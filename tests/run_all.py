@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 SUITES = ["tests.test_verification", "tests.test_solver_ext", "tests.test_ec3",
-          "tests.test_importers", "tests.test_report"]
+          "tests.test_importers", "tests.test_report", "tests.test_web"]
 
 
 def main(argv=None) -> int:

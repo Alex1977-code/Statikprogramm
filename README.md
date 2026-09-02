@@ -29,6 +29,7 @@ Handrechnungen (über 270 automatisierte Prüfungen, siehe unten).
 | **Parallel** | Elementschleifen und Aufträge auf mehreren Kernen; Rechnerfarm (Server/Worker/Client) über das Netz; optional MKL-Pardiso-Löser |
 | **Dokumentation** | Statischer Bericht (HTML druckbar, PDF, Markdown) mit Systemgrafiken, Schnittgrößenverläufen, allen Nachweiswerten; Benutzer-, Theorie-, Schnittstellen- und Farm-Handbuch in `docs/` |
 | **Export** | JSON-Modell, CSV, VTU (ParaView) |
+| **Handy / Browser** | Web-Server (`python run_web.py`) mit mobiler Oberfläche: 3D-Ansicht per Touch, Eingabe, Berechnung, Ergebnisse, Nachweise, Bericht; auch aus der Desktop-GUI startbar (gemeinsames Modell) |
 
 Einheiten durchgängig SI: **m, N, Pa, kg/m³**.
 
@@ -45,10 +46,15 @@ pip install reportlab svglib        # optional: PDF-Bericht direkt aus dem Progr
 
 Unter Linux zusätzlich `sudo apt install libglu1-mesa libegl1` (gmsh / Qt).
 
+Windows: Python 3.11/3.12 von python.org („Add to PATH“), dann in PowerShell im
+Programmordner `py -m venv .venv`, `.venv\Scripts\activate`, `pip install -r requirements.txt`,
+`python run_gui.py`. Beim ersten Start von `run_web.py` den Zugriff in der Windows-Firewall zulassen.
+
 ## Starten
 
 ```bash
 python run_gui.py                                              # grafische Oberfläche
+python run_web.py --schluessel geheim                          # Bedienung im Browser / auf dem Handy
 python -m statik3d.cli --beispiel hall --nachweise --ermuedung --bericht halle.html
 python -m statik3d.cli modell.json --kerne 8                   # alle Lastfälle + Kombinationen
 python -m statik3d.cli --import projekt.ifc --staebe --kombinationen --speichern projekt.json
@@ -61,6 +67,20 @@ Kombinationen, Umhüllende, EC3-Nachweise und Ermüdung in einem Lauf; danach
 **Datei → Statischer Bericht**.
 
 ---
+
+## Auf dem Handy
+
+```bash
+python run_web.py --schluessel geheim --beispiel hall
+```
+
+Der PC rechnet, das Handy bedient: Der Server nennt die Adresse im Netz
+(z. B. `http://192.168.1.23:8080/`), diese im Handy-Browser öffnen, Schlüssel
+eingeben, optional „Zum Startbildschirm hinzufügen“. Register Modell, Lasten,
+Rechnen, Ergebnisse, Nachweise und Bericht wie in der Desktop-GUI, 3D-Ansicht
+mit Touch. In der Desktop-GUI startet **Berechnung → Bedienung im Browser /
+auf dem Handy…** denselben Server für das geöffnete Modell. Details:
+`docs/Benutzerhandbuch.md`, Kapitel 11.
 
 ## Arbeitsablauf in der GUI
 
@@ -113,6 +133,7 @@ python -m tests.test_solver_ext       # 47 Prüfungen: Gelenke, Lasten, Kombinat
 python -m tests.test_ec3              # 48 Prüfungen: EC3-Handrechnungen
 python -m tests.test_importers        # 126 Prüfungen: Import
 python -m tests.test_report           # Bericht
+python -m tests.test_web              # 91 Prüfungen: Browser-/Handy-Server (API)
 xvfb-run -a python -m tests.test_gui_smoke   # Oberfläche (ohne Benutzer)
 ```
 
@@ -162,6 +183,7 @@ statik3d/
   report/            HTML/PDF/Markdown-Bericht, SVG-Grafiken
   elements/          beam3d, shell, solid
   gui/               PySide6-Oberfläche (main, dialogs, viewport, worker)
+  web/               Browser-/Handy-Oberfläche: server.py (HTTP-API), static/ (HTML, CSS, JS)
   mesher.py, examples_lib.py, cli.py
 docs/                Benutzerhandbuch, Theoriehandbuch, Schnittstellen, Rechnerfarm
 tests/               Verifikation
