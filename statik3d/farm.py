@@ -218,11 +218,21 @@ class FarmClient:
         return (f"Farm {self.host}:{self.port}: {len(alive)} Worker aktiv, "
                 f"{st['queued']} Auftraege wartend, {st['stats']['done']} erledigt")
 
-    def run(self, jobs: list[Job], progress=None, timeout: float = 3600.0) -> list[JobResult]:
+    def wait_for_workers(self, seconds: float = 10.0) -> int:
+        """Auf mindestens einen aktiven Worker warten; Rueckgabe: Anzahl."""
+        t0 = time.time()
+        while True:
+            st = self.status()
+            n = sum(1 for v in st["workers"].values() if v.get("alive"))
+            if n or time.time() - t0 > seconds:
+                return n
+            time.sleep(0.25)
+
+    def run(self, jobs: list[Job], progress=None, timeout: float = 3600.0,
+            wait_workers: float = 10.0) -> list[JobResult]:
         for i, j in enumerate(jobs):
             j.id = i
-        st = self.status()
-        if not any(v.get("alive") for v in st["workers"].values()):
+        if not self.wait_for_workers(wait_workers):
             raise RuntimeError("Kein Farm-Worker aktiv - bitte Worker starten "
                                "(python -m statik3d.farm worker ...)")
         for j in jobs:

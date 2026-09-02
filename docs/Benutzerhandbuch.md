@@ -10,7 +10,7 @@ Mehrkernrechnung, Rechnerfarm und statischem Bericht.
 ```bash
 pip install -r requirements.txt        # numpy, scipy, PySide6, pyvista, pyvistaqt
 pip install gmsh                       # optional: CAD-Import STEP/IGES/STL
-pip install pypardiso                  # optional: schneller Mehrkern-Gleichungslöser
+pip install pypardiso mkl              # optional: schneller Mehrkern-Gleichungslöser (Intel MKL)
 pip install reportlab svglib           # optional: PDF-Bericht direkt aus dem Programm
 
 python run_gui.py                      # oder: python -m statik3d.gui

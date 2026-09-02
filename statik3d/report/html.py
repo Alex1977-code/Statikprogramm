@@ -69,6 +69,9 @@ ENVELOPE_NAMES = {"ULS": "Grenzzustand der Tragfähigkeit (GZT)",
                   "SLS_QP": "Gebrauchstauglichkeit, quasi-ständig",
                   "CASES": "Lastfälle"}
 
+KIND_NAMES = {"Querschnitt": "Querschnittsnachweis", "Stabilitaet": "Stabilitätsnachweis",
+              "section": "Querschnittsnachweis"}
+
 FORCE_UNITS = {"N": "kN", "Vy": "kN", "Vz": "kN", "Mt": "kNm", "My": "kNm", "Mz": "kNm"}
 
 _NUM_RE = re.compile(r"^[-+−]?(\d+([.,]\d+)?|[.,]\d+)([eE][-+]?\d+)?\s*%?$|^[–-]$|^-?∞$")
@@ -208,6 +211,12 @@ def _ranges(ids) -> str:
     return sv._ranges(ids)
 
 
+def _pretty(s: str) -> str:
+    """ASCII-Formelzeichen der Kernmodule fuer die Anzeige."""
+    return (str(s).replace("Delta-sigma", "Δσ").replace("Delta-tau", "Δτ")
+            .replace("lambda_LT", "λ̄_LT").replace("chi_LT", "χ_LT"))
+
+
 def _dof_text(dofs) -> str:
     return " ".join(DOF_NAMES[d] for d in sorted(set(int(d) for d in dofs)) if 0 <= d < 6)
 
@@ -244,6 +253,11 @@ class Report:
 
     def __init__(self, model, analysis=None, results=None, options: dict = None):
         self.model = model
+        # Ein Results-Objekt an Stelle der Analysis (z.B. CLI/GUI ohne solve_all) zulassen
+        if analysis is not None and not hasattr(analysis, "cases") and hasattr(analysis, "beam_end"):
+            if results is None:
+                results = analysis
+            analysis = None
         self.analysis = analysis
         self.results = results
         self.options = dict(self.DEFAULTS)
@@ -318,11 +332,13 @@ class Report:
         d = hi - lo
         tol = 1e-6 * max(float(d.max()), 1.0)
         planar = [k for k, v in enumerate(d) if v <= tol]
-        if 1 in planar and 0 not in planar and 2 not in planar:
+        if len(planar) >= 2:                      # linienfoermiges Modell
+            return ["yz"] if 0 in planar and 1 not in planar else ["xz"]
+        if planar == [1]:
             return ["xz"]
-        if 2 in planar and 0 not in planar and 1 not in planar:
+        if planar == [2]:
             return ["xy"]
-        if 0 in planar and 1 not in planar and 2 not in planar:
+        if planar == [0]:
             return ["yz"]
         return ["iso", "xz", "xy"]
 
@@ -665,7 +681,6 @@ class Report:
 
     # ============================================================ Kapitel 3
     def _load_tables(self, lc) -> list:
-        m = self.model
         b = []
         # Knotenlasten (gleiche Lastvektoren zusammenfassen)
         if lc.nodal_loads:
@@ -807,7 +822,6 @@ class Report:
 
     # ============================================================ Kapitel 4
     def _overview_row(self, name, res) -> list:
-        m = self.model
         kind = getattr(res, "kind", "case")
         typ = res.info.get("typ", "") if isinstance(res.info, dict) else ""
         art = {"case": "Lastfall", "combination": "Kombination", "modal": "Modalanalyse",
@@ -839,7 +853,6 @@ class Report:
         return [name, art, umax, node] + R + [vm, ct]
 
     def _result_detail(self, name, res) -> list:
-        m = self.model
         b = []
         kv = []
         if getattr(res, "u", None) is not None and res.u.size:
@@ -1325,7 +1338,7 @@ class Report:
         g = mc.governing
         if g:
             kv.append(("Maßgebender Nachweis",
-                       f"{g.get('name', '')} ({g.get('kind', '')}), Kombination "
+                       f"{g.get('name', '')} ({KIND_NAMES.get(g.get('kind', ''), g.get('kind', ''))}), Kombination "
                        f"{g.get('combo', '')}, x = {fmt(g.get('x', 0.0), 2)} m"))
         kv.append(("Ausnutzung", Util(mc.util)))
         kv.append(("Status", "Nachweis erfüllt" if mc.util <= 1.0 else "Nachweis NICHT erfüllt"))
@@ -1471,7 +1484,7 @@ class Report:
         for fm in f.members.values():
             rows.append([fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
                          fmt(fm.dsig_max / 1e6, 1), fmt(fm.dsig_E2 / 1e6, 1), fmt(fm.D, 3),
-                         fmt(fm.D_shear, 3), Util(fm.util), fm.governing])
+                         fmt(fm.D_shear, 3), Util(fm.util), _pretty(fm.governing)])
         rows, note = self._truncate(rows, 400)
         b.append(("table", rows, "Ermüdungsnachweis je Stab", None, ""))
         if note:
@@ -1578,7 +1591,7 @@ class Report:
             worst = max(f.members.values(), key=lambda fm: fm.util)
             kv.append(("max. Schädigung Ermüdung", Util(worst.util)))
             kv.append(("maßgebend (Ermüdung)", f"Stab {worst.member}, Kerbfall "
-                                               f"{worst.category / 1e6:.0f}: {worst.governing}"))
+                                               f"{worst.category / 1e6:.0f}: {_pretty(worst.governing)}"))
             if any(fm.util > 1.0 for fm in f.members.values()):
                 status_ok = False
         b.append(("kv", kv, "Wesentliche Ergebnisse"))

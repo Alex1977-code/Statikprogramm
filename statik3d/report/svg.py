@@ -380,12 +380,17 @@ def _polygons(proj, X, P, facets, fill, stroke, width=0.5, shade=True, dashed=Fa
     return "".join(out)
 
 
-def _support_dir(dofs) -> np.ndarray:
-    v = np.zeros(3)
-    for d in dofs:
-        if 0 <= d < 3:
-            v[d] = -1.0
-    return v
+def _support_dir(proj, dofs):
+    """Seitenrichtung (2D, normiert) vom Knoten zur Lagerbasis: bevorzugt
+    entgegen der gehaltenen z-, sonst x-, sonst y-Richtung."""
+    for ax in (2, 0, 1):
+        if ax in dofs:
+            v = np.zeros(3)
+            v[ax] = -1.0
+            d2 = proj.unit(v)
+            if d2 is not None:
+                return d2
+    return np.array([0.0, 1.0])
 
 
 def _triangle(p, d2, size=11.0, colour=COL_SUPPORT, fill="#ffffff", dashed=False,
@@ -446,7 +451,7 @@ def _legend_ramp(x, y, vmin, vmax, unit, label) -> str:
             f'</linearGradient></defs>'
             + text(x, y, label, 10, "start", COL_TEXT, "bold")
             + f'<rect x="{_n(x)}" y="{_n(y + 6)}" width="90" height="9" fill="url(#{gid})" '
-              f'stroke="#888" stroke-width="0.5"/>'
+              f'stroke="#888888" stroke-width="0.5"/>'
             + text(x, y + 25, f"{_fmt_tick(vmin)} {unit}", 9)
             + text(x + 90, y + 25, f"{_fmt_tick(vmax)} {unit}", 9, "end"))
 
@@ -465,11 +470,33 @@ def draw_structure(model, projection="iso", width: int = 800, height: int = 520,
     util       : dict Element -> Ausnutzung (Farbe: gruen/gelb/orange/rot)
     case       : LoadCase, Lastfallname oder None (aktiver Lastfall) fuer die Lasten
     """
-    proj = projection if isinstance(projection, Projection) else \
-        Projection(projection, width, height)
+    own_proj = not isinstance(projection, Projection)
+    proj = Projection(projection, width, height) if own_proj else projection
     W, H = proj.width, proj.height
     out = [svg_open(W, H, title)]
     nn = model.nn
+    # Lastfall aufloesen (Raender haengen davon ab)
+    lc = None
+    if show_loads and model.load_cases:
+        if case is None:
+            try:
+                lc = model.case()
+            except KeyError:
+                lc = None
+        elif isinstance(case, str):
+            lc = model.load_cases.get(case)
+        else:
+            lc = case
+    if lc is not None and lc.n_loads == 0:
+        lc = None
+    legend_planned = bool(util) or field in ("util", "umag")
+    if own_proj:
+        ml, mt, mr, mb = proj.margin
+        if lc is not None:
+            ml, mt, mr, mb = max(ml, 70), max(mt, 64), max(mr, 70), max(mb, 50)
+        if legend_planned:
+            mr = max(mr, 130)
+        proj.margin = (ml, mt, mr, mb)
     if nn == 0 or not model.elements:
         out.append(text(W / 2, H / 2, "kein Modell", 12, "middle", "#888888"))
         if title:
@@ -589,9 +616,7 @@ def draw_structure(model, projection="iso", width: int = 800, height: int = 520,
             rot = [d for d in s.dofs if d >= 3]
             spring = bool(s.stiffness) and any(k for k in s.stiffness)
             if trans:
-                d2 = proj.unit(_support_dir(trans))
-                if d2 is None:
-                    d2 = np.array([0.0, 1.0])
+                d2 = _support_dir(proj, trans)
                 out.append(_triangle(p, d2, 11, COL_SUPPORT,
                                      "#555555" if len(trans) == 3 else "#ffffff", spring))
             if rot:
@@ -619,17 +644,6 @@ def draw_structure(model, projection="iso", width: int = 800, height: int = 520,
                                f'stroke="{COL_CONTACT}" stroke-width="1"/>')
 
     # ---- Lasten -------------------------------------------------------------
-    lc = None
-    if show_loads and model.load_cases:
-        if case is None:
-            try:
-                lc = model.case()
-            except KeyError:
-                lc = None
-        elif isinstance(case, str):
-            lc = model.load_cases.get(case)
-        else:
-            lc = case
     if lc is not None:
         out.append(_draw_loads(model, lc, proj, P0, X0, nn, notes))
 
@@ -666,9 +680,9 @@ def draw_structure(model, projection="iso", width: int = 800, height: int = 520,
         cap = f"Verformte Lage, Überhöhung {f_txt}-fach (max |u| = {umax * 1e3:.2f} mm)"
         out.append(text(70, H - 8, cap, 10, "start", "#333333"))
     if legend == "util":
-        out.append(_legend_util(W - 100, H - 62))
+        out.append(_legend_util(W - 110, H - 66))
     elif legend == "umag":
-        out.append(_legend_ramp(W - 105, H - 40, legend_vals[0], legend_vals[1], "mm",
+        out.append(_legend_ramp(W - 115, H - 44, legend_vals[0], legend_vals[1], "mm",
                                 "Verschiebung |u|"))
     out.append("</svg>")
     return "".join(out)
@@ -932,7 +946,10 @@ def draw_member_diagram(x, values, quantity: str = "My", unit: str = "kNm", widt
         out.append(f'<circle cx="{_n(px)}" cy="{_n(py)}" r="2.5" fill="#1a3d6d"/>')
         lab = f"{v[idx]:.2f} {unit} (x = {x[idx]:.2f} m)"
         ty = py - 6 if above else py + 13
-        ty = min(max(ty, mt + 9), mt + Hp - 2)
+        if above and ty < mt + 9:
+            ty = py + 13
+        elif not above and ty > mt + Hp - 2:
+            ty = py - 6
         anchor = "middle"
         if px < ml + 60:
             anchor = "start"
@@ -940,7 +957,8 @@ def draw_member_diagram(x, values, quantity: str = "My", unit: str = "kNm", widt
             anchor = "end"
         out.append(text(px, ty, lab, 9, anchor, "#1a3d6d", "bold"))
     # Achsenbeschriftung, Titel
-    out.append(text(ml, mt - 4, f"{quantity} [{unit}]", 10, "start", "#222222"))
+    out.append(text(13, mt + Hp / 2, f"{quantity} [{unit}]", 10, "middle", "#222222",
+                    rotate=-90))
     out.append(text(ml + Wp, mt + Hp + 24, "x [m]", 9, "end", "#444444"))
     if mn is not None:
         out.append(text(ml + Wp, mt - 4, "Umhüllende min/max (grau)", 9, "end", "#666666"))
@@ -1081,7 +1099,10 @@ def draw_sn_curve(category: float, points=None, gamma_Mf: float = 1.0, width: in
         out.append(line(ml, yy, xx, yy, "#888888", 0.7, "4,3"))
         out.append(line(xx, yy, xx, mt + Hp, "#888888", 0.7, "4,3"))
         out.append(f'<circle cx="{_n(xx)}" cy="{_n(yy)}" r="2.5" fill="#888888"/>')
-        out.append(text(xx + 5, yy - 4, lab, 9, "start", "#555555"))
+        if xx > ml + 0.72 * Wp:
+            out.append(text(xx - 5, yy - 4, lab, 9, "end", "#555555"))
+        else:
+            out.append(text(xx + 5, yy - 4, lab, 9, "start", "#555555"))
     # Lastpunkte
     for k, pt in enumerate(points or []):
         try:
@@ -1099,7 +1120,10 @@ def draw_sn_curve(category: float, points=None, gamma_Mf: float = 1.0, width: in
         out.append(f'<circle cx="{_n(xx)}" cy="{_n(yy)}" r="4.5" fill="{col}" '
                    f'fill-opacity="0.85" stroke="#222222" stroke-width="0.8"/>')
         lab = f"{name + ': ' if name else ''}Δσ = {ds / 1e6:.1f} MPa, n = {n:.3g}"
-        out.append(text(xx + 7, yy + 4 + 11 * (k % 2), lab, 9, "start", col))
+        if xx > ml + 0.6 * Wp:
+            out.append(text(xx - 7, yy + 4 + 11 * (k % 2), lab, 9, "end", col))
+        else:
+            out.append(text(xx + 7, yy + 4 + 11 * (k % 2), lab, 9, "start", col))
     # Beschriftung
     out.append(text(ml, mt - 4, ("Δτ" if shear else "Δσ") + " [MPa]", 10, "start", "#222222"))
     out.append(text(ml + Wp, mt + Hp + 27, "Lastspielzahl N", 9, "end", "#444444"))

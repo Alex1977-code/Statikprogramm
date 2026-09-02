@@ -34,6 +34,32 @@ from . import parallel
 # ==========================================================================
 # Linearer Gleichungsloeser (Faktorisierung wiederverwendbar)
 # ==========================================================================
+def _find_mkl():
+    """MKL-Laufzeitbibliothek fuer pypardiso finden (pip install mkl legt sie
+    ausserhalb des Suchpfads ab)."""
+    import os
+    import glob
+    import sys
+    if os.environ.get("PYPARDISO_MKL_RT"):
+        return
+    pats = []
+    for base in (sys.prefix, os.path.join(sys.prefix, "Library", "bin"),
+                 os.path.join(sys.prefix, "lib"), "/usr/local/lib", "/usr/lib"):
+        pats += [os.path.join(base, "libmkl_rt.so*"), os.path.join(base, "mkl_rt*.dll"),
+                 os.path.join(base, "libmkl_rt*.dylib")]
+    try:
+        import site
+        for sp_ in site.getsitepackages():
+            pats += [os.path.join(sp_, "..", "..", "libmkl_rt.so*"),
+                     os.path.join(sp_, "..", "..", "..", "Library", "bin", "mkl_rt*.dll")]
+    except Exception:
+        pass
+    for pat in pats:
+        hits = sorted(glob.glob(pat))
+        if hits:
+            os.environ["PYPARDISO_MKL_RT"] = os.path.abspath(hits[-1])
+            return
+
 class LinearSolver:
     """Faktorisiert K einmal; solve() fuer beliebig viele rechte Seiten.
     Backends: pypardiso (MKL, mehrere Threads), scikit-sparse CHOLMOD, SuperLU."""
@@ -51,6 +77,7 @@ class LinearSolver:
         self._K = K.tocsr()
         if be in ("auto", "pardiso"):
             try:
+                _find_mkl()
                 import pypardiso
                 ps = pypardiso.PyPardisoSolver()
                 Kcsr = K.tocsr()

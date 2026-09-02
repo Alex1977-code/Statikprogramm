@@ -130,6 +130,8 @@ def test_beam_report():
     rep2 = Report(m, results=solver.solve_static(m))
     html2 = rep2.html()
     check("Träger: Report nur mit Results", len(html2) > 20000 and "Ergebnisse" in html2)
+    html2b = Report(m, solver.solve_static(m)).html()      # Results im Analysis-Argument
+    check("Träger: Results positional statt Analysis", "Auflagerreaktionen LF1" in html2b)
     check("Träger: ohne Nachweise -> Hinweis", "keine Nachweise" in html2.lower()
           or "keine nachweisergebnisse" in html2.lower())
     _svgs_parse(html2)
@@ -257,11 +259,8 @@ def test_pdf():
     an = solver.solve_all(m, design=True, fatigue=True)
     rep = Report(m, an)
     path = os.path.join(_tmpdir(), "traeger.pdf")
-    try:
-        import reportlab  # noqa: F401
-        have = True
-    except ImportError:
-        have = False
+    import importlib.util
+    have = importlib.util.find_spec("reportlab") is not None
     if have:
         rep.to_pdf(path)
         check("PDF: Datei erzeugt (reportlab vorhanden)",

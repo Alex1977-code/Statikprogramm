@@ -39,7 +39,7 @@ Einheiten durchgängig SI: **m, N, Pa, kg/m³**.
 ```bash
 pip install -r requirements.txt     # numpy scipy PySide6 pyvista pyvistaqt
 pip install gmsh                    # optional: CAD-Import
-pip install pypardiso               # optional: Mehrkern-Gleichungslöser
+pip install pypardiso mkl           # optional: Mehrkern-Gleichungslöser (155k FHG: 3 s statt 110 s)
 pip install reportlab svglib        # optional: PDF-Bericht direkt aus dem Programm
 ```
 

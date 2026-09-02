@@ -5,6 +5,6 @@ pyvista>=0.42
 pyvistaqt>=0.11
 # optional:
 # gmsh>=4.11        CAD-Import (STEP/IGES/BREP/STL)
-# pypardiso         Mehrkern-Gleichungsloeser (Intel MKL Pardiso)
+# pypardiso mkl     Mehrkern-Gleichungsloeser (Intel MKL Pardiso): 155k FHG in 3 s statt 110 s
 # scikit-sparse     CHOLMOD-Loeser
 # reportlab, svglib PDF-Bericht direkt aus dem Programm

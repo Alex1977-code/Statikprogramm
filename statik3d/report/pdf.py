@@ -29,10 +29,15 @@ def print_hint() -> str:
             "kann optional 'pip install reportlab svglib' installiert werden.")
 
 
+# Zeichen, die die Standardschriften (Helvetica, WinAnsi) nicht enthalten
+_GLYPHS = str.maketrans({"⁰": "^0", "⁴": "^4", "⁵": "^5", "⁶": "^6", "⁷": "^7", "⁸": "^8",
+                         "⁹": "^9", "\u0304": "\u00af"})
+
+
 def _para_text(s) -> str:
-    """Text fuer reportlab-Paragraphs maskieren."""
+    """Text fuer reportlab-Paragraphs maskieren und auf darstellbare Zeichen abbilden."""
     from xml.sax.saxutils import escape
-    return escape(str(s))
+    return escape(str(s).translate(_GLYPHS))
 
 
 def to_pdf(report, path: str) -> str:
@@ -59,7 +64,6 @@ def to_pdf(report, path: str) -> str:
     styles = getSampleStyleSheet()
     base = ParagraphStyle("base", parent=styles["Normal"], fontName="Helvetica", fontSize=9,
                           leading=11.5)
-    small = ParagraphStyle("small", parent=base, fontSize=7.5, leading=9)
     note = ParagraphStyle("note", parent=base, fontSize=8, leading=10, textColor=colors.grey)
     cap = ParagraphStyle("cap", parent=base, fontSize=8.5, leading=10.5, fontName="Helvetica-Bold",
                          spaceBefore=6, spaceAfter=2)
@@ -122,11 +126,17 @@ def to_pdf(report, path: str) -> str:
             else:
                 data.append([cell_para(c, al[j] == "r", compact or ncol > 8)
                              for j, c in enumerate(r)])
-        # Spaltenbreiten nach Textlaenge
+        # Spaltenbreiten nach Textlaenge (mindestens das laengste Wort der Zelle)
         lens = []
         for j in range(ncol):
-            mx = max(len(_cell_text(r[j])) if j < len(r) else 0 for r in rows)
-            lens.append(min(max(mx, 3), 40))
+            mx = 0
+            for r in rows:
+                if j >= len(r):
+                    continue
+                t = _cell_text(r[j])
+                longest = max((len(w) for w in t.split()), default=0)
+                mx = max(mx, min(len(t), 40), longest)
+            lens.append(max(mx, 3))
         tot = float(sum(lens))
         widths = [avail_w * l / tot for l in lens]
         t = Table(data, colWidths=widths, repeatRows=1 if header else 0)
@@ -159,7 +169,6 @@ def to_pdf(report, path: str) -> str:
             st = ParagraphStyle(f"toc{level}", parent=base, leftIndent=(level - 1) * 14,
                                 fontName="Helvetica-Bold" if level == 1 else "Helvetica")
             story.append(Paragraph(f"{_para_text(number)}&nbsp;&nbsp;{_para_text(title)}", st))
-    first = True
     skipped_figures = 0
     for blk in blocks:
         kind = blk[0]
@@ -167,7 +176,6 @@ def to_pdf(report, path: str) -> str:
             _, level, number, title, _a = blk
             if level == 1:
                 story.append(PageBreak())
-                first = False
             story.append(Paragraph(f"{_para_text(number)}&nbsp;&nbsp;{_para_text(title)}",
                                    h.get(level, h[4])))
         elif kind == "p":

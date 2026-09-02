@@ -9,8 +9,11 @@ Standardmäßig nutzt Statik3D alle Prozessorkerne des Rechners:
 * Kombinationen mit Kontakt (nichtlinear) und Nachweise vieler Stäbe laufen
   als unabhängige Aufträge parallel.
 * Der Gleichungslöser SuperLU ist einprozessig. Für große Modelle lohnt
-  `pip install pypardiso` (Intel MKL Pardiso, mehrere Threads) – Statik3D
-  benutzt ihn automatisch, wenn er installiert ist.
+  `pip install pypardiso mkl` (Intel MKL Pardiso, mehrere Threads) – Statik3D
+  findet die MKL-Bibliothek selbst und benutzt Pardiso automatisch. Messung
+  (Platte, 25 600 Schalen, 155 000 FHG, 4 Kerne): Assemblierung 47 s → 16 s
+  parallel; Faktorisierung SuperLU 113 s → Pardiso 3 s; jeder weitere
+  Lastfall 8 s (Lösen + Nachlauf).
 
 Einstellung: GUI → Berechnung → Prozesse, oder in Python
 
