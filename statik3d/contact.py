@@ -1,0 +1,463 @@
+"""
+Kontakt: einseitige Lager, Knoten-Knoten-Spaltelemente, Knoten-Flaeche-Kontakt.
+
+Formulierung: Penalty-Verfahren mit Aktiv-Mengen-Iteration.
+Fuer jede Kontaktbedingung gilt der Spalt
+    g(u) = g0 + c^T u
+(c = Koeffizientenvektor ueber die beteiligten FHG). Ist g < 0, wird die
+Steifigkeit  k_n c c^T  und die Last  -k_n g0 c  hinzugefuegt; die Kontaktkraft
+ist  F_n = -k_n g >= 0.  Reibung (Coulomb): tangentiale Penalty-Steifigkeit
+k_t bei Haften; bei |F_t| > mu F_n Gleiten mit konstanter Reibkraft mu F_n
+entgegen der Gleitrichtung (elastisch-plastische Naeherung ohne Lastgeschichte,
+geeignet fuer monoton aufgebrachte Lasten).
+
+Die Iteration endet, wenn sich keine Kontaktzustaende (offen/Haften/Gleiten)
+mehr aendern. Oszillierende Bedingungen werden nach einigen Wechseln
+festgehalten (Warnung im Ergebnis).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+import numpy as np
+from scipy import sparse
+
+from .model import Model, NDOF
+
+PENALTY_FACTOR = 1.0e4       # automatische Kontaktsteifigkeit = Faktor * Diagonalsteifigkeit
+TANGENT_FACTOR = 1.0         # k_t = TANGENT_FACTOR * k_n
+SLIP_STIFFNESS = 1.0e-3      # Reststeifigkeit beim Gleiten (Regularisierung, Anteil von k_t)
+
+
+# --------------------------------------------------------------------------
+@dataclass
+class Constraint:
+    kind: str                      # support | gap | surface
+    dofs: np.ndarray               # globale FHG
+    cn: np.ndarray                 # Koeffizienten Normalrichtung (g = g0 + cn.u)
+    ct: Optional[np.ndarray]       # (2, ndofs) Koeffizienten Tangentialrichtungen
+    g0: float
+    kn: float
+    kt: float
+    mu: float
+    node: int
+    normal: np.ndarray
+    label: str = ""
+    master: Optional[tuple] = None  # (Knotenliste, Gewichte)
+    active: bool = False
+    slip: bool = False
+    slip_dir: Optional[np.ndarray] = None   # Gleitrichtung (2,) im Tangentialsystem
+    dir_updates: int = 0
+    Fn: float = 0.0
+    Ft: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    g: float = 0.0
+    toggles: int = 0
+    frozen: bool = False
+
+
+def _tangent_basis(n: np.ndarray):
+    n = n / (np.linalg.norm(n) or 1.0)
+    ref = np.array([1.0, 0, 0]) if abs(n[0]) < 0.9 else np.array([0, 1.0, 0])
+    t1 = np.cross(n, ref)
+    t1 /= np.linalg.norm(t1)
+    t2 = np.cross(n, t1)
+    return t1, t2
+
+
+def _trans_dofs(node: int) -> list[int]:
+    return [NDOF * node, NDOF * node + 1, NDOF * node + 2]
+
+
+# --------------------------------------------------------------------------
+# Geometrie: naechster Punkt auf Dreieck (Ericson, Real-Time Collision Detection)
+# --------------------------------------------------------------------------
+def closest_point_triangle(p, a, b, c):
+    """Rueckgabe: naechster Punkt q auf dem Dreieck und baryzentrische Gewichte."""
+    ab, ac, ap = b - a, c - a, p - a
+    d1, d2 = ab @ ap, ac @ ap
+    if d1 <= 0 and d2 <= 0:
+        return a, np.array([1.0, 0, 0])
+    bp = p - b
+    d3, d4 = ab @ bp, ac @ bp
+    if d3 >= 0 and d4 <= d3:
+        return b, np.array([0, 1.0, 0])
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0 and d1 >= 0 and d3 <= 0:
+        v = d1 / (d1 - d3)
+        return a + v * ab, np.array([1 - v, v, 0])
+    cp = p - c
+    d5, d6 = ab @ cp, ac @ cp
+    if d6 >= 0 and d5 <= d6:
+        return c, np.array([0, 0, 1.0])
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0 and d2 >= 0 and d6 <= 0:
+        w = d2 / (d2 - d6)
+        return a + w * ac, np.array([1 - w, 0, w])
+    va = d3 * d6 - d5 * d4
+    if va <= 0 and (d4 - d3) >= 0 and (d5 - d6) >= 0:
+        w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        return b + w * (c - b), np.array([0, 1 - w, w])
+    denom = 1.0 / (va + vb + vc)
+    v = vb * denom
+    w = vc * denom
+    return a + ab * v + ac * w, np.array([1 - v - w, v, w])
+
+
+def master_facets(model: Model, cp) -> list[tuple[int, ...]]:
+    """Facetten (Knotenlisten) der Master-Oberflaeche eines Kontaktpaares."""
+    from .assemble import SOLID_FACES, SHELL_TYPES, SOLID_TYPES
+    facets: list[tuple[int, ...]] = [tuple(int(n) for n in f) for f in cp.master_faces]
+    faces: dict[tuple, tuple] = {}
+    for ei in cp.master_elements:
+        e = model.elements[ei]
+        if e.typ in SHELL_TYPES:
+            facets.append(tuple(e.nodes))
+        elif e.typ in SOLID_TYPES:
+            for f in SOLID_FACES[e.typ]:
+                nodes = tuple(e.nodes[i] for i in f)
+                key = tuple(sorted(nodes))
+                if key in faces:
+                    del faces[key]          # innere Flaeche
+                else:
+                    faces[key] = nodes
+    facets.extend(faces.values())
+    return facets
+
+
+def _solid_outward(model: Model, cp) -> dict[tuple, np.ndarray]:
+    """Fuer Volumen-Facetten: Schwerpunkt des zugehoerigen Elements (Orientierung)."""
+    from .assemble import SOLID_FACES, SOLID_TYPES
+    out = {}
+    for ei in cp.master_elements:
+        e = model.elements[ei]
+        if e.typ in SOLID_TYPES:
+            cen = model.nodes[e.nodes].mean(axis=0)
+            for f in SOLID_FACES[e.typ]:
+                out[tuple(sorted(e.nodes[i] for i in f))] = cen
+    return out
+
+
+# --------------------------------------------------------------------------
+class ContactSystem:
+    def __init__(self, model: Model, K: sparse.csr_matrix, log: list = None):
+        self.model = model
+        self.log = log if log is not None else []
+        self.diag = np.asarray(K.diagonal()).ravel()
+        self.cons: list[Constraint] = []
+        self.size = model.characteristic_size()
+        self.tol = 1e-12 * self.size          # Spalt-Toleranz (Aktivierung)
+        self.f_tol = 1.0                      # Kraft-Toleranz (Freigabe), wird vom Loeser gesetzt
+        self._build()
+
+    # ---- Aufbau ----------------------------------------------------------
+    def _auto_k(self, nodes) -> float:
+        d = []
+        for n in nodes:
+            d.extend(self.diag[_trans_dofs(n)])
+        d = np.abs(np.asarray(d))
+        ref = d.max() if d.size and d.max() > 0 else (np.abs(self.diag).max() or 1.0)
+        return PENALTY_FACTOR * ref
+
+    def _build(self):
+        m = self.model
+        for cs in m.contact_supports:
+            n = np.asarray(cs.direction, float)
+            n /= np.linalg.norm(n) or 1.0
+            dofs = np.array(_trans_dofs(cs.node))
+            kn = cs.stiffness if cs.stiffness > 0 else self._auto_k([cs.node])
+            t1, t2 = _tangent_basis(n)
+            self.cons.append(Constraint(
+                "support", dofs, n.copy(), np.vstack([t1, t2]) if cs.mu > 0 else None,
+                float(cs.gap), kn, TANGENT_FACTOR * kn, cs.mu, cs.node, n,
+                f"Einseitiges Lager Knoten {cs.node}"))
+        for ge in m.gap_elements:
+            if ge.direction is not None:
+                n = np.asarray(ge.direction, float)
+            else:
+                n = m.nodes[ge.node_b] - m.nodes[ge.node_a]
+            ln = np.linalg.norm(n)
+            if ln <= 0:
+                self.log.append(f"Spaltelement {ge.node_a}-{ge.node_b}: Richtung unbestimmt "
+                                "(Knoten fallen zusammen) - bitte 'direction' angeben")
+                continue
+            n = n / ln
+            dofs = np.array(_trans_dofs(ge.node_a) + _trans_dofs(ge.node_b))
+            cn = np.concatenate([-n, n])
+            kn = ge.stiffness if ge.stiffness > 0 else self._auto_k([ge.node_a, ge.node_b])
+            ct = None
+            if ge.mu > 0:
+                t1, t2 = _tangent_basis(n)
+                ct = np.vstack([np.concatenate([-t1, t1]), np.concatenate([-t2, t2])])
+            g0 = float(ge.gap)
+            if ge.direction is None:
+                g0 += 0.0   # Abstand ist bereits geometrisch (Knoten getrennt) -> gap zusaetzlich
+            self.cons.append(Constraint("gap", dofs, cn, ct, g0, kn, TANGENT_FACTOR * kn,
+                                        ge.mu, ge.node_b, n,
+                                        f"Spaltelement {ge.node_a}-{ge.node_b}",
+                                        master=([ge.node_a], [1.0])))
+        for cp in m.contact_pairs:
+            self._build_pair(cp)
+
+    def _build_pair(self, cp):
+        m = self.model
+        facets = master_facets(m, cp)
+        if not facets:
+            self.log.append(f"Kontaktpaar '{cp.name}': keine Master-Facetten")
+            return
+        cen_of = _solid_outward(m, cp)
+        radius = cp.search_radius if cp.search_radius else 0.1 * self.size
+        tris = []   # (nodes(3), P(3,3), n, facet_key)
+        for f in facets:
+            key = tuple(sorted(f))
+            if len(f) == 3:
+                parts = [(f[0], f[1], f[2])]
+            else:
+                parts = [(f[0], f[1], f[2]), (f[0], f[2], f[3])]
+            for tri in parts:
+                P = m.nodes[list(tri)]
+                nv = np.cross(P[1] - P[0], P[2] - P[0])
+                a2 = np.linalg.norm(nv)
+                if a2 <= 0:
+                    continue
+                nv = nv / a2
+                if key in cen_of:            # Volumen: Normale nach aussen
+                    if nv @ (cen_of[key] - P.mean(axis=0)) > 0:
+                        nv = -nv
+                tris.append((tri, P, nv, key))
+        n_paired = 0
+        for s in cp.slave_nodes:
+            p = m.nodes[s]
+            best = None
+            for tri, P, nv, key in tris:
+                if s in tri:
+                    continue
+                q, w = closest_point_triangle(p, P[0], P[1], P[2])
+                dist = np.linalg.norm(p - q)
+                if dist > radius:
+                    continue
+                if best is None or dist < best[0]:
+                    best = (dist, tri, w, nv, q, key)
+            if best is None:
+                self.log.append(f"Kontaktpaar '{cp.name}': Knoten {s} ohne Master-Facette "
+                                f"im Suchradius {radius:.3g} m")
+                continue
+            dist, tri, w, nv, q, key = best
+            n = nv.copy()
+            d = (p - q) @ n
+            if cp.flip_normal:
+                n = -n
+                d = -d
+            elif key not in cen_of and abs(d) > 1e-9 * self.size:
+                # Schalen/explizite Facetten: Normale zum Slave-Knoten orientieren
+                if d < 0:
+                    n = -n
+                    d = -d
+            g0 = d - cp.gap
+            dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
+            cn = np.concatenate([n] + [-wi * n for wi in w])
+            kn = cp.stiffness if cp.stiffness > 0 else self._auto_k([s])
+            ct = None
+            if cp.mu > 0:
+                t1, t2 = _tangent_basis(n)
+                ct = np.vstack([np.concatenate([t1] + [-wi * t1 for wi in w]),
+                                np.concatenate([t2] + [-wi * t2 for wi in w])])
+            self.cons.append(Constraint("surface", dofs, cn, ct, float(g0), kn,
+                                        TANGENT_FACTOR * kn, cp.mu, s, n,
+                                        f"{cp.name}: Knoten {s} -> Facette {tri}",
+                                        master=(list(tri), list(w))))
+            n_paired += 1
+        self.log.append(f"Kontaktpaar '{cp.name}': {n_paired} von {len(cp.slave_nodes)} "
+                        f"Slave-Knoten zugeordnet")
+
+    # ---- Zustand ---------------------------------------------------------
+    def initialize(self):
+        """Anfangszustand: beruehrende oder durchdringende Bedingungen aktiv."""
+        for c in self.cons:
+            c.active = c.g0 <= self.tol
+            c.slip = False
+            c.slip_dir = None
+            c.dir_updates = 0
+            c.toggles = 0
+            c.frozen = False
+
+    @property
+    def n_active(self) -> int:
+        return sum(1 for c in self.cons if c.active)
+
+    def matrices(self, ndof: int):
+        """Kontaktsteifigkeit Kc (csr) und Kontaktlastvektor Fc."""
+        rows, cols, vals = [], [], []
+        Fc = np.zeros(ndof)
+        for c in self.cons:
+            if not c.active:
+                continue
+            r, cc = np.meshgrid(c.dofs, c.dofs, indexing="ij")
+            kmat = c.kn * np.outer(c.cn, c.cn)
+            Fc[c.dofs] += -c.kn * c.g0 * c.cn
+            if c.ct is not None and c.mu > 0:
+                if not c.slip:
+                    kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
+                else:
+                    # Gleiten: konstante Reibkraft entgegen der Gleitrichtung
+                    # + kleine Reststeifigkeit (haelt das System regulaer)
+                    fr = c.mu * max(c.Fn, 0.0)
+                    Fc[c.dofs] += -fr * (c.slip_dir[0] * c.ct[0] + c.slip_dir[1] * c.ct[1])
+                    kmat = kmat + SLIP_STIFFNESS * c.kt * (
+                        np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
+            rows.append(r.ravel())
+            cols.append(cc.ravel())
+            vals.append(kmat.ravel())
+        if rows:
+            Kc = sparse.coo_matrix((np.concatenate(vals),
+                                    (np.concatenate(rows), np.concatenate(cols))),
+                                   shape=(ndof, ndof)).tocsr()
+        else:
+            Kc = sparse.csr_matrix((ndof, ndof))
+        return Kc, Fc
+
+    def set_force_scale(self, f_ref: float):
+        """Bezugskraft fuer die Freigabe aktiver Bedingungen (Zugkraft > 1e-6 f_ref)."""
+        self.f_tol = 1e-6 * max(abs(f_ref), 1e-30)
+
+    def update(self, u: np.ndarray) -> bool:
+        """Zustaende aus der Loesung u aktualisieren. Rueckgabe: True wenn geaendert."""
+        changed = False
+        for c in self.cons:
+            ue = u[c.dofs]
+            g = c.g0 + c.cn @ ue
+            c.g = g
+            if c.active:
+                Fn = -c.kn * g
+                new_active = Fn > -self.f_tol   # Druckkraft (bzw. winziger Zug) -> bleibt
+                c.Fn = max(Fn, 0.0)
+            else:
+                c.Fn = 0.0
+                new_active = g < -self.tol
+            if c.frozen:
+                new_active = c.active
+            if new_active != c.active:
+                c.toggles += 1
+                if c.toggles > 8:
+                    c.frozen = True
+                    new_active = True
+                    self.log.append(f"{c.label}: Zustand oszilliert, wird als aktiv gehalten")
+                c.active = new_active
+                changed = True
+                if not c.active:
+                    c.slip = False
+                    c.slip_dir = None
+                    c.Ft[:] = 0
+            if c.active and c.ct is not None and c.mu > 0:
+                dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+                Ft_el = c.kt * dt
+                limit = c.mu * c.Fn
+                if not c.slip:
+                    if np.linalg.norm(Ft_el) > limit * (1 + 1e-6) and limit >= 0:
+                        c.slip = True
+                        nrm = np.linalg.norm(dt)
+                        c.slip_dir = dt / nrm if nrm > 0 else np.array([1.0, 0.0])
+                        c.dir_updates = 0
+                        changed = True
+                    c.Ft = Ft_el if not c.slip else limit * c.slip_dir
+                else:
+                    nrm = np.linalg.norm(dt)
+                    if nrm > 0 and (dt @ c.slip_dir) < 0:
+                        # Bewegung entgegen Gleitrichtung -> wieder Haften
+                        c.slip = False
+                        c.slip_dir = None
+                        c.Ft = np.zeros(2)
+                        changed = True
+                    else:
+                        if nrm > 0 and c.dir_updates < 12:
+                            # Gleitrichtung unterrelaxiert nachfuehren (Fixpunkt-Iteration);
+                            # nach 12 Anpassungen wird die Richtung festgehalten
+                            nd = dt / nrm
+                            blend = 0.5 * c.slip_dir + 0.5 * nd
+                            bn = np.linalg.norm(blend)
+                            blend = blend / bn if bn > 0 else nd
+                            if np.linalg.norm(blend - c.slip_dir) > 0.05:   # ~3 Grad
+                                c.slip_dir = blend
+                                c.dir_updates += 1
+                                changed = True
+                        c.Ft = limit * c.slip_dir
+            elif not c.active:
+                c.Ft = np.zeros(2)
+        return changed
+
+    # ---- Ergebnisse --------------------------------------------------------
+    def warnings(self) -> list[str]:
+        """Hinweise: vollstaendig gleitende Kontaktpaare (Gleichgewicht nur durch
+        Reststeifigkeit) und eingefrorene Bedingungen."""
+        out = []
+        groups: dict[str, list[Constraint]] = {}
+        for c in self.cons:
+            if c.mu > 0:
+                groups.setdefault(c.label.split(":")[0], []).append(c)
+        for name, cs in groups.items():
+            act = [c for c in cs if c.active]
+            if act and all(c.slip for c in act):
+                out.append(f"{name}: alle aktiven Kontaktknoten gleiten - Reibung reicht "
+                           "nicht fuer das Gleichgewicht (Bauteil rutscht)")
+        return out
+
+    def results(self) -> list[dict]:
+        out = []
+        for c in self.cons:
+            if not c.active:
+                status = "offen"
+            elif c.mu > 0 and c.slip:
+                status = "Gleiten"
+            elif c.mu > 0:
+                status = "Haften"
+            else:
+                status = "Kontakt"
+            out.append({"kind": c.kind, "label": c.label, "node": int(c.node),
+                        "master": c.master, "gap": float(c.g), "Fn": float(c.Fn),
+                        "Ft": float(np.linalg.norm(c.Ft)), "status": status,
+                        "normal": c.normal.tolist(), "frozen": c.frozen})
+        return out
+
+    def nodal_forces(self, nn: int) -> np.ndarray:
+        """Kontaktkraefte auf die Knoten (nn,3), global."""
+        F = np.zeros((nn, 3))
+        for c in self.cons:
+            if not c.active:
+                continue
+            f = c.Fn * c.normal
+            if c.ct is not None:
+                t1, t2 = _tangent_basis(c.normal)
+                f = f - (c.Ft[0] * t1 + c.Ft[1] * t2)
+            if c.kind == "support":
+                F[c.node] += f
+            elif c.kind == "gap":
+                F[c.node] += f
+                F[c.master[0][0]] -= f
+            else:
+                F[c.node] += f
+                for nd, w in zip(*c.master):
+                    F[nd] -= w * f
+        return F
+
+    def support_reactions(self, nn: int) -> np.ndarray:
+        """Nur einseitige Lager (fuer die Auflagerkraftsumme)."""
+        R = np.zeros((nn, 3))
+        for c in self.cons:
+            if c.active and c.kind == "support":
+                f = c.Fn * c.normal
+                if c.ct is not None:
+                    t1, t2 = _tangent_basis(c.normal)
+                    f = f - (c.Ft[0] * t1 + c.Ft[1] * t2)
+                R[c.node] += f
+        return R
+
+
+def summary(results: list[dict]) -> str:
+    if not results:
+        return "keine Kontaktbedingungen"
+    n_act = sum(1 for r in results if r["status"] != "offen")
+    n_slip = sum(1 for r in results if r["status"] == "Gleiten")
+    fmax = max((r["Fn"] for r in results), default=0.0)
+    return (f"Kontakt: {n_act} von {len(results)} Bedingungen aktiv"
+            + (f", {n_slip} gleitend" if n_slip else "")
+            + f", max. Kontaktkraft {fmax/1e3:.2f} kN")
