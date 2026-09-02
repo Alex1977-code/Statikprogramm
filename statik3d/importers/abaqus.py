@@ -23,8 +23,6 @@ import os
 import re
 from typing import Optional
 
-import numpy as np
-
 from ..model import Model, Material, Section
 from ..elements.solid import normalize_tet10
 from . import _common as C

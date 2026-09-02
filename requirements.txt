@@ -3,4 +3,8 @@ scipy>=1.10
 PySide6>=6.5
 pyvista>=0.42
 pyvistaqt>=0.11
-gmsh>=4.11   ; python_version >= "3.8"   # optional: CAD-Import (STEP/IGES/STL)
+# optional:
+# gmsh>=4.11        CAD-Import (STEP/IGES/BREP/STL)
+# pypardiso         Mehrkern-Gleichungsloeser (Intel MKL Pardiso)
+# scikit-sparse     CHOLMOD-Loeser
+# reportlab, svglib PDF-Bericht direkt aus dem Programm

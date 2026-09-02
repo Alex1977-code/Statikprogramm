@@ -25,8 +25,6 @@ import os
 import re
 from typing import Optional
 
-import numpy as np
-
 from ..model import Model, Material, Section
 from ..elements.solid import normalize_tet10
 from . import _common as C
@@ -64,12 +62,12 @@ def _split_line(line: str) -> tuple[str, list[str], bool]:
     if "," in line:
         fields = [f.strip() for f in line.split(",")]
         name = fields[0]
-        data = [f for f in fields[1:]]
-        # Fortsetzungsmarke am Ende (Feld 10) entfernen
-        if len(data) > 8:
-            data = data[:8]
-        elif data and data[-1].startswith("+") and len(data) == 9:
-            data = data[:-1]
+        large = name.endswith("*") or name.startswith("*")
+        n = 4 if large else 8
+        data = fields[1:]
+        if data and data[-1].startswith(("+", "*")) and len(data) > n:
+            data = data[:-1]                  # Fortsetzungsmarke (Feld 10)
+        data = (data + [""] * n)[:n]          # Felder sind positionsgebunden
     else:
         line = line.rstrip("\n\r")
         name = line[0:8].strip()

@@ -23,7 +23,6 @@ abgeleitete Einheiten); 'unit_scale' ueberschreibt den Laengenmassstab.
 """
 from __future__ import annotations
 
-import math
 import os
 import re
 from typing import Optional
@@ -992,7 +991,6 @@ class _Builder:
     # ---- Structural Analysis View --------------------------------------------------
     def build_structural(self) -> int:
         ifc = self.ifc
-        model = self.model
         conns = ifc.by_type("IfcStructuralPointConnection")
         members = ifc.by_type("IfcStructuralCurveMember")
         surfaces = ifc.by_type("IfcStructuralSurfaceMember")
@@ -1370,7 +1368,6 @@ class _Builder:
 
     def build_physical(self) -> int:
         ifc = self.ifc
-        model = self.model
         n = 0
         for typ in ("IfcBeam", "IfcColumn", "IfcMember"):
             for prod in ifc.by_type(typ):

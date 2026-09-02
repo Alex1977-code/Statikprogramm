@@ -351,10 +351,24 @@ class StaticSystem:
         self.Kfs = self.K[self.fi][:, self.si].tocsc() if np.any(self.vals[self.si]) else None
         if progress:
             progress(f"Gleichungssystem aufgestellt ({len(self.fi)} aktive FHG)")
-        self.solver = LinearSolver(self.Kff)
+        self._solver = None
+        self.backend = "-"
+        self._progress = progress
         self.t_assemble = time.time() - t0
-        if progress:
-            progress(f"Faktorisiert ({self.solver.backend}, {self.t_assemble:.2f} s)")
+        if not model.has_contact:
+            _ = self.solver          # sofort faktorisieren (bei Kontakt erst mit Kc)
+
+    @property
+    def solver(self) -> LinearSolver:
+        """Faktorisierung der Grundsteifigkeit (bei Bedarf)."""
+        if self._solver is None:
+            t0 = time.time()
+            self._solver = LinearSolver(self.Kff)
+            self.backend = self._solver.backend
+            self.t_assemble += time.time() - t0
+            if self._progress:
+                self._progress(f"Faktorisiert ({self.backend}, {time.time() - t0:.2f} s)")
+        return self._solver
 
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
               F_extra: np.ndarray = None) -> np.ndarray:
@@ -374,7 +388,9 @@ class StaticSystem:
                 Ktfs = Kt[self.fi][:, self.si]
                 rhs = F[self.fi] + (F_extra[self.fi] if F_extra is not None else 0) \
                     - Ktfs @ self.vals[self.si]
-            u[self.fi] = LinearSolver(Ktff).solve(rhs)
+            ls = LinearSolver(Ktff)
+            self.backend = ls.backend
+            u[self.fi] = ls.solve(rhs)
         return u
 
     def reactions(self, u: np.ndarray, F: np.ndarray, K_extra=None) -> np.ndarray:
@@ -511,7 +527,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     res.u = u.reshape(-1, NDOF)
     res.reactions = R.reshape(-1, NDOF)
     res.info.update({"ndof": model.ndof, "nfree": len(system.fi),
-                     "solver": system.solver.backend, "factors": dict(factors)})
+                     "solver": system.backend, "factors": dict(factors)})
     postprocess(model, u, res, feq, q, temp, workers)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
@@ -798,7 +814,7 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         from .ec3.fatigue import check_fatigue
         an.fatigue = check_fatigue(model, an, progress=progress)
     an.info = {"time": time.time() - t0, "parallel": parallel.describe(),
-               "solver": system.solver.backend, "ndof": model.ndof, "nfree": len(system.fi)}
+               "solver": system.backend, "ndof": model.ndof, "nfree": len(system.fi)}
     return an
 
 

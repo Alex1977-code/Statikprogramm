@@ -1,9 +1,14 @@
 # Statik3D
 
-Lineares Finite-Elemente-Programm für **Stabwerke, Flächentragwerke und Volumenmodelle** —
-mit Desktop-GUI, 3D-Viewport und CAD-Import.
+Finite-Elemente-Statikprogramm für **Stabwerke, Flächentragwerke und
+Volumenmodelle** – mit Desktop-Oberfläche, 3D-Viewport, Lastfällen und
+Kombinationen nach DIN EN 1990, Kontakt, Nachweisen nach DIN EN 1993-1-1
+(Stahlbau, Stabilität) und DIN EN 1993-1-9 (Ermüdung), Import gängiger
+Formate (u. a. IFC/SAF/Tabellen aus InfoCAD und RFEM), Mehrkernrechnung,
+Rechnerfarm und statischem Bericht.
 
-Alles in Python, verifiziert gegen analytische Lösungen (26 Benchmarks, siehe unten).
+Alles in Python (numpy/scipy), verifiziert gegen analytische Lösungen und
+Handrechnungen (über 270 automatisierte Prüfungen, siehe unten).
 
 ---
 
@@ -11,13 +16,18 @@ Alles in Python, verifiziert gegen analytische Lösungen (26 Benchmarks, siehe u
 
 | Bereich | Umfang |
 |---|---|
-| **Stabwerke** | 3D-Balken (12 FHG, Timoshenko-Schub), Fachwerkstäbe, beliebige Querschnitte, Streckenlasten, Schnittgrößen |
-| **Flächen** | Ebene Schale = CST-Scheibe + DKT-Platte, Dreiecke und Vierecke, Membran- und Biegeanteil, Flächenlasten |
-| **Volumen** | Tet4, **Tet10** (quadratisch), **Hex8 mit inkompatiblen Moden** (biegesteif, kein Locking) |
-| **Analysen** | Lineare Statik, Modalanalyse (Eigenfrequenzen/-formen), lineares Knicken für Stabtragwerke |
-| **Lasten** | Knotenlasten, Momente, Streckenlasten, Flächendruck, Eigengewicht, vorgegebene Verschiebungen, Federlager |
-| **Vernetzung** | Eingebaute strukturierte Netze (Quader, Platte, Stabzug) + **gmsh** für STEP/IGES/BREP/STL |
-| **Ergebnisse** | Verformungen, Auflagerreaktionen, Schnittgrößen, Membrankräfte/Momente, Hauptspannungen, Vergleichsspannung, Ausnutzungsgrad |
+| **Stabwerke** | 3D-Balken (12 FHG, Timoshenko-Schub), Fachwerkstäbe, Momentengelenke, Profildatenbank (IPE, HEA, HEB, HEM, SHS, RHS, CHS), Trapez- und Temperaturlasten, Schnittgrößen an Zwischenstellen (DIN 1080) |
+| **Flächen** | Ebene Schale = CST-Scheibe + DKT-Platte, Dreiecke und Vierecke, Flächenlasten (normal oder gerichtet), Temperatur |
+| **Volumen** | Tet4, Tet10 (quadratisch), Hex8 mit inkompatiblen Moden, Flächendruck, Temperatur |
+| **Lastfälle** | Einwirkungskategorien mit ψ-Beiwerten (DIN EN 1990/NA), Ausschlussgruppen, Eigengewicht je Lastfall |
+| **Kombinationen** | automatisch GZT 6.10 / 6.10a+b, außergewöhnlich 6.11b, GZG charakteristisch/häufig/quasi-ständig; manuell; Superposition mit einer Faktorisierung; Umhüllende mit maßgebender Kombination |
+| **Kontakt** | einseitige Lager (nur Druck, Bettung), Spaltelemente Knoten–Knoten, Kontaktpaare Knoten–Fläche (Schalen/Volumen) mit Coulomb-Reibung; Penalty-Verfahren mit Aktivmengen-Iteration |
+| **Nachweise EC3** | Klassifizierung (Tab. 5.2, wirksame Querschnitte Kl. 4), Querschnittsnachweise 6.2 (N, V, M, M+V, M+N, Torsion, σv), Biegeknicken, Drillknicken, Biegedrillknicken (Mcr, C1 automatisch), Interaktion 6.3.3 Anhang B |
+| **Ermüdung** | EN 1993-1-9: Kerbfälle, Wöhlerlinien (m = 3/5, Dauerfestigkeit, Schwellenwert), Palmgren-Miner, γMf nach Schadensfolge |
+| **Analysen** | Lineare Statik, Modalanalyse, lineares Knicken (Lastfall oder Kombination als Grundzustand) |
+| **Import** | Statik3D-JSON, DXF, IFC (Statikmodell: InfoCAD, RFEM, Allplan …), SAF (.xlsx: RFEM 6, SCIA …), RFEM/RSTAB-Tabellenexport (.xlsx/.csv), Abaqus/CalculiX .inp, Nastran .bdf, STEP/IGES/BREP/STL über gmsh |
+| **Parallel** | Elementschleifen und Aufträge auf mehreren Kernen; Rechnerfarm (Server/Worker/Client) über das Netz; optional MKL-Pardiso-Löser |
+| **Dokumentation** | Statischer Bericht (HTML druckbar, PDF, Markdown) mit Systemgrafiken, Schnittgrößenverläufen, allen Nachweiswerten; Benutzer-, Theorie-, Schnittstellen- und Farm-Handbuch in `docs/` |
 | **Export** | JSON-Modell, CSV, VTU (ParaView) |
 
 Einheiten durchgängig SI: **m, N, Pa, kg/m³**.
@@ -27,93 +37,110 @@ Einheiten durchgängig SI: **m, N, Pa, kg/m³**.
 ## Installation
 
 ```bash
-pip install numpy scipy PySide6 pyvista pyvistaqt
-pip install gmsh          # optional, für CAD-Import
+pip install -r requirements.txt     # numpy scipy PySide6 pyvista pyvistaqt
+pip install gmsh                    # optional: CAD-Import
+pip install pypardiso               # optional: Mehrkern-Gleichungslöser
+pip install reportlab svglib        # optional: PDF-Bericht direkt aus dem Programm
 ```
 
-Unter Linux zusätzlich `sudo apt install libglu1-mesa` (wird von gmsh gebraucht).
+Unter Linux zusätzlich `sudo apt install libglu1-mesa libegl1` (gmsh / Qt).
 
 ## Starten
 
 ```bash
-python -m statik3d.gui                                   # grafische Oberfläche
-python -m statik3d.cli --beispiel frame --analyse knicken # ohne GUI
-python -m tests.test_verification                        # Verifikation nachrechnen
+python run_gui.py                                              # grafische Oberfläche
+python -m statik3d.cli --beispiel hall --nachweise --ermuedung --bericht halle.html
+python -m statik3d.cli modell.json --kerne 8                   # alle Lastfälle + Kombinationen
+python -m statik3d.cli --import projekt.ifc --staebe --kombinationen --speichern projekt.json
+python -m statik3d.farm server --port 5555 --key geheim        # Rechnerfarm
+python -m statik3d.farm worker --host 192.168.1.10 --key geheim
 ```
 
-In der GUI: Menü **Beispiele → Rahmen / Platte / Konsole** laden und auf
-**BERECHNEN** klicken — damit siehst du den kompletten Ablauf in 5 Sekunden.
+In der GUI: Menü **Beispiele → Hallenrahmen** laden, **F5** – Lastfälle,
+Kombinationen, Umhüllende, EC3-Nachweise und Ermüdung in einem Lauf; danach
+**Datei → Statischer Bericht**.
 
 ---
 
 ## Arbeitsablauf in der GUI
 
-1. **Modell** — Material, Querschnitt, Schalendicke anlegen
-2. **Netz** — Stabzug, Platte, Quader erzeugen oder STEP/STL importieren
-3. **Lager/Lasten** — Knoten über ein Koordinatenfenster auswählen
-   (z. B. `x min = 0`, `x max = 0` wählt die ganze Einspannebene), dann
-   Lager setzen oder Last aufbringen
-4. **Berechnung** — Analyseart wählen, `BERECHNEN`
-5. **Ergebnisse** — Anzeigegröße wählen, Überhöhung schieben, CSV/VTU exportieren
+1. **Modell** – Material (Stahlsorte), Querschnitt (Profildatenbank), Schalendicke
+2. **Netz** – Stabzug, Platte, Quader erzeugen oder Datei importieren
+3. **Lager/Lasten** – Knoten per Klick oder Koordinatenfenster wählen, Lager setzen, Lasten in den aktiven Lastfall
+4. **Lastfälle** – Lastfälle mit Kategorie anlegen, Kombinationen automatisch erzeugen, Ermüdungslasten
+5. **Kontakt** – einseitige Lager, Spaltelemente, Kontaktpaare
+6. **Nachweise** – Stäbe mit Knicklängen, seitlicher Halterung, Kerbfall
+7. **Berechnung** – Kerne/Farm wählen, BERECHNEN
+8. **Ergebnisse** – Umhüllende, Färbung nach Ausnutzung, Schnittgrößenverläufe, Bericht
+
+Ausführlich: [docs/Benutzerhandbuch.md](docs/Benutzerhandbuch.md).
 
 ## Python-API
 
 ```python
 from statik3d.model import Model, Material, Section
 from statik3d import solver, mesher
+from statik3d.combinations import generate_combinations
 
 m = Model("Kragarm")
-m.add_material(Material("S355", E=210e9, nu=0.3, rho=7850, fy=355e6))
-m.add_section(Section.i_profile("HEA200", 0.190, 0.200, 0.0065, 0.010))
-
-ids = mesher.line_of_beams(m, "S355", "HEA200", (0, 0, 0), (5, 0, 0), n=10)
+m.add_material(Material.steel("S355"))
+m.add_section(Section.from_profile("HEA 200"))
+ids = mesher.line_of_beams(m, "S355", "HEA 200", (0, 0, 0), (5, 0, 0), n=10)
 m.fix(ids[0], "all")
+m.set_gravity(-9.81)                      # LF1 (G)
+m.add_load_case("Q", "Q_B", "Nutzlast")
 m.load_node(ids[-1], Fz=-20000)
+m.add_member("Kragarm", list(range(10)), beta_y=2.0, beta_z=2.0, detail_category=71e6)
+m.add_fatigue_load("Lastspiele", "Q", None, 2e6)
+generate_combinations(m)
 
-r = solver.solve_static(m)
-print(r.summary())
-print("Einspannmoment:", r.beam_forces[0]["My"][0] / 1e3, "kNm")
+an = solver.solve_all(m, design=True, fatigue=True)
+print(an.summary())
+print(an.envelopes["ULS"].extreme_table()[:3])
+print(an.design.members["Kragarm"].governing)
+
+from statik3d.report import write_report
+write_report(m, an, "kragarm.html")
 ```
 
 ---
 
 ## Verifikation
 
-`python -m tests.test_verification` → **26/26 bestanden**
+```bash
+python -m tests.test_verification     # 26 Benchmarks Stab/Schale/Volumen
+python -m tests.test_solver_ext       # 47 Prüfungen: Gelenke, Lasten, Kombinationen, Kontakt, Parallel, Farm
+python -m tests.test_ec3              # 48 Prüfungen: EC3-Handrechnungen
+python -m tests.test_importers        # 126 Prüfungen: Import
+python -m tests.test_report           # Bericht
+xvfb-run -a python -m tests.test_gui_smoke   # Oberfläche (ohne Benutzer)
+```
 
 | Benchmark | Abweichung |
 |---|---|
 | Kragarm Einzellast / Einspannmoment / Auflagerkraft | 0,00 % |
-| Einfeldträger Gleichlast, Feldmoment | 0,00 % |
-| Torsionsstab, Fachwerk | 0,00 % |
-| Eulerknicken Fall 2 (10 Elemente) | 0,04 % |
-| 1. Eigenfrequenz Kragarm | 0,04 % |
-| Scheibe Zug (Verformung + Spannung) | 0,00 % |
-| Kragplatte (Schalen) | 0,01 % |
-| Quadratplatte 4-seitig gelenkig, Navier | 0,37 % (Dreiecke) / 0,59 % (Vierecke) |
+| Einfeldträger Gleichlast, Feldmoment; Gelenkträger; Dreieckslast (Zwischenstellen) | 0,00 % |
+| Torsionsstab, Fachwerk, Temperatur (gehalten/frei) | 0,00 % |
+| Eulerknicken Fall 2, 1. Eigenfrequenz Kragarm | 0,04 % |
+| Platte 4-seitig gelenkig (Navier) | 0,37 % / 0,59 % |
 | Patch-Test Tet4 / Hex8 / Tet10 | exakt |
-| Volumen-Kragträger Hex8 vs. Timoshenko | 0,12 % |
-| Volumen-Kragträger Tet10 vs. Timoshenko | 3,85 % |
+| Superposition vs. direkte Lösung, seriell vs. parallel | 1e-10 |
+| Spaltelement: Kontaktkraft F − 3EI s/L³ | 0,00 % |
+| HEB 200 χz (Knicklinie c), IPE 300 Mcr / χLT, Interaktion 6.61 | Handrechnung |
+| Wöhlerlinie N_R, Miner-Schädigung | exakt |
 
 ---
 
-## Grenzen — bitte lesen
+## Grenzen – bitte lesen
 
-Das Programm ist **linear**. Es kann nicht, was ANSYS kann:
+* linear-elastisches Material, kleine Verformungen (Theorie II. Ordnung nur als lineares Verzweigungsproblem)
+* Kontakt als Penalty-Näherung ohne Lastgeschichte (monotone Lasten); kein Kontakt Fläche–Fläche
+* keine Beulnachweise für Blechfelder (EN 1993-1-5, Hinweis im Nachweis), keine Plastizität, keine Zeitbereichsdynamik
+* proprietäre Binärformate (.rf5/.rf6/.fem) sind nicht lesbar – Export als IFC-Statikmodell, SAF oder Tabellen
 
-- keine Plastizität, kein Kriechen, keine nichtlinearen Materialgesetze
-- **kein Kontakt**, keine Reibung, keine Fügestellen
-- keine große-Verformungs-Theorie (Theorie III. Ordnung), kein Beulen von Schalen
-  (nur Stabknicken über die geometrische Steifigkeit)
-- keine Dynamik im Zeitbereich, keine Thermik, keine Strömung
-- keine automatische Vernetzung ohne gmsh, keine Netzadaption
-
-**Für den Stahlwasserbau relevant:** Vorbemessung, Systemverständnis, Variantenvergleich,
-Plausibilitätskontrolle fremder Rechenläufe — dafür ist das Werkzeug gut geeignet.
-Für **prüffähige Nachweise** ist es das nicht: dafür braucht es geprüfte, validierte
-Software. Wenn es nichtlinear werden muss, ist **CalculiX** (Abaqus-kompatibler
-Open-Source-Solver) oder **code_aster** der richtige nächste Schritt — das VTU-Export
-und das gmsh-Netz aus diesem Programm lassen sich dort weiterverwenden.
+Das Programm ist gegen analytische Lösungen und Handrechnungen verifiziert,
+aber **nicht bauaufsichtlich geprüft**. Die Verantwortung für die Anwendung
+und Prüfung der Nachweise liegt beim Anwender.
 
 ---
 
@@ -121,26 +148,21 @@ und das gmsh-Netz aus diesem Programm lassen sich dort weiterverwenden.
 
 ```
 statik3d/
-  model.py            Datenmodell (Knoten, Material, Querschnitt, Lasten)
-  assemble.py         Assemblierung K, M, Kg, Lastvektor
-  solver.py           Statik, Modalanalyse, Knicken, Postprocessing
-  mesher.py           gmsh-Anbindung + strukturierte Netzgeneratoren
-  examples_lib.py     fertige Beispielmodelle
-  cli.py              Kommandozeile
-  elements/
-    beam3d.py         Balken/Fachwerk 3D, geometrische Steifigkeit, Massenmatrix
-    shell.py          CST + DKT Schale
-    solid.py          Tet4, Tet10, Hex8 (inkompatible Moden)
-  gui/main.py         PySide6-Oberfläche mit pyvista-Viewport
-tests/
-  test_verification.py
+  model.py           Datenmodell: Knoten, Elemente, Lastfälle, Kombinationen, Stäbe, Kontakt
+  assemble.py        Assemblierung K, M, Kg, Lastvektoren (parallel), Gelenke
+  solver.py          Statik (viele Lastfälle, Superposition, Umhüllende), Kontakt-Iteration, Modal, Knicken
+  contact.py         Kontaktbedingungen (Penalty, Aktivmenge, Reibung)
+  combinations.py    Kombinationen nach DIN EN 1990
+  profiles.py        Profildatenbank
+  parallel.py        Prozess-Pool, Auftrags-Registry
+  farm.py            Rechnerfarm (Server / Worker / Client)
+  jobs.py            registrierte Auftragsarten
+  ec3/               Klassifizierung, Querschnitt, Stabilität, Ermüdung, Nachweisführung
+  importers/         DXF, IFC, SAF, RFEM-Tabellen, Abaqus, Nastran, xlsx-Leser
+  report/            HTML/PDF/Markdown-Bericht, SVG-Grafiken
+  elements/          beam3d, shell, solid
+  gui/               PySide6-Oberfläche (main, dialogs, viewport, worker)
+  mesher.py, examples_lib.py, cli.py
+docs/                Benutzerhandbuch, Theoriehandbuch, Schnittstellen, Rechnerfarm
+tests/               Verifikation
 ```
-
-### Erweiterungspunkte
-
-- **Nichtlineare Statik**: Newton-Raphson um `solver.solve_static` legen, Tangenten-
-  steifigkeit aus `assemble.geometric_stiffness` (für Stäbe bereits vorhanden)
-- **Weitere Elemente**: Muster in `elements/` folgen — Matrix zurückgeben,
-  in `assemble.element_matrix` eintragen, Zelltyp in `gui/main.CELL_MAP` ergänzen
-- **Lastfallkombinationen**: `Model` mehrfach mit unterschiedlichen Lasten lösen und
-  überlagern (linear zulässig)

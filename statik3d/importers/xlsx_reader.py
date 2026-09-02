@@ -336,26 +336,33 @@ def convert_cell(text: str, decimal_comma: bool = None):
         return s
 
 
-def read_csv_table(path: str, delimiter: str = None) -> list[list]:
-    """CSV-Datei als Tabelle lesen (Trennzeichen automatisch, deutsches Dezimalkomma)."""
+def read_csv_table(path: str, delimiter: str = None, convert: bool = True) -> list[list]:
+    """CSV-Datei als Tabelle lesen (Trennzeichen automatisch, deutsches Dezimalkomma).
+
+    convert=False laesst alle Zellen als Text (leer -> None); das ist noetig, wenn
+    Listen wie '1,4' (Knoten 1 und 4) nicht von Dezimalzahlen '1,4' unterscheidbar sind.
+    """
     text = _read_text(path)
     if delimiter is None:
         delimiter = sniff_delimiter(text)
     decimal_comma = delimiter != ","
     rows = []
     for rec in csv.reader(io.StringIO(text), delimiter=delimiter, quotechar='"'):
-        row = [convert_cell(c, decimal_comma) for c in rec]
+        if convert:
+            row = [convert_cell(c, decimal_comma) for c in rec]
+        else:
+            row = [c.strip() if c.strip() else None for c in rec]
         while row and row[-1] is None:
             row.pop()
         rows.append(row)
     return rows
 
 
-def read_table_file(path: str) -> dict[str, list[list]]:
+def read_table_file(path: str, convert: bool = True) -> dict[str, list[list]]:
     """xlsx oder csv -> {Blattname: Zeilen} (CSV: Dateiname ohne Endung)."""
     ext = os.path.splitext(path)[1].lower()
     if ext in (".xlsx", ".xlsm", ".xltx"):
         return read_xlsx(path)
     if ext in (".csv", ".txt", ".tsv"):
-        return {os.path.splitext(os.path.basename(path))[0]: read_csv_table(path)}
+        return {os.path.splitext(os.path.basename(path))[0]: read_csv_table(path, convert=convert)}
     raise ValueError(f"Tabellendatei mit Endung '{ext}' wird nicht unterstuetzt")
