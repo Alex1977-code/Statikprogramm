@@ -1,10 +1,17 @@
-"""Assemblierung von Steifigkeits-, Massen- und Lastvektoren."""
+"""Assemblierung von Steifigkeits-, Massen- und Lastvektoren.
+
+Neu gegenueber Version 1:
+* Momentengelenke an Stabenden (statische Kondensation)
+* Lastvektor je Lastfall (Knoten-, Strecken- (auch trapezfoermig), Flaechen-,
+  Temperaturlasten, Eigengewicht)
+* parallele Elementschleifen ueber statik3d.parallel
+"""
 from __future__ import annotations
 
 import numpy as np
 from scipy import sparse
 
-from .model import Model, NDOF
+from .model import Model, NDOF, LoadCase
 from .elements import beam3d as bm
 from .elements import shell as sh
 from .elements import solid as sl
@@ -28,20 +35,51 @@ def element_dofs(e) -> np.ndarray:
     return np.array(d, dtype=int)
 
 
+def beam_local(model: Model, e):
+    """Lokale Steifigkeitsmatrix (12x12), T3, T (12x12), L eines Stabelements."""
+    mat = model.materials[e.mat]
+    sec = model.sections[e.sec]
+    X = model.nodes[e.nodes]
+    T3, L = bm.local_axes(X[0], X[1], e.roll)
+    T = bm.transform_matrix(T3)
+    if e.typ == "truss":
+        kl = bm.k_local_truss(mat.E, sec.A, L)
+    else:
+        kl = bm.k_local_beam(mat.E, mat.G, sec.A, sec.Iy, sec.Iz, sec.It,
+                             L, sec.Asy, sec.Asz)
+    return kl, T3, T, L
+
+
+def condense(kl: np.ndarray, fl: np.ndarray, released: list[int]):
+    """Statische Kondensation freigegebener (Gelenk-)FHG.
+    Rueckgabe: kondensierte Matrix (12x12, Zeilen/Spalten der Gelenke = 0),
+    kondensierter Lastvektor und Daten zur Rueckrechnung (Kcc^-1, Kcr, fc)."""
+    if not released:
+        return kl, fl, None
+    c = np.array(sorted(set(released)), dtype=int)
+    r = np.array([i for i in range(12) if i not in set(c)], dtype=int)
+    Kcc = kl[np.ix_(c, c)]
+    Kcr = kl[np.ix_(c, r)]
+    try:
+        Kcc_inv = np.linalg.inv(Kcc)
+    except np.linalg.LinAlgError:
+        Kcc_inv = np.linalg.pinv(Kcc)
+    K = np.zeros_like(kl)
+    K[np.ix_(r, r)] = kl[np.ix_(r, r)] - Kcr.T @ Kcc_inv @ Kcr
+    f = np.zeros_like(fl)
+    f[r] = fl[r] - Kcr.T @ Kcc_inv @ fl[c]
+    return K, f, (c, r, Kcc_inv, Kcr)
+
+
 def element_matrix(model: Model, e):
     """Elementsteifigkeitsmatrix im globalen System."""
     mat = model.materials[e.mat]
     X = model.nodes[e.nodes]
 
     if e.typ in LINE_TYPES:
-        sec = model.sections[e.sec]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
-        T = bm.transform_matrix(T3)
-        if e.typ == "truss":
-            kl = bm.k_local_truss(mat.E, sec.A, L)
-        else:
-            kl = bm.k_local_beam(mat.E, mat.G, sec.A, sec.Iy, sec.Iz, sec.It,
-                                 L, sec.Asy, sec.Asz)
+        kl, T3, T, L = beam_local(model, e)
+        if e.hinges:
+            kl, _, _ = condense(kl, np.zeros(12), e.hinges)
         return T.T @ kl @ T
 
     if e.typ == "shell3":
@@ -92,46 +130,56 @@ def element_mass(model: Model, e):
 
 
 # --------------------------------------------------------------------------
-def stiffness(model: Model) -> sparse.csr_matrix:
+# Elementschleifen (seriell oder parallel)
+# --------------------------------------------------------------------------
+def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
+    out = []
+    for i in idx:
+        e = model.elements[i]
+        out.append((element_dofs(e), np.asarray(element_matrix(model, e), float)))
+    return out
+
+
+def _mass_chunk(model: Model, idx: list[int]) -> list[tuple]:
+    out = []
+    for i in idx:
+        e = model.elements[i]
+        out.append((element_dofs(e), np.asarray(element_mass(model, e), float)))
+    return out
+
+
+def _assemble_triplets(model: Model, chunk_func, workers=None) -> sparse.csr_matrix:
+    from . import parallel
     n = model.ndof
+    ne = len(model.elements)
+    if ne == 0:
+        return sparse.csr_matrix((n, n))
+    pairs = parallel.map_elements(chunk_func, model, list(range(ne)), workers=workers)
     rows, cols, vals = [], [], []
-    for e in model.elements:
-        ke = element_matrix(model, e)
-        d = element_dofs(e)
+    for d, ke in pairs:
         r, c = np.meshgrid(d, d, indexing="ij")
         rows.append(r.ravel())
         cols.append(c.ravel())
-        vals.append(np.asarray(ke).ravel())
-    if not rows:
-        return sparse.csr_matrix((n, n))
-    K = sparse.coo_matrix(
-        (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
-        shape=(n, n)).tocsr()
-    # Federlager
-    for s in model.supports:
-        if s.stiffness:
-            for k_, dof in zip(s.stiffness, s.dofs):
-                if k_:
-                    i = NDOF * s.node + dof
-                    K[i, i] += k_
-    return K
-
-
-def mass(model: Model) -> sparse.csr_matrix:
-    n = model.ndof
-    rows, cols, vals = [], [], []
-    for e in model.elements:
-        me = element_mass(model, e)
-        d = element_dofs(e)
-        r, c = np.meshgrid(d, d, indexing="ij")
-        rows.append(r.ravel())
-        cols.append(c.ravel())
-        vals.append(np.asarray(me).ravel())
-    if not rows:
-        return sparse.csr_matrix((n, n))
+        vals.append(ke.ravel())
     return sparse.coo_matrix(
         (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
         shape=(n, n)).tocsr()
+
+
+def stiffness(model: Model, workers=None) -> sparse.csr_matrix:
+    K = _assemble_triplets(model, _matrix_chunk, workers)
+    # Federlager
+    springs = [(NDOF * s.node + dof, k_) for s in model.supports if s.stiffness
+               for k_, dof in zip(s.stiffness, s.dofs) if k_]
+    if springs:
+        idx = np.array([i for i, _ in springs])
+        val = np.array([k for _, k in springs])
+        K = (K + sparse.coo_matrix((val, (idx, idx)), shape=K.shape)).tocsr()
+    return K
+
+
+def mass(model: Model, workers=None) -> sparse.csr_matrix:
+    return _assemble_triplets(model, _mass_chunk, workers)
 
 
 def geometric_stiffness(model: Model, u: np.ndarray) -> sparse.csr_matrix:
@@ -163,48 +211,209 @@ def geometric_stiffness(model: Model, u: np.ndarray) -> sparse.csr_matrix:
 
 
 # --------------------------------------------------------------------------
-def load_vector(model: Model) -> np.ndarray:
+# Lasten
+# --------------------------------------------------------------------------
+def trapezoid_fixed_end_forces(q1, q2, L) -> np.ndarray:
+    """Aequivalente Knotenlasten fuer linear veraenderliche Streckenlast
+    q1 (Anfang) -> q2 (Ende) im lokalen System (Bernoulli)."""
+    q1 = np.asarray(q1, float)
+    q2 = np.asarray(q2, float)
+    f = np.zeros(12)
+    # axial
+    f[0] += L * (2 * q1[0] + q2[0]) / 6.0
+    f[6] += L * (q1[0] + 2 * q2[0]) / 6.0
+    # qy -> Biegung x-y (uy, rz)
+    f[1] += L * (7 * q1[1] + 3 * q2[1]) / 20.0
+    f[7] += L * (3 * q1[1] + 7 * q2[1]) / 20.0
+    f[5] += L ** 2 * (3 * q1[1] + 2 * q2[1]) / 60.0
+    f[11] += -L ** 2 * (2 * q1[1] + 3 * q2[1]) / 60.0
+    # qz -> Biegung x-z (uz, ry)
+    f[2] += L * (7 * q1[2] + 3 * q2[2]) / 20.0
+    f[8] += L * (3 * q1[2] + 7 * q2[2]) / 20.0
+    f[4] += -L ** 2 * (3 * q1[2] + 2 * q2[2]) / 60.0
+    f[10] += L ** 2 * (2 * q1[2] + 3 * q2[2]) / 60.0
+    return f
+
+
+def beam_load_local(model: Model, e, bl) -> tuple[np.ndarray, np.ndarray]:
+    """Lokale Streckenlast (q1, q2) eines BeamLoad."""
+    X = model.nodes[e.nodes]
+    T3, L = bm.local_axes(X[0], X[1], e.roll)
+    q1 = np.asarray(bl.q, float)
+    q2 = np.asarray(bl.q2, float) if bl.q2 is not None else q1.copy()
+    if bl.system == "global":
+        q1 = T3 @ q1
+        q2 = T3 @ q2
+    return q1, q2
+
+
+def element_equivalent_loads(model: Model, case: LoadCase) -> dict[int, np.ndarray]:
+    """Lokale aequivalente Knotenlasten je Stabelement (Streckenlasten,
+    Eigengewicht, Temperatur) - ohne Gelenkkondensation. Wird fuer die
+    Schnittgroessenrueckrechnung gebraucht."""
+    out: dict[int, np.ndarray] = {}
+    g = np.asarray(case.gravity, float)
+    for bl in case.beam_loads:
+        e = model.elements[bl.elem]
+        if e.typ not in LINE_TYPES:
+            continue
+        q1, q2 = beam_load_local(model, e, bl)
+        L = model.element_length(bl.elem)
+        out[bl.elem] = out.get(bl.elem, np.zeros(12)) + trapezoid_fixed_end_forces(q1, q2, L)
+    if np.any(g):
+        for i, e in enumerate(model.elements):
+            if e.typ in LINE_TYPES:
+                mat = model.materials[e.mat]
+                sec = model.sections[e.sec]
+                X = model.nodes[e.nodes]
+                T3, L = bm.local_axes(X[0], X[1], e.roll)
+                q = T3 @ (mat.rho * sec.A * g)
+                out[i] = out.get(i, np.zeros(12)) + bm.fixed_end_forces(q, L)
+    for tl in case.temp_loads:
+        e = model.elements[tl.elem]
+        if e.typ not in LINE_TYPES:
+            continue
+        mat = model.materials[e.mat]
+        sec = model.sections[e.sec]
+        f = np.zeros(12)
+        Fn = mat.E * sec.A * mat.alpha * tl.dT
+        f[0] -= Fn
+        f[6] += Fn
+        if tl.dT_z and sec.h > 0 and e.typ == "beam":
+            Mt_ = mat.E * sec.Iy * mat.alpha * tl.dT_z / sec.h
+            f[4] -= Mt_
+            f[10] += Mt_
+        out[tl.elem] = out.get(tl.elem, np.zeros(12)) + f
+    return out
+
+
+def element_distributed_loads(model: Model, case: LoadCase) -> dict[int, np.ndarray]:
+    """Lokale Streckenlasten (q1, q2) je Stabelement inkl. Eigengewicht,
+    Form (2,3). Fuer die Schnittgroessen an Zwischenstellen."""
+    out: dict[int, np.ndarray] = {}
+    g = np.asarray(case.gravity, float)
+    for bl in case.beam_loads:
+        e = model.elements[bl.elem]
+        if e.typ not in LINE_TYPES:
+            continue
+        q1, q2 = beam_load_local(model, e, bl)
+        out[bl.elem] = out.get(bl.elem, np.zeros((2, 3))) + np.vstack([q1, q2])
+    if np.any(g):
+        for i, e in enumerate(model.elements):
+            if e.typ in LINE_TYPES:
+                mat = model.materials[e.mat]
+                sec = model.sections[e.sec]
+                X = model.nodes[e.nodes]
+                T3, L = bm.local_axes(X[0], X[1], e.roll)
+                q = T3 @ (mat.rho * sec.A * g)
+                out[i] = out.get(i, np.zeros((2, 3))) + np.vstack([q, q])
+    return out
+
+
+def shell_thermal_loads(model: Model, e, dT: float) -> np.ndarray:
+    """Aequivalente Knotenlasten einer gleichmaessigen Temperaturaenderung
+    eines Schalenelements (Membrananteil), global."""
+    mat = model.materials[e.mat]
+    t = model.shells[e.sec].t
+    X = model.nodes[e.nodes]
+    tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
+    nn = len(e.nodes)
+    f = np.zeros(6 * nn)
+    eps0 = mat.alpha * dT * np.array([1.0, 1.0, 0.0])
+    Dm = sh._material_matrices(mat.E, mat.nu, t)[0]
+    for tri in tris:
+        T3, xy, A = sh.shell_frame(X[tri[0]], X[tri[1]], X[tri[2]])
+        Bm, _ = sh.cst_b(xy)
+        fm = A * (Bm.T @ (Dm @ eps0))           # [u1 v1 u2 v2 u3 v3] lokal
+        for k, n in enumerate(tri):
+            fl = np.array([fm[2 * k], fm[2 * k + 1], 0.0])
+            f[6 * n:6 * n + 3] += T3.T @ fl
+    return f
+
+
+def solid_thermal_loads(model: Model, e, dT: float) -> np.ndarray:
+    mat = model.materials[e.mat]
+    X = model.nodes[e.nodes]
+    D = sl.D_matrix(mat.E, mat.nu)
+    eps0 = mat.alpha * dT * np.array([1.0, 1.0, 1.0, 0, 0, 0])
+    s0 = D @ eps0
+    if e.typ == "tet4":
+        _, B, V = sl.k_tet4(X, mat.E, mat.nu)
+        return V * (B.T @ s0)
+    if e.typ == "tet10":
+        f = np.zeros(30)
+        for (r, s, t), w in zip(sl._TET_GP, sl._TET_W):
+            _, dNr = sl.tet10_N_dN(r, s, t)
+            J = dNr.T @ X
+            dN = np.linalg.solve(J, dNr.T).T
+            B = sl._B_from_grad(dN)
+            f += w * np.linalg.det(J) * (B.T @ s0)
+        return f
+    f = np.zeros(24)
+    for (r, s, t), w in zip(sl._HEX_GP, sl._HEX_W):
+        _, dNr = sl.hex8_N_dN(r, s, t)
+        J = dNr.T @ X
+        dN = np.linalg.solve(J, dNr.T).T
+        B = sl._B_from_grad(dN)
+        f += w * np.linalg.det(J) * (B.T @ s0)
+    return f
+
+
+def load_vector(model: Model, case: LoadCase = None) -> np.ndarray:
+    """Globaler Lastvektor eines Lastfalls (default: aktiver Lastfall)."""
+    if case is None:
+        case = model.case()
+    elif isinstance(case, str):
+        case = model.case(case)
     F = np.zeros(model.ndof)
 
-    for l in model.nodal_loads:
+    for l in case.nodal_loads:
         F[NDOF * l.node: NDOF * l.node + 6] += np.asarray(l.F, float)
 
-    for l in model.beam_loads:
-        e = model.elements[l.elem]
-        X = model.nodes[e.nodes]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
-        q = np.asarray(l.q, float)
-        q_local = T3 @ q if l.system == "global" else q
-        fl = bm.fixed_end_forces(q_local, L)
-        T = bm.transform_matrix(T3)
+    # Stablasten (Strecken-, Eigengewicht, Temperatur) mit Gelenkkondensation
+    for i, fl in element_equivalent_loads(model, case).items():
+        e = model.elements[i]
+        kl, T3, T, L = beam_local(model, e)
+        if e.hinges:
+            _, fl, _ = condense(kl, fl, e.hinges)
         F[element_dofs(e)] += T.T @ fl
 
-    for l in model.face_loads:
+    for l in case.face_loads:
         e = model.elements[l.elem]
         X = model.nodes[e.nodes]
-        if e.typ == "shell3":
-            F[element_dofs(e)] += sh.shell3_pressure(X[0], X[1], X[2], l.p)
-        elif e.typ == "shell4":
-            f = np.zeros(24)
-            for tri in [(0, 1, 2), (0, 2, 3)]:
-                ft = sh.shell3_pressure(X[tri[0]], X[tri[1]], X[tri[2]], l.p)
-                for k, n in enumerate(tri):
-                    f[6 * n:6 * n + 6] += ft[6 * k:6 * k + 6]
+        if e.typ in SHELL_TYPES:
+            tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
+            f = np.zeros(6 * len(e.nodes))
+            for tri in tris:
+                if l.direction is not None:
+                    _, _, A = sh.shell_frame(X[tri[0]], X[tri[1]], X[tri[2]])
+                    d = np.asarray(l.direction, float)
+                    d = d / (np.linalg.norm(d) or 1.0)
+                    fn = l.p * A / 3.0 * d
+                    for n in tri:
+                        f[6 * n:6 * n + 3] += fn
+                else:
+                    ft = sh.shell3_pressure(X[tri[0]], X[tri[1]], X[tri[2]], l.p)
+                    for k, n in enumerate(tri):
+                        f[6 * n:6 * n + 6] += ft[6 * k:6 * k + 6]
             F[element_dofs(e)] += f
+        elif e.typ in SOLID_TYPES:
+            F[element_dofs(e)] += solid_face_pressure(model, e, l.p, l.face, l.direction)
 
-    # Eigengewicht
-    g = np.asarray(model.gravity, float)
+    for tl in case.temp_loads:
+        e = model.elements[tl.elem]
+        if e.typ in SHELL_TYPES:
+            F[element_dofs(e)] += shell_thermal_loads(model, e, tl.dT)
+        elif e.typ in SOLID_TYPES:
+            F[element_dofs(e)] += solid_thermal_loads(model, e, tl.dT)
+
+    # Eigengewicht Schalen und Volumen (Staebe: siehe oben)
+    g = np.asarray(case.gravity, float)
     if np.any(g):
         for e in model.elements:
             mat = model.materials[e.mat]
             X = model.nodes[e.nodes]
-            if e.typ in LINE_TYPES:
-                sec = model.sections[e.sec]
-                T3, L = bm.local_axes(X[0], X[1], e.roll)
-                q = mat.rho * sec.A * g
-                fl = bm.fixed_end_forces(T3 @ q, L)
-                F[element_dofs(e)] += bm.transform_matrix(T3).T @ fl
-            elif e.typ in SHELL_TYPES:
+            if e.typ in SHELL_TYPES:
                 t = model.shells[e.sec].t
                 tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
                 for tri in tris:
@@ -217,6 +426,49 @@ def load_vector(model: Model) -> np.ndarray:
                 for k, n in enumerate(e.nodes):
                     F[NDOF * n: NDOF * n + 3] += m[k] * g
     return F
+
+
+SOLID_FACES = {
+    "tet4": [(0, 1, 2), (0, 1, 3), (1, 2, 3), (0, 2, 3)],
+    "tet10": [(0, 1, 2), (0, 1, 3), (1, 2, 3), (0, 2, 3)],
+    "hex8": [(0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)],
+}
+
+
+def solid_face_pressure(model: Model, e, p: float, face: int, direction=None) -> np.ndarray:
+    """Druck p auf Flaeche 'face' eines Volumenelements (positiv = nach innen).
+    Rueckgabe: Lastvektor (3 * Knotenzahl)."""
+    X = model.nodes[e.nodes]
+    faces = SOLID_FACES[e.typ]
+    f = np.zeros(3 * len(e.nodes))
+    if face < 0 or face >= len(faces):
+        return f
+    fn = faces[face]
+    P = X[list(fn)]
+    if len(fn) == 3:
+        tris = [(0, 1, 2)]
+    else:
+        tris = [(0, 1, 2), (0, 2, 3)]
+    centroid = X.mean(axis=0)
+    for tri in tris:
+        a, b, c = P[tri[0]], P[tri[1]], P[tri[2]]
+        nvec = np.cross(b - a, c - a)
+        A = 0.5 * np.linalg.norm(nvec)
+        if A <= 0:
+            continue
+        n = nvec / (2 * A)
+        if np.dot(n, centroid - (a + b + c) / 3.0) < 0:
+            n = -n                     # nach innen zeigend
+        if direction is not None:
+            d = np.asarray(direction, float)
+            d = d / (np.linalg.norm(d) or 1.0)
+            fvec = p * A / 3.0 * d
+        else:
+            fvec = p * A / 3.0 * n
+        for k in tri:
+            node_local = fn[k]
+            f[3 * node_local:3 * node_local + 3] += fvec
+    return f
 
 
 # --------------------------------------------------------------------------

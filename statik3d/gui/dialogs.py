@@ -1,0 +1,527 @@
+"""Dialoge der Statik3D-Oberflaeche."""
+from __future__ import annotations
+
+import os
+
+import numpy as np
+from PySide6 import QtCore, QtGui, QtWidgets
+
+from ..model import (Model, Material, Section, LoadCase, Combination, Member,
+                     ACTION_CATEGORIES, STEEL_GRADES, DesignSettings)
+from .. import profiles
+from ..ec3.fatigue import DETAIL_CATEGORIES, DETAIL_EXAMPLES
+
+
+class NumEdit(QtWidgets.QLineEdit):
+    def __init__(self, value=0.0, width=80):
+        super().__init__(f"{value:g}")
+        self.setValidator(QtGui.QDoubleValidator(-1e30, 1e30, 12))
+        self.setFixedWidth(width)
+
+    def value(self) -> float:
+        t = self.text().replace(",", ".").strip()
+        try:
+            return float(t)
+        except ValueError:
+            return 0.0
+
+    def set(self, v):
+        self.setText(f"{v:g}")
+
+
+def row(*widgets) -> QtWidgets.QWidget:
+    w = QtWidgets.QWidget()
+    lay = QtWidgets.QHBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    for x in widgets:
+        lay.addWidget(QtWidgets.QLabel(x) if isinstance(x, str) else x)
+    lay.addStretch()
+    return w
+
+
+def buttons(dialog: QtWidgets.QDialog) -> QtWidgets.QDialogButtonBox:
+    bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    bb.accepted.connect(dialog.accept)
+    bb.rejected.connect(dialog.reject)
+    return bb
+
+
+# ==========================================================================
+class MaterialDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, mat: Material = None):
+        super().__init__(parent)
+        self.setWindowTitle("Material")
+        m = mat or Material.steel("S355")
+        self.grade = QtWidgets.QComboBox()
+        self.grade.addItems(list(STEEL_GRADES) + ["benutzerdefiniert"])
+        self.grade.setCurrentText(m.grade if m.grade in STEEL_GRADES else "benutzerdefiniert")
+        self.grade.currentTextChanged.connect(self._grade_changed)
+        self.name = QtWidgets.QLineEdit(m.name)
+        self.E = NumEdit(m.E / 1e9, 100)
+        self.nu = NumEdit(m.nu, 100)
+        self.rho = NumEdit(m.rho, 100)
+        self.alpha = NumEdit(m.alpha * 1e6, 100)
+        self.fy = NumEdit((m.fy or 0) / 1e6, 100)
+        self.fu = NumEdit((m.fu or 0) / 1e6, 100)
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Stahlsorte", self.grade)
+        f.addRow("Name", self.name)
+        f.addRow("E-Modul [GPa]", self.E)
+        f.addRow("Querdehnzahl [-]", self.nu)
+        f.addRow("Dichte [kg/m³]", self.rho)
+        f.addRow("Wärmedehnzahl [1e-6/K]", self.alpha)
+        f.addRow("Streckgrenze fy [MPa]", self.fy)
+        f.addRow("Zugfestigkeit fu [MPa]", self.fu)
+        f.addRow(buttons(self))
+
+    def _grade_changed(self, g):
+        if g in STEEL_GRADES:
+            m = Material.steel(g)
+            self.name.setText(g)
+            self.E.set(m.E / 1e9); self.nu.set(m.nu); self.rho.set(m.rho)
+            self.fy.set(m.fy / 1e6); self.fu.set(m.fu / 1e6)
+
+    def result_material(self) -> Material:
+        fy = self.fy.value() * 1e6
+        fu = self.fu.value() * 1e6
+        g = self.grade.currentText()
+        return Material(self.name.text() or "Mat", self.E.value() * 1e9, self.nu.value(),
+                        self.rho.value(), self.alpha.value() * 1e-6,
+                        fy if fy > 0 else None, fu if fu > 0 else None,
+                        g if g in STEEL_GRADES else "")
+
+
+class SectionDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Querschnitt")
+        self.resize(460, 320)
+        self.name = QtWidgets.QLineEdit("")
+        self.tabs = QtWidgets.QTabWidget()
+        # --- Profildatenbank ---
+        w = QtWidgets.QWidget()
+        f = QtWidgets.QFormLayout(w)
+        self.family = QtWidgets.QComboBox()
+        self.family.addItems(list(profiles.FAMILIES))
+        self.family.currentTextChanged.connect(self._fill_profiles)
+        self.profile = QtWidgets.QComboBox()
+        self.profile.currentTextChanged.connect(self._show_props)
+        self.props = QtWidgets.QLabel("")
+        self.props.setStyleSheet("font-family: monospace")
+        f.addRow("Familie", self.family)
+        f.addRow("Profil", self.profile)
+        f.addRow(self.props)
+        self.tabs.addTab(w, "Datenbank (IPE, HEA, HEB, HEM, SHS, RHS, CHS)")
+        # --- parametrisch ---
+        w2 = QtWidgets.QWidget()
+        f2 = QtWidgets.QFormLayout(w2)
+        self.typ = QtWidgets.QComboBox()
+        self.typ.addItems(["Rechteck b×h", "Kreis d", "Rohr d/t (CHS)",
+                           "Doppel-T h/b/tw/tf/r (geschweißt)", "Hohlprofil h/b/t (RHS)",
+                           "frei (A, Iy, Iz, It)"])
+        self.p = [NumEdit(v, 70) for v in (0.2, 0.1, 0.008, 0.012, 0.0)]
+        self.free = [NumEdit(v, 90) for v in (1e-2, 1e-5, 1e-5, 1e-5)]
+        f2.addRow("Typ", self.typ)
+        f2.addRow("Parameter [m]", row(*self.p))
+        f2.addRow("A / Iy / Iz / It", row(*self.free))
+        self.tabs.addTab(w2, "Parametrisch")
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addWidget(row("Name (leer = Profilname)", self.name))
+        lay.addWidget(self.tabs)
+        lay.addWidget(buttons(self))
+        self._fill_profiles(self.family.currentText())
+
+    def _fill_profiles(self, fam):
+        self.profile.blockSignals(True)
+        self.profile.clear()
+        self.profile.addItems(profiles.list_profiles(fam))
+        self.profile.blockSignals(False)
+        self._show_props(self.profile.currentText())
+
+    def _show_props(self, name):
+        if not name:
+            return
+        try:
+            s = profiles.make_section(name)
+            self.props.setText(
+                f"A = {s.A*1e4:.1f} cm²   Iy = {s.Iy*1e8:.0f} cm⁴   Iz = {s.Iz*1e8:.0f} cm⁴\n"
+                f"It = {s.It*1e8:.1f} cm⁴   Wpl,y = {s.Wpl_y*1e6:.0f} cm³   Wpl,z = {s.Wpl_z*1e6:.0f} cm³\n"
+                f"{s.describe()}")
+        except Exception as ex:
+            self.props.setText(str(ex))
+
+    def result_section(self) -> Section:
+        n = self.name.text().strip()
+        if self.tabs.currentIndex() == 0:
+            return profiles.make_section(self.profile.currentText(), n or None)
+        n = n or "Q"
+        v = [x.value() for x in self.p]
+        i = self.typ.currentIndex()
+        if i == 0:
+            return Section.rectangle(n, v[0], v[1])
+        if i == 1:
+            return Section.circle(n, v[0])
+        if i == 2:
+            return Section.pipe(n, v[0], v[1])
+        if i == 3:
+            return Section.i_profile(n, v[0], v[1], v[2], v[3], v[4], fabrication="welded")
+        if i == 4:
+            return Section.rhs(n, v[0], v[1], v[2])
+        a = [x.value() for x in self.free]
+        return Section(n, A=a[0], Iy=a[1], Iz=a[2], It=a[3])
+
+
+# ==========================================================================
+class LoadCaseDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, lc: LoadCase = None, existing=()):
+        super().__init__(parent)
+        self.setWindowTitle("Lastfall")
+        self.name = QtWidgets.QLineEdit(lc.name if lc else f"LF{len(existing)+1}")
+        self.cat = QtWidgets.QComboBox()
+        for k, (desc, psi) in ACTION_CATEGORIES.items():
+            self.cat.addItem(f"{k}: {desc}  (ψ {psi[0]}/{psi[1]}/{psi[2]})", k)
+        if lc:
+            self.cat.setCurrentIndex(list(ACTION_CATEGORIES).index(lc.category))
+        self.desc = QtWidgets.QLineEdit(lc.description if lc else "")
+        self.group = QtWidgets.QLineEdit(lc.exclusive_group if lc else "")
+        self.group.setPlaceholderText("z.B. 'Wind' - Lastfälle einer Gruppe wirken nie gemeinsam")
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Name", self.name)
+        f.addRow("Einwirkung", self.cat)
+        f.addRow("Beschreibung", self.desc)
+        f.addRow("Ausschlussgruppe", self.group)
+        f.addRow(buttons(self))
+
+    def values(self):
+        return (self.name.text().strip() or "LF", self.cat.currentData(),
+                self.desc.text(), self.group.text().strip())
+
+
+class CombinationDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, model: Model = None, combo: Combination = None):
+        super().__init__(parent)
+        self.setWindowTitle("Kombination")
+        self.name = QtWidgets.QLineEdit(combo.name if combo else f"K{len(model.combinations)+1}")
+        self.typ = QtWidgets.QComboBox()
+        self.typ.addItems(["ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "USER"])
+        if combo:
+            self.typ.setCurrentText(combo.typ)
+        self.desc = QtWidgets.QLineEdit(combo.description if combo else "")
+        self.factors = {}
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Name", self.name)
+        f.addRow("Typ", self.typ)
+        f.addRow("Beschreibung", self.desc)
+        for k in model.load_cases:
+            e = NumEdit(combo.factors.get(k, 0.0) if combo else 0.0, 80)
+            self.factors[k] = e
+            f.addRow(f"Faktor {k}", e)
+        f.addRow(buttons(self))
+
+    def result(self) -> Combination:
+        return Combination(self.name.text().strip() or "K",
+                           {k: e.value() for k, e in self.factors.items() if e.value()},
+                           self.typ.currentText(), self.desc.text())
+
+
+class AutoCombinationDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, ds: DesignSettings = None):
+        super().__init__(parent)
+        self.setWindowTitle("Kombinationen automatisch erzeugen (DIN EN 1990)")
+        self.rule = QtWidgets.QComboBox()
+        self.rule.addItems(["6.10 (Deutschland, NA)", "6.10a / 6.10b"])
+        if ds and ds.combination_rule == "6.10ab":
+            self.rule.setCurrentIndex(1)
+        self.uls = QtWidgets.QCheckBox("GZT (STR/GEO)"); self.uls.setChecked(True)
+        self.sls = QtWidgets.QCheckBox("GZG (charakteristisch, häufig, quasi-ständig)"); self.sls.setChecked(True)
+        self.acc = QtWidgets.QCheckBox("außergewöhnlich"); self.acc.setChecked(True)
+        self.gfav = QtWidgets.QCheckBox("ständige Lasten auch günstig (γG = 1,0)"); self.gfav.setChecked(True)
+        self.replace = QtWidgets.QCheckBox("vorhandene automatische Kombinationen ersetzen"); self.replace.setChecked(True)
+        self.gG = NumEdit(ds.gamma_G_sup if ds else 1.35, 70)
+        self.gQ = NumEdit(ds.gamma_Q if ds else 1.5, 70)
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Regel", self.rule)
+        f.addRow("γG,sup / γQ", row(self.gG, self.gQ))
+        for c in (self.uls, self.sls, self.acc, self.gfav, self.replace):
+            f.addRow(c)
+        f.addRow(buttons(self))
+
+
+class FatigueLoadDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, model: Model = None):
+        super().__init__(parent)
+        self.setWindowTitle("Ermüdungslast (Lastwechsel)")
+        self.name = QtWidgets.QLineEdit(f"E{len(model.fatigue_loads)+1}")
+        cases = list(model.load_cases) + list(model.combinations)
+        self.cmax = QtWidgets.QComboBox(); self.cmax.addItems(cases)
+        self.cmin = QtWidgets.QComboBox(); self.cmin.addItems(["(Nullzustand)"] + cases)
+        self.cycles = NumEdit(2e6, 100)
+        self.factor = NumEdit(1.0, 80)
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Name", self.name)
+        f.addRow("Oberer Zustand (Lastfall/Kombination)", self.cmax)
+        f.addRow("Unterer Zustand", self.cmin)
+        f.addRow("Lastspiele n", self.cycles)
+        f.addRow("Faktor (z.B. dynamischer Beiwert)", self.factor)
+        f.addRow(buttons(self))
+
+    def values(self):
+        cmin = self.cmin.currentText()
+        return (self.name.text().strip(), self.cmax.currentText(),
+                None if cmin.startswith("(") else cmin, self.cycles.value(), self.factor.value())
+
+
+# ==========================================================================
+class MemberDialog(QtWidgets.QDialog):
+    """Nachweisparameter eines Stabes."""
+
+    def __init__(self, parent=None, member: Member = None, L: float = 1.0):
+        super().__init__(parent)
+        self.setWindowTitle(f"Stab {member.name}: Nachweisparameter")
+        m = member
+        self.design = QtWidgets.QCheckBox("nachweisen"); self.design.setChecked(m.design)
+        self.beta_y = NumEdit(m.beta_y, 70); self.beta_z = NumEdit(m.beta_z, 70)
+        self.Lcr_y = NumEdit(m.Lcr_y or 0.0, 70); self.Lcr_z = NumEdit(m.Lcr_z or 0.0, 70)
+        self.L_LT = NumEdit(m.L_LT or 0.0, 70)
+        self.kz = NumEdit(m.k_z, 60); self.kw = NumEdit(m.k_w, 60)
+        self.C1 = NumEdit(m.C1 or 0.0, 60)
+        self.loadpos = QtWidgets.QComboBox(); self.loadpos.addItems(["shear_centre", "top", "bottom"])
+        self.loadpos.setCurrentText(m.load_position)
+        self.lt = QtWidgets.QCheckBox("Biegedrillknicken nachweisen"); self.lt.setChecked(m.lt_check)
+        self.sway_y = QtWidgets.QCheckBox("verschieblich um y"); self.sway_y.setChecked(m.sway_y)
+        self.sway_z = QtWidgets.QCheckBox("verschieblich um z"); self.sway_z.setChecked(m.sway_z)
+        self.cat = QtWidgets.QComboBox()
+        self.cat.addItem("kein Ermüdungsnachweis", None)
+        for c in DETAIL_CATEGORIES:
+            self.cat.addItem(f"{c}: {DETAIL_EXAMPLES.get(c, '')}", c)
+        if m.detail_category:
+            idx = self.cat.findData(int(round(m.detail_category / 1e6)))
+            self.cat.setCurrentIndex(max(idx, 0))
+        self.cat_s = QtWidgets.QComboBox()
+        self.cat_s.addItems(["100", "80"])
+        if m.detail_category_shear:
+            self.cat_s.setCurrentText(f"{m.detail_category_shear/1e6:.0f}")
+        self.consequence = QtWidgets.QComboBox(); self.consequence.addItems(["low", "high"])
+        self.consequence.setCurrentText(m.consequence)
+        self.assessment = QtWidgets.QComboBox(); self.assessment.addItems(["damage_tolerant", "safe_life"])
+        self.assessment.setCurrentText(m.assessment)
+        f = QtWidgets.QFormLayout(self)
+        f.addRow(QtWidgets.QLabel(f"<b>Stablänge L = {L:.3f} m, Elemente: {m.elements}</b>"))
+        f.addRow(self.design)
+        f.addRow("Knicklängenbeiwert βy / βz", row(self.beta_y, self.beta_z))
+        f.addRow("Knicklänge Lcr,y / Lcr,z [m] (0 = β·L)", row(self.Lcr_y, self.Lcr_z))
+        f.addRow("Abstand seitl. Halterungen L_LT [m] (0 = L)", self.L_LT)
+        f.addRow("kz / kw / C1 (0 = automatisch)", row(self.kz, self.kw, self.C1))
+        f.addRow("Lastangriff (Mcr)", self.loadpos)
+        f.addRow(self.lt)
+        f.addRow(row(self.sway_y, self.sway_z))
+        f.addRow("Kerbfall Δσc [MPa]", self.cat)
+        f.addRow("Kerbfall Schub Δτc [MPa]", self.cat_s)
+        f.addRow("Schadensfolge / Konzept", row(self.consequence, self.assessment))
+        f.addRow(buttons(self))
+
+    def apply(self, m: Member):
+        m.design = self.design.isChecked()
+        m.beta_y = self.beta_y.value() or 1.0
+        m.beta_z = self.beta_z.value() or 1.0
+        m.Lcr_y = self.Lcr_y.value() or None
+        m.Lcr_z = self.Lcr_z.value() or None
+        m.L_LT = self.L_LT.value() or None
+        m.k_z = self.kz.value() or 1.0
+        m.k_w = self.kw.value() or 1.0
+        m.C1 = self.C1.value() or None
+        m.load_position = self.loadpos.currentText()
+        m.lt_check = self.lt.isChecked()
+        m.sway_y = self.sway_y.isChecked()
+        m.sway_z = self.sway_z.isChecked()
+        c = self.cat.currentData()
+        m.detail_category = float(c) * 1e6 if c else None
+        m.detail_category_shear = float(self.cat_s.currentText()) * 1e6
+        m.consequence = self.consequence.currentText()
+        m.assessment = self.assessment.currentText()
+
+
+class DesignSettingsDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, ds: DesignSettings = None):
+        super().__init__(parent)
+        self.setWindowTitle("Einstellungen Nachweise (DIN EN 1993-1-1/NA)")
+        self.gM0 = NumEdit(ds.gamma_M0, 70); self.gM1 = NumEdit(ds.gamma_M1, 70)
+        self.gM2 = NumEdit(ds.gamma_M2, 70); self.gFf = NumEdit(ds.gamma_Ff, 70)
+        self.lt = QtWidgets.QComboBox(); self.lt.addItems(["general", "rolled"])
+        self.lt.setCurrentText(ds.lt_method)
+        self.stations = QtWidgets.QSpinBox(); self.stations.setRange(2, 51); self.stations.setValue(ds.stations)
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("γM0 / γM1 / γM2", row(self.gM0, self.gM1, self.gM2))
+        f.addRow("γFf (Ermüdung)", self.gFf)
+        f.addRow("Biegedrillknicken: 6.3.2.2 (general) / 6.3.2.3 (rolled)", self.lt)
+        f.addRow("Nachweisstellen je Element", self.stations)
+        f.addRow(QtWidgets.QLabel("Interaktion: Anhang B (Methode 2)"))
+        f.addRow(buttons(self))
+
+    def apply(self, ds: DesignSettings):
+        ds.gamma_M0 = self.gM0.value() or 1.0
+        ds.gamma_M1 = self.gM1.value() or 1.1
+        ds.gamma_M2 = self.gM2.value() or 1.25
+        ds.gamma_Ff = self.gFf.value() or 1.0
+        ds.lt_method = self.lt.currentText()
+        ds.stations = self.stations.value()
+
+
+# ==========================================================================
+class ContactPairDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, model: Model = None, n_selected: int = 0):
+        super().__init__(parent)
+        self.setWindowTitle("Kontaktpaar Knoten - Fläche")
+        self.name = QtWidgets.QLineEdit(f"Kontakt{len(model.contact_pairs)+1}")
+        self.master = QtWidgets.QComboBox()
+        groups = sorted({e.group for e in model.elements})
+        self.master.addItem("alle Schalenelemente", ("shells", None))
+        self.master.addItem("alle Volumenelemente (Oberfläche)", ("solids", None))
+        for g in groups:
+            self.master.addItem(f"Elementgruppe '{g}'", ("group", g))
+        self.master.addItem("Element-Nr. (Liste)", ("list", None))
+        self.elist = QtWidgets.QLineEdit()
+        self.elist.setPlaceholderText("z.B. 0-15, 20, 22")
+        self.k = NumEdit(0.0, 90)
+        self.mu = NumEdit(0.0, 70)
+        self.gap = NumEdit(0.0, 70)
+        self.radius = NumEdit(0.0, 70)
+        self.flip = QtWidgets.QCheckBox("Normale umkehren")
+        f = QtWidgets.QFormLayout(self)
+        f.addRow(QtWidgets.QLabel(f"Slave-Knoten: aktuelle Auswahl ({n_selected} Knoten)"))
+        f.addRow("Name", self.name)
+        f.addRow("Master-Fläche", self.master)
+        f.addRow("Element-Liste", self.elist)
+        f.addRow("Kontaktsteifigkeit [N/m] (0 = automatisch)", self.k)
+        f.addRow("Reibungsbeiwert μ", self.mu)
+        f.addRow("Spalt / Versatz [m]", self.gap)
+        f.addRow("Suchradius [m] (0 = automatisch)", self.radius)
+        f.addRow(self.flip)
+        f.addRow(buttons(self))
+
+    def master_elements(self, model: Model) -> list[int]:
+        kind, g = self.master.currentData()
+        if kind == "shells":
+            return [i for i, e in enumerate(model.elements) if e.typ.startswith("shell")]
+        if kind == "solids":
+            return [i for i, e in enumerate(model.elements) if e.typ in ("tet4", "tet10", "hex8")]
+        if kind == "group":
+            return [i for i, e in enumerate(model.elements) if e.group == g]
+        return parse_int_list(self.elist.text(), len(model.elements))
+
+
+def parse_int_list(text: str, n_max: int = None) -> list[int]:
+    out = []
+    for part in text.replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            out.extend(range(int(a), int(b) + 1))
+        else:
+            out.append(int(part))
+    if n_max is not None:
+        out = [i for i in out if 0 <= i < n_max]
+    return sorted(set(out))
+
+
+# ==========================================================================
+class ImportDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, path: str = "", model: Model = None):
+        super().__init__(parent)
+        self.setWindowTitle("Import: " + os.path.basename(path))
+        ext = os.path.splitext(path)[1].lower()
+        self.unit = QtWidgets.QComboBox()
+        self.unit.addItems(["mm (×0,001)", "cm (×0,01)", "m (×1)"])
+        self.unit.setCurrentIndex(0 if ext in (".dxf",) else 2)
+        self.append = QtWidgets.QCheckBox("an vorhandenes Modell anhängen")
+        self.section = QtWidgets.QComboBox()
+        self.section.addItems(list(model.sections) + profiles.list_profiles("IPE")[:6]
+                              + profiles.list_profiles("HEA")[:6])
+        self.material = QtWidgets.QComboBox()
+        self.material.addItems(list(model.materials) or ["S235"])
+        self.shell = QtWidgets.QComboBox()
+        self.shell.addItems(list(model.shells))
+        self.cad_size = NumEdit(0.05, 80)
+        self.cad_order = QtWidgets.QComboBox(); self.cad_order.addItems(["Tet10 (quadratisch)", "Tet4 (linear)"])
+        self.cad_dim = QtWidgets.QComboBox(); self.cad_dim.addItems(["Volumen (3D)", "Schale (2D)"])
+        self.subdiv = QtWidgets.QSpinBox(); self.subdiv.setRange(1, 50); self.subdiv.setValue(1)
+        self.members = QtWidgets.QCheckBox("Stäbe automatisch erkennen (für EC3)"); self.members.setChecked(True)
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Längeneinheit der Datei", self.unit)
+        f.addRow("Standard-Querschnitt (Linien → Stäbe)", self.section)
+        f.addRow("Standard-Material", self.material)
+        f.addRow("Standard-Schalendicke", self.shell)
+        f.addRow("Stabteilung je Linie", self.subdiv)
+        if ext in (".step", ".stp", ".iges", ".igs", ".brep", ".stl"):
+            f.addRow("Netzweite [m] (gmsh)", row(self.cad_size, self.cad_order))
+            f.addRow("Vernetzung", self.cad_dim)
+        f.addRow(self.append)
+        f.addRow(self.members)
+        f.addRow(buttons(self))
+        self.ext = ext
+
+    def options(self) -> dict:
+        scale = [1e-3, 1e-2, 1.0][self.unit.currentIndex()]
+        opt = {"unit_scale": scale, "section": self.section.currentText(),
+               "mat": self.material.currentText(), "material": self.material.currentText(),
+               "shell_prop": self.shell.currentText(), "subdivide": self.subdiv.value(),
+               "size": self.cad_size.value(),
+               "order": 2 if self.cad_order.currentIndex() == 0 else 1,
+               "dim": 3 if self.cad_dim.currentIndex() == 0 else 2}
+        return opt
+
+
+class ReportDialog(QtWidgets.QDialog):
+    OPTIONS = [("model_tables", "Knoten-/Elementtabellen"), ("materials", "Materialien"),
+               ("sections", "Querschnitte"), ("supports", "Lager"), ("load_cases", "Lastfälle"),
+               ("combinations", "Kombinationen"), ("figures", "Systemgrafiken"),
+               ("results_cases", "Ergebnisse je Lastfall"),
+               ("results_combinations", "Ergebnisse je Kombination"),
+               ("envelopes", "Umhüllende"), ("member_diagrams", "Schnittgrößenverläufe"),
+               ("design", "Nachweise EC3"), ("fatigue", "Ermüdung"), ("contact", "Kontakt"),
+               ("modal", "Eigenfrequenzen"), ("buckling", "Knicken")]
+
+    def __init__(self, parent=None, model: Model = None, path: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle("Statischer Bericht")
+        self.meta = {}
+        f = QtWidgets.QFormLayout(self)
+        for k, label in (("projekt", "Projekt"), ("bauteil", "Bauteil"), ("position", "Position"),
+                         ("auftraggeber", "Auftraggeber"), ("bearbeiter", "Bearbeiter")):
+            e = QtWidgets.QLineEdit(model.meta.get(k, ""))
+            self.meta[k] = e
+            f.addRow(label, e)
+        self.fmt = QtWidgets.QComboBox()
+        self.fmt.addItems(["HTML (druckbar, Browser → PDF)", "PDF (reportlab)", "Markdown"])
+        f.addRow("Format", self.fmt)
+        self.path = QtWidgets.QLineEdit(path)
+        b = QtWidgets.QPushButton("…")
+        b.clicked.connect(self._browse)
+        f.addRow("Datei", row(self.path, b))
+        self.checks = {}
+        grid = QtWidgets.QGridLayout()
+        for i, (k, label) in enumerate(self.OPTIONS):
+            c = QtWidgets.QCheckBox(label); c.setChecked(True)
+            self.checks[k] = c
+            grid.addWidget(c, i // 2, i % 2)
+        f.addRow(grid)
+        f.addRow(buttons(self))
+
+    def _browse(self):
+        ext = [".html", ".pdf", ".md"][self.fmt.currentIndex()]
+        p, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Bericht", self.path.text() or f"bericht{ext}",
+                                                     f"Bericht (*{ext})")
+        if p:
+            self.path.setText(p)
+
+    def apply_meta(self, model: Model):
+        for k, e in self.meta.items():
+            model.meta[k] = e.text()
+
+    def options(self) -> dict:
+        return {k: c.isChecked() for k, c in self.checks.items()}
+
+    def format(self) -> str:
+        return ["html", "pdf", "md"][self.fmt.currentIndex()]

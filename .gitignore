@@ -6,3 +6,4 @@ build/
 dist/
 *.vtu
 *_bericht.html
+tests/_gui_smoke.png

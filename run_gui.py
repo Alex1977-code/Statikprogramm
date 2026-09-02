@@ -5,11 +5,16 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-try:
-    from statik3d.gui.main import main
-except ImportError as ex:
-    print("Fehlende Abhaengigkeit:", ex)
-    print("Bitte installieren:  pip install -r requirements.txt")
-    sys.exit(1)
 
-main()
+def _start():
+    try:
+        from statik3d.gui.main import main
+    except ImportError as ex:
+        print("Fehlende Abhaengigkeit:", ex)
+        print("Bitte installieren:  pip install -r requirements.txt")
+        sys.exit(1)
+    main()
+
+
+if __name__ == "__main__":       # wichtig fuer multiprocessing (Windows: spawn)
+    _start()

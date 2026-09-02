@@ -207,8 +207,17 @@ def merge_nodes(model: Model, tol: float = 1e-6) -> int:
         e.nodes = [int(new_index[n]) for n in e.nodes]
     for s in model.supports:
         s.node = int(new_index[s.node])
-    for l in model.nodal_loads:
-        l.node = int(new_index[l.node])
+    for lc in model.load_cases.values():
+        for l in lc.nodal_loads:
+            l.node = int(new_index[l.node])
+    for c in model.contact_supports:
+        c.node = int(new_index[c.node])
+    for g in model.gap_elements:
+        g.node_a = int(new_index[g.node_a])
+        g.node_b = int(new_index[g.node_b])
+    for cp in model.contact_pairs:
+        cp.slave_nodes = sorted({int(new_index[n]) for n in cp.slave_nodes})
+        cp.master_faces = [[int(new_index[n]) for n in f] for f in cp.master_faces]
     return n_removed
 
 
