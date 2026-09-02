@@ -28,6 +28,9 @@ from .model import Model, NDOF
 PENALTY_FACTOR = 1.0e4       # automatische Kontaktsteifigkeit = Faktor * Diagonalsteifigkeit
 TANGENT_FACTOR = 1.0         # k_t = TANGENT_FACTOR * k_n
 SLIP_STIFFNESS = 1.0e-3      # Reststeifigkeit beim Gleiten (Regularisierung, Anteil von k_t)
+SLIP_STIFFNESS_FINE = 1.0e-8  # Phase 2: haftende Nachbarn halten das Bauteil, Feder nur noch formal
+SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
+MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel (je Runde einer)
 
 
 # --------------------------------------------------------------------------
@@ -54,6 +57,10 @@ class Constraint:
     g: float = 0.0
     toggles: int = 0
     frozen: bool = False
+
+
+def _group(c: "Constraint") -> str:
+    return c.label.split(":")[0]
 
 
 def _tangent_basis(n: np.ndarray):
@@ -143,6 +150,11 @@ class ContactSystem:
     def __init__(self, model: Model, K: sparse.csr_matrix, log: list = None):
         self.model = model
         self.log = log if log is not None else []
+        self.phase = 1          # 1: Aktivmenge und Gleitrichtungen, 2: monotone Nachpruefung
+        self.cycles = 0
+        self.settle = 0
+        self.dF_slip = 0.0      # groesste Aenderung von mu*Fn an gleitenden Knoten je Runde
+        self.f_ref = 1.0
         self.diag = np.asarray(K.diagonal()).ravel()
         self.cons: list[Constraint] = []
         self.size = model.characteristic_size()
@@ -289,6 +301,7 @@ class ContactSystem:
         """Kontaktsteifigkeit Kc (csr) und Kontaktlastvektor Fc."""
         rows, cols, vals = [], [], []
         Fc = np.zeros(ndof)
+        full_slip = self._full_slip_groups()
         for c in self.cons:
             if not c.active:
                 continue
@@ -299,12 +312,14 @@ class ContactSystem:
                 if not c.slip:
                     kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
                 else:
-                    # Gleiten: konstante Reibkraft entgegen der Gleitrichtung
-                    # + kleine Reststeifigkeit (haelt das System regulaer)
+                    # Gleiten: konstante Reibkraft mu*Fn entgegen der Gleitrichtung
+                    # + Reststeifigkeit (haelt das System regulaer); in Phase 2 so klein,
+                    # dass ihr Kraftanteil vernachlaessigbar ist
                     fr = c.mu * max(c.Fn, 0.0)
-                    Fc[c.dofs] += -fr * (c.slip_dir[0] * c.ct[0] + c.slip_dir[1] * c.ct[1])
-                    kmat = kmat + SLIP_STIFFNESS * c.kt * (
-                        np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
+                    k_res = self._k_res(c, full_slip)
+                    f_t = fr * c.slip_dir
+                    Fc[c.dofs] += -(f_t[0] * c.ct[0] + f_t[1] * c.ct[1])
+                    kmat = kmat + k_res * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
             rows.append(r.ravel())
             cols.append(cc.ravel())
             vals.append(kmat.ravel())
@@ -316,19 +331,75 @@ class ContactSystem:
             Kc = sparse.csr_matrix((ndof, ndof))
         return Kc, Fc
 
+    def _k_res(self, c: Constraint, full_slip: dict) -> float:
+        """Reststeifigkeit eines gleitenden Knotens: grob in Phase 1 und fuer vollstaendig
+        rutschende Gruppen (nur sie haelt das Bauteil), sonst in Phase 2 vernachlaessigbar
+        klein, damit die Reibkraft exakt mu*Fn betraegt."""
+        if self.phase == 2 and not full_slip.get(_group(c), False):
+            return SLIP_STIFFNESS_FINE * c.kt
+        return SLIP_STIFFNESS * c.kt
+
+    def _full_slip_groups(self) -> dict:
+        """Kontaktgruppe -> True, wenn alle aktiven Reibknoten gleiten (Bauteil rutscht;
+        dann haelt nur die Reststeifigkeit, keine Fixpunkt-Korrektur)."""
+        groups: dict[str, bool] = {}
+        for c in self.cons:
+            if c.mu > 0 and c.active and c.ct is not None:
+                g = _group(c)
+                groups[g] = groups.get(g, True) and c.slip
+        return groups
+
     def set_force_scale(self, f_ref: float):
         """Bezugskraft fuer die Freigabe aktiver Bedingungen (Zugkraft > 1e-6 f_ref)."""
         self.f_tol = 1e-6 * max(abs(f_ref), 1e-30)
+        self.f_ref = max(abs(f_ref), 1e-30)
 
     def update(self, u: np.ndarray) -> bool:
-        """Zustaende aus der Loesung u aktualisieren. Rueckgabe: True wenn geaendert."""
+        """Zustaende aus der Loesung u aktualisieren. Rueckgabe: True, solange weiter
+        iteriert werden muss.
+
+        Phase 1 (grobe Reststeifigkeit): Aktivmenge, Haften/Gleiten und Gleitrichtungen
+        wie ueblich (unterrelaxiert) bis nichts mehr wechselt.
+        Phase 2 (Reststeifigkeit vernachlaessigbar): Gleitrichtungen bleiben fest; je
+        Runde geht hoechstens der am staerksten ueber der Reibgrenze liegende haftende
+        Knoten ins Gleiten ueber (monoton, kann nicht flattern). Ergebnis: Gleichgewicht
+        exakt, |Ft| <= mu*Fn an jedem Knoten, Ft = mu*Fn an gleitenden Knoten."""
+        changed = self._update_states(u)
+        if self.phase == 1:
+            if changed:
+                return True
+            full = self._full_slip_groups()
+            if any(c.active and c.slip and not full.get(_group(c), False) for c in self.cons):
+                self.phase = 2
+                self.cycles = 0
+                return True
+            return False
+        if not changed:
+            # Setzrunden: die konstante Reibkraft mu*Fn wurde mit der Normalkraft der
+            # vorigen Runde aufgestellt - solange sie sich merklich aendert, nachrechnen
+            if self.dF_slip > 1e-4 * self.f_ref and self.settle < SETTLE_ROUNDS:
+                self.settle += 1
+                return True
+            return False
+        self.cycles += 1
+        if self.cycles >= MAX_CYCLES:
+            self.log.append("Kontakt: Nachpruefung der Reibung nach "
+                            f"{MAX_CYCLES} Zustandswechseln abgebrochen")
+            return False
+        return True
+
+    def _update_states(self, u: np.ndarray) -> bool:
         changed = False
+        worst = None            # Phase 2: (Verhaeltnis, Bedingung, dt) des staerksten Verstosses
+        self.dF_slip = 0.0
         for c in self.cons:
             ue = u[c.dofs]
             g = c.g0 + c.cn @ ue
             c.g = g
             if c.active:
                 Fn = -c.kn * g
+                if c.slip:
+                    self.dF_slip = max(self.dF_slip, c.mu * abs(max(Fn, 0.0) - c.Fn))
                 new_active = Fn > -self.f_tol   # Druckkraft (bzw. winziger Zug) -> bleibt
                 c.Fn = max(Fn, 0.0)
             else:
@@ -352,16 +423,21 @@ class ContactSystem:
                 dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
                 Ft_el = c.kt * dt
                 limit = c.mu * c.Fn
+                nrm = np.linalg.norm(dt)
                 if not c.slip:
+                    c.Ft = Ft_el
                     if np.linalg.norm(Ft_el) > limit * (1 + 1e-6) and limit >= 0:
-                        c.slip = True
-                        nrm = np.linalg.norm(dt)
-                        c.slip_dir = dt / nrm if nrm > 0 else np.array([1.0, 0.0])
-                        c.dir_updates = 0
-                        changed = True
-                    c.Ft = Ft_el if not c.slip else limit * c.slip_dir
-                else:
-                    nrm = np.linalg.norm(dt)
+                        if self.phase == 1:
+                            c.slip = True
+                            c.slip_dir = dt / nrm if nrm > 0 else np.array([1.0, 0.0])
+                            c.dir_updates = 0
+                            c.Ft = limit * c.slip_dir
+                            changed = True
+                        else:
+                            ratio = np.linalg.norm(Ft_el) / limit if limit > 0 else np.inf
+                            if worst is None or ratio > worst[0]:
+                                worst = (ratio, c, dt)
+                elif self.phase == 1:
                     if nrm > 0 and (dt @ c.slip_dir) < 0:
                         # Bewegung entgegen Gleitrichtung -> wieder Haften
                         c.slip = False
@@ -381,8 +457,19 @@ class ContactSystem:
                                 c.dir_updates += 1
                                 changed = True
                         c.Ft = limit * c.slip_dir
+                else:
+                    c.Ft = limit * c.slip_dir      # Phase 2: Gleiten bleibt, Richtung fest
             elif not c.active:
                 c.Ft = np.zeros(2)
+        # Phase 2: je Runde nur der staerkste Verstoss Haften -> Gleiten (monoton)
+        if worst is not None:
+            ratio, c, dt = worst
+            nrm = np.linalg.norm(dt)
+            c.slip = True
+            c.slip_dir = dt / nrm if nrm > 0 else np.array([1.0, 0.0])
+            c.dir_updates = 0
+            c.Ft = c.mu * c.Fn * c.slip_dir
+            changed = True
         return changed
 
     # ---- Ergebnisse --------------------------------------------------------
@@ -398,7 +485,8 @@ class ContactSystem:
             act = [c for c in cs if c.active]
             if act and all(c.slip for c in act):
                 out.append(f"{name}: alle aktiven Kontaktknoten gleiten - Reibung reicht "
-                           "nicht fuer das Gleichgewicht (Bauteil rutscht)")
+                           "nicht fuer das Gleichgewicht (Bauteil rutscht; nahe der "
+                           "Reibkapazitaet mu*N urteilt das Verfahren konservativ)")
         return out
 
     def results(self) -> list[dict]:

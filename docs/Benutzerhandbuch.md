@@ -257,7 +257,8 @@ HTML-Bericht lässt sich am Handy über Teilen → Drucken als PDF sichern.
 ## 12 Grenzen
 
 Kleine Verformungen, linear-elastisches Material, Kontakt als
-Penalty-Näherung ohne Lastgeschichte, keine Schalenbeulnachweise, keine
+Penalty-Näherung ohne Lastgeschichte (Reibung nahe der Reibkapazität
+konservativ, siehe Theoriehandbuch Kap. 4), keine Schalenbeulnachweise, keine
 Plastizität, keine Zeitbereichsdynamik. Das Programm ist verifiziert
 (Testsuiten im Ordner `tests`), aber nicht bauaufsichtlich zugelassen; die
 Verantwortung für die Nachweise liegt beim Anwender.

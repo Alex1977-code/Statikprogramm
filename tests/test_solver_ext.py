@@ -242,7 +242,7 @@ def test_surface_contact_friction():
     top = [int(n) for n in box[:, :, -1].ravel()]
     mu = 0.3
     m.add_contact_pair("Block/Platte", bottom, plate_elems, mu=mu)
-    N, H = 90000.0, 20000.0
+    N, H = 90000.0, 13500.0          # H = 0.5 mu N
     for n in top:
         m.load_node(n, Fz=-N / len(top), Fx=H / len(top))
     # Kippsicherung: kleines Verhaeltnis H/N -> alle Knoten gedrueckt
@@ -257,6 +257,10 @@ def test_surface_contact_friction():
     Rz = r.reactions[:, 2].sum()
     check("Flaechenkontakt: Gleichgewicht z", Rz, N, 1e-6)
     check("Flaechenkontakt: Kontaktkraefte auf Knoten", r.contact_forces[bottom, 2].sum(), N, 1e-3)
+    check("Flaechenkontakt: Reibkraefte im Gleichgewicht mit H", r.contact_forces[bottom, 0].sum(), -H, 1e-2)
+    check("Flaechenkontakt: Coulomb an haftenden Knoten (Ft/mu Fn in 0..1)",
+          max((c["Ft"] / (mu * c["Fn"]) for c in r.contact if c["status"] == "Haften" and c["Fn"] > 0), default=0.0),
+          0.5, 1.0)
     # Gleiten
     for l in m.case().nodal_loads:
         l.F[0] = 0.4 * N / len(top)      # H = 0.4 N > mu N (Kippen: H*0.4 = 14.4 < N*0.2 = 18 kNm)

@@ -129,7 +129,7 @@ write_report(m, an, "kragarm.html")
 
 ```bash
 python -m tests.test_verification     # 26 Benchmarks Stab/Schale/Volumen
-python -m tests.test_solver_ext       # 47 Prüfungen: Gelenke, Lasten, Kombinationen, Kontakt, Parallel, Farm
+python -m tests.test_solver_ext       # 49 Prüfungen: Gelenke, Lasten, Kombinationen, Kontakt, Parallel, Farm
 python -m tests.test_ec3              # 48 Prüfungen: EC3-Handrechnungen
 python -m tests.test_importers        # 126 Prüfungen: Import
 python -m tests.test_report           # Bericht

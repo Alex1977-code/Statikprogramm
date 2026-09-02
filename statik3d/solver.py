@@ -653,7 +653,7 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
 # Kontakt-Iteration
 # ==========================================================================
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
-                       max_iter: int = 60, progress=None):
+                       max_iter: int = 120, progress=None):
     from .contact import ContactSystem
     log: list[str] = []
     cs = ContactSystem(model, system.K, log)
