@@ -174,7 +174,8 @@ def main():
             j = json.loads(r.read().decode("utf-8"))
         w._web_poll(); app.processEvents()
         check("Web-Server am GUI-Modell: Handy-Aenderung uebernommen",
-              j["state"]["nn"] == nn0 + 1 and w.model.nn == nn0 + 1 and f"Knoten: {nn0 + 1}" in w.lbl_info.text(),
+              j["state"]["nn"] == nn0 + 1 and w.model.nn == nn0 + 1
+              and f"{nn0 + 1} Knoten" in w.lbl_netz.text(),
               srv.local_url)
         w.stop_web_server()
         check("Web-Server beendet", w.web_server is None)
@@ -226,14 +227,12 @@ def main():
               w.kopf.titel.text()[:60])
         check("Kopfzeile nennt Knoten, Elemente und Stellungen",
               "Stellungen" in w.kopf.marke_modell.text(), w.kopf.marke_modell.text())
-        check("Menueleiste bleibt neben der Kopfzeile stehen",
-              w.menu_bar is not None and len(w.menu_bar.actions()) >= 5
-              and w.menuWidget() is not None
-              and w.menu_bar.parent() is w.menuWidget(),
-              str([a.text() for a in w.menu_bar.actions()]))
-        check("Kopfzeile und Menue teilen sich das Menuewidget",
-              w.menuWidget().height() >= w.kopf.height() + 10,
-              f"{w.menuWidget().height()} >= {w.kopf.height()} + 10")
+        check("Ribbon sitzt neben der Kopfzeile im Menuewidget",
+              w.menuWidget() is not None and w.ribbon.parent() is w.menuWidget(),
+              str(type(w.ribbon.parent()).__name__))
+        check("Kopfzeile und Ribbon teilen sich das Menuewidget",
+              w.menuWidget().height() >= w.kopf.height() + 40,
+              f"{w.menuWidget().height()} >= {w.kopf.height()} + 40")
         # Der Grund der Kopfzeile muss dunkel bleiben: ein schlichtes QWidget
         # zeichnet den Hintergrund aus dem Stilblatt nur mit WA_StyledBackground,
         # sonst zieht die allgemeine QWidget-Regel die Zeile hell.
@@ -246,17 +245,59 @@ def main():
         hell = max(logo.pixelColor(x, logo.height() // 2).lightness()
                    for x in range(0, logo.width(), 3))
         check("Programmname hebt sich vom Grund ab", hell > 180, f"Helligkeit {hell}")
-        werkzeuge = [a.text() for a in w.werkzeugleiste.actions() if a.text()]
-        check("Werkzeugleiste wie im Entwurf",
-              any("Berechnen" in t for t in werkzeuge) and any("Stellungen" in t for t in werkzeuge)
-              and any("Bericht" in t for t in werkzeuge), str(len(werkzeuge)) + " Knoepfe")
-        check("Register Stellungen vorhanden", w.register_zeigen("Stellungen"))
+        # Ribbon: jeder Befehl genau einmal, keine zweite Leiste daneben
+        register = [w.ribbon.tabs.tabText(i) for i in range(w.ribbon.tabs.count())]
+        check("Ribbon mit den Registern der Vorgabe",
+              register[:5] == ["Datei", "Start", "Geometrie", "Struktur", "Lager / Kontakt"]
+              and "Berechnung" in register and "Extras" in register, str(len(register)))
+        check("Befehle im Ribbon vermerkt", len(w.ribbon.befehle) > 60,
+              str(len(w.ribbon.befehle)))
+        namen = [b.text for b in w.ribbon.befehle]
+        check("Berechnen gibt es genau einmal", namen.count("Berechnen") == 1)
+        check("Befehlssuche findet den Befehl",
+              w.ribbon.finden("berechnen")[0].text == "Berechnen")
+        check("Befehlssuche meldet Fehlgriff", w.ribbon.finden("gibtsnicht") == [])
+        check("Schnellzugriff nutzt dieselben Aktionen",
+              all(a in [b.aktion for b in w.ribbon.befehle]
+                  for a in w.ribbon.schnellzugriff.actions()),
+              str(len(w.ribbon.schnellzugriff.actions())))
+        check("Keine Menueleiste und keine Werkzeugleiste mehr",
+              not hasattr(w, "menu_bar") and not hasattr(w, "werkzeugleiste"))
+        check("Maskenleiste rechts ist verschwunden", not w.tabs.tabBar().isVisible())
+        w.maske_zeigen("Netz")
+        check("Maske wird ueber den Docktitel benannt",
+              w.eingaben_dock.windowTitle() == "Netz", w.eingaben_dock.windowTitle())
+        check("Register des Ribbons anwaehlbar", w.register_zeigen("Berechnung")
+              and w.ribbon.tabs.tabText(w.ribbon.tabs.currentIndex()) == "Berechnung")
+        unten = [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())]
+        check("Werkstoffe, Querschnitte und Dicken stehen unten",
+              {"Werkstoffe", "Querschnitte", "Dicken"} <= set(unten), str(unten))
+        check("Tabelle laesst sich vorholen", w.tabelle_zeigen("Querschnitte")
+              and w.tab_unten.tabText(w.tab_unten.currentIndex()) == "Querschnitte")
+        check("Statusleiste zeigt Netz und Solver",
+              "Knoten" in w.lbl_netz.text() and w.lbl_solver.text().startswith("Solver"),
+              w.lbl_netz.text())
+        check("Fassung nicht mehr in der Statusleiste",
+              not w.btn_update.isVisible() and not w.lbl_version.isVisible())
         check("Modellbaum gefuellt", w.baum.topLevelItemCount() >= 1
               and w.baum.topLevelItem(0).childCount() >= 5,
               str(w.baum.topLevelItem(0).childCount()))
-        karten = [k for k in w.film.inhalt.findChildren(dsg.Stellungskarte)
-                  if not k.isHidden()]
-        check("Filmstreifen zeigt jede Stellung", len(karten) == 3, str(len(karten)))
+        check("Viewport bleibt frei - kein Filmstreifen mehr", not hasattr(w, "film"))
+        def stellungszweig():
+            """Der Zweig 'Stellungen' - nach jedem Auffrischen neu zu holen,
+            weil der Baum dabei neu aufgebaut wird."""
+            wurzel = w.baum.topLevelItem(0)
+            for i in range(wurzel.childCount()):
+                if wurzel.child(i).text(0) == "Stellungen":
+                    return wurzel.child(i)
+            return None
+
+        zweig = stellungszweig()
+        check("Stellungen stehen im Modellbaum",
+              zweig is not None and zweig.childCount() == 4,
+              str(zweig.childCount() if zweig else "kein Zweig"))
+        check("Modellbaum bietet das Anlegen an",
+              zweig.child(zweig.childCount() - 1).text(0).startswith("+ Stellung"))
         check("Stellungstabelle gefuellt", w.tbl_stellung.rowCount() == 3,
               str(w.tbl_stellung.rowCount()))
 
@@ -271,11 +312,10 @@ def main():
         check("Stellungen gerechnet", u is not None and u.eta > 0,
               f"eta = {getattr(u, 'eta', 0):.3f}")
         check("Umhuellende in der Oberflaeche", "η" in w.lbl_umh.text(), w.lbl_umh.text()[:60])
-        beschriftung = " ".join(
-            l.text() for k in w.film.inhalt.findChildren(dsg.Stellungskarte)
-            if not k.isHidden() for l in k.findChildren(QtWidgets.QLabel))
-        check("Filmstreifen zeigt die Ausnutzung", "η" in beschriftung,
-              beschriftung[:70])
+        w.refresh_all()
+        z2 = stellungszweig()
+        marke = " ".join(z2.child(i).text(0) for i in range(z2.childCount()))
+        check("Massgebende Stellung im Baum gekennzeichnet", "★" in marke, marke[:70])
 
         w.din19704_bilden()
         text = w.txt_regelwerk.toPlainText()

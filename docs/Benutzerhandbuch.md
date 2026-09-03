@@ -37,34 +37,55 @@ kNm, MPa und mm angezeigt.
 
 ## 2 Die Oberfläche
 
-Oben eine dunkle Kopfzeile: links **Statik3D**, daneben Bauteil, Norm und
-Fassung (`Statik3D 2.1.0 (Build a4b3c2d)`), rechts zwei Marken mit dem Umfang
-des Modells (Knoten, Elemente, Stellungen) und dem Zustand („bereit",
-„rechnet…", „berechnet · 12,4 s"). Darunter das Menü und die **Werkzeugleiste**
-mit den Wegen, die man ständig braucht:
+Oben eine dunkle Kopfzeile: links **Statik3D**, daneben Bauteil und Fassung,
+rechts zwei Marken mit dem Umfang des Modells und dem Zustand („bereit",
+„rechnet…", „berechnet · 12,4 s").
 
-| Knopf | Wirkung |
+Darunter das **Ribbon** — die Befehlsleiste. Jeder Befehl steht dort genau
+einmal; es gibt keine Menüleiste und keine zweite Werkzeugleiste daneben.
+Dreizehn Register nach Arbeitsschritt:
+
+| Register | Inhalt |
 |---|---|
-| **Datei ▾** | Neu, Öffnen, Speichern, Bericht |
-| **Übernehmen aus Modell ▾** | Import aus RFEM, HiCAD, IFC, DXF, SDNF, … |
-| **⬡ Netz**, **⇩ Lager / Lasten**, **⟳ Stellungen**, **Kontakt**, **✓ Nachweise** | springt in das jeweilige Register |
-| **▶ Berechnen (F5)** | startet die Berechnung |
-| **≡ Bericht** | Bericht als HTML oder PDF |
+| **Datei** | Neu, Öffnen, Speichern, Projektangaben, Übernehmen aus fremden Formaten, Exportieren, Beispiele |
+| **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
+| **Geometrie** | Knoten, Netzgeneratoren (Stabzug, Platte, Quader) |
+| **Struktur** | Stab, Schale, Querschnitte, Werkstoffe, Dicken, Zuweisen, Stäbe für Nachweise |
+| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse |
+| **Lasten** | Lastfälle, Kombinationen, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht |
+| **Netz** | Netz erzeugen und löschen |
+| **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
+| **Nachweise** | EC3, Ermüdung, Konfiguration |
+| **Ergebnisse** | Ergebniswahl und die Tabellen |
+| **Bericht** | Statischer Bericht |
+| **Ansicht** | Blickrichtungen, Kanten, Nummern, Lasten, Stäbe farbig |
+| **Extras** | Handbücher, Info, Update |
 
-Darunter die Arbeitsfläche in drei Spalten:
+Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Berechnen,
+Auswahl aufheben) — dieselben Befehle, nur schneller erreichbar. Rechts die
+**Befehlssuche**: Namen eintippen, Eingabetaste, der Befehl läuft und sein
+Register kommt nach vorn.
 
-* **links der Modellbaum** – Elemente nach Art, Querschnitte, Werkstoffe, Lager,
-  Lastfälle, Kombinationen, Kontakt, Stellungen und die Stäbe für die Nachweise,
-  jeweils mit Anzahl. Ein Klick springt in das zugehörige Register.
-* **in der Mitte die 3D-Ansicht**, darunter der **Filmstreifen der Stellungen**:
-  je Stellung eine Karte mit Winkel und Ausnutzung; die maßgebende ist mit ★
-  und orangem Rand gekennzeichnet, die gewählte blau umrandet.
-* **rechts die Eingaben** in Registern: Modell, Netz, Lager/Lasten, Lastfälle,
-  Stellungen, Kontakt, Nachweise, Berechnung, Ergebnisse.
+Die Arbeitsfläche in drei Spalten:
 
-Unten das **Protokoll** mit den Ergebnistabellen (Stabkräfte, Auflagerkräfte,
-Umhüllende, Nachweise EC3, Ermüdung, Kontakt). In der Statusleiste steht rechts
-die installierte Fassung mit dem Knopf „Update suchen".
+* **links der Modellbaum** — Elemente nach Art, Querschnitte, Werkstoffe,
+  Lager, Lastfälle, Kombinationen, Kontakt, Stellungen und die Stäbe für die
+  Nachweise, jeweils mit Anzahl. Ein Klick führt zur Eingabe oder zur Tabelle.
+  Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
+  Zweiges; die maßgebende trägt ★.
+* **in der Mitte die 3D-Ansicht** — frei für die Grafik.
+* **rechts die Eingabemaske** — es ist immer genau **eine** sichtbar, gewählt
+  über den Befehl im Ribbon; der Titel der Maske nennt sie. Eine Registerleiste
+  mit denselben Namen wie im Ribbon gibt es nicht mehr.
+
+Unten die **Tabellen**: Protokoll, Werkstoffe, Querschnitte, Dicken,
+Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt.
+Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
+in einem Panel rechts.
+
+Ganz unten die **Statusleiste**: Fang · aktives Koordinatensystem · Einheiten ·
+Netzstand · Solverstand. Die Fassung steht unter **Extras → Info**; ein Hinweis
+auf ein Update erscheint nur, wenn wirklich eines vorliegt.
 
 ## 3 Arbeitsablauf
 

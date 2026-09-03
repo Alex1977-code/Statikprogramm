@@ -26,6 +26,7 @@ from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialo
                       SupportNonlinearDialog, JointDialog,
                       parse_int_list)
 from .worker import SolveWorker
+from . import ribbon as rib
 from . import viewport as vp
 from . import design as dsg
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
@@ -48,26 +49,58 @@ class MainWindow(QtWidgets.QMainWindow):
         self.path = None
         self.worker = None
 
-        self.setStyleSheet(dsg.stil())
+        self.setStyleSheet(dsg.stil() + rib.stil())
         self._build_viewport()
         self._build_panels()
         self._build_bottom()
-        self._build_menu()
-        self._build_kopfzeile()
-        self._build_werkzeugleiste()
+        self.kopf = dsg.Kopfzeile(self)
+        self._build_ribbon()
+        self._build_update_button()
+        self._refresh_kopf()
         self._build_baum()
         self._refresh_title()
-        self.statusBar().showMessage("Bereit")
-        self.lbl_version = QtWidgets.QLabel()
-        self.lbl_version.setToolTip("Installierte Fassung von Statik3D")
-        self.statusBar().addPermanentWidget(self.lbl_version)
-        self._refresh_version_label()
+        self._build_statusleiste()
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setVisible(False)
         self.progress_bar.setFixedWidth(180)
         self.statusBar().addPermanentWidget(self.progress_bar)
         self.refresh_all()
+
+    def _build_statusleiste(self):
+        """Statusleiste nach Vorgabe: Fang, Koordinatensystem, Einheiten,
+        Netz- und Solverstatus. Der Modellumfang steht im Modellbaum, die
+        Fassung unter Extras → Info (Vorgabe Kap. 16.1 Nr. 4 und 5)."""
+        sb = self.statusBar()
+        sb.showMessage("Bereit")
+        self.lbl_fang = QtWidgets.QLabel("Fang: aus")
+        self.lbl_ks = QtWidgets.QLabel("KS: global")
+        self.lbl_einheiten = QtWidgets.QLabel("m · N · Pa")
+        self.lbl_netz = QtWidgets.QLabel("Netz: –")
+        self.lbl_solver = QtWidgets.QLabel("Solver: bereit")
+        for w in (self.lbl_fang, self.lbl_ks, self.lbl_einheiten,
+                  self.lbl_netz, self.lbl_solver):
+            w.setObjectName("statusfeld")
+            sb.addPermanentWidget(w)
+        # Der Update-Hinweis erscheint nur, wenn eine neuere Fassung vorliegt.
+        self.lbl_version = QtWidgets.QLabel()
+        self.lbl_version.setVisible(False)
+        sb.addPermanentWidget(self.lbl_version)
+
+    def _refresh_status(self):
+        """Netz- und Solverstand in der Statusleiste."""
+        if not hasattr(self, "lbl_netz"):
+            return
+        m = self.model
+        self.lbl_netz.setText(f"Netz: {m.nn} Knoten · {len(m.elements)} Elemente"
+                              if m.nn else "Netz: leer")
+        if self.analysis is not None:
+            n = len(self.analysis.cases) + len(self.analysis.combinations)
+            self.lbl_solver.setText(f"Solver: {n} Ergebnisse")
+        elif self.results is not None:
+            self.lbl_solver.setText("Solver: Ergebnis vorhanden")
+        else:
+            self.lbl_solver.setText("Solver: bereit")
 
     def __init_defaults(self):
         if not self.model.materials:
@@ -88,12 +121,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plotter = QtInteractor(central)
         self.plotter.set_background("white")
         lay.addWidget(self.plotter.interactor, 1)
-        # Filmstreifen der Stellungen unter der Ansicht (Entwurf "Werkbank")
-        self.film = dsg.Filmstreifen(central)
-        self.film.gewaehlt.connect(self._stellung_gewaehlt)
-        self.film.neu.connect(self.neue_stellung)
-        self.film.rechnen.connect(self.stellungen_rechnen)
-        lay.addWidget(self.film, 0)
         self.setCentralWidget(central)
         try:
             self.plotter.enable_point_picking(callback=self._picked, show_message=False,
@@ -121,80 +148,224 @@ class MainWindow(QtWidgets.QMainWindow):
                              f"{np.round(self.model.nodes[i], 3)})")
         self.redraw()
 
-    def _build_menu(self):
-        # Eigene Menueleiste: setMenuWidget() loescht die von menuBar() angelegte,
-        # und mit ihr das Widget, in dem sie steckt - unter Windows blieb dadurch
-        # die Kopfzeile samt Menue unsichtbar.
-        mb = QtWidgets.QMenuBar()
-        self.menu_bar = mb
-        f = mb.addMenu("&Datei")
-        f.addAction("Neu", self.new_model, "Ctrl+N")
-        f.addAction("Öffnen…", self.open_model, "Ctrl+O")
-        f.addAction("Speichern", self.save_model, "Ctrl+S")
-        f.addAction("Speichern unter…", lambda: self.save_model(True))
-        f.addSeparator()
-        f.addAction("Importieren (RFEM 6, HiCAD, DXF, IFC, SAF, INP, BDF, STEP…)…",
-                    self.import_file, "Ctrl+I")
-        f.addAction("Exportieren (SDNF, DSTV-NC, IFC, SAF, DXF, STL, VTK, HiCAD…)…",
-                    self.export_model, "Ctrl+E")
-        f.addAction("Ergebnisse als CSV…", self.export_csv)
-        f.addAction("Netz + Ergebnisse als VTK…", self.export_vtk)
-        f.addSeparator()
-        f.addAction("Statischer Bericht…", self.make_report, "Ctrl+R")
-        f.addSeparator()
-        f.addAction("Beenden", self.close)
+    def _build_ribbon(self):
+        """Die Befehlsleiste. Jeder Befehl steht hier - und nur hier.
 
-        e = mb.addMenu("&Bearbeiten")
-        e.addAction("Modell prüfen", self.do_check)
-        e.addAction("Doppelte Knoten zusammenführen", self.do_merge)
-        e.addAction("Stäbe automatisch erkennen", self.auto_members)
-        e.addAction("Kombinationen automatisch erzeugen…", self.auto_combinations)
-        e.addAction("Einstellungen Nachweise…", self.design_settings)
+        Ersetzt Menueleiste und Werkzeugleiste des Bestands; die Doppelung aus
+        oberer Leiste und rechter Registerleiste entfaellt damit (Vorgabe
+        Kap. 16.1 Nr. 1 und 2).
+        """
+        rb = rib.Ribbon(self)
+        self.ribbon = rb
+        rb.gesucht.connect(lambda t: self.info(f"Befehl „{t}“ ausgeführt")
+                           if t else self.info("Kein Befehl gefunden"))
 
-        b = mb.addMenu("&Beispiele")
-        for key, label in (("frame", "Rahmen (Stabwerk)"), ("truss", "Fachwerkträger"),
-                           ("plate", "Platte (Schalen)"), ("solid", "Konsole (Volumen)"),
-                           ("hall", "Hallenrahmen: Lastfälle, Kombinationen, EC3, Ermüdung"),
-                           ("gate", "Stauwand (Stahlwasserbau): Schalen + Riegel, Wasserdruck"),
-                           ("contact", "Kontakt: abhebendes Lager + Anschlag"),
-                           ("friction", "Kontakt: Block mit Reibung (Volumen)")):
-            b.addAction(label, lambda k=key: self.load_example(k))
+        # -- Datei -------------------------------------------------------
+        r = rb.register("Datei")
+        g = r.gruppe("Projekt")
+        self.act_neu = g.gross("Neu", "▢", self.new_model, "Ctrl+N",
+                               "Leeres Modell anlegen")
+        g.gross("Öffnen", "▤", self.open_model, "Ctrl+O", "Modell aus Datei laden")
+        self.act_speichern = g.gross("Speichern", "▣", self.save_model, "Ctrl+S",
+                                     "Modell speichern")
+        g.klein("Speichern unter…", lambda: self.save_model(True))
+        g.klein("Projektangaben…", lambda: self.maske_zeigen("Projekt"),
+                hinweis="Projekt, Bauteil, Position, Bearbeiter")
+        g = r.gruppe("Austausch")
+        g.gross("Übernehmen", "⇤", self.import_file, "Ctrl+I",
+                "Aus RFEM 6, HiCAD, IFC, DXF, SAF, INP, BDF, STEP übernehmen")
+        g.gross("Exportieren", "⇥", self.export_model, "Ctrl+E",
+                "SDNF, DSTV-NC, IFC, SAF, DXF, STL, VTK, HiCAD")
+        g.klein("Ergebnisse als CSV…", self.export_csv)
+        g.klein("Netz + Ergebnisse als VTK…", self.export_vtk)
+        g = r.gruppe("Beispiele")
+        for key, label in (("frame", "Rahmen"), ("truss", "Fachwerk"),
+                           ("plate", "Platte"), ("solid", "Konsole"),
+                           ("hall", "Hallenrahmen"), ("gate", "Stauwand"),
+                           ("contact", "Kontakt"), ("friction", "Reibung")):
+            g.klein(label, lambda k=key: self.load_example(k),
+                    hinweis=f"Beispiel {label} laden")
+        g = r.gruppe("Sitzung")
+        g.klein("Beenden", self.close, "Ctrl+Q")
 
-        c = mb.addMenu("Be&rechnung")
-        c.addAction("Alle Lastfälle + Kombinationen", lambda: self.do_solve("all"), "F5")
-        c.addAction("Nur aktiver Lastfall", lambda: self.do_solve("case"))
-        c.addAction("Eigenschwingungen", lambda: self.do_solve("modal"))
-        c.addAction("Knicken", lambda: self.do_solve("buckling"))
-        c.addSeparator()
-        c.addAction("Nachweise EC3 (nach Berechnung)", self.do_design)
-        c.addAction("Ermüdungsnachweis (nach Berechnung)", self.do_fatigue)
-        c.addSeparator()
-        c.addAction("Bedienung im Browser / auf dem Handy…", self.start_web_server)
+        # -- Start -------------------------------------------------------
+        r = rb.register("Start")
+        g = r.gruppe("Auswahl")
+        self.act_auswahl_weg = g.gross("Auswahl aufheben", "✕", self.clear_selection,
+                                       "Esc", "Alle gewählten Knoten abwählen")
+        g.klein("Alles auswählen", self.select_all, "Ctrl+A")
+        g.klein("Auswahl umkehren", self.invert_selection)
+        g = r.gruppe("Modell prüfen")
+        g.gross("Prüfen", "⚑", self.do_check, "", "Modell auf Fehler prüfen")
+        g.klein("Doppelte Knoten zusammenführen", self.do_merge)
+        g.klein("Freie Stabenden anschließen…", self.staebe_anschliessen)
+        g.klein("Stäbe automatisch erkennen", self.auto_members)
+        g = r.gruppe("Berechnen")
+        self.act_rechnen = g.gross("Berechnen", "▶", lambda: self.do_solve("all"),
+                                   "F5", "Alle Lastfälle und Kombinationen rechnen",
+                                   rolle="start")
 
-        v = mb.addMenu("&Ansicht")
-        v.addAction("Isometrisch", lambda: (self.plotter.view_isometric(), self.plotter.reset_camera()))
-        v.addAction("XY (Draufsicht)", self.plotter.view_xy)
-        v.addAction("XZ (Ansicht)", self.plotter.view_xz)
-        v.addAction("YZ (Seitenansicht)", self.plotter.view_yz)
-        v.addAction("Zoom alles", self.plotter.reset_camera)
-        v.addSeparator()
-        self.act_edges = v.addAction("Kanten anzeigen"); self.act_edges.setCheckable(True); self.act_edges.setChecked(True)
-        self.act_nodes = v.addAction("Knotennummern"); self.act_nodes.setCheckable(True)
-        self.act_elems = v.addAction("Elementnummern"); self.act_elems.setCheckable(True)
-        self.act_loads = v.addAction("Lasten des aktiven Lastfalls"); self.act_loads.setCheckable(True); self.act_loads.setChecked(True)
-        self.act_members = v.addAction("Stäbe farbig"); self.act_members.setCheckable(True)
-        for a in (self.act_edges, self.act_nodes, self.act_elems, self.act_loads, self.act_members):
-            a.triggered.connect(self.redraw)
+        # -- Geometrie ---------------------------------------------------
+        r = rb.register("Geometrie")
+        g = r.gruppe("Knoten")
+        g.gross("Knoten", "•", lambda: self.maske_zeigen("Knoten"),
+                hinweis="Knoten über Koordinaten anlegen")
+        g.klein("Knoten löschen", self.delete_nodes)
+        g = r.gruppe("Netzgeneratoren")
+        g.gross("Stabzug", "╱", lambda: self.maske_zeigen("Netz"),
+                hinweis="Stabzug zwischen zwei Punkten")
+        g.gross("Platte", "▦", lambda: self.maske_zeigen("Netz"),
+                hinweis="Rechteckplatte aus Schalen")
+        g.gross("Quader", "▩", lambda: self.maske_zeigen("Netz"),
+                hinweis="Quader aus Volumenelementen")
 
-        h = mb.addMenu("&Hilfe")
-        h.addAction("Benutzerhandbuch", lambda: self.open_doc("Benutzerhandbuch.md"))
-        h.addAction("Theoriehandbuch", lambda: self.open_doc("Theoriehandbuch.md"))
-        h.addAction("Schnittstellen (Import)", lambda: self.open_doc("Schnittstellen.md"))
-        h.addAction("Rechnerfarm", lambda: self.open_doc("Rechnerfarm.md"))
-        h.addSeparator()
-        h.addAction("Nach Update suchen…", self.check_update)
-        h.addAction("Über / Gültigkeitsbereich", self.about)
-        self._build_update_button()
+        # -- Struktur ----------------------------------------------------
+        r = rb.register("Struktur")
+        g = r.gruppe("Elemente")
+        g.gross("Stab", "╲", lambda: self.maske_zeigen("Netz"),
+                hinweis="Stabelement zwischen zwei Knoten")
+        g.gross("Schale", "◫", lambda: self.maske_zeigen("Netz"),
+                hinweis="Schalenelement aus 3 oder 4 Knoten")
+        g.klein("Elemente löschen", self.delete_elements)
+        g = r.gruppe("Eigenschaften")
+        g.gross("Querschnitte", "⌶", lambda: self.tabelle_zeigen("Querschnitte"),
+                hinweis="Querschnitte aus der Profildatenbank")
+        g.gross("Werkstoffe", "⬗", lambda: self.tabelle_zeigen("Werkstoffe"),
+                hinweis="Werkstoffe und ihre Kennwerte")
+        g.klein("Schalendicken", lambda: self.tabelle_zeigen("Dicken"))
+        g.klein("Zuweisen an Auswahl…", lambda: self.maske_zeigen("Auswahl"))
+        g.klein("Gelenke setzen…", lambda: self.maske_zeigen("Auswahl"))
+        g = r.gruppe("Stäbe für Nachweise")
+        g.gross("Stäbe", "≣", lambda: self.maske_zeigen("Nachweise"),
+                hinweis="Stäbe mit Knick- und Kipplängen")
+
+        # -- Lager / Gelenke / Kontakt -----------------------------------
+        r = rb.register("Lager / Kontakt")
+        g = r.gruppe("Lager")
+        g.gross("Knotenlager", "△", lambda: self.maske_zeigen("Lager/Lasten"),
+                hinweis="Lager an den gewählten Knoten")
+        g.klein("Linienlager…", self.line_support_dialog)
+        g.klein("Flächenlager…", self.surface_support_dialog)
+        g.klein("Nichtlinearität…", self.support_nonlinear_dialog)
+        g = r.gruppe("Kontakt")
+        g.gross("Kontakt", "⇹", lambda: self.maske_zeigen("Kontakt"),
+                hinweis="Einseitiges Lager, Spaltelement, Kontaktpaar")
+        g.klein("Kontakt löschen", self.clear_contact)
+        g = r.gruppe("Anschlüsse")
+        g.gross("Anschluss", "⊞", self.joint_dialog,
+                hinweis="Kopfplatte, Laschenstoß, Diagonalanschluss")
+
+        # -- Lasten ------------------------------------------------------
+        r = rb.register("Lasten")
+        g = r.gruppe("Lastfälle")
+        g.gross("Lastfälle", "≔", lambda: self.maske_zeigen("Lastfälle"),
+                hinweis="Lastfälle anlegen und verwalten")
+        g.klein("Kombinationen automatisch…", self.auto_combinations)
+        g.klein("Ermüdungslast…", self.fatigue_load_dialog)
+        g = r.gruppe("Lasten")
+        g.gross("Knotenlast", "↓", lambda: self.maske_zeigen("Lager/Lasten"),
+                hinweis="Einzellast an den gewählten Knoten")
+        g.gross("Stablast", "⇊", lambda: self.maske_zeigen("Lager/Lasten"),
+                hinweis="Streckenlast auf Stabelemente")
+        g.klein("Flächenlast", lambda: self.maske_zeigen("Lager/Lasten"))
+        g.klein("Temperaturlast", lambda: self.maske_zeigen("Lager/Lasten"))
+        g.klein("Eigengewicht", lambda: self.maske_zeigen("Lager/Lasten"))
+
+        # -- Netz --------------------------------------------------------
+        r = rb.register("Netz")
+        g = r.gruppe("Netz")
+        g.gross("Netz erzeugen", "⬢", lambda: self.maske_zeigen("Netz"),
+                hinweis="Netzgeneratoren und Elementerzeugung")
+        g.klein("Netz löschen", self.clear_mesh)
+
+        # -- Berechnung --------------------------------------------------
+        r = rb.register("Berechnung")
+        g = r.gruppe("Rechnen")
+        g.widget(self._ribbon_knopf(self.act_rechnen, "▶", "start"))
+        g.klein("Nur aktiver Lastfall", lambda: self.do_solve("case"))
+        g.klein("Eigenschwingungen", lambda: self.do_solve("modal"))
+        g.klein("Knicken", lambda: self.do_solve("buckling"))
+        g = r.gruppe("Stellungen")
+        g.gross("Alle Stellungen", "⟳", self.stellungen_rechnen,
+                hinweis="Jede Stellung rechnen und die Umhüllende bilden")
+        g.klein("DIN 19704: Kombinationen", self.din19704_bilden)
+        g = r.gruppe("Einstellungen")
+        g.gross("Einstellungen", "⚙", lambda: self.maske_zeigen("Berechnung"),
+                hinweis="Analyseart, Prozesse, Rechnerfarm")
+        g.klein("Bedienung im Browser…", self.start_web_server)
+
+        # -- Nachweise ---------------------------------------------------
+        r = rb.register("Nachweise")
+        g = r.gruppe("Führen")
+        g.gross("Nachweise EC3", "✓", self.do_design,
+                hinweis="Querschnitt und Stabilität nach EN 1993-1-1")
+        g.gross("Ermüdung", "∿", self.do_fatigue,
+                hinweis="Nachweis nach EN 1993-1-9")
+        g = r.gruppe("Einstellungen")
+        g.gross("Konfiguration", "⚙", self.design_settings,
+                hinweis="Teilsicherheitsbeiwerte und Nachweisstellen")
+        g.klein("Stäbe und Knicklängen…", lambda: self.maske_zeigen("Nachweise"))
+
+        # -- Ergebnisse --------------------------------------------------
+        r = rb.register("Ergebnisse")
+        g = r.gruppe("Auswahl")
+        g.gross("Ergebnisse", "∿", lambda: self.maske_zeigen("Ergebnisse"),
+                hinweis="Ergebnis, Färbung, Verlauf und Überhöhung wählen")
+        g = r.gruppe("Tabellen")
+        for name in ("Stabkräfte", "Auflagerkräfte", "Umhüllende",
+                     "Nachweise EC3", "Ermüdung", "Kontakt"):
+            g.klein(name, lambda n=name: self.tabelle_zeigen(n),
+                    hinweis=f"Tabelle {name} unten zeigen")
+
+        # -- Bericht -----------------------------------------------------
+        r = rb.register("Bericht")
+        g = r.gruppe("Bericht")
+        g.gross("Bericht", "≡", self.make_report, "Ctrl+R",
+                "Statischen Bericht als HTML oder PDF erzeugen")
+
+        # -- Ansicht -----------------------------------------------------
+        r = rb.register("Ansicht")
+        g = r.gruppe("Blickrichtung")
+        g.gross("Isometrisch", "◲", lambda: (self.plotter.view_isometric(),
+                                             self.plotter.reset_camera()))
+        g.klein("XY (Draufsicht)", self.plotter.view_xy)
+        g.klein("XZ (Ansicht)", self.plotter.view_xz)
+        g.klein("YZ (Seitenansicht)", self.plotter.view_yz)
+        g.klein("Zoom alles", self.plotter.reset_camera)
+        g = r.gruppe("Anzeigen")
+        self.act_edges = g.schalter("Kanten", lambda z: self.redraw(), True)
+        self.act_nodes = g.schalter("Knotennummern", lambda z: self.redraw())
+        self.act_elems = g.schalter("Elementnummern", lambda z: self.redraw())
+        self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True)
+        self.act_members = g.schalter("Stäbe farbig", lambda z: self.redraw())
+
+        # -- Extras ------------------------------------------------------
+        r = rb.register("Extras")
+        g = r.gruppe("Handbücher")
+        g.gross("Handbuch", "❓", lambda: self.open_doc("Benutzerhandbuch.md"))
+        g.klein("Theoriehandbuch", lambda: self.open_doc("Theoriehandbuch.md"))
+        g.klein("Schnittstellen", lambda: self.open_doc("Schnittstellen.md"))
+        g.klein("Rechnerfarm", lambda: self.open_doc("Rechnerfarm.md"))
+        g = r.gruppe("Programm")
+        g.gross("Info", "ⓘ", self.about,
+                hinweis="Fassung, Build und Gültigkeitsbereich")
+        g.klein("Nach Update suchen…", self.check_update)
+
+        rb.schnell(self.act_speichern, self.act_rechnen, self.act_auswahl_weg)
+        self.setMenuWidget(dsg.kopfhalter(self, self.kopf, rb))
+
+    @staticmethod
+    def _ribbon_knopf(aktion, zeichen: str, rolle: str = ""):
+        """Denselben Befehl ein zweites Mal als Knopf zeigen (kein neuer Befehl)."""
+        b = QtWidgets.QToolButton()
+        b.setDefaultAction(aktion)
+        b.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+        b.setText(f"{zeichen}\n{aktion.text()}")
+        b.setObjectName("ribbongross")
+        if rolle:
+            b.setProperty("rolle", rolle)
+        b.setMinimumWidth(56)
+        return b
 
     # ------------------------------------------------------------------
     def _build_panels(self):
@@ -213,6 +384,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self._scroll(self._tab_solve()), "Berechnung")
         self.tabs.addTab(self._scroll(self._tab_results()), "Ergebnisse")
         self.tabs.setMinimumWidth(470)
+        # Die Registerleiste entfaellt: sichtbar ist immer genau eine Maske,
+        # gewaehlt ueber den Befehl im Ribbon. Der Docktitel nennt sie.
+        self.tabs.tabBar().setVisible(False)
         dock.setWidget(self.tabs)
         self.eingaben_dock = dock
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
@@ -220,69 +394,23 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
     # Erscheinungsbild: Kopfzeile, Werkzeugleiste, Modellbaum
     # ------------------------------------------------------------------
-    def _build_kopfzeile(self):
-        """Dunkle Kopfzeile ueber dem Menue: Programm, Bauteil, Zustand."""
-        self.kopf = dsg.Kopfzeile(self)
-        self.setMenuWidget(dsg.kopfhalter(self, self.kopf, self.menu_bar))
-        self._refresh_kopf()
+    def register_zeigen(self, name: str) -> bool:
+        """Ein Register des Ribbons nach vorn holen."""
+        return self.ribbon.zeigen(name) if hasattr(self, "ribbon") else False
 
-    def _build_werkzeugleiste(self):
-        """Werkzeugleiste wie im Entwurf: Wege in die Register und Berechnen."""
-        tb = QtWidgets.QToolBar("Werkzeuge", self)
-        tb.setMovable(False)
-        tb.setFloatable(False)
-        tb.setIconSize(QtCore.QSize(16, 16))
-        tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        self.addToolBar(QtCore.Qt.TopToolBarArea, tb)
-        self.werkzeugleiste = tb
+    def maske_zeigen(self, name: str) -> bool:
+        """Die Eingabemaske mit diesem Namen rechts zeigen.
 
-        def knopf(text, hinweis, fn, name=""):
-            a = QtGui.QAction(text, self)
-            a.setToolTip(hinweis)
-            a.triggered.connect(fn)
-            tb.addAction(a)
-            if name:
-                w = tb.widgetForAction(a)
-                if w is not None:
-                    w.setObjectName(name)
-            return a
-
-        knopf("Datei ▾", "Neu, Öffnen, Speichern, Importieren, Exportieren",
-              lambda: self._menue_zeigen(0))
-        knopf("Übernehmen aus Modell ▾", "Aus RFEM, HiCAD, IFC, DXF, SDNF übernehmen",
-              self.import_file)
-        tb.addSeparator()
-        for text, hinweis, register in (
-                ("⬡ Netz", "Netzgeneratoren und Elemente", "Netz"),
-                ("⇩ Lager / Lasten", "Lager, Lasten, Lastfälle", "Lager/Lasten"),
-                ("⟳ Stellungen", "Stellungen beweglicher Brücken", "Stellungen"),
-                ("Kontakt", "Kontakt, Spalt, Reibung", "Kontakt"),
-                ("✓ Nachweise", "Nachweise nach EC3 und Ermüdung", "Nachweise")):
-            knopf(text, hinweis, lambda _=False, r=register: self.register_zeigen(r))
-        tb.addSeparator()
-        knopf("▶ Berechnen  F5", "Berechnung starten (F5)", self.do_solve, "start")
-        knopf("≡ Bericht", "Bericht als HTML oder PDF", self.make_report)
-        leer = QtWidgets.QWidget()
-        leer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
-        tb.addWidget(leer)
-        einheit = QtWidgets.QLabel("m · N · Pa   ")
-        einheit.setStyleSheet(f"color:{dsg.FARBEN['matt']}; font-size:12px;")
-        tb.addWidget(einheit)
-
-    def _menue_zeigen(self, i: int):
-        mb = self.menu_bar
-        menues = [a.menu() for a in mb.actions() if a.menu() is not None]
-        if 0 <= i < len(menues):
-            m = menues[i]
-            m.popup(self.mapToGlobal(QtCore.QPoint(12, 74)))
-
-    def register_zeigen(self, name: str):
-        """Register der Eingaben nach seinem Namen zeigen."""
+        Es ist immer nur **eine** Maske sichtbar; die Registerleiste des
+        Bestands entfaellt damit (Vorgabe Kap. 16.1 Nr. 1).
+        """
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i) == name:
                 self.tabs.setCurrentIndex(i)
                 if hasattr(self, "eingaben_dock"):
+                    self.eingaben_dock.setWindowTitle(name)
                     self.eingaben_dock.show()
+                    self.eingaben_dock.raise_()
                 return True
         return False
 
@@ -307,12 +435,20 @@ class MainWindow(QtWidgets.QMainWindow):
         "stab": "Nachweise", "stellungen": "Stellungen", "stellung": "Stellungen",
     }
 
+    #: Zweige des Modellbaums, die eine Tabelle unten zeigen statt eine Maske
+    BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe"}
+
     def _baum_geklickt(self, art: str, name: str):
+        if art == "stellung_neu":
+            return self.neue_stellung()
         if art == "stellung":
             self._stellung_gewaehlt(name.split("·", 1)[-1].strip())
+        tab = self.BAUM_TABELLE.get(art)
+        if tab:
+            return self.tabelle_zeigen(tab)
         ziel = self.BAUM_ZIEL.get(art)
         if ziel:
-            self.register_zeigen(ziel)
+            self.maske_zeigen(ziel)
 
     def _refresh_kopf(self):
         """Kopfzeile auf den Stand bringen: Bauteil, Version, Zustand."""
@@ -347,13 +483,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _refresh_baum(self):
         if hasattr(self, "baum"):
             self.baum.fuellen(self.model, self._stellungen_liste())
-        if hasattr(self, "film"):
-            st = self._stellungen_liste()
-            umh = ""
-            u = getattr(self, "umhuellende", None)
-            if u is not None:
-                umh = f"Umhüllende η = {u.eta:.3f}".replace(".", ",")
-            self.film.fuellen(st, umh)
+
 
     def _stellungen_liste(self) -> list:
         """Stellungen als einfache Liste fuer Baum und Filmstreifen."""
@@ -377,14 +507,63 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setWidget(w)
         return s
 
+    def _eingabetabelle(self, tbl, *knoepfe) -> QtWidgets.QWidget:
+        """Eine Eingabetabelle mit ihren Knoepfen fuer den unteren Bereich."""
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        tbl.setMaximumHeight(16777215)
+        tbl.horizontalHeader().setStretchLastSection(False)
+        tbl.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents)
+        lay.addWidget(tbl, 1)
+        if knoepfe:
+            lay.addWidget(row(*knoepfe))
+        return w
+
+    def _build_eingabetabellen(self, tabs):
+        """Werkstoffe, Querschnitte und Dicken als Tabellen unten.
+
+        Im Bestand standen sie zusaetzlich im rechten Panel - dieselbe Angabe
+        an zwei Stellen (Vorgabe Kap. 16.1 Nr. 6). Der Modellbaum verweist
+        darauf, die Tabelle selbst steht nur noch hier.
+        """
+        self.tbl_mat = QtWidgets.QTableWidget(0, 5)
+        self.tbl_mat.setHorizontalHeaderLabels(["Name", "E [GPa]", "ν", "ρ", "fy [MPa]"])
+        b1 = QtWidgets.QPushButton("Werkstoff hinzufügen…")
+        b1.clicked.connect(self.add_material)
+        bd = QtWidgets.QPushButton("Löschen")
+        bd.clicked.connect(lambda: self._delete_row(self.tbl_mat, self.model.materials))
+        tabs.addTab(self._eingabetabelle(self.tbl_mat, b1, bd), "Werkstoffe")
+
+        self.tbl_sec = QtWidgets.QTableWidget(0, 5)
+        self.tbl_sec.setHorizontalHeaderLabels(
+            ["Name", "Typ", "A [cm²]", "Iy [cm⁴]", "Wpl,y [cm³]"])
+        b2 = QtWidgets.QPushButton("Querschnitt hinzufügen (Profildatenbank)…")
+        b2.clicked.connect(self.add_section)
+        bd2 = QtWidgets.QPushButton("Löschen")
+        bd2.clicked.connect(lambda: self._delete_row(self.tbl_sec, self.model.sections))
+        tabs.addTab(self._eingabetabelle(self.tbl_sec, b2, bd2), "Querschnitte")
+
+        self.tbl_shell = QtWidgets.QTableWidget(0, 2)
+        self.tbl_shell.setHorizontalHeaderLabels(["Name", "t [m]"])
+        self.ed_t = NumEdit(0.01, 80)
+        b3 = QtWidgets.QPushButton("Dicke hinzufügen")
+        b3.clicked.connect(self.add_shell_prop)
+        tabs.addTab(self._eingabetabelle(self.tbl_shell, "t [m]", self.ed_t, b3), "Dicken")
+
     def _build_bottom(self):
         dock = QtWidgets.QDockWidget("Protokoll und Tabellen", self)
         dock.setAllowedAreas(QtCore.Qt.BottomDockWidgetArea)
+        self.unten_dock = dock
         tabs = QtWidgets.QTabWidget()
+        self.tab_unten = tabs
         self.log = QtWidgets.QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setStyleSheet("font-family: monospace; font-size: 11px;")
         tabs.addTab(self.log, "Protokoll")
+        self._build_eingabetabellen(tabs)
         self.tbl_beam = QtWidgets.QTableWidget(0, 10)
         self.tbl_beam.setHorizontalHeaderLabels(
             ["Element", "N1 [kN]", "N2 [kN]", "Vz1 [kN]", "Vz2 [kN]", "My1 [kNm]", "My2 [kNm]",
@@ -425,41 +604,6 @@ class MainWindow(QtWidgets.QMainWindow):
             g.addWidget(e, i // 2, 2 * (i % 2) + 1)
         lay.addLayout(g)
 
-        lay.addWidget(QtWidgets.QLabel("<b>Materialien</b>"))
-        self.tbl_mat = QtWidgets.QTableWidget(0, 5)
-        self.tbl_mat.setHorizontalHeaderLabels(["Name", "E [GPa]", "ν", "ρ", "fy [MPa]"])
-        self.tbl_mat.horizontalHeader().setStretchLastSection(True)
-        self.tbl_mat.setMaximumHeight(120)
-        lay.addWidget(self.tbl_mat)
-        b1 = QtWidgets.QPushButton("Material hinzufügen…")
-        b1.clicked.connect(self.add_material)
-        bd = QtWidgets.QPushButton("Löschen")
-        bd.clicked.connect(lambda: self._delete_row(self.tbl_mat, self.model.materials))
-        lay.addWidget(row(b1, bd))
-
-        lay.addWidget(QtWidgets.QLabel("<b>Stabquerschnitte</b>"))
-        self.tbl_sec = QtWidgets.QTableWidget(0, 5)
-        self.tbl_sec.setHorizontalHeaderLabels(["Name", "Typ", "A [cm²]", "Iy [cm⁴]", "Wpl,y [cm³]"])
-        self.tbl_sec.horizontalHeader().setStretchLastSection(True)
-        self.tbl_sec.setMaximumHeight(120)
-        lay.addWidget(self.tbl_sec)
-        b2 = QtWidgets.QPushButton("Querschnitt hinzufügen (Profildatenbank)…")
-        b2.clicked.connect(self.add_section)
-        bd2 = QtWidgets.QPushButton("Löschen")
-        bd2.clicked.connect(lambda: self._delete_row(self.tbl_sec, self.model.sections))
-        lay.addWidget(row(b2, bd2))
-
-        lay.addWidget(QtWidgets.QLabel("<b>Schalendicken</b>"))
-        self.tbl_shell = QtWidgets.QTableWidget(0, 2)
-        self.tbl_shell.setHorizontalHeaderLabels(["Name", "t [m]"])
-        self.tbl_shell.horizontalHeader().setStretchLastSection(True)
-        self.tbl_shell.setMaximumHeight(90)
-        lay.addWidget(self.tbl_shell)
-        self.ed_t = NumEdit(0.01, 80)
-        b3 = QtWidgets.QPushButton("Dicke hinzufügen")
-        b3.clicked.connect(self.add_shell_prop)
-        lay.addWidget(row("t [m]", self.ed_t, b3))
-
         lay.addWidget(QtWidgets.QLabel("<b>Elemente ändern</b>"))
         self.ed_elist = QtWidgets.QLineEdit()
         self.ed_elist.setPlaceholderText("Element-Nr., z.B. 0-7, 12 (leer = Auswahl-Knoten)")
@@ -476,10 +620,7 @@ class MainWindow(QtWidgets.QMainWindow):
         bh.clicked.connect(self.set_hinges)
         lay.addWidget(row(self.ed_hinge, bh))
 
-        self.lbl_info = QtWidgets.QLabel()
-        self.lbl_info.setStyleSheet("color:#444")
-        self.lbl_info.setWordWrap(True)
-        lay.addWidget(self.lbl_info)
+
         lay.addStretch()
         return w
 
@@ -813,8 +954,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _stellung_gewaehlt(self, name: str):
         """Stellung auswaehlen: Zeile markieren und im Filmstreifen hervorheben."""
         self.gewaehlte_stellung = name
-        if hasattr(self, "film"):
-            self.film.waehlen(name)
         st = self._stellungen_obj()
         for i, s in enumerate(st):
             if s.name == name and hasattr(self, "tbl_stellung"):
@@ -1128,19 +1267,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if cur in keys:
                 cb.setCurrentText(cur)
             cb.blockSignals(False)
-        kinds = {}
-        for e in m.elements:
-            kinds[e.typ] = kinds.get(e.typ, 0) + 1
-        n_loads = sum(lc.n_loads for lc in m.load_cases.values())
-        self.lbl_info.setText(
-            f"Knoten: {m.nn}   Elemente: {len(m.elements)}   "
-            + ", ".join(f"{k}: {v}" for k, v in kinds.items())
-            + f"\nLager: {len(m.supports)}   Lasten gesamt: {n_loads}   Lastfälle: {len(m.load_cases)}   "
-              f"Kombinationen: {len(m.combinations)}   Stäbe: {len(m.members)}   "
-              f"Kontakt: {len(m.contact_supports) + len(m.gap_elements) + len(m.contact_pairs)}"
-            + (f"\nLinienlager: {len(m.line_supports)}   Flächenlager: {len(m.surface_supports)}   "
-               f"Gelenkdefinitionen: {len(m.hinges)}" if (m.line_supports or m.surface_supports
-                                                          or m.hinges) else ""))
+        self._refresh_status()
         self.refresh_cases()
         self.refresh_contact()
         self.refresh_members()
@@ -1351,6 +1478,89 @@ class MainWindow(QtWidgets.QMainWindow):
         self.results = None
         self.selection = np.array([], dtype=int)
         self.refresh_all()
+
+    # ---- Befehle des Ribbons -----------------------------------------
+    def clear_selection(self):
+        """Auswahl aufheben."""
+        self._set_selection([])
+
+    def select_all(self):
+        self._set_selection(np.arange(self.model.nn, dtype=int))
+
+    def invert_selection(self):
+        alle = np.arange(self.model.nn, dtype=int)
+        self._set_selection(np.setdiff1d(alle, self.selection))
+
+    def delete_nodes(self):
+        """Die gewählten Knoten und die daran hängenden Elemente entfernen."""
+        if not len(self.selection):
+            return self.error("Zuerst Knoten wählen")
+        weg = set(int(i) for i in self.selection)
+        m = self.model
+        behalten = [e for e in m.elements if not (set(int(n) for n in e.nodes) & weg)]
+        n_el = len(m.elements) - len(behalten)
+        m.elements = behalten
+        m.supports = [x for x in m.supports if int(x.node) not in weg]
+        for lc in m.load_cases.values():
+            lc.nodal_loads = [l for l in lc.nodal_loads if int(l.node) not in weg]
+        self.info(f"{len(weg)} Knoten und {n_el} Elemente entfernt "
+                  "(die Knotennummern bleiben bestehen)")
+        self._set_selection([])
+        self.refresh_all()
+
+    def delete_elements(self):
+        """Alle Elemente entfernen, deren Knoten sämtlich gewählt sind."""
+        if not len(self.selection):
+            return self.error("Zuerst Knoten wählen")
+        sel = set(int(i) for i in self.selection)
+        m = self.model
+        vorher = len(m.elements)
+        m.elements = [e for e in m.elements
+                      if not set(int(n) for n in e.nodes) <= sel]
+        self.info(f"{vorher - len(m.elements)} Elemente entfernt")
+        self.refresh_all()
+
+    def staebe_anschliessen(self):
+        """Freie Stabenden auf die Achse des nächsten Stabes loten."""
+        from ..importers import hicad_szn as Z
+        radius, ok = QtWidgets.QInputDialog.getDouble(
+            self, "Freie Stabenden anschließen",
+            "Suchradius [mm] – aus CAD übernommene Querstäbe enden an der\n"
+            "Außenkante des angeschlossenen Bauteils:", 60.0, 1.0, 1000.0, 0)
+        if not ok:
+            return
+        log: list = []
+        r = Z.an_staebe_anschliessen(self.model, radius * 1e-3, log)
+        Z.zusammenhang(self.model, log)
+        for z in log:
+            self.info(z)
+        if not r["angeschlossen"]:
+            self.info(f"Kein freies Stabende innerhalb von {radius:g} mm")
+        self.refresh_all()
+
+    def support_nonlinear_dialog(self):
+        self.support_nonlinear()
+
+    def line_support_dialog(self):
+        self.add_line_support()
+
+    def surface_support_dialog(self):
+        self.add_surface_support()
+
+    def fatigue_load_dialog(self):
+        self.add_fatigue_load()
+
+    def joint_dialog(self):
+        self.add_joint()
+
+    def tabelle_zeigen(self, name: str) -> bool:
+        """Eine Tabelle im unteren Bereich nach vorn holen."""
+        for i in range(self.tab_unten.count()):
+            if self.tab_unten.tabText(i) == name:
+                self.tab_unten.setCurrentIndex(i)
+                self.unten_dock.show()
+                return True
+        return False
 
     # ---- Auswahl / Randbedingungen -----------------------------------
     def _sel_val(self, i):
@@ -2418,6 +2628,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_update.clicked.connect(lambda: self.check_update())
         self.btn_update.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.btn_update.customContextMenuRequested.connect(lambda _p: self.update_report())
+        self.btn_update.setVisible(False)
         self.statusBar().addPermanentWidget(self.btn_update)
         self._update_worker = None
         if os.environ.get("STATIK3D_NO_UPDATE_CHECK") != "1":
@@ -2467,13 +2678,20 @@ class MainWindow(QtWidgets.QMainWindow):
         w.start()
 
     def check_update(self, quiet: bool = False):
-        """Neueste Version bei GitHub erfragen (Hintergrund); bei quiet nur den Knopf faerben."""
+        """Neueste Version bei GitHub erfragen (Hintergrund).
+
+        Der Knopf in der Statusleiste erscheint nur, wenn es wirklich etwas zu
+        holen gibt; sonst bleibt die Leiste den Arbeitsangaben vorbehalten.
+        """
         from .. import update as upd
         self.btn_update.setEnabled(False)
-        self.btn_update.setText("Update wird gesucht…")
+        if not quiet:
+            self.btn_update.setVisible(True)
+            self.btn_update.setText("Update wird gesucht…")
 
         def done(info):
             self.btn_update.setEnabled(True)
+            self.btn_update.setVisible(bool(info.available) or not quiet)
             self.btn_update.setToolTip(info.message)
             if info.available:
                 self.btn_update.setText("Update verfügbar")

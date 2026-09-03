@@ -382,13 +382,21 @@ class Modellbaum(QtWidgets.QTreeWidget):
                      + len(model.contact_pairs))
         if n_kontakt:
             self._zweig(wurzel, "Kontakt", n_kontakt, "kontakt")
-        if stellungen:
-            st = self._zweig(wurzel, "Stellungen", len(stellungen), "stellungen",
-                             fett=True, farbe=FARBEN["akzent"])
-            for i, s in enumerate(stellungen, 1):
-                self._zweig(st, f"S{i} · {s.get('name', '')}",
-                            f"{float(s.get('winkel', 0)):.0f}°", "stellung")
-            st.setExpanded(True)
+        # Stellungen stehen ausschliesslich hier (Vorgabe Kap. 16.1 Nr. 3);
+        # der Zweig traegt die Schaltflaeche zum Anlegen.
+        st = self._zweig(wurzel, "Stellungen", len(stellungen or []), "stellungen",
+                         fett=bool(stellungen),
+                         farbe=FARBEN["akzent"] if stellungen else None)
+        for i, s in enumerate(stellungen or [], 1):
+            eta = s.get("eta")
+            text = f"S{i} · {s.get('name', '')}" + (" ★" if s.get("fuehrt") else "")
+            zweig = self._zweig(st, text,
+                                f"{float(s.get('winkel', 0)):.0f}°", "stellung")
+            if eta is not None:
+                zweig.setToolTip(0, f"Ausnutzung η = {float(eta):.3f}".replace(".", ","))
+        self._zweig(st, "+ Stellung anlegen", "", "stellung_neu",
+                    farbe=FARBEN["akzent"])
+        st.setExpanded(True)
         if model.members:
             mem = self._zweig(wurzel, "Stäbe für Nachweise", len(model.members), "staebe")
             for name, mm in list(model.members.items())[:60]:
