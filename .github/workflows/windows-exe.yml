@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: windows-exe-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   exe:
     name: Statik3D.exe bauen
@@ -35,10 +39,15 @@ jobs:
       - name: Selbsttest der exe
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath dist\Statik3D.exe -ArgumentList "--selbsttest" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Selbsttest fehlgeschlagen ($($p.ExitCode))" }
-          Get-Content statik3d_selbsttest.txt
           "Groesse: {0:N1} MB" -f ((Get-Item dist\Statik3D.exe).Length / 1MB)
+          $p = Start-Process -FilePath dist\Statik3D.exe -ArgumentList "--selbsttest" -PassThru
+          if (-not $p.WaitForExit(240000)) {
+            $p.Kill()
+            if (Test-Path statik3d_selbsttest.txt) { Get-Content statik3d_selbsttest.txt }
+            throw "Selbsttest: Zeitueberschreitung nach 240 s (haengt die exe in einem Meldungsfenster?)"
+          }
+          if (Test-Path statik3d_selbsttest.txt) { Get-Content statik3d_selbsttest.txt } else { "keine statik3d_selbsttest.txt geschrieben" }
+          if ($p.ExitCode -ne 0) { throw "Selbsttest fehlgeschlagen (Exit-Code $($p.ExitCode))" }
 
       - name: exe als Artefakt ablegen
         uses: actions/upload-artifact@v4
