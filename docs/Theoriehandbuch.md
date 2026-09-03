@@ -310,12 +310,93 @@ nach Tab. 5.1 für den Schub. Nachgewiesen wird nach Gl. (10.5)
 und zusätzlich wird die Vereinfachung 10.5(2) mit einem einzigen Beiwert ρ_min
 ausgewiesen, damit beide Wege im Dokument nachvollziehbar sind.
 
-**Grenzen**: Längs- und Quersteifen im Feld sind nicht enthalten — k_σ und k_τ
-gelten für das unversteifte Blechfeld; die wirksamen Breiten nach Abschnitt 4
-werden nur in der Querschnittsklassifizierung (Klasse 4) verwendet, nicht als
-eigener Feldnachweis; Lasteinleitung (Abschnitt 6) und Schalenbeulen
-(EN 1993-1-6) fehlen. Liegen die Elemente eines Feldes nicht in einer Ebene,
-wird das gesagt und der Nachweis als für ebene Felder gültig gekennzeichnet.
+### 5c.3 Längs- und Quersteifen (Anhang A, 4.5 und 9)
+
+Eine Längssteife hebt die Beulspannung des Feldes. Welcher Weg gilt, hängt an
+ihrer Zahl:
+
+* **eine oder zwei Steifen** → Anhang A.2.2. Mit b₁ und b₂ als Breiten der
+  Teilfelder und A_sl,1, I_sl,1 als Querschnittswerten der Steife **samt
+  mitwirkendem Blech** (je 15 ε t, Bild 4.4):
+
+      a_c = 4,33 (I_sl,1 b₁² b₂² / (t³ b))^(1/4)
+      a ≥ a_c:  σ_cr,sl = 1,05 E √(I_sl,1 t³ b) / (A_sl,1 b₁ b₂)
+      a < a_c:  σ_cr,sl = π² E I_sl,1/(A_sl,1 a²)
+                          + E t³ b a² / (4π² (1−ν²) A_sl,1 b₁² b₂²)
+
+* **ab drei Steifen** → Anhang A.1(2), die verschmierte orthotrope Platte mit
+  γ = ΣI_sl/I_p und δ = ΣA_sl/(b t), I_p = b t³/(12(1−ν²)).
+
+Der Schubbeulwert bekommt den Zuschlag nach A.3(2):
+
+      k_τ,st = 9 (h_w/a)² ⁴√((I_sl/(t³ h_w))³)   ≥ (2,1/t) ³√(I_sl/h_w)
+
+Zwischen **Plattenbeulen und Knickstabverhalten** wird nach 4.5.4 interpoliert.
+Die Knickspannung des Ersatzstabes ist σ_cr,c = π² E I_sl,1/(A_sl,1 a²), bei
+Spannungsgradient auf den gedrückten Rand hochgerechnet; damit
+
+      ξ = σ_cr,p/σ_cr,c − 1   (0 ≤ ξ ≤ 1)
+      ρ_c = (ρ − χ_c) ξ (2 − ξ) + χ_c
+
+mit χ_c aus der Knicklinie a und α_e = α + 0,09/i. Bei gleichmäßigem Druck
+entfällt die Hochrechnung (es gibt keine Nulllinie im Feld).
+
+Die Steifen selbst werden nach **Abschnitt 9** geprüft: Drillknicken einer
+Längssteife nach 9.2.1(8) mit I_T/I_p ≥ 5,3 f_y/E, Mindeststeifigkeit einer
+starren Quersteife nach 9.3.3(3) mit I_st ≥ 1,5 h_w³t³/a² (a/h_w < √2)
+beziehungsweise ≥ 0,75 h_w t³. Fehlen I_T und I_p, sagt das Programm, dass das
+Drillknicken gesondert zu prüfen ist — es rät nicht.
+
+### 5c.4 Lasteinleitung (Abschnitt 6)
+
+Eine örtlich eingeleitete Querkraft kann den Steg zum Beulen bringen:
+
+      k_F   nach Bild 6.1 (Art a, b oder c)
+      F_cr  = 0,9 k_F E t_w³ / h_w
+      m₁    = f_yf b_f/(f_yw t_w),  m₂ = 0,02 (h_w/t_f)² für λ̄_F > 0,5
+      ℓ_y   Art a und b: s_s + 2 t_f (1 + √(m₁+m₂)) ≤ a
+            Art c:       aus ℓ_e = k_F E t_w²/(2 f_yw h_w) ≤ s_s + c
+      λ̄_F  = √(ℓ_y t_w f_yw / F_cr),  χ_F = 0,5/λ̄_F ≤ 1,0
+      F_Rd  = f_yw χ_F ℓ_y t_w / γ_M1
+
+Weil m₂ von λ̄_F abhängt, wird wie in 6.5(1) zuerst mit m₂ = 0 gerechnet und
+danach einmal nachgezogen. Zusammen mit Biegung gilt 7.2: η₂ + 0,8 η₁ ≤ 1,4.
+Die Kraft F_Ed kommt aus der Rechnung — wahlweise als Knotenlast der jeweiligen
+Kombination oder als Auflagerkraft.
+
+### 5c.5 Schalenbeulen (DIN EN 1993-1-6, Abschnitt 8.5)
+
+Für Kreiszylinderschalen wird der spannungsbasierte Nachweis geführt. Die
+kritischen Beulspannungen folgen Anhang D.1 mit dem Längenparameter
+ω = l/√(r t) und den Beiwerten C_x, C_θ, C_τ je Längenbereich:
+
+      σ_x,Rcr = 0,605 E C_x t/r
+      σ_θ,Rcr = 0,92 E C_θ (t/r)/ω
+      τ_Rcr   = 0,75 E C_τ √(1/ω) t/r
+
+Der elastische Imperfektionsbeiwert hängt an der **Herstelltoleranzklasse**
+(A: Q = 40, B: 25, C: 16):
+
+      Δw_k = (1/Q)√(r/t)·t,   α_x = 0,62/(1 + 1,91 (Δw_k/t)^1,44)
+
+für Umfangsdruck und Schub α = 0,75 / 0,65 / 0,50 je Klasse. Mit
+λ̄ = √(f_yk/σ_Rcr) und λ̄_p = √(α/(1−β)) folgt χ nach 8.5.2(3) und
+σ_Rd = χ f_yk/γ_M1. Die Interaktion nach 8.5.3(3) lautet
+
+      (σ_x/σ_x,Rd)^k_x − k_i (σ_x σ_θ)/(σ_x,Rd σ_θ,Rd)
+        + (σ_θ/σ_θ,Rd)^k_θ + (τ/τ_Rd)^k_τ ≤ 1
+
+mit k_x = 1,25 + 0,75 χ_x, k_θ = 1,25 + 0,75 χ_θ, k_τ = 1,75 + 0,25 χ_τ und
+k_i = (χ_x χ_θ)². Zug beult nicht und geht nicht ein. Ist der Zylinder lang
+(ω > 0,5 r/t), weist das Programm darauf hin, dass zusätzlich das Knicken als
+Stab nach EN 1993-1-1 zu prüfen ist.
+
+**Grenzen**: nur Kreiszylinder mit konstanter Wanddicke — Kegel, Kugeln und
+ringversteifte Schalen fehlen, ebenso die numerischen Verfahren (LA, GNA,
+GMNIA) nach 8.6 und 8.7. Beim ebenen Feld sind die wirksamen Breiten nach
+Abschnitt 4 nur in der Querschnittsklassifizierung (Klasse 4) enthalten, nicht
+als eigener Feldnachweis. Liegen die Elemente eines ebenen Feldes nicht in
+einer Ebene, wird das gesagt.
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
@@ -504,10 +585,11 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 * Kleine Verformungen, linear-elastisches Material (keine Plastizität,
   kein Kriechen); Theorie II. Ordnung nur als lineares Verzweigungsproblem.
 * Kontakt als Penalty-Näherung ohne Lastgeschichte (monotone Lasten).
-* Schalen: ebene Elemente. Das Schubbeulen der Stegbleche und die Blechfelder
-  nach EN 1993-1-5 Abschnitt 10 werden nachgewiesen (Kapitel 5c); Längs- und
-  Quersteifen im Feld, die Lasteinleitung nach Abschnitt 6 und das
-  Schalenbeulen nach EN 1993-1-6 sind nicht enthalten.
+* Schalen: ebene Elemente. Nachgewiesen werden das Schubbeulen der Stegbleche
+  (Abschnitt 5), ebene Blechfelder mit und ohne Steifen (Abschnitt 10 mit
+  Anhang A und 4.5), die Steifen selbst (Abschnitt 9), die Lasteinleitung
+  (Abschnitt 6) und Kreiszylinderschalen nach EN 1993-1-6, 8.5 — siehe
+  Kapitel 5c und die dort genannten Grenzen.
 * Anschlüsse: nachgewiesen werden die im Modell angelegten Anschlüsse der drei
   Vorlagen (Kopfplatte, Laschenstoß, Knotenblech) aus den Stabendschnitt-
   größen. Die Nachgiebigkeit geht über die Anfangssteifigkeit S_j,ini als
@@ -535,7 +617,7 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 | `tests/test_supports.py` | Lager mit Ausfall bei Zug/Druck, Schlupf, Reibung, Grenzkraft; Linien- und Flächenlager; Federgelenke gegen Handrechnungen |
 | `tests/test_sections.py` | Profildatenbank nach Land gegen Katalogwerte, Hauptachsen der Winkel, zusammengesetzte Querschnitte |
 | `tests/test_gzg.py` | Verformungsnachweise gegen 5qL⁴/384EI, PL³/48EI und den Kragarm; Grenzwertbildung L/x, absolut, Überhöhung, Punktpaar |
-| `tests/test_beulen.py` | Beulwerte k_σ und k_τ gegen Tab. 4.1/4.2 und A.3, σ_E = 190000 (t/b)², ρ und χ_w gegen 4.4(2) und Tab. 5.1, Schubbeulen und die Methode der reduzierten Spannungen gegen Handrechnungen |
+| `tests/test_beulen.py` | Beulwerte k_σ und k_τ gegen Tab. 4.1/4.2 und A.3, σ_E = 190000 (t/b)², ρ und χ_w gegen 4.4(2) und Tab. 5.1, Schubbeulen, Methode der reduzierten Spannungen, Steifen nach A.1/A.2.2/A.3(2) und Abschnitt 9, Lasteinleitung nach Abschnitt 6, Schalenbeulen nach EN 1993-1-6, dazu der Patch-Test des Viereckelements |
 | `tests/test_joints.py` | Schrauben, Nähte, T-Stummel gegen EN-Zahlenwerte; Steifigkeitsbeiwerte Tab. 6.11, Klassifizierung 5.2.2.5, Drehfeder gegen die geschlossene Kragarmlösung |
 | `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |
 | `tests/test_solver_ext.py` | Gelenke, Trapezlasten, Temperatur, Zwischenstellen, Superposition, Umhüllende, Kombinationsgenerator, einseitige Lager, Spaltelement, Flächenkontakt mit Reibung, parallele Assemblierung, Rechnerfarm |

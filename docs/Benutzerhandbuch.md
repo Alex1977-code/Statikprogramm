@@ -55,7 +55,7 @@ Dreizehn Register nach Arbeitsschritt:
 | **Lasten** | Lastfälle, Kombinationen, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht |
 | **Netz** | Netz erzeugen und löschen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
-| **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5), Konfiguration |
+| **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
 | **Bericht** | Statischer Bericht |
 | **Ansicht** | Blickrichtungen, Kanten, Nummern, Lasten, Stäbe farbig |
@@ -80,7 +80,7 @@ Die Arbeitsfläche in drei Spalten:
 
 Unten die **Tabellen**: Protokoll, Werkstoffe, Querschnitte, Dicken,
 Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt,
-Anschlüsse, Verformungen, Beulfelder.
+Anschlüsse, Verformungen, Beulfelder, Lasteinleitung.
 Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
 in einem Panel rechts. Wie die Tabellen zu bedienen sind, steht im nächsten
 Abschnitt.
@@ -436,10 +436,30 @@ Ausnutzung; Kapitel 6 des Berichts führt jeden Zwischenwert auf — Beulwerte,
 kritische Spannungen, α-Werte und beide Nachweisformen (Gl. 10.5 und die
 Vereinfachung mit ρ_min).
 
-Was **nicht** enthalten ist: Längs- und Quersteifen im Feld, die
-Lasteinleitung nach Abschnitt 6 und das Schalenbeulen gekrümmter Bleche nach
-EN 1993-1-6. Liegen die Elemente eines Feldes nicht in einer Ebene, sagt das
-Programm es.
+**Steifen** gehören zum Feld: im Dialog lassen sich Längs- und Quersteifen
+zeilenweise eintragen (Lage, A_sl, I_sl, für das Drillknicken zusätzlich I_T
+und I_p). Eine Längssteife hebt σ_cr,p (Anhang A.2.2 bei einer oder zwei
+Steifen, A.1 ab drei) und den Schubbeulwert (k_τ,st nach A.3(2)); zwischen
+Platten- und Knickstabverhalten wird nach 4.5.4 interpoliert. Die Steifen
+selbst werden nach Abschnitt 9 geprüft — Drillknicken der Längssteife,
+Mindeststeifigkeit der starren Quersteife. Fehlen I_T und I_p, sagt das
+Programm, dass das Drillknicken gesondert zu prüfen ist.
+
+**Zylinderschalen**: im selben Dialog auf „Zylinderschale“ umstellen. Radius
+und Beullänge kommen aus der Geometrie oder werden von Hand gesetzt; dazu
+gehören die **Herstelltoleranzklasse** (A, B oder C) und die Randbedingung.
+Nachgewiesen wird nach DIN EN 1993-1-6, Abschnitt 8.5 — Meridian, Umfang und
+Schub je für sich und in der Interaktion.
+
+**Lasteinleitung**: Register *Nachweise* → „Lasteinleitung“. Anzugeben sind
+der Knoten, der Stab (für die Stegabmessungen), die Art nach Bild 6.1 (a, b
+oder c), die Lasteinleitungslänge s_s und der Abstand der Quersteifen. Die
+Kraft F_Ed kommt aus der Rechnung: wahlweise als Knotenlast der jeweiligen
+Kombination oder als **Auflagerkraft** — das ist der übliche Fall am Endauflager.
+
+Was **nicht** enthalten ist: Kegel- und Kugelschalen, ringversteifte Schalen
+und die numerischen Verfahren (GMNIA) nach EN 1993-1-6, 8.7. Liegen die
+Elemente eines ebenen Feldes nicht in einer Ebene, sagt das Programm es.
 
 ### Verformungsnachweise (GZG)
 

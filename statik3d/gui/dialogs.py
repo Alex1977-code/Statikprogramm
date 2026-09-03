@@ -830,6 +830,228 @@ class JointDialog(QtWidgets.QDialog):
         return self.cb_fe.currentData()
 
 
+class BeulfeldDialog(QtWidgets.QDialog):
+    """Ein Beulfeld festlegen: ebenes Blechfeld oder Zylinderschale, mit Steifen."""
+
+    def __init__(self, parent, model, feld=None, elemente=None):
+        super().__init__(parent)
+        from ..ec3.schalenbeulen import QUALITAET, C_XB
+        self.setWindowTitle("Beulfeld" + (f" {feld.name}" if feld else ""))
+        self.model = model
+        self._elemente = list(feld.elemente) if feld else list(elemente or [])
+        f = feld
+        lay = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+
+        self.ed_name = QtWidgets.QLineEdit(f.name if f else "")
+        form.addRow("Name", self.ed_name)
+        form.addRow("Elemente", QtWidgets.QLabel(
+            f"{len(self._elemente)} Flächenelemente aus der Auswahl"))
+        self.cb_art = QtWidgets.QComboBox()
+        self.cb_art.addItem("ebenes Blechfeld (EN 1993-1-5, Abschnitt 10)", "eben")
+        self.cb_art.addItem("Zylinderschale (EN 1993-1-6, Abschnitt 8.5)", "zylinder")
+        if f:
+            self.cb_art.setCurrentIndex(max(0, self.cb_art.findData(f.art)))
+        form.addRow("Art", self.cb_art)
+
+        self.cb_rand = QtWidgets.QComboBox()
+        self.cb_rand.addItem("beidseitig gestützt (z. B. Steg zwischen den Flanschen)",
+                             "beidseitig")
+        self.cb_rand.addItem("einseitig gestützt (ein Rand frei)", "einseitig")
+        if f:
+            self.cb_rand.setCurrentIndex(max(0, self.cb_rand.findData(f.rand)))
+        form.addRow("Lagerung der Ränder", self.cb_rand)
+        self.cb_endsteife = QtWidgets.QCheckBox("starre Endquersteife (Tab. 5.1)")
+        self.cb_endsteife.setChecked(bool(f.starre_endsteife) if f else False)
+        form.addRow("", self.cb_endsteife)
+
+        self.ed_r = NumEdit((f.r * 1e3) if f else 0.0, 90)
+        self.ed_l = NumEdit((f.l * 1e3) if f else 0.0, 90)
+        self.lbl_r = QtWidgets.QLabel("Radius r [mm] (0 = aus der Geometrie)")
+        self.lbl_l = QtWidgets.QLabel("Beullänge l [mm] (0 = aus der Geometrie)")
+        form.addRow(self.lbl_r, self.ed_r)
+        form.addRow(self.lbl_l, self.ed_l)
+        self.cb_qual = QtWidgets.QComboBox()
+        for k, (q, text) in QUALITAET.items():
+            self.cb_qual.addItem(f"{text} (Q = {q:g})", k)
+        if f:
+            self.cb_qual.setCurrentIndex(max(0, self.cb_qual.findData(f.qualitaet)))
+        else:
+            self.cb_qual.setCurrentIndex(1)
+        self.lbl_qual = QtWidgets.QLabel("Herstelltoleranzklasse")
+        form.addRow(self.lbl_qual, self.cb_qual)
+        self.cb_bc = QtWidgets.QComboBox()
+        for k in C_XB:
+            self.cb_bc.addItem(k, k)
+        if f:
+            self.cb_bc.setCurrentIndex(max(0, self.cb_bc.findData(f.randbedingung)))
+        self.lbl_bc = QtWidgets.QLabel("Randbedingung der Schale")
+        form.addRow(self.lbl_bc, self.cb_bc)
+
+        self.ed_text = QtWidgets.QLineEdit(f.beschreibung if f else "")
+        form.addRow("Beschreibung", self.ed_text)
+        lay.addLayout(form)
+
+        g = QtWidgets.QGroupBox("Steifen (leer = unversteiftes Feld)")
+        gl = QtWidgets.QVBoxLayout(g)
+        self.tbl = QtWidgets.QTableWidget(0, 7)
+        self.tbl.setHorizontalHeaderLabels(
+            ["Art", "Lage [mm]", "A_sl [cm²]", "I_sl [cm⁴]", "I_T [cm⁴]",
+             "I_p [cm⁴]", "Name"])
+        self.tbl.horizontalHeader().setStretchLastSection(True)
+        self.tbl.setMinimumHeight(130)
+        gl.addWidget(self.tbl)
+        b1 = QtWidgets.QPushButton("Längssteife")
+        b1.clicked.connect(lambda: self._zeile("laengs"))
+        b2 = QtWidgets.QPushButton("Quersteife")
+        b2.clicked.connect(lambda: self._zeile("quer"))
+        b3 = QtWidgets.QPushButton("Zeile entfernen")
+        b3.clicked.connect(self._weg)
+        gl.addWidget(row(b1, b2, b3))
+        gl.addWidget(QtWidgets.QLabel(
+            "Lage: Längssteife ab gedrücktem Rand, Quersteife = Abstand zur nächsten.\n"
+            "A_sl = Steife allein, I_sl = Steife mit mitwirkendem Blech.\n"
+            "I_T und I_p nur für das Drillknicken nach 9.2.1 nötig."))
+        lay.addWidget(g)
+        for st in (f.steifen if f else []):
+            self._zeile(getattr(st, "art", "laengs"), st)
+
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                        | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.cb_art.currentIndexChanged.connect(self._umschalten)
+        self._umschalten()
+
+    def _umschalten(self):
+        zyl = self.cb_art.currentData() == "zylinder"
+        for w in (self.ed_r, self.ed_l, self.cb_qual, self.cb_bc, self.lbl_r,
+                  self.lbl_l, self.lbl_qual, self.lbl_bc):
+            w.setVisible(zyl)
+        for w in (self.cb_rand, self.cb_endsteife):
+            w.setEnabled(not zyl)
+
+    def _zeile(self, art: str, st=None):
+        r = self.tbl.rowCount()
+        self.tbl.insertRow(r)
+        cb = QtWidgets.QComboBox()
+        cb.addItems(["laengs", "quer"])
+        cb.setCurrentText(art)
+        self.tbl.setCellWidget(r, 0, cb)
+        werte = [(st.lage * 1e3 if st else 0.0), (st.A_sl * 1e4 if st else 0.0),
+                 (st.I_sl * 1e8 if st else 0.0), (st.I_T * 1e8 if st else 0.0),
+                 (st.I_p * 1e8 if st else 0.0)]
+        for k, v in enumerate(werte, start=1):
+            self.tbl.setItem(r, k, QtWidgets.QTableWidgetItem(f"{v:g}"))
+        self.tbl.setItem(r, 6, QtWidgets.QTableWidgetItem(
+            (st.name if st else "") or f"S{r + 1}"))
+
+    def _weg(self):
+        r = self.tbl.currentRow()
+        if r >= 0:
+            self.tbl.removeRow(r)
+
+    def steifen(self) -> list:
+        from ..model import Beulsteife
+        out = []
+        for r in range(self.tbl.rowCount()):
+            def z(k):
+                it = self.tbl.item(r, k)
+                try:
+                    return float((it.text() if it else "0").replace(",", "."))
+                except ValueError:
+                    return 0.0
+            cb = self.tbl.cellWidget(r, 0)
+            nm = self.tbl.item(r, 6)
+            out.append(Beulsteife(cb.currentText() if cb else "laengs",
+                                  lage=z(1) * 1e-3, A_sl=z(2) * 1e-4,
+                                  I_sl=z(3) * 1e-8, I_T=z(4) * 1e-8,
+                                  I_p=z(5) * 1e-8,
+                                  name=(nm.text() if nm else "")))
+        return out
+
+    def result(self) -> tuple:
+        """(Name, Angaben) fuer model.add_beulfeld."""
+        return self.ed_name.text().strip(), {
+            "art": self.cb_art.currentData(),
+            "rand": self.cb_rand.currentData(),
+            "starre_endsteife": self.cb_endsteife.isChecked(),
+            "steifen": self.steifen(),
+            "r": self.ed_r.value() * 1e-3, "l": self.ed_l.value() * 1e-3,
+            "qualitaet": self.cb_qual.currentData(),
+            "randbedingung": self.cb_bc.currentData(),
+            "beschreibung": self.ed_text.text().strip()}
+
+
+class LasteinleitungDialog(QtWidgets.QDialog):
+    """Eine Lasteinleitungsstelle festlegen (EN 1993-1-5, Abschnitt 6)."""
+
+    def __init__(self, parent, model, stelle=None, knoten=None):
+        super().__init__(parent)
+        from ..ec3.beulen import EINLEITUNGSARTEN
+        self.setWindowTitle("Lasteinleitung" + (f" {stelle.name}" if stelle else ""))
+        self.model = model
+        st = stelle
+        lay = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+        self.ed_name = QtWidgets.QLineEdit(st.name if st else "")
+        form.addRow("Name", self.ed_name)
+        self.sp_knoten = QtWidgets.QSpinBox()
+        self.sp_knoten.setRange(0, max(model.nn - 1, 0))
+        self.sp_knoten.setValue(int(st.knoten) if st else int(knoten or 0))
+        form.addRow("Knoten", self.sp_knoten)
+        self.cb_stab = QtWidgets.QComboBox()
+        self.cb_stab.addItem("(Stab am Knoten suchen)", "")
+        for k in model.members:
+            self.cb_stab.addItem(k, k)
+        if st and st.stab:
+            self.cb_stab.setCurrentText(st.stab)
+        form.addRow("Stab (Querschnitt)", self.cb_stab)
+        self.cb_quelle = QtWidgets.QComboBox()
+        self.cb_quelle.addItem("Knotenlast der Kombination", "last")
+        self.cb_quelle.addItem("Auflagerkraft", "auflager")
+        if st:
+            self.cb_quelle.setCurrentIndex(max(0, self.cb_quelle.findData(st.quelle)))
+        form.addRow("Kraft aus", self.cb_quelle)
+        self.cb_typ = QtWidgets.QComboBox()
+        for k, text in EINLEITUNGSARTEN.items():
+            self.cb_typ.addItem(f"{k} – {text}", k)
+        if st:
+            self.cb_typ.setCurrentIndex(max(0, self.cb_typ.findData(st.typ)))
+        form.addRow("Art (Bild 6.1)", self.cb_typ)
+        self.ed_ss = NumEdit((st.s_s * 1e3) if st else 100.0, 90)
+        form.addRow("Lasteinleitungslänge s_s [mm]", self.ed_ss)
+        self.ed_a = NumEdit((st.a * 1e3) if st else 0.0, 90)
+        form.addRow("Abstand der Quersteifen a [mm] (0 = keine)", self.ed_a)
+        self.ed_c = NumEdit((st.c * 1e3) if st else 0.0, 90)
+        form.addRow("Abstand vom Trägerende c [mm] (nur Art c)", self.ed_c)
+        self.cb_richtung = QtWidgets.QComboBox()
+        for i, n in enumerate(("x", "y", "z")):
+            self.cb_richtung.addItem(f"Kraft in {n}", i)
+        self.cb_richtung.setCurrentIndex(int(st.richtung) if st else 2)
+        form.addRow("Richtung", self.cb_richtung)
+        self.ed_text = QtWidgets.QLineEdit(st.beschreibung if st else "")
+        form.addRow("Beschreibung", self.ed_text)
+        lay.addLayout(form)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                        | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def result(self) -> tuple:
+        return self.ed_name.text().strip(), {
+            "knoten": int(self.sp_knoten.value()),
+            "stab": self.cb_stab.currentData(),
+            "quelle": self.cb_quelle.currentData(),
+            "typ": self.cb_typ.currentData(),
+            "s_s": self.ed_ss.value() * 1e-3, "a": self.ed_a.value() * 1e-3,
+            "c": self.ed_c.value() * 1e-3,
+            "richtung": int(self.cb_richtung.currentData()),
+            "beschreibung": self.ed_text.text().strip()}
+
+
 class VerformungsgrenzeDialog(QtWidgets.QDialog):
     """Einen Verformungsnachweis (GZG) festlegen.
 

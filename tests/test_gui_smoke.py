@@ -854,6 +854,43 @@ def main():
         app.processEvents()
         check("Klick in der Tabelle wählt das Feld", len(w.selection) > 3,
               f"{len(w.selection)} Knoten")
+        # Steifen und Zylinder über den Dialog
+        from statik3d.model import Beulsteife
+        d = dg.BeulfeldDialog(w, w.model, w.model.beulfelder["Feld 1"])
+        d._zeile("laengs", Beulsteife("laengs", lage=0.6, A_sl=0.001, I_sl=1.2e-6,
+                                      I_T=3.3e-9, I_p=8e-6, name="L1"))
+        name, kw = d.result()
+        check("Dialog liest das Feld zurück",
+              name == "Feld 1" and kw["art"] == "eben" and len(kw["steifen"]) == 1,
+              f"{name}, {len(kw['steifen'])} Steifen")
+        st = kw["steifen"][0]
+        check("die Steife kommt in SI zurück",
+              abs(st.lage - 0.6) < 1e-9 and abs(st.I_sl - 1.2e-6) < 1e-15,
+              f"lage {st.lage}, I_sl {st.I_sl}")
+        d.cb_art.setCurrentIndex(1)
+        d.ed_r.set(500.0)
+        _n, kw2 = d.result()
+        check("Zylindermodus liefert Radius in Metern",
+              kw2["art"] == "zylinder" and abs(kw2["r"] - 0.5) < 1e-9, str(kw2["r"]))
+
+        # Lasteinleitung
+        r_ = w.model.members["Riegel"] if "Riegel" in w.model.members else None
+        knoten = 0
+        w.model.add_lasteinleitung("LE1", knoten, typ="a", s_s=0.2)
+        w.refresh_all()
+        app.processEvents()
+        check("Tabelle Lasteinleitung gefüllt", w.tbl_le.zeilenzahl() == 1)
+        check("Register „Lasteinleitung“ vorhanden", w.tabelle_zeigen("Lasteinleitung"))
+        dl = dg.LasteinleitungDialog(w, w.model, w.model.lasteinleitungen["LE1"])
+        n2, kw3 = dl.result()
+        check("Dialog liest die Stelle zurück",
+              n2 == "LE1" and abs(kw3["s_s"] - 0.2) < 1e-9, f"{n2}, s_s = {kw3['s_s']}")
+        w.tbl_le.view.selectRow(0)
+        w.delete_lasteinleitung()
+        check("Lasteinleitung lässt sich löschen", not w.model.lasteinleitungen)
+        w.undo()
+        check("und zurücknehmen", len(w.model.lasteinleitungen) == 1)
+
         w.tbl_beul.view.selectRow(0)
         w.delete_beulfeld()
         app.processEvents()

@@ -890,27 +890,104 @@ class Joint:
 
 
 @dataclass
+class Beulsteife:
+    """Eine Steife eines Beulfeldes (DIN EN 1993-1-5, Anhang A und Abschnitt 9).
+
+    art:    "laengs" oder "quer"
+    lage:   Abstand vom gedrueckten Rand [m] (laengs) beziehungsweise Abstand
+            zur naechsten Quersteife [m] (quer)
+    A_sl:   Flaeche der Steife allein [m^2]
+    I_sl:   Traegheitsmoment der Steife mit mitwirkendem Blech [m^4]
+    A_sl_1: Flaeche mit mitwirkendem Blech [m^2] (0 = je 15 eps t, Bild 4.4)
+    I_T, I_p: Torsions- und polares Traegheitsmoment fuer 9.2.1
+    """
+    art: str = "laengs"
+    lage: float = 0.0
+    A_sl: float = 0.0
+    I_sl: float = 0.0
+    A_sl_1: float = 0.0
+    I_T: float = 0.0
+    I_p: float = 0.0
+    name: str = ""
+
+
+@dataclass
 class Beulfeld:
-    """Ein Blechfeld fuer den Beulnachweis nach DIN EN 1993-1-5, Abschnitt 10.
+    """Ein Blechfeld fuer den Beulnachweis.
+
+    art: "eben"     ebenes Blechfeld nach DIN EN 1993-1-5, Abschnitt 10
+         "zylinder" Kreiszylinderschale nach DIN EN 1993-1-6, Abschnitt 8.5
 
     elemente: die Schalenelemente, die das Feld bilden. Abmessungen und Dicke
     werden daraus gewonnen; a, b und t ueberschreiben sie, wenn gesetzt.
 
     rand: "beidseitig" (Feld an beiden Laengsraendern gestuetzt, z. B. ein
     Stegblech zwischen den Flanschen) oder "einseitig" (ein Rand frei).
+
+    Fuer den Zylinder: r (Radius) und l (Beullaenge); 0 = aus der Geometrie.
+    qualitaet ist die Herstelltoleranzklasse A, B oder C (Tab. 8.4),
+    randbedingung eine der Kennungen "BC1-BC1", "BC1-BC2", "BC2-BC2".
     """
     name: str
     elemente: list = field(default_factory=list)
+    art: str = "eben"
     a: float = 0.0                 # Laenge des Feldes [m] (0 = aus der Geometrie)
     b: float = 0.0                 # Breite quer zur Hauptdruckspannung [m]
     t: float = 0.0                 # Blechdicke [m] (0 = aus der Schalendicke)
     rand: str = "beidseitig"
     starre_endsteife: bool = False
+    steifen: list = field(default_factory=list)   # Beulsteife
+    # -- Zylinder (EN 1993-1-6) -----------------------------------------
+    r: float = 0.0                 # Radius [m]
+    l: float = 0.0                 # Beullaenge [m]
+    qualitaet: str = "B"           # Herstelltoleranzklasse A | B | C
+    randbedingung: str = "BC1-BC1"
     beschreibung: str = ""
 
     def bezug(self) -> str:
         n = len(self.elemente)
-        return f"{n} Element{'e' if n != 1 else ''}"
+        s = f"{n} Element{'e' if n != 1 else ''}"
+        if self.steifen:
+            nl = sum(1 for x in self.steifen if _steifenart(x) == "laengs")
+            nq = len(self.steifen) - nl
+            teile = []
+            if nl:
+                teile.append(f"{nl} Längssteife{'n' if nl != 1 else ''}")
+            if nq:
+                teile.append(f"{nq} Quersteife{'n' if nq != 1 else ''}")
+            s += ", " + " und ".join(teile)
+        return s
+
+
+def _steifenart(x) -> str:
+    return x.get("art", "laengs") if isinstance(x, dict) else getattr(x, "art", "laengs")
+
+
+@dataclass
+class Lasteinleitung:
+    """Nachweis der Lasteinleitung nach DIN EN 1993-1-5, Abschnitt 6.
+
+    knoten: der Knoten, an dem die Kraft eingeleitet wird.
+    quelle: "last" (Knotenlast der Kombination) oder "auflager" (Auflagerkraft)
+    typ:    "a", "b" oder "c" nach Bild 6.1
+    s_s:    Lasteinleitungslaenge [m]
+    a:      Abstand der Quersteifen [m] (0 = keine)
+    c:      Abstand vom Traegerende [m] (nur Typ c)
+    stab:   Name des Stabes, dessen Querschnitt die Stegabmessungen liefert
+    """
+    name: str
+    knoten: int = 0
+    stab: str = ""
+    quelle: str = "last"
+    typ: str = "a"
+    s_s: float = 0.0
+    a: float = 0.0
+    c: float = 0.0
+    richtung: int = 2              # Freiheitsgrad der Kraft (2 = z)
+    beschreibung: str = ""
+
+    def bezug(self) -> str:
+        return f"Knoten {self.knoten}" + (f", Stab {self.stab}" if self.stab else "")
 
 
 #: Verformungsgroessen einer Grenze
@@ -1067,6 +1144,7 @@ class Model:
         self.joints: dict[str, Joint] = {}
         self.verformungsgrenzen: dict[str, Verformungsgrenze] = {}
         self.beulfelder: dict[str, Beulfeld] = {}
+        self.lasteinleitungen: dict[str, Lasteinleitung] = {}
         self.design = DesignSettings()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
@@ -1216,6 +1294,19 @@ class Model:
         b = Beulfeld(name, els, **kw)
         self.beulfelder[name] = b
         return b
+
+    def add_lasteinleitung(self, name: str, knoten: int, **kw) -> Lasteinleitung:
+        """Einen Lasteinleitungsnachweis (EN 1993-1-5, Abschnitt 6) aufnehmen."""
+        n = int(knoten)
+        if not 0 <= n < self.nn:
+            raise IndexError(f"Knoten {n} gibt es nicht")
+        le = Lasteinleitung(name, n, **kw)
+        if le.typ not in ("a", "b", "c"):
+            raise ValueError("Lasteinleitungstyp muss a, b oder c sein (Bild 6.1)")
+        if le.stab and le.stab not in self.members:
+            raise KeyError(f"Stab „{le.stab}“ gibt es nicht")
+        self.lasteinleitungen[name] = le
+        return le
 
     def add_joint(self, name: str, typ: str, elem: int, end: int = 1, **kw) -> Joint:
         """Anschluss an einem Stabende in das Modell aufnehmen."""
@@ -1581,6 +1672,7 @@ class Model:
             "joints": [asdict(j) for j in self.joints.values()],
             "verformungsgrenzen": [asdict(v) for v in self.verformungsgrenzen.values()],
             "beulfelder": [asdict(x) for x in self.beulfelder.values()],
+            "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
             "design": asdict(self.design),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
@@ -1626,6 +1718,11 @@ class Model:
         m.verformungsgrenzen = {v["name"]: _dc(Verformungsgrenze, v)
                                 for v in d.get("verformungsgrenzen", [])}
         m.beulfelder = {x["name"]: _dc(Beulfeld, x) for x in d.get("beulfelder", [])}
+        for bf in m.beulfelder.values():
+            bf.steifen = [_dc(Beulsteife, x) if isinstance(x, dict) else x
+                          for x in (bf.steifen or [])]
+        m.lasteinleitungen = {x["name"]: _dc(Lasteinleitung, x)
+                              for x in d.get("lasteinleitungen", [])}
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]

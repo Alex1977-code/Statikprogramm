@@ -426,5 +426,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
                              farbe=FARBEN["akzent"])
             for name, x in list(felder.items())[:60]:
                 self._zweig(bl, name, x.bezug(), "beulfeld")
+        stellen = getattr(model, "lasteinleitungen", {}) or {}
+        if stellen:
+            li = self._zweig(wurzel, "Lasteinleitung", len(stellen), "lasteinleitung",
+                             fett=True, farbe=FARBEN["akzent"])
+            for name, x in list(stellen.items())[:60]:
+                self._zweig(li, name, x.bezug(), "lasteinleitung")
         wurzel.setExpanded(offen.get(wurzel.text(0), True))
         el.setExpanded(offen.get("Elemente", True))

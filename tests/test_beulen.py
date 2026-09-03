@@ -256,6 +256,281 @@ def test_reduzierte_spannungen_gegen_handrechnung():
           any("beult nicht" in h for h in r3["hinweise"]), str(r3["hinweise"])[:60])
 
 
+# --------------------------------------------------------------------------
+def test_shell4_spannungen():
+    """Die beiden Dreiecke eines Vierecks haben verschiedene lokale Systeme.
+
+    Frueher wurden ihre Schnittgroessen ohne Drehung gemittelt - das Ergebnis
+    war von der Knotenreihenfolge abhaengig und im Betrag falsch.
+    """
+    from statik3d.elements import shell as sh
+
+    # Der Drehsatz selbst
+    v = np.array([100e6, 0.0, 0.0])
+    close("Tensor um 90° gedreht", float(sh.dreh_tensor(v, math.pi / 2)[1]), 100e6,
+          1e-9, " Pa")
+    close("Tensor um 45°: reiner Schub", float(sh.dreh_tensor(v, math.pi / 4)[2]),
+          -50e6, 1e-9, " Pa")
+    check("zweimal drehen hebt sich auf",
+          np.allclose(sh.dreh_tensor(sh.dreh_tensor(v, 0.7), -0.7), v))
+
+    def scheibe(nx, ny, versatz=0):
+        """Scheibe unter einachsigem Zug, statisch bestimmt gelagert."""
+        a, b, t, N = 2.0, 1.0, 0.010, 100e3
+        m = Model("S")
+        m.add_material(Material.steel("S355"))
+        m.add_shell_prop(ShellProp("t", t))
+        ids = {}
+        for j in range(ny + 1):
+            for i in range(nx + 1):
+                ids[(i, j)] = m.add_node(a * i / nx, b * j / ny, 0.0)
+        els = []
+        for j in range(ny):
+            for i in range(nx):
+                ecken = [ids[(i, j)], ids[(i + 1, j)], ids[(i + 1, j + 1)],
+                         ids[(i, j + 1)]]
+                ecken = ecken[versatz:] + ecken[:versatz]      # andere Startecke
+                els.append(m.add_element("shell4", ecken, "S355", "t"))
+        for j in range(ny + 1):
+            m.fix(ids[(0, j)], [0, 2, 3, 4, 5])
+        m.fix(ids[(0, 0)], [1])
+        for j in range(ny + 1):
+            m.load_node(ids[(nx, j)], Fx=N / ny * (0.5 if j in (0, ny) else 1.0))
+        an = solver.solve_all(m, combinations=False, envelopes=False)
+        res = an.cases[m.active_case]
+        i = els[len(els) // 2]
+        n = res.shell_stress[i]["n"] / t
+        return 0.5 * (n[0] + n[1]) + math.hypot(0.5 * (n[0] - n[1]), n[2])
+
+    soll = 100e3 / (1.0 * 0.010)
+    for nx, ny in ((4, 2), (8, 4), (16, 8)):
+        close(f"Scheibe {nx}×{ny}: konstanter Spannungszustand exakt",
+              scheibe(nx, ny), soll, 1e-9, " Pa")
+    werte = [scheibe(8, 4, v) for v in range(4)]
+    check("das Ergebnis hängt nicht von der Startecke ab",
+          max(werte) - min(werte) < 1e-3,
+          f"{[round(x / 1e6, 4) for x in werte]} MPa")
+
+
+def test_steifen():
+    from statik3d.ec3.beulen import Steife
+
+    kw = dict(a=3.0, b=1.5, t=0.008, fy=355e6, sx=250e6, tau=50e6, gamma_M1=1.1)
+    ohne = B.beulfeld(**kw)
+    st = Steife("laengs", lage=0.75, A_sl=0.001, I_sl=1.2e-6, I_T=3.3e-9,
+                I_p=8.0e-6, name="L1")
+    mit = B.beulfeld(**kw, steifen=[st])
+    check("die Längssteife erhöht die Beulspannung",
+          mit["sigma_cr_x"] > 3 * ohne["sigma_cr_x"],
+          f"{mit['sigma_cr_x'] / 1e6:.1f} statt {ohne['sigma_cr_x'] / 1e6:.1f} MPa")
+    check("und senkt die Ausnutzung",
+          mit["eta_interaktion"] < ohne["eta_interaktion"],
+          f"{mit['eta_interaktion']:.3f} < {ohne['eta_interaktion']:.3f}")
+    check("eine Steife führt über A.2.2, nicht A.1",
+          "A.2.2" in mit["k_sigma_p"]["verfahren"], mit["k_sigma_p"]["verfahren"])
+    check("σ_cr,p ≥ σ_cr,c (sonst wäre das Modell widersprüchlich)",
+          mit["sigma_cr_x"] >= mit["sigma_cr_c"],
+          f"{mit['sigma_cr_x'] / 1e6:.1f} ≥ {mit['sigma_cr_c'] / 1e6:.1f} MPa")
+    check("ξ liegt zwischen 0 und 1", 0.0 <= mit["xi"] <= 1.0, f"ξ = {mit['xi']:.3f}")
+    check("ρ_c liegt zwischen χ_c und ρ",
+          mit["chi_c"] <= mit["rho_x"] <= mit["rho_platte"] + 1e-12,
+          f"{mit['chi_c']:.3f} ≤ {mit['rho_x']:.3f} ≤ {mit['rho_platte']:.3f}")
+
+    # A.2.2 gegen die Formel
+    d = B.sigma_cr_sl_A22(3.0, 1.5, 0.008, st, 355e6)
+    A1 = st.flaeche_mit_blech(0.008, 355e6)
+    soll_ac = 4.33 * (st.I_sl * 0.75 ** 2 * 0.75 ** 2 / (0.008 ** 3 * 1.5)) ** 0.25
+    close("Grenzlänge a_c nach A.2.2", d["a_c"], soll_ac, 1e-12, " m")
+    euler = math.pi ** 2 * B.E_STAHL * st.I_sl / (A1 * 3.0 ** 2)
+    bett = (B.E_STAHL * 0.008 ** 3 * 1.5 * 9.0
+            / (4 * math.pi ** 2 * (1 - 0.3 ** 2) * A1 * 0.75 ** 2 * 0.75 ** 2))
+    close("σ_cr,sl im Zweig a < a_c", d["sigma_cr_sl"], euler + bett, 1e-9, " Pa")
+    lang = B.sigma_cr_sl_A22(6.0, 1.5, 0.008, st, 355e6)
+    close("σ_cr,sl im Zweig a ≥ a_c", lang["sigma_cr_sl"],
+          1.05 * B.E_STAHL * math.sqrt(st.I_sl * 0.008 ** 3 * 1.5) / (A1 * 0.75 * 0.75),
+          1e-9, " Pa")
+    check("der lange Zweig greift ab a_c", lang["zweig"] == "a ≥ a_c")
+
+    # A.1 ab drei Steifen
+    drei = [Steife("laengs", lage=0.375 * k, A_sl=0.001, I_sl=1.2e-6)
+            for k in (1, 2, 3)]
+    d3 = B.sigma_cr_p(3.0, 1.5, 0.008, drei, 1.0, 355e6)
+    check("ab drei Steifen gilt A.1", "A.1" in d3["verfahren"], d3["verfahren"])
+    I_p = 1.5 * 0.008 ** 3 / (12 * (1 - 0.3 ** 2))
+    close("γ = ΣI_sl / I_p", d3["gamma"], 3 * 1.2e-6 / I_p, 1e-12)
+    close("δ = ΣA_sl / (b t)", d3["delta"], 3 * 0.001 / (1.5 * 0.008), 1e-12)
+
+    # k_tau,st nach A.3(2)
+    kst = B.k_tau_st(3.0, 1.5, 0.008, [st])
+    w1 = 9.0 * (1.5 / 3.0) ** 2 * ((st.I_sl / (0.008 ** 3 * 1.5)) ** 3) ** 0.25
+    w2 = (2.1 / 0.008) * (st.I_sl / 1.5) ** (1.0 / 3.0)
+    close("k_τ,st = max der beiden Formeln", kst, max(w1, w2), 1e-12)
+    check("k_τ wächst durch die Steife", mit["k_tau"] > ohne["k_tau"],
+          f"{mit['k_tau']:.2f} > {ohne['k_tau']:.2f}")
+
+    # Nachweise der Steifen (Abschnitt 9)
+    d = B.steife_drillknicken(st, 355e6)
+    close("Grenze I_T/I_p = 5,3 f_y/E", d["grenze"], 5.3 * 355e6 / B.E_STAHL, 1e-12)
+    check("die flache Steife fällt beim Drillknicken durch", not d["ok"])
+    dick = B.Steife("laengs", I_T=1e-4, I_p=1e-3)
+    check("eine drillsteife Steife besteht", B.steife_drillknicken(dick, 355e6)["ok"])
+    ohne_it = B.steife_drillknicken(B.Steife("laengs"), 355e6)
+    check("ohne I_T wird das gesagt, nicht geraten",
+          not ohne_it["gefuehrt"] and "gesondert" in ohne_it["hinweis"])
+    q = B.quersteife_starr(2.0e-6, 1.5, 0.008, 1.5)
+    close("Mindeststeifigkeit a/h_w < √2", q["I_noetig"],
+          1.5 * 1.5 ** 3 * 0.008 ** 3 / 1.5 ** 2, 1e-12, " m^4")
+    q2 = B.quersteife_starr(2.0e-6, 1.5, 0.008, 3.0)
+    close("Mindeststeifigkeit a/h_w ≥ √2", q2["I_noetig"],
+          0.75 * 1.5 * 0.008 ** 3, 1e-12, " m^4")
+
+
+def test_lasteinleitung():
+    hw, tw, tf, bf, fy = 1.200, 0.008, 0.020, 0.400, 355e6
+    close("k_F Typ a", B.k_F("a", hw, a=1.5), 6.0 + 2.0 * (hw / 1.5) ** 2, 1e-12)
+    close("k_F Typ b", B.k_F("b", hw, a=1.5), 3.5 + 2.0 * (hw / 1.5) ** 2, 1e-12)
+    close("k_F Typ c", B.k_F("c", hw, s_s=0.2, c=0.05),
+          2.0 + 6.0 * 0.25 / hw, 1e-12)
+    check("k_F Typ c ist auf 6 begrenzt",
+          B.k_F("c", 0.3, s_s=1.0, c=0.5) == 6.0)
+
+    r = B.lasteinleitung(400e3, hw, tw, tf, bf, fy, art="a", s_s=0.200, a=1.5,
+                         gamma_M1=1.1)
+    close("F_cr = 0,9 k_F E t_w³/h_w", r["F_cr"],
+          0.9 * r["k_F"] * B.E_STAHL * tw ** 3 / hw, 1e-12, " N")
+    close("m_1 = f_yf b_f/(f_yw t_w)", r["m_1"], bf / tw, 1e-12)
+    close("m_2 = 0,02 (h_w/t_f)²", r["m_2"], 0.02 * (hw / tf) ** 2, 1e-12)
+    close("ℓ_y = s_s + 2 t_f (1 + √(m_1+m_2))", r["l_y"],
+          0.200 + 2 * tf * (1 + math.sqrt(r["m_1"] + r["m_2"])), 1e-12, " m")
+    close("λ̄_F = √(ℓ_y t_w f_yw/F_cr)", r["lambda_F"],
+          math.sqrt(r["l_y"] * tw * fy / r["F_cr"]), 1e-12)
+    close("χ_F = 0,5/λ̄_F", r["chi_F"], min(0.5 / r["lambda_F"], 1.0), 1e-12)
+    close("F_Rd = f_yw χ_F ℓ_y t_w/γ_M1", r["F_Rd"],
+          fy * r["chi_F"] * r["l_y"] * tw / 1.1, 1e-9, " N")
+    check("Typ a trägt mehr als Typ b",
+          r["F_Rd"] > B.lasteinleitung(400e3, hw, tw, tf, bf, fy, art="b",
+                                       s_s=0.200, a=1.5)["F_Rd"])
+    check("Typ c am freien Trägerende trägt am wenigsten",
+          B.lasteinleitung(400e3, hw, tw, tf, bf, fy, art="c", s_s=0.200,
+                           c=0.05)["F_Rd"] < r["F_Rd"])
+    gedrungen = B.lasteinleitung(400e3, 0.300, 0.020, tf, bf, fy, art="a", s_s=0.2)
+    check("gedrungener Steg: χ_F = 1, kein Beulen", gedrungen["chi_F"] == 1.0,
+          f"λ̄_F = {gedrungen['lambda_F']:.3f}")
+    i = B.lasteinleitung_interaktion(0.9, 0.7)
+    close("Interaktion 7.2: η_2 + 0,8 η_1", i["wert"], 0.9 + 0.8 * 0.7, 1e-12)
+    check("Grenze der Interaktion ist 1,4", i["grenze"] == 1.4 and not i["ok"])
+
+    # im Modell
+    from statik3d import examples_lib
+    m = examples_lib.build_example("hall")
+    r_ = m.members["Riegel"]
+    kn = int(m.elements[r_.elements[len(r_.elements) // 2]].nodes[0])
+    m.load_node(kn, Fz=-300e3)
+    m.add_lasteinleitung("Radlast", kn, stab="Riegel", typ="b", s_s=0.200, a=1.5)
+    an = solver.solve_all(m, design=True)
+    check("Lasteinleitung läuft mit der Berechnung",
+          an.lasteinleitung is not None and "Radlast" in an.lasteinleitung.stellen)
+    c = an.lasteinleitung.stellen["Radlast"]
+    check("die Kraft kommt aus der Kombination", c.F_Ed > 300e3,
+          f"F_Ed = {c.F_Ed / 1e3:.0f} kN in {c.kombination}")
+    check("jede Kombination wird geführt",
+          len(c.je_kombination) == len(an.lasteinleitung.kombinationen),
+          f"{len(c.je_kombination)}")
+    beste = max(c.je_kombination, key=lambda d: d["eta"])
+    check("die ungünstigste ist maßgebend", abs(beste["eta"] - c.util) < 1e-12)
+    m.add_lasteinleitung("Auflager", int(m.elements[
+        m.members["Stiel links"].elements[0]].nodes[0]), stab="Stiel links",
+        quelle="auflager", typ="c", s_s=0.150, c=0.05)
+    an2 = solver.solve_all(m, design=True)
+    check("die Auflagerkraft wird als Quelle erkannt",
+          an2.lasteinleitung.stellen["Auflager"].F_Ed > 0,
+          f"{an2.lasteinleitung.stellen['Auflager'].F_Ed / 1e3:.0f} kN")
+
+
+def test_schalenbeulen():
+    from statik3d.ec3 import schalenbeulen as S
+    r, t, l, fy = 0.5, 0.010, 4.0, 355e6
+    close("ω = l/√(r t)", S.omega(l, r, t), l / math.sqrt(r * t), 1e-12)
+    check("Längenbereiche werden unterschieden",
+          (S.laengenbereich(0.1, r, t) == "kurz"
+           and S.laengenbereich(1.0, r, t) == "mittel"
+           and S.laengenbereich(20.0, r, t) == "lang"),
+          f"{S.laengenbereich(0.1, r, t)}/{S.laengenbereich(1.0, r, t)}/"
+          f"{S.laengenbereich(20.0, r, t)}")
+    d = S.sigma_x_Rcr(1.0, r, t)
+    close("σ_x,Rcr = 0,605 E C_x t/r (mittellang, C_x = 1)", d["sigma_Rcr"],
+          0.605 * S.E_STAHL * t / r, 1e-12, " Pa")
+    a = S.alpha_x(r, t, "B")
+    close("Δw_k = (1/Q)√(r/t) t", a["Delta_wk"], (1 / 25.0) * math.sqrt(r / t) * t,
+          1e-12, " m")
+    close("α_x = 0,62/(1+1,91 (Δw_k/t)^1,44)", a["alpha"],
+          0.62 / (1 + 1.91 * (a["Delta_wk"] / t) ** 1.44), 1e-12)
+    check("bessere Herstelltoleranz gibt größeres α",
+          S.alpha_x(r, t, "A")["alpha"] > S.alpha_x(r, t, "B")["alpha"]
+          > S.alpha_x(r, t, "C")["alpha"])
+
+    c1 = S.chi_schale(0.1, 0.5)
+    check("χ = 1 unterhalb λ̄_0", c1["chi"] == 1.0)
+    lam_p = math.sqrt(0.5 / 0.4)
+    c2 = S.chi_schale(lam_p + 0.5, 0.5)
+    close("χ = α/λ̄² im elastischen Bereich", c2["chi"], 0.5 / (lam_p + 0.5) ** 2,
+          1e-12)
+    c3 = S.chi_schale(0.5 * (0.2 + lam_p), 0.5)
+    check("dazwischen liegt χ zwischen beiden Ästen", 0 < c3["chi"] < 1.0,
+          f"χ = {c3['chi']:.3f}")
+
+    z = S.zylinder(r=r, t=t, l=l, fy=fy, sigma_x=120e6, klasse="B")
+    me = z.werte["meridian"]
+    close("λ̄ = √(f_y/σ_Rcr)", me["lambda"], math.sqrt(fy / me["sigma_Rcr"]), 1e-12)
+    close("σ_Rd = χ f_y/γ_M1", me["sigma_Rd"], me["chi"] * fy / 1.1, 1e-12, " Pa")
+    close("Ausnutzung bei reinem Meridiandruck", z.util,
+          (120e6 / me["sigma_Rd"]) ** (1.25 + 0.75 * me["chi"]), 1e-9)
+    check("Zug beult nicht",
+          S.zylinder(r=r, t=t, l=l, fy=fy, sigma_x=-200e6).util == 0.0)
+    check("der lange Zylinder wird benannt",
+          any("Langer Zylinder" in h for h in z.hinweise), str(z.hinweise)[:60])
+    dick = S.zylinder(r=0.1, t=0.020, l=1.0, fy=fy, sigma_x=100e6)
+    check("die dickwandige Schale wird benannt",
+          any("dickwandig" in h for h in dick.hinweise), str(dick.hinweise)[:60])
+
+
+def test_zylinder_im_modell():
+    m = Model("Rohr")
+    m.add_material(Material.steel("S355"))
+    m.add_shell_prop(ShellProp("t10", 0.010))
+    r, l, nu_, nz = 0.5, 3.0, 24, 6
+    ids = {}
+    for k in range(nz + 1):
+        for j in range(nu_):
+            a = 2 * math.pi * j / nu_
+            ids[(j, k)] = m.add_node(r * math.cos(a), r * math.sin(a), l * k / nz)
+    els = []
+    for k in range(nz):
+        for j in range(nu_):
+            j2 = (j + 1) % nu_
+            els.append(m.add_element("shell4", [ids[(j, k)], ids[(j2, k)],
+                                                ids[(j2, k + 1)], ids[(j, k + 1)]],
+                                     "S355", "t10"))
+    for j in range(nu_):
+        m.fix(ids[(j, 0)], "all")
+    N = 1500e3
+    for j in range(nu_):
+        m.load_node(ids[(j, nz)], Fz=-N / nu_)
+    m.add_beulfeld("Mantel", els, art="zylinder", qualitaet="B")
+    an = solver.solve_all(m, combinations=False, envelopes=False, design=True)
+    c = an.beulen.felder["Mantel"]
+    w = c.werte
+    close("Radius aus der Geometrie", w["r"], r, 1e-9, " m")
+    close("Beullänge aus der Geometrie", w["l"], l, 1e-9, " m")
+    umfang = nu_ * 2 * r * math.sin(math.pi / nu_)      # Vieleck statt Kreis
+    close("Meridianspannung trifft N/(U t)", w["sigma_x"], N / (umfang * 0.010),
+          2e-3, " Pa")
+    check("die Schalenwerte stehen im Ergebnis", "zylinder" in w
+          and w["zylinder"]["meridian"]["chi"] > 0)
+    check("Umfangsspannung bleibt klein", w["sigma_z"] < 0.25 * w["sigma_x"],
+          f"{w['sigma_z'] / 1e6:.1f} gegen {w['sigma_x'] / 1e6:.1f} MPa")
+
+
 def test_bericht():
     from statik3d.report import Report
     m, els, _ids = _blechfeld()
@@ -270,6 +545,33 @@ def test_bericht():
           "Schubbeulen nach DIN EN 1993-1-5 wird nur angezeigt" not in html)
     check("Zusammenfassung nennt das Beulen", "Beulen (EN 1993-1-5)" in an.summary())
 
+    # versteiftes Feld, Zylinder und Lasteinleitung im Bericht
+    from statik3d.model import Beulsteife
+    from statik3d import examples_lib
+    m2, els2, _ids = _blechfeld()
+    m2.add_beulfeld("Versteift", els2, steifen=[
+        Beulsteife("laengs", lage=0.5, A_sl=0.001, I_sl=1.2e-6, I_T=3.3e-9,
+                   I_p=8.0e-6, name="L1"),
+        Beulsteife("quer", lage=1.0, I_sl=2.0e-6, name="Q1")])
+    an2 = solver.solve_all(m2, combinations=False, envelopes=False, design=True)
+    h2 = Report(m2, an2).html()
+    for text in ("Steifen des Feldes", "Längsversteifung", "Nachweise der Steifen",
+                 "A.2.2", "Knickstab", "Drillknicken", "Mindeststeifigkeit"):
+        check(f"Bericht nennt „{text}“", text in h2)
+
+    m3 = examples_lib.build_example("hall")
+    r3 = m3.members["Riegel"]
+    kn = int(m3.elements[r3.elements[len(r3.elements) // 2]].nodes[0])
+    m3.load_node(kn, Fz=-300e3)
+    m3.add_lasteinleitung("Radlast", kn, stab="Riegel", typ="b", s_s=0.2, a=1.5)
+    an3 = solver.solve_all(m3, design=True)
+    h3 = Report(m3, an3).html()
+    for text in ("Lasteinleitung (Abschnitt 6)", "Radlast", "wirksame Lastlänge",
+                 "λ̄_F", "max. Ausnutzung Lasteinleitung"):
+        check(f"Bericht nennt „{text}“", text in h3)
+    check("Zusammenfassung nennt die Lasteinleitung",
+          "Lasteinleitung (EN 1993-1-5, 6)" in an3.summary())
+
 
 def main():
     print("=" * 92)
@@ -277,7 +579,9 @@ def main():
     print("=" * 92)
     for t in (test_beulwerte, test_abminderung, test_schubbeulen,
               test_stabnachweis_fuehrt_schubbeulen, test_beulfeld_im_modell,
-              test_reduzierte_spannungen_gegen_handrechnung, test_bericht):
+              test_reduzierte_spannungen_gegen_handrechnung, test_shell4_spannungen,
+              test_steifen, test_lasteinleitung, test_schalenbeulen,
+              test_zylinder_im_modell, test_bericht):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

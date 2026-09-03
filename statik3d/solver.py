@@ -492,14 +492,25 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             t = model.shells[e.sec].t
             tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
             acc = np.zeros(6)
+            # Beim Viereck haben die beiden Dreiecke verschiedene lokale
+            # Systeme (x laeuft einmal an der Kante, einmal an der Diagonale).
+            # Vor dem Mitteln werden beide in das Elementsystem gedreht -
+            # sonst werden Groessen aus zwei Systemen addiert.
+            T3e, _xy, _A = sh.shell_frame(X[0], X[1], X[2])
             for tri in tris:
                 idx6 = []
                 for n in tri:
                     idx6.extend(range(6 * n, 6 * n + 6))
                 st = sh.shell3_stress(X[tri[0]], X[tri[1]], X[tri[2]],
                                       mat.E, mat.nu, t, ue[idx6])
-                acc[:3] += st["n"]
-                acc[3:] += st["m"]
+                n_v, m_v = st["n"], st["m"]
+                if tri != (0, 1, 2):
+                    T3t, _xy2, _A2 = sh.shell_frame(X[tri[0]], X[tri[1]], X[tri[2]])
+                    phi = sh.frame_winkel(T3t, T3e)
+                    n_v = sh.dreh_tensor(n_v, -phi)
+                    m_v = sh.dreh_tensor(m_v, -phi)
+                acc[:3] += n_v
+                acc[3:] += m_v
             acc /= len(tris)
             if i in temp:
                 Dm = sh._material_matrices(mat.E, mat.nu, t)[0]
@@ -824,6 +835,7 @@ class Analysis:
     joints: object = None
     gzg: object = None
     beulen: object = None
+    lasteinleitung: object = None
     info: dict = field(default_factory=dict)
 
     def all_results(self) -> dict:
@@ -849,6 +861,8 @@ class Analysis:
             s.append(self.gzg.summary())
         if self.beulen is not None:
             s.append(self.beulen.summary())
+        if self.lasteinleitung is not None:
+            s.append(self.lasteinleitung.summary())
         return "\n".join(s)
 
 
@@ -895,6 +909,9 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
     if design and model.beulfelder:
         from .ec3.beulen import check_beulen
         an.beulen = check_beulen(model, an, progress=progress)
+    if design and model.lasteinleitungen:
+        from .ec3.beulen import check_lasteinleitungen
+        an.lasteinleitung = check_lasteinleitungen(model, an, progress=progress)
     an.info.update({"time": time.time() - t0, "parallel": parallel.describe(),
                     "solver": system.backend, "ndof": model.ndof,
                     "nfree": len(system.fi)})

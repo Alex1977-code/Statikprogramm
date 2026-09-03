@@ -286,6 +286,7 @@ class Report:
         self.joints = None
         self.gzg = None
         self.beulen = None
+        self.lasteinleitung = None
         self.info: dict = {}
         if analysis is not None:
             self.cases = dict(getattr(analysis, "cases", {}) or {})
@@ -296,6 +297,7 @@ class Report:
             self.joints = getattr(analysis, "joints", None)
             self.gzg = getattr(analysis, "gzg", None)
             self.beulen = getattr(analysis, "beulen", None)
+            self.lasteinleitung = getattr(analysis, "lasteinleitung", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
             name = results.name or "Ergebnis"
@@ -1503,6 +1505,7 @@ class Report:
             else:
                 b.append(("p", "Es wurden keine Beulnachweise geführt (keine "
                                "Flächenergebnisse)."))
+            b.extend(self._abschnitt_lasteinleitung())
             return b
         st = bl.settings or {}
         b.append(self._h(2, "Grundlagen"))
@@ -1520,9 +1523,16 @@ class Report:
             f"γ_M1 = {fmt(st.get('gamma_M1', 1.1), 2)}, η = {fmt(st.get('eta', 1.2), 1)}; "
             f"geführt über {len(bl.kombinationen)} GZT-Kombinationen, die "
             "ungünstigste ist maßgebend.",
-            "Längs- und Quersteifen im Feld sind **nicht** enthalten: k_σ und k_τ "
-            "gelten für das unversteifte Blechfeld. Gekrümmte Bleche fallen unter "
-            "EN 1993-1-6 und sind hier nicht abgedeckt.",
+            "Längsversteifte Felder: σ_cr,p nach Anhang A.2.2 (eine oder zwei "
+            "Steifen) beziehungsweise A.1(2) (ab drei Steifen), Schubbeulwert "
+            "k_τ + k_τ,st nach A.3(2); zwischen Platten- und Knickstabverhalten "
+            "wird nach 4.5.4 interpoliert (ρ_c aus ρ, χ_c und ξ). Die Steifen "
+            "selbst werden nach Abschnitt 9 geprüft (Drillknicken 9.2.1(8), "
+            "Mindeststeifigkeit starrer Quersteifen 9.3.3).",
+            "Zylinderschalen werden nach DIN EN 1993-1-6, Abschnitt 8.5 geführt: "
+            "kritische Beulspannungen nach Anhang D.1, Imperfektionsbeiwerte nach "
+            "der Herstelltoleranzklasse, Abminderung χ nach 8.5.2(3) und "
+            "Interaktion nach 8.5.3(3).",
         ]))
         b.append(self._h(2, "Übersicht"))
         rows = [["Beulfeld", "a [m]", "b [m]", "t [mm]", "σ_x [MPa]", "σ_z [MPa]",
@@ -1593,6 +1603,89 @@ class Report:
                    ("Status", "Nachweis erfüllt" if c.util <= 1.0
                     else "Nachweis NICHT erfüllt")]
             b.append(("kv", kv, f"Beulfeld {c.name}"))
+            zyl = w.get("zylinder")
+            if zyl:
+                me, um, sb = zyl["meridian"], zyl["umfang"], zyl["schub"]
+                rows = [["Richtung", "σ_Ed [MPa]", "σ_Rcr [MPa]", "λ̄", "χ",
+                         "σ_Rd [MPa]", "Ausnutzung"]]
+                rows.append(["Meridian (x)", fmt(w.get("sigma_x", 0) / 1e6, 1),
+                             fmt(me["sigma_Rcr"] / 1e6, 1), fmt(me["lambda"], 3),
+                             fmt(me["chi"], 3), fmt(me["sigma_Rd"] / 1e6, 1),
+                             Util(me["eta"])])
+                rows.append(["Umfang (θ)", fmt(w.get("sigma_z", 0) / 1e6, 1),
+                             fmt(um["sigma_Rcr"] / 1e6, 1), fmt(um["lambda"], 3),
+                             fmt(um["chi"], 3), fmt(um["sigma_Rd"] / 1e6, 1),
+                             Util(um["eta"])])
+                rows.append(["Schub (xθ)", fmt(w.get("tau", 0) / 1e6, 1),
+                             fmt(sb["sigma_Rcr"] / math.sqrt(3) / 1e6, 1),
+                             fmt(sb["lambda"], 3), fmt(sb["chi"], 3),
+                             fmt(sb.get("tau_Rd", 0) / 1e6, 1), Util(sb["eta"])])
+                b.append(("table", rows, "Schalenbeulen je Spannungsrichtung "
+                                         "(EN 1993-1-6, 8.5)", None, ""))
+                b.append(("kv", [
+                    ("Zylinder", f"r = {w.get('r', 0):.3f} m, t = {c.t * 1e3:.1f} mm, "
+                                 f"l = {w.get('l', 0):.3f} m, r/t = {zyl['r_t']:.0f}"),
+                    ("Längenparameter ω", f"{zyl['omega']:.1f} ({zyl['bereich']})"),
+                    ("Herstelltoleranz", zyl["qualitaet"]),
+                    ("Beiwerte", f"C_x = {fmt(zyl.get('C_x') or 0, 3)}, "
+                                 f"C_θ = {fmt(zyl.get('C_theta') or 0, 3)}, "
+                                 f"C_τ = {fmt(zyl.get('C_tau') or 0, 3)}"),
+                    ("Imperfektionsbeiwerte",
+                     f"α_x = {zyl['alpha_x']['alpha']:.3f} "
+                     f"(Δw_k/t = {zyl['alpha_x'].get('Delta_wk_t', 0):.3f}), "
+                     f"α_θ = {zyl['alpha_theta']:.2f}, α_τ = {zyl['alpha_tau']:.2f}"),
+                    ("Interaktion 8.5.3(3)",
+                     f"k_x = {zyl['k_x']:.2f}, k_θ = {zyl['k_theta']:.2f}, "
+                     f"k_τ = {zyl['k_tau']:.2f}, k_i = {zyl['k_i']:.3f} → "
+                     f"{fmt(zyl['interaktion'], 3)}"),
+                ], f"Schalenbeulen {c.name}"))
+            st = w.get("steifen") or []
+            if st:
+                rows = [["Steife", "Art", "Lage [mm]", "A_sl [cm²]", "I_sl [cm⁴]"]]
+                for x in st:
+                    rows.append([x.get("name") or "–", x.get("art", ""),
+                                 fmt(x.get("lage", 0) * 1e3, 0),
+                                 fmt(x.get("A_sl", 0) * 1e4, 2),
+                                 fmt(x.get("I_sl", 0) * 1e8, 1)])
+                b.append(("table", rows, "Steifen des Feldes", None, ""))
+                kp = w.get("k_sigma_p") or {}
+                kv2 = [("Verfahren für σ_cr,p", kp.get("verfahren", "–"))]
+                if "a_c" in kp:
+                    kv2.append(("Grenzlänge a_c (A.2.2)",
+                                f"{kp['a_c']:.3f} m → {kp.get('zweig', '')}"))
+                if "gamma" in kp:
+                    kv2.append(("γ / δ (A.1)",
+                                f"{fmt(kp['gamma'], 2)} / {fmt(kp['delta'], 4)}"))
+                kv2 += [("k_τ unversteift + Zuschlag der Steifen",
+                         f"{fmt(w.get('k_tau_unversteift', 0), 2)} + "
+                         f"{fmt(w.get('k_tau_st', 0), 2)} = {fmt(w.get('k_tau', 0), 2)}")]
+                if "sigma_cr_c" in w:
+                    kv2 += [("σ_cr,c (Knickstab, 4.5.3)",
+                             f"{w['sigma_cr_c'] / 1e6:.1f} N/mm²"),
+                            ("ξ = σ_cr,p/σ_cr,c − 1", fmt(w.get("xi", 0.0), 3)),
+                            ("χ_c (Knicklinie)", fmt(w.get("chi_c", 1.0), 3)),
+                            ("ρ (Platte) → ρ_c (interpoliert, 4.5.4)",
+                             f"{fmt(w.get('rho_platte', 1.0), 3)} → "
+                             f"{fmt(w.get('rho_x', 1.0), 3)}")]
+                b.append(("kv", kv2, "Längsversteifung"))
+                sn = w.get("steifennachweise") or []
+                if sn:
+                    rows = [["Steife", "Nachweis", "Ergebnis", "Status"]]
+                    for d in sn:
+                        if d.get("gefuehrt"):
+                            rows.append([d.get("name", ""),
+                                         "Mindeststeifigkeit (9.3.3)" if d.get("art") == "quer"
+                                         else "Drillknicken (9.2.1(8))",
+                                         _pretty(d.get("text") or d.get("regel", ""))
+                                         + (f" – I_st = {fmt(d.get('I_st', 0) * 1e8, 1)} cm⁴ "
+                                            f"≥ {fmt(d.get('I_noetig', 0) * 1e8, 1)} cm⁴"
+                                            if d.get("art") == "quer" else ""),
+                                         "erfüllt" if d.get("ok") else "NICHT erfüllt"])
+                        else:
+                            rows.append([d.get("name", ""), "–",
+                                         _pretty(d.get("hinweis", "")), "nicht geführt"])
+                    b.append(("table", rows, "Nachweise der Steifen (Abschnitt 9)",
+                              None, ""))
             if len(c.je_kombination) > 1:
                 zeilen = sorted(c.je_kombination, key=lambda d: -d["eta"])
                 rows = [["Kombination", "σ_x [MPa]", "σ_z [MPa]", "τ [MPa]", "λ̄_p",
@@ -1611,6 +1704,67 @@ class Report:
         nf = [c.name for c in bl.felder.values() if c.util > 1.0]
         if nf:
             self._warnings.append("Beulnachweis NICHT erfüllt für: " + ", ".join(nf))
+        b.extend(self._abschnitt_lasteinleitung())
+        return b
+
+    def _abschnitt_lasteinleitung(self) -> list:
+        """Lasteinleitung nach DIN EN 1993-1-5, Abschnitt 6."""
+        le = self.lasteinleitung
+        if le is None or not getattr(le, "stellen", None):
+            return []
+        b = [self._h(2, "Lasteinleitung (Abschnitt 6)")]
+        b.append(("list", [
+            "Beulnachweis des Stegs unter einer örtlich eingeleiteten Querkraft: "
+            "F_cr = 0,9 k_F E t_w³/h_w mit k_F nach Bild 6.1, wirksame Lastlänge "
+            "ℓ_y nach 6.5 mit m_1 = f_yf b_f/(f_yw t_w) und m_2 = 0,02 (h_w/t_f)² "
+            "für λ̄_F > 0,5.",
+            "λ̄_F = √(ℓ_y t_w f_yw/F_cr), χ_F = 0,5/λ̄_F ≤ 1,0, L_eff = χ_F ℓ_y, "
+            "F_Rd = f_yw L_eff t_w/γ_M1 (6.2).",
+            "Wirken gleichzeitig Biegung und eine Querlast, gilt zusätzlich die "
+            "Interaktion nach 7.2: η_2 + 0,8 η_1 ≤ 1,4.",
+        ]))
+        rows = [["Stelle", "Bezug", "Typ", "F_Ed [kN]", "F_Rd [kN]", "ℓ_y [mm]",
+                 "λ̄_F", "χ_F", "Ausnutzung", "Kombination", "Status"]]
+        for c in le.stellen.values():
+            w = c.werte or {}
+            rows.append([c.name, c.bezug, c.typ, fmt(c.F_Ed / 1e3, 1),
+                         fmt(c.F_Rd / 1e3, 1), fmt(w.get("l_y", 0) * 1e3, 0),
+                         fmt(w.get("lambda_F", 0), 3), fmt(w.get("chi_F", 1), 3),
+                         Util(c.util), c.kombination,
+                         "erfüllt" if c.util <= 1.0 and not c.fehler
+                         else ("nicht geführt" if c.fehler else "NICHT erfüllt")])
+        b.append(("table", rows, "Lasteinleitungsstellen", None, ""))
+        for c in le.stellen.values():
+            b.append(self._h(3, f"Lasteinleitung {c.name}"))
+            if c.fehler:
+                b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
+                self._warnings.append(f"Lasteinleitung {c.name}: {c.fehler}")
+                continue
+            w = c.werte
+            kv = [("Bezug", c.bezug),
+                  ("Art der Lasteinleitung", w.get("beschreibung", c.typ)),
+                  ("Lasteinleitungslänge s_s", f"{w.get('s_s', 0) * 1e3:.0f} mm"),
+                  ("Abstand der Quersteifen a",
+                   f"{w.get('a', 0) * 1e3:.0f} mm" if w.get("a") else "keine"),
+                  ("Beulwert k_F", fmt(w.get("k_F", 0), 3)),
+                  ("F_cr = 0,9 k_F E t_w³/h_w", f"{w.get('F_cr', 0) / 1e3:.0f} kN"),
+                  ("m_1 / m_2", f"{fmt(w.get('m_1', 0), 2)} / {fmt(w.get('m_2', 0), 2)}"),
+                  ("wirksame Lastlänge ℓ_y", f"{w.get('l_y', 0) * 1e3:.0f} mm"),
+                  ("Schlankheit λ̄_F", fmt(w.get("lambda_F", 0), 3)),
+                  ("Abminderung χ_F = 0,5/λ̄_F ≤ 1", fmt(w.get("chi_F", 1), 3)),
+                  ("L_eff = χ_F ℓ_y", f"{w.get('L_eff', 0) * 1e3:.0f} mm"),
+                  ("F_Rd", f"{c.F_Rd / 1e3:.1f} kN"),
+                  ("maßgebende Kombination", c.kombination),
+                  ("F_Ed", f"{c.F_Ed / 1e3:.1f} kN"),
+                  ("Ausnutzung η_2", Util(c.util)),
+                  ("Status", "Nachweis erfüllt" if c.util <= 1.0
+                   else "Nachweis NICHT erfüllt")]
+            b.append(("kv", kv, f"Lasteinleitung {c.name}"))
+            if c.hinweise:
+                b.append(("list", [f"Hinweis: {h}" for h in c.hinweise]))
+        nf = [c.name for c in le.stellen.values() if c.util > 1.0]
+        if nf:
+            self._warnings.append("Lasteinleitung NICHT erfüllt für: " + ", ".join(nf))
         return b
 
     # ============================================================ Kapitel 7
@@ -2066,6 +2220,12 @@ class Report:
                        f"{worst.kombination}"))
             if any(c.util > 1.0 or c.fehler for c in bl.felder.values()):
                 status_ok = False
+        li = self.lasteinleitung
+        if li is not None and getattr(li, "stellen", None):
+            worst = max(li.stellen.values(), key=lambda c: c.util)
+            kv.append(("max. Ausnutzung Lasteinleitung", Util(worst.util)))
+            if any(c.util > 1.0 or c.fehler for c in li.stellen.values()):
+                status_ok = False
         gz = self.gzg
         if gz is not None and getattr(gz, "checks", None):
             worst = max(gz.checks.values(), key=lambda c: c.util)
@@ -2090,7 +2250,8 @@ class Report:
                     or (f is not None and getattr(f, "members", None))
                     or (aj is not None and getattr(aj, "joints", None))
                     or (gz is not None and getattr(gz, "checks", None))
-                    or (bl is not None and getattr(bl, "felder", None)))
+                    or (bl is not None and getattr(bl, "felder", None))
+                    or (li is not None and getattr(li, "stellen", None)))
         if gefuehrt:
             if status_ok:
                 b.append(("status", "Alle Nachweise erfüllt.", True))

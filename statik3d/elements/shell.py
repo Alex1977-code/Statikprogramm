@@ -211,6 +211,23 @@ def k_shell4(p1, p2, p3, p4, E, nu, t):
 
 
 # --------------------------------------------------------------------------
+def dreh_tensor(v, phi: float) -> np.ndarray:
+    """Ebenen-Tensor (xx, yy, xy) in ein um phi gedrehtes System umrechnen."""
+    c, s2 = np.cos(2.0 * phi), np.sin(2.0 * phi)
+    xx, yy, xy = float(v[0]), float(v[1]), float(v[2])
+    mitte, halb = 0.5 * (xx + yy), 0.5 * (xx - yy)
+    return np.array([mitte + halb * c + xy * s2,
+                     mitte - halb * c - xy * s2,
+                     -halb * s2 + xy * c])
+
+
+def frame_winkel(T3_von, T3_nach) -> float:
+    """Winkel, um den das System T3_von gegenueber T3_nach verdreht ist."""
+    ex = np.asarray(T3_von[0], float)
+    return float(np.arctan2(float(ex @ np.asarray(T3_nach[1], float)),
+                            float(ex @ np.asarray(T3_nach[0], float))))
+
+
 def shell3_pressure(p1, p2, p3, p) -> np.ndarray:
     """Aequivalente Knotenkraefte fuer Flaechenlast p in Normalenrichtung.
     Rueckgabe: 18er Vektor in globalen Koordinaten."""

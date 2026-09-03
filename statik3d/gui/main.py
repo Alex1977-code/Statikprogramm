@@ -24,7 +24,8 @@ from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialo
                       CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
                       DesignSettingsDialog, ContactPairDialog, ImportDialog, ReportDialog,
                       SupportNonlinearDialog, JointDialog,
-                      VerformungsgrenzeDialog, parse_int_list)
+                      VerformungsgrenzeDialog, BeulfeldDialog,
+                      LasteinleitungDialog, parse_int_list)
 from .worker import SolveWorker
 from . import ribbon as rib
 from . import masken as msk
@@ -382,7 +383,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Die gewählten Flächenelemente zu einem Beulfeld "
                         "zusammenfassen und nach Abschnitt 10 nachweisen")
         g.klein("Tabelle Beulfelder", lambda: self.tabelle_zeigen("Beulfelder"))
+        g.klein("Beulfeld ändern…", self.edit_beulfeld)
         g.klein("Beulfeld löschen", self.delete_beulfeld)
+        g.gross("Lasteinleitung", "↡", self.add_lasteinleitung,
+                hinweis="Beulnachweis des Stegs unter einer örtlich eingeleiteten "
+                        "Querkraft (Abschnitt 6)")
+        g.klein("Tabelle Lasteinleitung", lambda: self.tabelle_zeigen("Lasteinleitung"))
 
         r = rb.register("Ergebnisse")
         g = r.gruppe("Auswahl")
@@ -528,7 +534,8 @@ class MainWindow(QtWidgets.QMainWindow):
     BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe",
                     "anschluesse": "Anschlüsse", "anschluss": "Anschlüsse",
                     "verformungen": "Verformungen", "verformung": "Verformungen",
-                    "beulfelder": "Beulfelder", "beulfeld": "Beulfelder"}
+                    "beulfelder": "Beulfelder", "beulfeld": "Beulfelder",
+                    "lasteinleitung": "Lasteinleitung"}
 
     def _baum_geklickt(self, art: str, name: str):
         if art == "stellung_neu":
@@ -891,7 +898,26 @@ class MainWindow(QtWidgets.QMainWindow):
         c1.clicked.connect(self.add_beulfeld)
         c2 = QtWidgets.QPushButton("Löschen")
         c2.clicked.connect(self.delete_beulfeld)
-        tabs.addTab(self._eingabetabelle(self.tbl_beul, c1, c2), "Beulfelder")
+        c3 = QtWidgets.QPushButton("Ändern…")
+        c3.clicked.connect(self.edit_beulfeld)
+        tabs.addTab(self._eingabetabelle(self.tbl_beul, c1, c3, c2), "Beulfelder")
+
+        # Lasteinleitung (EN 1993-1-5, Abschnitt 6)
+        self.tbl_le = tab.Datentabelle([
+            Spalte("Stelle"), Spalte("Bezug"), Spalte("Typ"),
+            Spalte("F_Ed", "kN", "zahl", 1), Spalte("F_Rd", "kN", "zahl", 1),
+            Spalte("l_y", "mm", "zahl", 0),
+            Spalte("λ̄_F", "", "zahl", 3), Spalte("χ_F", "", "zahl", 3),
+            Spalte("Ausnutzung", "", "zahl", 3), Spalte("Kombination"),
+            Spalte("Status")], "Lasteinleitung", self, mit_kennwerten=True)
+        self.tbl_le.zeile_gewaehlt.connect(self._tabelle_lasteinleitung)
+        d1 = QtWidgets.QPushButton("Lasteinleitung…")
+        d1.clicked.connect(self.add_lasteinleitung)
+        d2 = QtWidgets.QPushButton("Ändern…")
+        d2.clicked.connect(self.edit_lasteinleitung)
+        d3 = QtWidgets.QPushButton("Löschen")
+        d3.clicked.connect(self.delete_lasteinleitung)
+        tabs.addTab(self._eingabetabelle(self.tbl_le, d1, d2, d3), "Lasteinleitung")
 
     #: Ergebnistabellen in der Reihenfolge des unteren Bereichs
     ERGEBNISTABELLEN = ("tbl_beam", "tbl_react", "tbl_env", "tbl_design",
@@ -1664,29 +1690,120 @@ class MainWindow(QtWidgets.QMainWindow):
                if e.typ.startswith("shell") and set(int(n) for n in e.nodes) <= sel]
         if not els:
             return self.error("In der Auswahl liegt kein vollständiges Flächenelement")
-        name, ok = QtWidgets.QInputDialog.getText(
-            self, "Beulfeld", f"Name des Beulfeldes ({len(els)} Elemente):",
-            text=self._freier_name("Beulfeld", self.model.beulfelder))
-        if not ok or not name.strip():
+        d = BeulfeldDialog(self, self.model, elemente=els)
+        d.ed_name.setText(self._freier_name("Beulfeld", self.model.beulfelder))
+        if not d.exec():
             return
-        name = name.strip()
+        name, kw = d.result()
+        if not name:
+            return self.error("Das Beulfeld braucht einen Namen")
         if name in self.model.beulfelder:
             return self.error(f"„{name}“ gibt es schon")
-        arten = ["beidseitig gestützt (z. B. Steg zwischen den Flanschen)",
-                 "einseitig gestützt (ein Rand frei)"]
-        art, ok = QtWidgets.QInputDialog.getItem(self, "Beulfeld", "Lagerung der Ränder:",
-                                                 arten, 0, False)
-        if not ok:
-            return
         self.merken(f"Beulfeld {name}")
         try:
-            bf = self.model.add_beulfeld(
-                name, els, rand="beidseitig" if art == arten[0] else "einseitig")
+            bf = self.model.add_beulfeld(name, els, **kw)
         except Exception as ex:          # noqa: BLE001
             return self.error(ex)
-        self.info(f"Beulfeld „{name}“ aus {len(bf.elemente)} Elementen angelegt - "
-                  "es wird ab jetzt bei jeder Berechnung nachgewiesen")
+        self.info(f"Beulfeld „{name}“ aus {len(bf.elemente)} Elementen angelegt "
+                  f"({bf.bezug()}) - es wird ab jetzt bei jeder Berechnung "
+                  "nachgewiesen")
         self.refresh_all()
+
+    def edit_beulfeld(self):
+        key = self._tabellenschluessel(self.tbl_beul)
+        bf = self.model.beulfelder.get(key) if key else None
+        if bf is None:
+            return self.error("Zuerst ein Beulfeld in der Tabelle wählen")
+        d = BeulfeldDialog(self, self.model, bf)
+        if not d.exec():
+            return
+        name, kw = d.result()
+        self.merken(f"Beulfeld {key}")
+        elemente = list(bf.elemente)
+        del self.model.beulfelder[key]
+        try:
+            self.model.add_beulfeld(name or key, elemente, **kw)
+        except Exception as ex:          # noqa: BLE001
+            self.undo()
+            return self.error(ex)
+        self.info(f"Beulfeld „{name or key}“ geändert")
+        self.refresh_all()
+
+    # ---- Lasteinleitung (EN 1993-1-5, Abschnitt 6) ---------------------
+    def add_lasteinleitung(self):
+        """Eine Lasteinleitungsstelle festlegen."""
+        kn = int(self.selection[0]) if len(self.selection) else 0
+        d = LasteinleitungDialog(self, self.model, knoten=kn)
+        d.ed_name.setText(self._freier_name("Lasteinleitung",
+                                            self.model.lasteinleitungen))
+        if not d.exec():
+            return
+        name, kw = d.result()
+        if not name:
+            return self.error("Der Nachweis braucht einen Namen")
+        if name in self.model.lasteinleitungen:
+            return self.error(f"„{name}“ gibt es schon")
+        self.merken(f"Lasteinleitung {name}")
+        try:
+            le = self.model.add_lasteinleitung(name, **kw)
+        except Exception as ex:          # noqa: BLE001
+            return self.error(ex)
+        self.info(f"Lasteinleitung „{name}“ an {le.bezug()} angelegt")
+        self.refresh_all()
+
+    def edit_lasteinleitung(self):
+        key = self._tabellenschluessel(self.tbl_le)
+        le = self.model.lasteinleitungen.get(key) if key else None
+        if le is None:
+            return self.error("Zuerst eine Stelle in der Tabelle wählen")
+        d = LasteinleitungDialog(self, self.model, le)
+        if not d.exec():
+            return
+        name, kw = d.result()
+        self.merken(f"Lasteinleitung {key}")
+        del self.model.lasteinleitungen[key]
+        try:
+            self.model.add_lasteinleitung(name or key, **kw)
+        except Exception as ex:          # noqa: BLE001
+            self.undo()
+            return self.error(ex)
+        self.info(f"Lasteinleitung „{name or key}“ geändert")
+        self.refresh_all()
+
+    def delete_lasteinleitung(self):
+        key = self._tabellenschluessel(self.tbl_le)
+        if not key or key not in self.model.lasteinleitungen:
+            return self.error("Zuerst eine Stelle in der Tabelle wählen")
+        self.merken(f"Lasteinleitung {key} gelöscht")
+        del self.model.lasteinleitungen[key]
+        self.info(f"Lasteinleitung „{key}“ entfernt")
+        self.refresh_all()
+
+    def _tabelle_lasteinleitung(self, wert):
+        le = self.model.lasteinleitungen.get(str(wert))
+        if le is not None and 0 <= le.knoten < self.model.nn:
+            self._set_selection([int(le.knoten)])
+
+    def refresh_lasteinleitungen(self):
+        """Die Tabelle der Lasteinleitungsstellen aufbauen."""
+        if not hasattr(self, "tbl_le"):
+            return
+        erg = (getattr(self.analysis, "lasteinleitung", None)
+               if self.analysis is not None else None)
+        zeilen = []
+        for name, le in self.model.lasteinleitungen.items():
+            c = erg.stellen.get(name) if erg is not None else None
+            w = (c.werte or {}) if c is not None else {}
+            zeilen.append([name, le.bezug(), le.typ,
+                           (c.F_Ed / 1e3 if c is not None and not c.fehler else ""),
+                           (c.F_Rd / 1e3 if c is not None and not c.fehler else ""),
+                           (w.get("l_y", 0.0) * 1e3 if w else ""),
+                           (w.get("lambda_F", 0.0) if w else ""),
+                           (w.get("chi_F", 0.0) if w else ""),
+                           (c.util if c is not None else ""),
+                           (c.kombination if c is not None else ""),
+                           (c.status() if c is not None else "nicht gerechnet")])
+        self._fill(self.tbl_le, zeilen)
 
     def delete_beulfeld(self):
         key = self._tabellenschluessel(self.tbl_beul)
@@ -1846,6 +1963,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_joints()
         self.refresh_verformungen()
         self.refresh_beulfelder()
+        self.refresh_lasteinleitungen()
+        self.refresh_lasteinleitungen()
         self.refresh_stellungen()
         self._refresh_kopf()
         self._refresh_baum()
@@ -3231,6 +3350,8 @@ class MainWindow(QtWidgets.QMainWindow):
             lines.append(an.gzg.summary())
         if an is not None and an.beulen is not None:
             lines.append(an.beulen.summary())
+        if an is not None and an.lasteinleitung is not None:
+            lines.append(an.lasteinleitung.summary())
         self.refresh_joints()
         self.refresh_verformungen()
         self.refresh_beulfelder()
