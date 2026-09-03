@@ -21,7 +21,7 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 
 | Endung | Format | Typische Herkunft | Übernommen wird |
 |---|---|---|---|
-| `.json` | Statik3D | – | vollständiges Modell (Format 1 und 2) |
+| `.json` | Statik3D | – | vollständiges Modell (Format 1 bis 4; Format 3 brachte Linien und Gelenke, Format 4 die **Anschlüsse**. Ältere Dateien werden gelesen) |
 | `.dxf` | AutoCAD DXF (ASCII, R12–2018) | InfoCAD, RFEM, CAD | LINE, LWPOLYLINE, POLYLINE (2D/3D, Polyface), 3DFACE |
 | `.ifc` | IFC 2x3 / IFC 4 STEP-Datei | InfoCAD, RFEM, Allplan, Revit, Tekla | Statikmodell (Structural Analysis View) oder Bauteilachsen |
 | `.xlsx` | SAF – Structural Analysis Format | RFEM 6, SCIA, Allplan, AxisVM, Frilo | Materialien, Querschnitte, Knoten, Stäbe, Flächen, Lager, Lastfälle, Lastgruppen, Kombinationen, Lasten |

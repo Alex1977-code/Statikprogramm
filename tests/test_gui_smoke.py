@@ -655,6 +655,81 @@ def main():
         traceback.print_exc()
         check("Tabellen", False, str(ex)[:70])
 
+    # ---- Anschlüsse: Modell, Baum, Tabelle, Nachweis --------------------
+    try:
+        from PySide6 import QtCore
+        from statik3d.joints import anschluss as ans
+        from statik3d.joints.templates import propose
+
+        w.load_example("hall")
+        r = w.model.members["Riegel"]
+        t = propose("kopfplatte", w.model, r.elements[0], end=0,
+                    N=-50e3, Vz=150e3, My=300e3)
+        name = w._freier_name(t.name, w.model.joints)
+        w.merken(f"Anschluss {name}")
+        w.model.joints[name] = ans.als_joint(t, name)
+        w.refresh_all()
+        app.processEvents()
+        check("Anschluss steht im Modell, nicht am Fenster",
+              name in w.model.joints and not hasattr(w, "joints"), name)
+        check("Anschlusstabelle unten gefüllt", w.tbl_joint.zeilenzahl() == 1,
+              f"{w.tbl_joint.zeilenzahl()} Zeilen")
+        check("vor der Rechnung steht „nicht gerechnet“",
+              w.tbl_joint.modell.zeilen[0][-1] == "nicht gerechnet",
+              str(w.tbl_joint.modell.zeilen[0][-1]))
+        zweige = [w.baum.topLevelItem(0).child(i).text(0)
+                  for i in range(w.baum.topLevelItem(0).childCount())]
+        check("Anschlüsse stehen im Modellbaum", "Anschlüsse" in zweige, str(zweige[-3:]))
+        check("Register „Anschlüsse“ unten vorhanden",
+              w.tabelle_zeigen("Anschlüsse"))
+
+        an = solver.solve_all(w.model, design=True, fatigue=True)
+        w._solve_done("all", an)
+        w.show_results()
+        app.processEvents()
+        check("Anschluss wird mit der Berechnung nachgewiesen",
+              an.joints is not None and name in an.joints.joints)
+        z = w.tbl_joint.modell.zeilen[0]
+        check("Ausnutzung steht in der Tabelle",
+              isinstance(z[5], float) and z[5] > 0 and z[6],
+              f"eta = {z[5]:.3f}, {z[6]}")
+        check("Ergebnisprotokoll nennt die Anschlüsse",
+              "Anschlüsse:" in w.txt_res.toPlainText())
+
+        # Baum -> Tabelle -> Ansicht
+        w.clear_selection()
+        w._baum_geklickt("anschluss", name)
+        app.processEvents()
+        check("Klick im Baum wählt den Stab des Anschlusses",
+              len(w.selection) == 2, f"{len(w.selection)} Knoten")
+        check("und markiert die Zeile",
+              len(w.tbl_joint.view.selectionModel().selectedRows()) == 1)
+        w.clear_selection()
+        w.tbl_joint.zeile_gewaehlt.emit(name)
+        app.processEvents()
+        check("Klick in der Tabelle wählt den Stab", len(w.selection) == 2)
+        w.clear_selection()
+
+        # Rückgängig und Löschen
+        nl = len(w.model.joints)
+        w.undo()
+        app.processEvents()
+        check("Anschluss lässt sich zurücknehmen",
+              len(w.model.joints) == nl - 1 and w.tbl_joint.zeilenzahl() == nl - 1)
+        w.redo()
+        app.processEvents()
+        check("und wiederherstellen", len(w.model.joints) == nl)
+        w.tbl_joint.view.selectRow(0)
+        w.delete_joint()
+        app.processEvents()
+        check("Anschluss lässt sich löschen", not w.model.joints)
+        w.undo()
+        check("Löschen ist rücknehmbar", len(w.model.joints) == nl)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Anschlüsse", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

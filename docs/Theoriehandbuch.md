@@ -256,6 +256,59 @@ schadensäquivalente Schwingbreite bei 2·10⁶ Lastspielen ausgewiesen. γMf na
 Tabelle 3.1 (Schadenstoleranz/Sicherheit gegen Versagen, geringe/hohe
 Schadensfolge), γFf = 1,0.
 
+## 5a Anschlüsse (DIN EN 1993-1-8)
+
+Ein Anschluss sitzt an einem Stabende. Die Beanspruchung sind die
+**Stabendschnittgrößen** N, V_z und M_y an diesem Ende, gedreht so, dass ein
+positives N Zug bedeutet (dieselbe Zählweise wie in `beam_end_forces`). Der
+Anschluss wird über **alle GZT-Kombinationen** geführt; die ungünstigste ist
+maßgebend. Die Aufteilung der Schnittgrößen auf die Bauteile folgt der
+üblichen Modellvorstellung:
+
+* Kopfplatte: Flanschkraft F_t = |M_y|/(h − t_f) + N·A_f/A auf die Schrauben
+  der Zugzone, Querkraft gleichmäßig auf alle Schrauben, Druckflansch gegen
+  b·t_f·f_y.
+* Laschenstoß: Flanschlaschen tragen Normalkraft und Moment, Steglaschen die
+  Querkraft (6.2.7).
+* Knotenblech: Stabkraft auf die Schrauben beziehungsweise die Naht; das Blech
+  wird über die **Whitmore-Breite** b_w = b + 2·L·tan 30° auf Zug und als
+  Ersatzstab auf Druck nachgewiesen.
+
+Nachgewiesen werden
+
+| Bauteil | Nachweise | Abschnitt |
+|---|---|---|
+| Schraube | F_v,Rd, F_b,Rd, F_t,Rd, B_p,Rd, Interaktion, F_s,Rd (Kat. B/C), β_Lf | 3.6, 3.7, 3.9 |
+| Zugzone | äquivalenter T-Stummel, Modus 1–3, l_eff nach Tab. 6.4/6.5 | 6.2.4 |
+| Naht | Richtungsbezogen (σ_⊥, τ_⊥, τ_∥, β_w) und Vereinfacht | 4.5.3 |
+| Blech | N_pl,Rd, N_u,Rd, Blockversagen V_eff,Rd | 6.2.3, 3.10.2 |
+
+Der **T-Stummel** vergleicht die drei Modi: Modus 1 (Fließen des Blechs)
+F = 4 M_pl,1,Rd/m, Modus 2 (Blech und Schraube) F = (2 M_pl,2,Rd + n ΣF_t,Rd)/(m+n),
+Modus 3 (Schraube) F = ΣF_t,Rd; maßgebend ist der kleinste Wert, und welcher
+es war, steht im Nachweis.
+
+**Ermüdung des Anschlusses**: je Ermüdungslast die Schwingbreite der
+Stabendschnittgrößen, daraus Δσ im betrachteten Bauteil (Schraube über den
+Spannungsquerschnitt A_s, Naht über a·l, Blech über den Nettoquerschnitt).
+Kerbfälle nach Tab. 8.1 und 8.5 — Schraube auf Zug 50, Schraube auf Abscheren
+100 (m = 5), Blech mit Loch 90, gleitfeste Verbindung 112, Kehlnaht 80,
+Kopfplattenanschluss 71. Die Schädigungen werden nach Palmgren–Miner **über
+alle Ermüdungslasten** aufsummiert, getrennt je Kerbfall.
+
+Bei vorgespannten Schrauben hält die Vorspannung die Fuge geschlossen; in der
+Schraube kommt dann nur ein Bruchteil der äußeren Schwingbreite an. Das
+Programm rechnet mit dem Steifigkeitsverhältnis Schraube/Blech (Voreinstellung
+1:5) und **sagt diese Annahme im Nachweis dazu**; genau ergibt sich die
+Schwingbreite aus der Rechnung am Teilmodell. Ohne Vorspannung wirkt die volle
+äußere Schwingbreite — auch das steht als Hinweis im Nachweis.
+
+Die Geometrievorschläge (Blechdicken, Schraubenbild, Nahtdicken) sind
+**Vorschläge, keine Nachweise**: sie folgen den Konstruktionsregeln
+(Rand- und Lochabstände Tab. 3.3, Nahtdicken 4.5.1) und werden so lange
+nachgebessert, bis die Nachweise für die eingegebenen Schnittgrößen erfüllt
+sind. Maßgebend ist immer die anschließende Rechnung über alle Kombinationen.
+
 ## 6 Modalanalyse und Knicken
 
 * Eigenschwingungen: verallgemeinertes Eigenwertproblem (K − ω² M) φ = 0
@@ -283,6 +336,11 @@ Schadensfolge), γFf = 1,0.
 * Kontakt als Penalty-Näherung ohne Lastgeschichte (monotone Lasten).
 * Schalen: ebene Elemente; Beulnachweise von Blechfeldern (EN 1993-1-5)
   sind nicht enthalten (Hinweis im Nachweis).
+* Anschlüsse: nachgewiesen werden die im Modell angelegten Anschlüsse der drei
+  Vorlagen (Kopfplatte, Laschenstoß, Knotenblech) aus den Stabendschnitt-
+  größen. Die Nachgiebigkeit des Anschlusses geht **nicht** in die Rechnung
+  ein (starre oder gelenkige Modellierung ist über die Stabendgelenke zu
+  wählen); Momenten-Rotations-Kennlinien nach 6.3 sind nicht enthalten.
 * Nachweise gelten für die implementierten Querschnittstypen (I, RHS, CHS,
   Rechteck, Kreis); bei freien Querschnitten wird elastisch (Klasse 3)
   gerechnet.

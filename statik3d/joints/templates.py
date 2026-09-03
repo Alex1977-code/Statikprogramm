@@ -121,6 +121,14 @@ class JointTemplate:
     def describe(self) -> str:
         raise NotImplementedError
 
+    def kennwerte(self) -> list:
+        """Die Bauteile des Anschlusses als (Bezeichnung, Wert) - fuer den Bericht.
+
+        ``describe`` schreibt dasselbe als Text fuers Protokoll; hier steht es
+        zeilenweise, damit es im Dokument als Tabelle erscheint.
+        """
+        return [("Beschreibung", self.describe())]
+
     def design(self, **forces) -> JointCheck:
         raise NotImplementedError
 
@@ -207,7 +215,7 @@ class EndPlate(JointTemplate):
         if abs(My) > 0.6 * fy * (sec.Wel_y or 1e-4):
             a.stiffeners = 2
             a.t_stiff = max(tw, 0.010)
-            a.hinweise.append("hohes Moment - Rippen ueber und unter dem Zugflansch "
+            a.hinweise.append("hohes Moment - Rippen über und unter dem Zugflansch "
                               "vorgeschlagen")
         a.hinweise.append(f"Vorschlag aus {sec.name}: Zugkraft im Flansch "
                           f"F_t = {Ft / 1e3:.0f} kN, {n} Schrauben {a.bolt.size}")
@@ -291,6 +299,22 @@ class EndPlate(JointTemplate):
             t.append("  Hinweis: " + h)
         return "\n".join(t)
 
+    def kennwerte(self) -> list:
+        z = ", ".join(f"{v * 1e3:+.0f}" for v in self.rows)
+        kv = [("Kopfplatte", f"b × h × t = {self.bp * 1e3:.0f} × {self.hp * 1e3:.0f} × "
+                             f"{self.tp * 1e3:.0f} mm, {self.grade}"),
+              ("Schrauben", self.bolt.describe()),
+              ("Anzahl", f"{2 * len(self.rows)} Stück in {len(self.rows)} Reihen"),
+              ("Reihen z (ab Plattenmitte)", f"{z} mm"),
+              ("Riss w (Abstand quer)", f"{self.w * 1e3:.0f} mm"),
+              ("Randabstand e_1 (oben/unten)", f"{self.ex * 1e3:.0f} mm"),
+              ("Randabstand e_2 (seitlich)", f"{0.5 * (self.bp - self.w) * 1e3:.0f} mm"),
+              ("Kehlnaht am Flansch", f"a = {self.a_f * 1e3:g} mm"),
+              ("Kehlnaht am Steg", f"a = {self.a_w * 1e3:g} mm")]
+        if self.stiffeners:
+            kv.append(("Rippen", f"{self.stiffeners} Stück, t = {self.t_stiff * 1e3:g} mm"))
+        return kv
+
     def bolt_positions(self) -> list[tuple[float, float]]:
         """Schraubenlagen (y, z) in der Plattenebene [m]."""
         return [(sy * 0.5 * self.w, z) for z in self.rows for sy in (-1, 1)]
@@ -333,10 +357,12 @@ class EndPlate(JointTemplate):
         # Naehte: Flanschnaht traegt die Flanschkraft, Stegnaht die Querkraft
         nf = Fillet(a=self.a_f, length=2 * b, fu=self.fu, grade=self.grade,
                     gamma_M2=self.gamma_M2)
-        j.add(check_weld(nf, N_perp=Ft_ges, V_perp=0.0, V_par=0.0))
+        j.add(check_weld(nf, N_perp=Ft_ges, V_perp=0.0, V_par=0.0,
+                         bezeichnung="Kehlnaht am Flansch"))
         nw = Fillet(a=self.a_w, length=2 * max(h - 2 * tf, 0.05), fu=self.fu,
                     grade=self.grade, double=False, gamma_M2=self.gamma_M2)
-        j.add(check_weld(nw, N_perp=0.0, V_perp=abs(Vz), V_par=0.0))
+        j.add(check_weld(nw, N_perp=0.0, V_perp=abs(Vz), V_par=0.0,
+                         bezeichnung="Kehlnaht am Steg"))
         # Druckflansch auf die Platte
         A_druck = b * tf
         F_druck = abs(My) / hebel + max(-N, 0.0) * anteil
@@ -355,15 +381,15 @@ class EndPlate(JointTemplate):
                                              area=self.bolt.As))
             if self.bolt.preloaded:
                 j.hinweise.append(
-                    "Ermuedung der Schrauben mit dem Faktor "
-                    f"{self.bolt_range_factor():.2f} der aeusseren Schwingbreite "
-                    "gerechnet (Vorspannung haelt die Fuge geschlossen). Genau "
+                    "Ermüdung der Schrauben mit dem Faktor "
+                    f"{self.bolt_range_factor():.2f} der äußeren Schwingbreite "
+                    "gerechnet (die Vorspannung hält die Fuge geschlossen). Genau "
                     "ergibt sich die Schwingbreite aus der Rechnung am Teilmodell.")
             else:
                 j.hinweise.append(
-                    "Schrauben nicht vorgespannt: die volle aeussere Schwingbreite "
-                    "wirkt in der Schraube. Fuer ermuedungsbeanspruchte "
-                    "Kopfplatten vorgespannte Schrauben verwenden.")
+                    "Schrauben nicht vorgespannt: die volle äußere Schwingbreite "
+                    "wirkt in der Schraube. Für ermüdungsbeanspruchte Kopfplatten "
+                    "vorgespannte Schrauben verwenden.")
             j.ermuedung.append(fatigue_check("kopfplatte",
                                              [(abs(dMy) / max(sec.Wel_y, 1e-9), n_cycles)]))
         return j
@@ -574,6 +600,19 @@ class Splice(JointTemplate):
         for h in self.hinweise:
             t.append("  Hinweis: " + h)
         return "\n".join(t)
+
+    def kennwerte(self) -> list:
+        return [("Flanschlaschen", f"b × t = {self.b_fl * 1e3:.0f} × {self.t_fl * 1e3:.0f} mm, "
+                                   + ("außen und innen (zweischnittig)" if self.inner_flange
+                                      else "nur außen (einschnittig)") + f", {self.grade}"),
+                ("Steglaschen", f"h × t = {self.h_web * 1e3:.0f} × {self.t_web * 1e3:.0f} mm, "
+                                "beidseitig"),
+                ("Schrauben", self.bolt.describe()),
+                ("Anzahl je Stoßseite", f"{self.n_fl} je Flanschlasche, "
+                                        f"{self.n_web} je Steglasche"),
+                ("Lochabstand p_1 (in Stabrichtung)", f"{self.p1 * 1e3:.0f} mm"),
+                ("Randabstand e_1", f"{self.e1 * 1e3:.0f} mm"),
+                ("Lochabstand p_2 (quer)", f"{self.p2 * 1e3:.0f} mm")]
 
     def design(self, N: float = 0.0, Vz: float = 0.0, My: float = 0.0,
                n_cycles: float = 0.0, dN: float = 0.0) -> JointCheck:
@@ -811,13 +850,28 @@ class Gusset(JointTemplate):
             t.append("  Hinweis: " + h)
         return "\n".join(t)
 
+    def kennwerte(self) -> list:
+        kv = [("Knotenblech", f"t = {self.t_g * 1e3:.0f} mm, {self.grade}")]
+        if self.welded:
+            kv.append(("Anschluss", f"geschweißt, Kehlnaht a = {self.a_w * 1e3:g} mm, "
+                                    f"l = {self.l_weld * 1e3:.0f} mm je Flanke"))
+        else:
+            kv += [("Schrauben", self.bolt.describe()),
+                   ("Anzahl", f"{self.n_bolt} Stück in {self.reihen} Reihe(n)"),
+                   ("Lochabstand p_1 / p_2", f"{self.p1 * 1e3:.0f} / {self.p2 * 1e3:.0f} mm"),
+                   ("Randabstand e_1 / e_2", f"{self.e1 * 1e3:.0f} / {self.e2 * 1e3:.0f} mm")]
+        kv.append(("wirksame Breite nach Whitmore",
+                   f"{self.whitmore_width() * 1e3:.0f} mm"))
+        return kv
+
     def design(self, N: float = 0.0, n_cycles: float = 0.0, dN: float = 0.0) -> JointCheck:
         j = JointCheck(self.name)
         sec = self.sec
         if self.welded:
             n = Fillet(a=self.a_w, length=self.l_weld, fu=self.fu, grade=self.grade,
                        double=True, gamma_M2=self.gamma_M2)
-            j.add(check_weld(n, V_par=abs(N)))
+            j.add(check_weld(n, V_par=abs(N),
+                             bezeichnung="Kehlnaht Blech an Bauteil"))
         else:
             Fv = abs(N) / max(self.n_bolt, 1)
             geo = BoltGeometry(e1=self.e1, e2=self.e2, p1=self.p1, p2=self.p2,

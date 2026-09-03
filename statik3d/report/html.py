@@ -243,7 +243,8 @@ class Report:
         "model_tables": True, "materials": True, "sections": True, "supports": True,
         "load_cases": True, "combinations": True, "figures": True, "results_cases": True,
         "results_combinations": True, "envelopes": True, "member_diagrams": True,
-        "design": True, "fatigue": True, "contact": True, "modal": True, "buckling": True,
+        "design": True, "fatigue": True, "joints": True, "contact": True,
+        "modal": True, "buckling": True,
         # Grenzen fuer grosse Modelle
         "max_rows": 200, "max_detail_cases": 20, "max_detail_combinations": 12,
         "max_member_diagrams": 40, "figure_width": 760, "figure_height": 480,
@@ -268,6 +269,7 @@ class Report:
         self.envelopes: dict = {}
         self.design = None
         self.fatigue = None
+        self.joints = None
         self.info: dict = {}
         if analysis is not None:
             self.cases = dict(getattr(analysis, "cases", {}) or {})
@@ -275,6 +277,7 @@ class Report:
             self.envelopes = dict(getattr(analysis, "envelopes", {}) or {})
             self.design = getattr(analysis, "design", None)
             self.fatigue = getattr(analysis, "fatigue", None)
+            self.joints = getattr(analysis, "joints", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
             name = results.name or "Ergebnis"
@@ -389,7 +392,7 @@ class Report:
             b = []
             for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
                        self.chapter_results, self.chapter_design, self.chapter_fatigue,
-                       self.chapter_summary, self.chapter_appendix):
+                       self.chapter_joints, self.chapter_summary, self.chapter_appendix):
                 b.extend(ch())
             self._blocks = b
         return self._blocks
@@ -471,6 +474,12 @@ class Report:
             "(Biegeknicken, Drillknicken, Biegedrillknicken mit M_cr nach NCCI SN003, "
             f"Interaktion nach Anhang {ds.interaction_method}); "
             f"γ_M0 = {ds.gamma_M0:g}, γ_M1 = {ds.gamma_M1:g}, γ_M2 = {ds.gamma_M2:g}.")
+        if m.joints:
+            items.append(
+                f"Anschlussnachweise nach DIN EN 1993-1-8 für {len(m.joints)} Anschlüsse "
+                "(Schrauben 3.6/3.7/3.9, äquivalenter T-Stummel 6.2.4, Schweißnähte 4.5.3, "
+                "Blockversagen 3.10.2) sowie deren Ermüdung nach DIN EN 1993-1-9, "
+                f"Tab. 8.1 und 8.5; γ_M2 = {ds.gamma_M2:g}.")
         items.append(
             "Ermüdungsnachweis nach DIN EN 1993-1-9 (Nennspannungskonzept, Kerbfallklassen, "
             "Wöhlerlinien mit m = 3/5 bzw. m = 5 für Schub, Schadensakkumulation "
@@ -484,8 +493,11 @@ class Report:
             "Stabilitätsnachweise setzen die angegebenen Knicklängen, seitlichen Halterungen "
             "und Randbedingungsbeiwerte voraus; diese sind vom Anwender zu verantworten.",
             "Schubbeulen nach DIN EN 1993-1-5 wird nur angezeigt (hw/tw-Grenze), nicht "
-            "nachgewiesen. Anschlüsse, Schweißnähte und Schrauben (DIN EN 1993-1-8) sind "
-            "nicht Bestandteil dieses Berichts.",
+            "nachgewiesen; Plattenbeulen und Schalenbeulen sind nicht Bestandteil dieses "
+            "Berichts.",
+            "Anschlüsse, Schweißnähte und Schrauben nach DIN EN 1993-1-8 werden für die im "
+            "Modell angelegten Anschlüsse in Kapitel 7 nachgewiesen; nicht angelegte "
+            "Anschlüsse sind gesondert nachzuweisen.",
             "Ermüdung: Nennspannungen an den Querschnittsrändern aus N, My, Mz; "
             "Schub aus V/A_v; Reihenfolgeeffekte werden nicht berücksichtigt.",
             "Alle Ergebnisse sind vom Aufsteller auf Plausibilität zu prüfen "
@@ -1546,6 +1558,142 @@ class Report:
         return b
 
     # ============================================================ Kapitel 7
+    def chapter_joints(self) -> list:
+        """Anschluesse: jede Naht und jede Schraube mit ihrer Ausnutzung."""
+        m = self.model
+        b = [self._h(1, "Anschlüsse nach DIN EN 1993-1-8")]
+        j = self.joints if self.opt("joints") else None
+        if j is None or not getattr(j, "joints", None):
+            if not self.opt("joints"):
+                b.append(("p", "Die Ausgabe der Anschlussnachweise ist deaktiviert."))
+            elif not m.joints:
+                b.append(("p", "Im Modell ist kein Anschluss angelegt. Anschlüsse sind "
+                               "dann gesondert nachzuweisen."))
+            else:
+                b.append(("p", "Es wurden keine Anschlussnachweise geführt "
+                               "(keine Ergebnisse)."))
+            return b
+        from ..joints.anschluss import KURZ, vorlage
+        b.append(self._h(2, "Grundlagen"))
+        st = j.settings or {}
+        b.append(("list", [
+            "Schrauben nach DIN EN 1993-1-8, 3.6 und 3.7: Abscheren F_v,Rd, Lochleibung "
+            "F_b,Rd, Zug F_t,Rd, Durchstanzen B_p,Rd, Interaktion Abscheren und Zug "
+            "(Tab. 3.4) sowie Gleitfestigkeit F_s,Rd der Kategorien B und C (3.9).",
+            "Zugzone geschraubter Stirnplatten über den äquivalenten T-Stummel nach 6.2.4 "
+            "(Versagensmodus 1 bis 3, wirksame Längen nach Tab. 6.4/6.5).",
+            "Kehl- und Stumpfnähte nach 4.5.3: Richtungsbezogenes Verfahren "
+            "(σ_⊥, τ_⊥, τ_∥ mit β_w nach Tab. 4.1) und Vereinfachtes Verfahren; "
+            "Nahtdicken nach 4.5.1.",
+            "Bleche: Zug im Brutto- und Nettoquerschnitt (EN 1993-1-1, 6.2.3), "
+            "Blockversagen nach 3.10.2, Rand- und Lochabstände nach Tab. 3.3.",
+            "Ermüdung der Anschlussteile nach DIN EN 1993-1-9, Kerbfälle Tab. 8.1 "
+            "(Schrauben, Bleche mit Loch) und Tab. 8.5 (Nähte); Schadensakkumulation "
+            "nach Palmgren-Miner über alle Ermüdungslasten.",
+            f"Teilsicherheitsbeiwerte: γ_M0 = {fmt(st.get('gamma_M0', 1.0), 2)}, "
+            f"γ_M2 = {fmt(st.get('gamma_M2', 1.25), 2)}, "
+            f"γ_Ff = {fmt(st.get('gamma_Ff', 1.0), 2)}.",
+            "Die Schnittgrößen sind die Stabendschnittgrößen am Anschlusspunkt; jeder "
+            f"Anschluss wird über alle {len(j.combinations)} GZT-Kombinationen geführt, "
+            "die ungünstigste ist maßgebend.",
+        ]))
+
+        b.append(self._h(2, "Übersicht"))
+        rows = [["Anschluss", "Typ", "Ort", "Ausnutzung", "maßgebender Nachweis",
+                 "Kombination", "D (Ermüdung)", "Status"]]
+        for c in j.joints.values():
+            rows.append([c.name, KURZ.get(c.typ, c.typ), c.ort, Util(c.util),
+                         _pretty(c.massgebend or c.fehler), c.kombination,
+                         Util(c.D) if c.D else "-",
+                         "erfüllt" if c.eta <= 1.0 and not c.fehler
+                         else ("nicht geführt" if c.fehler else "NICHT erfüllt")])
+        b.append(("table", rows, "Anschlüsse: maßgebende Ausnutzung", None, ""))
+        if self.opt("figures"):
+            liste = [c for c in j.joints.values() if not c.fehler][:60]
+            if liste:
+                b.append(self._figure(
+                    sv.draw_bar_chart([c.name for c in liste], [c.eta for c in liste],
+                                      620, None, 1.0, "Ausnutzung je Anschluss"),
+                    "Ausnutzungsgrade der Anschlüsse (Grenze 1.0; "
+                    "Tragfähigkeit oder Ermüdung, was größer ist)"))
+
+        b.append(self._h(2, "Nachweise im Einzelnen"))
+        for c in j.joints.values():
+            b.append(self._h(3, f"Anschluss {c.name}"))
+            if c.fehler:
+                b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
+                self._warnings.append(f"Anschluss {c.name}: {c.fehler}")
+                continue
+            e = m.elements[c.elem] if c.elem < len(m.elements) else None
+            stab = next((n for n, mm in m.members.items() if c.elem in mm.elements), "")
+            kv = [("Anschlusstyp", KURZ.get(c.typ, c.typ)),
+                  ("Ort", c.ort + (f", Stab {stab}" if stab else "")
+                   + (f", {e.sec} aus {e.mat}" if e is not None and e.sec else ""))]
+            try:
+                kv += vorlage(m, m.joints[c.name]).kennwerte()
+            except Exception as ex:            # noqa: BLE001
+                kv.append(("Geometrie", f"nicht darstellbar: {ex}"))
+            kv += [("maßgebende Kombination", c.kombination),
+                   ("Schnittgrößen am Anschluss",
+                    ", ".join(f"{k} = {v / (1e3):.1f} " + ("kNm" if k.startswith("M") else "kN")
+                              for k, v in c.kraefte.items())),
+                   ("maßgebender Nachweis", _pretty(c.massgebend)),
+                   ("Ausnutzung (Tragfähigkeit)", Util(c.util))]
+            if c.ermuedung:
+                kv.append(("Schädigung (Ermüdung)", Util(c.D)))
+            kv.append(("Status", "Nachweis erfüllt" if c.eta <= 1.0
+                       else "Nachweis NICHT erfüllt"))
+            b.append(("kv", kv, f"Anschluss {c.name}"))
+
+            rows = [["Nachweis", "E_d", "R_d", "Einheit", "Ausnutzung", "Bemerkung"]]
+            for ch in c.checks:
+                f = 1e-3 if ch["einheit"] == "kN" else (1e-6 if ch["einheit"] == "N/mm^2" else 1.0)
+                einheit = "N/mm²" if ch["einheit"] == "N/mm^2" else ch["einheit"]
+                rows.append([_pretty(ch["name"]), fmt(ch["E"] * f, 1), fmt(ch["R"] * f, 1),
+                             einheit, Util(ch["eta"]), _pretty(ch["hinweis"])])
+            b.append(("table", rows, f"Einzelnachweise {c.name} "
+                                     f"(Kombination {c.kombination})", None, ""))
+
+            if len(c.je_kombination) > 1:
+                zeilen = sorted(c.je_kombination, key=lambda d: -d["eta"])
+                rows = [["Kombination", "N [kN]", "V_z [kN]", "M_y [kNm]", "Ausnutzung",
+                         "maßgebender Nachweis"]]
+                for d in zeilen:
+                    rows.append([d["kombination"], fmt(d.get("N", 0.0) / 1e3, 1),
+                                 fmt(d.get("Vz", 0.0) / 1e3, 1),
+                                 fmt(d.get("My", 0.0) / 1e3, 1),
+                                 Util(d["eta"]), _pretty(d["massgebend"])])
+                rows, note = self._truncate(rows, self.opt("max_detail_combinations") or 12)
+                b.append(("table", rows, "Ausnutzung je Kombination (absteigend geordnet)",
+                          None, ""))
+                if note:
+                    b.append(("note", note))
+
+            if c.ermuedung:
+                rows = [["Kerbfall Δσ_C [MPa]", "Steigung m", "γ_Mf", "Δσ [MPa]", "n",
+                         "N_R", "n / N_R", "Ermüdungslast", "Kerbfallbeschreibung"]]
+                for e2 in c.ermuedung:
+                    for (ds, n), NR in zip(e2["stufen"], e2["N_R"]):
+                        rows.append([f"{e2['kerbfall']:.0f}", f"{e2['steigung']}",
+                                     fmt(e2["gamma_Mf"], 2), fmt(ds / 1e6, 1), f"{n:.3g}",
+                                     f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                                     fmt(n / NR, 4) if np.isfinite(NR) and NR > 0 else "0",
+                                     ", ".join(e2["lasten"]), _pretty(e2["beschreibung"])])
+                    rows.append([f"Summe D (Kerbfall {e2['kerbfall']:.0f})", "", "", "",
+                                 "", "", Util(e2["schaedigung"]), "",
+                                 "Palmgren-Miner über alle Ermüdungslasten"])
+                b.append(("table", rows, f"Ermüdungsnachweis {c.name} "
+                                         "(Palmgren-Miner über alle Ermüdungslasten)",
+                          None, ""))
+            if c.hinweise:
+                b.append(("list", [f"Hinweis: {_pretty(h)}" for h in c.hinweise]))
+
+        nf = [c.name for c in j.joints.values() if c.eta > 1.0]
+        if nf:
+            self._warnings.append("Anschlussnachweis NICHT erfüllt für: " + ", ".join(nf))
+        return b
+
+    # ============================================================ Kapitel 8
     def chapter_summary(self) -> list:
         m = self.model
         b = [self._h(1, "Zusammenfassung")]
@@ -1594,13 +1742,25 @@ class Report:
                                                f"{worst.category / 1e6:.0f}: {_pretty(worst.governing)}"))
             if any(fm.util > 1.0 for fm in f.members.values()):
                 status_ok = False
+        aj = self.joints
+        if aj is not None and getattr(aj, "joints", None):
+            worst = max(aj.joints.values(), key=lambda c: c.eta)
+            kv.append(("max. Ausnutzung Anschlüsse", Util(worst.eta)))
+            kv.append(("maßgebend (Anschluss)",
+                       f"{worst.name} ({worst.ort}): "
+                       + (f"Ermüdung, D = {fmt(worst.D, 3)}" if worst.D > worst.util
+                          else f"{_pretty(worst.massgebend)}, Kombination {worst.kombination}")))
+            if any(c.eta > 1.0 or c.fehler for c in aj.joints.values()):
+                status_ok = False
         b.append(("kv", kv, "Wesentliche Ergebnisse"))
-        if (d is not None and getattr(d, "members", None)) or \
-                (f is not None and getattr(f, "members", None)):
+        gefuehrt = ((d is not None and getattr(d, "members", None))
+                    or (f is not None and getattr(f, "members", None))
+                    or (aj is not None and getattr(aj, "joints", None)))
+        if gefuehrt:
             if status_ok:
                 b.append(("status", "Alle Nachweise erfüllt.", True))
             else:
-                b.append(("status", "Nachweise NICHT erfüllt – siehe Kapitel 5 und 6.", False))
+                b.append(("status", "Nachweise NICHT erfüllt – siehe Kapitel 5 bis 7.", False))
         else:
             b.append(("status", "Es wurden keine Nachweise geführt; die Ergebnisse dienen der "
                                 "Schnittgrößen- und Verformungsermittlung.", True))

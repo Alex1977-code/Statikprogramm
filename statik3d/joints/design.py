@@ -26,7 +26,7 @@ from ..ec3 import fatigue as fat
 #: Kerbfaelle EN 1993-1-9 Tab. 8.1 (Schrauben) und 8.5 (Naehte), Delta-sigma_C
 DETAILS = {
     "schraube_zug": (50, 3, "Schraube auf Zug, Spannungsquerschnitt, "
-                            "Abstuetzkraefte beruecksichtigen (Tab. 8.1, Kerbfall 50)"),
+                            "Abstützkräfte berücksichtigen (Tab. 8.1, Kerbfall 50)"),
     "schraube_zug_gewalzt": (50, 3, "Schraube mit gewalztem Gewinde, Kerbfall 50"),
     "schraube_abscheren": (100, 5, "Schraube auf Abscheren, Schaftquerschnitt "
                                    "(Tab. 8.1, Kerbfall 100, m = 5)"),
@@ -35,13 +35,13 @@ DETAILS = {
     "lochleibung": (90, 3, "Lochleibung am Blech mit Loch, Kerbfall 90"),
     "blech_loch": (90, 3, "Blech mit Loch, Nettoquerschnitt, Kerbfall 90"),
     "gvp": (112, 3, "Gleitfeste Verbindung, Bruttoquerschnitt, Kerbfall 112"),
-    "stumpfnaht_quer": (90, 3, "Stumpfnaht quer, beidseitig geschweisst, "
-                               "Nahtueberhoehung abgearbeitet: 112"),
-    "stumpfnaht_laengs": (125, 3, "Stumpfnaht laengs, Kerbfall 125"),
+    "stumpfnaht_quer": (90, 3, "Stumpfnaht quer, beidseitig geschweißt, "
+                               "Nahtüberhöhung abgearbeitet: 112"),
+    "stumpfnaht_laengs": (125, 3, "Stumpfnaht längs, Kerbfall 125"),
     "kehlnaht_quer": (80, 3, "Kehlnaht quer (Stirnkehlnaht), Kerbfall 80"),
-    "kehlnaht_laengs": (80, 3, "Kehlnaht laengs (Flankenkehlnaht), Kerbfall 80"),
+    "kehlnaht_laengs": (80, 3, "Kehlnaht längs (Flankenkehlnaht), Kerbfall 80"),
     "kehlnaht_schub": (80, 5, "Kehlnaht auf Schub, Delta-tau, Kerbfall 80, m = 5"),
-    "steife": (71, 3, "Aufgeschweisste Steife oder Rippe, Kerbfall 71"),
+    "steife": (71, 3, "Aufgeschweißte Steife oder Rippe, Kerbfall 71"),
     "kopfplatte": (71, 3, "Kopfplattenanschluss, Naht am Flansch, Kerbfall 71"),
 }
 
@@ -113,17 +113,26 @@ def check_bolt(bolt: Bolt, Fv_Ed: float = 0.0, Ft_Ed: float = 0.0,
 
 
 def check_weld(weld: Fillet, N_perp: float = 0.0, V_perp: float = 0.0,
-               V_par: float = 0.0, method: str = "richtung") -> list[Check]:
-    """Nahtnachweis nach dem Richtungsbezogenen oder Vereinfachten Verfahren."""
+               V_par: float = 0.0, method: str = "richtung",
+               bezeichnung: str = "Kehlnaht") -> list[Check]:
+    """Nahtnachweis nach dem Richtungsbezogenen oder Vereinfachten Verfahren.
+
+    bezeichnung: benennt die Naht im Nachweis ("Kehlnaht am Flansch"). Im
+    Bericht stehen sonst mehrere gleichnamige Zeilen, die niemand
+    auseinanderhalten kann.
+    """
     if method == "vereinfacht":
         F = math.sqrt(N_perp ** 2 + V_perp ** 2 + V_par ** 2)
-        return [Check("Kehlnaht (Vereinfachtes Verfahren)", F, weld.Fw_Rd(),
-                      hinweis=f"f_vw,d = {weld.fvw_d() / 1e6:.0f} N/mm^2")]
+        return [Check(f"{bezeichnung} (Vereinfachtes Verfahren)", F, weld.Fw_Rd(),
+                      hinweis=f"f_vw,d = {weld.fvw_d() / 1e6:.0f} N/mm^2, "
+                              f"a = {weld.a * 1e3:g} mm, l = {weld.length * 1e3:.0f} mm")]
     r = weld.utilisation_directional(N_perp, V_perp, V_par)
     return [
-        Check("Kehlnaht Vergleichsspannung", r["vergleichsspannung"], r["grenzspannung"],
-              einheit="N/mm^2", hinweis=f"beta_w = {beta_w(weld.grade):.2f}"),
-        Check("Kehlnaht sigma senkrecht", abs(r["sigma_senkrecht"]),
+        Check(f"{bezeichnung}: Vergleichsspannung", r["vergleichsspannung"],
+              r["grenzspannung"], einheit="N/mm^2",
+              hinweis=f"beta_w = {beta_w(weld.grade):.2f}, a = {weld.a * 1e3:g} mm, "
+                      f"l = {weld.length * 1e3:.0f} mm"),
+        Check(f"{bezeichnung}: sigma senkrecht", abs(r["sigma_senkrecht"]),
               0.9 * weld.fu / weld.gamma_M2, einheit="N/mm^2"),
     ]
 

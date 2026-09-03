@@ -821,6 +821,7 @@ class Analysis:
     envelopes: dict = field(default_factory=dict)
     design: object = None
     fatigue: object = None
+    joints: object = None
     info: dict = field(default_factory=dict)
 
     def all_results(self) -> dict:
@@ -840,6 +841,8 @@ class Analysis:
             s.append(self.design.summary())
         if self.fatigue is not None:
             s.append(self.fatigue.summary())
+        if self.joints is not None:
+            s.append(self.joints.summary())
         return "\n".join(s)
 
 
@@ -869,6 +872,11 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
     if fatigue and model.fatigue_loads:
         from .ec3.fatigue import check_fatigue
         an.fatigue = check_fatigue(model, an, progress=progress)
+    if design and model.joints:
+        # Anschluesse gehoeren zu den Nachweisen: sie laufen mit, sobald
+        # Nachweise verlangt sind (DIN EN 1993-1-8 / -1-9).
+        from .joints.anschluss import check_joints
+        an.joints = check_joints(model, an, progress=progress, ermuedung=bool(fatigue))
     an.info = {"time": time.time() - t0, "parallel": parallel.describe(),
                "solver": system.backend, "ndof": model.ndof, "nfree": len(system.fi)}
     return an

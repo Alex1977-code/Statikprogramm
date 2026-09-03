@@ -534,9 +534,130 @@ def test_vorlagen():
           a_vor.bolt_range_factor() < 0.3, f"{a_vor.bolt_range_factor():.2f}")
 
 
+# --------------------------------------------------------------------------
+# Anschluss als Teil des Modells: speichern, ueber alle Kombinationen
+# nachweisen, Ermuedung aus den Ermuedungslasten, Bericht
+# --------------------------------------------------------------------------
+def test_anschluss_im_modell():
+    from statik3d import solver, examples_lib
+    from statik3d.model import Model
+    from statik3d.joints import anschluss as A
+    from statik3d.joints.templates import propose
+
+    m = examples_lib.build_example("hall")
+    r = m.members["Riegel"]
+    e_kopf, e_lasche = r.elements[0], r.elements[len(r.elements) // 2]
+    t = propose("kopfplatte", m, e_kopf, end=0, N=-50e3, Vz=150e3, My=300e3)
+    j = A.als_joint(t, "K1")
+    m.joints[j.name] = j
+    check("Anschluss wird zum Modellobjekt", j.typ == "kopfplatte" and j.elem == e_kopf,
+          f"{j.typ}, {j.ort()}")
+    check("Geometrie steht im Modellobjekt",
+          abs(j.geometrie["tp"] - t.tp) < 1e-12 and j.geometrie["rows"] == t.rows,
+          f"t_p = {j.geometrie['tp'] * 1e3:.0f} mm, {len(j.geometrie['rows'])} Reihen")
+    check("Schraube steht im Modellobjekt",
+          j.schraube["size"] == t.bolt.size and j.schraube["grade"] == t.bolt.grade,
+          f"{j.schraube['size']} {j.schraube['grade']}")
+
+    # -- speichern und laden ------------------------------------------
+    d = Model.from_dict(m.to_dict())
+    check("Anschluss übersteht Speichern und Laden",
+          list(d.joints) == ["K1"] and d.joints["K1"].geometrie == j.geometrie)
+    check("Anschluss übersteht Rückgängig (Modellkopie)",
+          m.copy().joints["K1"].schraube == j.schraube)
+
+    # -- Vorlage aus dem Modellobjekt zurueckbauen ---------------------
+    t2 = A.vorlage(d, d.joints["K1"])
+    check("Vorlage lässt sich zurückbauen",
+          type(t2) is type(t) and abs(t2.tp - t.tp) < 1e-12 and t2.rows == t.rows)
+    j1 = t.design(N=-50e3, Vz=150e3, My=300e3)
+    j2 = t2.design(N=-50e3, Vz=150e3, My=300e3)
+    check("zurückgebaute Vorlage rechnet dasselbe",
+          abs(j1.eta - j2.eta) < 1e-12, f"{j1.eta:.6f} / {j2.eta:.6f}")
+
+    # -- Endkraefte: Vorzeichen wie in beam_end_forces ------------------
+    m.joints["S1"] = A.als_joint(
+        propose("lasche", m, e_lasche, end=1, N=-50e3, Vz=50e3, My=200e3), "S1")
+    an = solver.solve_all(m, design=True, fatigue=True)
+    ein = next(iter(an.combinations.values()))
+    k = A.endkraefte(ein, e_kopf, 0)
+    from statik3d.solver import beam_end_forces
+    bf = beam_end_forces(m, e_kopf, ein.beam_end[e_kopf])
+    check("Endkräfte stimmen mit beam_end_forces überein",
+          abs(k["N"] - bf["N"][0]) < 1e-6 and abs(k["My"] - bf["My"][0]) < 1e-6,
+          f"N = {k['N'] / 1e3:.1f} kN, My = {k['My'] / 1e3:.1f} kNm")
+
+    # -- Nachweis ueber alle Kombinationen ------------------------------
+    res = an.joints
+    check("Anschlüsse werden mit der Berechnung nachgewiesen",
+          res is not None and set(res.joints) == {"K1", "S1"})
+    c = res.joints["K1"]
+    check("jede GZT-Kombination wird geführt",
+          len(c.je_kombination) == len(res.combinations) == len(an.envelopes["ULS"].results)
+          if hasattr(an.envelopes.get("ULS"), "results") else
+          len(c.je_kombination) == len(res.combinations),
+          f"{len(c.je_kombination)} Kombinationen")
+    beste = max(c.je_kombination, key=lambda d: d["eta"])
+    check("die ungünstigste Kombination ist maßgebend",
+          abs(beste["eta"] - c.util) < 1e-12 and beste["kombination"] == c.kombination,
+          f"{c.kombination}: eta = {c.util:.3f}")
+    check("Einzelnachweise sind aufgeführt",
+          any("Abscheren" in x["name"] for x in c.checks)
+          and any("Kehlnaht" in x["name"] for x in c.checks)
+          and any("T-Stummel" in x["name"] for x in c.checks),
+          f"{len(c.checks)} Nachweise")
+    eta_max = max(x["eta"] for x in c.checks)
+    check("die Ausnutzung ist die größte der Einzelnachweise",
+          abs(eta_max - c.util) < 1e-12, f"{eta_max:.3f}")
+
+    # -- Ermuedung ------------------------------------------------------
+    check("Ermüdung aus den Ermüdungslasten des Modells",
+          c.ermuedung and c.D > 0,
+          f"D = {c.D:.3f} aus {[e['lasten'] for e in c.ermuedung]}")
+    check("Kerbfall der Schraube ist 50 (Tab. 8.1)",
+          any(e["kerbfall"] == 50 for e in c.ermuedung))
+    ohne = solver.solve_all(m, design=True, fatigue=False)
+    check("ohne Ermüdungsnachweis bleibt die Schädigung außen vor",
+          ohne.joints.joints["K1"].D == 0.0
+          and abs(ohne.joints.joints["K1"].util - c.util) < 1e-12)
+
+    # -- feste Schnittgroessen -------------------------------------------
+    m.joints["K1"].kraefte = {"N": 0.0, "Vz": 10e3, "My": 20e3}
+    fest = solver.solve_all(m, design=True).joints.joints["K1"]
+    check("festgehaltene Schnittgrößen gehen vor",
+          fest.kombination == "von Hand" and fest.util < c.util,
+          f"eta = {fest.util:.3f} statt {c.util:.3f}")
+    m.joints["K1"].kraefte = {}
+
+    # -- Fehler werden benannt, nicht verschwiegen -------------------------
+    m.joints["X"] = A.als_joint(propose("kopfplatte", m, e_kopf, end=0, My=100e3), "X")
+    m.joints["X"].typ = "gibtsnicht"
+    schlecht = solver.solve_all(m, design=True).joints.joints["X"]
+    check("unbekannter Anschlusstyp wird gemeldet, nicht geraten",
+          schlecht.fehler and schlecht.status() == "nicht geführt", schlecht.fehler[:50])
+    del m.joints["X"]
+
+    # -- Bericht ---------------------------------------------------------
+    from statik3d.report import Report
+    rep = Report(m, an)
+    html = rep.html()
+    check("Bericht hat ein Kapitel Anschlüsse",
+          "Anschlüsse nach DIN EN 1993-1-8" in html)
+    for text in ("T-Stummel", "Kehlnaht", "Abscheren F_v,Rd", "Palmgren-Miner",
+                 "K1", "S1"):
+        check(f"Bericht nennt „{text}“", text in html)
+    check("Bericht nennt die maßgebende Kombination im Anschluss",
+          c.kombination in html, c.kombination)
+    check("der alte Ausschluss steht nicht mehr im Bericht",
+          "nicht Bestandteil dieses Berichts" not in html.split("Anschlüsse, Schweißnähte")[0]
+          or "in Kapitel 7 nachgewiesen" in html)
+    check("Zusammenfassung führt die Anschlüsse",
+          "max. Ausnutzung Anschlüsse" in html)
+
+
 def main():
     for t in (test_schrauben, test_naehte, test_tstub, test_fe_schraube,
-              test_bleche, test_nachweise, test_vorlagen):
+              test_bleche, test_nachweise, test_vorlagen, test_anschluss_im_modell):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

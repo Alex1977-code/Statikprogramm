@@ -696,11 +696,21 @@ class JointDialog(QtWidgets.QDialog):
         self.txt.setFont(f)
         lay.addWidget(self.txt)
 
+        self.cb_fest = QtWidgets.QCheckBox(
+            "Diese Schnittgrößen festhalten (sonst aus der Rechnung, über alle "
+            "GZT-Kombinationen)")
+        self.cb_fest.setToolTip(
+            "Aus: der Anschluss wird bei jeder Berechnung mit den Stabend-\n"
+            "schnittgrößen jeder GZT-Kombination geführt, die ungünstigste ist\n"
+            "maßgebend. Ein: es gelten dauerhaft die oben eingetragenen Werte.")
+        lay.addWidget(self.cb_fest)
+
         zeile = QtWidgets.QHBoxLayout()
         self.cb_fe = QtWidgets.QComboBox()
         self.cb_fe.addItem("Teilmodell: Schalen (2D-FE)", "2d")
         self.cb_fe.addItem("Teilmodell: Volumen (3D-FE)", "3d")
         self.cb_fe.addItem("kein Teilmodell", "")
+        self.cb_fe.setCurrentIndex(self.cb_fe.count() - 1)
         zeile.addWidget(self.cb_fe)
         zeile.addStretch(1)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
@@ -742,6 +752,10 @@ class JointDialog(QtWidgets.QDialog):
     def forces(self) -> dict:
         """Die eingestellten Schnittgroessen [N bzw. Nm]."""
         return {k: self.sp[k].value() * 1e3 for k in self.sp}
+
+    def kraefte_fest(self) -> bool:
+        """Sollen die eingetragenen Schnittgroessen dauerhaft gelten?"""
+        return self.cb_fest.isChecked()
 
     def fe_kind(self) -> str:
         return self.cb_fe.currentData()
