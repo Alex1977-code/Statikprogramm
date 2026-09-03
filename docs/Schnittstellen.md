@@ -305,8 +305,17 @@ zusammengebaute Tragwerk ist SDNF oder IFC der Weg.
 
 `statik3d.exporters.export_model(modell, "ziel.endung")` — das Format folgt aus
 der Endung. In der Oberfläche: **Datei → Exportieren…** (Strg+E), auf der
-Kommandozeile `--export DATEI` (mehrfach möglich, `--formate` listet auf), über
-die Web-API die Operation `export`.
+Kommandozeile `--export DATEI` (mehrfach möglich, `--formate` listet auf), im
+Browser unter **Mehr → Export** (Format wählen, „Herunterladen“).
+
+Über die Web-API gibt es zwei Wege:
+
+* `POST /api/op {"op": "export", "path": "…"}` schreibt die Datei **auf dem
+  Rechner, auf dem der Server läuft** (für die Desktop-GUI und den eigenen PC).
+* `GET /api/export?fmt=.sdnf` liefert die Datei als Download an den Browser —
+  ohne Datei auf dem Server. Formate, die einen Ordner schreiben (`.csv`,
+  `.nc1`), kommen dabei als ZIP. `GET /api/state` nennt unter
+  `export_formats` alle Endungen mit Klartext.
 
 | Endung | Format | Inhalt |
 |---|---|---|

@@ -268,7 +268,11 @@ zulassen, sonst erreicht das Handy den PC nicht.
 
 Oben die 3D-Ansicht, unten die Register. Der Bereich dazwischen lässt sich am
 Griff ziehen (klein / halb / groß); auf Tablets und PCs liegen die Register
-links neben der Ansicht.
+links neben der Ansicht. Ab 1100 px Fensterbreite schaltet die Oberfläche in
+die **Werkbank**: links der Modellbaum (Elemente nach Art, Querschnitte,
+Werkstoffe, Lager, Lastfälle, Kombinationen, Kontakt, Stellungen, Stäbe für
+Nachweise), in der Mitte die Ansicht mit dem Filmstreifen der Stellungen
+darunter, rechts die Register als Arbeitsblatt.
 
 | Register | Inhalt |
 |---|---|
@@ -277,7 +281,8 @@ links neben der Ansicht.
 | **Rechnen** | Analyseart, Nachweise, Prozesse, Rechnerfarm, Start; Fortschritt und Zusammenfassung |
 | **Ergebnisse** | Ergebnis (Umhüllende / Kombination / Lastfall / Eigenform), Färbung, Überhöhung, Schnittgrößenverlauf, Stabdiagramm N/Vz/My, Tabellen Stabkräfte, Umhüllende, Auflagerkräfte, Kontakt |
 | **Nachweise** | Nachweise EC3 und Ermüdung starten, Tabellen; Zeile antippen zeigt alle Zwischenwerte |
-| **Mehr** | Datei öffnen/importieren (alle Formate aus Kap. 6), Modell speichern, Bericht (HTML/PDF/Markdown), Modellprüfung, Beispiele, Ansicht, Protokoll, Zugangsschlüssel |
+| **Stellungen** | Stellungen beweglicher Brücken anlegen und rechnen, Umhüllende, Kurve η über den Stellungswinkel, DIN-19704-Beiwerte, ZTV-ING-Prüfliste (siehe „Bewegliche Brücken“) |
+| **Mehr** | Datei öffnen/importieren (alle Formate aus Kap. 6), Modell speichern, **Export in dreizehn Formate** (herunterladen), Bericht (HTML/PDF/Markdown), Modellprüfung, Beispiele, Ansicht, Protokoll, Zugangsschlüssel |
 
 3D-Ansicht: Ziehen dreht, zwei Finger zoomen und verschieben, Doppeltipp
 zeigt alles, die Knöpfe oben schalten Ansichten (3D, XY, XZ, YZ) und
@@ -383,6 +388,36 @@ Grenzmoment der Rutschkupplung), `WIND_B` (Wind während der Bewegung), `EIS`,
 > `rw.bericht()` schreibt die Tabelle mit Herkunft, und das Importprotokoll
 > weist darauf hin. Ein Programm, das Beiwerte aus dem Gedächtnis behauptet,
 > wäre schlimmer als eines, das die Tabelle offen zur Bestätigung vorlegt.
+
+### Stellungen im Browser: Register „Stellungen“
+
+Alles davon gibt es auch ohne Python, im Browser (`python run_web.py`,
+Kapitel 12). Das Register **⟳ Stellungen** führt den ganzen Ablauf:
+
+1. **+ Stellung** legt eine Stellung an: Name, Stellungswinkel, welche Lager
+   ausfallen, welche Lastfälle gelten, um welchen Winkel welche Gruppe gedreht
+   wird und an welchem Knoten das Antriebsmoment angreift. Ein zweites Anlegen
+   unter demselben Namen **ändert** die Stellung, statt sie zu verdoppeln; die
+   Liste bleibt nach Winkel sortiert.
+2. **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln und bildet die
+   Umhüllende. Jede Karte zeigt danach ihr η, die maßgebende Stellung ist
+   hervorgehoben, und die Kurve **η über den Stellungswinkel** steht darunter.
+   Eine Stellung, die nicht rechenbar ist — etwa weil ein genannter Lastfall
+   im Modell fehlt —, wird mit ihrer Fehlermeldung ausgewiesen; die übrigen
+   Stellungen werden trotzdem gerechnet.
+3. **DIN 19704: Kombinationen bilden** legt die Kombinationen der drei
+   Lastfallklassen an und zeigt darunter **jeden Beiwert mit seinem Zustand**:
+   „zu bestätigen“ oder „bestätigt“. Ein Beiwert lässt sich im selben Register
+   setzen; damit gilt er als bestätigt und verschwindet aus der Liste der
+   offenen Werte.
+4. Die **ZTV-ING-Prüfliste** steht darunter — mit Haken nur bei dem, was das
+   Programm wirklich sehen kann.
+
+Am breiten Bildschirm (ab 1100 px) schaltet die Oberfläche in die
+**Werkbank**: links der Modellbaum, in der Mitte die 3D-Ansicht mit dem
+Filmstreifen der Stellungen darunter, rechts die Register. Der Filmstreifen
+zeigt jede Stellung als Karte mit Winkel und Ausnutzung; ein Klick wählt sie
+aus. Am Handy bleibt es beim gewohnten Aufbau mit dem Bereich von unten.
 
 ### ZTV-ING-Prüfliste
 

@@ -162,15 +162,33 @@ class Stellung:
         if not self.faelle:
             return
         behalten = set(self.faelle)
+        unbekannt = sorted(behalten - set(m.load_cases))
+        if unbekannt:
+            # Ohne diese Pruefung raeumt remove_load_case alle Lastfaelle ab und
+            # legt einen leeren Ersatzlastfall an - die Stellung waere sinnlos.
+            raise ValueError(f"Stellung '{self.name}': Lastfall "
+                             + ", ".join(f"'{x}'" for x in unbekannt)
+                             + " gibt es im Modell nicht. Vorhanden: "
+                             + ", ".join(sorted(m.load_cases)))
         for name in list(m.load_cases):
             if name not in behalten:
                 m.remove_load_case(name)
         for name in list(m.combinations):
             c = m.combinations[name]
-            if not set(c.factors) <= behalten:
+            if not set(c.factors) <= behalten or not c.factors:
                 del m.combinations[name]
+        # Ermuedungslasten, deren Lastfall in dieser Stellung fehlt, entfallen mit:
+        # sonst bricht die ganze Stellung an einem Verweis ins Leere ab.
+        weg = [f.name for f in m.fatigue_loads.values()
+               if f.case_max not in behalten
+               or (f.case_min is not None and f.case_min not in behalten)]
+        for name in weg:
+            del m.fatigue_loads[name]
         if log is not None:
             log.append(f"  {self.name}: Lastfälle {', '.join(sorted(behalten))}")
+            if weg:
+                log.append(f"  {self.name}: Ermüdungslasten ohne Lastfall entfallen: "
+                           + ", ".join(sorted(weg)))
 
     def _antrieb(self, m: Model, log: list = None):
         knoten, moment = self.antrieb
@@ -283,8 +301,8 @@ class Stellungsreihe:
                 self.log.append(f"  {st.name}: u_max = {e.u_max * 1e3:.3f} mm"
                                 + (f", eta = {e.eta:.3f}" if nachweise else ""))
             except Exception as ex:      # noqa: BLE001
-                e.fehler = str(ex)
-                self.log.append(f"  {st.name}: FEHLER {ex}")
+                e.fehler = f"{type(ex).__name__}: {ex}" if str(ex).strip() else type(ex).__name__
+                self.log.append(f"  {st.name}: FEHLER {e.fehler}")
             self.ergebnisse.append(e)
         return Umhuellende(self)
 

@@ -38,6 +38,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+import zipfile
 from dataclasses import asdict, is_dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -281,6 +282,112 @@ def _support_summary(m: Model) -> str:
         return ""
 
 
+def _export_formats() -> list:
+    """[(Endung, Beschreibung)] aller Ausgabeformate fuer die Oberflaeche."""
+    try:
+        from ..exporters import formats
+        return [{"ext": e, "text": t} for e, t in formats()]
+    except Exception:      # noqa: BLE001 - Uebersicht darf nie stoeren
+        return []
+
+
+def export_bytes(st: State, ext: str) -> tuple[bytes, str, str]:
+    """Modell in ein fremdes Format schreiben und als Datei zurueckgeben.
+
+    Formate, die einen Ordner schreiben (.csv, .nc1), werden gepackt.
+    Rueckgabe: (Daten, MIME-Typ, Dateiname).
+    """
+    from ..exporters import export_model, FORMATS
+    ext = (ext or "").strip().lower()
+    if not ext.startswith("."):
+        ext = "." + ext
+    if ext not in FORMATS:
+        raise ApiError(f"Format '{ext}' gibt es nicht: " + ", ".join(sorted(FORMATS)))
+    with st.lock:
+        m = st.model
+        erg = st.results if st.results is not None else st.analysis
+        name = _safe_name(m.name) or "modell"
+        log: list = []
+        with tempfile.TemporaryDirectory() as tmp:
+            ziel = os.path.join(tmp, name + ext)
+            try:
+                pfad = export_model(m, ziel, results=erg, log=log)
+            except Exception as ex:      # noqa: BLE001 - Meldung an die Oberflaeche
+                raise ApiError(f"Export nicht moeglich: {ex}")
+            if os.path.isdir(pfad):
+                paket = os.path.join(tmp, name + "_" + ext.lstrip(".") + ".zip")
+                with zipfile.ZipFile(paket, "w", zipfile.ZIP_DEFLATED) as z:
+                    for wurzel, _dirs, dateien in os.walk(pfad):
+                        for d in sorted(dateien):
+                            voll = os.path.join(wurzel, d)
+                            z.write(voll, os.path.relpath(voll, pfad))
+                pfad = paket
+            daten = open(pfad, "rb").read()
+            fname = os.path.basename(pfad)
+    for z in log:
+        st.info(z)
+    endung = os.path.splitext(fname)[1].lstrip(".").lower()
+    return daten, MIME.get(endung, "application/octet-stream"), fname
+
+
+def _stellungen_summary(st: State) -> dict:
+    """Stellungen des Systems und, falls gerechnet, die Umhuellende."""
+    liste = getattr(st, "stellungen", None) or []
+    umh = getattr(st, "umhuellende", None)
+    erg = {}
+    if umh is not None:
+        fuehrend = max(umh.reihe.ergebnisse, key=lambda x: x.eta,
+                       default=None) if umh.reihe.ergebnisse else None
+        for e in umh.reihe.ergebnisse:
+            erg[e.stellung.name] = {"eta": float(e.eta), "u_max": float(e.u_max),
+                                    "massgebend": e.massgebend, "fehler": e.fehler,
+                                    "fuehrt": bool(fuehrend is not None
+                                                   and e is fuehrend and not e.fehler)}
+    out = {
+        "liste": [{"name": s.name, "winkel": float(s.winkel),
+                   "beschreibung": s.beschreibung,
+                   "lager_aktiv": list(s.lager_aktiv), "lager_aus": list(s.lager_aus),
+                   "faelle": list(s.faelle), "dreh_winkel": float(s.dreh_winkel),
+                   "gruppen": list(s.dreh_gruppen),
+                   "antrieb": bool(s.antrieb),
+                   "ergebnis": erg.get(s.name)} for s in liste],
+        "gerechnet": umh is not None,
+    }
+    if umh is not None:
+        out.update({"eta": float(umh.eta), "u_max": float(umh.u_max),
+                    "massgebende_stellung": umh.massgebende_stellung,
+                    "kurve": [[float(w), float(e), float(u), n] for w, e, u, n in umh.kurve()],
+                    "fehlerhaft": [x.stellung.name for x in umh.fehlerhaft],
+                    "bericht": umh.bericht()})
+    rw = getattr(st, "regelwerk", None)
+    if rw is not None:
+        from ..bridges.din19704 import EINWIRKUNGEN, KLASSEN, KLASSEN_TEXT
+        out["regelwerk"] = {
+            "name": rw.name, "offen": rw.offen()[:40], "offen_gesamt": len(rw.offen()),
+            "klassen": [{"code": k, "text": KLASSEN_TEXT[k],
+                         "beiwerte": [{"einwirkung": e, "text": EINWIRKUNGEN.get(e, ""),
+                                       "wert": float(rw.gamma_F[k][e].wert),
+                                       "quelle": rw.gamma_F[k][e].quelle,
+                                       "bestaetigt": bool(rw.gamma_F[k][e].bestaetigt)}
+                                      for e in KLASSEN[k] if e in rw.gamma_F[k]]}
+                        for k in ("LF1", "LF2", "LF3")],
+            "bericht": rw.bericht()}
+    try:
+        from ..bridges.din19704 import pruefliste
+        from ..bridges.positions import Stellungsreihe
+        reihe = getattr(st, "stellungsreihe", None)
+        if reihe is None and liste:
+            # noch nicht gerechnet: die angelegten Stellungen trotzdem beurteilen
+            reihe = Stellungsreihe(st.model, st.model.name)
+            for x in liste:
+                reihe.add(x)
+        out["ztv"] = [{"thema": t, "erfuellt": bool(ok), "hinweis": h}
+                      for t, ok, h in pruefliste(reihe, st.model)]
+    except Exception:      # noqa: BLE001 - Uebersicht darf nie stoeren
+        out["ztv"] = []
+    return out
+
+
 def state_summary(st: State) -> dict:
     with st.lock:
         m = st.model
@@ -344,6 +451,7 @@ def state_summary(st: State) -> dict:
             "hinges": [{"name": h.name, "end": h.end, "beschreibung": h.describe()}
                        for h in m.hinges.values()],
             "support_summary": _support_summary(m),
+            "stellungen": _stellungen_summary(st),
             "countries": [{"code": c, "name": n, "norm": nn, "families": f}
                           for c, n, nn, f in profiles.countries()],
             "contact": {"supports": [_clean(asdict(c)) for c in m.contact_supports[:MAX_ROWS]],
@@ -356,6 +464,7 @@ def state_summary(st: State) -> dict:
             "categories": {k: {"text": v[0], "psi": list(v[1])} for k, v in ACTION_CATEGORIES.items()},
             "grades": list(STEEL_GRADES), "families": list(profiles.FAMILIES),
             "examples": {k: EXAMPLE_LABELS.get(k, k) for k in EXAMPLES},
+            "export_formats": _export_formats(),
             "log": st.log[-80:],
         }
 
@@ -1238,6 +1347,107 @@ def _op_add_hinge(st, m, d):
     return f"Gelenk {name} angelegt" + (f" und auf {len(elems)} Elemente gelegt" if elems else "")
 
 
+# --------------------------------------------------------------------------
+# Stellungen des Systems (bewegliche Bruecken)
+# --------------------------------------------------------------------------
+def _stellungen(st) -> list:
+    """Stellungsliste des Zustands (wird im Zustand gehalten, nicht im Modell)."""
+    if not hasattr(st, "stellungen"):
+        st.stellungen = []
+    return st.stellungen
+
+
+@op("stellung")
+def _op_stellung(st, m, d):
+    """Stellung anlegen oder aendern."""
+    from ..bridges.positions import Stellung
+    name = (d.get("name") or "").strip()
+    if not name:
+        raise ApiError("Name der Stellung fehlt")
+    liste = _stellungen(st)
+    vorhanden = next((s for s in liste if s.name == name), None)
+    antrieb = None
+    kn = str(d.get("antrieb_knoten") or "").strip()
+    treffer = re.findall(r"\d+", kn)
+    if treffer:
+        mv = [_f(d, "antrieb_mx", 0.0), _f(d, "antrieb_my", 0.0), _f(d, "antrieb_mz", 0.0)]
+        antrieb = (int(treffer[0]) - 1, mv)
+    neu = Stellung(
+        name=name,
+        winkel=_f(d, "winkel", 0.0),
+        beschreibung=(d.get("beschreibung") or "").strip(),
+        lager_aktiv=[x.strip() for x in (d.get("lager_aktiv") or "").split(",") if x.strip()],
+        lager_aus=[x.strip() for x in (d.get("lager_aus") or "").split(",") if x.strip()],
+        faelle=[x.strip() for x in (d.get("faelle") or "").split(",") if x.strip()],
+        dreh_achse=(_f(d, "achse_x", 0.0), _f(d, "achse_y", 1.0), _f(d, "achse_z", 0.0)),
+        dreh_punkt=(_f(d, "punkt_x", 0.0), _f(d, "punkt_y", 0.0), _f(d, "punkt_z", 0.0)),
+        dreh_winkel=_f(d, "dreh_winkel", 0.0),
+        dreh_gruppen=[x.strip() for x in (d.get("gruppen") or "").split(",") if x.strip()],
+        antrieb=antrieb)
+    if vorhanden is not None:
+        liste[liste.index(vorhanden)] = neu
+        return f"Stellung {name} geaendert"
+    liste.append(neu)
+    liste.sort(key=lambda s: s.winkel)
+    return f"Stellung {name} angelegt ({neu.beschriftung()})"
+
+
+@op("remove_stellung")
+def _op_remove_stellung(st, m, d):
+    name = (d.get("name") or "").strip()
+    liste = _stellungen(st)
+    vor = len(liste)
+    liste[:] = [s for s in liste if s.name != name]
+    if len(liste) == vor:
+        raise ApiError(f"Stellung '{name}' gibt es nicht")
+    return f"Stellung {name} entfernt"
+
+
+@op("stellungen_rechnen")
+def _op_stellungen_rechnen(st, m, d):
+    """Alle Stellungen rechnen und die Umhuellende bilden."""
+    from ..bridges.positions import Stellungsreihe
+    liste = _stellungen(st)
+    if not liste:
+        raise ApiError("Es ist keine Stellung angelegt")
+    reihe = Stellungsreihe(m, m.name)
+    for s in liste:
+        reihe.add(s)
+    umh = reihe.rechnen(kombinationen=bool(d.get("kombinationen", True)),
+                        nachweise=bool(d.get("nachweise", True)))
+    st.stellungsreihe = reihe
+    st.umhuellende = umh
+    for z in reihe.log:
+        st.log.append(z)
+    return (f"{len(liste)} Stellungen gerechnet: eta = {umh.eta:.3f}"
+            + (f", massgebend {umh.massgebende_stellung}" if umh.massgebende_stellung else ""))
+
+
+@op("din19704")
+def _op_din19704(st, m, d):
+    """Kombinationen nach DIN 19704 bilden."""
+    from ..bridges.din19704 import Regelwerk
+    rw = getattr(st, "regelwerk", None) or Regelwerk()
+    st.regelwerk = rw
+    faktoren = list(d.get("faktoren") or [])
+    if d.get("klasse") and d.get("einwirkung") and d.get("wert") not in (None, ""):
+        faktoren.append({"klasse": d["klasse"], "einwirkung": d["einwirkung"],
+                         "wert": d["wert"]})
+    for eintrag in faktoren:
+        try:
+            rw.faktor(eintrag["klasse"], eintrag["einwirkung"], float(eintrag["wert"]))
+        except (KeyError, TypeError, ValueError) as ex:
+            raise ApiError(f"Beiwert nicht setzbar: {ex}")
+    klassen = d.get("klassen") or None
+    log: list = []
+    namen = rw.kombinationen(m, klassen=klassen, log=log)
+    for z in log:
+        st.log.append(z)
+    offen = rw.offen()
+    return (f"{len(namen)} Kombinationen nach DIN 19704 gebildet"
+            + (f"; {len(offen)} Beiwerte sind noch zu bestaetigen" if offen else ""))
+
+
 @op("export")
 def _op_export(st, m, d):
     """Modell in ein fremdes Format schreiben (Endung bestimmt das Format)."""
@@ -1857,7 +2067,13 @@ def import_bytes(st: State, name: str, data: bytes, unit: float = None) -> dict:
 
 
 MIME = {"html": "text/html; charset=utf-8", "pdf": "application/pdf",
-        "md": "text/markdown; charset=utf-8", "json": "application/json; charset=utf-8"}
+        "md": "text/markdown; charset=utf-8", "json": "application/json; charset=utf-8",
+        "zip": "application/zip", "xlsx": "application/vnd.openxmlformats-officedocument."
+        "spreadsheetml.sheet", "csv": "text/csv; charset=utf-8", "dxf": "image/vnd.dxf",
+        "ifc": "application/x-step", "stl": "model/stl", "vtu": "application/xml",
+        "sdnf": "text/plain; charset=utf-8", "inp": "text/plain; charset=utf-8",
+        "bdf": "text/plain; charset=utf-8", "nc1": "text/plain; charset=utf-8",
+        "sza": "application/octet-stream"}
 
 
 def make_report(st: State, fmt: str = "html") -> tuple[bytes, str, str]:
@@ -2037,6 +2253,10 @@ class Handler(BaseHTTPRequestHandler):
             disp = "attachment" if q.get("download") else "inline"
             return self._send(data, mime, 200,
                               {"Content-Disposition": f'{disp}; filename="{fname}"'})
+        if path == "export":
+            daten, mime, fname = export_bytes(st, q.get("fmt") or q.get("format") or ".json")
+            return self._send(daten, mime, 200,
+                              {"Content-Disposition": f'attachment; filename="{fname}"'})
         if path == "download":
             with st.lock:
                 m = st.model

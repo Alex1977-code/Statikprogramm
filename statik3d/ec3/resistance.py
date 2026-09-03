@@ -84,10 +84,28 @@ def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: f
         checks["tau_t (6.2.7)"] = (tau_t / fvd, f"tau_t,Ed/(fy/(sqrt3 gM0)) = {tau_t/1e6:.1f}/{fvd/1e6:.1f} MPa")
     VyRd = R["V_y_Rd"] * red_T
     VzRd = R["V_z_Rd"] * red_T
+    # Schoepft die Torsion die Schubtragfaehigkeit schon allein aus (red_T = 0),
+    # bliebe V_Rd = 0 und die Ausnutzung unendlich. Dann wird stattdessen die
+    # Summe der Schubspannungen aus Torsion und Querkraft nachgewiesen - ein
+    # endlicher, nachvollziehbarer Wert, der ueber 1 liegt.
     if aVz > 0:
-        checks["V_z (6.2.6)"] = (aVz / VzRd, f"V_z,Ed/V_pl,z,Rd = {aVz/1e3:.1f}/{VzRd/1e3:.1f} kN")
+        if VzRd > 0:
+            checks["V_z (6.2.6)"] = (aVz / VzRd,
+                                     f"V_z,Ed/V_pl,z,Rd = {aVz/1e3:.1f}/{VzRd/1e3:.1f} kN")
+        else:
+            tau = tau_t + (aVz / R["Avz"] if R["Avz"] > 0 else 0.0)
+            checks["V_z + tau_t (6.2.6/6.2.7)"] = (
+                tau / fvd, f"Torsion schoepft die Schubtragfaehigkeit allein aus: "
+                f"(tau_t + tau_V)/f_vd = {tau/1e6:.1f}/{fvd/1e6:.1f} MPa")
     if aVy > 0:
-        checks["V_y (6.2.6)"] = (aVy / VyRd, f"V_y,Ed/V_pl,y,Rd = {aVy/1e3:.1f}/{VyRd/1e3:.1f} kN")
+        if VyRd > 0:
+            checks["V_y (6.2.6)"] = (aVy / VyRd,
+                                     f"V_y,Ed/V_pl,y,Rd = {aVy/1e3:.1f}/{VyRd/1e3:.1f} kN")
+        else:
+            tau = tau_t + (aVy / R["Avy"] if R["Avy"] > 0 else 0.0)
+            checks["V_y + tau_t (6.2.6/6.2.7)"] = (
+                tau / fvd, f"Torsion schoepft die Schubtragfaehigkeit allein aus: "
+                f"(tau_t + tau_V)/f_vd = {tau/1e6:.1f}/{fvd/1e6:.1f} MPa")
     if sec.typ == "I" and sec.tw > 0:
         eps = epsilon(fy)
         hw = sec.h - 2 * sec.tf
@@ -97,8 +115,8 @@ def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: f
                 f"hw/tw = {hw/sec.tw:.1f} > 72 eps/eta = {72*eps/1.2:.1f}: Nachweis nach EN 1993-1-5 erforderlich")
 
     # 6.2.8 Biegung + Querkraft: Abminderung
-    rho_y = (2 * aVz / VzRd - 1) ** 2 if aVz > 0.5 * VzRd else 0.0
-    rho_z = (2 * aVy / VyRd - 1) ** 2 if aVy > 0.5 * VyRd else 0.0
+    rho_y = (2 * aVz / VzRd - 1) ** 2 if VzRd > 0 and aVz > 0.5 * VzRd else 0.0
+    rho_z = (2 * aVy / VyRd - 1) ** 2 if VyRd > 0 and aVy > 0.5 * VyRd else 0.0
     MyRd = R["M_y_Rd"]
     MzRd = R["M_z_Rd"]
     if rho_y > 0:
