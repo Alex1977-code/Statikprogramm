@@ -37,8 +37,26 @@ from typing import Optional
 import numpy as np
 
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
+DOF_ALIASES = {"ux": 0, "uy": 1, "uz": 2, "rx": 3, "ry": 4, "rz": 5,
+               "phix": 3, "phiy": 4, "phiz": 5, "mx": 3, "my": 4, "mz": 5,
+               "d0": 0, "d1": 1, "d2": 2, "d3": 3, "d4": 4, "d5": 5,
+               "x": 0, "y": 1, "z": 2}
+
+
+def dof_index(key) -> int:
+    """FHG-Index 0..5 aus Name ('uz', 'phiy', 'd2') oder Zahl."""
+    if isinstance(key, (int, np.integer)):
+        i = int(key)
+    else:
+        k = str(key).strip().lower().replace("_", "").replace("-", "")
+        if k not in DOF_ALIASES:
+            raise KeyError(f"Freiheitsgrad '{key}' unbekannt ({sorted(set(DOF_ALIASES))})")
+        i = DOF_ALIASES[k]
+    if not 0 <= i <= 5:
+        raise KeyError(f"Freiheitsgrad {key} liegt nicht zwischen 0 und 5")
+    return i
 NDOF = 6
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -322,6 +340,73 @@ class Element:
     roll: float = 0.0               # Verdrehung der lokalen Achsen [rad], nur Stab
     group: str = "default"
     hinges: list[int] = field(default_factory=list)  # Momentengelenke: lokale FHG 3..5 / 9..11
+    hinge_springs: list = field(default_factory=list)  # [(lokaler FHG 0..11, Steifigkeit)]
+    line: str = ""                  # zugehoerige Linie (RFEM-Import)
+
+
+FAILURE_MODES = {
+    "": "immer wirksam",
+    "zug": "faellt bei Zug aus (nimmt nur Druck)",
+    "druck": "faellt bei Druck aus (nimmt nur Zug)",
+}
+
+
+@dataclass
+class DofBehaviour:
+    """Wirkung eines einzelnen Lager-Freiheitsgrads (Nichtlinearitaet wie in RFEM).
+
+    Vorzeichen: Das Lager wirkt entlang der positiven Achse seines FHG. Mit der
+    Knotenverschiebung u in diesem FHG ist die Lagerkraft auf den Knoten
+    F = -k*u. Bewegt sich der Knoten in das Lager hinein (u < 0), ist F > 0:
+    das Lager **drueckt** (Druck im Lager). Zieht der Knoten am Lager (u > 0),
+    ist F < 0: **Zug** im Lager.
+
+    typ:        'rigid' (starr) | 'spring' (Feder) | 'free' (frei)
+    stiffness:  Federsteifigkeit; Knotenlager [N/m] bzw. [Nm/rad],
+                Linienlager [N/m je m], Flaechenlager [N/m je m^2] (Bettung)
+    failure:    '' | 'zug' (Ausfall bei Zug) | 'druck' (Ausfall bei Druck)
+    slip:       Schlupf [m] bzw. [rad]: freier Weg, bevor das Lager wirkt
+    mu:         Reibbeiwert; die Kraft in diesem FHG ist auf mu * |F| des
+                Bezugs-FHG begrenzt (nur Verschiebungs-FHG)
+    mu_ref:     FHG-Index der Bezugskraft (meist 2 = uz); None = automatisch
+                der FHG mit Ausfall in derselben Lagerdefinition
+    limit:      Grenzkraft [N] bzw. [Nm]; 0 = unbegrenzt (plastisches Fliessen)
+    """
+    typ: str = "rigid"
+    stiffness: float = 0.0
+    failure: str = ""
+    slip: float = 0.0
+    mu: float = 0.0
+    mu_ref: Optional[int] = None
+    limit: float = 0.0
+
+    def __post_init__(self):
+        if self.typ not in ("rigid", "spring", "free"):
+            raise ValueError(f"Lagerart '{self.typ}' unbekannt (rigid | spring | free)")
+        if self.failure not in FAILURE_MODES:
+            raise ValueError(f"Ausfallart '{self.failure}' unbekannt ({list(FAILURE_MODES)})")
+
+    @property
+    def nonlinear(self) -> bool:
+        return bool(self.failure) or self.mu > 0 or self.slip > 0 or self.limit > 0
+
+    @property
+    def acts(self) -> bool:
+        return self.typ != "free"
+
+    def describe(self) -> str:
+        if self.typ == "free":
+            return "frei"
+        t = "starr" if self.typ == "rigid" else f"Feder {self.stiffness:g}"
+        if self.failure:
+            t += f", Ausfall bei {self.failure.capitalize()}"
+        if self.slip:
+            t += f", Schlupf {self.slip * 1000:g} mm"
+        if self.mu:
+            t += f", Reibung mu = {self.mu:g}"
+        if self.limit:
+            t += f", Grenzkraft {self.limit / 1e3:g} kN"
+        return t
 
 
 @dataclass
@@ -330,6 +415,122 @@ class Support:
     dofs: list[int]                 # gesperrte FHG-Indizes 0..5
     values: Optional[list[float]] = None   # vorgegebene Verschiebungen (default 0)
     stiffness: Optional[list[float]] = None  # optional Federsteifigkeiten statt starr
+    # Nichtlinearitaet je FHG: {FHG-Index: DofBehaviour}; nicht genannte FHG
+    # verhalten sich wie bisher (starr bzw. Feder aus 'stiffness')
+    behaviour: dict = field(default_factory=dict)
+    name: str = ""
+
+    def dof_behaviour(self, dof: int) -> DofBehaviour:
+        """Wirkung eines FHG; setzt 'dofs'/'stiffness' in DofBehaviour um."""
+        b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
+        if b is not None:
+            return b if isinstance(b, DofBehaviour) else _dc(DofBehaviour, b)
+        if dof not in self.dofs:
+            return DofBehaviour("free")
+        if self.stiffness:
+            k = self.stiffness[self.dofs.index(dof)]
+            if k:
+                return DofBehaviour("spring", float(k))
+        return DofBehaviour("rigid")
+
+    def set_behaviour(self, dof: int, **kw) -> DofBehaviour:
+        b = DofBehaviour(**kw)
+        self.behaviour[int(dof)] = b
+        if int(dof) not in self.dofs and b.acts:
+            self.dofs.append(int(dof))
+        return b
+
+    @property
+    def nonlinear(self) -> bool:
+        return any(self.dof_behaviour(d).nonlinear for d in range(NDOF))
+
+
+@dataclass
+class LineSupport:
+    """Lager entlang eines Linienzugs (RFEM: Linienlager).
+
+    nodes: Knoten des Linienzugs in Reihenfolge (oder line = Name einer Linie).
+    Die Steifigkeiten in 'behaviour' sind auf die Laenge bezogen
+    ([N/m je m] bzw. [Nm/rad je m]) und werden ueber die Einflusslaenge des
+    Knotens (halbe Nachbarabschnitte) auf Knotenfedern umgerechnet.
+    Ausfall, Schlupf und Reibung gelten je Knoten.
+    """
+    name: str = ""
+    nodes: list[int] = field(default_factory=list)
+    line: str = ""
+    behaviour: dict = field(default_factory=dict)     # {FHG: DofBehaviour}
+    axis: str = "global"                              # global (weitere Systeme spaeter)
+
+    def dof_behaviour(self, dof: int) -> DofBehaviour:
+        b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
+        if b is None:
+            return DofBehaviour("free")
+        return b if isinstance(b, DofBehaviour) else _dc(DofBehaviour, b)
+
+
+@dataclass
+class SurfaceSupport:
+    """Flaechenlager / Bettung (RFEM: Flaechenlager).
+
+    elements: Schalen- oder Volumenelemente, deren Flaeche gebettet ist;
+    bei Volumen wird die angegebene Flaechennummer 'face' verwendet
+    (face = -1: alle Aussenflaechen). Die Steifigkeiten in 'behaviour' sind auf
+    die Flaeche bezogen ([N/m je m^2] = Bettungsmodul [N/m^3]) und werden ueber
+    die Einflussflaeche der Knoten verteilt.
+    """
+    name: str = ""
+    elements: list[int] = field(default_factory=list)
+    nodes: list[int] = field(default_factory=list)    # alternativ direkt Knoten + Flaechen
+    areas: list[float] = field(default_factory=list)  # Einflussflaechen zu 'nodes' [m^2]
+    face: int = -1
+    behaviour: dict = field(default_factory=dict)     # {FHG: DofBehaviour}
+
+    def dof_behaviour(self, dof: int) -> DofBehaviour:
+        b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
+        if b is None:
+            return DofBehaviour("free")
+        return b if isinstance(b, DofBehaviour) else _dc(DofBehaviour, b)
+
+
+@dataclass
+class Line:
+    """Linie zwischen Knoten (RFEM: Linien; Staebe verweisen darauf)."""
+    name: str
+    nodes: list[int] = field(default_factory=list)
+    typ: str = "polyline"        # polyline | arc | circle (nur Geometrie/Zuordnung)
+    comment: str = ""
+
+
+HINGE_DOF_NAMES = ["ux", "uy", "uz", "phix", "phiy", "phiz"]
+
+
+@dataclass
+class MemberHinge:
+    """Stabendgelenk (RFEM: Stabendgelenke). Je lokalem FHG 0..5:
+    'fixed' (biegesteif), 'free' (gelenkig) oder 'spring' mit Federsteifigkeit.
+    'end' 0 = Stabanfang, 1 = Stabende. Lokale FHG: 0 ux, 1 uy, 2 uz,
+    3 Torsion, 4 My, 5 Mz."""
+    name: str = ""
+    end: int = 0
+    typ: list[str] = field(default_factory=lambda: ["fixed"] * 6)
+    stiffness: list[float] = field(default_factory=lambda: [0.0] * 6)
+
+    def released(self) -> list[int]:
+        """Lokale Element-FHG (0..11), die gelenkig sind (fuer die Kondensation)."""
+        return [d + 6 * self.end for d, t in enumerate(self.typ) if t == "free"]
+
+    def springs(self) -> list[tuple[int, float]]:
+        return [(d + 6 * self.end, float(k)) for d, (t, k) in enumerate(zip(self.typ, self.stiffness))
+                if t == "spring" and k > 0]
+
+    def describe(self) -> str:
+        parts = []
+        for d, t in enumerate(self.typ):
+            if t == "free":
+                parts.append(HINGE_DOF_NAMES[d])
+            elif t == "spring" and self.stiffness[d] > 0:
+                parts.append(f"{HINGE_DOF_NAMES[d]}={self.stiffness[d]:g}")
+        return ("Anfang" if self.end == 0 else "Ende") + ": " + (", ".join(parts) or "biegesteif")
 
 
 # --------------------------------------------------------------------------
@@ -590,6 +791,10 @@ class Model:
         self.sections: dict[str, Section] = {}
         self.shells: dict[str, ShellProp] = {}
         self.supports: list[Support] = []
+        self.line_supports: list[LineSupport] = []
+        self.surface_supports: list[SurfaceSupport] = []
+        self.lines: dict[str, Line] = {}
+        self.hinges: dict[str, MemberHinge] = {}
         # Lastfaelle / Kombinationen
         self.load_cases: dict[str, LoadCase] = {}
         self.combinations: dict[str, Combination] = {}
@@ -725,6 +930,83 @@ class Model:
                                      list(values) if values is not None else None,
                                      list(stiffness) if stiffness is not None else None))
 
+    def support(self, node: int, dofs="all", name: str = "", **behaviour) -> Support:
+        """Lager mit Nichtlinearitaet je FHG.
+
+            m.support(3, "pinned", uz=dict(failure="zug", slip=0.002),
+                      ux=dict(mu=0.3, mu_ref=2), uy=dict(mu=0.3, mu_ref=2))
+
+        Schluesselwoerter: ux, uy, uz, phix, phiy, phiz (oder d0..d5) mit
+        einem dict der DofBehaviour-Felder.
+        """
+        if dofs == "all":
+            dofs = [0, 1, 2, 3, 4, 5]
+        elif dofs == "pinned":
+            dofs = [0, 1, 2]
+        elif dofs == "free":
+            dofs = []
+        s = Support(int(node), [int(d) for d in dofs], name=name)
+        for key, val in behaviour.items():
+            d = dof_index(key)
+            s.set_behaviour(d, **(val if isinstance(val, dict) else asdict(val)))
+        self.supports.append(s)
+        return s
+
+    def add_line_support(self, nodes, name: str = "", **behaviour) -> LineSupport:
+        """Linienlager: Steifigkeiten je Laenge ([N/m je m]).
+
+            m.add_line_support(kante, uz=dict(typ="spring", stiffness=5e7, failure="zug"))
+        """
+        ls = LineSupport(name or f"LL{len(self.line_supports) + 1}", [int(n) for n in nodes])
+        for key, val in behaviour.items():
+            ls.behaviour[dof_index(key)] = DofBehaviour(**(val if isinstance(val, dict) else asdict(val)))
+        self.line_supports.append(ls)
+        return ls
+
+    def add_surface_support(self, elements=(), name: str = "", nodes=(), areas=(),
+                            face: int = -1, **behaviour) -> SurfaceSupport:
+        """Flaechenlager / Bettung: Steifigkeiten je Flaeche ([N/m je m^2] = [N/m^3])."""
+        ss = SurfaceSupport(name or f"FL{len(self.surface_supports) + 1}",
+                            [int(e) for e in elements], [int(n) for n in nodes],
+                            [float(a) for a in areas], int(face))
+        for key, val in behaviour.items():
+            ss.behaviour[dof_index(key)] = DofBehaviour(**(val if isinstance(val, dict) else asdict(val)))
+        self.surface_supports.append(ss)
+        return ss
+
+    def add_line(self, name: str, nodes, typ: str = "polyline") -> Line:
+        ln = Line(name, [int(n) for n in nodes], typ)
+        self.lines[name] = ln
+        return ln
+
+    def add_hinge(self, name: str, end: int = 0, **dofs) -> MemberHinge:
+        """Gelenkdefinition: ux/uy/uz/phix/phiy/phiz = 'free' oder Federsteifigkeit.
+
+            m.add_hinge("G1", end=1, phiy="free", phiz=1.5e6)
+        """
+        h = MemberHinge(name, int(end))
+        for key, val in dofs.items():
+            d = dof_index(key)
+            if isinstance(val, str):
+                h.typ[d] = val
+            else:
+                h.typ[d] = "spring"
+                h.stiffness[d] = float(val)
+        self.hinges[name] = h
+        return h
+
+    def apply_hinge(self, elem: int, hinge, end: int = None):
+        """Gelenkdefinition auf ein Stabelement legen."""
+        h = self.hinges[hinge] if isinstance(hinge, str) else hinge
+        if end is not None:
+            h = MemberHinge(h.name, int(end), list(h.typ), list(h.stiffness))
+        e = self.elements[int(elem)]
+        e.hinges = sorted(set(e.hinges) | set(h.released()))
+        springs = {d: k for d, k in e.hinge_springs}
+        springs.update(dict(h.springs()))
+        e.hinge_springs = sorted(springs.items())
+        return h
+
     def load_node(self, node: int, Fx=0.0, Fy=0.0, Fz=0.0, Mx=0.0, My=0.0, Mz=0.0,
                   case: str = None):
         self.case(case).nodal_loads.append(NodalLoad(int(node), [Fx, Fy, Fz, Mx, My, Mz]))
@@ -772,7 +1054,17 @@ class Model:
 
     @property
     def has_contact(self) -> bool:
-        return bool(self.contact_supports or self.gap_elements or self.contact_pairs)
+        """True, wenn eine nichtlineare Iteration noetig ist: Kontaktdefinitionen
+        oder Lager mit Ausfall, Schlupf, Reibung bzw. Grenzkraft."""
+        if self.contact_supports or self.gap_elements or self.contact_pairs:
+            return True
+        if any(s.nonlinear for s in self.supports):
+            return True
+        for grp in (self.line_supports, self.surface_supports):
+            for x in grp:
+                if any(x.dof_behaviour(d).nonlinear for d in range(NDOF)):
+                    return True
+        return False
 
     # ---------------- Hilfen ----------------
     @property
@@ -940,7 +1232,11 @@ class Model:
             "materials": {k: asdict(v) for k, v in self.materials.items()},
             "sections": {k: asdict(v) for k, v in self.sections.items()},
             "shells": {k: asdict(v) for k, v in self.shells.items()},
-            "supports": [asdict(s) for s in self.supports],
+            "supports": [_support_dict(s) for s in self.supports],
+            "line_supports": [_beh_dict(asdict(x)) for x in self.line_supports],
+            "surface_supports": [_beh_dict(asdict(x)) for x in self.surface_supports],
+            "lines": [asdict(x) for x in self.lines.values()],
+            "hinges": [asdict(x) for x in self.hinges.values()],
             "load_cases": [lc.to_dict() for lc in self.load_cases.values()],
             "active_case": self.active_case,
             "combinations": [asdict(c) for c in self.combinations.values()],
@@ -965,7 +1261,11 @@ class Model:
         m.materials = {k: _dc(Material, v) for k, v in d["materials"].items()}
         m.sections = {k: _dc(Section, v) for k, v in d["sections"].items()}
         m.shells = {k: _dc(ShellProp, v) for k, v in d.get("shells", {}).items()}
-        m.supports = [_dc(Support, s) for s in d["supports"]]
+        m.supports = [_support_from(sd) for sd in d["supports"]]
+        m.line_supports = [_beh_from(LineSupport, x) for x in d.get("line_supports", [])]
+        m.surface_supports = [_beh_from(SurfaceSupport, x) for x in d.get("surface_supports", [])]
+        m.lines = {x["name"]: _dc(Line, x) for x in d.get("lines", [])}
+        m.hinges = {x["name"]: _dc(MemberHinge, x) for x in d.get("hinges", [])}
         if "load_cases" in d:
             m.load_cases = {}
             for lcd in d["load_cases"]:
@@ -998,6 +1298,28 @@ class Model:
 
     def copy(self) -> "Model":
         return Model.from_dict(json.loads(json.dumps(self.to_dict())))
+
+
+def _beh_dict(d: dict) -> dict:
+    """Verhaltens-Woerterbuch {FHG: DofBehaviour} JSON-tauglich machen."""
+    b = d.get("behaviour") or {}
+    d = dict(d)
+    d["behaviour"] = {str(k): (asdict(v) if hasattr(v, "typ") else dict(v)) for k, v in b.items()}
+    return d
+
+
+def _beh_from(cls, d: dict):
+    obj = _dc(cls, {k: v for k, v in d.items() if k != "behaviour"})
+    obj.behaviour = {int(k): _dc(DofBehaviour, v) for k, v in (d.get("behaviour") or {}).items()}
+    return obj
+
+
+def _support_dict(s: Support) -> dict:
+    return _beh_dict(asdict(s))
+
+
+def _support_from(d: dict) -> Support:
+    return _beh_from(Support, d)
 
 
 def _dc(cls, d: dict):
