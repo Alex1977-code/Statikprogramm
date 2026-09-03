@@ -536,7 +536,15 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
 
     diag = np.abs(K.diagonal())
     ref = diag.max() if diag.size and diag.max() > 0 else 1.0
-    fixed |= diag < ref * 1e-12
+    weak = diag < ref * 1e-12
+    if model.has_contact:
+        # FHG, die ihre Steifigkeit erst aus dem Kontakt bekommen (Schraube mit
+        # Lochspiel, Reibflaeche), duerfen nicht vorab gesperrt werden.
+        from . import contact as _ct
+        held = _ct.contact_dofs(model, K)
+        if held:
+            weak[np.fromiter(held, dtype=int, count=len(held))] = False
+    fixed |= weak
 
     from . import supports as sup
     lin, _ = sup.split(sup.expand(model))
