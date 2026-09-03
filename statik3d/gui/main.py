@@ -167,7 +167,10 @@ class MainWindow(QtWidgets.QMainWindow):
         h.addAction("Theoriehandbuch", lambda: self.open_doc("Theoriehandbuch.md"))
         h.addAction("Schnittstellen (Import)", lambda: self.open_doc("Schnittstellen.md"))
         h.addAction("Rechnerfarm", lambda: self.open_doc("Rechnerfarm.md"))
+        h.addSeparator()
+        h.addAction("Nach Update suchen…", self.check_update)
         h.addAction("Über / Gültigkeitsbereich", self.about)
+        self._build_update_button()
 
     # ------------------------------------------------------------------
     def _build_panels(self):
@@ -1820,6 +1823,101 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         self.stop_web_server()
         super().closeEvent(event)
+
+    # ---- Update (neueste Version von GitHub) ---------------------------
+    def _build_update_button(self):
+        from .. import update as upd
+        self.btn_update = QtWidgets.QToolButton()
+        self.btn_update.setText("Update suchen")
+        self.btn_update.setToolTip(upd.describe())
+        self.btn_update.clicked.connect(lambda: self.check_update())
+        self.statusBar().addPermanentWidget(self.btn_update)
+        self._update_worker = None
+        if os.environ.get("STATIK3D_NO_UPDATE_CHECK") != "1":
+            QtCore.QTimer.singleShot(4000, lambda: self.check_update(quiet=True))
+
+    def _run_update_worker(self, func, on_done, on_failed):
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return
+        w = SolveWorker(func)
+        w.progress.connect(self.info)
+        w.finished_ok.connect(on_done)
+        w.failed.connect(lambda msg, tb: on_failed(msg))
+        self._update_worker = w
+        w.start()
+
+    def check_update(self, quiet: bool = False):
+        """Neueste Version bei GitHub erfragen (Hintergrund); bei quiet nur den Knopf faerben."""
+        from .. import update as upd
+        self.btn_update.setEnabled(False)
+        self.btn_update.setText("Update wird gesucht…")
+
+        def done(info):
+            self.btn_update.setEnabled(True)
+            self.btn_update.setToolTip(info.message)
+            if info.available:
+                self.btn_update.setText("Update verfügbar")
+                self.btn_update.setStyleSheet("font-weight:bold;color:#b8551e")
+                self.info(info.message)
+                if not quiet:
+                    self._offer_update(info)
+            else:
+                self.btn_update.setText("Aktuell")
+                self.btn_update.setStyleSheet("")
+                if not quiet:
+                    QtWidgets.QMessageBox.information(self, "Update", info.message)
+
+        def failed(msg):
+            self.btn_update.setEnabled(True)
+            self.btn_update.setText("Update suchen")
+            if not quiet:
+                self.error(f"Update-Prüfung fehlgeschlagen: {msg}")
+            else:
+                self.log.appendPlainText(f"Update-Prüfung: {msg}")
+
+        self._run_update_worker(lambda progress: upd.check(), done, failed)
+
+    def _offer_update(self, info):
+        from .. import update as upd
+        text = info.message + "\n\n"
+        if info.kind == "exe":
+            text += (f"Die neue Statik3D.exe ({info.size / 1e6:.0f} MB) wird heruntergeladen. "
+                     "Statik3D wird danach beendet, ausgetauscht und neu gestartet.")
+        else:
+            text += ("Die Programmdateien werden aktualisiert (git pull bzw. Download von GitHub). "
+                     "Statik3D startet danach neu.")
+        text += "\n\nUngespeicherte Änderungen bitte vorher speichern."
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Update")
+        box.setText(text)
+        b_go = box.addButton("Jetzt aktualisieren", QtWidgets.QMessageBox.AcceptRole)
+        box.addButton("Später", QtWidgets.QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is not b_go:
+            return
+        self.btn_update.setEnabled(False)
+        self.btn_update.setText("Update läuft…")
+        self.progress_bar.setVisible(True)
+
+        def run(progress):
+            def prog(done, total):
+                progress(f"Download {done / 1e6:.1f} / {total / 1e6:.1f} MB" if total
+                         else f"Download {done / 1e6:.1f} MB")
+            return upd.apply(info, prog, restart=True)
+
+        def done(msg):
+            self.progress_bar.setVisible(False)
+            self.log.appendPlainText(msg)
+            QtWidgets.QMessageBox.information(self, "Update", msg)
+            self.close()
+
+        def failed(msg):
+            self.progress_bar.setVisible(False)
+            self.btn_update.setEnabled(True)
+            self.btn_update.setText("Update verfügbar")
+            self.error(f"Update fehlgeschlagen: {msg}")
+
+        self._run_update_worker(run, done, failed)
 
     def about(self):
         QtWidgets.QMessageBox.information(

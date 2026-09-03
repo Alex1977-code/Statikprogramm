@@ -7,3 +7,7 @@ dist/
 *.vtu
 *_bericht.html
 tests/_gui_smoke.png
+statik3d/_build.py
+statik3d_selbsttest.txt
+statik3d_update.bat
+*.exe.new

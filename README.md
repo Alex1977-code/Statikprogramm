@@ -35,7 +35,20 @@ Einheiten durchgängig SI: **m, N, Pa, kg/m³**.
 
 ---
 
-## Windows: Ein-Klick-Start (immer die neueste Version)
+## Windows-Programm (exe)
+
+**Download, immer die neueste Version:**
+https://github.com/Alex1977-code/Statikprogramm/releases/latest/download/Statik3D.exe
+
+Eine einzelne Datei, keine Installation, kein Python nötig. Beim ersten Start meldet
+Windows SmartScreen ein unbekanntes Programm: „Weitere Informationen“ → „Trotzdem ausführen“
+(das Programm ist nicht signiert). Der erste Start dauert einige Sekunden, weil sich die exe
+entpackt. Unten rechts im Fenster sitzt der Knopf **Update suchen**: Er fragt GitHub nach
+dem neuesten Stand, lädt die neue exe herunter, tauscht sie aus und startet Statik3D neu.
+Die exe wird von GitHub Actions bei jedem Stand von `main` automatisch gebaut
+(`.github/workflows/windows-exe.yml`) und als Release „latest“ veröffentlicht.
+
+## Windows: Ein-Klick-Start aus dem Quellcode
 
 1. Python 3.11 oder 3.12 von https://www.python.org/downloads/windows/ installieren („Add python.exe to PATH“ anhaken).
 2. Diese Datei in einen eigenen Ordner (z. B. `C:\Statik3D`) speichern:
@@ -179,6 +192,14 @@ und Prüfung der Nachweise liegt beim Anwender.
 
 ---
 
+## Aktualisieren
+
+* **exe:** Knopf „Update suchen“ unten rechts (oder Hilfe → Nach Update suchen…).
+* **Quellinstallation:** derselbe Knopf führt `git pull` aus (Klon) oder lädt `main.zip`
+  und ersetzt die Programmdateien; danach Neustart. Ebenso in der Handy-Oberfläche unter
+  Mehr → Verbindung / Info → Update suchen.
+* `Statik3D-Windows.bat` aktualisiert ohnehin bei jedem Start.
+
 ## Aufbau
 
 ```
@@ -198,6 +219,8 @@ statik3d/
   elements/          beam3d, shell, solid
   gui/               PySide6-Oberfläche (main, dialogs, viewport, worker)
   web/               Browser-/Handy-Oberfläche: server.py (HTTP-API), static/ (HTML, CSS, JS)
+  update.py          Update von GitHub (exe-Austausch, git pull, ZIP)
+packaging/           PyInstaller-Rezept, Symbol, Build-Stempel (Windows-exe)
   mesher.py, examples_lib.py, cli.py
 docs/                Benutzerhandbuch, Theoriehandbuch, Schnittstellen, Rechnerfarm
 tests/               Verifikation
