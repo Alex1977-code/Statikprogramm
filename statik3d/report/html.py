@@ -502,6 +502,26 @@ class Report:
                 "(Schrauben 3.6/3.7/3.9, äquivalenter T-Stummel 6.2.4, Schweißnähte 4.5.3, "
                 "Blockversagen 3.10.2) sowie deren Ermüdung nach DIN EN 1993-1-9, "
                 f"Tab. 8.1 und 8.5; γ_M2 = {ds.gamma_M2:g}.")
+        if m.beulfelder:
+            n_zyl = sum(1 for f in m.beulfelder.values() if f.art == "zylinder")
+            n_pl = len(m.beulfelder) - n_zyl
+            teile = []
+            if n_pl:
+                teile.append(f"{n_pl} Blechfelder nach DIN EN 1993-1-5 mit der Methode "
+                             "der reduzierten Spannungen (Abschnitt 10), versteifte "
+                             "Felder mit σ_cr,p nach Anhang A und den Steifennachweisen "
+                             "nach Abschnitt 9")
+            if n_zyl:
+                teile.append(f"{n_zyl} Zylinderschalen nach DIN EN 1993-1-6, "
+                             "Abschnitt 8.5 (kritische Spannungen nach Anhang D.1, "
+                             "Herstelltoleranzklasse, Interaktion 8.5.3(3))")
+            items.append("Beulnachweise für die festgelegten Felder: "
+                         + "; ".join(teile) + ".")
+        if m.lasteinleitungen:
+            items.append(
+                f"Nachweis der Lasteinleitung an {len(m.lasteinleitungen)} Stellen nach "
+                "DIN EN 1993-1-5, Abschnitt 6 (Beiwert k_F, wirksame Lastlänge ℓ_y, "
+                "F_Rd = χ_F f_yw ℓ_y t_w/γ_M1) mit der Interaktion nach 7.2.")
         if m.verformungsgrenzen:
             items.append(
                 f"Verformungsnachweise im Grenzzustand der Gebrauchstauglichkeit für "
@@ -515,16 +535,20 @@ class Report:
         b.append(("list", items))
         b.append(self._h(2, "Gültigkeitsbereich und Hinweise"))
         b.append(("list", [
-            "Die Berechnung ist linear: keine Plastizität, keine Theorie II./III. Ordnung, "
-            "kein Schalenbeulen. Verzweigungslasten (lineares Knicken) gelten für "
-            "Stabtragwerke; Imperfektionen sind über die Knicklinien der Nachweise erfasst.",
+            "Die Berechnung ist linear: keine Plastizität, keine Theorie II./III. Ordnung. "
+            "Verzweigungslasten (lineares Knicken) gelten für Stabtragwerke; "
+            "Imperfektionen sind über die Knicklinien der Nachweise beziehungsweise "
+            "über die Herstelltoleranzklasse der Schalen erfasst.",
             "Stabilitätsnachweise setzen die angegebenen Knicklängen, seitlichen Halterungen "
             "und Randbedingungsbeiwerte voraus; diese sind vom Anwender zu verantworten.",
             "Schubbeulen der Stegbleche wird nach DIN EN 1993-1-5, Abschnitt 5 "
-            "nachgewiesen (V_b,Rd ohne Flanschanteil, Interaktion M–V nach 7.1); "
+            "nachgewiesen (V_b,Rd ohne Flanschanteil, Interaktion M–V nach 7.1). "
             "Blechfelder werden – soweit im Modell als Beulfeld festgelegt – nach "
-            "Abschnitt 10 geführt. Schalenbeulen nach EN 1993-1-6 und Längssteifen "
-            "sind nicht enthalten.",
+            "Abschnitt 10 geführt, längs- und quer versteifte Felder mit σ_cr,p nach "
+            "Anhang A und den Steifennachweisen nach Abschnitt 9; die Lasteinleitung "
+            "wird nach Abschnitt 6 und 7.2 geprüft. Zylinderschalen werden nach "
+            "DIN EN 1993-1-6, Abschnitt 8.5 geführt; andere Schalenformen "
+            "(Kegel, Kugel) sind nicht enthalten.",
             "Anschlüsse, Schweißnähte und Schrauben nach DIN EN 1993-1-8 werden für die im "
             "Modell angelegten Anschlüsse in Kapitel 7 nachgewiesen; nicht angelegte "
             "Anschlüsse sind gesondert nachzuweisen.",
@@ -1489,11 +1513,25 @@ class Report:
         return b
 
     # ============================================================ Kapitel 6
+    @staticmethod
+    def _ist_zylinder(c) -> bool:
+        """Wird das Feld als Zylinderschale nach EN 1993-1-6 gefuehrt?"""
+        return bool((c.werte or {}).get("zylinder"))
+
+    @staticmethod
+    def _beul_status(c) -> str:
+        if c.fehler:
+            return "nicht geführt"
+        return "erfüllt" if c.util <= 1.0 else "NICHT erfüllt"
+
     def chapter_beulen(self) -> list:
-        """Beulnachweise der Blechfelder nach DIN EN 1993-1-5."""
+        """Beulnachweise der Blech- und Schalenfelder nach DIN EN 1993-1-5/-1-6."""
         m = self.model
-        b = [self._h(1, "Beulnachweise nach DIN EN 1993-1-5")]
         bl = self.beulen if self.opt("beulen") else None
+        hat_schale = bool(bl and any(self._ist_zylinder(c)
+                                     for c in (getattr(bl, "felder", None) or {}).values()))
+        b = [self._h(1, "Beulnachweise nach DIN EN 1993-1-5"
+                        + (" und DIN EN 1993-1-6" if hat_schale else ""))]
         if bl is None or not getattr(bl, "felder", None):
             if not self.opt("beulen"):
                 b.append(("p", "Die Ausgabe der Beulnachweise ist deaktiviert."))
@@ -1508,8 +1546,12 @@ class Report:
             b.extend(self._abschnitt_lasteinleitung())
             return b
         st = bl.settings or {}
+        hat_platte = any(not self._ist_zylinder(c) for c in bl.felder.values())
+        hat_steifen = any((c.werte or {}).get("steifen") for c in bl.felder.values())
         b.append(self._h(2, "Grundlagen"))
-        b.append(("list", [
+        grundlagen = []
+        if hat_platte:
+            grundlagen += [
             "Methode der reduzierten Spannungen nach Abschnitt 10: aus dem "
             "Spannungszustand des Feldes (σ_x, σ_z, τ) werden der Fließfaktor "
             "α_ult,k (Gl. 10.3) und der Beulfaktor α_cr (Gl. 10.6) gebildet; daraus "
@@ -1519,37 +1561,60 @@ class Report:
             "σ_E = π² E t² / (12 (1−ν²) b²).",
             "Abminderungsbeiwerte ρ nach 4.4(2) für die Längsspannungen und χ_w "
             "nach Tab. 5.1 für den Schub; Nachweis nach Gl. (10.5). Zusätzlich wird "
-            "die Vereinfachung 10.5(2) mit einem einzigen Beiwert ρ_min ausgewiesen.",
+            "die Vereinfachung 10.5(2) mit einem einzigen Beiwert ρ_min ausgewiesen."]
+        grundlagen.append(
             f"γ_M1 = {fmt(st.get('gamma_M1', 1.1), 2)}, η = {fmt(st.get('eta', 1.2), 1)}; "
             f"geführt über {len(bl.kombinationen)} GZT-Kombinationen, die "
-            "ungünstigste ist maßgebend.",
+            "ungünstigste ist maßgebend.")
+        if hat_steifen:
+            grundlagen.append(
             "Längsversteifte Felder: σ_cr,p nach Anhang A.2.2 (eine oder zwei "
             "Steifen) beziehungsweise A.1(2) (ab drei Steifen), Schubbeulwert "
             "k_τ + k_τ,st nach A.3(2); zwischen Platten- und Knickstabverhalten "
             "wird nach 4.5.4 interpoliert (ρ_c aus ρ, χ_c und ξ). Die Steifen "
             "selbst werden nach Abschnitt 9 geprüft (Drillknicken 9.2.1(8), "
-            "Mindeststeifigkeit starrer Quersteifen 9.3.3).",
+            "Mindeststeifigkeit starrer Quersteifen 9.3.3).")
+        if hat_schale:
+            grundlagen.append(
             "Zylinderschalen werden nach DIN EN 1993-1-6, Abschnitt 8.5 geführt: "
             "kritische Beulspannungen nach Anhang D.1, Imperfektionsbeiwerte nach "
             "der Herstelltoleranzklasse, Abminderung χ nach 8.5.2(3) und "
-            "Interaktion nach 8.5.3(3).",
-        ]))
+            "Interaktion nach 8.5.3(3).")
+        b.append(("list", grundlagen))
         b.append(self._h(2, "Übersicht"))
-        rows = [["Beulfeld", "a [m]", "b [m]", "t [mm]", "σ_x [MPa]", "σ_z [MPa]",
-                 "τ [MPa]", "λ̄_p", "ρ_x", "χ_w", "Ausnutzung", "Kombination",
-                 "Status"]]
-        for c in bl.felder.values():
-            w = c.werte or {}
-            rows.append([c.name, fmt(c.a, 2), fmt(c.b, 2), fmt(c.t * 1e3, 0),
-                         fmt(w.get("sigma_x", 0.0) / 1e6, 1),
-                         fmt(w.get("sigma_z", 0.0) / 1e6, 1),
-                         fmt(w.get("tau", 0.0) / 1e6, 1),
-                         fmt(w.get("lambda_p", 0.0), 3), fmt(w.get("rho_x", 1.0), 3),
-                         fmt(w.get("chi_w", 1.0), 3), Util(c.util), c.kombination,
-                         "erfüllt" if c.util <= 1.0 and not c.fehler
-                         else ("nicht geführt" if c.fehler else "NICHT erfüllt")])
-        b.append(("table", rows, "Beulfelder: Spannungen, Schlankheit und Ausnutzung",
-                  None, ""))
+        platten = [c for c in bl.felder.values() if not self._ist_zylinder(c)]
+        schalen = [c for c in bl.felder.values() if self._ist_zylinder(c)]
+        if platten:
+            rows = [["Feld", "a [m]", "b [m]", "t [mm]", "σ_x [MPa]", "σ_z [MPa]",
+                     "τ [MPa]", "λ̄_p", "ρ_x", "χ_w", "η", "Komb.", "Status"]]
+            for c in platten:
+                w = c.werte or {}
+                rows.append([c.name, fmt(c.a, 2), fmt(c.b, 2), fmt(c.t * 1e3, 0),
+                             fmt(w.get("sigma_x", 0.0) / 1e6, 1),
+                             fmt(w.get("sigma_z", 0.0) / 1e6, 1),
+                             fmt(w.get("tau", 0.0) / 1e6, 1),
+                             fmt(w.get("lambda_p", 0.0), 3), fmt(w.get("rho_x", 1.0), 3),
+                             fmt(w.get("chi_w", 1.0), 3), Util(c.util), c.kombination,
+                             self._beul_status(c)])
+            b.append(("table", rows, "Blechfelder: Spannungen, Schlankheit und "
+                                     "Ausnutzung (η nach Gl. 10.5)", None, ""))
+        if schalen:
+            rows = [["Schale", "r [m]", "l [m]", "t [mm]", "r/t", "σ_x [MPa]",
+                     "σ_θ [MPa]", "τ [MPa]", "λ̄_x", "χ_x", "η", "Komb.", "Status"]]
+            for c in schalen:
+                w = c.werte or {}
+                z = w.get("zylinder") or {}
+                me = z.get("meridian") or {}
+                rows.append([c.name, fmt(w.get("r", 0.0), 3), fmt(w.get("l", 0.0), 3),
+                             fmt(c.t * 1e3, 0), fmt(z.get("r_t", 0.0), 0),
+                             fmt(w.get("sigma_x", 0.0) / 1e6, 1),
+                             fmt(w.get("sigma_z", 0.0) / 1e6, 1),
+                             fmt(w.get("tau", 0.0) / 1e6, 1),
+                             fmt(me.get("lambda", 0.0), 3), fmt(me.get("chi", 1.0), 3),
+                             Util(c.util), c.kombination, self._beul_status(c)])
+            b.append(("table", rows, "Zylinderschalen: Spannungen, Schlankheit und "
+                                     "Ausnutzung (η nach EN 1993-1-6, 8.5.3(3))",
+                      None, ""))
         if self.opt("figures"):
             liste = [c for c in bl.felder.values() if not c.fehler][:60]
             if liste:
@@ -1560,50 +1625,69 @@ class Report:
 
         b.append(self._h(2, "Nachweise im Einzelnen"))
         for c in bl.felder.values():
-            b.append(self._h(3, f"Beulfeld {c.name}"))
+            b.append(self._h(3, ("Zylinderschale " if self._ist_zylinder(c)
+                                 else "Beulfeld ") + c.name))
             if c.fehler:
                 b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
                 self._warnings.append(f"Beulfeld {c.name}: {c.fehler}")
                 continue
             w = c.werte or {}
             bf = m.beulfelder.get(c.name)
+            zyl = w.get("zylinder")
             kv = []
             if bf is not None and bf.beschreibung:
                 kv.append(("Beschreibung", bf.beschreibung))
-            kv += [("Feld", f"a × b × t = {c.a:.2f} × {c.b:.2f} m × {c.t * 1e3:.0f} mm"
-                            + (f", {bf.bezug()}" if bf is not None else "")),
-                   ("Lagerung", "beidseitig gestützt" if (bf is None or bf.rand == "beidseitig")
-                    else "einseitig gestützt (ein Rand frei)"),
-                   ("Streckgrenze f_y", f"{c.fy / 1e6:.0f} N/mm²"),
-                   ("maßgebende Kombination", c.kombination),
-                   ("Spannungen (Druck positiv)",
-                    f"σ_x = {w.get('sigma_x', 0) / 1e6:.1f}, "
-                    f"σ_z = {w.get('sigma_z', 0) / 1e6:.1f}, "
-                    f"τ = {w.get('tau', 0) / 1e6:.1f} N/mm²"),
-                   ("Spannungsverhältnisse",
-                    f"ψ_x = {w.get('psi_x', 1.0):.2f}, ψ_z = {w.get('psi_z', 1.0):.2f}"),
-                   ("Bezugsspannung σ_E", f"{w.get('sigma_E', 0) / 1e6:.2f} N/mm²"),
-                   ("Beulwerte",
-                    f"k_σ,x = {w.get('k_sigma_x', 0):.2f}, k_σ,z = {w.get('k_sigma_z', 0):.2f}, "
-                    f"k_τ = {w.get('k_tau', 0):.2f} (α = a/b = {w.get('alpha', 0):.2f})"),
-                   ("kritische Spannungen",
-                    f"σ_cr,x = {w.get('sigma_cr_x', 0) / 1e6:.1f}, "
-                    f"σ_cr,z = {w.get('sigma_cr_z', 0) / 1e6:.1f}, "
-                    f"τ_cr = {w.get('tau_cr', 0) / 1e6:.1f} N/mm²"),
-                   ("α_ult,k (Gl. 10.3)", fmt(w.get("alpha_ult_k", 0.0), 3)),
-                   ("α_cr (Gl. 10.6)", fmt(w.get("alpha_cr", 0.0), 3)),
-                   ("Schlankheit λ̄_p", fmt(w.get("lambda_p", 0.0), 3)),
-                   ("Abminderungsbeiwerte",
-                    f"ρ_x = {w.get('rho_x', 1.0):.3f}, ρ_z = {w.get('rho_z', 1.0):.3f}, "
-                    f"χ_w = {w.get('chi_w', 1.0):.3f}"),
-                   ("Ausnutzung nach Gl. (10.5)", Util(c.util)),
-                   ("Vereinfachung 10.5(2) mit ρ_min",
-                    f"ρ_min = {w.get('rho_min', 1.0):.3f} → η = "
-                    f"{fmt(w.get('eta_rho_min', 0.0), 3)}"),
-                   ("Status", "Nachweis erfüllt" if c.util <= 1.0
-                    else "Nachweis NICHT erfüllt")]
-            b.append(("kv", kv, f"Beulfeld {c.name}"))
-            zyl = w.get("zylinder")
+            spannungen = [
+                ("Streckgrenze f_y", f"{c.fy / 1e6:.0f} N/mm²"),
+                ("maßgebende Kombination", c.kombination),
+                ("Spannungen (Druck positiv)",
+                 f"σ_x = {w.get('sigma_x', 0) / 1e6:.1f}, "
+                 + ("σ_θ" if zyl else "σ_z")
+                 + f" = {w.get('sigma_z', 0) / 1e6:.1f}, "
+                 f"τ = {w.get('tau', 0) / 1e6:.1f} N/mm²")]
+            if zyl:
+                # Die Schale wird nach EN 1993-1-6 gefuehrt; die Plattenbeulwerte
+                # (sigma_E, k_sigma, alpha_cr) gelten dafuer nicht und entfallen.
+                kv += [("Schale", f"Zylinder r = {w.get('r', 0):.3f} m, "
+                                  f"l = {w.get('l', 0):.3f} m, t = {c.t * 1e3:.1f} mm"
+                                  + (f", {bf.bezug()}" if bf is not None else "")),
+                       ("Verfahren", "spannungsbasierter Nachweis nach "
+                                     "DIN EN 1993-1-6, Abschnitt 8.5")]
+                kv += spannungen
+                kv += [("Ausnutzung nach 8.5.3(3)", Util(c.util)),
+                       ("Status", "Nachweis erfüllt" if c.util <= 1.0
+                        else "Nachweis NICHT erfüllt")]
+            else:
+                kv += [("Feld", f"a × b × t = {c.a:.2f} × {c.b:.2f} m × {c.t * 1e3:.0f} mm"
+                                + (f", {bf.bezug()}" if bf is not None else "")),
+                       ("Lagerung", "beidseitig gestützt"
+                        if (bf is None or bf.rand == "beidseitig")
+                        else "einseitig gestützt (ein Rand frei)")]
+                kv += spannungen
+                kv += [("Spannungsverhältnisse",
+                        f"ψ_x = {w.get('psi_x', 1.0):.2f}, ψ_z = {w.get('psi_z', 1.0):.2f}"),
+                       ("Bezugsspannung σ_E", f"{w.get('sigma_E', 0) / 1e6:.2f} N/mm²"),
+                       ("Beulwerte",
+                        f"k_σ,x = {w.get('k_sigma_x', 0):.2f}, "
+                        f"k_σ,z = {w.get('k_sigma_z', 0):.2f}, "
+                        f"k_τ = {w.get('k_tau', 0):.2f} (α = a/b = {w.get('alpha', 0):.2f})"),
+                       ("kritische Spannungen",
+                        f"σ_cr,x = {w.get('sigma_cr_x', 0) / 1e6:.1f}, "
+                        f"σ_cr,z = {w.get('sigma_cr_z', 0) / 1e6:.1f}, "
+                        f"τ_cr = {w.get('tau_cr', 0) / 1e6:.1f} N/mm²"),
+                       ("α_ult,k (Gl. 10.3)", fmt(w.get("alpha_ult_k", 0.0), 3)),
+                       ("α_cr (Gl. 10.6)", fmt(w.get("alpha_cr", 0.0), 3)),
+                       ("Schlankheit λ̄_p", fmt(w.get("lambda_p", 0.0), 3)),
+                       ("Abminderungsbeiwerte",
+                        f"ρ_x = {w.get('rho_x', 1.0):.3f}, ρ_z = {w.get('rho_z', 1.0):.3f}, "
+                        f"χ_w = {w.get('chi_w', 1.0):.3f}"),
+                       ("Ausnutzung nach Gl. (10.5)", Util(c.util)),
+                       ("Vereinfachung 10.5(2) mit ρ_min",
+                        f"ρ_min = {w.get('rho_min', 1.0):.3f} → η = "
+                        f"{fmt(w.get('eta_rho_min', 0.0), 3)}"),
+                       ("Status", "Nachweis erfüllt" if c.util <= 1.0
+                        else "Nachweis NICHT erfüllt")]
+            b.append(("kv", kv, ("Zylinderschale " if zyl else "Beulfeld ") + c.name))
             if zyl:
                 me, um, sb = zyl["meridian"], zyl["umfang"], zyl["schub"]
                 rows = [["Richtung", "σ_Ed [MPa]", "σ_Rcr [MPa]", "λ̄", "χ",
@@ -1623,8 +1707,7 @@ class Report:
                 b.append(("table", rows, "Schalenbeulen je Spannungsrichtung "
                                          "(EN 1993-1-6, 8.5)", None, ""))
                 b.append(("kv", [
-                    ("Zylinder", f"r = {w.get('r', 0):.3f} m, t = {c.t * 1e3:.1f} mm, "
-                                 f"l = {w.get('l', 0):.3f} m, r/t = {zyl['r_t']:.0f}"),
+                    ("Verhältnis r/t", f"{zyl['r_t']:.0f}"),
                     ("Längenparameter ω", f"{zyl['omega']:.1f} ({zyl['bereich']})"),
                     ("Herstelltoleranz", zyl["qualitaet"]),
                     ("Beiwerte", f"C_x = {fmt(zyl.get('C_x') or 0, 3)}, "
@@ -1688,8 +1771,9 @@ class Report:
                               None, ""))
             if len(c.je_kombination) > 1:
                 zeilen = sorted(c.je_kombination, key=lambda d: -d["eta"])
-                rows = [["Kombination", "σ_x [MPa]", "σ_z [MPa]", "τ [MPa]", "λ̄_p",
-                         "Ausnutzung"]]
+                rows = [["Kombination", "σ_x [MPa]",
+                         "σ_θ [MPa]" if zyl else "σ_z [MPa]", "τ [MPa]",
+                         "λ̄_x" if zyl else "λ̄_p", "Ausnutzung"]]
                 for d in zeilen:
                     rows.append([d["kombination"], fmt(d["sigma_x"] / 1e6, 1),
                                  fmt(d["sigma_z"] / 1e6, 1), fmt(d["tau"] / 1e6, 1),
@@ -1724,14 +1808,18 @@ class Report:
             "Interaktion nach 7.2: η_2 + 0,8 η_1 ≤ 1,4.",
         ]))
         rows = [["Stelle", "Bezug", "Typ", "F_Ed [kN]", "F_Rd [kN]", "ℓ_y [mm]",
-                 "λ̄_F", "χ_F", "Ausnutzung", "Kombination", "Status"]]
+                 "λ̄_F", "χ_F", "η_2", "(η_2+0,8η_1)/1,4", "Komb.", "Status"]]
         for c in le.stellen.values():
             w = c.werte or {}
+            ia = c.interaktion or {}
+            ok = c.util <= 1.0 and ia.get("ok", True)
             rows.append([c.name, c.bezug, c.typ, fmt(c.F_Ed / 1e3, 1),
                          fmt(c.F_Rd / 1e3, 1), fmt(w.get("l_y", 0) * 1e3, 0),
                          fmt(w.get("lambda_F", 0), 3), fmt(w.get("chi_F", 1), 3),
-                         Util(c.util), c.kombination,
-                         "erfüllt" if c.util <= 1.0 and not c.fehler
+                         Util(c.util),
+                         (Util(ia["wert"] / 1.4) if ia else "–"),
+                         c.kombination,
+                         "erfüllt" if ok and not c.fehler
                          else ("nicht geführt" if c.fehler else "NICHT erfüllt")])
         b.append(("table", rows, "Lasteinleitungsstellen", None, ""))
         for c in le.stellen.values():
@@ -1756,13 +1844,28 @@ class Report:
                   ("F_Rd", f"{c.F_Rd / 1e3:.1f} kN"),
                   ("maßgebende Kombination", c.kombination),
                   ("F_Ed", f"{c.F_Ed / 1e3:.1f} kN"),
-                  ("Ausnutzung η_2", Util(c.util)),
-                  ("Status", "Nachweis erfüllt" if c.util <= 1.0
-                   else "Nachweis NICHT erfüllt")]
+                  ("Ausnutzung η_2", Util(c.util))]
+            ia = c.interaktion or {}
+            if ia:
+                kv += [("Biegung und Normalkraft η_1 (4.6)",
+                        fmt(ia.get("eta_1", 0.0), 3)
+                        + f" (Kombination {ia.get('kombination', '')})"),
+                       ("Interaktion 7.2(1)", _pretty(ia.get("text", ""))),
+                       ("Ausnutzung der Interaktion",
+                        Util(ia.get("wert", 0.0) / 1.4))]
+            kv.append(("Status", "Nachweis erfüllt"
+                       if c.util <= 1.0 and ia.get("ok", True)
+                       else "Nachweis NICHT erfüllt"))
             b.append(("kv", kv, f"Lasteinleitung {c.name}"))
-            if c.hinweise:
-                b.append(("list", [f"Hinweis: {h}" for h in c.hinweise]))
-        nf = [c.name for c in le.stellen.values() if c.util > 1.0]
+            hinweise = list(c.hinweise)
+            if ia:
+                hinweise.append("η_1 wird mit den Bruttoquerschnittswerten A und "
+                                "W_el,y gebildet; wirksame Querschnittswerte nach "
+                                "Abschnitt 4 sind gesondert zu prüfen.")
+            if hinweise:
+                b.append(("list", [f"Hinweis: {h}" for h in hinweise]))
+        nf = [c.name for c in le.stellen.values()
+              if c.util > 1.0 or not (c.interaktion or {}).get("ok", True)]
         if nf:
             self._warnings.append("Lasteinleitung NICHT erfüllt für: " + ", ".join(nf))
         return b
@@ -2515,7 +2618,7 @@ li { margin: 0.15em 0; }
 .toc li.l2 { margin-left: 1.6em; font-weight: normal; }
 .toc a { color: inherit; text-decoration: none; }
 .toc .no { display: inline-block; min-width: 2.6em; }
-.tbl { margin: 0.4em 0 1em; }
+.tbl { margin: 0.4em 0 1em; overflow-x: auto; }
 .caption { font-size: 9.5pt; font-weight: bold; color: #333; margin: 0.6em 0 0.2em; }
 table { border-collapse: collapse; width: 100%; font-size: 9pt; page-break-inside: auto; }
 table.compact { font-size: 8pt; }
@@ -2545,6 +2648,8 @@ figcaption { font-size: 9pt; color: #444; margin-top: 0.3em; }
           padding-top: 0.4em; }
 @media print {
   body { max-width: none; padding: 0; margin: 0; font-size: 10pt; }
+  .tbl { overflow: visible; }
+  td.num, th.num { white-space: normal; }
   a { color: inherit; text-decoration: none; }
   figure svg { border: none; }
 }

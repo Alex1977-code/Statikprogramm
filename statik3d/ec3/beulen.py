@@ -36,6 +36,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+import numpy as np
+
 E_STAHL = 210e9
 NU = 0.3
 
@@ -994,7 +996,8 @@ class EinleitungCheck:
     def status(self) -> str:
         if self.fehler:
             return "nicht geführt"
-        return "erfüllt" if self.util <= 1.0 else "NICHT erfüllt"
+        ok = self.util <= 1.0 and (self.interaktion or {}).get("ok", True)
+        return "erfüllt" if ok else "NICHT erfüllt"
 
 
 @dataclass
@@ -1009,7 +1012,8 @@ class EinleitungResults:
     def summary(self) -> str:
         if not self.stellen:
             return "Lasteinleitung: keine Stellen festgelegt"
-        schlecht = [c.name for c in self.stellen.values() if c.util > 1.0]
+        schlecht = [c.name for c in self.stellen.values()
+                    if c.util > 1.0 or not (c.interaktion or {}).get("ok", True)]
         fehler = [c.name for c in self.stellen.values() if c.fehler]
         worst = max(self.stellen.values(), key=lambda c: c.util)
         s = (f"Lasteinleitung (EN 1993-1-5, 6): {len(self.stellen)} Stellen, "
@@ -1026,14 +1030,16 @@ class EinleitungResults:
 
     def table(self) -> list[list]:
         rows = [["Stelle", "Bezug", "Typ", "F_Ed [kN]", "F_Rd [kN]", "l_y [mm]",
-                 "λ̄_F", "χ_F", "Ausnutzung", "Kombination", "Status"]]
+                 "λ̄_F", "χ_F", "Ausnutzung", "η_2+0,8η_1", "Kombination", "Status"]]
         for c in self.stellen.values():
             w = c.werte
             rows.append([c.name, c.bezug, c.typ, f"{c.F_Ed / 1e3:.1f}",
                          f"{c.F_Rd / 1e3:.1f}",
                          f"{w.get('l_y', 0) * 1e3:.0f}",
                          f"{w.get('lambda_F', 0):.3f}", f"{w.get('chi_F', 1):.3f}",
-                         f"{c.util:.3f}", c.kombination, c.status()])
+                         f"{c.util:.3f}",
+                         (f"{c.interaktion['wert']:.3f}" if c.interaktion else "-"),
+                         c.kombination, c.status()])
         return rows
 
 
@@ -1056,15 +1062,19 @@ def _stegwerte(model, le) -> dict:
     """Stegabmessungen fuer die Lasteinleitung - aus dem Stab oder dem Knoten."""
     sec = None
     mat = None
+    mem_name = ""
     if le.stab and le.stab in model.members:
         mem = model.members[le.stab]
         if mem.elements:
             e = model.elements[mem.elements[0]]
             sec, mat = model.sections.get(e.sec), model.materials.get(e.mat)
+            mem_name = le.stab
     if sec is None:
-        for e in model.elements:
+        for ie, e in enumerate(model.elements):
             if e.typ in ("beam", "truss") and int(le.knoten) in [int(n) for n in e.nodes]:
                 sec, mat = model.sections.get(e.sec), model.materials.get(e.mat)
+                mem_name = next((nm for nm, mm in model.members.items()
+                                 if ie in mm.elements), "")
                 break
     if sec is None:
         return {"fehler": "kein Stabquerschnitt am Knoten gefunden - "
@@ -1075,7 +1085,41 @@ def _stegwerte(model, le) -> dict:
                           "I-förmige Träger"}
     fy = (mat.yield_strength(sec.t_max) if mat is not None else 0.0) or 235e6
     return {"hw": sec.h - 2 * sec.tf, "tw": sec.tw, "tf": sec.tf, "bf": sec.b,
-            "fyw": fy, "fyf": fy, "sec": sec.name}
+            "fyw": fy, "fyf": fy, "sec": sec.name, "A": sec.A, "Wel_y": sec.Wel_y,
+            "member": mem_name}
+
+
+def _eta_1(model, sw, le, res, gamma_M0: float):
+    """
+    Ausnutzung aus Normalkraft und Biegung am Ort der Lasteinleitung, 4.6(1):
+
+        eta_1 = |N_Ed| / (A f_y / gamma_M0) + |M_Ed| / (W_el,y f_y / gamma_M0)
+
+    Es wird der Bruttoquerschnitt angesetzt; wirksame Querschnittswerte nach
+    Abschnitt 4 werden hier nicht gebildet (liegt bei schlanken Stegen auf der
+    unsicheren Seite und wird im Bericht als Hinweis genannt).  ``None``, wenn
+    kein Stab oder keine Schnittgroessen zugeordnet werden koennen.
+    """
+    nm = sw.get("member")
+    A, W = sw.get("A") or 0.0, sw.get("Wel_y") or 0.0
+    if not nm or nm not in model.members or A <= 0 or W <= 0:
+        return None
+    mem = model.members[nm]
+    try:
+        mf = res.member_forces(mem, model.design.stations)
+    except Exception:
+        return None
+    x = mf["x"]
+    if len(x) == 0:
+        return None
+    # Stelle des Lasteinleitungsknotens auf dem Stab suchen
+    p_knoten = np.asarray(model.nodes[int(le.knoten)], dtype=float)
+    p0 = np.asarray(model.nodes[int(model.elements[mem.elements[0]].nodes[0])], dtype=float)
+    s_knoten = float(np.linalg.norm(p_knoten - p0))
+    j = int(np.argmin(np.abs(np.asarray(x, dtype=float) - s_knoten)))
+    fy = sw["fyw"]
+    N_Rd, M_Rd = A * fy / gamma_M0, W * fy / gamma_M0
+    return abs(float(mf["N"][j])) / N_Rd + abs(float(mf["My"][j])) / M_Rd
 
 
 def check_lasteinleitungen(model, analysis, combos: list = None,
@@ -1107,10 +1151,17 @@ def check_lasteinleitungen(model, analysis, combos: list = None,
                 c.fehler = r["fehler"]
                 break
             eta = r["eta_2"]
-            c.je_kombination.append({"kombination": kname, "F_Ed": F, "eta": eta})
+            eta1 = _eta_1(model, sw, le, res, ds.gamma_M0)
+            ia = lasteinleitung_interaktion(eta, eta1) if eta1 is not None else {}
+            c.je_kombination.append({"kombination": kname, "F_Ed": F, "eta": eta,
+                                     "eta_1": eta1,
+                                     "eta_72": ia.get("wert")})
             if eta >= c.util:
                 c.util, c.kombination, c.werte = eta, kname, r
                 c.F_Ed, c.F_Rd = F, r["F_Rd"]
+            if ia and (not c.interaktion
+                       or ia["wert"] > c.interaktion.get("wert", 0.0)):
+                c.interaktion = dict(ia, kombination=kname, eta_1=eta1, eta_2=eta)
         if not c.je_kombination and not c.fehler:
             c.fehler = ("keine Kraft an diesem Knoten - Quelle „Last“ oder "
                         "„Auflager“ prüfen")

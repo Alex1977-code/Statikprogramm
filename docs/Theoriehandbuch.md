@@ -360,9 +360,22 @@ Eine örtlich eingeleitete Querkraft kann den Steg zum Beulen bringen:
       F_Rd  = f_yw χ_F ℓ_y t_w / γ_M1
 
 Weil m₂ von λ̄_F abhängt, wird wie in 6.5(1) zuerst mit m₂ = 0 gerechnet und
-danach einmal nachgezogen. Zusammen mit Biegung gilt 7.2: η₂ + 0,8 η₁ ≤ 1,4.
-Die Kraft F_Ed kommt aus der Rechnung — wahlweise als Knotenlast der jeweiligen
-Kombination oder als Auflagerkraft.
+danach einmal nachgezogen. Die Kraft F_Ed kommt aus der Rechnung — wahlweise
+als Knotenlast der jeweiligen Kombination oder als Auflagerkraft.
+
+Wirkt gleichzeitig Biegung, wird zusätzlich die Interaktion nach 7.2(1)
+geführt:
+
+      η₂    = F_Ed / F_Rd
+      η₁    = |N_Ed|/(A f_y/γ_M0) + |M_Ed|/(W_el,y f_y/γ_M0)   nach 4.6(1)
+      η₂ + 0,8 η₁ ≤ 1,4
+
+N_Ed und M_Ed werden an der Nachweisstelle des Stabes abgegriffen, die dem
+Lasteinleitungsknoten am nächsten liegt; die Interaktion wird über alle
+Kombinationen gebildet und der ungünstigste Wert ausgewiesen. η₁ entsteht aus
+den **Bruttoquerschnittswerten** A und W_el,y — wirksame Querschnittswerte nach
+Abschnitt 4 werden hier nicht gebildet; bei schlanken Stegen ist das auf der
+unsicheren Seite und wird im Bericht als Hinweis genannt.
 
 ### 5c.5 Schalenbeulen (DIN EN 1993-1-6, Abschnitt 8.5)
 

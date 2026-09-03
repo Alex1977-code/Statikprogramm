@@ -438,6 +438,29 @@ def test_lasteinleitung():
           f"{len(c.je_kombination)}")
     beste = max(c.je_kombination, key=lambda d: d["eta"])
     check("die ungünstigste ist maßgebend", abs(beste["eta"] - c.util) < 1e-12)
+    # Interaktion mit der Biegung nach 7.2(1)
+    ia = c.interaktion
+    check("die Interaktion 7.2 wird geführt", bool(ia), str(ia.get("text", ""))[:60])
+    close("η_2 + 0,8 η_1 aus den Einzelwerten", ia["wert"],
+          ia["eta_2"] + 0.8 * ia["eta_1"], 1e-12)
+    check("die Interaktion ist die ungünstigste über alle Kombinationen",
+          abs(max(d["eta_72"] for d in c.je_kombination) - ia["wert"]) < 1e-12)
+    # η_1 gegen die Handrechnung am Nachweisort
+    sec = m.sections[m.elements[r_.elements[0]].sec]
+    fy_ = m.materials[m.elements[r_.elements[0]].mat].yield_strength(sec.t_max)
+    res = an.combinations[ia["kombination"]]
+    mf = res.member_forces(r_, m.design.stations)
+    import numpy as _np
+    p_kn = _np.asarray(m.nodes[kn], dtype=float)
+    p_0 = _np.asarray(m.nodes[int(m.elements[r_.elements[0]].nodes[0])], dtype=float)
+    j = int(_np.argmin(_np.abs(_np.asarray(mf["x"]) - float(_np.linalg.norm(p_kn - p_0)))))
+    soll = (abs(float(mf["N"][j])) / (sec.A * fy_ / m.design.gamma_M0)
+            + abs(float(mf["My"][j])) / (sec.Wel_y * fy_ / m.design.gamma_M0))
+    close("η_1 = N/(A f_y/γ_M0) + M/(W_el f_y/γ_M0)", ia["eta_1"], soll, 1e-9)
+    check("die Interaktion geht in den Status ein",
+          (c.status() == "erfüllt") == (c.util <= 1.0 and ia["ok"]),
+          f"η_2 = {c.util:.3f}, η_2+0,8η_1 = {ia['wert']:.3f}, {c.status()}")
+
     m.add_lasteinleitung("Auflager", int(m.elements[
         m.members["Stiel links"].elements[0]].nodes[0]), stab="Stiel links",
         quelle="auflager", typ="c", s_s=0.150, c=0.05)
@@ -558,6 +581,40 @@ def test_bericht():
     for text in ("Steifen des Feldes", "Längsversteifung", "Nachweise der Steifen",
                  "A.2.2", "Knickstab", "Drillknicken", "Mindeststeifigkeit"):
         check(f"Bericht nennt „{text}“", text in h2)
+
+    # Zylinder: der Bericht darf keine Plattenkennwerte zeigen
+    mz = Model("Rohr")
+    mz.add_material(Material.steel("S355"))
+    mz.add_shell_prop(ShellProp("t8", 0.008))
+    nu_, nz, rr, ll = 24, 6, 0.5, 3.0
+    idz = {}
+    for k in range(nz + 1):
+        for j in range(nu_):
+            w_ = 2 * math.pi * j / nu_
+            idz[(j, k)] = mz.add_node(rr * math.cos(w_), rr * math.sin(w_), ll * k / nz)
+    elz = []
+    for k in range(nz):
+        for j in range(nu_):
+            j2 = (j + 1) % nu_
+            elz.append(mz.add_element("shell4", [idz[(j, k)], idz[(j2, k)],
+                                                 idz[(j2, k + 1)], idz[(j, k + 1)]],
+                                      "S355", "t8"))
+    for j in range(nu_):
+        mz.fix(idz[(j, 0)], "all")
+        mz.load_node(idz[(j, nz)], Fz=-1200e3 / nu_)
+    mz.add_beulfeld("Mantel", elz, art="zylinder", qualitaet="B")
+    anz = solver.solve_all(mz, combinations=False, envelopes=False, design=True)
+    hz = Report(mz, anz).html()
+    for text in ("Beulnachweise nach DIN EN 1993-1-5 und DIN EN 1993-1-6",
+                 "Zylinderschale Mantel", "Zylinderschalen: Spannungen",
+                 "Ausnutzung nach 8.5.3(3)", "Herstelltoleranz"):
+        check(f"Zylinderbericht nennt „{text}“", text in hz)
+    kap = hz.split('id="k6"')[1].split('id="k7"')[0]
+    for text in ("Bezugsspannung σ_E", "α_ult,k (Gl. 10.3)", "Methode der reduzierten",
+                 "Lagerung", "Blechfelder: Spannungen"):
+        check(f"Kapitel 6 zeigt „{text}“ nicht", text not in kap)
+    check("auch das Rechenverfahren nennt keine Blechfelder",
+          "Blechfelder nach DIN EN 1993-1-5" not in hz)
 
     m3 = examples_lib.build_example("hall")
     r3 = m3.members["Riegel"]

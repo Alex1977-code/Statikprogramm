@@ -456,6 +456,10 @@ der Knoten, der Stab (für die Stegabmessungen), die Art nach Bild 6.1 (a, b
 oder c), die Lasteinleitungslänge s_s und der Abstand der Quersteifen. Die
 Kraft F_Ed kommt aus der Rechnung: wahlweise als Knotenlast der jeweiligen
 Kombination oder als **Auflagerkraft** — das ist der übliche Fall am Endauflager.
+Neben η₂ = F_Ed/F_Rd wird die Interaktion mit der Biegung nach 7.2(1) geführt
+(η₂ + 0,8 η₁ ≤ 1,4); η₁ folgt aus N und M_y an der nächstgelegenen
+Nachweisstelle des Stabes, gebildet mit den Bruttoquerschnittswerten. Beide
+Nachweise gehen in den Status der Stelle ein.
 
 Was **nicht** enthalten ist: Kegel- und Kugelschalen, ringversteifte Schalen
 und die numerischen Verfahren (GMNIA) nach EN 1993-1-6, 8.7. Liegen die
