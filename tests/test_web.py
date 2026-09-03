@@ -362,6 +362,71 @@ def test_contact_and_import():
     _assert_since(n0)
 
 
+def test_nichtlineare_lager_und_profile():
+    """Neue Operationen: Lagerwirkung je FHG, Linien-/Flaechenlager, Gelenke,
+    zusammengesetzte Querschnitte, Profilliste nach Land."""
+    n0 = len(RESULTS)
+    server, c = _server()
+    try:
+        st, j, _ = c.op(op="add_material", grade="S235")
+        st, j, _ = c.op(op="add_section", designation="IPE 240")
+        st, j, _ = c.op(op="line_of_beams", p1=[0, 0, 0], p2=[6, 0, 0], n=6,
+                        mat="S235", sec="IPE 240")
+        st, j, _ = c.op(op="support_nonlinear", nodes=[0],
+                        behaviour={"uz": {"typ": "rigid", "failure": "zug", "slip": 0.002},
+                                   "ux": {"typ": "rigid", "mu": 0.3, "mu_ref": "uz"},
+                                   "uy": {"typ": "rigid"}})
+        sup = j["state"]["supports"][0] if st == 200 else {}
+        check("Lagerwirkung je FHG gesetzt", st == 200 and sup.get("nonlinear")
+              and "Ausfall bei Zug" in sup["beschreibung"]["uz"], str(sup.get("beschreibung")))
+        check("Lagerzusammenfassung", "nichtlineare" in j["state"]["support_summary"],
+              j["state"]["support_summary"])
+        st, j, _ = c.op(op="line_support", nodes=[1, 2, 3, 4],
+                        behaviour={"uz": {"typ": "spring", "stiffness": 5e7, "failure": "zug"}})
+        check("Linienlager angelegt", st == 200 and len(j["state"]["line_supports"]) == 1,
+              j.get("error", ""))
+        st, j, _ = c.op(op="add_shell", t=0.01)
+        st, j, _ = c.op(op="plate", lx=2, ly=1, nx=2, ny=1, mat="S235", origin=[0, 5, 0])
+        elems = [i for i, t in enumerate(j["state"]["types"]) ] and \
+            [i for i in range(j["state"]["ne"]) ]
+        st, j, _ = c.op(op="surface_support", elems=elems[-2:],
+                        behaviour={"uz": {"typ": "spring", "stiffness": 1e7, "failure": "zug"}})
+        check("Flaechenlager angelegt", st == 200 and len(j["state"]["surface_supports"]) == 1,
+              j.get("error", ""))
+        st, j, _ = c.op(op="add_hinge", name="G1", end=1, dofs={"phiy": "free"}, elems=[0])
+        check("Gelenk angelegt und zugewiesen", st == 200 and len(j["state"]["hinges"]) == 1,
+              j.get("error", ""))
+        st, j, _ = c.op(op="composite_section", name="2 UPE 200",
+                        parts=[{"profil": "UPE 200", "dy": -0.05},
+                               {"profil": "UPE 200", "dy": 0.05, "spiegeln": True}])
+        check("Zusammengesetzter Querschnitt", st == 200 and "2 UPE 200" in j["state"]["sections"],
+              j.get("message", j.get("error", "")))
+        st, j, _ = c.get("/api/profiles?country=US")
+        check("Profilliste nach Land", st == 200 and len(j["profiles"]) > 40
+              and any(f["code"] == "W" for f in j["families"]), str(len(j.get("profiles", []))))
+        st, j, _ = c.get("/api/profiles?country=XX")
+        check("unbekanntes Land meldet Fehler", st == 400)
+        st, s2, _ = c.get("/api/state")
+        check("Laender in der Uebersicht", len(s2["countries"]) >= 3)
+        st, j, _ = c.post("/api/solve", {"kind": "all", "workers": 1})
+        job = c.wait_job()
+        st, entries, _ = c.get("/api/entries")
+        which = next((e["id"] for e in entries if e["id"].startswith("case:")), "")
+        st, r, _ = c.get("/api/results?which=" + urllib.parse.quote(which))
+        check("Modell mit nichtlinearen Lagern rechnet", job["status"] == "fertig"
+              and bool(r.get("contact_rows")), job.get("error", "") or which)
+        check("Kontaktzeilen nennen den Lager-FHG",
+              any(row[1] for row in r.get("contact_rows", [])), "")
+        st, j, _ = c.op(op="remove_line_support", index=0)
+        st, j, _ = c.op(op="remove_surface_support", index=0)
+        check("Lager wieder entfernt", st == 200 and not j["state"]["line_supports"]
+              and not j["state"]["surface_supports"])
+    finally:
+        server.shutdown()
+        server.server_close()
+    _assert_since(n0)
+
+
 def test_bound_state():
     """Gemeinsamer Zustand mit einem 'GUI'-Objekt (model/analysis/results)."""
     n0 = len(RESULTS)
@@ -397,7 +462,8 @@ def test_bound_state():
 
 def main():
     for t in (test_static_and_auth, test_model_editing, test_solve_results_report,
-              test_contact_and_import, test_bound_state):
+              test_contact_and_import, test_nichtlineare_lager_und_profile,
+              test_bound_state):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

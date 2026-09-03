@@ -101,17 +101,22 @@ class SectionDialog(QtWidgets.QDialog):
         # --- Profildatenbank ---
         w = QtWidgets.QWidget()
         f = QtWidgets.QFormLayout(w)
+        self.country = QtWidgets.QComboBox()
+        for code, bez, norm, _fams in profiles.countries():
+            self.country.addItem(f"{bez} - {norm}", code)
+        self.country.currentIndexChanged.connect(self._fill_families)
         self.family = QtWidgets.QComboBox()
-        self.family.addItems(list(profiles.FAMILIES))
         self.family.currentTextChanged.connect(self._fill_profiles)
         self.profile = QtWidgets.QComboBox()
         self.profile.currentTextChanged.connect(self._show_props)
         self.props = QtWidgets.QLabel("")
         self.props.setStyleSheet("font-family: monospace")
-        f.addRow("Familie", self.family)
+        f.addRow("Land / Norm", self.country)
+        f.addRow("Reihe", self.family)
         f.addRow("Profil", self.profile)
         f.addRow(self.props)
-        self.tabs.addTab(w, "Datenbank (IPE, HEA, HEB, HEM, SHS, RHS, CHS)")
+        self._fill_families()
+        self.tabs.addTab(w, "Datenbank (nach Land)")
         # --- parametrisch ---
         w2 = QtWidgets.QWidget()
         f2 = QtWidgets.QFormLayout(w2)
@@ -131,10 +136,23 @@ class SectionDialog(QtWidgets.QDialog):
         lay.addWidget(buttons(self))
         self._fill_profiles(self.family.currentText())
 
-    def _fill_profiles(self, fam):
+    def _fill_families(self):
+        code = self.country.currentData() or "EU"
+        self.family.blockSignals(True)
+        self.family.clear()
+        for fam in profiles.families(code):
+            self.family.addItem(f"{fam} - {profiles.FAMILY_INFO.get(fam, (fam,))[0]}", fam)
+        self.family.blockSignals(False)
+        self._fill_profiles()
+
+    def _fill_profiles(self, _text=None):
+        fam = self.family.currentData() or "IPE"
         self.profile.blockSignals(True)
         self.profile.clear()
-        self.profile.addItems(profiles.list_profiles(fam))
+        try:
+            self.profile.addItems(profiles.list_profiles(fam))
+        except KeyError:
+            pass
         self.profile.blockSignals(False)
         self._show_props(self.profile.currentText())
 
@@ -427,6 +445,76 @@ def parse_int_list(text: str, n_max: int = None) -> list[int]:
 
 
 # ==========================================================================
+class SupportNonlinearDialog(QtWidgets.QDialog):
+    """Nichtlinearitaet eines Lagers je Freiheitsgrad: Ausfall bei Zug/Druck,
+    Schlupf, Reibbeiwert, Grenzkraft."""
+
+    DOFS = ["ux", "uy", "uz", "phix", "phiy", "phiz"]
+
+    def __init__(self, parent=None, support=None, kind: str = "Knotenlager"):
+        super().__init__(parent)
+        self.setWindowTitle(f"{kind}: Wirkung je Freiheitsgrad")
+        self.resize(760, 330)
+        self.support = support
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addWidget(QtWidgets.QLabel(
+            "Das Lager wirkt entlang der positiven Achse. Bewegt sich der Knoten in das Lager "
+            "hinein, entsteht <b>Druck</b>; zieht er daran, <b>Zug</b>.<br>"
+            "Steifigkeit: Knotenlager [kN/m] bzw. [kNm/rad], Linienlager je m, Flächenlager je m²."))
+        self.tbl = QtWidgets.QTableWidget(6, 6)
+        self.tbl.setHorizontalHeaderLabels(
+            ["Wirkung", "Steifigkeit", "Ausfall", "Schlupf [mm]", "Reibung μ", "μ bezogen auf"])
+        self.tbl.setVerticalHeaderLabels(self.DOFS)
+        self.rows = []
+        for d in range(6):
+            typ = QtWidgets.QComboBox(); typ.addItems(["frei", "starr", "Feder"])
+            k = NumEdit(0.0, 90)
+            fail = QtWidgets.QComboBox()
+            fail.addItems(["-", "bei Zug (nur Druck)", "bei Druck (nur Zug)"])
+            slip = NumEdit(0.0, 80)
+            mu = NumEdit(0.0, 70)
+            ref = QtWidgets.QComboBox(); ref.addItems(["-"] + self.DOFS[:3])
+            for c, wdg in enumerate((typ, k, fail, slip, mu, ref)):
+                self.tbl.setCellWidget(d, c, wdg)
+            self.rows.append((typ, k, fail, slip, mu, ref))
+        lay.addWidget(self.tbl)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                        | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        if support is not None:
+            self.load(support)
+
+    def load(self, support):
+        for d, (typ, k, fail, slip, mu, ref) in enumerate(self.rows):
+            b = support.dof_behaviour(d)
+            typ.setCurrentIndex({"free": 0, "rigid": 1, "spring": 2}[b.typ])
+            k.setText(f"{b.stiffness / 1e3:g}")
+            fail.setCurrentIndex({"": 0, "zug": 1, "druck": 2}[b.failure])
+            slip.setText(f"{b.slip * 1000:g}")
+            mu.setText(f"{b.mu:g}")
+            ref.setCurrentIndex(0 if b.mu_ref is None else int(b.mu_ref) + 1)
+
+    def behaviours(self) -> dict:
+        """{FHG: DofBehaviour} aus der Tabelle."""
+        from ..model import DofBehaviour
+        out = {}
+        for d, (typ, k, fail, slip, mu, ref) in enumerate(self.rows):
+            b = DofBehaviour(["free", "rigid", "spring"][typ.currentIndex()],
+                             k.value() * 1e3,
+                             ["", "zug", "druck"][fail.currentIndex()],
+                             slip.value() / 1000.0, mu.value(),
+                             None if ref.currentIndex() == 0 else ref.currentIndex() - 1)
+            if b.acts or b.failure or b.slip or b.mu:
+                out[d] = b
+        return out
+
+    def apply(self, support):
+        support.behaviour = self.behaviours()
+        support.dofs = sorted({d for d, b in support.behaviour.items() if b.acts})
+        return support
+
+
 class ImportDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, path: str = "", model: Model = None):
         super().__init__(parent)

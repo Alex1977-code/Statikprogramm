@@ -142,6 +142,47 @@ das wird als Warnung „Bauteil rutscht“ gemeldet. Hebt ein Bauteil
 vollständig ab, existiert kein statisches Gleichgewicht; das wird als Fehler
 mit Hinweis gemeldet.
 
+### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
+
+Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
+Knotenfreiheitsgrade umgelegt (`statik3d/supports.py`): Linienlager über die
+Einflusslänge (halbe Nachbarabschnitte), Flächenlager über die Einflussfläche
+der Knoten. Lineare Anteile (starr, Feder) gehen in die Sperrung bzw. in die
+Steifigkeitsmatrix, nichtlineare Anteile in dieselbe Aktivmengen-Iteration wie
+der Kontakt.
+
+Ein Lagerfreiheitsgrad wirkt entlang der positiven Achse. Mit der
+Knotenverschiebung u ist die Lagerkraft F = −k·u; u < 0 (Knoten drückt hinein)
+bedeutet **Druck**, u > 0 **Zug**. Daraus folgt die Umsetzung als
+Kontaktbedingung mit dem Spalt g = g₀ + c·u:
+
+| Einstellung | Bedingung |
+|---|---|
+| Ausfall bei Zug | c = +1, g₀ = Schlupf – aktiv, solange gedrückt wird |
+| Ausfall bei Druck | c = −1, g₀ = Schlupf – aktiv, solange gezogen wird |
+| nur Schlupf | zwei Bedingungen (c = ±1), das Lager wirkt außerhalb ±Schlupf |
+| Reibung μ | Tangentialrichtungen als eigene Koeffizientenzeilen; die Reibkraft ist auf μ·Fₙ des Bezugsfreiheitsgrads begrenzt (Haften/Gleiten wie in Kap. 4) |
+| Grenzkraft | ab F = limit konstante Kraft mit Restfeder (Zustand „Fließen“); bei Entlastung wieder elastisch |
+
+Rotationsfreiheitsgrade werden genauso behandelt (ohne Reibung); ihre Kräfte
+erscheinen als Momente in den Auflagerreaktionen, nicht in den
+Knotenkontaktkräften.
+
+### 4.2 Federgelenke
+
+Ein Stabendgelenk mit Federsteifigkeit k wird exakt als Reihenschaltung
+Stab + Feder gerechnet (`assemble.hinge_springs`): Für den betroffenen lokalen
+Freiheitsgrad wird ein innerer Freiheitsgrad eingeführt, den das Element belegt;
+die Feder verbindet ihn mit dem äußeren Freiheitsgrad, danach wird der innere
+statisch kondensiert. Für k → ∞ ergibt sich die biegesteife Verbindung, für
+k → 0 das Gelenk. Die Stabendkräfte werden aus den zurückgerechneten inneren
+Verschiebungen bestimmt.
+
+Probe (Einfeldträger, links elastisch eingespannt, Gleichlast q):
+M = qL²/8 / (1 + 3EI/(kL)); die Rechnung trifft diesen Wert; die verbleibende
+Abweichung von 0,7 % ist die Schubverformung des Timoshenko-Balkens, die in der
+Handformel fehlt.
+
 ## 5 Nachweise nach DIN EN 1993-1-1
 
 ### 5.1 Nachweisstellen und Staebe
@@ -254,6 +295,9 @@ Schadensfolge), γFf = 1,0.
 | Test | Umfang |
 |---|---|
 | `tests/test_verification.py` | 26 Benchmarks Stab/Schale/Volumen (analytisch, Patch-Tests) |
+| `tests/test_supports.py` | Lager mit Ausfall bei Zug/Druck, Schlupf, Reibung, Grenzkraft; Linien- und Flächenlager; Federgelenke gegen Handrechnungen |
+| `tests/test_sections.py` | Profildatenbank nach Land gegen Katalogwerte, Hauptachsen der Winkel, zusammengesetzte Querschnitte |
+| `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |
 | `tests/test_solver_ext.py` | Gelenke, Trapezlasten, Temperatur, Zwischenstellen, Superposition, Umhüllende, Kombinationsgenerator, einseitige Lager, Spaltelement, Flächenkontakt mit Reibung, parallele Assemblierung, Rechnerfarm |
 | `tests/test_ec3.py` | Klassifizierung, Querschnittsnachweise, Knicken (χ), M_cr, χ_LT, C1/C_m, Interaktion, Wöhlerlinien, Nachweisführung |
 | `tests/test_importers.py` | Import DXF, IFC, SAF, RFEM-Tabellen, INP, BDF |

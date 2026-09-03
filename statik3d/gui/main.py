@@ -23,6 +23,7 @@ from .. import solver, mesher, parallel, __version__
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
                       CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
                       DesignSettingsDialog, ContactPairDialog, ImportDialog, ReportDialog,
+                      SupportNonlinearDialog,
                       parse_int_list)
 from .worker import SolveWorker
 from . import viewport as vp
@@ -420,6 +421,16 @@ class MainWindow(QtWidgets.QMainWindow):
         b4 = QtWidgets.QPushButton("Lager entfernen")
         b4.clicked.connect(self.remove_support)
         gl.addWidget(row(b1, b2, b3, b4))
+        b5 = QtWidgets.QPushButton("Nichtlinearität…")
+        b5.setToolTip("Ausfall bei Zug/Druck, Schlupf, Reibung und Grenzkraft je Freiheitsgrad")
+        b5.clicked.connect(self.support_nonlinear)
+        b6 = QtWidgets.QPushButton("Linienlager…")
+        b6.setToolTip("Lager entlang der gewählten Knoten, Steifigkeit je Meter")
+        b6.clicked.connect(self.add_line_support)
+        b7 = QtWidgets.QPushButton("Flächenlager…")
+        b7.setToolTip("Bettung auf den Elementen im Feld 'Elemente', Steifigkeit je m²")
+        b7.clicked.connect(self.add_surface_support)
+        gl.addWidget(row(b5, b6, b7))
         lay.addWidget(g)
 
         g = QtWidgets.QGroupBox("Lasten auf Auswahl → aktiver Lastfall")
@@ -755,7 +766,10 @@ class MainWindow(QtWidgets.QMainWindow):
             + ", ".join(f"{k}: {v}" for k, v in kinds.items())
             + f"\nLager: {len(m.supports)}   Lasten gesamt: {n_loads}   Lastfälle: {len(m.load_cases)}   "
               f"Kombinationen: {len(m.combinations)}   Stäbe: {len(m.members)}   "
-              f"Kontakt: {len(m.contact_supports) + len(m.gap_elements) + len(m.contact_pairs)}")
+              f"Kontakt: {len(m.contact_supports) + len(m.gap_elements) + len(m.contact_pairs)}"
+            + (f"\nLinienlager: {len(m.line_supports)}   Flächenlager: {len(m.surface_supports)}   "
+               f"Gelenkdefinitionen: {len(m.hinges)}" if (m.line_supports or m.surface_supports
+                                                          or m.hinges) else ""))
         self.refresh_cases()
         self.refresh_contact()
         self.refresh_members()
@@ -1002,6 +1016,52 @@ class MainWindow(QtWidgets.QMainWindow):
         k = self.ed_spring.value()
         for n in self.selection:
             self.model.fix(int(n), dofs, stiffness=[k] * len(dofs) if k > 0 else None)
+        self.refresh_all()
+
+    def support_nonlinear(self):
+        """Nichtlinearitaet des Lagers an den gewaehlten Knoten einstellen."""
+        if not len(self.selection):
+            return self.error("Keine Knoten ausgewählt")
+        n = int(self.selection[0])
+        sup = next((s for s in self.model.supports if s.node == n), None)
+        if sup is None:
+            sup = self.model.support(n, [])
+        d = SupportNonlinearDialog(self, sup, "Knotenlager")
+        if not d.exec():
+            return
+        beh = d.behaviours()
+        for node in self.selection:
+            s = next((x for x in self.model.supports if x.node == int(node)), None)
+            if s is None:
+                s = self.model.support(int(node), [])
+            s.behaviour = {k: v for k, v in beh.items()}
+            s.dofs = sorted({k for k, v in beh.items() if v.acts})
+        self.info(f"Nichtlinearität an {len(self.selection)} Lagern gesetzt")
+        self.refresh_all()
+
+    def add_line_support(self):
+        """Linienlager entlang der gewaehlten Knoten (in Auswahlreihenfolge)."""
+        if len(self.selection) < 2:
+            return self.error("Mindestens zwei Knoten auswählen (Reihenfolge = Linienzug)")
+        d = SupportNonlinearDialog(self, None, "Linienlager")
+        if not d.exec():
+            return
+        ls = self.model.add_line_support([int(n) for n in self.selection])
+        ls.behaviour = d.behaviours()
+        self.info(f"Linienlager über {len(self.selection)} Knoten angelegt")
+        self.refresh_all()
+
+    def add_surface_support(self):
+        """Flaechenlager (Bettung) auf den gewaehlten Elementen."""
+        els = self._elements_from_text(self.ed_elist.text())
+        if not els:
+            return self.error("Keine Elemente angegeben (Feld 'Elemente')")
+        d = SupportNonlinearDialog(self, None, "Flächenlager (Bettung)")
+        if not d.exec():
+            return
+        ss = self.model.add_surface_support(els)
+        ss.behaviour = d.behaviours()
+        self.info(f"Flächenlager auf {len(els)} Elementen angelegt")
         self.refresh_all()
 
     def remove_support(self):

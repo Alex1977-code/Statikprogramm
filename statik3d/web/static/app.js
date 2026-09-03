@@ -58,6 +58,22 @@ function sel(name, label, options, val = '', attrs = '') {
 function chk(name, label, on = false, attrs = '') {
   return `<label class="chk"><input type="checkbox" name="${esc(name)}" ${on ? 'checked' : ''} ${attrs}>${esc(label)}</label>`;
 }
+const DOFS = ['ux', 'uy', 'uz', 'phix', 'phiy', 'phiz'];
+function dofTable(prefix) {
+  // Tabelle: Wirkung, Steifigkeit, Ausfall, Schlupf, Reibung je Freiheitsgrad
+  const rows = DOFS.map((d, i) => `<tr><th style="text-align:left">${d}</th>
+    <td>${sel(`${prefix}.${d}.typ`, '', [['free','frei'],['rigid','starr'],['spring','Feder']], 'free').replace(/<label>|<\/label>|<span><\/span>/g,'')}</td>
+    <td>${num(`${prefix}.${d}.stiffness`, '', '', {ph: 'k'}).replace(/<label>|<\/label>|<span><\/span>/g,'')}</td>
+    <td>${sel(`${prefix}.${d}.failure`, '', [['','–'],['zug','bei Zug'],['druck','bei Druck']], '').replace(/<label>|<\/label>|<span><\/span>/g,'')}</td>
+    <td>${num(`${prefix}.${d}.slip`, '', '', {ph: 'm', scale: 1}).replace(/<label>|<\/label>|<span><\/span>/g,'')}</td>
+    <td>${i < 3 ? num(`${prefix}.${d}.mu`, '', '', {ph: 'μ'}).replace(/<label>|<\/label>|<span><\/span>/g,'') : ''}</td>
+    <td>${i < 3 ? sel(`${prefix}.${d}.mu_ref`, '', [['','–'],['ux','ux'],['uy','uy'],['uz','uz']], '').replace(/<label>|<\/label>|<span><\/span>/g,'') : ''}</td></tr>`).join('');
+  return `<div class="scroll"><table class="t"><thead><tr><th>FHG</th><th>Wirkung</th><th>Steifigkeit</th>
+    <th>Ausfall</th><th>Schlupf [m]</th><th>μ</th><th>μ bez.</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="muted">Das Lager wirkt entlang der positiven Achse: Knoten drückt hinein = Druck, zieht daran = Zug.
+    Steifigkeit: Knotenlager [N/m], Linienlager je m, Flächenlager je m².</div>`;
+}
+
 function selInput(kind, label = null) {
   // Eingabefeld, das die aktuelle Auswahl (Knoten / Elemente) uebernimmt
   const name = kind === 'nodes' ? 'nodes' : 'elems';
@@ -630,9 +646,16 @@ function renderModell() {
 <details><summary>Querschnitte <span class="n">${secs.length}</span></summary><div class="body">
   <ul class="list">${secs.map(x => `<li><span class="txt">${esc(x.name)}<span class="sub">${esc(x.describe)}</span></span>${opBtn({op: 'remove_section', name: x.name}, '✕', 'btn small danger')}</li>`).join('') || '<li class="muted">keine</li>'}</ul>
   <form data-op="add_section" data-reset><input type="hidden" name="kind" value="profile" data-type="str">
-    <div class="row">${sel('family', 'Profilreihe', s.families, S.profileFamily || 'IPE', 'data-action="load-profiles"')}
+    <div class="row">${sel('country', 'Land / Norm', (s.countries || []).map(c => [c.code, `${c.name} (${c.norm})`]), S.country || 'EU', 'data-action="load-country"')}
+    ${sel('family', 'Profilreihe', (S.families || s.families).map(f => typeof f === 'string' ? [f, f] : [f.code, `${f.code} – ${f.text}`]), S.profileFamily || 'IPE', 'data-action="load-profiles"')}
     <label><span>Profil</span><select name="designation" id="profile-list" data-type="str">${(S.profiles[S.profileFamily || 'IPE'] || []).map(p => `<option>${esc(p)}</option>`).join('')}</select></label>
     ${inp('name', 'Name (optional)', '')}<button class="btn small primary">+ Profil</button></div></form>
+  <details><summary>Zusammengesetzter Querschnitt</summary><div class="body">
+    <form data-op="composite_section" data-reset><div class="row">${inp('name', 'Name', '')}</div>
+      ${[0, 1, 2, 3].map(i => `<div class="row">${inp(`parts.${i}.profil`, `Teil ${i + 1}: Profil`, '', 'data-type="str" placeholder="z.B. UPE 200"')}${num(`parts.${i}.dy`, 'dy [m]', '')}${num(`parts.${i}.dz`, 'dz [m]', '')}${num(`parts.${i}.drehung`, 'Drehung [°]', '')}${chk(`parts.${i}.spiegeln`, 'spiegeln')}</div>`).join('')}
+      <div class="muted">Leere Zeilen werden übersprungen. Versatz vom gemeinsamen Schwerpunkt aus; Steiner-Anteile und Hauptachsen werden berechnet.</div>
+      <button class="btn small primary">+ Zusammengesetzt</button></form>
+  </div></details>
   <details><summary>Parametrisch</summary><div class="body">
     <form data-op="add_section" data-reset><input type="hidden" name="kind" value="rect" data-type="str"><div class="row">${inp('name', 'Rechteck: Name', 'Rechteck')}${num('b', 'b [mm]', 100, {scale: 1e-3})}${num('h', 'h [mm]', 200, {scale: 1e-3})}<button class="btn small">+</button></div></form>
     <form data-op="add_section" data-reset><input type="hidden" name="kind" value="circle" data-type="str"><div class="row">${inp('name', 'Rund: Name', 'Rund')}${num('d', 'd [mm]', 50, {scale: 1e-3})}<button class="btn small">+</button></div></form>
@@ -692,8 +715,32 @@ function renderModell() {
   <div class="btns">${opBtn({op: 'support', nodes: '@nodes', dofs: 'all'}, 'Einspannung', 'btn small primary')}${opBtn({op: 'support', nodes: '@nodes', dofs: 'pinned'}, 'Gelenkig (ux uy uz)', 'btn small primary')}${opBtn({op: 'support', nodes: '@nodes', dofs: 'z'}, 'nur uz', 'btn small')}${opBtn({op: 'support', nodes: '@nodes', dofs: 'xz'}, 'ux uz', 'btn small')}${opBtn({op: 'support', nodes: '@nodes', dofs: 'yz'}, 'uy uz', 'btn small')}${opBtn({op: 'remove_support', nodes: '@nodes'}, 'Lager entfernen', 'btn small danger')}</div>
   <form data-op="support"><h3>Beliebig / Feder</h3><div class="row">${selInput('nodes')}</div><div class="grid6">${['ux', 'uy', 'uz', 'rx', 'ry', 'rz'].map((d, i) => chk('d.' + i, d, i < 3)).join('')}</div>
     <div class="row">${num('stiffness', 'Federsteifigkeit [kN/m] (0 = starr)', 0, {scale: 1e3})}<button class="btn small">Lager setzen</button></div></form>
-  <ul class="list">${s.supports.slice(0, 60).map(x => `<li class="tap" data-action="select-node" data-node="${x.node}"><span class="txt">Knoten ${x.node}<span class="sub">${x.dofs.map(d => ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'][d]).join(' ')}${x.stiffness ? ' (Feder)' : ''}</span></span>${opBtn({op: 'remove_support', nodes: [x.node]}, '✕', 'btn small danger')}</li>`).join('')}</ul>
+  <ul class="list">${s.supports.slice(0, 60).map(x => `<li class="tap" data-action="select-node" data-node="${x.node}"><span class="txt">Knoten ${x.node}${x.nonlinear ? ' <span class="chip">nichtlinear</span>' : ''}<span class="sub">${Object.entries(x.beschreibung || {}).map(([k, v]) => `${k}: ${v}`).join(' · ') || x.dofs.map(d => DOFS[d]).join(' ')}</span></span>${opBtn({op: 'remove_support', nodes: [x.node]}, '✕', 'btn small danger')}</li>`).join('')}</ul>
   ${s.n_supports > 60 ? `<div class="muted">… ${s.n_supports - 60} weitere</div>` : ''}
+  <div class="muted">${esc(s.support_summary || '')}</div>
+</div></details>
+
+<details><summary>Nichtlineare Lager <span class="n">${s.line_supports.length + s.surface_supports.length}</span></summary><div class="body">
+  <form data-op="support_nonlinear"><h3>Knotenlager: Wirkung je Freiheitsgrad</h3>
+    ${selInput('nodes')}${dofTable('behaviour')}<button class="btn small primary">Auf gewählte Knoten anwenden</button></form>
+  <form data-op="line_support"><h3>Linienlager (Steifigkeit je Meter)</h3>
+    <div class="row">${inp('name', 'Name', '')}${selInput('nodes', 'Knoten des Linienzugs (in Reihenfolge)')}</div>
+    ${dofTable('behaviour')}<button class="btn small primary">Linienlager anlegen</button></form>
+  <form data-op="surface_support"><h3>Flächenlager / Bettung (Steifigkeit je m²)</h3>
+    <div class="row">${inp('name', 'Name', '')}${selInput('elems', 'Schalen- oder Volumenelemente')}${num('face', 'Fläche (Volumen; -1 = alle)', -1, {int: true, step: 1})}</div>
+    ${dofTable('behaviour')}<button class="btn small primary">Flächenlager anlegen</button></form>
+  <ul class="list">
+    ${s.line_supports.map((x, i) => `<li><span class="txt">Linienlager ${esc(x.name)}<span class="sub">${x.nodes.length} Knoten · ${Object.entries(x.dofs).map(([k, v]) => `${k}: ${v}`).join(' · ')}</span></span>${opBtn({op: 'remove_line_support', index: i}, '✕', 'btn small danger')}</li>`).join('')}
+    ${s.surface_supports.map((x, i) => `<li><span class="txt">Flächenlager ${esc(x.name)}<span class="sub">${x.elements.length} Elemente · ${Object.entries(x.dofs).map(([k, v]) => `${k}: ${v}`).join(' · ')}</span></span>${opBtn({op: 'remove_surface_support', index: i}, '✕', 'btn small danger')}</li>`).join('')}
+  </ul>
+</div></details>
+
+<details><summary>Gelenke <span class="n">${s.hinges.length}</span></summary><div class="body">
+  <form data-op="add_hinge" data-reset><div class="row">${inp('name', 'Name', '')}${sel('end', 'Stabende', [[0, 'Anfang'], [1, 'Ende']], 0, 'data-type="int"')}${selInput('elems', 'Elemente (optional)')}</div>
+    <div class="grid3">${DOFS.map(d => sel(`dofs.${d}`, d, [['fixed', 'biegesteif'], ['free', 'gelenkig']], 'fixed')).join('')}</div>
+    <div class="muted">Federgelenke: statt „gelenkig“ eine Steifigkeit in die Stabtabelle des Imports eintragen oder das Modell als JSON bearbeiten.</div>
+    <button class="btn small primary">+ Gelenk</button></form>
+  <ul class="list">${s.hinges.map(h => `<li><span class="txt">${esc(h.name)}<span class="sub">${esc(h.beschreibung)}</span></span></li>`).join('') || '<li class="muted">keine</li>'}</ul>
 </div></details>
 
 <details><summary>Stäbe für Nachweise <span class="n">${s.members.length}</span></summary><div class="body">
@@ -1025,6 +1072,13 @@ function bindActions(root) {
     f.addEventListener('submit', async e => {
       e.preventDefault();
       const payload = Object.assign({op: f.dataset.op}, collect(f));
+      if (payload.parts) payload.parts = payload.parts.filter(p => p && p.profil);
+      if (payload.behaviour) {
+        for (const k of Object.keys(payload.behaviour)) {
+          const b = payload.behaviour[k];
+          if (b.typ === 'free' && !b.failure && !b.mu) delete payload.behaviour[k];
+        }
+      }
       if (payload.d) { payload.dofs = Object.entries(payload.d).filter(([, v]) => v).map(([k]) => parseInt(k, 10)); delete payload.d; }
       if (f.dataset.op === 'select_box') {
         try { const r = await API.post('/api/op', payload); S.sel.nodes = new Set(r.nodes); view.draw(); updateSelInfo(); toast(r.message); } catch (err) { toast(err.message, 'err'); }
@@ -1089,6 +1143,15 @@ const ACTIONS = {
   'example': async el => {
     try { const r = await API.post('/api/example', {name: el.dataset.name}); S.state = r.state; S.version = r.state.version; updateHeader(); S.first = true; S.sel.nodes.clear(); S.sel.elems.clear(); S.ro.which = ''; await refreshGeometry(); await loadResults(); toast(r.message, 'ok'); showTab('modell'); }
     catch (e) { toast(e.message, 'err'); }
+  },
+  'load-country': async el => {
+    S.country = el.value;
+    try {
+      const r = await API.get('/api/profiles?country=' + enc(S.country));
+      S.families = r.families; S.profileFamily = (r.families[0] || {}).code;
+      S.profiles[S.profileFamily] = r.profiles.length ? null : null;
+      render();
+    } catch (e) { toast(e.message, 'err'); }
   },
   'load-profiles': async el => {
     const fam = el.value; S.profileFamily = fam;

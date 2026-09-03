@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 
 from ..model import (Model, Material, Section, ShellProp, NodalLoad, BeamLoad, FaceLoad,
-                     TempLoad, Combination, ACTION_CATEGORIES, STEEL_GRADES, NDOF)
+                     TempLoad, Combination, ACTION_CATEGORIES, STEEL_GRADES, NDOF, DOF_NAMES)
 from .. import solver, parallel, mesher, profiles
 from ..assemble import SOLID_FACES
 from ..elements import beam3d as bm
@@ -273,6 +273,14 @@ def _loads_of(lc, limit: int = 300) -> dict:
     }
 
 
+def _support_summary(m: Model) -> str:
+    from .. import supports as sup
+    try:
+        return sup.summary(m)
+    except Exception:      # noqa: BLE001 - Uebersicht darf nie stoeren
+        return ""
+
+
 def state_summary(st: State) -> dict:
     with st.lock:
         m = st.model
@@ -312,7 +320,11 @@ def state_summary(st: State) -> dict:
             "sections": {k: dict(_clean(asdict(v)), describe=v.describe())
                          for k, v in m.sections.items()},
             "shells": {k: _clean(asdict(v)) for k, v in m.shells.items()},
-            "supports": [_clean(asdict(s)) for s in m.supports[:MAX_ROWS]],
+            "supports": [{"node": int(s.node), "dofs": list(s.dofs), "name": s.name,
+                          "nonlinear": s.nonlinear,
+                          "beschreibung": {DOF_NAMES[d]: s.dof_behaviour(d).describe()
+                                           for d in range(NDOF) if s.dof_behaviour(d).acts}}
+                         for s in m.supports[:MAX_ROWS]],
             "n_supports": len(m.supports),
             "load_cases": cases, "active_case": m.active_case,
             "combinations": [{"name": c.name, "typ": c.typ, "description": c.description,
@@ -321,6 +333,19 @@ def state_summary(st: State) -> dict:
             "fatigue_loads": [_clean(asdict(f)) for f in m.fatigue_loads.values()],
             "members": members,
             "design": _clean(asdict(m.design)),
+            "line_supports": [{"name": x.name, "nodes": list(x.nodes),
+                               "dofs": {DOF_NAMES[d]: x.dof_behaviour(d).describe()
+                                        for d in range(NDOF) if x.dof_behaviour(d).acts}}
+                              for x in m.line_supports],
+            "surface_supports": [{"name": x.name, "elements": list(x.elements), "face": x.face,
+                                  "dofs": {DOF_NAMES[d]: x.dof_behaviour(d).describe()
+                                           for d in range(NDOF) if x.dof_behaviour(d).acts}}
+                                 for x in m.surface_supports],
+            "hinges": [{"name": h.name, "end": h.end, "beschreibung": h.describe()}
+                       for h in m.hinges.values()],
+            "support_summary": _support_summary(m),
+            "countries": [{"code": c, "name": n, "norm": nn, "families": f}
+                          for c, n, nn, f in profiles.countries()],
             "contact": {"supports": [_clean(asdict(c)) for c in m.contact_supports[:MAX_ROWS]],
                         "gaps": [_clean(asdict(g)) for g in m.gap_elements[:MAX_ROWS]],
                         "pairs": [_clean(asdict(p)) for p in m.contact_pairs]},
@@ -1118,6 +1143,120 @@ def _op_support(st, m, d):
     return f"Lager an {len(nodes)} Knoten gesetzt"
 
 
+@op("support_nonlinear")
+def _op_support_nonlinear(st, m, d):
+    """Wirkung je Freiheitsgrad an Knotenlagern setzen (Ausfall/Schlupf/Reibung)."""
+    from ..model import DofBehaviour, dof_index
+    nodes = _ilist(d, "nodes")
+    _check_nodes(m, nodes)
+    beh = {}
+    for key, val in (d.get("behaviour") or {}).items():
+        dof = dof_index(key)
+        v = dict(val)
+        for num in ("stiffness", "slip", "mu", "limit"):
+            if num in v and v[num] not in (None, ""):
+                v[num] = _f(v, num)
+        if v.get("mu_ref") in (None, ""):
+            v.pop("mu_ref", None)
+        else:
+            v["mu_ref"] = dof_index(v["mu_ref"])
+        beh[dof] = DofBehaviour(**{k: x for k, x in v.items() if x not in (None, "")})
+    if not beh:
+        raise ApiError("Keine Freiheitsgrade angegeben")
+    for n in nodes:
+        s = next((x for x in m.supports if x.node == n), None)
+        if s is None:
+            s = m.support(n, [])
+        s.behaviour = dict(beh)
+        s.dofs = sorted({dof for dof, b in beh.items() if b.acts})
+    return f"Nichtlinearität an {len(nodes)} Lagern gesetzt"
+
+
+@op("line_support")
+def _op_line_support(st, m, d):
+    from ..model import DofBehaviour, dof_index
+    nodes = _ilist(d, "nodes")
+    _check_nodes(m, nodes)
+    if len(nodes) < 2:
+        raise ApiError("Linienlager braucht mindestens zwei Knoten")
+    ls = m.add_line_support(nodes, name=d.get("name") or "")
+    for key, val in (d.get("behaviour") or {}).items():
+        ls.behaviour[dof_index(key)] = DofBehaviour(**{k: (_f(val, k) if k in
+                                                          ("stiffness", "slip", "mu", "limit")
+                                                          else v)
+                                                       for k, v in val.items() if v not in (None, "")})
+    return f"Linienlager über {len(nodes)} Knoten angelegt"
+
+
+@op("surface_support")
+def _op_surface_support(st, m, d):
+    from ..model import DofBehaviour, dof_index
+    elems = _ilist(d, "elems")
+    _check_elems(m, elems)
+    ss = m.add_surface_support(elems, name=d.get("name") or "", face=_i(d, "face", -1))
+    for key, val in (d.get("behaviour") or {}).items():
+        ss.behaviour[dof_index(key)] = DofBehaviour(**{k: (_f(val, k) if k in
+                                                           ("stiffness", "slip", "mu", "limit")
+                                                           else v)
+                                                        for k, v in val.items() if v not in (None, "")})
+    return f"Flächenlager auf {len(elems)} Elementen angelegt"
+
+
+@op("remove_line_support")
+def _op_remove_line_support(st, m, d):
+    i = _i(d, "index")
+    if not 0 <= i < len(m.line_supports):
+        raise ApiError("Index ungültig")
+    del m.line_supports[i]
+    return "Linienlager entfernt"
+
+
+@op("remove_surface_support")
+def _op_remove_surface_support(st, m, d):
+    i = _i(d, "index")
+    if not 0 <= i < len(m.surface_supports):
+        raise ApiError("Index ungültig")
+    del m.surface_supports[i]
+    return "Flächenlager entfernt"
+
+
+@op("add_hinge")
+def _op_add_hinge(st, m, d):
+    from ..model import dof_index
+    name = (d.get("name") or f"G{len(m.hinges) + 1}").strip()
+    h = m.add_hinge(name, end=_i(d, "end", 0))
+    for key, val in (d.get("dofs") or {}).items():
+        dof = dof_index(key)
+        if isinstance(val, str) and val in ("free", "fixed"):
+            h.typ[dof] = val
+        elif val not in (None, ""):
+            h.typ[dof] = "spring"
+            h.stiffness[dof] = _f({"v": val}, "v")
+    elems = _ilist(d, "elems", required=False)
+    for e in elems:
+        m.apply_hinge(e, h)
+    return f"Gelenk {name} angelegt" + (f" und auf {len(elems)} Elemente gelegt" if elems else "")
+
+
+@op("composite_section")
+def _op_composite(st, m, d):
+    from .. import sections as sec_mod
+    name = (d.get("name") or "").strip()
+    if not name:
+        raise ApiError("Name fehlt")
+    parts = d.get("parts") or []
+    if not parts:
+        raise ApiError("Keine Teilquerschnitte angegeben")
+    try:
+        spec = [(p.get("profil"), _f(p, "dy", 0.0), _f(p, "dz", 0.0),
+                 _f(p, "drehung", 0.0), bool(p.get("spiegeln"))) for p in parts]
+        s = sec_mod.build(name, spec)
+    except (KeyError, ValueError) as ex:
+        raise ApiError(str(ex))
+    m.add_section(s)
+    return f"Zusammengesetzter Querschnitt {name}: {s.describe()}"
+
+
 @op("remove_support")
 def _op_remove_support(st, m, d):
     nodes = set(_ilist(d, "nodes"))
@@ -1886,7 +2025,16 @@ class Handler(BaseHTTPRequestHandler):
                               {"Content-Disposition": f'attachment; filename="{fname}"'})
         if path == "profiles":
             fam = q.get("family") or None
-            return self._json({"family": fam, "profiles": profiles.list_profiles(fam)})
+            land = q.get("country") or None
+            try:
+                lst = profiles.list_profiles(fam, land) if (fam or land) else profiles.list_profiles()
+            except KeyError as ex:
+                raise ApiError(str(ex))
+            return self._json({"family": fam, "country": land, "profiles": lst,
+                               "families": [{"code": f, "text": profiles.FAMILY_INFO.get(f, (f,))[0]}
+                                            for f in profiles.families(land)] if land else [],
+                               "countries": [{"code": c, "name": n, "norm": nn, "families": ff}
+                                             for c, n, nn, ff in profiles.countries()]})
         if path == "examples":
             return self._json({k: EXAMPLE_LABELS.get(k, k) for k in EXAMPLES})
         if path == "log":
