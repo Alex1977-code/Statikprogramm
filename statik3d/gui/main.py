@@ -23,7 +23,7 @@ from .. import solver, mesher, parallel, __version__
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
                       CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
                       DesignSettingsDialog, ContactPairDialog, ImportDialog, ReportDialog,
-                      SupportNonlinearDialog,
+                      SupportNonlinearDialog, JointDialog,
                       parse_int_list)
 from .worker import SolveWorker
 from . import viewport as vp
@@ -435,6 +435,22 @@ class MainWindow(QtWidgets.QMainWindow):
         b7.setToolTip("Bettung auf den Elementen im Feld 'Elemente', Steifigkeit je m²")
         b7.clicked.connect(self.add_surface_support)
         gl.addWidget(row(b5, b6, b7))
+        lay.addWidget(g)
+
+        g = QtWidgets.QGroupBox("Anschluss")
+        gl = QtWidgets.QVBoxLayout(g)
+        b8 = QtWidgets.QPushButton("Anschluss anlegen…")
+        b8.setToolTip("Anschlusstyp wählen und auf ein Stabende anwenden: Kopfplatte,\n"
+                      "Laschenstoß oder Diagonalanschluss. Der Vorschlag folgt aus\n"
+                      "Profil und Schnittgrößen und lässt sich ändern.")
+        b8.clicked.connect(self.add_joint)
+        b9 = QtWidgets.QPushButton("Anschlüsse zeigen")
+        b9.setToolTip("Angelegte Anschlüsse mit Nachweisen auflisten")
+        b9.clicked.connect(self.show_joints)
+        gl.addWidget(row(b8, b9))
+        self.lbl_joints = QtWidgets.QLabel("keine Anschlüsse")
+        self.lbl_joints.setWordWrap(True)
+        gl.addWidget(self.lbl_joints)
         lay.addWidget(g)
 
         g = QtWidgets.QGroupBox("Lasten auf Auswahl → aktiver Lastfall")
@@ -1042,6 +1058,97 @@ class MainWindow(QtWidgets.QMainWindow):
             s.dofs = sorted({k for k, v in beh.items() if v.acts})
         self.info(f"Nichtlinearität an {len(self.selection)} Lagern gesetzt")
         self.refresh_all()
+
+    # ---- Anschluesse ----------------------------------------------------
+    def _selected_beam_end(self):
+        """(Element, Ende) aus der Auswahl bestimmen.
+
+        Ausgewaehlt wird ein Knoten; gesucht wird das Stabelement, das dort
+        endet. Liegen mehrere an, wird das erste genommen und gemeldet.
+        """
+        if not len(self.selection):
+            raise ValueError("Bitte den Knoten am Stabende auswählen")
+        n = int(self.selection[0])
+        for i, e in enumerate(self.model.elements):
+            if e.typ not in ("beam", "truss"):
+                continue
+            if int(e.nodes[0]) == n:
+                return i, 0
+            if int(e.nodes[1]) == n:
+                return i, 1
+        raise ValueError(f"An Knoten {n + 1} endet kein Stabelement")
+
+    def _end_forces(self, elem: int, end: int) -> dict:
+        """Schnittgroessen am Stabende aus dem letzten Ergebnis (sonst 0)."""
+        r = self.current_result()
+        if r is None or not getattr(r, "beam_end", None):
+            return {}
+        v = r.beam_end.get(int(elem))
+        if v is None:
+            return {}
+        o = 0 if end == 0 else 6
+        vz = float(v[o + 2])
+        return {"N": float(v[o + 0]) * (-1.0 if end == 0 else 1.0),
+                "Vz": vz, "My": float(v[o + 4])}
+
+    def add_joint(self):
+        """Anschluss am gewaehlten Stabende anlegen."""
+        try:
+            elem, end = self._selected_beam_end()
+        except ValueError as ex:
+            return self.error(str(ex))
+        d = JointDialog(self, self.model, elem, end, self._end_forces(elem, end))
+        if not d.exec():
+            return
+        t = d.result_template()
+        if t is None:
+            return self.error("Es liegt kein gültiger Vorschlag vor")
+        if not hasattr(self, "joints"):
+            self.joints = []
+        t._forces = {k: d.sp[k].value() * 1e3 for k in d.sp}
+        if isinstance(t, type(t)) and t.__class__.__name__ == "Gusset":
+            t._forces = {"N": t._forces.get("N", 0.0)}
+        self.joints.append(t)
+        kind = d.fe_kind()
+        if kind:
+            log = []
+            teil = t.build(kind=kind, log=log)
+            teil.meta["bauteil"] = t.name
+            path = os.path.join(os.path.dirname(self.path or "."),
+                                f"{t.name.replace(' ', '_')}.json")
+            try:
+                teil.save(path)
+                log.append(f"Teilmodell gespeichert: {path}")
+            except OSError as ex:
+                log.append(f"Teilmodell konnte nicht gespeichert werden: {ex}")
+            QtWidgets.QMessageBox.information(
+                self, "Teilmodell des Anschlusses", "\n".join(log))
+        self._refresh_joints()
+        self.info(f"Anschluss '{t.name}' angelegt")
+
+    def _refresh_joints(self):
+        js = getattr(self, "joints", [])
+        if not js:
+            self.lbl_joints.setText("keine Anschlüsse")
+            return
+        zeilen = []
+        for t in js:
+            try:
+                j = t.design(**getattr(t, "_forces", {}))
+                zeilen.append(f"{t.name}: eta = {j.eta:.2f} ({j.massgebend})")
+            except Exception:            # noqa: BLE001
+                zeilen.append(t.name)
+        self.lbl_joints.setText("\n".join(zeilen))
+
+    def show_joints(self):
+        js = getattr(self, "joints", [])
+        if not js:
+            return self.error("Es wurde noch kein Anschluss angelegt")
+        text = "\n\n".join(t.describe() for t in js)
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Anschlüsse")
+        box.setText(text)
+        box.exec()
 
     def add_line_support(self):
         """Linienlager entlang der gewaehlten Knoten (in Auswahlreihenfolge)."""

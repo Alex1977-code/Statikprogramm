@@ -247,10 +247,13 @@ def rigid_fan(model: Model, center: int, ring, mat: str, sec: str,
     ohne die Lasteinleitung kuenstlich zu versteifen.
     """
     out = []
+    c = int(center)
+    pc = model.nodes[c]
     for n in np.ravel(ring):
         n = int(n)
-        if n != int(center):
-            out.append(model.add_element("beam", [int(center), n], mat, sec, group=group))
+        if n == c or float(np.linalg.norm(model.nodes[n] - pc)) < 1e-9:
+            continue          # deckungsgleiche Knoten: kein Element der Laenge 0
+        out.append(model.add_element("beam", [c, n], mat, sec, group=group))
     return out
 
 

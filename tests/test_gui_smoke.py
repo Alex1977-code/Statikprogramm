@@ -181,6 +181,35 @@ def main():
     except Exception as ex:
         check("Web-Server am GUI-Modell", False, str(ex))
 
+    # Anschlussdialog: Typ waehlen, Vorschlag rechnen
+    try:
+        from statik3d.gui.dialogs import JointDialog
+        from statik3d.model import Section
+        if "IPE 400" not in w.model.sections:
+            w.model.add_section(Section.from_profile("IPE 400"))
+        n0 = w.model.add_node(0.0, -3.0, 0.0)
+        n1 = w.model.add_node(6.0, -3.0, 0.0)
+        e = w.model.add_element("beam", [n0, n1], next(iter(w.model.materials)), "IPE 400")
+        d = JointDialog(w, w.model, e, 1, {"N": -100e3, "Vz": 90e3, "My": 180e3})
+        d.update_proposal()
+        t = d.result_template()
+        check("Anschlussdialog: Vorschlag erzeugt", t is not None,
+              type(t).__name__ if t else "-")
+        check("Anschlussdialog: Bericht mit Ausnutzung", "eta" in d.txt.toPlainText())
+        d.cb_typ.setCurrentIndex(1)
+        check("Anschlussdialog: Typwechsel rechnet neu",
+              d.result_template() is not None and
+              type(d.result_template()).__name__ == "Splice",
+              type(d.result_template()).__name__)
+        check("Anschlussdialog: Schnittgroessen ablesbar",
+              abs(d.forces()["My"] - 180e3) < 1.0, str(d.forces()))
+        d.close()
+        w.selection = np.array([n1], dtype=int)
+        el, end = w._selected_beam_end()
+        check("Stabende aus der Auswahl bestimmt", el == e and end == 1, f"{el}/{end}")
+    except Exception as ex:      # noqa: BLE001
+        check("Anschlussdialog", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

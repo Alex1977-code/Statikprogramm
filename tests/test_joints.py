@@ -403,9 +403,140 @@ def test_nachweise():
     check("Kerbfallverzeichnis vorhanden", len(DETAILS) >= 14, str(len(DETAILS)))
 
 
+# --------------------------------------------------------------------------
+# 7) Anschlussvorlagen: Typ waehlen, Stabende anklicken
+# --------------------------------------------------------------------------
+def _rahmen():
+    m = Model("Rahmen")
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("IPE 400"))
+    m.add_section(Section.from_profile("HEB 300"))
+    m.add_section(Section.from_profile("L 100x100x10")
+                  if "L 100x100x10" in [] else Section.from_profile("HEB 300"))
+    n0 = m.add_node(0, 0, 0)
+    n1 = m.add_node(6, 0, 0)
+    n2 = m.add_node(0, 0, 4)
+    e_traeger = m.add_element("beam", [n0, n1], "S355", "IPE 400")
+    e_diag = m.add_element("beam", [n0, n2], "S355", "HEB 300")
+    return m, e_traeger, e_diag
+
+
+def test_vorlagen():
+    from statik3d.joints.templates import (EndPlate, Splice, Gusset, propose,
+                                           TYPES, TEMPLATES)
+    m, e_tr, e_di = _rahmen()
+    check("drei Anschlusstypen", sorted(TYPES) == ["diagonale", "kopfplatte", "lasche"],
+          str(sorted(TYPES)))
+
+    # Kopfplatte
+    a = EndPlate.propose(m, elem=e_tr, end=1, N=-100e3, Vz=90e3, My=180e3)
+    sec = m.sections["IPE 400"]
+    check("Kopfplatte: Blech breiter als der Flansch", a.bp > sec.b,
+          f"{a.bp * 1e3:.0f} > {sec.b * 1e3:.0f} mm")
+    check("Kopfplatte: Blech hoeher als das Profil", a.hp > sec.h,
+          f"{a.hp * 1e3:.0f} > {sec.h * 1e3:.0f} mm")
+    check("Kopfplatte: Schraubenreihen ausserhalb und innerhalb", len(a.rows) >= 4,
+          str([round(z * 1e3) for z in a.rows]))
+    check("Kopfplatte: Riss haelt den Mindestabstand", a.w >= 2.4 * a.bolt.d0 - 1e-9,
+          f"w = {a.w * 1e3:.0f} mm, 2,4 d_0 = {2.4 * a.bolt.d0 * 1e3:.0f} mm")
+    check("Kopfplatte: Nahtdicke im zulaessigen Bereich",
+          min_throat(sec.tf) - 1e-9 <= a.a_f <= max_throat(sec.tf) + 1e-9,
+          f"a_f = {a.a_f * 1e3:g} mm")
+    check("Kopfplatte: Schraubenlagen paarweise",
+          len(a.bolt_positions()) == 2 * len(a.rows), str(len(a.bolt_positions())))
+    j = a.design(N=-100e3, Vz=90e3, My=180e3)
+    check("Kopfplatte: Vorschlag erfuellt die Nachweise", j.ok,
+          f"eta = {j.eta:.3f}, massgebend {j.massgebend}")
+    check("Kopfplatte: T-Stummel wird gefuehrt",
+          any("T-Stummel" in c.name for c in j.checks))
+    check("Kopfplatte: Beschreibung nennt Blech und Schrauben",
+          "Blech" in a.describe() and a.bolt.size in a.describe())
+
+    # groesseres Moment -> staerkerer Anschluss
+    a2 = EndPlate.propose(m, elem=e_tr, end=1, N=0.0, Vz=90e3, My=320e3)
+    check("groesseres Moment -> dickeres Blech oder groessere Schraube",
+          a2.tp >= a.tp or a2.bolt.d > a.bolt.d,
+          f"t = {a2.tp * 1e3:.0f} mm, {a2.bolt.size}")
+
+    # FE-Modell der Kopfplatte
+    log = []
+    teil = a.build(kind="2d", nx=6, ny=8, log=log)
+    check("Kopfplatte 2D: Schalen erzeugt",
+          any(e.typ.startswith("shell") for e in teil.elements))
+    check("Kopfplatte 2D: Schrauben eingebaut",
+          sum(1 for e in teil.elements if e.group == "schraube") == len(a.bolt_positions()),
+          str(sum(1 for e in teil.elements if e.group == "schraube")))
+    check("Kopfplatte 2D: Trennfuge als Kontakt", len(teil.gap_elements) > 0,
+          f"{len(teil.gap_elements)} Spaltelemente")
+    r = solver.solve_static(teil)
+    check("Kopfplatte 2D: Teilmodell rechnet", r.u is not None,
+          f"{teil.nn} Knoten, u_max = {abs(r.u).max() * 1e3:.3f} mm")
+    teil3 = a.build(kind="3d", nx=4, ny=6, nz=2)
+    check("Kopfplatte 3D: Volumenelemente",
+          any(e.typ == "hex8" for e in teil3.elements),
+          str(sum(1 for e in teil3.elements if e.typ == "hex8")))
+
+    # Laschenstoss
+    s = Splice.propose(m, elem=e_tr, end=1, N=-80e3, Vz=60e3, My=90e3)
+    check("Lasche: Flansch- und Steglaschen", s.t_fl > 0 and s.t_web > 0,
+          f"{s.t_fl * 1e3:g} / {s.t_web * 1e3:g} mm")
+    check("Lasche: gerade Schraubenzahl je Flansch", s.n_fl % 2 == 0, str(s.n_fl))
+    js = s.design(N=-80e3, Vz=60e3, My=90e3)
+    check("Lasche: Vorschlag erfuellt die Nachweise", js.ok,
+          f"eta = {js.eta:.3f}, massgebend {js.massgebend}")
+    check("Lasche: Blockversagen wird gefuehrt",
+          any("Blockversagen" in c.name for c in js.checks))
+    ts = s.build(kind="2d")
+    check("Lasche: Teilmodell mit Laschen und Schrauben",
+          any(e.group == "schraube" for e in ts.elements) and ts.nn > 0,
+          f"{ts.nn} Knoten")
+
+    # zu hohe Beanspruchung -> ehrlicher Hinweis statt stiller Vergroesserung
+    s2 = Splice.propose(m, elem=e_tr, end=1, N=-450e3, Vz=120e3, My=250e3)
+    check("Lasche: Bauteilversagen wird benannt",
+          any("Traegerflansch" in h or "Flansch" in h for h in s2.hinweise),
+          s2.hinweise[-1][:60])
+
+    # Diagonalanschluss
+    g = Gusset.propose(m, elem=e_di, end=1, N=-450e3)
+    check("Diagonale: Knotenblech vorgeschlagen", g.t_g >= 0.008, f"t = {g.t_g * 1e3:g} mm")
+    check("Diagonale: Whitmore-Breite", g.whitmore_width() > 0,
+          f"{g.whitmore_width() * 1e3:.0f} mm")
+    jg = g.design(N=-450e3)
+    check("Diagonale: Vorschlag erfuellt die Nachweise", jg.ok,
+          f"eta = {jg.eta:.3f}, massgebend {jg.massgebend}")
+    check("Diagonale: Knicken des Blechs bei Druck",
+          any("Knotenblech auf Druck" in c.name for c in jg.checks))
+    gw = Gusset.propose(m, elem=e_di, end=1, N=-300e3, welded=True)
+    check("Diagonale geschweisst: Nahtlaenge vorgeschlagen", gw.l_weld > 0.05,
+          f"l = {gw.l_weld * 1e3:.0f} mm")
+    jw = gw.design(N=-300e3)
+    check("Diagonale geschweisst: Nahtnachweis",
+          any("Kehlnaht" in c.name for c in jw.checks), f"eta = {jw.eta:.3f}")
+    tg = g.build(kind="2d")
+    check("Diagonale: Teilmodell rechnet", solver.solve_static(tg).u is not None,
+          f"{tg.nn} Knoten")
+
+    # Dispatcher
+    for kind in TYPES:
+        p = propose(kind, m, elem=e_tr if kind != "diagonale" else e_di, end=1,
+                    N=-100e3, Vz=60e3, My=90e3)
+        check(f"propose('{kind}') liefert eine Vorlage",
+              isinstance(p, TEMPLATES[kind]), type(p).__name__)
+
+    # Ermuedung im Anschluss
+    jf = a.design(N=0.0, Vz=50e3, My=100e3, n_cycles=2e6, dMy=40e3)
+    check("Kopfplatte: Ermuedungsnachweise vorhanden", len(jf.ermuedung) >= 2,
+          str(len(jf.ermuedung)))
+    a_vor = EndPlate.propose(m, elem=e_tr, end=1, N=0.0, Vz=50e3, My=100e3,
+                             bolt=Bolt("M24", "10.9", category="E"))
+    check("vorgespannte Schraube mindert die Schwingbreite",
+          a_vor.bolt_range_factor() < 0.3, f"{a_vor.bolt_range_factor():.2f}")
+
+
 def main():
     for t in (test_schrauben, test_naehte, test_tstub, test_fe_schraube,
-              test_bleche, test_nachweise):
+              test_bleche, test_nachweise, test_vorlagen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
