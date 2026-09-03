@@ -81,7 +81,54 @@ Die Arbeitsfläche in drei Spalten:
 Unten die **Tabellen**: Protokoll, Werkstoffe, Querschnitte, Dicken,
 Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt.
 Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
-in einem Panel rechts.
+in einem Panel rechts. Wie die Tabellen zu bedienen sind, steht im nächsten
+Abschnitt.
+
+### Tabellen: filtern, sortieren, ausgeben
+
+Jede Tabelle unten hat über der Kopfzeile eine **Filterzeile** — ein Feld je
+Spalte. Was dort steht, gilt sofort; mehrere Felder wirken zusammen (und, nicht
+oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist.
+
+| Eingabe | wirkt |
+|---|---|
+| `> 0,9` | größer als 0,9 — auch `>=`, `<`, `<=`, `!=` |
+| `= HEB 200` | genau dieser Wert (Zahl oder Text) |
+| `1..5` | Bereich einschließlich der Grenzen |
+| `HEB` | Text kommt vor (Groß- und Kleinschreibung egal) |
+| `!HEB` | Text kommt **nicht** vor |
+
+`> 1` in der Spalte „Ausnutzung" zeigt in einem Griff alle Überschreitungen.
+
+**Sortieren**: Klick auf die Spaltenüberschrift; Zahlen werden der Größe nach
+sortiert, nicht als Text. **Spalten** lassen sich über „Spalten…" ein- und
+ausblenden und mit der Maus verschieben.
+
+Unter jeder Ergebnistabelle steht eine feste **Zeile „Max"/„Min"**. Sie
+bezieht sich auf das, was der Filter gerade übrig lässt, und bleibt beim
+Sortieren an ihrem Platz.
+
+**Ausgeben** — „Kopieren", „CSV…", „Excel…" in der Tabelle selbst oder die
+Gruppe „Tabelle ausgeben" im Register *Ergebnisse* (Strg+Umschalt+C kopiert).
+Ausgegeben wird immer nur das, was gerade zu sehen ist, samt Max- und
+Min-Zeile. CSV kommt mit Semikolon und deutschem Dezimalkomma, xlsx mit echten
+Zahlen (nicht als Text) — in Excel lässt sich damit sofort weiterrechnen.
+
+**Tabelle und Ansicht hängen zusammen**: ein Klick auf eine Zeile wählt das
+Element beziehungsweise den Knoten in der 3D-Ansicht; umgekehrt markiert eine
+Auswahl in der Ansicht die zugehörigen Zeilen und rollt die erste ins Bild.
+
+**Eingabetabellen sind editierbar.** In Werkstoffe, Querschnitte und Dicken
+sind die hellen Spalten zum Hineinschreiben da: Zelle anklicken, Wert tippen,
+Eingabetaste. Gerechnet werden darf dabei — `= 210/1,05` ergibt 200. Erlaubt
+sind die vier Grundrechenarten, Klammern, Potenz und `pi`; mehr nicht, damit
+aus einer Tabellenzelle kein Programm wird. Ein unmöglicher Wert (E ≤ 0,
+ν ≥ 0,5, eine negative Fläche) wird **nicht** übernommen; die Zelle behält
+ihren Inhalt, und die Statuszeile sagt, warum. Jede Änderung geht über den
+Rückgängig-Stapel (Strg+Z) und verwirft die vorhandenen Ergebnisse — gerechnet
+werden muss danach neu. Wer A, Iy, Iz, It oder Wpl,y von Hand ändert, löst den
+Querschnitt von der Profildatenbank; sein Typ wird `free`, die Nachweise
+laufen dann elastisch.
 
 ### Maske oder Klick
 
@@ -308,7 +355,9 @@ im Bericht.
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
   der betragsmäßig größere Extremwert).
 * Tabellen: Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise, Ermüdung,
-  Kontakt. Export CSV, VTK (ParaView).
+  Kontakt — filterbar, sortierbar, mit Max-/Min-Zeile, ausgebbar nach
+  Zwischenablage, CSV und Excel (Kapitel 2, „Tabellen"). Modellexport
+  außerdem CSV, VTK (ParaView).
 * Statischer Bericht: Projektdaten, System, Einwirkungen, Kombinationen,
   Ergebnisse, Nachweise mit allen Zwischenwerten, Ermüdung, Kontakt,
   Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
@@ -317,7 +366,8 @@ im Bericht.
 ## 11 Tastenkürzel
 
 Strg+N neu, Strg+O öffnen, Strg+S speichern, Strg+I importieren,
-Strg+R Bericht, F5 berechnen.
+Strg+R Bericht, F5 berechnen, Strg+Z rückgängig, Strg+Y wiederholen,
+Strg+Umschalt+C vordere Tabelle kopieren.
 
 Browser/Handy: siehe Kapitel 12.
 

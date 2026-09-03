@@ -107,7 +107,7 @@ def main():
     check("Eingabe-Aktionen: Modell rechnet", an.design is not None and len(w.model.combinations) > 0,
           f"({len(w.model.combinations)} Kombinationen, {len(w.model.contact_supports)} Kontaktlager)")
     w.show_results(); app.processEvents()
-    check("Tabellen gefuellt", w.tbl_design.rowCount() >= 1 and w.tbl_react.rowCount() >= 1)
+    check("Tabellen gefuellt", w.tbl_design.zeilenzahl() >= 1 and w.tbl_react.zeilenzahl() >= 1)
 
     # Dialoge erzeugen (ohne exec)
     d1 = dg.MaterialDialog(w); d1._grade_changed("S355"); mat = d1.result_material()
@@ -464,6 +464,196 @@ def main():
         import traceback
         traceback.print_exc()
         check("Werkbank", False, str(ex)[:70])
+
+    # ---- Tabellen: Filter, Sortierung, Spalten, Export, Editieren -------
+    try:
+        import tempfile
+        from PySide6 import QtCore
+        from statik3d.gui import tabellen as tb
+
+        w.load_example("hall")
+        an = solver.solve_all(w.model, design=True)
+        w._solve_done("all", an)
+        for idx in range(w.cb_result.count()):     # eine Kombination, keine Umhuellende
+            if w.cb_result.itemData(idx)[0] in ("combo", "case"):
+                w.cb_result.setCurrentIndex(idx)
+                break
+        w.show_results()
+        app.processEvents()
+        t = w.tbl_beam
+        n_alle = t.zeilenzahl()
+        check("Ergebnistabelle ist eine Datentabelle", isinstance(t, tb.Datentabelle))
+        check("Stabkraefte gefuellt", n_alle > 10, f"{n_alle} Zeilen")
+        check("Tabelle startet aufsteigend, nicht verkehrt herum",
+              [t.filter.data(t.filter.index(r, 0), QtCore.Qt.UserRole)
+               for r in range(min(3, t.filter.rowCount()))] == [0.0, 1.0, 2.0],
+              str([t.filter.data(t.filter.index(r, 0), QtCore.Qt.UserRole)
+                   for r in range(min(3, t.filter.rowCount()))]))
+        check("Zahlen sind Zahlen, kein Text",
+              isinstance(t.modell.zeilen[0][1], float), type(t.modell.zeilen[0][1]).__name__)
+        check("Anzeige mit deutschem Komma",
+              "," in t.modell.data(t.modell.index(0, 1), QtCore.Qt.DisplayRole),
+              t.modell.data(t.modell.index(0, 1), QtCore.Qt.DisplayRole))
+
+        # Kennwerte stehen in der eigenen Fusszeile und wandern beim Sortieren nicht
+        check("Fusszeile Max/Min sichtbar",
+              not t.fuss.isHidden() and t.fussmodell.rowCount() == 2)
+        n1 = [z[1] for z in t.modell.zeilen]
+        check("Max der Fusszeile stimmt",
+              abs(float(t.fussmodell.zeilen[0][1]) - max(n1)) < 1e-9,
+              f"{t.fussmodell.zeilen[0][1]:.3f} / {max(n1):.3f}")
+        check("Min der Fusszeile stimmt",
+              abs(float(t.fussmodell.zeilen[1][1]) - min(n1)) < 1e-9)
+        check("Kennwerte sind keine Tabellenzeilen", t.modell.rowCount() == n_alle)
+
+        # Filter - die Schranke liegt in der Mitte der Werte, damit etwas
+        # wegfaellt und etwas stehen bleibt
+        n1 = [float(x) for x in n1]
+        grenze = float(f"{min(n1) + 0.5 * (max(n1) - min(n1)):.6f}")
+        t.felder[1].setText(f"> {grenze}")
+        app.processEvents()
+        n_gefiltert = t.sichtbar()
+        soll = sum(1 for x in n1 if x > grenze)
+        check(f"Kopfzeilenfilter „> {grenze:.2f}“ wirkt",
+              n_gefiltert == soll and 0 < n_gefiltert < n_alle,
+              f"{n_gefiltert} von {n_alle} (erwartet {soll})")
+        check("Zeilenzaehler nennt beide Zahlen",
+              f"{n_gefiltert} von {n_alle}" in t.lbl_zeilen.text(), t.lbl_zeilen.text())
+        check("Kennwerte folgen dem Filter",
+              float(t.fussmodell.zeilen[1][1]) > grenze,
+              f"Min = {float(t.fussmodell.zeilen[1][1]):.3f} > {grenze:.3f}")
+        csv_gefiltert = t.text()
+        check("Export nimmt nur die sichtbaren Zeilen",
+              len(csv_gefiltert.strip().splitlines()) == n_gefiltert + 3,
+              f"{len(csv_gefiltert.strip().splitlines())} Zeilen (+ Kopf, Max, Min)")
+        t.filter_leeren()
+        app.processEvents()
+        check("Filter leeren stellt alles wieder her", t.sichtbar() == n_alle)
+
+        # Sortierung: nach Zahl, nicht nach Text
+        t.view.sortByColumn(1, QtCore.Qt.AscendingOrder)
+        app.processEvents()
+        folge = [t.filter.data(t.filter.index(r, 1), QtCore.Qt.UserRole)
+                 for r in range(t.filter.rowCount())]
+        check("Sortierung ist numerisch",
+              all(a <= b for a, b in zip(folge, folge[1:])),
+              f"{folge[0]:.2f} … {folge[-1]:.2f}")
+        t.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
+
+        # Spalten aus- und einblenden
+        t.view.setColumnHidden(3, True)
+        t._filterbreiten()
+        check("Ausgeblendete Spalte blendet auch ihr Filterfeld aus",
+              t.felder[3].isHidden())
+        t.view.setColumnHidden(3, False)
+        t._filterbreiten()
+        check("Spalte laesst sich wieder einblenden", not t.felder[3].isHidden())
+
+        # Export
+        with tempfile.TemporaryDirectory() as d:
+            pfad = t.export_csv(os.path.join(d, "stab.csv"))
+            zeilen = open(pfad, encoding="utf-8-sig").read().strip().splitlines()
+            check("CSV geschrieben", len(zeilen) == n_alle + 3,
+                  f"{len(zeilen)} Zeilen")
+            check("CSV-Kopf hat die Einheiten", zeilen[0].startswith("Element;N1 [kN]"), zeilen[0])
+            xl = t.export_xlsx(os.path.join(d, "stab.xlsx"))
+            check("Excel geschrieben", os.path.getsize(xl) > 1000, f"{os.path.getsize(xl)} B")
+        check("Zwischenablage bekommt die Tabelle",
+              t.in_zwischenablage().startswith("Element;"))
+        w.tabelle_zeigen("Stabkräfte")
+        app.processEvents()
+        check("Ribbon findet die vordere Tabelle", w.aktive_tabelle() is t)
+        w.tabelle_ausgeben("clip")
+        check("Ribbon gibt sie aus", "Zeilen in der Zwischenablage" in w.log.toPlainText())
+        w.tabelle_zeigen("Werkstoffe")
+        app.processEvents()
+        check("Auch die Eingabetabelle wird gefunden", w.aktive_tabelle() is w.tbl_mat)
+        w.tabelle_zeigen("Stabkräfte")
+
+        # Tabelle und Ansicht: hin und zurueck
+        e0 = int(t.modell.zeilen[0][0])
+        t.zeile_gewaehlt.emit(e0)
+        app.processEvents()
+        knoten = sorted(int(n) for n in w.model.elements[e0].nodes)
+        check("Klick in der Tabelle waehlt das Element in der Ansicht",
+              sorted(int(n) for n in w.selection) == knoten, str(knoten))
+        check("Auswahl markiert die Zeile zurueck",
+              [i.data(QtCore.Qt.UserRole) for i in t.view.selectionModel().selectedRows()] == [e0],
+              str([i.data(QtCore.Qt.UserRole) for i in t.view.selectionModel().selectedRows()]))
+        w._set_selection(sorted({int(n) for e in w.model.elements[:3] for n in e.nodes}))
+        app.processEvents()
+        check("Mehrere Zeilen bleiben zugleich markiert",
+              len(t.view.selectionModel().selectedRows()) >= 2,
+              f"{len(t.view.selectionModel().selectedRows())} Zeilen")
+        w.tbl_react.zeile_gewaehlt.emit(int(w.tbl_react.modell.zeilen[0][0]))
+        app.processEvents()
+        check("Auflagerzeile waehlt den Knoten", len(w.selection) == 1, str(w.selection))
+        w.clear_selection()
+
+        # Nachweise: erste Spalte ist der Stabname
+        if w.tbl_design.zeilenzahl():
+            stab = str(w.tbl_design.modell.zeilen[0][0])
+            w.tbl_design.zeile_gewaehlt.emit(stab)
+            app.processEvents()
+            check("Nachweiszeile waehlt den ganzen Stab",
+                  len(w.selection) >= 2, f"{stab}: {len(w.selection)} Knoten")
+            check("Nachweistabelle hat Kennwerte", w.tbl_design.fussmodell.rowCount() == 2)
+            w.clear_selection()
+
+        # Umhuellende: dieselbe Tabelle, anderes Ergebnis
+        for idx in range(w.cb_result.count()):
+            if w.cb_result.itemData(idx)[0] == "env":
+                w.cb_result.setCurrentIndex(idx)
+                break
+        w.show_results()
+        app.processEvents()
+        check("Umhuellende fuellt ihre Tabelle", w.tbl_env.zeilenzahl() > 0,
+              f"{w.tbl_env.zeilenzahl()} Zeilen")
+        check("Stabkraefte sind dabei leer", w.tbl_beam.zeilenzahl() == 0)
+        check("Leere Tabelle zeigt keine Kennwerte", w.tbl_beam.fuss.isHidden())
+
+        # Eingabetabellen: editierbar, mit Formel, mit Grenzen, ruecknehmbar
+        name = list(w.model.materials)[0]
+        E0 = w.model.materials[name].E
+        i = w.tbl_mat.modell.index(0, 1)
+        check("Zelle ist editierbar",
+              bool(w.tbl_mat.modell.flags(i) & QtCore.Qt.ItemIsEditable))
+        check("Name bleibt geschuetzt",
+              not (w.tbl_mat.modell.flags(w.tbl_mat.modell.index(0, 0))
+                   & QtCore.Qt.ItemIsEditable))
+        ok = w.tbl_mat.modell.setData(i, "= 210/1,05")
+        check("Formel in der Zelle gerechnet",
+              ok and abs(w.model.materials[name].E - 200e9) < 1e3,
+              f"E = {w.model.materials[name].E / 1e9:.3f} GPa")
+        nu0 = w.model.materials[name].nu
+        schlecht = w.tbl_mat.modell.setData(w.tbl_mat.modell.index(0, 2), "0,9")
+        check("Unmoeglicher Wert wird abgewiesen",
+              not schlecht and w.model.materials[name].nu == nu0,
+              f"ν = {w.model.materials[name].nu}")
+        unfug = w.tbl_mat.modell.setData(w.tbl_mat.modell.index(0, 3), "Unfug")
+        check("Text in einer Zahlenspalte wird abgewiesen", not unfug)
+        w.undo()
+        app.processEvents()
+        check("Zellaenderung laesst sich zuruecknehmen",
+              abs(w.model.materials[name].E - E0) < 1e3,
+              f"E = {w.model.materials[name].E / 1e9:.3f} GPa")
+
+        sname = list(w.model.sections)[0]
+        A0 = w.model.sections[sname].A
+        ok = w.tbl_sec.modell.setData(w.tbl_sec.modell.index(0, 2), "= 100*1,5")
+        check("Querschnittsflaeche editierbar",
+              ok and abs(w.model.sections[sname].A - 150e-4) < 1e-9,
+              f"A = {w.model.sections[sname].A * 1e4:.2f} cm²")
+        check("Von Hand geaenderter Querschnitt gilt als frei",
+              w.model.sections[sname].typ == "free", w.model.sections[sname].typ)
+        w.undo()
+        app.processEvents()
+        check("Querschnittsaenderung ruecknehmbar",
+              abs(w.model.sections[sname].A - A0) < 1e-12)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Tabellen", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

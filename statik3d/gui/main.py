@@ -28,6 +28,8 @@ from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialo
 from .worker import SolveWorker
 from . import ribbon as rib
 from . import masken as msk
+from . import tabellen as tab
+from .tabellen import Spalte
 from .. import ks
 from . import viewport as vp
 from . import design as dsg
@@ -51,7 +53,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.path = None
         self.worker = None
 
-        self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil())
+        self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil() + tab.stil())
         self._undo_init()
         self._ks_init()
         self._build_viewport()
@@ -371,6 +373,16 @@ class MainWindow(QtWidgets.QMainWindow):
                      "Nachweise EC3", "Ermüdung", "Kontakt"):
             g.klein(name, lambda n=name: self.tabelle_zeigen(n),
                     hinweis=f"Tabelle {name} unten zeigen")
+        g = r.gruppe("Tabelle ausgeben")
+        g.gross("Excel", "▦", lambda: self.tabelle_ausgeben("xlsx"),
+                hinweis="Die Tabelle, die unten vorn liegt, als xlsx speichern "
+                        "(nur die gefilterten Zeilen)")
+        g.klein("CSV…", lambda: self.tabelle_ausgeben("csv"),
+                hinweis="Als CSV speichern (Semikolon, deutsches Dezimalkomma)")
+        g.klein("In die Zwischenablage", lambda: self.tabelle_ausgeben("clip"),
+                "Ctrl+Shift+C", "Die sichtbaren Zeilen kopieren")
+        g.klein("Filter leeren", self.tabelle_filter_leeren,
+                hinweis="Alle Kopfzeilenfilter der vorderen Tabelle löschen")
 
         # -- Bericht -----------------------------------------------------
         r = rb.register("Bericht")
@@ -570,10 +582,6 @@ class MainWindow(QtWidgets.QMainWindow):
         lay = QtWidgets.QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
-        tbl.setMaximumHeight(16777215)
-        tbl.horizontalHeader().setStretchLastSection(False)
-        tbl.horizontalHeader().setSectionResizeMode(
-            QtWidgets.QHeaderView.ResizeToContents)
         lay.addWidget(tbl, 1)
         if knoepfe:
             lay.addWidget(row(*knoepfe))
@@ -585,30 +593,210 @@ class MainWindow(QtWidgets.QMainWindow):
         Im Bestand standen sie zusaetzlich im rechten Panel - dieselbe Angabe
         an zwei Stellen (Vorgabe Kap. 16.1 Nr. 6). Der Modellbaum verweist
         darauf, die Tabelle selbst steht nur noch hier.
+
+        Die hellen Spalten sind **editierbar**: hineinklicken, Wert tippen,
+        Eingabetaste. Gerechnet werden darf dabei (``= 210/1,1``). Jede
+        Aenderung geht ueber ``merken`` und ist damit ruecknehmbar.
         """
-        self.tbl_mat = QtWidgets.QTableWidget(0, 5)
-        self.tbl_mat.setHorizontalHeaderLabels(["Name", "E [GPa]", "ν", "ρ", "fy [MPa]"])
+        self.tbl_mat = tab.Datentabelle([
+            Spalte("Name", hinweis="Bezeichnung des Werkstoffs"),
+            Spalte("E", "GPa", "zahl", 1, True, hinweis="Elastizitätsmodul"),
+            Spalte("ν", "", "zahl", 2, True, hinweis="Querdehnzahl (0 … 0,5)"),
+            Spalte("ρ", "kg/m³", "zahl", 0, True, hinweis="Dichte"),
+            Spalte("fy", "MPa", "zahl", 0, True, hinweis="Streckgrenze"),
+            Spalte("Sorte", "", "text", 3, True,
+                   hinweis="Stahlsorte nach EN 10025 für die Nachweise")],
+            "Werkstoffe", self)
+        self.tbl_mat.modell.aendern = self._mat_aendern
         b1 = QtWidgets.QPushButton("Werkstoff hinzufügen…")
         b1.clicked.connect(self.add_material)
         bd = QtWidgets.QPushButton("Löschen")
         bd.clicked.connect(lambda: self._delete_row(self.tbl_mat, self.model.materials))
         tabs.addTab(self._eingabetabelle(self.tbl_mat, b1, bd), "Werkstoffe")
 
-        self.tbl_sec = QtWidgets.QTableWidget(0, 5)
-        self.tbl_sec.setHorizontalHeaderLabels(
-            ["Name", "Typ", "A [cm²]", "Iy [cm⁴]", "Wpl,y [cm³]"])
+        self.tbl_sec = tab.Datentabelle([
+            Spalte("Name", hinweis="Bezeichnung des Querschnitts"),
+            Spalte("Typ", hinweis="I, RHS, CHS, rect, circle, free"),
+            Spalte("A", "cm²", "zahl", 2, True, hinweis="Querschnittsfläche"),
+            Spalte("Iy", "cm⁴", "zahl", 1, True, hinweis="Trägheitsmoment um die starke Achse"),
+            Spalte("Iz", "cm⁴", "zahl", 1, True, hinweis="Trägheitsmoment um die schwache Achse"),
+            Spalte("It", "cm⁴", "zahl", 1, True, hinweis="Torsionsträgheitsmoment"),
+            Spalte("Wpl,y", "cm³", "zahl", 1, True, hinweis="plastisches Widerstandsmoment"),
+            Spalte("h", "mm", "zahl", 1, hinweis="Höhe (aus der Profildatenbank)"),
+            Spalte("b", "mm", "zahl", 1, hinweis="Breite (aus der Profildatenbank)")],
+            "Querschnitte", self)
+        self.tbl_sec.modell.aendern = self._sec_aendern
         b2 = QtWidgets.QPushButton("Querschnitt hinzufügen (Profildatenbank)…")
         b2.clicked.connect(self.add_section)
         bd2 = QtWidgets.QPushButton("Löschen")
         bd2.clicked.connect(lambda: self._delete_row(self.tbl_sec, self.model.sections))
         tabs.addTab(self._eingabetabelle(self.tbl_sec, b2, bd2), "Querschnitte")
 
-        self.tbl_shell = QtWidgets.QTableWidget(0, 2)
-        self.tbl_shell.setHorizontalHeaderLabels(["Name", "t [m]"])
+        self.tbl_shell = tab.Datentabelle([
+            Spalte("Name", hinweis="Bezeichnung der Dicke"),
+            Spalte("t", "m", "zahl", 4, True, hinweis="Dicke des Flächenelements")],
+            "Dicken", self)
+        self.tbl_shell.modell.aendern = self._shell_aendern
         self.ed_t = NumEdit(0.01, 80)
         b3 = QtWidgets.QPushButton("Dicke hinzufügen")
         b3.clicked.connect(self.add_shell_prop)
         tabs.addTab(self._eingabetabelle(self.tbl_shell, "t [m]", self.ed_t, b3), "Dicken")
+
+    # ---- Editieren in den Eingabetabellen ------------------------------
+    def _pruefen(self, wert: float, unten=None, oben=None, was: str = "Wert") -> bool:
+        """Grenzen eines eingetippten Wertes.
+
+        Ein unmoeglicher Wert wird nicht uebernommen; die Zelle behaelt ihren
+        alten Inhalt. Gemeldet wird das in der Statuszeile und im Protokoll -
+        ein Meldungsfenster bei jedem Vertipper waere im Weg.
+        """
+        if unten is not None and wert <= unten:
+            self.info(f"{was}: {wert:g} ist nicht größer als {unten:g} - nicht übernommen")
+            return False
+        if oben is not None and wert >= oben:
+            self.info(f"{was}: {wert:g} ist nicht kleiner als {oben:g} - nicht übernommen")
+            return False
+        return True
+
+    def _zelle_uebernommen(self, was: str):
+        """Nachlauf einer Zellaenderung: Ergebnisse verwerfen, Baum auffrischen."""
+        self.analysis = None
+        self.results = None
+        self._undo_knoepfe()
+        self._refresh_baum()
+        self.info(was)
+
+    def _mat_aendern(self, z: int, k: int, wert) -> bool:
+        name = str(self.tbl_mat.modell.zeilen[z][0])
+        v = self.model.materials.get(name)
+        if v is None or k == 0:
+            return False
+        if k == 5:                       # Stahlsorte ist Text
+            self.merken(f"Werkstoff {name}")
+            v.grade = str(wert).strip().upper()
+            self._zelle_uebernommen(f"Werkstoff {name}: Sorte = {v.grade}")
+            return True
+        w = float(wert)
+        if k == 1 and not self._pruefen(w, unten=0.0, was="E-Modul"):
+            return False
+        if k == 2 and not self._pruefen(w, unten=-1.0, oben=0.5, was="Querdehnzahl"):
+            return False
+        if k in (3, 4) and not self._pruefen(w, unten=-1e-9, was=self.tbl_mat.modell.spalten[k].name):
+            return False
+        self.merken(f"Werkstoff {name}")
+        if k == 1:
+            v.E = w * 1e9
+        elif k == 2:
+            v.nu = w
+        elif k == 3:
+            v.rho = w
+        elif k == 4:
+            v.fy = w * 1e6
+        self._zelle_uebernommen(f"Werkstoff {name}: "
+                                f"{self.tbl_mat.modell.spalten[k].kopf()} = {wert}")
+        return True
+
+    #: Spalte der Querschnittstabelle -> (Feld, Faktor auf SI, Bezeichnung)
+    SEC_FELDER = {2: ("A", 1e-4, "Fläche A"), 3: ("Iy", 1e-8, "Iy"),
+                  4: ("Iz", 1e-8, "Iz"), 5: ("It", 1e-8, "It"),
+                  6: ("Wpl_y", 1e-6, "Wpl,y")}
+
+    def _sec_aendern(self, z: int, k: int, wert) -> bool:
+        name = str(self.tbl_sec.modell.zeilen[z][0])
+        v = self.model.sections.get(name)
+        if v is None or k not in self.SEC_FELDER:
+            return False
+        feld, faktor, was = self.SEC_FELDER[k]
+        if not self._pruefen(float(wert), unten=0.0, was=was):
+            return False
+        self.merken(f"Querschnitt {name}")
+        setattr(v, feld, float(wert) * faktor)
+        if v.typ != "free":
+            v.typ = "free"          # von Hand geaendert: keine Profilgeometrie mehr
+            self.tbl_sec.modell.zeilen[z][1] = "free"
+        self._zelle_uebernommen(f"Querschnitt {name}: {was} = {wert}")
+        return True
+
+    def _shell_aendern(self, z: int, k: int, wert) -> bool:
+        name = str(self.tbl_shell.modell.zeilen[z][0])
+        v = self.model.shells.get(name)
+        if v is None or k != 1:
+            return False
+        if not self._pruefen(float(wert), unten=0.0, was="Dicke"):
+            return False
+        self.merken(f"Dicke {name}")
+        v.t = float(wert)
+        self._zelle_uebernommen(f"Dicke {name}: t = {float(wert):g} m")
+        return True
+
+    def _build_ergebnistabellen(self, tabs):
+        """Die Ergebnistabellen: filterbar, sortierbar, mit Max- und Min-Zeile.
+
+        Ein Klick auf eine Zeile waehlt das Element beziehungsweise den Knoten
+        in der Ansicht; umgekehrt markiert eine Auswahl in der Ansicht die
+        zugehoerigen Zeilen (Vorgabe Kap. 3.6).
+        """
+        kN, kNm = "kN", "kNm"
+        self.tbl_beam = tab.Datentabelle([
+            Spalte("Element", "", "ganz"),
+            Spalte("N1", kN, "zahl", 2), Spalte("N2", kN, "zahl", 2),
+            Spalte("Vz1", kN, "zahl", 2), Spalte("Vz2", kN, "zahl", 2),
+            Spalte("My1", kNm, "zahl", 2), Spalte("My2", kNm, "zahl", 2),
+            Spalte("Mz max", kNm, "zahl", 2),
+            Spalte("σ", "MPa", "zahl", 1),
+            Spalte("Ausn.", "", "zahl", 3, hinweis="Ausnutzung; Filter z. B. > 0,9")],
+            "Stabkraefte", self, mit_kennwerten=True)
+        self.tbl_beam.zeile_gewaehlt.connect(self._tabelle_element)
+        tabs.addTab(self.tbl_beam, "Stabkräfte")
+
+        self.tbl_react = tab.Datentabelle([
+            Spalte("Knoten", "", "ganz"),
+            Spalte("Rx", kN, "zahl", 2), Spalte("Ry", kN, "zahl", 2),
+            Spalte("Rz", kN, "zahl", 2), Spalte("Mx", kNm, "zahl", 2),
+            Spalte("My", kNm, "zahl", 2), Spalte("Mz", kNm, "zahl", 2)],
+            "Auflagerkraefte", self, mit_kennwerten=True)
+        self.tbl_react.zeile_gewaehlt.connect(self._tabelle_knoten)
+        tabs.addTab(self.tbl_react, "Auflagerkräfte")
+
+        self.tbl_env = tab.Datentabelle([
+            Spalte("Element", "", "ganz"), Spalte("Größe"),
+            Spalte("min", "", "zahl", 2), Spalte("Kombination"),
+            Spalte("max", "", "zahl", 2), Spalte("Kombination ")],
+            "Umhuellende", self, mit_kennwerten=True)
+        self.tbl_env.zeile_gewaehlt.connect(self._tabelle_element)
+        tabs.addTab(self.tbl_env, "Umhüllende")
+
+        self.tbl_design = tab.Datentabelle([
+            Spalte("Stab"), Spalte("Querschnitt"), Spalte("Material"),
+            Spalte("L", "m", "zahl", 2), Spalte("Klasse", "", "ganz"),
+            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1 zeigt alle Überschreitungen"),
+            Spalte("maßgebender Nachweis"), Spalte("Kombination"),
+            Spalte("x", "m", "zahl", 2), Spalte("Status")],
+            "Nachweise_EC3", self, mit_kennwerten=True)
+        self.tbl_design.zeile_gewaehlt.connect(self._tabelle_stab)
+        tabs.addTab(self.tbl_design, "Nachweise EC3")
+
+        self.tbl_fat = tab.Datentabelle([
+            Spalte("Stab"), Spalte("Kerbfall", "MPa", "zahl", 0),
+            Spalte("γ_Mf", "", "zahl", 2),
+            Spalte("max Δσ", "MPa", "zahl", 1), Spalte("Δσ_E,2", "MPa", "zahl", 1),
+            Spalte("D (Miner)", "", "zahl", 3), Spalte("D Schub", "", "zahl", 3),
+            Spalte("Ausnutzung", "", "zahl", 3), Spalte("maßgebend")],
+            "Ermuedung", self, mit_kennwerten=True)
+        self.tbl_fat.zeile_gewaehlt.connect(self._tabelle_stab)
+        tabs.addTab(self.tbl_fat, "Ermüdung")
+
+        self.tbl_contact = tab.Datentabelle([
+            Spalte("Knoten", "", "ganz"), Spalte("Art"), Spalte("Status"),
+            Spalte("Fn", kN, "zahl", 2), Spalte("Ft", kN, "zahl", 2),
+            Spalte("Spalt", "mm", "zahl", 3)],
+            "Kontakt", self, mit_kennwerten=True)
+        self.tbl_contact.zeile_gewaehlt.connect(self._tabelle_knoten)
+        tabs.addTab(self.tbl_contact, "Kontakt")
+
+    #: Ergebnistabellen in der Reihenfolge des unteren Bereichs
+    ERGEBNISTABELLEN = ("tbl_beam", "tbl_react", "tbl_env", "tbl_design",
+                        "tbl_fat", "tbl_contact")
 
     def _build_bottom(self):
         dock = QtWidgets.QDockWidget("Protokoll und Tabellen", self)
@@ -621,25 +809,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.setStyleSheet("font-family: monospace; font-size: 11px;")
         tabs.addTab(self.log, "Protokoll")
         self._build_eingabetabellen(tabs)
-        self.tbl_beam = QtWidgets.QTableWidget(0, 10)
-        self.tbl_beam.setHorizontalHeaderLabels(
-            ["Element", "N1 [kN]", "N2 [kN]", "Vz1 [kN]", "Vz2 [kN]", "My1 [kNm]", "My2 [kNm]",
-             "Mz max [kNm]", "σ [MPa]", "Ausn."])
-        tabs.addTab(self.tbl_beam, "Stabkräfte")
-        self.tbl_react = QtWidgets.QTableWidget(0, 7)
-        self.tbl_react.setHorizontalHeaderLabels(["Knoten", "Rx [kN]", "Ry [kN]", "Rz [kN]",
-                                                  "Mx [kNm]", "My [kNm]", "Mz [kNm]"])
-        tabs.addTab(self.tbl_react, "Auflagerkräfte")
-        self.tbl_env = QtWidgets.QTableWidget(0, 6)
-        self.tbl_env.setHorizontalHeaderLabels(["Element", "Größe", "min", "Kombination", "max", "Kombination"])
-        tabs.addTab(self.tbl_env, "Umhüllende")
-        self.tbl_design = QtWidgets.QTableWidget(0, 10)
-        tabs.addTab(self.tbl_design, "Nachweise EC3")
-        self.tbl_fat = QtWidgets.QTableWidget(0, 9)
-        tabs.addTab(self.tbl_fat, "Ermüdung")
-        self.tbl_contact = QtWidgets.QTableWidget(0, 6)
-        self.tbl_contact.setHorizontalHeaderLabels(["Knoten", "Art", "Status", "Fn [kN]", "Ft [kN]", "Spalt [mm]"])
-        tabs.addTab(self.tbl_contact, "Kontakt")
+        self._build_ergebnistabellen(tabs)
         self.bottom_tabs = tabs
         dock.setWidget(tabs)
         dock.setMinimumHeight(190)
@@ -1279,7 +1449,15 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.critical(self, "Fehler", str(msg))
         self.log.appendPlainText("FEHLER: " + str(msg))
 
-    def _fill(self, tbl: QtWidgets.QTableWidget, rows, header=None):
+    def _fill(self, tbl, rows, header=None):
+        """Zeilen in eine Tabelle schreiben - alte QTableWidget oder Datentabelle.
+
+        Die Datentabelle bringt ihre Spalten selbst mit; *header* gilt nur noch
+        fuer die einfachen Tabellen des rechten Panels.
+        """
+        if isinstance(tbl, tab.Datentabelle):
+            tbl.setzen(rows)
+            return
         if header:
             tbl.setColumnCount(len(header))
             tbl.setHorizontalHeaderLabels(header)
@@ -1291,24 +1469,90 @@ class MainWindow(QtWidgets.QMainWindow):
                 tbl.setItem(r, c, it)
         tbl.resizeColumnsToContents()
 
-    def _delete_row(self, tbl, mapping: dict):
+    @staticmethod
+    def _tabellenschluessel(tbl):
+        """Der Wert der ersten Spalte in der gewaehlten Zeile (oder None)."""
+        if isinstance(tbl, tab.Datentabelle):
+            i = tbl.view.currentIndex()
+            if not i.isValid():
+                return None
+            w = tbl.filter.data(tbl.filter.index(i.row(), 0), QtCore.Qt.UserRole)
+            return None if w is None else str(w)
         r = tbl.currentRow()
-        if r < 0:
+        if r < 0 or tbl.item(r, 0) is None:
+            return None
+        return tbl.item(r, 0).text()
+
+    def _delete_row(self, tbl, mapping: dict):
+        key = self._tabellenschluessel(tbl)
+        if key is None:
+            return self.error("Zuerst eine Zeile wählen")
+        if key not in mapping:
             return
-        key = tbl.item(r, 0).text()
-        if key in mapping and len(mapping) > 1:
-            del mapping[key]
-            self.refresh_all()
+        if len(mapping) <= 1:
+            return self.error(f"„{key}“ ist der letzte Eintrag und bleibt bestehen")
+        self.merken(f"„{key}“ gelöscht")
+        del mapping[key]
+        self.refresh_all()
+
+    # ---- Tabelle und Ansicht auseinander halten ------------------------
+    def _tabelle_element(self, wert):
+        """Zeile mit Elementnummer angeklickt: das Element in der Ansicht waehlen."""
+        try:
+            e = int(float(wert))
+        except (TypeError, ValueError):
+            return
+        if 0 <= e < len(self.model.elements):
+            self._set_selection([int(n) for n in self.model.elements[e].nodes])
+
+    def _tabelle_knoten(self, wert):
+        """Zeile mit Knotennummer angeklickt."""
+        try:
+            n = int(float(wert))
+        except (TypeError, ValueError):
+            return
+        if 0 <= n < self.model.nn:
+            self._set_selection([n])
+
+    def _tabelle_stab(self, wert):
+        """Zeile eines Stabes (Nachweise) angeklickt: alle seine Knoten waehlen."""
+        mem = self.model.members.get(str(wert))
+        if mem is None:
+            return
+        kn = {int(n) for i in mem.elements if i < len(self.model.elements)
+              for n in self.model.elements[i].nodes}
+        self._set_selection(sorted(kn))
+
+    def _tabellen_markieren(self):
+        """Umgekehrter Weg: die Auswahl der Ansicht in den Tabellen zeigen."""
+        if not hasattr(self, "tbl_beam"):
+            return
+        sel = {int(n) for n in self.selection}
+        m = self.model
+        el = []
+        if sel and len(m.elements) <= 50000:
+            el = [i for i, e in enumerate(m.elements)
+                  if {int(n) for n in e.nodes} <= sel]
+        self.tbl_beam.markieren(el)
+        self.tbl_env.markieren(el)
+        self.tbl_react.markieren(sorted(sel))
+        self.tbl_contact.markieren(sorted(sel))
+        dabei = set(el)
+        staebe = [mem.name for mem in m.members.values()
+                  if mem.elements and set(mem.elements) <= dabei]
+        self.tbl_design.markieren(staebe)
+        self.tbl_fat.markieren(staebe)
 
     def refresh_all(self):
         m = self.model
         for k, e in self.ed_meta.items():
             e.setText(m.meta.get(k, ""))
-        self._fill(self.tbl_mat, [[k, f"{v.E/1e9:g}", f"{v.nu:g}", f"{v.rho:g}",
-                                   f"{(v.fy or 0)/1e6:g}"] for k, v in m.materials.items()])
-        self._fill(self.tbl_sec, [[k, v.typ, f"{v.A*1e4:.2f}", f"{v.Iy*1e8:.1f}",
-                                   f"{v.Wpl_y*1e6:.1f}"] for k, v in m.sections.items()])
-        self._fill(self.tbl_shell, [[k, f"{v.t:g}"] for k, v in m.shells.items()])
+        self._fill(self.tbl_mat, [[k, v.E / 1e9, v.nu, v.rho, (v.fy or 0.0) / 1e6,
+                                   v.grade] for k, v in m.materials.items()])
+        self._fill(self.tbl_sec, [[k, v.typ, v.A * 1e4, v.Iy * 1e8, v.Iz * 1e8,
+                                   v.It * 1e8, v.Wpl_y * 1e6, v.h * 1e3, v.b * 1e3]
+                                  for k, v in m.sections.items()])
+        self._fill(self.tbl_shell, [[k, v.t] for k, v in m.shells.items()])
         for cb, keys in ((self.cb_mat, m.materials), (self.cb_sec, m.sections),
                          (self.cb_shell, m.shells),
                          (getattr(self, "cb_assign_sec", None), m.sections),
@@ -1962,6 +2206,32 @@ class MainWindow(QtWidgets.QMainWindow):
     def joint_dialog(self):
         self.add_joint()
 
+    def aktive_tabelle(self):
+        """Die Datentabelle, die unten gerade vorn liegt (oder None)."""
+        w = self.tab_unten.currentWidget() if hasattr(self, "tab_unten") else None
+        if isinstance(w, tab.Datentabelle):
+            return w
+        return w.findChild(tab.Datentabelle) if w is not None else None
+
+    def tabelle_ausgeben(self, art: str):
+        """Die vordere Tabelle ausgeben - immer nur das, was der Filter zeigt."""
+        t = self.aktive_tabelle()
+        if t is None:
+            return self.error("Unten liegt gerade keine Tabelle vorn")
+        if art == "clip":
+            t.in_zwischenablage()
+            return self.info(f"{t.sichtbar()} Zeilen in der Zwischenablage")
+        pfad = t.export_xlsx() if art == "xlsx" else t.export_csv()
+        if pfad:
+            self.info(f"{t.sichtbar()} Zeilen geschrieben: {pfad}")
+        return pfad
+
+    def tabelle_filter_leeren(self):
+        t = self.aktive_tabelle()
+        if t is None:
+            return self.error("Unten liegt gerade keine Tabelle vorn")
+        t.filter_leeren()
+
     def tabelle_zeigen(self, name: str) -> bool:
         """Eine Tabelle im unteren Bereich nach vorn holen."""
         for i in range(self.tab_unten.count()):
@@ -1980,6 +2250,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selection = np.asarray(sel, dtype=int)
         self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt")
         self._auswahl_register()
+        self._tabellen_markieren()
         self.redraw()
 
     def do_select(self):
@@ -2624,22 +2895,22 @@ class MainWindow(QtWidgets.QMainWindow):
             rows = []
             for e, d in sorted(r.beam_forces.items()):
                 u = util_map.get(e, d["util"])
-                rows.append([e, f"{d['N'][0]/1e3:.2f}", f"{d['N'][1]/1e3:.2f}",
-                             f"{d['Vz'][0]/1e3:.2f}", f"{d['Vz'][1]/1e3:.2f}",
-                             f"{d['My'][0]/1e3:.2f}", f"{d['My'][1]/1e3:.2f}",
-                             f"{max(abs(d['Mz'][0]), abs(d['Mz'][1]))/1e3:.2f}",
-                             f"{d['sig_max']/1e6:.1f}", f"{u:.3f}" if u is not None else "-"])
+                rows.append([e, d["N"][0] / 1e3, d["N"][1] / 1e3,
+                             d["Vz"][0] / 1e3, d["Vz"][1] / 1e3,
+                             d["My"][0] / 1e3, d["My"][1] / 1e3,
+                             max(abs(d["Mz"][0]), abs(d["Mz"][1])) / 1e3,
+                             d["sig_max"] / 1e6, float(u) if u is not None else "-"])
             self._fill(self.tbl_beam, rows)
             react = []
             for s in sorted({s.node for s in self.model.supports} | {c.node for c in self.model.contact_supports}):
                 R = r.reactions[s]
-                react.append([s] + [f"{v/1e3:.2f}" for v in R])
+                react.append([s] + [float(v) / 1e3 for v in R])
             self._fill(self.tbl_react, react)
-            self._fill(self.tbl_contact, [[c["node"], c["kind"], c["status"], f"{c['Fn']/1e3:.2f}",
-                                           f"{c['Ft']/1e3:.2f}", f"{c['gap']*1e3:.3f}"] for c in r.contact])
+            self._fill(self.tbl_contact, [[c["node"], c["kind"], c["status"], c["Fn"] / 1e3,
+                                           c["Ft"] / 1e3, c["gap"] * 1e3] for c in r.contact])
             self._fill(self.tbl_env, [])
         elif hasattr(r, "extreme_table"):
-            rows = [[e, k, f"{mn/1e3:.2f}", c1, f"{mx/1e3:.2f}", c2] for e, k, mn, c1, mx, c2 in r.extreme_table()]
+            rows = [[e, k, mn / 1e3, c1, mx / 1e3, c2] for e, k, mn, c1, mx, c2 in r.extreme_table()]
             self._fill(self.tbl_env, rows)
             self._fill(self.tbl_beam, [])
             react = []
