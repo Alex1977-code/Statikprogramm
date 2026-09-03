@@ -17,6 +17,7 @@ jobs:
   exe:
     name: Statik3D.exe bauen
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 

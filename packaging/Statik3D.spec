@@ -35,7 +35,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "IPython", "jupyter", "pytest", "PyQt5", "PyQt6"],
+    excludes=["tkinter", "IPython", "jupyter", "pytest", "PyQt5", "PyQt6", "matplotlib.tests"],   # matplotlib: von pyvista benoetigt
     noarchive=False,
 )
 pyz = PYZ(a.pure)
