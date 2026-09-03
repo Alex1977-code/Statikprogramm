@@ -603,11 +603,36 @@ class SurfaceSupport:
 
 @dataclass
 class Line:
-    """Linie zwischen Knoten (RFEM: Linien; Staebe verweisen darauf)."""
+    """Linie zwischen Knoten (RFEM: Linien; Staebe verweisen darauf).
+
+    Eine Linie ist reine Geometrie. 'typ' nennt die Art (polyline, arc,
+    circle, ellipse, spline, parabola); 'geometrie' haelt die Angaben, die
+    ueber die Stuetzknoten hinausgehen - Mittelpunkt und Radius eines Kreises,
+    Grad und Gewichte eines Splines. Die Punktfolge liefert punkte().
+    """
     name: str
     nodes: list[int] = field(default_factory=list)
-    typ: str = "polyline"        # polyline | arc | circle (nur Geometrie/Zuordnung)
+    typ: str = "polyline"
     comment: str = ""
+    geometrie: dict = field(default_factory=dict)
+
+    def kurve(self, model=None):
+        """Die Kurve dieser Linie (statik3d.geometry.Kurve)."""
+        from . import geometry as geo
+        kw = dict(self.geometrie)
+        if model is not None and self.nodes:
+            kw.setdefault("punkte", [model.nodes[int(i)] for i in self.nodes])
+            kw.setdefault("steuerpunkte", kw["punkte"])
+        return geo.kurve(self.typ, **kw)
+
+    def punkte(self, model=None, n: int = None) -> np.ndarray:
+        """Stuetzpunkte der Linie; n = Anzahl der Abschnitte."""
+        from . import geometry as geo
+        return self.kurve(model).punkte(int(n or self.geometrie.get("teilung")
+                                            or geo.TEILUNG))
+
+    def laenge(self, model=None) -> float:
+        return float(self.kurve(model).laenge())
 
 
 HINGE_DOF_NAMES = ["ux", "uy", "uz", "phix", "phiy", "phiz"]
@@ -1083,10 +1108,39 @@ class Model:
         self.surface_supports.append(ss)
         return ss
 
-    def add_line(self, name: str, nodes, typ: str = "polyline") -> Line:
-        ln = Line(name, [int(n) for n in nodes], typ)
+    def add_line(self, name: str, nodes=(), typ: str = "polyline",
+                 **geometrie) -> Line:
+        """Linie anlegen.
+
+            m.add_line("L1", [0, 1])                       # Polylinie
+            m.add_line("B1", [0, 1, 2], "arc")             # Bogen durch drei Knoten
+            m.add_line("K1", typ="circle", mitte=(0,0,0), radius=2.0)
+        """
+        ln = Line(name, [int(n) for n in nodes], typ, geometrie=dict(geometrie))
         self.lines[name] = ln
         return ln
+
+    def line_to_beams(self, name: str, mat: str, sec: str, n: int = None,
+                      typ: str = "beam", group: str = "") -> list[int]:
+        """Eine Linie in Stabelemente teilen. Rueckgabe: Elementnummern.
+
+        Die Punkte der Linie werden zu Knoten; vorhandene Stuetzknoten werden
+        wiederverwendet, wenn sie auf der Linie liegen.
+        """
+        ln = self.lines[name]
+        P = ln.punkte(self, n)
+        idx = []
+        for p in P:
+            if self.nn:
+                d = np.linalg.norm(self.nodes - np.asarray(p, float), axis=1)
+                i = int(np.argmin(d))
+                if float(d[i]) < 1e-9:
+                    idx.append(i)
+                    continue
+            idx.append(self.add_node(float(p[0]), float(p[1]), float(p[2])))
+        return [self.add_element(typ, [idx[k], idx[k + 1]], mat, sec,
+                                 group=group or name)
+                for k in range(len(idx) - 1)]
 
     def add_hinge(self, name: str, end: int = 0, **dofs) -> MemberHinge:
         """Gelenkdefinition: ux/uy/uz/phix/phiy/phiz = 'free' oder Federsteifigkeit.

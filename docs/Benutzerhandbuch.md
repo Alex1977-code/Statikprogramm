@@ -37,34 +37,169 @@ kNm, MPa und mm angezeigt.
 
 ## 2 Die Oberfläche
 
-Oben eine dunkle Kopfzeile: links **Statik3D**, daneben Bauteil, Norm und
-Fassung (`Statik3D 2.1.0 (Build a4b3c2d)`), rechts zwei Marken mit dem Umfang
-des Modells (Knoten, Elemente, Stellungen) und dem Zustand („bereit",
-„rechnet…", „berechnet · 12,4 s"). Darunter das Menü und die **Werkzeugleiste**
-mit den Wegen, die man ständig braucht:
+Oben eine dunkle Kopfzeile: links **Statik3D**, daneben Bauteil und Fassung,
+rechts zwei Marken mit dem Umfang des Modells und dem Zustand („bereit",
+„rechnet…", „berechnet · 12,4 s").
 
-| Knopf | Wirkung |
+Darunter das **Ribbon** — die Befehlsleiste. Jeder Befehl steht dort genau
+einmal; es gibt keine Menüleiste und keine zweite Werkzeugleiste daneben.
+Dreizehn Register nach Arbeitsschritt:
+
+| Register | Inhalt |
 |---|---|
-| **Datei ▾** | Neu, Öffnen, Speichern, Bericht |
-| **Übernehmen aus Modell ▾** | Import aus RFEM, HiCAD, IFC, DXF, SDNF, … |
-| **⬡ Netz**, **⇩ Lager / Lasten**, **⟳ Stellungen**, **Kontakt**, **✓ Nachweise** | springt in das jeweilige Register |
-| **▶ Berechnen (F5)** | startet die Berechnung |
-| **≡ Bericht** | Bericht als HTML oder PDF |
+| **Datei** | Neu, Öffnen, Speichern, Projektangaben, Übernehmen aus fremden Formaten, Exportieren, Beispiele |
+| **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
+| **Geometrie** | Knoten, Netzgeneratoren (Stabzug, Platte, Quader) |
+| **Struktur** | Stab, Schale, Querschnitte, Werkstoffe, Dicken, Zuweisen, Stäbe für Nachweise |
+| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse |
+| **Lasten** | Lastfälle, Kombinationen, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht |
+| **Netz** | Netz erzeugen und löschen |
+| **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
+| **Nachweise** | EC3, Ermüdung, Konfiguration |
+| **Ergebnisse** | Ergebniswahl und die Tabellen |
+| **Bericht** | Statischer Bericht |
+| **Ansicht** | Blickrichtungen, Kanten, Nummern, Lasten, Stäbe farbig |
+| **Extras** | Handbücher, Info, Update |
 
-Darunter die Arbeitsfläche in drei Spalten:
+Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Berechnen,
+Auswahl aufheben) — dieselben Befehle, nur schneller erreichbar. Rechts die
+**Befehlssuche**: Namen eintippen, Eingabetaste, der Befehl läuft und sein
+Register kommt nach vorn.
 
-* **links der Modellbaum** – Elemente nach Art, Querschnitte, Werkstoffe, Lager,
-  Lastfälle, Kombinationen, Kontakt, Stellungen und die Stäbe für die Nachweise,
-  jeweils mit Anzahl. Ein Klick springt in das zugehörige Register.
-* **in der Mitte die 3D-Ansicht**, darunter der **Filmstreifen der Stellungen**:
-  je Stellung eine Karte mit Winkel und Ausnutzung; die maßgebende ist mit ★
-  und orangem Rand gekennzeichnet, die gewählte blau umrandet.
-* **rechts die Eingaben** in Registern: Modell, Netz, Lager/Lasten, Lastfälle,
-  Stellungen, Kontakt, Nachweise, Berechnung, Ergebnisse.
+Die Arbeitsfläche in drei Spalten:
 
-Unten das **Protokoll** mit den Ergebnistabellen (Stabkräfte, Auflagerkräfte,
-Umhüllende, Nachweise EC3, Ermüdung, Kontakt). In der Statusleiste steht rechts
-die installierte Fassung mit dem Knopf „Update suchen".
+* **links der Modellbaum** — Elemente nach Art, Querschnitte, Werkstoffe,
+  Lager, Lastfälle, Kombinationen, Kontakt, Stellungen und die Stäbe für die
+  Nachweise, jeweils mit Anzahl. Ein Klick führt zur Eingabe oder zur Tabelle.
+  Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
+  Zweiges; die maßgebende trägt ★.
+* **in der Mitte die 3D-Ansicht** — frei für die Grafik.
+* **rechts die Eingabemaske** — es ist immer genau **eine** sichtbar, gewählt
+  über den Befehl im Ribbon; der Titel der Maske nennt sie. Eine Registerleiste
+  mit denselben Namen wie im Ribbon gibt es nicht mehr.
+
+Unten die **Tabellen**: Protokoll, Werkstoffe, Querschnitte, Dicken,
+Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt.
+Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
+in einem Panel rechts. Wie die Tabellen zu bedienen sind, steht im nächsten
+Abschnitt.
+
+### Tabellen: filtern, sortieren, ausgeben
+
+Jede Tabelle unten hat über der Kopfzeile eine **Filterzeile** — ein Feld je
+Spalte. Was dort steht, gilt sofort; mehrere Felder wirken zusammen (und, nicht
+oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist.
+
+| Eingabe | wirkt |
+|---|---|
+| `> 0,9` | größer als 0,9 — auch `>=`, `<`, `<=`, `!=` |
+| `= HEB 200` | genau dieser Wert (Zahl oder Text) |
+| `1..5` | Bereich einschließlich der Grenzen |
+| `HEB` | Text kommt vor (Groß- und Kleinschreibung egal) |
+| `!HEB` | Text kommt **nicht** vor |
+
+`> 1` in der Spalte „Ausnutzung" zeigt in einem Griff alle Überschreitungen.
+
+**Sortieren**: Klick auf die Spaltenüberschrift; Zahlen werden der Größe nach
+sortiert, nicht als Text. **Spalten** lassen sich über „Spalten…" ein- und
+ausblenden und mit der Maus verschieben.
+
+Unter jeder Ergebnistabelle steht eine feste **Zeile „Max"/„Min"**. Sie
+bezieht sich auf das, was der Filter gerade übrig lässt, und bleibt beim
+Sortieren an ihrem Platz.
+
+**Ausgeben** — „Kopieren", „CSV…", „Excel…" in der Tabelle selbst oder die
+Gruppe „Tabelle ausgeben" im Register *Ergebnisse* (Strg+Umschalt+C kopiert).
+Ausgegeben wird immer nur das, was gerade zu sehen ist, samt Max- und
+Min-Zeile. CSV kommt mit Semikolon und deutschem Dezimalkomma, xlsx mit echten
+Zahlen (nicht als Text) — in Excel lässt sich damit sofort weiterrechnen.
+
+**Tabelle und Ansicht hängen zusammen**: ein Klick auf eine Zeile wählt das
+Element beziehungsweise den Knoten in der 3D-Ansicht; umgekehrt markiert eine
+Auswahl in der Ansicht die zugehörigen Zeilen und rollt die erste ins Bild.
+
+**Eingabetabellen sind editierbar.** In Werkstoffe, Querschnitte und Dicken
+sind die hellen Spalten zum Hineinschreiben da: Zelle anklicken, Wert tippen,
+Eingabetaste. Gerechnet werden darf dabei — `= 210/1,05` ergibt 200. Erlaubt
+sind die vier Grundrechenarten, Klammern, Potenz und `pi`; mehr nicht, damit
+aus einer Tabellenzelle kein Programm wird. Ein unmöglicher Wert (E ≤ 0,
+ν ≥ 0,5, eine negative Fläche) wird **nicht** übernommen; die Zelle behält
+ihren Inhalt, und die Statuszeile sagt, warum. Jede Änderung geht über den
+Rückgängig-Stapel (Strg+Z) und verwirft die vorhandenen Ergebnisse — gerechnet
+werden muss danach neu. Wer A, Iy, Iz, It oder Wpl,y von Hand ändert, löst den
+Querschnitt von der Profildatenbank; sein Typ wird `free`, die Nachweise
+laufen dann elastisch.
+
+### Maske oder Klick
+
+Jeder Erzeuge-Befehl — Knoten, Stab, Schale, Lager, Knotenlast — öffnet eine
+**kompakte Maske am rechten Rand der Ansicht**. Sie legt sich nicht über das
+Modell und blockiert nichts. Beide Wege führen zum selben Ziel:
+
+* **tippen**: Werte eintragen, „Anlegen" (oder Eingabetaste) — die Maske bleibt
+  offen und ist gleich für das nächste Objekt bereit;
+* **klicken**: in der Ansicht die Knoten anklicken. Sobald genug beisammen
+  sind, entsteht das Objekt; die gewählten Knoten stehen in der Maske. Ein
+  zweiter Klick auf denselben Knoten nimmt ihn wieder heraus.
+
+Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
+bis man sie ändert. **Esc** schließt die Maske. Ein neuer Erzeuge-Befehl löst
+die vorige Maske ab — es ist immer höchstens eine offen.
+
+### Rückgängig und Wiederholen
+
+**Strg+Z** nimmt die letzte Änderung zurück, **Strg+Y** stellt sie wieder her —
+für alles: Geometrie, Netz, Lager, Lasten, Linien. Gesichert wird jeweils das
+ganze Modell, darum bleibt auch eine Änderung umkehrbar, die viele Stellen auf
+einmal betrifft. Die letzten 50 Schritte werden vorgehalten; die Schnellzugriffs-
+leiste zeigt im Hinweistext, worum es beim nächsten Schritt geht.
+
+### Koordinatensysteme, Arbeitsebene, Fang
+
+Im Register **Geometrie** stehen drei Gruppen für die Eingabehilfen:
+
+* **Koordinatensystem** — das aktive System wählen, ein neues über Ursprung und
+  Drehwinkel anlegen oder aus drei gewählten Knoten aufspannen (Ursprung,
+  x-Richtung, ein Punkt in der xy-Ebene). Neben kartesisch gibt es
+  **zylindrisch** (r, θ, z — für Rohre und Segmentverschlüsse) und
+  **sphärisch** (r, θ, φ). Alle Koordinateneingaben beziehen sich auf das
+  aktive System; die Statusleiste nennt es.
+* **Arbeitsebene** — xy, yz oder xz des aktiven Systems, mit einstellbarer
+  Rasterweite (0 = kein Raster).
+* **Fang** — ein Klick in der Ansicht wird auf die nächste markante Stelle
+  gezogen: erst Knoten, dann Kantenmitte, dann Rasterpunkt. Der Schalter im
+  Ribbon nimmt ihn zurück; die Statusleiste zeigt seinen Zustand.
+
+### Linien: Bogen, Kreis, Spline, Parabel
+
+**Geometrie → Linie** öffnet die Maske. Art wählen, dann in der Ansicht die
+Knoten anklicken:
+
+| Art | Eingabe | Ergebnis |
+|---|---|---|
+| Polylinie | 2 oder mehr Knoten | gerader Zug |
+| Bogen | 3 Knoten: Anfang, Zwischenpunkt, Ende | Kreisbogen durch die drei Punkte; Radius und Öffnungswinkel folgen daraus |
+| Kreis | 1 Knoten (Mittelpunkt) + Radius | Vollkreis in der Arbeitsebene |
+| Spline | 3 oder mehr Knoten | B-Spline vom gewählten Grad durch den ersten und letzten Punkt |
+| Parabel | 2 Knoten + Stich | Parabel mit dem angegebenen Stich in der Mitte |
+
+Mit „Stäbe daraus erzeugen" wird die Linie gleich in Stabelemente geteilt — die
+Teilung steht in der Maske. Die Linie bleibt als Geometrie erhalten und kennt
+ihre exakte Länge (ein Halbkreis r = 2 m misst 6,283 m, nicht die Länge des
+Sehnenzugs).
+
+### Register „Auswahl"
+
+Sobald Knoten gewählt sind, erscheint rechts im Ribbon ein zusätzliches
+Register **„Auswahl: n Knoten"** mit genau den Befehlen, die auf die Auswahl
+passen: Querschnitt und Material zuweisen, Gelenke setzen, Elemente oder Knoten
+löschen, Lager setzen, Last aufbringen, Auswahl umkehren oder aufheben. Wird
+die Auswahl aufgehoben, verschwindet das Register wieder. Einen Bereich
+„Elemente ändern" im rechten Panel gibt es dafür nicht mehr.
+
+Ganz unten die **Statusleiste**: Fang · aktives Koordinatensystem · Einheiten ·
+Netzstand · Solverstand. Die Fassung steht unter **Extras → Info**; ein Hinweis
+auf ein Update erscheint nur, wenn wirklich eines vorliegt.
 
 ## 3 Arbeitsablauf
 
@@ -220,7 +355,9 @@ im Bericht.
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
   der betragsmäßig größere Extremwert).
 * Tabellen: Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise, Ermüdung,
-  Kontakt. Export CSV, VTK (ParaView).
+  Kontakt — filterbar, sortierbar, mit Max-/Min-Zeile, ausgebbar nach
+  Zwischenablage, CSV und Excel (Kapitel 2, „Tabellen"). Modellexport
+  außerdem CSV, VTK (ParaView).
 * Statischer Bericht: Projektdaten, System, Einwirkungen, Kombinationen,
   Ergebnisse, Nachweise mit allen Zwischenwerten, Ermüdung, Kontakt,
   Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
@@ -229,7 +366,8 @@ im Bericht.
 ## 11 Tastenkürzel
 
 Strg+N neu, Strg+O öffnen, Strg+S speichern, Strg+I importieren,
-Strg+R Bericht, F5 berechnen.
+Strg+R Bericht, F5 berechnen, Strg+Z rückgängig, Strg+Y wiederholen,
+Strg+Umschalt+C vordere Tabelle kopieren.
 
 Browser/Handy: siehe Kapitel 12.
 

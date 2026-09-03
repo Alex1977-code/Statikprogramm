@@ -107,7 +107,7 @@ def main():
     check("Eingabe-Aktionen: Modell rechnet", an.design is not None and len(w.model.combinations) > 0,
           f"({len(w.model.combinations)} Kombinationen, {len(w.model.contact_supports)} Kontaktlager)")
     w.show_results(); app.processEvents()
-    check("Tabellen gefuellt", w.tbl_design.rowCount() >= 1 and w.tbl_react.rowCount() >= 1)
+    check("Tabellen gefuellt", w.tbl_design.zeilenzahl() >= 1 and w.tbl_react.zeilenzahl() >= 1)
 
     # Dialoge erzeugen (ohne exec)
     d1 = dg.MaterialDialog(w); d1._grade_changed("S355"); mat = d1.result_material()
@@ -174,7 +174,8 @@ def main():
             j = json.loads(r.read().decode("utf-8"))
         w._web_poll(); app.processEvents()
         check("Web-Server am GUI-Modell: Handy-Aenderung uebernommen",
-              j["state"]["nn"] == nn0 + 1 and w.model.nn == nn0 + 1 and f"Knoten: {nn0 + 1}" in w.lbl_info.text(),
+              j["state"]["nn"] == nn0 + 1 and w.model.nn == nn0 + 1
+              and f"{nn0 + 1} Knoten" in w.lbl_netz.text(),
               srv.local_url)
         w.stop_web_server()
         check("Web-Server beendet", w.web_server is None)
@@ -226,17 +227,77 @@ def main():
               w.kopf.titel.text()[:60])
         check("Kopfzeile nennt Knoten, Elemente und Stellungen",
               "Stellungen" in w.kopf.marke_modell.text(), w.kopf.marke_modell.text())
-        werkzeuge = [a.text() for a in w.werkzeugleiste.actions() if a.text()]
-        check("Werkzeugleiste wie im Entwurf",
-              any("Berechnen" in t for t in werkzeuge) and any("Stellungen" in t for t in werkzeuge)
-              and any("Bericht" in t for t in werkzeuge), str(len(werkzeuge)) + " Knoepfe")
-        check("Register Stellungen vorhanden", w.register_zeigen("Stellungen"))
+        check("Ribbon sitzt neben der Kopfzeile im Menuewidget",
+              w.menuWidget() is not None and w.ribbon.parent() is w.menuWidget(),
+              str(type(w.ribbon.parent()).__name__))
+        check("Kopfzeile und Ribbon teilen sich das Menuewidget",
+              w.menuWidget().height() >= w.kopf.height() + 40,
+              f"{w.menuWidget().height()} >= {w.kopf.height()} + 40")
+        # Der Grund der Kopfzeile muss dunkel bleiben: ein schlichtes QWidget
+        # zeichnet den Hintergrund aus dem Stilblatt nur mit WA_StyledBackground,
+        # sonst zieht die allgemeine QWidget-Regel die Zeile hell.
+        bild = w.kopf.grab().toImage()
+        farbe = bild.pixelColor(max(1, bild.width() - 400), bild.height() // 2)
+        check("Kopfzeile ist dunkel hinterlegt",
+              farbe.red() < 90 and farbe.green() < 90 and farbe.blue() < 110,
+              f"RGB {farbe.red()},{farbe.green()},{farbe.blue()}")
+        logo = w.kopf.logo.grab().toImage()
+        hell = max(logo.pixelColor(x, logo.height() // 2).lightness()
+                   for x in range(0, logo.width(), 3))
+        check("Programmname hebt sich vom Grund ab", hell > 180, f"Helligkeit {hell}")
+        # Ribbon: jeder Befehl genau einmal, keine zweite Leiste daneben
+        register = [w.ribbon.tabs.tabText(i) for i in range(w.ribbon.tabs.count())]
+        check("Ribbon mit den Registern der Vorgabe",
+              register[:5] == ["Datei", "Start", "Geometrie", "Struktur", "Lager / Kontakt"]
+              and "Berechnung" in register and "Extras" in register, str(len(register)))
+        check("Befehle im Ribbon vermerkt", len(w.ribbon.befehle) > 60,
+              str(len(w.ribbon.befehle)))
+        namen = [b.text for b in w.ribbon.befehle]
+        check("Berechnen gibt es genau einmal", namen.count("Berechnen") == 1)
+        check("Befehlssuche findet den Befehl",
+              w.ribbon.finden("berechnen")[0].text == "Berechnen")
+        check("Befehlssuche meldet Fehlgriff", w.ribbon.finden("gibtsnicht") == [])
+        check("Schnellzugriff nutzt dieselben Aktionen",
+              all(a in [b.aktion for b in w.ribbon.befehle]
+                  for a in w.ribbon.schnellzugriff.actions()),
+              str(len(w.ribbon.schnellzugriff.actions())))
+        check("Keine Menueleiste und keine Werkzeugleiste mehr",
+              not hasattr(w, "menu_bar") and not hasattr(w, "werkzeugleiste"))
+        check("Maskenleiste rechts ist verschwunden", not w.tabs.tabBar().isVisible())
+        w.maske_zeigen("Netz")
+        check("Maske wird ueber den Docktitel benannt",
+              w.eingaben_dock.windowTitle() == "Netz", w.eingaben_dock.windowTitle())
+        check("Register des Ribbons anwaehlbar", w.register_zeigen("Berechnung")
+              and w.ribbon.tabs.tabText(w.ribbon.tabs.currentIndex()) == "Berechnung")
+        unten = [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())]
+        check("Werkstoffe, Querschnitte und Dicken stehen unten",
+              {"Werkstoffe", "Querschnitte", "Dicken"} <= set(unten), str(unten))
+        check("Tabelle laesst sich vorholen", w.tabelle_zeigen("Querschnitte")
+              and w.tab_unten.tabText(w.tab_unten.currentIndex()) == "Querschnitte")
+        check("Statusleiste zeigt Netz und Solver",
+              "Knoten" in w.lbl_netz.text() and w.lbl_solver.text().startswith("Solver"),
+              w.lbl_netz.text())
+        check("Fassung nicht mehr in der Statusleiste",
+              not w.btn_update.isVisible() and not w.lbl_version.isVisible())
         check("Modellbaum gefuellt", w.baum.topLevelItemCount() >= 1
               and w.baum.topLevelItem(0).childCount() >= 5,
               str(w.baum.topLevelItem(0).childCount()))
-        karten = [k for k in w.film.inhalt.findChildren(dsg.Stellungskarte)
-                  if not k.isHidden()]
-        check("Filmstreifen zeigt jede Stellung", len(karten) == 3, str(len(karten)))
+        check("Viewport bleibt frei - kein Filmstreifen mehr", not hasattr(w, "film"))
+        def stellungszweig():
+            """Der Zweig 'Stellungen' - nach jedem Auffrischen neu zu holen,
+            weil der Baum dabei neu aufgebaut wird."""
+            wurzel = w.baum.topLevelItem(0)
+            for i in range(wurzel.childCount()):
+                if wurzel.child(i).text(0) == "Stellungen":
+                    return wurzel.child(i)
+            return None
+
+        zweig = stellungszweig()
+        check("Stellungen stehen im Modellbaum",
+              zweig is not None and zweig.childCount() == 4,
+              str(zweig.childCount() if zweig else "kein Zweig"))
+        check("Modellbaum bietet das Anlegen an",
+              zweig.child(zweig.childCount() - 1).text(0).startswith("+ Stellung"))
         check("Stellungstabelle gefuellt", w.tbl_stellung.rowCount() == 3,
               str(w.tbl_stellung.rowCount()))
 
@@ -251,11 +312,10 @@ def main():
         check("Stellungen gerechnet", u is not None and u.eta > 0,
               f"eta = {getattr(u, 'eta', 0):.3f}")
         check("Umhuellende in der Oberflaeche", "η" in w.lbl_umh.text(), w.lbl_umh.text()[:60])
-        beschriftung = " ".join(
-            l.text() for k in w.film.inhalt.findChildren(dsg.Stellungskarte)
-            if not k.isHidden() for l in k.findChildren(QtWidgets.QLabel))
-        check("Filmstreifen zeigt die Ausnutzung", "η" in beschriftung,
-              beschriftung[:70])
+        w.refresh_all()
+        z2 = stellungszweig()
+        marke = " ".join(z2.child(i).text(0) for i in range(z2.childCount()))
+        check("Massgebende Stellung im Baum gekennzeichnet", "★" in marke, marke[:70])
 
         w.din19704_bilden()
         text = w.txt_regelwerk.toPlainText()
@@ -267,10 +327,333 @@ def main():
 
         w.stellung_entfernen()
         check("Stellung entfernt", len(w.stellungen) == 2, str(len(w.stellungen)))
+
+        # Nicht-modale Masken: „Maske oder Klick“ (Vorgabe Kap. 3.8)
+        w.load_example("frame")
+        w.refresh_all()
+        w.maske_knoten()
+        m = w.maskenrand.maske
+        check("Maske schwebt ueber der Ansicht",
+              m is not None and m.isVisible() and m.parent() is w.centralWidget(),
+              m.titel if m else "keine")
+        nn0 = w.model.nn
+        m.setzen("x", 9.0)
+        m.setzen("z", 2.5)
+        m.anwenden()
+        check("Maske legt den Knoten aus den Werten an",
+              w.model.nn == nn0 + 1
+              and abs(float(w.model.nodes[-1][0]) - 9.0) < 1e-9
+              and abs(float(w.model.nodes[-1][2]) - 2.5) < 1e-9,
+              str(np.round(w.model.nodes[-1], 2)))
+        check("Maske bleibt fuer das naechste Objekt offen", m.isVisible())
+
+        w.maske_stab()
+        m = w.maskenrand.maske
+        check("Erzeuge-Befehl loest die vorige Maske ab",
+              m.titel == "Stab" and m.n_knoten == 2)
+        ne0 = len(w.model.elements)
+        m.knoten_angeklickt(0)
+        check("Erster Klick erzeugt noch nichts",
+              len(w.model.elements) == ne0 and len(m.gewaehlt) == 1)
+        m.knoten_angeklickt(3)
+        check("Zweiter Klick erzeugt den Stab", len(w.model.elements) == ne0 + 1,
+              str(len(w.model.elements) - ne0))
+        check("Maske ist gleich fuer den naechsten Stab bereit",
+              m.gewaehlt == [] and m.isVisible())
+        e = w.model.elements[-1]
+        check("Stab bekommt Querschnitt und Material aus der Maske",
+              e.sec in w.model.sections and e.mat in w.model.materials,
+              f"{e.sec} / {e.mat}")
+
+        m.knoten_angeklickt(2)
+        m.knoten_angeklickt(2)
+        check("Erneutes Anklicken nimmt den Knoten wieder heraus", m.gewaehlt == [])
+        w.maskenrand.schliessen()
+        check("Maske laesst sich schliessen", w.maskenrand.maske is None)
+        check("Ohne Maske geht der Klick wieder an die Auswahl",
+              not w.maskenrand.knoten_angeklickt(1))
+
+        # Kontextabhaengiges Register statt „Elemente ändern“ im Panel
+        w.clear_selection()
+        n_reg = w.ribbon.tabs.count()
+        w._set_selection([0, 1, 2])
+        check("Register „Auswahl“ erscheint mit der Auswahl",
+              w.ribbon.tabs.count() == n_reg + 1
+              and w.ribbon.tabs.tabText(w.ribbon.tabs.count() - 1) == "Auswahl: 3 Knoten",
+              w.ribbon.tabs.tabText(w.ribbon.tabs.count() - 1))
+        check("Zuweisen sitzt im Auswahlregister",
+              any(b.text == "Zuweisen" and b.register.startswith("Auswahl")
+                  for b in w.ribbon.befehle))
+        check("Register laesst sich vorholen", w.ribbon.kontext_zeigen())
+        w.clear_selection()
+        check("Ohne Auswahl verschwindet das Register",
+              w.ribbon.tabs.count() == n_reg,
+              str(w.ribbon.tabs.count()))
+        check("Befehle des Registers sind wieder abgemeldet",
+              not any(b.register.startswith("Auswahl") for b in w.ribbon.befehle))
+
+        # Rueckgaengig / Wiederholen
+        w.load_example("frame")
+        w.refresh_all()
+        nn0 = w.model.nn
+        w.merken("Testknoten")
+        w.model.add_node(9.0, 9.0, 9.0)
+        w.refresh_all()
+        check("Aenderung wird gemerkt", w.act_undo.isEnabled() and w.model.nn == nn0 + 1)
+        w.undo()
+        check("Rueckgaengig nimmt sie zurueck", w.model.nn == nn0, str(w.model.nn))
+        check("Wiederholen wird moeglich", w.act_redo.isEnabled())
+        w.redo()
+        check("Wiederholen legt sie wieder an", w.model.nn == nn0 + 1)
+        w.undo()
+        w.undo()
+        check("Leerer Stapel stoert nicht",
+              w.model.nn == nn0 and not w.act_undo.isEnabled())
+
+        # Koordinatensystem, Arbeitsebene, Fang
+        check("Statusleiste nennt Koordinatensystem und Fang",
+              "global" in w.lbl_ks.text() and "Raster" in w.lbl_fang.text(),
+              w.lbl_fang.text())
+        w.arbeitsebene_setzen(ebene="xz", raster=0.25)
+        check("Arbeitsebene laesst sich umstellen",
+              w.arbeitsebene.ebene == "xz" and abs(w.arbeitsebene.raster - 0.25) < 1e-12
+              and "0.25" in w.lbl_fang.text().replace(",", "."), w.lbl_fang.text())
+        w.arbeitsebene_setzen(ebene="xy", raster=0.5)
+        i0 = w.model.add_node(0.0, 0.0, 0.0)
+        i1 = w.model.add_node(2.0, 0.0, 0.0)
+        i2 = w.model.add_node(0.0, 3.0, 0.0)
+        w._set_selection([i0, i1, i2])
+        w.ks_aus_auswahl()
+        check("Koordinatensystem aus drei Knoten",
+              w.ks_aktiv != "global" and len(w.ks_liste) == 2, w.ks_aktiv)
+        check("Aktives KS steht in der Statusleiste", w.ks_aktiv in w.lbl_ks.text())
+        w.ks_waehlen("global")
+        check("Zurueck auf global", w.ks_aktiv == "global")
+        t = w._fangen((0.02, 0.01, 0.0))
+        check("Fang zieht auf den Knoten", t.art == "knoten", t.text())
+        w.fang_umschalten(False)
+        check("Fang laesst sich abschalten",
+              w._fangen((0.02, 0.01, 0.0)).art == "" and "aus" in w.lbl_fang.text())
+        w.fang_umschalten(True)
+
+        # Linien: Bogen aus drei angeklickten Knoten
+        w.clear_selection()
+        w.maske_linie()
+        m = w.maskenrand.maske
+        check("Linienmaske verlangt drei Knoten",
+              m.titel == "Linie" and m.n_knoten == 3)
+        a = w.model.add_node(2.0, 0.0, 6.0)
+        b = w.model.add_node(0.0, 2.0, 6.0)
+        c = w.model.add_node(-2.0, 0.0, 6.0)
+        ne0, nl0 = len(w.model.elements), len(w.model.lines)
+        m.knoten_angeklickt(a)
+        m.knoten_angeklickt(b)
+        m.knoten_angeklickt(c)
+        check("Bogen wird angelegt", len(w.model.lines) == nl0 + 1,
+              str(list(w.model.lines)))
+        ln = list(w.model.lines.values())[-1]
+        check("Bogenlaenge stimmt (Halbkreis r = 2)",
+              abs(ln.laenge(w.model) - 2 * np.pi) < 1e-9,
+              f"{ln.laenge(w.model):.6f}")
+        check("Staebe entlang des Bogens erzeugt",
+              len(w.model.elements) - ne0 == 8, str(len(w.model.elements) - ne0))
+        w.undo()
+        check("Linie laesst sich zuruecknehmen", len(w.model.lines) == nl0)
+
     except Exception as ex:      # noqa: BLE001
         import traceback
         traceback.print_exc()
         check("Werkbank", False, str(ex)[:70])
+
+    # ---- Tabellen: Filter, Sortierung, Spalten, Export, Editieren -------
+    try:
+        import tempfile
+        from PySide6 import QtCore
+        from statik3d.gui import tabellen as tb
+
+        w.load_example("hall")
+        an = solver.solve_all(w.model, design=True)
+        w._solve_done("all", an)
+        for idx in range(w.cb_result.count()):     # eine Kombination, keine Umhuellende
+            if w.cb_result.itemData(idx)[0] in ("combo", "case"):
+                w.cb_result.setCurrentIndex(idx)
+                break
+        w.show_results()
+        app.processEvents()
+        t = w.tbl_beam
+        n_alle = t.zeilenzahl()
+        check("Ergebnistabelle ist eine Datentabelle", isinstance(t, tb.Datentabelle))
+        check("Stabkraefte gefuellt", n_alle > 10, f"{n_alle} Zeilen")
+        check("Tabelle startet aufsteigend, nicht verkehrt herum",
+              [t.filter.data(t.filter.index(r, 0), QtCore.Qt.UserRole)
+               for r in range(min(3, t.filter.rowCount()))] == [0.0, 1.0, 2.0],
+              str([t.filter.data(t.filter.index(r, 0), QtCore.Qt.UserRole)
+                   for r in range(min(3, t.filter.rowCount()))]))
+        check("Zahlen sind Zahlen, kein Text",
+              isinstance(t.modell.zeilen[0][1], float), type(t.modell.zeilen[0][1]).__name__)
+        check("Anzeige mit deutschem Komma",
+              "," in t.modell.data(t.modell.index(0, 1), QtCore.Qt.DisplayRole),
+              t.modell.data(t.modell.index(0, 1), QtCore.Qt.DisplayRole))
+
+        # Kennwerte stehen in der eigenen Fusszeile und wandern beim Sortieren nicht
+        check("Fusszeile Max/Min sichtbar",
+              not t.fuss.isHidden() and t.fussmodell.rowCount() == 2)
+        n1 = [z[1] for z in t.modell.zeilen]
+        check("Max der Fusszeile stimmt",
+              abs(float(t.fussmodell.zeilen[0][1]) - max(n1)) < 1e-9,
+              f"{t.fussmodell.zeilen[0][1]:.3f} / {max(n1):.3f}")
+        check("Min der Fusszeile stimmt",
+              abs(float(t.fussmodell.zeilen[1][1]) - min(n1)) < 1e-9)
+        check("Kennwerte sind keine Tabellenzeilen", t.modell.rowCount() == n_alle)
+
+        # Filter - die Schranke liegt in der Mitte der Werte, damit etwas
+        # wegfaellt und etwas stehen bleibt
+        n1 = [float(x) for x in n1]
+        grenze = float(f"{min(n1) + 0.5 * (max(n1) - min(n1)):.6f}")
+        t.felder[1].setText(f"> {grenze}")
+        app.processEvents()
+        n_gefiltert = t.sichtbar()
+        soll = sum(1 for x in n1 if x > grenze)
+        check(f"Kopfzeilenfilter „> {grenze:.2f}“ wirkt",
+              n_gefiltert == soll and 0 < n_gefiltert < n_alle,
+              f"{n_gefiltert} von {n_alle} (erwartet {soll})")
+        check("Zeilenzaehler nennt beide Zahlen",
+              f"{n_gefiltert} von {n_alle}" in t.lbl_zeilen.text(), t.lbl_zeilen.text())
+        check("Kennwerte folgen dem Filter",
+              float(t.fussmodell.zeilen[1][1]) > grenze,
+              f"Min = {float(t.fussmodell.zeilen[1][1]):.3f} > {grenze:.3f}")
+        csv_gefiltert = t.text()
+        check("Export nimmt nur die sichtbaren Zeilen",
+              len(csv_gefiltert.strip().splitlines()) == n_gefiltert + 3,
+              f"{len(csv_gefiltert.strip().splitlines())} Zeilen (+ Kopf, Max, Min)")
+        t.filter_leeren()
+        app.processEvents()
+        check("Filter leeren stellt alles wieder her", t.sichtbar() == n_alle)
+
+        # Sortierung: nach Zahl, nicht nach Text
+        t.view.sortByColumn(1, QtCore.Qt.AscendingOrder)
+        app.processEvents()
+        folge = [t.filter.data(t.filter.index(r, 1), QtCore.Qt.UserRole)
+                 for r in range(t.filter.rowCount())]
+        check("Sortierung ist numerisch",
+              all(a <= b for a, b in zip(folge, folge[1:])),
+              f"{folge[0]:.2f} … {folge[-1]:.2f}")
+        t.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
+
+        # Spalten aus- und einblenden
+        t.view.setColumnHidden(3, True)
+        t._filterbreiten()
+        check("Ausgeblendete Spalte blendet auch ihr Filterfeld aus",
+              t.felder[3].isHidden())
+        t.view.setColumnHidden(3, False)
+        t._filterbreiten()
+        check("Spalte laesst sich wieder einblenden", not t.felder[3].isHidden())
+
+        # Export
+        with tempfile.TemporaryDirectory() as d:
+            pfad = t.export_csv(os.path.join(d, "stab.csv"))
+            zeilen = open(pfad, encoding="utf-8-sig").read().strip().splitlines()
+            check("CSV geschrieben", len(zeilen) == n_alle + 3,
+                  f"{len(zeilen)} Zeilen")
+            check("CSV-Kopf hat die Einheiten", zeilen[0].startswith("Element;N1 [kN]"), zeilen[0])
+            xl = t.export_xlsx(os.path.join(d, "stab.xlsx"))
+            check("Excel geschrieben", os.path.getsize(xl) > 1000, f"{os.path.getsize(xl)} B")
+        check("Zwischenablage bekommt die Tabelle",
+              t.in_zwischenablage().startswith("Element;"))
+        w.tabelle_zeigen("Stabkräfte")
+        app.processEvents()
+        check("Ribbon findet die vordere Tabelle", w.aktive_tabelle() is t)
+        w.tabelle_ausgeben("clip")
+        check("Ribbon gibt sie aus", "Zeilen in der Zwischenablage" in w.log.toPlainText())
+        w.tabelle_zeigen("Werkstoffe")
+        app.processEvents()
+        check("Auch die Eingabetabelle wird gefunden", w.aktive_tabelle() is w.tbl_mat)
+        w.tabelle_zeigen("Stabkräfte")
+
+        # Tabelle und Ansicht: hin und zurueck
+        e0 = int(t.modell.zeilen[0][0])
+        t.zeile_gewaehlt.emit(e0)
+        app.processEvents()
+        knoten = sorted(int(n) for n in w.model.elements[e0].nodes)
+        check("Klick in der Tabelle waehlt das Element in der Ansicht",
+              sorted(int(n) for n in w.selection) == knoten, str(knoten))
+        check("Auswahl markiert die Zeile zurueck",
+              [i.data(QtCore.Qt.UserRole) for i in t.view.selectionModel().selectedRows()] == [e0],
+              str([i.data(QtCore.Qt.UserRole) for i in t.view.selectionModel().selectedRows()]))
+        w._set_selection(sorted({int(n) for e in w.model.elements[:3] for n in e.nodes}))
+        app.processEvents()
+        check("Mehrere Zeilen bleiben zugleich markiert",
+              len(t.view.selectionModel().selectedRows()) >= 2,
+              f"{len(t.view.selectionModel().selectedRows())} Zeilen")
+        w.tbl_react.zeile_gewaehlt.emit(int(w.tbl_react.modell.zeilen[0][0]))
+        app.processEvents()
+        check("Auflagerzeile waehlt den Knoten", len(w.selection) == 1, str(w.selection))
+        w.clear_selection()
+
+        # Nachweise: erste Spalte ist der Stabname
+        if w.tbl_design.zeilenzahl():
+            stab = str(w.tbl_design.modell.zeilen[0][0])
+            w.tbl_design.zeile_gewaehlt.emit(stab)
+            app.processEvents()
+            check("Nachweiszeile waehlt den ganzen Stab",
+                  len(w.selection) >= 2, f"{stab}: {len(w.selection)} Knoten")
+            check("Nachweistabelle hat Kennwerte", w.tbl_design.fussmodell.rowCount() == 2)
+            w.clear_selection()
+
+        # Umhuellende: dieselbe Tabelle, anderes Ergebnis
+        for idx in range(w.cb_result.count()):
+            if w.cb_result.itemData(idx)[0] == "env":
+                w.cb_result.setCurrentIndex(idx)
+                break
+        w.show_results()
+        app.processEvents()
+        check("Umhuellende fuellt ihre Tabelle", w.tbl_env.zeilenzahl() > 0,
+              f"{w.tbl_env.zeilenzahl()} Zeilen")
+        check("Stabkraefte sind dabei leer", w.tbl_beam.zeilenzahl() == 0)
+        check("Leere Tabelle zeigt keine Kennwerte", w.tbl_beam.fuss.isHidden())
+
+        # Eingabetabellen: editierbar, mit Formel, mit Grenzen, ruecknehmbar
+        name = list(w.model.materials)[0]
+        E0 = w.model.materials[name].E
+        i = w.tbl_mat.modell.index(0, 1)
+        check("Zelle ist editierbar",
+              bool(w.tbl_mat.modell.flags(i) & QtCore.Qt.ItemIsEditable))
+        check("Name bleibt geschuetzt",
+              not (w.tbl_mat.modell.flags(w.tbl_mat.modell.index(0, 0))
+                   & QtCore.Qt.ItemIsEditable))
+        ok = w.tbl_mat.modell.setData(i, "= 210/1,05")
+        check("Formel in der Zelle gerechnet",
+              ok and abs(w.model.materials[name].E - 200e9) < 1e3,
+              f"E = {w.model.materials[name].E / 1e9:.3f} GPa")
+        nu0 = w.model.materials[name].nu
+        schlecht = w.tbl_mat.modell.setData(w.tbl_mat.modell.index(0, 2), "0,9")
+        check("Unmoeglicher Wert wird abgewiesen",
+              not schlecht and w.model.materials[name].nu == nu0,
+              f"ν = {w.model.materials[name].nu}")
+        unfug = w.tbl_mat.modell.setData(w.tbl_mat.modell.index(0, 3), "Unfug")
+        check("Text in einer Zahlenspalte wird abgewiesen", not unfug)
+        w.undo()
+        app.processEvents()
+        check("Zellaenderung laesst sich zuruecknehmen",
+              abs(w.model.materials[name].E - E0) < 1e3,
+              f"E = {w.model.materials[name].E / 1e9:.3f} GPa")
+
+        sname = list(w.model.sections)[0]
+        A0 = w.model.sections[sname].A
+        ok = w.tbl_sec.modell.setData(w.tbl_sec.modell.index(0, 2), "= 100*1,5")
+        check("Querschnittsflaeche editierbar",
+              ok and abs(w.model.sections[sname].A - 150e-4) < 1e-9,
+              f"A = {w.model.sections[sname].A * 1e4:.2f} cm²")
+        check("Von Hand geaenderter Querschnitt gilt als frei",
+              w.model.sections[sname].typ == "free", w.model.sections[sname].typ)
+        w.undo()
+        app.processEvents()
+        check("Querschnittsaenderung ruecknehmbar",
+              abs(w.model.sections[sname].A - A0) < 1e-12)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Tabellen", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
