@@ -147,6 +147,37 @@ def merge_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
     for cp in model.contact_pairs:
         cp.slave_nodes = [int(new_index[n]) for n in cp.slave_nodes]
         cp.master_faces = [[int(new_index[n]) for n in f] for f in cp.master_faces]
+    for ln in model.lines.values():
+        seen, nodes = set(), []
+        for n in ln.nodes:
+            k = int(new_index[n])
+            if not nodes or nodes[-1] != k:
+                nodes.append(k)
+            seen.add(k)
+        ln.nodes = nodes
+    for ls in model.line_supports:
+        nodes = []
+        for n in ls.nodes:
+            k = int(new_index[n])
+            if k not in nodes:
+                nodes.append(k)
+        ls.nodes = nodes
+    for ss in model.surface_supports:
+        ss.elements = [int(e) for e in ss.elements]
+        nodes, areas = [], []
+        pos: dict[int, int] = {}
+        for i, n in enumerate(ss.nodes):
+            k = int(new_index[n])
+            a = ss.areas[i] if i < len(ss.areas) else 0.0
+            if k in pos:
+                if areas:
+                    areas[pos[k]] += a          # Einflussflaechen addieren
+            else:
+                pos[k] = len(nodes)
+                nodes.append(k)
+                areas.append(a)
+        ss.nodes = nodes
+        ss.areas = areas if any(areas) else []
     return n_removed
 
 

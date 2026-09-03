@@ -29,7 +29,8 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 | `.inp` | Abaqus / CalculiX | FE-Programme | Netz, Sets, Materialien, Beam/Shell/Solid Sections, Boundary, CLOAD, DLOAD, Steps |
 | `.bdf`, `.nas`, `.dat` | Nastran Bulk Data | FE-Programme | GRID, CBAR/CBEAM, CROD, CTRIA3/CQUAD4, CTETRA/CHEXA, PBAR/PBARL/PBEAM/PSHELL/PSOLID, MAT1, SPC/SPC1, FORCE/MOMENT, PLOAD2/PLOAD4, GRAV, LOAD |
 | `.step`, `.stp`, `.iges`, `.igs`, `.brep`, `.stl` | CAD-Geometrie | CAD | Vernetzung mit gmsh (Volumen Tet4/Tet10 oder Schalen) |
-| `.rf5`, `.rf6`, `.rfem`, `.rstab`, `.fem`, `.ifm` | proprietär (binär) | RFEM, RSTAB, InfoCAD | **nicht lesbar** – Meldung mit Exportweg |
+| `.rf6` | RFEM 6 Projektdatei (ZIP + SQLite `model.db`) | RFEM 6 | Knoten, Linien, Stäbe, Querschnitte, Materialien, Knoten-/Linien-/Flächenlager mit Nichtlinearität, Gelenke, Lastfälle |
+| `.rf5`, `.rfem`, `.rstab`, `.fem`, `.ifm` | proprietär (binär) | RFEM 5, RSTAB, InfoCAD | Behälter wird untersucht; sonst Meldung mit Exportweg |
 
 ## InfoCAD
 
@@ -113,9 +114,80 @@ Jeder Importer ist eine Funktion `import_xxx(path, model=None, log=None,
 aus Kopfzeilen, Polygon → Schalen, Standardmaterial/-querschnitt.
 
 
-## RFEM / RSTAB: native Projektdateien
+## RFEM 6 (.rf6): vollständiger Import aus der Modelldatenbank
 
-`.rf5 .rf6 .rfem .rs5 .rs6 .rs8 .rs9 .rstab` werden nicht mehr pauschal
+Eine `.rf6`-Datei ist ein ZIP-Behälter; darin liegt `model.db`, eine
+SQLite-Datenbank mit dem objektrelationalen Abbild des Modells. Dieser Aufbau
+wurde an einer echten Projektdatei (RFEM 6.11/6.12) ausgelesen und wird von
+`statik3d.importers.rfem6_db` vollständig gelesen — ohne Umweg über einen
+Export. `import_file("modell.rf6")` genügt.
+
+Aufbau der Datenbank (durchgehend dasselbe Muster):
+
+| Ebene | Tabellen | Inhalt |
+|---|---|---|
+| Griff | `Node`, `Line`, `Member`, `Surface`, `Solid`, `Section`, `Material`, `NodalSupport`, `LineSupport`, `SurfaceSupport`, `MemberHinge`, `LoadCase` | `id`, `userID` (die Nummer in RFEM), `impl_id`, `impl_table` |
+| Umsetzung | `NodeImplStandard`, `LineImplPolyline`, `LineImplArc`, `MemberImplTension`, `SurfaceImplPlane`, `NodalSupportImpl`, … | die eigentlichen Felder, z. B. `coordinates_x/y/z` |
+| Listen | `<Umsetzung>_<Feld>`, z. B. `NodalSupportImpl_nodes`, `LineImplPolyline_definitionNodes` | Zielspalte je nach Tabelle `value_id` oder `reference_id` |
+| Federn | `SpringConstants` (`owner_id`/`owner_table`), `SpringConstants_partialActivities` | Steifigkeiten, Nichtlinearität, Reibbeiwerte, teilweise Wirkung |
+
+Federwerte: **`inf` = starr, `0` = frei, endlicher Wert = Federsteifigkeit**.
+
+Übernommen werden Knoten, Linien (Polygonzüge und Bögen), Stäbe mit
+Querschnitt, Material, Verdrehung und Gelenken, Knoten-, Linien- und
+Flächenlager mit ihren Nichtlinearitäten, die Geometrie der Flächen sowie die
+Lastfälle mit Name, Einwirkungskategorie und Eigengewichtsfaktor.
+
+Querschnitte kommen aus `SectionData_parameterValues` mit ihren SI-Kennwerten
+(A, A_y, A_z, I_y, I_z, I_t); der Name entsteht aus den Bemaßungssymbolen der
+Parameterform, etwa `Rund 40` aus `d = 40 mm`. Materialnamen führt RFEM in der
+Projektdatei nicht mit – nur Kennwerte und die Nummer des Eintrags in der
+Dlubal-Materialdatenbank. Statik3D bildet den Namen deshalb aus E-Modul und
+Streckgrenze (`S355`) und nennt die Datenbanknummer im Protokoll.
+
+**Was ausdrücklich Annahme ist:** die Zahlenwerte der
+Nichtlinearitäts-Aufzählung (`nonlinearityType…`). Belegt ist nur `0 = linear`.
+Für alles andere gilt die Reihenfolge des RFEM-Dialogs; jede Kennzahl steht mit
+Rohwert **und** Deutung im Importprotokoll, unbekannte Kennzahlen lassen den
+Freiheitsgrad linear und erzeugen eine Warnung. Die Zuordnung lässt sich
+ersetzen:
+
+    m = import_file("modell.rf6", nonlinearity_map={1: ("druck", "Ausfall bei Druck")})
+    # oder aus einem XSD/WSDL der RFEM-Web-Services (Namen sind dort veröffentlicht):
+    from statik3d.importers.rfem6_db import nonlinearity_map_from_xsd
+    m = import_file("modell.rf6", nonlinearity_map="C:/.../nodal_support.xsd")
+
+Reibung steht in RFEM an dem Freiheitsgrad, dessen Kraft begrenzt wird
+(`nonlinearityFrictionCoefficient_XZ` begrenzt F_x auf μ·|F_z|). Trägt ein
+solcher Freiheitsgrad die Steifigkeit 0, hält er starr bis μ·|N| und gleitet
+danach – so, wie RFEM es rechnet.
+
+**Flächen und Volumen** werden als Geometrie gelesen, aber nicht vernetzt.
+Flächenlager werden über das Randpolygon der zugewiesenen Flächen auf deren
+Knoten gelegt, mit der Einflussfläche je Knoten (Newell-Formel, Summe = wahre
+Fläche). Trägt ein Modell seine Lasten über Flächen und Volumen, sagt das
+Protokoll das ausdrücklich:
+
+    1831 Knoten tragen kein Element (Rand von Flaechen und Volumen).
+    Das Stabtragwerk zerfaellt in 64 Teile (groesster Teil 2 Knoten).
+    WARNUNG: 48 Teiltragwerke ohne Lager - so ist das Modell nicht rechenbar.
+
+Mit `structure_only=True` bleibt nur das Stabtragwerk übrig; das Modell ist dann
+unmittelbar rechenbar, die Flächengeometrie entfällt.
+
+Ein Inhaltsverzeichnis ohne Modellaufbau liefert `rfem6_db.report(pfad)`:
+
+    modell.rf6: programm RFEM version 6.11.0004 (RFEM 6-Schema, 4678 Tabellen)
+      Knoten: 1959
+      Linien: 2807
+      Staebe: 64
+      Flaechen: 1375
+      Volumen: 108
+      ...
+
+## RFEM 5 / RSTAB: weitere native Projektdateien
+
+`.rf5 .rfem .rs5 .rs6 .rs8 .rs9 .rstab` werden nicht pauschal
 abgelehnt. Statik3D untersucht zuerst den Behälter der Datei
 (`statik3d.importers.rfem_native.probe`) und liest ihn aus, soweit er
 zugänglich ist:
