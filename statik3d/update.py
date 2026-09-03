@@ -167,6 +167,49 @@ def check(timeout: float = 10.0, api_url: str = API_URL, kind: str = None) -> Up
     return ui
 
 
+def diagnose(timeout: float = 10.0) -> str:
+    """Vollstaendiger Befund zum Update - fuer den Fall, dass es nicht geht.
+
+    Genannt werden die installierte Fassung, die neueste bei GitHub, die
+    Adressen, das Schreibrecht am Programmordner und die Erreichbarkeit von
+    GitHub. Der Text laesst sich unveraendert weitergeben.
+    """
+    b = build_info()
+    z = ["Statik3D - Update-Befund",
+         f"  Fassung          {b['version']}",
+         f"  Art              {'Programmdatei (exe)' if b['kind'] == 'exe' else 'Quellcode'}",
+         f"  Build            {b['sha'][:12] or '(kein Build-Stempel)'}",
+         f"  Datum            {b['date'] or '-'}",
+         f"  Ordner           {b['dir']}",
+         f"  Programmdatei    {sys.executable}",
+         f"  Schreibrecht     {'ja' if os.access(os.path.dirname(os.path.abspath(sys.executable)), os.W_OK) else 'NEIN - hier kann nicht ausgetauscht werden'}",
+         f"  Release-Adresse  {API_URL}/releases/tags/{RELEASE_TAG}",
+         f"  Download         {DOWNLOAD_URL}"]
+    try:
+        ui = check(timeout)
+        z.append(f"  Neueste Fassung  Build {ui.latest_sha[:12] or '-'} vom "
+                 f"{_short_date(ui.latest_date)}")
+        z.append(f"  Groesse          {ui.size / 1e6:.1f} MB" if ui.size else "")
+        z.append(f"  Ergebnis         " + ("Update verfuegbar" if ui.available
+                                           else "Sie haben bereits die neueste Fassung"))
+        if not ui.available and not b["sha"]:
+            z.append("  Hinweis          Ohne Build-Stempel wird immer aktualisiert.")
+    except UpdateError as ex:
+        z.append(f"  Ergebnis         Abfrage fehlgeschlagen: {ex}")
+        z.append("  Hinweis          Firewall oder Proxy? Der Download geht auch "
+                 "unmittelbar ueber die Adresse oben.")
+    log = os.path.join(os.path.dirname(os.path.abspath(sys.executable)),
+                       "statik3d_update.log")
+    if os.path.exists(log):
+        try:
+            with open(log, "r", encoding="ascii", errors="replace") as f:
+                z.append("  Letzter Austausch:")
+                z.extend("    " + l.rstrip() for l in f.readlines()[-12:])
+        except OSError:
+            pass
+    return "\n".join(x for x in z if x)
+
+
 def download(url: str, dest: str, progress: Callable = None, timeout: float = 60.0) -> str:
     """Datei mit Fortschrittsmeldung herunterladen (progress(geladen, gesamt))."""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -204,23 +247,45 @@ def write_build_stamp(sha: str, date: str, package_dir: str = None) -> str:
 
 
 # --------------------------------------------------------------------------
-UPDATE_BAT = """@echo off
-setlocal
+UPDATE_BAT = r"""@echo off
+setlocal enabledelayedexpansion
 set "EXE={exe}"
 set "NEW={new}"
+set "LOG={log}"
+echo [%date% %time%] Austausch beginnt> "%LOG%"
+echo   alt: "%EXE%">> "%LOG%"
+echo   neu: "%NEW%">> "%LOG%"
 echo Statik3D wird aktualisiert - bitte warten ...
+if not exist "%NEW%" (
+    echo [Fehler] Die heruntergeladene Datei fehlt.>> "%LOG%"
+    echo Die heruntergeladene Datei fehlt: "%NEW%"
+    pause
+    exit /b 2
+)
 set /a n=0
 :warten
 timeout /t 1 /nobreak >nul
 del "%EXE%" >nul 2>&1
 if exist "%EXE%" (
     set /a n+=1
-    if %n% lss 60 goto warten
-    echo Das Programm laeuft noch. Bitte Statik3D beenden und diese Datei erneut starten.
+    if !n! lss 120 goto warten
+    echo [Fehler] Programm laeuft nach 120 s noch.>> "%LOG%"
+    echo Statik3D laeuft noch. Bitte das Programm beenden und diese Datei
+    echo erneut starten:  "%~f0"
+    echo Die neue Fassung liegt bereit als: "%NEW%"
     pause
     exit /b 1
 )
-move /y "%NEW%" "%EXE%" >nul
+move /y "%NEW%" "%EXE%" >nul 2>&1
+if errorlevel 1 (
+    echo [Fehler] Umbenennen fehlgeschlagen ^(Schreibrecht^?^).>> "%LOG%"
+    echo Die neue Fassung konnte nicht an die Stelle der alten geschoben werden.
+    echo Sie liegt hier: "%NEW%"
+    echo Bitte von Hand umbenennen in: "%EXE%"
+    pause
+    exit /b 3
+)
+echo [%date% %time%] Austausch erfolgreich>> "%LOG%"
 start "" "%EXE%"
 (goto) 2>nul & del "%~f0"
 """
@@ -239,6 +304,13 @@ def apply(info: UpdateInfo, progress: Callable = None, restart: bool = True,
 def apply_exe(info: UpdateInfo, progress: Callable = None, restart: bool = True,
               exe_path: str = None) -> str:
     exe = os.path.abspath(exe_path or sys.executable)
+    ordner = os.path.dirname(exe)
+    # Schreibrecht vor dem Laden pruefen - 200 MB umsonst zu laden hilft niemandem
+    if not os.access(ordner, os.W_OK):
+        raise UpdateError(
+            f"Im Ordner '{ordner}' darf nicht geschrieben werden. Statik3D.exe an "
+            "eine Stelle legen, an der Sie Schreibrecht haben (z. B. auf den "
+            "Schreibtisch), oder die neue Fassung von Hand austauschen: " + info.url)
     new = exe + ".new"
     download(info.url, new, progress)
     with open(new, "rb") as f:
@@ -246,16 +318,24 @@ def apply_exe(info: UpdateInfo, progress: Callable = None, restart: bool = True,
     if head != b"MZ" or os.path.getsize(new) < 1_000_000:
         os.remove(new)
         raise UpdateError("Heruntergeladene Datei ist kein Windows-Programm")
-    bat = os.path.join(os.path.dirname(exe), "statik3d_update.bat")
+    log = os.path.join(ordner, "statik3d_update.log")
+    bat = os.path.join(ordner, "statik3d_update.bat")
     with open(bat, "w", encoding="ascii", errors="replace", newline="\r\n") as f:
-        f.write(UPDATE_BAT.format(exe=exe, new=new))
+        f.write(UPDATE_BAT.format(exe=exe, new=new, log=log))
     if restart:
         if os.name != "nt":
             raise UpdateError("Austausch der exe nur unter Windows")
-        subprocess.Popen(["cmd.exe", "/c", "start", "/min", "Statik3D Update", bat],
-                         close_fds=True, creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
-    return ("Neue Version heruntergeladen. Statik3D wird beendet, ausgetauscht und "
-            "neu gestartet.")
+        try:
+            subprocess.Popen(["cmd.exe", "/c", "start", "/min", "Statik3D Update",
+                              f'"{bat}"'], close_fds=True,
+                             creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        except OSError as ex:
+            raise UpdateError(
+                f"Das Austauschskript liess sich nicht starten ({ex}). Die neue "
+                f"Fassung liegt bereit: {new}\nBitte Statik3D beenden und "
+                f"'{bat}' von Hand ausfuehren.") from ex
+    return ("Neue Version heruntergeladen. Statik3D wird jetzt beendet, ausgetauscht "
+            f"und neu gestartet.\nProtokoll des Austauschs: {log}")
 
 
 def apply_source(info: UpdateInfo, progress: Callable = None, restart: bool = True,

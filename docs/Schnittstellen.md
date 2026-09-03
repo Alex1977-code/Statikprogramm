@@ -301,6 +301,42 @@ I, U, L, M, R, RU/RO, B, C, T). NC‑Dateien führen **keine Lage im Bauwerk** �
 die Teile liegen nebeneinander, es entsteht eine Teileliste. Für das
 zusammengebaute Tragwerk ist SDNF oder IFC der Weg.
 
+## Export: Modelle in fremde Formate schreiben
+
+`statik3d.exporters.export_model(modell, "ziel.endung")` — das Format folgt aus
+der Endung. In der Oberfläche: **Datei → Exportieren…** (Strg+E), auf der
+Kommandozeile `--export DATEI` (mehrfach möglich, `--formate` listet auf), über
+die Web-API die Operation `export`.
+
+| Endung | Format | Inhalt |
+|---|---|---|
+| `.json` | Statik3D-Modell | **verlustfrei**, alles |
+| `.sdnf` | SDNF 3.0 | Bauteile mit Lage im Bauwerk, Profil, Werkstoff, Verdrehung; Bleche mit Eckpunkten und Dicke |
+| `.nc1` / `.zip` | DSTV-NC | je Stab eine Datei: Kopfblock, Profil, Länge, Werkstoff, Kontur |
+| `.ifc` | IFC 4 (Structural Analysis View) | Knoten, Stäbe, Flächen, Lagerbedingungen, Lastfälle mit Knotenlasten |
+| `.xlsx` | SAF | Knoten, Stäbe, Flächen, Querschnitte, Materialien, Lager, Lastfälle, Kombinationen, Lasten |
+| `.csv` | Tabellen im RFEM-Aufbau | zehn Blätter in einem Ordner, vom eigenen Tabellenimport wieder lesbar |
+| `.dxf` | AutoCAD DXF | Stäbe als LINE, Schalen und Volumenaußenflächen als 3DFACE, Lager und Beschriftung auf eigenen Layern |
+| `.inp` | Abaqus / CalculiX | Knoten, Elemente, Materialien, Querschnitte, Randbedingungen, ein Step je Lastfall |
+| `.bdf` | Nastran Bulk Data | GRID, CBAR/CTRIA3/CQUAD4/CTETRA/CHEXA, PBAR/PSHELL/PSOLID, MAT1, SPC1, FORCE/MOMENT/GRAV |
+| `.stl` | STL (binär oder ASCII) | Schalen und Volumenaußenflächen als Dreiecke |
+| `.vtu` | VTK für ParaView | Netz **mit Ergebnissen**: Verformung, Verdrehung, Auflagerkräfte, Normalkraft, Moment, Vergleichsspannung |
+| `.sza` | HiCAD-Archiv | Behälter mit SDNF, DSTV-NC, Teiletabellen und XML-Teilen |
+
+**Der Rückweg ist geprüft:** Was Statik3D auch lesen kann, wird in
+`tests/test_exporters.py` exportiert, wieder eingelesen und verglichen —
+Knotenzahl, Stäbe, Profilkennwerte, Lager, Lastfälle.
+
+### Zum HiCAD-Archiv (.sza)
+
+Der Behälter wird richtig geschrieben und liest sich wieder ein. Die
+**3D-Geometrie** von HiCAD steht aber im Teil `SZN` in einem Format, das ISD
+nicht veröffentlicht; es wird nicht geraten. Eine hier geschriebene `.sza`
+enthält deshalb **kein von HiCAD lesbares Modell**, sondern die enthaltene
+SDNF-Datei, die DSTV-NC-Teile, die Teiletabellen der benutzten Profile und
+Werkstoffe sowie die XML-Teile. Wer das Modell **in HiCAD** haben will, nimmt
+die SDNF-Datei — das ist der Weg, den HiCAD selbst vorsieht.
+
 ## Profildatenbank nach Land
 
 `statik3d.profiles` führt 442 Profile in 18 Reihen:

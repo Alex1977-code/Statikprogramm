@@ -1238,6 +1238,27 @@ def _op_add_hinge(st, m, d):
     return f"Gelenk {name} angelegt" + (f" und auf {len(elems)} Elemente gelegt" if elems else "")
 
 
+@op("export")
+def _op_export(st, m, d):
+    """Modell in ein fremdes Format schreiben (Endung bestimmt das Format)."""
+    from ..exporters import export_model, FORMATS
+    ziel = (d.get("path") or d.get("datei") or "").strip()
+    if not ziel:
+        raise ApiError("Kein Dateiname angegeben")
+    ext = os.path.splitext(ziel)[1].lower()
+    if ext not in FORMATS:
+        raise ApiError(f"Endung '{ext or '(keine)'}' gehoert zu keinem Ausgabeformat. "
+                       "Moeglich: " + ", ".join(sorted(FORMATS)))
+    if not os.path.isabs(ziel):
+        ziel = os.path.join(st.tmpdir, ziel)
+    os.makedirs(os.path.dirname(os.path.abspath(ziel)) or ".", exist_ok=True)
+    log: list = []
+    an = st.analysis
+    r = getattr(an, "static", None) if an is not None else None
+    out = export_model(m, ziel, results=r, log=log)
+    return " | ".join(log) or f"Geschrieben: {out}"
+
+
 @op("composite_section")
 def _op_composite(st, m, d):
     from .. import sections as sec_mod

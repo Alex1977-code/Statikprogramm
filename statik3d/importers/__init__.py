@@ -53,6 +53,7 @@ SUPPORTED: dict[str, str] = {
     ".nc1": "DSTV-NC - Stahlbauteil fuer die NC-Steuerung (HiCAD, Tekla, bocad)",
     ".nc2": "DSTV-NC - Stahlbauteil fuer die NC-Steuerung",
     ".dstv": "DSTV-NC - Stahlbauteil fuer die NC-Steuerung",
+    ".zip": "ZIP-Behaelter - Inhalt wird bestimmt (DSTV-NC-Teile, SDNF, IFC)",
     ".sza": "HiCAD-Szene - Behaelter wird untersucht und gelesen, soweit zugaenglich",
     ".kra": "HiCAD-Konstruktion - Behaelter wird untersucht und gelesen, soweit zugaenglich",
     ".fga": "HiCAD-Figur - Behaelter wird untersucht und gelesen, soweit zugaenglich",
@@ -132,6 +133,7 @@ def file_filter() -> str:
              "SDNF Stahlbaumodell (*.sdnf *.sdn)",
              "DSTV-NC Stahlbauteile (*.nc *.nc1 *.nc2 *.dstv)",
              "HiCAD Szene / Bauteil (*.sza *.kra *.fga *.fig *.vaa)",
+             "ZIP mit DSTV-NC, SDNF oder IFC (*.zip)",
              "CAD-Geometrie (*.step *.stp *.iges *.igs *.brep *.stl)",
              "Alle Dateien (*)"]
     return ";;".join(parts)
@@ -152,6 +154,8 @@ def _detect(path: str) -> str:
         return "dstv"
     if ext in _HICAD:
         return "hicad"
+    if ext == ".zip":
+        return _detect_zip(path)
     if ext in PROPRIETARY:
         raise ImportError(PROPRIETARY[ext])
     if ext == ".json":
@@ -173,6 +177,51 @@ def _detect(path: str) -> str:
     if ext in _CAD:
         return "cad"
     raise ImportError(explain_format(path))
+
+
+def _detect_zip(path: str) -> str:
+    """Inhalt eines ZIP-Behaelters bestimmen: DSTV-NC-Teile, SDNF oder IFC."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            namen = z.namelist()
+    except zipfile.BadZipFile as ex:
+        raise ImportError(f"{os.path.basename(path)} ist keine lesbare ZIP-Datei "
+                          f"({ex}).") from None
+    ext = {os.path.splitext(n)[1].lower() for n in namen}
+    if ext & set(_DSTV):
+        return "dstv"
+    if ext & set(_SDNF):
+        return "sdnf_zip"
+    if ".ifc" in ext:
+        return "ifc_zip"
+    raise ImportError(
+        f"{os.path.basename(path)}: im ZIP-Behaelter ist kein lesbares Modell. "
+        "Enthalten sind u. a.: " + ", ".join(sorted(namen)[:8])
+        + ". Erwartet werden DSTV-NC-Teile (*.nc1), SDNF (*.sdnf) oder IFC (*.ifc).")
+
+
+def _from_zip_member(path: str, endungen, kind: str, model, log, **options) -> Model:
+    """Ein Modell aus dem ersten passenden Eintrag eines ZIP-Behaelters lesen."""
+    import shutil
+    import tempfile
+    import zipfile
+    tmp = tempfile.mkdtemp(prefix="statik3d_zip_")
+    try:
+        with zipfile.ZipFile(path) as z:
+            treffer = [n for n in z.namelist()
+                       if os.path.splitext(n)[1].lower() in endungen]
+            out = os.path.join(tmp, os.path.basename(treffer[0]))
+            with z.open(treffer[0]) as src, open(out, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+        C.say(log, f"Im ZIP-Behaelter gefunden: {treffer[0]}")
+        if kind == "sdnf":
+            from .sdnf import import_sdnf
+            return import_sdnf(out, model, log, **options)
+        from .ifc import import_ifc
+        return import_ifc(out, model, log, **options)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def import_file(path: str, model: Model = None, log: list = None, **options) -> Model:
@@ -257,6 +306,10 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     elif kind == "hicad":
         from .hicad import import_hicad
         import_hicad(path, model, log, **options)
+    elif kind == "sdnf_zip":
+        _from_zip_member(path, set(_SDNF), "sdnf", model, log, **options)
+    elif kind == "ifc_zip":
+        _from_zip_member(path, {".ifc"}, "ifc", model, log, **options)
 
     # Nachbereitung
     n_merged = C.merge_duplicate_nodes(model, tol) if model.nn > n_nodes0 else 0

@@ -7,7 +7,8 @@ Export von Statikmodellen in fremde Formate.
     .xlsx    SAF - Structural Analysis Format (RFEM 6, SCIA, Allplan, ...)
     .csv     Tabellen im RFEM-Aufbau (ein Blatt je Datei, Ordner)
     .sdnf    Steel Detailing Neutral Format (HiCAD, Tekla, SDS/2)
-    .nc1     DSTV-NC, je Stab eine Datei (Ordner oder ZIP)
+    .nc1     DSTV-NC, je Stab eine Datei (Ordner)
+    .zip     DSTV-NC, alle Teile in einer ZIP-Datei
     .inp     Abaqus / CalculiX
     .bdf     Nastran Bulk Data
     .stl     Oberflaechennetz (Dreiecke)
@@ -32,7 +33,8 @@ FORMATS: dict[str, tuple] = {
     ".xlsx": ("SAF - Structural Analysis Format", "saf", "write_saf"),
     ".csv": ("Tabellen im RFEM-Aufbau (Ordner)", "tables", "write_tables"),
     ".sdnf": ("SDNF - Steel Detailing Neutral Format", "sdnf", "write_sdnf"),
-    ".nc1": ("DSTV-NC - je Stab eine Datei (Ordner oder ZIP)", "dstv", "write_dstv"),
+    ".nc1": ("DSTV-NC - je Stab eine Datei (Ordner)", "dstv", "write_dstv"),
+    ".zip": ("DSTV-NC - alle Teile in einer ZIP-Datei", "dstv", "write_dstv"),
     ".inp": ("Abaqus / CalculiX", "abaqus", "write_inp"),
     ".bdf": ("Nastran Bulk Data", "nastran", "write_bdf"),
     ".stl": ("STL-Oberflaechennetz", "stl", "write_stl"),

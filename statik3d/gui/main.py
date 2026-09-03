@@ -117,7 +117,10 @@ class MainWindow(QtWidgets.QMainWindow):
         f.addAction("Speichern", self.save_model, "Ctrl+S")
         f.addAction("Speichern unter…", lambda: self.save_model(True))
         f.addSeparator()
-        f.addAction("Importieren (DXF, IFC, SAF, RFEM, INP, BDF, STEP…)…", self.import_file, "Ctrl+I")
+        f.addAction("Importieren (RFEM 6, HiCAD, DXF, IFC, SAF, INP, BDF, STEP…)…",
+                    self.import_file, "Ctrl+I")
+        f.addAction("Exportieren (SDNF, DSTV-NC, IFC, SAF, DXF, STL, VTK, HiCAD…)…",
+                    self.export_model, "Ctrl+E")
         f.addAction("Ergebnisse als CSV…", self.export_csv)
         f.addAction("Netz + Ergebnisse als VTK…", self.export_vtk)
         f.addSeparator()
@@ -1825,6 +1828,37 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_title()
             self.info(f"gespeichert: {p}")
 
+    def export_model(self):
+        """Modell in ein fremdes Format schreiben (Endung bestimmt das Format)."""
+        from ..exporters import export_model as _ex, file_filter as _ff, FORMATS
+        vor = os.path.splitext(self.path)[0] if self.path else self.model.name
+        p, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Modell exportieren", vor + ".sdnf", _ff())
+        if not p:
+            return
+        ext = os.path.splitext(p)[1].lower()
+        if ext not in FORMATS:
+            return self.error(
+                f"Die Endung '{ext or '(keine)'}' gehört zu keinem Ausgabeformat.\n"
+                "Möglich: " + ", ".join(sorted(FORMATS)))
+        log = []
+        try:
+            out = _ex(self.model, p, results=self.current_result(), log=log)
+        except Exception as ex:      # noqa: BLE001
+            return self.error(f"Export fehlgeschlagen: {ex}")
+        for z in log:
+            self.log.appendPlainText(z)
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Export")
+        box.setText("\n".join(log) or f"Geschrieben: {out}")
+        b_open = box.addButton("Ordner öffnen", QtWidgets.QMessageBox.ActionRole)
+        box.addButton(QtWidgets.QMessageBox.Ok)
+        box.exec()
+        if box.clickedButton() is b_open:
+            ordner = out if os.path.isdir(out) else os.path.dirname(os.path.abspath(out))
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(ordner))
+        self.info(f"exportiert: {out}")
+
     def export_csv(self):
         r = self.current_result()
         if r is None or not hasattr(r, "beam_forces"):
@@ -2031,10 +2065,45 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_update.setText("Update suchen")
         self.btn_update.setToolTip(upd.describe())
         self.btn_update.clicked.connect(lambda: self.check_update())
+        self.btn_update.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.btn_update.customContextMenuRequested.connect(lambda _p: self.update_report())
         self.statusBar().addPermanentWidget(self.btn_update)
         self._update_worker = None
         if os.environ.get("STATIK3D_NO_UPDATE_CHECK") != "1":
             QtCore.QTimer.singleShot(4000, lambda: self.check_update(quiet=True))
+
+    def update_report(self):
+        """Vollstaendiger Update-Befund zum Weitergeben (rechte Maustaste am Knopf)."""
+        from .. import update as upd
+        box = QtWidgets.QDialog(self)
+        box.setWindowTitle("Update-Befund")
+        lay = QtWidgets.QVBoxLayout(box)
+        txt = QtWidgets.QPlainTextEdit()
+        txt.setReadOnly(True)
+        f = txt.font()
+        f.setFamily("Courier New")
+        txt.setFont(f)
+        txt.setPlainText("Befund wird erstellt …")
+        txt.setMinimumSize(720, 380)
+        lay.addWidget(txt)
+        zeile = QtWidgets.QHBoxLayout()
+        b_copy = QtWidgets.QPushButton("In die Zwischenablage")
+        b_copy.clicked.connect(
+            lambda: QtWidgets.QApplication.clipboard().setText(txt.toPlainText()))
+        zeile.addWidget(b_copy)
+        b_dl = QtWidgets.QPushButton("Download im Browser öffnen")
+        b_dl.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(
+            QtCore.QUrl(upd.DOWNLOAD_URL)))
+        zeile.addWidget(b_dl)
+        zeile.addStretch(1)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        bb.rejected.connect(box.reject)
+        zeile.addWidget(bb)
+        lay.addLayout(zeile)
+        self._run_update_worker(lambda progress: upd.diagnose(),
+                                txt.setPlainText,
+                                lambda m: txt.setPlainText(f"Befund fehlgeschlagen: {m}"))
+        box.exec()
 
     def _run_update_worker(self, func, on_done, on_failed):
         if self._update_worker is not None and self._update_worker.isRunning():
@@ -2065,7 +2134,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.btn_update.setText("Aktuell")
                 self.btn_update.setStyleSheet("")
                 if not quiet:
-                    QtWidgets.QMessageBox.information(self, "Update", info.message)
+                    b = upd.build_info()
+                    QtWidgets.QMessageBox.information(
+                        self, "Update",
+                        info.message
+                        + f"\n\nInstalliert: {upd.version_label(long=True)}"
+                        + f"\nNeueste Fassung: Build {info.latest_sha[:7] or '-'}"
+                        + "\n\nMit der rechten Maustaste auf diesen Knopf gibt es den "
+                          "vollständigen Befund zum Weitergeben.")
 
         def failed(msg):
             self.btn_update.setEnabled(True)
@@ -2110,6 +2186,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(msg)
             QtWidgets.QMessageBox.information(self, "Update", msg)
             self.close()
+            QtWidgets.QApplication.quit()
 
         def failed(msg):
             self.progress_bar.setVisible(False)

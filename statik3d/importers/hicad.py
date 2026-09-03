@@ -213,7 +213,10 @@ def _from_archive(path: str, model=None, log=None, **options):
     C.say(log, "Teile: " + ", ".join(f"{e['kurz']} ({e['art']})" for e in ents[:10])
                + (" ..." if len(ents) > 10 else ""))
     desig = A.part_designations(path, log)
-    used = {re.split(r"\s*\{", d)[0].strip() for d in desig}
+    used = {re.split(r"\s*\{", d)[0].strip() for d in desig} or None
+    if used is None:
+        C.say(log, "Keine Bauteilbezeichnungen im Archiv - es werden alle Eintraege "
+                   "der Teiletabellen uebernommen.")
     from ..model import Material, ShellProp
     n_sec = n_plate = n_mat = 0
     for tname, table in A.part_tables(path, log).items():

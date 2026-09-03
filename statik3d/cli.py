@@ -46,9 +46,21 @@ def main(argv=None) -> int:
     ap.add_argument("--schluessel", default="statik3d", help="Farm-Schluessel")
     ap.add_argument("--csv", help="Knotenergebnisse als CSV schreiben")
     ap.add_argument("--vtk", help="Netz + Ergebnisse als .vtu schreiben (ParaView)")
+    ap.add_argument("--export", action="append", default=[], metavar="DATEI",
+                    help="Modell in ein fremdes Format schreiben; das Format folgt aus "
+                         "der Endung (.sdnf .nc1 .zip .ifc .xlsx .csv .dxf .stl .vtu "
+                         ".inp .bdf .sza .json). Mehrfach verwendbar.")
+    ap.add_argument("--formate", action="store_true",
+                    help="Ausgabeformate auflisten und beenden")
     ap.add_argument("--bericht", help="Statischen Bericht schreiben (.html / .pdf / .md)")
     ap.add_argument("--still", action="store_true", help="weniger Ausgabe")
     a = ap.parse_args(argv)
+    if a.formate:
+        from .exporters import formats as _formats
+        print("Ausgabeformate (--export DATEI, Format aus der Endung):")
+        for ext, beschr in _formats():
+            print(f"  {ext:<7s} {beschr}")
+        return 0
 
     log = print if not a.still else (lambda *x: None)
     if a.kerne:
@@ -147,6 +159,17 @@ def main(argv=None) -> int:
         g.save(a.vtk)
         log(f"VTK geschrieben: {a.vtk}")
 
+    for ziel in a.export:
+        from .exporters import export_model as _ex
+        elog = []
+        try:
+            out = _ex(m, ziel, results=r, log=elog)
+        except Exception as ex:      # noqa: BLE001
+            print(f"Export nach '{ziel}' fehlgeschlagen: {ex}", file=sys.stderr)
+            continue
+        for zeile in elog:
+            log(zeile)
+        log(f"exportiert: {out}")
     if a.bericht:
         from .report import write_report
         fmt = os.path.splitext(a.bericht)[1].lower().lstrip(".") or "html"

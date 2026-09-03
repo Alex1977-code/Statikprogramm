@@ -73,6 +73,67 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
 
+def test_befund_und_bat():
+    """Update-Befund und Austauschskript."""
+    import statik3d.update as upd
+    txt = upd.diagnose(timeout=3)
+    check("Befund nennt die Fassung", "Fassung" in txt and upd.__dict__["__doc__"] is not None,
+          txt.splitlines()[1][:50])
+    check("Befund nennt Ordner und Schreibrecht",
+          "Schreibrecht" in txt and "Ordner" in txt)
+    check("Befund nennt die Downloadadresse", upd.DOWNLOAD_URL in txt)
+
+    # Austauschskript: Platzhalter, Wartezeit, Fehlerbehandlung
+    bat = upd.UPDATE_BAT.format(exe=r"C:\Statik3D\Statik3D.exe",
+                                new=r"C:\Statik3D\Statik3D.exe.new",
+                                log=r"C:\Statik3D\statik3d_update.log")
+    check("Skript: verzoegerte Erweiterung eingeschaltet",
+          "enabledelayedexpansion" in bat)
+    check("Skript: Zaehler mit ! statt % gelesen", "!n! lss 120" in bat, "!n!")
+    check("Skript: Protokoll wird geschrieben", "statik3d_update.log" in bat)
+    check("Skript: fehlende Datei wird gemeldet", "Die heruntergeladene Datei fehlt" in bat)
+    check("Skript: Fehler beim Verschieben wird gemeldet", "errorlevel 1" in bat)
+    check("Skript: startet danach neu", 'start "" "%EXE%"' in bat)
+
+    # Ohne Schreibrecht wird abgelehnt, bevor 200 MB geladen werden.
+    # Als root liefert os.access immer True - deshalb wird die Abfrage selbst
+    # geprueft, nicht das Rechtesystem.
+    import tempfile, os as _os, shutil as _sh
+    d = tempfile.mkdtemp()
+    exe = _os.path.join(d, "Statik3D.exe")
+    with open(exe, "wb") as f:
+        f.write(b"MZ" + b"\x00" * 10)
+    echt = _os.access
+    geladen = []
+    echt_dl = upd.download
+
+    def kein_recht(pfad, modus):
+        if modus == _os.W_OK and _os.path.abspath(pfad) == _os.path.abspath(d):
+            return False
+        return echt(pfad, modus)
+
+    def merker(*a, **kw):
+        geladen.append(a)
+        return echt_dl(*a, **kw)
+
+    _os.access = kein_recht
+    upd.download = merker
+    try:
+        info = upd.UpdateInfo("exe", "2.1.0", "aaaa", "bbbb", "", "http://x", 2_000_000)
+        try:
+            upd.apply_exe(info, restart=False, exe_path=exe)
+            check("ohne Schreibrecht wird abgelehnt", False)
+        except upd.UpdateError as ex:
+            check("ohne Schreibrecht wird abgelehnt", "Schreibrecht" in str(ex),
+                  str(ex)[:60])
+        check("ohne Schreibrecht wird nichts geladen", not geladen,
+              f"{len(geladen)} Downloads")
+    finally:
+        _os.access = echt
+        upd.download = echt_dl
+        _sh.rmtree(d, ignore_errors=True)
+
+
 def main():
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -130,6 +191,7 @@ def main():
         check("gleicher Stand: kein Update", not same.available and "neuesten Stand" in same.message)
         cmd = upd.restart_command()
         check("Neustartbefehl", cmd and cmd[0] == sys.executable)
+        test_befund_und_bat()
         # Fehlerfaelle
         try:
             upd.check(api_url="http://127.0.0.1:9/repos/x/y", kind="source", timeout=2)
