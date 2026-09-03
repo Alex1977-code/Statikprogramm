@@ -887,6 +887,62 @@ class Joint:
         return f"Element {self.elem + 1}, Ende {'A' if self.end == 0 else 'E'}"
 
 
+#: Verformungsgroessen einer Grenze
+VERFORMUNGSGROESSEN = {
+    "ux": "Verschiebung in x", "uy": "Verschiebung in y", "uz": "Verschiebung in z",
+    "u": "Betrag der Verschiebung",
+    "phix": "Verdrehung um x", "phiy": "Verdrehung um y", "phiz": "Verdrehung um z",
+}
+
+
+@dataclass
+class Verformungsgrenze:
+    """Ein Verformungsnachweis im Grenzzustand der Gebrauchstauglichkeit.
+
+    art:
+        "stab"       Durchbiegung eines Stabes, bezogen auf die **Sehne**
+                     zwischen seinen Enden (die uebliche Durchbiegung w)
+        "knoten"     Verschiebung oder Verdrehung eines Knotens gegenueber
+                     der Ausgangslage (z. B. Kragarmspitze)
+        "punktpaar"  Verschiebung zweier Knoten **gegeneinander** - fuer
+                     Dichtungen, Fuehrungen, Fugen und Anschlaege
+
+    grenzart:
+        "L/x"        Grenze = L / wert; L ist die Stablaenge beziehungsweise
+                     der Abstand der beiden Knoten
+        "absolut"    Grenze = wert [m] beziehungsweise [rad]
+
+    situation: "SLS_CH" (charakteristisch), "SLS_FR" (haeufig),
+               "SLS_QP" (quasi-staendig) oder "" fuer alle GZG-Kombinationen.
+    ueberhoehung: Vorkruemmung w_c [m]; sie wird von der Durchbiegung
+               abgezogen (EN 1993-1-1, A.1.4.2: w = w_max - w_c).
+    """
+    name: str
+    art: str = "stab"
+    stab: str = ""
+    knoten: list = field(default_factory=list)
+    groesse: str = "uz"
+    grenzart: str = "L/x"
+    wert: float = 300.0
+    situation: str = "SLS_CH"
+    ueberhoehung: float = 0.0
+    beschreibung: str = ""
+
+    def grenztext(self) -> str:
+        if self.grenzart == "L/x":
+            return f"L/{self.wert:g}"
+        if self.groesse.startswith("phi"):
+            return f"{self.wert * 1e3:g} mrad"
+        return f"{self.wert * 1e3:g} mm"
+
+    def bezug(self) -> str:
+        if self.art == "stab":
+            return f"Stab {self.stab}"
+        if self.art == "punktpaar" and len(self.knoten) >= 2:
+            return f"Knoten {self.knoten[0]} gegen {self.knoten[1]}"
+        return f"Knoten {self.knoten[0]}" if self.knoten else "-"
+
+
 @dataclass
 class DesignSettings:
     """Globale Einstellungen der Nachweise (DIN EN 1993-1-1/NA)."""
@@ -983,6 +1039,7 @@ class Model:
         # Nachweise
         self.members: dict[str, Member] = {}
         self.joints: dict[str, Joint] = {}
+        self.verformungsgrenzen: dict[str, Verformungsgrenze] = {}
         self.design = DesignSettings()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
@@ -1100,6 +1157,24 @@ class Model:
         m = Member(name, [int(e) for e in elements], **kw)
         self.members[name] = m
         return m
+
+    def add_verformungsgrenze(self, name: str, art: str = "stab", **kw) -> Verformungsgrenze:
+        """Einen Verformungsnachweis (GZG) in das Modell aufnehmen."""
+        if art not in ("stab", "knoten", "punktpaar"):
+            raise ValueError(f"Art „{art}“ unbekannt: stab | knoten | punktpaar")
+        g = kw.get("groesse", "uz")
+        if g not in VERFORMUNGSGROESSEN:
+            raise KeyError(f"Verformungsgröße „{g}“ unbekannt: "
+                           f"{sorted(VERFORMUNGSGROESSEN)}")
+        v = Verformungsgrenze(name, art, **kw)
+        if art == "stab" and v.stab and v.stab not in self.members:
+            raise KeyError(f"Stab „{v.stab}“ gibt es nicht")
+        if art in ("knoten", "punktpaar"):
+            noetig = 2 if art == "punktpaar" else 1
+            if len(v.knoten) < noetig:
+                raise ValueError(f"„{art}“ braucht {noetig} Knoten")
+        self.verformungsgrenzen[name] = v
+        return v
 
     def add_joint(self, name: str, typ: str, elem: int, end: int = 1, **kw) -> Joint:
         """Anschluss an einem Stabende in das Modell aufnehmen."""
@@ -1463,6 +1538,7 @@ class Model:
             "fatigue_loads": [asdict(f) for f in self.fatigue_loads.values()],
             "members": [asdict(m) for m in self.members.values()],
             "joints": [asdict(j) for j in self.joints.values()],
+            "verformungsgrenzen": [asdict(v) for v in self.verformungsgrenzen.values()],
             "design": asdict(self.design),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
@@ -1505,6 +1581,8 @@ class Model:
         m.fatigue_loads = {f["name"]: _dc(FatigueLoad, f) for f in d.get("fatigue_loads", [])}
         m.members = {mm["name"]: _dc(Member, mm) for mm in d.get("members", [])}
         m.joints = {j["name"]: _dc(Joint, j) for j in d.get("joints", [])}
+        m.verformungsgrenzen = {v["name"]: _dc(Verformungsgrenze, v)
+                                for v in d.get("verformungsgrenzen", [])}
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]

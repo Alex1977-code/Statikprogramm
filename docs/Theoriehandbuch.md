@@ -380,6 +380,44 @@ Die Geometrievorschläge (Blechdicken, Schraubenbild, Nahtdicken) sind
 nachgebessert, bis die Nachweise für die eingegebenen Schnittgrößen erfüllt
 sind. Maßgebend ist immer die anschließende Rechnung über alle Kombinationen.
 
+## 5b Verformungsnachweise (Grenzzustand der Gebrauchstauglichkeit)
+
+Nachgewiesen wird gegen die GZG-Kombinationen nach DIN EN 1990, 6.5.3 —
+charakteristisch (6.14b), häufig (6.15b), quasi-ständig (6.16b). Jeder
+Nachweis läuft über alle Kombinationen seiner Bemessungssituation; die
+ungünstigste ist maßgebend.
+
+**Durchbiegung eines Stabes** wird auf die **Sehne** zwischen den Stabenden
+bezogen — nicht auf die Ausgangslage. Sie folgt aus der Momentenlinie:
+
+    w″(x) = M(x) / (E I)
+
+zweifach integriert, anschließend die Gerade durch die beiden Stabenden
+abgezogen. Innerhalb eines Elements ist M(x) bei linear veränderlicher
+Streckenlast höchstens ein Polynom dritten Grades und EI konstant; die
+Krümmung wird darum durch ein kubisches Polynom exakt beschrieben und
+geschlossen integriert. Zwei Folgen:
+
+* Das Ergebnis ist **auch bei nur einem Element je Stab exakt** — geprüft
+  gegen 5qL⁴/384EI und PL³/48EI mit Abweichung 0,0000 %.
+* Der Starrkörperanteil (Auflagersenkung, Verdrehung des ganzen Stabes) fällt
+  beim Abzug der Sehne heraus. Für einen Kragarm ist deshalb nicht die
+  Durchbiegung, sondern die **Knotenverschiebung** der richtige Nachweis.
+
+Eine Überhöhung w_c wird abgezogen (DIN EN 1993-1-1, A.1.4.2: w = w_max − w_c).
+
+**Knoten**: Verschiebung oder Verdrehung gegenüber der Ausgangslage —
+Kragarmspitze, Stützenkopf, Verdrehung eines Auflagers.
+
+**Punktpaar**: die Verschiebung zweier Knoten **gegeneinander**. Damit werden
+Dichtungen, Führungen, Fugen und Anschläge nachgewiesen, wie sie DIN 19704-1
+im Stahlwasserbau verlangt.
+
+Grenzwerte sind L/x (L = Stablänge beziehungsweise Abstand der beiden Knoten)
+oder ein absoluter Wert in mm beziehungsweise mrad. Fehlt die verlangte
+Bemessungssituation im Modell, wird der Nachweis **nicht geführt** und das
+gesagt — es wird nichts ersatzweise eingesetzt.
+
 ## 6 Modalanalyse und Knicken
 
 * Eigenschwingungen: verallgemeinertes Eigenwertproblem (K − ω² M) φ = 0
@@ -418,6 +456,10 @@ sind. Maßgebend ist immer die anschließende Rechnung über alle Kombinationen.
 * Nachweise gelten für die implementierten Querschnittstypen (I, RHS, CHS,
   Rechteck, Kreis); bei freien Querschnitten wird elastisch (Klasse 3)
   gerechnet.
+* Verformungen: nachgewiesen werden Stabdurchbiegungen, Knotenverschiebungen
+  und Punktpaare. Verformungen von Flächen (Plattendurchbiegung) und
+  Schwingungsnachweise (Eigenfrequenz als Gebrauchstauglichkeitskriterium)
+  sind nicht enthalten.
 * Das Programm ist verifiziert, aber nicht bauaufsichtlich zugelassen. Die
   Verantwortung für die Anwendung und die Prüfung der Ergebnisse liegt beim
   Anwender.
@@ -429,6 +471,8 @@ sind. Maßgebend ist immer die anschließende Rechnung über alle Kombinationen.
 | `tests/test_verification.py` | 26 Benchmarks Stab/Schale/Volumen (analytisch, Patch-Tests) |
 | `tests/test_supports.py` | Lager mit Ausfall bei Zug/Druck, Schlupf, Reibung, Grenzkraft; Linien- und Flächenlager; Federgelenke gegen Handrechnungen |
 | `tests/test_sections.py` | Profildatenbank nach Land gegen Katalogwerte, Hauptachsen der Winkel, zusammengesetzte Querschnitte |
+| `tests/test_gzg.py` | Verformungsnachweise gegen 5qL⁴/384EI, PL³/48EI und den Kragarm; Grenzwertbildung L/x, absolut, Überhöhung, Punktpaar |
+| `tests/test_joints.py` | Schrauben, Nähte, T-Stummel gegen EN-Zahlenwerte; Steifigkeitsbeiwerte Tab. 6.11, Klassifizierung 5.2.2.5, Drehfeder gegen die geschlossene Kragarmlösung |
 | `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |
 | `tests/test_solver_ext.py` | Gelenke, Trapezlasten, Temperatur, Zwischenstellen, Superposition, Umhüllende, Kombinationsgenerator, einseitige Lager, Spaltelement, Flächenkontakt mit Reibung, parallele Assemblierung, Rechnerfarm |
 | `tests/test_ec3.py` | Klassifizierung, Querschnittsnachweise, Knicken (χ), M_cr, χ_LT, C1/C_m, Interaktion, Wöhlerlinien, Nachweisführung |

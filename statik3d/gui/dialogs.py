@@ -830,6 +830,132 @@ class JointDialog(QtWidgets.QDialog):
         return self.cb_fe.currentData()
 
 
+class VerformungsgrenzeDialog(QtWidgets.QDialog):
+    """Einen Verformungsnachweis (GZG) festlegen.
+
+    Drei Bezuege: die Durchbiegung eines Stabes (bezogen auf die Sehne), die
+    Verschiebung eines Knotens oder die Verschiebung zweier Knoten
+    gegeneinander - letzteres fuer Dichtungen, Fuehrungen und Fugen.
+    """
+
+    def __init__(self, parent, model, grenze=None, knoten=None):
+        super().__init__(parent)
+        from ..model import VERFORMUNGSGROESSEN
+        from ..gzg import SITUATIONEN
+        self.setWindowTitle("Verformungsnachweis" + (f" {grenze.name}" if grenze else ""))
+        self.model = model
+        g = grenze
+        lay = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+
+        self.ed_name = QtWidgets.QLineEdit(g.name if g else "")
+        self.ed_name.setPlaceholderText("z. B. Durchbiegung Riegel")
+        form.addRow("Name", self.ed_name)
+
+        self.cb_art = QtWidgets.QComboBox()
+        for text, key in (("Stab – Durchbiegung bezogen auf die Sehne", "stab"),
+                          ("Knoten – Verschiebung gegenüber der Ausgangslage", "knoten"),
+                          ("Punktpaar – zwei Knoten gegeneinander", "punktpaar")):
+            self.cb_art.addItem(text, key)
+        if g:
+            self.cb_art.setCurrentIndex(max(0, self.cb_art.findData(g.art)))
+        form.addRow("Bezug", self.cb_art)
+
+        self.cb_stab = QtWidgets.QComboBox()
+        self.cb_stab.addItems(list(model.members))
+        if g and g.stab:
+            self.cb_stab.setCurrentText(g.stab)
+        form.addRow("Stab", self.cb_stab)
+
+        vor = ", ".join(str(int(n)) for n in (g.knoten if g else (knoten or [])))
+        self.ed_knoten = QtWidgets.QLineEdit(vor)
+        self.ed_knoten.setPlaceholderText("Knotennummern, z. B. 12 oder 12, 34")
+        form.addRow("Knoten", self.ed_knoten)
+
+        self.cb_groesse = QtWidgets.QComboBox()
+        for k, text in VERFORMUNGSGROESSEN.items():
+            self.cb_groesse.addItem(f"{k} – {text}", k)
+        if g:
+            self.cb_groesse.setCurrentIndex(max(0, self.cb_groesse.findData(g.groesse)))
+        form.addRow("Größe", self.cb_groesse)
+
+        self.cb_grenzart = QtWidgets.QComboBox()
+        self.cb_grenzart.addItem("L / x (bezogen auf die Länge)", "L/x")
+        self.cb_grenzart.addItem("absoluter Wert", "absolut")
+        if g:
+            self.cb_grenzart.setCurrentIndex(max(0, self.cb_grenzart.findData(g.grenzart)))
+        form.addRow("Art der Grenze", self.cb_grenzart)
+
+        # absolute Grenzen werden in mm beziehungsweise mrad eingegeben
+        vor_wert = (g.wert * 1e3 if g and g.grenzart == "absolut"
+                    else (g.wert if g else 300.0))
+        self.ed_wert = NumEdit(vor_wert, 90)
+        self.lbl_wert = QtWidgets.QLabel("Nenner x")
+        form.addRow(self.lbl_wert, self.ed_wert)
+
+        self.cb_sit = QtWidgets.QComboBox()
+        for k, text in SITUATIONEN.items():
+            self.cb_sit.addItem(f"{text} ({k})", k)
+        self.cb_sit.addItem("alle GZG-Kombinationen", "")
+        if g:
+            self.cb_sit.setCurrentIndex(max(0, self.cb_sit.findData(g.situation)))
+        form.addRow("Bemessungssituation", self.cb_sit)
+
+        self.ed_wc = NumEdit((g.ueberhoehung * 1e3) if g else 0.0, 90)
+        form.addRow("Überhöhung w_c [mm]", self.ed_wc)
+        self.ed_text = QtWidgets.QLineEdit(g.beschreibung if g else "")
+        form.addRow("Beschreibung", self.ed_text)
+        lay.addLayout(form)
+
+        self.hinweis = QtWidgets.QLabel()
+        self.hinweis.setWordWrap(True)
+        self.hinweis.setStyleSheet("color:#66717c;")
+        lay.addWidget(self.hinweis)
+
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                        | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        for w in (self.cb_art, self.cb_grenzart):
+            w.currentIndexChanged.connect(self._umschalten)
+        self._umschalten()
+
+    def _umschalten(self):
+        art = self.cb_art.currentData()
+        self.cb_stab.setEnabled(art == "stab")
+        self.ed_knoten.setEnabled(art != "stab")
+        lx = self.cb_grenzart.currentData() == "L/x"
+        self.lbl_wert.setText("Nenner x" if lx else "Grenzwert [mm bzw. mrad]")
+        if lx and art == "knoten":
+            self.hinweis.setText("L/x braucht eine Bezugslänge – für einen einzelnen "
+                                 "Knoten einen absoluten Grenzwert wählen.")
+        elif art == "punktpaar":
+            self.hinweis.setText("Zwei Knotennummern angeben. Nachgewiesen wird ihre "
+                                 "Verschiebung gegeneinander – für Dichtungen, "
+                                 "Führungen und Fugen (DIN 19704).")
+        elif art == "stab":
+            self.hinweis.setText("Die Durchbiegung wird auf die Sehne zwischen den "
+                                 "Stabenden bezogen und aus der Momentenlinie gewonnen.")
+        else:
+            self.hinweis.setText("Verschiebung des Knotens gegenüber der Ausgangslage.")
+
+    def result(self):
+        """(Name, Angaben) fuer model.add_verformungsgrenze - oder eine Ausnahme."""
+        art = self.cb_art.currentData()
+        knoten = parse_int_list(self.ed_knoten.text())
+        wert = self.ed_wert.value()
+        if self.cb_grenzart.currentData() == "absolut":
+            wert = wert * 1e-3          # mm bzw. mrad -> m bzw. rad
+        return self.ed_name.text().strip(), {
+            "art": art, "stab": self.cb_stab.currentText() if art == "stab" else "",
+            "knoten": knoten, "groesse": self.cb_groesse.currentData(),
+            "grenzart": self.cb_grenzart.currentData(), "wert": wert,
+            "situation": self.cb_sit.currentData(),
+            "ueberhoehung": self.ed_wc.value() * 1e-3,
+            "beschreibung": self.ed_text.text().strip()}
+
+
 class StellungDialog(QtWidgets.QDialog):
     """Eine Stellung des Systems anlegen oder aendern (bewegliche Bruecken).
 

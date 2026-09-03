@@ -411,5 +411,14 @@ class Modellbaum(QtWidgets.QTreeWidget):
             z.setToolTip(0, f"{name}: {j.typ} an {j.ort()}")
         self._zweig(an, "+ Anschluss anlegen", "", "anschluss_neu",
                     farbe=FARBEN["akzent"])
+        grenzen = getattr(model, "verformungsgrenzen", {}) or {}
+        vf = self._zweig(wurzel, "Verformungsnachweise", len(grenzen), "verformungen",
+                         fett=bool(grenzen),
+                         farbe=FARBEN["akzent"] if grenzen else None)
+        for name, g in list(grenzen.items())[:60]:
+            z = self._zweig(vf, name, g.grenztext(), "verformung")
+            z.setToolTip(0, f"{g.bezug()}: {g.groesse} ≤ {g.grenztext()}")
+        self._zweig(vf, "+ Verformungsgrenze", "", "verformung_neu",
+                    farbe=FARBEN["akzent"])
         wurzel.setExpanded(offen.get(wurzel.text(0), True))
         el.setExpanded(offen.get("Elemente", True))

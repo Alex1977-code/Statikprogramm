@@ -754,6 +754,72 @@ def main():
         traceback.print_exc()
         check("Anschlüsse", False, str(ex)[:70])
 
+    # ---- Verformungsnachweise (GZG) -------------------------------------
+    try:
+        w.load_example("hall")
+        m = w.model
+        m.add_verformungsgrenze("Durchbiegung Riegel", "stab", stab="Riegel",
+                                groesse="uz", grenzart="L/x", wert=300,
+                                situation="SLS_CH")
+        kopf = int(m.elements[m.members["Stiel links"].elements[-1]].nodes[1])
+        m.add_verformungsgrenze("Stielkopf", "knoten", knoten=[kopf], groesse="ux",
+                                grenzart="absolut", wert=0.030, situation="SLS_CH")
+        w.refresh_all()
+        app.processEvents()
+        check("Verformungstabelle unten gefüllt", w.tbl_gzg.zeilenzahl() == 2,
+              f"{w.tbl_gzg.zeilenzahl()} Zeilen")
+        check("vor der Rechnung steht „nicht gerechnet“",
+              w.tbl_gzg.modell.zeilen[0][-1] == "nicht gerechnet")
+        zweige = [w.baum.topLevelItem(0).child(i).text(0)
+                  for i in range(w.baum.topLevelItem(0).childCount())]
+        check("Verformungsnachweise stehen im Modellbaum",
+              "Verformungsnachweise" in zweige, str(zweige[-2:]))
+        check("Register „Verformungen“ unten vorhanden",
+              w.tabelle_zeigen("Verformungen"))
+
+        an = solver.solve_all(m, design=True)
+        w._solve_done("all", an)
+        w.show_results()
+        app.processEvents()
+        check("Verformungen werden mit gerechnet",
+              an.gzg is not None and len(an.gzg.checks) == 2)
+        z = w.tbl_gzg.modell.zeilen[0]
+        check("Wert, Grenze und Ausnutzung stehen in der Tabelle",
+              isinstance(z[4], float) and z[4] > 0 and "L/300" in str(z[5])
+              and isinstance(z[6], float),
+              f"{z[4]:.2f} mm von {z[5]}, η = {z[6]:.3f}")
+        check("Ergebnisprotokoll nennt die Verformungen",
+              "Verformungen (GZG)" in w.txt_res.toPlainText())
+
+        w.clear_selection()
+        w.tbl_gzg.zeile_gewaehlt.emit("Durchbiegung Riegel")
+        app.processEvents()
+        check("Klick in der Tabelle wählt den Stab", len(w.selection) > 2,
+              f"{len(w.selection)} Knoten")
+        w.clear_selection()
+
+        nv = len(m.verformungsgrenzen)
+        w.tbl_gzg.view.selectRow(1)
+        w.delete_verformungsgrenze()
+        app.processEvents()
+        check("Verformungsgrenze lässt sich löschen",
+              len(m.verformungsgrenzen) == nv - 1)
+        w.undo()
+        app.processEvents()
+        check("und zurücknehmen", len(w.model.verformungsgrenzen) == nv
+              and w.tbl_gzg.zeilenzahl() == nv)
+
+        d = dg.VerformungsgrenzeDialog(w, w.model,
+                                       w.model.verformungsgrenzen["Stielkopf"])
+        name, kw = d.result()
+        check("Dialog liest die Grenze zurück",
+              name == "Stielkopf" and kw["art"] == "knoten"
+              and abs(kw["wert"] - 0.030) < 1e-9, f"{name}, {kw['wert']}")
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Verformungsnachweise", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

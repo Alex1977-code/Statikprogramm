@@ -822,6 +822,7 @@ class Analysis:
     design: object = None
     fatigue: object = None
     joints: object = None
+    gzg: object = None
     info: dict = field(default_factory=dict)
 
     def all_results(self) -> dict:
@@ -843,6 +844,8 @@ class Analysis:
             s.append(self.fatigue.summary())
         if self.joints is not None:
             s.append(self.joints.summary())
+        if self.gzg is not None:
+            s.append(self.gzg.summary())
         return "\n".join(s)
 
 
@@ -883,6 +886,9 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         # Nachweise verlangt sind (DIN EN 1993-1-8 / -1-9).
         from .joints.anschluss import check_joints
         an.joints = check_joints(model, an, progress=progress, ermuedung=bool(fatigue))
+    if design and model.verformungsgrenzen:
+        from .gzg import check_verformung
+        an.gzg = check_verformung(model, an, progress=progress)
     an.info.update({"time": time.time() - t0, "parallel": parallel.describe(),
                     "solver": system.backend, "ndof": model.ndof,
                     "nfree": len(system.fi)})

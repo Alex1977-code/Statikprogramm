@@ -257,7 +257,7 @@ class Report:
         "model_tables": True, "materials": True, "sections": True, "supports": True,
         "load_cases": True, "combinations": True, "figures": True, "results_cases": True,
         "results_combinations": True, "envelopes": True, "member_diagrams": True,
-        "design": True, "fatigue": True, "joints": True, "contact": True,
+        "design": True, "fatigue": True, "joints": True, "gzg": True, "contact": True,
         "modal": True, "buckling": True,
         # Grenzen fuer grosse Modelle
         "max_rows": 200, "max_detail_cases": 20, "max_detail_combinations": 12,
@@ -284,6 +284,7 @@ class Report:
         self.design = None
         self.fatigue = None
         self.joints = None
+        self.gzg = None
         self.info: dict = {}
         if analysis is not None:
             self.cases = dict(getattr(analysis, "cases", {}) or {})
@@ -292,6 +293,7 @@ class Report:
             self.design = getattr(analysis, "design", None)
             self.fatigue = getattr(analysis, "fatigue", None)
             self.joints = getattr(analysis, "joints", None)
+            self.gzg = getattr(analysis, "gzg", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
             name = results.name or "Ergebnis"
@@ -406,7 +408,8 @@ class Report:
             b = []
             for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
                        self.chapter_results, self.chapter_design, self.chapter_fatigue,
-                       self.chapter_joints, self.chapter_summary, self.chapter_appendix):
+                       self.chapter_joints, self.chapter_gzg, self.chapter_summary,
+                       self.chapter_appendix):
                 b.extend(ch())
             self._blocks = b
         return self._blocks
@@ -494,6 +497,12 @@ class Report:
                 "(Schrauben 3.6/3.7/3.9, äquivalenter T-Stummel 6.2.4, Schweißnähte 4.5.3, "
                 "Blockversagen 3.10.2) sowie deren Ermüdung nach DIN EN 1993-1-9, "
                 f"Tab. 8.1 und 8.5; γ_M2 = {ds.gamma_M2:g}.")
+        if m.verformungsgrenzen:
+            items.append(
+                f"Verformungsnachweise im Grenzzustand der Gebrauchstauglichkeit für "
+                f"{len(m.verformungsgrenzen)} festgelegte Grenzwerte (DIN EN 1990, 6.5.3; "
+                "Durchbiegung bezogen auf die Sehne, Knotenverschiebungen, "
+                "Verschiebungen von Punktpaaren).")
         items.append(
             "Ermüdungsnachweis nach DIN EN 1993-1-9 (Nennspannungskonzept, Kerbfallklassen, "
             "Wöhlerlinien mit m = 3/5 bzw. m = 5 für Schub, Schadensakkumulation "
@@ -1770,6 +1779,104 @@ class Report:
         return b
 
     # ============================================================ Kapitel 8
+    def chapter_gzg(self) -> list:
+        """Verformungsnachweise im Grenzzustand der Gebrauchstauglichkeit."""
+        m = self.model
+        b = [self._h(1, "Verformungsnachweise (Grenzzustand der Gebrauchstauglichkeit)")]
+        g = self.gzg if self.opt("gzg") else None
+        if g is None or not getattr(g, "checks", None):
+            if not self.opt("gzg"):
+                b.append(("p", "Die Ausgabe der Verformungsnachweise ist deaktiviert."))
+            elif not m.verformungsgrenzen:
+                b.append(("p", "Es sind keine Verformungsgrenzen festgelegt. Die "
+                               "Gebrauchstauglichkeit ist gesondert nachzuweisen."))
+            else:
+                b.append(("p", "Es wurden keine Verformungsnachweise geführt "
+                               "(keine Ergebnisse der GZG-Kombinationen)."))
+            return b
+        from ..gzg import SITUATIONEN
+        b.append(self._h(2, "Grundlagen"))
+        b.append(("list", [
+            "Nachgewiesen wird gegen die Kombinationen des Grenzzustands der "
+            "Gebrauchstauglichkeit nach DIN EN 1990, 6.5.3 – charakteristisch (6.14b), "
+            "häufig (6.15b) und quasi-ständig (6.16b); die ungünstigste ist maßgebend.",
+            "Durchbiegung eines Stabes: w bezogen auf die **Sehne** zwischen den "
+            "Stabenden. Sie wird aus der Momentenlinie gewonnen (w″ = M/EI, zweifach "
+            "integriert, danach die Gerade durch die Stabenden abgezogen) und ist "
+            "dadurch auch bei nur einem Element je Stab exakt.",
+            "Knoten: Verschiebung oder Verdrehung gegenüber der Ausgangslage "
+            "(Kragarmspitze, Stützenkopf). Punktpaar: Verschiebung zweier Knoten "
+            "gegeneinander – für Dichtungen, Führungen, Fugen und Anschläge "
+            "(DIN 19704-1).",
+            "Eine Überhöhung w_c wird von der Durchbiegung abgezogen "
+            "(DIN EN 1993-1-1, A.1.4.2: w = w_max − w_c).",
+            f"Grundlage sind {len(g.kombinationen)} GZG-Kombinationen.",
+        ]))
+        b.append(self._h(2, "Übersicht"))
+        rows = [["Nachweis", "Bezug", "Größe", "Situation", "Wert", "Grenzwert",
+                 "Ausnutzung", "Kombination", "Stelle", "Status"]]
+        for c in g.checks.values():
+            rows.append([c.name, c.bezug, c.groesse,
+                         SITUATIONEN.get(c.situation, c.situation or "alle GZG"),
+                         c.werttext(), _pretty(c.grenztext), Util(c.util),
+                         c.kombination, c.stelle,
+                         "erfüllt" if c.util <= 1.0 and not c.fehler
+                         else ("nicht geführt" if c.fehler else "NICHT erfüllt")])
+        b.append(("table", rows, "Verformungsnachweise: Grenzwerte und Ausnutzung",
+                  None, ""))
+        if self.opt("figures"):
+            liste = [c for c in g.checks.values() if not c.fehler][:60]
+            if liste:
+                b.append(self._figure(
+                    sv.draw_bar_chart([c.name for c in liste], [c.util for c in liste],
+                                      620, None, 1.0, "Ausnutzung je Verformungsnachweis"),
+                    "Ausnutzungsgrade der Verformungsnachweise (Grenze 1.0)"))
+
+        b.append(self._h(2, "Nachweise im Einzelnen"))
+        for c in g.checks.values():
+            b.append(self._h(3, f"Verformung {c.name}"))
+            if c.fehler:
+                b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
+                self._warnings.append(f"Verformung {c.name}: {c.fehler}")
+                continue
+            grenze = m.verformungsgrenzen.get(c.name)
+            kv = [("Bezug", c.bezug),
+                  ("Verformungsgröße", c.groesse),
+                  ("Bemessungssituation",
+                   SITUATIONEN.get(c.situation, c.situation or "alle GZG-Kombinationen")),
+                  ("Grenzwert", _pretty(c.grenztext))]
+            if c.ueberhoehung:
+                kv.append(("Überhöhung w_c", f"{c.ueberhoehung * 1e3:.1f} mm"))
+            kv += [("größter Wert", c.werttext()),
+                   ("maßgebende Kombination", c.kombination),
+                   ("Stelle", c.stelle),
+                   ("Ausnutzung", Util(c.util)),
+                   ("Status", "Nachweis erfüllt" if c.util <= 1.0
+                    else "Nachweis NICHT erfüllt")]
+            if grenze is not None and grenze.beschreibung:
+                kv.insert(0, ("Beschreibung", grenze.beschreibung))
+            b.append(("kv", kv, f"Verformungsnachweis {c.name}"))
+            if len(c.je_kombination) > 1:
+                zeilen = sorted(c.je_kombination, key=lambda d: -d["util"])
+                rows = [["Kombination", "Wert", "Ausnutzung", "Stelle"]]
+                f = 1e3
+                for d in zeilen:
+                    rows.append([d["kombination"], f"{d['wert'] * f:.2f} "
+                                 + ("mrad" if c.winkel else "mm"),
+                                 Util(d["util"]), d["stelle"]])
+                rows, note = self._truncate(rows, self.opt("max_detail_combinations") or 12)
+                b.append(("table", rows, "Verformung je Kombination (absteigend geordnet)",
+                          None, ""))
+                if note:
+                    b.append(("note", note))
+            if c.hinweise:
+                b.append(("list", [f"Hinweis: {h}" for h in c.hinweise]))
+        nf = [c.name for c in g.checks.values() if c.util > 1.0]
+        if nf:
+            self._warnings.append("Verformungsnachweis NICHT erfüllt für: " + ", ".join(nf))
+        return b
+
+    # ============================================================ Kapitel 9
     def chapter_summary(self) -> list:
         m = self.model
         b = [self._h(1, "Zusammenfassung")]
@@ -1818,6 +1925,15 @@ class Report:
                                                f"{worst.category / 1e6:.0f}: {_pretty(worst.governing)}"))
             if any(fm.util > 1.0 for fm in f.members.values()):
                 status_ok = False
+        gz = self.gzg
+        if gz is not None and getattr(gz, "checks", None):
+            worst = max(gz.checks.values(), key=lambda c: c.util)
+            kv.append(("max. Ausnutzung Verformung (GZG)", Util(worst.util)))
+            kv.append(("maßgebend (Verformung)",
+                       f"{worst.name} ({worst.bezug}): {worst.werttext()} von "
+                       f"{worst.grenztext}, {worst.kombination}"))
+            if any(c.util > 1.0 or c.fehler for c in gz.checks.values()):
+                status_ok = False
         aj = self.joints
         if aj is not None and getattr(aj, "joints", None):
             worst = max(aj.joints.values(), key=lambda c: c.eta)
@@ -1831,12 +1947,13 @@ class Report:
         b.append(("kv", kv, "Wesentliche Ergebnisse"))
         gefuehrt = ((d is not None and getattr(d, "members", None))
                     or (f is not None and getattr(f, "members", None))
-                    or (aj is not None and getattr(aj, "joints", None)))
+                    or (aj is not None and getattr(aj, "joints", None))
+                    or (gz is not None and getattr(gz, "checks", None)))
         if gefuehrt:
             if status_ok:
                 b.append(("status", "Alle Nachweise erfüllt.", True))
             else:
-                b.append(("status", "Nachweise NICHT erfüllt – siehe Kapitel 5 bis 7.", False))
+                b.append(("status", "Nachweise NICHT erfüllt – siehe Kapitel 5 bis 8.", False))
         else:
             b.append(("status", "Es wurden keine Nachweise geführt; die Ergebnisse dienen der "
                                 "Schnittgrößen- und Verformungsermittlung.", True))

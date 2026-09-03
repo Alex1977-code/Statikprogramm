@@ -55,7 +55,7 @@ Dreizehn Register nach Arbeitsschritt:
 | **Lasten** | Lastfälle, Kombinationen, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht |
 | **Netz** | Netz erzeugen und löschen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
-| **Nachweise** | EC3, Ermüdung, Konfiguration |
+| **Nachweise** | EC3, Ermüdung, Verformung (GZG), Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
 | **Bericht** | Statischer Bericht |
 | **Ansicht** | Blickrichtungen, Kanten, Nummern, Lasten, Stäbe farbig |
@@ -80,7 +80,7 @@ Die Arbeitsfläche in drei Spalten:
 
 Unten die **Tabellen**: Protokoll, Werkstoffe, Querschnitte, Dicken,
 Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt,
-Anschlüsse.
+Anschlüsse, Verformungen.
 Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
 in einem Panel rechts. Wie die Tabellen zu bedienen sind, steht im nächsten
 Abschnitt.
@@ -412,6 +412,33 @@ Kapitel 7 des Berichts führt jede Schraube und jede Naht mit E_d, R_d und η,
 die Ausnutzung je Kombination, die Steifigkeitsbeiwerte k_i und die
 Schraubenreihen der Zugzone.
 
+### Verformungsnachweise (GZG)
+
+Die Kombinationen des Grenzzustands der Gebrauchstauglichkeit rechnet Statik3D
+ohnehin; mit einer **Verformungsgrenze** werden sie gegen einen Grenzwert
+gehalten. Anlegen über Register *Nachweise* → „Verformung“, über den
+Modellbaum („+ Verformungsgrenze“) oder in der Tabelle „Verformungen“.
+
+| Bezug | wofür |
+|---|---|
+| **Stab** | Durchbiegung w bezogen auf die Sehne zwischen den Stabenden |
+| **Knoten** | Verschiebung oder Verdrehung gegenüber der Ausgangslage (Kragarmspitze, Stützenkopf) |
+| **Punktpaar** | Verschiebung zweier Knoten gegeneinander — Dichtungen, Führungen, Fugen, Anschläge (DIN 19704) |
+
+Der Grenzwert ist entweder **L/x** (L = Stablänge beziehungsweise Abstand der
+beiden Knoten) oder ein **absoluter Wert** in mm beziehungsweise mrad. Dazu
+gehören die Bemessungssituation (charakteristisch, häufig, quasi-ständig oder
+alle GZG-Kombinationen) und wahlweise eine **Überhöhung w_c**, die abgezogen
+wird (EN 1993-1-1, A.1.4.2).
+
+Wichtig für den Kragarm: die Durchbiegung eines Stabes bezieht sich auf die
+**Sehne** — dreht der ganze Stab mit, fällt das heraus. Für eine Kragarmspitze
+ist der Bezug „Knoten“ der richtige.
+
+Ergebnis: Tabelle „Verformungen“ mit Wert, Grenzwert, Ausnutzung,
+maßgebender Kombination und Stelle; Kapitel 8 des Berichts führt jeden
+Nachweis mit seiner Verformung je Kombination.
+
 ## 9 Berechnung und Parallelisierung
 
 * **Alle Lastfälle + Kombinationen**: Standard. Eine Faktorisierung, alle
@@ -435,7 +462,7 @@ Schraubenreihen der Zugzone.
   außerdem CSV, VTK (ParaView).
 * Statischer Bericht: Projektdaten, System, Einwirkungen, Kombinationen,
   Ergebnisse, Nachweise mit allen Zwischenwerten, Ermüdung, Anschlüsse
-  (jede Schraube, jede Naht), Kontakt, Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
+  (jede Schraube, jede Naht), Verformungen (GZG), Kontakt, Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
   Markdown.
 
 ## 11 Tastenkürzel
