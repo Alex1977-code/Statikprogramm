@@ -1,0 +1,82 @@
+name: Windows-Programm
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-exe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exe:
+    name: Statik3D.exe bauen
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Pakete installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow reportlab svglib qrcode
+
+      - name: Build-Stempel schreiben
+        run: python packaging/write_build.py ${{ github.sha }}
+
+      - name: exe bauen (PyInstaller)
+        run: pyinstaller --noconfirm --clean packaging/Statik3D.spec
+
+      - name: Selbsttest der exe
+        shell: pwsh
+        run: |
+          "Groesse: {0:N1} MB" -f ((Get-Item dist\Statik3D.exe).Length / 1MB)
+          $p = Start-Process -FilePath dist\Statik3D.exe -ArgumentList "--selbsttest" -PassThru
+          if (-not $p.WaitForExit(240000)) {
+            $p.Kill()
+            if (Test-Path statik3d_selbsttest.txt) { Get-Content statik3d_selbsttest.txt }
+            throw "Selbsttest: Zeitueberschreitung nach 240 s (haengt die exe in einem Meldungsfenster?)"
+          }
+          if (Test-Path statik3d_selbsttest.txt) { Get-Content statik3d_selbsttest.txt } else { "keine statik3d_selbsttest.txt geschrieben" }
+          if ($p.ExitCode -ne 0) { throw "Selbsttest fehlgeschlagen (Exit-Code $($p.ExitCode))" }
+
+      - name: exe als Artefakt ablegen
+        uses: actions/upload-artifact@v4
+        with:
+          name: Statik3D-exe-${{ github.sha }}
+          path: dist/Statik3D.exe
+
+      - name: Tag "latest" auf diesen Stand setzen
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git tag -f latest ${{ github.sha }}
+          git push -f origin latest
+
+      - name: Release "latest" veroeffentlichen
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Statik3D - neueste Version
+          body: |
+            Automatisch gebaut aus `main`.
+
+            build: ${{ github.sha }}
+            Datum: ${{ github.event.head_commit.timestamp }}
+            Commit: ${{ github.event.head_commit.message }}
+
+            Download: Statik3D.exe (Windows 10/11, 64 Bit). Beim ersten Start meldet
+            Windows SmartScreen ein unbekanntes Programm: "Weitere Informationen" -> "Trotzdem ausführen".
+          files: dist/Statik3D.exe
+          prerelease: false
+          make_latest: true

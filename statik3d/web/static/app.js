@@ -997,7 +997,8 @@ function renderMehr() {
 <details><summary>Protokoll</summary><div class="body"><pre>${esc(s.log.join('\n'))}</pre></div></details>
 <details><summary>Verbindung / Info</summary><div class="body">
   <div class="kv"><b>Server</b><span>Statik3D Web ${esc(s.server_version)}</span><b>Adresse</b><span>${esc(location.host)}</span><b>Parallel</b><span>${esc(s.parallel)}</span><b>Kerne</b><span>${s.cpu}</span></div>
-  <div class="btns"><button class="btn small" data-action="key">Zugangsschlüssel ändern</button><button class="btn small" data-action="reload">Neu laden</button></div>
+  <div class="btns"><button class="btn small primary" data-action="update-check">Update suchen</button><button class="btn small" data-action="key">Zugangsschlüssel ändern</button><button class="btn small" data-action="reload">Neu laden</button></div>
+  <div id="update-box"></div>
   <div class="muted">Zum Startbildschirm hinzufügen: Browser-Menü → „Zum Startbildschirm“ – dann startet Statik3D wie eine App.</div>
 </div></details>`;
 }
@@ -1109,6 +1110,22 @@ const ACTIONS = {
   'member-chart': async el => { S.member = el.value; await loadMemberChart(); },
   'member-detail': el => memberDetail(el.dataset.name),
   'fatigue-detail': el => fatigueDetail(el.dataset.name),
+  'update-check': async () => {
+    const box = $('#update-box'); if (box) box.innerHTML = '<div class="muted">Frage GitHub …</div>';
+    try {
+      const r = await API.get('/api/update');
+      const html = `<div class="msg ${r.available ? 'warn' : 'ok'}">${esc(r.message)}</div><div class="muted">${esc(r.current)}</div>` +
+        (r.available ? (r.kind === 'exe'
+          ? `<div class="btns"><a class="btn primary" href="${esc(r.download)}">Statik3D.exe herunterladen</a><a class="btn" href="${esc(r.releases)}" target="_blank" rel="noopener">Release ansehen</a></div><div class="muted">Oder im Programmfenster auf dem PC: Knopf „Update“ unten rechts.</div>`
+          : `<div class="btns"><button class="btn primary" data-action="update-apply">Jetzt aktualisieren</button></div>`) : '');
+      if (box) { box.innerHTML = html; bindActions(box); }
+    } catch (e) { if (box) box.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+  },
+  'update-apply': async () => {
+    const box = $('#update-box'); if (box) box.innerHTML = '<div class="muted">Aktualisiere …</div><div class="progress"><div></div></div>';
+    try { const r = await API.post('/api/update', {}); if (box) box.innerHTML = `<div class="msg ok">${esc(r.message)}</div>`; toast(r.message, 'ok'); }
+    catch (e) { if (box) box.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+  },
   'check': async () => { try { const r = await API.get('/api/check'); modal(`<h2>Modellprüfung</h2>${r.messages.length ? r.messages.map(m => `<div class="msg ${/FEHLER/.test(m) ? 'err' : 'warn'}">${esc(m)}</div>`).join('') : '<div class="msg ok">Keine Beanstandungen</div>'}`); } catch (e) { toast(e.message, 'err'); } },
   'new': async () => { if (!confirm('Neues, leeres Modell anlegen? Ungespeicherte Änderungen gehen verloren.')) return; S.sel.nodes.clear(); S.sel.elems.clear(); S.first = true; await runOp({op: 'new', name: 'Modell'}); },
 };

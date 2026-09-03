@@ -1901,6 +1901,29 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "settings": st.settings, "parallel": parallel.describe()})
             return self._json({"settings": st.settings, "parallel": parallel.describe(),
                                "cpu": parallel.cpu_count()})
+        if path == "update":
+            from .. import update as upd
+            try:
+                if method == "POST":
+                    d = self._body_json(body)
+                    info = upd.check()
+                    if not info.available and not d.get("force"):
+                        return self._json({"ok": False, "message": info.message})
+                    if info.kind == "exe":
+                        raise ApiError("Das Windows-Programm aktualisiert sich über den Knopf "
+                                       "„Update“ unten rechts im Programmfenster auf dem PC.")
+                    msg = upd.apply(info, restart=False)
+                    if st.bound is None:
+                        threading.Timer(1.0, lambda: os.execv(sys.executable, upd.restart_command())).start()
+                        msg += " Der Server startet neu; die Seite verbindet sich gleich wieder."
+                    st.info(msg)
+                    return self._json({"ok": True, "message": msg})
+                info = upd.check()
+            except upd.UpdateError as ex:
+                raise ApiError(str(ex), 502)
+            return self._json({"ok": True, "available": info.available, "message": info.message,
+                               "kind": info.kind, "url": info.url, "current": upd.describe(),
+                               "download": upd.DOWNLOAD_URL, "releases": upd.RELEASES_URL})
         if path == "farm":
             from ..farm import FarmClient
             s = st.settings
