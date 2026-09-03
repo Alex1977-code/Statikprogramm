@@ -164,6 +164,14 @@ class Section:
     Wpl_y: float = 0.0        # plastische Widerstandsmomente [m^3]
     Wpl_z: float = 0.0
     fabrication: str = "rolled"   # rolled | welded | cold_formed
+    # Unsymmetrische Profile (U, L) und zusammengesetzte Querschnitte
+    yc: float = 0.0               # Schwerpunktlage in y ab Bezugskante [m]
+    zc: float = 0.0               # Schwerpunktlage in z ab Bezugskante [m]
+    alpha: float = 0.0            # Drehung der Hauptachsen gegen die Schenkel [rad]
+    Iy_geo: float = 0.0           # Traegheitsmomente in Schenkel-/Bezugsrichtung
+    Iz_geo: float = 0.0
+    Iyz_geo: float = 0.0
+    parts: list = field(default_factory=list)   # zusammengesetzt: Teilquerschnitte
 
     def __post_init__(self):
         if self.Wel_y <= 0 and self.zmax > 0:
@@ -243,6 +251,91 @@ class Section:
                        zmax=h / 2, ymax=b / 2,
                        typ="I", h=h, b=b, tw=tw, tf=tf, r=r, Iw=Iw,
                        Wpl_y=Wpl_y, Wpl_z=Wpl_z, fabrication=fabrication)
+
+    @staticmethod
+    def channel(name: str, h: float, b: float, tw: float, tf: float,
+                r: float = 0.0, taper: float = 0.0,
+                fabrication: str = "rolled") -> "Section":
+        """U-Profil (Rinne). h Gesamthoehe, b Flanschbreite, tw Stegdicke,
+        tf Flanschdicke (bei geneigten Flanschen in Flanschmitte gemessen),
+        taper = Neigung der Flanschinnenseite (UPN: 0.08, UPE: 0).
+        Die lokale y-Achse ist die starke Achse (Biegung in x-z), z liegt in der
+        Stegebene. yc ist der Schwerpunktabstand von der Stegaussenkante,
+        ymax der groessere Randabstand."""
+        hw = h - 2 * tf
+        A_w = h * tw
+        A_f = 2 * (b - tw) * tf
+        Ar = (1 - np.pi / 4) * r ** 2                 # Ausrundung je Steg-/Flanschecke
+        yr = tw + 0.2234 * r
+        A = A_w + A_f + 2 * Ar
+        # Flansche als Streifen: erfasst auch geneigte Innenseiten (UPN)
+        n = 400
+        x = np.linspace(tw, b, n + 1)
+        xm = 0.5 * (x[1:] + x[:-1])
+        dx = (b - tw) / n
+        t_str = tf + taper * ((tw + b) / 2 - xm)      # Dicke an der Stelle xm
+        zm = (h - t_str) / 2                          # Schwerpunktlage des Streifens
+        A_str = t_str * dx
+        S_f = 2 * float(np.sum(A_str * xm))
+        ey = (A_w * tw / 2 + S_f + 2 * Ar * yr) / A
+        Iy = (tw * hw ** 3 / 12.0                      # Steg
+              + 2 * float(np.sum(A_str * (t_str ** 2 / 12.0 + zm ** 2)))
+              + 2 * Ar * (hw / 2 - 0.2234 * r) ** 2)
+        Iy += tw * (h ** 3 - hw ** 3) / 12.0           # Steg ueber die volle Hoehe
+        Iz = (tw ** 3 * h / 12.0 + A_w * (tw / 2 - ey) ** 2
+              + 2 * float(np.sum(A_str * (dx ** 2 / 12.0 + (xm - ey) ** 2)))
+              + 2 * Ar * (yr - ey) ** 2)
+        It = (h * tw ** 3 + 2 * b * tf ** 3) / 3.0
+        hm = h - tf                      # Abstand der Flanschmitten
+        Iw = (tf * b ** 3 * hm ** 2 / 12.0
+              * (3 * tf * b + 2 * hm * tw) / (6 * tf * b + hm * tw))
+        ymax = max(ey, b - ey)
+        Wpl_y = tw * h ** 2 / 4.0 + (b - tw) * tf * (h - tf)
+        Wpl_z = (A / 2.0) * 0.35 * b     # Naeherung (unsymmetrisch)
+        return Section(name, A=A, Iy=Iy, Iz=Iz, It=It,
+                       Asy=A_f, Asz=hw * tw, zmax=h / 2, ymax=ymax,
+                       typ="U", h=h, b=b, tw=tw, tf=tf, r=r, Iw=Iw,
+                       Wel_y=Iy / (h / 2), Wel_z=Iz / ymax,
+                       Wpl_y=Wpl_y, Wpl_z=Wpl_z, fabrication=fabrication, yc=ey)
+
+    @staticmethod
+    def angle(name: str, h: float, b: float, t: float, r: float = 0.0,
+              fabrication: str = "rolled") -> "Section":
+        """Winkelprofil L (gleich- oder ungleichschenklig). h langer Schenkel,
+        b kurzer Schenkel, t Dicke.
+
+        Winkel haben geneigte Hauptachsen. Iy/Iz sind die **Hauptträgheitsmomente**
+        (Iy = groesseres), 'alpha' ist der Winkel der Hauptachsen gegen die
+        Schenkel [rad]: der Stab muss mit roll = alpha eingebaut werden, damit
+        die lokalen Achsen den Hauptachsen entsprechen. Iy_geo/Iz_geo/Iyz_geo
+        sind die Werte in Schenkelrichtung (Katalogwerte)."""
+        A1, A2 = h * t, (b - t) * t          # senkrechter und waagerechter Schenkel
+        A = A1 + A2 + (1 - np.pi / 4) * r ** 2
+        z1, y1 = h / 2, t / 2
+        z2, y2 = t / 2, t + (b - t) / 2
+        zc = (A1 * z1 + A2 * z2) / (A1 + A2)
+        yc = (A1 * y1 + A2 * y2) / (A1 + A2)
+        Iy_g = (t * h ** 3 / 12.0 + A1 * (z1 - zc) ** 2
+                + (b - t) * t ** 3 / 12.0 + A2 * (z2 - zc) ** 2)
+        Iz_g = (h * t ** 3 / 12.0 + A1 * (y1 - yc) ** 2
+                + t * (b - t) ** 3 / 12.0 + A2 * (y2 - yc) ** 2)
+        Iyz = A1 * (y1 - yc) * (z1 - zc) + A2 * (y2 - yc) * (z2 - zc)
+        m = (Iy_g + Iz_g) / 2.0
+        d = np.hypot((Iy_g - Iz_g) / 2.0, Iyz)
+        I1, I2 = m + d, m - d
+        alpha = 0.5 * np.arctan2(2 * Iyz, Iy_g - Iz_g) if abs(Iyz) > 1e-18 else 0.0
+        It = (h + b - t) * t ** 3 / 3.0
+        Iw = (h + b) * t ** 5 / 36.0        # Woelbwiderstand sehr klein
+        zmax = max(zc, h - zc)
+        ymax = max(yc, b - yc)
+        return Section(name, A=A, Iy=I1, Iz=I2, It=It,
+                       Asy=b * t, Asz=h * t, zmax=zmax, ymax=ymax,
+                       typ="L", h=h, b=b, tw=t, tf=t, r=r, Iw=Iw,
+                       Wel_y=I1 / zmax, Wel_z=I2 / ymax,
+                       Wpl_y=t * (h ** 2 + b ** 2 - t ** 2) / 4.0,
+                       Wpl_z=t * (h ** 2 + b ** 2 - t ** 2) / 4.0,
+                       fabrication=fabrication, yc=yc, zc=zc, alpha=float(alpha),
+                       Iy_geo=Iy_g, Iz_geo=Iz_g, Iyz_geo=Iyz)
 
     @staticmethod
     def rhs(name: str, h: float, b: float, t: float, r_out: float = None,

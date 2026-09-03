@@ -85,7 +85,148 @@ CHS = [(21.3, 2.3), (26.9, 2.3), (33.7, 2.6), (33.7, 3.2), (42.4, 2.6), (42.4, 3
        (355.6, 10), (355.6, 12.5), (355.6, 16), (406.4, 10), (406.4, 12.5), (406.4, 16),
        (457, 10), (457, 12.5), (457, 16), (508, 10), (508, 12.5), (508, 16), (610, 12.5), (610, 16)]
 
-FAMILIES = ("IPE", "HEA", "HEB", "HEM", "SHS", "RHS", "CHS")
+# --------------------------------------------------------------------------
+# U-Profile:  (h, b, tw, tf, r) in mm.  UPN nach DIN 1026-1 (geneigte Flansche,
+# Neigung 8 %), UPE nach DIN 1026-2 (parallele Flansche).
+# --------------------------------------------------------------------------
+UPN = {
+    50: (50, 38, 5, 7, 7), 65: (65, 42, 5.5, 7.5, 7.5), 80: (80, 45, 6, 8, 8),
+    100: (100, 50, 6, 8.5, 8.5), 120: (120, 55, 7, 9, 9), 140: (140, 60, 7, 10, 10),
+    160: (160, 65, 7.5, 10.5, 10.5), 180: (180, 70, 8, 11, 11), 200: (200, 75, 8.5, 11.5, 11.5),
+    220: (220, 80, 9, 12.5, 12.5), 240: (240, 85, 9.5, 13, 13), 260: (260, 90, 10, 14, 14),
+    280: (280, 95, 10, 15, 15), 300: (300, 100, 10, 16, 16), 320: (320, 100, 14, 17.5, 17.5),
+    350: (350, 100, 14, 16, 16), 380: (380, 102, 13.5, 16, 16), 400: (400, 110, 14, 18, 18),
+}
+UPE = {
+    80: (80, 50, 4, 7, 10), 100: (100, 55, 4.5, 7.5, 10), 120: (120, 60, 5, 8, 12),
+    140: (140, 65, 5, 9, 12), 160: (160, 70, 5.5, 9.5, 12), 180: (180, 75, 5.5, 10.5, 12),
+    200: (200, 80, 6, 11, 13), 220: (220, 85, 6.5, 12, 13), 240: (240, 90, 7, 12.5, 15),
+    270: (270, 95, 7.5, 13.5, 15), 300: (300, 100, 9.5, 15, 15), 330: (330, 105, 11, 16, 18),
+    360: (360, 110, 12, 17, 18), 400: (400, 115, 13.5, 18, 18),
+}
+# Winkel EN 10056-1: gleichschenklig (a, t, r), ungleichschenklig (h, b, t, r) in mm
+L_EQ = [(20, 3, 3.5), (25, 3, 3.5), (25, 4, 3.5), (30, 3, 5), (30, 4, 5), (35, 4, 5),
+        (40, 4, 6), (40, 5, 6), (45, 5, 7), (50, 5, 7), (50, 6, 7), (60, 6, 8), (60, 8, 8),
+        (70, 7, 9), (70, 9, 9), (80, 8, 10), (80, 10, 10), (90, 9, 11), (90, 11, 11),
+        (100, 10, 12), (100, 12, 12), (120, 12, 13), (120, 15, 13), (130, 12, 14),
+        (150, 15, 16), (150, 18, 16), (180, 18, 18), (200, 20, 18), (200, 24, 18), (250, 28, 24)]
+L_UNEQ = [(100, 50, 8, 9), (100, 65, 7, 10), (100, 65, 9, 10), (100, 75, 8, 10),
+          (120, 80, 8, 11), (120, 80, 10, 11), (125, 75, 8, 11), (130, 65, 8, 11),
+          (130, 65, 10, 11), (150, 75, 9, 12), (150, 90, 10, 12), (150, 90, 12, 12),
+          (150, 100, 10, 12), (150, 100, 12, 12), (200, 100, 10, 15), (200, 100, 12, 15),
+          (200, 150, 12, 15), (200, 150, 15, 15)]
+
+# --------------------------------------------------------------------------
+# Grossbritannien BS 4-1: UB/UC (h, b, tw, tf, r) in mm, PFC als U-Profil
+# --------------------------------------------------------------------------
+UB = {
+    "203x133x25": (203.2, 133.2, 5.7, 7.8, 7.6), "203x133x30": (206.8, 133.9, 6.4, 9.6, 7.6),
+    "254x146x31": (251.4, 146.1, 6.0, 8.6, 7.6), "254x146x43": (259.6, 147.3, 7.2, 12.7, 7.6),
+    "305x165x40": (303.4, 165.0, 6.0, 10.2, 8.9), "305x165x54": (310.4, 166.9, 7.9, 13.7, 8.9),
+    "356x171x51": (355.0, 171.5, 7.4, 11.5, 10.2), "356x171x67": (363.4, 173.2, 9.1, 15.7, 10.2),
+    "406x178x60": (406.4, 177.9, 7.9, 12.8, 10.2), "406x178x74": (412.8, 179.5, 9.5, 16.0, 10.2),
+    "457x191x74": (457.0, 190.4, 9.0, 14.5, 10.2), "457x191x98": (467.2, 192.8, 11.4, 19.6, 10.2),
+    "533x210x92": (533.1, 209.3, 10.1, 15.6, 12.7), "533x210x122": (544.5, 211.9, 12.7, 21.3, 12.7),
+    "610x229x113": (607.6, 228.2, 11.1, 17.3, 12.7), "610x229x140": (617.2, 230.2, 13.1, 22.1, 12.7),
+    "686x254x125": (677.9, 253.0, 11.7, 16.2, 15.2), "762x267x147": (754.0, 265.2, 12.8, 17.5, 16.5),
+    "838x292x176": (834.9, 291.7, 14.0, 18.8, 17.8), "914x305x201": (903.0, 303.3, 15.1, 20.2, 19.1),
+}
+UC = {
+    "152x152x37": (161.8, 154.4, 8.0, 11.5, 7.6), "152x152x51": (170.2, 157.4, 11.0, 15.7, 7.6),
+    "203x203x60": (209.6, 205.8, 9.4, 14.2, 10.2), "203x203x86": (222.2, 209.1, 12.7, 20.5, 10.2),
+    "254x254x73": (254.1, 254.6, 8.6, 14.2, 12.7), "254x254x89": (260.3, 256.3, 10.3, 17.3, 12.7),
+    "254x254x132": (276.3, 261.3, 15.3, 25.3, 12.7), "305x305x97": (307.9, 305.3, 9.9, 15.4, 15.2),
+    "305x305x137": (320.5, 309.2, 13.8, 21.7, 15.2), "305x305x198": (339.9, 314.5, 19.1, 31.4, 15.2),
+    "356x368x153": (362.0, 370.5, 12.6, 20.7, 15.2), "356x368x177": (368.2, 372.6, 14.4, 23.8, 15.2),
+}
+PFC = {
+    "100x50x10": (100, 50, 5.0, 8.5, 9.0), "125x65x15": (125, 65, 5.5, 9.5, 12.0),
+    "150x75x18": (150, 75, 5.5, 10.0, 12.0), "180x75x20": (180, 75, 6.0, 10.5, 12.0),
+    "200x75x23": (200, 75, 6.0, 12.5, 12.0), "200x90x30": (200, 90, 7.0, 14.0, 12.0),
+    "230x75x26": (230, 75, 6.5, 12.5, 12.0), "260x75x28": (260, 75, 7.0, 12.0, 12.0),
+    "260x90x35": (260, 90, 8.0, 14.0, 12.0), "300x90x41": (300, 90, 9.0, 15.5, 12.0),
+    "300x100x46": (300, 100, 9.0, 16.5, 15.0), "380x100x54": (380, 100, 9.5, 17.5, 15.0),
+    "430x100x64": (430, 100, 11.0, 19.0, 15.0),
+}
+
+# --------------------------------------------------------------------------
+# USA (AISC): W-Profile (d, bf, tw, tf) in Zoll, C-Profile, HSS und Pipe.
+# Die Ausrundung wird mit r ~ 0.6 tf angenaehert.
+# --------------------------------------------------------------------------
+INCH = 0.0254
+W_US = {
+    "W6x15": (5.99, 5.99, 0.230, 0.260), "W8x18": (8.14, 5.25, 0.230, 0.330),
+    "W8x31": (8.00, 8.00, 0.285, 0.435), "W10x22": (10.2, 5.75, 0.240, 0.360),
+    "W10x33": (9.73, 7.96, 0.290, 0.435), "W10x49": (10.0, 10.0, 0.340, 0.560),
+    "W12x26": (12.2, 6.49, 0.230, 0.380), "W12x40": (11.9, 8.01, 0.295, 0.515),
+    "W12x65": (12.1, 12.0, 0.390, 0.605), "W14x22": (13.7, 5.00, 0.230, 0.335),
+    "W14x53": (13.9, 8.06, 0.370, 0.660), "W14x90": (14.0, 14.5, 0.440, 0.710),
+    "W16x26": (15.7, 5.50, 0.250, 0.345), "W16x40": (16.0, 7.00, 0.305, 0.505),
+    "W18x35": (17.7, 6.00, 0.300, 0.425), "W18x50": (18.0, 7.50, 0.355, 0.570),
+    "W21x44": (20.7, 6.50, 0.350, 0.450), "W21x62": (21.0, 8.24, 0.400, 0.615),
+    "W24x55": (23.6, 7.01, 0.395, 0.505), "W24x76": (23.9, 8.99, 0.440, 0.680),
+    "W27x94": (26.9, 9.99, 0.490, 0.745), "W30x108": (29.8, 10.5, 0.545, 0.760),
+    "W33x118": (32.9, 11.5, 0.550, 0.740), "W36x150": (35.9, 12.0, 0.625, 0.940),
+}
+C_US = {   # (d, bf, tw, tf) in Zoll, geneigte Flansche (Neigung 1:6 = 0.167)
+    "C6x8.2": (6.00, 1.92, 0.200, 0.343), "C8x11.5": (8.00, 2.26, 0.220, 0.390),
+    "C10x15.3": (10.0, 2.60, 0.240, 0.436), "C12x20.7": (12.0, 2.94, 0.282, 0.501),
+    "C15x33.9": (15.0, 3.40, 0.400, 0.650),
+}
+HSS_US = {  # (h, b, t_nominal) in Zoll; Bemessungsdicke = 0.93 * t
+    "HSS4x4x1/4": (4, 4, 0.25), "HSS5x5x3/8": (5, 5, 0.375), "HSS6x6x3/8": (6, 6, 0.375),
+    "HSS8x8x1/2": (8, 8, 0.5), "HSS10x10x1/2": (10, 10, 0.5), "HSS12x12x1/2": (12, 12, 0.5),
+    "HSS6x4x3/8": (6, 4, 0.375), "HSS8x6x1/2": (8, 6, 0.5), "HSS10x6x1/2": (10, 6, 0.5),
+    "HSS12x8x1/2": (12, 8, 0.5), "HSS16x8x1/2": (16, 8, 0.5),
+}
+PIPE_US = {  # (Aussendurchmesser, Nennwanddicke) in Zoll; gerechnet mit 0.93 t (AISC)
+    "PIPE 2 STD": (2.375, 0.154), "PIPE 3 STD": (3.5, 0.216), "PIPE 4 STD": (4.5, 0.237),
+    "PIPE 6 STD": (6.625, 0.280), "PIPE 8 STD": (8.625, 0.322), "PIPE 10 STD": (10.75, 0.365),
+    "PIPE 12 STD": (12.75, 0.375),
+}
+
+FAMILIES = ("IPE", "HEA", "HEB", "HEM", "UPN", "UPE", "L", "LU", "SHS", "RHS", "CHS",
+            "UB", "UC", "PFC", "W", "C", "HSS", "PIPE")
+
+# Land -> (Bezeichnung, Norm, Familien)
+COUNTRIES = {
+    "EU": ("Europa / Deutschland", "EN 10365, DIN 1026, EN 10056, EN 10210",
+           ["IPE", "HEA", "HEB", "HEM", "UPN", "UPE", "L", "LU", "SHS", "RHS", "CHS"]),
+    "GB": ("Grossbritannien", "BS 4-1, BS EN 10365", ["UB", "UC", "PFC"]),
+    "US": ("USA / Kanada", "AISC Steel Construction Manual", ["W", "C", "HSS", "PIPE"]),
+}
+FAMILY_INFO = {
+    "IPE": ("Doppel-T schmal (EN 10365)", "EU"), "HEA": ("Breitflansch HE-A (EN 10365)", "EU"),
+    "HEB": ("Breitflansch HE-B (EN 10365)", "EU"), "HEM": ("Breitflansch HE-M (EN 10365)", "EU"),
+    "UPN": ("U-Profil geneigte Flansche (DIN 1026-1)", "EU"),
+    "UPE": ("U-Profil parallele Flansche (DIN 1026-2)", "EU"),
+    "L": ("Winkel gleichschenklig (EN 10056-1)", "EU"),
+    "LU": ("Winkel ungleichschenklig (EN 10056-1)", "EU"),
+    "SHS": ("Quadratrohr (EN 10210)", "EU"), "RHS": ("Rechteckrohr (EN 10210)", "EU"),
+    "CHS": ("Rundrohr (EN 10210)", "EU"),
+    "UB": ("Universal Beam (BS 4-1)", "GB"), "UC": ("Universal Column (BS 4-1)", "GB"),
+    "PFC": ("Parallel Flange Channel (BS 4-1)", "GB"),
+    "W": ("Wide Flange (AISC)", "US"), "C": ("American Standard Channel (AISC)", "US"),
+    "HSS": ("Hollow Structural Section (AISC)", "US"), "PIPE": ("Rohr Standard (AISC)", "US"),
+}
+
+
+def countries() -> list[tuple]:
+    """[(Kuerzel, Bezeichnung, Norm, Familien)] der Laender in der Datenbank."""
+    return [(k, v[0], v[1], list(v[2])) for k, v in COUNTRIES.items()]
+
+
+def country_of(family: str) -> str:
+    return FAMILY_INFO.get(family.upper(), ("", "EU"))[1]
+
+
+def families(country: str = None) -> list[str]:
+    if country is None:
+        return list(FAMILIES)
+    c = COUNTRIES.get(country.upper())
+    if c is None:
+        raise KeyError(f"Land '{country}' unbekannt ({list(COUNTRIES)})")
+    return list(c[2])
 
 
 def _norm(designation: str) -> str:
@@ -103,23 +244,73 @@ def _norm(designation: str) -> str:
     return s
 
 
-def list_profiles(family: str = None) -> list[str]:
-    """Alle Profilbezeichnungen (optional einer Familie)."""
+_US_TABLES = None
+
+
+def _us_lookup(key: str):
+    """(Tabellenname, Werte) zu einer normierten US-Bezeichnung."""
+    global _US_TABLES
+    if _US_TABLES is None:
+        _US_TABLES = {}
+        for tab_name, tab in (("W", W_US), ("C", C_US), ("HSS", HSS_US), ("PIPE", PIPE_US)):
+            for k, v in tab.items():
+                _US_TABLES[re.sub(r"\s+", "", k.upper())] = (tab_name, v)
+    return _US_TABLES.get(key)
+
+
+def _us_key(designation: str) -> str:
+    """US-Bezeichnung normieren: 'w14 x 90' -> 'W14x90', 'hss 6x6x3/8' -> 'HSS6x6x3/8'."""
+    k = re.sub(r"\s+", "", designation.upper()).replace("×", "X")
+    return k
+
+
+def list_profiles(family: str = None, country: str = None) -> list[str]:
+    """Profilbezeichnungen, optional einer Familie oder eines Landes."""
+    if family is None and country is not None:
+        out = []
+        for f in families(country):
+            out += list_profiles(f)
+        return out
     out = []
-    if family in (None, "IPE"):
+    f = family.upper() if family else None
+    if f in (None, "IPE"):
         out += [f"IPE {h}" for h in IPE]
-    if family in (None, "HEA"):
+    if f in (None, "HEA"):
         out += [f"HEA {h}" for h in HEA]
-    if family in (None, "HEB"):
+    if f in (None, "HEB"):
         out += [f"HEB {h}" for h in HEB]
-    if family in (None, "HEM"):
+    if f in (None, "HEM"):
         out += [f"HEM {h}" for h in HEM]
-    if family in (None, "SHS"):
+    if f in (None, "UPN"):
+        out += [f"UPN {h}" for h in UPN]
+    if f in (None, "UPE"):
+        out += [f"UPE {h}" for h in UPE]
+    if f in (None, "L"):
+        out += [f"L {a}x{a}x{t:g}" for a, t, _ in L_EQ]
+    if f in (None, "LU"):
+        out += [f"L {h}x{b}x{t:g}" for h, b, t, _ in L_UNEQ]
+    if f in (None, "SHS"):
         out += [f"SHS {b}x{t:g}" for b, t in SHS]
-    if family in (None, "RHS"):
+    if f in (None, "RHS"):
         out += [f"RHS {h}x{b}x{t:g}" for h, b, t in RHS]
-    if family in (None, "CHS"):
+    if f in (None, "CHS"):
         out += [f"CHS {d:g}x{t:g}" for d, t in CHS]
+    if f in (None, "UB"):
+        out += [f"UB {k}" for k in UB]
+    if f in (None, "UC"):
+        out += [f"UC {k}" for k in UC]
+    if f in (None, "PFC"):
+        out += [f"PFC {k}" for k in PFC]
+    if f in (None, "W"):
+        out += list(W_US)
+    if f in (None, "C"):
+        out += list(C_US)
+    if f in (None, "HSS"):
+        out += list(HSS_US)
+    if f in (None, "PIPE"):
+        out += list(PIPE_US)
+    if f is not None and not out:
+        raise KeyError(f"Profilreihe '{family}' unbekannt ({list(FAMILIES)})")
     return out
 
 
@@ -148,7 +339,57 @@ def make_section(designation: str, name: str = None) -> Section:
     if mm:
         d, t = float(mm.group(1)), float(mm.group(2))
         return Section.pipe(nm, d * 1e-3, t * 1e-3)
-    raise KeyError(f"Profil '{designation}' unbekannt (IPE/HEA/HEB/HEM/SHS/RHS/CHS)")
+    mm = re.match(r"(UPN|UPE) (\d+)$", s)
+    if mm:
+        fam, h = mm.group(1), int(mm.group(2))
+        tab = UPN if fam == "UPN" else UPE
+        if h not in tab:
+            raise KeyError(f"{fam} {h} nicht in der Datenbank")
+        H, B, tw, tf, r = tab[h]
+        return Section.channel(nm, H * 1e-3, B * 1e-3, tw * 1e-3, tf * 1e-3, r * 1e-3,
+                               taper=0.08 if fam == "UPN" else 0.0)
+    mm = re.match(r"L (\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)$", s)
+    if mm:
+        h, b, t = (float(mm.group(i)) for i in (1, 2, 3))
+        if h < b:
+            h, b = b, h
+        r = next((rr for a, tt, rr in L_EQ if a == h and tt == t), None) if h == b else \
+            next((rr for hh, bb, tt, rr in L_UNEQ if hh == h and bb == b and tt == t), None)
+        if r is None:
+            r = round(0.9 * t, 1)          # nicht tabelliert: Ausrundung geschaetzt
+        return Section.angle(nm, h * 1e-3, b * 1e-3, t * 1e-3, r * 1e-3)
+    mm = re.match(r"(UB|UC) (\S+)$", s)
+    if mm:
+        fam, key = mm.group(1), mm.group(2).lower()
+        tab = UB if fam == "UB" else UC
+        if key not in tab:
+            raise KeyError(f"{fam} {mm.group(2)} nicht in der Datenbank")
+        H, B, tw, tf, r = tab[key]
+        return Section.i_profile(nm, H * 1e-3, B * 1e-3, tw * 1e-3, tf * 1e-3, r * 1e-3)
+    mm = re.match(r"PFC (\S+)$", s)
+    if mm:
+        key = mm.group(1).lower()
+        if key not in PFC:
+            raise KeyError(f"PFC {mm.group(1)} nicht in der Datenbank")
+        H, B, tw, tf, r = PFC[key]
+        return Section.channel(nm, H * 1e-3, B * 1e-3, tw * 1e-3, tf * 1e-3, r * 1e-3)
+    hit = _us_lookup(_us_key(designation))
+    if hit:
+        fam, v = hit
+        if fam == "W":
+            d, bf, tw, tf = v
+            return Section.i_profile(nm, d * INCH, bf * INCH, tw * INCH, tf * INCH, 0.6 * tf * INCH)
+        if fam == "C":
+            d, bf, tw, tf = v
+            return Section.channel(nm, d * INCH, bf * INCH, tw * INCH, tf * INCH,
+                                   0.7 * tf * INCH, taper=1 / 6.0)
+        if fam == "HSS":
+            h, b, t = v
+            return Section.rhs(nm, h * INCH, b * INCH, 0.93 * t * INCH, fabrication="cold_formed")
+        d, t = v          # AISC: Bemessungswanddicke 0.93 * nominal
+        return Section.pipe(nm, d * INCH, 0.93 * t * INCH)
+    raise KeyError(f"Profil '{designation}' unbekannt. Verfuegbare Reihen: "
+                   + ", ".join(FAMILIES))
 
 
 def find_profile(designation: str) -> bool:
