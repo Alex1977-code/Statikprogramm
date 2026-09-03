@@ -80,6 +80,22 @@ ACTION_CATEGORIES = {
     "SET":  ("Baugrundsetzungen", (1.0, 1.0, 1.0)),
     "A":    ("Aussergewoehnliche Einwirkung", (1.0, 1.0, 1.0)),
     "FAT":  ("Ermuedungslast (nur fuer Ermuedungsnachweis)", (0.0, 0.0, 0.0)),
+    # --- Stahlwasserbau und bewegliche Bruecken (DIN 19704, ZTV-ING) ---
+    # Die psi-Werte sind Voreinstellungen und gegen die geltende Fassung zu
+    # bestaetigen; siehe statik3d.bridges.din19704.Regelwerk.
+    "G_A":    ("Eigengewicht Ausruestung und Antrieb (DIN 19704)", (1.0, 1.0, 1.0)),
+    "W_S":    ("Wasserdruck staendig, Stauziel (DIN 19704)", (1.0, 1.0, 1.0)),
+    "W_V":    ("Wasserdruck veraenderlich, Betriebswasserstaende (DIN 19704)", (0.8, 0.7, 0.5)),
+    "Q_BEW":  ("Betriebslast beim Bewegen (DIN 19704)", (0.8, 0.7, 0.5)),
+    "A_M":    ("Antriebsmoment, planmaessig (DIN 19704)", (1.0, 0.9, 0.8)),
+    "A_MG":   ("Antriebsmoment, Grenzmoment der Rutschkupplung (DIN 19704)", (1.0, 0.9, 0.8)),
+    "WIND_B": ("Wind waehrend der Bewegung (ZTV-ING)", (0.6, 0.2, 0.0)),
+    "EIS":    ("Eisdruck, Eislast (DIN 19704)", (0.6, 0.5, 0.0)),
+    "SCHWALL": ("Schwall und Sunk, Wellendruck (DIN 19704)", (0.6, 0.5, 0.0)),
+    "ANPRALL": ("Anprall durch Schiff oder Treibgut", (1.0, 1.0, 1.0)),
+    "KLEMM":  ("Verklemmen eines Antriebsstrangs (ZTV-ING)", (1.0, 1.0, 1.0)),
+    "MONT":   ("Montage- und Revisionszustand", (1.0, 1.0, 1.0)),
+    "ERD":    ("Erdbeben (DIN EN 1998)", (1.0, 1.0, 1.0)),
 }
 
 

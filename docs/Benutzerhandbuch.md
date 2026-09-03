@@ -311,3 +311,92 @@ konservativ, siehe Theoriehandbuch Kap. 4), keine Schalenbeulnachweise, keine
 Plastizität, keine Zeitbereichsdynamik. Das Programm ist verifiziert
 (Testsuiten im Ordner `tests`), aber nicht bauaufsichtlich zugelassen; die
 Verantwortung für die Nachweise liegt beim Anwender.
+
+## Bewegliche Brücken und Stahlwasserbauten
+
+Eine Klappbrücke, eine Drehbrücke oder ein Hubtor ist in jeder Stellung ein
+**anderes Tragwerk**: Lager greifen oder nicht, Riegel sind gezogen, das
+Eigengewicht wirkt unter einem anderen Winkel, der Antrieb hält ein anderes
+Moment. Deshalb wird jede Stellung als eigener Rechenlauf geführt und am Ende
+die Umhüllende über alle Stellungen gebildet — mit der Angabe, **welche
+Stellung für welchen Nachweis maßgebend ist**.
+
+### Stellungen anlegen
+
+```python
+from statik3d.bridges import Stellung, Stellungsreihe
+
+reihe = Stellungsreihe(modell, "Klappbrücke Hafenkanal")
+reihe.add(Stellung("S1", 0.0, "geschlossen"))
+for w in (20, 45, 70, 82):
+    reihe.add(Stellung(f"S{w}", w, f"geöffnet {w}°",
+                       lager_aus=["Endauflager"],          # Riegel gezogen
+                       dreh_achse=(0, 1, 0), dreh_punkt=(0, 0, 0),
+                       dreh_winkel=-w, dreh_gruppen=["klappe"],
+                       antrieb=(knoten_drehachse, (0, 250e3, 0))))
+umh = reihe.rechnen(nachweise=True)
+print(umh.bericht())
+```
+
+Je Stellung lässt sich einstellen:
+
+| Angabe | Wirkung |
+|---|---|
+| `lager_aktiv` / `lager_aus` | welche benannten Lager in dieser Stellung greifen |
+| `dreh_achse`, `dreh_punkt`, `dreh_winkel`, `dreh_gruppen` | die bewegten Bauteile werden gedreht; das Eigengewicht wirkt dadurch anders |
+| `faelle`, `kombinationen` | welche Lastfälle in dieser Stellung überhaupt gelten |
+| `antrieb` | Antriebsmoment als Knotenlast in einem eigenen Lastfall |
+
+Die Umhüllende nennt die größte Ausnutzung, die größte Verformung und die
+größte Auflagerkraft je Knoten — **jeweils mit der Stellung, in der sie
+auftritt**. `umh.kurve()` liefert `(Winkel, η, u_max)` für die Kurve über den
+Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
+ausgewiesen, nicht stillschweigend übergangen.
+
+### Lastfallklassen nach DIN 19704
+
+```python
+from statik3d.bridges import Regelwerk
+rw = Regelwerk()
+rw.faktor("LF1", "G", 1.35, "DIN 19704-1, geprüft")   # eigenen Wert bestätigen
+kombis = rw.kombinationen(modell)                     # DIN LF1.1, DIN LF2.3, …
+print(rw.bericht())
+```
+
+| Klasse | Bedeutung |
+|---|---|
+| LF1 | Normalfall — regelmäßiger Betrieb |
+| LF2 | Sonderfall — seltene, planmäßig mögliche Zustände |
+| LF3 | außergewöhnlicher Fall — Bau-, Revisions- und Störfall |
+
+Die Einwirkungen des Stahlwasserbaus sind als Einwirkungskategorien verfügbar:
+`G_A` (Ausrüstung und Antrieb), `W_S`/`W_V` (Wasserdruck ständig/veränderlich),
+`Q_BEW` (Betriebslast beim Bewegen), `A_M`/`A_MG` (Antriebsmoment planmäßig /
+Grenzmoment der Rutschkupplung), `WIND_B` (Wind während der Bewegung), `EIS`,
+`SCHWALL`, `ANPRALL`, `KLEMM` (Verklemmen), `MONT`, `ERD`.
+
+> **Wichtig — die Zahlenwerte sind zu bestätigen.** Statik3D bildet das
+> *Verfahren* ab: die Einteilung der Einwirkungen, die drei Lastfallklassen und
+> die Kombinationsbildung daraus. Die *Beiwerte* γ_F, γ_M und ψ₀ sind als
+> **Voreinstellung** mitgeliefert und ausdrücklich gegen die geltende Fassung
+> der Norm zu prüfen. `rw.offen()` nennt jeden noch nicht bestätigten Wert,
+> `rw.bericht()` schreibt die Tabelle mit Herkunft, und das Importprotokoll
+> weist darauf hin. Ein Programm, das Beiwerte aus dem Gedächtnis behauptet,
+> wäre schlimmer als eines, das die Tabelle offen zur Bestätigung vorlegt.
+
+### ZTV-ING-Prüfliste
+
+```python
+from statik3d.bridges import pruefliste, bewegungen
+for thema, erfuellt, hinweis in pruefliste(reihe, modell):
+    print("OK " if erfuellt else "OFFEN", thema, hinweis)
+print("Lastwechsel:", bewegungen(4 * 365, 100))   # 4 Bewegungen/Tag, 100 Jahre
+```
+
+Geprüft wird, ob Zwischenstellungen untersucht sind, ob ein Antriebsmoment
+angesetzt ist (und ob auch das Grenzmoment der Rutschkupplung als LF3
+vorliegt), ob Wind während der Bewegung und das Verklemmen eines
+Antriebsstrangs als Einwirkung geführt werden und ob die Lagerzustände je
+Stellung unterschieden sind. Was das Programm nicht selbst sehen kann — etwa
+die Zahl der Bewegungen über die Nutzungsdauer — wird als **offen** ausgewiesen
+und nicht als erfüllt behauptet.
