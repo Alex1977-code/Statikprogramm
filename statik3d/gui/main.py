@@ -27,6 +27,7 @@ from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialo
                       parse_int_list)
 from .worker import SolveWorker
 from . import ribbon as rib
+from . import masken as msk
 from . import viewport as vp
 from . import design as dsg
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
@@ -49,7 +50,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.path = None
         self.worker = None
 
-        self.setStyleSheet(dsg.stil() + rib.stil())
+        self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil())
         self._build_viewport()
         self._build_panels()
         self._build_bottom()
@@ -122,6 +123,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plotter.set_background("white")
         lay.addWidget(self.plotter.interactor, 1)
         self.setCentralWidget(central)
+        # Die nicht-modalen Masken schweben ueber der Ansicht (Vorgabe 3.8)
+        self.maskenrand = msk.Maskenrand(central)
         try:
             self.plotter.enable_point_picking(callback=self._picked, show_message=False,
                                               left_clicking=True, show_point=False,
@@ -140,12 +143,17 @@ class MainWindow(QtWidgets.QMainWindow):
         i = int(np.argmin(d))
         if d[i] > 0.05 * self.model.characteristic_size():
             return
+        # Ist eine Erzeuge-Maske offen, geht der Klick an sie: „Maske oder Klick“
+        if self.maskenrand.knoten_angeklickt(i):
+            self.redraw()
+            return
         if i in self.selection:
             self.selection = self.selection[self.selection != i]
         else:
             self.selection = np.append(self.selection, i)
         self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt (zuletzt {i}: "
                              f"{np.round(self.model.nodes[i], 3)})")
+        self._auswahl_register()
         self.redraw()
 
     def _build_ribbon(self):
@@ -208,8 +216,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # -- Geometrie ---------------------------------------------------
         r = rb.register("Geometrie")
         g = r.gruppe("Knoten")
-        g.gross("Knoten", "•", lambda: self.maske_zeigen("Knoten"),
-                hinweis="Knoten über Koordinaten anlegen")
+        g.gross("Knoten", "•", self.maske_knoten, "",
+                "Knoten über Koordinaten anlegen oder in der Ansicht klicken")
         g.klein("Knoten löschen", self.delete_nodes)
         g = r.gruppe("Netzgeneratoren")
         g.gross("Stabzug", "╱", lambda: self.maske_zeigen("Netz"),
@@ -222,10 +230,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # -- Struktur ----------------------------------------------------
         r = rb.register("Struktur")
         g = r.gruppe("Elemente")
-        g.gross("Stab", "╲", lambda: self.maske_zeigen("Netz"),
-                hinweis="Stabelement zwischen zwei Knoten")
-        g.gross("Schale", "◫", lambda: self.maske_zeigen("Netz"),
-                hinweis="Schalenelement aus 3 oder 4 Knoten")
+        g.gross("Stab", "╲", self.maske_stab, "",
+                "Zwei Knoten anklicken oder ihre Nummern eintragen")
+        g.gross("Schale", "◫", self.maske_schale, "",
+                "Drei oder vier Knoten in der Ansicht anklicken")
         g.klein("Elemente löschen", self.delete_elements)
         g = r.gruppe("Eigenschaften")
         g.gross("Querschnitte", "⌶", lambda: self.tabelle_zeigen("Querschnitte"),
@@ -242,8 +250,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # -- Lager / Gelenke / Kontakt -----------------------------------
         r = rb.register("Lager / Kontakt")
         g = r.gruppe("Lager")
-        g.gross("Knotenlager", "△", lambda: self.maske_zeigen("Lager/Lasten"),
-                hinweis="Lager an den gewählten Knoten")
+        g.gross("Knotenlager", "△", self.maske_lager, "",
+                "Knoten wählen, Freiheitsgrade ankreuzen")
         g.klein("Linienlager…", self.line_support_dialog)
         g.klein("Flächenlager…", self.surface_support_dialog)
         g.klein("Nichtlinearität…", self.support_nonlinear_dialog)
@@ -263,8 +271,8 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Kombinationen automatisch…", self.auto_combinations)
         g.klein("Ermüdungslast…", self.fatigue_load_dialog)
         g = r.gruppe("Lasten")
-        g.gross("Knotenlast", "↓", lambda: self.maske_zeigen("Lager/Lasten"),
-                hinweis="Einzellast an den gewählten Knoten")
+        g.gross("Knotenlast", "↓", self.maske_knotenlast, "",
+                "Knoten wählen, Kräfte und Momente eintragen")
         g.gross("Stablast", "⇊", lambda: self.maske_zeigen("Lager/Lasten"),
                 hinweis="Streckenlast auf Stabelemente")
         g.klein("Flächenlast", lambda: self.maske_zeigen("Lager/Lasten"))
@@ -604,21 +612,15 @@ class MainWindow(QtWidgets.QMainWindow):
             g.addWidget(e, i // 2, 2 * (i % 2) + 1)
         lay.addLayout(g)
 
-        lay.addWidget(QtWidgets.QLabel("<b>Elemente ändern</b>"))
-        self.ed_elist = QtWidgets.QLineEdit()
-        self.ed_elist.setPlaceholderText("Element-Nr., z.B. 0-7, 12 (leer = Auswahl-Knoten)")
-        self.cb_assign_sec = QtWidgets.QComboBox()
-        self.cb_assign_mat = QtWidgets.QComboBox()
-        ba = QtWidgets.QPushButton("Zuweisen")
-        ba.clicked.connect(self.assign_props)
-        lay.addWidget(self.ed_elist)
-        lay.addWidget(row("Querschnitt", self.cb_assign_sec, "Material", self.cb_assign_mat, ba))
+        # „Elemente ändern“ steht jetzt im Register „Auswahl: n Knoten“, das
+        # erscheint, sobald etwas gewählt ist (Vorgabe Kap. 16.1 Nr. 7).
+        self.ed_elist = QtWidgets.QLineEdit()          # bleibt als Eingabeweg
+        self.ed_elist.hide()
         self.ed_hinge = QtWidgets.QComboBox()
-        self.ed_hinge.addItems(["Gelenk: keines", "Gelenk Anfang (My, Mz)", "Gelenk Ende (My, Mz)",
-                                "Gelenk beide Enden", "Vollgelenk beide Enden (Mt, My, Mz)"])
-        bh = QtWidgets.QPushButton("Gelenke setzen")
-        bh.clicked.connect(self.set_hinges)
-        lay.addWidget(row(self.ed_hinge, bh))
+        self.ed_hinge.addItems(["Gelenk: keines", "Gelenk Anfang (My, Mz)",
+                                "Gelenk Ende (My, Mz)", "Gelenk beide Enden",
+                                "Vollgelenk beide Enden (Mt, My, Mz)"])
+        self.ed_hinge.hide()
 
 
         lay.addStretch()
@@ -1259,8 +1261,11 @@ class MainWindow(QtWidgets.QMainWindow):
                                    f"{v.Wpl_y*1e6:.1f}"] for k, v in m.sections.items()])
         self._fill(self.tbl_shell, [[k, f"{v.t:g}"] for k, v in m.shells.items()])
         for cb, keys in ((self.cb_mat, m.materials), (self.cb_sec, m.sections),
-                         (self.cb_shell, m.shells), (self.cb_assign_sec, m.sections),
-                         (self.cb_assign_mat, m.materials)):
+                         (self.cb_shell, m.shells),
+                         (getattr(self, "cb_assign_sec", None), m.sections),
+                         (getattr(self, "cb_assign_mat", None), m.materials)):
+            if cb is None:
+                continue
             cur = cb.currentText()
             cb.blockSignals(True)
             cb.clear(); cb.addItems(list(keys))
@@ -1479,6 +1484,156 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selection = np.array([], dtype=int)
         self.refresh_all()
 
+    # ---- Nicht-modale Masken („Maske oder Klick“) --------------------
+    def maske_knoten(self):
+        """Knoten anlegen: Koordinaten tippen oder in der Ansicht klicken."""
+        m = msk.Maske("Knoten", [
+            msk.Feld("x", "x [m]"), msk.Feld("y", "y [m]"), msk.Feld("z", "z [m]")],
+            hinweis="Koordinaten eintragen und „Anlegen“ – die Maske bleibt offen.",
+            knopf="Anlegen")
+        m.angewendet.connect(self._maske_knoten_anlegen)
+        self.maskenrand.zeigen(m)
+
+    def _maske_knoten_anlegen(self, w: dict):
+        i = self.model.add_node(w["x"], w["y"], w["z"])
+        self.info(f"Knoten {i + 1} angelegt bei "
+                  f"({w['x']:g}, {w['y']:g}, {w['z']:g}) m")
+        self.refresh_all()
+
+    def maske_stab(self):
+        """Stab anlegen: zwei Knoten anklicken oder ihre Nummern eintragen."""
+        m = msk.Maske("Stab", [
+            msk.Feld("mat", "Material", "wahl", self._erst(self.model.materials),
+                     list(self.model.materials)),
+            msk.Feld("sec", "Querschnitt", "wahl", self._erst(self.model.sections),
+                     list(self.model.sections)),
+            msk.Feld("fachwerk", "Fachwerkstab (nur N)", "haken", False)],
+            knoten=2, knopf="Stab anlegen")
+        m.angewendet.connect(self._maske_stab_anlegen)
+        self.maskenrand.zeigen(m)
+
+    def _maske_stab_anlegen(self, w: dict):
+        kn = w["knoten"]
+        if len(kn) < 2:
+            return self.error("Zwei Knoten in der Ansicht anklicken")
+        typ = "truss" if w.get("fachwerk") else "beam"
+        self.model.add_element(typ, [kn[0], kn[1]], w["mat"], w["sec"])
+        self.info(f"{'Fachwerkstab' if typ == 'truss' else 'Stab'} "
+                  f"{kn[0] + 1}–{kn[1] + 1} mit {w['sec']} angelegt")
+        if self.maskenrand.maske is not None:
+            self.maskenrand.maske.auswahl_leeren()
+        self.refresh_all()
+
+    def maske_schale(self):
+        """Schale anlegen: drei oder vier Knoten anklicken."""
+        m = msk.Maske("Schale", [
+            msk.Feld("mat", "Material", "wahl", self._erst(self.model.materials),
+                     list(self.model.materials)),
+            msk.Feld("dicke", "Dicke", "wahl", self._erst(self.model.shells),
+                     list(self.model.shells)),
+            msk.Feld("vier", "Viereck (4 Knoten)", "haken", True)],
+            knoten=4, knopf="Schale anlegen")
+        m.angewendet.connect(self._maske_schale_anlegen)
+        self.maskenrand.zeigen(m)
+
+    def _maske_schale_anlegen(self, w: dict):
+        kn = w["knoten"]
+        n = 4 if w.get("vier") else 3
+        if len(kn) < n:
+            return self.error(f"{n} Knoten in der Ansicht anklicken")
+        self.model.add_element("shell4" if n == 4 else "shell3", kn[:n],
+                               w["mat"], w["dicke"])
+        self.info(f"Schale aus {n} Knoten angelegt")
+        if self.maskenrand.maske is not None:
+            self.maskenrand.maske.auswahl_leeren()
+        self.refresh_all()
+
+    def maske_lager(self):
+        """Lager setzen: Knoten anklicken, Freiheitsgrade in der Maske."""
+        felder = [msk.Feld(f"d{i}", DOF_NAMES[i], "haken", i < 3) for i in range(6)]
+        m = msk.Maske("Lager", felder, knoten=0, knopf="Lager setzen",
+                      hinweis="Knoten in der Ansicht wählen, Freiheitsgrade "
+                              "ankreuzen und „Lager setzen“.")
+        m.angewendet.connect(self._maske_lager_setzen)
+        self.maskenrand.zeigen(m)
+
+    def _maske_lager_setzen(self, w: dict):
+        if not len(self.selection):
+            return self.error("Zuerst Knoten in der Ansicht wählen")
+        dofs = [i for i in range(6) if w.get(f"d{i}")]
+        if not dofs:
+            return self.error("Kein Freiheitsgrad angekreuzt")
+        for i in self.selection:
+            self.model.support(int(i), dofs)
+        self.info(f"Lager an {len(self.selection)} Knoten: "
+                  + ", ".join(DOF_NAMES[d] for d in dofs))
+        self.refresh_all()
+
+    def maske_knotenlast(self):
+        """Knotenlast aufbringen: Knoten wählen, Kräfte in der Maske."""
+        felder = [msk.Feld(k, f"{k} [kN{'m' if k.startswith('M') else ''}]")
+                  for k in ("Fx", "Fy", "Fz", "Mx", "My", "Mz")]
+        felder.append(msk.Feld("fall", "Lastfall", "wahl", self.model.active_case,
+                               list(self.model.load_cases)))
+        m = msk.Maske("Knotenlast", felder, knoten=0, knopf="Last aufbringen",
+                      hinweis="Knoten in der Ansicht wählen, Werte eintragen "
+                              "und „Last aufbringen“.")
+        m.angewendet.connect(self._maske_last_aufbringen)
+        self.maskenrand.zeigen(m)
+
+    def _maske_last_aufbringen(self, w: dict):
+        if not len(self.selection):
+            return self.error("Zuerst Knoten in der Ansicht wählen")
+        werte = {k: w.get(k, 0.0) * 1e3 for k in ("Fx", "Fy", "Fz", "Mx", "My", "Mz")}
+        if not any(werte.values()):
+            return self.error("Alle Werte sind null")
+        for i in self.selection:
+            self.model.load_node(int(i), case=w.get("fall") or None, **werte)
+        self.info(f"Knotenlast auf {len(self.selection)} Knoten "
+                  f"im Lastfall {w.get('fall')}")
+        self.refresh_all()
+
+    @staticmethod
+    def _erst(d: dict) -> str:
+        return next(iter(d), "")
+
+    # ---- Kontextabhaengiges Register „Auswahl“ ------------------------
+    def _auswahl_register(self):
+        """Register „Auswahl: Knoten“ zeigen, solange etwas gewählt ist.
+
+        Damit entfaellt der Bereich „Elemente ändern“ im rechten Panel
+        (Vorgabe Kap. 16.1 Nr. 7): die Befehle stehen dort, wo die Auswahl ist.
+        """
+        if not hasattr(self, "ribbon"):
+            return
+        n = len(self.selection)
+        if not n:
+            self.ribbon.kontext_aus()
+            return
+        r = self.ribbon.kontext(f"Auswahl: {n} Knoten")
+        if r.lay.count() > 1:      # schon gefuellt, nur der Name aendert sich
+            return
+        g = r.gruppe("Zuweisen")
+        self.cb_assign_sec = QtWidgets.QComboBox()
+        self.cb_assign_mat = QtWidgets.QComboBox()
+        self.cb_assign_sec.addItems(list(self.model.sections))
+        self.cb_assign_mat.addItems(list(self.model.materials))
+        g.widget(self.cb_assign_sec)
+        g.widget(self.cb_assign_mat)
+        g.gross("Zuweisen", "⇄", self.assign_props,
+                hinweis="Querschnitt und Material den Elementen der Auswahl geben")
+        g = r.gruppe("Elemente")
+        g.gross("Gelenke", "○", lambda: self.maske_zeigen("Netz"),
+                hinweis="Gelenke an den Stabenden setzen")
+        g.klein("Elemente löschen", self.delete_elements)
+        g.klein("Knoten löschen", self.delete_nodes)
+        g = r.gruppe("Randbedingungen")
+        g.gross("Lager", "△", self.maske_lager, hinweis="Lager an der Auswahl")
+        g.gross("Last", "↓", self.maske_knotenlast, hinweis="Knotenlast auf die Auswahl")
+        g = r.gruppe("Auswahl")
+        g.klein("Auswahl aufheben", self.clear_selection, "Esc")
+        g.klein("Auswahl umkehren", self.invert_selection)
+
     # ---- Befehle des Ribbons -----------------------------------------
     def clear_selection(self):
         """Auswahl aufheben."""
@@ -1570,6 +1725,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_selection(self, sel):
         self.selection = np.asarray(sel, dtype=int)
         self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt")
+        self._auswahl_register()
         self.redraw()
 
     def do_select(self):

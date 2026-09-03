@@ -327,6 +327,71 @@ def main():
 
         w.stellung_entfernen()
         check("Stellung entfernt", len(w.stellungen) == 2, str(len(w.stellungen)))
+
+        # Nicht-modale Masken: „Maske oder Klick“ (Vorgabe Kap. 3.8)
+        w.load_example("frame")
+        w.refresh_all()
+        w.maske_knoten()
+        m = w.maskenrand.maske
+        check("Maske schwebt ueber der Ansicht",
+              m is not None and m.isVisible() and m.parent() is w.centralWidget(),
+              m.titel if m else "keine")
+        nn0 = w.model.nn
+        m.setzen("x", 9.0)
+        m.setzen("z", 2.5)
+        m.anwenden()
+        check("Maske legt den Knoten aus den Werten an",
+              w.model.nn == nn0 + 1
+              and abs(float(w.model.nodes[-1][0]) - 9.0) < 1e-9
+              and abs(float(w.model.nodes[-1][2]) - 2.5) < 1e-9,
+              str(np.round(w.model.nodes[-1], 2)))
+        check("Maske bleibt fuer das naechste Objekt offen", m.isVisible())
+
+        w.maske_stab()
+        m = w.maskenrand.maske
+        check("Erzeuge-Befehl loest die vorige Maske ab",
+              m.titel == "Stab" and m.n_knoten == 2)
+        ne0 = len(w.model.elements)
+        m.knoten_angeklickt(0)
+        check("Erster Klick erzeugt noch nichts",
+              len(w.model.elements) == ne0 and len(m.gewaehlt) == 1)
+        m.knoten_angeklickt(3)
+        check("Zweiter Klick erzeugt den Stab", len(w.model.elements) == ne0 + 1,
+              str(len(w.model.elements) - ne0))
+        check("Maske ist gleich fuer den naechsten Stab bereit",
+              m.gewaehlt == [] and m.isVisible())
+        e = w.model.elements[-1]
+        check("Stab bekommt Querschnitt und Material aus der Maske",
+              e.sec in w.model.sections and e.mat in w.model.materials,
+              f"{e.sec} / {e.mat}")
+
+        m.knoten_angeklickt(2)
+        m.knoten_angeklickt(2)
+        check("Erneutes Anklicken nimmt den Knoten wieder heraus", m.gewaehlt == [])
+        w.maskenrand.schliessen()
+        check("Maske laesst sich schliessen", w.maskenrand.maske is None)
+        check("Ohne Maske geht der Klick wieder an die Auswahl",
+              not w.maskenrand.knoten_angeklickt(1))
+
+        # Kontextabhaengiges Register statt „Elemente ändern“ im Panel
+        w.clear_selection()
+        n_reg = w.ribbon.tabs.count()
+        w._set_selection([0, 1, 2])
+        check("Register „Auswahl“ erscheint mit der Auswahl",
+              w.ribbon.tabs.count() == n_reg + 1
+              and w.ribbon.tabs.tabText(w.ribbon.tabs.count() - 1) == "Auswahl: 3 Knoten",
+              w.ribbon.tabs.tabText(w.ribbon.tabs.count() - 1))
+        check("Zuweisen sitzt im Auswahlregister",
+              any(b.text == "Zuweisen" and b.register.startswith("Auswahl")
+                  for b in w.ribbon.befehle))
+        check("Register laesst sich vorholen", w.ribbon.kontext_zeigen())
+        w.clear_selection()
+        check("Ohne Auswahl verschwindet das Register",
+              w.ribbon.tabs.count() == n_reg,
+              str(w.ribbon.tabs.count()))
+        check("Befehle des Registers sind wieder abgemeldet",
+              not any(b.register.startswith("Auswahl") for b in w.ribbon.befehle))
+
     except Exception as ex:      # noqa: BLE001
         import traceback
         traceback.print_exc()

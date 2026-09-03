@@ -172,6 +172,8 @@ class Ribbon(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.befehle: list[Befehl] = []
         self._register: dict[str, Register] = {}
+        self._kontext: Register | None = None
+        self._kontext_name = ""
 
         aussen = QtWidgets.QVBoxLayout(self)
         aussen.setContentsMargins(0, 0, 0, 0)
@@ -214,6 +216,39 @@ class Ribbon(QtWidgets.QWidget):
         self._register[name] = r
         self.tabs.addTab(r, name)
         return r
+
+    def kontext(self, name: str) -> Register:
+        """Ein kontextabhaengiges Register ganz rechts anlegen oder holen.
+
+        Es erscheint, sobald etwas ausgewaehlt ist, und traegt die Befehle, die
+        auf die Auswahl passen (Vorgabe Kap. 3.2 und 16.1 Nr. 7).
+        """
+        if self._kontext is not None and self._kontext_name == name:
+            return self._kontext
+        self.kontext_aus()
+        r = Register(name, self, self)
+        self._kontext, self._kontext_name = r, name
+        i = self.tabs.addTab(r, name)
+        self.tabs.tabBar().setTabTextColor(i, QtGui.QColor(dsg.FARBEN["akzent2"]))
+        return r
+
+    def kontext_aus(self):
+        """Das kontextabhaengige Register wieder entfernen."""
+        if self._kontext is None:
+            return
+        i = self.tabs.indexOf(self._kontext)
+        if i >= 0:
+            self.tabs.removeTab(i)
+        namen = {b.aktion for b in self.befehle if b.register == self._kontext_name}
+        self.befehle = [b for b in self.befehle if b.aktion not in namen]
+        self._kontext.deleteLater()
+        self._kontext, self._kontext_name = None, ""
+
+    def kontext_zeigen(self) -> bool:
+        if self._kontext is None:
+            return False
+        self.tabs.setCurrentWidget(self._kontext)
+        return True
 
     def merken(self, b: Befehl):
         self.befehle.append(b)

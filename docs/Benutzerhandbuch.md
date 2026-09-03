@@ -83,6 +83,31 @@ Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt.
 Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
 in einem Panel rechts.
 
+### Maske oder Klick
+
+Jeder Erzeuge-Befehl — Knoten, Stab, Schale, Lager, Knotenlast — öffnet eine
+**kompakte Maske am rechten Rand der Ansicht**. Sie legt sich nicht über das
+Modell und blockiert nichts. Beide Wege führen zum selben Ziel:
+
+* **tippen**: Werte eintragen, „Anlegen" (oder Eingabetaste) — die Maske bleibt
+  offen und ist gleich für das nächste Objekt bereit;
+* **klicken**: in der Ansicht die Knoten anklicken. Sobald genug beisammen
+  sind, entsteht das Objekt; die gewählten Knoten stehen in der Maske. Ein
+  zweiter Klick auf denselben Knoten nimmt ihn wieder heraus.
+
+Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
+bis man sie ändert. **Esc** schließt die Maske. Ein neuer Erzeuge-Befehl löst
+die vorige Maske ab — es ist immer höchstens eine offen.
+
+### Register „Auswahl"
+
+Sobald Knoten gewählt sind, erscheint rechts im Ribbon ein zusätzliches
+Register **„Auswahl: n Knoten"** mit genau den Befehlen, die auf die Auswahl
+passen: Querschnitt und Material zuweisen, Gelenke setzen, Elemente oder Knoten
+löschen, Lager setzen, Last aufbringen, Auswahl umkehren oder aufheben. Wird
+die Auswahl aufgehoben, verschwindet das Register wieder. Einen Bereich
+„Elemente ändern" im rechten Panel gibt es dafür nicht mehr.
+
 Ganz unten die **Statusleiste**: Fang · aktives Koordinatensystem · Einheiten ·
 Netzstand · Solverstand. Die Fassung steht unter **Extras → Info**; ein Hinweis
 auf ein Update erscheint nur, wenn wirklich eines vorliegt.
