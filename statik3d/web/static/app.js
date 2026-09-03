@@ -1505,6 +1505,7 @@ function render() {
   renderTree();
   renderStellungsleiste();
   renderContext();
+  updateHeader();          // erst jetzt liegt das Stellungsergebnis vor
   const btn = $('#btn-solve');
   if (btn) btn.disabled = !!S.state.busy;
   updateSelInfo();

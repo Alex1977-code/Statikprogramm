@@ -229,27 +229,42 @@ Unter Windows: PowerShell im Programmordner, `.venv\Scripts\activate`,
 Windows-Firewall, ob Python im privaten Netz Verbindungen annehmen darf –
 zulassen, sonst erreicht das Handy den PC nicht.
 
-### 11.2 Die Oberfläche
+### 11.2 Die Arbeitsfläche
 
-Oben die 3D-Ansicht, unten die Register. Der Bereich dazwischen lässt sich am
-Griff ziehen (klein / halb / groß); auf Tablets und PCs liegen die Register
-links neben der Ansicht.
+Am PC gliedert sich die Oberfläche in vier Bereiche:
+
+* **Werkzeugleiste** oben mit den Bereichen und dem Knopf **Berechnen** (F5),
+* **Modellbaum** links: Bauteile, Stellungen, Lastfälle und Stäbe. Ein Klick
+  wählt den Eintrag – bei einer Stellung folgen Ansicht, Lagerung und Lasten,
+  bei einem Stab wechselt das Kontextpanel rechts,
+* **3D-Ansicht** in der Mitte, darunter bei beweglichen Systemen die
+  **Stellungsleiste** und die **Register**,
+* **Kontextpanel** rechts mit dem gewählten Stab: Querschnitt und
+  Nachweisparameter, die Ausnutzung je Einzelnachweis als Balken und – wenn
+  Stellungen gerechnet wurden – die Kurve η über die Stellungen.
+
+Die Höhe der Register lässt sich am Griff ziehen, Doppelklick klappt sie ein
+und aus. Unter 1100 px Fensterbreite (Handy, schmales Fenster) rücken die
+Register nach unten und die Bedienung wird gestapelt; Modellbaum und Auswahl
+lassen sich dann über die Knöpfe **Baum** und **Auswahl** einblenden.
 
 | Register | Inhalt |
 |---|---|
 | **Modell** | Projektdaten, Materialien, Querschnitte (Profildatenbank und parametrisch), Schalendicken, Netzgeneratoren (Stabzug, Platte, Quader), Knoten, Elemente (Stab, Schale, Zuweisen, Gelenke, Löschen), Lager, Stäbe mit Nachweisparametern, Kontakt, Nachweiseinstellungen |
 | **Lasten** | Lastfälle mit Einwirkungskategorie, Lasten des aktiven Lastfalls (Knoten-, Strecken-, Flächen-, Temperaturlast, Eigengewicht), Kombinationen (automatisch/manuell), Ermüdungslasten |
+| **Stellungen** | Stellungen des Systems für bewegliche Brücken (Kap. 12) |
 | **Rechnen** | Analyseart, Nachweise, Prozesse, Rechnerfarm, Start; Fortschritt und Zusammenfassung |
 | **Ergebnisse** | Ergebnis (Umhüllende / Kombination / Lastfall / Eigenform), Färbung, Überhöhung, Schnittgrößenverlauf, Stabdiagramm N/Vz/My, Tabellen Stabkräfte, Umhüllende, Auflagerkräfte, Kontakt |
-| **Nachweise** | Nachweise EC3 und Ermüdung starten, Tabellen; Zeile antippen zeigt alle Zwischenwerte |
+| **Nachweise** | Nachweise EC3 und Ermüdung starten, Tabellen; Zeile anklicken zeigt alle Zwischenwerte. Bei beweglichen Systemen zusätzlich die Umhüllende über die Stellungen |
 | **Mehr** | Datei öffnen/importieren (alle Formate aus Kap. 6), Modell speichern, Bericht (HTML/PDF/Markdown), Modellprüfung, Beispiele, Ansicht, Protokoll, Zugangsschlüssel |
 
-3D-Ansicht: Ziehen dreht, zwei Finger zoomen und verschieben, Doppeltipp
-zeigt alles, die Knöpfe oben schalten Ansichten (3D, XY, XZ, YZ) und
-Nummern. **Antippen wählt Knoten** (Umschalter „Kn/El“ für Elemente); die
-Auswahl wird in die Eingabefelder der Register übernommen (Lager, Lasten,
-Zuweisen, Stäbe, Kontakt). Ergebnisse werden verformt und farbig gezeichnet,
-Schnittgrößen als Verläufe am Stab.
+3D-Ansicht: Ziehen dreht, Mausrad zoomt, die rechte oder mittlere Taste
+schiebt, Doppelklick zeigt alles; am Touchgerät drehen ein Finger und zoomen
+zwei Finger. Die Knöpfe oben schalten Ansichten (3D, XY, XZ, YZ) und Nummern.
+**Klicken wählt Knoten** (Umschalter „Kn/El“ für Elemente); die Auswahl wird
+in die Eingabefelder der Register übernommen (Lager, Lasten, Zuweisen, Stäbe,
+Kontakt) und stellt rechts den zugehörigen Stab ein. Ergebnisse werden
+verformt und farbig gezeichnet, Schnittgrößen als Verläufe am Stab.
 
 ### 11.3 Sicherheit
 
@@ -268,7 +283,81 @@ träge. Ordner-Importe (RFEM-CSV-Ordner) gehen nur über die Desktop-GUI oder
 die Kommandozeile. Der PDF-Bericht benötigt `reportlab` auf dem Server; der
 HTML-Bericht lässt sich am Handy über Teilen → Drucken als PDF sichern.
 
-## 12 Grenzen
+## 12 Stellungen des Systems (bewegliche Brücken)
+
+Eine bewegliche Brücke – Klapp-, Dreh-, Hub- oder Faltbrücke – ist statisch
+nicht **ein** System, sondern eine Schar von Systemen. In jeder Stellung steht
+das bewegte Bauteil anders, ist anders gelagert und trägt andere Lasten:
+in der Verkehrsstellung tragen Endauflager und Riegel mit und es wirkt
+Verkehrslast, geöffnet hängt die Klappe im Drehlager, wird vom Antrieb
+gehalten und der Wind greift an der aufgestellten Fläche an. Maßgebend für
+die Bemessung ist die **Umhüllende über alle Stellungen** – und welche
+Stellung maßgebend wird, lässt sich vorher nicht sagen.
+
+### 12.1 Eine Stellung beschreiben
+
+Jede Stellung besteht aus:
+
+| Angabe | Bedeutung |
+|---|---|
+| **Bewegung** | Drehung um eine Achse (Klapp-, Dreh-, Faltbrücke) oder Verschiebung längs einer Richtung (Hub-, Schiebebrücke) |
+| **Winkel / Weg** | Drehwinkel in Grad bzw. Verschiebung in Meter, jeweils gegenüber der Ausgangsgeometrie |
+| **Drehachse** | Punkt und Richtung; die Drehung folgt der Rechtsschraube um die Achsrichtung |
+| **Bewegtes Bauteil** | Elementgruppen (und zusätzlich einzelne Knoten), die sich mitbewegen |
+| **Lager der Stellung** | Lager, die nur in dieser Stellung wirken – wahlweise zusätzlich zu den Lagern des Modells oder an deren Stelle |
+| **Wirkende Lastfälle** | Auswahl der Lastfälle; Kombinationen mit einem nicht wirkenden Lastfall entfallen in dieser Stellung |
+
+Die Bewegung ist eine reine Starrkörperlage der Ausgangsgeometrie. Die
+Querschnittslage der mitbewegten Stäbe wird mitgedreht – der Steg eines
+aufgestellten Trägers bleibt also im Bauteil und richtet sich nicht neu nach
+der globalen z-Achse aus.
+
+### 12.2 Vorgehen
+
+1. Modell in der Ausgangslage (meist geschlossen) aufbauen und dem bewegten
+   Teil eine eigene **Elementgruppe** geben.
+2. Register **Stellungen**: erste Stellung anlegen, Drehachse und bewegtes
+   Bauteil eintragen. Für den Öffnungsvorgang legt **Stellungsserie** in einem
+   Schritt gleichmäßig verteilte Stellungen an (z. B. 0° bis 82° in sechs
+   Schritten); Achse, Bauteil, Lager und Lastfälle kommen aus der aktiven
+   Stellung.
+3. Je Stellung die abweichende Lagerung setzen und die wirkenden Lastfälle
+   ankreuzen.
+4. **Alle Stellungen rechnen.** Jede Stellung wird als eigenes System gelöst
+   und nachgewiesen, danach werden die Nachweise umhüllt.
+
+### 12.3 Ergebnisse
+
+Die Stellungsleiste unter der Ansicht zeigt je Stellung die größte
+Ausnutzung; ein Klick stellt die Ansicht auf diese Stellung um. Das
+Kontextpanel rechts zeigt für den gewählten Stab die maßgebende Stellung und
+die Kurve η über die Stellungen. Das Register **Stellungen** enthält die
+Umhüllende: je Stab die maßgebende Stellung, den maßgebenden Nachweis, die
+Kombination und die Stelle. Im Bericht steht dazu ein eigenes Kapitel mit der
+Übersicht der Stellungen, der Ausnutzung je Stellung, der Umhüllenden, der
+Matrix Stab × Stellung und einer Systemdarstellung jeder Stellung.
+
+Das Beispiel **Klappbrücke mit Stellungen** (Register *Mehr* → Beispiele)
+zeigt den Ablauf an einer Klappbrücke mit fünf Stellungen von 0° bis 82°.
+Dort ist nicht die offene Endlage maßgebend, sondern die Stellung kurz nach
+dem Entriegeln – genau der Grund, warum alle Stellungen zu rechnen sind.
+
+### 12.4 Grenzen
+
+Die Stellungen werden in der **Browser-Oberfläche** (Kap. 11), im Bericht und
+über die Python-API bedient. Die PySide6-Desktop-GUI kennt sie noch nicht:
+Sie zeigt und rechnet ein Modell mit Stellungen in dessen Ausgangslage, ohne
+die Stellungen zu berücksichtigen.
+
+Gerechnet werden die definierten Stellungen, nicht der Bewegungsvorgang: die
+Berechnung ist je Stellung statisch und geometrisch linear, Massenkräfte aus
+dem Anfahren und Abbremsen sind gegebenenfalls als eigene Lastfälle
+anzusetzen. Beim Ermüdungsnachweis werden die Lastwechsel je Stellung aus den
+Ermüdungslasten des Modells gebildet; ein Lastspiel, das über zwei Stellungen
+läuft (Spannungswechsel geschlossen → offen), entsteht dabei nicht von
+selbst, sondern ist als Lastfallpaar innerhalb einer Stellung anzulegen.
+
+## 13 Grenzen
 
 Kleine Verformungen, linear-elastisches Material, Kontakt als
 Penalty-Näherung ohne Lastgeschichte (Reibung nahe der Reibkapazität

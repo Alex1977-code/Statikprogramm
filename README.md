@@ -24,12 +24,13 @@ Handrechnungen (über 270 automatisierte Prüfungen, siehe unten).
 | **Kontakt** | einseitige Lager (nur Druck, Bettung), Spaltelemente Knoten–Knoten, Kontaktpaare Knoten–Fläche (Schalen/Volumen) mit Coulomb-Reibung; Penalty-Verfahren mit Aktivmengen-Iteration |
 | **Nachweise EC3** | Klassifizierung (Tab. 5.2, wirksame Querschnitte Kl. 4), Querschnittsnachweise 6.2 (N, V, M, M+V, M+N, Torsion, σv), Biegeknicken, Drillknicken, Biegedrillknicken (Mcr, C1 automatisch), Interaktion 6.3.3 Anhang B |
 | **Ermüdung** | EN 1993-1-9: Kerbfälle, Wöhlerlinien (m = 3/5, Dauerfestigkeit, Schwellenwert), Palmgren-Miner, γMf nach Schadensfolge |
+| **Bewegliche Brücken** | Stellungen des Systems: Klapp-, Dreh-, Hub- und Faltbrücken werden in mehreren Lagen nachgewiesen. Je Stellung eigene Lagerung und eigene wirkende Lastfälle, Querschnittslage der mitbewegten Stäbe wird mitgedreht; Umhüllende der Nachweise über alle Stellungen mit der maßgebenden Stellung je Stab |
 | **Analysen** | Lineare Statik, Modalanalyse, lineares Knicken (Lastfall oder Kombination als Grundzustand) |
 | **Import** | Statik3D-JSON, DXF, IFC (Statikmodell: InfoCAD, RFEM, Allplan …), SAF (.xlsx: RFEM 6, SCIA …), RFEM/RSTAB-Tabellenexport (.xlsx/.csv), Abaqus/CalculiX .inp, Nastran .bdf, STEP/IGES/BREP/STL über gmsh |
 | **Parallel** | Elementschleifen und Aufträge auf mehreren Kernen; Rechnerfarm (Server/Worker/Client) über das Netz; optional MKL-Pardiso-Löser |
 | **Dokumentation** | Statischer Bericht (HTML druckbar, PDF, Markdown) mit Systemgrafiken, Schnittgrößenverläufen, allen Nachweiswerten; Benutzer-, Theorie-, Schnittstellen- und Farm-Handbuch in `docs/` |
 | **Export** | JSON-Modell, CSV, VTU (ParaView) |
-| **Handy / Browser** | Web-Server (`python run_web.py`) mit mobiler Oberfläche: 3D-Ansicht per Touch, Eingabe, Berechnung, Ergebnisse, Nachweise, Bericht; auch aus der Desktop-GUI startbar (gemeinsames Modell) |
+| **Browser / Handy** | Web-Server (`python run_web.py`) mit der Arbeitsfläche „Werkbank“: Modellbaum links, 3D-Ansicht in der Mitte, Stellungsleiste und Register unten, Kontextpanel mit den Ausnutzungen rechts. Auf schmalen Fenstern und am Handy gestapelte Touch-Bedienung; auch aus der Desktop-GUI startbar (gemeinsames Modell) |
 
 Einheiten durchgängig SI: **m, N, Pa, kg/m³**.
 
@@ -95,19 +96,28 @@ Kombinationen, Umhüllende, EC3-Nachweise und Ermüdung in einem Lauf; danach
 
 ---
 
-## Auf dem Handy
+## Im Browser und auf dem Handy
 
 ```bash
-python run_web.py --schluessel geheim --beispiel hall
+python run_web.py --schluessel geheim --beispiel bascule
 ```
 
-Der PC rechnet, das Handy bedient: Der Server nennt die Adresse im Netz
-(z. B. `http://192.168.1.23:8080/`), diese im Handy-Browser öffnen, Schlüssel
-eingeben, optional „Zum Startbildschirm hinzufügen“. Register Modell, Lasten,
-Rechnen, Ergebnisse, Nachweise und Bericht wie in der Desktop-GUI, 3D-Ansicht
-mit Touch. In der Desktop-GUI startet **Berechnung → Bedienung im Browser /
-auf dem Handy…** denselben Server für das geöffnete Modell. Details:
+Der Server nennt die Adresse im Netz (z. B. `http://192.168.1.23:8080/`).
+Am PC erscheint die Arbeitsfläche **Werkbank**: Modellbaum links, 3D-Ansicht
+in der Mitte, darunter die Stellungsleiste und die Register, rechts das
+Kontextpanel mit den Ausnutzungen des gewählten Stabes. Auf schmalen Fenstern
+und am Handy klappt dieselbe Oberfläche auf eine gestapelte Touch-Bedienung
+um; Modellbaum und Auswahl lassen sich dort einblenden. „Zum Startbildschirm
+hinzufügen“ startet Statik3D wie eine App.
+
+In der Desktop-GUI startet **Berechnung → Bedienung im Browser / auf dem
+Handy…** denselben Server für das geöffnete Modell. Details:
 `docs/Benutzerhandbuch.md`, Kapitel 11.
+
+> Die **Stellungen beweglicher Brücken** (Kapitel 12) werden in der
+> Browser-Oberfläche, im Bericht und über die Python-API bedient. Die
+> PySide6-Desktop-GUI kennt sie noch nicht: Sie zeigt und rechnet ein Modell
+> mit Stellungen in dessen Ausgangslage.
 
 ## Arbeitsablauf in der GUI
 
@@ -150,6 +160,30 @@ from statik3d.report import write_report
 write_report(m, an, "kragarm.html")
 ```
 
+### Bewegliche Brücke: Stellungen des Systems
+
+```python
+from statik3d import stellungen as stg
+
+# Bewegtes Bauteil in eine eigene Elementgruppe legen (hier: group="klappe"),
+# dann je Stellung Winkel, Lagerung und wirkende Lastfälle festlegen.
+m.add_stellung("S1", "Verkehrsstellung", "rotate", angle=0.0,
+               axis_point=[0, 0, 0], axis_dir=[0, -1, 0], moving_groups=["klappe"])
+m.add_stellung("S3", "Öffnungsvorgang", "rotate", angle=32.0,
+               axis_point=[0, 0, 0], axis_dir=[0, -1, 0], moving_groups=["klappe"],
+               cases=["LF1", "Wind"])          # Verkehr wirkt hier nicht
+
+sa = stg.solve_stellungen(m, design=True, fatigue=True)
+print(sa.summary())
+print(sa.curve("Kragarm"))                     # (Stellung, Winkel, Ausnutzung)
+print(sa.worst().stellung)                     # maßgebende Stellung
+write_report(m, sa.analyses["S1"], "bruecke.html", stellungen=sa)
+```
+
+`stg.series(m, "A", 0, 82, 6)` legt eine ganze Stellungsserie an,
+`stg.derive_model(m, m.stellung("S3"))` liefert das Modell einer einzelnen
+Stellung als gewöhnliches `Model`.
+
 ---
 
 ## Verifikation
@@ -160,7 +194,8 @@ python -m tests.test_solver_ext       # 49 Prüfungen: Gelenke, Lasten, Kombinat
 python -m tests.test_ec3              # 48 Prüfungen: EC3-Handrechnungen
 python -m tests.test_importers        # 126 Prüfungen: Import
 python -m tests.test_report           # Bericht
-python -m tests.test_web              # 91 Prüfungen: Browser-/Handy-Server (API)
+python -m tests.test_stellungen       # 73 Prüfungen: Stellungen beweglicher Brücken
+python -m tests.test_web              # 122 Prüfungen: Browser-Server (API, Stellungen)
 xvfb-run -a python -m tests.test_gui_smoke   # Oberfläche (ohne Benutzer)
 ```
 
@@ -204,10 +239,11 @@ und Prüfung der Nachweise liegt beim Anwender.
 
 ```
 statik3d/
-  model.py           Datenmodell: Knoten, Elemente, Lastfälle, Kombinationen, Stäbe, Kontakt
+  model.py           Datenmodell: Knoten, Elemente, Lastfälle, Kombinationen, Stäbe, Kontakt, Stellungen
   assemble.py        Assemblierung K, M, Kg, Lastvektoren (parallel), Gelenke
   solver.py          Statik (viele Lastfälle, Superposition, Umhüllende), Kontakt-Iteration, Modal, Knicken
   contact.py         Kontaktbedingungen (Penalty, Aktivmenge, Reibung)
+  stellungen.py      Stellungen beweglicher Brücken: Kinematik, Modell je Stellung, Umhüllende
   combinations.py    Kombinationen nach DIN EN 1990
   profiles.py        Profildatenbank
   parallel.py        Prozess-Pool, Auftrags-Registry
@@ -218,7 +254,7 @@ statik3d/
   report/            HTML/PDF/Markdown-Bericht, SVG-Grafiken
   elements/          beam3d, shell, solid
   gui/               PySide6-Oberfläche (main, dialogs, viewport, worker)
-  web/               Browser-/Handy-Oberfläche: server.py (HTTP-API), static/ (HTML, CSS, JS)
+  web/               Arbeitsfläche im Browser: server.py (HTTP-API), static/ (HTML, CSS, JS)
   update.py          Update von GitHub (exe-Austausch, git pull, ZIP)
 packaging/           PyInstaller-Rezept, Symbol, Build-Stempel (Windows-exe)
   mesher.py, examples_lib.py, cli.py
