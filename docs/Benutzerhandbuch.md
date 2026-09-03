@@ -387,10 +387,30 @@ Schädigungen werden nach Palmgren-Miner **über alle Ermüdungslasten**
 aufsummiert. Wichtig: eine nicht vorgespannte Schraube bekommt die volle
 äußere Schwingbreite ab — das Programm sagt das als Hinweis dazu.
 
+**Momenten-Rotations-Verhalten**: Statik3D bestimmt für jeden Anschluss die
+Anfangssteifigkeit S_j,ini nach dem Komponentenverfahren (6.3.1), die
+Momententragfähigkeit M_j,Rd (6.2.7), die Klasse (starr, nachgiebig, gelenkig
+nach 5.2.2.5) und das Rotationsvermögen (6.4.2) — und **rechnet damit**: ein
+nachgiebiger Anschluss sitzt als Drehfeder S_j = S_j,ini/η am Stabende
+(5.1.2(4)), ein gelenkiger als Momentengelenk.
+
+Im Dialog gehören dazu drei Angaben:
+
+* **Stützenquerschnitt** — das Profil, an das angeschlossen wird. Ohne ihn
+  entfallen die Komponenten k_1 bis k_4 (Stützensteg auf Schub, Druck und Zug,
+  Stützenflansch auf Biegung); S_j,ini ist dann eine **obere Schranke**, der
+  wirkliche Anschluss ist weicher. Das Programm sagt es dazu.
+* **Rahmen** ausgesteift (k_b = 8) oder nicht ausgesteift (k_b = 25) — die
+  Grenze, ab der ein Anschluss als starr gilt.
+* **in der Berechnung**: „automatisch“ folgt der Klassifizierung; wahlweise
+  fest „starr“, „Drehfeder“ oder „gelenkig“.
+
 Ergebnis: Tabelle „Anschlüsse“ mit Ausnutzung, maßgebendem Nachweis,
-Kombination und Schädigungssumme D; „Nachweise zeigen“ gibt sie im
-Klartext; Kapitel 7 des Berichts führt jede Schraube und jede Naht mit
-E_d, R_d und η sowie die Ausnutzung je Kombination.
+Kombination und Schädigungssumme D, dazu S_j,ini, Klasse, M_j,Rd und wie der
+Anschluss in der Rechnung sitzt; „Nachweise zeigen“ gibt alles im Klartext;
+Kapitel 7 des Berichts führt jede Schraube und jede Naht mit E_d, R_d und η,
+die Ausnutzung je Kombination, die Steifigkeitsbeiwerte k_i und die
+Schraubenreihen der Zugzone.
 
 ## 9 Berechnung und Parallelisierung
 

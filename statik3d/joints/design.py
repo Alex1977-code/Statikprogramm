@@ -63,8 +63,11 @@ class Check:
     def ok(self) -> bool:
         return self.eta <= 1.0 + 1e-9
 
+    #: Umrechnung der Anzeigeeinheit
+    FAKTOR = {"kN": 1e-3, "kNm": 1e-3, "N/mm^2": 1e-6, "-": 1.0, "": 1.0}
+
     def line(self) -> str:
-        f = 1e-3 if self.einheit == "kN" else (1e-6 if self.einheit == "N/mm^2" else 1.0)
+        f = self.FAKTOR.get(self.einheit, 1.0)
         return (f"{'OK ' if self.ok else 'NICHT ERFUELLT'} {self.name:44s} "
                 f"{self.E * f:9.1f} / {self.R * f:9.1f} {self.einheit}  eta = {self.eta:.3f}"
                 + (f"   {self.hinweis}" if self.hinweis else ""))

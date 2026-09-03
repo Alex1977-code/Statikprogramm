@@ -851,6 +851,12 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
     """Alle Lastfaelle, alle Kombinationen, Umhuellende, optional Nachweise."""
     t0 = time.time()
     an = Analysis(model)
+    if model.joints:
+        # Das Momenten-Rotations-Verhalten der Anschluesse gehoert in die
+        # Rechnung, nicht erst in den Nachweis: nachgiebige Anschluesse sitzen
+        # als Drehfeder am Stabende (EN 1993-1-8, 5.1.2).
+        from .joints.anschluss import federn_setzen
+        an.info["anschlussfedern"] = federn_setzen(model)
     system = StaticSystem(model, workers, progress)
     an.cases = solve_cases(model, workers=workers, progress=progress, system=system)
     if combinations and model.combinations:
@@ -877,8 +883,9 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         # Nachweise verlangt sind (DIN EN 1993-1-8 / -1-9).
         from .joints.anschluss import check_joints
         an.joints = check_joints(model, an, progress=progress, ermuedung=bool(fatigue))
-    an.info = {"time": time.time() - t0, "parallel": parallel.describe(),
-               "solver": system.backend, "ndof": model.ndof, "nfree": len(system.fi)}
+    an.info.update({"time": time.time() - t0, "parallel": parallel.describe(),
+                    "solver": system.backend, "ndof": model.ndof,
+                    "nfree": len(system.fi)})
     return an
 
 

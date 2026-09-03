@@ -25,6 +25,7 @@ Normalkraft am betrachteten Ende **Zug** bedeutet - dieselbe Zaehlweise wie in
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, fields
 
 from ..model import Model, Joint
@@ -114,6 +115,137 @@ def _nur(kraefte: dict, typ: str) -> dict:
     return {k: kraefte.get(k, 0.0) for k in KRAEFTE.get(typ, ("N", "Vz", "My"))}
 
 
+def _stab(model: Model, joint: Joint) -> str:
+    """Der Stab, zu dem das Element des Anschlusses gehoert."""
+    return next((n for n, m in model.members.items() if int(joint.elem) in m.elements), "")
+
+
+#: Felder, die die Stuetze beschreibt
+STUETZENFELDER = ("h", "b", "tw", "tf", "r", "A", "fy", "versteift", "schubfeld", "beta")
+
+
+def stuetze_aufloesen(model: Model, joint: Joint) -> dict:
+    """Die Angaben der Stuetze - aus dem Querschnitt des Modells oder von Hand.
+
+    ``joint.stuetze = {"section": "HEB 300"}`` genuegt: die Abmessungen kommen
+    dann aus der Profildatenbank des Modells. Einzelne Werte lassen sich
+    daneben ueberschreiben.
+    """
+    st = dict(joint.stuetze or {})
+    name = st.pop("section", "")
+    if name:
+        sec = model.sections.get(name)
+        if sec is None:
+            return {"fehler": f"Stützenquerschnitt „{name}“ gibt es im Modell nicht"}
+        aus = {"h": sec.h, "b": sec.b, "tw": sec.tw, "tf": sec.tf, "r": sec.r,
+               "A": sec.A}
+        aus.update({k: v for k, v in st.items() if k in STUETZENFELDER})
+        return aus
+    return {k: v for k, v in st.items() if k in STUETZENFELDER}
+
+
+def _I_b(model: Model, joint: Joint) -> float:
+    e = model.elements[int(joint.elem)]
+    sec = model.sections.get(e.sec)
+    return float(sec.Iy) if sec is not None else 0.0
+
+
+def _L_b(model: Model, joint: Joint) -> float:
+    """Stuetzweite des angeschlossenen Traegers fuer die Klassifizierung.
+
+    Massgebend ist die Laenge des **Stabes**, nicht die des einzelnen
+    Elements - sonst faellt die Grenze 8 E I_b / L_b viel zu hoch aus.
+    """
+    name = _stab(model, joint)
+    if name:
+        try:
+            return float(model.member_length(model.members[name]))
+        except Exception:                # noqa: BLE001
+            pass
+    return float(model.element_length(int(joint.elem)))
+
+
+# --------------------------------------------------------------------------
+# Wie sitzt der Anschluss in der Rechnung?
+# --------------------------------------------------------------------------
+def modellierung(joint: Joint, gelenk=None) -> tuple:
+    """(Art, Steifigkeit, Klartext) - wie der Anschluss abgebildet wird.
+
+    Art: "starr" (nichts zu tun), "gelenkig" (Momentengelenk) oder
+    "feder" (Drehfeder mit S_j).
+
+    "automatisch" folgt der Klassifizierung nach 5.2.2: ein starrer Anschluss
+    wird starr gerechnet, ein gelenkiger als Gelenk, ein nachgiebiger mit
+    seiner Drehfeder S_j = S_j,ini/eta (5.1.2(4)).
+    """
+    wahl = (joint.modellierung or "automatisch").lower()
+    if joint.S_j and wahl in ("automatisch", "feder"):
+        return ("feder", float(joint.S_j),
+                f"Drehfeder S_j = {float(joint.S_j) / 1e6:.1f} MNm/rad (von Hand)")
+    if wahl == "starr":
+        return ("starr", float("inf"), "starr gerechnet (vorgegeben)")
+    if wahl == "gelenkig":
+        return ("gelenkig", 0.0, "als Momentengelenk gerechnet (vorgegeben)")
+    if wahl == "feder":
+        S = float(getattr(gelenk, "S_j", 0.0) or 0.0)
+        if S <= 0:
+            return ("starr", float("inf"), "starr gerechnet (keine Steifigkeit bekannt)")
+        return ("feder", S, f"Drehfeder S_j = {S / 1e6:.1f} MNm/rad (5.1.2(4))")
+    # automatisch
+    if gelenk is None or not gelenk.klasse:
+        return ("starr", float("inf"), "starr gerechnet (nicht klassifiziert)")
+    if gelenk.klasse == "starr":
+        return ("starr", float("inf"), "starr gerechnet (Klasse starr nach 5.2.2.5)")
+    if gelenk.klasse == "gelenkig":
+        return ("gelenkig", 0.0, "als Momentengelenk gerechnet (Klasse gelenkig)")
+    S = float(gelenk.S_j or 0.0)
+    if not math.isfinite(S) or S <= 0:
+        return ("starr", float("inf"), "starr gerechnet (Steifigkeit unendlich)")
+    return ("feder", S,
+            f"nachgiebig: Drehfeder S_j = {S / 1e6:.1f} MNm/rad (S_j,ini/η, 5.1.2(4))")
+
+
+#: lokaler Freiheitsgrad der Biegung um die starke Achse am Stabende
+DOF_MY = {0: 4, 1: 10}
+
+
+def federn_setzen(model: Model, log: list = None) -> dict:
+    """Die Anschluesse als Drehfeder oder Gelenk an die Stabenden legen.
+
+    Wird vor jeder Berechnung aufgerufen und ist wiederholbar: die Wirkung
+    haengt nur an den Anschluessen des Modells, frueher gesetzte Werte
+    derselben Stabenden werden ersetzt.
+    """
+    gesetzt = {}
+    for name, j in model.joints.items():
+        if not j.design or not 0 <= int(j.elem) < len(model.elements):
+            continue
+        try:
+            t = vorlage(model, j)
+            st = stuetze_aufloesen(model, j)
+            g = t.momenten_rotation(stuetze={} if st.get("fehler") else st,
+                                    rahmen=j.rahmen, I_b=_I_b(model, j),
+                                    L_b=_L_b(model, j))
+        except Exception as ex:              # noqa: BLE001
+            if log is not None:
+                log.append(f"Anschluss {name}: Steifigkeit unbekannt ({ex})")
+            continue
+        art, S, text = modellierung(j, g)
+        d = DOF_MY[int(j.end)]
+        e = model.elements[int(j.elem)]
+        federn = {k: v for k, v in (e.hinge_springs or []) if k != d}
+        e.hinges = sorted(set(e.hinges) - {d})
+        if art == "feder" and math.isfinite(S) and S > 0:
+            federn[d] = S
+        elif art == "gelenkig":
+            e.hinges = sorted(set(e.hinges) | {d})
+        e.hinge_springs = sorted(federn.items())
+        gesetzt[name] = (art, S, text)
+        if log is not None:
+            log.append(f"Anschluss {name}: {text}")
+    return gesetzt
+
+
 # --------------------------------------------------------------------------
 # Ergebnis
 # --------------------------------------------------------------------------
@@ -135,6 +267,8 @@ class AnschlussCheck:
     je_kombination: list = field(default_factory=list)
     ermuedung: list = field(default_factory=list)
     hinweise: list = field(default_factory=list)
+    gelenk: object = None             # Gelenkkennwerte (Steifigkeit, Klasse, Rotation)
+    modelliert: str = ""              # wie der Anschluss in der Rechnung sitzt
     fehler: str = ""
 
     @property
@@ -226,6 +360,19 @@ def check_joint(model: Model, joint: Joint, results: dict, analysis=None,
     c.beschreibung = t.describe()
     fest = dict(joint.kraefte or {})
 
+    # -- Momenten-Rotations-Verhalten (6.3, 6.2.7, 6.4) ------------------
+    try:
+        st = stuetze_aufloesen(model, joint)
+        if st.get("fehler"):
+            c.hinweise.append(st["fehler"])
+            st = {}
+        c.gelenk = t.momenten_rotation(stuetze=st, rahmen=joint.rahmen,
+                                       I_b=_I_b(model, joint), L_b=_L_b(model, joint))
+    except Exception as ex:              # noqa: BLE001
+        c.hinweise.append(f"Momenten-Rotations-Verhalten nicht bestimmbar: "
+                          f"{type(ex).__name__}: {ex}")
+    c.modelliert = modellierung(joint, c.gelenk)[2]
+
     # -- Tragfaehigkeit: jede Kombination fuehren ------------------------
     faelle = []
     if fest:
@@ -247,6 +394,15 @@ def check_joint(model: Model, joint: Joint, results: dict, analysis=None,
         except Exception as ex:          # noqa: BLE001
             c.fehler = f"{type(ex).__name__}: {ex}"
             return c
+        # Momententragfaehigkeit des Anschlusses (6.2.7) - sie gehoert zu den
+        # Nachweisen, nicht nur in die Kennwerte.
+        M_j = float(getattr(c.gelenk, "M_j_Rd", 0.0) or 0.0)
+        if M_j > 0 and "My" in k:
+            from .design import Check
+            j.add(Check("Momententragfähigkeit M_j,Rd (6.2.7)", abs(k["My"]), M_j,
+                        einheit="kNm",
+                        hinweis=f"{c.gelenk.tragklasse}"
+                                + (f", {c.gelenk.klasse}" if c.gelenk.klasse else "")))
         c.je_kombination.append({"kombination": name, "eta": float(j.eta),
                                  "massgebend": j.massgebend, **k})
         if bestes is None or j.eta > bestes[1].eta:
@@ -257,7 +413,8 @@ def check_joint(model: Model, joint: Joint, results: dict, analysis=None,
     c.massgebend = j.massgebend
     c.kraefte = dict(k)
     c.checks = _checkliste(j)
-    c.hinweise = list(j.hinweise)
+    # frueher gesammelte Hinweise (Steifigkeit, Stuetze) bleiben stehen
+    c.hinweise += [h for h in j.hinweise if h not in c.hinweise]
 
     # -- Ermuedung: je Ermuedungslast die Schwingbreite -------------------
     if not ermuedung:

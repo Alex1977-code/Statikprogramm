@@ -23,6 +23,8 @@ Zellinhalte: Zeichenketten, Zahlen (werden mit fmt formatiert), Util
 """
 from __future__ import annotations
 
+import math
+
 import datetime
 import html as _html
 import re
@@ -209,6 +211,18 @@ def _md_table(rows, header: bool = True) -> str:
 
 def _ranges(ids) -> str:
     return sv._ranges(ids)
+
+
+def _steifigkeit_text(g) -> str:
+    """S_j,ini in MNm/rad - unendlich und null lesbar geschrieben."""
+    if g is None:
+        return "–"
+    v = float(getattr(g, "S_j_ini", 0.0) or 0.0)
+    if not math.isfinite(v):
+        return "∞ (starr)"
+    if v <= 0:
+        return "0 (gelenkig)"
+    return f"{v / 1e6:.1f}"
 
 
 def _pretty(s: str) -> str:
@@ -1596,18 +1610,35 @@ class Report:
             "Die Schnittgrößen sind die Stabendschnittgrößen am Anschlusspunkt; jeder "
             f"Anschluss wird über alle {len(j.combinations)} GZT-Kombinationen geführt, "
             "die ungünstigste ist maßgebend.",
+            "Momenten-Rotations-Verhalten: Anfangssteifigkeit S_j,ini = E z_eq² / Σ(1/k_i) "
+            "nach dem Komponentenverfahren (6.3.1) mit den Steifigkeitsbeiwerten k_i "
+            "nach Tab. 6.11; mehrere Schraubenreihen werden nach 6.3.3.1 zu einer "
+            "Ersatzfeder zusammengefasst.",
+            "Momententragfähigkeit M_j,Rd nach 6.2.7 aus den Reihenkräften und ihren "
+            "Hebelarmen zum Druckpunkt; übersteigt die Zugkraft die Druckzone, wird sie "
+            "von der untersten Reihe her abgebaut.",
+            "Klassifizierung nach 5.2.2.5 (starr, nachgiebig, gelenkig anhand "
+            "k_b E I_b / L_b) und 5.2.3 (voll-, teiltragfähig, gelenkig); "
+            "Rotationsvermögen nach 6.4.2.",
+            "In der Berechnung sitzt ein nachgiebiger Anschluss als Drehfeder am "
+            "Stabende, mit S_j = S_j,ini/η nach der Vereinfachung 5.1.2(4).",
         ]))
 
         b.append(self._h(2, "Übersicht"))
-        rows = [["Anschluss", "Typ", "Ort", "Ausnutzung", "maßgebender Nachweis",
-                 "Kombination", "D (Ermüdung)", "Status"]]
+        rows = [["Anschluss", "Typ", "Ort", "S_j,ini [MNm/rad]", "Klasse",
+                 "M_j,Rd [kNm]", "Ausnutzung", "maßgebender Nachweis", "Kombination",
+                 "D (Ermüdung)", "Status"]]
         for c in j.joints.values():
-            rows.append([c.name, KURZ.get(c.typ, c.typ), c.ort, Util(c.util),
-                         _pretty(c.massgebend or c.fehler), c.kombination,
+            g = c.gelenk
+            rows.append([c.name, KURZ.get(c.typ, c.typ), c.ort,
+                         _steifigkeit_text(g), g.klasse if g else "",
+                         fmt(g.M_j_Rd / 1e3, 1) if g and g.M_j_Rd else "-",
+                         Util(c.util), _pretty(c.massgebend or c.fehler), c.kombination,
                          Util(c.D) if c.D else "-",
                          "erfüllt" if c.eta <= 1.0 and not c.fehler
                          else ("nicht geführt" if c.fehler else "NICHT erfüllt")])
-        b.append(("table", rows, "Anschlüsse: maßgebende Ausnutzung", None, ""))
+        b.append(("table", rows, "Anschlüsse: Steifigkeit, Tragfähigkeit, Ausnutzung",
+                  None, ""))
         if self.opt("figures"):
             liste = [c for c in j.joints.values() if not c.fehler][:60]
             if liste:
@@ -1645,9 +1676,54 @@ class Report:
                        else "Nachweis NICHT erfüllt"))
             b.append(("kv", kv, f"Anschluss {c.name}"))
 
+            g = c.gelenk
+            if g is not None and (g.S_j_ini or g.klasse):
+                kv2 = [("Anfangssteifigkeit S_j,ini", _steifigkeit_text(g) + " MNm/rad")]
+                if g.z_eq:
+                    kv2.append(("Hebelarm der Ersatzfeder z_eq",
+                                f"{g.z_eq * 1e3:.0f} mm"))
+                if math.isfinite(g.S_j) and g.S_j > 0:
+                    kv2.append((f"Rechenwert S_j = S_j,ini/η (η = {fmt(g.eta, 1)})",
+                                f"{g.S_j / 1e6:.1f} MNm/rad"))
+                if g.grenze_starr:
+                    kv2.append(("Grenzen der Klassifizierung (5.2.2.5)",
+                                f"starr ab {g.grenze_starr / 1e6:.1f}, gelenkig bis "
+                                f"{g.grenze_gelenkig / 1e6:.2f} MNm/rad"))
+                kv2 += [("Klassifizierung Steifigkeit",
+                         f"{g.klasse}" + (f" – {g.klasse_grund}" if g.klasse_grund else "")),
+                        ("Klassifizierung Tragfähigkeit (5.2.3)", g.tragklasse or "–"),
+                        ("Momententragfähigkeit M_j,Rd",
+                         f"{g.M_j_Rd / 1e3:.1f} kNm" if g.M_j_Rd else "–"),
+                        ("Rotationsvermögen (6.4.2)",
+                         ("ausreichend – " if g.rotation_ok else "nicht nachgewiesen – ")
+                         + g.rotation_grund),
+                        ("in der Berechnung", c.modelliert or "–")]
+                if g.phi_Cd:
+                    kv2.append(("Verdrehung bei M_j,Rd (elastisch, mit S_j)",
+                                f"{g.phi_Cd * 1e3:.2f} mrad"))
+                b.append(("kv", kv2, f"Momenten-Rotations-Verhalten {c.name}"))
+                if g.komponenten:
+                    rows = [["Komponente", "k_i [mm]", "Bedeutung"]]
+                    for kenn, kw, txt in g.komponenten:
+                        rows.append([kenn, fmt(kw * 1e3, 3) if math.isfinite(kw) else "∞",
+                                     _pretty(txt)])
+                    b.append(("table", rows, "Steifigkeitsbeiwerte nach Tab. 6.11 "
+                                             "(je Schraubenreihe, dann Druckzone)",
+                              None, ""))
+                if g.reihen:
+                    rows = [["Reihe", "Hebelarm h_r [mm]", "k_eff,r [mm]",
+                             "F_tr,Rd [kN]", "maßgebend"]]
+                    for i, r in enumerate(g.reihen, 1):
+                        rows.append([f"{i}", fmt(r.h * 1e3, 0),
+                                     fmt(r.k_eff * 1e3, 3) if math.isfinite(r.k_eff) else "∞",
+                                     fmt(r.F_Rd / 1e3, 1), _pretty(r.versagen)])
+                    b.append(("table", rows, "Schraubenreihen der Zugzone (6.2.7, 6.3.3)",
+                              None, ""))
+
             rows = [["Nachweis", "E_d", "R_d", "Einheit", "Ausnutzung", "Bemerkung"]]
+            from ..joints.design import Check as _JCheck
             for ch in c.checks:
-                f = 1e-3 if ch["einheit"] == "kN" else (1e-6 if ch["einheit"] == "N/mm^2" else 1.0)
+                f = _JCheck.FAKTOR.get(ch["einheit"], 1.0)
                 einheit = "N/mm²" if ch["einheit"] == "N/mm^2" else ch["einheit"]
                 rows.append([_pretty(ch["name"]), fmt(ch["E"] * f, 1), fmt(ch["R"] * f, 1),
                              einheit, Util(ch["eta"]), _pretty(ch["hinweis"])])

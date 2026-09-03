@@ -303,6 +303,77 @@ Programm rechnet mit dem Steifigkeitsverhältnis Schraube/Blech (Voreinstellung
 Schwingbreite aus der Rechnung am Teilmodell. Ohne Vorspannung wirkt die volle
 äußere Schwingbreite — auch das steht als Hinweis im Nachweis.
 
+### 5a.1 Momenten-Rotations-Verhalten (Kap. 5 und 6.3)
+
+Ein Anschluss ist weder starr noch gelenkig. Sein Verhalten wird über das
+**Komponentenverfahren** beschrieben: jede Grundkomponente bekommt einen
+Steifigkeitsbeiwert k_i nach Tab. 6.11, und die Anfangssteifigkeit folgt aus
+der Reihenschaltung
+
+    S_j,ini = E z_eq² / Σ_i (1 / k_i)
+
+Umgesetzt sind
+
+| k_i | Komponente | Formel |
+|---|---|---|
+| k_1 | Stützensteg als Schubfeld | 0,38 A_vc / (β z) |
+| k_2 | Stützensteg auf Druck | 0,7 b_eff,c,wc t_wc / d_c |
+| k_3 | Stützensteg auf Zug | 0,7 b_eff,t,wc t_wc / d_c |
+| k_4 | Stützenflansch auf Biegung | 0,9 l_eff t_fc³ / m³ |
+| k_5 | Stirnplatte auf Biegung | 0,9 l_eff t_p³ / m³ |
+| k_10 | Schrauben auf Zug | 1,6 A_s / L_b |
+
+Bei mehreren Schraubenreihen werden die Reihen nach 6.3.3.1 zu einer
+Ersatzfeder zusammengefasst:
+
+    k_eff,r = 1 / Σ_i (1 / k_i,r)
+    z_eq    = Σ_r k_eff,r h_r² / Σ_r k_eff,r h_r
+    k_eq    = Σ_r k_eff,r h_r / z_eq
+
+**Momententragfähigkeit** M_j,Rd nach 6.2.7: Summe der Reihenkräfte F_tr,Rd mal
+ihrem Hebelarm h_r zum Druckpunkt (Mitte des Druckflansches). Übersteigt die
+Summe der Zugkräfte die Tragfähigkeit der Druckzone F_c,Rd = M_c,Rd/(h − t_f),
+werden die Kräfte von der **untersten** Reihe her abgebaut (6.2.7.2(6)).
+
+**Klassifizierung** nach 5.2.2.5 gegen die Biegesteifigkeit des angeschlossenen
+Trägers — maßgebend ist die Länge des ganzen Stabes, nicht des einzelnen
+Elements:
+
+    starr        S_j,ini ≥ k_b E I_b / L_b     (k_b = 8 ausgesteift, 25 sonst)
+    gelenkig     S_j,ini ≤ 0,5 E I_b / L_b
+    nachgiebig   dazwischen
+
+und nach 5.2.3 gegen M_pl,Rd des Trägers in voll-, teiltragfähig und gelenkig.
+
+**Rotationsvermögen** nach 6.4.2(2): ein geschraubter Anschluss hat genügend
+Rotationskapazität, wenn seine Tragfähigkeit vom Biegen des Blechs bestimmt
+wird **und** das Blech dünn genug ist, damit sich die Fließgelenke ausbilden:
+
+    t ≤ 0,36 d √(f_ub / f_y)
+
+Ist das nicht erfüllt, sagt das Programm es und weist darauf hin, dass für eine
+plastische Berechnung das Rotationsvermögen nachzuweisen ist.
+
+**In der Berechnung** sitzt der Anschluss als Drehfeder am Stabende. Gerechnet
+wird nach der Vereinfachung 5.1.2(4) mit
+
+    S_j = S_j,ini / η        (η = 2 für geschraubte Stirnplatten, Tab. 5.2)
+
+so dass ein einziger Rechendurchgang genügt und das Ergebnis für jedes M_j,Ed
+gilt. Die Voreinstellung „automatisch" folgt der Klassifizierung: ein starrer
+Anschluss bleibt starr, ein nachgiebiger wird zur Drehfeder, ein gelenkiger zum
+Momentengelenk. Die Feder wird über dieselbe exakte Reihenschaltung eingebaut
+wie ein Federgelenk (Kapitel 4.2), also ohne Näherung im Element.
+
+Sind keine Angaben zur Stütze vorhanden, entfallen k_1 bis k_4. S_j,ini ist
+dann eine **obere Schranke** — der wirkliche Anschluss ist weicher —, und
+genau das steht als Hinweis im Nachweis und im Bericht.
+
+Ein Laschenstoß gilt als durchgehend und damit starr; bei Schrauben der
+Kategorie A oder D wird darauf hingewiesen, dass der Schlupf des Lochspiels
+nicht in der Rechnung steckt. Ein Diagonalanschluss über ein Knotenblech gilt
+nach 5.1.5 als gelenkig.
+
 Die Geometrievorschläge (Blechdicken, Schraubenbild, Nahtdicken) sind
 **Vorschläge, keine Nachweise**: sie folgen den Konstruktionsregeln
 (Rand- und Lochabstände Tab. 3.3, Nahtdicken 4.5.1) und werden so lange
@@ -338,9 +409,12 @@ sind. Maßgebend ist immer die anschließende Rechnung über alle Kombinationen.
   sind nicht enthalten (Hinweis im Nachweis).
 * Anschlüsse: nachgewiesen werden die im Modell angelegten Anschlüsse der drei
   Vorlagen (Kopfplatte, Laschenstoß, Knotenblech) aus den Stabendschnitt-
-  größen. Die Nachgiebigkeit des Anschlusses geht **nicht** in die Rechnung
-  ein (starre oder gelenkige Modellierung ist über die Stabendgelenke zu
-  wählen); Momenten-Rotations-Kennlinien nach 6.3 sind nicht enthalten.
+  größen. Die Nachgiebigkeit geht über die Anfangssteifigkeit S_j,ini als
+  Drehfeder in die Rechnung ein (Kapitel 5a.1). Nicht enthalten sind die
+  nichtlineare M-φ-Kurve (gerechnet wird linear mit S_j = S_j,ini/η nach
+  5.1.2(4)), die Komponenten von Fußplatten auf Beton und die Interaktion
+  benachbarter Schraubenreihen als Gruppe (6.2.7.2(8)) — die Reihen werden
+  einzeln geführt.
 * Nachweise gelten für die implementierten Querschnittstypen (I, RHS, CHS,
   Rechteck, Kreis); bei freien Querschnitten wird elastisch (Klasse 3)
   gerechnet.

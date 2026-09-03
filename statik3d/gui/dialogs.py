@@ -682,7 +682,36 @@ class JointDialog(QtWidgets.QDialog):
         self.sp_mu.setDecimals(2)
         self.sp_mu.setValue(0.50)
         kopf.addRow("Reibbeiwert mu", self.sp_mu)
+
+        # -- Momenten-Rotations-Verhalten (EN 1993-1-8, Kap. 5 und 6.3) ----
+        self.cb_stuetze = QtWidgets.QComboBox()
+        self.cb_stuetze.addItem("keine Stütze angeschlossen", "")
+        for k in model.sections:
+            self.cb_stuetze.addItem(k, k)
+        self.cb_stuetze.setToolTip(
+            "Querschnitt der Stütze, an die angeschlossen wird. Ohne ihn entfallen\n"
+            "die Komponenten k_1 bis k_4 (Stützensteg auf Schub, Druck und Zug,\n"
+            "Stützenflansch auf Biegung); S_j,ini ist dann eine obere Schranke.")
+        kopf.addRow("Stützenquerschnitt", self.cb_stuetze)
+        self.cb_rahmen = QtWidgets.QComboBox()
+        self.cb_rahmen.addItem("ausgesteift (k_b = 8)", "ausgesteift")
+        self.cb_rahmen.addItem("nicht ausgesteift (k_b = 25)", "nicht ausgesteift")
+        self.cb_rahmen.setToolTip("Grenze der Steifigkeitsklassifizierung nach 5.2.2.5")
+        kopf.addRow("Rahmen", self.cb_rahmen)
+        self.cb_modell = QtWidgets.QComboBox()
+        for text, key in (("automatisch (nach Klassifizierung)", "automatisch"),
+                          ("starr", "starr"), ("Drehfeder S_j", "feder"),
+                          ("gelenkig", "gelenkig")):
+            self.cb_modell.addItem(text, key)
+        self.cb_modell.setToolTip(
+            "Wie der Anschluss in der Berechnung sitzt.\n"
+            "„automatisch“ folgt der Klassifizierung: starr bleibt starr,\n"
+            "nachgiebig wird zur Drehfeder S_j = S_j,ini/η (5.1.2(4)),\n"
+            "gelenkig wird zum Momentengelenk.")
+        kopf.addRow("in der Berechnung", self.cb_modell)
         lay.addLayout(kopf)
+        for w in (self.cb_stuetze, self.cb_rahmen):
+            w.currentIndexChanged.connect(self.update_proposal)
 
         btn = QtWidgets.QPushButton("Vorschlag berechnen")
         btn.clicked.connect(self.update_proposal)
@@ -731,6 +760,16 @@ class JointDialog(QtWidgets.QDialog):
                     hole=self.cb_hole.currentData(),
                     category=self.cb_cat.currentData(), mu=self.sp_mu.value())
 
+    def stuetze(self) -> dict:
+        name = self.cb_stuetze.currentData()
+        return {"section": name} if name else {}
+
+    def rahmen(self) -> str:
+        return self.cb_rahmen.currentData()
+
+    def modellierung(self) -> str:
+        return self.cb_modell.currentData()
+
     def update_proposal(self):
         kind = self.cb_typ.currentData()
         kw = {k: self.sp[k].value() * 1e3 for k in self.sp}
@@ -741,10 +780,40 @@ class JointDialog(QtWidgets.QDialog):
             j = (self.template.design(N=kw["N"])
                  if kind == "diagonale"
                  else self.template.design(**kw))
-            self.txt.setPlainText(self.template.describe() + "\n\n" + j.report())
+            text = self.template.describe() + "\n\n" + j.report()
+            text += "\n\n" + self._gelenktext()
+            self.txt.setPlainText(text)
         except Exception as ex:      # noqa: BLE001
             self.template = None
             self.txt.setPlainText(f"Vorschlag nicht moeglich: {ex}")
+
+    def _gelenktext(self) -> str:
+        """Steifigkeit, Klasse und Rotationsvermoegen des Vorschlags."""
+        from ..joints.anschluss import stuetze_aufloesen
+        from ..model import Joint
+        import math
+        j = Joint("x", "", int(self.elem), int(self.end),
+                  stuetze=self.stuetze(), rahmen=self.rahmen())
+        st = stuetze_aufloesen(self.model, j)
+        if st.get("fehler"):
+            st = {}
+        try:
+            g = self.template.momenten_rotation(stuetze=st, rahmen=self.rahmen())
+        except Exception as ex:      # noqa: BLE001
+            return f"Momenten-Rotations-Verhalten nicht bestimmbar: {ex}"
+        S = "unendlich" if not math.isfinite(g.S_j_ini) else f"{g.S_j_ini / 1e6:.1f} MNm/rad"
+        z = ["Momenten-Rotations-Verhalten (EN 1993-1-8, Kap. 5 und 6.3)",
+             "=" * 78,
+             f"S_j,ini = {S}"
+             + (f", Rechenwert S_j = {g.S_j / 1e6:.1f} MNm/rad (eta = {g.eta:g})"
+                if math.isfinite(g.S_j) and g.S_j > 0 else ""),
+             f"Klasse:  {g.beschreibung()}",
+             f"M_j,Rd = {g.M_j_Rd / 1e3:.1f} kNm ({g.tragklasse or '-'})",
+             f"Rotationsvermoegen: {'ausreichend' if g.rotation_ok else 'nicht nachgewiesen'}"
+             f" - {g.rotation_grund}"]
+        for h in g.hinweise:
+            z.append("Hinweis: " + h)
+        return "\n".join(z)
 
     def result_template(self):
         return self.template

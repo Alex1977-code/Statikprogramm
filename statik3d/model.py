@@ -872,6 +872,16 @@ class Joint:
     ermuedung: list = field(default_factory=list)
     design: bool = True
     beschreibung: str = ""
+    # -- Momenten-Rotations-Verhalten (EN 1993-1-8, Kap. 5 und 6.3) ------
+    #: "automatisch" = nach der Klassifizierung (starr, Drehfeder, Gelenk),
+    #: "starr" | "gelenkig" | "feder" = fest vorgegeben
+    modellierung: str = "automatisch"
+    #: Angaben der Stuetze fuer k_1 bis k_4: h, b, tw, tf, r, fy, versteift
+    stuetze: dict = field(default_factory=dict)
+    #: "ausgesteift" (k_b = 8) oder "nicht ausgesteift" (k_b = 25) nach 5.2.2.5
+    rahmen: str = "ausgesteift"
+    #: von Hand gesetzte Drehfedersteifigkeit [Nm/rad] (0 = aus der Rechnung)
+    S_j: float = 0.0
 
     def ort(self) -> str:
         return f"Element {self.elem + 1}, Ende {'A' if self.end == 0 else 'E'}"

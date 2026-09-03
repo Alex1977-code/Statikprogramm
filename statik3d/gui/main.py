@@ -810,6 +810,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_joint = tab.Datentabelle([
             Spalte("Anschluss"), Spalte("Typ"), Spalte("Ort"),
             Spalte("Stab"), Spalte("Querschnitt"),
+            Spalte("S_j,ini", "MNm/rad", "zahl", 1,
+                   hinweis="Anfangssteifigkeit nach dem Komponentenverfahren (6.3.1)"),
+            Spalte("Klasse", hinweis="starr, nachgiebig oder gelenkig (5.2.2.5)"),
+            Spalte("M_j,Rd", "kNm", "zahl", 1,
+                   hinweis="Momententragfähigkeit des Anschlusses (6.2.7)"),
+            Spalte("in der Rechnung",
+                   hinweis="wie der Anschluss im Modell sitzt: starr, Drehfeder, Gelenk"),
             Spalte("Ausnutzung", "", "zahl", 3,
                    hinweis="Tragfähigkeit nach EN 1993-1-8; Filter z. B. > 1"),
             Spalte("maßgebender Nachweis"), Spalte("Kombination"),
@@ -1557,8 +1564,15 @@ class MainWindow(QtWidgets.QMainWindow):
             e = m.elements[j.elem] if 0 <= j.elem < len(m.elements) else None
             stab = next((n for n, mm in m.members.items() if j.elem in mm.elements), "")
             c = erg.joints.get(name) if erg is not None else None
+            g = getattr(c, "gelenk", None) if c is not None else None
+            import math as _m
+            S = float(getattr(g, "S_j_ini", 0.0) or 0.0) if g is not None else None
             zeilen.append([name, KURZ.get(j.typ, j.typ), j.ort(), stab,
                            (e.sec if e is not None else "") or "",
+                           "" if S is None else ("∞" if not _m.isfinite(S) else S / 1e6),
+                           getattr(g, "klasse", "") if g is not None else "",
+                           (g.M_j_Rd / 1e3 if g is not None and g.M_j_Rd else ""),
+                           (c.modelliert if c is not None else ""),
                            c.util if c is not None else "",
                            (c.massgebend or c.fehler) if c is not None else "",
                            c.kombination if c is not None else "",
@@ -2400,6 +2414,9 @@ class MainWindow(QtWidgets.QMainWindow):
         name = self._freier_name(t.name, self.model.joints)
         self.merken(f"Anschluss {name}")
         j = ans.als_joint(t, name)
+        j.stuetze = d.stuetze()
+        j.rahmen = d.rahmen()
+        j.modellierung = d.modellierung()
         if d.kraefte_fest():
             j.kraefte = {k: v for k, v in d.forces().items()
                          if k in ans.KRAEFTE.get(j.typ, ())}
@@ -2470,9 +2487,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 zeilen = [f"{c.name} ({c.ort}) - {c.status()}", "=" * 78, c.beschreibung, ""]
                 if c.fehler:
                     zeilen.append("nicht geführt: " + c.fehler)
+                from ..joints.design import Check as _JCheck
                 for ch in c.checks:
-                    f = 1e-3 if ch["einheit"] == "kN" else (
-                        1e-6 if ch["einheit"] == "N/mm^2" else 1.0)
+                    f = _JCheck.FAKTOR.get(ch["einheit"], 1.0)
                     zeilen.append(f"{'OK ' if ch['eta'] <= 1 else 'NICHT ERFÜLLT'} "
                                   f"{ch['name']:42s} {ch['E'] * f:9.1f} / {ch['R'] * f:9.1f} "
                                   f"{ch['einheit']}  eta = {ch['eta']:.3f}")

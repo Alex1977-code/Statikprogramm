@@ -710,6 +710,30 @@ def main():
         check("Klick in der Tabelle wählt den Stab", len(w.selection) == 2)
         w.clear_selection()
 
+        # Momenten-Rotations-Verhalten steht in der Tabelle und in der Rechnung
+        g = an.joints.joints[name].gelenk
+        check("Steifigkeit des Anschlusses bestimmt", g is not None and g.S_j_ini > 0,
+              f"S_j,ini = {g.S_j_ini / 1e6:.1f} MNm/rad" if g else "-")
+        check("Klasse und M_j,Rd stehen in der Tabelle",
+              w.tbl_joint.modell.zeilen[0][6] in ("starr", "nachgiebig", "gelenkig")
+              and float(w.tbl_joint.modell.zeilen[0][7]) > 0,
+              f"{w.tbl_joint.modell.zeilen[0][6]}, "
+              f"M_j,Rd = {w.tbl_joint.modell.zeilen[0][7]} kNm")
+        check("die Tabelle sagt, wie er in der Rechnung sitzt",
+              "gerechnet" in str(w.tbl_joint.modell.zeilen[0][8])
+              or "Drehfeder" in str(w.tbl_joint.modell.zeilen[0][8]),
+              str(w.tbl_joint.modell.zeilen[0][8]))
+        w.model.joints[name].modellierung = "feder"
+        an = solver.solve_all(w.model, design=True, fatigue=True)
+        w._solve_done("all", an)
+        w.show_results()
+        app.processEvents()
+        e0 = w.model.elements[w.model.joints[name].elem]
+        check("die Drehfeder sitzt danach am Stabende",
+              any(d == DOF for d, _k in e0.hinge_springs for DOF in (4, 10)),
+              str(e0.hinge_springs))
+        w.model.joints[name].modellierung = "automatisch"
+
         # Rückgängig und Löschen
         nl = len(w.model.joints)
         w.undo()
