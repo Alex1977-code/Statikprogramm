@@ -28,6 +28,7 @@ from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialo
 from .worker import SolveWorker
 from . import ribbon as rib
 from . import masken as msk
+from .. import ks
 from . import viewport as vp
 from . import design as dsg
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
@@ -51,6 +52,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker = None
 
         self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil())
+        self._undo_init()
+        self._ks_init()
         self._build_viewport()
         self._build_panels()
         self._build_bottom()
@@ -92,6 +95,18 @@ class MainWindow(QtWidgets.QMainWindow):
         """Netz- und Solverstand in der Statusleiste."""
         if not hasattr(self, "lbl_netz"):
             return
+        self.lbl_ks.setText(f"KS: {self.ks_aktiv}")
+        self.lbl_fang.setText("Fang: " + ("an" if getattr(self, "fang_an", False)
+                                          else "aus")
+                              + f" · {self.arbeitsebene.ebene}"
+                              + (f" · Raster {self.arbeitsebene.raster:g} m"
+                                 if self.arbeitsebene.raster > 0 else ""))
+        if hasattr(self, "cb_ks") and self.cb_ks.count() != len(self.ks_liste):
+            self.cb_ks.blockSignals(True)
+            self.cb_ks.clear()
+            self.cb_ks.addItems(list(self.ks_liste))
+            self.cb_ks.setCurrentText(self.ks_aktiv)
+            self.cb_ks.blockSignals(False)
         m = self.model
         self.lbl_netz.setText(f"Netz: {m.nn} Knoten · {len(m.elements)} Elemente"
                               if m.nn else "Netz: leer")
@@ -198,6 +213,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # -- Start -------------------------------------------------------
         r = rb.register("Start")
+        g = r.gruppe("Zwischenablage")
+        self.act_undo = g.gross("Rückgängig", "↶", self.undo, "Ctrl+Z",
+                                "Letzte Änderung zurücknehmen")
+        self.act_redo = g.gross("Wiederholen", "↷", self.redo, "Ctrl+Y",
+                                "Zurückgenommene Änderung wiederholen")
         g = r.gruppe("Auswahl")
         self.act_auswahl_weg = g.gross("Auswahl aufheben", "✕", self.clear_selection,
                                        "Esc", "Alle gewählten Knoten abwählen")
@@ -219,6 +239,33 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Knoten", "•", self.maske_knoten, "",
                 "Knoten über Koordinaten anlegen oder in der Ansicht klicken")
         g.klein("Knoten löschen", self.delete_nodes)
+        g = r.gruppe("Linien")
+        g.gross("Linie", "◜", self.maske_linie, "",
+                "Polylinie, Bogen, Kreis, Spline oder Parabel")
+        g = r.gruppe("Koordinatensystem")
+        self.cb_ks = QtWidgets.QComboBox()
+        self.cb_ks.setMinimumWidth(120)
+        self.cb_ks.currentTextChanged.connect(self.ks_waehlen)
+        g.widget(self.cb_ks)
+        g.klein("Neues KS…", self.ks_neu)
+        g.klein("Aus drei Knoten", self.ks_aus_auswahl)
+        g = r.gruppe("Arbeitsebene")
+        self.cb_ebene = QtWidgets.QComboBox()
+        self.cb_ebene.addItems(list(ks.EBENEN))
+        self.cb_ebene.currentTextChanged.connect(
+            lambda t: self.arbeitsebene_setzen(ebene=t))
+        g.widget(self.cb_ebene)
+        self.sp_raster = QtWidgets.QDoubleSpinBox()
+        self.sp_raster.setRange(0.0, 100.0)
+        self.sp_raster.setSingleStep(0.1)
+        self.sp_raster.setValue(0.5)
+        self.sp_raster.setSuffix(" m")
+        self.sp_raster.setToolTip("Rasterweite der Arbeitsebene (0 = kein Raster)")
+        self.sp_raster.valueChanged.connect(
+            lambda v: self.arbeitsebene_setzen(raster=v))
+        g.widget(self.sp_raster)
+        self.act_fang = g.schalter("Fang", self.fang_umschalten, True,
+                                   "Auf Knoten, Kantenmitte und Raster fangen")
         g = r.gruppe("Netzgeneratoren")
         g.gross("Stabzug", "╱", lambda: self.maske_zeigen("Netz"),
                 hinweis="Stabzug zwischen zwei Punkten")
@@ -359,7 +406,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Fassung, Build und Gültigkeitsbereich")
         g.klein("Nach Update suchen…", self.check_update)
 
-        rb.schnell(self.act_speichern, self.act_rechnen, self.act_auswahl_weg)
+        rb.schnell(self.act_speichern, self.act_undo, self.act_redo,
+                   self.act_rechnen, self.act_auswahl_weg)
+        self._undo_knoepfe()
         self.setMenuWidget(dsg.kopfhalter(self, self.kopf, rb))
 
     @staticmethod
@@ -1482,6 +1531,211 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis = None
         self.results = None
         self.selection = np.array([], dtype=int)
+        self.refresh_all()
+
+    # ---- Rueckgaengig / Wiederholen ----------------------------------
+    #: so viele Schritte werden vorgehalten
+    SCHRITTE = 50
+
+    def _undo_init(self):
+        self._undo: list = []
+        self._redo: list = []
+
+    def merken(self, was: str):
+        """Den Stand vor einer Aenderung sichern.
+
+        Gesichert wird das ganze Modell - das ist einfach, verlaesslich und
+        macht jede Aenderung umkehrbar, auch Netz, Lasten und Lager. Die Liste
+        ist auf SCHRITTE begrenzt, damit grosse Modelle den Speicher nicht
+        auffressen.
+        """
+        if not hasattr(self, "_undo"):
+            self._undo_init()
+        self._undo.append((was, self.model.copy()))
+        del self._undo[:-self.SCHRITTE]
+        self._redo.clear()
+        self._undo_knoepfe()
+
+    def undo(self):
+        if not getattr(self, "_undo", None):
+            return self.info("Nichts rückgängig zu machen")
+        was, m = self._undo.pop()
+        self._redo.append((was, self.model.copy()))
+        self._modell_setzen(m)
+        self.info(f"Rückgängig: {was}")
+
+    def redo(self):
+        if not getattr(self, "_redo", None):
+            return self.info("Nichts zu wiederholen")
+        was, m = self._redo.pop()
+        self._undo.append((was, self.model.copy()))
+        self._modell_setzen(m)
+        self.info(f"Wiederholt: {was}")
+
+    def _modell_setzen(self, m):
+        self.model = m
+        self.analysis = None
+        self.results = None
+        self.selection = np.array([], dtype=int)
+        self._undo_knoepfe()
+        self.refresh_all()
+
+    def _undo_knoepfe(self):
+        if not hasattr(self, "act_undo"):
+            return
+        u, r = getattr(self, "_undo", []), getattr(self, "_redo", [])
+        self.act_undo.setEnabled(bool(u))
+        self.act_redo.setEnabled(bool(r))
+        self.act_undo.setToolTip(f"Rückgängig: {u[-1][0]}" if u
+                                 else "Nichts rückgängig zu machen")
+        self.act_redo.setToolTip(f"Wiederholen: {r[-1][0]}" if r
+                                 else "Nichts zu wiederholen")
+
+    # ---- Koordinatensystem, Arbeitsebene, Fang -----------------------
+    def _ks_init(self):
+        self.ks_liste = {"global": ks.Koordinatensystem.global_ks()}
+        self.ks_aktiv = "global"
+        self.arbeitsebene = ks.Arbeitsebene(self.ks_liste["global"], "xy", 0.0, 0.5)
+        self.fang_an = True
+        self.fang_arten = list(ks.FANGARTEN)
+
+    def ks(self) -> "ks.Koordinatensystem":
+        return self.ks_liste.get(self.ks_aktiv) or self.ks_liste["global"]
+
+    def ks_neu(self):
+        """Ein Koordinatensystem über drei Punkte oder Drehwinkel anlegen."""
+        m = msk.Maske("Koordinatensystem", [
+            msk.Feld("name", "Name", "text", f"KS{len(self.ks_liste)}", breite=110),
+            msk.Feld("art", "Art", "wahl", "kartesisch", list(ks.ARTEN)),
+            msk.Feld("x", "Ursprung x [m]"), msk.Feld("y", "y [m]"), msk.Feld("z", "z [m]"),
+            msk.Feld("a", "Drehung um x [°]"), msk.Feld("b", "um y [°]"),
+            msk.Feld("c", "um z [°]")],
+            knopf="Anlegen",
+            hinweis="Ursprung und Drehwinkel eintragen – oder drei Knoten in der "
+                    "Ansicht wählen und „Aus Auswahl“ im Ribbon.")
+        m.angewendet.connect(self._ks_anlegen)
+        self.maskenrand.zeigen(m)
+
+    def _ks_anlegen(self, w: dict):
+        name = (w.get("name") or "KS").strip()
+        k = ks.Koordinatensystem.aus_winkeln(name, (w["x"], w["y"], w["z"]),
+                                             w["a"], w["b"], w["c"], w.get("art"))
+        self.ks_liste[name] = k
+        self.ks_aktiv = name
+        self.arbeitsebene.ks = k
+        self.info(f"Koordinatensystem {k.beschreibung()}")
+        self._refresh_status()
+
+    def ks_aus_auswahl(self):
+        """Aus drei gewählten Knoten ein Koordinatensystem machen."""
+        if len(self.selection) < 3:
+            return self.error("Drei Knoten wählen: Ursprung, x-Richtung, xy-Ebene")
+        p = [self.model.nodes[int(i)] for i in self.selection[:3]]
+        name = f"KS{len(self.ks_liste)}"
+        try:
+            k = ks.Koordinatensystem.aus_punkten(name, p[0], p[1], p[2])
+        except ValueError:
+            return self.error("Die drei Knoten liegen auf einer Geraden – so lässt "
+                              "sich keine Ebene aufspannen. Einen Knoten außerhalb "
+                              "der Geraden wählen.")
+        self.ks_liste[name] = k
+        self.ks_aktiv = name
+        self.arbeitsebene.ks = k
+        self.info(f"Koordinatensystem {k.beschreibung()}")
+        self._refresh_status()
+
+    def ks_waehlen(self, name: str):
+        if name in self.ks_liste:
+            self.ks_aktiv = name
+            self.arbeitsebene.ks = self.ks_liste[name]
+            self._refresh_status()
+
+    def arbeitsebene_setzen(self, ebene: str = None, versatz: float = None,
+                            raster: float = None):
+        if ebene:
+            self.arbeitsebene.ebene = ebene
+        if versatz is not None:
+            self.arbeitsebene.versatz = float(versatz)
+        if raster is not None:
+            self.arbeitsebene.raster = float(raster)
+        self.info("Arbeitsebene: " + self.arbeitsebene.beschreibung())
+        self._refresh_status()
+
+    def fang_umschalten(self, an: bool):
+        self.fang_an = bool(an)
+        self._refresh_status()
+
+    def _fangen(self, punkt):
+        """Einen Punkt auf die nächste markante Stelle ziehen."""
+        if not getattr(self, "fang_an", False):
+            return ks.Fangtreffer(np.asarray(punkt, float))
+        kanten = [(int(e.nodes[0]), int(e.nodes[-1])) for e in self.model.elements
+                  if e.typ in ("beam", "truss")][:4000]
+        weite = 0.03 * max(self.model.characteristic_size(), 1e-6)
+        return ks.fangen(punkt, self.model.nodes if self.model.nn else None,
+                         kanten, self.arbeitsebene, weite, self.fang_arten)
+
+    # ---- Linien ------------------------------------------------------
+    def maske_linie(self):
+        """Linie anlegen: Art wählen, Knoten anklicken oder Werte eintragen."""
+        arten = [("polyline", "Polylinie (2+ Knoten)"), ("arc", "Bogen (3 Knoten)"),
+                 ("circle", "Kreis (Mitte + Radius)"), ("spline", "Spline (3+ Knoten)"),
+                 ("parabola", "Parabel (Anfang, Ende, Stich)")]
+        m = msk.Maske("Linie", [
+            msk.Feld("art", "Art", "wahl", "Bogen (3 Knoten)", [t for _k, t in arten]),
+            msk.Feld("mat", "Material", "wahl", self._erst(self.model.materials),
+                     list(self.model.materials)),
+            msk.Feld("sec", "Querschnitt", "wahl", self._erst(self.model.sections),
+                     list(self.model.sections)),
+            msk.Feld("teilung", "Teilung", "ganz", 8, breite=60),
+            msk.Feld("radius", "Radius / Stich [m]", "zahl", 2.0),
+            msk.Feld("staebe", "Stäbe daraus erzeugen", "haken", True)],
+            knoten=3, knopf="Linie anlegen")
+        m._arten = dict((t, k) for k, t in arten)
+        m.angewendet.connect(self._maske_linie_anlegen)
+        self.maskenrand.zeigen(m)
+
+    def _maske_linie_anlegen(self, w: dict):
+        from .. import geometry as geo
+        maske = self.maskenrand.maske
+        art = getattr(maske, "_arten", {}).get(w.get("art"), "polyline")
+        kn = list(w.get("knoten") or [])
+        noetig = {"polyline": 2, "arc": 3, "circle": 1, "spline": 3, "parabola": 2}[art]
+        if len(kn) < noetig:
+            return self.error(f"{noetig} Knoten in der Ansicht anklicken")
+        self.merken(f"Linie ({art})")
+        name = f"L{len(self.model.lines) + 1}"
+        teilung = max(int(w.get("teilung") or 8), 1)
+        try:
+            if art == "circle":
+                p = self.model.nodes[kn[0]]
+                _u, _v2, n = self.arbeitsebene.achsen()
+                self.model.add_line(name, [kn[0]], "circle", mitte=tuple(float(x) for x in p),
+                                    radius=float(w.get("radius") or 1.0),
+                                    normale=tuple(float(x) for x in n), teilung=teilung)
+            elif art == "parabola":
+                a, e = self.model.nodes[kn[0]], self.model.nodes[kn[1]]
+                _u, _v2, n = self.arbeitsebene.achsen()
+                self.model.add_line(name, kn[:2], "parabola",
+                                    anfang=tuple(float(x) for x in a),
+                                    ende=tuple(float(x) for x in e),
+                                    stich=float(w.get("radius") or 0.0),
+                                    richtung=tuple(float(x) for x in n), teilung=teilung)
+            else:
+                self.model.add_line(name, kn[:max(noetig, len(kn))], art, teilung=teilung)
+            ln = self.model.lines[name]
+            laenge = ln.laenge(self.model)
+            n_el = 0
+            if w.get("staebe"):
+                n_el = len(self.model.line_to_beams(name, w["mat"], w["sec"], teilung))
+        except (geo.GeometrieFehler, ValueError, KeyError) as ex:
+            self._undo.pop()
+            return self.error(str(ex))
+        self.info(f"{ln.kurve(self.model).beschreibung()}: {name}, "
+                  f"L = {laenge:.3f} m"
+                  + (f", {n_el} Stäbe erzeugt" if n_el else ""))
+        if maske is not None:
+            maske.auswahl_leeren()
         self.refresh_all()
 
     # ---- Nicht-modale Masken („Maske oder Klick“) --------------------

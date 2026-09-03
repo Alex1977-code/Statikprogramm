@@ -99,6 +99,48 @@ Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
 bis man sie ändert. **Esc** schließt die Maske. Ein neuer Erzeuge-Befehl löst
 die vorige Maske ab — es ist immer höchstens eine offen.
 
+### Rückgängig und Wiederholen
+
+**Strg+Z** nimmt die letzte Änderung zurück, **Strg+Y** stellt sie wieder her —
+für alles: Geometrie, Netz, Lager, Lasten, Linien. Gesichert wird jeweils das
+ganze Modell, darum bleibt auch eine Änderung umkehrbar, die viele Stellen auf
+einmal betrifft. Die letzten 50 Schritte werden vorgehalten; die Schnellzugriffs-
+leiste zeigt im Hinweistext, worum es beim nächsten Schritt geht.
+
+### Koordinatensysteme, Arbeitsebene, Fang
+
+Im Register **Geometrie** stehen drei Gruppen für die Eingabehilfen:
+
+* **Koordinatensystem** — das aktive System wählen, ein neues über Ursprung und
+  Drehwinkel anlegen oder aus drei gewählten Knoten aufspannen (Ursprung,
+  x-Richtung, ein Punkt in der xy-Ebene). Neben kartesisch gibt es
+  **zylindrisch** (r, θ, z — für Rohre und Segmentverschlüsse) und
+  **sphärisch** (r, θ, φ). Alle Koordinateneingaben beziehen sich auf das
+  aktive System; die Statusleiste nennt es.
+* **Arbeitsebene** — xy, yz oder xz des aktiven Systems, mit einstellbarer
+  Rasterweite (0 = kein Raster).
+* **Fang** — ein Klick in der Ansicht wird auf die nächste markante Stelle
+  gezogen: erst Knoten, dann Kantenmitte, dann Rasterpunkt. Der Schalter im
+  Ribbon nimmt ihn zurück; die Statusleiste zeigt seinen Zustand.
+
+### Linien: Bogen, Kreis, Spline, Parabel
+
+**Geometrie → Linie** öffnet die Maske. Art wählen, dann in der Ansicht die
+Knoten anklicken:
+
+| Art | Eingabe | Ergebnis |
+|---|---|---|
+| Polylinie | 2 oder mehr Knoten | gerader Zug |
+| Bogen | 3 Knoten: Anfang, Zwischenpunkt, Ende | Kreisbogen durch die drei Punkte; Radius und Öffnungswinkel folgen daraus |
+| Kreis | 1 Knoten (Mittelpunkt) + Radius | Vollkreis in der Arbeitsebene |
+| Spline | 3 oder mehr Knoten | B-Spline vom gewählten Grad durch den ersten und letzten Punkt |
+| Parabel | 2 Knoten + Stich | Parabel mit dem angegebenen Stich in der Mitte |
+
+Mit „Stäbe daraus erzeugen" wird die Linie gleich in Stabelemente geteilt — die
+Teilung steht in der Maske. Die Linie bleibt als Geometrie erhalten und kennt
+ihre exakte Länge (ein Halbkreis r = 2 m misst 6,283 m, nicht die Länge des
+Sehnenzugs).
+
 ### Register „Auswahl"
 
 Sobald Knoten gewählt sind, erscheint rechts im Ribbon ein zusätzliches

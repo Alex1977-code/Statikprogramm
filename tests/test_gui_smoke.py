@@ -392,6 +392,74 @@ def main():
         check("Befehle des Registers sind wieder abgemeldet",
               not any(b.register.startswith("Auswahl") for b in w.ribbon.befehle))
 
+        # Rueckgaengig / Wiederholen
+        w.load_example("frame")
+        w.refresh_all()
+        nn0 = w.model.nn
+        w.merken("Testknoten")
+        w.model.add_node(9.0, 9.0, 9.0)
+        w.refresh_all()
+        check("Aenderung wird gemerkt", w.act_undo.isEnabled() and w.model.nn == nn0 + 1)
+        w.undo()
+        check("Rueckgaengig nimmt sie zurueck", w.model.nn == nn0, str(w.model.nn))
+        check("Wiederholen wird moeglich", w.act_redo.isEnabled())
+        w.redo()
+        check("Wiederholen legt sie wieder an", w.model.nn == nn0 + 1)
+        w.undo()
+        w.undo()
+        check("Leerer Stapel stoert nicht",
+              w.model.nn == nn0 and not w.act_undo.isEnabled())
+
+        # Koordinatensystem, Arbeitsebene, Fang
+        check("Statusleiste nennt Koordinatensystem und Fang",
+              "global" in w.lbl_ks.text() and "Raster" in w.lbl_fang.text(),
+              w.lbl_fang.text())
+        w.arbeitsebene_setzen(ebene="xz", raster=0.25)
+        check("Arbeitsebene laesst sich umstellen",
+              w.arbeitsebene.ebene == "xz" and abs(w.arbeitsebene.raster - 0.25) < 1e-12
+              and "0.25" in w.lbl_fang.text().replace(",", "."), w.lbl_fang.text())
+        w.arbeitsebene_setzen(ebene="xy", raster=0.5)
+        i0 = w.model.add_node(0.0, 0.0, 0.0)
+        i1 = w.model.add_node(2.0, 0.0, 0.0)
+        i2 = w.model.add_node(0.0, 3.0, 0.0)
+        w._set_selection([i0, i1, i2])
+        w.ks_aus_auswahl()
+        check("Koordinatensystem aus drei Knoten",
+              w.ks_aktiv != "global" and len(w.ks_liste) == 2, w.ks_aktiv)
+        check("Aktives KS steht in der Statusleiste", w.ks_aktiv in w.lbl_ks.text())
+        w.ks_waehlen("global")
+        check("Zurueck auf global", w.ks_aktiv == "global")
+        t = w._fangen((0.02, 0.01, 0.0))
+        check("Fang zieht auf den Knoten", t.art == "knoten", t.text())
+        w.fang_umschalten(False)
+        check("Fang laesst sich abschalten",
+              w._fangen((0.02, 0.01, 0.0)).art == "" and "aus" in w.lbl_fang.text())
+        w.fang_umschalten(True)
+
+        # Linien: Bogen aus drei angeklickten Knoten
+        w.clear_selection()
+        w.maske_linie()
+        m = w.maskenrand.maske
+        check("Linienmaske verlangt drei Knoten",
+              m.titel == "Linie" and m.n_knoten == 3)
+        a = w.model.add_node(2.0, 0.0, 6.0)
+        b = w.model.add_node(0.0, 2.0, 6.0)
+        c = w.model.add_node(-2.0, 0.0, 6.0)
+        ne0, nl0 = len(w.model.elements), len(w.model.lines)
+        m.knoten_angeklickt(a)
+        m.knoten_angeklickt(b)
+        m.knoten_angeklickt(c)
+        check("Bogen wird angelegt", len(w.model.lines) == nl0 + 1,
+              str(list(w.model.lines)))
+        ln = list(w.model.lines.values())[-1]
+        check("Bogenlaenge stimmt (Halbkreis r = 2)",
+              abs(ln.laenge(w.model) - 2 * np.pi) < 1e-9,
+              f"{ln.laenge(w.model):.6f}")
+        check("Staebe entlang des Bogens erzeugt",
+              len(w.model.elements) - ne0 == 8, str(len(w.model.elements) - ne0))
+        w.undo()
+        check("Linie laesst sich zuruecknehmen", len(w.model.lines) == nl0)
+
     except Exception as ex:      # noqa: BLE001
         import traceback
         traceback.print_exc()
