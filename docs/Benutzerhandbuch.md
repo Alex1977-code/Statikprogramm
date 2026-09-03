@@ -37,23 +37,34 @@ kNm, MPa und mm angezeigt.
 
 ## 2 Die Oberfläche
 
-Links die Eingabe-Registerkarten, in der Mitte der 3D-Viewport, unten das
-Protokoll und die Ergebnistabellen.
+Oben eine dunkle Kopfzeile: links **Statik3D**, daneben Bauteil, Norm und
+Fassung (`Statik3D 2.1.0 (Build a4b3c2d)`), rechts zwei Marken mit dem Umfang
+des Modells (Knoten, Elemente, Stellungen) und dem Zustand („bereit",
+„rechnet…", „berechnet · 12,4 s"). Darunter das Menü und die **Werkzeugleiste**
+mit den Wegen, die man ständig braucht:
 
-| Register | Inhalt |
+| Knopf | Wirkung |
 |---|---|
-| **Modell** | Projektdaten (für den Bericht), Materialien (Stahlsorten S235–S460 mit fy/fu), Querschnitte aus der Profildatenbank **nach Land** (Europa: IPE, HEA/B/M, UPN, UPE, Winkel, SHS/RHS/CHS; Großbritannien: UB, UC, PFC; USA: W, C, HSS, Pipe), zusammengesetzt oder parametrisch, Schalendicken, Querschnitt/Material zuweisen, Gelenke setzen |
-| **Netz** | Stabzüge, Platten, Quader erzeugen; Import (siehe Kap. 7); doppelte Knoten zusammenführen |
-| **Lager/Lasten** | Lager mit Ausfall bei Zug/Druck, Schlupf, Reibung (Kap. 5), Linien- und Flächenlager; Knoten auswählen (Klick im Viewport, Koordinatenfenster, Nummern); Lager (starr, Feder, Einspannung, gelenkig); Knoten-, Strecken- (auch trapezförmig, lokal/global), Flächen-, Temperaturlasten und Eigengewicht **in den aktiven Lastfall** |
-| **Lastfälle** | Lastfälle mit Einwirkungskategorie (ψ-Werte), Ausschlussgruppen, Kombinationen automatisch (DIN EN 1990) oder manuell, Ermüdungslasten |
-| **Kontakt** | Einseitige Lager, Spaltelemente, Kontaktpaare Knoten–Fläche mit Reibung |
-| **Nachweise** | Stäbe (Knicklängen, seitliche Halterung, Kerbfall …), Einstellungen γM, Nachweise starten |
-| **Berechnung** | Analyseart, Parallelisierung (Kerne, Rechnerfarm), BERECHNEN (F5) |
-| **Ergebnisse** | Ergebnis (Lastfall / Kombination / Umhüllende) wählen, Färbung, Schnittgrößenverläufe, Überhöhung, Export, Bericht |
+| **Datei ▾** | Neu, Öffnen, Speichern, Bericht |
+| **Übernehmen aus Modell ▾** | Import aus RFEM, HiCAD, IFC, DXF, SDNF, … |
+| **⬡ Netz**, **⇩ Lager / Lasten**, **⟳ Stellungen**, **Kontakt**, **✓ Nachweise** | springt in das jeweilige Register |
+| **▶ Berechnen (F5)** | startet die Berechnung |
+| **≡ Bericht** | Bericht als HTML oder PDF |
 
-Der Viewport: linke Maustaste dreht, rechte zoomt, mittlere verschiebt.
-**Klick auf einen Knoten** wählt ihn aus (nochmals klicken hebt die Auswahl
-auf). Ansicht → Knotennummern / Elementnummern blendet Beschriftungen ein.
+Darunter die Arbeitsfläche in drei Spalten:
+
+* **links der Modellbaum** – Elemente nach Art, Querschnitte, Werkstoffe, Lager,
+  Lastfälle, Kombinationen, Kontakt, Stellungen und die Stäbe für die Nachweise,
+  jeweils mit Anzahl. Ein Klick springt in das zugehörige Register.
+* **in der Mitte die 3D-Ansicht**, darunter der **Filmstreifen der Stellungen**:
+  je Stellung eine Karte mit Winkel und Ausnutzung; die maßgebende ist mit ★
+  und orangem Rand gekennzeichnet, die gewählte blau umrandet.
+* **rechts die Eingaben** in Registern: Modell, Netz, Lager/Lasten, Lastfälle,
+  Stellungen, Kontakt, Nachweise, Berechnung, Ergebnisse.
+
+Unten das **Protokoll** mit den Ergebnistabellen (Stabkräfte, Auflagerkräfte,
+Umhüllende, Nachweise EC3, Ermüdung, Kontakt). In der Statusleiste steht rechts
+die installierte Fassung mit dem Knopf „Update suchen".
 
 ## 3 Arbeitsablauf
 
@@ -396,6 +407,20 @@ Grenzmoment der Rutschkupplung), `WIND_B` (Wind während der Bewegung), `EIS`,
 > `rw.bericht()` schreibt die Tabelle mit Herkunft, und das Importprotokoll
 > weist darauf hin. Ein Programm, das Beiwerte aus dem Gedächtnis behauptet,
 > wäre schlimmer als eines, das die Tabelle offen zur Bestätigung vorlegt.
+
+### Stellungen im Programmfenster
+
+Im Register **⟳ Stellungen** stehen alle Stellungen in einer Tabelle mit Winkel,
+ausgefallenen Lagern, geltenden Lastfällen, η und größter Verformung.
+„+ Stellung" öffnet den Dialog (Name, Winkel, Lager, Lastfälle, Drehung des
+bewegten Bauteils, Antriebsmoment), „Ändern" und „Entfernen" arbeiten auf der
+gewählten Zeile. **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln
+und schreibt die Umhüllende darunter; der Filmstreifen unter der 3D-Ansicht
+zeigt danach je Karte das η, die maßgebende mit ★.
+
+„Kombinationen nach DIN 19704 bilden" legt die Kombinationen der drei
+Lastfallklassen an und schreibt darunter **jeden Beiwert mit seinem Zustand**
+(„bestätigt" oder „zu bestätigen") und die ZTV-ING-Prüfliste.
 
 ### Stellungen im Browser: Register „Stellungen“
 
