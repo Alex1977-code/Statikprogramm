@@ -35,6 +35,20 @@ Einheiten durchgängig SI: **m, N, Pa, kg/m³**.
 
 ---
 
+## Windows: Ein-Klick-Start (immer die neueste Version)
+
+1. Python 3.11 oder 3.12 von https://www.python.org/downloads/windows/ installieren („Add python.exe to PATH“ anhaken).
+2. Diese Datei in einen eigenen Ordner (z. B. `C:\Statik3D`) speichern:
+   **https://raw.githubusercontent.com/Alex1977-code/Statikprogramm/main/Statik3D-Windows.bat**
+   (im Browser Strg+S bzw. Rechtsklick → „Ziel speichern unter“).
+3. Doppelklick. Die Datei holt bei jedem Start die aktuelle Version von GitHub, richtet einmalig
+   die Python-Umgebung ein und startet die Oberfläche. `Statik3D-Windows.bat handy` startet
+   stattdessen den Server für Handy und Browser, `Statik3D-Windows.bat offline` startet ohne Aktualisierung.
+
+Eigene Modelle in den Ordner `Projekte` neben der Startdatei legen; der Ordner `Statikprogramm` wird
+bei jeder Aktualisierung ersetzt. Ohne Startdatei: der Stand von `main` als ZIP ist immer unter
+https://github.com/Alex1977-code/Statikprogramm/archive/refs/heads/main.zip.
+
 ## Installation
 
 ```bash

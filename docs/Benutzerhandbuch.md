@@ -17,6 +17,13 @@ python run_gui.py                      # oder: python -m statik3d.gui
 python -m statik3d.cli --beispiel hall --nachweise --ermuedung --bericht halle.html
 ```
 
+Windows ohne Kommandozeile: `Statik3D-Windows.bat` aus dem Repository in einen
+eigenen Ordner speichern und doppelklicken. Die Datei lädt bei jedem Start die
+neueste Version von GitHub (Ordner `Statikprogramm`, wird ersetzt), legt einmalig
+die Python-Umgebung `.venv` an und startet die GUI. Mit dem Zusatz `handy`
+startet sie den Browser-Server (Kap. 11), mit `offline` ohne Aktualisierung.
+Eigene Modelle gehören in den Ordner `Projekte` daneben.
+
 Einheiten im Programm: **m, N, Pa, kg/m³**. Eingabefelder mit anderer Einheit
 sind beschriftet (z. B. E-Modul in GPa, fy in MPa). Ergebnisse werden in kN,
 kNm, MPa und mm angezeigt.
