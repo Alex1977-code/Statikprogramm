@@ -420,5 +420,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
             z.setToolTip(0, f"{g.bezug()}: {g.groesse} ≤ {g.grenztext()}")
         self._zweig(vf, "+ Verformungsgrenze", "", "verformung_neu",
                     farbe=FARBEN["akzent"])
+        felder = getattr(model, "beulfelder", {}) or {}
+        if felder:
+            bl = self._zweig(wurzel, "Beulfelder", len(felder), "beulfelder", fett=True,
+                             farbe=FARBEN["akzent"])
+            for name, x in list(felder.items())[:60]:
+                self._zweig(bl, name, x.bezug(), "beulfeld")
         wurzel.setExpanded(offen.get(wurzel.text(0), True))
         el.setExpanded(offen.get("Elemente", True))

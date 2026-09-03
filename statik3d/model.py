@@ -835,6 +835,8 @@ class Member:
     lt_check: bool = True              # Biegedrillknicken nachweisen
     sway_y: bool = False               # verschieblich um y (Cmy = 0.9)
     sway_z: bool = False               # verschieblich um z (Cmz = 0.9)
+    a_steifen: float = 0.0             # Abstand der Quersteifen [m] (0 = nur an den Auflagern)
+    starre_endsteife: bool = False     # starre Endquersteife (EN 1993-1-5, Tab. 5.1)
     detail_category: Optional[float] = None       # Kerbfall Delta-sigma_c [Pa], z.B. 71e6
     detail_category_shear: Optional[float] = None  # Kerbfall Schub Delta-tau_c [Pa]
     fatigue_points: str = "flanges"    # Spannungspunkte fuer Ermuedung
@@ -885,6 +887,30 @@ class Joint:
 
     def ort(self) -> str:
         return f"Element {self.elem + 1}, Ende {'A' if self.end == 0 else 'E'}"
+
+
+@dataclass
+class Beulfeld:
+    """Ein Blechfeld fuer den Beulnachweis nach DIN EN 1993-1-5, Abschnitt 10.
+
+    elemente: die Schalenelemente, die das Feld bilden. Abmessungen und Dicke
+    werden daraus gewonnen; a, b und t ueberschreiben sie, wenn gesetzt.
+
+    rand: "beidseitig" (Feld an beiden Laengsraendern gestuetzt, z. B. ein
+    Stegblech zwischen den Flanschen) oder "einseitig" (ein Rand frei).
+    """
+    name: str
+    elemente: list = field(default_factory=list)
+    a: float = 0.0                 # Laenge des Feldes [m] (0 = aus der Geometrie)
+    b: float = 0.0                 # Breite quer zur Hauptdruckspannung [m]
+    t: float = 0.0                 # Blechdicke [m] (0 = aus der Schalendicke)
+    rand: str = "beidseitig"
+    starre_endsteife: bool = False
+    beschreibung: str = ""
+
+    def bezug(self) -> str:
+        n = len(self.elemente)
+        return f"{n} Element{'e' if n != 1 else ''}"
 
 
 #: Verformungsgroessen einer Grenze
@@ -1040,6 +1066,7 @@ class Model:
         self.members: dict[str, Member] = {}
         self.joints: dict[str, Joint] = {}
         self.verformungsgrenzen: dict[str, Verformungsgrenze] = {}
+        self.beulfelder: dict[str, Beulfeld] = {}
         self.design = DesignSettings()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
@@ -1175,6 +1202,20 @@ class Model:
                 raise ValueError(f"„{art}“ braucht {noetig} Knoten")
         self.verformungsgrenzen[name] = v
         return v
+
+    def add_beulfeld(self, name: str, elemente, **kw) -> Beulfeld:
+        """Ein Blechfeld fuer den Beulnachweis aufnehmen."""
+        els = [int(e) for e in elemente]
+        if not els:
+            raise ValueError("Ein Beulfeld braucht Schalenelemente")
+        for e in els:
+            if not 0 <= e < len(self.elements):
+                raise IndexError(f"Element {e} gibt es nicht")
+            if not self.elements[e].typ.startswith("shell"):
+                raise ValueError(f"Element {e + 1} ist kein Flächenelement")
+        b = Beulfeld(name, els, **kw)
+        self.beulfelder[name] = b
+        return b
 
     def add_joint(self, name: str, typ: str, elem: int, end: int = 1, **kw) -> Joint:
         """Anschluss an einem Stabende in das Modell aufnehmen."""
@@ -1539,6 +1580,7 @@ class Model:
             "members": [asdict(m) for m in self.members.values()],
             "joints": [asdict(j) for j in self.joints.values()],
             "verformungsgrenzen": [asdict(v) for v in self.verformungsgrenzen.values()],
+            "beulfelder": [asdict(x) for x in self.beulfelder.values()],
             "design": asdict(self.design),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
@@ -1583,6 +1625,7 @@ class Model:
         m.joints = {j["name"]: _dc(Joint, j) for j in d.get("joints", [])}
         m.verformungsgrenzen = {v["name"]: _dc(Verformungsgrenze, v)
                                 for v in d.get("verformungsgrenzen", [])}
+        m.beulfelder = {x["name"]: _dc(Beulfeld, x) for x in d.get("beulfelder", [])}
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]

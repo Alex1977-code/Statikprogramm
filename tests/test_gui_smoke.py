@@ -820,6 +820,52 @@ def main():
         traceback.print_exc()
         check("Verformungsnachweise", False, str(ex)[:70])
 
+    # ---- Beulfelder (EN 1993-1-5) ---------------------------------------
+    try:
+        w.load_example("plate")
+        m = w.model
+        shells = [i for i, e in enumerate(m.elements) if e.typ.startswith("shell")]
+        w._set_selection(sorted({int(n) for i in shells for n in m.elements[i].nodes}))
+        app.processEvents()
+        m.add_beulfeld("Feld 1", shells, beschreibung="ganze Platte als ein Feld")
+        w.refresh_all()
+        app.processEvents()
+        check("Beulfeldtabelle unten gefüllt", w.tbl_beul.zeilenzahl() == 1,
+              f"{w.tbl_beul.zeilenzahl()} Zeilen")
+        check("Register „Beulfelder“ vorhanden", w.tabelle_zeigen("Beulfelder"))
+        zweige = [w.baum.topLevelItem(0).child(i).text(0)
+                  for i in range(w.baum.topLevelItem(0).childCount())]
+        check("Beulfelder stehen im Modellbaum", "Beulfelder" in zweige, str(zweige[-2:]))
+
+        an = solver.solve_all(m, design=True)
+        w._solve_done("all", an)
+        w.show_results()
+        app.processEvents()
+        check("Beulnachweise laufen mit", an.beulen is not None
+              and "Feld 1" in an.beulen.felder)
+        z = w.tbl_beul.modell.zeilen[0]
+        check("Abmessungen und Schlankheit stehen in der Tabelle",
+              isinstance(z[2], float) and z[2] > 0 and isinstance(z[8], float),
+              f"a = {z[2]:.2f} m, b = {z[3]:.2f} m, λ̄_p = {z[8]:.3f}")
+        check("Ergebnisprotokoll nennt das Beulen",
+              "Beulen (EN 1993-1-5)" in w.txt_res.toPlainText())
+        w.clear_selection()
+        w.tbl_beul.zeile_gewaehlt.emit("Feld 1")
+        app.processEvents()
+        check("Klick in der Tabelle wählt das Feld", len(w.selection) > 3,
+              f"{len(w.selection)} Knoten")
+        w.tbl_beul.view.selectRow(0)
+        w.delete_beulfeld()
+        app.processEvents()
+        check("Beulfeld lässt sich löschen", not w.model.beulfelder)
+        w.undo()
+        check("Löschen ist rücknehmbar", len(w.model.beulfelder) == 1)
+        w.clear_selection()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Beulfelder", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

@@ -823,6 +823,7 @@ class Analysis:
     fatigue: object = None
     joints: object = None
     gzg: object = None
+    beulen: object = None
     info: dict = field(default_factory=dict)
 
     def all_results(self) -> dict:
@@ -846,6 +847,8 @@ class Analysis:
             s.append(self.joints.summary())
         if self.gzg is not None:
             s.append(self.gzg.summary())
+        if self.beulen is not None:
+            s.append(self.beulen.summary())
         return "\n".join(s)
 
 
@@ -889,6 +892,9 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
     if design and model.verformungsgrenzen:
         from .gzg import check_verformung
         an.gzg = check_verformung(model, an, progress=progress)
+    if design and model.beulfelder:
+        from .ec3.beulen import check_beulen
+        an.beulen = check_beulen(model, an, progress=progress)
     an.info.update({"time": time.time() - t0, "parallel": parallel.describe(),
                     "solver": system.backend, "ndof": model.ndof,
                     "nfree": len(system.fi)})

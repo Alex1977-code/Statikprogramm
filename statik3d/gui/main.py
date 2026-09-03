@@ -377,6 +377,12 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Tabelle Verformungen", lambda: self.tabelle_zeigen("Verformungen"))
         g.klein("Grenze ändern…", self.edit_verformungsgrenze)
         g.klein("Grenze löschen", self.delete_verformungsgrenze)
+        g = r.gruppe("Beulen (EC3-1-5)")
+        g.gross("Beulfeld", "▦", self.add_beulfeld,
+                hinweis="Die gewählten Flächenelemente zu einem Beulfeld "
+                        "zusammenfassen und nach Abschnitt 10 nachweisen")
+        g.klein("Tabelle Beulfelder", lambda: self.tabelle_zeigen("Beulfelder"))
+        g.klein("Beulfeld löschen", self.delete_beulfeld)
 
         r = rb.register("Ergebnisse")
         g = r.gruppe("Auswahl")
@@ -521,7 +527,8 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Zweige des Modellbaums, die eine Tabelle unten zeigen statt eine Maske
     BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe",
                     "anschluesse": "Anschlüsse", "anschluss": "Anschlüsse",
-                    "verformungen": "Verformungen", "verformung": "Verformungen"}
+                    "verformungen": "Verformungen", "verformung": "Verformungen",
+                    "beulfelder": "Beulfelder", "beulfeld": "Beulfelder"}
 
     def _baum_geklickt(self, art: str, name: str):
         if art == "stellung_neu":
@@ -866,6 +873,25 @@ class MainWindow(QtWidgets.QMainWindow):
         v3 = QtWidgets.QPushButton("Löschen")
         v3.clicked.connect(self.delete_verformungsgrenze)
         tabs.addTab(self._eingabetabelle(self.tbl_gzg, v1, v2, v3), "Verformungen")
+
+        # Beulfelder (EN 1993-1-5, Abschnitt 10)
+        self.tbl_beul = tab.Datentabelle([
+            Spalte("Beulfeld"), Spalte("Elemente", "", "ganz"),
+            Spalte("a", "m", "zahl", 2), Spalte("b", "m", "zahl", 2),
+            Spalte("t", "mm", "zahl", 1),
+            Spalte("σ_x", "MPa", "zahl", 1), Spalte("σ_z", "MPa", "zahl", 1),
+            Spalte("τ", "MPa", "zahl", 1),
+            Spalte("λ̄_p", "", "zahl", 3, hinweis="Schlankheit des Beulfeldes"),
+            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Gl. (10.5); Filter z. B. > 1"),
+            Spalte("Kombination"), Spalte("Status")],
+            "Beulfelder", self, mit_kennwerten=True)
+        self.tbl_beul.zeile_gewaehlt.connect(self._tabelle_beulfeld)
+        c1 = QtWidgets.QPushButton("Beulfeld aus Auswahl…")
+        c1.setToolTip("Die gewählten Flächenelemente zu einem Beulfeld zusammenfassen")
+        c1.clicked.connect(self.add_beulfeld)
+        c2 = QtWidgets.QPushButton("Löschen")
+        c2.clicked.connect(self.delete_beulfeld)
+        tabs.addTab(self._eingabetabelle(self.tbl_beul, c1, c2), "Beulfelder")
 
     #: Ergebnistabellen in der Reihenfolge des unteren Bereichs
     ERGEBNISTABELLEN = ("tbl_beam", "tbl_react", "tbl_env", "tbl_design",
@@ -1629,6 +1655,78 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"Verformungsnachweis „{key}“ entfernt")
         self.refresh_all()
 
+    def add_beulfeld(self):
+        """Die gewählten Flächenelemente zu einem Beulfeld zusammenfassen."""
+        sel = set(int(n) for n in self.selection)
+        if not sel:
+            return self.error("Zuerst die Knoten des Blechfeldes auswählen")
+        els = [i for i, e in enumerate(self.model.elements)
+               if e.typ.startswith("shell") and set(int(n) for n in e.nodes) <= sel]
+        if not els:
+            return self.error("In der Auswahl liegt kein vollständiges Flächenelement")
+        name, ok = QtWidgets.QInputDialog.getText(
+            self, "Beulfeld", f"Name des Beulfeldes ({len(els)} Elemente):",
+            text=self._freier_name("Beulfeld", self.model.beulfelder))
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        if name in self.model.beulfelder:
+            return self.error(f"„{name}“ gibt es schon")
+        arten = ["beidseitig gestützt (z. B. Steg zwischen den Flanschen)",
+                 "einseitig gestützt (ein Rand frei)"]
+        art, ok = QtWidgets.QInputDialog.getItem(self, "Beulfeld", "Lagerung der Ränder:",
+                                                 arten, 0, False)
+        if not ok:
+            return
+        self.merken(f"Beulfeld {name}")
+        try:
+            bf = self.model.add_beulfeld(
+                name, els, rand="beidseitig" if art == arten[0] else "einseitig")
+        except Exception as ex:          # noqa: BLE001
+            return self.error(ex)
+        self.info(f"Beulfeld „{name}“ aus {len(bf.elemente)} Elementen angelegt - "
+                  "es wird ab jetzt bei jeder Berechnung nachgewiesen")
+        self.refresh_all()
+
+    def delete_beulfeld(self):
+        key = self._tabellenschluessel(self.tbl_beul)
+        if not key or key not in self.model.beulfelder:
+            return self.error("Zuerst ein Beulfeld in der Tabelle wählen")
+        self.merken(f"Beulfeld {key} gelöscht")
+        del self.model.beulfelder[key]
+        self.info(f"Beulfeld „{key}“ entfernt")
+        self.refresh_all()
+
+    def _tabelle_beulfeld(self, wert):
+        bf = self.model.beulfelder.get(str(wert))
+        if bf is None:
+            return
+        kn = {int(n) for i in bf.elemente if i < len(self.model.elements)
+              for n in self.model.elements[i].nodes}
+        self._set_selection(sorted(kn))
+
+    def refresh_beulfelder(self):
+        """Die Tabelle der Beulfelder aufbauen."""
+        if not hasattr(self, "tbl_beul"):
+            return
+        erg = getattr(self.analysis, "beulen", None) if self.analysis is not None else None
+        zeilen = []
+        for name, bf in self.model.beulfelder.items():
+            c = erg.felder.get(name) if erg is not None else None
+            w = (c.werte or {}) if c is not None else {}
+            zeilen.append([name, len(bf.elemente),
+                           (c.a if c is not None else bf.a),
+                           (c.b if c is not None else bf.b),
+                           ((c.t if c is not None else bf.t) * 1e3),
+                           (w.get("sigma_x", 0.0) / 1e6 if w else ""),
+                           (w.get("sigma_z", 0.0) / 1e6 if w else ""),
+                           (w.get("tau", 0.0) / 1e6 if w else ""),
+                           (w.get("lambda_p", 0.0) if w else ""),
+                           (c.util if c is not None else ""),
+                           (c.kombination if c is not None else ""),
+                           (c.status() if c is not None else "nicht gerechnet")])
+        self._fill(self.tbl_beul, zeilen)
+
     def _tabelle_verformung(self, wert):
         """Zeile angeklickt: den Bezug in der Ansicht wählen."""
         g = self.model.verformungsgrenzen.get(str(wert))
@@ -1747,6 +1845,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_members()
         self.refresh_joints()
         self.refresh_verformungen()
+        self.refresh_beulfelder()
         self.refresh_stellungen()
         self._refresh_kopf()
         self._refresh_baum()
@@ -3130,8 +3229,11 @@ class MainWindow(QtWidgets.QMainWindow):
             lines.append(an.joints.summary())
         if an is not None and an.gzg is not None:
             lines.append(an.gzg.summary())
+        if an is not None and an.beulen is not None:
+            lines.append(an.beulen.summary())
         self.refresh_joints()
         self.refresh_verformungen()
+        self.refresh_beulfelder()
         self.txt_res.setPlainText("\n".join(lines))
         # Tabellen
         if hasattr(r, "beam_forces"):

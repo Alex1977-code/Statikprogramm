@@ -107,7 +107,10 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
         for j in range(len(x)):
             cls = classify(sec, fy, N[j], My[j], Mz[j])
             cls_c = max(cls_c, cls.cls)
-            sc = section_check(sec, fy, N[j], Vy[j], Vz[j], Mt[j], My[j], Mz[j], ds.gamma_M0, cls)
+            sc = section_check(sec, fy, N[j], Vy[j], Vz[j], Mt[j], My[j], Mz[j],
+                               ds.gamma_M0, cls, gamma_M1=ds.gamma_M1,
+                               a_steifen=member.a_steifen,
+                               starre_endsteife=member.starre_endsteife)
             if best is None or sc["util"] > best["util"]:
                 best = {"combo": cname, "x": float(x[j]), "util": sc["util"],
                         "name": sc["governing"], "kind": "section", "cls": cls.cls,

@@ -53,7 +53,9 @@ def _torsion_stress(sec: Section, Mt: float) -> float:
 
 
 def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: float,
-                  My: float, Mz: float, gamma_M0: float = 1.0, cls: ClassResult = None) -> dict:
+                  My: float, Mz: float, gamma_M0: float = 1.0, cls: ClassResult = None,
+                  gamma_M1: float = 1.1, a_steifen: float = 0.0,
+                  starre_endsteife: bool = False) -> dict:
     """Alle Querschnittsnachweise an einer Stelle. Rueckgabe:
     {"class": ClassResult, "res": Widerstaende, "checks": {name: (util, text)},
      "util": max, "governing": name}"""
@@ -106,13 +108,34 @@ def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: f
             checks["V_y + tau_t (6.2.6/6.2.7)"] = (
                 tau / fvd, f"Torsion schoepft die Schubtragfaehigkeit allein aus: "
                 f"(tau_t + tau_V)/f_vd = {tau/1e6:.1f}/{fvd/1e6:.1f} MPa")
-    if sec.typ == "I" and sec.tw > 0:
-        eps = epsilon(fy)
+    if sec.typ == "I" and sec.tw > 0 and sec.h > 2 * sec.tf:
+        # Schubbeulen des Stegblechs: der Nachweis wird gefuehrt, nicht nur
+        # angekuendigt (DIN EN 1993-1-5, Abschnitt 5).
+        from .beulen import schubbeulen, schubbeulen_noetig
         hw = sec.h - 2 * sec.tf
-        if hw / sec.tw > 72 * eps / 1.2:
-            checks["Schubbeulen (6.2.6(6))"] = (
-                (hw / sec.tw) / (72 * eps / 1.2),
-                f"hw/tw = {hw/sec.tw:.1f} > 72 eps/eta = {72*eps/1.2:.1f}: Nachweis nach EN 1993-1-5 erforderlich")
+        noetig, _grenze, text = schubbeulen_noetig(hw, sec.tw, fy, a_steifen)
+        if noetig:
+            b = schubbeulen(hw, sec.tw, fy, a_steifen, gamma_M1, starre_endsteife)
+            V_b = b.get("V_b_Rd", 0.0)
+            if V_b > 0:
+                checks["Schubbeulen V_b,Rd (EN 1993-1-5, 5.2)"] = (
+                    aVz / V_b,
+                    f"h_w/t_w = {hw / sec.tw:.1f} > {text}; λ̄_w = {b['lambda_w']:.3f}, "
+                    f"χ_w = {b['chi_w']:.3f}, V_b,Rd = {V_b / 1e3:.0f} kN "
+                    f"(ohne Flanschanteil)")
+                if aVz > 0.5 * V_b and abs(My) > 0:
+                    # Interaktion M-V nach 7.1: eta_3 = V_Ed / V_bw,Rd
+                    eta3 = aVz / max(b.get("V_bw_Rd", V_b), 1e-9)
+                    MfRd = (sec.b * sec.tf * (sec.h - sec.tf) * fy / gamma_M0
+                            if sec.b > 0 and sec.tf > 0 else 0.0)
+                    MplRd = R["M_y_Rd"]
+                    if MplRd > 0 and abs(My) > MfRd:
+                        eta1 = abs(My) / MplRd
+                        w = eta1 + (1.0 - MfRd / MplRd) * (2.0 * eta3 - 1.0) ** 2
+                        checks["Biegung + Schubbeulen (EN 1993-1-5, 7.1)"] = (
+                            w, f"η_1 + (1 − M_f,Rd/M_pl,Rd)(2 η_3 − 1)² mit "
+                               f"η_1 = {eta1:.3f}, η_3 = {eta3:.3f}, "
+                               f"M_f,Rd = {MfRd / 1e3:.0f} kNm")
 
     # 6.2.8 Biegung + Querkraft: Abminderung
     rho_y = (2 * aVz / VzRd - 1) ** 2 if VzRd > 0 and aVz > 0.5 * VzRd else 0.0

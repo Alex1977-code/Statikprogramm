@@ -55,7 +55,7 @@ Dreizehn Register nach Arbeitsschritt:
 | **Lasten** | Lastfälle, Kombinationen, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht |
 | **Netz** | Netz erzeugen und löschen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
-| **Nachweise** | EC3, Ermüdung, Verformung (GZG), Konfiguration |
+| **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5), Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
 | **Bericht** | Statischer Bericht |
 | **Ansicht** | Blickrichtungen, Kanten, Nummern, Lasten, Stäbe farbig |
@@ -80,7 +80,7 @@ Die Arbeitsfläche in drei Spalten:
 
 Unten die **Tabellen**: Protokoll, Werkstoffe, Querschnitte, Dicken,
 Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt,
-Anschlüsse, Verformungen.
+Anschlüsse, Verformungen, Beulfelder.
 Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
 in einem Panel rechts. Wie die Tabellen zu bedienen sind, steht im nächsten
 Abschnitt.
@@ -412,6 +412,35 @@ Kapitel 7 des Berichts führt jede Schraube und jede Naht mit E_d, R_d und η,
 die Ausnutzung je Kombination, die Steifigkeitsbeiwerte k_i und die
 Schraubenreihen der Zugzone.
 
+### Beulnachweise nach EC3-1-5
+
+**Stegbleche** brauchen nichts weiter: sobald ein Steg schlanker ist als
+72 ε/η, führt Statik3D den Schubbeulnachweis nach Abschnitt 5 in den
+Querschnittsnachweisen mit — mit λ̄_w, χ_w, V_b,Rd und, wenn nötig, der
+Interaktion Biegung–Schubbeulen nach 7.1. Der Abstand der Quersteifen und eine
+starre Endquersteife lassen sich am Stab angeben (Felder ``a_steifen`` und
+``starre_endsteife``); ohne Angabe wird konservativ mit Steifen nur an den
+Auflagern gerechnet.
+
+**Blechfelder** aus Flächenelementen werden als **Beulfeld** festgelegt:
+die Elemente des Feldes auswählen (Knoten markieren), dann Register
+*Nachweise* → „Beulfeld“ oder in der Tabelle „Beulfeld aus Auswahl…“.
+Abmessungen a und b sowie die Dicke kommen aus der Geometrie; anzugeben ist
+nur die Lagerung der Ränder (beidseitig oder einseitig gestützt).
+
+Nachgewiesen wird nach der **Methode der reduzierten Spannungen**
+(Abschnitt 10): aus dem Spannungszustand des Feldes werden α_ult,k und α_cr
+gebildet, daraus λ̄_p und die Abminderungsbeiwerte ρ_x, ρ_z und χ_w.
+Die Tabelle „Beulfelder“ zeigt Abmessungen, Spannungen, λ̄_p und die
+Ausnutzung; Kapitel 6 des Berichts führt jeden Zwischenwert auf — Beulwerte,
+kritische Spannungen, α-Werte und beide Nachweisformen (Gl. 10.5 und die
+Vereinfachung mit ρ_min).
+
+Was **nicht** enthalten ist: Längs- und Quersteifen im Feld, die
+Lasteinleitung nach Abschnitt 6 und das Schalenbeulen gekrümmter Bleche nach
+EN 1993-1-6. Liegen die Elemente eines Feldes nicht in einer Ebene, sagt das
+Programm es.
+
 ### Verformungsnachweise (GZG)
 
 Die Kombinationen des Grenzzustands der Gebrauchstauglichkeit rechnet Statik3D
@@ -461,8 +490,9 @@ Nachweis mit seiner Verformung je Kombination.
   Zwischenablage, CSV und Excel (Kapitel 2, „Tabellen"). Modellexport
   außerdem CSV, VTK (ParaView).
 * Statischer Bericht: Projektdaten, System, Einwirkungen, Kombinationen,
-  Ergebnisse, Nachweise mit allen Zwischenwerten, Ermüdung, Anschlüsse
-  (jede Schraube, jede Naht), Verformungen (GZG), Kontakt, Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
+  Ergebnisse, Nachweise mit allen Zwischenwerten, Beulen (EC3-1-5), Ermüdung,
+  Anschlüsse (jede Schraube, jede Naht), Verformungen (GZG), Kontakt,
+  Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
   Markdown.
 
 ## 11 Tastenkürzel

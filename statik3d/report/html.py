@@ -257,7 +257,7 @@ class Report:
         "model_tables": True, "materials": True, "sections": True, "supports": True,
         "load_cases": True, "combinations": True, "figures": True, "results_cases": True,
         "results_combinations": True, "envelopes": True, "member_diagrams": True,
-        "design": True, "fatigue": True, "joints": True, "gzg": True, "contact": True,
+        "design": True, "fatigue": True, "joints": True, "gzg": True, "beulen": True, "contact": True,
         "modal": True, "buckling": True,
         # Grenzen fuer grosse Modelle
         "max_rows": 200, "max_detail_cases": 20, "max_detail_combinations": 12,
@@ -285,6 +285,7 @@ class Report:
         self.fatigue = None
         self.joints = None
         self.gzg = None
+        self.beulen = None
         self.info: dict = {}
         if analysis is not None:
             self.cases = dict(getattr(analysis, "cases", {}) or {})
@@ -294,6 +295,7 @@ class Report:
             self.fatigue = getattr(analysis, "fatigue", None)
             self.joints = getattr(analysis, "joints", None)
             self.gzg = getattr(analysis, "gzg", None)
+            self.beulen = getattr(analysis, "beulen", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
             name = results.name or "Ergebnis"
@@ -407,7 +409,8 @@ class Report:
             self._warnings = []
             b = []
             for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
-                       self.chapter_results, self.chapter_design, self.chapter_fatigue,
+                       self.chapter_results, self.chapter_design, self.chapter_beulen,
+                       self.chapter_fatigue,
                        self.chapter_joints, self.chapter_gzg, self.chapter_summary,
                        self.chapter_appendix):
                 b.extend(ch())
@@ -515,9 +518,11 @@ class Report:
             "Stabtragwerke; Imperfektionen sind über die Knicklinien der Nachweise erfasst.",
             "Stabilitätsnachweise setzen die angegebenen Knicklängen, seitlichen Halterungen "
             "und Randbedingungsbeiwerte voraus; diese sind vom Anwender zu verantworten.",
-            "Schubbeulen nach DIN EN 1993-1-5 wird nur angezeigt (hw/tw-Grenze), nicht "
-            "nachgewiesen; Plattenbeulen und Schalenbeulen sind nicht Bestandteil dieses "
-            "Berichts.",
+            "Schubbeulen der Stegbleche wird nach DIN EN 1993-1-5, Abschnitt 5 "
+            "nachgewiesen (V_b,Rd ohne Flanschanteil, Interaktion M–V nach 7.1); "
+            "Blechfelder werden – soweit im Modell als Beulfeld festgelegt – nach "
+            "Abschnitt 10 geführt. Schalenbeulen nach EN 1993-1-6 und Längssteifen "
+            "sind nicht enthalten.",
             "Anschlüsse, Schweißnähte und Schrauben nach DIN EN 1993-1-8 werden für die im "
             "Modell angelegten Anschlüsse in Kapitel 7 nachgewiesen; nicht angelegte "
             "Anschlüsse sind gesondert nachzuweisen.",
@@ -1482,6 +1487,133 @@ class Report:
         return b
 
     # ============================================================ Kapitel 6
+    def chapter_beulen(self) -> list:
+        """Beulnachweise der Blechfelder nach DIN EN 1993-1-5."""
+        m = self.model
+        b = [self._h(1, "Beulnachweise nach DIN EN 1993-1-5")]
+        bl = self.beulen if self.opt("beulen") else None
+        if bl is None or not getattr(bl, "felder", None):
+            if not self.opt("beulen"):
+                b.append(("p", "Die Ausgabe der Beulnachweise ist deaktiviert."))
+            elif not m.beulfelder:
+                b.append(("p", "Es sind keine Beulfelder festgelegt. Das Beulen "
+                               "schlanker Blechfelder ist gesondert nachzuweisen; "
+                               "das Schubbeulen der Stegbleche wird in Kapitel 5 "
+                               "bei den Querschnittsnachweisen geführt."))
+            else:
+                b.append(("p", "Es wurden keine Beulnachweise geführt (keine "
+                               "Flächenergebnisse)."))
+            return b
+        st = bl.settings or {}
+        b.append(self._h(2, "Grundlagen"))
+        b.append(("list", [
+            "Methode der reduzierten Spannungen nach Abschnitt 10: aus dem "
+            "Spannungszustand des Feldes (σ_x, σ_z, τ) werden der Fließfaktor "
+            "α_ult,k (Gl. 10.3) und der Beulfaktor α_cr (Gl. 10.6) gebildet; daraus "
+            "λ̄_p = √(α_ult,k/α_cr).",
+            "Beulwerte k_σ nach Tab. 4.1 beziehungsweise 4.2 (abhängig vom "
+            "Spannungsverhältnis ψ und der Lagerung), k_τ nach A.3; Bezugsspannung "
+            "σ_E = π² E t² / (12 (1−ν²) b²).",
+            "Abminderungsbeiwerte ρ nach 4.4(2) für die Längsspannungen und χ_w "
+            "nach Tab. 5.1 für den Schub; Nachweis nach Gl. (10.5). Zusätzlich wird "
+            "die Vereinfachung 10.5(2) mit einem einzigen Beiwert ρ_min ausgewiesen.",
+            f"γ_M1 = {fmt(st.get('gamma_M1', 1.1), 2)}, η = {fmt(st.get('eta', 1.2), 1)}; "
+            f"geführt über {len(bl.kombinationen)} GZT-Kombinationen, die "
+            "ungünstigste ist maßgebend.",
+            "Längs- und Quersteifen im Feld sind **nicht** enthalten: k_σ und k_τ "
+            "gelten für das unversteifte Blechfeld. Gekrümmte Bleche fallen unter "
+            "EN 1993-1-6 und sind hier nicht abgedeckt.",
+        ]))
+        b.append(self._h(2, "Übersicht"))
+        rows = [["Beulfeld", "a [m]", "b [m]", "t [mm]", "σ_x [MPa]", "σ_z [MPa]",
+                 "τ [MPa]", "λ̄_p", "ρ_x", "χ_w", "Ausnutzung", "Kombination",
+                 "Status"]]
+        for c in bl.felder.values():
+            w = c.werte or {}
+            rows.append([c.name, fmt(c.a, 2), fmt(c.b, 2), fmt(c.t * 1e3, 0),
+                         fmt(w.get("sigma_x", 0.0) / 1e6, 1),
+                         fmt(w.get("sigma_z", 0.0) / 1e6, 1),
+                         fmt(w.get("tau", 0.0) / 1e6, 1),
+                         fmt(w.get("lambda_p", 0.0), 3), fmt(w.get("rho_x", 1.0), 3),
+                         fmt(w.get("chi_w", 1.0), 3), Util(c.util), c.kombination,
+                         "erfüllt" if c.util <= 1.0 and not c.fehler
+                         else ("nicht geführt" if c.fehler else "NICHT erfüllt")])
+        b.append(("table", rows, "Beulfelder: Spannungen, Schlankheit und Ausnutzung",
+                  None, ""))
+        if self.opt("figures"):
+            liste = [c for c in bl.felder.values() if not c.fehler][:60]
+            if liste:
+                b.append(self._figure(
+                    sv.draw_bar_chart([c.name for c in liste], [c.util for c in liste],
+                                      620, None, 1.0, "Ausnutzung je Beulfeld"),
+                    "Ausnutzungsgrade der Beulnachweise (Grenze 1.0)"))
+
+        b.append(self._h(2, "Nachweise im Einzelnen"))
+        for c in bl.felder.values():
+            b.append(self._h(3, f"Beulfeld {c.name}"))
+            if c.fehler:
+                b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
+                self._warnings.append(f"Beulfeld {c.name}: {c.fehler}")
+                continue
+            w = c.werte or {}
+            bf = m.beulfelder.get(c.name)
+            kv = []
+            if bf is not None and bf.beschreibung:
+                kv.append(("Beschreibung", bf.beschreibung))
+            kv += [("Feld", f"a × b × t = {c.a:.2f} × {c.b:.2f} m × {c.t * 1e3:.0f} mm"
+                            + (f", {bf.bezug()}" if bf is not None else "")),
+                   ("Lagerung", "beidseitig gestützt" if (bf is None or bf.rand == "beidseitig")
+                    else "einseitig gestützt (ein Rand frei)"),
+                   ("Streckgrenze f_y", f"{c.fy / 1e6:.0f} N/mm²"),
+                   ("maßgebende Kombination", c.kombination),
+                   ("Spannungen (Druck positiv)",
+                    f"σ_x = {w.get('sigma_x', 0) / 1e6:.1f}, "
+                    f"σ_z = {w.get('sigma_z', 0) / 1e6:.1f}, "
+                    f"τ = {w.get('tau', 0) / 1e6:.1f} N/mm²"),
+                   ("Spannungsverhältnisse",
+                    f"ψ_x = {w.get('psi_x', 1.0):.2f}, ψ_z = {w.get('psi_z', 1.0):.2f}"),
+                   ("Bezugsspannung σ_E", f"{w.get('sigma_E', 0) / 1e6:.2f} N/mm²"),
+                   ("Beulwerte",
+                    f"k_σ,x = {w.get('k_sigma_x', 0):.2f}, k_σ,z = {w.get('k_sigma_z', 0):.2f}, "
+                    f"k_τ = {w.get('k_tau', 0):.2f} (α = a/b = {w.get('alpha', 0):.2f})"),
+                   ("kritische Spannungen",
+                    f"σ_cr,x = {w.get('sigma_cr_x', 0) / 1e6:.1f}, "
+                    f"σ_cr,z = {w.get('sigma_cr_z', 0) / 1e6:.1f}, "
+                    f"τ_cr = {w.get('tau_cr', 0) / 1e6:.1f} N/mm²"),
+                   ("α_ult,k (Gl. 10.3)", fmt(w.get("alpha_ult_k", 0.0), 3)),
+                   ("α_cr (Gl. 10.6)", fmt(w.get("alpha_cr", 0.0), 3)),
+                   ("Schlankheit λ̄_p", fmt(w.get("lambda_p", 0.0), 3)),
+                   ("Abminderungsbeiwerte",
+                    f"ρ_x = {w.get('rho_x', 1.0):.3f}, ρ_z = {w.get('rho_z', 1.0):.3f}, "
+                    f"χ_w = {w.get('chi_w', 1.0):.3f}"),
+                   ("Ausnutzung nach Gl. (10.5)", Util(c.util)),
+                   ("Vereinfachung 10.5(2) mit ρ_min",
+                    f"ρ_min = {w.get('rho_min', 1.0):.3f} → η = "
+                    f"{fmt(w.get('eta_rho_min', 0.0), 3)}"),
+                   ("Status", "Nachweis erfüllt" if c.util <= 1.0
+                    else "Nachweis NICHT erfüllt")]
+            b.append(("kv", kv, f"Beulfeld {c.name}"))
+            if len(c.je_kombination) > 1:
+                zeilen = sorted(c.je_kombination, key=lambda d: -d["eta"])
+                rows = [["Kombination", "σ_x [MPa]", "σ_z [MPa]", "τ [MPa]", "λ̄_p",
+                         "Ausnutzung"]]
+                for d in zeilen:
+                    rows.append([d["kombination"], fmt(d["sigma_x"] / 1e6, 1),
+                                 fmt(d["sigma_z"] / 1e6, 1), fmt(d["tau"] / 1e6, 1),
+                                 fmt(d["lambda_p"], 3), Util(d["eta"])])
+                rows, note = self._truncate(rows, self.opt("max_detail_combinations") or 12)
+                b.append(("table", rows, "Beulnachweis je Kombination (absteigend geordnet)",
+                          None, ""))
+                if note:
+                    b.append(("note", note))
+            if c.hinweise:
+                b.append(("list", [f"Hinweis: {h}" for h in c.hinweise]))
+        nf = [c.name for c in bl.felder.values() if c.util > 1.0]
+        if nf:
+            self._warnings.append("Beulnachweis NICHT erfüllt für: " + ", ".join(nf))
+        return b
+
+    # ============================================================ Kapitel 7
     def chapter_fatigue(self) -> list:
         m = self.model
         b = [self._h(1, "Ermüdungsnachweis nach DIN EN 1993-1-9")]
@@ -1925,6 +2057,15 @@ class Report:
                                                f"{worst.category / 1e6:.0f}: {_pretty(worst.governing)}"))
             if any(fm.util > 1.0 for fm in f.members.values()):
                 status_ok = False
+        bl = self.beulen
+        if bl is not None and getattr(bl, "felder", None):
+            worst = max(bl.felder.values(), key=lambda c: c.util)
+            kv.append(("max. Ausnutzung Beulen (EN 1993-1-5)", Util(worst.util)))
+            kv.append(("maßgebend (Beulen)",
+                       f"{worst.name}: λ̄_p = {fmt((worst.werte or {}).get('lambda_p', 0), 3)}, "
+                       f"{worst.kombination}"))
+            if any(c.util > 1.0 or c.fehler for c in bl.felder.values()):
+                status_ok = False
         gz = self.gzg
         if gz is not None and getattr(gz, "checks", None):
             worst = max(gz.checks.values(), key=lambda c: c.util)
@@ -1948,12 +2089,14 @@ class Report:
         gefuehrt = ((d is not None and getattr(d, "members", None))
                     or (f is not None and getattr(f, "members", None))
                     or (aj is not None and getattr(aj, "joints", None))
-                    or (gz is not None and getattr(gz, "checks", None)))
+                    or (gz is not None and getattr(gz, "checks", None))
+                    or (bl is not None and getattr(bl, "felder", None)))
         if gefuehrt:
             if status_ok:
                 b.append(("status", "Alle Nachweise erfüllt.", True))
             else:
-                b.append(("status", "Nachweise NICHT erfüllt – siehe Kapitel 5 bis 8.", False))
+                b.append(("status", "Nachweise NICHT erfüllt – siehe die Nachweiskapitel.",
+                          False))
         else:
             b.append(("status", "Es wurden keine Nachweise geführt; die Ergebnisse dienen der "
                                 "Schnittgrößen- und Verformungsermittlung.", True))

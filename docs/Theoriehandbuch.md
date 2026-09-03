@@ -256,6 +256,67 @@ schadensäquivalente Schwingbreite bei 2·10⁶ Lastspielen ausgewiesen. γMf na
 Tabelle 3.1 (Schadenstoleranz/Sicherheit gegen Versagen, geringe/hohe
 Schadensfolge), γFf = 1,0.
 
+## 5c Plattenbeulen (DIN EN 1993-1-5)
+
+Ein dünnes Blech unter Druck oder Schub versagt nicht durch Fließen, sondern
+durch Ausbeulen. Grundlage ist die Bezugsspannung
+
+    σ_E = π² E t² / (12 (1 − ν²) b²)   (= 190 000 (t/b)² N/mm²)
+
+und die Beulwerte k_σ nach Tab. 4.1 (beidseitig gestützt, z. B. Steg zwischen
+den Flanschen) beziehungsweise Tab. 4.2 (einseitig gestützt), k_τ nach A.3:
+
+    k_τ = 5,34 + 4,00/α²  (α = a/h_w ≥ 1)      k_τ = 4,00 + 5,34/α²  (α < 1)
+
+### 5c.1 Schubbeulen der Stegbleche (Abschnitt 5)
+
+Geführt wird der Nachweis, sobald h_w/t_w > 72 ε/η (ohne Zwischensteifen)
+beziehungsweise > 31 ε √k_τ/η (mit Quersteifen im Abstand a):
+
+    λ̄_w = h_w/(86,4 t_w ε)              nur Endquersteifen
+    λ̄_w = h_w/(37,4 t_w ε √k_τ)         mit Quersteifen im Abstand a
+    χ_w  nach Tab. 5.1
+    V_b,Rd = χ_w f_yw h_w t_w / (√3 γ_M1)   ≤ η f_yw h_w t_w / (√3 γ_M1)
+
+Der Flanschanteil V_bf,Rd wird **nicht** angesetzt — das liegt auf der sicheren
+Seite. Bei V_Ed > 0,5 V_bw,Rd und M_Ed > M_f,Rd folgt die Interaktion nach 7.1:
+
+    η_1 + (1 − M_f,Rd/M_pl,Rd)(2 η_3 − 1)² ≤ 1
+
+Dieser Nachweis läuft in den Querschnittsnachweisen jedes Stabes mit; früher
+stand dort nur der Hinweis, dass er zu führen sei.
+
+### 5c.2 Blechfelder: Methode der reduzierten Spannungen (Abschnitt 10)
+
+Ein **Beulfeld** ist eine Gruppe von Schalenelementen. Seine Achsen werden aus
+der Geometrie gewonnen (u längs = a, v quer = b, Normale n); die Membran­
+spannungen jedes Elements werden in diese Achsen gedreht, und über das Feld
+werden die größten Druckspannungen σ_x, σ_z sowie die größte Schubspannung τ
+genommen (Druck positiv). Aus den Randwerten folgen die Spannungsverhältnisse
+ψ_x und ψ_z. Damit:
+
+    1/α_ult,k² = (σ_x/f_y)² + (σ_z/f_y)² − (σ_x/f_y)(σ_z/f_y) + 3(τ/f_y)²   (10.3)
+    1/α_cr     = A + √(A² + (1−ψ_x)/2 · 1/α_cr,x² + (1−ψ_z)/2 · 1/α_cr,z²
+                        + 1/α_cr,τ²)                                        (10.6)
+                 mit A = (1+ψ_x)/(4 α_cr,x) + (1+ψ_z)/(4 α_cr,z)
+    λ̄_p       = √(α_ult,k / α_cr)
+
+Die Abminderungsbeiwerte sind ρ nach 4.4(2) für die Längsspannungen und χ_w
+nach Tab. 5.1 für den Schub. Nachgewiesen wird nach Gl. (10.5)
+
+    (σ_x/(ρ_x f_yd))² + (σ_z/(ρ_z f_yd))² − (σ_x σ_z)/(ρ_x ρ_z f_yd²)
+      + 3(τ/(χ_w f_yd))² ≤ 1
+
+und zusätzlich wird die Vereinfachung 10.5(2) mit einem einzigen Beiwert ρ_min
+ausgewiesen, damit beide Wege im Dokument nachvollziehbar sind.
+
+**Grenzen**: Längs- und Quersteifen im Feld sind nicht enthalten — k_σ und k_τ
+gelten für das unversteifte Blechfeld; die wirksamen Breiten nach Abschnitt 4
+werden nur in der Querschnittsklassifizierung (Klasse 4) verwendet, nicht als
+eigener Feldnachweis; Lasteinleitung (Abschnitt 6) und Schalenbeulen
+(EN 1993-1-6) fehlen. Liegen die Elemente eines Feldes nicht in einer Ebene,
+wird das gesagt und der Nachweis als für ebene Felder gültig gekennzeichnet.
+
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
 Ein Anschluss sitzt an einem Stabende. Die Beanspruchung sind die
@@ -443,8 +504,10 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 * Kleine Verformungen, linear-elastisches Material (keine Plastizität,
   kein Kriechen); Theorie II. Ordnung nur als lineares Verzweigungsproblem.
 * Kontakt als Penalty-Näherung ohne Lastgeschichte (monotone Lasten).
-* Schalen: ebene Elemente; Beulnachweise von Blechfeldern (EN 1993-1-5)
-  sind nicht enthalten (Hinweis im Nachweis).
+* Schalen: ebene Elemente. Das Schubbeulen der Stegbleche und die Blechfelder
+  nach EN 1993-1-5 Abschnitt 10 werden nachgewiesen (Kapitel 5c); Längs- und
+  Quersteifen im Feld, die Lasteinleitung nach Abschnitt 6 und das
+  Schalenbeulen nach EN 1993-1-6 sind nicht enthalten.
 * Anschlüsse: nachgewiesen werden die im Modell angelegten Anschlüsse der drei
   Vorlagen (Kopfplatte, Laschenstoß, Knotenblech) aus den Stabendschnitt-
   größen. Die Nachgiebigkeit geht über die Anfangssteifigkeit S_j,ini als
@@ -472,6 +535,7 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 | `tests/test_supports.py` | Lager mit Ausfall bei Zug/Druck, Schlupf, Reibung, Grenzkraft; Linien- und Flächenlager; Federgelenke gegen Handrechnungen |
 | `tests/test_sections.py` | Profildatenbank nach Land gegen Katalogwerte, Hauptachsen der Winkel, zusammengesetzte Querschnitte |
 | `tests/test_gzg.py` | Verformungsnachweise gegen 5qL⁴/384EI, PL³/48EI und den Kragarm; Grenzwertbildung L/x, absolut, Überhöhung, Punktpaar |
+| `tests/test_beulen.py` | Beulwerte k_σ und k_τ gegen Tab. 4.1/4.2 und A.3, σ_E = 190000 (t/b)², ρ und χ_w gegen 4.4(2) und Tab. 5.1, Schubbeulen und die Methode der reduzierten Spannungen gegen Handrechnungen |
 | `tests/test_joints.py` | Schrauben, Nähte, T-Stummel gegen EN-Zahlenwerte; Steifigkeitsbeiwerte Tab. 6.11, Klassifizierung 5.2.2.5, Drehfeder gegen die geschlossene Kragarmlösung |
 | `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |
 | `tests/test_solver_ext.py` | Gelenke, Trapezlasten, Temperatur, Zwischenstellen, Superposition, Umhüllende, Kombinationsgenerator, einseitige Lager, Spaltelement, Flächenkontakt mit Reibung, parallele Assemblierung, Rechnerfarm |
