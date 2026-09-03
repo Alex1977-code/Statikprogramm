@@ -47,7 +47,22 @@ SUPPORTED: dict[str, str] = {
     ".igs": "IGES-Geometrie (Vernetzung mit gmsh)",
     ".brep": "BREP-Geometrie (Vernetzung mit gmsh)",
     ".stl": "STL-Oberflaechennetz (Vernetzung mit gmsh)",
+    ".sdnf": "SDNF - Steel Detailing Neutral Format (HiCAD, Tekla, SDS/2, Advance Steel)",
+    ".sdn": "SDNF - Steel Detailing Neutral Format",
+    ".nc": "DSTV-NC - Stahlbauteil fuer die NC-Steuerung",
+    ".nc1": "DSTV-NC - Stahlbauteil fuer die NC-Steuerung (HiCAD, Tekla, bocad)",
+    ".nc2": "DSTV-NC - Stahlbauteil fuer die NC-Steuerung",
+    ".dstv": "DSTV-NC - Stahlbauteil fuer die NC-Steuerung",
+    ".sza": "HiCAD-Szene - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".kra": "HiCAD-Konstruktion - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".fga": "HiCAD-Figur - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".fig": "HiCAD-Figur - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".vaa": "HiCAD-Variante - Behaelter wird untersucht und gelesen, soweit zugaenglich",
 }
+
+_SDNF = (".sdnf", ".sdn")
+_DSTV = (".nc", ".nc1", ".nc2", ".dstv")
+_HICAD = (".sza", ".kra", ".fga", ".fig", ".vaa")
 
 _CAD = (".step", ".stp", ".iges", ".igs", ".brep", ".stl")
 _NO_MEMBER_INFO = (".dxf", ".inp", ".bdf", ".nas", ".dat")
@@ -114,6 +129,9 @@ def file_filter() -> str:
              "Abaqus / CalculiX (*.inp)",
              "Nastran Bulk Data (*.bdf *.nas *.dat)",
              "RFEM / RSTAB Projektdatei (*.rf5 *.rf6 *.rs5 *.rs6 *.rs8 *.rs9 *.rfem *.rstab)",
+             "SDNF Stahlbaumodell (*.sdnf *.sdn)",
+             "DSTV-NC Stahlbauteile (*.nc *.nc1 *.nc2 *.dstv)",
+             "HiCAD Szene / Bauteil (*.sza *.kra *.fga *.fig *.vaa)",
              "CAD-Geometrie (*.step *.stp *.iges *.igs *.brep *.stl)",
              "Alle Dateien (*)"]
     return ";;".join(parts)
@@ -121,10 +139,19 @@ def file_filter() -> str:
 
 def _detect(path: str) -> str:
     if os.path.isdir(path):
-        return "rfem"
+        names = os.listdir(path)
+        if any(os.path.splitext(n)[1].lower() in _DSTV for n in names):
+            return "dstv"                   # Ordner mit DSTV-NC-Teilen
+        return "rfem"                       # Ordner mit RFEM-Tabellen (CSV)
     ext = os.path.splitext(path)[1].lower()
     if ext in _NATIVE:
         return "native"                     # Behaelter wird untersucht (rfem_native)
+    if ext in _SDNF:
+        return "sdnf"
+    if ext in _DSTV:
+        return "dstv"
+    if ext in _HICAD:
+        return "hicad"
     if ext in PROPRIETARY:
         raise ImportError(PROPRIETARY[ext])
     if ext == ".json":
@@ -221,6 +248,15 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     elif kind == "native":
         from .rfem_native import import_rfem_native
         import_rfem_native(path, model, log, **options)
+    elif kind == "sdnf":
+        from .sdnf import import_sdnf
+        import_sdnf(path, model, log, **options)
+    elif kind == "dstv":
+        from .dstv import import_dstv
+        import_dstv(path, model, log, **options)
+    elif kind == "hicad":
+        from .hicad import import_hicad
+        import_hicad(path, model, log, **options)
 
     # Nachbereitung
     n_merged = C.merge_duplicate_nodes(model, tol) if model.nn > n_nodes0 else 0

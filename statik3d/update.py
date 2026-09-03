@@ -102,6 +102,30 @@ def build_info() -> dict:
             "kind": "exe" if is_frozen() else "source", "dir": root}
 
 
+def version_label(long: bool = False) -> str:
+    """Versionsangabe fuer Fensterrahmen, Statuszeile und Bericht.
+
+    "2.1.0 (Build a4b3c2d, 03.09.2026)" - ohne Build-Stempel nur die Version,
+    bei einer Arbeitskopie mit dem Zusatz "Quellcode".
+    """
+    b = build_info()
+    txt = b["version"]
+    extra = []
+    if b.get("sha"):
+        extra.append(f"Build {b['sha'][:7]}")
+    if b.get("date"):
+        extra.append(_short_date(b["date"]))
+    if long and b.get("kind") == "source":
+        extra.append("Quellcode")
+    return txt + (" (" + ", ".join(extra) + ")" if extra else "")
+
+
+def _short_date(text: str) -> str:
+    """ISO-Zeitstempel -> TT.MM.JJJJ (unveraendert, wenn nicht erkennbar)."""
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(text))
+    return f"{m.group(3)}.{m.group(2)}.{m.group(1)}" if m else str(text)
+
+
 def _get_json(url: str, timeout: float) -> dict:
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
                                                "User-Agent": USER_AGENT})

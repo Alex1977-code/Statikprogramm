@@ -14,7 +14,7 @@ datas = [
 datas += collect_data_files("pyvista")
 datas += collect_data_files("pyvistaqt")
 
-hiddenimports = ["pyvistaqt", "statik3d.web.server", "statik3d.update", "statik3d.farm",
+hiddenimports = ["pyvistaqt", "zstandard", "statik3d.web.server", "statik3d.update", "statik3d.farm",
                  "statik3d.jobs", "statik3d.importers", "statik3d.report", "statik3d.ec3",
                  "scipy.sparse.csgraph._validation", "scipy.special._cdflib",
                  "vtkmodules.all", "vtkmodules.util.data_model", "vtkmodules.util.execution_model"]

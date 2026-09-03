@@ -30,6 +30,9 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 | `.bdf`, `.nas`, `.dat` | Nastran Bulk Data | FE-Programme | GRID, CBAR/CBEAM, CROD, CTRIA3/CQUAD4, CTETRA/CHEXA, PBAR/PBARL/PBEAM/PSHELL/PSOLID, MAT1, SPC/SPC1, FORCE/MOMENT, PLOAD2/PLOAD4, GRAV, LOAD |
 | `.step`, `.stp`, `.iges`, `.igs`, `.brep`, `.stl` | CAD-Geometrie | CAD | Vernetzung mit gmsh (Volumen Tet4/Tet10 oder Schalen) |
 | `.rf6` | RFEM 6 Projektdatei (ZIP + SQLite `model.db`) | RFEM 6 | Knoten, Linien, Stäbe, Querschnitte, Materialien, Knoten-/Linien-/Flächenlager mit Nichtlinearität, Gelenke, Lastfälle |
+| `.sdnf`, `.sdn` | SDNF – Steel Detailing Neutral Format | HiCAD, Tekla, SDS/2, Advance Steel | Bauteile mit Lage im Bauwerk, Profil, Werkstoff, Bleche |
+| `.nc`, `.nc1`, `.nc2`, `.dstv` | DSTV-NC (Stahlbau-NC) | HiCAD, Tekla, bocad, Advance Steel | Teileliste: Profil, Länge, Werkstoff, Bohrungen, Konturen |
+| `.sza`, `.kra`, `.fga`, `.fig` | HiCAD-Archiv (`!HFA##`, zstd) | HiCAD | Teileliste, Profile mit Katalogwerten, Blechdicken, Werkstoffe, Verbindungsmittel |
 | `.rf5`, `.rfem`, `.rstab`, `.fem`, `.ifm` | proprietär (binär) | RFEM 5, RSTAB, InfoCAD | Behälter wird untersucht; sonst Meldung mit Exportweg |
 
 ## InfoCAD
@@ -217,6 +220,86 @@ englischen Spaltennamen. Lagerzellen dürfen Zusätze enthalten:
 Steht der Reibbeiwert am Freiheitsgrad mit dem Ausfall (z. B. uz), wird er auf
 die beiden Querrichtungen gelegt und auf ihn bezogen – so, wie die Reibung an
 einer Lagerfläche wirkt.
+
+## HiCAD (ISD Software und Systeme)
+
+### Archivdateien .SZA / .KRA / .FGA / .FIG
+
+Diese Dateien tragen die Kennung `!HFA##` (HiCAD File Archive). Der Aufbau
+wurde an echten Dateien aus HiCAD 2024 ausgelesen:
+
+| Bereich | Inhalt |
+|---|---|
+| Kopf `0x00` | `!HFA##`, Versionsfelder, Erzeuger („ISD Software & Systeme GmbH – Dortmund", UTF‑16LE) |
+| Einträge ab `0x198` | je Eintrag **1024 Byte Name** (UTF‑16LE, mit 0 aufgefüllt), **72 Byte Kopf**, dann die Daten |
+| Kopf | `u32[1]` = Beginn des nächsten Eintrags, `u32[13]` = Packverfahren (**3 = Zstandard**), `u32[16]` = gepackte, `u32[17]` = rohe Größe, drei FILETIME‑Zeitstempel |
+| große Teile | über 1 MiB folgen weitere Blöcke mit je 8 Byte Vorspann (gepackt/roh) |
+
+Ein `.SZA` enthält typischerweise:
+
+    <nr>.SZN            Szene (Geometrie, Behälter „FILE-CONTAINER ISD 1.0")
+    <nr>.POM            Bauteilmodell („ISD_POM_3.1")
+    <nr>.SZN.ATC        Attribute – hier stehen die Bauteilbezeichnungen
+    <nr>.SZN.DBA2/DBA3  Bemaßung,  .DVI Darstellung,  .ANS Ansichten
+    <nr>.SZN.ELREF      Bauteilverweise (XML),  .ITM_* Positionsnummern (XML)
+    VIEWER.GFIG         Anzeigegeometrie („HiGDI")
+    PREVIEW.DIB         Vorschaubild (Windows-Bitmap)
+    *.IPT               Teiletabellen: die im Modell benutzten Profile,
+                        Bleche, Werkstoffe und Verbindungsmittel
+
+**Was gelesen wird:** das Archiv vollständig, dazu alle Teile mit offenem
+Format. Aus den mitgelieferten Teiletabellen (`ISD Part Table File`) werden die
+**tatsächlich verwendeten Profile mit ihren Katalogwerten** übernommen –
+Fläche, I_y, I_z, Abmessungen – ebenso Blechdicken, Werkstoffe und die
+Verbindungsmittel. Die Bauform steht in der Kategorie der Tabelle
+(`U-PROFIL_GENEIGTE_FLANSCHE`, `I-PROFIL_PARALLELE_FLANSCHE`,
+`L-PROFIL_GLEICHSCHENKLIG`, `FLACHSTAHL`, `RUNDSTAHL`, `HOHLPROFIL_QUADRATISCH`,
+`BLECH`, `SECHSKANTSCHRAUBE` …); daraus folgen die Spalten.
+
+Beispiel aus einer echten Datei:
+
+    Profil 'HEB 700': A = 306,38 cm², I_y = 256888 cm⁴, I_z = 14441 cm⁴
+    Profil 'L 100x75x8': A = 13,57 cm², I_y = 165,5 cm⁴
+    Blech 'Bl 20': t = 20 mm
+    Verbindungsmittel: ISO 4017-M12x35 (M12), ISO 4032-M16 (M16), DIN 910-M36x1.5
+
+Führt die Werkstofftabelle andere Festigkeiten als die Norm zur Bezeichnung,
+gilt die Norm (EN 10025‑2) und die Abweichung steht im Protokoll.
+
+**Was nicht gelesen wird:** die 3D‑Geometrie. Sie liegt in den Teilen `SZN` und
+`VIEWER.GFIG` in einem Binärformat, das ISD nicht veröffentlicht – es wird
+nichts geraten. Für das Tragwerk aus HiCAD exportieren nach **SDNF**
+(Bauteile mit Lage im Bauwerk), **DSTV‑NC** (Einzelteile), **IFC** oder
+**STEP**.
+
+Zum Entpacken wird das Paket `zstandard` benötigt (in `requirements.txt` und in
+der Windows‑exe enthalten).
+
+### SDNF – Steel Detailing Neutral Format (.sdnf, .sdn)
+
+Textformat mit der Lage im Bauwerk; HiCAD, Tekla, SDS/2 und Advance Steel
+schreiben es. Gelesen werden Paket 00 (Einheit), Paket 10 (lineare Bauteile mit
+beiden Endpunkten, Profil, Werkstoff, Verdrehung) und Paket 20/21/22 (Bleche
+mit vier Eckpunkten und Dicke).
+
+Der Satzaufbau wird aus der Datei selbst bestimmt: Das Paket nennt die Anzahl
+seiner Sätze, die Zeilenzahl je Satz folgt daraus. Innerhalb eines Satzes sind
+die Zeichenketten in Anführungszeichen die Bezeichner und der längste
+zusammenhängende Zahlenblock die Geometrie. So werden alle SDNF‑Fassungen
+gelesen, ohne eine feste Feldreihenfolge zu unterstellen.
+
+### DSTV‑NC (.nc, .nc1, .nc2, .dstv)
+
+„Standardbeschreibung Stahlbau-Teile für die NC-Steuerung" des DSTV. Eine Datei
+beschreibt ein Teil: Kopfblock `ST` mit Auftrag, Position, Werkstoff, Profil,
+Profilcode und Länge, dann `BO` (Bohrungen), `AK`/`IK` (Konturen), `EN`.
+
+Gelesen werden Datei, Ordner und ZIP. Je Teil entsteht ein Stab der richtigen
+Länge mit Profil und Werkstoff; ist die Bezeichnung nicht in der
+Profildatenbank, wird der Querschnitt aus den Kopfmaßen gebildet (Profilcode
+I, U, L, M, R, RU/RO, B, C, T). NC‑Dateien führen **keine Lage im Bauwerk** –
+die Teile liegen nebeneinander, es entsteht eine Teileliste. Für das
+zusammengebaute Tragwerk ist SDNF oder IFC der Weg.
 
 ## Profildatenbank nach Land
 

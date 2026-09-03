@@ -38,7 +38,6 @@ DIAGRAMS = ["kein Verlauf", "N", "Vy", "Vz", "Mt", "My", "Mz"]
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"Statik3D {__version__} - FEM mit Lastfällen, Kontakt und EC3-Nachweisen")
         self.resize(1600, 980)
         self.model = Model("Neues Modell")
         self.__init_defaults()
@@ -52,7 +51,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_panels()
         self._build_bottom()
         self._build_menu()
+        self._refresh_title()
         self.statusBar().showMessage("Bereit")
+        self.lbl_version = QtWidgets.QLabel()
+        self.lbl_version.setToolTip("Installierte Fassung von Statik3D")
+        self.statusBar().addPermanentWidget(self.lbl_version)
+        self._refresh_version_label()
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setVisible(False)
@@ -1685,6 +1689,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selection = np.array([], dtype=int)
         self.path = None
         self.refresh_all()
+        self._refresh_title()
 
     def open_model(self):
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Modell öffnen", "", "Statik3D (*.json)")
@@ -1697,6 +1702,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.selection = np.array([], dtype=int)
                 self.path = p
                 self.refresh_all()
+                self._refresh_title()
                 self.plotter.reset_camera()
             except Exception as ex:
                 self.error(str(ex))
@@ -1709,6 +1715,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if p:
             self.model.save(p)
             self.path = p
+            self._refresh_title()
             self.info(f"gespeichert: {p}")
 
     def export_csv(self):
@@ -1883,6 +1890,32 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         self.stop_web_server()
         super().closeEvent(event)
+
+    # ---- Fensterrahmen: Version und Modell -----------------------------
+    def _refresh_title(self):
+        """Fenstertitel: Programm, Fassung und geöffnetes Modell."""
+        from .. import update as upd
+        try:
+            ver = upd.version_label()
+        except Exception:            # noqa: BLE001 - Titel darf nie scheitern
+            ver = __version__
+        name = os.path.basename(self.path) if getattr(self, "path", None) else \
+            (self.model.name if getattr(self, "model", None) else "")
+        self.setWindowTitle(f"Statik3D {ver}" + (f" - {name}" if name else "")
+                            + " - FEM mit Lastfällen, Kontakt und EC3-Nachweisen")
+
+    def _refresh_version_label(self):
+        from .. import update as upd
+        try:
+            b = upd.build_info()
+            txt = upd.version_label(long=True)
+        except Exception:            # noqa: BLE001
+            b, txt = {}, __version__
+        self.lbl_version.setText("Version " + txt)
+        self.lbl_version.setToolTip(
+            "Statik3D " + txt + "\n"
+            + ("Programmdatei (exe)" if b.get("kind") == "exe" else "Quellcode")
+            + "\n" + str(b.get("dir", "")))
 
     # ---- Update (neueste Version von GitHub) ---------------------------
     def _build_update_button(self):
