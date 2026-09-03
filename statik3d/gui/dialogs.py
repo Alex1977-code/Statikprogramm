@@ -613,3 +613,135 @@ class ReportDialog(QtWidgets.QDialog):
 
     def format(self) -> str:
         return ["html", "pdf", "md"][self.fmt.currentIndex()]
+
+
+# --------------------------------------------------------------------------
+class JointDialog(QtWidgets.QDialog):
+    """Anschluss anlegen: Typ waehlen, Stabende bestimmen, Vorschlag aendern.
+
+    Der Vorschlag entsteht aus Profil und Schnittgroessen; alle Werte lassen
+    sich danach von Hand aendern. Die Nachweise werden sofort mitgerechnet.
+    """
+
+    def __init__(self, parent, model, elem: int, end: int, forces: dict = None):
+        super().__init__(parent)
+        from ..joints.templates import TYPES, propose
+        from ..joints.bolts import SIZES, GRADES, HOLE_TYPES, CATEGORIES
+        self.setWindowTitle("Anschluss")
+        self.model = model
+        self.elem = int(elem)
+        self.end = int(end)
+        self.f0 = dict(forces or {})
+        self.template = None
+        self._propose = propose
+
+        lay = QtWidgets.QVBoxLayout(self)
+        kopf = QtWidgets.QFormLayout()
+        self.cb_typ = QtWidgets.QComboBox()
+        for key, (_cls, text) in TYPES.items():
+            self.cb_typ.addItem(text, key)
+        kopf.addRow("Anschlusstyp", self.cb_typ)
+        e = model.elements[self.elem]
+        kopf.addRow("Stab", QtWidgets.QLabel(
+            f"Element {self.elem + 1}, {e.sec or '-'} aus {e.mat}, "
+            f"Ende {'A' if self.end == 0 else 'E'}"))
+
+        self.sp = {}
+        for key, text, val, step in (("N", "N [kN]", self.f0.get("N", 0.0) / 1e3, 10.0),
+                                     ("Vz", "V_z [kN]", self.f0.get("Vz", 0.0) / 1e3, 10.0),
+                                     ("My", "M_y [kNm]", self.f0.get("My", 0.0) / 1e3, 10.0)):
+            s = QtWidgets.QDoubleSpinBox()
+            s.setRange(-1e6, 1e6)
+            s.setDecimals(1)
+            s.setSingleStep(step)
+            s.setValue(val)
+            kopf.addRow(text, s)
+            self.sp[key] = s
+
+        self.cb_size = QtWidgets.QComboBox()
+        self.cb_size.addItem("automatisch", "")
+        for k in SIZES:
+            self.cb_size.addItem(k, k)
+        kopf.addRow("Schraube", self.cb_size)
+        self.cb_grade = QtWidgets.QComboBox()
+        for k in GRADES:
+            self.cb_grade.addItem(k, k)
+        self.cb_grade.setCurrentText("10.9")
+        kopf.addRow("Festigkeitsklasse", self.cb_grade)
+        self.cb_hole = QtWidgets.QComboBox()
+        for k, v in HOLE_TYPES.items():
+            self.cb_hole.addItem(v[0], k)
+        kopf.addRow("Lochart", self.cb_hole)
+        self.cb_cat = QtWidgets.QComboBox()
+        for k, v in CATEGORIES.items():
+            self.cb_cat.addItem(f"{k} - {v}", k)
+        kopf.addRow("Kategorie", self.cb_cat)
+        self.sp_mu = QtWidgets.QDoubleSpinBox()
+        self.sp_mu.setRange(0.0, 0.7)
+        self.sp_mu.setSingleStep(0.05)
+        self.sp_mu.setDecimals(2)
+        self.sp_mu.setValue(0.50)
+        kopf.addRow("Reibbeiwert mu", self.sp_mu)
+        lay.addLayout(kopf)
+
+        btn = QtWidgets.QPushButton("Vorschlag berechnen")
+        btn.clicked.connect(self.update_proposal)
+        lay.addWidget(btn)
+
+        self.txt = QtWidgets.QPlainTextEdit()
+        self.txt.setReadOnly(True)
+        self.txt.setMinimumSize(720, 380)
+        f = self.txt.font()
+        f.setFamily("Courier New")
+        self.txt.setFont(f)
+        lay.addWidget(self.txt)
+
+        zeile = QtWidgets.QHBoxLayout()
+        self.cb_fe = QtWidgets.QComboBox()
+        self.cb_fe.addItem("Teilmodell: Schalen (2D-FE)", "2d")
+        self.cb_fe.addItem("Teilmodell: Volumen (3D-FE)", "3d")
+        self.cb_fe.addItem("kein Teilmodell", "")
+        zeile.addWidget(self.cb_fe)
+        zeile.addStretch(1)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                        | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        zeile.addWidget(bb)
+        lay.addLayout(zeile)
+        self.cb_typ.currentIndexChanged.connect(self.update_proposal)
+        self.update_proposal()
+
+    def _bolt(self):
+        from ..joints.bolts import Bolt
+        size = self.cb_size.currentData()
+        if not size:
+            return None
+        return Bolt(size, self.cb_grade.currentData(),
+                    hole=self.cb_hole.currentData(),
+                    category=self.cb_cat.currentData(), mu=self.sp_mu.value())
+
+    def update_proposal(self):
+        kind = self.cb_typ.currentData()
+        kw = {k: self.sp[k].value() * 1e3 for k in self.sp}
+        b = self._bolt()
+        try:
+            self.template = self._propose(kind, self.model, self.elem, self.end,
+                                          bolt=b, **kw)
+            j = (self.template.design(N=kw["N"])
+                 if kind == "diagonale"
+                 else self.template.design(**kw))
+            self.txt.setPlainText(self.template.describe() + "\n\n" + j.report())
+        except Exception as ex:      # noqa: BLE001
+            self.template = None
+            self.txt.setPlainText(f"Vorschlag nicht moeglich: {ex}")
+
+    def result_template(self):
+        return self.template
+
+    def forces(self) -> dict:
+        """Die eingestellten Schnittgroessen [N bzw. Nm]."""
+        return {k: self.sp[k].value() * 1e3 for k in self.sp}
+
+    def fe_kind(self) -> str:
+        return self.cb_fe.currentData()

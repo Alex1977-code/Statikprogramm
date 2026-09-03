@@ -68,6 +68,27 @@ def test_section_resistance():
     check("IPE 300: M_V,Rd (6.30)", r["M_y_Rd"], MyV, 1e-9)
 
 
+def test_torsion_schoepft_schub_aus():
+    """Grosse Torsion: V_pl,Rd wird zu null - die Ausnutzung muss endlich bleiben."""
+    ipe = make_section("IPE 300")
+    fy = 235e6
+    fvd = fy / np.sqrt(3)
+    r = section_check(ipe, fy, 0, 0, 200e3, 0, 50e3, 0, 1.0)
+    check("ohne Torsion: gewohnter Querkraftnachweis",
+          r["checks"]["V_z (6.2.6)"][0], 200e3 / (ipe.Asz * fy / np.sqrt(3)), 1e-9)
+    # Torsionsmoment so gross, dass tau_t > 1,25 f_vd wird: die Abminderung red_T
+    # aus 6.2.7 wird null und V_pl,Rd damit ebenfalls null
+    Mt = 6.0 * fvd * ipe.It / max(ipe.tf, ipe.tw)
+    r = section_check(ipe, fy, 0, 0, 200e3, Mt, 50e3, 0, 1.0)
+    check("Torsionsnachweis schlaegt an", float(r["checks"]["tau_t (6.2.7)"][0] > 1.0), 1.0, 0)
+    check("kein Querkraftnachweis durch null", float("V_z (6.2.6)" not in r["checks"]), 1.0, 0)
+    u = r["checks"]["V_z + tau_t (6.2.6/6.2.7)"][0]
+    check("Ersatznachweis ueber die Schubspannungen",
+          float(np.isfinite(u) and u > 1.0), 1.0, 0)
+    check("Gesamtausnutzung bleibt endlich",
+          float(np.isfinite(r["util"]) and r["util"] > 1.0), 1.0, 0)
+
+
 def test_flexural_buckling():
     heb = make_section("HEB 200")
     fy = 235e6
@@ -204,6 +225,7 @@ def main():
     print("=" * 100)
     test_classification()
     test_section_resistance()
+    test_torsion_schoepft_schub_aus()
     test_flexural_buckling()
     test_ltb()
     test_interaction()

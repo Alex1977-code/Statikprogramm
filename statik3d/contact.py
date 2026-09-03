@@ -64,6 +64,35 @@ class Constraint:
     frozen: bool = False
 
 
+def contact_dofs(model, K=None) -> set:
+    """Freiheitsgrade, die eine Kontaktbedingung halten kann.
+
+    Sie duerfen nicht vorab gesperrt werden, auch wenn die lineare
+    Steifigkeitsmatrix dort null ist: ihre Steifigkeit kommt erst aus der
+    Kontaktiteration - so bei einer Schraube mit Lochspiel, deren Querhalt
+    allein aus Reibung und Lochleibung stammt.
+
+    Massgebend ist, welche Zeilen die Bedingung wirklich besetzt: die
+    Normalenrichtung immer, die beiden Tangentialrichtungen nur bei Reibung.
+    """
+    out: set = set()
+    if not getattr(model, "has_contact", False):
+        return out
+    if K is None:
+        K = sparse.identity(model.ndof, format="csr")
+    try:
+        st = ContactSystem(model, K)
+    except Exception:            # noqa: BLE001 - die Sperrung darf nie am Kontakt scheitern
+        return out
+    for c in st.cons:
+        dofs = np.asarray(c.dofs, dtype=int)
+        out.update(int(d) for d in dofs[np.abs(c.cn) > 1e-12])
+        if c.ct is not None and c.mu > 0:
+            for row in c.ct:
+                out.update(int(d) for d in dofs[np.abs(row) > 1e-12])
+    return out
+
+
 def _group(c: "Constraint") -> str:
     return c.label.split(":")[0]
 
@@ -163,6 +192,7 @@ class ContactSystem:
         self.model = model
         self.log = log if log is not None else []
         self.phase = 1          # 1: Aktivmenge und Gleitrichtungen, 2: monotone Nachpruefung
+        self.stabilising = False   # Hilfsschritt ohne Spaltkraft (siehe stabilise)
         self.cycles = 0
         self.settle = 0
         self.dF_slip = 0.0      # groesste Aenderung von mu*Fn an gleitenden Knoten je Runde
@@ -391,6 +421,35 @@ class ContactSystem:
     def n_active(self) -> int:
         return sum(1 for c in self.cons if c.active)
 
+    def stabilise(self) -> bool:
+        """Hilfsschritt, wenn im ersten Schritt kein Halt besteht.
+
+        Alle Bedingungen werden geschlossen, aber **ohne** die Kraft aus dem
+        Spaltmass: sie wirken als reine Federn an ihrer jetzigen Lage. Der
+        Loesungsschritt danach zeigt nur, wohin sich das Bauteil bewegen will;
+        aus dieser Richtung wird in select_by_direction die richtige Bedingung
+        gewaehlt. Das ist der Startschritt fuer eine Schraube, die erst nach
+        dem Durchfahren des Lochspiels traegt.
+        """
+        self.stabilising = True
+        changed = False
+        for c in self.cons:
+            if not c.active:
+                c.active = True
+                c.stabilised = True
+                changed = True
+        return changed
+
+    def select_by_direction(self, u: np.ndarray) -> None:
+        """Nach dem Hilfsschritt: nur die Bedingungen halten, auf die sich das
+        Bauteil zubewegt (cn * u < 0). Die uebrigen werden wieder geoeffnet."""
+        self.stabilising = False
+        for c in self.cons:
+            if not getattr(c, "stabilised", False):
+                continue
+            c.stabilised = False
+            c.active = float(c.cn @ u[c.dofs]) < -1e-14
+
     def matrices(self, ndof: int):
         """Kontaktsteifigkeit Kc (csr) und Kontaktlastvektor Fc."""
         rows, cols, vals = [], [], []
@@ -406,7 +465,8 @@ class ContactSystem:
                 Fc[c.dofs] += c.limit * c.cn
             else:
                 kmat = c.kn * np.outer(c.cn, c.cn)
-                Fc[c.dofs] += -c.kn * c.g0 * c.cn
+                if not (self.stabilising and getattr(c, "stabilised", False)):
+                    Fc[c.dofs] += -c.kn * c.g0 * c.cn
             if c.ct is not None and c.mu > 0:
                 if not c.slip:
                     kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))

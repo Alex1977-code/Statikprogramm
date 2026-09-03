@@ -533,9 +533,22 @@ def _supports_from(tables: dict, m: Model, node_of: dict, line_nodes: dict, log:
 
 # --------------------------------------------------------------------------
 def import_rfem_native(path: str, model: Model = None, log: list = None,
-                       unit_scale: float = 1.0, **_) -> Model:
-    """RFEM/RSTAB-Projektdatei lesen, soweit der Behaelter zugaenglich ist."""
+                       unit_scale: float = 1.0, **options) -> Model:
+    """RFEM/RSTAB-Projektdatei lesen, soweit der Behaelter zugaenglich ist.
+
+    Fuer RFEM 6 (.rf6) liegt das Schema der eingebetteten Modelldatenbank vor;
+    es wird von rfem6_db vollstaendig gelesen. Andere Behaelter werden
+    untersucht und ueber Namensmuster ausgewertet.
+    """
     info = probe(path)
+    if info["kind"] == "zip":
+        try:
+            from . import rfem6_db
+            m6 = rfem6_db.read_rf6(path, model, log, **options)
+            C.merge_duplicate_nodes(m6)
+            return m6
+        except ImportError as exc:
+            C.say(log, f"Kein RFEM-6-Schema ({exc}); Behaelter wird untersucht.")
     C.say(log, info["report"])
     tables = {}
     if info["kind"] == "sqlite":

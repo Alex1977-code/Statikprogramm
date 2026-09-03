@@ -460,9 +460,176 @@ def test_bound_state():
     _assert_since(n0)
 
 
+# --------------------------------------------------------------------------
+def test_stellungen_din19704_export():
+    """Stellungen des Systems, DIN-19704-Beiwerte, ZTV-ING-Liste und Export."""
+    n0 = len(RESULTS)
+    server, c = _server()
+    try:
+        st, j, _ = c.post("/api/example", {"name": "gate"})
+        check("Beispiel Stauwand geladen", st == 200 and j["state"]["nn"] > 0)
+
+        for name, winkel in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
+            st, j, _ = c.op(op="stellung", name=name, winkel=winkel,
+                            beschreibung=f"{winkel:g} Grad")
+            if st != 200:
+                break
+        check("Drei Stellungen angelegt",
+              st == 200 and len(j["state"]["stellungen"]["liste"]) == 3, j.get("error", ""))
+        liste = j["state"]["stellungen"]["liste"]
+        check("Stellungen nach Winkel sortiert",
+              [x["winkel"] for x in liste] == sorted(x["winkel"] for x in liste))
+
+        st, j, _ = c.op(op="stellung", name="Zwischen", winkel=45.0, lager_aus="A, B",
+                        faelle="LF1", dreh_winkel=45.0, gruppen="Klappe",
+                        antrieb_knoten="3", antrieb_my=120.0)
+        s = j["state"]["stellungen"]["liste"]
+        z = next(x for x in s if x["name"] == "Zwischen")
+        check("Stellung geaendert statt doppelt angelegt", st == 200 and len(s) == 3)
+        check("Lager, Faelle, Drehung und Antrieb uebernommen",
+              z["lager_aus"] == ["A", "B"]
+              and abs(z["dreh_winkel"] - 45.0) < 1e-9 and z["gruppen"] == ["Klappe"]
+              and z["antrieb"] is True and z["faelle"] == ["LF1"], str(z))
+
+        st, j, _ = c.op(op="stellung", name="Falsch", winkel=10.0, faelle="GibtsNicht")
+        st, j, _ = c.op(op="stellungen_rechnen")
+        falsch = next(x for x in j["state"]["stellungen"]["liste"] if x["name"] == "Falsch")
+        check("Unbekannter Lastfall wird als Fehler der Stellung gemeldet",
+              st == 200 and falsch["ergebnis"] and "GibtsNicht" in falsch["ergebnis"]["fehler"],
+              str(falsch.get("ergebnis")))
+        st, j, _ = c.op(op="remove_stellung", name="Falsch")
+
+        st, j, _ = c.op(op="din19704")
+        rw = j["state"]["stellungen"]["regelwerk"]
+        check("DIN 19704: Kombinationen gebildet", st == 200 and "19704" in j["message"])
+        check("Beiwerte je Lastfallklasse geliefert",
+              [k["code"] for k in rw["klassen"]] == ["LF1", "LF2", "LF3"]
+              and len(rw["klassen"][0]["beiwerte"]) > 5)
+        offen0 = rw["offen_gesamt"]
+        check("Voreingestellte Beiwerte sind als offen ausgewiesen", offen0 > 0)
+        st, j, _ = c.op(op="din19704", klasse="LF1", einwirkung="G", wert=1.35)
+        rw = j["state"]["stellungen"]["regelwerk"]
+        g = next(b for b in rw["klassen"][0]["beiwerte"] if b["einwirkung"] == "G")
+        check("Bestaetigter Beiwert zaehlt nicht mehr als offen",
+              st == 200 and g["bestaetigt"] and rw["offen_gesamt"] == offen0 - 1)
+
+        ztv = j["state"]["stellungen"]["ztv"]
+        check("ZTV-ING-Pruefliste vorhanden",
+              len(ztv) >= 5 and all({"thema", "erfuellt", "hinweis"} <= set(x) for x in ztv))
+        check("Betriebsstellungen als erfuellt erkannt",
+              any(x["thema"] == "Betriebsstellungen" and x["erfuellt"] for x in ztv))
+
+        st, j, _ = c.op(op="stellungen_rechnen")
+        B = j["state"]["stellungen"]
+        check("Stellungen gerechnet", st == 200 and B["gerechnet"], j.get("error", ""))
+        check("Umhuellende und Kurve geliefert",
+              B["eta"] > 0 and len(B["kurve"]) == 3 and all(len(p) == 4 for p in B["kurve"])
+              and B["massgebende_stellung"] and B["bericht"])
+        check("Jede Stellung hat ein Ergebnis",
+              all(x["ergebnis"] and not x["ergebnis"]["fehler"] for x in B["liste"]))
+
+        st, j, _ = c.op(op="remove_stellung", name="offen")
+        check("Stellung entfernt", st == 200 and len(j["state"]["stellungen"]["liste"]) == 2)
+        st, j, _ = c.op(op="remove_stellung", name="gibtsnicht")
+        check("Unbekannte Stellung wird abgewiesen", st >= 400)
+
+        st, s, _ = c.get("/api/state")
+        exts = [f["ext"] for f in s["export_formats"]]
+        check("Exportformate in der Uebersicht", ".sdnf" in exts and ".sza" in exts and len(exts) >= 12)
+        for ext, mindest in ((".sdnf", 400), (".dxf", 400), (".stl", 200),
+                             (".sza", 200), (".json", 400)):
+            st, data, hdr = c.get("/api/export?fmt=" + ext, raw=True)
+            if st != 200 or len(data) < mindest:
+                break
+        check(f"Export {ext} geliefert", st == 200 and len(data) >= mindest
+              and "attachment" in hdr.get("Content-Disposition", ""), f"{st}, {len(data)} B")
+        st, data, hdr = c.get("/api/export?fmt=.csv", raw=True)
+        check("Ordner-Format kommt als ZIP",
+              st == 200 and data[:2] == b"PK" and ".zip" in hdr.get("Content-Disposition", ""))
+        st, j, _ = c.get("/api/export?fmt=.xyz")
+        check("Unbekanntes Format wird abgewiesen", st >= 400)
+    finally:
+        server.shutdown()
+        server.server_close()
+    _assert_since(n0)
+
+
+# --------------------------------------------------------------------------
+def _node() -> str:
+    """Pfad zu node, falls vorhanden - sonst leer (die Pruefung entfaellt dann)."""
+    import shutil
+    for name in ("node", "nodejs"):
+        p = shutil.which(name)
+        if p:
+            return p
+    for p in ("/opt/node22/bin/node", "/usr/local/bin/node"):
+        if os.path.exists(p):
+            return p
+    return ""
+
+
+def test_oberflaeche_rendert():
+    """Die Oberflaeche wird ohne Browser gerendert: alle Register, Baum, Filmstreifen.
+
+    Statisch geprueft wird immer; mit node laeuft app.js zusaetzlich wirklich.
+    """
+    n0 = len(RESULTS)
+    hier = os.path.dirname(os.path.abspath(__file__))
+    stat = os.path.join(os.path.dirname(hier), "statik3d", "web", "static")
+    js = open(os.path.join(stat, "app.js"), encoding="utf-8").read()
+    css = open(os.path.join(stat, "app.css"), encoding="utf-8").read()
+    html = open(os.path.join(stat, "index.html"), encoding="utf-8").read()
+    check("Register Stellungen im Rahmen", 'data-tab="bruecke"' in html
+          and 'id="baum"' in html and 'id="film"' in html)
+    check("Register Stellungen angemeldet", "bruecke: renderBruecke" in js)
+    for name in ("renderBruecke", "renderBaum", "renderFilm", "updateWerkbank",
+                 "stellungForm", "etaKurve", "stellungKarte"):
+        if f"function {name}" not in js:
+            break
+    check("Alle Bausteine der Werkbank vorhanden", f"function {name}" in js, name)
+    for kl in (".stellungen", ".stellung", ".kurve", ".beiwert", "body.werkbank"):
+        if kl not in css:
+            break
+    check("Stilvorlagen der Werkbank vorhanden", kl in css, kl)
+
+    node = _node()
+    if not node:
+        check("node nicht vorhanden - Renderpruefung entfaellt", True)
+        _assert_since(n0)
+        return
+
+    server, c = _server()
+    try:
+        c.post("/api/example", {"name": "gate"})
+        for name, winkel in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
+            c.op(op="stellung", name=name, winkel=winkel, beschreibung=f"{winkel:g} Grad")
+        c.op(op="din19704")
+        c.op(op="stellungen_rechnen")
+        st, zustand, _ = c.get("/api/state")
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            pfad = os.path.join(tmp, "zustand.json")
+            with open(pfad, "w", encoding="utf-8") as f:
+                json.dump(zustand, f)
+            r = subprocess.run([node, os.path.join(hier, "render_check.js"),
+                                os.path.join(stat, "app.js"), pfad],
+                               capture_output=True, text=True, timeout=120)
+        for zeile in r.stdout.splitlines():
+            if zeile.startswith(("OK ", "FAIL")):
+                RESULTS.append((zeile[4:].strip().split("  ")[0], zeile.startswith("OK")))
+        check("Oberflaeche rendert vollstaendig", r.returncode == 0,
+              (r.stderr or r.stdout)[-300:] if r.returncode else "")
+    finally:
+        server.shutdown()
+        server.server_close()
+    _assert_since(n0)
+
+
 def main():
     for t in (test_static_and_auth, test_model_editing, test_solve_results_report,
               test_contact_and_import, test_nichtlineare_lager_und_profile,
+              test_stellungen_din19704_export, test_oberflaeche_rendert,
               test_bound_state):
         print(f"\n--- {t.__name__} ---")
         try:

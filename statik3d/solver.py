@@ -656,6 +656,13 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
 # ==========================================================================
 # Kontakt-Iteration
 # ==========================================================================
+def _contact_singular(it: int, ex, cs) -> str:
+    n_open = sum(1 for c in cs.cons if not c.active)
+    return (f"Kontakt-Iteration {it}: {ex}\nHinweis: {n_open} von {len(cs.cons)} "
+            "Kontaktbedingungen offen - vermutlich hebt ein Bauteil vollstaendig ab "
+            "oder rutscht ohne Halt (kein statisches Gleichgewicht moeglich).")
+
+
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None):
     from .contact import ContactSystem
@@ -673,16 +680,34 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                                                    "contact_converged": True,
                                                    "contact_log": log}
     u = None
+    forced = False
     for it in range(1, max_iter + 1):
         Kc, Fc = cs.matrices(model.ndof)
         try:
             u = system.solve(F, Kc, Fc)
         except RuntimeError as ex:
-            n_open = sum(1 for c in cs.cons if not c.active)
-            raise RuntimeError(
-                f"Kontakt-Iteration {it}: {ex}\nHinweis: {n_open} von {len(cs.cons)} "
-                "Kontaktbedingungen offen - vermutlich hebt ein Bauteil vollstaendig ab "
-                "oder rutscht ohne Halt (kein statisches Gleichgewicht moeglich).") from None
+            if it == 1 and not forced and cs.stabilise():
+                # Im ersten Schritt haelt keine Bedingung - etwa eine Schraube,
+                # die erst nach dem Durchfahren des Lochspiels traegt. Ein
+                # Hilfsschritt mit allen Bedingungen als reine Federn zeigt,
+                # wohin sich das Bauteil bewegen will; danach bleiben nur die
+                # Bedingungen geschlossen, auf die es sich zubewegt.
+                forced = True
+                log.append("Hilfsschritt: Bewegungsrichtung bestimmt, weil im ersten "
+                           "Schritt keine Kontaktbedingung haelt")
+                Kc, Fc = cs.matrices(model.ndof)
+                try:
+                    u = system.solve(F, Kc, Fc)
+                except RuntimeError as ex2:
+                    raise RuntimeError(_contact_singular(it, ex2, cs)) from None
+                cs.select_by_direction(u)
+                Kc, Fc = cs.matrices(model.ndof)
+                try:
+                    u = system.solve(F, Kc, Fc)
+                except RuntimeError as ex3:
+                    raise RuntimeError(_contact_singular(it, ex3, cs)) from None
+            else:
+                raise RuntimeError(_contact_singular(it, ex, cs)) from None
         changed = cs.update(u)
         if progress:
             progress(f"Kontakt-Iteration {it}: {cs.n_active} aktiv")

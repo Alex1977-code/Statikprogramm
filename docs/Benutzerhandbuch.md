@@ -268,7 +268,11 @@ zulassen, sonst erreicht das Handy den PC nicht.
 
 Oben die 3D-Ansicht, unten die Register. Der Bereich dazwischen lässt sich am
 Griff ziehen (klein / halb / groß); auf Tablets und PCs liegen die Register
-links neben der Ansicht.
+links neben der Ansicht. Ab 1100 px Fensterbreite schaltet die Oberfläche in
+die **Werkbank**: links der Modellbaum (Elemente nach Art, Querschnitte,
+Werkstoffe, Lager, Lastfälle, Kombinationen, Kontakt, Stellungen, Stäbe für
+Nachweise), in der Mitte die Ansicht mit dem Filmstreifen der Stellungen
+darunter, rechts die Register als Arbeitsblatt.
 
 | Register | Inhalt |
 |---|---|
@@ -277,7 +281,8 @@ links neben der Ansicht.
 | **Rechnen** | Analyseart, Nachweise, Prozesse, Rechnerfarm, Start; Fortschritt und Zusammenfassung |
 | **Ergebnisse** | Ergebnis (Umhüllende / Kombination / Lastfall / Eigenform), Färbung, Überhöhung, Schnittgrößenverlauf, Stabdiagramm N/Vz/My, Tabellen Stabkräfte, Umhüllende, Auflagerkräfte, Kontakt |
 | **Nachweise** | Nachweise EC3 und Ermüdung starten, Tabellen; Zeile antippen zeigt alle Zwischenwerte |
-| **Mehr** | Datei öffnen/importieren (alle Formate aus Kap. 6), Modell speichern, Bericht (HTML/PDF/Markdown), Modellprüfung, Beispiele, Ansicht, Protokoll, Zugangsschlüssel |
+| **Stellungen** | Stellungen beweglicher Brücken anlegen und rechnen, Umhüllende, Kurve η über den Stellungswinkel, DIN-19704-Beiwerte, ZTV-ING-Prüfliste (siehe „Bewegliche Brücken“) |
+| **Mehr** | Datei öffnen/importieren (alle Formate aus Kap. 6), Modell speichern, **Export in dreizehn Formate** (herunterladen), Bericht (HTML/PDF/Markdown), Modellprüfung, Beispiele, Ansicht, Protokoll, Zugangsschlüssel |
 
 3D-Ansicht: Ziehen dreht, zwei Finger zoomen und verschieben, Doppeltipp
 zeigt alles, die Knöpfe oben schalten Ansichten (3D, XY, XZ, YZ) und
@@ -311,3 +316,122 @@ konservativ, siehe Theoriehandbuch Kap. 4), keine Schalenbeulnachweise, keine
 Plastizität, keine Zeitbereichsdynamik. Das Programm ist verifiziert
 (Testsuiten im Ordner `tests`), aber nicht bauaufsichtlich zugelassen; die
 Verantwortung für die Nachweise liegt beim Anwender.
+
+## Bewegliche Brücken und Stahlwasserbauten
+
+Eine Klappbrücke, eine Drehbrücke oder ein Hubtor ist in jeder Stellung ein
+**anderes Tragwerk**: Lager greifen oder nicht, Riegel sind gezogen, das
+Eigengewicht wirkt unter einem anderen Winkel, der Antrieb hält ein anderes
+Moment. Deshalb wird jede Stellung als eigener Rechenlauf geführt und am Ende
+die Umhüllende über alle Stellungen gebildet — mit der Angabe, **welche
+Stellung für welchen Nachweis maßgebend ist**.
+
+### Stellungen anlegen
+
+```python
+from statik3d.bridges import Stellung, Stellungsreihe
+
+reihe = Stellungsreihe(modell, "Klappbrücke Hafenkanal")
+reihe.add(Stellung("S1", 0.0, "geschlossen"))
+for w in (20, 45, 70, 82):
+    reihe.add(Stellung(f"S{w}", w, f"geöffnet {w}°",
+                       lager_aus=["Endauflager"],          # Riegel gezogen
+                       dreh_achse=(0, 1, 0), dreh_punkt=(0, 0, 0),
+                       dreh_winkel=-w, dreh_gruppen=["klappe"],
+                       antrieb=(knoten_drehachse, (0, 250e3, 0))))
+umh = reihe.rechnen(nachweise=True)
+print(umh.bericht())
+```
+
+Je Stellung lässt sich einstellen:
+
+| Angabe | Wirkung |
+|---|---|
+| `lager_aktiv` / `lager_aus` | welche benannten Lager in dieser Stellung greifen |
+| `dreh_achse`, `dreh_punkt`, `dreh_winkel`, `dreh_gruppen` | die bewegten Bauteile werden gedreht; das Eigengewicht wirkt dadurch anders |
+| `faelle`, `kombinationen` | welche Lastfälle in dieser Stellung überhaupt gelten |
+| `antrieb` | Antriebsmoment als Knotenlast in einem eigenen Lastfall |
+
+Die Umhüllende nennt die größte Ausnutzung, die größte Verformung und die
+größte Auflagerkraft je Knoten — **jeweils mit der Stellung, in der sie
+auftritt**. `umh.kurve()` liefert `(Winkel, η, u_max)` für die Kurve über den
+Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
+ausgewiesen, nicht stillschweigend übergangen.
+
+### Lastfallklassen nach DIN 19704
+
+```python
+from statik3d.bridges import Regelwerk
+rw = Regelwerk()
+rw.faktor("LF1", "G", 1.35, "DIN 19704-1, geprüft")   # eigenen Wert bestätigen
+kombis = rw.kombinationen(modell)                     # DIN LF1.1, DIN LF2.3, …
+print(rw.bericht())
+```
+
+| Klasse | Bedeutung |
+|---|---|
+| LF1 | Normalfall — regelmäßiger Betrieb |
+| LF2 | Sonderfall — seltene, planmäßig mögliche Zustände |
+| LF3 | außergewöhnlicher Fall — Bau-, Revisions- und Störfall |
+
+Die Einwirkungen des Stahlwasserbaus sind als Einwirkungskategorien verfügbar:
+`G_A` (Ausrüstung und Antrieb), `W_S`/`W_V` (Wasserdruck ständig/veränderlich),
+`Q_BEW` (Betriebslast beim Bewegen), `A_M`/`A_MG` (Antriebsmoment planmäßig /
+Grenzmoment der Rutschkupplung), `WIND_B` (Wind während der Bewegung), `EIS`,
+`SCHWALL`, `ANPRALL`, `KLEMM` (Verklemmen), `MONT`, `ERD`.
+
+> **Wichtig — die Zahlenwerte sind zu bestätigen.** Statik3D bildet das
+> *Verfahren* ab: die Einteilung der Einwirkungen, die drei Lastfallklassen und
+> die Kombinationsbildung daraus. Die *Beiwerte* γ_F, γ_M und ψ₀ sind als
+> **Voreinstellung** mitgeliefert und ausdrücklich gegen die geltende Fassung
+> der Norm zu prüfen. `rw.offen()` nennt jeden noch nicht bestätigten Wert,
+> `rw.bericht()` schreibt die Tabelle mit Herkunft, und das Importprotokoll
+> weist darauf hin. Ein Programm, das Beiwerte aus dem Gedächtnis behauptet,
+> wäre schlimmer als eines, das die Tabelle offen zur Bestätigung vorlegt.
+
+### Stellungen im Browser: Register „Stellungen“
+
+Alles davon gibt es auch ohne Python, im Browser (`python run_web.py`,
+Kapitel 12). Das Register **⟳ Stellungen** führt den ganzen Ablauf:
+
+1. **+ Stellung** legt eine Stellung an: Name, Stellungswinkel, welche Lager
+   ausfallen, welche Lastfälle gelten, um welchen Winkel welche Gruppe gedreht
+   wird und an welchem Knoten das Antriebsmoment angreift. Ein zweites Anlegen
+   unter demselben Namen **ändert** die Stellung, statt sie zu verdoppeln; die
+   Liste bleibt nach Winkel sortiert.
+2. **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln und bildet die
+   Umhüllende. Jede Karte zeigt danach ihr η, die maßgebende Stellung ist
+   hervorgehoben, und die Kurve **η über den Stellungswinkel** steht darunter.
+   Eine Stellung, die nicht rechenbar ist — etwa weil ein genannter Lastfall
+   im Modell fehlt —, wird mit ihrer Fehlermeldung ausgewiesen; die übrigen
+   Stellungen werden trotzdem gerechnet.
+3. **DIN 19704: Kombinationen bilden** legt die Kombinationen der drei
+   Lastfallklassen an und zeigt darunter **jeden Beiwert mit seinem Zustand**:
+   „zu bestätigen“ oder „bestätigt“. Ein Beiwert lässt sich im selben Register
+   setzen; damit gilt er als bestätigt und verschwindet aus der Liste der
+   offenen Werte.
+4. Die **ZTV-ING-Prüfliste** steht darunter — mit Haken nur bei dem, was das
+   Programm wirklich sehen kann.
+
+Am breiten Bildschirm (ab 1100 px) schaltet die Oberfläche in die
+**Werkbank**: links der Modellbaum, in der Mitte die 3D-Ansicht mit dem
+Filmstreifen der Stellungen darunter, rechts die Register. Der Filmstreifen
+zeigt jede Stellung als Karte mit Winkel und Ausnutzung; ein Klick wählt sie
+aus. Am Handy bleibt es beim gewohnten Aufbau mit dem Bereich von unten.
+
+### ZTV-ING-Prüfliste
+
+```python
+from statik3d.bridges import pruefliste, bewegungen
+for thema, erfuellt, hinweis in pruefliste(reihe, modell):
+    print("OK " if erfuellt else "OFFEN", thema, hinweis)
+print("Lastwechsel:", bewegungen(4 * 365, 100))   # 4 Bewegungen/Tag, 100 Jahre
+```
+
+Geprüft wird, ob Zwischenstellungen untersucht sind, ob ein Antriebsmoment
+angesetzt ist (und ob auch das Grenzmoment der Rutschkupplung als LF3
+vorliegt), ob Wind während der Bewegung und das Verklemmen eines
+Antriebsstrangs als Einwirkung geführt werden und ob die Lagerzustände je
+Stellung unterschieden sind. Was das Programm nicht selbst sehen kann — etwa
+die Zahl der Bewegungen über die Nutzungsdauer — wird als **offen** ausgewiesen
+und nicht als erfüllt behauptet.

@@ -148,7 +148,7 @@ const S = {
   state: null, geom: null, tab: 'modell', entries: [], result: null, diagram: null, design: null,
   ro: {which: '', field: 'umag', mode: 0, diagram: '', deform: true, scale: null, factor: 0},
   sel: {nodes: new Set(), elems: new Set()},
-  job: null, pollTimer: null, version: -1, member: '', profiles: {}, first: true,
+  job: null, pollTimer: null, version: -1, member: '', profiles: {}, first: true, stellung: '',
 };
 
 // ======================================================================
@@ -1031,6 +1031,11 @@ function renderMehr() {
   <div class="muted">Statik3D-JSON, DXF, IFC (InfoCAD/RFEM-Statikmodell), SAF/RFEM-xlsx, Abaqus INP, Nastran BDF, STEP/IGES/STL (gmsh).</div>
   <div class="btns"><a class="btn" href="${API.url('/api/download')}" download>Modell speichern (JSON)</a><button class="btn" data-action="check">Modell prüfen</button><button class="btn danger" data-action="new">Neues Modell</button></div>
 </div></details>
+<details open><summary>Export <span class="n">${(s.export_formats || []).length} Formate</span></summary><div class="body">
+  <div class="row">${sel('fmt', 'Format', (s.export_formats || []).map(f => [f.ext, `${f.ext} – ${f.text}`]), S.exportFmt || '.sdnf', 'id="export-fmt"')}
+  <button class="btn primary" data-action="export" style="flex:0 0 auto;align-self:end">Herunterladen</button></div>
+  <div class="muted">Formate, die einen Ordner schreiben (.csv, .nc1), kommen als ZIP. .sza ist ein HiCAD-Behälter mit den Profilangaben – die Einschränkung steht im Schnittstellenhandbuch.</div>
+</div></details>
 <details open><summary>Bericht</summary><div class="body">
   ${hasRes ? '' : '<div class="muted">Erst berechnen, dann steht der Bericht zur Verfügung.</div>'}
   <div class="btns"><a class="btn primary" href="${API.url('/api/report?fmt=html')}" target="_blank" rel="noopener">Bericht anzeigen (HTML)</a><a class="btn" href="${API.url('/api/report?fmt=pdf&download=1')}">PDF</a><a class="btn" href="${API.url('/api/report?fmt=md&download=1')}">Markdown</a></div>
@@ -1050,6 +1055,222 @@ function renderMehr() {
 </div></details>`;
 }
 
+
+// ======================================================================
+// Register: Stellungen des Systems (bewegliche Bruecken)
+// ======================================================================
+function etaFarbe(e) { return e > 1 ? 'var(--bad)' : e > 0.85 ? 'var(--warn)' : 'var(--ok)'; }
+
+function stellungKarte(st, i) {
+  const e = st.ergebnis;
+  const aktiv = S.stellung === st.name;
+  const eta = e && !e.fehler ? `<span class="eta" style="background:${etaFarbe(e.eta)}">η ${fmt(e.eta, 2)}</span>` : '';
+  return `<div class="stellung${aktiv ? ' aktiv' : ''}${e && e.fuehrt ? ' massgebend' : ''}" data-action="pick-stellung" data-name="${esc(st.name)}" title="${esc(st.beschreibung || st.name)}${e && e.fuehrt ? ' – maßgebende Stellung' : ''}">
+    <span class="id">S${i + 1}</span>${eta}
+    <div class="deg">${fmt(st.winkel, 1)}°</div>
+    <div class="nm">${esc(st.name)}</div>
+    ${e && e.fehler ? `<div class="fehler">Fehler</div>` : ''}
+  </div>`;
+}
+
+function etaKurve(kurve, hoehe = 112) {
+  if (!kurve || kurve.length < 2) return '';
+  const W = 280, H = 96, ml = 16, mr = 10, mt = 10, mb = 18;
+  const w = kurve.map(p => p[0]), et = kurve.map(p => p[1]);
+  const w0 = Math.min(...w), w1 = Math.max(...w), emax = Math.max(1, ...et);
+  const X = v => ml + (w1 - w0 > 1e-9 ? (v - w0) / (w1 - w0) : 0.5) * (W - ml - mr);
+  const Y = v => mt + (1 - v / emax) * (H - mt - mb);
+  const pts = kurve.map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ');
+  const beste = kurve.reduce((a, b) => (b[1] > a[1] ? b : a), kurve[0]);
+  const punkte = kurve.map(p => `<circle class="punkt${p === beste ? ' max' : ''}" cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="${p === beste ? 4 : 3}"><title>${esc(p[3])}: ${fmt(p[0], 1)}°, η = ${fmt(p[1], 3)}, u = ${fmt(p[2] * 1e3, 2)} mm</title></circle>`).join('');
+  const namen = kurve.map(p => `<text x="${X(p[0]).toFixed(1)}" y="${H - 4}" text-anchor="middle">${esc(p[3].slice(0, 6))}</text>`).join('');
+  return `<svg class="kurve" viewBox="0 0 ${W} ${H}" style="max-height:${hoehe}px">
+    <line class="achse" x1="${ml}" y1="${Y(0)}" x2="${W - mr}" y2="${Y(0)}"/>
+    <line class="grenze" x1="${ml}" y1="${Y(1)}" x2="${W - mr}" y2="${Y(1)}"/>
+    <text x="${ml}" y="${Y(1) - 2}">η = 1,0</text>
+    <polyline class="linie" points="${pts}"/>${punkte}${namen}</svg>`;
+}
+
+function stellungForm(st) {
+  const s = st || {};
+  const achse = s.dreh_achse || [0, 1, 0], punkt = s.dreh_punkt || [0, 0, 0];
+  return `<form data-op="stellung" ${st ? 'data-close="1"' : 'data-reset="1"'}>
+    ${st ? `<h2>Stellung ${esc(st.name)}</h2>` : ''}
+    <div class="grid2">${inp('name', 'Name', s.name || '', 'required')}${num('winkel', 'Stellungswinkel [°]', s.winkel ?? 0)}</div>
+    ${inp('beschreibung', 'Beschreibung', s.beschreibung || '')}
+    <div class="grid2">${inp('lager_aus', 'Lager aus (Namen, Komma)', (s.lager_aus || []).join(', '))}${inp('lager_aktiv', 'nur diese Lager aktiv', (s.lager_aktiv || []).join(', '))}</div>
+    ${inp('faelle', 'Lastfälle dieser Stellung (Komma, leer = alle)', (s.faelle || []).join(', '))}
+    <details${st && s.dreh_winkel ? ' open' : ''}><summary>Bewegtes Bauteil drehen</summary><div class="body">
+      <div class="grid2">${num('dreh_winkel', 'Drehwinkel [°]', s.dreh_winkel ?? 0)}${inp('gruppen', 'Gruppen / Stäbe (Komma)', (s.gruppen || []).join(', '))}</div>
+      <div class="grid3">${num('achse_x', 'Achse x', achse[0])}${num('achse_y', 'Achse y', achse[1])}${num('achse_z', 'Achse z', achse[2])}</div>
+      <div class="grid3">${num('punkt_x', 'Drehpunkt x [m]', punkt[0])}${num('punkt_y', 'Drehpunkt y [m]', punkt[1])}${num('punkt_z', 'Drehpunkt z [m]', punkt[2])}</div>
+      <div class="muted">Leere Gruppenliste: alles wird gedreht. Die Drehung wirkt nur in dieser Stellung.</div>
+    </div></details>
+    <details><summary>Antriebsmoment</summary><div class="body">
+      ${inp('antrieb_knoten', 'Knoten des Antriebs (Auswahl in 3D-Ansicht)', '', 'data-sel="nodes" placeholder="z.B. 24"')}
+      <div class="grid3">${num('antrieb_mx', 'Mx [kNm]', 0)}${num('antrieb_my', 'My [kNm]', 0)}${num('antrieb_mz', 'Mz [kNm]', 0)}</div>
+    </div></details>
+    <div class="btns"><button class="btn primary wide">${st ? 'Stellung ändern' : '+ Stellung anlegen'}</button></div>
+  </form>`;
+}
+
+function renderBruecke() {
+  const s = S.state, B = s.stellungen || {liste: []}, liste = B.liste || [];
+  const busy = s.busy;
+  let html = `<div class="card">
+    <div class="row"><b>Stellungen des Systems</b><span class="muted">${liste.length} angelegt${B.gerechnet ? ' · gerechnet' : ''}</span></div>
+    <div class="btns">
+      <button class="btn primary" data-action="op" data-payload='${JSON.stringify({op: 'stellungen_rechnen', kombinationen: true, nachweise: true})}' ${busy || !liste.length ? 'disabled' : ''}>▶ Alle Stellungen rechnen</button>
+      <button class="btn" data-action="neue-stellung">+ Stellung</button>
+      <button class="btn" data-action="op" data-payload='${JSON.stringify({op: 'din19704'})}' ${busy ? 'disabled' : ''}>DIN 19704: Kombinationen bilden</button>
+    </div>
+    <div class="muted">Jede Stellung ist ein eigener Rechenlauf: Lager, Lastfälle und die Lage des bewegten Bauteils werden umgestellt. Die Umhüllende ist die ungünstigste Stellung je Nachweis.</div>`;
+  if (liste.length) html += `<div class="stellungen">${liste.map(stellungKarte).join('')}</div>`;
+  else html += `<div class="muted" style="padding:8px 0">Noch keine Stellung. „+ Stellung“ legt zum Beispiel „geschlossen 0°“, „Zwischenstellung 40°“ und „offen 82°“ an.</div>`;
+  html += `</div>`;
+
+  const gew = liste.find(x => x.name === S.stellung);
+  if (gew) {
+    const e = gew.ergebnis;
+    html += `<div class="card">
+      <div class="row" style="margin:0"><b style="font-size:16px">${esc(gew.name)}</b><span class="muted">${fmt(gew.winkel, 1)}°</span><span style="flex:1"></span>
+        <button class="btn small" data-action="edit-stellung" data-name="${esc(gew.name)}">Ändern</button></div>
+      <div class="muted">${esc(gew.beschreibung || 'ohne Beschreibung')}</div>
+      <div class="kv"><b>Lager aus</b><span>${esc((gew.lager_aus || []).join(', ') || '–')}</span>
+        <b>nur aktiv</b><span>${esc((gew.lager_aktiv || []).join(', ') || 'alle')}</span>
+        <b>Lastfälle</b><span>${esc((gew.faelle || []).join(', ') || 'alle')}</span>
+        <b>Drehung</b><span>${gew.dreh_winkel ? `${fmt(gew.dreh_winkel, 1)}° · ${esc((gew.gruppen || []).join(', ') || 'ganzes Modell')}` : 'keine'}</span>
+        <b>Antrieb</b><span>${gew.antrieb ? 'Moment angesetzt' : '–'}</span></div>
+      ${e ? (e.fehler ? `<div class="msg err">${esc(e.fehler)}</div>`
+        : `<div class="msg ${e.eta > 1 ? 'err' : 'ok'}">η = ${fmt(e.eta, 3)} · u max = ${fmt(e.u_max * 1e3, 3)} mm${e.massgebend ? ' · maßgebende Stellung' : ''}</div>`)
+        : '<div class="muted">Diese Stellung ist noch nicht gerechnet.</div>'}
+    </div>`;
+  }
+
+  if (B.gerechnet) {
+    const kl = B.eta > 1 ? 'err' : 'ok';
+    html += `<div class="card">
+      <div class="msg ${kl}">Umhüllende über alle Stellungen: η = ${fmt(B.eta, 3)}${B.massgebende_stellung ? ` – maßgebend ${esc(B.massgebende_stellung)}` : ''}</div>
+      <div class="kv"><b>größte Verformung</b><span>${fmt(B.u_max * 1e3, 3)} mm</span><b>Stellungen</b><span>${liste.length}</span>${B.fehlerhaft && B.fehlerhaft.length ? `<b>fehlerhaft</b><span class="status-bad">${B.fehlerhaft.map(esc).join(', ')}</span>` : ''}</div>
+      <h3 class="klar">Ausnutzung η über die Stellungen</h3>${etaKurve(B.kurve)}
+    </div>`;
+    html += `<details><summary>Bericht der Stellungen</summary><div class="body"><pre>${esc(B.bericht || '')}</pre></div></details>`;
+  }
+
+  if (liste.length) {
+    html += `<details open><summary>Stellungen <span class="n">${liste.length}</span></summary><div class="body">
+      ${table(['Stellung', 'Winkel', 'Lager aus', 'Lastfälle', 'η', 'u max [mm]', ''],
+        liste.map(x => [x.name, fmt(x.winkel, 1) + '°', (x.lager_aus || []).join(', ') || '–',
+          (x.faelle || []).join(', ') || 'alle',
+          x.ergebnis && !x.ergebnis.fehler ? x.ergebnis.eta : '',
+          x.ergebnis && !x.ergebnis.fehler ? fmt(x.ergebnis.u_max * 1e3, 3) : (x.ergebnis && x.ergebnis.fehler ? 'Fehler' : '–'),
+          `<button class="btn small danger" data-action="op" data-payload='${JSON.stringify({op: 'remove_stellung', name: x.name})}' data-confirm="Stellung ${x.name} entfernen?">✕</button>`]),
+        {rowAttr: r => `class="tap" data-action="edit-stellung" data-name="${esc(r[0])}"`,
+         format: (c, j) => j === 4 ? (c === '' ? '–' : utilBadge(c)) : j === 6 ? c : esc(c)})}
+      <div class="muted">Zeile antippen: Stellung ändern.</div></div></details>`;
+  }
+  html += `<details${liste.length ? '' : ' open'}><summary>Neue Stellung</summary><div class="body">${stellungForm(null)}</div></details>`;
+
+  const rw = B.regelwerk;
+  if (rw) {
+    html += `<details open><summary>DIN 19704 <span class="n">${rw.offen_gesamt} offen</span></summary><div class="body">
+      <div class="msg ${rw.offen_gesamt ? 'warn' : 'ok'}">${rw.offen_gesamt ? `${rw.offen_gesamt} Beiwerte sind Voreinstellungen und gegen die geltende Norm zu bestätigen.` : 'Alle Beiwerte sind bestätigt.'}</div>`;
+    for (const k of rw.klassen || []) {
+      html += `<h3>${esc(k.code)} – ${esc(k.text)}</h3>` + k.beiwerte.map(b =>
+        `<div class="beiwert"><span title="${esc(b.text)}">γ<sub>F</sub> ${esc(b.einwirkung)}</span><span>${fmt(b.wert, 2)} <span class="${b.bestaetigt ? 'status-ok' : 'offen'}">${b.bestaetigt ? 'bestätigt' : 'zu bestätigen'}</span></span></div>`).join('');
+    }
+    html += `<h3>Beiwert bestätigen oder ändern</h3>
+      <form data-op="din19704" data-reset="1"><div class="grid3">
+        ${sel('klasse', 'Lastfallklasse', (rw.klassen || []).map(k => [k.code, k.code]), 'LF1')}
+        ${sel('einwirkung', 'Einwirkung', ((rw.klassen || [])[0] || {beiwerte: []}).beiwerte.map(b => [b.einwirkung, `${b.einwirkung} – ${b.text}`]), 'G')}
+        ${num('wert', 'γF', 1.35)}</div>
+        <div class="btns"><button class="btn primary">Beiwert setzen und Kombinationen bilden</button></div></form>
+      <details><summary>Beiwerte im Klartext</summary><div class="body"><pre>${esc(rw.bericht || '')}</pre></div></details>
+    </div></details>`;
+  }
+
+  const ztv = B.ztv || [];
+  if (ztv.length) {
+    html += `<details><summary>ZTV-ING, bewegliche Brücken <span class="n">${ztv.filter(z => z.erfuellt).length}/${ztv.length}</span></summary><div class="body">
+      ${ztv.map(z => `<div class="beiwert"><span>${z.erfuellt ? '<span class="status-ok">✓</span>' : '<span class="offen">offen</span>'} ${esc(z.thema)}</span><span class="muted" style="text-align:right">${esc(z.hinweis)}</span></div>`).join('')}
+      <div class="muted">Die Liste zeigt, was das Programm selbst sehen kann. Alles Übrige bleibt als offen ausgewiesen und ist vom Aufsteller zu prüfen.</div>
+    </div></details>`;
+  }
+  return html;
+}
+
+// ======================================================================
+// Werkbank: Modellbaum links, Filmstreifen unter der Ansicht
+// (Entwurf 1a, ab 1100 px Fensterbreite)
+// ======================================================================
+function werkbankAn() { return window.innerWidth >= 1100 && !S.schmal; }
+
+function baumZeile(text, zahl = '', o = {}) {
+  const marke = o.marke ? `<span class="marke">${esc(o.marke)}</span>` : '';
+  const attr = o.action ? ` data-action="${o.action}"${o.tab ? ` data-tab="${esc(o.tab)}"` : ''}${o.name ? ` data-name="${esc(o.name)}"` : ''}` : '';
+  return `<div class="knoten"${attr} style="${o.stil || ''}">${o.pfeil || ''}${esc(text)}${marke}${zahl !== '' ? `<span class="zahl">${esc(zahl)}</span>` : ''}</div>`;
+}
+
+function renderBaum() {
+  const el = $('#baum'); if (!el) return;
+  const s = S.state;
+  if (!s) { el.innerHTML = ''; return; }
+  const typen = Object.entries(s.types || {}).sort((a, b) => b[1] - a[1]);
+  const B = s.stellungen || {liste: []};
+  let h = `<h3>Modellbaum</h3>
+    <div class="knoten" style="font-weight:600">▾ ${esc(s.name)}<span class="zahl">${s.nn} Kn</span></div>`;
+  h += `<div style="padding-left:10px">`;
+  h += baumZeile('Elemente', s.ne, {pfeil: '▾ ', action: 'tab', tab: 'modell'});
+  h += `<div style="padding-left:12px">` + typen.map(([t, n]) => baumZeile(t, n)).join('') + `</div>`;
+  h += baumZeile('Querschnitte', Object.keys(s.sections || {}).length, {pfeil: '▸ ', action: 'tab', tab: 'modell'});
+  h += baumZeile('Werkstoffe', Object.keys(s.materials || {}).length, {pfeil: '▸ ', action: 'tab', tab: 'modell'});
+  h += baumZeile('Lager', s.n_supports, {pfeil: '▸ ', action: 'tab', tab: 'modell'});
+  h += baumZeile('Lastfälle', (s.load_cases || []).length, {pfeil: '▸ ', action: 'tab', tab: 'lasten'});
+  h += baumZeile('Kombinationen', (s.combinations || []).length, {pfeil: '▸ ', action: 'tab', tab: 'lasten'});
+  if ((s.contact.supports.length + s.contact.gaps.length + s.contact.pairs.length) > 0) {
+    h += baumZeile('Kontakt', s.contact.supports.length + s.contact.gaps.length + s.contact.pairs.length, {pfeil: '▸ ', action: 'tab', tab: 'modell'});
+  }
+  if ((B.liste || []).length) {
+    h += baumZeile(`Stellungen`, B.liste.length, {pfeil: '▾ ', action: 'tab', tab: 'bruecke', stil: 'color:var(--accent);font-weight:600'});
+    h += `<div style="padding-left:12px">` + B.liste.map((x, i) =>
+      baumZeile(`S${i + 1} · ${x.name}`, fmt(x.winkel, 0) + '°', {action: 'pick-stellung', name: x.name})).join('') + `</div>`;
+  }
+  if ((s.members || []).length) {
+    h += baumZeile('Stäbe für Nachweise', s.members.length, {pfeil: '▾ ', action: 'tab', tab: 'nachweise'});
+    h += `<div style="padding-left:12px">` + s.members.slice(0, 40).map(m =>
+      baumZeile(m.name, m.section || '', {action: 'member-detail', name: m.name})).join('') + `</div>`;
+  }
+  h += `</div>`;
+  h += `<h3>Bauteil in Statik übernehmen</h3>
+    <div class="btns"><button class="btn small wide" data-action="tab" data-tab="modell">Auswahl → Stabzug / Schale</button></div>`;
+  el.innerHTML = h;
+  bindActions(el);
+}
+
+function renderFilm() {
+  const el = $('#film'); if (!el) return;
+  const s = S.state;
+  const B = (s && s.stellungen) || {liste: []};
+  const liste = B.liste || [];
+  if (!liste.length) {
+    el.innerHTML = `<div class="row" style="margin:0"><span class="muted">Stellungen des Systems – noch keine angelegt</span><span style="flex:1"></span><button class="btn small" data-action="neue-stellung">+ Stellung</button></div>`;
+    bindActions(el); return;
+  }
+  el.innerHTML = `<div class="row" style="margin:0 0 2px"><h3 style="margin:0">Stellungen des Systems</h3><span style="flex:1"></span>
+    <span class="muted">${B.gerechnet ? `Umhüllende η = ${fmt(B.eta, 3)}` : 'noch nicht gerechnet'}</span>
+    <button class="btn small" data-action="neue-stellung">+ Stellung</button>
+    <button class="btn small primary" data-action="op" data-payload='${JSON.stringify({op: 'stellungen_rechnen', kombinationen: true, nachweise: true})}'>▶ rechnen</button></div>
+    <div class="stellungen">${liste.map(stellungKarte).join('')}</div>`;
+  bindActions(el);
+}
+
+function updateWerkbank() {
+  const an = werkbankAn();
+  document.body.classList.toggle('werkbank', an);
+  if (an) { renderBaum(); renderFilm(); }
+  if (view) view.resize();
+}
+
 // ======================================================================
 // Rendern und Ereignisse
 // ======================================================================
@@ -1058,13 +1279,14 @@ function render() {
   if (!S.state) { p.innerHTML = '<div class="muted" style="padding:20px">Verbinde …</div>'; return; }
   const open = new Set($$('details[open]', p).map(d => d.querySelector('summary')?.textContent.trim().split(' ')[0]));
   const scroll = p.scrollTop;
-  const fn = {modell: renderModell, lasten: renderLasten, rechnen: renderRechnen, ergebnisse: renderErgebnisse, nachweise: renderNachweise, mehr: renderMehr}[S.tab] || renderModell;
+  const fn = {modell: renderModell, lasten: renderLasten, rechnen: renderRechnen, ergebnisse: renderErgebnisse, nachweise: renderNachweise, bruecke: renderBruecke, mehr: renderMehr}[S.tab] || renderModell;
   try { p.innerHTML = fn(); } catch (e) { p.innerHTML = `<div class="msg err">Darstellungsfehler: ${esc(e.message)}</div>`; console.error(e); }
   if (open.size) $$('details', p).forEach(d => { const k = d.querySelector('summary')?.textContent.trim().split(' ')[0]; if (open.has(k)) d.open = true; });
   $$('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === S.tab));
   bindActions(p);
   p.scrollTop = scroll;
   updateSelInfo();
+  updateWerkbank();
 }
 
 function bindActions(root) {
@@ -1161,6 +1383,9 @@ const ACTIONS = {
   'add-shell': el => { const f = el.closest('form'); const n = (f.elements.nodes.value.match(/\d+/g) || []).length; f.elements.typ.value = n === 4 ? 'shell4' : 'shell3'; f.requestSubmit(); },
   'member-from-sel': el => { const f = el.closest('form'); f.querySelector('[name=elems]').name = 'elements'; f.requestSubmit(); },
   'edit-member': el => { const m = S.state.members.find(x => x.name === el.dataset.name); if (m) modal(memberForm(m)); },
+  'neue-stellung': () => modal(`<h2>Neue Stellung</h2>${stellungForm(null)}`),
+  'edit-stellung': el => { const x = (S.state.stellungen.liste || []).find(y => y.name === el.dataset.name); if (x) modal(stellungForm(x)); },
+  'pick-stellung': el => { S.stellung = S.stellung === el.dataset.name ? '' : el.dataset.name; if (S.tab !== 'bruecke') showTab('bruecke'); else render(); },
   'edit-case': el => { const c = S.state.load_cases.find(x => x.name === el.dataset.name); if (c) modal(caseForm(c)); },
   'solve': () => { const f = $('#solve-form'); const v = collect(f); S.solveKind = v.kind; startJob('/api/solve', v); },
   'design': () => startJob('/api/design', {}),
@@ -1188,6 +1413,14 @@ const ACTIONS = {
     const box = $('#update-box'); if (box) box.innerHTML = '<div class="muted">Aktualisiere …</div><div class="progress"><div></div></div>';
     try { const r = await API.post('/api/update', {}); if (box) box.innerHTML = `<div class="msg ok">${esc(r.message)}</div>`; toast(r.message, 'ok'); }
     catch (e) { if (box) box.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+  },
+  'export': () => {
+    const f = $('#export-fmt'); if (!f) return;
+    S.exportFmt = f.value;
+    const a = document.createElement('a');
+    a.href = API.url('/api/export?fmt=' + enc(f.value)); a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('Export ' + f.value + ' wird erzeugt …');
   },
   'check': async () => { try { const r = await API.get('/api/check'); modal(`<h2>Modellprüfung</h2>${r.messages.length ? r.messages.map(m => `<div class="msg ${/FEHLER/.test(m) ? 'err' : 'warn'}">${esc(m)}</div>`).join('') : '<div class="msg ok">Keine Beanstandungen</div>'}`); } catch (e) { toast(e.message, 'err'); } },
   'new': async () => { if (!confirm('Neues, leeres Modell anlegen? Ungespeicherte Änderungen gehen verloren.')) return; S.sel.nodes.clear(); S.sel.elems.clear(); S.first = true; await runOp({op: 'new', name: 'Modell'}); },
@@ -1218,6 +1451,7 @@ function bindShell() {
   view.onPick = () => updateSelInfo();
   new ResizeObserver(() => view.resize()).observe($('#view-wrap'));
   window.addEventListener('orientationchange', () => setTimeout(() => view.resize(), 300));
+  window.addEventListener('resize', () => { if (werkbankAn() !== document.body.classList.contains('werkbank')) updateWerkbank(); });
 }
 
 async function watchVersion() {

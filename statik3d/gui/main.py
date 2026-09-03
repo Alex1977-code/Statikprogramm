@@ -23,7 +23,7 @@ from .. import solver, mesher, parallel, __version__
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
                       CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
                       DesignSettingsDialog, ContactPairDialog, ImportDialog, ReportDialog,
-                      SupportNonlinearDialog,
+                      SupportNonlinearDialog, JointDialog,
                       parse_int_list)
 from .worker import SolveWorker
 from . import viewport as vp
@@ -38,7 +38,6 @@ DIAGRAMS = ["kein Verlauf", "N", "Vy", "Vz", "Mt", "My", "Mz"]
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"Statik3D {__version__} - FEM mit Lastfällen, Kontakt und EC3-Nachweisen")
         self.resize(1600, 980)
         self.model = Model("Neues Modell")
         self.__init_defaults()
@@ -52,7 +51,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_panels()
         self._build_bottom()
         self._build_menu()
+        self._refresh_title()
         self.statusBar().showMessage("Bereit")
+        self.lbl_version = QtWidgets.QLabel()
+        self.lbl_version.setToolTip("Installierte Fassung von Statik3D")
+        self.statusBar().addPermanentWidget(self.lbl_version)
+        self._refresh_version_label()
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setVisible(False)
@@ -113,7 +117,10 @@ class MainWindow(QtWidgets.QMainWindow):
         f.addAction("Speichern", self.save_model, "Ctrl+S")
         f.addAction("Speichern unter…", lambda: self.save_model(True))
         f.addSeparator()
-        f.addAction("Importieren (DXF, IFC, SAF, RFEM, INP, BDF, STEP…)…", self.import_file, "Ctrl+I")
+        f.addAction("Importieren (RFEM 6, HiCAD, DXF, IFC, SAF, INP, BDF, STEP…)…",
+                    self.import_file, "Ctrl+I")
+        f.addAction("Exportieren (SDNF, DSTV-NC, IFC, SAF, DXF, STL, VTK, HiCAD…)…",
+                    self.export_model, "Ctrl+E")
         f.addAction("Ergebnisse als CSV…", self.export_csv)
         f.addAction("Netz + Ergebnisse als VTK…", self.export_vtk)
         f.addSeparator()
@@ -431,6 +438,22 @@ class MainWindow(QtWidgets.QMainWindow):
         b7.setToolTip("Bettung auf den Elementen im Feld 'Elemente', Steifigkeit je m²")
         b7.clicked.connect(self.add_surface_support)
         gl.addWidget(row(b5, b6, b7))
+        lay.addWidget(g)
+
+        g = QtWidgets.QGroupBox("Anschluss")
+        gl = QtWidgets.QVBoxLayout(g)
+        b8 = QtWidgets.QPushButton("Anschluss anlegen…")
+        b8.setToolTip("Anschlusstyp wählen und auf ein Stabende anwenden: Kopfplatte,\n"
+                      "Laschenstoß oder Diagonalanschluss. Der Vorschlag folgt aus\n"
+                      "Profil und Schnittgrößen und lässt sich ändern.")
+        b8.clicked.connect(self.add_joint)
+        b9 = QtWidgets.QPushButton("Anschlüsse zeigen")
+        b9.setToolTip("Angelegte Anschlüsse mit Nachweisen auflisten")
+        b9.clicked.connect(self.show_joints)
+        gl.addWidget(row(b8, b9))
+        self.lbl_joints = QtWidgets.QLabel("keine Anschlüsse")
+        self.lbl_joints.setWordWrap(True)
+        gl.addWidget(self.lbl_joints)
         lay.addWidget(g)
 
         g = QtWidgets.QGroupBox("Lasten auf Auswahl → aktiver Lastfall")
@@ -1038,6 +1061,97 @@ class MainWindow(QtWidgets.QMainWindow):
             s.dofs = sorted({k for k, v in beh.items() if v.acts})
         self.info(f"Nichtlinearität an {len(self.selection)} Lagern gesetzt")
         self.refresh_all()
+
+    # ---- Anschluesse ----------------------------------------------------
+    def _selected_beam_end(self):
+        """(Element, Ende) aus der Auswahl bestimmen.
+
+        Ausgewaehlt wird ein Knoten; gesucht wird das Stabelement, das dort
+        endet. Liegen mehrere an, wird das erste genommen und gemeldet.
+        """
+        if not len(self.selection):
+            raise ValueError("Bitte den Knoten am Stabende auswählen")
+        n = int(self.selection[0])
+        for i, e in enumerate(self.model.elements):
+            if e.typ not in ("beam", "truss"):
+                continue
+            if int(e.nodes[0]) == n:
+                return i, 0
+            if int(e.nodes[1]) == n:
+                return i, 1
+        raise ValueError(f"An Knoten {n + 1} endet kein Stabelement")
+
+    def _end_forces(self, elem: int, end: int) -> dict:
+        """Schnittgroessen am Stabende aus dem letzten Ergebnis (sonst 0)."""
+        r = self.current_result()
+        if r is None or not getattr(r, "beam_end", None):
+            return {}
+        v = r.beam_end.get(int(elem))
+        if v is None:
+            return {}
+        o = 0 if end == 0 else 6
+        vz = float(v[o + 2])
+        return {"N": float(v[o + 0]) * (-1.0 if end == 0 else 1.0),
+                "Vz": vz, "My": float(v[o + 4])}
+
+    def add_joint(self):
+        """Anschluss am gewaehlten Stabende anlegen."""
+        try:
+            elem, end = self._selected_beam_end()
+        except ValueError as ex:
+            return self.error(str(ex))
+        d = JointDialog(self, self.model, elem, end, self._end_forces(elem, end))
+        if not d.exec():
+            return
+        t = d.result_template()
+        if t is None:
+            return self.error("Es liegt kein gültiger Vorschlag vor")
+        if not hasattr(self, "joints"):
+            self.joints = []
+        t._forces = {k: d.sp[k].value() * 1e3 for k in d.sp}
+        if isinstance(t, type(t)) and t.__class__.__name__ == "Gusset":
+            t._forces = {"N": t._forces.get("N", 0.0)}
+        self.joints.append(t)
+        kind = d.fe_kind()
+        if kind:
+            log = []
+            teil = t.build(kind=kind, log=log)
+            teil.meta["bauteil"] = t.name
+            path = os.path.join(os.path.dirname(self.path or "."),
+                                f"{t.name.replace(' ', '_')}.json")
+            try:
+                teil.save(path)
+                log.append(f"Teilmodell gespeichert: {path}")
+            except OSError as ex:
+                log.append(f"Teilmodell konnte nicht gespeichert werden: {ex}")
+            QtWidgets.QMessageBox.information(
+                self, "Teilmodell des Anschlusses", "\n".join(log))
+        self._refresh_joints()
+        self.info(f"Anschluss '{t.name}' angelegt")
+
+    def _refresh_joints(self):
+        js = getattr(self, "joints", [])
+        if not js:
+            self.lbl_joints.setText("keine Anschlüsse")
+            return
+        zeilen = []
+        for t in js:
+            try:
+                j = t.design(**getattr(t, "_forces", {}))
+                zeilen.append(f"{t.name}: eta = {j.eta:.2f} ({j.massgebend})")
+            except Exception:            # noqa: BLE001
+                zeilen.append(t.name)
+        self.lbl_joints.setText("\n".join(zeilen))
+
+    def show_joints(self):
+        js = getattr(self, "joints", [])
+        if not js:
+            return self.error("Es wurde noch kein Anschluss angelegt")
+        text = "\n\n".join(t.describe() for t in js)
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Anschlüsse")
+        box.setText(text)
+        box.exec()
 
     def add_line_support(self):
         """Linienlager entlang der gewaehlten Knoten (in Auswahlreihenfolge)."""
@@ -1685,6 +1799,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selection = np.array([], dtype=int)
         self.path = None
         self.refresh_all()
+        self._refresh_title()
 
     def open_model(self):
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Modell öffnen", "", "Statik3D (*.json)")
@@ -1697,6 +1812,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.selection = np.array([], dtype=int)
                 self.path = p
                 self.refresh_all()
+                self._refresh_title()
                 self.plotter.reset_camera()
             except Exception as ex:
                 self.error(str(ex))
@@ -1709,7 +1825,39 @@ class MainWindow(QtWidgets.QMainWindow):
         if p:
             self.model.save(p)
             self.path = p
+            self._refresh_title()
             self.info(f"gespeichert: {p}")
+
+    def export_model(self):
+        """Modell in ein fremdes Format schreiben (Endung bestimmt das Format)."""
+        from ..exporters import export_model as _ex, file_filter as _ff, FORMATS
+        vor = os.path.splitext(self.path)[0] if self.path else self.model.name
+        p, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Modell exportieren", vor + ".sdnf", _ff())
+        if not p:
+            return
+        ext = os.path.splitext(p)[1].lower()
+        if ext not in FORMATS:
+            return self.error(
+                f"Die Endung '{ext or '(keine)'}' gehört zu keinem Ausgabeformat.\n"
+                "Möglich: " + ", ".join(sorted(FORMATS)))
+        log = []
+        try:
+            out = _ex(self.model, p, results=self.current_result(), log=log)
+        except Exception as ex:      # noqa: BLE001
+            return self.error(f"Export fehlgeschlagen: {ex}")
+        for z in log:
+            self.log.appendPlainText(z)
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Export")
+        box.setText("\n".join(log) or f"Geschrieben: {out}")
+        b_open = box.addButton("Ordner öffnen", QtWidgets.QMessageBox.ActionRole)
+        box.addButton(QtWidgets.QMessageBox.Ok)
+        box.exec()
+        if box.clickedButton() is b_open:
+            ordner = out if os.path.isdir(out) else os.path.dirname(os.path.abspath(out))
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(ordner))
+        self.info(f"exportiert: {out}")
 
     def export_csv(self):
         r = self.current_result()
@@ -1884,6 +2032,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_web_server()
         super().closeEvent(event)
 
+    # ---- Fensterrahmen: Version und Modell -----------------------------
+    def _refresh_title(self):
+        """Fenstertitel: Programm, Fassung und geöffnetes Modell."""
+        from .. import update as upd
+        try:
+            ver = upd.version_label()
+        except Exception:            # noqa: BLE001 - Titel darf nie scheitern
+            ver = __version__
+        name = os.path.basename(self.path) if getattr(self, "path", None) else \
+            (self.model.name if getattr(self, "model", None) else "")
+        self.setWindowTitle(f"Statik3D {ver}" + (f" - {name}" if name else "")
+                            + " - FEM mit Lastfällen, Kontakt und EC3-Nachweisen")
+
+    def _refresh_version_label(self):
+        from .. import update as upd
+        try:
+            b = upd.build_info()
+            txt = upd.version_label(long=True)
+        except Exception:            # noqa: BLE001
+            b, txt = {}, __version__
+        self.lbl_version.setText("Version " + txt)
+        self.lbl_version.setToolTip(
+            "Statik3D " + txt + "\n"
+            + ("Programmdatei (exe)" if b.get("kind") == "exe" else "Quellcode")
+            + "\n" + str(b.get("dir", "")))
+
     # ---- Update (neueste Version von GitHub) ---------------------------
     def _build_update_button(self):
         from .. import update as upd
@@ -1891,10 +2065,45 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_update.setText("Update suchen")
         self.btn_update.setToolTip(upd.describe())
         self.btn_update.clicked.connect(lambda: self.check_update())
+        self.btn_update.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.btn_update.customContextMenuRequested.connect(lambda _p: self.update_report())
         self.statusBar().addPermanentWidget(self.btn_update)
         self._update_worker = None
         if os.environ.get("STATIK3D_NO_UPDATE_CHECK") != "1":
             QtCore.QTimer.singleShot(4000, lambda: self.check_update(quiet=True))
+
+    def update_report(self):
+        """Vollstaendiger Update-Befund zum Weitergeben (rechte Maustaste am Knopf)."""
+        from .. import update as upd
+        box = QtWidgets.QDialog(self)
+        box.setWindowTitle("Update-Befund")
+        lay = QtWidgets.QVBoxLayout(box)
+        txt = QtWidgets.QPlainTextEdit()
+        txt.setReadOnly(True)
+        f = txt.font()
+        f.setFamily("Courier New")
+        txt.setFont(f)
+        txt.setPlainText("Befund wird erstellt …")
+        txt.setMinimumSize(720, 380)
+        lay.addWidget(txt)
+        zeile = QtWidgets.QHBoxLayout()
+        b_copy = QtWidgets.QPushButton("In die Zwischenablage")
+        b_copy.clicked.connect(
+            lambda: QtWidgets.QApplication.clipboard().setText(txt.toPlainText()))
+        zeile.addWidget(b_copy)
+        b_dl = QtWidgets.QPushButton("Download im Browser öffnen")
+        b_dl.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(
+            QtCore.QUrl(upd.DOWNLOAD_URL)))
+        zeile.addWidget(b_dl)
+        zeile.addStretch(1)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        bb.rejected.connect(box.reject)
+        zeile.addWidget(bb)
+        lay.addLayout(zeile)
+        self._run_update_worker(lambda progress: upd.diagnose(),
+                                txt.setPlainText,
+                                lambda m: txt.setPlainText(f"Befund fehlgeschlagen: {m}"))
+        box.exec()
 
     def _run_update_worker(self, func, on_done, on_failed):
         if self._update_worker is not None and self._update_worker.isRunning():
@@ -1925,7 +2134,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.btn_update.setText("Aktuell")
                 self.btn_update.setStyleSheet("")
                 if not quiet:
-                    QtWidgets.QMessageBox.information(self, "Update", info.message)
+                    b = upd.build_info()
+                    QtWidgets.QMessageBox.information(
+                        self, "Update",
+                        info.message
+                        + f"\n\nInstalliert: {upd.version_label(long=True)}"
+                        + f"\nNeueste Fassung: Build {info.latest_sha[:7] or '-'}"
+                        + "\n\nMit der rechten Maustaste auf diesen Knopf gibt es den "
+                          "vollständigen Befund zum Weitergeben.")
 
         def failed(msg):
             self.btn_update.setEnabled(True)
@@ -1970,6 +2186,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(msg)
             QtWidgets.QMessageBox.information(self, "Update", msg)
             self.close()
+            QtWidgets.QApplication.quit()
 
         def failed(msg):
             self.progress_bar.setVisible(False)

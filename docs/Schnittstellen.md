@@ -29,7 +29,11 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 | `.inp` | Abaqus / CalculiX | FE-Programme | Netz, Sets, Materialien, Beam/Shell/Solid Sections, Boundary, CLOAD, DLOAD, Steps |
 | `.bdf`, `.nas`, `.dat` | Nastran Bulk Data | FE-Programme | GRID, CBAR/CBEAM, CROD, CTRIA3/CQUAD4, CTETRA/CHEXA, PBAR/PBARL/PBEAM/PSHELL/PSOLID, MAT1, SPC/SPC1, FORCE/MOMENT, PLOAD2/PLOAD4, GRAV, LOAD |
 | `.step`, `.stp`, `.iges`, `.igs`, `.brep`, `.stl` | CAD-Geometrie | CAD | Vernetzung mit gmsh (Volumen Tet4/Tet10 oder Schalen) |
-| `.rf5`, `.rf6`, `.rfem`, `.rstab`, `.fem`, `.ifm` | proprietär (binär) | RFEM, RSTAB, InfoCAD | **nicht lesbar** – Meldung mit Exportweg |
+| `.rf6` | RFEM 6 Projektdatei (ZIP + SQLite `model.db`) | RFEM 6 | Knoten, Linien, Stäbe, Querschnitte, Materialien, Knoten-/Linien-/Flächenlager mit Nichtlinearität, Gelenke, Lastfälle |
+| `.sdnf`, `.sdn` | SDNF – Steel Detailing Neutral Format | HiCAD, Tekla, SDS/2, Advance Steel | Bauteile mit Lage im Bauwerk, Profil, Werkstoff, Bleche |
+| `.nc`, `.nc1`, `.nc2`, `.dstv` | DSTV-NC (Stahlbau-NC) | HiCAD, Tekla, bocad, Advance Steel | Teileliste: Profil, Länge, Werkstoff, Bohrungen, Konturen |
+| `.sza`, `.kra`, `.fga`, `.fig` | HiCAD-Archiv (`!HFA##`, zstd) | HiCAD | Teileliste, Profile mit Katalogwerten, Blechdicken, Werkstoffe, Verbindungsmittel |
+| `.rf5`, `.rfem`, `.rstab`, `.fem`, `.ifm` | proprietär (binär) | RFEM 5, RSTAB, InfoCAD | Behälter wird untersucht; sonst Meldung mit Exportweg |
 
 ## InfoCAD
 
@@ -113,9 +117,80 @@ Jeder Importer ist eine Funktion `import_xxx(path, model=None, log=None,
 aus Kopfzeilen, Polygon → Schalen, Standardmaterial/-querschnitt.
 
 
-## RFEM / RSTAB: native Projektdateien
+## RFEM 6 (.rf6): vollständiger Import aus der Modelldatenbank
 
-`.rf5 .rf6 .rfem .rs5 .rs6 .rs8 .rs9 .rstab` werden nicht mehr pauschal
+Eine `.rf6`-Datei ist ein ZIP-Behälter; darin liegt `model.db`, eine
+SQLite-Datenbank mit dem objektrelationalen Abbild des Modells. Dieser Aufbau
+wurde an einer echten Projektdatei (RFEM 6.11/6.12) ausgelesen und wird von
+`statik3d.importers.rfem6_db` vollständig gelesen — ohne Umweg über einen
+Export. `import_file("modell.rf6")` genügt.
+
+Aufbau der Datenbank (durchgehend dasselbe Muster):
+
+| Ebene | Tabellen | Inhalt |
+|---|---|---|
+| Griff | `Node`, `Line`, `Member`, `Surface`, `Solid`, `Section`, `Material`, `NodalSupport`, `LineSupport`, `SurfaceSupport`, `MemberHinge`, `LoadCase` | `id`, `userID` (die Nummer in RFEM), `impl_id`, `impl_table` |
+| Umsetzung | `NodeImplStandard`, `LineImplPolyline`, `LineImplArc`, `MemberImplTension`, `SurfaceImplPlane`, `NodalSupportImpl`, … | die eigentlichen Felder, z. B. `coordinates_x/y/z` |
+| Listen | `<Umsetzung>_<Feld>`, z. B. `NodalSupportImpl_nodes`, `LineImplPolyline_definitionNodes` | Zielspalte je nach Tabelle `value_id` oder `reference_id` |
+| Federn | `SpringConstants` (`owner_id`/`owner_table`), `SpringConstants_partialActivities` | Steifigkeiten, Nichtlinearität, Reibbeiwerte, teilweise Wirkung |
+
+Federwerte: **`inf` = starr, `0` = frei, endlicher Wert = Federsteifigkeit**.
+
+Übernommen werden Knoten, Linien (Polygonzüge und Bögen), Stäbe mit
+Querschnitt, Material, Verdrehung und Gelenken, Knoten-, Linien- und
+Flächenlager mit ihren Nichtlinearitäten, die Geometrie der Flächen sowie die
+Lastfälle mit Name, Einwirkungskategorie und Eigengewichtsfaktor.
+
+Querschnitte kommen aus `SectionData_parameterValues` mit ihren SI-Kennwerten
+(A, A_y, A_z, I_y, I_z, I_t); der Name entsteht aus den Bemaßungssymbolen der
+Parameterform, etwa `Rund 40` aus `d = 40 mm`. Materialnamen führt RFEM in der
+Projektdatei nicht mit – nur Kennwerte und die Nummer des Eintrags in der
+Dlubal-Materialdatenbank. Statik3D bildet den Namen deshalb aus E-Modul und
+Streckgrenze (`S355`) und nennt die Datenbanknummer im Protokoll.
+
+**Was ausdrücklich Annahme ist:** die Zahlenwerte der
+Nichtlinearitäts-Aufzählung (`nonlinearityType…`). Belegt ist nur `0 = linear`.
+Für alles andere gilt die Reihenfolge des RFEM-Dialogs; jede Kennzahl steht mit
+Rohwert **und** Deutung im Importprotokoll, unbekannte Kennzahlen lassen den
+Freiheitsgrad linear und erzeugen eine Warnung. Die Zuordnung lässt sich
+ersetzen:
+
+    m = import_file("modell.rf6", nonlinearity_map={1: ("druck", "Ausfall bei Druck")})
+    # oder aus einem XSD/WSDL der RFEM-Web-Services (Namen sind dort veröffentlicht):
+    from statik3d.importers.rfem6_db import nonlinearity_map_from_xsd
+    m = import_file("modell.rf6", nonlinearity_map="C:/.../nodal_support.xsd")
+
+Reibung steht in RFEM an dem Freiheitsgrad, dessen Kraft begrenzt wird
+(`nonlinearityFrictionCoefficient_XZ` begrenzt F_x auf μ·|F_z|). Trägt ein
+solcher Freiheitsgrad die Steifigkeit 0, hält er starr bis μ·|N| und gleitet
+danach – so, wie RFEM es rechnet.
+
+**Flächen und Volumen** werden als Geometrie gelesen, aber nicht vernetzt.
+Flächenlager werden über das Randpolygon der zugewiesenen Flächen auf deren
+Knoten gelegt, mit der Einflussfläche je Knoten (Newell-Formel, Summe = wahre
+Fläche). Trägt ein Modell seine Lasten über Flächen und Volumen, sagt das
+Protokoll das ausdrücklich:
+
+    1831 Knoten tragen kein Element (Rand von Flaechen und Volumen).
+    Das Stabtragwerk zerfaellt in 64 Teile (groesster Teil 2 Knoten).
+    WARNUNG: 48 Teiltragwerke ohne Lager - so ist das Modell nicht rechenbar.
+
+Mit `structure_only=True` bleibt nur das Stabtragwerk übrig; das Modell ist dann
+unmittelbar rechenbar, die Flächengeometrie entfällt.
+
+Ein Inhaltsverzeichnis ohne Modellaufbau liefert `rfem6_db.report(pfad)`:
+
+    modell.rf6: programm RFEM version 6.11.0004 (RFEM 6-Schema, 4678 Tabellen)
+      Knoten: 1959
+      Linien: 2807
+      Staebe: 64
+      Flaechen: 1375
+      Volumen: 108
+      ...
+
+## RFEM 5 / RSTAB: weitere native Projektdateien
+
+`.rf5 .rfem .rs5 .rs6 .rs8 .rs9 .rstab` werden nicht pauschal
 abgelehnt. Statik3D untersucht zuerst den Behälter der Datei
 (`statik3d.importers.rfem_native.probe`) und liest ihn aus, soweit er
 zugänglich ist:
@@ -145,6 +220,131 @@ englischen Spaltennamen. Lagerzellen dürfen Zusätze enthalten:
 Steht der Reibbeiwert am Freiheitsgrad mit dem Ausfall (z. B. uz), wird er auf
 die beiden Querrichtungen gelegt und auf ihn bezogen – so, wie die Reibung an
 einer Lagerfläche wirkt.
+
+## HiCAD (ISD Software und Systeme)
+
+### Archivdateien .SZA / .KRA / .FGA / .FIG
+
+Diese Dateien tragen die Kennung `!HFA##` (HiCAD File Archive). Der Aufbau
+wurde an echten Dateien aus HiCAD 2024 ausgelesen:
+
+| Bereich | Inhalt |
+|---|---|
+| Kopf `0x00` | `!HFA##`, Versionsfelder, Erzeuger („ISD Software & Systeme GmbH – Dortmund", UTF‑16LE) |
+| Einträge ab `0x198` | je Eintrag **1024 Byte Name** (UTF‑16LE, mit 0 aufgefüllt), **72 Byte Kopf**, dann die Daten |
+| Kopf | `u32[1]` = Beginn des nächsten Eintrags, `u32[13]` = Packverfahren (**3 = Zstandard**), `u32[16]` = gepackte, `u32[17]` = rohe Größe, drei FILETIME‑Zeitstempel |
+| große Teile | über 1 MiB folgen weitere Blöcke mit je 8 Byte Vorspann (gepackt/roh) |
+
+Ein `.SZA` enthält typischerweise:
+
+    <nr>.SZN            Szene (Geometrie, Behälter „FILE-CONTAINER ISD 1.0")
+    <nr>.POM            Bauteilmodell („ISD_POM_3.1")
+    <nr>.SZN.ATC        Attribute – hier stehen die Bauteilbezeichnungen
+    <nr>.SZN.DBA2/DBA3  Bemaßung,  .DVI Darstellung,  .ANS Ansichten
+    <nr>.SZN.ELREF      Bauteilverweise (XML),  .ITM_* Positionsnummern (XML)
+    VIEWER.GFIG         Anzeigegeometrie („HiGDI")
+    PREVIEW.DIB         Vorschaubild (Windows-Bitmap)
+    *.IPT               Teiletabellen: die im Modell benutzten Profile,
+                        Bleche, Werkstoffe und Verbindungsmittel
+
+**Was gelesen wird:** das Archiv vollständig, dazu alle Teile mit offenem
+Format. Aus den mitgelieferten Teiletabellen (`ISD Part Table File`) werden die
+**tatsächlich verwendeten Profile mit ihren Katalogwerten** übernommen –
+Fläche, I_y, I_z, Abmessungen – ebenso Blechdicken, Werkstoffe und die
+Verbindungsmittel. Die Bauform steht in der Kategorie der Tabelle
+(`U-PROFIL_GENEIGTE_FLANSCHE`, `I-PROFIL_PARALLELE_FLANSCHE`,
+`L-PROFIL_GLEICHSCHENKLIG`, `FLACHSTAHL`, `RUNDSTAHL`, `HOHLPROFIL_QUADRATISCH`,
+`BLECH`, `SECHSKANTSCHRAUBE` …); daraus folgen die Spalten.
+
+Beispiel aus einer echten Datei:
+
+    Profil 'HEB 700': A = 306,38 cm², I_y = 256888 cm⁴, I_z = 14441 cm⁴
+    Profil 'L 100x75x8': A = 13,57 cm², I_y = 165,5 cm⁴
+    Blech 'Bl 20': t = 20 mm
+    Verbindungsmittel: ISO 4017-M12x35 (M12), ISO 4032-M16 (M16), DIN 910-M36x1.5
+
+Führt die Werkstofftabelle andere Festigkeiten als die Norm zur Bezeichnung,
+gilt die Norm (EN 10025‑2) und die Abweichung steht im Protokoll.
+
+**Was nicht gelesen wird:** die 3D‑Geometrie. Sie liegt in den Teilen `SZN` und
+`VIEWER.GFIG` in einem Binärformat, das ISD nicht veröffentlicht – es wird
+nichts geraten. Für das Tragwerk aus HiCAD exportieren nach **SDNF**
+(Bauteile mit Lage im Bauwerk), **DSTV‑NC** (Einzelteile), **IFC** oder
+**STEP**.
+
+Zum Entpacken wird das Paket `zstandard` benötigt (in `requirements.txt` und in
+der Windows‑exe enthalten).
+
+### SDNF – Steel Detailing Neutral Format (.sdnf, .sdn)
+
+Textformat mit der Lage im Bauwerk; HiCAD, Tekla, SDS/2 und Advance Steel
+schreiben es. Gelesen werden Paket 00 (Einheit), Paket 10 (lineare Bauteile mit
+beiden Endpunkten, Profil, Werkstoff, Verdrehung) und Paket 20/21/22 (Bleche
+mit vier Eckpunkten und Dicke).
+
+Der Satzaufbau wird aus der Datei selbst bestimmt: Das Paket nennt die Anzahl
+seiner Sätze, die Zeilenzahl je Satz folgt daraus. Innerhalb eines Satzes sind
+die Zeichenketten in Anführungszeichen die Bezeichner und der längste
+zusammenhängende Zahlenblock die Geometrie. So werden alle SDNF‑Fassungen
+gelesen, ohne eine feste Feldreihenfolge zu unterstellen.
+
+### DSTV‑NC (.nc, .nc1, .nc2, .dstv)
+
+„Standardbeschreibung Stahlbau-Teile für die NC-Steuerung" des DSTV. Eine Datei
+beschreibt ein Teil: Kopfblock `ST` mit Auftrag, Position, Werkstoff, Profil,
+Profilcode und Länge, dann `BO` (Bohrungen), `AK`/`IK` (Konturen), `EN`.
+
+Gelesen werden Datei, Ordner und ZIP. Je Teil entsteht ein Stab der richtigen
+Länge mit Profil und Werkstoff; ist die Bezeichnung nicht in der
+Profildatenbank, wird der Querschnitt aus den Kopfmaßen gebildet (Profilcode
+I, U, L, M, R, RU/RO, B, C, T). NC‑Dateien führen **keine Lage im Bauwerk** –
+die Teile liegen nebeneinander, es entsteht eine Teileliste. Für das
+zusammengebaute Tragwerk ist SDNF oder IFC der Weg.
+
+## Export: Modelle in fremde Formate schreiben
+
+`statik3d.exporters.export_model(modell, "ziel.endung")` — das Format folgt aus
+der Endung. In der Oberfläche: **Datei → Exportieren…** (Strg+E), auf der
+Kommandozeile `--export DATEI` (mehrfach möglich, `--formate` listet auf), im
+Browser unter **Mehr → Export** (Format wählen, „Herunterladen“).
+
+Über die Web-API gibt es zwei Wege:
+
+* `POST /api/op {"op": "export", "path": "…"}` schreibt die Datei **auf dem
+  Rechner, auf dem der Server läuft** (für die Desktop-GUI und den eigenen PC).
+* `GET /api/export?fmt=.sdnf` liefert die Datei als Download an den Browser —
+  ohne Datei auf dem Server. Formate, die einen Ordner schreiben (`.csv`,
+  `.nc1`), kommen dabei als ZIP. `GET /api/state` nennt unter
+  `export_formats` alle Endungen mit Klartext.
+
+| Endung | Format | Inhalt |
+|---|---|---|
+| `.json` | Statik3D-Modell | **verlustfrei**, alles |
+| `.sdnf` | SDNF 3.0 | Bauteile mit Lage im Bauwerk, Profil, Werkstoff, Verdrehung; Bleche mit Eckpunkten und Dicke |
+| `.nc1` / `.zip` | DSTV-NC | je Stab eine Datei: Kopfblock, Profil, Länge, Werkstoff, Kontur |
+| `.ifc` | IFC 4 (Structural Analysis View) | Knoten, Stäbe, Flächen, Lagerbedingungen, Lastfälle mit Knotenlasten |
+| `.xlsx` | SAF | Knoten, Stäbe, Flächen, Querschnitte, Materialien, Lager, Lastfälle, Kombinationen, Lasten |
+| `.csv` | Tabellen im RFEM-Aufbau | zehn Blätter in einem Ordner, vom eigenen Tabellenimport wieder lesbar |
+| `.dxf` | AutoCAD DXF | Stäbe als LINE, Schalen und Volumenaußenflächen als 3DFACE, Lager und Beschriftung auf eigenen Layern |
+| `.inp` | Abaqus / CalculiX | Knoten, Elemente, Materialien, Querschnitte, Randbedingungen, ein Step je Lastfall |
+| `.bdf` | Nastran Bulk Data | GRID, CBAR/CTRIA3/CQUAD4/CTETRA/CHEXA, PBAR/PSHELL/PSOLID, MAT1, SPC1, FORCE/MOMENT/GRAV |
+| `.stl` | STL (binär oder ASCII) | Schalen und Volumenaußenflächen als Dreiecke |
+| `.vtu` | VTK für ParaView | Netz **mit Ergebnissen**: Verformung, Verdrehung, Auflagerkräfte, Normalkraft, Moment, Vergleichsspannung |
+| `.sza` | HiCAD-Archiv | Behälter mit SDNF, DSTV-NC, Teiletabellen und XML-Teilen |
+
+**Der Rückweg ist geprüft:** Was Statik3D auch lesen kann, wird in
+`tests/test_exporters.py` exportiert, wieder eingelesen und verglichen —
+Knotenzahl, Stäbe, Profilkennwerte, Lager, Lastfälle.
+
+### Zum HiCAD-Archiv (.sza)
+
+Der Behälter wird richtig geschrieben und liest sich wieder ein. Die
+**3D-Geometrie** von HiCAD steht aber im Teil `SZN` in einem Format, das ISD
+nicht veröffentlicht; es wird nicht geraten. Eine hier geschriebene `.sza`
+enthält deshalb **kein von HiCAD lesbares Modell**, sondern die enthaltene
+SDNF-Datei, die DSTV-NC-Teile, die Teiletabellen der benutzten Profile und
+Werkstoffe sowie die XML-Teile. Wer das Modell **in HiCAD** haben will, nimmt
+die SDNF-Datei — das ist der Weg, den HiCAD selbst vorsieht.
 
 ## Profildatenbank nach Land
 

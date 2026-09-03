@@ -3,6 +3,7 @@ scipy>=1.10
 PySide6>=6.5
 pyvista>=0.42
 pyvistaqt>=0.11
+zstandard>=0.21     # HiCAD-Archive (.sza/.kra/.fga) sind zstd-gepackt
 # optional:
 # gmsh>=4.11        CAD-Import (STEP/IGES/BREP/STL)
 # pypardiso mkl     Mehrkern-Gleichungsloeser (Intel MKL Pardiso): 155k FHG in 3 s statt 110 s
