@@ -278,9 +278,12 @@ def test_hicad_behaelter():
     try:
         # unbekannter Binaerbehaelter mit lesbaren Profilnamen
         f = os.path.join(tmp, "halle.sza")
-        blob = (b"HCSZA\x01\x00\x00\x00" + os.urandom(200)
+        # Fuellbytes bewusst nicht zufaellig: sie duerfen nicht mit den
+        # Bezeichnungen zu einem lesbaren Wort verschmelzen.
+        fill = bytes(range(1, 32)) * 8
+        blob = (b"HCSZA\x01\x00\x00\x00" + fill
                 + "HEA 200;IPE 300;S355J2;L 80x80x8".encode("latin-1")
-                + os.urandom(300) + b"Stuetze A1" + os.urandom(100))
+                + fill + b"Stuetze A1" + fill)
         with open(f, "wb") as fh:
             fh.write(blob)
         info = H.probe(f)
