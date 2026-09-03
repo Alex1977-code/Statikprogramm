@@ -244,15 +244,20 @@ class Report:
         "load_cases": True, "combinations": True, "figures": True, "results_cases": True,
         "results_combinations": True, "envelopes": True, "member_diagrams": True,
         "design": True, "fatigue": True, "contact": True, "modal": True, "buckling": True,
+        "stellungen": True,
         # Grenzen fuer grosse Modelle
         "max_rows": 200, "max_detail_cases": 20, "max_detail_combinations": 12,
-        "max_member_diagrams": 40, "figure_width": 760, "figure_height": 480,
+        "max_member_diagrams": 40, "max_stellung_figures": 8,
+        "figure_width": 760, "figure_height": 480,
         "date": None,
     }
     LIST_LIMIT = 200          # Knoten-/Elementlisten oberhalb: gekuerzt
 
-    def __init__(self, model, analysis=None, results=None, options: dict = None):
+    def __init__(self, model, analysis=None, results=None, options: dict = None,
+                 stellungen=None):
         self.model = model
+        # Umhuellende ueber die Stellungen (stellungen.StellungenAnalysis)
+        self.stellungen = stellungen
         # Ein Results-Objekt an Stelle der Analysis (z.B. CLI/GUI ohne solve_all) zulassen
         if analysis is not None and not hasattr(analysis, "cases") and hasattr(analysis, "beam_end"):
             if results is None:
@@ -387,9 +392,9 @@ class Report:
             self._appendix = False
             self._warnings = []
             b = []
-            for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
-                       self.chapter_results, self.chapter_design, self.chapter_fatigue,
-                       self.chapter_summary, self.chapter_appendix):
+            for ch in (self.chapter_general, self.chapter_system, self.chapter_stellungen,
+                       self.chapter_actions, self.chapter_results, self.chapter_design,
+                       self.chapter_fatigue, self.chapter_summary, self.chapter_appendix):
                 b.extend(ch())
             self._blocks = b
         return self._blocks
@@ -749,6 +754,126 @@ class Report:
                            f"{g[2]:.2f}) m/s²."))
         if lc.n_loads == 0:
             b.append(("p", "Dieser Lastfall enthält keine Lasten."))
+        return b
+
+    def chapter_stellungen(self) -> list:
+        """Stellungen des Systems (bewegliche Bruecken) und die Umhuellende
+        der Nachweise ueber alle Stellungen."""
+        m = self.model
+        if not getattr(m, "stellungen", None) or not self.opt("stellungen"):
+            return []
+        from ..stellungen import moved_elements
+        sa = self.stellungen
+        b = [self._h(1, "Stellungen des Systems")]
+        b.append(("p",
+                  "Das Tragwerk ist beweglich. Es wird deshalb nicht in einer Lage, sondern in "
+                  "mehreren Stellungen nachgewiesen: In jeder Stellung steht das bewegte Bauteil "
+                  "anders, ist anders gelagert und trägt andere Lasten. Maßgebend für die "
+                  "Bemessung ist die Umhüllende über alle Stellungen."))
+        b.append(("p",
+                  "Jede Stellung ist eine Starrkörperlage der Ausgangsgeometrie; der "
+                  "Bewegungsvorgang selbst wird nicht dynamisch untersucht. Die Querschnittslage "
+                  "der mitbewegten Stäbe wird mitgedreht."))
+
+        b.append(self._h(2, "Übersicht der Stellungen"))
+        rows = [["Stellung", "Bezeichnung", "Bewegung", "bewegte Elemente", "eigene Lager",
+                 "Lastfälle", "in der Umhüllenden"]]
+        art = {"rotate": "Drehung", "translate": "Verschiebung", "none": "unverändert"}
+        for s in m.stellungen.values():
+            rows.append([s.name, s.title or "–",
+                         f"{art.get(s.kind, s.kind)} {s.value_text()}",
+                         str(moved_elements(m, s)), str(len(s.supports)),
+                         ", ".join(s.cases) if s.cases else "alle",
+                         "ja" if s.active else "nein"])
+        b.append(("table", rows, "Stellungen des Systems", None, ""))
+        s0 = next(iter(m.stellungen.values()))
+        if s0.kind == "rotate":
+            b.append(("kv", [("Drehachse, Punkt",
+                              "(" + ", ".join(fmt(v, 3) for v in s0.axis_point) + ") m"),
+                             ("Drehachse, Richtung",
+                              "(" + ", ".join(fmt(v, 3) for v in s0.axis_dir) + ")")],
+                      "Bewegungsachse"))
+
+        if sa is None:
+            b.append(("note", "Die Stellungen wurden noch nicht gerechnet; die Umhüllende über "
+                              "die Stellungen liegt daher nicht vor."))
+            return b
+
+        # Ausnutzung je Stellung
+        b.append(self._h(2, "Ausnutzung je Stellung"))
+        per = sa.util_by_stellung()
+        rows = [["Stellung", "Bewegung", "Lastfälle", "Kombinationen", "größte Ausnutzung"]]
+        for name in sa.stellungen:
+            s = m.stellungen.get(name)
+            an = sa.analyses.get(name)
+            rows.append([name, s.value_text() if s else "–",
+                         str(len(an.cases) if an else 0),
+                         str(len(an.combinations) if an else 0),
+                         Util(per.get(name, 0.0))])
+        b.append(("table", rows, "Größte Ausnutzung in der jeweiligen Stellung", None, ""))
+        if self.opt("figures"):
+            b.append(self._figure(
+                sv.draw_bar_chart([f"{n} {m.stellungen[n].value_text()}" for n in sa.stellungen],
+                                  [per.get(n, 0.0) for n in sa.stellungen],
+                                  620, None, 1.0, "Ausnutzung je Stellung"),
+                "Größte Ausnutzung je Stellung (Grenze 1.0)"))
+
+        # Umhuellende je Stab
+        b.append(self._h(2, "Umhüllende über alle Stellungen"))
+        rows = sa.table()
+        rows = [rows[0]] + [[c for c in r] for r in rows[1:]]
+        for r in rows[1:]:
+            r[3] = Util(float(str(r[3]).replace(",", ".")))
+        rows, note = self._truncate(rows, 400)
+        b.append(("table", rows, "Maßgebende Stellung und maßgebender Nachweis je Stab",
+                  None, ""))
+        if note:
+            b.append(("note", note))
+
+        # Ausnutzung Stab x Stellung
+        b.append(self._h(2, "Ausnutzung je Stab und Stellung"))
+        rows = [["Stab"] + [f"{n} ({m.stellungen[n].value_text()})" for n in sa.stellungen]
+                + ["Umhüllende", "maßgebend in"]]
+        for me in sorted(sa.members.values(), key=lambda x: -x.util):
+            rows.append([me.member]
+                        + [Util(me.per_stellung.get(n, 0.0)) for n in sa.stellungen]
+                        + [Util(me.util), me.stellung])
+        rows, note = self._truncate(rows, 400)
+        b.append(("table", rows, "Ausnutzung jedes Stabes in jeder Stellung", None, ""))
+        if note:
+            b.append(("note", note))
+
+        # Systemdarstellung je Stellung
+        if self.opt("figures") and m.nn:
+            b.append(self._h(2, "Das System in den einzelnen Stellungen"))
+            for name in sa.stellungen[:self.opt("max_stellung_figures")]:
+                dm = sa.models.get(name)
+                s = m.stellungen.get(name)
+                if dm is None:
+                    continue
+                svg_text = sv.draw_structure(dm, "xz", self.opt("figure_width"),
+                                             self.opt("figure_height"), show_supports=True,
+                                             show_loads=False,
+                                             title=f"Stellung {name} – {s.value_text() if s else ''}")
+                b.append(self._figure(svg_text, f"Stellung {name}"
+                                      + (f" ({s.title})" if s and s.title else "")
+                                      + f" bei {s.value_text() if s else ''} – Lagerung dieser Stellung"))
+
+        w = sa.worst()
+        if w is not None:
+            s = m.stellungen.get(w.stellung)
+            b.append(("p", f"Maßgebend über alle Stellungen ist der Stab {w.member} in Stellung "
+                           f"{w.stellung}"
+                           + (f" ({s.title}) bei {s.value_text()}" if s else "")
+                           + f" mit einer Ausnutzung von {fmt(w.util, 3)} "
+                           f"({w.governing.get('name', '')})."))
+            if w.util > 1.0:
+                self._warnings.append(
+                    f"Umhüllende über die Stellungen NICHT erfüllt: {w.member} in "
+                    f"{w.stellung} mit {fmt(w.util, 3)}")
+        if sa.messages:
+            b.append(self._h(2, "Hinweise zum Rechenlauf"))
+            b.append(("list", list(sa.messages)))
         return b
 
     def chapter_actions(self) -> list:

@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1c2733">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -15,41 +15,87 @@
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+
 <header id="top">
-  <div class="title"><span class="logo">Statik3D</span><span id="model-name">–</span></div>
-  <div class="right"><span id="status-pill" class="pill">verbinde…</span></div>
-</header>
-<main id="main">
-  <div id="view-wrap">
-    <canvas id="view"></canvas>
-    <div id="view-tools">
-      <button data-view="iso" title="Isometrisch">3D</button>
-      <button data-view="xy" title="Draufsicht">XY</button>
-      <button data-view="xz" title="Ansicht">XZ</button>
-      <button data-view="yz" title="Seitenansicht">YZ</button>
-      <button data-view="fit" title="Zoom alles">⤢</button>
-      <button id="btn-pick" title="Auswahl: Knoten / Elemente">Kn</button>
-      <button id="btn-clear-sel" title="Auswahl aufheben">✕</button>
-      <button id="btn-deform" class="on" title="Verformt darstellen">u</button>
-      <button id="btn-labels" title="Nummern anzeigen">#</button>
-    </div>
-    <div id="sel-info"></div>
-    <div id="legend" hidden></div>
-    <div id="view-hint">Tippen: Knoten wählen · Ziehen: drehen · 2 Finger: zoom/schieben</div>
+  <div class="title">
+    <span class="logo">Statik3D</span>
+    <span id="model-name">–</span>
   </div>
-  <section id="sheet">
-    <div id="sheet-handle" title="Ziehen oder tippen: Bereich vergrößern/verkleinern"><span></span></div>
-    <div id="panel"></div>
+  <div class="right">
+    <span id="stellung-pill" class="pill" hidden></span>
+    <span id="status-pill" class="pill">verbinde…</span>
+  </div>
+</header>
+
+<div id="toolbar">
+  <button class="tb narrow" id="btn-tree-col" title="Modellbaum einblenden"><span class="ic">☰</span>Baum</button>
+  <button class="tb narrow" id="btn-ctx-col" title="Auswahl einblenden"><span class="ic">◧</span>Auswahl</button>
+  <span class="sep narrow"></span>
+  <button class="tb" data-tool="modell"><span class="ic">⬡</span>Modell</button>
+  <button class="tb" data-tool="lasten"><span class="ic">⇩</span>Lager / Lasten</button>
+  <button class="tb" data-tool="stellungen"><span class="ic">⟳</span>Stellungen</button>
+  <span class="sep"></span>
+  <button class="tb" data-tool="rechnen"><span class="ic">▶</span>Rechnen</button>
+  <button class="tb" data-tool="ergebnisse"><span class="ic">∿</span>Ergebnisse</button>
+  <button class="tb" data-tool="nachweise"><span class="ic">✓</span>Nachweise</button>
+  <button class="tb" data-tool="mehr"><span class="ic">≡</span>Datei / Bericht</button>
+  <span class="sep"></span>
+  <button class="tb go" id="btn-solve"><span class="ic">▶</span>Berechnen <kbd>F5</kbd></button>
+  <span class="grow"></span>
+  <span class="units" title="Alle Eingaben und Ergebnisse in Meter, Newton, Pascal">m · N · Pa</span>
+</div>
+
+<main id="work">
+
+  <aside id="tree-col" class="col">
+    <div class="colhd">
+      <span>Modellbaum</span>
+      <span id="tree-count" class="muted"></span>
+      <button class="colclose narrow" data-close-col="tree-col" title="Schließen">✕</button>
+    </div>
+    <div id="tree" class="colbody"></div>
+    <div id="tree-foot" class="colfoot"></div>
+  </aside>
+
+  <section id="center">
+    <div id="view-wrap">
+      <canvas id="view"></canvas>
+      <div id="view-tools">
+        <button data-view="iso" title="Isometrisch">3D</button>
+        <button data-view="xz" title="Ansicht">XZ</button>
+        <button data-view="xy" title="Draufsicht">XY</button>
+        <button data-view="yz" title="Seitenansicht">YZ</button>
+        <button data-view="fit" title="Zoom alles">⤢</button>
+        <button id="btn-pick" title="Auswahl: Knoten / Elemente">Kn</button>
+        <button id="btn-clear-sel" title="Auswahl aufheben">✕</button>
+        <button id="btn-deform" class="on" title="Verformt darstellen">u</button>
+        <button id="btn-labels" title="Nummern anzeigen">#</button>
+      </div>
+      <div id="sel-info"></div>
+      <div id="legend" hidden></div>
+      <div id="view-hint">Ziehen: drehen · Rad: zoomen · Rechts/Mitte: schieben · Klick: Knoten wählen</div>
+    </div>
+
+    <div id="stellungen-bar" hidden></div>
+
+    <div id="dock">
+      <div id="dock-grip" title="Ziehen: Höhe einstellen · Doppelklick: ein-/ausklappen"><span></span></div>
+      <div id="dock-tabs"></div>
+      <div id="panel"></div>
+    </div>
   </section>
-  <nav id="tabs">
-    <button data-tab="modell"><span class="ic">⬡</span>Modell</button>
-    <button data-tab="lasten"><span class="ic">⇩</span>Lasten</button>
-    <button data-tab="rechnen"><span class="ic">▶</span>Rechnen</button>
-    <button data-tab="ergebnisse"><span class="ic">∿</span>Ergebnisse</button>
-    <button data-tab="nachweise"><span class="ic">✓</span>Nachweise</button>
-    <button data-tab="mehr"><span class="ic">≡</span>Mehr</button>
-  </nav>
+
+  <aside id="ctx-col" class="col">
+    <div class="colhd"><span>Auswahl</span><span id="ctx-hint" class="muted"></span>
+      <button class="colclose narrow" data-close-col="ctx-col" title="Schließen">✕</button></div>
+    <div id="ctx" class="colbody"></div>
+    <div id="ctx-foot" class="colfoot"></div>
+  </aside>
+
 </main>
+
+<nav id="tabs"></nav>
+
 <div id="toast" hidden></div>
 <div id="modal" hidden><div class="box"><div id="modal-body"></div></div></div>
 <script src="/app.js"></script>

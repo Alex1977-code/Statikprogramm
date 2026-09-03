@@ -133,7 +133,33 @@ const S = {
   ro: {which: '', field: 'umag', mode: 0, diagram: '', deform: true, scale: null, factor: 0},
   sel: {nodes: new Set(), elems: new Set()},
   job: null, pollTimer: null, version: -1, member: '', profiles: {}, first: true,
+  // Stellungen des Systems (bewegliche Bruecken)
+  stel: null,          // Umhuellende ueber die Stellungen (/api/stellungen)
+  ctxMember: '',       // Stab im Kontextpanel rechts
+  treeOpen: {modell: true, stellungen: true, lasten: false, nachweise: false},
 };
+
+// Kuerzel fuer den Zustand der aktiven Stellung
+function activeStellung() {
+  const s = S.state;
+  if (!s || !s.stellungen.length) return null;
+  return s.stellungen.find(x => x.name === s.active_stellung) || s.stellungen[0];
+}
+function stelResult(name) {
+  if (!S.stel || !S.stel.has_result) return null;
+  return S.stel.stellungen.find(x => x.name === name) || null;
+}
+function utilColor(u) {
+  const v = Number(u);
+  if (!Number.isFinite(v)) return '#c62828';
+  return v > 1 ? '#c62828' : v > 0.9 ? '#d2352f' : v > 0.75 ? '#b7791f' : v > 0.55 ? '#59c15a' : '#22a7c9';
+}
+function etaPill(u) {
+  if (u === null || u === undefined || !Number.isFinite(Number(u))) return '';
+  const v = Number(u);
+  const bg = v > 1 ? '#c62828' : v >= 0.9 ? '#c62828' : v >= 0.75 ? '#b7791f' : '#2e8b3a';
+  return `<span class="eta" style="background:${bg}">η ${fmt(v, 2)}</span>`;
+}
 
 // ======================================================================
 // 3D-Ansicht (Canvas, orthografisch, Malerverfahren)
@@ -451,7 +477,17 @@ let view = null;
 function setPill(text, cls = '') { const p = $('#status-pill'); p.textContent = text; p.className = 'pill ' + cls; }
 function updateHeader() {
   const s = S.state; if (!s) return;
-  $('#model-name').textContent = `${s.name} · ${s.nn} Kn · ${s.ne} El`;
+  const parts = [s.name, `${s.nn} Kn`, `${s.ne} El`];
+  if (s.meta && s.meta.bauteil) parts.splice(1, 0, s.meta.bauteil);
+  $('#model-name').textContent = parts.join(' · ');
+  const sp = $('#stellung-pill'), st = activeStellung();
+  if (st) {
+    const r = stelResult(st.name);
+    sp.hidden = false;
+    sp.className = 'pill info';
+    sp.textContent = `${s.stellungen.length} Stellungen · ${st.name} ${st.value_text}`
+      + (r ? ` · η ${fmt(r.util, 2)}` : '');
+  } else sp.hidden = true;
   if (s.busy) setPill('rechnet…', 'busy');
   else if (s.has_analysis || s.single) setPill('Ergebnisse', 'ok');
   else setPill('bereit');
@@ -462,10 +498,16 @@ async function refreshState() {
   updateHeader();
 }
 async function refreshGeometry() {
-  S.geom = await API.get('/api/geometry');
+  const st = S.state && S.state.active_stellung ? `?stellung=${enc(S.state.active_stellung)}` : '';
+  S.geom = await API.get('/api/geometry' + st);
   view.setGeometry(S.geom);
   if (S.first) { view.fit(); S.first = false; } else view.draw();
   updateSelInfo();
+}
+async function loadStellungen() {
+  const s = S.state;
+  if (!s || !s.has_stellungen) { S.stel = null; return; }
+  try { S.stel = await API.get('/api/stellungen'); } catch (e) { S.stel = null; }
 }
 async function loadResults() {
   const s = S.state;
@@ -493,6 +535,8 @@ async function refreshAll() {
   await refreshState();
   await refreshGeometry();
   await loadResults();
+  await loadStellungen();
+  if (S.state.has_analysis) await loadDesign();
   render();
   if (S.state.busy) pollJob();
 }
@@ -524,6 +568,7 @@ async function runOp(payload, o = {}) {
     if (r.geometry_changed) await refreshGeometry();
     if (!S.state.has_analysis && !S.state.single) { S.result = null; S.diagram = null; view.result = null; view.diagram = null; updateLegend(); view.draw(); }
     else if (payload.op !== 'check') await loadResults();
+    if (!S.state.has_stellungen_analysis) S.stel = null;
     if (!o.norender) render();
     return r;
   } catch (e) { toast(e.message, 'err'); return null; }
@@ -544,8 +589,15 @@ function pollJob() {
     S.job = j; updateJobUI();
     if (j.status === 'laeuft') { S.pollTimer = setTimeout(tick, 700); return; }
     await refreshState();
-    if (j.status === 'fertig') { toast('Berechnung abgeschlossen', 'ok'); S.ro.scale = null; await loadResults(); if (S.tab === 'rechnen') S.tab = 'ergebnisse'; }
-    else if (j.status === 'fehler') toast('Fehler: ' + j.error, 'err');
+    if (j.status === 'fertig') {
+      toast('Berechnung abgeschlossen', 'ok');
+      S.ro.scale = null;
+      await refreshGeometry();
+      await loadResults();
+      await loadStellungen();
+      await loadDesign();
+      if (S.tab === 'rechnen') S.tab = S.solveKind === 'stellungen' ? 'stellungen' : 'ergebnisse';
+    } else if (j.status === 'fehler') toast('Fehler: ' + j.error, 'err');
     render();
   };
   tick();
@@ -803,14 +855,177 @@ function caseForm(c) {
 }
 
 // ======================================================================
+// Register: Stellungen des Systems (bewegliche Bruecken)
+// ======================================================================
+function renderStellungen() {
+  const s = S.state;
+  const st = activeStellung();
+  const kinds = Object.entries(s.movement_kinds).map(([k, v]) => [k, v]);
+  const groupOpts = s.element_groups.map(x => [x, x]);
+  const res = S.stel && S.stel.has_result;
+
+  let html = `
+<div class="card">
+  <div class="row" style="align-items:center">
+    <div style="flex:1 1 auto;min-width:220px">
+      <b>Stellungen des Systems</b>
+      <div class="muted">Eine bewegliche Brücke ist statisch nicht ein System, sondern eine Schar:
+      in jeder Stellung steht das bewegte Bauteil anders, ist anders gelagert und trägt andere Lasten.
+      Maßgebend ist die Umhüllende über alle Stellungen.</div>
+    </div>
+    <button class="btn primary" data-action="solve-stellungen" ${s.busy || !s.stellungen.some(x => x.active) ? 'disabled' : ''}>▶ Alle Stellungen rechnen</button>
+  </div>
+</div>`;
+
+  if (res) {
+    const rows = S.stel.table.slice(1);
+    html += `<div class="card"><div class="msg ${S.stel.util_max > 1 ? 'err' : 'ok'}">
+      Umhüllende über ${S.stel.stellungen.length} Stellungen · größte Ausnutzung ${fmt(S.stel.util_max, 3)}
+      ${S.stel.members.length ? `(${esc(S.stel.members[0].member)} in ${esc(S.stel.members[0].stellung)})` : ''}</div>
+      ${table(['Stab', 'Stellung', 'maßgebender Nachweis', 'η', 'Kombination', 'Stelle', 'Querschnitt'],
+        rows.map(r => [r[0], r[1], r[2], parseFloat(r[3]), r[4], r[5] + ' m', r[6]]),
+        {rowAttr: r => `class="tap" data-action="pick-member" data-name="${esc(r[0])}"`,
+         format: (c, j) => j === 3 ? utilBadge(c) : esc(c)})}
+      <div class="muted">Zeile anklicken: Stab rechts im Kontextpanel mit der Kurve über die Stellungen.</div></div>`;
+    if (S.stel.messages.length) {
+      html += `<details><summary>Hinweise aus dem Rechenlauf <span class="n">${S.stel.messages.length}</span></summary>
+        <div class="body"><ul class="list">${S.stel.messages.map(x => `<li><span class="txt">${esc(x)}</span></li>`).join('')}</ul></div></details>`;
+    }
+  }
+
+  html += `<details open><summary>Stellungen <span class="n">${s.stellungen.length}</span></summary><div class="body">
+    <ul class="list">${s.stellungen.map(x => {
+      const r = stelResult(x.name);
+      return `<li class="tap ${x.name === s.active_stellung ? 'active' : ''}"
+        data-action="pick-stellung" data-name="${esc(x.name)}">
+        <span class="txt">${x.name === s.active_stellung ? '● ' : ''}${esc(x.name)}
+          ${x.title ? esc(x.title) : ''} <span class="chip">${esc(x.value_text)}</span>
+          ${x.active ? '' : '<span class="chip">nicht in der Umhüllenden</span>'}
+          <span class="sub">${esc(x.description || '')}${x.description ? ' · ' : ''}${x.n_moving_elements} bewegte Elemente
+          · ${x.supports.length} eigene Lager · ${x.cases.length ? x.cases.length + ' Lastfälle' : 'alle Lastfälle'}
+          ${r ? ' · η ' + fmt(r.util, 3) : ''}</span></span>
+        <button class="btn small" data-action="edit-stellung" data-name="${esc(x.name)}">✎</button>
+        ${opBtn({op: 'remove_stellung', stellung: x.name}, '✕', 'btn small danger', `Stellung ${x.name} löschen?`)}</li>`;
+    }).join('') || '<li class="muted">keine – unten anlegen oder eine Serie erzeugen</li>'}</ul>
+    <form data-op="add_stellung" data-reset><div class="row">
+      ${inp('name', 'Neue Stellung', '', `placeholder="S${s.stellungen.length + 1}"`)}
+      ${inp('title', 'Bezeichnung', '', 'placeholder="z. B. Öffnungsvorgang"')}
+      ${sel('kind', 'Bewegung', kinds, st ? st.kind : 'rotate')}
+      ${num('angle', 'Drehwinkel [°]', 0)}
+      ${num('shift', 'Verschiebung [m]', 0)}
+      <button class="btn small primary">+ Stellung</button></div>
+      <div class="muted">Drehachse, bewegtes Bauteil, Lager und Lastfälle werden von der aktiven Stellung übernommen.</div>
+    </form>
+  </div></details>`;
+
+  if (st) {
+    const usedCases = new Set(st.cases);
+    html += `<details open><summary>Stellung ${esc(st.name)} bearbeiten <span class="n">${esc(st.value_text)}</span></summary><div class="body">
+    <form data-op="edit_stellung"><input type="hidden" name="stellung" value="${esc(st.name)}" data-type="str">
+      <div class="grid3">
+        ${inp('rename', 'Kürzel', st.name)}
+        ${inp('title', 'Bezeichnung', st.title)}
+        ${sel('kind', 'Bewegung', kinds, st.kind)}
+      </div>
+      <div class="grid3">
+        ${num('angle', 'Drehwinkel [°]', st.angle)}
+        ${num('shift', 'Verschiebung [m]', st.shift)}
+        ${inp('description', 'Anmerkung', st.description)}
+      </div>
+      <h3>Drehachse / Bewegungsrichtung</h3>
+      <div class="grid3">
+        ${num('axis_point.0', 'Punkt x [m]', st.axis_point[0])}${num('axis_point.1', 'y [m]', st.axis_point[1])}${num('axis_point.2', 'z [m]', st.axis_point[2])}
+        ${num('axis_dir.0', 'Richtung x', st.axis_dir[0])}${num('axis_dir.1', 'y', st.axis_dir[1])}${num('axis_dir.2', 'z', st.axis_dir[2])}
+      </div>
+      <div class="muted">Rechtsschraube um die Achsrichtung. Für eine Klappbrücke, die sich um die
+      Querachse aufstellt, ist die Richtung (0, −1, 0) und der Punkt liegt im Drehlager.</div>
+      <h3>Bewegtes Bauteil</h3>
+      <div class="row">
+        ${inp('moving_groups', 'Elementgruppen (Komma)', st.moving_groups.join(', '), 'data-type="str" data-keep="1"')}
+        ${inp('moving_nodes', 'zusätzliche Knoten', st.moving_nodes.join(', '), 'data-type="list" data-keep="1" data-sel="nodes"')}
+      </div>
+      <div class="muted">Vorhandene Gruppen: ${s.element_groups.map(x => `<span class="chip">${esc(x)}</span>`).join(' ') || '–'}
+        · derzeit ${st.n_moving_elements} von ${s.ne} Elementen bewegt</div>
+      <h3>Wirkende Lastfälle</h3>
+      <div class="grid3">${s.load_cases.map(c => chk('cases.' + c.name, `${c.name} (${c.category})`, !st.cases.length || usedCases.has(c.name))).join('')}</div>
+      <div class="muted">Alle abgewählt oder alle gewählt bedeutet: alle Lastfälle wirken.
+        Kombinationen mit einem nicht wirkenden Lastfall entfallen in dieser Stellung.</div>
+      <div class="grid2" style="margin-top:8px">
+        ${chk('active', 'In der Umhüllenden berücksichtigen', st.active)}
+        ${chk('use_model_supports', 'Lager des Modells gelten zusätzlich', st.use_model_supports)}
+      </div>
+      <div class="btns"><button class="btn primary">Speichern</button></div>
+    </form>
+
+    <h3>Lager nur in dieser Stellung <span class="muted">(${st.supports.length})</span></h3>
+    <div class="muted">In der Verkehrsstellung tragen Endauflager und Riegel mit, geöffnet hängt die
+      Klappe im Drehlager. Knoten in der 3D-Ansicht wählen, dann Lagerart setzen.</div>
+    <div class="btns">
+      ${opBtn({op: 'stellung_support', stellung: st.name, nodes: '@nodes', dofs: 'all'}, 'Einspannung', 'btn small primary')}
+      ${opBtn({op: 'stellung_support', stellung: st.name, nodes: '@nodes', dofs: 'pinned'}, 'Gelenkig', 'btn small primary')}
+      ${opBtn({op: 'stellung_support', stellung: st.name, nodes: '@nodes', dofs: 'z'}, 'nur uz', 'btn small')}
+      ${opBtn({op: 'stellung_support', stellung: st.name, nodes: '@nodes', dofs: 'xz'}, 'ux uz', 'btn small')}
+      ${opBtn({op: 'remove_stellung_support', stellung: st.name, nodes: '@nodes'}, 'Entfernen', 'btn small danger')}
+    </div>
+    <form data-op="stellung_support"><input type="hidden" name="stellung" value="${esc(st.name)}" data-type="str">
+      <div class="row">${selInput('nodes')}</div>
+      <div class="grid6">${['ux', 'uy', 'uz', 'rx', 'ry', 'rz'].map((d, i) => chk('d.' + i, d, i < 3)).join('')}</div>
+      <button class="btn small">Lager in dieser Stellung setzen</button></form>
+    <ul class="list">${st.supports.map(x => `<li class="tap" data-action="select-node" data-node="${x.node}">
+      <span class="txt">Knoten ${x.node}<span class="sub">${x.dofs.map(d => ['ux', 'uy', 'uz', 'rx', 'ry', 'rz'][d]).join(' ')}</span></span>
+      ${opBtn({op: 'remove_stellung_support', stellung: st.name, nodes: [x.node]}, '✕', 'btn small danger')}</li>`).join('')
+      || '<li class="muted">keine – es gelten nur die Lager des Modells</li>'}</ul>
+    </div></details>`;
+  }
+
+  html += `<details><summary>Stellungsserie erzeugen</summary><div class="body">
+    <div class="muted">Legt gleichmäßig verteilte Stellungen an, z. B. den Öffnungsvorgang von 0° bis 82°
+      in sechs Schritten. Drehachse, bewegtes Bauteil, Lager und Lastfälle kommen aus der aktiven Stellung.</div>
+    <form data-op="stellung_series"><div class="grid3">
+      ${inp('prefix', 'Kürzel', 'A')}
+      ${sel('kind', 'Bewegung', [['rotate', 'Drehung [°]'], ['translate', 'Verschiebung [m]']], 'rotate')}
+      ${num('steps', 'Schritte', 6, {int: true, step: 1, min: 2, max: 60})}
+      ${num('start', 'von', 0)}${num('end', 'bis', 82)}
+      ${chk('replace', 'vorhandene Stellungen ersetzen')}
+    </div><button class="btn small primary">Serie erzeugen</button></form>
+    ${s.stellungen.length ? `<div class="btns">${opBtn({op: 'clear_stellungen'}, 'Alle Stellungen entfernen', 'btn small danger', 'Alle Stellungen wirklich entfernen?')}</div>` : ''}
+  </div></details>`;
+
+  return html;
+}
+
+function stellungForm(x) {
+  const s = S.state;
+  const kinds = Object.entries(s.movement_kinds).map(([k, v]) => [k, v]);
+  return `<h2>Stellung ${esc(x.name)}</h2>
+    <form data-op="edit_stellung" data-close><input type="hidden" name="stellung" value="${esc(x.name)}" data-type="str">
+    <div class="grid3">${inp('rename', 'Kürzel', x.name)}${inp('title', 'Bezeichnung', x.title)}${sel('kind', 'Bewegung', kinds, x.kind)}
+    ${num('angle', 'Drehwinkel [°]', x.angle)}${num('shift', 'Verschiebung [m]', x.shift)}${inp('description', 'Anmerkung', x.description)}</div>
+    <h3>Drehachse / Richtung</h3><div class="grid3">
+    ${num('axis_point.0', 'Punkt x', x.axis_point[0])}${num('axis_point.1', 'y', x.axis_point[1])}${num('axis_point.2', 'z', x.axis_point[2])}
+    ${num('axis_dir.0', 'Richtung x', x.axis_dir[0])}${num('axis_dir.1', 'y', x.axis_dir[1])}${num('axis_dir.2', 'z', x.axis_dir[2])}</div>
+    <div class="row">${inp('moving_groups', 'Bewegte Elementgruppen', x.moving_groups.join(', '), 'data-type="str" data-keep="1"')}</div>
+    ${chk('active', 'In der Umhüllenden berücksichtigen', x.active)}
+    ${chk('use_model_supports', 'Lager des Modells gelten zusätzlich', x.use_model_supports)}
+    <div class="btns"><button class="btn primary">Speichern</button>
+      ${opBtn({op: 'remove_stellung', stellung: x.name}, 'Stellung löschen', 'btn danger', 'Stellung löschen?')}</div></form>`;
+}
+
+// ======================================================================
 // Register: Rechnen
 // ======================================================================
 function renderRechnen() {
   const s = S.state, st = s.settings;
   const busy = s.busy || (S.job && S.job.status === 'laeuft');
+  const kinds = [['all', 'Alle Lastfälle + Kombinationen'], ['case', 'Nur ein Lastfall'],
+                 ['modal', 'Eigenschwingungen'], ['buckling', 'Knicken (Grundzustand = Lastfall)']];
+  if (s.has_stellungen) {
+    kinds.splice(1, 0, ['stellungen',
+      `Alle Stellungen des Systems (${s.stellungen.filter(x => x.active).length} aktiv)`]);
+  }
   return `
 <div class="card"><form id="solve-form">
-  <div class="grid2">${sel('kind', 'Analyse', [['all', 'Alle Lastfälle + Kombinationen'], ['case', 'Nur ein Lastfall'], ['modal', 'Eigenschwingungen'], ['buckling', 'Knicken (Grundzustand = Lastfall)']], S.solveKind || 'all')}
+  <div class="grid2">${sel('kind', 'Analyse', kinds, S.solveKind || (s.has_stellungen ? 'stellungen' : 'all'))}
   ${sel('case', 'Lastfall (für Lastfall / Knicken)', caseOpts(s), s.active_case)}
   ${num('nmodes', 'Anzahl Eigenformen', 6, {int: true, step: 1, min: 1})}${num('workers', `Prozesse (max. ${s.cpu})`, st.workers, {int: true, step: 1, min: 1, max: 64})}</div>
   <div class="grid2">${chk('design', `Nachweise EC3 (${s.members.length} Stäbe)`, true)}${chk('fatigue', `Ermüdung (${s.fatigue_loads.length} Lasten)`, true)}</div>
@@ -905,8 +1120,19 @@ async function loadMemberChart() {
 function renderNachweise() {
   const s = S.state, D = S.design;
   const busy = s.busy;
-  let html = `<div class="card"><div class="btns"><button class="btn primary" data-action="design" ${busy || !s.has_analysis ? 'disabled' : ''}>Nachweise EC3 führen</button><button class="btn" data-action="fatigue" ${busy || !s.has_analysis ? 'disabled' : ''}>Ermüdungsnachweis</button></div>
+  let html = `<div class="card"><div class="btns"><button class="btn primary" data-action="design" ${busy || !s.has_analysis ? 'disabled' : ''}>Nachweise EC3 führen</button><button class="btn" data-action="fatigue" ${busy || !s.has_analysis ? 'disabled' : ''}>Ermüdungsnachweis</button>${s.has_stellungen ? `<button class="btn accent" data-action="solve-stellungen" ${busy ? 'disabled' : ''}>Über alle Stellungen</button>` : ''}</div>
   <div class="muted">${s.has_analysis ? `${s.members.length} Stäbe, ${s.fatigue_loads.length} Ermüdungslasten` : 'Zuerst unter „Rechnen“ berechnen (Nachweise laufen dort auf Wunsch automatisch mit).'}</div></div>`;
+  if (S.stel && S.stel.has_result) {
+    const rows = S.stel.table.slice(1);
+    html += `<div class="card"><h3>Umhüllende über die Stellungen</h3>
+      <div class="msg ${S.stel.util_max > 1 ? 'err' : 'ok'}">Größte Ausnutzung ${fmt(S.stel.util_max, 3)} über ${S.stel.stellungen.length} Stellungen
+        ${S.stel.members.length ? `– maßgebend ${esc(S.stel.members[0].member)} in Stellung ${esc(S.stel.members[0].stellung)}` : ''}</div>
+      ${table(['Stab', 'Stellung', 'maßgebender Nachweis', 'η', 'Kombination', 'Stelle', 'Querschnitt'],
+        rows.map(r => [r[0], r[1], r[2], parseFloat(r[3]), r[4], r[5] + ' m', r[6]]),
+        {rowAttr: r => `class="tap" data-action="pick-member" data-name="${esc(r[0])}"`,
+         format: (c, j) => j === 3 ? utilBadge(c) : esc(c)})}
+      <div class="muted">Die Nachweistabellen darunter zeigen die Stellung ${esc(s.active_stellung)} einzeln.</div></div>`;
+  }
   if (D && D.design) {
     const d = D.design, rows = d.table.slice(1);
     html += `<div class="card"><div class="msg ${d.util_max > 1 ? 'err' : 'ok'}">${esc(d.summary)}</div>
@@ -1004,19 +1230,283 @@ function renderMehr() {
 }
 
 // ======================================================================
+// Modellbaum (linke Spalte)
+// ======================================================================
+function twGroup(key, label, count, kids) {
+  const on = S.treeOpen[key] !== false;
+  return `<div class="grp ${on ? 'on' : ''}" data-action="tree-toggle" data-key="${esc(key)}">
+      <span class="tw-ar">${on ? '▾' : '▸'}</span>${esc(label)}<span class="n">${esc(String(count))}</span></div>
+    ${on ? `<div class="kids">${kids || '<div class="empty">–</div>'}</div>` : ''}`;
+}
+function twLeaf(label, o = {}) {
+  return `<button class="leaf ${o.on ? 'on' : ''}" ${o.action ? `data-action="${o.action}"` : ''} ${o.attrs || ''}>
+    ${esc(label)}${o.tag ? `<span class="tag ${o.tagCls || ''}">${esc(o.tag)}</span>` : ''}
+    ${o.n !== undefined ? `<span class="n">${esc(String(o.n))}</span>` : ''}</button>`;
+}
+
+function renderTree() {
+  const s = S.state;
+  const box = $('#tree');
+  if (!s) { box.innerHTML = ''; return; }
+  $('#tree-count').textContent = `${s.nn} Knoten`;
+
+  const bauteile = Object.entries(s.types).map(([k, v]) =>
+    twLeaf({beam: 'Balkenelemente', truss: 'Fachwerkstäbe', shell3: 'Schalen (3)',
+            shell4: 'Schalen (4)', tet4: 'Volumen tet4', tet10: 'Volumen tet10',
+            hex8: 'Volumen hex8'}[k] || k, {n: v})).join('');
+
+  const stel = s.stellungen.map(x => {
+    const r = stelResult(x.name);
+    return twLeaf(`${x.name} ${x.title || ''}`.trim(), {
+      on: x.name === s.active_stellung, action: 'pick-stellung',
+      attrs: `data-name="${esc(x.name)}"`, tag: x.value_text,
+      tagCls: x.active ? '' : 'warn', n: r ? fmt(r.util, 2) : '',
+    });
+  }).join('');
+
+  const cases = s.load_cases.map(c => twLeaf(c.name, {
+    on: c.name === s.active_case, action: 'op',
+    attrs: `data-payload="${esc(JSON.stringify({op: 'set_active_case', name: c.name}))}"`,
+    tag: c.category, n: c.n_loads,
+  })).join('');
+
+  const D = S.design && S.design.design;
+  const members = s.members.map(m => {
+    const mc = D && D.members[m.name];
+    const env = S.stel && S.stel.has_result && S.stel.members.find(x => x.member === m.name);
+    const u = env ? env.util : (mc ? mc.util : null);
+    return twLeaf(m.name, {
+      on: m.name === S.ctxMember, action: 'pick-member', attrs: `data-name="${esc(m.name)}"`,
+      n: u === null || u === undefined ? `${m.n_elements} El` : fmt(u, 2),
+    });
+  }).join('');
+
+  box.innerHTML = `<div class="tw">
+    ${twGroup('modell', s.name || 'Modell', `${s.ne} El`, bauteile
+      + twLeaf(s.has_stellungen ? 'Lager (in allen Stellungen)' : 'Lager',
+               {n: s.n_supports, action: 'tool', attrs: 'data-tool="lasten"'})
+      + twLeaf('Kontakt', {n: s.contact.supports.length + s.contact.gaps.length + s.contact.pairs.length,
+                           action: 'tool', attrs: 'data-tool="lasten"'}))}
+    ${s.has_stellungen ? twGroup('stellungen', 'Stellungen des Systems', s.stellungen.length, stel) : ''}
+    ${twGroup('lasten', 'Lastfälle', `${s.load_cases.length} · ${s.combinations.length} Komb.`, cases)}
+    ${twGroup('nachweise', 'Stäbe für Nachweise', s.members.length, members
+      || '<div class="empty">keine – unter „Modell“ automatisch erkennen</div>')}
+  </div>`;
+
+  $('#tree-foot').innerHTML = s.has_stellungen
+    ? `<div class="muted" style="margin-bottom:6px">Stellung wählen: Ansicht, Lager und Lasten folgen.</div>
+       <button class="btn small wide" data-action="tool" data-tool="stellungen">Stellungen bearbeiten</button>`
+    : `<div class="muted" style="margin-bottom:6px">Bewegliche Brücke? Stellungen anlegen.</div>
+       <button class="btn small wide" data-action="tool" data-tool="stellungen">Stellungen einrichten</button>`;
+  bindActions(box);
+  bindActions($('#tree-foot'));
+}
+
+// ======================================================================
+// Stellungsleiste (unter der Ansicht)
+// ======================================================================
+function renderStellungsleiste() {
+  const s = S.state, bar = $('#stellungen-bar');
+  if (!s || !s.has_stellungen) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const res = S.stel && S.stel.has_result;
+  const chips = s.stellungen.map(x => {
+    const r = stelResult(x.name);
+    return `<button class="st-chip ${x.name === s.active_stellung ? 'on' : ''} ${x.active ? '' : 'off'}"
+      data-action="pick-stellung" data-name="${esc(x.name)}"
+      title="${esc(x.description || x.title || '')}${x.active ? '' : ' (nicht in der Umhüllenden)'}">
+      <span class="id">${esc(x.name)}</span>
+      ${x.title ? `<span class="nm">${esc(x.title)}</span>` : ''}
+      <span class="deg">${esc(x.value_text)}</span>
+      ${r ? etaPill(r.util) : ''}</button>`;
+  }).join('');
+  const worst = res && S.stel.members.length ? S.stel.members[0] : null;
+  bar.innerHTML = `
+    <div class="sb-hd">
+      <span class="t">Stellungen des Systems</span>
+      <span class="note">${res
+        ? `maßgebend: ${esc(worst.member)} in ${esc(worst.stellung)} · η ${fmt(worst.util, 2)} · ${esc(worst.governing.name || '')}`
+        : 'Jede Stellung hat eigene Lager und Lastfälle – die Umhüllende läuft über alle.'}</span>
+      <span class="grow"></span>
+      <button class="btn small" data-action="tool" data-tool="stellungen">+ Stellung</button>
+      <button class="btn small primary" data-action="solve-stellungen"
+        ${s.busy ? 'disabled' : ''}>▶ Alle Stellungen rechnen</button>
+    </div>
+    <div class="sb-chips">${chips}</div>`;
+  bindActions(bar);
+}
+
+// ======================================================================
+// Kontextpanel (rechte Spalte)
+// ======================================================================
+function etaSpark(paare, aktiv) {
+  // Kurve der Ausnutzung ueber die Stellungen
+  if (!paare.length) return '';
+  const W = 280, H = 96, ml = 16, mr = 12, mt = 12, mb = 22;
+  const hi = Math.max(1.0, ...paare.map(p => p.u));
+  const X = i => paare.length < 2 ? (ml + W - mr) / 2
+    : ml + i * (W - ml - mr) / (paare.length - 1);
+  const Y = u => mt + (1 - u / hi) * (H - mt - mb);
+  const pts = paare.map((p, i) => `${X(i).toFixed(1)},${Y(p.u).toFixed(1)}`).join(' ');
+  const punkte = paare.map((p, i) => {
+    const on = p.name === aktiv;
+    return `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.u).toFixed(1)}" r="${on ? 4.5 : 3.2}"
+      fill="${utilColor(p.u)}" ${on ? 'stroke="#1c2733" stroke-width="1.4"' : ''}><title>${esc(p.name)} ${esc(p.txt)}: η ${fmt(p.u, 3)}</title></circle>`;
+  }).join('');
+  const marken = paare.map((p, i) =>
+    `<text x="${X(i).toFixed(1)}" y="${H - 8}" font-size="9" fill="#66717c" text-anchor="middle">${esc(p.name)}</text>`).join('');
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Ausnutzung über die Stellungen">
+    <line x1="${ml}" y1="${Y(1).toFixed(1)}" x2="${W - mr}" y2="${Y(1).toFixed(1)}"
+      stroke="#d2352f" stroke-width="1" stroke-dasharray="4 3"></line>
+    <text x="${W - mr}" y="${(Y(1) - 3).toFixed(1)}" font-size="8.5" fill="#c62828" text-anchor="end">η = 1,0</text>
+    <polyline points="${pts}" fill="none" stroke="#1467c6" stroke-width="2.2" stroke-linejoin="round"></polyline>
+    ${punkte}${marken}</svg>`;
+}
+
+function renderContext() {
+  const s = S.state, box = $('#ctx'), foot = $('#ctx-foot');
+  if (!s) { box.innerHTML = ''; foot.innerHTML = ''; return; }
+  const name = S.ctxMember && s.members.find(m => m.name === S.ctxMember) ? S.ctxMember
+    : (s.members[0] ? s.members[0].name : '');
+  S.ctxMember = name;
+  const m = s.members.find(x => x.name === name);
+  const D = S.design && S.design.design;
+  const mc = D && D.members[name];
+  const env = S.stel && S.stel.has_result ? S.stel.members.find(x => x.member === name) : null;
+  const aktiv = activeStellung();
+  $('#ctx-hint').textContent = s.members.length > 1 ? `${s.members.length} Stäbe` : '';
+
+  if (!m) {
+    box.innerHTML = `<div class="muted" style="padding:8px">Noch keine Stäbe für Nachweise.
+      Unter „Modell → Stäbe“ lassen sie sich automatisch aus dem Netz erkennen.</div>
+      <div class="btns"><button class="btn small primary" data-action="op"
+        data-payload="${esc(JSON.stringify({op: 'auto_members'}))}">Stäbe automatisch erkennen</button></div>`;
+    foot.innerHTML = '';
+    bindActions(box);
+    return;
+  }
+
+  let html = '';
+  if (s.members.length > 1) {
+    html += `<label style="margin-bottom:8px"><span>Stab</span><select data-action="pick-member-sel">
+      ${s.members.map(x => `<option ${x.name === name ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
+      </select></label>`;
+  }
+  const sec = mc ? mc.section : '';
+  html += `<div class="ctx-title">${esc(m.name)}</div>
+    <div class="ctx-sub">${m.n_elements} Stabelemente${sec ? ' · ' + esc(sec) : ''}
+      ${mc ? ' · ' + esc(mc.material) : ''} · L = ${g(m.L, 4)} m</div>
+    <div class="kv" style="margin-top:12px">
+      <span class="muted">βy / βz</span><b>${g(m.beta_y)} / ${g(m.beta_z)}</b>
+      <span class="muted">L_LT</span><b>${m.L_LT ? g(m.L_LT, 3) + ' m' : 'Stablänge'}</b>
+      <span class="muted">Kerbfall</span><b>${m.detail_category ? 'Δσc = ' + g(m.detail_category / 1e6, 3) + ' N/mm²' : '–'}</b>
+      <span class="muted">Lastangriff</span><b>${esc({top: 'Obergurt', bottom: 'Untergurt', shear_centre: 'Schubmittelpunkt'}[m.load_position] || m.load_position)}</b>
+    </div>`;
+
+  // Ausnutzung je Einzelnachweis: Groesstwert ueber alle Kombinationen
+  if (mc) {
+    const worst = {};
+    for (const c of (mc.section_checks || []).concat(mc.stability || [])) {
+      for (const [k, v] of Object.entries(c.checks || {})) {
+        const u = Number(Array.isArray(v) ? v[0] : v);
+        if (Number.isFinite(u)) worst[k] = Math.max(worst[k] ?? 0, u);
+      }
+    }
+    let bars = Object.entries(worst).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    if (!bars.length) bars = [[(mc.governing || {}).name || 'maßgebend', mc.util]];
+    html += `<div class="ctx-sep"></div>
+      <div class="ctx-sec">Ausnutzung${aktiv ? ' · Stellung ' + esc(aktiv.name) + ' (' + esc(aktiv.value_text) + ')' : ''}</div>
+      <div class="bars">${bars.map(([k, u]) => `<div class="bar-row">
+        <div class="lab"><span>${esc(k)}</span><b style="color:${u > 0.9 ? '#c62828' : 'inherit'}">${fmt(u, 2)}</b></div>
+        <div class="bar-out"><div class="bar-in" style="width:${Math.min(100, Math.max(0, u * 100))}%;background:${utilColor(u)}"></div></div>
+      </div>`).join('')}</div>
+      <div class="muted" style="margin-top:6px">Größtwert je Nachweis über alle
+        ${mc.section_checks ? mc.section_checks.length : 0} Kombinationen dieser Stellung.</div>`;
+  }
+
+  // Massgebende Stellung und Kurve ueber die Stellungen
+  if (env) {
+    const st = s.stellungen.find(x => x.name === env.stellung);
+    html += `<div class="msg ${env.util > 1 ? 'err' : 'warn'}" style="margin-top:14px">
+      Maßgebend in Stellung <b>${esc(env.stellung)}${st ? ` (${esc(st.value_text)})` : ''}</b>${st && st.title ? ` – ${esc(st.title)}` : ''}
+      ${env.governing.name ? `<br>${esc(env.governing.name)} · ${esc(env.governing.combo || '')}` : ''}</div>`;
+    const paare = s.stellungen.filter(x => env.per_stellung[x.name] !== undefined)
+      .map(x => ({name: x.name, txt: x.value_text, u: env.per_stellung[x.name]}));
+    if (paare.length > 1) {
+      html += `<div class="ctx-sep"></div>
+        <div class="ctx-sec"><span class="asis">η</span> über die Stellungen</div>
+        ${etaSpark(paare, s.active_stellung)}`;
+    }
+  } else if (mc) {
+    const gv = mc.governing || {};
+    html += `<div class="msg ${mc.util > 1 ? 'err' : 'ok'}" style="margin-top:14px">
+      ${esc(gv.name || '')} · η ${fmt(mc.util, 3)}${gv.combo ? '<br>' + esc(gv.combo) : ''}
+      ${gv.x !== undefined ? ` · x = ${g(gv.x, 3)} m` : ''}</div>`;
+  } else {
+    html += `<div class="muted" style="margin-top:14px">Noch nicht nachgewiesen – Berechnung starten.</div>`;
+  }
+
+  // Ermuedung
+  const F = S.design && S.design.fatigue;
+  const fm = F && F.members[name];
+  if (fm) {
+    html += `<div class="ctx-sep"></div><div class="ctx-sec">Ermüdung EN 1993-1-9</div>
+      <div class="bar-row"><div class="lab"><span>Schädigung D</span><b>${fmt(fm.util, 2)}</b></div>
+      <div class="bar-out"><div class="bar-in" style="width:${Math.min(100, fm.util * 100)}%;background:${utilColor(fm.util)}"></div></div></div>
+      <div class="muted" style="margin-top:6px">Δσ max = ${fmt(fm.dsig_max / 1e6, 1)} MPa · Kerbfall ${g(fm.category / 1e6, 3)}</div>`;
+  }
+
+  box.innerHTML = html;
+  foot.innerHTML = `<div class="btns" style="margin:0">
+    <button class="btn small" style="flex:1" data-action="member-detail" data-name="${esc(name)}"
+      ${mc ? '' : 'disabled'}>Nachweisdetails</button>
+    <a class="btn small accent" style="flex:1" href="${API.url('/api/report?fmt=html')}"
+      target="_blank" rel="noopener">Bericht öffnen</a></div>`;
+  bindActions(box);
+  bindActions(foot);
+}
+
+// ======================================================================
 // Rendern und Ereignisse
 // ======================================================================
+const TABS = [
+  ['modell', '⬡', 'Modell'], ['lasten', '⇩', 'Lasten'], ['stellungen', '⟳', 'Stellungen'],
+  ['rechnen', '▶', 'Rechnen'], ['ergebnisse', '∿', 'Ergebnisse'],
+  ['nachweise', '✓', 'Nachweise'], ['mehr', '≡', 'Mehr'],
+];
+
+function renderDockTabs() {
+  const s = S.state;
+  const info = s && s.has_stellungen && S.stel && S.stel.has_result
+    ? `${s.members.length} Stäbe · ${s.combinations.length} Kombinationen · ${s.stellungen.length} Stellungen`
+    : s ? `${s.members.length} Stäbe · ${s.combinations.length} Kombinationen` : '';
+  $('#dock-tabs').innerHTML = TABS.map(([k, ic, label]) =>
+    `<button data-action="tab" data-tab="${k}" class="${k === S.tab ? 'active' : ''}">${esc(label)}</button>`
+  ).join('') + `<span class="info">${esc(info)}</span>`;
+  $('#tabs').innerHTML = TABS.map(([k, ic, label]) =>
+    `<button data-action="tab" data-tab="${k}" class="${k === S.tab ? 'active' : ''}"><span class="ic">${ic}</span>${esc(label)}</button>`
+  ).join('');
+  $$('#toolbar .tb[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === S.tab));
+  bindActions($('#dock-tabs'));
+  bindActions($('#tabs'));
+}
+
 function render() {
   const p = $('#panel');
   if (!S.state) { p.innerHTML = '<div class="muted" style="padding:20px">Verbinde …</div>'; return; }
   const open = new Set($$('details[open]', p).map(d => d.querySelector('summary')?.textContent.trim().split(' ')[0]));
   const scroll = p.scrollTop;
-  const fn = {modell: renderModell, lasten: renderLasten, rechnen: renderRechnen, ergebnisse: renderErgebnisse, nachweise: renderNachweise, mehr: renderMehr}[S.tab] || renderModell;
+  const fn = {modell: renderModell, lasten: renderLasten, stellungen: renderStellungen, rechnen: renderRechnen, ergebnisse: renderErgebnisse, nachweise: renderNachweise, mehr: renderMehr}[S.tab] || renderModell;
   try { p.innerHTML = fn(); } catch (e) { p.innerHTML = `<div class="msg err">Darstellungsfehler: ${esc(e.message)}</div>`; console.error(e); }
   if (open.size) $$('details', p).forEach(d => { const k = d.querySelector('summary')?.textContent.trim().split(' ')[0]; if (open.has(k)) d.open = true; });
-  $$('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === S.tab));
   bindActions(p);
   p.scrollTop = scroll;
+  renderDockTabs();
+  renderTree();
+  renderStellungsleiste();
+  renderContext();
+  const btn = $('#btn-solve');
+  if (btn) btn.disabled = !!S.state.busy;
   updateSelInfo();
 }
 
@@ -1026,6 +1516,12 @@ function bindActions(root) {
       e.preventDefault();
       const payload = Object.assign({op: f.dataset.op}, collect(f));
       if (payload.d) { payload.dofs = Object.entries(payload.d).filter(([, v]) => v).map(([k]) => parseInt(k, 10)); delete payload.d; }
+      if (payload.cases && !Array.isArray(payload.cases)) {
+        // Ankreuzfelder je Lastfall -> Liste; alle gewaehlt bedeutet "alle wirken"
+        const alle = Object.entries(payload.cases);
+        const an = alle.filter(([, v]) => v).map(([k]) => k);
+        payload.cases = an.length === alle.length ? [] : an;
+      }
       if (f.dataset.op === 'select_box') {
         try { const r = await API.post('/api/op', payload); S.sel.nodes = new Set(r.nodes); view.draw(); updateSelInfo(); toast(r.message); } catch (err) { toast(err.message, 'err'); }
         return;
@@ -1087,8 +1583,15 @@ const ACTIONS = {
   'select-elem': el => { const i = parseInt(el.dataset.elem, 10); if (S.sel.elems.has(i)) S.sel.elems.delete(i); else S.sel.elems.add(i); view.draw(); updateSelInfo(); },
   'clear-sel': () => { S.sel.nodes.clear(); S.sel.elems.clear(); view.draw(); updateSelInfo(); },
   'example': async el => {
-    try { const r = await API.post('/api/example', {name: el.dataset.name}); S.state = r.state; S.version = r.state.version; updateHeader(); S.first = true; S.sel.nodes.clear(); S.sel.elems.clear(); S.ro.which = ''; await refreshGeometry(); await loadResults(); toast(r.message, 'ok'); showTab('modell'); }
-    catch (e) { toast(e.message, 'err'); }
+    try {
+      const r = await API.post('/api/example', {name: el.dataset.name});
+      S.state = r.state; S.version = r.state.version; updateHeader();
+      S.first = true; S.sel.nodes.clear(); S.sel.elems.clear();
+      S.ro.which = ''; S.stel = null; S.design = null; S.ctxMember = '';
+      await refreshGeometry(); await loadResults();
+      toast(r.message, 'ok');
+      showTab(S.state.has_stellungen ? 'stellungen' : 'modell');
+    } catch (e) { toast(e.message, 'err'); }
   },
   'load-profiles': async el => {
     const fam = el.value; S.profileFamily = fam;
@@ -1099,6 +1602,22 @@ const ACTIONS = {
   'member-from-sel': el => { const f = el.closest('form'); f.querySelector('[name=elems]').name = 'elements'; f.requestSubmit(); },
   'edit-member': el => { const m = S.state.members.find(x => x.name === el.dataset.name); if (m) modal(memberForm(m)); },
   'edit-case': el => { const c = S.state.load_cases.find(x => x.name === el.dataset.name); if (c) modal(caseForm(c)); },
+  'edit-stellung': el => { const x = S.state.stellungen.find(y => y.name === el.dataset.name); if (x) modal(stellungForm(x)); },
+  'tool': el => { closeCols(); showTab(el.dataset.tool); },
+  'tree-toggle': el => { const k = el.dataset.key; S.treeOpen[k] = S.treeOpen[k] === false; renderTree(); },
+  'pick-member': el => { S.ctxMember = el.dataset.name; S.member = el.dataset.name; renderTree(); renderContext(); },
+  'pick-member-sel': el => { S.ctxMember = el.value; S.member = el.value; renderTree(); renderContext(); },
+  'pick-stellung': async el => {
+    closeCols();
+    const name = el.dataset.name;
+    if (!name || name === S.state.active_stellung) return;
+    const r = await runOp({op: 'set_active_stellung', name}, {quiet: true, norender: true});
+    if (r) { await refreshGeometry(); render(); }
+  },
+  'solve-stellungen': () => {
+    S.solveKind = 'stellungen';
+    startJob('/api/solve', {kind: 'stellungen', design: true, fatigue: true});
+  },
   'solve': () => { const f = $('#solve-form'); const v = collect(f); S.solveKind = v.kind; startJob('/api/solve', v); },
   'design': () => startJob('/api/design', {}),
   'fatigue': () => startJob('/api/fatigue', {}),
@@ -1130,31 +1649,83 @@ const ACTIONS = {
   'new': async () => { if (!confirm('Neues, leeres Modell anlegen? Ungespeicherte Änderungen gehen verloren.')) return; S.sel.nodes.clear(); S.sel.elems.clear(); S.first = true; await runOp({op: 'new', name: 'Modell'}); },
 };
 
+function closeCols() {
+  // eingeblendete Spalten im schmalen Fenster wieder schliessen
+  $('#tree-col').classList.remove('show');
+  $('#ctx-col').classList.remove('show');
+}
+
 function showTab(tab) {
   S.tab = tab;
-  const sheet = $('#sheet');
-  if (sheet.classList.contains('collapsed')) sheet.classList.remove('collapsed');
+  const dock = $('#dock');
+  dock.classList.remove('collapsed');
   if (tab === 'nachweise') loadDesign().then(render); else render();
   if (tab === 'ergebnisse' && S.member) loadMemberChart();
+  setTimeout(() => view.resize(), 60);
 }
 
 function bindShell() {
-  $$('#tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  $$('#toolbar .tb[data-tool]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tool)));
+  $('#btn-solve').addEventListener('click', () => {
+    const s = S.state;
+    if (!s) return;
+    if (s.has_stellungen && s.stellungen.some(x => x.active)) ACTIONS['solve-stellungen']();
+    else startJob('/api/solve', {kind: 'all', design: true, fatigue: true});
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'F5' && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); $('#btn-solve').click(); }
+    if (e.key === 'Escape' && !$('#modal').hidden) closeModal();
+  });
+  // Schmale Fenster: Modellbaum und Auswahl lassen sich einblenden
+  const showCol = id => {
+    const on = $('#' + id).classList.contains('show');
+    $('#tree-col').classList.remove('show');
+    $('#ctx-col').classList.remove('show');
+    if (!on) $('#' + id).classList.add('show');
+  };
+  $('#btn-tree-col').addEventListener('click', () => showCol('tree-col'));
+  $('#btn-ctx-col').addEventListener('click', () => showCol('ctx-col'));
+  $$('[data-close-col]').forEach(b => b.addEventListener('click',
+    () => $('#' + b.dataset.closeCol).classList.remove('show')));
   $$('#view-tools [data-view]').forEach(b => b.addEventListener('click', () => { if (b.dataset.view === 'fit') view.fit(); else view.setView(b.dataset.view); }));
-  $('#btn-pick').addEventListener('click', () => { view.pickMode = view.pickMode === 'nodes' ? 'elems' : 'nodes'; $('#btn-pick').textContent = view.pickMode === 'nodes' ? 'Kn' : 'El'; $('#btn-pick').classList.toggle('on', view.pickMode === 'elems'); $('#view-hint').textContent = view.pickMode === 'nodes' ? 'Tippen: Knoten wählen · Ziehen: drehen · 2 Finger: zoom/schieben' : 'Tippen: Element wählen · Ziehen: drehen · 2 Finger: zoom/schieben'; });
+  $('#btn-pick').addEventListener('click', () => { view.pickMode = view.pickMode === 'nodes' ? 'elems' : 'nodes'; $('#btn-pick').textContent = view.pickMode === 'nodes' ? 'Kn' : 'El'; $('#btn-pick').classList.toggle('on', view.pickMode === 'elems'); $('#view-hint').textContent = view.pickMode === 'nodes' ? 'Ziehen: drehen · Rad: zoomen · Klick: Knoten wählen' : 'Ziehen: drehen · Rad: zoomen · Klick: Element wählen'; });
   $('#btn-clear-sel').addEventListener('click', () => ACTIONS['clear-sel']());
   $('#btn-deform').addEventListener('click', () => { S.ro.deform = !S.ro.deform; view.opts.deform = S.ro.deform; $('#btn-deform').classList.toggle('on', S.ro.deform); view.draw(); });
   $('#btn-labels').addEventListener('click', () => { view.opts.labels = !view.opts.labels; $('#btn-labels').classList.toggle('on', view.opts.labels); view.draw(); });
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
-  // Bottom-Sheet: tippen wechselt die Groesse, ziehen stellt sie ein
-  const sheet = $('#sheet'), handle = $('#sheet-handle');
+  // Register unten: ziehen stellt die Hoehe ein, Doppelklick klappt ein und aus
+  const dock = $('#dock'), grip = $('#dock-grip');
   let drag = null;
-  handle.addEventListener('pointerdown', e => { drag = {y: e.clientY, h: sheet.getBoundingClientRect().height, moved: false}; handle.setPointerCapture(e.pointerId); });
-  handle.addEventListener('pointermove', e => { if (!drag) return; const dy = drag.y - e.clientY; if (Math.abs(dy) > 6) drag.moved = true; if (drag.moved) { sheet.classList.remove('collapsed', 'full'); sheet.style.height = Math.max(36, Math.min(window.innerHeight - 150, drag.h + dy)) + 'px'; view.resize(); } });
-  handle.addEventListener('pointerup', () => { if (drag && !drag.moved) { sheet.style.height = ''; if (sheet.classList.contains('collapsed')) sheet.classList.remove('collapsed'); else if (sheet.classList.contains('full')) sheet.classList.replace('full', 'collapsed'); else sheet.classList.add('full'); setTimeout(() => view.resize(), 220); } drag = null; });
-  view.onPick = () => updateSelInfo();
+  grip.addEventListener('pointerdown', e => {
+    drag = {y: e.clientY, h: dock.getBoundingClientRect().height};
+    grip.setPointerCapture(e.pointerId);
+  });
+  grip.addEventListener('pointermove', e => {
+    if (!drag) return;
+    dock.classList.remove('collapsed', 'full');
+    dock.style.height = Math.max(34, Math.min(window.innerHeight - 220, drag.h + drag.y - e.clientY)) + 'px';
+    view.resize();
+  });
+  grip.addEventListener('pointerup', () => { drag = null; });
+  grip.addEventListener('dblclick', () => {
+    dock.style.height = '';
+    dock.classList.toggle('collapsed');
+    setTimeout(() => view.resize(), 60);
+  });
+  view.onPick = () => { updateSelInfo(); pickToContext(); };
   new ResizeObserver(() => view.resize()).observe($('#view-wrap'));
   window.addEventListener('orientationchange', () => setTimeout(() => view.resize(), 300));
+}
+
+function pickToContext() {
+  // Element in der Ansicht gewaehlt -> zugehoerigen Stab rechts zeigen
+  if (!S.geom || !S.geom.member_of) return;
+  const e = Array.from(S.sel.elems)[S.sel.elems.size - 1];
+  if (e === undefined) return;
+  const k = S.geom.member_of[e];
+  if (k === undefined) return;
+  const name = S.geom.member_names[k];
+  if (name && name !== S.ctxMember) { S.ctxMember = name; S.member = name; renderTree(); renderContext(); }
 }
 
 async function watchVersion() {
@@ -1164,7 +1735,7 @@ async function watchVersion() {
     if (s.version !== S.version) {
       const wasBusy = S.state && S.state.busy;
       S.state = s; S.version = s.version; updateHeader();
-      await refreshGeometry(); await loadResults(); render();
+      await refreshGeometry(); await loadResults(); await loadStellungen(); render();
       if (s.busy && !wasBusy) pollJob();
     } else if (s.busy && !(S.job && S.job.status === 'laeuft')) { S.state = s; pollJob(); }
   } catch (e) { /* offline: naechster Versuch */ }

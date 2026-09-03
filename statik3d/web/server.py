@@ -1981,7 +1981,7 @@ def make_report(st: State, fmt: str = "html") -> tuple[bytes, str, str]:
         fname = _safe_name(m.name) + "_bericht." + fmt
         path = os.path.join(st.tmpdir, fname)
         try:
-            write_report(m, an, path, fmt=fmt)
+            write_report(m, an, path, fmt=fmt, stellungen=st.stellungen_analysis)
         except ImportError as ex:
             raise ApiError(f"PDF benötigt reportlab (pip install reportlab svglib): {ex}")
         with open(path, "rb") as f:

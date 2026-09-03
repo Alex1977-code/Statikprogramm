@@ -20,10 +20,15 @@ from . import svg  # noqa: F401
 
 
 def write_report(model, analysis=None, path: str = "bericht.html", fmt: str = "html",
-                 results=None, **options) -> str:
+                 results=None, stellungen=None, **options) -> str:
     """Bericht schreiben. fmt: 'html' | 'pdf' | 'md' (Markdown). Rueckgabe: Pfad.
+
+    stellungen: Ergebnis von stellungen.solve_stellungen() - dann enthaelt der
+    Bericht das Kapitel "Stellungen des Systems" mit der Umhuellenden ueber
+    alle Stellungen.
     Zusaetzliche Schluesselwortargumente sind Berichtsoptionen (siehe Report.DEFAULTS)."""
-    rep = Report(model, analysis, results=results, options=options or None)
+    rep = Report(model, analysis, results=results, options=options or None,
+                 stellungen=stellungen)
     f = (fmt or "html").lower().lstrip(".")
     if f in ("html", "htm"):
         return rep.to_html(path)

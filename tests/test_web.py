@@ -93,10 +93,13 @@ def test_static_and_auth():
     try:
         st, html, hdr = c.get("/", raw=True)
         check("Startseite ausgeliefert", st == 200 and b"Statik3D" in html and b"app.js" in html)
+        check("Arbeitsflaeche mit Modellbaum, Ansicht, Register und Kontextpanel",
+              all(x in html for x in (b'id="tree"', b'id="view"', b'id="dock"',
+                                      b'id="ctx"', b'id="stellungen-bar"')))
         st, js, _ = c.get("/app.js", raw=True)
         check("app.js ausgeliefert", st == 200 and b"View3D" in js)
         st, css, _ = c.get("/app.css", raw=True)
-        check("app.css ausgeliefert", st == 200 and b"#sheet" in css)
+        check("app.css ausgeliefert", st == 200 and b"#dock" in css and b"#tree-col" in css)
         st, man, _ = c.get("/manifest.webmanifest")
         check("Manifest fuer Startbildschirm", st == 200 and man.get("display") == "standalone")
         st, _, _ = c.get("/icon.svg", raw=True)
@@ -362,6 +365,94 @@ def test_contact_and_import():
     _assert_since(n0)
 
 
+def test_stellungen():
+    """Stellungen des Systems: anlegen, aendern, Geometrie je Stellung, rechnen."""
+    n0 = len(RESULTS)
+    server, c = _server()
+    try:
+        st, j, _ = c.post("/api/example", {"name": "bascule"})
+        check("Beispiel Klappbruecke geladen", st == 200 and j["state"]["has_stellungen"])
+        s = j["state"]
+        check("fuenf Stellungen im Zustand", len(s["stellungen"]) == 5)
+        check("Stellung nennt Winkel und bewegtes Bauteil",
+              s["stellungen"][2]["value_text"] == "32°"
+              and s["stellungen"][2]["n_moving_elements"] > 0)
+        check("Bewegungsarten und Elementgruppen gemeldet",
+              "rotate" in s["movement_kinds"] and "klappe" in s["element_groups"])
+
+        st, g1, _ = c.get("/api/geometry?stellung=S1")
+        st2, g3, _ = c.get("/api/geometry?stellung=S3")
+        check("Geometrie je Stellung unterschiedlich",
+              st == 200 and st2 == 200 and g1["nodes"] != g3["nodes"])
+        check("Geometrie nennt die gezeigte Stellung und die bewegten Knoten",
+              g3["stellung"] == "S3" and len(g3["moving"]) > 0)
+        check("Verkehrsstellung hat mehr Lager als die geoeffnete",
+              len(g1["supports"]) > len(g3["supports"]))
+
+        st, j, _ = c.op(op="set_active_stellung", name="S4")
+        check("Stellung wechseln", st == 200 and j["state"]["active_stellung"] == "S4")
+        st, j, _ = c.op(op="add_stellung", name="SX", title="Probe", angle=45)
+        check("Stellung anlegen", st == 200 and any(x["name"] == "SX" for x in j["state"]["stellungen"]))
+        neu = [x for x in j["state"]["stellungen"] if x["name"] == "SX"][0]
+        check("neue Stellung erbt Drehachse und Bauteil",
+              neu["axis_dir"] == [0.0, -1.0, 0.0] and neu["moving_groups"] == ["klappe"])
+        st, j, _ = c.op(op="edit_stellung", stellung="SX", angle=55, active=False)
+        neu = [x for x in j["state"]["stellungen"] if x["name"] == "SX"][0]
+        check("Stellung aendern", st == 200 and neu["angle"] == 55 and not neu["active"])
+        n_lager = len(neu["supports"])
+        st, j, _ = c.op(op="stellung_support", stellung="SX", nodes=[0], dofs="z")
+        neu = [x for x in j["state"]["stellungen"] if x["name"] == "SX"][0]
+        check("Lager nur in dieser Stellung",
+              st == 200 and len(neu["supports"]) == n_lager + 1
+              and any(x["node"] == 0 and x["dofs"] == [2] for x in neu["supports"]))
+        check("Lager der Stellung wirkt nicht im Modell",
+              not any(x["node"] == 0 and x["dofs"] == [2] for x in j["state"]["supports"]))
+        st, j, _ = c.op(op="remove_stellung_support", stellung="SX", nodes=[0])
+        neu = [x for x in j["state"]["stellungen"] if x["name"] == "SX"][0]
+        check("Lager der Stellung entfernen", st == 200 and len(neu["supports"]) == n_lager)
+        st, j, _ = c.op(op="remove_stellung", stellung="SX")
+        check("Stellung entfernen", st == 200 and len(j["state"]["stellungen"]) == 5)
+        st, j, _ = c.op(op="edit_stellung", stellung="gibtsnicht")
+        check("unbekannte Stellung wird abgewiesen", st == 400 and "error" in j)
+        st, j, _ = c.op(op="add_stellung", name="S1")
+        check("doppelter Name wird abgewiesen", st == 400)
+        st, j, _ = c.op(op="stellung_series", prefix="R", start=0, end=90, steps=3)
+        check("Stellungsserie anlegen", st == 200 and len(j["state"]["stellungen"]) == 8)
+        for name in ("R1", "R2", "R3"):
+            c.op(op="remove_stellung", stellung=name)
+
+        st, j, _ = c.post("/api/solve", {"kind": "stellungen", "workers": 1,
+                                         "design": True, "fatigue": True})
+        job = c.wait_job()
+        check("Rechenlauf ueber alle Stellungen", job["status"] == "fertig", job.get("error", ""))
+        st, sp, _ = c.get("/api/stellungen")
+        check("Umhuellende vorhanden", st == 200 and sp["has_result"])
+        check("je Stellung eine Ausnutzung",
+              len(sp["stellungen"]) == 5 and all(0 < x["util"] < 1 for x in sp["stellungen"]))
+        check("Staebe mit massgebender Stellung",
+              sp["members"] and sp["members"][0]["stellung"] in [x["name"] for x in sp["stellungen"]])
+        check("Ausnutzung je Stellung fuer die Kurve",
+              len(sp["members"][0]["per_stellung"]) == 5)
+        check("Nachweistabelle mit Kopfzeile", len(sp["table"]) == len(sp["members"]) + 1)
+        check("groesste Ausnutzung gemeldet", 0 < sp["util_max"] <= 1.0)
+        st, s2, _ = c.get("/api/state")
+        check("Zustand kennt das Stellungsergebnis", s2["has_stellungen_analysis"])
+        st, mdl, _ = c.get("/api/model")
+        check("Stellungen im Modell-JSON", len(mdl["stellungen"]) == 5 and mdl["format"] >= 3)
+
+        # Modell ohne Stellungen: Oberflaeche darf nichts vermissen
+        st, j, _ = c.post("/api/example", {"name": "frame"})
+        check("Modell ohne Stellungen", st == 200 and not j["state"]["has_stellungen"])
+        st, sp, _ = c.get("/api/stellungen")
+        check("Umhuellende ohne Stellungen ist leer",
+              st == 200 and not sp["has_result"] and sp["n_stellungen"] == 0)
+        st, j, _ = c.post("/api/solve", {"kind": "stellungen"})
+        check("Rechnen ohne Stellungen wird abgewiesen", st == 400)
+    finally:
+        server.shutdown()
+    _assert_since(n0)
+
+
 def test_bound_state():
     """Gemeinsamer Zustand mit einem 'GUI'-Objekt (model/analysis/results)."""
     n0 = len(RESULTS)
@@ -397,7 +488,7 @@ def test_bound_state():
 
 def main():
     for t in (test_static_and_auth, test_model_editing, test_solve_results_report,
-              test_contact_and_import, test_bound_state):
+              test_contact_and_import, test_stellungen, test_bound_state):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
