@@ -865,7 +865,7 @@ GEOM_OPS = {"new", "add_node", "move_node", "delete_nodes", "delete_elements", "
             "contact_pair", "remove_contact", "clear_contact", "nodal_load", "beam_load",
             "face_load", "temp_load", "gravity", "remove_load", "clear_loads", "set_active_case",
             "add_case", "remove_case", "copy_case", "auto_members", "set_member", "remove_member",
-            "assign", "edit_case"}
+            "assign", "edit_case", "staebe_anschliessen"}
 
 
 def op(name: str):
@@ -1421,6 +1421,26 @@ def _op_stellungen_rechnen(st, m, d):
         st.log.append(z)
     return (f"{len(liste)} Stellungen gerechnet: eta = {umh.eta:.3f}"
             + (f", massgebend {umh.massgebende_stellung}" if umh.massgebende_stellung else ""))
+
+
+@op("staebe_anschliessen")
+def _op_staebe_anschliessen(st, m, d):
+    """Freie Stabenden auf die Achse des naechsten Stabes loten und dort teilen."""
+    from ..importers import hicad_szn as Z
+    radius = _f(d, "radius", 0.06)
+    if radius <= 0:
+        raise ApiError("Radius muss groesser als null sein")
+    log: list = []
+    r = Z.an_staebe_anschliessen(m, radius, log)
+    zus = Z.zusammenhang(m, log)
+    for z in log:
+        st.log.append(z)
+    if not r["angeschlossen"]:
+        return (f"Kein freies Stabende innerhalb von {radius * 1e3:.0f} mm - "
+                "nichts geaendert")
+    return (f"{r['angeschlossen']} Stabenden angeschlossen, {r['geteilt']} Staebe "
+            f"geteilt, groesster Versatz {r['groesster_versatz'] * 1e3:.1f} mm; "
+            f"das System hat noch {zus['teile']} Teile")
 
 
 @op("din19704")

@@ -27,6 +27,7 @@ from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialo
                       parse_int_list)
 from .worker import SolveWorker
 from . import viewport as vp
+from . import design as dsg
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 
 FIELDS = ["|u| Verschiebung", "ux", "uy", "uz", "Vergleichsspannung",
@@ -47,10 +48,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.path = None
         self.worker = None
 
+        self.setStyleSheet(dsg.stil())
         self._build_viewport()
         self._build_panels()
         self._build_bottom()
         self._build_menu()
+        self._build_kopfzeile()
+        self._build_werkzeugleiste()
+        self._build_baum()
         self._refresh_title()
         self.statusBar().showMessage("Bereit")
         self.lbl_version = QtWidgets.QLabel()
@@ -79,9 +84,16 @@ class MainWindow(QtWidgets.QMainWindow):
         central = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(central)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
         self.plotter = QtInteractor(central)
         self.plotter.set_background("white")
-        lay.addWidget(self.plotter.interactor)
+        lay.addWidget(self.plotter.interactor, 1)
+        # Filmstreifen der Stellungen unter der Ansicht (Entwurf "Werkbank")
+        self.film = dsg.Filmstreifen(central)
+        self.film.gewaehlt.connect(self._stellung_gewaehlt)
+        self.film.neu.connect(self.neue_stellung)
+        self.film.rechnen.connect(self.stellungen_rechnen)
+        lay.addWidget(self.film, 0)
         self.setCentralWidget(central)
         try:
             self.plotter.enable_point_picking(callback=self._picked, show_message=False,
@@ -183,7 +195,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
     def _build_panels(self):
         dock = QtWidgets.QDockWidget("Eingaben", self)
-        dock.setAllowedAreas(QtCore.Qt.LeftDockWidgetArea)
+        dock.setAllowedAreas(QtCore.Qt.RightDockWidgetArea)
         dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setUsesScrollButtons(True)
@@ -191,13 +203,174 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self._scroll(self._tab_mesh()), "Netz")
         self.tabs.addTab(self._scroll(self._tab_bc()), "Lager/Lasten")
         self.tabs.addTab(self._scroll(self._tab_cases()), "Lastfälle")
+        self.tabs.addTab(self._scroll(self._tab_stellungen()), "Stellungen")
         self.tabs.addTab(self._scroll(self._tab_contact()), "Kontakt")
         self.tabs.addTab(self._scroll(self._tab_design()), "Nachweise")
         self.tabs.addTab(self._scroll(self._tab_solve()), "Berechnung")
         self.tabs.addTab(self._scroll(self._tab_results()), "Ergebnisse")
         self.tabs.setMinimumWidth(470)
         dock.setWidget(self.tabs)
+        self.eingaben_dock = dock
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+
+    # ------------------------------------------------------------------
+    # Erscheinungsbild: Kopfzeile, Werkzeugleiste, Modellbaum
+    # ------------------------------------------------------------------
+    def _build_kopfzeile(self):
+        """Dunkle Kopfzeile ueber dem Menue: Programm, Bauteil, Zustand."""
+        self.kopf = dsg.Kopfzeile(self)
+        halter = QtWidgets.QWidget(self)
+        lay = QtWidgets.QVBoxLayout(halter)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self.kopf)
+        lay.addWidget(self.menuBar())
+        self.setMenuWidget(halter)
+        self._refresh_kopf()
+
+    def _build_werkzeugleiste(self):
+        """Werkzeugleiste wie im Entwurf: Wege in die Register und Berechnen."""
+        tb = QtWidgets.QToolBar("Werkzeuge", self)
+        tb.setMovable(False)
+        tb.setFloatable(False)
+        tb.setIconSize(QtCore.QSize(16, 16))
+        tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        self.addToolBar(QtCore.Qt.TopToolBarArea, tb)
+        self.werkzeugleiste = tb
+
+        def knopf(text, hinweis, fn, name=""):
+            a = QtGui.QAction(text, self)
+            a.setToolTip(hinweis)
+            a.triggered.connect(fn)
+            tb.addAction(a)
+            if name:
+                w = tb.widgetForAction(a)
+                if w is not None:
+                    w.setObjectName(name)
+            return a
+
+        knopf("Datei ▾", "Neu, Öffnen, Speichern, Importieren, Exportieren",
+              lambda: self._menue_zeigen(0))
+        knopf("Übernehmen aus Modell ▾", "Aus RFEM, HiCAD, IFC, DXF, SDNF übernehmen",
+              self.import_file)
+        tb.addSeparator()
+        for text, hinweis, register in (
+                ("⬡ Netz", "Netzgeneratoren und Elemente", "Netz"),
+                ("⇩ Lager / Lasten", "Lager, Lasten, Lastfälle", "Lager/Lasten"),
+                ("⟳ Stellungen", "Stellungen beweglicher Brücken", "Stellungen"),
+                ("Kontakt", "Kontakt, Spalt, Reibung", "Kontakt"),
+                ("✓ Nachweise", "Nachweise nach EC3 und Ermüdung", "Nachweise")):
+            knopf(text, hinweis, lambda _=False, r=register: self.register_zeigen(r))
+        tb.addSeparator()
+        knopf("▶ Berechnen  F5", "Berechnung starten (F5)", self.do_solve, "start")
+        knopf("≡ Bericht", "Bericht als HTML oder PDF", self.make_report)
+        leer = QtWidgets.QWidget()
+        leer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        tb.addWidget(leer)
+        einheit = QtWidgets.QLabel("m · N · Pa   ")
+        einheit.setStyleSheet(f"color:{dsg.FARBEN['matt']}; font-size:12px;")
+        tb.addWidget(einheit)
+
+    def _menue_zeigen(self, i: int):
+        mb = self.menuBar()
+        menues = [a.menu() for a in mb.actions() if a.menu() is not None]
+        if 0 <= i < len(menues):
+            m = menues[i]
+            m.popup(self.mapToGlobal(QtCore.QPoint(12, 74)))
+
+    def register_zeigen(self, name: str):
+        """Register der Eingaben nach seinem Namen zeigen."""
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == name:
+                self.tabs.setCurrentIndex(i)
+                if hasattr(self, "eingaben_dock"):
+                    self.eingaben_dock.show()
+                return True
+        return False
+
+    def _build_baum(self):
+        """Modellbaum links: was im Modell steckt."""
+        dock = QtWidgets.QDockWidget("Modellbaum", self)
+        dock.setAllowedAreas(QtCore.Qt.LeftDockWidgetArea)
+        dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
+        self.baum = dsg.Modellbaum(dock)
+        self.baum.angeklickt.connect(self._baum_geklickt)
+        dock.setWidget(self.baum)
+        dock.setMinimumWidth(230)
+        dock.setMaximumWidth(340)
+        self.baum_dock = dock
         self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)
+
+    #: Zweig des Modellbaums -> Register der Eingaben
+    BAUM_ZIEL = {
+        "modell": "Modell", "elemente": "Netz", "querschnitte": "Modell",
+        "werkstoffe": "Modell", "lager": "Lager/Lasten", "lastfaelle": "Lastfälle",
+        "kombinationen": "Lastfälle", "kontakt": "Kontakt", "staebe": "Nachweise",
+        "stab": "Nachweise", "stellungen": "Stellungen", "stellung": "Stellungen",
+    }
+
+    def _baum_geklickt(self, art: str, name: str):
+        if art == "stellung":
+            self._stellung_gewaehlt(name.split("·", 1)[-1].strip())
+        ziel = self.BAUM_ZIEL.get(art)
+        if ziel:
+            self.register_zeigen(ziel)
+
+    def _refresh_kopf(self):
+        """Kopfzeile auf den Stand bringen: Bauteil, Version, Zustand."""
+        if not hasattr(self, "kopf"):
+            return
+        from .. import update as upd
+        try:
+            ver = upd.version_label()
+        except Exception:            # noqa: BLE001 - die Kopfzeile darf nie scheitern
+            ver = __version__
+        m = self.model
+        bauteil = m.meta.get("Bauteil") or m.name or "Neues Modell"
+        teile = [bauteil, f"Statik3D {ver}"]
+        norm = m.meta.get("Norm")
+        if norm:
+            teile.insert(1, norm)
+        stellungen = getattr(self, "stellungen", None) or []
+        modell = f"{m.nn} Knoten · {len(m.elements)} Elemente"
+        if stellungen:
+            modell += f" · {len(stellungen)} Stellungen"
+        if self.analysis is not None:
+            info = getattr(self.analysis, "info", {}) or {}
+            t = info.get("time") or info.get("dauer")
+            zustand = "berechnet" + (f" · {float(t):.1f} s" if t else "")
+            art = "gut"
+        elif self.results is not None:
+            zustand, art = "Ergebnis vorhanden", "gut"
+        else:
+            zustand, art = "bereit", "matt"
+        self.kopf.setzen(" · ".join(teile), modell, zustand, art)
+
+    def _refresh_baum(self):
+        if hasattr(self, "baum"):
+            self.baum.fuellen(self.model, self._stellungen_liste())
+        if hasattr(self, "film"):
+            st = self._stellungen_liste()
+            umh = ""
+            u = getattr(self, "umhuellende", None)
+            if u is not None:
+                umh = f"Umhüllende η = {u.eta:.3f}".replace(".", ",")
+            self.film.fuellen(st, umh)
+
+    def _stellungen_liste(self) -> list:
+        """Stellungen als einfache Liste fuer Baum und Filmstreifen."""
+        st = getattr(self, "stellungen", None) or []
+        u = getattr(self, "umhuellende", None)
+        erg = {}
+        fuehrt = ""
+        if u is not None:
+            for e in u.reihe.ergebnisse:
+                erg[e.stellung.name] = None if e.fehler else float(e.eta)
+            besser = [e for e in u.reihe.ergebnisse if not e.fehler]
+            if besser:
+                fuehrt = max(besser, key=lambda e: e.eta).stellung.name
+        return [{"name": s.name, "winkel": float(s.winkel),
+                 "eta": erg.get(s.name), "fuehrt": s.name == fuehrt} for s in st]
 
     @staticmethod
     def _scroll(w):
@@ -552,6 +725,183 @@ class MainWindow(QtWidgets.QMainWindow):
         return w
 
     # ---- Tab 5: Kontakt ----------------------------------------------
+    # ------------------------------------------------------------------
+    # Register: Stellungen beweglicher Bruecken
+    # ------------------------------------------------------------------
+    def _tab_stellungen(self):
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        g = QtWidgets.QGroupBox("Stellungen des Systems")
+        gl = QtWidgets.QVBoxLayout(g)
+        self.tbl_stellung = QtWidgets.QTableWidget(0, 6)
+        self.tbl_stellung.setHorizontalHeaderLabels(
+            ["Stellung", "Winkel [°]", "Lager aus", "Lastfälle", "η", "u max [mm]"])
+        self.tbl_stellung.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.tbl_stellung.itemSelectionChanged.connect(self._stellung_zeile)
+        self.tbl_stellung.setMinimumHeight(150)
+        gl.addWidget(self.tbl_stellung)
+        b1 = QtWidgets.QPushButton("+ Stellung")
+        b1.clicked.connect(self.neue_stellung)
+        b2 = QtWidgets.QPushButton("Ändern")
+        b2.clicked.connect(self.stellung_aendern)
+        b3 = QtWidgets.QPushButton("Entfernen")
+        b3.clicked.connect(self.stellung_entfernen)
+        gl.addWidget(row(b1, b2, b3))
+        b = QtWidgets.QPushButton("▶ Alle Stellungen rechnen")
+        b.setObjectName("start")
+        b.clicked.connect(self.stellungen_rechnen)
+        gl.addWidget(b)
+        self.lbl_umh = QtWidgets.QLabel("noch nicht gerechnet")
+        self.lbl_umh.setWordWrap(True)
+        gl.addWidget(self.lbl_umh)
+        lay.addWidget(g)
+
+        g = QtWidgets.QGroupBox("DIN 19704 / ZTV-ING")
+        gl = QtWidgets.QVBoxLayout(g)
+        b = QtWidgets.QPushButton("Kombinationen nach DIN 19704 bilden")
+        b.clicked.connect(self.din19704_bilden)
+        gl.addWidget(b)
+        self.txt_regelwerk = QtWidgets.QPlainTextEdit()
+        self.txt_regelwerk.setReadOnly(True)
+        self.txt_regelwerk.setStyleSheet("font-family: monospace; font-size: 11px;")
+        self.txt_regelwerk.setMinimumHeight(160)
+        self.txt_regelwerk.setPlainText(
+            "Die Beiwerte sind Voreinstellungen und gegen die geltende Fassung der "
+            "Norm zu bestätigen. Nach dem Bilden stehen hier alle Werte mit ihrem "
+            "Zustand und die ZTV-ING-Prüfliste.")
+        gl.addWidget(self.txt_regelwerk)
+        lay.addWidget(g)
+        lay.addStretch(1)
+        return w
+
+    def _stellungen_obj(self) -> list:
+        if not hasattr(self, "stellungen"):
+            self.stellungen = []
+        return self.stellungen
+
+    def refresh_stellungen(self):
+        if not hasattr(self, "tbl_stellung"):
+            return
+        u = getattr(self, "umhuellende", None)
+        erg = {}
+        if u is not None:
+            for e in u.reihe.ergebnisse:
+                erg[e.stellung.name] = e
+        rows = []
+        for s in self._stellungen_obj():
+            e = erg.get(s.name)
+            rows.append([s.name, f"{s.winkel:g}", ", ".join(s.lager_aus) or "–",
+                         ", ".join(s.faelle) or "alle",
+                         "–" if e is None or e.fehler else f"{e.eta:.3f}",
+                         "–" if e is None or e.fehler else f"{e.u_max * 1e3:.3f}"])
+        self._fill(self.tbl_stellung, rows)
+        if u is not None:
+            self.lbl_umh.setText(
+                (f"Umhüllende über alle Stellungen: η = {u.eta:.3f}"
+                 + (f" – maßgebend {u.massgebende_stellung}"
+                    if u.massgebende_stellung else "")
+                 + f"; größte Verformung {u.u_max * 1e3:.3f} mm").replace(".", ","))
+        elif self._stellungen_obj():
+            self.lbl_umh.setText(f"{len(self._stellungen_obj())} Stellungen angelegt – "
+                                 "noch nicht gerechnet")
+
+    def _stellung_zeile(self):
+        z = self.tbl_stellung.currentRow()
+        st = self._stellungen_obj()
+        if 0 <= z < len(st):
+            self._stellung_gewaehlt(st[z].name)
+
+    def _stellung_gewaehlt(self, name: str):
+        """Stellung auswaehlen: Zeile markieren und im Filmstreifen hervorheben."""
+        self.gewaehlte_stellung = name
+        if hasattr(self, "film"):
+            self.film.waehlen(name)
+        st = self._stellungen_obj()
+        for i, s in enumerate(st):
+            if s.name == name and hasattr(self, "tbl_stellung"):
+                if self.tbl_stellung.currentRow() != i:
+                    self.tbl_stellung.blockSignals(True)
+                    self.tbl_stellung.selectRow(i)
+                    self.tbl_stellung.blockSignals(False)
+                break
+
+    def neue_stellung(self):
+        from .dialogs import StellungDialog
+        d = StellungDialog(self, None, self.model)
+        if d.exec():
+            s = d.stellung()
+            liste = self._stellungen_obj()
+            liste[:] = [x for x in liste if x.name != s.name]
+            liste.append(s)
+            liste.sort(key=lambda x: x.winkel)
+            self.umhuellende = None
+            self.info(f"Stellung {s.name} angelegt ({s.beschriftung()})")
+            self.refresh_all()
+
+    def stellung_aendern(self):
+        from .dialogs import StellungDialog
+        z = self.tbl_stellung.currentRow()
+        liste = self._stellungen_obj()
+        if not (0 <= z < len(liste)):
+            return self.error("Zuerst eine Stellung in der Liste wählen")
+        d = StellungDialog(self, liste[z], self.model)
+        if d.exec():
+            liste[z] = d.stellung()
+            liste.sort(key=lambda x: x.winkel)
+            self.umhuellende = None
+            self.refresh_all()
+
+    def stellung_entfernen(self):
+        z = self.tbl_stellung.currentRow()
+        liste = self._stellungen_obj()
+        if not (0 <= z < len(liste)):
+            return self.error("Zuerst eine Stellung in der Liste wählen")
+        name = liste.pop(z).name
+        self.umhuellende = None
+        self.info(f"Stellung {name} entfernt")
+        self.refresh_all()
+
+    def stellungen_rechnen(self):
+        from ..bridges.positions import Stellungsreihe
+        liste = self._stellungen_obj()
+        if not liste:
+            return self.error("Es ist keine Stellung angelegt")
+        reihe = Stellungsreihe(self.model, self.model.name)
+        for s in liste:
+            reihe.add(s)
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            umh = reihe.rechnen(kombinationen=True, nachweise=True)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        self.stellungsreihe = reihe
+        self.umhuellende = umh
+        for z in reihe.log:
+            self.info(z)
+        self.info(f"{len(liste)} Stellungen gerechnet: eta = {umh.eta:.3f}"
+                  + (f", maßgebend {umh.massgebende_stellung}"
+                     if umh.massgebende_stellung else ""))
+        self.refresh_all()
+
+    def din19704_bilden(self):
+        from ..bridges.din19704 import Regelwerk, pruefliste
+        rw = getattr(self, "regelwerk", None) or Regelwerk()
+        self.regelwerk = rw
+        log: list = []
+        namen = rw.kombinationen(self.model, log=log)
+        for z in log:
+            self.info(z)
+        offen = rw.offen()
+        text = [rw.bericht(), "", "ZTV-ING, bewegliche Brücken:"]
+        for thema, ok, hinweis in pruefliste(getattr(self, "stellungsreihe", None),
+                                             self.model):
+            text.append(f"  {'erfüllt ' if ok else 'offen   '} {thema}: {hinweis}")
+        self.txt_regelwerk.setPlainText("\n".join(text))
+        self.info(f"{len(namen)} Kombinationen nach DIN 19704 gebildet"
+                  + (f"; {len(offen)} Beiwerte sind noch zu bestätigen" if offen else ""))
+        self.refresh_all()
+
     def _tab_contact(self):
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
@@ -796,6 +1146,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_cases()
         self.refresh_contact()
         self.refresh_members()
+        self.refresh_stellungen()
+        self._refresh_kopf()
+        self._refresh_baum()
         self.redraw()
 
     def refresh_cases(self):

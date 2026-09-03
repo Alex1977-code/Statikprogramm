@@ -264,11 +264,61 @@ def _from_archive(path: str, model=None, log=None, **options):
         C.say(log, "Teileliste (Bezeichnung {Gruppe} {Positionsnummer}):")
         for d in stueck:
             C.say(log, "  " + d)
+    # Geometrie aus dem Szenenteil: Stabachsen, die HiCAD selbst nennt
+    n_stab = n_knoten = 0
+    if options.get("geometrie", True):
+        n_stab, n_knoten = _szn_geometrie(path, m, ents, log, **options)
     C.say(log, f"HiCAD-Archiv gelesen: {n_sec} Profile mit Katalogwerten, "
-               f"{n_plate} Blechdicken, {n_mat} Werkstoffe, {len(stueck)} Positionen. "
-               "Die 3D-Geometrie steht in den Teilen SZN und VIEWER.GFIG in einem "
-               "nicht veroeffentlichten Binaerformat und wird nicht geraten. " + EXPORT_HINT)
+               f"{n_plate} Blechdicken, {n_mat} Werkstoffe, {len(stueck)} Positionen"
+               + (f", {n_stab} Staebe mit {n_knoten} Knoten aus der Szene." if n_stab
+                  else ". Die Szene nennt keine Stabachsen."))
+    if not n_stab:
+        C.say(log, "Fuer die vollstaendige Geometrie: " + EXPORT_HINT)
     return m
+
+
+def _szn_geometrie(path, m, ents, log, **options):
+    """Stabachsen aus dem Szenenteil (SZN) uebernehmen.
+
+    HiCAD legt im Szenenteil je Bauteil die Achse als eigene Punktart ab. Wo
+    sie steht, wird sie unmittelbar als Stabachse uebernommen; der Querschnitt
+    folgt aus den senkrecht dazu gemessenen Massen und wird in den benutzten
+    Teiletabellen gesucht. Naeheres in hicad_szn.py.
+    """
+    from . import hicad_sza as A
+    from . import hicad_szn as Z
+    szn = None
+    try:
+        for e in A.archive_entries(path, data=True):
+            if e["kurz"].upper().endswith(".SZN") and e.get("data"):
+                szn = e["data"]
+                break
+    except Exception as ex:      # noqa: BLE001 - Geometrie ist eine Zugabe
+        C.warn(log, f"Szenenteil nicht lesbar: {ex}")
+        return 0, 0
+    if not szn or not Z.is_szn(szn):
+        return 0, 0
+    try:
+        r = Z.in_modell(szn, m, profile=dict(m.sections), log=log)
+    except Exception as ex:      # noqa: BLE001
+        C.warn(log, f"Szenenteil nicht auswertbar: {ex}")
+        return 0, 0
+    if r["staebe"]:
+        radius = float(options.get("anschluss") or 0.0)
+        if radius > 0:
+            Z.an_staebe_anschliessen(m, radius, log)
+        Z.zusammenhang(m, log)
+        if radius <= 0:
+            C.say(log, "Die Querstaebe enden an der Aussenkante der Pfosten. Mit der "
+                       "Option anschluss=0.06 (60 mm) werden freie Stabenden auf die "
+                       "Achse des naechsten Stabes gelotet und die Staebe dort geteilt; "
+                       "in der Oberflaeche macht das 'Freie Stabenden anschliessen'.")
+        C.say(log, f"Szene: {r['staebe']} Staebe mit {r['knoten']} Knoten aus den "
+                   f"Bauteilachsen uebernommen (Laengen und Lage aus der Datei, "
+                   f"Querschnitte ueber die gemessenen Masse zugeordnet). "
+                   f"Bleche, Verbindungsmittel und die genaue Koerpergeometrie sind "
+                   f"nicht enthalten - dafuer den Exportweg nehmen: " + EXPORT_HINT)
+    return r["staebe"], r["knoten"]
 
 
 def _from_zip(path: str, model, log, **options):

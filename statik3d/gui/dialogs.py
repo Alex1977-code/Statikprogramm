@@ -745,3 +745,92 @@ class JointDialog(QtWidgets.QDialog):
 
     def fe_kind(self) -> str:
         return self.cb_fe.currentData()
+
+
+class StellungDialog(QtWidgets.QDialog):
+    """Eine Stellung des Systems anlegen oder aendern (bewegliche Bruecken).
+
+    Jede Stellung ist ein eigener Rechenlauf: welche Lager greifen, welche
+    Lastfaelle gelten, um welchen Winkel das bewegte Bauteil gedreht ist und
+    welches Antriebsmoment es haelt.
+    """
+
+    def __init__(self, parent=None, stellung=None, model=None):
+        super().__init__(parent)
+        self.setWindowTitle("Stellung" + (f" {stellung.name}" if stellung else " anlegen"))
+        self._model = model
+        s = stellung
+        lay = QtWidgets.QVBoxLayout(self)
+
+        self.ed_name = QtWidgets.QLineEdit(s.name if s else "")
+        self.ed_winkel = NumEdit(s.winkel if s else 0.0, 80)
+        lay.addWidget(row("Name", self.ed_name, "Stellungswinkel [°]", self.ed_winkel))
+        self.ed_text = QtWidgets.QLineEdit(s.beschreibung if s else "")
+        lay.addWidget(row("Beschreibung", self.ed_text))
+
+        g = QtWidgets.QGroupBox("Lager und Lastfälle in dieser Stellung")
+        gl = QtWidgets.QVBoxLayout(g)
+        self.ed_aus = QtWidgets.QLineEdit(", ".join(s.lager_aus) if s else "")
+        self.ed_aktiv = QtWidgets.QLineEdit(", ".join(s.lager_aktiv) if s else "")
+        gl.addWidget(row("Lager aus (Namen, Komma)", self.ed_aus))
+        gl.addWidget(row("nur diese Lager aktiv (leer = alle)", self.ed_aktiv))
+        self.ed_faelle = QtWidgets.QLineEdit(", ".join(s.faelle) if s else "")
+        gl.addWidget(row("Lastfälle (leer = alle)", self.ed_faelle))
+        if model is not None and model.load_cases:
+            hint = QtWidgets.QLabel("vorhanden: " + ", ".join(list(model.load_cases)[:12]))
+            hint.setStyleSheet("color:#66717c; font-size:11px;")
+            hint.setWordWrap(True)
+            gl.addWidget(hint)
+        lay.addWidget(g)
+
+        g = QtWidgets.QGroupBox("Bewegtes Bauteil drehen")
+        gl = QtWidgets.QVBoxLayout(g)
+        self.ed_dreh = NumEdit(s.dreh_winkel if s else 0.0, 80)
+        self.ed_gruppen = QtWidgets.QLineEdit(", ".join(s.dreh_gruppen) if s else "")
+        gl.addWidget(row("Drehwinkel [°]", self.ed_dreh,
+                         "Gruppen (leer = alles ohne Lager)", self.ed_gruppen))
+        a = s.dreh_achse if s else (0.0, 1.0, 0.0)
+        p = s.dreh_punkt if s else (0.0, 0.0, 0.0)
+        self.ed_achse = [NumEdit(v, 60) for v in a]
+        self.ed_punkt = [NumEdit(v, 70) for v in p]
+        gl.addWidget(row("Drehachse", *self.ed_achse))
+        gl.addWidget(row("Punkt auf der Achse [m]", *self.ed_punkt))
+        lay.addWidget(g)
+
+        g = QtWidgets.QGroupBox("Antriebsmoment (hält die Stellung)")
+        gl = QtWidgets.QVBoxLayout(g)
+        kn, mv = (s.antrieb if (s and s.antrieb) else (None, (0.0, 0.0, 0.0)))
+        self.ed_knoten = QtWidgets.QLineEdit("" if kn is None else str(int(kn) + 1))
+        self.ed_moment = [NumEdit(v / 1e3, 80) for v in mv]
+        gl.addWidget(row("Knoten (Nummer, leer = kein Antrieb)", self.ed_knoten))
+        gl.addWidget(row("Mx [kNm]", self.ed_moment[0], "My", self.ed_moment[1],
+                         "Mz", self.ed_moment[2]))
+        lay.addWidget(g)
+        lay.addWidget(buttons(self))
+
+    @staticmethod
+    def _liste(text: str) -> list:
+        return [x.strip() for x in text.split(",") if x.strip()]
+
+    def stellung(self):
+        from ..bridges.positions import Stellung
+        antrieb = None
+        t = self.ed_knoten.text().strip()
+        if t:
+            try:
+                antrieb = (int(float(t.replace(",", "."))) - 1,
+                           [e.value() * 1e3 for e in self.ed_moment])
+            except ValueError:
+                antrieb = None
+        return Stellung(
+            name=self.ed_name.text().strip() or "Stellung",
+            winkel=self.ed_winkel.value(),
+            beschreibung=self.ed_text.text().strip(),
+            lager_aktiv=self._liste(self.ed_aktiv.text()),
+            lager_aus=self._liste(self.ed_aus.text()),
+            faelle=self._liste(self.ed_faelle.text()),
+            dreh_achse=tuple(e.value() for e in self.ed_achse),
+            dreh_punkt=tuple(e.value() for e in self.ed_punkt),
+            dreh_winkel=self.ed_dreh.value(),
+            dreh_gruppen=self._liste(self.ed_gruppen.text()),
+            antrieb=antrieb)

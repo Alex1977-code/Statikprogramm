@@ -210,6 +210,68 @@ def main():
     except Exception as ex:      # noqa: BLE001
         check("Anschlussdialog", False, str(ex)[:70])
 
+    # Werkbank: Kopfzeile, Werkzeugleiste, Modellbaum, Filmstreifen, Stellungen
+    try:
+        from statik3d.bridges.positions import Stellung
+        from statik3d.gui import design as dsg
+        w.load_example("gate")
+        w.model.meta["Bauteil"] = "Klappbruecke"
+        w.stellungen = [Stellung(name=f"S{i}", winkel=float(a), beschreibung=t)
+                        for i, (a, t) in enumerate(((0, "geschlossen"), (32, "Zwischen"),
+                                                    (82, "offen")), 1)]
+        w.refresh_all()
+        app.processEvents()
+        check("Kopfzeile nennt Bauteil und Version",
+              "Klappbruecke" in w.kopf.titel.text() and "Statik3D" in w.kopf.titel.text(),
+              w.kopf.titel.text()[:60])
+        check("Kopfzeile nennt Knoten, Elemente und Stellungen",
+              "Stellungen" in w.kopf.marke_modell.text(), w.kopf.marke_modell.text())
+        werkzeuge = [a.text() for a in w.werkzeugleiste.actions() if a.text()]
+        check("Werkzeugleiste wie im Entwurf",
+              any("Berechnen" in t for t in werkzeuge) and any("Stellungen" in t for t in werkzeuge)
+              and any("Bericht" in t for t in werkzeuge), str(len(werkzeuge)) + " Knoepfe")
+        check("Register Stellungen vorhanden", w.register_zeigen("Stellungen"))
+        check("Modellbaum gefuellt", w.baum.topLevelItemCount() >= 1
+              and w.baum.topLevelItem(0).childCount() >= 5,
+              str(w.baum.topLevelItem(0).childCount()))
+        karten = [k for k in w.film.inhalt.findChildren(dsg.Stellungskarte)
+                  if not k.isHidden()]
+        check("Filmstreifen zeigt jede Stellung", len(karten) == 3, str(len(karten)))
+        check("Stellungstabelle gefuellt", w.tbl_stellung.rowCount() == 3,
+              str(w.tbl_stellung.rowCount()))
+
+        w._stellung_gewaehlt("S2")
+        check("Stellung auswaehlbar", w.tbl_stellung.currentRow() == 1
+              and getattr(w, "gewaehlte_stellung", "") == "S2",
+              str(w.tbl_stellung.currentRow()))
+
+        w.stellungen_rechnen()
+        app.processEvents()
+        u = getattr(w, "umhuellende", None)
+        check("Stellungen gerechnet", u is not None and u.eta > 0,
+              f"eta = {getattr(u, 'eta', 0):.3f}")
+        check("Umhuellende in der Oberflaeche", "η" in w.lbl_umh.text(), w.lbl_umh.text()[:60])
+        beschriftung = " ".join(
+            l.text() for k in w.film.inhalt.findChildren(dsg.Stellungskarte)
+            if not k.isHidden() for l in k.findChildren(QtWidgets.QLabel))
+        check("Filmstreifen zeigt die Ausnutzung", "η" in beschriftung,
+              beschriftung[:70])
+
+        w.din19704_bilden()
+        text = w.txt_regelwerk.toPlainText()
+        check("DIN 19704: Beiwerte mit Zustand", "zu bestätigen" in text, text[:60])
+        check("ZTV-ING-Pruefliste in der Oberflaeche", "ZTV-ING" in text)
+        check("Kombinationen im Modell angelegt",
+              any(k.startswith("DIN ") for k in w.model.combinations),
+              str(len(w.model.combinations)))
+
+        w.stellung_entfernen()
+        check("Stellung entfernt", len(w.stellungen) == 2, str(len(w.stellungen)))
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Werkbank", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:
@@ -217,6 +279,9 @@ def main():
         w.cb_field.setCurrentText("Ausnutzung EC3"); w.cb_diagram.setCurrentText("My"); app.processEvents()
         w.plotter.screenshot(out)
         check("Screenshot", os.path.getsize(out) > 5000, out)
+        fenster = os.path.join(os.path.dirname(out), "_gui_fenster.png")
+        w.grab().save(fenster)
+        check("Screenshot des Fensters", os.path.getsize(fenster) > 5000, fenster)
     except Exception as ex:
         check("Screenshot", False, str(ex))
     w.close()
