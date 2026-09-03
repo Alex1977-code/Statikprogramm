@@ -7,6 +7,7 @@ Einheiten (konsistent, SI):
     Spannung Pa (N/m^2)
     Dichte   kg/m^3
     Temperatur K bzw. Kelvin-Differenz
+    Winkel   rad (Element.roll), Ausnahme: Stellung.angle in Grad (siehe dort)
 
 Freiheitsgrade pro Knoten (immer 6, ungenutzte werden automatisch gesperrt):
     0 ux, 1 uy, 2 uz, 3 rx, 4 ry, 5 rz
@@ -24,6 +25,10 @@ Aufbau des Modells
   (Knicklaengen, Biegedrillknicken, Kerbfall)
 * Kontakt: einseitige Lager, Knoten-Knoten-Spaltelemente,
   Knoten-Flaeche-Kontaktpaare (Penalty, Reibung)
+* Stellungen (Stellung): Lagen eines beweglichen Systems (Klapp-, Dreh-,
+  Hubbruecke). Jede Stellung bewegt einen Teil des Modells als Starrkoerper
+  und traegt eigene Lager und Lastfaelle; die Nachweise laufen ueber die
+  Umhuellende aller Stellungen (siehe statik3d.stellungen).
 
 Kompatibilitaet: Die alte Ein-Lastfall-API (model.load_node, model.nodal_loads,
 model.gravity ...) arbeitet auf dem *aktiven* Lastfall weiter.
@@ -38,7 +43,7 @@ import numpy as np
 
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
 NDOF = 6
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3       # 3: Stellungen des Systems (bewegliche Bruecken)
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -579,6 +584,116 @@ class ContactPair:
 
 
 # --------------------------------------------------------------------------
+# Stellungen des Systems (bewegliche Bruecken)
+# --------------------------------------------------------------------------
+MOVEMENT_KINDS = {
+    "rotate": "Drehung um eine Achse (Klapp-, Dreh-, Faltbruecke)",
+    "translate": "Verschiebung laengs einer Richtung (Hub-, Schiebebruecke)",
+    "none": "unveraendert (Ausgangslage)",
+}
+
+
+@dataclass
+class Stellung:
+    """Eine Stellung des beweglichen Systems.
+
+    Die Stellung beschreibt eine Starrkoerperbewegung des *bewegten Bauteils*
+    gegenueber der Ausgangsgeometrie des Modells:
+
+        kind = 'rotate'     Drehung um die Achse (axis_point, axis_dir)
+                            um angle [Grad], Rechtsschraube um axis_dir
+        kind = 'translate'  Verschiebung um shift [m] in Richtung axis_dir
+        kind = 'none'       unveraenderte Geometrie (z.B. Verkehrsstellung)
+
+    Der Winkel steht abweichend von der sonstigen SI-Konvention in **Grad**:
+    im Brueckenbau wird die Stellung durchweg in Grad angegeben (0 Grad
+    geschlossen, 82 Grad offen), und der Wert erscheint unveraendert in
+    Eingabe, Bericht und Zeichnung.
+
+    Das bewegte Bauteil ergibt sich aus den Elementgruppen `moving_groups`
+    (alle Knoten der Elemente dieser Gruppen) und zusaetzlich aus den
+    ausdruecklich genannten Knoten `moving_nodes`.
+
+    Lagerung: In jeder Stellung ist das System anders gelagert (verriegelt,
+    im Drehlager, am Endanschlag). `supports` sind die Lager dieser Stellung.
+    Mit `use_model_supports = True` treten sie zu den Lagern des Modells
+    hinzu, mit False ersetzen sie diese vollstaendig.
+
+    Lastfaelle: `cases` waehlt die in dieser Stellung wirkenden Lastfaelle
+    (leer = alle). Kombinationen, die einen nicht gewaehlten Lastfall mit
+    einem Faktor ungleich null enthalten, entfallen in dieser Stellung.
+    """
+    name: str
+    title: str = ""                    # Klartext, z.B. "Verkehrsstellung"
+    kind: str = "rotate"
+    angle: float = 0.0                 # Drehwinkel [Grad]
+    shift: float = 0.0                 # Verschiebung [m]
+    axis_point: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    axis_dir: list[float] = field(default_factory=lambda: [0.0, 1.0, 0.0])
+    moving_groups: list[str] = field(default_factory=list)
+    moving_nodes: list[int] = field(default_factory=list)
+    supports: list[Support] = field(default_factory=list)
+    use_model_supports: bool = True
+    contact_supports: list[ContactSupport] = field(default_factory=list)
+    cases: list[str] = field(default_factory=list)
+    active: bool = True                # in der Umhuellenden beruecksichtigen
+    description: str = ""
+
+    @property
+    def moves(self) -> bool:
+        """Bewegt diese Stellung ueberhaupt etwas gegenueber der Ausgangslage?"""
+        if self.kind == "rotate":
+            return abs(self.angle) > 1e-12
+        if self.kind == "translate":
+            return abs(self.shift) > 1e-12
+        return False
+
+    @property
+    def label(self) -> str:
+        return f"{self.name} ({self.title})" if self.title else self.name
+
+    def value_text(self) -> str:
+        if self.kind == "rotate":
+            return f"{self.angle:g}°"
+        if self.kind == "translate":
+            return f"{self.shift:g} m"
+        return "—"
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name, "title": self.title, "kind": self.kind,
+            "angle": float(self.angle), "shift": float(self.shift),
+            "axis_point": [float(v) for v in self.axis_point],
+            "axis_dir": [float(v) for v in self.axis_dir],
+            "moving_groups": list(self.moving_groups),
+            "moving_nodes": [int(n) for n in self.moving_nodes],
+            "supports": [asdict(s) for s in self.supports],
+            "use_model_supports": bool(self.use_model_supports),
+            "contact_supports": [asdict(c) for c in self.contact_supports],
+            "cases": list(self.cases), "active": bool(self.active),
+            "description": self.description,
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "Stellung":
+        st = Stellung(
+            d["name"], d.get("title", ""), d.get("kind", "rotate"),
+            float(d.get("angle", 0.0)), float(d.get("shift", 0.0)),
+            list(d.get("axis_point", [0.0, 0.0, 0.0])),
+            list(d.get("axis_dir", [0.0, 1.0, 0.0])),
+            list(d.get("moving_groups", [])),
+            [int(n) for n in d.get("moving_nodes", [])],
+        )
+        st.supports = [_dc(Support, s) for s in d.get("supports", [])]
+        st.use_model_supports = bool(d.get("use_model_supports", True))
+        st.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]
+        st.cases = list(d.get("cases", []))
+        st.active = bool(d.get("active", True))
+        st.description = d.get("description", "")
+        return st
+
+
+# --------------------------------------------------------------------------
 # Gesamtmodell
 # --------------------------------------------------------------------------
 class Model:
@@ -603,6 +718,9 @@ class Model:
         self.contact_supports: list[ContactSupport] = []
         self.gap_elements: list[GapElement] = []
         self.contact_pairs: list[ContactPair] = []
+        # Stellungen (bewegliche Bruecken)
+        self.stellungen: dict[str, Stellung] = {}
+        self.active_stellung: str = ""
         # Metadaten (Bericht)
         self.meta: dict[str, str] = {"projekt": "", "bauteil": "", "bearbeiter": "",
                                      "auftraggeber": "", "position": ""}
@@ -774,6 +892,46 @@ class Model:
     def has_contact(self) -> bool:
         return bool(self.contact_supports or self.gap_elements or self.contact_pairs)
 
+    # ---------------- Stellungen ----------------
+    def add_stellung(self, name: str, title: str = "", kind: str = "rotate",
+                     angle: float = 0.0, activate: bool = True, **kw) -> Stellung:
+        """Stellung anlegen. angle in Grad, shift in m (siehe Stellung)."""
+        if kind not in MOVEMENT_KINDS:
+            raise KeyError(f"Bewegungsart '{kind}' unbekannt: {list(MOVEMENT_KINDS)}")
+        st = Stellung(name, title, kind, angle, **kw)
+        self.stellungen[name] = st
+        if activate or not self.active_stellung:
+            self.active_stellung = name
+        return st
+
+    def remove_stellung(self, name: str):
+        self.stellungen.pop(name, None)
+        if self.active_stellung == name:
+            self.active_stellung = next(iter(self.stellungen), "")
+
+    def stellung(self, name: str = None) -> Stellung:
+        """Stellung (default: aktive Stellung)."""
+        if name is None:
+            name = self.active_stellung
+        if name not in self.stellungen:
+            raise KeyError(f"Stellung '{name}' existiert nicht")
+        return self.stellungen[name]
+
+    @property
+    def is_movable(self) -> bool:
+        return bool(self.stellungen)
+
+    def active_stellungen(self) -> list[Stellung]:
+        """Stellungen, die in die Umhuellende eingehen (in Eingabereihenfolge)."""
+        return [s for s in self.stellungen.values() if s.active]
+
+    def element_groups(self) -> list[str]:
+        """Vorhandene Elementgruppen (fuer die Wahl des bewegten Bauteils)."""
+        seen = {}
+        for e in self.elements:
+            seen[e.group] = None
+        return list(seen)
+
     # ---------------- Hilfen ----------------
     @property
     def nn(self) -> int:
@@ -927,6 +1085,35 @@ class Model:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Flaeche")
             if not cp.slave_nodes:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Slave-Knoten")
+        groups = set(self.element_groups())
+        for st in self.stellungen.values():
+            if st.kind not in MOVEMENT_KINDS:
+                msgs.append(f"FEHLER: Stellung '{st.name}': Bewegungsart '{st.kind}' unbekannt")
+            if st.kind in ("rotate", "translate") and not np.any(np.asarray(st.axis_dir, float)):
+                msgs.append(f"FEHLER: Stellung '{st.name}': Achsrichtung ist der Nullvektor")
+            for n in st.moving_nodes:
+                if n < 0 or n >= self.nn:
+                    msgs.append(f"FEHLER: Stellung '{st.name}': Knoten {n} existiert nicht")
+            for gname in st.moving_groups:
+                if gname not in groups:
+                    msgs.append(f"WARNUNG: Stellung '{st.name}': Elementgruppe "
+                                f"'{gname}' kommt im Modell nicht vor")
+            for k in st.cases:
+                if k not in self.load_cases:
+                    msgs.append(f"FEHLER: Stellung '{st.name}': Lastfall '{k}' unbekannt")
+            for s in st.supports:
+                if s.node < 0 or s.node >= self.nn:
+                    msgs.append(f"FEHLER: Stellung '{st.name}': Lagerknoten {s.node} "
+                                f"existiert nicht")
+            if st.moves and not st.moving_groups and not st.moving_nodes:
+                msgs.append(f"WARNUNG: Stellung '{st.name}': kein bewegtes Bauteil "
+                            f"gewaehlt, die Geometrie bleibt unveraendert")
+            if not st.use_model_supports and not st.supports and not st.contact_supports:
+                msgs.append(f"FEHLER: Stellung '{st.name}': keine Lagerung "
+                            f"(Modelllager abgewaehlt und keine eigenen Lager)")
+        if self.stellungen and not self.active_stellungen():
+            msgs.append("WARNUNG: keine Stellung aktiv - die Umhuellende ueber die "
+                        "Stellungen bleibt leer")
         return msgs
 
     # ---------------- Speichern / Laden ----------------
@@ -950,6 +1137,8 @@ class Model:
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "contact_pairs": [asdict(c) for c in self.contact_pairs],
+            "stellungen": [s.to_dict() for s in self.stellungen.values()],
+            "active_stellung": self.active_stellung,
         }
 
     def save(self, path: str):
@@ -988,6 +1177,10 @@ class Model:
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.contact_pairs = [_dc(ContactPair, c) for c in d.get("contact_pairs", [])]
+        for sd in d.get("stellungen", []):
+            s = Stellung.from_dict(sd)
+            m.stellungen[s.name] = s
+        m.active_stellung = d.get("active_stellung") or next(iter(m.stellungen), "")
         return m
 
     @staticmethod

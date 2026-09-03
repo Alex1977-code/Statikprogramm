@@ -159,6 +159,131 @@ def hall_frame_example() -> Model:
     return m
 
 
+def bascule_bridge_example() -> Model:
+    """Klappbruecke ueber einen Hafenkanal: zwei Kastenträger 1000x500x20 mit
+    Querträgern HEA 400 und Windverband, Gegengewichtsarm, Drehachse am
+    Widerlager.
+
+    Das Beispiel zeigt die **Stellungen des Systems**: dieselbe Konstruktion
+    wird in fuenf Lagen zwischen 0 Grad (Verkehrsstellung, verriegelt) und
+    82 Grad (Endlage offen) nachgewiesen. Die Lagerung wechselt dabei - in
+    der Verkehrsstellung tragen die Endauflager und der Riegel mit, in den
+    geoeffneten Stellungen haengt die Klappe im Drehlager und wird vom
+    Antrieb gehalten (die Auflagerreaktion My im Drehlager ist das
+    Antriebsmoment). Verkehr wirkt nur in der Verkehrsstellung, Wind quer
+    zur aufgestellten Klappe in allen Stellungen.
+
+    Das Gegengewicht ist so gewaehlt, dass die Klappe im Eigengewicht
+    annaehernd ausgewogen ist - deshalb bleibt das Antriebsmoment klein,
+    waehrend der Hauptträger am Drehlager das volle Kragmoment traegt.
+    """
+    from .combinations import generate_combinations
+    m = Model("Klappbruecke Hafenkanal")
+    m.meta.update({"projekt": "Klappbruecke Hafenkanal", "bauteil": "Klappe Los 2",
+                   "position": "Stellungen 0 bis 82 Grad"})
+    m.add_material(Material.steel("S355"))
+    # Hauptträger als geschweisster Kasten: eine Klappe ist im geoeffneten
+    # Zustand ein raeumlicher Kragarm und muss torsionssteif sein - ein
+    # offenes Walzprofil scheidet dafuer aus.
+    m.add_section(Section.rhs("Kasten 1000x500x20", 1.000, 0.500, 0.020,
+                              fabrication="welded"))
+    m.add_section(Section.from_profile("HEA 400"))
+    m.add_section(Section.pipe("RO 168/10", 0.1683, 0.010))
+
+    L, Lg, B, nf = 16.0, 4.0, 6.0, 10          # Klappe, Gegengewichtsarm, Breite, Felder
+    dx = (L + Lg) / nf
+    xs = [-Lg + i * dx for i in range(nf + 1)]
+    i_hinge = min(range(len(xs)), key=lambda i: abs(xs[i]))
+    ys = [0.0, B]
+    # Hauptträger (Drehachse liegt bei x = 0)
+    girder = {}
+    for y in ys:
+        ids = [m.add_node(x, y, 0.0) for x in xs]
+        girder[y] = ids
+        for i in range(nf):
+            m.add_element("beam", [ids[i], ids[i + 1]], "S355", "Kasten 1000x500x20", group="klappe")
+    e_per = nf
+    # Querträger in jedem Knotenschnitt, am linken Hauptträger gelenkig
+    # angeschlossen (lokale FHG 4 = Biegung, 9 = Torsion): der Steganschluss
+    # nimmt weder Biege- noch Torsionsmoment auf. Ohne diese Gelenke laufen
+    # die Endmomente der Querträger als Torsion in die Hauptträger und die
+    # offenen Walzprofile werden rechnerisch ueberlastet.
+    qt = [m.add_element("beam", [girder[ys[0]][i], girder[ys[1]][i]], "S355", "HEA 400",
+                        group="klappe", hinges=[4, 9]) for i in range(nf + 1)]
+    # Windverband in der Fahrbahnebene: ohne ihn muesste der offene
+    # I-Querschnitt den Wind ueber Torsion abtragen (St-Venant sehr weich).
+    verband = []
+    for i in range(nf):
+        a, b = girder[ys[0]][i], girder[ys[0]][i + 1]
+        c, d = girder[ys[1]][i], girder[ys[1]][i + 1]
+        verband.append(m.add_element("truss", [a, d] if i % 2 == 0 else [b, c],
+                                     "S355", "RO 168/10", group="klappe"))
+
+    hinge = [girder[y][i_hinge] for y in ys]
+    ende = [girder[y][-1] for y in ys]
+
+    # Staebe fuer die Nachweise
+    m.add_member("HT-links", list(range(0, e_per)), beta_y=1.0, beta_z=2.4, L_LT=dx,
+                 load_position="top", detail_category=71e6)
+    m.add_member("HT-rechts", list(range(e_per, 2 * e_per)), beta_y=1.0, beta_z=2.4,
+                 L_LT=dx, load_position="top", detail_category=71e6)
+    for k, e in enumerate(qt):
+        m.add_member(f"QT-{k + 1:02d}", [e], beta_y=1.0, beta_z=1.0, L_LT=B,
+                     detail_category=71e6)
+
+    # Lagerung, die in jeder Stellung gilt: Drehlager (Drehung um y bleibt frei)
+    for n in hinge:
+        m.fix(int(n), [0, 1, 2, 3, 5])
+
+    # Lastfaelle
+    m.case().category = "G"
+    m.case().description = "Eigengewicht, Fahrbahnblech, Aufbauten"
+    for e in range(2 * e_per):
+        m.load_beam(e, qz=-20000.0)
+    m.set_gravity(-9.81)
+    m.add_load_case("Gegengewicht", "G", "Gegengewicht 122 t am Kragarmende")
+    for y in ys:
+        m.load_node(int(girder[y][0]), Fz=-600000.0)
+    m.add_load_case("Verkehr", "Q_G", "Verkehrslast, nur in der Verkehrsstellung")
+    for e in range(2 * e_per):
+        m.load_beam(e, qz=-9000.0)
+    m.add_load_case("Wind", "W", "Wind quer zur Bruecke, w = 0,60 kN/m²")
+    for e in range(2 * e_per):
+        m.load_beam(e, qy=1800.0)
+    m.active_case = "LF1"
+    m.add_fatigue_load("Oeffnungsspiele", "Verkehr", None, 2e6)
+    generate_combinations(m)
+
+    # ------------------------------------------------------------------
+    # Stellungen des Systems
+    # ------------------------------------------------------------------
+    from .model import Support
+    alle = ["LF1", "Gegengewicht", "Verkehr", "Wind"]
+    offen = ["LF1", "Gegengewicht", "Wind"]
+    # Drehung um -y stellt die Klappe auf (+x -> +z)
+    achse = {"axis_point": [0.0, 0.0, 0.0], "axis_dir": [0.0, -1.0, 0.0],
+             "moving_groups": ["klappe"]}
+    # In der Verkehrsstellung tragen die Endauflager und der Riegel mit.
+    verkehr_lager = [Support(int(ende[0]), [0, 2]), Support(int(ende[1]), [1, 2])]
+    # In den geoeffneten Stellungen haelt der Antrieb die Drehung um y.
+    antrieb = [Support(int(hinge[0]), [4])]
+
+    for name, titel, winkel, hinweis in [
+            ("S1", "Verkehrsstellung", 0.0, "geschlossen, verriegelt"),
+            ("S2", "Entriegelt", 8.0, "Auflager umgelagert, Antrieb haelt"),
+            ("S3", "Oeffnungsvorgang", 32.0, "Antriebsmoment gross"),
+            ("S4", "Wind offen", 68.0, "Wind quer auf die aufgestellte Klappe"),
+            ("S5", "Endlage offen", 82.0, "Endanschlag, Ruhelast")]:
+        offen_stellung = winkel > 0.0
+        st = m.add_stellung(name, titel, "rotate", angle=winkel,
+                            activate=(name == "S1"), **achse)
+        st.description = hinweis
+        st.cases = list(offen if offen_stellung else alle)
+        st.supports = list(antrieb if offen_stellung else verkehr_lager + antrieb)
+    m.active_stellung = "S1"
+    return m
+
+
 def contact_example() -> Model:
     """Gelagerter Traeger auf Betonsockel: Einfeldtraeger mit Kragarm auf zwei
     einseitigen Lagern - das hintere Lager hebt ab. Zusaetzlich Spaltelement
@@ -257,4 +382,5 @@ EXAMPLES.update({
     "contact": contact_example,
     "friction": block_friction_example,
     "gate": gate_example,
+    "bascule": bascule_bridge_example,
 })

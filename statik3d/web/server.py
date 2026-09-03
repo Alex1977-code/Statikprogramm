@@ -8,13 +8,16 @@ PC dasselbe Modell sehen.
 
 API (JSON; Schluessel per Kopfzeile X-Statik-Key oder ?key=...):
     GET  /api/state                     Uebersicht (Modell, Lastfaelle, Auftrag, Protokoll)
-    GET  /api/model      POST /api/model  Modell lesen / ersetzen (JSON-Format 2)
-    GET  /api/geometry[?case=LF1]       Knoten, Linien, Dreiecke, Lager, Lastpfeile
+    GET  /api/model      POST /api/model  Modell lesen / ersetzen (JSON-Format 3)
+    GET  /api/geometry[?case=LF1][&stellung=S3]   Knoten, Linien, Dreiecke, Lager,
+                                        Lastpfeile - wahlweise in einer Stellung
     POST /api/op                        {"op": "...", ...}      Bearbeitung (siehe OPS)
     POST /api/example                   {"name": "hall"}
     POST /api/import?name=datei.dxf[&unit=0.001]     Dateiinhalt im Rumpf
-    POST /api/solve                     {"kind": "all|case|modal|buckling", "design": true, ...}
+    POST /api/solve                     {"kind": "all|case|modal|buckling|stellungen",
+                                         "design": true, ...}
     POST /api/design   POST /api/fatigue  Nachweise zur vorhandenen Analyse
+    GET  /api/stellungen                Umhuellende ueber die Stellungen des Systems
     GET  /api/job                       Auftragsstatus, Fortschritt
     GET  /api/entries                   waehlbare Ergebnisse
     GET  /api/results?which=env:ULS&field=umag[&mode=0]
@@ -27,6 +30,7 @@ API (JSON; Schluessel per Kopfzeile X-Statik-Key oder ?key=...):
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -44,8 +48,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 
 from ..model import (Model, Material, Section, ShellProp, NodalLoad, BeamLoad, FaceLoad,
-                     TempLoad, Combination, ACTION_CATEGORIES, STEEL_GRADES, NDOF)
-from .. import solver, parallel, mesher, profiles
+                     TempLoad, Combination, Support, Stellung, ACTION_CATEGORIES,
+                     MOVEMENT_KINDS, STEEL_GRADES, NDOF)
+from .. import solver, parallel, mesher, profiles, stellungen as stg
 from ..assemble import SOLID_FACES
 from ..elements import beam3d as bm
 from ..examples_lib import EXAMPLES, build_example
@@ -61,6 +66,7 @@ EXAMPLE_LABELS = {
     "solid": "Konsole (Volumen)", "hall": "Hallenrahmen HEB/IPE mit Nachweisen",
     "gate": "Stauwand (Stahlwasserbau)", "contact": "Träger auf Sockel (Kontakt)",
     "friction": "Block mit Reibung (Kontakt)",
+    "bascule": "Klappbrücke mit Stellungen (bewegliche Brücke)",
 }
 
 
@@ -195,6 +201,7 @@ class State:
         self._model = model if model is not None else Model()
         self._analysis = None
         self._results = None
+        self.stellungen_analysis = None    # stellungen.StellungenAnalysis
         self.bound = None
         self.job: Job = None
         self.log: list[str] = []
@@ -254,9 +261,11 @@ class State:
         if what == "all":
             self.analysis = None
             self.results = None
+            self.stellungen_analysis = None
         elif what == "design" and self.analysis is not None:
             self.analysis.design = None
             self.analysis.fatigue = None
+            self.stellungen_analysis = None
 
 
 # --------------------------------------------------------------------------
@@ -294,6 +303,22 @@ def state_summary(st: State) -> dict:
             d["L"] = float(m.member_length(mem)) if mem.elements else 0.0
             d["n_elements"] = len(mem.elements)
             members.append(d)
+        stellungen = []
+        for s in m.stellungen.values():
+            stellungen.append({
+                "name": s.name, "title": s.title, "label": s.label, "kind": s.kind,
+                "angle": float(s.angle), "shift": float(s.shift),
+                "value_text": s.value_text(), "moves": bool(s.moves),
+                "axis_point": [float(v) for v in s.axis_point],
+                "axis_dir": [float(v) for v in s.axis_dir],
+                "moving_groups": list(s.moving_groups),
+                "moving_nodes": [int(n) for n in s.moving_nodes],
+                "n_moving_elements": stg.moved_elements(m, s),
+                "supports": [_clean(asdict(x)) for x in s.supports],
+                "use_model_supports": bool(s.use_model_supports),
+                "cases": list(s.cases), "active": bool(s.active),
+                "description": s.description,
+            })
         analysis = None
         if an is not None:
             analysis = {"cases": list(an.cases), "combinations": list(an.combinations),
@@ -324,6 +349,11 @@ def state_summary(st: State) -> dict:
             "contact": {"supports": [_clean(asdict(c)) for c in m.contact_supports[:MAX_ROWS]],
                         "gaps": [_clean(asdict(g)) for g in m.gap_elements[:MAX_ROWS]],
                         "pairs": [_clean(asdict(p)) for p in m.contact_pairs]},
+            "stellungen": stellungen, "active_stellung": m.active_stellung,
+            "movement_kinds": {k: v for k, v in MOVEMENT_KINDS.items()},
+            "element_groups": m.element_groups(),
+            "has_stellungen": bool(m.stellungen),
+            "has_stellungen_analysis": st.stellungen_analysis is not None,
             "has_analysis": an is not None, "analysis": analysis, "single": single,
             "job": st.job.to_dict() if st.job is not None else None, "busy": st.busy(),
             "settings": dict(st.settings), "cpu": parallel.cpu_count(),
@@ -341,9 +371,20 @@ def _shell_normal(X: np.ndarray) -> np.ndarray:
     return n / ln if ln > 0 else np.array([0.0, 0.0, 1.0])
 
 
-def geometry(model: Model, case: str = None) -> dict:
+def geometry(model: Model, case: str = None, stellung: str = None) -> dict:
     """Darstellungsgeometrie: Knoten, Linien (Staebe), Dreiecke (Schalen, Aussenflaechen
-    der Volumen), Lager, Kontakt, Lastpfeile des Lastfalls."""
+    der Volumen), Lager, Kontakt, Lastpfeile des Lastfalls.
+
+    stellung: Name einer Stellung des Systems - dann wird die Geometrie in
+    dieser Stellung gezeigt, mit ihrer Lagerung und ihren Lasten."""
+    shown = ""
+    if stellung and stellung in model.stellungen:
+        s = model.stellungen[stellung]
+        moving = stg.moving_mask(model, s)
+        model = stg.derive_model(model, s)
+        shown = stellung
+    else:
+        moving = np.zeros(model.nn, dtype=bool)
     nodes = np.asarray(model.nodes, float)
     lines, line_elem, tris, tri_elem = [], [], [], []
     face_count: dict[tuple, tuple] = {}
@@ -442,6 +483,7 @@ def geometry(model: Model, case: str = None) -> dict:
         "hinges": hinges, "arrows": arr_out, "gravity": grav, "case": case,
         "member_of": member_of, "member_names": list(model.members),
         "bbox": _clean(bbox), "size": size, "types": [e.typ for e in model.elements],
+        "stellung": shown, "moving": [int(i) for i in np.where(moving)[0]],
     }
 
 
@@ -718,11 +760,56 @@ def design_payload(st: State) -> dict:
         return out
 
 
+def stellungen_payload(st: State) -> dict:
+    """Umhuellende ueber die Stellungen fuer die Arbeitsflaeche: je Stab die
+    massgebende Stellung, dazu die Ausnutzung je Stellung fuer die Kurve."""
+    with st.lock:
+        m = st.model
+        sa = st.stellungen_analysis
+        out = {"has_result": sa is not None, "n_stellungen": len(m.stellungen),
+               "stellungen": [], "members": [], "table": [], "util_max": 0.0,
+               "messages": [], "summary": "", "info": {}}
+        if sa is None:
+            return out
+        per = sa.util_by_stellung()
+        for name in sa.stellungen:
+            s = m.stellungen.get(name)
+            an = sa.analyses.get(name)
+            out["stellungen"].append({
+                "name": name, "title": s.title if s else "",
+                "angle": float(s.angle) if s else 0.0,
+                "value_text": s.value_text() if s else "",
+                "util": float(per.get(name, 0.0)),
+                "n_cases": len(an.cases) if an else 0,
+                "n_combinations": len(an.combinations) if an else 0,
+                "description": s.description if s else "",
+            })
+        for me in sorted(sa.members.values(), key=lambda x: -x.util):
+            out["members"].append({
+                "member": me.member, "section": me.section, "material": me.material,
+                "L": float(me.L), "cls": int(me.cls), "util": float(me.util),
+                "stellung": me.stellung, "governing": _clean(me.governing),
+                "status": me.status(),
+                "per_stellung": {k: float(v) for k, v in me.per_stellung.items()},
+                "util_fatigue": float(me.util_fatigue),
+                "stellung_fatigue": me.stellung_fatigue,
+                "fatigue_per_stellung": {k: float(v)
+                                         for k, v in me.fatigue_per_stellung.items()},
+            })
+        out["table"] = sa.table()
+        out["util_max"] = float(sa.util_max)
+        out["messages"] = list(sa.messages)
+        out["summary"] = sa.summary()
+        out["info"] = _clean(sa.info)
+        return out
+
+
 # --------------------------------------------------------------------------
 # Bearbeitungsoperationen
 # --------------------------------------------------------------------------
 OPS: dict = {}
-KEEP_ALL = {"check", "meta", "rename", "select_box", "set_active_case"}
+KEEP_ALL = {"check", "meta", "rename", "select_box", "set_active_case",
+            "set_active_stellung"}
 KEEP_DESIGN = {"design_settings", "set_member", "remove_member", "auto_members",
                "add_fatigue_load", "remove_fatigue_load"}
 GEOM_OPS = {"new", "add_node", "move_node", "delete_nodes", "delete_elements", "clear_mesh",
@@ -731,7 +818,10 @@ GEOM_OPS = {"new", "add_node", "move_node", "delete_nodes", "delete_elements", "
             "contact_pair", "remove_contact", "clear_contact", "nodal_load", "beam_load",
             "face_load", "temp_load", "gravity", "remove_load", "clear_loads", "set_active_case",
             "add_case", "remove_case", "copy_case", "auto_members", "set_member", "remove_member",
-            "assign", "edit_case"}
+            "assign", "edit_case",
+            "add_stellung", "edit_stellung", "remove_stellung", "clear_stellungen",
+            "set_active_stellung", "stellung_support", "remove_stellung_support",
+            "stellung_series"}
 
 
 def op(name: str):
@@ -1498,6 +1588,169 @@ def _op_clear_contact(st, m, d):
     return "Alle Kontaktdefinitionen entfernt"
 
 
+# ---- Stellungen des Systems ----
+def _stellung(m: Model, d: dict, key: str = "stellung") -> Stellung:
+    name = d.get(key) or m.active_stellung
+    if name not in m.stellungen:
+        raise ApiError(f"Stellung '{name}' unbekannt")
+    return m.stellungen[name]
+
+
+def _apply_stellung_fields(m: Model, s: Stellung, d: dict):
+    """Felder einer Stellung aus dem Aufruf uebernehmen (nur die genannten)."""
+    if d.get("title") is not None:
+        s.title = str(d["title"])
+    if d.get("description") is not None:
+        s.description = str(d["description"])
+    if d.get("kind"):
+        if d["kind"] not in MOVEMENT_KINDS:
+            raise ApiError(f"Bewegungsart '{d['kind']}' unbekannt: {list(MOVEMENT_KINDS)}")
+        s.kind = str(d["kind"])
+    if d.get("angle") not in (None, ""):
+        s.angle = _f(d, "angle")
+    if d.get("shift") not in (None, ""):
+        s.shift = _f(d, "shift")
+    if d.get("axis_point") is not None:
+        s.axis_point = _vec(d, "axis_point", 3)
+    if d.get("axis_dir") is not None:
+        v = _vec(d, "axis_dir", 3)
+        if not any(v):
+            raise ApiError("Achsrichtung darf nicht der Nullvektor sein")
+        s.axis_dir = v
+    if d.get("moving_groups") is not None:
+        g = d["moving_groups"]
+        if isinstance(g, str):
+            g = [x for x in re.split(r"[,;]+", g) if x.strip()]
+        s.moving_groups = [str(x).strip() for x in g]
+    if d.get("moving_nodes") is not None:
+        nodes = _ilist(d, "moving_nodes", required=False)
+        _check_nodes(m, nodes)
+        s.moving_nodes = nodes
+    if d.get("cases") is not None:
+        c = d["cases"]
+        if isinstance(c, str):
+            c = [x for x in re.split(r"[,;]+", c) if x.strip()]
+        c = [str(x).strip() for x in c]
+        bad = [x for x in c if x not in m.load_cases]
+        if bad:
+            raise ApiError(f"Lastfall/Lastfaelle unbekannt: {', '.join(bad)}")
+        s.cases = c
+    if d.get("active") is not None:
+        s.active = bool(d["active"])
+    if d.get("use_model_supports") is not None:
+        s.use_model_supports = bool(d["use_model_supports"])
+
+
+@op("add_stellung")
+def _op_add_stellung(st, m, d):
+    name = str(d.get("name") or "").strip() or f"S{len(m.stellungen) + 1}"
+    if name in m.stellungen:
+        raise ApiError(f"Stellung '{name}' gibt es schon")
+    s = m.add_stellung(name, str(d.get("title") or ""), str(d.get("kind") or "rotate"))
+    # Vorbelegung aus der aktiven Stellung, damit Achse und Bauteil erhalten bleiben
+    vorlage = d.get("from")
+    if vorlage is None and len(m.stellungen) > 1:
+        vorlage = next((k for k in m.stellungen if k != name), None)
+    if vorlage in m.stellungen:
+        v = m.stellungen[vorlage]
+        s.axis_point, s.axis_dir = list(v.axis_point), list(v.axis_dir)
+        s.moving_groups, s.moving_nodes = list(v.moving_groups), list(v.moving_nodes)
+        s.supports = copy.deepcopy(v.supports)
+        s.contact_supports = copy.deepcopy(v.contact_supports)
+        s.use_model_supports, s.cases = v.use_model_supports, list(v.cases)
+    _apply_stellung_fields(m, s, d)
+    m.active_stellung = name
+    return f"Stellung {s.label} bei {s.value_text()} angelegt"
+
+
+@op("edit_stellung")
+def _op_edit_stellung(st, m, d):
+    s = _stellung(m, d)
+    neu = str(d.get("rename") or "").strip()
+    _apply_stellung_fields(m, s, d)
+    if neu and neu != s.name:
+        if neu in m.stellungen:
+            raise ApiError(f"Stellung '{neu}' gibt es schon")
+        m.stellungen = {(neu if k == s.name else k): v for k, v in m.stellungen.items()}
+        if m.active_stellung == s.name:
+            m.active_stellung = neu
+        s.name = neu
+    return f"Stellung {s.label} bei {s.value_text()} geändert"
+
+
+@op("remove_stellung")
+def _op_remove_stellung(st, m, d):
+    s = _stellung(m, d)
+    m.remove_stellung(s.name)
+    return f"Stellung {s.name} entfernt"
+
+
+@op("clear_stellungen")
+def _op_clear_stellungen(st, m, d):
+    n0 = len(m.stellungen)
+    m.stellungen, m.active_stellung = {}, ""
+    return f"{n0} Stellungen entfernt"
+
+
+@op("set_active_stellung")
+def _op_set_active_stellung(st, m, d):
+    s = _stellung(m, d, "name")
+    m.active_stellung = s.name
+    return f"Stellung {s.name} ({s.value_text()})"
+
+
+@op("stellung_support")
+def _op_stellung_support(st, m, d):
+    """Lager, das nur in dieser Stellung wirkt."""
+    s = _stellung(m, d)
+    nodes = _ilist(d, "nodes")
+    _check_nodes(m, nodes)
+    dofs = d.get("dofs", "all")
+    if isinstance(dofs, str):
+        dofs = {"all": [0, 1, 2, 3, 4, 5], "pinned": [0, 1, 2], "z": [2], "xz": [0, 2],
+                "yz": [1, 2], "xyz": [0, 1, 2]}.get(dofs) or _ilist({"d": dofs}, "d")
+    dofs = [int(x) for x in dofs]
+    if not dofs or any(x < 0 or x > 5 for x in dofs):
+        raise ApiError("Freiheitsgrade 0..5 erwartet")
+    s.supports = [x for x in s.supports if x.node not in nodes]
+    for n in nodes:
+        s.supports.append(Support(int(n), list(dofs)))
+    return f"{len(nodes)} Lager in Stellung {s.name} gesetzt"
+
+
+@op("remove_stellung_support")
+def _op_remove_stellung_support(st, m, d):
+    s = _stellung(m, d)
+    nodes = set(_ilist(d, "nodes"))
+    n0 = len(s.supports)
+    s.supports = [x for x in s.supports if x.node not in nodes]
+    return f"{n0 - len(s.supports)} Lager aus Stellung {s.name} entfernt"
+
+
+@op("stellung_series")
+def _op_stellung_series(st, m, d):
+    """Stellungsserie anlegen, z.B. 0…82 Grad in 6 Schritten."""
+    from ..stellungen import series
+    prefix = str(d.get("prefix") or "S").strip() or "S"
+    steps = _i(d, "steps", 6)
+    if steps < 2 or steps > 60:
+        raise ApiError("Schrittzahl zwischen 2 und 60 erwartet")
+    kind = str(d.get("kind") or "rotate")
+    if kind not in ("rotate", "translate"):
+        raise ApiError("Bewegungsart: rotate | translate")
+    vorlage = m.stellungen.get(d.get("template") or m.active_stellung)
+    if bool(d.get("replace")):
+        m.stellungen, m.active_stellung = {}, ""
+    for i in range(1, steps + 1):
+        if f"{prefix}{i}" in m.stellungen:
+            raise ApiError(f"Stellung '{prefix}{i}' gibt es schon - anderes Kürzel "
+                           f"wählen oder vorhandene Stellungen ersetzen")
+    neu = series(m, prefix, _f(d, "start", 0.0), _f(d, "end", 90.0), steps,
+                 template=vorlage, kind=kind)
+    return (f"{len(neu)} Stellungen angelegt: {neu[0].value_text()} bis "
+            f"{neu[-1].value_text()} in {steps} Schritten")
+
+
 def apply_op(st: State, d: dict) -> dict:
     """Bearbeitungsoperation ausfuehren; Rueckgabe: Nachricht, Uebersicht, Zusatzdaten."""
     name = d.get("op")
@@ -1556,8 +1809,10 @@ def start_solve(st: State, opts: dict) -> dict:
             raise ApiError("\n".join(problems))
         _apply_settings(st, opts)
         kind = opts.get("kind") or "all"
-        if kind not in ("all", "case", "modal", "buckling"):
-            raise ApiError("kind: all | case | modal | buckling")
+        if kind not in ("all", "case", "modal", "buckling", "stellungen"):
+            raise ApiError("kind: all | case | modal | buckling | stellungen")
+        if kind == "stellungen" and not m.active_stellungen():
+            raise ApiError("Keine aktive Stellung definiert - zuerst Stellungen anlegen")
         design = bool(opts.get("design", True)) and bool(m.members)
         fatigue = bool(opts.get("fatigue", True)) and bool(m.fatigue_loads)
         nmodes = max(1, _i(opts, "nmodes", 6))
@@ -1565,11 +1820,24 @@ def start_solve(st: State, opts: dict) -> dict:
         if case and case not in m.load_cases:
             raise ApiError(f"Lastfall '{case}' unbekannt")
         label = {"all": "Alle Lastfälle + Kombinationen", "case": "Lastfall",
-                 "modal": "Eigenschwingungen", "buckling": "Knicken"}[kind]
+                 "modal": "Eigenschwingungen", "buckling": "Knicken",
+                 "stellungen": "Alle Stellungen des Systems"}[kind]
 
         def run(progress):
             progress(f"{label} gestartet ({parallel.describe()})")
-            if kind == "all":
+            if kind == "stellungen":
+                sa = stg.solve_stellungen(m, progress=progress, design=design,
+                                          fatigue=fatigue, workers=int(st.settings["workers"]))
+                # Die zuletzt gerechnete Stellung bleibt als Einzelanalyse sichtbar,
+                # damit Verformung und Schnittgroessen weiter dargestellt werden.
+                letzte = m.active_stellung if m.active_stellung in sa.analyses \
+                    else sa.stellungen[-1]
+                text = sa.summary()
+                with st.lock:
+                    st.stellungen_analysis = sa
+                    st.analysis, st.results = sa.analyses[letzte], None
+                    m.active_stellung = letzte
+            elif kind == "all":
                 an = solver.solve_all(m, progress=progress, design=design, fatigue=fatigue)
                 text = an.summary()
                 with st.lock:
@@ -1838,7 +2106,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(st.model.to_dict())
         if path == "geometry":
             with st.lock:
-                return self._json(geometry(st.model, q.get("case") or None))
+                s = q.get("stellung")
+                if s is None:
+                    s = st.model.active_stellung
+                return self._json(geometry(st.model, q.get("case") or None, s or None))
+        if path == "stellungen":
+            return self._json(stellungen_payload(st))
         if path == "op":
             if method != "POST":
                 raise ApiError("POST erwartet", 405)
