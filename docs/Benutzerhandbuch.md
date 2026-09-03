@@ -157,11 +157,19 @@ Datei → Importieren (Details in `Schnittstellen.md`):
 | `.ifc` | InfoCAD, RFEM, Allplan … (IFC Structural Analysis View) | Knoten, Stäbe, Flächen, Profile, Lager, Lasten, Lastfälle |
 | `.xlsx` SAF | RFEM 6, SCIA, Allplan, AxisVM | Structural Analysis Format |
 | `.xlsx`/`.csv` | RFEM 5/6, RSTAB Tabellenexport | Knoten, Linien, Stäbe, Querschnitte, Lager, Lastfälle, Lasten |
+| `.sza`/`.kra`/`.fga` | HiCAD | Profile mit Katalogwerten, Blechdicken, Werkstoffe, Teileliste **und die Stabachsen aus dem Szenenteil** (siehe Schnittstellenhandbuch) |
 | `.inp` | Abaqus, CalculiX | Netz, Materialien, Sections, Randbedingungen, Lasten je Step |
 | `.bdf`/`.nas`/`.dat` | Nastran | GRID, CBAR/CBEAM, CQUAD4/CTRIA3, CTETRA/CHEXA, SPC, FORCE, PLOAD |
 | `.step`/`.iges`/`.stl` | CAD | Vernetzung mit gmsh (Volumen oder Schale) |
 
 Native Binärformate (`.rf5`, `.rf6`, `.fem`) können nicht gelesen werden;
+Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
+Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
+zerfällt zunächst in Teile. Im Register **Mehr → Aus CAD übernommenes Modell**
+schließt „Freie Stabenden anschließen" (Suchradius 60 mm) jedes freie Ende an die
+Achse des nächsten Stabes an und teilt diesen dort; der Versatz steht im
+Protokoll, die Ausmitte des Anschlusses wird nicht abgebildet.
+
 das Programm nennt den Exportweg (RFEM: IFC-Statikmodell, SAF oder
 Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 

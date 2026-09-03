@@ -1046,6 +1046,13 @@ function renderMehr() {
   ${chk('edges', 'Elementkanten zeichnen', view.opts.edges, 'data-view-opt="edges"')}${chk('loads', 'Lasten anzeigen', view.opts.loads !== false, 'data-view-opt="loads"')}${chk('labels', 'Knoten-/Elementnummern', view.opts.labels, 'data-view-opt="labels"')}
   <div class="muted">Ziehen dreht, zwei Finger zoomen und verschieben, Doppeltipp zeigt alles. Antippen wählt Knoten oder Elemente (Umschalter „Kn/El“ oben).</div>
 </div></details>
+<details><summary>Aus CAD übernommenes Modell</summary><div class="body">
+  <form data-op="staebe_anschliessen">
+    ${num('radius', 'Suchradius [mm]', 60, {scale: 0.001, step: 1, min: 1})}
+    <div class="btns"><button class="btn primary">Freie Stabenden anschließen</button></div>
+  </form>
+  <div class="muted">Aus HiCAD oder SDNF übernommene Stäbe enden an der Außenkante des angeschlossenen Bauteils; ihre Achsen laufen um die halbe Profilhöhe daneben vorbei. Der Knopf lotet jedes freie Ende auf die Achse des nächsten Stabes und teilt diesen dort. Die Ausmitte des Anschlusses wird dabei nicht abgebildet – der Versatz steht im Protokoll.</div>
+</div></details>
 <details><summary>Protokoll</summary><div class="body"><pre>${esc(s.log.join('\n'))}</pre></div></details>
 <details><summary>Verbindung / Info</summary><div class="body">
   <div class="kv"><b>Server</b><span>Statik3D Web ${esc(s.server_version)}</span><b>Adresse</b><span>${esc(location.host)}</span><b>Parallel</b><span>${esc(s.parallel)}</span><b>Kerne</b><span>${s.cpu}</span></div>

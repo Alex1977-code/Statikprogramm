@@ -5,6 +5,7 @@ Untersuchung nativer HiCAD-Behaelter (.sza/.kra/.fga).
 Aufruf:  python -m tests.test_hicad
 """
 import math
+import struct
 import os
 import shutil
 import sys
@@ -550,8 +551,144 @@ def test_hicad_archiv():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# --------------------------------------------------------------------------
+# SZN: Geometrie aus dem Szenenteil
+# --------------------------------------------------------------------------
+def _szn(blaetter) -> bytes:
+    """Eine SZN im echten Aufbau bauen: Fortran-Saetze, Abschnitte, Blaetter.
+
+    blaetter: [(Nummer, [(x, y, z, art), ...])] - Masse in Millimetern.
+    """
+    from statik3d.importers import hicad_szn as Z
+
+    def satz(b: bytes) -> bytes:
+        return struct.pack("<I", len(b)) + b + struct.pack("<I", len(b))
+
+    def abschnitt(name: str, saetze: list) -> bytes:
+        inhalt = b"".join(satz(x) for x in saetze)
+        return (satz(Z.SECTION + b"\0") + satz(struct.pack("<I", len(inhalt)))
+                + satz(struct.pack("<I", len(name))) + satz(name.encode("ascii"))
+                + inhalt)
+
+    out = [Z.MAGIC, abschnitt("SZN_HEA", [struct.pack("<I", 1)])]
+    for nummer, punkte in blaetter:
+        roh = b"".join(struct.pack("<3dI I I I", x, y, z, 0, art, 0, 0)
+                       for x, y, z, art in punkte)
+        out.append(abschnitt("SZ_LEAF", [struct.pack("<I", nummer),
+                                         struct.pack("<I", len(punkte)), roh]))
+    out.append(abschnitt("ENDTREE", [struct.pack("<I", 0)]))
+    return b"".join(out)
+
+
+def _u200_wolke(x0, y0, z0, x1, y1, z1, h=200.0, b=75.0):
+    """Achse (Art 4003) und ein Querschnittsrechteck (Art 2) an beiden Enden."""
+    import numpy as np
+    p0, p1 = np.array([x0, y0, z0]), np.array([x1, y1, z1])
+    e1 = (p1 - p0) / np.linalg.norm(p1 - p0)
+    # zwei Richtungen senkrecht zur Achse
+    hilf = np.array([0.0, 0.0, 1.0]) if abs(e1[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    e2 = np.cross(e1, hilf); e2 /= np.linalg.norm(e2)
+    e3 = np.cross(e1, e2)
+    pts = [(x0, y0, z0, 4003), (x1, y1, z1, 4003), (*e1, 5)]
+    for p in (p0, p1):
+        for sh in (-h / 2, h / 2):
+            for sb in (-b / 2, b / 2):
+                q = p + e2 * sh + e3 * sb
+                pts.append((q[0], q[1], q[2], 2))
+    return pts
+
+
+def test_szn_geometrie():
+    from statik3d.importers import hicad_szn as Z
+    from statik3d.model import Model, Material
+    from statik3d.profiles import make_section
+
+    blatt_u = _u200_wolke(0, 0, 0, 0, 0, 3000)                 # Pfosten, 3 m
+    blatt_q = _u200_wolke(37.5, 0, 1000, 2000, 0, 1000, 100, 10)   # Querstab
+    klein = [(0, 0, 0, 4003), (0, 0, 30, 4003)] + [(1, 1, 1, 2)] * 4   # 30 mm Stift
+    data = _szn([(1, blatt_u), (2, blatt_q), (3, klein)])
+
+    check("SZN-Kennung erkannt", Z.is_szn(data))
+    recs = Z.records(data, strict=True)
+    check("Satzkette endet am Dateiende", len(recs) > 10, f"{len(recs)} Saetze")
+    namen = [n for n, _a, _b in Z.sections(recs)]
+    check("Abschnitte gelesen", namen.count("SZ_LEAF") == 3 and "SZN_HEA" in namen,
+          str(namen))
+    check("Fremde Datei wird abgewiesen",
+          not Z.is_szn(b"nur text") and _raises(Z.records, b"nur text"))
+
+    bl = Z.leaves(data)
+    check("drei Blaetter mit Punkten", len(bl) == 3 and len(bl[0].punkte) == len(blatt_u))
+    check("Millimeter in Meter umgerechnet",
+          abs(float(bl[0].punkte[1][2]) - 3.0) < 1e-9, str(bl[0].punkte[1]))
+    check("Punktarten uebernommen",
+          int((bl[0].arten == Z.ACHSE).sum()) == 2
+          and int((bl[0].arten == Z.RICHTUNG).sum()) == 1)
+
+    k = Z.koerper(bl[0])
+    check("Achse 4003 wird als Stabachse genommen", k.quelle == "Achse 4003", k.quelle)
+    check("Laenge aus der Achse", abs(k.L - 3.0) < 1e-9, f"{k.L}")
+    check("Querschnitt senkrecht zur Achse gemessen",
+          abs(k.h - 0.200) < 1e-6 and abs(k.b - 0.075) < 1e-6, f"{k.h}/{k.b}")
+
+    st = Z.staebe(data)
+    check("Stift unter 100 mm wird nicht zum Stab", len(st) == 2, str(len(st)))
+
+    prof = {"UPN 200": make_section("UPN 200"), "IPE 300": make_section("IPE 300")}
+    name, dh, db = Z.passendes_profil(0.206, 0.079, prof)
+    check("gemessene 206 x 79 mm finden 'UPN 200'", name == "UPN 200", str(name))
+    check("Abweichung wird ausgewiesen", abs(dh - 0.006) < 1e-6, f"{dh}")
+    check("zu breites Profil wird verworfen",
+          Z.passendes_profil(0.206, 0.020, {"UPN 200": prof["UPN 200"]})[0] is None)
+    check("unpassende Hoehe findet nichts",
+          Z.passendes_profil(0.500, 0.200, prof)[0] is None)
+
+    m = Model("SZN")
+    m.add_material(Material.steel("S235"))
+    log = []
+    r = Z.in_modell(data, m, profile=prof, log=log)
+    check("Staebe im Modell", r["staebe"] == 2 and len(m.elements) == 2, str(r))
+    check("Knoten im Modell", m.nn == 4, str(m.nn))
+    check("Pfosten bekommt UPN 200",
+          any(getattr(e, "sec", "") == "UPN 200" for e in m.elements),
+          str([getattr(e, "sec", "") for e in m.elements]))
+    check("Ersatzrechteck fuer unbekanntes Mass",
+          any(s.startswith("gemessen") for s in m.sections), str(sorted(m.sections)))
+    check("Protokoll nennt die Zuordnung", any("UPN 200" in z for z in log))
+
+    zus = Z.zusammenhang(m)
+    check("Teiltragwerke gezaehlt", zus["teile"] == 2, str(zus))
+    # gemessen wird der kleinste Knoten-Knoten-Abstand zwischen den Teilen:
+    # Pfostenfuss (0,0,0) zum Anfang des Querstabes (37,5 mm, 0, 1 m)
+    check("Luecke zwischen den Teilen gemessen",
+          abs(zus["luecke"] - math.hypot(0.0375, 1.0)) < 1e-6, str(zus["luecke"]))
+
+    log2 = []
+    r2 = Z.an_staebe_anschliessen(m, 0.06, log2)
+    check("freies Ende angeschlossen", r2["angeschlossen"] >= 1, str(r2))
+    check("Pfosten dafuer geteilt", r2["geteilt"] == 1 and len(m.elements) == 3, str(r2))
+    check("Versatz ausgewiesen und begrenzt",
+          0 < r2["groesster_versatz"] <= 0.06, str(r2["groesster_versatz"]))
+    check("System haengt zusammen", Z.zusammenhang(m)["teile"] == 1)
+    check("Protokoll nennt den Versatz", any("Versatz" in z for z in log2))
+
+    m2 = Model("leer")
+    m2.add_material(Material.steel("S235"))
+    check("Szene ohne Staebe stoert nicht",
+          Z.in_modell(_szn([(1, klein)]), m2, profile=prof)["staebe"] == 0)
+
+
+def _raises(fn, *a) -> bool:
+    try:
+        fn(*a)
+    except Exception:      # noqa: BLE001
+        return True
+    return False
+
+
 def main():
-    for t in (test_dstv, test_sdnf, test_hicad_behaelter, test_hicad_archiv):
+    for t in (test_dstv, test_sdnf, test_hicad_behaelter, test_hicad_archiv,
+              test_szn_geometrie):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

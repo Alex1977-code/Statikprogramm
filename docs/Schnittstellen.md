@@ -266,11 +266,69 @@ Beispiel aus einer echten Datei:
 Führt die Werkstofftabelle andere Festigkeiten als die Norm zur Bezeichnung,
 gilt die Norm (EN 10025‑2) und die Abweichung steht im Protokoll.
 
-**Was nicht gelesen wird:** die 3D‑Geometrie. Sie liegt in den Teilen `SZN` und
-`VIEWER.GFIG` in einem Binärformat, das ISD nicht veröffentlicht – es wird
-nichts geraten. Für das Tragwerk aus HiCAD exportieren nach **SDNF**
-(Bauteile mit Lage im Bauwerk), **DSTV‑NC** (Einzelteile), **IFC** oder
-**STEP**.
+#### Geometrie aus dem Szenenteil (SZN)
+
+Der Szenenteil ist **kein undurchdringliches Binärformat**. Er beginnt mit der
+Kennung `FILE-CONTAINER ISD  1.0` und ist ein Strom aus **Fortran‑Sätzen**: jeder
+Satz steht zwischen zwei gleichen 32‑Bit‑Längen, wie es die unformatierte
+sequentielle Ausgabe von Fortran schreibt. Die Satzkette endet in beiden
+Prüffiles punktgenau am Dateiende – das ist der Beleg, dass der Aufbau stimmt.
+
+Der Behälter ist in Abschnitte geteilt (`FILE-CONT-SECTION`, dann Größe,
+Namenslänge, Name): `SZN_HEA` (Kopf), `SZN_KRP` (Körper), je Bauteil ein
+`SZ_LEAF` mit `CESF_LF` und `TFBF_LF`, am Ende `ENDTREE`. Ein `SZ_LEAF` führt
+Nummer, Anzahl und die Eintragsliste mit **40 Byte je Eintrag**: drei `float64`
+als Koordinate in Millimetern, dann vier `uint32`. Der zweite davon ist die Art:
+
+| Art | Bedeutung |
+|---|---|
+| 1 | Konstruktionspunkt (Kontur, Hilfspunkt) |
+| 2 | Eckpunkt des Körpers |
+| 5 | Richtungsvektor (Einheitsvektor) |
+| **4003** | **Achse des Bauteils – zwei Punkte, Anfang und Ende** |
+| 50003 | Bezugssystem (Ursprung und zwei Achspunkte) |
+
+Die Art 4003 ist der Schlüssel: **HiCAD nennt die Stabachse selbst.** Sie wird
+unmittelbar übernommen, der Querschnitt senkrecht dazu aus den Eckpunkten
+gemessen und in den benutzten Teiletabellen gesucht:
+
+```
+Teil  8: L =  5518 mm, gemessen 206.0 x  78.9 mm -> 'U 200'      (Abw. +6.0 / +3.9 mm)
+Teil 14: L =   928 mm, gemessen 100.1 x  20.0 mm -> 'Fl 100x10'  (Abw. +0.1 / +10.0 mm)
+Teil 57: L = 12900 mm, gemessen 701.2 x 302.8 mm -> 'HEB 700'    (Abw. +1.2 / +2.8 mm)
+```
+
+Die große Abmessung steht in der Punktwolke genau; die kleine darf nur **nach
+oben** abweichen, weil die Wolke auch Punkte angeschweißter Nachbarteile
+enthält. Ein Profil, das breiter wäre als gemessen, kann es darum nicht sein und
+wird verworfen. Passt kein Katalogprofil, entsteht ein Ersatzrechteck aus den
+gemessenen Maßen – benannt `gemessen 91x26`, damit es niemand für ein
+Katalogprofil hält. Führt HiCAD ein Bauteil und die daran angeschweißte
+Baugruppe mit **derselben** Achse, wird das Blatt mit dem kleineren Querschnitt
+behalten – das Profil selbst, nicht die Baugruppe. Teile unter 100 mm Länge
+(Schrauben, Stifte) werden nicht zu Stäben.
+
+**Anschlüsse.** Ein Querstab endet in HiCAD an der Außenkante des Pfostens;
+seine Achse läuft um die halbe Profilhöhe daneben vorbei. Das Stabmodell
+zerfällt dadurch zunächst in Teile – das steht mit dem gemessenen Abstand im
+Protokoll. Die Option `anschluss=0.06` (in der Oberfläche „Freie Stabenden
+anschließen", Suchradius 60 mm) lotet jedes freie Ende auf die Achse des
+nächsten Stabes und teilt diesen dort. Der Versatz steht im Protokoll; die
+**Ausmitte des Anschlusses wird nicht abgebildet**.
+
+**Was das ist und was nicht.** Ein Stabmodell an der richtigen Stelle, kein
+Nachbau des Volumenmodells: Bleche, Verbindungsmittel, Ausschnitte und die
+Flächen‑/Kantentopologie (`CESF_LF`/`TFBF_LF`, `VIEWER.GFIG`) sind nicht
+enthalten. Wer die genaue Geometrie braucht, nimmt weiterhin den von HiCAD
+vorgesehenen Weg: **SDNF** (Bauteile mit Lage im Bauwerk), **DSTV‑NC**
+(Einzelteile), **IFC** oder **STEP**.
+
+An den beiden Prüffiles:
+
+| Datei | Ergebnis |
+|---|---|
+| `OH_ÄUSSERE DAMMTAFEL_RECHTS_BESTAND.SZA` (3,1 MB) | 18 Stäbe, 36 Knoten: 4 × U 200, 10 × Fl 100x10, 2 × Fl 60x20, 1 × Fl 65x12, 1 Ersatzrechteck (Notenprofil) |
+| `TAFELLEHNE_BESTAND.SZA` (11,2 MB) | 76 Stäbe, 150 Knoten, darunter ein HEB 700 mit 12,90 m |
 
 Zum Entpacken wird das Paket `zstandard` benötigt (in `requirements.txt` und in
 der Windows‑exe enthalten).
@@ -339,8 +397,9 @@ Knotenzahl, Stäbe, Profilkennwerte, Lager, Lastfälle.
 ### Zum HiCAD-Archiv (.sza)
 
 Der Behälter wird richtig geschrieben und liest sich wieder ein. Die
-**3D-Geometrie** von HiCAD steht aber im Teil `SZN` in einem Format, das ISD
-nicht veröffentlicht; es wird nicht geraten. Eine hier geschriebene `.sza`
+**Körpergeometrie** (Flächen, Kanten, Ausschnitte) steht in Teilen, die hier
+nicht gedeutet werden – nur die Bauteilachsen werden gelesen (siehe oben).
+Eine hier geschriebene `.sza`
 enthält deshalb **kein von HiCAD lesbares Modell**, sondern die enthaltene
 SDNF-Datei, die DSTV-NC-Teile, die Teiletabellen der benutzten Profile und
 Werkstoffe sowie die XML-Teile. Wer das Modell **in HiCAD** haben will, nimmt
