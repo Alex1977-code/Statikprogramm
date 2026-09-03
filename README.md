@@ -29,10 +29,25 @@ Handrechnungen (über 270 automatisierte Prüfungen, siehe unten).
 | **Parallel** | Elementschleifen und Aufträge auf mehreren Kernen; Rechnerfarm (Server/Worker/Client) über das Netz; optional MKL-Pardiso-Löser |
 | **Dokumentation** | Statischer Bericht (HTML druckbar, PDF, Markdown) mit Systemgrafiken, Schnittgrößenverläufen, allen Nachweiswerten; Benutzer-, Theorie-, Schnittstellen- und Farm-Handbuch in `docs/` |
 | **Export** | JSON-Modell, CSV, VTU (ParaView) |
+| **Handy / Browser** | Web-Server (`python run_web.py`) mit mobiler Oberfläche: 3D-Ansicht per Touch, Eingabe, Berechnung, Ergebnisse, Nachweise, Bericht; auch aus der Desktop-GUI startbar (gemeinsames Modell) |
 
 Einheiten durchgängig SI: **m, N, Pa, kg/m³**.
 
 ---
+
+## Windows: Ein-Klick-Start (immer die neueste Version)
+
+1. Python 3.11 oder 3.12 von https://www.python.org/downloads/windows/ installieren („Add python.exe to PATH“ anhaken).
+2. Diese Datei in einen eigenen Ordner (z. B. `C:\Statik3D`) speichern:
+   **https://raw.githubusercontent.com/Alex1977-code/Statikprogramm/main/Statik3D-Windows.bat**
+   (im Browser Strg+S bzw. Rechtsklick → „Ziel speichern unter“).
+3. Doppelklick. Die Datei holt bei jedem Start die aktuelle Version von GitHub, richtet einmalig
+   die Python-Umgebung ein und startet die Oberfläche. `Statik3D-Windows.bat handy` startet
+   stattdessen den Server für Handy und Browser, `Statik3D-Windows.bat offline` startet ohne Aktualisierung.
+
+Eigene Modelle in den Ordner `Projekte` neben der Startdatei legen; der Ordner `Statikprogramm` wird
+bei jeder Aktualisierung ersetzt. Ohne Startdatei: der Stand von `main` als ZIP ist immer unter
+https://github.com/Alex1977-code/Statikprogramm/archive/refs/heads/main.zip.
 
 ## Installation
 
@@ -45,10 +60,15 @@ pip install reportlab svglib        # optional: PDF-Bericht direkt aus dem Progr
 
 Unter Linux zusätzlich `sudo apt install libglu1-mesa libegl1` (gmsh / Qt).
 
+Windows: Python 3.11/3.12 von python.org („Add to PATH“), dann in PowerShell im
+Programmordner `py -m venv .venv`, `.venv\Scripts\activate`, `pip install -r requirements.txt`,
+`python run_gui.py`. Beim ersten Start von `run_web.py` den Zugriff in der Windows-Firewall zulassen.
+
 ## Starten
 
 ```bash
 python run_gui.py                                              # grafische Oberfläche
+python run_web.py --schluessel geheim                          # Bedienung im Browser / auf dem Handy
 python -m statik3d.cli --beispiel hall --nachweise --ermuedung --bericht halle.html
 python -m statik3d.cli modell.json --kerne 8                   # alle Lastfälle + Kombinationen
 python -m statik3d.cli --import projekt.ifc --staebe --kombinationen --speichern projekt.json
@@ -61,6 +81,20 @@ Kombinationen, Umhüllende, EC3-Nachweise und Ermüdung in einem Lauf; danach
 **Datei → Statischer Bericht**.
 
 ---
+
+## Auf dem Handy
+
+```bash
+python run_web.py --schluessel geheim --beispiel hall
+```
+
+Der PC rechnet, das Handy bedient: Der Server nennt die Adresse im Netz
+(z. B. `http://192.168.1.23:8080/`), diese im Handy-Browser öffnen, Schlüssel
+eingeben, optional „Zum Startbildschirm hinzufügen“. Register Modell, Lasten,
+Rechnen, Ergebnisse, Nachweise und Bericht wie in der Desktop-GUI, 3D-Ansicht
+mit Touch. In der Desktop-GUI startet **Berechnung → Bedienung im Browser /
+auf dem Handy…** denselben Server für das geöffnete Modell. Details:
+`docs/Benutzerhandbuch.md`, Kapitel 11.
 
 ## Arbeitsablauf in der GUI
 
@@ -109,10 +143,11 @@ write_report(m, an, "kragarm.html")
 
 ```bash
 python -m tests.test_verification     # 26 Benchmarks Stab/Schale/Volumen
-python -m tests.test_solver_ext       # 47 Prüfungen: Gelenke, Lasten, Kombinationen, Kontakt, Parallel, Farm
+python -m tests.test_solver_ext       # 49 Prüfungen: Gelenke, Lasten, Kombinationen, Kontakt, Parallel, Farm
 python -m tests.test_ec3              # 48 Prüfungen: EC3-Handrechnungen
 python -m tests.test_importers        # 126 Prüfungen: Import
 python -m tests.test_report           # Bericht
+python -m tests.test_web              # 91 Prüfungen: Browser-/Handy-Server (API)
 xvfb-run -a python -m tests.test_gui_smoke   # Oberfläche (ohne Benutzer)
 ```
 
@@ -162,6 +197,7 @@ statik3d/
   report/            HTML/PDF/Markdown-Bericht, SVG-Grafiken
   elements/          beam3d, shell, solid
   gui/               PySide6-Oberfläche (main, dialogs, viewport, worker)
+  web/               Browser-/Handy-Oberfläche: server.py (HTTP-API), static/ (HTML, CSS, JS)
   mesher.py, examples_lib.py, cli.py
 docs/                Benutzerhandbuch, Theoriehandbuch, Schnittstellen, Rechnerfarm
 tests/               Verifikation

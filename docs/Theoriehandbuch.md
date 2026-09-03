@@ -113,16 +113,34 @@ Arten:
 
 Reibung (Coulomb): Bei Haften wirkt eine tangentiale Penalty-Steifigkeit
 k_t = k_n; überschreitet die Tangentialkraft μ F_n, gleitet der Knoten mit
-der konstanten Reibkraft μ F_n entgegen der Gleitrichtung (mit kleiner
-Reststeifigkeit zur Regularisierung). Die Gleitrichtung wird unterrelaxiert
-nachgeführt. Das Verfahren ist eine elastisch-plastische Näherung ohne
-Lastgeschichte und für monoton aufgebrachte Lasten geeignet.
+der konstanten Reibkraft μ F_n entgegen der Gleitrichtung. Das Verfahren ist
+eine elastisch-plastische Näherung ohne Lastgeschichte und für monoton
+aufgebrachte Lasten geeignet. Die Iteration läuft in zwei Phasen:
 
-Die Iteration endet, wenn sich kein Zustand (offen / Kontakt / Haften /
-Gleiten) mehr ändert. Bedingungen, die mehr als achtmal wechseln, werden
-als aktiv festgehalten und im Protokoll vermerkt. Hebt ein Bauteil
-vollständig ab oder rutscht es ohne Halt, existiert kein statisches
-Gleichgewicht; das wird als Fehler mit Hinweis gemeldet.
+1. **Aktivmenge und Gleitrichtungen.** Gleitende Knoten behalten eine
+   Reststeifigkeit von 10⁻³ k_t (Regularisierung), die Gleitrichtung wird
+   unterrelaxiert nachgeführt, Knoten mit Bewegung entgegen der
+   Gleitrichtung haften wieder. Die Phase endet, wenn sich kein Zustand
+   (offen / Kontakt / Haften / Gleiten) mehr ändert. Bedingungen, die mehr
+   als achtmal wechseln, werden als aktiv festgehalten und im Protokoll
+   vermerkt.
+2. **Nachprüfung.** Die Reststeifigkeit wird auf 10⁻⁸ k_t abgesenkt, so
+   dass an gleitenden Knoten exakt μ F_n wirkt; die Gleitrichtungen bleiben
+   fest. Je Runde geht nur der am stärksten über der Reibgrenze liegende
+   haftende Knoten ins Gleiten über (monoton, deshalb ohne Flattern), bis
+   |F_t| ≤ μ F_n an allen haftenden Knoten gilt. Anschließend laufen
+   Setzrunden, bis sich die Normalkräfte in μ F_n nicht mehr ändern.
+
+Ergebnis: Die ausgewiesenen Kontaktkräfte stehen mit den Lasten im
+Gleichgewicht (Summe der Reibkräfte = Horizontallast), an gleitenden Knoten
+ist |F_t| = μ F_n, an haftenden |F_t| ≤ μ F_n. Weil die Gleitrichtungen der
+Nachprüfung fest bleiben, urteilt das Verfahren nahe der Reibkapazität
+μ ΣF_n konservativ: Oberhalb von etwa 80 % kann es „rutscht“ melden, obwohl
+die Kapazität rechnerisch noch nicht erreicht ist. Gleiten alle aktiven
+Knoten einer Kontaktgruppe, hält nur die grobe Reststeifigkeit das Bauteil;
+das wird als Warnung „Bauteil rutscht“ gemeldet. Hebt ein Bauteil
+vollständig ab, existiert kein statisches Gleichgewicht; das wird als Fehler
+mit Hinweis gemeldet.
 
 ## 5 Nachweise nach DIN EN 1993-1-1
 

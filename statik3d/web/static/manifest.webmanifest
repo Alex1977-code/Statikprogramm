@@ -1,0 +1,13 @@
+{
+  "name": "Statik3D",
+  "short_name": "Statik3D",
+  "description": "Statik3D - FE-Berechnung mit Lastfaellen, Kombinationen, Kontakt und Nachweisen nach EC3",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f6f8",
+  "theme_color": "#1c2733",
+  "lang": "de",
+  "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}]
+}

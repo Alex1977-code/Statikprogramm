@@ -125,6 +125,29 @@ def main():
     check("Dialoge erzeugt", mat.fy == 355e6 and sec.typ == "I" and "unit_scale" in opts and ro["design"],
           f"{mat.name} {sec.name}")
 
+    # Web-Server (Browser / Handy) am GUI-Modell: Aenderung vom "Handy" erscheint in der GUI
+    try:
+        import json
+        import urllib.request
+        from statik3d.web import start_server_thread
+        srv, th, st = start_server_thread(None, host="127.0.0.1", port=0, key=None, bound=w)
+        w.web_server, w.web_thread, w.web_state = srv, th, st
+        w.web_version = st.version
+        nn0 = w.model.nn
+        body = json.dumps({"op": "add_node", "x": 1, "y": 2, "z": 3}).encode("utf-8")
+        req = urllib.request.Request(srv.local_url + "api/op", data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            j = json.loads(r.read().decode("utf-8"))
+        w._web_poll(); app.processEvents()
+        check("Web-Server am GUI-Modell: Handy-Aenderung uebernommen",
+              j["state"]["nn"] == nn0 + 1 and w.model.nn == nn0 + 1 and f"Knoten: {nn0 + 1}" in w.lbl_info.text(),
+              srv.local_url)
+        w.stop_web_server()
+        check("Web-Server beendet", w.web_server is None)
+    except Exception as ex:
+        check("Web-Server am GUI-Modell", False, str(ex))
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

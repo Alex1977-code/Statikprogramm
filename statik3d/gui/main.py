@@ -144,6 +144,8 @@ class MainWindow(QtWidgets.QMainWindow):
         c.addSeparator()
         c.addAction("Nachweise EC3 (nach Berechnung)", self.do_design)
         c.addAction("Ermüdungsnachweis (nach Berechnung)", self.do_fatigue)
+        c.addSeparator()
+        c.addAction("Bedienung im Browser / auf dem Handy…", self.start_web_server)
 
         v = mb.addMenu("&Ansicht")
         v.addAction("Isometrisch", lambda: (self.plotter.view_isometric(), self.plotter.reset_camera()))
@@ -1736,6 +1738,88 @@ class MainWindow(QtWidgets.QMainWindow):
             QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(p))
         else:
             self.error(f"Dokument nicht gefunden: {p}")
+
+    # ---- Web-Server (Browser / Handy) ---------------------------------
+    def start_web_server(self):
+        """Startet den Web-Server fuer das aktuelle Modell; Handy und GUI teilen sich
+        Modell und Ergebnisse (State.bound = dieses Fenster)."""
+        if getattr(self, "web_server", None) is not None:
+            return self._web_info()
+        port, ok = QtWidgets.QInputDialog.getInt(self, "Browser / Handy", "Port:", 8080, 1024, 65535)
+        if not ok:
+            return
+        key, ok = QtWidgets.QInputDialog.getText(
+            self, "Browser / Handy", "Zugangsschlüssel (leer = ohne Schlüssel):", text="statik")
+        if not ok:
+            return
+        try:
+            from ..web import start_server_thread
+            self.web_server, self.web_thread, self.web_state = start_server_thread(
+                host="0.0.0.0", port=port, key=key.strip() or None, bound=self)
+        except OSError as ex:
+            self.web_server = None
+            return self.error(f"Web-Server konnte nicht starten (Port {port} belegt?): {ex}")
+        self.web_version = self.web_state.version
+        self.web_timer = QtCore.QTimer(self)
+        self.web_timer.timeout.connect(self._web_poll)
+        self.web_timer.start(1000)
+        self.info(f"Web-Server gestartet: {self.web_server.url}")
+        self._web_info()
+
+    def stop_web_server(self):
+        srv = getattr(self, "web_server", None)
+        if srv is None:
+            return
+        try:
+            timer = getattr(self, "web_timer", None)
+            if timer is not None:
+                timer.stop()
+            srv.shutdown()
+            srv.server_close()
+        finally:
+            self.web_server = None
+            self.info("Web-Server beendet")
+
+    def _web_info(self):
+        srv, st = self.web_server, self.web_state
+        text = (f"Auf dem Handy oder Tablet im Browser öffnen (gleiches WLAN):\n\n{srv.url}\n\n"
+                + (f"Zugangsschlüssel: {st.key}\n\n" if st.key else "Kein Zugangsschlüssel.\n\n")
+                + f"Auf diesem Rechner: {srv.local_url}\n\n"
+                "Handy und PC arbeiten am selben Modell; Änderungen und Ergebnisse erscheinen auf beiden Seiten.")
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Bedienung im Browser / auf dem Handy")
+        box.setText(text)
+        box.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        b_open = box.addButton("Im Browser öffnen", QtWidgets.QMessageBox.ActionRole)
+        b_stop = box.addButton("Server beenden", QtWidgets.QMessageBox.DestructiveRole)
+        box.addButton(QtWidgets.QMessageBox.Close)
+        box.exec()
+        if box.clickedButton() is b_open:
+            url = srv.local_url + (f"?key={st.key}" if st.key else "")
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
+        elif box.clickedButton() is b_stop:
+            self.stop_web_server()
+
+    def _web_poll(self):
+        """Aenderungen vom Handy in die Oberflaeche uebernehmen."""
+        st = getattr(self, "web_state", None)
+        if st is None or st.version == self.web_version:
+            return
+        if self.worker is not None and self.worker.isRunning():
+            return
+        self.web_version = st.version
+        try:
+            self.selection = self.selection[self.selection < self.model.nn]
+            self.refresh_all()
+            self._fill_result_selector()
+            self.show_results()
+            self.info("Aktualisiert (Änderung aus dem Browser)")
+        except Exception:      # noqa: BLE001
+            self.log.appendPlainText(traceback.format_exc())
+
+    def closeEvent(self, event):
+        self.stop_web_server()
+        super().closeEvent(event)
 
     def about(self):
         QtWidgets.QMessageBox.information(

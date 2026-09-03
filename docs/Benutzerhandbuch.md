@@ -17,6 +17,13 @@ python run_gui.py                      # oder: python -m statik3d.gui
 python -m statik3d.cli --beispiel hall --nachweise --ermuedung --bericht halle.html
 ```
 
+Windows ohne Kommandozeile: `Statik3D-Windows.bat` aus dem Repository in einen
+eigenen Ordner speichern und doppelklicken. Die Datei lädt bei jedem Start die
+neueste Version von GitHub (Ordner `Statikprogramm`, wird ersetzt), legt einmalig
+die Python-Umgebung `.venv` an und startet die GUI. Mit dem Zusatz `handy`
+startet sie den Browser-Server (Kap. 11), mit `offline` ohne Aktualisierung.
+Eigene Modelle gehören in den Ordner `Projekte` daneben.
+
 Einheiten im Programm: **m, N, Pa, kg/m³**. Eingabefelder mit anderer Einheit
 sind beschriftet (z. B. E-Modul in GPa, fy in MPa). Ergebnisse werden in kN,
 kNm, MPa und mm angezeigt.
@@ -163,10 +170,102 @@ im Bericht.
 Strg+N neu, Strg+O öffnen, Strg+S speichern, Strg+I importieren,
 Strg+R Bericht, F5 berechnen.
 
-## 11 Grenzen
+Browser/Handy: siehe Kapitel 11.
+
+## 11 Bedienung im Browser und auf dem Handy
+
+Statik3D lässt sich ohne Installation auf dem Handy oder Tablet bedienen: Der
+Rechenkern läuft als kleiner Web-Server auf dem PC (oder einem Server im
+Netz), das Handy zeigt die Oberfläche im Browser. Modell, Berechnung,
+Ergebnisse, Nachweise und Bericht sind dieselben wie in der Desktop-GUI.
+
+### 11.1 Starten
+
+```bash
+python run_web.py --schluessel geheim              # oder: python -m statik3d.web
+python run_web.py --beispiel hall --port 8080
+python run_web.py --modell halle.json --kerne 8
+```
+
+Der Server meldet zwei Adressen:
+
+```
+Statik3D - Bedienung im Browser / auf dem Handy
+  Auf diesem Rechner : http://127.0.0.1:8080/
+  Im Netzwerk (Handy): http://192.168.1.23:8080/
+  Schlüssel          : geheim   (im Browser einmalig eingeben)
+```
+
+Auf dem Handy (gleiches WLAN) die Netzwerk-Adresse im Browser öffnen und den
+Schlüssel eingeben; er wird auf dem Gerät gespeichert. Mit `pip install qrcode`
+druckt der Server zusätzlich einen QR-Code, den das Handy direkt scannt.
+Browser-Menü → **Zum Startbildschirm hinzufügen** legt ein App-Symbol an;
+Statik3D startet dann bildschirmfüllend wie eine App.
+
+Aus der Desktop-GUI: **Berechnung → Bedienung im Browser / auf dem Handy…**
+startet den Server für das geöffnete Modell. Handy und PC arbeiten dann am
+selben Modell: Eingaben vom Handy erscheinen in der GUI, Ergebnisse vom PC
+auf dem Handy.
+
+| Option | Bedeutung |
+|---|---|
+| `--port 8080` | Port des Servers |
+| `--host 0.0.0.0` | im ganzen Netz erreichbar; `127.0.0.1` = nur dieser Rechner |
+| `--schluessel …` | Zugangsschlüssel (empfohlen, sobald der Server im Netz erreichbar ist) |
+| `--modell datei` | Modell (.json) oder Importdatei beim Start laden |
+| `--beispiel hall` | eingebautes Beispiel laden |
+| `--kerne 8` | Anzahl Prozesse für die Berechnung |
+| `--laut` | jede Anfrage im Terminal protokollieren |
+
+Unter Windows: PowerShell im Programmordner, `.venv\Scripts\activate`,
+`python run_web.py --schluessel geheim`. Beim ersten Start fragt die
+Windows-Firewall, ob Python im privaten Netz Verbindungen annehmen darf –
+zulassen, sonst erreicht das Handy den PC nicht.
+
+### 11.2 Die Oberfläche
+
+Oben die 3D-Ansicht, unten die Register. Der Bereich dazwischen lässt sich am
+Griff ziehen (klein / halb / groß); auf Tablets und PCs liegen die Register
+links neben der Ansicht.
+
+| Register | Inhalt |
+|---|---|
+| **Modell** | Projektdaten, Materialien, Querschnitte (Profildatenbank und parametrisch), Schalendicken, Netzgeneratoren (Stabzug, Platte, Quader), Knoten, Elemente (Stab, Schale, Zuweisen, Gelenke, Löschen), Lager, Stäbe mit Nachweisparametern, Kontakt, Nachweiseinstellungen |
+| **Lasten** | Lastfälle mit Einwirkungskategorie, Lasten des aktiven Lastfalls (Knoten-, Strecken-, Flächen-, Temperaturlast, Eigengewicht), Kombinationen (automatisch/manuell), Ermüdungslasten |
+| **Rechnen** | Analyseart, Nachweise, Prozesse, Rechnerfarm, Start; Fortschritt und Zusammenfassung |
+| **Ergebnisse** | Ergebnis (Umhüllende / Kombination / Lastfall / Eigenform), Färbung, Überhöhung, Schnittgrößenverlauf, Stabdiagramm N/Vz/My, Tabellen Stabkräfte, Umhüllende, Auflagerkräfte, Kontakt |
+| **Nachweise** | Nachweise EC3 und Ermüdung starten, Tabellen; Zeile antippen zeigt alle Zwischenwerte |
+| **Mehr** | Datei öffnen/importieren (alle Formate aus Kap. 6), Modell speichern, Bericht (HTML/PDF/Markdown), Modellprüfung, Beispiele, Ansicht, Protokoll, Zugangsschlüssel |
+
+3D-Ansicht: Ziehen dreht, zwei Finger zoomen und verschieben, Doppeltipp
+zeigt alles, die Knöpfe oben schalten Ansichten (3D, XY, XZ, YZ) und
+Nummern. **Antippen wählt Knoten** (Umschalter „Kn/El“ für Elemente); die
+Auswahl wird in die Eingabefelder der Register übernommen (Lager, Lasten,
+Zuweisen, Stäbe, Kontakt). Ergebnisse werden verformt und farbig gezeichnet,
+Schnittgrößen als Verläufe am Stab.
+
+### 11.3 Sicherheit
+
+Der Server spricht unverschlüsseltes HTTP und ist für das eigene Netz (WLAN,
+Firmennetz) gedacht. Immer einen Schlüssel setzen, sobald `--host 0.0.0.0`
+verwendet wird. Für den Zugriff über das Internet ein VPN oder einen
+Reverse-Proxy mit HTTPS vorschalten; den Port nicht direkt am Router
+freigeben. Hochgeladene Dateien landen in einem temporären Ordner des
+Servers.
+
+### 11.4 Grenzen
+
+Die Darstellung zeichnet mit dem Canvas des Browsers; sehr große
+Volumenmodelle (mehr als etwa 50 000 Außenflächen) werden auf älteren Handys
+träge. Ordner-Importe (RFEM-CSV-Ordner) gehen nur über die Desktop-GUI oder
+die Kommandozeile. Der PDF-Bericht benötigt `reportlab` auf dem Server; der
+HTML-Bericht lässt sich am Handy über Teilen → Drucken als PDF sichern.
+
+## 12 Grenzen
 
 Kleine Verformungen, linear-elastisches Material, Kontakt als
-Penalty-Näherung ohne Lastgeschichte, keine Schalenbeulnachweise, keine
+Penalty-Näherung ohne Lastgeschichte (Reibung nahe der Reibkapazität
+konservativ, siehe Theoriehandbuch Kap. 4), keine Schalenbeulnachweise, keine
 Plastizität, keine Zeitbereichsdynamik. Das Programm ist verifiziert
 (Testsuiten im Ordner `tests`), aber nicht bauaufsichtlich zugelassen; die
 Verantwortung für die Nachweise liegt beim Anwender.
