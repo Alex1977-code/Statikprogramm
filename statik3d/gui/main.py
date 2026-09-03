@@ -24,7 +24,7 @@ from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialo
                       CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
                       DesignSettingsDialog, ContactPairDialog, ImportDialog, ReportDialog,
                       SupportNonlinearDialog, JointDialog,
-                      parse_int_list)
+                      VerformungsgrenzeDialog, parse_int_list)
 from .worker import SolveWorker
 from . import ribbon as rib
 from . import masken as msk
@@ -309,8 +309,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Einseitiges Lager, Spaltelement, Kontaktpaar")
         g.klein("Kontakt löschen", self.clear_contact)
         g = r.gruppe("Anschlüsse")
-        g.gross("Anschluss", "⊞", self.joint_dialog,
-                hinweis="Kopfplatte, Laschenstoß, Diagonalanschluss")
+        g.gross("Anschluss", "⊞", self.add_joint,
+                hinweis="Kopfplatte, Laschenstoß oder Diagonalanschluss am gewählten "
+                        "Stabende anlegen. Der Anschluss gehört danach zum Modell und "
+                        "wird bei jeder Berechnung nachgewiesen.")
+        g.klein("Anschlüsse zeigen", self.show_joints,
+                hinweis="Alle Anschlüsse mit ihren Nachweisen im Klartext")
+        g.klein("Tabelle Anschlüsse", lambda: self.tabelle_zeigen("Anschlüsse"))
+        g.klein("Anschluss löschen", self.delete_joint)
 
         # -- Lasten ------------------------------------------------------
         r = rb.register("Lasten")
@@ -364,6 +370,14 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Stäbe und Knicklängen…", lambda: self.maske_zeigen("Nachweise"))
 
         # -- Ergebnisse --------------------------------------------------
+        g = r.gruppe("Verformung (GZG)")
+        g.gross("Verformung", "↧", self.add_verformungsgrenze,
+                hinweis="Grenzwert der Verformung festlegen: Durchbiegung eines Stabes, "
+                        "Verschiebung eines Knotens oder zweier Knoten gegeneinander")
+        g.klein("Tabelle Verformungen", lambda: self.tabelle_zeigen("Verformungen"))
+        g.klein("Grenze ändern…", self.edit_verformungsgrenze)
+        g.klein("Grenze löschen", self.delete_verformungsgrenze)
+
         r = rb.register("Ergebnisse")
         g = r.gruppe("Auswahl")
         g.gross("Ergebnisse", "∿", lambda: self.maske_zeigen("Ergebnisse"),
@@ -505,13 +519,25 @@ class MainWindow(QtWidgets.QMainWindow):
     }
 
     #: Zweige des Modellbaums, die eine Tabelle unten zeigen statt eine Maske
-    BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe"}
+    BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe",
+                    "anschluesse": "Anschlüsse", "anschluss": "Anschlüsse",
+                    "verformungen": "Verformungen", "verformung": "Verformungen"}
 
     def _baum_geklickt(self, art: str, name: str):
         if art == "stellung_neu":
             return self.neue_stellung()
+        if art == "anschluss_neu":
+            return self.add_joint()
+        if art == "verformung_neu":
+            return self.add_verformungsgrenze()
         if art == "stellung":
             self._stellung_gewaehlt(name.split("·", 1)[-1].strip())
+        if art == "anschluss":
+            self._anschluss_gewaehlt(name)
+        if art == "verformung":
+            self.tabelle_zeigen("Verformungen")
+            self.tbl_gzg.markieren([name])
+            self._tabelle_verformung(name)
         tab = self.BAUM_TABELLE.get(art)
         if tab:
             return self.tabelle_zeigen(tab)
@@ -794,6 +820,53 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_contact.zeile_gewaehlt.connect(self._tabelle_knoten)
         tabs.addTab(self.tbl_contact, "Kontakt")
 
+        # Anschluesse: Eingabe und Ergebnis in einer Tabelle. Vor der Rechnung
+        # stehen Typ und Ort, danach zusaetzlich Ausnutzung und Status.
+        self.tbl_joint = tab.Datentabelle([
+            Spalte("Anschluss"), Spalte("Typ"), Spalte("Ort"),
+            Spalte("Stab"), Spalte("Querschnitt"),
+            Spalte("S_j,ini", "MNm/rad", "zahl", 1,
+                   hinweis="Anfangssteifigkeit nach dem Komponentenverfahren (6.3.1)"),
+            Spalte("Klasse", hinweis="starr, nachgiebig oder gelenkig (5.2.2.5)"),
+            Spalte("M_j,Rd", "kNm", "zahl", 1,
+                   hinweis="Momententragfähigkeit des Anschlusses (6.2.7)"),
+            Spalte("in der Rechnung",
+                   hinweis="wie der Anschluss im Modell sitzt: starr, Drehfeder, Gelenk"),
+            Spalte("Ausnutzung", "", "zahl", 3,
+                   hinweis="Tragfähigkeit nach EN 1993-1-8; Filter z. B. > 1"),
+            Spalte("maßgebender Nachweis"), Spalte("Kombination"),
+            Spalte("D (Ermüdung)", "", "zahl", 3,
+                   hinweis="Schädigungssumme nach Palmgren-Miner"),
+            Spalte("Status")], "Anschluesse", self, mit_kennwerten=True)
+        self.tbl_joint.zeile_gewaehlt.connect(self._tabelle_anschluss)
+        b_neu = QtWidgets.QPushButton("Anschluss anlegen…")
+        b_neu.clicked.connect(self.add_joint)
+        b_zeig = QtWidgets.QPushButton("Nachweise zeigen")
+        b_zeig.clicked.connect(self.show_joints)
+        b_weg = QtWidgets.QPushButton("Löschen")
+        b_weg.clicked.connect(self.delete_joint)
+        tabs.addTab(self._eingabetabelle(self.tbl_joint, b_neu, b_zeig, b_weg),
+                    "Anschlüsse")
+
+        # Verformungsnachweise (GZG): Grenzwert und Ergebnis in einer Tabelle
+        self.tbl_gzg = tab.Datentabelle([
+            Spalte("Nachweis"), Spalte("Bezug"), Spalte("Größe"),
+            Spalte("Situation"),
+            Spalte("Wert", "mm", "zahl", 2,
+                   hinweis="größte Verformung über alle GZG-Kombinationen"),
+            Spalte("Grenzwert"),
+            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1"),
+            Spalte("Kombination"), Spalte("Stelle"), Spalte("Status")],
+            "Verformungen", self, mit_kennwerten=True)
+        self.tbl_gzg.zeile_gewaehlt.connect(self._tabelle_verformung)
+        v1 = QtWidgets.QPushButton("Verformungsgrenze…")
+        v1.clicked.connect(self.add_verformungsgrenze)
+        v2 = QtWidgets.QPushButton("Ändern…")
+        v2.clicked.connect(self.edit_verformungsgrenze)
+        v3 = QtWidgets.QPushButton("Löschen")
+        v3.clicked.connect(self.delete_verformungsgrenze)
+        tabs.addTab(self._eingabetabelle(self.tbl_gzg, v1, v2, v3), "Verformungen")
+
     #: Ergebnistabellen in der Reihenfolge des unteren Bereichs
     ERGEBNISTABELLEN = ("tbl_beam", "tbl_react", "tbl_env", "tbl_design",
                         "tbl_fat", "tbl_contact")
@@ -971,22 +1044,6 @@ class MainWindow(QtWidgets.QMainWindow):
         b7.setToolTip("Bettung auf den Elementen im Feld 'Elemente', Steifigkeit je m²")
         b7.clicked.connect(self.add_surface_support)
         gl.addWidget(row(b5, b6, b7))
-        lay.addWidget(g)
-
-        g = QtWidgets.QGroupBox("Anschluss")
-        gl = QtWidgets.QVBoxLayout(g)
-        b8 = QtWidgets.QPushButton("Anschluss anlegen…")
-        b8.setToolTip("Anschlusstyp wählen und auf ein Stabende anwenden: Kopfplatte,\n"
-                      "Laschenstoß oder Diagonalanschluss. Der Vorschlag folgt aus\n"
-                      "Profil und Schnittgrößen und lässt sich ändern.")
-        b8.clicked.connect(self.add_joint)
-        b9 = QtWidgets.QPushButton("Anschlüsse zeigen")
-        b9.setToolTip("Angelegte Anschlüsse mit Nachweisen auflisten")
-        b9.clicked.connect(self.show_joints)
-        gl.addWidget(row(b8, b9))
-        self.lbl_joints = QtWidgets.QLabel("keine Anschlüsse")
-        self.lbl_joints.setWordWrap(True)
-        gl.addWidget(self.lbl_joints)
         lay.addWidget(g)
 
         g = QtWidgets.QGroupBox("Lasten auf Auswahl → aktiver Lastfall")
@@ -1523,6 +1580,123 @@ class MainWindow(QtWidgets.QMainWindow):
               for n in self.model.elements[i].nodes}
         self._set_selection(sorted(kn))
 
+    def add_verformungsgrenze(self):
+        """Einen Verformungsnachweis (GZG) festlegen."""
+        d = VerformungsgrenzeDialog(self, self.model,
+                                    knoten=[int(n) for n in self.selection[:2]])
+        if not d.exec():
+            return
+        name, kw = d.result()
+        if not name:
+            return self.error("Der Nachweis braucht einen Namen")
+        if name in self.model.verformungsgrenzen:
+            return self.error(f"„{name}“ gibt es schon")
+        self.merken(f"Verformungsnachweis {name}")
+        try:
+            self.model.add_verformungsgrenze(name, **kw)
+        except Exception as ex:          # noqa: BLE001
+            return self.error(ex)
+        self.info(f"Verformungsnachweis „{name}“ angelegt "
+                  f"({self.model.verformungsgrenzen[name].bezug()}, Grenze "
+                  f"{self.model.verformungsgrenzen[name].grenztext()})")
+        self.refresh_all()
+
+    def edit_verformungsgrenze(self):
+        key = self._tabellenschluessel(self.tbl_gzg)
+        g = self.model.verformungsgrenzen.get(key) if key else None
+        if g is None:
+            return self.error("Zuerst einen Nachweis in der Tabelle wählen")
+        d = VerformungsgrenzeDialog(self, self.model, g)
+        if not d.exec():
+            return
+        name, kw = d.result()
+        self.merken(f"Verformungsnachweis {key}")
+        del self.model.verformungsgrenzen[key]
+        try:
+            self.model.add_verformungsgrenze(name or key, **kw)
+        except Exception as ex:          # noqa: BLE001
+            self.undo()
+            return self.error(ex)
+        self.info(f"Verformungsnachweis „{name or key}“ geändert")
+        self.refresh_all()
+
+    def delete_verformungsgrenze(self):
+        key = self._tabellenschluessel(self.tbl_gzg)
+        if not key or key not in self.model.verformungsgrenzen:
+            return self.error("Zuerst einen Nachweis in der Tabelle wählen")
+        self.merken(f"Verformungsnachweis {key} gelöscht")
+        del self.model.verformungsgrenzen[key]
+        self.info(f"Verformungsnachweis „{key}“ entfernt")
+        self.refresh_all()
+
+    def _tabelle_verformung(self, wert):
+        """Zeile angeklickt: den Bezug in der Ansicht wählen."""
+        g = self.model.verformungsgrenzen.get(str(wert))
+        if g is None:
+            return
+        if g.art == "stab":
+            mem = self.model.members.get(g.stab)
+            if mem is not None:
+                kn = {int(n) for i in mem.elements if i < len(self.model.elements)
+                      for n in self.model.elements[i].nodes}
+                self._set_selection(sorted(kn))
+        elif g.knoten:
+            self._set_selection([int(n) for n in g.knoten
+                                 if 0 <= int(n) < self.model.nn])
+
+    def refresh_verformungen(self):
+        """Die Tabelle der Verformungsnachweise aufbauen."""
+        if not hasattr(self, "tbl_gzg"):
+            return
+        from ..gzg import SITUATIONEN
+        erg = getattr(self.analysis, "gzg", None) if self.analysis is not None else None
+        zeilen = []
+        for name, g in self.model.verformungsgrenzen.items():
+            c = erg.checks.get(name) if erg is not None else None
+            zeilen.append([name, g.bezug(), g.groesse,
+                           SITUATIONEN.get(g.situation, g.situation or "alle GZG"),
+                           (c.wert * 1e3 if c is not None and not c.fehler else ""),
+                           (c.grenztext if c is not None else g.grenztext()),
+                           (c.util if c is not None else ""),
+                           (c.kombination if c is not None else ""),
+                           (c.stelle if c is not None else ""),
+                           (c.status() if c is not None else "nicht gerechnet")])
+        self._fill(self.tbl_gzg, zeilen)
+
+    def _tabelle_anschluss(self, wert):
+        """Zeile eines Anschlusses angeklickt: seinen Stab in der Ansicht wählen."""
+        j = self.model.joints.get(str(wert))
+        if j is not None and 0 <= j.elem < len(self.model.elements):
+            self._set_selection([int(n) for n in self.model.elements[j.elem].nodes])
+
+    def refresh_joints(self):
+        """Die Anschlusstabelle aufbauen - mit Nachweisen, sobald gerechnet wurde."""
+        if not hasattr(self, "tbl_joint"):
+            return
+        m = self.model
+        erg = getattr(self.analysis, "joints", None) if self.analysis is not None else None
+        from ..joints.anschluss import KURZ
+        zeilen = []
+        for name, j in m.joints.items():
+            e = m.elements[j.elem] if 0 <= j.elem < len(m.elements) else None
+            stab = next((n for n, mm in m.members.items() if j.elem in mm.elements), "")
+            c = erg.joints.get(name) if erg is not None else None
+            g = getattr(c, "gelenk", None) if c is not None else None
+            import math as _m
+            S = float(getattr(g, "S_j_ini", 0.0) or 0.0) if g is not None else None
+            zeilen.append([name, KURZ.get(j.typ, j.typ), j.ort(), stab,
+                           (e.sec if e is not None else "") or "",
+                           "" if S is None else ("∞" if not _m.isfinite(S) else S / 1e6),
+                           getattr(g, "klasse", "") if g is not None else "",
+                           (g.M_j_Rd / 1e3 if g is not None and g.M_j_Rd else ""),
+                           (c.modelliert if c is not None else ""),
+                           c.util if c is not None else "",
+                           (c.massgebend or c.fehler) if c is not None else "",
+                           c.kombination if c is not None else "",
+                           (c.D if c.D else "") if c is not None else "",
+                           c.status() if c is not None else "nicht gerechnet"])
+        self._fill(self.tbl_joint, zeilen)
+
     def _tabellen_markieren(self):
         """Umgekehrter Weg: die Auswahl der Ansicht in den Tabellen zeigen."""
         if not hasattr(self, "tbl_beam"):
@@ -1542,6 +1716,8 @@ class MainWindow(QtWidgets.QMainWindow):
                   if mem.elements and set(mem.elements) <= dabei]
         self.tbl_design.markieren(staebe)
         self.tbl_fat.markieren(staebe)
+        if hasattr(self, "tbl_joint"):
+            self.tbl_joint.markieren([n for n, j in m.joints.items() if j.elem in dabei])
 
     def refresh_all(self):
         m = self.model
@@ -1569,6 +1745,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_cases()
         self.refresh_contact()
         self.refresh_members()
+        self.refresh_joints()
+        self.refresh_verformungen()
         self.refresh_stellungen()
         self._refresh_kopf()
         self._refresh_baum()
@@ -2203,9 +2381,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def fatigue_load_dialog(self):
         self.add_fatigue_load()
 
-    def joint_dialog(self):
-        self.add_joint()
-
     def aktive_tabelle(self):
         """Die Datentabelle, die unten gerade vorn liegt (oder None)."""
         w = self.tab_unten.currentWidget() if hasattr(self, "tab_unten") else None
@@ -2337,7 +2512,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Vz": vz, "My": float(v[o + 4])}
 
     def add_joint(self):
-        """Anschluss am gewaehlten Stabende anlegen."""
+        """Anschluss am gewaehlten Stabende anlegen - er gehoert ins Modell.
+
+        Der Anschluss wird als ``model.Joint`` gespeichert: er ueberlebt
+        Speichern, Laden und Rueckgaengig, steht im Modellbaum und in der
+        Tabelle und wird bei jeder Berechnung mit nachgewiesen.
+        """
+        from ..joints import anschluss as ans
         try:
             elem, end = self._selected_beam_end()
         except ValueError as ex:
@@ -2348,19 +2529,23 @@ class MainWindow(QtWidgets.QMainWindow):
         t = d.result_template()
         if t is None:
             return self.error("Es liegt kein gültiger Vorschlag vor")
-        if not hasattr(self, "joints"):
-            self.joints = []
-        t._forces = {k: d.sp[k].value() * 1e3 for k in d.sp}
-        if isinstance(t, type(t)) and t.__class__.__name__ == "Gusset":
-            t._forces = {"N": t._forces.get("N", 0.0)}
-        self.joints.append(t)
+        name = self._freier_name(t.name, self.model.joints)
+        self.merken(f"Anschluss {name}")
+        j = ans.als_joint(t, name)
+        j.stuetze = d.stuetze()
+        j.rahmen = d.rahmen()
+        j.modellierung = d.modellierung()
+        if d.kraefte_fest():
+            j.kraefte = {k: v for k, v in d.forces().items()
+                         if k in ans.KRAEFTE.get(j.typ, ())}
+        self.model.joints[name] = j
         kind = d.fe_kind()
         if kind:
             log = []
             teil = t.build(kind=kind, log=log)
-            teil.meta["bauteil"] = t.name
+            teil.meta["bauteil"] = name
             path = os.path.join(os.path.dirname(self.path or "."),
-                                f"{t.name.replace(' ', '_')}.json")
+                                f"{name.replace(' ', '_')}.json")
             try:
                 teil.save(path)
                 log.append(f"Teilmodell gespeichert: {path}")
@@ -2368,32 +2553,85 @@ class MainWindow(QtWidgets.QMainWindow):
                 log.append(f"Teilmodell konnte nicht gespeichert werden: {ex}")
             QtWidgets.QMessageBox.information(
                 self, "Teilmodell des Anschlusses", "\n".join(log))
-        self._refresh_joints()
-        self.info(f"Anschluss '{t.name}' angelegt")
+        self.info(f"Anschluss „{name}“ angelegt ({j.ort()}) - er wird ab jetzt "
+                  "bei jeder Berechnung nachgewiesen")
+        self.refresh_all()
 
-    def _refresh_joints(self):
-        js = getattr(self, "joints", [])
-        if not js:
-            self.lbl_joints.setText("keine Anschlüsse")
+    @staticmethod
+    def _freier_name(vorschlag: str, vorhanden) -> str:
+        """Einen noch nicht vergebenen Namen finden."""
+        name = vorschlag or "Anschluss"
+        if name not in vorhanden:
+            return name
+        i = 2
+        while f"{name} {i}" in vorhanden:
+            i += 1
+        return f"{name} {i}"
+
+    def delete_joint(self):
+        """Den in der Tabelle gewaehlten Anschluss entfernen."""
+        key = self._tabellenschluessel(self.tbl_joint)
+        if key is None or key not in self.model.joints:
+            return self.error("Zuerst einen Anschluss in der Tabelle wählen")
+        self.merken(f"Anschluss {key} gelöscht")
+        del self.model.joints[key]
+        self.info(f"Anschluss „{key}“ entfernt")
+        self.refresh_all()
+
+    def _anschluss_gewaehlt(self, name: str):
+        """Anschluss im Baum angeklickt: Zeile markieren und Stab waehlen."""
+        j = self.model.joints.get(name)
+        if j is None:
             return
-        zeilen = []
-        for t in js:
-            try:
-                j = t.design(**getattr(t, "_forces", {}))
-                zeilen.append(f"{t.name}: eta = {j.eta:.2f} ({j.massgebend})")
-            except Exception:            # noqa: BLE001
-                zeilen.append(t.name)
-        self.lbl_joints.setText("\n".join(zeilen))
+        self.tabelle_zeigen("Anschlüsse")
+        self.tbl_joint.markieren([name])
+        if 0 <= j.elem < len(self.model.elements):
+            self._set_selection([int(n) for n in self.model.elements[j.elem].nodes])
 
     def show_joints(self):
-        js = getattr(self, "joints", [])
-        if not js:
+        """Die Nachweise der Anschlüsse im Klartext zeigen."""
+        if not self.model.joints:
             return self.error("Es wurde noch kein Anschluss angelegt")
-        text = "\n\n".join(t.describe() for t in js)
-        box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("Anschlüsse")
-        box.setText(text)
-        box.exec()
+        an = getattr(self, "analysis", None)
+        erg = getattr(an, "joints", None) if an is not None else None
+        if erg is None:
+            from ..joints import anschluss as ans
+            text = "\n\n".join(
+                ans.vorlage(self.model, j).describe() for j in self.model.joints.values())
+            text += "\n\nNoch nicht gerechnet - „Berechnen“ (F5) führt die Nachweise."
+        else:
+            teile = []
+            for c in erg.joints.values():
+                zeilen = [f"{c.name} ({c.ort}) - {c.status()}", "=" * 78, c.beschreibung, ""]
+                if c.fehler:
+                    zeilen.append("nicht geführt: " + c.fehler)
+                from ..joints.design import Check as _JCheck
+                for ch in c.checks:
+                    f = _JCheck.FAKTOR.get(ch["einheit"], 1.0)
+                    zeilen.append(f"{'OK ' if ch['eta'] <= 1 else 'NICHT ERFÜLLT'} "
+                                  f"{ch['name']:42s} {ch['E'] * f:9.1f} / {ch['R'] * f:9.1f} "
+                                  f"{ch['einheit']}  eta = {ch['eta']:.3f}")
+                for e in c.ermuedung:
+                    zeilen.append(f"{'OK ' if e['ok'] else 'NICHT ERFÜLLT'} Ermüdung "
+                                  f"Kerbfall {e['kerbfall']:.0f}: D = {e['schaedigung']:.3f}")
+                if c.kombination:
+                    zeilen.append(f"maßgebend: {c.massgebend} in {c.kombination}")
+                teile.append("\n".join(zeilen))
+            text = "\n\n".join(teile) + "\n\n" + erg.summary()
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Anschlüsse")
+        lay = QtWidgets.QVBoxLayout(dlg)
+        t = QtWidgets.QPlainTextEdit(text)
+        t.setReadOnly(True)
+        f = t.font()
+        f.setFamily("Courier New")
+        t.setFont(f)
+        t.setMinimumSize(820, 520)
+        lay.addWidget(t)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        dlg.exec()
 
     def add_line_support(self):
         """Linienlager entlang der gewaehlten Knoten (in Auswahlreihenfolge)."""
@@ -2888,6 +3126,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_design.setText(an.design.summary() if an.design else "")
         if an is not None and an.design is not None:
             self.lbl_design.setText(an.design.summary() + ("\n" + an.fatigue.summary() if an.fatigue else ""))
+        if an is not None and an.joints is not None:
+            lines.append(an.joints.summary())
+        if an is not None and an.gzg is not None:
+            lines.append(an.gzg.summary())
+        self.refresh_joints()
+        self.refresh_verformungen()
         self.txt_res.setPlainText("\n".join(lines))
         # Tabellen
         if hasattr(r, "beam_forces"):

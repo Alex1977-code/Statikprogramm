@@ -534,9 +534,352 @@ def test_vorlagen():
           a_vor.bolt_range_factor() < 0.3, f"{a_vor.bolt_range_factor():.2f}")
 
 
+# --------------------------------------------------------------------------
+# Anschluss als Teil des Modells: speichern, ueber alle Kombinationen
+# nachweisen, Ermuedung aus den Ermuedungslasten, Bericht
+# --------------------------------------------------------------------------
+def test_anschluss_im_modell():
+    from statik3d import solver, examples_lib
+    from statik3d.model import Model
+    from statik3d.joints import anschluss as A
+    from statik3d.joints.templates import propose
+
+    m = examples_lib.build_example("hall")
+    r = m.members["Riegel"]
+    e_kopf, e_lasche = r.elements[0], r.elements[len(r.elements) // 2]
+    t = propose("kopfplatte", m, e_kopf, end=0, N=-50e3, Vz=150e3, My=300e3)
+    j = A.als_joint(t, "K1")
+    m.joints[j.name] = j
+    check("Anschluss wird zum Modellobjekt", j.typ == "kopfplatte" and j.elem == e_kopf,
+          f"{j.typ}, {j.ort()}")
+    check("Geometrie steht im Modellobjekt",
+          abs(j.geometrie["tp"] - t.tp) < 1e-12 and j.geometrie["rows"] == t.rows,
+          f"t_p = {j.geometrie['tp'] * 1e3:.0f} mm, {len(j.geometrie['rows'])} Reihen")
+    check("Schraube steht im Modellobjekt",
+          j.schraube["size"] == t.bolt.size and j.schraube["grade"] == t.bolt.grade,
+          f"{j.schraube['size']} {j.schraube['grade']}")
+
+    # -- speichern und laden ------------------------------------------
+    d = Model.from_dict(m.to_dict())
+    check("Anschluss übersteht Speichern und Laden",
+          list(d.joints) == ["K1"] and d.joints["K1"].geometrie == j.geometrie)
+    check("Anschluss übersteht Rückgängig (Modellkopie)",
+          m.copy().joints["K1"].schraube == j.schraube)
+
+    # -- Vorlage aus dem Modellobjekt zurueckbauen ---------------------
+    t2 = A.vorlage(d, d.joints["K1"])
+    check("Vorlage lässt sich zurückbauen",
+          type(t2) is type(t) and abs(t2.tp - t.tp) < 1e-12 and t2.rows == t.rows)
+    j1 = t.design(N=-50e3, Vz=150e3, My=300e3)
+    j2 = t2.design(N=-50e3, Vz=150e3, My=300e3)
+    check("zurückgebaute Vorlage rechnet dasselbe",
+          abs(j1.eta - j2.eta) < 1e-12, f"{j1.eta:.6f} / {j2.eta:.6f}")
+
+    # -- Endkraefte: Vorzeichen wie in beam_end_forces ------------------
+    m.joints["S1"] = A.als_joint(
+        propose("lasche", m, e_lasche, end=1, N=-50e3, Vz=50e3, My=200e3), "S1")
+    an = solver.solve_all(m, design=True, fatigue=True)
+    ein = next(iter(an.combinations.values()))
+    k = A.endkraefte(ein, e_kopf, 0)
+    from statik3d.solver import beam_end_forces
+    bf = beam_end_forces(m, e_kopf, ein.beam_end[e_kopf])
+    check("Endkräfte stimmen mit beam_end_forces überein",
+          abs(k["N"] - bf["N"][0]) < 1e-6 and abs(k["My"] - bf["My"][0]) < 1e-6,
+          f"N = {k['N'] / 1e3:.1f} kN, My = {k['My'] / 1e3:.1f} kNm")
+
+    # -- Nachweis ueber alle Kombinationen ------------------------------
+    res = an.joints
+    check("Anschlüsse werden mit der Berechnung nachgewiesen",
+          res is not None and set(res.joints) == {"K1", "S1"})
+    c = res.joints["K1"]
+    check("jede GZT-Kombination wird geführt",
+          len(c.je_kombination) == len(res.combinations) == len(an.envelopes["ULS"].results)
+          if hasattr(an.envelopes.get("ULS"), "results") else
+          len(c.je_kombination) == len(res.combinations),
+          f"{len(c.je_kombination)} Kombinationen")
+    beste = max(c.je_kombination, key=lambda d: d["eta"])
+    check("die ungünstigste Kombination ist maßgebend",
+          abs(beste["eta"] - c.util) < 1e-12 and beste["kombination"] == c.kombination,
+          f"{c.kombination}: eta = {c.util:.3f}")
+    check("Einzelnachweise sind aufgeführt",
+          any("Abscheren" in x["name"] for x in c.checks)
+          and any("Kehlnaht" in x["name"] for x in c.checks)
+          and any("T-Stummel" in x["name"] for x in c.checks),
+          f"{len(c.checks)} Nachweise")
+    eta_max = max(x["eta"] for x in c.checks)
+    check("die Ausnutzung ist die größte der Einzelnachweise",
+          abs(eta_max - c.util) < 1e-12, f"{eta_max:.3f}")
+
+    # -- Ermuedung ------------------------------------------------------
+    check("Ermüdung aus den Ermüdungslasten des Modells",
+          c.ermuedung and c.D > 0,
+          f"D = {c.D:.3f} aus {[e['lasten'] for e in c.ermuedung]}")
+    check("Kerbfall der Schraube ist 50 (Tab. 8.1)",
+          any(e["kerbfall"] == 50 for e in c.ermuedung))
+    ohne = solver.solve_all(m, design=True, fatigue=False)
+    check("ohne Ermüdungsnachweis bleibt die Schädigung außen vor",
+          ohne.joints.joints["K1"].D == 0.0
+          and abs(ohne.joints.joints["K1"].util - c.util) < 1e-12)
+
+    # -- feste Schnittgroessen -------------------------------------------
+    m.joints["K1"].kraefte = {"N": 0.0, "Vz": 10e3, "My": 20e3}
+    fest = solver.solve_all(m, design=True).joints.joints["K1"]
+    check("festgehaltene Schnittgrößen gehen vor",
+          fest.kombination == "von Hand" and fest.util < c.util,
+          f"eta = {fest.util:.3f} statt {c.util:.3f}")
+    m.joints["K1"].kraefte = {}
+
+    # -- Fehler werden benannt, nicht verschwiegen -------------------------
+    m.joints["X"] = A.als_joint(propose("kopfplatte", m, e_kopf, end=0, My=100e3), "X")
+    m.joints["X"].typ = "gibtsnicht"
+    schlecht = solver.solve_all(m, design=True).joints.joints["X"]
+    check("unbekannter Anschlusstyp wird gemeldet, nicht geraten",
+          schlecht.fehler and schlecht.status() == "nicht geführt", schlecht.fehler[:50])
+    del m.joints["X"]
+
+    # -- Bericht ---------------------------------------------------------
+    from statik3d.report import Report
+    rep = Report(m, an)
+    html = rep.html()
+    check("Bericht hat ein Kapitel Anschlüsse",
+          "Anschlüsse nach DIN EN 1993-1-8" in html)
+    for text in ("T-Stummel", "Kehlnaht", "Abscheren F_v,Rd", "Palmgren-Miner",
+                 "K1", "S1"):
+        check(f"Bericht nennt „{text}“", text in html)
+    check("Bericht nennt die maßgebende Kombination im Anschluss",
+          c.kombination in html, c.kombination)
+    check("der alte Ausschluss steht nicht mehr im Bericht",
+          "nicht Bestandteil dieses Berichts" not in html.split("Anschlüsse, Schweißnähte")[0]
+          or "in Kapitel 7 nachgewiesen" in html)
+    check("Zusammenfassung führt die Anschlüsse",
+          "max. Ausnutzung Anschlüsse" in html)
+
+
+# --------------------------------------------------------------------------
+# Momenten-Rotations-Verhalten: Komponentenverfahren, Klassifizierung,
+# Rotationsvermoegen und die Drehfeder in der Rechnung
+# --------------------------------------------------------------------------
+def test_momenten_rotation():
+    from statik3d.joints import rotation as R
+
+    # -- Steifigkeitsbeiwerte gegen die Formeln der Tab. 6.11 ------------
+    k5 = R.k5_stirnplatte(l_eff=0.200, t_p=0.020, m=0.040)
+    close("k_5 = 0,9 l_eff t^3 / m^3", k5.k, 0.9 * 0.200 * 0.020 ** 3 / 0.040 ** 3,
+          1e-12, " m")
+    k10 = R.k10_schrauben(As=353e-6, L_b=0.060)
+    close("k_10 = 1,6 A_s / L_b", k10.k, 1.6 * 353e-6 / 0.060, 1e-12, " m")
+    k1 = R.k1_schubfeld(A_vc=47.4e-4, beta=1.0, z=0.480)
+    close("k_1 = 0,38 A_vc / (beta z)", k1.k, 0.38 * 47.4e-4 / 0.480, 1e-12, " m")
+    close("Schubfläche HEB 300 (EN 1993-1-1, 6.2.6(3))",
+          R.schubflaeche_I(0.300, 0.300, 0.011, 0.019, 0.027, 149.1e-4),
+          47.43e-4, 3e-3, " m^2")
+
+    # -- eine Reihe: S_j,ini = E z^2 / (1/k_5 + 1/k_10) ------------------
+    r = R.Reihe(h=0.500, komponenten=[k5, k10])
+    close("k_eff einer Reihe", r.k_eff, 1.0 / (1.0 / k5.k + 1.0 / k10.k), 1e-12, " m")
+    S, z, keq, _ = R.steifigkeit([r])
+    close("S_j,ini einer Reihe", S, R.E_STAHL * 0.5 ** 2 / (1.0 / k5.k + 1.0 / k10.k),
+          1e-12, " Nm/rad")
+
+    # -- zwei Reihen: Ersatzfeder nach 6.3.3.1 ---------------------------
+    r1 = R.Reihe(h=0.500, komponenten=[k5, k10])
+    r2 = R.Reihe(h=0.400, komponenten=[k5, k10])
+    z_eq, k_eq = R.ersatzfeder([r1, r2])
+    keff = r1.k_eff
+    soll_z = (keff * 0.5 ** 2 + keff * 0.4 ** 2) / (keff * 0.5 + keff * 0.4)
+    close("z_eq zweier Reihen", z_eq, soll_z, 1e-12, " m")
+    close("k_eq zweier Reihen", k_eq, (keff * 0.5 + keff * 0.4) / soll_z, 1e-12, " m")
+    S2, _z, _k, _ = R.steifigkeit([r1, r2])
+    check("zwei Reihen sind steifer als eine", S2 > S, f"{S2 / 1e6:.1f} > {S / 1e6:.1f}")
+
+    # -- eine unendlich steife Komponente faellt heraus -------------------
+    starr = R.Komponente("k_x", float("inf"))
+    r3 = R.Reihe(h=0.500, komponenten=[k5, k10, starr])
+    close("unendliche Komponente ändert nichts", r3.k_eff, r1.k_eff, 1e-12, " m")
+
+    # -- Klassifizierung 5.2.2.5 -----------------------------------------
+    E, I_b, L_b = R.E_STAHL, 48200e-8, 15.0
+    grenze = 8.0 * E * I_b / L_b
+    for S_test, soll in ((1.01 * grenze, "starr"), (0.99 * grenze, "nachgiebig"),
+                         (0.49 * E * I_b / L_b, "gelenkig")):
+        kl, _grund, gs, gg = R.klassifizieren(S_test, E, I_b, L_b, "ausgesteift")
+        check(f"Klassifizierung {soll}", kl == soll, f"{S_test / 1e6:.1f} -> {kl}")
+    kl, _g, gs, _gg = R.klassifizieren(1.01 * grenze, E, I_b, L_b, "nicht ausgesteift")
+    check("nicht ausgesteift verlangt k_b = 25", kl == "nachgiebig"
+          and abs(gs - 25.0 * E * I_b / L_b) < 1e-6, f"{kl}, Grenze {gs / 1e6:.1f}")
+
+    # -- Tragfaehigkeitsklasse 5.2.3 --------------------------------------
+    Mpl = 400e3
+    for M, soll in ((410e3, "volltragfähig"), (200e3, "teiltragfähig"),
+                    (90e3, "gelenkig")):
+        check(f"Tragfähigkeitsklasse {soll}",
+              R.tragfaehigkeitsklasse(M, Mpl) == soll, f"{M / 1e3:.0f} kNm")
+
+    # -- Momententragfaehigkeit mit begrenzter Druckzone (6.2.7.2(6)) -----
+    ra = R.Reihe(h=0.50, F_Rd=300e3)
+    rb = R.Reihe(h=0.40, F_Rd=300e3)
+    M, anteile = R.momententragfaehigkeit([ra, rb], F_c_Rd=1e9)
+    close("M_j,Rd ohne Begrenzung", M, 300e3 * 0.5 + 300e3 * 0.4, 1e-9, " Nm")
+    M2, anteile2 = R.momententragfaehigkeit([ra, rb], F_c_Rd=400e3)
+    close("M_j,Rd mit begrenzter Druckzone", M2, 300e3 * 0.5 + 100e3 * 0.4, 1e-9, " Nm")
+    check("die unterste Reihe wird zuerst abgebaut",
+          abs(anteile2[0][1] - 300e3) < 1 and abs(anteile2[1][1] - 100e3) < 1,
+          str([f"{F / 1e3:.0f}" for _h, F, _v in anteile2]))
+
+    # -- Rotationsvermoegen 6.4.2(2) --------------------------------------
+    d, fub, fy = 0.024, 1000e6, 355e6
+    grenze_t = 0.36 * d * math.sqrt(fub / fy)
+    ok1, _ = R.rotationskapazitaet("Modus 1 (Blech)", 0.9 * grenze_t, d, fub, fy)
+    ok2, _ = R.rotationskapazitaet("Modus 1 (Blech)", 1.1 * grenze_t, d, fub, fy)
+    ok3, _ = R.rotationskapazitaet("Modus 3 (Schraube)", 0.5 * grenze_t, d, fub, fy)
+    check("dünnes Blech mit Blechbiegen: Rotationsvermögen ausreichend", ok1)
+    check("zu dickes Blech: nicht ausreichend", not ok2,
+          f"Grenze {grenze_t * 1e3:.1f} mm")
+    check("Schraubenversagen ist nicht duktil", not ok3)
+
+
+def test_gelenk_in_der_rechnung():
+    """Die Drehfeder des Anschlusses muss in der Rechnung ankommen.
+
+    Kragarm der Laenge L mit Endlast P. Sitzt am Einspannknoten eine
+    Drehfeder S, verdreht sich der Stabanfang um phi = M/S = P L / S; die
+    Spitze senkt sich zusaetzlich um phi L::
+
+        w = P L^3 / (3 E I) + P L^2 / S
+    """
+    from statik3d import solver
+    from statik3d.model import Model, Material, Section
+    from statik3d.joints import anschluss as A
+
+    L, P = 4.0, 20e3
+    E, I = 210e9, 8356e-8            # IPE 300
+    for S, name in ((1e12, "sehr steif"), (5e6, "weich"), (2e7, "mittel")):
+        m = Model("Kragarm")
+        m.add_material(Material.steel("S355"))
+        m.add_section(Section("IPE 300", A=53.8e-4, Iy=I, Iz=604e-8, It=20.1e-8,
+                              Wpl_y=628e-6, Wel_y=557e-6, typ="I", h=0.300, b=0.150,
+                              tw=0.0071, tf=0.0107, r=0.015, zmax=0.150, ymax=0.075))
+        n0 = m.add_node(0, 0, 0)
+        n1 = m.add_node(L, 0, 0)
+        e = m.add_element("beam", [n0, n1], "S355", "IPE 300")
+        m.fix(n0, "all")
+        m.load_node(n1, Fz=-P)
+        m.joints["A1"] = A.als_joint(
+            __import__("statik3d.joints.templates", fromlist=["propose"]).propose(
+                "kopfplatte", m, e, end=0, N=0.0, Vz=P, My=P * L), "A1")
+        m.joints["A1"].modellierung = "feder"
+        m.joints["A1"].S_j = S
+        an = solver.solve_all(m, combinations=False, envelopes=False)
+        u = an.cases[m.active_case].u[n1, 2]
+        soll = -(P * L ** 3 / (3 * E * I) + P * L ** 2 / S)
+        close(f"Kragarm mit Drehfeder S = {S:.0e} Nm/rad ({name})", u, soll, 2e-3, " m")
+
+    # Gelenk und starr als Grenzfaelle
+    def bau(modellierung):
+        m = Model("Kragarm")
+        m.add_material(Material.steel("S355"))
+        m.add_section(Section("IPE 300", A=53.8e-4, Iy=I, Iz=604e-8, It=20.1e-8,
+                              Wpl_y=628e-6, Wel_y=557e-6, typ="I", h=0.300, b=0.150,
+                              tw=0.0071, tf=0.0107, r=0.015, zmax=0.150, ymax=0.075))
+        n0 = m.add_node(0, 0, 0)
+        n1 = m.add_node(L, 0, 0)
+        n2 = m.add_node(2 * L, 0, 0)
+        e0 = m.add_element("beam", [n0, n1], "S355", "IPE 300")
+        m.add_element("beam", [n1, n2], "S355", "IPE 300")
+        m.fix(n0, "all")
+        m.fix(n2, [2])
+        m.load_node(n1, Fz=-P)
+        from statik3d.joints.templates import propose
+        m.joints["A1"] = A.als_joint(propose("kopfplatte", m, e0, end=0,
+                                             N=0.0, Vz=P, My=P * L), "A1")
+        m.joints["A1"].modellierung = modellierung
+        return m, n1, e0
+
+    m_s, n1, e0 = bau("starr")
+    u_starr = solver.solve_all(m_s, combinations=False, envelopes=False).cases[
+        m_s.active_case].u[n1, 2]
+    m_g, n1g, e0g = bau("gelenkig")
+    ang = solver.solve_all(m_g, combinations=False, envelopes=False)
+    u_gel = ang.cases[m_g.active_case].u[n1g, 2]
+    check("Gelenk am Stabanfang verformt mehr als starr",
+          abs(u_gel) > abs(u_starr) * 1.2,
+          f"{u_gel * 1e3:.2f} mm gegen {u_starr * 1e3:.2f} mm")
+    check("das Gelenk steht auch am Element", 4 in m_g.elements[e0g].hinges,
+          str(m_g.elements[e0g].hinges))
+    check("starr setzt weder Feder noch Gelenk",
+          not m_s.elements[e0].hinges and not m_s.elements[e0].hinge_springs)
+
+    # wiederholtes Rechnen darf die Federn nicht anhaeufen
+    m_f, n1f, e0f = bau("feder")
+    m_f.joints["A1"].S_j = 1e7
+    for _ in range(3):
+        solver.solve_all(m_f, combinations=False, envelopes=False)
+    check("wiederholtes Rechnen häuft keine Federn an",
+          m_f.elements[e0f].hinge_springs == [(4, 1e7)],
+          str(m_f.elements[e0f].hinge_springs))
+
+
+def test_gelenk_im_modell_und_bericht():
+    from statik3d import solver, examples_lib
+    from statik3d.joints import anschluss as A
+    from statik3d.joints.templates import propose
+    from statik3d.report import Report
+
+    m = examples_lib.build_example("hall")
+    r = m.members["Riegel"]
+    m.joints["K1"] = A.als_joint(propose("kopfplatte", m, r.elements[0], end=0,
+                                         N=-50e3, Vz=160e3, My=400e3), "K1")
+    an = solver.solve_all(m, design=True)
+    ohne = an.joints.joints["K1"].gelenk
+    check("ohne Stütze wird die obere Schranke benannt",
+          any("obere Schranke" in h for h in ohne.hinweise), str(ohne.hinweise)[:60])
+
+    m.joints["K1"].stuetze = {"section": "HEB 300"}
+    an2 = solver.solve_all(m, design=True)
+    mit = an2.joints.joints["K1"].gelenk
+    check("die Stütze macht den Anschluss weicher",
+          mit.S_j_ini < ohne.S_j_ini,
+          f"{mit.S_j_ini / 1e6:.1f} < {ohne.S_j_ini / 1e6:.1f} MNm/rad")
+    check("die Komponenten der Stütze sind dabei",
+          {k for k, _v, _t in mit.komponenten} >= {"k_1", "k_2", "k_3", "k_4"},
+          str(sorted({k for k, _v, _t in mit.komponenten})))
+    check("mit Stütze gilt der Nachweis als vollständig", mit.vollstaendig)
+
+    m.joints["K1"].stuetze = {"section": "gibtsnicht"}
+    c = solver.solve_all(m, design=True).joints.joints["K1"]
+    check("unbekannter Stützenquerschnitt wird gemeldet",
+          any("gibtsnicht" in h for h in c.hinweise), str(c.hinweise)[:70])
+    m.joints["K1"].stuetze = {"section": "HEB 300"}
+
+    # Klassifizierung schlaegt auf die Rechnung durch
+    m.joints["K1"].modellierung = "feder"
+    an3 = solver.solve_all(m, design=True)
+    e = m.elements[r.elements[0]]
+    check("die Drehfeder sitzt am Stabende",
+          any(d == 4 for d, _k in e.hinge_springs), str(e.hinge_springs))
+    check("die Rechnung nennt die Feder",
+          "K1" in an3.info.get("anschlussfedern", {}),
+          str(an3.info.get("anschlussfedern")))
+
+    # Momententragfaehigkeit ist ein Nachweis
+    c3 = an3.joints.joints["K1"]
+    check("M_j,Rd steht unter den Nachweisen",
+          any("M_j,Rd" in x["name"] for x in c3.checks))
+
+    html = Report(m, an3).html()
+    for text in ("S_j,ini", "Komponentenverfahren", "Steifigkeitsbeiwerte nach Tab. 6.11",
+                 "Rotationsvermögen", "Klassifizierung Steifigkeit", "k_5", "k_10",
+                 "Schraubenreihen der Zugzone"):
+        check(f"Bericht nennt „{text}“", text in html)
+    check("der alte Ausschluss der Kennlinien ist weg",
+          "Momenten-Rotations-Kennlinien nach 6.3 sind nicht enthalten" not in html)
+
+
 def main():
     for t in (test_schrauben, test_naehte, test_tstub, test_fe_schraube,
-              test_bleche, test_nachweise, test_vorlagen):
+              test_bleche, test_nachweise, test_vorlagen, test_anschluss_im_modell,
+              test_momenten_rotation, test_gelenk_in_der_rechnung,
+              test_gelenk_im_modell_und_bericht):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

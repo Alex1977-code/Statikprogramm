@@ -401,5 +401,24 @@ class Modellbaum(QtWidgets.QTreeWidget):
             mem = self._zweig(wurzel, "Stäbe für Nachweise", len(model.members), "staebe")
             for name, mm in list(model.members.items())[:60]:
                 self._zweig(mem, name, getattr(mm, "section", "") or "", "stab")
+        # Anschluesse gehoeren zum Modell und stehen darum hier - der Zweig
+        # traegt wie bei den Stellungen die Schaltflaeche zum Anlegen.
+        an = self._zweig(wurzel, "Anschlüsse", len(getattr(model, "joints", {}) or {}),
+                         "anschluesse", fett=bool(getattr(model, "joints", None)),
+                         farbe=FARBEN["akzent"] if getattr(model, "joints", None) else None)
+        for name, j in list(getattr(model, "joints", {}).items())[:60]:
+            z = self._zweig(an, name, j.ort(), "anschluss")
+            z.setToolTip(0, f"{name}: {j.typ} an {j.ort()}")
+        self._zweig(an, "+ Anschluss anlegen", "", "anschluss_neu",
+                    farbe=FARBEN["akzent"])
+        grenzen = getattr(model, "verformungsgrenzen", {}) or {}
+        vf = self._zweig(wurzel, "Verformungsnachweise", len(grenzen), "verformungen",
+                         fett=bool(grenzen),
+                         farbe=FARBEN["akzent"] if grenzen else None)
+        for name, g in list(grenzen.items())[:60]:
+            z = self._zweig(vf, name, g.grenztext(), "verformung")
+            z.setToolTip(0, f"{g.bezug()}: {g.groesse} ≤ {g.grenztext()}")
+        self._zweig(vf, "+ Verformungsgrenze", "", "verformung_neu",
+                    farbe=FARBEN["akzent"])
         wurzel.setExpanded(offen.get(wurzel.text(0), True))
         el.setExpanded(offen.get("Elemente", True))

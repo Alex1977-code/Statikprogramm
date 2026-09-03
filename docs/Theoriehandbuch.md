@@ -256,6 +256,168 @@ schadensäquivalente Schwingbreite bei 2·10⁶ Lastspielen ausgewiesen. γMf na
 Tabelle 3.1 (Schadenstoleranz/Sicherheit gegen Versagen, geringe/hohe
 Schadensfolge), γFf = 1,0.
 
+## 5a Anschlüsse (DIN EN 1993-1-8)
+
+Ein Anschluss sitzt an einem Stabende. Die Beanspruchung sind die
+**Stabendschnittgrößen** N, V_z und M_y an diesem Ende, gedreht so, dass ein
+positives N Zug bedeutet (dieselbe Zählweise wie in `beam_end_forces`). Der
+Anschluss wird über **alle GZT-Kombinationen** geführt; die ungünstigste ist
+maßgebend. Die Aufteilung der Schnittgrößen auf die Bauteile folgt der
+üblichen Modellvorstellung:
+
+* Kopfplatte: Flanschkraft F_t = |M_y|/(h − t_f) + N·A_f/A auf die Schrauben
+  der Zugzone, Querkraft gleichmäßig auf alle Schrauben, Druckflansch gegen
+  b·t_f·f_y.
+* Laschenstoß: Flanschlaschen tragen Normalkraft und Moment, Steglaschen die
+  Querkraft (6.2.7).
+* Knotenblech: Stabkraft auf die Schrauben beziehungsweise die Naht; das Blech
+  wird über die **Whitmore-Breite** b_w = b + 2·L·tan 30° auf Zug und als
+  Ersatzstab auf Druck nachgewiesen.
+
+Nachgewiesen werden
+
+| Bauteil | Nachweise | Abschnitt |
+|---|---|---|
+| Schraube | F_v,Rd, F_b,Rd, F_t,Rd, B_p,Rd, Interaktion, F_s,Rd (Kat. B/C), β_Lf | 3.6, 3.7, 3.9 |
+| Zugzone | äquivalenter T-Stummel, Modus 1–3, l_eff nach Tab. 6.4/6.5 | 6.2.4 |
+| Naht | Richtungsbezogen (σ_⊥, τ_⊥, τ_∥, β_w) und Vereinfacht | 4.5.3 |
+| Blech | N_pl,Rd, N_u,Rd, Blockversagen V_eff,Rd | 6.2.3, 3.10.2 |
+
+Der **T-Stummel** vergleicht die drei Modi: Modus 1 (Fließen des Blechs)
+F = 4 M_pl,1,Rd/m, Modus 2 (Blech und Schraube) F = (2 M_pl,2,Rd + n ΣF_t,Rd)/(m+n),
+Modus 3 (Schraube) F = ΣF_t,Rd; maßgebend ist der kleinste Wert, und welcher
+es war, steht im Nachweis.
+
+**Ermüdung des Anschlusses**: je Ermüdungslast die Schwingbreite der
+Stabendschnittgrößen, daraus Δσ im betrachteten Bauteil (Schraube über den
+Spannungsquerschnitt A_s, Naht über a·l, Blech über den Nettoquerschnitt).
+Kerbfälle nach Tab. 8.1 und 8.5 — Schraube auf Zug 50, Schraube auf Abscheren
+100 (m = 5), Blech mit Loch 90, gleitfeste Verbindung 112, Kehlnaht 80,
+Kopfplattenanschluss 71. Die Schädigungen werden nach Palmgren–Miner **über
+alle Ermüdungslasten** aufsummiert, getrennt je Kerbfall.
+
+Bei vorgespannten Schrauben hält die Vorspannung die Fuge geschlossen; in der
+Schraube kommt dann nur ein Bruchteil der äußeren Schwingbreite an. Das
+Programm rechnet mit dem Steifigkeitsverhältnis Schraube/Blech (Voreinstellung
+1:5) und **sagt diese Annahme im Nachweis dazu**; genau ergibt sich die
+Schwingbreite aus der Rechnung am Teilmodell. Ohne Vorspannung wirkt die volle
+äußere Schwingbreite — auch das steht als Hinweis im Nachweis.
+
+### 5a.1 Momenten-Rotations-Verhalten (Kap. 5 und 6.3)
+
+Ein Anschluss ist weder starr noch gelenkig. Sein Verhalten wird über das
+**Komponentenverfahren** beschrieben: jede Grundkomponente bekommt einen
+Steifigkeitsbeiwert k_i nach Tab. 6.11, und die Anfangssteifigkeit folgt aus
+der Reihenschaltung
+
+    S_j,ini = E z_eq² / Σ_i (1 / k_i)
+
+Umgesetzt sind
+
+| k_i | Komponente | Formel |
+|---|---|---|
+| k_1 | Stützensteg als Schubfeld | 0,38 A_vc / (β z) |
+| k_2 | Stützensteg auf Druck | 0,7 b_eff,c,wc t_wc / d_c |
+| k_3 | Stützensteg auf Zug | 0,7 b_eff,t,wc t_wc / d_c |
+| k_4 | Stützenflansch auf Biegung | 0,9 l_eff t_fc³ / m³ |
+| k_5 | Stirnplatte auf Biegung | 0,9 l_eff t_p³ / m³ |
+| k_10 | Schrauben auf Zug | 1,6 A_s / L_b |
+
+Bei mehreren Schraubenreihen werden die Reihen nach 6.3.3.1 zu einer
+Ersatzfeder zusammengefasst:
+
+    k_eff,r = 1 / Σ_i (1 / k_i,r)
+    z_eq    = Σ_r k_eff,r h_r² / Σ_r k_eff,r h_r
+    k_eq    = Σ_r k_eff,r h_r / z_eq
+
+**Momententragfähigkeit** M_j,Rd nach 6.2.7: Summe der Reihenkräfte F_tr,Rd mal
+ihrem Hebelarm h_r zum Druckpunkt (Mitte des Druckflansches). Übersteigt die
+Summe der Zugkräfte die Tragfähigkeit der Druckzone F_c,Rd = M_c,Rd/(h − t_f),
+werden die Kräfte von der **untersten** Reihe her abgebaut (6.2.7.2(6)).
+
+**Klassifizierung** nach 5.2.2.5 gegen die Biegesteifigkeit des angeschlossenen
+Trägers — maßgebend ist die Länge des ganzen Stabes, nicht des einzelnen
+Elements:
+
+    starr        S_j,ini ≥ k_b E I_b / L_b     (k_b = 8 ausgesteift, 25 sonst)
+    gelenkig     S_j,ini ≤ 0,5 E I_b / L_b
+    nachgiebig   dazwischen
+
+und nach 5.2.3 gegen M_pl,Rd des Trägers in voll-, teiltragfähig und gelenkig.
+
+**Rotationsvermögen** nach 6.4.2(2): ein geschraubter Anschluss hat genügend
+Rotationskapazität, wenn seine Tragfähigkeit vom Biegen des Blechs bestimmt
+wird **und** das Blech dünn genug ist, damit sich die Fließgelenke ausbilden:
+
+    t ≤ 0,36 d √(f_ub / f_y)
+
+Ist das nicht erfüllt, sagt das Programm es und weist darauf hin, dass für eine
+plastische Berechnung das Rotationsvermögen nachzuweisen ist.
+
+**In der Berechnung** sitzt der Anschluss als Drehfeder am Stabende. Gerechnet
+wird nach der Vereinfachung 5.1.2(4) mit
+
+    S_j = S_j,ini / η        (η = 2 für geschraubte Stirnplatten, Tab. 5.2)
+
+so dass ein einziger Rechendurchgang genügt und das Ergebnis für jedes M_j,Ed
+gilt. Die Voreinstellung „automatisch" folgt der Klassifizierung: ein starrer
+Anschluss bleibt starr, ein nachgiebiger wird zur Drehfeder, ein gelenkiger zum
+Momentengelenk. Die Feder wird über dieselbe exakte Reihenschaltung eingebaut
+wie ein Federgelenk (Kapitel 4.2), also ohne Näherung im Element.
+
+Sind keine Angaben zur Stütze vorhanden, entfallen k_1 bis k_4. S_j,ini ist
+dann eine **obere Schranke** — der wirkliche Anschluss ist weicher —, und
+genau das steht als Hinweis im Nachweis und im Bericht.
+
+Ein Laschenstoß gilt als durchgehend und damit starr; bei Schrauben der
+Kategorie A oder D wird darauf hingewiesen, dass der Schlupf des Lochspiels
+nicht in der Rechnung steckt. Ein Diagonalanschluss über ein Knotenblech gilt
+nach 5.1.5 als gelenkig.
+
+Die Geometrievorschläge (Blechdicken, Schraubenbild, Nahtdicken) sind
+**Vorschläge, keine Nachweise**: sie folgen den Konstruktionsregeln
+(Rand- und Lochabstände Tab. 3.3, Nahtdicken 4.5.1) und werden so lange
+nachgebessert, bis die Nachweise für die eingegebenen Schnittgrößen erfüllt
+sind. Maßgebend ist immer die anschließende Rechnung über alle Kombinationen.
+
+## 5b Verformungsnachweise (Grenzzustand der Gebrauchstauglichkeit)
+
+Nachgewiesen wird gegen die GZG-Kombinationen nach DIN EN 1990, 6.5.3 —
+charakteristisch (6.14b), häufig (6.15b), quasi-ständig (6.16b). Jeder
+Nachweis läuft über alle Kombinationen seiner Bemessungssituation; die
+ungünstigste ist maßgebend.
+
+**Durchbiegung eines Stabes** wird auf die **Sehne** zwischen den Stabenden
+bezogen — nicht auf die Ausgangslage. Sie folgt aus der Momentenlinie:
+
+    w″(x) = M(x) / (E I)
+
+zweifach integriert, anschließend die Gerade durch die beiden Stabenden
+abgezogen. Innerhalb eines Elements ist M(x) bei linear veränderlicher
+Streckenlast höchstens ein Polynom dritten Grades und EI konstant; die
+Krümmung wird darum durch ein kubisches Polynom exakt beschrieben und
+geschlossen integriert. Zwei Folgen:
+
+* Das Ergebnis ist **auch bei nur einem Element je Stab exakt** — geprüft
+  gegen 5qL⁴/384EI und PL³/48EI mit Abweichung 0,0000 %.
+* Der Starrkörperanteil (Auflagersenkung, Verdrehung des ganzen Stabes) fällt
+  beim Abzug der Sehne heraus. Für einen Kragarm ist deshalb nicht die
+  Durchbiegung, sondern die **Knotenverschiebung** der richtige Nachweis.
+
+Eine Überhöhung w_c wird abgezogen (DIN EN 1993-1-1, A.1.4.2: w = w_max − w_c).
+
+**Knoten**: Verschiebung oder Verdrehung gegenüber der Ausgangslage —
+Kragarmspitze, Stützenkopf, Verdrehung eines Auflagers.
+
+**Punktpaar**: die Verschiebung zweier Knoten **gegeneinander**. Damit werden
+Dichtungen, Führungen, Fugen und Anschläge nachgewiesen, wie sie DIN 19704-1
+im Stahlwasserbau verlangt.
+
+Grenzwerte sind L/x (L = Stablänge beziehungsweise Abstand der beiden Knoten)
+oder ein absoluter Wert in mm beziehungsweise mrad. Fehlt die verlangte
+Bemessungssituation im Modell, wird der Nachweis **nicht geführt** und das
+gesagt — es wird nichts ersatzweise eingesetzt.
+
 ## 6 Modalanalyse und Knicken
 
 * Eigenschwingungen: verallgemeinertes Eigenwertproblem (K − ω² M) φ = 0
@@ -283,9 +445,21 @@ Schadensfolge), γFf = 1,0.
 * Kontakt als Penalty-Näherung ohne Lastgeschichte (monotone Lasten).
 * Schalen: ebene Elemente; Beulnachweise von Blechfeldern (EN 1993-1-5)
   sind nicht enthalten (Hinweis im Nachweis).
+* Anschlüsse: nachgewiesen werden die im Modell angelegten Anschlüsse der drei
+  Vorlagen (Kopfplatte, Laschenstoß, Knotenblech) aus den Stabendschnitt-
+  größen. Die Nachgiebigkeit geht über die Anfangssteifigkeit S_j,ini als
+  Drehfeder in die Rechnung ein (Kapitel 5a.1). Nicht enthalten sind die
+  nichtlineare M-φ-Kurve (gerechnet wird linear mit S_j = S_j,ini/η nach
+  5.1.2(4)), die Komponenten von Fußplatten auf Beton und die Interaktion
+  benachbarter Schraubenreihen als Gruppe (6.2.7.2(8)) — die Reihen werden
+  einzeln geführt.
 * Nachweise gelten für die implementierten Querschnittstypen (I, RHS, CHS,
   Rechteck, Kreis); bei freien Querschnitten wird elastisch (Klasse 3)
   gerechnet.
+* Verformungen: nachgewiesen werden Stabdurchbiegungen, Knotenverschiebungen
+  und Punktpaare. Verformungen von Flächen (Plattendurchbiegung) und
+  Schwingungsnachweise (Eigenfrequenz als Gebrauchstauglichkeitskriterium)
+  sind nicht enthalten.
 * Das Programm ist verifiziert, aber nicht bauaufsichtlich zugelassen. Die
   Verantwortung für die Anwendung und die Prüfung der Ergebnisse liegt beim
   Anwender.
@@ -297,6 +471,8 @@ Schadensfolge), γFf = 1,0.
 | `tests/test_verification.py` | 26 Benchmarks Stab/Schale/Volumen (analytisch, Patch-Tests) |
 | `tests/test_supports.py` | Lager mit Ausfall bei Zug/Druck, Schlupf, Reibung, Grenzkraft; Linien- und Flächenlager; Federgelenke gegen Handrechnungen |
 | `tests/test_sections.py` | Profildatenbank nach Land gegen Katalogwerte, Hauptachsen der Winkel, zusammengesetzte Querschnitte |
+| `tests/test_gzg.py` | Verformungsnachweise gegen 5qL⁴/384EI, PL³/48EI und den Kragarm; Grenzwertbildung L/x, absolut, Überhöhung, Punktpaar |
+| `tests/test_joints.py` | Schrauben, Nähte, T-Stummel gegen EN-Zahlenwerte; Steifigkeitsbeiwerte Tab. 6.11, Klassifizierung 5.2.2.5, Drehfeder gegen die geschlossene Kragarmlösung |
 | `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |
 | `tests/test_solver_ext.py` | Gelenke, Trapezlasten, Temperatur, Zwischenstellen, Superposition, Umhüllende, Kombinationsgenerator, einseitige Lager, Spaltelement, Flächenkontakt mit Reibung, parallele Assemblierung, Rechnerfarm |
 | `tests/test_ec3.py` | Klassifizierung, Querschnittsnachweise, Knicken (χ), M_cr, χ_LT, C1/C_m, Interaktion, Wöhlerlinien, Nachweisführung |

@@ -31,7 +31,7 @@ class MemberCheck:
     elements: list = field(default_factory=list)
 
     def status(self) -> str:
-        return "erfuellt" if self.util <= 1.0 else "NICHT erfuellt"
+        return "erfüllt" if self.util <= 1.0 else "NICHT erfüllt"
 
 
 @dataclass

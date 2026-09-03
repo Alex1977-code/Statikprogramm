@@ -655,6 +655,171 @@ def main():
         traceback.print_exc()
         check("Tabellen", False, str(ex)[:70])
 
+    # ---- Anschlüsse: Modell, Baum, Tabelle, Nachweis --------------------
+    try:
+        from PySide6 import QtCore
+        from statik3d.joints import anschluss as ans
+        from statik3d.joints.templates import propose
+
+        w.load_example("hall")
+        r = w.model.members["Riegel"]
+        t = propose("kopfplatte", w.model, r.elements[0], end=0,
+                    N=-50e3, Vz=150e3, My=300e3)
+        name = w._freier_name(t.name, w.model.joints)
+        w.merken(f"Anschluss {name}")
+        w.model.joints[name] = ans.als_joint(t, name)
+        w.refresh_all()
+        app.processEvents()
+        check("Anschluss steht im Modell, nicht am Fenster",
+              name in w.model.joints and not hasattr(w, "joints"), name)
+        check("Anschlusstabelle unten gefüllt", w.tbl_joint.zeilenzahl() == 1,
+              f"{w.tbl_joint.zeilenzahl()} Zeilen")
+        check("vor der Rechnung steht „nicht gerechnet“",
+              w.tbl_joint.modell.zeilen[0][-1] == "nicht gerechnet",
+              str(w.tbl_joint.modell.zeilen[0][-1]))
+        zweige = [w.baum.topLevelItem(0).child(i).text(0)
+                  for i in range(w.baum.topLevelItem(0).childCount())]
+        check("Anschlüsse stehen im Modellbaum", "Anschlüsse" in zweige, str(zweige[-3:]))
+        check("Register „Anschlüsse“ unten vorhanden",
+              w.tabelle_zeigen("Anschlüsse"))
+
+        an = solver.solve_all(w.model, design=True, fatigue=True)
+        w._solve_done("all", an)
+        w.show_results()
+        app.processEvents()
+        check("Anschluss wird mit der Berechnung nachgewiesen",
+              an.joints is not None and name in an.joints.joints)
+        z = w.tbl_joint.modell.zeilen[0]
+        check("Ausnutzung steht in der Tabelle",
+              isinstance(z[5], float) and z[5] > 0 and z[6],
+              f"eta = {z[5]:.3f}, {z[6]}")
+        check("Ergebnisprotokoll nennt die Anschlüsse",
+              "Anschlüsse:" in w.txt_res.toPlainText())
+
+        # Baum -> Tabelle -> Ansicht
+        w.clear_selection()
+        w._baum_geklickt("anschluss", name)
+        app.processEvents()
+        check("Klick im Baum wählt den Stab des Anschlusses",
+              len(w.selection) == 2, f"{len(w.selection)} Knoten")
+        check("und markiert die Zeile",
+              len(w.tbl_joint.view.selectionModel().selectedRows()) == 1)
+        w.clear_selection()
+        w.tbl_joint.zeile_gewaehlt.emit(name)
+        app.processEvents()
+        check("Klick in der Tabelle wählt den Stab", len(w.selection) == 2)
+        w.clear_selection()
+
+        # Momenten-Rotations-Verhalten steht in der Tabelle und in der Rechnung
+        g = an.joints.joints[name].gelenk
+        check("Steifigkeit des Anschlusses bestimmt", g is not None and g.S_j_ini > 0,
+              f"S_j,ini = {g.S_j_ini / 1e6:.1f} MNm/rad" if g else "-")
+        check("Klasse und M_j,Rd stehen in der Tabelle",
+              w.tbl_joint.modell.zeilen[0][6] in ("starr", "nachgiebig", "gelenkig")
+              and float(w.tbl_joint.modell.zeilen[0][7]) > 0,
+              f"{w.tbl_joint.modell.zeilen[0][6]}, "
+              f"M_j,Rd = {w.tbl_joint.modell.zeilen[0][7]} kNm")
+        check("die Tabelle sagt, wie er in der Rechnung sitzt",
+              "gerechnet" in str(w.tbl_joint.modell.zeilen[0][8])
+              or "Drehfeder" in str(w.tbl_joint.modell.zeilen[0][8]),
+              str(w.tbl_joint.modell.zeilen[0][8]))
+        w.model.joints[name].modellierung = "feder"
+        an = solver.solve_all(w.model, design=True, fatigue=True)
+        w._solve_done("all", an)
+        w.show_results()
+        app.processEvents()
+        e0 = w.model.elements[w.model.joints[name].elem]
+        check("die Drehfeder sitzt danach am Stabende",
+              any(d == DOF for d, _k in e0.hinge_springs for DOF in (4, 10)),
+              str(e0.hinge_springs))
+        w.model.joints[name].modellierung = "automatisch"
+
+        # Rückgängig und Löschen
+        nl = len(w.model.joints)
+        w.undo()
+        app.processEvents()
+        check("Anschluss lässt sich zurücknehmen",
+              len(w.model.joints) == nl - 1 and w.tbl_joint.zeilenzahl() == nl - 1)
+        w.redo()
+        app.processEvents()
+        check("und wiederherstellen", len(w.model.joints) == nl)
+        w.tbl_joint.view.selectRow(0)
+        w.delete_joint()
+        app.processEvents()
+        check("Anschluss lässt sich löschen", not w.model.joints)
+        w.undo()
+        check("Löschen ist rücknehmbar", len(w.model.joints) == nl)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Anschlüsse", False, str(ex)[:70])
+
+    # ---- Verformungsnachweise (GZG) -------------------------------------
+    try:
+        w.load_example("hall")
+        m = w.model
+        m.add_verformungsgrenze("Durchbiegung Riegel", "stab", stab="Riegel",
+                                groesse="uz", grenzart="L/x", wert=300,
+                                situation="SLS_CH")
+        kopf = int(m.elements[m.members["Stiel links"].elements[-1]].nodes[1])
+        m.add_verformungsgrenze("Stielkopf", "knoten", knoten=[kopf], groesse="ux",
+                                grenzart="absolut", wert=0.030, situation="SLS_CH")
+        w.refresh_all()
+        app.processEvents()
+        check("Verformungstabelle unten gefüllt", w.tbl_gzg.zeilenzahl() == 2,
+              f"{w.tbl_gzg.zeilenzahl()} Zeilen")
+        check("vor der Rechnung steht „nicht gerechnet“",
+              w.tbl_gzg.modell.zeilen[0][-1] == "nicht gerechnet")
+        zweige = [w.baum.topLevelItem(0).child(i).text(0)
+                  for i in range(w.baum.topLevelItem(0).childCount())]
+        check("Verformungsnachweise stehen im Modellbaum",
+              "Verformungsnachweise" in zweige, str(zweige[-2:]))
+        check("Register „Verformungen“ unten vorhanden",
+              w.tabelle_zeigen("Verformungen"))
+
+        an = solver.solve_all(m, design=True)
+        w._solve_done("all", an)
+        w.show_results()
+        app.processEvents()
+        check("Verformungen werden mit gerechnet",
+              an.gzg is not None and len(an.gzg.checks) == 2)
+        z = w.tbl_gzg.modell.zeilen[0]
+        check("Wert, Grenze und Ausnutzung stehen in der Tabelle",
+              isinstance(z[4], float) and z[4] > 0 and "L/300" in str(z[5])
+              and isinstance(z[6], float),
+              f"{z[4]:.2f} mm von {z[5]}, η = {z[6]:.3f}")
+        check("Ergebnisprotokoll nennt die Verformungen",
+              "Verformungen (GZG)" in w.txt_res.toPlainText())
+
+        w.clear_selection()
+        w.tbl_gzg.zeile_gewaehlt.emit("Durchbiegung Riegel")
+        app.processEvents()
+        check("Klick in der Tabelle wählt den Stab", len(w.selection) > 2,
+              f"{len(w.selection)} Knoten")
+        w.clear_selection()
+
+        nv = len(m.verformungsgrenzen)
+        w.tbl_gzg.view.selectRow(1)
+        w.delete_verformungsgrenze()
+        app.processEvents()
+        check("Verformungsgrenze lässt sich löschen",
+              len(m.verformungsgrenzen) == nv - 1)
+        w.undo()
+        app.processEvents()
+        check("und zurücknehmen", len(w.model.verformungsgrenzen) == nv
+              and w.tbl_gzg.zeilenzahl() == nv)
+
+        d = dg.VerformungsgrenzeDialog(w, w.model,
+                                       w.model.verformungsgrenzen["Stielkopf"])
+        name, kw = d.result()
+        check("Dialog liest die Grenze zurück",
+              name == "Stielkopf" and kw["art"] == "knoten"
+              and abs(kw["wert"] - 0.030) < 1e-9, f"{name}, {kw['wert']}")
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Verformungsnachweise", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

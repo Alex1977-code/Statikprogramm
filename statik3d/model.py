@@ -56,7 +56,7 @@ def dof_index(key) -> int:
         raise KeyError(f"Freiheitsgrad {key} liegt nicht zwischen 0 und 5")
     return i
 NDOF = 6
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -843,6 +843,107 @@ class Member:
 
 
 @dataclass
+class Joint:
+    """Ein Anschluss an einem Stabende (DIN EN 1993-1-8).
+
+    Der Anschluss gehoert zum Modell: er wird mitgespeichert, steht im
+    Modellbaum und in der Tabelle, und er wird bei jeder Berechnung mit
+    nachgewiesen. Die Geometrie liegt als Feldwerte der Vorlage vor
+    (``statik3d.joints.templates``), damit sie ohne die Vorlagenklasse
+    gespeichert und gelesen werden kann.
+
+    typ:        Schluessel aus joints.templates.TYPES
+                ("kopfplatte", "lasche", "diagonale")
+    elem, end:  Stabelement und sein Ende (0 = Anfang, 1 = Ende)
+    geometrie:  Blechdicken, Schraubenbild, Nahtdicken - die Felder der Vorlage
+    schraube:   size, grade, hole, category, mu
+    kraefte:    von Hand gesetzte Schnittgroessen [N, Nm]. Leer heisst: die
+                Schnittgroessen kommen aus der Rechnung, ueber alle
+                GZT-Kombinationen, und die ungünstigste ist massgebend.
+    ermuedung:  Namen der Ermuedungslasten (leer = alle vorhandenen)
+    """
+    name: str
+    typ: str = "kopfplatte"
+    elem: int = 0
+    end: int = 1
+    geometrie: dict = field(default_factory=dict)
+    schraube: dict = field(default_factory=dict)
+    kraefte: dict = field(default_factory=dict)
+    ermuedung: list = field(default_factory=list)
+    design: bool = True
+    beschreibung: str = ""
+    # -- Momenten-Rotations-Verhalten (EN 1993-1-8, Kap. 5 und 6.3) ------
+    #: "automatisch" = nach der Klassifizierung (starr, Drehfeder, Gelenk),
+    #: "starr" | "gelenkig" | "feder" = fest vorgegeben
+    modellierung: str = "automatisch"
+    #: Angaben der Stuetze fuer k_1 bis k_4: h, b, tw, tf, r, fy, versteift
+    stuetze: dict = field(default_factory=dict)
+    #: "ausgesteift" (k_b = 8) oder "nicht ausgesteift" (k_b = 25) nach 5.2.2.5
+    rahmen: str = "ausgesteift"
+    #: von Hand gesetzte Drehfedersteifigkeit [Nm/rad] (0 = aus der Rechnung)
+    S_j: float = 0.0
+
+    def ort(self) -> str:
+        return f"Element {self.elem + 1}, Ende {'A' if self.end == 0 else 'E'}"
+
+
+#: Verformungsgroessen einer Grenze
+VERFORMUNGSGROESSEN = {
+    "ux": "Verschiebung in x", "uy": "Verschiebung in y", "uz": "Verschiebung in z",
+    "u": "Betrag der Verschiebung",
+    "phix": "Verdrehung um x", "phiy": "Verdrehung um y", "phiz": "Verdrehung um z",
+}
+
+
+@dataclass
+class Verformungsgrenze:
+    """Ein Verformungsnachweis im Grenzzustand der Gebrauchstauglichkeit.
+
+    art:
+        "stab"       Durchbiegung eines Stabes, bezogen auf die **Sehne**
+                     zwischen seinen Enden (die uebliche Durchbiegung w)
+        "knoten"     Verschiebung oder Verdrehung eines Knotens gegenueber
+                     der Ausgangslage (z. B. Kragarmspitze)
+        "punktpaar"  Verschiebung zweier Knoten **gegeneinander** - fuer
+                     Dichtungen, Fuehrungen, Fugen und Anschlaege
+
+    grenzart:
+        "L/x"        Grenze = L / wert; L ist die Stablaenge beziehungsweise
+                     der Abstand der beiden Knoten
+        "absolut"    Grenze = wert [m] beziehungsweise [rad]
+
+    situation: "SLS_CH" (charakteristisch), "SLS_FR" (haeufig),
+               "SLS_QP" (quasi-staendig) oder "" fuer alle GZG-Kombinationen.
+    ueberhoehung: Vorkruemmung w_c [m]; sie wird von der Durchbiegung
+               abgezogen (EN 1993-1-1, A.1.4.2: w = w_max - w_c).
+    """
+    name: str
+    art: str = "stab"
+    stab: str = ""
+    knoten: list = field(default_factory=list)
+    groesse: str = "uz"
+    grenzart: str = "L/x"
+    wert: float = 300.0
+    situation: str = "SLS_CH"
+    ueberhoehung: float = 0.0
+    beschreibung: str = ""
+
+    def grenztext(self) -> str:
+        if self.grenzart == "L/x":
+            return f"L/{self.wert:g}"
+        if self.groesse.startswith("phi"):
+            return f"{self.wert * 1e3:g} mrad"
+        return f"{self.wert * 1e3:g} mm"
+
+    def bezug(self) -> str:
+        if self.art == "stab":
+            return f"Stab {self.stab}"
+        if self.art == "punktpaar" and len(self.knoten) >= 2:
+            return f"Knoten {self.knoten[0]} gegen {self.knoten[1]}"
+        return f"Knoten {self.knoten[0]}" if self.knoten else "-"
+
+
+@dataclass
 class DesignSettings:
     """Globale Einstellungen der Nachweise (DIN EN 1993-1-1/NA)."""
     gamma_M0: float = 1.0
@@ -937,6 +1038,8 @@ class Model:
         self.add_load_case("LF1", "G", "Eigengewicht / staendige Lasten")
         # Nachweise
         self.members: dict[str, Member] = {}
+        self.joints: dict[str, Joint] = {}
+        self.verformungsgrenzen: dict[str, Verformungsgrenze] = {}
         self.design = DesignSettings()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
@@ -1054,6 +1157,35 @@ class Model:
         m = Member(name, [int(e) for e in elements], **kw)
         self.members[name] = m
         return m
+
+    def add_verformungsgrenze(self, name: str, art: str = "stab", **kw) -> Verformungsgrenze:
+        """Einen Verformungsnachweis (GZG) in das Modell aufnehmen."""
+        if art not in ("stab", "knoten", "punktpaar"):
+            raise ValueError(f"Art „{art}“ unbekannt: stab | knoten | punktpaar")
+        g = kw.get("groesse", "uz")
+        if g not in VERFORMUNGSGROESSEN:
+            raise KeyError(f"Verformungsgröße „{g}“ unbekannt: "
+                           f"{sorted(VERFORMUNGSGROESSEN)}")
+        v = Verformungsgrenze(name, art, **kw)
+        if art == "stab" and v.stab and v.stab not in self.members:
+            raise KeyError(f"Stab „{v.stab}“ gibt es nicht")
+        if art in ("knoten", "punktpaar"):
+            noetig = 2 if art == "punktpaar" else 1
+            if len(v.knoten) < noetig:
+                raise ValueError(f"„{art}“ braucht {noetig} Knoten")
+        self.verformungsgrenzen[name] = v
+        return v
+
+    def add_joint(self, name: str, typ: str, elem: int, end: int = 1, **kw) -> Joint:
+        """Anschluss an einem Stabende in das Modell aufnehmen."""
+        e = int(elem)
+        if not 0 <= e < len(self.elements):
+            raise IndexError(f"Element {e} gibt es nicht")
+        if self.elements[e].typ not in ("beam", "truss"):
+            raise ValueError(f"Element {e + 1} ist kein Stab")
+        j = Joint(name, typ, e, int(end), **kw)
+        self.joints[name] = j
+        return j
 
     def fix(self, node: int, dofs="all", values=None, stiffness=None):
         if dofs == "all":
@@ -1405,6 +1537,8 @@ class Model:
             "combinations": [asdict(c) for c in self.combinations.values()],
             "fatigue_loads": [asdict(f) for f in self.fatigue_loads.values()],
             "members": [asdict(m) for m in self.members.values()],
+            "joints": [asdict(j) for j in self.joints.values()],
+            "verformungsgrenzen": [asdict(v) for v in self.verformungsgrenzen.values()],
             "design": asdict(self.design),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
@@ -1446,6 +1580,9 @@ class Model:
         m.combinations = {c["name"]: _dc(Combination, c) for c in d.get("combinations", [])}
         m.fatigue_loads = {f["name"]: _dc(FatigueLoad, f) for f in d.get("fatigue_loads", [])}
         m.members = {mm["name"]: _dc(Member, mm) for mm in d.get("members", [])}
+        m.joints = {j["name"]: _dc(Joint, j) for j in d.get("joints", [])}
+        m.verformungsgrenzen = {v["name"]: _dc(Verformungsgrenze, v)
+                                for v in d.get("verformungsgrenzen", [])}
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]

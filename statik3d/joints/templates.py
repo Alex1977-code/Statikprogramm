@@ -121,6 +121,14 @@ class JointTemplate:
     def describe(self) -> str:
         raise NotImplementedError
 
+    def kennwerte(self) -> list:
+        """Die Bauteile des Anschlusses als (Bezeichnung, Wert) - fuer den Bericht.
+
+        ``describe`` schreibt dasselbe als Text fuers Protokoll; hier steht es
+        zeilenweise, damit es im Dokument als Tabelle erscheint.
+        """
+        return [("Beschreibung", self.describe())]
+
     def design(self, **forces) -> JointCheck:
         raise NotImplementedError
 
@@ -207,7 +215,7 @@ class EndPlate(JointTemplate):
         if abs(My) > 0.6 * fy * (sec.Wel_y or 1e-4):
             a.stiffeners = 2
             a.t_stiff = max(tw, 0.010)
-            a.hinweise.append("hohes Moment - Rippen ueber und unter dem Zugflansch "
+            a.hinweise.append("hohes Moment - Rippen über und unter dem Zugflansch "
                               "vorgeschlagen")
         a.hinweise.append(f"Vorschlag aus {sec.name}: Zugkraft im Flansch "
                           f"F_t = {Ft / 1e3:.0f} kN, {n} Schrauben {a.bolt.size}")
@@ -291,6 +299,150 @@ class EndPlate(JointTemplate):
             t.append("  Hinweis: " + h)
         return "\n".join(t)
 
+    # -- Momenten-Rotations-Verhalten -----------------------------------
+    def _zugreihen(self):
+        """Die Schraubenreihen der Zugzone mit ihrem Hebelarm zum Druckpunkt.
+
+        Druckpunkt ist die Mitte des Druckflansches; Hebelarm h_r = z_r + z_f
+        mit z_f = (h - t_f)/2. Zugreihen sind die mit z_r > 0.
+        """
+        sec = self.sec
+        h = sec.h or 0.300
+        tf = sec.tf or 0.012
+        tw = sec.tw or 0.008
+        z_f = 0.5 * (h - tf)
+        e_arm = 0.5 * (self.bp - self.w)
+        m_innen = max(0.5 * (self.w - tw) - 0.8 * self.a_w * math.sqrt(2),
+                      0.5 * self.bolt.d0)
+        out = []
+        for z in sorted((z for z in self.rows if z > 0), reverse=True):
+            if z > z_f:                      # Reihe ausserhalb des Zugflansches
+                mx = max(z - z_f - 0.8 * self.a_f * math.sqrt(2), 0.5 * self.bolt.d0)
+                le = effective_lengths("aussen", m=mx, e=e_arm, mx=mx, ex=self.ex,
+                                       w=self.w, bp=self.bp)
+                m = mx
+            else:
+                le = effective_lengths("innen", m=m_innen, e=e_arm)
+                m = m_innen
+            out.append((z + z_f, m, le, e_arm))
+        return out
+
+    def momenten_rotation(self, stuetze=None, rahmen: str = "ausgesteift",
+                          I_b: float = None, L_b: float = None):
+        """Steifigkeit, Momententragfaehigkeit und Rotationsvermoegen (6.3, 6.2.7, 6.4).
+
+        stuetze: dict mit den Angaben der Stuetze (h, b, tw, tf, r, fy,
+                 versteift). Ohne sie entfallen k_1 bis k_4 - S_j,ini ist dann
+                 eine obere Schranke, und das steht im Hinweis.
+        """
+        from . import rotation as R
+        sec = self.sec
+        h = sec.h or 0.300
+        tf = sec.tf or 0.012
+        g = R.Gelenkkennwerte(art="kopfplatte", eta=R.ETA["kopfplatte"])
+        st = dict(stuetze or {})
+        t_gegen = float(st.get("tf", 0.0)) or self.tp
+        L_bolt = R.klemmlaenge(self.tp, t_gegen, self.bolt)
+
+        for h_r, m, le, e_arm in self._zugreihen():
+            r = R.Reihe(h=h_r)
+            leff_min = min(le["cp"], le["nc"]) if le.get("cp") else le["nc"]
+            r.komponenten.append(R.k5_stirnplatte(leff_min, self.tp, m))
+            r.komponenten.append(R.k10_schrauben(self.bolt.As, L_bolt))
+            ts = TStub(t=self.tp, fy=self.fy, m=m, e=e_arm, leff_cp=le["cp"],
+                       leff_nc=le["nc"], Ft_Rd=self.bolt.Ft_Rd(), n_bolts=2,
+                       gamma_M0=self.gamma_M0)
+            res = ts.resistance()
+            r.F_Rd = res["F_T_Rd"]
+            r.versagen = res["versagen"]
+            if st:
+                t_fc = float(st.get("tf", 0.0))
+                t_wc = float(st.get("tw", 0.0))
+                d_c = float(st.get("h", 0.0)) - 2.0 * t_fc - 2.0 * float(st.get("r", 0.0))
+                if t_fc > 0 and m > 0:
+                    r.komponenten.append(R.k4_stuetzenflansch(leff_min, t_fc, m))
+                if t_wc > 0 and d_c > 0:
+                    r.komponenten.append(R.k3_stuetzensteg_zug(leff_min, t_wc, d_c))
+            g.reihen.append(r)
+        if not g.reihen:
+            g.hinweise.append("keine Schraubenreihe in der Zugzone - der Anschluss "
+                              "überträgt kein Moment")
+            g.klasse = "gelenkig"
+            return g
+
+        weitere = []
+        if st:
+            t_fc = float(st.get("tf", 0.0))
+            t_wc = float(st.get("tw", 0.0))
+            d_c = float(st.get("h", 0.0)) - 2.0 * t_fc - 2.0 * float(st.get("r", 0.0))
+            b_eff = self.tp + 2.0 * self.a_f * math.sqrt(2) + 5.0 * (t_fc + float(st.get("r", 0.0)))
+            if t_wc > 0 and d_c > 0:
+                weitere.append(R.k2_stuetzensteg_druck(b_eff, t_wc, d_c))
+                if st.get("schubfeld", True):
+                    A_vc = R.schubflaeche_I(float(st.get("h", 0.0)),
+                                            float(st.get("b", 0.0)), t_wc, t_fc,
+                                            float(st.get("r", 0.0)),
+                                            float(st.get("A", 0.0)))
+                    beta = float(st.get("beta", 1.0))
+                    weitere.append(R.k1_schubfeld(A_vc, beta, max(h - tf, 0.1 * h)))
+            g.vollstaendig = True
+        else:
+            g.hinweise.append(
+                "Ohne Angaben zur Stütze entfallen die Komponenten k_1 bis k_4 "
+                "(Stützensteg auf Schub, Druck und Zug, Stützenflansch auf Biegung). "
+                "S_j,ini ist damit eine obere Schranke - der wirkliche Anschluss ist "
+                "weicher.")
+
+        g.S_j_ini, g.z_eq, g.k_eq, _ = R.steifigkeit(g.reihen, weitere)
+        g.komponenten = [(k.kennung, k.k, k.text)
+                         for r in g.reihen for k in r.komponenten] \
+            + [(k.kennung, k.k, k.text) for k in weitere]
+
+        # Druckzone: Flansch des Traegers, 6.2.6.7
+        Mc_Rd = (sec.Wpl_y or 0.0) * self.fy / self.gamma_M0
+        F_c = Mc_Rd / max(h - tf, 1e-6) if Mc_Rd > 0 else \
+            (sec.b or 0.15) * tf * self.fy / self.gamma_M0
+        g.M_j_Rd, anteile = R.momententragfaehigkeit(g.reihen, F_c)
+        if sum(F for _h, F, _v in anteile) < sum(r.F_Rd for r in g.reihen) - 1e-6:
+            g.hinweise.append(
+                f"Die Druckzone begrenzt: F_c,Rd = {F_c / 1e3:.0f} kN, die Zugkräfte "
+                "werden von der untersten Reihe her abgebaut (6.2.7.2(6)).")
+
+        # Klassifizierung
+        if I_b is None or L_b is None:
+            I_b = I_b if I_b is not None else (sec.Iy or 0.0)
+            if L_b is None and self.model is not None:
+                try:
+                    L_b = float(self.model.element_length(int(self.elem)))
+                except Exception:            # noqa: BLE001
+                    L_b = 0.0
+        g.klasse, g.klasse_grund, g.grenze_starr, g.grenze_gelenkig = R.klassifizieren(
+            g.S_j_ini, R.E_STAHL, I_b or 0.0, L_b or 0.0, rahmen)
+        g.tragklasse = R.tragfaehigkeitsklasse(g.M_j_Rd, Mc_Rd)
+
+        # Rotationsvermoegen
+        massgebend = min(g.reihen, key=lambda r: r.F_Rd).versagen if g.reihen else ""
+        g.rotation_ok, g.rotation_grund = R.rotationskapazitaet(
+            massgebend, self.tp, self.bolt.d, self.bolt.fub, self.fy)
+        g.phi_Cd = g.M_j_Rd / g.S_j if g.S_j > 0 else 0.0
+        return g
+
+    def kennwerte(self) -> list:
+        z = ", ".join(f"{v * 1e3:+.0f}" for v in self.rows)
+        kv = [("Kopfplatte", f"b × h × t = {self.bp * 1e3:.0f} × {self.hp * 1e3:.0f} × "
+                             f"{self.tp * 1e3:.0f} mm, {self.grade}"),
+              ("Schrauben", self.bolt.describe()),
+              ("Anzahl", f"{2 * len(self.rows)} Stück in {len(self.rows)} Reihen"),
+              ("Reihen z (ab Plattenmitte)", f"{z} mm"),
+              ("Riss w (Abstand quer)", f"{self.w * 1e3:.0f} mm"),
+              ("Randabstand e_1 (oben/unten)", f"{self.ex * 1e3:.0f} mm"),
+              ("Randabstand e_2 (seitlich)", f"{0.5 * (self.bp - self.w) * 1e3:.0f} mm"),
+              ("Kehlnaht am Flansch", f"a = {self.a_f * 1e3:g} mm"),
+              ("Kehlnaht am Steg", f"a = {self.a_w * 1e3:g} mm")]
+        if self.stiffeners:
+            kv.append(("Rippen", f"{self.stiffeners} Stück, t = {self.t_stiff * 1e3:g} mm"))
+        return kv
+
     def bolt_positions(self) -> list[tuple[float, float]]:
         """Schraubenlagen (y, z) in der Plattenebene [m]."""
         return [(sy * 0.5 * self.w, z) for z in self.rows for sy in (-1, 1)]
@@ -333,10 +485,12 @@ class EndPlate(JointTemplate):
         # Naehte: Flanschnaht traegt die Flanschkraft, Stegnaht die Querkraft
         nf = Fillet(a=self.a_f, length=2 * b, fu=self.fu, grade=self.grade,
                     gamma_M2=self.gamma_M2)
-        j.add(check_weld(nf, N_perp=Ft_ges, V_perp=0.0, V_par=0.0))
+        j.add(check_weld(nf, N_perp=Ft_ges, V_perp=0.0, V_par=0.0,
+                         bezeichnung="Kehlnaht am Flansch"))
         nw = Fillet(a=self.a_w, length=2 * max(h - 2 * tf, 0.05), fu=self.fu,
                     grade=self.grade, double=False, gamma_M2=self.gamma_M2)
-        j.add(check_weld(nw, N_perp=0.0, V_perp=abs(Vz), V_par=0.0))
+        j.add(check_weld(nw, N_perp=0.0, V_perp=abs(Vz), V_par=0.0,
+                         bezeichnung="Kehlnaht am Steg"))
         # Druckflansch auf die Platte
         A_druck = b * tf
         F_druck = abs(My) / hebel + max(-N, 0.0) * anteil
@@ -355,15 +509,15 @@ class EndPlate(JointTemplate):
                                              area=self.bolt.As))
             if self.bolt.preloaded:
                 j.hinweise.append(
-                    "Ermuedung der Schrauben mit dem Faktor "
-                    f"{self.bolt_range_factor():.2f} der aeusseren Schwingbreite "
-                    "gerechnet (Vorspannung haelt die Fuge geschlossen). Genau "
+                    "Ermüdung der Schrauben mit dem Faktor "
+                    f"{self.bolt_range_factor():.2f} der äußeren Schwingbreite "
+                    "gerechnet (die Vorspannung hält die Fuge geschlossen). Genau "
                     "ergibt sich die Schwingbreite aus der Rechnung am Teilmodell.")
             else:
                 j.hinweise.append(
-                    "Schrauben nicht vorgespannt: die volle aeussere Schwingbreite "
-                    "wirkt in der Schraube. Fuer ermuedungsbeanspruchte "
-                    "Kopfplatten vorgespannte Schrauben verwenden.")
+                    "Schrauben nicht vorgespannt: die volle äußere Schwingbreite "
+                    "wirkt in der Schraube. Für ermüdungsbeanspruchte Kopfplatten "
+                    "vorgespannte Schrauben verwenden.")
             j.ermuedung.append(fatigue_check("kopfplatte",
                                              [(abs(dMy) / max(sec.Wel_y, 1e-9), n_cycles)]))
         return j
@@ -574,6 +728,49 @@ class Splice(JointTemplate):
         for h in self.hinweise:
             t.append("  Hinweis: " + h)
         return "\n".join(t)
+
+    def kennwerte(self) -> list:
+        return [("Flanschlaschen", f"b × t = {self.b_fl * 1e3:.0f} × {self.t_fl * 1e3:.0f} mm, "
+                                   + ("außen und innen (zweischnittig)" if self.inner_flange
+                                      else "nur außen (einschnittig)") + f", {self.grade}"),
+                ("Steglaschen", f"h × t = {self.h_web * 1e3:.0f} × {self.t_web * 1e3:.0f} mm, "
+                                "beidseitig"),
+                ("Schrauben", self.bolt.describe()),
+                ("Anzahl je Stoßseite", f"{self.n_fl} je Flanschlasche, "
+                                        f"{self.n_web} je Steglasche"),
+                ("Lochabstand p_1 (in Stabrichtung)", f"{self.p1 * 1e3:.0f} mm"),
+                ("Randabstand e_1", f"{self.e1 * 1e3:.0f} mm"),
+                ("Lochabstand p_2 (quer)", f"{self.p2 * 1e3:.0f} mm")]
+
+    def momenten_rotation(self, stuetze=None, rahmen: str = "ausgesteift",
+                          I_b: float = None, L_b: float = None):
+        """Ein Laschenstoss ist durchgehend - starr, solange er nicht gleitet."""
+        from . import rotation as R
+        g = R.Gelenkkennwerte(art="lasche", eta=1.0, S_j_ini=float("inf"),
+                              vollstaendig=True)
+        g.klasse = "starr"
+        g.klasse_grund = ("durchgehender Stoß: die Laschen führen Flansche und Steg "
+                          "durch, es entsteht keine zusätzliche Verdrehung (5.2.2.1)")
+        sec = self.sec
+        Mc_Rd = (sec.Wpl_y or 0.0) * self.fy / self.gamma_M0
+        # Die Laschen tragen das Moment ueber die Flanschkraft
+        hebel = max((sec.h or 0.3) - (sec.tf or 0.012), 0.1 * (sec.h or 0.3))
+        schnitte = 2 if self.inner_flange else 1
+        F_fl = min(self.n_fl * (self.bolt.Fs_Rd() if self.bolt.preloaded
+                                else self.bolt.Fv_Rd() * schnitte),
+                   self.b_fl * self.t_fl * schnitte * self.fy / self.gamma_M0)
+        g.M_j_Rd = F_fl * hebel
+        g.tragklasse = R.tragfaehigkeitsklasse(g.M_j_Rd, Mc_Rd)
+        g.rotation_ok = True
+        g.rotation_grund = ("durchgehender Stoß - die Verdrehung ist die des Stabes; "
+                            "ein Rotationsvermögen des Anschlusses wird nicht benötigt")
+        if self.bolt.category in ("A", "D"):
+            g.hinweise.append(
+                f"Schrauben der Kategorie {self.bolt.category} (Scher-/Lochleibungs"
+                "verbindung): das Lochspiel lässt den Stoß gleiten, bevor er trägt. "
+                "Dieser Schlupf steckt nicht in der Rechnung. Für einen wirklich "
+                "starren Stoß gleitfeste Verbindungen der Kategorie B oder C wählen.")
+        return g
 
     def design(self, N: float = 0.0, Vz: float = 0.0, My: float = 0.0,
                n_cycles: float = 0.0, dN: float = 0.0) -> JointCheck:
@@ -811,13 +1008,44 @@ class Gusset(JointTemplate):
             t.append("  Hinweis: " + h)
         return "\n".join(t)
 
+    def kennwerte(self) -> list:
+        kv = [("Knotenblech", f"t = {self.t_g * 1e3:.0f} mm, {self.grade}")]
+        if self.welded:
+            kv.append(("Anschluss", f"geschweißt, Kehlnaht a = {self.a_w * 1e3:g} mm, "
+                                    f"l = {self.l_weld * 1e3:.0f} mm je Flanke"))
+        else:
+            kv += [("Schrauben", self.bolt.describe()),
+                   ("Anzahl", f"{self.n_bolt} Stück in {self.reihen} Reihe(n)"),
+                   ("Lochabstand p_1 / p_2", f"{self.p1 * 1e3:.0f} / {self.p2 * 1e3:.0f} mm"),
+                   ("Randabstand e_1 / e_2", f"{self.e1 * 1e3:.0f} / {self.e2 * 1e3:.0f} mm")]
+        kv.append(("wirksame Breite nach Whitmore",
+                   f"{self.whitmore_width() * 1e3:.0f} mm"))
+        return kv
+
+    def momenten_rotation(self, stuetze=None, rahmen: str = "ausgesteift",
+                          I_b: float = None, L_b: float = None):
+        """Ein Diagonalanschluss ueber ein Knotenblech gilt als gelenkig (5.1.5)."""
+        from . import rotation as R
+        g = R.Gelenkkennwerte(art="diagonale", eta=1.0, S_j_ini=0.0, vollstaendig=True)
+        g.klasse = "gelenkig"
+        g.klasse_grund = ("Fachwerkanschluss über ein Knotenblech: nach 5.1.5 dürfen "
+                          "die Anschlüsse von Fachwerkstäben als gelenkig angenommen "
+                          "werden, wenn die Ausmitten klein bleiben")
+        g.tragklasse = "gelenkig"
+        g.rotation_ok = True
+        g.rotation_grund = "gelenkiger Anschluss - er nimmt kein Moment auf"
+        g.hinweise.append("Der Stab wird als Pendelstab angeschlossen; eine planmäßige "
+                          "Ausmitte am Knoten ist gesondert zu berücksichtigen.")
+        return g
+
     def design(self, N: float = 0.0, n_cycles: float = 0.0, dN: float = 0.0) -> JointCheck:
         j = JointCheck(self.name)
         sec = self.sec
         if self.welded:
             n = Fillet(a=self.a_w, length=self.l_weld, fu=self.fu, grade=self.grade,
                        double=True, gamma_M2=self.gamma_M2)
-            j.add(check_weld(n, V_par=abs(N)))
+            j.add(check_weld(n, V_par=abs(N),
+                             bezeichnung="Kehlnaht Blech an Bauteil"))
         else:
             Fv = abs(N) / max(self.n_bolt, 1)
             geo = BoltGeometry(e1=self.e1, e2=self.e2, p1=self.p1, p2=self.p2,

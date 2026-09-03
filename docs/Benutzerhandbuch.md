@@ -51,11 +51,11 @@ Dreizehn Register nach Arbeitsschritt:
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
 | **Geometrie** | Knoten, Netzgeneratoren (Stabzug, Platte, Quader) |
 | **Struktur** | Stab, Schale, Querschnitte, Werkstoffe, Dicken, Zuweisen, Stäbe für Nachweise |
-| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse |
+| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht |
 | **Netz** | Netz erzeugen und löschen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
-| **Nachweise** | EC3, Ermüdung, Konfiguration |
+| **Nachweise** | EC3, Ermüdung, Verformung (GZG), Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
 | **Bericht** | Statischer Bericht |
 | **Ansicht** | Blickrichtungen, Kanten, Nummern, Lasten, Stäbe farbig |
@@ -79,7 +79,8 @@ Die Arbeitsfläche in drei Spalten:
   mit denselben Namen wie im Ribbon gibt es nicht mehr.
 
 Unten die **Tabellen**: Protokoll, Werkstoffe, Querschnitte, Dicken,
-Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt.
+Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt,
+Anschlüsse, Verformungen.
 Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
 in einem Panel rechts. Wie die Tabellen zu bedienen sind, steht im nächsten
 Abschnitt.
@@ -337,6 +338,107 @@ Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
 
+### Anschlüsse nach EC3-1-8
+
+Ein Anschluss gehört zum Modell wie ein Stab: er wird mitgespeichert, steht im
+Modellbaum und in der Tabelle „Anschlüsse“, überlebt Rückgängig und wird bei
+**jeder** Berechnung mit nachgewiesen.
+
+**Anlegen**: Stabende wählen (die beiden Knoten des Stabelements markieren),
+dann Register *Lager / Kontakt* → „Anschluss“ — oder im Modellbaum
+„+ Anschluss anlegen“, oder in der Tabelle „Anschluss anlegen…“.
+Es gibt drei Vorlagen:
+
+| Vorlage | Anwendung |
+|---|---|
+| **Kopfplatte** | geschraubte Stirnplatte am Stabende, mit Rippen |
+| **Laschenstoß** | Flansch- und Steglaschen, geschraubt |
+| **Knotenblech** | Diagonalanschluss (Gusset), geschraubt oder geschweißt |
+
+Der Dialog schlägt aus Profil und Schnittgrößen eine vollständige Geometrie vor
+— Blechdicken, Schraubenbild, Nahtdicken — und bessert sie nach, bis die
+Nachweise erfüllt sind; jeder Wert lässt sich danach ändern. Die Vorschläge
+folgen den Regeln der EN 1993-1-8 (Rand- und Lochabstände Tab. 3.3, Nahtdicken
+4.5.1, Blechdicke so, dass der T-Stummel nicht im Modus 1 versagt). Der
+Vorschlag ist **kein Nachweis** — maßgebend ist immer die Rechnung.
+
+**Schnittgrößen**: standardmäßig aus der Berechnung. Der Anschluss wird über
+**alle GZT-Kombinationen** geführt; die ungünstigste ist maßgebend, und die
+Tabelle nennt sie. Wer feste Werte will (Vorbemessung, Handrechnung), setzt im
+Dialog den Haken „Diese Schnittgrößen festhalten“.
+
+**Nachgewiesen wird** je Anschluss:
+
+* Schrauben: Abscheren F_v,Rd, Lochleibung F_b,Rd, Zug F_t,Rd, Durchstanzen
+  B_p,Rd, Interaktion Abscheren + Zug (Tab. 3.4), Gleitfestigkeit F_s,Rd der
+  Kategorien B und C, Abminderung langer Anschlüsse β_Lf;
+* Zugzone der Kopfplatte über den äquivalenten T-Stummel (6.2.4) mit den
+  Versagensmodi 1 bis 3 und den wirksamen Längen nach Tab. 6.4/6.5;
+* Kehl- und Stumpfnähte nach dem Richtungsbezogenen Verfahren (σ_⊥, τ_⊥, τ_∥
+  mit β_w) und dem Vereinfachten Verfahren;
+* Bleche: Zug im Brutto- und Nettoquerschnitt, Blockversagen (3.10.2),
+  Knotenblech auf Druck über die Whitmore-Breite;
+* Rand- und Lochabstände als Prüfliste (Hinweise, keine stille Korrektur).
+
+**Ermüdung**: aus den Ermüdungslasten des Modells. Je Last die Schwingbreite
+der Stabendschnittgrößen, daraus Δσ im jeweiligen Bauteil, Kerbfall nach
+EN 1993-1-9 Tab. 8.1 (Schrauben, Bleche mit Loch) und 8.5 (Nähte); die
+Schädigungen werden nach Palmgren-Miner **über alle Ermüdungslasten**
+aufsummiert. Wichtig: eine nicht vorgespannte Schraube bekommt die volle
+äußere Schwingbreite ab — das Programm sagt das als Hinweis dazu.
+
+**Momenten-Rotations-Verhalten**: Statik3D bestimmt für jeden Anschluss die
+Anfangssteifigkeit S_j,ini nach dem Komponentenverfahren (6.3.1), die
+Momententragfähigkeit M_j,Rd (6.2.7), die Klasse (starr, nachgiebig, gelenkig
+nach 5.2.2.5) und das Rotationsvermögen (6.4.2) — und **rechnet damit**: ein
+nachgiebiger Anschluss sitzt als Drehfeder S_j = S_j,ini/η am Stabende
+(5.1.2(4)), ein gelenkiger als Momentengelenk.
+
+Im Dialog gehören dazu drei Angaben:
+
+* **Stützenquerschnitt** — das Profil, an das angeschlossen wird. Ohne ihn
+  entfallen die Komponenten k_1 bis k_4 (Stützensteg auf Schub, Druck und Zug,
+  Stützenflansch auf Biegung); S_j,ini ist dann eine **obere Schranke**, der
+  wirkliche Anschluss ist weicher. Das Programm sagt es dazu.
+* **Rahmen** ausgesteift (k_b = 8) oder nicht ausgesteift (k_b = 25) — die
+  Grenze, ab der ein Anschluss als starr gilt.
+* **in der Berechnung**: „automatisch“ folgt der Klassifizierung; wahlweise
+  fest „starr“, „Drehfeder“ oder „gelenkig“.
+
+Ergebnis: Tabelle „Anschlüsse“ mit Ausnutzung, maßgebendem Nachweis,
+Kombination und Schädigungssumme D, dazu S_j,ini, Klasse, M_j,Rd und wie der
+Anschluss in der Rechnung sitzt; „Nachweise zeigen“ gibt alles im Klartext;
+Kapitel 7 des Berichts führt jede Schraube und jede Naht mit E_d, R_d und η,
+die Ausnutzung je Kombination, die Steifigkeitsbeiwerte k_i und die
+Schraubenreihen der Zugzone.
+
+### Verformungsnachweise (GZG)
+
+Die Kombinationen des Grenzzustands der Gebrauchstauglichkeit rechnet Statik3D
+ohnehin; mit einer **Verformungsgrenze** werden sie gegen einen Grenzwert
+gehalten. Anlegen über Register *Nachweise* → „Verformung“, über den
+Modellbaum („+ Verformungsgrenze“) oder in der Tabelle „Verformungen“.
+
+| Bezug | wofür |
+|---|---|
+| **Stab** | Durchbiegung w bezogen auf die Sehne zwischen den Stabenden |
+| **Knoten** | Verschiebung oder Verdrehung gegenüber der Ausgangslage (Kragarmspitze, Stützenkopf) |
+| **Punktpaar** | Verschiebung zweier Knoten gegeneinander — Dichtungen, Führungen, Fugen, Anschläge (DIN 19704) |
+
+Der Grenzwert ist entweder **L/x** (L = Stablänge beziehungsweise Abstand der
+beiden Knoten) oder ein **absoluter Wert** in mm beziehungsweise mrad. Dazu
+gehören die Bemessungssituation (charakteristisch, häufig, quasi-ständig oder
+alle GZG-Kombinationen) und wahlweise eine **Überhöhung w_c**, die abgezogen
+wird (EN 1993-1-1, A.1.4.2).
+
+Wichtig für den Kragarm: die Durchbiegung eines Stabes bezieht sich auf die
+**Sehne** — dreht der ganze Stab mit, fällt das heraus. Für eine Kragarmspitze
+ist der Bezug „Knoten“ der richtige.
+
+Ergebnis: Tabelle „Verformungen“ mit Wert, Grenzwert, Ausnutzung,
+maßgebender Kombination und Stelle; Kapitel 8 des Berichts führt jeden
+Nachweis mit seiner Verformung je Kombination.
+
 ## 9 Berechnung und Parallelisierung
 
 * **Alle Lastfälle + Kombinationen**: Standard. Eine Faktorisierung, alle
@@ -355,12 +457,12 @@ im Bericht.
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
   der betragsmäßig größere Extremwert).
 * Tabellen: Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise, Ermüdung,
-  Kontakt — filterbar, sortierbar, mit Max-/Min-Zeile, ausgebbar nach
+  Kontakt, Anschlüsse — filterbar, sortierbar, mit Max-/Min-Zeile, ausgebbar nach
   Zwischenablage, CSV und Excel (Kapitel 2, „Tabellen"). Modellexport
   außerdem CSV, VTK (ParaView).
 * Statischer Bericht: Projektdaten, System, Einwirkungen, Kombinationen,
-  Ergebnisse, Nachweise mit allen Zwischenwerten, Ermüdung, Kontakt,
-  Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
+  Ergebnisse, Nachweise mit allen Zwischenwerten, Ermüdung, Anschlüsse
+  (jede Schraube, jede Naht), Verformungen (GZG), Kontakt, Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
   Markdown.
 
 ## 11 Tastenkürzel
