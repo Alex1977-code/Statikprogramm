@@ -23,7 +23,7 @@ from typing import Optional
 import numpy as np
 from scipy import sparse
 
-from .model import Model, NDOF
+from .model import Model, NDOF, DOF_NAMES
 
 PENALTY_FACTOR = 1.0e4       # automatische Kontaktsteifigkeit = Faktor * Diagonalsteifigkeit
 TANGENT_FACTOR = 1.0         # k_t = TANGENT_FACTOR * k_n
@@ -48,6 +48,11 @@ class Constraint:
     normal: np.ndarray
     label: str = ""
     master: Optional[tuple] = None  # (Knotenliste, Gewichte)
+    axes: Optional[np.ndarray] = None   # (2,3) globale Tangentialrichtungen; None = aus normal
+    limit: float = 0.0             # Grenzkraft [N]/[Nm]; 0 = unbegrenzt (plastisches Fliessen)
+    yielding: bool = False
+    g_yield: float = 0.0
+    dof: int = -1                  # Lager-FHG 0..5 bei kind 'dof'/'dof_rot'
     active: bool = False
     slip: bool = False
     slip_dir: Optional[np.ndarray] = None   # Gleitrichtung (2,) im Tangentialsystem
@@ -70,6 +75,13 @@ def _tangent_basis(n: np.ndarray):
     t1 /= np.linalg.norm(t1)
     t2 = np.cross(n, t1)
     return t1, t2
+
+
+def _axes_of(c: "Constraint"):
+    """Globale Tangentialrichtungen (t1, t2) einer Bedingung."""
+    if c.axes is not None:
+        return c.axes[0], c.axes[1]
+    return _tangent_basis(c.normal)
 
 
 def _trans_dofs(node: int) -> list[int]:
@@ -210,6 +222,88 @@ class ContactSystem:
                                         master=([ge.node_a], [1.0])))
         for cp in m.contact_pairs:
             self._build_pair(cp)
+        self._build_dof_supports()
+
+    def _build_dof_supports(self):
+        """Nichtlineare Lager-FHG (Ausfall bei Zug/Druck, Schlupf, Reibung, Grenzkraft)
+        aus Knoten-, Linien- und Flaechenlagern in Kontaktbedingungen umsetzen."""
+        from . import supports as sup
+        _, nlin = sup.split(sup.expand(self.model, self.log))
+        if not nlin:
+            return
+        by_node: dict[int, list] = {}
+        for e in nlin:
+            by_node.setdefault(e.node, []).append(e)
+        for node, entries in sorted(by_node.items()):
+            used = set()
+            # 1) FHG mit Ausfall/Schlupf: eigene Bedingung, ggf. mit Reibung
+            for e in entries:
+                if e.mu > 0 and not e.failure and e.slip <= 0:
+                    continue                     # reiner Reibungs-FHG: unten behandelt
+                used.add(id(e))
+                tang = [t for t in entries if t.mu > 0 and id(t) not in used
+                        and (t.mu_ref is None or t.mu_ref == e.dof) and t.dof < 3]
+                if e.dof >= 3:
+                    tang = []                    # Rotations-FHG: keine Reibung
+                for t in tang:
+                    used.add(id(t))
+                self._add_dof_constraint(e, tang)
+            # 2) Reibungs-FHG ohne zugehoerigen Ausfall-FHG
+            rest = [e for e in entries if id(e) not in used]
+            for e in rest:
+                self.log.append(f"{e.label} {DOF_NAMES[e.dof]}: Reibung ohne Bezugskraft "
+                                f"(mu_ref) - der FHG wird starr gehalten")
+
+    def _add_dof_constraint(self, e, tang):
+        """Eine Bedingung fuer einen Lager-FHG. Vorzeichen: das Lager wirkt entlang
+        +Achse; 'zug' (Ausfall bei Zug) laesst nur Druck zu (Knoten drueckt hinein),
+        'druck' nur Zug. Ohne Ausfall, aber mit Schlupf entstehen zwei Bedingungen
+        (beidseitiger Spalt)."""
+        node, dof = e.node, e.dof
+        rot = dof >= 3
+        base = np.zeros(3)
+        if not rot:
+            base[dof] = 1.0
+        kn = e.stiffness if e.stiffness > 0 else self._auto_k([node])
+        dirs = []
+        if e.failure == "zug":
+            dirs = [+1.0]
+        elif e.failure == "druck":
+            dirs = [-1.0]
+        else:
+            dirs = [+1.0, -1.0] if e.slip > 0 else [+1.0]
+        for sgn in dirs:
+            dofs = [NDOF * node + dof]
+            cn = np.array([sgn])
+            ct = None
+            axes = None
+            if tang and not rot:
+                rows = []
+                ax = []
+                for t in tang:
+                    dofs.append(NDOF * node + t.dof)
+                    v = np.zeros(3)
+                    v[t.dof] = 1.0
+                    ax.append(v)
+                while len(rows) < 2:
+                    row = np.zeros(len(dofs))
+                    k = len(rows)
+                    if k < len(tang):
+                        row[1 + k] = 1.0
+                    rows.append(row)
+                while len(ax) < 2:
+                    ax.append(np.zeros(3))
+                ct = np.vstack(rows[:2])
+                axes = np.vstack(ax[:2])
+                cn = np.concatenate([[sgn], np.zeros(len(dofs) - 1)])
+            mu = max((t.mu for t in tang), default=0.0)
+            kind = "dof_rot" if rot else "dof"
+            what = {"zug": "Ausfall bei Zug", "druck": "Ausfall bei Druck"}.get(
+                e.failure, f"Schlupf {'+' if sgn > 0 else '-'}")
+            label = f"{e.label} {DOF_NAMES[dof]} ({what})"
+            self.cons.append(Constraint(
+                kind, np.array(dofs), cn, ct, float(e.slip), kn, TANGENT_FACTOR * kn,
+                mu, node, base * sgn, label, axes=axes, limit=float(e.limit), dof=dof))
 
     def _build_pair(self, cp):
         m = self.model
@@ -306,8 +400,13 @@ class ContactSystem:
             if not c.active:
                 continue
             r, cc = np.meshgrid(c.dofs, c.dofs, indexing="ij")
-            kmat = c.kn * np.outer(c.cn, c.cn)
-            Fc[c.dofs] += -c.kn * c.g0 * c.cn
+            if c.yielding:
+                # Grenzkraft erreicht: konstante Kraft, nur Reststeifigkeit (plastisch)
+                kmat = SLIP_STIFFNESS_FINE * c.kn * np.outer(c.cn, c.cn)
+                Fc[c.dofs] += c.limit * c.cn
+            else:
+                kmat = c.kn * np.outer(c.cn, c.cn)
+                Fc[c.dofs] += -c.kn * c.g0 * c.cn
             if c.ct is not None and c.mu > 0:
                 if not c.slip:
                     kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
@@ -397,11 +496,19 @@ class ContactSystem:
             g = c.g0 + c.cn @ ue
             c.g = g
             if c.active:
-                Fn = -c.kn * g
+                Fn = c.limit if c.yielding else -c.kn * g
                 if c.slip:
                     self.dF_slip = max(self.dF_slip, c.mu * abs(max(Fn, 0.0) - c.Fn))
                 new_active = Fn > -self.f_tol   # Druckkraft (bzw. winziger Zug) -> bleibt
                 c.Fn = max(Fn, 0.0)
+                if c.limit > 0:
+                    if not c.yielding and new_active and -c.kn * g > c.limit:
+                        c.yielding = True       # Grenzkraft erreicht -> plastisch
+                        c.g_yield = g
+                        changed = True
+                    elif c.yielding and g > c.g_yield + self.tol:
+                        c.yielding = False      # Entlastung -> wieder elastisch
+                        changed = True
             else:
                 c.Fn = 0.0
                 new_active = g < -self.tol
@@ -418,6 +525,7 @@ class ContactSystem:
                 if not c.active:
                     c.slip = False
                     c.slip_dir = None
+                    c.yielding = False
                     c.Ft[:] = 0
             if c.active and c.ct is not None and c.mu > 0:
                 dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
@@ -494,6 +602,8 @@ class ContactSystem:
         for c in self.cons:
             if not c.active:
                 status = "offen"
+            elif c.yielding:
+                status = "Fliessen"
             elif c.mu > 0 and c.slip:
                 status = "Gleiten"
             elif c.mu > 0:
@@ -503,20 +613,21 @@ class ContactSystem:
             out.append({"kind": c.kind, "label": c.label, "node": int(c.node),
                         "master": c.master, "gap": float(c.g), "Fn": float(c.Fn),
                         "Ft": float(np.linalg.norm(c.Ft)), "status": status,
-                        "normal": c.normal.tolist(), "frozen": c.frozen})
+                        "normal": c.normal.tolist(), "frozen": c.frozen,
+                        "dof": int(c.dof), "limit": float(c.limit)})
         return out
 
     def nodal_forces(self, nn: int) -> np.ndarray:
         """Kontaktkraefte auf die Knoten (nn,3), global."""
         F = np.zeros((nn, 3))
         for c in self.cons:
-            if not c.active:
+            if not c.active or c.kind == "dof_rot":
                 continue
             f = c.Fn * c.normal
             if c.ct is not None:
-                t1, t2 = _tangent_basis(c.normal)
+                t1, t2 = _axes_of(c)
                 f = f - (c.Ft[0] * t1 + c.Ft[1] * t2)
-            if c.kind == "support":
+            if c.kind in ("support", "dof"):
                 F[c.node] += f
             elif c.kind == "gap":
                 F[c.node] += f
@@ -531,10 +642,10 @@ class ContactSystem:
         """Nur einseitige Lager (fuer die Auflagerkraftsumme)."""
         R = np.zeros((nn, 3))
         for c in self.cons:
-            if c.active and c.kind == "support":
+            if c.active and c.kind in ("support", "dof"):
                 f = c.Fn * c.normal
                 if c.ct is not None:
-                    t1, t2 = _tangent_basis(c.normal)
+                    t1, t2 = _axes_of(c)
                     f = f - (c.Ft[0] * t1 + c.Ft[1] * t2)
                 R[c.node] += f
         return R

@@ -34,6 +34,9 @@ DEFAULT_UNIT_SCALE = 1.0
 # Tabellenerkennung
 # --------------------------------------------------------------------------
 _SHEET_KINDS = [
+    ("line_supports", r"linienlager|line support"),
+    ("surface_supports", r"flaechenlager|fl[aä]chenlager|surface support|bettung|bedding"),
+    ("hinges", r"stabendgelenk|gelenk|member hinge|release"),
     ("supports", r"knotenlager|nodal support|node support"),
     ("nodal_loads", r"knotenlast|nodal load|node load"),
     ("member_loads", r"stablast|member load"),
@@ -50,6 +53,7 @@ _SHEET_KINDS = [
 ]
 _SHEET_NUMBERS = {"1.1": "nodes", "1.2": "lines", "1.3": "materials", "1.4": "surfaces",
                   "1.5": "sections", "1.7": "members", "1.8": "supports",
+                  "1.9": "line_supports", "1.10": "surface_supports", "1.13": "hinges",
                   "2.1": "load_cases", "2.5": "combinations", "3.1": "nodal_loads",
                   "3.2": "member_loads"}
 
@@ -126,6 +130,29 @@ SPECS: dict[str, dict] = {
         "ry": [r"\bphiy\b", r"\bphi\s?y\b", r"\bry\b", r"rot\w*\s*y\b"],
         "rz": [r"\bphiz\b", r"\bphi\s?z\b", r"\brz\b", r"rot\w*\s*z\b"],
     },
+    "line_supports": {
+        "no": [r"^(linienlager|line support)s?\s*(nr|no)?$"] + _NO,
+        "lines": [r"^(an )?(linie|line)s?\s*(nr|no)?$", r"(linie|line)"],
+        "nodes": [r"^(an )?(knoten|node)s?\s*(nr|no)?$"],
+        "ux": [r"\bux\b", r"\bu\s?x\b"], "uy": [r"\buy\b", r"\bu\s?y\b"], "uz": [r"\buz\b", r"\bu\s?z\b"],
+        "rx": [r"\bphix\b", r"\bphi\s?x\b", r"\brx\b"],
+        "ry": [r"\bphiy\b", r"\bphi\s?y\b", r"\bry\b"],
+        "rz": [r"\bphiz\b", r"\bphi\s?z\b", r"\brz\b"],
+    },
+    "surface_supports": {
+        "no": [r"^(flaechenlager|surface support|bettung|bedding)s?\s*(nr|no)?$"] + _NO,
+        "surfaces": [r"^(an )?(flaeche|surface)n?s?\s*(nr|no)?$", r"(flaeche|surface)"],
+        "elements": [r"^(element)e?s?\s*(nr|no)?$"],
+        "ux": [r"\bux\b", r"\bu\s?x\b"], "uy": [r"\buy\b", r"\bu\s?y\b"], "uz": [r"\buz\b", r"\bu\s?z\b"],
+        "rx": [r"\bphix\b", r"\brx\b"], "ry": [r"\bphiy\b", r"\bry\b"], "rz": [r"\bphiz\b", r"\brz\b"],
+    },
+    "hinges": {
+        "no": [r"^(stabendgelenk|gelenk|member hinge|hinge|release)s?\s*(nr|no)?$"] + _NO,
+        "ux": [r"\bux\b", r"\bu\s?x\b"], "uy": [r"\buy\b", r"\bu\s?y\b"], "uz": [r"\buz\b", r"\bu\s?z\b"],
+        "rx": [r"\bphix\b", r"\bphi\s?x\b", r"\brx\b"],
+        "ry": [r"\bphiy\b", r"\bphi\s?y\b", r"\bry\b"],
+        "rz": [r"\bphiz\b", r"\bphi\s?z\b", r"\brz\b"],
+    },
     "load_cases": {
         "no": [r"^(lastfall|load case|lf|lc)s?\s*(nr|no)?$"] + _NO,
         "name": [r"bezeichnung|description|^name$"],
@@ -164,7 +191,8 @@ SPECS: dict[str, dict] = {
 REQUIRED = {"nodes": ["x", "y"], "lines": ["nodes"], "materials": ["name"],
             "surfaces": ["lines"], "sections": ["name"], "members": [],
             "supports": ["nodes"], "load_cases": ["no"], "combinations": ["formula"],
-            "nodal_loads": ["nodes"], "member_loads": ["members", "p1"]}
+            "nodal_loads": ["nodes"], "member_loads": ["members", "p1"],
+            "line_supports": ["uz"], "surface_supports": ["uz"], "hinges": []}
 _BLOCK_TITLE = re.compile(r"^(LF|LC|CO|LK|EK|RC)\s*(\d+)\b", re.IGNORECASE)
 
 
@@ -350,6 +378,40 @@ def _parse_formula(text: str) -> tuple[dict[str, float], list[str]]:
 # --------------------------------------------------------------------------
 # Import
 # --------------------------------------------------------------------------
+def _behaviours(row, t, keys) -> dict:
+    """{FHG: DofBehaviour} aus einer Lagerzeile (Zahl = Federsteifigkeit,
+    Text = starr/frei; Zusaetze fuer Ausfall, Schlupf und Reibung)."""
+    from .rfem_native import behaviour_from_text, normalise_friction
+    out = {}
+    for dof, key in enumerate(keys):
+        if not t.has(key):
+            continue
+        cell = row[t.cols[key]] if t.cols[key] < len(row) else None
+        txt = C.clean_text(cell)
+        if not txt:
+            continue
+        val = C.parse_number(cell)
+        b = behaviour_from_text(txt, stiffness=val * t.unit(key, 1e3) if val and val > 0 else None)
+        if b.acts or b.failure:
+            out[dof] = b
+    return normalise_friction(out)
+
+
+def _apply_nonlinearity(model: Model, node: int, row, t, keys, log) -> None:
+    """Ausfall, Schlupf und Reibung eines Knotenlagers uebernehmen."""
+    beh = _behaviours(row, t, keys)
+    extra = {d: b for d, b in beh.items() if b.failure or b.slip or b.mu}
+    if not extra:
+        return
+    sup = next((s for s in reversed(model.supports) if s.node == node), None)
+    if sup is None:
+        sup = model.support(node, [])
+    for dof, b in extra.items():
+        sup.behaviour[dof] = b
+        if b.acts and dof not in sup.dofs:
+            sup.dofs.append(dof)
+
+
 def read_rfem_tables(path: str) -> dict[str, list[list]]:
     """xlsx-Datei, einzelne CSV-Datei oder Ordner mit CSV-Dateien -> {Name: Zeilen}.
 
@@ -656,7 +718,70 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                     model.fix(n, sdofs, stiffness=sk)
                 if fixed or sdofs:
                     n_sup += 1
+                _apply_nonlinearity(model, n, row, t, keys, log)
         C.say(log, f"{n_sup} Knotenlager")
+
+    # ---- Linienlager -----------------------------------------------------------------
+    t = found.get("line_supports")
+    if t is not None:
+        keys = ["ux", "uy", "uz", "rx", "ry", "rz"]
+        n_ls = 0
+        for row, _ in t.data():
+            if row is None:
+                continue
+            ids = t.id_list(row, "lines") or t.id_list(row, "nodes")
+            nodes: list[int] = []
+            for i in ids:
+                nodes.extend(line_nodes.get(i, []) or ([node_by_no[i]] if i in node_by_no else []))
+            beh = _behaviours(row, t, keys)
+            if nodes and beh:
+                ls = model.add_line_support(sorted(dict.fromkeys(nodes)))
+                ls.behaviour.update(beh)
+                n_ls += 1
+        C.say(log, f"{n_ls} Linienlager")
+
+    # ---- Flaechenlager / Bettung -----------------------------------------------------
+    t = found.get("surface_supports")
+    if t is not None:
+        keys = ["ux", "uy", "uz", "rx", "ry", "rz"]
+        n_ss = 0
+        for row, _ in t.data():
+            if row is None:
+                continue
+            ids = t.id_list(row, "surfaces") or t.id_list(row, "elements")
+            elems = [e for i in ids for e in surface_elems.get(i, [])]
+            beh = _behaviours(row, t, keys)
+            if beh and elems:
+                ss = model.add_surface_support(elems)
+                ss.behaviour.update(beh)
+                n_ss += 1
+        C.say(log, f"{n_ss} Flaechenlager")
+
+    # ---- Stabendgelenke --------------------------------------------------------------
+    t = found.get("hinges")
+    if t is not None:
+        keys = ["ux", "uy", "uz", "rx", "ry", "rz"]
+        n_h = 0
+        for row, _ in t.data():
+            if row is None:
+                continue
+            no = C.clean_text(row[t.cols["no"]]) if t.has("no") else str(n_h + 1)
+            typ, stiff = [], []
+            for dof, key in enumerate(keys):
+                cell = row[t.cols[key]] if t.has(key) and t.cols[key] < len(row) else None
+                txt = C.clean_text(cell).lower()
+                val = C.parse_number(cell)
+                if re.search(r"frei|free|gelenk|hinge|yes|ja", txt) and val is None:
+                    typ.append("free"); stiff.append(0.0)
+                elif val is not None and val > 0:
+                    typ.append("spring"); stiff.append(float(val) * t.unit(key, 1e3))
+                else:
+                    typ.append("fixed"); stiff.append(0.0)
+            if any(x != "fixed" for x in typ):
+                h = model.add_hinge(f"G{no}", end=0)
+                h.typ, h.stiffness = typ, stiff
+                n_h += 1
+        C.say(log, f"{n_h} Gelenkdefinitionen (Zuordnung ueber die Stabtabelle)")
 
     # ---- Lastfaelle -------------------------------------------------------------------
     case_by_no: dict[int, str] = {}

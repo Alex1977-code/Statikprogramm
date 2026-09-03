@@ -25,6 +25,14 @@ from . import _common as C
 
 SUPPORTED: dict[str, str] = {
     ".json": "Statik3D-Modell (JSON)",
+    ".rf5": "RFEM 5-Projektdatei - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".rf6": "RFEM 6-Projektdatei - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".rs5": "RSTAB-Projektdatei - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".rs6": "RSTAB-Projektdatei - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".rs8": "RSTAB 8-Projektdatei - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".rs9": "RSTAB 9-Projektdatei - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".rfem": "RFEM-Projektdatei - Behaelter wird untersucht und gelesen, soweit zugaenglich",
+    ".rstab": "RSTAB-Projektdatei - Behaelter wird untersucht und gelesen, soweit zugaenglich",
     ".dxf": "AutoCAD DXF - Linien/Polylinien als Staebe, 3DFACE als Schalen",
     ".ifc": "IFC 2x3 / IFC4 - Statikmodell (Structural Analysis View) oder Bauteilachsen",
     ".xlsx": "SAF (Structural Analysis Format) oder RFEM/RSTAB-Tabellenexport (Excel)",
@@ -69,6 +77,10 @@ PROPRIETARY: dict[str, str] = {
 }
 
 
+_NATIVE = (".rf3", ".rf4", ".rf5", ".rf6", ".rfem",
+           ".rs5", ".rs6", ".rs7", ".rs8", ".rs9", ".rstab")
+
+
 def explain_format(path: str) -> str:
     """Erklaerung zum Dateiformat (Unterstuetzung bzw. Exportweg) als deutscher Text."""
     if os.path.isdir(path):
@@ -101,6 +113,7 @@ def file_filter() -> str:
              "RFEM-Tabellen CSV (*.csv)",
              "Abaqus / CalculiX (*.inp)",
              "Nastran Bulk Data (*.bdf *.nas *.dat)",
+             "RFEM / RSTAB Projektdatei (*.rf5 *.rf6 *.rs5 *.rs6 *.rs8 *.rs9 *.rfem *.rstab)",
              "CAD-Geometrie (*.step *.stp *.iges *.igs *.brep *.stl)",
              "Alle Dateien (*)"]
     return ";;".join(parts)
@@ -110,6 +123,8 @@ def _detect(path: str) -> str:
     if os.path.isdir(path):
         return "rfem"
     ext = os.path.splitext(path)[1].lower()
+    if ext in _NATIVE:
+        return "native"                     # Behaelter wird untersucht (rfem_native)
     if ext in PROPRIETARY:
         raise ImportError(PROPRIETARY[ext])
     if ext == ".json":
@@ -122,6 +137,8 @@ def _detect(path: str) -> str:
         return "xlsx"
     if ext == ".csv":
         return "rfem"
+    if ext in _NATIVE:
+        return "native"
     if ext == ".inp":
         return "inp"
     if ext in (".bdf", ".nas", ".dat"):
@@ -201,6 +218,9 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     elif kind == "rfem":
         from .rfem_tables import import_rfem_tables
         import_rfem_tables(path, model, log, **options)
+    elif kind == "native":
+        from .rfem_native import import_rfem_native
+        import_rfem_native(path, model, log, **options)
 
     # Nachbereitung
     n_merged = C.merge_duplicate_nodes(model, tol) if model.nn > n_nodes0 else 0

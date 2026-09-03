@@ -21,11 +21,13 @@ Handrechnungen (über 270 automatisierte Prüfungen, siehe unten).
 | **Volumen** | Tet4, Tet10 (quadratisch), Hex8 mit inkompatiblen Moden, Flächendruck, Temperatur |
 | **Lastfälle** | Einwirkungskategorien mit ψ-Beiwerten (DIN EN 1990/NA), Ausschlussgruppen, Eigengewicht je Lastfall |
 | **Kombinationen** | automatisch GZT 6.10 / 6.10a+b, außergewöhnlich 6.11b, GZG charakteristisch/häufig/quasi-ständig; manuell; Superposition mit einer Faktorisierung; Umhüllende mit maßgebender Kombination |
+| **Lager** | je Freiheitsgrad starr/Feder/frei mit **Ausfall bei Zug oder Druck, Schlupf, Reibbeiwert und Grenzkraft**; **Linienlager** (Steifigkeit je m) und **Flächenlager/Bettung** (je m²); Stabendgelenke gelenkig oder als Drehfeder |
 | **Kontakt** | einseitige Lager (nur Druck, Bettung), Spaltelemente Knoten–Knoten, Kontaktpaare Knoten–Fläche (Schalen/Volumen) mit Coulomb-Reibung; Penalty-Verfahren mit Aktivmengen-Iteration |
+| **Querschnitte** | Profildatenbank **nach Land**: Europa (IPE, HEA/B/M, UPN, UPE, Winkel, SHS/RHS/CHS), Großbritannien (UB, UC, PFC), USA (W, C, HSS, Pipe) – 442 Profile; **zusammengesetzte Querschnitte** mit Versatz, Drehung, Spiegelung |
 | **Nachweise EC3** | Klassifizierung (Tab. 5.2, wirksame Querschnitte Kl. 4), Querschnittsnachweise 6.2 (N, V, M, M+V, M+N, Torsion, σv), Biegeknicken, Drillknicken, Biegedrillknicken (Mcr, C1 automatisch), Interaktion 6.3.3 Anhang B |
 | **Ermüdung** | EN 1993-1-9: Kerbfälle, Wöhlerlinien (m = 3/5, Dauerfestigkeit, Schwellenwert), Palmgren-Miner, γMf nach Schadensfolge |
 | **Analysen** | Lineare Statik, Modalanalyse, lineares Knicken (Lastfall oder Kombination als Grundzustand) |
-| **Import** | Statik3D-JSON, DXF, IFC (Statikmodell: InfoCAD, RFEM, Allplan …), SAF (.xlsx: RFEM 6, SCIA …), RFEM/RSTAB-Tabellenexport (.xlsx/.csv), Abaqus/CalculiX .inp, Nastran .bdf, STEP/IGES/BREP/STL über gmsh |
+| **Import** | **RFEM/RSTAB-Projektdateien** (.rf5/.rf6/.rs5/.rs6/.rs8/.rs9 – Behälter wird untersucht und gelesen, soweit zugänglich), Statik3D-JSON, DXF, IFC (Statikmodell: InfoCAD, RFEM, Allplan …), SAF (.xlsx: RFEM 6, SCIA …), RFEM/RSTAB-Tabellenexport (.xlsx/.csv), Abaqus/CalculiX .inp, Nastran .bdf, STEP/IGES/BREP/STL über gmsh |
 | **Parallel** | Elementschleifen und Aufträge auf mehreren Kernen; Rechnerfarm (Server/Worker/Client) über das Netz; optional MKL-Pardiso-Löser |
 | **Dokumentation** | Statischer Bericht (HTML druckbar, PDF, Markdown) mit Systemgrafiken, Schnittgrößenverläufen, allen Nachweiswerten; Benutzer-, Theorie-, Schnittstellen- und Farm-Handbuch in `docs/` |
 | **Export** | JSON-Modell, CSV, VTU (ParaView) |
@@ -157,6 +159,9 @@ write_report(m, an, "kragarm.html")
 ```bash
 python -m tests.test_verification     # 26 Benchmarks Stab/Schale/Volumen
 python -m tests.test_solver_ext       # 49 Prüfungen: Gelenke, Lasten, Kombinationen, Kontakt, Parallel, Farm
+python -m tests.test_supports         # 46 Prüfungen: Ausfall, Schlupf, Reibung, Linien-/Flächenlager
+python -m tests.test_sections         # 83 Prüfungen: Profildatenbank nach Land, zusammengesetzte Querschnitte
+python -m tests.test_rfem             # 38 Prüfungen: RFEM/RSTAB-Import
 python -m tests.test_ec3              # 48 Prüfungen: EC3-Handrechnungen
 python -m tests.test_importers        # 126 Prüfungen: Import
 python -m tests.test_report           # Bericht
@@ -220,6 +225,8 @@ statik3d/
   gui/               PySide6-Oberfläche (main, dialogs, viewport, worker)
   web/               Browser-/Handy-Oberfläche: server.py (HTTP-API), static/ (HTML, CSS, JS)
   update.py          Update von GitHub (exe-Austausch, git pull, ZIP)
+  supports.py        Knoten-, Linien- und Flächenlager auf Freiheitsgrade umlegen
+  sections.py        zusammengesetzte Querschnitte (Steiner, Hauptachsen)
 packaging/           PyInstaller-Rezept, Symbol, Build-Stempel (Windows-exe)
   mesher.py, examples_lib.py, cli.py
 docs/                Benutzerhandbuch, Theoriehandbuch, Schnittstellen, Rechnerfarm

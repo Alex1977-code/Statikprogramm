@@ -424,13 +424,12 @@ class StaticSystem:
         K = self.K if K_extra is None else (self.K + K_extra)
         R = np.zeros(self.model.ndof)
         R[self.si] = (K @ u)[self.si] - F[self.si]
-        # Federlager: Federkraft als Reaktion ausweisen
-        for s in self.model.supports:
-            if s.stiffness:
-                for k_, dof in zip(s.stiffness, s.dofs):
-                    if k_:
-                        idx = NDOF * s.node + dof
-                        R[idx] += -k_ * u[idx]
+        # Federlager (Knoten-, Linien- und Flaechenlager): Federkraft als Reaktion
+        from . import supports as sup
+        lin, _ = sup.split(sup.expand(self.model))
+        for e in lin:
+            if e.typ == "spring" and e.stiffness:
+                R[e.index] += -e.stiffness * u[e.index]
         return R
 
 
@@ -477,11 +476,16 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             kl, T3, T, L = asm.beam_local(model, e)
             ul = T @ ue
             f0 = feq.get(i, np.zeros(12))
+            kl_s, f_s, rec = kl, f0, None
+            if getattr(e, "hinge_springs", None):
+                kl_s, f_s, rec = asm.hinge_springs(kl, f0, e.hinge_springs)
             if e.hinges:
-                _, _, cond = asm.condense(kl, f0, e.hinges)
+                _, _, cond = asm.condense(kl_s, f_s, e.hinges)
                 c, r, Kcc_inv, Kcr = cond
                 ul = ul.copy()
-                ul[c] = Kcc_inv @ (f0[c] - Kcr @ ul[r])
+                ul[c] = Kcc_inv @ (f_s[c] - Kcr @ ul[r])
+            if rec is not None:
+                ul = asm.hinge_local_disp(rec, ul)      # Stabende hinter der Feder
             fl = kl @ ul - f0
             out.append((i, "beam", fl))
         elif e.typ in asm.SHELL_TYPES:

@@ -111,3 +111,69 @@ Jeder Importer ist eine Funktion `import_xxx(path, model=None, log=None,
 `SUPPORTED` eingetragen und in `import_file` verzweigt. Hilfsfunktionen in
 `_common.py`: Knotenindex mit Toleranz, Zahlen mit Dezimalkomma, Einheiten
 aus Kopfzeilen, Polygon → Schalen, Standardmaterial/-querschnitt.
+
+
+## RFEM / RSTAB: native Projektdateien
+
+`.rf5 .rf6 .rfem .rs5 .rs6 .rs8 .rs9 .rstab` werden nicht mehr pauschal
+abgelehnt. Statik3D untersucht zuerst den Behälter der Datei
+(`statik3d.importers.rfem_native.probe`) und liest ihn aus, soweit er
+zugänglich ist:
+
+| Befund | Vorgehen |
+|---|---|
+| SQLite-Datenbank | Tabellen werden gelesen und über Namensmuster zugeordnet |
+| ZIP | enthaltene CSV-, XML-, JSON- und eingebettete SQLite-Dateien werden gelesen |
+| OLE2-Verbunddatei | Datenströme werden aufgelistet und lesbare Inhalte ausgewertet |
+| XML / JSON | direkt gelesen |
+| unbekanntes Binärformat | genauer Befund: Kennung, Größe, gefundene Zeichenketten, eingebettete Behälter – **es wird nichts geraten** – dazu der Exportweg |
+
+Dlubal veröffentlicht den Aufbau dieser Dateien nicht. Ob eine bestimmte Datei
+gelesen werden kann, hängt deshalb an ihrem Behälter. Die Meldung sagt in jedem
+Fall genau, was gefunden wurde. Sicher funktioniert immer der Export aus
+RFEM/RSTAB nach **SAF (.xlsx)**, **IFC (Statikmodell)** oder **Tabellen nach
+Excel/CSV**.
+
+Erkannt werden Knoten, Linien, Stäbe, Materialien, Querschnitte,
+Knotenlager, Linienlager, Flächenlager und Gelenke – jeweils mit deutschen und
+englischen Spaltennamen. Lagerzellen dürfen Zusätze enthalten:
+
+    starr, Ausfall bei Zug, Schlupf 0.003
+    1.5e8                                     (Federsteifigkeit)
+    rigid, failure in tension, friction mu 0.35
+
+Steht der Reibbeiwert am Freiheitsgrad mit dem Ausfall (z. B. uz), wird er auf
+die beiden Querrichtungen gelegt und auf ihn bezogen – so, wie die Reibung an
+einer Lagerfläche wirkt.
+
+## Profildatenbank nach Land
+
+`statik3d.profiles` führt 442 Profile in 18 Reihen:
+
+| Land | Norm | Reihen |
+|---|---|---|
+| Europa / Deutschland | EN 10365, DIN 1026, EN 10056, EN 10210 | IPE, HEA, HEB, HEM, UPN, UPE, L (gleich- und ungleichschenklig), SHS, RHS, CHS |
+| Großbritannien | BS 4-1 | UB, UC, PFC |
+| USA / Kanada | AISC | W, C, HSS, Pipe |
+
+Alle Querschnittswerte werden aus den Nennabmessungen gerechnet. Gegen die
+Herstellertabellen: EN- und BS-Profile unter 1 %, UPN bis 5 % (die
+Zehenausrundung der geneigten Flansche ist nicht erfasst), AISC-Profile 1–4 %
+(Ausrundung geschätzt, Hohlprofile mit der Bemessungswanddicke 0,93 t).
+
+Winkel haben geneigte Hauptachsen: `Iy`/`Iz` sind die **Hauptträgheitsmomente**,
+`alpha` ist deren Drehung gegen die Schenkel. Der Stab muss mit `roll = alpha`
+eingebaut werden; `Iy_geo`, `Iz_geo`, `Iyz_geo` sind die Katalogwerte in
+Schenkelrichtung.
+
+## Zusammengesetzte Querschnitte
+
+    from statik3d.sections import build, double_angle, double_channel, plated_i, box_from_plates
+    s = double_channel("2 UPE 200", "UPE 200", gap=0.100, back_to_back=False)
+    s = build("Kasten", [("UPE 300", -0.15, 0), ("UPE 300", 0.15, 0, 180)])
+
+Teile werden mit Versatz, Drehung und Spiegelung zusammengesetzt; Fläche,
+Schwerpunkt, Steiner-Anteile und Hauptachsen werden berechnet. `It` und `Iw`
+sind die Summen der Teile (offene Profile ohne Verbund, bei Kästen auf der
+sicheren Seite), `Wpl` eine Näherung; Nachweise laufen für zusammengesetzte
+Querschnitte elastisch.

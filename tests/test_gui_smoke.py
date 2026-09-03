@@ -125,6 +125,39 @@ def main():
     check("Dialoge erzeugt", mat.fy == 355e6 and sec.typ == "I" and "unit_scale" in opts and ro["design"],
           f"{mat.name} {sec.name}")
 
+    # Neue Lager und Profilauswahl nach Land
+    try:
+        d = dg.SectionDialog(w)
+        laender = [d.country.itemData(i) for i in range(d.country.count())]
+        d.country.setCurrentIndex(laender.index("US"))
+        us_profile = [d.profile.itemText(i) for i in range(d.profile.count())]
+        d.country.setCurrentIndex(laender.index("EU"))
+        eu_profile = [d.profile.itemText(i) for i in range(d.profile.count())]
+        check("Querschnittsdialog: Laenderauswahl", len(laender) >= 3 and us_profile and eu_profile,
+              f"{laender}, US {len(us_profile)} / EU {len(eu_profile)} Profile")
+        from statik3d.model import DofBehaviour
+        w.new_model()
+        w.beam_p2[0].set(6.0); w.beam_n.setValue(4); w.make_beams(); app.processEvents()
+        w.sel[0].setText("0"); w.sel[1].setText("0"); w.do_select()
+        sup = w.model.support(int(w.selection[0]), [])
+        nd = dg.SupportNonlinearDialog(w, sup, "Knotenlager")
+        nd.rows[2][0].setCurrentIndex(1)          # uz starr
+        nd.rows[2][2].setCurrentIndex(1)          # Ausfall bei Zug
+        nd.rows[2][3].setText("2")                # Schlupf 2 mm
+        nd.rows[0][0].setCurrentIndex(1)
+        nd.rows[0][4].setText("0.3")              # Reibung ux
+        nd.rows[0][5].setCurrentIndex(3)          # bezogen auf uz
+        beh = nd.behaviours()
+        check("Lagerdialog: Nichtlinearitaet",
+              beh[2].failure == "zug" and abs(beh[2].slip - 0.002) < 1e-9
+              and abs(beh[0].mu - 0.3) < 1e-9 and beh[0].mu_ref == 2,
+              f"uz {beh[2].describe()}")
+        nd.apply(sup)
+        check("Lagerdialog uebernimmt", w.model.supports[-1].dof_behaviour(2).failure == "zug"
+              and w.model.has_contact)
+    except Exception as ex:
+        check("Neue Lager und Profilauswahl", False, str(ex))
+
     # Web-Server (Browser / Handy) am GUI-Modell: Aenderung vom "Handy" erscheint in der GUI
     try:
         import json

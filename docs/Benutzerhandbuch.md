@@ -28,7 +28,7 @@ Windows ohne Kommandozeile, aber mit Python: `Statik3D-Windows.bat` aus dem Repo
 eigenen Ordner speichern und doppelklicken. Die Datei lädt bei jedem Start die
 neueste Version von GitHub (Ordner `Statikprogramm`, wird ersetzt), legt einmalig
 die Python-Umgebung `.venv` an und startet die GUI. Mit dem Zusatz `handy`
-startet sie den Browser-Server (Kap. 11), mit `offline` ohne Aktualisierung.
+startet sie den Browser-Server (Kap. 12), mit `offline` ohne Aktualisierung.
 Eigene Modelle gehören in den Ordner `Projekte` daneben.
 
 Einheiten im Programm: **m, N, Pa, kg/m³**. Eingabefelder mit anderer Einheit
@@ -42,9 +42,9 @@ Protokoll und die Ergebnistabellen.
 
 | Register | Inhalt |
 |---|---|
-| **Modell** | Projektdaten (für den Bericht), Materialien (Stahlsorten S235–S460 mit fy/fu), Querschnitte aus der Profildatenbank (IPE, HEA, HEB, HEM, SHS, RHS, CHS) oder parametrisch, Schalendicken, Querschnitt/Material zuweisen, Gelenke setzen |
-| **Netz** | Stabzüge, Platten, Quader erzeugen; Import (siehe Kap. 6); doppelte Knoten zusammenführen |
-| **Lager/Lasten** | Knoten auswählen (Klick im Viewport, Koordinatenfenster, Nummern); Lager (starr, Feder, Einspannung, gelenkig); Knoten-, Strecken- (auch trapezförmig, lokal/global), Flächen-, Temperaturlasten und Eigengewicht **in den aktiven Lastfall** |
+| **Modell** | Projektdaten (für den Bericht), Materialien (Stahlsorten S235–S460 mit fy/fu), Querschnitte aus der Profildatenbank **nach Land** (Europa: IPE, HEA/B/M, UPN, UPE, Winkel, SHS/RHS/CHS; Großbritannien: UB, UC, PFC; USA: W, C, HSS, Pipe), zusammengesetzt oder parametrisch, Schalendicken, Querschnitt/Material zuweisen, Gelenke setzen |
+| **Netz** | Stabzüge, Platten, Quader erzeugen; Import (siehe Kap. 7); doppelte Knoten zusammenführen |
+| **Lager/Lasten** | Lager mit Ausfall bei Zug/Druck, Schlupf, Reibung (Kap. 5), Linien- und Flächenlager; Knoten auswählen (Klick im Viewport, Koordinatenfenster, Nummern); Lager (starr, Feder, Einspannung, gelenkig); Knoten-, Strecken- (auch trapezförmig, lokal/global), Flächen-, Temperaturlasten und Eigengewicht **in den aktiven Lastfall** |
 | **Lastfälle** | Lastfälle mit Einwirkungskategorie (ψ-Werte), Ausschlussgruppen, Kombinationen automatisch (DIN EN 1990) oder manuell, Ermüdungslasten |
 | **Kontakt** | Einseitige Lager, Spaltelemente, Kontaktpaare Knoten–Fläche mit Reibung |
 | **Nachweise** | Stäbe (Knicklängen, seitliche Halterung, Kerbfall …), Einstellungen γM, Nachweise starten |
@@ -96,7 +96,42 @@ Kontaktbeispiele.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
 
-## 5 Kontakt
+## 5 Lager: Ausfall, Schlupf, Reibung
+
+Jedes Lager wirkt je Freiheitsgrad **starr**, als **Feder** oder ist **frei**;
+zusätzlich lassen sich Nichtlinearitäten einstellen (Register Lager/Lasten →
+**Nichtlinearität…**, auf dem Handy Modell → Nichtlineare Lager):
+
+| Einstellung | Bedeutung |
+|---|---|
+| **Ausfall bei Zug** | Das Lager nimmt nur Druck auf (klassisches abhebendes Auflager). |
+| **Ausfall bei Druck** | Das Lager nimmt nur Zug auf (Zuganker, Hänger). |
+| **Schlupf** | Freier Weg, bevor das Lager wirkt (Lagerspiel, Fuge). |
+| **Reibung μ** | Die Kraft quer zur Stützrichtung ist auf μ·|F| der Bezugskraft begrenzt; „μ bezogen auf“ nennt den Freiheitsgrad der Normalkraft (meist uz). |
+| **Grenzkraft** | Ab dieser Kraft fließt das Lager plastisch weiter (Zustand „Fließen“). |
+
+**Vorzeichen:** Das Lager wirkt entlang der positiven Achse seines
+Freiheitsgrads. Bewegt sich der Knoten in das Lager hinein, entsteht **Druck**;
+zieht er daran, **Zug**.
+
+**Linienlager** (Knopf *Linienlager…*): Lager entlang der gewählten Knoten in
+Auswahlreihenfolge. Die Steifigkeit wird **je Meter** angegeben und über die
+Einflusslänge (halbe Nachbarabschnitte) auf die Knoten verteilt.
+
+**Flächenlager / Bettung** (Knopf *Flächenlager…*): Lager auf Schalen- oder
+Volumenelementen. Die Steifigkeit wird **je m²** angegeben (Bettungsmodul) und
+über die Einflussfläche verteilt; bei Volumen wird die gewählte Fläche belegt
+(-1 = alle Außenflächen).
+
+Alle drei Lagerarten nutzen dieselbe Iteration wie der Kontakt (Kapitel 6): Die
+Ergebnisse zeigen je Bedingung Zustand (offen / Kontakt / Haften / Gleiten /
+Fließen), Spalt und Kräfte.
+
+**Gelenke**: Stabendgelenke je lokalem Freiheitsgrad biegesteif, gelenkig oder
+als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
+(sonst ist die Kette Stab–Feder–freier Knoten wieder ein Gelenk).
+
+## 6 Kontakt
 
 * **Einseitiges Lager**: Knoten auswählen, Stützrichtung (z. B. 0 0 1 =
   stützt nach oben), optional Spalt, Federsteifigkeit (elastische Bettung,
@@ -111,7 +146,7 @@ Kontaktbeispiele.
   Marker im Viewport). Hebt ein Bauteil vollständig ab oder rutscht es ohne
   Halt, wird das als Fehler gemeldet – dann Lagerung oder Lasten prüfen.
 
-## 6 Import
+## 7 Import
 
 Datei → Importieren (Details in `Schnittstellen.md`):
 
@@ -130,7 +165,7 @@ Native Binärformate (`.rf5`, `.rf6`, `.fem`) können nicht gelesen werden;
 das Programm nennt den Exportweg (RFEM: IFC-Statikmodell, SAF oder
 Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 
-## 7 Nachweise nach EC3
+## 8 Nachweise nach EC3
 
 Stäbe (Kette von Stabelementen) werden beim Erzeugen von Stabzügen und beim
 Import automatisch angelegt („Stäbe automatisch erkennen“ verkettet
@@ -148,7 +183,7 @@ Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
 
-## 8 Berechnung und Parallelisierung
+## 9 Berechnung und Parallelisierung
 
 * **Alle Lastfälle + Kombinationen**: Standard. Eine Faktorisierung, alle
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
@@ -159,7 +194,7 @@ im Bericht.
   macht den eigenen Rechner zum Farm-Server.
 * Die Berechnung läuft im Hintergrund; Fortschritt im Protokoll.
 
-## 9 Ergebnisse und Bericht
+## 10 Ergebnisse und Bericht
 
 * Färbung: |u|, ux/uy/uz, Vergleichsspannung (Schalen/Volumen, Randspannung
   bei Stäben), Ausnutzung EC3 / Ermüdung / elastisch.
@@ -172,21 +207,21 @@ im Bericht.
   Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
   Markdown.
 
-## 10 Tastenkürzel
+## 11 Tastenkürzel
 
 Strg+N neu, Strg+O öffnen, Strg+S speichern, Strg+I importieren,
 Strg+R Bericht, F5 berechnen.
 
-Browser/Handy: siehe Kapitel 11.
+Browser/Handy: siehe Kapitel 12.
 
-## 11 Bedienung im Browser und auf dem Handy
+## 12 Bedienung im Browser und auf dem Handy
 
 Statik3D lässt sich ohne Installation auf dem Handy oder Tablet bedienen: Der
 Rechenkern läuft als kleiner Web-Server auf dem PC (oder einem Server im
 Netz), das Handy zeigt die Oberfläche im Browser. Modell, Berechnung,
 Ergebnisse, Nachweise und Bericht sind dieselben wie in der Desktop-GUI.
 
-### 11.1 Starten
+### 12.1 Starten
 
 ```bash
 python run_web.py --schluessel geheim              # oder: python -m statik3d.web
@@ -229,7 +264,7 @@ Unter Windows: PowerShell im Programmordner, `.venv\Scripts\activate`,
 Windows-Firewall, ob Python im privaten Netz Verbindungen annehmen darf –
 zulassen, sonst erreicht das Handy den PC nicht.
 
-### 11.2 Die Oberfläche
+### 12.2 Die Oberfläche
 
 Oben die 3D-Ansicht, unten die Register. Der Bereich dazwischen lässt sich am
 Griff ziehen (klein / halb / groß); auf Tablets und PCs liegen die Register
@@ -251,7 +286,7 @@ Auswahl wird in die Eingabefelder der Register übernommen (Lager, Lasten,
 Zuweisen, Stäbe, Kontakt). Ergebnisse werden verformt und farbig gezeichnet,
 Schnittgrößen als Verläufe am Stab.
 
-### 11.3 Sicherheit
+### 12.3 Sicherheit
 
 Der Server spricht unverschlüsseltes HTTP und ist für das eigene Netz (WLAN,
 Firmennetz) gedacht. Immer einen Schlüssel setzen, sobald `--host 0.0.0.0`
@@ -260,7 +295,7 @@ Reverse-Proxy mit HTTPS vorschalten; den Port nicht direkt am Router
 freigeben. Hochgeladene Dateien landen in einem temporären Ordner des
 Servers.
 
-### 11.4 Grenzen
+### 12.4 Grenzen
 
 Die Darstellung zeichnet mit dem Canvas des Browsers; sehr große
 Volumenmodelle (mehr als etwa 50 000 Außenflächen) werden auf älteren Handys
@@ -268,7 +303,7 @@ träge. Ordner-Importe (RFEM-CSV-Ordner) gehen nur über die Desktop-GUI oder
 die Kommandozeile. Der PDF-Bericht benötigt `reportlab` auf dem Server; der
 HTML-Bericht lässt sich am Handy über Teilen → Drucken als PDF sichern.
 
-## 12 Grenzen
+## 13 Grenzen
 
 Kleine Verformungen, linear-elastisches Material, Kontakt als
 Penalty-Näherung ohne Lastgeschichte (Reibung nahe der Reibkapazität

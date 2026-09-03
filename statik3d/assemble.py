@@ -50,6 +50,56 @@ def beam_local(model: Model, e):
     return kl, T3, T, L
 
 
+def hinge_springs(kl: np.ndarray, fl: np.ndarray, springs) -> tuple:
+    """Federgelenke: zwischen Stabende und Knoten liegt je FHG eine Feder.
+
+    Fuer jeden Federgelenk-FHG d wird ein innerer FHG eingefuehrt, den das
+    Element belegt; die Feder k verbindet ihn mit dem aeusseren FHG d. Der
+    innere FHG wird anschliessend statisch kondensiert - das Ergebnis ist die
+    exakte Reihenschaltung Stab + Feder (k -> unendlich: biegesteif,
+    k -> 0: Gelenk).
+    Rueckgabe: (kl, fl) mit denselben 12 aeusseren FHG.
+    """
+    springs = [(int(d), float(k)) for d, k in (springs or []) if k and k > 0]
+    if not springs:
+        return kl, fl, None
+    n = 12 + len(springs)
+    B = np.zeros((12, n))
+    for i in range(12):
+        B[i, i] = 1.0
+    K = np.zeros((n, n))
+    f = np.zeros(n)
+    for j, (d, k) in enumerate(springs):
+        B[d, d] = 0.0
+        B[d, 12 + j] = 1.0          # das Element haengt am inneren FHG
+    K[:, :] = B.T @ kl @ B
+    f[:] = B.T @ fl
+    for j, (d, k) in enumerate(springs):
+        e = np.zeros(n)
+        e[d] = 1.0
+        e[12 + j] = -1.0
+        K += k * np.outer(e, e)     # Feder zwischen aeusserem und innerem FHG
+    inner = np.arange(12, n)
+    outer = np.arange(12)
+    Kii = K[np.ix_(inner, inner)]
+    Kio = K[np.ix_(inner, outer)]
+    try:
+        Kii_inv = np.linalg.inv(Kii)
+    except np.linalg.LinAlgError:
+        Kii_inv = np.linalg.pinv(Kii)
+    kl2 = K[np.ix_(outer, outer)] - Kio.T @ Kii_inv @ Kio
+    fl2 = f[outer] - Kio.T @ Kii_inv @ f[inner]
+    return kl2, fl2, (B, Kii_inv, Kio, f[inner])
+
+
+def hinge_local_disp(rec, ul: np.ndarray) -> np.ndarray:
+    """Stabend-Verschiebungen des Elements aus den Knotenverschiebungen ul,
+    wenn Federgelenke vorliegen (Rueckrechnung der inneren FHG)."""
+    B, Kii_inv, Kio, f_inner = rec
+    wi = Kii_inv @ (f_inner - Kio @ ul)
+    return B @ np.concatenate([ul, wi])
+
+
 def condense(kl: np.ndarray, fl: np.ndarray, released: list[int]):
     """Statische Kondensation freigegebener (Gelenk-)FHG.
     Rueckgabe: kondensierte Matrix (12x12, Zeilen/Spalten der Gelenke = 0),
@@ -78,6 +128,8 @@ def element_matrix(model: Model, e):
 
     if e.typ in LINE_TYPES:
         kl, T3, T, L = beam_local(model, e)
+        if getattr(e, "hinge_springs", None):
+            kl, _, _ = hinge_springs(kl, np.zeros(12), e.hinge_springs)
         if e.hinges:
             kl, _, _ = condense(kl, np.zeros(12), e.hinges)
         return T.T @ kl @ T
@@ -169,8 +221,9 @@ def _assemble_triplets(model: Model, chunk_func, workers=None) -> sparse.csr_mat
 def stiffness(model: Model, workers=None) -> sparse.csr_matrix:
     K = _assemble_triplets(model, _matrix_chunk, workers)
     # Federlager
-    springs = [(NDOF * s.node + dof, k_) for s in model.supports if s.stiffness
-               for k_, dof in zip(s.stiffness, s.dofs) if k_]
+    from . import supports as sup
+    lin, _ = sup.split(sup.expand(model))
+    springs = [(e.index, e.stiffness) for e in lin if e.typ == "spring" and e.stiffness]
     if springs:
         idx = np.array([i for i, _ in springs])
         val = np.array([k for _, k in springs])
@@ -374,6 +427,8 @@ def load_vector(model: Model, case: LoadCase = None) -> np.ndarray:
     for i, fl in element_equivalent_loads(model, case).items():
         e = model.elements[i]
         kl, T3, T, L = beam_local(model, e)
+        if getattr(e, "hinge_springs", None):
+            kl, fl, _ = hinge_springs(kl, fl, e.hinge_springs)
         if e.hinges:
             _, fl, _ = condense(kl, fl, e.hinges)
         F[element_dofs(e)] += T.T @ fl
@@ -483,11 +538,10 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
     ref = diag.max() if diag.size and diag.max() > 0 else 1.0
     fixed |= diag < ref * 1e-12
 
-    for s in model.supports:
-        if s.stiffness:
-            continue           # Federlager -> nicht sperren
-        for k, dof in enumerate(s.dofs):
-            i = NDOF * s.node + dof
-            fixed[i] = True
-            vals[i] = s.values[k] if s.values else 0.0
+    from . import supports as sup
+    lin, _ = sup.split(sup.expand(model))
+    for e in lin:
+        if e.typ == "rigid":
+            fixed[e.index] = True
+            vals[e.index] = e.value
     return fixed, vals
