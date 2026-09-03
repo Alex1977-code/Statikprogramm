@@ -226,6 +226,26 @@ def main():
               w.kopf.titel.text()[:60])
         check("Kopfzeile nennt Knoten, Elemente und Stellungen",
               "Stellungen" in w.kopf.marke_modell.text(), w.kopf.marke_modell.text())
+        check("Menueleiste bleibt neben der Kopfzeile stehen",
+              w.menu_bar is not None and len(w.menu_bar.actions()) >= 5
+              and w.menuWidget() is not None
+              and w.menu_bar.parent() is w.menuWidget(),
+              str([a.text() for a in w.menu_bar.actions()]))
+        check("Kopfzeile und Menue teilen sich das Menuewidget",
+              w.menuWidget().height() >= w.kopf.height() + 10,
+              f"{w.menuWidget().height()} >= {w.kopf.height()} + 10")
+        # Der Grund der Kopfzeile muss dunkel bleiben: ein schlichtes QWidget
+        # zeichnet den Hintergrund aus dem Stilblatt nur mit WA_StyledBackground,
+        # sonst zieht die allgemeine QWidget-Regel die Zeile hell.
+        bild = w.kopf.grab().toImage()
+        farbe = bild.pixelColor(max(1, bild.width() - 400), bild.height() // 2)
+        check("Kopfzeile ist dunkel hinterlegt",
+              farbe.red() < 90 and farbe.green() < 90 and farbe.blue() < 110,
+              f"RGB {farbe.red()},{farbe.green()},{farbe.blue()}")
+        logo = w.kopf.logo.grab().toImage()
+        hell = max(logo.pixelColor(x, logo.height() // 2).lightness()
+                   for x in range(0, logo.width(), 3))
+        check("Programmname hebt sich vom Grund ab", hell > 180, f"Helligkeit {hell}")
         werkzeuge = [a.text() for a in w.werkzeugleiste.actions() if a.text()]
         check("Werkzeugleiste wie im Entwurf",
               any("Berechnen" in t for t in werkzeuge) and any("Stellungen" in t for t in werkzeuge)

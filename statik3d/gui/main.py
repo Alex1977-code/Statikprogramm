@@ -122,7 +122,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redraw()
 
     def _build_menu(self):
-        mb = self.menuBar()
+        # Eigene Menueleiste: setMenuWidget() loescht die von menuBar() angelegte,
+        # und mit ihr das Widget, in dem sie steckt - unter Windows blieb dadurch
+        # die Kopfzeile samt Menue unsichtbar.
+        mb = QtWidgets.QMenuBar()
+        self.menu_bar = mb
         f = mb.addMenu("&Datei")
         f.addAction("Neu", self.new_model, "Ctrl+N")
         f.addAction("Öffnen…", self.open_model, "Ctrl+O")
@@ -219,13 +223,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_kopfzeile(self):
         """Dunkle Kopfzeile ueber dem Menue: Programm, Bauteil, Zustand."""
         self.kopf = dsg.Kopfzeile(self)
-        halter = QtWidgets.QWidget(self)
-        lay = QtWidgets.QVBoxLayout(halter)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        lay.addWidget(self.kopf)
-        lay.addWidget(self.menuBar())
-        self.setMenuWidget(halter)
+        self.setMenuWidget(dsg.kopfhalter(self, self.kopf, self.menu_bar))
         self._refresh_kopf()
 
     def _build_werkzeugleiste(self):
@@ -272,7 +270,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tb.addWidget(einheit)
 
     def _menue_zeigen(self, i: int):
-        mb = self.menuBar()
+        mb = self.menu_bar
         menues = [a.menu() for a in mb.actions() if a.menu() is not None]
         if 0 <= i < len(menues):
             m = menues[i]

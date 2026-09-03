@@ -39,9 +39,17 @@ STIL = """
 QMainWindow, QWidget {{ background: {grund}; color: {text};
     font-family: "Segoe UI", -apple-system, Roboto, Helvetica, Arial, sans-serif;
     font-size: 13px; }}
+/* Kopfbereich: der Grund kommt vom Behaelter, die Beschriftungen bleiben
+   durchsichtig - sonst zieht die allgemeine QWidget-Regel oben sie hell. */
+QWidget#kopfhalter {{ background: {kopf}; }}
+Kopfzeile {{ background: {kopf}; }}
+Kopfzeile QLabel {{ background: transparent; color: {kopf_matt}; }}
+Filmstreifen {{ background: {flaeche}; border-top: 1px solid {linie}; }}
+Filmstreifen > QLabel {{ background: transparent; }}
 QMenuBar {{ background: {kopf}; color: {kopf_matt}; border: 0; padding: 2px 6px; }}
 QMenuBar::item {{ background: transparent; padding: 5px 10px; border-radius: 6px; }}
-QMenuBar::item:selected {{ background: #39485a; color: #fff; }}
+QMenuBar::item:selected, QMenuBar::item:pressed {{ background: #39485a; color: #fff; }}
+QMenuBar::item:disabled {{ color: #6b7885; }}
 QMenu {{ background: {flaeche}; border: 1px solid {linie}; padding: 4px; }}
 QMenu::item {{ padding: 6px 22px 6px 12px; border-radius: 6px; }}
 QMenu::item:selected {{ background: {akzent_hell}; color: {akzent}; }}
@@ -139,12 +147,29 @@ class Marke(QtWidgets.QLabel):
                            f"padding:3px 10px; font-size:12px;")
 
 
+def kopfhalter(parent, *widgets) -> QtWidgets.QWidget:
+    """Behaelter fuer Kopfzeile und Menueleiste, durchgehend dunkel.
+
+    Ohne eigenen Grund zeichnet Qt hier die Fensterfarbe; unter Windows wird die
+    Zeile dadurch weiss, sobald ein Menue geoeffnet ist.
+    """
+    w = QtWidgets.QWidget(parent)
+    w.setObjectName("kopfhalter")
+    w.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+    lay = QtWidgets.QVBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+    for x in widgets:
+        lay.addWidget(x)
+    return w
+
+
 class Kopfzeile(QtWidgets.QWidget):
     """Dunkle Kopfzeile: Programmname, Bauteil und Zustand."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(f"Kopfzeile {{ background:{FARBEN['kopf']}; }}")
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.setFixedHeight(40)
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(14, 0, 12, 0)
@@ -239,8 +264,7 @@ class Filmstreifen(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(f"Filmstreifen {{ background:{FARBEN['flaeche']};"
-                           f"border-top:1px solid {FARBEN['linie']}; }}")
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         aussen = QtWidgets.QVBoxLayout(self)
         aussen.setContentsMargins(12, 8, 12, 10)
         aussen.setSpacing(6)
