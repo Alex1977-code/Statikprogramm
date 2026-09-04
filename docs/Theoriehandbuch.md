@@ -763,6 +763,94 @@ gesagt — es wird nichts ersatzweise eingesetzt.
   Kombination. Der Knicklastfaktor λ multipliziert die Lasten des
   Grundzustands.
 
+## 6a Vernetzung von Volumenkörpern
+
+Ein Volumenkörper aus RFEM ist eine **Randdarstellung**: eine Hülle aus
+Flächen, die ihrerseits von Linien berandet sind. Abgebildet (*mapped*)
+vernetzen lassen sich davon nur der Sechsflächner (6 Vierecke, 8 Knoten,
+trilineare Abbildung) und der Tetraeder (4 Dreiecke, 4 Knoten). Alles andere
+geht an den **freien Vernetzer** (`statik3d/mesher3d.py`). Er arbeitet in vier
+Schritten, jeder für sich nachrechenbar.
+
+**1 Randnetz.** Jede Randfläche wird in Dreiecke geteilt:
+
+| Randfläche | Weg |
+|---|---|
+| eben, auch mit Bohrungen | in ihrer Ebene frei vernetzt (Delaunay + Schwerpunktprobe) |
+| krumm, vier Randlinien | **Coons-Fleck** zwischen den vier Randkurven; für eine Zylinderhälfte ist er die Fläche selbst, keine Näherung |
+| krumm auf einem Zylinder | in der **Abwicklung** (r·φ, Achskoordinate) vernetzt und exakt zurückgelegt |
+| krumm, sonst | ebenes Netz auf der Ausgleichsebene, dann **harmonisch** in den Rand eingespannt: div grad w = 0 mit dem Rand als Randbedingung |
+
+Jede **Linie** wird dabei genau einmal abgetastet — die Teilung gehört der
+Linie, nicht der Fläche. Nur so passen die Netze benachbarter Flächen
+aufeinander. Gegenüberliegende Seiten einer abgebildet vernetzten Fläche
+müssen gleich viele Abschnitte haben; diese Bindung wird über eine
+Vereinigungssuche (union-find) durch das ganze Bauteil weitergereicht. Krumme
+Linien bekommen zusätzlich zur Längenteilung eine **Krümmungsteilung**: der
+gesamte Richtungswechsel wird durch 30° geteilt, ein Kreis bekommt also
+mindestens zwölf Abschnitte — ob er 10 mm oder 10 m Durchmesser hat.
+
+**2 Dichtheit.** Die Dreiecke werden vernäht und geprüft: jede Kante muss in
+genau zwei Dreiecken liegen. Das Volumen folgt aus dem Gaußschen Satz,
+
+    V = 1/6 · Σ (a × b) · c   über alle Dreiecke,
+
+und muss positiv sein — dann zeigt die Hülle nach außen. Ist sie nicht dicht,
+wird **nicht** vernetzt: ein Netz aus einer undichten Hülle ist stillschweigend
+falsch, und das ist schlimmer als kein Netz. Fehlt einer Fläche eine
+Randstrecke, wird die *Linie* feiner geteilt und alles neu vernetzt.
+
+**3 Punkte.** Zuerst ein raumzentriertes kubisches Gitter (BCC) mit der
+Zielkantenlänge — das Punktmuster, dessen Delaunay-Zerlegung von sich aus gute
+Tetraeder liefert (Labelle/Shewchuk). Dann **Delaunay-Verfeinerung**: der
+Umkugelmittelpunkt jedes schlechten Tetraeders wird eingefügt. Schlecht heißt
+*zu groß* (Umkugelhalbmesser über 0,62·h_lokal — der reguläre Tetraeder mit der
+Kante a hat den Halbmesser a·√6/4 = 0,6124 a) oder *schlecht geformt*
+(Umkugelhalbmesser über dem Doppelten der kürzesten Kante, Ruppert/Shewchuk).
+Die Sollkantenlänge am Ort wächst vom Rand weg:
+
+    h_lokal(x) = min(h, Randkantenlänge am nächsten Randpunkt + 0,35 · Abstand zum Rand)
+
+So bekommt eine 20-mm-Bohrung in einer 900-mm-Platte kleine Elemente, ohne dass
+die ganze Platte fein wird.
+
+**4 Tetraeder.** Von der Delaunay-Zerlegung bleiben die Tetraeder, deren
+Schwerpunkt im Körper liegt (die Zerlegung füllt immer die konvexe Hülle; alles
+in einer Einbuchtung gehört nicht dazu). Ob ein Punkt im Körper liegt, wird auf
+zwei völlig verschiedenen Wegen beantwortet:
+
+* **Strahlenzählung** — ein Strahl nach +z schneidet eine geschlossene Hülle
+  ungerade oft, wenn der Punkt innen liegt; mit einem Gitterindex über die
+  xy-Projektion, damit nicht jeder Punkt gegen jedes Dreieck zu prüfen ist.
+* **Verallgemeinerte Windungszahl** — die Summe der Raumwinkel aller Dreiecke
+  (van Oosterom/Strackee) ist 4π innen und 0 außen. Sie kennt keine
+  Sonderfälle und ist der Prüfstein für die schnelle Strahlenzählung; die
+  Prüfungen vergleichen beide gegeneinander.
+
+Zum Schluss wird **gerechnet, nicht gehofft**. Im Protokoll steht je Körper:
+
+* Summe der Tetraedervolumen gegen das Hüllvolumen aus Schritt 2,
+* Güte q = 12·(3V)^(2/3) / Σ l² (1 für den regulären, 0 für den flachen
+  Tetraeder) als kleinster und mittlerer Wert und die Zahl der Splitter
+  (q < 0,1),
+* **Randtreue**: welcher Anteil der freien Elementseiten wirklich auf der Hülle
+  liegt, und ihr größter Abstand dazu. Verglichen wird geometrisch, nicht
+  Dreieck gegen Dreieck: ein ebenes Viereck lässt sich über beide Diagonalen
+  teilen, ohne dass eine der beiden falsch wäre.
+
+**Gemeinsame Randflächen.** Zwei Körper, die *dieselbe* Fläche berandet,
+bekommen dort dieselben Knoten und hängen zusammen. Geteilt wird ausdrücklich
+über die Fläche, nicht über die Koordinate: zwei Flächen, die aufeinander
+liegen, aber verschiedene Objekte sind, gehören zu einer Kontaktfuge und dürfen
+**nicht** verschweißt werden.
+
+**Grenzen.** Der Vernetzer erzeugt lineare Tetraeder (`tet4`, konstante
+Dehnung). Splitter — sehr flache Tetraeder — lassen sich mit dem
+Kugel-Kanten-Kriterium nicht ausschließen; ihre Zahl und die schlechteste Güte
+stehen darum im Protokoll. Ist eine Zielkantenlänge für ein Bauteil zu grob
+(weniger als vier Elemente über seine größte Ausdehnung), wird sie für dieses
+Bauteil verkleinert und das gemeldet.
+
 ## 7 Parallelisierung
 
 * Elementschleifen (Assemblierung, Nachlauf) werden ab 1500 Elementen in
@@ -781,6 +869,9 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 * Volumen: nachgewiesen wird der Spannungszustand nach 6.2.1(5) für die im
   Modell angelegten Volumenbereiche (Kapitel 5d). Eine Stabilitätsuntersuchung
   des Volumenkörpers gibt es nicht.
+* Vernetzung: lineare Tetraeder (konstante Dehnung, Kapitel 6a). Sie sind
+  steifer als quadratische Elemente; für Spannungsspitzen an Kerben ist
+  entsprechend fein zu vernetzen. Die Netzgüte steht je Körper im Protokoll.
 * Schalen: ebene Elemente. Nachgewiesen werden das Schubbeulen der Stegbleche
   (Abschnitt 5), ebene Blechfelder mit und ohne Steifen (Abschnitt 10 mit
   Anhang A und 4.5), die Steifen selbst (Abschnitt 9), die Lasteinleitung

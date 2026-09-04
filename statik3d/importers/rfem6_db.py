@@ -1417,17 +1417,43 @@ def _randlinien(db: Db) -> dict:
 
 
 def _openings(db: Db) -> dict:
-    """{Surface.id: Anzahl Oeffnungen} ueber die integrierten Oeffnungen."""
-    out: dict[int, int] = {}
+    """{Surface.id: [Opening.id, ...]} ueber die integrierten Oeffnungen."""
+    out: dict[int, list] = {}
     for tbl in ("SurfaceImplPlane_integratedOpenings",
                 "SurfaceImplQuadrangle_integratedOpenings",
-                "SurfaceImplTrimmed_integratedOpenings"):
+                "SurfaceImplTrimmed_integratedOpenings",
+                "SurfaceImplNurbs_integratedOpenings"):
         impl_tbl = tbl.split("_")[0]
+        if not db.has(tbl) or not db.has(impl_tbl):
+            continue
         parent = {r["id"]: r.get("parent_id") for r in db.rows(impl_tbl)}
         for oid, lst in db.container(tbl).items():
             sid = parent.get(oid)
             if sid:
-                out[sid] = out.get(sid, 0) + len(lst)
+                out.setdefault(sid, []).extend(lst)
+    return out
+
+
+def _opening_lines(db: Db) -> dict:
+    """{Opening.id: [Line.id, ...]} - der Rand jeder Oeffnung.
+
+    Eine Bohrung ist in RFEM kein Loch im Randpolygon, sondern ein eigenes
+    Objekt ``Opening`` mit eigenen Randlinien. Ohne diese Linien wuerde ein
+    Flansch mit 28 Schraubenloechern beim Vernetzen zubetoniert - eine viel
+    zu steife Platte, und niemand saehe es.
+    """
+    if not db.has("Opening") or not db.has("OpeningImpl_boundaryLines"):
+        return {}
+    impl = db.by_id("OpeningImpl") if db.has("OpeningImpl") else {}
+    lines = db.container("OpeningImpl_boundaryLines")
+    out: dict[int, list] = {}
+    for h in db.rows("Opening"):
+        iid = h.get("impl_id")
+        if iid is None or (impl and iid not in impl):
+            continue
+        lst = lines.get(iid, [])
+        if lst:
+            out[h["id"]] = list(lst)
     return out
 
 
@@ -1457,9 +1483,11 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
     ohne_rand = 0
     props: dict[tuple, str] = {}
     openings = _openings(db)
+    opening_lines = _opening_lines(db)
     randlinien = _randlinien(db)
     rueck = _stiffness_owner(db)
     line_name = line_name or {}
+    n_oeffnung = 0
     for h, impl in db.impls("Surface"):
         sid = h["id"]
         nr = h.get("userID") or sid
@@ -1481,8 +1509,17 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
                 pname = C.unique_name(m.shells, f"d{t_mm:g}")
                 m.add_shell_prop(ShellProp(pname, d["t"]))
                 props[key] = pname
+        # Die Oeffnungen sind eigene Objekte mit eigenen Randlinien; sie
+        # gehoeren an die Flaeche, sonst wird jede Bohrung zubetoniert.
+        loecher = []
+        for oid in openings.get(sid, []):
+            rand = [line_name[x] for x in opening_lines.get(oid, []) if x in line_name]
+            if rand:
+                loecher.append(rand)
+        n_oeffnung += len(loecher)
         f = Flaeche(fname, linien, dicke=pname, material=mname,
-                    kommentar=d["text"] if d["t"] <= 0 else "")
+                    kommentar=d["text"] if d["t"] <= 0 else "",
+                    oeffnungen=loecher)
         m.flaechen[fname] = f
         namen[sid] = fname
         if d["t"] <= 0:
@@ -1492,10 +1529,12 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
             ohne_rand += 1
             continue
         if openings.get(sid):
+            n_o = len(openings[sid])
             mit_oeffnung += 1
-            f.kommentar = f"{openings[sid]} Öffnung(en) – nicht vernetzt"
-            C.warn(log, f"Flaeche {nr} hat {openings[sid]} Oeffnung(en) - nicht "
-                        "vernetzt, weil das Randpolygon die Oeffnung schliessen wuerde.")
+            f.kommentar = (f"{n_o} Öffnung(en) – abgebildet nicht vernetzbar, "
+                           "der freie Vernetzer kann es")
+            C.warn(log, f"Flaeche {nr} hat {n_o} Oeffnung(en) - kein abgebildetes "
+                        "Netz, weil das Randpolygon die Oeffnung schliessen wuerde.")
             continue
         els = C.polygon_to_shells(m, ring, mname, pname, group=fname, log=log,
                                   what=f"Flaeche {nr}")
@@ -1515,8 +1554,11 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
     if ohne:
         C.say(log, "  ohne eigene Steifigkeit (kein Netz): "
                    + ", ".join(f"{n}x {k}" for k, n in sorted(ohne.items())))
+    if n_oeffnung:
+        C.say(log, f"  {n_oeffnung} Oeffnungen (Bohrungen, Aussparungen) mit ihren "
+                   "Randlinien uebernommen")
     if mit_oeffnung:
-        C.say(log, f"  {mit_oeffnung} Flaechen mit Oeffnung nicht vernetzt")
+        C.say(log, f"  {mit_oeffnung} Flaechen mit Oeffnung ohne abgebildetes Netz")
     if ohne_rand:
         C.say(log, f"  {ohne_rand} Flaechen mit Dicke, aber ohne aufloesbaren Rand")
     return out, namen

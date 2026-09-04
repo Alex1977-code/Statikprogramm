@@ -1466,10 +1466,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self._netz_loeschen(f.elemente)
             f.elemente = []
             n += len(mesher.mesh_flaeche(self.model, f, log))
+        # Ein Woerterbuch fuer alle Koerper dieses Laufs: Koerper, die sich
+        # eine Randflaeche teilen, bekommen dort dieselben Knoten. Ohne das
+        # stuende jeder Koerper fuer sich und das Modell zerfiele.
+        cache: dict = {}
         for k in koerper:
             self._netz_loeschen(k.elemente)
             k.elemente = []
-            n += len(mesher.mesh_koerper(self.model, k, log))
+            n += len(mesher.mesh_koerper(self.model, k, log, cache=cache))
         for z in log:
             self.log.appendPlainText(z)
         if n:

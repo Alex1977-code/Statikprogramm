@@ -1109,6 +1109,9 @@ class Flaeche:
 
     linien:   Namen der Randlinien, in beliebiger Reihenfolge; der Rand wird
               ueber die gemeinsamen Endknoten zusammengesetzt.
+    oeffnungen: je Oeffnung die Namen ihrer Randlinien - Bohrungen, Aussparungen
+              und Durchbrueche. Sie gehoeren nicht zur Flaeche und werden beim
+              Vernetzen ausgespart.
     teilung:  Elementzahl in den beiden Randrichtungen beim Vernetzen.
     """
     name: str
@@ -1119,9 +1122,12 @@ class Flaeche:
     teilung: list[int] = field(default_factory=lambda: [4, 4])
     elemente: list[int] = field(default_factory=list)
     kommentar: str = ""
+    oeffnungen: list[list[str]] = field(default_factory=list)
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
+        if self.oeffnungen:
+            t += f", {len(self.oeffnungen)} Öffnungen"
         if self.dicke:
             t += f", {self.dicke}"
         return t + (f", {len(self.elemente)} Elemente" if self.elemente
@@ -1139,54 +1145,28 @@ class Flaeche:
         denselben zwei Knoten. Ueber die Knoten waeren das zwei Punkte und
         damit kein Polygon; erst die abgetasteten Boegen ergeben den Kreis.
         """
-        stuecke = _randstuecke(model, self.linien)
-        if not stuecke:
-            return np.zeros((0, 3))
-        punkte: list = []
-        for name, knoten in stuecke:
-            ln = model.lines.get(name)
-            teil = None
-            if ln is not None and (ln.typ or "polyline") != "polyline":
-                try:
-                    teil = np.asarray(ln.kurve(model).punkte(max(teilung, 4)), float)
-                except Exception:            # noqa: BLE001 - krumm, aber unbrauchbar
-                    teil = None
-                if teil is not None and len(teil) > 1 and knoten:
-                    # Die Kurve laeuft nicht zwingend in Richtung der Knotenfolge
-                    p0 = model.nodes[int(knoten[0])]
-                    if np.linalg.norm(teil[0] - p0) > np.linalg.norm(teil[-1] - p0):
-                        teil = teil[::-1]
-            if teil is None:
-                idx = [int(n) for n in knoten if 0 <= int(n) < model.nn]
-                if not idx:
-                    continue
-                teil = model.nodes[idx]
-            # Der Endpunkt eines Stuecks ist der Anfangspunkt des naechsten;
-            # beim geschlossenen Umlauf faellt er darum jeweils weg.
-            punkte.extend(teil[:-1] if len(teil) > 1 else teil)
-        if not punkte:
-            return np.zeros((0, 3))
-        P = np.asarray(punkte, float)
-        # Aufeinanderfolgende gleiche Punkte entfernen
-        halten = np.ones(len(P), bool)
-        halten[1:] = np.linalg.norm(np.diff(P, axis=0), axis=1) > 1e-12
-        P = P[halten]
-        return P if len(P) >= 3 else np.zeros((0, 3))
+        return _linienzug_punkte(model, self.linien, teilung)
+
+    def oeffnungspunkte(self, model, teilung: int = 16) -> list:
+        """Je Oeffnung ihr Randpolygon als Punktfolge."""
+        out = []
+        for linien in self.oeffnungen or []:
+            P = _linienzug_punkte(model, linien, teilung)
+            if len(P) >= 3:
+                out.append(P)
+        return out
 
     def inhalt(self, model, teilung: int = 64) -> float:
-        """Flaecheninhalt des Randpolygons [m^2] (Newell).
+        """Flaecheninhalt [m^2] (Newell), Oeffnungen abgezogen.
 
         Krumme Raender werden fein abgetastet: das eingeschriebene Vieleck
         unterschaetzt den Kreis um 1 - sin(2a)/(2a) mit a = pi/n; bei n = 64
         sind das 0.04 %, bei 16 Abschnitten waeren es 0.6 %.
         """
-        P = self.randpunkte(model, teilung)
-        if len(P) < 3:
-            return 0.0
-        n = np.zeros(3)
-        for a, b in zip(P, np.roll(P, -1, axis=0)):
-            n += np.cross(a, b)
-        return float(np.linalg.norm(n)) / 2.0
+        A = _polygoninhalt(self.randpunkte(model, teilung))
+        for P in self.oeffnungspunkte(model, teilung):
+            A -= _polygoninhalt(P)
+        return max(A, 0.0)
 
 
 @dataclass
@@ -1209,6 +1189,59 @@ class Volumenkoerper:
             t += f", {self.material}"
         return t + (f", {len(self.elemente)} Elemente" if self.elemente
                     else ", nicht vernetzt")
+
+
+def _polygoninhalt(P) -> float:
+    """Flaecheninhalt eines ebenen Vielecks im Raum (Newell-Formel)."""
+    P = np.asarray(P, float)
+    if len(P) < 3:
+        return 0.0
+    n = np.zeros(3)
+    for a, b in zip(P, np.roll(P, -1, axis=0)):
+        n += np.cross(a, b)
+    return float(np.linalg.norm(n)) / 2.0
+
+
+def _linienzug_punkte(model, linien, teilung: int = 16) -> "np.ndarray":
+    """Ein geschlossener Linienzug als Punktfolge, krumme Linien abgetastet.
+
+    Die Knotenfolge allein reicht nicht: eine Bohrung, eine Buchse oder ein
+    Augenblech ist in RFEM ein Kreis aus zwei Halbboegen zwischen denselben
+    zwei Knoten. Ueber die Knoten waeren das zwei Punkte und damit kein
+    Vieleck; erst die abgetasteten Boegen ergeben den Kreis.
+    """
+    stuecke = _randstuecke(model, list(linien or []))
+    if not stuecke:
+        return np.zeros((0, 3))
+    punkte: list = []
+    for name, knoten in stuecke:
+        ln = model.lines.get(name)
+        teil = None
+        if ln is not None and (ln.typ or "polyline") != "polyline":
+            try:
+                teil = np.asarray(ln.kurve(model).punkte(max(teilung, 4)), float)
+            except Exception:            # noqa: BLE001 - krumm, aber unbrauchbar
+                teil = None
+            if teil is not None and len(teil) > 1 and knoten:
+                # Die Kurve laeuft nicht zwingend in Richtung der Knotenfolge
+                p0 = model.nodes[int(knoten[0])]
+                if np.linalg.norm(teil[0] - p0) > np.linalg.norm(teil[-1] - p0):
+                    teil = teil[::-1]
+        if teil is None:
+            idx = [int(n) for n in knoten if 0 <= int(n) < model.nn]
+            if not idx:
+                continue
+            teil = model.nodes[idx]
+        # Der Endpunkt eines Stuecks ist der Anfangspunkt des naechsten;
+        # beim geschlossenen Umlauf faellt er darum jeweils weg.
+        punkte.extend(teil[:-1] if len(teil) > 1 else teil)
+    if not punkte:
+        return np.zeros((0, 3))
+    P = np.asarray(punkte, float)
+    halten = np.ones(len(P), bool)
+    halten[1:] = np.linalg.norm(np.diff(P, axis=0), axis=1) > 1e-12
+    P = P[halten]
+    return P if len(P) >= 3 else np.zeros((0, 3))
 
 
 def _randstuecke(model, linien: list[str]) -> list:

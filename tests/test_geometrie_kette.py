@@ -177,14 +177,20 @@ def test_koerper_aus_flaechen():
     close("Verlaengerung = N L /(E A)", float(r.u.reshape(-1, 6)[rechts[0], 0]),
           u, 2e-3, " m")
 
-    # Koerper mit anderer Randflaechenzahl bleibt liegen und wird benannt
+    # Ein Koerper, dem eine Randflaeche fehlt, ist offen: weder abgebildet
+    # noch frei vernetzbar - und das muss dastehen.
     m2 = _quader()
     k2 = m2.add_koerper("V9", ["Boden", "Deckel", "S1", "S2", "S3"])
     log2 = []
     check("unvollstaendiger Koerper nicht vernetzt",
           mesher.mesh_koerper(m2, k2, log2) == [])
     check("und der Grund steht im Protokoll",
-          any("Sechsflächner" in x for x in log2), log2[0] if log2 else "-")
+          any("nicht dicht" in x for x in log2), log2[-1] if log2 else "-")
+    # Ohne den freien Vernetzer nennt die Meldung die abgebildeten Formen
+    log3 = []
+    check("abgeschalteter freier Vernetzer meldet die abgebildeten Formen",
+          mesher.mesh_koerper(m2, k2, log3, frei=False) == []
+          and any("Sechsflächner" in x for x in log3), log3[-1] if log3 else "-")
 
 
 # --------------------------------------------------------------------------

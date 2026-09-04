@@ -267,6 +267,15 @@ steifes Modell schlimmer ist als eine sichtbare Lücke:
 * Flächen mit **veränderlicher Dicke** werden mit dem Mittelwert gerechnet und
   gemeldet.
 
+### Öffnungen
+
+Eine Bohrung ist in RFEM kein Loch im Randpolygon, sondern ein eigenes Objekt:
+`Opening` → `OpeningImpl_boundaryLines`. Die Fläche zeigt über
+`SurfaceImpl*_integratedOpenings` darauf. Die Randlinien der Öffnung gehören an
+die Fläche (`Flaeche.oeffnungen`), sonst würde ein Flansch mit 28
+Schraubenlöchern beim Vernetzen zubetoniert — eine viel zu steife Platte, und
+niemand sähe es. Im Beispielmodell sind es 376 Öffnungen auf 100 Flächen.
+
 ### Volumenkörper
 
 Ein Volumenkörper steht in `Solid` → `SolidImplStandard` mit seinen
@@ -283,8 +292,14 @@ werden über die gemeinsamen Knoten der Seitenflächen zugeordnet und die
 Jacobi-Determinante geprüft (bei negativem Vorzeichen werden Boden und Deckel
 getauscht).
 
-Beide Topologien gelten nur, wenn **jede** Randfläche ein ebenes Vieleck mit
-mindestens drei Knoten ist. Eine Buchse hat vier Randflächen und vier Knoten
+Alles andere geht an den **freien Vernetzer** (`statik3d/mesher3d.py`, siehe
+Theoriehandbuch Kapitel 6a): die Randflächen werden in Dreiecke geteilt, die
+Hülle auf Dichtheit geprüft und mit Tetraedern gefüllt. Im Beispielmodell einer
+Lagerkonstruktion sind das alle 108 Körper — 427 717 Tetraeder in 67 s, mit
+einer Volumenabweichung von 0,0008 % gegenüber den Randhüllen.
+
+Beide abgebildeten Topologien gelten nur, wenn **jede** Randfläche ein ebenes
+Vieleck mit mindestens drei Knoten ist. Eine Buchse hat vier Randflächen und vier Knoten
 — zwei Kreisdeckel und zwei Zylinderhälften — und sähe sonst aus wie ein
 Tetraeder; sie wäre ein Element ohne Volumen und eine singuläre Matrix. Ein
 Körper mit krummen Randflächen bleibt darum ohne Netz, und das steht an ihm

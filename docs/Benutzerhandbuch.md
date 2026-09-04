@@ -171,12 +171,41 @@ vernetztes Objekt ein ○.
 | Fläche mit drei Randknoten | ein Dreieckelement |
 | Volumen: 6 Vierecke, 8 Eckknoten | abgebildetes Hexaedernetz (x × y × z) |
 | Volumen: 4 Dreiecke, 4 Knoten | ein Tetraeder |
-| alles andere | wird **nicht** vernetzt; der Grund steht im Protokoll |
+| alles andere | **freier Vernetzer**: Randflächen in Dreiecke, Hülle prüfen, mit Tetraedern füllen |
 
 Ist eine Randlinie ein **Bogen, Kreis, Spline, Parabel oder eine Ellipse**,
 folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den
 Stützknoten. Eine Polylinie bleibt dagegen eine Polylinie: dort laufen die
 Knoten auf den Sehnen, denn etwas anderes hat der Anwender nicht angegeben.
+
+#### Der freie Vernetzer
+
+Ein Lagerbock, ein Augenblech mit Bohrung, eine Buchse — nichts davon ist ein
+Sechsflächner. Solche Körper vernetzt Statik3D **frei** in Tetraeder. Die
+angestrebte Kantenlänge kommt aus den Netzeinstellungen (bei einem RFEM-Import
+aus dessen `mesh.xml`); ist sie für ein Bauteil zu grob — weniger als vier
+Elemente über seine größte Ausdehnung —, wird sie für dieses Bauteil
+verkleinert und das im Protokoll gesagt.
+
+Das Netz folgt der Geometrie: Bohrungen bleiben ausgespart, krumme Flächen
+werden auf ihrer wahren Krümmung vernetzt, und um eine kleine Bohrung in einer
+großen Platte wird das Netz von selbst feiner, ohne dass die ganze Platte fein
+wird. Zwei Körper, die **dieselbe** Randfläche haben, teilen sich dort die
+Knoten und hängen zusammen; zwei Flächen, die nur aufeinander liegen, aber
+verschiedene Objekte sind, bleiben getrennt — das ist eine Kontaktfuge und
+keine Schweißnaht.
+
+Nach jedem Körper steht im Protokoll, was herausgekommen ist:
+
+    Volumen V34: 75437 Tetraeder aus 9174 Randdreiecken (Kantenlänge 50 mm, 14512 Knoten)
+      Volumen 0.100611 m^3 gegen 0.100602 m^3 aus der Hülle (Abweichung 0.009 %),
+      Güte min 0.005 / Mittel 0.685, Randtreue 99.96 % (größter Abstand zur Hülle 18.01 mm)
+
+Das ist keine Zierde, sondern die Probe: das **Volumen** des Netzes gegen das
+Volumen der Randhülle (Gaußscher Satz), die **Güte** der Elemente (1 = regulärer
+Tetraeder, 0 = flach) und die **Randtreue** — wieviel des Netzrandes wirklich
+auf der Geometrie liegt. Ist die Randhülle nicht dicht, wird gar nicht
+vernetzt: ein Netz aus einer undichten Hülle wäre stillschweigend falsch.
 
 „Netz löschen" nimmt die Elemente wieder weg, die Geometrie bleibt stehen.
 Eine Fläche, die noch einen Volumenkörper berandet, lässt sich nicht löschen —
