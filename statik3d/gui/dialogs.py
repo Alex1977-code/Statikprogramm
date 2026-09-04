@@ -345,6 +345,17 @@ class MemberDialog(QtWidgets.QDialog):
         self.lt = QtWidgets.QCheckBox("Biegedrillknicken nachweisen"); self.lt.setChecked(m.lt_check)
         self.sway_y = QtWidgets.QCheckBox("verschieblich um y"); self.sway_y.setChecked(m.sway_y)
         self.sway_z = QtWidgets.QCheckBox("verschieblich um z"); self.sway_z.setChecked(m.sway_z)
+        # Woelbkrafttorsion: die Verwoelbung ist an jedem Stabende entweder
+        # frei (Gabellagerung) oder behindert (Einspannung, Stirnplatte).
+        self.woelb = QtWidgets.QCheckBox("Wölbkrafttorsion nachweisen")
+        self.woelb.setChecked(m.woelb_check)
+        self.woelb.setToolTip("Für offene Querschnitte (I, U). Bei beidseits "
+                              "freier Verwölbung und konstantem Torsionsmoment "
+                              "ändert sich dadurch nichts.")
+        self.w_start = QtWidgets.QComboBox(); self.w_start.addItems(["frei", "behindert"])
+        self.w_start.setCurrentText(m.woelb_start)
+        self.w_ende = QtWidgets.QComboBox(); self.w_ende.addItems(["frei", "behindert"])
+        self.w_ende.setCurrentText(m.woelb_ende)
         self.cat = QtWidgets.QComboBox()
         self.cat.addItem("kein Ermüdungsnachweis", None)
         for c in DETAIL_CATEGORIES:
@@ -370,6 +381,8 @@ class MemberDialog(QtWidgets.QDialog):
         f.addRow("Lastangriff (Mcr)", self.loadpos)
         f.addRow(self.lt)
         f.addRow(row(self.sway_y, self.sway_z))
+        f.addRow(self.woelb)
+        f.addRow("Verwölbung Anfang / Ende", row(self.w_start, self.w_ende))
         f.addRow("Kerbfall Δσc [MPa]", self.cat)
         f.addRow("Kerbfall Schub Δτc [MPa]", self.cat_s)
         f.addRow("Schadensfolge / Konzept", row(self.consequence, self.assessment))
@@ -389,6 +402,9 @@ class MemberDialog(QtWidgets.QDialog):
         m.lt_check = self.lt.isChecked()
         m.sway_y = self.sway_y.isChecked()
         m.sway_z = self.sway_z.isChecked()
+        m.woelb_check = self.woelb.isChecked()
+        m.woelb_start = self.w_start.currentText()
+        m.woelb_ende = self.w_ende.currentText()
         c = self.cat.currentData()
         m.detail_category = float(c) * 1e6 if c else None
         m.detail_category_shear = float(self.cat_s.currentText()) * 1e6

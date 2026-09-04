@@ -1735,6 +1735,50 @@ class Report:
             self._warnings.append("Nachweise NICHT erfüllt für: " + ", ".join(nf))
         return b
 
+    def _woelbkrafttorsion(self, mc) -> list:
+        """Woelbkrafttorsion eines Stabes (6.2.7) - Bimoment und Woelbspannung.
+
+        Ohne diesen Abschnitt stuende im Statikdokument eine Torsion, von der
+        niemand weiss, auf welchem Weg sie getragen wird. Genau darauf kommt es
+        beim offenen Querschnitt an: EN 1993-1-1, 6.2.7(7) sagt, dass bei
+        I- und H-Profilen die St.-Venant-Torsion vernachlaessigt werden darf -
+        also traegt die Woelbkrafttorsion.
+        """
+        woelb = getattr(mc, "woelb", None)
+        if not woelb:
+            return []
+        b = [self._h(4, "Wölbkrafttorsion (6.2.7)")]
+        rows = [["Kombination", "Rand Anfang/Ende", "λ·L [–]", "B_max [kNm²]",
+                 "x(B_max) [m]", "σ_w [N/mm²]", "Anteil Wölbtorsion"]]
+        for w in woelb:
+            rows.append([w.get("combo", ""), " / ".join(w.get("rand", ("", ""))),
+                         fmt(w.get("lamL", 0.0), 3),
+                         fmt(w.get("B_max", 0.0) / 1e3, 3),
+                         fmt(w.get("x_max", 0.0), 2),
+                         fmt(w.get("sigma_w_max", 0.0) / 1e6, 1),
+                         fmt(100 * w.get("anteil_woelb", 0.0), 1) + " %"])
+        rows, note = self._truncate(rows)
+        b.append(("table", rows,
+                  "Aufteilung des Torsionsmoments: M_t = M_t,v + M_t,w mit "
+                  "M_t,v = G I_t θ' (St.-Venant) und M_t,w = −E I_w θ''' "
+                  "(Wölbkrafttorsion); B = −E I_w θ'' ist das Wölbbimoment, "
+                  "σ_w = B ω/I_w die Wölbnormalspannung",
+                  None, "compact"))
+        if note:
+            b.append(("note", note))
+        sw = next((w.get("sektor") for w in woelb if w.get("sektor")), None)
+        if sw is not None:
+            b.append(("kv", [
+                ("ω_max", f"{fmt(sw.omega_max * 1e4, 2)} cm² ({sw.ort_omega})"),
+                ("S_ω,max", f"{fmt(sw.S_max * 1e8, 1)} cm⁴ ({sw.ort_S}, "
+                            f"t = {fmt(sw.t_S * 1e3, 1)} mm)"),
+                ("Probe I_w", f"{fmt(sw.Iw_probe * 1e12, 1)} cm⁶ aus ∫ω² t ds"),
+            ], "Wölbordinaten des Querschnitts"))
+        hinweise = {w.get("hinweis") for w in woelb if w.get("hinweis")}
+        for h in sorted(hinweise):
+            b.append(("note", h))
+        return b
+
     def _wirksamer_querschnitt(self, best: dict, sec) -> list:
         """Herleitung der wirksamen Querschnittswerte eines Klasse-4-Stabes."""
         w = (best or {}).get("wirksam") or {}
@@ -1872,6 +1916,7 @@ class Report:
                       f"M_y = {fmt(best.get('My', 0.0) / 1e3, 2)} kNm, M_z = {fmt(best.get('Mz', 0.0) / 1e3, 2)} kNm",
                       None, ""))
             b.extend(self._wirksamer_querschnitt(best, sec))
+        b.extend(self._woelbkrafttorsion(mc))
         # Stabilitaet
         if mc.stability:
             b.append(self._h(4, "Stabilitätsnachweise (6.3)"))

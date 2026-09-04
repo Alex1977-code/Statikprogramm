@@ -167,6 +167,15 @@ def main():
     d5 = dg.AutoCombinationDialog(w, w.model.design)
     d6 = dg.FatigueLoadDialog(w, w.model)
     mem = next(iter(w.model.members.values()))
+    d7 = dg.MemberDialog(w, mem, 6.0)
+    # Wölbkrafttorsion: die Randbedingung der Verwölbung gehört in die Maske
+    d7.w_start.setCurrentText("behindert")
+    d7.apply(mem)
+    check("Wölbrandbedingung aus der Stabmaske übernommen",
+          mem.woelb_start == "behindert" and mem.woelb_ende == "frei"
+          and mem.woelb_check,
+          f"{mem.woelb_start}/{mem.woelb_ende}")
+    mem.woelb_start = "frei"
     d7 = dg.MemberDialog(w, mem, 6.0); d7.apply(mem)
     d8 = dg.DesignSettingsDialog(w, w.model.design); d8.apply(w.model.design)
     d9 = dg.ContactPairDialog(w, w.model, 2)

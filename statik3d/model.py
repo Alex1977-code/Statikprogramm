@@ -914,6 +914,16 @@ class Member:
     sway_z: bool = False               # verschieblich um z (Cmz = 0.9)
     a_steifen: float = 0.0             # Abstand der Quersteifen [m] (0 = nur an den Auflagern)
     starre_endsteife: bool = False     # starre Endquersteife (EN 1993-1-5, Tab. 5.1)
+    #: Woelbkrafttorsion (DIN EN 1993-1-1, 6.2.7). Die Verwoelbung ist an
+    #: einem Stabende entweder **frei** (Gabellagerung, freies Ende) oder
+    #: **behindert** (Einspannung, Stirnplatte, angeschweisste Steife). Die
+    #: Vorgabe „frei/frei" ist der Regelfall und aendert nichts an der
+    #: bisherigen Rechnung: bei konstantem Torsionsmoment entsteht dann keine
+    #: Woelbkrafttorsion. Erst eine Behinderung - oder eine Streckentorsion -
+    #: erzeugt ein Woelbbimoment.
+    woelb_start: str = "frei"          # frei | behindert
+    woelb_ende: str = "frei"           # frei | behindert
+    woelb_check: bool = True           # Woelbkrafttorsion nachweisen
     detail_category: Optional[float] = None       # Kerbfall Delta-sigma_c [Pa], z.B. 71e6
     detail_category_shear: Optional[float] = None  # Kerbfall Schub Delta-tau_c [Pa]
     fatigue_points: str = "flanges"    # Spannungspunkte fuer Ermuedung

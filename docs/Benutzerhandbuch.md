@@ -596,6 +596,15 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
 
 * Querschnittsnachweise an allen Nachweisstellen (Klasse, N, V, M, M+V, M+N,
   Torsion, Vergleichsspannung),
+* **Wölbkrafttorsion** bei offenen Querschnitten (I, U): das Torsionsmoment
+  wird in den St.-Venant-Anteil und den Wölbanteil aufgeteilt, das
+  Wölbbimoment B und die Wölbnormalspannung σ_w werden ausgewiesen und gehen
+  in die Vergleichsspannung ein. In der Stabmaske steht dazu, ob die
+  Verwölbung am Anfang und am Ende **frei** (Gabellagerung, freies Ende) oder
+  **behindert** (Einspannung, Stirnplatte) ist. Vorgabe ist frei/frei — dann
+  ändert sich bei konstantem Torsionsmoment nichts. Warum das wichtig ist,
+  sagt EC3 selbst: bei I- und H-Profilen darf die St.-Venant-Torsion
+  vernachlässigt werden (6.2.7(7)) — es trägt die Wölbkrafttorsion.
 * Biegeknicken um y und z (Knicklängen βy·L, βz·L oder explizit),
   Drillknicken, Biegedrillknicken (L_LT, kz, kw, C1 automatisch aus dem
   Momentenverlauf, Lastangriff oben/unten), Interaktion Gl. 6.61/6.62,

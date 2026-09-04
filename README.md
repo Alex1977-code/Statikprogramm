@@ -24,7 +24,7 @@ Handrechnungen (über 270 automatisierte Prüfungen, siehe unten).
 | **Lager** | je Freiheitsgrad starr/Feder/frei mit **Ausfall bei Zug oder Druck, Schlupf, Reibbeiwert und Grenzkraft**; **Linienlager** (Steifigkeit je m) und **Flächenlager/Bettung** (je m²); Stabendgelenke gelenkig oder als Drehfeder |
 | **Kontakt** | einseitige Lager (nur Druck, Bettung), Spaltelemente Knoten–Knoten, Kontaktpaare Knoten–Fläche (Schalen/Volumen) mit Coulomb-Reibung; Penalty-Verfahren mit Aktivmengen-Iteration |
 | **Querschnitte** | Profildatenbank **nach Land**: Europa (IPE, HEA/B/M, UPN, UPE, Winkel, SHS/RHS/CHS), Großbritannien (UB, UC, PFC), USA (W, C, HSS, Pipe) – 442 Profile; **zusammengesetzte Querschnitte** mit Versatz, Drehung, Spiegelung |
-| **Nachweise EC3** | Klassifizierung (Tab. 5.2, wirksame Querschnitte Kl. 4), Querschnittsnachweise 6.2 (N, V, M, M+V, M+N, Torsion, σv), Biegeknicken, Drillknicken, Biegedrillknicken (Mcr, C1 automatisch), Interaktion 6.3.3 Anhang B |
+| **Nachweise EC3** | Klassifizierung (Tab. 5.2, wirksame Querschnitte Kl. 4), Querschnittsnachweise 6.2 (N, V, M, M+V, M+N, Torsion, σv), **Wölbkrafttorsion** (Bimoment B, σ_w, τ_w bei I- und U-Profilen), Biegeknicken, Drillknicken, Biegedrillknicken (Mcr, C1 automatisch), Interaktion 6.3.3 Anhang B |
 | **Ermüdung** | EN 1993-1-9: Kerbfälle, Wöhlerlinien (m = 3/5, Dauerfestigkeit, Schwellenwert), Palmgren-Miner, γMf nach Schadensfolge |
 | **Analysen** | Lineare Statik, Modalanalyse, lineares Knicken (Lastfall oder Kombination als Grundzustand) |
 | **Import** | **RFEM/RSTAB-Projektdateien** (.rf5/.rf6/.rs5/.rs6/.rs8/.rs9 – Behälter wird untersucht und gelesen, soweit zugänglich), Statik3D-JSON, DXF, IFC (Statikmodell: InfoCAD, RFEM, Allplan …), SAF (.xlsx: RFEM 6, SCIA …), RFEM/RSTAB-Tabellenexport (.xlsx/.csv), Abaqus/CalculiX .inp, Nastran .bdf, STEP/IGES/BREP/STL über gmsh |
@@ -223,7 +223,7 @@ statik3d/
   parallel.py        Prozess-Pool, Auftrags-Registry
   farm.py            Rechnerfarm (Server / Worker / Client)
   jobs.py            registrierte Auftragsarten
-  ec3/               Klassifizierung, Querschnitt, Stabilität, Ermüdung, Nachweisführung
+  ec3/               Klassifizierung, Querschnitt, Stabilität, Wölbkrafttorsion, Ermüdung
   importers/         DXF, IFC, SAF, RFEM-Tabellen, Abaqus, Nastran, xlsx-Leser
   report/            HTML/PDF/Markdown-Bericht, SVG-Grafiken
   elements/          beam3d, shell, solid
