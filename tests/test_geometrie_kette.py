@@ -331,10 +331,51 @@ def test_rand_zusammensetzen():
           len(ring) == 5, str(ring))
 
 
+def test_kreisflaeche_aus_zwei_boegen():
+    """Bohrung, Buchse, Augenblech: ein Kreis aus zwei Halbboegen zwischen
+    denselben zwei Knoten. Ueber die Knotenfolge sind das zwei Punkte und
+    damit kein Polygon - erst die abgetasteten Boegen ergeben den Kreis."""
+    from statik3d.gui import viewport as vp
+    r = 2.0
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_nodes(np.array([[-r, 0, 0], [r, 0, 0.]]))
+    m.add_line("B1", [0, 1], "arc", punkte=[(-r, 0, 0), (0, r, 0), (r, 0, 0)])
+    m.add_line("B2", [1, 0], "arc", punkte=[(r, 0, 0), (0, -r, 0), (-r, 0, 0)])
+    f = m.add_flaeche("Buchse", ["B1", "B2"], material="S235")
+
+    check("ueber die Knoten schliesst der Rand nicht", f.randknoten(m) == [],
+          str(f.randknoten(m)))
+    P = f.randpunkte(m)
+    check("ueber die Kurven schliesst er", len(P) == 32, f"{len(P)} Punkte")
+    rad = np.linalg.norm(P - P.mean(axis=0), axis=1)
+    close("alle Randpunkte liegen auf dem Kreis", float(rad.min()), r, 1e-12, " m")
+    close("und keiner darueber hinaus", float(rad.max()), r, 1e-12, " m")
+    close("Flaecheninhalt (fein abgetastet)", f.inhalt(m), np.pi * r * r,
+          1e-3 * np.pi * r * r, " m^2")
+    close("Anzeigepolygon liegt darunter (einbeschrieben)",
+          polygon_flaeche(P), np.pi * r * r * np.sin(np.pi / 16) / (np.pi / 16),
+          1e-9, " m^2")
+    check("die Flaeche wird im Viewport gefunden",
+          vp.flaeche_at(m, [0.0, 0.0, 0.0], m.characteristic_size()) == "Buchse")
+
+    # Ein halber Umlauf bleibt ein halber Umlauf
+    from statik3d.model import Flaeche
+    g = Flaeche("Halb", ["B1"])
+    check("ein einzelner Bogen schliesst nicht", len(g.randpunkte(m)) == 0,
+          str(len(g.randpunkte(m))))
+    close("und hat keinen Inhalt", g.inhalt(m), 0.0, 1e-12, " m^2")
+    try:
+        m.add_flaeche("Halb", ["B1"], material="S235")
+        check("ein offener Rand wird abgewiesen", False, "keine Meldung")
+    except ValueError as ex:
+        check("ein offener Rand wird abgewiesen", "geschlossen" in str(ex), str(ex))
+
+
 def main():
     for t in (test_flaeche_aus_linien, test_koerper_aus_flaechen,
               test_gekruemmter_rand, test_bericht_uebernahme,
-              test_rand_zusammensetzen):
+              test_rand_zusammensetzen, test_kreisflaeche_aus_zwei_boegen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

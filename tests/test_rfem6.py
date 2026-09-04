@@ -60,6 +60,16 @@ CREATE TABLE Line (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
 CREATE TABLE LineImplPolyline (id INTEGER PRIMARY KEY, version INTEGER, parent_id bigint);
 CREATE TABLE LineImplPolyline_definitionNodes (id INTEGER, container_order INTEGER,
                    reference_id bigint, reference_table TEXT);
+CREATE TABLE LineImplArc (id INTEGER PRIMARY KEY, version INTEGER, parent_id bigint,
+                   rotationType INTEGER, angle double precision,
+                   controlPoint_id bigint, controlPoint_table TEXT);
+CREATE TABLE LineImplArc_definitionNodes (id INTEGER, container_order INTEGER,
+                   reference_id bigint, reference_table TEXT);
+CREATE TABLE ControlPoint (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE ControlPointImpl (id INTEGER PRIMARY KEY, version INTEGER, parent_id bigint,
+                   coordinates_x double precision, coordinates_y double precision,
+                   coordinates_z double precision);
 CREATE TABLE Member (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
                    impl_id bigint, impl_table TEXT);
 CREATE TABLE MemberImplTension (id INTEGER PRIMARY KEY, version INTEGER, parent_id bigint,
@@ -143,6 +153,8 @@ CREATE TABLE SurfaceImplPlane_integratedOpenings (id INTEGER, container_order IN
 CREATE TABLE SurfaceStiffnessStandard (id INTEGER PRIMARY KEY, version INTEGER,
                    owner_id bigint, owner_table TEXT, thickness_id bigint);
 CREATE TABLE SurfaceStiffnessWithoutThickness (id INTEGER PRIMARY KEY, version INTEGER,
+                   owner_id bigint, owner_table TEXT);
+CREATE TABLE SurfaceStiffnessRigid (id INTEGER PRIMARY KEY, version INTEGER,
                    owner_id bigint, owner_table TEXT);
 CREATE TABLE Thickness (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
                    impl_id bigint, impl_table TEXT);
@@ -262,7 +274,8 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
              surface_supports=(), surfaces=(), hinges=(), partials=(),
              solids=(), releases=(), surface_loads=(), load_cases=(),
              free_loads=0, openings=(), nodal_loads=(), prestress=(),
-             combinations=(), boundary_lines=None):
+             combinations=(), boundary_lines=None, stiffness_reverse=False,
+             rigid_surfaces=()):
     """Modelldatenbank im RFEM-6-Schema erzeugen.
 
     ``surfaces``   Eintrag ``[Knoten...]``           -> Flaeche ohne Dicke
@@ -276,18 +289,36 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
     ``prestress``     (Lastfall-id, [Stabnummern], N_0 [N])
     ``combinations``  (Name, Situationsart, {Lastfall-id: Faktor})
     ``boundary_lines`` {Flaechennummer: [Liniennummern]} - Randlinien
+    ``stiffness_reverse`` Vorwaertszeiger der Flaeche leer lassen; die
+                   Steifigkeit ist dann nur ueber ``owner_id`` zu finden
+    ``rigid_surfaces`` Flaechennummern mit SurfaceStiffnessRigid
     """
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
     for i, (x, y, z) in enumerate(nodes, 1):
         con.execute("INSERT INTO Node VALUES (?,1,?,?,'NodeImplStandard')", (i, i, i))
         con.execute("INSERT INTO NodeImplStandard VALUES (?,1,?,?,?,?)", (i, i, x, y, z))
-    for i, ns in enumerate(lines, 1):
-        con.execute("INSERT INTO Line VALUES (?,1,?,?,'LineImplPolyline')", (i, i, i))
-        con.execute("INSERT INTO LineImplPolyline VALUES (?,1,?)", (i, i))
+    cp_id = 0
+    for i, entry in enumerate(lines, 1):
+        # [Knoten]                  -> Polylinie
+        # ([Knoten], (x, y, z))     -> Bogen ueber seinen Kontrollpunkt
+        ns, mitte = (entry, None) if not isinstance(entry, tuple) else entry
+        if mitte is None:
+            con.execute("INSERT INTO Line VALUES (?,1,?,?,'LineImplPolyline')", (i, i, i))
+            con.execute("INSERT INTO LineImplPolyline VALUES (?,1,?)", (i, i))
+            tbl = "LineImplPolyline_definitionNodes"
+        else:
+            cp_id += 1
+            con.execute("INSERT INTO ControlPoint VALUES (?,1,?,?,'ControlPointImpl')",
+                        (cp_id, cp_id, cp_id))
+            con.execute("INSERT INTO ControlPointImpl VALUES (?,1,?,?,?,?)",
+                        (cp_id, cp_id, mitte[0], mitte[1], mitte[2]))
+            con.execute("INSERT INTO Line VALUES (?,1,?,?,'LineImplArc')", (i, i, i))
+            con.execute("INSERT INTO LineImplArc VALUES (?,1,?,2,0.0,?,'ControlPoint')",
+                        (i, i, cp_id))
+            tbl = "LineImplArc_definitionNodes"
         for j, n in enumerate(ns):
-            con.execute("INSERT INTO LineImplPolyline_definitionNodes VALUES (?,?,?,'Node')",
-                        (i, j, n))
+            con.execute(f"INSERT INTO {tbl} VALUES (?,?,?,'Node')", (i, j, n))
     # Material: S355
     con.execute("INSERT INTO Material VALUES (1,1,1,1,'MaterialImpl')")
     con.execute("INSERT INTO MaterialImpl VALUES (1,1,'',1,22175,10)")
@@ -346,12 +377,16 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
         # ([Knoten], t)   -> Flaeche mit Dicke t
         corners, t = (entry, None) if not isinstance(entry, tuple) else entry
         if t == 0.0:
-            con.execute("INSERT INTO SurfaceStiffnessWithoutThickness VALUES "
-                        "(?,1,?,'SurfaceImplPlane')", (i, i))
+            steif = ("SurfaceStiffnessRigid" if i in rigid_surfaces
+                     else "SurfaceStiffnessWithoutThickness")
+            con.execute(f"INSERT INTO {steif} VALUES (?,1,?,'SurfaceImplPlane')", (i, i))
             con.execute("INSERT INTO Surface VALUES (?,1,?,?,'SurfaceImplPlane')",
                         (i, i, i))
-            con.execute("INSERT INTO SurfaceImplPlane VALUES (?,1,?,?,"
-                        "'SurfaceStiffnessWithoutThickness',0)", (i, i, i))
+            # Vorwaertszeiger - in manchen Dateien ist er leer, dann bleibt
+            # nur der Rueckzeiger owner_id der Steifigkeitstabelle
+            con.execute("INSERT INTO SurfaceImplPlane VALUES (?,1,?,?,?,0)",
+                        (i, i, None if stiffness_reverse else i,
+                         None if stiffness_reverse else steif))
             for j, n in enumerate(corners):
                 con.execute("INSERT INTO SurfaceImplPlane_cornerNodes "
                             "VALUES (?,?,?,'Node')", (i, j, n))
@@ -1192,13 +1227,126 @@ def test_knoten_zusammenfuehren():
     close("Einflussflaeche unveraendert", ss.areas[1], 4.0, 1e-12, " m^2")
 
 
+# --------------------------------------------------------------------------
+# 7) Boegen ueber ihre Kontrollpunkte - Augenbleche, Bolzen, Buchsen
+# --------------------------------------------------------------------------
+def test_boegen_und_kreisflaechen():
+    """Ein Kreis besteht in RFEM aus zwei Halbboegen zwischen denselben zwei
+    Knoten. Ueber die Knoten allein waeren das zwei Punkte - die Flaeche fiele
+    in ihre Sehne zusammen und waere unsichtbar. Genau so fehlten dem Nutzer
+    Augenbleche, Bolzen und Buchsen."""
+    tmp = tempfile.mkdtemp()
+    try:
+        r = 0.05
+        f = make_rf6(
+            os.path.join(tmp, "buchse.rf6"),
+            # Knoten 1 und 2 liegen sich auf dem Kreis gegenueber,
+            # Knoten 3/4 sind die Scheitel der beiden Halbboegen
+            nodes=[(-r, 0, 0), (r, 0, 0), (0, 0, 0), (2 * r, 0, 0)],
+            lines=[([1, 2], (0.0, r, 0.0)),      # oberer Halbbogen
+                   ([2, 1], (0.0, -r, 0.0)),     # unterer Halbbogen
+                   [3, 4]],                      # eine gerade Linie zum Vergleich
+            members=[], supports=[],
+            surfaces=[([1, 2], 0.0)],
+            boundary_lines={1: [1, 2]})
+        log = []
+        m = R6.read_rf6(f, log=log)
+        b = m.lines["L1"]
+        check("Bogen wird als Bogen gelesen", b.typ == "arc", b.typ)
+        check("der Kontrollpunkt steht in der Geometrie",
+              len(b.geometrie.get("punkte") or []) == 3,
+              str(b.geometrie.get("punkte")))
+        close("der Bogen ist ein Halbkreis", b.laenge(m), np.pi * r, 1e-9, " m")
+        check("die gerade Linie bleibt gerade", m.lines["L3"].typ == "polyline",
+              m.lines["L3"].typ)
+        check("Protokoll nennt die Boegen",
+              any("2x arc" in z for z in log),
+              next((z for z in log if "Linien gelesen" in z), ""))
+
+        fl = m.flaechen["F1"]
+        check("ueber die Knoten schliesst der Rand nicht",
+              len(fl.randknoten(m)) == 0, str(fl.randknoten(m)))
+        P = fl.randpunkte(m)
+        check("ueber die Kurven schliesst er", len(P) >= 3, f"{len(P)} Punkte")
+        rad = np.linalg.norm(P - P.mean(axis=0), axis=1)
+        close("alle Randpunkte liegen auf dem Kreis", float(rad.max()), r, 1e-9, " m")
+        close("die Flaeche ist die Kreisflaeche", fl.inhalt(m), np.pi * r * r,
+              2e-3 * np.pi * r * r, " m^2")
+        check("und sie steht im Modellbaum-Objekt", fl.linien == ["L1", "L2"],
+              str(fl.linien))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# 8) Flaechensteifigkeit auch ueber den Rueckzeiger owner_id
+# --------------------------------------------------------------------------
+def test_steifigkeit_rueckzeiger():
+    """In manchen Dateien ist SurfaceImpl*.stiffness_table leer; die Zuordnung
+    steht dann nur in SurfaceStiffness*.owner_id. Ohne den Rueckweg waere jede
+    Flaeche 'unbekannt' und rutschte als Null-Element durch."""
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "rueck.rf6"),
+            nodes=[(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)],
+            lines=[], members=[], supports=[],
+            surfaces=[([1, 2, 3, 4], 0.0), ([1, 2, 3, 4], 0.0)],
+            rigid_surfaces=(2,), stiffness_reverse=True)
+        log = []
+        m = R6.read_rf6(f, log=log)
+        text = "\n".join(log)
+        check("keine Flaeche bleibt unbekannt", "unbekannt" not in text,
+              next((z for z in log if "unbekannt" in z), ""))
+        check("Null-Element erkannt", "ohne Dicke (Null-Element)" in text,
+              next((z for z in log if "Null-Element" in z), ""))
+        check("starre Flaeche erkannt", "starr" in text,
+              next((z for z in log if "starr" in z), ""))
+        check("beide Flaechen sind Objekte", len(m.flaechen) == 2, str(len(m.flaechen)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# 9) Aufeinanderliegende Knoten werden nicht stillschweigend verschweisst
+# --------------------------------------------------------------------------
+def test_kein_stilles_verschmelzen():
+    """An einer Kontaktfuge und an jeder Flaechenfreigabe liegen die Knoten
+    absichtlich aufeinander. Werden sie zusammengefuehrt, ist das Modell dort
+    verschweisst - zu steif, und die Freigaben laufen ins Leere."""
+    from statik3d.importers.rfem_native import import_rfem_native
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "fuge.rf6"),
+            nodes=[(0, 0, 0), (1, 0, 0), (1, 0, 0), (2, 0, 0)],
+            lines=[[1, 2], [3, 4]],
+            members=[(1, None, None), (2, None, None)],
+            supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1])])
+        log = []
+        m = import_rfem_native(f, log=log)
+        check("die Fuge bleibt offen", m.nn == 4, f"nn = {m.nn}")
+        check("und das Protokoll sagt es",
+              any("NICHT zusammengefuehrt" in z for z in log),
+              next((z for z in log if "liegen auf" in z), ""))
+        log2 = []
+        m2 = import_rfem_native(f, log=log2, merge_nodes=True)
+        check("auf Verlangen wird zusammengefuehrt", m2.nn == 3, f"nn = {m2.nn}")
+        check("auch das steht im Protokoll",
+              any("zusammengefuehrt" in z and "NICHT" not in z for z in log2),
+              next((z for z in log2 if "zusammengefuehrt" in z), ""))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     for t in (test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
               test_volumenkoerper, test_stabtypen, test_flaechenfreigaben,
               test_lastfaelle_und_lasten, test_lasten_und_kombinationen,
               test_dispatcher_und_hilfen,
-              test_knoten_zusammenfuehren):
+              test_knoten_zusammenfuehren, test_boegen_und_kreisflaechen,
+              test_steifigkeit_rueckzeiger, test_kein_stilles_verschmelzen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

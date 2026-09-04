@@ -118,6 +118,9 @@ def add_linien(plotter, model: Model, hervor: list = None):
     dargestellt. In einem aus RFEM uebernommenen Modell besteht die Geometrie
     fast nur aus Linien; ohne sie sieht man ein leeres Bild und haelt den
     Import fuer gescheitert.
+
+    Krumme Linien werden auf ihrer **wahren Kurve** gezeichnet, nicht als
+    Sehne durch die Stuetzknoten - sonst wird aus einer Bohrung eine Strecke.
     """
     linien = getattr(model, "lines", {}) or {}
     if not linien:
@@ -130,9 +133,15 @@ def add_linien(plotter, model: Model, hervor: list = None):
         idx = [int(n) for n in ln.nodes if 0 <= int(n) < model.nn]
         if len(idx) < 2:
             continue
+        X = model.nodes[idx]
+        if (ln.typ or "polyline") != "polyline":
+            try:
+                X = np.asarray(ln.punkte(model, TEILUNG_KURVE), float)
+            except Exception:            # noqa: BLE001 - dann eben die Sehne
+                X = model.nodes[idx]
         basis = len(pts)
-        pts.extend(model.nodes[idx])
-        for i in range(len(idx) - 1):
+        pts.extend(X)
+        for i in range(len(X) - 1):
             zellen.extend([2, basis + i, basis + i + 1])
     if pts:
         plotter.add_mesh(pv.PolyData(np.asarray(pts, float), lines=np.asarray(zellen)),
@@ -140,6 +149,9 @@ def add_linien(plotter, model: Model, hervor: list = None):
 
 
 FARBE_LINIE = "#7a8a99"
+
+#: So viele Abschnitte bekommt eine krumme Linie beim Zeichnen
+TEILUNG_KURVE = 16
 
 
 def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = None):
@@ -154,7 +166,10 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
     leicht ueber tausend Flaechen. Je Flaeche ein eigener Darsteller braucht
     Minuten und macht die Ansicht unbedienbar; gebuendelt sind es zwei.
     ``raender`` nimmt bereits berechnete Randpolygone entgegen
-    ({Flaechenname: [Knoten]}), damit sie nicht zweimal ermittelt werden.
+    ({Flaechenname: Punktfolge}), damit sie nicht zweimal ermittelt werden.
+    Es sind **Punkte**, keine Knotennummern: eine Bohrung oder eine Buchse
+    besteht aus zwei Halbboegen zwischen denselben zwei Knoten - ueber die
+    Knoten allein waere davon nichts zu sehen.
     """
     flaechen = getattr(model, "flaechen", {}) or {}
     if not flaechen:
@@ -164,7 +179,7 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
     def ring_von(name, f):
         r = raender.get(name)
         if r is None:
-            r = f.randknoten(model)
+            r = f.randpunkte(model)
             raender[name] = r
         return r
 
@@ -177,7 +192,7 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
         if len(ring) < 3:
             continue
         basis = len(pts)
-        pts.extend(model.nodes[ring])
+        pts.extend(np.asarray(ring, float))
         faces.append(len(ring))
         faces.extend(range(basis, basis + len(ring)))
     if pts:
@@ -198,8 +213,9 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
             if len(ring) < 3:
                 continue
             basis = len(kpts)
-            kpts.extend(model.nodes[ring + [ring[0]]])
-            for i in range(len(ring)):
+            P = np.asarray(ring, float)
+            kpts.extend(np.vstack([P, P[:1]]))
+            for i in range(len(P)):
                 klines.extend([2, basis + i, basis + i + 1])
     if kpts:
         plotter.add_mesh(pv.PolyData(np.asarray(kpts, float),
@@ -263,10 +279,9 @@ def flaeche_at(model: Model, punkt, size: float):
     p = np.asarray(punkt, float).ravel()[:3]
     best, bestd = None, None
     for name, f in (getattr(model, "flaechen", {}) or {}).items():
-        ring = f.randknoten(model)
-        if len(ring) < 3:
+        X = np.asarray(f.randpunkte(model), float)
+        if len(X) < 3:
             continue
-        X = model.nodes[ring]
         d = float(np.linalg.norm(X.mean(axis=0) - p))
         r = float(np.linalg.norm(X - X.mean(axis=0), axis=1).max())
         if d <= max(r, 0.02 * size) and (bestd is None or d < bestd):
@@ -289,13 +304,14 @@ def koerper_at(model: Model, punkt, size: float):
     p = np.asarray(punkt, float).ravel()[:3]
     best, bestd = None, None
     for name, k in (getattr(model, "koerper", {}) or {}).items():
-        idx = sorted({n for fn in k.flaechen
-                      for n in ((getattr(model, "flaechen", {}) or {})
-                                .get(fn).randknoten(model)
-                                if (getattr(model, "flaechen", {}) or {}).get(fn) else [])})
-        if len(idx) < 4:
+        teile = [np.asarray((getattr(model, "flaechen", {}) or {})[fn].randpunkte(model), float)
+                 for fn in k.flaechen if fn in (getattr(model, "flaechen", {}) or {})]
+        teile = [t for t in teile if len(t)]
+        if not teile:
             continue
-        X = model.nodes[idx]
+        X = np.vstack(teile)
+        if len(X) < 4:
+            continue
         d = float(np.linalg.norm(X.mean(axis=0) - p))
         r = float(np.linalg.norm(X - X.mean(axis=0), axis=1).max())
         if d <= max(r, 0.02 * size) and (bestd is None or d < bestd):

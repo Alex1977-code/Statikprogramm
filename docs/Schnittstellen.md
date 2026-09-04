@@ -136,12 +136,49 @@ Aufbau der Datenbank (durchgehend dasselbe Muster):
 
 Federwerte: **`inf` = starr, `0` = frei, endlicher Wert = Federsteifigkeit**.
 
-Übernommen werden Knoten, Linien (Polygonzüge und Bögen), Stäbe mit
+Übernommen werden Knoten, Linien (Polygonzüge, Bögen, Kreise, Parabeln,
+Ellipsen und NURBS — jeweils über ihre Kontrollpunkte), Stäbe mit
 Querschnitt, Material, Verdrehung, Typ und Gelenken, Knoten-, Linien- und
 Flächenlager mit ihren Nichtlinearitäten, Flächen mit Dicke als Schalenelemente,
 Volumenkörper einfacher Topologie als Volumenelemente, die Flächenfreigaben mit
 ihren Typeinstellungen sowie die Lastfälle mit Name, Einwirkungskategorie,
 Eigengewichtsfaktor und den Flächenlasten.
+
+### Linienarten: Bögen über ihre Kontrollpunkte
+
+Eine krumme Linie ist in RFEM **nicht** durch ihre Definitionsknoten
+bestimmt. Der dritte Punkt eines Bogens steht als *Kontrollpunkt* in einer
+eigenen Tabelle:
+
+    LineImplArc.controlPoint_id → ControlPoint.impl_id
+                                → ControlPointImpl.coordinates_x/y/z
+
+Ohne diesen Punkt bleibt von einem Bogen nur die Sehne durch seine beiden
+Knoten. Das trifft nicht nur die Darstellung: eine **Bohrung, eine Buchse,
+ein Bolzen oder ein Augenblech** ist in RFEM ein Kreis aus *zwei Halbbögen
+zwischen denselben zwei Knoten*. Über die Knotenfolge sind das zwei Punkte
+und damit kein Polygon — die Fläche fällt in ihre Sehne zusammen und ist
+weder sichtbar noch anklickbar. In einer Lagerkonstruktion waren das
+320 von 1375 Flächen.
+
+Übernommen werden:
+
+| RFEM-Tabelle | Linienart | woher die Form kommt |
+|---|---|---|
+| `LineImplPolyline` | Polylinie | die Definitionsknoten |
+| `LineImplArc` | Bogen | Anfang, **Kontrollpunkt**, Ende |
+| `LineImplCircle` | Kreis | `center_x/y/z`, `radius`, `normal_x/y/z` |
+| `LineImplParabola` | Parabel | Anfang, **Kontrollpunkt**, Ende |
+| `LineImplEllipticalArc`, `LineImplEllipse` | Ellipse | die beiden Hauptachsenpunkte und der Umfangspunkt |
+| `LineImplNurbs` | NURBS | `LineImplNurbs_controlPoints` mit Gewichten, `degree` |
+| `LineImplSpline` | Spline | genähert über die Definitionsknoten (wird gemeldet) |
+
+Die Form steht danach in `Line.geometrie` und wird überall auf ihrer wahren
+Kurve ausgewertet: beim Zeichnen, beim Zusammensetzen des Flächenrandes, beim
+Flächeninhalt und beim Vernetzen. Was sich nicht rekonstruieren lässt, wird
+zur Geraden — **mit** Meldung im Protokoll, nie stillschweigend:
+
+    2807 Linien gelesen (1356x arc, ueber ihre Kontrollpunkte gefuehrt)
 
 ### Stabtypen
 
@@ -196,6 +233,10 @@ Fehlt die Datei, gilt die Programmvorgabe — und das Protokoll sagt es.
 Die Fläche zeigt über `stiffness_id`/`stiffness_table` auf ihr
 Steifigkeitsobjekt; nur `SurfaceStiffnessStandard` (und die Membranformen)
 tragen über `Thickness` → `ThicknessImplUniform` eine Dicke und ein Material.
+Der Zeiger steht in **beiden Richtungen** in der Datenbank — rückwärts als
+`SurfaceStiffness*.owner_id`/`owner_table`. In manchen Dateien ist die
+Vorwärtsspalte leer; dann wird der Rückweg genommen. Ohne ihn wäre jede
+Fläche „unbekannt" und rutschte als Null-Element durch.
 **Jede** Fläche wird ein Modellobjekt `Flaeche` — mit ihren Randlinien
 (`SurfaceImplPlane_boundaryLines` bzw. `…Quadrangle_boundaryLines`), ihrer
 Dicke und ihrem Werkstoff. Sie steht damit im Modellbaum und in der Tabelle
@@ -211,7 +252,13 @@ gleich vernetzt; gleiche Dicken teilen sich eine Schalenkennung (`d12` für
 | `SurfaceStiffnessWithoutThickness` | nein | Null-Element, keine Elemente |
 | `SurfaceStiffnessRigid` | nein | starre Fläche, keine Elemente |
 | `SurfaceStiffnessLoadTransfer`, `…LoadDistribution` | nein | reine Lastverteilung |
-| `SurfaceStiffnessGroundwater`, `…Floor` | nein | keine Elemente |
+| `SurfaceStiffnessGroundwater`, `…Discontinuity`, `…Modifications` | nein | keine Elemente |
+| `SurfaceStiffnessFloor`, `…FloorDiaphragm(Version1)`, `…FloorFlexibleDiaphragm(Version1)`, `…FloorSemirigid(Version1)` | nein | Deckenscheiben, keine Elemente |
+
+Alle 18 Arten, die RFEM 6.11 kennt, stehen in `rfem6_db.SURFACE_STIFFNESS`.
+Eine Art, die dort fehlt (neue RFEM-Version), wird **nicht** stillschweigend
+zum Null-Element: trägt ihre Tabelle eine `thickness_id`, wird die Dicke
+übernommen und die Art im Protokoll beim Namen genannt.
 
 Zwei Fälle bleiben **absichtlich** ohne Elemente, weil ein stillschweigend zu
 steifes Modell schlimmer ist als eine sichtbare Lücke:

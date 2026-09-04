@@ -479,7 +479,20 @@ Volumenkörper als Objekt** (mit Randlinien, Dicke und Werkstoff), die Lager,
 die Flächenfreigaben, alle Lastfälle mit ihren Lasten (Vorspannung als
 gleichwertige Temperaturlast), die Kombinationen und die **Netzeinstellungen**
 aus `mesh.xml`. Was kein Netz bekommen konnte, steht trotzdem im Modellbaum
-und lässt sich dort vernetzen. Was gar nicht ging, steht Zeile für Zeile im
+und lässt sich dort vernetzen.
+
+**Krumme Linien** kommen mit ihrer wahren Form: Bögen, Kreise, Parabeln,
+Ellipsen und NURBS werden über ihre Kontrollpunkte gelesen, nicht als Sehne
+durch die Stützknoten. Das ist keine Kleinigkeit der Darstellung — eine
+Bohrung, eine Buchse, ein Bolzen oder ein Augenblech besteht in RFEM aus
+*zwei Halbbögen zwischen denselben zwei Knoten*; über die Knoten allein wäre
+das kein Polygon, und die Fläche fehlte im Bild wie im Modellbaum.
+
+**Aufeinanderliegende Knoten werden nicht zusammengeführt.** In einem
+RFEM-Volumenmodell liegen sie an jeder Kontaktfuge und jeder Flächenfreigabe
+absichtlich aufeinander; verschweißt wäre das Modell dort zu steif und die
+Freigaben liefen ins Leere. Wie viele es sind, steht im Protokoll; wer sie
+doch zusammenführen will, liest die Datei mit `merge_nodes=True`. Was gar nicht ging, steht Zeile für Zeile im
 Importprotokoll; Einzelheiten im Schnittstellenhandbuch. Die älteren nativen Formate (`.rf5`, `.rs6`, `.fem`)
 werden untersucht und, soweit ihr Behälter zugänglich ist, ausgelesen –
 andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder

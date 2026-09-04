@@ -1015,7 +1015,7 @@ class MainWindow(QtWidgets.QMainWindow):
             knoten = [int(x) for x in m.lines[name].nodes]
         elif art == "geoflaeche" and name in m.flaechen:
             f = m.flaechen[name]
-            knoten = list(f.randknoten(m))
+            knoten = list(f.randknoten(m)) or self._linienknoten(f.linien)
             for i in (f.elemente or []):
                 knoten += [int(x) for x in m.elements[i].nodes]
             if name not in self.sel_flaechen:
@@ -1025,7 +1025,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for fn in k.flaechen:
                 f = m.flaechen.get(fn)
                 if f is not None:
-                    knoten += list(f.randknoten(m))
+                    knoten += list(f.randknoten(m)) or self._linienknoten(f.linien)
             for i in (k.elemente or []):
                 knoten += [int(x) for x in m.elements[i].nodes]
             if name not in self.sel_koerper:
@@ -1052,6 +1052,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.leuchtet = self._elemente_zu(art, name)
         self.lbl_sel.setText(f"{len(knoten)} Knoten ausgewählt (Modellbaum)")
         self.redraw()
+
+    def _linienknoten(self, linien) -> list[int]:
+        """Die Knoten der genannten Linien - Rueckfall, wenn der Rand nicht
+        als Polygon schliesst (Kreis aus zwei Halbboegen)."""
+        m = self.model
+        return [int(n) for nm in linien if nm in m.lines
+                for n in m.lines[nm].nodes]
 
     def _elemente_zu(self, art: str, name: str) -> list[int]:
         """Die Elemente, die zu einem Zweig des Modellbaums gehoeren."""
@@ -2098,6 +2105,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def refresh_modelltabellen(self):
         m = self.model
         self._raender_stand = None
+        self._inhalte_stand = None
         if not hasattr(self, "tbl_knoten"):
             return
         # Knoten
@@ -2174,14 +2182,14 @@ class MainWindow(QtWidgets.QMainWindow):
         from .viewport import polygon_flaeche as _pf
         from ..elements import solid as _so
         zeilen = []
-        raender = self._raender()
         for name, f in (getattr(m, "flaechen", {}) or {}).items():
             if f.elemente:
                 A = sum(_pf(m.nodes[[int(n) for n in m.elements[i].nodes]])
                         for i in f.elemente if i < len(m.elements))
             else:
-                ring = raender.get(name) or []
-                A = _pf(m.nodes[ring]) if len(ring) >= 3 else 0.0
+                # Fein abgetastet, nicht ueber das Anzeigepolygon: eine
+                # Bohrung waere sonst um ein halbes Prozent zu klein.
+                A = self._inhalte().get(name, 0.0)
             zeilen.append([name, ", ".join(f.linien), f.dicke, f.material,
                            " × ".join(str(x) for x in f.teilung),
                            len(f.elemente or []), A, f.kommentar])
@@ -5381,19 +5389,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redraw()
 
     def _raender(self) -> dict:
-        """{Flaechenname: Randpolygon} - einmal je Modellstand berechnet.
+        """{Flaechenname: Randpunkte} - einmal je Modellstand berechnet.
 
         Das Randpolygon einer Flaeche entsteht aus ihren Linien; bei ueber
         tausend Flaechen darf das nicht bei jedem Neuzeichnen und jeder
-        Tabellenzeile neu geschehen.
+        Tabellenzeile neu geschehen. Es sind Punkte, keine Knotennummern:
+        krumme Randlinien werden auf ihrer wahren Kurve abgetastet, sonst
+        faellt eine Bohrung aus zwei Halbboegen in ihre Sehne zusammen.
         """
         m = self.model
         stand = (id(m), len(m.flaechen), len(m.lines), m.nn)
         if getattr(self, "_raender_stand", None) != stand:
             self._raender_stand = stand
-            self._raender_zwischen = {name: f.randknoten(m)
+            self._raender_zwischen = {name: f.randpunkte(m)
                                       for name, f in m.flaechen.items()}
         return self._raender_zwischen
+
+    def _inhalte(self) -> dict:
+        """{Flaechenname: Flaecheninhalt [m^2]} - einmal je Modellstand.
+
+        Fein abgetastet (siehe Flaeche.inhalt); bei ueber tausend Flaechen
+        dauert das rund drei Sekunden und darf nicht bei jeder Tabellenzeile
+        von vorn geschehen.
+        """
+        m = self.model
+        stand = (id(m), len(m.flaechen), len(m.lines), m.nn)
+        if getattr(self, "_inhalte_stand", None) != stand:
+            self._inhalte_stand = stand
+            self._inhalte_zwischen = {name: f.inhalt(m)
+                                      for name, f in m.flaechen.items()}
+        return self._inhalte_zwischen
 
     def _auswahl_zeichnen(self):
         """Ausgewaehlte Linien, Flaechen, Koerper und Staebe hervorheben."""
@@ -5415,15 +5440,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
             idx = [int(n) for n in ln.nodes if 0 <= int(n) < m.nn]
             if len(idx) > 1:
-                pl.add_mesh(pv.lines_from_points(m.nodes[idx]), color="#ff8800",
+                X = m.nodes[idx]
+                if (ln.typ or "polyline") != "polyline":
+                    try:
+                        X = np.asarray(ln.punkte(m, vp.TEILUNG_KURVE), float)
+                    except Exception:      # noqa: BLE001 - dann eben die Sehne
+                        X = m.nodes[idx]
+                pl.add_mesh(pv.lines_from_points(X), color="#ff8800",
                             line_width=6, name=f"sel_l{i}")
         for i, name in enumerate(self.sel_flaechen):
             f = m.flaechen.get(name)
             if f is None:
                 continue
-            ring = f.randknoten(m)
-            if len(ring) >= 3:
-                pl.add_mesh(pv.lines_from_points(m.nodes[ring + [ring[0]]]),
+            P = np.asarray(self._raender().get(name, f.randpunkte(m)), float)
+            if len(P) >= 3:
+                pl.add_mesh(pv.lines_from_points(np.vstack([P, P[:1]])),
                             color="#ff8800", line_width=6, name=f"sel_f{i}")
         for i, name in enumerate(self.sel_koerper):
             k = m.koerper.get(name)
@@ -5433,9 +5464,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 f = m.flaechen.get(fn)
                 if f is None:
                     continue
-                ring = f.randknoten(m)
-                if len(ring) >= 3:
-                    pl.add_mesh(pv.lines_from_points(m.nodes[ring + [ring[0]]]),
+                P = np.asarray(self._raender().get(fn, f.randpunkte(m)), float)
+                if len(P) >= 3:
+                    pl.add_mesh(pv.lines_from_points(np.vstack([P, P[:1]])),
                                 color="#ff8800", line_width=5, name=f"sel_k{i}_{j}")
         for i, name in enumerate(self.sel_staebe):
             mem = m.members.get(name)

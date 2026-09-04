@@ -1131,6 +1131,63 @@ class Flaeche:
         """Die Randknoten im Umlauf - oder [], wenn der Rand nicht schliesst."""
         return _rand_aus_linien(model, self.linien)
 
+    def randpunkte(self, model, teilung: int = 16) -> "np.ndarray":
+        """Der Rand als **Punktfolge**, krumme Linien abgetastet.
+
+        Die Knotenfolge allein reicht nicht: eine Bohrung, eine Buchse oder ein
+        Augenblech ist in RFEM eine Flaeche aus zwei Halbboegen - zwischen
+        denselben zwei Knoten. Ueber die Knoten waeren das zwei Punkte und
+        damit kein Polygon; erst die abgetasteten Boegen ergeben den Kreis.
+        """
+        stuecke = _randstuecke(model, self.linien)
+        if not stuecke:
+            return np.zeros((0, 3))
+        punkte: list = []
+        for name, knoten in stuecke:
+            ln = model.lines.get(name)
+            teil = None
+            if ln is not None and (ln.typ or "polyline") != "polyline":
+                try:
+                    teil = np.asarray(ln.kurve(model).punkte(max(teilung, 4)), float)
+                except Exception:            # noqa: BLE001 - krumm, aber unbrauchbar
+                    teil = None
+                if teil is not None and len(teil) > 1 and knoten:
+                    # Die Kurve laeuft nicht zwingend in Richtung der Knotenfolge
+                    p0 = model.nodes[int(knoten[0])]
+                    if np.linalg.norm(teil[0] - p0) > np.linalg.norm(teil[-1] - p0):
+                        teil = teil[::-1]
+            if teil is None:
+                idx = [int(n) for n in knoten if 0 <= int(n) < model.nn]
+                if not idx:
+                    continue
+                teil = model.nodes[idx]
+            # Der Endpunkt eines Stuecks ist der Anfangspunkt des naechsten;
+            # beim geschlossenen Umlauf faellt er darum jeweils weg.
+            punkte.extend(teil[:-1] if len(teil) > 1 else teil)
+        if not punkte:
+            return np.zeros((0, 3))
+        P = np.asarray(punkte, float)
+        # Aufeinanderfolgende gleiche Punkte entfernen
+        halten = np.ones(len(P), bool)
+        halten[1:] = np.linalg.norm(np.diff(P, axis=0), axis=1) > 1e-12
+        P = P[halten]
+        return P if len(P) >= 3 else np.zeros((0, 3))
+
+    def inhalt(self, model, teilung: int = 64) -> float:
+        """Flaecheninhalt des Randpolygons [m^2] (Newell).
+
+        Krumme Raender werden fein abgetastet: das eingeschriebene Vieleck
+        unterschaetzt den Kreis um 1 - sin(2a)/(2a) mit a = pi/n; bei n = 64
+        sind das 0.04 %, bei 16 Abschnitten waeren es 0.6 %.
+        """
+        P = self.randpunkte(model, teilung)
+        if len(P) < 3:
+            return 0.0
+        n = np.zeros(3)
+        for a, b in zip(P, np.roll(P, -1, axis=0)):
+            n += np.cross(a, b)
+        return float(np.linalg.norm(n)) / 2.0
+
 
 @dataclass
 class Volumenkoerper:
@@ -1152,6 +1209,46 @@ class Volumenkoerper:
             t += f", {self.material}"
         return t + (f", {len(self.elemente)} Elemente" if self.elemente
                     else ", nicht vernetzt")
+
+
+def _randstuecke(model, linien: list[str]) -> list:
+    """Die Randlinien im Umlauf aneinanderhaengen.
+
+    Rueckgabe [(Linienname, Knoten in Umlaufrichtung)] - oder [], wenn der
+    Umlauf nicht schliesst. Anders als ``_rand_aus_linien`` bleibt hier
+    erhalten, **welche** Linie welches Stueck beisteuert; nur so laesst sich
+    ein Bogen spaeter auf seiner wahren Kurve abtasten.
+    """
+    offen = []
+    for name in linien:
+        ln = model.lines.get(name)
+        if ln is None or len(ln.nodes) < 2:
+            return []
+        offen.append((name, [int(n) for n in ln.nodes]))
+    if not offen:
+        return []
+    kette = [offen.pop(0)]
+    while offen:
+        ende = kette[-1][1][-1]
+        anfang = kette[0][1][0]
+        for i, (name, kn) in enumerate(offen):
+            if kn[0] == ende:
+                kette.append((name, kn))
+            elif kn[-1] == ende:
+                kette.append((name, kn[::-1]))
+            elif kn[-1] == anfang:
+                kette.insert(0, (name, kn))
+            elif kn[0] == anfang:
+                kette.insert(0, (name, kn[::-1]))
+            else:
+                continue
+            offen.pop(i)
+            break
+        else:
+            return []
+    if kette[-1][1][-1] != kette[0][1][0]:
+        return []
+    return kette
 
 
 def _rand_aus_linien(model, linien: list[str]) -> list[int]:
@@ -1608,7 +1705,10 @@ class Model:
         if fehlt:
             raise KeyError(f"Linie(n) gibt es nicht: {', '.join(fehlt)}")
         f = Flaeche(name, namen, **kw)
-        if not f.randknoten(self):
+        # Der Rand darf auch krumm sein: eine Bohrung aus zwei Halbboegen hat
+        # nur zwei Knoten und ergibt ueber die Knotenfolge kein Polygon - wohl
+        # aber ueber die abgetasteten Kurven.
+        if not f.randknoten(self) and len(f.randpunkte(self)) < 3:
             raise ValueError("Die Linien bilden keinen geschlossenen Rand.")
         self.flaechen[name] = f
         return f
