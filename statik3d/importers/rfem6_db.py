@@ -878,11 +878,11 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     # ---- Flaechen und Flaechenlager -------------------------------------
     surf_nodes, surf_area = _surface_nodes(db, node_of, m)
     n_surf = db.count("Surface")
-    C.say(log, f"{len(surf_nodes)} von {n_surf} Flaechen mit Randpolygon gelesen "
-               f"(Geometrie; nicht vernetzt)")
+    C.say(log, f"{len(surf_nodes)} von {n_surf} Flaechen mit Randpolygon gelesen")
     if len(surf_nodes) < n_surf:
         C.say(log, f"  {n_surf - len(surf_nodes)} Flaechen ohne aufloesbaren Rand "
-                   "(getrimmte Flaechen, Oeffnungen) - nur fuer Flaechenlager von Belang.")
+                   "(getrimmte Flaechen, Freiformraender)")
+    _surfaces(db, m, surf_nodes, log, matcache)
     for h, impl in db.impls("SurfaceSupport"):
         sids = db.container("SurfaceSupportImpl_surfaces").get(impl["id"], [])
         name = (impl.get("name") or "").strip() or f"Flaechenlager {h.get('userID') or h['id']}"
@@ -907,12 +907,8 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
         C.say(log, f"  {name}: {len(sids)} Flaechen, {len(nodes)} Knoten, "
                    f"A = {sum(areas.values()):.3f} m^2")
 
+    _solids(db, m, surf_nodes, log, matcache)
     _load_cases(db, m, log)
-
-    n_solid = db.count("Solid")
-    if n_solid:
-        C.say(log, f"{n_solid} Volumenkoerper in der Datei - Geometrie ohne Netz, "
-                   "nicht uebernommen.")
     _diagnose(m, log)
 
 
@@ -1064,6 +1060,238 @@ def _surface_behaviour(impl: dict, nlmap: dict, label: str, log: list) -> dict:
             _friction_acts(out[d], f"{label} FHG {d}", log)
         C.say(log, f"  {label}: Reibung mu = {mu:g} in x und y, bezogen auf uz")
     return out
+
+
+# --------------------------------------------------------------------------
+# Flaechen als Schalenelemente
+# --------------------------------------------------------------------------
+#: Steifigkeitsarten der Flaeche: Tabelle -> (traegt Dicke?, Klartext)
+SURFACE_STIFFNESS = {
+    "SurfaceStiffnessStandard": (True, "Standard (Dicke und Material)"),
+    "SurfaceStiffnessWithoutThickness": (False, "ohne Dicke (Null-Element)"),
+    "SurfaceStiffnessRigid": (False, "starr"),
+    "SurfaceStiffnessMembrane": (True, "Membran"),
+    "SurfaceStiffnessWithoutMembraneTension": (True, "ohne Membranzugkraefte"),
+    "SurfaceStiffnessLoadTransfer": (False, "Lastverteilung"),
+    "SurfaceStiffnessLoadDistribution": (False, "Lastverteilung"),
+    "SurfaceStiffnessGroundwater": (False, "Grundwasser"),
+    "SurfaceStiffnessFloor": (False, "Deckenscheibe"),
+}
+
+
+def _thickness_of(db: Db, impl: dict) -> dict:
+    """
+    Dicke, Material und Art der Flaechensteifigkeit.
+
+    Die Flaeche zeigt ueber ``stiffness_id``/``stiffness_table`` auf ein
+    Steifigkeitsobjekt.  Nur ``SurfaceStiffnessStandard`` (und die
+    Membranformen) tragen eine Dicke; sie zeigen ueber ``thickness_id`` auf
+    ``Thickness`` und von dort auf die Umsetzung, die Dicke und Material
+    fuehrt.  Alle anderen Arten sind Flaechen **ohne eigene Steifigkeit**:
+    Null-Elemente, starre Flaechen, Lastverteilungsflaechen und - der haeufigste
+    Fall in Volumenmodellen - die Randflaechen von Volumenkoerpern.
+    """
+    tbl = impl.get("stiffness_table") or ""
+    sid = impl.get("stiffness_id")
+    traegt, text = SURFACE_STIFFNESS.get(tbl, (False, tbl or "unbekannt"))
+    out = {"art": tbl, "text": text, "t": 0.0, "material_id": None,
+           "variabel": False}
+    if not traegt or not sid or not db.has(tbl):
+        return out
+    row = db.by_id(tbl).get(sid) or {}
+    thid = row.get("thickness_id")
+    if not thid:
+        return out
+    th = db.by_id("Thickness").get(thid) or {}
+    itbl = th.get("impl_table") or ""
+    ti = db.by_id(itbl).get(th.get("impl_id")) if itbl else None
+    if not ti:
+        return out
+    out["material_id"] = ti.get("material_id")
+    if "thickness" in ti:
+        out["t"] = float(ti.get("thickness") or 0.0)
+    else:
+        # veraenderliche Dicke: Mittelwert der Stuetzstellen, mit Hinweis
+        werte = [float(v) for k, v in ti.items()
+                 if k.startswith("thickness") and isinstance(v, (int, float)) and v]
+        out["t"] = sum(werte) / len(werte) if werte else 0.0
+        out["variabel"] = True
+    out["name"] = (ti.get("name") or "").strip()
+    return out
+
+
+def _openings(db: Db) -> dict:
+    """{Surface.id: Anzahl Oeffnungen} ueber die integrierten Oeffnungen."""
+    out: dict[int, int] = {}
+    for tbl in ("SurfaceImplPlane_integratedOpenings",
+                "SurfaceImplQuadrangle_integratedOpenings",
+                "SurfaceImplTrimmed_integratedOpenings"):
+        impl_tbl = tbl.split("_")[0]
+        parent = {r["id"]: r.get("parent_id") for r in db.rows(impl_tbl)}
+        for oid, lst in db.container(tbl).items():
+            sid = parent.get(oid)
+            if sid:
+                out[sid] = out.get(sid, 0) + len(lst)
+    return out
+
+
+def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
+              matcache: dict) -> dict:
+    """
+    Flaechen mit eigener Steifigkeit in Schalenelemente umsetzen.
+
+    Rueckgabe {Surface.id: [Elementnummern]}.
+
+    Flaechen **ohne** Dicke (Null-Elemente, starre Flaechen,
+    Lastverteilungsflaechen, Randflaechen von Volumenkoerpern) bekommen keine
+    Elemente; ihre Zahl steht im Protokoll.  Flaechen mit **Oeffnung** werden
+    ebenfalls nicht vernetzt: das Randpolygon allein wuerde die Oeffnung
+    zubetonieren und die Flaeche zu steif machen.  Ein fehlendes Element
+    faellt beim Prueflauf auf, eine zu steife Flaeche nicht.
+    """
+    out: dict[int, list] = {}
+    ohne: dict[str, int] = {}
+    mit_oeffnung = 0
+    ohne_rand = 0
+    props: dict[tuple, str] = {}
+    openings = _openings(db)
+    for h, impl in db.impls("Surface"):
+        sid = h["id"]
+        d = _thickness_of(db, impl)
+        if d["t"] <= 0:
+            ohne[d["text"]] = ohne.get(d["text"], 0) + 1
+            continue
+        ring = surf_nodes.get(sid)
+        if not ring or len(ring) < 3:
+            ohne_rand += 1
+            continue
+        if openings.get(sid):
+            mit_oeffnung += 1
+            C.warn(log, f"Flaeche {h.get('userID') or sid} hat "
+                        f"{openings[sid]} Oeffnung(en) - nicht vernetzt, weil das "
+                        "Randpolygon die Oeffnung schliessen wuerde.")
+            continue
+        mname = (_material(db, d["material_id"], m, matcache, log)
+                 if d["material_id"] else C.ensure_material(m, log=log))
+        key = (round(d["t"], 9), mname)
+        pname = props.get(key)
+        if pname is None:
+            pname = C.unique_name(m.shells, f"d{d[chr(39)+chr(116)+chr(39)] * 1e3:g}")
+            m.add_shell_prop(ShellProp(pname, d["t"]))
+            props[key] = pname
+        els = C.polygon_to_shells(m, ring, mname, pname, log=log,
+                                  what=f"Flaeche {h.get('userID') or sid}")
+        if els:
+            out[sid] = els
+        if d["variabel"]:
+            C.warn(log, f"Flaeche {h.get('userID') or sid}: veraenderliche Dicke - "
+                        f"mit dem Mittelwert {d['t'] * 1e3:.1f} mm gerechnet.")
+        if impl.get("isDeactivatedForCalculation"):
+            C.say(log, f"  Flaeche {h.get('userID') or sid} ist in RFEM deaktiviert - "
+                       "dennoch uebernommen.")
+    n_el = sum(len(v) for v in out.values())
+    if out:
+        C.say(log, f"{len(out)} Flaechen als {n_el} Schalenelemente uebernommen "
+                   f"({len(props)} Dicken)")
+    if ohne:
+        C.say(log, "Flaechen ohne eigene Steifigkeit (keine Elemente): "
+                   + ", ".join(f"{n}x {k}" for k, n in sorted(ohne.items())))
+    if mit_oeffnung:
+        C.say(log, f"  {mit_oeffnung} Flaechen mit Oeffnung nicht vernetzt")
+    if ohne_rand:
+        C.say(log, f"  {ohne_rand} Flaechen ohne aufloesbaren Rand")
+    return out
+
+
+# --------------------------------------------------------------------------
+# Volumen als Volumenelemente
+# --------------------------------------------------------------------------
+def _hex_order(faces: list[list[int]]) -> list[int] | None:
+    """
+    Knotenreihenfolge eines Hexaeders aus seinen sechs Viereckflaechen.
+
+    Gesucht sind Boden und Deckel (die beiden Flaechen ohne gemeinsamen
+    Knoten); die vier Seitenflaechen ordnen dann jedem Bodenknoten seinen
+    Deckelknoten zu.  ``None``, wenn die Topologie das nicht hergibt.
+    """
+    quads = [f for f in faces if len(set(f)) == 4]
+    if len(quads) != 6:
+        return None
+    for i, a in enumerate(quads):
+        sa = set(a)
+        gegen = [b for b in quads if not (sa & set(b))]
+        if len(gegen) != 1:
+            continue
+        top = gegen[0]
+        paar: dict[int, int] = {}
+        for f in quads:
+            sf = set(f)
+            if sf == sa or sf == set(top):
+                continue
+            unten = [n for n in f if n in sa]
+            oben = [n for n in f if n in set(top)]
+            if len(unten) != 2 or len(oben) != 2:
+                return None
+            # In der Seitenflaeche folgen die Knoten dem Umlauf: die beiden
+            # unteren liegen benachbart, ebenso die beiden oberen.
+            for u in unten:
+                iu = f.index(u)
+                for o in (f[(iu - 1) % 4], f[(iu + 1) % 4]):
+                    if o in oben:
+                        paar[u] = o
+                        break
+        if len(paar) == 4 and all(n in paar for n in a):
+            return list(a) + [paar[n] for n in a]
+    return None
+
+
+def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
+            matcache: dict) -> int:
+    """
+    Volumenkoerper aus ihren Randflaechen in Volumenelemente umsetzen.
+
+    Ohne 3D-Vernetzer geht das nur fuer die beiden einfachen Topologien:
+
+        6 Viereckflaechen, 8 Eckknoten   -> hex8
+        4 Dreieckflaechen, 4 Eckknoten   -> tet4
+
+    Alles andere (Koerper mit Bohrungen, Freiformflaechen, viele Randflaechen)
+    braucht einen Vernetzer und wird mit Randflaechenzahl und Material
+    berichtet, aber nicht uebernommen - lieber eine sichtbare Luecke als ein
+    stillschweigend falscher Koerper.
+    """
+    n_hex = n_tet = 0
+    offen: dict[int, int] = {}
+    for h, impl in db.impls("Solid"):
+        tbl = h.get("impl_table") or "SolidImplStandard"
+        sids = db.container(tbl + "_boundarySurfaces").get(impl["id"], [])
+        faces = [surf_nodes[s] for s in sids if s in surf_nodes]
+        knoten = sorted({n for f in faces for n in f})
+        mname = (_material(db, impl.get("material_id"), m, matcache, log)
+                 if impl.get("material_id") else C.ensure_material(m, log=log))
+        if len(faces) == 6 and len(knoten) == 8:
+            order = _hex_order(faces)
+            if order:
+                m.add_element("hex8", order, mname)
+                n_hex += 1
+                continue
+        if len(faces) == 4 and len(knoten) == 4:
+            X = m.nodes[knoten]
+            v = np.dot(np.cross(X[1] - X[0], X[2] - X[0]), X[3] - X[0])
+            nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
+            m.add_element("tet4", nodes, mname)
+            n_tet += 1
+            continue
+        offen[len(sids)] = offen.get(len(sids), 0) + 1
+    if n_hex or n_tet:
+        C.say(log, f"{n_hex + n_tet} Volumenkoerper uebernommen "
+                   f"({n_hex} Hexaeder, {n_tet} Tetraeder)")
+    if offen:
+        gesamt = sum(offen.values())
+        C.say(log, f"{gesamt} Volumenkoerper nicht uebernommen (Randflaechenzahl "
+                   + ", ".join(f"{k}: {v}x" for k, v in sorted(offen.items()))
+                   + ") - dafuer waere ein 3D-Vernetzer noetig.")
+    return n_hex + n_tet
 
 
 # --------------------------------------------------------------------------

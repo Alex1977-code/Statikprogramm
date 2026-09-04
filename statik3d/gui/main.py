@@ -3954,6 +3954,14 @@ class MainWindow(QtWidgets.QMainWindow):
         holen gibt; sonst bleibt die Leiste den Arbeitsangaben vorbehalten.
         """
         from .. import update as upd
+        # Ist der Austausch schon vorbereitet (heruntergeladen, aber das
+        # Schliessen wurde abgelehnt), nicht erneut 200 MB laden, sondern den
+        # Austausch anstossen.
+        bat = getattr(self, "_update_bat", "")
+        if bat and os.path.isfile(bat) and getattr(self, "_austausch_starten", None):
+            if self.close():
+                self._austausch_starten()
+            return
         self.btn_update.setEnabled(False)
         if not quiet:
             self.btn_update.setVisible(True)
@@ -4018,14 +4026,43 @@ class MainWindow(QtWidgets.QMainWindow):
             def prog(done, total):
                 progress(f"Download {done / 1e6:.1f} / {total / 1e6:.1f} MB" if total
                          else f"Download {done / 1e6:.1f} MB")
-            return upd.apply(info, prog, restart=True)
+            # restart=False: erst herunterladen und das Austauschskript
+            # schreiben, aber noch nicht starten. Das Skript wartet darauf,
+            # dass sich Statik3D beendet - es darf deshalb nicht laufen,
+            # solange noch ein Dialog offen ist oder das Schliessen scheitert.
+            return upd.apply(info, prog, restart=info.kind != "exe")
 
         def done(msg):
             self.progress_bar.setVisible(False)
             self.log.appendPlainText(msg)
-            QtWidgets.QMessageBox.information(self, "Update", msg)
-            self.close()
+            if info.kind != "exe":
+                QtWidgets.QMessageBox.information(self, "Update", msg)
+                return
+            self.btn_update.setText("Statik3D wird beendet…")
+            self._update_bat = upd.helper_path()
+            # Erst schliessen (das fragt bei ungespeicherten Aenderungen nach).
+            # Nur wenn das Fenster wirklich zu ist, laeuft der Austausch an.
+            if not self.close():
+                self.btn_update.setEnabled(True)
+                self.btn_update.setText("Update bereit")
+                self.log.appendPlainText(
+                    "Der Austausch wartet: Statik3D wurde nicht beendet. "
+                    "Über „Update bereit“ erneut auslösen.")
+                return
+            self._austausch_starten()
+
+        def _austausch_starten(self=self):
+            try:
+                upd.start_helper(self._update_bat)
+            except Exception as ex:            # noqa: BLE001
+                QtWidgets.QMessageBox.warning(
+                    None, "Update",
+                    f"{ex}\n\nDie neue Fassung liegt bereit. Nach dem Beenden "
+                    "von Statik3D das Skript ausführen:\n" + self._update_bat)
+                return
             QtWidgets.QApplication.quit()
+
+        self._austausch_starten = _austausch_starten
 
         def failed(msg):
             self.progress_bar.setVisible(False)

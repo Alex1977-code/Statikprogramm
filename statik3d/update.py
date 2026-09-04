@@ -286,7 +286,16 @@ if errorlevel 1 (
     exit /b 3
 )
 echo [%date% %time%] Austausch erfolgreich>> "%LOG%"
+cd /d "%~dp0"
 start "" "%EXE%"
+if errorlevel 1 (
+    echo [Fehler] Neustart fehlgeschlagen.>> "%LOG%"
+    echo Der Austausch hat geklappt, der Neustart nicht.
+    echo Bitte von Hand starten:  "%EXE%"
+    pause
+    exit /b 4
+)
+echo [%date% %time%] neu gestartet>> "%LOG%"
 (goto) 2>nul & del "%~f0"
 """
 
@@ -323,19 +332,42 @@ def apply_exe(info: UpdateInfo, progress: Callable = None, restart: bool = True,
     with open(bat, "w", encoding="ascii", errors="replace", newline="\r\n") as f:
         f.write(UPDATE_BAT.format(exe=exe, new=new, log=log))
     if restart:
-        if os.name != "nt":
-            raise UpdateError("Austausch der exe nur unter Windows")
-        try:
-            subprocess.Popen(["cmd.exe", "/c", "start", "/min", "Statik3D Update",
-                              f'"{bat}"'], close_fds=True,
-                             creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
-        except OSError as ex:
-            raise UpdateError(
-                f"Das Austauschskript liess sich nicht starten ({ex}). Die neue "
-                f"Fassung liegt bereit: {new}\nBitte Statik3D beenden und "
-                f"'{bat}' von Hand ausfuehren.") from ex
+        start_helper(bat, new)
     return ("Neue Version heruntergeladen. Statik3D wird jetzt beendet, ausgetauscht "
             f"und neu gestartet.\nProtokoll des Austauschs: {log}")
+
+
+def helper_path(exe_path: str = None) -> str:
+    """Pfad des Austauschskripts neben der exe."""
+    exe = os.path.abspath(exe_path or sys.executable)
+    return os.path.join(os.path.dirname(exe), "statik3d_update.bat")
+
+
+def start_helper(bat: str, new: str = "") -> None:
+    """
+    Das Austauschskript starten - erst aufrufen, wenn Statik3D wirklich geht.
+
+    Die Befehlszeile wird als **eine Zeichenkette** uebergeben. Mit einer
+    Argumentliste setzt ``subprocess`` unter Windows ``list2cmdline`` an; das
+    versieht die Anfuehrungszeichen im Pfad mit Gegenschraegstrichen, und
+    cmd.exe sucht dann eine Datei namens \"C:\...\statik3d_update.bat\"
+    - genau der Fehler "konnte nicht gefunden werden".
+
+    ``start ""`` mit leerem Titel ist Absicht: sonst deutet cmd.exe den
+    ersten Pfad in Anfuehrungszeichen als Fenstertitel.
+    """
+    if os.name != "nt":
+        raise UpdateError("Austausch der exe nur unter Windows")
+    if not os.path.isfile(bat):
+        raise UpdateError(f"Das Austauschskript fehlt: {bat}")
+    try:
+        subprocess.Popen(f'cmd.exe /c start "" /min "{bat}"', close_fds=True,
+                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    except OSError as ex:
+        raise UpdateError(
+            f"Das Austauschskript liess sich nicht starten ({ex}). Die neue "
+            + (f"Fassung liegt bereit: {new}\n" if new else "")
+            + f"Bitte Statik3D beenden und '{bat}' von Hand ausfuehren.") from ex
 
 
 def apply_source(info: UpdateInfo, progress: Callable = None, restart: bool = True,
