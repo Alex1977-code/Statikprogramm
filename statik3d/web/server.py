@@ -2323,7 +2323,7 @@ class Handler(BaseHTTPRequestHandler):
                                        "„Update“ unten rechts im Programmfenster auf dem PC.")
                     msg = upd.apply(info, restart=False)
                     if st.bound is None:
-                        threading.Timer(1.0, lambda: os.execv(sys.executable, upd.restart_command())).start()
+                        threading.Timer(1.0, upd.restart_now).start()
                         msg += " Der Server startet neu; die Seite verbindet sich gleich wieder."
                     st.info(msg)
                     return self._json({"ok": True, "message": msg})

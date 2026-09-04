@@ -112,7 +112,7 @@ def test_befund_und_bat():
         pid = 1
 
     def merk_popen(cmd, *a, **kw):
-        gerufen.append(cmd)
+        gerufen.append((cmd, kw.get("env")))
         return Dummy()
 
     d2 = tempfile.mkdtemp()
@@ -128,7 +128,7 @@ def test_befund_und_bat():
         _sp.Popen = echt_popen
         upd.os.name = echt_name
     check("Austauschskript wird gestartet", len(gerufen) == 1, str(gerufen)[:70])
-    cmd = gerufen[0] if gerufen else ""
+    cmd, mitgegeben = gerufen[0] if gerufen else ("", None)
     check("Befehlszeile ist eine Zeichenkette, keine Liste",
           isinstance(cmd, str), type(cmd).__name__)
     check("kein Gegenschraegstrich vor den Anfuehrungszeichen",
@@ -143,6 +143,65 @@ def test_befund_und_bat():
                                    f'"{batpfad}"'])
         check("die Argumentliste haette den Pfad verstuemmelt",
               '\\"' in kaputt, kaputt[-50:])
+
+    # ---- Die Umgebung des Ladeteils darf nicht mitgehen ------------------
+    #
+    # Eine gepackte exe laeuft in zwei Prozessen; der innere erkennt sich an
+    # _PYI_PARENT_PROCESS_LEVEL als Kind und prueft seit PyInstaller 6, ob sein
+    # Elternprozess dieselbe exe ist. Erbt die neu gestartete exe diese
+    # Variablen, findet sie cmd.exe als Elternprozess und bricht ab mit
+    # "Security validation failure: parent process has different executable!".
+    check("dem Austauschskript wird eine eigene Umgebung mitgegeben",
+          isinstance(mitgegeben, dict), type(mitgegeben).__name__)
+    reste = [k for k in (mitgegeben or {})
+             if k.startswith("_PYI") or k == "_MEIPASS2"]
+    check("keine PyInstaller-Variablen in der Umgebung", not reste, str(reste))
+
+    # dieselbe Pruefung unmittelbar an der Funktion, mit gesetzten Variablen
+    vorlage = {"PATH": "bleibt", "HOME": "bleibt",
+               "_PYI_PARENT_PROCESS_LEVEL": "1",
+               "_PYI_APPLICATION_HOME_DIR": r"C:\Temp\_MEI123",
+               "_PYI_ARCHIVE_FILE": r"C:\App\Statik3D.exe",
+               "_PYI_SPLASH_IPC": "1234", "_MEIPASS2": r"C:\Temp\_MEI123",
+               "_PYI_NEUE_VARIABLE": "auch weg"}
+    sauber = upd.saubere_umgebung(vorlage)
+    check("saubere_umgebung entfernt alle _PYI-Variablen",
+          not [k for k in sauber if k.startswith("_PYI")], str(sorted(sauber)))
+    check("auch _MEIPASS2 ist weg", "_MEIPASS2" not in sauber)
+    check("alles andere bleibt stehen",
+          sauber.get("PATH") == "bleibt" and sauber.get("HOME") == "bleibt",
+          str(sauber))
+    check("auch eine kuenftige _PYI-Variable faellt weg",
+          "_PYI_NEUE_VARIABLE" not in sauber)
+    # POSIX: der zurueckgelegte Suchpfad wird wiederhergestellt
+    sauber2 = upd.saubere_umgebung({"LD_LIBRARY_PATH": "/tmp/_MEI/lib",
+                                    "LD_LIBRARY_PATH_ORIG": "/usr/lib"})
+    check("LD_LIBRARY_PATH wird auf den urspruenglichen Wert gesetzt",
+          sauber2.get("LD_LIBRARY_PATH") == "/usr/lib"
+          and "LD_LIBRARY_PATH_ORIG" not in sauber2, str(sauber2))
+
+    # Das Skript raeumt die Variablen auch selbst weg - fuer den Fall, dass es
+    # von Hand aus einer Eingabeaufforderung laeuft.
+    for name in ("_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE",
+                 "_PYI_PARENT_PROCESS_LEVEL", "_MEIPASS2"):
+        check(f"Skript loescht {name}", f'set "{name}="' in bat)
+    check("Skript schliesst zum Schluss sein Fenster",
+          bat.rstrip().endswith('& exit'), bat.rstrip().splitlines()[-1])
+
+    # Neustart an Ort und Stelle: ebenfalls mit gesaeuberter Umgebung
+    gerufen_exec = []
+    echt_execve = upd.os.execve
+    upd.os.execve = lambda pfad, argv, env: gerufen_exec.append((pfad, argv, env))
+    try:
+        upd.restart_now()
+    finally:
+        upd.os.execve = echt_execve
+    check("restart_now nutzt execve mit eigener Umgebung", len(gerufen_exec) == 1)
+    if gerufen_exec:
+        _pfad, _argv, env = gerufen_exec[0]
+        check("auch beim Neustart keine _PYI-Variablen",
+              not [k for k in env if k.startswith("_PYI")],
+              str([k for k in env if k.startswith("_PYI")]))
 
     try:
         upd.os.name = "nt"
