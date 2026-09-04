@@ -111,6 +111,19 @@ class NodeIndex:
         return self._base + len(self._pending)
 
 
+def count_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
+    """Wie viele Knoten auf einem anderen liegen - ohne etwas zu aendern.
+
+    Zusammenfuehren ist nicht immer richtig: an einer Kontaktfuge, einer
+    Kontaktbedingung oder einem Gleitlager liegen die Knoten absichtlich
+    aufeinander. Wer nur wissen will, wie viele es sind, fragt hier.
+    """
+    if model.nn == 0:
+        return 0
+    key = np.floor(model.nodes / tol + 0.5).astype(np.int64)
+    return int(model.nn - len(np.unique(key, axis=0)))
+
+
 def merge_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
     """Doppelte Knoten zusammenfuehren, alle Verweise umhaengen.
 

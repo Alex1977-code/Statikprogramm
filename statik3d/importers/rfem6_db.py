@@ -699,6 +699,131 @@ def _line_nodes(db: Db) -> dict:
     return out
 
 
+#: Umsetzungstabelle einer Linie -> Linienart von :mod:`statik3d.geometry`
+LINE_ART = {
+    "LineImplPolyline": "polyline",
+    "LineImplArc": "arc",
+    "LineImplCircle": "circle",
+    "LineImplParabola": "parabola",
+    "LineImplNurbs": "spline",
+    "LineImplSpline": "spline",
+    "LineImplEllipse": "ellipse",
+    "LineImplEllipticalArc": "ellipse",
+    "LineImplCutViaSection": "polyline",
+    "LineImplCutViaTwoLines": "polyline",
+}
+
+
+def _control_points(db: Db) -> dict:
+    """{ControlPoint.id: (x, y, z)} - die Hilfspunkte der krummen Linien.
+
+    RFEM legt den dritten Punkt eines Bogens nicht als Knoten ab, sondern als
+    *Kontrollpunkt*: ``LineImplArc.controlPoint_id`` -> ``ControlPoint`` ->
+    ``ControlPointImpl.coordinates_x/y/z``. Ohne diesen Punkt bleibt vom Bogen
+    nur die Sehne durch seine beiden Definitionsknoten uebrig - und ein Kreis
+    aus zwei Halbboegen faellt vollstaendig in sich zusammen.
+    """
+    if not db.has("ControlPoint") or not db.has("ControlPointImpl"):
+        return {}
+    impl = db.by_id("ControlPointImpl")
+    out: dict[int, tuple] = {}
+    for h in db.rows("ControlPoint"):
+        row = impl.get(h.get("impl_id"))
+        if row is None:
+            continue
+        out[h["id"]] = (float(row.get("coordinates_x") or 0.0),
+                        float(row.get("coordinates_y") or 0.0),
+                        float(row.get("coordinates_z") or 0.0))
+    return out
+
+
+def _line_shape(db: Db, tbl: str, impl: dict, punkte: list, cp: dict,
+                label: str, log: list) -> tuple[str, dict]:
+    """(Linienart, Geometrieangaben) einer Linie.
+
+    ``punkte`` sind die Koordinaten der Definitionsknoten. Zurueck kommt, was
+    :meth:`statik3d.model.Line.kurve` braucht; ist die Form nicht rekonstruierbar,
+    bleibt es bei der Polylinie durch die Definitionsknoten - dann aber mit
+    einer Meldung, damit die Naeherung nicht unbemerkt bleibt.
+    """
+    art = LINE_ART.get(tbl or "", "polyline")
+    if art == "polyline":
+        return "polyline", {}
+
+    def punkt(feld: str):
+        pid = impl.get(feld + "_id")
+        return cp.get(pid) if pid else None
+
+    if art in ("arc", "parabola"):
+        mitte = punkt("controlPoint")
+        if mitte is None or len(punkte) < 2:
+            C.warn(log, f"{label}: {tbl} ohne Kontrollpunkt - als Gerade gefuehrt.")
+            return "polyline", {}
+        return art, {"punkte": [list(punkte[0]), list(mitte), list(punkte[-1])]}
+
+    if art == "circle":
+        r = float(impl.get("radius") or 0.0)
+        n = (impl.get("normal_x") or 0.0, impl.get("normal_y") or 0.0,
+             impl.get("normal_z") or 0.0)
+        if r <= 0 or not any(n):
+            C.warn(log, f"{label}: Kreis ohne Radius oder Normale - als Gerade gefuehrt.")
+            return "polyline", {}
+        return "circle", {"mitte": [float(impl.get("center_" + a) or 0.0) for a in "xyz"],
+                          "radius": r, "normale": [float(v) for v in n]}
+
+    if art == "ellipse":
+        # Ellipse: zwei Hauptachsenpunkte und ein Umfangspunkt; daraus folgen
+        # Mittelpunkt und die beiden Halbachsenvektoren.
+        a1, a2 = punkt("firstMainAxisControlPoint"), punkt("secondMainAxisControlPoint")
+        u = punkt("perimeterControlPoint")
+        if a1 is None or a2 is None or u is None:
+            C.warn(log, f"{label}: Ellipse ohne Hauptachsenpunkte - als Gerade gefuehrt.")
+            return "polyline", {}
+        a1, a2, u = np.asarray(a1), np.asarray(a2), np.asarray(u)
+        mitte = 0.5 * (a1 + a2)
+        a = a1 - mitte
+        # Der Umfangspunkt liegt auf der zweiten Halbachse, sobald sein Anteil
+        # in Richtung a abgezogen ist.
+        na = float(np.linalg.norm(a))
+        if na < 1e-12:
+            C.warn(log, f"{label}: Ellipse mit Hauptachse null - als Gerade gefuehrt.")
+            return "polyline", {}
+        b = (u - mitte) - a * float((u - mitte) @ a) / (na * na)
+        if float(np.linalg.norm(b)) < 1e-12:
+            C.warn(log, f"{label}: Ellipse mit Nebenachse null - als Gerade gefuehrt.")
+            return "polyline", {}
+        return "ellipse", {"mitte": mitte.tolist(), "a": a.tolist(), "b": b.tolist()}
+
+    if art == "spline":
+        rows = db.container_rows(tbl + "_controlPoints").get(impl["id"], [])
+        steuer, gew = [], []
+        for r in rows:
+            pt = cp.get(r.get("controlPoint_id"))
+            if pt is None:
+                steuer = []
+                break
+            steuer.append(list(pt))
+            gew.append(float(r.get("weight") or 1.0))
+        if not steuer:
+            # Spline ohne eigene Steuerpunkte: RFEM fuehrt ihn durch die
+            # Definitionsknoten. Als B-Spline ueber genau diese Punkte ist die
+            # Linie eine Naeherung - sie liegt innerhalb der Knotenkette.
+            if len(punkte) < 3:
+                return "polyline", {}
+            C.warn(log, f"{label}: Spline ohne Steuerpunkte - genaehert ueber die "
+                        "Definitionsknoten.")
+            steuer = [list(p) for p in punkte]
+            gew = []
+        grad = int(impl.get("degree") or 3)
+        geo = {"steuerpunkte": steuer, "grad": max(1, min(grad, len(steuer) - 1))}
+        if gew and any(abs(g - 1.0) > 1e-12 for g in gew):
+            geo["gewichte"] = gew
+        return "spline", geo
+
+    C.warn(log, f"{label}: Linienart {tbl} unbekannt - als Gerade gefuehrt.")
+    return "polyline", {}
+
+
 def _polygon_area(pts: np.ndarray) -> float:
     """Flaeche eines ebenen Polygons im Raum (Newell)."""
     if len(pts) < 3:
@@ -828,18 +953,24 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     # ---- Linien -------------------------------------------------------
     line_nodes = _line_nodes(db)
     line_name: dict[int, str] = {}
-    arcs = 0
+    cp = _control_points(db)
+    arten: dict[str, int] = {}
     for h, impl in db.impls("Line"):
         nodes = [node_of[n] for n in line_nodes.get(h["id"], []) if n in node_of]
         if len(nodes) < 2:
             continue
-        typ = "arc" if "Arc" in (h["impl_table"] or "") else "polyline"
-        arcs += typ == "arc"
         nm = C.unique_name(m.lines, f"L{h.get('userID') or h['id']}")
-        m.add_line(nm, nodes, typ)
+        punkte = [m.nodes[i] for i in nodes]
+        typ, geo = _line_shape(db, h.get("impl_table") or "", impl, punkte, cp,
+                               f"Linie {h.get('userID') or h['id']}", log)
+        arten[typ] = arten.get(typ, 0) + 1
+        ln = m.add_line(nm, nodes, typ)
+        if geo:
+            ln.geometrie = geo
         line_name[h["id"]] = nm
-    C.say(log, f"{len(line_name)} Linien gelesen ({arcs} Boegen, als Sehne durch die "
-               "Definitionsknoten gefuehrt)")
+    krumm = ", ".join(f"{n}x {t}" for t, n in sorted(arten.items()) if t != "polyline")
+    C.say(log, f"{len(line_name)} Linien gelesen"
+               + (f" ({krumm}, ueber ihre Kontrollpunkte gefuehrt)" if krumm else ""))
 
     # ---- Staebe -------------------------------------------------------
     seccache: dict[int, tuple] = {}
@@ -945,12 +1076,12 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
         C.say(log, f"  {name}: {len(lines)} Linien, {len(nodes)} Knoten")
 
     # ---- Flaechen und Flaechenlager -------------------------------------
-    surf_nodes, surf_area = _surface_nodes(db, node_of, m)
+    surf_nodes, surf_area = _surface_nodes(db, node_of, m, line_name)
     n_surf = db.count("Surface")
-    C.say(log, f"{len(surf_nodes)} von {n_surf} Flaechen mit Randpolygon gelesen")
+    C.say(log, f"{len(surf_nodes)} von {n_surf} Flaechen mit Randknoten gelesen")
     if len(surf_nodes) < n_surf:
-        C.say(log, f"  {n_surf - len(surf_nodes)} Flaechen ohne aufloesbaren Rand "
-                   "(getrimmte Flaechen, Freiformraender)")
+        C.warn(log, f"  {n_surf - len(surf_nodes)} Flaechen ohne aufloesbaren Rand "
+                    "(getrimmte Flaechen, Freiformraender) - sie bleiben unsichtbar.")
     surf_els, surf_name = _surfaces(db, m, surf_nodes, log, matcache, line_name)
     for h, impl in db.impls("SurfaceSupport"):
         sids = db.container("SurfaceSupportImpl_surfaces").get(impl["id"], [])
@@ -1067,32 +1198,61 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     _combinations(db, m, lc_name, log)
 
 
-def _surface_nodes(db: Db, node_of: dict, m: Model) -> tuple[dict, dict]:
+def _surface_nodes(db: Db, node_of: dict, m: Model,
+                   line_name: dict = None) -> tuple[dict, dict]:
     """{Surface.id: [Knoten]} und {Surface.id: Flaeche [m^2]}.
 
     Eckknoten stehen entweder unmittelbar (Viereckflaechen) oder ueber die
     Randlinien; die Flaeche folgt aus dem Randpolygon (Newell).
     """
     line_nodes = _line_nodes(db)
+    line_name = line_name or {}
     nodes_out: dict[int, list] = {}
     area_out: dict[int, float] = {}
     for h, impl in db.impls("Surface"):
         tbl = h["impl_table"] or ""
         raw = db.container(tbl + "_cornerNodes").get(impl["id"], [])
+        rand = db.container(tbl + "_boundaryLines").get(impl["id"], [])
         if raw:
             ring = [n for n in raw if n in node_of]
         else:
             ring = []
-            for lid in db.container(tbl + "_boundaryLines").get(impl["id"], []):
+            for lid in rand:
                 for n in line_nodes.get(lid, []):
                     if n in node_of and n not in ring:
                         ring.append(n)
-        if len(ring) < 3:
+        # Zwei Knoten reichen: eine Bohrung, eine Buchse oder ein Augenblech
+        # ist ein Kreis aus zwei Halbboegen zwischen denselben zwei Knoten.
+        if len(ring) < 2:
             continue
         idx = [node_of[n] for n in ring]
         nodes_out[h["id"]] = idx
-        area_out[h["id"]] = _polygon_area(m.nodes[idx])
+        # Die Flaeche folgt der wahren Randkurve, nicht der Sehne
+        P = _randkurve(m, [line_name[x] for x in rand if x in line_name])
+        area_out[h["id"]] = (_polygon_area(P) if len(P) >= 3
+                             else (_polygon_area(m.nodes[idx]) if len(idx) >= 3 else 0.0))
     return nodes_out, area_out
+
+
+#: Abschnitte je krummer Randlinie beim Flaecheninhalt. Das eingeschriebene
+#: Vieleck unterschaetzt den Kreis um 1 - sin(2a)/(2a) mit a = pi/n; bei n = 64
+#: sind das 0.04 %, bei den 16 Abschnitten der Darstellung waeren es 0.6 %.
+TEILUNG_FLAECHE = 64
+
+
+def _randkurve(m: Model, linien: list, teilung: int = TEILUNG_FLAECHE) -> np.ndarray:
+    """Die Randpunkte eines Linienzuges - krumme Linien abgetastet.
+
+    Nutzt dieselbe Umlaufsuche wie :meth:`statik3d.model.Flaeche.randpunkte`;
+    hier gebraucht, bevor die Flaechenobjekte ueberhaupt bestehen.
+    """
+    if not linien:
+        return np.zeros((0, 3))
+    from ..model import Flaeche
+    try:
+        return np.asarray(Flaeche("", list(linien)).randpunkte(m, teilung), float)
+    except Exception:                    # noqa: BLE001 - kein Umlauf, kein Polygon
+        return np.zeros((0, 3))
 
 
 #: Federkonstanten des Flaechenlagers: Spalte -> Freiheitsgrad
@@ -1133,21 +1293,56 @@ def _surface_behaviour(impl: dict, nlmap: dict, label: str, log: list) -> dict:
 # --------------------------------------------------------------------------
 # Flaechen als Schalenelemente
 # --------------------------------------------------------------------------
-#: Steifigkeitsarten der Flaeche: Tabelle -> (traegt Dicke?, Klartext)
+#: Steifigkeitsarten der Flaeche: Tabelle -> (traegt Dicke?, Klartext).
+#: RFEM legt je Art eine eigene Tabelle an; der Name IST die Art. Alle 18
+#: Arten stehen hier, damit "unbekannt" nicht stillschweigend heisst, dass
+#: eine tragende Flaeche als Null-Element durchrutscht.
 SURFACE_STIFFNESS = {
     "SurfaceStiffnessStandard": (True, "Standard (Dicke und Material)"),
-    "SurfaceStiffnessWithoutThickness": (False, "ohne Dicke (Null-Element)"),
-    "SurfaceStiffnessRigid": (False, "starr"),
     "SurfaceStiffnessMembrane": (True, "Membran"),
     "SurfaceStiffnessWithoutMembraneTension": (True, "ohne Membranzugkraefte"),
+    "SurfaceStiffnessWithoutThickness": (False, "ohne Dicke (Null-Element)"),
+    "SurfaceStiffnessRigid": (False, "starr"),
     "SurfaceStiffnessLoadTransfer": (False, "Lastverteilung"),
     "SurfaceStiffnessLoadDistribution": (False, "Lastverteilung"),
     "SurfaceStiffnessGroundwater": (False, "Grundwasser"),
+    "SurfaceStiffnessDiscontinuity": (False, "Diskontinuitaet"),
+    "SurfaceStiffnessModifications": (False, "Steifigkeitsanpassung"),
     "SurfaceStiffnessFloor": (False, "Deckenscheibe"),
+    "SurfaceStiffnessFloorDiaphragm": (False, "starre Deckenscheibe"),
+    "SurfaceStiffnessFloorDiaphragmVersion1": (False, "starre Deckenscheibe"),
+    "SurfaceStiffnessFloorFlexibleDiaphragm": (False, "nachgiebige Deckenscheibe"),
+    "SurfaceStiffnessFloorFlexibleDiaphragmVersion1": (False, "nachgiebige Deckenscheibe"),
+    "SurfaceStiffnessFloorSemirigid": (False, "halbstarre Deckenscheibe"),
+    "SurfaceStiffnessFloorSemirigidVersion1": (False, "halbstarre Deckenscheibe"),
 }
 
 
-def _thickness_of(db: Db, impl: dict) -> dict:
+def _stiffness_owner(db: Db) -> dict:
+    """{(Flaechen-Umsetzungstabelle, id): (Steifigkeitstabelle, id)}.
+
+    Der Zeiger von der Flaeche zur Steifigkeit steht in beiden Richtungen in
+    der Datenbank: vorwaerts als ``SurfaceImpl*.stiffness_id/_table``,
+    rueckwaerts als ``SurfaceStiffness*.owner_id/owner_table``. In manchen
+    Dateien ist die Vorwaertsspalte leer - dann ist ohne den Rueckweg **jede**
+    Flaeche "unbekannt" und faellt als Null-Element durch.
+    """
+    out: dict[tuple, tuple] = {}
+    for tbl in sorted(db.tables):
+        if not tbl.startswith("SurfaceStiffness") or "_" in tbl:
+            continue
+        cols = db.columns(tbl)
+        if "owner_id" not in cols or "owner_table" not in cols:
+            continue
+        for r in db.rows(tbl):
+            ot, oid = r.get("owner_table"), r.get("owner_id")
+            if ot and oid:
+                out.setdefault((ot, oid), (tbl, r["id"]))
+    return out
+
+
+def _thickness_of(db: Db, impl: dict, impl_table: str = "",
+                  rueck: dict = None) -> dict:
     """
     Dicke, Material und Art der Flaechensteifigkeit.
 
@@ -1158,12 +1353,29 @@ def _thickness_of(db: Db, impl: dict) -> dict:
     fuehrt.  Alle anderen Arten sind Flaechen **ohne eigene Steifigkeit**:
     Null-Elemente, starre Flaechen, Lastverteilungsflaechen und - der haeufigste
     Fall in Volumenmodellen - die Randflaechen von Volumenkoerpern.
+
+    Ist die Vorwaertsspalte leer, wird der Rueckzeiger ``owner_id`` der
+    Steifigkeitstabellen genommen (``rueck`` aus :func:`_stiffness_owner`).
     """
     tbl = impl.get("stiffness_table") or ""
     sid = impl.get("stiffness_id")
-    traegt, text = SURFACE_STIFFNESS.get(tbl, (False, tbl or "unbekannt"))
-    out = {"art": tbl, "text": text, "t": 0.0, "material_id": None,
+    if (not tbl or not sid) and rueck and impl_table:
+        tbl, sid = rueck.get((impl_table, impl.get("id")), (tbl, sid))
+    out = {"art": tbl, "text": "", "t": 0.0, "material_id": None,
            "variabel": False}
+    if not tbl:
+        out["text"] = "ohne Steifigkeitsangabe"
+        return out
+    if tbl in SURFACE_STIFFNESS:
+        traegt, text = SURFACE_STIFFNESS[tbl]
+    else:
+        # Eine Art, die dieses Programm noch nicht kennt. Traegt sie eine
+        # Dicke, wird sie als Schale uebernommen - lieber gerechnet und
+        # gemeldet als stillschweigend weggelassen.
+        traegt = "thickness_id" in db.columns(tbl)
+        text = (f"unbekannte Art {tbl}"
+                + (" - Dicke uebernommen" if traegt else " - ohne Dicke gefuehrt"))
+    out["text"] = text
     if not traegt or not sid or not db.has(tbl):
         return out
     row = db.by_id(tbl).get(sid) or {}
@@ -1205,17 +1417,43 @@ def _randlinien(db: Db) -> dict:
 
 
 def _openings(db: Db) -> dict:
-    """{Surface.id: Anzahl Oeffnungen} ueber die integrierten Oeffnungen."""
-    out: dict[int, int] = {}
+    """{Surface.id: [Opening.id, ...]} ueber die integrierten Oeffnungen."""
+    out: dict[int, list] = {}
     for tbl in ("SurfaceImplPlane_integratedOpenings",
                 "SurfaceImplQuadrangle_integratedOpenings",
-                "SurfaceImplTrimmed_integratedOpenings"):
+                "SurfaceImplTrimmed_integratedOpenings",
+                "SurfaceImplNurbs_integratedOpenings"):
         impl_tbl = tbl.split("_")[0]
+        if not db.has(tbl) or not db.has(impl_tbl):
+            continue
         parent = {r["id"]: r.get("parent_id") for r in db.rows(impl_tbl)}
         for oid, lst in db.container(tbl).items():
             sid = parent.get(oid)
             if sid:
-                out[sid] = out.get(sid, 0) + len(lst)
+                out.setdefault(sid, []).extend(lst)
+    return out
+
+
+def _opening_lines(db: Db) -> dict:
+    """{Opening.id: [Line.id, ...]} - der Rand jeder Oeffnung.
+
+    Eine Bohrung ist in RFEM kein Loch im Randpolygon, sondern ein eigenes
+    Objekt ``Opening`` mit eigenen Randlinien. Ohne diese Linien wuerde ein
+    Flansch mit 28 Schraubenloechern beim Vernetzen zubetoniert - eine viel
+    zu steife Platte, und niemand saehe es.
+    """
+    if not db.has("Opening") or not db.has("OpeningImpl_boundaryLines"):
+        return {}
+    impl = db.by_id("OpeningImpl") if db.has("OpeningImpl") else {}
+    lines = db.container("OpeningImpl_boundaryLines")
+    out: dict[int, list] = {}
+    for h in db.rows("Opening"):
+        iid = h.get("impl_id")
+        if iid is None or (impl and iid not in impl):
+            continue
+        lst = lines.get(iid, [])
+        if lst:
+            out[h["id"]] = list(lst)
     return out
 
 
@@ -1245,12 +1483,15 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
     ohne_rand = 0
     props: dict[tuple, str] = {}
     openings = _openings(db)
+    opening_lines = _opening_lines(db)
     randlinien = _randlinien(db)
+    rueck = _stiffness_owner(db)
     line_name = line_name or {}
+    n_oeffnung = 0
     for h, impl in db.impls("Surface"):
         sid = h["id"]
         nr = h.get("userID") or sid
-        d = _thickness_of(db, impl)
+        d = _thickness_of(db, impl, h.get("impl_table") or "", rueck)
         ring = surf_nodes.get(sid) or []
         # Das Objekt entsteht immer - auch ohne Dicke und ohne aufloesbaren Rand.
         fname = C.unique_name(m.flaechen, f"F{nr}")
@@ -1268,8 +1509,17 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
                 pname = C.unique_name(m.shells, f"d{t_mm:g}")
                 m.add_shell_prop(ShellProp(pname, d["t"]))
                 props[key] = pname
+        # Die Oeffnungen sind eigene Objekte mit eigenen Randlinien; sie
+        # gehoeren an die Flaeche, sonst wird jede Bohrung zubetoniert.
+        loecher = []
+        for oid in openings.get(sid, []):
+            rand = [line_name[x] for x in opening_lines.get(oid, []) if x in line_name]
+            if rand:
+                loecher.append(rand)
+        n_oeffnung += len(loecher)
         f = Flaeche(fname, linien, dicke=pname, material=mname,
-                    kommentar=d["text"] if d["t"] <= 0 else "")
+                    kommentar=d["text"] if d["t"] <= 0 else "",
+                    oeffnungen=loecher)
         m.flaechen[fname] = f
         namen[sid] = fname
         if d["t"] <= 0:
@@ -1279,10 +1529,12 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
             ohne_rand += 1
             continue
         if openings.get(sid):
+            n_o = len(openings[sid])
             mit_oeffnung += 1
-            f.kommentar = f"{openings[sid]} Öffnung(en) – nicht vernetzt"
-            C.warn(log, f"Flaeche {nr} hat {openings[sid]} Oeffnung(en) - nicht "
-                        "vernetzt, weil das Randpolygon die Oeffnung schliessen wuerde.")
+            f.kommentar = (f"{n_o} Öffnung(en) – abgebildet nicht vernetzbar, "
+                           "der freie Vernetzer kann es")
+            C.warn(log, f"Flaeche {nr} hat {n_o} Oeffnung(en) - kein abgebildetes "
+                        "Netz, weil das Randpolygon die Oeffnung schliessen wuerde.")
             continue
         els = C.polygon_to_shells(m, ring, mname, pname, group=fname, log=log,
                                   what=f"Flaeche {nr}")
@@ -1302,8 +1554,11 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
     if ohne:
         C.say(log, "  ohne eigene Steifigkeit (kein Netz): "
                    + ", ".join(f"{n}x {k}" for k, n in sorted(ohne.items())))
+    if n_oeffnung:
+        C.say(log, f"  {n_oeffnung} Oeffnungen (Bohrungen, Aussparungen) mit ihren "
+                   "Randlinien uebernommen")
     if mit_oeffnung:
-        C.say(log, f"  {mit_oeffnung} Flaechen mit Oeffnung nicht vernetzt")
+        C.say(log, f"  {mit_oeffnung} Flaechen mit Oeffnung ohne abgebildetes Netz")
     if ohne_rand:
         C.say(log, f"  {ohne_rand} Flaechen mit Dicke, aber ohne aufloesbaren Rand")
     return out, namen
@@ -1377,6 +1632,7 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
     """
     from ..model import Volumenkoerper
     n_hex = n_tet = 0
+    flach = gebogen = 0
     offen: dict[int, int] = {}
     surf_name = surf_name or {}
     for h, impl in db.impls("Solid"):
@@ -1384,6 +1640,12 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
         nr = h.get("userID") or h["id"]
         sids = db.container(tbl + "_boundarySurfaces").get(impl["id"], [])
         faces = [surf_nodes[s] for s in sids if s in surf_nodes]
+        # Nur ebene Vielecke zaehlen fuer die Topologie. Eine Randflaeche mit
+        # zwei Knoten ist ein Kreis aus zwei Halbboegen (Bohrung, Buchse,
+        # Bolzen); ein Koerper mit solchen Deckeln ist ein Zylinder, kein
+        # Tetraeder - er darf nicht als eines durchgehen.
+        krumm = sum(1 for f in faces if len(f) < 3)
+        vollstaendig = len(faces) == len(sids) and not krumm
         knoten = sorted({n for f in faces for n in f})
         mname = (_material(db, impl.get("material_id"), m, matcache, log)
                  if impl.get("material_id") else C.ensure_material(m, log=log))
@@ -1393,7 +1655,7 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
         k = Volumenkoerper(kname, [surf_name[x] for x in sids if x in surf_name],
                            material=mname)
         m.koerper[kname] = k
-        if len(faces) == 6 and len(knoten) == 8:
+        if vollstaendig and len(faces) == 6 and len(knoten) == 8:
             order = _hex_order(faces)
             if order:
                 # Die Randflaechen tragen keine gemeinsame Umlaufrichtung: der
@@ -1405,15 +1667,28 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
                 k.elemente = [m.add_element("hex8", order, mname, group=kname)]
                 n_hex += 1
                 continue
-        if len(faces) == 4 and len(knoten) == 4:
+        if vollstaendig and len(faces) == 4 and len(knoten) == 4:
             X = m.nodes[knoten]
-            v = np.dot(np.cross(X[1] - X[0], X[2] - X[0]), X[3] - X[0])
-            nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
-            k.elemente = [m.add_element("tet4", nodes, mname, group=kname)]
-            n_tet += 1
+            v = np.dot(np.cross(X[1] - X[0], X[2] - X[0]), X[3] - X[0]) / 6.0
+            # Ein flacher "Tetraeder" ist keiner: vier Knoten in einer Ebene
+            # ergeben ein Element ohne Volumen und eine singulaere Matrix.
+            kante = float(np.linalg.norm(X - X.mean(axis=0), axis=1).max())
+            if abs(v) > 1e-6 * max(kante, 1e-9) ** 3:
+                nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
+                k.elemente = [m.add_element("tet4", nodes, mname, group=kname)]
+                n_tet += 1
+                continue
+            flach += 1
+            k.kommentar = "vier Randflächen, aber ohne Volumen (Knoten in einer Ebene)"
             continue
-        k.kommentar = (f"{len(sids)} Randflächen – für ein Netz ist ein "
-                       "3D-Vernetzer nötig")
+        if krumm:
+            gebogen += 1
+            k.kommentar = (f"{len(sids)} Randflächen, davon {krumm} krumm "
+                           "(Zylinder, Bohrung) – für ein Netz ist ein "
+                           "3D-Vernetzer nötig")
+        else:
+            k.kommentar = (f"{len(sids)} Randflächen – für ein Netz ist ein "
+                           "3D-Vernetzer nötig")
         offen[len(sids)] = offen.get(len(sids), 0) + 1
     C.say(log, f"{len(m.koerper)} Volumenkoerper als Objekte angelegt")
     if n_hex or n_tet:
@@ -1425,6 +1700,12 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
                    + ", ".join(f"{k2}: {v}x" for k2, v in sorted(offen.items()))
                    + ") - dafuer waere ein 3D-Vernetzer noetig. Die Geometrie "
                      "steht im Modellbaum und laesst sich dort weiterbearbeiten.")
+    if gebogen:
+        C.say(log, f"    davon {gebogen} mit krummen Randflaechen "
+                   "(Zylinder, Bohrungen, Buchsen)")
+    if flach:
+        C.warn(log, f"  {flach} Koerper mit vier Randflaechen, aber ohne Volumen "
+                    "(Knoten in einer Ebene) - nicht vernetzt.")
     return n_hex + n_tet
 
 
@@ -1466,7 +1747,7 @@ def member_type(impl_table: str) -> tuple:
 
 
 # --------------------------------------------------------------------------
-# Flaechenfreigaben (mit ihren Typeinstellungen)
+# Kontaktbedingungen zwischen Flaechen (RFEM: Flaechenfreigaben)
 # --------------------------------------------------------------------------
 #: Ort der Freigabe (releaseLocation) - Deutung wie im RFEM-Dialog, Annahme
 RELEASE_LOCATION = {0: "Anfang", 1: "Ende"}
@@ -1474,7 +1755,7 @@ RELEASE_LOCATION = {0: "Anfang", 1: "Ende"}
 
 def _release_type(db: Db, tid: int, nlmap: dict, label: str, log: list) -> dict:
     """
-    Typeinstellung einer Flaechenfreigabe: die Federkonstanten je Freiheitsgrad.
+    Typeinstellung einer Kontaktbedingung: die Federkonstanten je Freiheitsgrad.
 
     Der Typ zeigt ueber ``springConstants_id`` **unmittelbar** auf die Zeile in
     ``SpringConstants`` (nicht ueber owner_id wie die Lager).
@@ -1494,9 +1775,10 @@ def _release_type(db: Db, tid: int, nlmap: dict, label: str, log: list) -> dict:
 
 def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
     """
-    Flaechenfreigaben mit ihren Typeinstellungen lesen und berichten.
+    Kontaktbedingungen (RFEM: Flaechenfreigaben) mit ihren
+    Typeinstellungen lesen und berichten.
 
-    Eine Flaechenfreigabe trennt in RFEM die freigegebenen Flaechen von den
+    Eine Kontaktbedingung trennt in RFEM die freigegebenen Flaechen von den
     Objekten, an denen sie haengen, und verbindet beide ueber die Federn des
     Freigabetyps.  Das Trennen setzt ein Netz voraus: erst dort gibt es zwei
     Knoten, zwischen die die Feder gehoert.  Der Leser holt darum alles
@@ -1510,7 +1792,7 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
     out = []
     for h, impl in db.impls("SurfaceRelease"):
         name = ((impl.get("name") or "").strip() or (impl.get("comment") or "").strip()
-                or f"Flaechenfreigabe {h.get('userID') or h['id']}")
+                or f"Kontaktbedingung {h.get('userID') or h['id']}")
         flaechen = db.container("SurfaceReleaseImpl_releasedSurfaces").get(impl["id"], [])
         volumen = db.container("SurfaceReleaseImpl_releasedSolids").get(impl["id"], [])
         ziele = db.container("SurfaceReleaseImpl_assignedToObjects").get(impl["id"], [])
@@ -1534,8 +1816,8 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
         # sie nach dem Speichern weg und niemand sieht mehr, dass an dieser
         # Stelle eine Fuge gehoert.
         haupt = d["typen"][0] if d["typen"] else {}
-        m.add_flaechenfreigabe(
-            C.unique_name(m.flaechenfreigaben, name),
+        m.add_kontaktbedingung(
+            C.unique_name(m.kontaktbedingungen, name),
             flaechen=[int(x) for x in flaechen], volumen=[int(x) for x in volumen],
             ziele=len(ziele), ort=d["ort"],
             typ=str(haupt.get("nummer", "")) + (f" {haupt['name']}" if haupt.get("name") else ""),
@@ -1568,7 +1850,8 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
                        + (f" „{t['name']}“" if t["name"] else "")
                        + ": " + (", ".join(teile) if teile else "keine Federn"))
     if out:
-        C.say(log, f"{len(out)} Flaechenfreigaben gelesen. Die Trennung selbst wird "
+        C.say(log, f"{len(out)} Kontaktbedingungen gelesen (RFEM: Flaechenfreigaben). "
+                   "Die Trennung selbst wird "
                    "nicht ausgefuehrt - dafuer muessten die beteiligten Flaechen "
                    "vernetzt und die Knoten an der Fuge verdoppelt werden. Ohne die "
                    "Trennung ist das Modell an diesen Stellen zu steif.")

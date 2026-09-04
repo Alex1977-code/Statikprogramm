@@ -86,7 +86,7 @@ Die Arbeitsfläche in drei Spalten:
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden |
-  | Flächenfreigaben | Kontaktfugen aus RFEM mit ihrer Wirkung je Freiheitsgrad |
+  | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Lasten | alle Lasten aller Lastfälle, je Lastfall gezählt |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
   | Einwirkungen | Lastfälle und Kombinationen |
@@ -126,12 +126,12 @@ bedienen sind, steht im nächsten Abschnitt.
 | Gelenke | über die Maske (Doppelklick) |
 | Lastfälle | Beschreibung; Doppelklick öffnet Name, Einwirkung, Ausschlussgruppe |
 | Kombinationen | über die Maske (Doppelklick) |
-| Flächenfreigaben | nur Anzeige — sie kommen aus RFEM |
+| Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM |
 | Flächen, Volumenkörper | über die Maske (Doppelklick): Randlinien bzw. Randflächen, Dicke, Werkstoff, Teilung |
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
-**Flächenfreigaben** sind Kontaktfugen: in der Fugenebene starr, senkrecht dazu
+**Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der Fugenebene starr, senkrecht dazu
 frei mit Ausfall bei Zug. Statik3D liest sie aus der RFEM-Datei vollständig ein
 und zeigt sie mit ihrer Wirkung je Freiheitsgrad, **führt die Trennung im Netz
 aber nicht aus** — dafür müssten die beteiligten Flächen vernetzt und die
@@ -171,12 +171,54 @@ vernetztes Objekt ein ○.
 | Fläche mit drei Randknoten | ein Dreieckelement |
 | Volumen: 6 Vierecke, 8 Eckknoten | abgebildetes Hexaedernetz (x × y × z) |
 | Volumen: 4 Dreiecke, 4 Knoten | ein Tetraeder |
-| alles andere | wird **nicht** vernetzt; der Grund steht im Protokoll |
+| alles andere | **freier Vernetzer**: Randflächen in Dreiecke, Hülle prüfen, mit Tetraedern füllen |
 
 Ist eine Randlinie ein **Bogen, Kreis, Spline, Parabel oder eine Ellipse**,
 folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den
 Stützknoten. Eine Polylinie bleibt dagegen eine Polylinie: dort laufen die
 Knoten auf den Sehnen, denn etwas anderes hat der Anwender nicht angegeben.
+
+#### Der freie Vernetzer
+
+Ein Lagerbock, ein Augenblech mit Bohrung, eine Buchse — nichts davon ist ein
+Sechsflächner. Solche Körper vernetzt Statik3D **frei** in Tetraeder. Die
+angestrebte Kantenlänge kommt aus den Netzeinstellungen (bei einem RFEM-Import
+aus dessen `mesh.xml`); ist sie für ein Bauteil zu grob — weniger als vier
+Elemente über seine größte Ausdehnung —, wird sie für dieses Bauteil
+verkleinert und das im Protokoll gesagt.
+
+Das Netz folgt der Geometrie: Bohrungen bleiben ausgespart, krumme Flächen
+werden auf ihrer wahren Krümmung vernetzt, und um eine kleine Bohrung in einer
+großen Platte wird das Netz von selbst feiner, ohne dass die ganze Platte fein
+wird. Zwei Körper, die **dieselbe** Randfläche haben, teilen sich dort die
+Knoten und hängen zusammen; zwei Flächen, die nur aufeinander liegen, aber
+verschiedene Objekte sind, bleiben getrennt — das ist eine Kontaktfuge und
+keine Schweißnaht.
+
+Nach jedem Körper steht im Protokoll, was herausgekommen ist:
+
+    Volumen V34: 75437 Tetraeder aus 9174 Randdreiecken (Kantenlänge 50 mm, 14512 Knoten)
+      Volumen 0.100611 m^3 gegen 0.100602 m^3 aus der Hülle (Abweichung 0.009 %),
+      Güte min 0.005 / Mittel 0.685, Randtreue 99.96 % (größter Abstand zur Hülle 18.01 mm)
+
+**Lineare oder quadratische Elemente.** In den Netzeinstellungen steht die
+*Ordnung*: 1 gibt lineare Tetraeder (tet4), 2 quadratische (tet10). Der lineare
+hat eine konstante Dehnung und ist unter Biegung deutlich zu steif — bei einem
+Kragträger mit 100 mm Kantenlänge kommt er auf 69 % der Balkenlösung, der
+quadratische mit demselben Netz auf 99 %. Er kostet dafür mehr Knoten. Für
+Spannungsnachweise an Kerben, Augen und Bohrungen gehören die quadratischen
+genommen.
+
+**Splitter** — fast flache Elemente — werden herausgeglättet: die *freien*
+Knoten wandern so, dass die schlechteste Güte steigt; die Randknoten bleiben,
+wo sie sind, damit sich das Volumen nicht ändert. Die Schwelle steht ebenfalls
+in den Netzeinstellungen.
+
+Das ist keine Zierde, sondern die Probe: das **Volumen** des Netzes gegen das
+Volumen der Randhülle (Gaußscher Satz), die **Güte** der Elemente (1 = regulärer
+Tetraeder, 0 = flach) und die **Randtreue** — wieviel des Netzrandes wirklich
+auf der Geometrie liegt. Ist die Randhülle nicht dicht, wird gar nicht
+vernetzt: ein Netz aus einer undichten Hülle wäre stillschweigend falsch.
 
 „Netz löschen" nimmt die Elemente wieder weg, die Geometrie bleibt stehen.
 Eine Fläche, die noch einen Volumenkörper berandet, lässt sich nicht löschen —
@@ -352,6 +394,19 @@ Teilung steht in der Maske. Die Linie bleibt als Geometrie erhalten und kennt
 ihre exakte Länge (ein Halbkreis r = 2 m misst 6,283 m, nicht die Länge des
 Sehnenzugs).
 
+### Ansichtswürfel und Rückseite
+
+Oben rechts in der Ansicht steht der **Ansichtswürfel**: drei sichtbare Seiten,
+beschriftet mit ihrer Achse (+Z, −Y, +X). Ein Klick auf eine Seite dreht die
+Ansicht dorthin, ein Klick daneben stellt die isometrische Ansicht ein.
+
+Darunter — **statt einer Drehscheibe** — steht eine Zeile mit allen sechs
+Richtungen: **V** vorne, **H** hinten, **L** links, **R** rechts, **O** oben,
+**U** unten. Die Rückseite ist damit ein Klick und nicht eine halbe Umdrehung.
+Der Knopf **180°** kehrt die *laufende* Ansicht um: aus jeder beliebigen
+Schrägansicht wird ihre Rückansicht, ohne dass man sich neu hindrehen muss. Im
+Ribbon steht derselbe Befehl unter „Rückseite (180°)".
+
 ### Register „Auswahl"
 
 Sobald Knoten gewählt sind, erscheint rechts im Ribbon ein zusätzliches
@@ -470,16 +525,29 @@ Datei → Importieren (Details in `Schnittstellen.md`):
 | `.sza`/`.kra`/`.fga` | HiCAD | Profile mit Katalogwerten, Blechdicken, Werkstoffe, Teileliste **und die Stabachsen aus dem Szenenteil** (siehe Schnittstellenhandbuch) |
 | `.inp` | Abaqus, CalculiX | Netz, Materialien, Sections, Randbedingungen, Lasten je Step |
 | `.bdf`/`.nas`/`.dat` | Nastran | GRID, CBAR/CBEAM, CQUAD4/CTRIA3, CTETRA/CHEXA, SPC, FORCE, PLOAD |
-| `.rf6` | RFEM 6 Projektdatei | Knoten, Linien, Stäbe mit Typ, Flächen mit Dicke, Volumenkörper, Lager mit Nichtlinearität, Gelenke, Flächenfreigaben, Lastfälle mit Flächenlasten |
+| `.rf6` | RFEM 6 Projektdatei | Knoten, Linien, Stäbe mit Typ, Flächen mit Dicke, Volumenkörper, Lager mit Nichtlinearität, Gelenke, Kontaktbedingungen, Lastfälle mit Flächenlasten |
 | `.step`/`.iges`/`.stl` | CAD | Vernetzung mit gmsh (Volumen oder Schale) |
 
 Eine **RFEM-6-Projektdatei** (`.rf6`) wird unmittelbar gelesen – kein Export
 nötig. Übernommen werden Knoten, Linien, Stäbe, **jede Fläche und jeder
 Volumenkörper als Objekt** (mit Randlinien, Dicke und Werkstoff), die Lager,
-die Flächenfreigaben, alle Lastfälle mit ihren Lasten (Vorspannung als
+die Kontaktbedingungen, alle Lastfälle mit ihren Lasten (Vorspannung als
 gleichwertige Temperaturlast), die Kombinationen und die **Netzeinstellungen**
 aus `mesh.xml`. Was kein Netz bekommen konnte, steht trotzdem im Modellbaum
-und lässt sich dort vernetzen. Was gar nicht ging, steht Zeile für Zeile im
+und lässt sich dort vernetzen.
+
+**Krumme Linien** kommen mit ihrer wahren Form: Bögen, Kreise, Parabeln,
+Ellipsen und NURBS werden über ihre Kontrollpunkte gelesen, nicht als Sehne
+durch die Stützknoten. Das ist keine Kleinigkeit der Darstellung — eine
+Bohrung, eine Buchse, ein Bolzen oder ein Augenblech besteht in RFEM aus
+*zwei Halbbögen zwischen denselben zwei Knoten*; über die Knoten allein wäre
+das kein Polygon, und die Fläche fehlte im Bild wie im Modellbaum.
+
+**Aufeinanderliegende Knoten werden nicht zusammengeführt.** In einem
+RFEM-Volumenmodell liegen sie an jeder Kontaktfuge und jeder Kontaktbedingung
+absichtlich aufeinander; verschweißt wäre das Modell dort zu steif und die
+Freigaben liefen ins Leere. Wie viele es sind, steht im Protokoll; wer sie
+doch zusammenführen will, liest die Datei mit `merge_nodes=True`. Was gar nicht ging, steht Zeile für Zeile im
 Importprotokoll; Einzelheiten im Schnittstellenhandbuch. Die älteren nativen Formate (`.rf5`, `.rs6`, `.fem`)
 werden untersucht und, soweit ihr Behälter zugänglich ist, ausgelesen –
 andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder

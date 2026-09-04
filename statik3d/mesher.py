@@ -458,13 +458,21 @@ def _seiten_aus_linien(model: Model, flaeche):
     return kette if kette[-1][0][-1] == kette[0][0][0] else None
 
 
-def mesh_koerper(model: Model, koerper, log: list = None) -> list[int]:
+def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
+                 h: float = 0.0, cache: dict = None, ordnung: int = 0) -> list[int]:
     """Einen Volumenkoerper in Volumenelemente umsetzen.
 
-    Sechs vernetzte Vierseit-Randflaechen geben ein abgebildetes
-    Hexaedernetz. Voraussetzung ist, dass Boden und Deckel gleich fein
-    vernetzt sind; sonst passen die Knoten nicht aufeinander und der Koerper
-    wird nicht vernetzt.
+    Sechs Vierseit-Randflaechen mit acht Eckknoten geben ein **abgebildetes**
+    Hexaedernetz, vier Dreiecke mit vier Knoten einen Tetraeder - das sind die
+    beiden Faelle, in denen die Elemente der Geometrie folgen, ohne dass etwas
+    genaehert wird. Jede andere Form geht an den **freien Vernetzer**
+    (:mod:`statik3d.mesher3d`), der die Randflaechen in Dreiecke teilt, die
+    Huelle auf Dichtheit prueft und sie mit Tetraedern fuellt.
+
+    ``frei=False`` schaltet das ab; dann bleibt alles ohne Netz, was sich
+    nicht abgebildet vernetzen laesst. ``h`` ist die angestrebte Kantenlaenge
+    (0 = aus den Netzeinstellungen), ``cache`` teilt die Knoten gemeinsamer
+    Randflaechen zwischen mehreren Koerpern.
     """
     from .importers import _common as C
     from .model import _rand_aus_linien          # noqa: F401  (Doku)
@@ -496,10 +504,14 @@ def mesh_koerper(model: Model, koerper, log: list = None) -> list[int]:
         koerper.elemente = els
         C.say(log, f"Volumen {koerper.name}: ein Tetraeder")
         return els
+    if frei:
+        from .mesher3d import mesh_koerper_frei
+        return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
+                                 ordnung=ordnung)
     C.warn(log, f"Volumen {koerper.name}: {len(flaechen)} Randflächen mit "
                 f"{len(knoten)} Eckknoten - abgebildet vernetzen lassen sich nur "
                 "Sechsflächner (6 Vierecke, 8 Knoten) und Tetraeder (4 Dreiecke, "
-                "4 Knoten). Nicht vernetzt.")
+                "4 Knoten). Der freie Vernetzer ist abgeschaltet - nicht vernetzt.")
     return []
 
 

@@ -1039,6 +1039,14 @@ class Netzeinstellungen:
     seitenverhaeltnis: groesstes zulaessiges Seitenverhaeltnis eines Elements
     form:         0 Dreiecke, 1 Vierecke, 2 Dreiecke und Vierecke
     abgebildet:   abgebildetes (mapped) Netz bevorzugen
+    ordnung:      1 = lineare Volumenelemente (tet4), 2 = quadratische (tet10).
+                  Der lineare Tetraeder hat eine konstante Dehnung: er ist zu
+                  steif und gibt Spannungen erst mit sehr feinem Netz richtig
+                  wieder. Der quadratische kostet je Element mehr, braucht aber
+                  viel weniger davon.
+    splitter:     Guete, unter der ein Tetraeder als Splitter gilt und aus dem
+                  Netz herausgeglaettet wird (0 = nicht glaetten). 1 waere der
+                  regelmaessige Tetraeder, 0 der flache.
     """
     ziellaenge: float = 0.5
     knoten_linie: float = 0.001
@@ -1046,6 +1054,8 @@ class Netzeinstellungen:
     seitenverhaeltnis: float = 1.8
     form: int = 2
     abgebildet: bool = False
+    ordnung: int = 1
+    splitter: float = 0.1
     quelle: str = ""              # woher die Werte stammen
 
     def teilung(self, laenge: float) -> int:
@@ -1057,7 +1067,9 @@ class Netzeinstellungen:
     def beschreibung(self) -> str:
         return (f"Ziellänge {self.ziellaenge * 1e3:.0f} mm, "
                 f"Stabteilung {self.stabteilung}, "
-                f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}"
+                f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}, "
+                + ("quadratische Volumenelemente (tet10)" if self.ordnung >= 2
+                   else "lineare Volumenelemente (tet4)")
                 + (f" ({self.quelle})" if self.quelle else ""))
 
 
@@ -1109,6 +1121,9 @@ class Flaeche:
 
     linien:   Namen der Randlinien, in beliebiger Reihenfolge; der Rand wird
               ueber die gemeinsamen Endknoten zusammengesetzt.
+    oeffnungen: je Oeffnung die Namen ihrer Randlinien - Bohrungen, Aussparungen
+              und Durchbrueche. Sie gehoeren nicht zur Flaeche und werden beim
+              Vernetzen ausgespart.
     teilung:  Elementzahl in den beiden Randrichtungen beim Vernetzen.
     """
     name: str
@@ -1119,9 +1134,12 @@ class Flaeche:
     teilung: list[int] = field(default_factory=lambda: [4, 4])
     elemente: list[int] = field(default_factory=list)
     kommentar: str = ""
+    oeffnungen: list[list[str]] = field(default_factory=list)
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
+        if self.oeffnungen:
+            t += f", {len(self.oeffnungen)} Öffnungen"
         if self.dicke:
             t += f", {self.dicke}"
         return t + (f", {len(self.elemente)} Elemente" if self.elemente
@@ -1130,6 +1148,37 @@ class Flaeche:
     def randknoten(self, model) -> list[int]:
         """Die Randknoten im Umlauf - oder [], wenn der Rand nicht schliesst."""
         return _rand_aus_linien(model, self.linien)
+
+    def randpunkte(self, model, teilung: int = 16) -> "np.ndarray":
+        """Der Rand als **Punktfolge**, krumme Linien abgetastet.
+
+        Die Knotenfolge allein reicht nicht: eine Bohrung, eine Buchse oder ein
+        Augenblech ist in RFEM eine Flaeche aus zwei Halbboegen - zwischen
+        denselben zwei Knoten. Ueber die Knoten waeren das zwei Punkte und
+        damit kein Polygon; erst die abgetasteten Boegen ergeben den Kreis.
+        """
+        return _linienzug_punkte(model, self.linien, teilung)
+
+    def oeffnungspunkte(self, model, teilung: int = 16) -> list:
+        """Je Oeffnung ihr Randpolygon als Punktfolge."""
+        out = []
+        for linien in self.oeffnungen or []:
+            P = _linienzug_punkte(model, linien, teilung)
+            if len(P) >= 3:
+                out.append(P)
+        return out
+
+    def inhalt(self, model, teilung: int = 64) -> float:
+        """Flaecheninhalt [m^2] (Newell), Oeffnungen abgezogen.
+
+        Krumme Raender werden fein abgetastet: das eingeschriebene Vieleck
+        unterschaetzt den Kreis um 1 - sin(2a)/(2a) mit a = pi/n; bei n = 64
+        sind das 0.04 %, bei 16 Abschnitten waeren es 0.6 %.
+        """
+        A = _polygoninhalt(self.randpunkte(model, teilung))
+        for P in self.oeffnungspunkte(model, teilung):
+            A -= _polygoninhalt(P)
+        return max(A, 0.0)
 
 
 @dataclass
@@ -1152,6 +1201,99 @@ class Volumenkoerper:
             t += f", {self.material}"
         return t + (f", {len(self.elemente)} Elemente" if self.elemente
                     else ", nicht vernetzt")
+
+
+def _polygoninhalt(P) -> float:
+    """Flaecheninhalt eines ebenen Vielecks im Raum (Newell-Formel)."""
+    P = np.asarray(P, float)
+    if len(P) < 3:
+        return 0.0
+    n = np.zeros(3)
+    for a, b in zip(P, np.roll(P, -1, axis=0)):
+        n += np.cross(a, b)
+    return float(np.linalg.norm(n)) / 2.0
+
+
+def _linienzug_punkte(model, linien, teilung: int = 16) -> "np.ndarray":
+    """Ein geschlossener Linienzug als Punktfolge, krumme Linien abgetastet.
+
+    Die Knotenfolge allein reicht nicht: eine Bohrung, eine Buchse oder ein
+    Augenblech ist in RFEM ein Kreis aus zwei Halbboegen zwischen denselben
+    zwei Knoten. Ueber die Knoten waeren das zwei Punkte und damit kein
+    Vieleck; erst die abgetasteten Boegen ergeben den Kreis.
+    """
+    stuecke = _randstuecke(model, list(linien or []))
+    if not stuecke:
+        return np.zeros((0, 3))
+    punkte: list = []
+    for name, knoten in stuecke:
+        ln = model.lines.get(name)
+        teil = None
+        if ln is not None and (ln.typ or "polyline") != "polyline":
+            try:
+                teil = np.asarray(ln.kurve(model).punkte(max(teilung, 4)), float)
+            except Exception:            # noqa: BLE001 - krumm, aber unbrauchbar
+                teil = None
+            if teil is not None and len(teil) > 1 and knoten:
+                # Die Kurve laeuft nicht zwingend in Richtung der Knotenfolge
+                p0 = model.nodes[int(knoten[0])]
+                if np.linalg.norm(teil[0] - p0) > np.linalg.norm(teil[-1] - p0):
+                    teil = teil[::-1]
+        if teil is None:
+            idx = [int(n) for n in knoten if 0 <= int(n) < model.nn]
+            if not idx:
+                continue
+            teil = model.nodes[idx]
+        # Der Endpunkt eines Stuecks ist der Anfangspunkt des naechsten;
+        # beim geschlossenen Umlauf faellt er darum jeweils weg.
+        punkte.extend(teil[:-1] if len(teil) > 1 else teil)
+    if not punkte:
+        return np.zeros((0, 3))
+    P = np.asarray(punkte, float)
+    halten = np.ones(len(P), bool)
+    halten[1:] = np.linalg.norm(np.diff(P, axis=0), axis=1) > 1e-12
+    P = P[halten]
+    return P if len(P) >= 3 else np.zeros((0, 3))
+
+
+def _randstuecke(model, linien: list[str]) -> list:
+    """Die Randlinien im Umlauf aneinanderhaengen.
+
+    Rueckgabe [(Linienname, Knoten in Umlaufrichtung)] - oder [], wenn der
+    Umlauf nicht schliesst. Anders als ``_rand_aus_linien`` bleibt hier
+    erhalten, **welche** Linie welches Stueck beisteuert; nur so laesst sich
+    ein Bogen spaeter auf seiner wahren Kurve abtasten.
+    """
+    offen = []
+    for name in linien:
+        ln = model.lines.get(name)
+        if ln is None or len(ln.nodes) < 2:
+            return []
+        offen.append((name, [int(n) for n in ln.nodes]))
+    if not offen:
+        return []
+    kette = [offen.pop(0)]
+    while offen:
+        ende = kette[-1][1][-1]
+        anfang = kette[0][1][0]
+        for i, (name, kn) in enumerate(offen):
+            if kn[0] == ende:
+                kette.append((name, kn))
+            elif kn[-1] == ende:
+                kette.append((name, kn[::-1]))
+            elif kn[-1] == anfang:
+                kette.insert(0, (name, kn))
+            elif kn[0] == anfang:
+                kette.insert(0, (name, kn[::-1]))
+            else:
+                continue
+            offen.pop(i)
+            break
+        else:
+            return []
+    if kette[-1][1][-1] != kette[0][1][0]:
+        return []
+    return kette
 
 
 def _rand_aus_linien(model, linien: list[str]) -> list[int]:
@@ -1196,10 +1338,10 @@ def _rand_aus_linien(model, linien: list[str]) -> list[int]:
 
 
 @dataclass
-class Flaechenfreigabe:
-    """Flaechenfreigabe (RFEM: Flaechenfreigaben).
+class Kontaktbedingung:
+    """Kontaktbedingung zwischen Flaechen (RFEM: Flaechenfreigaben).
 
-    Eine Flaechenfreigabe trennt die genannten Flaechen von den Objekten, an
+    Eine Kontaktbedingung trennt die genannten Flaechen von den Objekten, an
     denen sie haengen, und verbindet beide ueber Federn je Freiheitsgrad -
     typisch eine **Kontaktfuge**: in der Ebene starr, senkrecht dazu frei mit
     Ausfall bei Zug.
@@ -1391,6 +1533,10 @@ class ContactPair:
 # --------------------------------------------------------------------------
 # Gesamtmodell
 # --------------------------------------------------------------------------
+#: Alter Name der Kontaktbedingung (RFEM: Flaechenfreigabe)
+Flaechenfreigabe = Kontaktbedingung
+
+
 class Model:
     def __init__(self, name: str = "Modell"):
         self.name = name
@@ -1417,7 +1563,7 @@ class Model:
         self.beulfelder: dict[str, Beulfeld] = {}
         self.volumenbereiche: dict[str, Volumenbereich] = {}
         self.lasteinleitungen: dict[str, Lasteinleitung] = {}
-        self.flaechenfreigaben: dict[str, Flaechenfreigabe] = {}
+        self.kontaktbedingungen: dict[str, Kontaktbedingung] = {}
         self.flaechen: dict[str, Flaeche] = {}
         self.koerper: dict[str, Volumenkoerper] = {}
         #: Aus der Ansicht in den Bericht uebernommene Ergebnisse, in der
@@ -1608,7 +1754,10 @@ class Model:
         if fehlt:
             raise KeyError(f"Linie(n) gibt es nicht: {', '.join(fehlt)}")
         f = Flaeche(name, namen, **kw)
-        if not f.randknoten(self):
+        # Der Rand darf auch krumm sein: eine Bohrung aus zwei Halbboegen hat
+        # nur zwei Knoten und ergibt ueber die Knotenfolge kein Polygon - wohl
+        # aber ueber die abgetasteten Kurven.
+        if not f.randknoten(self) and len(f.randpunkte(self)) < 3:
             raise ValueError("Die Linien bilden keinen geschlossenen Rand.")
         self.flaechen[name] = f
         return f
@@ -1625,14 +1774,27 @@ class Model:
         self.koerper[name] = k
         return k
 
-    def add_flaechenfreigabe(self, name: str, **kw) -> Flaechenfreigabe:
-        """Eine Flaechenfreigabe aufnehmen (aus RFEM gelesen oder von Hand).
+    @property
+    def flaechenfreigaben(self) -> dict:
+        """Alter Name der Kontaktbedingungen (RFEM: Flaechenfreigaben)."""
+        return self.kontaktbedingungen
+
+    @flaechenfreigaben.setter
+    def flaechenfreigaben(self, wert: dict):
+        self.kontaktbedingungen = wert
+
+    def add_flaechenfreigabe(self, name: str, **kw) -> "Kontaktbedingung":
+        """Alter Name von :meth:`add_kontaktbedingung`."""
+        return self.add_kontaktbedingung(name, **kw)
+
+    def add_kontaktbedingung(self, name: str, **kw) -> Kontaktbedingung:
+        """Eine Kontaktbedingung aufnehmen (aus RFEM gelesen oder von Hand).
 
         Die Trennung im Netz fuehrt das Programm nicht aus; ``ausgefuehrt``
         bleibt darum False, bis das jemand tut.
         """
-        fr = Flaechenfreigabe(name, **kw)
-        self.flaechenfreigaben[name] = fr
+        fr = Kontaktbedingung(name, **kw)
+        self.kontaktbedingungen[name] = fr
         return fr
 
     def add_joint(self, name: str, typ: str, elem: int, end: int = 1, **kw) -> Joint:
@@ -2001,8 +2163,8 @@ class Model:
             "beulfelder": [asdict(x) for x in self.beulfelder.values()],
             "volumenbereiche": [asdict(x) for x in self.volumenbereiche.values()],
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
-            "flaechenfreigaben": [_beh_dict(asdict(x))
-                                  for x in self.flaechenfreigaben.values()],
+            "kontaktbedingungen": [_beh_dict(asdict(x))
+                                   for x in self.kontaktbedingungen.values()],
             "flaechen": [asdict(x) for x in self.flaechen.values()],
             "koerper": [asdict(x) for x in self.koerper.values()],
             "bericht": [asdict(x) for x in self.bericht],
@@ -2059,8 +2221,12 @@ class Model:
                           for x in (bf.steifen or [])]
         m.lasteinleitungen = {x["name"]: _dc(Lasteinleitung, x)
                               for x in d.get("lasteinleitungen", [])}
-        m.flaechenfreigaben = {x["name"]: _beh_from(Flaechenfreigabe, x)
-                               for x in d.get("flaechenfreigaben", [])}
+        # "flaechenfreigaben" ist der alte Name derselben Sache - Dateien,
+        # die ihn tragen, werden weiter gelesen.
+        m.kontaktbedingungen = {
+            x["name"]: _beh_from(Kontaktbedingung, x)
+            for x in (d.get("kontaktbedingungen")
+                      or d.get("flaechenfreigaben") or [])}
         m.flaechen = {x["name"]: _dc(Flaeche, x) for x in d.get("flaechen", [])}
         m.koerper = {x["name"]: _dc(Volumenkoerper, x) for x in d.get("koerper", [])}
         m.bericht = [_dc(Berichtseintrag, x) for x in d.get("bericht", [])]

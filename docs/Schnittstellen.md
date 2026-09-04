@@ -21,7 +21,7 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 
 | Endung | Format | Typische Herkunft | Übernommen wird |
 |---|---|---|---|
-| `.json` | Statik3D | – | vollständiges Modell (Format 1 bis 5; Format 3 brachte Linien und Gelenke, Format 4 die **Anschlüsse**, die **Verformungsgrenzen**, die **Beulfelder** (mit Steifen) und die **Lasteinleitungsstellen**, Format 5 die **Volumenbereiche** und die Einstellungen zur **Theorie II. Ordnung**, Format 6 die **Flächen** und **Volumenkörper** der Geometriekette, die **Flächenfreigaben** und die in den **Bericht übernommenen Ergebnisbilder**. Ältere Dateien werden gelesen) |
+| `.json` | Statik3D | – | vollständiges Modell (Format 1 bis 5; Format 3 brachte Linien und Gelenke, Format 4 die **Anschlüsse**, die **Verformungsgrenzen**, die **Beulfelder** (mit Steifen) und die **Lasteinleitungsstellen**, Format 5 die **Volumenbereiche** und die Einstellungen zur **Theorie II. Ordnung**, Format 6 die **Flächen** und **Volumenkörper** der Geometriekette, die **Kontaktbedingungen** (früher „Flächenfreigaben“, der alte Schlüssel wird weiter gelesen) und die in den **Bericht übernommenen Ergebnisbilder**. Ältere Dateien werden gelesen) |
 | `.dxf` | AutoCAD DXF (ASCII, R12–2018) | InfoCAD, RFEM, CAD | LINE, LWPOLYLINE, POLYLINE (2D/3D, Polyface), 3DFACE |
 | `.ifc` | IFC 2x3 / IFC 4 STEP-Datei | InfoCAD, RFEM, Allplan, Revit, Tekla | Statikmodell (Structural Analysis View) oder Bauteilachsen |
 | `.xlsx` | SAF – Structural Analysis Format | RFEM 6, SCIA, Allplan, AxisVM, Frilo | Materialien, Querschnitte, Knoten, Stäbe, Flächen, Lager, Lastfälle, Lastgruppen, Kombinationen, Lasten |
@@ -29,7 +29,7 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 | `.inp` | Abaqus / CalculiX | FE-Programme | Netz, Sets, Materialien, Beam/Shell/Solid Sections, Boundary, CLOAD, DLOAD, Steps |
 | `.bdf`, `.nas`, `.dat` | Nastran Bulk Data | FE-Programme | GRID, CBAR/CBEAM, CROD, CTRIA3/CQUAD4, CTETRA/CHEXA, PBAR/PBARL/PBEAM/PSHELL/PSOLID, MAT1, SPC/SPC1, FORCE/MOMENT, PLOAD2/PLOAD4, GRAV, LOAD |
 | `.step`, `.stp`, `.iges`, `.igs`, `.brep`, `.stl` | CAD-Geometrie | CAD | Vernetzung mit gmsh (Volumen Tet4/Tet10 oder Schalen) |
-| `.rf6` | RFEM 6 Projektdatei (ZIP + SQLite `model.db`) | RFEM 6 | Knoten, Linien, Stäbe mit Typ, Querschnitte, Materialien, Knoten-/Linien-/Flächenlager mit Nichtlinearität, Gelenke, Flächen mit Dicke, Volumenkörper, Flächenfreigaben mit Typeinstellung, Lastfälle mit Flächenlasten |
+| `.rf6` | RFEM 6 Projektdatei (ZIP + SQLite `model.db`) | RFEM 6 | Knoten, Linien, Stäbe mit Typ, Querschnitte, Materialien, Knoten-/Linien-/Flächenlager mit Nichtlinearität, Gelenke, Flächen mit Dicke, Volumenkörper, Kontaktbedingungen mit Typeinstellung, Lastfälle mit Flächenlasten |
 | `.sdnf`, `.sdn` | SDNF – Steel Detailing Neutral Format | HiCAD, Tekla, SDS/2, Advance Steel | Bauteile mit Lage im Bauwerk, Profil, Werkstoff, Bleche |
 | `.nc`, `.nc1`, `.nc2`, `.dstv` | DSTV-NC (Stahlbau-NC) | HiCAD, Tekla, bocad, Advance Steel | Teileliste: Profil, Länge, Werkstoff, Bohrungen, Konturen |
 | `.sza`, `.kra`, `.fga`, `.fig` | HiCAD-Archiv (`!HFA##`, zstd) | HiCAD | Teileliste, Profile mit Katalogwerten, Blechdicken, Werkstoffe, Verbindungsmittel |
@@ -136,12 +136,49 @@ Aufbau der Datenbank (durchgehend dasselbe Muster):
 
 Federwerte: **`inf` = starr, `0` = frei, endlicher Wert = Federsteifigkeit**.
 
-Übernommen werden Knoten, Linien (Polygonzüge und Bögen), Stäbe mit
+Übernommen werden Knoten, Linien (Polygonzüge, Bögen, Kreise, Parabeln,
+Ellipsen und NURBS — jeweils über ihre Kontrollpunkte), Stäbe mit
 Querschnitt, Material, Verdrehung, Typ und Gelenken, Knoten-, Linien- und
 Flächenlager mit ihren Nichtlinearitäten, Flächen mit Dicke als Schalenelemente,
-Volumenkörper einfacher Topologie als Volumenelemente, die Flächenfreigaben mit
+Volumenkörper einfacher Topologie als Volumenelemente, die Kontaktbedingungen mit
 ihren Typeinstellungen sowie die Lastfälle mit Name, Einwirkungskategorie,
 Eigengewichtsfaktor und den Flächenlasten.
+
+### Linienarten: Bögen über ihre Kontrollpunkte
+
+Eine krumme Linie ist in RFEM **nicht** durch ihre Definitionsknoten
+bestimmt. Der dritte Punkt eines Bogens steht als *Kontrollpunkt* in einer
+eigenen Tabelle:
+
+    LineImplArc.controlPoint_id → ControlPoint.impl_id
+                                → ControlPointImpl.coordinates_x/y/z
+
+Ohne diesen Punkt bleibt von einem Bogen nur die Sehne durch seine beiden
+Knoten. Das trifft nicht nur die Darstellung: eine **Bohrung, eine Buchse,
+ein Bolzen oder ein Augenblech** ist in RFEM ein Kreis aus *zwei Halbbögen
+zwischen denselben zwei Knoten*. Über die Knotenfolge sind das zwei Punkte
+und damit kein Polygon — die Fläche fällt in ihre Sehne zusammen und ist
+weder sichtbar noch anklickbar. In einer Lagerkonstruktion waren das
+320 von 1375 Flächen.
+
+Übernommen werden:
+
+| RFEM-Tabelle | Linienart | woher die Form kommt |
+|---|---|---|
+| `LineImplPolyline` | Polylinie | die Definitionsknoten |
+| `LineImplArc` | Bogen | Anfang, **Kontrollpunkt**, Ende |
+| `LineImplCircle` | Kreis | `center_x/y/z`, `radius`, `normal_x/y/z` |
+| `LineImplParabola` | Parabel | Anfang, **Kontrollpunkt**, Ende |
+| `LineImplEllipticalArc`, `LineImplEllipse` | Ellipse | die beiden Hauptachsenpunkte und der Umfangspunkt |
+| `LineImplNurbs` | NURBS | `LineImplNurbs_controlPoints` mit Gewichten, `degree` |
+| `LineImplSpline` | Spline | genähert über die Definitionsknoten (wird gemeldet) |
+
+Die Form steht danach in `Line.geometrie` und wird überall auf ihrer wahren
+Kurve ausgewertet: beim Zeichnen, beim Zusammensetzen des Flächenrandes, beim
+Flächeninhalt und beim Vernetzen. Was sich nicht rekonstruieren lässt, wird
+zur Geraden — **mit** Meldung im Protokoll, nie stillschweigend:
+
+    2807 Linien gelesen (1356x arc, ueber ihre Kontrollpunkte gefuehrt)
 
 ### Stabtypen
 
@@ -196,6 +233,10 @@ Fehlt die Datei, gilt die Programmvorgabe — und das Protokoll sagt es.
 Die Fläche zeigt über `stiffness_id`/`stiffness_table` auf ihr
 Steifigkeitsobjekt; nur `SurfaceStiffnessStandard` (und die Membranformen)
 tragen über `Thickness` → `ThicknessImplUniform` eine Dicke und ein Material.
+Der Zeiger steht in **beiden Richtungen** in der Datenbank — rückwärts als
+`SurfaceStiffness*.owner_id`/`owner_table`. In manchen Dateien ist die
+Vorwärtsspalte leer; dann wird der Rückweg genommen. Ohne ihn wäre jede
+Fläche „unbekannt" und rutschte als Null-Element durch.
 **Jede** Fläche wird ein Modellobjekt `Flaeche` — mit ihren Randlinien
 (`SurfaceImplPlane_boundaryLines` bzw. `…Quadrangle_boundaryLines`), ihrer
 Dicke und ihrem Werkstoff. Sie steht damit im Modellbaum und in der Tabelle
@@ -211,7 +252,13 @@ gleich vernetzt; gleiche Dicken teilen sich eine Schalenkennung (`d12` für
 | `SurfaceStiffnessWithoutThickness` | nein | Null-Element, keine Elemente |
 | `SurfaceStiffnessRigid` | nein | starre Fläche, keine Elemente |
 | `SurfaceStiffnessLoadTransfer`, `…LoadDistribution` | nein | reine Lastverteilung |
-| `SurfaceStiffnessGroundwater`, `…Floor` | nein | keine Elemente |
+| `SurfaceStiffnessGroundwater`, `…Discontinuity`, `…Modifications` | nein | keine Elemente |
+| `SurfaceStiffnessFloor`, `…FloorDiaphragm(Version1)`, `…FloorFlexibleDiaphragm(Version1)`, `…FloorSemirigid(Version1)` | nein | Deckenscheiben, keine Elemente |
+
+Alle 18 Arten, die RFEM 6.11 kennt, stehen in `rfem6_db.SURFACE_STIFFNESS`.
+Eine Art, die dort fehlt (neue RFEM-Version), wird **nicht** stillschweigend
+zum Null-Element: trägt ihre Tabelle eine `thickness_id`, wird die Dicke
+übernommen und die Art im Protokoll beim Namen genannt.
 
 Zwei Fälle bleiben **absichtlich** ohne Elemente, weil ein stillschweigend zu
 steifes Modell schlimmer ist als eine sichtbare Lücke:
@@ -219,6 +266,15 @@ steifes Modell schlimmer ist als eine sichtbare Lücke:
 * Flächen mit **Öffnung** — das Randpolygon allein würde die Öffnung schließen.
 * Flächen mit **veränderlicher Dicke** werden mit dem Mittelwert gerechnet und
   gemeldet.
+
+### Öffnungen
+
+Eine Bohrung ist in RFEM kein Loch im Randpolygon, sondern ein eigenes Objekt:
+`Opening` → `OpeningImpl_boundaryLines`. Die Fläche zeigt über
+`SurfaceImpl*_integratedOpenings` darauf. Die Randlinien der Öffnung gehören an
+die Fläche (`Flaeche.oeffnungen`), sonst würde ein Flansch mit 28
+Schraubenlöchern beim Vernetzen zubetoniert — eine viel zu steife Platte, und
+niemand sähe es. Im Beispielmodell sind es 376 Öffnungen auf 100 Flächen.
 
 ### Volumenkörper
 
@@ -234,16 +290,31 @@ sich daraus nur die beiden einfachen Topologien bilden:
 Die Reihenfolge der Randflächen ist beliebig; Boden und Deckel des Hexaeders
 werden über die gemeinsamen Knoten der Seitenflächen zugeordnet und die
 Jacobi-Determinante geprüft (bei negativem Vorzeichen werden Boden und Deckel
-getauscht). Auch hier wird **jeder** Körper ein Modellobjekt
+getauscht).
+
+Alles andere geht an den **freien Vernetzer** (`statik3d/mesher3d.py`, siehe
+Theoriehandbuch Kapitel 6a): die Randflächen werden in Dreiecke geteilt, die
+Hülle auf Dichtheit geprüft und mit Tetraedern gefüllt. Im Beispielmodell einer
+Lagerkonstruktion sind das alle 108 Körper — 427 717 Tetraeder in 67 s, mit
+einer Volumenabweichung von 0,0008 % gegenüber den Randhüllen.
+
+Beide abgebildeten Topologien gelten nur, wenn **jede** Randfläche ein ebenes
+Vieleck mit mindestens drei Knoten ist. Eine Buchse hat vier Randflächen und vier Knoten
+— zwei Kreisdeckel und zwei Zylinderhälften — und sähe sonst aus wie ein
+Tetraeder; sie wäre ein Element ohne Volumen und eine singuläre Matrix. Ein
+Körper mit krummen Randflächen bleibt darum ohne Netz, und das steht an ihm
+und im Protokoll. Ebenso wird ein „Tetraeder", dessen vier Knoten in einer
+Ebene liegen, verworfen und gemeldet. Auch hier wird **jeder** Körper ein Modellobjekt
 `Volumenkoerper` mit seinen Randflächen — Körper mit Bohrungen, Zylinder und
 Freiformflächen bekommen nur kein Netz, und der Grund steht dabei:
 
     108 Volumenkoerper nicht uebernommen (Randflaechenzahl 4: 48x, 6: 23x, 9: 18x, …)
     - dafuer waere ein 3D-Vernetzer noetig.
 
-### Flächenfreigaben und ihre Typeinstellungen
+### Kontaktbedingungen und ihre Typeinstellungen
 
-Eine Flächenfreigabe (`SurfaceRelease`) trennt in RFEM die freigegebenen
+Was RFEM „Flächenfreigabe“ nennt (`SurfaceRelease`), heißt in Statik3D
+**Kontaktbedingung** — es ist eine Kontaktfuge. Sie trennt in RFEM die freigegebenen
 Flächen von den Objekten, an denen sie hängen, und verbindet beide über die
 Federn des Freigabetyps (`SurfaceReleaseType` →
 `SurfaceReleaseTypeImplVersion1` → `SpringConstants`, hier **unmittelbar** über
@@ -253,7 +324,8 @@ Federn des Freigabetyps (`SurfaceReleaseType` →
 Statik3D liest alles heraus — Name, Ort, freigegebene Flächen und Volumen,
 Zuordnung, Federkonstante je Freiheitsgrad samt Ausfalltyp und Reibbeiwert —
 und legt jede Freigabe als **Modellobjekt** `Flaechenfreigabe` an. Sie steht
-damit im Modellbaum und in der Tabelle „Flächenfreigaben", wird mitgespeichert
+damit im Modellbaum unter „Kontaktbedingungen → Flächenkontakte" und in der
+gleichnamigen Tabelle, wird mitgespeichert
 und überlebt Rückgängig. Das Feld `ausgefuehrt` sagt, ob die Trennung im Netz
 umgesetzt ist — heute immer `False`, und das Protokoll sagt es auch:
 
