@@ -1029,6 +1029,39 @@ class Lasteinleitung:
 
 
 @dataclass
+class Netzeinstellungen:
+    """Vorgaben fuer die Vernetzung (RFEM: Netzeinstellungen, mesh.xml).
+
+    ziellaenge:   angestrebte Kantenlaenge eines finiten Elements [m]
+    knoten_linie: groesster Abstand, bei dem ein Knoten noch auf eine Linie
+                  gezogen wird [m]
+    stabteilung:  Zahl der Abschnitte je Stab fuer Sondertypen und Auswertung
+    seitenverhaeltnis: groesstes zulaessiges Seitenverhaeltnis eines Elements
+    form:         0 Dreiecke, 1 Vierecke, 2 Dreiecke und Vierecke
+    abgebildet:   abgebildetes (mapped) Netz bevorzugen
+    """
+    ziellaenge: float = 0.5
+    knoten_linie: float = 0.001
+    stabteilung: int = 10
+    seitenverhaeltnis: float = 1.8
+    form: int = 2
+    abgebildet: bool = False
+    quelle: str = ""              # woher die Werte stammen
+
+    def teilung(self, laenge: float) -> int:
+        """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""
+        if self.ziellaenge <= 0:
+            return 1
+        return max(1, int(round(float(laenge) / self.ziellaenge)))
+
+    def beschreibung(self) -> str:
+        return (f"Ziellänge {self.ziellaenge * 1e3:.0f} mm, "
+                f"Stabteilung {self.stabteilung}, "
+                f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}"
+                + (f" ({self.quelle})" if self.quelle else ""))
+
+
+@dataclass
 class Berichtseintrag:
     """Ein aus der Ansicht in den Bericht uebernommenes Ergebnis.
 
@@ -1390,6 +1423,7 @@ class Model:
         #: Aus der Ansicht in den Bericht uebernommene Ergebnisse, in der
         #: Reihenfolge, in der sie im Bericht stehen sollen.
         self.bericht: list[Berichtseintrag] = []
+        self.netz = Netzeinstellungen()
         self.design = DesignSettings()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
@@ -1972,6 +2006,7 @@ class Model:
             "flaechen": [asdict(x) for x in self.flaechen.values()],
             "koerper": [asdict(x) for x in self.koerper.values()],
             "bericht": [asdict(x) for x in self.bericht],
+            "netz": asdict(self.netz),
             "design": asdict(self.design),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
@@ -2029,6 +2064,8 @@ class Model:
         m.flaechen = {x["name"]: _dc(Flaeche, x) for x in d.get("flaechen", [])}
         m.koerper = {x["name"]: _dc(Volumenkoerper, x) for x in d.get("koerper", [])}
         m.bericht = [_dc(Berichtseintrag, x) for x in d.get("bericht", [])]
+        if "netz" in d:
+            m.netz = _dc(Netzeinstellungen, d["netz"])
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]

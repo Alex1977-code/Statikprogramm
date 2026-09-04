@@ -595,6 +595,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           f"{lc.n_loads} Lasten")
                          for name, lc in model.load_cases.items()], "lastfall",
                     "lastfaelle")
+        n_lasten = sum(lc.n_loads for lc in model.load_cases.values())
+        la = self._zweig(ew, "Lasten", n_lasten, "lasten",
+                         hinweis="Alle Lasten aller Lastfälle – die Tabelle "
+                                 "unten zeigt sie einzeln")
+        for name, lc in model.load_cases.items():
+            if lc.n_loads:
+                self._zweig(la, name, lc.n_loads, "last", schluessel=name)
         kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
         self._liste(kb, [(name, getattr(c, "kind", "") or "", name, name)
                          for name, c in model.combinations.items()], "kombination",

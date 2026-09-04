@@ -173,13 +173,36 @@ Importprotokoll:
 Ein unbekannter Tabellenname wird als Balken übernommen und mit seinem Namen
 genannt — eine neue RFEM-Version bleibt so lesbar.
 
+### Netzeinstellungen
+
+Die Vernetzungsvorgaben liegen **nicht** in der Modelldatenbank, sondern als
+eigene Datei `mesh.xml` im Behälter. Ohne sie würde Statik3D mit seiner
+eigenen Vorgabe vernetzen und ein Netz erzeugen, das mit dem in RFEM nichts
+zu tun hat. Übernommen werden:
+
+| Schlüssel in `mesh.xml` | Bedeutung |
+|---|---|
+| `E_VALUE_GENERAL_TARGET_LENGTH_OF_FE` | angestrebte Elementkantenlänge [m] |
+| `E_VALUE_GENERAL_MAXIMUM_DISTANCE_BETWEEN_NODE_AND_LINE` | Fangabstand Knoten–Linie [m] |
+| `E_VALUE_MEMBERS_NUMBER_OF_DIVISIONS_FOR_SPECIAL_TYPES` | Stabteilung |
+| `E_VALUE_SURFACES_MAXIMUM_RATIO_OF_FE` | größtes Seitenverhältnis |
+| `E_VALUE_SURFACES_SHAPE_OF_FINITE_ELEMENTS` | 0 Dreiecke, 1 Vierecke, 2 gemischt |
+| `E_VALUE_SURFACES_MAPPED_MESH_PREFERRED` | abgebildetes Netz bevorzugen |
+
+Fehlt die Datei, gilt die Programmvorgabe — und das Protokoll sagt es.
+
 ### Flächen: Dicke und Steifigkeitsart
 
 Die Fläche zeigt über `stiffness_id`/`stiffness_table` auf ihr
 Steifigkeitsobjekt; nur `SurfaceStiffnessStandard` (und die Membranformen)
 tragen über `Thickness` → `ThicknessImplUniform` eine Dicke und ein Material.
-Flächen mit Dicke werden zu Schalenelementen vernetzt, gleiche Dicken teilen
-sich eine Schalenkennung (`d12` für 12 mm).
+**Jede** Fläche wird ein Modellobjekt `Flaeche` — mit ihren Randlinien
+(`SurfaceImplPlane_boundaryLines` bzw. `…Quadrangle_boundaryLines`), ihrer
+Dicke und ihrem Werkstoff. Sie steht damit im Modellbaum und in der Tabelle
+„Flächen" und lässt sich dort weiterbearbeiten und vernetzen, auch wenn der
+Import selbst kein Netz erzeugen konnte. Flächen mit Dicke werden zusätzlich
+gleich vernetzt; gleiche Dicken teilen sich eine Schalenkennung (`d12` für
+12 mm).
 
 | Steifigkeitsart | trägt Dicke | Vorgehen |
 |---|---|---|
@@ -211,8 +234,9 @@ sich daraus nur die beiden einfachen Topologien bilden:
 Die Reihenfolge der Randflächen ist beliebig; Boden und Deckel des Hexaeders
 werden über die gemeinsamen Knoten der Seitenflächen zugeordnet und die
 Jacobi-Determinante geprüft (bei negativem Vorzeichen werden Boden und Deckel
-getauscht). Alles andere — Körper mit Bohrungen, Zylinder, Freiformflächen —
-wird mit Randflächenzahl gemeldet, aber **nicht** übernommen:
+getauscht). Auch hier wird **jeder** Körper ein Modellobjekt
+`Volumenkoerper` mit seinen Randflächen — Körper mit Bohrungen, Zylinder und
+Freiformflächen bekommen nur kein Netz, und der Grund steht dabei:
 
     108 Volumenkoerper nicht uebernommen (Randflaechenzahl 4: 48x, 6: 23x, 9: 18x, …)
     - dafuer waere ein 3D-Vernetzer noetig.
@@ -248,10 +272,34 @@ Jeder Lastfall kommt mit Name (als Beschreibung), Einwirkungskategorie
 
 | Last | Vorgehen |
 |---|---|
+| Knotenlast (`NodalLoad`) | Kraft und Moment je Achse, an alle zugewiesenen Knoten |
 | Flächenlast (`SurfaceLoad` → `SurfaceTypeLoadImplForce`) | auf die Schalenelemente der vernetzten Zielfläche gelegt |
 | Flächenlast auf eine Fläche ohne Dicke | mit Anzahl und Grund gemeldet, nicht übernommen |
-| Stablast (`MemberLoad`) | gemeldet – Vorspannlasten kennt das Programm nicht |
+| **Stabvorspannung** (`MemberTypeLoadImplInitialPrestress`) | als gleichwertige Temperaturlast (siehe unten) |
 | Linienlast, freie Rechtecklast, Volumenlast | gemeldet – brauchen das Netz bzw. die Projektion |
+
+**Vorspannung.** Eine Vorspannkraft N₀ im Stab ist mechanisch gleichwertig zu
+einer aufgezwungenen Verkürzung ε₀ = −N₀/(EA), also einer Temperaturänderung
+
+    ΔT = −N₀ / (E · A · α)
+
+Am voll behinderten Stab kommt damit genau N₀ heraus; im statisch
+unbestimmten System verteilt die Rechnung die Kraft richtig um. So kommt die
+Vorspannung an, ohne dass das Programm eine eigene Vorspannlast bräuchte —
+und das Protokoll sagt es, damit niemand die Temperaturlast für ein Versehen
+hält.
+
+### Kombinationen
+
+`LoadCombination` überlagert in RFEM die Lasten vor der Rechnung,
+`ResultCombination` die Ergebnisse danach. Solange die Rechnung linear ist,
+ist das dasselbe; beide werden darum als Kombination mit ihren Faktoren
+(`modelObjectFactor` × `groupFactor`) übernommen. Die Bemessungssituation
+(`designSituationType`) wird auf ULS/SLS/ACC/EQU abgebildet.
+
+Enthält eine Ergebniskombination Klammern, Oder-Verknüpfungen oder
+Zwischenergebnisse, wird das gemeldet: die einfache Überlagerung trifft die
+Absicht dann nur bei linearer Rechnung.
 
 Die Lastrichtung (`loadDirection`) steht mit Rohwert und Deutung im Protokoll
 (`0 = lokal z`, `1 = global Z`, `2 = global X`, `3 = global Y`) — die Deutung

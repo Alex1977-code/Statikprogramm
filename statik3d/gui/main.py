@@ -66,6 +66,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sel_flaechen: list[str] = []
         self.sel_koerper: list[str] = []
         self.sel_staebe: list[str] = []
+        #: Elemente, die aus dem Modellbaum heraus aufleuchten
+        self.leuchtet: list[int] = []
 
         self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil() + tab.stil())
         self._undo_init()
@@ -75,6 +77,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_bottom()
         self.kopf = dsg.Kopfzeile(self)
         self._build_ribbon()
+        self._build_glasleiste()
         self._build_update_button()
         self._refresh_kopf()
         self._build_baum()
@@ -112,7 +115,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not hasattr(self, "lbl_netz"):
             return
         self.lbl_ks.setText(f"KS: {self.ks_aktiv}")
-        self.lbl_fang.setText("Fang: " + ("an" if getattr(self, "fang_an", False)
+        arten = getattr(self, "fang_arten", None) or []
+        self.lbl_fang.setText("Fang: " + (", ".join(arten) if
+                                          getattr(self, "fang_an", False) and arten
                                           else "aus")
                               + f" · {self.arbeitsebene.ebene}"
                               + (f" · Raster {self.arbeitsebene.raster:g} m"
@@ -322,10 +327,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if art not in self.AUSWAHLARTEN:
             return
         self.auswahlart = art
-        if hasattr(self, "cb_auswahlart") and self.cb_auswahlart.currentText() != art:
-            self.cb_auswahlart.blockSignals(True)
-            self.cb_auswahlart.setCurrentText(art)
-            self.cb_auswahlart.blockSignals(False)
+        for feld in (getattr(self, "cb_auswahlart", None),
+                     getattr(self, "cb_auswahlart_glas", None)):
+            if feld is not None and feld.currentText() != art:
+                feld.blockSignals(True)
+                feld.setCurrentText(art)
+                feld.blockSignals(False)
         self.statusBar().showMessage(f"Auswahl: {art}", 3000)
 
     def _objekt_umschalten(self, liste: list, name: str, was: str):
@@ -382,6 +389,56 @@ class MainWindow(QtWidgets.QMainWindow):
                              f"{np.round(self.model.nodes[i], 3)})")
         self._auswahl_register()
         self.redraw()
+
+    def _build_glasleiste(self):
+        """Die durchscheinende Schnellleiste und der Ansichtswuerfel.
+
+        Beides liegt **ueber** der Ansicht und nimmt keinen Platz weg. Die
+        Knoepfe fuehren dieselben Aktionsobjekte wie das Ribbon - es sind
+        keine zweiten Befehle, nur ein kuerzerer Weg fuer das, was man beim
+        Modellieren staendig braucht.
+        """
+        central = self.centralWidget()
+        leiste = msk.Glasleiste(central)
+        for name, (zeichen, _hinweis) in vp.DARSTELLUNGEN.items():
+            leiste.knopf(self.act_darstellung[name], zeichen)
+        leiste.trenner()
+        leiste.knopf(self.act_edges, "▦")
+        leiste.knopf(self.act_knoten, "•")
+        leiste.knopf(self.act_linien, "╱")
+        leiste.knopf(self.act_loads, "↓")
+        leiste.trenner()
+        leiste.knopf(self.act_fang, "⊹")
+        cb = QtWidgets.QComboBox()
+        cb.addItems(self.AUSWAHLARTEN)
+        cb.setToolTip("Was ein Klick in der Ansicht trifft")
+        cb.currentTextChanged.connect(self.auswahlart_setzen)
+        self.cb_auswahlart_glas = leiste.widget(cb)
+        leiste.trenner()
+        a = QtGui.QAction("Zoom alles", self)
+        a.setToolTip("Alles ins Bild holen")
+        a.triggered.connect(lambda: (self.plotter.reset_camera(), self.plotter.render()))
+        leiste.knopf(a, "⤢")
+        leiste.adjustSize()
+        wuerfel = msk.Ansichtswuerfel(central)
+        wuerfel.gewaehlt.connect(self.blickrichtung)
+        self.glasleiste = leiste
+        self.ansichtswuerfel = wuerfel
+        self.ansichtsrand = msk.Ansichtsrand(central, leiste, wuerfel)
+
+    def blickrichtung(self, richtung: str):
+        """Blickrichtung setzen - vom Ansichtswuerfel oder aus dem Ribbon."""
+        fn = {"xy": self.plotter.view_xy, "xz": self.plotter.view_xz,
+              "yz": self.plotter.view_yz,
+              "iso": self.plotter.view_isometric}.get(richtung)
+        if fn is None:
+            return
+        fn()
+        self.plotter.reset_camera()
+        self.plotter.render()
+        self.statusBar().showMessage(
+            {"xy": "Draufsicht (XY)", "xz": "Vorderansicht (XZ)",
+             "yz": "Seitenansicht (YZ)", "iso": "Isometrisch"}[richtung], 3000)
 
     def _build_ribbon(self):
         """Die Befehlsleiste. Jeder Befehl steht hier - und nur hier.
@@ -498,7 +555,21 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda v: self.arbeitsebene_setzen(raster=v))
         g.widget(self.sp_raster)
         self.act_fang = g.schalter("Fang", self.fang_umschalten, True,
-                                   "Auf Knoten, Kantenmitte und Raster fangen")
+                                   "Fang ein- und ausschalten (F3)")
+        self.act_fang.setShortcut(QtGui.QKeySequence("F3"))
+        self.act_fang.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+        # Was gefangen wird, muss man beim Modellieren staendig umstellen -
+        # darum je Fangart ein eigener Schalter mit Taste, nicht ein Dialog.
+        self.act_fangart = {}
+        for i, (art, text, kuerzel) in enumerate((
+                ("knoten", "auf Knoten", "Shift+F1"),
+                ("mitte", "auf Kantenmitte", "Shift+F2"),
+                ("raster", "auf Raster", "Shift+F3"))):
+            a = g.schalter(text, lambda z, k=art: self.fangart_umschalten(k, z),
+                           art in self.fang_arten, f"Fangart „{text}“ ({kuerzel})")
+            a.setShortcut(QtGui.QKeySequence(kuerzel))
+            a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+            self.act_fangart[art] = a
         g = r.gruppe("Netzgeneratoren")
         g.gross("Stabzug", "╱", lambda: self.maske_zeigen("Netz"),
                 hinweis="Stabzug zwischen zwei Punkten")
@@ -662,11 +733,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # -- Ansicht -----------------------------------------------------
         r = rb.register("Ansicht")
         g = r.gruppe("Blickrichtung")
-        g.gross("Isometrisch", "◲", lambda: (self.plotter.view_isometric(),
-                                             self.plotter.reset_camera()))
-        g.klein("XY (Draufsicht)", self.plotter.view_xy)
-        g.klein("XZ (Ansicht)", self.plotter.view_xz)
-        g.klein("YZ (Seitenansicht)", self.plotter.view_yz)
+        g.gross("Isometrisch", "◲", lambda: self.blickrichtung("iso"))
+        g.klein("XY (Draufsicht)", lambda: self.blickrichtung("xy"))
+        g.klein("XZ (Ansicht)", lambda: self.blickrichtung("xz"))
+        g.klein("YZ (Seitenansicht)", lambda: self.blickrichtung("yz"))
         g.klein("Zoom alles", self.plotter.reset_camera)
         g = r.gruppe("Darstellung")
         # Die vier Darstellungsarten liegen als eigene Knoepfe nebeneinander und
@@ -690,6 +760,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_edges.setShortcutContext(QtCore.Qt.ApplicationShortcut)
         self.act_knoten = g.schalter("Knoten", lambda z: self.redraw(), True,
                                      "Die gesetzten Knoten als Punkte zeigen")
+        self.act_linien = g.schalter("Linien", lambda z: self.redraw(), True,
+                                     "Die Linien des Modells zeigen (Geometrie, "
+                                     "keine Elemente)")
         self.act_nodes = g.schalter("Knotennummern", lambda z: self.redraw())
         self.act_elems = g.schalter("Elementnummern", lambda z: self.redraw())
         self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True)
@@ -756,7 +829,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # Die Registerleiste entfaellt: sichtbar ist immer genau eine Maske,
         # gewaehlt ueber den Befehl im Ribbon. Der Docktitel nennt sie.
         self.tabs.tabBar().setVisible(False)
-        dock.setWidget(self.tabs)
+        # Darueber der Platz fuer die Erzeuge-Maske (Knoten, Linie, Fläche …).
+        # Sie schwebt nicht mehr ueber der Ansicht, sondern steht hier - dort,
+        # wo alle Einstellungen stehen.
+        halter = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(halter)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        lay.addWidget(self.tabs, 1)
+        self.maskenplatz = lay
+        self.maskenrand.setze_ziel(lay)
+        dock.setWidget(halter)
         self.eingaben_dock = dock
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
 
@@ -783,6 +866,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 return True
         return False
 
+    def maske_erzeugen(self, maske):
+        """Eine Erzeuge-Maske im rechten Bereich zeigen und ihn aufklappen."""
+        self.maskenrand.zeigen(maske)
+        if hasattr(self, "eingaben_dock"):
+            self.eingaben_dock.setWindowTitle(getattr(maske, "titel", "") or "Erzeugen")
+            self.eingaben_dock.show()
+            self.eingaben_dock.raise_()
+        return maske
+
     def _build_baum(self):
         """Modellbaum links: was im Modell steckt."""
         dock = QtWidgets.QDockWidget("Modellbaum", self)
@@ -800,20 +892,37 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)
 
     #: Zweig des Modellbaums -> Register der Eingaben
+    #: Zweig des Modellbaums -> Register der Eingaben rechts.
+    #: Es gelten nur die Register, die es wirklich gibt: Modell, Netz,
+    #: Lager/Lasten, Lastfaelle, Stellungen, Kontakt, Nachweise, Berechnung,
+    #: Ergebnisse.
     BAUM_ZIEL = {
-        "modell": "Modell", "elemente": "Netz", "querschnitte": "Modell",
-        "werkstoffe": "Modell", "dicken": "Modell", "lager": "Lager/Lasten",
-        "linienlager": "Lager/Lasten", "flaechenlager": "Lager/Lasten",
-        "lastfaelle": "Lastfälle", "kombinationen": "Lastfälle",
-        "kontakt": "Kontakt", "staebe": "Nachweise", "stab": "Nachweise",
+        "modell": "Modell",
+        "querschnitte": "Modell", "querschnitt": "Modell",
+        "werkstoffe": "Modell", "werkstoff": "Modell",
+        "dicken": "Modell", "dicke": "Modell",
+        "elemente": "Netz", "stabelemente": "Netz", "flaechen": "Netz",
+        "volumen": "Netz",
+        "lager": "Lager/Lasten", "lager_einzeln": "Lager/Lasten",
+        "linienlager": "Lager/Lasten", "linienlager_einzeln": "Lager/Lasten",
+        "flaechenlager": "Lager/Lasten", "flaechenlager_einzeln": "Lager/Lasten",
+        "lasten": "Lager/Lasten", "last": "Lager/Lasten",
+        "lastfaelle": "Lastfälle", "lastfall": "Lastfälle",
+        "kombinationen": "Lastfälle", "kombination": "Lastfälle",
+        "kontakt": "Kontakt",
+        "staebe": "Nachweise", "stab": "Nachweise",
         "stellungen": "Stellungen", "stellung": "Stellungen",
-        "knoten": "Geometrie", "linien": "Geometrie", "linie": "Geometrie",
-        "stabelemente": "Netz", "flaechen": "Netz", "volumen": "Netz",
-        "gelenke": "Struktur", "gelenk": "Struktur",
-        "geoflaechen": "Geometrie", "geoflaeche": "Geometrie",
-        "geokoerper": "Geometrie", "geokoerper_einzeln": "Geometrie",
         "ergebnisse": "Ergebnisse", "ergebnisgruppe": "Ergebnisse",
         "ergebnis": "Ergebnisse", "nachweis": "Ergebnisse",
+        "bericht": "Ergebnisse", "berichtseintrag": "Ergebnisse",
+    }
+
+    #: Zweige, zu denen es kein festes Register gibt: sie oeffnen die
+    #: Erzeuge-Maske, die dazu gehoert - ebenfalls rechts.
+    BAUM_MASKE = {
+        "knoten": "maske_knoten",
+        "linien": "maske_linie", "linie": "maske_linie",
+        "gelenke": "add_hinge", "gelenk": "add_hinge",
     }
 
     #: Zweige des Modellbaums, die eine Tabelle unten zeigen statt eine Maske
@@ -827,6 +936,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "linienlager": "Lager", "linienlager_einzeln": "Lager",
                     "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
                     "gelenke": "Gelenke", "gelenk": "Gelenke",
+                    "lasten": "Lasten", "last": "Lasten",
                     "geoflaechen": "Flächen", "geoflaeche": "Flächen",
                     "geokoerper": "Volumenkörper",
                     "geokoerper_einzeln": "Volumenkörper",
@@ -856,6 +966,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.maske_zeigen("Ergebnisse")
         if art == "berichtseintrag":
             return self.tabelle_zeigen("Bericht")
+        if art == "last" and name in self.model.load_cases:
+            self.cb_lastfilter.setCurrentText(name)
+        elif art == "lasten":
+            self.cb_lastfilter.setCurrentText("(alle)")
         if art == "anschluss_neu":
             return self.add_joint()
         if art == "verformung_neu":
@@ -870,12 +984,20 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tabelle_verformung(name)
         # Ein Zweig, der ein Objekt meint, zeigt es auch in der Ansicht.
         self._baum_auswaehlen(art, name)
+        # Links waehlen, rechts einstellen: der Zweig holt seine Tabelle nach
+        # vorn UND oeffnet die Maske, die dazu gehoert. Frueher war es
+        # entweder-oder; wer eine Fläche anklickte, sah die Tabelle, aber die
+        # Einstellungen musste er sich selbst suchen.
         tab = self.BAUM_TABELLE.get(art)
-        if tab and self.tabelle_zeigen(tab):
-            return
+        if tab:
+            self.tabelle_zeigen(tab)
         ziel = self.BAUM_ZIEL.get(art)
         if ziel:
             self.maske_zeigen(ziel)
+            return
+        befehl = self.BAUM_MASKE.get(art)
+        if befehl and hasattr(self, befehl) and art not in ("gelenk", "gelenke"):
+            getattr(self, befehl)()
 
     def _baum_auswaehlen(self, art: str, name: str):
         """Was im Baum angeklickt wurde, im Viewport hervorheben."""
@@ -924,8 +1046,31 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         knoten = [n for n in dict.fromkeys(knoten) if 0 <= n < m.nn]
         self.selection = np.array(knoten, dtype=int)
+        # Was im Baum angeklickt wurde, leuchtet in der Ansicht auf: die
+        # Elemente des Objekts bekommen eine eigene Hervorhebung, nicht nur
+        # die Knotenpunkte.
+        self.leuchtet = self._elemente_zu(art, name)
         self.lbl_sel.setText(f"{len(knoten)} Knoten ausgewählt (Modellbaum)")
         self.redraw()
+
+    def _elemente_zu(self, art: str, name: str) -> list[int]:
+        """Die Elemente, die zu einem Zweig des Modellbaums gehoeren."""
+        m = self.model
+        if art in self.BAUM_ELEMENTARTEN:
+            typen = (name,) if name in self.BAUM_ELEMENTARTEN[art] \
+                else self.BAUM_ELEMENTARTEN[art]
+            return [i for i, e in enumerate(m.elements) if e.typ in typen]
+        if art == "geoflaeche" and name in m.flaechen:
+            return list(m.flaechen[name].elemente or [])
+        if art == "geokoerper_einzeln" and name in m.koerper:
+            return list(m.koerper[name].elemente or [])
+        if art == "stab" and name in m.members:
+            return list(m.members[name].elements or [])
+        if art == "linie" and name in m.lines:
+            kn = set(int(x) for x in m.lines[name].nodes)
+            return [i for i, e in enumerate(m.elements)
+                    if e.typ in ("beam", "truss") and kn.issuperset(e.nodes)]
+        return []
 
     #: Zweig des Modellbaums -> Befehl, den der Doppelklick ausfuehrt
     BAUM_NEU = {"querschnitte": "add_section", "werkstoffe": "add_material",
@@ -1612,14 +1757,42 @@ class MainWindow(QtWidgets.QMainWindow):
         return s
 
     def _eingabetabelle(self, tbl, *knoepfe) -> QtWidgets.QWidget:
-        """Eine Eingabetabelle mit ihren Knoepfen fuer den unteren Bereich."""
+        """Eine Eingabetabelle mit ihrer Werkzeugzeile fuer den unteren Bereich.
+
+        Die Knoepfe standen frueher als breite Schaltflaechen unter der
+        Tabelle; bei zehn Tabellen wurde daraus eine Knopfwand, die mehr Platz
+        brauchte als die Zeilen. Jetzt sind es schmale Werkzeugknoepfe in einer
+        Zeile - dieselben Befehle, ein Drittel der Hoehe.
+        """
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
+        lay.setSpacing(3)
         lay.addWidget(tbl, 1)
         if knoepfe:
-            lay.addWidget(row(*knoepfe))
+            zeile = QtWidgets.QHBoxLayout()
+            zeile.setContentsMargins(4, 0, 4, 2)
+            zeile.setSpacing(4)
+            for k in knoepfe:
+                if isinstance(k, QtWidgets.QPushButton):
+                    b = QtWidgets.QToolButton(w)
+                    b.setText(k.text())
+                    b.setToolTip(k.toolTip() or k.text())
+                    b.setObjectName("tabellenknopf")
+                    b.clicked.connect(k.click)
+                    k.setVisible(False)
+                    k.setParent(w)
+                    zeile.addWidget(b)
+                elif isinstance(k, QtWidgets.QWidget):
+                    zeile.addWidget(k)
+                else:
+                    lbl = QtWidgets.QLabel(str(k))
+                    lbl.setObjectName("tabellenzahl")
+                    zeile.addWidget(lbl)
+            zeile.addStretch(1)
+            halter = QtWidgets.QWidget(w)
+            halter.setLayout(zeile)
+            lay.addWidget(halter)
         return w
 
     def _build_eingabetabellen(self, tabs):
@@ -1817,6 +1990,28 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self._eingabetabelle(self.tbl_geokoerper, bv1, bv2, bv3),
                     "Volumenkörper")
 
+        # ---- Lasten -------------------------------------------------------
+        self.tbl_last = tab.Datentabelle([
+            Spalte("Nr", "", "ganz"), Spalte("Lastfall"), Spalte("Art"),
+            Spalte("Ziel", "", "text", hinweis="Knoten bzw. Element"),
+            Spalte("Größe", "", "text",
+                   hinweis="Knotenlast kN/kNm, Streckenlast kN/m, "
+                           "Flächenlast kN/m², Temperatur K"),
+            Spalte("Richtung"), Spalte("Bemerkung")],
+            "Lasten", self, mit_kennwerten=False)
+        self.tbl_last.zeile_gewaehlt.connect(self._tabelle_last)
+        self.cb_lastfilter = QtWidgets.QComboBox()
+        self.cb_lastfilter.setMinimumWidth(140)
+        self.cb_lastfilter.setToolTip("Lasten welches Lastfalls anzeigen")
+        self.cb_lastfilter.currentTextChanged.connect(
+            lambda _t: self.refresh_modelltabellen())
+        bl_1 = QtWidgets.QPushButton("Knotenlast…")
+        bl_1.clicked.connect(self.maske_knotenlast)
+        bl_2 = QtWidgets.QPushButton("Löschen")
+        bl_2.clicked.connect(self.last_loeschen)
+        tabs.addTab(self._eingabetabelle(self.tbl_last, "Lastfall",
+                                         self.cb_lastfilter, bl_1, bl_2), "Lasten")
+
         self.tbl_bericht = tab.Datentabelle([
             Spalte("Nr", "", "ganz"), Spalte("Name", "", "text", 3, True),
             Spalte("Zeigt"), Spalte("Bildunterschrift", "", "text", 3, True),
@@ -1902,6 +2097,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def refresh_modelltabellen(self):
         m = self.model
+        self._raender_stand = None
         if not hasattr(self, "tbl_knoten"):
             return
         # Knoten
@@ -1978,12 +2174,13 @@ class MainWindow(QtWidgets.QMainWindow):
         from .viewport import polygon_flaeche as _pf
         from ..elements import solid as _so
         zeilen = []
+        raender = self._raender()
         for name, f in (getattr(m, "flaechen", {}) or {}).items():
             if f.elemente:
                 A = sum(_pf(m.nodes[[int(n) for n in m.elements[i].nodes]])
                         for i in f.elemente if i < len(m.elements))
             else:
-                ring = f.randknoten(m)
+                ring = raender.get(name) or []
                 A = _pf(m.nodes[ring]) if len(ring) >= 3 else 0.0
             zeilen.append([name, ", ".join(f.linien), f.dicke, f.material,
                            " × ".join(str(x) for x in f.teilung),
@@ -2003,6 +2200,7 @@ class MainWindow(QtWidgets.QMainWindow):
                            " × ".join(str(x) for x in k.teilung),
                            len(k.elemente or []), V, k.kommentar])
         self._fill(self.tbl_geokoerper, zeilen)
+        self._lasten_fuellen()
         self._fill(self.tbl_bericht,
                    [[i, x.name, x.bezug(), x.beschriftung, x.bemerkung,
                      len(x.bild or "") * 3 / 4096]
@@ -2011,6 +2209,106 @@ class MainWindow(QtWidgets.QMainWindow):
                    [[name, x.typ, x.ort, len(x.flaechen), len(x.volumen), x.ziele,
                      x.describe(), "ja" if x.ausgefuehrt else "nein"]
                     for name, x in (getattr(m, "flaechenfreigaben", {}) or {}).items()])
+
+    #: Richtungsnamen der Knotenlast
+    LASTRICHTUNG = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
+
+    def _lasten_fuellen(self):
+        """Die Lasten aller (oder eines) Lastfaelle in die Tabelle schreiben."""
+        m = self.model
+        cb = self.cb_lastfilter
+        namen = ["(alle)"] + list(m.load_cases)
+        if [cb.itemText(i) for i in range(cb.count())] != namen:
+            cur = cb.currentText()
+            cb.blockSignals(True)
+            cb.clear()
+            cb.addItems(namen)
+            cb.setCurrentText(cur if cur in namen else "(alle)")
+            cb.blockSignals(False)
+        nur = cb.currentText()
+        zeilen = []
+        i = 0
+        for lcname, lc in m.load_cases.items():
+            if nur not in ("(alle)", "", lcname):
+                continue
+            if any(lc.gravity):
+                zeilen.append([i, lcname, "Eigengewicht", "ganzes Modell",
+                               f"{float(lc.gravity[2]):.2f} m/s²", "global Z", ""])
+                i += 1
+            for l in lc.nodal_loads:
+                teile = [f"{self.LASTRICHTUNG[k]} = {v / 1e3:.3f}"
+                         for k, v in enumerate(l.F) if v]
+                zeilen.append([i, lcname, "Knotenlast", f"K{l.node}",
+                               ", ".join(teile) or "0",
+                               "global", ""])
+                i += 1
+            for l in lc.beam_loads:
+                q = ", ".join(f"{v / 1e3:.3f}" for v in l.q)
+                zeilen.append([i, lcname, "Streckenlast", f"E{l.elem}",
+                               f"q = ({q}) kN/m", l.system,
+                               "veränderlich" if l.q2 is not None else ""])
+                i += 1
+            for l in lc.face_loads:
+                zeilen.append([i, lcname, "Flächenlast", f"E{l.elem}",
+                               f"p = {l.p / 1e3:.4f} kN/m²",
+                               "Richtungsvektor" if l.direction else "lokal z", ""])
+                i += 1
+            for l in lc.temp_loads:
+                zeilen.append([i, lcname, "Temperatur", f"E{l.elem}",
+                               f"ΔT = {l.dT:.2f} K",
+                               f"ΔT_z = {l.dT_z:.2f} K" if l.dT_z else "gleichmäßig",
+                               ""])
+                i += 1
+        self._fill(self.tbl_last, zeilen)
+
+    def _lastzeiger(self, nr: int):
+        """(Lastfall, Listenname, Index) zu einer Zeilennummer der Lasttabelle."""
+        m = self.model
+        nur = self.cb_lastfilter.currentText()
+        i = 0
+        for lcname, lc in m.load_cases.items():
+            if nur not in ("(alle)", "", lcname):
+                continue
+            if any(lc.gravity):
+                if i == nr:
+                    return lc, "gravity", 0
+                i += 1
+            for liste in ("nodal_loads", "beam_loads", "face_loads", "temp_loads"):
+                for k in range(len(getattr(lc, liste))):
+                    if i == nr:
+                        return lc, liste, k
+                    i += 1
+        return None, "", -1
+
+    def _tabelle_last(self, wert):
+        """Zeile der Lasttabelle angeklickt: Ziel in der Ansicht waehlen."""
+        try:
+            nr = int(float(wert))
+        except (TypeError, ValueError):
+            return
+        lc, liste, k = self._lastzeiger(nr)
+        if lc is None or liste in ("", "gravity"):
+            return
+        obj = getattr(lc, liste)[k]
+        m = self.model
+        if liste == "nodal_loads":
+            self._set_selection([int(obj.node)])
+        elif 0 <= int(obj.elem) < len(m.elements):
+            self._set_selection([int(n) for n in m.elements[int(obj.elem)].nodes])
+
+    def last_loeschen(self):
+        nr = self._zeilenzahl(self.tbl_last)
+        lc, liste, k = self._lastzeiger(nr)
+        if lc is None or not liste:
+            return self.error("Zuerst eine Zeile wählen")
+        self.merken("Last gelöscht")
+        if liste == "gravity":
+            lc.gravity = [0.0, 0.0, 0.0]
+        else:
+            del getattr(lc, liste)[k]
+        self.analysis = None
+        self.results = None
+        self.refresh_all()
 
     # ---- Editieren in den Modelltabellen ---------------------------------
     def _knoten_aendern(self, z: int, k: int, wert) -> bool:
@@ -2506,7 +2804,7 @@ class MainWindow(QtWidgets.QMainWindow):
                       "Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
                       "Werkstoffe", "Querschnitte", "Dicken",
                       "Lager", "Gelenke", "Flächenfreigaben",
-                      "Lastfälle", "Kombinationen",
+                      "Lastfälle", "Lasten", "Kombinationen",
                       "Stabkräfte", "Auflagerkräfte", "Umhüllende",
                       "Nachweise EC3", "Ermüdung", "Kontakt", "Anschlüsse",
                       "Verformungen", "Beulfelder", "Volumen", "Lasteinleitung",
@@ -3922,7 +4220,7 @@ class MainWindow(QtWidgets.QMainWindow):
             hinweis="Ursprung und Drehwinkel eintragen – oder drei Knoten in der "
                     "Ansicht wählen und „Aus Auswahl“ im Ribbon.")
         m.angewendet.connect(self._ks_anlegen)
-        self.maskenrand.zeigen(m)
+        self.maske_erzeugen(m)
 
     def _ks_anlegen(self, w: dict):
         name = (w.get("name") or "KS").strip()
@@ -3973,6 +4271,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fang_an = bool(an)
         self._refresh_status()
 
+    def fangart_umschalten(self, art: str, an: bool):
+        """Eine einzelne Fangart zu- oder abschalten."""
+        arten = [x for x in self.fang_arten if x != art]
+        if an:
+            arten = [x for x in ks.FANGARTEN if x == art or x in arten]
+        self.fang_arten = arten
+        if not arten and self.fang_an:
+            # Ohne Fangart faengt nichts - dann ist der Fang aus, und das
+            # soll auch dranstehen.
+            self.act_fang.setChecked(False)
+        self._refresh_status()
+
     def _fangen(self, punkt):
         """Einen Punkt auf die nächste markante Stelle ziehen."""
         if not getattr(self, "fang_an", False):
@@ -3990,7 +4300,10 @@ class MainWindow(QtWidgets.QMainWindow):
                  ("circle", "Kreis (Mitte + Radius)"), ("spline", "Spline (3+ Knoten)"),
                  ("parabola", "Parabel (Anfang, Ende, Stich)")]
         m = msk.Maske("Linie", [
-            msk.Feld("art", "Art", "wahl", "Bogen (3 Knoten)", [t for _k, t in arten]),
+            # Vorgabe ist die gerade Linie - sie ist der haeufigste Fall; ein
+            # Bogen war als Vorgabe eine Falle.
+            msk.Feld("art", "Art", "wahl", "Polylinie (2+ Knoten)",
+                     [t for _k, t in arten]),
             msk.Feld("mat", "Material", "wahl", self._erst(self.model.materials),
                      list(self.model.materials)),
             msk.Feld("sec", "Querschnitt", "wahl", self._erst(self.model.sections),
@@ -4001,7 +4314,7 @@ class MainWindow(QtWidgets.QMainWindow):
             knoten=3, knopf="Linie anlegen")
         m._arten = dict((t, k) for k, t in arten)
         m.angewendet.connect(self._maske_linie_anlegen)
-        self.maskenrand.zeigen(m)
+        self.maske_erzeugen(m)
 
     def _maske_linie_anlegen(self, w: dict):
         from .. import geometry as geo
@@ -4054,7 +4367,7 @@ class MainWindow(QtWidgets.QMainWindow):
             hinweis="Koordinaten eintragen und „Anlegen“ – die Maske bleibt offen.",
             knopf="Anlegen")
         m.angewendet.connect(self._maske_knoten_anlegen)
-        self.maskenrand.zeigen(m)
+        self.maske_erzeugen(m)
 
     def _maske_knoten_anlegen(self, w: dict):
         i = self.model.add_node(w["x"], w["y"], w["z"])
@@ -4072,7 +4385,7 @@ class MainWindow(QtWidgets.QMainWindow):
             msk.Feld("fachwerk", "Fachwerkstab (nur N)", "haken", False)],
             knoten=2, knopf="Stab anlegen")
         m.angewendet.connect(self._maske_stab_anlegen)
-        self.maskenrand.zeigen(m)
+        self.maske_erzeugen(m)
 
     def _maske_stab_anlegen(self, w: dict):
         kn = w["knoten"]
@@ -4096,7 +4409,7 @@ class MainWindow(QtWidgets.QMainWindow):
             msk.Feld("vier", "Viereck (4 Knoten)", "haken", True)],
             knoten=4, knopf="Schale anlegen")
         m.angewendet.connect(self._maske_schale_anlegen)
-        self.maskenrand.zeigen(m)
+        self.maske_erzeugen(m)
 
     def _maske_schale_anlegen(self, w: dict):
         kn = w["knoten"]
@@ -4117,7 +4430,7 @@ class MainWindow(QtWidgets.QMainWindow):
                       hinweis="Knoten in der Ansicht wählen, Freiheitsgrade "
                               "ankreuzen und „Lager setzen“.")
         m.angewendet.connect(self._maske_lager_setzen)
-        self.maskenrand.zeigen(m)
+        self.maske_erzeugen(m)
 
     def _maske_lager_setzen(self, w: dict):
         if not len(self.selection):
@@ -4141,7 +4454,7 @@ class MainWindow(QtWidgets.QMainWindow):
                       hinweis="Knoten in der Ansicht wählen, Werte eintragen "
                               "und „Last aufbringen“.")
         m.angewendet.connect(self._maske_last_aufbringen)
-        self.maskenrand.zeigen(m)
+        self.maske_erzeugen(m)
 
     def _maske_last_aufbringen(self, w: dict):
         if not len(self.selection):
@@ -4202,6 +4515,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for liste in (self.sel_linien, self.sel_flaechen, self.sel_koerper,
                       self.sel_staebe):
             liste.clear()
+        self.leuchtet = []
         self._set_selection([])
 
     def select_all(self):
@@ -5066,10 +5380,35 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fill(self.tbl_react, react)
         self.redraw()
 
+    def _raender(self) -> dict:
+        """{Flaechenname: Randpolygon} - einmal je Modellstand berechnet.
+
+        Das Randpolygon einer Flaeche entsteht aus ihren Linien; bei ueber
+        tausend Flaechen darf das nicht bei jedem Neuzeichnen und jeder
+        Tabellenzeile neu geschehen.
+        """
+        m = self.model
+        stand = (id(m), len(m.flaechen), len(m.lines), m.nn)
+        if getattr(self, "_raender_stand", None) != stand:
+            self._raender_stand = stand
+            self._raender_zwischen = {name: f.randknoten(m)
+                                      for name, f in m.flaechen.items()}
+        return self._raender_zwischen
+
     def _auswahl_zeichnen(self):
         """Ausgewaehlte Linien, Flaechen, Koerper und Staebe hervorheben."""
         m = self.model
         pl = self.plotter
+        # Aus dem Modellbaum heraus Gewaehltes leuchtet auf
+        leuchtet = [i for i in (getattr(self, "leuchtet", None) or [])
+                    if 0 <= i < len(m.elements)]
+        if leuchtet:
+            try:
+                teil = vp.to_grid(m).extract_cells(np.asarray(leuchtet, int))
+                pl.add_mesh(teil, color="#ff8800", opacity=0.85, show_edges=True,
+                            edge_color="#c05000", line_width=5, name="leuchtet")
+            except Exception as ex:      # noqa: BLE001
+                self.log.appendPlainText(f"Hervorhebung: {ex}")
         for i, name in enumerate(self.sel_linien):
             ln = m.lines.get(name)
             if ln is None:
@@ -5209,7 +5548,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             vp.add_supports(self.plotter, m, size, self.lagergroesse)
-            vp.add_geometrie(self.plotter, m)
+            if self.act_linien.isChecked():
+                vp.add_linien(self.plotter, m, self.sel_linien)
+            vp.add_geometrie(self.plotter, m, raender=self._raender())
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
                 vp.add_nodes(self.plotter, m)
             self._auswahl_zeichnen()

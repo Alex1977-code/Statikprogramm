@@ -334,8 +334,8 @@ def main():
         w.refresh_all()
         w.maske_knoten()
         m = w.maskenrand.maske
-        check("Maske schwebt ueber der Ansicht",
-              m is not None and m.isVisible() and m.parent() is w.centralWidget(),
+        check("Maske steht im rechten Eingabebereich, nicht über der Ansicht",
+              m is not None and m.isVisible() and m.parent() is not w.centralWidget(),
               m.titel if m else "keine")
         nn0 = w.model.nn
         m.setzen("x", 9.0)
@@ -443,6 +443,10 @@ def main():
         m = w.maskenrand.maske
         check("Linienmaske verlangt drei Knoten",
               m.titel == "Linie" and m.n_knoten == 3)
+        check("Vorgabe der Linienart ist die Polylinie",
+              m.werte().get("art", "").startswith("Polylinie"),
+              str(m.werte().get("art")))
+        m.setzen("art", "Bogen (3 Knoten)")      # für diesen Test ausdrücklich
         a = w.model.add_node(2.0, 0.0, 6.0)
         b = w.model.add_node(0.0, 2.0, 6.0)
         c = w.model.add_node(-2.0, 0.0, 6.0)
@@ -1369,6 +1373,116 @@ def main():
         import traceback
         traceback.print_exc()
         check("Ergebnisse und Bericht", False, str(ex)[:70])
+
+    # ---- Lasten, Fang, Glasleiste, Masken rechts --------------------------
+    try:
+        from statik3d.gui import viewport as vpl
+        w.error = lambda msg: check("Ansicht: unerwarteter Fehler", False, str(msg)[:60])
+        w.load_example("hall")
+        app.processEvents()
+        ml = w.model
+
+        # Linien werden gezeichnet
+        ml.add_line("L1", [0, 1, 2])
+        w.refresh_all()
+        app.processEvents()
+        check("Schalter „Linien“ vorhanden und an", w.act_linien.isChecked())
+        check("Linien stehen im Modellbaum", "Linien" in zweige(w.baum))
+
+        # Lastentabelle
+        check("Register „Lasten“ vorhanden",
+              "Lasten" in [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())])
+        n_last = sum(lc.n_loads for lc in ml.load_cases.values())
+        check("Lastentabelle gefüllt", len(w.tbl_last.modell.zeilen) == n_last,
+              f"{len(w.tbl_last.modell.zeilen)} von {n_last}")
+        arten = {z[2] for z in w.tbl_last.modell.zeilen}
+        check("die Lastarten stehen dabei",
+              {"Eigengewicht", "Streckenlast"} <= arten, str(sorted(arten)))
+        check("Lasten stehen im Modellbaum", "Lasten" in zweige(w.baum))
+        erster = list(ml.load_cases)[0]
+        w.cb_lastfilter.setCurrentText(erster)
+        app.processEvents()
+        check("Lastfilter wirkt",
+              {z[1] for z in w.tbl_last.modell.zeilen} == {erster},
+              str({z[1] for z in w.tbl_last.modell.zeilen}))
+        w.cb_lastfilter.setCurrentText("(alle)")
+        app.processEvents()
+        w.tbl_last.view.selectRow(1)
+        w._tabelle_last(1)
+        check("Klick auf eine Lastzeile wählt ihr Ziel", len(w.selection) > 0,
+              f"{len(w.selection)} Knoten")
+        n0 = len(w.tbl_last.modell.zeilen)
+        w.tbl_last.view.selectRow(1)
+        w.last_loeschen()
+        check("Last löschbar", len(w.tbl_last.modell.zeilen) == n0 - 1,
+              f"{len(w.tbl_last.modell.zeilen)} statt {n0}")
+        w.undo()
+        check("Löschen ist rücknehmbar", len(w.tbl_last.modell.zeilen) == n0)
+
+        # Fang
+        check("alle drei Fangarten an", sorted(w.fang_arten) == ["knoten", "mitte", "raster"],
+              str(w.fang_arten))
+        w.fangart_umschalten("mitte", False)
+        check("eine Fangart abschaltbar", "mitte" not in w.fang_arten, str(w.fang_arten))
+        check("die Statuszeile nennt die Fangarten",
+              "knoten" in w.lbl_fang.text() and "mitte" not in w.lbl_fang.text(),
+              w.lbl_fang.text())
+        w.fangart_umschalten("mitte", True)
+        check("und wieder an", "mitte" in w.fang_arten)
+
+        # Glasleiste und Ansichtswürfel
+        check("Glasleiste über der Ansicht", w.glasleiste.isVisible()
+              and w.glasleiste.width() > 200, f"{w.glasleiste.width()} px")
+        check("Ansichtswürfel vorhanden", w.ansichtswuerfel.isVisible())
+        for richtung in ("xy", "xz", "yz", "iso"):
+            w.ansichtswuerfel.gewaehlt.emit(richtung)
+            app.processEvents()
+        check("Blickrichtung über den Würfel", True)
+        w.auswahlart_setzen("Linie")
+        check("Auswahlart auch in der Glasleiste",
+              w.cb_auswahlart_glas.currentText() == "Linie",
+              w.cb_auswahlart_glas.currentText())
+        w.auswahlart_setzen("Knoten")
+
+        # Erzeuge-Maske steht rechts, nicht über der Ansicht
+        w.maske_linie()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Erzeuge-Maske im rechten Bereich",
+              mk is not None and mk.parent() is not w.centralWidget())
+        check("der Docktitel nennt sie", w.eingaben_dock.windowTitle() == "Linie",
+              w.eingaben_dock.windowTitle())
+        check("Vorgabe ist die Polylinie, nicht der Bogen",
+              mk.werte().get("art", "").startswith("Polylinie"),
+              str(mk.werte().get("art")))
+        w.maskenrand.schliessen()
+        app.processEvents()
+
+        # Modellbaum: Klick öffnet rechts die passende Maske und lässt aufleuchten
+        w._baum_geklickt("lager_einzeln", "0")
+        check("Klick auf ein Lager öffnet die Lagermaske",
+              w.eingaben_dock.windowTitle() == "Lager/Lasten",
+              w.eingaben_dock.windowTitle())
+        stab = list(w.model.members)[0]
+        w._baum_geklickt("stab", stab)
+        check("Klick auf einen Stab lässt seine Elemente aufleuchten",
+              len(w.leuchtet) == len(w.model.members[stab].elements),
+              f"{len(w.leuchtet)} Elemente")
+        check("und öffnet die Nachweismaske",
+              w.eingaben_dock.windowTitle() == "Nachweise",
+              w.eingaben_dock.windowTitle())
+        w.clear_selection()
+        check("Auswahl aufheben löscht auch das Aufleuchten", not w.leuchtet)
+
+        # Viele freie Knoten übertönen die Hervorhebung nicht
+        w.new_model()
+        w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))
+        check("bei überwiegend freien Knoten keine Sonderfarbe",
+              len(vpl.unbelegte_knoten(w.model)) > vpl.FREI_ANTEIL * w.model.nn)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Lasten, Fang, Glasleiste", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

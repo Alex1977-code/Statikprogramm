@@ -64,6 +64,10 @@ def unbelegte_knoten(model: Model) -> np.ndarray:
     return np.flatnonzero(~getragen)
 
 
+#: Anteil freier Knoten, ab dem die Hervorhebung sinnlos wird
+FREI_ANTEIL = 0.25
+
+
 def add_nodes(plotter, model: Model, groesse: float = 1.0):
     """Alle gesetzten Knoten als Punkte zeichnen.
 
@@ -71,11 +75,21 @@ def add_nodes(plotter, model: Model, groesse: float = 1.0):
     im Viewport gar nicht zu sehen - das Modell wuchs unsichtbar. Solche
     Knoten bekommen hier eine eigene Farbe und einen groesseren Punkt, damit
     man beim Modellieren sieht, wo man schon war.
+
+    Die Hervorhebung soll den **einen vergessenen** Knoten zeigen. In einem aus
+    RFEM uebernommenen Modell haengen fast alle Knoten an Flaechen und Volumen
+    statt an Elementen; waeren sie alle orange, uebertoente die Markierung das
+    ganze Bauteil und sagte nichts mehr. Ueberschreiten die freien Knoten den
+    Anteil ``FREI_ANTEIL``, werden darum alle Knoten gleich gezeichnet.
     """
     if model.nn == 0:
         return
     frei = unbelegte_knoten(model)
     d = max(3.0, 7.0 * float(groesse))
+    if len(frei) > FREI_ANTEIL * model.nn:
+        plotter.add_points(model.nodes, color=FARBE_KNOTEN, point_size=d,
+                           render_points_as_spheres=True, name="knoten")
+        return
     fest = np.setdiff1d(np.arange(model.nn), frei, assume_unique=False)
     if len(fest):
         plotter.add_points(model.nodes[fest], color=FARBE_KNOTEN, point_size=d,
@@ -97,37 +111,100 @@ def polygon_flaeche(punkte) -> float:
     return float(np.linalg.norm(n)) / 2.0
 
 
-def add_geometrie(plotter, model: Model, groesse: float = 1.0):
+def add_linien(plotter, model: Model, hervor: list = None):
+    """Die Linien des Modells zeichnen.
+
+    Linien sind Geometrie, keine Elemente - sie wurden bisher gar nicht
+    dargestellt. In einem aus RFEM uebernommenen Modell besteht die Geometrie
+    fast nur aus Linien; ohne sie sieht man ein leeres Bild und haelt den
+    Import fuer gescheitert.
+    """
+    linien = getattr(model, "lines", {}) or {}
+    if not linien:
+        return
+    hervor = set(hervor or [])
+    pts, zellen = [], []
+    for name, ln in linien.items():
+        if name in hervor:
+            continue
+        idx = [int(n) for n in ln.nodes if 0 <= int(n) < model.nn]
+        if len(idx) < 2:
+            continue
+        basis = len(pts)
+        pts.extend(model.nodes[idx])
+        for i in range(len(idx) - 1):
+            zellen.extend([2, basis + i, basis + i + 1])
+    if pts:
+        plotter.add_mesh(pv.PolyData(np.asarray(pts, float), lines=np.asarray(zellen)),
+                         color=FARBE_LINIE, line_width=2, name="linien")
+
+
+FARBE_LINIE = "#7a8a99"
+
+
+def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = None):
     """Flaechen und Volumenkoerper zeichnen, die **noch nicht vernetzt** sind.
 
     Ein Objekt, das man nicht sieht, kann man auch nicht anklicken. Eine eben
     aus Linien erzeugte Flaeche traegt noch keine Elemente; sie wird darum als
     durchscheinendes Polygon gezeichnet, ein noch nicht vernetzter
-    Volumenkoerper als Kantenzug seiner Randflaechen.
+    Volumenkoerper zusaetzlich mit farbigen Randkanten.
+
+    **Alles in je einem Netz**: ein aus RFEM uebernommenes Volumenmodell hat
+    leicht ueber tausend Flaechen. Je Flaeche ein eigener Darsteller braucht
+    Minuten und macht die Ansicht unbedienbar; gebuendelt sind es zwei.
+    ``raender`` nimmt bereits berechnete Randpolygone entgegen
+    ({Flaechenname: [Knoten]}), damit sie nicht zweimal ermittelt werden.
     """
-    for i, f in enumerate((getattr(model, "flaechen", {}) or {}).values()):
+    flaechen = getattr(model, "flaechen", {}) or {}
+    if not flaechen:
+        return
+    raender = raender if raender is not None else {}
+
+    def ring_von(name, f):
+        r = raender.get(name)
+        if r is None:
+            r = f.randknoten(model)
+            raender[name] = r
+        return r
+
+    pts: list = []
+    faces: list = []
+    for name, f in flaechen.items():
         if f.elemente:
             continue
-        ring = f.randknoten(model)
+        ring = ring_von(name, f)
         if len(ring) < 3:
             continue
-        pts = model.nodes[ring]
-        pd = pv.PolyData(pts, faces=np.hstack([[len(pts)], np.arange(len(pts))]))
-        plotter.add_mesh(pd, color="#7fb3d5", opacity=0.45, show_edges=True,
-                         edge_color="#20638f", line_width=2, name=f"geo_f{i}")
-    for i, k in enumerate((getattr(model, "koerper", {}) or {}).values()):
+        basis = len(pts)
+        pts.extend(model.nodes[ring])
+        faces.append(len(ring))
+        faces.extend(range(basis, basis + len(ring)))
+    if pts:
+        plotter.add_mesh(pv.PolyData(np.asarray(pts, float), faces=np.asarray(faces)),
+                         color="#7fb3d5", opacity=0.45, show_edges=True,
+                         edge_color="#20638f", line_width=1, name="geo_flaechen")
+    # Randkanten der noch nicht vernetzten Volumenkoerper - ebenfalls gebuendelt
+    kpts: list = []
+    klines: list = []
+    for k in (getattr(model, "koerper", {}) or {}).values():
         if k.elemente:
             continue
-        for j, fname in enumerate(k.flaechen):
-            f = (getattr(model, "flaechen", {}) or {}).get(fname)
+        for fname in k.flaechen:
+            f = flaechen.get(fname)
             if f is None or f.elemente:
                 continue
-            ring = f.randknoten(model)
+            ring = ring_von(fname, f)
             if len(ring) < 3:
                 continue
-            pts = model.nodes[ring + [ring[0]]]
-            plotter.add_mesh(pv.lines_from_points(pts), color="#8e44ad",
-                             line_width=3, name=f"geo_v{i}_{j}")
+            basis = len(kpts)
+            kpts.extend(model.nodes[ring + [ring[0]]])
+            for i in range(len(ring)):
+                klines.extend([2, basis + i, basis + i + 1])
+    if kpts:
+        plotter.add_mesh(pv.PolyData(np.asarray(kpts, float),
+                                     lines=np.asarray(klines)),
+                         color="#8e44ad", line_width=2, name="geo_volumen")
 
 
 def line_at(model: Model, punkt, size: float):
