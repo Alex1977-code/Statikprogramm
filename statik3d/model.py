@@ -528,6 +528,10 @@ class Support:
     # verhalten sich wie bisher (starr bzw. Feder aus 'stiffness')
     behaviour: dict = field(default_factory=dict)
     name: str = ""
+    #: Groesse des Lagersymbols in der Ansicht, 1.0 = Grundgroesse. Reine
+    #: Darstellung, ohne Einfluss auf die Rechnung - sie wird mitgespeichert,
+    #: damit ein eingestelltes Symbol beim naechsten Oeffnen wieder stimmt.
+    groesse: float = 1.0
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         """Wirkung eines FHG; setzt 'dofs'/'stiffness' in DofBehaviour um."""
@@ -1024,6 +1028,65 @@ class Lasteinleitung:
         return f"Knoten {self.knoten}" + (f", Stab {self.stab}" if self.stab else "")
 
 
+@dataclass
+class Flaechenfreigabe:
+    """Flaechenfreigabe (RFEM: Flaechenfreigaben).
+
+    Eine Flaechenfreigabe trennt die genannten Flaechen von den Objekten, an
+    denen sie haengen, und verbindet beide ueber Federn je Freiheitsgrad -
+    typisch eine **Kontaktfuge**: in der Ebene starr, senkrecht dazu frei mit
+    Ausfall bei Zug.
+
+    Das Programm **liest und speichert** die Freigabe vollstaendig, fuehrt die
+    Trennung aber **nicht** aus: dafuer muessten die beteiligten Flaechen
+    vernetzt und die Knoten an der Fuge verdoppelt werden. ``ausgefuehrt``
+    haelt fest, ob das geschehen ist. Solange es False ist, rechnet das Modell
+    an dieser Stelle durchverbunden - also zu steif. Das ist eine
+    Modellangabe, keine Zierde: sie steht im Modellbaum, in der Tabelle und im
+    Bericht, damit die Luecke sichtbar bleibt.
+
+    flaechen/volumen: Nummern der freigegebenen Objekte in der Quelldatei
+    behaviour:        {FHG: DofBehaviour} des Freigabetyps
+    """
+    name: str = ""
+    flaechen: list[int] = field(default_factory=list)
+    volumen: list[int] = field(default_factory=list)
+    ziele: int = 0                       # Zahl der Objekte, an denen sie haengt
+    ort: str = "Anfang"
+    typ: str = ""                        # Name/Nummer des Freigabetyps
+    behaviour: dict = field(default_factory=dict)     # {FHG: DofBehaviour}
+    aus: bool = False                    # in der Quelldatei deaktiviert
+    ausgefuehrt: bool = False            # Trennung im Netz umgesetzt?
+    beschreibung: str = ""
+
+    def dof_behaviour(self, dof: int) -> DofBehaviour:
+        b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
+        if b is None:
+            return DofBehaviour("free")
+        return b if isinstance(b, DofBehaviour) else _dc(DofBehaviour, b)
+
+    def bezug(self) -> str:
+        teile = [f"{len(self.flaechen)} Flächen"]
+        if self.volumen:
+            teile.append(f"{len(self.volumen)} Volumen")
+        if self.ziele:
+            teile.append(f"an {self.ziele} Objekten")
+        return ", ".join(teile)
+
+    def describe(self) -> str:
+        namen = ["ux", "uy", "uz", "phix", "phiy", "phiz"]
+        teile = []
+        for d in range(6):
+            b = self.dof_behaviour(d)
+            wert = b.describe() if b.acts else "frei"
+            if b.failure and "Ausfall" not in wert:
+                wert += f" (Ausfall bei {b.failure.capitalize()})"
+            if b.mu:
+                wert += f", Reibung mu = {b.mu:g}"
+            teile.append(f"{namen[d]}={wert}")
+        return ", ".join(teile)
+
+
 #: Verformungsgroessen einer Grenze
 VERFORMUNGSGROESSEN = {
     "ux": "Verschiebung in x", "uy": "Verschiebung in y", "uz": "Verschiebung in z",
@@ -1187,6 +1250,7 @@ class Model:
         self.beulfelder: dict[str, Beulfeld] = {}
         self.volumenbereiche: dict[str, Volumenbereich] = {}
         self.lasteinleitungen: dict[str, Lasteinleitung] = {}
+        self.flaechenfreigaben: dict[str, Flaechenfreigabe] = {}
         self.design = DesignSettings()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
@@ -1363,6 +1427,16 @@ class Model:
             raise KeyError(f"Stab „{le.stab}“ gibt es nicht")
         self.lasteinleitungen[name] = le
         return le
+
+    def add_flaechenfreigabe(self, name: str, **kw) -> Flaechenfreigabe:
+        """Eine Flaechenfreigabe aufnehmen (aus RFEM gelesen oder von Hand).
+
+        Die Trennung im Netz fuehrt das Programm nicht aus; ``ausgefuehrt``
+        bleibt darum False, bis das jemand tut.
+        """
+        fr = Flaechenfreigabe(name, **kw)
+        self.flaechenfreigaben[name] = fr
+        return fr
 
     def add_joint(self, name: str, typ: str, elem: int, end: int = 1, **kw) -> Joint:
         """Anschluss an einem Stabende in das Modell aufnehmen."""
@@ -1730,6 +1804,8 @@ class Model:
             "beulfelder": [asdict(x) for x in self.beulfelder.values()],
             "volumenbereiche": [asdict(x) for x in self.volumenbereiche.values()],
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
+            "flaechenfreigaben": [_beh_dict(asdict(x))
+                                  for x in self.flaechenfreigaben.values()],
             "design": asdict(self.design),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
@@ -1782,6 +1858,8 @@ class Model:
                           for x in (bf.steifen or [])]
         m.lasteinleitungen = {x["name"]: _dc(Lasteinleitung, x)
                               for x in d.get("lasteinleitungen", [])}
+        m.flaechenfreigaben = {x["name"]: _beh_from(Flaechenfreigabe, x)
+                               for x in d.get("flaechenfreigaben", [])}
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]

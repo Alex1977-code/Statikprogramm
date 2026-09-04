@@ -29,6 +29,7 @@ def main():
     from statik3d import solver
     from statik3d.gui.main import MainWindow, FIELDS, DIAGRAMS
     from statik3d.gui import dialogs as dg
+    from statik3d.model import Model
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     w = MainWindow()
     w.show()
@@ -983,6 +984,224 @@ def main():
         import traceback
         traceback.print_exc()
         check("Volumenbereiche", False, str(ex)[:70])
+
+    # ---- Ansicht: Knoten, Darstellungsarten, Lagergroesse -----------------
+    try:
+        from statik3d.gui import viewport as vp
+        w.new_model()
+        mv = w.model
+        mv.add_nodes(np.array([[0, 0, 0], [4, 0, 0], [8, 0, 0], [4, 3, 0.]]))
+        mv.add_element("beam", [0, 1], "S235", "IPE 200")
+        mv.support(0, [0, 1, 2, 3, 4, 5], name="Einspannung")
+        mv.support(1, [0, 1, 2], name="Gelenk")
+        w.refresh_all()
+        app.processEvents()
+        frei = list(vp.unbelegte_knoten(mv))
+        check("gesetzte Knoten ohne Element werden erkannt", frei == [2, 3], str(frei))
+        check("Knoten werden gezeichnet (Schalter an)", w.act_knoten.isChecked())
+        check("Lagersymbol nach Freiheitsgraden",
+              [vp.support_shape(x) for x in mv.supports] == ["einspannung", "gelenk"],
+              str([vp.support_shape(x) for x in mv.supports]))
+        for name in vp.DARSTELLUNGEN:
+            w.darstellung_setzen(name)
+            app.processEvents()
+            check(f"Darstellung „{name}“", w.darstellung == name
+                  and w.act_darstellung[name].isChecked())
+        check("Drahtmodell zeichnet nur Kanten",
+              vp.darstellung("Drahtmodell", True).get("style") == "wireframe")
+        check("Transparent ist durchscheinend",
+              0 < vp.darstellung("Transparent", True).get("opacity", 1) < 1)
+        check("Hidden-Line zeigt Kanten und weisse Flächen",
+              vp.darstellung("Hidden-Line", False).get("show_edges") is True
+              and vp.darstellung("Hidden-Line", False).get("color") == "#ffffff")
+        check("Hidden-Line überschreibt keine Ergebnisfarbe",
+              "color" not in vp.darstellung("Hidden-Line", False, True))
+        w.darstellung_setzen("Voll")
+        w.act_edges.setChecked(False)
+        app.processEvents()
+        check("FE-Netz abschaltbar", vp.darstellung("Voll", w.act_edges.isChecked())
+              .get("show_edges") is False)
+        w.act_edges.setChecked(True)
+        # Lagergroesse: global und je Lager
+        w.sl_lager.setValue(25)
+        app.processEvents()
+        check("Lagergröße global über den Schieber", abs(w.lagergroesse - 2.5) < 1e-9,
+              f"{w.lagergroesse}")
+        mv.supports[0].groesse = 3.0
+        w.redraw()
+        i = vp.support_at(mv, mv.nodes[0], mv.characteristic_size(), w.lagergroesse)
+        check("Rechtsklick trifft das Lager", i == 0, str(i))
+        check("Klick neben dem Lager trifft nichts",
+              vp.support_at(mv, mv.nodes[3], mv.characteristic_size(),
+                            w.lagergroesse) is None)
+        check("Lagergröße wird mitgespeichert",
+              Model.from_dict(mv.to_dict()).supports[0].groesse == 3.0)
+        w.lagergroesse_zuruecksetzen()
+        check("Zurücksetzen stellt die Grundgröße her",
+              w.lagergroesse == 1.0 and mv.supports[0].groesse == 1.0)
+        # lagergroesse_einstellen() oeffnet eine modale Maske und wird darum
+        # hier nicht aufgerufen; geprueft ist der Weg dahinter (Schieber,
+        # Support.groesse, Zuruecksetzen).
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Ansicht (Knoten, Darstellung, Lager)", False, str(ex)[:70])
+
+    # ---- Modellbaum und Modelltabellen ------------------------------------
+    try:
+        from statik3d.model import MemberHinge
+        w.load_example("hall")
+        mb = w.model
+        mb.add_line("L1", [0, 1, 2])
+        mb.hinges["G1"] = MemberHinge("G1", 0, ["fixed"] * 4 + ["free", "free"], [0.0] * 6)
+        w.refresh_all()
+        app.processEvents()
+
+        def zweige(baum):
+            namen = []
+
+            def lauf(it):
+                namen.append(it.text(0))
+                for i in range(it.childCount()):
+                    lauf(it.child(i))
+            for i in range(baum.topLevelItemCount()):
+                lauf(baum.topLevelItem(i))
+            return namen
+
+        namen = zweige(w.baum)
+        for zweig in ("Geometrie", "Knoten", "Linien", "Elemente", "Stäbe",
+                      "Eigenschaften", "Querschnitte", "Werkstoffe", "Dicken",
+                      "Lager", "Knotenlager", "Gelenke", "Einwirkungen",
+                      "Lastfälle", "Kombinationen"):
+            check(f"Modellbaum: Zweig „{zweig}“", zweig in namen)
+
+        register = [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())]
+        for reg in ("Knoten", "Linien", "Elemente", "Lager", "Gelenke",
+                    "Lastfälle", "Kombinationen"):
+            check(f"Tabelle unten: „{reg}“", reg in register)
+        check("Knotentabelle gefüllt", len(w.tbl_knoten.modell.zeilen) == mb.nn,
+              f"{len(w.tbl_knoten.modell.zeilen)} von {mb.nn}")
+        check("Elementtabelle gefüllt",
+              len(w.tbl_elem.modell.zeilen) == len(mb.elements))
+        check("Lagertabelle gefüllt", len(w.tbl_lager.modell.zeilen) == len(mb.supports))
+        check("Linientabelle gefüllt", len(w.tbl_linie.modell.zeilen) == 1)
+        check("Gelenktabelle gefüllt", len(w.tbl_gelenk.modell.zeilen) == 1,
+              str(w.tbl_gelenk.modell.zeilen))
+        check("Lastfalltabelle gefüllt",
+              len(w.tbl_lastfall.modell.zeilen) == len(mb.load_cases))
+        check("Kombinationstabelle gefüllt",
+              len(w.tbl_kombi.modell.zeilen) == len(mb.combinations))
+        check("Knoten ohne Element wird in der Tabelle als 0 geführt",
+              all(isinstance(z[4], int) for z in w.tbl_knoten.modell.zeilen))
+
+        # Editieren in den Tabellen
+        x0 = float(mb.nodes[0][0])
+        check("Knotenkoordinate editierbar", w._knoten_aendern(0, 1, x0 + 0.25)
+              and abs(float(mb.nodes[0][0]) - (x0 + 0.25)) < 1e-9,
+              f"x = {float(mb.nodes[0][0]):.3f}")
+        w.undo()
+        check("Änderung in der Tabelle ist rücknehmbar",
+              abs(float(w.model.nodes[0][0]) - x0) < 1e-9)
+        mb = w.model
+        check("Elementdrehung editierbar", w._elem_aendern(0, 5, 30.0)
+              and abs(np.degrees(mb.elements[0].roll) - 30.0) < 1e-6)
+        check("unbekannter Werkstoff wird abgewiesen",
+              not w._elem_aendern(0, 3, "GibtEsNicht"))
+        check("Lagername editierbar", w._lager_aendern(0, 2, "Fußpunkt links")
+              and mb.supports[0].name == "Fußpunkt links")
+        check("Symbolgröße in der Tabelle editierbar",
+              w._lager_aendern(0, 6, 2.5) and mb.supports[0].groesse == 2.5)
+        check("Lastfallbeschreibung editierbar",
+              w._lastfall_aendern(0, 2, "Eigenlast Dach")
+              and list(mb.load_cases.values())[0].description == "Eigenlast Dach")
+
+        # Modellbaum: Klick waehlt aus, Doppelklick oeffnet
+        w._baum_geklickt("stabelemente", "beam")
+        check("Klick auf „Stäbe“ wählt die Stabknoten", len(w.selection) > 0,
+              f"{len(w.selection)} Knoten")
+        w._baum_geklickt("lager_einzeln", "0")
+        check("Klick auf ein Lager wählt seinen Knoten",
+              list(w.selection) == [int(mb.supports[0].node)], str(w.selection))
+        w._baum_geklickt("linie", "L1")
+        check("Klick auf die Linie wählt ihre Knoten", len(w.selection) == 3,
+              str(w.selection))
+        w.clear_selection()
+
+        # Bearbeitungsmasken lassen sich bauen und lesen die Werte zurueck
+        from statik3d.gui import dialogs as dgl
+        d = dgl.KnotenDialog(w, mb.nodes[3], 3)
+        check("Knotenmaske liest die Koordinaten",
+              np.allclose(d.werte(), mb.nodes[3]), str(d.werte()))
+        d = dgl.LinienDialog(w, mb.lines["L1"], mb.nn)
+        check("Linienmaske liest die Linie zurück",
+              d.werte()["nodes"] == [0, 1, 2] and d.werte()["name"] == "L1",
+              str(d.werte()))
+        d = dgl.DickeDialog(w, list(mb.shells.values())[0])
+        check("Dickenmaske liest die Dicke zurück",
+              abs(d.werte()[1] - list(mb.shells.values())[0].t) < 1e-12)
+        d = dgl.GelenkDialog(w, mb.hinges["G1"])
+        check("Gelenkmaske liest die Freigaben zurück",
+              d.werte()["typ"] == ["fixed"] * 4 + ["free", "free"], str(d.werte()["typ"]))
+        d = dgl.SupportNonlinearDialog(w, mb.supports[0], "Knotenlager", stammdaten=True)
+        check("Lagermaske zeigt Name und Symbolgröße",
+              d.name_ed.text() == "Fußpunkt links" and abs(d.groesse_ed.value() - 2.5) < 1e-9)
+        d.name_ed.setText("Fußpunkt A")
+        d.groesse_ed.set(1.4)
+        d.apply(mb.supports[0])
+        check("Lagermaske schreibt Name und Symbolgröße zurück",
+              mb.supports[0].name == "Fußpunkt A" and abs(mb.supports[0].groesse - 1.4) < 1e-9)
+        d = dgl.SectionDialog(w, mb.sections["HEB 300"])
+        check("Querschnittsmaske findet das Profil in der Datenbank",
+              d.tabs.currentIndex() == 0 and d.profile.currentText() == "HEB 300",
+              d.profile.currentText())
+        from statik3d.model import Section
+        d = dgl.SectionDialog(w, Section.rectangle("R", 0.3, 0.5))
+        check("Querschnittsmaske fällt bei freien Querschnitten auf „Parametrisch“",
+              d.tabs.currentIndex() == 1 and abs(d.p[1].value() - 0.5) < 1e-9,
+              f"{d.tabs.currentIndex()}, h = {d.p[1].value()}")
+
+        # Loeschen in den Tabellen
+        n_el = len(mb.elements)
+        w.tbl_elem.view.selectRow(0)
+        w.element_loeschen()
+        check("Element aus der Tabelle löschbar", len(w.model.elements) == n_el - 1,
+              f"{len(w.model.elements)} statt {n_el}")
+        w.undo()
+        check("Löschen ist rücknehmbar", len(w.model.elements) == n_el)
+        w.new_model()
+        w.model.add_nodes(np.array([[0, 0, 0], [1, 0, 0.]]))
+        w.refresh_all()
+        w.tbl_knoten.view.selectRow(1)
+        w.knoten_loeschen()
+        check("freier Knoten löschbar", w.model.nn == 1, f"{w.model.nn}")
+
+        # Flaechenfreigaben: Modellobjekt, Baumzweig, Tabelle
+        from statik3d.model import DofBehaviour
+        w.model.add_flaechenfreigabe(
+            "Lagerbock-Grundplatte", flaechen=[1, 2, 3], volumen=[1], ziele=5,
+            typ="4", behaviour={0: DofBehaviour("rigid"), 1: DofBehaviour("rigid"),
+                                2: DofBehaviour("free", failure="zug")})
+        w.refresh_all()
+        app.processEvents()
+        check("Flächenfreigaben stehen im Modellbaum",
+              "Flächenfreigaben" in zweige(w.baum))
+        check("Register „Flächenfreigaben“ vorhanden",
+              "Flächenfreigaben" in [w.tab_unten.tabText(i)
+                                     for i in range(w.tab_unten.count())])
+        z = w.tbl_freigabe.modell.zeilen
+        check("Tabelle der Flächenfreigaben gefüllt", len(z) == 1, str(z))
+        check("Wirkung je Freiheitsgrad in der Tabelle",
+              "uz=frei (Ausfall bei Zug)" in str(z[0][6]), str(z[0][6]))
+        check("nicht ausgeführte Trennung wird als „nein“ geführt",
+              z[0][7] == "nein", str(z[0][7]))
+        fr = Model.from_dict(w.model.to_dict()).flaechenfreigaben["Lagerbock-Grundplatte"]
+        check("Flächenfreigabe überlebt Speichern und Laden",
+              fr.flaechen == [1, 2, 3] and fr.dof_behaviour(2).failure == "zug",
+              fr.describe())
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Modellbaum und Modelltabellen", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

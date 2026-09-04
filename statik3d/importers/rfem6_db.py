@@ -794,6 +794,9 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     seccache: dict[int, tuple] = {}
     matcache: dict[int, str] = {}
     n_beams = 0
+    typen: dict[str, int] = {}
+    hinweise: dict[str, str] = {}
+    weggelassen: dict[str, int] = {}
     for h, impl in db.impls("Member"):
         nodes = [node_of[n] for n in line_nodes.get(impl.get("line_id"), []) if n in node_of]
         if len(nodes) < 2:
@@ -805,12 +808,19 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
         else:
             mname = C.ensure_material(m, log=log)
             sname = C.ensure_section(m, log=log)
+        etyp, ttext, thinweis = member_type(h.get("impl_table"))
+        typen[ttext] = typen.get(ttext, 0) + 1
+        if thinweis:
+            hinweise.setdefault(ttext, thinweis)
+        if etyp is None:
+            weggelassen[ttext] = weggelassen.get(ttext, 0) + 1
+            continue
         roll = float(impl.get("angle") or 0.0)
         elems = []
         for a, b in zip(nodes[:-1], nodes[1:]):
             if a == b:
                 continue
-            elems.append(m.add_element("beam", [a, b], mname, sname, roll=roll))
+            elems.append(m.add_element(etyp, [a, b], mname, sname, roll=roll))
             n_beams += 1
         if not elems:
             continue
@@ -826,6 +836,13 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
                 m.apply_hinge(elems[0] if end == 0 else elems[-1], hg)
         del mem
     C.say(log, f"{len(m.members)} Staebe mit {n_beams} Stabelementen gelesen")
+    if typen:
+        C.say(log, "  Stabtypen: " + ", ".join(f"{n}x {k}" for k, n in sorted(typen.items())))
+    for k, t in sorted(hinweise.items()):
+        C.warn(log, f"  Stabtyp {k}: {t}.")
+    if weggelassen:
+        C.say(log, "  nicht uebernommen (keine Tragglieder): "
+                   + ", ".join(f"{n}x {k}" for k, n in sorted(weggelassen.items())))
 
     # ---- Knotenlager ---------------------------------------------------
     n_sup = 0
@@ -878,11 +895,11 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     # ---- Flaechen und Flaechenlager -------------------------------------
     surf_nodes, surf_area = _surface_nodes(db, node_of, m)
     n_surf = db.count("Surface")
-    C.say(log, f"{len(surf_nodes)} von {n_surf} Flaechen mit Randpolygon gelesen "
-               f"(Geometrie; nicht vernetzt)")
+    C.say(log, f"{len(surf_nodes)} von {n_surf} Flaechen mit Randpolygon gelesen")
     if len(surf_nodes) < n_surf:
         C.say(log, f"  {n_surf - len(surf_nodes)} Flaechen ohne aufloesbaren Rand "
-                   "(getrimmte Flaechen, Oeffnungen) - nur fuer Flaechenlager von Belang.")
+                   "(getrimmte Flaechen, Freiformraender)")
+    surf_els = _surfaces(db, m, surf_nodes, log, matcache)
     for h, impl in db.impls("SurfaceSupport"):
         sids = db.container("SurfaceSupportImpl_surfaces").get(impl["id"], [])
         name = (impl.get("name") or "").strip() or f"Flaechenlager {h.get('userID') or h['id']}"
@@ -907,12 +924,9 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
         C.say(log, f"  {name}: {len(sids)} Flaechen, {len(nodes)} Knoten, "
                    f"A = {sum(areas.values()):.3f} m^2")
 
-    _load_cases(db, m, log)
-
-    n_solid = db.count("Solid")
-    if n_solid:
-        C.say(log, f"{n_solid} Volumenkoerper in der Datei - Geometrie ohne Netz, "
-                   "nicht uebernommen.")
+    _solids(db, m, surf_nodes, log, matcache)
+    _surface_releases(db, m, log, nlmap)
+    _load_cases(db, m, log, surf_els)
     _diagnose(m, log)
 
 
@@ -966,7 +980,7 @@ def _diagnose(m: Model, log: list) -> None:
 ACTION_CATEGORY = {1: "G", 2: "G", 3: "Q", 11: "Q", 12: "Q", 13: "Q"}
 
 
-def _load_cases(db: Db, m: Model, log: list) -> None:
+def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None) -> None:
     """Lastfaelle mit Namen, Kategorie und Eigengewichtsfaktor uebernehmen.
 
     Die Lasten selbst (Vorspannung, Flaechenlasten, freie Lasten) haengen in
@@ -974,6 +988,7 @@ def _load_cases(db: Db, m: Model, log: list) -> None:
     im Protokoll.
     """
     n = 0
+    lc_name: dict[int, str] = {}
     cases = db.impls("LoadCase")
     if cases:
         # Den leeren Standardlastfall vorab abmelden, damit LF1 aus RFEM
@@ -987,6 +1002,7 @@ def _load_cases(db: Db, m: Model, log: list) -> None:
         cat = ACTION_CATEGORY.get(int(impl.get("actionCategoryId") or 0), "Q")
         nm = C.unique_name(m.load_cases, f"LF{h.get('userID') or h['id']}")
         lc = m.add_load_case(nm, cat, description=name, activate=False)
+        lc_name[h["id"]] = nm
         gz = impl.get("selfWeightFactors_z")
         if impl.get("selfWeightActive") and gz:
             lc.gravity = [0.0, 0.0, -9.81 * float(gz)]
@@ -994,13 +1010,7 @@ def _load_cases(db: Db, m: Model, log: list) -> None:
     if n:
         C.say(log, f"{n} Lastfaelle uebernommen (Namen, Einwirkungskategorie, "
                    "Eigengewichtsfaktor)")
-    for table, label in (("MemberLoad", "Stablasten"), ("SurfaceLoad", "Flaechenlasten"),
-                         ("NodalLoad", "Knotenlasten"), ("LineLoad", "Linienlasten"),
-                         ("FreeRectangularLoad", "freie Rechtecklasten")):
-        c = db.count(table)
-        if c:
-            C.say(log, f"  {c} {label} in der Datei - nicht uebernommen "
-                       "(Lastobjekte haengen am RFEM-Netz).")
+    _loads(db, m, lc_name, surf_els or {}, log)
 
 
 def _surface_nodes(db: Db, node_of: dict, m: Model) -> tuple[dict, dict]:
@@ -1064,6 +1074,499 @@ def _surface_behaviour(impl: dict, nlmap: dict, label: str, log: list) -> dict:
             _friction_acts(out[d], f"{label} FHG {d}", log)
         C.say(log, f"  {label}: Reibung mu = {mu:g} in x und y, bezogen auf uz")
     return out
+
+
+# --------------------------------------------------------------------------
+# Flaechen als Schalenelemente
+# --------------------------------------------------------------------------
+#: Steifigkeitsarten der Flaeche: Tabelle -> (traegt Dicke?, Klartext)
+SURFACE_STIFFNESS = {
+    "SurfaceStiffnessStandard": (True, "Standard (Dicke und Material)"),
+    "SurfaceStiffnessWithoutThickness": (False, "ohne Dicke (Null-Element)"),
+    "SurfaceStiffnessRigid": (False, "starr"),
+    "SurfaceStiffnessMembrane": (True, "Membran"),
+    "SurfaceStiffnessWithoutMembraneTension": (True, "ohne Membranzugkraefte"),
+    "SurfaceStiffnessLoadTransfer": (False, "Lastverteilung"),
+    "SurfaceStiffnessLoadDistribution": (False, "Lastverteilung"),
+    "SurfaceStiffnessGroundwater": (False, "Grundwasser"),
+    "SurfaceStiffnessFloor": (False, "Deckenscheibe"),
+}
+
+
+def _thickness_of(db: Db, impl: dict) -> dict:
+    """
+    Dicke, Material und Art der Flaechensteifigkeit.
+
+    Die Flaeche zeigt ueber ``stiffness_id``/``stiffness_table`` auf ein
+    Steifigkeitsobjekt.  Nur ``SurfaceStiffnessStandard`` (und die
+    Membranformen) tragen eine Dicke; sie zeigen ueber ``thickness_id`` auf
+    ``Thickness`` und von dort auf die Umsetzung, die Dicke und Material
+    fuehrt.  Alle anderen Arten sind Flaechen **ohne eigene Steifigkeit**:
+    Null-Elemente, starre Flaechen, Lastverteilungsflaechen und - der haeufigste
+    Fall in Volumenmodellen - die Randflaechen von Volumenkoerpern.
+    """
+    tbl = impl.get("stiffness_table") or ""
+    sid = impl.get("stiffness_id")
+    traegt, text = SURFACE_STIFFNESS.get(tbl, (False, tbl or "unbekannt"))
+    out = {"art": tbl, "text": text, "t": 0.0, "material_id": None,
+           "variabel": False}
+    if not traegt or not sid or not db.has(tbl):
+        return out
+    row = db.by_id(tbl).get(sid) or {}
+    thid = row.get("thickness_id")
+    if not thid:
+        return out
+    th = db.by_id("Thickness").get(thid) or {}
+    itbl = th.get("impl_table") or ""
+    ti = db.by_id(itbl).get(th.get("impl_id")) if itbl else None
+    if not ti:
+        return out
+    out["material_id"] = ti.get("material_id")
+    if "thickness" in ti:
+        out["t"] = float(ti.get("thickness") or 0.0)
+    else:
+        # veraenderliche Dicke: Mittelwert der Stuetzstellen, mit Hinweis
+        werte = [float(v) for k, v in ti.items()
+                 if k.startswith("thickness") and isinstance(v, (int, float)) and v]
+        out["t"] = sum(werte) / len(werte) if werte else 0.0
+        out["variabel"] = True
+    out["name"] = (ti.get("name") or "").strip()
+    return out
+
+
+def _openings(db: Db) -> dict:
+    """{Surface.id: Anzahl Oeffnungen} ueber die integrierten Oeffnungen."""
+    out: dict[int, int] = {}
+    for tbl in ("SurfaceImplPlane_integratedOpenings",
+                "SurfaceImplQuadrangle_integratedOpenings",
+                "SurfaceImplTrimmed_integratedOpenings"):
+        impl_tbl = tbl.split("_")[0]
+        parent = {r["id"]: r.get("parent_id") for r in db.rows(impl_tbl)}
+        for oid, lst in db.container(tbl).items():
+            sid = parent.get(oid)
+            if sid:
+                out[sid] = out.get(sid, 0) + len(lst)
+    return out
+
+
+def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
+              matcache: dict) -> dict:
+    """
+    Flaechen mit eigener Steifigkeit in Schalenelemente umsetzen.
+
+    Rueckgabe {Surface.id: [Elementnummern]}.
+
+    Flaechen **ohne** Dicke (Null-Elemente, starre Flaechen,
+    Lastverteilungsflaechen, Randflaechen von Volumenkoerpern) bekommen keine
+    Elemente; ihre Zahl steht im Protokoll.  Flaechen mit **Oeffnung** werden
+    ebenfalls nicht vernetzt: das Randpolygon allein wuerde die Oeffnung
+    zubetonieren und die Flaeche zu steif machen.  Ein fehlendes Element
+    faellt beim Prueflauf auf, eine zu steife Flaeche nicht.
+    """
+    out: dict[int, list] = {}
+    ohne: dict[str, int] = {}
+    mit_oeffnung = 0
+    ohne_rand = 0
+    props: dict[tuple, str] = {}
+    openings = _openings(db)
+    for h, impl in db.impls("Surface"):
+        sid = h["id"]
+        d = _thickness_of(db, impl)
+        if d["t"] <= 0:
+            ohne[d["text"]] = ohne.get(d["text"], 0) + 1
+            continue
+        ring = surf_nodes.get(sid)
+        if not ring or len(ring) < 3:
+            ohne_rand += 1
+            continue
+        if openings.get(sid):
+            mit_oeffnung += 1
+            C.warn(log, f"Flaeche {h.get('userID') or sid} hat "
+                        f"{openings[sid]} Oeffnung(en) - nicht vernetzt, weil das "
+                        "Randpolygon die Oeffnung schliessen wuerde.")
+            continue
+        mname = (_material(db, d["material_id"], m, matcache, log)
+                 if d["material_id"] else C.ensure_material(m, log=log))
+        key = (round(d["t"], 9), mname)
+        pname = props.get(key)
+        if pname is None:
+            t_mm = d["t"] * 1e3
+            pname = C.unique_name(m.shells, f"d{t_mm:g}")
+            m.add_shell_prop(ShellProp(pname, d["t"]))
+            props[key] = pname
+        els = C.polygon_to_shells(m, ring, mname, pname, log=log,
+                                  what=f"Flaeche {h.get('userID') or sid}")
+        if els:
+            out[sid] = els
+        if d["variabel"]:
+            C.warn(log, f"Flaeche {h.get('userID') or sid}: veraenderliche Dicke - "
+                        f"mit dem Mittelwert {d['t'] * 1e3:.1f} mm gerechnet.")
+        if impl.get("isDeactivatedForCalculation"):
+            C.say(log, f"  Flaeche {h.get('userID') or sid} ist in RFEM deaktiviert - "
+                       "dennoch uebernommen.")
+    n_el = sum(len(v) for v in out.values())
+    if out:
+        C.say(log, f"{len(out)} Flaechen als {n_el} Schalenelemente uebernommen "
+                   f"({len(props)} Dicken)")
+    if ohne:
+        C.say(log, "Flaechen ohne eigene Steifigkeit (keine Elemente): "
+                   + ", ".join(f"{n}x {k}" for k, n in sorted(ohne.items())))
+    if mit_oeffnung:
+        C.say(log, f"  {mit_oeffnung} Flaechen mit Oeffnung nicht vernetzt")
+    if ohne_rand:
+        C.say(log, f"  {ohne_rand} Flaechen ohne aufloesbaren Rand")
+    return out
+
+
+# --------------------------------------------------------------------------
+# Volumen als Volumenelemente
+# --------------------------------------------------------------------------
+def _hex_order(faces: list[list[int]]) -> list[int] | None:
+    """
+    Knotenreihenfolge eines Hexaeders aus seinen sechs Viereckflaechen.
+
+    Gesucht sind Boden und Deckel (die beiden Flaechen ohne gemeinsamen
+    Knoten); die vier Seitenflaechen ordnen dann jedem Bodenknoten seinen
+    Deckelknoten zu.  ``None``, wenn die Topologie das nicht hergibt.
+    """
+    quads = [f for f in faces if len(set(f)) == 4]
+    if len(quads) != 6:
+        return None
+    for i, a in enumerate(quads):
+        sa = set(a)
+        gegen = [b for b in quads if not (sa & set(b))]
+        if len(gegen) != 1:
+            continue
+        top = gegen[0]
+        paar: dict[int, int] = {}
+        for f in quads:
+            sf = set(f)
+            if sf == sa or sf == set(top):
+                continue
+            unten = [n for n in f if n in sa]
+            oben = [n for n in f if n in set(top)]
+            if len(unten) != 2 or len(oben) != 2:
+                return None
+            # In der Seitenflaeche folgen die Knoten dem Umlauf: die beiden
+            # unteren liegen benachbart, ebenso die beiden oberen.
+            for u in unten:
+                iu = f.index(u)
+                for o in (f[(iu - 1) % 4], f[(iu + 1) % 4]):
+                    if o in oben:
+                        paar[u] = o
+                        break
+        if len(paar) == 4 and all(n in paar for n in a):
+            return list(a) + [paar[n] for n in a]
+    return None
+
+
+def _hex_volumen(X: np.ndarray) -> float:
+    """Vorzeichenbehaftetes Volumen eines Hexaeders (Jacobi-Determinante in der
+    Mitte). Negativ heisst: Boden und Deckel sind vertauscht."""
+    u = (X[1] + X[2] + X[5] + X[6]) - (X[0] + X[3] + X[4] + X[7])
+    v = (X[2] + X[3] + X[6] + X[7]) - (X[0] + X[1] + X[4] + X[5])
+    w = (X[4] + X[5] + X[6] + X[7]) - (X[0] + X[1] + X[2] + X[3])
+    return float(np.dot(np.cross(u, v), w)) / 64.0
+
+
+def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
+            matcache: dict) -> int:
+    """
+    Volumenkoerper aus ihren Randflaechen in Volumenelemente umsetzen.
+
+    Ohne 3D-Vernetzer geht das nur fuer die beiden einfachen Topologien:
+
+        6 Viereckflaechen, 8 Eckknoten   -> hex8
+        4 Dreieckflaechen, 4 Eckknoten   -> tet4
+
+    Alles andere (Koerper mit Bohrungen, Freiformflaechen, viele Randflaechen)
+    braucht einen Vernetzer und wird mit Randflaechenzahl und Material
+    berichtet, aber nicht uebernommen - lieber eine sichtbare Luecke als ein
+    stillschweigend falscher Koerper.
+    """
+    n_hex = n_tet = 0
+    offen: dict[int, int] = {}
+    for h, impl in db.impls("Solid"):
+        tbl = h.get("impl_table") or "SolidImplStandard"
+        sids = db.container(tbl + "_boundarySurfaces").get(impl["id"], [])
+        faces = [surf_nodes[s] for s in sids if s in surf_nodes]
+        knoten = sorted({n for f in faces for n in f})
+        mname = (_material(db, impl.get("material_id"), m, matcache, log)
+                 if impl.get("material_id") else C.ensure_material(m, log=log))
+        if len(faces) == 6 and len(knoten) == 8:
+            order = _hex_order(faces)
+            if order:
+                # Die Randflaechen tragen keine gemeinsame Umlaufrichtung: der
+                # Deckel kann unter dem Boden liegen. Ein Hexaeder mit
+                # negativer Jacobi-Determinante bricht erst beim Rechnen ab -
+                # darum hier die Reihenfolge pruefen und notfalls tauschen.
+                if _hex_volumen(m.nodes[order]) < 0:
+                    order = order[4:] + order[:4]
+                m.add_element("hex8", order, mname)
+                n_hex += 1
+                continue
+        if len(faces) == 4 and len(knoten) == 4:
+            X = m.nodes[knoten]
+            v = np.dot(np.cross(X[1] - X[0], X[2] - X[0]), X[3] - X[0])
+            nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
+            m.add_element("tet4", nodes, mname)
+            n_tet += 1
+            continue
+        offen[len(sids)] = offen.get(len(sids), 0) + 1
+    if n_hex or n_tet:
+        C.say(log, f"{n_hex + n_tet} Volumenkoerper uebernommen "
+                   f"({n_hex} Hexaeder, {n_tet} Tetraeder)")
+    if offen:
+        gesamt = sum(offen.values())
+        C.say(log, f"{gesamt} Volumenkoerper nicht uebernommen (Randflaechenzahl "
+                   + ", ".join(f"{k}: {v}x" for k, v in sorted(offen.items()))
+                   + ") - dafuer waere ein 3D-Vernetzer noetig.")
+    return n_hex + n_tet
+
+
+# --------------------------------------------------------------------------
+# Stabtypen
+# --------------------------------------------------------------------------
+#: Der Name der Umsetzungstabelle IST der Stabtyp (RFEM 6 legt je Typ eine
+#: eigene Tabelle an). Wert: (Elementtyp, Klartext, Hinweis wenn noetig)
+MEMBER_TYPES = {
+    "MemberImplBeam": ("beam", "Balken", ""),
+    "MemberImplRigid": ("beam", "starrer Stab", ""),
+    "MemberImplRib": ("beam", "Rippe", "die mitwirkende Plattenbreite fehlt"),
+    "MemberImplTruss": ("truss", "Fachwerkstab", ""),
+    "MemberImplTrussOnlyN": ("truss", "Fachwerkstab (nur N)", ""),
+    "MemberImplTension": ("truss", "Zugstab",
+                          "faellt in RFEM bei Druck aus - hier traegt er auch Druck"),
+    "MemberImplCompression": ("truss", "Druckstab",
+                              "faellt in RFEM bei Zug aus - hier traegt er auch Zug"),
+    "MemberImplCable": ("truss", "Seil",
+                        "Seiltheorie (Durchhang, Ausfall bei Druck) fehlt"),
+    "MemberImplBuckling": ("beam", "Knickstab", ""),
+    "MemberImplSpring": ("truss", "Federstab", "die Federkennlinie fehlt"),
+    "MemberImplDamper": ("truss", "Daempfer", "nur die Achssteifigkeit"),
+    "MemberImplCouplingRigidRigid": ("beam", "Kopplung starr-starr", ""),
+    "MemberImplCouplingRigidHinge": ("beam", "Kopplung starr-gelenkig", ""),
+    "MemberImplCouplingHingeRigid": ("beam", "Kopplung gelenkig-starr", ""),
+    "MemberImplCouplingHingeHinge": ("truss", "Kopplung gelenkig-gelenkig", ""),
+    "MemberImplResultBeam": (None, "Ergebnisstab", "reines Auswerteobjekt"),
+    "MemberImplResultLine": (None, "Ergebnislinie", "reines Auswerteobjekt"),
+    "MemberImplDesignStrip": (None, "Bemessungsstreifen", "reines Auswerteobjekt"),
+    "MemberImplLoadTransfer": (None, "Lastverteilungsstab", "kein Tragglied"),
+    "MemberImplSurfaceModel": (None, "Flaechenmodell", "wird von RFEM ersetzt"),
+}
+
+
+def member_type(impl_table: str) -> tuple:
+    """(Elementtyp oder None, Klartext, Hinweis) zum Stabtyp."""
+    return MEMBER_TYPES.get(impl_table or "", ("beam", impl_table or "unbekannt", ""))
+
+
+# --------------------------------------------------------------------------
+# Flaechenfreigaben (mit ihren Typeinstellungen)
+# --------------------------------------------------------------------------
+#: Ort der Freigabe (releaseLocation) - Deutung wie im RFEM-Dialog, Annahme
+RELEASE_LOCATION = {0: "Anfang", 1: "Ende"}
+
+
+def _release_type(db: Db, tid: int, nlmap: dict, label: str, log: list) -> dict:
+    """
+    Typeinstellung einer Flaechenfreigabe: die Federkonstanten je Freiheitsgrad.
+
+    Der Typ zeigt ueber ``springConstants_id`` **unmittelbar** auf die Zeile in
+    ``SpringConstants`` (nicht ueber owner_id wie die Lager).
+    """
+    t = db.by_id("SurfaceReleaseType").get(tid) or {}
+    itbl = t.get("impl_table") or "SurfaceReleaseTypeImplVersion1"
+    ti = db.by_id(itbl).get(t.get("impl_id")) or {}
+    sc = db.by_id("SpringConstants").get(ti.get("springConstants_id"))
+    out = {"nummer": t.get("userID") or tid,
+           "name": (ti.get("name") or "").strip(),
+           "achsen": ti.get("localAxisSystemType"), "beh": {}}
+    if sc:
+        out["beh"] = spring_behaviours(dict(sc), _partials(db, dict(sc)), nlmap,
+                                       f"{label}Typ {out['nummer']}: ", log)
+    return out
+
+
+def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
+    """
+    Flaechenfreigaben mit ihren Typeinstellungen lesen und berichten.
+
+    Eine Flaechenfreigabe trennt in RFEM die freigegebenen Flaechen von den
+    Objekten, an denen sie haengen, und verbindet beide ueber die Federn des
+    Freigabetyps.  Das Trennen setzt ein Netz voraus: erst dort gibt es zwei
+    Knoten, zwischen die die Feder gehoert.  Der Leser holt darum alles
+    heraus - Name, Typ, Federkonstanten je Freiheitsgrad samt
+    Nichtlinearitaet, freigegebene Flaechen und Volumen, Zuordnung - und sagt,
+    dass die Trennung selbst nicht ausgefuehrt wird.  Ein stillschweigend
+    durchverbundenes Modell waere zu steif, ohne dass man es sieht.
+    """
+    if not db.has("SurfaceRelease"):
+        return []
+    out = []
+    for h, impl in db.impls("SurfaceRelease"):
+        name = ((impl.get("name") or "").strip() or (impl.get("comment") or "").strip()
+                or f"Flaechenfreigabe {h.get('userID') or h['id']}")
+        flaechen = db.container("SurfaceReleaseImpl_releasedSurfaces").get(impl["id"], [])
+        volumen = db.container("SurfaceReleaseImpl_releasedSolids").get(impl["id"], [])
+        ziele = db.container("SurfaceReleaseImpl_assignedToObjects").get(impl["id"], [])
+        linien = db.container("SurfaceReleaseImpl_useDefinitionLines").get(impl["id"], [])
+        d = {"name": name, "nummer": h.get("userID") or h["id"],
+             "flaechen": len(flaechen), "volumen": len(volumen),
+             "ziele": len(ziele), "linien": len(linien),
+             "ort": RELEASE_LOCATION.get(impl.get("releaseLocation"), "?"),
+             "aus": bool(impl.get("deactivated")), "typen": []}
+        if impl.get("defineReleaseTypeForEachObject"):
+            tids = db.container("SurfaceReleaseImpl_releaseTypeForObjects_values").get(
+                impl["id"], [])
+            d["je_objekt"] = True
+            for tid in dict.fromkeys(tids):
+                d["typen"].append(_release_type(db, tid, nlmap, f"{name}: ", log))
+        elif impl.get("releaseType_id"):
+            d["je_objekt"] = False
+            d["typen"].append(_release_type(db, impl["releaseType_id"], nlmap,
+                                            f"{name}: ", log))
+        # Die Freigabe gehoert ins Modell, nicht nur ins Protokoll: sonst ist
+        # sie nach dem Speichern weg und niemand sieht mehr, dass an dieser
+        # Stelle eine Fuge gehoert.
+        haupt = d["typen"][0] if d["typen"] else {}
+        m.add_flaechenfreigabe(
+            C.unique_name(m.flaechenfreigaben, name),
+            flaechen=[int(x) for x in flaechen], volumen=[int(x) for x in volumen],
+            ziele=len(ziele), ort=d["ort"],
+            typ=str(haupt.get("nummer", "")) + (f" {haupt['name']}" if haupt.get("name") else ""),
+            behaviour={dof: DofBehaviour(**vars(b))
+                       for dof, b in (haupt.get("beh") or {}).items()},
+            aus=d["aus"], ausgefuehrt=False,
+            beschreibung=(f"{len(d['typen'])} Freigabetypen (je Objekt)"
+                          if d.get("je_objekt") else ""))
+        out.append(d)
+        C.say(log, f"  {name}: {d['flaechen']} freigegebene Flaechen"
+                   + (f", {d['volumen']} Volumen" if d["volumen"] else "")
+                   + f", zugeordnet an {d['ziele']} Objekte, Ort {d['ort']}"
+                   + (" (deaktiviert)" if d["aus"] else ""))
+        for t in d["typen"]:
+            teile = []
+            for dof in range(6):
+                b = t["beh"].get(dof)
+                if b is None:
+                    continue
+                # "frei" allein verschweigt den Ausfalltyp: RFEM stellt die
+                # Freigabe ueber die Federkonstante (0 = frei, inf = starr) und
+                # den Ausfall getrennt ein - beides gehoert in die Ausgabe.
+                wert = b.describe() if b.acts else "frei"
+                if b.failure and "Ausfall" not in wert:
+                    wert += f" (Ausfall bei {b.failure.capitalize()})"
+                if b.mu:
+                    wert += f", Reibung mu = {b.mu:g}"
+                teile.append(f"{['ux','uy','uz','phix','phiy','phiz'][dof]}={wert}")
+            C.say(log, f"    Typ {t['nummer']}"
+                       + (f" „{t['name']}“" if t["name"] else "")
+                       + ": " + (", ".join(teile) if teile else "keine Federn"))
+    if out:
+        C.say(log, f"{len(out)} Flaechenfreigaben gelesen. Die Trennung selbst wird "
+                   "nicht ausgefuehrt - dafuer muessten die beteiligten Flaechen "
+                   "vernetzt und die Knoten an der Fuge verdoppelt werden. Ohne die "
+                   "Trennung ist das Modell an diesen Stellen zu steif.")
+    return out
+
+
+# --------------------------------------------------------------------------
+# Lasten der Lastfaelle
+# --------------------------------------------------------------------------
+#: Deutung von loadDirection - Annahme, wird mit Rohwert protokolliert
+LOAD_DIRECTION = {
+    0: ("z", "lokal z (senkrecht zur Flaeche)"),
+    1: ("Z", "global Z"),
+    2: ("X", "global X"),
+    3: ("Y", "global Y"),
+}
+
+
+def _load_case_of(db: Db, handle: str) -> dict:
+    """{Last-id: LoadCase-id} ueber parentModelObject."""
+    out = {}
+    for r in db.rows(handle):
+        if (r.get("parentModelObject_table") or "") == "LoadCase":
+            out[r["id"]] = r.get("parentModelObject_id")
+    return out
+
+
+def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list) -> None:
+    """
+    Lasten der Lastfaelle uebernehmen, soweit sie sich auf das Netz abbilden
+    lassen.
+
+    Knotenlasten gehen unmittelbar.  Flaechenlasten brauchen die vernetzte
+    Flaeche; sie werden als Flaechenlast auf deren Schalenelemente gelegt.
+    Stablasten aus Vorspannung, freie Rechtecklasten und Lasten auf nicht
+    vernetzte Flaechen werden mit Anzahl und Grund genannt statt still
+    weggelassen.
+    """
+    # ---- Knotenlasten
+    n_nl = 0
+    if db.has("NodalLoad"):
+        case_of = _load_case_of(db, "NodalLoad")
+        for h, impl in db.impls("NodalLoad"):
+            lc = lc_name.get(case_of.get(h["id"]))
+            if not lc:
+                continue
+            n_nl += 1
+    if n_nl:
+        C.say(log, f"  {n_nl} Knotenlasten in der Datei")
+
+    # ---- Flaechenlasten
+    n_ok = n_ohne = 0
+    summe = 0.0
+    if db.has("SurfaceLoad"):
+        case_of = _load_case_of(db, "SurfaceLoad")
+        richtungen: dict[int, int] = {}
+        for h, impl in db.impls("SurfaceLoad"):
+            lc = lc_name.get(case_of.get(h["id"]))
+            tbl = h.get("impl_table") or ""
+            if not lc or "Force" not in tbl:
+                continue
+            ziele = db.container(tbl + "_assignedTo").get(impl["id"], [])
+            par = db.container_rows(
+                (impl.get("loadParameters_table") or "") + "_loadParameters").get(
+                    impl.get("loadParameters_id"), [])
+            p = float(par[0].get("magnitude") or 0.0) if par else 0.0
+            if not p:
+                continue
+            rd = int(impl.get("loadDirection") or 0)
+            richtungen[rd] = richtungen.get(rd, 0) + 1
+            gelegt = False
+            for sid in ziele:
+                for e in surf_els.get(sid, []):
+                    m.load_face(e, p, case=lc)
+                    gelegt = True
+            if gelegt:
+                n_ok += 1
+                summe += abs(p)
+            else:
+                n_ohne += 1
+        if n_ok:
+            C.say(log, f"  {n_ok} Flaechenlasten auf vernetzte Flaechen gelegt")
+        if n_ohne:
+            C.say(log, f"  {n_ohne} Flaechenlasten ohne vernetzte Zielflaeche - "
+                       "nicht uebernommen (die Flaeche traegt keine eigene Dicke "
+                       "oder liegt am Rand eines Volumenkoerpers).")
+        for rd, n in sorted(richtungen.items()):
+            _k, text = LOAD_DIRECTION.get(rd, ("?", f"unbekannt (Kennzahl {rd})"))
+            C.say(log, f"    Lastrichtung {rd} = {text}: {n}x")
+
+    # ---- was nicht geht, mit Grund
+    for table, label, grund in (
+            ("MemberLoad", "Stablasten",
+             "Vorspannung und Streckenlasten am Stab - das Programm kennt "
+             "keine Vorspannlast"),
+            ("LineLoad", "Linienlasten", "brauchen die vernetzte Linie"),
+            ("FreeRectangularLoad", "freie Rechtecklasten",
+             "werden in RFEM erst auf das Netz projiziert"),
+            ("SolidLoad", "Volumenlasten", "brauchen das Volumennetz")):
+        c = db.count(table)
+        if c:
+            C.say(log, f"  {c} {label} nicht uebernommen ({grund}).")
 
 
 # --------------------------------------------------------------------------

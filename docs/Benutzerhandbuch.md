@@ -58,7 +58,7 @@ Dreizehn Register nach Arbeitsschritt:
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
 | **Bericht** | Statischer Bericht |
-| **Ansicht** | Blickrichtungen, Kanten, Nummern, Lasten, Stäbe farbig |
+| **Ansicht** | Blickrichtungen, Darstellungsart (Voll, Transparent, Hidden-Line, Drahtmodell), FE-Netz, Knoten, Nummern, Lasten, Stäbe farbig, Lagergröße |
 | **Extras** | Handbücher, Info, Update |
 
 Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Berechnen,
@@ -68,9 +68,27 @@ Register kommt nach vorn.
 
 Die Arbeitsfläche in drei Spalten:
 
-* **links der Modellbaum** — Elemente nach Art, Querschnitte, Werkstoffe,
-  Lager, Lastfälle, Kombinationen, Kontakt, Stellungen und die Stäbe für die
-  Nachweise, jeweils mit Anzahl. Ein Klick führt zur Eingabe oder zur Tabelle.
+* **links der Modellbaum** — **alles, was modelliert werden kann**, mit Anzahl:
+
+  | Zweig | Inhalt |
+  |---|---|
+  | Geometrie | Knoten (mit Koordinaten), Linien (Art und Knotenzahl) |
+  | Elemente | Stäbe, Flächen, Volumen — je nach Elementart, dazu die Stäbe für die Nachweise |
+  | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
+  | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
+  | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden |
+  | Flächenfreigaben | Kontaktfugen aus RFEM mit ihrer Wirkung je Freiheitsgrad |
+  | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
+  | Einwirkungen | Lastfälle und Kombinationen |
+  | Stellungen, Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte |
+
+  **Ein Klick** wählt aus: der Zweig holt seine Tabelle nach vorn und hebt das
+  Objekt in der Ansicht hervor. **Ein Doppelklick bearbeitet**: er öffnet die
+  Maske des Objekts (Knotenkoordinaten, Linie, Querschnitt, Werkstoff, Dicke,
+  Lager, Gelenk, Lastfall, Kombination …). Ein Doppelklick auf den
+  Sammelzweig — „Werkstoffe“, „Gelenke“, „Linien“ — legt ein **neues** Objekt an.
+  Zweige mit vielen Einträgen zeigen die ersten 60 und verweisen für den Rest
+  auf die Tabelle unten, wo gefiltert werden kann.
   Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
   Zweiges; die maßgebende trägt ★.
 * **in der Mitte die 3D-Ansicht** — frei für die Grafik.
@@ -78,12 +96,61 @@ Die Arbeitsfläche in drei Spalten:
   über den Befehl im Ribbon; der Titel der Maske nennt sie. Eine Registerleiste
   mit denselben Namen wie im Ribbon gibt es nicht mehr.
 
-Unten die **Tabellen**: Protokoll, Werkstoffe, Querschnitte, Dicken,
-Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt,
-Anschlüsse, Verformungen, Beulfelder, Volumen, Lasteinleitung.
-Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
-in einem Panel rechts. Wie die Tabellen zu bedienen sind, steht im nächsten
-Abschnitt.
+Unten die **Tabellen**. Erst die Eingaben — Protokoll, Werkstoffe,
+Querschnitte, Dicken, **Knoten, Linien, Elemente, Lager, Gelenke, Lastfälle,
+Kombinationen** —, dann die Ergebnisse: Stabkräfte, Auflagerkräfte, Umhüllende,
+Nachweise EC3, Ermüdung, Kontakt, Anschlüsse, Verformungen, Beulfelder,
+Volumen, Lasteinleitung. **Das gesamte Modell steht damit tabellarisch da und
+lässt sich dort auch ändern** — nicht nur die Ergebnisse. Wie die Tabellen zu
+bedienen sind, steht im nächsten Abschnitt.
+
+| Tabelle | editierbar |
+|---|---|
+| Knoten | x, y, z; dazu Elementzahl am Knoten und Lagername (Doppelklick öffnet die Maske) |
+| Linien | über die Maske (Doppelklick): Name, Art, Knoten, Bemerkung |
+| Elemente | Werkstoff, Querschnitt bzw. Dicke, Drehung der lokalen Achsen |
+| Lager | Name und Symbolgröße; Doppelklick öffnet die Wirkung je Freiheitsgrad |
+| Gelenke | über die Maske (Doppelklick) |
+| Lastfälle | Beschreibung; Doppelklick öffnet Name, Einwirkung, Ausschlussgruppe |
+| Kombinationen | über die Maske (Doppelklick) |
+| Flächenfreigaben | nur Anzeige — sie kommen aus RFEM |
+
+**Flächenfreigaben** sind Kontaktfugen: in der Fugenebene starr, senkrecht dazu
+frei mit Ausfall bei Zug. Statik3D liest sie aus der RFEM-Datei vollständig ein
+und zeigt sie mit ihrer Wirkung je Freiheitsgrad, **führt die Trennung im Netz
+aber nicht aus** — dafür müssten die beteiligten Flächen vernetzt und die
+Knoten an der Fuge verdoppelt werden. Die Spalte „Trennung ausgeführt" steht
+deshalb auf „nein", und der Zweig im Modellbaum trägt ein ⚠. An diesen Stellen
+rechnet das Modell durchverbunden — also **zu steif**.
+
+Ein Knoten wird nur gelöscht, wenn **kein** Element mehr an ihm hängt — sonst
+sagt das Programm, welches Element im Weg ist. Beim Löschen eines Elements
+oder Knotens werden Stabzüge, Lager und Lasten mitgeführt.
+
+### Darstellung in der Ansicht
+
+Vier Darstellungsarten, im Register *Ansicht* nebeneinander und auf
+**Strg+1 … Strg+4**, dazu im Rechtsklickmenü der Ansicht:
+
+| Art | Taste | Bild |
+|---|---|---|
+| Voll | Strg+1 | gefüllte Flächen, farbig |
+| Transparent | Strg+2 | durchscheinend — man sieht die innen liegenden Teile |
+| Hidden-Line | Strg+3 | weiße Flächen mit dunklen Kanten, wie eine Zeichnung |
+| Drahtmodell | Strg+4 | nur die Kanten |
+
+**F9** blendet das **FE-Netz** (die Elementkanten) ein und aus. Der Schalter
+„Knoten" zeigt die gesetzten Knoten als Punkte: Knoten, an denen noch **kein
+Element** hängt, sind orange und etwas größer — so sieht man beim Modellieren,
+wo man schon war, auch wenn dort noch nichts steht.
+
+**Lagersymbole**: Die Form sagt, was das Lager hält — Würfel für die
+Einspannung, Kegel für das gelenkige Lager, Zylinder für ein Federlager.
+Linienlager und Flächenlager werden kleiner und in eigener Farbe gezeichnet.
+Die **Größe** stellt der Schieber „Lager" im Register *Ansicht* für alle
+zusammen ein; **ein Rechtsklick auf ein Lagersymbol** öffnet dessen eigenes
+Menü mit „Größe dieses Lagers…", „Größe aller Lager…", „Lager bearbeiten…" und
+„Lager löschen". Die eingestellte Größe wird mitgespeichert.
 
 ### Tabellen: filtern, sortieren, ausgeben
 
@@ -119,8 +186,9 @@ Zahlen (nicht als Text) — in Excel lässt sich damit sofort weiterrechnen.
 Element beziehungsweise den Knoten in der 3D-Ansicht; umgekehrt markiert eine
 Auswahl in der Ansicht die zugehörigen Zeilen und rollt die erste ins Bild.
 
-**Eingabetabellen sind editierbar.** In Werkstoffe, Querschnitte und Dicken
-sind die hellen Spalten zum Hineinschreiben da: Zelle anklicken, Wert tippen,
+**Eingabetabellen sind editierbar.** In Werkstoffe, Querschnitte, Dicken,
+Knoten, Elementen, Lagern und Lastfällen sind die hellen Spalten zum
+Hineinschreiben da: Zelle anklicken, Wert tippen,
 Eingabetaste. Gerechnet werden darf dabei — `= 210/1,05` ergibt 200. Erlaubt
 sind die vier Grundrechenarten, Klammern, Potenz und `pi`; mehr nicht, damit
 aus einer Tabellenzelle kein Programm wird. Ein unmöglicher Wert (E ≤ 0,
@@ -307,18 +375,24 @@ Datei → Importieren (Details in `Schnittstellen.md`):
 | `.sza`/`.kra`/`.fga` | HiCAD | Profile mit Katalogwerten, Blechdicken, Werkstoffe, Teileliste **und die Stabachsen aus dem Szenenteil** (siehe Schnittstellenhandbuch) |
 | `.inp` | Abaqus, CalculiX | Netz, Materialien, Sections, Randbedingungen, Lasten je Step |
 | `.bdf`/`.nas`/`.dat` | Nastran | GRID, CBAR/CBEAM, CQUAD4/CTRIA3, CTETRA/CHEXA, SPC, FORCE, PLOAD |
+| `.rf6` | RFEM 6 Projektdatei | Knoten, Linien, Stäbe mit Typ, Flächen mit Dicke, Volumenkörper, Lager mit Nichtlinearität, Gelenke, Flächenfreigaben, Lastfälle mit Flächenlasten |
 | `.step`/`.iges`/`.stl` | CAD | Vernetzung mit gmsh (Volumen oder Schale) |
 
-Native Binärformate (`.rf5`, `.rf6`, `.fem`) können nicht gelesen werden;
+Eine **RFEM-6-Projektdatei** (`.rf6`) wird unmittelbar gelesen – kein Export
+nötig. Was übernommen wird und was nicht (Flächen ohne eigene Dicke,
+Volumenkörper, die ein 3D-Netz brauchen, die Trennung an Flächenfreigaben),
+steht Zeile für Zeile im Importprotokoll; Einzelheiten im
+Schnittstellenhandbuch. Die älteren nativen Formate (`.rf5`, `.rs6`, `.fem`)
+werden untersucht und, soweit ihr Behälter zugänglich ist, ausgelesen –
+andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder
+Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
+
 Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
 Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
 zerfällt zunächst in Teile. Im Register **Mehr → Aus CAD übernommenes Modell**
 schließt „Freie Stabenden anschließen" (Suchradius 60 mm) jedes freie Ende an die
 Achse des nächsten Stabes an und teilt diesen dort; der Versatz steht im
 Protokoll, die Ausmitte des Anschlusses wird nicht abgebildet.
-
-das Programm nennt den Exportweg (RFEM: IFC-Statikmodell, SAF oder
-Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 
 ## 8 Nachweise nach EC3
 
@@ -609,6 +683,9 @@ Nachweis mit seiner Verformung je Kombination.
 Strg+N neu, Strg+O öffnen, Strg+S speichern, Strg+I importieren,
 Strg+R Bericht, F5 berechnen, Strg+Z rückgängig, Strg+Y wiederholen,
 Strg+Umschalt+C vordere Tabelle kopieren.
+
+Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
+Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
 
 Browser/Handy: siehe Kapitel 12.
 

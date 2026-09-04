@@ -94,6 +94,68 @@ def test_befund_und_bat():
     check("Skript: fehlende Datei wird gemeldet", "Die heruntergeladene Datei fehlt" in bat)
     check("Skript: Fehler beim Verschieben wird gemeldet", "errorlevel 1" in bat)
     check("Skript: startet danach neu", 'start "" "%EXE%"' in bat)
+    check("Skript: wechselt vorher ins eigene Verzeichnis", 'cd /d "%~dp0"' in bat)
+    check("Skript: meldet einen fehlgeschlagenen Neustart",
+          "Neustart fehlgeschlagen" in bat)
+
+    # Der Aufruf des Austauschskripts: die Befehlszeile muss als EINE
+    # Zeichenkette an Popen gehen. Mit einer Argumentliste setzt Windows
+    # list2cmdline an und macht aus "pfad" die Zeichenfolge \"pfad\" -
+    # cmd.exe sucht dann eine Datei mit Gegenschraegstrichen im Namen und
+    # meldet "konnte nicht gefunden werden".
+    import subprocess as _sp
+    import tempfile
+    gerufen = []
+    echt_popen = _sp.Popen
+
+    class Dummy:
+        pid = 1
+
+    def merk_popen(cmd, *a, **kw):
+        gerufen.append(cmd)
+        return Dummy()
+
+    d2 = tempfile.mkdtemp()
+    batpfad = os.path.join(d2, "statik3d_update.bat")
+    with open(batpfad, "w") as f:
+        f.write("@echo off\n")
+    echt_name = os.name
+    _sp.Popen = merk_popen
+    try:
+        upd.os.name = "nt"
+        upd.start_helper(batpfad)
+    finally:
+        _sp.Popen = echt_popen
+        upd.os.name = echt_name
+    check("Austauschskript wird gestartet", len(gerufen) == 1, str(gerufen)[:70])
+    cmd = gerufen[0] if gerufen else ""
+    check("Befehlszeile ist eine Zeichenkette, keine Liste",
+          isinstance(cmd, str), type(cmd).__name__)
+    check("kein Gegenschraegstrich vor den Anfuehrungszeichen",
+          '\\"' not in str(cmd), str(cmd)[:80])
+    check("Pfad steht vollstaendig in Anfuehrungszeichen",
+          f'"{batpfad}"' in str(cmd), str(cmd)[-60:])
+    check("leerer Fenstertitel, damit cmd den Pfad nicht als Titel nimmt",
+          'start ""' in str(cmd), str(cmd)[:40])
+    # so wuerde es mit einer Argumentliste aussehen - der alte Fehler
+    if hasattr(_sp, "list2cmdline"):
+        kaputt = _sp.list2cmdline(["cmd.exe", "/c", "start", "/min", "Titel",
+                                   f'"{batpfad}"'])
+        check("die Argumentliste haette den Pfad verstuemmelt",
+              '\\"' in kaputt, kaputt[-50:])
+
+    try:
+        upd.os.name = "nt"
+        upd.start_helper(os.path.join(d2, "gibtsnicht.bat"))
+        check("fehlendes Skript wird gemeldet", False)
+    except upd.UpdateError as ex:
+        check("fehlendes Skript wird gemeldet", "fehlt" in str(ex), str(ex)[:50])
+    finally:
+        upd.os.name = echt_name
+    check("helper_path liegt neben der exe",
+          upd.helper_path(os.path.join(d2, "Statik3D.exe")) == batpfad,
+          upd.helper_path(os.path.join(d2, "Statik3D.exe")))
+    shutil.rmtree(d2, ignore_errors=True)
 
     # Ohne Schreibrecht wird abgelehnt, bevor 200 MB geladen werden.
     # Als root liefert os.access immer True - deshalb wird die Abfrage selbst
