@@ -530,6 +530,67 @@ Für **Stabquerschnitte** sind die wirksamen Breiten nach Abschnitt 4 dagegen
 vollständig enthalten (Kapitel 5.2a): A_eff, W_eff,y, W_eff,z und e_N gehen in
 die Querschnitts- und die Stabilitätsnachweise ein.
 
+## 5d Volumen (DIN EN 1993-1-1, 6.2.1(5))
+
+Ein Volumen hat keinen Querschnitt. Klassifizierung, plastische Widerstands-
+momente, Knicklängen und die Interaktionsformeln der Abschnitte 6.2 und 6.3
+sind darauf nicht anwendbar. Was anwendbar ist, ist der **Spannungsnachweis
+am Punkt**, und den nennt 6.2.1(5) ausdrücklich als konservative Alternative.
+Für den allgemeinen räumlichen Spannungszustand ist das die Vergleichsspannung
+nach von Mises:
+
+      σ_v = √(½[(σ_1−σ_2)² + (σ_2−σ_3)² + (σ_3−σ_1)²]) ≤ f_y/γ_M0
+
+mit den Hauptspannungen σ_1 ≥ σ_2 ≥ σ_3 als Eigenwerten des Spannungstensors.
+**Wo wird ausgewertet?** Je Element an der Mitte **und** an den Eckpunkten
+(Hexaeder 9 Punkte, Tet10 5, Tet4 einer — dort ist die Spannung konstant).
+Die Elementmitte allein genügt nicht: bei Biegung durch den Körper liegt die
+Randspannung deutlich höher. Am Kragarm aus Hexaedern mit vier Elementen über
+die Höhe gibt die Mitte 43,3 N/mm², der Eckpunkt 60,3 N/mm² — die
+Balkenlösung M/W ist 60,0 N/mm². Ein Nachweis aus Mittelpunktspannungen läge
+also um rund 28 % auf der unsicheren Seite. Maßgebend ist der größte Wert
+über alle Elemente, Punkte und GZT-Kombinationen.
+
+Für den Hexaeder werden die inkompatiblen Moden dabei einmal je Element
+gelöst und danach alle Punkte damit ausgewertet.
+
+Zusätzlich ausgewiesen:
+
+      τ_max = (σ_1 − σ_3)/2                  größte Schubspannung
+      η_Tresca = (σ_1 − σ_3)/f_yd            Vergleich zu von Mises
+      σ_m = (σ_1+σ_2+σ_3)/3                  hydrostatische Spannung
+      h   = σ_m/σ_v                          Mehrachsigkeit
+
+Bei **dreiachsigem Zug** (σ_3 > 0) und h > 1/3 ist die Verformungsfähigkeit
+stark eingeschränkt: der Werkstoff kann nicht mehr durch Gleiten ausweichen,
+und die Bruchgefahr steigt, obwohl σ_v unauffällig bleibt. Statik3D rechnet
+den Sprödbruchnachweis nach DIN EN 1993-1-10 nicht, benennt den Fall aber im
+Bericht mit den Zahlenwerten. Damit nicht jeder einachsige Zugkörper, dessen
+σ_3 rechnerisch bei 10⁻¹⁴ N/mm² landet, als dreiachsig gemeldet wird, muss
+σ_3 über 2 % von σ_v und über 1 N/mm² liegen.
+
+**Spannungssingularitäten.** An einspringenden Ecken, unter Einzellasten und
+an Punktlagern wächst die Spannung mit jeder Netzverfeinerung; ein Nachweis
+gegen f_y ist dort ohne Aussage. Zwei Vorkehrungen:
+
+* Ein Bereich kann als `singular` gekennzeichnet werden. Dann werden die
+  Spannungen berichtet, aber kein Nachweis geführt — der Status heißt
+  „nur berichtet“, nicht „erfüllt“.
+* Unabhängig davon vergleicht das Programm die Spitzenspannung mit dem
+  Mittelwert des Bereichs. Liegt sie um mehr als den Faktor 5 darüber, weist
+  es auf eine mögliche Singularität hin.
+
+Wird ein **Kerbradius** angegeben, prüft das Programm zusätzlich, ob die
+mittlere Elementgröße h ≤ r/3 ist — sonst liegen weniger als drei Elemente
+über den Radius und die Kerbspannung wird unterschätzt.
+
+**Grenzen**: Keine Stabilität des Volumenkörpers — die geometrische
+Steifigkeit ist nur für Stabelemente gebildet, ein Verzweigungsproblem für
+Volumen gibt es nicht. Kein Plastizieren, kein Kriechen, keine Ermüdung aus
+dem räumlichen Spannungszustand (dafür wären Kerbspannungs- oder Struktur-
+spannungskonzepte nötig) und nicht der Sprödbruchnachweis nach EN 1993-1-10
+selbst.
+
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
 Ein Anschluss sitzt an einem Stabende. Die Beanspruchung sind die
@@ -717,6 +778,9 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 * Kleine Verformungen, linear-elastisches Material (keine Plastizität,
   kein Kriechen); Theorie II. Ordnung nur als lineares Verzweigungsproblem.
 * Kontakt als Penalty-Näherung ohne Lastgeschichte (monotone Lasten).
+* Volumen: nachgewiesen wird der Spannungszustand nach 6.2.1(5) für die im
+  Modell angelegten Volumenbereiche (Kapitel 5d). Eine Stabilitätsuntersuchung
+  des Volumenkörpers gibt es nicht.
 * Schalen: ebene Elemente. Nachgewiesen werden das Schubbeulen der Stegbleche
   (Abschnitt 5), ebene Blechfelder mit und ohne Steifen (Abschnitt 10 mit
   Anhang A und 4.5), die Steifen selbst (Abschnitt 9), die Lasteinleitung
@@ -751,6 +815,7 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 | `tests/test_gzg.py` | Verformungsnachweise gegen 5qL⁴/384EI, PL³/48EI und den Kragarm; Grenzwertbildung L/x, absolut, Überhöhung, Punktpaar |
 | `tests/test_beulen.py` | Beulwerte k_σ und k_τ gegen Tab. 4.1/4.2 und A.3, σ_E = 190000 (t/b)², ρ und χ_w gegen 4.4(2) und Tab. 5.1, Schubbeulen, Methode der reduzierten Spannungen, Steifen nach A.1/A.2.2/A.3(2) und Abschnitt 9, Lasteinleitung nach Abschnitt 6, Schalenbeulen nach EN 1993-1-6, dazu der Patch-Test des Viereckelements |
 | `tests/test_joints.py` | Schrauben, Nähte, T-Stummel gegen EN-Zahlenwerte; Steifigkeitsbeiwerte Tab. 6.11, Klassifizierung 5.2.2.5, Drehfeder gegen die geschlossene Kragarmlösung |
+| `tests/test_volumen.py` | Vergleichsspannung, Hauptspannungen und Mehrachsigkeit gegen die geschlossenen Werte (einachsiger Zug, reiner Schub √3 τ, hydrostatischer Druck σ_v = 0, Tresca/Mises = 2/√3), σ_v = N/A am Zugkörper aus Hexaedern, Singularitäts- und Netzfeinheitshinweise |
 | `tests/test_theorie2.py` | α_cr der Kragstütze und des Pendelstabes gegen die Knicklast nach Engesser, Vergrößerung der Verformung gegen 1/(1−N/N_cr), φ und e_0 gegen 5.3.2 und Tabelle 5.1, Gleichgewicht der Ersatzlastbilder, Feldmoment aus der Vorkrümmung, Kriterium 5.3.2(6) |
 | `tests/test_klasse4.py` | wirksame Querschnitte der Klasse 4: Beulwerte, Grenzschlankheiten und ρ nach 4.4(2), Aufteilung b_e1/b_e2, W_eff,y und A_eff eines geschweißten Blechträgers gegen eine unabhängige Handrechnung, Zusatzmoment aus e_N, Schalenbeulen schlanker Kreisrohre |
 | `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |

@@ -903,6 +903,87 @@ def main():
         traceback.print_exc()
         check("Beulfelder", False, str(ex)[:70])
 
+    # ---- Volumenbereiche (EN 1993-1-1, 6.2.1(5)) ------------------------
+    try:
+        from statik3d.model import Model, Material
+        mv = Model("Volumen")
+        mv.add_material(Material.steel("S355"))
+        ids = {}
+        for k in range(3):
+            for j in range(2):
+                for i in range(2):
+                    ids[(i, j, k)] = mv.add_node(0.1 * i, 0.1 * j, 0.2 * k)
+        els = []
+        for k in range(2):
+            els.append(mv.add_element("hex8", [
+                ids[(0, 0, k)], ids[(1, 0, k)], ids[(1, 1, k)], ids[(0, 1, k)],
+                ids[(0, 0, k + 1)], ids[(1, 0, k + 1)], ids[(1, 1, k + 1)],
+                ids[(0, 1, k + 1)]], "S355"))
+        for j in range(2):
+            for i in range(2):
+                mv.fix(ids[(i, j, 0)], "all")
+                mv.load_node(ids[(i, j, 2)], Fz=250e3)
+        mv.add_combination("K1", {list(mv.load_cases)[0]: 1.0}, typ="ULS")
+        w.model = mv
+        w.analysis = None
+        w.refresh_all()
+        app.processEvents()
+        w._set_selection(sorted({int(n) for e in mv.elements for n in e.nodes}))
+        app.processEvents()
+        # add_volumenbereich() oeffnet einen modalen Dialog - im Test wird der
+        # Bereich darum direkt angelegt und der Dialog unten fuer sich geprueft.
+        mv.add_volumenbereich("Bereich 1", els, beschreibung="ganzer Körper")
+        w.refresh_all()
+        app.processEvents()
+        check("Volumenbereich angelegt",
+              len(mv.volumenbereiche) == 1
+              and len(mv.volumenbereiche["Bereich 1"].elemente) == 2,
+              str(list(mv.volumenbereiche)))
+        check("Register „Volumen“ vorhanden", w.tabelle_zeigen("Volumen"))
+        check("Volumentabelle gefüllt", w.tbl_vol.zeilenzahl() == 1,
+              f"{w.tbl_vol.zeilenzahl()} Zeilen")
+        zweige = [w.baum.topLevelItem(0).child(i).text(0)
+                  for i in range(w.baum.topLevelItem(0).childCount())]
+        check("Volumenbereiche stehen im Modellbaum",
+              "Volumenbereiche" in zweige, str(zweige[-3:]))
+
+        an = solver.solve_all(mv, design=True)
+        w._solve_done("all", an)
+        w.show_results()
+        app.processEvents()
+        name = list(mv.volumenbereiche)[0]
+        check("Volumennachweise laufen mit",
+              an.volumen is not None and name in an.volumen.bereiche)
+        z = w.tbl_vol.modell.zeilen[0]
+        check("Spannungen stehen in der Tabelle",
+              isinstance(z[6], float) and z[6] > 0 and isinstance(z[8], float),
+              f"σ_v = {z[6]:.1f} MPa, η = {z[8]:.3f}")
+        check("Ergebnisprotokoll nennt die Volumen",
+              "Volumen (EN 1993-1-1" in w.txt_res.toPlainText())
+        w.clear_selection()
+        w.tbl_vol.zeile_gewaehlt.emit(name)
+        app.processEvents()
+        check("Klick in der Tabelle wählt den Bereich", len(w.selection) >= 8,
+              f"{len(w.selection)} Knoten")
+        dv = dg.VolumenbereichDialog(w, mv, mv.volumenbereiche[name])
+        dv.cb_sing.setChecked(True)
+        dv.ed_r.set(5.0)
+        n3, kw4 = dv.result()
+        check("Dialog liest den Bereich zurück",
+              n3 == name and kw4["singular"] is True
+              and abs(kw4["ausrundung"] - 0.005) < 1e-9,
+              f"{n3}, Kerbradius {kw4['ausrundung'] * 1e3:.1f} mm")
+        w.tbl_vol.view.selectRow(0)
+        w.delete_volumenbereich()
+        check("Volumenbereich lässt sich löschen", not mv.volumenbereiche)
+        w.undo()
+        check("Löschen ist rücknehmbar", len(w.model.volumenbereiche) == 1)
+        w.clear_selection()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Volumenbereiche", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

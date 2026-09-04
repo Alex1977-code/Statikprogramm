@@ -80,7 +80,7 @@ Die Arbeitsfläche in drei Spalten:
 
 Unten die **Tabellen**: Protokoll, Werkstoffe, Querschnitte, Dicken,
 Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt,
-Anschlüsse, Verformungen, Beulfelder, Lasteinleitung.
+Anschlüsse, Verformungen, Beulfelder, Volumen, Lasteinleitung.
 Werkstoffe, Querschnitte und Dicken werden hier gepflegt — nicht mehr zusätzlich
 in einem Panel rechts. Wie die Tabellen zu bedienen sind, steht im nächsten
 Abschnitt.
@@ -482,6 +482,44 @@ Nachweise gehen in den Status der Stelle ein.
 Was **nicht** enthalten ist: Kegel- und Kugelschalen, ringversteifte Schalen
 und die numerischen Verfahren (GMNIA) nach EN 1993-1-6, 8.7. Liegen die
 Elemente eines ebenen Feldes nicht in einer Ebene, sagt das Programm es.
+
+### Volumennachweise
+
+Volumenkörper bekommen keine Querschnittsnachweise — es gibt keinen
+Querschnitt. Nachgewiesen wird der **Spannungszustand** nach
+DIN EN 1993-1-1, 6.2.1(5): die Vergleichsspannung nach von Mises gegen
+f_y/γ_M0.
+
+Anlegen: die Knoten des Bereichs in der Ansicht auswählen, dann Register
+*Nachweise* → „Volumen“ (oder in der Tabelle „Volumen“ auf
+„Bereich aus Auswahl…“). Es werden alle Volumenelemente aufgenommen, die
+vollständig in der Auswahl liegen.
+
+Im Dialog gibt es zwei Schalter, die den Unterschied zwischen einem
+brauchbaren und einem wertlosen Nachweis ausmachen:
+
+* **Spannungssingularität**: An einspringenden Ecken, unter Einzellasten und
+  an Punktlagern wächst die Spannung mit jeder Netzverfeinerung. Ein Nachweis
+  gegen f_y ist dort ohne Aussage. Ist der Schalter gesetzt, werden die
+  Spannungen berichtet, aber kein Nachweis geführt — der Status heißt „nur
+  berichtet“. Statik3D weist von sich aus darauf hin, wenn die
+  Spitzenspannung um mehr als den Faktor 5 über dem Mittel des Bereichs liegt.
+* **Kerbradius**: Wird er angegeben, prüft das Programm, ob mindestens drei
+  Elemente über den Radius liegen. Sonst sagt es, dass das Netz dort zu grob
+  ist und die Kerbspannung unterschätzt wird.
+
+Ausgewertet wird je Element an der Mitte **und** an den Eckpunkten; maßgebend
+ist der größte Wert. Die Elementmitte allein würde die Randspannung bei
+Biegung um rund ein Viertel unterschätzen.
+
+Der Bericht führt je Bereich den vollen Spannungstensor, die Hauptspannungen,
+τ_max, die hydrostatische Spannung, die Mehrachsigkeit h = σ_m/σ_v, σ_v und
+die Ausnutzung auf, dazu den Vergleich nach Tresca. Bei **dreiachsigem Zug**
+kommt der Hinweis, dass die Zähigkeit nach DIN EN 1993-1-10 zu beurteilen ist
+— diesen Nachweis führt Statik3D nicht.
+
+**Nicht enthalten**: Stabilität des Volumenkörpers. Das Verzweigungsproblem
+ist nur für Stabtragwerke gebildet.
 
 ### Theorie II. Ordnung und Imperfektionen
 

@@ -56,7 +56,7 @@ def dof_index(key) -> int:
         raise KeyError(f"Freiheitsgrad {key} liegt nicht zwischen 0 und 5")
     return i
 NDOF = 6
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -845,6 +845,40 @@ class Member:
 
 
 @dataclass
+class Volumenbereich:
+    """
+    Ein Bereich aus Volumenelementen fuer den Spannungsnachweis.
+
+    Volumen bekommen keine Querschnittsnachweise - es gibt keinen
+    Querschnitt.  Nachgewiesen wird der **Spannungszustand** nach
+    DIN EN 1993-1-1, 6.2.1(5): die Vergleichsspannung nach von Mises gegen
+    f_y/gamma_M0.  Zusaetzlich werden die Hauptspannungen, die
+    Mehrachsigkeit und - bei dreiachsigem Zug - der Hinweis auf die
+    Zaehigkeitsanforderungen nach DIN EN 1993-1-10 ausgewiesen.
+
+    elemente:   die Volumenelemente des Bereichs (tet4, tet10, hex8)
+    ausrundung: Kerbradius [m] am Nachweisort, 0 = unbekannt. Wird er
+                angegeben, prueft das Programm, ob die Vernetzung dort fein
+                genug ist, und sagt es, wenn nicht.
+    singular:   Der Bereich enthaelt eine bekannte Spannungssingularitaet
+                (einspringende Ecke, Einzellast, Punktlager). Dann wird die
+                Spitzenspannung nicht als Nachweis gefuehrt, sondern nur
+                berichtet - alles andere waere sinnlos, weil sie mit der
+                Netzfeinheit waechst.
+    """
+    name: str
+    elemente: list = field(default_factory=list)
+    design: bool = True
+    ausrundung: float = 0.0
+    singular: bool = False
+    beschreibung: str = ""
+
+    def bezug(self) -> str:
+        n = len(self.elemente)
+        return f"{n} Volumenelement{'e' if n != 1 else ''}"
+
+
+@dataclass
 class Joint:
     """Ein Anschluss an einem Stabende (DIN EN 1993-1-8).
 
@@ -1151,6 +1185,7 @@ class Model:
         self.joints: dict[str, Joint] = {}
         self.verformungsgrenzen: dict[str, Verformungsgrenze] = {}
         self.beulfelder: dict[str, Beulfeld] = {}
+        self.volumenbereiche: dict[str, Volumenbereich] = {}
         self.lasteinleitungen: dict[str, Lasteinleitung] = {}
         self.design = DesignSettings()
         # Kontakt
@@ -1301,6 +1336,20 @@ class Model:
         b = Beulfeld(name, els, **kw)
         self.beulfelder[name] = b
         return b
+
+    def add_volumenbereich(self, name: str, elemente, **kw) -> Volumenbereich:
+        """Einen Volumenbereich fuer den Spannungsnachweis aufnehmen."""
+        els = [int(e) for e in elemente]
+        if not els:
+            raise ValueError("Ein Volumenbereich braucht Volumenelemente")
+        for e in els:
+            if not 0 <= e < len(self.elements):
+                raise IndexError(f"Element {e} gibt es nicht")
+            if self.elements[e].typ not in ("tet4", "tet10", "hex8"):
+                raise ValueError(f"Element {e + 1} ist kein Volumenelement")
+        v = Volumenbereich(name, els, **kw)
+        self.volumenbereiche[name] = v
+        return v
 
     def add_lasteinleitung(self, name: str, knoten: int, **kw) -> Lasteinleitung:
         """Einen Lasteinleitungsnachweis (EN 1993-1-5, Abschnitt 6) aufnehmen."""
@@ -1679,6 +1728,7 @@ class Model:
             "joints": [asdict(j) for j in self.joints.values()],
             "verformungsgrenzen": [asdict(v) for v in self.verformungsgrenzen.values()],
             "beulfelder": [asdict(x) for x in self.beulfelder.values()],
+            "volumenbereiche": [asdict(x) for x in self.volumenbereiche.values()],
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
             "design": asdict(self.design),
             "contact_supports": [asdict(c) for c in self.contact_supports],
@@ -1725,6 +1775,8 @@ class Model:
         m.verformungsgrenzen = {v["name"]: _dc(Verformungsgrenze, v)
                                 for v in d.get("verformungsgrenzen", [])}
         m.beulfelder = {x["name"]: _dc(Beulfeld, x) for x in d.get("beulfelder", [])}
+        m.volumenbereiche = {x["name"]: _dc(Volumenbereich, x)
+                             for x in d.get("volumenbereiche", [])}
         for bf in m.beulfelder.values():
             bf.steifen = [_dc(Beulsteife, x) if isinstance(x, dict) else x
                           for x in (bf.steifen or [])]

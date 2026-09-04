@@ -1081,6 +1081,61 @@ class LasteinleitungDialog(QtWidgets.QDialog):
             "beschreibung": self.ed_text.text().strip()}
 
 
+class VolumenbereichDialog(QtWidgets.QDialog):
+    """Einen Volumenbereich fuer den Spannungsnachweis festlegen."""
+
+    def __init__(self, parent, model, bereich=None, elemente=None):
+        super().__init__(parent)
+        self.setWindowTitle("Volumenbereich"
+                            + (f" {bereich.name}" if bereich else ""))
+        self.model = model
+        v = bereich
+        self.elemente = list(v.elemente) if v else [int(e) for e in (elemente or [])]
+        lay = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+        self.ed_name = QtWidgets.QLineEdit(v.name if v else "")
+        form.addRow("Name", self.ed_name)
+        form.addRow("Volumenelemente", QtWidgets.QLabel(
+            f"{len(self.elemente)} Element{'e' if len(self.elemente) != 1 else ''}"))
+        self.cb_design = QtWidgets.QCheckBox("Nachweis führen")
+        self.cb_design.setChecked(bool(v.design) if v else True)
+        form.addRow(self.cb_design)
+        self.cb_sing = QtWidgets.QCheckBox(
+            "Bereich enthält eine Spannungssingularität")
+        self.cb_sing.setChecked(bool(v.singular) if v else False)
+        self.cb_sing.setToolTip(
+            "Einspringende Ecke, Einzellast oder Punktlager: die Spannung wächst\n"
+            "dort mit jeder Netzverfeinerung. Die Spannungen werden dann nur\n"
+            "berichtet, nicht als Nachweis gegen f_y geführt.")
+        form.addRow(self.cb_sing)
+        self.ed_r = NumEdit((v.ausrundung * 1e3) if v else 0.0, 90)
+        self.ed_r.setToolTip(
+            "Kerbradius am Nachweisort. Wird er angegeben, prüft das Programm,\n"
+            "ob mindestens drei Elemente über den Radius liegen.")
+        form.addRow("Kerbradius [mm] (0 = unbekannt)", self.ed_r)
+        self.ed_text = QtWidgets.QLineEdit(v.beschreibung if v else "")
+        form.addRow("Beschreibung", self.ed_text)
+        lay.addLayout(form)
+        hint = QtWidgets.QLabel(
+            "Nachgewiesen wird die Vergleichsspannung nach von Mises gegen\n"
+            "f_y/γ_M0 (DIN EN 1993-1-1, 6.2.1(5)), dazu Hauptspannungen,\n"
+            "τ_max und die Mehrachsigkeit.")
+        hint.setStyleSheet("color: #555;")
+        lay.addWidget(hint)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                        | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def result(self) -> tuple:
+        return self.ed_name.text().strip(), {
+            "design": self.cb_design.isChecked(),
+            "singular": self.cb_sing.isChecked(),
+            "ausrundung": self.ed_r.value() * 1e-3,
+            "beschreibung": self.ed_text.text().strip()}
+
+
 class VerformungsgrenzeDialog(QtWidgets.QDialog):
     """Einen Verformungsnachweis (GZG) festlegen.
 

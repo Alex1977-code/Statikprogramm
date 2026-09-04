@@ -25,6 +25,7 @@ from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialo
                       DesignSettingsDialog, ContactPairDialog, ImportDialog, ReportDialog,
                       SupportNonlinearDialog, JointDialog,
                       VerformungsgrenzeDialog, BeulfeldDialog,
+                      VolumenbereichDialog,
                       LasteinleitungDialog, parse_int_list)
 from .worker import SolveWorker
 from . import ribbon as rib
@@ -385,6 +386,12 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Tabelle Beulfelder", lambda: self.tabelle_zeigen("Beulfelder"))
         g.klein("Beulfeld ändern…", self.edit_beulfeld)
         g.klein("Beulfeld löschen", self.delete_beulfeld)
+        g.gross("Volumen", "◧", self.add_volumenbereich,
+                hinweis="Die gewählten Volumenelemente zu einem Bereich für den "
+                        "Spannungsnachweis zusammenfassen (6.2.1(5))")
+        g.klein("Tabelle Volumen", lambda: self.tabelle_zeigen("Volumen"))
+        g.klein("Volumenbereich ändern…", self.edit_volumenbereich)
+        g.klein("Volumenbereich löschen", self.delete_volumenbereich)
         g.gross("Lasteinleitung", "↡", self.add_lasteinleitung,
                 hinweis="Beulnachweis des Stegs unter einer örtlich eingeleiteten "
                         "Querkraft (Abschnitt 6)")
@@ -535,7 +542,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     "anschluesse": "Anschlüsse", "anschluss": "Anschlüsse",
                     "verformungen": "Verformungen", "verformung": "Verformungen",
                     "beulfelder": "Beulfelder", "beulfeld": "Beulfelder",
-                    "lasteinleitung": "Lasteinleitung"}
+                    "lasteinleitung": "Lasteinleitung",
+                    "volumenbereiche": "Volumen", "volumenbereich": "Volumen"}
 
     def _baum_geklickt(self, art: str, name: str):
         if art == "stellung_neu":
@@ -901,6 +909,28 @@ class MainWindow(QtWidgets.QMainWindow):
         c3 = QtWidgets.QPushButton("Ändern…")
         c3.clicked.connect(self.edit_beulfeld)
         tabs.addTab(self._eingabetabelle(self.tbl_beul, c1, c3, c2), "Beulfelder")
+
+        # Volumenbereiche (EN 1993-1-1, 6.2.1(5))
+        self.tbl_vol = tab.Datentabelle([
+            Spalte("Bereich"), Spalte("Elemente", "", "ganz"),
+            Spalte("Material"), Spalte("f_y", "MPa", "zahl", 0),
+            Spalte("σ_1", "MPa", "zahl", 1), Spalte("σ_3", "MPa", "zahl", 1),
+            Spalte("σ_v", "MPa", "zahl", 1,
+                   hinweis="Vergleichsspannung nach von Mises"),
+            Spalte("h", "", "zahl", 2,
+                   hinweis="Mehrachsigkeit σ_m/σ_v; bei dreiachsigem Zug kritisch"),
+            Spalte("Ausnutzung", "", "zahl", 3, hinweis="σ_v/(f_y/γ_M0); Filter z. B. > 1"),
+            Spalte("Kombination"), Spalte("Status")],
+            "Volumen", self, mit_kennwerten=True)
+        self.tbl_vol.zeile_gewaehlt.connect(self._tabelle_volumen)
+        w1 = QtWidgets.QPushButton("Bereich aus Auswahl…")
+        w1.setToolTip("Die gewählten Volumenelemente zu einem Bereich zusammenfassen")
+        w1.clicked.connect(self.add_volumenbereich)
+        w2 = QtWidgets.QPushButton("Löschen")
+        w2.clicked.connect(self.delete_volumenbereich)
+        w3 = QtWidgets.QPushButton("Ändern…")
+        w3.clicked.connect(self.edit_volumenbereich)
+        tabs.addTab(self._eingabetabelle(self.tbl_vol, w1, w3, w2), "Volumen")
 
         # Lasteinleitung (EN 1993-1-5, Abschnitt 6)
         self.tbl_le = tab.Datentabelle([
@@ -1814,6 +1844,91 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"Beulfeld „{key}“ entfernt")
         self.refresh_all()
 
+    # ---------------------------------------------------- Volumenbereiche
+    def add_volumenbereich(self):
+        """Die gewählten Volumenelemente zu einem Bereich zusammenfassen."""
+        sel = set(int(n) for n in self.selection)
+        if not sel:
+            return self.error("Zuerst die Knoten des Volumenbereichs auswählen")
+        els = [i for i, e in enumerate(self.model.elements)
+               if e.typ in ("tet4", "tet10", "hex8")
+               and set(int(n) for n in e.nodes) <= sel]
+        if not els:
+            return self.error("In der Auswahl liegt kein vollständiges "
+                              "Volumenelement (tet4, tet10 oder hex8)")
+        d = VolumenbereichDialog(self, self.model, elemente=els)
+        d.ed_name.setText(self._freier_name("Bereich", self.model.volumenbereiche))
+        if d.exec() != QtWidgets.QDialog.Accepted:
+            return
+        name, kw = d.result()
+        if not name:
+            return self.error("Der Volumenbereich braucht einen Namen")
+        if name in self.model.volumenbereiche:
+            return self.error(f"„{name}“ gibt es schon")
+        self.merken(f"Volumenbereich {name}")
+        vb = self.model.add_volumenbereich(name, els, **kw)
+        self.info(f"Volumenbereich „{name}“ aus {len(vb.elemente)} Elementen "
+                  "angelegt (Nachweis nach 6.2.1(5))")
+        self.refresh_all()
+        self.tabelle_zeigen("Volumen")
+
+    def edit_volumenbereich(self):
+        key = self._tabellenschluessel(self.tbl_vol)
+        vb = self.model.volumenbereiche.get(key) if key else None
+        if vb is None:
+            return self.error("Zuerst einen Volumenbereich in der Tabelle wählen")
+        d = VolumenbereichDialog(self, self.model, vb)
+        if d.exec() != QtWidgets.QDialog.Accepted:
+            return
+        name, kw = d.result()
+        self.merken(f"Volumenbereich {key}")
+        for k, v in kw.items():
+            setattr(vb, k, v)
+        if name and name != key:
+            del self.model.volumenbereiche[key]
+            vb.name = name
+            self.model.volumenbereiche[name] = vb
+        self.info(f"Volumenbereich „{name or key}“ geändert")
+        self.refresh_all()
+
+    def delete_volumenbereich(self):
+        key = self._tabellenschluessel(self.tbl_vol)
+        if not key or key not in self.model.volumenbereiche:
+            return self.error("Zuerst einen Volumenbereich in der Tabelle wählen")
+        self.merken(f"Volumenbereich {key} gelöscht")
+        del self.model.volumenbereiche[key]
+        self.info(f"Volumenbereich „{key}“ entfernt")
+        self.refresh_all()
+
+    def _tabelle_volumen(self, wert):
+        vb = self.model.volumenbereiche.get(str(wert))
+        if vb is None:
+            return
+        kn = {int(n) for i in vb.elemente if i < len(self.model.elements)
+              for n in self.model.elements[i].nodes}
+        self._set_selection(sorted(kn))
+
+    def refresh_volumen(self):
+        """Die Tabelle der Volumenbereiche aufbauen."""
+        if not hasattr(self, "tbl_vol"):
+            return
+        erg = getattr(self.analysis, "volumen", None) if self.analysis is not None else None
+        zeilen = []
+        for name, vb in self.model.volumenbereiche.items():
+            c = erg.bereiche.get(name) if erg is not None else None
+            w = (c.werte or {}) if c is not None else {}
+            zeilen.append([name, len(vb.elemente),
+                           (c.material if c is not None else ""),
+                           (c.fy / 1e6 if c is not None and c.fy else ""),
+                           (w.get("s1", 0.0) / 1e6 if w else ""),
+                           (w.get("s3", 0.0) / 1e6 if w else ""),
+                           (w.get("sigma_v", 0.0) / 1e6 if w else ""),
+                           (w.get("h", 0.0) if w else ""),
+                           (c.util if c is not None and not c.singular else ""),
+                           (c.kombination if c is not None else ""),
+                           (c.status() if c is not None else "nicht gerechnet")])
+        self._fill(self.tbl_vol, zeilen)
+
     def _tabelle_beulfeld(self, wert):
         bf = self.model.beulfelder.get(str(wert))
         if bf is None:
@@ -1963,6 +2078,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_joints()
         self.refresh_verformungen()
         self.refresh_beulfelder()
+        self.refresh_volumen()
         self.refresh_lasteinleitungen()
         self.refresh_lasteinleitungen()
         self.refresh_stellungen()
@@ -3352,9 +3468,15 @@ class MainWindow(QtWidgets.QMainWindow):
             lines.append(an.beulen.summary())
         if an is not None and an.lasteinleitung is not None:
             lines.append(an.lasteinleitung.summary())
+        if an is not None and getattr(an, "volumen", None) is not None:
+            lines.append(an.volumen.summary())
+        if an is not None and getattr(an, "theorie2", None) is not None \
+                and an.theorie2.kombinationen:
+            lines.append(an.theorie2.summary())
         self.refresh_joints()
         self.refresh_verformungen()
         self.refresh_beulfelder()
+        self.refresh_volumen()
         self.txt_res.setPlainText("\n".join(lines))
         # Tabellen
         if hasattr(r, "beam_forces"):

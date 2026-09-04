@@ -257,7 +257,8 @@ class Report:
         "model_tables": True, "materials": True, "sections": True, "supports": True,
         "load_cases": True, "combinations": True, "figures": True, "results_cases": True,
         "results_combinations": True, "envelopes": True, "member_diagrams": True,
-        "design": True, "fatigue": True, "joints": True, "gzg": True, "beulen": True, "contact": True,
+        "design": True, "fatigue": True, "joints": True, "gzg": True, "beulen": True,
+        "volumen": True, "contact": True,
         "modal": True, "buckling": True,
         # Grenzen fuer grosse Modelle
         "max_rows": 200, "max_detail_cases": 20, "max_detail_combinations": 12,
@@ -287,6 +288,7 @@ class Report:
         self.gzg = None
         self.beulen = None
         self.lasteinleitung = None
+        self.volumen = None
         self.theorie2 = None
         self.info: dict = {}
         if analysis is not None:
@@ -299,6 +301,7 @@ class Report:
             self.gzg = getattr(analysis, "gzg", None)
             self.beulen = getattr(analysis, "beulen", None)
             self.lasteinleitung = getattr(analysis, "lasteinleitung", None)
+            self.volumen = getattr(analysis, "volumen", None)
             self.theorie2 = getattr(analysis, "theorie2", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
@@ -415,6 +418,7 @@ class Report:
             for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
                        self.chapter_theorie2,
                        self.chapter_results, self.chapter_design, self.chapter_beulen,
+                       self.chapter_volumen,
                        self.chapter_fatigue,
                        self.chapter_joints, self.chapter_gzg, self.chapter_summary,
                        self.chapter_appendix):
@@ -898,6 +902,139 @@ class Report:
                              fmt(f.factor, 2)])
             b.append(("table", rows, "Ermüdungsbeanspruchungen (Lastwechsel zwischen zwei "
                                      "Lastfällen)", None, ""))
+        return b
+
+    # ==================================== Volumen (eigenes Kapitel)
+    def chapter_volumen(self) -> list:
+        """Spannungsnachweis der Volumenbereiche (EN 1993-1-1, 6.2.1(5))."""
+        v = self.volumen if self.opt("volumen") else None
+        if v is None or not getattr(v, "bereiche", None):
+            return []
+        st = v.settings or {}
+        b = [self._h(1, "Spannungsnachweise der Volumenbereiche")]
+        b.append(self._h(2, "Grundlagen"))
+        b.append(("list", [
+            "Ein Volumen hat keinen Querschnitt: Klassifizierung, plastische "
+            "Widerstandsmomente, Knicklängen und die Interaktionsformeln des "
+            "Abschnitts 6.2/6.3 sind darauf nicht anwendbar. Geführt wird der "
+            "Spannungsnachweis am Punkt nach DIN EN 1993-1-1, 6.2.1(5): die "
+            "Vergleichsspannung nach von Mises gegen f_y/γ_M0.",
+            "σ_v = √(½[(σ_1−σ_2)² + (σ_2−σ_3)² + (σ_3−σ_1)²]) mit den "
+            "Hauptspannungen σ_1 ≥ σ_2 ≥ σ_3; ausgewiesen wird zusätzlich "
+            "τ_max = (σ_1 − σ_3)/2 und die Ausnutzung nach Tresca als Vergleich.",
+            "Mehrachsigkeit h = σ_m/σ_v mit σ_m = (σ_1+σ_2+σ_3)/3. Bei "
+            "dreiachsigem Zug (σ_3 > 0) ist die Verformungsfähigkeit "
+            "eingeschränkt; die Zähigkeit ist dann nach DIN EN 1993-1-10 zu "
+            "beurteilen. Dieser Nachweis wird hier nicht geführt, der Fall aber "
+            "benannt.",
+            f"γ_M0 = {fmt(st.get('gamma_M0', 1.0), 2)}; geführt über "
+            f"{len(v.kombinationen)} GZT-Kombinationen, die ungünstigste ist "
+            "maßgebend.",
+            "Die Spannung wird je Element an der Mitte und an den Eckpunkten "
+            "ausgewertet, maßgebend ist der größte Wert. Die Elementmitte "
+            "allein genügt nicht: bei Biegung durch den Körper liegt die "
+            "Randspannung deutlich höher – am Kragarm aus Hexaedern mit vier "
+            "Elementen über die Höhe gibt die Mitte 43,3 N/mm², der Eckpunkt "
+            "60,3 N/mm², und die Balkenlösung M/W ist 60,0 N/mm².",
+            "Nicht enthalten: Stabilität des Volumenkörpers (die geometrische "
+            "Steifigkeit ist nur für Stabelemente gebildet), Plastizieren und "
+            "die Ermüdung aus dem räumlichen Spannungszustand.",
+        ]))
+
+        b.append(self._h(2, "Übersicht"))
+        rows = [["Bereich", "Elemente", "Material", "f_y [MPa]", "σ_v [MPa]",
+                 "σ_1 [MPa]", "σ_3 [MPa]", "h", "η", "Komb.", "Status"]]
+        for c in v.bereiche.values():
+            w = c.werte or {}
+            rows.append([c.name, str(c.n_elemente), c.material,
+                         fmt(c.fy / 1e6, 0), fmt(w.get("sigma_v", 0) / 1e6, 1),
+                         fmt(w.get("s1", 0) / 1e6, 1), fmt(w.get("s3", 0) / 1e6, 1),
+                         fmt(w.get("h", 0.0), 2),
+                         ("–" if c.singular else Util(c.util)),
+                         c.kombination, c.status()])
+        b.append(("table", rows, "Volumenbereiche: Spannungen und Ausnutzung",
+                  None, ""))
+        if self.opt("figures"):
+            liste = [c for c in v.bereiche.values() if not c.fehler and not c.singular][:60]
+            if liste:
+                b.append(self._figure(
+                    sv.draw_bar_chart([c.name for c in liste],
+                                      [c.util for c in liste], 620, None, 1.0,
+                                      "Ausnutzung je Volumenbereich"),
+                    "Ausnutzungsgrade der Volumennachweise (Grenze 1.0)"))
+
+        b.append(self._h(2, "Nachweise im Einzelnen"))
+        for c in v.bereiche.values():
+            b.append(self._h(3, f"Volumenbereich {c.name}"))
+            if c.fehler:
+                b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
+                self._warnings.append(f"Volumenbereich {c.name}: {c.fehler}")
+                continue
+            w = c.werte or {}
+            kv = []
+            if c.beschreibung:
+                kv.append(("Beschreibung", c.beschreibung))
+            kv += [("Bereich", f"{c.n_elemente} Volumenelemente"),
+                   ("Material", f"{c.material}, f_y = {c.fy / 1e6:.0f} N/mm²"),
+                   ("Bemessungswert f_yd = f_y/γ_M0",
+                    f"{w.get('f_yd', 0) / 1e6:.1f} N/mm²"),
+                   ("maßgebende Kombination", c.kombination),
+                   ("maßgebendes Element", str(c.element + 1)
+                    + (f", Auswertepunkt {w['punkt']}" if w.get("punkt") else "")),
+                   ("Spannungstensor σ_x, σ_y, σ_z",
+                    ", ".join(f"{x / 1e6:.1f}" for x in (w.get("sigma") or [0] * 6)[:3])
+                    + " N/mm²"),
+                   ("Schubspannungen τ_xy, τ_yz, τ_zx",
+                    ", ".join(f"{x / 1e6:.1f}" for x in (w.get("sigma") or [0] * 6)[3:])
+                    + " N/mm²"),
+                   ("Hauptspannungen σ_1 / σ_2 / σ_3",
+                    f"{w.get('s1', 0) / 1e6:.1f} / {w.get('s2', 0) / 1e6:.1f} / "
+                    f"{w.get('s3', 0) / 1e6:.1f} N/mm²"),
+                   ("größte Schubspannung τ_max = (σ_1−σ_3)/2",
+                    f"{w.get('tau_max', 0) / 1e6:.1f} N/mm²"),
+                   ("hydrostatische Spannung σ_m",
+                    f"{w.get('sigma_m', 0) / 1e6:.1f} N/mm²"),
+                   ("Mehrachsigkeit h = σ_m/σ_v", fmt(w.get("h", 0.0), 3)),
+                   ("Vergleichsspannung σ_v (von Mises)",
+                    f"{w.get('sigma_v', 0) / 1e6:.1f} N/mm²"),
+                   ("Spitzenspannung / Mittel im Bereich",
+                    fmt(w.get("spitze", 1.0), 2)),
+                   ("Ausnutzung σ_v/f_yd",
+                    "– (nur berichtet, Singularität)" if c.singular
+                    else Util(c.util)),
+                   ("Vergleich nach Tresca (σ_1−σ_3)/f_yd",
+                    fmt(w.get("eta_tresca", 0.0), 3))]
+            if "ausrundung" in w:
+                kv.append(("Kerbradius / mittlere Elementgröße",
+                           f"{w['ausrundung'] * 1e3:.1f} / "
+                           f"{w.get('elementgroesse', 0) * 1e3:.1f} mm"))
+            kv.append(("Status", {"erfüllt": "Nachweis erfüllt",
+                                  "NICHT erfüllt": "Nachweis NICHT erfüllt",
+                                  "nur berichtet": "kein Nachweis geführt "
+                                                   "(Singularität)"}.get(
+                                      c.status(), c.status())))
+            b.append(("kv", kv, f"Volumenbereich {c.name}"))
+            if c.hinweise:
+                b.append(("list", [f"Hinweis: {_pretty(h)}" for h in c.hinweise]))
+            if len(c.je_kombination) > 1:
+                zeilen = sorted(c.je_kombination, key=lambda d: -d["eta"])
+                rows = [["Kombination", "Element", "σ_1 [MPa]", "σ_3 [MPa]",
+                         "σ_v [MPa]", "Ausnutzung"]]
+                for d in zeilen:
+                    rows.append([d["kombination"], str(d["element"] + 1),
+                                 fmt(d["s1"] / 1e6, 1), fmt(d["s3"] / 1e6, 1),
+                                 fmt(d["sigma_v"] / 1e6, 1), Util(d["eta"])])
+                rows, note = self._truncate(
+                    rows, self.opt("max_detail_combinations") or 12)
+                b.append(("table", rows, "Spannungsnachweis je Kombination "
+                                         "(absteigend geordnet)", None, ""))
+                if note:
+                    b.append(("note", note))
+        nf = [c.name for c in v.bereiche.values()
+              if not c.singular and not c.fehler and c.util > 1.0]
+        if nf:
+            self._warnings.append("Volumennachweis NICHT erfüllt für: "
+                                  + ", ".join(nf))
         return b
 
     # ==================================== Theorie II. Ordnung (eigenes Kapitel)

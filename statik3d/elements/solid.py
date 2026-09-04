@@ -283,3 +283,56 @@ def lumped_mass(typ, X, rho) -> np.ndarray:
         w = np.full(n, 1.0 / n)
     m = rho * V * w
     return np.repeat(m, 3)
+
+
+# --------------------------------------------------------------------------
+# Spannungen an mehreren Punkten eines Elements
+# --------------------------------------------------------------------------
+#: Auswertepunkte je Elementtyp: Mitte und Eckpunkte in Elementkoordinaten
+AUSWERTEPUNKTE = {
+    "tet4": [(0.25, 0.25, 0.25)],
+    "tet10": [(0.25, 0.25, 0.25), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+              (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)],
+    "hex8": [(0.0, 0.0, 0.0)] + [(r, s, t) for r in (-1.0, 1.0)
+                                 for s in (-1.0, 1.0) for t in (-1.0, 1.0)],
+}
+
+
+def stress_points(typ, X, E, nu, ue, punkte=None) -> list:
+    """
+    Spannungen an mehreren Punkten eines Volumenelements.
+
+    Die Elementmitte allein reicht fuer einen Nachweis nicht: bei Biegung
+    durch den Koerper liegt die Randspannung deutlich hoeher.  An einem
+    Kragarm aus Hexaedern (4 Elemente ueber die Hoehe) gibt die Mitte
+    43,3 N/mm^2, der Eckpunkt 60,3 N/mm^2 - die Balkenloesung M/W ist
+    60,0 N/mm^2.  Darum wird hier ueber Mitte **und** Eckpunkte ausgewertet.
+
+    Rueckgabe: Liste von Spannungsvektoren [sx, sy, sz, txy, tyz, tzx].
+    """
+    X = np.asarray(X, float)
+    pts = punkte if punkte is not None else AUSWERTEPUNKTE.get(typ, [])
+    if typ == "tet4":
+        return [stress_tet4(X, E, nu, ue)]
+    if typ == "tet10":
+        return [stress_tet10(X, E, nu, ue, *p) for p in pts]
+    if typ != "hex8":
+        return []
+    # Hex8: die inkompatiblen Moden einmal loesen, dann alle Punkte auswerten
+    D = D_matrix(E, nu)
+    _K, Kua, Kaa, _ = hex8_matrices(X, E, nu, True)
+    alpha = -np.linalg.solve(Kaa, Kua.T @ ue)
+    _, dN0 = hex8_N_dN(0.0, 0.0, 0.0)
+    J0 = dN0.T @ X
+    detJ0 = np.linalg.det(J0)
+    out = []
+    for r, s, t in pts:
+        _, dNr = hex8_N_dN(r, s, t)
+        J = dNr.T @ X
+        detJ = np.linalg.det(J)
+        dN = np.linalg.solve(J, dNr.T).T
+        eps = _B_from_grad(dN) @ ue
+        g = _hex8_incompatible_grad(r, s, t, J0, detJ0, J, detJ)
+        eps = eps + _B_from_grad(g) @ alpha
+        out.append(D @ eps)
+    return out

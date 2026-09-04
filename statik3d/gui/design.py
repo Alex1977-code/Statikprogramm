@@ -426,6 +426,12 @@ class Modellbaum(QtWidgets.QTreeWidget):
                              farbe=FARBEN["akzent"])
             for name, x in list(felder.items())[:60]:
                 self._zweig(bl, name, x.bezug(), "beulfeld")
+        bereiche = getattr(model, "volumenbereiche", {}) or {}
+        if bereiche:
+            vb = self._zweig(wurzel, "Volumenbereiche", len(bereiche),
+                             "volumenbereiche", fett=True, farbe=FARBEN["akzent"])
+            for name, x in list(bereiche.items())[:60]:
+                self._zweig(vb, name, x.bezug(), "volumenbereich")
         stellen = getattr(model, "lasteinleitungen", {}) or {}
         if stellen:
             li = self._zweig(wurzel, "Lasteinleitung", len(stellen), "lasteinleitung",

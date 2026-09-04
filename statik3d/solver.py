@@ -836,6 +836,7 @@ class Analysis:
     gzg: object = None
     beulen: object = None
     lasteinleitung: object = None
+    volumen: object = None
     theorie2: object = None
     info: dict = field(default_factory=dict)
 
@@ -864,6 +865,8 @@ class Analysis:
             s.append(self.beulen.summary())
         if self.lasteinleitung is not None:
             s.append(self.lasteinleitung.summary())
+        if self.volumen is not None:
+            s.append(self.volumen.summary())
         if self.theorie2 is not None and self.theorie2.kombinationen:
             s.append(self.theorie2.summary())
         return "\n".join(s)
@@ -921,6 +924,9 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
     if design and model.lasteinleitungen:
         from .ec3.beulen import check_lasteinleitungen
         an.lasteinleitung = check_lasteinleitungen(model, an, progress=progress)
+    if design and model.volumenbereiche:
+        from .ec3.volumen import check_volumen
+        an.volumen = check_volumen(model, an, progress=progress)
     an.info.update({"time": time.time() - t0, "parallel": parallel.describe(),
                     "solver": system.backend, "ndof": model.ndof,
                     "nfree": len(system.fi)})
