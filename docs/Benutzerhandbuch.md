@@ -126,18 +126,24 @@ bedienen sind, steht im nächsten Abschnitt.
 | Gelenke | über die Maske (Doppelklick) |
 | Lastfälle | Beschreibung; Doppelklick öffnet Name, Einwirkung, Ausschlussgruppe |
 | Kombinationen | über die Maske (Doppelklick) |
-| Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM |
+| Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske (Doppelklick): Randlinien bzw. Randflächen, Dicke, Werkstoff, Teilung |
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
-**Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der Fugenebene starr, senkrecht dazu
-frei mit Ausfall bei Zug. Statik3D liest sie aus der RFEM-Datei vollständig ein
-und zeigt sie mit ihrer Wirkung je Freiheitsgrad, **führt die Trennung im Netz
-aber nicht aus** — dafür müssten die beteiligten Flächen vernetzt und die
-Knoten an der Fuge verdoppelt werden. Die Spalte „Trennung ausgeführt" steht
-deshalb auf „nein", und der Zweig im Modellbaum trägt ein ⚠. An diesen Stellen
-rechnet das Modell durchverbunden — also **zu steif**.
+**Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
+Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall. Statik3D liest sie
+aus der RFEM-Datei vollständig ein und **führt sie beim Vernetzen auch aus**:
+die Netze werden an der Fuge getrennt, und je nachdem, ob sie Knoten für Knoten
+zusammenpassen, hält sie ein Spaltelement je Knotenpaar oder ein Kontaktpaar
+über die Fläche. Die Fuge trägt dann Druck und geht unter Zug auf.
+
+Wer nur einzelne Körper neu vernetzt oder ein Modell von Hand aufgebaut hat,
+findet den Befehl auch einzeln: **Geometrie → Kontaktfugen ausführen**. Die
+Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
+(„ja (68 Spaltelemente)", „ja (Kontaktpaar)"); steht dort „nein", rechnet das
+Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
+sagt, woran es lag.
 
 Ein Knoten wird nur gelöscht, wenn **kein** Element mehr an ihm hängt — sonst
 sagt das Programm, welches Element im Weg ist. Beim Löschen eines Elements

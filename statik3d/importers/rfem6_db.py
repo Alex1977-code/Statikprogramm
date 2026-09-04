@@ -1107,8 +1107,8 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
         C.say(log, f"  {name}: {len(sids)} Flaechen, {len(nodes)} Knoten, "
                    f"A = {sum(areas.values()):.3f} m^2")
 
-    _solids(db, m, surf_nodes, log, matcache, surf_name)
-    _surface_releases(db, m, log, nlmap)
+    solid_name = _solids(db, m, surf_nodes, log, matcache, surf_name)
+    _surface_releases(db, m, log, nlmap, surf_name, solid_name)
     _load_cases(db, m, log, surf_els, node_of, member_name, surf_name)
     _diagnose(m, log)
 
@@ -1617,7 +1617,7 @@ def _hex_volumen(X: np.ndarray) -> float:
 
 
 def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
-            matcache: dict, surf_name: dict = None) -> int:
+            matcache: dict, surf_name: dict = None) -> dict:
     """
     Volumenkoerper aus ihren Randflaechen in Volumenelemente umsetzen.
 
@@ -1630,10 +1630,14 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
     braucht einen Vernetzer und wird mit Randflaechenzahl und Material
     berichtet, aber nicht uebernommen - lieber eine sichtbare Luecke als ein
     stillschweigend falscher Koerper.
+
+    Rueckgabe {Solid.id: Name des Volumenkoerpers} - die Kontaktbedingungen
+    brauchen die Namen, um zu wissen, welche Seite sie loesen.
     """
     from ..model import Volumenkoerper
     n_hex = n_tet = 0
     flach = gebogen = 0
+    namen: dict[int, str] = {}
     offen: dict[int, int] = {}
     surf_name = surf_name or {}
     for h, impl in db.impls("Solid"):
@@ -1653,6 +1657,7 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
         # Auch ein Koerper, der sich hier nicht vernetzen laesst, wird ein
         # Objekt: sonst waere er im Modell gar nicht vorhanden.
         kname = C.unique_name(m.koerper, f"V{nr}")
+        namen[h["id"]] = kname
         k = Volumenkoerper(kname, [surf_name[x] for x in sids if x in surf_name],
                            material=mname)
         m.koerper[kname] = k
@@ -1707,7 +1712,7 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
     if flach:
         C.warn(log, f"  {flach} Koerper mit vier Randflaechen, aber ohne Volumen "
                     "(Knoten in einer Ebene) - nicht vernetzt.")
-    return n_hex + n_tet
+    return namen
 
 
 # --------------------------------------------------------------------------
@@ -1774,7 +1779,8 @@ def _release_type(db: Db, tid: int, nlmap: dict, label: str, log: list) -> dict:
     return out
 
 
-def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
+def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
+                      surf_name: dict = None, solid_name: dict = None) -> list:
     """
     Kontaktbedingungen (RFEM: Flaechenfreigaben) mit ihren
     Typeinstellungen lesen und berichten.
@@ -1784,19 +1790,37 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
     Freigabetyps.  Das Trennen setzt ein Netz voraus: erst dort gibt es zwei
     Knoten, zwischen die die Feder gehoert.  Der Leser holt darum alles
     heraus - Name, Typ, Federkonstanten je Freiheitsgrad samt
-    Nichtlinearitaet, freigegebene Flaechen und Volumen, Zuordnung - und sagt,
-    dass die Trennung selbst nicht ausgefuehrt wird.  Ein stillschweigend
+    Nichtlinearitaet, freigegebene Flaechen und Volumen, den geloesten Koerper
+    (``releasedSolids``) und die Flaechen der Gegenseite.  Ausgefuehrt wird die
+    Trennung beim Vernetzen (:mod:`statik3d.fugen`); ein stillschweigend
     durchverbundenes Modell waere zu steif, ohne dass man es sieht.
     """
     if not db.has("SurfaceRelease"):
         return []
+    surf_name = surf_name or {}
+    solid_name = solid_name or {}
     out = []
     for h, impl in db.impls("SurfaceRelease"):
         name = ((impl.get("name") or "").strip() or (impl.get("comment") or "").strip()
                 or f"Kontaktbedingung {h.get('userID') or h['id']}")
         flaechen = db.container("SurfaceReleaseImpl_releasedSurfaces").get(impl["id"], [])
         volumen = db.container("SurfaceReleaseImpl_releasedSolids").get(impl["id"], [])
-        ziele = db.container("SurfaceReleaseImpl_assignedToObjects").get(impl["id"], [])
+        zeilen = db.container_rows("SurfaceReleaseImpl_assignedToObjects").get(
+            impl["id"], [])
+        ziele = [r.get("reference_id") for r in zeilen]
+        # Welcher Koerper geloest wird, steht in RFEM ausdruecklich in
+        # ``releasedSolids`` - die Flaechen in ``releasedSurfaces`` sind seine
+        # Kopien der Fugenflaeche. ``assignedToObjects`` nennt dagegen die
+        # Flaechen, an denen die Freigabe haengt (die Gegenseite); nur wenn
+        # dort ausnahmsweise Volumen stehen, gelten sie als geloeste Seite.
+        koerpernamen = [solid_name[x] for x in volumen if x in solid_name]
+        if not koerpernamen:
+            koerpernamen = [solid_name[r["reference_id"]] for r in zeilen
+                            if (r.get("reference_table") or "") == "Solid"
+                            and r.get("reference_id") in solid_name]
+        gegenflaechen = [surf_name[r["reference_id"]] for r in zeilen
+                         if (r.get("reference_table") or "") == "Surface"
+                         and r.get("reference_id") in surf_name]
         linien = db.container("SurfaceReleaseImpl_useDefinitionLines").get(impl["id"], [])
         d = {"name": name, "nummer": h.get("userID") or h["id"],
              "flaechen": len(flaechen), "volumen": len(volumen),
@@ -1820,6 +1844,9 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
         m.add_kontaktbedingung(
             C.unique_name(m.kontaktbedingungen, name),
             flaechen=[int(x) for x in flaechen], volumen=[int(x) for x in volumen],
+            flaechennamen=[surf_name[x] for x in flaechen if x in surf_name],
+            koerpernamen=list(dict.fromkeys(koerpernamen)),
+            gegenflaechen=list(dict.fromkeys(gegenflaechen)),
             ziele=len(ziele), ort=d["ort"],
             typ=str(haupt.get("nummer", "")) + (f" {haupt['name']}" if haupt.get("name") else ""),
             behaviour={dof: DofBehaviour(**vars(b))
@@ -1852,10 +1879,9 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
                        + ": " + (", ".join(teile) if teile else "keine Federn"))
     if out:
         C.say(log, f"{len(out)} Kontaktbedingungen gelesen (RFEM: Flaechenfreigaben). "
-                   "Die Trennung selbst wird "
-                   "nicht ausgefuehrt - dafuer muessten die beteiligten Flaechen "
-                   "vernetzt und die Knoten an der Fuge verdoppelt werden. Ohne die "
-                   "Trennung ist das Modell an diesen Stellen zu steif.")
+                   "Ausgefuehrt - also im Netz getrennt - werden sie beim "
+                   "Vernetzen; ohne die Trennung waere das Modell dort "
+                   "durchverbunden und damit zu steif.")
     return out
 
 
@@ -2027,15 +2053,145 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
         C.say(log, f"  {n_vs_ohne} Vorspannlasten ohne Ziel, ohne Betrag oder "
                    "ohne Waermedehnzahl - nicht uebernommen")
 
+    _freie_rechtecklasten(db, m, lc_name, surf_name, log)
+
     # ---- was nicht geht, mit Grund
     for table, label, grund in (
             ("LineLoad", "Linienlasten", "brauchen die vernetzte Linie"),
-            ("FreeRectangularLoad", "freie Rechtecklasten",
-             "werden in RFEM erst auf das Netz projiziert"),
             ("SolidLoad", "Volumenlasten", "brauchen das Volumennetz")):
         c = db.count(table)
         if c:
             C.say(log, f"  {c} {label} nicht uebernommen ({grund}).")
+
+
+def _koordinatensysteme(db: Db) -> dict:
+    """{CoordinateSystem.id: (Ursprung, u, v, w)} der benutzerdefinierten Systeme.
+
+    RFEM legt sie als „zwei Punkte und ein Winkel" ab: der Ursprung, ein Punkt
+    auf der u-Achse und der Drehwinkel der uw-Ebene. Die beiden anderen Achsen
+    folgen daraus - w aus der globalen Z-Achse, senkrecht zu u gestellt und um
+    den Winkel um u gedreht, v aus dem Kreuzprodukt.
+    """
+    out: dict = {}
+    if not db.has("CoordinateSystemModelObject"):
+        return out
+    for h, impl in db.impls("CoordinateSystemModelObject"):
+        tbl = h.get("impl_table") or ""
+        o = np.array([float(impl.get("originCoordinates_" + a) or 0.0) for a in "xyz"])
+        if "2PointsAndAngle" not in tbl:
+            out[h["id"]] = (o, np.array([1.0, 0, 0]), np.array([0, 1.0, 0]),
+                            np.array([0, 0, 1.0]))
+            continue
+        pu = np.array([float(impl.get("UAxisPointCoordinates_" + a) or 0.0) for a in "xyz"])
+        u = pu - o
+        nu = float(np.linalg.norm(u))
+        if nu <= 0:
+            continue
+        u = u / nu
+        bezug = np.array([0.0, 0.0, 1.0])
+        if abs(float(u @ bezug)) > 0.999:
+            bezug = np.array([1.0, 0.0, 0.0])
+        w0 = bezug - float(bezug @ u) * u
+        w0 /= np.linalg.norm(w0)
+        winkel = float(impl.get("UWPlaneAngle") or 0.0)
+        v0 = np.cross(u, w0)
+        w = np.cos(winkel) * w0 + np.sin(winkel) * v0
+        out[h["id"]] = (o, u, np.cross(w, u), w)
+    return out
+
+
+def _freie_rechtecklasten(db: Db, m: Model, lc_name: dict, surf_name: dict,
+                          log: list) -> None:
+    """Freie Rechtecklasten uebernehmen.
+
+    Eine freie Rechtecklast folgt nicht der Flaeche, sondern einem **Fenster**
+    in einer eigenen Ebene: RFEM legt das Rechteck in die uv-Ebene eines
+    Koordinatensystems und traegt die Last auf alles auf, was darin liegt.
+
+    Sie wirkt **senkrecht zu diesem Fenster**, also entlang der dritten Achse
+    w, und zwar auf die **projizierte** Flaeche. Das ist keine Auslegung ins
+    Blaue: im geprueften Modell ist die Zielflaeche eine Bohrung (Halbzylinder,
+    r = 0,3 m, Laenge 0,23 m), und das Fenster misst genau 0,23 x 0,6 m -
+    Laenge mal Durchmesser, also die Projektion der Bohrung. Die Achse w steht
+    senkrecht auf der Bohrungsachse und dreht sich von Lastfall zu Lastfall:
+    die Lastrichtung eines Drehlagers. Die Summe kommt damit auf p mal d mal l
+    heraus - die Lagerkraft. Wuerde man p stattdessen als Druck senkrecht zur
+    **Flaeche** deuten, hebe sich die Last ueber den Zylinder auf und der
+    Lastfall waere kraeftefrei.
+
+    Getroffen wird nur, was der Last zugewandt ist; die Rueckseite der Bohrung
+    bleibt frei. Der Rohwert der Lastrichtung steht im Protokoll, damit die
+    Annahme nachpruefbar bleibt.
+    """
+    if not db.count("FreeRectangularLoad"):
+        return
+    ks = _koordinatensysteme(db)
+    case_of = _load_case_of(db, "FreeRectangularLoad")
+    surf_name = surf_name or {}
+    n_ok = n_ohne = n_ohne_ks = 0
+    richtungen: dict = {}
+    veraenderlich = 0
+    for h, impl in db.impls("FreeRectangularLoad"):
+        lc = lc_name.get(case_of.get(h["id"]))
+        if not lc:
+            continue
+        p = float(impl.get("magnitudeFirst") or 0.0)
+        if not p:
+            continue
+        if impl.get("distribution") or impl.get("magnitudeSecond"):
+            veraenderlich += 1
+        rd = int(impl.get("loadDirection") or 0)
+        richtungen[rd] = richtungen.get(rd, 0) + 1
+        achsen = ks.get(impl.get("coordinateSystem_id"))
+        bereich: dict = {}
+        richtung = None
+        if achsen is not None:
+            o, u, v, w = achsen
+            x1 = float(impl.get("locationFirstX") or 0.0)
+            y1 = float(impl.get("locationFirstY") or 0.0)
+            x2 = float(impl.get("locationSecondX") or 0.0)
+            y2 = float(impl.get("locationSecondY") or 0.0)
+            bereich = {"art": "rechteck", "ursprung": o.tolist(),
+                       "u": u.tolist(), "v": v.tolist(),
+                       "von": [min(x1, x2), min(y1, y2)],
+                       "bis": [max(x1, x2), max(y1, y2)]}
+            richtung = w.tolist()
+        ziele = [r.get("reference_id") for r in
+                 db.container_rows("FreeRectangularLoadImpl_assignedTo").get(impl["id"], [])
+                 if (r.get("reference_table") or "") == "Surface"]
+        namen = [surf_name[s] for s in ziele if s in surf_name]
+        if not namen:
+            n_ohne += 1
+            continue
+        for name in namen:
+            m.add_geometrielast(name, p, "flaeche", richtung=richtung, case=lc,
+                                bereich=bereich, projiziert=bool(richtung))
+        n_ok += 1
+        if richtung is None:
+            n_ohne_ks += 1
+    if n_ok:
+        C.say(log, f"  {n_ok} freie Rechtecklasten uebernommen - als Fenster in "
+                   "ihrer Ebene; sie wirken senkrecht dazu auf die projizierte "
+                   "Flaeche, sobald das Ziel vernetzt ist")
+        for rd, k in sorted(richtungen.items()):
+            C.say(log, f"    Lastrichtung {rd} (Rohwert): {k}x - als Achse senkrecht "
+                       "zum Lastfenster gedeutet")
+    if n_ohne_ks:
+        C.warn(log, f"  {n_ohne_ks} freie Rechtecklasten ohne Koordinatensystem - "
+                    "ohne Fenster und ohne Richtung wirken sie senkrecht auf die "
+                    "ganze Zielflaeche.")
+    if veraenderlich:
+        C.warn(log, f"  {veraenderlich} freie Rechtecklasten sind veraenderlich - "
+                    "hier wird mit dem ersten Wert gerechnet.")
+    if n_ohne:
+        C.warn(log, f"  {n_ohne} freie Rechtecklasten ohne Zielflaeche im Modell.")
+    if not n_ok and not n_ohne:
+        # Es gibt sie in der Datei, aber ihre Werte sind nicht lesbar. Das
+        # gehoert gesagt: eine stillschweigend fehlende Last ist schlimmer als
+        # eine, die man nicht lesen konnte.
+        C.warn(log, f"  {db.count('FreeRectangularLoad')} freie Rechtecklasten "
+                    "nicht uebernommen - in dieser Datei stehen keine Lastwerte "
+                    "dazu (kein FreeRectangularLoadImpl).")
 
 
 #: Kennzahl der Bemessungssituation -> Kombinationsart in Statik3D

@@ -110,10 +110,10 @@ Zweig gehen schief.
 Steht im Bericht der letzten Sitzung und in den Handbüchern; die größeren
 Punkte:
 
-* **Kontaktfugen ausführen** – die Kontaktbedingungen aus RFEM trennen die
-  Netze noch nicht; das Modell rechnet dort durchverbunden, also zu steif.
-* **Freie Rechtecklasten** aus RFEM (420 Stück im Beispielmodell) werden noch
-  nicht auf das Netz projiziert.
+* **Starre Fugenebene bei nicht passenden Netzen** – steht in der Freigabe
+  „ux/uy starr", die beiden Netze passen an der Fuge aber nicht Knoten für
+  Knoten zusammen, trägt das Kontaktpaar nur Druck und Reibung. Eine starre
+  Verbindung in der Fugenebene gibt es dort nicht; das wird gemeldet.
 * **Werkstoff- und Querschnittsnamen** aus der Dlubal-Datenbank
   (`C:\Program Files\Dlubal`) – die Dateien liegen nur lokal vor.
 * **Splitter am Rand**: Tetraeder, deren vier Knoten alle auf der Oberfläche

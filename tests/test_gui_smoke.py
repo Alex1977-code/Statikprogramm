@@ -1487,6 +1487,32 @@ def main():
         check("„180°“ kehrt die Ansicht am Blickpunkt um",
               float(np.linalg.norm(nachher - (2 * mitte - vorher))) < 1e-6,
               f"{np.round(vorher, 3)} -> {np.round(nachher, 3)}")
+        # Mausrad: der Punkt unter dem Zeiger muss stehen bleiben
+        w.blickrichtung("iso")
+        app.processEvents()
+        breite, hoehe = w.plotter.render_window.GetSize()
+        x_qt, y_qt = breite * 0.25, hoehe * 0.25      # deutlich neben der Mitte
+        vorher = w._bildpunkt_in_welt(x_qt, hoehe - 1 - y_qt)
+        pos_v = np.asarray(w.plotter.camera_position[0], float)
+        ziel_v = np.asarray(w.plotter.camera_position[1], float)
+        w.zoom_zum_zeiger(2.0, x_qt, y_qt)
+        app.processEvents()
+        nachher = w._bildpunkt_in_welt(x_qt, hoehe - 1 - y_qt)
+        pos_n = np.asarray(w.plotter.camera_position[0], float)
+        ziel_n = np.asarray(w.plotter.camera_position[1], float)
+        groesse = max(float(np.linalg.norm(pos_v - ziel_v)), 1e-9)
+        check("Mausrad zoomt zum Zeiger: der Punkt darunter bleibt liegen",
+              vorher is not None and nachher is not None
+              and float(np.linalg.norm(nachher - vorher)) < 1e-6 * groesse,
+              f"Wanderung {float(np.linalg.norm(nachher - vorher)):.3e} m "
+              f"bei Bildgröße {groesse:.3g} m")
+        check("und die Kamera kommt dabei wirklich näher",
+              float(np.linalg.norm(pos_n - ziel_n)) < 0.9 * groesse,
+              f"{groesse:.4g} m -> {float(np.linalg.norm(pos_n - ziel_n)):.4g} m")
+        check("der Zielpunkt wandert dabei mit (nicht die Bildmitte)",
+              float(np.linalg.norm(ziel_n - ziel_v)) > 1e-9 * groesse,
+              f"{np.round(ziel_v, 4)} -> {np.round(ziel_n, 4)}")
+
         w.auswahlart_setzen("Linie")
         check("Auswahlart auch in der Glasleiste",
               w.cb_auswahlart_glas.currentText() == "Linie",

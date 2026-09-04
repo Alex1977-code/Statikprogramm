@@ -58,6 +58,21 @@ zu liefern.
   berechnet (Momentenverlauf quadratisch bzw. kubisch).
 * Flächenlasten auf Schalen (normal oder in vorgegebener globaler Richtung)
   und auf Volumenoberflächen (Flächennummer).
+* **Lasten an der Geometrie** (`Geometrielast`): Eine Last, die an einer Fläche
+  oder einem Volumenkörper hängt und beim Vernetzen auf die entstandenen
+  Elementseiten verteilt wird. So kommen die Flächenlasten aus RFEM an, wo es
+  beim Einlesen noch gar keine Elemente gibt. Zwei Zusätze:
+  * ein **Wirkungsbereich** — ein Rechteck in einer eigenen Ebene
+    (Ursprung, zwei Achsen u/v, von/bis). Belastet wird jede Elementseite,
+    deren Schwerpunkt im Fenster liegt.
+  * **auf die Projektion**: p ist dann die Last je Quadratmeter der
+    *Projektion* auf die Ebene senkrecht zur Lastrichtung d. Belastet wird
+    nur, was der Last zugewandt ist (Außennormale n mit n·d < 0), und zwar mit
+    p · A · |n·d| in Richtung d. So sind Schnee, Wind und die **Lagerpressung
+    in einer Bohrung** gezählt: über eine Bohrung summiert sich die Last
+    genau zu p · d · l — der Lagerkraft. Ohne die Projektion, also als Druck
+    senkrecht zur Fläche, höbe sie sich über den Zylinder auf und der
+    Lastfall wäre kräftefrei.
 * Eigengewicht je Lastfall (Erdbeschleunigungsvektor).
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
@@ -141,6 +156,66 @@ Knoten einer Kontaktgruppe, hält nur die grobe Reststeifigkeit das Bauteil;
 das wird als Warnung „Bauteil rutscht“ gemeldet. Hebt ein Bauteil
 vollständig ab, existiert kein statisches Gleichgewicht; das wird als Fehler
 mit Hinweis gemeldet.
+
+### 4.0 Kontaktfugen ausführen (RFEM: Flächenfreigaben)
+
+Eine **Kontaktbedingung** sagt, dass zwei Bauteile an einer Fläche nicht
+durchverbunden sind: sie liegen aufeinander, können abheben, vielleicht
+gleiten. Gelesen wird sie aus der Quelldatei; sie muss aber auch **ausgeführt**
+werden, sonst rechnet das Modell an der Fuge durchverbunden – also zu steif –
+und überträgt dort Zug, wo in Wirklichkeit ein Spalt aufgeht.
+
+RFEM legt die Fuge so ab: `releasedSolids` nennt den gelösten Körper,
+`releasedSurfaces` seine Kopien der Fugenfläche, `assignedToObjects` die
+Flächen der Gegenseite. Der Vernetzer teilt Knoten nur über **dieselbe**
+Fläche; zwei Bauteile mit je eigener Fugenfläche teilen deshalb nur die Knoten
+ihrer gemeinsamen **Randlinien**. Daraus folgen zwei Fälle:
+
+| Netze an der Fuge | Woran man es erkennt | Umsetzung |
+|---|---|---|
+| passen Knoten für Knoten | **jeder** Fugenknoten gehört beiden Bauteilen | Knoten verdoppeln, je Paar ein Spaltelement (und Kopplungen für die Fugenebene) |
+| passen nicht | nur der gemeinsame Rand gehört beiden | den Rand trennen, die Fläche über ein **Kontaktpaar** (Knoten–Fläche, Abschnitt 4) |
+
+Die Verbindung je Freiheitsgrad folgt der Freigabe: *starr* → Kopplung mit
+Straffeder, *Feder c* [N/m je m²] → Kopplung mit c · A (A = Einflussfläche des
+Knotens, ein Drittel der anliegenden Dreiecke – dieselbe Aufteilung wie bei
+einer Flächenlast), *frei mit Ausfall* → Spaltelement. Ein Reibbeiwert geht als
+Coulomb-Reibung in das Spaltelement; die Reibkraft hängt damit an der
+wirklichen Kontaktkraft.
+
+**Zum Vorzeichen des Ausfalls.** RFEM schreibt den Ausfall als „bei negativer"
+oder „bei positiver" Kraft – bezogen auf die lokale z-Achse der freigegebenen
+Fläche, die in der Datei nicht mitgeliefert wird. Dieselbe Fuge steht darum je
+nach Lage der Flächenachse einmal als „Ausfall bei Zug" und einmal als „Ausfall
+bei Druck" in der Datei; im geprüften Beispielmodell kommen beide
+Schreibweisen nebeneinander vor. Zwischen zwei **Volumenkörpern** ist die Frage
+aber nicht offen: zwei Bauteile, die aufeinanderliegen, können sich nicht
+durchdringen. Die Richtung folgt darum der Geometrie – die Normale des
+Spaltelements zeigt in den gelösten Körper hinein –, nicht dem Vorzeichen aus
+der Datei. Der Rohwert steht im Protokoll.
+
+**Master-Facetten müssen gerichtet sein.** Beim Kontaktpaar liest der Kontakt
+die Richtung einer Facette aus der Reihenfolge ihrer Knoten,
+n = (P₁−P₀) × (P₂−P₀). Liegen Slave und Master aufeinander – und genau das ist
+eine Kontaktfuge –, ist der Abstand null und die Richtung lässt sich nachträglich
+nicht mehr bestimmen. Die Knoten jeder Master-Facette werden darum schon beim
+Anlegen so geordnet, dass n aus dem Masterkörper heraus zeigt.
+
+**Lager an Fugenknoten** werden mitgenommen: vor der Trennung hing an einem
+Knoten ein Lager und beide Bauteile daran; danach gibt es zwei Knoten und beide
+bekommen es. Lasten werden **nicht** verdoppelt – eine verdoppelte Kraft wäre
+eine andere Aufgabe.
+
+Was nicht geht, bleibt sichtbar: eine Fuge ohne Gegenfläche, ohne Netz oder
+ohne Flächen im Modell wird mit Grund gemeldet; eine Fuge, deren Fugenebene
+weder Federn noch Reibung hat, wird als frei gleitend gemeldet, denn dann
+braucht das gelöste Bauteil eigene Lager.
+
+**Geprüft** wird in `tests/test_fugen.py` an zwei Würfeln übereinander gegen
+geschlossene Werte: unter Druck ist die Fuge zu und die Auflagerkraft gleich der
+Last (auf Rechengenauigkeit), unter Zug geht **keine** Kraft mehr durch das
+Fundament (Sollwert null, nicht „klein"), und beide Wege – passende und nicht
+passende Netze – liefern dieselbe Stauchung.
 
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 

@@ -176,6 +176,101 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plotter.interactor.customContextMenuRequested.connect(self._viewport_menu)
         except Exception:
             pass
+        # Mausrad: zum Zeiger zoomen statt zur Bildmitte
+        try:
+            self.plotter.interactor.installEventFilter(self)
+        except Exception:
+            pass
+
+    #: Zoomfaktor je Rasterschritt des Mausrades
+    RADSCHRITT = 1.15
+
+    def eventFilter(self, obj, ereignis):
+        """Das Mausrad selbst behandeln, damit es zum Zeiger zoomt.
+
+        VTK zoomt von Haus aus auf die Bildmitte; wer sich eine Schweissnaht
+        ansehen will, muss sie danach jedes Mal wieder in die Mitte schieben.
+        Das Ereignis wird darum hier abgefangen (und mit ``True`` verbraucht,
+        damit VTK nicht ein zweites Mal zoomt).
+        """
+        try:
+            if (obj is self.plotter.interactor
+                    and ereignis.type() == QtCore.QEvent.Wheel):
+                self._rad(ereignis)
+                return True
+        except Exception:                   # noqa: BLE001
+            return False
+        return super().eventFilter(obj, ereignis)
+
+    def _rad(self, ereignis) -> None:
+        """Ein Mausradschritt: zoomen und den Punkt unter dem Zeiger festhalten."""
+        try:
+            grad = ereignis.angleDelta().y()
+        except Exception:                   # noqa: BLE001
+            grad = 0
+        if not grad:
+            return
+        try:
+            pos = ereignis.position()
+            x_qt, y_qt = pos.x(), pos.y()
+        except Exception:                   # noqa: BLE001
+            x_qt, y_qt = ereignis.x(), ereignis.y()
+        self.zoom_zum_zeiger(self.RADSCHRITT ** (grad / 120.0), x_qt, y_qt)
+
+    def _bildpunkt_in_welt(self, x: float, y: float):
+        """Weltpunkt unter dem Fensterpunkt (x, y), in der Tiefe des Zielpunktes.
+
+        Ohne Trefferprobe: der Punkt liegt in der Ebene durch den Zielpunkt der
+        Kamera, senkrecht zur Blickrichtung. Genau der muss beim Zoomen unter
+        dem Zeiger stehen bleiben - auch dann, wenn dort gar nichts ist.
+        """
+        try:
+            ren = self.plotter.renderer
+            kam = ren.GetActiveCamera()
+            ren.SetWorldPoint(*kam.GetFocalPoint(), 1.0)
+            ren.WorldToDisplay()
+            z = ren.GetDisplayPoint()[2]
+            ren.SetDisplayPoint(float(x), float(y), float(z))
+            ren.DisplayToWorld()
+            w = ren.GetWorldPoint()
+            if abs(w[3]) < 1e-12:
+                return None
+            return np.array(w[:3], float) / w[3]
+        except Exception:                   # noqa: BLE001
+            return None
+
+    def zoom_zum_zeiger(self, faktor: float, x_qt: float, y_qt: float) -> None:
+        """Um ``faktor`` zoomen, ohne dass sich der Punkt unter dem Zeiger bewegt.
+
+        Gemessen wird zweimal derselbe Fensterpunkt - einmal vor und einmal
+        nach dem Zoom. Die Kamera wird um die Differenz verschoben; damit
+        bleibt liegen, was unter dem Zeiger lag. Das gilt fuer beide
+        Projektionen: perspektivisch faehrt die Kamera vor, parallel wird der
+        Massstab geaendert.
+        """
+        if not faktor or faktor <= 0:
+            return
+        try:
+            ren = self.plotter.renderer
+            kam = ren.GetActiveCamera()
+            hoehe = self.plotter.render_window.GetSize()[1]
+            x = float(x_qt)
+            y = float(hoehe - 1 - y_qt)     # Qt zaehlt von oben, VTK von unten
+            vorher = self._bildpunkt_in_welt(x, y)
+            if kam.GetParallelProjection():
+                kam.SetParallelScale(max(kam.GetParallelScale() / faktor, 1e-12))
+            else:
+                kam.Dolly(faktor)
+            nachher = self._bildpunkt_in_welt(x, y)
+            if vorher is not None and nachher is not None:
+                d = vorher - nachher
+                kam.SetPosition(*(np.asarray(kam.GetPosition(), float) + d))
+                kam.SetFocalPoint(*(np.asarray(kam.GetFocalPoint(), float) + d))
+            ren.ResetCameraClippingRange()
+            self._kamera_steht = True
+            self.plotter.render()
+        except Exception:                   # noqa: BLE001
+            pass
 
     def darstellung_setzen(self, name: str):
         """Darstellungsart umschalten (Voll, Transparent, Hidden-Line, Draht)."""
@@ -754,6 +849,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Die ausgewählten – sonst alle – Flächen und Körper vernetzen")
         g.klein("Netz löschen", self.netz_loeschen_geometrie,
                 hinweis="Das Netz entfernen, die Geometrie bleibt")
+        g.klein("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren,
+                hinweis="Die Netze an den Kontaktbedingungen trennen "
+                        "(geschieht beim Vernetzen von selbst)")
         g = r.gruppe("Auswahl in der Ansicht")
         self.cb_auswahlart = QtWidgets.QComboBox()
         self.cb_auswahlart.addItems(self.AUSWAHLARTEN)
@@ -1675,6 +1773,11 @@ class MainWindow(QtWidgets.QMainWindow):
             mem.elements = um(mem.elements)
         for f in m.flaechen.values():
             f.elemente = um(f.elemente)
+            # Die Randseiten zeigen auf Element **und** lokale Seite; ohne sie
+            # nachzuziehen haenge jede Flaechenlast auf einem Volumen falsch.
+            f.randseiten = [[neu_nr[int(e)], int(seite)]
+                            for e, seite in (f.randseiten or [])
+                            if int(e) in neu_nr]
         for kb in m.koerper.values():
             kb.elemente = um(kb.elemente)
         for vb in m.volumenbereiche.values():
@@ -1692,8 +1795,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _vernetzen(self, flaechen: list, koerper: list) -> int:
         """Flaechen und Koerper vernetzen und das Protokoll fuehren."""
+        from .. import fugen
         log = []
         n = 0
+        # Was aus Kontaktbedingungen entstanden ist, gehoert zum alten Netz.
+        fugen.kontaktfugen_zuruecksetzen(self.model, log)
         for f in flaechen:
             self._netz_loeschen(f.elemente)
             f.elemente = []
@@ -1708,6 +1814,9 @@ class MainWindow(QtWidgets.QMainWindow):
             n += len(mesher.mesh_koerper(self.model, k, log, cache=cache))
         # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
         self.model.lasten_verteilen(log)
+        # und die Kontaktfugen koennen jetzt getrennt werden - ohne sie rechnet
+        # das Modell dort durchverbunden, also zu steif.
+        fugen.kontaktfugen_ausfuehren(self.model, log)
         for z in log:
             self.log.appendPlainText(z)
         if n:
@@ -1729,6 +1838,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
         self.info(f"{n} Elemente erzeugt" if n else
                   "Nichts vernetzt - das Protokoll sagt, warum")
+
+    def kontaktfugen_ausfuehren(self):
+        """Die Netze an den Kontaktbedingungen trennen."""
+        from .. import fugen
+        m = self.model
+        if not (getattr(m, "kontaktbedingungen", {}) or {}):
+            return self.error("Das Modell hat keine Kontaktbedingungen.")
+        self.merken("Kontaktfugen ausgeführt")
+        log = []
+        ges = fugen.kontaktfugen_ausfuehren(m, log)
+        for z in log:
+            self.log.appendPlainText(z)
+        if ges["fugen"]:
+            self.analysis = None
+            self.results = None
+        self.refresh_all()
+        self.info(f"{ges['fugen']} Kontaktfugen ausgeführt, {ges['offen']} offen"
+                  if ges["fugen"] else
+                  "Keine Kontaktfuge ausgeführt - das Protokoll sagt, warum")
 
     def netz_loeschen_geometrie(self):
         """Das Netz der Flaechen und Koerper entfernen, die Geometrie bleibt."""
@@ -2453,7 +2581,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     for i, x in enumerate(getattr(m, "bericht", None) or [])])
         self._fill(self.tbl_freigabe,
                    [[name, x.typ, x.ort, len(x.flaechen), len(x.volumen), x.ziele,
-                     x.describe(), "ja" if x.ausgefuehrt else "nein"]
+                     x.describe(), x.art_der_trennung(m)]
                     for name, x in (getattr(m, "kontaktbedingungen", {}) or {}).items()])
 
     #: Richtungsnamen der Knotenlast

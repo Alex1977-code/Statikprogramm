@@ -716,21 +716,56 @@ class Geometrielast:
 
     ziel:      Name der Flaeche (oder des Volumenkoerpers)
     art:       "flaeche" oder "koerper"
-    p:         Flaechenlast [N/m^2], positiv in Richtung der Aussennormalen
+    p:         Flaechenlast [N/m^2] wie bei :class:`FaceLoad`: **positiv
+               druckt in den Koerper hinein**, entgegen der Aussennormalen.
     richtung:  None = senkrecht zur Flaeche, sonst ein globaler Richtungsvektor
     """
     ziel: str = ""
     art: str = "flaeche"
     p: float = 0.0
     richtung: Optional[list[float]] = None
+    #: Wirkungsbereich: leer = die ganze Flaeche. Ein Rechteck steht als
+    #: {"art": "rechteck", "ursprung": [..], "u": [..], "v": [..],
+    #:  "von": [u1, v1], "bis": [u2, v2]} - so kommt die *freie Rechtecklast*
+    #: aus RFEM herueber, die nicht der Flaeche folgt, sondern einem Fenster
+    #: in einer eigenen Ebene.
+    bereich: dict = field(default_factory=dict)
+    #: Wirkt die Last auf die **projizierte** Flaeche? Dann ist p die Last je
+    #: Quadratmeter der Projektion auf die Ebene senkrecht zu ``richtung``:
+    #: getroffen wird nur, was der Last zugewandt ist (Aussennormale gegen
+    #: ``richtung``), und die Kraft je Seite ist p mal A mal |n . d|. So sind
+    #: Schnee, Wind und die **Lagerpressung in einer Bohrung** gezaehlt - bei
+    #: einer Bohrung ist die Projektion d mal l, und die Summe kommt genau
+    #: darauf heraus. Ohne Projektion wirkt p auf die wahre Flaeche.
+    projiziert: bool = False
     kommentar: str = ""
 
     def bezug(self) -> str:
         t = f"{self.ziel}: {self.p / 1e3:.3g} kN/m²"
         if self.richtung:
             t += " in " + ", ".join(f"{x:g}" for x in self.richtung)
+        if self.projiziert:
+            t += " (auf die Projektion)"
+        if self.bereich:
+            t += f" im {self.bereich.get('art', 'Bereich')}"
         return t + (" – noch nicht vernetzt" if not self.kommentar else
                     f" – {self.kommentar}")
+
+    def trifft(self, punkt) -> bool:
+        """Liegt der Punkt im Wirkungsbereich? (leerer Bereich = ueberall)"""
+        if not self.bereich:
+            return True
+        if self.bereich.get("art") != "rechteck":
+            return True
+        o = np.asarray(self.bereich.get("ursprung", [0, 0, 0]), float)
+        u = np.asarray(self.bereich.get("u", [1, 0, 0]), float)
+        v = np.asarray(self.bereich.get("v", [0, 1, 0]), float)
+        von = np.asarray(self.bereich.get("von", [0, 0]), float)
+        bis = np.asarray(self.bereich.get("bis", [0, 0]), float)
+        d = np.asarray(punkt, float) - o
+        xy = np.array([float(d @ u), float(d @ v)])
+        lo, hi = np.minimum(von, bis), np.maximum(von, bis)
+        return bool(np.all(xy >= lo) and np.all(xy <= hi))
 
 
 @dataclass
@@ -1403,6 +1438,19 @@ class Kontaktbedingung:
     name: str = ""
     flaechen: list[int] = field(default_factory=list)
     volumen: list[int] = field(default_factory=list)
+    #: Namen der freigegebenen Flaechen **in diesem Modell** (die Nummern oben
+    #: sind die der Quelldatei). Ohne sie laesst sich die Fuge nicht ausfuehren.
+    flaechennamen: list[str] = field(default_factory=list)
+    #: Namen der Volumenkoerper, die geloest werden. In RFEM steht das
+    #: ausdruecklich in ``releasedSolids``; die freigegebenen Flaechen sind
+    #: die Kopien dieses Koerpers an der Fuge.
+    koerpernamen: list[str] = field(default_factory=list)
+    #: Namen der Flaechen, an denen die Freigabe **haengt** (RFEM:
+    #: ``assignedToObjects``). Sie gehoeren der Gegenseite, sind dort aber
+    #: nicht vollstaendig aufgezaehlt - zum Ausfuehren der Fuge wird die
+    #: Gegenseite darum geometrisch gesucht. Der Eintrag bleibt als Angabe
+    #: aus der Quelldatei erhalten.
+    gegenflaechen: list[str] = field(default_factory=list)
     ziele: int = 0                       # Zahl der Objekte, an denen sie haengt
     ort: str = "Anfang"
     typ: str = ""                        # Name/Nummer des Freigabetyps
@@ -1423,7 +1471,28 @@ class Kontaktbedingung:
             teile.append(f"{len(self.volumen)} Volumen")
         if self.ziele:
             teile.append(f"an {self.ziele} Objekten")
+        # Ob die Trennung ausgefuehrt ist, gehoert an jede Stelle, an der die
+        # Bedingung auftaucht: eine nicht getrennte Fuge rechnet zu steif.
+        teile.append("getrennt" if self.ausgefuehrt else "noch durchverbunden")
         return ", ".join(teile)
+
+    def art_der_trennung(self, model) -> str:
+        """Wie die Fuge im Netz umgesetzt ist - fuer Tabelle und Bericht."""
+        if not self.ausgefuehrt:
+            return "nein"
+        teile = []
+        n = sum(1 for g in (model.gap_elements or [])
+                if str(getattr(g, "group", "")) == self.name)
+        if n:
+            teile.append(f"{n} Spaltelemente")
+        n = sum(1 for k in (model.kopplungen or [])
+                if str(getattr(k, "gruppe", "")) == self.name)
+        if n:
+            teile.append(f"{n} Kopplungen")
+        n = sum(1 for c in (model.contact_pairs or []) if c.name == self.name)
+        if n:
+            teile.append("Kontaktpaar")
+        return "ja (" + ", ".join(teile) + ")" if teile else "ja"
 
     def describe(self) -> str:
         namen = ["ux", "uy", "uz", "phix", "phiy", "phiz"]
@@ -1556,6 +1625,34 @@ class GapElement:
 
 
 @dataclass
+class Kopplung:
+    """Federkopplung zweier Knoten in gegebenen Richtungen.
+
+    Zwei Knoten, die geometrisch aufeinander liegen, werden in den genannten
+    Richtungen ueber eine Feder verbunden. Das ist der **lineare** Teil einer
+    Kontaktfuge: was in der Fugenebene starr oder federnd haelt. Der
+    nichtlineare Teil - Abheben, Reibung - steckt im Spaltelement daneben.
+
+    steifigkeiten je Richtung [N/m]; ``inf`` heisst starr, dann wird eine
+    Straffeder gesetzt, deren Wert sich an der Steifigkeit der Umgebung
+    bemisst (Penalty). 0 heisst frei - die Richtung wird uebergangen.
+    """
+    node_a: int
+    node_b: int
+    richtungen: list[list[float]] = field(default_factory=list)
+    steifigkeiten: list[float] = field(default_factory=list)
+    gruppe: str = ""
+
+    def paare(self):
+        """(Einheitsrichtung, Steifigkeit) - nur die wirksamen."""
+        for n, k in zip(self.richtungen, self.steifigkeiten):
+            v = np.asarray(n, float)
+            L = float(np.linalg.norm(v))
+            if L > 0 and k != 0.0:
+                yield v / L, float(k)
+
+
+@dataclass
 class ContactPair:
     """Knoten-Flaeche-Kontakt: slave_nodes gegen die Oberflaeche von master_elements
     (Schalenelemente oder Volumenelemente, deren Aussenflaechen benutzt werden)
@@ -1607,6 +1704,7 @@ class Model:
         self.volumenbereiche: dict[str, Volumenbereich] = {}
         self.lasteinleitungen: dict[str, Lasteinleitung] = {}
         self.kontaktbedingungen: dict[str, Kontaktbedingung] = {}
+        self.kopplungen: list[Kopplung] = []
         self.flaechen: dict[str, Flaeche] = {}
         self.koerper: dict[str, Volumenkoerper] = {}
         #: Aus der Ansicht in den Bericht uebernommene Ergebnisse, in der
@@ -1854,51 +1952,132 @@ class Model:
                     f._geo = True
                     lc.face_loads.append(f)
                 erzeugt += len(neue)
-                gl.kommentar = (f"{len(neue)} Elementlasten" if neue
-                                else "Ziel noch nicht vernetzt")
+                gl.kommentar = f"{len(neue)} Elementlasten" if neue else self._warum_leer(gl)
                 offen += not neue
         if log is not None and (erzeugt or offen):
             from .importers import _common as C
             if erzeugt:
                 C.say(log, f"{erzeugt} Elementlasten aus Geometrielasten erzeugt")
             if offen:
-                C.say(log, f"  {offen} Geometrielasten warten noch auf ihr Netz")
+                gruende: dict = {}
+                for lc in self.load_cases.values():
+                    for gl in lc.geometrielasten:
+                        if "Elementlasten" not in (gl.kommentar or ""):
+                            gruende[gl.kommentar] = gruende.get(gl.kommentar, 0) + 1
+                for grund, k in sorted(gruende.items()):
+                    C.say(log, f"  {k} Geometrielasten ohne Elementlast: {grund}")
         return erzeugt
+
+    def _warum_leer(self, gl: "Geometrielast") -> str:
+        """Warum eine Geometrielast keine Elementlast erzeugt hat.
+
+        „Ziel noch nicht vernetzt" waere zu bequem: eine projizierte Last
+        trifft eine Flaeche, die von ihr abgewandt liegt, mit Recht nicht -
+        und ein Lastfenster kann danebenliegen. Beides ist kein Fehler,
+        beides muss aber unterscheidbar sein.
+        """
+        ziel = (self.flaechen.get(gl.ziel) if gl.art == "flaeche"
+                else self.koerper.get(gl.ziel))
+        if ziel is None:
+            return "Ziel gibt es im Modell nicht"
+        if gl.art == "flaeche" and not (ziel.elemente or ziel.randseiten):
+            return "Ziel noch nicht vernetzt"
+        if gl.art != "flaeche" and not ziel.elemente:
+            return "Ziel noch nicht vernetzt"
+        if gl.projiziert and gl.richtung:
+            return "liegt ganz im Windschatten der Last"
+        if gl.bereich:
+            return "liegt ganz außerhalb des Lastfensters"
+        return "keine Elementseite getroffen"
+
+    def _seitenmitte(self, elem: int, seite: int):
+        """Schwerpunkt einer Elementseite - fuer die Bereichsprobe."""
+        from .assemble import SOLID_FACES
+        e = self.elements[int(elem)]
+        seiten = SOLID_FACES.get(e.typ)
+        if not seiten:
+            return self.nodes[[int(x) for x in e.nodes]].mean(axis=0)
+        s = seiten[int(seite) % len(seiten)]
+        return self.nodes[[int(e.nodes[j]) for j in s]].mean(axis=0)
+
+    def _seitennormale(self, elem: int, seite: int):
+        """Aussennormale einer Elementseite (Einheitsvektor) - oder None.
+
+        Gerichtet wird am gegenueberliegenden Knoten: die Normale zeigt von
+        ihm weg, also aus dem Element heraus. Ohne diese Probe waere ihr
+        Vorzeichen von der Knotenreihenfolge abhaengig.
+        """
+        from .assemble import SOLID_FACES
+        e = self.elements[int(elem)]
+        seiten = SOLID_FACES.get(e.typ)
+        if not seiten:
+            return None
+        nd = [int(e.nodes[j]) for j in seiten[int(seite) % len(seiten)]]
+        if len(nd) < 3:
+            return None
+        X = self.nodes[nd[:3]]
+        n = np.cross(X[1] - X[0], X[2] - X[0])
+        L = float(np.linalg.norm(n))
+        if L <= 0:
+            return None
+        n = n / L
+        rest = [k for k in e.nodes if int(k) not in nd]
+        if rest:
+            innen = self.nodes[[int(x) for x in rest]].mean(axis=0) - X.mean(axis=0)
+            if float(n @ innen) > 0:
+                n = -n
+        return n
 
     def _geometrielast_legen(self, gl: "Geometrielast") -> list:
         """Die Elementlasten einer Geometrielast - oder [], wenn kein Netz da ist."""
         out: list = []
+        richtung = list(gl.richtung) if gl.richtung else None
+        d = None
+        if gl.projiziert and richtung:
+            d = np.asarray(richtung, float)
+            d = d / (np.linalg.norm(d) or 1.0)
+
+        def nimm(e: int, seite: int):
+            if not 0 <= int(e) < len(self.elements):
+                return
+            if gl.bereich and not gl.trifft(self._seitenmitte(e, seite)):
+                return
+            p = gl.p
+            if d is not None:
+                n = self._seitennormale(e, seite)
+                if n is None:
+                    return
+                c = float(n @ d)
+                if c >= 0:
+                    return          # diese Seite liegt im Windschatten der Last
+                p = gl.p * (-c)     # Last je Quadratmeter der Projektion
+            out.append(FaceLoad(int(e), p, int(seite), richtung))
+
+        flaechen = []
         if gl.art == "flaeche":
             f = self.flaechen.get(gl.ziel)
-            if f is None:
-                return out
+            if f is not None:
+                flaechen = [f]
+        else:
+            k = self.koerper.get(gl.ziel)
+            if k is not None:
+                flaechen = [self.flaechen[n] for n in (k.flaechen or [])
+                            if n in self.flaechen]
+        for f in flaechen:
             for e in (f.elemente or []):
-                if 0 <= int(e) < len(self.elements):
-                    out.append(FaceLoad(int(e), gl.p, 0, list(gl.richtung)
-                                        if gl.richtung else None))
+                nimm(e, 0)
             for e, seite in (f.randseiten or []):
-                if 0 <= int(e) < len(self.elements):
-                    out.append(FaceLoad(int(e), gl.p, int(seite),
-                                        list(gl.richtung) if gl.richtung else None))
-            return out
-        k = self.koerper.get(gl.ziel)
-        if k is None:
-            return out
-        for name in (k.flaechen or []):
-            f = self.flaechen.get(name)
-            if f is None:
-                continue
-            for e, seite in (f.randseiten or []):
-                if 0 <= int(e) < len(self.elements):
-                    out.append(FaceLoad(int(e), gl.p, int(seite),
-                                        list(gl.richtung) if gl.richtung else None))
+                nimm(e, seite)
         return out
 
     def add_geometrielast(self, ziel: str, p: float, art: str = "flaeche",
-                          richtung=None, case: str = None) -> "Geometrielast":
+                          richtung=None, case: str = None,
+                          bereich: dict = None,
+                          projiziert: bool = False) -> "Geometrielast":
         """Eine Last an ein Geometrieobjekt haengen (wirkt nach dem Vernetzen)."""
         gl = Geometrielast(str(ziel), art, float(p),
-                           list(richtung) if richtung else None)
+                           list(richtung) if richtung else None,
+                           dict(bereich or {}), bool(projiziert))
         self.case(case).geometrielasten.append(gl)
         return gl
 
@@ -2287,6 +2466,7 @@ class Model:
             "design": asdict(self.design),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
+            "kopplungen": [asdict(k) for k in self.kopplungen],
             "contact_pairs": [asdict(c) for c in self.contact_pairs],
         }
 
@@ -2351,6 +2531,7 @@ class Model:
             m.design = _dc(DesignSettings, d["design"])
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
+        m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]
         m.contact_pairs = [_dc(ContactPair, c) for c in d.get("contact_pairs", [])]
         return m
 

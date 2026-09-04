@@ -335,18 +335,33 @@ Federn des Freigabetyps (`SurfaceReleaseType` →
 
 Statik3D liest alles heraus — Name, Ort, freigegebene Flächen und Volumen,
 Zuordnung, Federkonstante je Freiheitsgrad samt Ausfalltyp und Reibbeiwert —
-und legt jede Freigabe als **Modellobjekt** `Flaechenfreigabe` an. Sie steht
-damit im Modellbaum unter „Kontaktbedingungen → Flächenkontakte" und in der
-gleichnamigen Tabelle, wird mitgespeichert
-und überlebt Rückgängig. Das Feld `ausgefuehrt` sagt, ob die Trennung im Netz
-umgesetzt ist — heute immer `False`, und das Protokoll sagt es auch:
+und legt jede Freigabe als **Modellobjekt** `Kontaktbedingung` an (der alte
+Name `Flaechenfreigabe` bleibt als Zweitname stehen). Sie steht damit im
+Modellbaum unter „Kontaktbedingungen → Flächenkontakte" und in der
+gleichnamigen Tabelle, wird mitgespeichert und überlebt Rückgängig:
 
     Achse: 56 freigegebene Flaechen, 1 Volumen, zugeordnet an 52 Objekte, Ort Anfang
       Typ 3: ux=frei, uy=frei, uz=frei (Ausfall bei Zug), phix=frei, …
       Typ 4: ux=starr, uy=starr, uz=frei (Ausfall bei Zug), phix=frei, …
-    8 Flaechenfreigaben gelesen. Die Trennung selbst wird nicht ausgefuehrt -
-    dafuer muessten die beteiligten Flaechen vernetzt und die Knoten an der Fuge
-    verdoppelt werden. Ohne die Trennung ist das Modell an diesen Stellen zu steif.
+
+**Welcher Körper gelöst wird**, steht in `SurfaceReleaseImpl_releasedSolids`;
+`releasedSurfaces` sind seine Kopien der Fugenfläche und
+`assignedToObjects` die Flächen der Gegenseite. Letztere sind **unvollständig**
+— im geprüften Modell nennt die Liste für 36 freigegebene Flächen nur 5
+Gegenflächen. Sie wird deshalb als Angabe aus der Quelldatei übernommen
+(`gegenflaechen`), zum Ausführen der Fuge aber nicht als Filter benutzt: die
+Gegenseite wird geometrisch gesucht (aufeinanderliegend, entgegengesetzt
+gerichtet).
+
+**Ausgeführt** wird die Trennung beim Vernetzen von selbst — oder von Hand über
+„Kontaktfugen ausführen". Wie das geschieht, steht im Theoriehandbuch,
+Abschnitt 4.0. Das Feld `ausgefuehrt` und die Tabellenspalte „Trennung
+ausgeführt" sagen, ob und wie:
+
+    Kontaktbedingung Achse: 58 Randknoten getrennt, Kontaktpaar mit 438 Knoten
+      gegen 272 Gegenflaechen (geloest: V30)
+    7 Kontaktfugen ausgefuehrt: 335 Fugenknoten, 0 Spaltelemente, 0 Kopplungen,
+      7 Kontaktpaare
 
 ### Lastfälle und Lasten
 
@@ -357,10 +372,25 @@ Jeder Lastfall kommt mit Name (als Beschreibung), Einwirkungskategorie
 | Last | Vorgehen |
 |---|---|
 | Knotenlast (`NodalLoad`) | Kraft und Moment je Achse, an alle zugewiesenen Knoten |
-| Flächenlast (`SurfaceLoad` → `SurfaceTypeLoadImplForce`) | auf die Schalenelemente der vernetzten Zielfläche gelegt |
-| Flächenlast auf eine Fläche ohne Dicke | mit Anzahl und Grund gemeldet, nicht übernommen |
+| Flächenlast (`SurfaceLoad` → `SurfaceTypeLoadImplForce`) | auf die Schalenelemente der vernetzten Zielfläche gelegt; ist die Fläche noch nicht vernetzt, bleibt die Last als **Geometrielast** an ihr hängen und wird beim Vernetzen verteilt |
+| **Freie Rechtecklast** (`FreeRectangularLoad`) | als Geometrielast mit Fenster und Richtung – siehe unten |
 | **Stabvorspannung** (`MemberTypeLoadImplInitialPrestress`) | als gleichwertige Temperaturlast (siehe unten) |
-| Linienlast, freie Rechtecklast, Volumenlast | gemeldet – brauchen das Netz bzw. die Projektion |
+| Linienlast, Volumenlast | gemeldet – sie brauchen das Linien- bzw. Volumennetz |
+
+**Freie Rechtecklasten.** RFEM legt das Lastfenster in die uv-Ebene eines
+eigenen Koordinatensystems (`coordinateSystem_id` → `CoordinateSystem…
+2PointsAndAngle`: Ursprung, ein Punkt auf der u-Achse, Drehwinkel der
+uw-Ebene). Übernommen wird das Rechteck als Wirkungsbereich, die dritte Achse
+w als **Lastrichtung**, und die Last wirkt auf die **projizierte** Fläche.
+
+Dass das so gemeint ist, lässt sich am Modell ablesen und nicht nur vermuten:
+die Zielfläche ist eine Bohrung (Halbzylinder, r = 0,3 m, Länge 0,23 m), das
+Fenster misst 0,23 × 0,6 m — Länge mal Durchmesser, also genau die Projektion
+der Bohrung. Die Achse w steht senkrecht auf der Bohrungsachse und dreht sich
+von Lastfall zu Lastfall: die Lastrichtung eines Drehlagers. Die Summe kommt
+damit auf p · d · l heraus, die Lagerkraft. Als Druck senkrecht zur Fläche
+gedeutet höbe sich dieselbe Last über den Zylinder auf, und alle 420 Lastfälle
+wären kräftefrei. Der Rohwert von `loadDirection` steht im Protokoll.
 
 **Vorspannung.** Eine Vorspannkraft N₀ im Stab ist mechanisch gleichwertig zu
 einer aufgezwungenen Verkürzung ε₀ = −N₀/(EA), also einer Temperaturänderung

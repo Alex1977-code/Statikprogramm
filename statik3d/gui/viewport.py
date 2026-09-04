@@ -584,3 +584,95 @@ def displacement_of(res):
     if hasattr(res, "u_max"):
         return np.where(np.abs(res.u_max) > np.abs(res.u_min), res.u_max, res.u_min)
     return None
+
+
+#: Schnittgroessen eines Stabes in der Reihenfolge, in der sie angezeigt werden
+SCHNITTGROESSEN = ("N", "Vy", "Vz", "Mt", "My", "Mz")
+
+#: Einheit und Umrechnung je Schnittgroesse
+SG_EINHEIT = {"N": ("kN", 1e3), "Vy": ("kN", 1e3), "Vz": ("kN", 1e3),
+              "Mt": ("kNm", 1e3), "My": ("kNm", 1e3), "Mz": ("kNm", 1e3)}
+
+
+def schnittgroessen_grenzen(model: Model, res, groessen=SCHNITTGROESSEN) -> dict:
+    """{Groesse: (kleinster Wert, Element, groesster Wert, Element)}.
+
+    Gesucht wird ueber **alle Nachweisstellen**, nicht nur die Stabenden: das
+    groesste Feldmoment liegt in der Regel dazwischen. Bei einer Umhuellenden
+    stehen die Grenzwerte schon in ``res.beam``; dann werden sie genommen.
+    """
+    out: dict = {}
+    st = res.stations() if hasattr(res, "stations") else None
+    quelle = st if st else getattr(res, "beam", None)
+    if not quelle:
+        return out
+    for q in groessen:
+        klein = gross = None
+        for i, d in quelle.items():
+            v = np.asarray(d.get(q), float)
+            if not v.size:
+                continue
+            a, b = float(np.nanmin(v)), float(np.nanmax(v))
+            if klein is None or a < klein[0]:
+                klein = (a, i)
+            if gross is None or b > gross[0]:
+                gross = (b, i)
+        if klein is not None:
+            out[q] = (klein[0], klein[1], gross[0], gross[1])
+    return out
+
+
+def _stabname(model: Model, elem: int) -> str:
+    """Der Stab, zu dem ein Element gehoert - sonst die Elementnummer."""
+    for name, mem in (model.members or {}).items():
+        if elem in (mem.elements or []):
+            return f"Stab {name}"
+    return f"Element {elem}"
+
+
+def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
+              ueberschrift: str = "") -> list:
+    """Die Kennzahlen des gezeigten Ergebnisses als Textzeilen.
+
+    Das sind die Zahlen, nach denen zuerst gefragt wird: groesste Ausnutzung,
+    kleinste und groesste Verformung, kleinste und groesste Schnittgroesse -
+    jeweils **mit dem Ort**, denn ein Zahlenwert ohne Ort ist kein Ergebnis.
+    Steht in *groesse* eine Schnittgroesse, wird nur diese ausgeschrieben.
+    """
+    zeilen = []
+    if ueberschrift:
+        zeilen.append(ueberschrift)
+    u = displacement_of(res)
+    if u is not None and len(u):
+        mag = np.linalg.norm(u[:, :3], axis=1)
+        k = int(np.nanargmax(mag)) if np.isfinite(mag).any() else 0
+        zeilen.append(f"|u|max = {mag[k] * 1000:.3f} mm  an Knoten {k}")
+        teile = []
+        for j, nm in enumerate(("ux", "uy", "uz")):
+            teile.append(f"{nm} {u[:, j].min() * 1000:+.3f} … {u[:, j].max() * 1000:+.3f}")
+        zeilen.append("   " + "  |  ".join(teile) + "   [mm]")
+    grenzen = schnittgroessen_grenzen(
+        model, res, (groesse,) if groesse in SCHNITTGROESSEN else SCHNITTGROESSEN)
+    for q in (groesse,) if groesse in SCHNITTGROESSEN else SCHNITTGROESSEN:
+        if q not in grenzen:
+            continue
+        lo, e_lo, hi, e_hi = grenzen[q]
+        eh, f = SG_EINHEIT[q]
+        zeilen.append(f"{q:<3s} {lo / f:+11.3f} ({_stabname(model, e_lo)})   "
+                      f"{hi / f:+11.3f} ({_stabname(model, e_hi)})   [{eh}]")
+    werte = dict(util or {})
+    if not werte:
+        for i, d in (getattr(res, "beam_forces", None) or {}).items():
+            if d.get("util") is not None:
+                werte[i] = d["util"]
+    if werte:
+        i = max(werte, key=lambda k: werte[k])
+        zeilen.append(f"größte Ausnutzung {werte[i]:.3f}  an {_stabname(model, i)}"
+                      + ("  – überschritten!" if werte[i] > 1.0 else ""))
+    vm = getattr(res, "node_vm_max", None)
+    if vm is None:
+        vm = getattr(res, "node_vm", None)
+    if vm is not None and len(vm) and np.isfinite(vm).any():
+        k = int(np.nanargmax(vm))
+        zeilen.append(f"σv max = {float(vm[k]) / 1e6:.1f} N/mm²  an Knoten {k}")
+    return zeilen
