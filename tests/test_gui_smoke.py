@@ -1462,6 +1462,31 @@ def main():
             w.ansichtswuerfel.gewaehlt.emit(richtung)
             app.processEvents()
         check("Blickrichtung über den Würfel", True)
+        # Alle sechs Seiten und das Umkehren - die Rueckseite ist ein Klick
+        richtungen = [r for _t, r, _h in w.ansichtswuerfel.RICHTUNGEN]
+        check("der Würfel bietet alle sechs Seiten und „180°“",
+              set(richtungen) == {"vorne", "hinten", "links", "rechts",
+                                  "oben", "unten", "kehren"}, str(richtungen))
+        w.blickrichtung("vorne")
+        app.processEvents()
+        vorn = np.asarray(w.plotter.camera_position[0], float)
+        blick = np.asarray(w.plotter.camera_position[1], float)
+        check("Vorderansicht schaut aus −Y", vorn[1] < blick[1],
+              f"{np.round(vorn, 3)} -> {np.round(blick, 3)}")
+        w.blickrichtung("hinten")
+        app.processEvents()
+        hint = np.asarray(w.plotter.camera_position[0], float)
+        check("Rückansicht schaut aus +Y", hint[1] > blick[1], str(np.round(hint, 3)))
+        w.blickrichtung("iso")
+        app.processEvents()
+        vorher = np.asarray(w.plotter.camera_position[0], float)
+        mitte = np.asarray(w.plotter.camera_position[1], float)
+        w.blickrichtung("kehren")
+        app.processEvents()
+        nachher = np.asarray(w.plotter.camera_position[0], float)
+        check("„180°“ kehrt die Ansicht am Blickpunkt um",
+              float(np.linalg.norm(nachher - (2 * mitte - vorher))) < 1e-6,
+              f"{np.round(vorher, 3)} -> {np.round(nachher, 3)}")
         w.auswahlart_setzen("Linie")
         check("Auswahlart auch in der Glasleiste",
               w.cb_auswahlart_glas.currentText() == "Linie",

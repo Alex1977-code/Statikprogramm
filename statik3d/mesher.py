@@ -459,7 +459,7 @@ def _seiten_aus_linien(model: Model, flaeche):
 
 
 def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
-                 h: float = 0.0, cache: dict = None) -> list[int]:
+                 h: float = 0.0, cache: dict = None, ordnung: int = 0) -> list[int]:
     """Einen Volumenkoerper in Volumenelemente umsetzen.
 
     Sechs Vierseit-Randflaechen mit acht Eckknoten geben ein **abgebildetes**
@@ -506,7 +506,8 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
         return els
     if frei:
         from .mesher3d import mesh_koerper_frei
-        return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache)
+        return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
+                                 ordnung=ordnung)
     C.warn(log, f"Volumen {koerper.name}: {len(flaechen)} Randflächen mit "
                 f"{len(knoten)} Eckknoten - abgebildet vernetzen lassen sich nur "
                 "Sechsflächner (6 Vierecke, 8 Knoten) und Tetraeder (4 Dreiecke, "

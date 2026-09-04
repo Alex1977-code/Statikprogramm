@@ -449,11 +449,106 @@ def test_undichte_huelle():
           any("nicht dicht" in z for z in log), log[0] if log else "-")
 
 
+# --------------------------------------------------------------------------
+# 10) Quadratische Tetraeder (tet10) und Splitterglaettung
+# --------------------------------------------------------------------------
+def test_quadratische_tetraeder():
+    """Der lineare Tetraeder hat eine konstante Dehnung: unter Biegung ist er
+    viel zu steif. Der quadratische gibt dieselbe Aufgabe mit demselben Netz
+    richtig wieder - das ist der ganze Grund fuer ihn."""
+    E, nu = 210e9, 0.3
+    b = hq = 0.2
+    L, F = 2.0, 1.0e5
+    I = b * hq ** 3 / 12
+    G = E / (2 * (1 + nu))
+    As = 5.0 / 6.0 * b * hq
+    w_soll = F * L ** 3 / (3 * E * I) + F * L / (G * As)     # Biegung + Schub
+    ergebnis = {}
+    for ordnung in (1, 2):
+        m = neues_modell()
+        k = prisma(m, [[(0, 0), (b, 0), (b, hq), (0, hq)]], L)
+        m.netz.ziellaenge = 0.1
+        m.netz.ordnung = ordnung
+        els = M3.mesh_koerper_frei(m, k, log=[])
+        typen = {m.elements[i].typ for i in els}
+        check(f"Ordnung {ordnung}: Elementtyp",
+              typen == ({"tet10"} if ordnung == 2 else {"tet4"}), str(typen))
+        close(f"Ordnung {ordnung}: Volumen", netzvolumen(m, els), b * hq * L,
+              1e-9, " m^3")
+        im = sorted({int(x) for i in els for x in m.elements[i].nodes})
+        for i in im:
+            if abs(m.nodes[i][2]) < 1e-9:
+                m.support(i, [0, 1, 2])
+        oben = [i for i in im if abs(m.nodes[i][2] - L) < 1e-9]
+        lc = m.add_load_case("LF1")
+        lc.gravity = [0.0, 0.0, 0.0]
+        for i in oben:
+            m.load_node(i, Fx=F / len(oben), case="LF1")
+        r = solver.solve_static(m, case="LF1")
+        ergebnis[ordnung] = float(r.u.reshape(-1, 6)[oben, 0].mean())
+        close(f"Ordnung {ordnung}: Summe der Auflagerkräfte",
+              -float(r.reactions[:, 0].sum()), F, 1e-3, " N")
+    check("der lineare Tetraeder ist unter Biegung deutlich zu steif",
+          ergebnis[1] < 0.85 * w_soll,
+          f"{ergebnis[1] / w_soll * 100:.1f} % der Balkenlösung")
+    check("der quadratische trifft dieselbe Aufgabe auf 3 % genau",
+          abs(ergebnis[2] - w_soll) < 0.03 * w_soll,
+          f"{ergebnis[2] / w_soll * 100:.1f} % der Balkenlösung "
+          f"({ergebnis[2] * 1e3:.3f} mm von {w_soll * 1e3:.3f} mm)")
+
+    # Seitenmittenknoten muessen geteilt werden - sonst faellt das Netz auseinander
+    m = neues_modell()
+    k = prisma(m, [[(0, 0), (1, 0), (1, 1), (0, 1)]], 1.0)
+    m.netz.ziellaenge = 0.5
+    m.netz.ordnung = 2
+    els = M3.mesh_koerper_frei(m, k, log=[])
+    seiten = {}
+    for i in els:
+        nd = [int(x) for x in m.elements[i].nodes]
+        for a2, b2 in M3.TET10_KANTEN:
+            seiten.setdefault((min(nd[a2], nd[b2]), max(nd[a2], nd[b2])), set()).add(
+                nd[4 + M3.TET10_KANTEN.index((a2, b2))])
+    check("jede Kante hat genau einen Seitenmittenknoten",
+          all(len(v) == 1 for v in seiten.values()),
+          f"{sum(1 for v in seiten.values() if len(v) != 1)} Kanten mit mehreren")
+
+
+def test_splitter_glaetten():
+    """Splitter sind fast flache Tetraeder. Das Kugel-Kanten-Kriterium erfasst
+    sie nicht - dafuer werden die freien Knoten so verschoben, dass die
+    schlechteste Guete steigt. Die Randknoten bleiben, wo sie sind: das
+    Volumen darf sich dabei nicht aendern."""
+    r, t = 0.4, 0.4
+    ohne = mit = None
+    for splitter in (0.0, 0.1):
+        m = neues_modell()
+        k = prisma(m, [[(0, 0), (2, 0), (2, 2), (0, 2)],
+                       kreis_punkte(r, 48, 1.0, 1.0, umgekehrt=True)], t)
+        m.netz.ziellaenge = 0.15
+        m.netz.splitter = splitter
+        els = M3.mesh_koerper_frei(m, k, log=[])
+        TET = np.array([[int(x) for x in m.elements[i].nodes] for i in els])
+        q = M3.guete(m.nodes, TET)
+        werte = (float(q.min()), int((q < 0.1).sum()), netzvolumen(m, els), len(els))
+        if splitter:
+            mit = werte
+        else:
+            ohne = werte
+    check("ohne Glättung gibt es Splitter", ohne[1] > 0,
+          f"{ohne[1]} Elemente unter 0.1, schlechtestes {ohne[0]:.4f}")
+    check("mit Glättung ist die schlechteste Güte deutlich besser",
+          mit[0] > 5 * ohne[0], f"{ohne[0]:.4f} -> {mit[0]:.4f}")
+    check("und kein Splitter bleibt übrig", mit[1] == 0, f"{mit[1]} Elemente")
+    close("das Volumen bleibt dabei unverändert", mit[2], ohne[2], 1e-9, " m^3")
+    check("und die Elementzahl auch", mit[3] == ohne[3], f"{ohne[3]} -> {mit[3]}")
+
+
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_einspringende_ecke,
               test_platte_mit_bohrung, test_zylinder_und_buchse,
               test_kleines_bauteil, test_gemeinsame_flaeche, test_zugstab,
-              test_undichte_huelle):
+              test_undichte_huelle, test_quadratische_tetraeder,
+              test_splitter_glaetten):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

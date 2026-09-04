@@ -201,6 +201,19 @@ Nach jedem Körper steht im Protokoll, was herausgekommen ist:
       Volumen 0.100611 m^3 gegen 0.100602 m^3 aus der Hülle (Abweichung 0.009 %),
       Güte min 0.005 / Mittel 0.685, Randtreue 99.96 % (größter Abstand zur Hülle 18.01 mm)
 
+**Lineare oder quadratische Elemente.** In den Netzeinstellungen steht die
+*Ordnung*: 1 gibt lineare Tetraeder (tet4), 2 quadratische (tet10). Der lineare
+hat eine konstante Dehnung und ist unter Biegung deutlich zu steif — bei einem
+Kragträger mit 100 mm Kantenlänge kommt er auf 69 % der Balkenlösung, der
+quadratische mit demselben Netz auf 99 %. Er kostet dafür mehr Knoten. Für
+Spannungsnachweise an Kerben, Augen und Bohrungen gehören die quadratischen
+genommen.
+
+**Splitter** — fast flache Elemente — werden herausgeglättet: die *freien*
+Knoten wandern so, dass die schlechteste Güte steigt; die Randknoten bleiben,
+wo sie sind, damit sich das Volumen nicht ändert. Die Schwelle steht ebenfalls
+in den Netzeinstellungen.
+
 Das ist keine Zierde, sondern die Probe: das **Volumen** des Netzes gegen das
 Volumen der Randhülle (Gaußscher Satz), die **Güte** der Elemente (1 = regulärer
 Tetraeder, 0 = flach) und die **Randtreue** — wieviel des Netzrandes wirklich
@@ -380,6 +393,19 @@ Mit „Stäbe daraus erzeugen" wird die Linie gleich in Stabelemente geteilt —
 Teilung steht in der Maske. Die Linie bleibt als Geometrie erhalten und kennt
 ihre exakte Länge (ein Halbkreis r = 2 m misst 6,283 m, nicht die Länge des
 Sehnenzugs).
+
+### Ansichtswürfel und Rückseite
+
+Oben rechts in der Ansicht steht der **Ansichtswürfel**: drei sichtbare Seiten,
+beschriftet mit ihrer Achse (+Z, −Y, +X). Ein Klick auf eine Seite dreht die
+Ansicht dorthin, ein Klick daneben stellt die isometrische Ansicht ein.
+
+Darunter — **statt einer Drehscheibe** — steht eine Zeile mit allen sechs
+Richtungen: **V** vorne, **H** hinten, **L** links, **R** rechts, **O** oben,
+**U** unten. Die Rückseite ist damit ein Klick und nicht eine halbe Umdrehung.
+Der Knopf **180°** kehrt die *laufende* Ansicht um: aus jeder beliebigen
+Schrägansicht wird ihre Rückansicht, ohne dass man sich neu hindrehen muss. Im
+Ribbon steht derselbe Befehl unter „Rückseite (180°)".
 
 ### Register „Auswahl"
 

@@ -617,18 +617,58 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ansichtswuerfel = wuerfel
         self.ansichtsrand = msk.Ansichtsrand(central, leiste, wuerfel)
 
+    #: Blickrichtung -> (Richtung, in die geschaut wird; "oben" im Bild; Klartext)
+    BLICKRICHTUNGEN = {
+        "oben": ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0), "Draufsicht (von +Z)"),
+        "unten": ((0.0, 0.0, 1.0), (0.0, -1.0, 0.0), "Untersicht (von −Z)"),
+        "vorne": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), "Vorderansicht (von −Y)"),
+        "hinten": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0), "Rückansicht (von +Y)"),
+        "rechts": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von rechts (von +X)"),
+        "links": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von links (von −X)"),
+        # Die alten Namen bleiben gueltig - Ribbon und Tastenkuerzel nutzen sie
+        "xy": ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0), "Draufsicht (XY)"),
+        "xz": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), "Vorderansicht (XZ)"),
+        "yz": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Seitenansicht (YZ)"),
+    }
+
     def blickrichtung(self, richtung: str):
-        """Blickrichtung setzen - vom Ansichtswuerfel oder aus dem Ribbon."""
-        fn = {"xy": self.plotter.view_xy, "xz": self.plotter.view_xz,
-              "yz": self.plotter.view_yz,
-              "iso": self.plotter.view_isometric}.get(richtung)
-        if fn is None:
+        """Blickrichtung setzen - vom Ansichtswuerfel oder aus dem Ribbon.
+
+        „kehren" dreht die laufende Ansicht um 180 Grad um den Blickpunkt: aus
+        jeder beliebigen Schraegansicht wird ihre Rueckansicht. Das ist der
+        schnelle Weg auf die Rueckseite, den eine Drehscheibe nicht hat - die
+        muesste erst eine halbe Umdrehung machen und kann ausserdem nur um die
+        Hochachse.
+        """
+        if richtung == "iso":
+            self.plotter.view_isometric()
+            self.zoom_alles()
+            self.statusBar().showMessage("Isometrisch", 3000)
             return
-        fn()
+        if richtung == "kehren":
+            try:
+                pos, blick, oben = self.plotter.camera_position
+                pos = np.asarray(pos, float)
+                blick = np.asarray(blick, float)
+                self.plotter.camera_position = [
+                    (blick - (pos - blick)).tolist(), blick.tolist(), oben]
+                self._kamera_steht = True
+                self.plotter.render()
+                self.statusBar().showMessage("Ansicht umgekehrt – Rückseite", 3000)
+            except Exception as ex:         # noqa: BLE001
+                self.log.appendPlainText(f"Ansicht umkehren: {ex}")
+            return
+        eintrag = self.BLICKRICHTUNGEN.get(richtung)
+        if eintrag is None:
+            return
+        blickvektor, oben, text = eintrag
+        m = self.model
+        mitte = (m.nodes.mean(axis=0) if m.nn else np.zeros(3))
+        weite = max(m.characteristic_size(), 1e-6) * 3.0
+        pos = mitte - np.asarray(blickvektor, float) * weite
+        self.plotter.camera_position = [pos.tolist(), mitte.tolist(), list(oben)]
         self.zoom_alles()
-        self.statusBar().showMessage(
-            {"xy": "Draufsicht (XY)", "xz": "Vorderansicht (XZ)",
-             "yz": "Seitenansicht (YZ)", "iso": "Isometrisch"}[richtung], 3000)
+        self.statusBar().showMessage(text, 3000)
 
     def _build_ribbon(self):
         """Die Befehlsleiste. Jeder Befehl steht hier - und nur hier.
@@ -927,6 +967,8 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("XY (Draufsicht)", lambda: self.blickrichtung("xy"))
         g.klein("XZ (Ansicht)", lambda: self.blickrichtung("xz"))
         g.klein("YZ (Seitenansicht)", lambda: self.blickrichtung("yz"))
+        g.klein("Rückseite (180°)", lambda: self.blickrichtung("kehren"),
+                hinweis="Die laufende Ansicht umkehren – zeigt die Rückseite")
         g.klein("Zoom alles", self.zoom_alles)
         g = r.gruppe("Darstellung")
         # Die vier Darstellungsarten liegen als eigene Knoepfe nebeneinander und

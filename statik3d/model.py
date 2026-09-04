@@ -1039,6 +1039,14 @@ class Netzeinstellungen:
     seitenverhaeltnis: groesstes zulaessiges Seitenverhaeltnis eines Elements
     form:         0 Dreiecke, 1 Vierecke, 2 Dreiecke und Vierecke
     abgebildet:   abgebildetes (mapped) Netz bevorzugen
+    ordnung:      1 = lineare Volumenelemente (tet4), 2 = quadratische (tet10).
+                  Der lineare Tetraeder hat eine konstante Dehnung: er ist zu
+                  steif und gibt Spannungen erst mit sehr feinem Netz richtig
+                  wieder. Der quadratische kostet je Element mehr, braucht aber
+                  viel weniger davon.
+    splitter:     Guete, unter der ein Tetraeder als Splitter gilt und aus dem
+                  Netz herausgeglaettet wird (0 = nicht glaetten). 1 waere der
+                  regelmaessige Tetraeder, 0 der flache.
     """
     ziellaenge: float = 0.5
     knoten_linie: float = 0.001
@@ -1046,6 +1054,8 @@ class Netzeinstellungen:
     seitenverhaeltnis: float = 1.8
     form: int = 2
     abgebildet: bool = False
+    ordnung: int = 1
+    splitter: float = 0.1
     quelle: str = ""              # woher die Werte stammen
 
     def teilung(self, laenge: float) -> int:
@@ -1057,7 +1067,9 @@ class Netzeinstellungen:
     def beschreibung(self) -> str:
         return (f"Ziellänge {self.ziellaenge * 1e3:.0f} mm, "
                 f"Stabteilung {self.stabteilung}, "
-                f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}"
+                f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}, "
+                + ("quadratische Volumenelemente (tet10)" if self.ordnung >= 2
+                   else "lineare Volumenelemente (tet4)")
                 + (f" ({self.quelle})" if self.quelle else ""))
 
 

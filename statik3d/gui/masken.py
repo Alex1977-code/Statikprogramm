@@ -360,43 +360,88 @@ class Glasleiste(QtWidgets.QFrame):
 class Ansichtswuerfel(QtWidgets.QWidget):
     """Ansichtswuerfel oben rechts: ein Klick auf eine Seite dreht die Ansicht.
 
-    Gezeichnet wird ein Wuerfel in isometrischer Schraegansicht. Die sechs
-    Seiten und die Ecke sind anklickbar; das Signal nennt die Blickrichtung.
+    Gezeichnet wird ein Wuerfel in isometrischer Schraegansicht. Sichtbar sind
+    immer die drei Seiten, auf die man gerade schaut - beschriftet mit ihrer
+    Achse, wie man es aus CAD-Programmen kennt.
+
+    **Statt der Drehscheibe darunter** steht eine Zeile mit den sechs
+    Richtungen. Die Scheibe kann nur um die Hochachse drehen; die Rueckseite
+    erreicht man mit ihr erst nach einer halben Umdrehung. Hier ist jede der
+    sechs Seiten **ein Klick**, und „180°" kehrt die laufende Ansicht um -
+    aus einer beliebigen Schraegansicht wird so ihre Rueckansicht.
     """
 
-    gewaehlt = QtCore.Signal(str)          # "xy" | "xz" | "yz" | "-xy" | … | "iso"
+    gewaehlt = QtCore.Signal(str)
 
-    #: (Beschriftung, Blickrichtung, Vieleck in Einheitskoordinaten)
+    #: (Beschriftung, Blickrichtung, Vieleck in Einheitskoordinaten des Wuerfels)
     SEITEN = [
-        ("O", "xy", [(0.5, 0.06), (0.94, 0.30), (0.5, 0.54), (0.06, 0.30)]),
-        ("V", "xz", [(0.06, 0.30), (0.5, 0.54), (0.5, 0.97), (0.06, 0.73)]),
-        ("S", "yz", [(0.5, 0.54), (0.94, 0.30), (0.94, 0.73), (0.5, 0.97)]),
+        ("+Z", "oben", [(0.5, 0.04), (0.96, 0.27), (0.5, 0.50), (0.04, 0.27)]),
+        ("−Y", "vorne", [(0.04, 0.27), (0.5, 0.50), (0.5, 0.94), (0.04, 0.71)]),
+        ("+X", "rechts", [(0.5, 0.50), (0.96, 0.27), (0.96, 0.71), (0.5, 0.94)]),
     ]
+
+    #: (Beschriftung, Blickrichtung, Hinweis) der Zeile unter dem Wuerfel
+    RICHTUNGEN = [
+        ("V", "vorne", "Vorderansicht (von −Y)"),
+        ("H", "hinten", "Rückansicht (von +Y)"),
+        ("L", "links", "Ansicht von links (von −X)"),
+        ("R", "rechts", "Ansicht von rechts (von +X)"),
+        ("O", "oben", "Draufsicht (von +Z)"),
+        ("U", "unten", "Untersicht (von −Z)"),
+        ("180°", "kehren", "Die laufende Ansicht umkehren – zeigt die Rückseite"),
+    ]
+
+    WUERFEL = 76          # Kantenlaenge des Wuerfelfeldes
+    ZEILE = 22            # Hoehe der Richtungszeile
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(78, 78)
+        self.setFixedSize(self.WUERFEL + 40, self.WUERFEL + self.ZEILE + 6)
         self.setCursor(QtCore.Qt.PointingHandCursor)
-        self.setToolTip("Ansichtswürfel: O Draufsicht, V Vorderansicht, "
-                        "S Seitenansicht, Mitte isometrisch")
+        self.setMouseTracking(True)
+        self.setToolTip("Ansichtswürfel: eine Seite anklicken. Darunter die "
+                        "sechs Richtungen und „180°“ für die Rückseite.")
         self._unter = ""
 
+    # -- Geometrie -------------------------------------------------------
+    def _wuerfelfeld(self) -> QtCore.QRectF:
+        x = (self.width() - self.WUERFEL) / 2.0
+        return QtCore.QRectF(x, 0.0, self.WUERFEL, self.WUERFEL)
+
     def _polygone(self):
-        w, h = self.width(), self.height()
+        r = self._wuerfelfeld()
         for text, richtung, punkte in self.SEITEN:
             yield text, richtung, QtGui.QPolygonF(
-                [QtCore.QPointF(x * w, y * h) for x, y in punkte])
+                [QtCore.QPointF(r.x() + x * r.width(), r.y() + y * r.height())
+                 for x, y in punkte])
+
+    def _felder(self):
+        """Die Schaltflaechen der Richtungszeile als (Rechteck, Text, Richtung)."""
+        n = len(self.RICHTUNGEN)
+        b = self.width() / n
+        y = self.WUERFEL + 4
+        for i, (text, richtung, _hinweis) in enumerate(self.RICHTUNGEN):
+            yield QtCore.QRectF(i * b, y, b - 1, self.ZEILE), text, richtung
 
     def _treffer(self, pos) -> str:
+        p = QtCore.QPointF(pos)
         for _t, richtung, poly in self._polygone():
-            if poly.containsPoint(QtCore.QPointF(pos), QtCore.Qt.OddEvenFill):
+            if poly.containsPoint(p, QtCore.Qt.OddEvenFill):
+                return richtung
+        for rect, _t, richtung in self._felder():
+            if rect.contains(p):
                 return richtung
         return ""
 
+    # -- Bedienung -------------------------------------------------------
     def mouseMoveEvent(self, ev):
         neu = self._treffer(ev.position() if hasattr(ev, "position") else ev.pos())
         if neu != self._unter:
             self._unter = neu
+            for text, richtung, hinweis in self.RICHTUNGEN:
+                if richtung == neu:
+                    self.setToolTip(hinweis)
+                    break
             self.update()
 
     def leaveEvent(self, _ev):
@@ -407,12 +452,17 @@ class Ansichtswuerfel(QtWidgets.QWidget):
         r = self._treffer(ev.position() if hasattr(ev, "position") else ev.pos())
         self.gewaehlt.emit(r or "iso")
 
+    # -- Zeichnen --------------------------------------------------------
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        # Der Wuerfel: die obere Seite hell, die beiden anderen abgestuft -
+        # so sieht man auf einen Blick, welche Seite oben liegt.
+        tiefe = {"oben": "#eef3f7", "vorne": "#dde5ec", "rechts": "#cbd6df"}
         for text, richtung, poly in self._polygone():
             hell = richtung == self._unter
-            p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if hell else "#f2f5f8"))
+            p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if hell
+                                    else tiefe.get(richtung, "#f2f5f8")))
             p.setPen(QtGui.QPen(QtGui.QColor(dsg.FARBEN["linie"]), 1.2))
             p.drawPolygon(poly)
             p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["matt"]))
@@ -421,6 +471,18 @@ class Ansichtswuerfel(QtWidgets.QWidget):
             f.setBold(True)
             p.setFont(f)
             p.drawText(poly.boundingRect(), QtCore.Qt.AlignCenter, text)
+        # Die Richtungszeile
+        for rect, text, richtung in self._felder():
+            hell = richtung == self._unter
+            p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if hell else "#f7f9fb"))
+            p.setPen(QtGui.QPen(QtGui.QColor(dsg.FARBEN["linie"]), 1.0))
+            p.drawRoundedRect(rect, 3, 3)
+            p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["matt"]))
+            f = p.font()
+            f.setPointSize(7 if len(text) > 1 else 8)
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(rect, QtCore.Qt.AlignCenter, text)
         p.end()
 
 

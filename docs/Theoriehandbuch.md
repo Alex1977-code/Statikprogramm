@@ -844,12 +844,39 @@ bekommen dort dieselben Knoten und hängen zusammen. Geteilt wird ausdrücklich
 liegen, aber verschiedene Objekte sind, gehören zu einer Kontaktfuge und dürfen
 **nicht** verschweißt werden.
 
-**Grenzen.** Der Vernetzer erzeugt lineare Tetraeder (`tet4`, konstante
-Dehnung). Splitter — sehr flache Tetraeder — lassen sich mit dem
-Kugel-Kanten-Kriterium nicht ausschließen; ihre Zahl und die schlechteste Güte
-stehen darum im Protokoll. Ist eine Zielkantenlänge für ein Bauteil zu grob
-(weniger als vier Elemente über seine größte Ausdehnung), wird sie für dieses
-Bauteil verkleinert und das gemeldet.
+**Splitter.** Das Kugel-Kanten-Kriterium erfasst jede schlechte Form außer
+einer: vier fast in einer Ebene liegende Knoten können eine ganz gewöhnliche
+Umkugel haben. Solche *Splitter* sind fast singulär und verderben die
+Kondition der Steifigkeitsmatrix. Sie werden nachträglich herausgeglättet
+(*smart Laplacian* mit Mustersuche): ein freier Knoten wandert versuchsweise in
+den Schwerpunkt seiner Nachbarn und in zwölf Richtungen um seinen Platz herum,
+und der beste Schritt wird nur behalten, wenn die **schlechteste** Güte seiner
+Elemente danach höher ist und kein Element umklappt. Randknoten stehen fest —
+sie sind die Geometrie, und so bleibt das Volumen unverändert. An einer Platte
+mit Bohrung steigt die schlechteste Güte damit von 0,0035 auf 0,102, und kein
+Element bleibt unter 0,1. Wo alle vier Knoten eines Splitters auf dem Rand
+liegen, lässt er sich nicht glätten; seine Zahl steht dann im Protokoll.
+
+**Lineare und quadratische Tetraeder.** `Netzeinstellungen.ordnung` wählt
+zwischen `tet4` (linear, konstante Dehnung) und `tet10` (quadratisch). Die
+Seitenmittenknoten liegen auf den Kantenmitten und werden über das *Knotenpaar*
+gemerkt: benachbarte Elemente und Körper mit gemeinsamer Randfläche bekommen
+denselben Knoten, an einer Kontaktfuge verschiedene. Der Unterschied ist groß —
+ein Kragträger 0,2 × 0,2 × 2,0 m mit derselben Kantenlänge von 100 mm:
+
+| | tet4 | tet10 |
+|---|---|---|
+| Elemente | 1143 | 1143 |
+| Knoten | 285 | 1874 |
+| Endverschiebung | 69,5 % der Balkenlösung | 99,0 % |
+
+Der lineare Tetraeder versteift (*locking*); erst bei 50 mm kommt er auf 91 %.
+Beide bestehen dagegen den Patchtest exakt: unter einem linearen
+Verschiebungsfeld bleibt die Restkraft an jedem inneren Knoten unter 1e-8 N.
+
+**Grenzen.** Ist eine Zielkantenlänge für ein Bauteil zu grob (weniger als vier
+Elemente über seine größte Ausdehnung), wird sie für dieses Bauteil verkleinert
+und das gemeldet.
 
 ## 7 Parallelisierung
 
@@ -869,9 +896,10 @@ Bauteil verkleinert und das gemeldet.
 * Volumen: nachgewiesen wird der Spannungszustand nach 6.2.1(5) für die im
   Modell angelegten Volumenbereiche (Kapitel 5d). Eine Stabilitätsuntersuchung
   des Volumenkörpers gibt es nicht.
-* Vernetzung: lineare Tetraeder (konstante Dehnung, Kapitel 6a). Sie sind
-  steifer als quadratische Elemente; für Spannungsspitzen an Kerben ist
-  entsprechend fein zu vernetzen. Die Netzgüte steht je Körper im Protokoll.
+* Vernetzung: Tetraeder, linear oder quadratisch (Kapitel 6a). Die linearen
+  sind steifer; für Biegung und für Spannungsspitzen an Kerben gehören die
+  quadratischen genommen oder entsprechend fein vernetzt. Die Netzgüte steht
+  je Körper im Protokoll.
 * Schalen: ebene Elemente. Nachgewiesen werden das Schubbeulen der Stegbleche
   (Abschnitt 5), ebene Blechfelder mit und ohne Steifen (Abschnitt 10 mit
   Anhang A und 4.5), die Steifen selbst (Abschnitt 9), die Lasteinleitung

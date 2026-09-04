@@ -899,6 +899,9 @@ KUGELKANTE = 2.0
 #: Hoechstzahl der Verfeinerungsdurchgaenge
 MAXRUNDEN = 30
 
+#: Guete, unter der ein Tetraeder als Splitter gilt und herausgeglaettet wird
+SPLITTER = 0.1
+
 
 def bcc_gitter(P: np.ndarray, T: np.ndarray, h: float,
                index: "Gitterindex" = None) -> np.ndarray:
@@ -1049,7 +1052,8 @@ def _innere(punkte: np.ndarray, simplices: np.ndarray, P: np.ndarray,
     return TET[drin], V[drin]
 
 
-def tetraedern(P: np.ndarray, T: np.ndarray, h: float) -> tuple:
+def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
+               splitter: float = SPLITTER) -> tuple:
     """Aus der geschlossenen Huelle (P, T) ein Tetraedernetz machen.
 
     **Delaunay-Verfeinerung.** Begonnen wird mit den Randpunkten allein. Dann
@@ -1134,7 +1138,14 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float) -> tuple:
             # leicht wieder auf gemeinsamen Kugeln, und Qhull antwortet mit
             # flachen Tetraedern
             rng = np.random.default_rng(20240906 + runde)
-            tri.add_points(K + rng.normal(scale=1e-4 * h, size=K.shape))
+            try:
+                tri.add_points(K + rng.normal(scale=1e-4 * h, size=K.shape))
+            except Exception as ex:         # noqa: BLE001
+                # Qhull kann bei fast entarteten Punktwolken aussteigen. Dann
+                # bleibt es bei dem, was bis hierher entstanden ist - das ist
+                # ein brauchbares Netz, nur ein groeberes.
+                bericht["hinweis"] = f"Verfeinerung abgebrochen: {ex}"
+                break
             bericht["verfeinerungen"] = runde + 1
             # Wenn kaum noch Punkte dazukommen, ist nichts mehr zu holen
             if len(K) < 0.005 * len(punkte):
@@ -1145,7 +1156,19 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float) -> tuple:
         bericht["fehler"] = f"Verfeinerung misslungen: {ex}"
         return P, np.zeros((0, 4), int), bericht
     finally:
-        tri.close()
+        try:
+            tri.close()
+        except Exception:                   # noqa: BLE001
+            pass
+    # Splitter herausglaetten - die Randknoten bleiben, wo sie sind
+    if len(TET) and splitter > 0:
+        fest = np.zeros(len(punkte), bool)
+        fest[:len(P)] = True
+        punkte, bewegt = glaetten(punkte, TET, fest, ziel=splitter)
+        bericht["geglaettet"] = bewegt
+        if bewegt:
+            V = np.abs(tetraedervolumen(punkte, TET))
+            TET, V = TET[V > FLACH * h ** 3], V[V > FLACH * h ** 3]
     bericht["innenpunkte"] = len(punkte) - len(P)
     bericht["tetraeder"] = len(TET)
     bericht["volumen"] = float(V.sum())
@@ -1191,7 +1214,8 @@ def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
 
 
 def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
-                    runden: int = 3, quelle: list = None) -> tuple:
+                    runden: int = 3, quelle: list = None,
+                    splitter: float = SPLITTER) -> tuple:
     """Tetraedern und dabei den Rand nachfuehren, wo er nicht getroffen wurde.
 
     Eine einspringende Kante - der Innenwinkel eines L-Koerpers, die Kehle
@@ -1208,7 +1232,7 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
     from scipy.spatial import cKDTree
     bestes = None
     for runde in range(max(1, runden)):
-        Pn, TET, bericht = tetraedern(P, T, h)
+        Pn, TET, bericht = tetraedern(P, T, h, splitter)
         bericht["runden"] = runde + 1
         bericht["huelldreiecke"] = len(T)
         soll = bericht["sollvolumen"]
@@ -1236,6 +1260,82 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
         P, T, quelle = huelle_verfeinern(P, T, np.unique(np.atleast_2d(nn)), quelle)
     Pn, TET, bericht, _, P, T, quelle = bestes
     return Pn, TET, bericht, P, T, quelle
+
+
+def glaetten(P: np.ndarray, TET: np.ndarray, fest: np.ndarray,
+             ziel: float = SPLITTER, runden: int = 6) -> tuple:
+    """Splitter herausglaetten: schlechte Tetraeder durch Knotenverschieben bessern.
+
+    Die Delaunay-Verfeinerung erfasst mit dem Kugel-Kanten-Kriterium jede
+    schlechte Form **ausser dem Splitter**: vier fast in einer Ebene liegende
+    Knoten koennen eine ganz gewoehnliche Umkugel haben. Solche Elemente sind
+    fast singulaer und verderben die Kondition der Steifigkeitsmatrix.
+
+    Geglaettet wird nur, was hilft (*smart Laplacian*): ein Knoten wandert
+    versuchsweise in den Schwerpunkt seiner Nachbarn, und der Schritt wird nur
+    behalten, wenn die **schlechteste** Guete seiner Elemente danach besser ist
+    und kein Element umklappt. Randknoten stehen fest - sie sind die Geometrie.
+
+    Rueckgabe (Punkte, Zahl der verschobenen Knoten).
+    """
+    if not len(TET):
+        return P, 0
+    P = np.array(P, dtype=float, copy=True)
+    # Nachbarschaft: Knoten -> Elemente, Knoten -> Nachbarknoten
+    an_knoten: dict = {}
+    for k, t in enumerate(TET):
+        for i in t:
+            an_knoten.setdefault(int(i), []).append(k)
+    nachbarn: dict = {}
+    for t in TET:
+        for i in t:
+            nachbarn.setdefault(int(i), set()).update(int(x) for x in t if x != i)
+    richtungen = np.array([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0],
+                           [0, 0, 1], [0, 0, -1],
+                           [1, 1, 1], [-1, -1, -1], [1, -1, 1], [-1, 1, -1],
+                           [1, 1, -1], [-1, -1, 1]], float)
+    richtungen /= np.linalg.norm(richtungen, axis=1)[:, None]
+    verschoben = 0
+    for _runde in range(max(1, runden)):
+        q = guete(P, TET)
+        schlecht = np.flatnonzero(q < ziel)
+        if not len(schlecht):
+            break
+        kandidaten = sorted({int(i) for k in schlecht for i in TET[k]
+                             if not fest[int(i)]})
+        if not kandidaten:
+            break
+        bewegt = 0
+        for i in kandidaten:
+            els = an_knoten.get(i)
+            nb = list(nachbarn.get(i, ()))
+            if not els or not nb:
+                continue
+            teil = TET[els]
+            vorher = float(guete(P, teil).min())
+            alt = P[i].copy()
+            weite = float(np.linalg.norm(P[nb] - alt, axis=1).mean())
+            # Musterschritte: erst in den Schwerpunkt der Nachbarn, dann in
+            # zwoelf Richtungen um den Punkt herum. Ein reiner Laplace-Schritt
+            # allein bessert einen Splitter oft nicht - er liegt ja gerade
+            # deshalb flach, weil er mitten zwischen seinen Nachbarn steht.
+            versuche = [alt + f * (P[nb].mean(axis=0) - alt) for f in (1.0, 0.6, 0.3)]
+            for w in (0.35, 0.2, 0.1):
+                versuche += list(alt + w * weite * richtungen)
+            bestes, bestq = None, vorher
+            for kandidat in versuche:
+                P[i] = kandidat
+                if tetraedervolumen(P, teil).min() <= 0:
+                    continue
+                gq = float(guete(P, teil).min())
+                if gq > bestq + 1e-12:
+                    bestes, bestq = kandidat.copy(), gq
+            P[i] = bestes if bestes is not None else alt
+            bewegt += bestes is not None
+        verschoben += bewegt
+        if not bewegt:
+            break
+    return P, verschoben
 
 
 def guete(P: np.ndarray, TET: np.ndarray) -> np.ndarray:
@@ -1490,8 +1590,37 @@ def _knoten_anlegen(model: Model, koerper, Pn: np.ndarray, benutzt: np.ndarray,
     return neu
 
 
+#: Kantenreihenfolge des quadratischen Tetraeders: 4=M(0,1) 5=M(1,2)
+#: 6=M(0,2) 7=M(0,3) 8=M(1,3) 9=M(2,3) - so erwartet sie statik3d.elements.solid
+TET10_KANTEN = ((0, 1), (1, 2), (0, 2), (0, 3), (1, 3), (2, 3))
+
+
+def _tet10_knoten(model: Model, ecken: list, kanten: dict) -> list:
+    """Die zehn Knoten eines quadratischen Tetraeders zu vier Ecken.
+
+    Die Seitenmittenknoten liegen auf den Kantenmitten (geradflaechiger
+    Tetraeder mit quadratischem Verschiebungsansatz). Sie werden ueber das
+    **Knotenpaar** gemerkt: zwei Elemente an derselben Kante bekommen damit
+    denselben Mittenknoten, und ebenso zwei Koerper, die sich eine Randflaeche
+    teilen - dort haben die Eckknoten ja schon dieselben Nummern. An einer
+    Kontaktfuge sind die Eckknoten verschieden, also auch die Mittenknoten:
+    die Fuge bleibt offen.
+    """
+    out = list(ecken)
+    for a, b in TET10_KANTEN:
+        i, j = int(ecken[a]), int(ecken[b])
+        schluessel = (min(i, j), max(i, j))
+        k = kanten.get(schluessel)
+        if k is None:
+            k = int(model.add_node(*(0.5 * (model.nodes[i] + model.nodes[j]))))
+            kanten[schluessel] = k
+        out.append(k)
+    return out
+
+
 def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
-                      log: list = None, cache: dict = None) -> list[int]:
+                      log: list = None, cache: dict = None,
+                      ordnung: int = 0) -> list[int]:
     """Einen Volumenkoerper frei in Tetraeder vernetzen.
 
     ``h`` ist die angestrebte Kantenlaenge; 0 nimmt die Netzeinstellungen des
@@ -1507,6 +1636,8 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
         h = float(getattr(netz, "ziellaenge", 0.0) or 0.0)
     if h <= 0:
         h = STANDARDLAENGE
+    if ordnung <= 0:
+        ordnung = int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1)
     mat = koerper.material or C.ensure_material(model, log=log)
 
     # Ein 20-mm-Bolzen bei 50 mm Zielkantenlaenge haette kein einziges
@@ -1541,7 +1672,9 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
 
     quelle = bericht.get("quelle") or []
     n_rand = len(P)
-    Pn, TET, tb, P, T, quelle = tetraedern_treu(P, T, h, quelle=quelle)
+    splitter = float(getattr(getattr(model, "netz", None), "splitter", SPLITTER) or 0.0)
+    Pn, TET, tb, P, T, quelle = tetraedern_treu(P, T, h, quelle=quelle,
+                                                splitter=splitter)
     if tb.get("fehler"):
         C.warn(log, f"Volumen {koerper.name}: {tb['fehler']}")
         return []
@@ -1556,12 +1689,22 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
     # Nur die wirklich benutzten Punkte ins Modell uebernehmen
     benutzt = np.unique(TET)
     neu = _knoten_anlegen(model, koerper, Pn, benutzt, len(P), T, quelle, cache)
-    els = [model.add_element("tet4", [int(neu[i]) for i in t], mat,
-                             group=koerper.name) for t in TET]
+    ecken = [[int(neu[i]) for i in t] for t in TET]
+    if ordnung >= 2:
+        # Das Woerterbuch der Kanten muss ueber alle Elemente gehen - sonst
+        # bekaeme jedes Element eigene Seitenmittenknoten und das Netz fiele
+        # an ihnen auseinander.
+        kanten = cache.setdefault("_kanten", {}) if cache is not None else {}
+        els = [model.add_element("tet10", _tet10_knoten(model, e, kanten), mat,
+                                 group=koerper.name) for e in ecken]
+    else:
+        els = [model.add_element("tet4", e, mat, group=koerper.name) for e in ecken]
     koerper.elemente = els
-    koerper.kommentar = (f"{len(els)} Tetraeder, Kantenlänge {h * 1e3:.0f} mm, "
+    art = "tet10" if ordnung >= 2 else "tet4"
+    koerper.kommentar = (f"{len(els)} Tetraeder ({art}), "
+                         f"Kantenlänge {h * 1e3:.0f} mm, "
                          f"Güte min {tb['guete']:.3f}")
-    C.say(log, f"Volumen {koerper.name}: {len(els)} Tetraeder aus "
+    C.say(log, f"Volumen {koerper.name}: {len(els)} Tetraeder ({art}) aus "
                f"{tb.get('huelldreiecke', bericht['dreiecke'])} Randdreiecken "
                f"(Kantenlänge {h * 1e3:.0f} mm, {len(benutzt)} Knoten"
                + (f", {tb['runden']} Durchgänge" if tb.get("runden", 1) > 1 else "")
@@ -1571,6 +1714,11 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
                f"Mittel {tb.get('guete_mittel', 0.0):.3f}, "
                f"Randtreue {tb['randtreue'] * 100:.2f} % "
                f"(größter Abstand zur Hülle {tb.get('randabweichung', 0.0) * 1e3:.2f} mm)")
+    if tb.get("hinweis"):
+        C.say(log, f"  Volumen {koerper.name}: {tb['hinweis']}")
+    if tb.get("geglaettet"):
+        C.say(log, f"  {tb['geglaettet']} Knoten geglättet, um Splitter zu "
+                   "beseitigen (Randknoten bleiben, wo sie sind)")
     if tb.get("splitter"):
         C.say(log, f"  {tb['splitter']} Splitter (Güte unter 0.1) von "
                    f"{len(TET)} Tetraedern")
