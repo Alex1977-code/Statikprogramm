@@ -1004,9 +1004,14 @@ def test_lastfaelle_und_lasten():
               f"{lf2.n_loads} Lasten")
         check("Protokoll: eine Last gelegt", "1 Flaechenlasten auf vernetzte" in txt,
               next((x for x in log if "auf vernetzte" in x), "-"))
-        check("Protokoll: eine Last ohne Zielflaeche",
-              "1 Flaechenlasten ohne vernetzte Zielflaeche" in txt,
-              next((x for x in log if "ohne vernetzte" in x), "-"))
+        # Die Last auf der unvernetzten Flaeche faellt nicht mehr weg: sie
+        # haengt jetzt an der Flaeche und wirkt, sobald diese vernetzt ist.
+        check("Protokoll: eine Last an ihre Flaeche gehaengt",
+              "1 Flaechenlasten an ihre Flaeche gehaengt" in txt,
+              next((x for x in log if "an ihre Flaeche" in x), "-"))
+        geo = [g for lc in m.load_cases.values() for g in lc.geometrielasten]
+        check("und sie steht als Geometrielast im Modell", len(geo) == 1,
+              geo[0].bezug() if geo else "-")
         check("Lastrichtung im Klartext", "lokal z" in txt and "global Z" in txt,
               next((x for x in log if "Lastrichtung" in x), "-"))
         check("freie Rechtecklasten mit Grund genannt",

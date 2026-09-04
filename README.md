@@ -124,6 +124,11 @@ auf dem Handy…** denselben Server für das geöffnete Modell. Details:
 
 Ausführlich: [docs/Benutzerhandbuch.md](docs/Benutzerhandbuch.md).
 
+Zu mehreren am Programm arbeiten: [docs/Mitarbeit.md](docs/Mitarbeit.md) —
+Schreibrecht vergeben, Zweige, Pull Requests, Prüfungen. **Auf `main` wird
+nicht unmittelbar gepusht**: jeder Push dorthin baut die exe, die alle
+Installationen beim nächsten Start holen.
+
 ## Python-API
 
 ```python
@@ -229,6 +234,6 @@ statik3d/
   sections.py        zusammengesetzte Querschnitte (Steiner, Hauptachsen)
 packaging/           PyInstaller-Rezept, Symbol, Build-Stempel (Windows-exe)
   mesher.py, examples_lib.py, cli.py
-docs/                Benutzerhandbuch, Theoriehandbuch, Schnittstellen, Rechnerfarm
+docs/                Benutzerhandbuch, Theoriehandbuch, Schnittstellen, Rechnerfarm, Mitarbeit
 tests/               Verifikation
 ```

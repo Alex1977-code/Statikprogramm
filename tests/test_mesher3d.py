@@ -543,12 +543,64 @@ def test_splitter_glaetten():
     check("und die Elementzahl auch", mit[3] == ohne[3], f"{ohne[3]} -> {mit[3]}")
 
 
+# --------------------------------------------------------------------------
+# 11) Lasten, die an der Geometrie haengen, wirken nach dem Vernetzen
+# --------------------------------------------------------------------------
+def test_geometrielast():
+    """RFEM haengt seine Flaechenlasten an die Flaeche. Beim Import gibt es die
+    Elemente noch nicht - die Last muss darum am Objekt bleiben und beim
+    Vernetzen auf die Elemente kommen. Die Probe ist das Gleichgewicht:
+    die Summe der Auflagerkraefte muss p mal Flaeche sein."""
+    a, hoehe, p = 1.0, 0.5, -2.0e5          # 200 kN/m^2 nach unten
+    m = neues_modell()
+    k = prisma(m, [[(0, 0), (a, 0), (a, a), (0, a)]], hoehe)
+    m.add_load_case("LF1")
+    m.case("LF1").gravity = [0.0, 0.0, 0.0]
+    m.add_geometrielast("Deckel", p, "flaeche", richtung=[0.0, 0.0, 1.0], case="LF1")
+    check("die Last haengt am Objekt", len(m.case("LF1").geometrielasten) == 1)
+    check("vor dem Vernetzen wirkt sie nicht",
+          m.lasten_verteilen() == 0 and not m.case("LF1").face_loads)
+
+    m.netz.ziellaenge = 0.25
+    els = M3.mesh_koerper_frei(m, k, log=[])
+    n = m.lasten_verteilen()
+    check("nach dem Vernetzen liegt sie auf den Elementen", n > 0,
+          f"{n} Elementlasten")
+    check("die Randseiten der Fläche sind gemerkt",
+          len(m.flaechen["Deckel"].randseiten) == n,
+          f"{len(m.flaechen['Deckel'].randseiten)} Seiten")
+
+    im = sorted({int(x) for i in els for x in m.elements[i].nodes})
+    for i in im:
+        if abs(m.nodes[i][2]) < 1e-9:
+            m.support(i, [0, 1, 2])
+    r = solver.solve_static(m, case="LF1")
+    close("Summe der Auflagerkräfte = p · A", float(r.reactions[:, 2].sum()),
+          -p * a * a, 1.0, " N")
+
+    # Wiederholtes Verteilen darf die Last nicht verdoppeln
+    n2 = m.lasten_verteilen()
+    check("nochmaliges Verteilen verdoppelt die Last nicht",
+          n2 == n and len(m.case("LF1").face_loads) == n,
+          f"{len(m.case('LF1').face_loads)} Elementlasten")
+    # und sie ueberlebt Speichern und Laden
+    from statik3d.model import Model as _M
+    m2 = _M.from_dict(m.to_dict())
+    check("die Geometrielast überlebt Speichern und Laden",
+          len(m2.case("LF1").geometrielasten) == 1
+          and len(m2.case("LF1").face_loads) == 0,
+          f"{len(m2.case('LF1').geometrielasten)} Geometrielasten, "
+          f"{len(m2.case('LF1').face_loads)} Elementlasten")
+    check("und wird nach dem Laden wieder verteilt",
+          m2.lasten_verteilen() == n, f"{n} Elementlasten")
+
+
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_einspringende_ecke,
               test_platte_mit_bohrung, test_zylinder_und_buchse,
               test_kleines_bauteil, test_gemeinsame_flaeche, test_zugstab,
               test_undichte_huelle, test_quadratische_tetraeder,
-              test_splitter_glaetten):
+              test_splitter_glaetten, test_geometrielast):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

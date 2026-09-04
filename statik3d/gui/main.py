@@ -1706,6 +1706,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._netz_loeschen(k.elemente)
             k.elemente = []
             n += len(mesher.mesh_koerper(self.model, k, log, cache=cache))
+        # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
+        self.model.lasten_verteilen(log)
         for z in log:
             self.log.appendPlainText(z)
         if n:

@@ -705,6 +705,35 @@ class FaceLoad:
 
 
 @dataclass
+class Geometrielast:
+    """Last auf einem Geometrieobjekt statt auf Elementen.
+
+    RFEM haengt seine Flaechenlasten an die **Flaeche**, nicht an Elemente -
+    beim Import gibt es die Elemente noch gar nicht, die Flaeche ist ja noch
+    nicht vernetzt. Frueher fielen solche Lasten darum unter den Tisch; jetzt
+    bleiben sie am Objekt haengen und werden beim Vernetzen auf die
+    entstandenen Elemente verteilt (:meth:`Model.lasten_verteilen`).
+
+    ziel:      Name der Flaeche (oder des Volumenkoerpers)
+    art:       "flaeche" oder "koerper"
+    p:         Flaechenlast [N/m^2], positiv in Richtung der Aussennormalen
+    richtung:  None = senkrecht zur Flaeche, sonst ein globaler Richtungsvektor
+    """
+    ziel: str = ""
+    art: str = "flaeche"
+    p: float = 0.0
+    richtung: Optional[list[float]] = None
+    kommentar: str = ""
+
+    def bezug(self) -> str:
+        t = f"{self.ziel}: {self.p / 1e3:.3g} kN/m²"
+        if self.richtung:
+            t += " in " + ", ".join(f"{x:g}" for x in self.richtung)
+        return t + (" – noch nicht vernetzt" if not self.kommentar else
+                    f" – {self.kommentar}")
+
+
+@dataclass
 class TempLoad:
     """Gleichmaessige Temperaturaenderung dT [K] eines Elements
     (Stab, Schale oder Volumen). Optional dT_z = Temperaturdifferenz ueber die
@@ -725,6 +754,7 @@ class LoadCase:
     nodal_loads: list[NodalLoad] = field(default_factory=list)
     beam_loads: list[BeamLoad] = field(default_factory=list)
     face_loads: list[FaceLoad] = field(default_factory=list)
+    geometrielasten: list[Geometrielast] = field(default_factory=list)
     temp_loads: list[TempLoad] = field(default_factory=list)
     gravity: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     gamma_sup: Optional[float] = None      # Teilsicherheitsbeiwert (None -> aus Kategorie)
@@ -751,7 +781,8 @@ class LoadCase:
     @property
     def n_loads(self) -> int:
         return (len(self.nodal_loads) + len(self.beam_loads) + len(self.face_loads)
-                + len(self.temp_loads) + (1 if np.any(self.gravity) else 0))
+                + len(self.geometrielasten) + len(self.temp_loads)
+                + (1 if np.any(self.gravity) else 0))
 
     def to_dict(self) -> dict:
         return {
@@ -760,7 +791,12 @@ class LoadCase:
             "exclusive_group": self.exclusive_group,
             "nodal_loads": [asdict(l) for l in self.nodal_loads],
             "beam_loads": [asdict(l) for l in self.beam_loads],
-            "face_loads": [asdict(l) for l in self.face_loads],
+            # Aus Geometrielasten erzeugte Elementlasten werden **nicht**
+            # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
+            # laegen sie nach dem Laden doppelt auf dem Netz.
+            "face_loads": [asdict(l) for l in self.face_loads
+                           if not getattr(l, "_geo", False)],
+            "geometrielasten": [asdict(l) for l in self.geometrielasten],
             "temp_loads": [asdict(l) for l in self.temp_loads],
             "gravity": list(map(float, self.gravity)),
             "gamma_sup": self.gamma_sup, "gamma_inf": self.gamma_inf,
@@ -773,6 +809,8 @@ class LoadCase:
         lc.nodal_loads = [NodalLoad(**l) for l in d.get("nodal_loads", [])]
         lc.beam_loads = [BeamLoad(**l) for l in d.get("beam_loads", [])]
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
+        lc.geometrielasten = [Geometrielast(**l)
+                              for l in d.get("geometrielasten", [])]
         lc.temp_loads = [TempLoad(**l) for l in d.get("temp_loads", [])]
         lc.gravity = list(d.get("gravity", [0, 0, 0]))
         lc.gamma_sup = d.get("gamma_sup")
@@ -1135,6 +1173,11 @@ class Flaeche:
     elemente: list[int] = field(default_factory=list)
     kommentar: str = ""
     oeffnungen: list[list[str]] = field(default_factory=list)
+    #: [[Element, lokale Seite], ...] - die Seitenflaechen der Volumenelemente,
+    #: die auf dieser Flaeche liegen. Nur so laesst sich eine Flaechenlast auf
+    #: die Randflaeche eines Volumenkoerpers legen: dort gibt es keine
+    #: Schalenelemente, nur Tetraeder, die mit einer Seite anliegen.
+    randseiten: list[list[int]] = field(default_factory=list)
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
@@ -1786,6 +1829,78 @@ class Model:
     def add_flaechenfreigabe(self, name: str, **kw) -> "Kontaktbedingung":
         """Alter Name von :meth:`add_kontaktbedingung`."""
         return self.add_kontaktbedingung(name, **kw)
+
+    def lasten_verteilen(self, log: list = None) -> int:
+        """Geometrielasten auf die inzwischen vorhandenen Elemente legen.
+
+        Eine Last, die an einer Flaeche haengt, kann erst wirken, wenn die
+        Flaeche vernetzt ist. Diese Methode holt das nach - nach jedem
+        Vernetzen. Sie ist **wiederholbar**: die aus einer Geometrielast
+        erzeugten Elementlasten werden vorher wieder entfernt, sonst
+        verdoppelte sich die Last bei jedem Neuvernetzen.
+
+        Rueckgabe: Zahl der erzeugten Elementlasten.
+        """
+        erzeugt = 0
+        offen = 0
+        for lc in self.load_cases.values():
+            if not lc.geometrielasten:
+                continue
+            # Alles wegwerfen, was aus Geometrielasten stammt
+            lc.face_loads = [f for f in lc.face_loads if not getattr(f, "_geo", False)]
+            for gl in lc.geometrielasten:
+                neue = self._geometrielast_legen(gl)
+                for f in neue:
+                    f._geo = True
+                    lc.face_loads.append(f)
+                erzeugt += len(neue)
+                gl.kommentar = (f"{len(neue)} Elementlasten" if neue
+                                else "Ziel noch nicht vernetzt")
+                offen += not neue
+        if log is not None and (erzeugt or offen):
+            from .importers import _common as C
+            if erzeugt:
+                C.say(log, f"{erzeugt} Elementlasten aus Geometrielasten erzeugt")
+            if offen:
+                C.say(log, f"  {offen} Geometrielasten warten noch auf ihr Netz")
+        return erzeugt
+
+    def _geometrielast_legen(self, gl: "Geometrielast") -> list:
+        """Die Elementlasten einer Geometrielast - oder [], wenn kein Netz da ist."""
+        out: list = []
+        if gl.art == "flaeche":
+            f = self.flaechen.get(gl.ziel)
+            if f is None:
+                return out
+            for e in (f.elemente or []):
+                if 0 <= int(e) < len(self.elements):
+                    out.append(FaceLoad(int(e), gl.p, 0, list(gl.richtung)
+                                        if gl.richtung else None))
+            for e, seite in (f.randseiten or []):
+                if 0 <= int(e) < len(self.elements):
+                    out.append(FaceLoad(int(e), gl.p, int(seite),
+                                        list(gl.richtung) if gl.richtung else None))
+            return out
+        k = self.koerper.get(gl.ziel)
+        if k is None:
+            return out
+        for name in (k.flaechen or []):
+            f = self.flaechen.get(name)
+            if f is None:
+                continue
+            for e, seite in (f.randseiten or []):
+                if 0 <= int(e) < len(self.elements):
+                    out.append(FaceLoad(int(e), gl.p, int(seite),
+                                        list(gl.richtung) if gl.richtung else None))
+        return out
+
+    def add_geometrielast(self, ziel: str, p: float, art: str = "flaeche",
+                          richtung=None, case: str = None) -> "Geometrielast":
+        """Eine Last an ein Geometrieobjekt haengen (wirkt nach dem Vernetzen)."""
+        gl = Geometrielast(str(ziel), art, float(p),
+                           list(richtung) if richtung else None)
+        self.case(case).geometrielasten.append(gl)
+        return gl
 
     def add_kontaktbedingung(self, name: str, **kw) -> Kontaktbedingung:
         """Eine Kontaktbedingung aufnehmen (aus RFEM gelesen oder von Hand).

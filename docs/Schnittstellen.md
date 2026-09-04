@@ -267,6 +267,18 @@ steifes Modell schlimmer ist als eine sichtbare Lücke:
 * Flächen mit **veränderlicher Dicke** werden mit dem Mittelwert gerechnet und
   gemeldet.
 
+### Flächenlasten ohne Netz
+
+RFEM hängt eine Flächenlast an die **Fläche**. Ist die Fläche beim Import noch
+nicht vernetzt — in einem Volumenmodell ist sie das nie, dort ist sie die
+Randfläche eines Körpers —, gäbe es kein Element, an das die Last gehen könnte.
+Sie wird darum als `Geometrielast` am Objekt gehalten und beim Vernetzen
+verteilt (`Model.lasten_verteilen`). Auf einer Volumen-Randfläche geht sie auf
+die Seitenflächen der anliegenden Tetraeder; welche das sind, merkt sich der
+Vernetzer beim Vernetzen (`Flaeche.randseiten`).
+
+Die Probe ist das Gleichgewicht: die Summe der Auflagerkräfte muss p · A sein.
+
 ### Öffnungen
 
 Eine Bohrung ist in RFEM kein Loch im Randpolygon, sondern ein eigenes Objekt:

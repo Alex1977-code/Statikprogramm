@@ -220,6 +220,15 @@ Tetraeder, 0 = flach) und die **Randtreue** — wieviel des Netzrandes wirklich
 auf der Geometrie liegt. Ist die Randhülle nicht dicht, wird gar nicht
 vernetzt: ein Netz aus einer undichten Hülle wäre stillschweigend falsch.
 
+**Lasten, die an der Geometrie hängen.** RFEM hängt seine Flächenlasten an die
+*Fläche*, nicht an Elemente — beim Import gibt es die Elemente noch gar nicht.
+Solche Lasten fallen jetzt nicht mehr unter den Tisch: sie bleiben als
+**Geometrielast** am Objekt und werden beim Vernetzen auf die entstandenen
+Elemente verteilt. Auf der Randfläche eines Volumenkörpers gibt es keine
+Schalenelemente — dort merkt sich das Programm, mit welcher Seite jeder
+Tetraeder anliegt, und legt die Last auf diese Seiten. Aus dem Beispielmodell
+kommen so 711 Flächenlasten, die vorher verloren gingen.
+
 „Netz löschen" nimmt die Elemente wieder weg, die Geometrie bleibt stehen.
 Eine Fläche, die noch einen Volumenkörper berandet, lässt sich nicht löschen —
 das Programm sagt, welcher es ist.

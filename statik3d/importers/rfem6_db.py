@@ -1109,7 +1109,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
 
     _solids(db, m, surf_nodes, log, matcache, surf_name)
     _surface_releases(db, m, log, nlmap)
-    _load_cases(db, m, log, surf_els, node_of, member_name)
+    _load_cases(db, m, log, surf_els, node_of, member_name, surf_name)
     _diagnose(m, log)
 
 
@@ -1164,7 +1164,8 @@ ACTION_CATEGORY = {1: "G", 2: "G", 3: "Q", 11: "Q", 12: "Q", 13: "Q"}
 
 
 def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
-                node_of: dict = None, member_name: dict = None) -> None:
+                node_of: dict = None, member_name: dict = None,
+                surf_name: dict = None) -> None:
     """Lastfaelle mit Namen, Kategorie und Eigengewichtsfaktor uebernehmen.
 
     Die Lasten selbst (Vorspannung, Flaechenlasten, freie Lasten) haengen in
@@ -1194,7 +1195,7 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     if n:
         C.say(log, f"{n} Lastfaelle uebernommen (Namen, Einwirkungskategorie, "
                    "Eigengewichtsfaktor)")
-    _loads(db, m, lc_name, surf_els or {}, log, node_of, member_name)
+    _loads(db, m, lc_name, surf_els or {}, log, node_of, member_name, surf_name)
     _combinations(db, m, lc_name, log)
 
 
@@ -1880,7 +1881,8 @@ def _load_case_of(db: Db, handle: str) -> dict:
 
 
 def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
-           node_of: dict = None, member_name: dict = None) -> None:
+           node_of: dict = None, member_name: dict = None,
+           surf_name: dict = None) -> None:
     """
     Lasten der Lastfaelle uebernehmen, soweit sie sich auf das Netz abbilden
     lassen.
@@ -1930,7 +1932,7 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                    "- nicht uebernommen")
 
     # ---- Flaechenlasten
-    n_ok = n_ohne = 0
+    n_ok = n_ohne = n_geo = 0
     summe = 0.0
     if db.has("SurfaceLoad"):
         case_of = _load_case_of(db, "SurfaceLoad")
@@ -1957,10 +1959,23 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             if gelegt:
                 n_ok += 1
                 summe += abs(p)
+                continue
+            # Kein Netz auf der Zielflaeche - die Last bleibt trotzdem im
+            # Modell: sie haengt an der Flaeche und wird beim Vernetzen auf
+            # die Elemente verteilt. Frueher fiel sie hier still weg.
+            fuer_flaeche = [surf_name[sid] for sid in ziele
+                            if sid in (surf_name or {})]
+            if fuer_flaeche:
+                for name in fuer_flaeche:
+                    m.add_geometrielast(name, p, "flaeche", case=lc)
+                n_geo += 1
             else:
                 n_ohne += 1
         if n_ok:
             C.say(log, f"  {n_ok} Flaechenlasten auf vernetzte Flaechen gelegt")
+        if n_geo:
+            C.say(log, f"  {n_geo} Flaechenlasten an ihre Flaeche gehaengt - sie "
+                       "wirken, sobald die Flaeche vernetzt ist")
         if n_ohne:
             C.say(log, f"  {n_ohne} Flaechenlasten ohne vernetzte Zielflaeche - "
                        "nicht uebernommen (die Flaeche traegt keine eigene Dicke "
