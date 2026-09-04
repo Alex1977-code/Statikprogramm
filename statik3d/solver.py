@@ -836,6 +836,7 @@ class Analysis:
     gzg: object = None
     beulen: object = None
     lasteinleitung: object = None
+    theorie2: object = None
     info: dict = field(default_factory=dict)
 
     def all_results(self) -> dict:
@@ -863,6 +864,8 @@ class Analysis:
             s.append(self.beulen.summary())
         if self.lasteinleitung is not None:
             s.append(self.lasteinleitung.summary())
+        if self.theorie2 is not None and self.theorie2.kombinationen:
+            s.append(self.theorie2.summary())
         return "\n".join(s)
 
 
@@ -882,6 +885,12 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
     if combinations and model.combinations:
         an.combinations = solve_combinations(model, case_results=an.cases, system=system,
                                              workers=workers, progress=progress)
+    if model.design.theorie2 != "aus" and an.combinations:
+        # Gleichgewicht am verformten System: die GZT-Kombinationen werden
+        # ersetzt, denn nach Theorie II. Ordnung gilt keine Superposition
+        # mehr (EN 1993-1-1, 5.2). Danach erst die Umhuellenden bilden.
+        from .theorie2 import check_theorie2
+        an.theorie2 = check_theorie2(model, an, system=system, progress=progress)
     if envelopes:
         groups: dict[str, dict] = {}
         for n, r in an.combinations.items():

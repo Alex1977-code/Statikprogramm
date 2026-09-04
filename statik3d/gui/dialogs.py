@@ -374,6 +374,31 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         f.addRow("Biegedrillknicken: 6.3.2.2 (general) / 6.3.2.3 (rolled)", self.lt)
         f.addRow("Nachweisstellen je Element", self.stations)
         f.addRow(QtWidgets.QLabel("Interaktion: Anhang B (Methode 2)"))
+        # --- Theorie II. Ordnung (EN 1993-1-1, 5.2 und 5.3)
+        self.th2 = QtWidgets.QComboBox()
+        self.th2.addItem("aus - nur Theorie I. Ordnung", "aus")
+        self.th2.addItem("automatisch nach 5.2.1(3) (α_cr < Grenze)", "auto")
+        self.th2.addItem("ein - immer am verformten System", "ein")
+        i = self.th2.findData(getattr(ds, "theorie2", "aus"))
+        self.th2.setCurrentIndex(max(i, 0))
+        self.imp = QtWidgets.QCheckBox("Ersatzimperfektionen nach 5.3.2 ansetzen")
+        self.imp.setChecked(bool(getattr(ds, "imperfektionen", True)))
+        self.th2_pl = QtWidgets.QCheckBox(
+            "plastische Berechnung (Grenze α_cr = 15 statt 10)")
+        self.th2_pl.setChecked(bool(getattr(ds, "th2_plastisch", False)))
+        self.th2_alle = QtWidgets.QCheckBox(
+            "Vorkrümmung für alle gedrückten Stäbe (5.3.2(6) übergehen)")
+        self.th2_alle.setChecked(bool(getattr(ds, "th2_alle_vorkruemmungen", False)))
+        f.addRow(QtWidgets.QLabel("<b>Theorie II. Ordnung (5.2 und 5.3)</b>"))
+        f.addRow("Berechnung", self.th2)
+        f.addRow(self.imp)
+        f.addRow(self.th2_pl)
+        f.addRow(self.th2_alle)
+        hint = QtWidgets.QLabel(
+            "Nach Theorie II. Ordnung gilt keine Superposition: jede Kombination\n"
+            "wird einzeln am verformten System gerechnet. Das dauert länger.")
+        hint.setStyleSheet("color: #555;")
+        f.addRow(hint)
         f.addRow(buttons(self))
 
     def apply(self, ds: DesignSettings):
@@ -383,6 +408,10 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         ds.gamma_Ff = self.gFf.value() or 1.0
         ds.lt_method = self.lt.currentText()
         ds.stations = self.stations.value()
+        ds.theorie2 = self.th2.currentData()
+        ds.imperfektionen = self.imp.isChecked()
+        ds.th2_plastisch = self.th2_pl.isChecked()
+        ds.th2_alle_vorkruemmungen = self.th2_alle.isChecked()
 
 
 # ==========================================================================

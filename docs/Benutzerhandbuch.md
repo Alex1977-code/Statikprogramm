@@ -483,6 +483,35 @@ Was **nicht** enthalten ist: Kegel- und Kugelschalen, ringversteifte Schalen
 und die numerischen Verfahren (GMNIA) nach EN 1993-1-6, 8.7. Liegen die
 Elemente eines ebenen Feldes nicht in einer Ebene, sagt das Programm es.
 
+### Theorie II. Ordnung und Imperfektionen
+
+Register *Nachweise* → „Einstellungen“. Unter **Theorie II. Ordnung** gibt es
+drei Möglichkeiten:
+
+* **aus** – es wird nur nach Theorie I. Ordnung gerechnet (Voreinstellung).
+* **automatisch nach 5.2.1(3)** – Statik3D bestimmt für jede GZT-Kombination
+  den Verzweigungslastfaktor α_cr und rechnet nur die Kombinationen am
+  verformten System, bei denen α_cr unter der Grenze liegt (10 elastisch,
+  15 plastisch). Das ist der empfohlene Weg: er kostet wenig und beantwortet
+  die Frage, ob Theorie I. Ordnung überhaupt zulässig war.
+* **ein** – alle GZT-Kombinationen werden am verformten System gerechnet.
+
+Dazu die **Ersatzimperfektionen nach 5.3.2**: Schiefstellung φ und
+Vorkrümmung e_0 werden als gleichwertige Lasten angesetzt, die Geometrie
+bleibt unberührt. Wer die Vorkrümmung auch für gedrungene Stäbe ansetzen
+will, schaltet „5.3.2(6) übergehen“ ein.
+
+Der Bericht bekommt ein eigenes Kapitel: α_cr je Kombination mit dem
+Kriterium, das gewählte Verfahren, die Zahl der Iterationen, der
+Verformungszuwachs gegenüber Theorie I. Ordnung, dann φ mit α_h, α_m und der
+Richtung, die Ersatzhorizontalkraft je Stiel und die Vorkrümmung je Stab mit
+Knicklinie, e_0, q und V.
+
+**Wichtig**: Nach Theorie II. Ordnung gilt keine Superposition mehr. Jede
+Kombination wird einzeln gerechnet — das dauert länger als eine lineare
+Überlagerung. Die Ergebnisse der einzelnen **Lastfälle** bleiben Ergebnisse
+nach Theorie I. Ordnung und dürfen nicht mehr von Hand überlagert werden.
+
 ### Verformungsnachweise (GZG)
 
 Die Kombinationen des Grenzzustands der Gebrauchstauglichkeit rechnet Statik3D

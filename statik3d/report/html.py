@@ -287,6 +287,7 @@ class Report:
         self.gzg = None
         self.beulen = None
         self.lasteinleitung = None
+        self.theorie2 = None
         self.info: dict = {}
         if analysis is not None:
             self.cases = dict(getattr(analysis, "cases", {}) or {})
@@ -298,6 +299,7 @@ class Report:
             self.gzg = getattr(analysis, "gzg", None)
             self.beulen = getattr(analysis, "beulen", None)
             self.lasteinleitung = getattr(analysis, "lasteinleitung", None)
+            self.theorie2 = getattr(analysis, "theorie2", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
             name = results.name or "Ergebnis"
@@ -411,6 +413,7 @@ class Report:
             self._warnings = []
             b = []
             for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
+                       self.chapter_theorie2,
                        self.chapter_results, self.chapter_design, self.chapter_beulen,
                        self.chapter_fatigue,
                        self.chapter_joints, self.chapter_gzg, self.chapter_summary,
@@ -535,10 +538,21 @@ class Report:
         b.append(("list", items))
         b.append(self._h(2, "Gültigkeitsbereich und Hinweise"))
         b.append(("list", [
-            "Die Berechnung ist linear: keine Plastizität, keine Theorie II./III. Ordnung. "
-            "Verzweigungslasten (lineares Knicken) gelten für Stabtragwerke; "
-            "Imperfektionen sind über die Knicklinien der Nachweise beziehungsweise "
-            "über die Herstelltoleranzklasse der Schalen erfasst.",
+            ("Die Berechnung ist elastisch (keine Plastizität, keine Theorie "
+             "III. Ordnung/große Verformungen). "
+             + ("Das Gleichgewicht wird am verformten System aufgestellt "
+                "(Theorie II. Ordnung, DIN EN 1993-1-1, 5.2) – siehe das "
+                "eigene Kapitel dazu."
+                if (self.theorie2 is not None
+                    and getattr(self.theorie2, "kombinationen", None))
+                else "Gerechnet wird nach Theorie I. Ordnung; ob das nach "
+                     "5.2.1(3) zulässig ist (α_cr ≥ 10), ist gesondert zu "
+                     "prüfen – Statik3D kann α_cr je Kombination bestimmen "
+                     "und das Gleichgewicht am verformten System aufstellen "
+                     "(Einstellungen der Nachweise).")
+             + " Imperfektionen sind über die Knicklinien der Nachweise "
+               "beziehungsweise über die Herstelltoleranzklasse der Schalen "
+               "erfasst."),
             "Stabilitätsnachweise setzen die angegebenen Knicklängen, seitlichen Halterungen "
             "und Randbedingungsbeiwerte voraus; diese sind vom Anwender zu verantworten.",
             "Schubbeulen der Stegbleche wird nach DIN EN 1993-1-5, Abschnitt 5 "
@@ -884,6 +898,169 @@ class Report:
                              fmt(f.factor, 2)])
             b.append(("table", rows, "Ermüdungsbeanspruchungen (Lastwechsel zwischen zwei "
                                      "Lastfällen)", None, ""))
+        return b
+
+    # ==================================== Theorie II. Ordnung (eigenes Kapitel)
+    def chapter_theorie2(self) -> list:
+        """Berechnung nach Theorie II. Ordnung und Ersatzimperfektionen."""
+        t2 = self.theorie2
+        if t2 is None or not getattr(t2, "kombinationen", None):
+            return []
+        st = t2.settings or {}
+        gerechnet = [i for i in t2.kombinationen.values() if i.gerechnet]
+        b = [self._h(1, "Berechnung nach Theorie II. Ordnung "
+                        "(DIN EN 1993-1-1, 5.2 und 5.3)")]
+        b.append(self._h(2, "Grundlagen"))
+        grenze = st.get("grenze", 10.0)
+        items = [
+            "Kriterium 5.2.1(3): nach Theorie I. Ordnung darf gerechnet werden, "
+            f"solange α_cr = F_cr/F_Ed ≥ {grenze:.0f} ist "
+            + ("(plastische Berechnung)" if st.get("plastisch") else
+               "(elastische Berechnung)")
+            + ". α_cr folgt je Kombination aus dem linearen Verzweigungsproblem "
+              "(K + λ K_g) v = 0 mit dem Spannungszustand der Kombination als "
+              "Grundzustand.",
+            "Gleichgewicht am verformten System: (K + K_g(N)) u = F. Weil K_g von "
+            "den Normalkräften abhängt und diese von u, wird iteriert, bis sich "
+            "die Verformungen nicht mehr ändern.",
+        ]
+        modus = {"auto": "automatisch je Kombination nach 5.2.1(3)",
+                 "ein": "immer am verformten System",
+                 "aus": "aus"}.get(st.get("modus", ""), st.get("modus", ""))
+        items.append(f"Einstellung: {modus}.")
+        if st.get("imperfektionen"):
+            items.append(
+                "Ersatzimperfektionen nach 5.3.2(7): statt die Geometrie zu "
+                "verziehen werden gleichwertige Lasten angesetzt. Schiefstellung "
+                "φ = φ_0 α_h α_m mit φ_0 = 1/200, α_h = 2/√h (2/3 ≤ α_h ≤ 1,0) "
+                "und α_m = √(0,5 (1 + 1/m)); je Stiel wirkt H_Ed = φ N_Ed als "
+                "Kräftepaar zwischen Fuß und Kopf. Vorkrümmung e_0 nach "
+                "Tabelle 5.1 je Knicklinie, angesetzt als q = 8 N_Ed e_0/L² quer "
+                "zum Stab mit den Endquerkräften 4 N_Ed e_0/L.")
+            items.append(
+                "m ist die Zahl der Stiele, die mindestens 50 % der mittleren "
+                "Stielnormalkraft tragen (5.3.2(3)); sie wird je Kombination aus "
+                "den Normalkräften bestimmt. Die Schiefstellung wirkt in der "
+                "maßgebenden waagerechten Richtung (5.3.2(4)) – der Richtung, in "
+                "die sich die Stiele ohnehin verschieben –, nicht gleichzeitig in "
+                "beiden. Die Vorkrümmung wird nur für die nach 5.3.2(6) schlanken "
+                "Stäbe angesetzt (λ̄ > 0,5 √(A f_y/N_Ed)).")
+        else:
+            items.append("Ersatzimperfektionen nach 5.3.2 sind ausgeschaltet; sie "
+                         "sind dann gesondert nachzuweisen.")
+        if gerechnet:
+            items.append(
+                "Nach Theorie II. Ordnung gilt die Superposition nicht mehr: jede "
+                "Kombination wird einzeln am verformten System gerechnet. Die im "
+                "Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind Ergebnisse nach "
+                "Theorie I. Ordnung und dürfen nicht mehr überlagert werden; die "
+                "Kombinationen und die Umhüllenden sind es nicht.")
+        b.append(("list", items))
+
+        b.append(self._h(2, "Übersicht"))
+        rows = [["Kombination", "α_cr", "Grenze", "Verfahren", "Iterationen",
+                 "u_I [mm]", "u_II [mm]", "Zuwachs", "Status"]]
+        for n, i in t2.kombinationen.items():
+            rows.append([n,
+                         fmt(i.alpha_cr, 2) if math.isfinite(i.alpha_cr) else "∞",
+                         fmt(i.grenze, 0),
+                         "II. Ordnung" if i.gerechnet else "I. Ordnung",
+                         str(i.iterationen) if i.gerechnet else "–",
+                         fmt(i.u_max_I * 1e3, 2),
+                         fmt(i.u_max_II * 1e3, 2) if i.gerechnet else "–",
+                         f"{i.zuwachs * 100:+.1f} %" if i.gerechnet else "–",
+                         "nicht geführt" if i.fehler else "geführt"])
+        rows, note = self._truncate(rows, 200)
+        b.append(("table", rows, "Verzweigungslastfaktor und Berechnungsverfahren "
+                                 "je Kombination", None, ""))
+        if note:
+            b.append(("note", note))
+
+        # maßgebende Kombination im Einzelnen
+        kand = gerechnet or list(t2.kombinationen.values())
+        worst = min(kand, key=lambda i: i.alpha_cr if math.isfinite(i.alpha_cr)
+                    else float("inf"))
+        b.append(self._h(2, f"Maßgebende Kombination {worst.kombination}"))
+        from ..theorie2 import erforderlich as _erf
+        krit = _erf(worst.alpha_cr, st.get("plastisch", False))
+        verfahren = "Theorie II. Ordnung" if worst.gerechnet else "Theorie I. Ordnung"
+        if worst.gerechnet and not krit["noetig"]:
+            verfahren += " (obwohl das Kriterium sie nicht verlangt – "
+            verfahren += "Einstellung „immer am verformten System“)"
+        kv = [("Verzweigungslastfaktor α_cr",
+               fmt(worst.alpha_cr, 3) if math.isfinite(worst.alpha_cr)
+               else "∞ (keine Druckkräfte)"),
+              ("Kriterium 5.2.1(3)", _pretty(krit["text"])),
+              ("gerechnet wurde", verfahren)]
+        sk = worst.schiefstellung or {}
+        if sk.get("phi"):
+            r = sk.get("richtung") or [1.0, 0.0, 0.0]
+            kv += [("Bauwerkshöhe h", f"{sk.get('h', 0.0):.2f} m"),
+                   ("maßgebende Stiele m", str(sk.get("m", 0))),
+                   ("α_h = 2/√h", fmt(sk.get("alpha_h", 1.0), 4)),
+                   ("α_m = √(0,5(1+1/m))", fmt(sk.get("alpha_m", 1.0), 4)),
+                   ("Schiefstellung φ = φ_0 α_h α_m",
+                    f"{sk['phi']:.5f} = 1/{1 / sk['phi']:.0f}"),
+                   ("Richtung der Schiefstellung",
+                    f"({r[0]:+.3f}, {r[1]:+.3f}) in der Grundrissebene"),
+                   ("Summe der Ersatzhorizontalkräfte",
+                    f"{sk.get('H_gesamt', 0.0) / 1e3:.2f} kN")]
+        elif sk.get("hinweis"):
+            kv.append(("Schiefstellung", _pretty(sk["hinweis"])))
+        vk = worst.vorkruemmung or {}
+        kv.append(("Vorkrümmungen angesetzt",
+                   f"{vk.get('anzahl', 0)} Stäbe"
+                   + (f", {len(vk.get('uebersprungen') or [])} nach 5.3.2(6) "
+                      "nicht erforderlich" if vk.get("uebersprungen") else "")))
+        if worst.gerechnet:
+            kv += [("Iterationen", str(worst.iterationen)),
+                   ("letzte Änderung der Verformung",
+                    f"{worst.konvergenz * 100:.4f} %"),
+                   ("größte Verschiebung I. / II. Ordnung",
+                    f"{worst.u_max_I * 1e3:.2f} / {worst.u_max_II * 1e3:.2f} mm "
+                    f"({worst.zuwachs * 100:+.1f} %)")]
+        b.append(("kv", kv, f"Kombination {worst.kombination}"))
+
+        if sk.get("je_stiel"):
+            rows = [["Stiel", "N_Ed [kN]", "H_Ed = φ N_Ed [kN]", "Knoten Fuß",
+                     "Knoten Kopf"]]
+            for d in sk["je_stiel"]:
+                rows.append([d["stab"], fmt(d["N_Ed"] / 1e3, 1),
+                             fmt(d["H_Ed"] / 1e3, 3), str(d["knoten_unten"]),
+                             str(d["knoten_oben"])])
+            rows, note = self._truncate(rows, 60)
+            b.append(("table", rows, "Ersatzhorizontalkräfte aus der Schiefstellung "
+                                     "(5.3.2(7))", None, ""))
+            if note:
+                b.append(("note", note))
+        if vk.get("je_stab"):
+            rows = [["Stab", "L [m]", "Knicklinie", "e_0/L", "e_0 [mm]",
+                     "N_Ed [kN]", "q [kN/m]", "V [kN]"]]
+            for d in vk["je_stab"]:
+                rows.append([d["stab"], fmt(d["L"], 2), d["kurve"],
+                             f"1/{1 / d['e0_L']:.0f}", fmt(d["e_0"] * 1e3, 1),
+                             fmt(d["N_Ed"] / 1e3, 1), fmt(d["q"] / 1e3, 3),
+                             fmt(d["V"] / 1e3, 3)])
+            rows, note = self._truncate(rows, 60)
+            b.append(("table", rows, "Ersatzlasten aus der Vorkrümmung "
+                                     "(5.3.2(7), Tabelle 5.1)", None, ""))
+            if note:
+                b.append(("note", note))
+        if vk.get("uebersprungen"):
+            b.append(("list", [f"{d['stab']}: {_pretty(d['grund'])}"
+                               for d in vk["uebersprungen"][:20]]))
+        alle_hinweise = []
+        for i in t2.kombinationen.values():
+            for h in i.hinweise:
+                if h not in alle_hinweise:
+                    alle_hinweise.append(h)
+            if i.fehler:
+                t = f"{i.kombination}: {i.fehler}"
+                if t not in alle_hinweise:
+                    alle_hinweise.append(t)
+                self._warnings.append(f"Theorie II. Ordnung {t}")
+        if alle_hinweise:
+            b.append(("list", [_pretty(h) for h in alle_hinweise]))
         return b
 
     # ============================================================ Kapitel 4

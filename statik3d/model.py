@@ -1063,6 +1063,13 @@ class DesignSettings:
     gamma_Q: float = 1.5
     gamma_Q_fav: float = 0.0
     stations: int = 9                  # Nachweisstellen je Element
+    # --- Theorie II. Ordnung und Imperfektionen (EN 1993-1-1, 5.2 und 5.3)
+    theorie2: str = "aus"              # aus | auto (nach 5.2.1(3)) | ein
+    imperfektionen: bool = True        # Ersatzimperfektionen nach 5.3.2 ansetzen
+    th2_plastisch: bool = False        # plastische Berechnung -> Grenze alpha_cr = 15
+    th2_richtung: Optional[list] = None  # Richtung der Schiefstellung [x, y]
+                                       # (None = aus der Kombination bestimmt)
+    th2_alle_vorkruemmungen: bool = False  # 5.3.2(6) uebergehen und alle ansetzen
 
 
 # --------------------------------------------------------------------------

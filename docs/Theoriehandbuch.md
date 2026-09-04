@@ -191,6 +191,70 @@ Ein Stab (Member) ist eine Kette von Stabelementen. Die Schnittgrößen
 werden an `stations` Stellen je Element ausgewertet (Standard 9). Die
 Klassifizierung erfolgt an jeder Stelle mit den dort wirkenden Schnittgrößen.
 
+### 5.1a Theorie II. Ordnung und Ersatzimperfektionen (5.2 und 5.3)
+
+**Wann ist sie nötig?** Nach 5.2.1(3) darf nach Theorie I. Ordnung gerechnet
+werden, solange
+
+      α_cr = F_cr / F_Ed ≥ 10   (elastische Berechnung)
+      α_cr ≥ 15                 (plastische Berechnung)
+
+α_cr folgt je Kombination aus dem linearen Verzweigungsproblem
+(K + λ K_g) v = 0 mit dem Spannungszustand **dieser** Kombination als
+Grundzustand. Die Einstellung `theorie2` kennt drei Werte: `aus`, `auto`
+(α_cr je Kombination bestimmen und nur bei Unterschreitung am verformten
+System rechnen) und `ein` (immer).
+
+**Gleichgewicht am verformten System.** Gelöst wird (K + K_g(N)) u = F.
+Weil K_g von den Normalkräften abhängt und diese von u, wird iteriert, bis
+sich die Verformungen nicht mehr ändern (Abbruch bei einer relativen Änderung
+unter 1·10⁻⁶). K_g ist die geometrische Steifigkeit des Stabelements; das
+Element rechnet mit Schubverformung, die Verzweigungslast ist deshalb die
+nach Engesser
+
+      N_cr = N_E / (1 + N_E/(G A_s)),   N_E = π² E I / L_cr²
+
+und liegt bei gedrungenen Profilen rund ein halbes Prozent unter der
+schubstarren Eulerlast — die Verifikation prüft genau das.
+
+**Ersatzimperfektionen (5.3.2).** Statt die Geometrie zu verziehen werden
+nach 5.3.2(7) gleichwertige Lasten angesetzt:
+
+      Schiefstellung   φ = φ_0 α_h α_m,  φ_0 = 1/200
+                       α_h = 2/√h,  2/3 ≤ α_h ≤ 1,0
+                       α_m = √(0,5 (1 + 1/m))
+                       H_Ed = φ N_Ed  je Stiel, als Kräftepaar Fuß–Kopf
+      Vorkrümmung      e_0/L nach Tabelle 5.1 je Knicklinie
+                       q = 8 N_Ed e_0 / L²  quer zum Stab
+                       V = 4 N_Ed e_0 / L   an beiden Enden entgegengesetzt
+
+Beide Lastbilder sind in sich im Gleichgewicht; die Auflagersumme bleibt
+unberührt. h ist die Bauwerkshöhe aus der Bounding-Box, m die Zahl der
+Stiele, die mindestens 50 % der mittleren Stielnormalkraft tragen
+(5.3.2(3)) — sie wird **je Kombination aus den Normalkräften** bestimmt, nicht
+geraten. Als Stiel gilt ein Stab, dessen Achse höchstens 30° von der
+Lotrechten abweicht; nur gedrückte Stiele bekommen eine Ersatzlast.
+
+Die Schiefstellung wirkt in der **maßgebenden waagerechten Richtung**
+(5.3.2(4)), nicht gleichzeitig in beiden: genommen wird die Richtung, in die
+sich die Stielköpfe gegen ihre Füße ohnehin verschieben — so wirkt die
+Ersatzlast immer ungünstig. Die Vorkrümmung wird in der lokalen y-Richtung
+angesetzt (e_0 stammt aus der Knicklinie der schwachen Achse z, und Knicken
+um z heißt Ausweichen in y) und nur für die nach 5.3.2(6) schlanken Stäbe:
+
+      λ̄ > 0,5 √(A f_y / N_Ed)
+
+**Folge für die Ergebnisse**: nach Theorie II. Ordnung gilt die Superposition
+nicht mehr. Jede Kombination wird einzeln gerechnet und ersetzt das Ergebnis
+der linearen Überlagerung; die Umhüllenden werden erst danach gebildet. Die
+Lastfallergebnisse bleiben Ergebnisse nach Theorie I. Ordnung und dürfen nicht
+mehr überlagert werden — der Bericht sagt das.
+
+**Grenzen**: keine Theorie III. Ordnung (große Verformungen), keine
+Fließgelenke, keine Imperfektionsform aus der Knickeigenform nach 5.3.2(11)
+(die Eigenform wird berechnet, aber nur als α_cr ausgewertet) und keine
+Imperfektionen für Aussteifungsverbände nach 5.3.3.
+
 ### 5.2 Querschnittsklassifizierung (5.5, Tabelle 5.2)
 
 * I-Profile: Flansch als einseitig gestütztes Teil c = (b − tw − 2r)/2,
@@ -687,6 +751,7 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 | `tests/test_gzg.py` | Verformungsnachweise gegen 5qL⁴/384EI, PL³/48EI und den Kragarm; Grenzwertbildung L/x, absolut, Überhöhung, Punktpaar |
 | `tests/test_beulen.py` | Beulwerte k_σ und k_τ gegen Tab. 4.1/4.2 und A.3, σ_E = 190000 (t/b)², ρ und χ_w gegen 4.4(2) und Tab. 5.1, Schubbeulen, Methode der reduzierten Spannungen, Steifen nach A.1/A.2.2/A.3(2) und Abschnitt 9, Lasteinleitung nach Abschnitt 6, Schalenbeulen nach EN 1993-1-6, dazu der Patch-Test des Viereckelements |
 | `tests/test_joints.py` | Schrauben, Nähte, T-Stummel gegen EN-Zahlenwerte; Steifigkeitsbeiwerte Tab. 6.11, Klassifizierung 5.2.2.5, Drehfeder gegen die geschlossene Kragarmlösung |
+| `tests/test_theorie2.py` | α_cr der Kragstütze und des Pendelstabes gegen die Knicklast nach Engesser, Vergrößerung der Verformung gegen 1/(1−N/N_cr), φ und e_0 gegen 5.3.2 und Tabelle 5.1, Gleichgewicht der Ersatzlastbilder, Feldmoment aus der Vorkrümmung, Kriterium 5.3.2(6) |
 | `tests/test_klasse4.py` | wirksame Querschnitte der Klasse 4: Beulwerte, Grenzschlankheiten und ρ nach 4.4(2), Aufteilung b_e1/b_e2, W_eff,y und A_eff eines geschweißten Blechträgers gegen eine unabhängige Handrechnung, Zusatzmoment aus e_N, Schalenbeulen schlanker Kreisrohre |
 | `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |
 | `tests/test_solver_ext.py` | Gelenke, Trapezlasten, Temperatur, Zwischenstellen, Superposition, Umhüllende, Kombinationsgenerator, einseitige Lager, Spaltelement, Flächenkontakt mit Reibung, parallele Assemblierung, Rechnerfarm |
