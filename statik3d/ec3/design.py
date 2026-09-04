@@ -127,6 +127,8 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
                 mc.warnings.append(
                     f"Wölbkrafttorsion: {wt['grund']} – der Momentenanteil wird "
                     "ausgewiesen, die Wölbspannungen nicht.")
+            if v.hinweis and v.hinweis not in mc.warnings:
+                mc.warnings.append(f"Wölbkrafttorsion: {v.hinweis}")
 
         # --- Querschnittsnachweise an allen Stellen ---
         best = None
