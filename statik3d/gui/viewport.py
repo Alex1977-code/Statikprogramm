@@ -64,6 +64,10 @@ def unbelegte_knoten(model: Model) -> np.ndarray:
     return np.flatnonzero(~getragen)
 
 
+#: Anteil freier Knoten, ab dem die Hervorhebung sinnlos wird
+FREI_ANTEIL = 0.25
+
+
 def add_nodes(plotter, model: Model, groesse: float = 1.0):
     """Alle gesetzten Knoten als Punkte zeichnen.
 
@@ -71,11 +75,21 @@ def add_nodes(plotter, model: Model, groesse: float = 1.0):
     im Viewport gar nicht zu sehen - das Modell wuchs unsichtbar. Solche
     Knoten bekommen hier eine eigene Farbe und einen groesseren Punkt, damit
     man beim Modellieren sieht, wo man schon war.
+
+    Die Hervorhebung soll den **einen vergessenen** Knoten zeigen. In einem aus
+    RFEM uebernommenen Modell haengen fast alle Knoten an Flaechen und Volumen
+    statt an Elementen; waeren sie alle orange, uebertoente die Markierung das
+    ganze Bauteil und sagte nichts mehr. Ueberschreiten die freien Knoten den
+    Anteil ``FREI_ANTEIL``, werden darum alle Knoten gleich gezeichnet.
     """
     if model.nn == 0:
         return
     frei = unbelegte_knoten(model)
     d = max(3.0, 7.0 * float(groesse))
+    if len(frei) > FREI_ANTEIL * model.nn:
+        plotter.add_points(model.nodes, color=FARBE_KNOTEN, point_size=d,
+                           render_points_as_spheres=True, name="knoten")
+        return
     fest = np.setdiff1d(np.arange(model.nn), frei, assume_unique=False)
     if len(fest):
         plotter.add_points(model.nodes[fest], color=FARBE_KNOTEN, point_size=d,
@@ -95,6 +109,209 @@ def polygon_flaeche(punkte) -> float:
     for a, b in zip(P, np.roll(P, -1, axis=0)):
         n += np.cross(a, b)
     return float(np.linalg.norm(n)) / 2.0
+
+
+def add_linien(plotter, model: Model, hervor: list = None):
+    """Die Linien des Modells zeichnen.
+
+    Linien sind Geometrie, keine Elemente - sie wurden bisher gar nicht
+    dargestellt. In einem aus RFEM uebernommenen Modell besteht die Geometrie
+    fast nur aus Linien; ohne sie sieht man ein leeres Bild und haelt den
+    Import fuer gescheitert.
+    """
+    linien = getattr(model, "lines", {}) or {}
+    if not linien:
+        return
+    hervor = set(hervor or [])
+    pts, zellen = [], []
+    for name, ln in linien.items():
+        if name in hervor:
+            continue
+        idx = [int(n) for n in ln.nodes if 0 <= int(n) < model.nn]
+        if len(idx) < 2:
+            continue
+        basis = len(pts)
+        pts.extend(model.nodes[idx])
+        for i in range(len(idx) - 1):
+            zellen.extend([2, basis + i, basis + i + 1])
+    if pts:
+        plotter.add_mesh(pv.PolyData(np.asarray(pts, float), lines=np.asarray(zellen)),
+                         color=FARBE_LINIE, line_width=2, name="linien")
+
+
+FARBE_LINIE = "#7a8a99"
+
+
+def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = None):
+    """Flaechen und Volumenkoerper zeichnen, die **noch nicht vernetzt** sind.
+
+    Ein Objekt, das man nicht sieht, kann man auch nicht anklicken. Eine eben
+    aus Linien erzeugte Flaeche traegt noch keine Elemente; sie wird darum als
+    durchscheinendes Polygon gezeichnet, ein noch nicht vernetzter
+    Volumenkoerper zusaetzlich mit farbigen Randkanten.
+
+    **Alles in je einem Netz**: ein aus RFEM uebernommenes Volumenmodell hat
+    leicht ueber tausend Flaechen. Je Flaeche ein eigener Darsteller braucht
+    Minuten und macht die Ansicht unbedienbar; gebuendelt sind es zwei.
+    ``raender`` nimmt bereits berechnete Randpolygone entgegen
+    ({Flaechenname: [Knoten]}), damit sie nicht zweimal ermittelt werden.
+    """
+    flaechen = getattr(model, "flaechen", {}) or {}
+    if not flaechen:
+        return
+    raender = raender if raender is not None else {}
+
+    def ring_von(name, f):
+        r = raender.get(name)
+        if r is None:
+            r = f.randknoten(model)
+            raender[name] = r
+        return r
+
+    pts: list = []
+    faces: list = []
+    for name, f in flaechen.items():
+        if f.elemente:
+            continue
+        ring = ring_von(name, f)
+        if len(ring) < 3:
+            continue
+        basis = len(pts)
+        pts.extend(model.nodes[ring])
+        faces.append(len(ring))
+        faces.extend(range(basis, basis + len(ring)))
+    if pts:
+        plotter.add_mesh(pv.PolyData(np.asarray(pts, float), faces=np.asarray(faces)),
+                         color="#7fb3d5", opacity=0.45, show_edges=True,
+                         edge_color="#20638f", line_width=1, name="geo_flaechen")
+    # Randkanten der noch nicht vernetzten Volumenkoerper - ebenfalls gebuendelt
+    kpts: list = []
+    klines: list = []
+    for k in (getattr(model, "koerper", {}) or {}).values():
+        if k.elemente:
+            continue
+        for fname in k.flaechen:
+            f = flaechen.get(fname)
+            if f is None or f.elemente:
+                continue
+            ring = ring_von(fname, f)
+            if len(ring) < 3:
+                continue
+            basis = len(kpts)
+            kpts.extend(model.nodes[ring + [ring[0]]])
+            for i in range(len(ring)):
+                klines.extend([2, basis + i, basis + i + 1])
+    if kpts:
+        plotter.add_mesh(pv.PolyData(np.asarray(kpts, float),
+                                     lines=np.asarray(klines)),
+                         color="#8e44ad", line_width=2, name="geo_volumen")
+
+
+def line_at(model: Model, punkt, size: float):
+    """Name der Linie, die dem Punkt am naechsten liegt - oder None."""
+    if punkt is None or not model.lines:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    tol = 0.03 * size
+    best, bestd = None, None
+    for name, ln in model.lines.items():
+        idx = [int(n) for n in ln.nodes if 0 <= int(n) < model.nn]
+        if len(idx) < 2:
+            continue
+        X = model.nodes[idx]
+        for a, b in zip(X[:-1], X[1:]):
+            d = b - a
+            L2 = float(d @ d)
+            t = 0.0 if L2 <= 0 else max(0.0, min(1.0, float((p - a) @ d) / L2))
+            dist = float(np.linalg.norm(p - (a + t * d)))
+            if dist <= tol and (bestd is None or dist < bestd):
+                best, bestd = name, dist
+    return best
+
+
+def element_at(model: Model, punkt, typen=None):
+    """Nummer des Elements, dessen Mittelpunkt dem Punkt am naechsten liegt."""
+    if punkt is None or not model.elements:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    best, bestd = None, None
+    for i, e in enumerate(model.elements):
+        if typen and e.typ not in typen:
+            continue
+        idx = [int(n) for n in e.nodes if 0 <= int(n) < model.nn]
+        if not idx:
+            continue
+        d = float(np.linalg.norm(model.nodes[idx].mean(axis=0) - p))
+        if bestd is None or d < bestd:
+            best, bestd = i, d
+    return best
+
+
+def flaeche_at(model: Model, punkt, size: float):
+    """Name der Flaeche unter dem Zeiger - vernetzt oder nicht."""
+    el = element_at(model, punkt, ("shell3", "shell4"))
+    if el is not None:
+        for name, f in (getattr(model, "flaechen", {}) or {}).items():
+            if el in (f.elemente or []):
+                return name
+        g = getattr(model.elements[el], "group", "")
+        if g in (getattr(model, "flaechen", {}) or {}):
+            return g
+    # noch nicht vernetzt: ueber den Schwerpunkt des Randpolygons
+    if punkt is None:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    best, bestd = None, None
+    for name, f in (getattr(model, "flaechen", {}) or {}).items():
+        ring = f.randknoten(model)
+        if len(ring) < 3:
+            continue
+        X = model.nodes[ring]
+        d = float(np.linalg.norm(X.mean(axis=0) - p))
+        r = float(np.linalg.norm(X - X.mean(axis=0), axis=1).max())
+        if d <= max(r, 0.02 * size) and (bestd is None or d < bestd):
+            best, bestd = name, d
+    return best
+
+
+def koerper_at(model: Model, punkt, size: float):
+    """Name des Volumenkoerpers unter dem Zeiger."""
+    el = element_at(model, punkt, ("tet4", "tet10", "hex8"))
+    if el is not None:
+        for name, k in (getattr(model, "koerper", {}) or {}).items():
+            if el in (k.elemente or []):
+                return name
+        g = getattr(model.elements[el], "group", "")
+        if g in (getattr(model, "koerper", {}) or {}):
+            return g
+    if punkt is None:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    best, bestd = None, None
+    for name, k in (getattr(model, "koerper", {}) or {}).items():
+        idx = sorted({n for fn in k.flaechen
+                      for n in ((getattr(model, "flaechen", {}) or {})
+                                .get(fn).randknoten(model)
+                                if (getattr(model, "flaechen", {}) or {}).get(fn) else [])})
+        if len(idx) < 4:
+            continue
+        X = model.nodes[idx]
+        d = float(np.linalg.norm(X.mean(axis=0) - p))
+        r = float(np.linalg.norm(X - X.mean(axis=0), axis=1).max())
+        if d <= max(r, 0.02 * size) and (bestd is None or d < bestd):
+            best, bestd = name, d
+    return best
+
+
+def member_at(model: Model, punkt):
+    """Name des Stabes (Stabzug), dessen Element unter dem Zeiger liegt."""
+    el = element_at(model, punkt, ("beam", "truss"))
+    if el is None:
+        return None
+    for name, mem in (model.members or {}).items():
+        if el in (mem.elements or []):
+            return name
+    return None
 
 
 def to_grid(model: Model) -> pv.UnstructuredGrid:

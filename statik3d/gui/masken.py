@@ -214,33 +214,50 @@ class Maske(QtWidgets.QFrame):
 
 
 class Maskenrand(QtCore.QObject):
-    """Haelt die eine offene Maske am rechten Rand der Ansicht.
+    """Haelt die eine offene Erzeuge-Maske **im rechten Bereich**.
 
     Es ist immer hoechstens **eine** Maske offen: ein Erzeuge-Befehl loest den
-    vorigen ab. Die Maske schwebt ueber der Ansicht und wird beim Groesse
-    aendern mitgefuehrt.
+    vorigen ab. Frueher schwebte sie ueber der Ansicht; das verdeckte gerade
+    das, was man zum Anklicken braucht, und stand ausserdem woanders als alle
+    anderen Eingaben. Jetzt sitzt sie oben im rechten Eingabebereich - dort,
+    wo die Einstellungen zu dem stehen, was man gerade erzeugt.
+
+    ``ziel`` ist das Layout im rechten Bereich, in das die Maske kommt. Ohne
+    Ziel faellt sie auf das alte Schweben ueber der Ansicht zurueck (der Test
+    baut das Fenster ohne rechten Bereich).
     """
 
-    def __init__(self, ansicht: QtWidgets.QWidget):
+    def __init__(self, ansicht: QtWidgets.QWidget, ziel: QtWidgets.QBoxLayout = None):
         super().__init__(ansicht)
         self.ansicht = ansicht
+        self.ziel = ziel
         self.maske: Maske | None = None
         ansicht.installEventFilter(self)
+
+    def setze_ziel(self, ziel: QtWidgets.QBoxLayout):
+        self.ziel = ziel
 
     def zeigen(self, maske: Maske) -> Maske:
         self.schliessen()
         self.maske = maske
-        maske.setParent(self.ansicht)
         maske.geschlossen.connect(self._vergessen)
-        maske.show()
-        maske.raise_()
-        maske.setFocus()
-        self._platzieren()
+        if self.ziel is not None:
+            self.ziel.insertWidget(0, maske)
+            maske.show()
+            maske.setFocus()
+        else:
+            maske.setParent(self.ansicht)
+            maske.show()
+            maske.raise_()
+            maske.setFocus()
+            self._platzieren()
         return maske
 
     def schliessen(self):
         if self.maske is not None:
             m, self.maske = self.maske, None
+            if self.ziel is not None:
+                self.ziel.removeWidget(m)
             m.hide()
             m.deleteLater()
 
@@ -258,7 +275,7 @@ class Maskenrand(QtCore.QObject):
         return True
 
     def _platzieren(self):
-        if self.maske is None:
+        if self.maske is None or self.ziel is not None:
             return
         g = self.maske.sizeHint()
         b = self.ansicht.width()
@@ -280,8 +297,156 @@ QLabel#maskenhinweis {{ color: {matt}; font-size: 11px; }}
 QToolButton#maskezu {{ border: 0; color: {matt}; font-size: 13px;
     padding: 0 4px; }}
 QToolButton#maskezu:hover {{ color: {schlecht}; }}
+
+/* Glasleiste ueber der Ansicht: durchscheinend, damit das Modell darunter
+   sichtbar bleibt. */
+QFrame#glasleiste {{ background: rgba(255, 255, 255, 200);
+    border: 1px solid rgba(0, 0, 0, 30); border-radius: 9px; }}
+QToolButton#glasknopf {{ background: transparent; border: 0; border-radius: 6px;
+    padding: 4px 7px; color: {text}; font-weight: 600; }}
+QToolButton#glasknopf:hover {{ background: {akzent_hell}; color: {akzent}; }}
+QToolButton#glasknopf:checked {{ background: {akzent}; color: #fff; }}
+QFrame#glastrenner {{ color: rgba(0, 0, 0, 40); }}
+Ansichtswuerfel {{ background: transparent; }}
 """
 
 
 def stil() -> str:
     return STIL.format(**dsg.FARBEN)
+
+
+# ==========================================================================
+# Glasleiste und Ansichtswuerfel ueber der Ansicht
+# ==========================================================================
+class Glasleiste(QtWidgets.QFrame):
+    """Schmale, durchscheinende Leiste ueber der Ansicht (wie in HiCAD).
+
+    Sie traegt die Handgriffe, die man beim Modellieren staendig braucht -
+    Darstellungsart, FE-Netz, Knoten, Lasten, Fang, Auswahlart - und liegt
+    dabei ueber dem Bild, statt Platz wegzunehmen. Alle Befehle sind dieselben
+    Aktionsobjekte wie im Ribbon; hier stehen sie nur naeher an der Maus.
+    """
+
+    def __init__(self, ansicht: QtWidgets.QWidget):
+        super().__init__(ansicht)
+        self.setObjectName("glasleiste")
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.lay = QtWidgets.QHBoxLayout(self)
+        self.lay.setContentsMargins(6, 3, 6, 3)
+        self.lay.setSpacing(3)
+
+    def knopf(self, aktion: QtGui.QAction, zeichen: str = "") -> QtWidgets.QToolButton:
+        b = QtWidgets.QToolButton(self)
+        b.setDefaultAction(aktion)
+        if zeichen:
+            b.setText(zeichen)
+        b.setObjectName("glasknopf")
+        b.setAutoRaise(True)
+        self.lay.addWidget(b)
+        return b
+
+    def trenner(self):
+        f = QtWidgets.QFrame(self)
+        f.setFrameShape(QtWidgets.QFrame.VLine)
+        f.setObjectName("glastrenner")
+        self.lay.addWidget(f)
+
+    def widget(self, w: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        w.setParent(self)
+        self.lay.addWidget(w)
+        return w
+
+
+class Ansichtswuerfel(QtWidgets.QWidget):
+    """Ansichtswuerfel oben rechts: ein Klick auf eine Seite dreht die Ansicht.
+
+    Gezeichnet wird ein Wuerfel in isometrischer Schraegansicht. Die sechs
+    Seiten und die Ecke sind anklickbar; das Signal nennt die Blickrichtung.
+    """
+
+    gewaehlt = QtCore.Signal(str)          # "xy" | "xz" | "yz" | "-xy" | … | "iso"
+
+    #: (Beschriftung, Blickrichtung, Vieleck in Einheitskoordinaten)
+    SEITEN = [
+        ("O", "xy", [(0.5, 0.06), (0.94, 0.30), (0.5, 0.54), (0.06, 0.30)]),
+        ("V", "xz", [(0.06, 0.30), (0.5, 0.54), (0.5, 0.97), (0.06, 0.73)]),
+        ("S", "yz", [(0.5, 0.54), (0.94, 0.30), (0.94, 0.73), (0.5, 0.97)]),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(78, 78)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip("Ansichtswürfel: O Draufsicht, V Vorderansicht, "
+                        "S Seitenansicht, Mitte isometrisch")
+        self._unter = ""
+
+    def _polygone(self):
+        w, h = self.width(), self.height()
+        for text, richtung, punkte in self.SEITEN:
+            yield text, richtung, QtGui.QPolygonF(
+                [QtCore.QPointF(x * w, y * h) for x, y in punkte])
+
+    def _treffer(self, pos) -> str:
+        for _t, richtung, poly in self._polygone():
+            if poly.containsPoint(QtCore.QPointF(pos), QtCore.Qt.OddEvenFill):
+                return richtung
+        return ""
+
+    def mouseMoveEvent(self, ev):
+        neu = self._treffer(ev.position() if hasattr(ev, "position") else ev.pos())
+        if neu != self._unter:
+            self._unter = neu
+            self.update()
+
+    def leaveEvent(self, _ev):
+        self._unter = ""
+        self.update()
+
+    def mousePressEvent(self, ev):
+        r = self._treffer(ev.position() if hasattr(ev, "position") else ev.pos())
+        self.gewaehlt.emit(r or "iso")
+
+    def paintEvent(self, _ev):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        for text, richtung, poly in self._polygone():
+            hell = richtung == self._unter
+            p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if hell else "#f2f5f8"))
+            p.setPen(QtGui.QPen(QtGui.QColor(dsg.FARBEN["linie"]), 1.2))
+            p.drawPolygon(poly)
+            p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["matt"]))
+            f = p.font()
+            f.setPointSize(8)
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(poly.boundingRect(), QtCore.Qt.AlignCenter, text)
+        p.end()
+
+
+class Ansichtsrand(QtCore.QObject):
+    """Haelt Glasleiste und Ansichtswuerfel an ihrem Platz ueber der Ansicht."""
+
+    def __init__(self, ansicht: QtWidgets.QWidget, leiste: Glasleiste,
+                 wuerfel: Ansichtswuerfel):
+        super().__init__(ansicht)
+        self.ansicht = ansicht
+        self.leiste = leiste
+        self.wuerfel = wuerfel
+        ansicht.installEventFilter(self)
+        self.platzieren()
+
+    def platzieren(self):
+        b = self.ansicht.width()
+        g = self.leiste.sizeHint()
+        self.leiste.setGeometry(12, 10, g.width(), g.height())
+        self.leiste.raise_()
+        w = self.wuerfel.width()
+        self.wuerfel.setGeometry(max(12, b - w - 14), 10 + g.height() + 8,
+                                 w, self.wuerfel.height())
+        self.wuerfel.raise_()
+
+    def eventFilter(self, obj, ev):
+        if obj is self.ansicht and ev.type() == QtCore.QEvent.Resize:
+            self.platzieren()
+        return False

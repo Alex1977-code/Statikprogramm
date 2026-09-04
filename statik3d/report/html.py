@@ -258,7 +258,7 @@ class Report:
         "load_cases": True, "combinations": True, "figures": True, "results_cases": True,
         "results_combinations": True, "envelopes": True, "member_diagrams": True,
         "design": True, "fatigue": True, "joints": True, "gzg": True, "beulen": True,
-        "volumen": True, "contact": True,
+        "volumen": True, "contact": True, "uebernommen": True,
         "modal": True, "buckling": True,
         # Grenzen fuer grosse Modelle
         "max_rows": 200, "max_detail_cases": 20, "max_detail_combinations": 12,
@@ -407,6 +407,11 @@ class Report:
     def _figure(self, svg_text: str, caption: str):
         return ("figure", svg_text, caption)
 
+    @staticmethod
+    def _bild(png_b64: str, caption: str = "", breite: int = 0):
+        """Ein aufgenommenes Bild (PNG als Base64) mit Unterschrift."""
+        return ("bild", png_b64, caption, breite)
+
     # ---------------------------------------------------------------- Aufbau
     def blocks(self) -> list:
         if self._blocks is None:
@@ -420,7 +425,8 @@ class Report:
                        self.chapter_results, self.chapter_design, self.chapter_beulen,
                        self.chapter_volumen,
                        self.chapter_fatigue,
-                       self.chapter_joints, self.chapter_gzg, self.chapter_summary,
+                       self.chapter_joints, self.chapter_gzg,
+                       self.chapter_uebernommen, self.chapter_summary,
                        self.chapter_appendix):
                 b.extend(ch())
             self._blocks = b
@@ -905,6 +911,42 @@ class Report:
         return b
 
     # ==================================== Volumen (eigenes Kapitel)
+    def chapter_uebernommen(self) -> list:
+        """Kapitel: die aus der Ansicht uebernommenen Ergebnisbilder.
+
+        Der Bearbeiter stellt in der Ansicht ein, was er zeigen will, und
+        uebernimmt es. Hier steht das Bild samt der Einstellung, aus der es
+        entstanden ist - Ergebnis, Faerbung, Verlauf und Ueberhoehung. Ohne
+        diese Angabe waere eine Farbgrafik im Bericht nicht pruefbar.
+        """
+        eintraege = list(getattr(self.model, "bericht", None) or [])
+        if not eintraege or not self.opt("uebernommen"):
+            return []
+        b = [self._h(1, "Übernommene Ergebnisbilder")]
+        b.append(("p", "Die folgenden Abbildungen wurden aus der Ansicht des "
+                       "Programms übernommen. Unter jedem Bild steht, welches "
+                       "Ergebnis es zeigt, wonach eingefärbt wurde, welcher "
+                       "Schnittgrößenverlauf angetragen ist und mit welcher "
+                       "Überhöhung die Verformung dargestellt wird."))
+        W = self.opt("figure_width")
+        for i, e in enumerate(eintraege, 1):
+            b.append(self._h(2, e.name or f"Bild {i}"))
+            zeilen = [["Zeigt", e.quelle_text()]]
+            if e.feld:
+                zeilen.append(["Färbung", e.feld])
+            if e.verlauf and e.verlauf != "kein Verlauf":
+                zeilen.append(["Schnittgrößenverlauf", e.verlauf])
+            if e.ueberhoehung:
+                zeilen.append(["Überhöhung", f"{e.ueberhoehung:g}"])
+            b.append(("kv", zeilen, ""))
+            if e.bild:
+                b.append(self._bild(e.bild, e.beschriftung or e.bezug(), W))
+            else:
+                b.append(("p", "<i>Zu diesem Eintrag liegt kein Bild vor.</i>"))
+            if e.bemerkung:
+                b.append(("p", e.bemerkung))
+        return b
+
     def chapter_volumen(self) -> list:
         """Spannungsnachweis der Volumenbereiche (EN 1993-1-1, 6.2.1(5))."""
         v = self.volumen if self.opt("volumen") else None
@@ -2855,6 +2897,13 @@ class Report:
             return (f"<figure>{svg_text}"
                     + (f"<figcaption>{esc(caption)}</figcaption>" if caption else "")
                     + "</figure>")
+        if kind == "bild":
+            _, png, caption, breite = (list(blk) + [0])[:4]
+            stil = f' style="width:{int(breite)}px;max-width:100%"' if breite else ""
+            return (f'<figure><img src="data:image/png;base64,{png}"{stil} '
+                    f'alt="{esc(caption)}">'
+                    + (f"<figcaption>{esc(caption)}</figcaption>" if caption else "")
+                    + "</figure>")
         if kind == "status":
             _, txt, ok = blk
             return f'<div class="status {"ok" if ok else "nok"}">{esc(txt)}</div>'
@@ -2970,6 +3019,9 @@ Strg+P als PDF speichern.</div>
                 out.append("")
             elif kind == "figure":
                 out.append(f"*[Abbildung: {blk[2]}]*")
+                out.append("")
+            elif kind == "bild":
+                out.append(f"![{blk[2]}](data:image/png;base64,{blk[1]})")
                 out.append("")
             elif kind == "status":
                 out.append(f"> **{blk[1]}**")

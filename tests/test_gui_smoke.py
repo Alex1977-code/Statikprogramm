@@ -334,8 +334,8 @@ def main():
         w.refresh_all()
         w.maske_knoten()
         m = w.maskenrand.maske
-        check("Maske schwebt ueber der Ansicht",
-              m is not None and m.isVisible() and m.parent() is w.centralWidget(),
+        check("Maske steht im rechten Eingabebereich, nicht über der Ansicht",
+              m is not None and m.isVisible() and m.parent() is not w.centralWidget(),
               m.titel if m else "keine")
         nn0 = w.model.nn
         m.setzen("x", 9.0)
@@ -443,6 +443,10 @@ def main():
         m = w.maskenrand.maske
         check("Linienmaske verlangt drei Knoten",
               m.titel == "Linie" and m.n_knoten == 3)
+        check("Vorgabe der Linienart ist die Polylinie",
+              m.werte().get("art", "").startswith("Polylinie"),
+              str(m.werte().get("art")))
+        m.setzen("art", "Bogen (3 Knoten)")      # für diesen Test ausdrücklich
         a = w.model.add_node(2.0, 0.0, 6.0)
         b = w.model.add_node(0.0, 2.0, 6.0)
         c = w.model.add_node(-2.0, 0.0, 6.0)
@@ -1202,6 +1206,283 @@ def main():
         import traceback
         traceback.print_exc()
         check("Modellbaum und Modelltabellen", False, str(ex)[:70])
+
+    # ---- Geometriekette und Objektauswahl in der Ansicht -------------------
+    try:
+        from statik3d.gui import viewport as vpg
+        w.new_model()
+        w.error = lambda msg: check("Geometrie: unerwarteter Fehler", False, str(msg)[:60])
+        mg = w.model
+        mg.add_nodes(np.array([[0, 0, 0], [4, 0, 0], [4, 2, 0], [0, 2, 0.]]))
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            mg.add_line(f"L{i + 1}", [a, b])
+        w.refresh_all()
+        app.processEvents()
+        # Auswahlart umschalten und Linien in der Ansicht anklicken
+        w.auswahlart_setzen("Linie")
+        check("Auswahlart umschaltbar", w.auswahlart == "Linie"
+              and w.cb_auswahlart.currentText() == "Linie")
+        check("Linie unter dem Zeiger gefunden",
+              vpg.line_at(mg, [2.0, 0.0, 0.0], mg.characteristic_size()) == "L1")
+        for punkt in ([2.0, 0, 0], [4.0, 1.0, 0], [2.0, 2.0, 0], [0, 1.0, 0]):
+            w._picked(punkt)
+        check("vier Linien ausgewählt", w.sel_linien == ["L1", "L2", "L3", "L4"],
+              str(w.sel_linien))
+        w._picked([2.0, 0.0, 0.0])
+        check("nochmaliger Klick nimmt die Linie wieder heraus",
+              "L1" not in w.sel_linien, str(w.sel_linien))
+        w._picked([2.0, 0.0, 0.0])
+
+        f = mg.add_flaeche("F1", w.sel_linien, dicke=list(mg.shells)[0],
+                           material=list(mg.materials)[0], teilung=[8, 4])
+        n = w._vernetzen([f], [])
+        w.refresh_all()
+        app.processEvents()
+        check("Fläche aus Linien vernetzt", n == 32 and len(mg.elements) == 32,
+              f"{n} Elemente")
+        check("Flächen stehen im Modellbaum", "Flächen" in zweige(w.baum))
+        check("Register „Flächen“ vorhanden",
+              "Flächen" in [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())])
+        z = w.tbl_geoflaeche.modell.zeilen
+        check("Flächentabelle gefüllt", len(z) == 1 and z[0][5] == 32, str(z[0][:6]))
+        check("Flächeninhalt in der Tabelle", abs(z[0][6] - 8.0) < 1e-9, str(z[0][6]))
+        w.auswahlart_setzen("Fläche")
+        check("Fläche unter dem Zeiger gefunden",
+              vpg.flaeche_at(mg, [2.0, 1.0, 0.0], mg.characteristic_size()) == "F1")
+        w.netz_loeschen_geometrie()
+        check("Netz löschbar, Geometrie bleibt",
+              not mg.elements and not mg.flaechen["F1"].elemente and mg.lines)
+        w.undo()
+        check("Netz löschen ist rücknehmbar", len(w.model.elements) == 32)
+
+        # Volumenkörper aus sechs Flächen
+        w.new_model()
+        mv2 = w.model
+        P = np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
+                      [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]])
+        mv2.add_nodes(P)
+        kanten = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+                  (0, 4), (1, 5), (2, 6), (3, 7)]
+        for i, (a, b) in enumerate(kanten):
+            mv2.add_line(f"K{i + 1}", [a, b])
+        seiten = {"Boden": ["K1", "K2", "K3", "K4"], "Deckel": ["K5", "K6", "K7", "K8"],
+                  "S1": ["K1", "K10", "K5", "K9"], "S2": ["K2", "K11", "K6", "K10"],
+                  "S3": ["K3", "K12", "K7", "K11"], "S4": ["K4", "K9", "K8", "K12"]}
+        for nme, ls in seiten.items():
+            mv2.add_flaeche(nme, ls, material=list(mv2.materials)[0])
+        kk = mv2.add_koerper("V1", list(seiten), material=list(mv2.materials)[0],
+                             teilung=[4, 2, 2])
+        n = w._vernetzen([], [kk])
+        w.refresh_all()
+        app.processEvents()
+        check("Volumen aus Flächen vernetzt", n == 16, f"{n} Elemente")
+        check("Volumenkörper stehen im Modellbaum", "Volumenkörper" in zweige(w.baum))
+        zv = w.tbl_geokoerper.modell.zeilen
+        check("Volumentabelle nennt das Volumen", abs(zv[0][5] - 2.0) < 1e-9, str(zv[0][5]))
+        w.auswahlart_setzen("Volumen")
+        check("Volumenkörper unter dem Zeiger gefunden",
+              vpg.koerper_at(mv2, [1.0, 0.5, 0.5], mv2.characteristic_size()) == "V1")
+        # Masken lesen die Objekte zurück
+        from statik3d.gui import dialogs as dgg
+        d = dgg.FlaechenDialog(w, mv2, flaeche=mv2.flaechen["Boden"])
+        check("Flächenmaske liest die Randlinien zurück",
+              sorted(d.werte()["linien"]) == ["K1", "K2", "K3", "K4"],
+              str(d.werte()["linien"]))
+        d = dgg.KoerperDialog(w, mv2, koerper=kk)
+        check("Volumenmaske liest die Randflächen zurück",
+              len(d.werte()["flaechen"]) == 6 and d.werte()["teilung"] == [4, 2, 2],
+              str(d.werte()["teilung"]))
+        # Eine berandende Fläche darf nicht einfach weg
+        gemeldet = []
+        w.error = lambda msg: gemeldet.append(str(msg))
+        w.tbl_geoflaeche.view.selectRow(0)
+        w._geometrie_loeschen(w.tbl_geoflaeche, mv2.flaechen)
+        check("berandende Fläche wird nicht gelöscht",
+              len(mv2.flaechen) == 6 and gemeldet
+              and "Volumenkörper" in gemeldet[-1], gemeldet[-1] if gemeldet else "-")
+        w.tbl_geokoerper.view.selectRow(0)
+        w._geometrie_loeschen(w.tbl_geokoerper, mv2.koerper)
+        check("Volumenkörper mit seinem Netz löschbar",
+              not mv2.koerper and not w.model.elements)
+        w.clear_selection()
+        check("Auswahl aufheben leert auch die Objektauswahl",
+              not w.sel_linien and not w.sel_flaechen and not w.sel_koerper)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Geometriekette", False, str(ex)[:70])
+
+    # ---- Ergebnisse im Modellbaum und Übernahme in den Bericht -------------
+    try:
+        w.error = lambda msg: check("Bericht: unerwarteter Fehler", False, str(msg)[:60])
+        w.load_example("hall")
+        an = solver.solve_all(w.model, design=True)
+        w._solve_done("all", an)
+        app.processEvents()
+        erg = w._ergebnisliste()
+        for gruppe in ("Umhüllende", "Kombinationen", "Lastfälle", "Nachweise"):
+            check(f"Ergebnisliste: „{gruppe}“", gruppe in erg and erg[gruppe],
+                  f"{len(erg.get(gruppe, []))} Einträge")
+        namen = zweige(w.baum)
+        check("Ergebnisse stehen im Modellbaum", "Ergebnisse" in namen)
+        check("Bericht steht im Modellbaum", "Bericht" in namen)
+        w._baum_geklickt("ergebnis", "combo:GZT7")
+        check("Klick im Baum stellt das Ergebnis ein",
+              "GZT7" in w.cb_result.currentText(), w.cb_result.currentText()[:40])
+        w.cb_field.setCurrentText("Ausnutzung EC3")
+        w.cb_diagram.setCurrentText("My")
+        app.processEvents()
+        check("aktuelle Quelle wird erkannt", w._aktuelle_quelle() == "combo:GZT7",
+              w._aktuelle_quelle())
+        w.ansicht_in_bericht()
+        app.processEvents()
+        b = w.model.bericht
+        check("Ansicht in den Bericht übernommen", len(b) == 1, f"{len(b)}")
+        check("das Bild ist wirklich drin", len(b[0].bild) > 5000,
+              f"{len(b[0].bild) // 1024} kB Base64")
+        check("die Einstellung steht dabei",
+              b[0].bezug() == "Kombination GZT7 · Ausnutzung EC3 · My", b[0].bezug())
+        check("Tabelle „Bericht“ gefüllt", len(w.tbl_bericht.modell.zeilen) == 1)
+        w._baum_geklickt("ergebnis", "env:GZT")
+        w.cb_field.setCurrentText("|u| Verschiebung")
+        app.processEvents()
+        w.ansicht_in_bericht()
+        check("zweites Bild übernommen", len(w.model.bericht) == 2)
+        w.tbl_bericht.view.selectRow(1)
+        w.berichtseintrag_schieben(-1)
+        check("Reihenfolge lässt sich ändern",
+              [x.name for x in w.model.bericht] == ["Bild 2", "Bild 1"],
+              str([x.name for x in w.model.bericht]))
+        check("Beschriftung editierbar",
+              w._bericht_aendern(0, 3, "Verformung im GZG")
+              and w.model.bericht[0].beschriftung == "Verformung im GZG")
+        from statik3d.report.html import Report
+        html = Report(w.model, w.analysis).html()
+        check("Bericht hat das Kapitel „Übernommene Ergebnisbilder“",
+              "Übernommene Ergebnisbilder" in html)
+        check("die Bilder stehen im Bericht",
+              html.count("data:image/png;base64") >= 2,
+              f"{html.count('data:image/png;base64')} Bilder")
+        check("die Bildunterschrift steht im Bericht", "Verformung im GZG" in html)
+        w.tbl_bericht.view.selectRow(0)
+        w.berichtseintrag_loeschen()
+        check("Bild löschbar", len(w.model.bericht) == 1)
+        w.undo()
+        check("Löschen ist rücknehmbar", len(w.model.bericht) == 2)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Ergebnisse und Bericht", False, str(ex)[:70])
+
+    # ---- Lasten, Fang, Glasleiste, Masken rechts --------------------------
+    try:
+        from statik3d.gui import viewport as vpl
+        w.error = lambda msg: check("Ansicht: unerwarteter Fehler", False, str(msg)[:60])
+        w.load_example("hall")
+        app.processEvents()
+        ml = w.model
+
+        # Linien werden gezeichnet
+        ml.add_line("L1", [0, 1, 2])
+        w.refresh_all()
+        app.processEvents()
+        check("Schalter „Linien“ vorhanden und an", w.act_linien.isChecked())
+        check("Linien stehen im Modellbaum", "Linien" in zweige(w.baum))
+
+        # Lastentabelle
+        check("Register „Lasten“ vorhanden",
+              "Lasten" in [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())])
+        n_last = sum(lc.n_loads for lc in ml.load_cases.values())
+        check("Lastentabelle gefüllt", len(w.tbl_last.modell.zeilen) == n_last,
+              f"{len(w.tbl_last.modell.zeilen)} von {n_last}")
+        arten = {z[2] for z in w.tbl_last.modell.zeilen}
+        check("die Lastarten stehen dabei",
+              {"Eigengewicht", "Streckenlast"} <= arten, str(sorted(arten)))
+        check("Lasten stehen im Modellbaum", "Lasten" in zweige(w.baum))
+        erster = list(ml.load_cases)[0]
+        w.cb_lastfilter.setCurrentText(erster)
+        app.processEvents()
+        check("Lastfilter wirkt",
+              {z[1] for z in w.tbl_last.modell.zeilen} == {erster},
+              str({z[1] for z in w.tbl_last.modell.zeilen}))
+        w.cb_lastfilter.setCurrentText("(alle)")
+        app.processEvents()
+        w.tbl_last.view.selectRow(1)
+        w._tabelle_last(1)
+        check("Klick auf eine Lastzeile wählt ihr Ziel", len(w.selection) > 0,
+              f"{len(w.selection)} Knoten")
+        n0 = len(w.tbl_last.modell.zeilen)
+        w.tbl_last.view.selectRow(1)
+        w.last_loeschen()
+        check("Last löschbar", len(w.tbl_last.modell.zeilen) == n0 - 1,
+              f"{len(w.tbl_last.modell.zeilen)} statt {n0}")
+        w.undo()
+        check("Löschen ist rücknehmbar", len(w.tbl_last.modell.zeilen) == n0)
+
+        # Fang
+        check("alle drei Fangarten an", sorted(w.fang_arten) == ["knoten", "mitte", "raster"],
+              str(w.fang_arten))
+        w.fangart_umschalten("mitte", False)
+        check("eine Fangart abschaltbar", "mitte" not in w.fang_arten, str(w.fang_arten))
+        check("die Statuszeile nennt die Fangarten",
+              "knoten" in w.lbl_fang.text() and "mitte" not in w.lbl_fang.text(),
+              w.lbl_fang.text())
+        w.fangart_umschalten("mitte", True)
+        check("und wieder an", "mitte" in w.fang_arten)
+
+        # Glasleiste und Ansichtswürfel
+        check("Glasleiste über der Ansicht", w.glasleiste.isVisible()
+              and w.glasleiste.width() > 200, f"{w.glasleiste.width()} px")
+        check("Ansichtswürfel vorhanden", w.ansichtswuerfel.isVisible())
+        for richtung in ("xy", "xz", "yz", "iso"):
+            w.ansichtswuerfel.gewaehlt.emit(richtung)
+            app.processEvents()
+        check("Blickrichtung über den Würfel", True)
+        w.auswahlart_setzen("Linie")
+        check("Auswahlart auch in der Glasleiste",
+              w.cb_auswahlart_glas.currentText() == "Linie",
+              w.cb_auswahlart_glas.currentText())
+        w.auswahlart_setzen("Knoten")
+
+        # Erzeuge-Maske steht rechts, nicht über der Ansicht
+        w.maske_linie()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Erzeuge-Maske im rechten Bereich",
+              mk is not None and mk.parent() is not w.centralWidget())
+        check("der Docktitel nennt sie", w.eingaben_dock.windowTitle() == "Linie",
+              w.eingaben_dock.windowTitle())
+        check("Vorgabe ist die Polylinie, nicht der Bogen",
+              mk.werte().get("art", "").startswith("Polylinie"),
+              str(mk.werte().get("art")))
+        w.maskenrand.schliessen()
+        app.processEvents()
+
+        # Modellbaum: Klick öffnet rechts die passende Maske und lässt aufleuchten
+        w._baum_geklickt("lager_einzeln", "0")
+        check("Klick auf ein Lager öffnet die Lagermaske",
+              w.eingaben_dock.windowTitle() == "Lager/Lasten",
+              w.eingaben_dock.windowTitle())
+        stab = list(w.model.members)[0]
+        w._baum_geklickt("stab", stab)
+        check("Klick auf einen Stab lässt seine Elemente aufleuchten",
+              len(w.leuchtet) == len(w.model.members[stab].elements),
+              f"{len(w.leuchtet)} Elemente")
+        check("und öffnet die Nachweismaske",
+              w.eingaben_dock.windowTitle() == "Nachweise",
+              w.eingaben_dock.windowTitle())
+        w.clear_selection()
+        check("Auswahl aufheben löscht auch das Aufleuchten", not w.leuchtet)
+
+        # Viele freie Knoten übertönen die Hervorhebung nicht
+        w.new_model()
+        w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))
+        check("bei überwiegend freien Knoten keine Sonderfarbe",
+              len(vpl.unbelegte_knoten(w.model)) > vpl.FREI_ANTEIL * w.model.nn)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Lasten, Fang, Glasleiste", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

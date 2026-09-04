@@ -25,6 +25,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from statik3d import solver  # noqa: E402
+from statik3d.model import Model  # noqa: E402
 from statik3d.importers import import_file  # noqa: E402
 from statik3d.importers import rfem6_db as R6  # noqa: E402
 
@@ -133,6 +134,10 @@ CREATE TABLE SurfaceImplPlane (id INTEGER PRIMARY KEY, version INTEGER, parent_i
                    isDeactivatedForCalculation boolean);
 CREATE TABLE SurfaceImplPlane_cornerNodes (id INTEGER, container_order INTEGER,
                    reference_id bigint, reference_table TEXT);
+CREATE TABLE SurfaceImplPlane_boundaryLines (id INTEGER, container_order INTEGER,
+                   value_id bigint);
+CREATE TABLE SurfaceImplQuadrangle_boundaryLines (id INTEGER, container_order INTEGER,
+                   value_id bigint);
 CREATE TABLE SurfaceImplPlane_integratedOpenings (id INTEGER, container_order INTEGER,
                    value_id bigint);
 CREATE TABLE SurfaceStiffnessStandard (id INTEGER PRIMARY KEY, version INTEGER,
@@ -192,6 +197,33 @@ CREATE TABLE MemberImplResultBeam (id INTEGER PRIMARY KEY, version INTEGER, pare
                    angle double precision, isDeactivatedForCalculation boolean);
 CREATE TABLE FreeRectangularLoad (id INTEGER PRIMARY KEY, version INTEGER,
                    impl_id bigint, impl_table TEXT);
+CREATE TABLE NodalLoad (id INTEGER PRIMARY KEY, version INTEGER,
+                   parentModelObject_id bigint, parentModelObject_table TEXT,
+                   userID INTEGER, impl_id bigint, impl_table TEXT);
+CREATE TABLE NodalTypeLoadImplForce (id INTEGER PRIMARY KEY, version INTEGER,
+                   parent_id bigint, parent_table TEXT, loadDirection INTEGER,
+                   forceMagnitude_x double precision, forceMagnitude_y double precision,
+                   forceMagnitude_z double precision,
+                   momentMagnitude_x double precision, momentMagnitude_y double precision,
+                   momentMagnitude_z double precision, magnitude double precision);
+CREATE TABLE NodalTypeLoadImplForce_assignedTo (id INTEGER, container_order INTEGER,
+                   value_id bigint);
+CREATE TABLE MemberLoad (id INTEGER PRIMARY KEY, version INTEGER,
+                   parentModelObject_id bigint, parentModelObject_table TEXT,
+                   userID INTEGER, impl_id bigint, impl_table TEXT);
+CREATE TABLE MemberTypeLoadImplInitialPrestress (id INTEGER PRIMARY KEY, version INTEGER,
+                   parent_id bigint, parent_table TEXT, magnitude double precision);
+CREATE TABLE MemberTypeLoadImplInitialPrestress_assignedTo (id INTEGER,
+                   container_order INTEGER, value_id bigint);
+CREATE TABLE ResultCombination (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE ResultCombinationImpl (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
+                   parent_id bigint, designSituationType INTEGER);
+CREATE TABLE ResultCombinationImpl_items (id INTEGER, container_order INTEGER,
+                   modelObject_id bigint, modelObject_table TEXT,
+                   modelObjectFactor REAL, groupFactor REAL,
+                   leftParenthesis boolean, rightParenthesis boolean,
+                   operator INTEGER, subResult INTEGER);
 CREATE TABLE SpringConstants (id INTEGER PRIMARY KEY, version INTEGER,
                    owner_id bigint, owner_table TEXT,
                    springConstantAlongX REAL, springConstantAlongY REAL,
@@ -229,7 +261,8 @@ def _spring(con, sid, owner, table, k, nl=(0,) * 6, friction=None):
 def build_db(path, nodes, lines, members, supports, line_supports=(),
              surface_supports=(), surfaces=(), hinges=(), partials=(),
              solids=(), releases=(), surface_loads=(), load_cases=(),
-             free_loads=0, openings=()):
+             free_loads=0, openings=(), nodal_loads=(), prestress=(),
+             combinations=(), boundary_lines=None):
     """Modelldatenbank im RFEM-6-Schema erzeugen.
 
     ``surfaces``   Eintrag ``[Knoten...]``           -> Flaeche ohne Dicke
@@ -239,6 +272,10 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
     ``surface_loads`` (Lastfall-id, [Flaechen], Groesse [N/m^2], Richtung)
     ``load_cases`` (Name, Einwirkungskategorie, Eigengewichtsfaktor z)
     ``openings``   Flaechennummern, die eine Oeffnung tragen
+    ``nodal_loads``   (Lastfall-id, [Knoten], (Fx,Fy,Fz), (Mx,My,Mz))
+    ``prestress``     (Lastfall-id, [Stabnummern], N_0 [N])
+    ``combinations``  (Name, Situationsart, {Lastfall-id: Faktor})
+    ``boundary_lines`` {Flaechennummer: [Liniennummern]} - Randlinien
     """
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
@@ -304,7 +341,24 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
         sid += 1
     thick_id = 0
     for i, entry in enumerate(surfaces, 1):
-        corners, t = (entry, 0.0) if not isinstance(entry, tuple) else entry
+        # [Knoten]        -> Viereckflaeche ohne Steifigkeitsobjekt
+        # ([Knoten], 0.0) -> Flaeche mit SurfaceStiffnessWithoutThickness
+        # ([Knoten], t)   -> Flaeche mit Dicke t
+        corners, t = (entry, None) if not isinstance(entry, tuple) else entry
+        if t == 0.0:
+            con.execute("INSERT INTO SurfaceStiffnessWithoutThickness VALUES "
+                        "(?,1,?,'SurfaceImplPlane')", (i, i))
+            con.execute("INSERT INTO Surface VALUES (?,1,?,?,'SurfaceImplPlane')",
+                        (i, i, i))
+            con.execute("INSERT INTO SurfaceImplPlane VALUES (?,1,?,?,"
+                        "'SurfaceStiffnessWithoutThickness',0)", (i, i, i))
+            for j, n in enumerate(corners):
+                con.execute("INSERT INTO SurfaceImplPlane_cornerNodes "
+                            "VALUES (?,?,?,'Node')", (i, j, n))
+            for j, ln in enumerate((boundary_lines or {}).get(i, [])):
+                con.execute("INSERT INTO SurfaceImplPlane_boundaryLines "
+                            "VALUES (?,?,?)", (i, j, ln))
+            continue
         if not t:
             # Flaeche ohne eigene Steifigkeit (Randflaeche eines Volumens):
             # Viereckflaeche mit Null-Steifigkeit, wie in echten Volumenmodellen
@@ -314,6 +368,9 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
             for j, n in enumerate(corners):
                 con.execute("INSERT INTO SurfaceImplQuadrangle_cornerNodes "
                             "VALUES (?,?,?,'Node')", (i, j, n))
+            for j, ln in enumerate((boundary_lines or {}).get(i, [])):
+                con.execute("INSERT INTO SurfaceImplQuadrangle_boundaryLines "
+                            "VALUES (?,?,?)", (i, j, ln))
             continue
         # Flaeche mit Dicke: SurfaceImplPlane -> SurfaceStiffnessStandard -> Thickness
         thick_id += 1
@@ -329,6 +386,9 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
         for j, n in enumerate(corners):
             con.execute("INSERT INTO SurfaceImplPlane_cornerNodes VALUES (?,?,?,'Node')",
                         (i, j, n))
+        for j, ln in enumerate((boundary_lines or {}).get(i, [])):
+            con.execute("INSERT INTO SurfaceImplPlane_boundaryLines VALUES (?,?,?)",
+                        (i, j, ln))
         if i in openings:
             con.execute("INSERT INTO SurfaceImplPlane_integratedOpenings VALUES (?,0,1)", (i,))
     for i, (name, springs, nl, mu, srf) in enumerate(surface_supports, 1):
@@ -386,17 +446,55 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
                         (i, j, n))
     for i in range(1, free_loads + 1):
         con.execute("INSERT INTO FreeRectangularLoad VALUES (?,1,?,'x')", (i, i))
+    for i, (lc, knoten, F, M) in enumerate(nodal_loads, 1):
+        con.execute("INSERT INTO NodalLoad VALUES (?,1,?,'LoadCase',?,?,"
+                    "'NodalTypeLoadImplForce')", (i, lc, i, i))
+        con.execute("INSERT INTO NodalTypeLoadImplForce VALUES "
+                    "(?,1,?,'NodalLoad',1,?,?,?,?,?,?,0)",
+                    (i, i) + tuple(F) + tuple(M))
+        for j, n in enumerate(knoten):
+            con.execute("INSERT INTO NodalTypeLoadImplForce_assignedTo VALUES (?,?,?)",
+                        (i, j, n))
+    for i, (lc, staebe, N0) in enumerate(prestress, 1):
+        con.execute("INSERT INTO MemberLoad VALUES (?,1,?,'LoadCase',?,?,"
+                    "'MemberTypeLoadImplInitialPrestress')", (i, lc, i, i))
+        con.execute("INSERT INTO MemberTypeLoadImplInitialPrestress VALUES "
+                    "(?,1,?,'MemberLoad',?)", (i, i, N0))
+        for j, n in enumerate(staebe):
+            con.execute("INSERT INTO MemberTypeLoadImplInitialPrestress_assignedTo "
+                        "VALUES (?,?,?)", (i, j, n))
+    for i, (name, situation, faktoren) in enumerate(combinations, 1):
+        con.execute("INSERT INTO ResultCombination VALUES (?,1,?,?,"
+                    "'ResultCombinationImpl')", (i, i, i))
+        con.execute("INSERT INTO ResultCombinationImpl VALUES (?,1,?,?,?)",
+                    (i, name, i, situation))
+        for j, (lcid, f) in enumerate(faktoren.items()):
+            con.execute("INSERT INTO ResultCombinationImpl_items VALUES "
+                        "(?,?,?,'LoadCase',?,1.0,0,0,0,0)", (i, j, lcid, f))
     con.commit()
     con.close()
 
 
-def make_rf6(path, **kw):
-    """.rf6-Behaelter mit model.db und format.txt."""
+MESH_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<property key="meshConfig">
+  <property value="0.075" key="E_VALUE_GENERAL_TARGET_LENGTH_OF_FE"/>
+  <property value="0.002" key="E_VALUE_GENERAL_MAXIMUM_DISTANCE_BETWEEN_NODE_AND_LINE"/>
+  <property value="12" key="E_VALUE_MEMBERS_NUMBER_OF_DIVISIONS_FOR_SPECIAL_TYPES"/>
+  <property value="2.5" key="E_VALUE_SURFACES_MAXIMUM_RATIO_OF_FE"/>
+  <property value="1" key="E_VALUE_SURFACES_SHAPE_OF_FINITE_ELEMENTS"/>
+  <property value="true" key="E_VALUE_SURFACES_MAPPED_MESH_PREFERRED"/>
+</property>"""
+
+
+def make_rf6(path, mesh_xml: str = MESH_XML, **kw):
+    """.rf6-Behaelter mit model.db, format.txt und mesh.xml."""
     tmp = tempfile.mkdtemp()
     db = os.path.join(tmp, "model.db")
     build_db(db, **kw)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(db, "model.db")
+        if mesh_xml:
+            z.writestr("mesh.xml", mesh_xml)
         z.writestr("format.txt", "RFEM\n6.11.0004\nRFEM6\n6.12.0010\n1773229130\n")
         z.writestr("general_data.xml", "<?xml version='1.0'?><property key='generalData'/>")
     shutil.rmtree(tmp, ignore_errors=True)
@@ -641,33 +739,48 @@ def test_flaechen_mit_dicke():
             os.path.join(tmp, "platte.rf6"),
             nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0),
                    (4, 0, 0), (4, 2, 0), (6, 0, 0), (6, 2, 0)],
-            lines=[],
+            lines=[[1, 2], [2, 3], [3, 4], [4, 1]],
             members=[],
             supports=[],
             surfaces=[([1, 2, 3, 4], 0.012),      # 12 mm -> Schalen
                       ([2, 5, 6, 3], 0.012),       # gleiche Dicke -> gleiche Kennung
-                      [5, 7, 8, 6],                # ohne Dicke -> nichts
+                      ([5, 7, 8, 6], 0.0),         # ohne Dicke -> nichts
                       ([1, 2, 3, 4], 0.020)],      # mit Oeffnung -> nicht vernetzt
             openings=(4,),
+            boundary_lines={1: [1, 2, 3, 4]},
         )
         log = []
         m = R6.read_rf6(f, log=log)
         check("Flaeche mit Dicke vernetzt", len(m.elements) > 0, f"{len(m.elements)} Elemente")
         check("nur Schalenelemente", all(e.typ.startswith("shell") for e in m.elements),
               ", ".join(sorted({e.typ for e in m.elements})))
-        check("eine Schalenkennung fuer zwei gleich dicke Flaechen",
-              len(m.shells) == 1, ", ".join(m.shells))
-        sp = list(m.shells.values())[0]
-        close("Schalendicke", sp.t, 0.012, 1e-12, " m")
-        check("Kennung nach Dicke benannt", list(m.shells)[0] == "d12", list(m.shells)[0])
+        check("jede Flaeche wird ein Modellobjekt", len(m.flaechen) == 4,
+              ", ".join(m.flaechen))
+        check("Randlinien am Objekt", m.flaechen["F1"].linien == ["L1", "L2", "L3", "L4"],
+              str(m.flaechen["F1"].linien))
+        check("Objekt kennt seine Elemente", len(m.flaechen["F1"].elemente) == 1,
+              str(m.flaechen["F1"].elemente))
+        check("Flaeche ohne Dicke traegt kein Netz",
+              not m.flaechen["F3"].elemente and "Null-Element" in m.flaechen["F3"].kommentar,
+              m.flaechen["F3"].kommentar)
+        check("zwei gleich dicke Flaechen teilen die Kennung",
+              m.flaechen["F1"].dicke == m.flaechen["F2"].dicke == "d12",
+              f"{m.flaechen['F1'].dicke} / {m.flaechen['F2'].dicke}")
+        check("die dickere Flaeche hat ihre eigene Kennung",
+              m.flaechen["F4"].dicke == "d20", m.flaechen["F4"].dicke)
+        close("Schalendicke", m.shells["d12"].t, 0.012, 1e-12, " m")
         check("Flaeche ohne Dicke gemeldet",
               any("ohne eigene Steifigkeit" in x for x in log),
               next((x for x in log if "ohne eigene" in x), "-"))
         check("Flaeche mit Oeffnung nicht vernetzt",
               any("Oeffnung" in x for x in log), next((x for x in log if "ffnung" in x), "-"))
-        check("Anzahl vernetzter Flaechen genannt",
-              any("2 Flaechen als" in x for x in log),
-              next((x for x in log if "Flaechen als" in x), "-"))
+        check("Zahl der Objekte und der vernetzten genannt",
+              any("4 Flaechen als Objekte angelegt" in x and "2 vernetzt" in x
+                  for x in log),
+              next((x for x in log if "als Objekte" in x), "-"))
+        check("Netzeinstellungen aus mesh.xml", abs(m.netz.ziellaenge - 0.075) < 1e-12
+              and m.netz.stabteilung == 12 and m.netz.abgebildet,
+              m.netz.beschreibung())
 
         # Rechnung: Kragplatte, 2 m x 2 m, 12 mm, Streifenlast
         for nd in range(m.nn):
@@ -877,6 +990,110 @@ def test_lastfaelle_und_lasten():
 
 
 # --------------------------------------------------------------------------
+# 4e) Knotenlasten, Vorspannung, Kombinationen, Netzeinstellungen
+# --------------------------------------------------------------------------
+def test_lasten_und_kombinationen():
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "lasten2.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0), (4, 0, 0)],
+            lines=[[1, 2], [2, 3]],
+            members=[(1, None, None), (2, None, None)],
+            supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1])],
+            load_cases=[("Eigengewicht", 1, 1.0), ("Nutzlast", 12, 0.0),
+                        ("Vorspannung", 3, 0.0)],
+            nodal_loads=[(2, [3], (0.0, 0.0, -50e3), (0.0, 12e3, 0.0)),
+                         (2, [2], (10e3, 0.0, 0.0), (0.0, 0.0, 0.0)),
+                         (2, [], (5e3, 0.0, 0.0), (0.0, 0.0, 0.0))],   # ohne Ziel
+            prestress=[(3, [1, 2], 120e3)],
+            combinations=[("GZT: 1,35 G + 1,5 Q", 0, {1: 1.35, 2: 1.5}),
+                          ("GZG selten", 1, {1: 1.0, 2: 1.0})],
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+
+        # ---- Knotenlasten
+        lf2 = m.load_cases["LF2"]
+        check("Knotenlasten uebernommen", len(lf2.nodal_loads) == 2,
+              f"{len(lf2.nodal_loads)}")
+        l = [x for x in lf2.nodal_loads if x.node == 2][0]
+        close("Knotenlast Fz", l.F[2], -50e3, 1e-9, " N")
+        close("Knotenlast My", l.F[4], 12e3, 1e-9, " Nm")
+        check("Knotenlast ohne Ziel wird gemeldet",
+              "1 Knotenlasten ohne Ziel" in txt,
+              next((x for x in log if "ohne Ziel" in x), "-"))
+        check("Zahl der uebernommenen Knotenlasten genannt",
+              "2 Knotenlasten uebernommen" in txt)
+
+        # ---- Vorspannung als gleichwertige Temperaturlast
+        lf3 = m.load_cases["LF3"]
+        check("Vorspannung auf beide Staebe gelegt", len(lf3.temp_loads) == 2,
+              f"{len(lf3.temp_loads)}")
+        t = lf3.temp_loads[0]
+        e = m.elements[t.elem]
+        sec, mat = m.sections[e.sec], m.materials[e.mat]
+        close("dT = -N_0/(E*A*alpha)", t.dT, -120e3 / (mat.E * sec.A * mat.alpha),
+              1e-12, " K")
+        check("der Weg steht im Protokoll",
+              "gleichwertige Temperaturlast" in txt,
+              next((x for x in log if "Temperaturlast" in x), "-"))
+        # Gegenprobe: der voll behinderte Stab traegt genau N_0
+        mm = Model("Probe")
+        mm.add_material(mat)
+        mm.add_section(sec)
+        mm.add_nodes(np.array([[0, 0, 0], [2, 0, 0.]]))
+        mm.add_element("truss", [0, 1], mat.name, sec.name)
+        mm.support(0, [0, 1, 2])
+        mm.support(1, [0, 1, 2])
+        mm.load_cases["LF1"].gravity = [0.0, 0.0, 0.0]
+        mm.load_temp(0, t.dT, case="LF1")
+        r = solver.solve_static(mm, case="LF1")
+        close("voll behinderter Stab traegt N_0", abs(float(r.reactions[0, 0])),
+              120e3, 1e-9, " N")
+
+        # ---- Kombinationen
+        check("beide Kombinationen uebernommen", len(m.combinations) == 2,
+              ", ".join(m.combinations))
+        k = m.combinations["GZT: 1,35 G + 1,5 Q"]
+        close("Faktor auf den staendigen Lastfall", k.factors["LF1"], 1.35, 1e-12)
+        close("Faktor auf die Nutzlast", k.factors["LF2"], 1.5, 1e-12)
+        check("Bemessungssituation uebernommen", k.typ == "ULS", k.typ)
+        check("GZG als SLS gefuehrt", m.combinations["GZG selten"].typ == "SLS_CH",
+              m.combinations["GZG selten"].typ)
+        check("Zahl genannt", "2 Kombinationen uebernommen" in txt)
+
+        # ---- Netzeinstellungen
+        close("Ziellaenge aus mesh.xml", m.netz.ziellaenge, 0.075, 1e-12, " m")
+        close("groesster Knoten-Linien-Abstand", m.netz.knoten_linie, 0.002, 1e-12, " m")
+        check("Stabteilung", m.netz.stabteilung == 12, str(m.netz.stabteilung))
+        check("abgebildetes Netz bevorzugt", m.netz.abgebildet)
+        check("Netzeinstellungen im Protokoll",
+              "Netzeinstellungen übernommen" in txt,
+              next((x for x in log if "Netzeinstellungen" in x), "-"))
+        check("Teilung nach der Ziellaenge", m.netz.teilung(1.5) == 20,
+              str(m.netz.teilung(1.5)))
+
+        # ---- ohne mesh.xml bleibt die Vorgabe des Programms
+        f2 = make_rf6(
+            os.path.join(tmp, "ohne_mesh.rf6"), mesh_xml="",
+            nodes=[(0, 0, 0), (2, 0, 0)], lines=[[1, 2]],
+            members=[(1, None, None)],
+            supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1])],
+        )
+        log2 = []
+        m2 = R6.read_rf6(f2, log=log2)
+        check("ohne mesh.xml gilt die Vorgabe", m2.netz.quelle == "",
+              m2.netz.beschreibung())
+        check("und das wird gesagt",
+              any("Keine mesh.xml" in x for x in log2),
+              next((x for x in log2 if "mesh.xml" in x), "-"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
 # 5) Dispatcher, Behaelter, Hilfsfunktionen
 # --------------------------------------------------------------------------
 def test_dispatcher_und_hilfen():
@@ -979,7 +1196,8 @@ def main():
     for t in (test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
               test_volumenkoerper, test_stabtypen, test_flaechenfreigaben,
-              test_lastfaelle_und_lasten, test_dispatcher_und_hilfen,
+              test_lastfaelle_und_lasten, test_lasten_und_kombinationen,
+              test_dispatcher_und_hilfen,
               test_knoten_zusammenfuehren):
         print(f"\n--- {t.__name__} ---")
         try:

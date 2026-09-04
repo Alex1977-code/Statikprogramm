@@ -72,18 +72,22 @@ Die Arbeitsfläche in drei Spalten:
 
   | Zweig | Inhalt |
   |---|---|
-  | Geometrie | Knoten (mit Koordinaten), Linien (Art und Knotenzahl) |
+  | Geometrie | Knoten (mit Koordinaten), Linien, **Flächen**, **Volumenkörper** |
   | Elemente | Stäbe, Flächen, Volumen — je nach Elementart, dazu die Stäbe für die Nachweise |
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden |
   | Flächenfreigaben | Kontaktfugen aus RFEM mit ihrer Wirkung je Freiheitsgrad |
+  | Lasten | alle Lasten aller Lastfälle, je Lastfall gezählt |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
   | Einwirkungen | Lastfälle und Kombinationen |
   | Stellungen, Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte |
+  | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
+  | **Bericht** | die aus der Ansicht übernommenen Ergebnisbilder |
 
-  **Ein Klick** wählt aus: der Zweig holt seine Tabelle nach vorn und hebt das
-  Objekt in der Ansicht hervor. **Ein Doppelklick bearbeitet**: er öffnet die
+  **Ein Klick** wählt aus: der Zweig holt seine Tabelle nach vorn, öffnet
+  rechts die Maske, die dazu gehört, und lässt das Objekt in der Ansicht
+  **aufleuchten**. **Ein Doppelklick bearbeitet**: er öffnet die
   Maske des Objekts (Knotenkoordinaten, Linie, Querschnitt, Werkstoff, Dicke,
   Lager, Gelenk, Lastfall, Kombination …). Ein Doppelklick auf den
   Sammelzweig — „Werkstoffe“, „Gelenke“, „Linien“ — legt ein **neues** Objekt an.
@@ -114,6 +118,9 @@ bedienen sind, steht im nächsten Abschnitt.
 | Lastfälle | Beschreibung; Doppelklick öffnet Name, Einwirkung, Ausschlussgruppe |
 | Kombinationen | über die Maske (Doppelklick) |
 | Flächenfreigaben | nur Anzeige — sie kommen aus RFEM |
+| Flächen, Volumenkörper | über die Maske (Doppelklick): Randlinien bzw. Randflächen, Dicke, Werkstoff, Teilung |
+| Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
+| Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
 **Flächenfreigaben** sind Kontaktfugen: in der Fugenebene starr, senkrecht dazu
 frei mit Ausfall bei Zug. Statik3D liest sie aus der RFEM-Datei vollständig ein
@@ -126,6 +133,67 @@ rechnet das Modell durchverbunden — also **zu steif**.
 Ein Knoten wird nur gelöscht, wenn **kein** Element mehr an ihm hängt — sonst
 sagt das Programm, welches Element im Weg ist. Beim Löschen eines Elements
 oder Knotens werden Stabzüge, Lager und Lasten mitgeführt.
+
+### Die Geometriekette: Knoten → Linien → Flächen → Volumen
+
+Modelliert wird wie in RFEM, in vier Stufen. Jede Stufe nimmt, was in der
+Ansicht ausgewählt ist:
+
+| Stufe | Befehl | Voraussetzung |
+|---|---|---|
+| Knoten | *Geometrie → Knoten* | – |
+| Linie aus Knoten | *Geometrie → Linien → Linie aus Knoten* | mindestens zwei Knoten ausgewählt |
+| **Fläche aus Linien** | *Geometrie → Flächen und Volumen* | die ausgewählten Linien bilden einen **geschlossenen** Rand |
+| **Volumen aus Flächen** | *Geometrie → Flächen und Volumen* | mindestens vier Flächen ausgewählt |
+
+Wonach ein Klick in der Ansicht greift, stellt das Auswahlfeld
+**Geometrie → Auswahl in der Ansicht** ein: *Knoten, Linie, Fläche, Volumen,
+Stab*. Ein zweiter Klick auf dasselbe Objekt nimmt es wieder aus der Auswahl;
+das Gewählte ist orange hervorgehoben.
+
+Fläche und Volumenkörper sind **Geometrie** — sie tragen erst dann Elemente,
+wenn sie **vernetzt** werden (*Vernetzen* in derselben Gruppe, oder das
+Häkchen „gleich vernetzen" in der Maske). Im Modellbaum trägt ein noch nicht
+vernetztes Objekt ein ○.
+
+| Form | Netz |
+|---|---|
+| Fläche mit vier Randabschnitten | abgebildetes Vierecknetz mit der eingestellten Teilung (längs × quer) |
+| Fläche mit drei Randknoten | ein Dreieckelement |
+| Volumen: 6 Vierecke, 8 Eckknoten | abgebildetes Hexaedernetz (x × y × z) |
+| Volumen: 4 Dreiecke, 4 Knoten | ein Tetraeder |
+| alles andere | wird **nicht** vernetzt; der Grund steht im Protokoll |
+
+Ist eine Randlinie ein **Bogen, Kreis, Spline, Parabel oder eine Ellipse**,
+folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den
+Stützknoten. Eine Polylinie bleibt dagegen eine Polylinie: dort laufen die
+Knoten auf den Sehnen, denn etwas anderes hat der Anwender nicht angegeben.
+
+„Netz löschen" nimmt die Elemente wieder weg, die Geometrie bleibt stehen.
+Eine Fläche, die noch einen Volumenkörper berandet, lässt sich nicht löschen —
+das Programm sagt, welcher es ist.
+
+### Ergebnisse und Bericht
+
+Was gerechnet wurde, steht im **Modellbaum unter „Ergebnisse"**: Umhüllende,
+Kombinationen, Lastfälle, die Nachweise, Eigenformen und Knickfiguren. Ein
+Klick stellt das Ergebnis in der Ansicht ein — dieselbe Auswahl, die auch die
+Maske *Ergebnisse* rechts führt. Dort werden Färbung, Schnittgrößenverlauf und
+Überhöhung eingestellt.
+
+**Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
+*Bericht → Ansicht übernehmen* (**Strg+B**), ein Doppelklick auf den
+Ergebniszweig oder „+ Ansicht übernehmen" im Modellbaum. Aufgenommen wird das
+Bild **und** die Einstellung, aus der es entstanden ist — welches Ergebnis,
+wonach eingefärbt, welcher Verlauf, welche Überhöhung. Ohne diese Angabe wäre
+eine Farbgrafik im Statikdokument nicht prüfbar.
+
+Die übernommenen Bilder stehen im Modellbaum unter „Bericht" und in der
+Tabelle **Bericht** unten: dort lassen sich Name, Bildunterschrift und
+Bemerkung ändern, die Reihenfolge mit ▲/▼ verschieben und einzelne Bilder
+löschen. Im Statikdokument erscheinen sie als eigenes Kapitel „Übernommene
+Ergebnisbilder", jeweils mit einer Tabelle, die die Einstellung nennt. Das
+Kapitel lässt sich in der Berichtsmaske abwählen.
 
 ### Darstellung in der Ansicht
 
@@ -143,6 +211,24 @@ Vier Darstellungsarten, im Register *Ansicht* nebeneinander und auf
 „Knoten" zeigt die gesetzten Knoten als Punkte: Knoten, an denen noch **kein
 Element** hängt, sind orange und etwas größer — so sieht man beim Modellieren,
 wo man schon war, auch wenn dort noch nichts steht.
+
+**Die Glasleiste** liegt oben links über der Ansicht und trägt die Griffe, die
+man beim Modellieren dauernd braucht: die vier Darstellungsarten, FE-Netz,
+Knoten, Linien, Lasten, Fang, die Auswahlart und „alles ins Bild". Es sind
+dieselben Befehle wie im Ribbon, nur näher an der Maus.
+
+**Der Ansichtswürfel** oben rechts schaltet die Blickrichtung: **O**
+Draufsicht, **V** Vorderansicht, **S** Seitenansicht, ein Klick daneben
+isometrisch.
+
+**Linien** sind Geometrie, keine Elemente — der Schalter „Linien" zeigt sie.
+Bei einem aus RFEM übernommenen Modell besteht die Geometrie fast nur aus
+Linien; ohne den Schalter sähe man ein leeres Bild.
+
+**Der Fang** lässt sich einzeln umstellen: F3 schaltet ihn ganz aus,
+Umschalt+F1 den Knotenfang, Umschalt+F2 den Fang auf Kantenmitten,
+Umschalt+F3 den Rasterfang. Was gerade gefangen wird, steht in der
+Statuszeile.
 
 **Lagersymbole**: Die Form sagt, was das Lager hält — Würfel für die
 Einspannung, Kegel für das gelenkige Lager, Zylinder für ein Federlager.
@@ -379,10 +465,13 @@ Datei → Importieren (Details in `Schnittstellen.md`):
 | `.step`/`.iges`/`.stl` | CAD | Vernetzung mit gmsh (Volumen oder Schale) |
 
 Eine **RFEM-6-Projektdatei** (`.rf6`) wird unmittelbar gelesen – kein Export
-nötig. Was übernommen wird und was nicht (Flächen ohne eigene Dicke,
-Volumenkörper, die ein 3D-Netz brauchen, die Trennung an Flächenfreigaben),
-steht Zeile für Zeile im Importprotokoll; Einzelheiten im
-Schnittstellenhandbuch. Die älteren nativen Formate (`.rf5`, `.rs6`, `.fem`)
+nötig. Übernommen werden Knoten, Linien, Stäbe, **jede Fläche und jeder
+Volumenkörper als Objekt** (mit Randlinien, Dicke und Werkstoff), die Lager,
+die Flächenfreigaben, alle Lastfälle mit ihren Lasten (Vorspannung als
+gleichwertige Temperaturlast), die Kombinationen und die **Netzeinstellungen**
+aus `mesh.xml`. Was kein Netz bekommen konnte, steht trotzdem im Modellbaum
+und lässt sich dort vernetzen. Was gar nicht ging, steht Zeile für Zeile im
+Importprotokoll; Einzelheiten im Schnittstellenhandbuch. Die älteren nativen Formate (`.rf5`, `.rs6`, `.fem`)
 werden untersucht und, soweit ihr Behälter zugänglich ist, ausgelesen –
 andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder
 Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
@@ -686,6 +775,9 @@ Strg+Umschalt+C vordere Tabelle kopieren.
 
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
+Strg+B übernimmt die Ansicht in den Bericht.
+Fang: F3 ein/aus, Umschalt+F1 Knoten, Umschalt+F2 Kantenmitte,
+Umschalt+F3 Raster.
 
 Browser/Handy: siehe Kapitel 12.
 
