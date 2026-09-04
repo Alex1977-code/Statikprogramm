@@ -128,7 +128,69 @@ CREATE TABLE LoadCase (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
 CREATE TABLE LoadCaseImplStatic (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
                    parent_id bigint, actionCategoryId INTEGER, selfWeightActive boolean,
                    selfWeightFactors_x REAL, selfWeightFactors_y REAL, selfWeightFactors_z REAL);
+CREATE TABLE SurfaceImplPlane (id INTEGER PRIMARY KEY, version INTEGER, parent_id bigint,
+                   stiffness_id bigint, stiffness_table TEXT,
+                   isDeactivatedForCalculation boolean);
+CREATE TABLE SurfaceImplPlane_cornerNodes (id INTEGER, container_order INTEGER,
+                   reference_id bigint, reference_table TEXT);
+CREATE TABLE SurfaceImplPlane_integratedOpenings (id INTEGER, container_order INTEGER,
+                   value_id bigint);
+CREATE TABLE SurfaceStiffnessStandard (id INTEGER PRIMARY KEY, version INTEGER,
+                   owner_id bigint, owner_table TEXT, thickness_id bigint);
+CREATE TABLE SurfaceStiffnessWithoutThickness (id INTEGER PRIMARY KEY, version INTEGER,
+                   owner_id bigint, owner_table TEXT);
+CREATE TABLE Thickness (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE ThicknessImplUniform (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
+                   parent_id bigint, material_id bigint, thickness double precision);
 CREATE TABLE Solid (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE SolidImplStandard (id INTEGER PRIMARY KEY, version INTEGER, parent_id bigint,
+                   material_id bigint, isDeactivatedForCalculation boolean);
+CREATE TABLE SolidImplStandard_boundarySurfaces (id INTEGER, container_order INTEGER,
+                   value_id bigint);
+CREATE TABLE SurfaceRelease (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE SurfaceReleaseImpl (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
+                   comment TEXT, parent_id bigint, releaseType_id bigint,
+                   releaseType_table TEXT, releaseLocation INTEGER,
+                   deactivated boolean, defineReleaseTypeForEachObject boolean);
+CREATE TABLE SurfaceReleaseImpl_releasedSurfaces (id INTEGER, container_order INTEGER,
+                   value_id bigint);
+CREATE TABLE SurfaceReleaseImpl_releasedSolids (id INTEGER, container_order INTEGER,
+                   value_id bigint);
+CREATE TABLE SurfaceReleaseImpl_assignedToObjects (id INTEGER, container_order INTEGER,
+                   reference_id bigint, reference_table TEXT);
+CREATE TABLE SurfaceReleaseImpl_useDefinitionLines (id INTEGER, container_order INTEGER,
+                   value_id bigint);
+CREATE TABLE SurfaceReleaseImpl_releaseTypeForObjects_values (id INTEGER,
+                   container_order INTEGER, value_id bigint);
+CREATE TABLE SurfaceReleaseType (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE SurfaceReleaseTypeImplVersion1 (id INTEGER PRIMARY KEY, version INTEGER,
+                   name TEXT, parent_id bigint, springConstants_id bigint,
+                   localAxisSystemType INTEGER);
+CREATE TABLE SurfaceLoad (id INTEGER PRIMARY KEY, version INTEGER,
+                   parentModelObject_id bigint, parentModelObject_table TEXT,
+                   userID INTEGER, impl_id bigint, impl_table TEXT);
+CREATE TABLE SurfaceTypeLoadImplForce (id INTEGER PRIMARY KEY, version INTEGER,
+                   parent_id bigint, parent_table TEXT, loadDistribution INTEGER,
+                   loadParameters_id bigint, loadParameters_table TEXT,
+                   loadDirection INTEGER);
+CREATE TABLE SurfaceTypeLoadImplForce_assignedTo (id INTEGER, container_order INTEGER,
+                   value_id bigint);
+CREATE TABLE SurfaceTypeLoadImplForce_NodeAndMagnitudeParameters_loadParameters
+                  (id INTEGER, container_order INTEGER, magnitude double precision,
+                   node_id bigint);
+CREATE TABLE MemberImplBeam (id INTEGER PRIMARY KEY, version INTEGER, parent_id bigint,
+                   line_id bigint, sectionStart_id bigint, sectionEnd_id bigint,
+                   memberHingeStart_id bigint, memberHingeEnd_id bigint,
+                   angle double precision, isDeactivatedForCalculation boolean);
+CREATE TABLE MemberImplResultBeam (id INTEGER PRIMARY KEY, version INTEGER, parent_id bigint,
+                   line_id bigint, sectionStart_id bigint, sectionEnd_id bigint,
+                   memberHingeStart_id bigint, memberHingeEnd_id bigint,
+                   angle double precision, isDeactivatedForCalculation boolean);
+CREATE TABLE FreeRectangularLoad (id INTEGER PRIMARY KEY, version INTEGER,
                    impl_id bigint, impl_table TEXT);
 CREATE TABLE SpringConstants (id INTEGER PRIMARY KEY, version INTEGER,
                    owner_id bigint, owner_table TEXT,
@@ -165,8 +227,19 @@ def _spring(con, sid, owner, table, k, nl=(0,) * 6, friction=None):
 
 
 def build_db(path, nodes, lines, members, supports, line_supports=(),
-             surface_supports=(), surfaces=(), hinges=(), partials=()):
-    """Modelldatenbank im RFEM-6-Schema erzeugen."""
+             surface_supports=(), surfaces=(), hinges=(), partials=(),
+             solids=(), releases=(), surface_loads=(), load_cases=(),
+             free_loads=0, openings=()):
+    """Modelldatenbank im RFEM-6-Schema erzeugen.
+
+    ``surfaces``   Eintrag ``[Knoten...]``           -> Flaeche ohne Dicke
+                   Eintrag ``([Knoten...], t)``      -> Flaeche mit Dicke t [m]
+    ``solids``     Liste der Randflaechennummern je Volumenkoerper
+    ``releases``   (Name, [Flaechen], [Volumen], Zielzahl, Federn, Kennzahlen)
+    ``surface_loads`` (Lastfall-id, [Flaechen], Groesse [N/m^2], Richtung)
+    ``load_cases`` (Name, Einwirkungskategorie, Eigengewichtsfaktor z)
+    ``openings``   Flaechennummern, die eine Oeffnung tragen
+    """
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
     for i, (x, y, z) in enumerate(nodes, 1):
@@ -206,10 +279,11 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
                                 ("I_y", I), ("I_z", I), ("I_t", 2 * I)]):
         con.execute("INSERT INTO SectionData_parameterValues_keys VALUES (1,?,?)", (j, k))
         con.execute("INSERT INTO SectionData_parameterValues_values VALUES (1,?,?,NULL)", (j, v))
-    for i, (line, hs, he) in enumerate(members, 1):
-        con.execute("INSERT INTO Member VALUES (?,1,?,?,'MemberImplTension')", (i, i, i))
-        con.execute("INSERT INTO MemberImplTension VALUES (?,1,?,?,1,1,?,?,0,0)",
-                    (i, i, line, hs, he))
+    for i, mem in enumerate(members, 1):
+        line, hs, he = mem[:3]
+        tbl = mem[3] if len(mem) > 3 else "MemberImplBeam"
+        con.execute("INSERT INTO Member VALUES (?,1,?,?,?)", (i, i, i, tbl))
+        con.execute(f"INSERT INTO {tbl} VALUES (?,1,?,?,1,1,?,?,0,0)", (i, i, line, hs, he))
     sid = 1
     for i, (name, k, nl, fr, nodes_) in enumerate(supports, 1):
         con.execute("INSERT INTO NodalSupport VALUES (?,1,?,?,'NodalSupportImpl')", (i, i, i))
@@ -228,12 +302,35 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
         for j, n in enumerate(lns):
             con.execute("INSERT INTO LineSupportImpl_lines VALUES (?,?,?)", (i, j, n))
         sid += 1
-    for i, corners in enumerate(surfaces, 1):
-        con.execute("INSERT INTO Surface VALUES (?,1,?,?,'SurfaceImplQuadrangle')", (i, i, i))
-        con.execute("INSERT INTO SurfaceImplQuadrangle VALUES (?,1,?)", (i, i))
+    thick_id = 0
+    for i, entry in enumerate(surfaces, 1):
+        corners, t = (entry, 0.0) if not isinstance(entry, tuple) else entry
+        if not t:
+            # Flaeche ohne eigene Steifigkeit (Randflaeche eines Volumens):
+            # Viereckflaeche mit Null-Steifigkeit, wie in echten Volumenmodellen
+            con.execute("INSERT INTO Surface VALUES (?,1,?,?,'SurfaceImplQuadrangle')",
+                        (i, i, i))
+            con.execute("INSERT INTO SurfaceImplQuadrangle VALUES (?,1,?)", (i, i))
+            for j, n in enumerate(corners):
+                con.execute("INSERT INTO SurfaceImplQuadrangle_cornerNodes "
+                            "VALUES (?,?,?,'Node')", (i, j, n))
+            continue
+        # Flaeche mit Dicke: SurfaceImplPlane -> SurfaceStiffnessStandard -> Thickness
+        thick_id += 1
+        con.execute("INSERT INTO Thickness VALUES (?,1,?,?,'ThicknessImplUniform')",
+                    (thick_id, thick_id, thick_id))
+        con.execute("INSERT INTO ThicknessImplUniform VALUES (?,1,?,?,1,?)",
+                    (thick_id, f"D{thick_id}", thick_id, t))
+        con.execute("INSERT INTO SurfaceStiffnessStandard VALUES (?,1,?,'SurfaceImplPlane',?)",
+                    (i, i, thick_id))
+        con.execute("INSERT INTO Surface VALUES (?,1,?,?,'SurfaceImplPlane')", (i, i, i))
+        con.execute("INSERT INTO SurfaceImplPlane VALUES (?,1,?,?,"
+                    "'SurfaceStiffnessStandard',0)", (i, i, i))
         for j, n in enumerate(corners):
-            con.execute("INSERT INTO SurfaceImplQuadrangle_cornerNodes VALUES (?,?,?,'Node')",
+            con.execute("INSERT INTO SurfaceImplPlane_cornerNodes VALUES (?,?,?,'Node')",
                         (i, j, n))
+        if i in openings:
+            con.execute("INSERT INTO SurfaceImplPlane_integratedOpenings VALUES (?,0,1)", (i,))
     for i, (name, springs, nl, mu, srf) in enumerate(surface_supports, 1):
         con.execute("INSERT INTO SurfaceSupport VALUES (?,1,?,?,'SurfaceSupportImpl')", (i, i, i))
         con.execute("INSERT INTO SurfaceSupportImpl VALUES (?,1,?,?,?,?,?,?,?,?,?,?,0,0)",
@@ -245,8 +342,50 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
         con.execute("INSERT INTO MemberHingeImpl VALUES (?,1,?,?,?)", (i, name, i, sid))
         _spring(con, sid, i, "MemberHingeImpl", k)
         sid += 1
-    con.execute("INSERT INTO LoadCase VALUES (1,1,1,1,'LoadCaseImplStatic')")
-    con.execute("INSERT INTO LoadCaseImplStatic VALUES (1,1,'Eigengewicht',1,1,1,0,0,1.0)")
+    for i, faces in enumerate(solids, 1):
+        con.execute("INSERT INTO Solid VALUES (?,1,?,?,'SolidImplStandard')", (i, i, i))
+        con.execute("INSERT INTO SolidImplStandard VALUES (?,1,?,1,0)", (i, i))
+        for j, sf in enumerate(faces):
+            con.execute("INSERT INTO SolidImplStandard_boundarySurfaces VALUES (?,?,?)",
+                        (i, j, sf))
+    for i, (name, srf, sol, ziele, k, nl) in enumerate(releases, 1):
+        con.execute("INSERT INTO SurfaceReleaseType VALUES (?,1,?,?,"
+                    "'SurfaceReleaseTypeImplVersion1')", (i, i, i))
+        con.execute("INSERT INTO SurfaceReleaseTypeImplVersion1 VALUES (?,1,?,?,?,0)",
+                    (i, f"Fuge {i}", i, sid))
+        _spring(con, sid, i, "SurfaceReleaseTypeImplVersion1", k, nl)
+        sid += 1
+        con.execute("INSERT INTO SurfaceRelease VALUES (?,1,?,?,'SurfaceReleaseImpl')",
+                    (i, i, i))
+        con.execute("INSERT INTO SurfaceReleaseImpl VALUES (?,1,'',?,?,?,"
+                    "'SurfaceReleaseType',0,0,0)", (i, name, i, i))
+        for j, n in enumerate(srf):
+            con.execute("INSERT INTO SurfaceReleaseImpl_releasedSurfaces VALUES (?,?,?)",
+                        (i, j, n))
+        for j, n in enumerate(sol):
+            con.execute("INSERT INTO SurfaceReleaseImpl_releasedSolids VALUES (?,?,?)",
+                        (i, j, n))
+        for j in range(ziele):
+            con.execute("INSERT INTO SurfaceReleaseImpl_assignedToObjects "
+                        "VALUES (?,?,?,'Solid')", (i, j, j + 1))
+    faelle = load_cases or [("Eigengewicht", 1, 1.0)]
+    for i, (name, cat, gz) in enumerate(faelle, 1):
+        con.execute("INSERT INTO LoadCase VALUES (?,1,?,?,'LoadCaseImplStatic')", (i, i, i))
+        con.execute("INSERT INTO LoadCaseImplStatic VALUES (?,1,?,?,?,?,0,0,?)",
+                    (i, name, i, cat, 1 if gz else 0, gz))
+    for i, (lc, srf, p, richtung) in enumerate(surface_loads, 1):
+        con.execute("INSERT INTO SurfaceLoad VALUES (?,1,?,'LoadCase',?,?,"
+                    "'SurfaceTypeLoadImplForce')", (i, lc, i, i))
+        con.execute("INSERT INTO SurfaceTypeLoadImplForce VALUES (?,1,?,'SurfaceLoad',0,?,"
+                    "'SurfaceTypeLoadImplForce_NodeAndMagnitudeParameters',?)",
+                    (i, i, i, richtung))
+        con.execute("INSERT INTO SurfaceTypeLoadImplForce_NodeAndMagnitudeParameters"
+                    "_loadParameters VALUES (?,0,?,NULL)", (i, p))
+        for j, n in enumerate(srf):
+            con.execute("INSERT INTO SurfaceTypeLoadImplForce_assignedTo VALUES (?,?,?)",
+                        (i, j, n))
+    for i in range(1, free_loads + 1):
+        con.execute("INSERT INTO FreeRectangularLoad VALUES (?,1,?,'x')", (i, i))
     con.commit()
     con.close()
 
@@ -485,6 +624,259 @@ def test_linien_flaechenlager():
 
 
 # --------------------------------------------------------------------------
+# 4b) Flaechen mit Dicke, Volumenkoerper, Stabtypen
+# --------------------------------------------------------------------------
+#: Wuerfel 1 m: Boden, Deckel, vier Seiten (Knoten 1..8)
+WUERFEL_FLAECHEN = [[1, 2, 3, 4], [5, 6, 7, 8],
+                    [1, 2, 6, 5], [2, 3, 7, 6], [3, 4, 8, 7], [4, 1, 5, 8]]
+WUERFEL_KNOTEN = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                  (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+
+
+def test_flaechen_mit_dicke():
+    """Flaeche mit Dicke -> Schalenelemente, Flaeche ohne Dicke -> keine."""
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "platte.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0),
+                   (4, 0, 0), (4, 2, 0), (6, 0, 0), (6, 2, 0)],
+            lines=[],
+            members=[],
+            supports=[],
+            surfaces=[([1, 2, 3, 4], 0.012),      # 12 mm -> Schalen
+                      ([2, 5, 6, 3], 0.012),       # gleiche Dicke -> gleiche Kennung
+                      [5, 7, 8, 6],                # ohne Dicke -> nichts
+                      ([1, 2, 3, 4], 0.020)],      # mit Oeffnung -> nicht vernetzt
+            openings=(4,),
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        check("Flaeche mit Dicke vernetzt", len(m.elements) > 0, f"{len(m.elements)} Elemente")
+        check("nur Schalenelemente", all(e.typ.startswith("shell") for e in m.elements),
+              ", ".join(sorted({e.typ for e in m.elements})))
+        check("eine Schalenkennung fuer zwei gleich dicke Flaechen",
+              len(m.shells) == 1, ", ".join(m.shells))
+        sp = list(m.shells.values())[0]
+        close("Schalendicke", sp.t, 0.012, 1e-12, " m")
+        check("Kennung nach Dicke benannt", list(m.shells)[0] == "d12", list(m.shells)[0])
+        check("Flaeche ohne Dicke gemeldet",
+              any("ohne eigene Steifigkeit" in x for x in log),
+              next((x for x in log if "ohne eigene" in x), "-"))
+        check("Flaeche mit Oeffnung nicht vernetzt",
+              any("Oeffnung" in x for x in log), next((x for x in log if "ffnung" in x), "-"))
+        check("Anzahl vernetzter Flaechen genannt",
+              any("2 Flaechen als" in x for x in log),
+              next((x for x in log if "Flaechen als" in x), "-"))
+
+        # Rechnung: Kragplatte, 2 m x 2 m, 12 mm, Streifenlast
+        for nd in range(m.nn):
+            if abs(float(m.nodes[nd][0])) < 1e-9:
+                m.support(nd, [0, 1, 2, 3, 4, 5])
+        m.load_cases["LF1"].gravity = [0.0, 0.0, 0.0]
+        for i in range(len(m.elements)):
+            m.load_face(i, -1000.0, case="LF1")
+        r = solver.solve_static(m, case="LF1")
+        check("Kragplatte rechenbar", np.isfinite(r.u).all() and abs(r.u).max() > 0,
+              f"w_max = {abs(r.u.reshape(-1, 6)[:, 2]).max() * 1e3:.3f} mm")
+        close("Summe der Auflagerkraefte = q * A (2 Flaechen a 4 m^2)",
+              float(r.reactions[:, 2].sum()), 1000.0 * 8.0, 1e-6, " N")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_volumenkoerper():
+    """Sechs Viereckflaechen -> ein Hexaeder, vier Dreiecke -> ein Tetraeder."""
+    tmp = tempfile.mkdtemp()
+    try:
+        # Wuerfel (Flaechen 1..6) und Tetraeder (Flaechen 7..10)
+        nodes = WUERFEL_KNOTEN + [(3, 0, 0), (4, 0, 0), (3, 1, 0), (3, 0, 1)]
+        tet = [[9, 10, 11], [9, 10, 12], [10, 11, 12], [9, 11, 12]]
+        f = make_rf6(
+            os.path.join(tmp, "volumen.rf6"),
+            nodes=nodes, lines=[], members=[], supports=[],
+            surfaces=WUERFEL_FLAECHEN + tet,
+            solids=[[1, 2, 3, 4, 5, 6], [7, 8, 9, 10]],
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        typen = sorted(e.typ for e in m.elements)
+        check("ein Hexaeder und ein Tetraeder", typen == ["hex8", "tet4"], str(typen))
+        check("Protokoll nennt beide", any("1 Hexaeder, 1 Tetraeder" in x for x in log),
+              next((x for x in log if "Hexaeder" in x), "-"))
+        hex_el = [e for e in m.elements if e.typ == "hex8"][0]
+        from statik3d.elements import solid as SO
+        X = m.nodes[hex_el.nodes]
+        close("Volumen des Hexaeders", SO.solid_volume("hex8", X), 1.0, 1e-9, " m^3")
+        check("Boden und Deckel getrennt",
+              sorted(hex_el.nodes[:4]) == [0, 1, 2, 3]
+              and sorted(hex_el.nodes[4:]) == [4, 5, 6, 7], str(hex_el.nodes))
+        tet_el = [e for e in m.elements if e.typ == "tet4"][0]
+        close("Volumen des Tetraeders", SO.solid_volume("tet4", m.nodes[tet_el.nodes]),
+              1.0 / 6.0, 1e-9, " m^3")
+
+        # Reihenfolge der Randflaechen darf das Ergebnis nicht aendern
+        f2 = make_rf6(
+            os.path.join(tmp, "volumen2.rf6"),
+            nodes=WUERFEL_KNOTEN, lines=[], members=[], supports=[],
+            surfaces=[WUERFEL_FLAECHEN[i] for i in (2, 5, 1, 3, 0, 4)],
+            solids=[[1, 2, 3, 4, 5, 6]],
+        )
+        m2 = R6.read_rf6(f2)
+        e2 = m2.elements[0]
+        close("Volumen unabhaengig von der Flaechenreihenfolge",
+              SO.solid_volume("hex8", m2.nodes[e2.nodes]), 1.0, 1e-9, " m^3")
+        K, V = SO.k_hex8(m2.nodes[e2.nodes], 210e9, 0.3)
+        check("Hexaeder ist rechenbar (positive Jacobi-Determinante)",
+              np.isfinite(K).all() and V > 0, f"V = {V:.4g} m^3")
+
+        # Koerper, den der Leser ohne Vernetzer nicht bilden kann
+        f3 = make_rf6(
+            os.path.join(tmp, "offen.rf6"),
+            nodes=WUERFEL_KNOTEN, lines=[], members=[], supports=[],
+            surfaces=WUERFEL_FLAECHEN[:5],
+            solids=[[1, 2, 3, 4, 5]],
+        )
+        log3 = []
+        m3 = R6.read_rf6(f3, log=log3)
+        check("unvollstaendiger Koerper nicht uebernommen",
+              not [e for e in m3.elements if e.typ in ("hex8", "tet4")],
+              str([e.typ for e in m3.elements]))
+        check("Grund genannt (3D-Vernetzer)",
+              any("Vernetzer" in x for x in log3),
+              next((x for x in log3 if "Vernetzer" in x), "-"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_stabtypen():
+    """Der Name der Umsetzungstabelle ist der Stabtyp."""
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "typen.rf6"),
+            nodes=[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)],
+            lines=[[1, 2], [2, 3], [3, 4]],
+            members=[(1, None, None, "MemberImplBeam"),
+                     (2, None, None, "MemberImplTension"),
+                     (3, None, None, "MemberImplResultBeam")],
+            supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1])],
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        typen = [e.typ for e in m.elements]
+        check("Balken bleibt Balken", typen[0] == "beam", typen[0])
+        check("Zugstab wird Fachwerkstab", typen[1] == "truss", typen[1])
+        check("Ergebnisstab wird nicht uebernommen", len(m.elements) == 2, str(typen))
+        check("Protokoll listet die Stabtypen",
+              any("Stabtypen:" in x and "Balken" in x and "Zugstab" in x for x in log),
+              next((x for x in log if "Stabtypen" in x), "-"))
+        check("Zugstab-Hinweis (traegt hier auch Druck) steht im Protokoll",
+              any("Zugstab" in x and "faellt in RFEM bei Druck aus" in x for x in log),
+              next((x for x in log if "Zugstab" in x and "faellt" in x), "-"))
+        check("Ergebnisstab als Nicht-Tragglied genannt",
+              any("keine Tragglieder" in x and "Ergebnisstab" in x for x in log),
+              next((x for x in log if "Tragglieder" in x), "-"))
+        check("member_type: unbekannte Tabelle -> Balken",
+              R6.member_type("MemberImplNeu")[0] == "beam")
+        check("member_type: Seil ist Fachwerkstab mit Hinweis",
+              R6.member_type("MemberImplCable")[0] == "truss"
+              and "Seiltheorie" in R6.member_type("MemberImplCable")[2])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# 4c) Flaechenfreigaben mit Typeinstellung
+# --------------------------------------------------------------------------
+def test_flaechenfreigaben():
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "freigabe.rf6"),
+            nodes=WUERFEL_KNOTEN, lines=[], members=[], supports=[],
+            surfaces=WUERFEL_FLAECHEN,
+            solids=[[1, 2, 3, 4, 5, 6]],
+            # ux/uy starr, uz frei mit Ausfall bei Zug -> Kontaktfuge
+            releases=[("Lagerbock-Grundplatte", [1, 2], [1], 3,
+                       (INF, INF, 0.0, 0.0, 0.0, 0.0), (0, 0, 1, 0, 0, 0))],
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        del m
+        txt = "\n".join(log)
+        check("Name der Freigabe uebernommen", "Lagerbock-Grundplatte" in txt)
+        check("freigegebene Flaechen gezaehlt", "2 freigegebene Flaechen" in txt,
+              next((x for x in log if "freigegebene" in x), "-"))
+        check("freigegebene Volumen gezaehlt", "1 Volumen" in txt)
+        check("Zuordnung gezaehlt", "zugeordnet an 3 Objekte" in txt)
+        check("Ort der Freigabe genannt", "Ort Anfang" in txt)
+        check("Typeinstellung: ux und uy starr", "ux=starr" in txt and "uy=starr" in txt,
+              next((x for x in log if "ux=" in x), "-"))
+        check("Typeinstellung: uz frei mit Ausfall bei Zug",
+              "uz=frei (Ausfall bei Zug)" in txt,
+              next((x for x in log if "uz=" in x), "-"))
+        check("Typname genannt", "Fuge 1" in txt)
+        check("nicht ausgefuehrte Trennung wird benannt",
+              "Trennung selbst wird nicht ausgefuehrt" in txt)
+        check("Folge der fehlenden Trennung benannt", "zu steif" in txt)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# 4d) Lastfaelle mit Lasten
+# --------------------------------------------------------------------------
+def test_lastfaelle_und_lasten():
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "lasten.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0),
+                   (4, 0, 0), (4, 2, 0)],
+            lines=[], members=[], supports=[],
+            surfaces=[([1, 2, 3, 4], 0.010), [2, 5, 6, 3]],
+            load_cases=[("Eigengewicht", 1, 1.0), ("Schnee", 12, 0.0)],
+            # 2 kN/m^2 auf die vernetzte Flaeche, 3 kN/m^2 auf die Flaeche ohne Dicke
+            surface_loads=[(2, [1], -2000.0, 0), (2, [2], -3000.0, 1)],
+            free_loads=5,
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        check("beide Lastfaelle uebernommen", len(m.load_cases) == 2, str(list(m.load_cases)))
+        lf2 = m.load_cases["LF2"]
+        check("Lastfallname als Beschreibung", lf2.description == "Schnee", lf2.description)
+        check("Einwirkungskategorie aus RFEM", m.load_cases["LF1"].category == "G",
+              m.load_cases["LF1"].category)
+        close("Eigengewicht nur im ersten Lastfall",
+              m.load_cases["LF1"].gravity[2], -9.81, 1e-9, " m/s^2")
+        close("zweiter Lastfall ohne Eigengewicht", lf2.gravity[2], 0.0, 1e-12, " m/s^2")
+        check("Flaechenlast auf die vernetzte Flaeche gelegt", lf2.n_loads > 0,
+              f"{lf2.n_loads} Lasten")
+        check("Protokoll: eine Last gelegt", "1 Flaechenlasten auf vernetzte" in txt,
+              next((x for x in log if "auf vernetzte" in x), "-"))
+        check("Protokoll: eine Last ohne Zielflaeche",
+              "1 Flaechenlasten ohne vernetzte Zielflaeche" in txt,
+              next((x for x in log if "ohne vernetzte" in x), "-"))
+        check("Lastrichtung im Klartext", "lokal z" in txt and "global Z" in txt,
+              next((x for x in log if "Lastrichtung" in x), "-"))
+        check("freie Rechtecklasten mit Grund genannt",
+              "5 freie Rechtecklasten nicht uebernommen" in txt,
+              next((x for x in log if "Rechtecklasten" in x), "-"))
+
+        # Rechnung: Kragplatte 2 m unter 2 kN/m^2
+        for nd in range(m.nn):
+            if abs(float(m.nodes[nd][0])) < 1e-9:
+                m.support(nd, [0, 1, 2, 3, 4, 5])
+        r = solver.solve_static(m, case="LF2")
+        Rz = float(r.reactions[:, 2].sum())
+        close("Summe der Auflagerkraefte = q * A", Rz, 2000.0 * 4.0, 1e-6, " N")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
 # 5) Dispatcher, Behaelter, Hilfsfunktionen
 # --------------------------------------------------------------------------
 def test_dispatcher_und_hilfen():
@@ -585,7 +977,9 @@ def test_knoten_zusammenfuehren():
 
 def main():
     for t in (test_grundmodell, test_nichtlineare_lager, test_abheben,
-              test_linien_flaechenlager, test_dispatcher_und_hilfen,
+              test_linien_flaechenlager, test_flaechen_mit_dicke,
+              test_volumenkoerper, test_stabtypen, test_flaechenfreigaben,
+              test_lastfaelle_und_lasten, test_dispatcher_und_hilfen,
               test_knoten_zusammenfuehren):
         print(f"\n--- {t.__name__} ---")
         try:

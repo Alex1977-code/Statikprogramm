@@ -307,18 +307,24 @@ Datei → Importieren (Details in `Schnittstellen.md`):
 | `.sza`/`.kra`/`.fga` | HiCAD | Profile mit Katalogwerten, Blechdicken, Werkstoffe, Teileliste **und die Stabachsen aus dem Szenenteil** (siehe Schnittstellenhandbuch) |
 | `.inp` | Abaqus, CalculiX | Netz, Materialien, Sections, Randbedingungen, Lasten je Step |
 | `.bdf`/`.nas`/`.dat` | Nastran | GRID, CBAR/CBEAM, CQUAD4/CTRIA3, CTETRA/CHEXA, SPC, FORCE, PLOAD |
+| `.rf6` | RFEM 6 Projektdatei | Knoten, Linien, Stäbe mit Typ, Flächen mit Dicke, Volumenkörper, Lager mit Nichtlinearität, Gelenke, Flächenfreigaben, Lastfälle mit Flächenlasten |
 | `.step`/`.iges`/`.stl` | CAD | Vernetzung mit gmsh (Volumen oder Schale) |
 
-Native Binärformate (`.rf5`, `.rf6`, `.fem`) können nicht gelesen werden;
+Eine **RFEM-6-Projektdatei** (`.rf6`) wird unmittelbar gelesen – kein Export
+nötig. Was übernommen wird und was nicht (Flächen ohne eigene Dicke,
+Volumenkörper, die ein 3D-Netz brauchen, die Trennung an Flächenfreigaben),
+steht Zeile für Zeile im Importprotokoll; Einzelheiten im
+Schnittstellenhandbuch. Die älteren nativen Formate (`.rf5`, `.rs6`, `.fem`)
+werden untersucht und, soweit ihr Behälter zugänglich ist, ausgelesen –
+andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder
+Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
+
 Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
 Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
 zerfällt zunächst in Teile. Im Register **Mehr → Aus CAD übernommenes Modell**
 schließt „Freie Stabenden anschließen" (Suchradius 60 mm) jedes freie Ende an die
 Achse des nächsten Stabes an und teilt diesen dort; der Versatz steht im
 Protokoll, die Ausmitte des Anschlusses wird nicht abgebildet.
-
-das Programm nennt den Exportweg (RFEM: IFC-Statikmodell, SAF oder
-Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 
 ## 8 Nachweise nach EC3
 

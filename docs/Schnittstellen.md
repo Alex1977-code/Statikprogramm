@@ -29,7 +29,7 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 | `.inp` | Abaqus / CalculiX | FE-Programme | Netz, Sets, Materialien, Beam/Shell/Solid Sections, Boundary, CLOAD, DLOAD, Steps |
 | `.bdf`, `.nas`, `.dat` | Nastran Bulk Data | FE-Programme | GRID, CBAR/CBEAM, CROD, CTRIA3/CQUAD4, CTETRA/CHEXA, PBAR/PBARL/PBEAM/PSHELL/PSOLID, MAT1, SPC/SPC1, FORCE/MOMENT, PLOAD2/PLOAD4, GRAV, LOAD |
 | `.step`, `.stp`, `.iges`, `.igs`, `.brep`, `.stl` | CAD-Geometrie | CAD | Vernetzung mit gmsh (Volumen Tet4/Tet10 oder Schalen) |
-| `.rf6` | RFEM 6 Projektdatei (ZIP + SQLite `model.db`) | RFEM 6 | Knoten, Linien, Stäbe, Querschnitte, Materialien, Knoten-/Linien-/Flächenlager mit Nichtlinearität, Gelenke, Lastfälle |
+| `.rf6` | RFEM 6 Projektdatei (ZIP + SQLite `model.db`) | RFEM 6 | Knoten, Linien, Stäbe mit Typ, Querschnitte, Materialien, Knoten-/Linien-/Flächenlager mit Nichtlinearität, Gelenke, Flächen mit Dicke, Volumenkörper, Flächenfreigaben mit Typeinstellung, Lastfälle mit Flächenlasten |
 | `.sdnf`, `.sdn` | SDNF – Steel Detailing Neutral Format | HiCAD, Tekla, SDS/2, Advance Steel | Bauteile mit Lage im Bauwerk, Profil, Werkstoff, Bleche |
 | `.nc`, `.nc1`, `.nc2`, `.dstv` | DSTV-NC (Stahlbau-NC) | HiCAD, Tekla, bocad, Advance Steel | Teileliste: Profil, Länge, Werkstoff, Bohrungen, Konturen |
 | `.sza`, `.kra`, `.fga`, `.fig` | HiCAD-Archiv (`!HFA##`, zstd) | HiCAD | Teileliste, Profile mit Katalogwerten, Blechdicken, Werkstoffe, Verbindungsmittel |
@@ -137,9 +137,122 @@ Aufbau der Datenbank (durchgehend dasselbe Muster):
 Federwerte: **`inf` = starr, `0` = frei, endlicher Wert = Federsteifigkeit**.
 
 Übernommen werden Knoten, Linien (Polygonzüge und Bögen), Stäbe mit
-Querschnitt, Material, Verdrehung und Gelenken, Knoten-, Linien- und
-Flächenlager mit ihren Nichtlinearitäten, die Geometrie der Flächen sowie die
-Lastfälle mit Name, Einwirkungskategorie und Eigengewichtsfaktor.
+Querschnitt, Material, Verdrehung, Typ und Gelenken, Knoten-, Linien- und
+Flächenlager mit ihren Nichtlinearitäten, Flächen mit Dicke als Schalenelemente,
+Volumenkörper einfacher Topologie als Volumenelemente, die Flächenfreigaben mit
+ihren Typeinstellungen sowie die Lastfälle mit Name, Einwirkungskategorie,
+Eigengewichtsfaktor und den Flächenlasten.
+
+### Stabtypen
+
+RFEM 6 legt je Stabtyp eine eigene Umsetzungstabelle an — der Tabellenname
+**ist** der Typ. Statik3D bildet ihn wie folgt ab (`rfem6_db.MEMBER_TYPES`):
+
+| RFEM-Tabelle | Typ | Element | Hinweis im Protokoll |
+|---|---|---|---|
+| `MemberImplBeam` | Balken | `beam` | — |
+| `MemberImplRigid` | starrer Stab | `beam` | — |
+| `MemberImplRib` | Rippe | `beam` | die mitwirkende Plattenbreite fehlt |
+| `MemberImplTruss`, `MemberImplTrussOnlyN` | Fachwerkstab | `truss` | — |
+| `MemberImplTension` | Zugstab | `truss` | fällt in RFEM bei Druck aus – hier trägt er auch Druck |
+| `MemberImplCompression` | Druckstab | `truss` | fällt in RFEM bei Zug aus – hier trägt er auch Zug |
+| `MemberImplCable` | Seil | `truss` | Seiltheorie (Durchhang, Ausfall bei Druck) fehlt |
+| `MemberImplBuckling` | Knickstab | `beam` | — |
+| `MemberImplSpring`, `MemberImplDamper` | Feder-/Dämpferstab | `truss` | nur die Achssteifigkeit |
+| `MemberImplCoupling…` | Kopplungen | `beam` bzw. `truss` | — |
+| `MemberImplResultBeam`, `…ResultLine`, `…DesignStrip` | Auswerteobjekte | — | nicht übernommen |
+| `MemberImplLoadTransfer`, `…SurfaceModel` | kein Tragglied | — | nicht übernommen |
+
+Die gezählten Typen, die Hinweise und die nicht übernommenen Objekte stehen im
+Importprotokoll:
+
+    64 Staebe mit 64 Stabelementen gelesen
+      Stabtypen: 64x Zugstab
+    WARNUNG:   Stabtyp Zugstab: faellt in RFEM bei Druck aus - hier traegt er auch Druck.
+
+Ein unbekannter Tabellenname wird als Balken übernommen und mit seinem Namen
+genannt — eine neue RFEM-Version bleibt so lesbar.
+
+### Flächen: Dicke und Steifigkeitsart
+
+Die Fläche zeigt über `stiffness_id`/`stiffness_table` auf ihr
+Steifigkeitsobjekt; nur `SurfaceStiffnessStandard` (und die Membranformen)
+tragen über `Thickness` → `ThicknessImplUniform` eine Dicke und ein Material.
+Flächen mit Dicke werden zu Schalenelementen vernetzt, gleiche Dicken teilen
+sich eine Schalenkennung (`d12` für 12 mm).
+
+| Steifigkeitsart | trägt Dicke | Vorgehen |
+|---|---|---|
+| `SurfaceStiffnessStandard` | ja | Schalenelemente |
+| `SurfaceStiffnessMembrane`, `…WithoutMembraneTension` | ja | Schalenelemente |
+| `SurfaceStiffnessWithoutThickness` | nein | Null-Element, keine Elemente |
+| `SurfaceStiffnessRigid` | nein | starre Fläche, keine Elemente |
+| `SurfaceStiffnessLoadTransfer`, `…LoadDistribution` | nein | reine Lastverteilung |
+| `SurfaceStiffnessGroundwater`, `…Floor` | nein | keine Elemente |
+
+Zwei Fälle bleiben **absichtlich** ohne Elemente, weil ein stillschweigend zu
+steifes Modell schlimmer ist als eine sichtbare Lücke:
+
+* Flächen mit **Öffnung** — das Randpolygon allein würde die Öffnung schließen.
+* Flächen mit **veränderlicher Dicke** werden mit dem Mittelwert gerechnet und
+  gemeldet.
+
+### Volumenkörper
+
+Ein Volumenkörper steht in `Solid` → `SolidImplStandard` mit seinen
+Randflächen (`SolidImplStandard_boundarySurfaces`). Ohne 3D-Vernetzer lassen
+sich daraus nur die beiden einfachen Topologien bilden:
+
+| Randflächen | Eckknoten | Element |
+|---|---|---|
+| 6 Vierecke | 8 | `hex8` |
+| 4 Dreiecke | 4 | `tet4` |
+
+Die Reihenfolge der Randflächen ist beliebig; Boden und Deckel des Hexaeders
+werden über die gemeinsamen Knoten der Seitenflächen zugeordnet und die
+Jacobi-Determinante geprüft (bei negativem Vorzeichen werden Boden und Deckel
+getauscht). Alles andere — Körper mit Bohrungen, Zylinder, Freiformflächen —
+wird mit Randflächenzahl gemeldet, aber **nicht** übernommen:
+
+    108 Volumenkoerper nicht uebernommen (Randflaechenzahl 4: 48x, 6: 23x, 9: 18x, …)
+    - dafuer waere ein 3D-Vernetzer noetig.
+
+### Flächenfreigaben und ihre Typeinstellungen
+
+Eine Flächenfreigabe (`SurfaceRelease`) trennt in RFEM die freigegebenen
+Flächen von den Objekten, an denen sie hängen, und verbindet beide über die
+Federn des Freigabetyps (`SurfaceReleaseType` →
+`SurfaceReleaseTypeImplVersion1` → `SpringConstants`, hier **unmittelbar** über
+`springConstants_id`, nicht über `owner_id` wie bei den Lagern). Ist
+`defineReleaseTypeForEachObject` gesetzt, gilt je Objekt ein eigener Typ.
+
+Statik3D liest alles heraus — Name, Ort, freigegebene Flächen und Volumen,
+Zuordnung, Federkonstante je Freiheitsgrad samt Ausfalltyp und Reibbeiwert —
+und sagt ausdrücklich, dass die Trennung selbst nicht ausgeführt wird:
+
+    Achse: 56 freigegebene Flaechen, 1 Volumen, zugeordnet an 52 Objekte, Ort Anfang
+      Typ 3: ux=frei, uy=frei, uz=frei (Ausfall bei Zug), phix=frei, …
+      Typ 4: ux=starr, uy=starr, uz=frei (Ausfall bei Zug), phix=frei, …
+    8 Flaechenfreigaben gelesen. Die Trennung selbst wird nicht ausgefuehrt -
+    dafuer muessten die beteiligten Flaechen vernetzt und die Knoten an der Fuge
+    verdoppelt werden. Ohne die Trennung ist das Modell an diesen Stellen zu steif.
+
+### Lastfälle und Lasten
+
+Jeder Lastfall kommt mit Name (als Beschreibung), Einwirkungskategorie
+(`actionCategoryId` → G/Q) und Eigengewichtsfaktor. Die Lasten hängen über
+`parentModelObject_id`/`_table` am Lastfall:
+
+| Last | Vorgehen |
+|---|---|
+| Flächenlast (`SurfaceLoad` → `SurfaceTypeLoadImplForce`) | auf die Schalenelemente der vernetzten Zielfläche gelegt |
+| Flächenlast auf eine Fläche ohne Dicke | mit Anzahl und Grund gemeldet, nicht übernommen |
+| Stablast (`MemberLoad`) | gemeldet – Vorspannlasten kennt das Programm nicht |
+| Linienlast, freie Rechtecklast, Volumenlast | gemeldet – brauchen das Netz bzw. die Projektion |
+
+Die Lastrichtung (`loadDirection`) steht mit Rohwert und Deutung im Protokoll
+(`0 = lokal z`, `1 = global Z`, `2 = global X`, `3 = global Y`) — die Deutung
+folgt der Reihenfolge des RFEM-Dialogs und ist damit Annahme.
 
 Querschnitte kommen aus `SectionData_parameterValues` mit ihren SI-Kennwerten
 (A, A_y, A_z, I_y, I_z, I_t); der Name entsteht aus den Bemaßungssymbolen der
@@ -165,11 +278,10 @@ Reibung steht in RFEM an dem Freiheitsgrad, dessen Kraft begrenzt wird
 solcher Freiheitsgrad die Steifigkeit 0, hält er starr bis μ·|N| und gleitet
 danach – so, wie RFEM es rechnet.
 
-**Flächen und Volumen** werden als Geometrie gelesen, aber nicht vernetzt.
 Flächenlager werden über das Randpolygon der zugewiesenen Flächen auf deren
 Knoten gelegt, mit der Einflussfläche je Knoten (Newell-Formel, Summe = wahre
-Fläche). Trägt ein Modell seine Lasten über Flächen und Volumen, sagt das
-Protokoll das ausdrücklich:
+Fläche). Trägt ein Modell seine Lasten über Flächen ohne eigene Dicke und über
+Volumenkörper, die ein 3D-Netz brauchen, sagt das Protokoll das ausdrücklich:
 
     1831 Knoten tragen kein Element (Rand von Flaechen und Volumen).
     Das Stabtragwerk zerfaellt in 64 Teile (groesster Teil 2 Knoten).

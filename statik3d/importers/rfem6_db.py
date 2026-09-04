@@ -794,6 +794,9 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     seccache: dict[int, tuple] = {}
     matcache: dict[int, str] = {}
     n_beams = 0
+    typen: dict[str, int] = {}
+    hinweise: dict[str, str] = {}
+    weggelassen: dict[str, int] = {}
     for h, impl in db.impls("Member"):
         nodes = [node_of[n] for n in line_nodes.get(impl.get("line_id"), []) if n in node_of]
         if len(nodes) < 2:
@@ -805,12 +808,19 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
         else:
             mname = C.ensure_material(m, log=log)
             sname = C.ensure_section(m, log=log)
+        etyp, ttext, thinweis = member_type(h.get("impl_table"))
+        typen[ttext] = typen.get(ttext, 0) + 1
+        if thinweis:
+            hinweise.setdefault(ttext, thinweis)
+        if etyp is None:
+            weggelassen[ttext] = weggelassen.get(ttext, 0) + 1
+            continue
         roll = float(impl.get("angle") or 0.0)
         elems = []
         for a, b in zip(nodes[:-1], nodes[1:]):
             if a == b:
                 continue
-            elems.append(m.add_element("beam", [a, b], mname, sname, roll=roll))
+            elems.append(m.add_element(etyp, [a, b], mname, sname, roll=roll))
             n_beams += 1
         if not elems:
             continue
@@ -826,6 +836,13 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
                 m.apply_hinge(elems[0] if end == 0 else elems[-1], hg)
         del mem
     C.say(log, f"{len(m.members)} Staebe mit {n_beams} Stabelementen gelesen")
+    if typen:
+        C.say(log, "  Stabtypen: " + ", ".join(f"{n}x {k}" for k, n in sorted(typen.items())))
+    for k, t in sorted(hinweise.items()):
+        C.warn(log, f"  Stabtyp {k}: {t}.")
+    if weggelassen:
+        C.say(log, "  nicht uebernommen (keine Tragglieder): "
+                   + ", ".join(f"{n}x {k}" for k, n in sorted(weggelassen.items())))
 
     # ---- Knotenlager ---------------------------------------------------
     n_sup = 0
@@ -882,7 +899,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     if len(surf_nodes) < n_surf:
         C.say(log, f"  {n_surf - len(surf_nodes)} Flaechen ohne aufloesbaren Rand "
                    "(getrimmte Flaechen, Freiformraender)")
-    _surfaces(db, m, surf_nodes, log, matcache)
+    surf_els = _surfaces(db, m, surf_nodes, log, matcache)
     for h, impl in db.impls("SurfaceSupport"):
         sids = db.container("SurfaceSupportImpl_surfaces").get(impl["id"], [])
         name = (impl.get("name") or "").strip() or f"Flaechenlager {h.get('userID') or h['id']}"
@@ -908,7 +925,8 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
                    f"A = {sum(areas.values()):.3f} m^2")
 
     _solids(db, m, surf_nodes, log, matcache)
-    _load_cases(db, m, log)
+    _surface_releases(db, m, log, nlmap)
+    _load_cases(db, m, log, surf_els)
     _diagnose(m, log)
 
 
@@ -962,7 +980,7 @@ def _diagnose(m: Model, log: list) -> None:
 ACTION_CATEGORY = {1: "G", 2: "G", 3: "Q", 11: "Q", 12: "Q", 13: "Q"}
 
 
-def _load_cases(db: Db, m: Model, log: list) -> None:
+def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None) -> None:
     """Lastfaelle mit Namen, Kategorie und Eigengewichtsfaktor uebernehmen.
 
     Die Lasten selbst (Vorspannung, Flaechenlasten, freie Lasten) haengen in
@@ -970,6 +988,7 @@ def _load_cases(db: Db, m: Model, log: list) -> None:
     im Protokoll.
     """
     n = 0
+    lc_name: dict[int, str] = {}
     cases = db.impls("LoadCase")
     if cases:
         # Den leeren Standardlastfall vorab abmelden, damit LF1 aus RFEM
@@ -983,6 +1002,7 @@ def _load_cases(db: Db, m: Model, log: list) -> None:
         cat = ACTION_CATEGORY.get(int(impl.get("actionCategoryId") or 0), "Q")
         nm = C.unique_name(m.load_cases, f"LF{h.get('userID') or h['id']}")
         lc = m.add_load_case(nm, cat, description=name, activate=False)
+        lc_name[h["id"]] = nm
         gz = impl.get("selfWeightFactors_z")
         if impl.get("selfWeightActive") and gz:
             lc.gravity = [0.0, 0.0, -9.81 * float(gz)]
@@ -990,13 +1010,7 @@ def _load_cases(db: Db, m: Model, log: list) -> None:
     if n:
         C.say(log, f"{n} Lastfaelle uebernommen (Namen, Einwirkungskategorie, "
                    "Eigengewichtsfaktor)")
-    for table, label in (("MemberLoad", "Stablasten"), ("SurfaceLoad", "Flaechenlasten"),
-                         ("NodalLoad", "Knotenlasten"), ("LineLoad", "Linienlasten"),
-                         ("FreeRectangularLoad", "freie Rechtecklasten")):
-        c = db.count(table)
-        if c:
-            C.say(log, f"  {c} {label} in der Datei - nicht uebernommen "
-                       "(Lastobjekte haengen am RFEM-Netz).")
+    _loads(db, m, lc_name, surf_els or {}, log)
 
 
 def _surface_nodes(db: Db, node_of: dict, m: Model) -> tuple[dict, dict]:
@@ -1176,7 +1190,8 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
         key = (round(d["t"], 9), mname)
         pname = props.get(key)
         if pname is None:
-            pname = C.unique_name(m.shells, f"d{d[chr(39)+chr(116)+chr(39)] * 1e3:g}")
+            t_mm = d["t"] * 1e3
+            pname = C.unique_name(m.shells, f"d{t_mm:g}")
             m.add_shell_prop(ShellProp(pname, d["t"]))
             props[key] = pname
         els = C.polygon_to_shells(m, ring, mname, pname, log=log,
@@ -1245,6 +1260,15 @@ def _hex_order(faces: list[list[int]]) -> list[int] | None:
     return None
 
 
+def _hex_volumen(X: np.ndarray) -> float:
+    """Vorzeichenbehaftetes Volumen eines Hexaeders (Jacobi-Determinante in der
+    Mitte). Negativ heisst: Boden und Deckel sind vertauscht."""
+    u = (X[1] + X[2] + X[5] + X[6]) - (X[0] + X[3] + X[4] + X[7])
+    v = (X[2] + X[3] + X[6] + X[7]) - (X[0] + X[1] + X[4] + X[5])
+    w = (X[4] + X[5] + X[6] + X[7]) - (X[0] + X[1] + X[2] + X[3])
+    return float(np.dot(np.cross(u, v), w)) / 64.0
+
+
 def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
             matcache: dict) -> int:
     """
@@ -1272,6 +1296,12 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
         if len(faces) == 6 and len(knoten) == 8:
             order = _hex_order(faces)
             if order:
+                # Die Randflaechen tragen keine gemeinsame Umlaufrichtung: der
+                # Deckel kann unter dem Boden liegen. Ein Hexaeder mit
+                # negativer Jacobi-Determinante bricht erst beim Rechnen ab -
+                # darum hier die Reihenfolge pruefen und notfalls tauschen.
+                if _hex_volumen(m.nodes[order]) < 0:
+                    order = order[4:] + order[:4]
                 m.add_element("hex8", order, mname)
                 n_hex += 1
                 continue
@@ -1292,6 +1322,237 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
                    + ", ".join(f"{k}: {v}x" for k, v in sorted(offen.items()))
                    + ") - dafuer waere ein 3D-Vernetzer noetig.")
     return n_hex + n_tet
+
+
+# --------------------------------------------------------------------------
+# Stabtypen
+# --------------------------------------------------------------------------
+#: Der Name der Umsetzungstabelle IST der Stabtyp (RFEM 6 legt je Typ eine
+#: eigene Tabelle an). Wert: (Elementtyp, Klartext, Hinweis wenn noetig)
+MEMBER_TYPES = {
+    "MemberImplBeam": ("beam", "Balken", ""),
+    "MemberImplRigid": ("beam", "starrer Stab", ""),
+    "MemberImplRib": ("beam", "Rippe", "die mitwirkende Plattenbreite fehlt"),
+    "MemberImplTruss": ("truss", "Fachwerkstab", ""),
+    "MemberImplTrussOnlyN": ("truss", "Fachwerkstab (nur N)", ""),
+    "MemberImplTension": ("truss", "Zugstab",
+                          "faellt in RFEM bei Druck aus - hier traegt er auch Druck"),
+    "MemberImplCompression": ("truss", "Druckstab",
+                              "faellt in RFEM bei Zug aus - hier traegt er auch Zug"),
+    "MemberImplCable": ("truss", "Seil",
+                        "Seiltheorie (Durchhang, Ausfall bei Druck) fehlt"),
+    "MemberImplBuckling": ("beam", "Knickstab", ""),
+    "MemberImplSpring": ("truss", "Federstab", "die Federkennlinie fehlt"),
+    "MemberImplDamper": ("truss", "Daempfer", "nur die Achssteifigkeit"),
+    "MemberImplCouplingRigidRigid": ("beam", "Kopplung starr-starr", ""),
+    "MemberImplCouplingRigidHinge": ("beam", "Kopplung starr-gelenkig", ""),
+    "MemberImplCouplingHingeRigid": ("beam", "Kopplung gelenkig-starr", ""),
+    "MemberImplCouplingHingeHinge": ("truss", "Kopplung gelenkig-gelenkig", ""),
+    "MemberImplResultBeam": (None, "Ergebnisstab", "reines Auswerteobjekt"),
+    "MemberImplResultLine": (None, "Ergebnislinie", "reines Auswerteobjekt"),
+    "MemberImplDesignStrip": (None, "Bemessungsstreifen", "reines Auswerteobjekt"),
+    "MemberImplLoadTransfer": (None, "Lastverteilungsstab", "kein Tragglied"),
+    "MemberImplSurfaceModel": (None, "Flaechenmodell", "wird von RFEM ersetzt"),
+}
+
+
+def member_type(impl_table: str) -> tuple:
+    """(Elementtyp oder None, Klartext, Hinweis) zum Stabtyp."""
+    return MEMBER_TYPES.get(impl_table or "", ("beam", impl_table or "unbekannt", ""))
+
+
+# --------------------------------------------------------------------------
+# Flaechenfreigaben (mit ihren Typeinstellungen)
+# --------------------------------------------------------------------------
+#: Ort der Freigabe (releaseLocation) - Deutung wie im RFEM-Dialog, Annahme
+RELEASE_LOCATION = {0: "Anfang", 1: "Ende"}
+
+
+def _release_type(db: Db, tid: int, nlmap: dict, label: str, log: list) -> dict:
+    """
+    Typeinstellung einer Flaechenfreigabe: die Federkonstanten je Freiheitsgrad.
+
+    Der Typ zeigt ueber ``springConstants_id`` **unmittelbar** auf die Zeile in
+    ``SpringConstants`` (nicht ueber owner_id wie die Lager).
+    """
+    t = db.by_id("SurfaceReleaseType").get(tid) or {}
+    itbl = t.get("impl_table") or "SurfaceReleaseTypeImplVersion1"
+    ti = db.by_id(itbl).get(t.get("impl_id")) or {}
+    sc = db.by_id("SpringConstants").get(ti.get("springConstants_id"))
+    out = {"nummer": t.get("userID") or tid,
+           "name": (ti.get("name") or "").strip(),
+           "achsen": ti.get("localAxisSystemType"), "beh": {}}
+    if sc:
+        out["beh"] = spring_behaviours(dict(sc), _partials(db, dict(sc)), nlmap,
+                                       f"{label}Typ {out['nummer']}: ", log)
+    return out
+
+
+def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
+    """
+    Flaechenfreigaben mit ihren Typeinstellungen lesen und berichten.
+
+    Eine Flaechenfreigabe trennt in RFEM die freigegebenen Flaechen von den
+    Objekten, an denen sie haengen, und verbindet beide ueber die Federn des
+    Freigabetyps.  Das Trennen setzt ein Netz voraus: erst dort gibt es zwei
+    Knoten, zwischen die die Feder gehoert.  Der Leser holt darum alles
+    heraus - Name, Typ, Federkonstanten je Freiheitsgrad samt
+    Nichtlinearitaet, freigegebene Flaechen und Volumen, Zuordnung - und sagt,
+    dass die Trennung selbst nicht ausgefuehrt wird.  Ein stillschweigend
+    durchverbundenes Modell waere zu steif, ohne dass man es sieht.
+    """
+    if not db.has("SurfaceRelease"):
+        return []
+    out = []
+    for h, impl in db.impls("SurfaceRelease"):
+        name = ((impl.get("name") or "").strip() or (impl.get("comment") or "").strip()
+                or f"Flaechenfreigabe {h.get('userID') or h['id']}")
+        flaechen = db.container("SurfaceReleaseImpl_releasedSurfaces").get(impl["id"], [])
+        volumen = db.container("SurfaceReleaseImpl_releasedSolids").get(impl["id"], [])
+        ziele = db.container("SurfaceReleaseImpl_assignedToObjects").get(impl["id"], [])
+        linien = db.container("SurfaceReleaseImpl_useDefinitionLines").get(impl["id"], [])
+        d = {"name": name, "nummer": h.get("userID") or h["id"],
+             "flaechen": len(flaechen), "volumen": len(volumen),
+             "ziele": len(ziele), "linien": len(linien),
+             "ort": RELEASE_LOCATION.get(impl.get("releaseLocation"), "?"),
+             "aus": bool(impl.get("deactivated")), "typen": []}
+        if impl.get("defineReleaseTypeForEachObject"):
+            tids = db.container("SurfaceReleaseImpl_releaseTypeForObjects_values").get(
+                impl["id"], [])
+            d["je_objekt"] = True
+            for tid in dict.fromkeys(tids):
+                d["typen"].append(_release_type(db, tid, nlmap, f"{name}: ", log))
+        elif impl.get("releaseType_id"):
+            d["je_objekt"] = False
+            d["typen"].append(_release_type(db, impl["releaseType_id"], nlmap,
+                                            f"{name}: ", log))
+        out.append(d)
+        C.say(log, f"  {name}: {d['flaechen']} freigegebene Flaechen"
+                   + (f", {d['volumen']} Volumen" if d["volumen"] else "")
+                   + f", zugeordnet an {d['ziele']} Objekte, Ort {d['ort']}"
+                   + (" (deaktiviert)" if d["aus"] else ""))
+        for t in d["typen"]:
+            teile = []
+            for dof in range(6):
+                b = t["beh"].get(dof)
+                if b is None:
+                    continue
+                # "frei" allein verschweigt den Ausfalltyp: RFEM stellt die
+                # Freigabe ueber die Federkonstante (0 = frei, inf = starr) und
+                # den Ausfall getrennt ein - beides gehoert in die Ausgabe.
+                wert = b.describe() if b.acts else "frei"
+                if b.failure and "Ausfall" not in wert:
+                    wert += f" (Ausfall bei {b.failure.capitalize()})"
+                if b.mu:
+                    wert += f", Reibung mu = {b.mu:g}"
+                teile.append(f"{['ux','uy','uz','phix','phiy','phiz'][dof]}={wert}")
+            C.say(log, f"    Typ {t['nummer']}"
+                       + (f" „{t['name']}“" if t["name"] else "")
+                       + ": " + (", ".join(teile) if teile else "keine Federn"))
+    if out:
+        C.say(log, f"{len(out)} Flaechenfreigaben gelesen. Die Trennung selbst wird "
+                   "nicht ausgefuehrt - dafuer muessten die beteiligten Flaechen "
+                   "vernetzt und die Knoten an der Fuge verdoppelt werden. Ohne die "
+                   "Trennung ist das Modell an diesen Stellen zu steif.")
+    return out
+
+
+# --------------------------------------------------------------------------
+# Lasten der Lastfaelle
+# --------------------------------------------------------------------------
+#: Deutung von loadDirection - Annahme, wird mit Rohwert protokolliert
+LOAD_DIRECTION = {
+    0: ("z", "lokal z (senkrecht zur Flaeche)"),
+    1: ("Z", "global Z"),
+    2: ("X", "global X"),
+    3: ("Y", "global Y"),
+}
+
+
+def _load_case_of(db: Db, handle: str) -> dict:
+    """{Last-id: LoadCase-id} ueber parentModelObject."""
+    out = {}
+    for r in db.rows(handle):
+        if (r.get("parentModelObject_table") or "") == "LoadCase":
+            out[r["id"]] = r.get("parentModelObject_id")
+    return out
+
+
+def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list) -> None:
+    """
+    Lasten der Lastfaelle uebernehmen, soweit sie sich auf das Netz abbilden
+    lassen.
+
+    Knotenlasten gehen unmittelbar.  Flaechenlasten brauchen die vernetzte
+    Flaeche; sie werden als Flaechenlast auf deren Schalenelemente gelegt.
+    Stablasten aus Vorspannung, freie Rechtecklasten und Lasten auf nicht
+    vernetzte Flaechen werden mit Anzahl und Grund genannt statt still
+    weggelassen.
+    """
+    # ---- Knotenlasten
+    n_nl = 0
+    if db.has("NodalLoad"):
+        case_of = _load_case_of(db, "NodalLoad")
+        for h, impl in db.impls("NodalLoad"):
+            lc = lc_name.get(case_of.get(h["id"]))
+            if not lc:
+                continue
+            n_nl += 1
+    if n_nl:
+        C.say(log, f"  {n_nl} Knotenlasten in der Datei")
+
+    # ---- Flaechenlasten
+    n_ok = n_ohne = 0
+    summe = 0.0
+    if db.has("SurfaceLoad"):
+        case_of = _load_case_of(db, "SurfaceLoad")
+        richtungen: dict[int, int] = {}
+        for h, impl in db.impls("SurfaceLoad"):
+            lc = lc_name.get(case_of.get(h["id"]))
+            tbl = h.get("impl_table") or ""
+            if not lc or "Force" not in tbl:
+                continue
+            ziele = db.container(tbl + "_assignedTo").get(impl["id"], [])
+            par = db.container_rows(
+                (impl.get("loadParameters_table") or "") + "_loadParameters").get(
+                    impl.get("loadParameters_id"), [])
+            p = float(par[0].get("magnitude") or 0.0) if par else 0.0
+            if not p:
+                continue
+            rd = int(impl.get("loadDirection") or 0)
+            richtungen[rd] = richtungen.get(rd, 0) + 1
+            gelegt = False
+            for sid in ziele:
+                for e in surf_els.get(sid, []):
+                    m.load_face(e, p, case=lc)
+                    gelegt = True
+            if gelegt:
+                n_ok += 1
+                summe += abs(p)
+            else:
+                n_ohne += 1
+        if n_ok:
+            C.say(log, f"  {n_ok} Flaechenlasten auf vernetzte Flaechen gelegt")
+        if n_ohne:
+            C.say(log, f"  {n_ohne} Flaechenlasten ohne vernetzte Zielflaeche - "
+                       "nicht uebernommen (die Flaeche traegt keine eigene Dicke "
+                       "oder liegt am Rand eines Volumenkoerpers).")
+        for rd, n in sorted(richtungen.items()):
+            _k, text = LOAD_DIRECTION.get(rd, ("?", f"unbekannt (Kennzahl {rd})"))
+            C.say(log, f"    Lastrichtung {rd} = {text}: {n}x")
+
+    # ---- was nicht geht, mit Grund
+    for table, label, grund in (
+            ("MemberLoad", "Stablasten",
+             "Vorspannung und Streckenlasten am Stab - das Programm kennt "
+             "keine Vorspannlast"),
+            ("LineLoad", "Linienlasten", "brauchen die vernetzte Linie"),
+            ("FreeRectangularLoad", "freie Rechtecklasten",
+             "werden in RFEM erst auf das Netz projiziert"),
+            ("SolidLoad", "Volumenlasten", "brauchen das Volumennetz")):
+        c = db.count(table)
+        if c:
+            C.say(log, f"  {c} {label} nicht uebernommen ({grund}).")
 
 
 # --------------------------------------------------------------------------
