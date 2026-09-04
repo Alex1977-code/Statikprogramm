@@ -1590,6 +1590,7 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
     """
     from ..model import Volumenkoerper
     n_hex = n_tet = 0
+    flach = gebogen = 0
     offen: dict[int, int] = {}
     surf_name = surf_name or {}
     for h, impl in db.impls("Solid"):
@@ -1597,6 +1598,12 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
         nr = h.get("userID") or h["id"]
         sids = db.container(tbl + "_boundarySurfaces").get(impl["id"], [])
         faces = [surf_nodes[s] for s in sids if s in surf_nodes]
+        # Nur ebene Vielecke zaehlen fuer die Topologie. Eine Randflaeche mit
+        # zwei Knoten ist ein Kreis aus zwei Halbboegen (Bohrung, Buchse,
+        # Bolzen); ein Koerper mit solchen Deckeln ist ein Zylinder, kein
+        # Tetraeder - er darf nicht als eines durchgehen.
+        krumm = sum(1 for f in faces if len(f) < 3)
+        vollstaendig = len(faces) == len(sids) and not krumm
         knoten = sorted({n for f in faces for n in f})
         mname = (_material(db, impl.get("material_id"), m, matcache, log)
                  if impl.get("material_id") else C.ensure_material(m, log=log))
@@ -1606,7 +1613,7 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
         k = Volumenkoerper(kname, [surf_name[x] for x in sids if x in surf_name],
                            material=mname)
         m.koerper[kname] = k
-        if len(faces) == 6 and len(knoten) == 8:
+        if vollstaendig and len(faces) == 6 and len(knoten) == 8:
             order = _hex_order(faces)
             if order:
                 # Die Randflaechen tragen keine gemeinsame Umlaufrichtung: der
@@ -1618,15 +1625,28 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
                 k.elemente = [m.add_element("hex8", order, mname, group=kname)]
                 n_hex += 1
                 continue
-        if len(faces) == 4 and len(knoten) == 4:
+        if vollstaendig and len(faces) == 4 and len(knoten) == 4:
             X = m.nodes[knoten]
-            v = np.dot(np.cross(X[1] - X[0], X[2] - X[0]), X[3] - X[0])
-            nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
-            k.elemente = [m.add_element("tet4", nodes, mname, group=kname)]
-            n_tet += 1
+            v = np.dot(np.cross(X[1] - X[0], X[2] - X[0]), X[3] - X[0]) / 6.0
+            # Ein flacher "Tetraeder" ist keiner: vier Knoten in einer Ebene
+            # ergeben ein Element ohne Volumen und eine singulaere Matrix.
+            kante = float(np.linalg.norm(X - X.mean(axis=0), axis=1).max())
+            if abs(v) > 1e-6 * max(kante, 1e-9) ** 3:
+                nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
+                k.elemente = [m.add_element("tet4", nodes, mname, group=kname)]
+                n_tet += 1
+                continue
+            flach += 1
+            k.kommentar = "vier Randflächen, aber ohne Volumen (Knoten in einer Ebene)"
             continue
-        k.kommentar = (f"{len(sids)} Randflächen – für ein Netz ist ein "
-                       "3D-Vernetzer nötig")
+        if krumm:
+            gebogen += 1
+            k.kommentar = (f"{len(sids)} Randflächen, davon {krumm} krumm "
+                           "(Zylinder, Bohrung) – für ein Netz ist ein "
+                           "3D-Vernetzer nötig")
+        else:
+            k.kommentar = (f"{len(sids)} Randflächen – für ein Netz ist ein "
+                           "3D-Vernetzer nötig")
         offen[len(sids)] = offen.get(len(sids), 0) + 1
     C.say(log, f"{len(m.koerper)} Volumenkoerper als Objekte angelegt")
     if n_hex or n_tet:
@@ -1638,6 +1658,12 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
                    + ", ".join(f"{k2}: {v}x" for k2, v in sorted(offen.items()))
                    + ") - dafuer waere ein 3D-Vernetzer noetig. Die Geometrie "
                      "steht im Modellbaum und laesst sich dort weiterbearbeiten.")
+    if gebogen:
+        C.say(log, f"    davon {gebogen} mit krummen Randflaechen "
+                   "(Zylinder, Bohrungen, Buchsen)")
+    if flach:
+        C.warn(log, f"  {flach} Koerper mit vier Randflaechen, aber ohne Volumen "
+                    "(Knoten in einer Ebene) - nicht vernetzt.")
     return n_hex + n_tet
 
 

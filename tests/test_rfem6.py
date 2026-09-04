@@ -1277,6 +1277,38 @@ def test_boegen_und_kreisflaechen():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # Eine Buchse: zwei Kreisdeckel und zwei Zylinderhaelften. Vier
+    # Randflaechen mit vier Knoten - aber kein Tetraeder.
+    tmp = tempfile.mkdtemp()
+    try:
+        r, hh = 0.05, 0.2
+        f = make_rf6(
+            os.path.join(tmp, "zylinder.rf6"),
+            nodes=[(-r, 0, 0), (r, 0, 0), (-r, 0, hh), (r, 0, hh)],
+            lines=[([1, 2], (0.0, r, 0.0)), ([2, 1], (0.0, -r, 0.0)),
+                   ([3, 4], (0.0, r, hh)), ([4, 3], (0.0, -r, hh)),
+                   [1, 3], [2, 4]],
+            members=[], supports=[],
+            surfaces=[([1, 2], 0.0), ([3, 4], 0.0),
+                      ([1, 2, 4, 3], 0.0), ([1, 2, 4, 3], 0.0)],
+            boundary_lines={1: [1, 2], 2: [3, 4],
+                            3: [1, 5, 3, 6], 4: [2, 5, 4, 6]},
+            solids=[[1, 2, 3, 4]])
+        log = []
+        m = R6.read_rf6(f, log=log)
+        check("die Buchse wird kein Tetraeder",
+              not any(e.typ == "tet4" for e in m.elements),
+              str([e.typ for e in m.elements]))
+        check("sie steht trotzdem als Koerper im Modell", len(m.koerper) == 1,
+              str(list(m.koerper)))
+        k = list(m.koerper.values())[0]
+        check("und der Grund steht daran", "krumm" in k.kommentar, k.kommentar)
+        check("das Protokoll nennt die krummen Randflaechen",
+              any("krummen Randflaechen" in z for z in log),
+              next((z for z in log if "krumm" in z), ""))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 
 # --------------------------------------------------------------------------
 # 8) Flaechensteifigkeit auch ueber den Rueckzeiger owner_id

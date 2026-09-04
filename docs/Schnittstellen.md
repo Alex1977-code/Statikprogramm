@@ -281,7 +281,15 @@ sich daraus nur die beiden einfachen Topologien bilden:
 Die Reihenfolge der Randflächen ist beliebig; Boden und Deckel des Hexaeders
 werden über die gemeinsamen Knoten der Seitenflächen zugeordnet und die
 Jacobi-Determinante geprüft (bei negativem Vorzeichen werden Boden und Deckel
-getauscht). Auch hier wird **jeder** Körper ein Modellobjekt
+getauscht).
+
+Beide Topologien gelten nur, wenn **jede** Randfläche ein ebenes Vieleck mit
+mindestens drei Knoten ist. Eine Buchse hat vier Randflächen und vier Knoten
+— zwei Kreisdeckel und zwei Zylinderhälften — und sähe sonst aus wie ein
+Tetraeder; sie wäre ein Element ohne Volumen und eine singuläre Matrix. Ein
+Körper mit krummen Randflächen bleibt darum ohne Netz, und das steht an ihm
+und im Protokoll. Ebenso wird ein „Tetraeder", dessen vier Knoten in einer
+Ebene liegen, verworfen und gemeldet. Auch hier wird **jeder** Körper ein Modellobjekt
 `Volumenkoerper` mit seinen Randflächen — Körper mit Bohrungen, Zylinder und
 Freiformflächen bekommen nur kein Netz, und der Grund steht dabei:
 
