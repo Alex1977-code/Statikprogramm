@@ -754,6 +754,32 @@ class Report:
                                  fmt(cp.stiffness / 1e3, 1) if cp.stiffness > 0 else "automatisch",
                                  fmt(cp.mu, 2)])
                 b.append(("table", rows, "Knoten-Flächen-Kontaktpaare", None, ""))
+            kbs = getattr(m, "kontaktbedingungen", None) or {}
+            if kbs:
+                # Eine Kontaktfuge, die nicht getrennt wurde, rechnet
+                # durchverbunden - also zu steif. Das gehoert ins Dokument,
+                # nicht nur ins Importprotokoll.
+                rows = [["Kontaktbedingung", "Bezug", "Wirkung je Freiheitsgrad",
+                         "Trennung ausgeführt"]]
+                for name, kb in kbs.items():
+                    rows.append([name, kb.bezug(), kb.describe(),
+                                 kb.art_der_trennung(m)])
+                rows, note = self._truncate(rows)
+                b.append(("table", rows,
+                          "Kontaktbedingungen (in RFEM „Flächenfreigaben“): "
+                          "Kontaktfugen zwischen Bauteilen. Solange die Trennung "
+                          "nicht ausgeführt ist, rechnet das Modell an der Fuge "
+                          "durchverbunden – also zu steif.", None, "compact"))
+                if note:
+                    b.append(("note", note))
+                offen = [n for n, kb in kbs.items() if not kb.ausgefuehrt and not kb.aus]
+                if offen:
+                    b.append(("note", f"{len(offen)} Kontaktbedingung(en) sind "
+                                      "nicht ausgeführt: "
+                                      + ", ".join(offen[:8])
+                                      + (" …" if len(offen) > 8 else "")
+                                      + ". Das Modell ist dort zu steif und "
+                                      "überträgt Zug, wo eine Fuge aufginge."))
         # ---- Figuren
         if self.opt("figures") and m.nn:
             b.append(self._h(2, "Systemdarstellung"))

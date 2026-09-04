@@ -253,6 +253,28 @@ def test_svg_helpers():
     _assert_since(n0)
 
 
+def test_kontaktbedingungen_im_bericht():
+    """Eine nicht ausgefuehrte Kontaktfuge darf im Dokument nicht fehlen."""
+    n0 = len(RESULTS)
+    from statik3d.model import DofBehaviour
+    m = build_beam_model()
+    m.add_kontaktbedingung("Fuge 1", flaechennamen=["F1"], koerpernamen=["V1"],
+                           behaviour={0: DofBehaviour("rigid"),
+                                      1: DofBehaviour("rigid"),
+                                      2: DofBehaviour("free", failure="zug")})
+    html = Report(m, solver.solve_static(m)).html()
+    check("Bericht: Kontaktbedingung genannt", "Fuge 1" in html)
+    check("Bericht: Wirkung je Freiheitsgrad genannt",
+          "ux=starr" in html and "Ausfall bei Zug" in html)
+    check("Bericht: nicht ausgeführte Trennung wird benannt",
+          "nicht ausgeführt" in html and "zu steif" in html)
+    m.kontaktbedingungen["Fuge 1"].ausgefuehrt = True
+    html2 = Report(m, solver.solve_static(m)).html()
+    check("Bericht: ausgeführte Fuge wird nicht mehr angemahnt",
+          "Kontaktbedingung(en) sind nicht ausgeführt" not in html2)
+    _assert_since(n0)
+
+
 def test_pdf():
     n0 = len(RESULTS)
     m = build_beam_model()
@@ -282,7 +304,7 @@ def main():
     print("STATIK3D - Test statischer Bericht (HTML / Markdown / PDF / SVG)")
     print("=" * 96)
     tests = [test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
-             test_svg_helpers, test_pdf]
+             test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf]
     for t in tests:
         try:
             t()

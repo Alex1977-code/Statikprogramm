@@ -248,7 +248,7 @@ def test_am_ganzen_modell():
     from statik3d.ec3 import design as D
     from statik3d.model import Model
 
-    def bauen(rand):
+    def bauen(rand, check=True):
         m = Model()
         m.add_material(Material.steel("S235"))
         m.add_section(ipe())
@@ -261,6 +261,7 @@ def test_am_ganzen_modell():
         m.load_node(n, Mx=5.0e3, case="LF1")
         mem = m.add_member("S1", list(range(n)))
         mem.woelb_start, mem.woelb_ende = rand
+        mem.woelb_check = check
         mem.lt_check = False
         return m, L
 
@@ -297,6 +298,17 @@ def test_am_ganzen_modell():
     sig = 6.0 * soll / (sec.tf * sec.b ** 2 * hm)
     close("σ_w an der Einspannung von Hand nachgerechnet",
           w["sigma_w_max"], sig, sig * 1e-3, " N/m²")
+
+    # Die Vorgabe darf an einem bestehenden Modell nichts aendern: ohne
+    # Woelbbehinderung und bei konstantem M_t muss genau dasselbe herauskommen
+    # wie mit abgeschaltetem Nachweis - sonst waeren alte Ergebnisse plötzlich
+    # andere, ohne dass jemand etwas geändert hätte.
+    m3, _ = bauen(("frei", "frei"), check=False)
+    an3 = solver.solve_all(m3, design=True)
+    mc3 = an3.design.members["S1"]
+    check("die Vorgabe „frei/frei“ ändert an bestehenden Modellen nichts",
+          abs(mc2.util - mc3.util) < 1e-12,
+          f"{mc2.util:.9f} (mit Nachweis) gegen {mc3.util:.9f} (ohne)")
 
 
 def main():
