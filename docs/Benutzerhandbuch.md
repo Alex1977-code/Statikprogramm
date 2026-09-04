@@ -24,6 +24,15 @@ Informationen → Trotzdem ausführen“ bestätigen). Der Knopf **Update suchen
 unten rechts holt die neueste Version: prüfen, herunterladen, austauschen,
 Neustart. Dasselbe leistet Hilfe → Nach Update suchen… in jeder Installation.
 
+Der Austausch läuft über ein kleines Skript `statik3d_update.bat` neben der
+exe: Statik3D beendet sich, das Skript ersetzt die Datei und startet die neue
+Fassung. Es räumt dabei die internen Umgebungsvariablen des Programmpackers
+weg (`_PYI_…`, `_MEIPASS2`) — erbte die neue exe sie, hielte sie sich für
+einen Unterprozess der alten und bräche mit „Security validation failure:
+parent process has different executable!“ ab. Ein Protokoll des Austauschs
+liegt als `statik3d_update.log` daneben; klappt etwas nicht, bleibt das
+Fenster mit der Begründung stehen und die neue Datei liegt bereit.
+
 Windows ohne Kommandozeile, aber mit Python: `Statik3D-Windows.bat` aus dem Repository in einen
 eigenen Ordner speichern und doppelklicken. Die Datei lädt bei jedem Start die
 neueste Version von GitHub (Ordner `Statikprogramm`, wird ersetzt), legt einmalig

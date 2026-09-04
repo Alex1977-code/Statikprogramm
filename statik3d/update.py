@@ -249,6 +249,17 @@ def write_build_stamp(sha: str, date: str, package_dir: str = None) -> str:
 # --------------------------------------------------------------------------
 UPDATE_BAT = r"""@echo off
 setlocal enabledelayedexpansion
+rem Die internen Variablen des PyInstaller-Ladeteils gehoeren nicht in die neue
+rem exe: sie beschreiben den alten Programmlauf. Erbt die neue Fassung sie,
+rem haelt sie sich fuer einen Kindprozess und bricht mit
+rem "Security validation failure: parent process has different executable!" ab.
+rem Das Skript raeumt sie darum selbst weg - auch wenn es von Hand laeuft.
+set "_PYI_APPLICATION_HOME_DIR="
+set "_PYI_ARCHIVE_FILE="
+set "_PYI_PARENT_PROCESS_LEVEL="
+set "_PYI_SPLASH_IPC="
+set "_PYI_LINUX_PROCESS_NAME="
+set "_MEIPASS2="
 set "EXE={exe}"
 set "NEW={new}"
 set "LOG={log}"
@@ -296,7 +307,12 @@ if errorlevel 1 (
     exit /b 4
 )
 echo [%date% %time%] neu gestartet>> "%LOG%"
-(goto) 2>nul & del "%~f0"
+rem Das Skript loescht sich selbst und schliesst sein Fenster. (goto) verlaesst
+rem den Skriptzusammenhang, damit die Datei beim Loeschen nicht mehr in
+rem Benutzung ist; das anschliessende exit schliesst die Eingabeaufforderung
+rem auch dann, wenn sie interaktiv geoeffnet wurde - sonst bleibt sie mit einer
+rem Eingabezeile stehen und sieht aus, als sei etwas schiefgegangen.
+(goto) 2>nul & del "%~f0" & exit
 """
 
 
@@ -343,6 +359,45 @@ def helper_path(exe_path: str = None) -> str:
     return os.path.join(os.path.dirname(exe), "statik3d_update.bat")
 
 
+#: Umgebungsvariablen, die der PyInstaller-Ladeteil einer laufenden exe setzt.
+#: Sie beschreiben **diesen** Programmlauf - das entpackte Verzeichnis, die
+#: Archivdatei und die Stellung im Prozessbaum.
+PYI_VARIABLEN = ("_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE",
+                 "_PYI_PARENT_PROCESS_LEVEL", "_PYI_SPLASH_IPC",
+                 "_PYI_LINUX_PROCESS_NAME", "_MEIPASS2", "_PYI_BUILDER_CLEANUP")
+
+
+def saubere_umgebung(basis: dict = None) -> dict:
+    """Umgebung ohne die internen Variablen des PyInstaller-Ladeteils.
+
+    Eine gepackte exe laeuft in zwei Prozessen: der aeussere entpackt sich
+    nach ``_MEIxxxx`` und startet sich selbst noch einmal. Der innere erkennt
+    an ``_PYI_PARENT_PROCESS_LEVEL``, dass er das Kind ist, und prueft dann -
+    seit PyInstaller 6 - ob sein Elternprozess **dieselbe** exe ist.
+
+    Gibt man diese Variablen an einen fremden Prozess weiter, erbt der sie:
+    ein daraus gestartetes Statik3D haelt sich faelschlich fuer ein Kind,
+    findet als Elternprozess cmd.exe und bricht mit
+    „Security validation failure: parent process has different executable!"
+    ab. Genau das ist beim Selbstupdate passiert.
+
+    Darum wird hier alles entfernt, was der Ladeteil gesetzt hat.
+    """
+    umgebung = dict(os.environ if basis is None else basis)
+    for name in list(umgebung):
+        if name in PYI_VARIABLEN or name.startswith("_PYI"):
+            umgebung.pop(name, None)
+    # Unter Linux/macOS legt der Ladeteil den urspruenglichen Suchpfad zur
+    # Seite; fuer einen fremden Prozess gilt wieder der urspruengliche.
+    for pfad in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        alt_wert = umgebung.pop(pfad + "_ORIG", None)
+        if alt_wert is not None:
+            umgebung[pfad] = alt_wert
+        elif pfad + "_ORIG" in os.environ:
+            umgebung.pop(pfad, None)
+    return umgebung
+
+
 def start_helper(bat: str, new: str = "") -> None:
     """
     Das Austauschskript starten - erst aufrufen, wenn Statik3D wirklich geht.
@@ -355,6 +410,10 @@ def start_helper(bat: str, new: str = "") -> None:
 
     ``start ""`` mit leerem Titel ist Absicht: sonst deutet cmd.exe den
     ersten Pfad in Anfuehrungszeichen als Fenstertitel.
+
+    Die Umgebung wird von den PyInstaller-Variablen befreit
+    (siehe ``saubere_umgebung``) - sonst erbt die neu gestartete exe die
+    Angaben dieses Programmlaufs und bricht mit einer Sicherheitsmeldung ab.
     """
     if os.name != "nt":
         raise UpdateError("Austausch der exe nur unter Windows")
@@ -362,6 +421,7 @@ def start_helper(bat: str, new: str = "") -> None:
         raise UpdateError(f"Das Austauschskript fehlt: {bat}")
     try:
         subprocess.Popen(f'cmd.exe /c start "" /min "{bat}"', close_fds=True,
+                         env=saubere_umgebung(),
                          creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
     except OSError as ex:
         raise UpdateError(
@@ -417,6 +477,17 @@ def restart_command() -> list[str]:
     if is_frozen():
         return [sys.executable] + sys.argv[1:]
     return [sys.executable] + sys.argv
+
+
+def restart_now() -> None:
+    """Das Programm an Ort und Stelle neu starten.
+
+    Ueber ``execve`` mit gesaeuberter Umgebung: ``execv`` wuerde die Variablen
+    des PyInstaller-Ladeteils mitnehmen, und der neue Lauf hielte sich fuer
+    einen Kindprozess (siehe ``saubere_umgebung``).
+    """
+    befehl = restart_command()
+    os.execve(befehl[0], befehl, saubere_umgebung())
 
 
 def describe() -> str:
