@@ -242,10 +242,23 @@ das Programm sagt, welcher es ist.
 ### Ergebnisse und Bericht
 
 Was gerechnet wurde, steht im **Modellbaum unter „Ergebnisse"**: Umhüllende,
-Kombinationen, Lastfälle, die Nachweise, Eigenformen und Knickfiguren. Ein
-Klick stellt das Ergebnis in der Ansicht ein — dieselbe Auswahl, die auch die
-Maske *Ergebnisse* rechts führt. Dort werden Färbung, Schnittgrößenverlauf und
-Überhöhung eingestellt.
+Kombinationen, Lastfälle, die **Schnittgrößen**, die Nachweise, Eigenformen und
+Knickfiguren. Ein Klick stellt das Ergebnis in der Ansicht ein — dieselbe
+Auswahl, die auch die Maske *Ergebnisse* rechts führt. Dort werden Färbung,
+Schnittgrößenverlauf und Überhöhung eingestellt.
+
+Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
+Grenzwerten daneben; ein Klick stellt den Verlauf in der Ansicht ein, „kein
+Verlauf" blendet ihn wieder aus.
+
+**Kennwerte im Bild.** Links oben in der Ansicht stehen die Zahlen, nach denen
+zuerst gefragt wird: größte Verformung mit Knoten, kleinste und größte
+Verformung je Richtung, kleinste und größte Schnittgröße mit dem Stab, an dem
+sie auftritt, die größte Ausnutzung mit ihrem Ort und die größte
+Vergleichsspannung. Steht ein Schnittgrößenverlauf an, wird nur diese Größe
+ausgeschrieben, sonst alle sechs. Der Text gehört zum Bild und kommt darum mit
+in den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
+Kennwerte im Bild*.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
 *Bericht → Ansicht übernehmen* (**Strg+B**), ein Doppelklick auf den
@@ -848,7 +861,11 @@ Nachweis mit seiner Verformung je Kombination.
 * Färbung: |u|, ux/uy/uz, Vergleichsspannung (Schalen/Volumen, Randspannung
   bei Stäben), Ausnutzung EC3 / Ermüdung / elastisch.
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
-  der betragsmäßig größere Extremwert).
+  der betragsmäßig größere Extremwert), auswählbar im Modellbaum unter
+  „Ergebnisse → Schnittgrößen".
+* Kennwerte als Text im Bild: größte Verformung, Grenzwerte der Schnittgrößen,
+  größte Ausnutzung und Vergleichsspannung — jeweils mit dem Ort. Sie sind Teil
+  des Bildes und stehen damit auch im Bericht.
 * Tabellen: Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise, Ermüdung,
   Kontakt, Anschlüsse — filterbar, sortierbar, mit Max-/Min-Zeile, ausgebbar nach
   Zwischenablage, CSV und Excel (Kapitel 2, „Tabellen"). Modellexport

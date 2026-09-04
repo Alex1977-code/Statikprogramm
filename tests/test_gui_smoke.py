@@ -110,6 +110,55 @@ def main():
     w.show_results(); app.processEvents()
     check("Tabellen gefuellt", w.tbl_design.zeilenzahl() >= 1 and w.tbl_react.zeilenzahl() >= 1)
 
+    # ---- Kennwerte im Bild und Schnittgroessen im Baum -------------------
+    from statik3d.gui import viewport as _vp
+    r = w.current_result()
+    grenzen = _vp.schnittgroessen_grenzen(w.model, r)
+    check("Grenzwerte aller sechs Schnittgrößen bestimmt",
+          set(grenzen) == set(_vp.SCHNITTGROESSEN), str(sorted(grenzen)))
+    # Gegenprobe von Hand: das groesste My aus allen Nachweisstellen
+    # (bei einer Umhuellenden aus ihren Grenzwerten)
+    quelle = r.stations() if hasattr(r, "stations") else r.beam
+    my = max(float(np.max(np.asarray(d["My"], float))) for d in quelle.values())
+    check("größtes My stimmt mit der Nachrechnung überein",
+          abs(grenzen["My"][2] - my) < 1e-6 * max(abs(my), 1.0),
+          f"{grenzen['My'][2]:.6g} / {my:.6g} Nm")
+    check("und es steht der Stab dabei, nicht nur die Zahl",
+          grenzen["My"][3] in range(len(w.model.elements)), str(grenzen["My"][3]))
+    w.cb_diagram.setCurrentText("My"); app.processEvents()
+    zeilen = w._kennwerte_zeichnen(r)
+    text = "\n".join(zeilen)
+    check("Kennwerte im Bild: größte Verformung mit Knoten",
+          any(z.startswith("u ") and "Knoten" in z for z in zeilen)
+          and any(z.startswith("uz") for z in zeilen),
+          zeilen[1] if len(zeilen) > 1 else "-")
+    check("Kennwerte im Bild: nur die gewählte Schnittgröße",
+          any(z.startswith("My ") for z in zeilen)
+          and not any(z.startswith("Vz ") for z in zeilen), text[:80])
+    ausn = next((z for z in zeilen if "Ausnutzung" in z), "")
+    stab = next(iter(w.model.members), "")
+    check("Kennwerte im Bild: größte Ausnutzung mit Ort",
+          "max. Ausnutzung" in ausn and " an " in ausn, ausn or "-")
+    check("und der Ort ist wirklich ein Stab des Modells",
+          any(f" an {n}" in ausn for n in w.model.members) or " an El. " in ausn,
+          f"{ausn} (Stäbe: {list(w.model.members)[:3]}, z. B. {stab})")
+    w.act_kennwerte.setChecked(False); app.processEvents()
+    check("und abschaltbar", not w._kennwerte_zeichnen(r))
+    w.act_kennwerte.setChecked(True); app.processEvents()
+    # Der Baum fuehrt die Schnittgroessen und ein Klick stellt sie ein
+    erg = w._ergebnisliste()
+    sg = [k for _t, _z, k in erg.get("Schnittgrößen", [])]
+    check("Schnittgrößen stehen im Modellbaum",
+          [f"schnittgroesse:{q}" for q in _vp.SCHNITTGROESSEN] ==
+          [k for k in sg if not k.endswith("kein Verlauf")], str(sg))
+    w.ergebnis_zeigen("schnittgroesse:Vz"); app.processEvents()
+    check("ein Klick im Baum stellt den Verlauf ein",
+          w.cb_diagram.currentText() == "Vz", w.cb_diagram.currentText())
+    w.ergebnis_zeigen("schnittgroesse:kein Verlauf"); app.processEvents()
+    check("und lässt sich dort auch wieder abschalten",
+          w.cb_diagram.currentText() == "kein Verlauf", w.cb_diagram.currentText())
+    w.cb_diagram.setCurrentText("My"); app.processEvents()
+
     # Dialoge erzeugen (ohne exec)
     d1 = dg.MaterialDialog(w); d1._grade_changed("S355"); mat = d1.result_material()
     d2 = dg.SectionDialog(w); d2.family.setCurrentText("HEB"); sec = d2.result_section()

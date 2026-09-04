@@ -41,6 +41,8 @@ from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 FIELDS = ["|u| Verschiebung", "ux", "uy", "uz", "Vergleichsspannung",
           "Ausnutzung EC3", "Ausnutzung Ermüdung", "Ausnutzung elastisch", "keine Färbung"]
 DIAGRAMS = ["kein Verlauf", "N", "Vy", "Vz", "Mt", "My", "Mz"]
+#: Zeilenhoehe der Kennwerte im Bild [Bildpunkte] bei Schriftgroesse 8
+ZEILENHOEHE = 15
 
 
 # ==========================================================================
@@ -1029,6 +1031,11 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Auswahl")
         g.gross("Ergebnisse", "∿", lambda: self.maske_zeigen("Ergebnisse"),
                 hinweis="Ergebnis, Färbung, Verlauf und Überhöhung wählen")
+        self.act_kennwerte = g.schalter(
+            "Kennwerte im Bild", lambda _z: self.redraw(), True,
+            "Größte Ausnutzung, kleinste und größte Verformung und "
+            "Schnittgrößen als Text in der Ansicht – sie kommen so auch in "
+            "den Bericht")
         g = r.gruppe("Tabellen")
         for name in ("Stabkräfte", "Auflagerkräfte", "Umhüllende",
                      "Nachweise EC3", "Ermüdung", "Kontakt"):
@@ -1531,6 +1538,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def ergebnis_zeigen(self, schluessel: str):
         """Ein Ergebnis aus dem Baum in der Ansicht einstellen."""
         art, _, wert = (schluessel or "").partition(":")
+        if art == "schnittgroesse":
+            i = self.cb_diagram.findText(wert)
+            if i >= 0:
+                self.cb_diagram.setCurrentIndex(i)     # zeichnet neu
+                self.info(f"Schnittgrößenverlauf {wert}")
+            return
         if art == "nachweis":
             tabelle = self.NACHWEIS_TABELLE.get(wert)
             if tabelle and self.tabelle_zeigen(tabelle):
@@ -2092,6 +2105,23 @@ class MainWindow(QtWidgets.QMainWindow):
                     pass
                 nachweise.append((text, kurz, f"nachweis:{feld}"))
             out["Nachweise"] = nachweise
+        r = self.current_result() if an is not None else None
+        if r is not None and (getattr(r, "beam_end", None) or getattr(r, "beam", None)):
+            # Die Schnittgroessen gehoeren in den Baum: dort sucht man sie,
+            # und ein Klick stellt gleich den Verlauf in der Ansicht ein.
+            grenzen = vp.schnittgroessen_grenzen(self.model, r)
+            reihe = []
+            for q in vp.SCHNITTGROESSEN:
+                if q not in grenzen:
+                    continue
+                lo, _e1, hi, _e2 = grenzen[q]
+                eh, f = vp.SG_EINHEIT[q]
+                reihe.append((q, f"{lo / f:+.3g} … {hi / f:+.3g} {eh}",
+                              f"schnittgroesse:{q}"))
+            if reihe:
+                reihe.append(("kein Verlauf", "Verlauf ausblenden",
+                              "schnittgroesse:kein Verlauf"))
+                out["Schnittgrößen"] = reihe
         r = self.results
         if r is not None:
             if getattr(r, "modes", None) is not None:
@@ -5662,6 +5692,17 @@ class MainWindow(QtWidgets.QMainWindow):
             return an.cases.get(key)
         return None
 
+    def _ausnutzung_map(self) -> dict | None:
+        """Die Ausnutzung je Element - EC3 vor Ermuedung, sonst nichts."""
+        an = self.analysis
+        if an is None:
+            return None
+        if getattr(an, "design", None) is not None:
+            return an.design.util_by_element()
+        if getattr(an, "fatigue", None) is not None:
+            return an.fatigue.util_by_element(self.model)
+        return None
+
     def _util_map(self, field: str) -> dict | None:
         an = self.analysis
         if an is None:
@@ -5967,12 +6008,53 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(self.selection):
             self.plotter.add_points(m.nodes[self.selection], color="#ff8800", point_size=11,
                                     render_points_as_spheres=True, name="selection")
+        self._kennwerte_zeichnen(r)
         try:
             self.plotter.show_axes()
         except Exception:
             pass
         self._kamera_setzen(kamera)
         self.plotter.render()
+
+    def _kennwerte_zeichnen(self, r) -> list:
+        """Die Kennzahlen des Ergebnisses als Text in die Ansicht schreiben.
+
+        Sie gehoeren ins **Bild**, nicht nur in eine Tabelle: wer eine Ansicht
+        in den Bericht uebernimmt, hat die Zahlen damit gleich dabei - groesste
+        Ausnutzung, kleinste und groesste Verformung, Grenzwerte der
+        Schnittgroessen, jeweils mit dem Ort.
+        """
+        zeigen = getattr(self, "act_kennwerte", None) is None or self.act_kennwerte.isChecked()
+        if r is None or not zeigen:
+            self._kennwerte_zeilen = []
+            return []
+        try:
+            # Die Ausnutzung gehoert immer dazu - auch wenn gerade nach der
+            # Verformung eingefaerbt wird. Sonst muesste man erst umschalten,
+            # um die Zahl zu sehen, nach der zuerst gefragt wird.
+            zeilen = vp.kennwerte(self.model, r, self._ausnutzung_map(),
+                                  self.cb_diagram.currentText(),
+                                  self.cb_result.currentText())
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Kennwerte: {ex}")
+            self._kennwerte_zeilen = []
+            return []
+        self._kennwerte_zeilen = zeilen
+        if not zeilen:
+            return []
+        try:
+            # Oben links, aber **unterhalb** der Glasleiste - und nicht unten,
+            # wo die Farbskalen liegen. VTK zaehlt die Bildzeilen von unten.
+            hoch = self.plotter.render_window.GetSize()[1]
+            rand = (self.glasleiste.height() + 10) if getattr(self, "glasleiste", None) \
+                else 46
+            y = hoch - rand - ZEILENHOEHE * len(zeilen)
+            self.plotter.add_text("\n".join(zeilen), position=(12, max(y, 6)),
+                                  font_size=8, font="courier", color="#203040",
+                                  name="kennwerte")
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Kennwerte: {ex}")
+        return zeilen
 
     def _kamera_setzen(self, kamera):
         """Die vor dem Neuzeichnen gemerkte Kamera wieder aufsetzen."""
