@@ -228,7 +228,10 @@ Federn des Freigabetyps (`SurfaceReleaseType` →
 
 Statik3D liest alles heraus — Name, Ort, freigegebene Flächen und Volumen,
 Zuordnung, Federkonstante je Freiheitsgrad samt Ausfalltyp und Reibbeiwert —
-und sagt ausdrücklich, dass die Trennung selbst nicht ausgeführt wird:
+und legt jede Freigabe als **Modellobjekt** `Flaechenfreigabe` an. Sie steht
+damit im Modellbaum und in der Tabelle „Flächenfreigaben", wird mitgespeichert
+und überlebt Rückgängig. Das Feld `ausgefuehrt` sagt, ob die Trennung im Netz
+umgesetzt ist — heute immer `False`, und das Protokoll sagt es auch:
 
     Achse: 56 freigegebene Flaechen, 1 Volumen, zugeordnet an 52 Objekte, Ort Anfang
       Typ 3: ux=frei, uy=frei, uz=frei (Ausfall bei Zug), phix=frei, …

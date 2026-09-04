@@ -18,6 +18,84 @@ CELL_MAP = {
 
 STATUS_COLOR = {"offen": "#9e9e9e", "Kontakt": "#1565c0", "Haften": "#2e7d32", "Gleiten": "#e65100"}
 
+#: Farben der Modellsymbole
+FARBE_KNOTEN = "#2f4f6f"
+FARBE_KNOTEN_FREI = "#e07000"      # Knoten, der (noch) an keinem Element haengt
+FARBE_LAGER = "#207020"
+FARBE_LINIENLAGER = "#1f6f4f"
+FARBE_FLAECHENLAGER = "#2a7f9f"
+FARBE_KONTAKT = "#c8a000"
+
+#: Darstellungsarten des Viewports: Name -> (Zeichen, Erklaerung)
+DARSTELLUNGEN = {
+    "Voll": ("■", "gefuellte Flaechen"),
+    "Transparent": ("◧", "durchscheinend - man sieht die innen liegenden Teile"),
+    "Hidden-Line": ("◫", "weisse Flaechen mit dunklen Kanten, wie eine Zeichnung"),
+    "Drahtmodell": ("▦", "nur die Kanten"),
+}
+
+
+def darstellung(modus: str, netz: bool, farbig: bool = False) -> dict:
+    """Angaben fuer ``add_mesh`` zu einer Darstellungsart.
+
+    ``netz`` schaltet die Elementkanten (das FE-Netz) zu, ``farbig`` sagt, dass
+    der Aufrufer eine Farbskala legt - dann darf hier keine feste Farbe stehen.
+    """
+    if modus == "Drahtmodell":
+        return {"style": "wireframe", "line_width": 2}
+    if modus == "Transparent":
+        return {"opacity": 0.35, "show_edges": netz}
+    if modus == "Hidden-Line":
+        d = {"show_edges": True, "edge_color": "#202020", "line_width": 2,
+             "lighting": False}
+        if not farbig:
+            d["color"] = "#ffffff"
+        return d
+    return {"show_edges": netz}
+
+
+def unbelegte_knoten(model: Model) -> np.ndarray:
+    """Knoten, die an keinem Element haengen (nur gesetzte Punkte)."""
+    getragen = np.zeros(model.nn, bool)
+    for e in model.elements:
+        idx = [int(i) for i in e.nodes if 0 <= int(i) < model.nn]
+        if idx:
+            getragen[idx] = True
+    return np.flatnonzero(~getragen)
+
+
+def add_nodes(plotter, model: Model, groesse: float = 1.0):
+    """Alle gesetzten Knoten als Punkte zeichnen.
+
+    Ein eben gesetzter Knoten haengt an keinem Element und war darum bisher
+    im Viewport gar nicht zu sehen - das Modell wuchs unsichtbar. Solche
+    Knoten bekommen hier eine eigene Farbe und einen groesseren Punkt, damit
+    man beim Modellieren sieht, wo man schon war.
+    """
+    if model.nn == 0:
+        return
+    frei = unbelegte_knoten(model)
+    d = max(3.0, 7.0 * float(groesse))
+    fest = np.setdiff1d(np.arange(model.nn), frei, assume_unique=False)
+    if len(fest):
+        plotter.add_points(model.nodes[fest], color=FARBE_KNOTEN, point_size=d,
+                           render_points_as_spheres=True, name="knoten")
+    if len(frei):
+        plotter.add_points(model.nodes[frei], color=FARBE_KNOTEN_FREI,
+                           point_size=d + 4, render_points_as_spheres=True,
+                           name="knoten_frei")
+
+
+def polygon_flaeche(punkte) -> float:
+    """Flaeche eines ebenen Polygons im Raum (Newell-Formel)."""
+    P = np.asarray(punkte, float)
+    if len(P) < 3:
+        return 0.0
+    n = np.zeros(3)
+    for a, b in zip(P, np.roll(P, -1, axis=0)):
+        n += np.cross(a, b)
+    return float(np.linalg.norm(n)) / 2.0
+
 
 def to_grid(model: Model) -> pv.UnstructuredGrid:
     cells, types = [], []
@@ -37,20 +115,98 @@ def util_colors(values: np.ndarray):
     return "RdYlGn_r"
 
 
-def add_supports(plotter, model: Model, size: float):
-    if not model.supports and not model.contact_supports:
-        return
-    d = 0.012 * size
-    pts = model.nodes[[s.node for s in model.supports]] if model.supports else np.zeros((0, 3))
-    if len(pts):
-        plotter.add_mesh(pv.PolyData(pts).glyph(
-            geom=pv.Cone(direction=(0, 0, 1), height=2 * d, radius=d),
-            scale=False, orient=False), color="#207020", name="supports")
+def support_shape(support) -> str:
+    """Symbolart eines Lagers aus seinen Freiheitsgraden.
+
+    Ein Wuerfel steht fuer die Einspannung (alle sechs Freiheitsgrade), ein
+    Kegel fuer das gelenkige Lager, ein Zylinder fuer ein Federlager. So sagt
+    das Symbol, was es haelt - erst dadurch ist seine Groesse eine Angabe und
+    nicht nur Zierde.
+    """
+    dofs = set(int(d) for d in getattr(support, "dofs", []) or [])
+    beh = getattr(support, "behaviour", None) or {}
+    for b in beh.values():
+        typ = getattr(b, "typ", None) or (b.get("typ") if isinstance(b, dict) else None)
+        if typ == "spring":
+            return "feder"
+    if getattr(support, "stiffness", None) and any(support.stiffness):
+        return "feder"
+    if dofs >= {0, 1, 2, 3, 4, 5}:
+        return "einspannung"
+    return "gelenk"
+
+
+def _glyph(shape: str, d: float):
+    if shape == "einspannung":
+        return pv.Cube(x_length=1.6 * d, y_length=1.6 * d, z_length=1.2 * d,
+                       center=(0, 0, -0.6 * d))
+    if shape == "feder":
+        return pv.Cylinder(direction=(0, 0, 1), height=2 * d, radius=0.7 * d,
+                           center=(0, 0, -d))
+    return pv.Cone(direction=(0, 0, 1), height=2 * d, radius=d, center=(0, 0, -d))
+
+
+def support_size(model: Model, faktor: float = 1.0) -> float:
+    """Grundgroesse der Lagersymbole [m]."""
+    return 0.012 * model.characteristic_size() * max(float(faktor), 0.05)
+
+
+def add_supports(plotter, model: Model, size: float, faktor: float = 1.0):
+    """Knoten-, Linien- und Flaechenlager sowie Kontaktlager zeichnen.
+
+    ``faktor`` skaliert alle Symbole, ``Support.groesse`` zusaetzlich das
+    einzelne Lager (Rechtsklick auf das Lager im Viewport).
+    """
+    d0 = 0.012 * size * max(float(faktor), 0.05)
+    # Nach Symbolart und Groesse buendeln: ein Glyphensatz je Kombination
+    gruppen: dict[tuple, list] = {}
+    for s in model.supports:
+        g = round(float(getattr(s, "groesse", 1.0) or 1.0), 3)
+        gruppen.setdefault((support_shape(s), g), []).append(s.node)
+    for i, ((shape, g), nodes) in enumerate(sorted(gruppen.items())):
+        pts = model.nodes[nodes]
+        plotter.add_mesh(pv.PolyData(pts).glyph(geom=_glyph(shape, d0 * g),
+                                                scale=False, orient=False),
+                         color=FARBE_LAGER, name=f"supports{i}")
+    for j, ls in enumerate(getattr(model, "line_supports", []) or []):
+        nodes = [int(n) for n in ls.nodes if 0 <= int(n) < model.nn]
+        if not nodes:
+            continue
+        plotter.add_mesh(pv.PolyData(model.nodes[nodes]).glyph(
+            geom=_glyph("gelenk", 0.6 * d0), scale=False, orient=False),
+            color=FARBE_LINIENLAGER, name=f"lsupports{j}")
+    for j, ss in enumerate(getattr(model, "surface_supports", []) or []):
+        nodes = [int(n) for n in ss.nodes if 0 <= int(n) < model.nn]
+        if not nodes:
+            continue
+        plotter.add_mesh(pv.PolyData(model.nodes[nodes]).glyph(
+            geom=_glyph("feder", 0.5 * d0), scale=False, orient=False),
+            color=FARBE_FLAECHENLAGER, name=f"fsupports{j}")
     if model.contact_supports:
         pts = model.nodes[[c.node for c in model.contact_supports]]
-        plotter.add_mesh(pv.PolyData(pts).glyph(
-            geom=pv.Cone(direction=(0, 0, 1), height=2 * d, radius=d),
-            scale=False, orient=False), color="#c8a000", name="csupports")
+        plotter.add_mesh(pv.PolyData(pts).glyph(geom=_glyph("gelenk", d0),
+                                                scale=False, orient=False),
+                         color=FARBE_KONTAKT, name="csupports")
+
+
+def support_at(model: Model, punkt, size: float, faktor: float = 1.0):
+    """Das Lager, das am dichtesten an ``punkt`` liegt - oder None.
+
+    Der Fangbereich ist die Symbolgroesse selbst: was man anklickt, muss man
+    auch sehen.
+    """
+    if punkt is None or not model.supports:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    best, bestd = None, None
+    for i, s in enumerate(model.supports):
+        if not (0 <= int(s.node) < model.nn):
+            continue
+        d0 = 0.012 * size * max(float(faktor), 0.05) * float(getattr(s, "groesse", 1.0) or 1.0)
+        dist = float(np.linalg.norm(model.nodes[int(s.node)] - p))
+        if dist <= max(2.5 * d0, 0.01 * size) and (bestd is None or dist < bestd):
+            best, bestd = i, dist
+    return best
 
 
 def add_loads(plotter, model: Model, case, size: float):

@@ -92,7 +92,9 @@ class MaterialDialog(QtWidgets.QDialog):
 
 
 class SectionDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, sec: Section = None):
+        """``sec`` fuellt die Maske mit einem vorhandenen Querschnitt vor -
+        das ist der Weg des Doppelklicks im Modellbaum."""
         super().__init__(parent)
         self.setWindowTitle("Querschnitt")
         self.resize(460, 320)
@@ -135,6 +137,41 @@ class SectionDialog(QtWidgets.QDialog):
         lay.addWidget(self.tabs)
         lay.addWidget(buttons(self))
         self._fill_profiles(self.family.currentText())
+        if sec is not None:
+            self._laden(sec)
+
+    #: Querschnittsart -> Register „Parametrisch", Zeile und Parameterfolge
+    PARAM = {"rect": (0, ("b", "h")), "circle": (1, ("h",)), "CHS": (2, ("h", "tw")),
+             "I": (3, ("h", "b", "tw", "tf", "r")), "RHS": (4, ("h", "b", "tw"))}
+
+    def _laden(self, sec: Section):
+        """Die Maske mit einem vorhandenen Querschnitt fuellen."""
+        self.name.setText(sec.name)
+        # Steht der Name in der Profildatenbank, ist das Register „Datenbank"
+        # der richtige Ort - sonst der parametrische Weg.
+        try:
+            fam = profiles.family_of(sec.name)
+        except Exception:                        # noqa: BLE001
+            fam = None
+        if fam:
+            for i in range(self.family.count()):
+                if self.family.itemData(i) == fam:
+                    self.family.setCurrentIndex(i)
+                    break
+            self.profile.setCurrentText(sec.name)
+            self.tabs.setCurrentIndex(0)
+            return
+        self.tabs.setCurrentIndex(1)
+        eintrag = self.PARAM.get(sec.typ)
+        if eintrag is None:
+            self.typ.setCurrentIndex(5)
+            for e, v in zip(self.free, (sec.A, sec.Iy, sec.Iz, sec.It)):
+                e.set(v)
+            return
+        zeile, felder = eintrag
+        self.typ.setCurrentIndex(zeile)
+        for e, feld in zip(self.p, felder):
+            e.set(float(getattr(sec, feld, 0.0) or 0.0))
 
     def _fill_families(self):
         code = self.country.currentData() or "EU"
@@ -480,12 +517,31 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
 
     DOFS = ["ux", "uy", "uz", "phix", "phiy", "phiz"]
 
-    def __init__(self, parent=None, support=None, kind: str = "Knotenlager"):
+    def __init__(self, parent=None, support=None, kind: str = "Knotenlager",
+                 stammdaten: bool = False):
+        """``stammdaten=True`` zeigt zusaetzlich Name und Symbolgroesse - das ist
+        die Maske, die der Doppelklick im Modellbaum oeffnet."""
         super().__init__(parent)
         self.setWindowTitle(f"{kind}: Wirkung je Freiheitsgrad")
-        self.resize(760, 330)
+        self.resize(760, 380 if stammdaten else 330)
         self.support = support
+        self.name_ed = self.groesse_ed = None
         lay = QtWidgets.QVBoxLayout(self)
+        if stammdaten:
+            kopf = QtWidgets.QFormLayout()
+            self.name_ed = QtWidgets.QLineEdit(getattr(support, "name", "") or "")
+            kopf.addRow("Name", self.name_ed)
+            ort = getattr(support, "node", None)
+            if ort is not None:
+                kopf.addRow("Knoten", QtWidgets.QLabel(str(ort)))
+            elif getattr(support, "nodes", None) is not None:
+                kopf.addRow("Knoten", QtWidgets.QLabel(
+                    f"{len(support.nodes)} ({', '.join(str(n) for n in support.nodes[:12])}"
+                    + (" …" if len(support.nodes) > 12 else "") + ")"))
+            if hasattr(support, "groesse"):
+                self.groesse_ed = NumEdit(float(getattr(support, "groesse", 1.0) or 1.0), 80)
+                kopf.addRow("Symbolgröße [-]", self.groesse_ed)
+            lay.addLayout(kopf)
         lay.addWidget(QtWidgets.QLabel(
             "Das Lager wirkt entlang der positiven Achse. Bewegt sich der Knoten in das Lager "
             "hinein, entsteht <b>Druck</b>; zieht er daran, <b>Zug</b>.<br>"
@@ -540,8 +596,121 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
 
     def apply(self, support):
         support.behaviour = self.behaviours()
-        support.dofs = sorted({d for d, b in support.behaviour.items() if b.acts})
+        if hasattr(support, "dofs"):
+            support.dofs = sorted({d for d, b in support.behaviour.items() if b.acts})
+        if self.name_ed is not None:
+            support.name = self.name_ed.text().strip()
+        if self.groesse_ed is not None and hasattr(support, "groesse"):
+            support.groesse = max(0.05, self.groesse_ed.value())
         return support
+
+
+class KnotenDialog(QtWidgets.QDialog):
+    """Die Koordinaten eines Knotens."""
+
+    def __init__(self, parent=None, punkt=(0.0, 0.0, 0.0), nummer: int = 0):
+        super().__init__(parent)
+        self.setWindowTitle(f"Knoten {nummer}")
+        self.felder = [NumEdit(float(v), 110) for v in punkt]
+        f = QtWidgets.QFormLayout(self)
+        for name, e in zip(("x [m]", "y [m]", "z [m]"), self.felder):
+            f.addRow(name, e)
+        f.addRow(buttons(self))
+
+    def werte(self) -> list[float]:
+        return [e.value() for e in self.felder]
+
+
+class LinienDialog(QtWidgets.QDialog):
+    """Name, Art und Stuetzknoten einer Linie."""
+
+    ARTEN = ["polyline", "arc", "circle", "ellipse", "spline", "parabola"]
+
+    def __init__(self, parent=None, linie=None, n_max: int = 0):
+        super().__init__(parent)
+        self.setWindowTitle("Linie" + (f" {linie.name}" if linie else ""))
+        self.n_max = n_max
+        self.name = QtWidgets.QLineEdit(getattr(linie, "name", "") or "L1")
+        self.typ = QtWidgets.QComboBox()
+        self.typ.addItems(self.ARTEN)
+        self.typ.setCurrentText(getattr(linie, "typ", "polyline") or "polyline")
+        self.knoten = QtWidgets.QLineEdit(
+            ", ".join(str(n) for n in (getattr(linie, "nodes", []) or [])))
+        self.knoten.setPlaceholderText("Knotennummern, z. B. 0, 1, 2 oder 0-5")
+        self.comment = QtWidgets.QLineEdit(getattr(linie, "comment", "") or "")
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Name", self.name)
+        f.addRow("Art", self.typ)
+        f.addRow("Knoten", self.knoten)
+        f.addRow("Bemerkung", self.comment)
+        f.addRow(buttons(self))
+
+    def werte(self) -> dict:
+        return {"name": self.name.text().strip() or "L",
+                "typ": self.typ.currentText(),
+                "nodes": parse_int_list(self.knoten.text(), self.n_max),
+                "comment": self.comment.text().strip()}
+
+
+class DickeDialog(QtWidgets.QDialog):
+    """Name und Dicke einer Flaechenkennung."""
+
+    def __init__(self, parent=None, prop=None):
+        super().__init__(parent)
+        self.setWindowTitle("Dicke")
+        self.name = QtWidgets.QLineEdit(getattr(prop, "name", "") or "")
+        self.t = NumEdit(float(getattr(prop, "t", 0.01) or 0.01) * 1e3, 90)
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Name", self.name)
+        f.addRow("Dicke t [mm]", self.t)
+        f.addRow(buttons(self))
+
+    def werte(self) -> tuple[str, float]:
+        return self.name.text().strip() or "Dicke", max(1e-6, self.t.value() / 1e3)
+
+
+class GelenkDialog(QtWidgets.QDialog):
+    """Stabendgelenk: je lokalem Freiheitsgrad biegesteif, gelenkig oder Feder."""
+
+    DOFS = ["ux", "uy", "uz", "φx (Torsion)", "φy (My)", "φz (Mz)"]
+
+    def __init__(self, parent=None, hinge=None):
+        super().__init__(parent)
+        self.setWindowTitle("Stabendgelenk")
+        self.resize(460, 340)
+        lay = QtWidgets.QVBoxLayout(self)
+        f = QtWidgets.QFormLayout()
+        self.name = QtWidgets.QLineEdit(getattr(hinge, "name", "") or "G1")
+        self.ende = QtWidgets.QComboBox()
+        self.ende.addItems(["Stabanfang", "Stabende"])
+        self.ende.setCurrentIndex(int(getattr(hinge, "end", 0) or 0))
+        f.addRow("Name", self.name)
+        f.addRow("Lage", self.ende)
+        lay.addLayout(f)
+        self.tbl = QtWidgets.QTableWidget(6, 2)
+        self.tbl.setHorizontalHeaderLabels(["Wirkung", "Federsteifigkeit [kN/m bzw. kNm/rad]"])
+        self.tbl.setVerticalHeaderLabels(self.DOFS)
+        self.tbl.horizontalHeader().setStretchLastSection(True)
+        self.zeilen = []
+        typen = list(getattr(hinge, "typ", ["fixed"] * 6) or ["fixed"] * 6)
+        federn = list(getattr(hinge, "stiffness", [0.0] * 6) or [0.0] * 6)
+        for d in range(6):
+            cb = QtWidgets.QComboBox()
+            cb.addItems(["biegesteif", "gelenkig", "Feder"])
+            cb.setCurrentIndex({"fixed": 0, "free": 1, "spring": 2}.get(typen[d], 0))
+            k = NumEdit(float(federn[d]) / 1e3, 120)
+            self.tbl.setCellWidget(d, 0, cb)
+            self.tbl.setCellWidget(d, 1, k)
+            self.zeilen.append((cb, k))
+        lay.addWidget(self.tbl)
+        lay.addWidget(buttons(self))
+
+    def werte(self) -> dict:
+        return {"name": self.name.text().strip() or "G",
+                "end": self.ende.currentIndex(),
+                "typ": [["fixed", "free", "spring"][cb.currentIndex()]
+                        for cb, _ in self.zeilen],
+                "stiffness": [k.value() * 1e3 for _, k in self.zeilen]}
 
 
 class ImportDialog(QtWidgets.QDialog):

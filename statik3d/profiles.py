@@ -229,6 +229,28 @@ def families(country: str = None) -> list[str]:
     return list(c[2])
 
 
+_FAMILY_INDEX = None
+
+
+def family_of(designation: str) -> str:
+    """Die Profilreihe zu einer Bezeichnung.
+
+    Leer, wenn die Bezeichnung nicht in der Datenbank steht - dann ist der
+    Querschnitt frei eingegeben und nicht aus dem Katalog.
+    """
+    global _FAMILY_INDEX
+    if _FAMILY_INDEX is None:
+        _FAMILY_INDEX = {}
+        for fam in FAMILIES:
+            try:
+                namen = list_profiles(fam)
+            except KeyError:
+                continue
+            for name in namen:
+                _FAMILY_INDEX.setdefault(re.sub(r"\s+", "", name.upper()), fam)
+    return _FAMILY_INDEX.get(re.sub(r"\s+", "", str(designation).upper()), "")
+
+
 def _norm(designation: str) -> str:
     s = designation.upper().replace(",", ".")
     s = re.sub(r"\s+", " ", s.strip())

@@ -1426,6 +1426,20 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
             d["je_objekt"] = False
             d["typen"].append(_release_type(db, impl["releaseType_id"], nlmap,
                                             f"{name}: ", log))
+        # Die Freigabe gehoert ins Modell, nicht nur ins Protokoll: sonst ist
+        # sie nach dem Speichern weg und niemand sieht mehr, dass an dieser
+        # Stelle eine Fuge gehoert.
+        haupt = d["typen"][0] if d["typen"] else {}
+        m.add_flaechenfreigabe(
+            C.unique_name(m.flaechenfreigaben, name),
+            flaechen=[int(x) for x in flaechen], volumen=[int(x) for x in volumen],
+            ziele=len(ziele), ort=d["ort"],
+            typ=str(haupt.get("nummer", "")) + (f" {haupt['name']}" if haupt.get("name") else ""),
+            behaviour={dof: DofBehaviour(**vars(b))
+                       for dof, b in (haupt.get("beh") or {}).items()},
+            aus=d["aus"], ausgefuehrt=False,
+            beschreibung=(f"{len(d['typen'])} Freigabetypen (je Objekt)"
+                          if d.get("je_objekt") else ""))
         out.append(d)
         C.say(log, f"  {name}: {d['flaechen']} freigegebene Flaechen"
                    + (f", {d['volumen']} Volumen" if d["volumen"] else "")

@@ -13,6 +13,7 @@ die Eingaben rechts - und unten Protokoll und Tabellen.
 """
 from __future__ import annotations
 
+import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 #: Farben des Entwurfs
@@ -328,10 +329,26 @@ class Filmstreifen(QtWidgets.QWidget):
             k.setzen_aktiv(k.name == name)
 
 
+#: Wie viele Einzeleintraege ein Zweig hoechstens ausklappt. Darueber steht
+#: eine Sammelzeile; die vollstaendige Liste steht in der Tabelle unten, wo
+#: sie gefiltert und sortiert werden kann.
+BAUM_MAX = 60
+
+
 class Modellbaum(QtWidgets.QTreeWidget):
-    """Der Modellbaum links: was im Modell steckt, mit Anzahl."""
+    """Der Modellbaum links: **alles**, was im Modell modelliert werden kann.
+
+    Knoten, Linien, Staebe, Flaechen, Volumen, Lager (Knoten, Linie, Flaeche),
+    Gelenke, Kontaktbedingungen, Querschnitte, Werkstoffe, Dicken, Lastfaelle,
+    Kombinationen und die Nachweisobjekte stehen hier mit ihrer Anzahl.
+
+    Ein **Klick** waehlt den Zweig aus (und zeigt die zugehoerige Tabelle oder
+    Maske), ein **Doppelklick** oeffnet ihn zum Bearbeiten. Beides laeuft ueber
+    zwei Signale, damit das Fenster entscheidet, was daraus wird.
+    """
 
     angeklickt = QtCore.Signal(str, str)      # (Art, Name)
+    bearbeiten = QtCore.Signal(str, str)      # (Art, Name) - Doppelklick
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -343,15 +360,30 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
         self.itemClicked.connect(self._klick)
+        self.itemDoubleClicked.connect(self._doppelklick)
+
+    @staticmethod
+    def _schluessel(item) -> tuple[str, str]:
+        art = str(item.data(0, QtCore.Qt.UserRole) or "")
+        name = item.data(0, QtCore.Qt.UserRole + 1)
+        return art, str(name if name is not None else item.text(0))
 
     def _klick(self, item, _spalte):
-        art = item.data(0, QtCore.Qt.UserRole) or ""
+        art, name = self._schluessel(item)
         if art:
-            self.angeklickt.emit(str(art), item.text(0))
+            self.angeklickt.emit(art, name)
 
-    def _zweig(self, eltern, text, zahl="", art="", fett=False, farbe=None):
+    def _doppelklick(self, item, _spalte):
+        art, name = self._schluessel(item)
+        if art:
+            self.bearbeiten.emit(art, name)
+
+    def _zweig(self, eltern, text, zahl="", art="", fett=False, farbe=None,
+               schluessel=None, hinweis=""):
         it = QtWidgets.QTreeWidgetItem(eltern, [text, str(zahl)])
         it.setData(0, QtCore.Qt.UserRole, art)
+        if schluessel is not None:
+            it.setData(0, QtCore.Qt.UserRole + 1, str(schluessel))
         if fett:
             f = it.font(0)
             f.setBold(True)
@@ -359,84 +391,243 @@ class Modellbaum(QtWidgets.QTreeWidget):
         it.setForeground(1, QtGui.QColor(FARBEN["matt"]))
         if farbe:
             it.setForeground(0, QtGui.QColor(farbe))
+        if hinweis:
+            it.setToolTip(0, hinweis)
         return it
 
+    def _liste(self, eltern, eintraege, art, sammelart=""):
+        """Eintraege unter einen Zweig haengen, gedeckelt auf BAUM_MAX."""
+        for i, (text, zahl, key, tip) in enumerate(eintraege):
+            if i >= BAUM_MAX:
+                self._zweig(eltern, f"… {len(eintraege) - BAUM_MAX} weitere",
+                            "", sammelart or art, farbe=FARBEN["matt"],
+                            hinweis="Die vollständige Liste steht in der "
+                                    "Tabelle unten – dort mit Filter.")
+                break
+            self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip)
+
+    # -- Beschriftungen ---------------------------------------------------
+    @staticmethod
+    def _lagertext(support) -> str:
+        namen = ["ux", "uy", "uz", "φx", "φy", "φz"]
+        teile = []
+        for d in range(6):
+            b = support.dof_behaviour(d)
+            if getattr(b, "acts", False):
+                teile.append(namen[d])
+        return ", ".join(teile) or "frei"
+
     def fuellen(self, model, stellungen: list = None):
-        offen = {self.topLevelItem(i).text(0): self.topLevelItem(i).isExpanded()
-                 for i in range(self.topLevelItemCount())}
+        offen = {}
+
+        def merken(it):
+            offen[it.text(0)] = it.isExpanded()
+            for i in range(it.childCount()):
+                merken(it.child(i))
+
+        for i in range(self.topLevelItemCount()):
+            merken(self.topLevelItem(i))
         self.clear()
         wurzel = self._zweig(self, model.name or "Modell", f"{model.nn} Kn",
                              "modell", fett=True)
+
+        # ---- Geometrie ---------------------------------------------------
+        geo = self._zweig(wurzel, "Geometrie", "", "modell", fett=True)
+        kn = self._zweig(geo, "Knoten", model.nn, "knoten")
+        self._liste(kn, [(f"K{i}", "  ".join(f"{v:g}" for v in model.nodes[i]),
+                          str(i), f"Knoten {i}: {np.round(model.nodes[i], 4)}")
+                         for i in range(model.nn)], "knoten")
+        lin = self._zweig(geo, "Linien", len(model.lines), "linien")
+        self._liste(lin, [(name, f"{ln.typ} · {len(ln.nodes)}", name,
+                           f"{name}: {ln.typ} über {len(ln.nodes)} Knoten")
+                          for name, ln in model.lines.items()], "linie", "linien")
+
+        # ---- Elemente ----------------------------------------------------
         arten: dict = {}
         for e in model.elements:
             arten[e.typ] = arten.get(e.typ, 0) + 1
-        el = self._zweig(wurzel, "Elemente", len(model.elements), "elemente")
-        for k, v in sorted(arten.items(), key=lambda x: -x[1]):
-            self._zweig(el, k, v, "elemente")
-        self._zweig(wurzel, "Querschnitte", len(model.sections), "querschnitte")
-        self._zweig(wurzel, "Werkstoffe", len(model.materials), "werkstoffe")
-        self._zweig(wurzel, "Lager", len(model.supports), "lager")
-        self._zweig(wurzel, "Lastfälle", len(model.load_cases), "lastfaelle")
-        self._zweig(wurzel, "Kombinationen", len(model.combinations), "kombinationen")
+        el = self._zweig(wurzel, "Elemente", len(model.elements), "elemente", fett=True)
+        stab = sum(arten.get(k, 0) for k in ("beam", "truss"))
+        flae = sum(arten.get(k, 0) for k in ("shell3", "shell4"))
+        voll = sum(arten.get(k, 0) for k in ("tet4", "tet10", "hex8"))
+        if stab:
+            z = self._zweig(el, "Stäbe", stab, "stabelemente",
+                            hinweis="Balken- und Fachwerkelemente")
+            for k in ("beam", "truss"):
+                if arten.get(k):
+                    self._zweig(z, {"beam": "Balken", "truss": "Fachwerkstab"}[k],
+                                arten[k], "stabelemente", schluessel=k)
+        if flae:
+            z = self._zweig(el, "Flächen", flae, "flaechen",
+                            hinweis="Schalenelemente")
+            for k in ("shell3", "shell4"):
+                if arten.get(k):
+                    self._zweig(z, {"shell3": "Dreieck", "shell4": "Viereck"}[k],
+                                arten[k], "flaechen", schluessel=k)
+        if voll:
+            z = self._zweig(el, "Volumen", voll, "volumen",
+                            hinweis="Volumenelemente (Tetraeder, Hexaeder)")
+            for k in ("tet4", "tet10", "hex8"):
+                if arten.get(k):
+                    self._zweig(z, {"tet4": "Tetraeder (linear)",
+                                    "tet10": "Tetraeder (quadratisch)",
+                                    "hex8": "Hexaeder"}[k], arten[k], "volumen",
+                                schluessel=k)
+        if model.members:
+            mem = self._zweig(el, "Stäbe für Nachweise", len(model.members), "staebe")
+            self._liste(mem, [(name, getattr(mm, "section", "") or "", name,
+                               f"{name}: {len(mm.elements)} Elemente")
+                              for name, mm in model.members.items()], "stab", "staebe")
+
+        # ---- Eigenschaften ----------------------------------------------
+        eig = self._zweig(wurzel, "Eigenschaften", "", "modell", fett=True)
+        qs = self._zweig(eig, "Querschnitte", len(model.sections), "querschnitte")
+        self._liste(qs, [(name, getattr(x, "typ", "") or "", name,
+                          f"{name}: A = {getattr(x, 'A', 0) * 1e4:.1f} cm²")
+                         for name, x in model.sections.items()], "querschnitt",
+                    "querschnitte")
+        wk = self._zweig(eig, "Werkstoffe", len(model.materials), "werkstoffe")
+        self._liste(wk, [(name, getattr(x, "grade", "") or "", name,
+                          f"{name}: E = {getattr(x, 'E', 0) / 1e9:.0f} GPa")
+                         for name, x in model.materials.items()], "werkstoff",
+                    "werkstoffe")
+        dk = self._zweig(eig, "Dicken", len(model.shells), "dicken")
+        self._liste(dk, [(name, f"{getattr(x, 't', 0) * 1e3:g} mm", name,
+                          f"{name}: t = {getattr(x, 't', 0) * 1e3:g} mm")
+                         for name, x in model.shells.items()], "dicke", "dicken")
+
+        # ---- Lager und Kopplungen ---------------------------------------
+        n_lager = (len(model.supports) + len(model.line_supports)
+                   + len(model.surface_supports))
+        lg = self._zweig(wurzel, "Lager", n_lager, "lager", fett=True)
+        kl = self._zweig(lg, "Knotenlager", len(model.supports), "lager")
+        self._liste(kl, [(x.name or f"Lager {i + 1}", f"K{x.node}", str(i),
+                          f"Knoten {x.node}: {self._lagertext(x)}")
+                         for i, x in enumerate(model.supports)], "lager_einzeln",
+                    "lager")
+        if model.line_supports:
+            ll = self._zweig(lg, "Linienlager", len(model.line_supports),
+                             "linienlager")
+            self._liste(ll, [(x.name or f"Linienlager {i + 1}",
+                              f"{len(x.nodes)} Kn", str(i),
+                              f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
+                             for i, x in enumerate(model.line_supports)],
+                        "linienlager_einzeln", "linienlager")
+        if model.surface_supports:
+            fl = self._zweig(lg, "Flächenlager", len(model.surface_supports),
+                             "flaechenlager")
+            self._liste(fl, [(x.name or f"Flächenlager {i + 1}",
+                              f"{len(x.nodes)} Kn", str(i),
+                              f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
+                             for i, x in enumerate(model.surface_supports)],
+                        "flaechenlager_einzeln", "flaechenlager")
+        if model.hinges:
+            gk = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke")
+            self._liste(gk, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d]
+                                              for d in h.released()) or "starr",
+                              name, f"{name}: freigegeben {h.released()}")
+                             for name, h in model.hinges.items()], "gelenk", "gelenke")
+        freigaben = getattr(model, "flaechenfreigaben", {}) or {}
+        if freigaben:
+            offen_noch = sum(1 for x in freigaben.values() if not x.ausgefuehrt)
+            ff = self._zweig(wurzel, "Flächenfreigaben", len(freigaben),
+                             "flaechenfreigaben", fett=True,
+                             farbe=FARBEN["warn"] if offen_noch else FARBEN["akzent"],
+                             hinweis="Kontaktfugen aus RFEM. Solange die Trennung "
+                                     "nicht ausgeführt ist, rechnet das Modell dort "
+                                     "durchverbunden – also zu steif.")
+            self._liste(ff, [(name + ("" if x.ausgefuehrt else " ⚠"), x.bezug(), name,
+                              f"{name}: {x.describe()}"
+                              + ("" if x.ausgefuehrt
+                                 else "\nTrennung nicht ausgeführt – hier zu steif."))
+                             for name, x in freigaben.items()], "flaechenfreigabe",
+                        "flaechenfreigaben")
         n_kontakt = (len(model.contact_supports) + len(model.gap_elements)
                      + len(model.contact_pairs))
         if n_kontakt:
-            self._zweig(wurzel, "Kontakt", n_kontakt, "kontakt")
+            kt = self._zweig(wurzel, "Kontaktbedingungen", n_kontakt, "kontakt",
+                             fett=True, farbe=FARBEN["akzent"])
+            if model.contact_supports:
+                self._zweig(kt, "einseitige Lager", len(model.contact_supports),
+                            "kontakt", schluessel="supports")
+            if model.gap_elements:
+                self._zweig(kt, "Spaltelemente", len(model.gap_elements),
+                            "kontakt", schluessel="gaps")
+            if model.contact_pairs:
+                self._zweig(kt, "Kontaktpaare", len(model.contact_pairs),
+                            "kontakt", schluessel="pairs")
+
+        # ---- Einwirkungen -------------------------------------------------
+        ew = self._zweig(wurzel, "Einwirkungen", "", "modell", fett=True)
+        lf = self._zweig(ew, "Lastfälle", len(model.load_cases), "lastfaelle")
+        self._liste(lf, [(name, f"{lc.category} · {lc.n_loads}", name,
+                          f"{name}: {lc.description or lc.category}, "
+                          f"{lc.n_loads} Lasten")
+                         for name, lc in model.load_cases.items()], "lastfall",
+                    "lastfaelle")
+        kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
+        self._liste(kb, [(name, getattr(c, "kind", "") or "", name, name)
+                         for name, c in model.combinations.items()], "kombination",
+                    "kombinationen")
+
+        # ---- Stellungen ----------------------------------------------------
         # Stellungen stehen ausschliesslich hier (Vorgabe Kap. 16.1 Nr. 3);
         # der Zweig traegt die Schaltflaeche zum Anlegen.
         st = self._zweig(wurzel, "Stellungen", len(stellungen or []), "stellungen",
                          fett=bool(stellungen),
                          farbe=FARBEN["akzent"] if stellungen else None)
-        for i, s in enumerate(stellungen or [], 1):
-            eta = s.get("eta")
-            text = f"S{i} · {s.get('name', '')}" + (" ★" if s.get("fuehrt") else "")
-            zweig = self._zweig(st, text,
-                                f"{float(s.get('winkel', 0)):.0f}°", "stellung")
+        for i, x in enumerate(stellungen or [], 1):
+            eta = x.get("eta")
+            text = f"S{i} · {x.get('name', '')}" + (" ★" if x.get("fuehrt") else "")
+            zweig = self._zweig(st, text, f"{float(x.get('winkel', 0)):.0f}°",
+                                "stellung", schluessel=x.get("name", ""))
             if eta is not None:
                 zweig.setToolTip(0, f"Ausnutzung η = {float(eta):.3f}".replace(".", ","))
         self._zweig(st, "+ Stellung anlegen", "", "stellung_neu",
                     farbe=FARBEN["akzent"])
         st.setExpanded(True)
-        if model.members:
-            mem = self._zweig(wurzel, "Stäbe für Nachweise", len(model.members), "staebe")
-            for name, mm in list(model.members.items())[:60]:
-                self._zweig(mem, name, getattr(mm, "section", "") or "", "stab")
+
+        # ---- Nachweisobjekte -------------------------------------------------
         # Anschluesse gehoeren zum Modell und stehen darum hier - der Zweig
         # traegt wie bei den Stellungen die Schaltflaeche zum Anlegen.
         an = self._zweig(wurzel, "Anschlüsse", len(getattr(model, "joints", {}) or {}),
                          "anschluesse", fett=bool(getattr(model, "joints", None)),
                          farbe=FARBEN["akzent"] if getattr(model, "joints", None) else None)
-        for name, j in list(getattr(model, "joints", {}).items())[:60]:
-            z = self._zweig(an, name, j.ort(), "anschluss")
-            z.setToolTip(0, f"{name}: {j.typ} an {j.ort()}")
+        self._liste(an, [(name, j.ort(), name, f"{name}: {j.typ} an {j.ort()}")
+                         for name, j in (getattr(model, "joints", {}) or {}).items()],
+                    "anschluss", "anschluesse")
         self._zweig(an, "+ Anschluss anlegen", "", "anschluss_neu",
                     farbe=FARBEN["akzent"])
         grenzen = getattr(model, "verformungsgrenzen", {}) or {}
         vf = self._zweig(wurzel, "Verformungsnachweise", len(grenzen), "verformungen",
                          fett=bool(grenzen),
                          farbe=FARBEN["akzent"] if grenzen else None)
-        for name, g in list(grenzen.items())[:60]:
-            z = self._zweig(vf, name, g.grenztext(), "verformung")
-            z.setToolTip(0, f"{g.bezug()}: {g.groesse} ≤ {g.grenztext()}")
+        self._liste(vf, [(name, g.grenztext(), name,
+                          f"{g.bezug()}: {g.groesse} ≤ {g.grenztext()}")
+                         for name, g in grenzen.items()], "verformung", "verformungen")
         self._zweig(vf, "+ Verformungsgrenze", "", "verformung_neu",
                     farbe=FARBEN["akzent"])
         felder = getattr(model, "beulfelder", {}) or {}
         if felder:
             bl = self._zweig(wurzel, "Beulfelder", len(felder), "beulfelder", fett=True,
                              farbe=FARBEN["akzent"])
-            for name, x in list(felder.items())[:60]:
-                self._zweig(bl, name, x.bezug(), "beulfeld")
+            self._liste(bl, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
+                             for name, x in felder.items()], "beulfeld", "beulfelder")
         bereiche = getattr(model, "volumenbereiche", {}) or {}
         if bereiche:
             vb = self._zweig(wurzel, "Volumenbereiche", len(bereiche),
                              "volumenbereiche", fett=True, farbe=FARBEN["akzent"])
-            for name, x in list(bereiche.items())[:60]:
-                self._zweig(vb, name, x.bezug(), "volumenbereich")
+            self._liste(vb, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
+                             for name, x in bereiche.items()], "volumenbereich",
+                        "volumenbereiche")
         stellen = getattr(model, "lasteinleitungen", {}) or {}
         if stellen:
             li = self._zweig(wurzel, "Lasteinleitung", len(stellen), "lasteinleitung",
                              fett=True, farbe=FARBEN["akzent"])
-            for name, x in list(stellen.items())[:60]:
-                self._zweig(li, name, x.bezug(), "lasteinleitung")
+            self._liste(li, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
+                             for name, x in stellen.items()], "lasteinleitung_einzeln",
+                        "lasteinleitung")
         wurzel.setExpanded(offen.get(wurzel.text(0), True))
-        el.setExpanded(offen.get("Elemente", True))
+        for zweig, vorgabe in ((geo, False), (el, True), (eig, False), (lg, True),
+                               (ew, False)):
+            zweig.setExpanded(offen.get(zweig.text(0), vorgabe))
