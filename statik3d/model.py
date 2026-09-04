@@ -56,7 +56,7 @@ def dof_index(key) -> int:
         raise KeyError(f"Freiheitsgrad {key} liegt nicht zwischen 0 und 5")
     return i
 NDOF = 6
-FORMAT_VERSION = 5
+FORMAT_VERSION = 6
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -1029,6 +1029,140 @@ class Lasteinleitung:
 
 
 @dataclass
+class Berichtseintrag:
+    """Ein aus der Ansicht in den Bericht uebernommenes Ergebnis.
+
+    Der Nutzer stellt in der Ansicht ein, was er zeigen will - Lastfall oder
+    Kombination, Faerbung, Schnittgroessenverlauf, Ueberhoehung - und
+    uebernimmt das Bild mit einem Befehl. Der Eintrag haelt sowohl das **Bild**
+    (PNG, Base64) als auch die **Einstellung**, aus der es entstanden ist;
+    so steht im Bericht nicht nur eine Grafik, sondern auch, was sie zeigt.
+
+    quelle: "case:LF1", "combo:GZT7", "env:GZT" oder "modal:1"
+    """
+    name: str = ""
+    quelle: str = ""
+    feld: str = ""                 # Faerbung
+    verlauf: str = ""              # Schnittgroessenverlauf
+    ueberhoehung: float = 0.0
+    bild: str = ""                 # PNG als Base64, ohne Praefix
+    beschriftung: str = ""
+    bemerkung: str = ""
+
+    def bezug(self) -> str:
+        teile = [self.quelle_text()]
+        if self.feld:
+            teile.append(self.feld)
+        if self.verlauf and self.verlauf != "kein Verlauf":
+            teile.append(self.verlauf)
+        return " · ".join(t for t in teile if t)
+
+    def quelle_text(self) -> str:
+        art, _, wert = (self.quelle or "").partition(":")
+        return {"case": f"Lastfall {wert}", "combo": f"Kombination {wert}",
+                "env": f"Umhüllende {wert}", "modal": f"Eigenform {wert}",
+                "buckling": f"Knickfigur {wert}"}.get(art, self.quelle or "-")
+
+
+@dataclass
+class Flaeche:
+    """Flaeche als Modellobjekt (RFEM: Flaechen) - berandet von Linien.
+
+    Die Kette ist dieselbe wie in RFEM: aus Knoten werden Linien, aus Linien
+    Flaechen, aus Flaechen Volumenkoerper. Die Flaeche selbst ist Geometrie;
+    erst das **Vernetzen** macht daraus Schalenelemente, deren Nummern in
+    ``elemente`` stehen. Wird die Flaeche geaendert oder neu vernetzt, sind es
+    andere Elemente - der Zusammenhang bleibt ueber dieses Feld erhalten.
+
+    linien:   Namen der Randlinien, in beliebiger Reihenfolge; der Rand wird
+              ueber die gemeinsamen Endknoten zusammengesetzt.
+    teilung:  Elementzahl in den beiden Randrichtungen beim Vernetzen.
+    """
+    name: str
+    linien: list[str] = field(default_factory=list)
+    typ: str = "eben"
+    dicke: str = ""                  # Name der ShellProp
+    material: str = ""
+    teilung: list[int] = field(default_factory=lambda: [4, 4])
+    elemente: list[int] = field(default_factory=list)
+    kommentar: str = ""
+
+    def bezug(self) -> str:
+        t = f"{len(self.linien)} Linien"
+        if self.dicke:
+            t += f", {self.dicke}"
+        return t + (f", {len(self.elemente)} Elemente" if self.elemente
+                    else ", nicht vernetzt")
+
+    def randknoten(self, model) -> list[int]:
+        """Die Randknoten im Umlauf - oder [], wenn der Rand nicht schliesst."""
+        return _rand_aus_linien(model, self.linien)
+
+
+@dataclass
+class Volumenkoerper:
+    """Volumenkoerper als Modellobjekt (RFEM: Volumen) - berandet von Flaechen.
+
+    Wie bei der Flaeche ist der Koerper Geometrie; ``elemente`` haelt die
+    Volumenelemente, die beim Vernetzen daraus entstanden sind.
+    """
+    name: str
+    flaechen: list[str] = field(default_factory=list)
+    material: str = ""
+    teilung: list[int] = field(default_factory=lambda: [4, 4, 4])
+    elemente: list[int] = field(default_factory=list)
+    kommentar: str = ""
+
+    def bezug(self) -> str:
+        t = f"{len(self.flaechen)} Flächen"
+        if self.material:
+            t += f", {self.material}"
+        return t + (f", {len(self.elemente)} Elemente" if self.elemente
+                    else ", nicht vernetzt")
+
+
+def _rand_aus_linien(model, linien: list[str]) -> list[int]:
+    """Randpolygon aus Linienzuegen zusammensetzen.
+
+    Die Linien duerfen in beliebiger Reihenfolge und Richtung stehen; sie
+    werden ueber ihre gemeinsamen Endknoten aneinandergehaengt. Schliesst der
+    Umlauf nicht, kommt eine leere Liste zurueck - lieber keine Flaeche als
+    eine falsche.
+    """
+    stuecke = []
+    for name in linien:
+        ln = model.lines.get(name)
+        if ln is None or len(ln.nodes) < 2:
+            return []
+        stuecke.append([int(n) for n in ln.nodes])
+    if not stuecke:
+        return []
+    kette = list(stuecke.pop(0))
+    while stuecke:
+        for i, st in enumerate(stuecke):
+            if st[0] == kette[-1]:
+                kette += st[1:]
+            elif st[-1] == kette[-1]:
+                kette += st[-2::-1]
+            elif st[-1] == kette[0]:
+                kette = st[:-1] + kette
+            elif st[0] == kette[0]:
+                kette = st[:0:-1] + kette
+            else:
+                continue
+            stuecke.pop(i)
+            break
+        else:
+            return []                      # ein Stueck haengt nirgends an
+    # Der Umlauf muss sich schliessen. Ein offener Zug waere keine Berandung -
+    # er wuerde eine Flaeche vortaeuschen, deren Rand nirgends endet.
+    if len(kette) < 4 or kette[0] != kette[-1]:
+        return []
+    kette.pop()
+    return kette if len(kette) >= 3 else []
+
+
+@dataclass
 class Flaechenfreigabe:
     """Flaechenfreigabe (RFEM: Flaechenfreigaben).
 
@@ -1251,6 +1385,11 @@ class Model:
         self.volumenbereiche: dict[str, Volumenbereich] = {}
         self.lasteinleitungen: dict[str, Lasteinleitung] = {}
         self.flaechenfreigaben: dict[str, Flaechenfreigabe] = {}
+        self.flaechen: dict[str, Flaeche] = {}
+        self.koerper: dict[str, Volumenkoerper] = {}
+        #: Aus der Ansicht in den Bericht uebernommene Ergebnisse, in der
+        #: Reihenfolge, in der sie im Bericht stehen sollen.
+        self.bericht: list[Berichtseintrag] = []
         self.design = DesignSettings()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
@@ -1427,6 +1566,30 @@ class Model:
             raise KeyError(f"Stab „{le.stab}“ gibt es nicht")
         self.lasteinleitungen[name] = le
         return le
+
+    def add_flaeche(self, name: str, linien, **kw) -> Flaeche:
+        """Eine Flaeche aus Randlinien anlegen (noch ohne Netz)."""
+        namen = [str(x) for x in linien]
+        fehlt = [x for x in namen if x not in self.lines]
+        if fehlt:
+            raise KeyError(f"Linie(n) gibt es nicht: {', '.join(fehlt)}")
+        f = Flaeche(name, namen, **kw)
+        if not f.randknoten(self):
+            raise ValueError("Die Linien bilden keinen geschlossenen Rand.")
+        self.flaechen[name] = f
+        return f
+
+    def add_koerper(self, name: str, flaechen, **kw) -> Volumenkoerper:
+        """Einen Volumenkoerper aus Randflaechen anlegen (noch ohne Netz)."""
+        namen = [str(x) for x in flaechen]
+        fehlt = [x for x in namen if x not in self.flaechen]
+        if fehlt:
+            raise KeyError(f"Flaeche(n) gibt es nicht: {', '.join(fehlt)}")
+        if len(namen) < 4:
+            raise ValueError("Ein Volumenkörper braucht mindestens vier Randflächen.")
+        k = Volumenkoerper(name, namen, **kw)
+        self.koerper[name] = k
+        return k
 
     def add_flaechenfreigabe(self, name: str, **kw) -> Flaechenfreigabe:
         """Eine Flaechenfreigabe aufnehmen (aus RFEM gelesen oder von Hand).
@@ -1806,6 +1969,9 @@ class Model:
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
             "flaechenfreigaben": [_beh_dict(asdict(x))
                                   for x in self.flaechenfreigaben.values()],
+            "flaechen": [asdict(x) for x in self.flaechen.values()],
+            "koerper": [asdict(x) for x in self.koerper.values()],
+            "bericht": [asdict(x) for x in self.bericht],
             "design": asdict(self.design),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
@@ -1860,6 +2026,9 @@ class Model:
                               for x in d.get("lasteinleitungen", [])}
         m.flaechenfreigaben = {x["name"]: _beh_from(Flaechenfreigabe, x)
                                for x in d.get("flaechenfreigaben", [])}
+        m.flaechen = {x["name"]: _dc(Flaeche, x) for x in d.get("flaechen", [])}
+        m.koerper = {x["name"]: _dc(Volumenkoerper, x) for x in d.get("koerper", [])}
+        m.bericht = [_dc(Berichtseintrag, x) for x in d.get("bericht", [])]
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]

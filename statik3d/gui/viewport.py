@@ -97,6 +97,146 @@ def polygon_flaeche(punkte) -> float:
     return float(np.linalg.norm(n)) / 2.0
 
 
+def add_geometrie(plotter, model: Model, groesse: float = 1.0):
+    """Flaechen und Volumenkoerper zeichnen, die **noch nicht vernetzt** sind.
+
+    Ein Objekt, das man nicht sieht, kann man auch nicht anklicken. Eine eben
+    aus Linien erzeugte Flaeche traegt noch keine Elemente; sie wird darum als
+    durchscheinendes Polygon gezeichnet, ein noch nicht vernetzter
+    Volumenkoerper als Kantenzug seiner Randflaechen.
+    """
+    for i, f in enumerate((getattr(model, "flaechen", {}) or {}).values()):
+        if f.elemente:
+            continue
+        ring = f.randknoten(model)
+        if len(ring) < 3:
+            continue
+        pts = model.nodes[ring]
+        pd = pv.PolyData(pts, faces=np.hstack([[len(pts)], np.arange(len(pts))]))
+        plotter.add_mesh(pd, color="#7fb3d5", opacity=0.45, show_edges=True,
+                         edge_color="#20638f", line_width=2, name=f"geo_f{i}")
+    for i, k in enumerate((getattr(model, "koerper", {}) or {}).values()):
+        if k.elemente:
+            continue
+        for j, fname in enumerate(k.flaechen):
+            f = (getattr(model, "flaechen", {}) or {}).get(fname)
+            if f is None or f.elemente:
+                continue
+            ring = f.randknoten(model)
+            if len(ring) < 3:
+                continue
+            pts = model.nodes[ring + [ring[0]]]
+            plotter.add_mesh(pv.lines_from_points(pts), color="#8e44ad",
+                             line_width=3, name=f"geo_v{i}_{j}")
+
+
+def line_at(model: Model, punkt, size: float):
+    """Name der Linie, die dem Punkt am naechsten liegt - oder None."""
+    if punkt is None or not model.lines:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    tol = 0.03 * size
+    best, bestd = None, None
+    for name, ln in model.lines.items():
+        idx = [int(n) for n in ln.nodes if 0 <= int(n) < model.nn]
+        if len(idx) < 2:
+            continue
+        X = model.nodes[idx]
+        for a, b in zip(X[:-1], X[1:]):
+            d = b - a
+            L2 = float(d @ d)
+            t = 0.0 if L2 <= 0 else max(0.0, min(1.0, float((p - a) @ d) / L2))
+            dist = float(np.linalg.norm(p - (a + t * d)))
+            if dist <= tol and (bestd is None or dist < bestd):
+                best, bestd = name, dist
+    return best
+
+
+def element_at(model: Model, punkt, typen=None):
+    """Nummer des Elements, dessen Mittelpunkt dem Punkt am naechsten liegt."""
+    if punkt is None or not model.elements:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    best, bestd = None, None
+    for i, e in enumerate(model.elements):
+        if typen and e.typ not in typen:
+            continue
+        idx = [int(n) for n in e.nodes if 0 <= int(n) < model.nn]
+        if not idx:
+            continue
+        d = float(np.linalg.norm(model.nodes[idx].mean(axis=0) - p))
+        if bestd is None or d < bestd:
+            best, bestd = i, d
+    return best
+
+
+def flaeche_at(model: Model, punkt, size: float):
+    """Name der Flaeche unter dem Zeiger - vernetzt oder nicht."""
+    el = element_at(model, punkt, ("shell3", "shell4"))
+    if el is not None:
+        for name, f in (getattr(model, "flaechen", {}) or {}).items():
+            if el in (f.elemente or []):
+                return name
+        g = getattr(model.elements[el], "group", "")
+        if g in (getattr(model, "flaechen", {}) or {}):
+            return g
+    # noch nicht vernetzt: ueber den Schwerpunkt des Randpolygons
+    if punkt is None:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    best, bestd = None, None
+    for name, f in (getattr(model, "flaechen", {}) or {}).items():
+        ring = f.randknoten(model)
+        if len(ring) < 3:
+            continue
+        X = model.nodes[ring]
+        d = float(np.linalg.norm(X.mean(axis=0) - p))
+        r = float(np.linalg.norm(X - X.mean(axis=0), axis=1).max())
+        if d <= max(r, 0.02 * size) and (bestd is None or d < bestd):
+            best, bestd = name, d
+    return best
+
+
+def koerper_at(model: Model, punkt, size: float):
+    """Name des Volumenkoerpers unter dem Zeiger."""
+    el = element_at(model, punkt, ("tet4", "tet10", "hex8"))
+    if el is not None:
+        for name, k in (getattr(model, "koerper", {}) or {}).items():
+            if el in (k.elemente or []):
+                return name
+        g = getattr(model.elements[el], "group", "")
+        if g in (getattr(model, "koerper", {}) or {}):
+            return g
+    if punkt is None:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    best, bestd = None, None
+    for name, k in (getattr(model, "koerper", {}) or {}).items():
+        idx = sorted({n for fn in k.flaechen
+                      for n in ((getattr(model, "flaechen", {}) or {})
+                                .get(fn).randknoten(model)
+                                if (getattr(model, "flaechen", {}) or {}).get(fn) else [])})
+        if len(idx) < 4:
+            continue
+        X = model.nodes[idx]
+        d = float(np.linalg.norm(X.mean(axis=0) - p))
+        r = float(np.linalg.norm(X - X.mean(axis=0), axis=1).max())
+        if d <= max(r, 0.02 * size) and (bestd is None or d < bestd):
+            best, bestd = name, d
+    return best
+
+
+def member_at(model: Model, punkt):
+    """Name des Stabes (Stabzug), dessen Element unter dem Zeiger liegt."""
+    el = element_at(model, punkt, ("beam", "truss"))
+    if el is None:
+        return None
+    for name, mem in (model.members or {}).items():
+        if el in (mem.elements or []):
+            return name
+    return None
+
+
 def to_grid(model: Model) -> pv.UnstructuredGrid:
     cells, types = [], []
     for e in model.elements:

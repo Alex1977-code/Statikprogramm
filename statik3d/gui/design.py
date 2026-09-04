@@ -417,7 +417,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 teile.append(namen[d])
         return ", ".join(teile) or "frei"
 
-    def fuellen(self, model, stellungen: list = None):
+    def fuellen(self, model, stellungen: list = None, ergebnisse: dict = None):
         offen = {}
 
         def merken(it):
@@ -441,6 +441,21 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(lin, [(name, f"{ln.typ} · {len(ln.nodes)}", name,
                            f"{name}: {ln.typ} über {len(ln.nodes)} Knoten")
                           for name, ln in model.lines.items()], "linie", "linien")
+        # Die Geometriekette: aus Linien Flaechen, aus Flaechen Volumen.
+        # Was noch kein Netz traegt, ist matt - so sieht man auf einen Blick,
+        # was noch gerechnet werden kann und was nicht.
+        gf = getattr(model, "flaechen", {}) or {}
+        fl = self._zweig(geo, "Flächen", len(gf), "geoflaechen")
+        self._liste(fl, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
+                          f"{name}: {x.bezug()}"
+                          + ("" if x.elemente else "\nnoch nicht vernetzt"))
+                         for name, x in gf.items()], "geoflaeche", "geoflaechen")
+        gk = getattr(model, "koerper", {}) or {}
+        vo = self._zweig(geo, "Volumenkörper", len(gk), "geokoerper")
+        self._liste(vo, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
+                          f"{name}: {x.bezug()}"
+                          + ("" if x.elemente else "\nnoch nicht vernetzt"))
+                         for name, x in gk.items()], "geokoerper_einzeln", "geokoerper")
 
         # ---- Elemente ----------------------------------------------------
         arten: dict = {}
@@ -569,6 +584,40 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(kb, [(name, getattr(c, "kind", "") or "", name, name)
                          for name, c in model.combinations.items()], "kombination",
                     "kombinationen")
+
+        # ---- Ergebnisse -------------------------------------------------
+        # Ergebnisse gehoeren in denselben Baum wie das Modell: was gerechnet
+        # wurde, steht dort, wo man es sucht. Ein Klick stellt das Ergebnis in
+        # der Ansicht ein, ein Doppelklick uebernimmt es in den Bericht.
+        erg = ergebnisse or {}
+        anzahl = sum(len(v) for v in erg.values())
+        ew2 = self._zweig(wurzel, "Ergebnisse", anzahl or "", "ergebnisse",
+                          fett=bool(anzahl),
+                          farbe=FARBEN["akzent"] if anzahl else FARBEN["matt"],
+                          hinweis="Klick zeigt das Ergebnis, Doppelklick "
+                                  "übernimmt es in den Bericht")
+        if not anzahl:
+            self._zweig(ew2, "noch nicht gerechnet", "", "ergebnisse",
+                        farbe=FARBEN["matt"])
+        for gruppe, eintraege in erg.items():
+            if not eintraege:
+                continue
+            z = self._zweig(ew2, gruppe, len(eintraege), "ergebnisgruppe",
+                            schluessel=gruppe)
+            self._liste(z, [(text, zusatz, key, text)
+                            for text, zusatz, key in eintraege],
+                        "ergebnis", "ergebnisgruppe")
+        eintraege = list(getattr(model, "bericht", None) or [])
+        bz = self._zweig(wurzel, "Bericht", len(eintraege), "bericht",
+                         fett=bool(eintraege),
+                         farbe=FARBEN["akzent"] if eintraege else None,
+                         hinweis="Die aus der Ansicht übernommenen Ergebnisse")
+        self._liste(bz, [(x.name or f"Bild {i + 1}", x.bezug(), str(i),
+                          f"{x.name}: {x.bezug()}")
+                         for i, x in enumerate(eintraege)], "berichtseintrag",
+                    "bericht")
+        self._zweig(bz, "+ Ansicht übernehmen", "", "bericht_neu",
+                    farbe=FARBEN["akzent"])
 
         # ---- Stellungen ----------------------------------------------------
         # Stellungen stehen ausschliesslich hier (Vorgabe Kap. 16.1 Nr. 3);

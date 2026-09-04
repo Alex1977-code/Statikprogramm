@@ -1203,6 +1203,173 @@ def main():
         traceback.print_exc()
         check("Modellbaum und Modelltabellen", False, str(ex)[:70])
 
+    # ---- Geometriekette und Objektauswahl in der Ansicht -------------------
+    try:
+        from statik3d.gui import viewport as vpg
+        w.new_model()
+        w.error = lambda msg: check("Geometrie: unerwarteter Fehler", False, str(msg)[:60])
+        mg = w.model
+        mg.add_nodes(np.array([[0, 0, 0], [4, 0, 0], [4, 2, 0], [0, 2, 0.]]))
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            mg.add_line(f"L{i + 1}", [a, b])
+        w.refresh_all()
+        app.processEvents()
+        # Auswahlart umschalten und Linien in der Ansicht anklicken
+        w.auswahlart_setzen("Linie")
+        check("Auswahlart umschaltbar", w.auswahlart == "Linie"
+              and w.cb_auswahlart.currentText() == "Linie")
+        check("Linie unter dem Zeiger gefunden",
+              vpg.line_at(mg, [2.0, 0.0, 0.0], mg.characteristic_size()) == "L1")
+        for punkt in ([2.0, 0, 0], [4.0, 1.0, 0], [2.0, 2.0, 0], [0, 1.0, 0]):
+            w._picked(punkt)
+        check("vier Linien ausgewählt", w.sel_linien == ["L1", "L2", "L3", "L4"],
+              str(w.sel_linien))
+        w._picked([2.0, 0.0, 0.0])
+        check("nochmaliger Klick nimmt die Linie wieder heraus",
+              "L1" not in w.sel_linien, str(w.sel_linien))
+        w._picked([2.0, 0.0, 0.0])
+
+        f = mg.add_flaeche("F1", w.sel_linien, dicke=list(mg.shells)[0],
+                           material=list(mg.materials)[0], teilung=[8, 4])
+        n = w._vernetzen([f], [])
+        w.refresh_all()
+        app.processEvents()
+        check("Fläche aus Linien vernetzt", n == 32 and len(mg.elements) == 32,
+              f"{n} Elemente")
+        check("Flächen stehen im Modellbaum", "Flächen" in zweige(w.baum))
+        check("Register „Flächen“ vorhanden",
+              "Flächen" in [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())])
+        z = w.tbl_geoflaeche.modell.zeilen
+        check("Flächentabelle gefüllt", len(z) == 1 and z[0][5] == 32, str(z[0][:6]))
+        check("Flächeninhalt in der Tabelle", abs(z[0][6] - 8.0) < 1e-9, str(z[0][6]))
+        w.auswahlart_setzen("Fläche")
+        check("Fläche unter dem Zeiger gefunden",
+              vpg.flaeche_at(mg, [2.0, 1.0, 0.0], mg.characteristic_size()) == "F1")
+        w.netz_loeschen_geometrie()
+        check("Netz löschbar, Geometrie bleibt",
+              not mg.elements and not mg.flaechen["F1"].elemente and mg.lines)
+        w.undo()
+        check("Netz löschen ist rücknehmbar", len(w.model.elements) == 32)
+
+        # Volumenkörper aus sechs Flächen
+        w.new_model()
+        mv2 = w.model
+        P = np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
+                      [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]])
+        mv2.add_nodes(P)
+        kanten = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+                  (0, 4), (1, 5), (2, 6), (3, 7)]
+        for i, (a, b) in enumerate(kanten):
+            mv2.add_line(f"K{i + 1}", [a, b])
+        seiten = {"Boden": ["K1", "K2", "K3", "K4"], "Deckel": ["K5", "K6", "K7", "K8"],
+                  "S1": ["K1", "K10", "K5", "K9"], "S2": ["K2", "K11", "K6", "K10"],
+                  "S3": ["K3", "K12", "K7", "K11"], "S4": ["K4", "K9", "K8", "K12"]}
+        for nme, ls in seiten.items():
+            mv2.add_flaeche(nme, ls, material=list(mv2.materials)[0])
+        kk = mv2.add_koerper("V1", list(seiten), material=list(mv2.materials)[0],
+                             teilung=[4, 2, 2])
+        n = w._vernetzen([], [kk])
+        w.refresh_all()
+        app.processEvents()
+        check("Volumen aus Flächen vernetzt", n == 16, f"{n} Elemente")
+        check("Volumenkörper stehen im Modellbaum", "Volumenkörper" in zweige(w.baum))
+        zv = w.tbl_geokoerper.modell.zeilen
+        check("Volumentabelle nennt das Volumen", abs(zv[0][5] - 2.0) < 1e-9, str(zv[0][5]))
+        w.auswahlart_setzen("Volumen")
+        check("Volumenkörper unter dem Zeiger gefunden",
+              vpg.koerper_at(mv2, [1.0, 0.5, 0.5], mv2.characteristic_size()) == "V1")
+        # Masken lesen die Objekte zurück
+        from statik3d.gui import dialogs as dgg
+        d = dgg.FlaechenDialog(w, mv2, flaeche=mv2.flaechen["Boden"])
+        check("Flächenmaske liest die Randlinien zurück",
+              sorted(d.werte()["linien"]) == ["K1", "K2", "K3", "K4"],
+              str(d.werte()["linien"]))
+        d = dgg.KoerperDialog(w, mv2, koerper=kk)
+        check("Volumenmaske liest die Randflächen zurück",
+              len(d.werte()["flaechen"]) == 6 and d.werte()["teilung"] == [4, 2, 2],
+              str(d.werte()["teilung"]))
+        # Eine berandende Fläche darf nicht einfach weg
+        gemeldet = []
+        w.error = lambda msg: gemeldet.append(str(msg))
+        w.tbl_geoflaeche.view.selectRow(0)
+        w._geometrie_loeschen(w.tbl_geoflaeche, mv2.flaechen)
+        check("berandende Fläche wird nicht gelöscht",
+              len(mv2.flaechen) == 6 and gemeldet
+              and "Volumenkörper" in gemeldet[-1], gemeldet[-1] if gemeldet else "-")
+        w.tbl_geokoerper.view.selectRow(0)
+        w._geometrie_loeschen(w.tbl_geokoerper, mv2.koerper)
+        check("Volumenkörper mit seinem Netz löschbar",
+              not mv2.koerper and not w.model.elements)
+        w.clear_selection()
+        check("Auswahl aufheben leert auch die Objektauswahl",
+              not w.sel_linien and not w.sel_flaechen and not w.sel_koerper)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Geometriekette", False, str(ex)[:70])
+
+    # ---- Ergebnisse im Modellbaum und Übernahme in den Bericht -------------
+    try:
+        w.error = lambda msg: check("Bericht: unerwarteter Fehler", False, str(msg)[:60])
+        w.load_example("hall")
+        an = solver.solve_all(w.model, design=True)
+        w._solve_done("all", an)
+        app.processEvents()
+        erg = w._ergebnisliste()
+        for gruppe in ("Umhüllende", "Kombinationen", "Lastfälle", "Nachweise"):
+            check(f"Ergebnisliste: „{gruppe}“", gruppe in erg and erg[gruppe],
+                  f"{len(erg.get(gruppe, []))} Einträge")
+        namen = zweige(w.baum)
+        check("Ergebnisse stehen im Modellbaum", "Ergebnisse" in namen)
+        check("Bericht steht im Modellbaum", "Bericht" in namen)
+        w._baum_geklickt("ergebnis", "combo:GZT7")
+        check("Klick im Baum stellt das Ergebnis ein",
+              "GZT7" in w.cb_result.currentText(), w.cb_result.currentText()[:40])
+        w.cb_field.setCurrentText("Ausnutzung EC3")
+        w.cb_diagram.setCurrentText("My")
+        app.processEvents()
+        check("aktuelle Quelle wird erkannt", w._aktuelle_quelle() == "combo:GZT7",
+              w._aktuelle_quelle())
+        w.ansicht_in_bericht()
+        app.processEvents()
+        b = w.model.bericht
+        check("Ansicht in den Bericht übernommen", len(b) == 1, f"{len(b)}")
+        check("das Bild ist wirklich drin", len(b[0].bild) > 5000,
+              f"{len(b[0].bild) // 1024} kB Base64")
+        check("die Einstellung steht dabei",
+              b[0].bezug() == "Kombination GZT7 · Ausnutzung EC3 · My", b[0].bezug())
+        check("Tabelle „Bericht“ gefüllt", len(w.tbl_bericht.modell.zeilen) == 1)
+        w._baum_geklickt("ergebnis", "env:GZT")
+        w.cb_field.setCurrentText("|u| Verschiebung")
+        app.processEvents()
+        w.ansicht_in_bericht()
+        check("zweites Bild übernommen", len(w.model.bericht) == 2)
+        w.tbl_bericht.view.selectRow(1)
+        w.berichtseintrag_schieben(-1)
+        check("Reihenfolge lässt sich ändern",
+              [x.name for x in w.model.bericht] == ["Bild 2", "Bild 1"],
+              str([x.name for x in w.model.bericht]))
+        check("Beschriftung editierbar",
+              w._bericht_aendern(0, 3, "Verformung im GZG")
+              and w.model.bericht[0].beschriftung == "Verformung im GZG")
+        from statik3d.report.html import Report
+        html = Report(w.model, w.analysis).html()
+        check("Bericht hat das Kapitel „Übernommene Ergebnisbilder“",
+              "Übernommene Ergebnisbilder" in html)
+        check("die Bilder stehen im Bericht",
+              html.count("data:image/png;base64") >= 2,
+              f"{html.count('data:image/png;base64')} Bilder")
+        check("die Bildunterschrift steht im Bericht", "Verformung im GZG" in html)
+        w.tbl_bericht.view.selectRow(0)
+        w.berichtseintrag_loeschen()
+        check("Bild löschbar", len(w.model.bericht) == 1)
+        w.undo()
+        check("Löschen ist rücknehmbar", len(w.model.bericht) == 2)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Ergebnisse und Bericht", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

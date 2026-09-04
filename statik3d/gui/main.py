@@ -58,6 +58,14 @@ class MainWindow(QtWidgets.QMainWindow):
         #: Darstellungsart des Viewports und Groesse der Lagersymbole
         self.darstellung = "Voll"
         self.lagergroesse = 1.0
+        #: Was ein Klick in der Ansicht trifft. Die Geometriekette geht von
+        #: Knoten ueber Linien und Flaechen zu Volumen; jede Stufe braucht
+        #: darum ihre eigene Auswahl.
+        self.auswahlart = "Knoten"
+        self.sel_linien: list[str] = []
+        self.sel_flaechen: list[str] = []
+        self.sel_koerper: list[str] = []
+        self.sel_staebe: list[str] = []
 
         self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil() + tab.stil())
         self._undo_init()
@@ -307,7 +315,51 @@ class MainWindow(QtWidgets.QMainWindow):
         self.maske_zeigen("Lager/Lasten")
         self.redraw()
 
+    AUSWAHLARTEN = ["Knoten", "Linie", "Fläche", "Volumen", "Stab"]
+
+    def auswahlart_setzen(self, art: str):
+        """Umschalten, was ein Klick in der Ansicht trifft."""
+        if art not in self.AUSWAHLARTEN:
+            return
+        self.auswahlart = art
+        if hasattr(self, "cb_auswahlart") and self.cb_auswahlart.currentText() != art:
+            self.cb_auswahlart.blockSignals(True)
+            self.cb_auswahlart.setCurrentText(art)
+            self.cb_auswahlart.blockSignals(False)
+        self.statusBar().showMessage(f"Auswahl: {art}", 3000)
+
+    def _objekt_umschalten(self, liste: list, name: str, was: str):
+        """Ein Objekt der Auswahl zufuegen oder herausnehmen."""
+        if name in liste:
+            liste.remove(name)
+        else:
+            liste.append(name)
+        self.lbl_sel.setText(f"{len(liste)} {was} ausgewählt"
+                             + (f" ({', '.join(liste[:6])}"
+                                + (" …" if len(liste) > 6 else "") + ")" if liste else ""))
+        self.redraw()
+
     def _picked(self, point, *args):
+        art = getattr(self, "auswahlart", "Knoten")
+        if art != "Knoten":
+            m = self.model
+            size = m.characteristic_size()
+            if art == "Linie":
+                name = vp.line_at(m, point, size)
+                return self._objekt_umschalten(self.sel_linien, name, "Linien") \
+                    if name else self.info("Dort liegt keine Linie")
+            if art == "Fläche":
+                name = vp.flaeche_at(m, point, size)
+                return self._objekt_umschalten(self.sel_flaechen, name, "Flächen") \
+                    if name else self.info("Dort liegt keine Fläche")
+            if art == "Volumen":
+                name = vp.koerper_at(m, point, size)
+                return self._objekt_umschalten(self.sel_koerper, name, "Volumen") \
+                    if name else self.info("Dort liegt kein Volumenkörper")
+            if art == "Stab":
+                name = vp.member_at(m, point)
+                return self._objekt_umschalten(self.sel_staebe, name, "Stäbe") \
+                    if name else self.info("Dort liegt kein Stab")
         try:
             p = np.asarray(point, float).ravel()[:3]
         except Exception:
@@ -402,6 +454,27 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Linien")
         g.gross("Linie", "◜", self.maske_linie, "",
                 "Polylinie, Bogen, Kreis, Spline oder Parabel")
+        g.klein("Linie aus Knoten…", self.add_linie,
+                hinweis="Aus den ausgewählten Knoten eine Linie machen")
+        # Die Kette wie in RFEM: aus Knoten Linien, aus Linien Flaechen, aus
+        # Flaechen Volumen. Jede Stufe nimmt, was in der Ansicht ausgewaehlt ist.
+        g = r.gruppe("Flächen und Volumen")
+        g.gross("Fläche aus Linien", "▱", self.add_flaeche_aus_auswahl, "",
+                "Aus den ausgewählten Linien eine Fläche bilden")
+        g.gross("Volumen aus Flächen", "▣", self.add_koerper_aus_auswahl, "",
+                "Aus den ausgewählten Flächen einen Volumenkörper bilden")
+        g.klein("Vernetzen", self.geometrie_vernetzen,
+                hinweis="Die ausgewählten – sonst alle – Flächen und Körper vernetzen")
+        g.klein("Netz löschen", self.netz_loeschen_geometrie,
+                hinweis="Das Netz entfernen, die Geometrie bleibt")
+        g = r.gruppe("Auswahl in der Ansicht")
+        self.cb_auswahlart = QtWidgets.QComboBox()
+        self.cb_auswahlart.addItems(self.AUSWAHLARTEN)
+        self.cb_auswahlart.setMinimumWidth(110)
+        self.cb_auswahlart.setToolTip("Was ein Klick in der Ansicht trifft")
+        self.cb_auswahlart.currentTextChanged.connect(self.auswahlart_setzen)
+        g.widget(self.cb_auswahlart)
+        g.klein("Auswahl aufheben", self.clear_selection)
         g = r.gruppe("Koordinatensystem")
         self.cb_ks = QtWidgets.QComboBox()
         self.cb_ks.setMinimumWidth(120)
@@ -578,6 +651,13 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Bericht")
         g.gross("Bericht", "≡", self.make_report, "Ctrl+R",
                 "Statischen Bericht als HTML oder PDF erzeugen")
+        g = r.gruppe("Ergebnisse übernehmen")
+        g.gross("Ansicht übernehmen", "⎘", self.ansicht_in_bericht, "Ctrl+B",
+                "Die Ansicht, so wie sie gerade steht, als Bild in den Bericht "
+                "aufnehmen – samt Ergebnis, Färbung und Verlauf")
+        g.klein("Übernommene Bilder", lambda: self.tabelle_zeigen("Bericht"),
+                hinweis="Die Tabelle „Bericht“ unten zeigen")
+        g.klein("Alle Bilder verwerfen", self.bericht_leeren)
 
         # -- Ansicht -----------------------------------------------------
         r = rb.register("Ansicht")
@@ -728,6 +808,10 @@ class MainWindow(QtWidgets.QMainWindow):
         "knoten": "Geometrie", "linien": "Geometrie", "linie": "Geometrie",
         "stabelemente": "Netz", "flaechen": "Netz", "volumen": "Netz",
         "gelenke": "Struktur", "gelenk": "Struktur",
+        "geoflaechen": "Geometrie", "geoflaeche": "Geometrie",
+        "geokoerper": "Geometrie", "geokoerper_einzeln": "Geometrie",
+        "ergebnisse": "Ergebnisse", "ergebnisgruppe": "Ergebnisse",
+        "ergebnis": "Ergebnisse", "nachweis": "Ergebnisse",
     }
 
     #: Zweige des Modellbaums, die eine Tabelle unten zeigen statt eine Maske
@@ -741,6 +825,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     "linienlager": "Lager", "linienlager_einzeln": "Lager",
                     "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
                     "gelenke": "Gelenke", "gelenk": "Gelenke",
+                    "geoflaechen": "Flächen", "geoflaeche": "Flächen",
+                    "geokoerper": "Volumenkörper",
+                    "geokoerper_einzeln": "Volumenkörper",
+                    "berichtseintrag": "Bericht", "bericht": "Bericht",
                     "flaechenfreigaben": "Flächenfreigaben",
                     "flaechenfreigabe": "Flächenfreigaben",
                     "anschluesse": "Anschlüsse", "anschluss": "Anschlüsse",
@@ -758,6 +846,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _baum_geklickt(self, art: str, name: str):
         if art == "stellung_neu":
             return self.neue_stellung()
+        if art == "bericht_neu":
+            return self.ansicht_in_bericht()
+        if art == "ergebnis":
+            return self.ergebnis_zeigen(name)
+        if art in ("ergebnisse", "ergebnisgruppe"):
+            return self.maske_zeigen("Ergebnisse")
+        if art == "berichtseintrag":
+            return self.tabelle_zeigen("Bericht")
         if art == "anschluss_neu":
             return self.add_joint()
         if art == "verformung_neu":
@@ -793,6 +889,23 @@ class MainWindow(QtWidgets.QMainWindow):
                     knoten += [int(x) for x in e.nodes]
         elif art == "linie" and name in m.lines:
             knoten = [int(x) for x in m.lines[name].nodes]
+        elif art == "geoflaeche" and name in m.flaechen:
+            f = m.flaechen[name]
+            knoten = list(f.randknoten(m))
+            for i in (f.elemente or []):
+                knoten += [int(x) for x in m.elements[i].nodes]
+            if name not in self.sel_flaechen:
+                self.sel_flaechen = [name]
+        elif art == "geokoerper_einzeln" and name in m.koerper:
+            k = m.koerper[name]
+            for fn in k.flaechen:
+                f = m.flaechen.get(fn)
+                if f is not None:
+                    knoten += list(f.randknoten(m))
+            for i in (k.elemente or []):
+                knoten += [int(x) for x in m.elements[i].nodes]
+            if name not in self.sel_koerper:
+                self.sel_koerper = [name]
         elif art == "lager_einzeln" and name.isdigit() \
                 and int(name) < len(m.supports):
             knoten = [int(m.supports[int(name)].node)]
@@ -819,7 +932,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 "anschluesse": "add_joint", "verformungen": "add_verformungsgrenze",
                 "beulfelder": "add_beulfeld", "volumenbereiche": "add_volumenbereich",
                 "lasteinleitung": "add_lasteinleitung", "gelenke": "add_hinge",
-                "linien": "add_linie", "lager": "add_support_dialog"}
+                "linien": "add_linie", "lager": "add_support_dialog",
+                "geoflaechen": "add_flaeche_aus_auswahl",
+                "geokoerper": "add_koerper_aus_auswahl",
+                "bericht": "ansicht_in_bericht"}
 
     def _baum_bearbeiten(self, art: str, name: str):
         """Doppelklick im Modellbaum: das Objekt oeffnen, nicht nur zeigen.
@@ -832,6 +948,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.knoten_bearbeiten(int(name))
             if art == "linie":
                 return self.linie_bearbeiten(name)
+            if art == "geoflaeche":
+                return self.flaeche_bearbeiten(name)
+            if art == "geokoerper_einzeln":
+                return self.koerper_bearbeiten(name)
+            if art == "ergebnis":
+                self.ergebnis_zeigen(name)
+                return self.ansicht_in_bericht()
+            if art == "berichtseintrag":
+                return self.berichtseintrag_bearbeiten(name)
             if art == "querschnitt":
                 return self.querschnitt_bearbeiten(name)
             if art == "werkstoff":
@@ -910,6 +1035,324 @@ class MainWindow(QtWidgets.QMainWindow):
         del self.model.lines[name]
         self.model.add_line(w["name"], w["nodes"], w["typ"])
         self.model.lines[w["name"]].comment = w["comment"]
+        self.refresh_all()
+
+    # ---- Ergebnisse aus dem Modellbaum -----------------------------------
+    #: Schluesselwort im Baum -> Tabelle unten
+    NACHWEIS_TABELLE = {"design": "Nachweise EC3", "fatigue": "Ermüdung",
+                        "gzg": "Verformungen", "beulen": "Beulfelder",
+                        "lasteinleitung": "Lasteinleitung", "volumen": "Volumen",
+                        "joints": "Anschlüsse"}
+
+    def ergebnis_zeigen(self, schluessel: str):
+        """Ein Ergebnis aus dem Baum in der Ansicht einstellen."""
+        art, _, wert = (schluessel or "").partition(":")
+        if art == "nachweis":
+            tabelle = self.NACHWEIS_TABELLE.get(wert)
+            if tabelle and self.tabelle_zeigen(tabelle):
+                return
+            return self.show_design() if hasattr(self, "show_design") else None
+        for i in range(self.cb_result.count()):
+            d = self.cb_result.itemData(i)
+            if not d:
+                continue
+            if art == "modal" or art == "buckling":
+                break
+            if d[0] == art and str(d[1]) == wert:
+                self.cb_result.setCurrentIndex(i)
+                self.maske_zeigen("Ergebnisse")
+                return
+        if art in ("modal", "buckling") and self.cb_mode.count():
+            self.cb_mode.setCurrentIndex(min(int(wert or 0), self.cb_mode.count() - 1))
+            self.maske_zeigen("Ergebnisse")
+            return
+        self.info(f"Ergebnis „{schluessel}“ ist nicht (mehr) vorhanden - neu rechnen")
+
+    def _aktuelle_quelle(self) -> str:
+        """Der Schluessel des Ergebnisses, das gerade in der Ansicht steht."""
+        d = self.cb_result.currentData()
+        if d:
+            art, wert = d[0], d[1]
+            if art in ("env", "combo", "case"):
+                return f"{art}:{wert}"
+        r = self.current_result()
+        if r is not None and getattr(r, "modes", None) is not None:
+            return f"modal:{self.cb_mode.currentIndex()}"
+        if r is not None and getattr(r, "buckling_modes", None) is not None:
+            return f"buckling:{self.cb_mode.currentIndex()}"
+        return "modell:"
+
+    def ansicht_in_bericht(self):
+        """Die Ansicht so, wie sie gerade steht, in den Bericht uebernehmen.
+
+        Aufgenommen wird das Bild **und** die Einstellung, aus der es
+        entstanden ist - Ergebnis, Faerbung, Verlauf, Ueberhoehung. Im Bericht
+        steht damit nicht nur eine Grafik, sondern auch, was sie zeigt.
+        """
+        import base64
+        import tempfile
+        import os as _os
+        try:
+            fd, tmp = tempfile.mkstemp(suffix=".png")
+            _os.close(fd)
+            self.plotter.screenshot(tmp)
+            with open(tmp, "rb") as fh:
+                bild = base64.b64encode(fh.read()).decode("ascii")
+            _os.unlink(tmp)
+        except Exception as ex:      # noqa: BLE001
+            return self.error(f"Die Ansicht ließ sich nicht aufnehmen: {ex}")
+        from ..model import Berichtseintrag
+        quelle = self._aktuelle_quelle()
+        e = Berichtseintrag(
+            name=f"Bild {len(self.model.bericht) + 1}", quelle=quelle,
+            feld=self.cb_field.currentText(), verlauf=self.cb_diagram.currentText(),
+            ueberhoehung=float(self.sl_scale.value()), bild=bild)
+        e.beschriftung = e.bezug()
+        self.merken("Ansicht in den Bericht übernommen")
+        self.model.bericht.append(e)
+        self.refresh_all()
+        self.tabelle_zeigen("Bericht")
+        self.info(f"„{e.name}“ in den Bericht übernommen ({e.bezug()})")
+
+    def berichtseintrag_bearbeiten(self, nummer: str):
+        """Beschriftung und Bemerkung eines Berichtsbildes."""
+        try:
+            i = int(nummer)
+        except (TypeError, ValueError):
+            return
+        if not (0 <= i < len(self.model.bericht)):
+            return
+        e = self.model.bericht[i]
+        d = dg.BerichtseintragDialog(self, e)
+        if d.exec():
+            self.merken(f"Berichtsbild {e.name}")
+            d.apply(e)
+            self.refresh_all()
+
+    def bericht_leeren(self):
+        if not self.model.bericht:
+            return self.info("Es wurde noch kein Bild übernommen")
+        if QtWidgets.QMessageBox.question(
+                self, "Bilder verwerfen",
+                f"{len(self.model.bericht)} übernommene Bilder löschen?") \
+                != QtWidgets.QMessageBox.Yes:
+            return
+        self.merken("Berichtsbilder verworfen")
+        self.model.bericht.clear()
+        self.refresh_all()
+
+    def berichtseintrag_loeschen(self):
+        i = self._zeilenzahl(self.tbl_bericht)
+        if not (0 <= i < len(self.model.bericht)):
+            return self.error("Zuerst eine Zeile wählen")
+        self.merken(f"Berichtsbild {self.model.bericht[i].name} gelöscht")
+        del self.model.bericht[i]
+        self.refresh_all()
+
+    def berichtseintrag_schieben(self, richtung: int):
+        i = self._zeilenzahl(self.tbl_bericht)
+        j = i + richtung
+        if not (0 <= i < len(self.model.bericht)) or not (0 <= j < len(self.model.bericht)):
+            return
+        self.merken("Reihenfolge im Bericht")
+        b = self.model.bericht
+        b[i], b[j] = b[j], b[i]
+        self.refresh_all()
+        self.tbl_bericht.view.selectRow(j)
+
+    # ---- Geometriekette: Knoten -> Linien -> Flaechen -> Volumen ---------
+    def add_flaeche_aus_auswahl(self):
+        """Aus den ausgewaehlten Linien eine Flaeche machen.
+
+        Der Rand muss schliessen; sonst waere die Flaeche nicht bestimmt und
+        das Programm sagt das, statt zu raten.
+        """
+        linien = list(self.sel_linien)
+        if len(linien) < 3:
+            return self.error("Erst mindestens drei Linien auswählen "
+                              "(Auswahl auf „Linie“ stellen und in der Ansicht "
+                              "anklicken).")
+        name = self._freier_name("F1", self.model.flaechen)
+        d = dg.FlaechenDialog(self, self.model, linien=linien, name=name)
+        if not d.exec():
+            return
+        w = d.werte()
+        try:
+            self.merken(f"Fläche {w['name']}")
+            f = self.model.add_flaeche(w["name"], w["linien"], dicke=w["dicke"],
+                                       material=w["material"], teilung=w["teilung"],
+                                       kommentar=w["kommentar"])
+        except (KeyError, ValueError) as ex:
+            self.undo()
+            return self.error(str(ex))
+        if w["vernetzen"]:
+            self._vernetzen([f], [])
+        self.sel_linien.clear()
+        self.refresh_all()
+
+    def flaeche_bearbeiten(self, name: str):
+        f = self.model.flaechen.get(name)
+        if f is None:
+            return self.add_flaeche_aus_auswahl()
+        d = dg.FlaechenDialog(self, self.model, flaeche=f)
+        if not d.exec():
+            return
+        w = d.werte()
+        self.merken(f"Fläche {name}")
+        self._netz_loeschen(f.elemente)
+        del self.model.flaechen[name]
+        try:
+            neu = self.model.add_flaeche(w["name"], w["linien"], dicke=w["dicke"],
+                                         material=w["material"], teilung=w["teilung"],
+                                         kommentar=w["kommentar"])
+        except (KeyError, ValueError) as ex:
+            self.undo()
+            return self.error(str(ex))
+        for k in self.model.koerper.values():
+            k.flaechen = [w["name"] if x == name else x for x in k.flaechen]
+        if w["vernetzen"]:
+            self._vernetzen([neu], [])
+        self.refresh_all()
+
+    def add_koerper_aus_auswahl(self):
+        """Aus den ausgewaehlten Flaechen einen Volumenkoerper machen."""
+        flaechen = list(self.sel_flaechen)
+        if len(flaechen) < 4:
+            return self.error("Erst mindestens vier Flächen auswählen "
+                              "(Auswahl auf „Fläche“ stellen und in der Ansicht "
+                              "anklicken).")
+        name = self._freier_name("V1", self.model.koerper)
+        d = dg.KoerperDialog(self, self.model, flaechen=flaechen, name=name)
+        if not d.exec():
+            return
+        w = d.werte()
+        try:
+            self.merken(f"Volumen {w['name']}")
+            k = self.model.add_koerper(w["name"], w["flaechen"],
+                                       material=w["material"], teilung=w["teilung"],
+                                       kommentar=w["kommentar"])
+        except (KeyError, ValueError) as ex:
+            self.undo()
+            return self.error(str(ex))
+        if w["vernetzen"]:
+            self._vernetzen([], [k])
+        self.sel_flaechen.clear()
+        self.refresh_all()
+
+    def koerper_bearbeiten(self, name: str):
+        k = self.model.koerper.get(name)
+        if k is None:
+            return self.add_koerper_aus_auswahl()
+        d = dg.KoerperDialog(self, self.model, koerper=k)
+        if not d.exec():
+            return
+        w = d.werte()
+        self.merken(f"Volumen {name}")
+        self._netz_loeschen(k.elemente)
+        del self.model.koerper[name]
+        try:
+            neu = self.model.add_koerper(w["name"], w["flaechen"],
+                                         material=w["material"], teilung=w["teilung"],
+                                         kommentar=w["kommentar"])
+        except (KeyError, ValueError) as ex:
+            self.undo()
+            return self.error(str(ex))
+        if w["vernetzen"]:
+            self._vernetzen([], [neu])
+        self.refresh_all()
+
+    def _netz_loeschen(self, elemente: list):
+        """Die Elemente eines Objekts entfernen und alle Verweise nachziehen.
+
+        Elementnummern sind Positionen in einer Liste; loescht man eine, wandern
+        alle dahinter. Darum werden hier Stabzuege, Lasten, Bereiche und die
+        Netze der anderen Objekte in einem Zug mitgefuehrt.
+        """
+        weg = sorted({int(e) for e in (elemente or [])}, reverse=True)
+        if not weg:
+            return
+        m = self.model
+        wegmenge = set(weg)
+        neu_nr = {}
+        k = 0
+        for i in range(len(m.elements)):
+            if i in wegmenge:
+                continue
+            neu_nr[i] = k
+            k += 1
+        m.elements = [e for i, e in enumerate(m.elements) if i not in wegmenge]
+
+        def um(liste):
+            return [neu_nr[i] for i in (liste or []) if i in neu_nr]
+
+        for mem in m.members.values():
+            mem.elements = um(mem.elements)
+        for f in m.flaechen.values():
+            f.elemente = um(f.elemente)
+        for kb in m.koerper.values():
+            kb.elemente = um(kb.elemente)
+        for vb in m.volumenbereiche.values():
+            vb.elemente = um(vb.elemente)
+        for lc in m.load_cases.values():
+            lc.beam_loads = [l for l in lc.beam_loads if l.elem in neu_nr]
+            for l in lc.beam_loads:
+                l.elem = neu_nr[l.elem]
+            lc.face_loads = [l for l in lc.face_loads if l.elem in neu_nr]
+            for l in lc.face_loads:
+                l.elem = neu_nr[l.elem]
+            lc.temp_loads = [l for l in lc.temp_loads if l.elem in neu_nr]
+            for l in lc.temp_loads:
+                l.elem = neu_nr[l.elem]
+
+    def _vernetzen(self, flaechen: list, koerper: list) -> int:
+        """Flaechen und Koerper vernetzen und das Protokoll fuehren."""
+        log = []
+        n = 0
+        for f in flaechen:
+            self._netz_loeschen(f.elemente)
+            f.elemente = []
+            n += len(mesher.mesh_flaeche(self.model, f, log))
+        for k in koerper:
+            self._netz_loeschen(k.elemente)
+            k.elemente = []
+            n += len(mesher.mesh_koerper(self.model, k, log))
+        for z in log:
+            self.log.appendPlainText(z)
+        if n:
+            self.analysis = None
+            self.results = None
+        return n
+
+    def geometrie_vernetzen(self):
+        """Die ausgewaehlten - sonst alle - Flaechen und Koerper vernetzen."""
+        m = self.model
+        flaechen = [m.flaechen[x] for x in self.sel_flaechen if x in m.flaechen] \
+            or list(m.flaechen.values())
+        koerper = [m.koerper[x] for x in self.sel_koerper if x in m.koerper] \
+            or list(m.koerper.values())
+        if not flaechen and not koerper:
+            return self.error("Es gibt keine Flächen oder Volumenkörper zum Vernetzen.")
+        self.merken("Geometrie vernetzt")
+        n = self._vernetzen(flaechen, koerper)
+        self.refresh_all()
+        self.info(f"{n} Elemente erzeugt" if n else
+                  "Nichts vernetzt - das Protokoll sagt, warum")
+
+    def netz_loeschen_geometrie(self):
+        """Das Netz der Flaechen und Koerper entfernen, die Geometrie bleibt."""
+        m = self.model
+        els = [e for f in m.flaechen.values() for e in (f.elemente or [])]
+        els += [e for k in m.koerper.values() for e in (k.elemente or [])]
+        if not els:
+            return self.error("Es liegt kein Netz aus Flächen oder Volumen vor.")
+        self.merken("Netz der Geometrie gelöscht")
+        self._netz_loeschen(els)
+        for f in m.flaechen.values():
+            f.elemente = []
+        for k in m.koerper.values():
+            k.elemente = []
+        self.analysis = None
+        self.results = None
         self.refresh_all()
 
     def querschnitt_bearbeiten(self, name: str):
@@ -1092,7 +1535,56 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh_baum(self):
         if hasattr(self, "baum"):
-            self.baum.fuellen(self.model, self._stellungen_liste())
+            self.baum.fuellen(self.model, self._stellungen_liste(),
+                              self._ergebnisliste())
+
+    def _ergebnisliste(self) -> dict:
+        """Was gerechnet vorliegt, nach Art geordnet: {Gruppe: [(Text, Zusatz, Schluessel)]}.
+
+        Die Schluessel sind dieselben, die das Auswahlfeld der Ergebnismaske
+        fuehrt - Baum und Maske zeigen damit immer dasselbe.
+        """
+        out: dict[str, list] = {}
+        an = self.analysis
+        if an is not None:
+            m = self.model
+            out["Umhüllende"] = [(f"Umhüllende {k}", "", f"env:{k}")
+                                 for k in getattr(an, "envelopes", {})]
+            out["Kombinationen"] = [
+                (k, m.combinations[k].formula() if k in m.combinations else "",
+                 f"combo:{k}") for k in getattr(an, "combinations", {})]
+            out["Lastfälle"] = [(k, m.load_cases[k].category
+                                 if k in m.load_cases else "", f"case:{k}")
+                                for k in getattr(an, "cases", {})]
+            nachweise = []
+            for feld, text in (("design", "Nachweise EC3"), ("fatigue", "Ermüdung"),
+                               ("gzg", "Verformungen (GZG)"), ("beulen", "Beulen"),
+                               ("lasteinleitung", "Lasteinleitung"),
+                               ("volumen", "Volumen"), ("joints", "Anschlüsse"),
+                               ("theorie2", "Theorie II. Ordnung")):
+                erg = getattr(an, feld, None)
+                if erg is None:
+                    continue
+                kurz = ""
+                try:
+                    kurz = str(erg.summary()).splitlines()[0][:60]
+                except Exception:      # noqa: BLE001
+                    pass
+                nachweise.append((text, kurz, f"nachweis:{feld}"))
+            out["Nachweise"] = nachweise
+        r = self.results
+        if r is not None:
+            if getattr(r, "modes", None) is not None:
+                out["Eigenformen"] = [
+                    (f"Eigenform {i + 1}",
+                     f"{r.freqs[i]:.3f} Hz" if getattr(r, "freqs", None) is not None
+                     else "", f"modal:{i}") for i in range(len(r.modes))]
+            if getattr(r, "buckling_modes", None) is not None:
+                out["Knickfiguren"] = [
+                    (f"Knickfigur {i + 1}",
+                     f"α = {r.factors[i]:.3f}" if getattr(r, "factors", None) is not None
+                     else "", f"buckling:{i}") for i in range(len(r.buckling_modes))]
+        return {k: v for k, v in out.items() if v}
 
 
     def _stellungen_liste(self) -> list:
@@ -1284,6 +1776,67 @@ class MainWindow(QtWidgets.QMainWindow):
         bf1.clicked.connect(self.add_case)
         tabs.addTab(self._eingabetabelle(self.tbl_lastfall, bf1), "Lastfälle")
 
+        self.tbl_geoflaeche = tab.Datentabelle([
+            Spalte("Fläche"), Spalte("Randlinien"), Spalte("Dicke"),
+            Spalte("Werkstoff"), Spalte("Teilung"),
+            Spalte("Elemente", "", "ganz"), Spalte("Fläche", "m²", "zahl", 4),
+            Spalte("Bemerkung")], "Flächen", self, mit_kennwerten=True)
+        self.tbl_geoflaeche.zeile_gewaehlt.connect(
+            lambda w: self._baum_geklickt("geoflaeche", str(w)))
+        self.tbl_geoflaeche.view.doubleClicked.connect(
+            lambda _i: self.flaeche_bearbeiten(
+                str(self._tabellenschluessel(self.tbl_geoflaeche))))
+        bq1 = QtWidgets.QPushButton("Fläche aus Linien…")
+        bq1.clicked.connect(self.add_flaeche_aus_auswahl)
+        bq2 = QtWidgets.QPushButton("Vernetzen")
+        bq2.clicked.connect(self.geometrie_vernetzen)
+        bq3 = QtWidgets.QPushButton("Löschen")
+        bq3.clicked.connect(lambda: self._geometrie_loeschen(
+            self.tbl_geoflaeche, self.model.flaechen))
+        tabs.addTab(self._eingabetabelle(self.tbl_geoflaeche, bq1, bq2, bq3), "Flächen")
+
+        self.tbl_geokoerper = tab.Datentabelle([
+            Spalte("Volumenkörper"), Spalte("Randflächen"), Spalte("Werkstoff"),
+            Spalte("Teilung"), Spalte("Elemente", "", "ganz"),
+            Spalte("Volumen", "m³", "zahl", 5), Spalte("Bemerkung")],
+            "Volumenkörper", self, mit_kennwerten=True)
+        self.tbl_geokoerper.zeile_gewaehlt.connect(
+            lambda w: self._baum_geklickt("geokoerper_einzeln", str(w)))
+        self.tbl_geokoerper.view.doubleClicked.connect(
+            lambda _i: self.koerper_bearbeiten(
+                str(self._tabellenschluessel(self.tbl_geokoerper))))
+        bv1 = QtWidgets.QPushButton("Volumen aus Flächen…")
+        bv1.clicked.connect(self.add_koerper_aus_auswahl)
+        bv2 = QtWidgets.QPushButton("Vernetzen")
+        bv2.clicked.connect(self.geometrie_vernetzen)
+        bv3 = QtWidgets.QPushButton("Löschen")
+        bv3.clicked.connect(lambda: self._geometrie_loeschen(
+            self.tbl_geokoerper, self.model.koerper))
+        tabs.addTab(self._eingabetabelle(self.tbl_geokoerper, bv1, bv2, bv3),
+                    "Volumenkörper")
+
+        self.tbl_bericht = tab.Datentabelle([
+            Spalte("Nr", "", "ganz"), Spalte("Name", "", "text", 3, True),
+            Spalte("Zeigt"), Spalte("Bildunterschrift", "", "text", 3, True),
+            Spalte("Bemerkung", "", "text", 3, True),
+            Spalte("Bild", "kB", "zahl", 0)], "Bericht", self)
+        self.tbl_bericht.modell.aendern = self._bericht_aendern
+        self.tbl_bericht.view.doubleClicked.connect(
+            lambda _i: self.berichtseintrag_bearbeiten(
+                str(self._zeilenzahl(self.tbl_bericht))))
+        bb1 = QtWidgets.QPushButton("Ansicht übernehmen")
+        bb1.clicked.connect(self.ansicht_in_bericht)
+        bb2 = QtWidgets.QPushButton("▲")
+        bb2.setToolTip("Nach oben")
+        bb2.clicked.connect(lambda: self.berichtseintrag_schieben(-1))
+        bb3 = QtWidgets.QPushButton("▼")
+        bb3.setToolTip("Nach unten")
+        bb3.clicked.connect(lambda: self.berichtseintrag_schieben(+1))
+        bb4 = QtWidgets.QPushButton("Löschen")
+        bb4.clicked.connect(self.berichtseintrag_loeschen)
+        tabs.addTab(self._eingabetabelle(self.tbl_bericht, bb1, bb2, bb3, bb4),
+                    "Bericht")
+
         self.tbl_freigabe = tab.Datentabelle([
             Spalte("Flächenfreigabe"), Spalte("Typ"), Spalte("Ort"),
             Spalte("Flächen", "", "ganz"), Spalte("Volumen", "", "ganz"),
@@ -1420,6 +1973,38 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill(self.tbl_kombi,
                    [[name, c.typ, c.formula(), c.description]
                     for name, c in m.combinations.items()])
+        from .viewport import polygon_flaeche as _pf
+        from ..elements import solid as _so
+        zeilen = []
+        for name, f in (getattr(m, "flaechen", {}) or {}).items():
+            if f.elemente:
+                A = sum(_pf(m.nodes[[int(n) for n in m.elements[i].nodes]])
+                        for i in f.elemente if i < len(m.elements))
+            else:
+                ring = f.randknoten(m)
+                A = _pf(m.nodes[ring]) if len(ring) >= 3 else 0.0
+            zeilen.append([name, ", ".join(f.linien), f.dicke, f.material,
+                           " × ".join(str(x) for x in f.teilung),
+                           len(f.elemente or []), A, f.kommentar])
+        self._fill(self.tbl_geoflaeche, zeilen)
+        zeilen = []
+        for name, k in (getattr(m, "koerper", {}) or {}).items():
+            V = 0.0
+            for i in (k.elemente or []):
+                if i < len(m.elements):
+                    e = m.elements[i]
+                    try:
+                        V += float(_so.solid_volume(e.typ, m.nodes[[int(x) for x in e.nodes]]))
+                    except Exception:      # noqa: BLE001
+                        pass
+            zeilen.append([name, ", ".join(k.flaechen), k.material,
+                           " × ".join(str(x) for x in k.teilung),
+                           len(k.elemente or []), V, k.kommentar])
+        self._fill(self.tbl_geokoerper, zeilen)
+        self._fill(self.tbl_bericht,
+                   [[i, x.name, x.bezug(), x.beschriftung, x.bemerkung,
+                     len(x.bild or "") * 3 / 4096]
+                    for i, x in enumerate(getattr(m, "bericht", None) or [])])
         self._fill(self.tbl_freigabe,
                    [[name, x.typ, x.ort, len(x.flaechen), len(x.volumen), x.ziele,
                      x.describe(), "ja" if x.ausgefuehrt else "nein"]
@@ -1485,6 +2070,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redraw()
         return True
 
+    def _bericht_aendern(self, z: int, k: int, wert) -> bool:
+        i = int(self.tbl_bericht.modell.zeilen[z][0])
+        if not (0 <= i < len(self.model.bericht)) or k not in (1, 3, 4):
+            return False
+        self.merken("Bericht bearbeitet")
+        e = self.model.bericht[i]
+        if k == 1:
+            e.name = str(wert).strip() or e.name
+        elif k == 3:
+            e.beschriftung = str(wert)
+        else:
+            e.bemerkung = str(wert)
+        self._zelle_uebernommen(f"Berichtsbild {e.name}")
+        return True
+
     def _lastfall_aendern(self, z: int, k: int, wert) -> bool:
         name = str(self.tbl_lastfall.modell.zeilen[z][0])
         lc = self.model.load_cases.get(name)
@@ -1534,6 +2134,24 @@ class MainWindow(QtWidgets.QMainWindow):
             if obj in gruppe:
                 gruppe.remove(obj)
                 break
+        self.refresh_all()
+
+    def _geometrie_loeschen(self, tbl, mapping: dict):
+        """Eine Flaeche oder einen Koerper samt Netz entfernen."""
+        key = self._tabellenschluessel(tbl)
+        if key is None or key not in mapping:
+            return self.error("Zuerst eine Zeile wählen")
+        obj = mapping[key]
+        if mapping is self.model.flaechen:
+            benutzt = [k for k, x in self.model.koerper.items() if key in x.flaechen]
+            if benutzt:
+                return self.error(f"„{key}“ berandet noch {', '.join(benutzt)} – "
+                                  "erst den Volumenkörper löschen.")
+        self.merken(f"„{key}“ gelöscht")
+        self._netz_loeschen(obj.elemente)
+        del mapping[key]
+        self.analysis = None
+        self.results = None
         self.refresh_all()
 
     def knoten_loeschen(self):
@@ -1873,10 +2491,33 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self.log, "Protokoll")
         self._build_eingabetabellen(tabs)
         self._build_ergebnistabellen(tabs)
+        self._register_ordnen(tabs)
         self.bottom_tabs = tabs
         dock.setWidget(tabs)
         dock.setMinimumHeight(190)
         self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, dock)
+
+    #: Reihenfolge der Register unten - dieselbe wie im Modellbaum links.
+    #: Der Baum sagt, was es gibt; hier steht dasselbe als Tabelle. Beides in
+    #: derselben Folge zu halten spart das Suchen.
+    REGISTER_FOLGE = ["Protokoll",
+                      "Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
+                      "Werkstoffe", "Querschnitte", "Dicken",
+                      "Lager", "Gelenke", "Flächenfreigaben",
+                      "Lastfälle", "Kombinationen",
+                      "Stabkräfte", "Auflagerkräfte", "Umhüllende",
+                      "Nachweise EC3", "Ermüdung", "Kontakt", "Anschlüsse",
+                      "Verformungen", "Beulfelder", "Volumen", "Lasteinleitung",
+                      "Bericht"]
+
+    def _register_ordnen(self, tabs):
+        """Die Register unten in die Reihenfolge des Modellbaums bringen."""
+        bar = tabs.tabBar()
+        for ziel, name in enumerate(self.REGISTER_FOLGE):
+            jetzt = next((i for i in range(tabs.count())
+                          if tabs.tabText(i) == name), None)
+            if jetzt is not None and jetzt != ziel:
+                bar.moveTab(jetzt, ziel)
 
     # ---- Tab 1: Modell ------------------------------------------------
     def _tab_model(self):
@@ -3555,7 +4196,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- Befehle des Ribbons -----------------------------------------
     def clear_selection(self):
-        """Auswahl aufheben."""
+        """Auswahl aufheben - Knoten wie Objekte."""
+        for liste in (self.sel_linien, self.sel_flaechen, self.sel_koerper,
+                      self.sel_staebe):
+            liste.clear()
         self._set_selection([])
 
     def select_all(self):
@@ -4302,6 +4946,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill_result_selector()
         self.tabs.setCurrentIndex(7)
         self.show_results()
+        # Die Ergebnisse stehen jetzt auch im Modellbaum - er muss davon wissen.
+        self._refresh_baum()
+        self._refresh_kopf()
 
     # ---- Ergebnisse --------------------------------------------------
     def _fill_result_selector(self):
@@ -4417,6 +5064,48 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fill(self.tbl_react, react)
         self.redraw()
 
+    def _auswahl_zeichnen(self):
+        """Ausgewaehlte Linien, Flaechen, Koerper und Staebe hervorheben."""
+        m = self.model
+        pl = self.plotter
+        for i, name in enumerate(self.sel_linien):
+            ln = m.lines.get(name)
+            if ln is None:
+                continue
+            idx = [int(n) for n in ln.nodes if 0 <= int(n) < m.nn]
+            if len(idx) > 1:
+                pl.add_mesh(pv.lines_from_points(m.nodes[idx]), color="#ff8800",
+                            line_width=6, name=f"sel_l{i}")
+        for i, name in enumerate(self.sel_flaechen):
+            f = m.flaechen.get(name)
+            if f is None:
+                continue
+            ring = f.randknoten(m)
+            if len(ring) >= 3:
+                pl.add_mesh(pv.lines_from_points(m.nodes[ring + [ring[0]]]),
+                            color="#ff8800", line_width=6, name=f"sel_f{i}")
+        for i, name in enumerate(self.sel_koerper):
+            k = m.koerper.get(name)
+            if k is None:
+                continue
+            for j, fn in enumerate(k.flaechen):
+                f = m.flaechen.get(fn)
+                if f is None:
+                    continue
+                ring = f.randknoten(m)
+                if len(ring) >= 3:
+                    pl.add_mesh(pv.lines_from_points(m.nodes[ring + [ring[0]]]),
+                                color="#ff8800", line_width=5, name=f"sel_k{i}_{j}")
+        for i, name in enumerate(self.sel_staebe):
+            mem = m.members.get(name)
+            if mem is None:
+                continue
+            for j, e in enumerate(mem.elements or []):
+                if e < len(m.elements):
+                    idx = [int(n) for n in m.elements[e].nodes]
+                    pl.add_mesh(pv.lines_from_points(m.nodes[idx]), color="#ff8800",
+                                line_width=7, name=f"sel_s{i}_{j}")
+
     def _scale(self, u):
         umax = np.abs(u[:, :3]).max() if u.size else 0.0
         if umax <= 0:
@@ -4518,8 +5207,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             vp.add_supports(self.plotter, m, size, self.lagergroesse)
+            vp.add_geometrie(self.plotter, m)
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
                 vp.add_nodes(self.plotter, m)
+            self._auswahl_zeichnen()
             if self.act_loads.isChecked() and (u is None or not modal):
                 vp.add_loads(self.plotter, m, m.case(), size)
         except Exception as ex:

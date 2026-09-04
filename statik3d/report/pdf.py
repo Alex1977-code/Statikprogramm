@@ -213,6 +213,23 @@ def to_pdf(report, path: str) -> str:
             parts.append(t)
             story.append(KeepTogether(parts))
             story.append(Spacer(1, 4))
+        elif kind == "bild":
+            # Aus der Ansicht uebernommenes PNG (Base64)
+            import base64
+            _, png, caption = (list(blk) + ["", ""])[:3]
+            try:
+                from reportlab.platypus import Image as RLImage
+                daten = io.BytesIO(base64.b64decode(png))
+                bild = RLImage(daten)
+                w, hgt = float(bild.imageWidth), float(bild.imageHeight)
+                s2 = min(avail_w / w, 1.0)
+                bild.drawWidth, bild.drawHeight = w * s2, hgt * s2
+                story.append(bild)
+                if caption:
+                    story.append(Paragraph(_para_text(caption), note))
+            except Exception:      # noqa: BLE001
+                story.append(Paragraph(_para_text(
+                    f"[Bild „{caption}“ ließ sich nicht einbetten]"), note))
         elif kind == "figure":
             _, svg_text, caption = blk
             drawing = None

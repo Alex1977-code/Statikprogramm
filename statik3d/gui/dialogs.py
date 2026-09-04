@@ -669,6 +669,140 @@ class DickeDialog(QtWidgets.QDialog):
         return self.name.text().strip() or "Dicke", max(1e-6, self.t.value() / 1e3)
 
 
+class FlaechenDialog(QtWidgets.QDialog):
+    """Eine Flaeche: Randlinien, Dicke, Werkstoff, Netzteilung."""
+
+    def __init__(self, parent=None, model: Model = None, flaeche=None,
+                 linien=None, name: str = "F1"):
+        super().__init__(parent)
+        self.setWindowTitle("Fläche" + (f" {flaeche.name}" if flaeche else ""))
+        self.resize(460, 380)
+        self.model = model
+        vorhanden = list((getattr(model, "lines", {}) or {}))
+        gewaehlt = list(getattr(flaeche, "linien", None) or linien or [])
+        self.name = QtWidgets.QLineEdit(getattr(flaeche, "name", "") or name)
+        self.liste = QtWidgets.QListWidget()
+        self.liste.setSelectionMode(QtWidgets.QAbstractItemView.MultiSelection)
+        for x in vorhanden:
+            it = QtWidgets.QListWidgetItem(x)
+            self.liste.addItem(it)
+            if x in gewaehlt:
+                it.setSelected(True)
+        self.dicke = QtWidgets.QComboBox()
+        self.dicke.addItems(list((getattr(model, "shells", {}) or {})))
+        if getattr(flaeche, "dicke", ""):
+            self.dicke.setCurrentText(flaeche.dicke)
+        self.material = QtWidgets.QComboBox()
+        self.material.addItems(list((getattr(model, "materials", {}) or {})))
+        if getattr(flaeche, "material", ""):
+            self.material.setCurrentText(flaeche.material)
+        t = list(getattr(flaeche, "teilung", None) or [4, 4])
+        self.nu = QtWidgets.QSpinBox(); self.nu.setRange(1, 200); self.nu.setValue(int(t[0]))
+        self.nv = QtWidgets.QSpinBox(); self.nv.setRange(1, 200)
+        self.nv.setValue(int(t[1] if len(t) > 1 else t[0]))
+        self.kommentar = QtWidgets.QLineEdit(getattr(flaeche, "kommentar", "") or "")
+        self.vernetzen = QtWidgets.QCheckBox("gleich vernetzen")
+        self.vernetzen.setChecked(not getattr(flaeche, "elemente", None))
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Name", self.name)
+        f.addRow(QtWidgets.QLabel(
+            "<b>Randlinien</b> – der Rand muss schließen. Vier Randabschnitte "
+            "geben ein abgebildetes Vierecknetz."))
+        f.addRow(self.liste)
+        f.addRow("Dicke", self.dicke)
+        f.addRow("Werkstoff", self.material)
+        f.addRow("Teilung (längs × quer)", row(self.nu, self.nv))
+        f.addRow("Bemerkung", self.kommentar)
+        f.addRow(self.vernetzen)
+        f.addRow(buttons(self))
+
+    def werte(self) -> dict:
+        return {"name": self.name.text().strip() or "F",
+                "linien": [i.text() for i in self.liste.selectedItems()],
+                "dicke": self.dicke.currentText(),
+                "material": self.material.currentText(),
+                "teilung": [self.nu.value(), self.nv.value()],
+                "kommentar": self.kommentar.text().strip(),
+                "vernetzen": self.vernetzen.isChecked()}
+
+
+class KoerperDialog(QtWidgets.QDialog):
+    """Ein Volumenkoerper: Randflaechen, Werkstoff, Netzteilung."""
+
+    def __init__(self, parent=None, model: Model = None, koerper=None,
+                 flaechen=None, name: str = "V1"):
+        super().__init__(parent)
+        self.setWindowTitle("Volumenkörper" + (f" {koerper.name}" if koerper else ""))
+        self.resize(460, 380)
+        vorhanden = list((getattr(model, "flaechen", {}) or {}))
+        gewaehlt = list(getattr(koerper, "flaechen", None) or flaechen or [])
+        self.name = QtWidgets.QLineEdit(getattr(koerper, "name", "") or name)
+        self.liste = QtWidgets.QListWidget()
+        self.liste.setSelectionMode(QtWidgets.QAbstractItemView.MultiSelection)
+        for x in vorhanden:
+            it = QtWidgets.QListWidgetItem(x)
+            self.liste.addItem(it)
+            if x in gewaehlt:
+                it.setSelected(True)
+        self.material = QtWidgets.QComboBox()
+        self.material.addItems(list((getattr(model, "materials", {}) or {})))
+        if getattr(koerper, "material", ""):
+            self.material.setCurrentText(koerper.material)
+        t = list(getattr(koerper, "teilung", None) or [4, 4, 4])
+        self.n = []
+        for i in range(3):
+            sp = QtWidgets.QSpinBox(); sp.setRange(1, 100)
+            sp.setValue(int(t[i] if i < len(t) else 4))
+            self.n.append(sp)
+        self.kommentar = QtWidgets.QLineEdit(getattr(koerper, "kommentar", "") or "")
+        self.vernetzen = QtWidgets.QCheckBox("gleich vernetzen")
+        self.vernetzen.setChecked(not getattr(koerper, "elemente", None))
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Name", self.name)
+        f.addRow(QtWidgets.QLabel(
+            "<b>Randflächen</b> – abgebildet vernetzen lassen sich Sechsflächner "
+            "(6 Vierecke, 8 Eckknoten) und Tetraeder (4 Dreiecke, 4 Knoten)."))
+        f.addRow(self.liste)
+        f.addRow("Werkstoff", self.material)
+        f.addRow("Teilung (x × y × z)", row(*self.n))
+        f.addRow("Bemerkung", self.kommentar)
+        f.addRow(self.vernetzen)
+        f.addRow(buttons(self))
+
+    def werte(self) -> dict:
+        return {"name": self.name.text().strip() or "V",
+                "flaechen": [i.text() for i in self.liste.selectedItems()],
+                "material": self.material.currentText(),
+                "teilung": [x.value() for x in self.n],
+                "kommentar": self.kommentar.text().strip(),
+                "vernetzen": self.vernetzen.isChecked()}
+
+
+class BerichtseintragDialog(QtWidgets.QDialog):
+    """Beschriftung und Bemerkung eines uebernommenen Ergebnisbildes."""
+
+    def __init__(self, parent=None, eintrag=None):
+        super().__init__(parent)
+        self.setWindowTitle("Bild im Bericht")
+        self.name = QtWidgets.QLineEdit(getattr(eintrag, "name", "") or "")
+        self.bez = QtWidgets.QLineEdit(getattr(eintrag, "beschriftung", "") or "")
+        self.bem = QtWidgets.QPlainTextEdit(getattr(eintrag, "bemerkung", "") or "")
+        self.bem.setFixedHeight(90)
+        f = QtWidgets.QFormLayout(self)
+        f.addRow("Name", self.name)
+        f.addRow("Bildunterschrift", self.bez)
+        f.addRow("Bemerkung", self.bem)
+        f.addRow(QtWidgets.QLabel(
+            f"<i>Zeigt: {getattr(eintrag, 'bezug', lambda: '')()}</i>"))
+        f.addRow(buttons(self))
+
+    def apply(self, eintrag):
+        eintrag.name = self.name.text().strip() or eintrag.name
+        eintrag.beschriftung = self.bez.text().strip()
+        eintrag.bemerkung = self.bem.toPlainText().strip()
+        return eintrag
+
+
 class GelenkDialog(QtWidgets.QDialog):
     """Stabendgelenk: je lokalem Freiheitsgrad biegesteif, gelenkig oder Feder."""
 
@@ -767,7 +901,8 @@ class ReportDialog(QtWidgets.QDialog):
                ("results_combinations", "Ergebnisse je Kombination"),
                ("envelopes", "Umhüllende"), ("member_diagrams", "Schnittgrößenverläufe"),
                ("design", "Nachweise EC3"), ("fatigue", "Ermüdung"), ("contact", "Kontakt"),
-               ("modal", "Eigenfrequenzen"), ("buckling", "Knicken")]
+               ("modal", "Eigenfrequenzen"), ("buckling", "Knicken"),
+               ("uebernommen", "Übernommene Ergebnisbilder")]
 
     def __init__(self, parent=None, model: Model = None, path: str = ""):
         super().__init__(parent)
