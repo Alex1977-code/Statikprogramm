@@ -126,18 +126,24 @@ bedienen sind, steht im nächsten Abschnitt.
 | Gelenke | über die Maske (Doppelklick) |
 | Lastfälle | Beschreibung; Doppelklick öffnet Name, Einwirkung, Ausschlussgruppe |
 | Kombinationen | über die Maske (Doppelklick) |
-| Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM |
+| Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske (Doppelklick): Randlinien bzw. Randflächen, Dicke, Werkstoff, Teilung |
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
-**Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der Fugenebene starr, senkrecht dazu
-frei mit Ausfall bei Zug. Statik3D liest sie aus der RFEM-Datei vollständig ein
-und zeigt sie mit ihrer Wirkung je Freiheitsgrad, **führt die Trennung im Netz
-aber nicht aus** — dafür müssten die beteiligten Flächen vernetzt und die
-Knoten an der Fuge verdoppelt werden. Die Spalte „Trennung ausgeführt" steht
-deshalb auf „nein", und der Zweig im Modellbaum trägt ein ⚠. An diesen Stellen
-rechnet das Modell durchverbunden — also **zu steif**.
+**Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
+Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall. Statik3D liest sie
+aus der RFEM-Datei vollständig ein und **führt sie beim Vernetzen auch aus**:
+die Netze werden an der Fuge getrennt, und je nachdem, ob sie Knoten für Knoten
+zusammenpassen, hält sie ein Spaltelement je Knotenpaar oder ein Kontaktpaar
+über die Fläche. Die Fuge trägt dann Druck und geht unter Zug auf.
+
+Wer nur einzelne Körper neu vernetzt oder ein Modell von Hand aufgebaut hat,
+findet den Befehl auch einzeln: **Geometrie → Kontaktfugen ausführen**. Die
+Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
+(„ja (68 Spaltelemente)", „ja (Kontaktpaar)"); steht dort „nein", rechnet das
+Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
+sagt, woran es lag.
 
 Ein Knoten wird nur gelöscht, wenn **kein** Element mehr an ihm hängt — sonst
 sagt das Programm, welches Element im Weg ist. Beim Löschen eines Elements
@@ -220,6 +226,15 @@ Tetraeder, 0 = flach) und die **Randtreue** — wieviel des Netzrandes wirklich
 auf der Geometrie liegt. Ist die Randhülle nicht dicht, wird gar nicht
 vernetzt: ein Netz aus einer undichten Hülle wäre stillschweigend falsch.
 
+**Lasten, die an der Geometrie hängen.** RFEM hängt seine Flächenlasten an die
+*Fläche*, nicht an Elemente — beim Import gibt es die Elemente noch gar nicht.
+Solche Lasten fallen jetzt nicht mehr unter den Tisch: sie bleiben als
+**Geometrielast** am Objekt und werden beim Vernetzen auf die entstandenen
+Elemente verteilt. Auf der Randfläche eines Volumenkörpers gibt es keine
+Schalenelemente — dort merkt sich das Programm, mit welcher Seite jeder
+Tetraeder anliegt, und legt die Last auf diese Seiten. Aus dem Beispielmodell
+kommen so 711 Flächenlasten, die vorher verloren gingen.
+
 „Netz löschen" nimmt die Elemente wieder weg, die Geometrie bleibt stehen.
 Eine Fläche, die noch einen Volumenkörper berandet, lässt sich nicht löschen —
 das Programm sagt, welcher es ist.
@@ -227,10 +242,23 @@ das Programm sagt, welcher es ist.
 ### Ergebnisse und Bericht
 
 Was gerechnet wurde, steht im **Modellbaum unter „Ergebnisse"**: Umhüllende,
-Kombinationen, Lastfälle, die Nachweise, Eigenformen und Knickfiguren. Ein
-Klick stellt das Ergebnis in der Ansicht ein — dieselbe Auswahl, die auch die
-Maske *Ergebnisse* rechts führt. Dort werden Färbung, Schnittgrößenverlauf und
-Überhöhung eingestellt.
+Kombinationen, Lastfälle, die **Schnittgrößen**, die Nachweise, Eigenformen und
+Knickfiguren. Ein Klick stellt das Ergebnis in der Ansicht ein — dieselbe
+Auswahl, die auch die Maske *Ergebnisse* rechts führt. Dort werden Färbung,
+Schnittgrößenverlauf und Überhöhung eingestellt.
+
+Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
+Grenzwerten daneben; ein Klick stellt den Verlauf in der Ansicht ein, „kein
+Verlauf" blendet ihn wieder aus.
+
+**Kennwerte im Bild.** Links oben in der Ansicht stehen die Zahlen, nach denen
+zuerst gefragt wird: größte Verformung mit Knoten, kleinste und größte
+Verformung je Richtung, kleinste und größte Schnittgröße mit dem Stab, an dem
+sie auftritt, die größte Ausnutzung mit ihrem Ort und die größte
+Vergleichsspannung. Steht ein Schnittgrößenverlauf an, wird nur diese Größe
+ausgeschrieben, sonst alle sechs. Der Text gehört zum Bild und kommt darum mit
+in den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
+Kennwerte im Bild*.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
 *Bericht → Ansicht übernehmen* (**Strg+B**), ein Doppelklick auf den
@@ -568,6 +596,15 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
 
 * Querschnittsnachweise an allen Nachweisstellen (Klasse, N, V, M, M+V, M+N,
   Torsion, Vergleichsspannung),
+* **Wölbkrafttorsion** bei offenen Querschnitten (I, U): das Torsionsmoment
+  wird in den St.-Venant-Anteil und den Wölbanteil aufgeteilt, das
+  Wölbbimoment B und die Wölbnormalspannung σ_w werden ausgewiesen und gehen
+  in die Vergleichsspannung ein. In der Stabmaske steht dazu, ob die
+  Verwölbung am Anfang und am Ende **frei** (Gabellagerung, freies Ende) oder
+  **behindert** (Einspannung, Stirnplatte) ist. Vorgabe ist frei/frei — dann
+  ändert sich bei konstantem Torsionsmoment nichts. Warum das wichtig ist,
+  sagt EC3 selbst: bei I- und H-Profilen darf die St.-Venant-Torsion
+  vernachlässigt werden (6.2.7(7)) — es trägt die Wölbkrafttorsion.
 * Biegeknicken um y und z (Knicklängen βy·L, βz·L oder explizit),
   Drillknicken, Biegedrillknicken (L_LT, kz, kw, C1 automatisch aus dem
   Momentenverlauf, Lastangriff oben/unten), Interaktion Gl. 6.61/6.62,
@@ -833,7 +870,11 @@ Nachweis mit seiner Verformung je Kombination.
 * Färbung: |u|, ux/uy/uz, Vergleichsspannung (Schalen/Volumen, Randspannung
   bei Stäben), Ausnutzung EC3 / Ermüdung / elastisch.
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
-  der betragsmäßig größere Extremwert).
+  der betragsmäßig größere Extremwert), auswählbar im Modellbaum unter
+  „Ergebnisse → Schnittgrößen".
+* Kennwerte als Text im Bild: größte Verformung, Grenzwerte der Schnittgrößen,
+  größte Ausnutzung und Vergleichsspannung — jeweils mit dem Ort. Sie sind Teil
+  des Bildes und stehen damit auch im Bericht.
 * Tabellen: Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise, Ermüdung,
   Kontakt, Anschlüsse — filterbar, sortierbar, mit Max-/Min-Zeile, ausgebbar nach
   Zwischenablage, CSV und Excel (Kapitel 2, „Tabellen"). Modellexport

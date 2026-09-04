@@ -1618,6 +1618,73 @@ def _tet10_knoten(model: Model, ecken: list, kanten: dict) -> list:
     return out
 
 
+def _randseiten_merken(model: Model, koerper, T: np.ndarray, quelle: list,
+                       neu: np.ndarray, els: list, ecken: list,
+                       weite: float = 0.25) -> int:
+    """Zu jeder freien Elementseite die Randflaeche merken, auf der sie liegt.
+
+    Auf der Randflaeche eines Volumenkoerpers gibt es keine Schalenelemente,
+    an die man eine Flaechenlast haengen koennte - nur Tetraeder, die mit
+    einer Seite anliegen. Genau diese Paare (Element, Seite) werden hier
+    festgehalten; ohne sie faellt jede Flaechenlast auf einen Volumenkoerper
+    unter den Tisch.
+
+    Gegangen wird vom **Netz** aus, nicht von der Huelle: jede freie
+    Elementseite bekommt die Flaeche, der sie am naechsten liegt. Andersherum
+    - Huelldreieck sucht Tetraeder - blieben die Stellen uebrig, an denen die
+    Zerlegung ein ebenes Viereck ueber die andere Diagonale geteilt hat; dort
+    fehlte dann ein Stueck der Lastflaeche.
+    """
+    from .assemble import SOLID_FACES
+    from scipy.spatial import cKDTree
+    if not len(T) or not els:
+        return 0
+    # Alte Eintraege dieses Koerpers wegwerfen
+    weg = set(int(e) for e in els)
+    for name in (koerper.flaechen or []):
+        f = model.flaechen.get(name)
+        if f is not None:
+            f.randseiten = [x for x in (f.randseiten or []) if int(x[0]) not in weg]
+    # Freie Seiten des Netzes suchen
+    zaehler: dict = {}
+    for e, t in zip(els, ecken):
+        for nr, seite in enumerate(SOLID_FACES["tet4"]):
+            key = tuple(sorted(int(t[j]) for j in seite))
+            zaehler.setdefault(key, []).append((int(e), nr, [int(t[j]) for j in seite]))
+    frei = [v[0] for v in zaehler.values() if len(v) == 1]
+    if not frei:
+        return 0
+    # Huelldreiecke in Modellknoten und ihre Schwerpunkte
+    HT = np.array([[int(neu[i]) for i in tri] for tri in T], int)
+    HP = model.nodes
+    schwer_h = HP[HT].mean(axis=1)
+    baum = cKDTree(schwer_h)
+    schwer_f = np.array([HP[nd].mean(axis=0) for _e, _nr, nd in frei])
+    kanten = np.linalg.norm(HP[HT[:, 0]] - HP[HT[:, 1]], axis=1)
+    tol = max(weite * float(np.median(kanten)) if len(kanten) else 0.0, 1e-9)
+    k = min(8, len(HT))
+    _, nn = baum.query(schwer_f, k=k)
+    nn = np.atleast_2d(nn)
+    n = 0
+    for zeile, (e, nr, _nd) in enumerate(frei):
+        bestes, bestd = None, np.inf
+        for j in range(nn.shape[1]):
+            t = HT[nn[zeile, j]]
+            d = float(punkt_dreieck_abstand(schwer_f[zeile][None, :],
+                                            HP[t[0]][None, :], HP[t[1]][None, :],
+                                            HP[t[2]][None, :])[0])
+            if d < bestd:
+                bestes, bestd = int(nn[zeile, j]), d
+        if bestes is None or bestd > tol:
+            continue
+        f = model.flaechen.get(quelle[bestes] if bestes < len(quelle) else "")
+        if f is None:
+            continue
+        f.randseiten.append([e, nr])
+        n += 1
+    return n
+
+
 def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
                       log: list = None, cache: dict = None,
                       ordnung: int = 0) -> list[int]:
@@ -1700,6 +1767,7 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
     else:
         els = [model.add_element("tet4", e, mat, group=koerper.name) for e in ecken]
     koerper.elemente = els
+    _randseiten_merken(model, koerper, T, quelle, neu, els, ecken)
     art = "tet10" if ordnung >= 2 else "tet4"
     koerper.kommentar = (f"{len(els)} Tetraeder ({art}), "
                          f"Kantenlänge {h * 1e3:.0f} mm, "

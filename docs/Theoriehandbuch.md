@@ -58,6 +58,21 @@ zu liefern.
   berechnet (Momentenverlauf quadratisch bzw. kubisch).
 * Flächenlasten auf Schalen (normal oder in vorgegebener globaler Richtung)
   und auf Volumenoberflächen (Flächennummer).
+* **Lasten an der Geometrie** (`Geometrielast`): Eine Last, die an einer Fläche
+  oder einem Volumenkörper hängt und beim Vernetzen auf die entstandenen
+  Elementseiten verteilt wird. So kommen die Flächenlasten aus RFEM an, wo es
+  beim Einlesen noch gar keine Elemente gibt. Zwei Zusätze:
+  * ein **Wirkungsbereich** — ein Rechteck in einer eigenen Ebene
+    (Ursprung, zwei Achsen u/v, von/bis). Belastet wird jede Elementseite,
+    deren Schwerpunkt im Fenster liegt.
+  * **auf die Projektion**: p ist dann die Last je Quadratmeter der
+    *Projektion* auf die Ebene senkrecht zur Lastrichtung d. Belastet wird
+    nur, was der Last zugewandt ist (Außennormale n mit n·d < 0), und zwar mit
+    p · A · |n·d| in Richtung d. So sind Schnee, Wind und die **Lagerpressung
+    in einer Bohrung** gezählt: über eine Bohrung summiert sich die Last
+    genau zu p · d · l — der Lagerkraft. Ohne die Projektion, also als Druck
+    senkrecht zur Fläche, höbe sie sich über den Zylinder auf und der
+    Lastfall wäre kräftefrei.
 * Eigengewicht je Lastfall (Erdbeschleunigungsvektor).
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
@@ -141,6 +156,66 @@ Knoten einer Kontaktgruppe, hält nur die grobe Reststeifigkeit das Bauteil;
 das wird als Warnung „Bauteil rutscht“ gemeldet. Hebt ein Bauteil
 vollständig ab, existiert kein statisches Gleichgewicht; das wird als Fehler
 mit Hinweis gemeldet.
+
+### 4.0 Kontaktfugen ausführen (RFEM: Flächenfreigaben)
+
+Eine **Kontaktbedingung** sagt, dass zwei Bauteile an einer Fläche nicht
+durchverbunden sind: sie liegen aufeinander, können abheben, vielleicht
+gleiten. Gelesen wird sie aus der Quelldatei; sie muss aber auch **ausgeführt**
+werden, sonst rechnet das Modell an der Fuge durchverbunden – also zu steif –
+und überträgt dort Zug, wo in Wirklichkeit ein Spalt aufgeht.
+
+RFEM legt die Fuge so ab: `releasedSolids` nennt den gelösten Körper,
+`releasedSurfaces` seine Kopien der Fugenfläche, `assignedToObjects` die
+Flächen der Gegenseite. Der Vernetzer teilt Knoten nur über **dieselbe**
+Fläche; zwei Bauteile mit je eigener Fugenfläche teilen deshalb nur die Knoten
+ihrer gemeinsamen **Randlinien**. Daraus folgen zwei Fälle:
+
+| Netze an der Fuge | Woran man es erkennt | Umsetzung |
+|---|---|---|
+| passen Knoten für Knoten | **jeder** Fugenknoten gehört beiden Bauteilen | Knoten verdoppeln, je Paar ein Spaltelement (und Kopplungen für die Fugenebene) |
+| passen nicht | nur der gemeinsame Rand gehört beiden | den Rand trennen, die Fläche über ein **Kontaktpaar** (Knoten–Fläche, Abschnitt 4) |
+
+Die Verbindung je Freiheitsgrad folgt der Freigabe: *starr* → Kopplung mit
+Straffeder, *Feder c* [N/m je m²] → Kopplung mit c · A (A = Einflussfläche des
+Knotens, ein Drittel der anliegenden Dreiecke – dieselbe Aufteilung wie bei
+einer Flächenlast), *frei mit Ausfall* → Spaltelement. Ein Reibbeiwert geht als
+Coulomb-Reibung in das Spaltelement; die Reibkraft hängt damit an der
+wirklichen Kontaktkraft.
+
+**Zum Vorzeichen des Ausfalls.** RFEM schreibt den Ausfall als „bei negativer"
+oder „bei positiver" Kraft – bezogen auf die lokale z-Achse der freigegebenen
+Fläche, die in der Datei nicht mitgeliefert wird. Dieselbe Fuge steht darum je
+nach Lage der Flächenachse einmal als „Ausfall bei Zug" und einmal als „Ausfall
+bei Druck" in der Datei; im geprüften Beispielmodell kommen beide
+Schreibweisen nebeneinander vor. Zwischen zwei **Volumenkörpern** ist die Frage
+aber nicht offen: zwei Bauteile, die aufeinanderliegen, können sich nicht
+durchdringen. Die Richtung folgt darum der Geometrie – die Normale des
+Spaltelements zeigt in den gelösten Körper hinein –, nicht dem Vorzeichen aus
+der Datei. Der Rohwert steht im Protokoll.
+
+**Master-Facetten müssen gerichtet sein.** Beim Kontaktpaar liest der Kontakt
+die Richtung einer Facette aus der Reihenfolge ihrer Knoten,
+n = (P₁−P₀) × (P₂−P₀). Liegen Slave und Master aufeinander – und genau das ist
+eine Kontaktfuge –, ist der Abstand null und die Richtung lässt sich nachträglich
+nicht mehr bestimmen. Die Knoten jeder Master-Facette werden darum schon beim
+Anlegen so geordnet, dass n aus dem Masterkörper heraus zeigt.
+
+**Lager an Fugenknoten** werden mitgenommen: vor der Trennung hing an einem
+Knoten ein Lager und beide Bauteile daran; danach gibt es zwei Knoten und beide
+bekommen es. Lasten werden **nicht** verdoppelt – eine verdoppelte Kraft wäre
+eine andere Aufgabe.
+
+Was nicht geht, bleibt sichtbar: eine Fuge ohne Gegenfläche, ohne Netz oder
+ohne Flächen im Modell wird mit Grund gemeldet; eine Fuge, deren Fugenebene
+weder Federn noch Reibung hat, wird als frei gleitend gemeldet, denn dann
+braucht das gelöste Bauteil eigene Lager.
+
+**Geprüft** wird in `tests/test_fugen.py` an zwei Würfeln übereinander gegen
+geschlossene Werte: unter Druck ist die Fuge zu und die Auflagerkraft gleich der
+Last (auf Rechengenauigkeit), unter Zug geht **keine** Kraft mehr durch das
+Fundament (Sollwert null, nicht „klein"), und beide Wege – passende und nicht
+passende Netze – liefern dieselbe Stauchung.
 
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
@@ -323,15 +398,87 @@ elastischen Spannungsnachweis.
 * Normalkraft 6.2.3/6.2.4, Biegung 6.2.5 (W_pl, W_el, W_eff je Klasse),
   Querkraft 6.2.6 mit Schubflächen (I: A − 2btf + (tw + 2r)tf; RHS:
   A·h/(b+h); CHS: 2A/π), Hinweis auf Schubbeulen bei hw/tw > 72ε/η.
-* Torsion 6.2.7: Saint-Venant-Schubspannung (Wölbkrafttorsion vernach-
-  lässigt), Abminderung der Querkrafttragfähigkeit.
+* Torsion 6.2.7: Saint-Venant-Schubspannung, Abminderung der
+  Querkrafttragfähigkeit; **Wölbkrafttorsion** siehe 5.3a.
 * Biegung + Querkraft 6.2.8: ρ = (2V/Vpl − 1)² bei V > 0,5 Vpl.
 * Biegung + Normalkraft 6.2.9: Klasse 1/2 mit M_N,Rd (I: Gl. 6.36–6.38,
   RHS: 6.39/6.40, CHS: M_N = M_pl (1 − n^1,7)), biaxial Gl. 6.41; Klasse
   3/4 linear elastisch (6.2.9.2/6.2.9.3), bei Klasse 4 mit A_eff, W_eff
   und dem Zusatzmoment ΔM = N_Ed e_N nach Gl. (6.44).
 * Vergleichsspannung 6.2.1(5) als zusätzlicher elastischer Nachweis bei
-  Klasse 3/4 und bei Torsion.
+  Klasse 3/4 und bei Torsion — dort gehen auch σ_w und τ_w aus der
+  Wölbkrafttorsion ein.
+
+### 5.3a Wölbkrafttorsion (6.2.7)
+
+Ein offener dünnwandiger Querschnitt trägt Torsion auf zwei Wegen zugleich:
+
+* **St.-Venant-Torsion** M_t,v = G I_t θ′ — reine Schubspannungen über die
+  Wanddicke, die Querschnitte verwölben sich frei.
+* **Wölbkrafttorsion** M_t,w = −E I_w θ‴ — wird das Verwölben behindert (an
+  einer Einspannung, einer Stirnplatte, einer Querschnittsänderung), entstehen
+  **Normalspannungen**. Ihr Maß ist das Wölbbimoment B = −E I_w θ″.
+
+DIN EN 1993-1-1, 6.2.7(7) sagt es deutlich: bei geschlossenen Hohlquerschnitten
+darf die Wölbkrafttorsion vernachlässigt werden, bei offenen Querschnitten wie
+I und H dagegen die **St.-Venant-Torsion**. Rechnet man einen I-Träger mit
+Wölbbehinderung nur mit I_t, kommt eine Verdrehung heraus, die um ein
+Vielfaches zu groß ist, und die Wölbnormalspannung fehlt ganz — sie bestimmt
+den Nachweis oft allein.
+
+**Wie gerechnet wird.** Das Stabelement hat sechs Freiheitsgrade je Knoten und
+kennt damit nur die St.-Venant-Torsion. Der Verlauf M_t(x) aus der Rechnung ist
+trotzdem richtig, solange der Torsionsweg **statisch bestimmt** ist — er folgt
+dann allein aus dem Gleichgewicht. Auf diesem M_t(x) wird die
+Differentialgleichung geschlossen gelöst. Mit ψ = θ′ und λ² = G I_t/(E I_w)
+wird aus M_t = G I_t θ′ − E I_w θ‴:
+
+    ψ″ − λ² ψ = −M_t(x)/(E I_w)
+
+    ψ(x) = M_t(x)/(G I_t) + P e^(−λx) + Q e^(−λ(L−x))
+
+Diese Schreibweise ist numerisch stabil: beide Exponentialglieder sind höchstens
+1, während cosh(λL) bei langen Trägern überläuft. Daraus folgen
+
+    M_t,v = G I_t ψ
+    M_t,w = M_t − M_t,v
+    B     = −E I_w ψ′
+
+Die beiden Konstanten kommen aus den Randbedingungen an den Stabenden: **frei**
+(Gabellagerung, freies Ende) heißt B = 0, **behindert** (Einspannung,
+Stirnplatte) heißt ψ = θ′ = 0. Sind beide Enden frei und ist M_t konstant, wird
+P = Q = 0 — dann gibt es keine Wölbkrafttorsion, und das ist richtig so. Das ist
+zugleich die Voreinstellung: an einem bestehenden Modell ändert sich dadurch
+nichts, bis jemand eine Wölbbehinderung angibt.
+
+**Spannungen.** Mit den Wölbordinaten des Querschnitts:
+
+    σ_w = B ω / I_w              τ_w = M_t,w S_ω /(I_w t)      τ_t = M_t,v t / I_t
+
+Für das I-Profil (Schubmittelpunkt = Schwerpunkt, der Steg liegt auf der Achse
+durch den Pol) ist ω_max = h_m b/4 und S_ω,max = t_f h_m b²/16, also
+σ_w = 6B/(t_f b² h_m) und τ_w = 1,5 M_t,w/(t_f b h_m) mit h_m = h − t_f. Für das
+U-Profil liegt der Schubmittelpunkt um e = 3 t_f b²/(6 t_f b + h_m t_w) neben dem
+Steg; dadurch verwölbt sich auch der Steg, und das größte S_ω liegt in
+Stegmitte. Für andere Querschnitte werden die Wölbordinaten **nicht geraten**:
+der Momentenanteil wird ausgewiesen, die Wölbspannungen nicht, und der Grund
+steht dabei.
+
+Die Richtigkeit der Wölbordinaten ist daran zu prüfen, dass I_w = ∫ω² t ds
+denselben Wert ergibt wie die Querschnittstabelle — zwei ganz verschiedene Wege
+zu derselben Zahl. `tests/test_woelb.py` rechnet das für IPE, HEB, HEA, UPE und
+UPN nach (Abweichung 0,000 %) und prüft die Lösung gegen die geschlossene Form
+des Kragträgers mit Endtorsionsmoment:
+
+    B(0) = −T tanh(λL)/λ        θ(L) = T (L − tanh(λL)/λ)/(G I_t)
+
+samt beider Grenzfälle (λL → 0: reine Wölbkrafttorsion mit B = −T L; λL → ∞:
+B(0) → −T/λ und eine Randschicht der Länge 1/λ).
+
+**Grenze.** Ist der Torsionsweg statisch unbestimmt, verteilt die
+Wölbsteifigkeit die Torsionsmomente anders auf die Stäbe, als die Rechnung mit
+sechs Freiheitsgraden es tut. Der Anteil je Stab ist dann eine Näherung; das
+steht im Bericht.
 
 ### 5.4 Stabilitätsnachweise (6.3)
 

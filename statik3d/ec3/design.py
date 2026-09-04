@@ -13,6 +13,7 @@ from ..model import Model, Member
 from .section_class import classify
 from .resistance import section_check
 from .stability import member_stability
+from . import woelb
 
 
 @dataclass
@@ -29,6 +30,9 @@ class MemberCheck:
     extremes: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
     elements: list = field(default_factory=list)
+    #: Woelbkrafttorsion je Kombination: {"combo", "B_max", "sigma_w_max",
+    #: "x_max", "anteil_woelb", "lamL", "rand", "hinweis"}
+    woelb: list = field(default_factory=list)
 
     def status(self) -> str:
         return "erfüllt" if self.util <= 1.0 else "NICHT erfüllt"
@@ -101,17 +105,42 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
         ext["N_max"] = max(ext["N_max"], float(N.max()))
         for k, arr in (("Vy_max", Vy), ("Vz_max", Vz), ("Mt_max", Mt), ("My_max", My), ("Mz_max", Mz)):
             ext[k] = max(ext[k], float(np.abs(arr).max()))
+        # --- Woelbkrafttorsion (6.2.7) ---
+        # Sie wird vor den Querschnittsnachweisen gerechnet, denn sie teilt das
+        # Torsionsmoment auf: der St.-Venant-Anteil geht in die Schubspannung,
+        # der Woelbanteil in sigma_w und tau_w.
+        Mt_v, sig_w, tau_w = Mt, None, None
+        if (member.woelb_check and sec.Iw > 0
+                and float(np.abs(Mt).max()) > 0):
+            wt = woelb.woelbnachweis(sec, mat.E, mat.G, L, x, Mt,
+                                     (member.woelb_start, member.woelb_ende))
+            v = wt["verlauf"]
+            Mt_v = v.Mtv
+            sig_w, tau_w = wt["sigma_w"], wt["tau_w"]
+            mc.woelb.append({
+                "combo": cname, "B_max": wt["B_max"], "x_max": wt["x_max"],
+                "sigma_w_max": wt["sigma_w_max"], "anteil_woelb": v.anteil_woelb,
+                "lamL": v.lamL, "lam": v.lam,
+                "rand": (member.woelb_start, member.woelb_ende),
+                "sektor": wt["sektor"], "hinweis": wt["grund"] or v.hinweis})
+            if wt["grund"] and wt["grund"] not in mc.warnings:
+                mc.warnings.append(
+                    f"Wölbkrafttorsion: {wt['grund']} – der Momentenanteil wird "
+                    "ausgewiesen, die Wölbspannungen nicht.")
+
         # --- Querschnittsnachweise an allen Stellen ---
         best = None
         cls_c = 1
         for j in range(len(x)):
             cls = classify(sec, fy, N[j], My[j], Mz[j])
             cls_c = max(cls_c, cls.cls)
-            sc = section_check(sec, fy, N[j], Vy[j], Vz[j], Mt[j], My[j], Mz[j],
+            sc = section_check(sec, fy, N[j], Vy[j], Vz[j], Mt_v[j], My[j], Mz[j],
                                ds.gamma_M0, cls, gamma_M1=ds.gamma_M1,
                                a_steifen=member.a_steifen,
                                starre_endsteife=member.starre_endsteife,
-                               l_schale=Lcr_z)
+                               l_schale=Lcr_z,
+                               sigma_w=float(sig_w[j]) if sig_w is not None else 0.0,
+                               tau_w=float(tau_w[j]) if tau_w is not None else 0.0)
             if best is None or sc["util"] > best["util"]:
                 best = {"combo": cname, "x": float(x[j]), "util": sc["util"],
                         "name": sc["governing"], "kind": "section", "cls": cls.cls,

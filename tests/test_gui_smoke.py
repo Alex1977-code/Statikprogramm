@@ -110,6 +110,55 @@ def main():
     w.show_results(); app.processEvents()
     check("Tabellen gefuellt", w.tbl_design.zeilenzahl() >= 1 and w.tbl_react.zeilenzahl() >= 1)
 
+    # ---- Kennwerte im Bild und Schnittgroessen im Baum -------------------
+    from statik3d.gui import viewport as _vp
+    r = w.current_result()
+    grenzen = _vp.schnittgroessen_grenzen(w.model, r)
+    check("Grenzwerte aller sechs Schnittgrößen bestimmt",
+          set(grenzen) == set(_vp.SCHNITTGROESSEN), str(sorted(grenzen)))
+    # Gegenprobe von Hand: das groesste My aus allen Nachweisstellen
+    # (bei einer Umhuellenden aus ihren Grenzwerten)
+    quelle = r.stations() if hasattr(r, "stations") else r.beam
+    my = max(float(np.max(np.asarray(d["My"], float))) for d in quelle.values())
+    check("größtes My stimmt mit der Nachrechnung überein",
+          abs(grenzen["My"][2] - my) < 1e-6 * max(abs(my), 1.0),
+          f"{grenzen['My'][2]:.6g} / {my:.6g} Nm")
+    check("und es steht der Stab dabei, nicht nur die Zahl",
+          grenzen["My"][3] in range(len(w.model.elements)), str(grenzen["My"][3]))
+    w.cb_diagram.setCurrentText("My"); app.processEvents()
+    zeilen = w._kennwerte_zeichnen(r)
+    text = "\n".join(zeilen)
+    check("Kennwerte im Bild: größte Verformung mit Knoten",
+          any(z.startswith("u ") and "Knoten" in z for z in zeilen)
+          and any(z.startswith("uz") for z in zeilen),
+          zeilen[1] if len(zeilen) > 1 else "-")
+    check("Kennwerte im Bild: nur die gewählte Schnittgröße",
+          any(z.startswith("My ") for z in zeilen)
+          and not any(z.startswith("Vz ") for z in zeilen), text[:80])
+    ausn = next((z for z in zeilen if "Ausnutzung" in z), "")
+    stab = next(iter(w.model.members), "")
+    check("Kennwerte im Bild: größte Ausnutzung mit Ort",
+          "max. Ausnutzung" in ausn and " an " in ausn, ausn or "-")
+    check("und der Ort ist wirklich ein Stab des Modells",
+          any(f" an {n}" in ausn for n in w.model.members) or " an El. " in ausn,
+          f"{ausn} (Stäbe: {list(w.model.members)[:3]}, z. B. {stab})")
+    w.act_kennwerte.setChecked(False); app.processEvents()
+    check("und abschaltbar", not w._kennwerte_zeichnen(r))
+    w.act_kennwerte.setChecked(True); app.processEvents()
+    # Der Baum fuehrt die Schnittgroessen und ein Klick stellt sie ein
+    erg = w._ergebnisliste()
+    sg = [k for _t, _z, k in erg.get("Schnittgrößen", [])]
+    check("Schnittgrößen stehen im Modellbaum",
+          [f"schnittgroesse:{q}" for q in _vp.SCHNITTGROESSEN] ==
+          [k for k in sg if not k.endswith("kein Verlauf")], str(sg))
+    w.ergebnis_zeigen("schnittgroesse:Vz"); app.processEvents()
+    check("ein Klick im Baum stellt den Verlauf ein",
+          w.cb_diagram.currentText() == "Vz", w.cb_diagram.currentText())
+    w.ergebnis_zeigen("schnittgroesse:kein Verlauf"); app.processEvents()
+    check("und lässt sich dort auch wieder abschalten",
+          w.cb_diagram.currentText() == "kein Verlauf", w.cb_diagram.currentText())
+    w.cb_diagram.setCurrentText("My"); app.processEvents()
+
     # Dialoge erzeugen (ohne exec)
     d1 = dg.MaterialDialog(w); d1._grade_changed("S355"); mat = d1.result_material()
     d2 = dg.SectionDialog(w); d2.family.setCurrentText("HEB"); sec = d2.result_section()
@@ -118,6 +167,15 @@ def main():
     d5 = dg.AutoCombinationDialog(w, w.model.design)
     d6 = dg.FatigueLoadDialog(w, w.model)
     mem = next(iter(w.model.members.values()))
+    d7 = dg.MemberDialog(w, mem, 6.0)
+    # Wölbkrafttorsion: die Randbedingung der Verwölbung gehört in die Maske
+    d7.w_start.setCurrentText("behindert")
+    d7.apply(mem)
+    check("Wölbrandbedingung aus der Stabmaske übernommen",
+          mem.woelb_start == "behindert" and mem.woelb_ende == "frei"
+          and mem.woelb_check,
+          f"{mem.woelb_start}/{mem.woelb_ende}")
+    mem.woelb_start = "frei"
     d7 = dg.MemberDialog(w, mem, 6.0); d7.apply(mem)
     d8 = dg.DesignSettingsDialog(w, w.model.design); d8.apply(w.model.design)
     d9 = dg.ContactPairDialog(w, w.model, 2)
@@ -1487,6 +1545,32 @@ def main():
         check("„180°“ kehrt die Ansicht am Blickpunkt um",
               float(np.linalg.norm(nachher - (2 * mitte - vorher))) < 1e-6,
               f"{np.round(vorher, 3)} -> {np.round(nachher, 3)}")
+        # Mausrad: der Punkt unter dem Zeiger muss stehen bleiben
+        w.blickrichtung("iso")
+        app.processEvents()
+        breite, hoehe = w.plotter.render_window.GetSize()
+        x_qt, y_qt = breite * 0.25, hoehe * 0.25      # deutlich neben der Mitte
+        vorher = w._bildpunkt_in_welt(x_qt, hoehe - 1 - y_qt)
+        pos_v = np.asarray(w.plotter.camera_position[0], float)
+        ziel_v = np.asarray(w.plotter.camera_position[1], float)
+        w.zoom_zum_zeiger(2.0, x_qt, y_qt)
+        app.processEvents()
+        nachher = w._bildpunkt_in_welt(x_qt, hoehe - 1 - y_qt)
+        pos_n = np.asarray(w.plotter.camera_position[0], float)
+        ziel_n = np.asarray(w.plotter.camera_position[1], float)
+        groesse = max(float(np.linalg.norm(pos_v - ziel_v)), 1e-9)
+        check("Mausrad zoomt zum Zeiger: der Punkt darunter bleibt liegen",
+              vorher is not None and nachher is not None
+              and float(np.linalg.norm(nachher - vorher)) < 1e-6 * groesse,
+              f"Wanderung {float(np.linalg.norm(nachher - vorher)):.3e} m "
+              f"bei Bildgröße {groesse:.3g} m")
+        check("und die Kamera kommt dabei wirklich näher",
+              float(np.linalg.norm(pos_n - ziel_n)) < 0.9 * groesse,
+              f"{groesse:.4g} m -> {float(np.linalg.norm(pos_n - ziel_n)):.4g} m")
+        check("der Zielpunkt wandert dabei mit (nicht die Bildmitte)",
+              float(np.linalg.norm(ziel_n - ziel_v)) > 1e-9 * groesse,
+              f"{np.round(ziel_v, 4)} -> {np.round(ziel_n, 4)}")
+
         w.auswahlart_setzen("Linie")
         check("Auswahlart auch in der Glasleiste",
               w.cb_auswahlart_glas.currentText() == "Linie",

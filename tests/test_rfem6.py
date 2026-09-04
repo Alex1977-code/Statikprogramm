@@ -461,8 +461,11 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
             con.execute("INSERT INTO SurfaceReleaseImpl_releasedSolids VALUES (?,?,?)",
                         (i, j, n))
         for j in range(ziele):
+            # Die letzte Zuordnung ist eine **Flaeche** - so steht es in echten
+            # Dateien: dort nennt assignedToObjects die Gegenseite.
+            tabelle = "Surface" if j == ziele - 1 else "Solid"
             con.execute("INSERT INTO SurfaceReleaseImpl_assignedToObjects "
-                        "VALUES (?,?,?,'Solid')", (i, j, j + 1))
+                        f"VALUES (?,?,?,'{tabelle}')", (i, j, j + 1))
     faelle = load_cases or [("Eigengewicht", 1, 1.0)]
     for i, (name, cat, gz) in enumerate(faelle, 1):
         con.execute("INSERT INTO LoadCase VALUES (?,1,?,?,'LoadCaseImplStatic')", (i, i, i))
@@ -951,7 +954,6 @@ def test_kontaktbedingungen():
         )
         log = []
         m = R6.read_rf6(f, log=log)
-        del m
         txt = "\n".join(log)
         check("Name der Freigabe uebernommen", "Lagerbock-Grundplatte" in txt)
         check("freigegebene Flaechen gezaehlt", "2 freigegebene Flaechen" in txt,
@@ -965,9 +967,15 @@ def test_kontaktbedingungen():
               "uz=frei (Ausfall bei Zug)" in txt,
               next((x for x in log if "uz=" in x), "-"))
         check("Typname genannt", "Fuge 1" in txt)
-        check("nicht ausgefuehrte Trennung wird benannt",
-              "Trennung selbst wird nicht ausgefuehrt" in txt)
+        check("das Ausfuehren der Trennung wird benannt",
+              "im Netz getrennt - werden sie beim Vernetzen" in txt,
+              next((x for x in log if "Vernetzen" in x), "-"))
         check("Folge der fehlenden Trennung benannt", "zu steif" in txt)
+        kb = list(m.kontaktbedingungen.values())[0]
+        check("der geloeste Koerper steht am Objekt", kb.koerpernamen,
+              str(kb.koerpernamen))
+        check("und die Flaechen der Gegenseite auch", kb.gegenflaechen,
+              str(kb.gegenflaechen))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1004,9 +1012,14 @@ def test_lastfaelle_und_lasten():
               f"{lf2.n_loads} Lasten")
         check("Protokoll: eine Last gelegt", "1 Flaechenlasten auf vernetzte" in txt,
               next((x for x in log if "auf vernetzte" in x), "-"))
-        check("Protokoll: eine Last ohne Zielflaeche",
-              "1 Flaechenlasten ohne vernetzte Zielflaeche" in txt,
-              next((x for x in log if "ohne vernetzte" in x), "-"))
+        # Die Last auf der unvernetzten Flaeche faellt nicht mehr weg: sie
+        # haengt jetzt an der Flaeche und wirkt, sobald diese vernetzt ist.
+        check("Protokoll: eine Last an ihre Flaeche gehaengt",
+              "1 Flaechenlasten an ihre Flaeche gehaengt" in txt,
+              next((x for x in log if "an ihre Flaeche" in x), "-"))
+        geo = [g for lc in m.load_cases.values() for g in lc.geometrielasten]
+        check("und sie steht als Geometrielast im Modell", len(geo) == 1,
+              geo[0].bezug() if geo else "-")
         check("Lastrichtung im Klartext", "lokal z" in txt and "global Z" in txt,
               next((x for x in log if "Lastrichtung" in x), "-"))
         check("freie Rechtecklasten mit Grund genannt",

@@ -228,7 +228,55 @@ def stiffness(model: Model, workers=None) -> sparse.csr_matrix:
         idx = np.array([i for i, _ in springs])
         val = np.array([k for _, k in springs])
         K = (K + sparse.coo_matrix((val, (idx, idx)), shape=K.shape)).tocsr()
-    return K
+    Kk = kopplungen(model, K)
+    return (K + Kk).tocsr() if Kk is not None else K
+
+
+def _trans_dofs(node: int) -> list[int]:
+    """Die drei Verschiebungs-FHG eines Knotens."""
+    return [NDOF * node, NDOF * node + 1, NDOF * node + 2]
+
+
+def kopplungen(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
+    """Steifigkeit der Knotenkopplungen (Kontaktfugen, starr oder federnd).
+
+    Fuer jede Richtung n mit der Steifigkeit k gilt zwischen den Knoten a und b
+
+        K += k * c c^T   mit c = [-n, n]
+
+    - eine Feder, die den Abstand der beiden Knoten in Richtung n haelt.
+    Starre Kopplungen (``inf``) werden als Straffeder gesetzt: 1e4-mal die
+    groesste vorhandene Hauptdiagonale. Das ist das uebliche Strafverfahren;
+    groesser gewaehlt wuerde die Matrix schlecht konditioniert, kleiner
+    liesse die Fuge nach.
+    """
+    kopp = getattr(model, "kopplungen", None)
+    if not kopp:
+        return None
+    n = model.ndof
+    if K is None:
+        K = _assemble_triplets(model, _matrix_chunk, None)
+    diag = np.abs(np.asarray(K.diagonal()).ravel())
+    gross = float(diag[diag > 0].max()) if np.any(diag > 0) else 1.0
+    starr = 1e4 * gross
+    rows, cols, vals = [], [], []
+    for kp in kopp:
+        d = np.array(_trans_dofs(int(kp.node_a)) + _trans_dofs(int(kp.node_b)), int)
+        for richtung, wert in kp.paare():
+            k = starr if not np.isfinite(wert) else float(wert)
+            if k <= 0:
+                continue
+            c = np.concatenate([-richtung, richtung])
+            ke = k * np.outer(c, c)
+            r, cc = np.meshgrid(d, d, indexing="ij")
+            rows.append(r.ravel())
+            cols.append(cc.ravel())
+            vals.append(ke.ravel())
+    if not rows:
+        return None
+    return sparse.coo_matrix(
+        (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+        shape=(n, n))
 
 
 def mass(model: Model, workers=None) -> sparse.csr_matrix:

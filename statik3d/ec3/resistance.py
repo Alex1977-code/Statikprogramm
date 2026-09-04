@@ -56,10 +56,18 @@ def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: f
                   My: float, Mz: float, gamma_M0: float = 1.0, cls: ClassResult = None,
                   gamma_M1: float = 1.1, a_steifen: float = 0.0,
                   starre_endsteife: bool = False, l_schale: float = 0.0,
-                  schalenklasse: str = "B") -> dict:
+                  schalenklasse: str = "B", sigma_w: float = 0.0,
+                  tau_w: float = 0.0) -> dict:
     """Alle Querschnittsnachweise an einer Stelle. Rueckgabe:
     {"class": ClassResult, "res": Widerstaende, "checks": {name: (util, text)},
-     "util": max, "governing": name}"""
+     "util": max, "governing": name}
+
+    ``Mt`` ist der **St.-Venant-Anteil** des Torsionsmoments; wurde die
+    Woelbkrafttorsion gerechnet, kommen mit ``sigma_w`` die
+    Woelbnormalspannung und mit ``tau_w`` die Woelbschubspannung dazu. Beide
+    gehen in die Vergleichsspannung nach 6.2.1(5) ein - dort, wo sie den
+    Nachweis oft bestimmen.
+    """
     cls = cls or classify(sec, fy, N, My, Mz)
     R = section_resistance(sec, fy, cls, gamma_M0)
     g = gamma_M0
@@ -242,13 +250,26 @@ def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: f
                 if h not in cls.warnings:
                     cls.warnings.append(h)
 
+    # 6.2.7 Woelbkrafttorsion: die Woelbnormalspannung fuer sich
+    sw, tw_ = abs(float(sigma_w)), abs(float(tau_w))
+    if sw > 0:
+        checks["sigma_w Wölbkrafttorsion (6.2.7)"] = (
+            sw / (fy / g), f"sigma_w,Ed/f_yd = {sw/1e6:.1f}/{fy/g/1e6:.1f} MPa")
+
     # 6.2.1(5) Vergleichsspannung (elastisch, informativ fuer Klasse 3/4, massgebend bei Torsion)
-    if cls.cls >= 3 or tau_t > 0:
-        sig = Nabs / R["A"] + aMy / max(R["Wy"], 1e-30) + aMz / max(R["Wz"], 1e-30)
-        tau = max(aVz / R["Avz"] if R["Avz"] else 0.0, aVy / R["Avy"] if R["Avy"] else 0.0) + tau_t
+    if cls.cls >= 3 or tau_t > 0 or sw > 0 or tw_ > 0:
+        sig = (Nabs / R["A"] + aMy / max(R["Wy"], 1e-30)
+               + aMz / max(R["Wz"], 1e-30) + sw)
+        tau = (max(aVz / R["Avz"] if R["Avz"] else 0.0,
+                   aVy / R["Avy"] if R["Avy"] else 0.0) + tau_t + tw_)
         u = (sig / (fy / g)) ** 2 + 3 * (tau / (fy / g)) ** 2
+        zusatz = ""
+        if sw > 0 or tw_ > 0:
+            zusatz = (f" (darin sigma_w = {sw/1e6:.1f} MPa, "
+                      f"tau_w = {tw_/1e6:.1f} MPa aus Wölbkrafttorsion)")
         checks["sigma_v (6.2.1(5))"] = (u, f"(sig/fyd)^2 + 3 (tau/fyd)^2 = {u:.3f}; "
-                                            f"sig = {sig/1e6:.1f} MPa, tau = {tau/1e6:.1f} MPa")
+                                            f"sig = {sig/1e6:.1f} MPa, tau = {tau/1e6:.1f} MPa"
+                                            + zusatz)
 
     util = max((v[0] for v in checks.values()), default=0.0)
     gov = max(checks, key=lambda k: checks[k][0]) if checks else ""
