@@ -329,6 +329,15 @@ class Filmstreifen(QtWidgets.QWidget):
             k.setzen_aktiv(k.name == name)
 
 
+def _kurz(punkt) -> str:
+    """Koordinaten knapp: „2 | 0 | 0". Rundungsschrott wie 1.2e-16 wird zu 0."""
+    teile = []
+    for v in np.asarray(punkt, float).ravel()[:3]:
+        v = 0.0 if abs(v) < 1e-12 else float(v)
+        teile.append(f"{v:.4g}")
+    return " | ".join(teile)
+
+
 #: Wie viele Einzeleintraege ein Zweig hoechstens ausklappt. Darueber steht
 #: eine Sammelzeile; die vollstaendige Liste steht in der Tabelle unten, wo
 #: sie gefiltert und sortiert werden kann.
@@ -359,6 +368,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self.header().setStretchLastSection(False)
         self.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        # Die zweite Spalte traegt Zusatzangaben (Anzahl, Koordinaten, Bezug).
+        # Ohne Deckel frisst eine lange Angabe die ganze Breite und der Name in
+        # Spalte 0 verschwindet - der Baum waere dann unlesbar.
+        self.header().setMaximumSectionSize(120)
+        self.setTextElideMode(QtCore.Qt.ElideRight)
         self.itemClicked.connect(self._klick)
         self.itemDoubleClicked.connect(self._doppelklick)
 
@@ -434,8 +448,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # ---- Geometrie ---------------------------------------------------
         geo = self._zweig(wurzel, "Geometrie", "", "modell", fett=True)
         kn = self._zweig(geo, "Knoten", model.nn, "knoten")
-        self._liste(kn, [(f"K{i}", "  ".join(f"{v:g}" for v in model.nodes[i]),
-                          str(i), f"Knoten {i}: {np.round(model.nodes[i], 4)}")
+        self._liste(kn, [(f"K{i}", _kurz(model.nodes[i]), str(i),
+                          "Knoten {}: x = {:.4f}  y = {:.4f}  z = {:.4f} m".format(
+                              i, *model.nodes[i]))
                          for i in range(model.nn)], "knoten")
         lin = self._zweig(geo, "Linien", len(model.lines), "linien")
         self._liste(lin, [(name, f"{ln.typ} · {len(ln.nodes)}", name,

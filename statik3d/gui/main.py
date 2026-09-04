@@ -792,8 +792,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.baum.angeklickt.connect(self._baum_geklickt)
         self.baum.bearbeiten.connect(self._baum_bearbeiten)
         dock.setWidget(self.baum)
-        dock.setMinimumWidth(230)
-        dock.setMaximumWidth(340)
+        # Der Baum traegt jetzt Namen und Zusatzangabe nebeneinander (Knoten mit
+        # Koordinaten, Lager mit Wirkung); unter 290 px bleibt vom Namen nichts.
+        dock.setMinimumWidth(290)
+        dock.setMaximumWidth(420)
         self.baum_dock = dock
         self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)
 
