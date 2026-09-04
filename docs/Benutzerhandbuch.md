@@ -451,6 +451,24 @@ gehören die **Herstelltoleranzklasse** (A, B oder C) und die Randbedingung.
 Nachgewiesen wird nach DIN EN 1993-1-6, Abschnitt 8.5 — Meridian, Umfang und
 Schub je für sich und in der Interaktion.
 
+**Schlanke Stege und Gurte (Klasse 4)**: Wird ein Querschnittsteil so schlank,
+dass es vor dem Erreichen der Streckgrenze beult, ordnet Statik3D den
+Querschnitt der Klasse 4 zu und rechnet mit den **wirksamen** Querschnittswerten
+nach DIN EN 1993-1-5, Abschnitt 4 — A_eff aus reinem Druck, W_eff,y und W_eff,z
+aus reiner Biegung. Dazu ist nichts einzustellen; es geschieht von selbst,
+sobald die Schnittgrößen es verlangen. Der Bericht führt die Herleitung
+vollständig auf: je Querschnittsteil c/t, ψ, k_σ, λ̄_p, Grenzschlankheit und ρ,
+dann die wirksame Stegbreite mit ihrer Aufteilung, die verschobene Schwerachse,
+A → A_eff, W_el → W_eff und die Schwerachsenverschiebung e_N. Ist e_N ungleich
+null, tritt das Zusatzmoment ΔM = N_Ed e_N in den Nachweisen 6.2.9.3 und
+6.3.3 hinzu.
+
+Bei einem **schlanken Kreisrohr** (d/t > 90ε²) gibt es keine wirksamen Breiten.
+Statik3D führt dort den spannungsbasierten Schalenbeulnachweis nach
+DIN EN 1993-1-6, 8.5 — mit der Beullänge L_cr,z des Stabes und der
+Herstelltoleranzklasse B. Dieser Nachweis wird bei schlanken Rohren
+regelmäßig maßgebend.
+
 **Lasteinleitung**: Register *Nachweise* → „Lasteinleitung“. Anzugeben sind
 der Knoten, der Stab (für die Stegabmessungen), die Art nach Bild 6.1 (a, b
 oder c), die Lasteinleitungslänge s_s und der Abstand der Quersteifen. Die

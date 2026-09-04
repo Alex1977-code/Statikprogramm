@@ -7,8 +7,6 @@ Vorzeichen: Druck positiv (N_c = -N), Momente als Betraege.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
-
 import numpy as np
 
 from ..model import Section
@@ -27,7 +25,8 @@ class ClassResult:
     A_eff: float = 0.0          # wirksame Flaeche (nur Klasse 4, sonst = A)
     Weff_y: float = 0.0
     Weff_z: float = 0.0
-    eN_y: float = 0.0           # Verschiebung der Schwerachse (Klasse 4, reine Druckkraft)
+    eN_y: float = 0.0           # Verschiebung der Schwerachse in z (Klasse 4, reiner Druck)
+    eN_z: float = 0.0           # Verschiebung der Schwerachse in y
     warnings: list = field(default_factory=list)
 
     def text(self) -> str:
@@ -140,8 +139,11 @@ def classify(sec: Section, fy: float, N: float = 0.0, My: float = 0.0,
             res.cls = 3
         else:
             res.cls = 4
-            res.warnings.append("CHS Klasse 4: Beulnachweis nach EN 1993-1-6 erforderlich "
-                                "(hier elastisch mit Bruttoquerschnitt)")
+            # Fuer das Kreisrohr gibt es keine wirksamen Breiten nach
+            # EN 1993-1-5, 4.4; der Nachweis laeuft spannungsbasiert nach
+            # EN 1993-1-6, 8.5 (siehe section_check). Die Querschnittswerte
+            # bleiben deshalb die des Bruttoquerschnitts.
+            res.details["schalenbeulen"] = True
         res.flange = res.web = res.cls
         res.details["d/t"] = dt
     elif sec.typ in ("rect", "circle"):
@@ -155,28 +157,42 @@ def classify(sec: Section, fy: float, N: float = 0.0, My: float = 0.0,
 # --------------------------------------------------------------------------
 # Wirksame Querschnitte (EN 1993-1-5, 4.4)
 # --------------------------------------------------------------------------
-def _rho_internal(bt: float, eps: float, psi: float) -> float:
-    if psi == 1:
-        k = 4.0
-    elif psi > 0:
-        k = 8.2 / (1.05 + psi)
-    elif psi == 0:
-        k = 7.81
-    elif psi > -1:
-        k = 7.81 - 6.29 * psi + 9.78 * psi ** 2
-    else:
-        k = 23.9
+def k_sigma_internal(psi: float) -> float:
+    """Beulwert eines beidseitig gestuetzten Teils, EN 1993-1-5 Tab. 4.1."""
+    from .beulen import k_sigma
+    return k_sigma(psi, "beidseitig")
+
+
+def k_sigma_outstand(psi: float = 1.0, druck_am_freien_rand: bool = True) -> float:
+    """
+    Beulwert eines einseitig gestuetzten Teils, EN 1993-1-5 Tab. 4.2.
+
+    ``psi`` ist das Spannungsverhaeltnis ueber die Breite des Teils,
+    ``druck_am_freien_rand`` unterscheidet die beiden Blaetter der Tabelle.
+    """
+    from .beulen import k_sigma
+    return k_sigma(psi, "einseitig", druck_am_freien_rand)
+
+
+def _rho_info(bt: float, eps: float, psi: float, k: float, innen: bool) -> dict:
+    """Abminderungsbeiwert rho mit allen Zwischenwerten (EN 1993-1-5, 4.4(2))."""
     lam = bt / (28.4 * eps * np.sqrt(k))
-    if lam <= 0.5 + np.sqrt(max(0.085 - 0.055 * psi, 0)):
-        return 1.0
-    return float(min((lam - 0.055 * (3 + psi)) / lam ** 2, 1.0))
+    if innen:
+        grenze = 0.5 + np.sqrt(max(0.085 - 0.055 * psi, 0.0))
+        rho = 1.0 if lam <= grenze else min((lam - 0.055 * (3 + psi)) / lam ** 2, 1.0)
+    else:
+        grenze = 0.748
+        rho = 1.0 if lam <= grenze else min((lam - 0.188) / lam ** 2, 1.0)
+    return {"b_t": float(bt), "psi": float(psi), "k_sigma": float(k),
+            "lambda_p": float(lam), "grenze": float(grenze), "rho": float(max(rho, 0.0))}
+
+
+def _rho_internal(bt: float, eps: float, psi: float) -> float:
+    return _rho_info(bt, eps, psi, k_sigma_internal(psi), True)["rho"]
 
 
 def _rho_outstand(bt: float, eps: float, k: float = 0.43) -> float:
-    lam = bt / (28.4 * eps * np.sqrt(k))
-    if lam <= 0.748:
-        return 1.0
-    return float(min((lam - 0.188) / lam ** 2, 1.0))
+    return _rho_info(bt, eps, 1.0, k, False)["rho"]
 
 
 def _rect_props(rects):
@@ -192,70 +208,144 @@ def _rect_props(rects):
 
 
 def _effective_I(sec: Section, fy, eps, Nc, My, alpha, psi, res: ClassResult):
-    """Wirksamer Querschnitt eines doppeltsymmetrischen I-Profils (ohne Ausrundungen)."""
+    """
+    Wirksamer Querschnitt eines doppeltsymmetrischen I-Profils (EN 1993-1-5, 4.4).
+
+    Nach EN 1993-1-1, 6.2.9.3 werden drei Querschnitte gebildet:
+
+      A_eff     aus reinem Druck (psi = 1 in allen Teilen)
+      W_eff,y   aus reiner Biegung um y
+      W_eff,z   aus reiner Biegung um z
+
+    Die Ausrundungen bleiben unberuecksichtigt (der Flanschueberstand wird mit
+    (b - t_w)/2 statt (b - t_w - 2r)/2 angesetzt) - das liegt auf der sicheren
+    Seite.  Die Schwerachsenverschiebung e_N wird aus dem wirksamen
+    Druckquerschnitt berechnet, nicht angenommen.
+    """
     h, b, tw, tf = sec.h, sec.b, sec.tw, sec.tf
     cf = (b - tw) / 2.0            # Flanschueberstand (konservativ ohne r)
     hw = h - 2 * tf
-    # --- reiner Druck: A_eff ---
-    rho_f = _rho_outstand(cf / tf, eps)
-    rho_w = _rho_internal(hw / tw, eps, 1.0)
-    A_eff_c = 2 * (tw + 2 * rho_f * cf) * tf + rho_w * hw * tw
-    # --- Biegung um y: Druckflansch + Steg (psi = -1 bzw. aus Bruttoquerschnitt) ---
     zt = h / 2.0
-    top = (-(tw / 2 + rho_f * cf), tw / 2 + rho_f * cf, zt - tf, zt)      # Druckflansch (oben)
+    d = {}
+
+    # ---------------- reiner Druck: A_eff und e_N ----------------
+    i_f = _rho_info(cf / tf, eps, 1.0, k_sigma_outstand(1.0), False)
+    i_w = _rho_info(hw / tw, eps, 1.0, k_sigma_internal(1.0), True)
+    rho_f, rho_w = i_f["rho"], i_w["rho"]
+    # Steg unter Gleichdruck: b_eff = rho h_w, je zur Haelfte an beiden Raendern
+    be = rho_w * hw
+    druck = [(-(tw / 2 + rho_f * cf), tw / 2 + rho_f * cf, zt - tf, zt),
+             (-(tw / 2 + rho_f * cf), tw / 2 + rho_f * cf, -zt, -zt + tf),
+             (-tw / 2, tw / 2, zt - tf - be / 2, zt - tf),
+             (-tw / 2, tw / 2, -zt + tf, -zt + tf + be / 2)]
+    druck = [r for r in druck if r[3] > r[2] and r[1] > r[0]]
+    A_eff_c, ys_c, zs_c, _, _ = _rect_props(druck)
+    d["druck"] = {"flansch": i_f, "steg": i_w, "b_eff_Steg": float(be),
+                  "A_eff": float(A_eff_c)}
+
+    # ---------------- Biegung um y: W_eff,y ----------------
+    # psi im Steg nach 4.4(3) aus dem Bruttoquerschnitt: reine Biegung -> -1
+    i_wy = _rho_info(hw / tw, eps, -1.0, k_sigma_internal(-1.0), True)
+    rho_wy = i_wy["rho"]
+    bc = hw / 2.0                                   # Druckzone (psi = -1)
+    beff = rho_wy * bc
+    be1, be2 = 0.4 * beff, 0.6 * beff
+    top = (-(tw / 2 + rho_f * cf), tw / 2 + rho_f * cf, zt - tf, zt)
     bot = (-b / 2, b / 2, -zt, -zt + tf)
-    rects = [top, bot, (-tw / 2, tw / 2, -zt + tf, zt - tf)]
-    A1, _, zs1, _, _ = _rect_props(rects)
-    # Spannungsverhaeltnis im Steg (Schwerachse verschoben)
-    z_top_w = zt - tf - zs1
-    z_bot_w = -zt + tf - zs1
-    psi_w = z_bot_w / z_top_w if z_top_w > 0 else -1.0
-    psi_w = max(psi_w, -1.0)
-    rho = _rho_internal(hw / tw, eps, psi_w)
-    bc = hw / (1 - psi_w) if psi_w < 1 else hw        # Druckzone
-    beff = rho * bc
-    be1 = 0.4 * beff
-    be2 = 0.6 * beff
-    # Steg: wirksam be1 am Druckflansch, be2 am Ende der Druckzone, Zugzone voll
-    z_c_end = zt - tf - bc                              # Ende der Druckzone
-    web_rects = [(-tw / 2, tw / 2, zt - tf - be1, zt - tf),
-                 (-tw / 2, tw / 2, z_c_end, z_c_end + be2),
-                 (-tw / 2, tw / 2, -zt + tf, z_c_end)]
-    web_rects = [r for r in web_rects if r[3] > r[2]]
-    A2, _, zs2, Iy2, _ = _rect_props([top, bot] + web_rects)
+    z_c_end = zt - tf - bc                          # Ende der Druckzone (= Schwerachse)
+    web = [(-tw / 2, tw / 2, zt - tf - be1, zt - tf),
+           (-tw / 2, tw / 2, z_c_end, z_c_end + be2),
+           (-tw / 2, tw / 2, -zt + tf, z_c_end)]
+    rects = [r for r in ([top, bot] + web) if r[3] > r[2] and r[1] > r[0]]
+    _A2, _ys2, zs2, Iy2, _ = _rect_props(rects)
     Weff_y = Iy2 / max(zt - zs2, zt + zs2)
-    # --- Biegung um z: Flansche als einseitig gestuetzte Teile, Steg neutral ---
-    rho_fz = _rho_outstand(cf / tf, eps)
-    bz = tw / 2 + rho_fz * cf
+    d["biegung_y"] = {"flansch": i_f, "steg": i_wy, "b_eff": float(beff),
+                      "b_e1": float(be1), "b_e2": float(be2),
+                      "z_s": float(zs2), "I_eff": float(Iy2), "W_eff": float(Weff_y)}
+
+    # ---------------- Biegung um z: W_eff,z ----------------
+    # Jede Flanschhaelfte ist ein einseitig gestuetztes Teil mit der groessten
+    # Druckspannung am freien Rand; psi = 0 am Steg (Tab. 4.2).
+    i_fz = _rho_info(cf / tf, eps, 0.0, k_sigma_outstand(0.0, True), False)
+    bz = tw / 2 + i_fz["rho"] * cf
     Iz_eff = 2 * tf * (2 * bz) ** 3 / 12 + hw * tw ** 3 / 12
     Weff_z = Iz_eff / bz
+    d["biegung_z"] = {"flansch": i_fz, "b_eff_halb": float(bz),
+                      "I_eff": float(Iz_eff), "W_eff": float(Weff_z)}
+
     res.A_eff = A_eff_c
     res.Weff_y = min(Weff_y, sec.Wel_y) if sec.Wel_y > 0 else Weff_y
     res.Weff_z = min(Weff_z, sec.Wel_z) if sec.Wel_z > 0 else Weff_z
-    res.eN_y = 0.0
-    res.details.update({"rho_f": rho_f, "rho_w": rho_w, "A_eff": A_eff_c, "Weff_y": res.Weff_y})
+    # Schwerachsenverschiebung: der wirksame Druckquerschnitt gegen den Brutto-
+    # querschnitt (dessen Schwerpunkt hier im Ursprung liegt)
+    res.eN_y = float(zs_c)
+    res.eN_z = float(ys_c)
+    d["e_N"] = {"e_Ny": res.eN_y, "e_Nz": res.eN_z}
+    res.details.update({"rho_f": rho_f, "rho_w": rho_w, "A_eff": A_eff_c,
+                        "Weff_y": res.Weff_y, "Weff_z": res.Weff_z,
+                        "wirksam": d})
 
 
 def _effective_RHS(sec: Section, fy, eps, Nc, My, res: ClassResult):
+    """Wirksamer Querschnitt eines Rechteckhohlprofils (EN 1993-1-5, 4.4)."""
     h, b, t = sec.h, sec.b, sec.tw
     cf = b - 2 * t
     cw = h - 2 * t
-    rho_f = _rho_internal(cf / t, eps, 1.0)
-    rho_w = _rho_internal(cw / t, eps, 1.0)
-    res.A_eff = sec.A - 2 * (1 - rho_f) * cf * t - 2 * (1 - rho_w) * cw * t
-    # Biegung um y: Druckgurt reduziert, Stege mit psi=-1
-    rho_wb = _rho_internal(cw / t, eps, -1.0)
-    top = (-b / 2, -b / 2 + t, h / 2 - t, h / 2)
-    rects = [(-b / 2, b / 2, -h / 2, -h / 2 + t),                       # Zuggurt
-             (-rho_f * cf / 2, rho_f * cf / 2, h / 2 - t, h / 2),       # Druckgurt (wirksam)
-             (-b / 2, -b / 2 + t, h / 2 - t, h / 2), (b / 2 - t, b / 2, h / 2 - t, h / 2)]
+    d = {}
+
+    # ---------------- reiner Druck ----------------
+    i_f = _rho_info(cf / t, eps, 1.0, k_sigma_internal(1.0), True)
+    i_w = _rho_info(cw / t, eps, 1.0, k_sigma_internal(1.0), True)
+    rho_f, rho_w = i_f["rho"], i_w["rho"]
+    bef, bew = rho_f * cf, rho_w * cw
+    druck = []
+    for z0, z1 in ((h / 2 - t, h / 2), (-h / 2, -h / 2 + t)):      # Gurte
+        druck.append((-b / 2, -b / 2 + t + bef / 2, z0, z1))
+        druck.append((b / 2 - t - bef / 2, b / 2, z0, z1))
+    for y0, y1 in ((-b / 2, -b / 2 + t), (b / 2 - t, b / 2)):      # Stege
+        druck.append((y0, y1, h / 2 - t - bew / 2, h / 2 - t))
+        druck.append((y0, y1, -h / 2 + t, -h / 2 + t + bew / 2))
+    A_eff_c, ys_c, zs_c, _, _ = _rect_props(druck)
+    res.A_eff = A_eff_c
+    d["druck"] = {"gurt": i_f, "steg": i_w, "A_eff": float(A_eff_c)}
+
+    # ---------------- Biegung um y ----------------
+    i_wb = _rho_info(cw / t, eps, -1.0, k_sigma_internal(-1.0), True)
+    rho_wb = i_wb["rho"]
     bc = cw / 2.0
     beff = rho_wb * bc
+    rects = [(-b / 2, b / 2, -h / 2, -h / 2 + t),                       # Zuggurt voll
+             (-b / 2, -b / 2 + t + bef / 2, h / 2 - t, h / 2),          # Druckgurt wirksam
+             (b / 2 - t - bef / 2, b / 2, h / 2 - t, h / 2)]
     for y0 in (-b / 2, b / 2 - t):
-        rects.append((y0, y0 + t, -h / 2 + t, 0.0))                        # Zugzone
-        rects.append((y0, y0 + t, h / 2 - t - 0.4 * beff, h / 2 - t))     # be1
-        rects.append((y0, y0 + t, 0.0, 0.6 * beff))                        # be2
-    A2, _, zs2, Iy2, _ = _rect_props(rects)
+        rects.append((y0, y0 + t, -h / 2 + t, 0.0))                        # Zugzone voll
+        rects.append((y0, y0 + t, h / 2 - t - 0.4 * beff, h / 2 - t))      # b_e1
+        rects.append((y0, y0 + t, 0.0, 0.6 * beff))                        # b_e2
+    rects = [r for r in rects if r[3] > r[2] and r[1] > r[0]]
+    _A2, _ys2, zs2, Iy2, _ = _rect_props(rects)
     res.Weff_y = min(Iy2 / max(h / 2 - zs2, h / 2 + zs2), sec.Wel_y)
-    res.Weff_z = sec.Wel_z * res.A_eff / sec.A
-    res.details.update({"rho_f": rho_f, "rho_w": rho_w, "A_eff": res.A_eff})
+    d["biegung_y"] = {"gurt": i_f, "steg": i_wb, "b_eff": float(beff),
+                      "z_s": float(zs2), "I_eff": float(Iy2), "W_eff": float(res.Weff_y)}
+
+    # ---------------- Biegung um z: Rollentausch von Gurt und Steg ----------
+    i_fb = _rho_info(cf / t, eps, -1.0, k_sigma_internal(-1.0), True)
+    bcz = cf / 2.0
+    beffz = i_fb["rho"] * bcz
+    rectz = [(-b / 2, -b / 2 + t, -h / 2, h / 2),                          # Zugsteg voll
+             (b / 2 - t - bew / 2, b / 2, h / 2 - t, h / 2),
+             (b / 2 - t - bew / 2, b / 2, -h / 2, -h / 2 + t)]
+    for z0 in (-h / 2, h / 2 - t):
+        rectz.append((-b / 2 + t, 0.0, z0, z0 + t))                        # Zugzone voll
+        rectz.append((b / 2 - t - 0.4 * beffz, b / 2 - t, z0, z0 + t))     # b_e1
+        rectz.append((0.0, 0.6 * beffz, z0, z0 + t))                       # b_e2
+    rectz = [r for r in rectz if r[3] > r[2] and r[1] > r[0]]
+    _A3, ys3, _zs3, _Iy3, Iz3 = _rect_props(rectz)
+    res.Weff_z = min(Iz3 / max(b / 2 - ys3, b / 2 + ys3), sec.Wel_z)
+    d["biegung_z"] = {"gurt": i_fb, "b_eff": float(beffz), "y_s": float(ys3),
+                      "I_eff": float(Iz3), "W_eff": float(res.Weff_z)}
+
+    res.eN_y = float(zs_c)
+    res.eN_z = float(ys_c)
+    d["e_N"] = {"e_Ny": res.eN_y, "e_Nz": res.eN_z}
+    res.details.update({"rho_f": rho_f, "rho_w": rho_w, "A_eff": res.A_eff,
+                        "Weff_y": res.Weff_y, "Weff_z": res.Weff_z, "wirksam": d})

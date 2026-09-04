@@ -199,10 +199,60 @@ Klassifizierung erfolgt an jeder Stelle mit den dort wirkenden Schnittgrößen.
   (elastisches Spannungsverhältnis) mit ε = √(235/fy).
 * Hohlprofile RHS: alle Teile innenliegend, c = b − 2t − 2r_i.
 * CHS: d/t ≤ 50ε², 70ε², 90ε².
-* Klasse 4: wirksame Breiten nach DIN EN 1993-1-5, 4.4 (ρ für innen-
-  liegende und einseitig gestützte Teile), wirksame Fläche A_eff und
-  wirksames Widerstandsmoment W_eff aus der Rechteckzerlegung des
-  Querschnitts (Schwerachsenverschiebung bei Biegung berücksichtigt).
+* CHS der Klasse 4 (d/t > 90ε²): für das Kreisrohr gibt es keine wirksamen
+  Breiten. Der Nachweis läuft spannungsbasiert nach DIN EN 1993-1-6, 8.5
+  (siehe 5.2a).
+
+#### 5.2a Wirksame Querschnitte der Klasse 4 (DIN EN 1993-1-5, Abschnitt 4)
+
+Beult ein Querschnittsteil, bevor die Streckgrenze erreicht wird, wird die
+Tragfähigkeit mit dem **wirksamen** Querschnitt geführt. Je Teil gilt
+
+      λ̄_p = (b̄/t) / (28,4 ε √k_σ)
+      ρ   = 1                                     für λ̄_p ≤ Grenze
+      ρ   = (λ̄_p − 0,055(3+ψ)) / λ̄_p²           innenliegend (4.4(2))
+      ρ   = (λ̄_p − 0,188) / λ̄_p²                einseitig gestützt
+
+mit den Beulwerten k_σ nach Tabelle 4.1 (innenliegend) beziehungsweise 4.2
+(einseitig) — es ist dieselbe Implementierung wie beim Blechfeldnachweis in
+Kapitel 5c. Die Grenzschlankheit ist 0,5 + √(0,085 − 0,055 ψ) innen und
+0,748 außen. Die wirksame Breite wird nach Tabelle 4.1 aufgeteilt: bei ψ = 1
+je zur Hälfte an beide Ränder, bei ψ = −1 mit b_e1 = 0,4 b_eff am Druckrand
+und b_e2 = 0,6 b_eff an der Nulllinie.
+
+Nach DIN EN 1993-1-1, 6.2.9.3 werden **drei** Querschnitte gebildet:
+
+      A_eff     aus reinem Druck (ψ = 1 in allen Teilen)
+      W_eff,y   aus reiner Biegung um y
+      W_eff,z   aus reiner Biegung um z
+
+Jeder entsteht aus einer Rechteckzerlegung des wirksamen Querschnitts; daraus
+folgen Fläche, Schwerpunkt und Trägheitsmoment geschlossen. Die Verschiebung
+der Schwerachse
+
+      e_N = z_s(A_eff) − z_s(A)
+
+wird aus dem wirksamen Druckquerschnitt **berechnet**, nicht angenommen. Beim
+doppeltsymmetrischen Querschnitt ist die Abminderung symmetrisch und e_N wird
+zu null; sonst treten die Zusatzmomente ΔM = N_Ed e_N in 6.2.9.3 (Gl. 6.44)
+und in 6.3.3 (Gl. 6.61/6.62) hinzu.
+
+Bewusst auf der sicheren Seite: die Ausrundungen bleiben unberücksichtigt
+(Flanschüberstand (b − t_w)/2 statt (b − t_w − 2r)/2), ψ wird nach 4.4(3) am
+Bruttoquerschnitt bestimmt, und die Abminderung über λ̄_p,red nach 4.4(5) mit
+der tatsächlichen Randspannung wird nicht ausgenutzt. Der Bericht weist jedes
+Querschnittsteil mit c/t, ψ, k_σ, λ̄_p, Grenze und ρ aus, dazu b_eff, die
+Schwerachse, A → A_eff, W_el → W_eff und e_N.
+
+#### 5.2b Schlanke Kreisrohre (DIN EN 1993-1-6, 8.5)
+
+Für ein CHS der Klasse 4 wird die Meridianspannung aus N und M sowie die
+Schubspannung aus V und Torsion gebildet und damit der spannungsbasierte
+Schalenbeulnachweis nach Kapitel 5c.5 geführt — mit der Beullänge L_cr,z des
+Stabes und der Herstelltoleranzklasse B. Bei einem schlanken Rohr wird dieser
+Nachweis regelmäßig maßgebend: für CHS 508×8 in S355 unter N = 2000 kN,
+M_y = 300 kNm und V = 200 kN ergibt sich η = 1,47 gegenüber η = 1,00 aus dem
+elastischen Spannungsnachweis.
 
 ### 5.3 Querschnittsnachweise (6.2)
 
@@ -214,7 +264,8 @@ Klassifizierung erfolgt an jeder Stelle mit den dort wirkenden Schnittgrößen.
 * Biegung + Querkraft 6.2.8: ρ = (2V/Vpl − 1)² bei V > 0,5 Vpl.
 * Biegung + Normalkraft 6.2.9: Klasse 1/2 mit M_N,Rd (I: Gl. 6.36–6.38,
   RHS: 6.39/6.40, CHS: M_N = M_pl (1 − n^1,7)), biaxial Gl. 6.41; Klasse
-  3/4 linear elastisch (6.2.9.2/6.2.9.3).
+  3/4 linear elastisch (6.2.9.2/6.2.9.3), bei Klasse 4 mit A_eff, W_eff
+  und dem Zusatzmoment ΔM = N_Ed e_N nach Gl. (6.44).
 * Vergleichsspannung 6.2.1(5) als zusätzlicher elastischer Nachweis bei
   Klasse 3/4 und bei Torsion.
 
@@ -410,6 +461,10 @@ GMNIA) nach 8.6 und 8.7. Beim ebenen Feld sind die wirksamen Breiten nach
 Abschnitt 4 nur in der Querschnittsklassifizierung (Klasse 4) enthalten, nicht
 als eigener Feldnachweis. Liegen die Elemente eines ebenen Feldes nicht in
 einer Ebene, wird das gesagt.
+
+Für **Stabquerschnitte** sind die wirksamen Breiten nach Abschnitt 4 dagegen
+vollständig enthalten (Kapitel 5.2a): A_eff, W_eff,y, W_eff,z und e_N gehen in
+die Querschnitts- und die Stabilitätsnachweise ein.
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
@@ -632,6 +687,7 @@ gesagt — es wird nichts ersatzweise eingesetzt.
 | `tests/test_gzg.py` | Verformungsnachweise gegen 5qL⁴/384EI, PL³/48EI und den Kragarm; Grenzwertbildung L/x, absolut, Überhöhung, Punktpaar |
 | `tests/test_beulen.py` | Beulwerte k_σ und k_τ gegen Tab. 4.1/4.2 und A.3, σ_E = 190000 (t/b)², ρ und χ_w gegen 4.4(2) und Tab. 5.1, Schubbeulen, Methode der reduzierten Spannungen, Steifen nach A.1/A.2.2/A.3(2) und Abschnitt 9, Lasteinleitung nach Abschnitt 6, Schalenbeulen nach EN 1993-1-6, dazu der Patch-Test des Viereckelements |
 | `tests/test_joints.py` | Schrauben, Nähte, T-Stummel gegen EN-Zahlenwerte; Steifigkeitsbeiwerte Tab. 6.11, Klassifizierung 5.2.2.5, Drehfeder gegen die geschlossene Kragarmlösung |
+| `tests/test_klasse4.py` | wirksame Querschnitte der Klasse 4: Beulwerte, Grenzschlankheiten und ρ nach 4.4(2), Aufteilung b_e1/b_e2, W_eff,y und A_eff eines geschweißten Blechträgers gegen eine unabhängige Handrechnung, Zusatzmoment aus e_N, Schalenbeulen schlanker Kreisrohre |
 | `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |
 | `tests/test_solver_ext.py` | Gelenke, Trapezlasten, Temperatur, Zwischenstellen, Superposition, Umhüllende, Kombinationsgenerator, einseitige Lager, Spaltelement, Flächenkontakt mit Reibung, parallele Assemblierung, Rechnerfarm |
 | `tests/test_ec3.py` | Klassifizierung, Querschnittsnachweise, Knicken (χ), M_cr, χ_LT, C1/C_m, Interaktion, Wöhlerlinien, Nachweisführung |

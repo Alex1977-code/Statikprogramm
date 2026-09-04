@@ -55,7 +55,8 @@ def _torsion_stress(sec: Section, Mt: float) -> float:
 def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: float,
                   My: float, Mz: float, gamma_M0: float = 1.0, cls: ClassResult = None,
                   gamma_M1: float = 1.1, a_steifen: float = 0.0,
-                  starre_endsteife: bool = False) -> dict:
+                  starre_endsteife: bool = False, l_schale: float = 0.0,
+                  schalenklasse: str = "B") -> dict:
     """Alle Querschnittsnachweise an einer Stelle. Rueckgabe:
     {"class": ClassResult, "res": Widerstaende, "checks": {name: (util, text)},
      "util": max, "governing": name}"""
@@ -198,11 +199,48 @@ def section_check(sec: Section, fy: float, N: float, Vy: float, Vz: float, Mt: f
             else:
                 checks["M_z+N (6.2.9.1)"] = (aMz / MNz, f"M_z,Ed/M_N,z,Rd = {aMz/1e3:.1f}/{MNz/1e3:.1f} kNm (n={n:.3f})")
         else:
-            # elastisch (Klasse 3) bzw. wirksam (Klasse 4): lineare Interaktion
+            # elastisch (Klasse 3) bzw. wirksam (Klasse 4): lineare Interaktion.
+            # Bei Klasse 4 tritt nach 6.2.9.3, Gl. (6.44) das Zusatzmoment
+            # dM = N_Ed e_N aus der Verschiebung der Schwerachse hinzu.
             NRd = R["N_c_Rd"] if Nc > 0 else R["N_t_Rd"]
-            u = Nabs / NRd + aMy / MyRd + aMz / MzRd
-            checks["N+M elastisch (6.2.9.2/3)"] = (
-                u, f"N/N_Rd + My/M_y,Rd + Mz/M_z,Rd = {Nabs/NRd:.3f} + {aMy/MyRd:.3f} + {aMz/MzRd:.3f}")
+            dMy = Nc * abs(cls.eN_y) if cls.cls == 4 else 0.0
+            dMz = Nc * abs(cls.eN_z) if cls.cls == 4 else 0.0
+            u = Nabs / NRd + (aMy + dMy) / MyRd + (aMz + dMz) / MzRd
+            txt = (f"N/N_Rd + My/M_y,Rd + Mz/M_z,Rd = {Nabs/NRd:.3f} + "
+                   f"{(aMy + dMy)/MyRd:.3f} + {(aMz + dMz)/MzRd:.3f}")
+            if dMy or dMz:
+                txt += (f"; ΔM aus e_N: ΔM_y = {dMy/1e3:.1f} kNm, "
+                        f"ΔM_z = {dMz/1e3:.1f} kNm")
+            elif cls.cls == 4:
+                txt += "; e_N = 0 (doppeltsymmetrisch), kein Zusatzmoment"
+            checks["N+M elastisch (6.2.9.2/3)"] = (u, txt)
+
+    # Schlanke Kreisrohre: fuer das Rohr gibt es keine wirksamen Breiten nach
+    # EN 1993-1-5, 4.4. Der Nachweis wird spannungsbasiert nach EN 1993-1-6,
+    # 8.5 gefuehrt - mit der Meridianspannung aus N und M und der Schub-
+    # spannung aus V und Torsion.
+    if sec.typ == "CHS" and cls.cls == 4 and sec.tw > 0:
+        from .schalenbeulen import zylinder
+        r_m = (sec.h - sec.tw) / 2.0
+        laenge = l_schale if l_schale > 0 else 2 * np.pi * r_m
+        s_x = Nc / sec.A + np.sqrt(aMy ** 2 + aMz ** 2) / max(sec.Wel_y, 1e-30)
+        tau_v = np.sqrt(aVy ** 2 + aVz ** 2) / max(R["Avz"], 1e-30) + tau_t
+        z = zylinder(r=r_m, t=sec.tw, l=laenge, fy=fy, sigma_x=s_x, tau=tau_v,
+                     klasse=schalenklasse, gamma_M1=gamma_M1)
+        if z.fehler:
+            cls.warnings.append(f"Schalenbeulen des Rohrs nicht geführt: {z.fehler}")
+        else:
+            me = z.werte["meridian"]
+            checks["Schalenbeulen Rohr (EN 1993-1-6, 8.5)"] = (
+                z.util,
+                f"d/t = {sec.h / sec.tw:.0f} > 90 ε² → Klasse 4; σ_x,Ed = "
+                f"{s_x / 1e6:.1f} N/mm², σ_x,Rcr = {me['sigma_Rcr'] / 1e6:.0f} N/mm², "
+                f"λ̄_x = {me['lambda']:.3f}, χ_x = {me['chi']:.3f}, σ_x,Rd = "
+                f"{me['sigma_Rd'] / 1e6:.1f} N/mm² (Herstelltoleranz {schalenklasse}, "
+                f"Beullänge {laenge:.2f} m)")
+            for h in z.hinweise:
+                if h not in cls.warnings:
+                    cls.warnings.append(h)
 
     # 6.2.1(5) Vergleichsspannung (elastisch, informativ fuer Klasse 3/4, massgebend bei Torsion)
     if cls.cls >= 3 or tau_t > 0:

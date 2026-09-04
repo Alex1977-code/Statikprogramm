@@ -326,13 +326,20 @@ def member_stability(sec: Section, E: float, G: float, fy: float, cls: ClassResu
                                  Cmy, Cmz, CmLT, susceptible)
         MyRd = chiLT * MyRk / gamma_M1
         MzRd = MzRk / gamma_M1
-        u61 = n_y + kf["kyy"] * My_Ed / MyRd + kf["kyz"] * Mz_Ed / MzRd
-        u62 = n_z + kf["kzy"] * My_Ed / MyRd + kf["kzz"] * Mz_Ed / MzRd
+        # Klasse 4: Zusatzmomente aus der Verschiebung der Schwerachse,
+        # Gl. (6.61) und (6.62) mit (M_Ed + dM_Ed)
+        dMy = N_Ed * abs(cls.eN_y) if cls.cls == 4 else 0.0
+        dMz = N_Ed * abs(cls.eN_z) if cls.cls == 4 else 0.0
+        My_i, Mz_i = My_Ed + dMy, Mz_Ed + dMz
+        zusatz = (f"; ΔM_y,Ed = {dMy/1e3:.1f} kNm, ΔM_z,Ed = {dMz/1e3:.1f} kNm "
+                  f"aus e_N (Klasse 4)" if (dMy or dMz) else "")
+        u61 = n_y + kf["kyy"] * My_i / MyRd + kf["kyz"] * Mz_i / MzRd
+        u62 = n_z + kf["kzy"] * My_i / MyRd + kf["kzz"] * Mz_i / MzRd
         checks["Interaktion Gl. 6.61"] = (
-            u61, f"{n_y:.3f} + {kf['kyy']:.3f}·{My_Ed/MyRd:.3f} + {kf['kyz']:.3f}·{Mz_Ed/MzRd:.3f}"
-                 f" (Cmy = {Cmy:.2f} {cmy_t})")
+            u61, f"{n_y:.3f} + {kf['kyy']:.3f}·{My_i/MyRd:.3f} + {kf['kyz']:.3f}·{Mz_i/MzRd:.3f}"
+                 f" (Cmy = {Cmy:.2f} {cmy_t}){zusatz}")
         checks["Interaktion Gl. 6.62"] = (
-            u62, f"{n_z:.3f} + {kf['kzy']:.3f}·{My_Ed/MyRd:.3f} + {kf['kzz']:.3f}·{Mz_Ed/MzRd:.3f}"
+            u62, f"{n_z:.3f} + {kf['kzy']:.3f}·{My_i/MyRd:.3f} + {kf['kzz']:.3f}·{Mz_i/MzRd:.3f}"
                  f" (Cmz = {Cmz:.2f} {cmz_t})")
         details.update(kf)
         details.update({"Cmy": Cmy, "Cmz": Cmz, "n_y": n_y, "n_z": n_z})

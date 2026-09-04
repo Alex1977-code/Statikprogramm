@@ -110,14 +110,23 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
             sc = section_check(sec, fy, N[j], Vy[j], Vz[j], Mt[j], My[j], Mz[j],
                                ds.gamma_M0, cls, gamma_M1=ds.gamma_M1,
                                a_steifen=member.a_steifen,
-                               starre_endsteife=member.starre_endsteife)
+                               starre_endsteife=member.starre_endsteife,
+                               l_schale=Lcr_z)
             if best is None or sc["util"] > best["util"]:
                 best = {"combo": cname, "x": float(x[j]), "util": sc["util"],
                         "name": sc["governing"], "kind": "section", "cls": cls.cls,
                         "text": sc["checks"].get(sc["governing"], (0, ""))[1],
                         "checks": sc["checks"], "N": N[j], "Vy": Vy[j], "Vz": Vz[j],
                         "Mt": Mt[j], "My": My[j], "Mz": Mz[j], "class_text": cls.text(),
-                        "warnings": cls.warnings}
+                        "warnings": cls.warnings,
+                        # wirksame Querschnittswerte der Klasse 4 fuer den Bericht
+                        "wirksam": (dict(cls.details.get("wirksam") or {},
+                                         A=sec.A, A_eff=cls.A_eff,
+                                         Wel_y=sec.Wel_y, Weff_y=cls.Weff_y,
+                                         Wel_z=sec.Wel_z, Weff_z=cls.Weff_z,
+                                         eN_y=cls.eN_y, eN_z=cls.eN_z,
+                                         eps=cls.details.get("eps", 0.0))
+                                    if cls.cls == 4 else {})}
         worst_cls = max(worst_cls, cls_c)
         mc.section_checks.append(best)
         for w in best.get("warnings", []):

@@ -1086,7 +1086,7 @@ def _stegwerte(model, le) -> dict:
     fy = (mat.yield_strength(sec.t_max) if mat is not None else 0.0) or 235e6
     return {"hw": sec.h - 2 * sec.tf, "tw": sec.tw, "tf": sec.tf, "bf": sec.b,
             "fyw": fy, "fyf": fy, "sec": sec.name, "A": sec.A, "Wel_y": sec.Wel_y,
-            "member": mem_name}
+            "sec_obj": sec, "member": mem_name}
 
 
 def _eta_1(model, sw, le, res, gamma_M0: float):
@@ -1095,10 +1095,10 @@ def _eta_1(model, sw, le, res, gamma_M0: float):
 
         eta_1 = |N_Ed| / (A f_y / gamma_M0) + |M_Ed| / (W_el,y f_y / gamma_M0)
 
-    Es wird der Bruttoquerschnitt angesetzt; wirksame Querschnittswerte nach
-    Abschnitt 4 werden hier nicht gebildet (liegt bei schlanken Stegen auf der
-    unsicheren Seite und wird im Bericht als Hinweis genannt).  ``None``, wenn
-    kein Stab oder keine Schnittgroessen zugeordnet werden koennen.
+    Bei einem Querschnitt der Klasse 4 werden die wirksamen Werte A_eff und
+    W_eff,y nach EN 1993-1-5, Abschnitt 4 angesetzt - 4.6(1) verlangt das -,
+    sonst die des Bruttoquerschnitts.  ``None``, wenn kein Stab oder keine
+    Schnittgroessen zugeordnet werden koennen.
     """
     nm = sw.get("member")
     A, W = sw.get("A") or 0.0, sw.get("Wel_y") or 0.0
@@ -1117,9 +1117,20 @@ def _eta_1(model, sw, le, res, gamma_M0: float):
     p0 = np.asarray(model.nodes[int(model.elements[mem.elements[0]].nodes[0])], dtype=float)
     s_knoten = float(np.linalg.norm(p_knoten - p0))
     j = int(np.argmin(np.abs(np.asarray(x, dtype=float) - s_knoten)))
+    N_Ed, M_Ed = float(mf["N"][j]), float(mf["My"][j])
     fy = sw["fyw"]
+    sec = sw.get("sec_obj")
+    klasse = 0
+    if sec is not None:
+        from .section_class import classify
+        c = classify(sec, fy, N_Ed, M_Ed)
+        klasse = c.cls
+        if c.cls == 4 and c.A_eff > 0 and c.Weff_y > 0:
+            A, W = c.A_eff, c.Weff_y
     N_Rd, M_Rd = A * fy / gamma_M0, W * fy / gamma_M0
-    return abs(float(mf["N"][j])) / N_Rd + abs(float(mf["My"][j])) / M_Rd
+    eta = abs(N_Ed) / N_Rd + abs(M_Ed) / M_Rd
+    return {"eta_1": eta, "klasse": klasse, "A": A, "W": W,
+            "N_Ed": N_Ed, "M_Ed": M_Ed}
 
 
 def check_lasteinleitungen(model, analysis, combos: list = None,
@@ -1151,7 +1162,8 @@ def check_lasteinleitungen(model, analysis, combos: list = None,
                 c.fehler = r["fehler"]
                 break
             eta = r["eta_2"]
-            eta1 = _eta_1(model, sw, le, res, ds.gamma_M0)
+            d1 = _eta_1(model, sw, le, res, ds.gamma_M0)
+            eta1 = d1["eta_1"] if d1 else None
             ia = lasteinleitung_interaktion(eta, eta1) if eta1 is not None else {}
             c.je_kombination.append({"kombination": kname, "F_Ed": F, "eta": eta,
                                      "eta_1": eta1,
@@ -1161,7 +1173,8 @@ def check_lasteinleitungen(model, analysis, combos: list = None,
                 c.F_Ed, c.F_Rd = F, r["F_Rd"]
             if ia and (not c.interaktion
                        or ia["wert"] > c.interaktion.get("wert", 0.0)):
-                c.interaktion = dict(ia, kombination=kname, eta_1=eta1, eta_2=eta)
+                c.interaktion = dict(ia, kombination=kname, eta_1=eta1, eta_2=eta,
+                                     klasse=d1["klasse"], A_1=d1["A"], W_1=d1["W"])
         if not c.je_kombination and not c.fehler:
             c.fehler = ("keine Kraft an diesem Knoten - Quelle „Last“ oder "
                         "„Auflager“ prüfen")

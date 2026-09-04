@@ -1379,6 +1379,76 @@ class Report:
             self._warnings.append("Nachweise NICHT erfüllt für: " + ", ".join(nf))
         return b
 
+    def _wirksamer_querschnitt(self, best: dict, sec) -> list:
+        """Herleitung der wirksamen Querschnittswerte eines Klasse-4-Stabes."""
+        w = (best or {}).get("wirksam") or {}
+        if not w or not w.get("druck"):
+            return []
+        out = [("p", "Der Querschnitt ist an dieser Stelle der Klasse 4 zuzuordnen: "
+                     "mindestens ein Querschnittsteil beult, bevor die Streckgrenze "
+                     "erreicht wird. Die Tragfähigkeit wird deshalb mit dem "
+                     "wirksamen Querschnitt nach DIN EN 1993-1-5, Abschnitt 4 "
+                     "geführt. Nach DIN EN 1993-1-1, 6.2.9.3 werden dafür drei "
+                     "Querschnitte gebildet: A_eff aus reinem Druck sowie W_eff,y und "
+                     "W_eff,z aus reiner Biegung um die jeweilige Achse.")]
+        rows = [["Belastung", "Teil", "c/t", "ψ", "k_σ", "λ̄_p", "Grenze", "ρ"]]
+
+        def zeilen(titel, d):
+            for schl, name in (("flansch", "Flansch/Gurt"), ("gurt", "Gurt"),
+                               ("steg", "Steg")):
+                i = d.get(schl)
+                if not i:
+                    continue
+                rows.append([titel, name, fmt(i["b_t"], 1), fmt(i["psi"], 2),
+                             fmt(i["k_sigma"], 2), fmt(i["lambda_p"], 3),
+                             fmt(i["grenze"], 3), fmt(i["rho"], 3)])
+
+        zeilen("Druck", w.get("druck") or {})
+        zeilen("Biegung y", w.get("biegung_y") or {})
+        zeilen("Biegung z", w.get("biegung_z") or {})
+        out.append(("table", rows, "Querschnittsteile: Schlankheit und "
+                                   "Abminderungsbeiwert ρ nach 4.4(2)", None, ""))
+
+        by = w.get("biegung_y") or {}
+        kv = [("Werkstoffbeiwert ε = √(235/f_y)", fmt(w.get("eps", 0.0), 4))]
+        if by.get("b_eff"):
+            kv.append(("wirksame Stegbreite (Biegung y)",
+                       f"b_eff = {by['b_eff'] * 1e3:.1f} mm"
+                       + (f", davon b_e1 = {by['b_e1'] * 1e3:.1f} mm am Druckrand "
+                          f"und b_e2 = {by['b_e2'] * 1e3:.1f} mm an der Nulllinie"
+                          if by.get("b_e1") else "")))
+            kv.append(("Schwerachse des wirksamen Querschnitts",
+                       f"z_s = {by.get('z_s', 0.0) * 1e3:+.1f} mm gegenüber dem "
+                       "Bruttoquerschnitt"))
+        A, A_eff = w.get("A", 0.0), w.get("A_eff", 0.0)
+        kv.append(("Fläche A → A_eff",
+                   f"{A * 1e4:.1f} → {A_eff * 1e4:.1f} cm²"
+                   + (f" ({A_eff / A * 100:.1f} %)" if A > 0 else "")))
+        for ax in ("y", "z"):
+            Wel, Weff = w.get(f"Wel_{ax}", 0.0), w.get(f"Weff_{ax}", 0.0)
+            kv.append((f"Widerstandsmoment W_el,{ax} → W_eff,{ax}",
+                       f"{Wel * 1e6:.1f} → {Weff * 1e6:.1f} cm³"
+                       + (f" ({Weff / Wel * 100:.1f} %)" if Wel > 0 else "")))
+        eNy, eNz = w.get("eN_y", 0.0), w.get("eN_z", 0.0)
+        if abs(eNy) > 1e-9 or abs(eNz) > 1e-9:
+            kv.append(("Verschiebung der Schwerachse e_N",
+                       f"e_Ny = {eNy * 1e3:+.2f} mm, e_Nz = {eNz * 1e3:+.2f} mm; "
+                       "daraus die Zusatzmomente ΔM = N_Ed e_N nach 6.2.9.3 und 6.3.3"))
+        else:
+            kv.append(("Verschiebung der Schwerachse e_N",
+                       "e_N = 0 (doppeltsymmetrischer Querschnitt, die Abminderung "
+                       "ist symmetrisch) – kein Zusatzmoment nach 6.2.9.3"))
+        out.append(("kv", kv, "Wirksamer Querschnitt (Klasse 4)"))
+        out.append(("list", [
+            "Die Ausrundungen bleiben unberücksichtigt: der Flanschüberstand wird "
+            "mit (b − t_w)/2 angesetzt statt (b − t_w − 2r)/2. Das liegt auf der "
+            "sicheren Seite.",
+            "ψ wird nach 4.4(3) am Bruttoquerschnitt bestimmt; die Abminderung "
+            "über λ̄_p,red nach 4.4(5) mit der tatsächlichen Randspannung wird "
+            "nicht ausgenutzt (ebenfalls sichere Seite).",
+        ]))
+        return out
+
     def _member_design_blocks(self, mc) -> list:
         m = self.model
         b = [self._h(3, f"Stab {mc.member}")]
@@ -1445,6 +1515,7 @@ class Report:
                       f"V_z = {fmt(best.get('Vz', 0.0) / 1e3, 2)} kN, M_t = {fmt(best.get('Mt', 0.0) / 1e3, 2)} kNm, "
                       f"M_y = {fmt(best.get('My', 0.0) / 1e3, 2)} kNm, M_z = {fmt(best.get('Mz', 0.0) / 1e3, 2)} kNm",
                       None, ""))
+            b.extend(self._wirksamer_querschnitt(best, sec))
         # Stabilitaet
         if mc.stability:
             b.append(self._h(4, "Stabilitätsnachweise (6.3)"))
