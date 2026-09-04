@@ -226,6 +226,22 @@ def test_streckentorsion():
     close("eingeleitetes Gesamtmoment", float(Mt[0]), mt * L, 1e-9, " Nm")
 
 
+def test_nichtlinearer_verlauf():
+    """Springt M_t im Feld, muss die Naeherung benannt werden."""
+    sec = ipe()
+    L = 6.0
+    x = np.linspace(0, L, 61)
+    Mt = np.where(x < L / 2, 3.0e3, 1.0e3)      # Sprung in Feldmitte
+    v = W.torsionsverlauf(L, sec.It, sec.Iw, E, G, x, Mt,
+                          rand=("behindert", "frei"))
+    check("der Sprung im Torsionsverlauf wird gemeldet",
+          "nicht linear" in v.hinweis, v.hinweis[:70])
+    glatt = W.torsionsverlauf(L, sec.It, sec.Iw, E, G, x,
+                              np.full_like(x, 2.0e3), rand=("behindert", "frei"))
+    check("ein linearer Verlauf wird nicht gemeldet", not glatt.hinweis,
+          glatt.hinweis or "(kein Hinweis)")
+
+
 def test_am_ganzen_modell():
     """Kragtraeger mit Endtorsion: der Nachweis muss die Woelbspannung fuehren."""
     from statik3d import solver
@@ -286,7 +302,7 @@ def test_am_ganzen_modell():
 def main():
     for t in (test_kragtraeger, test_grenzfaelle, test_gabellagerung,
               test_sektorwerte, test_spannungen, test_streckentorsion,
-              test_am_ganzen_modell):
+              test_nichtlinearer_verlauf, test_am_ganzen_modell):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

@@ -201,6 +201,18 @@ def torsionsverlauf(L: float, It: float, Iw: float, E: float, G: float,
     # Gerade durch die Stuetzstellen: T0 + T1 x
     if len(x) > 1 and np.ptp(x) > 0:
         T1, T0 = np.polyfit(x, Mt, 1)
+        # Ist M_t nicht linear - etwa weil im Feld ein Torsionsmoment
+        # eingeleitet wird und der Verlauf springt -, ist die Gerade eine
+        # Naeherung. Das muss gesagt werden, sonst steht im Statikdokument
+        # eine Zahl, die niemand nachrechnen kann.
+        rest = float(np.abs(Mt - (T0 + T1 * x)).max())
+        gross = float(np.abs(Mt).max())
+        if gross > 0 and rest > 0.02 * gross:
+            out.hinweis = (f"M_t verläuft nicht linear (Abweichung von der "
+                           f"Geraden {100 * rest / gross:.1f} %) – vermutlich "
+                           "wird im Feld ein Torsionsmoment eingeleitet. Die "
+                           "Aufteilung ist dann eine Näherung; für den genauen "
+                           "Verlauf den Stab an der Einleitungsstelle teilen.")
     else:
         T0, T1 = float(Mt[0]), 0.0
     if Iw <= 0 or E <= 0:
@@ -209,7 +221,8 @@ def torsionsverlauf(L: float, It: float, Iw: float, E: float, G: float,
         out.Mtw = np.zeros_like(Mt)
         out.B = np.zeros_like(Mt)
         out.theta_strich = Mt / (G * It) if G * It > 0 else np.zeros_like(Mt)
-        out.hinweis = "kein Wölbwiderstand (I_w = 0) – reine St.-Venant-Torsion"
+        out.hinweis = (out.hinweis + " " if out.hinweis else "") + \
+            "kein Wölbwiderstand (I_w = 0) – reine St.-Venant-Torsion"
         return out
     if G * It <= 0:
         # Reine Woelbkrafttorsion: psi'' = -Mt/(E Iw), Polynomloesung

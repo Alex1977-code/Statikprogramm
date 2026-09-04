@@ -114,6 +114,12 @@ Punkte:
   „ux/uy starr", die beiden Netze passen an der Fuge aber nicht Knoten für
   Knoten zusammen, trägt das Kontaktpaar nur Druck und Reibung. Eine starre
   Verbindung in der Fugenebene gibt es dort nicht; das wird gemeldet.
+* **Wölbkrafttorsion bei statisch unbestimmtem Torsionsweg** – das Stabelement
+  hat sechs Freiheitsgrade je Knoten; die Wölbsteifigkeit verteilt die
+  Torsionsmomente dann anders auf die Stäbe, als gerechnet wird. Der Weg
+  dorthin wäre ein Stabelement mit sieben Freiheitsgraden.
+* **Wölbordinaten nur für I und U** – für andere offene Querschnitte wird der
+  Momentenanteil ausgewiesen, aber keine Wölbspannung; sie würde geraten.
 * **Werkstoff- und Querschnittsnamen** aus der Dlubal-Datenbank
   (`C:\Program Files\Dlubal`) – die Dateien liegen nur lokal vor.
 * **Splitter am Rand**: Tetraeder, deren vier Knoten alle auf der Oberfläche
