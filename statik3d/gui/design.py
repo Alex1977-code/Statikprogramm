@@ -557,26 +557,33 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                               for d in h.released()) or "starr",
                               name, f"{name}: freigegeben {h.released()}")
                              for name, h in model.hinges.items()], "gelenk", "gelenke")
-        freigaben = getattr(model, "flaechenfreigaben", {}) or {}
-        if freigaben:
-            offen_noch = sum(1 for x in freigaben.values() if not x.ausgefuehrt)
-            ff = self._zweig(wurzel, "Flächenfreigaben", len(freigaben),
-                             "flaechenfreigaben", fett=True,
-                             farbe=FARBEN["warn"] if offen_noch else FARBEN["akzent"],
-                             hinweis="Kontaktfugen aus RFEM. Solange die Trennung "
-                                     "nicht ausgeführt ist, rechnet das Modell dort "
-                                     "durchverbunden – also zu steif.")
-            self._liste(ff, [(name + ("" if x.ausgefuehrt else " ⚠"), x.bezug(), name,
-                              f"{name}: {x.describe()}"
-                              + ("" if x.ausgefuehrt
-                                 else "\nTrennung nicht ausgeführt – hier zu steif."))
-                             for name, x in freigaben.items()], "flaechenfreigabe",
-                        "flaechenfreigaben")
-        n_kontakt = (len(model.contact_supports) + len(model.gap_elements)
-                     + len(model.contact_pairs))
+        # Kontaktbedingungen: die Flaechenkontakte (in RFEM heissen sie
+        # "Flaechenfreigaben") und die knotenweisen Bedingungen stehen unter
+        # einem Zweig - es ist dieselbe Sache auf zwei Ebenen.
+        flaechenkontakte = getattr(model, "kontaktbedingungen", {}) or {}
+        n_kontakt = (len(flaechenkontakte) + len(model.contact_supports)
+                     + len(model.gap_elements) + len(model.contact_pairs))
         if n_kontakt:
+            offen_noch = sum(1 for x in flaechenkontakte.values() if not x.ausgefuehrt)
             kt = self._zweig(wurzel, "Kontaktbedingungen", n_kontakt, "kontakt",
-                             fett=True, farbe=FARBEN["akzent"])
+                             fett=True,
+                             farbe=FARBEN["warn"] if offen_noch else FARBEN["akzent"],
+                             hinweis="Kontaktfugen zwischen Flächen und Körpern "
+                                     "(in RFEM „Flächenfreigaben“) sowie die "
+                                     "knotenweisen Bedingungen.")
+            if flaechenkontakte:
+                fk = self._zweig(kt, "Flächenkontakte", len(flaechenkontakte),
+                                 "kontaktbedingungen",
+                                 farbe=FARBEN["warn"] if offen_noch else None,
+                                 hinweis="Solange die Trennung nicht ausgeführt "
+                                         "ist, rechnet das Modell dort "
+                                         "durchverbunden – also zu steif.")
+                self._liste(fk, [(name + ("" if x.ausgefuehrt else " ⚠"), x.bezug(),
+                                  name, f"{name}: {x.describe()}"
+                                  + ("" if x.ausgefuehrt
+                                     else "\nTrennung nicht ausgeführt – hier zu steif."))
+                                 for name, x in flaechenkontakte.items()],
+                            "kontaktbedingung", "kontaktbedingungen")
             if model.contact_supports:
                 self._zweig(kt, "einseitige Lager", len(model.contact_supports),
                             "kontakt", schluessel="supports")

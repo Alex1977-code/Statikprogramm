@@ -552,16 +552,16 @@ def import_rfem_native(path: str, model: Model = None, log: list = None,
                 if weg:
                     C.warn(log, f"{weg} aufeinanderliegende Knoten zusammengefuehrt "
                                 "(merge_nodes=True). Kontaktfugen und "
-                                "Flaechenfreigaben sind damit verschweisst.")
+                                "Kontaktbedingungen sind damit verschweisst.")
             elif doppelt:
                 # Frueher wurde hier stillschweigend verschmolzen. In einem
                 # RFEM-6-Volumenmodell liegen die Knoten an jeder Kontaktfuge
-                # und jeder Flaechenfreigabe absichtlich aufeinander -
+                # und jeder Kontaktbedingung absichtlich aufeinander -
                 # zusammengefuehrt ist das Modell dort verschweisst und zu
                 # steif, und die Freigaben laufen ins Leere.
                 C.say(log, f"{doppelt} Knoten liegen auf einem anderen. Sie werden "
                            "NICHT zusammengefuehrt: das sind die Fugen der "
-                           "Flaechenfreigaben und Kontaktflaechen. Zum "
+                           "Kontaktbedingungen und Kontaktflaechen. Zum "
                            "Zusammenfuehren die Datei mit merge_nodes=True lesen.")
             return m6
         except ImportError as exc:

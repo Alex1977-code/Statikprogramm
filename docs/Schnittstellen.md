@@ -21,7 +21,7 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 
 | Endung | Format | Typische Herkunft | Übernommen wird |
 |---|---|---|---|
-| `.json` | Statik3D | – | vollständiges Modell (Format 1 bis 5; Format 3 brachte Linien und Gelenke, Format 4 die **Anschlüsse**, die **Verformungsgrenzen**, die **Beulfelder** (mit Steifen) und die **Lasteinleitungsstellen**, Format 5 die **Volumenbereiche** und die Einstellungen zur **Theorie II. Ordnung**, Format 6 die **Flächen** und **Volumenkörper** der Geometriekette, die **Flächenfreigaben** und die in den **Bericht übernommenen Ergebnisbilder**. Ältere Dateien werden gelesen) |
+| `.json` | Statik3D | – | vollständiges Modell (Format 1 bis 5; Format 3 brachte Linien und Gelenke, Format 4 die **Anschlüsse**, die **Verformungsgrenzen**, die **Beulfelder** (mit Steifen) und die **Lasteinleitungsstellen**, Format 5 die **Volumenbereiche** und die Einstellungen zur **Theorie II. Ordnung**, Format 6 die **Flächen** und **Volumenkörper** der Geometriekette, die **Kontaktbedingungen** (früher „Flächenfreigaben“, der alte Schlüssel wird weiter gelesen) und die in den **Bericht übernommenen Ergebnisbilder**. Ältere Dateien werden gelesen) |
 | `.dxf` | AutoCAD DXF (ASCII, R12–2018) | InfoCAD, RFEM, CAD | LINE, LWPOLYLINE, POLYLINE (2D/3D, Polyface), 3DFACE |
 | `.ifc` | IFC 2x3 / IFC 4 STEP-Datei | InfoCAD, RFEM, Allplan, Revit, Tekla | Statikmodell (Structural Analysis View) oder Bauteilachsen |
 | `.xlsx` | SAF – Structural Analysis Format | RFEM 6, SCIA, Allplan, AxisVM, Frilo | Materialien, Querschnitte, Knoten, Stäbe, Flächen, Lager, Lastfälle, Lastgruppen, Kombinationen, Lasten |
@@ -29,7 +29,7 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 | `.inp` | Abaqus / CalculiX | FE-Programme | Netz, Sets, Materialien, Beam/Shell/Solid Sections, Boundary, CLOAD, DLOAD, Steps |
 | `.bdf`, `.nas`, `.dat` | Nastran Bulk Data | FE-Programme | GRID, CBAR/CBEAM, CROD, CTRIA3/CQUAD4, CTETRA/CHEXA, PBAR/PBARL/PBEAM/PSHELL/PSOLID, MAT1, SPC/SPC1, FORCE/MOMENT, PLOAD2/PLOAD4, GRAV, LOAD |
 | `.step`, `.stp`, `.iges`, `.igs`, `.brep`, `.stl` | CAD-Geometrie | CAD | Vernetzung mit gmsh (Volumen Tet4/Tet10 oder Schalen) |
-| `.rf6` | RFEM 6 Projektdatei (ZIP + SQLite `model.db`) | RFEM 6 | Knoten, Linien, Stäbe mit Typ, Querschnitte, Materialien, Knoten-/Linien-/Flächenlager mit Nichtlinearität, Gelenke, Flächen mit Dicke, Volumenkörper, Flächenfreigaben mit Typeinstellung, Lastfälle mit Flächenlasten |
+| `.rf6` | RFEM 6 Projektdatei (ZIP + SQLite `model.db`) | RFEM 6 | Knoten, Linien, Stäbe mit Typ, Querschnitte, Materialien, Knoten-/Linien-/Flächenlager mit Nichtlinearität, Gelenke, Flächen mit Dicke, Volumenkörper, Kontaktbedingungen mit Typeinstellung, Lastfälle mit Flächenlasten |
 | `.sdnf`, `.sdn` | SDNF – Steel Detailing Neutral Format | HiCAD, Tekla, SDS/2, Advance Steel | Bauteile mit Lage im Bauwerk, Profil, Werkstoff, Bleche |
 | `.nc`, `.nc1`, `.nc2`, `.dstv` | DSTV-NC (Stahlbau-NC) | HiCAD, Tekla, bocad, Advance Steel | Teileliste: Profil, Länge, Werkstoff, Bohrungen, Konturen |
 | `.sza`, `.kra`, `.fga`, `.fig` | HiCAD-Archiv (`!HFA##`, zstd) | HiCAD | Teileliste, Profile mit Katalogwerten, Blechdicken, Werkstoffe, Verbindungsmittel |
@@ -140,7 +140,7 @@ Federwerte: **`inf` = starr, `0` = frei, endlicher Wert = Federsteifigkeit**.
 Ellipsen und NURBS — jeweils über ihre Kontrollpunkte), Stäbe mit
 Querschnitt, Material, Verdrehung, Typ und Gelenken, Knoten-, Linien- und
 Flächenlager mit ihren Nichtlinearitäten, Flächen mit Dicke als Schalenelemente,
-Volumenkörper einfacher Topologie als Volumenelemente, die Flächenfreigaben mit
+Volumenkörper einfacher Topologie als Volumenelemente, die Kontaktbedingungen mit
 ihren Typeinstellungen sowie die Lastfälle mit Name, Einwirkungskategorie,
 Eigengewichtsfaktor und den Flächenlasten.
 
@@ -311,9 +311,10 @@ Freiformflächen bekommen nur kein Netz, und der Grund steht dabei:
     108 Volumenkoerper nicht uebernommen (Randflaechenzahl 4: 48x, 6: 23x, 9: 18x, …)
     - dafuer waere ein 3D-Vernetzer noetig.
 
-### Flächenfreigaben und ihre Typeinstellungen
+### Kontaktbedingungen und ihre Typeinstellungen
 
-Eine Flächenfreigabe (`SurfaceRelease`) trennt in RFEM die freigegebenen
+Was RFEM „Flächenfreigabe“ nennt (`SurfaceRelease`), heißt in Statik3D
+**Kontaktbedingung** — es ist eine Kontaktfuge. Sie trennt in RFEM die freigegebenen
 Flächen von den Objekten, an denen sie hängen, und verbindet beide über die
 Federn des Freigabetyps (`SurfaceReleaseType` →
 `SurfaceReleaseTypeImplVersion1` → `SpringConstants`, hier **unmittelbar** über
@@ -323,7 +324,8 @@ Federn des Freigabetyps (`SurfaceReleaseType` →
 Statik3D liest alles heraus — Name, Ort, freigegebene Flächen und Volumen,
 Zuordnung, Federkonstante je Freiheitsgrad samt Ausfalltyp und Reibbeiwert —
 und legt jede Freigabe als **Modellobjekt** `Flaechenfreigabe` an. Sie steht
-damit im Modellbaum und in der Tabelle „Flächenfreigaben", wird mitgespeichert
+damit im Modellbaum unter „Kontaktbedingungen → Flächenkontakte" und in der
+gleichnamigen Tabelle, wird mitgespeichert
 und überlebt Rückgängig. Das Feld `ausgefuehrt` sagt, ob die Trennung im Netz
 umgesetzt ist — heute immer `False`, und das Protokoll sagt es auch:
 

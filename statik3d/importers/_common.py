@@ -115,7 +115,7 @@ def count_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
     """Wie viele Knoten auf einem anderen liegen - ohne etwas zu aendern.
 
     Zusammenfuehren ist nicht immer richtig: an einer Kontaktfuge, einer
-    Flaechenfreigabe oder einem Gleitlager liegen die Knoten absichtlich
+    Kontaktbedingung oder einem Gleitlager liegen die Knoten absichtlich
     aufeinander. Wer nur wissen will, wie viele es sind, fragt hier.
     """
     if model.nn == 0:

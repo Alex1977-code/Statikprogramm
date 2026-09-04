@@ -162,9 +162,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Die nicht-modalen Masken schweben ueber der Ansicht (Vorgabe 3.8)
         self.maskenrand = msk.Maskenrand(central)
         try:
+            # pickable_window=True: der Rueckruf kommt auch, wenn der Klick
+            # keinen Koerper trifft. Ob etwas getroffen ist, entscheiden wir
+            # selbst - in Bildschirmpunkten, nicht ueber die VTK-Trefferprobe.
             self.plotter.enable_point_picking(callback=self._picked, show_message=False,
                                               left_clicking=True, show_point=False,
-                                              pickable_window=False)
+                                              pickable_window=True)
         except Exception:
             pass
         # Rechtsklick: Kontextmenue zu dem, was unter dem Zeiger liegt
@@ -267,7 +270,7 @@ class MainWindow(QtWidgets.QMainWindow):
         a.setCheckable(True)
         a.setChecked(self.act_knoten.isChecked())
         menu.addSeparator()
-        menu.addAction("Zoom alles", self.plotter.reset_camera)
+        menu.addAction("Zoom alles", self.zoom_alles)
         menu.exec(self.plotter.interactor.mapToGlobal(pos))
 
     def lagergroesse_einstellen(self, idx=None):
@@ -346,13 +349,156 @@ class MainWindow(QtWidgets.QMainWindow):
                                 + (" …" if len(liste) > 6 else "") + ")" if liste else ""))
         self.redraw()
 
+    #: Fangradius um den Mauszeiger [Bildschirmpunkte]. In Pixeln, nicht in
+    #: Metern: was man sieht, will man treffen - unabhaengig davon, wie weit
+    #: man gerade hineingezoomt hat.
+    FANGRADIUS = 14
+
+    def _zeigerposition(self):
+        """Mausposition im Fenster (VTK zaehlt von unten) - oder None."""
+        try:
+            x, y = self.plotter.iren.interactor.GetEventPosition()
+            return float(x), float(y)
+        except Exception:                   # noqa: BLE001
+            return None
+
+    def _projizieren(self, punkte):
+        """Weltpunkte -> Fensterkoordinaten [Pixel] und Sichtbarkeit.
+
+        Genommen wird die zusammengesetzte Projektionsmatrix der Kamera; das
+        ist genau die Abbildung, die auch das Bild erzeugt. Auf ihr fusst der
+        Fang: der Abstand wird dort gemessen, wo der Anwender ihn sieht.
+        """
+        P = np.atleast_2d(np.asarray(punkte, float))
+        if not len(P):
+            return np.zeros((0, 2)), np.zeros(0, bool)
+        ren = self.plotter.renderer
+        kam = ren.GetActiveCamera()
+        breite, hoehe = self.plotter.render_window.GetSize()
+        M = kam.GetCompositeProjectionTransformMatrix(ren.GetTiledAspectRatio(),
+                                                      -1.0, 1.0)
+        A = np.array([[M.GetElement(i, j) for j in range(4)] for i in range(4)])
+        H = np.hstack([P, np.ones((len(P), 1))]) @ A.T
+        w = H[:, 3]
+        gut = np.abs(w) > 1e-12
+        ndc = np.zeros((len(P), 3))
+        ndc[gut] = H[gut, :3] / w[gut, None]
+        xy = np.stack([(ndc[:, 0] * 0.5 + 0.5) * breite,
+                       (ndc[:, 1] * 0.5 + 0.5) * hoehe], axis=1)
+        sichtbar = gut & (w > 0) & (np.abs(ndc[:, 2]) <= 1.0)
+        return xy, sichtbar
+
+    def _naechster_am_zeiger(self, punkte, radius: float = None):
+        """(Nummer, Abstand in Pixeln) des Punktes unter dem Zeiger - oder None."""
+        zp = self._zeigerposition()
+        P = np.atleast_2d(np.asarray(punkte, float))
+        if zp is None or not len(P):
+            return None
+        xy, sichtbar = self._projizieren(P)
+        d = np.linalg.norm(xy - np.asarray(zp, float), axis=1)
+        d[~sichtbar] = np.inf
+        i = int(np.argmin(d))
+        r = self.FANGRADIUS if radius is None else radius
+        return (i, float(d[i])) if d[i] <= r else None
+
+    def _strecken_am_zeiger(self, A, B, radius: float = None):
+        """(Nummer, Abstand) der Strecke A[i]-B[i] unter dem Zeiger - oder None."""
+        zp = self._zeigerposition()
+        A = np.atleast_2d(np.asarray(A, float))
+        B = np.atleast_2d(np.asarray(B, float))
+        if zp is None or not len(A):
+            return None
+        a, sa = self._projizieren(A)
+        b, sb = self._projizieren(B)
+        q = np.asarray(zp, float)
+        ab = b - a
+        L2 = np.einsum("ij,ij->i", ab, ab)
+        t = np.zeros(len(a))
+        gut = L2 > 1e-12
+        t[gut] = np.clip(np.einsum("ij,ij->i", q - a, ab)[gut] / L2[gut], 0.0, 1.0)
+        fuss = a + t[:, None] * ab
+        d = np.linalg.norm(q - fuss, axis=1)
+        d[~(sa | sb)] = np.inf
+        i = int(np.argmin(d))
+        r = self.FANGRADIUS if radius is None else radius
+        return (i, float(d[i])) if d[i] <= r else None
+
+    def _fangpunkt(self):
+        """Was der Fang unter dem Zeiger findet: (Punkt, Art, Knotennummer).
+
+        Die Reihenfolge ist verbindlich - ein Knoten geht der Kantenmitte vor,
+        diese dem Raster. Gemessen wird in Bildschirmpunkten; genau darum
+        trifft der Fang jetzt das, was man sieht.
+        """
+        m = self.model
+        arten = self.fang_arten if getattr(self, "fang_an", False) else ("knoten",)
+        if "knoten" in arten and m.nn:
+            treffer = self._naechster_am_zeiger(m.nodes)
+            if treffer is not None:
+                return m.nodes[treffer[0]], "knoten", treffer[0]
+        if "mitte" in arten and len(m.elements):
+            paare = [(int(e.nodes[0]), int(e.nodes[-1])) for e in m.elements
+                     if e.typ in ("beam", "truss")][:20000]
+            if paare:
+                idx = np.asarray(paare, int)
+                mitten = 0.5 * (m.nodes[idx[:, 0]] + m.nodes[idx[:, 1]])
+                treffer = self._naechster_am_zeiger(mitten)
+                if treffer is not None:
+                    return mitten[treffer[0]], "mitte", -1
+        if "raster" in arten and getattr(self.arbeitsebene, "raster", 0) > 0:
+            frei = self._arbeitsebenenpunkt()
+            if frei is not None:
+                r = self.arbeitsebene.rasterpunkt(frei)
+                treffer = self._naechster_am_zeiger(r[None, :])
+                if treffer is not None:
+                    return r, "raster", -1
+        return None, "", -1
+
+    def _fangen(self, punkt):
+        """Einen **gegebenen** Weltpunkt auf die naechste markante Stelle ziehen.
+
+        Fuer die Eingabe ueber Zahlen und als Rueckfall. Was unter dem
+        Mauszeiger liegt, beantwortet :meth:`_fangpunkt` - dort wird in
+        Bildschirmpunkten gemessen, nicht in Metern.
+        """
+        if not getattr(self, "fang_an", False):
+            return ks.Fangtreffer(np.asarray(punkt, float))
+        kanten = [(int(e.nodes[0]), int(e.nodes[-1])) for e in self.model.elements
+                  if e.typ in ("beam", "truss")][:4000]
+        weite = 0.03 * max(self.model.characteristic_size(), 1e-6)
+        return ks.fangen(punkt, self.model.nodes if self.model.nn else None,
+                         kanten, self.arbeitsebene, weite, self.fang_arten)
+
+    def _arbeitsebenenpunkt(self):
+        """Wo der Sehstrahl unter dem Zeiger die Arbeitsebene trifft.
+
+        Der Strahl wird aus zwei entprojizierten Fensterpunkten gebildet -
+        einem auf der vorderen, einem auf der hinteren Klippebene.
+        """
+        zp = self._zeigerposition()
+        if zp is None:
+            return None
+        ren = self.plotter.renderer
+        punkte = []
+        for tiefe in (0.0, 1.0):
+            ren.SetDisplayPoint(zp[0], zp[1], tiefe)
+            ren.DisplayToWorld()
+            w = np.asarray(ren.GetWorldPoint(), float)
+            if abs(w[3]) < 1e-12:
+                return None
+            punkte.append(w[:3] / w[3])
+        richtung = punkte[1] - punkte[0]
+        if float(np.linalg.norm(richtung)) < 1e-12:
+            return None
+        return self.arbeitsebene.schnitt(punkte[0], richtung)
+
     def _picked(self, point, *args):
         art = getattr(self, "auswahlart", "Knoten")
         if art != "Knoten":
             m = self.model
             size = m.characteristic_size()
             if art == "Linie":
-                name = vp.line_at(m, point, size)
+                name = self._linie_am_zeiger() or vp.line_at(m, point, size)
                 return self._objekt_umschalten(self.sel_linien, name, "Linien") \
                     if name else self.info("Dort liegt keine Linie")
             if art == "Fläche":
@@ -364,19 +510,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self._objekt_umschalten(self.sel_koerper, name, "Volumen") \
                     if name else self.info("Dort liegt kein Volumenkörper")
             if art == "Stab":
-                name = vp.member_at(m, point)
+                name = self._stab_am_zeiger() or vp.member_at(m, point)
                 return self._objekt_umschalten(self.sel_staebe, name, "Stäbe") \
                     if name else self.info("Dort liegt kein Stab")
-        try:
-            p = np.asarray(point, float).ravel()[:3]
-        except Exception:
-            return
         if self.model.nn == 0:
             return
-        d = np.linalg.norm(self.model.nodes - p, axis=1)
-        i = int(np.argmin(d))
-        if d[i] > 0.05 * self.model.characteristic_size():
+        p, fangart, i = self._fangpunkt()
+        if p is None:
             return
+        if i < 0:
+            # Kantenmitte oder Rasterpunkt: erst wenn eine Maske einen Punkt
+            # erwartet, wird daraus ein Knoten - sonst blieben Streuknoten liegen.
+            if not (self.maskenrand.offen() and getattr(self.maskenrand.maske, "n_knoten", 0)):
+                return self.statusBar().showMessage(
+                    f"Gefangen: {fangart} bei {np.round(p, 4)} - "
+                    "es ist keine Maske offen, die einen Punkt erwartet", 4000)
+            self.merken("Knoten aus Fang")
+            i = int(self.model.add_node(*p))
         # Ist eine Erzeuge-Maske offen, geht der Klick an sie: „Maske oder Klick“
         if self.maskenrand.knoten_angeklickt(i):
             self.redraw()
@@ -389,6 +539,47 @@ class MainWindow(QtWidgets.QMainWindow):
                              f"{np.round(self.model.nodes[i], 3)})")
         self._auswahl_register()
         self.redraw()
+
+    def _linie_am_zeiger(self):
+        """Name der Linie unter dem Zeiger - in Bildschirmpunkten gemessen."""
+        m = self.model
+        A, B, namen = [], [], []
+        for name, ln in (m.lines or {}).items():
+            idx = [int(n) for n in ln.nodes if 0 <= int(n) < m.nn]
+            if len(idx) < 2:
+                continue
+            X = m.nodes[idx]
+            if (ln.typ or "polyline") != "polyline":
+                try:
+                    X = np.asarray(ln.punkte(m, vp.TEILUNG_KURVE), float)
+                except Exception:           # noqa: BLE001
+                    X = m.nodes[idx]
+            A.append(X[:-1])
+            B.append(X[1:])
+            namen += [name] * (len(X) - 1)
+        if not A:
+            return None
+        treffer = self._strecken_am_zeiger(np.vstack(A), np.vstack(B))
+        return namen[treffer[0]] if treffer is not None else None
+
+    def _stab_am_zeiger(self):
+        """Name des Stabes unter dem Zeiger - in Bildschirmpunkten gemessen."""
+        m = self.model
+        A, B, namen = [], [], []
+        for name, mem in (m.members or {}).items():
+            for e in (mem.elements or []):
+                if e >= len(m.elements):
+                    continue
+                idx = [int(x) for x in m.elements[e].nodes]
+                if len(idx) < 2:
+                    continue
+                A.append(m.nodes[idx[0]])
+                B.append(m.nodes[idx[-1]])
+                namen.append(name)
+        if not A:
+            return None
+        treffer = self._strecken_am_zeiger(np.asarray(A), np.asarray(B))
+        return namen[treffer[0]] if treffer is not None else None
 
     def _build_glasleiste(self):
         """Die durchscheinende Schnellleiste und der Ansichtswuerfel.
@@ -417,7 +608,7 @@ class MainWindow(QtWidgets.QMainWindow):
         leiste.trenner()
         a = QtGui.QAction("Zoom alles", self)
         a.setToolTip("Alles ins Bild holen")
-        a.triggered.connect(lambda: (self.plotter.reset_camera(), self.plotter.render()))
+        a.triggered.connect(self.zoom_alles)
         leiste.knopf(a, "⤢")
         leiste.adjustSize()
         wuerfel = msk.Ansichtswuerfel(central)
@@ -434,8 +625,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if fn is None:
             return
         fn()
-        self.plotter.reset_camera()
-        self.plotter.render()
+        self.zoom_alles()
         self.statusBar().showMessage(
             {"xy": "Draufsicht (XY)", "xz": "Vorderansicht (XZ)",
              "yz": "Seitenansicht (YZ)", "iso": "Isometrisch"}[richtung], 3000)
@@ -737,7 +927,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("XY (Draufsicht)", lambda: self.blickrichtung("xy"))
         g.klein("XZ (Ansicht)", lambda: self.blickrichtung("xz"))
         g.klein("YZ (Seitenansicht)", lambda: self.blickrichtung("yz"))
-        g.klein("Zoom alles", self.plotter.reset_camera)
+        g.klein("Zoom alles", self.zoom_alles)
         g = r.gruppe("Darstellung")
         # Die vier Darstellungsarten liegen als eigene Knoepfe nebeneinander und
         # auf Strg+1..Strg+4 - Umschalten soll ein Griff sein, kein Klickweg
@@ -941,8 +1131,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     "geokoerper": "Volumenkörper",
                     "geokoerper_einzeln": "Volumenkörper",
                     "berichtseintrag": "Bericht", "bericht": "Bericht",
-                    "flaechenfreigaben": "Flächenfreigaben",
-                    "flaechenfreigabe": "Flächenfreigaben",
+                    "kontaktbedingungen": "Kontaktbedingungen",
+                    "kontaktbedingung": "Kontaktbedingungen",
                     "anschluesse": "Anschlüsse", "anschluss": "Anschlüsse",
                     "verformungen": "Verformungen", "verformung": "Verformungen",
                     "beulfelder": "Beulfelder", "beulfeld": "Beulfelder",
@@ -2046,16 +2236,16 @@ class MainWindow(QtWidgets.QMainWindow):
                     "Bericht")
 
         self.tbl_freigabe = tab.Datentabelle([
-            Spalte("Flächenfreigabe"), Spalte("Typ"), Spalte("Ort"),
+            Spalte("Kontaktbedingung"), Spalte("Typ"), Spalte("Ort"),
             Spalte("Flächen", "", "ganz"), Spalte("Volumen", "", "ganz"),
             Spalte("Objekte", "", "ganz"), Spalte("Wirkung je FHG"),
             Spalte("Trennung ausgeführt", "", "text",
                    hinweis="Solange „nein“, rechnet das Modell an der Fuge "
                            "durchverbunden - also zu steif")],
-            "Flächenfreigaben", self)
+            "Kontaktbedingungen", self)
         self.tbl_freigabe.zeile_gewaehlt.connect(
-            lambda w: self.info(f"Flächenfreigabe {w}"))
-        tabs.addTab(self._eingabetabelle(self.tbl_freigabe), "Flächenfreigaben")
+            lambda w: self.info(f"Kontaktbedingung {w}"))
+        tabs.addTab(self._eingabetabelle(self.tbl_freigabe), "Kontaktbedingungen")
 
         self.tbl_kombi = tab.Datentabelle([
             Spalte("Kombination"), Spalte("Typ"), Spalte("Formel"),
@@ -2220,7 +2410,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill(self.tbl_freigabe,
                    [[name, x.typ, x.ort, len(x.flaechen), len(x.volumen), x.ziele,
                      x.describe(), "ja" if x.ausgefuehrt else "nein"]
-                    for name, x in (getattr(m, "flaechenfreigaben", {}) or {}).items()])
+                    for name, x in (getattr(m, "kontaktbedingungen", {}) or {}).items()])
 
     #: Richtungsnamen der Knotenlast
     LASTRICHTUNG = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
@@ -2815,7 +3005,7 @@ class MainWindow(QtWidgets.QMainWindow):
     REGISTER_FOLGE = ["Protokoll",
                       "Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
                       "Werkstoffe", "Querschnitte", "Dicken",
-                      "Lager", "Gelenke", "Flächenfreigaben",
+                      "Lager", "Gelenke", "Kontaktbedingungen",
                       "Lastfälle", "Lasten", "Kombinationen",
                       "Stabkräfte", "Auflagerkräfte", "Umhüllende",
                       "Nachweise EC3", "Ermüdung", "Kontakt", "Anschlüsse",
@@ -4124,7 +4314,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
             self.selection = np.array([], dtype=int)
             self.refresh_all()
-            self.plotter.reset_camera()
+            self.zoom_alles()
             self.info(f"Import: {m.nn} Knoten, {len(m.elements)} Elemente, "
                       f"{len(m.load_cases)} Lastfälle, {len(m.members)} Stäbe")
         except Exception as ex:
@@ -4294,16 +4484,6 @@ class MainWindow(QtWidgets.QMainWindow):
             # soll auch dranstehen.
             self.act_fang.setChecked(False)
         self._refresh_status()
-
-    def _fangen(self, punkt):
-        """Einen Punkt auf die nächste markante Stelle ziehen."""
-        if not getattr(self, "fang_an", False):
-            return ks.Fangtreffer(np.asarray(punkt, float))
-        kanten = [(int(e.nodes[0]), int(e.nodes[-1])) for e in self.model.elements
-                  if e.typ in ("beam", "truss")][:4000]
-        weite = 0.03 * max(self.model.characteristic_size(), 1e-6)
-        return ks.fangen(punkt, self.model.nodes if self.model.nn else None,
-                         kanten, self.arbeitsebene, weite, self.fang_arten)
 
     # ---- Linien ------------------------------------------------------
     def maske_linie(self):
@@ -5490,12 +5670,23 @@ class MainWindow(QtWidgets.QMainWindow):
         return target / umax, umax
 
     def redraw(self):
+        # Die Kamera muss das Neuzeichnen ueberleben. plotter.clear() nimmt
+        # alle Darsteller weg; das naechste add_mesh setzt die Kamera dann von
+        # sich aus zurueck - man haette nach jedem Klick wieder die
+        # Gesamtansicht vor sich und muesste sich neu hindrehen.
+        kamera = None
+        if getattr(self, "_kamera_steht", False):
+            try:
+                kamera = self.plotter.camera_position
+            except Exception:               # noqa: BLE001
+                kamera = None
         try:
             self.plotter.clear()
         except Exception:
             return
         m = self.model
         if m.nn == 0:
+            self._kamera_setzen(kamera)
             self.plotter.render()
             return
         grid = vp.to_grid(m)
@@ -5608,7 +5799,31 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plotter.show_axes()
         except Exception:
             pass
+        self._kamera_setzen(kamera)
         self.plotter.render()
+
+    def _kamera_setzen(self, kamera):
+        """Die vor dem Neuzeichnen gemerkte Kamera wieder aufsetzen."""
+        if kamera is not None:
+            try:
+                self.plotter.camera_position = kamera
+                return
+            except Exception:               # noqa: BLE001
+                pass
+        try:
+            self.plotter.reset_camera()
+            self._kamera_steht = True
+        except Exception:                   # noqa: BLE001
+            pass
+
+    def zoom_alles(self):
+        """Alles ins Bild holen - und zwar nur, wenn man es verlangt."""
+        try:
+            self.plotter.reset_camera()
+            self._kamera_steht = True
+            self.plotter.render()
+        except Exception:                   # noqa: BLE001
+            pass
 
     # ---- Datei -------------------------------------------------------
     def new_model(self):
@@ -5633,7 +5848,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.path = p
                 self.refresh_all()
                 self._refresh_title()
-                self.plotter.reset_camera()
+                self.zoom_alles()
             except Exception as ex:
                 self.error(str(ex))
 
@@ -5755,8 +5970,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.selection = np.array([], dtype=int)
             self.path = None
             self.refresh_all()
-            self.plotter.reset_camera()
             self.plotter.view_isometric()
+            self.zoom_alles()
             self.info(f"Beispiel '{which}' geladen - jetzt BERECHNEN (F5)")
         except Exception as ex:
             self.log.appendPlainText(traceback.format_exc())

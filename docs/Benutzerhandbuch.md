@@ -86,7 +86,7 @@ Die Arbeitsfläche in drei Spalten:
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden |
-  | Flächenfreigaben | Kontaktfugen aus RFEM mit ihrer Wirkung je Freiheitsgrad |
+  | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Lasten | alle Lasten aller Lastfälle, je Lastfall gezählt |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
   | Einwirkungen | Lastfälle und Kombinationen |
@@ -126,12 +126,12 @@ bedienen sind, steht im nächsten Abschnitt.
 | Gelenke | über die Maske (Doppelklick) |
 | Lastfälle | Beschreibung; Doppelklick öffnet Name, Einwirkung, Ausschlussgruppe |
 | Kombinationen | über die Maske (Doppelklick) |
-| Flächenfreigaben | nur Anzeige — sie kommen aus RFEM |
+| Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM |
 | Flächen, Volumenkörper | über die Maske (Doppelklick): Randlinien bzw. Randflächen, Dicke, Werkstoff, Teilung |
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
-**Flächenfreigaben** sind Kontaktfugen: in der Fugenebene starr, senkrecht dazu
+**Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der Fugenebene starr, senkrecht dazu
 frei mit Ausfall bei Zug. Statik3D liest sie aus der RFEM-Datei vollständig ein
 und zeigt sie mit ihrer Wirkung je Freiheitsgrad, **führt die Trennung im Netz
 aber nicht aus** — dafür müssten die beteiligten Flächen vernetzt und die
@@ -499,13 +499,13 @@ Datei → Importieren (Details in `Schnittstellen.md`):
 | `.sza`/`.kra`/`.fga` | HiCAD | Profile mit Katalogwerten, Blechdicken, Werkstoffe, Teileliste **und die Stabachsen aus dem Szenenteil** (siehe Schnittstellenhandbuch) |
 | `.inp` | Abaqus, CalculiX | Netz, Materialien, Sections, Randbedingungen, Lasten je Step |
 | `.bdf`/`.nas`/`.dat` | Nastran | GRID, CBAR/CBEAM, CQUAD4/CTRIA3, CTETRA/CHEXA, SPC, FORCE, PLOAD |
-| `.rf6` | RFEM 6 Projektdatei | Knoten, Linien, Stäbe mit Typ, Flächen mit Dicke, Volumenkörper, Lager mit Nichtlinearität, Gelenke, Flächenfreigaben, Lastfälle mit Flächenlasten |
+| `.rf6` | RFEM 6 Projektdatei | Knoten, Linien, Stäbe mit Typ, Flächen mit Dicke, Volumenkörper, Lager mit Nichtlinearität, Gelenke, Kontaktbedingungen, Lastfälle mit Flächenlasten |
 | `.step`/`.iges`/`.stl` | CAD | Vernetzung mit gmsh (Volumen oder Schale) |
 
 Eine **RFEM-6-Projektdatei** (`.rf6`) wird unmittelbar gelesen – kein Export
 nötig. Übernommen werden Knoten, Linien, Stäbe, **jede Fläche und jeder
 Volumenkörper als Objekt** (mit Randlinien, Dicke und Werkstoff), die Lager,
-die Flächenfreigaben, alle Lastfälle mit ihren Lasten (Vorspannung als
+die Kontaktbedingungen, alle Lastfälle mit ihren Lasten (Vorspannung als
 gleichwertige Temperaturlast), die Kombinationen und die **Netzeinstellungen**
 aus `mesh.xml`. Was kein Netz bekommen konnte, steht trotzdem im Modellbaum
 und lässt sich dort vernetzen.
@@ -518,7 +518,7 @@ Bohrung, eine Buchse, ein Bolzen oder ein Augenblech besteht in RFEM aus
 das kein Polygon, und die Fläche fehlte im Bild wie im Modellbaum.
 
 **Aufeinanderliegende Knoten werden nicht zusammengeführt.** In einem
-RFEM-Volumenmodell liegen sie an jeder Kontaktfuge und jeder Flächenfreigabe
+RFEM-Volumenmodell liegen sie an jeder Kontaktfuge und jeder Kontaktbedingung
 absichtlich aufeinander; verschweißt wäre das Modell dort zu steif und die
 Freigaben liefen ins Leere. Wie viele es sind, steht im Protokoll; wer sie
 doch zusammenführen will, liest die Datei mit `merge_nodes=True`. Was gar nicht ging, steht Zeile für Zeile im

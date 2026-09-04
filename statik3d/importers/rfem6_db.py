@@ -1747,7 +1747,7 @@ def member_type(impl_table: str) -> tuple:
 
 
 # --------------------------------------------------------------------------
-# Flaechenfreigaben (mit ihren Typeinstellungen)
+# Kontaktbedingungen zwischen Flaechen (RFEM: Flaechenfreigaben)
 # --------------------------------------------------------------------------
 #: Ort der Freigabe (releaseLocation) - Deutung wie im RFEM-Dialog, Annahme
 RELEASE_LOCATION = {0: "Anfang", 1: "Ende"}
@@ -1755,7 +1755,7 @@ RELEASE_LOCATION = {0: "Anfang", 1: "Ende"}
 
 def _release_type(db: Db, tid: int, nlmap: dict, label: str, log: list) -> dict:
     """
-    Typeinstellung einer Flaechenfreigabe: die Federkonstanten je Freiheitsgrad.
+    Typeinstellung einer Kontaktbedingung: die Federkonstanten je Freiheitsgrad.
 
     Der Typ zeigt ueber ``springConstants_id`` **unmittelbar** auf die Zeile in
     ``SpringConstants`` (nicht ueber owner_id wie die Lager).
@@ -1775,9 +1775,10 @@ def _release_type(db: Db, tid: int, nlmap: dict, label: str, log: list) -> dict:
 
 def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
     """
-    Flaechenfreigaben mit ihren Typeinstellungen lesen und berichten.
+    Kontaktbedingungen (RFEM: Flaechenfreigaben) mit ihren
+    Typeinstellungen lesen und berichten.
 
-    Eine Flaechenfreigabe trennt in RFEM die freigegebenen Flaechen von den
+    Eine Kontaktbedingung trennt in RFEM die freigegebenen Flaechen von den
     Objekten, an denen sie haengen, und verbindet beide ueber die Federn des
     Freigabetyps.  Das Trennen setzt ein Netz voraus: erst dort gibt es zwei
     Knoten, zwischen die die Feder gehoert.  Der Leser holt darum alles
@@ -1791,7 +1792,7 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
     out = []
     for h, impl in db.impls("SurfaceRelease"):
         name = ((impl.get("name") or "").strip() or (impl.get("comment") or "").strip()
-                or f"Flaechenfreigabe {h.get('userID') or h['id']}")
+                or f"Kontaktbedingung {h.get('userID') or h['id']}")
         flaechen = db.container("SurfaceReleaseImpl_releasedSurfaces").get(impl["id"], [])
         volumen = db.container("SurfaceReleaseImpl_releasedSolids").get(impl["id"], [])
         ziele = db.container("SurfaceReleaseImpl_assignedToObjects").get(impl["id"], [])
@@ -1815,8 +1816,8 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
         # sie nach dem Speichern weg und niemand sieht mehr, dass an dieser
         # Stelle eine Fuge gehoert.
         haupt = d["typen"][0] if d["typen"] else {}
-        m.add_flaechenfreigabe(
-            C.unique_name(m.flaechenfreigaben, name),
+        m.add_kontaktbedingung(
+            C.unique_name(m.kontaktbedingungen, name),
             flaechen=[int(x) for x in flaechen], volumen=[int(x) for x in volumen],
             ziele=len(ziele), ort=d["ort"],
             typ=str(haupt.get("nummer", "")) + (f" {haupt['name']}" if haupt.get("name") else ""),
@@ -1849,7 +1850,8 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict) -> list:
                        + (f" „{t['name']}“" if t["name"] else "")
                        + ": " + (", ".join(teile) if teile else "keine Federn"))
     if out:
-        C.say(log, f"{len(out)} Flaechenfreigaben gelesen. Die Trennung selbst wird "
+        C.say(log, f"{len(out)} Kontaktbedingungen gelesen (RFEM: Flaechenfreigaben). "
+                   "Die Trennung selbst wird "
                    "nicht ausgefuehrt - dafuer muessten die beteiligten Flaechen "
                    "vernetzt und die Knoten an der Fuge verdoppelt werden. Ohne die "
                    "Trennung ist das Modell an diesen Stellen zu steif.")

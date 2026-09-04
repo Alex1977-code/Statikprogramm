@@ -437,6 +437,30 @@ def main():
               w._fangen((0.02, 0.01, 0.0)).art == "" and "aus" in w.lbl_fang.text())
         w.fang_umschalten(True)
 
+        # Der Fang unter dem Mauszeiger wird in Bildschirmpunkten gemessen.
+        # Genau das war vorher ungenau: gerechnet wurde in Metern, mit einem
+        # Radius von 5 % der Modellgroesse.
+        w.redraw()
+        app.processEvents()
+        xy, sichtbar = w._projizieren(w.model.nodes)
+        breite, hoehe = w.plotter.render_window.GetSize()
+        check("Knoten lassen sich auf das Fenster abbilden",
+              bool(sichtbar.any())
+              and bool(np.all(xy[sichtbar, 0] >= -breite))
+              and bool(np.all(xy[sichtbar, 0] <= 2 * breite)),
+              f"{int(sichtbar.sum())} von {len(xy)} sichtbar")
+        ziel = int(np.flatnonzero(sichtbar)[0])
+        w.plotter.iren.interactor.SetEventPosition(int(round(xy[ziel][0])),
+                                                   int(round(xy[ziel][1])))
+        treffer = w._naechster_am_zeiger(w.model.nodes)
+        check("der Zeiger findet genau diesen Knoten",
+              treffer is not None and treffer[0] == ziel,
+              f"{treffer} statt {ziel}")
+        w.plotter.iren.interactor.SetEventPosition(int(round(xy[ziel][0])) + 60,
+                                                   int(round(xy[ziel][1])) + 60)
+        check("und daneben faengt er nichts",
+              w._naechster_am_zeiger(w.model.nodes) is None)
+
         # Linien: Bogen aus drei angeklickten Knoten
         w.clear_selection()
         w.maske_linie()
@@ -1179,27 +1203,27 @@ def main():
         w.knoten_loeschen()
         check("freier Knoten löschbar", w.model.nn == 1, f"{w.model.nn}")
 
-        # Flaechenfreigaben: Modellobjekt, Baumzweig, Tabelle
+        # Kontaktbedingungen: Modellobjekt, Baumzweig, Tabelle
         from statik3d.model import DofBehaviour
-        w.model.add_flaechenfreigabe(
+        w.model.add_kontaktbedingung(
             "Lagerbock-Grundplatte", flaechen=[1, 2, 3], volumen=[1], ziele=5,
             typ="4", behaviour={0: DofBehaviour("rigid"), 1: DofBehaviour("rigid"),
                                 2: DofBehaviour("free", failure="zug")})
         w.refresh_all()
         app.processEvents()
-        check("Flächenfreigaben stehen im Modellbaum",
-              "Flächenfreigaben" in zweige(w.baum))
-        check("Register „Flächenfreigaben“ vorhanden",
-              "Flächenfreigaben" in [w.tab_unten.tabText(i)
+        check("Kontaktbedingungen stehen im Modellbaum",
+              "Kontaktbedingungen" in zweige(w.baum) and "Flächenkontakte" in zweige(w.baum))
+        check("Register „Kontaktbedingungen“ vorhanden",
+              "Kontaktbedingungen" in [w.tab_unten.tabText(i)
                                      for i in range(w.tab_unten.count())])
         z = w.tbl_freigabe.modell.zeilen
-        check("Tabelle der Flächenfreigaben gefüllt", len(z) == 1, str(z))
+        check("Tabelle der Kontaktbedingungen gefüllt", len(z) == 1, str(z))
         check("Wirkung je Freiheitsgrad in der Tabelle",
               "uz=frei (Ausfall bei Zug)" in str(z[0][6]), str(z[0][6]))
         check("nicht ausgeführte Trennung wird als „nein“ geführt",
               z[0][7] == "nein", str(z[0][7]))
-        fr = Model.from_dict(w.model.to_dict()).flaechenfreigaben["Lagerbock-Grundplatte"]
-        check("Flächenfreigabe überlebt Speichern und Laden",
+        fr = Model.from_dict(w.model.to_dict()).kontaktbedingungen["Lagerbock-Grundplatte"]
+        check("Kontaktbedingung überlebt Speichern und Laden",
               fr.flaechen == [1, 2, 3] and fr.dof_behaviour(2).failure == "zug",
               fr.describe())
     except Exception as ex:      # noqa: BLE001

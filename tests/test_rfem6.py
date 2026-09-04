@@ -935,9 +935,9 @@ def test_stabtypen():
 
 
 # --------------------------------------------------------------------------
-# 4c) Flaechenfreigaben mit Typeinstellung
+# 4c) Kontaktbedingungen mit Typeinstellung
 # --------------------------------------------------------------------------
-def test_flaechenfreigaben():
+def test_kontaktbedingungen():
     tmp = tempfile.mkdtemp()
     try:
         f = make_rf6(
@@ -1343,7 +1343,7 @@ def test_steifigkeit_rueckzeiger():
 # 9) Aufeinanderliegende Knoten werden nicht stillschweigend verschweisst
 # --------------------------------------------------------------------------
 def test_kein_stilles_verschmelzen():
-    """An einer Kontaktfuge und an jeder Flaechenfreigabe liegen die Knoten
+    """An einer Kontaktfuge und an jeder Kontaktbedingung liegen die Knoten
     absichtlich aufeinander. Werden sie zusammengefuehrt, ist das Modell dort
     verschweisst - zu steif, und die Freigaben laufen ins Leere."""
     from statik3d.importers.rfem_native import import_rfem_native
@@ -1374,7 +1374,7 @@ def test_kein_stilles_verschmelzen():
 def main():
     for t in (test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
-              test_volumenkoerper, test_stabtypen, test_flaechenfreigaben,
+              test_volumenkoerper, test_stabtypen, test_kontaktbedingungen,
               test_lastfaelle_und_lasten, test_lasten_und_kombinationen,
               test_dispatcher_und_hilfen,
               test_knoten_zusammenfuehren, test_boegen_und_kreisflaechen,

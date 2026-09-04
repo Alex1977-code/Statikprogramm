@@ -1326,10 +1326,10 @@ def _rand_aus_linien(model, linien: list[str]) -> list[int]:
 
 
 @dataclass
-class Flaechenfreigabe:
-    """Flaechenfreigabe (RFEM: Flaechenfreigaben).
+class Kontaktbedingung:
+    """Kontaktbedingung zwischen Flaechen (RFEM: Flaechenfreigaben).
 
-    Eine Flaechenfreigabe trennt die genannten Flaechen von den Objekten, an
+    Eine Kontaktbedingung trennt die genannten Flaechen von den Objekten, an
     denen sie haengen, und verbindet beide ueber Federn je Freiheitsgrad -
     typisch eine **Kontaktfuge**: in der Ebene starr, senkrecht dazu frei mit
     Ausfall bei Zug.
@@ -1521,6 +1521,10 @@ class ContactPair:
 # --------------------------------------------------------------------------
 # Gesamtmodell
 # --------------------------------------------------------------------------
+#: Alter Name der Kontaktbedingung (RFEM: Flaechenfreigabe)
+Flaechenfreigabe = Kontaktbedingung
+
+
 class Model:
     def __init__(self, name: str = "Modell"):
         self.name = name
@@ -1547,7 +1551,7 @@ class Model:
         self.beulfelder: dict[str, Beulfeld] = {}
         self.volumenbereiche: dict[str, Volumenbereich] = {}
         self.lasteinleitungen: dict[str, Lasteinleitung] = {}
-        self.flaechenfreigaben: dict[str, Flaechenfreigabe] = {}
+        self.kontaktbedingungen: dict[str, Kontaktbedingung] = {}
         self.flaechen: dict[str, Flaeche] = {}
         self.koerper: dict[str, Volumenkoerper] = {}
         #: Aus der Ansicht in den Bericht uebernommene Ergebnisse, in der
@@ -1758,14 +1762,27 @@ class Model:
         self.koerper[name] = k
         return k
 
-    def add_flaechenfreigabe(self, name: str, **kw) -> Flaechenfreigabe:
-        """Eine Flaechenfreigabe aufnehmen (aus RFEM gelesen oder von Hand).
+    @property
+    def flaechenfreigaben(self) -> dict:
+        """Alter Name der Kontaktbedingungen (RFEM: Flaechenfreigaben)."""
+        return self.kontaktbedingungen
+
+    @flaechenfreigaben.setter
+    def flaechenfreigaben(self, wert: dict):
+        self.kontaktbedingungen = wert
+
+    def add_flaechenfreigabe(self, name: str, **kw) -> "Kontaktbedingung":
+        """Alter Name von :meth:`add_kontaktbedingung`."""
+        return self.add_kontaktbedingung(name, **kw)
+
+    def add_kontaktbedingung(self, name: str, **kw) -> Kontaktbedingung:
+        """Eine Kontaktbedingung aufnehmen (aus RFEM gelesen oder von Hand).
 
         Die Trennung im Netz fuehrt das Programm nicht aus; ``ausgefuehrt``
         bleibt darum False, bis das jemand tut.
         """
-        fr = Flaechenfreigabe(name, **kw)
-        self.flaechenfreigaben[name] = fr
+        fr = Kontaktbedingung(name, **kw)
+        self.kontaktbedingungen[name] = fr
         return fr
 
     def add_joint(self, name: str, typ: str, elem: int, end: int = 1, **kw) -> Joint:
@@ -2134,8 +2151,8 @@ class Model:
             "beulfelder": [asdict(x) for x in self.beulfelder.values()],
             "volumenbereiche": [asdict(x) for x in self.volumenbereiche.values()],
             "lasteinleitungen": [asdict(x) for x in self.lasteinleitungen.values()],
-            "flaechenfreigaben": [_beh_dict(asdict(x))
-                                  for x in self.flaechenfreigaben.values()],
+            "kontaktbedingungen": [_beh_dict(asdict(x))
+                                   for x in self.kontaktbedingungen.values()],
             "flaechen": [asdict(x) for x in self.flaechen.values()],
             "koerper": [asdict(x) for x in self.koerper.values()],
             "bericht": [asdict(x) for x in self.bericht],
@@ -2192,8 +2209,12 @@ class Model:
                           for x in (bf.steifen or [])]
         m.lasteinleitungen = {x["name"]: _dc(Lasteinleitung, x)
                               for x in d.get("lasteinleitungen", [])}
-        m.flaechenfreigaben = {x["name"]: _beh_from(Flaechenfreigabe, x)
-                               for x in d.get("flaechenfreigaben", [])}
+        # "flaechenfreigaben" ist der alte Name derselben Sache - Dateien,
+        # die ihn tragen, werden weiter gelesen.
+        m.kontaktbedingungen = {
+            x["name"]: _beh_from(Kontaktbedingung, x)
+            for x in (d.get("kontaktbedingungen")
+                      or d.get("flaechenfreigaben") or [])}
         m.flaechen = {x["name"]: _dc(Flaeche, x) for x in d.get("flaechen", [])}
         m.koerper = {x["name"]: _dc(Volumenkoerper, x) for x in d.get("koerper", [])}
         m.bericht = [_dc(Berichtseintrag, x) for x in d.get("bericht", [])]
