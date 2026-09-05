@@ -9,8 +9,10 @@ Dokumentation in statischen Berichten.
 ### 1.1 Einheiten und Vorzeichen
 
 * Einheiten durchgängig SI: Länge m, Kraft N, Spannung Pa, Dichte kg/m³,
-  Temperatur K. Die Oberfläche und der Bericht rechnen zur Anzeige in kN,
-  kNm, MPa, mm um.
+  Temperatur K. Der Bericht rechnet zur Anzeige in kN, kNm, MPa, mm um; in
+  der Oberfläche sind Einheiten und Nachkommastellen je Modell einstellbar
+  (*Ansicht → Einheiten*, Modul `statik3d/einheiten.py`), gerechnet wird
+  davon unberührt in SI.
 * Freiheitsgrade je Knoten: ux, uy, uz, rx, ry, rz (Rechtssystem).
 * Schnittgrößen der Stäbe nach DIN 1080: Am positiven Schnittufer wirken
   positive Schnittgrößen in Richtung der positiven lokalen Achsen.

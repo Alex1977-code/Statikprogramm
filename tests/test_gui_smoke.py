@@ -3401,6 +3401,99 @@ def main():
         traceback.print_exc()
         check("Lasten und Auswahl", False, str(ex)[:70])
 
+    # ---- Einheiten und Genauigkeiten (Ansicht -> Einheiten) ----------------
+    try:
+        import json
+        from statik3d.model import Member as Mb
+        w.new_model()
+        m_ = w.model
+        w.error = lambda text: None
+        w._bestaetigen = lambda text: True
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(4, 3, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1])
+        m_.fix(k0, "all")
+        m_.fix(k2, [0, 1, 2])
+        m_.load_node(k1, Fz=-12500.0)
+        m_.load_beam(e0, qz=-5000.0)
+        w.refresh_all()
+        app.processEvents()
+        mk_ = w.tbl_knoten.modell
+        check("Vorgabe: Knotentabelle x [m] mit 4,000, Lasten [kN, kN/m]",
+              w.tbl_knoten.kopfzeile()[1] == "x [m]" and mk_.data(mk_.index(1, 1)) == "4,000"
+              and any("[kN, kN/m]" in z for z in w._kopfzeile_zeilen),
+              str((w.tbl_knoten.kopfzeile()[:2], mk_.data(mk_.index(1, 1)), w._kopfzeile_zeilen)))
+        an_ = solver.solve_all(m_, design=True)
+        w._solve_done("all", an_)
+        app.processEvents()
+        check("Kennwerte unten links: u in [mm], Rz in [kN]",
+              any(z.startswith("u ") and "[mm]" in z for z in w._kennwerte_zeilen)
+              and any(z.startswith("Rz") and "[kN]" in z for z in w._kennwerte_zeilen),
+              str(w._kennwerte_zeilen[:3]))
+        rk_ = w.tbl_react.modell
+        # Auflagerkraefte stehen als „min / max“-Paar (Umhuellende) oder als Zahl
+        roh_ = str(rk_.zeilen[0][3])
+        rz_kN = float(roh_.split("/")[0].replace(",", "."))
+        paar_ = "/" in roh_
+        maske_ = w.maske_einheiten()
+        check("Maske „Einheiten und Genauigkeiten“ rechts mit Kraft, Länge, Verformung, Spannung",
+              w.eingaben_dock.windowTitle() == "Einheiten und Genauigkeiten"
+              and all(k in maske_.werte() for k in ("kraft", "laenge", "verformung", "spannung", "nk_kraft")),
+              str(sorted(maske_.werte())))
+        w._einheiten_setzen({"kraft": "N", "laenge": "mm", "verformung": "cm", "spannung": "kN/cm²",
+                             "nk_kraft": 0, "nk_last": 1, "nk_laenge": 1, "nk_verformung": 3,
+                             "nk_spannung": 2, "nk_winkel": 1, "nk_ausnutzung": 2})
+        app.processEvents()
+        check("Modell trägt die Einheiten (N, mm, cm, kN/cm²)",
+              m_.einheiten.kraft == "N" and m_.einheiten.laenge == "mm" and m_.einheiten.nk_kraft == 0)
+        check("Tabellenköpfe folgen: x [mm], Rx [N], Mx [Nmm]",
+              w.tbl_knoten.kopfzeile()[1] == "x [mm]" and w.tbl_react.kopfzeile()[1] == "Rx [N]"
+              and w.tbl_react.kopfzeile()[4] == "Mx [Nmm]",
+              str((w.tbl_knoten.kopfzeile()[1], w.tbl_react.kopfzeile()[1:5])))
+        rz_zelle = str(rk_.data(rk_.index(0, 3)))
+        check("Zellen folgen: x = 4000,0 mm; Rz in N ohne Nachkomma (auch als min/max-Paar)",
+              mk_.data(mk_.index(1, 1)) == "4000,0"
+              and rz_zelle.split("/")[0].strip() == f"{rz_kN * 1000:.0f}".replace(".", ","),
+              str((mk_.data(mk_.index(1, 1)), rz_zelle, rz_kN)))
+        if not paar_:
+            check("Filter und Sortierung in der Anzeigeeinheit (UserRole = N)",
+                  abs(float(rk_.data(rk_.index(0, 3), QtCore.Qt.UserRole)) - rz_kN * 1000) < 1e-6)
+        csv_ = w.tbl_react.text().splitlines()
+        check("CSV-Export in der Anzeigeeinheit: Kopf [N], Wert in N",
+              csv_[0].startswith("Knoten;Rx [N];Ry [N];Rz [N];Mx [Nmm]")
+              and abs(float(csv_[1].split(";")[3].split("/")[0].replace(",", ".")) - rz_kN * 1000) < 1e-6,
+              str(csv_[:2]))
+        check("Lasten oben links in [N, N/mm], Kennwerte u in [cm], Rz in [N]",
+              any("[N, N/mm]" in z for z in w._kopfzeile_zeilen)
+              and any(z.startswith("u ") and "[cm]" in z for z in w._kennwerte_zeilen)
+              and any(z.startswith("Rz") and "[N]" in z for z in w._kennwerte_zeilen),
+              str((w._kopfzeile_zeilen, w._kennwerte_zeilen[:2])))
+        ok_ = mk_.setData(mk_.index(1, 1), "4500", QtCore.Qt.EditRole)
+        check("Eingabe in der Tabelle in mm: 4500 -> Knoten x = 4,5 m",
+              ok_ and abs(float(m_.nodes[1, 0]) - 4.5) < 1e-9, str(m_.nodes[1, 0]))
+        m2_ = Model.from_dict(json.loads(json.dumps(m_.to_dict())))
+        check("Einheiten werden mit dem Modell gespeichert",
+              m2_.einheiten.kraft == "N" and m2_.einheiten.nk_last == 1 and m2_.einheiten.spannung == "kN/cm²")
+        w.undo()
+        w.undo()
+        app.processEvents()
+        # Rueckgaengig tauscht das Modellobjekt - darum ueber w.model pruefen
+        check("Rückgängig stellt kN und m wieder her",
+              w.model.einheiten.kraft == "kN" and w.tbl_knoten.kopfzeile()[1] == "x [m]"
+              and w.tbl_react.kopfzeile()[1] == "Rx [kN]",
+              str((w.model.einheiten.kraft, w.tbl_knoten.kopfzeile()[1])))
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Einheiten und Genauigkeiten", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

@@ -48,6 +48,20 @@ VERGLEICHE = (("<=", operator.le), (">=", operator.ge), ("!=", operator.ne),
               ("<", operator.lt), (">", operator.gt), ("=", operator.eq))
 
 
+_PAAR = re.compile(r"^\s*(-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?)\s*/\s*"
+                   r"(-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?)\s*$")
+
+
+def _paar(wert):
+    """„min / max“-Text einer Umhuellenden als zwei Zahlen, sonst None."""
+    if not isinstance(wert, str):
+        return None
+    m = _PAAR.match(wert)
+    if not m:
+        return None
+    return (float(m.group(1).replace(",", ".")), float(m.group(2).replace(",", ".")))
+
+
 def _zahl(x):
     """Der Wert als Zahl - oder None, wenn er keine ist."""
     if isinstance(x, bool):
@@ -217,6 +231,54 @@ class TabellenModell(QtCore.QAbstractTableModel):
         self.spalten = list(spalten)
         self.zeilen = [list(z) for z in (zeilen or [])]
         self.aendern = None          # fn(zeile, spalte, wert) -> bool
+        #: fn() -> einheiten.Einheiten oder None. Die Zeilen stehen in den
+        #: Grundeinheiten der Spalten (kN, kNm, m, mm, N/mm² ...); gezeigt,
+        #: gefiltert, bearbeitet und exportiert wird in den eingestellten
+        #: Einheiten mit deren Nachkommastellen.
+        self.einheiten_quelle = None
+
+    # -- Einheiten -------------------------------------------------------
+    def anzeige(self, k: int) -> tuple:
+        """(Faktor Grundeinheit -> Anzeige, Einheitentext, Nachkommastellen)
+        der Spalte *k*."""
+        sp = self.spalten[k]
+        e = self.einheiten_quelle() if self.einheiten_quelle is not None else None
+        if e is None or sp.art != "zahl":
+            return 1.0, sp.einheit, sp.nachkomma
+        return e.anzeige(sp.einheit, sp.nachkomma)
+
+    def kopf(self, k: int) -> str:
+        sp = self.spalten[k]
+        _f, einheit, _nk = self.anzeige(k)
+        return f"{sp.name} [{einheit}]" if einheit else sp.name
+
+    def angezeigt(self, k: int, wert):
+        """Zahlenwert der Spalte *k* in der Anzeigeeinheit (Text bleibt Text;
+        ein „min / max“-Paar wird als Paar umgerechnet)."""
+        if self.spalten[k].art != "zahl":
+            return wert
+        if isinstance(wert, (int, float)) and not isinstance(wert, bool):
+            f, _e, nk = self.anzeige(k)
+            return round(float(wert) * f, int(nk) + 6)
+        paar = _paar(wert)
+        if paar is not None:
+            f, _e, nk = self.anzeige(k)
+            if f != 1.0:
+                return " / ".join(f"{x * f:.{nk}f}" for x in paar)
+        return wert
+
+    def zeilen_angezeigt(self, zeilen: list) -> list:
+        """Zeilen in Anzeigeeinheiten - fuer Zwischenablage, CSV und Excel."""
+        return [[self.angezeigt(k, w) if k < len(self.spalten) else w
+                 for k, w in enumerate(z)] for z in zeilen]
+
+    def einheiten_aktualisieren(self):
+        """Nach geaenderten Einheiten Kopf und Zellen neu zeichnen."""
+        if self.columnCount():
+            self.headerDataChanged.emit(QtCore.Qt.Horizontal, 0, self.columnCount() - 1)
+        if self.rowCount() and self.columnCount():
+            self.dataChanged.emit(self.index(0, 0),
+                                  self.index(self.rowCount() - 1, self.columnCount() - 1))
 
     # -- Qt --------------------------------------------------------------
     def rowCount(self, _eltern=QtCore.QModelIndex()) -> int:
@@ -228,10 +290,10 @@ class TabellenModell(QtCore.QAbstractTableModel):
     def headerData(self, i, richtung, rolle=QtCore.Qt.DisplayRole):
         if rolle == QtCore.Qt.DisplayRole:
             if richtung == QtCore.Qt.Horizontal:
-                return self.spalten[i].kopf()
+                return self.kopf(i)
             return str(i + 1)
         if rolle == QtCore.Qt.ToolTipRole and richtung == QtCore.Qt.Horizontal:
-            return self.spalten[i].hinweis or self.spalten[i].kopf()
+            return self.spalten[i].hinweis or self.kopf(i)
         return None
 
     def data(self, index, rolle=QtCore.Qt.DisplayRole):
@@ -241,19 +303,27 @@ class TabellenModell(QtCore.QAbstractTableModel):
         wert = self.zeilen[z][k] if k < len(self.zeilen[z]) else ""
         if rolle in (QtCore.Qt.DisplayRole, QtCore.Qt.EditRole):
             sp = self.spalten[k]
+            if sp.art == "zahl" and isinstance(wert, (int, float)):
+                f, _e, nk = self.anzeige(k)
+                if rolle == QtCore.Qt.EditRole:
+                    return f"{self.angezeigt(k, wert):g}"
+                return f"{float(wert) * f:.{nk}f}".replace(".", ",")
+            if sp.art == "zahl" and rolle == QtCore.Qt.DisplayRole and _paar(wert) is not None:
+                f, _e, nk = self.anzeige(k)
+                if f != 1.0:
+                    return " / ".join(f"{x * f:.{nk}f}".replace(".", ",") for x in _paar(wert))
             if rolle == QtCore.Qt.EditRole:
                 return str(wert)
-            if sp.art in ("zahl",) and isinstance(wert, (int, float)):
-                return f"{float(wert):.{sp.nachkomma}f}".replace(".", ",")
             if sp.art == "ganz" and isinstance(wert, (int, float)):
                 return str(int(wert))
             return str(wert)
         if rolle == QtCore.Qt.TextAlignmentRole and self.spalten[k].art != "text":
             return int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         if rolle == QtCore.Qt.UserRole:
+            # Sortieren, Filtern und Markieren in der Anzeigeeinheit
             if self.spalten[k].art in ("zahl", "ganz"):
                 z = _zahl(wert)
-                return wert if z is None else z
+                return wert if z is None else self.angezeigt(k, z)
             return wert
         return None
 
@@ -274,6 +344,11 @@ class TabellenModell(QtCore.QAbstractTableModel):
             return False
         if sp.art == "ganz":
             neu = int(round(neu))
+        elif sp.art == "zahl":
+            # eingegeben in der Anzeigeeinheit, gespeichert in der Grundeinheit
+            f, _e, _nk = self.anzeige(k)
+            if f and f != 1.0:
+                neu = float(neu) / f
         if self.aendern is not None and not self.aendern(z, k, neu):
             return False
         while len(self.zeilen[z]) <= k:
@@ -464,7 +539,21 @@ class Datentabelle(QtWidgets.QWidget):
         return self.filter.rowCount()
 
     def kopfzeile(self) -> list:
-        return [sp.kopf() for sp in self.modell.spalten]
+        return [self.modell.kopf(k) for k in range(len(self.modell.spalten))]
+
+    def einheiten_setzen(self, quelle):
+        """*quelle*: fn() -> einheiten.Einheiten (oder None fuer Grundeinheiten).
+        Kopf, Zellen, Filter, Fusszeile und Export folgen den Einheiten."""
+        self.modell.einheiten_quelle = quelle
+        self.fussmodell.einheiten_quelle = quelle
+        self.einheiten_aktualisieren()
+
+    def einheiten_aktualisieren(self):
+        self.modell.einheiten_aktualisieren()
+        self.fussmodell.einheiten_aktualisieren()
+        self.filter.invalidate()
+        self.view.resizeColumnsToContents()
+        self._nachfuehren()
 
     @staticmethod
     def _schluessel(x):
@@ -540,7 +629,7 @@ class Datentabelle(QtWidgets.QWidget):
     def _spaltenwahl(self):
         m = QtWidgets.QMenu(self)
         for k, sp in enumerate(self.modell.spalten):
-            a = m.addAction(sp.kopf())
+            a = m.addAction(self.modell.kopf(k))
             a.setCheckable(True)
             a.setChecked(not self.view.isColumnHidden(k))
             a.toggled.connect(lambda an, i=k: (self.view.setColumnHidden(i, not an),
@@ -553,12 +642,13 @@ class Datentabelle(QtWidgets.QWidget):
 
     # -- Export ----------------------------------------------------------
     def zeilen_fuer_export(self) -> list:
-        """Was gerade zu sehen ist, samt Max- und Min-Zeile."""
+        """Was gerade zu sehen ist, samt Max- und Min-Zeile - in den
+        Anzeigeeinheiten, so wie der Kopf sie nennt."""
         z = self.sichtbare_zeilen()
         if self.kennwerte_zeigen and z:
             hoch, tief = kennwerte(z, self.modell.spalten)
             z = z + [hoch, tief]
-        return z
+        return self.modell.zeilen_angezeigt(z)
 
     def text(self) -> str:
         return als_csv(self.kopfzeile(), self.zeilen_fuer_export())

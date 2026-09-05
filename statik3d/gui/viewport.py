@@ -902,21 +902,24 @@ def _lastzahl(v: float, nachkomma: int = 2) -> str:
     return s or "0"
 
 
-#: Einheiten der Lastarten fuer die Kopfzeile
-LASTEINHEITEN = {"kraft": "kN", "moment": "kNm", "strecke": "kN/m", "flaeche": "kN/m²",
-                 "temperatur": "K", "zwang": "mm"}
+#: Lastart der Beschriftung -> Groesse in einheiten.Einheiten
+LASTARTEN = {"kraft": "kraft", "moment": "moment", "strecke": "strecke",
+             "flaeche": "flaechenlast", "temperatur": "temperatur", "zwang": "zwang"}
 #: hoechstens so viele Lastwerte je Lastart beschriften
 LASTWERTE_MAX = 60
 
 
 def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
-              seiten: dict = None, beschriften: bool = False, textgroesse: int = 10) -> list:
+              seiten: dict = None, beschriften: bool = False, textgroesse: int = 10,
+              einheiten=None) -> list:
     """Alle Lasten eines Lastfalls ins Bild. Rueckgabe: die Einheiten der
     gezeichneten Lastarten (fuer die Kopfzeile), z. B. ["kN", "kN/m²"].
 
     ``beschriften`` schreibt die Lastgroesse als Zahl an die Pfeile (Knoten-
     lasten, Strecken- und Flaechenlasten, Objektlasten je Flaeche, Temperatur,
-    Zwangsverformung); die Einheit steht in der Kopfzeile.
+    Zwangsverformung); die Einheit steht in der Kopfzeile. ``einheiten``
+    (einheiten.Einheiten, sonst ``model.einheiten``) bestimmt Einheit und
+    Nachkommastellen der Zahlen.
 
     * Knotenlasten: rote Pfeile auf den Knoten
     * Streckenlasten auf Elementen (auch abschnittsweise): Pfeilreihen
@@ -933,13 +936,23 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
     """
     if case is None:
         return []
-    einheiten: list = []
+    from ..einheiten import Einheiten
+    eh = einheiten or getattr(model, "einheiten", None) or Einheiten()
+    arten: list = []
     texte: dict = {}            # Lastart -> [(Punkt, Text)]
 
     def merken(art, punkt, text):
-        if art not in einheiten:
-            einheiten.append(art)
+        if art not in arten:
+            arten.append(art)
         texte.setdefault(art, []).append((np.asarray(punkt, float), text))
+
+    def lz(wert_si, art):
+        """Lastgroesse (SI) als kurze Zahl in der eingestellten Einheit."""
+        return eh.zahl(abs(float(wert_si)), LASTARTEN[art], eh.nk_last)
+
+    def spanne(a_si, b_si, art, pfeil="→"):
+        return lz(a_si, art) if abs(a_si - b_si) < 1e-9 * max(1.0, abs(a_si)) \
+            else f"{lz(a_si, art)}{pfeil}{lz(b_si, art)}"
 
     # ---- Kraefte: Knoten, Strecken, Elementseiten -------------------------
     pts, vec = [], []
@@ -950,10 +963,10 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         if np.any(f) and 0 <= int(l.node) < model.nn:
             pts.append(model.nodes[int(l.node)])
             vec.append(f)
-            merken("kraft", model.nodes[int(l.node)], _lastzahl(np.linalg.norm(f) / 1e3))
+            merken("kraft", model.nodes[int(l.node)], lz(np.linalg.norm(f), "kraft"))
         mo = np.asarray(l.F[3:6], float) if len(l.F) >= 6 else np.zeros(3)
         if np.any(mo) and 0 <= int(l.node) < model.nn:
-            merken("moment", model.nodes[int(l.node)], _lastzahl(np.linalg.norm(mo) / 1e3))
+            merken("moment", model.nodes[int(l.node)], lz(np.linalg.norm(mo), "moment"))
     for bl in case.beam_loads:
         if getattr(bl, "_geo", False) or not 0 <= int(bl.elem) < len(model.elements):
             continue
@@ -975,9 +988,8 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                 pts.append(X[0] + (x / L) * (X[-1] - X[0]))
                 vec.append(q)
         if np.any(q1) or np.any(q2):
-            n1, n2 = np.linalg.norm(q1) / 1e3, np.linalg.norm(q2) / 1e3
-            text = _lastzahl(n1) if abs(n1 - n2) < 1e-9 else f"{_lastzahl(n1)}→{_lastzahl(n2)}"
-            merken("strecke", X[0] + (0.5 * (a + b) / L) * (X[-1] - X[0]), text)
+            merken("strecke", X[0] + (0.5 * (a + b) / L) * (X[-1] - X[0]),
+                   spanne(np.linalg.norm(q1), np.linalg.norm(q2), "strecke"))
     for fl in case.face_loads:
         if getattr(fl, "_geo", False) or not 0 <= int(fl.elem) < len(model.elements):
             continue
@@ -995,7 +1007,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             d = -n            # positiv drueckt in den Koerper hinein
         pts.append(mitte)
         vec.append(d * fl.p)
-        merken("flaeche", mitte, _lastzahl(fl.p / 1e3))
+        merken("flaeche", mitte, lz(fl.p, "flaeche"))
     # ---- Objektlasten auf der Geometrie -------------------------------------
     warm, kalt = [], []
     rahmen_pts, rahmen_lines = [], []
@@ -1052,9 +1064,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                 vec.append(d_ * p)
                 werte.append(float(p))
             if werte:
-                lo, hi = min(werte) / 1e3, max(werte) / 1e3
-                text = _lastzahl(hi) if abs(hi - lo) < 1e-6 else f"{_lastzahl(lo)}…{_lastzahl(hi)}"
-                merken("flaeche", mitten.mean(axis=0), text)
+                merken("flaeche", mitten.mean(axis=0), spanne(min(werte), max(werte), "flaeche", "…"))
     for ll in getattr(case, "linienlasten", []) or []:
         q1 = np.asarray(ll.q, float)
         q2 = np.asarray(ll.q2, float) if ll.q2 is not None else q1
@@ -1096,9 +1106,8 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         lauf = 0.0
         for (A, B, roll), L in zip(stuecke, laengen):
             if lauf <= mitte_s <= lauf + L and L > 0:
-                n1, n2 = np.linalg.norm(q1) / 1e3, np.linalg.norm(q2) / 1e3
                 merken("strecke", A + (mitte_s - lauf) / L * (B - A),
-                       _lastzahl(n1) if abs(n1 - n2) < 1e-9 else f"{_lastzahl(n1)}→{_lastzahl(n2)}")
+                       spanne(np.linalg.norm(q1), np.linalg.norm(q2), "strecke"))
                 break
             lauf += L
         s0 = 0.0
@@ -1151,7 +1160,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         if np.any(u):
             zpts.append(X)
             zvec.append(u)
-            merken("zwang", X, _lastzahl(np.linalg.norm(u) * 1e3, 2))
+            merken("zwang", X, eh.zahl(np.linalg.norm(u), "zwang"))
         if any(k in zv.dofs and zv.u[k] for k in (3, 4, 5)):
             ringe.append(X)
     _pfeile(plotter, zpts, zvec, size, "zwang", FARBE_ZWANG)
@@ -1172,7 +1181,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             plotter.add_point_labels(np.asarray(punkte, float), zeilen, font_size=int(textgroesse),
                                      text_color=FARBE_LAST, shape=None, show_points=False,
                                      always_visible=True, name="lastwerte")
-    return [LASTEINHEITEN[a] for a in einheiten if a in LASTEINHEITEN]
+    return [eh.einheit(LASTARTEN[a]) for a in arten if a in LASTARTEN]
 
 
 def add_contact_markers(plotter, model: Model, contact: list, size: float):
@@ -1340,7 +1349,7 @@ def _stabname(model: Model, elem: int, breite: int = 12) -> str:
 
 
 def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
-              ueberschrift: str = "") -> list:
+              ueberschrift: str = "", einheiten=None) -> list:
     """Die Kennzahlen des gezeigten Ergebnisses als Textzeilen.
 
     Das sind die Zahlen, nach denen zuerst gefragt wird: groesste Ausnutzung,
@@ -1350,8 +1359,11 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
 
     Die Zeilen sind auf feste Spalten gesetzt (Schreibmaschinenschrift), damit
     die Zahlen im Bild untereinander stehen und die Zeile nicht ueber das
-    Modell laeuft.
+    Modell laeuft. Einheiten und Nachkommastellen kommen aus *einheiten*
+    (einheiten.Einheiten, sonst ``model.einheiten``).
     """
+    from ..einheiten import Einheiten
+    E = einheiten or getattr(model, "einheiten", None) or Einheiten()
     zeilen = []
     if ueberschrift:
         zeilen.append(str(ueberschrift))
@@ -1359,24 +1371,27 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         return (f"{name:<6s}{lo:>10s} {ort_lo:<11s}{hi:>10s} {ort_hi:<11s}"
                 f"[{einheit}]")
 
+    def z(wert_si, art):
+        return E.text(wert_si, art, mit_einheit=False)
+
     u = displacement_of(res)
     if u is not None and len(u):
         mag = np.linalg.norm(u[:, :3], axis=1)
         k = int(np.nanargmax(mag)) if np.isfinite(mag).any() else 0
-        zeilen.append(zeile("u", "", "", f"{mag[k] * 1000:.3f}",
-                            f"Knoten {k}", "mm"))
+        zeilen.append(zeile("u", "", "", z(mag[k], "verformung"),
+                            f"Knoten {k}", E.einheit("verformung")))
         for j, nm in enumerate(("ux", "uy", "uz")):
-            zeilen.append(zeile(nm, f"{u[:, j].min() * 1000:.3f}", "",
-                                f"{u[:, j].max() * 1000:.3f}", "", "mm"))
+            zeilen.append(zeile(nm, z(u[:, j].min(), "verformung"), "",
+                                z(u[:, j].max(), "verformung"), "", E.einheit("verformung")))
     reihe = (groesse,) if groesse in SCHNITTGROESSEN else SCHNITTGROESSEN
     grenzen = schnittgroessen_grenzen(model, res, reihe)
     for q in reihe:
         if q not in grenzen:
             continue
         lo, e_lo, hi, e_hi = grenzen[q]
-        eh, f = SG_EINHEIT[q]
-        zeilen.append(zeile(q, f"{lo / f:.3f}", _stabname(model, e_lo, 10),
-                            f"{hi / f:.3f}", _stabname(model, e_hi, 10), eh))
+        art = "moment" if q in ("Mt", "My", "Mz") else "kraft"
+        zeilen.append(zeile(q, z(lo, art), _stabname(model, e_lo, 10),
+                            z(hi, art), _stabname(model, e_hi, 10), E.einheit(art)))
     # Verdrehungen - nur wo es Staebe oder Schalen gibt, sonst sind sie null
     if u is not None and len(u) and u.shape[1] >= 6 and np.abs(u[:, 3:6]).max() > 0:
         for j, nm in enumerate(("phix", "phiy", "phiz")):
@@ -1384,33 +1399,31 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
                                 f"{u[:, 3 + j].max() * 1000:.3f}", "", "mrad"))
     # Auflagerkraefte: kleinste und groesste je Richtung mit Knoten
     R = getattr(res, "reactions", None)
+    reakt = (("Rx", "kraft"), ("Ry", "kraft"), ("Rz", "kraft"),
+             ("Mx", "moment"), ("My", "moment"), ("Mz", "moment"))
     if R is None and getattr(res, "r_min", None) is not None:
         R = None
         rmin, rmax = res.r_min, res.r_max
-        for j, (nm, eh, f) in enumerate((("Rx", "kN", 1e3), ("Ry", "kN", 1e3),
-                                          ("Rz", "kN", 1e3), ("Mx", "kNm", 1e3),
-                                          ("My", "kNm", 1e3), ("Mz", "kNm", 1e3))):
+        for j, (nm, art) in enumerate(reakt):
             if not np.any(rmin[:, j]) and not np.any(rmax[:, j]):
                 continue
             a, b = int(np.argmin(rmin[:, j])), int(np.argmax(rmax[:, j]))
-            zeilen.append(zeile(nm, f"{rmin[a, j] / f:.2f}", f"Knoten {a}",
-                                f"{rmax[b, j] / f:.2f}", f"Knoten {b}", eh))
+            zeilen.append(zeile(nm, z(rmin[a, j], art), f"Knoten {a}",
+                                z(rmax[b, j], art), f"Knoten {b}", E.einheit(art)))
     elif R is not None and len(R):
-        for j, (nm, eh, f) in enumerate((("Rx", "kN", 1e3), ("Ry", "kN", 1e3),
-                                          ("Rz", "kN", 1e3), ("Mx", "kNm", 1e3),
-                                          ("My", "kNm", 1e3), ("Mz", "kNm", 1e3))):
+        for j, (nm, art) in enumerate(reakt):
             if j >= R.shape[1] or not np.any(R[:, j]):
                 continue
             a, b = int(np.argmin(R[:, j])), int(np.argmax(R[:, j]))
-            zeilen.append(zeile(nm, f"{R[a, j] / f:.2f}", f"Knoten {a}",
-                                f"{R[b, j] / f:.2f}", f"Knoten {b}", eh))
+            zeilen.append(zeile(nm, z(R[a, j], art), f"Knoten {a}",
+                                z(R[b, j], art), f"Knoten {b}", E.einheit(art)))
     vm = getattr(res, "node_vm_max", None)
     if vm is None:
         vm = getattr(res, "node_vm", None)
     if vm is not None and len(vm) and np.isfinite(vm).any():
         k = int(np.nanargmax(vm))
-        zeilen.append(zeile("sig_v", "", "", f"{float(vm[k]) / 1e6:.1f}",
-                            f"Knoten {k}", "N/mm²"))
+        zeilen.append(zeile("sig_v", "", "", z(float(vm[k]), "spannung"),
+                            f"Knoten {k}", E.einheit("spannung")))
     werte = dict(util or {})
     if not werte:
         for i, d in (getattr(res, "beam_forces", None) or {}).items():
@@ -1418,7 +1431,7 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
                 werte[i] = d["util"]
     if werte:
         i = max(werte, key=lambda k: werte[k])
-        zeilen.append(f"max. Ausnutzung {werte[i]:.3f} an {_stabname(model, i)}"
+        zeilen.append(f"max. Ausnutzung {werte[i]:.{E.nk_ausnutzung}f} an {_stabname(model, i)}"
                       + ("  - ueberschritten!" if werte[i] > 1.0 else ""))
     return zeilen
 

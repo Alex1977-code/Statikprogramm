@@ -36,6 +36,8 @@ from typing import Optional
 
 import numpy as np
 
+from .einheiten import Einheiten
+
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
 DOF_ALIASES = {"ux": 0, "uy": 1, "uz": 2, "rx": 3, "ry": 4, "rz": 5,
                "phix": 3, "phiy": 4, "phiz": 5, "mx": 3, "my": 4, "mz": 5,
@@ -2079,6 +2081,8 @@ class Model:
         # Bemassungen (bemassung.Bemassung) und ihre Einstellungen
         self.bemassungen: dict = {}
         self.bemassung_einstellung = None      # None = Vorgabe (bemassung.BemassungEinstellung)
+        # Einheiten und Nachkommastellen fuer Ansicht und Tabellen (einheiten.Einheiten)
+        self.einheiten = Einheiten()
         # Metadaten (Bericht)
         self.meta: dict[str, str] = {"projekt": "", "bauteil": "", "bearbeiter": "",
                                      "auftraggeber": "", "position": ""}
@@ -3591,6 +3595,7 @@ class Model:
             "bemassungen": [asdict(x) for x in self.bemassungen.values()],
             "bemassung_einstellung": (asdict(self.bemassung_einstellung)
                                       if self.bemassung_einstellung is not None else None),
+            "einheiten": asdict(self.einheiten),
         }
 
     def save(self, path: str):
@@ -3675,6 +3680,8 @@ class Model:
             m.bemassungen = {x["name"]: _dc(Bemassung, x) for x in d.get("bemassungen") or []}
             if d.get("bemassung_einstellung"):
                 m.bemassung_einstellung = _dc(BemassungEinstellung, d["bemassung_einstellung"])
+        if d.get("einheiten"):
+            m.einheiten = _dc(Einheiten, d["einheiten"])
         if d.get("stellungen"):
             from .bridges.positions import Stellung
             m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]

@@ -455,7 +455,9 @@ passende Tabelle nach vorn — samt ihrer Gruppe.
 
 Jede Tabelle unten hat über der Kopfzeile eine **Filterzeile** — ein Feld je
 Spalte. Was dort steht, gilt sofort; mehrere Felder wirken zusammen (und, nicht
-oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist.
+oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist. Zahlen-
+spalten stehen in den Einheiten aus *Ansicht → Einheiten*; Filterwerte werden
+in derselben Einheit eingegeben.
 
 | Eingabe | wirkt |
 |---|---|
@@ -557,10 +559,44 @@ Mitte des belasteten Abschnitts (bei Trapezlasten „q₁→q₂“), Flächen- 
 Objektlasten p je Fläche (bei Verläufen „p_min…p_max“), Temperaturlasten ΔT,
 Zwangsverformungen die Verschiebung. Die **Einheiten** der gezeichneten
 Lastarten stehen oben links in eckigen Klammern unter dem Lastfall, etwa
-„[kN, kN/m, kN/m²]“ - kN, kNm, kN/m, kN/m², K und mm. Der Schalter
+„[kN, kN/m, kN/m²]“ - in den Einheiten aus *Ansicht → Einheiten*
+(Vorgabe kN, kNm, kN/m, kN/m², K und mm). Der Schalter
 *Ansicht → Anzeigen → Lastwerte* blendet die Zahlen aus; die Textgröße
 folgt den Bemaßungseinstellungen. Bei sehr vielen gleichartigen Lasten
 werden höchstens 60 je Lastart beschriftet.
+
+### Einheiten und Genauigkeiten
+
+*Ansicht → Einheiten* (auch *Extras → Einheiten und Genauigkeiten…*) öffnet
+rechts die Maske, in der Einheit und Nachkommastellen für die Anzeige gewählt
+werden. Gerechnet wird immer in SI (N, m, Pa); die Einstellung betrifft nur,
+was gezeigt wird, und sie wird mit dem Modell gespeichert.
+
+| Größe | Einheiten | Nachkommastellen |
+|---|---|---|
+| Kraft | N, kN, MN | Kraft und Moment |
+| Länge | m, cm, mm | Länge |
+| Verformung | mm, cm, m | Verformung |
+| Spannung | N/mm², MPa, kN/cm² | Spannung |
+| Lastwerte in der Ansicht | aus Kraft und Länge | Lasten |
+| Winkel, Ausnutzung | °, – | Winkel, Ausnutzung |
+
+Moment, Strecken- und Flächenlast folgen aus Kraft und Länge: bei N und mm
+wird aus kNm Nmm, aus kN/m N/mm und aus kN/m² N/mm². Die Einstellung wirkt
+auf
+
+* die **Lastwerte** an den Lasten und die Einheitenzeile oben links,
+* die **Kennwerte** unten links (Verformung, Schnittgrößen, Auflagerkräfte,
+  Vergleichsspannung, Ausnutzung),
+* alle **Tabellen** unten: Kopfzeile, Zellen, Filter, Sortierung, Max/Min-Zeile,
+  Zwischenablage, CSV und Excel. Bearbeitbare Zahlen (Knotenkoordinaten,
+  Streckgrenze …) werden in der angezeigten Einheit eingegeben und in der
+  Grundeinheit gespeichert; „min / max“-Paare der Umhüllenden werden als Paar
+  umgerechnet.
+
+Die Maße im Bild haben eigene Angaben (*Messen → Bemaßung: Einstellungen*),
+der Bericht bleibt bei kN, m, mm und N/mm². „Rückgängig“ nimmt auch eine
+Einheitenumstellung zurück.
 
 ### Messen und Bemaßen (Register Messen)
 

@@ -1756,6 +1756,58 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"Bemaßung: {e.einheit}, {e.nachkomma} Nachkommastellen, {e.textgroesse} pt")
         self.refresh_all()
 
+    # ------------------------------------------------------------------
+    # Einheiten und Genauigkeiten
+    # ------------------------------------------------------------------
+    def maske_einheiten(self):
+        """Einheiten und Nachkommastellen fuer Ansicht und Tabellen."""
+        from .. import einheiten as eh
+        e = self.model.einheiten
+        F = msk.Feld
+        felder = [F("kraft", "Kraft", "wahl", e.kraft, list(eh.WAHL["kraft"]),
+                    hinweis="Moment, Strecken- und Flächenlast folgen aus Kraft und Länge"),
+                  F("laenge", "Länge", "wahl", e.laenge, list(eh.WAHL["laenge"])),
+                  F("verformung", "Verformung", "wahl", e.verformung, list(eh.WAHL["verformung"])),
+                  F("spannung", "Spannung", "wahl", e.spannung, list(eh.WAHL["spannung"])),
+                  F("nk_kraft", "Nachkommastellen Kraft, Moment", "ganz", int(e.nk_kraft)),
+                  F("nk_last", "Nachkommastellen Lasten (Ansicht)", "ganz", int(e.nk_last)),
+                  F("nk_laenge", "Nachkommastellen Länge", "ganz", int(e.nk_laenge)),
+                  F("nk_verformung", "Nachkommastellen Verformung", "ganz", int(e.nk_verformung)),
+                  F("nk_spannung", "Nachkommastellen Spannung", "ganz", int(e.nk_spannung)),
+                  F("nk_winkel", "Nachkommastellen Winkel", "ganz", int(e.nk_winkel)),
+                  F("nk_ausnutzung", "Nachkommastellen Ausnutzung", "ganz", int(e.nk_ausnutzung))]
+        maske = msk.Maske("Einheiten und Genauigkeiten", felder, knopf="Übernehmen",
+                          hinweis="Gerechnet wird immer in SI; die Einstellung gilt für die "
+                                  "Zahlen in der Ansicht (Lastwerte, Kennwerte unten links) und "
+                                  "für alle Tabellen unten samt Filter, Kopieren, CSV und Excel. "
+                                  "Sie wird mit dem Modell gespeichert. Die Maße im Bild haben "
+                                  "eigene Angaben (Messen → Bemaßung: Einstellungen).")
+        maske.angewendet.connect(self._einheiten_setzen)
+        return self.maske_erzeugen(maske)
+
+    def _einheiten_setzen(self, w: dict):
+        from .. import einheiten as eh
+        e = self.model.einheiten
+        self.merken("Einheiten und Genauigkeiten")
+        for name in ("kraft", "laenge", "verformung", "spannung"):
+            wert = str(w.get(name, getattr(e, name)))
+            if wert in eh.WAHL[name]:
+                setattr(e, name, wert)
+        for name in ("nk_kraft", "nk_last", "nk_laenge", "nk_verformung", "nk_spannung",
+                     "nk_winkel", "nk_ausnutzung"):
+            try:
+                setattr(e, name, min(8, max(0, int(round(float(w.get(name, getattr(e, name))))))))
+            except (TypeError, ValueError):
+                pass
+        self.einheiten_anwenden()
+        self.info("Einheiten: " + e.beschreibung())
+
+    def einheiten_anwenden(self):
+        """Tabellen und Ansicht nach geaenderten Einheiten neu beschriften."""
+        for t in self.findChildren(tab.Datentabelle):
+            t.einheiten_aktualisieren()
+        self.redraw()
+
     def _linie_am_zeiger(self):
         """Name der Linie unter dem Zeiger - in Bildschirmpunkten gemessen."""
         A, B, namen = self._linienstrecken()
@@ -2426,6 +2478,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g.widget(self.sl_lager)
         g.klein("Lagergröße zurücksetzen", self.lagergroesse_zuruecksetzen,
                 hinweis="Alle Lagersymbole auf die Grundgröße")
+        g = r.gruppe("Einheiten")
+        self.act_einheiten = g.gross("Einheiten", "㎪", self.maske_einheiten,
+                                     hinweis="Einheiten und Nachkommastellen für Ansicht und "
+                                             "Tabellen (Kraft, Länge, Verformung, Spannung)")
 
         # -- Extras ------------------------------------------------------
         # -- Messen ------------------------------------------------------
@@ -2476,6 +2532,8 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Info", "ⓘ", self.about,
                 hinweis="Fassung, Build und Gültigkeitsbereich")
         g.klein("Nach Update suchen…", self.check_update)
+        g.klein("Einheiten und Genauigkeiten…", self.maske_einheiten,
+                hinweis="Einheiten und Nachkommastellen für Ansicht und Tabellen")
 
         rb.schnell(self.act_speichern, self.act_undo, self.act_redo,
                    self.act_rechnen, self.act_auswahl_weg)
@@ -5652,6 +5710,10 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self.log, "Protokoll")
         self._build_eingabetabellen(tabs)
         self._build_ergebnistabellen(tabs)
+        # Alle Tabellen zeigen in den Einheiten und Nachkommastellen des
+        # Modells (Ansicht -> Einheiten); die Zeilen bleiben in Grundeinheiten.
+        for t in tabs.findChildren(tab.Datentabelle):
+            t.einheiten_setzen(lambda: self.model.einheiten)
         self.bottom_tabs = tabs
         dock.setWidget(tabs)
         dock.setMinimumHeight(215)
