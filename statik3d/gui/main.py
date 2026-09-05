@@ -6765,6 +6765,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knicklaengen = None
         self.schwingung = None
         self.selection = np.array([], dtype=int)
+        self._objektauswahl_leeren()
         self._undo_knoepfe()
         self.refresh_all()
 
@@ -9235,9 +9236,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis = None
         self.results = None
         self.selection = np.array([], dtype=int)
+        self._objektauswahl_leeren()
         self.path = None
         self.refresh_all()
         self._refresh_title()
+
+    def _objektauswahl_leeren(self):
+        """Gewaehlte Linien, Staebe, Flaechen, Volumen und Elemente vergessen -
+        nach einem Modellwechsel zeigen sie sonst auf Objekte, die es nicht
+        mehr gibt, und eine neue Maske uebernaehme sie stillschweigend."""
+        for name in ("sel_linien", "sel_flaechen", "sel_koerper", "sel_staebe", "sel_elemente"):
+            if isinstance(getattr(self, name, None), list):
+                getattr(self, name).clear()
+        if isinstance(getattr(self, "leuchtet", None), list):
+            self.leuchtet = []
 
     def open_model(self):
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Modell öffnen", "", "Statik3D (*.json)")

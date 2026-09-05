@@ -1624,9 +1624,9 @@ def main():
               and kn_zweig.child(m_.nn - 1).text(0) == f"K{m_.nn - 1}",
               f"{kn_zweig.childCount()} Einträge")
         st_zweig = wurzel.child(2)
-        check("unter Stäbe zuerst die Stäbe mit Nachweis, dann alle Stabelemente",
-              st_zweig.child(0).text(0) == "Stäbe mit Nachweis"
-              and st_zweig.childCount() == 1 + sum(1 for e in m_.elements if e.typ in ("beam", "truss")),
+        check("unter Stäbe zuerst die Stäbe mit Nachweis und die Schweißnähte, dann alle Stabelemente",
+              st_zweig.child(0).text(0) == "Stäbe mit Nachweis" and st_zweig.child(1).text(0) == "Schweißnähte"
+              and st_zweig.childCount() == 2 + sum(1 for e in m_.elements if e.typ in ("beam", "truss")),
               f"{st_zweig.childCount()} Einträge")
         w._baum_geklickt("knoten", "Knoten")
         check("Klick auf „Knoten“ wählt alle Knoten", len(w.selection) == m_.nn
@@ -1816,7 +1816,8 @@ def main():
               and tu.tabText(tu.currentIndex()) == "Nachweise EC3"
               and tu.currentWidget() is w.tbl_design, tu.currentGroup())
         check("Reihenfolge in der Gruppe folgt der Vorgabe",
-              tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente"],
+              tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
+                                        "Schweißnähte"],
               str(tu.tabellen("Modell")))
         check("eine Gruppe mit nur einer Tabelle zeigt keine zweite Leiste",
               tu.seiten["Protokoll"].tabBar().isHidden()
