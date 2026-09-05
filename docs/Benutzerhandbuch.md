@@ -944,6 +944,35 @@ Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
 
+### Schwingungsnachweis des Verschlusses
+
+*Nachweise → Schwingung → Verschluss* (Ergebnis unten in der Tabelle
+„Schwingung“, Eigenformen im Wasser in der Ansicht, Erläuterung im Protokoll
+und im Bericht). Der Nachweis nimmt **benetzte Flächen, Wasserstände und
+Strömung aus einem Wasserdruck-Generierer** - deshalb zuerst den Wasserdruck
+anlegen (mit „unterströmt“ bzw. „überströmt“ für die Strömungsgeschwindigkeit
+und c_p' > 0 für die Druckschwankung).
+
+| Angabe | Bedeutung |
+|---|---|
+| Wasserdruck | Generierer, dessen Flächen, Situation, Wasserstände und Strömung gelten |
+| Eigenformen | Anzahl der gerechneten Eigenfrequenzen |
+| Hydrodynamische Masse | mitschwingendes Wasser nach Westergaard (m'' = 7/8·ρ·√(H·y)) auf den benetzten Flächen, je Wasserseite, in Richtung der Flächennormalen |
+| Dämpfungsgrad ζ | Lehrsches Dämpfungsmaß (Stahlwasserbau 0,01 … 0,03; im Wasser eher mehr) |
+| Strouhal-Zahl St, Kantenbreite d | Wirbelablösung f_s = St·v/d an der Unterkante bzw. Dichtung; d ist die Breite der Kante in Strömungsrichtung (leer = Blechdicke) |
+| Grenze V_r | reduzierte Geschwindigkeit V_r = v/(f·d); unterhalb der Grenze (≈ 1) sind instabilitäts- oder bewegungsinduzierte Schwingungen nicht zu erwarten |
+| Resonanzband | ± um f_s: liegt eine Eigenfrequenz darin, gilt der Nachweis als nicht erfüllt |
+| Betrieb, Nutzungsdauer, Kerbfall, γ_Mf, γ_Ff | Ermüdung aus der Antwort auf die Druckschwankung: N = f_s·t Lastspiele, Δσ = 2·V·σ_amp, D = N/N_R ≤ 1 (EN 1993-1-9) |
+
+Die Tabelle nennt je Eigenform f in Luft und im Wasser, das modale
+Massenverhältnis m_h/m, V_r, f_s/f, die Vergrößerungsfunktion V und die
+Beurteilung (unkritisch, Hinweis V_r, Resonanz). Der Bericht (Kapitel
+„Schwingungsnachweis des Verschlusses“) enthält Angaben, Modentabelle,
+Antwort auf die Druckschwankung mit Ermüdung, die Erläuterung und das
+**Frequenzbild** (Eigenfrequenzen nass und trocken, Band der Wirbelablösung,
+Grenze V_r) samt der Westergaard-Verteilung über die Höhe. Die Angaben
+bleiben im Modell und werden mit der Datei gespeichert.
+
 ### Knicklängen aus der Knickfigur
 
 *Nachweise → Knicklängen → Aus Knickfigur* (oder die Tabelle „Knicklängen“

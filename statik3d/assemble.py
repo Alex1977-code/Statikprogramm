@@ -295,8 +295,9 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
         shape=(n, n))
 
 
-def mass(model: Model, workers=None) -> sparse.csr_matrix:
-    return _assemble_triplets(model, _mass_chunk, workers)
+def mass(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
+    """Gesamtmasse (konzentriert); ``aktiv`` laesst abgeschaltete Elemente weg."""
+    return _assemble_triplets(model, _mass_chunk, workers, aktive_indizes(model, aktiv))
 
 
 def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None) -> sparse.csr_matrix:

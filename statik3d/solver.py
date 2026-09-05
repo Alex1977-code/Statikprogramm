@@ -965,6 +965,7 @@ class Analysis:
     systeme: dict = field(default_factory=dict)
     modelle: dict = field(default_factory=dict)
     theorie3: object = None
+    schwingung: object = None
 
     def all_results(self) -> dict:
         d = dict(self.cases)
@@ -1133,10 +1134,16 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
 # ==========================================================================
 # Modalanalyse
 # ==========================================================================
-def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = None) -> Results:
+def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = None,
+                aktiv=None, zusatzmasse=None) -> Results:
+    """Eigenfrequenzen und Eigenformen. ``aktiv``: Elementmaske einer Situation;
+    ``zusatzmasse``: zusaetzliche Massenmatrix (ndof x ndof), z. B. die
+    hydrodynamische Masse eines Verschlusses (schwingung.zusatzmassen)."""
     t0 = time.time()
-    K = asm.stiffness(model, workers)
-    M = asm.mass(model, workers)
+    K = asm.stiffness(model, workers, aktiv)
+    M = asm.mass(model, workers, aktiv)
+    if zusatzmasse is not None:
+        M = (M + zusatzmasse).tocsr()
     fixed, vals = asm.constrained_dofs(model, K)
     md = np.asarray(M.diagonal()).ravel()
     fixed = fixed | (md <= 0)
@@ -1165,7 +1172,8 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     res.reactions = np.zeros((model.nn, NDOF))
     res.freqs = freqs
     res.modes = modes.reshape(k, model.nn, NDOF)
-    res.info = {"ndof": model.ndof, "nfree": len(fi), "time": time.time() - t0}
+    res.info = {"ndof": model.ndof, "nfree": len(fi), "time": time.time() - t0,
+                "zusatzmasse": zusatzmasse is not None}
     return res
 
 

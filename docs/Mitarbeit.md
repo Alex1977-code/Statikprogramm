@@ -125,6 +125,12 @@ Punkte:
   Bilder 7.23, 7.28, 7.33 und 7.36 sind stückweise log-linear
   nachgezeichnet; Seitenwand- und Dachzonen setzen ein rechteckiges
   Gebäude voraus (Hüllquader der gewählten Flächen).
+* **Schwingungsnachweis**: die hydrodynamische Masse nach Westergaard gilt
+  für die senkrechte, starre Wand vor tiefem Wasser (inkompressibel, keine
+  Oberflächenwellen); für geneigte Häute, Segmentverschlüsse und
+  Wasserkörper endlicher Länge (Kolkman-Kurven) ist sie eine Näherung.
+  Selbsterregte (bewegungsinduzierte) Schwingungen werden nur über V_r
+  eingegrenzt, nicht berechnet; Strouhal-Zahl und Kantenbreite sind Eingaben.
 * **Wasserdruck**: die Druckminderung durch die Absenkung des Wasserspiegels
   (Überfall: ⅓·ρ·g·h_ü über 2·h_ü; Ausfluss: über 2·a) ist eine Näherung
   nach Naudascher; für Segmentverschlüsse mit gekrümmter Haut wirkt der

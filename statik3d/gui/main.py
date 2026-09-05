@@ -159,6 +159,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init_defaults(self):
         self.knicklaengen = None      # Knicklaengen aus der Knickfigur
+        self.schwingung = None        # Schwingungsnachweis des Verschlusses
         if not self.model.materials:
             self.model.add_material(Material.steel("S235"))
             self.model.add_material(Material.steel("S355"))
@@ -1645,6 +1646,13 @@ class MainWindow(QtWidgets.QMainWindow):
                         "welche Achse und ob der Stab beteiligt ist")
         g.klein("β übernehmen", self.knicklaengen_uebernehmen)
         g.klein("Tabelle Knicklängen", lambda: self.tabelle_zeigen("Knicklängen"))
+        g = r.gruppe("Schwingung")
+        g.gross("Verschluss", "f₁", lambda: self.maske_schwingung(),
+                hinweis="Strömungsinduzierte Schwingungen eines Verschlusses aus dem Wasserdruck: "
+                        "Eigenfrequenzen in Luft und im Wasser (hydrodynamische Masse nach "
+                        "Westergaard), Wirbelablösung (Strouhal), reduzierte Geschwindigkeit, "
+                        "Antwort auf die Druckschwankung und Ermüdung")
+        g.klein("Tabelle Schwingung", lambda: self.tabelle_zeigen("Schwingung"))
 
         # -- Ergebnisse --------------------------------------------------
         g = r.gruppe("Verformung (GZG)")
@@ -3032,7 +3040,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- Ergebnisse aus dem Modellbaum -----------------------------------
     #: Schluesselwort im Baum -> Tabelle unten
     NACHWEIS_TABELLE = {"design": "Nachweise EC3", "fatigue": "Ermüdung",
-                        "knicklaengen": "Knicklängen",
+                        "knicklaengen": "Knicklängen", "schwingung": "Schwingung",
                         "gzg": "Verformungen", "beulen": "Beulfelder",
                         "lasteinleitung": "Lasteinleitung", "volumen": "Volumen",
                         "joints": "Anschlüsse"}
@@ -3661,6 +3669,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if kl is not None:
             out.setdefault("Nachweise", []).append(
                 ("Knicklängen aus Knickfigur", kl.summary()[:60], "nachweis:knicklaengen"))
+        sw_ = getattr(self, "schwingung", None)
+        if sw_ is not None:
+            out.setdefault("Nachweise", []).append(
+                ("Schwingung Verschluss", sw_.summary()[:60], "nachweis:schwingung"))
         r = self.current_result() if an is not None else None
         if r is not None and (getattr(r, "beam_end", None) or getattr(r, "beam", None)):
             # Die Schnittgroessen gehoeren in den Baum: dort sucht man sie,
@@ -4706,6 +4718,19 @@ class MainWindow(QtWidgets.QMainWindow):
         bk2.clicked.connect(self.knicklaengen_uebernehmen)
         tabs.addTab(self._eingabetabelle(self.tbl_knick, bk1, bk2), "Knicklängen")
 
+        # Schwingungsnachweis des Verschlusses: je Eigenform f trocken/nass, V_r, f_s/f, V
+        self.tbl_schwing = tab.Datentabelle([
+            Spalte("Mode"), Spalte("f_Luft", "Hz", "zahl", 2),
+            Spalte("f_Wasser", "Hz", "zahl", 2, hinweis="mit hydrodynamischer Masse (Westergaard)"),
+            Spalte("m_h/m", "", "zahl", 2, hinweis="modales Verhältnis hydrodynamische Masse zu Masse"),
+            Spalte("V_r", "", "zahl", 2, hinweis="reduzierte Geschwindigkeit v/(f·d)"),
+            Spalte("f_s/f", "", "zahl", 2, hinweis="Wirbelablösung f_s = St·v/d zur Eigenfrequenz"),
+            Spalte("V", "", "zahl", 2, hinweis="Vergrößerungsfunktion bei f_s (Dämpfung ζ)"),
+            Spalte("Beurteilung")], "Schwingung", self, mit_kennwerten=True)
+        bs1 = QtWidgets.QPushButton("Nachweis führen…")
+        bs1.clicked.connect(lambda: self.maske_schwingung())
+        tabs.addTab(self._eingabetabelle(self.tbl_schwing, bs1), "Schwingung")
+
         # Anschluesse: Eingabe und Ergebnis in einer Tabelle. Vor der Rechnung
         # stehen Typ und Ort, danach zusaetzlich Ausnutzung und Status.
         self.tbl_joint = tab.Datentabelle([
@@ -4848,7 +4873,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ("Lager", ["Lager", "Gelenke", "Kontaktbedingungen"]),
         ("Lasten", ["Lastfälle", "Lasten", "Kombinationen"]),
         ("Ergebnisse", ["Stabkräfte", "Auflagerkräfte", "Umhüllende", "Kontakt"]),
-        ("Nachweise", ["Nachweise EC3", "Knicklängen", "Ermüdung", "Anschlüsse",
+        ("Nachweise", ["Nachweise EC3", "Knicklängen", "Schwingung", "Ermüdung", "Anschlüsse",
                        "Verformungen", "Beulfelder", "Volumen", "Lasteinleitung"]),
         ("Bericht", ["Bericht"]),
     ]
@@ -5610,6 +5635,116 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info("β übernommen für " + ", ".join(geaendert)
                   + " (nur beteiligte Stäbe; die Nachweise rechnen jetzt damit)")
         self.refresh_all()
+
+    # ---- Schwingungsnachweis des Verschlusses -------------------------
+    def maske_schwingung(self, name: str = None):
+        """Schwingungsnachweis eines Verschlusses aus einem Wasserdruck-Generierer."""
+        from ..schwingung import Schwingungsnachweis
+        from ..ec3.fatigue import DETAIL_CATEGORIES
+        m = self.model
+        if not m.wasserdruecke:
+            return self.error("Zuerst einen Wasserdruck anlegen (Lasten → Generierer → Wasserdruck): "
+                              "der Nachweis nimmt benetzte Flächen, Wasserstände und Strömung von dort")
+        sn = m.schwingungen.get(name) if name else (
+            next(iter(m.schwingungen.values())) if m.schwingungen else None)
+        neu = sn is None
+        if neu:
+            sn = Schwingungsnachweis(m.naechster_name("Schwingung", m.schwingungen))
+            sn.wasserdruck = next(iter(m.wasserdruecke))
+        F = msk.Feld
+        wds = list(m.wasserdruecke)
+        kerb = [f"{k:g}" for k in DETAIL_CATEGORIES]
+        felder = [F("name", "Name", "text", sn.name, breite=140),
+                  F("wasserdruck", "Wasserdruck", "wahl",
+                    sn.wasserdruck if sn.wasserdruck in wds else wds[0], wds),
+                  F("n_moden", "Eigenformen", "ganz", int(sn.n_moden)),
+                  F("hydromasse", "Hydrodynamische Masse (Westergaard)", "haken", bool(sn.hydromasse)),
+                  F("zeta", "Dämpfungsgrad ζ", "zahl", float(sn.zeta)),
+                  F("strouhal", "Strouhal-Zahl St", "zahl", float(sn.strouhal)),
+                  F("d_kante", "Kantenbreite d [m]", "text",
+                    "" if sn.d_kante is None else f"{sn.d_kante:g}", breite=78,
+                    hinweis="Unterkante bzw. Dichtung in Strömungsrichtung; leer = Blechdicke der Haut"),
+                  F("vr_grenz", "Grenze V_r", "zahl", float(sn.vr_grenz)),
+                  F("band", "Resonanzband ± [%]", "zahl", float(sn.band) * 100.0),
+                  F("betriebsstunden", "Betrieb [h/Jahr]", "zahl", float(sn.betriebsstunden),
+                    hinweis="Stunden je Jahr mit Durch- oder Überströmung (0 = keine Ermüdung)"),
+                  F("jahre", "Nutzungsdauer [Jahre]", "zahl", float(sn.jahre)),
+                  F("kerbfall", "Kerbfall Δσ_C [N/mm²]", "wahl",
+                    f"{sn.kerbfall:g}" if f"{sn.kerbfall:g}" in kerb else "71", kerb),
+                  F("gamma_Mf", "γ_Mf", "zahl", float(sn.gamma_Mf)),
+                  F("gamma_Ff", "γ_Ff", "zahl", float(sn.gamma_Ff))]
+        maske = msk.Maske("Neu: Schwingungsnachweis" if neu else f"Schwingung {sn.name}", felder,
+                          knopf="Nachweis führen",
+                          hinweis="Eigenfrequenzen des Verschlusses in Luft und im Wasser (hydrodynamische "
+                                  "Masse auf den benetzten Flächen des Wasserdrucks), Wirbelablösung "
+                                  "f_s = St·v/d aus Ausfluss bzw. Überfall, reduzierte Geschwindigkeit "
+                                  "V_r = v/(f·d), Antwort auf die Druckschwankung (c_p' im Wasserdruck) "
+                                  "und Ermüdung. Ergebnis unten in der Tabelle, Eigenformen im Wasser in "
+                                  "der Ansicht, Erläuterung im Protokoll und im Bericht.")
+        maske.angewendet.connect(lambda w, alt=(None if neu else sn.name), vorlage=sn:
+                                 self._schwingung_rechnen(w, vorlage, alt))
+        return self.maske_erzeugen(maske)
+
+    @staticmethod
+    def _schwingung_aus_maske(w: dict, vorlage):
+        from dataclasses import replace
+
+        def zahl(key, vorgabe=None):
+            s = str(w.get(key, "")).strip().replace(",", ".")
+            return vorgabe if not s else float(s)
+
+        return replace(vorlage, name=str(w.get("name", "")).strip() or vorlage.name,
+                       wasserdruck=str(w.get("wasserdruck", "")),
+                       n_moden=max(1, int(float(w.get("n_moden", 6) or 6))),
+                       hydromasse=bool(w.get("hydromasse", True)),
+                       zeta=max(1e-4, float(w.get("zeta", 0.02) or 0.02)),
+                       strouhal=float(w.get("strouhal", 0.2) or 0.2),
+                       d_kante=zahl("d_kante"),
+                       vr_grenz=float(w.get("vr_grenz", 1.0) or 1.0),
+                       band=float(w.get("band", 20.0) or 20.0) / 100.0,
+                       betriebsstunden=float(w.get("betriebsstunden", 0.0) or 0.0),
+                       jahre=float(w.get("jahre", 50.0) or 50.0),
+                       kerbfall=float(str(w.get("kerbfall", "71")).replace(",", ".") or 71.0),
+                       gamma_Mf=float(w.get("gamma_Mf", 1.15) or 1.15),
+                       gamma_Ff=float(w.get("gamma_Ff", 1.0) or 1.0))
+
+    def _schwingung_rechnen(self, w: dict, vorlage, alt: str = None):
+        """Nachweis rechnen, Ergebnis in Tabelle, Ansicht (Eigenformen im Wasser),
+        Protokoll und Modellbaum; die Angaben bleiben im Modell."""
+        from .. import schwingung as swm
+        m = self.model
+        try:
+            sn = self._schwingung_aus_maske(w, vorlage)
+        except ValueError as ex:
+            return self.error(f"Eingabe: {ex}")
+        if sn.wasserdruck not in m.wasserdruecke:
+            return self.error(f"Wasserdruck „{sn.wasserdruck}“ gibt es nicht")
+        if alt and alt != sn.name and alt in m.schwingungen:
+            del m.schwingungen[alt]
+        m.schwingungen[sn.name] = sn
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            erg = swm.nachweis(m, sn, self.analysis,
+                               progress=lambda s: self.log.appendPlainText("  " + s))
+        except Exception as ex:                    # noqa: BLE001
+            return self.error(ex)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        self.schwingung = erg
+        if self.analysis is not None:
+            self.analysis.schwingung = erg
+        self._fill(self.tbl_schwing, [
+            [mo.nr, mo.f_luft, mo.f_wasser, mo.mu, mo.V_r if mo.V_r else "–",
+             mo.verhaeltnis if mo.verhaeltnis else "–", mo.dlf if mo.verhaeltnis else "–",
+             mo.beurteilung] for mo in erg.moden])
+        self.info(erg.summary())
+        for zeile in erg.log:
+            self.log.appendPlainText("  " + zeile)
+        if erg.res_wasser is not None:
+            self._solve_done("modal", erg.res_wasser)
+        self.tabelle_zeigen("Schwingung")
+        self._refresh_baum()
+        return erg
         self.tabelle_zeigen("Nachweise EC3") if False else None
         return geaendert
 
@@ -6323,6 +6458,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis = None
         self.results = None
         self.knicklaengen = None
+        self.schwingung = None
         self.selection = np.array([], dtype=int)
         self._undo_knoepfe()
         self.refresh_all()

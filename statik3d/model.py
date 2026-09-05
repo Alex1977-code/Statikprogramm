@@ -2055,6 +2055,8 @@ class Model:
         # Lastgenerierer (wasserdruck.Wasserdruck, wind.Wind), nach Name
         self.wasserdruecke: dict = {}
         self.winde: dict = {}
+        # Schwingungsnachweise (schwingung.Schwingungsnachweis), nach Name
+        self.schwingungen: dict = {}
         # Metadaten (Bericht)
         self.meta: dict[str, str] = {"projekt": "", "bauteil": "", "bearbeiter": "",
                                      "auftraggeber": "", "position": ""}
@@ -3550,6 +3552,7 @@ class Model:
                            for s in self.stellungen],
             "wasserdruecke": [asdict(x) for x in self.wasserdruecke.values()],
             "winde": [asdict(x) for x in self.winde.values()],
+            "schwingungen": [asdict(x) for x in self.schwingungen.values()],
         }
 
     def save(self, path: str):
@@ -3623,6 +3626,9 @@ class Model:
         if d.get("winde"):
             from .wind import Wind
             m.winde = {x["name"]: _dc(Wind, x) for x in d["winde"]}
+        if d.get("schwingungen"):
+            from .schwingung import Schwingungsnachweis
+            m.schwingungen = {x["name"]: _dc(Schwingungsnachweis, x) for x in d["schwingungen"]}
         if d.get("stellungen"):
             from .bridges.positions import Stellung
             m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]

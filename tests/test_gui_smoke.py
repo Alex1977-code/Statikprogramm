@@ -2282,6 +2282,69 @@ def main():
         app.processEvents()
         check("Rückgängig holt den Wind zurück", "Wind1" in w.model.winde)
 
+        # ---- Schwingungsnachweis des Verschlusses ----
+        w.new_model()
+        m_ = w.model
+        m_.add_material(Material("S"))
+        m_.add_shell_prop(ShP("t", 0.012))
+        nx_, nz_, b_, h_ = 6, 20, 3.0, 5.0
+        ids_ = [[m_.add_node(0.0, i * b_ / nx_, k * h_ / nz_) for k in range(nz_ + 1)] for i in range(nx_ + 1)]
+        el_ = [m_.add_element("shell4", [ids_[i][k], ids_[i + 1][k], ids_[i + 1][k + 1], ids_[i][k + 1]], "S", "t")
+               for i in range(nx_) for k in range(nz_)]
+        m_.flaechen["Haut"] = Fl("Haut", dicke="t", material="S", elemente=el_)
+        for k in range(nz_ + 1):
+            m_.fix(ids_[0][k], "all")
+            m_.fix(ids_[nx_][k], "all")
+        w.refresh_all()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w.maske_schwingung()
+        app.processEvents()
+        check("Schwingung ohne Wasserdruck: Hinweis statt Maske", bool(fehler_) and "Wasserdruck" in fehler_[-1])
+        w.sel_flaechen = ["Haut"]
+        w._baum_geklickt("wasserdruck_neu", "+")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("h_ow", 4.0)
+        mk.setzen("richtung", "global x")
+        mk.setzen("unter", True)
+        mk.setzen("spalt", 0.3)
+        mk.setzen("cp_dyn", 0.1)
+        mk.anwenden()
+        app.processEvents()
+        w.maske_schwingung()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Schwingungs-Maske mit dem Wasserdruck W1 vorbelegt",
+              mk.titel == "Neu: Schwingungsnachweis" and mk.werte()["wasserdruck"] == "W1", str(mk.werte().get("wasserdruck")))
+        mk.setzen("n_moden", 3)
+        mk.setzen("d_kante", "0.2")
+        mk.setzen("betriebsstunden", 500.0)
+        mk.anwenden()
+        app.processEvents()
+        erg_ = w.schwingung
+        check("„Nachweis führen“: 3 Moden nass/trocken, Angaben im Modell, Tabelle Schwingung, Eigenformen im Wasser",
+              erg_ is not None and len(erg_.moden) == 3 and all(x.f_wasser < x.f_luft for x in erg_.moden)
+              and m_.schwingungen["Schwingung1"].d_kante == 0.2
+              and len(w.tbl_schwing.modell.zeilen) == 3 and w.tab_unten.currentGroup() == "Nachweise"
+              and getattr(w.results, "modes", None) is not None and "Wasser" in w.results.name,
+              str(fehler_[1:] or (erg_ and erg_.summary())))
+        check("Schwingung im Baum unter Nachweise", any("Schwingung Verschluss" in z for z in zweige(w.baum)))
+        w.maske_schwingung()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Schwingungs-Maske zum Bearbeiten vorbelegt",
+              mk.titel == "Schwingung Schwingung1" and mk.werte()["d_kante"] == "0.2", str(mk.werte().get("d_kante")))
+        an_ = w.analysis if w.analysis is not None else solver.Analysis(m_)
+        an_.schwingung = erg_
+        bl_ = Rep(m_, an_).chapter_schwingung()
+        check("Bericht: Kapitel Schwingungsnachweis mit drei Tabellen, Erläuterung und Frequenzbild",
+              sum(1 for x in bl_ if x[0] == "table") == 3 and any(x[0] == "figure" and "<svg" in x[1] for x in bl_)
+              and any(x[0] == "p" and "Westergaard" in x[1] for x in bl_), str([x[0] for x in bl_]))
+        w.error = alt_error
+
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
         w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))

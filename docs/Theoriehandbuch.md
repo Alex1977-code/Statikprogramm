@@ -200,6 +200,42 @@ Zahlenwerten der Norm und die Summen der Elementlasten an einem Quader
 (Luvdruck + Leesog, Dachsog nach Zonen, Innendruck) sowie die Stablasten
 eines Rohrmasts.
 
+### 2.3 Strömungsinduzierte Schwingungen eines Verschlusses (`schwingung.py`)
+
+Grundlagen: Naudascher/Rockwell, *Flow-Induced Vibrations*; Kolkman;
+DIN 19704-1 (Schwingungen); Westergaard (1933).
+
+* **Hydrodynamische Masse.** Für eine senkrechte Wand vor einem Wasserkörper
+  der Tiefe H wirkt bei horizontaler Beschleunigung die Massenbelegung
+  m''(y) = 7/8·ρ·√(H·y) (y Tiefe unter dem Spiegel), in Summe
+  7/12·ρ·H² je Breite. Sie wird je benetztem Schalenelement mit 2×2
+  Gauß-Punkten (Dreieck: Seitenmitten) integriert, gleichmäßig auf die
+  Knoten verteilt und als Block m·n·nᵀ (n Elementnormale) zur Massenmatrix
+  addiert - je Wasserseite (Ober- und Unterwasser) getrennt. Die
+  Eigenfrequenzen folgen aus (K − ω²(M + M_h))φ = 0; bei gleichmäßiger
+  Zusatzmasse exakt f_w = f_l/√(1 + m_h/m), sonst gibt das modale
+  Verhältnis φᵀM_hφ/φᵀMφ die Abminderung an.
+* **Wirbelablösung** an der Kante: f_s = St·v/d mit St ≈ 0,2, v aus dem
+  Wasserdruck (Ausflussstrahl v_a = √(2gΔh) bzw. Überfall v_c = √(g·h_c)), d
+  Kantenbreite in Strömungsrichtung. Resonanz, wenn |f_s/f − 1| ≤ band.
+* **Reduzierte Geschwindigkeit** V_r = v/(f·d). Für V_r ≤ V_r,grenz (≈ 1)
+  ist die Anregung quasistatisch (f_s/f = St·V_r ≤ 0,2); darüber sind
+  instabilitäts- (Scherschichtinstabilität an der Kante) und
+  bewegungsinduzierte Schwingungen (Kolkman: Verschlüsse mit Dichtung
+  stromab, Unterdruck hinter der Kante) möglich - das Programm gibt den
+  Hinweis, ein Ausschluss verlangt Konstruktion oder Versuch.
+* **Antwort auf die Druckschwankung** Δp = c_p'·ρ·v²/2 (Lastfall des
+  Generierers, statisch gerechnet: σ_amp, u_amp): Vergrößerungsfunktion
+  V = 1/√((1 − r²)² + (2ζr)²) mit r = f_s/f₁; σ_dyn = V·σ_amp,
+  Δσ = 2·σ_dyn. Ermüdung: N = f_s·3600·h·a Lastspiele, Δσ_Ed = γ_Ff·Δσ,
+  N_R aus der Wöhlerlinie des Kerbfalls (EN 1993-1-9, m = 3/5,
+  Dauerfestigkeit, Schwellenwert), D = N/N_R ≤ 1.
+
+`tests/test_schwingung.py` prüft die Westergaard-Summe auf dem Netz, die
+exakte Frequenzabminderung bei gleichmäßiger Zusatzmasse, die
+Rayleigh-Schranke der nassen Grundfrequenz, Strouhal, V_r, V(r = 1) = 1/(2ζ),
+die Resonanzerkennung und die Ermüdungskette.
+
 ## 3 Lastfälle, Kombinationen, Umhüllende
 
 Jeder Lastfall trägt eine Einwirkungskategorie (DIN EN 1990/NA Tabelle

@@ -292,6 +292,7 @@ class Report:
         self.theorie2 = None
         self.knicklaengen = None
         self.theorie3 = None
+        self.schwingung = None
         self.info: dict = {}
         if analysis is not None:
             self.cases = dict(getattr(analysis, "cases", {}) or {})
@@ -307,6 +308,7 @@ class Report:
             self.theorie2 = getattr(analysis, "theorie2", None)
             self.knicklaengen = getattr(analysis, "knicklaengen", None)
             self.theorie3 = getattr(analysis, "theorie3", None)
+            self.schwingung = getattr(analysis, "schwingung", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
             name = results.name or "Ergebnis"
@@ -428,6 +430,7 @@ class Report:
                        self.chapter_lastgenerierer,
                        self.chapter_theorie2, self.chapter_theorie3,
                        self.chapter_results, self.chapter_knicklaengen,
+                       self.chapter_schwingung,
                        self.chapter_design, self.chapter_beulen,
                        self.chapter_volumen,
                        self.chapter_fatigue,
@@ -1329,6 +1332,65 @@ class Report:
         b.append(("table", rows, "Knicklängenbeiwerte je Stab", None, "compact"))
         if note:
             b.append(("p", note))
+        return b
+
+    def chapter_schwingung(self) -> list:
+        """Schwingungsnachweis des Verschlusses (stroemungsinduzierte Schwingungen)."""
+        erg = getattr(self, "schwingung", None)
+        if erg is None or not getattr(erg, "moden", None):
+            return []
+        from .. import schwingung as swm
+        kw = erg.kennwerte or {}
+        b = [self._h(1, "Schwingungsnachweis des Verschlusses")]
+        b.append(("p", "Strömungsinduzierte Schwingungen nach Naudascher/Rockwell (Flow-Induced "
+                       "Vibrations) und DIN 19704-1: Das mitschwingende Wasser wird als hydrodynamische "
+                       "Masse nach Westergaard (m'' = 7/8·ρ·√(H·y), in Summe 7/12·ρ·H² je Breite) in "
+                       "Richtung der Flächennormalen auf die benetzten Flächen gelegt; damit werden die "
+                       "Eigenfrequenzen im Wasser gerechnet. Die Wirbelablösung an der Kante regt mit "
+                       "f_s = St·v/d an; im Band um f_s droht Resonanz. Die reduzierte Geschwindigkeit "
+                       "V_r = v/(f·d) grenzt ab, ob instabilitäts- oder bewegungsinduzierte "
+                       "Schwingungen (Kolkman) möglich sind. Die Antwort auf die Druckschwankung des "
+                       "Wasserdrucks folgt aus der Vergrößerungsfunktion V = 1/√((1−r²)² + (2ζr)²) "
+                       "und wird als Spannungsschwingbreite auf Ermüdung (EN 1993-1-9) geprüft."))
+        rows = [["Angabe", "Wert"],
+                ["Wasserdruck", erg.wasserdruck],
+                ["Strömung", (f"v = {erg.v:.2f} m/s"
+                              + (f" (Ausfluss v_a = {kw['v_a']:.2f} m/s)" if kw.get("v_a", 0) > 0 else "")
+                              + (f" (Überfall v_c = {kw['v_c']:.2f} m/s)" if kw.get("v_c", 0) > 0 else ""))
+                 if erg.v > 0 else "keine Durch-/Überströmung"],
+                ["Kantenbreite d", f"{erg.d * 1e3:.0f} mm"],
+                ["Strouhal-Zahl St / Wirbelablösung f_s", f"{erg.strouhal:g} / "
+                 + (f"{erg.f_s:.2f} Hz" if erg.f_s > 0 else "–")],
+                ["Dämpfungsgrad ζ", f"{erg.zeta:g}"],
+                ["Hydrodynamische Masse", (f"{erg.m_hydro:.0f} kg (Westergaard; Theorie "
+                                           f"{erg.m_hydro_theorie:.0f} kg), Haut {erg.m_struktur:.0f} kg")
+                 if erg.m_hydro > 0 else "nicht angesetzt"],
+                ["Grenze V_r / Resonanzband", f"{erg.vr_grenz:g} / ±{erg.band * 100:.0f} %"],
+                ["Ergebnis", erg.status]]
+        b.append(("table", rows, f"Schwingung {erg.name}: Angaben und Kennwerte", None, "compact"))
+        b.append(("table", erg.tabelle(), "Eigenfrequenzen in Luft und im Wasser, Beurteilung je Mode",
+                  None, "compact"))
+        d = erg.dyn or {}
+        if d:
+            rows = [["Größe", "Wert"],
+                    ["Druckschwankung Δp (Lastfall)", f"{d['dp'] / 1e3:.3f} kN/m² ({d['lastfall']})"],
+                    ["statische Amplitude σ_amp", f"{d['sigma_amp'] / 1e6:.1f} N/mm²"],
+                    ["r = f_s/f₁, Vergrößerung V", f"{d['r']:.2f}, {d['V']:.2f}"],
+                    ["σ_dyn = V·σ_amp, Δσ = 2·σ_dyn", f"{d['sigma_dyn'] / 1e6:.1f} N/mm², {d['delta_sigma'] / 1e6:.1f} N/mm²"],
+                    ["Verformungsamplitude", f"{d['u_dyn'] * 1e3:.2f} mm"]]
+            if "N" in d:
+                rows += [["Lastspiele N = f_s·t", f"{d['N']:.3g}"],
+                         ["Δσ_Ed = γ_Ff·Δσ, Kerbfall, γ_Mf", f"{d['delta_sigma_Ed'] / 1e6:.1f} N/mm², "
+                                                            f"{d['kerbfall']:g}, {d['gamma_Mf']:g}"],
+                         ["N_R, D = N/N_R", ("∞" if not np.isfinite(d["N_R"]) else f"{d['N_R']:.3g}")
+                          + f", {d['D']:.3f} " + ("≤ 1 erfüllt" if d["D"] <= 1 else "> 1 nicht erfüllt")]]
+            b.append(("table", rows, "Antwort auf die Druckschwankung und Ermüdung", None, "compact"))
+        for zeile in swm.erlaeuterung(erg):
+            b.append(("p", zeile))
+        if self.opt("figures"):
+            b.append(self._figure(swm.skizze_svg(erg),
+                                  f"Schwingung {erg.name}: Frequenzbild (Eigenfrequenzen, Wirbelablösung, "
+                                  "Grenze V_r) und hydrodynamische Masse"))
         return b
 
     def chapter_theorie2(self) -> list:
