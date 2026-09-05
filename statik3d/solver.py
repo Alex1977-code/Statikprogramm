@@ -23,7 +23,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import splu, eigsh
 
-from .model import Model, NDOF, Combination, LoadCase, Member
+from .model import Model, NDOF, Combination, LoadCase, Member, GRUNDSTELLUNG
 from . import assemble as asm
 from .elements import beam3d as bm
 from .elements import shell as sh
@@ -369,10 +369,14 @@ def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
 class StaticSystem:
     """Assemblierte und faktorisierte Steifigkeit fuer beliebig viele Lastfaelle."""
 
-    def __init__(self, model: Model, workers: int = None, progress=None):
+    def __init__(self, model: Model, workers: int = None, progress=None,
+                 aktiv=None, situation: str = ""):
         t0 = time.time()
         self.model = model
-        self.K = asm.stiffness(model, workers)
+        #: Situation: Maske der wirksamen Elemente (None = alle) und ihr Name
+        self.aktiv = None if aktiv is None else np.asarray(aktiv, bool)
+        self.situation = situation
+        self.K = asm.stiffness(model, workers, self.aktiv)
         self.fixed, self.vals = asm.constrained_dofs(model, self.K)
         self.fi = np.where(~self.fixed)[0]
         self.si = np.where(self.fixed)[0]
@@ -444,10 +448,11 @@ class StaticSystem:
 # ==========================================================================
 # Lasten eines Lastfalls / einer Kombination
 # ==========================================================================
-def case_loads(model: Model, factors: dict) -> tuple:
+def case_loads(model: Model, factors: dict, aktiv=None) -> tuple:
     """(F, feq, q, temp) fuer eine Linearkombination von Lastfaellen.
     feq: elem -> lokale aequivalente Knotenlasten (unkondensiert),
-    q: elem -> lokale Streckenlast (2,3), temp: elem -> dT."""
+    q: elem -> lokale Streckenlast (2,3), temp: elem -> dT.
+    ``aktiv``: abgeschaltete Elemente einer Situation tragen keine Last."""
     F = np.zeros(model.ndof)
     feq: dict = {}
     q: dict = {}
@@ -456,10 +461,10 @@ def case_loads(model: Model, factors: dict) -> tuple:
         if not f:
             continue
         lc = model.case(name)
-        F += f * asm.load_vector(model, lc)
-        for i, v in asm.element_equivalent_loads(model, lc).items():
+        F += f * asm.load_vector(model, lc, aktiv)
+        for i, v in asm.element_equivalent_loads(model, lc, aktiv).items():
             feq[i] = feq.get(i, 0.0) + f * v
-        for i, v in asm.element_distributed_loads(model, lc).items():
+        for i, v in asm.element_distributed_loads(model, lc, aktiv).items():
             q[i] = asm.abschnitte_zusammen(q.get(i), asm.skaliere_abschnitte(v, f))
         for tl in lc.temp_loads:
             temp[tl.elem] = temp.get(tl.elem, 0.0) + f * tl.dT
@@ -565,14 +570,26 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
 
 
 def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
-                q: dict = None, temp: dict = None, workers: int = None):
-    """Rohgroessen je Element aus dem Verschiebungsvektor u (ndof,)."""
+                q: dict = None, temp: dict = None, workers: int = None, aktiv=None):
+    """Rohgroessen je Element aus dem Verschiebungsvektor u (ndof,).
+    Abgeschaltete Elemente (``aktiv`` False) bekommen Nullen: sie wirken nicht."""
     feq = feq if feq is not None else {}
     q = q if q is not None else {}
     temp = temp if temp is not None else {}
-    idx = list(range(len(model.elements)))
+    idx = asm.aktive_indizes(model, aktiv)
     items = parallel.map_elements(_post_chunk, model, idx, workers=workers,
                                   extra={"u": u, "feq": feq, "temp": temp})
+    if aktiv is not None:
+        inaktiv = [i for i in range(len(model.elements)) if not aktiv[i]]
+        res.info["inaktiv"] = inaktiv
+        for i in inaktiv:
+            e = model.elements[i]
+            if e.typ in asm.LINE_TYPES:
+                res.beam_end[i] = np.zeros(12)
+            elif e.typ in asm.SHELL_TYPES:
+                res.shell_res[i] = np.zeros(6)
+            else:
+                res.solid_res[i] = np.zeros(6)
     for i, kind, val in items:
         if kind == "beam":
             res.beam_end[i] = val
@@ -591,9 +608,12 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
 def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  kind: str, workers=None, progress=None) -> Results:
     t0 = time.time()
-    F, feq, q, temp = case_loads(model, factors)
+    aktiv = getattr(system, "aktiv", None)
+    F, feq, q, temp = case_loads(model, factors, aktiv)
     us = case_prescribed(model, factors, warn=progress)
     res = Results(name=name, kind=kind, model=model)
+    if getattr(system, "situation", ""):
+        res.info["situation"] = system.situation
     if model.has_contact:
         u, R, res.contact, res.contact_forces, cinfo = solve_with_contact(
             model, system, F, progress=progress, us=us)
@@ -605,9 +625,36 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     res.reactions = R.reshape(-1, NDOF)
     res.info.update({"ndof": model.ndof, "nfree": len(system.fi),
                      "solver": system.backend, "factors": dict(factors)})
-    postprocess(model, u, res, feq, q, temp, workers)
+    postprocess(model, u, res, feq, q, temp, workers, aktiv)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
+
+
+# ==========================================================================
+# Situationen: je Situation ein eigenes System
+# ==========================================================================
+def situationssystem(model: Model, name: str = "", workers: int = None,
+                     progress=None) -> tuple:
+    """(Modell, StaticSystem) der Situation: Stellung angewandt, abgeschaltete
+    Elemente weggelassen. Fuer die Grundstellung ist das Modell das Original."""
+    from .situationen import situationsmodell
+    m_s, aktiv, log = situationsmodell(model, name)
+    if progress:
+        for z in log:
+            progress(z.strip())
+    system = StaticSystem(m_s, workers, progress, aktiv=aktiv, situation=name or GRUNDSTELLUNG)
+    return m_s, system
+
+
+def systeme_je_situation(model: Model, namen=None, workers: int = None, progress=None,
+                         systeme: dict = None) -> dict:
+    """{Situation: (Modell, System)} fuer die Situationen der genannten
+    Lastfaelle (alle, wenn keine genannt). ``systeme`` wird ergaenzt."""
+    systeme = systeme if systeme is not None else {}
+    for sit in model.lastfaelle_je_situation(namen):
+        if sit not in systeme:
+            systeme[sit] = situationssystem(model, sit, workers, progress)
+    return systeme
 
 
 def solve_static(model: Model, progress=None, case: str = None,
@@ -629,29 +676,66 @@ def solve_static(model: Model, progress=None, case: str = None,
 
 
 def solve_cases(model: Model, cases: list = None, workers: int = None,
-                progress=None, system: StaticSystem = None) -> dict:
-    """Alle (oder ausgewaehlte) Lastfaelle mit einer Faktorisierung loesen."""
-    system = system or StaticSystem(model, workers, progress)
+                progress=None, system: StaticSystem = None, systeme: dict = None) -> dict:
+    """Alle (oder ausgewaehlte) Lastfaelle loesen - je Situation mit ihrem
+    System (eine Faktorisierung je Situation). Ein uebergebenes ``system``
+    gilt fuer alle genannten Lastfaelle."""
     names = cases if cases is not None else list(model.load_cases)
     out = {}
-    for k, name in enumerate(names):
-        out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers)
-        if progress:
-            progress(f"Lastfall {name} ({k+1}/{len(names)})")
+    if system is not None:
+        for k, name in enumerate(names):
+            out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers)
+            if progress:
+                progress(f"Lastfall {name} ({k+1}/{len(names)})")
+        return out
+    systeme = systeme_je_situation(model, names, workers, progress, systeme)
+    k = 0
+    for sit, sit_names in model.lastfaelle_je_situation(names).items():
+        m_s, sys_s = systeme[sit]
+        for name in sit_names:
+            out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers)
+            k += 1
+            if progress:
+                progress(f"Lastfall {name} ({k}/{len(names)})"
+                         + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""))
     return out
+
+
+def _kombination_pruefen(model: Model, combo: Combination) -> str:
+    """Die Situation der Kombination; ihre Lastfaelle muessen dazu gehoeren."""
+    sit = combo.situation or GRUNDSTELLUNG
+    fremd = [k for k, f in combo.factors.items() if f and k in model.load_cases
+             and (model.load_cases[k].situation or GRUNDSTELLUNG) != sit]
+    if fremd:
+        raise ValueError(f"Kombination '{combo.name}' (Situation {sit}) enthält Lastfall "
+                         f"{', '.join(fremd)} aus einer anderen Situation")
+    return sit
 
 
 def solve_combination(model: Model, combo: Combination, case_results: dict = None,
                       system: StaticSystem = None, workers: int = None,
-                      progress=None) -> Results:
-    """Eine Kombination: Superposition (linear) oder direkte Loesung (Kontakt)."""
+                      progress=None, systeme: dict = None) -> Results:
+    """Eine Kombination: Superposition (linear) oder direkte Loesung (Kontakt) -
+    in der Situation der Kombination."""
+    sit = _kombination_pruefen(model, combo)
     if not model.has_contact and case_results is not None \
             and all(k in case_results for k, f in combo.factors.items() if f):
-        res = Results.combine(model, [(case_results[k], f) for k, f in combo.factors.items()
-                                      if f], combo.name)
+        teile = [(case_results[k], f) for k, f in combo.factors.items() if f]
+        basis = next((r.model for r, _f in teile if getattr(r, "model", None) is not None), model)
+        res = Results.combine(basis, teile, combo.name)
         res.info["typ"] = combo.typ
+        if sit != GRUNDSTELLUNG:
+            res.info["situation"] = sit
+        if teile and "inaktiv" in teile[0][0].info:
+            res.info["inaktiv"] = list(teile[0][0].info["inaktiv"])
         return res
-    system = system or StaticSystem(model, workers, progress)
+    if system is None:
+        if systeme is not None and sit in systeme:
+            model, system = systeme[sit]
+        elif sit != GRUNDSTELLUNG or model.situation(sit).deaktiviert:
+            model, system = situationssystem(model, sit, workers, progress)
+        else:
+            system = StaticSystem(model, workers, progress)
     res = _solve_loads(model, system, combo.factors, combo.name, "combination", workers,
                        progress)
     res.info["typ"] = combo.typ
@@ -660,7 +744,7 @@ def solve_combination(model: Model, combo: Combination, case_results: dict = Non
 
 def solve_combinations(model: Model, combos: list = None, case_results: dict = None,
                        system: StaticSystem = None, workers: int = None,
-                       progress=None, use_jobs: bool = None) -> dict:
+                       progress=None, use_jobs: bool = None, systeme: dict = None) -> dict:
     """Alle Kombinationen. Bei Kontakt (nichtlinear) werden die Kombinationen
     als Auftraege parallel bzw. auf der Farm gerechnet."""
     names = combos if combos is not None else list(model.combinations)
@@ -669,9 +753,11 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
         return out
     if not model.has_contact:
         if case_results is None:
-            case_results = solve_cases(model, workers=workers, progress=progress, system=system)
+            case_results = solve_cases(model, workers=workers, progress=progress,
+                                       system=system, systeme=systeme)
         for n in names:
-            out[n] = solve_combination(model, model.combinations[n], case_results)
+            out[n] = solve_combination(model, model.combinations[n], case_results,
+                                       systeme=systeme)
         return out
     # nichtlinear: Auftraege
     st = parallel.settings()
@@ -691,9 +777,9 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
             res.model = model
             out[n] = res
         return out
-    system = system or StaticSystem(model, workers, progress)
     for k, n in enumerate(names):
-        out[n] = solve_combination(model, model.combinations[n], None, system, workers)
+        out[n] = solve_combination(model, model.combinations[n], None, system, workers,
+                                   systeme=systeme)
         if progress:
             progress(f"Kombination {n} ({k+1}/{len(names)})")
     return out
@@ -874,6 +960,10 @@ class Analysis:
     volumen: object = None
     theorie2: object = None
     info: dict = field(default_factory=dict)
+    #: je Situation das System und das Modell, mit dem gerechnet wurde
+    #: (Grundstellung: das Modell selbst; Stellung: gedrehte Kopie)
+    systeme: dict = field(default_factory=dict)
+    modelle: dict = field(default_factory=dict)
 
     def all_results(self) -> dict:
         d = dict(self.cases)
@@ -918,17 +1008,26 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         # als Drehfeder am Stabende (EN 1993-1-8, 5.1.2).
         from .joints.anschluss import federn_setzen
         an.info["anschlussfedern"] = federn_setzen(model)
-    system = StaticSystem(model, workers, progress)
-    an.cases = solve_cases(model, workers=workers, progress=progress, system=system)
+    # Je Situation ein System: die Grundstellung (unbewegt, alles aktiv) und
+    # jede Situation, in der ein Lastfall steht
+    systeme: dict = {}
+    an.cases = solve_cases(model, workers=workers, progress=progress, systeme=systeme)
+    if GRUNDSTELLUNG not in systeme:
+        systeme[GRUNDSTELLUNG] = (model, StaticSystem(model, workers, progress))
+    an.systeme = {k: v[1] for k, v in systeme.items()}
+    an.modelle = {k: v[0] for k, v in systeme.items()}
+    system = an.systeme[GRUNDSTELLUNG]
     if combinations and model.combinations:
-        an.combinations = solve_combinations(model, case_results=an.cases, system=system,
-                                             workers=workers, progress=progress)
+        an.combinations = solve_combinations(model, case_results=an.cases, system=None,
+                                             workers=workers, progress=progress,
+                                             systeme=systeme)
     if model.design.theorie2 != "aus" and an.combinations:
         # Gleichgewicht am verformten System: die GZT-Kombinationen werden
         # ersetzt, denn nach Theorie II. Ordnung gilt keine Superposition
         # mehr (EN 1993-1-1, 5.2). Danach erst die Umhuellenden bilden.
         from .theorie2 import check_theorie2
-        an.theorie2 = check_theorie2(model, an, system=system, progress=progress)
+        an.theorie2 = check_theorie2(model, an, system=system, progress=progress,
+                                     systeme=systeme)
     if envelopes:
         groups: dict[str, dict] = {}
         for n, r in an.combinations.items():

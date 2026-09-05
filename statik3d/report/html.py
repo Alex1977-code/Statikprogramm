@@ -290,6 +290,7 @@ class Report:
         self.lasteinleitung = None
         self.volumen = None
         self.theorie2 = None
+        self.knicklaengen = None
         self.info: dict = {}
         if analysis is not None:
             self.cases = dict(getattr(analysis, "cases", {}) or {})
@@ -303,6 +304,7 @@ class Report:
             self.lasteinleitung = getattr(analysis, "lasteinleitung", None)
             self.volumen = getattr(analysis, "volumen", None)
             self.theorie2 = getattr(analysis, "theorie2", None)
+            self.knicklaengen = getattr(analysis, "knicklaengen", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
             name = results.name or "Ergebnis"
@@ -422,7 +424,8 @@ class Report:
             b = []
             for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
                        self.chapter_theorie2,
-                       self.chapter_results, self.chapter_design, self.chapter_beulen,
+                       self.chapter_results, self.chapter_knicklaengen,
+                       self.chapter_design, self.chapter_beulen,
                        self.chapter_volumen,
                        self.chapter_fatigue,
                        self.chapter_joints, self.chapter_gzg,
@@ -942,7 +945,7 @@ class Report:
         b = [self._h(1, "Einwirkungen")]
         b.append(self._h(2, "Lastfälle"))
         rows = [["Lastfall", "Kategorie", "Einwirkung", "Beschreibung", "ψ_0", "ψ_1", "ψ_2",
-                 "γ_sup", "γ_inf", "Gruppe", "Lasten"]]
+                 "γ_sup", "γ_inf", "Gruppe", "Situation", "Lasten"]]
         ds = m.design
         for lc in m.load_cases.values():
             psi = lc.psi_factors
@@ -957,7 +960,8 @@ class Report:
                 gs, gi = 1.0, 1.0
             rows.append([lc.name, lc.category, cat, lc.description or "–", fmt(psi[0], 2),
                          fmt(psi[1], 2), fmt(psi[2], 2), fmt(gs, 2), fmt(gi, 2),
-                         lc.exclusive_group or "–", str(lc.n_loads)])
+                         lc.exclusive_group or "–", getattr(lc, "situation", "") or "Grundstellung",
+                         str(lc.n_loads)])
         b.append(("table", rows, "Lastfälle und Einwirkungskategorien (DIN EN 1990/NA)",
                   None, ""))
         if self.opt("load_cases"):
@@ -1176,6 +1180,27 @@ class Report:
         return b
 
     # ==================================== Theorie II. Ordnung (eigenes Kapitel)
+    def chapter_knicklaengen(self) -> list:
+        """Knicklaengenbeiwerte aus der Knickfigur."""
+        kl = getattr(self, "knicklaengen", None)
+        if kl is None or not getattr(kl, "staebe", None):
+            return []
+        b = [self._h(1, "Knicklängen aus der Knickfigur")]
+        b.append(("p", f"Grundzustand: {kl.grundzustand}. Knickfigur {kl.modus + 1} mit dem "
+                       f"Verzweigungslastfaktor α_cr = {fmt(kl.alpha_cr, 3)}. Für jeden Stab "
+                       "folgt aus dem Grundzustand N_cr = α_cr·|N_Ed| und daraus die "
+                       "Knicklänge L_cr = π·√(E·I/N_cr), β = L_cr/L. Die Eigenform bestimmt "
+                       "die Biegeachse (Anteil der modalen Biegeenergie um y und z) und "
+                       "die Beteiligung des Stabs an der Knickfigur: bei einem Stab, der in "
+                       "der Knickfigur gerade bleibt, ist der Wert nur eine Obergrenze "
+                       f"(gekennzeichnet; Grenze {kl.min_beteiligung * 100:.0f} %)."))
+        rows = kl.tabelle()
+        rows, note = self._truncate(rows)
+        b.append(("table", rows, "Knicklängenbeiwerte je Stab", None, "compact"))
+        if note:
+            b.append(("p", note))
+        return b
+
     def chapter_theorie2(self) -> list:
         """Berechnung nach Theorie II. Ordnung und Ersatzimperfektionen."""
         t2 = self.theorie2

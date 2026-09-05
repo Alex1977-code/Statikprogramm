@@ -18,7 +18,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import pyvista as pv
 from pyvistaqt import QtInteractor
 
-from ..model import Model, Material, Section, ShellProp, DOF_NAMES, Member
+from ..model import Model, Material, Section, ShellProp, DOF_NAMES, Member, GRUNDSTELLUNG, GESAMTSYSTEM
 from .. import solver, mesher, parallel, __version__
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
                       CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
@@ -157,6 +157,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_solver.setText("Solver: bereit")
 
     def __init_defaults(self):
+        self.knicklaengen = None      # Knicklaengen aus der Knickfigur
         if not self.model.materials:
             self.model.add_material(Material.steel("S235"))
             self.model.add_material(Material.steel("S355"))
@@ -1627,6 +1628,13 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Konfiguration", "⚙", self.design_settings,
                 hinweis="Teilsicherheitsbeiwerte und Nachweisstellen")
         g.klein("Stäbe und Knicklängen…", lambda: self.maske_zeigen("Nachweise"))
+        g = r.gruppe("Knicklängen")
+        g.gross("Aus Knickfigur", "β", self.do_knicklaengen,
+                hinweis="Knicklängenbeiwerte β aus Verzweigungslastfaktor und Eigenform: "
+                        "N_cr = α_cr·|N_Ed|, L_cr = π·√(EI/N_cr); die Knickfigur sagt, um "
+                        "welche Achse und ob der Stab beteiligt ist")
+        g.klein("β übernehmen", self.knicklaengen_uebernehmen)
+        g.klein("Tabelle Knicklängen", lambda: self.tabelle_zeigen("Knicklängen"))
 
         # -- Ergebnisse --------------------------------------------------
         g = r.gruppe("Verformung (GZG)")
@@ -1961,7 +1969,13 @@ class MainWindow(QtWidgets.QMainWindow):
     OBJEKT_ARTEN = {"knoten", "linien", "linie", "stabelemente", "stabelement", "staebe",
                     "stab", "geoflaechen", "geoflaeche", "geokoerper", "geokoerper_einzeln"}
 
+    #: Zweige und Eintraege fuer Subsysteme und Situationen
+    SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
+                    "situationen", "situation", "situation_neu"}
+
     def _baum_geklickt(self, art: str, name: str):
+        if art in self.SYSTEM_ARTEN:
+            return self._baum_system_geklickt(art, name)
         if art == "querschnitte":
             # Der Zweig: Tabelle unten, rechts gleich die Maske fuer einen neuen
             self.tabelle_zeigen("Querschnitte")
@@ -2433,6 +2447,10 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         if zweigart == "querschnitte":
             return self.querschnitt_neu()
+        if zweigart == "subsysteme":
+            return self.subsystem_neu()
+        if zweigart == "situationen":
+            return self.situation_neu()
         if zweigart == "knoten":
             self.merken("Knoten angelegt")
             i = m.add_node(0.0, 0.0, 0.0)
@@ -2450,6 +2468,284 @@ class MainWindow(QtWidgets.QMainWindow):
         if zweigart == "geokoerper":
             return self._objektmaske("geokoerper_einzeln", m.naechster_name("V", m.koerper), neu=True)
         return None
+
+    # ------------------------------------------------------------------
+    # Subsysteme und Situationen
+    # ------------------------------------------------------------------
+    def _baum_system_geklickt(self, art: str, name: str):
+        if art == "subsystem_neu":
+            return self.subsystem_neu()
+        if art == "situation_neu":
+            return self.situation_neu()
+        if art == "subsysteme":
+            return self._subsysteme_maske()
+        if art == "situationen":
+            return self._situationen_maske()
+        if art == "subsystem":
+            return self._subsystem_zeigen(name)
+        return self._situation_zeigen(name)
+
+    def _auswahl_beschreibung(self) -> str:
+        teile = [f"{n} {was}" for n, was in ((len(self.sel_staebe), "Stäbe"),
+                                             (len(self.sel_flaechen), "Flächen"),
+                                             (len(self.sel_koerper), "Volumen"),
+                                             (len(self.sel_elemente), "Elemente"),
+                                             (len(self.selection), "Knoten")) if n]
+        return ", ".join(teile) or "nichts gewählt"
+
+    @staticmethod
+    def _elemente_text(elemente) -> str:
+        el = sorted(int(i) for i in elemente)
+        if not el:
+            return "keine (alles aktiv)"
+        return f"{len(el)} Elemente: " + ", ".join(f"E{i}" for i in el[:12]) \
+            + (" …" if len(el) > 12 else "")
+
+    def _subsysteme_maske(self):
+        m = self.model
+        F = msk.Feld
+        felder = [F("anzahl", "Subsysteme", "info", str(1 + len(m.subsysteme))),
+                  F("namen", "Namen", "info", ", ".join(m.subsystemnamen())),
+                  F("auswahl", "Auswahl", "info", self._auswahl_beschreibung())]
+        maske = msk.Maske("Subsysteme", felder, knopf="Neues Subsystem",
+                          hinweis="Das Gesamtsystem ist immer die ganze Struktur. Ein weiteres "
+                                  "Subsystem entsteht aus angeklickten Stäben, Flächen oder "
+                                  "Volumen - mit allem, was dazugehört.")
+        maske.angewendet.connect(lambda _w: self.subsystem_neu())
+        return self.maske_erzeugen(maske)
+
+    def subsystem_neu(self):
+        """Rechts die Maske fuer ein neues Subsystem aus der Auswahl."""
+        m = self.model
+        F = msk.Feld
+        name = m.naechster_name("SUB", m.subsysteme)
+        felder = [F("name", "Name", "text", name, breite=150),
+                  F("beschreibung", "Beschreibung", "text", "", breite=170),
+                  F("beruehrung", "Berührungselemente mitnehmen (gehören dann beiden)", "haken", True),
+                  F("auswahl", "Auswahl", "info", self._auswahl_beschreibung())]
+        halter: dict = {}
+        zusatz = [("Auswahl neu lesen",
+                   lambda: halter["m"].setzen("auswahl", self._auswahl_beschreibung()))]
+        maske = msk.Maske("Neu: Subsystem", felder, knopf="OK", abbrechen="Abbrechen",
+                          hinweis="Stäbe, Flächen, Volumen (oder Elemente, Knoten) in der "
+                                  "Ansicht anklicken - auch mit dem Auswahlfenster -, dann OK. "
+                                  "Knoten, Linien, Lager und Kontakte kommen mit; Elemente an "
+                                  "der Berührungsstelle werden verdoppelt.",
+                          zusatz=zusatz)
+        halter["m"] = maske
+        maske.angewendet.connect(self._subsystem_anlegen)
+        return self.maske_erzeugen(maske)
+
+    def _subsystem_anlegen(self, w: dict):
+        m = self.model
+        name = str(w.get("name", "")).strip()
+        if not name or name == GESAMTSYSTEM:
+            return self.error("Bitte einen eigenen Namen für das Subsystem eingeben")
+        if name in m.subsysteme:
+            return self.error(f"Subsystem „{name}“ gibt es schon")
+        if not (self.sel_staebe or self.sel_flaechen or self.sel_koerper
+                or self.sel_elemente or len(self.selection)):
+            return self.error("Zuerst Stäbe, Flächen oder Volumen in der Ansicht anklicken")
+        self.merken(f"Subsystem {name}")
+        try:
+            sub = m.subsystem_bilden(name, elemente=self.sel_elemente, staebe=self.sel_staebe,
+                                     flaechen=self.sel_flaechen, koerper=self.sel_koerper,
+                                     knoten=[int(i) for i in self.selection],
+                                     beruehrung=bool(w.get("beruehrung", True)),
+                                     beschreibung=str(w.get("beschreibung", "")))
+        except ValueError as ex:
+            self._undo.pop()
+            return self.error(ex)
+        self.info(f"Subsystem {sub.name}: {sub.bezug()}")
+        self.refresh_all()
+        return self._subsystem_zeigen(sub.name)
+
+    def _subsystem_zeigen(self, name: str):
+        """Ein Subsystem: in der Ansicht waehlen, rechts seine Angaben."""
+        m = self.model
+        try:
+            sub = m.subsystem(name)
+        except KeyError:
+            return self.error(f"Subsystem {name} gibt es nicht")
+        ne, nn = len(m.elements), m.nn
+        self.selection = np.array(sorted({int(n) for n in sub.knoten if 0 <= int(n) < nn}), dtype=int)
+        self.sel_elemente = sorted({int(i) for i in sub.elemente if 0 <= int(i) < ne})
+        self.sel_staebe = [s for s in sub.staebe if s in m.members]
+        self.sel_flaechen = [f for f in sub.flaechen if f in m.flaechen]
+        self.sel_koerper = [k for k in sub.koerper if k in m.koerper]
+        self.sel_linien = [ln for ln in sub.linien if ln in m.lines]
+        self.leuchtet = []
+        self._auswahl_register()
+        self.redraw()
+        F = msk.Feld
+        gesamt = name == GESAMTSYSTEM
+        art = "info" if gesamt else "text"
+        felder = [F("name", "Name", art, sub.name, breite=150),
+                  F("beschreibung", "Beschreibung", art, sub.beschreibung, breite=170),
+                  F("inhalt", "Inhalt", "info", sub.bezug()),
+                  F("elemente", "Elemente", "info", self._spanne([f"E{i}" for i in sub.elemente])),
+                  F("beruehrt", "Berührung", "info",
+                    self._elemente_text(sub.beruehrung) if sub.beruehrung else "keine"),
+                  F("objekte", "Objekte", "info",
+                    ", ".join(f"{n} {was}" for n, was in ((len(sub.staebe), "Stäbe"),
+                                                          (len(sub.flaechen), "Flächen"),
+                                                          (len(sub.koerper), "Volumen"),
+                                                          (len(sub.linien), "Linien")) if n)
+                    or "–"),
+                  F("kontakte", "Kontakte", "info", ", ".join(sub.kontakte) or "keine")]
+        maske = msk.Maske(f"Subsystem {sub.name}", felder,
+                          knopf="Übernehmen" if not gesamt else "Neues Subsystem",
+                          hinweis="Die Auswahl in der Ansicht ist dieses Subsystem."
+                                  + ("" if gesamt else " Name und Beschreibung sind änderbar; "
+                                     "Entf löscht das Subsystem."))
+        if gesamt:
+            maske.angewendet.connect(lambda _w: self.subsystem_neu())
+        else:
+            maske.angewendet.connect(lambda w, alt=name: self._subsystem_uebernehmen(alt, w))
+        return self.maske_erzeugen(maske)
+
+    def _subsystem_uebernehmen(self, alt: str, w: dict):
+        m = self.model
+        neu = str(w.get("name", "")).strip() or alt
+        if neu != alt and (neu in m.subsysteme or neu == GESAMTSYSTEM):
+            return self.error(f"Subsystem „{neu}“ gibt es schon")
+        self.merken(f"Subsystem {alt}")
+        sub = m.subsysteme.pop(alt)
+        sub.name = neu
+        sub.beschreibung = str(w.get("beschreibung", ""))
+        m.subsysteme[neu] = sub
+        self.refresh_all()
+        self.info(f"Subsystem {neu} übernommen")
+
+    # ---- Situationen ---------------------------------------------------
+    def _situationen_maske(self):
+        m = self.model
+        F = msk.Feld
+        felder = [F("anzahl", "Situationen", "info", str(1 + len(m.situationen))),
+                  F("namen", "Namen", "info", ", ".join(m.situationsnamen())),
+                  F("stellungen", "Stellungen", "info",
+                    ", ".join(s.name for s in m.stellungen) or "keine angelegt")]
+        maske = msk.Maske("Situationen", felder, knopf="Neue Situation",
+                          hinweis="Die Grundstellung ist unbewegt mit allen Elementen. Eine "
+                                  "Situation nennt eine Stellung und die Elemente, die nicht "
+                                  "wirken; Lastfälle und Kombinationen nennen ihre Situation.")
+        maske.angewendet.connect(lambda _w: self.situation_neu())
+        return self.maske_erzeugen(maske)
+
+    def _situation_vorschau(self, aus):
+        """Die abgeschalteten Elemente einer Situation in der Ansicht ausblenden;
+        ``None`` stellt die Sicht von vorher wieder her."""
+        if aus is None:
+            alt = getattr(self, "_situation_sicht_alt", None)
+            if alt is not None:
+                self.versteckt["elemente"] = set(alt)
+                self._situation_sicht_alt = None
+                self._sicht_knoepfe()
+                self.redraw()
+            return
+        if getattr(self, "_situation_sicht_alt", None) is None:
+            self._situation_sicht_alt = set(self.versteckt["elemente"])
+        self.versteckt["elemente"] = {int(i) for i in aus}
+        self._sicht_knoepfe()
+        self.redraw()
+
+    def _situationsmaske(self, sit, neu: bool):
+        """Die Maske einer Situation (neu oder vorhanden)."""
+        m = self.model
+        F = msk.Feld
+        unbewegt = "– (unbewegt)"
+        stellungen = [unbewegt] + [s.name for s in m.stellungen]
+        wahl = sit.stellung if sit.stellung in stellungen else unbewegt
+        halter = {"aus": {int(i) for i in sit.deaktiviert}}
+        felder = [F("name", "Name", "text", sit.name, breite=150),
+                  F("stellung", "Stellung", "wahl", wahl, stellungen),
+                  F("beschreibung", "Beschreibung", "text", sit.beschreibung, breite=170),
+                  F("aus", "Deaktiviert", "info", self._elemente_text(halter["aus"]))]
+
+        def setzen(neue):
+            halter["aus"] = {int(i) for i in neue}
+            halter["m"].setzen("aus", self._elemente_text(halter["aus"]))
+            self._situation_vorschau(halter["aus"])
+
+        zusatz = [("Auswahl deaktivieren",
+                   lambda: setzen(halter["aus"] | set(self._ausgewaehlte_elemente()))),
+                  ("Auswahl aktivieren",
+                   lambda: setzen(halter["aus"] - set(self._ausgewaehlte_elemente()))),
+                  ("Alle aktivieren", lambda: setzen(set()))]
+        maske = msk.Maske("Neu: Situation" if neu else f"Situation {sit.name}", felder,
+                          knopf="OK" if neu else "Übernehmen",
+                          abbrechen="Abbrechen" if neu else "",
+                          hinweis="Stellung wählen; Elemente, Stäbe, Flächen oder Volumen in der "
+                                  "Ansicht anklicken und „Auswahl deaktivieren“ - sie wirken in "
+                                  "dieser Situation nicht (im Bild ausgeblendet). Lastfälle und "
+                                  "Kombinationen nennen dann ihre Situation.",
+                          zusatz=zusatz)
+        halter["m"] = maske
+        alt = None if neu else sit.name
+        maske.angewendet.connect(lambda w, a=alt: self._situation_uebernehmen(a, w, halter["aus"]))
+        maske.abgebrochen.connect(lambda: self._situation_vorschau(None))
+        maske.geschlossen.connect(lambda: self._situation_vorschau(None))
+        self._situation_vorschau(halter["aus"])
+        return self.maske_erzeugen(maske)
+
+    def situation_neu(self):
+        """Rechts die Maske fuer eine neue Situation."""
+        m = self.model
+        from ..model import Situation
+        return self._situationsmaske(Situation(m.naechster_name("SIT", m.situationen)), True)
+
+    def _situation_zeigen(self, name: str):
+        m = self.model
+        if name == GRUNDSTELLUNG or not name:
+            self._situation_vorschau(set())
+            F = msk.Feld
+            n_lf = sum(1 for lc in m.load_cases.values() if not lc.situation)
+            felder = [F("stellung", "Stellung", "info", "unbewegt"),
+                      F("aus", "Deaktiviert", "info", "keine - alle Elemente wirken"),
+                      F("lastfaelle", "Lastfälle", "info", f"{n_lf} von {len(m.load_cases)}")]
+            maske = msk.Maske("Grundstellung", felder, knopf="Neue Situation",
+                              hinweis="Die Grundstellung ist immer da: unbewegt, alles aktiv.")
+            maske.angewendet.connect(lambda _w: self.situation_neu())
+            maske.geschlossen.connect(lambda: self._situation_vorschau(None))
+            return self.maske_erzeugen(maske)
+        if name not in m.situationen:
+            return self.error(f"Situation {name} gibt es nicht")
+        return self._situationsmaske(m.situationen[name], False)
+
+    def _situation_uebernehmen(self, alt, w: dict, aus):
+        m = self.model
+        from ..model import Situation
+        name = str(w.get("name", "")).strip()
+        if not name or name == GRUNDSTELLUNG:
+            return self.error("Bitte einen eigenen Namen für die Situation eingeben")
+        if name != alt and name in m.situationen:
+            return self.error(f"Situation „{name}“ gibt es schon")
+        aus = sorted(int(i) for i in aus if 0 <= int(i) < len(m.elements))
+        if len(aus) >= len(m.elements) and m.elements:
+            return self.error("Alle Elemente deaktiviert - so bleibt nichts zu rechnen")
+        stellung = str(w.get("stellung", ""))
+        stellung = "" if stellung.startswith("–") else stellung
+        self.merken(f"Situation {name}")
+        if alt and alt in m.situationen:
+            sit = m.situationen.pop(alt)
+        else:
+            sit = Situation(name)
+        sit.name, sit.stellung, sit.deaktiviert = name, stellung, aus
+        sit.beschreibung = str(w.get("beschreibung", ""))
+        m.situationen[name] = sit
+        if alt and alt != name:
+            for lc in m.load_cases.values():
+                if lc.situation == alt:
+                    lc.situation = name
+            for c in m.combinations.values():
+                if c.situation == alt:
+                    c.situation = name
+        self.analysis = None
+        self.results = None
+        self._situation_vorschau(None)
+        self.info(f"Situation {name}: {sit.bezug()}")
+        self.refresh_all()
+        self.maskenrand.schliessen()
 
     def _objekt_neu_abbrechen(self, art: str, name: str):
         """Abbrechen in der Neu-Maske: ein schon angelegter Knoten geht wieder weg."""
@@ -2474,7 +2770,8 @@ class MainWindow(QtWidgets.QMainWindow):
                "stab": f"Stab mit Nachweis {name} (die Elemente bleiben)",
                "geoflaeche": f"Fläche {name} samt ihren Elementen",
                "geokoerper_einzeln": f"Volumen {name} samt seinen Elementen",
-               "querschnitt": f"Querschnitt {name}"}.get(art)
+               "querschnitt": f"Querschnitt {name}",
+               "subsystem": f"Subsystem {name}", "situation": f"Situation {name}"}.get(art)
         if was is None:
             return
         if not self._bestaetigen(f"{was} wirklich löschen?"):
@@ -2497,6 +2794,26 @@ class MainWindow(QtWidgets.QMainWindow):
             grund = m.flaeche_loeschen(name)
         elif art == "geokoerper_einzeln":
             grund = m.koerper_loeschen(name)
+        elif art == "subsystem":
+            if name == GESAMTSYSTEM or name not in m.subsysteme:
+                grund = "Das Gesamtsystem ist immer da - es lässt sich nicht löschen" \
+                    if name == GESAMTSYSTEM else f"Subsystem {name} gibt es nicht"
+            else:
+                self.merken(f"{was} gelöscht")
+                del m.subsysteme[name]
+        elif art == "situation":
+            nutzer = [k for k, lc in m.load_cases.items() if lc.situation == name] \
+                + [k for k, c in m.combinations.items() if c.situation == name]
+            if name == GRUNDSTELLUNG or name not in m.situationen:
+                grund = "Die Grundstellung ist immer da - sie lässt sich nicht löschen" \
+                    if name == GRUNDSTELLUNG else f"Situation {name} gibt es nicht"
+            elif nutzer:
+                grund = (f"Situation {name} wird benutzt von {', '.join(nutzer[:6])}"
+                         + (" …" if len(nutzer) > 6 else "") + " - dort zuerst umstellen")
+            else:
+                self.merken(f"{was} gelöscht")
+                del m.situationen[name]
+                self._situation_vorschau(None)
         elif art == "querschnitt":
             if name not in m.sections:
                 grund = f"Querschnitt {name} gibt es nicht"
@@ -2512,7 +2829,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     del m.sections[name]
         if grund:
             return self.error(grund)
-        if art not in ("stabelement", "querschnitt"):
+        if art not in ("stabelement", "querschnitt", "subsystem", "situation"):
             self.merken(f"{was} gelöscht")
         self.analysis = None
         self.results = None
@@ -2591,6 +2908,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.lagerobjekt_bearbeiten(art, name)
             if art == "gelenk":
                 return self.gelenk_bearbeiten(name)
+            if art == "subsystem":
+                return self._subsystem_zeigen(name)
+            if art == "situation":
+                return self._situation_zeigen(name)
             if art == "lastfall":
                 return self.lastfall_bearbeiten(name)
             if art == "kombination":
@@ -2664,6 +2985,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- Ergebnisse aus dem Modellbaum -----------------------------------
     #: Schluesselwort im Baum -> Tabelle unten
     NACHWEIS_TABELLE = {"design": "Nachweise EC3", "fatigue": "Ermüdung",
+                        "knicklaengen": "Knicklängen",
                         "gzg": "Verformungen", "beulen": "Beulfelder",
                         "lasteinleitung": "Lasteinleitung", "volumen": "Volumen",
                         "joints": "Anschlüsse"}
@@ -3107,12 +3429,13 @@ class MainWindow(QtWidgets.QMainWindow):
         lc = self.model.load_cases.get(name)
         if lc is None:
             return self.add_load_case()
-        d = dg.LoadCaseDialog(self, lc, self.model.load_cases)
+        d = dg.LoadCaseDialog(self, lc, self.model.load_cases, self.model.situationsnamen())
         if not d.exec():
             return
         nm, cat, desc, grp = d.values()
         self.merken(f"Lastfall {name}")
         lc.category, lc.description, lc.exclusive_group = cat, desc, grp
+        lc.situation = d.situation_name()
         if nm != name and nm not in self.model.load_cases:
             self.model.load_cases = {(nm if k == name else k): v
                                      for k, v in self.model.load_cases.items()}
@@ -3184,7 +3507,7 @@ class MainWindow(QtWidgets.QMainWindow):
         norm = m.meta.get("Norm")
         if norm:
             teile.insert(1, norm)
-        stellungen = getattr(self, "stellungen", None) or []
+        stellungen = self._stellungen_obj()
         modell = f"{m.nn} Knoten · {len(m.elements)} Elemente"
         if stellungen:
             modell += f" · {len(stellungen)} Stellungen"
@@ -3238,6 +3561,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 ("Dicken", str(len(m.shells))),
                 ("Lastfälle", str(len(m.load_cases))),
                 ("Kombinationen", str(len(m.combinations))),
+                ("Subsysteme", str(1 + len(getattr(m, "subsysteme", {}) or {}))),
+                ("Situationen", str(1 + len(getattr(m, "situationen", {}) or {}))),
+                ("Stellungen", str(len(getattr(m, "stellungen", []) or []))),
                 ("Abmessungen x × y × z", masse)]
 
     def _modellangaben_text(self) -> str:
@@ -3282,6 +3608,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     pass
                 nachweise.append((text, kurz, f"nachweis:{feld}"))
             out["Nachweise"] = nachweise
+        kl = getattr(self, "knicklaengen", None)
+        if kl is not None:
+            out.setdefault("Nachweise", []).append(
+                ("Knicklängen aus Knickfigur", kl.summary()[:60], "nachweis:knicklaengen"))
         r = self.current_result() if an is not None else None
         if r is not None and (getattr(r, "beam_end", None) or getattr(r, "beam", None)):
             # Die Schnittgroessen gehoeren in den Baum: dort sucht man sie,
@@ -3316,7 +3646,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _stellungen_liste(self) -> list:
         """Stellungen als einfache Liste fuer Baum und Filmstreifen."""
-        st = getattr(self, "stellungen", None) or []
+        st = self._stellungen_obj()
         u = getattr(self, "umhuellende", None)
         erg = {}
         fuehrt = ""
@@ -3523,7 +3853,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_lastfall = tab.Datentabelle([
             Spalte("Lastfall"), Spalte("Einwirkung"), Spalte("Beschreibung", "", "text", 3, True),
             Spalte("Lasten", "", "ganz"), Spalte("Eigengewicht", "m/s²", "zahl", 2),
-            Spalte("Ausschlussgruppe")], "Lastfälle", self)
+            Spalte("Ausschlussgruppe"),
+            Spalte("Situation", hinweis="Stellung und wirksame Elemente, in denen der Lastfall gilt")],
+            "Lastfälle", self)
         self.tbl_lastfall.modell.aendern = self._lastfall_aendern
         self.tbl_lastfall.view.doubleClicked.connect(
             lambda _i: self.lastfall_bearbeiten(str(self._tabellenschluessel(self.tbl_lastfall))))
@@ -3628,7 +3960,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tbl_kombi = tab.Datentabelle([
             Spalte("Kombination"), Spalte("Typ"), Spalte("Formel"),
-            Spalte("Beschreibung")], "Kombinationen", self)
+            Spalte("Beschreibung"), Spalte("Situation")], "Kombinationen", self)
         self.tbl_kombi.view.doubleClicked.connect(
             lambda _i: self.kombination_bearbeiten(str(self._tabellenschluessel(self.tbl_kombi))))
         bc1 = QtWidgets.QPushButton("Kombination hinzufügen…")
@@ -3747,10 +4079,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill(self.tbl_lastfall,
                    [[name, f"{lc.category}", lc.description, lc.n_loads,
                      float(lc.gravity[2]) if len(lc.gravity) > 2 else 0.0,
-                     getattr(lc, "exclusive_group", "") or ""]
+                     getattr(lc, "exclusive_group", "") or "",
+                     getattr(lc, "situation", "") or GRUNDSTELLUNG]
                     for name, lc in m.load_cases.items()])
         self._fill(self.tbl_kombi,
-                   [[name, c.typ, c.formula(), c.description]
+                   [[name, c.typ, c.formula(), c.description,
+                     getattr(c, "situation", "") or GRUNDSTELLUNG]
                     for name, c in m.combinations.items()])
         from .viewport import polygon_flaeche as _pf
         from ..elements import solid as _so
@@ -4299,6 +4633,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_contact.zeile_gewaehlt.connect(self._tabelle_knoten)
         tabs.addTab(self.tbl_contact, "Kontakt")
 
+        # Knicklaengen aus der Knickfigur: je Stab N_Ed, alpha_cr, L_cr und beta
+        self.tbl_knick = tab.Datentabelle([
+            Spalte("Stab"), Spalte("L", "m", "zahl", 3),
+            Spalte("N_Ed", kN, "zahl", 2, hinweis="maßgebende Druckkraft (negativ)"),
+            Spalte("α_cr", "", "zahl", 3, hinweis="Verzweigungslastfaktor der Knickfigur"),
+            Spalte("N_cr", kN, "zahl", 2, hinweis="α_cr · |N_Ed|"),
+            Spalte("Achse", hinweis="Biegeachse der Knickfigur (aus der Eigenform)"),
+            Spalte("L_cr,y", "m", "zahl", 3), Spalte("β_y", "", "zahl", 3),
+            Spalte("L_cr,z", "m", "zahl", 3), Spalte("β_z", "", "zahl", 3),
+            Spalte("Beteiligung", "%", "zahl", 1,
+                   hinweis="Anteil des Stabs an der Formänderungsenergie der Knickfigur"),
+            Spalte("Hinweis")], "Knicklaengen", self, mit_kennwerten=True)
+        self.tbl_knick.zeile_gewaehlt.connect(self._tabelle_stab)
+        bk1 = QtWidgets.QPushButton("Aus Knickfigur ermitteln")
+        bk1.clicked.connect(self.do_knicklaengen)
+        bk2 = QtWidgets.QPushButton("β in die Stäbe übernehmen")
+        bk2.clicked.connect(self.knicklaengen_uebernehmen)
+        tabs.addTab(self._eingabetabelle(self.tbl_knick, bk1, bk2), "Knicklängen")
+
         # Anschluesse: Eingabe und Ergebnis in einer Tabelle. Vor der Rechnung
         # stehen Typ und Ort, danach zusaetzlich Ausnutzung und Status.
         self.tbl_joint = tab.Datentabelle([
@@ -4441,8 +4794,8 @@ class MainWindow(QtWidgets.QMainWindow):
         ("Lager", ["Lager", "Gelenke", "Kontaktbedingungen"]),
         ("Lasten", ["Lastfälle", "Lasten", "Kombinationen"]),
         ("Ergebnisse", ["Stabkräfte", "Auflagerkräfte", "Umhüllende", "Kontakt"]),
-        ("Nachweise", ["Nachweise EC3", "Ermüdung", "Anschlüsse", "Verformungen",
-                       "Beulfelder", "Volumen", "Lasteinleitung"]),
+        ("Nachweise", ["Nachweise EC3", "Knicklängen", "Ermüdung", "Anschlüsse",
+                       "Verformungen", "Beulfelder", "Volumen", "Lasteinleitung"]),
         ("Bericht", ["Bericht"]),
     ]
 
@@ -4762,9 +5115,10 @@ class MainWindow(QtWidgets.QMainWindow):
         return w
 
     def _stellungen_obj(self) -> list:
-        if not hasattr(self, "stellungen"):
-            self.stellungen = []
-        return self.stellungen
+        """Die Stellungen gehoeren zum Modell und werden mit ihm gespeichert."""
+        if not hasattr(self.model, "stellungen"):
+            self.model.stellungen = []
+        return self.model.stellungen
 
     def refresh_stellungen(self):
         if not hasattr(self, "tbl_stellung"):
@@ -5139,6 +5493,71 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if 0 <= n < self.model.nn:
             self._set_selection([n])
+
+    # ---- Knicklaengen aus der Knickfigur ---------------------------------
+    def do_knicklaengen(self):
+        """Knicklaengenbeiwerte aus Verzweigungslastfaktor und Eigenform.
+
+        Liegt ein Knickergebnis vor, wird die in der Ergebnismaske gewaehlte
+        Knickfigur ausgewertet; sonst wird das Verzweigungsproblem zuerst
+        geloest - Grundzustand ist die gewaehlte Kombination oder der aktive
+        Lastfall."""
+        from ..ec3.knicklaengen import knicklaengen_aus_eigenform
+        m = self.model
+        if not m.members:
+            return self.error("Keine Stäbe mit Nachweis - zuerst Stäbe anlegen (Struktur → Stäbe)")
+        r = self.results
+        if r is None or getattr(r, "buckling_modes", None) is None:
+            d = self.cb_result.currentData() if self.analysis is not None else None
+            combo = d[1] if d and d[0] == "combo" else None
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+            try:
+                r = solver.solve_buckling(m, max(1, self.sp_modes.value()),
+                                          case=None if combo else m.active_case,
+                                          combination=combo)
+            except Exception as ex:                    # noqa: BLE001
+                return self.error(ex)
+            finally:
+                QtWidgets.QApplication.restoreOverrideCursor()
+            self._solve_done("buckling", r)
+        modus = self.cb_mode.currentIndex() if self.cb_mode.count() else 0
+        try:
+            erg = knicklaengen_aus_eigenform(m, r, max(0, modus))
+        except ValueError as ex:
+            return self.error(ex)
+        self.knicklaengen = erg
+        if self.analysis is not None:
+            self.analysis.knicklaengen = erg
+        self._fill(self.tbl_knick, [
+            [k.stab, k.L, k.N_Ed / 1e3, k.alpha_cr, (k.N_cr / 1e3) if k.N_cr else "–",
+             k.achse or "–",
+             k.Lcr_y if k.Lcr_y is not None else "–", k.beta_y if k.beta_y is not None else "–",
+             k.Lcr_z if k.Lcr_z is not None else "–", k.beta_z if k.beta_z is not None else "–",
+             k.beteiligung * 100.0, k.hinweis] for k in erg.staebe.values()])
+        self.info(erg.summary())
+        for k in erg.staebe.values():
+            if k.hinweis:
+                self.log.appendPlainText(f"  {k.stab}: {k.hinweis}")
+        self.tabelle_zeigen("Knicklängen")
+        self._refresh_baum()
+        return erg
+
+    def knicklaengen_uebernehmen(self):
+        """Die gefundenen β der beteiligten Staebe in die Staebe schreiben."""
+        from ..ec3.knicklaengen import knicklaengen_uebernehmen as uebernehmen
+        erg = getattr(self, "knicklaengen", None)
+        if erg is None:
+            return self.error("Zuerst „Knicklängen aus Knickfigur“ ermitteln")
+        self.merken("Knicklängen übernommen")
+        geaendert = uebernehmen(self.model, erg)
+        if not geaendert:
+            self._undo.pop()
+            return self.error("Kein beteiligter Stab mit Druckkraft - nichts übernommen")
+        self.info("β übernommen für " + ", ".join(geaendert)
+                  + " (nur beteiligte Stäbe; die Nachweise rechnen jetzt damit)")
+        self.refresh_all()
+        self.tabelle_zeigen("Nachweise EC3") if False else None
+        return geaendert
 
     def _tabelle_stab(self, wert):
         """Zeile eines Stabes (Nachweise) angeklickt: alle seine Knoten waehlen."""
@@ -5580,7 +5999,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for lc in m.load_cases.values():
             p = lc.psi_factors
             rows.append([lc.name, lc.category, f"{p[0]:g}/{p[1]:g}/{p[2]:g}", lc.n_loads,
-                         lc.description + (f"  [Gruppe {lc.exclusive_group}]" if lc.exclusive_group else "")])
+                         lc.description + (f"  [Gruppe {lc.exclusive_group}]" if lc.exclusive_group else "")
+                         + (f"  [Situation {lc.situation}]" if getattr(lc, "situation", "") else "")])
         self.tbl_lc.blockSignals(True)
         self._fill(self.tbl_lc, rows)
         names = list(m.load_cases)
@@ -5848,6 +6268,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model = m
         self.analysis = None
         self.results = None
+        self.knicklaengen = None
         self.selection = np.array([], dtype=int)
         self._undo_knoepfe()
         self.refresh_all()
@@ -6802,21 +7223,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.redraw()
 
     def add_case(self):
-        d = LoadCaseDialog(self, existing=list(self.model.load_cases))
+        d = LoadCaseDialog(self, existing=list(self.model.load_cases),
+                           situationen=self.model.situationsnamen())
         if d.exec():
             name, cat, desc, grp = d.values()
             if name in self.model.load_cases:
                 return self.error(f"Lastfall '{name}' existiert bereits")
             self.model.add_load_case(name, cat, desc, exclusive_group=grp)
+            self.model.load_cases[name].situation = d.situation_name()
             self.refresh_all()
 
     def edit_case(self):
         lc = self.model.case()
-        d = LoadCaseDialog(self, lc, list(self.model.load_cases))
+        d = LoadCaseDialog(self, lc, list(self.model.load_cases), self.model.situationsnamen())
         if d.exec():
             name, cat, desc, grp = d.values()
             old = lc.name
             lc.category, lc.description, lc.exclusive_group = cat, desc, grp
+            lc.situation = d.situation_name()
             if name != old:
                 self.model.load_cases = {(name if k == old else k): v for k, v in self.model.load_cases.items()}
                 lc.name = name
@@ -7512,7 +7936,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             return
         self._vereinfacht = None
-        m = self.model
+        m = self._anzeigemodell()
         self._sicht_pruefen()
         if m.nn == 0:
             self._kamera_setzen(kamera)
@@ -7522,6 +7946,19 @@ class MainWindow(QtWidgets.QMainWindow):
             r = self._aufbauen(m)
         self._kamera_setzen(kamera)
         self.plotter.render()
+
+    def _anzeigemodell(self):
+        """Das Modell, das die Ansicht zeigt: bei einem Ergebnis aus einer
+        Situation mit Stellung die gedrehte Kopie, mit der gerechnet wurde -
+        sonst das Modell selbst. Knoten und Elemente sind dieselben, nur die
+        Lage der bewegten Teile ist eine andere."""
+        r = self.current_result()
+        rm = getattr(r, "model", None) if r is not None else None
+        info = getattr(r, "info", None) or {}
+        if (rm is not None and rm is not self.model and info.get("situation")
+                and rm.nn == self.model.nn and len(rm.elements) == len(self.model.elements)):
+            return rm
+        return self.model
 
     def _aufbauen(self, m):
         """Alle Darsteller der Ansicht aufbauen (ohne Zwischenbilder)."""
@@ -7560,6 +7997,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.act_volumen.isChecked():
             typen += list(vp.TYPEN_VOLUMEN)
         ausser = set(self.versteckt["elemente"])
+        if r is not None:
+            # Elemente, die in der Situation des Ergebnisses nicht wirken
+            ausser |= {int(i) for i in (getattr(r, "info", None) or {}).get("inaktiv", [])}
         koerper_elems: list = []
         if staebe_an and modus in vp.KOERPERLICH:
             koerper_elems = [i for i, e in enumerate(m.elements)

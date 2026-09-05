@@ -954,6 +954,7 @@ class LoadCase:
     description: str = ""
     psi: Optional[list[float]] = None      # (psi0, psi1, psi2); None -> aus Kategorie
     exclusive_group: str = ""              # Lastfaelle derselben Gruppe wirken nie gemeinsam
+    situation: str = ""                    # Situation (Stellung + wirksame Elemente); "" = Grundstellung
     nodal_loads: list[NodalLoad] = field(default_factory=list)
     beam_loads: list[BeamLoad] = field(default_factory=list)
     face_loads: list[FaceLoad] = field(default_factory=list)
@@ -1004,6 +1005,7 @@ class LoadCase:
             "name": self.name, "category": self.category,
             "description": self.description, "psi": self.psi,
             "exclusive_group": self.exclusive_group,
+            "situation": self.situation,
             # Aus Objektlasten erzeugte Elementlasten werden **nicht**
             # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
             # laegen sie nach dem Laden doppelt auf dem Netz.
@@ -1022,6 +1024,7 @@ class LoadCase:
     def from_dict(d: dict) -> "LoadCase":
         lc = LoadCase(d["name"], d.get("category", "G"), d.get("description", ""),
                       d.get("psi"), d.get("exclusive_group", ""))
+        lc.situation = d.get("situation", "") or ""
         lc.nodal_loads = [NodalLoad(**l) for l in d.get("nodal_loads", [])]
         lc.beam_loads = [BeamLoad(**l) for l in d.get("beam_loads", [])]
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
@@ -1048,6 +1051,7 @@ class Combination:
     typ: str = "ULS"
     description: str = ""
     leading: str = ""       # Leiteinwirkung (Information)
+    situation: str = ""     # Situation, in der die Kombination gilt; "" = Grundstellung
 
     @property
     def is_uls(self) -> bool:
@@ -1918,6 +1922,76 @@ class ContactPair:
 Flaechenfreigabe = Kontaktbedingung
 
 
+#: Die Situation, in der alles wirkt und nichts bewegt ist
+GRUNDSTELLUNG = "Grundstellung"
+#: Das Subsystem, das die ganze Struktur ist
+GESAMTSYSTEM = "Gesamtsystem"
+
+
+@dataclass
+class Subsystem:
+    """Ein Teil des Tragwerks mit allem, was dazugehoert.
+
+    Vorgabe: standardmaessig ist die ganze Struktur ein Subsystem
+    (GESAMTSYSTEM, nicht gespeichert, sondern gebildet). Ein neues Subsystem
+    entsteht aus angeklickten Staeben, Flaechen und Volumen samt ihren
+    Elementen, Knoten, Linien, Lagern und Kontakten. An der Beruehrungsstelle
+    zu den uebrigen Teilen werden die Elemente **verdoppelt**: jedes
+    Subsystem hat sie, aehnlich wie bei Kontakten - ``beruehrung`` nennt sie.
+    """
+    name: str
+    elemente: list[int] = field(default_factory=list)
+    beruehrung: list[int] = field(default_factory=list)
+    knoten: list[int] = field(default_factory=list)
+    linien: list[str] = field(default_factory=list)
+    staebe: list[str] = field(default_factory=list)
+    flaechen: list[str] = field(default_factory=list)
+    koerper: list[str] = field(default_factory=list)
+    lager: list[int] = field(default_factory=list)          # Indizes in supports
+    linienlager: list[int] = field(default_factory=list)
+    flaechenlager: list[int] = field(default_factory=list)
+    kontakte: list[str] = field(default_factory=list)       # Kontaktbedingungen, Kontaktpaare
+    beschreibung: str = ""
+
+    def bezug(self) -> str:
+        t = f"{len(self.elemente)} Elemente, {len(self.knoten)} Knoten"
+        if self.beruehrung:
+            t += f", {len(self.beruehrung)} Berührungselemente"
+        n_lager = len(self.lager) + len(self.linienlager) + len(self.flaechenlager)
+        if n_lager:
+            t += f", {n_lager} Lager"
+        if self.kontakte:
+            t += f", {len(self.kontakte)} Kontakte"
+        return t
+
+
+@dataclass
+class Situation:
+    """Eine Situation: eine Stellung des Systems und die Elemente, die darin
+    **nicht** wirken.
+
+    Vorgabe: die GRUNDSTELLUNG - unbewegt, alles aktiviert - gilt immer und
+    wird nicht gespeichert. Jeder Lastfall und jede Kombination nennt seine
+    Situation; gerechnet wird jede Situation mit ihrem eigenen System.
+    """
+    name: str
+    stellung: str = ""                     # Name einer Stellung; "" = unbewegt
+    deaktiviert: list[int] = field(default_factory=list)   # Elemente ohne Wirkung
+    beschreibung: str = ""
+
+    @property
+    def ist_grund(self) -> bool:
+        return self.name == GRUNDSTELLUNG or not self.name
+
+    def bezug(self) -> str:
+        t = self.stellung if self.stellung else "unbewegt"
+        if self.deaktiviert:
+            t += f", {len(self.deaktiviert)} Elemente aus"
+        else:
+            t += ", alles aktiv"
+        return t
+
+
 class Model:
     def __init__(self, name: str = "Modell"):
         self.name = name
@@ -1957,6 +2031,10 @@ class Model:
         self.contact_supports: list[ContactSupport] = []
         self.gap_elements: list[GapElement] = []
         self.contact_pairs: list[ContactPair] = []
+        # Subsysteme, Situationen und Stellungen (Stellung: bridges.positions)
+        self.subsysteme: dict[str, Subsystem] = {}
+        self.situationen: dict[str, Situation] = {}
+        self.stellungen: list = []
         # Metadaten (Bericht)
         self.meta: dict[str, str] = {"projekt": "", "bauteil": "", "bearbeiter": "",
                                      "auftraggeber": "", "position": ""}
@@ -2334,6 +2412,8 @@ class Model:
             x.knoten = f(x.knoten)
         for x in (getattr(self, "verformungsgrenzen", None) or {}).values():
             x.knoten = [f(n) for n in (x.knoten or [])]
+        for sub in (getattr(self, "subsysteme", None) or {}).values():
+            sub.knoten = [f(n) for n in (sub.knoten or [])]
 
     def knoten_tauschen(self, a: int, b: int) -> None:
         """Zwei Knotennummern tauschen - samt allen Verweisen.
@@ -2384,6 +2464,132 @@ class Model:
         self._knotenverweise_abbilden({n: n - 1 for n in range(i + 1, self.nn + 1)})
         return ""
 
+    # ---------------- Subsysteme ----------------
+    def subsystem_gesamt(self) -> Subsystem:
+        """Das Subsystem, das die ganze Struktur ist (wird gebildet, nicht gespeichert)."""
+        return Subsystem(GESAMTSYSTEM, list(range(len(self.elements))), [],
+                         list(range(self.nn)), list(self.lines), list(self.members),
+                         list(self.flaechen), list(self.koerper),
+                         list(range(len(self.supports))), list(range(len(self.line_supports))),
+                         list(range(len(self.surface_supports))),
+                         list(self.kontaktbedingungen) + [cp.name for cp in self.contact_pairs],
+                         "die ganze Struktur")
+
+    def subsystemnamen(self) -> list[str]:
+        return [GESAMTSYSTEM] + list(self.subsysteme)
+
+    def subsystem(self, name: str) -> Subsystem:
+        if name == GESAMTSYSTEM or not name:
+            return self.subsystem_gesamt()
+        return self.subsysteme[name]
+
+    def subsystem_bilden(self, name: str, elemente=(), staebe=(), flaechen=(), koerper=(),
+                         knoten=(), beruehrung: bool = True, beschreibung: str = "") -> Subsystem:
+        """Ein Subsystem aus angeklickten Staeben, Flaechen, Volumen (oder
+        Elementen und Knoten) bilden - mit allem, was dazugehoert.
+
+        Genommen werden die Elemente der genannten Objekte; Knoten, Linien,
+        Lager und Kontakte folgen daraus. Mit ``beruehrung`` kommen die
+        Elemente hinzu, die an den Knoten des Teils haengen, aber nicht dazu
+        gehoeren: sie werden verdoppelt, jedes Subsystem hat sie.
+        """
+        if not name or name == GESAMTSYSTEM:
+            raise ValueError("Ein Subsystem braucht einen eigenen Namen")
+        ne = len(self.elements)
+        elem = {int(i) for i in (elemente or []) if 0 <= int(i) < ne}
+        for s in staebe or []:
+            if s in self.members:
+                elem |= {int(i) for i in self.members[s].elements if 0 <= int(i) < ne}
+        for f in flaechen or []:
+            if f in self.flaechen:
+                elem |= {int(i) for i in (self.flaechen[f].elemente or []) if 0 <= int(i) < ne}
+        for k in koerper or []:
+            if k in self.koerper:
+                kb = self.koerper[k]
+                elem |= {int(i) for i in (kb.elemente or []) if 0 <= int(i) < ne}
+                for f in kb.flaechen or []:
+                    if f in self.flaechen:
+                        elem |= {int(i) for i in (self.flaechen[f].elemente or []) if 0 <= int(i) < ne}
+        kn = {int(n) for n in (knoten or []) if 0 <= int(n) < self.nn}
+        if kn:
+            elem |= {i for i, e in enumerate(self.elements) if set(int(n) for n in e.nodes) <= kn}
+        if not elem:
+            raise ValueError("Nichts gewählt: zuerst Stäbe, Flächen oder Volumen anklicken")
+        kern = {int(n) for i in elem for n in self.elements[i].nodes}
+        beruehrt = []
+        if beruehrung:
+            beruehrt = sorted(i for i, e in enumerate(self.elements)
+                              if i not in elem and kern & {int(n) for n in e.nodes})
+        alle = sorted(elem | set(beruehrt))
+        emenge = set(alle)
+        kmenge = {int(n) for i in alle for n in self.elements[i].nodes}
+        linien = sorted({ln for ln, x in self.lines.items()
+                         if x.nodes and {int(n) for n in x.nodes} <= kmenge}
+                        | {self.elements[i].line for i in alle
+                           if getattr(self.elements[i], "line", "") in self.lines})
+        staebe_ = [n for n, mem in self.members.items()
+                   if mem.elements and {int(i) for i in mem.elements} <= emenge]
+        flaechen_ = sorted({n for n, f in self.flaechen.items()
+                            if f.elemente and {int(i) for i in f.elemente} <= emenge}
+                           | {f for f in (flaechen or []) if f in self.flaechen})
+        koerper_ = sorted({n for n, kb in self.koerper.items()
+                           if kb.elemente and {int(i) for i in kb.elemente} <= emenge}
+                          | {k for k in (koerper or []) if k in self.koerper})
+        lager = [i for i, s in enumerate(self.supports) if int(s.node) in kmenge]
+        linienlager = [i for i, ls in enumerate(self.line_supports)
+                       if ls.nodes and {int(n) for n in ls.nodes} <= kmenge]
+        flaechenlager = [i for i, fs in enumerate(self.surface_supports)
+                         if (fs.elements and {int(e) for e in fs.elements} <= emenge)
+                         or (fs.nodes and {int(n) for n in fs.nodes} <= kmenge)]
+        kontakte = [n for n, kb in self.kontaktbedingungen.items()
+                    if (set(getattr(kb, "flaechennamen", []) or []) & set(flaechen_))
+                    or (set(getattr(kb, "koerpernamen", []) or []) & set(koerper_))]
+        kontakte += [cp.name for cp in self.contact_pairs
+                     if ({int(n) for n in cp.slave_nodes} & kmenge)
+                     or ({int(e) for e in cp.master_elements} & emenge)]
+        sub = Subsystem(name, alle, beruehrt, sorted(kmenge), linien, staebe_, flaechen_,
+                        koerper_, lager, linienlager, flaechenlager, kontakte, beschreibung)
+        self.subsysteme[name] = sub
+        return sub
+
+    # ---------------- Situationen ----------------
+    def situationsnamen(self) -> list[str]:
+        return [GRUNDSTELLUNG] + list(self.situationen)
+
+    def situation(self, name: str = "") -> Situation:
+        """Die Situation mit diesem Namen; leer oder GRUNDSTELLUNG = alles
+        aktiv, unbewegt."""
+        if not name or name == GRUNDSTELLUNG:
+            return Situation(GRUNDSTELLUNG, "", [], "unbewegt, alles aktiv")
+        if name not in self.situationen:
+            raise KeyError(f"Situation '{name}' unbekannt (vorhanden: "
+                           + ", ".join(self.situationsnamen()) + ")")
+        return self.situationen[name]
+
+    def stellung(self, name: str):
+        """Die Stellung (bridges.positions.Stellung) mit diesem Namen - oder None."""
+        for s in self.stellungen:
+            if getattr(s, "name", "") == name:
+                return s
+        return None
+
+    def aktive_elemente(self, situation: str = "") -> np.ndarray:
+        """Maske (n_elemente,): True, wo das Element in der Situation wirkt."""
+        aktiv = np.ones(len(self.elements), dtype=bool)
+        sit = self.situation(situation)
+        for i in sit.deaktiviert:
+            if 0 <= int(i) < len(aktiv):
+                aktiv[int(i)] = False
+        return aktiv
+
+    def lastfaelle_je_situation(self, namen=None) -> dict[str, list[str]]:
+        """{Situation: [Lastfaelle]} in der Reihenfolge der Lastfaelle."""
+        out: dict[str, list[str]] = {}
+        for name in (namen if namen is not None else list(self.load_cases)):
+            lc = self.load_cases[name]
+            out.setdefault(lc.situation or GRUNDSTELLUNG, []).append(name)
+        return out
+
     def elemente_loeschen(self, elemente) -> int:
         """Elemente entfernen und alle Verweise nachziehen (Elementnummern sind
         Listenplaetze: was dahinter liegt, rueckt auf). Rueckgabe: Anzahl."""
@@ -2428,6 +2634,11 @@ class Model:
         for cp in cps:
             if hasattr(cp, "master_elements"):
                 cp.master_elements = um(cp.master_elements)
+        for sub in (getattr(self, "subsysteme", None) or {}).values():
+            sub.elemente = um(sub.elemente)
+            sub.beruehrung = um(sub.beruehrung)
+        for sit in (getattr(self, "situationen", None) or {}).values():
+            sit.deaktiviert = um(sit.deaktiviert)
         return len(wegmenge)
 
     @staticmethod
@@ -3212,6 +3423,27 @@ class Model:
             for k in c.factors:
                 if k not in self.load_cases:
                     msgs.append(f"FEHLER: Kombination '{c.name}': Lastfall '{k}' unbekannt")
+        # Situationen: jeder Lastfall und jede Kombination nennt eine, die es
+        # gibt; eine Kombination ueberlagert nur Lastfaelle ihrer Situation
+        namen = set(self.situationsnamen())
+        for lc in self.load_cases.values():
+            if lc.situation and lc.situation not in namen:
+                msgs.append(f"FEHLER: Lastfall '{lc.name}': Situation '{lc.situation}' unbekannt")
+        for sit in self.situationen.values():
+            if sit.stellung and self.stellung(sit.stellung) is None:
+                msgs.append(f"FEHLER: Situation '{sit.name}': Stellung '{sit.stellung}' unbekannt")
+            if sit.deaktiviert and len(sit.deaktiviert) >= len(self.elements):
+                msgs.append(f"FEHLER: Situation '{sit.name}': alle Elemente deaktiviert")
+        for c in self.combinations.values():
+            sit = c.situation or GRUNDSTELLUNG
+            if sit not in namen:
+                msgs.append(f"FEHLER: Kombination '{c.name}': Situation '{sit}' unbekannt")
+                continue
+            fremd = [k for k, f in c.factors.items() if f and k in self.load_cases
+                     and (self.load_cases[k].situation or GRUNDSTELLUNG) != sit]
+            if fremd:
+                msgs.append(f"FEHLER: Kombination '{c.name}' (Situation {sit}) enthält "
+                            f"Lastfall {', '.join(fremd)} aus einer anderen Situation")
         for f in self.fatigue_loads.values():
             for k in (f.case_max, f.case_min):
                 if k and k not in self.load_cases:
@@ -3276,6 +3508,10 @@ class Model:
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "kopplungen": [asdict(k) for k in self.kopplungen],
             "contact_pairs": [asdict(c) for c in self.contact_pairs],
+            "subsysteme": [asdict(x) for x in self.subsysteme.values()],
+            "situationen": [asdict(x) for x in self.situationen.values()],
+            "stellungen": [asdict(s) if hasattr(s, "__dataclass_fields__") else dict(s)
+                           for s in self.stellungen],
         }
 
     def save(self, path: str):
@@ -3341,6 +3577,16 @@ class Model:
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]
         m.contact_pairs = [_dc(ContactPair, c) for c in d.get("contact_pairs", [])]
+        m.subsysteme = {x["name"]: _dc(Subsystem, x) for x in d.get("subsysteme", [])}
+        m.situationen = {x["name"]: _dc(Situation, x) for x in d.get("situationen", [])}
+        if d.get("stellungen"):
+            from .bridges.positions import Stellung
+            m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]
+            for s in m.stellungen:
+                s.dreh_achse = tuple(s.dreh_achse)
+                s.dreh_punkt = tuple(s.dreh_punkt)
+                if s.antrieb is not None:
+                    s.antrieb = (int(s.antrieb[0]), tuple(s.antrieb[1]))
         return m
 
     @staticmethod

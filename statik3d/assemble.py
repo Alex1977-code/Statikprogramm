@@ -200,13 +200,21 @@ def _mass_chunk(model: Model, idx: list[int]) -> list[tuple]:
     return out
 
 
-def _assemble_triplets(model: Model, chunk_func, workers=None) -> sparse.csr_matrix:
+def aktive_indizes(model: Model, aktiv=None) -> list[int]:
+    """Die Elemente, die wirken: alle oder die der Aktivmaske (Situation)."""
+    ne = len(model.elements)
+    if aktiv is None:
+        return list(range(ne))
+    return [i for i in range(ne) if aktiv[i]]
+
+
+def _assemble_triplets(model: Model, chunk_func, workers=None, idx=None) -> sparse.csr_matrix:
     from . import parallel
     n = model.ndof
-    ne = len(model.elements)
-    if ne == 0:
+    idx = list(range(len(model.elements))) if idx is None else list(idx)
+    if not idx:
         return sparse.csr_matrix((n, n))
-    pairs = parallel.map_elements(chunk_func, model, list(range(ne)), workers=workers)
+    pairs = parallel.map_elements(chunk_func, model, idx, workers=workers)
     rows, cols, vals = [], [], []
     for d, ke in pairs:
         r, c = np.meshgrid(d, d, indexing="ij")
@@ -218,8 +226,10 @@ def _assemble_triplets(model: Model, chunk_func, workers=None) -> sparse.csr_mat
         shape=(n, n)).tocsr()
 
 
-def stiffness(model: Model, workers=None) -> sparse.csr_matrix:
-    K = _assemble_triplets(model, _matrix_chunk, workers)
+def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
+    """Gesamtsteifigkeit; ``aktiv`` (Maske je Element) laesst abgeschaltete
+    Elemente einer Situation weg."""
+    K = _assemble_triplets(model, _matrix_chunk, workers, aktive_indizes(model, aktiv))
     # Federlager
     from . import supports as sup
     lin, _ = sup.split(sup.expand(model))
@@ -228,7 +238,7 @@ def stiffness(model: Model, workers=None) -> sparse.csr_matrix:
         idx = np.array([i for i, _ in springs])
         val = np.array([k for _, k in springs])
         K = (K + sparse.coo_matrix((val, (idx, idx)), shape=K.shape)).tocsr()
-    Kk = kopplungen(model, K)
+    Kk = kopplungen(model, K, aktiv=aktiv)
     return (K + Kk).tocsr() if Kk is not None else K
 
 
@@ -237,7 +247,7 @@ def _trans_dofs(node: int) -> list[int]:
     return [NDOF * node, NDOF * node + 1, NDOF * node + 2]
 
 
-def kopplungen(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
+def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.spmatrix:
     """Steifigkeit der Knotenkopplungen (Kontaktfugen, starr oder federnd).
 
     Fuer jede Richtung n mit der Steifigkeit k gilt zwischen den Knoten a und b
@@ -260,7 +270,13 @@ def kopplungen(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
     gross = float(diag[diag > 0].max()) if np.any(diag > 0) else 1.0
     starr = 1e4 * gross
     rows, cols, vals = [], [], []
+    kn_aktiv = None
+    if aktiv is not None:
+        from .situationen import aktive_knoten
+        kn_aktiv = aktive_knoten(model, aktiv)
     for kp in kopp:
+        if kn_aktiv is not None and not (kn_aktiv[int(kp.node_a)] and kn_aktiv[int(kp.node_b)]):
+            continue                      # Fuge an einem Knoten ohne wirksames Element
         d = np.array(_trans_dofs(int(kp.node_a)) + _trans_dofs(int(kp.node_b)), int)
         for richtung, wert in kp.paare():
             k = starr if not np.isfinite(wert) else float(wert)
@@ -283,12 +299,13 @@ def mass(model: Model, workers=None) -> sparse.csr_matrix:
     return _assemble_triplets(model, _mass_chunk, workers)
 
 
-def geometric_stiffness(model: Model, u: np.ndarray) -> sparse.csr_matrix:
-    """Geometrische Steifigkeit aus vorhandenem Verformungszustand (nur Staebe)."""
+def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None) -> sparse.csr_matrix:
+    """Geometrische Steifigkeit aus vorhandenem Verformungszustand (nur Staebe);
+    abgeschaltete Elemente (``aktiv`` False) bleiben weg."""
     n = model.ndof
     rows, cols, vals = [], [], []
-    for e in model.elements:
-        if e.typ not in LINE_TYPES:
+    for i, e in enumerate(model.elements):
+        if e.typ not in LINE_TYPES or not _wirkt(aktiv, i):
             continue
         mat = model.materials[e.mat]
         sec = model.sections[e.sec]
@@ -390,15 +407,20 @@ def beam_load_local(model: Model, e, bl) -> tuple[np.ndarray, np.ndarray]:
     return q1, q2
 
 
-def element_equivalent_loads(model: Model, case: LoadCase) -> dict[int, np.ndarray]:
+def _wirkt(aktiv, i: int) -> bool:
+    return aktiv is None or bool(aktiv[int(i)])
+
+
+def element_equivalent_loads(model: Model, case: LoadCase, aktiv=None) -> dict[int, np.ndarray]:
     """Lokale aequivalente Knotenlasten je Stabelement (Streckenlasten,
     Eigengewicht, Temperatur) - ohne Gelenkkondensation. Wird fuer die
-    Schnittgroessenrueckrechnung gebraucht."""
+    Schnittgroessenrueckrechnung gebraucht. ``aktiv``: abgeschaltete
+    Elemente einer Situation tragen keine Last."""
     out: dict[int, np.ndarray] = {}
     g = np.asarray(case.gravity, float)
     for bl in case.beam_loads:
         e = model.elements[bl.elem]
-        if e.typ not in LINE_TYPES:
+        if e.typ not in LINE_TYPES or not _wirkt(aktiv, bl.elem):
             continue
         q1, q2 = beam_load_local(model, e, bl)
         L = model.element_length(bl.elem)
@@ -409,7 +431,7 @@ def element_equivalent_loads(model: Model, case: LoadCase) -> dict[int, np.ndarr
         out[bl.elem] = out.get(bl.elem, np.zeros(12)) + f
     if np.any(g):
         for i, e in enumerate(model.elements):
-            if e.typ in LINE_TYPES:
+            if e.typ in LINE_TYPES and _wirkt(aktiv, i):
                 mat = model.materials[e.mat]
                 sec = model.sections[e.sec]
                 X = model.nodes[e.nodes]
@@ -418,7 +440,7 @@ def element_equivalent_loads(model: Model, case: LoadCase) -> dict[int, np.ndarr
                 out[i] = out.get(i, np.zeros(12)) + bm.fixed_end_forces(q, L)
     for tl in case.temp_loads:
         e = model.elements[tl.elem]
-        if e.typ not in LINE_TYPES:
+        if e.typ not in LINE_TYPES or not _wirkt(aktiv, tl.elem):
             continue
         mat = model.materials[e.mat]
         sec = model.sections[e.sec]
@@ -434,7 +456,7 @@ def element_equivalent_loads(model: Model, case: LoadCase) -> dict[int, np.ndarr
     return out
 
 
-def element_distributed_loads(model: Model, case: LoadCase) -> dict[int, np.ndarray]:
+def element_distributed_loads(model: Model, case: LoadCase, aktiv=None) -> dict[int, np.ndarray]:
     """Lokale Streckenlasten je Stabelement als **Abschnitte**, inkl.
     Eigengewicht: Feld (n, 8) mit Zeilen [a, b, q1x, q1y, q1z, q2x, q2y, q2z] -
     q1 bei x = a, q2 bei x = b. Fuer die Schnittgroessen an Zwischenstellen.
@@ -447,7 +469,7 @@ def element_distributed_loads(model: Model, case: LoadCase) -> dict[int, np.ndar
         out[i] = np.vstack([out[i], z]) if i in out else z
     for bl in case.beam_loads:
         e = model.elements[bl.elem]
-        if e.typ not in LINE_TYPES:
+        if e.typ not in LINE_TYPES or not _wirkt(aktiv, bl.elem):
             continue
         q1, q2 = beam_load_local(model, e, bl)
         L = model.element_length(bl.elem)
@@ -458,7 +480,7 @@ def element_distributed_loads(model: Model, case: LoadCase) -> dict[int, np.ndar
         anhaengen(bl.elem, [a, b, *q1, *q2])
     if np.any(g):
         for i, e in enumerate(model.elements):
-            if e.typ in LINE_TYPES:
+            if e.typ in LINE_TYPES and _wirkt(aktiv, i):
                 mat = model.materials[e.mat]
                 sec = model.sections[e.sec]
                 X = model.nodes[e.nodes]
@@ -555,19 +577,27 @@ def solid_thermal_loads(model: Model, e, dT: float) -> np.ndarray:
     return f
 
 
-def load_vector(model: Model, case: LoadCase = None) -> np.ndarray:
-    """Globaler Lastvektor eines Lastfalls (default: aktiver Lastfall)."""
+def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
+    """Globaler Lastvektor eines Lastfalls (default: aktiver Lastfall).
+    ``aktiv``: abgeschaltete Elemente einer Situation tragen keine Last;
+    Knotenlasten an Knoten ohne wirksames Element entfallen."""
     if case is None:
         case = model.case()
     elif isinstance(case, str):
         case = model.case(case)
     F = np.zeros(model.ndof)
+    kn_aktiv = None
+    if aktiv is not None:
+        from .situationen import aktive_knoten
+        kn_aktiv = aktive_knoten(model, aktiv)
 
     for l in case.nodal_loads:
+        if kn_aktiv is not None and not kn_aktiv[int(l.node)]:
+            continue
         F[NDOF * l.node: NDOF * l.node + 6] += np.asarray(l.F, float)
 
     # Stablasten (Strecken-, Eigengewicht, Temperatur) mit Gelenkkondensation
-    for i, fl in element_equivalent_loads(model, case).items():
+    for i, fl in element_equivalent_loads(model, case, aktiv).items():
         e = model.elements[i]
         kl, T3, T, L = beam_local(model, e)
         if getattr(e, "hinge_springs", None):
@@ -577,6 +607,8 @@ def load_vector(model: Model, case: LoadCase = None) -> np.ndarray:
         F[element_dofs(e)] += T.T @ fl
 
     for l in case.face_loads:
+        if not _wirkt(aktiv, l.elem):
+            continue
         e = model.elements[l.elem]
         X = model.nodes[e.nodes]
         if e.typ in SHELL_TYPES:
@@ -599,6 +631,8 @@ def load_vector(model: Model, case: LoadCase = None) -> np.ndarray:
             F[element_dofs(e)] += solid_face_pressure(model, e, l.p, l.face, l.direction)
 
     for tl in case.temp_loads:
+        if not _wirkt(aktiv, tl.elem):
+            continue
         e = model.elements[tl.elem]
         if e.typ in SHELL_TYPES:
             F[element_dofs(e)] += shell_thermal_loads(model, e, tl.dT)
@@ -608,7 +642,9 @@ def load_vector(model: Model, case: LoadCase = None) -> np.ndarray:
     # Eigengewicht Schalen und Volumen (Staebe: siehe oben)
     g = np.asarray(case.gravity, float)
     if np.any(g):
-        for e in model.elements:
+        for i, e in enumerate(model.elements):
+            if not _wirkt(aktiv, i):
+                continue
             mat = model.materials[e.mat]
             X = model.nodes[e.nodes]
             if e.typ in SHELL_TYPES:

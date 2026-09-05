@@ -623,6 +623,46 @@ Querschnittsmaske. Sie hat drei Teile, von oben nach unten:
 geht per Rechtsklick → *Löschen* oder Entf aus dem Modellbaum; ein benutzter
 wird mit der Zahl seiner Elemente abgewiesen.
 
+### Subsysteme
+
+Standardmäßig ist die ganze Struktur **ein** Subsystem — das *Gesamtsystem*
+im Modellbaum unter „Subsysteme“. Ein weiteres Subsystem entsteht mit
+**Rechtsklick → Neu: Subsystem** (oder „+ Subsystem anlegen“): Stäbe,
+Flächen oder Volumen in der Ansicht anklicken — auch mit dem
+Auswahlfenster —, Name eingeben, **OK**. Zum Subsystem gehören dann
+**alle zugehörigen Elemente, Knoten, Linien, Lager und Kontakte**. An der
+Berührungsstelle zu den übrigen Teilen werden die Elemente **verdoppelt**:
+jedes Subsystem hat sie, ähnlich wie bei Kontakten (der Haken
+„Berührungselemente mitnehmen“ schaltet das ab). Ein Klick auf ein
+Subsystem wählt es in der Ansicht und zeigt rechts, was es enthält; Name
+und Beschreibung sind dort änderbar, Entf löscht es. Subsysteme werden mit
+dem Modell gespeichert.
+
+### Situationen: Stellung und wirksame Elemente
+
+Unter „Situationen“ steht immer die **Grundstellung**: unbewegt, alle
+Elemente aktiviert. Eine weitere Situation entsteht mit **Rechtsklick →
+Neu: Situation** (oder „+ Situation anlegen“). In ihrer Maske wählt man die
+**Stellung** (eine der angelegten Stellungen des Systems oder „unbewegt“)
+und bestimmt, welche Elemente **nicht wirken**: Elemente, Stäbe, Flächen
+oder Volumen in der Ansicht anklicken und **„Auswahl deaktivieren“** — sie
+verschwinden im Bild; „Auswahl aktivieren“ und „Alle aktivieren“ nehmen es
+zurück. **OK** legt die Situation an.
+
+**Jeder Lastfall und jede Kombination nennt seine Situation** — im
+Lastfalldialog und im Kombinationsdialog als Feld „Situation“; die
+Tabellen unten und der Modellbaum zeigen sie mit. Eine Kombination
+überlagert nur Lastfälle **derselben** Situation (die anderen Felder sind
+im Dialog gesperrt, die Modellprüfung meldet eine Mischung als Fehler);
+die automatischen Kombinationen nach DIN EN 1990 entstehen je Situation.
+Gerechnet wird jede Situation mit ihrem eigenen System: die Stellung wird
+angewandt, die deaktivierten Elemente tragen weder Steifigkeit noch Last,
+ihre Schnittgrößen sind null, Knoten ohne wirksames Element werden
+festgehalten. Im Ergebnisbild einer solchen Situation fehlen die
+abgeschalteten Elemente, und bei einer Stellung steht das Modell in der
+gedrehten Lage, mit der gerechnet wurde. Stellungen werden jetzt mit dem
+Modell gespeichert.
+
 ### Register „Auswahl"
 
 Sobald Knoten gewählt sind, erscheint rechts im Ribbon ein zusätzliches
@@ -850,6 +890,30 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
+
+### Knicklängen aus der Knickfigur
+
+*Nachweise → Knicklängen → Aus Knickfigur* (oder die Tabelle „Knicklängen“
+unten, Gruppe *Nachweise*). Das Programm löst das Verzweigungsproblem —
+Grundzustand ist die in der Ergebnismaske gewählte Kombination, sonst der
+aktive Lastfall; liegt schon ein Knickergebnis vor, wird die dort gewählte
+Knickfigur ausgewertet — und bestimmt für jeden Stab mit Nachweis:
+
+| Spalte | Bedeutung |
+|---|---|
+| N_Ed | die maßgebende Druckkraft des Stabs im Grundzustand |
+| α_cr, N_cr | Verzweigungslastfaktor der Knickfigur und N_cr = α_cr·\|N_Ed\| |
+| Achse | um welche Achse der Stab in der Knickfigur biegt (aus der Eigenform) |
+| L_cr, β | L_cr = π·√(E·I/N_cr), β = L_cr/L für diese Achse; die andere bleibt offen |
+| Beteiligung | Anteil des Stabs an der Formänderungsenergie der Knickfigur |
+
+Ein Stab, der in der Knickfigur gerade bleibt (Beteiligung unter 5 %),
+bekommt seinen Wert nur als **Obergrenze** gekennzeichnet — die Formel
+setzt voraus, dass er es ist, der ausknickt. Für solche Stäbe eine höhere
+Knickfigur wählen (Ergebnismaske) und erneut ermitteln. **β übernehmen**
+schreibt die Beiwerte der beteiligten Stäbe in die Stäbe; die
+Stabilitätsnachweise rechnen dann damit (Rückgängig nimmt es zurück). Die
+Tabelle steht auch im Bericht.
 
 ### Anschlüsse nach EC3-1-8
 
@@ -1311,6 +1375,12 @@ Grenzmoment der Rutschkupplung), `WIND_B` (Wind während der Bewegung), `EIS`,
 > wäre schlimmer als eines, das die Tabelle offen zur Bestätigung vorlegt.
 
 ### Stellungen im Programmfenster
+
+Die Stellungen gehören zum Modell und werden mit ihm gespeichert; eine
+**Situation** (Modellbaum → Situationen) verbindet eine Stellung mit den
+Elementen, die darin nicht wirken, und wird von Lastfällen und Kombinationen
+genannt (siehe „Situationen“ in Kapitel 2).
+
 
 Im Register **⟳ Stellungen** stehen alle Stellungen in einer Tabelle mit Winkel,
 ausgefallenen Lagern, geltenden Lastfällen, η und größter Verformung.

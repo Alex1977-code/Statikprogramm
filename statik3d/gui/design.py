@@ -380,17 +380,19 @@ class Modellbaum(QtWidgets.QTreeWidget):
     loeschen = QtCore.Signal(str, str)        # (Art, Name): Objekt loeschen
 
     #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst
-    NEU_ARTEN = {"querschnitte": "Querschnitt",
+    NEU_ARTEN = {"querschnitte": "Querschnitt", "subsysteme": "Subsystem",
+                 "situationen": "Situation",
                  "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
-                    "geokoerper_einzeln"}
+                    "geokoerper_einzeln", "subsystem", "situation"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
-                 "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte"}
+                 "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte",
+                 "subsystem": "subsysteme", "situation": "situationen"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -662,9 +664,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # ---- Einwirkungen -------------------------------------------------
         ew = self._zweig(wurzel, "Einwirkungen", "", "modell", fett=True)
         lf = self._zweig(ew, "Lastfälle", len(model.load_cases), "lastfaelle")
-        self._liste(lf, [(name, f"{lc.category} · {lc.n_loads}", name,
-                          f"{name}: {lc.description or lc.category}, "
-                          f"{lc.n_loads} Lasten")
+        self._liste(lf, [(name, f"{lc.category} · {lc.n_loads}"
+                          + (f" · {lc.situation}" if getattr(lc, "situation", "") else ""),
+                          name, f"{name}: {lc.description or lc.category}, "
+                          f"{lc.n_loads} Lasten"
+                          + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
                          for name, lc in model.load_cases.items()], "lastfall",
                     "lastfaelle")
         n_lasten = sum(lc.n_loads for lc in model.load_cases.values())
@@ -675,7 +679,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
             if lc.n_loads:
                 self._zweig(la, name, lc.n_loads, "last", schluessel=name)
         kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
-        self._liste(kb, [(name, getattr(c, "kind", "") or "", name, name)
+        self._liste(kb, [(name, getattr(c, "situation", "") or "", name,
+                          name + (f": Situation {c.situation}" if getattr(c, "situation", "") else ""))
                          for name, c in model.combinations.items()], "kombination",
                     "kombinationen")
 
@@ -729,6 +734,31 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._zweig(st, "+ Stellung anlegen", "", "stellung_neu",
                     farbe=FARBEN["akzent"])
         st.setExpanded(True)
+
+        # ---- Subsysteme und Situationen ------------------------------------
+        # Das Gesamtsystem und die Grundstellung sind immer da; alles weitere
+        # legt der Anwender an (Rechtsklick: Neu, oder der Eintrag "+ …").
+        from ..model import GRUNDSTELLUNG, GESAMTSYSTEM
+        subs = getattr(model, "subsysteme", {}) or {}
+        sz = self._zweig(wurzel, "Subsysteme", 1 + len(subs), "subsysteme", fett=bool(subs),
+                         farbe=FARBEN["akzent"] if subs else None,
+                         hinweis="Teile des Tragwerks mit allem, was dazugehört; "
+                                 "Berührungselemente gehören beiden")
+        self._zweig(sz, GESAMTSYSTEM, f"{len(model.elements)} El", "subsystem",
+                    schluessel=GESAMTSYSTEM, hinweis="die ganze Struktur")
+        self._liste(sz, [(name, f"{len(s.elemente)} El", name, f"{name}: {s.bezug()}")
+                         for name, s in subs.items()], "subsystem", "subsysteme")
+        self._zweig(sz, "+ Subsystem anlegen", "", "subsystem_neu", farbe=FARBEN["akzent"])
+        sits = getattr(model, "situationen", {}) or {}
+        siz = self._zweig(wurzel, "Situationen", 1 + len(sits), "situationen",
+                          fett=bool(sits), farbe=FARBEN["akzent"] if sits else None,
+                          hinweis="Stellung und wirksame Elemente; Lastfälle und "
+                                  "Kombinationen nennen ihre Situation")
+        self._zweig(siz, GRUNDSTELLUNG, "alles aktiv", "situation", schluessel=GRUNDSTELLUNG,
+                    hinweis="unbewegt, alle Elemente wirken")
+        self._liste(siz, [(name, s.bezug(), name, f"{name}: {s.bezug()}")
+                          for name, s in sits.items()], "situation", "situationen")
+        self._zweig(siz, "+ Situation anlegen", "", "situation_neu", farbe=FARBEN["akzent"])
 
         # ---- Nachweisobjekte -------------------------------------------------
         # Anschluesse gehoeren zum Modell und stehen darum hier - der Zweig

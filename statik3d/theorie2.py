@@ -432,7 +432,8 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     from .solver import StaticSystem, case_loads, case_prescribed, postprocess, Results
     t0 = time.time()
     system = system or StaticSystem(model)
-    F, feq, q, temp = case_loads(model, factors)
+    aktiv = getattr(system, "aktiv", None)          # Situation: abgeschaltete Elemente
+    F, feq, q, temp = case_loads(model, factors, aktiv)
     us = case_prescribed(model, factors)
 
     # --- Theorie I. Ordnung als Ausgangspunkt
@@ -440,7 +441,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     res1 = Results(name=name, kind="combination", model=model)
     res1.u = u1.reshape(-1, NDOF)
     res1.reactions = system.reactions(u1, F).reshape(-1, NDOF)
-    postprocess(model, u1, res1, feq, q, temp)
+    postprocess(model, u1, res1, feq, q, temp, aktiv=aktiv)
 
     info = Th2Info(kombination=name, u_max_I=float(np.abs(u1).max()))
     ac = alpha_cr(model, system, u1)
@@ -460,7 +461,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
             Fimp = Fs + Fv
             info.schiefstellung, info.vorkruemmung = s_info, v_info
         Fges = F + Fimp
-        Kg = asm.geometric_stiffness(model, u)
+        Kg = asm.geometric_stiffness(model, u, aktiv)
         try:
             u_neu = system.solve(Fges, K_extra=Kg, us=us)
         except Exception as exc:
@@ -472,7 +473,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         res = Results(name=name, kind="combination", model=model)
         res.u = u.reshape(-1, NDOF)
         res.reactions = system.reactions(u, Fges, K_extra=Kg).reshape(-1, NDOF)
-        postprocess(model, u, res, feq, q, temp)
+        postprocess(model, u, res, feq, q, temp, aktiv=aktiv)
         info.iterationen = it
         info.konvergenz = d / bezug
         if d / bezug < tol:
@@ -547,7 +548,7 @@ class Th2Results:
 
 
 def check_theorie2(model: Model, analysis, combos: list = None, system=None,
-                   progress=None) -> Th2Results:
+                   progress=None, systeme: dict = None) -> Th2Results:
     """
     Alle GZT-Kombinationen nach Theorie II. Ordnung rechnen und die
     Ergebnisse der Berechnung **ersetzen**.
@@ -577,12 +578,19 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
         return out
     system = system or StaticSystem(model, progress=progress)
     grenze = out.settings["grenze"]
+    basis = model
     for k, n in enumerate(names):
         combo = model.combinations[n]
+        # Die Kombination rechnet in ihrer Situation (eigenes Modell und System)
+        sit = getattr(combo, "situation", "") or "Grundstellung"
+        if systeme and sit in systeme:
+            model, system = systeme[sit]
+        else:
+            model = basis
         if modus == "auto":
             # Grundzustand und alpha_cr zuerst
             from .solver import case_loads, case_prescribed
-            F, _feq, _q, _temp = case_loads(model, combo.factors)
+            F, _feq, _q, _temp = case_loads(model, combo.factors, getattr(system, "aktiv", None))
             u1 = system.solve(F, us=case_prescribed(model, combo.factors))
             ac = alpha_cr(model, system, u1)
             info = Th2Info(kombination=n, alpha_cr=ac["alpha_cr"], grenze=grenze,

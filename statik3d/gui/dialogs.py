@@ -228,10 +228,18 @@ class SectionDialog(QtWidgets.QDialog):
 
 # ==========================================================================
 class LoadCaseDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, lc: LoadCase = None, existing=()):
+    def __init__(self, parent=None, lc: LoadCase = None, existing=(), situationen=()):
         super().__init__(parent)
         self.setWindowTitle("Lastfall")
         self.name = QtWidgets.QLineEdit(lc.name if lc else f"LF{len(existing)+1}")
+        # Die Situation, in der der Lastfall gilt (Stellung + wirksame Elemente)
+        self.situation = QtWidgets.QComboBox()
+        namen = list(situationen) or ["Grundstellung"]
+        self.situation.addItems(namen)
+        if lc and getattr(lc, "situation", ""):
+            if lc.situation not in namen:
+                self.situation.addItem(lc.situation)
+            self.situation.setCurrentText(lc.situation)
         self.cat = QtWidgets.QComboBox()
         for k, (desc, psi) in ACTION_CATEGORIES.items():
             self.cat.addItem(f"{k}: {desc}  (ψ {psi[0]}/{psi[1]}/{psi[2]})", k)
@@ -245,11 +253,17 @@ class LoadCaseDialog(QtWidgets.QDialog):
         f.addRow("Einwirkung", self.cat)
         f.addRow("Beschreibung", self.desc)
         f.addRow("Ausschlussgruppe", self.group)
+        f.addRow("Situation", self.situation)
         f.addRow(buttons(self))
 
     def values(self):
         return (self.name.text().strip() or "LF", self.cat.currentData(),
                 self.desc.text(), self.group.text().strip())
+
+    def situation_name(self) -> str:
+        """"" fuer die Grundstellung, sonst der Name der Situation."""
+        s = self.situation.currentText()
+        return "" if s == "Grundstellung" else s
 
 
 class CombinationDialog(QtWidgets.QDialog):
@@ -263,20 +277,46 @@ class CombinationDialog(QtWidgets.QDialog):
             self.typ.setCurrentText(combo.typ)
         self.desc = QtWidgets.QLineEdit(combo.description if combo else "")
         self.factors = {}
+        self.model = model
+        # Die Situation der Kombination: nur Lastfaelle derselben Situation
+        # lassen sich ueberlagern - die anderen Felder werden gesperrt
+        self.situation = QtWidgets.QComboBox()
+        self.situation.addItems(model.situationsnamen() if hasattr(model, "situationsnamen")
+                                else ["Grundstellung"])
+        if combo and getattr(combo, "situation", ""):
+            self.situation.setCurrentText(combo.situation)
         f = QtWidgets.QFormLayout(self)
         f.addRow("Name", self.name)
         f.addRow("Typ", self.typ)
         f.addRow("Beschreibung", self.desc)
-        for k in model.load_cases:
+        f.addRow("Situation", self.situation)
+        for k, lc in model.load_cases.items():
             e = NumEdit(combo.factors.get(k, 0.0) if combo else 0.0, 80)
             self.factors[k] = e
-            f.addRow(f"Faktor {k}", e)
+            sit = getattr(lc, "situation", "") or ""
+            f.addRow(f"Faktor {k}" + (f"  [{sit}]" if sit else ""), e)
+        self.situation.currentTextChanged.connect(self._situation_gewechselt)
+        self._situation_gewechselt()
         f.addRow(buttons(self))
+
+    def situation_name(self) -> str:
+        s = self.situation.currentText()
+        return "" if s == "Grundstellung" else s
+
+    def _situation_gewechselt(self, _t=None):
+        sit = self.situation_name()
+        for k, e in self.factors.items():
+            lc = self.model.load_cases.get(k)
+            passt = (getattr(lc, "situation", "") or "") == sit if lc is not None else True
+            e.setEnabled(passt)
+            e.setToolTip("" if passt else "Lastfall einer anderen Situation - nicht kombinierbar")
 
     def result(self) -> Combination:
         return Combination(self.name.text().strip() or "K",
-                           {k: e.value() for k, e in self.factors.items() if e.value()},
-                           self.typ.currentText(), self.desc.text())
+                           {k: e.value() for k, e in self.factors.items()
+                            if e.value() and e.isEnabled()},
+                           self.typ.currentText(), self.desc.text(),
+                           situation=self.situation_name())
 
 
 class AutoCombinationDialog(QtWidgets.QDialog):

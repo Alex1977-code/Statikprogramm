@@ -120,6 +120,12 @@ Punkte:
   dorthin wäre ein Stabelement mit sieben Freiheitsgraden.
 * **Wölbordinaten nur für I und U** – für andere offene Querschnitte wird der
   Momentenanteil ausgewiesen, aber keine Wölbspannung; sie würde geraten.
+* **Subsysteme** sind bisher eine Gliederung (Auswahl, Baum, Speichern);
+  eine Berechnung je Subsystem (Teilsystem freischneiden, Schnittkräfte an
+  den verdoppelten Berührungselementen) steht noch aus.
+* **Situationen mit Stellung** rechnen auf einer gedrehten Kopie des Modells;
+  der Antrieb (`Stellung.antrieb`) und die Lastfallauswahl der Stellung
+  (`faelle`) gelten nur in der Stellungsreihe, nicht in der Situation.
 * **Torsion freier Polygonquerschnitte** (`sections.polygon`) ist eine
   Näherung nach Saint-Venant (A⁴/(4π²·Ip)); exakt wäre die Lösung der
   Prandtlschen Spannungsfunktion auf dem Polygon (kleines FE-Problem). Der

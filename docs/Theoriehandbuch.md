@@ -174,6 +174,39 @@ wird jede Kombination einzeln gelöst.
 Umhüllende: je Ergebnisgruppe (GZT, GZG …) werden Minimum und Maximum jeder
 Größe an jeder Nachweisstelle mit der maßgebenden Kombination gespeichert.
 
+### 3.1 Situationen: Stellung und wirksame Elemente
+
+Jeder Lastfall und jede Kombination gehört zu einer **Situation**; die
+Grundstellung (unbewegt, alle Elemente) ist die Vorgabe. Für jede Situation,
+in der ein Lastfall steht, wird ein eigenes Gleichungssystem aufgestellt:
+
+* **Stellung**: die bewegten Knoten werden um die Achse der Stellung gedreht
+  (Rotationsmatrix nach Rodrigues, `bridges.positions.drehmatrix`), die in
+  der Stellung unwirksamen Lager entfallen. Gerechnet wird auf dieser Kopie
+  des Modells; Ergebnisse und Bild beziehen sich auf die gedrehte Lage.
+* **Deaktivierte Elemente** liefern keinen Beitrag zur Steifigkeitsmatrix,
+  keine Elementlasten (Streckenlast, Eigengewicht, Temperatur, Flächenlast)
+  und bekommen Schnittgrößen null. Knotenlasten an Knoten, an denen kein
+  wirksames Element mehr hängt, entfallen; solche Knoten werden über die
+  Regel „Freiheitsgrad ohne Steifigkeit wird festgehalten“ gesperrt.
+  Kopplungen einer Kontaktfuge an solchen Knoten entfallen ebenfalls.
+* **Kombinationen** überlagern nur Lastfälle derselben Situation (gleiche
+  Steifigkeitsmatrix — sonst wäre die Superposition falsch); eine Mischung
+  meldet die Modellprüfung als Fehler, der Rechenkern weist sie ab. Die
+  Theorie II. Ordnung rechnet jede Kombination mit dem System ihrer
+  Situation (geometrische Steifigkeit ebenfalls nur aus wirksamen Elementen).
+* **Umhüllende** und Nachweise laufen wie bisher über alle Kombinationen –
+  die Stablängen bleiben bei einer Drehung erhalten.
+
+`tests/test_situationen.py` prüft das gegen geschlossene Lösungen:
+eingespannt-gestützter Balken (7PL³/96EI) gegen den Kragarm nach Abschalten
+des zweiten Elements (PL³/3EI), Eigengewicht nur der wirksamen Elemente,
+Kragarm um 90° hochgeklappt unter Vertikallast (PL/EA statt PL³/3EI).
+
+**Subsysteme** sind eine Gliederung des Modells (Elemente, Knoten, Linien,
+Lager, Kontakte je Teil; Elemente an der Berührungsstelle gehören beiden);
+sie ändern die Berechnung nicht.
+
 ## 4 Kontakt
 
 Kontakt wird mit dem Penalty-Verfahren und einer Aktivmengen-Iteration
@@ -573,6 +606,33 @@ steht im Bericht.
   werden je Kombination N_Ed = max. Druckkraft, M_y,Ed und M_z,Ed = max.
   Beträge entlang des Stabes angesetzt (auf der sicheren Seite).
 * Teilsicherheitsbeiwerte: γM0 = 1,0, γM1 = 1,1 (deutscher NA), γM2 = 1,25.
+
+#### 5.4a Knicklängen aus der Knickfigur
+
+Aus dem linearen Verzweigungsproblem (K + α·K_g) v = 0 mit dem
+Spannungszustand einer Kombination als Grundzustand folgen der
+Verzweigungslastfaktor α_cr und die Knickfigur v. Für einen Stab mit der
+Druckkraft N_Ed ist die ideale Knicklast N_cr = α_cr·|N_Ed| und damit
+
+    L_cr = π · √(E·I / N_cr),   β = L_cr / L.
+
+Die Eigenform liefert zwei Angaben, die α_cr allein nicht enthält
+(`ec3/knicklaengen.py`):
+
+* die **Biegeachse**: die modale Formänderungsenergie ½ vᵀ k v jedes
+  Elements wird nach den Biegefreiheitsgraden um die lokale y- und z-Achse
+  getrennt; die Knicklänge gilt für die Achse mit dem größeren Anteil, die
+  andere bleibt unbestimmt;
+* die **Beteiligung**: der Anteil des Stabs an der Gesamtenergie der
+  Knickfigur. Ein unbeteiligter Stab bekommt nach der Formel eine viel zu
+  große Knicklänge — der Wert wird als Obergrenze gekennzeichnet; für ihn
+  ist eine höhere Knickfigur auszuwerten.
+
+Geprüft (`tests/test_knicklaengen.py`) gegen die Eulerfälle β = 1, 2, 0,5
+und 0,699 (Abweichung < 0,3 % bei 12 bis 16 Elementen), die Achse bei
+gehaltener schwacher Achse, den zweistieligen Rahmen mit starrem Riegel
+(β = 1 bei eingespannten Füßen, β = 2 bei Fußgelenken, Beteiligung je 50 %)
+und den kaum belasteten Nachbarstiel (unbeteiligt, Obergrenze).
 
 ### 5.5 Ermüdung (DIN EN 1993-1-9)
 

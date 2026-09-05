@@ -50,7 +50,8 @@ class Maske(QtWidgets.QFrame):
     abgebrochen = QtCore.Signal()
 
     def __init__(self, titel: str, felder: list, parent=None, knoten: int = 0,
-                 hinweis: str = "", knopf: str = "Anwenden", abbrechen: str = ""):
+                 hinweis: str = "", knopf: str = "Anwenden", abbrechen: str = "",
+                 zusatz: list = None):
         super().__init__(parent)
         self.setObjectName("maske")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -114,6 +115,16 @@ class Maske(QtWidgets.QFrame):
             b.clicked.connect(self.auswahl_leeren)
             knoepfe.addWidget(b)
         lay.addLayout(knoepfe)
+        # Weitere Knoepfe (Situation: Auswahl deaktivieren / aktivieren)
+        self.zusatzknoepfe: dict[str, QtWidgets.QPushButton] = {}
+        if zusatz:
+            zeile = QtWidgets.QHBoxLayout()
+            for text, ruf in zusatz:
+                b = QtWidgets.QPushButton(text, self)
+                b.clicked.connect(lambda _c=False, r=ruf: r())
+                zeile.addWidget(b)
+                self.zusatzknoepfe[text] = b
+            lay.addLayout(zeile)
         self.setMinimumWidth(232)
 
     # -- Aufbau ----------------------------------------------------------

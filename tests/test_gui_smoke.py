@@ -276,7 +276,7 @@ def main():
         from statik3d.gui import design as dsg
         w.load_example("gate")
         w.model.meta["Bauteil"] = "Klappbruecke"
-        w.stellungen = [Stellung(name=f"S{i}", winkel=float(a), beschreibung=t)
+        w._stellungen_obj()[:] = [Stellung(name=f"S{i}", winkel=float(a), beschreibung=t)
                         for i, (a, t) in enumerate(((0, "geschlossen"), (32, "Zwischen"),
                                                     (82, "offen")), 1)]
         w.refresh_all()
@@ -385,7 +385,7 @@ def main():
               str(len(w.model.combinations)))
 
         w.stellung_entfernen()
-        check("Stellung entfernt", len(w.stellungen) == 2, str(len(w.stellungen)))
+        check("Stellung entfernt", len(w._stellungen_obj()) == 2, str(len(w._stellungen_obj())))
 
         # Nicht-modale Masken: „Maske oder Klick“ (Vorgabe Kap. 3.8)
         w.load_example("frame")
@@ -1926,6 +1926,165 @@ def main():
         check("Baum: Neu und Löschen für Querschnitte",
               "querschnitte" in w.baum.NEU_ARTEN and "querschnitt" in w.baum.LOESCH_ARTEN)
         w.maskenrand.schliessen()
+
+        # ---- Subsysteme und Situationen ----
+        from statik3d.model import GRUNDSTELLUNG as GRUND, GESAMTSYSTEM as GESAMT
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        namen = zweige(w.baum)
+        check("Baum: Subsysteme mit Gesamtsystem, Situationen mit Grundstellung",
+              "Subsysteme" in namen and GESAMT in namen and "Situationen" in namen
+              and GRUND in namen and "+ Subsystem anlegen" in namen and "+ Situation anlegen" in namen)
+        stab = list(m_.members)[0]
+        w._baum_geklickt("stab", stab)
+        w._baum_geklickt("subsystem_neu", "+ Subsystem anlegen")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neu: Subsystem-Maske zeigt die Auswahl und den Haken Berührung",
+              mk is not None and mk.titel == "Neu: Subsystem" and "1 Stäbe" in mk.werte()["auswahl"]
+              and mk.werte()["beruehrung"] is True and "Auswahl neu lesen" in mk.zusatzknoepfe,
+              str(mk.werte() if mk else None))
+        mk.setzen("name", "Stiel")
+        mk.anwenden()
+        app.processEvents()
+        sub = m_.subsysteme.get("Stiel")
+        els = set(m_.members[stab].elements)
+        check("OK bildet das Subsystem: Elemente des Stabs, Berührungselemente, Knoten, Lager",
+              sub is not None and els <= set(sub.elemente)
+              and set(sub.beruehrung) == set(sub.elemente) - els and len(sub.beruehrung) >= 1
+              and sub.staebe == [stab] and sub.knoten and sub.lager, sub.bezug() if sub else None)
+        check("Subsystem in der Ansicht gewählt, Maske rechts, Eintrag im Baum",
+              set(w.sel_elemente) == set(sub.elemente) and set(w.selection.tolist()) == set(sub.knoten)
+              and w.maskenrand.maske.titel == "Subsystem Stiel" and "Stiel" in zweige(w.baum))
+        w._baum_geklickt("subsystem", GESAMT)
+        app.processEvents()
+        check("Gesamtsystem wählt alles", len(w.sel_elemente) == len(m_.elements))
+        w._baum_geklickt("subsystem", "Stiel")
+        w.maskenrand.maske.setzen("name", "Stiel A")
+        w.maskenrand.maske.anwenden()
+        app.processEvents()
+        check("Subsystem umbenennen", "Stiel A" in m_.subsysteme and "Stiel" not in m_.subsysteme)
+        fehler = []
+        w.error = lambda msg: fehler.append(str(msg))
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("subsystem", GESAMT)
+        check("Gesamtsystem lässt sich nicht löschen", bool(fehler) and "Gesamtsystem" in fehler[0])
+        w._baum_loeschen("subsystem", "Stiel A")
+        app.processEvents()
+        check("Subsystem löschen, Rückgängig holt es zurück", "Stiel A" not in m_.subsysteme
+              and (w.undo() or True) and "Stiel A" in w.model.subsysteme)
+        m_ = w.model
+        # Situation: die Elemente des Stabs deaktivieren
+        w._baum_geklickt("situation_neu", "+ Situation anlegen")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neu: Situation-Maske mit Stellung, Deaktiviert und drei Knöpfen",
+              mk.titel == "Neu: Situation" and mk.werte()["stellung"].startswith("–")
+              and set(mk.zusatzknoepfe) == {"Auswahl deaktivieren", "Auswahl aktivieren", "Alle aktivieren"})
+        w.clear_selection()
+        w.sel_staebe = [stab]
+        mk.zusatzknoepfe["Auswahl deaktivieren"].click()
+        app.processEvents()
+        check("„Auswahl deaktivieren“: Elemente in der Maske und im Bild ausgeblendet",
+              f"{len(els)} Elemente" in mk.werte()["aus"] and set(w.versteckt["elemente"]) == els,
+              mk.werte()["aus"])
+        mk.setzen("name", "ohne Stiel")
+        mk.anwenden()
+        app.processEvents()
+        sit = m_.situationen.get("ohne Stiel")
+        check("OK legt die Situation an und stellt die Sicht wieder her",
+              sit is not None and set(sit.deaktiviert) == els and not w.versteckt["elemente"]
+              and "ohne Stiel" in zweige(w.baum), str(sit))
+        d = dg.LoadCaseDialog(w, existing=list(m_.load_cases), situationen=m_.situationsnamen())
+        check("Lastfalldialog bietet die Situationen",
+              [d.situation.itemText(i) for i in range(d.situation.count())] == [GRUND, "ohne Stiel"])
+        d.situation.setCurrentText("ohne Stiel")
+        d.name.setText("LFS")
+        name, cat, desc, grp = d.values()
+        m_.add_load_case(name, cat, desc, exclusive_group=grp)
+        m_.load_cases[name].situation = d.situation_name()
+        m_.load_node(0, Fz=-1e3, case="LFS")
+        w.refresh_all()
+        app.processEvents()
+        check("Lastfall trägt die Situation (Tabelle unten, Baum)",
+              m_.load_cases["LFS"].situation == "ohne Stiel"
+              and any("ohne Stiel" in str(z) for z in w.tbl_lastfall.modell.zeilen)
+              and any("ohne Stiel" in t for t in zweige(w.baum)))
+        dk = dg.CombinationDialog(w, m_)
+        dk.situation.setCurrentText("ohne Stiel")
+        check("Kombinationsdialog sperrt Lastfälle anderer Situationen",
+              not dk.factors["LF1"].isEnabled() and dk.factors["LFS"].isEnabled())
+        dk.factors["LFS"].set(1.35)
+        dk.name.setText("KS")
+        ck = dk.result()
+        check("Kombination trägt die Situation", ck.situation == "ohne Stiel" and ck.factors == {"LFS": 1.35})
+        m_.combinations["KS"] = ck
+        an_ = solver.solve_all(m_)
+        w._solve_done("all", an_)
+        app.processEvents()
+        for i in range(w.cb_result.count()):
+            if w.cb_result.itemText(i).endswith("LFS"):
+                w.cb_result.setCurrentIndex(i)
+                break
+        app.processEvents()
+        r_ = w.current_result()
+        check("Ergebnis der Situation: abgeschaltete Elemente ohne Schnittgrößen, im Bild weggelassen",
+              r_ is not None and r_.info.get("situation") == "ohne Stiel"
+              and all(np.allclose(r_.beam_end[i], 0) for i in els)
+              and set(r_.info.get("inaktiv", [])) == els, str(r_.name if r_ else None))
+        w._baum_geklickt("situation", "ohne Stiel")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Situation zeigen: Maske und ausgeblendete Elemente",
+              mk.titel == "Situation ohne Stiel" and set(w.versteckt["elemente"]) == els)
+        mk.zusatzknoepfe["Alle aktivieren"].click()
+        mk.anwenden()
+        app.processEvents()
+        check("Übernehmen: alles wieder aktiv", m_.situationen["ohne Stiel"].deaktiviert == []
+              and not w.versteckt["elemente"])
+        fehler.clear()
+        w._baum_loeschen("situation", "ohne Stiel")
+        check("eine benutzte Situation wird abgewiesen", bool(fehler) and "benutzt" in fehler[0]
+              and "ohne Stiel" in m_.situationen, str(fehler[:1]))
+        w._baum_loeschen("situation", GRUND)
+        check("die Grundstellung lässt sich nicht löschen", len(fehler) == 2 and "Grundstellung" in fehler[1])
+        w.error = fehler_alt
+        del w._bestaetigen
+        check("Modellangaben nennen Subsysteme, Situationen, Stellungen",
+              dict(w.modellangaben())["Situationen"] == "2" and dict(w.modellangaben())["Subsysteme"] == "2"
+              and "Stellungen" in dict(w.modellangaben()))
+        w.maskenrand.schliessen()
+
+        # ---- Knicklaengen aus der Knickfigur ----
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        beta_alt = {k: (mem.beta_y, mem.beta_z) for k, mem in m_.members.items()}
+        erg = w.do_knicklaengen()
+        app.processEvents()
+        check("Knicklängen: Verzweigungsproblem gelöst und je Stab ausgewertet",
+              erg is not None and set(erg.staebe) == set(m_.members)
+              and w.results is not None and getattr(w.results, "buckling_modes", None) is not None
+              and len(w.tbl_knick.modell.zeilen) == len(m_.members), str(erg.summary() if erg else None))
+        check("Knicklängen: Tabelle vorn, Eintrag im Baum, Hinweis im Protokoll",
+              w.tab_unten.tabText(w.tab_unten.currentIndex()) == "Knicklängen"
+              and any("Knicklängen" in t for t in zweige(w.baum)))
+        beteiligt = [k for k, v in erg.staebe.items() if v.beteiligt and (v.beta_y or v.beta_z)]
+        w.knicklaengen_uebernehmen()
+        app.processEvents()
+        check("β übernehmen schreibt nur beteiligte Stäbe",
+              bool(beteiligt) and all((m_.members[k].beta_y, m_.members[k].beta_z) != beta_alt[k]
+                                      for k in beteiligt)
+              and all((m_.members[k].beta_y, m_.members[k].beta_z) == beta_alt[k]
+                      for k in m_.members if k not in beteiligt), str(beteiligt))
+        w.undo()
+        app.processEvents()
+        check("Rückgängig stellt die β wieder her",
+              all((w.model.members[k].beta_y, w.model.members[k].beta_z) == beta_alt[k]
+                  for k in beta_alt))
+        w.ergebnis_zeigen("nachweis:knicklaengen")
+        check("Baumklick holt die Knicklängen-Tabelle", w.tab_unten.tabText(w.tab_unten.currentIndex()) == "Knicklängen")
 
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
