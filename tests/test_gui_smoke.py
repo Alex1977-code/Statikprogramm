@@ -1162,7 +1162,7 @@ def main():
             check(f"Modellbaum: Zweig „{zweig}“", zweig in namen)
 
         register = [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())]
-        for reg in ("Knoten", "Linien", "Elemente", "Lager", "Gelenke",
+        for reg in ("Knoten", "Linien", "Stäbe", "Lager", "Gelenke",
                     "Lastfälle", "Kombinationen"):
             check(f"Tabelle unten: „{reg}“", reg in register)
         check("Knotentabelle gefüllt", len(w.tbl_knoten.modell.zeilen) == mb.nn,
@@ -1819,7 +1819,7 @@ def main():
               and tu.tabText(tu.currentIndex()) == "Nachweise EC3"
               and tu.currentWidget() is w.tbl_design, tu.currentGroup())
         check("Reihenfolge in der Gruppe folgt der Vorgabe",
-              tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
+              tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Stäbe",
                                         "Schweißnähte"],
               str(tu.tabellen("Modell")))
         check("eine Gruppe mit nur einer Tabelle zeigt keine zweite Leiste",
@@ -3604,6 +3604,80 @@ def main():
         import traceback
         traceback.print_exc()
         check("Eigenschaftsmasken rechts", False, str(ex)[:70])
+
+    # ---- Tabellen unten direkt bearbeiten, Aufklapplisten ---------------------
+    try:
+        from PySide6 import QtCore
+        from statik3d.model import Material as Mat_, ShellProp as ShP_
+        from statik3d.schweissnaehte import Schweissnaht as Sn_
+        w.new_model()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        mat_ = list(m_.materials)[0]
+        m_.add_material(Mat_("S2"))
+        t0_ = list(m_.shells)[0]
+        m_.add_shell_prop(ShP_("t2", 0.02))
+        ids_ = [m_.add_node(0, 0, 0), m_.add_node(4, 0, 0), m_.add_node(4, 2, 0), m_.add_node(0, 2, 0),
+                m_.add_node(0, 0, 2)]
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            m_.add_line(f"L{i}", [ids_[a], ids_[b]])
+        m_.add_flaeche("F1", ["L0", "L1", "L2", "L3"], dicke=t0_, material=mat_, teilung=[2, 2])
+        e0 = m_.add_element("beam", [ids_[0], ids_[4]], mat_, list(m_.sections)[0])
+        m_.schweissnaehte["N1"] = Sn_("N1", art="Kehlnaht", a=5.0)
+        w.refresh_all()
+        app.processEvents()
+        check("Tabelle „Stäbe“ (statt „Elemente“) in der Gruppe Modell",
+              "Stäbe" in w.tab_unten.tabellen("Modell") and "Elemente" not in w.tab_unten.tabellen("Modell"),
+              str(w.tab_unten.tabellen("Modell")))
+
+        def setz_(tbl, zeile, spalte, wert):
+            md = tbl.modell
+            ok = md.setData(md.index(zeile, spalte), wert, QtCore.Qt.EditRole)
+            app.processEvents()
+            return ok
+
+        check("Linien: Knotenfolge und Bemerkung in der Zelle bearbeitbar",
+              setz_(w.tbl_linie, 0, 4, f"{ids_[0]}, {ids_[2]}") and m_.lines["L0"].nodes == [ids_[0], ids_[2]]
+              and setz_(w.tbl_linie, 0, 5, "Kante") and m_.lines["L0"].comment == "Kante")
+        check("Linien: unbekannte Knoten werden abgewiesen", not setz_(w.tbl_linie, 0, 4, "99, 100"))
+        z_e = [i for i, z in enumerate(w.tbl_elem.modell.zeilen) if int(z[0]) == e0][0]
+        check("Stäbe: Knoten und Werkstoff in der Zelle bearbeitbar",
+              setz_(w.tbl_elem, z_e, 2, f"{ids_[1]}, {ids_[4]}") and m_.elements[e0].nodes == [ids_[1], ids_[4]]
+              and setz_(w.tbl_elem, z_e, 3, "S2") and m_.elements[e0].mat == "S2")
+        sp_ = w.tbl_elem.modell.spalten
+        check("Wahlspalten kennen die Aufklappwerte (Werkstoffe, Querschnitte je Zeile)",
+              sp_[3].art == "wahl" and "S2" in sp_[3].wahlwerte(w.tbl_elem.modell.zeilen[z_e])
+              and set(sp_[4].wahlwerte(w.tbl_elem.modell.zeilen[z_e])) == set(m_.sections))
+        view_ = w.tbl_elem.view
+        deleg_ = view_.itemDelegate()
+        idx_ = w.tbl_elem.filter.mapFromSource(w.tbl_elem.modell.index(z_e, 3))
+        ed_ = deleg_.createEditor(view_, QtWidgets.QStyleOptionViewItem(), idx_)
+        check("Aufklappliste als Zelleditor der Wahlspalte", isinstance(ed_, QtWidgets.QComboBox) and ed_.count() >= 2)
+        ed_.setCurrentText(mat_)
+        deleg_.setModelData(ed_, w.tbl_elem.filter, idx_)
+        app.processEvents()
+        check("Auswahl aus der Aufklappliste landet im Modell", m_.elements[e0].mat == mat_)
+        check("Flächen: Dicke, Werkstoff, Teilung in der Zelle bearbeitbar; falsche Randlinie abgewiesen",
+              setz_(w.tbl_geoflaeche, 0, 2, "t2") and m_.flaechen["F1"].dicke == "t2"
+              and setz_(w.tbl_geoflaeche, 0, 3, "S2") and m_.flaechen["F1"].material == "S2"
+              and setz_(w.tbl_geoflaeche, 0, 4, "3 × 5") and m_.flaechen["F1"].teilung == [3, 5]
+              and not setz_(w.tbl_geoflaeche, 0, 1, "L0, Lx, L2"))
+        check("Schweißnähte: Nahtart, a und Lage in der Zelle bearbeitbar, Kerbfall folgt",
+              setz_(w.tbl_naht, 0, 1, "Stumpfnaht") and m_.schweissnaehte["N1"].art == "Stumpfnaht"
+              and setz_(w.tbl_naht, 0, 3, 7.0) and m_.schweissnaehte["N1"].a == 7.0
+              and setz_(w.tbl_naht, 0, 2, "quer") and m_.schweissnaehte["N1"].lage == "quer")
+        app.processEvents()
+        check("Nahttabelle nach der Änderung neu gefüllt", w.tbl_naht.modell.zeilen[0][1] == "Stumpfnaht")
+        w.undo()
+        app.processEvents()
+        check("Zelländerung ist rückgängig machbar", w.model.schweissnaehte["N1"].lage == "längs")
+        w.error = alt_error
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Tabellen direkt bearbeiten", False, str(ex)[:70])
 
     # ---- Klick und Ziehen; Bericht ohne Berechnung ---------------------------
     try:

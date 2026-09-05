@@ -2752,9 +2752,9 @@ class MainWindow(QtWidgets.QMainWindow):
     BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe",
                     "querschnitt": "Querschnitte", "werkstoff": "Werkstoffe",
                     "dicken": "Dicken", "dicke": "Dicken",
-                    "knoten": "Knoten", "elemente": "Elemente",
-                    "stabelemente": "Elemente", "flaechen": "Elemente",
-                    "volumen": "Elemente", "linien": "Linien", "linie": "Linien",
+                    "knoten": "Knoten", "elemente": "Stäbe",
+                    "stabelemente": "Stäbe", "flaechen": "Stäbe",
+                    "volumen": "Stäbe", "linien": "Linien", "linie": "Linien",
                     "lager": "Lager", "lager_einzeln": "Lager",
                     "linienlager": "Lager", "linienlager_einzeln": "Lager",
                     "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
@@ -5052,8 +5052,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # ---- Linien -------------------------------------------------------
         self.tbl_linie = tab.Datentabelle([
             Spalte("Linie"), Spalte("Art"), Spalte("Knoten", "", "ganz"),
-            Spalte("Länge", "m", "zahl", 3), Spalte("Folge"), Spalte("Bemerkung")],
+            Spalte("Länge", "m", "zahl", 3),
+            Spalte("Folge", "", "text", 3, True, hinweis="Knotennummern in Reihenfolge - direkt bearbeitbar"),
+            Spalte("Bemerkung", "", "text", 3, True)],
             "Linien", self)
+        self.tbl_linie.modell.aendern = self._linie_aendern
         self.tbl_linie.zeile_gewaehlt.connect(
             lambda w: self._baum_auswaehlen("linie", str(w)))
         self.tbl_linie.view.doubleClicked.connect(
@@ -5067,18 +5070,21 @@ class MainWindow(QtWidgets.QMainWindow):
         # ---- Elemente -----------------------------------------------------
         self.tbl_elem = tab.Datentabelle([
             Spalte("Element", "", "ganz"), Spalte("Art"),
-            Spalte("Knoten"), Spalte("Werkstoff", "", "text", 3, True),
-            Spalte("Querschnitt / Dicke", "", "text", 3, True),
+            Spalte("Knoten", "", "text", 3, True, hinweis="Knotennummern des Elements - direkt bearbeitbar"),
+            Spalte("Werkstoff", "", "wahl", 3, True, werte_fn=lambda _z: list(self.model.materials)),
+            Spalte("Querschnitt / Dicke", "", "wahl", 3, True,
+                   werte_fn=lambda z: list(self.model.sections) if (z and str(z[1]) in ("beam", "truss"))
+                   else list(self.model.shells)),
             Spalte("Drehung", "°", "zahl", 1, True,
                    hinweis="Verdrehung der lokalen Achsen um die Stabachse"),
             Spalte("Länge / Fläche", "", "zahl", 4),
             Spalte("Gelenke", "", "text")],
-            "Elemente", self, mit_kennwerten=True)
+            "Staebe", self, mit_kennwerten=True)
         self.tbl_elem.modell.aendern = self._elem_aendern
         self.tbl_elem.zeile_gewaehlt.connect(self._tabelle_element)
         be = QtWidgets.QPushButton("Element löschen")
         be.clicked.connect(self.element_loeschen)
-        tabs.addTab(self._eingabetabelle(self.tbl_elem, be), "Elemente")
+        tabs.addTab(self._eingabetabelle(self.tbl_elem, be), "Stäbe")
 
         # ---- Lager --------------------------------------------------------
         self.tbl_lager = tab.Datentabelle([
@@ -5128,10 +5134,14 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self._eingabetabelle(self.tbl_lastfall, bf1), "Lastfälle")
 
         self.tbl_geoflaeche = tab.Datentabelle([
-            Spalte("Fläche"), Spalte("Randlinien"), Spalte("Dicke"),
-            Spalte("Werkstoff"), Spalte("Teilung"),
+            Spalte("Fläche"),
+            Spalte("Randlinien", "", "text", 3, True, hinweis="Namen der Randlinien - direkt bearbeitbar"),
+            Spalte("Dicke", "", "wahl", 3, True, werte_fn=lambda _z: list(self.model.shells)),
+            Spalte("Werkstoff", "", "wahl", 3, True, werte_fn=lambda _z: list(self.model.materials)),
+            Spalte("Teilung", "", "text", 3, True, hinweis="Teilung je Richtung, z. B. 4 × 4"),
             Spalte("Elemente", "", "ganz"), Spalte("Fläche", "m²", "zahl", 4),
-            Spalte("Bemerkung")], "Flächen", self, mit_kennwerten=True)
+            Spalte("Bemerkung", "", "text", 3, True)], "Flächen", self, mit_kennwerten=True)
+        self.tbl_geoflaeche.modell.aendern = self._geoflaeche_aendern
         self.tbl_geoflaeche.zeile_gewaehlt.connect(
             lambda w: self._baum_geklickt("geoflaeche", str(w)))
         self.tbl_geoflaeche.view.doubleClicked.connect(
@@ -5147,10 +5157,14 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self._eingabetabelle(self.tbl_geoflaeche, bq1, bq2, bq3), "Flächen")
 
         self.tbl_geokoerper = tab.Datentabelle([
-            Spalte("Volumenkörper"), Spalte("Randflächen"), Spalte("Werkstoff"),
-            Spalte("Teilung"), Spalte("Elemente", "", "ganz"),
-            Spalte("Volumen", "m³", "zahl", 5), Spalte("Bemerkung")],
+            Spalte("Volumenkörper"),
+            Spalte("Randflächen", "", "text", 3, True, hinweis="Namen der Randflächen - direkt bearbeitbar"),
+            Spalte("Werkstoff", "", "wahl", 3, True, werte_fn=lambda _z: list(self.model.materials)),
+            Spalte("Teilung", "", "text", 3, True, hinweis="Teilung je Richtung, z. B. 4 × 4 × 4"),
+            Spalte("Elemente", "", "ganz"),
+            Spalte("Volumen", "m³", "zahl", 5), Spalte("Bemerkung", "", "text", 3, True)],
             "Volumenkörper", self, mit_kennwerten=True)
+        self.tbl_geokoerper.modell.aendern = self._geokoerper_aendern
         self.tbl_geokoerper.zeile_gewaehlt.connect(
             lambda w: self._baum_geklickt("geokoerper_einzeln", str(w)))
         self.tbl_geokoerper.view.doubleClicked.connect(
@@ -5164,14 +5178,21 @@ class MainWindow(QtWidgets.QMainWindow):
         bv3.clicked.connect(lambda: self._geometrie_loeschen(
             self.tbl_geokoerper, self.model.koerper))
         # Schweissnaehte: Nahtart, Lage, Ausfuehrung -> Kerbfall (EN 1993-1-9)
+        from .. import schweissnaehte as _swn
         self.tbl_naht = tab.Datentabelle([
-            Spalte("Naht"), Spalte("Nahtart"), Spalte("Lage"), Spalte("a", "mm", "zahl", 1),
-            Spalte("t", "mm", "zahl", 1), Spalte("ℓ", "mm", "zahl", 0), Spalte("Ausführung"),
-            Spalte("Merkmale"), Spalte("gilt für"),
+            Spalte("Naht"), Spalte("Nahtart", "", "wahl", 3, True, werte=list(_swn.NAHTARTEN)),
+            Spalte("Lage", "", "wahl", 3, True, werte=list(_swn.LAGEN)),
+            Spalte("a", "mm", "zahl", 1, True, hinweis="Nahtdicke (Kehlnähte)"),
+            Spalte("t", "mm", "zahl", 1, True, hinweis="Blechdicke (Größeneinfluss)"),
+            Spalte("ℓ", "mm", "zahl", 0, True, hinweis="Breite des angeschlossenen Teils"),
+            Spalte("Ausführung", "", "wahl", 3, True, werte=list(_swn.AUSFUEHRUNGEN)),
+            Spalte("Merkmale"),
+            Spalte("gilt für", "", "text", 3, True, hinweis="Stäbe, Linien, Flächen - Namen, durch Komma getrennt"),
             Spalte("Δσ_C", "MPa", "zahl", 0, hinweis="Kerbfall mit Größeneinfluss"),
             Spalte("k_s", "", "zahl", 3, hinweis="Größeneinfluss (25/t)^0,2 für t > 25 mm"),
             Spalte("Δτ_C", "MPa", "zahl", 0), Spalte("Fundstelle")],
             "Schweissnaehte", self, mit_kennwerten=True)
+        self.tbl_naht.modell.aendern = self._naht_aendern
         self.tbl_naht.zeile_gewaehlt.connect(
             lambda w: self._baum_geklickt("schweissnaht", str(w)))
         bn1 = QtWidgets.QPushButton("Schweißnaht…")
@@ -5315,7 +5336,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pts = [int(x) for x in ln.nodes if 0 <= int(x) < m.nn]
             laenge = float(sum(np.linalg.norm(m.nodes[b] - m.nodes[a])
                                for a, b in zip(pts[:-1], pts[1:]))) if len(pts) > 1 else 0.0
-            folge = ", ".join(str(x) for x in pts[:10]) + (" …" if len(pts) > 10 else "")
+            folge = ", ".join(str(x) for x in pts)
             zeilen.append([name, ln.typ, len(pts), laenge, folge, ln.comment])
         self._fill(self.tbl_linie, zeilen)
         # Elemente
@@ -5580,12 +5601,168 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redraw()
         return True
 
+    def _spaeter_auffrischen(self):
+        """Die Modelltabellen nach einer Zellaenderung neu fuellen - erst nach
+        dem laufenden Bearbeitungsvorgang, nicht mitten im setData."""
+        QtCore.QTimer.singleShot(0, self.refresh_modelltabellen)
+
+    def _linie_aendern(self, z: int, k: int, wert) -> bool:
+        name = str(self.tbl_linie.modell.zeilen[z][0])
+        ln = self.model.lines.get(name)
+        if ln is None or k not in (4, 5):
+            return False
+        if k == 4:
+            knoten = self._zahlenliste(wert)
+            if len(knoten) < 2 or any(not 0 <= n < self.model.nn for n in knoten):
+                self.info("Eine Linie braucht mindestens zwei vorhandene Knoten - nicht übernommen")
+                return False
+            self.merken(f"Linie {name}")
+            ln.nodes = knoten
+        else:
+            self.merken(f"Linie {name}")
+            ln.comment = str(wert)
+        self._zelle_uebernommen(f"Linie {name}: {self.tbl_linie.modell.spalten[k].name} = {wert}")
+        self._spaeter_auffrischen()
+        self.redraw()
+        return True
+
+    def _geoflaeche_aendern(self, z: int, k: int, wert) -> bool:
+        name = str(self.tbl_geoflaeche.modell.zeilen[z][0])
+        f = self.model.flaechen.get(name)
+        if f is None or k not in (1, 2, 3, 4, 7):
+            return False
+        m = self.model
+        if k == 1:
+            linien = self._namensliste(wert)
+            fehlt = [ln for ln in linien if ln not in m.lines]
+            if len(linien) < 3 or fehlt:
+                self.info("Randlinien: mindestens drei vorhandene Linien" + (f" - unbekannt: {', '.join(fehlt)}"
+                                                                          if fehlt else "") + " - nicht übernommen")
+                return False
+            self.merken(f"Fläche {name}")
+            f.linien = linien
+        elif k == 2:
+            if str(wert) not in m.shells:
+                self.info(f"Dicke „{wert}“ gibt es nicht - nicht übernommen")
+                return False
+            self.merken(f"Fläche {name}")
+            f.dicke = str(wert)
+            for i in f.elemente or []:
+                if 0 <= int(i) < len(m.elements):
+                    m.elements[int(i)].sec = str(wert)
+        elif k == 3:
+            if str(wert) not in m.materials:
+                self.info(f"Werkstoff „{wert}“ gibt es nicht - nicht übernommen")
+                return False
+            self.merken(f"Fläche {name}")
+            f.material = str(wert)
+            for i in f.elemente or []:
+                if 0 <= int(i) < len(m.elements):
+                    m.elements[int(i)].mat = str(wert)
+        elif k == 4:
+            teile = self._zahlenliste(str(wert).replace("×", ",").replace("x", ","))
+            if not teile or any(t <= 0 for t in teile):
+                self.info("Teilung als ganze Zahlen, z. B. 4 × 4 - nicht übernommen")
+                return False
+            self.merken(f"Fläche {name}")
+            f.teilung = teile[:2] if len(teile) >= 2 else [teile[0], teile[0]]
+        else:
+            self.merken(f"Fläche {name}")
+            f.kommentar = str(wert)
+        self._zelle_uebernommen(f"Fläche {name}: {self.tbl_geoflaeche.modell.spalten[k].name} = {wert}")
+        self._spaeter_auffrischen()
+        self.redraw()
+        return True
+
+    def _geokoerper_aendern(self, z: int, k: int, wert) -> bool:
+        name = str(self.tbl_geokoerper.modell.zeilen[z][0])
+        kp = self.model.koerper.get(name)
+        if kp is None or k not in (1, 2, 3, 6):
+            return False
+        m = self.model
+        if k == 1:
+            flaechen = self._namensliste(wert)
+            fehlt = [f for f in flaechen if f not in m.flaechen]
+            if len(flaechen) < 4 or fehlt:
+                self.info("Randflächen: mindestens vier vorhandene Flächen" + (f" - unbekannt: {', '.join(fehlt)}"
+                                                                            if fehlt else "") + " - nicht übernommen")
+                return False
+            self.merken(f"Volumen {name}")
+            kp.flaechen = flaechen
+        elif k == 2:
+            if str(wert) not in m.materials:
+                self.info(f"Werkstoff „{wert}“ gibt es nicht - nicht übernommen")
+                return False
+            self.merken(f"Volumen {name}")
+            kp.material = str(wert)
+            for i in kp.elemente or []:
+                if 0 <= int(i) < len(m.elements):
+                    m.elements[int(i)].mat = str(wert)
+        elif k == 3:
+            teile = self._zahlenliste(str(wert).replace("×", ",").replace("x", ","))
+            if not teile or any(t <= 0 for t in teile):
+                self.info("Teilung als ganze Zahlen, z. B. 4 × 4 × 4 - nicht übernommen")
+                return False
+            self.merken(f"Volumen {name}")
+            kp.teilung = (teile + teile[-1:] * 3)[:3]
+        else:
+            self.merken(f"Volumen {name}")
+            kp.kommentar = str(wert)
+        self._zelle_uebernommen(f"Volumen {name}: {self.tbl_geokoerper.modell.spalten[k].name} = {wert}")
+        self._spaeter_auffrischen()
+        self.redraw()
+        return True
+
+    def _naht_aendern(self, z: int, k: int, wert) -> bool:
+        from .. import schweissnaehte as swn
+        name = str(self.tbl_naht.modell.zeilen[z][0])
+        n = self.model.schweissnaehte.get(name)
+        if n is None or k not in (1, 2, 3, 4, 5, 6, 8):
+            return False
+        if k == 1 and str(wert) not in swn.NAHTARTEN:
+            return False
+        if k == 2 and str(wert) not in swn.LAGEN:
+            return False
+        if k == 6 and str(wert) not in swn.AUSFUEHRUNGEN:
+            return False
+        self.merken(f"Schweißnaht {name}")
+        if k == 1:
+            n.art = str(wert)
+        elif k == 2:
+            n.lage = str(wert)
+        elif k == 3:
+            n.a = max(0.0, float(wert))
+        elif k == 4:
+            n.t = max(0.0, float(wert))
+        elif k == 5:
+            n.l_anschluss = max(0.0, float(wert))
+        elif k == 6:
+            n.ausfuehrung = str(wert)
+        else:
+            m = self.model
+            namen = self._namensliste(wert)
+            n.staebe = [x for x in namen if x in m.members]
+            n.linien = [x for x in namen if x in m.lines]
+            n.flaechen = [x for x in namen if x in m.flaechen]
+        self._zelle_uebernommen(f"Schweißnaht {name}: {self.tbl_naht.modell.spalten[k].name} = {wert}")
+        QtCore.QTimer.singleShot(0, self._naehte_fuellen)
+        return True
+
     def _elem_aendern(self, z: int, k: int, wert) -> bool:
         i = int(self.tbl_elem.modell.zeilen[z][0])
         if not (0 <= i < len(self.model.elements)):
             return False
         e = self.model.elements[i]
-        if k == 3:
+        if k == 2:
+            knoten = self._zahlenliste(wert)
+            soll = len(e.nodes)
+            if len(knoten) != soll or any(not 0 <= n < self.model.nn for n in knoten) or len(set(knoten)) != soll:
+                self.info(f"Element {i} braucht {soll} verschiedene vorhandene Knoten - nicht übernommen")
+                return False
+            self.merken(f"Element {i}")
+            e.nodes = knoten
+            self._gitter_stand = None
+        elif k == 3:
             if str(wert) not in self.model.materials:
                 self.info(f"Werkstoff „{wert}“ gibt es nicht - nicht übernommen")
                 return False
@@ -6100,7 +6277,7 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Tabelle. Beides in derselben Ordnung zu halten spart das Suchen.
     TABELLENGRUPPEN = [
         ("Protokoll", ["Protokoll"]),
-        ("Modell", ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente", "Schweißnähte"]),
+        ("Modell", ["Knoten", "Linien", "Flächen", "Volumenkörper", "Stäbe", "Schweißnähte"]),
         ("Eigenschaften", ["Werkstoffe", "Querschnitte", "Dicken"]),
         ("Lager", ["Lager", "Gelenke", "Kontaktbedingungen"]),
         ("Lasten", ["Lastfälle", "Lasten", "Kombinationen"]),

@@ -215,6 +215,17 @@ class Spalte:
     editierbar: bool = False
     werte: list = field(default_factory=list)
     hinweis: str = ""
+    #: fn(zeile) -> Liste der Wahlwerte, wenn sie von der Zeile oder vom
+    #: Modellstand abhaengen (Werkstoffe, Querschnitte, Dicken)
+    werte_fn: object = None
+
+    def wahlwerte(self, zeile=None) -> list:
+        if self.werte_fn is not None:
+            try:
+                return [str(v) for v in self.werte_fn(zeile)]
+            except Exception:               # noqa: BLE001
+                return [str(v) for v in self.werte]
+        return [str(v) for v in self.werte]
 
     def kopf(self) -> str:
         return f"{self.name} [{self.einheit}]" if self.einheit else self.name
@@ -365,6 +376,42 @@ class TabellenModell(QtCore.QAbstractTableModel):
         self.endResetModel()
 
 
+class WahlDelegate(QtWidgets.QStyledItemDelegate):
+    """Aufklappliste fuer Spalten mit art == "wahl" (Werkstoff, Querschnitt,
+    Dicke, Nahtart …); alle anderen Spalten bekommen den Standard-Editor."""
+
+    def __init__(self, tabelle):
+        super().__init__(tabelle.view)
+        self.tabelle = tabelle
+
+    def _spalte(self, index):
+        q = self.tabelle.filter.mapToSource(index)
+        sp = self.tabelle.modell.spalten[q.column()]
+        zeile = self.tabelle.modell.zeilen[q.row()] if q.row() < len(self.tabelle.modell.zeilen) else None
+        return sp, zeile
+
+    def createEditor(self, parent, option, index):
+        sp, zeile = self._spalte(index)
+        if sp.art != "wahl":
+            return super().createEditor(parent, option, index)
+        cb = QtWidgets.QComboBox(parent)
+        cb.addItems(sp.wahlwerte(zeile))
+        cb.setEditable(False)
+        return cb
+
+    def setEditorData(self, editor, index):
+        if isinstance(editor, QtWidgets.QComboBox):
+            editor.setCurrentText(str(index.data(QtCore.Qt.EditRole) or ""))
+            return
+        super().setEditorData(editor, index)
+
+    def setModelData(self, editor, model, index):
+        if isinstance(editor, QtWidgets.QComboBox):
+            model.setData(index, editor.currentText(), QtCore.Qt.EditRole)
+            return
+        super().setModelData(editor, model, index)
+
+
 class Filtermodell(QtCore.QSortFilterProxyModel):
     """Kopfzeilenfilter je Spalte, dazu die Sortierung."""
 
@@ -494,6 +541,8 @@ class Datentabelle(QtWidgets.QWidget):
         self.view.verticalHeader().setDefaultSectionSize(22)
         self.view.setWordWrap(False)
         self.view.clicked.connect(self._geklickt)
+        # Wahlspalten bekommen eine Aufklappliste, alles andere den Standard
+        self.view.setItemDelegate(WahlDelegate(self))
         lay.addWidget(self.view, 1)
 
         # Fusszeile: Max und Min der *sichtbaren* Zeilen. Sie steht in einer

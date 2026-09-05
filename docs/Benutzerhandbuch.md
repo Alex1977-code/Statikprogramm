@@ -453,7 +453,7 @@ passende Tabelle nach vorn — samt ihrer Gruppe.
 | Gruppe | Tabellen |
 |---|---|
 | Protokoll | das Protokoll der Berechnung und der Modellprüfung |
-| Modell | Knoten, Linien, Flächen, Volumenkörper, Elemente |
+| Modell | Knoten, Linien, Flächen, Volumenkörper, Stäbe (alle Elemente), Schweißnähte |
 | Eigenschaften | Werkstoffe, Querschnitte, Dicken |
 | Lager | Lager, Gelenke, Kontaktbedingungen |
 | Lasten | Lastfälle, Lasten, Kombinationen |
@@ -465,7 +465,16 @@ Jede Tabelle unten hat über der Kopfzeile eine **Filterzeile** — ein Feld je
 Spalte. Was dort steht, gilt sofort; mehrere Felder wirken zusammen (und, nicht
 oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist. Zahlen-
 spalten stehen in den Einheiten aus *Ansicht → Einheiten*; Filterwerte werden
-in derselben Einheit eingegeben. Spalten werden aus ihrem Inhalt breit,
+in derselben Einheit eingegeben. **Direkt bearbeiten:** in den Modelltabellen
+sind die Eigenschaften in der Zelle editierbar (Doppelklick oder F2) - Knoten
+x/y/z, bei Linien die Knotenfolge und die Bemerkung, bei Stäben die Knoten,
+Werkstoff, Querschnitt bzw. Dicke und die Drehung, bei Flächen Randlinien,
+Dicke, Werkstoff, Teilung und Bemerkung, bei Volumenkörpern Randflächen,
+Werkstoff, Teilung und Bemerkung, bei Schweißnähten Nahtart, Lage, a, t, ℓ,
+Ausführung und „gilt für“. Wo eine Auswahl besteht (Werkstoff, Querschnitt,
+Dicke, Nahtart, Lage, Ausführung), öffnet die Zelle eine **Aufklappliste**;
+Unzulässiges (unbekannter Knoten, fehlende Linie) wird mit Hinweis
+abgewiesen, jede Änderung ist rückgängig machbar. Spalten werden aus ihrem Inhalt breit,
 aber höchstens 360 Punkte (eine Elementliste mit tausend Nummern bleibt
 lesbar, ohne die Tabelle über die ganze Wand zu ziehen); die Tabellen
 zwingen dem Fenster keine Mindestbreite auf.
