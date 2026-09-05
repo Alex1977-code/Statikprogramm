@@ -29,9 +29,19 @@ exe: Statik3D beendet sich, das Skript ersetzt die Datei und startet die neue
 Fassung. Es räumt dabei die internen Umgebungsvariablen des Programmpackers
 weg (`_PYI_…`, `_MEIPASS2`) — erbte die neue exe sie, hielte sie sich für
 einen Unterprozess der alten und bräche mit „Security validation failure:
-parent process has different executable!“ ab. Ein Protokoll des Austauschs
-liegt als `statik3d_update.log` daneben; klappt etwas nicht, bleibt das
-Fenster mit der Begründung stehen und die neue Datei liegt bereit.
+parent process has different executable!“ ab. Die neu gestartete Fassung
+**meldet sich** beim Skript zurück (Datei `statik3d_update.ok`); bleibt die
+Meldung aus, weil die exe beim Start abgebrochen ist, sagt das Skript das und
+was zu tun ist, statt sich zu löschen. Ein Protokoll des Austauschs liegt als
+`statik3d_update.log` daneben; klappt etwas nicht, bleibt das Fenster mit der
+Begründung stehen und die neue Datei liegt bereit.
+
+Erscheint die Sicherheitsmeldung trotzdem einmal — das ist der Fall, wenn die
+**alte** exe den Austausch noch ohne diese Vorkehrung ausgeführt hat —, ist
+der Austausch selbst schon geschehen: die neue Fassung liegt an Ort und
+Stelle. Meldung schließen, `Statik3D.exe` aus dem Explorer heraus starten
+(Doppelklick), fertig; der Fensterrahmen zeigt den neuen Stand. Ab dann
+laufen alle weiteren Aktualisierungen mit der Vorkehrung.
 
 Windows ohne Kommandozeile, aber mit Python: `Statik3D-Windows.bat` aus dem Repository in einen
 eigenen Ordner speichern und doppelklicken. Die Datei lädt bei jedem Start die
