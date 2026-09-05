@@ -90,6 +90,17 @@ class Wind:
     cf_vorgabe: Optional[float] = None    # c_f für alle Stäbe erzwingen
     c_scd: float = 1.0                    # Strukturbeiwert c_s·c_d
     kommentar: str = ""
+    # -- numerischer Windkanal (Gitter-Boltzmann im Schnitt) ------------------
+    verfahren: str = "norm"               # "norm" (DIN EN 1991-1-4) | "windkanal"
+    schnittart: str = "grundriss"         # "grundriss" (waagerechter Schnitt) | "aufriss" (lotrecht in Windrichtung)
+    z_schnitt: Optional[float] = None     # Höhe des Grundriss-Schnitts [m]; None = 0,6·h über Gelände
+    gitter: int = 24                      # Zellen über die Querabmessung des Hindernisses
+    re: float = 150.0                     # Reynolds-Zahl des Modells (Stabilität: τ ≥ 0,52)
+    schritte: int = 3000                  # Zeitschritte des Windkanals
+    lastfall_nr: int = 0                  # Lastfallnummer (0 = nächste freie)
+
+    def windkanal(self) -> bool:
+        return str(self.verfahren or "").lower().startswith("wind")
 
     def bezug(self) -> str:
         t = f"Zone {self.zone}" if self.v_b is None else f"v_b = {self.v_b:g} m/s"
@@ -380,15 +391,177 @@ def beiwert_am_punkt(param: dict, geo: dict, rolle: str, punkt) -> tuple:
     return 0.0, "–"
 
 
+#: Entpackte c_p-Felder je Objektlast (siehe wasserdruck._FELDER)
+_FELDER: dict = {}
+
+
+def _feld_aus_verlauf(verlauf: dict):
+    from . import stroemung as st
+    key = (id(verlauf), (verlauf.get("feld") or {}).get("stempel"))
+    hit = _FELDER.get(key)
+    if hit is None:
+        hit = st.feld_entpacken(verlauf["feld"])
+        if len(_FELDER) > 12:
+            _FELDER.clear()
+        _FELDER[key] = hit
+    return hit
+
+
 def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = False) -> float:
     """p [Pa] für eine Geometrielast mit verlauf["art"] == "wind": positiv drückt
-    in den Körper (gegen die Außennormale), negativ ist Sog."""
+    in den Körper (gegen die Außennormale), negativ ist Sog.
+
+    Mit c_p-Feld des Windkanals (``verlauf["feld"]``) wird der Beiwert vor
+    der Elementseite abgetastet (dünne Schale: netto aus beiden Seiten) und
+    mit dem Böengeschwindigkeitsdruck q_p(z) der Norm skaliert; sonst die
+    Zonenbeiwerte der Norm."""
+    from . import stroemung as st
     param = verlauf.get("param") or {}
     geo = verlauf.get("geometrie") or {}
     w = _param(param)
     z = float(np.asarray(punkt, float)[2]) - float(geo.get("z_boden", 0.0))
+    if verlauf.get("feld"):
+        schnitt, cp, fluid, _block = _feld_aus_verlauf(verlauf)
+        c = float(st.wert_am_punkt(cp, fluid, schnitt, punkt, normale, beidseitig)) - float(w.c_pi)
+        return w.c_scd * c * q_p(max(z, 0.0), w)
     c, _zone = beiwert_am_punkt(param, geo, verlauf.get("rolle", ""), punkt)
     return w.c_scd * c * q_p(max(z, 0.0), w)
+
+
+# ==========================================================================
+# Numerischer Windkanal (Gitter-Boltzmann im Schnitt)
+# ==========================================================================
+def _stab_vierecke(model, w: Wind, geo: dict) -> list:
+    """Die Stäbe als schmale Vierecke (Achse ± b_ref/2 quer zur Achse in der
+    Ebene) - so stehen Stützen und Riegel als Hindernis im Windkanal."""
+    tris = []
+    for name in w.staebe:
+        mem = model.members.get(name)
+        if mem is None:
+            continue
+        try:
+            b = stabbeiwert(w, model, name, geo)["b_ref"]
+        except Exception:                    # noqa: BLE001
+            b = 0.2
+        for e in mem.elements or []:
+            if not 0 <= int(e) < len(model.elements):
+                continue
+            el = model.elements[int(e)]
+            A, B = model.nodes[int(el.nodes[0])], model.nodes[int(el.nodes[-1])]
+            ab = B - A
+            L = float(np.linalg.norm(ab))
+            if L < 1e-9:
+                continue
+            t = ab / L
+            # zwei Querrichtungen, damit das Viereck in jeder Schnittebene Breite hat
+            for q in (np.array([0.0, 0.0, 1.0]), np.array([-t[1], t[0], 0.0])):
+                q = q - t * float(q @ t)
+                n = float(np.linalg.norm(q))
+                if n < 1e-9:
+                    continue
+                q = q / n * 0.5 * b
+                tris.append(np.array([A - q, B - q, B + q]))
+                tris.append(np.array([A - q, B + q, A + q]))
+    return tris
+
+
+def windkanal_rechnen(w: Wind, model, geo: dict, fortschritt=None) -> dict:
+    """Die Strömung um die Flächen und Stäbe im Schnitt rechnen (Gitter-
+    Boltzmann): Rückgabe {"schnitt", "cp", "ux", "uz", "fluid", "block",
+    "re", "tau", "schritte", "aufriss", "z_schnitt", "gitter"}."""
+    from . import stroemung as st
+    d = np.asarray(geo["richtung"], float)
+    quer = np.asarray(geo["quer"], float)
+    tris = st.objekt_dreiecke(model, list(w.flaechen) + list(w.freie_waende) + list(w.schilder))
+    tris += _stab_vierecke(model, w, geo)
+    if not tris:
+        raise ValueError("Keine Flächen oder Stäbe für den Windkanal")
+    P = np.concatenate([np.asarray(t, float) for t in tris]).reshape(-1, 3)
+    aufriss = str(w.schnittart or "").lower().startswith("auf")
+    z_boden = float(geo["z_boden"])
+    c = P.mean(axis=0)
+    if aufriss:
+        ex, ez = d, np.array([0.0, 0.0, 1.0])
+        L = max(float(geo["h"]), 1e-3)
+        s0, s1 = float((P @ d).min()), float((P @ d).max())
+        z_schnitt = None
+        x0, x1 = s0 - 3.0 * L, s1 + 8.0 * L
+        z0, z1 = z_boden, z_boden + 4.0 * L
+    else:
+        ex, ez = d, quer
+        L = max(float(geo["b"]), 1e-3)
+        s0, s1 = float((P @ d).min()), float((P @ d).max())
+        t0, t1 = float((P @ quer).min()), float((P @ quer).max())
+        z_schnitt = float(w.z_schnitt) if w.z_schnitt is not None else z_boden + 0.6 * float(geo["h"])
+        x0, x1 = s0 - 3.0 * L, s1 + 8.0 * L
+        z0, z1 = t0 - 3.0 * L, t1 + 3.0 * L
+    n_g = min(120, max(6, int(w.gitter or 24)))
+    h = L / n_g
+    nx, nz = int(math.ceil((x1 - x0) / h)), int(math.ceil((z1 - z0) / h))
+    if nx * nz > 80000:
+        f = math.sqrt(nx * nz / 80000.0)
+        h *= f
+        nx, nz = int(math.ceil((x1 - x0) / h)), int(math.ceil((z1 - z0) / h))
+    ursprung = c + (x0 - float(c @ ex)) * ex + (z0 - float(c @ ez)) * ez
+    if not aufriss:
+        ursprung = ursprung + (z_schnitt - float(ursprung[2])) * np.array([0.0, 0.0, 1.0])
+    schnitt = st.Schnitt(ursprung, ex, ez, h, nx, nz)
+    st._melden(fortschritt, 0.0, f"Wind {w.name}: Windkanal {nx} × {nz} Zellen")
+    block = st.rastern(schnitt, tris,
+                       fortschritt=(lambda a_, t_: fortschritt(0.02 + 0.13 * a_, t_)) if fortschritt else None,
+                       text=f"Wind {w.name}: Hindernisse rastern")
+    block = st.verdicken(block)
+    if not block.any():
+        raise ValueError("Die Hindernisse liegen nicht im Schnitt - Schnitthöhe prüfen")
+    lb = st.gitter_boltzmann(block, u_lb=0.08, re=float(w.re or 150.0), schritte=int(w.schritte or 3000),
+                             boden=aufriss,
+                             fortschritt=(lambda a_, t_: fortschritt(0.15 + 0.8 * a_, t_)) if fortschritt else None)
+    return {"schnitt": schnitt, "cp": lb["cp"], "ux": lb["ux"], "uz": lb["uz"], "fluid": ~lb["block"],
+            "block": lb["block"], "re": lb["re"], "tau": lb["tau"], "schritte": lb["schritte"],
+            "aufriss": aufriss, "z_schnitt": z_schnitt, "gitter": (nx, nz, h), "L": L}
+
+
+def _feld_passt(wk: dict, normale, quer) -> bool:
+    """Liegt die Fläche mit ihrer Normale in der Schnittebene? Dann kommt ihr
+    Druck aus dem Windkanal, sonst aus den Zonen der Norm (Dächer im
+    Grundriss, Seitenwände im Aufriss)."""
+    if normale is None:
+        return False
+    n = np.asarray(normale, float)
+    if wk["aufriss"]:
+        return abs(float(n @ np.asarray(quer, float))) <= 0.7
+    return abs(float(n[2])) <= 0.7
+
+
+def abschirmung(wk: dict, punkt) -> float:
+    """(v/v_∞)² an einem Punkt des Windkanals - Verschattung eines Stabes im
+    Nachlauf; 1,0 ausserhalb des Feldes."""
+    from . import stroemung as st
+    v = np.sqrt(wk["ux"] ** 2 + wk["uz"] ** 2)
+    v[~wk["fluid"]] = np.nan
+    r = st.wert_am_punkt(v, wk["fluid"], wk["schnitt"], punkt, None, False)
+    if r <= 0.0:
+        return 1.0
+    return float(min(1.5, r) ** 2)
+
+
+def windkanal_svg(w: Wind, kw: dict, breite: int = 620) -> tuple:
+    """Bilder des Windkanals fuer den Bericht: (c_p-Feld, Geschwindigkeitsfeld)."""
+    from . import stroemung as st
+    wk = kw.get("_wk")
+    if not wk:
+        return "", ""
+    sch = wk["schnitt"]
+    art = "Aufriss" if wk["aufriss"] else f"Grundriss bei z = {wk['z_schnitt']:.2f} m"
+    cp = st.feld_svg(sch, wk["cp"], wk["fluid"], wk["block"], "wind", breite=breite,
+                     titel=f"Wind {w.name}: Druckbeiwert c_p im Windkanal ({art})", einheit="c_p", faktor=1.0,
+                     grenzen=(-1.5, 1.0))
+    v = np.sqrt(wk["ux"] ** 2 + wk["uz"] ** 2)
+    v[~wk["fluid"]] = np.nan
+    vs = st.feld_svg(sch, v, wk["fluid"], wk["block"], "wasser", breite=breite,
+                     titel=f"Wind {w.name}: Geschwindigkeit v/v∞ (Nachlauf, Verschattung)", einheit="v/v∞",
+                     faktor=1.0, grenzen=(0.0, 1.3))
+    return cp, vs
 
 
 def _param(p) -> Wind:
@@ -474,10 +647,15 @@ def kennwerte(w: Wind, model=None, geo: dict = None) -> dict:
     return out
 
 
-def lasten_erzeugen(model, w: Wind) -> dict:
+def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     """Objektlasten an Flächen und Linienlasten auf Stäbe schreiben (alte des
-    Generierers entfernen), verteilen; Rückgabe: Kennwerte samt Zahlen."""
+    Generierers entfernen), verteilen; Rückgabe: Kennwerte samt Zahlen. Mit
+    ``verfahren = "windkanal"`` läuft zuerst die Strömungsrechnung
+    (``fortschritt(anteil, text) -> bool``; False bricht ab, das Modell bleibt
+    unverändert)."""
     from .model import GRUNDSTELLUNG, ACTION_CATEGORIES
+    from . import stroemung as st
+    import uuid
     fehlt = [n for n in list(w.flaechen) + list(w.freie_waende) + list(w.schilder)
              if n not in model.flaechen] + [n for n in w.staebe if n not in model.members]
     if fehlt:
@@ -487,6 +665,19 @@ def lasten_erzeugen(model, w: Wind) -> dict:
     geo = gebaeude(w, model)
     roll = rollen(w, model, geo)
     kw = kennwerte(w, model, geo)
+    wk = None
+    feld = None
+    if w.windkanal():
+        wk = windkanal_rechnen(w, model, geo, fortschritt=fortschritt)
+        cp = wk["cp"]
+        kw["windkanal"] = {"re": wk["re"], "tau": wk["tau"], "schritte": wk["schritte"], "gitter": wk["gitter"],
+                           "aufriss": wk["aufriss"], "z_schnitt": wk["z_schnitt"],
+                           "cp_min": float(np.nanmin(cp)) if np.isfinite(cp).any() else 0.0,
+                           "cp_max": float(np.nanmax(cp)) if np.isfinite(cp).any() else 0.0}
+        kw["_wk"] = wk
+        feld = st.feld_packen(wk["schnitt"], cp, wk["fluid"], wk["block"], nachkomma=3,
+                              aufriss=bool(wk["aufriss"]), stempel=uuid.uuid4().hex)
+        st._melden(fortschritt, 0.96, f"Wind {w.name}: Lasten auf das Netz")
     if not w.lastfall:
         w.lastfall = f"Wind {w.name}"
     for lc in model.load_cases.values():
@@ -498,28 +689,44 @@ def lasten_erzeugen(model, w: Wind) -> dict:
                             f"Wind {w.name}", activate=False)
     lc = model.load_cases[w.lastfall]
     lc.situation = "" if w.situation == GRUNDSTELLUNG else w.situation
+    if not getattr(lc, "nummer", 0):
+        lc.nummer = int(w.lastfall_nr) if int(w.lastfall_nr or 0) > 0 else model.naechste_lastfallnummer()
     param = asdict(w)
     n_obj = 0
     zonen: dict = {}
+    aus_feld: list = []
     for name, rolle in roll.items():
-        model.add_geometrielast(name, 0.0, art="flaeche", richtung=None, case=w.lastfall,
-                                verlauf={"art": "wind", "name": w.name, "param": param,
-                                         "geometrie": geo, "rolle": rolle})
+        verlauf = {"art": "wind", "name": w.name, "param": param, "geometrie": geo, "rolle": rolle}
+        if feld is not None and _feld_passt(wk, _flaechennormale(model, name), geo["quer"]):
+            verlauf["feld"] = feld
+            aus_feld.append(name)
+        model.add_geometrielast(name, 0.0, art="flaeche", richtung=None, case=w.lastfall, verlauf=verlauf)
         n_obj += 1
         zonen[name] = rolle
     staebe = []
     for name in w.staebe:
         sb = stabbeiwert(w, model, name, geo)
         d = np.asarray(geo["richtung"], float)
-        ll = model.add_linienlast(name, (sb["w1"] * d).tolist(), art="stab", q2=(sb["w2"] * d).tolist(),
-                                  system="global", case=w.lastfall)
-        ll.kommentar = f"Wind {w.name}: c_f = {sb['cf']:.2f}, b_ref = {sb['b_ref']:.3f} m"
+        faktor = 1.0
+        if wk is not None:
+            mem = model.members[name]
+            kn = [int(n) for e in mem.elements for n in model.elements[int(e)].nodes
+                  if 0 <= int(e) < len(model.elements)]
+            if kn:
+                faktor = abschirmung(wk, model.nodes[kn].mean(axis=0))
+        sb["abschirmung"] = faktor
+        ll = model.add_linienlast(name, (sb["w1"] * faktor * d).tolist(), art="stab",
+                                  q2=(sb["w2"] * faktor * d).tolist(), system="global", case=w.lastfall)
+        ll.kommentar = f"Wind {w.name}: c_f = {sb['cf']:.2f}, b_ref = {sb['b_ref']:.3f} m" \
+            + (f", Windkanal (v/v∞)² = {faktor:.2f}" if wk is not None else "")
         staebe.append(sb)
     model.winde[w.name] = w
     n_elem = model.lasten_verteilen()
     kw.update({"rollen": zonen, "staebe": staebe, "objektlasten": n_obj, "elementlasten": n_elem,
-               "lastfall": w.lastfall})
+               "lastfall": w.lastfall, "lastfall_nr": int(getattr(lc, "nummer", 0) or 0),
+               "aus_feld": aus_feld, "verfahren": "windkanal" if wk is not None else "norm"})
     kw["kontrolle"] = kontrollsumme(model, w)
+    st._melden(fortschritt, 1.0, f"Wind {w.name}: {n_elem} Elementlasten")
     return kw
 
 
@@ -592,6 +799,21 @@ def erlaeuterung(w: Wind, kw: dict) -> list:
                      f"{sb['w2']:.1f} N/m (z = {sb['z1']:.1f} … {sb['z2']:.1f} m), F = {sb['F'] / 1e3:.2f} kN.")
     if w.c_scd != 1.0:
         z.append(f"Strukturbeiwert c_s·c_d = {w.c_scd:g}.")
+    wk = kw.get("windkanal")
+    if wk:
+        nx, nz, h = wk["gitter"]
+        z.append(f"Numerischer Windkanal: Gitter-Boltzmann-Verfahren (D2Q9, BGK) im "
+                 + ("lotrechten Schnitt in Windrichtung (Aufriss, Boden als Wand)" if wk["aufriss"]
+                    else f"waagerechten Schnitt bei z = {wk['z_schnitt']:.2f} m (Grundriss)")
+                 + f", Gitter {nx} × {nz} (Zelle {h:.3g} m), {wk['schritte']} Zeitschritte, Modell-Reynolds-Zahl "
+                   f"Re = {wk['re']:.0f} (τ = {wk['tau']:.3f}); der Druck ist über die letzten 40 % der Schritte "
+                   f"gemittelt. Druckbeiwerte c_p = (p − p∞)/(½·ρ·v∞²) von {wk['cp_min']:+.2f} bis "
+                   f"{wk['cp_max']:+.2f}; sie ersetzen die Zonenbeiwerte der Norm auf den Flächen, die in der "
+                   f"Schnittebene liegen (" + (", ".join(kw.get("aus_feld", [])) or "keine") + "), und werden mit "
+                   f"q_p(z) skaliert. Stäbe im Nachlauf tragen (v/v∞)² als Abschirmung. Nachlauf, "
+                   f"Wirbelablösung und Verschattung kommen aus der Rechnung; die Reynolds-Zahl ist die des "
+                   f"Modells, nicht die des Bauwerks - die Beiwerte sind qualitativ und gegen die Norm zu "
+                   f"prüfen.")
     return z
 
 

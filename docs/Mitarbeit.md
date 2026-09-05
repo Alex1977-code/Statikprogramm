@@ -139,6 +139,9 @@ Punkte:
   Oberfläche und ohne Reibung im ebenen Schnitt; Pfeiler, Nischen und der
   Wechselsprung fehlen, das Druckfeld hängt als Liste an der Objektlast
   (bei feinem Gitter wächst die Modelldatei).
+* **Windkanal**: zweidimensional (Grundriss oder Aufriss), BGK mit
+  Modell-Reynolds-Zahl ≤ ~300, keine turbulente Anströmung; Beiwerte
+  qualitativ, Laufzeit einige zehn Sekunden je Generierer.
 * **Einheiten**: die Einstellung gilt für Ansicht und Tabellen; der Bericht
   und die Masken rechts bleiben bei kN, m, mm und N/mm², Winkel und
   Temperatur sind nicht umschaltbar.

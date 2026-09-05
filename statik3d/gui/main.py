@@ -8624,6 +8624,8 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- Wind ----------------------------------------------------------------
     WINDRICHTUNGEN = ["+x", "−x", "+y", "−y", "Winkel [°] von +x"]
     WINDROLLEN = ["Gebäude (Wände und Dach nach der Normale)", "freistehende Wand", "Anzeigetafel"]
+    WINDVERFAHREN = ["Norm (DIN EN 1991-1-4, Zonenbeiwerte)", "numerischer Windkanal (Gitter-Boltzmann im Schnitt)"]
+    WINDSCHNITTE = ["Grundriss (waagerechter Schnitt)", "Aufriss (lotrecht in Windrichtung)"]
 
     def maske_wind(self, name: str = None):
         """Lastgenerierer Wind nach DIN EN 1991-1-4: neu oder vorhanden bearbeiten."""
@@ -8657,6 +8659,19 @@ class MainWindow(QtWidgets.QMainWindow):
         felder = [F("name", "Name", "text", w.name, breite=140),
                   F("situation", "Situation", "wahl", w.situation or situationen[0], situationen),
                   F("fall", "Lastfall", "text", w.lastfall or f"Wind {w.name}", breite=140),
+                  F("fall_nr", "Lastfall-Nr.", "ganz", int(w.lastfall_nr or m.naechste_lastfallnummer())),
+                  F("verfahren", "Verfahren", "wahl", self.WINDVERFAHREN[1 if w.windkanal() else 0],
+                    list(self.WINDVERFAHREN),
+                    hinweis="Windkanal: Nachlauf, Wirbelablösung, gegenseitige Beeinflussung und Verschattung "
+                            "aus der Strömungsrechnung; Flächen in der Schnittebene bekommen c_p aus dem Feld"),
+                  F("schnittart", "Windkanal: Schnitt", "wahl",
+                    self.WINDSCHNITTE[1 if str(w.schnittart).startswith("auf") else 0], list(self.WINDSCHNITTE)),
+                  F("z_schnitt", "Schnitthöhe z [m] (Grundriss)", "text", txt(w.z_schnitt), breite=78,
+                    hinweis="leer = 0,6·h über Gelände"),
+                  F("gitter", "Windkanal: Zellen über die Breite", "ganz", int(w.gitter or 24)),
+                  F("re", "Windkanal: Reynolds-Zahl", "zahl", float(w.re or 150.0),
+                    hinweis="Modell-Reynolds-Zahl; über ~300 wird das Verfahren instabil"),
+                  F("schritte", "Windkanal: Zeitschritte", "ganz", int(w.schritte or 3000)),
                   F("ziele", "Belastet", "info", self._wind_ziele_text(w)),
                   F("rolle", "Flächen sind", "wahl", rolle, list(self.WINDROLLEN)),
                   F("zone", "Windzone", "wahl", zone, zonen),
@@ -8749,9 +8764,23 @@ class MainWindow(QtWidgets.QMainWindow):
             a = math.radians(float(w.get("winkel", 0.0) or 0.0))
             vek = [math.cos(a), math.sin(a), 0.0]
         situation = str(w.get("situation", ""))
+        try:
+            fall_nr = max(0, int(round(float(w.get("fall_nr", 0) or 0))))
+        except (TypeError, ValueError):
+            fall_nr = 0
+        verfahren = "windkanal" if str(w.get("verfahren", "")).startswith("numerisch") else "norm"
+        schnittart = "aufriss" if str(w.get("schnittart", "")).startswith("Aufriss") else "grundriss"
+        try:
+            gitter = min(120, max(6, int(round(float(w.get("gitter", 24) or 24)))))
+            schritte = min(50000, max(100, int(round(float(w.get("schritte", 3000) or 3000)))))
+        except (TypeError, ValueError):
+            gitter, schritte = 24, 3000
         return replace(vorlage, name=str(w.get("name", "")).strip() or vorlage.name,
                        situation="" if situation == GRUNDSTELLUNG else situation,
                        lastfall=str(w.get("fall", "")).strip(), zone=zone, v_b=v_b,
+                       lastfall_nr=fall_nr, verfahren=verfahren, schnittart=schnittart,
+                       z_schnitt=zahl("z_schnitt"), gitter=gitter, re=float(w.get("re", 150.0) or 150.0),
+                       schritte=schritte,
                        c_dir=float(w.get("c_dir", 1.0) or 1.0), c_season=float(w.get("c_season", 1.0) or 1.0),
                        profil=str(w.get("profil", "II")), c_o=float(w.get("c_o", 1.0) or 1.0),
                        richtung=vek, z_boden=zahl("z_boden"), c_pi=float(w.get("c_pi", 0.0) or 0.0),
@@ -8777,16 +8806,32 @@ class MainWindow(QtWidgets.QMainWindow):
                                       if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == alt)]
                 lc.linienlasten = [ll for ll in lc.linienlasten if not (ll.kommentar or "").startswith(f"Wind {alt}:")]
             del m.winde[alt]
+        from .. import stroemung as strm
+        self._fortschritt_beginnen(100, f"Wind {wd.name}: " + ("Windkanal …" if wd.windkanal() else "Lasten …"))
         try:
-            kw = wm.lasten_erzeugen(m, wd)
+            kw = wm.lasten_erzeugen(m, wd, fortschritt=lambda a, t: self._fortschritt(int(round(100 * a)), t))
+        except strm.Abgebrochen:
+            self._undo.pop()
+            self._fortschritt_ende()
+            return self.info(f"Wind {wd.name}: abgebrochen - das Modell ist unverändert")
         except (ValueError, KeyError) as ex:
             self._undo.pop()
+            self._fortschritt_ende()
             return self.error(ex)
+        except Exception:                        # noqa: BLE001
+            self._undo.pop()
+            self._fortschritt_ende()
+            self.log.appendPlainText(traceback.format_exc())
+            return self.error("Wind: Strömungsberechnung fehlgeschlagen - siehe Protokoll")
+        self._fortschritt_ende()
         self.analysis = None
         self.results = None
-        self.info(f"Wind {wd.name}: {kw['objektlasten']} Flächen, {len(kw['staebe'])} Stäbe, "
-                  f"{kw['elementlasten']} Elementlasten in {kw['lastfall']}; q_p(h) = {kw.get('q_p_h', 0):.0f} N/m², "
-                  f"Kontrollsumme Flächen {kw['kontrolle']['betrag'] / 1e3:.1f} kN, Stäbe {kw['kontrolle']['F_staebe'] / 1e3:.1f} kN")
+        wk_ = kw.get("windkanal")
+        self.info(f"Wind {wd.name} ({kw.get('verfahren', 'norm')}): {kw['objektlasten']} Flächen, {len(kw['staebe'])} Stäbe, "
+                  f"{kw['elementlasten']} Elementlasten in {kw['lastfall']} (Nr. {kw.get('lastfall_nr', 0)}); "
+                  f"q_p(h) = {kw.get('q_p_h', 0):.0f} N/m², "
+                  f"Kontrollsumme Flächen {kw['kontrolle']['betrag'] / 1e3:.1f} kN, Stäbe {kw['kontrolle']['F_staebe'] / 1e3:.1f} kN"
+                  + (f"; Windkanal Re = {wk_['re']:.0f}, c_p {wk_['cp_min']:+.2f} … {wk_['cp_max']:+.2f}" if wk_ else ""))
         for zeile in wm.erlaeuterung(wd, kw):
             self.log.appendPlainText("  " + zeile)
         self.refresh_all()

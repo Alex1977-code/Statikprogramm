@@ -2284,6 +2284,10 @@ def main():
         check("Wind-Maske mit den gewählten Flächen und den Knöpfen",
               mk.titel == "Neu: Wind" and "Luv" in mk.werte()["ziele"] and "Dach" in mk.werte()["ziele"]
               and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kennwerte"}, str(mk.werte().get("ziele")))
+        check("Wind-Maske kennt Verfahren (Norm/Windkanal), Schnitt, Gitter, Reynolds, Schritte, Lastfall-Nr.",
+              all(k in mk.werte() for k in ("verfahren", "schnittart", "z_schnitt", "gitter", "re", "schritte",
+                                             "fall_nr"))
+              and str(mk.werte()["verfahren"]).startswith("Norm"), str(mk.werte().get("verfahren")))
         mk.setzen("zone", "Zone 2 (v_b,0 = 25 m/s)")
         mk.setzen("profil", "Binnenland")
         mk.setzen("richtung", "+x")
@@ -2307,6 +2311,31 @@ def main():
         check("Wind-Maske zum Bearbeiten vorbelegt",
               mk.titel == "Wind Wind1" and mk.werte()["profil"] == "Binnenland" and mk.werte()["richtung"] == "+x",
               str((mk.titel, mk.werte()["profil"], mk.werte()["richtung"])))
+        # Windkanal aus der Maske: kleines Gitter, wenige Schritte, Fortschritt
+        mk.setzen("verfahren", w.WINDVERFAHREN[1])
+        mk.setzen("gitter", 8)
+        mk.setzen("schritte", 200)
+        mk.setzen("re", 80.0)
+        fort_ = []
+        alt_fort = w._fortschritt
+        w._fortschritt = lambda wert, text: (fort_.append(wert), alt_fort(wert, text))[1]
+        mk.anwenden()
+        app.processEvents()
+        w._fortschritt = alt_fort
+        wd_ = m_.winde.get("Wind1")
+        lc_ = m_.load_cases.get(wd_.lastfall) if wd_ else None
+        check("Windkanal aus der Maske: Generierer mit Verfahren, Lasten mit c_p-Feld an den Wänden, Fortschritt lief",
+              wd_ is not None and wd_.windkanal() and lc_ is not None
+              and sum(1 for gl in lc_.geometrielasten if gl.verlauf.get("feld")) == 4
+              and fort_ and max(fort_) == 100 and "Windkanal" in w.log.toPlainText(),
+              str((wd_ and wd_.verfahren, lc_ and sum(1 for gl in lc_.geometrielasten if gl.verlauf.get("feld")),
+                   fort_[-2:])))
+        w._baum_geklickt("wind", "Wind1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Wind-Maske zeigt den Windkanal vorbelegt", str(mk.werte()["verfahren"]).startswith("numerisch")
+              and int(mk.werte()["gitter"]) == 8)
+        mk.setzen("verfahren", w.WINDVERFAHREN[0])
         mk.setzen("richtung", "Winkel [°] von +x")
         mk.setzen("winkel", 90.0)
         mk.setzen("c_pi", -0.3)

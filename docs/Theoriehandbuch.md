@@ -236,6 +236,35 @@ Zahlenwerten der Norm und die Summen der Elementlasten an einem Quader
 (Luvdruck + Leesog, Dachsog nach Zonen, Innendruck) sowie die Stablasten
 eines Rohrmasts.
 
+### 2.2a Numerischer Windkanal (`stroemung.py`, `wind.py`)
+
+Wahlweise statt der Zonenbeiwerte: die Strömung um die Hindernisse (Flächen,
+Stäbe als schmale Vierecke) wird in einem Schnitt mit dem
+**Gitter-Boltzmann-Verfahren** (D2Q9, BGK-Stoßoperator) gerechnet. Links
+strömt es mit u_∞ ein, rechts frei aus, oben und unten herrscht die freie
+Anströmung (im Aufriss unten Haftbedingung am Boden); die Hindernisse
+reflektieren die Verteilungen (Rückprall = Haftbedingung). Die Zähigkeit
+folgt aus der Modell-Reynolds-Zahl Re = u_∞·L/ν mit L = Querabmessung des
+Hindernisses; für die Stabilität des Verfahrens wird τ = 3ν + ½ ≥ 0,52
+gehalten (die wirksame Re-Zahl steht im Bericht). Dichte und
+Geschwindigkeit werden über die letzten 40 % der Zeitschritte gemittelt;
+c_p = (p − p_∞)/(½·ρ·u_∞²) mit p = ρ·c_s² und p_∞ weit vorn.
+
+Die Elementseiten in der Schnittebene tasten c_p vor der Fläche ab (dünne
+Schale: netto), der Druck ist c_s·c_d·(c_p − c_pi)·q_p(z) mit dem Höhenprofil
+der Norm; Flächen quer zur Ebene (Dächer im Grundriss, Seitenwände im
+Aufriss) behalten die Zonenbeiwerte. Stäbe erhalten ihre Norm-Linienlast mal
+(v/v_∞)² am Stabmittelpunkt (Abschirmung im Nachlauf). Geprüft
+(`tests/test_stroemung.py`, `tests/test_wind.py`): Staupunkt c_p ≈ 1,
+Sog und Rückströmung im Nachlauf, Verschattung eines zweiten Körpers und einer
+Wand im Nachlauf, Abschirmung eines Stabes, Aufriss mit Dach.
+
+Grenzen: ebene Strömung (kein Umströmen über das Dach im Grundriss, keine
+Ecken quer), Modell-Reynolds-Zahl weit unter der des Bauwerks (Ablösung und
+Nachlauf sind qualitativ), keine Turbulenz der Anströmung, keine
+Grenzschicht des Geländes im Grundriss. Die Beiwerte sind gegen die Norm zu
+prüfen; sie zeigen, **wo** Verschattung und Wirbel wirken.
+
 ### 2.3 Strömungsinduzierte Schwingungen eines Verschlusses (`schwingung.py`)
 
 Grundlagen: Naudascher/Rockwell, *Flow-Induced Vibrations*; Kolkman;

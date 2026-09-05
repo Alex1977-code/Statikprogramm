@@ -972,6 +972,24 @@ I_v, q_p), die Beiwerte je Zone und Stab (mit Re, λ, ψ_λ), Resultierende
 und Kontrollsummen; der Bericht zeichnet **Höhenprofil und Grundriss** mit
 Anströmung und Zonen.
 
+**Numerischer Windkanal.** Mit *Verfahren → numerischer Windkanal* wird die
+Strömung um die gewählten Flächen und Stäbe in einem Schnitt gerechnet
+(Gitter-Boltzmann-Verfahren, siehe Theoriehandbuch 2.2a): *Grundriss*
+(waagerechter Schnitt in der angegebenen Höhe, Vorgabe 0,6·h) oder
+*Aufriss* (lotrechter Schnitt in Windrichtung, Boden als Wand). Das Ergebnis
+sind **Verwirbelungen, Nachlauf, gegenseitige Beeinflussung und
+Verschattung** wie im Windkanal: Flächen, die in der Schnittebene liegen
+(Wände im Grundriss; Luv-, Leewand und Dach im Aufriss), bekommen den
+zeitlich gemittelten Druckbeiwert c_p aus dem Feld statt der Zonenbeiwerte,
+skaliert mit q_p(z) der Norm; die übrigen Flächen behalten die Norm. Stäbe im
+Nachlauf tragen (v/v∞)² als Abschirmung. *Zellen über die Breite*,
+*Reynolds-Zahl* (Modell, über etwa 300 wird das Verfahren instabil) und
+*Zeitschritte* bestimmen Feinheit und Dauer; die Rechnung läuft mit
+Fortschrittsbalken und ist abbrechbar. Der Bericht zeigt das c_p-Feld und das
+Geschwindigkeitsfeld v/v∞ des Schnitts. Die Beiwerte sind **qualitativ** -
+Modell-Reynolds-Zahl, ebener Schnitt - und gegen die Norm zu prüfen; der
+Lastfall trägt die Lastfall-Nr. aus der Maske.
+
 ## 5 Lager: Ausfall, Schlupf, Reibung
 
 Jedes Lager wirkt je Freiheitsgrad **starr**, als **Feder** oder ist **frei**;

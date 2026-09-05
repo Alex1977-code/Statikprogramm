@@ -226,8 +226,103 @@ def test_staebe():
     close("Rechteck d/b = 0,5: c_f,0 nach Bild 7.23", kw["staebe"][0]["cf0"], wm.cf0_rechteck(0.5), 1e-12)
 
 
+def test_windkanal():
+    """Numerischer Windkanal: Staudruck auf der Luvwand, Sog auf der Leewand,
+    Verschattung eines zweiten Gebäudes im Nachlauf, Abschirmung eines Stabes,
+    Persistenz, Abbruch, Aufriss."""
+    from statik3d import stroemung as st
+    from statik3d.elements import shell as sh
+    m = _quader()
+    w = Wind("WK", zone=2, profil="II", richtung=[1, 0, 0], flaechen=["Luv", "Lee", "Seite1", "Seite2", "Dach"],
+             verfahren="windkanal", gitter=10, schritte=500, re=100.0)
+    check("Vorgabe bleibt die Norm; Windkanal ist wählbar", not Wind("x").windkanal() and w.windkanal())
+    rufe = []
+    kw = wm.lasten_erzeugen(m, w, fortschritt=lambda a, t: (rufe.append(a), True)[1])
+    check("Windkanal gerechnet: Kennwerte mit Re, τ, Gitter, c_p-Spanne",
+          kw["verfahren"] == "windkanal" and kw["windkanal"]["re"] > 0 and kw["windkanal"]["tau"] >= 0.52
+          and kw["windkanal"]["cp_max"] > 0.3 and kw["windkanal"]["cp_min"] < -0.2,
+          str({k: (round(v, 3) if isinstance(v, float) else v) for k, v in kw["windkanal"].items()}))
+    check("Fortschritt gemeldet bis 1,0", bool(rufe) and abs(rufe[-1] - 1.0) < 1e-9 and rufe == sorted(rufe))
+    check("Wände in der Schnittebene aus dem Feld, Dach aus der Norm",
+          set(kw["aus_feld"]) == {"Luv", "Lee", "Seite1", "Seite2"}, str(kw["aus_feld"]))
+    lc = m.load_cases[w.lastfall]
+    check("Lastfallnummer vergeben", lc.nummer >= 1 and kw["lastfall_nr"] == lc.nummer)
+
+    def mittel(modell, fall, flaeche):
+        el = set(modell.flaechen[flaeche].elemente)
+        p = [fl.p for fl in fall.face_loads if int(fl.elem) in el]
+        return sum(p) / len(p) if p else 0.0
+
+    p_luv, p_lee, p_dach = mittel(m, lc, "Luv"), mittel(m, lc, "Lee"), mittel(m, lc, "Dach")
+    check("Luvwand: Druck (Staupunkt, c_p > 0)", p_luv > 0.3 * kw["q_p_h"], f"{p_luv:.0f} von q_p {kw['q_p_h']:.0f}")
+    check("Leewand: Sog aus dem Nachlauf", p_lee < 0.0, f"{p_lee:.0f}")
+    check("Dach aus der Norm (Sog)", p_dach < 0.0, f"{p_dach:.0f}")
+    # Verschattung: zweite Wand 4 d hinter dem Gebaeude
+    m2 = _quader()
+    b, d, h = 8.0, 5.0, 6.0
+    x2 = 4.0 * d
+    ids = [[m2.add_node(x2, i * b / 4, k * h / 4) for k in range(5)] for i in range(5)]
+    el2 = [m2.add_element("shell4", [ids[i][k], ids[i + 1][k], ids[i + 1][k + 1], ids[i][k + 1]], "S", "t")
+           for i in range(4) for k in range(4)]
+    m2.flaechen["Luv2"] = Flaeche("Luv2", dicke="t", material="S", elemente=el2)
+    X = m2.nodes[[int(x) for x in m2.elements[el2[0]].nodes]]
+    T3, _xy, _A = sh.shell_frame(X[0], X[1], X[2])
+    if T3[2][0] > 0:
+        for e in el2:
+            m2.elements[e].nodes = list(reversed(m2.elements[e].nodes))
+    w2 = Wind("WK2", zone=2, profil="II", richtung=[1, 0, 0], flaechen=["Luv", "Lee", "Seite1", "Seite2", "Luv2"],
+              verfahren="windkanal", gitter=10, schritte=500, re=100.0)
+    kw2 = wm.lasten_erzeugen(m2, w2)
+    lc2 = m2.load_cases[w2.lastfall]
+    p1, p2 = mittel(m2, lc2, "Luv"), mittel(m2, lc2, "Luv2")
+    check("Verschattung: die Wand im Nachlauf bekommt deutlich weniger Staudruck als die vordere",
+          p2 < 0.6 * p1, f"vorn {p1:.0f}, hinten {p2:.0f} N/m²")
+    # Stab im Nachlauf: Abschirmung (v/v_inf)^2 < 1
+    m3 = _quader()
+    m3.add_section(Section.pipe("CHS", 0.3, 0.01))
+    n0, n1 = m3.add_node(3.0 * d, 0.5 * b, 0.0), m3.add_node(3.0 * d, 0.5 * b, h)
+    e = m3.add_element("beam", [n0, n1], "S", "CHS")
+    m3.members["Mast"] = Member("Mast", [e])
+    w3 = Wind("WK3", zone=2, profil="II", richtung=[1, 0, 0], flaechen=["Luv", "Lee", "Seite1", "Seite2"],
+              staebe=["Mast"], verfahren="windkanal", gitter=10, schritte=500, re=100.0)
+    kw3 = wm.lasten_erzeugen(m3, w3)
+    sb = kw3["staebe"][0]
+    check("Stab im Nachlauf: Abschirmung (v/v∞)² unter 1", 0.0 <= sb["abschirmung"] < 0.9, f"{sb['abschirmung']:.2f}")
+    # Persistenz und Abbruch
+    m4 = Model.from_dict(json.loads(json.dumps(m.to_dict())))
+    m4.lasten_verteilen()
+    lc4 = m4.load_cases[w.lastfall]
+    s_alt = sum(fl.p for fl in lc.face_loads)
+    s_neu = sum(fl.p for fl in lc4.face_loads)
+    close("nach dem Laden aus dem gespeicherten c_p-Feld verteilt: gleiche Summe", s_neu, s_alt, 1e-9, "N/m²")
+    check("Windkanal-Angaben überleben das Speichern", m4.winde["WK"].windkanal() and m4.winde["WK"].gitter == 10)
+    m5 = _quader()
+    vorher = json.dumps(m5.to_dict(), sort_keys=True)
+    try:
+        wm.lasten_erzeugen(m5, Wind("A", flaechen=["Luv"], verfahren="windkanal", gitter=8, schritte=200),
+                           fortschritt=lambda a, t: False)
+        check("Abbruch löst Abgebrochen aus", False)
+    except st.Abgebrochen:
+        check("Abbruch löst Abgebrochen aus", True)
+    check("nach dem Abbruch ist das Modell unverändert", json.dumps(m5.to_dict(), sort_keys=True) == vorher
+          and not m5.winde)
+    # Aufriss
+    w6 = Wind("WK6", zone=2, profil="II", richtung=[1, 0, 0], flaechen=["Luv", "Lee", "Seite1", "Seite2", "Dach"],
+              verfahren="windkanal", schnittart="aufriss", gitter=10, schritte=500, re=100.0)
+    m6 = _quader()
+    kw6 = wm.lasten_erzeugen(m6, w6)
+    check("Aufriss: Luv, Lee und Dach aus dem Feld, Seitenwände aus der Norm",
+          set(kw6["aus_feld"]) == {"Luv", "Lee", "Dach"} and kw6["windkanal"]["aufriss"], str(kw6["aus_feld"]))
+    text = wm.erlaeuterung(w6, kw6)
+    check("Erläuterung nennt den Windkanal und die Modell-Reynolds-Zahl",
+          any("Gitter-Boltzmann" in t and "Reynolds" in t for t in text))
+    svg_cp, svg_v = wm.windkanal_svg(w6, kw6)
+    check("Bilder des Windkanals (c_p und v/v∞) für den Bericht",
+          svg_cp.startswith("<svg") and "data:image/png" in svg_cp and "v/v∞" in svg_v)
+
+
 def main():
-    for t in (test_profil, test_beiwerte, test_gebaeude, test_staebe):
+    for t in (test_profil, test_beiwerte, test_gebaeude, test_staebe, test_windkanal):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

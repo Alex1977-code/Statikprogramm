@@ -1290,8 +1290,13 @@ class Report:
             except Exception as ex:                # noqa: BLE001
                 b.append(("p", f"Kennwerte nicht berechenbar: {ex}"))
                 continue
+            lcw = m.load_cases.get(w.lastfall)
+            nrw = int(getattr(lcw, "nummer", 0) or 0) if lcw is not None else 0
             rows = [["Angabe", "Wert"],
-                    ["Situation / Lastfall", f"{w.situation or 'Grundstellung'} / {w.lastfall or '–'}"],
+                    ["Situation / Lastfall", f"{w.situation or 'Grundstellung'} / {w.lastfall or '–'}"
+                     + (f" (Nr. {nrw})" if nrw else "")],
+                    ["Verfahren", "numerischer Windkanal (Gitter-Boltzmann im Schnitt) + Norm-Höhenprofil"
+                     if w.windkanal() else "DIN EN 1991-1-4 (Zonenbeiwerte)"],
                     ["Windzone / v_b", (f"Zone {w.zone}" if w.v_b is None else "Vorgabe")
                      + f", v_b = {kw['v_b']:.1f} m/s (c_dir = {w.c_dir:g}, c_season = {w.c_season:g})"],
                     ["Profil", f"{w.profil}, c_o = {w.c_o:g}"],
@@ -1317,11 +1322,27 @@ class Report:
                                fmt(sb["psi"], 2), f"{sb['Re']:.2e}", fmt(sb["cf0"], 2), fmt(sb["cf"], 2),
                                fmt(sb["w1"], 1), fmt(sb["w2"], 1), fmt(sb["F"] / 1e3, 2)])
                 b.append(("table", st, f"Wind {name}: Kraftbeiwerte und Streckenlasten der Stäbe", None, "compact"))
+            if w.windkanal() and "windkanal" not in kw:
+                # Kennwerte ohne Lasten: den Windkanal fuer den Bericht nachrechnen
+                try:
+                    wk_ = wm.windkanal_rechnen(w, m, wm.gebaeude(w, m))
+                    kw["_wk"] = wk_
+                    kw["windkanal"] = {"re": wk_["re"], "tau": wk_["tau"], "schritte": wk_["schritte"],
+                                       "gitter": wk_["gitter"], "aufriss": wk_["aufriss"], "z_schnitt": wk_["z_schnitt"],
+                                       "cp_min": float(np.nanmin(wk_["cp"])), "cp_max": float(np.nanmax(wk_["cp"]))}
+                except Exception as ex:            # noqa: BLE001
+                    b.append(("p", f"Windkanal nicht berechenbar: {ex}"))
             for zeile in wm.erlaeuterung(w, kw):
                 b.append(("p", zeile))
             if self.opt("figures"):
                 b.append(self._figure(wm.skizze_svg(w, kw),
                                       f"Wind {name}: Höhenprofil q_p(z) und Grundriss mit Anströmung und Zonen"))
+                if kw.get("_wk"):
+                    svg_cp, svg_v = wm.windkanal_svg(w, kw)
+                    if svg_cp:
+                        b.append(self._figure(svg_cp, f"Wind {name}: Druckbeiwert c_p im numerischen Windkanal"))
+                    if svg_v:
+                        b.append(self._figure(svg_v, f"Wind {name}: Geschwindigkeitsfeld v/v∞ - Nachlauf und Verschattung"))
         return b
 
     def chapter_theorie3(self) -> list:
