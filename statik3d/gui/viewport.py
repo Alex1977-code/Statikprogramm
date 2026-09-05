@@ -171,6 +171,38 @@ def add_linien(plotter, model: Model, hervor: list = None, ausser=None, netz=Non
 
 
 FARBE_LINIE = "#7a8a99"
+FARBE_MASS = "#1d2731"
+FARBE_MESSUNG = "#e5701c"
+
+
+def add_bemassungen(plotter, model: Model, groesse: float, blick=None, messungen=None):
+    """Bemassungen des Modells (dunkel) und voruebergehende Messungen (orange):
+    Strecken als Linien, Masstexte als Beschriftungen, immer sichtbar."""
+    from .. import bemassung as bm
+    einst = model.bemassung_einstellungen() if hasattr(model, "bemassung_einstellungen") \
+        else bm.BemassungEinstellung()
+
+    def zeichnen(geos, name, farbe):
+        segs = [s for g in geos for s in g["linien"]]
+        texte = [x for g in geos for x in g["texte"]]
+        if segs:
+            pts = np.array([np.asarray(q, float) for a, b in segs for q in (a, b)], float)
+            pd = pv.PolyData(pts)
+            pd.lines = np.hstack([[2, 2 * i, 2 * i + 1] for i in range(len(segs))])
+            plotter.add_mesh(pd, color=farbe, line_width=2, name=name)
+        if texte:
+            plotter.add_point_labels(np.array([np.asarray(q, float) for q, _ in texte]),
+                                     [str(x) for _, x in texte], font_size=int(einst.textgroesse),
+                                     text_color=farbe, shape=None, show_points=False,
+                                     always_visible=True, name=name + "_text")
+
+    bms = getattr(model, "bemassungen", {}) or {}
+    if bms:
+        zeichnen([bm.geometrie(b, einst, groesse, blick) for b in bms.values()], "bemassung",
+                 einst.farbe or FARBE_MASS)
+    if messungen:
+        zeichnen([bm.messung_geometrie(x["art"], x["punkte"], einst, groesse, blick) for x in messungen],
+                 "messung", FARBE_MESSUNG)
 
 #: So viele Abschnitte bekommt eine krumme Linie beim Zeichnen
 TEILUNG_KURVE = 16

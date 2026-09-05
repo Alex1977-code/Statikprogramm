@@ -2558,6 +2558,177 @@ def main():
         del w._fragen
         w.error = alt_error
 
+        # ---- Messen und Bemaßen (Register Messen) ----
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(4, 3, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1])
+        w.refresh_all()
+        w.blickrichtung("+z")
+        w.zoom_alles()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+
+        def akteure():
+            return list(w.plotter.renderer.actors)
+
+        check("Ribbon-Register „Messen“ vorhanden", "Messen" in w.ribbon._register)
+        w.messen("abstand")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Messmaske sammelt zwei Punkte statt Knoten",
+              mk.titel == "Abstand messen" and mk.punkte and mk.n_knoten == 2 and w.maskenrand.will_punkte())
+        w.maskenrand.punkt_angeklickt([0, 0, 0])
+        w.maskenrand.punkt_angeklickt([3, 4, 0])
+        app.processEvents()
+        check("Abstand 3-4-5: Messung 5.000 m mit Δx/Δy, orange gezeichnet, Maske für die nächste Messung geleert",
+              bool(w.messungen) and w.messungen[0]["text"].startswith("Abstand 5.000 m") and "Δx 3.000 m" in w.messungen[0]["text"]
+              and "messung" in akteure() and any(a.startswith("messung_text") for a in akteure())
+              and not mk.gewaehlt_punkte and "5.000 m" in mk.werte()["ergebnis"], str(w.messungen[:1]))
+        nn0 = m_.nn
+        xy_, _ = w._projizieren(np.atleast_2d(m_.nodes[k2]))
+        w.plotter.iren.interactor.SetEventInformation(int(round(xy_[0, 0])), int(round(xy_[0, 1])))
+        w._picked(None)
+        app.processEvents()
+        check("Klick auf Knoten K2 gibt der Messmaske den Punkt, ohne einen Knoten anzulegen",
+              len(mk.gewaehlt_punkte) == 1 and np.allclose(mk.gewaehlt_punkte[0], [4, 3, 0]) and m_.nn == nn0,
+              str((mk.gewaehlt_punkte, m_.nn)))
+        w.messungen_loeschen()
+        app.processEvents()
+        check("„Messungen löschen“ nimmt sie aus der Ansicht", not w.messungen and "messung" not in akteure())
+        w.messen("winkel")
+        app.processEvents()
+        for p_ in ([4, 0, 0], [0, 0, 0], [0, 3, 0]):
+            w.maskenrand.punkt_angeklickt(p_)
+        app.processEvents()
+        check("Winkelmessung 90°", bool(w.messungen) and w.messungen[-1]["text"].startswith("Winkel 90.00°"))
+        w.sel_staebe = ["S1", "S2"]
+        t_ = w.messen_auswahl()
+        check("Länge der gewählten Stäbe 4 + 3 = 7 m", bool(t_) and "Länge gesamt 7.0000 m" in t_, str(t_))
+        w.bemassung_neu("linear")
+        app.processEvents()
+        w.maskenrand.punkt_angeklickt([0, 0, 0])
+        w.maskenrand.punkt_angeklickt([4, 0, 0])
+        app.processEvents()
+        b_ = m_.bemassungen.get("M1")
+        check("Linearmaß M1: Versatzrichtung aus der Blickrichtung festgehalten, gezeichnet, im Modellbaum",
+              b_ is not None and b_.art == "linear" and b_.richtung is not None
+              and abs(np.linalg.norm(b_.richtung) - 1) < 1e-9 and abs(float(np.dot(b_.richtung, [1, 0, 0]))) < 1e-9
+              and "bemassung" in akteure() and any(a.startswith("bemassung_text") for a in akteure())
+              and "M1" in zweige(w.baum) and "Bemaßungen" in zweige(w.baum), str((b_, fehler_)))
+        w.bemassung_neu("hoehenkote")
+        app.processEvents()
+        w.maskenrand.punkt_angeklickt([4, 3, 2.5])
+        app.processEvents()
+        check("Höhenkote M2 z = 2.500 m", "M2" in m_.bemassungen and m_.bemassungen["M2"].bezug() == "Höhenkote z = 2.500 m")
+        w.bemassung_neu("kette")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        for p_ in ([0, 0, 0], [2, 0, 0], [4, 0, 0]):
+            w.maskenrand.punkt_angeklickt(p_)
+        mk.anwenden()
+        app.processEvents()
+        check("Maßkette M3 mit „Anwenden“ abgeschlossen: 2 Glieder", "M3" in m_.bemassungen and "2 Glieder" in m_.bemassungen["M3"].bezug())
+        w.bemassung_bearbeiten("M1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        r0 = list(m_.bemassungen["M1"].richtung)
+        mk.setzen("text", "L")
+        mk.setzen("umkehren", True)
+        mk.setzen("einheit", "cm")
+        mk.anwenden()
+        app.processEvents()
+        b_ = m_.bemassungen["M1"]
+        check("Bemaßung bearbeiten: Text, Einheit, Versatz umgekehrt",
+              b_.text == "L" and b_.einheit == "cm" and np.allclose(b_.richtung, -np.array(r0)))
+        w.bemassung_einstellungen()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("einheit", "mm")
+        mk.setzen("nachkomma", 0)
+        mk.anwenden()
+        app.processEvents()
+        e_ = m_.bemassung_einstellungen()
+        check("Einstellungen übernommen: mm, 0 Nachkommastellen", e_.einheit == "mm" and e_.nachkomma == 0)
+        import json as _json
+        from statik3d.model import Model as _Modell
+        m2_ = _Modell.from_dict(_json.loads(_json.dumps(m_.to_dict())))
+        check("Bemaßungen und Einstellungen werden gespeichert",
+              sorted(m2_.bemassungen) == ["M1", "M2", "M3"] and m2_.bemassung_einstellung.einheit == "mm")
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("bemassung", "M2")
+        app.processEvents()
+        check("Löschen über den Modellbaum", "M2" not in m_.bemassungen)
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt M2 zurück", "M2" in w.model.bemassungen)
+        w.bemassung_loeschen(None)
+        app.processEvents()
+        check("„Letzte Bemaßung löschen“ entfernt M3", "M3" not in w.model.bemassungen)
+        w.bemassungen_alle_loeschen()
+        app.processEvents()
+        check("„Alle Bemaßungen löschen“", not w.model.bemassungen and "bemassung" not in akteure())
+        del w._bestaetigen
+        w.error = alt_error
+
+        # ---- Fortschrittsbalken beim Vernetzen, Abbrechen ----
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        t_ = list(m_.shells)[0]
+        for k in range(3):
+            y0 = 3.0 * k
+            ids_ = [m_.add_node(0, y0, 0), m_.add_node(2, y0, 0), m_.add_node(2, y0 + 2, 0), m_.add_node(0, y0 + 2, 0)]
+            for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+                m_.add_line(f"L{k}{i}", [ids_[a], ids_[b]])
+            m_.add_flaeche(f"F{k}", [f"L{k}{i}" for i in range(4)], dicke=t_, material=mat_, teilung=[4, 4])
+        w.refresh_all()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+        werte_ = []
+        alt_setvalue = w.progress_bar.setValue
+        w.progress_bar.setValue = lambda v: (werte_.append(int(v)), alt_setvalue(v))
+        w.sel_flaechen = []
+        w.geometrie_vernetzen()
+        app.processEvents()
+        check("Vernetzen: Fortschritt 0…3 je Fläche, Balken danach aus und wieder unbestimmt",
+              werte_[:4] == [0, 0, 1, 2] and werte_[-1] == 3 and not w.progress_bar.isVisible()
+              and w.progress_bar.maximum() == 0 and all(len(m_.flaechen[f"F{k}"].elemente) == 16 for k in range(3)),
+              str(werte_))
+        check("Abbrechen-Knopf in der Statuszeile, nach dem Lauf versteckt",
+              getattr(w, "btn_abbrechen", None) is not None and not w.btn_abbrechen.isVisible())
+        for k in range(3):
+            m_.flaechen[f"F{k}"].elemente = []
+        werte_.clear()
+
+        def setv_(v):
+            alt_setvalue(v)
+            werte_.append(int(v))
+            if int(v) == 1:
+                w._fortschritt_abbrechen()
+        w.progress_bar.setValue = setv_
+        w.geometrie_vernetzen()
+        app.processEvents()
+        n_el = [len(m_.flaechen[f"F{k}"].elemente or []) for k in range(3)]
+        check("Abbrechen nach der ersten Fläche: eine vernetzt, zwei ohne Netz, Protokoll nennt den Abbruch",
+              n_el[0] == 16 and n_el[1] == 0 and n_el[2] == 0 and "abgebrochen" in w.log.toPlainText()
+              and not w.progress_bar.isVisible() and not w._abbruch, str(n_el))
+        w.progress_bar.setValue = alt_setvalue
+        del w._bestaetigen
+        w.error = alt_error
+
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
         w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))

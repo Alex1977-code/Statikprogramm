@@ -384,18 +384,19 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "situationen": "Situation", "generierer": "Wasserdruck",
                  "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
-                 "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht"}
+                 "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
+                 "bemassungen": "Linearmaß"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind",
-                    "schweissnaht"}
+                    "schweissnaht", "bemassung"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
                  "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte",
                  "subsystem": "subsysteme", "situation": "situationen",
                  "wasserdruck": "generierer", "wind": "generierer",
-                 "schweissnaht": "schweissnaehte"}
+                 "schweissnaht": "schweissnaehte", "bemassung": "bemassungen"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -587,6 +588,15 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           + ("" if x.elemente else "\nnoch nicht vernetzt"))
                          for name, x in sorted(gk.items(), key=lambda kv: _natuerlich(kv[0]))],
                     "geokoerper_einzeln", "geokoerper")
+
+        # ---- Bemassungen ---------------------------------------------------
+        bms = getattr(model, "bemassungen", {}) or {}
+        bz = self._zweig(wurzel, "Bemaßungen", len(bms), "bemassungen", fett=bool(bms),
+                         hinweis="Linearmaße, Maßketten, Höhenkoten, Winkel und Radien "
+                                 "(Register Messen); Klick bearbeitet, Entf löscht")
+        self._liste(bz, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
+                         for name, x in bms.items()], "bemassung", "bemassungen")
+        self._zweig(bz, "+ Linearmaß anlegen", "", "bemassung_neu", farbe=FARBEN["akzent"])
 
         # ---- Eigenschaften ----------------------------------------------
         eig = self._zweig(wurzel, "Eigenschaften", "", "modell", fett=True)

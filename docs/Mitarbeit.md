@@ -125,6 +125,10 @@ Punkte:
   Bilder 7.23, 7.28, 7.33 und 7.36 sind stückweise log-linear
   nachgezeichnet; Seitenwand- und Dachzonen setzen ein rechteckiges
   Gebäude voraus (Hüllquader der gewählten Flächen).
+* **Bemaßungen** werden nur in der Ansicht gezeichnet (und damit in
+  Bildern, die man in den Bericht übernimmt); die SVG-Systemskizzen des
+  Berichts kennen sie noch nicht. Verschieben eines Maßes heißt löschen und
+  neu anlegen; Bogenmaße auf Kreislinien und Durchmesser fehlen.
 * **Schweißnähte**: die Kerbfalltabelle ist eine Auswahl (Tab. 8.2 bis 8.5);
   Details mit Radien (Tab. 8.4, 4/5), Hohlprofilknoten (Tab. 8.6/8.7) und
   Bolzen fehlen und sind über die Kerbfall-Vorgabe einzugeben. Nähte an

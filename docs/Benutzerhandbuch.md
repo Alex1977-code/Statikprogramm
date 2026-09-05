@@ -220,6 +220,12 @@ folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den
 Stützknoten. Eine Polylinie bleibt dagegen eine Polylinie: dort laufen die
 Knoten auf den Sehnen, denn etwas anderes hat der Anwender nicht angegeben.
 
+Beim Vernetzen zeigt die Statuszeile einen **Fortschrittsbalken** („Vernetze
+Fläche 120 von 1375: …“ mit Laufzeit); die Oberfläche bleibt bedienbar.
+**Abbrechen** (Knopf neben dem Balken oder Esc) hält nach dem laufenden
+Objekt an - das bisher Erzeugte bleibt, die übrigen Objekte bleiben ohne
+Netz, das Protokoll sagt es.
+
 #### Der freie Vernetzer
 
 Ein Lagerbock, ein Augenblech mit Bohrung, eine Buchse — nichts davon ist ein
@@ -504,6 +510,38 @@ Ein Klick auf der ersten Ecke verwirft das Fenster wieder.
 Gefasst wird, was die Auswahlart sagt: Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente des Netzes. Das Fenster ergänzt die vorhandene
 Auswahl; **Esc** bricht es ab, *Auswahl aufheben* leert alles.
+
+### Messen und Bemaßen (Register Messen)
+
+**Messen** beantwortet eine Frage sofort: *Abstand* (zwei Punkte: Länge,
+Δx, Δy, Δz und Abstand in der Ebene), *Winkel* (Schenkel, Scheitel,
+Schenkel), *Koordinaten* (ein Punkt), *Fläche* (Polygon aus angeklickten
+Punkten, „Anwenden“ schließt es) und *Länge / Fläche* der Auswahl (gewählte
+Linien und Stäbe, gewählte Flächen). Die Punkte kommen aus dem Fang -
+Knoten, Kantenmitten, Linien, Stabachsen, Raster, sonst die Arbeitsebene -
+und legen **keine Knoten** an. Das Ergebnis steht in der Maske, in der
+Statuszeile und im Protokoll und wird orange in die Ansicht gezeichnet;
+*Messungen löschen* nimmt es wieder weg. Die Maske bleibt für die nächste
+Messung offen.
+
+**Bemaßung** legt Maße als Objekte des Modells an (Modellbaum → Bemaßungen,
+werden mit der Datei gespeichert und erscheinen in Bildern für den
+Bericht):
+
+| Werkzeug | Punkte | Darstellung |
+|---|---|---|
+| Linearmaß | 2 | Maßhilfslinien, Maßlinie mit Schrägstrichen, Maßzahl; die Maßlinie liegt senkrecht zur Strecke in der Blickebene (beim Anlegen festgehalten, in der Maske umkehrbar) |
+| Maßkette | beliebig, „Anwenden“ beendet | Einzelmaße auf einer Linie und das Gesamtmaß darüber |
+| Höhenkote | 1 | Kotensymbol mit Fahne und Höhe ab dem Höhenbezug (±0.000) |
+| Winkelmaß | 3 | Maßbogen zwischen den Schenkeln mit Winkel in Grad |
+| Radius | 2 (Mittelpunkt, Kreispunkt) oder 3 Kreispunkte | Strahl mit Mittelpunktkreuz und „R …“ |
+
+Je Maß lassen sich Einheit, Nachkommastellen, Versatz und ein eigener Text
+setzen (Klick auf das Maß im Modellbaum); *Einstellungen…* regelt Einheit
+(m, cm, mm), Nachkommastellen, Textgröße, Versatz (0 = 8 % der Modellgröße),
+Höhenbezug und Farbe für alle Maße ohne eigene Angabe. *Letzte / Alle
+Bemaßungen löschen* und Entf im Modellbaum entfernen Maße; Rückgängig holt
+sie zurück.
 
 ### Maske oder Klick
 

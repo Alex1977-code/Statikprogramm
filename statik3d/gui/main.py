@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import os
 import sys
+import time
 import traceback
 
 os.environ.setdefault("QT_API", "pyside6")
@@ -160,6 +161,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init_defaults(self):
         self.knicklaengen = None      # Knicklaengen aus der Knickfigur
         self.schwingung = None        # Schwingungsnachweis des Verschlusses
+        self.messungen = []           # voruebergehende Messungen in der Ansicht
         if not self.model.materials:
             self.model.add_material(Material.steel("S235"))
             self.model.add_material(Material.steel("S355"))
@@ -237,6 +239,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif t == QtCore.QEvent.MouseMove and self._fenster_ecke is not None:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     self._fenster_nachziehen(pos)
+                elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
+                        and self.progress_bar.isVisible() and self.progress_bar.maximum() > 0:
+                    self._fortschritt_abbrechen()
+                    return True
                 elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
                         and self._fenster_ecke is not None:
                     self._fenster_abbrechen()
@@ -1176,6 +1182,14 @@ class MainWindow(QtWidgets.QMainWindow):
         p, fangart, i = self._fangpunkt()
         maske_will_punkt = bool(self.maskenrand.offen()
                                 and getattr(self.maskenrand.maske, "n_knoten", 0))
+        if maske_will_punkt and self.maskenrand.will_punkte():
+            # Messen und Bemassen: der gefangene Weltpunkt geht an die Maske,
+            # ohne dass ein Knoten entsteht; ins Leere geklickt zaehlt die
+            # Arbeitsebene
+            q = p if p is not None else self._arbeitsebenenpunkt()
+            if q is not None and self.maskenrand.punkt_angeklickt(np.asarray(q, float)):
+                self.redraw()
+                return
         if (p is None or i < 0) and not maske_will_punkt:
             # Kein Knoten unter dem Zeiger und keine Maske, die einen Punkt
             # erwartet: dann meint der Klick das Objekt, das dort liegt - Stab,
@@ -1229,6 +1243,270 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._objekt_umschalten(liste, name, was)
                 return True
         return False
+
+    # ---- Messen und Bemassen (Register Messen) -----------------------------
+    MESSARTEN = {"abstand": ("Abstand messen", 2), "winkel": ("Winkel messen", 3),
+                 "koordinaten": ("Koordinaten messen", 1), "flaeche": ("Fläche messen (Polygon)", 40),
+                 "radius": ("Radius messen", 3)}
+
+    def _blick(self):
+        """Blickrichtung der Kamera (Einheitsvektor) - oder None."""
+        try:
+            return np.asarray(self.plotter.camera.GetDirectionOfProjection(), float)
+        except Exception:                   # noqa: BLE001
+            return None
+
+    def _messgroesse(self) -> float:
+        m = self.model
+        try:
+            return float(m.characteristic_size()) if m.nn else 1.0
+        except Exception:                   # noqa: BLE001
+            return 1.0
+
+    def messen(self, art: str):
+        """Eine Messung beginnen: Punkte in der Ansicht anklicken."""
+        titel, n = self.MESSARTEN[art]
+        F = msk.Feld
+        felder = [F("ergebnis", "Ergebnis", "info", "–")]
+        maske = msk.Maske(titel, felder, knoten=n, punkte=True, knopf="Anwenden",
+                          hinweis="Das Ergebnis steht hier, in der Statuszeile und im Protokoll und "
+                                  "wird orange in die Ansicht gezeichnet (Messen → Messungen löschen "
+                                  "nimmt es wieder weg). Die Maske bleibt für die nächste Messung offen.")
+        maske.angewendet.connect(lambda w, art=art: self._messung_anwenden(art, w))
+        return self.maske_erzeugen(maske)
+
+    def _messung_anwenden(self, art: str, w: dict):
+        from .. import bemassung as bm
+        P = list(w.get("punkte") or [])
+        noetig = {"koordinaten": 1, "abstand": 2, "radius": 2, "winkel": 3, "flaeche": 3}[art]
+        if len(P) < noetig:
+            return self.error(f"{noetig} Punkte anklicken ({len(P)} gewählt)")
+        einst = self.model.bemassung_einstellungen()
+        text = bm.messung_text(art, P, einst.einheit, einst.nachkomma)
+        self.messungen.append({"art": art, "punkte": P, "text": text})
+        self.info(text)
+        self.statusBar().showMessage(text, 15000)
+        mk = self.maskenrand.maske
+        if mk is not None:
+            mk.setzen("ergebnis", text)
+            mk.auswahl_leeren()
+        self.redraw()
+        return text
+
+    def messen_auswahl(self):
+        """Laenge der gewaehlten Linien und Staebe, Flaeche der gewaehlten Flaechen."""
+        from .. import bemassung as bm
+        m = self.model
+        zeilen = []
+        L = 0.0
+        for name in self.sel_linien:
+            ln = m.lines.get(name)
+            if ln is not None:
+                try:
+                    li = float(ln.laenge(m))
+                except Exception:           # noqa: BLE001
+                    continue
+                L += li
+                zeilen.append(f"Linie {name}: {li:.4f} m")
+        for name in self.sel_staebe:
+            mem = m.members.get(name)
+            if mem is not None and mem.elements:
+                li = float(m.member_length(mem))
+                L += li
+                zeilen.append(f"Stab {name}: {li:.4f} m")
+        A = 0.0
+        raender = self._raender() if hasattr(self, "_raender") else {}
+        for name in self.sel_flaechen:
+            f = m.flaechen.get(name)
+            if f is None:
+                continue
+            a = 0.0
+            if f.elemente:
+                for ei in f.elemente:
+                    if 0 <= int(ei) < len(m.elements):
+                        a += float(bm.polygonflaeche(m.nodes[[int(k) for k in m.elements[int(ei)].nodes]])[0])
+            else:
+                P = raender.get(name)
+                if P is not None and len(P) >= 3:
+                    a = float(bm.polygonflaeche(P)[0])
+            A += a
+            zeilen.append(f"Fläche {name}: {a:.4f} m²")
+        if not zeilen:
+            return self.error("Nichts gewählt - Linien, Stäbe oder Flächen anklicken (Auswahlart)")
+        kopf = " · ".join(x for x in (f"Länge gesamt {L:.4f} m" if L else "", f"Fläche gesamt {A:.4f} m²" if A else "") if x)
+        self.info(kopf)
+        for z in zeilen:
+            self.log.appendPlainText("  " + z)
+        self.statusBar().showMessage(kopf, 15000)
+        return kopf
+
+    def messungen_loeschen(self):
+        self.messungen = []
+        self.redraw()
+        self.info("Messungen aus der Ansicht genommen")
+
+    def bemassung_neu(self, art: str = "linear"):
+        """Ein Mass anlegen: Punkte in der Ansicht anklicken."""
+        from .. import bemassung as bm
+        if art not in bm.ARTEN:
+            return self.error(f"Bemaßungsart „{art}“ unbekannt")
+        n = bm.PUNKTE[art] or 40
+        e = self.model.bemassung_einstellungen()
+        F = msk.Feld
+        felder = [F("einheit", "Einheit", "wahl", "Einstellung", ["Einstellung"] + list(bm.EINHEITEN)),
+                  F("nachkomma", "Nachkommastellen", "text", "", breite=60, hinweis="leer = Einstellung"),
+                  F("versatz", "Versatz der Maßlinie [m]", "text", "", breite=78,
+                    hinweis="leer = Einstellung bzw. 8 % der Modellgröße; Winkelmaß: Bogenradius"),
+                  F("text", "Text (leer = Maßzahl)", "text", "", breite=140),
+                  F("kommentar", "Kommentar", "text", "", breite=140)]
+        maske = msk.Maske(f"Neu: {bm.ARTEN[art]}", felder, knoten=n, punkte=True, knopf="Anwenden",
+                          hinweis={"linear": "Zwei Punkte anklicken; die Maßlinie liegt senkrecht zur Strecke "
+                                             "in der Blickebene (Versatzrichtung wird beim Anlegen festgehalten).",
+                                   "kette": "Punkte der Reihe nach anklicken; „Anwenden“ schließt die Kette ab.",
+                                   "hoehenkote": "Einen Punkt anklicken; die Höhe zählt ab dem Höhenbezug "
+                                                 f"(z = {e.hoehen_bezug:g} m, Einstellungen).",
+                                   "winkel": "Drei Punkte: Schenkel, Scheitel, Schenkel.",
+                                   "radius": "Mittelpunkt und Kreispunkt anklicken - oder drei Kreispunkte "
+                                             "(dann „Anwenden“ nach dem dritten)."}[art]
+                                  + " Die Maske bleibt für das nächste Maß offen.")
+        maske.angewendet.connect(lambda w, art=art: self._bemassung_anlegen(art, w))
+        return self.maske_erzeugen(maske)
+
+    def _bemassung_anlegen(self, art: str, w: dict):
+        from .. import bemassung as bm
+        m = self.model
+        P = list(w.get("punkte") or [])
+        noetig = {"linear": 2, "kette": 2, "hoehenkote": 1, "winkel": 3, "radius": 2}[art]
+        if len(P) < noetig:
+            return self.error(f"{noetig} Punkte anklicken ({len(P)} gewählt)")
+        if art == "linear":
+            P = P[:2]
+        elif art == "hoehenkote":
+            P = P[:1]
+        elif art == "winkel":
+            P = P[:3]
+        elif art == "radius":
+            P = P[:3]
+
+        def zahl(key):
+            s = str(w.get(key, "")).strip().replace(",", ".")
+            return float(s) if s else None
+
+        name = m.naechster_name("M", m.bemassungen)
+        einheit = str(w.get("einheit", "Einstellung"))
+        b = bm.Bemassung(name, art, P, versatz=zahl("versatz"),
+                         richtung=(bm.versatzrichtung(P[0], P[-1], self._blick()).tolist()
+                                   if art in ("linear", "kette") else None),
+                         text=str(w.get("text", "")).strip(), einheit="" if einheit == "Einstellung" else einheit,
+                         nachkomma=(int(zahl("nachkomma")) if zahl("nachkomma") is not None else None),
+                         kommentar=str(w.get("kommentar", "")).strip())
+        self.merken(f"Bemaßung {name}")
+        m.bemassungen[name] = b
+        self.info(f"{name}: {b.bezug()}")
+        mk = self.maskenrand.maske
+        if mk is not None:
+            mk.auswahl_leeren()
+        self.refresh_all()
+        return b
+
+    def bemassung_bearbeiten(self, name: str):
+        from .. import bemassung as bm
+        m = self.model
+        b = m.bemassungen.get(name)
+        if b is None:
+            return self.error(f"Bemaßung {name} gibt es nicht")
+        F = msk.Feld
+        felder = [F("name", "Name", "text", b.name, breite=120),
+                  F("art", "Art", "info", b.bezug()),
+                  F("einheit", "Einheit", "wahl", b.einheit or "Einstellung", ["Einstellung"] + list(bm.EINHEITEN)),
+                  F("nachkomma", "Nachkommastellen", "text", "" if b.nachkomma is None else str(b.nachkomma), breite=60),
+                  F("versatz", "Versatz der Maßlinie [m]", "text", "" if b.versatz is None else f"{b.versatz:g}", breite=78),
+                  F("umkehren", "Versatz umkehren", "haken", False),
+                  F("text", "Text (leer = Maßzahl)", "text", b.text, breite=140),
+                  F("kommentar", "Kommentar", "text", b.kommentar, breite=140)]
+        maske = msk.Maske(f"Bemaßung {name}", felder, knopf="Übernehmen",
+                          hinweis="Punkte bleiben; zum Verschieben löschen und neu anlegen.")
+        maske.angewendet.connect(lambda w, alt=name: self._bemassung_aendern(alt, w))
+        return self.maske_erzeugen(maske)
+
+    def _bemassung_aendern(self, alt: str, w: dict):
+        m = self.model
+        b = m.bemassungen.get(alt)
+        if b is None:
+            return
+        neu = str(w.get("name", "")).strip() or alt
+        if neu != alt and neu in m.bemassungen:
+            return self.error(f"Bemaßung „{neu}“ gibt es schon")
+
+        def zahl(key):
+            s = str(w.get(key, "")).strip().replace(",", ".")
+            return float(s) if s else None
+
+        self.merken(f"Bemaßung {alt} geändert")
+        einheit = str(w.get("einheit", "Einstellung"))
+        b.einheit = "" if einheit == "Einstellung" else einheit
+        nk = zahl("nachkomma")
+        b.nachkomma = int(nk) if nk is not None else None
+        b.versatz = zahl("versatz")
+        if w.get("umkehren") and b.richtung:
+            b.richtung = [-float(x) for x in b.richtung]
+        b.text = str(w.get("text", "")).strip()
+        b.kommentar = str(w.get("kommentar", "")).strip()
+        if neu != alt:
+            b.name = neu
+            m.bemassungen = {(neu if k == alt else k): v for k, v in m.bemassungen.items()}
+        self.refresh_all()
+        return b
+
+    def bemassung_loeschen(self, name: str = None):
+        m = self.model
+        if not m.bemassungen:
+            return self.error("Es gibt keine Bemaßung")
+        name = name or list(m.bemassungen)[-1]
+        if name not in m.bemassungen:
+            return self.error(f"Bemaßung {name} gibt es nicht")
+        self.merken(f"Bemaßung {name} gelöscht")
+        del m.bemassungen[name]
+        self.info(f"Bemaßung {name} gelöscht")
+        self.refresh_all()
+
+    def bemassungen_alle_loeschen(self):
+        m = self.model
+        if not m.bemassungen:
+            return self.error("Es gibt keine Bemaßung")
+        if not self._bestaetigen(f"Alle {len(m.bemassungen)} Bemaßungen wirklich löschen?"):
+            return
+        self.merken("Alle Bemaßungen gelöscht")
+        m.bemassungen.clear()
+        self.refresh_all()
+
+    def bemassung_einstellungen(self):
+        from .. import bemassung as bm
+        e = self.model.bemassung_einstellungen()
+        F = msk.Feld
+        felder = [F("einheit", "Einheit", "wahl", e.einheit, list(bm.EINHEITEN)),
+                  F("nachkomma", "Nachkommastellen", "ganz", int(e.nachkomma)),
+                  F("textgroesse", "Textgröße [pt]", "ganz", int(e.textgroesse)),
+                  F("versatz", "Versatz der Maßlinie [m]", "zahl", float(e.versatz),
+                    hinweis="0 = 8 % der Modellgröße"),
+                  F("hoehen_bezug", "Höhenbezug ±0.000 bei z [m]", "zahl", float(e.hoehen_bezug)),
+                  F("farbe", "Farbe", "text", e.farbe, breite=90)]
+        maske = msk.Maske("Bemaßung: Einstellungen", felder, knopf="Übernehmen",
+                          hinweis="Gilt für alle Maße ohne eigene Angabe und für die Messungen.")
+        maske.angewendet.connect(self._bemassung_einstellungen_setzen)
+        return self.maske_erzeugen(maske)
+
+    def _bemassung_einstellungen_setzen(self, w: dict):
+        e = self.model.bemassung_einstellungen()
+        self.merken("Bemaßung: Einstellungen")
+        e.einheit = str(w.get("einheit", e.einheit))
+        e.nachkomma = max(0, int(float(w.get("nachkomma", e.nachkomma) or 0)))
+        e.textgroesse = max(6, int(float(w.get("textgroesse", e.textgroesse) or 11)))
+        e.versatz = float(w.get("versatz", 0.0) or 0.0)
+        e.hoehen_bezug = float(w.get("hoehen_bezug", 0.0) or 0.0)
+        e.farbe = str(w.get("farbe", e.farbe)).strip() or e.farbe
+        self.info(f"Bemaßung: {e.einheit}, {e.nachkomma} Nachkommastellen, {e.textgroesse} pt")
+        self.refresh_all()
 
     def _linie_am_zeiger(self):
         """Name der Linie unter dem Zeiger - in Bildschirmpunkten gemessen."""
@@ -1887,6 +2165,44 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Alle Lagersymbole auf die Grundgröße")
 
         # -- Extras ------------------------------------------------------
+        # -- Messen ------------------------------------------------------
+        r = rb.register("Messen")
+        g = r.gruppe("Messen")
+        g.gross("Abstand", "↔", lambda: self.messen("abstand"),
+                hinweis="Abstand zweier Punkte mit Δx, Δy, Δz und Abstand in der Ebene - zwei "
+                        "Punkte anklicken (Knoten, Kanten, Linien, Raster, Arbeitsebene)",
+                symbol="linie_neu")
+        g.klein("Winkel", lambda: self.messen("winkel"),
+                hinweis="Winkel dreier Punkte: Schenkel, Scheitel, Schenkel")
+        g.klein("Koordinaten", lambda: self.messen("koordinaten"),
+                hinweis="Koordinaten eines Punkts")
+        g.klein("Fläche (Polygon)", lambda: self.messen("flaeche"),
+                hinweis="Fläche und Schwerpunkt eines angeklickten Polygons - „Anwenden“ schließt es")
+        g = r.gruppe("Auswahl")
+        g.gross("Länge / Fläche", "Σ", self.messen_auswahl,
+                hinweis="Länge der gewählten Linien und Stäbe, Fläche der gewählten Flächen "
+                        "(Auswahlart Linie, Stab oder Fläche)", symbol="suchen")
+        g.klein("Messungen löschen", self.messungen_loeschen, symbol="loeschen",
+                hinweis="Die vorübergehenden Messungen aus der Ansicht nehmen")
+        g = r.gruppe("Bemaßung")
+        g.gross("Linearmaß", "⟷", lambda: self.bemassung_neu("linear"),
+                hinweis="Maß zwischen zwei Punkten mit Maßhilfslinien, Maßlinie und Schrägstrichen; "
+                        "die Maßlinie liegt senkrecht zur Strecke in der Blickebene", symbol="linie_neu")
+        g.gross("Maßkette", "⟷", lambda: self.bemassung_neu("kette"),
+                hinweis="Mehrere Punkte der Reihe nach: Einzelmaße und Gesamtmaß; „Anwenden“ beendet",
+                symbol="linien")
+        g.klein("Höhenkote", lambda: self.bemassung_neu("hoehenkote"),
+                hinweis="Höhe eines Punkts über dem Höhenbezug (±0.000), mit Kotensymbol")
+        g.klein("Winkelmaß", lambda: self.bemassung_neu("winkel"),
+                hinweis="Winkel dreier Punkte mit Maßbogen")
+        g.klein("Radius", lambda: self.bemassung_neu("radius"),
+                hinweis="Mittelpunkt und Punkt auf dem Kreis (oder drei Kreispunkte)")
+        g = r.gruppe("Verwalten")
+        g.klein("Einstellungen…", self.bemassung_einstellungen,
+                hinweis="Einheit, Nachkommastellen, Textgröße, Versatz, Höhenbezug, Farbe")
+        g.klein("Letzte Bemaßung löschen", lambda: self.bemassung_loeschen(None))
+        g.klein("Alle Bemaßungen löschen", self.bemassungen_alle_loeschen)
+
         r = rb.register("Extras")
         g = r.gruppe("Handbücher")
         g.gross("Handbuch", "❓", lambda: self.open_doc("Benutzerhandbuch.md"))
@@ -2076,6 +2392,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     #: Zweige und Eintraege fuer Subsysteme und Situationen
     SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
+                    "bemassungen", "bemassung", "bemassung_neu",
                     "situationen", "situation", "situation_neu",
                     "generierer", "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
                     "schweissnaehte", "schweissnaht", "schweissnaht_neu"}
@@ -2582,6 +2899,10 @@ class MainWindow(QtWidgets.QMainWindow):
     # Subsysteme und Situationen
     # ------------------------------------------------------------------
     def _baum_system_geklickt(self, art: str, name: str):
+        if art in ("bemassungen", "bemassung_neu"):
+            return self.bemassung_neu("linear")
+        if art == "bemassung":
+            return self.bemassung_bearbeiten(name)
         if art in ("schweissnaehte", "schweissnaht_neu"):
             return self.maske_schweissnaht()
         if art == "schweissnaht":
@@ -2895,7 +3216,8 @@ class MainWindow(QtWidgets.QMainWindow):
                "subsystem": f"Subsystem {name}", "situation": f"Situation {name}",
                "wasserdruck": f"Wasserdruck {name} samt seinen Lasten",
                "wind": f"Wind {name} samt seinen Lasten",
-               "schweissnaht": f"Schweißnaht {name}"}.get(art)
+               "schweissnaht": f"Schweißnaht {name}",
+               "bemassung": f"Bemaßung {name}"}.get(art)
         if was is None:
             return
         if not self._bestaetigen(f"{was} wirklich löschen?"):
@@ -2904,7 +3226,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Der Stand **vor** dem Loeschen gehoert auf den Rueckgaengig-Stapel;
         # die Arten, die unten selbst merken, tun es an ihrer Stelle.
         SELBST = ("stabelement", "querschnitt", "subsystem", "situation", "wasserdruck", "wind",
-                  "schweissnaht")
+                  "schweissnaht", "bemassung")
         if art not in SELBST:
             self.merken(f"{was} gelöscht")
         if art == "knoten":
@@ -2948,6 +3270,12 @@ class MainWindow(QtWidgets.QMainWindow):
                                        if not (ll.kommentar or "").startswith(f"Wind {name}:")]
                 del m.winde[name]
                 m.lasten_verteilen()
+        elif art == "bemassung":
+            if name not in m.bemassungen:
+                grund = f"Bemaßung {name} gibt es nicht"
+            else:
+                self.merken(f"{was} gelöscht")
+                del m.bemassungen[name]
         elif art == "schweissnaht":
             if name not in m.schweissnaehte:
                 grund = f"Schweißnaht {name} gibt es nicht"
@@ -3435,35 +3763,92 @@ class MainWindow(QtWidgets.QMainWindow):
             for l in lc.temp_loads:
                 l.elem = neu_nr[l.elem]
 
+    def _fortschritt_beginnen(self, gesamt: int, text: str = ""):
+        """Fortschrittsbalken in der Statuszeile: bestimmt (0 … gesamt), mit
+        Abbrechen-Knopf. Die Oberflaeche bleibt bedienbar (processEvents)."""
+        self._abbruch = False
+        self.progress_bar.setRange(0, max(1, int(gesamt)))
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        if getattr(self, "btn_abbrechen", None) is None:
+            self.btn_abbrechen = QtWidgets.QPushButton("Abbrechen")
+            self.btn_abbrechen.setFlat(True)
+            self.btn_abbrechen.setToolTip("Nach dem laufenden Objekt anhalten (auch Esc)")
+            self.btn_abbrechen.clicked.connect(self._fortschritt_abbrechen)
+            self.statusBar().addPermanentWidget(self.btn_abbrechen)
+        self.btn_abbrechen.setVisible(True)
+        self._fortschritt_t0 = time.time()
+        if text:
+            self.statusBar().showMessage(text)
+        QtWidgets.QApplication.processEvents()
+
+    def _fortschritt_abbrechen(self):
+        self._abbruch = True
+        self.statusBar().showMessage("Abbruch angefordert - nach dem laufenden Objekt wird angehalten …")
+
+    def _fortschritt(self, wert: int, text: str) -> bool:
+        """Balken und Text nachfuehren; False, wenn abgebrochen wurde."""
+        self.progress_bar.setValue(int(wert))
+        dt = time.time() - getattr(self, "_fortschritt_t0", time.time())
+        self.statusBar().showMessage(f"{text}  ({dt:.0f} s)")
+        QtWidgets.QApplication.processEvents()
+        return not getattr(self, "_abbruch", False)
+
+    def _fortschritt_ende(self):
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 0)          # die Rechnung nutzt den unbestimmten Balken
+        if getattr(self, "btn_abbrechen", None) is not None:
+            self.btn_abbrechen.setVisible(False)
+        self._abbruch = False
+
     def _vernetzen(self, flaechen: list, koerper: list) -> int:
-        """Flaechen und Koerper vernetzen und das Protokoll fuehren."""
+        """Flaechen und Koerper vernetzen und das Protokoll fuehren - mit
+        Fortschrittsbalken je Objekt; Abbrechen behaelt das bisher Erzeugte."""
         from .. import fugen
         log = []
         n = 0
-        # Was aus Kontaktbedingungen entstanden ist, gehoert zum alten Netz.
-        fugen.kontaktfugen_zuruecksetzen(self.model, log)
-        for f in flaechen:
-            self._netz_loeschen(f.elemente)
-            f.elemente = []
-            n += len(mesher.mesh_flaeche(self.model, f, log))
-        # Ein Woerterbuch fuer alle Koerper dieses Laufs: Koerper, die sich
-        # eine Randflaeche teilen, bekommen dort dieselben Knoten. Ohne das
-        # stuende jeder Koerper fuer sich und das Modell zerfiele.
-        cache: dict = {}
-        for k in koerper:
-            self._netz_loeschen(k.elemente)
-            k.elemente = []
-            n += len(mesher.mesh_koerper(self.model, k, log, cache=cache))
-        # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
-        self.model.lasten_verteilen(log)
-        # und die Kontaktfugen koennen jetzt getrennt werden - ohne sie rechnet
-        # das Modell dort durchverbunden, also zu steif.
-        fugen.kontaktfugen_ausfuehren(self.model, log)
+        gesamt = len(flaechen) + len(koerper)
+        self._fortschritt_beginnen(gesamt, f"Vernetzen: {len(flaechen)} Flächen, {len(koerper)} Volumen …")
+        abgebrochen = False
+        try:
+            # Was aus Kontaktbedingungen entstanden ist, gehoert zum alten Netz.
+            fugen.kontaktfugen_zuruecksetzen(self.model, log)
+            for i, f in enumerate(flaechen):
+                if not self._fortschritt(i, f"Vernetze Fläche {i + 1} von {len(flaechen)}: {f.name}"):
+                    abgebrochen = True
+                    break
+                self._netz_loeschen(f.elemente)
+                f.elemente = []
+                n += len(mesher.mesh_flaeche(self.model, f, log))
+            # Ein Woerterbuch fuer alle Koerper dieses Laufs: Koerper, die sich
+            # eine Randflaeche teilen, bekommen dort dieselben Knoten. Ohne das
+            # stuende jeder Koerper fuer sich und das Modell zerfiele.
+            cache: dict = {}
+            for i, k in enumerate(koerper):
+                if abgebrochen or not self._fortschritt(len(flaechen) + i,
+                                                        f"Vernetze Volumen {i + 1} von {len(koerper)}: {k.name}"):
+                    abgebrochen = True
+                    break
+                self._netz_loeschen(k.elemente)
+                k.elemente = []
+                n += len(mesher.mesh_koerper(self.model, k, log, cache=cache))
+            self._fortschritt(gesamt, "Lasten verteilen und Kontaktfugen trennen …")
+            # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
+            self.model.lasten_verteilen(log)
+            # und die Kontaktfugen koennen jetzt getrennt werden - ohne sie rechnet
+            # das Modell dort durchverbunden, also zu steif.
+            fugen.kontaktfugen_ausfuehren(self.model, log)
+        finally:
+            self._fortschritt_ende()
+        if abgebrochen:
+            log.append(f"Vernetzen abgebrochen: {n} Elemente erzeugt, die übrigen Objekte bleiben ohne Netz")
         for z in log:
             self.log.appendPlainText(z)
         if n:
             self.analysis = None
             self.results = None
+        self.statusBar().showMessage(f"Vernetzt: {n} Elemente in {time.time() - self._fortschritt_t0:.1f} s"
+                                     + (" - abgebrochen" if abgebrochen else ""), 8000)
         return n
 
     def geometrie_vernetzen(self):
@@ -8978,6 +9363,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
                 vp.add_nodes(self.plotter, m)
             self._auswahl_zeichnen()
+            if (getattr(m, "bemassungen", None) or getattr(self, "messungen", None)):
+                try:
+                    vp.add_bemassungen(self.plotter, m, size, self._blick(), self.messungen)
+                except Exception as ex:          # noqa: BLE001 - ein Mass darf die Ansicht nicht sperren
+                    self.log.appendPlainText(f"Bemaßung nicht gezeichnet: {ex}")
             if self.act_loads.isChecked() and (u is None or not modal):
                 vp.add_loads(self.plotter, m, m.case(), size, raender=self._raender(),
                              seiten=self._randseiten())
