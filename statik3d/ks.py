@@ -36,8 +36,15 @@ ARTEN = ("kartesisch", "zylindrisch", "sphaerisch")
 #: Ebenen der Arbeitsebene
 EBENEN = ("xy", "yz", "xz")
 
-#: Was gefangen werden kann
-FANGARTEN = ("knoten", "mitte", "raster")
+#: Was gefangen werden kann - in dieser Reihenfolge hat der Fang den Vorrang:
+#: ein Knoten geht der Stabmitte vor, diese dem Punkt auf einer Linie, dann
+#: Stab, Flaeche (Randmitten und Schwerpunkt), Volumen (Schwerpunkt), Raster.
+FANGARTEN = ("knoten", "mitte", "linie", "stab", "flaeche", "volumen", "raster")
+
+#: Klartext je Fangart
+FANG_TEXT = {"knoten": "Knoten", "mitte": "Kantenmitte", "linie": "Linie",
+             "stab": "Stab", "flaeche": "Fläche", "volumen": "Volumen",
+             "raster": "Raster"}
 
 
 def _v(p) -> np.ndarray:

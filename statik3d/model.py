@@ -1247,6 +1247,22 @@ class Flaeche:
         """
         return _linienzug_punkte(model, self.linien, teilung)
 
+    def randseiten_punkte(self, model, teilung: int = 16) -> list:
+        """Der Rand **je Linie**: [Punktfolge der 1. Linie, der 2., ...] im Umlauf.
+
+        Fuer eine krumme Flaeche - den Mantel einer Bohrung, einer Buchse,
+        eines Bolzens - reicht das Randpolygon nicht: es liegt nicht in einer
+        Ebene und laesst sich als ein Vieleck nicht zeichnen. Aus den vier
+        Randseiten entsteht dafuer eine Coons-Flaeche (siehe
+        ``gui.viewport.coons_flaeche``). Jede Seite laeuft in Umlaufrichtung,
+        das Ende einer Seite ist der Anfang der naechsten.
+        """
+        return _randseiten_punkte(model, self.linien, teilung)
+
+    def eben(self, model, tol: float = 1e-3) -> bool:
+        """Liegt der Rand in einer Ebene? (Abweichung <= tol * Groesse)"""
+        return polygon_eben(self.randpunkte(model), tol)
+
     def oeffnungspunkte(self, model, teilung: int = 16) -> list:
         """Je Oeffnung ihr Randpolygon als Punktfolge."""
         out = []
@@ -1302,18 +1318,15 @@ def _polygoninhalt(P) -> float:
     return float(np.linalg.norm(n)) / 2.0
 
 
-def _linienzug_punkte(model, linien, teilung: int = 16) -> "np.ndarray":
-    """Ein geschlossener Linienzug als Punktfolge, krumme Linien abgetastet.
+def _randseiten_punkte(model, linien, teilung: int = 16) -> list:
+    """Je Randlinie ihre Punktfolge in Umlaufrichtung, krumme Linien abgetastet.
 
-    Die Knotenfolge allein reicht nicht: eine Bohrung, eine Buchse oder ein
-    Augenblech ist in RFEM ein Kreis aus zwei Halbboegen zwischen denselben
-    zwei Knoten. Ueber die Knoten waeren das zwei Punkte und damit kein
-    Vieleck; erst die abgetasteten Boegen ergeben den Kreis.
+    Rueckgabe [] wenn der Umlauf nicht schliesst. Die Kurve einer Linie laeuft
+    nicht zwingend in Richtung der Knotenfolge des Umlaufs; sie wird dann
+    umgedreht, damit das Ende jeder Seite der Anfang der naechsten ist.
     """
     stuecke = _randstuecke(model, list(linien or []))
-    if not stuecke:
-        return np.zeros((0, 3))
-    punkte: list = []
+    seiten: list = []
     for name, knoten in stuecke:
         ln = model.lines.get(name)
         teil = None
@@ -1323,7 +1336,6 @@ def _linienzug_punkte(model, linien, teilung: int = 16) -> "np.ndarray":
             except Exception:            # noqa: BLE001 - krumm, aber unbrauchbar
                 teil = None
             if teil is not None and len(teil) > 1 and knoten:
-                # Die Kurve laeuft nicht zwingend in Richtung der Knotenfolge
                 p0 = model.nodes[int(knoten[0])]
                 if np.linalg.norm(teil[0] - p0) > np.linalg.norm(teil[-1] - p0):
                     teil = teil[::-1]
@@ -1332,6 +1344,23 @@ def _linienzug_punkte(model, linien, teilung: int = 16) -> "np.ndarray":
             if not idx:
                 continue
             teil = model.nodes[idx]
+        seiten.append(np.asarray(teil, float))
+    return seiten
+
+
+def _linienzug_punkte(model, linien, teilung: int = 16) -> "np.ndarray":
+    """Ein geschlossener Linienzug als Punktfolge, krumme Linien abgetastet.
+
+    Die Knotenfolge allein reicht nicht: eine Bohrung, eine Buchse oder ein
+    Augenblech ist in RFEM ein Kreis aus zwei Halbboegen zwischen denselben
+    zwei Knoten. Ueber die Knoten waeren das zwei Punkte und damit kein
+    Vieleck; erst die abgetasteten Boegen ergeben den Kreis.
+    """
+    seiten = _randseiten_punkte(model, linien, teilung)
+    if not seiten:
+        return np.zeros((0, 3))
+    punkte: list = []
+    for teil in seiten:
         # Der Endpunkt eines Stuecks ist der Anfangspunkt des naechsten;
         # beim geschlossenen Umlauf faellt er darum jeweils weg.
         punkte.extend(teil[:-1] if len(teil) > 1 else teil)
@@ -1342,6 +1371,24 @@ def _linienzug_punkte(model, linien, teilung: int = 16) -> "np.ndarray":
     halten[1:] = np.linalg.norm(np.diff(P, axis=0), axis=1) > 1e-12
     P = P[halten]
     return P if len(P) >= 3 else np.zeros((0, 3))
+
+
+def polygon_eben(P, tol: float = 1e-3) -> bool:
+    """Liegen die Punkte in einer Ebene? Abweichung <= tol * Ausdehnung.
+
+    Ein Zylindermantel aus zwei Boegen und zwei Geraden ist es nicht - und
+    laesst sich darum weder als ein Vieleck zeichnen noch als ebene Flaeche
+    vernetzen.
+    """
+    P = np.asarray(P, float)
+    if len(P) < 4:
+        return True
+    Q = P - P.mean(axis=0)
+    groesse = float(np.linalg.norm(Q, axis=1).max())
+    if groesse <= 0.0:
+        return True
+    n = np.linalg.svd(Q, full_matrices=False)[2][2]
+    return float(np.abs(Q @ n).max()) <= tol * groesse
 
 
 def _randstuecke(model, linien: list[str]) -> list:

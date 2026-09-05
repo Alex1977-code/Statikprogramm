@@ -1502,12 +1502,15 @@ def main():
         check("Löschen ist rücknehmbar", len(w.tbl_last.modell.zeilen) == n0)
 
         # Fang
-        check("alle drei Fangarten an", sorted(w.fang_arten) == ["knoten", "mitte", "raster"],
-              str(w.fang_arten))
+        from statik3d import ks as ksm
+        check("alle Fangarten an (Knoten, Mitte, Linie, Stab, Fläche, Volumen, Raster)",
+              sorted(w.fang_arten) == sorted(ksm.FANGARTEN), str(w.fang_arten))
+        check("die Statuszeile sagt dann „alle“", w.lbl_fang.text().startswith("Fang: alle"),
+              w.lbl_fang.text())
         w.fangart_umschalten("mitte", False)
         check("eine Fangart abschaltbar", "mitte" not in w.fang_arten, str(w.fang_arten))
-        check("die Statuszeile nennt die Fangarten",
-              "knoten" in w.lbl_fang.text() and "mitte" not in w.lbl_fang.text(),
+        check("die Statuszeile nennt die Fangarten mit Namen",
+              "Knoten" in w.lbl_fang.text() and "Kantenmitte" not in w.lbl_fang.text(),
               w.lbl_fang.text())
         w.fangart_umschalten("mitte", True)
         check("und wieder an", "mitte" in w.fang_arten)
@@ -1522,9 +1525,9 @@ def main():
         check("Blickrichtung über den Würfel", True)
         # Alle sechs Seiten und das Umkehren - die Rueckseite ist ein Klick
         richtungen = [r for _t, r, _h in w.ansichtswuerfel.RICHTUNGEN]
-        check("der Würfel bietet alle sechs Seiten und „180°“",
-              set(richtungen) == {"vorne", "hinten", "links", "rechts",
-                                  "oben", "unten", "kehren"}, str(richtungen))
+        check("der Würfel bietet +x +y +z -x -y -z und iso",
+              set(richtungen) == {"+x", "+y", "+z", "-x", "-y", "-z", "iso"},
+              str(richtungen))
         w.blickrichtung("vorne")
         app.processEvents()
         vorn = np.asarray(w.plotter.camera_position[0], float)
@@ -1616,6 +1619,292 @@ def main():
         import traceback
         traceback.print_exc()
         check("Lasten, Fang, Glasleiste", False, str(ex)[:70])
+
+    # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
+    try:
+        import pyvista as pvx
+        from PySide6 import QtGui
+        from statik3d import ks as ksm
+        from statik3d.gui import ribbon as ribm, symbole as symm
+        from statik3d.model import Model as Mdl, Line, Flaeche
+        w.fang_umschalten(True)
+        for art in ksm.FANGARTEN:
+            w.fangart_umschalten(art, True)
+        # Fang Linie/Stab: der Fusspunkt auf der Strecke unter dem Zeiger
+        w.load_example("hall")
+        app.processEvents()
+        w.blickrichtung("-y")
+        w.zoom_alles()
+        app.processEvents()
+        A = np.array([[0.0, 0.0, 0.0]])
+        B = np.array([[10.0, 0.0, 0.0]])
+        xy, _sicht = w._projizieren(np.array([[4.0, 0.0, 0.0]]))
+        w.plotter.iren.interactor.SetEventPosition(int(round(xy[0][0])), int(round(xy[0][1])))
+        fuss = w._fusspunkt_am_zeiger(A, B)
+        check("Fang Linie: Fusspunkt auf der Strecke unter dem Zeiger",
+              fuss is not None and abs(fuss[0] - 4.0) < 0.6 and abs(fuss[1]) < 1e-9
+              and abs(fuss[2]) < 1e-9, str(fuss))
+        # Fang Flaeche: der Punkt auf der Schale unter dem Zeiger
+        w.load_example("plate")
+        app.processEvents()
+        w.blickrichtung("+z")
+        w.zoom_alles()
+        app.processEvents()
+        breite, hoehe = w.plotter.render_window.GetSize()
+        w.plotter.iren.interactor.SetEventPosition(breite // 2, hoehe // 2)
+        w.fang_arten = ["flaeche"]
+        p_f, art_f, _i = w._fangpunkt()
+        check("Fang Fläche: Punkt auf der Schale unter dem Zeiger",
+              art_f == "flaeche" and p_f is not None, f"{art_f} {p_f}")
+        w.fang_arten = ["volumen"]
+        p_v, art_v, _i = w._fangpunkt()
+        check("Fang Volumen greift auf einer Schale nicht", art_v == "", f"{art_v} {p_v}")
+        w.fang_arten = list(ksm.FANGARTEN)
+
+        # Ansichtswuerfel: Kamera bekannt, Ziehen dreht
+        R = w.ansichtswuerfel.kamera()
+        check("der Würfel kennt die Kamera", R is not None and len(R) == 3 and len(R[0]) == 3)
+        w.blickrichtung("iso")
+        app.processEvents()
+        pos0 = np.asarray(w.plotter.camera_position[0], float)
+        ziel0 = np.asarray(w.plotter.camera_position[1], float)
+        w.ansichtswuerfel.gedreht.emit(40.0, 0.0)
+        app.processEvents()
+        pos1 = np.asarray(w.plotter.camera_position[0], float)
+        ziel1 = np.asarray(w.plotter.camera_position[1], float)
+        check("Ziehen auf dem Würfel dreht die Kamera um den Blickpunkt",
+              np.linalg.norm(pos1 - pos0) > 1e-6
+              and abs(np.linalg.norm(pos1 - ziel1) - np.linalg.norm(pos0 - ziel0)) < 1e-6
+              and np.linalg.norm(ziel1 - ziel0) < 1e-9,
+              f"{np.round(pos0, 2)} -> {np.round(pos1, 2)}")
+        wf = w.ansichtswuerfel
+        empfangen = []
+        wf.gedreht.connect(lambda dx, dy: empfangen.append((dx, dy)))
+
+        def maus(typ, pos, knopf, knoepfe):
+            ev = QtGui.QMouseEvent(typ, QtCore.QPointF(pos), QtCore.QPointF(wf.mapToGlobal(pos)),
+                                   knopf, knoepfe, QtCore.Qt.NoModifier)
+            app.sendEvent(wf, ev)
+        mitte = QtCore.QPoint(wf.WUERFEL // 2, wf.WUERFEL // 2)
+        maus(QtCore.QEvent.MouseButtonPress, mitte, QtCore.Qt.LeftButton, QtCore.Qt.LeftButton)
+        maus(QtCore.QEvent.MouseMove, mitte + QtCore.QPoint(12, 0), QtCore.Qt.NoButton,
+             QtCore.Qt.LeftButton)
+        maus(QtCore.QEvent.MouseMove, mitte + QtCore.QPoint(26, 3), QtCore.Qt.NoButton,
+             QtCore.Qt.LeftButton)
+        maus(QtCore.QEvent.MouseButtonRelease, mitte + QtCore.QPoint(26, 3),
+             QtCore.Qt.LeftButton, QtCore.Qt.NoButton)
+        app.processEvents()
+        check("die Maus dreht den Würfel", len(empfangen) >= 1 and empfangen[-1][0] > 0,
+              str(empfangen[:3]))
+        for r_ in ("+x", "-x", "+y", "-y", "+z", "-z", "iso"):
+            w.blickrichtung(r_)
+        app.processEvents()
+        w.blickrichtung("+z")
+        app.processEvents()
+        oben_pos = np.asarray(w.plotter.camera_position[0], float)
+        oben_ziel = np.asarray(w.plotter.camera_position[1], float)
+        check("+z schaut von oben (aus +Z) auf das Modell", oben_pos[2] > oben_ziel[2],
+              f"{np.round(oben_pos, 2)}")
+
+        # Glasleiste: Symbole mit Text beim Ueberfahren, mittig, ohne "Alles holen"
+        kn = w.glasleiste.knoepfe
+        check("Glasleiste: Darstellung, Sichtbarkeit, Sicht und Fang als Knöpfe",
+              all(k in kn for k in ("Voll", "Drahtmodell", "knoten", "staebe", "flaechen",
+                                    "volumen", "netz", "nur_auswahl", "ausblenden",
+                                    "zurueck", "alles", "fang", "fang_knoten",
+                                    "fang_volumen")), str(sorted(kn)))
+        check("Glasleiste: nur Symbole, der Text kommt beim Überfahren",
+              all((not b.icon().isNull()) and b.toolTip()
+                  and b.toolButtonStyle() == QtCore.Qt.ToolButtonIconOnly
+                  for b in kn.values()),
+              str([k for k, b in kn.items() if b.icon().isNull() or not b.toolTip()]))
+        check("„Alles holen“ ist aus der Glasleiste weg",
+              not any("zoom" in k.lower() or "holen" in k.lower() for k in kn))
+        ansicht = w.centralWidget()
+        mitte_leiste = w.glasleiste.x() + w.glasleiste.width() / 2
+        # mittig - oder, wenn der Wuerfel im Weg ist, knapp links von ihm
+        frei_vom_wuerfel = w.glasleiste.geometry().right() < w.ansichtswuerfel.x()
+        check("die Glasleiste steht mittig oben und nie unter dem Würfel",
+              (abs(mitte_leiste - ansicht.width() / 2) <= 3 or
+               (frei_vom_wuerfel and abs(mitte_leiste - ansicht.width() / 2) < 60))
+              and frei_vom_wuerfel and w.glasleiste.y() <= 16,
+              f"Mitte {mitte_leiste:.0f} von {ansicht.width()} px, y = {w.glasleiste.y()}, "
+              f"rechts {w.glasleiste.geometry().right()} < Würfel {w.ansichtswuerfel.x()}")
+
+        # Ribbon: gleiche Hoehe, Gruppentitel auf gleicher Hoehe, Symbole
+        register = w.ribbon.findChildren(ribm.Register)
+        hoehen = {r_.minimumHeight() for r_ in register}
+        check("alle Ribbonregister gleich hoch", len(register) > 5 and len(hoehen) == 1,
+              str(hoehen))
+        gruppen = w.ribbon.findChildren(ribm.Gruppe)
+        check("Gruppentitel auf gleicher Höhe",
+              len(gruppen) > 5 and len({g.minimumHeight() for g in gruppen}) == 1,
+              str({g.minimumHeight() for g in gruppen}))
+        knoepfe = [b for r_ in register for b in r_.findChildren(QtWidgets.QToolButton)]
+        mit = sum(1 for b in knoepfe if not b.icon().isNull())
+        check("Ribbonbefehle tragen Symbol und Text",
+              mit >= 0.95 * len(knoepfe) and all(b.text() for b in knoepfe),
+              f"{mit} von {len(knoepfe)} mit Symbol")
+        check("Programmsymbol ist eine eigene Zeichnung",
+              not symm.programmsymbol().isNull()
+              and symm.programmbild(16).width() == 16 and symm.programmbild(256).width() == 256)
+
+        # Staebe: bei Voll und Transparent mit Querschnittskontur, sonst als Linie
+        w.load_example("hall")
+        app.processEvents()
+        w.darstellung_setzen("Voll")
+        app.processEvents()
+        akt = dict(w.plotter.renderer.actors)
+        check("Voll: Stäbe als Körper mit Querschnittskontur",
+              "model_stabkoerper" in akt, str([k for k in akt if k.startswith("model")]))
+        pd_k = pvx.wrap(akt["model_stabkoerper"].GetMapper().GetInput())
+        check("der Stabkörper kennt Element und Knoten je Zelle und Punkt",
+              "elem" in pd_k.cell_data and "knoten" in pd_k.point_data and pd_k.n_cells > 0)
+        w.darstellung_setzen("Drahtmodell")
+        app.processEvents()
+        akt = dict(w.plotter.renderer.actors)
+        check("Drahtmodell: Stäbe als Linien",
+              "model_stabkoerper" not in akt and "model_netz" in akt,
+              str([k for k in akt if k.startswith("model")]))
+        w.darstellung_setzen("Transparent")
+        app.processEvents()
+        check("Transparent: Stäbe als Körper",
+              "model_stabkoerper" in dict(w.plotter.renderer.actors))
+        w.darstellung_setzen("Voll")
+        app.processEvents()
+
+        # Sicht: Auswahl ausblenden, nur Auswahl, zurueck, alles
+        stab = list(w.model.members)[0]
+        elems = {int(e) for e in w.model.members[stab].elements}
+        alle = set(range(len(w.model.elements)))
+        w.sel_staebe = [stab]
+        w.auswahl_ausblenden()
+        app.processEvents()
+        check("Auswahl ausblenden nimmt die Stabelemente aus dem Bild",
+              w.versteckt["elemente"] == elems and not w.sel_staebe,
+              str(sorted(w.versteckt["elemente"])))
+        akt = dict(w.plotter.renderer.actors)
+        gezeigt = set()
+        for nm in ("model_stabkoerper", "model_netz"):
+            if nm in akt:
+                gezeigt |= set(np.asarray(pvx.wrap(akt[nm].GetMapper().GetInput())
+                                          .cell_data["elem"]).tolist())
+        check("und die Darsteller zeigen sie nicht mehr",
+              elems.isdisjoint(gezeigt) and (alle - elems) <= gezeigt,
+              f"{len(gezeigt)} Elemente im Bild")
+        check("Vorherige Sicht ist dann möglich", w.act_sicht_zurueck.isEnabled())
+        w.sicht_zurueck()
+        app.processEvents()
+        check("Vorherige Sicht holt sie zurück", not w.versteckt["elemente"])
+        w.sel_staebe = [stab]
+        w.nur_auswahl_zeigen()
+        app.processEvents()
+        check("Nur Auswahl zeigen blendet den Rest aus",
+              w.versteckt["elemente"] == alle - elems, str(len(w.versteckt["elemente"])))
+        w.alles_zeigen()
+        app.processEvents()
+        check("Alles zeigen räumt auf",
+              not any(w.versteckt.values()) and not w.act_alles_zeigen.isEnabled())
+        w.sel_staebe = []
+
+        # Drehen eines grossen Modells: Nebendarsteller bleiben kurz weg
+        w.SCHNELLDREHEN_AB = 1
+        w.redraw()
+        app.processEvents()
+        kn_akt = w.plotter.renderer.actors.get("knoten")
+        w._interaktion_beginnt()
+        check("beim Drehen bleiben die Knotenpunkte weg",
+              kn_akt is not None and not kn_akt.GetVisibility())
+        w._interaktion_endet()
+        check("und kommen beim Loslassen wieder", kn_akt is not None and kn_akt.GetVisibility())
+        w.plotter.iren.style.InvokeEvent("StartInteractionEvent")
+        check("das Drehen meldet sich über den Interaktionsstil",
+              kn_akt is not None and not kn_akt.GetVisibility())
+        w.plotter.iren.style.InvokeEvent("EndInteractionEvent")
+        check("und das Loslassen auch", kn_akt is not None and kn_akt.GetVisibility())
+        del w.SCHNELLDREHEN_AB
+
+        # Texte im Bild: Kopfzeile oben links, Kennwerte unten links, Skalen rechts
+        an = solver.solve_all(w.model, design=True)
+        w._solve_done("all", an)
+        w.cb_field.setCurrentText("Ausnutzung EC3")
+        w.cb_diagram.setCurrentText("My")
+        app.processEvents()
+        check("Kopfzeile oben links nennt das Ergebnis",
+              bool(w._kopfzeile_zeilen)
+              and w.cb_result.currentText().split(":")[0] in w._kopfzeile_zeilen[0],
+              str(w._kopfzeile_zeilen))
+        akt = dict(w.plotter.renderer.actors)
+        hoehe = w.plotter.render_window.GetSize()[1]
+        kopf, kw = akt.get("kopfzeile"), akt.get("kennwerte")
+        check("die Kopfzeile steht oben", kopf is not None and kopf.GetPosition()[1] > hoehe * 0.55,
+              str(kopf.GetPosition() if kopf is not None else None))
+        check("die Kennwerte stehen unten links",
+              kw is not None and kw.GetPosition()[1] < 30 and kw.GetPosition()[0] < 30,
+              str(kw.GetPosition() if kw is not None else None))
+        check("Kennwerte nennen Auflagerkräfte und Verdrehungen",
+              any(z.startswith("Rz") for z in w._kennwerte_zeilen)
+              and any(z.startswith("phiy") for z in w._kennwerte_zeilen),
+              str(w._kennwerte_zeilen[:3]))
+        skalen = w.plotter.scalar_bars
+        namen = list(skalen.keys())
+        check("Farbskalen stehen senkrecht am rechten Rand",
+              bool(namen) and all(skalen[n].GetOrientation() == 1
+                                  and skalen[n].GetPosition()[0] > 0.75 for n in namen),
+              str([(n, skalen[n].GetPosition()) for n in namen]))
+        check("Ergebnis: Stäbe als Körper eingefärbt", "result_stabkoerper" in akt,
+              str([k for k in akt if k.startswith("result")]))
+
+        # Protokoll: ein neues Modell faengt mit leerem Blatt an
+        w.log.appendPlainText("ALTES PROTOKOLL")
+        w.new_model()
+        app.processEvents()
+        text = w.log.toPlainText()
+        check("Neues Modell leert das Protokoll",
+              "ALTES PROTOKOLL" not in text and "Neues Modell" in text, text[:60])
+
+        # Krumme Flaechen: Coons-Flaeche zwischen den Randseiten
+        r_ = 0.5
+        t_ = np.linspace(0, np.pi, 17)
+        unten = np.stack([r_ * np.cos(t_), r_ * np.sin(t_), np.zeros_like(t_)], axis=1)
+        rechts = np.array([[-r_, 0, 0], [-r_, 0, 1.0]])
+        oben = unten[::-1] + [0, 0, 1.0]
+        links = np.array([[r_, 0, 1.0], [r_, 0, 0]])
+        Pc, Dc = vpl.coons_flaeche([unten, rechts, oben, links])
+        rad = np.linalg.norm(Pc[:, :2], axis=1)
+        check("Coons-Fläche trifft den Zylinder genau",
+              abs(rad.min() - r_) < 1e-9 and abs(rad.max() - r_) < 1e-9 and len(Dc) == 32,
+              f"r = {rad.min():.4f}..{rad.max():.4f}, {len(Dc)} Dreiecke")
+        mz = Mdl("Zylinder")
+        mz.add_nodes(np.array([[0.5, 0, 0], [-0.5, 0, 0], [-0.5, 0, 1], [0.5, 0, 1]], float))
+        mz.lines["unten"] = Line("unten", [0, 1], "arc",
+                                 geometrie={"punkte": [[0.5, 0, 0], [0, 0.5, 0], [-0.5, 0, 0]]})
+        mz.lines["rechts"] = Line("rechts", [1, 2])
+        mz.lines["oben"] = Line("oben", [2, 3], "arc",
+                                geometrie={"punkte": [[-0.5, 0, 1], [0, 0.5, 1], [0.5, 0, 1]]})
+        mz.lines["links"] = Line("links", [3, 0])
+        mz.flaechen["Mantel"] = Flaeche("Mantel", linien=["unten", "rechts", "oben", "links"])
+        check("ein Zylindermantel ist nicht eben", not mz.flaechen["Mantel"].eben(mz))
+        seiten = mz.flaechen["Mantel"].randseiten_punkte(mz)
+        check("vier Randseiten im Umlauf, Ende = Anfang der nächsten",
+              len(seiten) == 4 and all(np.allclose(seiten[i][-1], seiten[(i + 1) % 4][0])
+                                       for i in range(4)), str([len(x) for x in seiten]))
+        pl = pvx.Plotter(off_screen=True)
+        vpl.add_geometrie(pl, mz, raender={}, seiten={})
+        geo = pvx.wrap(pl.renderer.actors["geo_flaechen"].GetMapper().GetInput())
+        rad = np.linalg.norm(geo.points[:, :2], axis=1)
+        check("die krumme Fläche kommt als Coons-Fläche ins Bild",
+              geo.n_cells > 4 and abs(rad.min() - 0.5) < 1e-6 and abs(rad.max() - 0.5) < 1e-6
+              and "flaeche" in geo.cell_data, f"{geo.n_cells} Zellen, r = {rad.min():.3f}..{rad.max():.3f}")
+        pl.close()
+        pl = pvx.Plotter(off_screen=True)
+        vpl.add_geometrie(pl, mz, raender={}, seiten={}, ausser_flaechen={"Mantel"})
+        check("eine ausgeblendete Fläche fehlt im Bild", "geo_flaechen" not in pl.renderer.actors)
+        pl.close()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Neue Oberfläche", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

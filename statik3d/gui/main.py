@@ -70,6 +70,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sel_staebe: list[str] = []
         #: Elemente, die aus dem Modellbaum heraus aufleuchten
         self.leuchtet: list[int] = []
+        #: Sicht: was ausgeblendet ist - Elemente (Nummern), Linien, Flaechen
+        #: und Koerper (Namen) - und die Schritte davor, damit "Vorherige
+        #: Sicht" zurueckgehen kann.
+        self.versteckt = {"elemente": set(), "linien": set(), "flaechen": set(),
+                          "koerper": set()}
+        self._sicht_verlauf: list = []
+        self._sicht_stand = None
 
         self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil() + tab.stil())
         self._undo_init()
@@ -118,9 +125,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.lbl_ks.setText(f"KS: {self.ks_aktiv}")
         arten = getattr(self, "fang_arten", None) or []
-        self.lbl_fang.setText("Fang: " + (", ".join(arten) if
-                                          getattr(self, "fang_an", False) and arten
-                                          else "aus")
+        if getattr(self, "fang_an", False) and arten:
+            fang = ("alle" if set(arten) >= set(ks.FANGARTEN)
+                    else ", ".join(ks.FANG_TEXT.get(a, a) for a in arten))
+        else:
+            fang = "aus"
+        self.lbl_fang.setText(f"Fang: {fang}"
                               + f" · {self.arbeitsebene.ebene}"
                               + (f" · Raster {self.arbeitsebene.raster:g} m"
                                  if self.arbeitsebene.raster > 0 else ""))
@@ -181,6 +191,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # Mausrad: zum Zeiger zoomen statt zur Bildmitte
         try:
             self.plotter.interactor.installEventFilter(self)
+        except Exception:
+            pass
+        # Beim Drehen eines grossen Modells bleiben Nebendarsteller kurz weg
+        try:
+            stil = self.plotter.iren.style
+            fuegen = getattr(stil, "add_observer", None) or stil.AddObserver
+            fuegen("StartInteractionEvent", self._interaktion_beginnt)
+            fuegen("EndInteractionEvent", self._interaktion_endet)
         except Exception:
             pass
 
@@ -498,8 +516,12 @@ class MainWindow(QtWidgets.QMainWindow):
         r = self.FANGRADIUS if radius is None else radius
         return (i, float(d[i])) if d[i] <= r else None
 
-    def _strecken_am_zeiger(self, A, B, radius: float = None):
-        """(Nummer, Abstand) der Strecke A[i]-B[i] unter dem Zeiger - oder None."""
+    def _strecken_treffer(self, A, B, radius: float = None):
+        """(Nummer, Lage t, Abstand) der Strecke A[i]-B[i] unter dem Zeiger.
+
+        Gemessen wird in Bildschirmpunkten; t ist die Lage des Fusspunkts auf
+        der Strecke (0 = A, 1 = B). None, wenn keine Strecke nah genug liegt.
+        """
         zp = self._zeigerposition()
         A = np.atleast_2d(np.asarray(A, float))
         B = np.atleast_2d(np.asarray(B, float))
@@ -518,14 +540,35 @@ class MainWindow(QtWidgets.QMainWindow):
         d[~(sa | sb)] = np.inf
         i = int(np.argmin(d))
         r = self.FANGRADIUS if radius is None else radius
-        return (i, float(d[i])) if d[i] <= r else None
+        return (i, float(t[i]), float(d[i])) if d[i] <= r else None
+
+    def _strecken_am_zeiger(self, A, B, radius: float = None):
+        """(Nummer, Abstand) der Strecke A[i]-B[i] unter dem Zeiger - oder None."""
+        t = self._strecken_treffer(A, B, radius)
+        return (t[0], t[2]) if t is not None else None
+
+    def _fusspunkt_am_zeiger(self, A, B, radius: float = None):
+        """Der Weltpunkt auf der Strecke unter dem Zeiger - oder None.
+
+        Der Fusspunkt wird im Bild bestimmt und ueber seine Lage t auf die
+        Strecke im Raum uebertragen; bei Parallelprojektion ist das genau, bei
+        Perspektive auf einen Bruchteil der Streckenlaenge.
+        """
+        t = self._strecken_treffer(A, B, radius)
+        if t is None:
+            return None
+        A = np.atleast_2d(np.asarray(A, float))
+        B = np.atleast_2d(np.asarray(B, float))
+        return A[t[0]] + t[1] * (B[t[0]] - A[t[0]])
 
     def _fangpunkt(self):
         """Was der Fang unter dem Zeiger findet: (Punkt, Art, Knotennummer).
 
         Die Reihenfolge ist verbindlich - ein Knoten geht der Kantenmitte vor,
-        diese dem Raster. Gemessen wird in Bildschirmpunkten; genau darum
-        trifft der Fang jetzt das, was man sieht.
+        die einer Linie, die einem Stab, der eine Flaeche, die einem Volumen,
+        und das Raster kommt zuletzt. Gemessen wird in Bildschirmpunkten; genau
+        darum trifft der Fang das, was man sieht. Jede Art laesst sich einzeln
+        abschalten (Ribbon "Fang", Glasleiste).
         """
         m = self.model
         arten = self.fang_arten if getattr(self, "fang_an", False) else ("knoten",)
@@ -534,14 +577,28 @@ class MainWindow(QtWidgets.QMainWindow):
             if treffer is not None:
                 return m.nodes[treffer[0]], "knoten", treffer[0]
         if "mitte" in arten and len(m.elements):
-            paare = [(int(e.nodes[0]), int(e.nodes[-1])) for e in m.elements
-                     if e.typ in ("beam", "truss")][:20000]
-            if paare:
-                idx = np.asarray(paare, int)
-                mitten = 0.5 * (m.nodes[idx[:, 0]] + m.nodes[idx[:, 1]])
+            A, B = self._stabstrecken()
+            if len(A):
+                mitten = 0.5 * (A + B)
                 treffer = self._naechster_am_zeiger(mitten)
                 if treffer is not None:
                     return mitten[treffer[0]], "mitte", -1
+        if "linie" in arten and getattr(m, "lines", None):
+            A, B, _ = self._linienstrecken()
+            if len(A):
+                punkt = self._fusspunkt_am_zeiger(A, B)
+                if punkt is not None:
+                    return punkt, "linie", -1
+        if "stab" in arten and len(m.elements):
+            A, B = self._stabstrecken()
+            if len(A):
+                punkt = self._fusspunkt_am_zeiger(A, B)
+                if punkt is not None:
+                    return punkt, "stab", -1
+        if "flaeche" in arten or "volumen" in arten:
+            treffer = self._oberflaechenfang(arten)
+            if treffer is not None:
+                return treffer[0], treffer[1], -1
         if "raster" in arten and getattr(self.arbeitsebene, "raster", 0) > 0:
             frei = self._arbeitsebenenpunkt()
             if frei is not None:
@@ -550,6 +607,129 @@ class MainWindow(QtWidgets.QMainWindow):
                 if treffer is not None:
                     return r, "raster", -1
         return None, "", -1
+
+    def _linienstrecken(self):
+        """Alle Linien als Strecken: (A, B, Linienname je Strecke).
+
+        Krumme Linien sind abgetastet. Einmal je Modellstand aufgebaut - bei
+        dreitausend Linien darf das nicht bei jedem Klick geschehen.
+        """
+        m = self.model
+        stand = (id(m), len(m.lines or {}), m.nn,
+                 hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0)
+        if getattr(self, "_linienstrecken_stand", None) == stand:
+            return self._linienstrecken_zwischen
+        A, B, namen = [], [], []
+        for name, ln in (m.lines or {}).items():
+            idx = [int(n) for n in ln.nodes if 0 <= int(n) < m.nn]
+            if len(idx) < 2:
+                continue
+            X = m.nodes[idx]
+            if (ln.typ or "polyline") != "polyline":
+                try:
+                    X = np.asarray(ln.punkte(m, vp.TEILUNG_KURVE), float)
+                except Exception:           # noqa: BLE001
+                    X = m.nodes[idx]
+            A.append(X[:-1])
+            B.append(X[1:])
+            namen += [name] * (len(X) - 1)
+        out = (np.vstack(A) if A else np.zeros((0, 3)),
+               np.vstack(B) if B else np.zeros((0, 3)), namen)
+        self._linienstrecken_stand = stand
+        self._linienstrecken_zwischen = out
+        return out
+
+    def _stabstrecken(self):
+        """Anfangs- und Endpunkte aller Stabelemente (A, B) - je Modellstand einmal."""
+        m = self.model
+        stand = (id(m), len(m.elements), m.nn,
+                 hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0)
+        if getattr(self, "_stabstrecken_stand", None) == stand:
+            return self._stabstrecken_zwischen
+        paare = [(int(e.nodes[0]), int(e.nodes[-1])) for e in m.elements
+                 if e.typ in vp.TYPEN_STAEBE and len(e.nodes) >= 2]
+        if paare:
+            idx = np.asarray(paare, int)
+            out = (m.nodes[idx[:, 0]], m.nodes[idx[:, 1]])
+        else:
+            out = (np.zeros((0, 3)), np.zeros((0, 3)))
+        self._stabstrecken_stand = stand
+        self._stabstrecken_zwischen = out
+        return out
+
+    def _oberflaechenfang(self, arten):
+        """Der Punkt auf einer Flaeche oder einem Volumen unter dem Zeiger.
+
+        Genommen wird die **gezeichnete Oberflaeche** selbst (VTK-Zellenpicker
+        auf den Netz- und Geometriedarstellern): so faengt man auf einem
+        Zylindermantel oder einer Schale genau dort, wo der Zeiger steht.
+        Rueckgabe (Punkt, Art) mit Art "flaeche" oder "volumen" - je nachdem,
+        was getroffen ist und welche Fangarten an sind - oder None.
+        """
+        zp = self._zeigerposition()
+        if zp is None:
+            return None
+        try:
+            from vtkmodules.vtkRenderingCore import vtkCellPicker
+        except Exception:                       # noqa: BLE001
+            try:
+                from vtk import vtkCellPicker   # aeltere VTK-Pakete
+            except Exception:                   # noqa: BLE001
+                return None
+        m = self.model
+        try:
+            akteure = dict(self.plotter.renderer.actors)
+        except Exception:                       # noqa: BLE001
+            return None
+        namen = [n for n in akteure
+                 if n.startswith(("model_", "result_")) or n == "geo_flaechen"]
+        if not namen:
+            return None
+        picker = vtkCellPicker()
+        picker.SetTolerance(0.001)
+        picker.PickFromListOn()
+        for n in namen:
+            picker.AddPickList(akteure[n])
+        try:
+            if not picker.Pick(float(zp[0]), float(zp[1]), 0.0, self.plotter.renderer):
+                return None
+        except Exception:                       # noqa: BLE001
+            return None
+        punkt = np.asarray(picker.GetPickPosition(), float)
+        akteur, zelle = picker.GetActor(), int(picker.GetCellId())
+        if akteur is None or zelle < 0:
+            return None
+        adresse = akteur.GetAddressAsString("vtkProp")
+        name = next((n for n in namen
+                     if akteure[n].GetAddressAsString("vtkProp") == adresse), "")
+        try:
+            daten = pv.wrap(akteur.GetMapper().GetInput())
+        except Exception:                       # noqa: BLE001
+            return None
+        koerper = getattr(m, "koerper", {}) or {}
+        if name == "geo_flaechen":
+            fl = daten.cell_data.get("flaeche")
+            if fl is None or zelle >= len(fl):
+                return None
+            fname = list(m.flaechen)[int(fl[zelle])]
+            if "flaeche" in arten:
+                return punkt, "flaeche"
+            if "volumen" in arten and any(fname in k.flaechen for k in koerper.values()):
+                return punkt, "volumen"
+            return None
+        el = daten.cell_data.get("elem")
+        if el is None or zelle >= len(el):
+            return None
+        typ = m.elements[int(el[zelle])].typ
+        if typ in vp.TYPEN_VOLUMEN:
+            if "volumen" in arten:
+                return punkt, "volumen"
+            if "flaeche" in arten:
+                # die Aussenflaeche eines Koerpers ist eine Flaeche
+                return punkt, "flaeche"
+        elif typ in vp.TYPEN_FLAECHEN and "flaeche" in arten:
+            return punkt, "flaeche"
+        return None
 
     def _fangen(self, punkt):
         """Einen **gegebenen** Weltpunkt auf die naechste markante Stelle ziehen.
@@ -639,24 +819,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _linie_am_zeiger(self):
         """Name der Linie unter dem Zeiger - in Bildschirmpunkten gemessen."""
-        m = self.model
-        A, B, namen = [], [], []
-        for name, ln in (m.lines or {}).items():
-            idx = [int(n) for n in ln.nodes if 0 <= int(n) < m.nn]
-            if len(idx) < 2:
-                continue
-            X = m.nodes[idx]
-            if (ln.typ or "polyline") != "polyline":
-                try:
-                    X = np.asarray(ln.punkte(m, vp.TEILUNG_KURVE), float)
-                except Exception:           # noqa: BLE001
-                    X = m.nodes[idx]
-            A.append(X[:-1])
-            B.append(X[1:])
-            namen += [name] * (len(X) - 1)
-        if not A:
+        A, B, namen = self._linienstrecken()
+        if not len(A):
             return None
-        treffer = self._strecken_am_zeiger(np.vstack(A), np.vstack(B))
+        treffer = self._strecken_am_zeiger(A, B)
         return namen[treffer[0]] if treffer is not None else None
 
     def _stab_am_zeiger(self):
@@ -684,35 +850,132 @@ class MainWindow(QtWidgets.QMainWindow):
         Beides liegt **ueber** der Ansicht und nimmt keinen Platz weg. Die
         Knoepfe fuehren dieselben Aktionsobjekte wie das Ribbon - es sind
         keine zweiten Befehle, nur ein kuerzerer Weg fuer das, was man beim
-        Modellieren staendig braucht.
+        Modellieren staendig braucht. Alles als Symbol; der Klartext kommt
+        beim Ueberfahren.
         """
         central = self.centralWidget()
         leiste = msk.Glasleiste(central)
-        for name, (zeichen, _hinweis) in vp.DARSTELLUNGEN.items():
-            leiste.knopf(self.act_darstellung[name], zeichen)
+        # Darstellungsart
+        for name in vp.DARSTELLUNGEN:
+            leiste.knopf(self.act_darstellung[name], vp.DARSTELLUNG_SYMBOL[name], name)
         leiste.trenner()
-        leiste.knopf(self.act_edges, "▦")
-        leiste.knopf(self.act_knoten, "•")
-        leiste.knopf(self.act_linien, "╱")
-        leiste.knopf(self.act_loads, "↓")
+        # Was sichtbar ist
+        for a, symbol, schluessel in ((self.act_knoten, "knoten", "knoten"),
+                                      (self.act_linien, "linien", "linien"),
+                                      (self.act_staebe, "staebe", "staebe"),
+                                      (self.act_flaechen, "flaechen", "flaechen"),
+                                      (self.act_volumen, "volumen", "volumen"),
+                                      (self.act_edges, "netz", "netz"),
+                                      (self.act_loads, "lasten", "lasten")):
+            leiste.knopf(a, symbol, schluessel)
         leiste.trenner()
-        leiste.knopf(self.act_fang, "⊹")
+        # Sicht: nur die Auswahl, Auswahl weg, zurueck, alles
+        for a, symbol, schluessel in ((self.act_nur_auswahl, "sicht_nur_auswahl", "nur_auswahl"),
+                                      (self.act_auswahl_weg_sicht, "sicht_ausblenden", "ausblenden"),
+                                      (self.act_sicht_zurueck, "sicht_zurueck", "zurueck"),
+                                      (self.act_alles_zeigen, "sicht_alles", "alles")):
+            leiste.knopf(a, symbol, schluessel)
+        leiste.trenner()
+        # Fang: Hauptschalter und je Art
+        leiste.knopf(self.act_fang, "fang", "fang")
+        for art in ("knoten", "linie", "stab", "flaeche", "volumen"):
+            leiste.knopf(self.act_fangart[art], f"fang_{art}", f"fang_{art}")
+        leiste.trenner()
         cb = QtWidgets.QComboBox()
         cb.addItems(self.AUSWAHLARTEN)
         cb.setToolTip("Was ein Klick in der Ansicht trifft")
         cb.currentTextChanged.connect(self.auswahlart_setzen)
         self.cb_auswahlart_glas = leiste.widget(cb)
-        leiste.trenner()
-        a = QtGui.QAction("Zoom alles", self)
-        a.setToolTip("Alles ins Bild holen")
-        a.triggered.connect(self.zoom_alles)
-        leiste.knopf(a, "⤢")
         leiste.adjustSize()
         wuerfel = msk.Ansichtswuerfel(central)
+        wuerfel.kamera = self._kamera_matrix
         wuerfel.gewaehlt.connect(self.blickrichtung)
+        wuerfel.gedreht.connect(self._wuerfel_gedreht)
         self.glasleiste = leiste
         self.ansichtswuerfel = wuerfel
         self.ansichtsrand = msk.Ansichtsrand(central, leiste, wuerfel)
+        # Der Wuerfel dreht sich mit der Ansicht: ein leichter Takt schaut
+        # nach, ob sich die Kamera bewegt hat, und zeichnet ihn dann neu.
+        self._kamera_stand = None
+        self._wuerfel_takt = QtCore.QTimer(self)
+        self._wuerfel_takt.setInterval(120)
+        self._wuerfel_takt.timeout.connect(self._wuerfel_nachfuehren)
+        self._wuerfel_takt.start()
+
+    def _kamera_matrix(self):
+        """Die 3x3-Drehmatrix Welt -> Bild der Kamera - fuer den Wuerfel."""
+        try:
+            M = self.plotter.renderer.GetActiveCamera().GetViewTransformMatrix()
+            return [[float(M.GetElement(i, j)) for j in range(3)] for i in range(3)]
+        except Exception:                   # noqa: BLE001
+            return None
+
+    def _wuerfel_nachfuehren(self):
+        R = self._kamera_matrix()
+        stand = tuple(round(x, 4) for zeile in (R or []) for x in zeile)
+        if stand != self._kamera_stand:
+            self._kamera_stand = stand
+            if getattr(self, "ansichtswuerfel", None) is not None:
+                self.ansichtswuerfel.update()
+
+    def _wuerfel_gedreht(self, dx: float, dy: float):
+        """Ziehen auf dem Wuerfel dreht die Kamera um den Blickpunkt."""
+        try:
+            kam = self.plotter.renderer.GetActiveCamera()
+            kam.Azimuth(-0.6 * dx)
+            kam.Elevation(0.6 * dy)
+            kam.OrthogonalizeViewUp()
+            self.plotter.renderer.ResetCameraClippingRange()
+            self._kamera_steht = True
+            self.plotter.render()
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Ansicht drehen: {ex}")
+
+    #: Ab so vielen Knoten und Elementen wird beim Drehen vereinfacht gezeichnet
+    SCHNELLDREHEN_AB = 20000
+    #: Darsteller, die beim Drehen eines grossen Modells kurz wegbleiben
+    NEBENDARSTELLER = ("knoten", "knoten_frei", "linien", "geo_volumen", "nlabels",
+                       "elabels", "loads", "undeformed_netz", "undeformed_stabkoerper")
+
+    def _interaktion_beginnt(self, *_):
+        """Drehen, Schieben, Zoomen beginnt: bei einem grossen Modell bleiben
+        die Nebendarsteller (Knotenpunkte, Linien, Nummern, Lasten) und die
+        Netzkanten weg, bis die Maus losgelassen wird. Ein Modell mit
+        370000 Tetraedern ruckelte sonst und blieb zwischendurch haengen."""
+        m = self.model
+        if len(m.elements) + m.nn < self.SCHNELLDREHEN_AB or getattr(self, "_vereinfacht", None):
+            return
+        weg, kanten = [], []
+        try:
+            for name, a in dict(self.plotter.renderer.actors).items():
+                if name in self.NEBENDARSTELLER:
+                    if a.GetVisibility():
+                        a.VisibilityOff()
+                        weg.append(a)
+                elif name.startswith(("model_", "result_")) and hasattr(a, "GetProperty"):
+                    p = a.GetProperty()
+                    if p.GetEdgeVisibility():
+                        p.EdgeVisibilityOff()
+                        kanten.append(p)
+        except Exception:                       # noqa: BLE001
+            pass
+        self._vereinfacht = (weg, kanten)
+
+    def _interaktion_endet(self, *_):
+        """Maus losgelassen: alles wieder zeigen."""
+        v = getattr(self, "_vereinfacht", None)
+        if not v:
+            return
+        self._vereinfacht = None
+        weg, kanten = v
+        for a in weg:
+            a.VisibilityOn()
+        for p in kanten:
+            p.EdgeVisibilityOn()
+        try:
+            self.plotter.render()
+        except Exception:                       # noqa: BLE001
+            pass
 
     #: Blickrichtung -> (Richtung, in die geschaut wird; "oben" im Bild; Klartext)
     BLICKRICHTUNGEN = {
@@ -722,6 +985,14 @@ class MainWindow(QtWidgets.QMainWindow):
         "hinten": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0), "Rückansicht (von +Y)"),
         "rechts": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von rechts (von +X)"),
         "links": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von links (von −X)"),
+        # Die Achsennamen des Wuerfels: "von +X" heisst, die Kamera steht auf
+        # der Seite +X und schaut in Richtung -X.
+        "+x": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von +X"),
+        "-x": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von -X"),
+        "+y": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von +Y"),
+        "-y": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), "Ansicht von -Y"),
+        "+z": ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0), "Ansicht von +Z (Draufsicht)"),
+        "-z": ((0.0, 0.0, 1.0), (0.0, -1.0, 0.0), "Ansicht von -Z (Untersicht)"),
         # Die alten Namen bleiben gueltig - Ribbon und Tastenkuerzel nutzen sie
         "xy": ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0), "Draufsicht (XY)"),
         "xz": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), "Vorderansicht (XZ)"),
@@ -891,12 +1162,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # Was gefangen wird, muss man beim Modellieren staendig umstellen -
         # darum je Fangart ein eigener Schalter mit Taste, nicht ein Dialog.
         self.act_fangart = {}
-        for i, (art, text, kuerzel) in enumerate((
-                ("knoten", "auf Knoten", "Shift+F1"),
-                ("mitte", "auf Kantenmitte", "Shift+F2"),
-                ("raster", "auf Raster", "Shift+F3"))):
+        for art, text, kuerzel, symbol in (
+                ("knoten", "auf Knoten", "Shift+F1", "fang_knoten"),
+                ("mitte", "auf Kantenmitte", "Shift+F2", "fang_mitte"),
+                ("raster", "auf Raster", "Shift+F3", "fang_raster"),
+                ("linie", "auf Linien", "Shift+F4", "fang_linie"),
+                ("stab", "auf Stäbe", "Shift+F5", "fang_stab"),
+                ("flaeche", "auf Flächen", "Shift+F6", "fang_flaeche"),
+                ("volumen", "auf Volumen", "Shift+F7", "fang_volumen")):
             a = g.schalter(text, lambda z, k=art: self.fangart_umschalten(k, z),
-                           art in self.fang_arten, f"Fangart „{text}“ ({kuerzel})")
+                           art in self.fang_arten, f"Fang {text} ({kuerzel})",
+                           symbol=symbol)
             a.setShortcut(QtGui.QKeySequence(kuerzel))
             a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
             self.act_fangart[art] = a
@@ -1068,13 +1344,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # -- Ansicht -----------------------------------------------------
         r = rb.register("Ansicht")
         g = r.gruppe("Blickrichtung")
-        g.gross("Isometrisch", "◲", lambda: self.blickrichtung("iso"))
-        g.klein("XY (Draufsicht)", lambda: self.blickrichtung("xy"))
-        g.klein("XZ (Ansicht)", lambda: self.blickrichtung("xz"))
-        g.klein("YZ (Seitenansicht)", lambda: self.blickrichtung("yz"))
+        g.gross("Isometrisch", "◲", lambda: self.blickrichtung("iso"), symbol="iso")
+        g.klein("XY (Draufsicht)", lambda: self.blickrichtung("+z"), symbol="wuerfel")
+        g.klein("XZ (Ansicht)", lambda: self.blickrichtung("-y"), symbol="wuerfel")
+        g.klein("YZ (Seitenansicht)", lambda: self.blickrichtung("+x"), symbol="wuerfel")
         g.klein("Rückseite (180°)", lambda: self.blickrichtung("kehren"),
-                hinweis="Die laufende Ansicht umkehren – zeigt die Rückseite")
-        g.klein("Zoom alles", self.zoom_alles)
+                hinweis="Die laufende Ansicht umkehren – zeigt die Rückseite",
+                symbol="kehren")
+        g.klein("Zoom alles", self.zoom_alles, symbol="zoom")
         g = r.gruppe("Darstellung")
         # Die vier Darstellungsarten liegen als eigene Knoepfe nebeneinander und
         # auf Strg+1..Strg+4 - Umschalten soll ein Griff sein, kein Klickweg
@@ -1096,14 +1373,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_edges.setShortcut(QtGui.QKeySequence("F9"))
         self.act_edges.setShortcutContext(QtCore.Qt.ApplicationShortcut)
         self.act_knoten = g.schalter("Knoten", lambda z: self.redraw(), True,
-                                     "Die gesetzten Knoten als Punkte zeigen")
+                                     "Die gesetzten Knoten als Punkte zeigen",
+                                     symbol="knoten")
         self.act_linien = g.schalter("Linien", lambda z: self.redraw(), True,
                                      "Die Linien des Modells zeigen (Geometrie, "
-                                     "keine Elemente)")
-        self.act_nodes = g.schalter("Knotennummern", lambda z: self.redraw())
-        self.act_elems = g.schalter("Elementnummern", lambda z: self.redraw())
-        self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True)
-        self.act_members = g.schalter("Stäbe farbig", lambda z: self.redraw())
+                                     "keine Elemente)", symbol="linien")
+        self.act_staebe = g.schalter("Stäbe", lambda z: self.redraw(), True,
+                                     "Stabelemente zeigen - bei Voll und Transparent "
+                                     "mit ihrer Querschnittskontur", symbol="staebe")
+        self.act_flaechen = g.schalter("Flächen", lambda z: self.redraw(), True,
+                                       "Flächen und Schalenelemente zeigen",
+                                       symbol="flaechen")
+        self.act_volumen = g.schalter("Volumen", lambda z: self.redraw(), True,
+                                      "Volumenkörper und Volumenelemente zeigen",
+                                      symbol="volumen")
+        self.act_nodes = g.schalter("Knotennummern", lambda z: self.redraw(),
+                                    symbol="nummern")
+        self.act_elems = g.schalter("Elementnummern", lambda z: self.redraw(),
+                                    symbol="nummern")
+        self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True,
+                                    symbol="lasten")
+        self.act_members = g.schalter("Stäbe farbig", lambda z: self.redraw(),
+                                      symbol="farbig")
+        g = r.gruppe("Sicht")
+        # Was man nicht sieht, stoert nicht: die Auswahl allein zeigen, die
+        # Auswahl ausblenden, einen Schritt zurueck, alles wieder her.
+        self.act_nur_auswahl = g.klein("Nur Auswahl zeigen", self.nur_auswahl_zeigen,
+                                       hinweis="Alles ausser der Auswahl ausblenden",
+                                       symbol="sicht_nur_auswahl")
+        self.act_auswahl_weg_sicht = g.klein("Auswahl ausblenden", self.auswahl_ausblenden,
+                                             hinweis="Die ausgewählten Objekte ausblenden",
+                                             symbol="sicht_ausblenden")
+        self.act_sicht_zurueck = g.klein("Vorherige Sicht", self.sicht_zurueck,
+                                         hinweis="Den letzten Ausblendeschritt zurücknehmen",
+                                         symbol="sicht_zurueck")
+        self.act_alles_zeigen = g.klein("Alles zeigen", self.alles_zeigen,
+                                        hinweis="Alle ausgeblendeten Objekte wieder zeigen",
+                                        symbol="sicht_alles")
         g = r.gruppe("Symbole")
         self.sl_lager = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.sl_lager.setRange(2, 60)
@@ -1136,14 +1442,19 @@ class MainWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _ribbon_knopf(aktion, zeichen: str, rolle: str = ""):
         """Denselben Befehl ein zweites Mal als Knopf zeigen (kein neuer Befehl)."""
+        from . import symbole as sym
         b = QtWidgets.QToolButton()
+        if aktion.icon().isNull():
+            aktion.setIcon(sym.fuer_befehl(aktion.text(), zeichen))
         b.setDefaultAction(aktion)
         b.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
-        b.setText(f"{zeichen}\n{aktion.text()}")
+        b.setIconSize(QtCore.QSize(rib.SYMBOL_GROSS, rib.SYMBOL_GROSS))
+        b.setText(aktion.text())
         b.setObjectName("ribbongross")
         if rolle:
             b.setProperty("rolle", rolle)
-        b.setMinimumWidth(56)
+        b.setMinimumWidth(58)
+        b.setFixedHeight(rib.INHALT_HOEHE)
         return b
 
     # ------------------------------------------------------------------
@@ -4505,6 +4816,8 @@ class MainWindow(QtWidgets.QMainWindow):
             from .. import importers
             msgs: list[str] = []
             target = self.model if d.append.isChecked() else None
+            if target is None:
+                self._protokoll_neu(f"Import: {path}")
             m = importers.import_file(path, model=target, log=msgs, **opt)
             for s in msgs:
                 self.log.appendPlainText("  " + s)
@@ -5802,6 +6115,19 @@ class MainWindow(QtWidgets.QMainWindow):
                                       for name, f in m.flaechen.items()}
         return self._raender_zwischen
 
+    def _randseiten(self) -> dict:
+        """{Flaechenname: [Punktfolge je Randlinie]} - fuer krumme Flaechen.
+
+        Wird von ``add_geometrie`` bei Bedarf gefuellt (Coons-Flaechen der
+        Zylindermaentel) und wie die Raender je Modellstand gehalten.
+        """
+        m = self.model
+        stand = (id(m), len(m.flaechen), len(m.lines), m.nn)
+        if getattr(self, "_randseiten_stand", None) != stand:
+            self._randseiten_stand = stand
+            self._randseiten_zwischen = {}
+        return self._randseiten_zwischen
+
     def _inhalte(self) -> dict:
         """{Flaechenname: Flaecheninhalt [m^2]} - einmal je Modellstand.
 
@@ -5882,6 +6208,66 @@ class MainWindow(QtWidgets.QMainWindow):
         target = 0.08 * self.model.characteristic_size() * self.sl_scale.value() / 30.0
         return target / umax, umax
 
+    def _gitter(self, typen, ausser):
+        """Das gefilterte Elementnetz und je Punkt seine Knotennummer.
+
+        Einmal je Modellstand: bei 370000 Tetraedern dauert der Aufbau ueber
+        eine Sekunde, das darf nicht bei jedem Klick geschehen. Volumen werden
+        auf ihre **Oberflaeche** gebracht - gezeichnet wird ohnehin nur sie,
+        und der Fang auf der Oberflaeche bleibt damit bezahlbar.
+        """
+        m = self.model
+        stand = (id(m), len(m.elements), m.nn,
+                 hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
+                 tuple(typen), frozenset(ausser))
+        if getattr(self, "_gitter_stand", None) == stand:
+            return self._gitter_zwischen
+        grid = vp.to_grid(m, typen=typen, ausser=ausser)
+        kidx = np.arange(m.nn)
+        if grid.n_cells:
+            try:
+                volumen_typen = {vp.CELL_MAP[t][0] for t in vp.TYPEN_VOLUMEN
+                                 if t in vp.CELL_MAP}
+                if np.isin(grid.celltypes, list(volumen_typen)).any():
+                    flaeche = grid.extract_surface(pass_pointid=True, pass_cellid=True,
+                                                   algorithm="dataset_surface")
+                    kidx = np.asarray(flaeche.point_data["vtkOriginalPointIds"], int)
+                    grid = flaeche
+            except Exception as ex:             # noqa: BLE001
+                self.log.appendPlainText(f"Oberfläche: {ex}")
+        self._gitter_stand = stand
+        self._gitter_zwischen = (grid, kidx)
+        return grid, kidx
+
+    #: Lage der Farbskalen: senkrecht am rechten Rand, Ergebnis aussen, der
+    #: Schnittgroessenverlauf daneben. Unten links stehen die Kennwerte, unten
+    #: rechts das Achsenkreuz.
+    FARBSKALA = {"vertical": True, "position_x": 0.905, "position_y": 0.18,
+                 "height": 0.5, "width": 0.055, "title_font_size": 13,
+                 "label_font_size": 11, "fmt": "%.3g"}
+    FARBSKALA_VERLAUF = dict(FARBSKALA, position_x=0.83)
+    #: Platz, den der Ansichtswuerfel mit seiner Knopfzeile oben rechts braucht [px]
+    WUERFEL_PLATZ = 165
+
+    def _farbskala(self, verlauf: bool = False) -> dict:
+        """Lage der Farbskala - so hoch, dass sie unter dem Wuerfel bleibt.
+
+        In einem niedrigen Fenster reicht der Ansichtswuerfel weit herunter;
+        die Skala wird dann kuerzer, statt unter seine Knopfzeile zu laufen.
+        """
+        skala = dict(self.FARBSKALA_VERLAUF if verlauf else self.FARBSKALA)
+        try:
+            hoch = float(self.plotter.render_window.GetSize()[1])
+        except Exception:                   # noqa: BLE001
+            hoch = 0.0
+        if hoch > 0:
+            frei = 1.0 - self.WUERFEL_PLATZ / hoch - skala["position_y"] - 0.08
+            skala["height"] = float(min(skala["height"], max(0.22, frei)))
+        return skala
+    #: Schriftgroessen der Texte im Bild (pyvista verdoppelt sie in Pixel)
+    SCHRIFT_KOPF = 7
+    SCHRIFT_KENNWERTE = 6
+
     def redraw(self):
         # Die Kamera muss das Neuzeichnen ueberleben. plotter.clear() nimmt
         # alle Darsteller weg; das naechste add_mesh setzt die Kamera dann von
@@ -5897,12 +6283,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plotter.clear()
         except Exception:
             return
+        self._vereinfacht = None
         m = self.model
+        self._sicht_pruefen()
         if m.nn == 0:
             self._kamera_setzen(kamera)
             self.plotter.render()
             return
-        grid = vp.to_grid(m)
         show_edges = self.act_edges.isChecked()
         modus = getattr(self, "darstellung", "Voll")
         size = m.characteristic_size()
@@ -5918,78 +6305,137 @@ class MainWindow(QtWidgets.QMainWindow):
                 modal = True
             else:
                 u = vp.displacement_of(r)
+        s = 0.0
+        if u is not None:
+            s, umax = self._scale(u)
+            self.lbl_scale.setText(f"Faktor {s:.1f}   |  max = {umax*1000:.3f} mm"
+                                   if not modal else f"Faktor {s:.1f} (normierte Eigenform)")
 
+        # Was ins Bild kommt: die Sichtbarkeitsschalter Staebe, Flaechen,
+        # Volumen und die ausgeblendeten Elemente. Bei Voll und Transparent
+        # bekommen die Staebe ihre Querschnittskontur - dann kommen sie nicht
+        # als Linie ins Gitter, sondern als eigener Koerper.
+        typen = [t for t in vp.CELL_MAP
+                 if t not in vp.TYPEN_STAEBE + vp.TYPEN_FLAECHEN + vp.TYPEN_VOLUMEN]
+        staebe_an = self.act_staebe.isChecked()
+        if staebe_an:
+            typen += list(vp.TYPEN_STAEBE)
+        if self.act_flaechen.isChecked():
+            typen += list(vp.TYPEN_FLAECHEN)
+        if self.act_volumen.isChecked():
+            typen += list(vp.TYPEN_VOLUMEN)
+        ausser = set(self.versteckt["elemente"])
+        koerper_elems: list = []
+        if staebe_an and modus in vp.KOERPERLICH:
+            koerper_elems = [i for i, e in enumerate(m.elements)
+                             if e.typ in vp.TYPEN_STAEBE and i not in ausser
+                             and e.sec and e.sec in m.sections]
+        grid, kidx = self._gitter(typen, ausser | set(koerper_elems))
+        netze = []
         if grid.n_cells:
+            netze.append((grid, kidx, "netz"))
+        if koerper_elems:
+            try:
+                pd = vp.stab_koerper(m, koerper_elems)
+                if pd is not None:
+                    netze.append((pd, np.asarray(pd.point_data["knoten"], int), "stabkoerper"))
+            except Exception as ex:         # noqa: BLE001
+                self.log.appendPlainText(f"Stabkörper: {ex}")
+
+        field = self.cb_field.currentText()
+        point_scalars = cell_scalars = None
+        name = ""
+        clim = None
+        if u is not None and not modal:
+            point_scalars, cell_scalars, name = vp.result_field(m, r, field, self._util_map(field))
+            if point_scalars is not None:
+                ps = np.asarray(point_scalars, float)
+                if np.isfinite(ps).any():
+                    clim = [float(np.nanmin(ps)), float(np.nanmax(ps))]
+        col = None
+        if u is None and self.act_members.isChecked() and m.members:
+            col = np.full(len(m.elements), np.nan)
+            for k, mem in enumerate(m.members.values()):
+                for e in mem.elements:
+                    if 0 <= e < len(col):
+                        col[e] = k % 12
+        for netz, kn, nm in netze:
+            eidx = np.asarray(netz.cell_data["elem"], int)
+            breit = 3 if nm == "netz" else 1
+            # Die Kanten eines Stabkoerpers sind Facetten des Profils, kein
+            # FE-Netz - ein Rundstab mit 24 Mantelkanten wuerde schwarz.
+            show_edges = self.act_edges.isChecked() and nm == "netz"
             if u is not None:
-                s, umax = self._scale(u)
-                self.lbl_scale.setText(f"Faktor {s:.1f}   |  max = {umax*1000:.3f} mm"
-                                       if not modal else f"Faktor {s:.1f} (normierte Eigenform)")
-                warped = grid.copy()
-                warped.points = grid.points + s * u[:, :3]
+                warped = netz.copy()
+                warped.points = netz.points + s * u[kn, :3]
                 if self.cb_undeformed.isChecked():
-                    self.plotter.add_mesh(grid, style="wireframe", color="#c8c8c8",
-                                          opacity=0.35, line_width=1, name="undeformed")
-                field = self.cb_field.currentText()
-                point_scalars = cell_scalars = None
-                name = ""
-                if not modal:
-                    point_scalars, cell_scalars, name = vp.result_field(m, r, field, self._util_map(field))
+                    self.plotter.add_mesh(netz, style="wireframe", color="#c8c8c8",
+                                          opacity=0.35, line_width=1,
+                                          name=f"undeformed_{nm}")
                 if point_scalars is not None:
-                    warped.point_data[name] = point_scalars
-                    self.plotter.add_mesh(warped, scalars=name, cmap="turbo",
-                                          scalar_bar_args={"title": name}, name="result",
-                                          **dict({"line_width": 3},
+                    warped.point_data[name] = np.asarray(point_scalars)[kn]
+                    self.plotter.add_mesh(warped, scalars=name, cmap="turbo", clim=clim,
+                                          scalar_bar_args=dict(self._farbskala(), title=name),
+                                          name=f"result_{nm}",
+                                          **dict({"line_width": breit},
                                                  **vp.darstellung(modus, show_edges, True)))
-                elif cell_scalars is not None:
-                    warped.cell_data[name] = cell_scalars
+                elif cell_scalars is not None and np.isfinite(np.asarray(cell_scalars, float)[eidx]).any():
+                    warped.cell_data[name] = np.asarray(cell_scalars, float)[eidx]
                     self.plotter.add_mesh(warped, scalars=name, cmap="RdYlGn_r", clim=[0, 1.2],
                                           nan_color="#9fb8d0",
-                                          scalar_bar_args={"title": name}, name="result",
-                                          **dict({"line_width": 5},
+                                          scalar_bar_args=dict(self._farbskala(), title=name),
+                                          name=f"result_{nm}",
+                                          **dict({"line_width": 5 if nm == "netz" else 1},
                                                  **vp.darstellung(modus, show_edges, True)))
                 else:
-                    self.plotter.add_mesh(warped, name="result",
-                                          **dict({"color": "#4488cc", "line_width": 3},
+                    # ohne Werte fuer diesen Teil (etwa Schalen bei der
+                    # Stabausnutzung): in der Farbe fuer "kein Wert"
+                    farbe = "#9fb8d0" if cell_scalars is not None else "#4488cc"
+                    self.plotter.add_mesh(warped, name=f"result_{nm}",
+                                          **dict({"color": farbe, "line_width": breit},
                                                  **vp.darstellung(modus, show_edges)))
-                # Schnittgroessenverlauf
-                q = self.cb_diagram.currentText()
-                if q in ("N", "Vy", "Vz", "Mt", "My", "Mz") and not modal and \
-                        (hasattr(r, "beam_end") or hasattr(r, "beam")):
-                    try:
-                        sc = vp.diagram_scale(m, r, q) * self.sl_scale.value() / 30.0
-                        pd = vp.beam_diagram(m, r, q, sc)
-                        if pd is not None:
-                            unit = "kN" if q in ("N", "Vy", "Vz") else "kNm"
-                            pd["wert"] = pd["wert"] / 1e3
-                            self.plotter.add_mesh(pd, scalars="wert", cmap="coolwarm", line_width=2,
-                                                  scalar_bar_args={"title": f"{q} [{unit}]"},
-                                                  name="diagram")
-                    except Exception as ex:
-                        self.log.appendPlainText(f"Verlauf: {ex}")
-                if getattr(r, "contact", None):
-                    vp.add_contact_markers(self.plotter, m, r.contact, size)
+            elif col is not None:
+                farbig = netz.copy()
+                farbig.cell_data["Stab"] = col[eidx]
+                self.plotter.add_mesh(farbig, scalars="Stab", cmap="tab20",
+                                      nan_color="#8fb8d8", show_scalar_bar=False,
+                                      name=f"model_{nm}",
+                                      **dict({"line_width": 4 if nm == "netz" else 1},
+                                             **vp.darstellung(modus, show_edges, True)))
             else:
-                if self.act_members.isChecked() and m.members:
-                    col = np.full(len(m.elements), np.nan)
-                    for k, mem in enumerate(m.members.values()):
-                        for e in mem.elements:
-                            col[e] = k % 12
-                    grid.cell_data["Stab"] = col
-                    self.plotter.add_mesh(grid, scalars="Stab", cmap="tab20",
-                                          nan_color="#8fb8d8", show_scalar_bar=False,
-                                          name="model",
-                                          **dict({"line_width": 4},
-                                                 **vp.darstellung(modus, show_edges, True)))
-                else:
-                    self.plotter.add_mesh(grid, name="model",
-                                          **dict({"color": "#8fb8d8", "line_width": 3},
-                                                 **vp.darstellung(modus, show_edges)))
+                self.plotter.add_mesh(netz, name=f"model_{nm}",
+                                      **dict({"color": "#8fb8d8", "line_width": breit},
+                                             **vp.darstellung(modus, show_edges)))
+        if u is not None and not modal:
+            # Schnittgroessenverlauf
+            q = self.cb_diagram.currentText()
+            if q in vp.SCHNITTGROESSEN and (hasattr(r, "beam_end") or hasattr(r, "beam")):
+                try:
+                    sc = vp.diagram_scale(m, r, q) * self.sl_scale.value() / 30.0
+                    pd = vp.beam_diagram(m, r, q, sc)
+                    if pd is not None:
+                        unit = "kN" if q in ("N", "Vy", "Vz") else "kNm"
+                        pd["wert"] = pd["wert"] / 1e3
+                        self.plotter.add_mesh(pd, scalars="wert", cmap="coolwarm", line_width=2,
+                                              scalar_bar_args=dict(self._farbskala(True),
+                                                                   title=f"{q} [{unit}]"),
+                                              name="diagram")
+                except Exception as ex:
+                    self.log.appendPlainText(f"Verlauf: {ex}")
+            if getattr(r, "contact", None):
+                vp.add_contact_markers(self.plotter, m, r.contact, size)
 
         try:
             vp.add_supports(self.plotter, m, size, self.lagergroesse)
             if self.act_linien.isChecked():
-                vp.add_linien(self.plotter, m, self.sel_linien)
-            vp.add_geometrie(self.plotter, m, raender=self._raender())
+                vp.add_linien(self.plotter, m, self.sel_linien,
+                              ausser=self.versteckt["linien"])
+            vp.add_geometrie(self.plotter, m, raender=self._raender(),
+                             seiten=self._randseiten(),
+                             flaechen_an=self.act_flaechen.isChecked(),
+                             koerper_an=self.act_volumen.isChecked(),
+                             ausser_flaechen=self.versteckt["flaechen"],
+                             ausser_koerper=self.versteckt["koerper"])
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
                 vp.add_nodes(self.plotter, m)
             self._auswahl_zeichnen()
@@ -6008,21 +6454,72 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(self.selection):
             self.plotter.add_points(m.nodes[self.selection], color="#ff8800", point_size=11,
                                     render_points_as_spheres=True, name="selection")
+        self._kopfzeile_zeichnen(r, s if (u is not None and not modal) else 0.0)
         self._kennwerte_zeichnen(r)
         try:
-            self.plotter.show_axes()
+            # Achsenkreuz unten rechts - unten links stehen die Kennwerte
+            self.plotter.add_axes(viewport=(0.86, 0.0, 1.0, 0.16))
         except Exception:
-            pass
+            try:
+                self.plotter.show_axes()
+            except Exception:
+                pass
         self._kamera_setzen(kamera)
         self.plotter.render()
 
+    def _kopfzeile_zeichnen(self, r, faktor: float = 0.0) -> list:
+        """Oben links: was die Ansicht zeigt.
+
+        Ohne Ergebnis der aktive Lastfall, mit Ergebnis der Lastfall, die
+        Kombination oder die Umhuellende samt Faerbung, Verlauf und
+        Ueberhoehung. Ein Bild ohne diese Zeile ist im Statikdokument nicht
+        pruefbar - man wuesste nicht, wovon es die Verformung zeigt.
+        """
+        zeigen = getattr(self, "act_kennwerte", None) is None or self.act_kennwerte.isChecked()
+        self._kopfzeile_zeilen = []
+        if not zeigen:
+            return []
+        try:
+            if r is not None and self.results is not None:
+                name = self.cb_mode.currentText() if self.cb_mode.count() else "Eigenform"
+            elif r is not None:
+                name = self.cb_result.currentText()
+            else:
+                name = ""
+            zeilen = vp.kopfzeile(self.model, r, name,
+                                  self.cb_field.currentText() if r is not None else "",
+                                  self.cb_diagram.currentText() if r is not None else "",
+                                  faktor)
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Kopfzeile: {ex}")
+            return []
+        if not zeilen:
+            return []
+        self._kopfzeile_zeilen = zeilen
+        try:
+            # Oben links, aber **unterhalb** der Glasleiste: in einem schmalen
+            # Fenster reicht die Leiste bis in die linke Ecke. VTK zaehlt die
+            # Bildzeilen von unten.
+            hoch = self.plotter.render_window.GetSize()[1]
+            rand = (self.glasleiste.height() + 16) if getattr(self, "glasleiste", None) \
+                else 46
+            zh = int(self.SCHRIFT_KOPF * 2 * 1.25)
+            y = hoch - rand - zh * len(zeilen)
+            self.plotter.add_text("\n".join(zeilen), position=(12, max(y, 6)),
+                                  font_size=self.SCHRIFT_KOPF, font="courier",
+                                  color="#203040", name="kopfzeile")
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Kopfzeile: {ex}")
+        return zeilen
+
     def _kennwerte_zeichnen(self, r) -> list:
-        """Die Kennzahlen des Ergebnisses als Text in die Ansicht schreiben.
+        """Die Kennzahlen des Ergebnisses als Text unten links in die Ansicht.
 
         Sie gehoeren ins **Bild**, nicht nur in eine Tabelle: wer eine Ansicht
         in den Bericht uebernimmt, hat die Zahlen damit gleich dabei - groesste
-        Ausnutzung, kleinste und groesste Verformung, Grenzwerte der
-        Schnittgroessen, jeweils mit dem Ort.
+        Ausnutzung, kleinste und groesste Verformung, Verdrehung,
+        Schnittgroesse, Auflagerkraft und Spannung, jeweils mit dem Ort. Die
+        Farbskalen stehen rechts, damit sich nichts ueberdeckt.
         """
         zeigen = getattr(self, "act_kennwerte", None) is None or self.act_kennwerte.isChecked()
         if r is None or not zeigen:
@@ -6033,8 +6530,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Verformung eingefaerbt wird. Sonst muesste man erst umschalten,
             # um die Zahl zu sehen, nach der zuerst gefragt wird.
             zeilen = vp.kennwerte(self.model, r, self._ausnutzung_map(),
-                                  self.cb_diagram.currentText(),
-                                  self.cb_result.currentText())
+                                  self.cb_diagram.currentText())
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kennwerte: {ex}")
             self._kennwerte_zeilen = []
@@ -6043,15 +6539,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not zeilen:
             return []
         try:
-            # Oben links, aber **unterhalb** der Glasleiste - und nicht unten,
-            # wo die Farbskalen liegen. VTK zaehlt die Bildzeilen von unten.
-            hoch = self.plotter.render_window.GetSize()[1]
-            rand = (self.glasleiste.height() + 10) if getattr(self, "glasleiste", None) \
-                else 46
-            y = hoch - rand - ZEILENHOEHE * len(zeilen)
-            self.plotter.add_text("\n".join(zeilen), position=(12, max(y, 6)),
-                                  font_size=8, font="courier", color="#203040",
-                                  name="kennwerte")
+            self.plotter.add_text("\n".join(zeilen), position=(12, 10),
+                                  font_size=self.SCHRIFT_KENNWERTE, font="courier",
+                                  color="#203040", name="kennwerte")
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kennwerte: {ex}")
         return zeilen
@@ -6079,8 +6569,163 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:                   # noqa: BLE001
             pass
 
+    # ---- Sicht: ausblenden und wieder zeigen --------------------------
+    def _ausgewaehlte_elemente(self) -> set:
+        """Die Elementnummern zu allem, was gerade ausgewaehlt ist.
+
+        Staebe ueber ihre Elemente, Flaechen und Koerper ueber ihr Netz,
+        gewaehlte Knoten ueber die Elemente, die an ihnen haengen.
+        """
+        m = self.model
+        elems: set = set()
+        for name in self.sel_staebe:
+            mem = m.members.get(name)
+            if mem is not None:
+                elems.update(int(e) for e in (mem.elements or []))
+        for name in self.sel_flaechen:
+            f = m.flaechen.get(name)
+            if f is not None:
+                elems.update(int(e) for e in f.elemente)
+        for name in self.sel_koerper:
+            k = m.koerper.get(name)
+            if k is not None:
+                elems.update(int(e) for e in k.elemente)
+        if len(self.selection):
+            knoten = {int(i) for i in self.selection}
+            for i, e in enumerate(m.elements):
+                if knoten.intersection(int(n) for n in e.nodes):
+                    elems.add(i)
+        return {e for e in elems if 0 <= e < len(m.elements)}
+
+    def _sicht_merken(self):
+        self._sicht_verlauf.append({k: set(v) for k, v in self.versteckt.items()})
+        del self._sicht_verlauf[:-20]
+
+    def _sicht_knoepfe(self):
+        """Zurueck geht nur, wenn es einen Schritt gibt; Alles zeigen nur,
+        wenn etwas ausgeblendet ist."""
+        a = getattr(self, "act_sicht_zurueck", None)
+        if a is not None:
+            a.setEnabled(bool(self._sicht_verlauf))
+        a = getattr(self, "act_alles_zeigen", None)
+        if a is not None:
+            a.setEnabled(any(self.versteckt.values()))
+
+    def _sicht_pruefen(self):
+        """Ein anderes Modell oder ein neues Netz: die Ausblendung passt nicht mehr."""
+        m = self.model
+        stand = (id(m), len(m.elements))
+        if stand == self._sicht_stand:
+            return
+        alt = self._sicht_stand
+        self._sicht_stand = stand
+        if alt is None or alt[0] != stand[0]:
+            self.versteckt = {k: set() for k in self.versteckt}
+            self._sicht_verlauf = []
+        else:
+            # gleiches Modell, anderes Netz: die Elementnummern sind neu
+            self.versteckt["elemente"] = set()
+            for schritt in self._sicht_verlauf:
+                schritt["elemente"] = set()
+        self._sicht_knoepfe()
+
+    def _auswahl_leeren(self):
+        self.selection = np.array([], dtype=int)
+        self.sel_linien, self.sel_flaechen = [], []
+        self.sel_koerper, self.sel_staebe = [], []
+        self._auswahl_register()
+
+    def nur_auswahl_zeigen(self):
+        """Alles ausser der Auswahl ausblenden - die Auswahl bleibt allein im Bild."""
+        m = self.model
+        elems = self._ausgewaehlte_elemente()
+        flaechen = set(self.sel_flaechen)
+        koerper = set(self.sel_koerper)
+        for name in self.sel_koerper:
+            k = m.koerper.get(name)
+            if k is not None:
+                flaechen.update(k.flaechen)
+        linien = set(self.sel_linien)
+        for name in flaechen:
+            f = m.flaechen.get(name)
+            if f is not None:
+                linien.update(f.linien)
+                for o in (f.oeffnungen or []):
+                    linien.update(o)
+        if not (elems or linien or flaechen or koerper):
+            return self.error("Erst etwas auswählen - dann bleibt nur das im Bild.")
+        self._sicht_merken()
+        self.versteckt["elemente"] = set(range(len(m.elements))) - elems
+        self.versteckt["linien"] = set(m.lines or {}) - linien
+        self.versteckt["flaechen"] = set(m.flaechen or {}) - flaechen
+        self.versteckt["koerper"] = set(m.koerper or {}) - koerper
+        self._sicht_knoepfe()
+        teile = [f"{n} {was}" for n, was in ((len(elems), "Elemente"), (len(koerper), "Körper"),
+                                             (len(flaechen), "Flächen"), (len(linien), "Linien"))
+                 if n]
+        self.info("Nur die Auswahl im Bild (" + ", ".join(teile) + ") - "
+                  "„Alles zeigen“ holt den Rest zurück")
+        self.redraw()
+
+    def auswahl_ausblenden(self):
+        """Die ausgewaehlten Objekte aus dem Bild nehmen."""
+        m = self.model
+        elems = self._ausgewaehlte_elemente()
+        if not (elems or self.sel_linien or self.sel_flaechen or self.sel_koerper):
+            return self.error("Erst auswählen, was aus dem Bild soll.")
+        self._sicht_merken()
+        self.versteckt["elemente"] |= elems
+        self.versteckt["linien"] |= set(self.sel_linien)
+        self.versteckt["flaechen"] |= set(self.sel_flaechen)
+        self.versteckt["koerper"] |= set(self.sel_koerper)
+        for name in self.sel_koerper:
+            k = m.koerper.get(name)
+            if k is not None:
+                self.versteckt["flaechen"].update(k.flaechen)
+        teile = [f"{n} {was}" for n, was in ((len(elems), "Elemente"),
+                                             (len(self.sel_koerper), "Körper"),
+                                             (len(self.sel_flaechen), "Flächen"),
+                                             (len(self.sel_linien), "Linien")) if n]
+        self._auswahl_leeren()
+        self._sicht_knoepfe()
+        self.info("Ausgeblendet: " + ", ".join(teile) + " - „Vorherige Sicht“ holt sie zurück")
+        self.redraw()
+
+    def sicht_zurueck(self):
+        """Den letzten Ausblendeschritt zuruecknehmen."""
+        if not self._sicht_verlauf:
+            return self.info("Keine vorherige Sicht - es ist nichts ausgeblendet worden")
+        self.versteckt = self._sicht_verlauf.pop()
+        self._sicht_knoepfe()
+        self.info("Vorherige Sicht")
+        self.redraw()
+
+    def alles_zeigen(self):
+        """Alle ausgeblendeten Objekte wieder ins Bild holen."""
+        if not any(self.versteckt.values()):
+            return self.info("Es ist nichts ausgeblendet")
+        self._sicht_merken()
+        self.versteckt = {k: set() for k in self.versteckt}
+        self._sicht_knoepfe()
+        self.info("Alles wieder im Bild")
+        self.redraw()
+
     # ---- Datei -------------------------------------------------------
+    def _protokoll_neu(self, titel: str):
+        """Das Protokoll leeren - ein neues Modell faengt mit leerem Blatt an.
+
+        Sonst steht unter dem eben geladenen Modell noch die Berechnung des
+        vorigen, und man liest Zahlen, die nicht zu diesem Modell gehoeren.
+        """
+        try:
+            from datetime import datetime
+            self.log.clear()
+            self.log.appendPlainText(f"--- {titel}  ({datetime.now():%d.%m.%Y %H:%M}) ---")
+        except Exception:                   # noqa: BLE001
+            pass
+
     def new_model(self):
+        self._protokoll_neu("Neues Modell")
         self.model = Model("Neues Modell")
         self.__init_defaults()
         self.analysis = None
@@ -6094,6 +6739,7 @@ class MainWindow(QtWidgets.QMainWindow):
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Modell öffnen", "", "Statik3D (*.json)")
         if p:
             try:
+                self._protokoll_neu(f"Modell geöffnet: {p}")
                 self.model = Model.load(p)
                 self.__init_defaults()
                 self.analysis = None
@@ -6217,6 +6863,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def load_example(self, which):
         from ..examples_lib import build_example
         try:
+            self._protokoll_neu(f"Beispiel '{which}'")
             self.model = build_example(which)
             self.__init_defaults()
             self.analysis = None
@@ -6552,7 +7199,16 @@ class MainWindow(QtWidgets.QMainWindow):
 def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
+    try:
+        from . import symbole as sym
+        app.setWindowIcon(sym.programmsymbol())
+    except Exception:                       # noqa: BLE001 - dann ohne Symbol
+        pass
     win = MainWindow()
+    try:
+        win.setWindowIcon(app.windowIcon())
+    except Exception:                       # noqa: BLE001
+        pass
     win.show()
     sys.exit(app.exec())
 

@@ -1,29 +1,46 @@
-"""Programmsymbol statik3d.ico aus einfachen Formen erzeugen (Pillow)."""
-import os
-from PIL import Image, ImageDraw
+"""Programmsymbol statik3d.ico aus der Zeichnung in statik3d/gui/symbole.py.
 
+Dieselbe Zeichnung, die das Fenster und die Taskleiste zeigen, wird hier in
+allen Groessen gerendert und als Windows-Symboldatei fuer die exe abgelegt
+(PyInstaller: ``icon=`` in Statik3D.spec). Daneben entsteht statik3d.png
+(256 px) fuer README und Handbuch.
+
+    python packaging/make_icon.py
+"""
+import io
+import os
+import sys
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 here = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(here))
+
+from PySide6 import QtCore, QtWidgets  # noqa: E402
+
+app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+from statik3d.gui import symbole as sym  # noqa: E402
+
 sizes = [256, 128, 64, 48, 32, 16]
-frames = []
-for s in sizes:
-    im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    r = s * 0.19
-    d.rounded_rectangle([0, 0, s - 1, s - 1], radius=r, fill=(28, 39, 51, 255))
-    w = max(1, round(s * 0.055))
-    col = (242, 210, 58, 255)
-    x0, x1, yt, yb, ym = s * 0.22, s * 0.78, s * 0.41, s * 0.75, s * 0.235
-    d.line([(x0, yb), (x0, yt), (s / 2, ym), (x1, yt), (x1, yb)], fill=col, width=w, joint="curve")
-    d.line([(x0, yb), (x1, yb)], fill=col, width=w)
-    d.line([(x0, yt), (x1, yt)], fill=col, width=w)
-    g = (89, 193, 90, 255)
-    t = s * 0.07
-    for x in (x0, x1):
-        d.polygon([(x, yb + w * 0.4), (x - t, yb + w * 0.4 + 1.6 * t), (x + t, yb + w * 0.4 + 1.6 * t)], fill=g)
-    o = (229, 112, 28, 255)
-    d.line([(s / 2, s * 0.06), (s / 2, s * 0.19)], fill=o, width=w)
-    d.polygon([(s / 2 - t * 0.8, s * 0.14), (s / 2 + t * 0.8, s * 0.14), (s / 2, s * 0.21)], fill=o)
-    frames.append(im)
+
+
+def png_bytes(groesse: int) -> bytes:
+    pm = sym.programmbild(groesse)
+    buf = QtCore.QBuffer()
+    buf.open(QtCore.QIODevice.WriteOnly)
+    pm.save(buf, "PNG")
+    return bytes(buf.data())
+
+
+out_png = os.path.join(here, "statik3d.png")
+with open(out_png, "wb") as f:
+    f.write(png_bytes(256))
 out = os.path.join(here, "statik3d.ico")
-frames[0].save(out, format="ICO", sizes=[(s, s) for s in sizes], append_images=frames[1:])
+try:
+    from PIL import Image
+    frames = [Image.open(io.BytesIO(png_bytes(s))).convert("RGBA") for s in sizes]
+    frames[0].save(out, format="ICO", sizes=[(s, s) for s in sizes], append_images=frames[1:])
+except ImportError:
+    # Ohne Pillow schreibt Qt ein Symbol mit einer Groesse
+    sym.programmbild(256).save(out, "ICO")
 print(out)
+print(out_png)

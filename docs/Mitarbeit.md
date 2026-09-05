@@ -124,3 +124,10 @@ Punkte:
   (`C:\Program Files\Dlubal`) – die Dateien liegen nur lokal vor.
 * **Splitter am Rand**: Tetraeder, deren vier Knoten alle auf der Oberfläche
   liegen, lassen sich nicht glätten. Sie werden gezählt und gemeldet.
+* **Fang auf krummen Flächen ohne Netz** greift auf der gezeichneten
+  Coons-Fläche (Dreiecke), nicht auf der exakten Zylinderfläche — bei 16
+  Stücken je Bogen liegt der Punkt bis 0,5 % des Radius neben dem Mantel.
+* **Drehen sehr großer Volumenmodelle**: die Nebendarsteller bleiben beim
+  Drehen weg (ab 20 000 Knoten und Elementen); das Netz selbst wird nicht
+  vergröbert. Reicht das auf schwachen Grafikkarten nicht, wäre eine
+  Detailstufe (LOD) des Netzes der nächste Schritt.

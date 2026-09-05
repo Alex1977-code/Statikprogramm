@@ -291,33 +291,84 @@ Vier Darstellungsarten, im Register *Ansicht* nebeneinander und auf
 
 | Art | Taste | Bild |
 |---|---|---|
-| Voll | Strg+1 | gefüllte Flächen, farbig |
-| Transparent | Strg+2 | durchscheinend — man sieht die innen liegenden Teile |
-| Hidden-Line | Strg+3 | weiße Flächen mit dunklen Kanten, wie eine Zeichnung |
-| Drahtmodell | Strg+4 | nur die Kanten |
+| Voll | Strg+1 | gefüllte Flächen, farbig; Stäbe als Körper mit ihrer Querschnittskontur |
+| Transparent | Strg+2 | durchscheinend — man sieht die innen liegenden Teile; Stäbe als Körper |
+| Hidden-Line | Strg+3 | weiße Flächen mit dunklen Kanten, wie eine Zeichnung; Stäbe als Linien |
+| Drahtmodell | Strg+4 | nur die Kanten; Stäbe als Linien |
+
+Die vier Arten gelten auch für **Stäbe**: bei Voll und Transparent wird jeder
+Stab mit seinem Querschnitt über die Stablänge gezeichnet (ein IPE als
+I-Profil, ein Rohr als Rohr, mit dem Drehwinkel des Stabes), bei Hidden-Line
+und Drahtmodell als Linie. Ergebnisfarben liegen auf dem Stabkörper genauso
+wie auf dem Netz.
+
+**Krumme Flächen** — der Mantel einer Bohrung, einer Buchse, eines Bolzens,
+in RFEM eine Fläche aus zwei Bögen und zwei Geraden — werden als gewölbte
+Fläche zwischen ihren vier Randlinien gezeichnet (Coons-Fläche). Vorher
+fehlten sie im Bild, weil ihr Rand nicht in einer Ebene liegt, und die
+Volumen wirkten offen.
 
 **F9** blendet das **FE-Netz** (die Elementkanten) ein und aus. Der Schalter
 „Knoten" zeigt die gesetzten Knoten als Punkte: Knoten, an denen noch **kein
 Element** hängt, sind orange und etwas größer — so sieht man beim Modellieren,
 wo man schon war, auch wenn dort noch nichts steht.
 
-**Die Glasleiste** liegt oben links über der Ansicht und trägt die Griffe, die
-man beim Modellieren dauernd braucht: die vier Darstellungsarten, FE-Netz,
-Knoten, Linien, Lasten, Fang, die Auswahlart und „alles ins Bild". Es sind
-dieselben Befehle wie im Ribbon, nur näher an der Maus.
+**Die Glasleiste** liegt mittig oben über der Ansicht, durchscheinend, und
+trägt als Symbole die Griffe, die man beim Modellieren dauernd braucht — der
+Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
-**Der Ansichtswürfel** oben rechts schaltet die Blickrichtung: **O**
-Draufsicht, **V** Vorderansicht, **S** Seitenansicht, ein Klick daneben
-isometrisch.
+| Gruppe | Knöpfe |
+|---|---|
+| Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
+| Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
+| Sicht | Nur Auswahl zeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen |
+| Fang | Fang ein/aus, dann je Art: Knoten, Linie, Stab, Fläche, Volumen |
+| Auswahlart | was ein Klick trifft: Knoten, Linie, Fläche, Volumen, Stab |
+
+Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen, Sicht, Fang*),
+nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
+und als **iso** unter dem Ansichtswürfel.
+
+**Sicht — ausblenden und wieder zeigen.** Was man nicht sieht, stört nicht:
+*Auswahl ausblenden* nimmt die gewählten Stäbe, Flächen, Volumen, Linien
+oder die Elemente an den gewählten Knoten aus dem Bild; *Nur Auswahl zeigen*
+blendet alles andere aus. *Vorherige Sicht* nimmt den letzten Schritt
+zurück (bis zu zwanzig Schritte), *Alles zeigen* holt alles wieder her. Die
+Ausblendung ist nur eine Sicht — am Modell und an der Berechnung ändert sie
+nichts. Ein neues Netz oder ein anderes Modell hebt sie auf.
+
+**Der Ansichtswürfel** oben rechts dreht sich mit der Ansicht und lässt sich
+**mit der Maus drehen**: auf den Würfel klicken und ziehen dreht die Kamera um
+den Blickpunkt. Ein Klick auf eine Würfelseite stellt die Ansicht senkrecht
+auf diese Seite. Die Knöpfe darunter heißen wie die Achsen: **+x +y +z −x
+−y −z** (die Richtung, aus der man schaut) und **iso** (isometrisch, alles
+im Bild).
+
+**Texte im Bild.** Oben links steht, was die Ansicht zeigt: ohne Ergebnis der
+aktive Lastfall mit seiner Lastzahl, mit Ergebnis der Lastfall, die
+Kombination oder die Umhüllende samt Färbung, Schnittgrößenverlauf und
+Überhöhung. Unten links stehen die **Kennwerte**: Verformungen und
+Verdrehungen (min/max mit Knoten), Schnittgrößen (min/max mit Stab),
+Auflagerkräfte (min/max mit Knoten), die größte Vergleichsspannung und die
+größte Ausnutzung. Die Farbskalen stehen rechts, das Achsenkreuz unten
+rechts; der Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die
+Texte weg. Beides kommt so auch in den Bericht.
+
+**Drehen großer Modelle.** Ab etwa 20 000 Knoten und Elementen bleiben
+während des Drehens, Schiebens und Zoomens die Nebendarsteller
+(Knotenpunkte, Linien, Nummern, Lasten) und die Netzkanten weg und kommen
+beim Loslassen der Maus wieder — das Bild bleibt dadurch flüssig.
+Volumennetze werden nur mit ihrer Oberfläche gezeichnet.
 
 **Linien** sind Geometrie, keine Elemente — der Schalter „Linien" zeigt sie.
 Bei einem aus RFEM übernommenen Modell besteht die Geometrie fast nur aus
 Linien; ohne den Schalter sähe man ein leeres Bild.
 
-**Der Fang** lässt sich einzeln umstellen: F3 schaltet ihn ganz aus,
+**Der Fang** lässt sich je Art umstellen: F3 schaltet ihn ganz aus,
 Umschalt+F1 den Knotenfang, Umschalt+F2 den Fang auf Kantenmitten,
-Umschalt+F3 den Rasterfang. Was gerade gefangen wird, steht in der
-Statuszeile.
+Umschalt+F3 den Rasterfang, Umschalt+F4 bis F7 den Fang auf Linien, Stäbe,
+Flächen und Volumen. Was gerade gefangen wird, steht in der Statuszeile
+(„Fang: alle" oder die Liste der Arten).
 
 **Lagersymbole**: Die Form sagt, was das Lager hält — Würfel für die
 Einspannung, Kegel für das gelenkige Lager, Zylinder für ein Federlager.
@@ -411,8 +462,14 @@ Im Register **Geometrie** stehen drei Gruppen für die Eingabehilfen:
 * **Arbeitsebene** — xy, yz oder xz des aktiven Systems, mit einstellbarer
   Rasterweite (0 = kein Raster).
 * **Fang** — ein Klick in der Ansicht wird auf die nächste markante Stelle
-  gezogen: erst Knoten, dann Kantenmitte, dann Rasterpunkt. Der Schalter im
-  Ribbon nimmt ihn zurück; die Statusleiste zeigt seinen Zustand.
+  gezogen, in dieser Reihenfolge: **Knoten**, **Kantenmitte** eines Stabes,
+  **Linie** (der Fußpunkt auf der Linie, auch auf einem Bogen), **Stab** (der
+  Fußpunkt auf der Stabachse), **Fläche** (der Punkt auf der Fläche oder
+  Schale unter dem Zeiger, auch auf einem Zylindermantel), **Volumen** (der
+  Punkt auf der Oberfläche eines Körpers), zuletzt der **Rasterpunkt**. Jede
+  Art ist einzeln schaltbar — im Ribbon, in der Glasleiste oder mit
+  Umschalt+F1 … F7; der Hauptschalter (F3) nimmt alles zurück. Die
+  Statusleiste zeigt den Zustand.
 
 ### Linien: Bogen, Kreis, Spline, Parabel
 
@@ -432,18 +489,25 @@ Teilung steht in der Maske. Die Linie bleibt als Geometrie erhalten und kennt
 ihre exakte Länge (ein Halbkreis r = 2 m misst 6,283 m, nicht die Länge des
 Sehnenzugs).
 
-### Ansichtswürfel und Rückseite
+### Ansichtswürfel
 
-Oben rechts in der Ansicht steht der **Ansichtswürfel**: drei sichtbare Seiten,
-beschriftet mit ihrer Achse (+Z, −Y, +X). Ein Klick auf eine Seite dreht die
-Ansicht dorthin, ein Klick daneben stellt die isometrische Ansicht ein.
+Oben rechts in der Ansicht steht der **Ansichtswürfel**. Er zeigt die Lage
+der Kamera: die drei Seiten, auf die man gerade schaut, sind sichtbar und mit
+ihrer Achse beschriftet (+X, −Y, +Z …), und er dreht sich mit, wenn man die
+Ansicht dreht. Drei Wege, ihn zu benutzen:
 
-Darunter — **statt einer Drehscheibe** — steht eine Zeile mit allen sechs
-Richtungen: **V** vorne, **H** hinten, **L** links, **R** rechts, **O** oben,
-**U** unten. Die Rückseite ist damit ein Klick und nicht eine halbe Umdrehung.
-Der Knopf **180°** kehrt die *laufende* Ansicht um: aus jeder beliebigen
-Schrägansicht wird ihre Rückansicht, ohne dass man sich neu hindrehen muss. Im
-Ribbon steht derselbe Befehl unter „Rückseite (180°)".
+* **Ziehen** mit gedrückter linker Maustaste auf dem Würfel dreht die
+  Ansicht um den Blickpunkt — wie das Drehen in der Ansicht selbst, nur mit
+  dem Würfel als Griff.
+* **Klick auf eine Seite** stellt die Ansicht senkrecht auf diese Seite.
+* **Die Knöpfe darunter** heißen wie die Achsen: **+x +y +z −x −y −z** — die
+  Richtung, aus der man schaut (−y ist die Vorderansicht, +z die Draufsicht)
+  — und **iso** für die isometrische Ansicht mit allem im Bild. Die Rückseite
+  ist damit ein Klick und nicht eine halbe Umdrehung.
+
+Im Ribbon *Ansicht → Blickrichtung* stehen dieselben Richtungen, dazu
+„Rückseite (180°)", das die laufende Ansicht am Blickpunkt umkehrt, und
+„Zoom alles".
 
 ### Register „Auswahl"
 

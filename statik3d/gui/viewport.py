@@ -28,11 +28,20 @@ FARBE_KONTAKT = "#c8a000"
 
 #: Darstellungsarten des Viewports: Name -> (Zeichen, Erklaerung)
 DARSTELLUNGEN = {
-    "Voll": ("■", "gefuellte Flaechen"),
-    "Transparent": ("◧", "durchscheinend - man sieht die innen liegenden Teile"),
-    "Hidden-Line": ("◫", "weisse Flaechen mit dunklen Kanten, wie eine Zeichnung"),
-    "Drahtmodell": ("▦", "nur die Kanten"),
+    "Voll": ("■", "gefuellte Flaechen, Staebe mit ihrer Querschnittskontur"),
+    "Transparent": ("◧", "durchscheinend - man sieht die innen liegenden Teile; "
+                         "Staebe mit Querschnittskontur"),
+    "Hidden-Line": ("◫", "weisse Flaechen mit dunklen Kanten, wie eine Zeichnung; "
+                         "Staebe als Linie"),
+    "Drahtmodell": ("▦", "nur die Kanten; Staebe als Linie"),
 }
+
+#: Symbolname je Darstellungsart
+DARSTELLUNG_SYMBOL = {"Voll": "voll", "Transparent": "transparent",
+                      "Hidden-Line": "hiddenline", "Drahtmodell": "draht"}
+
+#: Bei diesen Darstellungsarten bekommt der Stab seine Querschnittskontur
+KOERPERLICH = ("Voll", "Transparent")
 
 
 def darstellung(modus: str, netz: bool, farbig: bool = False) -> dict:
@@ -111,7 +120,7 @@ def polygon_flaeche(punkte) -> float:
     return float(np.linalg.norm(n)) / 2.0
 
 
-def add_linien(plotter, model: Model, hervor: list = None):
+def add_linien(plotter, model: Model, hervor: list = None, ausser=None):
     """Die Linien des Modells zeichnen.
 
     Linien sind Geometrie, keine Elemente - sie wurden bisher gar nicht
@@ -126,9 +135,10 @@ def add_linien(plotter, model: Model, hervor: list = None):
     if not linien:
         return
     hervor = set(hervor or [])
+    ausser = set(ausser or ())
     pts, zellen = [], []
     for name, ln in linien.items():
-        if name in hervor:
+        if name in hervor or name in ausser:
             continue
         idx = [int(n) for n in ln.nodes if 0 <= int(n) < model.nn]
         if len(idx) < 2:
@@ -154,7 +164,98 @@ FARBE_LINIE = "#7a8a99"
 TEILUNG_KURVE = 16
 
 
-def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = None):
+def coons_flaeche(seiten: list, n: int = None):
+    """Eine Coons-Flaeche zwischen vier Randseiten: (Punkte, Dreiecke).
+
+    Der Mantel einer Bohrung oder eines Bolzens ist in RFEM eine Flaeche aus
+    zwei Boegen und zwei Geraden. Ihr Rand liegt nicht in einer Ebene; als
+    ein Vieleck laesst sie sich nicht zeichnen - VTK findet dafuer keine
+    Dreiecke, und die Flaeche fehlt im Bild. Die transfinite Interpolation
+    (Coons) spannt zwischen den vier Seiten eine Flaeche auf, die genau durch
+    alle vier Raender geht:
+
+        P(u,v) = (1-v) c_u(u) + v c_o(u) + (1-u) c_l(v) + u c_r(v)
+                 - [(1-u)(1-v) P00 + u(1-v) P10 + (1-u) v P01 + u v P11]
+
+    ``seiten`` sind die vier Randseiten im Umlauf (Ende = Anfang der
+    naechsten); ``n`` erzwingt eine Teilung je Richtung, sonst folgt sie der
+    Abtastung der Seiten. Rueckgabe: Punkte (k, 3)
+    und Dreiecke (m, 3) als Indizes. Bei weniger oder mehr als vier Seiten
+    (None, None).
+    """
+    if len(seiten) != 4:
+        return None, None
+    # Teilung je Richtung aus der Abtastung der Seiten: ein Zylindermantel
+    # braucht entlang der Boegen 16 Stuecke, entlang der Geraden eines - er
+    # ist eine Regelflaeche. 512 Dreiecke je Flaeche waeren bei 800 Mantel-
+    # flaechen 400000; so sind es 25000.
+    if n is None:
+        n_u = int(min(24, max(1, max(len(seiten[0]), len(seiten[2])) - 1)))
+        n_v = int(min(24, max(1, max(len(seiten[1]), len(seiten[3])) - 1)))
+    else:
+        n_u = n_v = int(n)
+
+    def gleichmaessig(kurve, n):
+        """Die Kurve auf n+1 Punkte gleicher Bogenlaenge bringen."""
+        K = np.asarray(kurve, float)
+        if len(K) < 2:
+            return np.repeat(K[:1], n + 1, axis=0)
+        laenge = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(K, axis=0), axis=1))])
+        if laenge[-1] <= 0:
+            return np.repeat(K[:1], n + 1, axis=0)
+        t = np.linspace(0.0, laenge[-1], n + 1)
+        return np.stack([np.interp(t, laenge, K[:, k]) for k in range(3)], axis=1)
+
+    unten = gleichmaessig(seiten[0], n_u)            # u: 0 -> 1 bei v = 0
+    rechts = gleichmaessig(seiten[1], n_v)           # v: 0 -> 1 bei u = 1
+    oben = gleichmaessig(seiten[2][::-1], n_u)       # u: 0 -> 1 bei v = 1
+    links = gleichmaessig(seiten[3][::-1], n_v)      # v: 0 -> 1 bei u = 0
+    P00, P10, P01, P11 = unten[0], unten[-1], oben[0], oben[-1]
+    u = np.linspace(0.0, 1.0, n_u + 1)[:, None, None]  # (n_u+1, 1, 1)
+    v = np.linspace(0.0, 1.0, n_v + 1)[None, :, None]  # (1, n_v+1, 1)
+    P = ((1 - v) * unten[:, None, :] + v * oben[:, None, :]
+         + (1 - u) * links[None, :, :] + u * rechts[None, :, :]
+         - ((1 - u) * (1 - v) * P00 + u * (1 - v) * P10
+            + (1 - u) * v * P01 + u * v * P11))
+    punkte = P.reshape(-1, 3)
+    idx = np.arange((n_u + 1) * (n_v + 1)).reshape(n_u + 1, n_v + 1)
+    a, b, c, d = idx[:-1, :-1], idx[1:, :-1], idx[1:, 1:], idx[:-1, 1:]
+    dreiecke = np.concatenate([np.stack([a, b, c], axis=-1).reshape(-1, 3),
+                               np.stack([a, c, d], axis=-1).reshape(-1, 3)])
+    return punkte, dreiecke
+
+
+def flaechen_dreiecke(ring, seiten=None):
+    """Eine Flaeche fuers Bild: (Punkte, Zellen als VTK-Liste).
+
+    Eben: das Randpolygon als **eine** Zelle. Krumm mit vier Seiten: eine
+    Coons-Flaeche aus Dreiecken. Sonst ein Faecher um den Schwerpunkt - das
+    ist fuer eine schwach gewoelbte Flaeche mit fuenf Seiten besser als gar
+    nichts.
+    """
+    from ..model import polygon_eben
+    ring = np.asarray(ring, float)
+    if len(ring) < 3:
+        return None, None
+    if polygon_eben(ring):
+        return ring, [len(ring), *range(len(ring))]
+    if seiten is not None and len(seiten) == 4:
+        P, D = coons_flaeche(seiten)
+        if P is not None:
+            zellen = np.hstack([np.full((len(D), 1), 3), D]).ravel().tolist()
+            return P, zellen
+    mitte = ring.mean(axis=0)
+    P = np.vstack([ring, mitte[None, :]])
+    k = len(ring)
+    zellen = []
+    for i in range(k):
+        zellen += [3, i, (i + 1) % k, k]
+    return P, zellen
+
+
+def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = None,
+                  seiten: dict = None, flaechen_an: bool = True, koerper_an: bool = True,
+                  ausser_flaechen=None, ausser_koerper=None):
     """Flaechen und Volumenkoerper zeichnen, die **noch nicht vernetzt** sind.
 
     Ein Objekt, das man nicht sieht, kann man auch nicht anklicken. Eine eben
@@ -166,15 +267,38 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
     leicht ueber tausend Flaechen. Je Flaeche ein eigener Darsteller braucht
     Minuten und macht die Ansicht unbedienbar; gebuendelt sind es zwei.
     ``raender`` nimmt bereits berechnete Randpolygone entgegen
-    ({Flaechenname: Punktfolge}), damit sie nicht zweimal ermittelt werden.
-    Es sind **Punkte**, keine Knotennummern: eine Bohrung oder eine Buchse
-    besteht aus zwei Halbboegen zwischen denselben zwei Knoten - ueber die
-    Knoten allein waere davon nichts zu sehen.
+    ({Flaechenname: Punktfolge}), ``seiten`` die Randseiten je Linie
+    ({Flaechenname: [Punktfolgen]}) - beide werden gefuellt, wenn sie fehlen,
+    damit sie nicht zweimal ermittelt werden. Es sind **Punkte**, keine
+    Knotennummern: eine Bohrung oder eine Buchse besteht aus zwei Halbboegen
+    zwischen denselben zwei Knoten - ueber die Knoten allein waere davon
+    nichts zu sehen.
+
+    Krumme Flaechen (Zylindermantel: zwei Boegen, zwei Geraden) werden als
+    Coons-Flaeche aus Dreiecken gezeichnet - als ein Vieleck fehlten sie im
+    Bild, und die Volumen wirkten offen. Jede Zelle traegt in
+    ``cell_data["flaeche"]`` die Nummer ihrer Flaeche in ``model.flaechen``
+    (fuer den Fang auf Flaechen).
+
+    ``flaechen_an``/``koerper_an`` sind die Sichtbarkeitsschalter,
+    ``ausser_flaechen``/``ausser_koerper`` die ausgeblendeten Namen.
     """
     flaechen = getattr(model, "flaechen", {}) or {}
     if not flaechen:
         return
     raender = raender if raender is not None else {}
+    seiten = seiten if seiten is not None else {}
+    ausser_flaechen = set(ausser_flaechen or ())
+    ausser_koerper = set(ausser_koerper or ())
+    koerper = getattr(model, "koerper", {}) or {}
+    # Flaechen eines ausgeblendeten Koerpers sind mit ihm weg
+    for kn in ausser_koerper:
+        k = koerper.get(kn)
+        if k is not None:
+            ausser_flaechen.update(k.flaechen)
+    if not koerper_an:
+        for k in koerper.values():
+            ausser_flaechen.update(k.flaechen)
 
     def ring_von(name, f):
         r = raender.get(name)
@@ -183,27 +307,53 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
             raender[name] = r
         return r
 
+    def seiten_von(name, f):
+        r = seiten.get(name)
+        if r is None:
+            try:
+                r = f.randseiten_punkte(model)
+            except Exception:            # noqa: BLE001
+                r = []
+            seiten[name] = r
+        return r
+
     pts: list = []
-    faces: list = []
-    for name, f in flaechen.items():
-        if f.elemente:
+    zellen: list = []
+    zelle_flaeche: list = []
+    for nr, (name, f) in enumerate(flaechen.items()):
+        if f.elemente or name in ausser_flaechen:
+            continue
+        if not flaechen_an and not any(name in k.flaechen for k in koerper.values()):
             continue
         ring = ring_von(name, f)
         if len(ring) < 3:
             continue
+        P, Z = flaechen_dreiecke(ring, seiten_von(name, f))
+        if P is None:
+            continue
         basis = len(pts)
-        pts.extend(np.asarray(ring, float))
-        faces.append(len(ring))
-        faces.extend(range(basis, basis + len(ring)))
+        pts.extend(np.asarray(P, float))
+        i = 0
+        n_zellen = 0
+        while i < len(Z):
+            k = int(Z[i])
+            zellen.append(k)
+            zellen.extend(int(z) + basis for z in Z[i + 1:i + 1 + k])
+            i += k + 1
+            n_zellen += 1
+        zelle_flaeche.extend([nr] * n_zellen)
     if pts:
-        plotter.add_mesh(pv.PolyData(np.asarray(pts, float), faces=np.asarray(faces)),
-                         color="#7fb3d5", opacity=0.45, show_edges=True,
+        pd = pv.PolyData(np.asarray(pts, float), faces=np.asarray(zellen))
+        pd.cell_data["flaeche"] = np.asarray(zelle_flaeche, int)
+        plotter.add_mesh(pd, color="#7fb3d5", opacity=0.45, show_edges=True,
                          edge_color="#20638f", line_width=1, name="geo_flaechen")
     # Randkanten der noch nicht vernetzten Volumenkoerper - ebenfalls gebuendelt
+    if not koerper_an:
+        return
     kpts: list = []
     klines: list = []
-    for k in (getattr(model, "koerper", {}) or {}).values():
-        if k.elemente:
+    for kn, k in koerper.items():
+        if k.elemente or kn in ausser_koerper:
             continue
         for fname in k.flaechen:
             f = flaechen.get(fname)
@@ -330,17 +480,158 @@ def member_at(model: Model, punkt):
     return None
 
 
-def to_grid(model: Model) -> pv.UnstructuredGrid:
-    cells, types = [], []
-    for e in model.elements:
+#: Elementtypen je Sichtbarkeitsschalter
+TYPEN_STAEBE = ("beam", "truss")
+TYPEN_FLAECHEN = ("shell3", "shell4")
+TYPEN_VOLUMEN = ("tet4", "tet10", "hex8")
+
+
+def to_grid(model: Model, typen=None, ausser=None) -> pv.UnstructuredGrid:
+    """Das Elementnetz als VTK-Gitter.
+
+    ``typen`` beschraenkt auf Elementtypen (Sichtbarkeitsschalter Staebe,
+    Flaechen, Volumen), ``ausser`` blendet einzelne Elemente aus. Die
+    Elementnummern stehen als ``cell_data["elem"]`` am Gitter - nur so lassen
+    sich Zellwerte (Ausnutzung je Element) auf ein gefiltertes Gitter legen.
+    Die Punkte sind immer **alle** Modellknoten, damit Knotenwerte
+    (Verschiebungen) unveraendert passen.
+    """
+    cells, types, idx = [], [], []
+    ausser = ausser or ()
+    for i, e in enumerate(model.elements):
+        if typen is not None and e.typ not in typen:
+            continue
+        if i in ausser:
+            continue
         ct, n = CELL_MAP[e.typ]
         cells.append(n)
         cells.extend(e.nodes[:n])
         types.append(ct)
+        idx.append(i)
     if not cells:
         return pv.UnstructuredGrid()
-    return pv.UnstructuredGrid(np.array(cells), np.array(types),
-                               np.asarray(model.nodes, float))
+    g = pv.UnstructuredGrid(np.array(cells), np.array(types),
+                            np.asarray(model.nodes, float))
+    g.cell_data["elem"] = np.asarray(idx, int)
+    return g
+
+
+# --------------------------------------------------------------------------
+# Staebe mit ihrer Querschnittskontur
+# --------------------------------------------------------------------------
+def querschnitt_umriss(sec) -> np.ndarray:
+    """Der Umriss eines Querschnitts als (n, 2)-Punktfolge in (y, z).
+
+    Lokale Achsen wie im Stabelement: y = starke Achse (Flanschbreite b liegt
+    entlang y), z in der Stegebene (Hoehe h entlang z). Der Umriss ist ein
+    geschlossenes Vieleck ohne Ausrundungen - fuer das Bild reicht das, und
+    die Kanten bleiben scharf.
+    """
+    typ = str(getattr(sec, "typ", "") or "free")
+    h = float(getattr(sec, "h", 0.0) or 0.0)
+    b = float(getattr(sec, "b", 0.0) or 0.0)
+    tw = float(getattr(sec, "tw", 0.0) or 0.0)
+    tf = float(getattr(sec, "tf", 0.0) or 0.0)
+    if typ == "I" and h > 0 and b > 0 and tw > 0 and tf > 0:
+        y, z = b / 2, h / 2
+        s = tw / 2
+        return np.array([(-y, -z), (y, -z), (y, -z + tf), (s, -z + tf), (s, z - tf),
+                         (y, z - tf), (y, z), (-y, z), (-y, z - tf), (-s, z - tf),
+                         (-s, -z + tf), (-y, -z + tf)])
+    if typ == "U" and h > 0 and b > 0 and tw > 0 and tf > 0:
+        # Steg links, Flansche nach +y; Bezug ist die Schwerachse (yc)
+        yc = float(getattr(sec, "yc", 0.0) or b / 3)
+        z = h / 2
+        return np.array([(-yc, -z), (b - yc, -z), (b - yc, -z + tf), (tw - yc, -z + tf),
+                         (tw - yc, z - tf), (b - yc, z - tf), (b - yc, z), (-yc, z)])
+    if typ == "L" and h > 0 and b > 0 and tw > 0:
+        yc = float(getattr(sec, "yc", 0.0) or b / 4)
+        zc = float(getattr(sec, "zc", 0.0) or h / 4)
+        t = tw
+        return np.array([(-yc, -zc), (b - yc, -zc), (b - yc, -zc + t), (t - yc, -zc + t),
+                         (t - yc, h - zc), (-yc, h - zc)])
+    if typ == "T" and h > 0 and b > 0 and tw > 0 and tf > 0:
+        zc = float(getattr(sec, "zc", 0.0) or h / 3)
+        y, s = b / 2, tw / 2
+        return np.array([(-s, -zc), (s, -zc), (s, h - zc - tf), (y, h - zc - tf),
+                         (y, h - zc), (-y, h - zc), (-y, h - zc - tf), (-s, h - zc - tf)])
+    if typ in ("CHS", "circle") and h > 0:
+        t = np.linspace(0, 2 * np.pi, 24, endpoint=False)
+        return np.column_stack([h / 2 * np.cos(t), h / 2 * np.sin(t)])
+    if typ in ("RHS", "rect") and h > 0 and b > 0:
+        y, z = b / 2, h / 2
+        return np.array([(-y, -z), (y, -z), (y, z), (-y, z)])
+    # Unbekannt: ein Quadrat mit der Flaeche des Querschnitts - besser als
+    # nichts, und ehrlich, weil es keine Form vortaeuscht, die niemand kennt.
+    A = float(getattr(sec, "A", 0.0) or 0.0)
+    a = np.sqrt(max(A, 1e-8)) / 2
+    if h > 0 and b > 0:
+        a_y, a_z = b / 2, h / 2
+    else:
+        a_y = a_z = a
+    return np.array([(-a_y, -a_z), (a_y, -a_z), (a_y, a_z), (-a_y, a_z)])
+
+
+def stab_koerper(model: Model, elems, u=None, faktor: float = 0.0) -> "pv.PolyData | None":
+    """Stabelemente als Koerper: die Querschnittskontur ueber die Stablaenge.
+
+    Bei Voll- und Transparentdarstellung ist ein Stab mehr als eine Linie -
+    man soll sehen, welches Profil dort liegt und wie es gedreht ist (Rollwinkel
+    des Elements). Jede Elementseite traegt in ``cell_data["elem"]`` ihre
+    Elementnummer und jeder Punkt in ``point_data["knoten"]`` den Knoten des
+    Stabendes, zu dem er gehoert - damit lassen sich Ergebnisfarben genauso
+    auflegen wie auf das Netz. ``u`` und ``faktor`` verschieben die Stabenden
+    mit der (ueberhoehten) Verformung.
+    """
+    pts: list = []
+    faces: list = []
+    elem_of_face: list = []
+    knoten_of_pt: list = []
+    for i in elems:
+        e = model.elements[int(i)]
+        if e.typ not in TYPEN_STAEBE or len(e.nodes) < 2:
+            continue
+        sec = model.sections.get(e.sec) if e.sec else None
+        if sec is None:
+            continue
+        n0, n1 = int(e.nodes[0]), int(e.nodes[-1])
+        X0 = np.asarray(model.nodes[n0], float)
+        X1 = np.asarray(model.nodes[n1], float)
+        try:
+            T3, L = bm.local_axes(X0, X1, getattr(e, "roll", 0.0) or 0.0)
+        except ValueError:
+            continue
+        if u is not None and faktor:
+            X0 = X0 + faktor * np.asarray(u[n0, :3], float)
+            X1 = X1 + faktor * np.asarray(u[n1, :3], float)
+        ring = querschnitt_umriss(sec)
+        k = len(ring)
+        if k < 3:
+            continue
+        ey, ez = T3[1], T3[2]
+        basis = len(pts)
+        for X, nd in ((X0, n0), (X1, n1)):
+            for y, z in ring:
+                pts.append(X + y * ey + z * ez)
+                knoten_of_pt.append(nd)
+        # Mantel: je Kante ein Viereck
+        for j in range(k):
+            a, b = basis + j, basis + (j + 1) % k
+            faces.extend([4, a, b, b + k, a + k])
+            elem_of_face.append(int(i))
+        # Stirnseiten
+        faces.append(k)
+        faces.extend(range(basis, basis + k))
+        elem_of_face.append(int(i))
+        faces.append(k)
+        faces.extend(range(basis + k, basis + 2 * k))
+        elem_of_face.append(int(i))
+    if not pts:
+        return None
+    pd = pv.PolyData(np.asarray(pts, float), faces=np.asarray(faces))
+    pd.cell_data["elem"] = np.asarray(elem_of_face, int)
+    pd.point_data["knoten"] = np.asarray(knoten_of_pt, int)
+    return pd
 
 
 def util_colors(values: np.ndarray):
@@ -676,6 +967,40 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         eh, f = SG_EINHEIT[q]
         zeilen.append(zeile(q, f"{lo / f:.3f}", _stabname(model, e_lo, 10),
                             f"{hi / f:.3f}", _stabname(model, e_hi, 10), eh))
+    # Verdrehungen - nur wo es Staebe oder Schalen gibt, sonst sind sie null
+    if u is not None and len(u) and u.shape[1] >= 6 and np.abs(u[:, 3:6]).max() > 0:
+        for j, nm in enumerate(("phix", "phiy", "phiz")):
+            zeilen.append(zeile(nm, f"{u[:, 3 + j].min() * 1000:.3f}", "",
+                                f"{u[:, 3 + j].max() * 1000:.3f}", "", "mrad"))
+    # Auflagerkraefte: kleinste und groesste je Richtung mit Knoten
+    R = getattr(res, "reactions", None)
+    if R is None and getattr(res, "r_min", None) is not None:
+        R = None
+        rmin, rmax = res.r_min, res.r_max
+        for j, (nm, eh, f) in enumerate((("Rx", "kN", 1e3), ("Ry", "kN", 1e3),
+                                          ("Rz", "kN", 1e3), ("Mx", "kNm", 1e3),
+                                          ("My", "kNm", 1e3), ("Mz", "kNm", 1e3))):
+            if not np.any(rmin[:, j]) and not np.any(rmax[:, j]):
+                continue
+            a, b = int(np.argmin(rmin[:, j])), int(np.argmax(rmax[:, j]))
+            zeilen.append(zeile(nm, f"{rmin[a, j] / f:.2f}", f"Knoten {a}",
+                                f"{rmax[b, j] / f:.2f}", f"Knoten {b}", eh))
+    elif R is not None and len(R):
+        for j, (nm, eh, f) in enumerate((("Rx", "kN", 1e3), ("Ry", "kN", 1e3),
+                                          ("Rz", "kN", 1e3), ("Mx", "kNm", 1e3),
+                                          ("My", "kNm", 1e3), ("Mz", "kNm", 1e3))):
+            if j >= R.shape[1] or not np.any(R[:, j]):
+                continue
+            a, b = int(np.argmin(R[:, j])), int(np.argmax(R[:, j]))
+            zeilen.append(zeile(nm, f"{R[a, j] / f:.2f}", f"Knoten {a}",
+                                f"{R[b, j] / f:.2f}", f"Knoten {b}", eh))
+    vm = getattr(res, "node_vm_max", None)
+    if vm is None:
+        vm = getattr(res, "node_vm", None)
+    if vm is not None and len(vm) and np.isfinite(vm).any():
+        k = int(np.nanargmax(vm))
+        zeilen.append(zeile("sig_v", "", "", f"{float(vm[k]) / 1e6:.1f}",
+                            f"Knoten {k}", "N/mm²"))
     werte = dict(util or {})
     if not werte:
         for i, d in (getattr(res, "beam_forces", None) or {}).items():
@@ -684,12 +1009,48 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
     if werte:
         i = max(werte, key=lambda k: werte[k])
         zeilen.append(f"max. Ausnutzung {werte[i]:.3f} an {_stabname(model, i)}"
-                      + ("  – überschritten!" if werte[i] > 1.0 else ""))
-    vm = getattr(res, "node_vm_max", None)
-    if vm is None:
-        vm = getattr(res, "node_vm", None)
-    if vm is not None and len(vm) and np.isfinite(vm).any():
-        k = int(np.nanargmax(vm))
-        zeilen.append(zeile("sig_v", "", "", f"{float(vm[k]) / 1e6:.1f}",
-                            f"Knoten {k}", "N/mm²"))
+                      + ("  - ueberschritten!" if werte[i] > 1.0 else ""))
+    return zeilen
+
+
+def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
+              verlauf: str = "", faktor: float = 0.0, lastfall: str = "") -> list:
+    """Was die Ansicht gerade zeigt - fuer die Ecke oben links.
+
+    Ohne Ergebnis: das Modell und der aktive Lastfall mit seinen Lasten. Mit
+    Ergebnis: der Lastfall, die Kombination oder die Umhuellende, danach die
+    Faerbung, der Schnittgroessenverlauf und die Ueberhoehung. Ein Bild ohne
+    diese Zeile ist im Statikdokument nicht pruefbar.
+    """
+    zeilen = []
+    if res is None:
+        lc = None
+        try:
+            lc = model.case(lastfall) if lastfall else model.case()
+        except Exception:                   # noqa: BLE001
+            lc = None
+        if lc is not None:
+            n = getattr(lc, "n_loads", 0)
+            zeilen.append(f"Lastfall {lc.name}" + (f" ({n} Lasten)" if n else ""))
+        else:
+            zeilen.append(model.name or "Modell")
+        return zeilen
+    name = ergebnisname or getattr(res, "name", "") or "Ergebnis"
+    if name.startswith("Kombination "):
+        kurz = name.split(":")[0]
+        formel = name[len(kurz) + 1:].strip()
+        zeilen.append(kurz)
+        if formel:
+            zeilen.append("  " + formel)
+    else:
+        zeilen.append(name)
+    teile = []
+    if faerbung and not faerbung.startswith("keine"):
+        teile.append(f"Färbung {faerbung}")
+    if verlauf and verlauf in SCHNITTGROESSEN:
+        teile.append(f"Verlauf {verlauf}")
+    if faktor:
+        teile.append(f"Überhöhung x{faktor:.1f}")
+    if teile:
+        zeilen.append("  " + " · ".join(teile))
     return zeilen
