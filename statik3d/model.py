@@ -821,6 +821,9 @@ class Geometrielast:
         if self.verlauf and self.verlauf.get("art") == "wasser":
             from .wasserdruck import druck_aus_verlauf
             return druck_aus_verlauf(self.verlauf, punkt)
+        if self.verlauf and self.verlauf.get("art") == "wind":
+            from .wind import druck_aus_verlauf as wind_druck
+            return wind_druck(self.verlauf, punkt)
         if not self.verlauf or self.verlauf.get("art") != "linear":
             return float(self.p)
         P = np.asarray(self.verlauf.get("punkte") or [], float).reshape(-1, 4)
@@ -850,6 +853,8 @@ class Geometrielast:
         elif self.verlauf and self.verlauf.get("art") == "wasser":
             t = (f"{self.ziel}: Wasserdruck {self.verlauf.get('name', '')}"
                  + (" (Schwankung)" if self.verlauf.get("dyn") else ""))
+        elif self.verlauf and self.verlauf.get("art") == "wind":
+            t = f"{self.ziel}: Wind {self.verlauf.get('name', '')} ({self.verlauf.get('rolle', '')})"
         else:
             t = f"{self.ziel}: {self.p / 1e3:.3g} kN/m²"
             if self.verlauf:
@@ -2047,8 +2052,9 @@ class Model:
         self.subsysteme: dict[str, Subsystem] = {}
         self.situationen: dict[str, Situation] = {}
         self.stellungen: list = []
-        # Lastgenerierer (wasserdruck.Wasserdruck), nach Name
+        # Lastgenerierer (wasserdruck.Wasserdruck, wind.Wind), nach Name
         self.wasserdruecke: dict = {}
+        self.winde: dict = {}
         # Metadaten (Bericht)
         self.meta: dict[str, str] = {"projekt": "", "bauteil": "", "bearbeiter": "",
                                      "auftraggeber": "", "position": ""}
@@ -3543,6 +3549,7 @@ class Model:
             "stellungen": [asdict(s) if hasattr(s, "__dataclass_fields__") else dict(s)
                            for s in self.stellungen],
             "wasserdruecke": [asdict(x) for x in self.wasserdruecke.values()],
+            "winde": [asdict(x) for x in self.winde.values()],
         }
 
     def save(self, path: str):
@@ -3613,6 +3620,9 @@ class Model:
         if d.get("wasserdruecke"):
             from .wasserdruck import Wasserdruck
             m.wasserdruecke = {x["name"]: _dc(Wasserdruck, x) for x in d["wasserdruecke"]}
+        if d.get("winde"):
+            from .wind import Wind
+            m.winde = {x["name"]: _dc(Wind, x) for x in d["winde"]}
         if d.get("stellungen"):
             from .bridges.positions import Stellung
             m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]

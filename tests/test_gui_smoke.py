@@ -2203,6 +2203,85 @@ def main():
         app.processEvents()
         check("Rückgängig holt den Generierer zurück", "W1" in w.model.wasserdruecke)
 
+        # ---- Lastgenerierer Wind ----
+        w.new_model()
+        m_ = w.model
+        m_.add_material(Material("S"))
+        m_.add_shell_prop(ShP("t", 0.01))
+        bq, dq, hq, nq = 8.0, 5.0, 6.0, 4
+
+        def quaderflaeche(name, ecken, aussen):
+            P0, P1, _P2, P3 = map(lambda a: np.asarray(a, float), ecken)
+            u_, v_ = P1 - P0, P3 - P0
+            if float(np.cross(u_, v_) @ np.asarray(aussen, float)) < 0:
+                u_, v_ = v_, u_
+            ids2 = [[m_.add_node(*(P0 + u_ * i / nq + v_ * k / nq)) for k in range(nq + 1)] for i in range(nq + 1)]
+            el2 = [m_.add_element("shell4", [ids2[i][k], ids2[i + 1][k], ids2[i + 1][k + 1], ids2[i][k + 1]], "S", "t")
+                   for i in range(nq) for k in range(nq)]
+            m_.flaechen[name] = Fl(name, dicke="t", material="S", elemente=el2)
+        quaderflaeche("Luv", [(0, 0, 0), (0, bq, 0), (0, bq, hq), (0, 0, hq)], (-1, 0, 0))
+        quaderflaeche("Lee", [(dq, 0, 0), (dq, bq, 0), (dq, bq, hq), (dq, 0, hq)], (1, 0, 0))
+        quaderflaeche("Seite1", [(0, 0, 0), (dq, 0, 0), (dq, 0, hq), (0, 0, hq)], (0, -1, 0))
+        quaderflaeche("Seite2", [(0, bq, 0), (dq, bq, 0), (dq, bq, hq), (0, bq, hq)], (0, 1, 0))
+        quaderflaeche("Dach", [(0, 0, hq), (dq, 0, hq), (dq, bq, hq), (0, bq, hq)], (0, 0, 1))
+        w.refresh_all()
+        app.processEvents()
+        check("Baum: „+ Wind anlegen“ unter Lastgenerierer", "+ Wind anlegen" in zweige(w.baum))
+        w.sel_flaechen = ["Luv", "Lee", "Seite1", "Seite2", "Dach"]
+        w._baum_geklickt("wind_neu", "+")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Wind-Maske mit den gewählten Flächen und den Knöpfen",
+              mk.titel == "Neu: Wind" and "Luv" in mk.werte()["ziele"] and "Dach" in mk.werte()["ziele"]
+              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kennwerte"}, str(mk.werte().get("ziele")))
+        mk.setzen("zone", "Zone 2 (v_b,0 = 25 m/s)")
+        mk.setzen("profil", "Binnenland")
+        mk.setzen("richtung", "+x")
+        mk.zusatzknoepfe["Kennwerte"].click()
+        app.processEvents()
+        kwt = mk.werte()["kennwerte"]
+        check("Kennwerte in der Maske: v_b = 25 m/s, q_b = ½·1,25·25² = 391 N/m², h/d = 1,2 → c_pe,D = +0,80",
+              "v_b = 25.0 m/s" in kwt and "q_b = 391 N/m²" in kwt and "c_pe,D = +0.80" in kwt, kwt)
+        mk.anwenden()
+        app.processEvents()
+        wd_ = m_.winde.get("Wind1")
+        lc_ = m_.load_cases.get(wd_.lastfall) if wd_ else None
+        check("„Lasten erzeugen“: Generierer, Lastfall W, fünf Objektlasten, Elementlasten auf allen Flächen",
+              wd_ is not None and lc_ is not None and lc_.category == "W"
+              and sum(1 for gl in lc_.geometrielasten if gl.verlauf.get("art") == "wind") == 5
+              and len(lc_.face_loads) == 5 * nq * nq and "Wind1" in zweige(w.baum),
+              str((wd_ and wd_.lastfall, lc_ and lc_.category, lc_ and len(lc_.face_loads))))
+        w._baum_geklickt("wind", "Wind1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Wind-Maske zum Bearbeiten vorbelegt",
+              mk.titel == "Wind Wind1" and mk.werte()["profil"] == "Binnenland" and mk.werte()["richtung"] == "+x",
+              str((mk.titel, mk.werte()["profil"], mk.werte()["richtung"])))
+        mk.setzen("richtung", "Winkel [°] von +x")
+        mk.setzen("winkel", 90.0)
+        mk.setzen("c_pi", -0.3)
+        mk.anwenden()
+        app.processEvents()
+        wd_ = m_.winde["Wind1"]
+        check("Ändern: Anströmung unter 90° (+y), Innendruck c_pi",
+              abs(wd_.richtung[1] - 1.0) < 1e-9 and abs(wd_.c_pi + 0.3) < 1e-12 and len(m_.winde) == 1,
+              str((wd_.richtung, wd_.c_pi)))
+        bl_ = Rep(m_, None).chapter_lastgenerierer()
+        check("Bericht: Wind mit Tabellen, Erläuterung (Basiswindgeschwindigkeit) und Skizze",
+              sum(1 for x in bl_ if x[0] == "table") >= 2 and any(x[0] == "figure" and "<svg" in x[1] for x in bl_)
+              and any(x[0] == "p" and "Basiswindgeschwindigkeit" in x[1] for x in bl_), str([x[0] for x in bl_]))
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("wind", "Wind1")
+        app.processEvents()
+        check("Löschen entfernt den Wind samt Lasten",
+              "Wind1" not in m_.winde
+              and not any(gl.verlauf.get("art") == "wind" for lc in m_.load_cases.values() for gl in lc.geometrielasten)
+              and not any(getattr(f, "_geo", False) for lc in m_.load_cases.values() for f in lc.face_loads))
+        del w._bestaetigen
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt den Wind zurück", "Wind1" in w.model.winde)
+
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
         w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))

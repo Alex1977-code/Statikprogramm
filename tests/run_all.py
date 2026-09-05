@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 SUITES = ["tests.test_verification", "tests.test_solver_ext", "tests.test_ec3",
-          "tests.test_importers", "tests.test_report", "tests.test_web", "tests.test_update", "tests.test_supports", "tests.test_sections", "tests.test_rfem", "tests.test_rfem6", "tests.test_hicad", "tests.test_joints", "tests.test_exporters", "tests.test_bridges", "tests.test_geometrie", "tests.test_tabellen", "tests.test_gzg", "tests.test_beulen", "tests.test_klasse4", "tests.test_theorie2", "tests.test_volumen", "tests.test_geometrie_kette", "tests.test_mesher3d", "tests.test_fugen", "tests.test_woelb", "tests.test_lasten", "tests.test_situationen", "tests.test_knicklaengen", "tests.test_theorie3", "tests.test_wasserdruck"]
+          "tests.test_importers", "tests.test_report", "tests.test_web", "tests.test_update", "tests.test_supports", "tests.test_sections", "tests.test_rfem", "tests.test_rfem6", "tests.test_hicad", "tests.test_joints", "tests.test_exporters", "tests.test_bridges", "tests.test_geometrie", "tests.test_tabellen", "tests.test_gzg", "tests.test_beulen", "tests.test_klasse4", "tests.test_theorie2", "tests.test_volumen", "tests.test_geometrie_kette", "tests.test_mesher3d", "tests.test_fugen", "tests.test_woelb", "tests.test_lasten", "tests.test_situationen", "tests.test_knicklaengen", "tests.test_theorie3", "tests.test_wasserdruck", "tests.test_wind"]
 
 
 def main(argv=None) -> int:

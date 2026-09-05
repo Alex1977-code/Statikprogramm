@@ -5,6 +5,7 @@ Start:  python -m statik3d.gui
 """
 from __future__ import annotations
 
+import math
 import os
 import sys
 import traceback
@@ -1591,6 +1592,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
                 "Dichtungslinie, überströmt, unterströmt, Absenkung des Wasserspiegels, "
                 "Druckschwankung - mit Kennwerten und Erläuterung", symbol="flaechenlast")
+        g.gross("Wind", "", lambda: self.maske_wind(), "",
+                "Wind nach DIN EN 1991-1-4: Windzone, Geländekategorie oder Mischprofil, "
+                "Anströmrichtung; Außendruck auf Wände und Dächer (Zonen), Kraftbeiwerte auf "
+                "Stäbe - mit Höhenprofil, Kennwerten und Erläuterung", symbol="lasten")
         g = r.gruppe("Weitere")
         g.klein("Eigengewicht", lambda: self.maske_zeigen("Lager/Lasten"),
                 hinweis="Eigengewicht im aktiven Lastfall ein- und ausschalten")
@@ -1977,7 +1982,7 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Zweige und Eintraege fuer Subsysteme und Situationen
     SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
                     "situationen", "situation", "situation_neu",
-                    "generierer", "wasserdruck", "wasserdruck_neu"}
+                    "generierer", "wasserdruck", "wasserdruck_neu", "wind", "wind_neu"}
 
     def _baum_geklickt(self, art: str, name: str):
         if art in self.SYSTEM_ARTEN:
@@ -2485,6 +2490,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.maske_wasserdruck()
         if art == "wasserdruck":
             return self.maske_wasserdruck(name)
+        if art == "wind_neu":
+            return self.maske_wind()
+        if art == "wind":
+            return self.maske_wind(name)
         if art == "subsystem_neu":
             return self.subsystem_neu()
         if art == "situation_neu":
@@ -2784,7 +2793,8 @@ class MainWindow(QtWidgets.QMainWindow):
                "geokoerper_einzeln": f"Volumen {name} samt seinen Elementen",
                "querschnitt": f"Querschnitt {name}",
                "subsystem": f"Subsystem {name}", "situation": f"Situation {name}",
-               "wasserdruck": f"Wasserdruck {name} samt seinen Lasten"}.get(art)
+               "wasserdruck": f"Wasserdruck {name} samt seinen Lasten",
+               "wind": f"Wind {name} samt seinen Lasten"}.get(art)
         if was is None:
             return
         if not self._bestaetigen(f"{was} wirklich löschen?"):
@@ -2817,6 +2827,19 @@ class MainWindow(QtWidgets.QMainWindow):
                                           if not (gl.verlauf.get("art") == "wasser"
                                                   and gl.verlauf.get("name") == name)]
                 del m.wasserdruecke[name]
+                m.lasten_verteilen()
+        elif art == "wind":
+            if name not in m.winde:
+                grund = f"Wind {name} gibt es nicht"
+            else:
+                self.merken(f"{was} gelöscht")
+                for lc in m.load_cases.values():
+                    lc.geometrielasten = [gl for gl in lc.geometrielasten
+                                          if not (gl.verlauf.get("art") == "wind"
+                                                  and gl.verlauf.get("name") == name)]
+                    lc.linienlasten = [ll for ll in lc.linienlasten
+                                       if not (ll.kommentar or "").startswith(f"Wind {name}:")]
+                del m.winde[name]
                 m.lasten_verteilen()
         elif art == "subsystem":
             if name == GESAMTSYSTEM or name not in m.subsysteme:
@@ -2853,7 +2876,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     del m.sections[name]
         if grund:
             return self.error(grund)
-        if art not in ("stabelement", "querschnitt", "subsystem", "situation", "wasserdruck"):
+        if art not in ("stabelement", "querschnitt", "subsystem", "situation", "wasserdruck", "wind"):
             self.merken(f"{was} gelöscht")
         self.analysis = None
         self.results = None
@@ -6774,6 +6797,178 @@ class MainWindow(QtWidgets.QMainWindow):
         maske.angewendet.connect(lambda w, alt=(None if neu else wd.name), vorlage=wd:
                                  self._wasserdruck_anlegen(w, vorlage, alt))
         return self.maske_erzeugen(maske)
+
+    # ---- Wind ----------------------------------------------------------------
+    WINDRICHTUNGEN = ["+x", "−x", "+y", "−y", "Winkel [°] von +x"]
+    WINDROLLEN = ["Gebäude (Wände und Dach nach der Normale)", "freistehende Wand", "Anzeigetafel"]
+
+    def maske_wind(self, name: str = None):
+        """Lastgenerierer Wind nach DIN EN 1991-1-4: neu oder vorhanden bearbeiten."""
+        from ..wind import Wind, WINDZONEN, GELAENDE, MISCHPROFILE
+        m = self.model
+        w = m.winde.get(name) if name else None
+        neu = w is None
+        if neu:
+            w = Wind(m.naechster_name("Wind", m.winde))
+            w.flaechen = list(self.sel_flaechen)
+            w.staebe = list(self.sel_staebe)
+        F = msk.Feld
+
+        def txt(v):
+            return "" if v is None else f"{v:g}"
+
+        r = np.asarray(w.richtung, float)
+        richtung, winkel = "Winkel [°] von +x", math.degrees(math.atan2(r[1], r[0]))
+        for text, vek in (("+x", (1, 0)), ("−x", (-1, 0)), ("+y", (0, 1)), ("−y", (0, -1))):
+            if np.allclose(r[:2] / (np.linalg.norm(r[:2]) or 1.0), vek):
+                richtung = text
+        zonen = [f"Zone {k} (v_b,0 = {v:g} m/s)" for k, v in WINDZONEN.items()] + ["v_b eingeben"]
+        zone = zonen[-1] if w.v_b is not None else zonen[int(w.zone) - 1]
+        profile = list(GELAENDE) + list(MISCHPROFILE)
+        rolle = self.WINDROLLEN[0]
+        if w.freie_waende and not w.flaechen:
+            rolle = self.WINDROLLEN[1]
+        elif w.schilder and not w.flaechen:
+            rolle = self.WINDROLLEN[2]
+        situationen = m.situationsnamen()
+        felder = [F("name", "Name", "text", w.name, breite=140),
+                  F("situation", "Situation", "wahl", w.situation or situationen[0], situationen),
+                  F("fall", "Lastfall", "text", w.lastfall or f"Wind {w.name}", breite=140),
+                  F("ziele", "Belastet", "info", self._wind_ziele_text(w)),
+                  F("rolle", "Flächen sind", "wahl", rolle, list(self.WINDROLLEN)),
+                  F("zone", "Windzone", "wahl", zone, zonen),
+                  F("v_b", "v_b [m/s]", "zahl", float(w.v_b if w.v_b is not None else WINDZONEN.get(int(w.zone), 25.0))),
+                  F("profil", "Geländekategorie / Profil", "wahl", w.profil if w.profil in profile else "II", profile),
+                  F("richtung", "Anströmung", "wahl", richtung, list(self.WINDRICHTUNGEN)),
+                  F("winkel", "Winkel [°] von +x", "zahl", float(winkel)),
+                  F("z_boden", "Geländeoberkante z [m]", "text", txt(w.z_boden), breite=78,
+                    hinweis="leer = Unterkante der gewählten Objekte"),
+                  F("c_dir", "c_dir", "zahl", float(w.c_dir)), F("c_season", "c_season", "zahl", float(w.c_season)),
+                  F("c_o", "c_o (Topographie)", "zahl", float(w.c_o)),
+                  F("c_pi", "Innendruck c_pi", "zahl", float(w.c_pi)),
+                  F("c_scd", "c_s·c_d", "zahl", float(w.c_scd)),
+                  F("fachwerk", "Stäbe als Fachwerk (φ)", "haken", bool(w.fachwerk)),
+                  F("phi", "Völligkeitsgrad φ", "zahl", float(w.phi)),
+                  F("k", "Rauigkeit k [mm] (Zylinder)", "zahl", float(w.k_rauigkeit * 1e3)),
+                  F("cf", "c_f Vorgabe (leer = Norm)", "text", txt(w.cf_vorgabe), breite=78),
+                  F("kennwerte", "Kennwerte", "info", "–")]
+        halter: dict = {}
+
+        def kennwerte_zeigen():
+            from .. import wind as wm
+            try:
+                w_ = self._wind_aus_maske(halter["m"].werte(), w)
+                kw = wm.kennwerte(w_, m)
+                text = f"v_b = {kw['v_b']:.1f} m/s, q_b = {kw['q_b']:.0f} N/m²"
+                if "h" in kw:
+                    text += (f"; h = {kw['h']:.1f} m: q_p = {kw['q_p_h']:.0f} N/m², v_m = {kw['v_m_h']:.1f} m/s, "
+                             f"I_v = {kw['I_v_h']:.2f}; c_pe,D = {kw['cpe_D']:+.2f}, c_pe,E = {kw['cpe_E']:+.2f}")
+                halter["m"].setzen("kennwerte", text)
+                for zeile in wm.erlaeuterung(w_, kw):
+                    self.log.appendPlainText("  " + zeile)
+            except Exception as ex:                # noqa: BLE001
+                halter["m"].setzen("kennwerte", str(ex))
+
+        def auswahl_lesen():
+            rolle_ = str(halter["m"].werte().get("rolle", ""))
+            if rolle_ == self.WINDROLLEN[1]:
+                w.freie_waende, w.flaechen, w.schilder = list(self.sel_flaechen), [], []
+            elif rolle_ == self.WINDROLLEN[2]:
+                w.schilder, w.flaechen, w.freie_waende = list(self.sel_flaechen), [], []
+            else:
+                w.flaechen, w.freie_waende, w.schilder = list(self.sel_flaechen), [], []
+            w.staebe = list(self.sel_staebe)
+            halter["m"].setzen("ziele", self._wind_ziele_text(w))
+
+        maske = msk.Maske("Neu: Wind" if neu else f"Wind {w.name}", felder, knopf="Lasten erzeugen",
+                          hinweis="Wände und Dach (Auswahlart Fläche) und Stäbe (Auswahlart Stab) in der "
+                                  "Ansicht wählen, „Auswahl übernehmen“, Zone, Profil und Anströmung "
+                                  "einstellen. Wände und Dächer bekommen den Außendruck ihrer Zone "
+                                  "(Tab. 7.1/7.2), Stäbe die Kraftbeiwerte ihres Querschnitts; alles "
+                                  "folgt dem Höhenprofil q_p(z). Kennwerte und Erläuterung stehen im "
+                                  "Protokoll und im Bericht (Höhenprofil und Zonenskizze).",
+                          zusatz=[("Auswahl übernehmen", auswahl_lesen), ("Kennwerte", kennwerte_zeigen)])
+        halter["m"] = maske
+        maske.angewendet.connect(lambda ww, alt=(None if neu else w.name), vorlage=w:
+                                 self._wind_anlegen(ww, vorlage, alt))
+        return self.maske_erzeugen(maske)
+
+    @staticmethod
+    def _wind_ziele_text(w) -> str:
+        teile = []
+        if w.flaechen:
+            teile.append("Gebäude: " + ", ".join(w.flaechen[:6]) + (" …" if len(w.flaechen) > 6 else ""))
+        if w.freie_waende:
+            teile.append("freie Wände: " + ", ".join(w.freie_waende[:6]))
+        if w.schilder:
+            teile.append("Schilder: " + ", ".join(w.schilder[:6]))
+        if w.staebe:
+            teile.append("Stäbe: " + ", ".join(w.staebe[:6]) + (" …" if len(w.staebe) > 6 else ""))
+        return " · ".join(teile) or "nichts gewählt - Flächen/Stäbe anklicken, dann „Auswahl übernehmen“"
+
+    def _wind_aus_maske(self, w: dict, vorlage):
+        from dataclasses import replace
+        from ..wind import WINDZONEN
+
+        def zahl(key, vorgabe=None):
+            t = str(w.get(key, "")).strip().replace(",", ".")
+            return vorgabe if not t else float(t)
+
+        zone_text = str(w.get("zone", ""))
+        zone = 2
+        for k in WINDZONEN:
+            if zone_text.startswith(f"Zone {k}"):
+                zone = k
+        v_b = float(w.get("v_b", 25.0) or 25.0) if zone_text == "v_b eingeben" else None
+        richtung = str(w.get("richtung", "+x"))
+        vek = {"+x": [1.0, 0.0, 0.0], "−x": [-1.0, 0.0, 0.0], "+y": [0.0, 1.0, 0.0], "−y": [0.0, -1.0, 0.0]}.get(richtung)
+        if vek is None:
+            a = math.radians(float(w.get("winkel", 0.0) or 0.0))
+            vek = [math.cos(a), math.sin(a), 0.0]
+        situation = str(w.get("situation", ""))
+        return replace(vorlage, name=str(w.get("name", "")).strip() or vorlage.name,
+                       situation="" if situation == GRUNDSTELLUNG else situation,
+                       lastfall=str(w.get("fall", "")).strip(), zone=zone, v_b=v_b,
+                       c_dir=float(w.get("c_dir", 1.0) or 1.0), c_season=float(w.get("c_season", 1.0) or 1.0),
+                       profil=str(w.get("profil", "II")), c_o=float(w.get("c_o", 1.0) or 1.0),
+                       richtung=vek, z_boden=zahl("z_boden"), c_pi=float(w.get("c_pi", 0.0) or 0.0),
+                       c_scd=float(w.get("c_scd", 1.0) or 1.0), fachwerk=bool(w.get("fachwerk")),
+                       phi=float(w.get("phi", 1.0) or 1.0), k_rauigkeit=float(w.get("k", 0.2) or 0.2) * 1e-3,
+                       cf_vorgabe=zahl("cf"))
+
+    def _wind_anlegen(self, w: dict, vorlage, alt: str = None):
+        from .. import wind as wm
+        m = self.model
+        try:
+            wd = self._wind_aus_maske(w, vorlage)
+        except ValueError as ex:
+            return self.error(f"Eingabe: {ex}")
+        if not (wd.flaechen or wd.freie_waende or wd.schilder or wd.staebe):
+            return self.error("Zuerst Wände/Dach oder Stäbe in der Ansicht wählen und „Auswahl übernehmen“")
+        if wd.name != alt and wd.name in m.winde:
+            return self.error(f"Wind „{wd.name}“ gibt es schon")
+        self.merken(f"Wind {wd.name}")
+        if alt and alt != wd.name and alt in m.winde:
+            for lc in m.load_cases.values():
+                lc.geometrielasten = [gl for gl in lc.geometrielasten
+                                      if not (gl.verlauf.get("art") == "wind" and gl.verlauf.get("name") == alt)]
+                lc.linienlasten = [ll for ll in lc.linienlasten if not (ll.kommentar or "").startswith(f"Wind {alt}:")]
+            del m.winde[alt]
+        try:
+            kw = wm.lasten_erzeugen(m, wd)
+        except (ValueError, KeyError) as ex:
+            self._undo.pop()
+            return self.error(ex)
+        self.analysis = None
+        self.results = None
+        self.info(f"Wind {wd.name}: {kw['objektlasten']} Flächen, {len(kw['staebe'])} Stäbe, "
+                  f"{kw['elementlasten']} Elementlasten in {kw['lastfall']}; q_p(h) = {kw.get('q_p_h', 0):.0f} N/m², "
+                  f"Kontrollsumme Flächen {kw['kontrolle']['betrag'] / 1e3:.1f} kN, Stäbe {kw['kontrolle']['F_staebe'] / 1e3:.1f} kN")
+        for zeile in wm.erlaeuterung(wd, kw):
+            self.log.appendPlainText("  " + zeile)
+        self.refresh_all()
+        self.tabelle_zeigen("Lasten")
+        return wd
 
     @staticmethod
     def _wasser_ziele_text(wd) -> str:

@@ -178,6 +178,28 @@ Druck ist die Resultierende je Element damit exakt). `tests/test_wasserdruck.py`
 prüft Druckverlauf, Kennwerte (Rechteckschütz, Netto mit Unterwasser, Poleni,
 Torricelli) und die Summe der Elementlasten auf einem Netz.
 
+### 2.2 Wind nach DIN EN 1991-1-4 (`wind.py`)
+
+Strömung: v_b = c_dir·c_season·v_b,0; k_r = 0,19·(z_0/0,05)^0,07,
+c_r(z) = k_r·ln(z/z_0) für z_min ≤ z ≤ 200 m; v_m = c_r·c_o·v_b;
+I_v = k_I/(c_o·ln(z/z_0)); q_p = (1 + 7·I_v)·½·ρ·v_m² mit ρ = 1,25 kg/m³.
+Mischprofile des NA (Tab. NA.B.2) als Vielfache von q_b = ½·ρ·v_b².
+
+Beiwerte: Wände Tab. 7.1 (D: 0,7 … 0,8 und E: −0,3 … −0,7 über h/d
+interpoliert; A/B/C = −1,2/−0,8/−0,5 in Bändern e/5, e ab der Luvkante mit
+e = min(b, 2h)), Flachdach Tab. 7.2 (F/G/H/I = −1,8/−1,2/−0,7/−0,2 nach
+Bild 7.6), freistehende Wand Tab. 7.9 (A–D ab dem freien Ende), Anzeigetafel
+c_f = 1,8; Stäbe: Rechteck Bild 7.23 (log-linear über d/b) mit ψ_r,
+Kreiszylinder Gl. 7.19 (c_f,0 = 1,2 + 0,18·lg(10k/b)/(1 + 0,4·lg(Re/10⁶)),
+mindestens 0,4; unterkritisch 1,2), scharfkantige Profile 2,0, Fachwerk
+Bild 7.33/7.34 über φ; ψ_λ nach Bild 7.36 mit λ nach Tab. 7.16. Die Rolle
+einer Fläche (Luv, Lee, Seite, Dach) folgt aus ihrer mittleren Normale gegen
+die Anströmung; der Druck je Elementseite ist c·q_p(z) am Schwerpunkt,
+positiv gegen die Außennormale. `tests/test_wind.py` prüft die Formeln mit
+Zahlenwerten der Norm und die Summen der Elementlasten an einem Quader
+(Luvdruck + Leesog, Dachsog nach Zonen, Innendruck) sowie die Stablasten
+eines Rohrmasts.
+
 ## 3 Lastfälle, Kombinationen, Umhüllende
 
 Jeder Lastfall trägt eine Einwirkungskategorie (DIN EN 1990/NA Tabelle

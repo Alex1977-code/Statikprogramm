@@ -120,6 +120,11 @@ Punkte:
   dorthin wäre ein Stabelement mit sieben Freiheitsgraden.
 * **Wölbordinaten nur für I und U** – für andere offene Querschnitte wird der
   Momentenanteil ausgewiesen, aber keine Wölbspannung; sie würde geraten.
+* **Wind**: Dächer werden als Flachdach mit scharfen Traufen behandelt
+  (Sattel-, Pult- und Walmdächer, Tab. 7.3 ff., fehlen); die Kurven der
+  Bilder 7.23, 7.28, 7.33 und 7.36 sind stückweise log-linear
+  nachgezeichnet; Seitenwand- und Dachzonen setzen ein rechteckiges
+  Gebäude voraus (Hüllquader der gewählten Flächen).
 * **Wasserdruck**: die Druckminderung durch die Absenkung des Wasserspiegels
   (Überfall: ⅓·ρ·g·h_ü über 2·h_ü; Ausfluss: über 2·a) ist eine Näherung
   nach Naudascher; für Segmentverschlüsse mit gekrümmter Haut wirkt der

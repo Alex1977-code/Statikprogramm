@@ -387,13 +387,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "geokoerper": "Volumen"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
-                    "geokoerper_einzeln", "subsystem", "situation", "wasserdruck"}
+                    "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
                  "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte",
                  "subsystem": "subsysteme", "situation": "situationen",
-                 "wasserdruck": "generierer"}
+                 "wasserdruck": "generierer", "wind": "generierer"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -691,12 +691,17 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
         # ---- Lastgenerierer -------------------------------------------------
         wds = getattr(model, "wasserdruecke", {}) or {}
-        lg = self._zweig(ew, "Lastgenerierer", len(wds), "generierer",
-                         fett=bool(wds), farbe=FARBEN["akzent"] if wds else None,
-                         hinweis="Wasserdruck (statisch, überströmt, unterströmt) je Situation")
+        winde = getattr(model, "winde", {}) or {}
+        lg = self._zweig(ew, "Lastgenerierer", len(wds) + len(winde), "generierer",
+                         fett=bool(wds or winde), farbe=FARBEN["akzent"] if (wds or winde) else None,
+                         hinweis="Wasserdruck (statisch, überströmt, unterströmt) und Wind "
+                                 "(DIN EN 1991-1-4) je Situation")
         self._liste(lg, [(name, x.bezug(), name, f"Wasserdruck {name}: {x.bezug()}")
                          for name, x in wds.items()], "wasserdruck", "generierer")
+        self._liste(lg, [(name, x.bezug(), name, f"Wind {name}: {x.bezug()}")
+                         for name, x in winde.items()], "wind", "generierer")
         self._zweig(lg, "+ Wasserdruck anlegen", "", "wasserdruck_neu", farbe=FARBEN["akzent"])
+        self._zweig(lg, "+ Wind anlegen", "", "wind_neu", farbe=FARBEN["akzent"])
 
         # ---- Ergebnisse -------------------------------------------------
         # Ergebnisse gehoeren in denselben Baum wie das Modell: was gerechnet

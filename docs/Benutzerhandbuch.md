@@ -784,6 +784,29 @@ Wasserstände, Druckfigur, Überfall bzw. Ausflussstrahl und Resultierende.
 Ein Generierer lässt sich im Modellbaum anklicken (ändern, erneut erzeugen)
 und mit Entf samt seinen Lasten löschen.
 
+### Lastgenerierer Wind (DIN EN 1991-1-4)
+
+*Lasten → Generierer → Wind* (oder Modellbaum → Lastgenerierer → „+ Wind
+anlegen“). Wände und Dach (Auswahlart Fläche) und Stäbe (Auswahlart Stab)
+in der Ansicht wählen, „Auswahl übernehmen“, dann:
+
+| Angabe | Bedeutung |
+|---|---|
+| Windzone / v_b | v_b,0 der Zone 1–4 (22,5 / 25 / 27,5 / 30 m/s) oder v_b unmittelbar; c_dir, c_season |
+| Geländekategorie / Profil | 0, I, II, III, IV nach Tab. 4.1 (c_r, v_m, I_v, q_p = (1 + 7·I_v)·½·ρ·v_m²) oder die Mischprofile des NA (Binnenland, Küste, Inseln der Nordsee) |
+| Anströmung | ±x, ±y oder ein Winkel von +x; Geländeoberkante (leer = Unterkante der Objekte) |
+| Flächen sind | Gebäude (Wände und Dach nach ihrer Normale: Luv D, Lee E, Seiten A/B/C, Flachdach F/G/H/I), freistehende Wand (Tab. 7.9) oder Anzeigetafel (c_f = 1,8) |
+| Stäbe | Kraftbeiwert aus dem Querschnitt: Rechteck (Bild 7.23), scharfkantige Profile (2,0), Kreiszylinder (Reynoldszahl, Rauigkeit k), Fachwerk (Völligkeitsgrad φ); Schlankheitsabminderung ψ_λ; oder c_f vorgeben |
+| c_pi, c_s·c_d | Innendruck (wird von allen Zonen abgezogen), Strukturbeiwert |
+
+**Lasten erzeugen** schreibt Objektlasten an die Flächen (Verlauf „Wind“:
+q_p in der Höhe des Elements mal dem Beiwert seiner Zone) und trapezförmige
+Streckenlasten auf die Stäbe (w = c_f·q_p(z)·b_ref) in einen Lastfall der
+Kategorie W. Protokoll und Bericht nennen v_b, q_b, das Höhenprofil (v_m,
+I_v, q_p), die Beiwerte je Zone und Stab (mit Re, λ, ψ_λ), Resultierende
+und Kontrollsummen; der Bericht zeichnet **Höhenprofil und Grundriss** mit
+Anströmung und Zonen.
+
 ## 5 Lager: Ausfall, Schlupf, Reibung
 
 Jedes Lager wirkt je Freiheitsgrad **starr**, als **Feder** oder ist **frei**;

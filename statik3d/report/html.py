@@ -1188,9 +1188,11 @@ class Report:
         """Lastgenerierer: Wasserdruck mit Kennwerten, Erlaeuterung und Skizze."""
         m = self.model
         wds = getattr(m, "wasserdruecke", {}) or {}
-        if not wds:
+        winde = getattr(m, "winde", {}) or {}
+        if not wds and not winde:
             return []
         from .. import wasserdruck as wdm
+        from .. import wind as wm
         b = [self._h(1, "Lastgenerierer")]
         b.append(("p", "Die Lasten dieser Generierer hängen als Objektlasten an den benetzten "
                        "Flächen und werden beim Vernetzen auf die Elemente gelegt. Wasserdruck: "
@@ -1235,6 +1237,45 @@ class Report:
             if self.opt("figures"):
                 b.append(self._figure(wdm.skizze_svg(wd, kw),
                                       f"Wasserdruck {name}: Wasserstände, Druckfigur, Strömung und Resultierende"))
+        for name, w in winde.items():
+            b.append(self._h(2, f"Wind {name} (DIN EN 1991-1-4)"))
+            try:
+                kw = wm.kennwerte(w, m)
+            except Exception as ex:                # noqa: BLE001
+                b.append(("p", f"Kennwerte nicht berechenbar: {ex}"))
+                continue
+            rows = [["Angabe", "Wert"],
+                    ["Situation / Lastfall", f"{w.situation or 'Grundstellung'} / {w.lastfall or '–'}"],
+                    ["Windzone / v_b", (f"Zone {w.zone}" if w.v_b is None else "Vorgabe")
+                     + f", v_b = {kw['v_b']:.1f} m/s (c_dir = {w.c_dir:g}, c_season = {w.c_season:g})"],
+                    ["Profil", f"{w.profil}, c_o = {w.c_o:g}"],
+                    ["Anströmung", f"({w.richtung[0]:g}, {w.richtung[1]:g})"],
+                    ["Wände / Dach", ", ".join(w.flaechen) or "–"],
+                    ["Freistehende Wände / Schilder", ", ".join(w.freie_waende + w.schilder) or "–"],
+                    ["Stäbe", ", ".join(w.staebe) or "–"],
+                    ["Innendruck c_pi / c_s·c_d", f"{w.c_pi:+g} / {w.c_scd:g}"]]
+            if "h" in kw:
+                rows.append(["Gebäude", f"h = {kw['h']:.2f} m, b = {kw['b']:.2f} m, d = {kw['d']:.2f} m, "
+                                        f"e = {kw['e']:.2f} m, h/d = {kw['h_d']:.2f}"])
+                rows.append(["c_pe Luv / Lee", f"{kw['cpe_D']:+.2f} / {kw['cpe_E']:+.2f}"])
+            b.append(("table", rows, f"Wind {name}: Angaben", None, "compact"))
+            prof = [["z [m]", "v_m [m/s]", "I_v", "q_p [N/m²]"]]
+            for z, vm_, iv, qp in kw["profil_tabelle"]:
+                prof.append([fmt(z, 1), fmt(vm_, 1), fmt(iv, 3), fmt(qp, 0)])
+            b.append(("table", prof, f"Wind {name}: Höhenprofil", None, "compact"))
+            if kw.get("staebe"):
+                st = [["Stab", "Querschnitt", "b_ref [m]", "L [m]", "λ", "ψ_λ", "Re", "c_f,0", "c_f",
+                       "w unten [N/m]", "w oben [N/m]", "F [kN]"]]
+                for sb in kw["staebe"]:
+                    st.append([sb["stab"], sb["typ"], fmt(sb["b_ref"], 3), fmt(sb["L"], 2), fmt(sb["lambda"], 1),
+                               fmt(sb["psi"], 2), f"{sb['Re']:.2e}", fmt(sb["cf0"], 2), fmt(sb["cf"], 2),
+                               fmt(sb["w1"], 1), fmt(sb["w2"], 1), fmt(sb["F"] / 1e3, 2)])
+                b.append(("table", st, f"Wind {name}: Kraftbeiwerte und Streckenlasten der Stäbe", None, "compact"))
+            for zeile in wm.erlaeuterung(w, kw):
+                b.append(("p", zeile))
+            if self.opt("figures"):
+                b.append(self._figure(wm.skizze_svg(w, kw),
+                                      f"Wind {name}: Höhenprofil q_p(z) und Grundriss mit Anströmung und Zonen"))
         return b
 
     def chapter_theorie3(self) -> list:
