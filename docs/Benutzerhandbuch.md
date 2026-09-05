@@ -1296,6 +1296,17 @@ Nachweis mit seiner Verformung je Kombination.
   Schlüssel (siehe `Rechnerfarm.md`). „Lokalen Server + Worker starten“
   macht den eigenen Rechner zum Farm-Server.
 * Die Berechnung läuft im Hintergrund; Fortschritt im Protokoll.
+* **Vor dem Rechnen** prüft das Programm die Rechenbarkeit. Flächen und
+  Volumen **ohne Netz** tragen nichts (nach einem Import aus RFEM oder
+  HiCAD besteht das Modell oft nur aus Geometrie und ein paar Stäben): es
+  fragt, ob jetzt mit den Netzeinstellungen vernetzt werden soll, und
+  rechnet danach. **Teiltragwerke ohne Lager** (das Netz zerfällt in Teile,
+  von denen eines weder ein Lager noch eine Kopplung an ein gelagertes Teil
+  hat) machen das Gleichungssystem singulär; die Modellprüfung nennt sie mit
+  Knotennummern, statt dass der Solver mit „Factor is exactly singular“
+  abbricht. Teile, die nur ein einseitiges Lager oder ein Kontaktpaar hält,
+  sind ein Hinweis, kein Fehler - ob sie tragen, entscheidet die
+  Kontakt-Iteration.
 
 ## 10 Ergebnisse und Bericht
 

@@ -8342,7 +8342,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(tb)
         self.error(msg)
 
+    def _fragen(self, titel: str, text: str) -> bool:
+        """Ja/Nein-Rueckfrage - die Tests ueberschreiben sie."""
+        antwort = QtWidgets.QMessageBox.question(
+            self, titel, text,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.Yes)
+        return antwort == QtWidgets.QMessageBox.Yes
+
+    def _vor_rechnung_vernetzen(self) -> bool:
+        """Flaechen und Volumen ohne Netz tragen nichts: vor dem Rechnen
+        vernetzen (nach Rueckfrage). False, wenn der Anwender abbricht."""
+        from ..diagnose import diagnose
+        d = diagnose(self.model)
+        nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
+        if not nf and not nk:
+            return True
+        was = " und ".join(x for x in (f"{nf} Flächen" if nf else "", f"{nk} Volumen" if nk else "") if x)
+        if not self._fragen("Vernetzen", f"{was} haben noch kein Netz - Geometrie ohne Elemente trägt "
+                                         "nichts, und die Lasten darauf gehen verloren.\n\n"
+                                         "Jetzt mit den Netzeinstellungen vernetzen und dann rechnen?"):
+            self.info(f"Berechnung abgebrochen: {was} ohne Netz (Netz → Netz erzeugen)")
+            return False
+        alte = list(self.sel_flaechen), list(self.sel_koerper)
+        self.sel_flaechen, self.sel_koerper = [], []      # alles vernetzen, nicht nur die Auswahl
+        try:
+            self.geometrie_vernetzen()
+        finally:
+            self.sel_flaechen, self.sel_koerper = alte
+        d = diagnose(self.model)
+        if d["unvernetzte_flaechen"] or d["unvernetzte_koerper"]:
+            self.error(f"{len(d['unvernetzte_flaechen'])} Flächen und {len(d['unvernetzte_koerper'])} Volumen "
+                       "sind weiterhin ohne Netz - das Protokoll sagt, warum. Die Berechnung wird nicht gestartet.")
+            return False
+        return True
+
     def do_solve(self, kind: str = None):
+        if not self._vor_rechnung_vernetzen():
+            return
         msgs = [m for m in self.model.check() if m.startswith("FEHLER")]
         if msgs:
             return self.error("\n".join(msgs))

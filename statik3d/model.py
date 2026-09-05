@@ -2059,6 +2059,9 @@ class Model:
         self.schwingungen: dict = {}
         # Schweissnaehte (schweissnaehte.Schweissnaht), nach Name
         self.schweissnaehte: dict = {}
+        # Bemassungen (bemassung.Bemassung) und ihre Einstellungen
+        self.bemassungen: dict = {}
+        self.bemassung_einstellung = None      # None = Vorgabe (bemassung.BemassungEinstellung)
         # Metadaten (Bericht)
         self.meta: dict[str, str] = {"projekt": "", "bauteil": "", "bearbeiter": "",
                                      "auftraggeber": "", "position": ""}
@@ -3434,6 +3437,13 @@ class Model:
             members.append(self.add_member(f"{prefix}{k}", chain))
         return members
 
+    def bemassung_einstellungen(self):
+        """Die Einstellungen der Bemassung - bei Bedarf mit den Vorgaben angelegt."""
+        if getattr(self, "bemassung_einstellung", None) is None:
+            from .bemassung import BemassungEinstellung
+            self.bemassung_einstellung = BemassungEinstellung()
+        return self.bemassung_einstellung
+
     def check(self) -> list[str]:
         """Einfache Modellpruefung. Gibt Liste von Warnungen/Fehlern zurueck."""
         msgs = []
@@ -3509,6 +3519,11 @@ class Model:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Flaeche")
             if not cp.slave_nodes:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Slave-Knoten")
+        # Rechenbarkeit: unvernetzte Geometrie (WARNUNG) und Teiltragwerke ohne
+        # Lager (FEHLER - das Gleichungssystem waere singulaer)
+        if self.elements:
+            from .diagnose import meldungen
+            msgs += [z for z in meldungen(self) if not z.startswith("Hinweis")]
         return msgs
 
     # ---------------- Speichern / Laden ----------------
@@ -3556,6 +3571,9 @@ class Model:
             "winde": [asdict(x) for x in self.winde.values()],
             "schwingungen": [asdict(x) for x in self.schwingungen.values()],
             "schweissnaehte": [asdict(x) for x in self.schweissnaehte.values()],
+            "bemassungen": [asdict(x) for x in self.bemassungen.values()],
+            "bemassung_einstellung": (asdict(self.bemassung_einstellung)
+                                      if self.bemassung_einstellung is not None else None),
         }
 
     def save(self, path: str):
@@ -3635,6 +3653,11 @@ class Model:
         if d.get("schweissnaehte"):
             from .schweissnaehte import Schweissnaht
             m.schweissnaehte = {x["name"]: _dc(Schweissnaht, x) for x in d["schweissnaehte"]}
+        if d.get("bemassungen") or d.get("bemassung_einstellung"):
+            from .bemassung import Bemassung, BemassungEinstellung
+            m.bemassungen = {x["name"]: _dc(Bemassung, x) for x in d.get("bemassungen") or []}
+            if d.get("bemassung_einstellung"):
+                m.bemassung_einstellung = _dc(BemassungEinstellung, d["bemassung_einstellung"])
         if d.get("stellungen"):
             from .bridges.positions import Stellung
             m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]

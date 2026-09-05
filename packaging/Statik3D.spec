@@ -42,6 +42,12 @@ pyz = PYZ(a.pure)
 # Startbild schon beim Auspacken der exe (Tcl/Tk des Build-Python; tkinter
 # selbst bleibt ausgeschlossen, die Splash-Stufe bringt ihre Bibliotheken
 # selbst mit). run_gui.py schliesst es, sobald Qt das Startbild uebernimmt.
+#
+# Kein text_font: PyInstaller setzt den Namen unmaskiert in das Tcl-Skript
+# („font create myFont -family Segoe UI“) - ein Leerzeichen im Namen bricht
+# das Skript ab, bevor Bild und Rahmenlosigkeit gesetzt sind, und es bleibt
+# ein leeres Fenster mit dem Titel „tk“ stehen. Die Vorgabeschrift ist auf
+# Windows ohnehin Segoe UI.
 splash = Splash(
     os.path.join(SPECPATH, "splash.png"),
     binaries=a.binaries,
@@ -49,7 +55,7 @@ splash = Splash(
     text_pos=(24, 268),
     text_size=10,
     text_color="#dfe8f2",
-    text_font="Segoe UI",
+    text_default="Statik3D wird gestartet …",
     minify_script=True,
     always_on_top=False,
 )

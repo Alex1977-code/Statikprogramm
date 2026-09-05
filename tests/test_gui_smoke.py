@@ -2518,6 +2518,46 @@ def main():
         del w._bestaetigen
         w.error = alt_error
 
+        # ---- Vor dem Rechnen: unvernetzte Geometrie und Teiltragwerke ohne Lager ----
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(2, 0, 0)
+        k2 = m_.add_node(0, 3, 0)
+        k3 = m_.add_node(2, 3, 0)
+        m_.add_element("beam", [k0, k1], mat_, sec_)
+        m_.add_element("beam", [k2, k3], mat_, sec_)
+        m_.fix(k0, "all")
+        m_.load_node(k1, Fz=-1000.0)
+        w.refresh_all()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w.do_solve("case")
+        app.processEvents()
+        check("„Berechnen“ bei einem Teiltragwerk ohne Lager: Meldung mit Knoten statt Solver-Abbruch",
+              bool(fehler_) and "Teiltragwerk" in fehler_[-1] and "K2" in fehler_[-1]
+              and (w.worker is None or not w.worker.isRunning()), str(fehler_[-1:])[:160])
+        m_.fix(k2, "all")
+        # Flaeche ohne Netz: Rueckfrage, Vernetzen, dann rechenbar
+        for i, (a, b) in enumerate([(k0, k1), (k1, k3), (k3, k2), (k2, k0)]):
+            m_.add_line(f"L{i + 1}", [a, b])
+        f_ = m_.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke=list(m_.shells)[0],
+                            material=mat_, teilung=[4, 4])
+        fragen_ = []
+        w._fragen = lambda titel, text: (fragen_.append(text), False)[1]
+        check("Vor dem Rechnen: Fläche ohne Netz → Rückfrage; „Nein“ bricht ab",
+              w._vor_rechnung_vernetzen() is False and fragen_ and "1 Flächen" in fragen_[-1], str(fragen_[-1:])[:120])
+        w._fragen = lambda titel, text: True
+        check("„Ja“ vernetzt die Fläche und gibt die Berechnung frei",
+              w._vor_rechnung_vernetzen() is True and len(m_.flaechen["F1"].elemente or []) == 16
+              and not [x for x in m_.check() if x.startswith("FEHLER")], str(len(m_.flaechen["F1"].elemente or [])))
+        del w._fragen
+        w.error = alt_error
+
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
         w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))
