@@ -1962,6 +1962,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     "stab", "geoflaechen", "geoflaeche", "geokoerper", "geokoerper_einzeln"}
 
     def _baum_geklickt(self, art: str, name: str):
+        if art == "querschnitte":
+            # Der Zweig: Tabelle unten, rechts gleich die Maske fuer einen neuen
+            self.tabelle_zeigen("Querschnitte")
+            self.maske_zeigen("Modell")
+            return self.querschnitt_neu()
         if art in self.OBJEKT_ARTEN:
             # Links waehlen: der Zweig alle, der Eintrag das eine; rechts die
             # Maske mit Anzahl und Nummern oder den Feldern des Objekts.
@@ -2426,6 +2431,8 @@ class MainWindow(QtWidgets.QMainWindow):
         mit OK und Abbrechen. Ein Knoten entsteht sofort (Abbrechen nimmt ihn
         zurueck), alles andere erst mit OK."""
         m = self.model
+        if zweigart == "querschnitte":
+            return self.querschnitt_neu()
         if zweigart == "knoten":
             self.merken("Knoten angelegt")
             i = m.add_node(0.0, 0.0, 0.0)
@@ -2466,7 +2473,8 @@ class MainWindow(QtWidgets.QMainWindow):
         was = {"knoten": f"Knoten K{name}", "linie": f"Linie {name}", "stabelement": f"Stab E{name}",
                "stab": f"Stab mit Nachweis {name} (die Elemente bleiben)",
                "geoflaeche": f"Fläche {name} samt ihren Elementen",
-               "geokoerper_einzeln": f"Volumen {name} samt seinen Elementen"}.get(art)
+               "geokoerper_einzeln": f"Volumen {name} samt seinen Elementen",
+               "querschnitt": f"Querschnitt {name}"}.get(art)
         if was is None:
             return
         if not self._bestaetigen(f"{was} wirklich löschen?"):
@@ -2489,9 +2497,22 @@ class MainWindow(QtWidgets.QMainWindow):
             grund = m.flaeche_loeschen(name)
         elif art == "geokoerper_einzeln":
             grund = m.koerper_loeschen(name)
+        elif art == "querschnitt":
+            if name not in m.sections:
+                grund = f"Querschnitt {name} gibt es nicht"
+            else:
+                nutzer = [i for i, e in enumerate(m.elements) if getattr(e, "sec", "") == name]
+                staebe = [k for k, mm in m.members.items() if getattr(mm, "section", "") == name]
+                if nutzer or staebe:
+                    grund = (f"Querschnitt {name} wird benutzt: {len(nutzer)} Elemente"
+                             + (f", Stäbe {', '.join(staebe[:5])}" if staebe else "")
+                             + " - zuerst umbelegen")
+                else:
+                    self.merken(f"{was} gelöscht")
+                    del m.sections[name]
         if grund:
             return self.error(grund)
-        if art != "stabelement":
+        if art not in ("stabelement", "querschnitt"):
             self.merken(f"{was} gelöscht")
         self.analysis = None
         self.results = None
@@ -5609,13 +5630,39 @@ class MainWindow(QtWidgets.QMainWindow):
             self.refresh_all()
 
     def add_section(self):
-        d = SectionDialog(self)
-        if d.exec():
-            try:
-                self.model.add_section(d.result_section())
-            except Exception as ex:
-                return self.error(ex)
-            self.refresh_all()
+        """„Querschnitt hinzufügen“: rechts die Maske mit Normprofilen,
+        Parameterprofilen und dem freien Profileditor."""
+        return self.querschnitt_neu()
+
+    def querschnitt_neu(self):
+        """Die Querschnittsmaske rechts zeigen (Modellbaum „Querschnitte → Neu“).
+
+        Oben die Normprofile nach Reihe (Doppel-T, U, Hohl, T, L) aus der
+        Profildatenbank, darunter die gaengigen selbst erstellbaren Profile
+        mit Parametern, darunter der Knopf fuer ein voellig frei aus
+        Standardprofilen, Knoten und Elementen zusammengesetztes Profil.
+        """
+        from .profilmaske import QuerschnittMaske
+        maske = QuerschnittMaske(vorhandene=self.model.sections)
+        maske.angewendet.connect(self._querschnitt_anlegen)
+        return self.maske_erzeugen(maske)
+
+    def _querschnitt_anlegen(self, sec):
+        """Ein Querschnitt aus der Maske kommt ins Modell."""
+        if sec.name in self.model.sections:
+            return self.error(f"Querschnitt „{sec.name}“ gibt es schon - anderen Namen eingeben")
+        self.merken(f"Querschnitt {sec.name}")
+        self.model.add_section(sec)
+        self.refresh_all()
+        self.tabelle_zeigen("Querschnitte")
+        if hasattr(self.tbl_sec, "markieren"):
+            self.tbl_sec.markieren([sec.name])
+        self.info(f"Querschnitt {sec.name} angelegt: A = {sec.A * 1e4:.2f} cm², "
+                  f"Iy = {sec.Iy * 1e8:.1f} cm⁴, Iz = {sec.Iz * 1e8:.1f} cm⁴, "
+                  f"It = {sec.It * 1e8:.2f} cm⁴")
+        maske = self.maskenrand.maske
+        if maske is not None and hasattr(maske, "vorhandene_zeigen"):
+            maske.vorhandene_zeigen(self.model.sections)
 
     def add_shell_prop(self):
         t = self.ed_t.value()

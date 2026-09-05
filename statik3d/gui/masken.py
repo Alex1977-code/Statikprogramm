@@ -267,7 +267,10 @@ class Maskenrand(QtCore.QObject):
         self.maske = maske
         maske.geschlossen.connect(self._vergessen)
         if self.ziel is not None:
-            self.ziel.insertWidget(0, maske)
+            # Eine lange Maske (Querschnitte) meldet eine Dehnung an und
+            # bekommt damit den groesseren Teil der Hoehe; die kurzen Masken
+            # bleiben bei ihrer natuerlichen Hoehe
+            self.ziel.insertWidget(0, maske, int(getattr(maske, "dehnung", 0)))
             maske.show()
             maske.setFocus()
         else:

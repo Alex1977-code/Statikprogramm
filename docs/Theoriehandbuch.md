@@ -48,6 +48,52 @@ mit derselben Faktorisierung gelöst. Nach dem Lösen wird das Residuum
 freie Bauteile) werden als Fehler gemeldet statt unbemerkt falsche Ergebnisse
 zu liefern.
 
+### 1.4 Querschnittswerte freier Profile
+
+Der freie Profileditor vereinigt Teile nach dem **Satz von Steiner**
+(`sections.build`): mit den Teilwerten A_i, I_y,i, I_z,i, I_yz,i im
+gemeinsamen y-z-Bezug und den Schwerpunktlagen (y_i, z_i) ist
+
+    A = Σ A_i,   y_c = Σ A_i y_i / A,   z_c = Σ A_i z_i / A
+    I_y = Σ (I_y,i + A_i (z_i − z_c)²),   I_z = Σ (I_z,i + A_i (y_i − y_c)²)
+    I_yz = Σ (I_yz,i + A_i (y_i − y_c)(z_i − z_c))
+
+Daraus die Hauptwerte I_1,2 = (I_y + I_z)/2 ± √(((I_y − I_z)/2)² + I_yz²) und
+der Hauptachsenwinkel α = ½·atan2(2 I_yz, I_y − I_z). Gedrehte Teile gehen mit
+ihrem gedrehten Tensor R^T I R ein; ein gespiegeltes Teil wechselt das
+Vorzeichen von I_yz.
+
+**T-Profil** (`Section.tee`, auch halbierte Doppel-T IPET/HEAT/HEBT): Flansch
+b·t_f, Steg (h − t_f)·t_w, Ausrundungen wie beim Doppel-T; z_c von der
+Flanschoberkante. W_pl,y folgt aus der plastischen Nulllinie, die die Fläche
+halbiert (im Flansch oder im Steg).
+
+**Element (Blechstreifen)** von Knoten 1 nach Knoten 2, Länge L, Dicke t,
+Richtung e = (e_y, e_z): mit I_l = t L³/12 (um die Querachse) und
+I_q = L t³/12 (um die Längsachse)
+
+    I_y = I_l e_z² + I_q e_y²,   I_z = I_l e_y² + I_q e_z²,   I_yz = (I_l − I_q) e_y e_z
+    I_t = L t³/3   (offener dünnwandiger Querschnitt)
+
+**Fläche (Polygon)** mit den Eckpunkten (y_i, z_i), c_i = y_i z_{i+1} − y_{i+1} z_i
+(Green über die Kanten, unabhängig vom Umlaufsinn):
+
+    A = ½ Σ c_i,   S_y = ∫z dA = ⅙ Σ (z_i + z_{i+1}) c_i,   S_z = ∫y dA = ⅙ Σ (y_i + y_{i+1}) c_i
+    ∫z² dA = 1/12 Σ (z_i² + z_i z_{i+1} + z_{i+1}²) c_i,   ∫y² dA entsprechend
+    ∫yz dA = 1/24 Σ (y_i z_{i+1} + 2 y_i z_i + 2 y_{i+1} z_{i+1} + y_{i+1} z_i) c_i
+
+Ein Loch wird mit seinen Werten abgezogen; danach Steiner zum Schwerpunkt.
+Für die **Torsion** eines Polygons gibt es keine geschlossene Lösung; genommen
+wird die Näherung nach Saint-Venant
+
+    I_t ≈ A⁴ / (4π² I_p),   I_p = I_y + I_z um den eigenen Schwerpunkt,
+
+die für den Kreis exakt ist und für ein Quadrat 8 % zu hoch liegt. Bei
+Löchern wird als Differenz von Außen- und Lochwert gerechnet, was für den
+dünnen Ring den Bredtschen Wert 2π r_m³ t trifft (`tests/test_sections.py`
+prüft Kreis, Ring, Rechteck mit Loch und das aus drei Streifen gebaute I
+gegen die geschlossenen Formeln).
+
 ## 2 Lasten
 
 * Knotenlasten, Momente, vorgegebene Verschiebungen, Federlager.

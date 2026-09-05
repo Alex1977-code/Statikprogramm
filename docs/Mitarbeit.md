@@ -120,6 +120,10 @@ Punkte:
   dorthin wäre ein Stabelement mit sieben Freiheitsgraden.
 * **Wölbordinaten nur für I und U** – für andere offene Querschnitte wird der
   Momentenanteil ausgewiesen, aber keine Wölbspannung; sie würde geraten.
+* **Torsion freier Polygonquerschnitte** (`sections.polygon`) ist eine
+  Näherung nach Saint-Venant (A⁴/(4π²·Ip)); exakt wäre die Lösung der
+  Prandtlschen Spannungsfunktion auf dem Polygon (kleines FE-Problem). Der
+  Wert lässt sich in der Tabelle „Querschnitte“ von Hand überschreiben.
 * **Werkstoff- und Querschnittsnamen** aus der Dlubal-Datenbank
   (`C:\Program Files\Dlubal`) – die Dateien liegen nur lokal vor.
 * **Splitter am Rand**: Tetraeder, deren vier Knoten alle auf der Oberfläche

@@ -354,6 +354,47 @@ class Section:
                        Iy_geo=Iy_g, Iz_geo=Iz_g, Iyz_geo=Iyz)
 
     @staticmethod
+    def tee(name: str, h: float, b: float, tw: float, tf: float, r: float = 0.0,
+            fabrication: str = "rolled") -> "Section":
+        """T-Profil: Flansch b x tf oben, darunter der Steg (h - tf) x tw.
+
+        Der haeufigste Fall ist das halbierte Doppel-T (IPET, HEAT, HEBT):
+        h ist dann die halbe Hoehe des Ausgangsprofils. ``zc`` misst den
+        Schwerpunkt von der Flanschoberkante, ``yc`` = b/2. Das Profil ist
+        symmetrisch zur z-Achse; Iy und Iz sind damit Hauptwerte. Wpl,y
+        folgt aus der plastischen Nulllinie, die die Flaeche halbiert."""
+        hw = h - tf
+        Af, Aw = b * tf, hw * tw
+        Ar = (1 - np.pi / 4) * r ** 2                 # je Ausrundung Steg/Flansch
+        A = Af + Aw + 2 * Ar
+        zf, zw, zr = tf / 2, tf + hw / 2, tf + 0.2234 * r
+        zc = (Af * zf + Aw * zw + 2 * Ar * zr) / A
+        # Ausrundungen wie beim Doppel-T (Herstellerkataloge): Eigenanteil
+        # 0,015 r⁴ fuer zwei Ausrundungen und Steiner-Anteil
+        Iy = (b * tf ** 3 / 12.0 + Af * (zf - zc) ** 2
+              + tw * hw ** 3 / 12.0 + Aw * (zw - zc) ** 2
+              + 0.015 * r ** 4 + 2 * Ar * (zr - zc) ** 2)
+        Iz = (tf * b ** 3 / 12.0 + hw * tw ** 3 / 12.0
+              + 0.015 * r ** 4 + 2 * Ar * (tw / 2 + 0.2234 * r) ** 2)
+        It = (b * tf ** 3 + hw * tw ** 3) / 3.0
+        Iw = b ** 3 * tf ** 3 / 144.0 + hw ** 3 * tw ** 3 / 36.0
+        A0 = (Af + Aw) / 2.0                          # plastische Nulllinie
+        if Af >= A0:
+            z0 = A0 / b
+            Wpl_y = b * z0 ** 2 / 2.0 + b * (tf - z0) ** 2 / 2.0 + Aw * (zw - z0)
+        else:
+            z0 = tf + (A0 - Af) / tw
+            Wpl_y = Af * (z0 - zf) + tw * (z0 - tf) ** 2 / 2.0 + tw * (h - z0) ** 2 / 2.0
+        Wpl_z = tf * b ** 2 / 4.0 + hw * tw ** 2 / 4.0
+        zmax = max(zc, h - zc)
+        return Section(name, A=A, Iy=Iy, Iz=Iz, It=It,
+                       Asy=Af, Asz=hw * tw, zmax=zmax, ymax=b / 2,
+                       typ="T", h=h, b=b, tw=tw, tf=tf, r=r, Iw=Iw,
+                       Wel_y=Iy / zmax, Wel_z=Iz / (b / 2),
+                       Wpl_y=Wpl_y, Wpl_z=Wpl_z, fabrication=fabrication,
+                       yc=b / 2, zc=zc)
+
+    @staticmethod
     def rhs(name: str, h: float, b: float, t: float, r_out: float = None,
             r_in: float = None, fabrication: str = "rolled") -> "Section":
         """Rechteck-/Quadrathohlprofil. Warmgefertigt (EN 10210): r_out=1.5t, r_in=1.0t."""
@@ -418,6 +459,18 @@ class Section:
             return f"Rechteck {self.b*1e3:.0f}x{self.h*1e3:.0f} mm"
         if self.typ == "circle":
             return f"Kreis d={self.h*1e3:.0f} mm"
+        if self.typ == "T":
+            return (f"T-Profil h={self.h*1e3:.0f} b={self.b*1e3:.0f} "
+                    f"tw={self.tw*1e3:.1f} tf={self.tf*1e3:.1f} mm")
+        if self.typ == "U":
+            return (f"U-Profil h={self.h*1e3:.0f} b={self.b*1e3:.0f} "
+                    f"tw={self.tw*1e3:.1f} tf={self.tf*1e3:.1f} mm")
+        if self.typ == "L":
+            return f"Winkel {self.h*1e3:.0f}x{self.b*1e3:.0f}x{self.tw*1e3:.1f} mm"
+        if self.typ == "poly":
+            return f"Polygon {self.b*1e3:.0f}x{self.h*1e3:.0f} mm"
+        if self.typ == "composite":
+            return f"zusammengesetzt aus {len([p for p in self.parts if 'profil' in p])} Teilen"
         return f"A={self.A:.4g} m² Iy={self.Iy:.4g} m⁴"
 
 

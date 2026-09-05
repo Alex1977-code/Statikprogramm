@@ -582,6 +582,47 @@ Im Ribbon *Ansicht → Blickrichtung* stehen dieselben Richtungen, dazu
 „Rückseite (180°)", das die laufende Ansicht am Blickpunkt umkehrt, und
 „Zoom alles".
 
+### Querschnitte anlegen: Normprofile, eigene Profile, freier Editor
+
+Ein Klick auf **Querschnitte** im Modellbaum (oder Rechtsklick → *Neu:
+Querschnitt*, oder *Struktur → Querschnitt hinzufügen*) zeigt rechts die
+Querschnittsmaske. Sie hat drei Teile, von oben nach unten:
+
+1. **Normprofile** aus der Profildatenbank. Oben das Land mit seiner Norm,
+   darunter die **Art** als Knöpfe — *Doppel-T* (IPE, HEA, HEB, HEM; UB, UC;
+   W), *U* (UPN, UPE; PFC; C), *Hohl* (SHS, RHS, CHS; HSS, PIPE), *T*
+   (halbierte Doppel-T: IPET, HEAT, HEBT) und *L* (gleich- und
+   ungleichschenklig) —, dann Reihe und Profil. Das Bild und die Kennwerte
+   (A, Iy, Iz, It, Wel, Wpl) laufen mit; **Anlegen** nimmt das Profil ins
+   Modell. Der Name ist die Profilbezeichnung, wenn das Namensfeld leer bleibt.
+2. **Eigene Profile** mit Parametern in mm: Rechteck, Kreis, Rundrohr,
+   Rechteckrohr, geschweißtes Doppel-T, U, T, Winkel, Kasten aus Blechen —
+   oder *frei* nach Steifigkeiten (A, Iy, Iz, It). Auch hier Bild und
+   Kennwerte, dann **Anlegen**.
+3. **Profil frei erstellen …** öffnet den Editor. Dort setzt man ein Profil aus
+   drei Dingen zusammen:
+   * **Standardprofile** (aus der Datenbank oder ein Querschnitt des Modells)
+     mit der Lage ihres Schwerpunkts dy, dz [mm], Drehung [°] und Spiegeln;
+   * **Knoten** (Nr, y, z in mm; y nach rechts, z nach oben) und **Elemente**:
+     Blechstreifen der Dicke t zwischen zwei Knoten — so entstehen
+     dünnwandige Profile beliebiger Form;
+   * **Flächen**: eine Knotenfolge als geschlossenes Polygon, wahlweise als
+     **Loch** (wird von der Fläche abgezogen, in der es liegt) — so entstehen
+     Vollquerschnitte und Kästen.
+
+   Rechts stehen Bild und Kennwerte, die bei jeder Änderung mitlaufen; ein
+   Fehler (Knoten fehlt, Element ohne Länge) steht rot dort und sperrt OK.
+   Das Ergebnis ist ein zusammengesetzter Querschnitt nach dem Satz von
+   Steiner mit Hauptachsen und Hauptachsenwinkel; der Editorinhalt reist mit
+   und lässt sich über den Editor wieder öffnen. It ist bei Elementen der
+   offene Wert Σ L·t³/3, bei Flächen die Näherung nach Saint-Venant (siehe
+   Theoriehandbuch 1.4); wer It genauer kennt, trägt ihn in der Tabelle
+   „Querschnitte“ ein.
+
+**Löschen**: ein Querschnitt, den kein Element und kein Stab mehr benutzt,
+geht per Rechtsklick → *Löschen* oder Entf aus dem Modellbaum; ein benutzter
+wird mit der Zahl seiner Elemente abgewiesen.
+
 ### Register „Auswahl"
 
 Sobald Knoten gewählt sind, erscheint rechts im Ribbon ein zusätzliches

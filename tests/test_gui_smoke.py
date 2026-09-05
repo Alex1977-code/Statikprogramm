@@ -1824,6 +1824,109 @@ def main():
         w.do_check()
         check("Modellprüfung holt das Protokoll nach vorn", tu.currentGroup() == "Protokoll")
 
+        # ---- Querschnitte: Maske rechts mit Normprofilen, Parametern, freiem Editor ----
+        from statik3d.gui import profilmaske as pm
+        from statik3d import sections as secs
+        from statik3d.model import Section as Sec
+        n0 = len(m_.sections)
+        w._baum_geklickt("querschnitte", "Querschnitte")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Klick auf „Querschnitte“ zeigt rechts die Querschnittsmaske",
+              isinstance(mk, pm.QuerschnittMaske) and w.eingaben_dock.windowTitle() == "Neuer Querschnitt",
+              w.eingaben_dock.windowTitle())
+        check("Normprofile nach Art: Doppel-T, U, Hohl, T, L",
+              list(mk.typknoepfe) == ["Doppel-T", "U", "Hohl", "T", "L"])
+        mk.typknoepfe["T"].click()
+        app.processEvents()
+        check("„T“ bietet die halbierten Doppel-T (IPET, HEAT, HEBT)",
+              mk.cb_reihe.currentData() == "IPET" and mk.cb_profil.count() > 10,
+              f"{mk.cb_reihe.currentData()} {mk.cb_profil.count()}")
+        mk.typknoepfe["Hohl"].click()
+        reihen = [mk.cb_reihe.itemData(i) for i in range(mk.cb_reihe.count())]
+        mk.cb_reihe.setCurrentIndex(reihen.index("CHS"))
+        mk.cb_profil.setCurrentText("CHS 168.3x5")
+        app.processEvents()
+        check("Bild (Außen und Loch) und Kennwerte des Normprofils",
+              len(mk.bild_norm.umrisse) == 2 and "A = " in mk.lbl_norm.text(), mk.lbl_norm.text()[:40])
+        mk.anwenden_norm()
+        app.processEvents()
+        check("„Anlegen“ nimmt das Normprofil ins Modell",
+              "CHS 168.3x5" in m_.sections and len(m_.sections) == n0 + 1, str(sorted(m_.sections)))
+        mk = w.maskenrand.maske
+        check("Maske bleibt offen und zählt die Querschnitte mit",
+              isinstance(mk, pm.QuerschnittMaske) and f"{n0 + 1} Querschnitte" in mk.lbl_vorhanden.text(),
+              mk.lbl_vorhanden.text() if mk else None)
+        fehler = []
+        fehler_alt = w.error
+        w.error = lambda msg: fehler.append(str(msg))
+        mk.anwenden_norm()
+        w.error = fehler_alt
+        check("ein doppelter Name wird abgewiesen", bool(fehler) and "gibt es schon" in fehler[0])
+        mk.cb_art.setCurrentText("T geschweißt")
+        app.processEvents()
+        check("Parameterprofil mit Vorschau und Wpl",
+              len(mk.bild_param.umrisse) == 1 and "Wpl" in mk.lbl_param.text())
+        for e, v in zip(mk.par, ("200", "100", "10", "12")):
+            e.setText(v)
+        mk.ed_name.setText("T-Eigen")
+        mk.anwenden_parameter()
+        app.processEvents()
+        s_ = m_.sections.get("T-Eigen")
+        check("Parameterprofil T 200/100/10/12 angelegt (A = b·tf + (h−tf)·tw)",
+              s_ is not None and abs(s_.A - (0.1 * 0.012 + 0.188 * 0.01)) < 1e-12)
+        w.undo()
+        app.processEvents()
+        m_ = w.model                      # Rueckgaengig setzt eine Kopie ein
+        check("Rückgängig nimmt den Querschnitt zurück", "T-Eigen" not in m_.sections)
+        # Der freie Editor: drei Blechstreifen = geschweisstes I
+        ed = pm.ProfilEditor(w, vorhandene=m_.sections, name="Frei")
+        h_, b_, tw_, tf_ = 0.4, 0.2, 0.01, 0.016
+        hw_ = h_ - 2 * tf_
+        ed.setze(knoten={1: (-b_ / 2, (h_ - tf_) / 2), 2: (b_ / 2, (h_ - tf_) / 2),
+                         3: (-b_ / 2, -(h_ - tf_) / 2), 4: (b_ / 2, -(h_ - tf_) / 2),
+                         5: (0, -hw_ / 2), 6: (0, hw_ / 2)},
+                 elemente=[(1, 2, tf_), (3, 4, tf_), (5, 6, tw_)])
+        app.processEvents()
+        ref = Sec.i_profile("I", h_, b_, tw_, tf_, 0.0)
+        check("Editor: drei Streifen ergeben das geschweißte I (Iy exakt)",
+              ed.sec is not None and abs(ed.sec.Iy - ref.Iy) < 1e-10
+              and ed.knoepfe.button(QtWidgets.QDialogButtonBox.Ok).isEnabled(), ed.lbl_werte.text()[:60])
+        ed.teil_zufuegen("IPE 200", 0, (h_ / 2 + 0.1) * 1e3)
+        app.processEvents()
+        check("Editor: Standardprofil dazu, das Bild zeigt alle Teile",
+              ed.sec.A > ref.A and len(ed.bild.umrisse) == 4, str(len(ed.bild.umrisse)))
+        ed.tb_elemente.item(0, 2).setText("abc")
+        app.processEvents()
+        check("Editor: Fehler wird gemeldet, OK gesperrt",
+              ed.sec is None and not ed.knoepfe.button(QtWidgets.QDialogButtonBox.Ok).isEnabled(),
+              ed.lbl_werte.text()[:50])
+        ed.tb_elemente.item(0, 2).setText("16")
+        app.processEvents()
+        sec_frei = ed.ergebnis()
+        check("Editor: Ergebnis trägt den Editorinhalt",
+              sec_frei is not None and secs.editor_inhalt(sec_frei) is not None and sec_frei.name == "Frei")
+        w._querschnitt_anlegen(sec_frei)
+        app.processEvents()
+        ed2 = pm.ProfilEditor(w, vorhandene=m_.sections)
+        check("Editor: ein freies Profil lässt sich wieder öffnen",
+              ed2.laden(m_.sections["Frei"]) and ed2.tb_knoten.rowCount() == 6
+              and abs(ed2.sec.Iy - sec_frei.Iy) < 1e-12)
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("querschnitt", "Frei")
+        app.processEvents()
+        check("Baum: ein unbenutzter Querschnitt lässt sich löschen", "Frei" not in m_.sections)
+        fehler = []
+        w.error = lambda msg: fehler.append(str(msg))
+        w._baum_loeschen("querschnitt", "IPE 500")
+        w.error = fehler_alt
+        del w._bestaetigen
+        check("Baum: ein benutzter Querschnitt wird mit Grund abgewiesen",
+              "IPE 500" in m_.sections and bool(fehler) and "benutzt" in fehler[0], str(fehler[:1]))
+        check("Baum: Neu und Löschen für Querschnitte",
+              "querschnitte" in w.baum.NEU_ARTEN and "querschnitt" in w.baum.LOESCH_ARTEN)
+        w.maskenrand.schliessen()
+
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
         w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))

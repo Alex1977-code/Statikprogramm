@@ -380,16 +380,17 @@ class Modellbaum(QtWidgets.QTreeWidget):
     loeschen = QtCore.Signal(str, str)        # (Art, Name): Objekt loeschen
 
     #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst
-    NEU_ARTEN = {"knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
+    NEU_ARTEN = {"querschnitte": "Querschnitt",
+                 "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
-    LOESCH_ARTEN = {"knoten", "linie", "stabelement", "stab", "geoflaeche",
+    LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
-                 "geokoerper_einzeln": "geokoerper"}
+                 "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
