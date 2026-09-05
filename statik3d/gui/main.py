@@ -1586,6 +1586,11 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Zwangsverformung", "", self.maske_zwangsverformung, "",
                 "Vorgegebene Verschiebung oder Verdrehung an gewählten gelagerten "
                 "Knoten (Setzung)", symbol="zwang")
+        g = r.gruppe("Generierer")
+        g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
+                "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
+                "Dichtungslinie, überströmt, unterströmt, Absenkung des Wasserspiegels, "
+                "Druckschwankung - mit Kennwerten und Erläuterung", symbol="flaechenlast")
         g = r.gruppe("Weitere")
         g.klein("Eigengewicht", lambda: self.maske_zeigen("Lager/Lasten"),
                 hinweis="Eigengewicht im aktiven Lastfall ein- und ausschalten")
@@ -1971,7 +1976,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     #: Zweige und Eintraege fuer Subsysteme und Situationen
     SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
-                    "situationen", "situation", "situation_neu"}
+                    "situationen", "situation", "situation_neu",
+                    "generierer", "wasserdruck", "wasserdruck_neu"}
 
     def _baum_geklickt(self, art: str, name: str):
         if art in self.SYSTEM_ARTEN:
@@ -2451,6 +2457,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.subsystem_neu()
         if zweigart == "situationen":
             return self.situation_neu()
+        if zweigart == "generierer":
+            return self.maske_wasserdruck()
         if zweigart == "knoten":
             self.merken("Knoten angelegt")
             i = m.add_node(0.0, 0.0, 0.0)
@@ -2473,6 +2481,10 @@ class MainWindow(QtWidgets.QMainWindow):
     # Subsysteme und Situationen
     # ------------------------------------------------------------------
     def _baum_system_geklickt(self, art: str, name: str):
+        if art in ("generierer", "wasserdruck_neu"):
+            return self.maske_wasserdruck()
+        if art == "wasserdruck":
+            return self.maske_wasserdruck(name)
         if art == "subsystem_neu":
             return self.subsystem_neu()
         if art == "situation_neu":
@@ -2771,7 +2783,8 @@ class MainWindow(QtWidgets.QMainWindow):
                "geoflaeche": f"Fläche {name} samt ihren Elementen",
                "geokoerper_einzeln": f"Volumen {name} samt seinen Elementen",
                "querschnitt": f"Querschnitt {name}",
-               "subsystem": f"Subsystem {name}", "situation": f"Situation {name}"}.get(art)
+               "subsystem": f"Subsystem {name}", "situation": f"Situation {name}",
+               "wasserdruck": f"Wasserdruck {name} samt seinen Lasten"}.get(art)
         if was is None:
             return
         if not self._bestaetigen(f"{was} wirklich löschen?"):
@@ -2794,6 +2807,17 @@ class MainWindow(QtWidgets.QMainWindow):
             grund = m.flaeche_loeschen(name)
         elif art == "geokoerper_einzeln":
             grund = m.koerper_loeschen(name)
+        elif art == "wasserdruck":
+            if name not in m.wasserdruecke:
+                grund = f"Wasserdruck {name} gibt es nicht"
+            else:
+                self.merken(f"{was} gelöscht")
+                for lc in m.load_cases.values():
+                    lc.geometrielasten = [gl for gl in lc.geometrielasten
+                                          if not (gl.verlauf.get("art") == "wasser"
+                                                  and gl.verlauf.get("name") == name)]
+                del m.wasserdruecke[name]
+                m.lasten_verteilen()
         elif art == "subsystem":
             if name == GESAMTSYSTEM or name not in m.subsysteme:
                 grund = "Das Gesamtsystem ist immer da - es lässt sich nicht löschen" \
@@ -2829,7 +2853,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     del m.sections[name]
         if grund:
             return self.error(grund)
-        if art not in ("stabelement", "querschnitt", "subsystem", "situation"):
+        if art not in ("stabelement", "querschnitt", "subsystem", "situation", "wasserdruck"):
             self.merken(f"{was} gelöscht")
         self.analysis = None
         self.results = None
@@ -6661,6 +6685,166 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"{fall or self.model.active_case}"
                   + (f" ({n} Elementlasten)" if n else " - wirkt, sobald vernetzt ist"))
         self.refresh_all()
+
+    #: Wohin der Wasserdruck wirkt
+    WASSERRICHTUNGEN = ["senkrecht zur Fläche, gegen die Normale (in den Körper)",
+                        "senkrecht zur Fläche, mit der Normale",
+                        "global x", "global y", "global z", "global −x", "global −y", "global −z"]
+
+    def maske_wasserdruck(self, name: str = None):
+        """Lastgenerierer Wasserdruck: neu oder einen vorhandenen bearbeiten."""
+        from ..wasserdruck import Wasserdruck
+        m = self.model
+        wd = m.wasserdruecke.get(name) if name else None
+        neu = wd is None
+        if neu:
+            wd = Wasserdruck(m.naechster_name("W", m.wasserdruecke))
+            wd.flaechen = list(self.sel_flaechen)
+            wd.koerper = list(self.sel_koerper)
+            wd.dichtung = list(self.sel_linien)
+        F = msk.Feld
+
+        def txt(v):
+            return "" if v is None else f"{v:g}"
+
+        richtung = self.WASSERRICHTUNGEN[0]
+        if wd.richtung:
+            for k, v in self.LASTRICHTUNG_VEKTOR.items():
+                if np.allclose(v, wd.richtung):
+                    richtung = k
+        elif wd.seite < 0:
+            richtung = self.WASSERRICHTUNGEN[1]
+        situationen = m.situationsnamen()
+        felder = [F("name", "Name", "text", wd.name, breite=140),
+                  F("situation", "Situation", "wahl", wd.situation or situationen[0], situationen),
+                  F("fall", "Lastfall", "text", wd.lastfall or f"Wasser {wd.name}", breite=140),
+                  F("ziele", "Benetzt", "info", self._wasser_ziele_text(wd)),
+                  F("richtung", "Wirkt", "wahl", richtung, list(self.WASSERRICHTUNGEN)),
+                  F("h_ow", "Oberwasser [m]", "zahl", float(wd.h_ow)),
+                  F("h_uw", "Unterwasser [m]", "text", txt(wd.h_uw), breite=78,
+                    hinweis="leer = trocken"),
+                  F("rho", "Dichte [kg/m³]", "zahl", float(wd.rho)),
+                  F("z_uk", "Dichtung z [m]", "text", txt(wd.z_uk), breite=78,
+                    hinweis="leer = aus der Dichtungslinie oder der Unterkante der Flächen"),
+                  F("z_ok", "Oberkante z [m]", "text", txt(wd.z_ok), breite=78, hinweis="leer = aus Geometrie"),
+                  F("breite", "Breite [m]", "text", txt(wd.breite), breite=78, hinweis="leer = aus Geometrie"),
+                  F("ueber", "überströmt (Wasser über der Oberkante)", "haken", bool(wd.ueberstroemt)),
+                  F("mu_ue", "μ Überfall (Poleni)", "zahl", float(wd.mu_ue)),
+                  F("unter", "unterströmt (Öffnung unter dem Verschluss)", "haken", bool(wd.unterstroemt)),
+                  F("spalt", "Öffnung a [m]", "zahl", float(wd.spalt)),
+                  F("mu_a", "μ Ausfluss (Kontraktion)", "zahl", float(wd.mu_a)),
+                  F("absenkung", "Absenkung des Wasserspiegels berücksichtigen", "haken", bool(wd.absenkung)),
+                  F("cp_dyn", "Druckschwankungsbeiwert c_p'", "zahl", float(wd.cp_dyn),
+                    hinweis="0 = keine dynamische Amplitude; sonst eigener Lastfall Δp = c_p'·ρ·v²/2"),
+                  F("kennwerte", "Kennwerte", "info", "–")]
+        halter: dict = {}
+
+        def kennwerte_zeigen():
+            from .. import wasserdruck as wdm
+            try:
+                w_ = self._wasserdruck_aus_maske(halter["m"].werte(), wd)
+                kw = wdm.kennwerte(w_, m)
+                text = (f"F = {kw['F'] / 1e3:.1f} kN (z_R = {kw['z_R']:.2f} m)"
+                        + (f", h_ü = {kw['h_ue']:.2f} m, q = {kw['q_ue']:.2f} m³/(s·m), v_c = {kw['v_c']:.2f} m/s"
+                           if kw.get("h_ue", 0) > 0 else "")
+                        + (f", v_a = {kw['v_a']:.2f} m/s, q = {kw['q_a']:.2f} m³/(s·m), Fr = {kw['Fr_a']:.2f}"
+                           if kw.get("spalt", 0) > 0 else "")
+                        + (f", Δp_dyn = {kw['dp_dyn'] / 1e3:.2f} kN/m²" if kw.get("dp_dyn", 0) > 0 else ""))
+                halter["m"].setzen("kennwerte", text)
+                for zeile in wdm.erlaeuterung(w_, kw):
+                    self.log.appendPlainText("  " + zeile)
+            except Exception as ex:                # noqa: BLE001
+                halter["m"].setzen("kennwerte", str(ex))
+
+        def auswahl_lesen():
+            wd.flaechen = list(self.sel_flaechen)
+            wd.koerper = list(self.sel_koerper)
+            wd.dichtung = list(self.sel_linien)
+            halter["m"].setzen("ziele", self._wasser_ziele_text(wd))
+
+        maske = msk.Maske("Neu: Wasserdruck" if neu else f"Wasserdruck {wd.name}", felder,
+                          knopf="Lasten erzeugen",
+                          hinweis="Benetzte Flächen (Auswahlart Fläche/Volumen) und die Dichtungslinie "
+                                  "(Linien) in der Ansicht wählen, Wasserstände eintragen. „Lasten "
+                                  "erzeugen“ legt die Objektlasten in den Lastfall der Situation; sie "
+                                  "folgen jedem Neuvernetzen. Kennwerte und Erläuterung stehen im "
+                                  "Protokoll und im Bericht (mit Skizze).",
+                          zusatz=[("Auswahl übernehmen", auswahl_lesen), ("Kennwerte", kennwerte_zeigen)])
+        halter["m"] = maske
+        maske.angewendet.connect(lambda w, alt=(None if neu else wd.name), vorlage=wd:
+                                 self._wasserdruck_anlegen(w, vorlage, alt))
+        return self.maske_erzeugen(maske)
+
+    @staticmethod
+    def _wasser_ziele_text(wd) -> str:
+        teile = []
+        if wd.flaechen:
+            teile.append("Flächen " + ", ".join(wd.flaechen[:6]) + (" …" if len(wd.flaechen) > 6 else ""))
+        if wd.koerper:
+            teile.append("Volumen " + ", ".join(wd.koerper[:6]))
+        if wd.dichtung:
+            teile.append("Dichtung " + ", ".join(wd.dichtung[:6]))
+        return " · ".join(teile) or "nichts gewählt - Flächen anklicken, dann „Auswahl übernehmen“"
+
+    def _wasserdruck_aus_maske(self, w: dict, vorlage):
+        from ..wasserdruck import Wasserdruck
+        from dataclasses import replace
+
+        def zahl(key, vorgabe=None):
+            t = str(w.get(key, "")).strip().replace(",", ".")
+            return vorgabe if not t else float(t)
+
+        richtung = str(w.get("richtung", ""))
+        vektor = self.LASTRICHTUNG_VEKTOR.get(richtung)
+        seite = -1 if richtung == self.WASSERRICHTUNGEN[1] else 1
+        situation = str(w.get("situation", ""))
+        wd = replace(vorlage, name=str(w.get("name", "")).strip() or vorlage.name,
+                     situation="" if situation == GRUNDSTELLUNG else situation,
+                     lastfall=str(w.get("fall", "")).strip(),
+                     h_ow=float(w.get("h_ow", 0.0) or 0.0), h_uw=zahl("h_uw"),
+                     rho=float(w.get("rho", 1000.0) or 1000.0),
+                     richtung=list(vektor) if vektor else None, seite=seite,
+                     z_uk=zahl("z_uk"), z_ok=zahl("z_ok"), breite=zahl("breite"),
+                     ueberstroemt=bool(w.get("ueber")), mu_ue=float(w.get("mu_ue", 0.62) or 0.62),
+                     unterstroemt=bool(w.get("unter")), spalt=float(w.get("spalt", 0.0) or 0.0),
+                     mu_a=float(w.get("mu_a", 0.61) or 0.61), absenkung=bool(w.get("absenkung")),
+                     cp_dyn=float(w.get("cp_dyn", 0.0) or 0.0))
+        return wd
+
+    def _wasserdruck_anlegen(self, w: dict, vorlage, alt: str = None):
+        from .. import wasserdruck as wdm
+        m = self.model
+        try:
+            wd = self._wasserdruck_aus_maske(w, vorlage)
+        except ValueError as ex:
+            return self.error(f"Eingabe: {ex}")
+        if not (wd.flaechen or wd.koerper):
+            return self.error("Zuerst die benetzten Flächen (oder Volumen) in der Ansicht wählen "
+                              "und „Auswahl übernehmen“")
+        if wd.name != alt and wd.name in m.wasserdruecke:
+            return self.error(f"Wasserdruck „{wd.name}“ gibt es schon")
+        self.merken(f"Wasserdruck {wd.name}")
+        if alt and alt != wd.name and alt in m.wasserdruecke:
+            for lc in m.load_cases.values():
+                lc.geometrielasten = [gl for gl in lc.geometrielasten
+                                      if not (gl.verlauf.get("art") == "wasser"
+                                              and gl.verlauf.get("name") == alt)]
+            del m.wasserdruecke[alt]
+        try:
+            kw = wdm.lasten_erzeugen(m, wd)
+        except ValueError as ex:
+            self._undo.pop()
+            return self.error(ex)
+        self.analysis = None
+        self.results = None
+        self.info(f"Wasserdruck {wd.name}: {kw['objektlasten']} Objektlasten, {kw['elementlasten']} "
+                  f"Elementlasten in {', '.join(kw['lastfaelle'])}; F = {kw['F'] / 1e3:.1f} kN, "
+                  f"Kontrollsumme {kw['kontrolle']['betrag'] / 1e3:.1f} kN")
+        for zeile in wdm.erlaeuterung(wd, kw):
+            self.log.appendPlainText("  " + zeile)
+        self.refresh_all()
+        self.tabelle_zeigen("Lasten")
+        return wd
 
     def maske_temperaturlast(self):
         """Temperaturaenderung auf Staebe, Flaechen oder Volumen."""

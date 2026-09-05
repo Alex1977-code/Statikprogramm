@@ -381,18 +381,19 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
     #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst
     NEU_ARTEN = {"querschnitte": "Querschnitt", "subsysteme": "Subsystem",
-                 "situationen": "Situation",
+                 "situationen": "Situation", "generierer": "Wasserdruck",
                  "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
-                    "geokoerper_einzeln", "subsystem", "situation"}
+                    "geokoerper_einzeln", "subsystem", "situation", "wasserdruck"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
                  "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte",
-                 "subsystem": "subsysteme", "situation": "situationen"}
+                 "subsystem": "subsysteme", "situation": "situationen",
+                 "wasserdruck": "generierer"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -687,6 +688,15 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           name + (f": Situation {c.situation}" if getattr(c, "situation", "") else ""))
                          for name, c in model.combinations.items()], "kombination",
                     "kombinationen")
+
+        # ---- Lastgenerierer -------------------------------------------------
+        wds = getattr(model, "wasserdruecke", {}) or {}
+        lg = self._zweig(ew, "Lastgenerierer", len(wds), "generierer",
+                         fett=bool(wds), farbe=FARBEN["akzent"] if wds else None,
+                         hinweis="Wasserdruck (statisch, überströmt, unterströmt) je Situation")
+        self._liste(lg, [(name, x.bezug(), name, f"Wasserdruck {name}: {x.bezug()}")
+                         for name, x in wds.items()], "wasserdruck", "generierer")
+        self._zweig(lg, "+ Wasserdruck anlegen", "", "wasserdruck_neu", farbe=FARBEN["akzent"])
 
         # ---- Ergebnisse -------------------------------------------------
         # Ergebnisse gehoeren in denselben Baum wie das Modell: was gerechnet

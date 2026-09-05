@@ -816,7 +816,11 @@ class Geometrielast:
     verlauf: dict = field(default_factory=dict)
 
     def wert(self, punkt) -> float:
-        """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig oder linear."""
+        """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig, linear oder
+        aus dem Wasserdruck-Generierer (verlauf["art"] == "wasser")."""
+        if self.verlauf and self.verlauf.get("art") == "wasser":
+            from .wasserdruck import druck_aus_verlauf
+            return druck_aus_verlauf(self.verlauf, punkt)
         if not self.verlauf or self.verlauf.get("art") != "linear":
             return float(self.p)
         P = np.asarray(self.verlauf.get("punkte") or [], float).reshape(-1, 4)
@@ -843,6 +847,9 @@ class Geometrielast:
             t = f"{self.ziel}: ΔT = {self.dT:g} K"
             if self.dT_z:
                 t += f", ΔT_z = {self.dT_z:g} K"
+        elif self.verlauf and self.verlauf.get("art") == "wasser":
+            t = (f"{self.ziel}: Wasserdruck {self.verlauf.get('name', '')}"
+                 + (" (Schwankung)" if self.verlauf.get("dyn") else ""))
         else:
             t = f"{self.ziel}: {self.p / 1e3:.3g} kN/m²"
             if self.verlauf:
@@ -2040,6 +2047,8 @@ class Model:
         self.subsysteme: dict[str, Subsystem] = {}
         self.situationen: dict[str, Situation] = {}
         self.stellungen: list = []
+        # Lastgenerierer (wasserdruck.Wasserdruck), nach Name
+        self.wasserdruecke: dict = {}
         # Metadaten (Bericht)
         self.meta: dict[str, str] = {"projekt": "", "bauteil": "", "bearbeiter": "",
                                      "auftraggeber": "", "position": ""}
@@ -3026,6 +3035,8 @@ class Model:
             if gl.bereich and not gl.trifft(mitte):
                 return
             p = gl.wert(mitte) if gl.verlauf else gl.p
+            if gl.verlauf and p == 0.0:
+                return              # ausserhalb des Verlaufs (ueber dem Wasserspiegel)
             if d is not None:
                 n = self._seitennormale(e, seite)
                 if n is None:
@@ -3531,6 +3542,7 @@ class Model:
             "situationen": [asdict(x) for x in self.situationen.values()],
             "stellungen": [asdict(s) if hasattr(s, "__dataclass_fields__") else dict(s)
                            for s in self.stellungen],
+            "wasserdruecke": [asdict(x) for x in self.wasserdruecke.values()],
         }
 
     def save(self, path: str):
@@ -3598,6 +3610,9 @@ class Model:
         m.contact_pairs = [_dc(ContactPair, c) for c in d.get("contact_pairs", [])]
         m.subsysteme = {x["name"]: _dc(Subsystem, x) for x in d.get("subsysteme", [])}
         m.situationen = {x["name"]: _dc(Situation, x) for x in d.get("situationen", [])}
+        if d.get("wasserdruecke"):
+            from .wasserdruck import Wasserdruck
+            m.wasserdruecke = {x["name"]: _dc(Wasserdruck, x) for x in d["wasserdruecke"]}
         if d.get("stellungen"):
             from .bridges.positions import Stellung
             m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]

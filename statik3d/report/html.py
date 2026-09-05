@@ -425,6 +425,7 @@ class Report:
             self._warnings = []
             b = []
             for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
+                       self.chapter_lastgenerierer,
                        self.chapter_theorie2, self.chapter_theorie3,
                        self.chapter_results, self.chapter_knicklaengen,
                        self.chapter_design, self.chapter_beulen,
@@ -1183,6 +1184,59 @@ class Report:
         return b
 
     # ==================================== Theorie II. Ordnung (eigenes Kapitel)
+    def chapter_lastgenerierer(self) -> list:
+        """Lastgenerierer: Wasserdruck mit Kennwerten, Erlaeuterung und Skizze."""
+        m = self.model
+        wds = getattr(m, "wasserdruecke", {}) or {}
+        if not wds:
+            return []
+        from .. import wasserdruck as wdm
+        b = [self._h(1, "Lastgenerierer")]
+        b.append(("p", "Die Lasten dieser Generierer hängen als Objektlasten an den benetzten "
+                       "Flächen und werden beim Vernetzen auf die Elemente gelegt. Wasserdruck: "
+                       "DIN 19704-1; Strömungskennwerte nach Poleni (Überfall) und Torricelli "
+                       "(Ausfluss); Druckminderung durch die Absenkung des Wasserspiegels als "
+                       "Näherung nach Naudascher (Hydrodynamic Forces, IAHR)."))
+        for name, wd in wds.items():
+            b.append(self._h(2, f"Wasserdruck {name}"))
+            try:
+                kw = wdm.kennwerte(wd, m)
+            except Exception as ex:                # noqa: BLE001
+                b.append(("p", f"Kennwerte nicht berechenbar: {ex}"))
+                continue
+            rows = [["Angabe", "Wert"],
+                    ["Situation", wd.situation or "Grundstellung"],
+                    ["Lastfall", wd.lastfall or "–"],
+                    ["Benetzte Flächen / Volumen", ", ".join(wd.flaechen + wd.koerper) or "–"],
+                    ["Dichtungslinie", ", ".join(wd.dichtung) or f"Unterkante z = {kw['z_uk']:g} m"],
+                    ["Oberwasser / Unterwasser", f"{wd.h_ow:g} m / "
+                     + (f"{wd.h_uw:g} m" if wd.h_uw is not None else "trocken")],
+                    ["Dichte", f"{wd.rho:g} kg/m³"],
+                    ["Verschluss", f"z = {kw['z_uk']:g} … {kw['z_ok']:g} m, Breite {kw['breite']:g} m"],
+                    ["Wirkung", "senkrecht zur Fläche" if wd.richtung is None
+                     else f"in Richtung {tuple(wd.richtung)}"],
+                    ["Überströmt / unterströmt", ("ja" if wd.ueberstroemt else "nein") + " / "
+                     + (f"ja, a = {wd.spalt:g} m" if wd.unterstroemt else "nein")],
+                    ["Absenkung des Wasserspiegels", "berücksichtigt" if wd.absenkung else "nicht berücksichtigt"],
+                    ["Resultierende", f"{kw['F'] / 1e3:.1f} kN bei z = {kw['z_R']:.3f} m "
+                     f"({kw['hebel']:.3f} m über der Dichtung)"]]
+            if kw.get("h_ue", 0) > 0:
+                rows.append(["Überfall", f"h_ü = {kw['h_ue']:.3f} m, q = {kw['q_ue']:.3f} m³/(s·m), "
+                                         f"Q = {kw['Q_ue']:.2f} m³/s, v_c = {kw['v_c']:.2f} m/s"])
+            if kw.get("spalt", 0) > 0:
+                rows.append(["Ausfluss", f"Δh = {kw['dh_a']:.3f} m, v_a = {kw['v_a']:.2f} m/s, "
+                                         f"q = {kw['q_a']:.3f} m³/(s·m), Q = {kw['Q_a']:.2f} m³/s, Fr = {kw['Fr_a']:.2f}"])
+            if kw.get("dp_dyn", 0) > 0:
+                rows.append(["Druckschwankung", f"Δp = {kw['dp_dyn'] / 1e3:.3f} kN/m² (c_p' = {wd.cp_dyn:g}), "
+                                                f"Lastfall {wd.lastfall_dyn}"])
+            b.append(("table", rows, f"Wasserdruck {name}: Angaben und Kennwerte", None, "compact"))
+            for zeile in wdm.erlaeuterung(wd, kw):
+                b.append(("p", zeile))
+            if self.opt("figures"):
+                b.append(self._figure(wdm.skizze_svg(wd, kw),
+                                      f"Wasserdruck {name}: Wasserstände, Druckfigur, Strömung und Resultierende"))
+        return b
+
     def chapter_theorie3(self) -> list:
         """Berechnung nach Theorie III. Ordnung (grosse Verformungen)."""
         t3 = getattr(self, "theorie3", None)

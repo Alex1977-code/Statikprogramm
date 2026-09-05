@@ -754,6 +754,36 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
 
+### Lastgenerierer Wasserdruck (Stahlwasserbau)
+
+*Lasten → Generierer → Wasserdruck* (oder Modellbaum → Einwirkungen →
+Lastgenerierer → „+ Wasserdruck anlegen“). Vorher in der Ansicht die
+**benetzten Flächen** (Haut des Verschlusses, Auswahlart Fläche oder
+Volumen) und die **Dichtungslinie** (Linien, Auswahlart Linie) wählen; die
+Maske übernimmt sie mit „Auswahl übernehmen“. Je Generierer gilt eine
+**Situation** (Stellung und wirksame Elemente); der Lastfall wird angelegt
+und trägt die Situation.
+
+| Angabe | Bedeutung |
+|---|---|
+| Oberwasser, Unterwasser | Wasserstände in m über dem Bezug des Modells (leer = trocken) |
+| Dichtung z, Oberkante z, Breite | leer = aus der Dichtungslinie bzw. der Geometrie der Flächen |
+| Wirkt | senkrecht zur Fläche (gegen oder mit der Normale) oder in einer globalen Richtung |
+| überströmt | Wasser über der Oberkante: Überfallhöhe, Abfluss nach Poleni (μ), kritische Tiefe und Geschwindigkeit auf der Krone |
+| unterströmt | Öffnung a unter dem Verschluss: Ausfluss nach Torricelli mit Kontraktionsbeiwert μ_a, Geschwindigkeit, Froude-Zahl |
+| Absenkung des Wasserspiegels | zieht die Geschwindigkeitshöhe vom Druck ab: an der Krone wirkt ⅔·ρ·g·h_ü statt ρ·g·h_ü, an der Unterkante der Druck des Strahls bzw. des Unterwassers; die Fehlbeträge klingen über 2·h_ü bzw. 2·a ab |
+| Druckschwankungsbeiwert c_p' | > 0 legt einen zweiten Lastfall mit der Amplitude Δp = c_p'·ρ·v²/2 an (Eingang für den Schwingungsnachweis) |
+
+**Lasten erzeugen** schreibt Objektlasten (Verlauf „Wasser“) an die Flächen;
+sie werden beim Vernetzen auf die Elemente gelegt (nur wo Druck wirkt) und
+folgen jedem Neuvernetzen. Das Protokoll nennt Resultierende, Angriffspunkt
+und eine Kontrollsumme der Elementlasten; „Kennwerte“ in der Maske zeigt
+sie vorab. Der Bericht (Kapitel „Lastgenerierer“) führt Angaben, Kennwerte
+und Erläuterungen auf und zeichnet den **Schnitt durch den Verschluss**:
+Wasserstände, Druckfigur, Überfall bzw. Ausflussstrahl und Resultierende.
+Ein Generierer lässt sich im Modellbaum anklicken (ändern, erneut erzeugen)
+und mit Entf samt seinen Lasten löschen.
+
 ## 5 Lager: Ausfall, Schlupf, Reibung
 
 Jedes Lager wirkt je Freiheitsgrad **starr**, als **Feder** oder ist **frei**;

@@ -120,6 +120,12 @@ Punkte:
   dorthin wäre ein Stabelement mit sieben Freiheitsgraden.
 * **Wölbordinaten nur für I und U** – für andere offene Querschnitte wird der
   Momentenanteil ausgewiesen, aber keine Wölbspannung; sie würde geraten.
+* **Wasserdruck**: die Druckminderung durch die Absenkung des Wasserspiegels
+  (Überfall: ⅓·ρ·g·h_ü über 2·h_ü; Ausfluss: über 2·a) ist eine Näherung
+  nach Naudascher; für Segmentverschlüsse mit gekrümmter Haut wirkt der
+  Druck senkrecht zur Fläche (richtig), die Kennwerte (Breite, Oberkante)
+  kommen aus der Geometrie der Flächen. Wind (#89) und der
+  Schwingungsnachweis (#90) folgen.
 * **Theorie III. Ordnung** rechnet mit der korotationalen Tangente
   Tᵀ(k_l + k_g)T ohne die Zusatzterme der konsistenten Tangente (Crisfield
   Kap. 17) — Konvergenz linear statt quadratisch; Lasten richtungstreu,

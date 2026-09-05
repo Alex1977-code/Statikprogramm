@@ -151,6 +151,33 @@ gegen die geschlossenen Formeln).
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
   Anfangsdehnung wird bei der Spannungsrückrechnung abgezogen.
 
+### 2.1 Wasserdruck auf Verschlüsse (`wasserdruck.py`)
+
+Nettodruck p(z) = ρ·g·(h_ow − z) − ρ·g·(h_uw − z) (jeder Anteil nur unter
+seinem Wasserspiegel). Resultierende und Angriffspunkt durch Integration
+über die Verschlusshöhe: für ein senkrechtes Rechteck F = ½·ρ·g·h²·b,
+Hebel h/3 über der Dichtung; mit Unterwasser F = ½·ρ·g·b·(h_ow² − h_uw²),
+Hebel (h_ow³ − h_uw³)/(3·(h_ow² − h_uw²)).
+
+* **Überströmen**: h_ü = h_ow − z_ok, Abfluss je Breite nach Poleni
+  q = ⅔·μ·√(2g)·h_ü^1,5, auf der Krone kritischer Abfluss h_c = ⅔·h_ü,
+  v_c = √(g·h_c), Fr = 1. Mit Absenkung: Druck an der Krone
+  ρ·g·h_ü − ρ·v_c²/2 = ⅔·ρ·g·h_ü, der Fehlbetrag ⅓·ρ·g·h_ü klingt linear über
+  2·h_ü nach unten ab (Näherung nach Naudascher).
+* **Unterströmen**: kontrahierter Strahl μ_a·a, wirksame Fallhöhe
+  Δh = h_ow − max(h_uw, z_uk + μ_a·a), v_a = √(2·g·Δh) (Torricelli),
+  q = μ_a·a·v_a, Fr = v_a/√(g·μ_a·a). Mit Absenkung: an der Unterkante der
+  Druck des Strahls bzw. des Unterwassers statt ρ·g·(h_ow − z_uk), Fehlbetrag
+  linear über 2·a nach oben abklingend.
+* **Druckschwankung**: Δp = c_p'·ρ·v²/2 mit v = max(v_c, v_a) als Amplitude
+  auf der benetzten Fläche (eigener Lastfall).
+
+Die Lasten liegen als Objektlasten mit ``verlauf["art"] == "wasser"`` an den
+Flächen; je Elementseite wird p am Schwerpunkt ausgewertet (bei linearem
+Druck ist die Resultierende je Element damit exakt). `tests/test_wasserdruck.py`
+prüft Druckverlauf, Kennwerte (Rechteckschütz, Netto mit Unterwasser, Poleni,
+Torricelli) und die Summe der Elementlasten auf einem Netz.
+
 ## 3 Lastfälle, Kombinationen, Umhüllende
 
 Jeder Lastfall trägt eine Einwirkungskategorie (DIN EN 1990/NA Tabelle

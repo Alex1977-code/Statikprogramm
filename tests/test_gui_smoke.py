@@ -2132,6 +2132,77 @@ def main():
         m_.load_cases[lf].theorie = ""
         m_.combinations["K2"].theorie = ""
 
+        # ---- Lastgenerierer Wasserdruck ----
+        from statik3d.model import ShellProp as ShP, Flaeche as Fl
+        from statik3d.report.html import Report as Rep
+        w.new_model()
+        m_ = w.model
+        m_.add_material(Material("S"))
+        m_.add_shell_prop(ShP("t", 0.012))
+        nx_, nz_, b_, h_ = 6, 20, 3.0, 5.0
+        ids_ = [[m_.add_node(0.0, i * b_ / nx_, k * h_ / nz_) for k in range(nz_ + 1)] for i in range(nx_ + 1)]
+        el_ = [m_.add_element("shell4", [ids_[i][k], ids_[i + 1][k], ids_[i + 1][k + 1], ids_[i][k + 1]], "S", "t")
+               for i in range(nx_) for k in range(nz_)]
+        m_.flaechen["Haut"] = Fl("Haut", dicke="t", material="S", elemente=el_)
+        for k in range(nz_ + 1):
+            m_.fix(ids_[0][k], "all")
+            m_.fix(ids_[nx_][k], "all")
+        w.refresh_all()
+        app.processEvents()
+        check("Baum: Lastgenerierer mit „+ Wasserdruck anlegen“",
+              "Lastgenerierer" in zweige(w.baum) and "+ Wasserdruck anlegen" in zweige(w.baum))
+        w.sel_flaechen = ["Haut"]
+        w._baum_geklickt("wasserdruck_neu", "+")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Wasserdruck-Maske mit der gewählten Fläche und den Knöpfen",
+              mk.titel == "Neu: Wasserdruck" and "Haut" in mk.werte()["ziele"]
+              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kennwerte"}, str(mk.werte().get("ziele")))
+        mk.setzen("h_ow", 4.0)
+        mk.setzen("richtung", "global x")
+        mk.setzen("absenkung", False)
+        mk.zusatzknoepfe["Kennwerte"].click()
+        app.processEvents()
+        check("Kennwerte in der Maske: F = ½ρgh²b = 235,4 kN", "235.4 kN" in mk.werte()["kennwerte"],
+              mk.werte()["kennwerte"])
+        mk.anwenden()
+        app.processEvents()
+        wd_ = m_.wasserdruecke.get("W1")
+        check("„Lasten erzeugen“: Generierer, Lastfall, Objektlast, Elementlasten nur unter Wasser",
+              wd_ is not None and wd_.lastfall in m_.load_cases
+              and any(gl.verlauf.get("art") == "wasser" for gl in m_.load_cases[wd_.lastfall].geometrielasten)
+              and len(m_.load_cases[wd_.lastfall].face_loads) == 6 * 16 and "W1" in zweige(w.baum),
+              str(len(m_.load_cases[wd_.lastfall].face_loads) if wd_ else None))
+        w._baum_geklickt("wasserdruck", "W1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("h_ow", 6.0)
+        mk.setzen("ueber", True)
+        mk.setzen("unter", True)
+        mk.setzen("spalt", 0.4)
+        mk.setzen("cp_dyn", 0.2)
+        mk.setzen("absenkung", True)
+        mk.anwenden()
+        app.processEvents()
+        wd_ = m_.wasserdruecke["W1"]
+        check("Ändern: überströmt, unterströmt, Druckschwankung als eigener Lastfall",
+              wd_.ueberstroemt and wd_.unterstroemt and wd_.lastfall_dyn in m_.load_cases
+              and len(m_.wasserdruecke) == 1, str(list(m_.load_cases)))
+        bl_ = Rep(m_, None).chapter_lastgenerierer()
+        check("Bericht: Kapitel Lastgenerierer mit Tabelle, Erläuterung (Poleni) und Skizze",
+              any(x[0] == "table" for x in bl_) and any(x[0] == "figure" and "<svg" in x[1] for x in bl_)
+              and any(x[0] == "p" and "Poleni" in x[1] for x in bl_), str([x[0] for x in bl_]))
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("wasserdruck", "W1")
+        app.processEvents()
+        check("Löschen entfernt den Generierer samt Lasten",
+              "W1" not in m_.wasserdruecke
+              and not any(getattr(f, "_geo", False) for lc in m_.load_cases.values() for f in lc.face_loads))
+        del w._bestaetigen
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt den Generierer zurück", "W1" in w.model.wasserdruecke)
+
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
         w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))
