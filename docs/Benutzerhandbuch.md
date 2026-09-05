@@ -164,7 +164,7 @@ bedienen sind, steht im nächsten Abschnitt.
 | Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts die Maske mit Name, Nummer, Einwirkung, Beschreibung, Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerten und „aktiver Lastfall“ |
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ, Beschreibung, Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM; ausgeführt werden sie beim Vernetzen |
-| Flächen, Volumenkörper | über die Maske (Doppelklick): Randlinien bzw. Randflächen, Dicke, Werkstoff, Teilung |
+| Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** in der Ansicht gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
@@ -379,7 +379,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 |---|---|
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
-| Auswahl und Sicht | Alles deselektieren, Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen |
+| Auswahl und Sicht | Alles deselektieren, Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Intelligente Auswahl** (Schalter) |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Ansicht → Fang*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente) — genau einer ist gedrückt |
 
@@ -474,7 +474,12 @@ Werkstoff, Teilung und Bemerkung, bei Schweißnähten Nahtart, Lage, a, t, ℓ,
 Ausführung und „gilt für“. Wo eine Auswahl besteht (Werkstoff, Querschnitt,
 Dicke, Nahtart, Lage, Ausführung), öffnet die Zelle eine **Aufklappliste**;
 Unzulässiges (unbekannter Knoten, fehlende Linie) wird mit Hinweis
-abgewiesen, jede Änderung ist rückgängig machbar. Spalten werden aus ihrem Inhalt breit,
+abgewiesen, jede Änderung ist rückgängig machbar. **Mehrfachauswahl:** mit
+**Umschalt** markiert ein Klick einen Bereich von Zeilen, mit **Strg** kommen
+einzelne Zeilen dazu oder gehen heraus; die Ansicht wählt dann alles
+zusammen, was die Zeilen einzeln gewählt hätten (die Knoten mehrerer Stäbe,
+mehrere Flächen, Lager, Lasten …), und die Statuszeile nennt die Zahl der
+Tabellenzeilen. Spalten werden aus ihrem Inhalt breit,
 aber höchstens 360 Punkte (eine Elementliste mit tausend Nummern bleibt
 lesbar, ohne die Tabelle über die ganze Wand zu ziehen); die Tabellen
 zwingen dem Fenster keine Mindestbreite auf.
@@ -555,6 +560,26 @@ alles. **Klicken und Ziehen wählt nichts**: gezählt wird der Klick erst beim
 Loslassen, und nur, wenn der Zeiger dazwischen höchstens vier Bildpunkte
 gewandert ist — wer die Ansicht mit gedrückter Taste dreht, ändert die
 Auswahl nicht.
+
+**Intelligente Auswahl.** Der Schalter in der Glasleiste (auch *Start →
+Auswahl*, Vorgabe: an) nimmt bei Linien und Stäben die **eindeutige
+Fortsetzung** gleich mit: Hängt am Endknoten der angeklickten Linie genau
+eine weitere Linie, gehört sie dazu, und so weiter — bis zu einer
+Verzweigung (mehrere Linien am Knoten), einem freien Ende oder dem Schluss
+eines Rings. Ein Zug aus zwölf Linien ohne Abzweig ist so ein einziger
+Klick. Dieselbe Regel gilt **beim Abwählen**: der Klick auf eine gewählte
+Linie nimmt den Zug wieder heraus, soweit er gewählt ist. Bei Stäben zählt
+der physische Stab (Kette von Elementen) mit seinen beiden Enden. Ist der
+Schalter aus, erzwingt **Umschalt + Klick** die Kette für diesen einen
+Klick. Der Klickmodus der Flächenmaske (*Randlinien anklicken*) nutzt
+dieselbe Kette — ein Klick auf eine Randlinie holt den ganzen geschlossenen
+Rand, wenn er sonst nirgends abzweigt.
+
+**Die Auswahl leuchtet.** Gewählte Linien, Stäbe, Flächen und Volumen werden
+nicht nur umrandet, sondern gefüllt hervorgehoben: Stäbe und vernetzte
+Flächen über ihre Elemente, unvernetzte Flächen als durchscheinendes
+Polygon, Volumen über ihre Oberfläche — dieselbe Hervorhebung wie beim
+Anklicken im Modellbaum.
 
 Ist **nichts gewählt** und keine Erzeuge-Maske offen, zeigt der rechte
 Bereich nur die **Information zum Modell** (Projekt und Modellangaben) -
@@ -824,7 +849,9 @@ Modell gespeichert.
 Sobald Knoten gewählt sind, erscheint rechts im Ribbon ein zusätzliches
 Register **„Auswahl: n Knoten"** mit genau den Befehlen, die auf die Auswahl
 passen: Querschnitt und Material zuweisen, Gelenke setzen, Elemente oder Knoten
-löschen, Lager setzen, Last aufbringen, Auswahl umkehren oder aufheben. Wird
+löschen, Lager setzen, Last aufbringen, Auswahl umkehren oder aufheben. Im
+Register *Start → Auswahl* steht daneben der Schalter **Intelligente
+Auswahl** (siehe „Auswahl per Klick“). Wird
 die Auswahl aufgehoben, verschwindet das Register wieder. Einen Bereich
 „Elemente ändern" im rechten Panel gibt es dafür nicht mehr.
 

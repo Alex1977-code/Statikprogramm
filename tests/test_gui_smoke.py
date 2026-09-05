@@ -1309,14 +1309,24 @@ def main():
               and w.cb_auswahlart.currentText() == "Linie")
         check("Linie unter dem Zeiger gefunden",
               vpg.line_at(mg, [2.0, 0.0, 0.0], mg.characteristic_size()) == "L1")
+        # Intelligente Auswahl (Vorgabe: an): ein Klick auf eine Linie des
+        # geschlossenen Rands holt den ganzen Ring, der naechste nimmt ihn weg
+        w._picked([2.0, 0, 0])
+        check("ein Klick wählt den geschlossenen Rand (intelligente Auswahl): vier Linien",
+              sorted(w.sel_linien) == ["L1", "L2", "L3", "L4"], str(w.sel_linien))
+        w._picked([2.0, 0.0, 0.0])
+        check("nochmaliger Klick nimmt den ganzen Zug wieder heraus",
+              not w.sel_linien, str(w.sel_linien))
+        w.act_klug.setChecked(False)
         for punkt in ([2.0, 0, 0], [4.0, 1.0, 0], [2.0, 2.0, 0], [0, 1.0, 0]):
             w._picked(punkt)
-        check("vier Linien ausgewählt", w.sel_linien == ["L1", "L2", "L3", "L4"],
+        check("Schalter aus: vier Klicks, vier Linien", w.sel_linien == ["L1", "L2", "L3", "L4"],
               str(w.sel_linien))
         w._picked([2.0, 0.0, 0.0])
-        check("nochmaliger Klick nimmt die Linie wieder heraus",
-              "L1" not in w.sel_linien, str(w.sel_linien))
+        check("Schalter aus: nochmaliger Klick nimmt nur die eine Linie heraus",
+              "L1" not in w.sel_linien and len(w.sel_linien) == 3, str(w.sel_linien))
         w._picked([2.0, 0.0, 0.0])
+        w.act_klug.setChecked(True)
 
         f = mg.add_flaeche("F1", w.sel_linien, dicke=list(mg.shells)[0],
                            material=list(mg.materials)[0], teilung=[8, 4])
@@ -3678,6 +3688,114 @@ def main():
         import traceback
         traceback.print_exc()
         check("Tabellen direkt bearbeiten", False, str(ex)[:70])
+
+    # ---- Mehrfachauswahl, Randlinien anklicken, intelligente Auswahl, Leuchten --
+    try:
+        from PySide6 import QtCore
+        from statik3d.gui import masken as msk_
+        w.new_model()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        mat_, t0_, sec_ = list(m_.materials)[0], list(m_.shells)[0], list(m_.sections)[0]
+        # Kette 0-1-2-3, an 3 Verzweigung nach 4 und 5; Ring 6-7-8-9 als Fläche F1
+        P_ = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 1, 0), (4, -1, 0),
+              (0, 3, 0), (2, 3, 0), (2, 5, 0), (0, 5, 0)]
+        ids_ = [m_.add_node(*p) for p in P_]
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 4), (3, 5)]):
+            m_.add_line(f"L{i}", [ids_[a], ids_[b]])
+        for i, (a, b) in enumerate([(6, 7), (7, 8), (8, 9), (9, 6)]):
+            m_.add_line(f"R{i}", [ids_[a], ids_[b]])
+        m_.add_flaeche("F1", ["R0", "R1", "R2", "R3"], dicke=t0_, material=mat_, teilung=[2, 2])
+        e_ = [m_.add_element("beam", [ids_[a], ids_[b]], mat_, sec_)
+              for a, b in [(0, 1), (1, 2), (2, 3), (3, 4), (3, 5)]]
+        for i, e in enumerate(e_):
+            m_.add_member(f"M{i}", [e])
+        w.refresh_all(); app.processEvents()
+        t_ = w.tbl_knoten
+        check("Tabellen: Mehrfachauswahl mit Umschalt/Strg (ExtendedSelection)",
+              t_.view.selectionMode() == QtWidgets.QAbstractItemView.ExtendedSelection)
+        sm_ = t_.view.selectionModel(); sm_.clearSelection()
+        for r in (0, 2, 5):
+            sm_.select(t_.filter.index(r, 0), QtCore.QItemSelectionModel.Select | QtCore.QItemSelectionModel.Rows)
+        t_._geklickt(t_.filter.index(5, 0)); app.processEvents()
+        check("drei Knotenzeilen markiert -> drei Knoten in der Ansicht, Zeilen bleiben markiert",
+              len(w.selection) == 3 and len(sm_.selectedRows()) == 3
+              and sorted(int(x) for x in t_.gewaehlte_schluessel()) == sorted(int(x) for x in w.selection),
+              str(w.selection.tolist()))
+        t2_ = w.tbl_elem; sm2_ = t2_.view.selectionModel(); sm2_.clearSelection()
+        for r in (0, 1):
+            sm2_.select(t2_.filter.index(r, 0), QtCore.QItemSelectionModel.Select | QtCore.QItemSelectionModel.Rows)
+        t2_._geklickt(t2_.filter.index(1, 0)); app.processEvents()
+        check("zwei Stabzeilen -> die Knoten beider Elemente, Statuszeile nennt Tabellenzeilen",
+              len(w.selection) == 3 and "2 Tabellenzeilen" in w.lbl_sel.text(), w.lbl_sel.text())
+        enden_ = w._linienenden()
+        check("Kette: L0 -> L0, L1, L2 (hält an der Verzweigung); Ring R0 -> alle vier; L3 allein",
+              w._kette("L0", enden_, set(enden_)) == ["L0", "L1", "L2"]
+              and sorted(w._kette("R0", enden_, set(enden_))) == ["R0", "R1", "R2", "R3"]
+              and w._kette("L3", enden_, set(enden_)) == ["L3"])
+        w.auswahlart_setzen("Linie"); w.sel_linien = []
+        w.act_klug.setChecked(True)
+        w._objekt_umschalten_klug(w.sel_linien, "L1", "Linien", enden_)
+        w._objekt_umschalten_klug(w.sel_linien, "L3", "Linien", enden_)
+        zug_ = list(w.sel_linien)
+        w._objekt_umschalten_klug(w.sel_linien, "L2", "Linien", enden_)
+        check("intelligente Auswahl: Klick auf L1 wählt L0..L2, L3 einzeln; Klick auf L2 wählt den Zug ab",
+              set(zug_) == {"L0", "L1", "L2", "L3"} and w.sel_linien == ["L3"], str((zug_, w.sel_linien)))
+        w.act_klug.setChecked(False)
+        w._objekt_umschalten_klug(w.sel_linien, "L1", "Linien", enden_)
+        check("Schalter aus: nur die angeklickte Linie", set(w.sel_linien) == {"L3", "L1"}, str(w.sel_linien))
+        w._klick_umschalt = True
+        w._objekt_umschalten_klug(w.sel_linien, "L0", "Linien", enden_)
+        w._klick_umschalt = False
+        check("Umschalt+Klick erzwingt die Kette (L0 mit L2 dazu)", set(w.sel_linien) == {"L3", "L1", "L0", "L2"},
+              str(w.sel_linien))
+        w.act_klug.setChecked(True)
+        w.sel_linien = []; w.sel_staebe = []
+        w._objekt_umschalten_klug(w.sel_staebe, "M0", "Stäbe", w._stabenden())
+        check("Stabzug M0..M2 gewählt, hält an der Verzweigung", set(w.sel_staebe) == {"M0", "M1", "M2"},
+              str(w.sel_staebe))
+        check("„Intelligente Auswahl“ als Schalter in der Glasleiste mit Symbol",
+              "auswahl_klug" in w.glasleiste.knoepfe
+              and w.glasleiste.knoepfe["auswahl_klug"].defaultAction() is w.act_klug
+              and not w.act_klug.icon().isNull() and w.act_klug.isCheckable())
+        w.sel_staebe = []; w.sel_flaechen = ["F1"]; w.redraw(); app.processEvents()
+        ak_ = list(w.plotter.renderer.actors)
+        check("gewählte unvernetzte Fläche leuchtet als Polygon", "auswahl_flaechen" in ak_ and "auswahl" in ak_,
+              str([a for a in ak_ if "auswahl" in a]))
+        w.sel_flaechen = []; w.sel_staebe = ["M0"]; w.redraw(); app.processEvents()
+        check("gewählter Stab leuchtet über seine Elemente", "auswahl_elemente" in list(w.plotter.renderer.actors))
+        w.sel_staebe = []
+        mk_ = w.flaeche_bearbeiten("F1"); app.processEvents()
+        check("Doppelklick Fläche: Maske rechts (kein Dialog) mit „Randlinien anklicken“",
+              isinstance(mk_, msk_.Maske) and mk_.titel == "Fläche F1" and w.maskenrand.maske is mk_
+              and "Randlinien anklicken" in mk_.zusatzknoepfe, str(getattr(mk_, "titel", mk_)))
+        mk_.zusatzknoepfe["Randlinien anklicken"].click(); app.processEvents()
+        check("Klickmodus: Maske erwartet Linien, die Randlinien leuchten",
+              mk_.objekt_modus == "linie" and w.maskenrand.objekt_modus() == "linie"
+              and set(w.sel_linien) == {"R0", "R1", "R2", "R3"}, str((mk_.objekt_modus, w.sel_linien)))
+        mk_.objekt_angeklickt("linie", "R1")
+        weg_ = "R1" not in w._namensliste(mk_.werte()["linien"]) and "R1" not in w.sel_linien
+        w._linie_am_zeiger = lambda: "L1"
+        w._maskenobjekt_klick("linie", np.zeros(3)); app.processEvents()
+        check("Klick nimmt R1 heraus; Klick auf L1 bringt den Zug L0, L1, L2 in die Maske",
+              weg_ and {"L0", "L1", "L2"} <= set(w._namensliste(mk_.werte()["linien"])), mk_.werte()["linien"])
+        mk_.objekt_angeklickt("flaeche", "F1")
+        mk_.zusatzknoepfe["Randlinien anklicken"].click(); app.processEvents()
+        check("falsche Art abgewiesen, Klickmodus wieder aus", "F1" not in mk_.werte()["linien"] and mk_.objekt_modus == "")
+        mk_.setzen("linien", "R0, R1, R2, R3"); mk_.setzen("vernetzen", True)
+        mk_.anwenden(); app.processEvents()
+        check("Übernehmen mit „gleich vernetzen“: F1 hat Elemente, keine Fehler",
+              len(w.model.flaechen["F1"].elemente) > 0 and not fehler_, str(fehler_[:1]))
+        w.undo(); app.processEvents()
+        check("Rückgängig nimmt das Netz wieder", not w.model.flaechen["F1"].elemente)
+        w.error = alt_error
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Mehrfachauswahl und intelligente Auswahl", False, str(ex)[:70])
 
     # ---- Klick und Ziehen; Bericht ohne Berechnung ---------------------------
     try:

@@ -209,6 +209,20 @@ def z_nummern(s: Stift):
     s.text("#", 11)
 
 
+def z_auswahl_klug(s: Stift):
+    # Intelligente Auswahl: ein Linienzug, der sich von selbst fortsetzt, bis
+    # er sich verzweigt - dort haelt die Auswahl (gestrichelt)
+    s.stift(breite=2.2)
+    s.zug([(2.5, 18.5), (8, 8), (14, 14.5), (19, 6)])
+    s.stift(breite=1.2, gestrichelt=True)
+    s.linie(19, 6, 22, 11)
+    s.linie(19, 6, 22, 2)
+    s.stift(breite=1.0)
+    s.fuellung(s.akzent)
+    for x, y in ((2.5, 18.5), (8, 8), (14, 14.5), (19, 6)):
+        s.kreis(x, y, 1.7)
+
+
 def z_fang(s: Stift):
     # Ein Fadenkreuz mit Fangkreis
     s.stift(breite=1.5)

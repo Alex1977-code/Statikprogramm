@@ -108,6 +108,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.kopf = dsg.Kopfzeile(self)
         self._build_ribbon()
         self._build_glasleiste()
+        self._tabellen_mehrfach_verbinden()
         self._build_update_button()
         self._refresh_kopf()
         self._build_baum()
@@ -779,6 +780,91 @@ class MainWindow(QtWidgets.QMainWindow):
                                 + (" …" if len(liste) > 6 else "") + ")" if liste else ""))
         self.redraw()
 
+    # ---- Intelligente Auswahl: eindeutige Fortsetzung mitnehmen ----------
+    def _klug_aktiv(self) -> bool:
+        """Der Schalter „Intelligente Auswahl“ (Start, Glasleiste) oder die
+        Umschalttaste beim Klick."""
+        a = getattr(self, "act_klug", None)
+        return bool(getattr(self, "_klick_umschalt", False)
+                    or (a is not None and a.isChecked()))
+
+    def _linienenden(self) -> dict:
+        """{Linienname: (Anfangsknoten, Endknoten)} aller Linien."""
+        return {name: (int(ln.nodes[0]), int(ln.nodes[-1]))
+                for name, ln in self.model.lines.items() if len(ln.nodes) >= 2}
+
+    def _stabenden(self) -> dict:
+        """{Stabname: (Anfangsknoten, Endknoten)} - nur fuer Staebe, die eine
+        offene Kette von Elementen sind (zwei Enden)."""
+        m = self.model
+        enden = {}
+        for name, mem in m.members.items():
+            zaehler: dict = {}
+            for e in (mem.elements or []):
+                if 0 <= int(e) < len(m.elements):
+                    kn = m.elements[int(e)].nodes
+                    for n in (int(kn[0]), int(kn[-1])):
+                        zaehler[n] = zaehler.get(n, 0) + 1
+            offen = [n for n, z in zaehler.items() if z == 1]
+            if len(offen) == 2:
+                enden[name] = (offen[0], offen[1])
+        return enden
+
+    @staticmethod
+    def _kette(start, enden: dict, kandidaten) -> list:
+        """Von *start* aus in beide Richtungen weiter, solange am Endknoten
+        **genau eine** andere Linie (bzw. ein Stab) haengt und sie zu den
+        Kandidaten gehoert. An einer Verzweigung, einem freien Ende oder
+        einem geschlossenen Ring haelt die Kette an."""
+        if start not in enden:
+            return [start]
+        an: dict = {}
+        for name, (a, b) in enden.items():
+            an.setdefault(a, set()).add(name)
+            an.setdefault(b, set()).add(name)
+        zug, drin = [start], {start}
+        for knoten in enden[start]:
+            vorher = start
+            while True:
+                andere = an.get(knoten, set()) - {vorher}
+                if len(andere) != 1:
+                    break
+                naechste = next(iter(andere))
+                if naechste in drin or naechste not in kandidaten:
+                    break
+                zug.append(naechste)
+                drin.add(naechste)
+                a, b = enden[naechste]
+                knoten = b if a == knoten else a
+                vorher = naechste
+        return zug
+
+    def _objekt_umschalten_klug(self, liste: list, name: str, was: str, enden: dict):
+        """Wie _objekt_umschalten, aber mit der eindeutigen Fortsetzung:
+        Anklicken nimmt den ganzen Zug dazu, Anklicken eines gewaehlten
+        Objekts nimmt den Zug wieder heraus."""
+        if not self._klug_aktiv() or name not in enden:
+            return self._objekt_umschalten(liste, name, was)
+        drin = name in liste
+        # Herausnehmen laeuft nur ueber gewaehlte Objekte; Dazunehmen laeuft
+        # durch schon gewaehlte hindurch und nimmt die fehlenden mit
+        kette = self._kette(name, enden, set(liste) if drin else set(enden))
+        for x in kette:
+            if drin:
+                if x in liste:
+                    liste.remove(x)
+            elif x not in liste:
+                liste.append(x)
+        self.lbl_sel.setText(f"{len(liste)} {was} ausgewählt"
+                             + (f" ({', '.join(str(x) for x in liste[:6])}"
+                                + (" …" if len(liste) > 6 else "") + ")" if liste else ""))
+        if len(kette) > 1:
+            self.statusBar().showMessage(
+                f"Intelligente Auswahl: {len(kette)} {was} im Zug "
+                + ("abgewählt" if drin else "gewählt") + f" ({', '.join(str(x) for x in kette[:6])}"
+                + (" …" if len(kette) > 6 else "") + ")", 4000)
+        self.redraw()
+
     #: Fangradius um den Mauszeiger [Bildschirmpunkte]. In Pixeln, nicht in
     #: Metern: was man sieht, will man treffen - unabhaengig davon, wie weit
     #: man gerade hineingezoomt hat.
@@ -1426,7 +1512,24 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:               # noqa: BLE001
                 name = None
             if name:
-                self.maskenrand.maske.objekt_angeklickt(art, name)
+                namen = [name]
+                if art == "linie" and self._klug_aktiv():
+                    # Der Linienzug geht als Ganzes an die Maske: was sie schon
+                    # hat, spiegelt sie in sel_linien - danach richtet sich,
+                    # ob die Kette dazukommt oder herausgeht
+                    enden = self._linienenden()
+                    drin = name in self.sel_linien
+                    # Herausnehmen laeuft nur ueber gewaehlte Linien; Dazunehmen
+                    # laeuft durch schon gewaehlte hindurch und nimmt die
+                    # fehlenden mit
+                    kandidaten = set(self.sel_linien) if drin else set(enden)
+                    namen = [x for x in self._kette(name, enden, kandidaten)
+                             if (x in self.sel_linien) == drin]
+                for x in namen:
+                    self.maskenrand.maske.objekt_angeklickt(art, x)
+                if len(namen) > 1:
+                    self.statusBar().showMessage(f"Linienzug: {len(namen)} Linien ({', '.join(namen[:6])}"
+                                                 + (" …" if len(namen) > 6 else "") + ")", 4000)
                 self.redraw()
                 return
         self.statusBar().showMessage("Nichts getroffen - Objekt anklicken oder den Klickmodus in der Maske "
@@ -1451,7 +1554,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 return                      # gezogen: gedreht, nicht geklickt
         except Exception:                   # noqa: BLE001
             pass
-        self._picked(wartend[0], *wartend[1])
+        self._klick_umschalt = bool(QtWidgets.QApplication.keyboardModifiers()
+                                    & QtCore.Qt.ShiftModifier)
+        try:
+            self._picked(wartend[0], *wartend[1])
+        finally:
+            self._klick_umschalt = False
 
     def _picked(self, point, *args):
         # Ein laufendes Auswahlfenster: der zweite Linksklick schliesst es ab
@@ -1480,7 +1588,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self._objekt_umschalten(self.sel_elemente, int(elem), "Elemente")
             if art == "Linie":
                 name = self._linie_am_zeiger() or vp.line_at(m, point, size)
-                return self._objekt_umschalten(self.sel_linien, name, "Linien") \
+                return self._objekt_umschalten_klug(self.sel_linien, name, "Linien", self._linienenden()) \
                     if name else self._fenster_beginnen()
             # Erst das, was gezeichnet ist (Zellenpicker) - das trifft auch
             # Zylindermaentel und Stabkoerper; die geometrische Suche ist der
@@ -1496,7 +1604,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "Stab":
                 name = (self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")
                         or vp.member_at(m, point))
-                return self._objekt_umschalten(self.sel_staebe, name, "Stäbe") \
+                return self._objekt_umschalten_klug(self.sel_staebe, name, "Stäbe", self._stabenden()) \
                     if name else self._fenster_beginnen()
         if self.model.nn == 0:
             return
@@ -1941,6 +2049,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                       (self.act_sicht_zurueck, "sicht_zurueck", "zurueck"),
                                       (self.act_alles_zeigen, "sicht_alles", "alles")):
             leiste.knopf(a, symbol, schluessel)
+        leiste.knopf(self.act_klug, "auswahl_klug", "auswahl_klug")
         leiste.trenner()
         # Fang: Hauptschalter (die Arten stehen im Ribbon)
         leiste.knopf(self.act_fang, "fang", "fang")
@@ -2166,6 +2275,11 @@ class MainWindow(QtWidgets.QMainWindow):
                                        "Esc", "Auswahl aufheben - nichts bleibt gewählt (auch in der Glasleiste)")
         g.klein("Alles auswählen", self.select_all, "Ctrl+A")
         g.klein("Auswahl umkehren", self.invert_selection)
+        self.act_klug = g.schalter("Intelligente Auswahl", None, True,
+                                   hinweis="Linien und Stäbe: gibt es am Ende genau eine Fortsetzung, "
+                                           "wird sie mit gewählt - und beim Abwählen mit abgewählt. "
+                                           "Umschalt+Klick erzwingt es auch bei ausgeschaltetem Schalter.",
+                                   symbol="auswahl_klug")
         g = r.gruppe("Modell prüfen")
         g.gross("Prüfen", "⚑", self.do_check, "", "Modell auf Fehler prüfen")
         g.klein("Doppelte Knoten zusammenführen", self.do_merge)
@@ -2693,6 +2807,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def maske_erzeugen(self, maske):
         """Eine Erzeuge-Maske im rechten Bereich zeigen und ihn aufklappen."""
+        if getattr(self, "_auswahl_sammeln", False):
+            return maske                    # Mehrfachauswahl: keine Maske je Zeile
         self.maskenrand.zeigen(maske)
         if hasattr(self, "eingaben_dock"):
             self.eingaben_dock.setWindowTitle(getattr(maske, "titel", "") or "Erzeugen")
@@ -3098,8 +3214,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             [""] + list(m.materials)),
                           F("teilung", "Teilung", "text",
                             ", ".join(str(t) for t in (f.teilung if f else [4, 4])), breite=80),
-                          F("linien", "Randlinien", "text", ", ".join(f.linien if f else []), breite=160),
+                          F("linien", "Randlinien", "text", ", ".join(f.linien if f else []), breite=160,
+                            hinweis="Namen der Randlinien - oder „Randlinien anklicken“ und in der Ansicht wählen"),
                           F("elemente", "Elemente", "info", str(len(f.elemente)) if f else "0"),
+                          F("vernetzen", "gleich vernetzen", "haken", not (f is not None and f.elemente)),
                           F("kommentar", "Kommentar", "text", (f.kommentar if f else ""), breite=160)]
                 titel = f"Fläche {name}"
         elif art in ("geokoerper", "geokoerper_einzeln"):
@@ -3117,8 +3235,10 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("teilung", "Teilung", "text",
                             ", ".join(str(t) for t in (k.teilung if k else [4, 4, 4])), breite=80),
                           F("flaechen", "Randflächen", "text", ", ".join(k.flaechen if k else []),
-                            breite=160),
+                            breite=160,
+                            hinweis="Namen der Randflächen - oder „Randflächen anklicken“ und in der Ansicht wählen"),
                           F("elemente", "Elemente", "info", str(len(k.elemente)) if k else "0"),
+                          F("vernetzen", "gleich vernetzen", "haken", not (k is not None and k.elemente)),
                           F("kommentar", "Kommentar", "text", (k.kommentar if k else ""), breite=160)]
                 titel = f"Volumen {name}"
         elif art in ("lastfaelle", "lastfall"):
@@ -3224,10 +3344,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if neu:
             titel = "Neu: " + titel
             hinweis = "Felder ausfüllen und OK - Abbrechen legt nichts an."
+        zusatz: list = []
+        halter: dict = {}
+        if eintrag and art in ("geoflaeche", "geokoerper_einzeln"):
+            # Randlinien bzw. Randflaechen in der Ansicht anklicken statt tippen
+            zusatz = [("Randlinien anklicken" if art == "geoflaeche" else "Randflächen anklicken",
+                       lambda: self._objektmaske_klick_umschalten(halter.get("m"), art))]
         maske = msk.Maske(titel, felder, knopf=knopf,
                           hinweis=hinweis or ("Werte ändern und „Übernehmen“." if eintrag else
                                               "Rechtsklick auf den Zweig: Neu. Entf löscht den gewählten Eintrag."),
-                          abbrechen="Abbrechen" if neu else "")
+                          zusatz=zusatz, abbrechen="Abbrechen" if neu else "")
+        halter["m"] = maske
+        if zusatz:
+            self._objektmaske_klickmodus(maske, art)
         zweigart = self.baum.ELTERNART.get(art, art)
         if not eintrag:
             maske.angewendet.connect(lambda _w, z=zweigart: self._baum_neu(z))
@@ -3238,6 +3367,61 @@ class MainWindow(QtWidgets.QMainWindow):
                 maske.abgebrochen.connect(lambda a=art, n=name: self._objekt_neu_abbrechen(a, n))
         self.maske_erzeugen(maske)
         return maske
+
+    #: Flaechen- und Volumenmaske: welches Feld der Klickmodus fuellt
+    MASKENKLICK = {"geoflaeche": ("linien", "linie", "Randlinien"),
+                   "geokoerper_einzeln": ("flaechen", "flaeche", "Randflächen")}
+
+    def _objektmaske_klickmodus(self, maske, art: str):
+        """Die Maske einer Flaeche oder eines Volumens nimmt Klicks aus der
+        Ansicht entgegen: jede angeklickte Randlinie (Randflaeche) kommt in
+        die Namensliste oder geht wieder heraus, und die Liste leuchtet."""
+        feld, modus, was = self.MASKENKLICK[art]
+        maske._klick_hinweis_alt = maske.lbl_hinweis.text()
+
+        def liste() -> list:
+            return self._namensliste(maske.werte().get(feld))
+
+        def angeklickt(art_obj: str, name: str):
+            if art_obj != modus:
+                return self.statusBar().showMessage(f"{name} ist keine {was[:-1]}e - Klickmodus: {was}", 3000)
+            namen = liste()
+            if name in namen:
+                namen.remove(name)
+            else:
+                namen.append(name)
+            maske.setzen(feld, ", ".join(namen))
+            self._objektmaske_klick_zeigen(maske, art)
+            self.statusBar().showMessage(f"{was}: {', '.join(namen) if namen else 'keine'}", 4000)
+
+        maske.objekt_angeklickt = angeklickt
+
+    def _objektmaske_klick_zeigen(self, maske, art: str):
+        """Die Namensliste der Maske in der Ansicht hervorheben."""
+        if maske is None:
+            return
+        feld, modus, _was = self.MASKENKLICK[art]
+        namen = self._namensliste(maske.werte().get(feld))
+        if modus == "linie":
+            self.sel_linien = [x for x in namen if x in self.model.lines]
+        else:
+            self.sel_flaechen = [x for x in namen if x in self.model.flaechen]
+        self.redraw()
+
+    def _objektmaske_klick_umschalten(self, maske, art: str):
+        """Der Zusatzknopf: Klickmodus an oder aus."""
+        if maske is None:
+            return
+        feld, modus, was = self.MASKENKLICK[art]
+        an = not maske.objekt_modus
+        maske.objekt_modus = modus if an else ""
+        if an:
+            maske.lbl_hinweis.setText(f"Klickmodus: {was} in der Ansicht anklicken - jeder Klick nimmt "
+                                      "dazu oder heraus; derselbe Knopf beendet ihn.")
+            self._objektmaske_klick_zeigen(maske, art)
+        else:
+            maske.lbl_hinweis.setText(getattr(maske, "_klick_hinweis_alt", "") or "")
+        self.statusBar().showMessage(f"{was} anklicken" if an else "Klickmodus beendet", 3000)
 
     def _objekt_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False):
         """Die Felder der Objektmaske ins Modell schreiben (oder das Objekt anlegen)."""
@@ -3360,6 +3544,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 return None
         except (KeyError, ValueError, IndexError) as ex:
             return self.error(str(ex))
+        if w.get("vernetzen"):
+            if art == "geoflaeche" and name in m.flaechen:
+                self._vernetzen([m.flaechen[name]], [])
+            elif art == "geokoerper_einzeln" and name in m.koerper:
+                self._vernetzen([], [m.koerper[name]])
         self.analysis = None
         self.results = None
         self.info(("Angelegt: " if neu else "Übernommen: ") + f"{art} {name}")
@@ -4334,28 +4523,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def flaeche_bearbeiten(self, name: str):
+        """Doppelklick auf eine Flaeche: ihre Maske rechts - Randlinien auch
+        durch Anklicken in der Ansicht."""
         f = self.model.flaechen.get(name)
         if f is None:
             return self.add_flaeche_aus_auswahl()
-        d = dg.FlaechenDialog(self, self.model, flaeche=f)
-        if not d.exec():
-            return
-        w = d.werte()
-        self.merken(f"Fläche {name}")
-        self._netz_loeschen(f.elemente)
-        del self.model.flaechen[name]
-        try:
-            neu = self.model.add_flaeche(w["name"], w["linien"], dicke=w["dicke"],
-                                         material=w["material"], teilung=w["teilung"],
-                                         kommentar=w["kommentar"])
-        except (KeyError, ValueError) as ex:
-            self.undo()
-            return self.error(str(ex))
-        for k in self.model.koerper.values():
-            k.flaechen = [w["name"] if x == name else x for x in k.flaechen]
-        if w["vernetzen"]:
-            self._vernetzen([neu], [])
-        self.refresh_all()
+        self._baum_objekt_waehlen("geoflaeche", name)
+        self.redraw()
+        return self._objektmaske("geoflaeche", name)
 
     def add_koerper_aus_auswahl(self):
         """Aus den ausgewaehlten Flaechen einen Volumenkoerper machen."""
@@ -4383,26 +4558,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def koerper_bearbeiten(self, name: str):
+        """Doppelklick auf ein Volumen: seine Maske rechts - Randflaechen auch
+        durch Anklicken in der Ansicht."""
         k = self.model.koerper.get(name)
         if k is None:
             return self.add_koerper_aus_auswahl()
-        d = dg.KoerperDialog(self, self.model, koerper=k)
-        if not d.exec():
-            return
-        w = d.werte()
-        self.merken(f"Volumen {name}")
-        self._netz_loeschen(k.elemente)
-        del self.model.koerper[name]
-        try:
-            neu = self.model.add_koerper(w["name"], w["flaechen"],
-                                         material=w["material"], teilung=w["teilung"],
-                                         kommentar=w["kommentar"])
-        except (KeyError, ValueError) as ex:
-            self.undo()
-            return self.error(str(ex))
-        if w["vernetzen"]:
-            self._vernetzen([], [neu])
-        self.refresh_all()
+        self._baum_objekt_waehlen("geokoerper_einzeln", name)
+        self.redraw()
+        return self._objektmaske("geokoerper_einzeln", name)
 
     def _netz_loeschen(self, elemente: list):
         """Die Elemente eines Objekts entfernen und alle Verweise nachziehen.
@@ -7698,9 +7861,53 @@ class MainWindow(QtWidgets.QMainWindow):
                            c.status() if c is not None else "nicht gerechnet"])
         self._fill(self.tbl_joint, zeilen)
 
+    def _tabellen_mehrfach_verbinden(self):
+        """Alle Datentabellen: Umschalt/Strg markiert mehrere Zeilen, und die
+        Ansicht zeigt dann die Vereinigung dessen, was jede Zeile einzeln
+        gewaehlt haette."""
+        for tbl in list(vars(self).values()):
+            if isinstance(tbl, tab.Datentabelle):
+                tbl.zeilen_gewaehlt.connect(lambda werte, t=tbl: self._tabelle_mehrfach(t, werte))
+
+    def _tabelle_mehrfach(self, tbl, werte: list):
+        """Mehrere Zeilen markiert: jede wie einen Einzelklick behandeln, aber
+        ohne zwischendurch zu zeichnen - und alles zusammenlegen, was die
+        Zeilen einzeln gewaehlt haetten (Knoten, Linien, Flaechen, Volumen,
+        Staebe, Elemente)."""
+        werte = [x for x in (werte or []) if x is not None]
+        if not werte:
+            return
+        knoten: set = set()
+        listen: dict = {"sel_linien": [], "sel_flaechen": [], "sel_koerper": [],
+                        "sel_staebe": [], "sel_elemente": [], "leuchtet": []}
+        self._auswahl_sammeln = True
+        try:
+            for wert in werte:
+                tbl.zeile_gewaehlt.emit(wert)
+                knoten |= {int(n) for n in np.asarray(self.selection, int).tolist()}
+                for k, sammel in listen.items():
+                    for x in (getattr(self, k, None) or []):
+                        if x not in sammel:
+                            sammel.append(x)
+        finally:
+            self._auswahl_sammeln = False
+        self.selection = np.array(sorted(knoten), dtype=int)
+        for k, v in listen.items():
+            setattr(self, k, v)
+        teile = [f"{len(listen[k])} {name}" for k, name in
+                 (("sel_linien", "Linien"), ("sel_flaechen", "Flächen"), ("sel_koerper", "Volumen"),
+                  ("sel_staebe", "Stäbe"), ("sel_elemente", "Elemente")) if listen[k]]
+        if knoten:
+            teile.insert(0, f"{len(knoten)} Knoten")
+        self.lbl_sel.setText((", ".join(teile) if teile else "nichts")
+                             + f" ausgewählt ({len(werte)} Tabellenzeilen)")
+        self._auswahl_register()
+        self._tabellen_markieren()
+        self.redraw()
+
     def _tabellen_markieren(self):
         """Umgekehrter Weg: die Auswahl der Ansicht in den Tabellen zeigen."""
-        if not hasattr(self, "tbl_beam"):
+        if not hasattr(self, "tbl_beam") or getattr(self, "_auswahl_sammeln", False):
             return
         sel = {int(n) for n in self.selection}
         m = self.model
@@ -9230,7 +9437,7 @@ class MainWindow(QtWidgets.QMainWindow):
         Damit entfaellt der Bereich „Elemente ändern“ im rechten Panel
         (Vorgabe Kap. 16.1 Nr. 7): die Befehle stehen dort, wo die Auswahl ist.
         """
-        if not hasattr(self, "ribbon"):
+        if not hasattr(self, "ribbon") or getattr(self, "_auswahl_sammeln", False):
             return
         n = len(self.selection)
         if not n:
@@ -10315,13 +10522,63 @@ class MainWindow(QtWidgets.QMainWindow):
                     if 0 <= i < len(m.elements)]
         gewaehlt = [int(i) for i in (getattr(self, "sel_elemente", None) or [])
                     if 0 <= int(i) < len(m.elements)]
+        # Auch was per Klick gewaehlt ist, leuchtet auf - nicht nur sein
+        # Umriss: die Elemente der Flaechen, Koerper und Staebe gefuellt,
+        # unvernetzte Flaechen als durchscheinendes Polygon.
+        raender = self._raender()
+        polygone: list = []
+
+        def polygon(fname: str):
+            f = m.flaechen.get(fname)
+            if f is None:
+                return
+            P = np.asarray(raender.get(fname, f.randpunkte(m)), float)
+            if len(P) >= 3:
+                polygone.append(P)
+
+        for name in self.sel_flaechen:
+            f = m.flaechen.get(name)
+            if f is not None:
+                if f.elemente:
+                    gewaehlt += [int(e) for e in f.elemente]
+                else:
+                    polygon(name)
+        for name in self.sel_koerper:
+            k = m.koerper.get(name)
+            if k is not None:
+                if k.elemente:
+                    gewaehlt += [int(e) for e in k.elemente]
+                else:
+                    for fn in k.flaechen:
+                        polygon(fn)
+        for name in self.sel_staebe:
+            mem = m.members.get(name)
+            if mem is not None:
+                gewaehlt += [int(e) for e in (mem.elements or [])]
+        schon = set(leuchtet)
+        gewaehlt = [e for e in dict.fromkeys(gewaehlt) if 0 <= e < len(m.elements) and e not in schon]
         for elems, name in ((leuchtet, "leuchtet"), (gewaehlt, "auswahl_elemente")):
             if not elems:
                 continue
             try:
                 teil = vp.to_grid(m).extract_cells(np.asarray(elems, int))
+                if teil.n_cells > 2000:
+                    # grosse Koerper: nur ihre Oberflaeche leuchtet
+                    teil = teil.extract_surface()
                 pl.add_mesh(teil, color="#ff8800", opacity=0.85, show_edges=True,
                             edge_color="#c05000", line_width=5, name=name)
+            except Exception as ex:      # noqa: BLE001
+                self.log.appendPlainText(f"Hervorhebung: {ex}")
+        if polygone:
+            try:
+                pts: list = []
+                faces: list = []
+                for P in polygone:
+                    basis = len(pts)
+                    pts.extend(P.tolist())
+                    faces.extend([len(P)] + [basis + j for j in range(len(P))])
+                flaechen = pv.PolyData(np.asarray(pts, float), faces=np.asarray(faces)).triangulate()
+                pl.add_mesh(flaechen, color="#ffaa33", opacity=0.45, name="auswahl_flaechen")
             except Exception as ex:      # noqa: BLE001
                 self.log.appendPlainText(f"Hervorhebung: {ex}")
         # Alle Umrisse der Auswahl in **einem** Darsteller: ein Koerper mit 144
@@ -10446,6 +10703,8 @@ class MainWindow(QtWidgets.QMainWindow):
     SCHRIFT_KENNWERTE = 6
 
     def redraw(self):
+        if getattr(self, "_auswahl_sammeln", False):
+            return                          # Mehrfachauswahl: erst am Ende zeichnen
         # Die Kamera muss das Neuzeichnen ueberleben. plotter.clear() nimmt
         # alle Darsteller weg; das naechste add_mesh setzt die Kamera dann von
         # sich aus zurueck - man haette nach jedem Klick wieder die

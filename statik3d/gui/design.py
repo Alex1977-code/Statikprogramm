@@ -670,10 +670,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                  hinweis="Solange die Trennung nicht ausgeführt "
                                          "ist, rechnet das Modell dort "
                                          "durchverbunden – also zu steif.")
-                self._liste(fk, [(name + ("" if x.ausgefuehrt else " ⚠"), x.bezug(),
+                # Das Warnzeichen steht **vor** dem Namen: hinten wuerde es
+                # bei langen Namen mit dem „…“ der Spalte verschwinden, und
+                # dann sahe es aus, als seien nur die kurzen Namen betroffen
+                self._liste(fk, [(("" if x.ausgefuehrt else "⚠ ") + name,
+                                  x.bezug() + ("" if x.ausgefuehrt else " ⚠"),
                                   name, f"{name}: {x.describe()}"
                                   + ("" if x.ausgefuehrt
-                                     else "\nTrennung nicht ausgeführt – hier zu steif."))
+                                     else "\n⚠ Trennung nicht ausgeführt – das Modell rechnet hier "
+                                          "durchverbunden, also zu steif. Register „Lager / Kontakt“ → "
+                                          "„Kontaktfugen ausführen“."))
                                  for name, x in flaechenkontakte.items()],
                             "kontaktbedingung", "kontaktbedingungen")
             if model.contact_supports:

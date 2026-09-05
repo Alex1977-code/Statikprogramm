@@ -461,6 +461,8 @@ class Datentabelle(QtWidgets.QWidget):
 
     #: Zeile angeklickt - der erste Spaltenwert (meist die Objektnummer)
     zeile_gewaehlt = QtCore.Signal(object)
+    #: mehrere Zeilen markiert (Umschalt/Strg): die Werte der ersten Spalte
+    zeilen_gewaehlt = QtCore.Signal(list)
     #: Hoehe der Filterzeile
     FILTER_HOEHE = 22
     #: Breiter wird keine Spalte aus ihrem Inhalt (eine Elementliste mit
@@ -528,6 +530,8 @@ class Datentabelle(QtWidgets.QWidget):
         self.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
         self.view.setAlternatingRowColors(True)
         self.view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        # Umschalt markiert einen Bereich, Strg nimmt einzelne Zeilen dazu
+        self.view.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         kopf = self.view.horizontalHeader()
         kopf.setSectionsMovable(True)
         kopf.setStretchLastSection(False)
@@ -714,7 +718,20 @@ class Datentabelle(QtWidgets.QWidget):
 
     def _geklickt(self, index):
         wert = self.filter.data(self.filter.index(index.row(), 0), QtCore.Qt.UserRole)
-        self.zeile_gewaehlt.emit(wert)
+        werte = self.gewaehlte_schluessel()
+        if len(werte) > 1:
+            self.zeilen_gewaehlt.emit(werte)
+        else:
+            self.zeile_gewaehlt.emit(werte[0] if werte else wert)
+
+    def gewaehlte_schluessel(self) -> list:
+        """Die erste Spalte aller markierten Zeilen, in Tabellenreihenfolge."""
+        sm = self.view.selectionModel()
+        if sm is None:
+            return []
+        zeilen = sorted({i.row() for i in sm.selectedRows()}
+                        | {i.row() for i in sm.selectedIndexes()})
+        return [self.filter.data(self.filter.index(r, 0), QtCore.Qt.UserRole) for r in zeilen]
 
     # -- Export ----------------------------------------------------------
     def zeilen_fuer_export(self) -> list:
