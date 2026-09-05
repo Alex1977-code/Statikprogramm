@@ -383,14 +383,17 @@ def _verdichten(model: Model, kante: list[int], n: int, linie: str = "") -> list
     return out
 
 
-def mesh_flaeche(model: Model, flaeche, log: list = None) -> list[int]:
+def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None) -> list[int]:
     """Eine Flaeche in Schalenelemente umsetzen.
 
     Vier Randabschnitte geben ein abgebildetes Vierecknetz mit der in
     ``flaeche.teilung`` genannten Elementzahl; drei Abschnitte ein Dreiecknetz.
-    Jede andere Randform wird benannt und nicht vernetzt.
+    Jede andere Randform wird benannt und nicht vernetzt. ``dreiecke`` teilt
+    jedes Viereck in zwei Dreiecke (None = nach Netzeinstellungen ``form``).
     """
     from .importers import _common as C
+    if dreiecke is None:
+        dreiecke = int(getattr(getattr(model, "netz", None), "form", 2) or 0) == 0
     ring = flaeche.randknoten(model)
     if not ring:
         C.warn(log, f"Fläche {flaeche.name}: die Linien bilden keinen geschlossenen Rand.")
@@ -414,12 +417,16 @@ def mesh_flaeche(model: Model, flaeche, log: list = None) -> list[int]:
         els = []
         for i in range(ids.shape[0] - 1):
             for j in range(ids.shape[1] - 1):
-                els.append(model.add_element(
-                    "shell4", [int(ids[i, j]), int(ids[i + 1, j]),
-                               int(ids[i + 1, j + 1]), int(ids[i, j + 1])],
-                    mat, prop, group=flaeche.name))
+                a, b, c, d = (int(ids[i, j]), int(ids[i + 1, j]),
+                              int(ids[i + 1, j + 1]), int(ids[i, j + 1]))
+                if dreiecke:
+                    els.append(model.add_element("shell3", [a, b, c], mat, prop, group=flaeche.name))
+                    els.append(model.add_element("shell3", [a, c, d], mat, prop, group=flaeche.name))
+                else:
+                    els.append(model.add_element("shell4", [a, b, c, d], mat, prop, group=flaeche.name))
         flaeche.elemente = els
-        C.say(log, f"Fläche {flaeche.name}: {len(els)} Viereckelemente ({nu} x {nv})")
+        C.say(log, f"Fläche {flaeche.name}: {len(els)} "
+                   + ("Dreieckelemente" if dreiecke else "Viereckelemente") + f" ({nu} x {nv})")
         return els
     if len(ring) == 3:
         els = [model.add_element("shell3", ring, mat, prop, group=flaeche.name)]

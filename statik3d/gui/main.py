@@ -383,6 +383,10 @@ class MainWindow(QtWidgets.QMainWindow):
         idx = vp.support_at(m, punkt, m.characteristic_size(), self.lagergroesse) \
             if m.nn else None
         menu = QtWidgets.QMenu(self)
+        # Ist etwas gewaehlt, steht es oben: zeigen, ausblenden, je Gruppe
+        # bearbeiten (Sammelmaske) oder loeschen
+        if self._auswahlmenue(menu):
+            menu.addSeparator()
         if idx is not None:
             s = m.supports[idx]
             name = s.name or f"Lager {idx + 1}"
@@ -420,6 +424,250 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.addSeparator()
         menu.addAction("Zoom alles", self.zoom_alles)
         menu.exec(self.plotter.interactor.mapToGlobal(pos))
+
+    # ---- Kontextmenue der Auswahl: zeigen, ausblenden, bearbeiten, loeschen ----
+    AUSWAHL_TEXT = {"knoten": "Knoten", "linie": "Linien", "stab": "Stäbe", "flaeche": "Flächen",
+                    "volumen": "Volumen", "element": "Elemente", "lager": "Lager", "kontakt": "Kontakte"}
+
+    def _auswahlgruppen(self) -> list:
+        """[(Art, Namen bzw. Nummern)] der gewaehlten Objekte - auch Lager an
+        gewaehlten Knoten und Kontaktbedingungen an gewaehlten Flaechen."""
+        m = self.model
+        gruppen = []
+        kn = [int(i) for i in self.selection]
+        if kn:
+            gruppen.append(("knoten", kn))
+            lager = [i for i, s in enumerate(m.supports) if int(s.node) in set(kn)]
+            if lager:
+                gruppen.append(("lager", lager))
+        for art, liste in (("linie", self.sel_linien), ("stab", self.sel_staebe),
+                           ("flaeche", self.sel_flaechen), ("volumen", self.sel_koerper)):
+            if liste:
+                gruppen.append((art, list(liste)))
+        if self.sel_elemente:
+            gruppen.append(("element", [int(i) for i in self.sel_elemente]))
+        if self.sel_flaechen:
+            fl = set(self.sel_flaechen)
+            kb = [name for name, k in (getattr(m, "kontaktbedingungen", {}) or {}).items()
+                  if fl & set(getattr(k, "flaechen", []) or [])]
+            if kb:
+                gruppen.append(("kontakt", kb))
+        return gruppen
+
+    def _auswahlmenue(self, menu) -> bool:
+        """Die Eintraege der Auswahl in ein Menue schreiben; False ohne Auswahl."""
+        gruppen = self._auswahlgruppen()
+        if not gruppen:
+            return False
+        menu.addAction("Selektiertes anzeigen", self.nur_auswahl_zeigen)
+        menu.addAction("Selektiertes ausblenden", self.auswahl_ausblenden)
+        menu.addSeparator()
+        for art, namen in gruppen:
+            sub = menu.addMenu(f"{self.AUSWAHL_TEXT[art]} ({len(namen)})")
+            sub.addAction("Bearbeiten…", lambda _c=False, a=art, n=list(namen): self.sammelmaske(a, n))
+            sub.addAction("Löschen", lambda _c=False, a=art, n=list(namen): self.auswahl_loeschen(a, n))
+        return True
+
+    def _sammelfelder(self, art: str, namen: list) -> list:
+        """Feldbeschreibungen der Sammelmaske: (Schluessel, Text, Art, Lesen, Schreiben, Wahlwerte)."""
+        m = self.model
+        if art == "knoten":
+            def les(k, i): return f"{m.nodes[i][k]:g}"
+            def schr(k, i, v): m.nodes[i][k] = float(v)
+            return [("x", "x [m]", "text", lambda i: les(0, i), lambda i, v: schr(0, i, v), None),
+                    ("y", "y [m]", "text", lambda i: les(1, i), lambda i, v: schr(1, i, v), None),
+                    ("z", "z [m]", "text", lambda i: les(2, i), lambda i, v: schr(2, i, v), None)]
+        if art == "linie":
+            typen = ["polyline", "arc", "circle", "ellipse", "spline", "parabola"]
+            return [("typ", "Typ", "wahl", lambda n: m.lines[n].typ, lambda n, v: setattr(m.lines[n], "typ", v), typen),
+                    ("comment", "Kommentar", "text", lambda n: getattr(m.lines[n], "comment", "") or "",
+                     lambda n, v: setattr(m.lines[n], "comment", v), None)]
+        if art == "stab":
+            def zahl_les(attr):
+                return lambda n: ("" if getattr(m.members[n], attr) is None else f"{getattr(m.members[n], attr):g}")
+
+            def zahl_schr(attr, faktor=1.0):
+                return lambda n, v: setattr(m.members[n], attr, float(v) * faktor)
+            return [("beta_y", "β_y", "text", zahl_les("beta_y"), zahl_schr("beta_y"), None),
+                    ("beta_z", "β_z", "text", zahl_les("beta_z"), zahl_schr("beta_z"), None),
+                    ("Lcr_y", "L_cr,y [m]", "text", zahl_les("Lcr_y"), zahl_schr("Lcr_y"), None),
+                    ("Lcr_z", "L_cr,z [m]", "text", zahl_les("Lcr_z"), zahl_schr("Lcr_z"), None),
+                    ("L_LT", "L_LT [m]", "text", zahl_les("L_LT"), zahl_schr("L_LT"), None),
+                    ("lt_check", "Biegedrillknicken", "jn", lambda n: m.members[n].lt_check,
+                     lambda n, v: setattr(m.members[n], "lt_check", v), None),
+                    ("design", "Nachweis führen", "jn", lambda n: m.members[n].design,
+                     lambda n, v: setattr(m.members[n], "design", v), None),
+                    ("kerbfall", "Kerbfall [N/mm²]", "text",
+                     lambda n: "" if m.members[n].detail_category is None else f"{m.members[n].detail_category / 1e6:g}",
+                     zahl_schr("detail_category", 1e6), None)]
+        if art == "flaeche":
+            return [("dicke", "Dicke", "wahl", lambda n: m.flaechen[n].dicke, lambda n, v: setattr(m.flaechen[n], "dicke", v), list(m.shells)),
+                    ("material", "Werkstoff", "wahl", lambda n: m.flaechen[n].material, lambda n, v: setattr(m.flaechen[n], "material", v), list(m.materials)),
+                    ("tu", "Teilung u", "text", lambda n: str((m.flaechen[n].teilung or [4, 4])[0]),
+                     lambda n, v: m.flaechen[n].teilung.__setitem__(0, int(float(v))) if m.flaechen[n].teilung else setattr(m.flaechen[n], "teilung", [int(float(v)), 4]), None),
+                    ("tv", "Teilung v", "text", lambda n: str((m.flaechen[n].teilung or [4, 4])[-1]),
+                     lambda n, v: m.flaechen[n].teilung.__setitem__(1, int(float(v))) if len(m.flaechen[n].teilung or []) > 1 else setattr(m.flaechen[n], "teilung", [4, int(float(v))]), None),
+                    ("kommentar", "Kommentar", "text", lambda n: m.flaechen[n].kommentar or "",
+                     lambda n, v: setattr(m.flaechen[n], "kommentar", v), None)]
+        if art == "volumen":
+            def teil(k):
+                return (lambda n: str((list(m.koerper[n].teilung) + [4, 4, 4])[k]),
+                        lambda n, v: m.koerper[n].teilung.__setitem__(k, int(float(v))))
+            return [("material", "Werkstoff", "wahl", lambda n: m.koerper[n].material, lambda n, v: setattr(m.koerper[n], "material", v), list(m.materials)),
+                    ("tx", "Teilung x", "text", *teil(0), None), ("ty", "Teilung y", "text", *teil(1), None),
+                    ("tz", "Teilung z", "text", *teil(2), None),
+                    ("kommentar", "Kommentar", "text", lambda n: m.koerper[n].kommentar or "",
+                     lambda n, v: setattr(m.koerper[n], "kommentar", v), None)]
+        if art == "lager":
+            def gesperrt(d):
+                return lambda i: d in (m.supports[i].dofs or [])
+
+            def sperren(d):
+                def f(i, v):
+                    s = m.supports[i]
+                    dofs = [int(x) for x in (s.dofs or [])]
+                    if v and d not in dofs:
+                        dofs.append(d)
+                    if not v and d in dofs:
+                        dofs.remove(d)
+                    s.dofs = sorted(dofs)
+                return f
+            felder = [(f"d{d}", text, "jn", gesperrt(d), sperren(d), None)
+                      for d, text in enumerate(("u_x gesperrt", "u_y gesperrt", "u_z gesperrt",
+                                                "φ_x gesperrt", "φ_y gesperrt", "φ_z gesperrt"))]
+            felder.append(("name", "Name", "text", lambda i: m.supports[i].name or "",
+                           lambda i, v: setattr(m.supports[i], "name", v), None))
+            return felder
+        if art == "element":
+            def sec_les(i):
+                return m.elements[i].sec or ""
+
+            def sec_schr(i, v):
+                m.elements[i].sec = v
+            return [("mat", "Werkstoff", "wahl", lambda i: m.elements[i].mat, lambda i, v: setattr(m.elements[i], "mat", v), list(m.materials)),
+                    ("sec", "Querschnitt / Dicke", "wahl", sec_les, sec_schr, list(m.sections) + list(m.shells))]
+        if art == "kontakt":
+            return [("kommentar", "Kommentar", "text",
+                     lambda n: getattr(m.kontaktbedingungen[n], "kommentar", "") or "",
+                     lambda n, v: setattr(m.kontaktbedingungen[n], "kommentar", v), None)]
+        return []
+
+    UNVERAENDERT = "(unverändert)"
+
+    def sammelmaske(self, art: str, namen: list):
+        """Eine Maske fuer alle gewaehlten Objekte einer Art: Felder, in denen
+        sich die Objekte unterscheiden, zeigen „verschieden“ und bleiben
+        unangetastet, solange man nichts eintraegt - so aendert man eine
+        Eigenschaft vieler Objekte auf einmal."""
+        namen = list(namen)
+        if not namen:
+            return
+        spec = self._sammelfelder(art, namen)
+        if not spec:
+            return self.error(f"Für {self.AUSWAHL_TEXT.get(art, art)} gibt es keine Sammelbearbeitung")
+        F = msk.Feld
+        beschreibung = ", ".join(str(n) if art not in ("knoten", "element", "lager") else
+                                 ("K" if art == "knoten" else "E" if art == "element" else "Lager ") + str(n if art != "lager" else n + 1)
+                                 for n in namen[:8]) + (" …" if len(namen) > 8 else "")
+        felder = [F("objekte", f"{len(namen)} {self.AUSWAHL_TEXT[art]}", "info", beschreibung)]
+        for key, text, fart, lesen, _schreiben, werte in spec:
+            try:
+                vals = [lesen(n) for n in namen]
+            except Exception:                   # noqa: BLE001
+                vals = []
+            gleich = bool(vals) and all(v == vals[0] for v in vals)
+            if fart == "jn":
+                aktuell = ("ja" if vals[0] else "nein") if gleich else self.UNVERAENDERT
+                felder.append(F(key, text, "wahl", aktuell, [self.UNVERAENDERT, "ja", "nein"],
+                                hinweis="" if gleich else "verschieden"))
+            elif fart == "wahl":
+                aktuell = str(vals[0]) if gleich and str(vals[0]) in (werte or []) else self.UNVERAENDERT
+                felder.append(F(key, text, "wahl", aktuell, [self.UNVERAENDERT] + list(werte or []),
+                                hinweis="" if gleich else "verschieden"))
+            else:
+                felder.append(F(key, text + ("" if gleich else " (verschieden)"), "text",
+                                str(vals[0]) if gleich else "", breite=110,
+                                hinweis="leer = unverändert"))
+        maske = msk.Maske(f"{len(namen)} {self.AUSWAHL_TEXT[art]} bearbeiten", felder, knopf="Übernehmen",
+                          hinweis="Ein Wert gilt für alle gewählten Objekte; „verschieden“ bzw. leer lässt "
+                                  "das Feld, wie es je Objekt ist.")
+        maske.angewendet.connect(lambda w, a=art, n=namen, s=spec: self._sammel_anwenden(a, n, s, w))
+        return self.maske_erzeugen(maske)
+
+    def _sammel_anwenden(self, art: str, namen: list, spec: list, w: dict):
+        geaendert = 0
+        fehler = []
+        self.merken(f"{len(namen)} {self.AUSWAHL_TEXT[art]} bearbeitet")
+        for key, text, fart, _lesen, schreiben, _werte in spec:
+            v = w.get(key, "")
+            if fart in ("jn", "wahl"):
+                if v == self.UNVERAENDERT or v == "":
+                    continue
+                wert = (v == "ja") if fart == "jn" else v
+            else:
+                s = str(v).strip()
+                if not s:
+                    continue
+                wert = s
+            for n in namen:
+                try:
+                    schreiben(n, wert)
+                    geaendert += 1
+                except Exception as ex:             # noqa: BLE001
+                    fehler.append(f"{text}: {ex}")
+        if not geaendert:
+            self._undo.pop()
+            self._undo_knoepfe()
+            return self.info("Nichts geändert - alle Felder auf „unverändert“ bzw. leer")
+        if fehler:
+            self.error("\n".join(fehler[:5]))
+        self.analysis = None
+        self.results = None
+        self.info(f"{self.AUSWAHL_TEXT[art]}: {geaendert} Werte an {len(namen)} Objekten geändert")
+        self.refresh_all()
+
+    def auswahl_loeschen(self, art: str, namen: list):
+        """Alle gewaehlten Objekte einer Art loeschen - eine Rueckfrage fuer alle."""
+        m = self.model
+        namen = list(namen)
+        if not namen:
+            return
+        if not self._bestaetigen(f"{len(namen)} {self.AUSWAHL_TEXT.get(art, art)} wirklich löschen?"):
+            return
+        self.merken(f"{len(namen)} {self.AUSWAHL_TEXT.get(art, art)} gelöscht")
+        gruende = []
+        if art == "knoten":
+            for i in sorted(int(x) for x in namen)[::-1]:
+                g = m.knoten_loeschen(i)
+                if g:
+                    gruende.append(f"K{i}: {g}")
+        elif art == "element":
+            m.elemente_loeschen(sorted(int(x) for x in namen))
+        elif art == "lager":
+            for i in sorted(int(x) for x in namen)[::-1]:
+                if 0 <= i < len(m.supports):
+                    del m.supports[i]
+        elif art == "kontakt":
+            for n in namen:
+                m.kontaktbedingungen.pop(n, None)
+        else:
+            f = {"linie": m.linie_loeschen, "stab": m.stab_loeschen, "flaeche": m.flaeche_loeschen,
+                 "volumen": m.koerper_loeschen}.get(art)
+            if f is None:
+                self._undo.pop()
+                return self.error(f"{art}: kein Löschweg")
+            for n in namen:
+                g = f(n)
+                if g:
+                    gruende.append(f"{n}: {g}")
+        self.analysis = None
+        self.results = None
+        self.selection = np.array([], dtype=int)
+        self._objektauswahl_leeren()
+        self.maskenrand.schliessen()
+        self.info(f"{len(namen) - len(gruende)} {self.AUSWAHL_TEXT.get(art, art)} gelöscht"
+                  + (f"; nicht gelöscht: {'; '.join(gruende[:4])}" if gruende else ""))
+        self.refresh_all()
 
     def lagergroesse_einstellen(self, idx=None):
         """Symbolgroesse eines Lagers oder aller Lager einstellen."""
@@ -1878,11 +2126,11 @@ class MainWindow(QtWidgets.QMainWindow):
             a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
             self.act_fangart[art] = a
         g = r.gruppe("Netzgeneratoren")
-        g.gross("Stabzug", "╱", lambda: self.maske_zeigen("Netz"),
+        g.gross("Stabzug", "╱", self.maske_stabzug,
                 hinweis="Stabzug zwischen zwei Punkten")
-        g.gross("Platte", "▦", lambda: self.maske_zeigen("Netz"),
+        g.gross("Platte", "▦", self.maske_platte,
                 hinweis="Rechteckplatte aus Schalen")
-        g.gross("Quader", "▩", lambda: self.maske_zeigen("Netz"),
+        g.gross("Quader", "▩", self.maske_quader,
                 hinweis="Quader aus Volumenelementen")
 
         # -- Struktur ----------------------------------------------------
@@ -1970,9 +2218,21 @@ class MainWindow(QtWidgets.QMainWindow):
         # -- Netz --------------------------------------------------------
         r = rb.register("Netz")
         g = r.gruppe("Netz")
-        g.gross("Netz erzeugen", "⬢", lambda: self.maske_zeigen("Netz"),
-                hinweis="Netzgeneratoren und Elementerzeugung")
-        g.klein("Netz löschen", self.clear_mesh)
+        g.gross("Vernetzen", "⬢", self.geometrie_vernetzen,
+                hinweis="Die gewählten - sonst alle - Flächen und Volumen vernetzen: Netzdichte und "
+                        "Elementform aus den Netzeinstellungen, Fortschritt in der Statuszeile, "
+                        "Esc bricht ab", symbol="vernetzen")
+        g.klein("Netzeinstellungen…", self.maske_netzeinstellungen,
+                hinweis="Netzdichte (grob, mittel, fein, eigene Ziellänge), Elementform, intelligente "
+                        "Anpassung an kleine Kanten, kleinste/größte Elementgröße, Höchstzahl je Objekt")
+        g.klein("Netzvorschau", self.netz_vorschau,
+                hinweis="Geschätzte Elementzahl je Fläche und Volumen ins Protokoll - vor dem Vernetzen")
+        g.klein("Netz löschen", self.netz_loeschen_geometrie, symbol="netz_loeschen",
+                hinweis="Das Netz der Flächen und Volumen entfernen - die Geometrie bleibt")
+        g = r.gruppe("Weiteres")
+        g.klein("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren,
+                hinweis="Die Netze an den Kontaktbedingungen trennen")
+        g.klein("Alle Elemente löschen", self.clear_mesh)
 
         # -- Berechnung --------------------------------------------------
         r = rb.register("Berechnung")
@@ -2135,6 +2395,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                     symbol="nummern")
         self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True,
                                     symbol="lasten")
+        self.act_lastwerte = g.schalter("Lastwerte", lambda z: self.redraw(), True,
+                                        "Die Lastgröße als Zahl an jeder Last; die Einheit steht "
+                                        "oben links unter dem Lastfall", symbol="lasten")
         self.act_members = g.schalter("Stäbe farbig", lambda z: self.redraw(),
                                       symbol="farbig")
         g = r.gruppe("Sicht")
@@ -3810,6 +4073,12 @@ class MainWindow(QtWidgets.QMainWindow):
         gesamt = len(flaechen) + len(koerper)
         self._fortschritt_beginnen(gesamt, f"Vernetzen: {len(flaechen)} Flächen, {len(koerper)} Volumen …")
         abgebrochen = False
+        # Netzdichte: Teilung je Flaeche und Kantenlaenge je Volumen aus den
+        # Netzeinstellungen und der Groesse des Objekts
+        from .. import netzdichte as nd
+        netz = self.model.netz
+        hs = nd.anwenden(self.model, netz, flaechen, koerper, log)
+        log.append(f"Netzeinstellungen: {netz.beschreibung()}")
         try:
             # Was aus Kontaktbedingungen entstanden ist, gehoert zum alten Netz.
             fugen.kontaktfugen_zuruecksetzen(self.model, log)
@@ -3831,7 +4100,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     break
                 self._netz_loeschen(k.elemente)
                 k.elemente = []
-                n += len(mesher.mesh_koerper(self.model, k, log, cache=cache))
+                n += len(mesher.mesh_koerper(self.model, k, log, cache=cache,
+                                             h=float(hs.get(k.name, 0.0) or 0.0)))
             self._fortschritt(gesamt, "Lasten verteilen und Kontaktfugen trennen …")
             # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
             self.model.lasten_verteilen(log)
@@ -3865,6 +4135,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
         self.info(f"{n} Elemente erzeugt" if n else
                   "Nichts vernetzt - das Protokoll sagt, warum")
+        self._info_zeigen()
 
     def kontaktfugen_ausfuehren(self):
         """Die Netze an den Kontaktbedingungen trennen."""
@@ -7006,6 +7277,207 @@ class MainWindow(QtWidgets.QMainWindow):
     def _mat(self):
         return self.cb_mat.currentText()
 
+    # ---- Netzeinstellungen und Generatoren als Masken --------------------
+    NETZFORMEN = {"Dreiecke": 0, "Vierecke": 1, "Vierecke, sonst Dreiecke": 2}
+    NETZORDNUNG = {"linear (tet4)": 1, "quadratisch (tet10)": 2}
+
+    def maske_netzeinstellungen(self):
+        from .. import netzdichte as nd
+        n = self.model.netz
+        F = msk.Feld
+
+        def txt(v):
+            return "" if not v else f"{v:g}"
+
+        form = next((k for k, v in self.NETZFORMEN.items() if v == int(n.form)), "Vierecke, sonst Dreiecke")
+        ordnung = next((k for k, v in self.NETZORDNUNG.items() if v == int(n.ordnung)), "linear (tet4)")
+        felder = [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),
+                    hinweis="grob 8, mittel 16, fein 32 Elemente über die größte Abmessung jedes Objekts; "
+                            "eigene = die Ziellänge gilt absolut"),
+                  F("ziellaenge", "Ziellänge [m] (eigene)", "zahl", float(n.ziellaenge)),
+                  F("intelligent", "Intelligent anpassen (kleine Kanten feiner)", "haken", bool(n.intelligent)),
+                  F("h_min", "kleinste Elementgröße [m]", "text", txt(n.h_min), breite=78,
+                    hinweis="leer = ein Viertel der Dichte-Länge"),
+                  F("h_max", "größte Elementgröße [m]", "text", txt(n.h_max), breite=78,
+                    hinweis="leer = das Vierfache der Dichte-Länge"),
+                  F("max_elemente", "Höchstzahl Elemente je Objekt", "ganz", int(n.max_elemente)),
+                  F("form", "Elementform Flächen", "wahl", form, list(self.NETZFORMEN)),
+                  F("ordnung", "Volumenelemente", "wahl", ordnung, list(self.NETZORDNUNG)),
+                  F("abgebildet", "Abgebildetes Netz bevorzugen", "haken", bool(n.abgebildet)),
+                  F("uebersteuern", "Teilung je Fläche aus der Netzdichte", "haken", bool(n.teilung_uebersteuern),
+                    hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt"),
+                  F("vorschau", "Vorschau", "info", "–")]
+        halter = {}
+
+        def vorschau():
+            try:
+                netz = self._netz_aus_maske(halter["m"].werte())
+                v = nd.vorschau(self.model, netz)
+                halter["m"].setzen("vorschau", f"{v['flaechen']} Flächen ≈ {v['n_flaechen']} Elemente · "
+                                               f"{v['koerper']} Volumen ≈ {v['n_koerper']} Elemente")
+                for name, art, h, n_, grund, teil in v["zeilen"][:60]:
+                    self.log.appendPlainText(f"  {art} {name}: h = {h * 1e3:.0f} mm, ≈ {n_:.0f} Elemente"
+                                             + (f" ({teil[0]} × {teil[1]})" if teil else "") + f" - {grund}")
+                if len(v["zeilen"]) > 60:
+                    self.log.appendPlainText(f"  … {len(v['zeilen']) - 60} weitere Objekte")
+            except Exception as ex:                    # noqa: BLE001
+                halter["m"].setzen("vorschau", str(ex))
+
+        maske = msk.Maske("Netzeinstellungen", felder, knopf="Übernehmen",
+                          hinweis="Die Netzdichte leitet die Elementgröße aus der Größe jedes Objekts ab; "
+                                  "„intelligent“ verfeinert an kleinen Kanten (Löcher, Stege) innerhalb der "
+                                  "Grenzen. „Vorschau“ schätzt die Elementzahlen ins Protokoll.",
+                          zusatz=[("Vorschau", vorschau)])
+        halter["m"] = maske
+        maske.angewendet.connect(self._netzeinstellungen_setzen)
+        return self.maske_erzeugen(maske)
+
+    def _netz_aus_maske(self, w: dict):
+        from dataclasses import replace
+
+        def zahl(key):
+            s = str(w.get(key, "")).strip().replace(",", ".")
+            return float(s) if s else 0.0
+
+        n = self.model.netz
+        return replace(n, dichte=str(w.get("dichte", n.dichte)),
+                       ziellaenge=max(1e-4, float(w.get("ziellaenge", n.ziellaenge) or n.ziellaenge)),
+                       intelligent=bool(w.get("intelligent", True)),
+                       h_min=zahl("h_min"), h_max=zahl("h_max"),
+                       max_elemente=max(0, int(float(w.get("max_elemente", n.max_elemente) or 0))),
+                       form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
+                       ordnung=self.NETZORDNUNG.get(str(w.get("ordnung", "")), n.ordnung),
+                       abgebildet=bool(w.get("abgebildet", n.abgebildet)),
+                       teilung_uebersteuern=bool(w.get("uebersteuern", True)))
+
+    def _netzeinstellungen_setzen(self, w: dict):
+        try:
+            netz = self._netz_aus_maske(w)
+        except (ValueError, TypeError) as ex:
+            return self.error(f"Eingabe: {ex}")
+        self.merken("Netzeinstellungen")
+        self.model.netz = netz
+        self.info("Netzeinstellungen: " + netz.beschreibung())
+        self.refresh_all()
+        return netz
+
+    def netz_vorschau(self):
+        """Geschaetzte Elementzahlen der Auswahl (sonst aller Objekte) ins Protokoll."""
+        from .. import netzdichte as nd
+        m = self.model
+        flaechen = [m.flaechen[x] for x in self.sel_flaechen if x in m.flaechen] or list(m.flaechen.values())
+        koerper = [m.koerper[x] for x in self.sel_koerper if x in m.koerper] or list(m.koerper.values())
+        if not flaechen and not koerper:
+            return self.error("Es gibt keine Flächen oder Volumenkörper.")
+        v = nd.vorschau(m, m.netz, flaechen, koerper)
+        for name, art, h, n_, grund, teil in v["zeilen"]:
+            self.log.appendPlainText(f"  {art} {name}: h = {h * 1e3:.0f} mm, ≈ {n_:.0f} Elemente"
+                                     + (f" ({teil[0]} × {teil[1]})" if teil else "") + f" - {grund}")
+        text = (f"Netzvorschau: {v['flaechen']} Flächen ≈ {v['n_flaechen']} Elemente, "
+                f"{v['koerper']} Volumen ≈ {v['n_koerper']} Elemente ({m.netz.beschreibung()})")
+        self.info(text)
+        return v
+
+    def maske_stabzug(self):
+        m = self.model
+        F = msk.Feld
+        felder = [F("mat", "Werkstoff", "wahl", list(m.materials)[0] if m.materials else "", list(m.materials)),
+                  F("sec", "Querschnitt", "wahl", list(m.sections)[0] if m.sections else "", list(m.sections)),
+                  F("x1", "von x", "zahl", 0.0), F("y1", "y", "zahl", 0.0), F("z1", "z", "zahl", 0.0),
+                  F("x2", "bis x", "zahl", 5.0), F("y2", "y", "zahl", 0.0), F("z2", "z", "zahl", 0.0),
+                  F("n", "Teilung", "ganz", 4), F("fachwerk", "Fachwerkstab", "haken", False)]
+        maske = msk.Maske("Stabzug erzeugen", felder, knopf="Stäbe erzeugen",
+                          hinweis="Gerader Stabzug von A nach B in n Elementen; wird als Stab für die "
+                                  "Nachweise registriert. Deckungsgleiche Knoten werden verschmolzen.")
+        maske.angewendet.connect(self._stabzug_erzeugen)
+        return self.maske_erzeugen(maske)
+
+    def _stabzug_erzeugen(self, w: dict):
+        m = self.model
+        if not m.materials or not m.sections:
+            return self.error("Werkstoff und Querschnitt anlegen")
+        self.merken("Stabzug")
+        try:
+            e0 = len(m.elements)
+            mesher.line_of_beams(m, str(w.get("mat")), str(w.get("sec")),
+                                 [float(w.get("x1", 0)), float(w.get("y1", 0)), float(w.get("z1", 0))],
+                                 [float(w.get("x2", 0)), float(w.get("y2", 0)), float(w.get("z2", 0))],
+                                 max(1, int(float(w.get("n", 4) or 4))))
+            if w.get("fachwerk"):
+                for e in m.elements[e0:]:
+                    e.typ = "truss"
+            m.add_member(m.naechster_name("S", m.members), list(range(e0, len(m.elements))))
+            mesher.merge_nodes(m)
+        except Exception as ex:                    # noqa: BLE001
+            self._undo.pop()
+            return self.error(str(ex))
+        self.info(f"Stabzug: {len(m.elements) - e0} Elemente")
+        self.refresh_all()
+
+    def maske_platte(self):
+        m = self.model
+        F = msk.Feld
+        felder = [F("mat", "Werkstoff", "wahl", list(m.materials)[0] if m.materials else "", list(m.materials)),
+                  F("dicke", "Dicke", "wahl", list(m.shells)[0] if m.shells else "", list(m.shells)),
+                  F("lx", "lx [m]", "zahl", 4.0), F("ly", "ly [m]", "zahl", 3.0), F("z", "z [m]", "zahl", 0.0),
+                  F("nx", "nx", "ganz", 10), F("ny", "ny", "ganz", 10),
+                  F("vierecke", "Vierecke", "haken", True)]
+        maske = msk.Maske("Platte / Scheibe erzeugen", felder, knopf="Schalennetz erzeugen",
+                          hinweis="Rechteck in der xy-Ebene auf der Höhe z, nx × ny Elemente.")
+        maske.angewendet.connect(self._platte_erzeugen)
+        return self.maske_erzeugen(maske)
+
+    def _platte_erzeugen(self, w: dict):
+        m = self.model
+        if not m.materials or not m.shells:
+            return self.error("Werkstoff und Schalendicke anlegen")
+        self.merken("Platte")
+        e0 = len(m.elements)
+        try:
+            mesher.grid_plate(m, str(w.get("mat")), str(w.get("dicke")),
+                              float(w.get("lx", 4)), float(w.get("ly", 3)),
+                              max(1, int(float(w.get("nx", 10) or 10))), max(1, int(float(w.get("ny", 10) or 10))),
+                              origin=(0, 0, float(w.get("z", 0))), quad=bool(w.get("vierecke", True)))
+            mesher.merge_nodes(m)
+        except Exception as ex:                    # noqa: BLE001
+            self._undo.pop()
+            return self.error(str(ex))
+        self.info(f"Platte: {len(m.elements) - e0} Elemente")
+        self.refresh_all()
+
+    def maske_quader(self):
+        m = self.model
+        F = msk.Feld
+        felder = [F("mat", "Werkstoff", "wahl", list(m.materials)[0] if m.materials else "", list(m.materials)),
+                  F("lx", "lx [m]", "zahl", 2.0), F("ly", "ly [m]", "zahl", 0.4), F("lz", "lz [m]", "zahl", 0.4),
+                  F("x0", "Ursprung x", "zahl", 0.0), F("y0", "y", "zahl", 0.0), F("z0", "z", "zahl", 0.0),
+                  F("nx", "nx", "ganz", 10), F("ny", "ny", "ganz", 3), F("nz", "nz", "ganz", 3),
+                  F("typ", "Elementtyp", "wahl", "hex8", ["hex8", "tet4"])]
+        maske = msk.Maske("Quader erzeugen", felder, knopf="Volumennetz erzeugen",
+                          hinweis="Quader mit nx × ny × nz Hexaedern (oder Tetraedern).")
+        maske.angewendet.connect(self._quader_erzeugen)
+        return self.maske_erzeugen(maske)
+
+    def _quader_erzeugen(self, w: dict):
+        m = self.model
+        if not m.materials:
+            return self.error("Werkstoff anlegen")
+        self.merken("Quader")
+        e0 = len(m.elements)
+        try:
+            mesher.grid_box(m, str(w.get("mat")),
+                            float(w.get("lx", 2)), float(w.get("ly", .4)), float(w.get("lz", .4)),
+                            max(1, int(float(w.get("nx", 10) or 10))), max(1, int(float(w.get("ny", 3) or 3))),
+                            max(1, int(float(w.get("nz", 3) or 3))),
+                            origin=(float(w.get("x0", 0)), float(w.get("y0", 0)), float(w.get("z0", 0))),
+                            typ=str(w.get("typ", "hex8")))
+            mesher.merge_nodes(m)
+        except Exception as ex:                    # noqa: BLE001
+            self._undo.pop()
+            return self.error(str(ex))
+        self.info(f"Quader: {len(m.elements) - e0} Elemente")
+        self.refresh_all()
+
     def make_beams(self):
         try:
             e0 = len(self.model.elements)
@@ -7981,6 +8453,7 @@ class MainWindow(QtWidgets.QMainWindow):
         n = len(self.selection)
         if not n:
             self.ribbon.kontext_aus()
+            self._info_zeigen()
             return
         r = self.ribbon.kontext(f"Auswahl: {n} Knoten")
         if r.lay.count() > 1:      # schon gefuellt, nur der Name aendert sich
@@ -7995,7 +8468,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Zuweisen", "⇄", self.assign_props,
                 hinweis="Querschnitt und Material den Elementen der Auswahl geben")
         g = r.gruppe("Elemente")
-        g.gross("Gelenke", "○", lambda: self.maske_zeigen("Netz"),
+        g.gross("Gelenke", "○", lambda: self.maske_zeigen("Lager/Lasten"),
                 hinweis="Gelenke an den Stabenden setzen")
         g.klein("Elemente löschen", self.delete_elements)
         g.klein("Knoten löschen", self.delete_nodes)
@@ -8014,6 +8487,20 @@ class MainWindow(QtWidgets.QMainWindow):
             liste.clear()
         self.leuchtet = []
         self._set_selection([])
+        self._info_zeigen()
+
+    def _info_zeigen(self):
+        """Ohne Auswahl und ohne offene Erzeuge-Maske steht rechts nur die
+        Information zum Modell (Register „Modell“) - kein Netz-, Material-
+        oder Generatorpanel."""
+        if getattr(self, "maskenrand", None) is not None and self.maskenrand.offen():
+            return
+        if any((len(self.selection), self.sel_linien, self.sel_flaechen, self.sel_koerper,
+                self.sel_staebe, self.sel_elemente)):
+            return
+        aktuell = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
+        if aktuell in ("Netz", "Modell"):
+            self.maske_zeigen("Modell")
 
     def select_all(self):
         self._set_selection(np.arange(self.model.nn, dtype=int))
@@ -9190,6 +9677,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             return
         self._vereinfacht = None
+        self._lasteinheiten = []
         m = self._anzeigemodell()
         self._sicht_pruefen()
         if m.nn == 0:
@@ -9369,8 +9857,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 except Exception as ex:          # noqa: BLE001 - ein Mass darf die Ansicht nicht sperren
                     self.log.appendPlainText(f"Bemaßung nicht gezeichnet: {ex}")
             if self.act_loads.isChecked() and (u is None or not modal):
-                vp.add_loads(self.plotter, m, m.case(), size, raender=self._raender(),
-                             seiten=self._randseiten())
+                self._lasteinheiten = vp.add_loads(self.plotter, m, m.case(), size, raender=self._raender(),
+                             seiten=self._randseiten(),
+                             beschriften=getattr(self, 'act_lastwerte', None) is not None and self.act_lastwerte.isChecked(),
+                             textgroesse=int(self.model.bemassung_einstellungen().textgroesse) - 1)
         except Exception as ex:
             self.log.appendPlainText(f"Darstellung: {ex}")
         if self.act_nodes.isChecked() and m.nn <= 3000:
@@ -9418,7 +9908,7 @@ class MainWindow(QtWidgets.QMainWindow):
             zeilen = vp.kopfzeile(self.model, r, name,
                                   self.cb_field.currentText() if r is not None else "",
                                   self.cb_diagram.currentText() if r is not None else "",
-                                  faktor)
+                                  faktor, einheiten=list(getattr(self, "_lasteinheiten", []) or []))
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kopfzeile: {ex}")
             return []
@@ -9666,6 +10156,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.path = None
         self.refresh_all()
         self._refresh_title()
+        # Ein neues Modell: keine Erzeuge-Maske mehr, rechts die Modellinformation
+        if getattr(self, "maskenrand", None) is not None:
+            self.maskenrand.schliessen()
+        self.maske_zeigen("Modell")
 
     def _objektauswahl_leeren(self):
         """Gewaehlte Linien, Staebe, Flaechen, Volumen und Elemente vergessen -

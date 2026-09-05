@@ -896,9 +896,27 @@ def _dreiecksmitten(model: Model, f, raender: dict = None, seiten: dict = None,
     return mitten, normalen
 
 
+def _lastzahl(v: float, nachkomma: int = 2) -> str:
+    """Lastgroesse als kurze Zahl: 12.5, 3, 0.25 - ohne Nachkommanullen."""
+    s = f"{abs(float(v)):.{nachkomma}f}".rstrip("0").rstrip(".")
+    return s or "0"
+
+
+#: Einheiten der Lastarten fuer die Kopfzeile
+LASTEINHEITEN = {"kraft": "kN", "moment": "kNm", "strecke": "kN/m", "flaeche": "kN/m²",
+                 "temperatur": "K", "zwang": "mm"}
+#: hoechstens so viele Lastwerte je Lastart beschriften
+LASTWERTE_MAX = 60
+
+
 def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
-              seiten: dict = None):
-    """Alle Lasten eines Lastfalls ins Bild.
+              seiten: dict = None, beschriften: bool = False, textgroesse: int = 10) -> list:
+    """Alle Lasten eines Lastfalls ins Bild. Rueckgabe: die Einheiten der
+    gezeichneten Lastarten (fuer die Kopfzeile), z. B. ["kN", "kN/m²"].
+
+    ``beschriften`` schreibt die Lastgroesse als Zahl an die Pfeile (Knoten-
+    lasten, Strecken- und Flaechenlasten, Objektlasten je Flaeche, Temperatur,
+    Zwangsverformung); die Einheit steht in der Kopfzeile.
 
     * Knotenlasten: rote Pfeile auf den Knoten
     * Streckenlasten auf Elementen (auch abschnittsweise): Pfeilreihen
@@ -914,7 +932,15 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
       Ringe fuer Verdrehungen
     """
     if case is None:
-        return
+        return []
+    einheiten: list = []
+    texte: dict = {}            # Lastart -> [(Punkt, Text)]
+
+    def merken(art, punkt, text):
+        if art not in einheiten:
+            einheiten.append(art)
+        texte.setdefault(art, []).append((np.asarray(punkt, float), text))
+
     # ---- Kraefte: Knoten, Strecken, Elementseiten -------------------------
     pts, vec = [], []
     for l in case.nodal_loads:
@@ -924,6 +950,10 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         if np.any(f) and 0 <= int(l.node) < model.nn:
             pts.append(model.nodes[int(l.node)])
             vec.append(f)
+            merken("kraft", model.nodes[int(l.node)], _lastzahl(np.linalg.norm(f) / 1e3))
+        mo = np.asarray(l.F[3:6], float) if len(l.F) >= 6 else np.zeros(3)
+        if np.any(mo) and 0 <= int(l.node) < model.nn:
+            merken("moment", model.nodes[int(l.node)], _lastzahl(np.linalg.norm(mo) / 1e3))
     for bl in case.beam_loads:
         if getattr(bl, "_geo", False) or not 0 <= int(bl.elem) < len(model.elements):
             continue
@@ -944,6 +974,10 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             if np.any(q):
                 pts.append(X[0] + (x / L) * (X[-1] - X[0]))
                 vec.append(q)
+        if np.any(q1) or np.any(q2):
+            n1, n2 = np.linalg.norm(q1) / 1e3, np.linalg.norm(q2) / 1e3
+            text = _lastzahl(n1) if abs(n1 - n2) < 1e-9 else f"{_lastzahl(n1)}→{_lastzahl(n2)}"
+            merken("strecke", X[0] + (0.5 * (a + b) / L) * (X[-1] - X[0]), text)
     for fl in case.face_loads:
         if getattr(fl, "_geo", False) or not 0 <= int(fl.elem) < len(model.elements):
             continue
@@ -961,6 +995,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             d = -n            # positiv drueckt in den Koerper hinein
         pts.append(mitte)
         vec.append(d * fl.p)
+        merken("flaeche", mitte, _lastzahl(fl.p / 1e3))
     # ---- Objektlasten auf der Geometrie -------------------------------------
     warm, kalt = [], []
     rahmen_pts, rahmen_lines = [], []
@@ -995,6 +1030,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                     continue
             if getattr(gl, "lastart", "druck") == "temperatur":
                 (warm if gl.dT >= 0 else kalt).extend(mitten)
+                merken("temperatur", mitten.mean(axis=0), f"ΔT {_lastzahl(gl.dT, 1)}")
                 continue
             if gl.richtung:
                 d = np.asarray(gl.richtung, float)
@@ -1009,10 +1045,16 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                         continue
             else:
                 D = -normalen       # positiv drueckt hinein
+            werte = []
             for m_, d_ in zip(mitten, D):
                 p = gl.wert(m_) if getattr(gl, "verlauf", None) else gl.p
                 pts.append(m_)
                 vec.append(d_ * p)
+                werte.append(float(p))
+            if werte:
+                lo, hi = min(werte) / 1e3, max(werte) / 1e3
+                text = _lastzahl(hi) if abs(hi - lo) < 1e-6 else f"{_lastzahl(lo)}…{_lastzahl(hi)}"
+                merken("flaeche", mitten.mean(axis=0), text)
     for ll in getattr(case, "linienlasten", []) or []:
         q1 = np.asarray(ll.q, float)
         q2 = np.asarray(ll.q2, float) if ll.q2 is not None else q1
@@ -1049,6 +1091,16 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         if B_ <= A_ or gesamt <= 0:
             continue
         n_pfeile = max(4, min(40, int(gesamt / max(size, 1e-9) * 40)))
+        # Beschriftung in der Mitte des belasteten Abschnitts
+        mitte_s = 0.5 * (A_ + B_)
+        lauf = 0.0
+        for (A, B, roll), L in zip(stuecke, laengen):
+            if lauf <= mitte_s <= lauf + L and L > 0:
+                n1, n2 = np.linalg.norm(q1) / 1e3, np.linalg.norm(q2) / 1e3
+                merken("strecke", A + (mitte_s - lauf) / L * (B - A),
+                       _lastzahl(n1) if abs(n1 - n2) < 1e-9 else f"{_lastzahl(n1)}→{_lastzahl(n2)}")
+                break
+            lauf += L
         s0 = 0.0
         for (A, B, roll), L in zip(stuecke, laengen):
             if L <= 0:
@@ -1079,6 +1131,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         e = model.elements[tl.elem]
         c = model.nodes[[int(n) for n in e.nodes]].mean(axis=0)
         (warm if tl.dT >= 0 else kalt).append(c)
+        merken("temperatur", c, f"ΔT {_lastzahl(tl.dT, 1)}")
     d = max(4.0, 0.012 * size)
     for punkte, farbe, name in ((warm, FARBE_LAST_WARM, "temp_warm"),
                                 (kalt, FARBE_LAST_KALT, "temp_kalt")):
@@ -1098,12 +1151,28 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         if np.any(u):
             zpts.append(X)
             zvec.append(u)
+            merken("zwang", X, _lastzahl(np.linalg.norm(u) * 1e3, 2))
         if any(k in zv.dofs and zv.u[k] for k in (3, 4, 5)):
             ringe.append(X)
     _pfeile(plotter, zpts, zvec, size, "zwang", FARBE_ZWANG)
     if ringe:
         plotter.add_points(np.asarray(ringe, float), color=FARBE_ZWANG, point_size=13,
                            render_points_as_spheres=True, name="zwang_drehung")
+    # ---- Lastwerte als Zahlen ----------------------------------------------
+    if beschriften and texte:
+        punkte, zeilen = [], []
+        for art, liste in texte.items():
+            if len(liste) > LASTWERTE_MAX:
+                wahl = np.linspace(0, len(liste) - 1, LASTWERTE_MAX).astype(int)
+                liste = [liste[i] for i in wahl]
+            for q, s in liste:
+                punkte.append(q)
+                zeilen.append(s)
+        if punkte:
+            plotter.add_point_labels(np.asarray(punkte, float), zeilen, font_size=int(textgroesse),
+                                     text_color=FARBE_LAST, shape=None, show_points=False,
+                                     always_visible=True, name="lastwerte")
+    return [LASTEINHEITEN[a] for a in einheiten if a in LASTEINHEITEN]
 
 
 def add_contact_markers(plotter, model: Model, contact: list, size: float):
@@ -1355,7 +1424,8 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
 
 
 def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
-              verlauf: str = "", faktor: float = 0.0, lastfall: str = "") -> list:
+              verlauf: str = "", faktor: float = 0.0, lastfall: str = "",
+              einheiten: list = None) -> list:
     """Was die Ansicht gerade zeigt - fuer die Ecke oben links.
 
     Ohne Ergebnis: das Modell und der aktive Lastfall mit seinen Lasten. Mit
@@ -1375,6 +1445,8 @@ def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
             zeilen.append(f"Lastfall {lc.name}" + (f" ({n} Lasten)" if n else ""))
         else:
             zeilen.append(model.name or "Modell")
+        if einheiten:
+            zeilen.append("  [" + ", ".join(einheiten) + "]")
         return zeilen
     name = ergebnisname or getattr(res, "name", "") or "Ergebnis"
     if name.startswith("Kombination "):
@@ -1394,4 +1466,6 @@ def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
         teile.append(f"Überhöhung x{faktor:.1f}")
     if teile:
         zeilen.append("  " + " · ".join(teile))
+    if einheiten:
+        zeilen.append("  Lasten [" + ", ".join(einheiten) + "]")
     return zeilen

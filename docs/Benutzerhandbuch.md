@@ -76,7 +76,7 @@ Dreizehn Register nach Arbeitsschritt:
 | **Struktur** | Stab, Schale, Querschnitte, Werkstoffe, Dicken, Zuweisen, Stäbe für Nachweise |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht |
-| **Netz** | Netz erzeugen und löschen |
+| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzvorschau, Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
@@ -219,6 +219,25 @@ Ist eine Randlinie ein **Bogen, Kreis, Spline, Parabel oder eine Ellipse**,
 folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den
 Stützknoten. Eine Polylinie bleibt dagegen eine Polylinie: dort laufen die
 Knoten auf den Sehnen, denn etwas anderes hat der Anwender nicht angegeben.
+
+#### Netzdichte und Netzeinstellungen
+
+*Netz → Vernetzen* vernetzt die gewählten - sonst alle - Flächen und Volumen.
+Die Elementgröße kommt aus den **Netzeinstellungen** (*Netz →
+Netzeinstellungen…*, mit der Datei gespeichert):
+
+| Angabe | Bedeutung |
+|---|---|
+| Netzdichte | **grob / mittel / fein**: 8 / 16 / 32 Elemente über die größte Abmessung jedes Objekts - ein 4 m langer Träger und eine 8 cm dicke Lasche bekommen so je ihr passendes Netz; **eigene**: die Ziellänge gilt absolut (so übernimmt sie der RFEM-Import) |
+| Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge) |
+| Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)) |
+| Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall; Volumen linear (tet4) oder quadratisch (tet10) |
+| Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
+
+**Vorschau** in der Maske und *Netz → Netzvorschau* schätzen die Elementzahl
+je Objekt und gesamt ins Protokoll - vor dem Vernetzen, damit ein Modell
+mit hunderttausend Tetraedern nicht überrascht. Das Protokoll nennt beim
+Vernetzen je Objekt die gewählte Elementgröße und ihren Grund.
 
 Beim Vernetzen zeigt die Statuszeile einen **Fortschrittsbalken** („Vernetze
 Fläche 120 von 1375: …“ mit Laufzeit); die Oberfläche bleibt bedienbar.
@@ -510,6 +529,38 @@ Ein Klick auf der ersten Ecke verwirft das Fenster wieder.
 Gefasst wird, was die Auswahlart sagt: Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente des Netzes. Das Fenster ergänzt die vorhandene
 Auswahl; **Esc** bricht es ab, *Auswahl aufheben* leert alles.
+
+Ist **nichts gewählt** und keine Erzeuge-Maske offen, zeigt der rechte
+Bereich nur die **Information zum Modell** (Projekt und Modellangaben) -
+kein Netz-, Werkstoff- oder Generatorpanel. Stabzug, Platte und Quader sind
+Masken im Register *Geometrie*, der Import steht im Register *Datei*.
+
+**Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
+Volumen oder Elemente gewählt (mit ihren Lagern und Kontaktbedingungen),
+öffnet der Rechtsklick in der Ansicht ein Menü: oben *Selektiertes
+anzeigen* (alles andere ausblenden) und *Selektiertes ausblenden*, darunter
+je Gruppe der markierten Objekte ein Untermenü mit **Bearbeiten…** und
+**Löschen**. *Bearbeiten…* öffnet rechts die **Sammelmaske** für alle
+Objekte der Gruppe: Felder, in denen sich die Objekte unterscheiden, zeigen
+„verschieden“ (bzw. „(unverändert)“) und bleiben so, wie sie je Objekt sind,
+solange man nichts einträgt - ein eingetragener Wert gilt für alle. So
+bekommen zwanzig Stäbe in einem Schritt denselben Knicklängenbeiwert oder
+zehn Flächen dieselbe Dicke. *Löschen* entfernt die ganze Gruppe nach einer
+Rückfrage; was nicht gelöscht werden kann (Knoten mit Linien oder
+Elementen), nennt die Statuszeile. Rückgängig nimmt beides zurück.
+
+### Lastwerte in der Ansicht
+
+Jede gezeichnete Last trägt ihre **Größe als Zahl**: Knotenlasten den
+Betrag der Kraft (und des Moments), Strecken- und Linienlasten q in der
+Mitte des belasteten Abschnitts (bei Trapezlasten „q₁→q₂“), Flächen- und
+Objektlasten p je Fläche (bei Verläufen „p_min…p_max“), Temperaturlasten ΔT,
+Zwangsverformungen die Verschiebung. Die **Einheiten** der gezeichneten
+Lastarten stehen oben links in eckigen Klammern unter dem Lastfall, etwa
+„[kN, kN/m, kN/m²]“ - kN, kNm, kN/m, kN/m², K und mm. Der Schalter
+*Ansicht → Anzeigen → Lastwerte* blendet die Zahlen aus; die Textgröße
+folgt den Bemaßungseinstellungen. Bei sehr vielen gleichartigen Lasten
+werden höchstens 60 je Lastart beschriftet.
 
 ### Messen und Bemaßen (Register Messen)
 

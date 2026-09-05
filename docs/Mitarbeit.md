@@ -125,6 +125,10 @@ Punkte:
   Bilder 7.23, 7.28, 7.33 und 7.36 sind stückweise log-linear
   nachgezeichnet; Seitenwand- und Dachzonen setzen ein rechteckiges
   Gebäude voraus (Hüllquader der gewählten Flächen).
+* **Netzdichte**: die intelligente Anpassung kennt nur Kantenlängen
+  (kleinste Randlinie je Objekt), keine Krümmung und keine Nachbarschaft;
+  Übergänge zwischen grob und fein vernetzten Nachbarflächen entstehen nur,
+  soweit die gemeinsame Kante dieselbe Teilung bekommt.
 * **Bemaßungen** werden nur in der Ansicht gezeichnet (und damit in
   Bildern, die man in den Bericht übernimmt); die SVG-Systemskizzen des
   Berichts kennen sie noch nicht. Verschieben eines Maßes heißt löschen und

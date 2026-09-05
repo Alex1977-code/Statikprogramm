@@ -1295,6 +1295,7 @@ def main():
         w.new_model()
         w.error = lambda msg: check("Geometrie: unerwarteter Fehler", False, str(msg)[:60])
         mg = w.model
+        mg.netz.teilung_uebersteuern = False     # die Teilung der Flächen gilt hier
         mg.add_nodes(np.array([[0, 0, 0], [4, 0, 0], [4, 2, 0], [0, 2, 0.]]))
         for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
             mg.add_line(f"L{i + 1}", [a, b])
@@ -2521,6 +2522,7 @@ def main():
         # ---- Vor dem Rechnen: unvernetzte Geometrie und Teiltragwerke ohne Lager ----
         w.new_model()
         m_ = w.model
+        m_.netz.teilung_uebersteuern = False
         mat_ = list(m_.materials)[0]
         sec_ = list(m_.sections)[0]
         k0 = m_.add_node(0, 0, 0)
@@ -2683,6 +2685,7 @@ def main():
         # ---- Fortschrittsbalken beim Vernetzen, Abbrechen ----
         w.new_model()
         m_ = w.model
+        m_.netz.teilung_uebersteuern = False
         mat_ = list(m_.materials)[0]
         t_ = list(m_.shells)[0]
         for k in range(3):
@@ -2726,6 +2729,196 @@ def main():
               n_el[0] == 16 and n_el[1] == 0 and n_el[2] == 0 and "abgebrochen" in w.log.toPlainText()
               and not w.progress_bar.isVisible() and not w._abbruch, str(n_el))
         w.progress_bar.setValue = alt_setvalue
+        del w._bestaetigen
+        w.error = alt_error
+
+        # ---- Rechts nur Modellinformation; Ribbon Netz: Vernetzen, Netzeinstellungen, Generator-Masken ----
+        w.new_model()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+
+        def tab_():
+            return w.tabs.tabText(w.tabs.currentIndex())
+
+        check("Nach „Neues Modell“ steht rechts die Modellinformation", tab_() == "Modell", tab_())
+        w.maske_zeigen("Netz")
+        w.clear_selection()
+        app.processEvents()
+        check("Auswahl aufheben ohne offene Maske holt die Modellinformation zurück (kein Netz-Panel)",
+              tab_() == "Modell", tab_())
+        check("Ribbon Netz: Vernetzen, Netzeinstellungen, Vorschau; Generatoren als Masken",
+              all(hasattr(w, a) for a in ("geometrie_vernetzen", "maske_netzeinstellungen", "netz_vorschau",
+                                          "maske_stabzug", "maske_platte", "maske_quader")))
+        w.maske_platte()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("lx", 2.0)
+        mk.setzen("ly", 1.0)
+        mk.setzen("nx", 2)
+        mk.setzen("ny", 1)
+        mk.anwenden()
+        app.processEvents()
+        check("Platte-Maske erzeugt 2 Viereckelemente", len(m_.elements) == 2 and all(e.typ == "shell4" for e in m_.elements), str(fehler_))
+        w.maske_stabzug()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("z1", 1.0)
+        mk.setzen("x2", 3.0)
+        mk.setzen("z2", 1.0)
+        mk.setzen("n", 3)
+        mk.anwenden()
+        app.processEvents()
+        check("Stabzug-Maske erzeugt 3 Balken und einen Stab mit Nachweis",
+              sum(1 for e in m_.elements if e.typ == "beam") == 3 and len(m_.members) == 1, str(fehler_))
+        w.maske_quader()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("nx", 1)
+        mk.setzen("ny", 1)
+        mk.setzen("nz", 1)
+        mk.setzen("z0", 3.0)
+        mk.anwenden()
+        app.processEvents()
+        check("Quader-Maske erzeugt einen Hexaeder", sum(1 for e in m_.elements if e.typ == "hex8") == 1, str(fehler_))
+        w.maskenrand.schliessen()
+        w.clear_selection()
+        app.processEvents()
+        check("Maske geschlossen, nichts gewählt: Modellinformation", tab_() == "Modell", tab_())
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        t_ = list(m_.shells)[0]
+        ids_ = [m_.add_node(0, 0, 0), m_.add_node(4, 0, 0), m_.add_node(4, 2, 0), m_.add_node(0, 2, 0)]
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            m_.add_line(f"L{i}", [ids_[a], ids_[b]])
+        f_ = m_.add_flaeche("F1", ["L0", "L1", "L2", "L3"], dicke=t_, material=mat_, teilung=[2, 2])
+        w.refresh_all()
+        app.processEvents()
+        w.maske_netzeinstellungen()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("dichte", "eigene")
+        mk.setzen("ziellaenge", 0.5)
+        mk.setzen("intelligent", False)
+        mk.setzen("form", "Dreiecke")
+        mk.zusatzknoepfe["Vorschau"].click()
+        app.processEvents()
+        check("Netzeinstellungen: Vorschau schätzt 8 m² / 0,5² = 32 Elemente", "1 Flächen ≈ 32" in mk.werte()["vorschau"],
+              mk.werte()["vorschau"])
+        mk.anwenden()
+        app.processEvents()
+        check("Netzeinstellungen übernommen (eigene Ziellänge 0,5 m, Dreiecke, ohne Anpassung)",
+              m_.netz.dichte == "eigene" and m_.netz.ziellaenge == 0.5 and not m_.netz.intelligent and m_.netz.form == 0, str(fehler_))
+        w.maskenrand.schliessen()
+        w.sel_flaechen = []
+        w.geometrie_vernetzen()
+        app.processEvents()
+        check("Vernetzen: Teilung 8 × 4 aus der Netzdichte, 64 Dreieckelemente, Protokoll nennt die Netzdichte",
+              f_.teilung == [8, 4] and len(f_.elemente) == 64 and all(m_.elements[e].typ == "shell3" for e in f_.elemente)
+              and "Netzdichte Fläche F1" in w.log.toPlainText(), str((f_.teilung, len(f_.elemente))))
+        v_ = w.netz_vorschau()
+        check("Netzvorschau: 32 Elemente geschätzt", bool(v_) and v_["n"] == 32)
+        m_.netz.dichte = "mittel"
+        m_.netz.intelligent = True
+        m_.netz.form = 2
+        w.geometrie_vernetzen()
+        app.processEvents()
+        D_ = (16 + 4) ** 0.5
+        check("Netzdichte mittel: 16 Elemente über die Diagonale → Teilung 14 × 7, Vierecke",
+              f_.teilung == [round(4 / (D_ / 16)), round(2 / (D_ / 16))] and all(m_.elements[e].typ == "shell4" for e in f_.elemente),
+              str(f_.teilung))
+        del w._bestaetigen
+        w.error = alt_error
+
+        # ---- Lastwerte in der Ansicht; Kontextmenü der Auswahl mit Sammelmaske ----
+        w.new_model()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(4, 3, 0)
+        k3 = m_.add_node(0, 3, 0)
+        k4 = m_.add_node(0, 6, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1], beta_y=2.0)
+        m_.fix(k0, "all")
+        m_.fix(k3, [0, 1, 2])
+        for i, (a, b) in enumerate([(k0, k1), (k1, k2), (k2, k3), (k3, k0)]):
+            m_.add_line(f"L{i}", [a, b])
+        m_.load_node(k1, Fz=-12500.0)
+        m_.load_node(k2, Fx=3000.0, Mx=2000.0)
+        m_.load_beam(e0, qz=-5000.0)
+        w.refresh_all()
+        app.processEvents()
+        ak_ = list(w.plotter.renderer.actors)
+        check("Lastwerte als Zahlen an den Lasten, Einheiten [kN, kNm, kN/m] unter dem Lastfall",
+              any(a.startswith("lastwerte") for a in ak_) and any("[kN, kNm, kN/m]" in z for z in w._kopfzeile_zeilen),
+              str(w._kopfzeile_zeilen))
+        w.act_lastwerte.setChecked(False)
+        app.processEvents()
+        check("Schalter „Lastwerte“ aus: keine Zahlen, Einheiten bleiben",
+              not any(a.startswith("lastwerte") for a in w.plotter.renderer.actors)
+              and any("[kN" in z for z in w._kopfzeile_zeilen))
+        w.act_lastwerte.setChecked(True)
+        w.selection = np.array([k0, k1], int)
+        w.sel_linien = ["L0", "L1"]
+        w.sel_staebe = ["S1", "S2"]
+        menu_ = QtWidgets.QMenu()
+        ok_ = w._auswahlmenue(menu_)
+        texte_ = [a.text() for a in menu_.actions() if a.text()]
+        check("Kontextmenü der Auswahl: „Selektiertes anzeigen“, „Selektiertes ausblenden“, dann die Gruppen",
+              ok_ and texte_[:2] == ["Selektiertes anzeigen", "Selektiertes ausblenden"]
+              and "Knoten (2)" in texte_ and "Lager (1)" in texte_ and "Linien (2)" in texte_ and "Stäbe (2)" in texte_,
+              str(texte_))
+        sub_ = next(a.menu() for a in menu_.actions() if a.text() == "Knoten (2)")
+        check("Untermenü je Gruppe: Bearbeiten…, Löschen", [a.text() for a in sub_.actions()] == ["Bearbeiten…", "Löschen"])
+        w.sammelmaske("knoten", [k0, k1])
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Sammelmaske Knoten: x verschieden (leer), z gleich", mk.werte()["x"] == "" and mk.werte()["z"] == "0", str(mk.werte()))
+        mk.setzen("z", "1.5")
+        mk.anwenden()
+        app.processEvents()
+        check("z = 1,5 für beide Knoten, x bleibt je Knoten", m_.nodes[k0][2] == 1.5 and m_.nodes[k1][2] == 1.5 and m_.nodes[k1][0] == 4.0)
+        w.sammelmaske("stab", ["S1", "S2"])
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Sammelmaske Stäbe: β_y verschieden, β_z gleich", mk.werte()["beta_y"] == "" and mk.werte()["beta_z"] == "1")
+        mk.setzen("beta_y", "0.7")
+        mk.setzen("lt_check", "nein")
+        mk.anwenden()
+        app.processEvents()
+        check("β_y = 0,7 und Biegedrillknicken aus für beide Stäbe",
+              all(m_.members[s].beta_y == 0.7 and not m_.members[s].lt_check for s in ("S1", "S2")))
+        w.sammelmaske("lager", [0, 1])
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Sammelmaske Lager: u_x bei beiden gesperrt, φ_x verschieden → „(unverändert)“",
+              mk.werte()["d0"] == "ja" and mk.werte()["d3"] == "(unverändert)")
+        mk.setzen("d3", "ja")
+        mk.anwenden()
+        app.processEvents()
+        check("φ_x jetzt bei beiden Lagern gesperrt", all(3 in s.dofs for s in m_.supports))
+        w.auswahl_loeschen("linie", ["L0", "L1"])
+        app.processEvents()
+        check("Löschen der Gruppe: beide Linien weg, Auswahl leer", "L0" not in m_.lines and "L1" not in m_.lines
+              and "L2" in m_.lines and not w.sel_linien)
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt beide Linien zurück", "L0" in w.model.lines and "L1" in w.model.lines)
+        w.auswahl_loeschen("knoten", [k4])
+        app.processEvents()
+        check("Freien Knoten über das Menü löschen", w.model.nn == 4, str(w.model.nn))
         del w._bestaetigen
         w.error = alt_error
 

@@ -920,6 +920,7 @@ def read_rf6(path: str, model: Model = None, log: list = None,
         if netz:
             from ..model import Netzeinstellungen
             m.netz = Netzeinstellungen(quelle="aus mesh.xml der RFEM-Datei", **netz)
+            m.netz.dichte = "eigene"          # die Ziellaenge der Datei gilt absolut
             C.say(log, "Netzeinstellungen übernommen: " + m.netz.beschreibung())
         else:
             C.say(log, "Keine mesh.xml im Behälter - es gilt die Vorgabe des "

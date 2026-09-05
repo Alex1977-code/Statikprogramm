@@ -1344,6 +1344,17 @@ class Netzeinstellungen:
     ordnung: int = 1
     splitter: float = 0.1
     quelle: str = ""              # woher die Werte stammen
+    #: Netzdichte: grob | mittel | fein (Elemente ueber die Objektgroesse) oder
+    #: eigene (die absolute Ziellaenge); siehe netzdichte.py
+    dichte: str = "mittel"
+    #: intelligente Anpassung: kleine Kanten feiner, gedeckelt durch h_min/h_max
+    #: (0 = ein Viertel bzw. das Vierfache der Dichte-Laenge) und max_elemente
+    intelligent: bool = True
+    h_min: float = 0.0
+    h_max: float = 0.0
+    max_elemente: int = 100000
+    #: Teilung je Flaeche aus der Netzdichte ableiten (sonst bleibt die eigene)
+    teilung_uebersteuern: bool = True
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""
@@ -1352,8 +1363,14 @@ class Netzeinstellungen:
         return max(1, int(round(float(laenge) / self.ziellaenge)))
 
     def beschreibung(self) -> str:
-        return (f"Ziellänge {self.ziellaenge * 1e3:.0f} mm, "
-                f"Stabteilung {self.stabteilung}, "
+        from .netzdichte import DICHTEN, FORMEN
+        dichte = getattr(self, "dichte", "mittel") or "mittel"
+        kopf = (f"Netzdichte {dichte} ({DICHTEN[dichte]} Elemente über die Objektgröße), "
+                if dichte in DICHTEN else "")
+        return (kopf + f"Ziellänge {self.ziellaenge * 1e3:.0f} mm, "
+                + FORMEN.get(int(getattr(self, "form", 2)), "") + ", "
+                + ("intelligent angepasst, " if getattr(self, "intelligent", True) else "")
+                + f"Stabteilung {self.stabteilung}, "
                 f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}, "
                 + ("quadratische Volumenelemente (tet10)" if self.ordnung >= 2
                    else "lineare Volumenelemente (tet4)")
