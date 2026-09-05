@@ -330,10 +330,16 @@ Jeder Lastfall und jede Kombination gehört zu einer **Situation**; die
 Grundstellung (unbewegt, alle Elemente) ist die Vorgabe. Für jede Situation,
 in der ein Lastfall steht, wird ein eigenes Gleichungssystem aufgestellt:
 
-* **Stellung**: die bewegten Knoten werden um die Achse der Stellung gedreht
-  (Rotationsmatrix nach Rodrigues, `bridges.positions.drehmatrix`), die in
-  der Stellung unwirksamen Lager entfallen. Gerechnet wird auf dieser Kopie
-  des Modells; Ergebnisse und Bild beziehen sich auf die gedrehte Lage.
+* **Stellung**: die Lage entsteht als Kette — erst die Ausgangsstellung
+  (rekursiv), dann die eigene Verschiebung der bewegten Knoten und ihre
+  Drehung um die Achse der Stellung (Rotationsmatrix nach Rodrigues,
+  `bridges.positions.drehmatrix`). Die in der Stellung unwirksamen Lager
+  entfallen, die deaktivierten Gelenke werden biegesteif (ihre Freigaben und
+  Federn gehen von den Elementen herunter, an denen sie gesetzt wurden), und
+  die Elemente der deaktivierten Stäbe, Flächen und Volumen gehen als
+  Aktivmaske in das System (wie die deaktivierten Elemente unten). Gerechnet
+  wird auf dieser Kopie des Modells; Ergebnisse und Bild beziehen sich auf
+  die Lage der Stellung.
 * **Deaktivierte Elemente** liefern keinen Beitrag zur Steifigkeitsmatrix,
   keine Elementlasten (Streckenlast, Eigengewicht, Temperatur, Flächenlast)
   und bekommen Schnittgrößen null. Knotenlasten an Knoten, an denen kein

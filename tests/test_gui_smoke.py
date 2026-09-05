@@ -1989,27 +1989,74 @@ def main():
         check("Subsystem löschen, Rückgängig holt es zurück", "Stiel A" not in m_.subsysteme
               and (w.undo() or True) and "Stiel A" in w.model.subsysteme)
         m_ = w.model
-        # Situation: die Elemente des Stabs deaktivieren
-        w._baum_geklickt("situation_neu", "+ Situation anlegen")
+        # Stellung (Maske rechts): der Riegel wirkt nicht - ohne ihn bleibt die
+        # Halle stabil (die Stiele stehen unten eingespannt), ohne Stiel nicht
+        from statik3d.gui import masken as msk_
+        stab = "Riegel"
+        els = set(m_.members[stab].elements)
+        w._baum_geklickt("stellung_neu", "+ Stellung anlegen")
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Neu: Situation-Maske mit Stellung, Deaktiviert und drei Knöpfen",
-              mk.titel == "Neu: Situation" and mk.werte()["stellung"].startswith("–")
-              and set(mk.zusatzknoepfe) == {"Auswahl deaktivieren", "Auswahl aktivieren", "Alle aktivieren"})
+        check("Neu: Stellung-Maske rechts: Bezeichnung, Ausgangsstellung, Verschiebung, Verdrehung, "
+              "deaktivierte Stäbe/Flächen/Volumen/Gelenke/Lager - mehr nicht",
+              isinstance(mk, msk_.Maske) and mk.titel.startswith("Neu: Stellung")
+              and {"name", "basis", "dx", "dy", "dz", "winkel", "ax", "ay", "az", "px", "py", "pz",
+                   "staebe_aus", "flaechen_aus", "koerper_aus", "gelenke_aus", "lager_aus",
+                   "linienlager_aus", "flaechenlager_aus"} <= set(mk.werte())
+              and "beschreibung" not in mk.werte() and "faelle" not in mk.werte()
+              and set(mk.zusatzknoepfe) == {"Auswahl deaktivieren", "Auswahl aktivieren", "Alle aktivieren"},
+              str(sorted(mk.werte())))
         w.clear_selection()
         w.sel_staebe = [stab]
         mk.zusatzknoepfe["Auswahl deaktivieren"].click()
         app.processEvents()
-        check("„Auswahl deaktivieren“: Elemente in der Maske und im Bild ausgeblendet",
-              f"{len(els)} Elemente" in mk.werte()["aus"] and set(w.versteckt["elemente"]) == els,
-              mk.werte()["aus"])
-        mk.setzen("name", "ohne Stiel")
+        check("„Auswahl deaktivieren“: Stab in der Liste, seine Elemente im Bild ausgeblendet",
+              stab in w._namensliste(mk.werte()["staebe_aus"]) and set(w.versteckt["elemente"]) == els,
+              mk.werte()["staebe_aus"])
+        mk.setzen("name", "ohne Riegel")
+        mk.anwenden()
+        app.processEvents()
+        st = w.model.stellung("ohne Riegel")
+        check("OK legt die Stellung an (Stab deaktiviert), Eintrag im Baum, ihre Maske bleibt offen und "
+              "zeigt die Stellung ohne den Stab",
+              st is not None and st.staebe_aus == [stab] and set(w.versteckt["elemente"]) == els
+              and any("ohne Riegel" in t for t in zweige(w.baum))
+              and w.maskenrand.maske.titel == "Stellung ohne Riegel", str((st, len(w.versteckt["elemente"]))))
+        w.maskenrand.schliessen()
+        app.processEvents()
+        check("Maske zu: Sicht wieder hergestellt", not w.versteckt["elemente"], str(len(w.versteckt["elemente"])))
+        m_ = w.model
+        w._baum_geklickt("stellung_neu", "+ Stellung anlegen")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("name", "hoch"); mk.setzen("basis", "ohne Riegel"); mk.setzen("dz", 0.5); mk.setzen("winkel", 10.0)
+        mk.anwenden()
+        app.processEvents()
+        st2 = w.model.stellung("hoch")
+        check("Stellung mit Ausgangsstellung, Verschiebung und Verdrehung",
+              st2 is not None and st2.basis == "ohne Riegel" and st2.verschiebung == (0.0, 0.0, 0.5)
+              and st2.dreh_winkel == 10.0 and st2.winkel == 10.0, str(st2))
+        m_ = w.model
+        wurzel_ = w.baum.topLevelItem(0)
+        oben_ = [wurzel_.child(i).text(0) for i in range(wurzel_.childCount())]
+        check("Baum: Subsysteme vor Stellungen vor Situationen",
+              oben_.index("Subsysteme") < oben_.index("Stellungen") < oben_.index("Situationen"), str(oben_))
+        # Situation: nur noch Stellung + Lastfaelle/Kombinationen
+        w._baum_geklickt("situation_neu", "+ Situation anlegen")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neu: Situation-Maske: Stellung, Lastfälle, Kombinationen - keine Deaktivierung mehr",
+              mk.titel == "Neu: Situation" and mk.werte()["stellung"].startswith("–")
+              and {"lastfaelle", "kombinationen"} <= set(mk.werte()) and "aus" not in mk.werte()
+              and set(mk.zusatzknoepfe) == {"Alle Lastfälle und Kombinationen"}, str(sorted(mk.werte())))
+        mk.setzen("name", "ohne Stiel"); mk.setzen("stellung", "ohne Riegel")
         mk.anwenden()
         app.processEvents()
         sit = m_.situationen.get("ohne Stiel")
-        check("OK legt die Situation an und stellt die Sicht wieder her",
-              sit is not None and set(sit.deaktiviert) == els and not w.versteckt["elemente"]
-              and "ohne Stiel" in zweige(w.baum), str(sit))
+        check("OK legt die Situation an: Stellung zugeordnet, Elemente der Stellung ohne Wirkung",
+              sit is not None and sit.stellung == "ohne Riegel" and not w.versteckt["elemente"]
+              and "ohne Stiel" in zweige(w.baum)
+              and set(np.where(~m_.aktive_elemente("ohne Stiel"))[0]) == els, str(sit))
         d = dg.LoadCaseDialog(w, existing=list(m_.load_cases), situationen=m_.situationsnamen())
         check("Lastfalldialog bietet die Situationen",
               [d.situation.itemText(i) for i in range(d.situation.count())] == [GRUND, "ohne Stiel"])
@@ -2043,31 +2090,41 @@ def main():
                 break
         app.processEvents()
         r_ = w.current_result()
-        check("Ergebnis der Situation: abgeschaltete Elemente ohne Schnittgrößen, im Bild weggelassen",
+        check("Ergebnis der Situation: Elemente der Stellung ohne Schnittgrößen, im Bild weggelassen",
               r_ is not None and r_.info.get("situation") == "ohne Stiel"
               and all(np.allclose(r_.beam_end[i], 0) for i in els)
               and set(r_.info.get("inaktiv", [])) == els, str(r_.name if r_ else None))
         w._baum_geklickt("situation", "ohne Stiel")
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Situation zeigen: Maske und ausgeblendete Elemente",
-              mk.titel == "Situation ohne Stiel" and set(w.versteckt["elemente"]) == els)
-        mk.zusatzknoepfe["Alle aktivieren"].click()
+        check("Situation zeigen: Maske nennt Lastfall und Kombination, Elemente der Stellung ausgeblendet",
+              mk.titel == "Situation ohne Stiel" and "LFS" in mk.werte()["lastfaelle"]
+              and "KS" in mk.werte()["kombinationen"] and set(w.versteckt["elemente"]) == els,
+              str((mk.werte()["lastfaelle"], mk.werte()["kombinationen"])))
+        mk.setzen("kombinationen", "")
         mk.anwenden()
         app.processEvents()
-        check("Übernehmen: alles wieder aktiv", m_.situationen["ohne Stiel"].deaktiviert == []
+        check("Übernehmen: nicht mehr genannte Kombination fällt in die Grundstellung zurück, Sicht wieder da",
+              m_.combinations["KS"].situation == "" and m_.load_cases["LFS"].situation == "ohne Stiel"
               and not w.versteckt["elemente"])
+        fehler.clear()
+        w._baum_loeschen("stellung", "ohne Riegel")
+        check("eine benutzte Stellung wird abgewiesen", bool(fehler) and "benutzt" in fehler[0]
+              and m_.stellung("ohne Riegel") is not None, str(fehler[:1]))
         fehler.clear()
         w._baum_loeschen("situation", "ohne Stiel")
         check("eine benutzte Situation wird abgewiesen", bool(fehler) and "benutzt" in fehler[0]
               and "ohne Stiel" in m_.situationen, str(fehler[:1]))
         w._baum_loeschen("situation", GRUND)
         check("die Grundstellung lässt sich nicht löschen", len(fehler) == 2 and "Grundstellung" in fehler[1])
+        w._baum_loeschen("stellung", "hoch")
+        check("eine freie Stellung lässt sich löschen", w.model.stellung("hoch") is None and len(fehler) == 2)
+        m_ = w.model
         w.error = fehler_alt
         del w._bestaetigen
         check("Modellangaben nennen Subsysteme, Situationen, Stellungen",
               dict(w.modellangaben())["Situationen"] == "2" and dict(w.modellangaben())["Subsysteme"] == "2"
-              and "Stellungen" in dict(w.modellangaben()))
+              and dict(w.modellangaben())["Stellungen"] == "1")
         w.maskenrand.schliessen()
 
         # ---- Knicklaengen aus der Knickfigur ----
@@ -3796,6 +3853,111 @@ def main():
         import traceback
         traceback.print_exc()
         check("Mehrfachauswahl und intelligente Auswahl", False, str(ex)[:70])
+
+    # ---- Masken rechts: Querschnitt, Gelenk, Berichtsbild, Kontaktbedingung; Ribbon Struktur --
+    try:
+        from statik3d.gui import masken as msk_
+        from statik3d.model import Kontaktbedingung as Kb_, DofBehaviour as Db_
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+        gruppen_ = list(dict.fromkeys(b.gruppe for b in w.ribbon.befehle if b.register == "Struktur"))
+        texte_ = {(b.gruppe, b.text) for b in w.ribbon.befehle if b.register == "Struktur"}
+        check("Ribbon Struktur nach Objektart: Stäbe, Flächen, Volumen, Gelenke, Eigenschaften",
+              gruppen_ == ["Stäbe", "Flächen", "Volumen", "Gelenke", "Eigenschaften"]
+              and {("Stäbe", "Stab"), ("Stäbe", "Stabzug"), ("Flächen", "Schale"), ("Flächen", "Fläche aus Linien"),
+                   ("Volumen", "Volumen aus Flächen"), ("Gelenke", "Gelenk"), ("Gelenke", "Gelenke setzen…"),
+                   ("Eigenschaften", "Querschnitte")} <= texte_, str(gruppen_))
+        sec_ = list(m_.sections)[0]
+        A_alt = m_.sections[sec_].A
+        mk = w.querschnitt_bearbeiten(sec_)
+        app.processEvents()
+        check("Querschnitt: Maske rechts mit Kennwerten in cm und „Neu aus Profil“",
+              isinstance(mk, msk_.Maske) and mk.titel == f"Querschnitt {sec_}"
+              and abs(mk.werte()["A"] - A_alt * 1e4) < 1e-9 and "Neu aus Profil …" in mk.zusatzknoepfe
+              and isinstance(w.leuchtet, list), str(mk.werte().get("A") if mk else None))
+        mk.setzen("A", 123.4); mk.setzen("name", sec_ + "x")
+        mk.anwenden()
+        app.processEvents()
+        check("Querschnitt übernommen: A in cm², umbenannt, Elemente und Tabelle nachgezogen",
+              sec_ + "x" in w.model.sections and abs(w.model.sections[sec_ + "x"].A - 123.4e-4) < 1e-12
+              and all(e.sec != sec_ for e in w.model.elements if e.typ == "beam") and not fehler_
+              and any(str(z[0]) == sec_ + "x" for z in w.tbl_sec.modell.zeilen), str(fehler_[:1]))
+        w.undo()
+        app.processEvents()
+        check("Querschnitt rückgängig", sec_ in w.model.sections and abs(w.model.sections[sec_].A - A_alt) < 1e-15)
+        m_ = w.model
+        mk = w.add_hinge()
+        app.processEvents()
+        check("Gelenk neu (Ribbon Struktur → Gelenk): Maske rechts mit sechs Freiheitsgraden",
+              isinstance(mk, msk_.Maske) and mk.titel.startswith("Neu: Gelenk") and "typ4" in mk.werte()
+              and "k4" in mk.werte() and mk.werte()["end"] == "Stabanfang")
+        mk.setzen("name", "G1"); mk.setzen("end", "Stabende"); mk.setzen("typ4", "gelenkig")
+        mk.setzen("typ5", "Feder"); mk.setzen("k5", 1500.0)
+        mk.anwenden()
+        app.processEvents()
+        h_ = w.model.hinges.get("G1")
+        check("Gelenk angelegt: Stabende, φy gelenkig, φz Feder 1500 kNm/rad; Baum verträgt Gelenke am Stabende",
+              h_ is not None and h_.end == 1 and h_.typ[4] == "free" and h_.typ[5] == "spring"
+              and abs(h_.stiffness[5] - 1.5e6) < 1e-6 and not fehler_ and "G1" in zweige(w.baum),
+              str((h_, fehler_[:1])))
+        m_ = w.model
+        e0 = m_.members["Riegel"].elements[0]
+        m_.apply_hinge(e0, "G1")
+        mk = w.gelenk_bearbeiten("G1")
+        app.processEvents()
+        check("Gelenk bearbeiten: Maske nennt die Elemente, sie leuchten",
+              mk.titel == "Gelenk G1" and f"E{e0}" in mk.werte()["elemente"] and w.leuchtet == [e0],
+              str(mk.werte()["elemente"]))
+        mk.setzen("typ4", "biegesteif")
+        mk.anwenden()
+        app.processEvents()
+        check("Gelenk geändert: Element folgt (φy nicht mehr frei, Feder φz bleibt)",
+              10 not in w.model.elements[e0].hinges and any(d == 11 for d, k in w.model.elements[e0].hinge_springs),
+              str((w.model.elements[e0].hinges, w.model.elements[e0].hinge_springs)))
+        w._baum_loeschen("gelenk", "G1")
+        app.processEvents()
+        check("Gelenk gelöscht: Element wieder biegesteif",
+              "G1" not in w.model.hinges and not w.model.elements[e0].hinge_springs)
+        m_ = w.model
+        w.ansicht_in_bericht()
+        app.processEvents()
+        mk = w.berichtseintrag_bearbeiten("0") if m_.bericht else None
+        app.processEvents()
+        check("Berichtsbild: Maske rechts statt Dialog", isinstance(mk, msk_.Maske) and mk.titel == "Berichtsbild 1")
+        mk.setzen("beschriftung", "Momente am Rahmen")
+        mk.anwenden()
+        app.processEvents()
+        check("Bildunterschrift übernommen", w.model.bericht[0].beschriftung == "Momente am Rahmen")
+        m_ = w.model
+        m_.kontaktbedingungen["Fuge"] = Kb_("Fuge", flaechen=[1], volumen=[], ziele=1, typ="4",
+                                           behaviour={0: Db_("rigid"), 2: Db_("free", failure="zug")})
+        w.refresh_all()
+        app.processEvents()
+        w._baum_geklickt("kontaktbedingung", "Fuge")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Kontaktbedingung: Maske rechts mit Wirkung je FHG, Trennung und „Kontaktfugen ausführen“",
+              mk.titel == "Kontaktbedingung Fuge" and "uz=frei (Ausfall bei Zug)" in mk.werte()["wirkung"]
+              and "nicht ausgeführt" in mk.werte()["ausgefuehrt"] and "Kontaktfugen ausführen" in mk.zusatzknoepfe,
+              str(mk.werte()))
+        mk.setzen("beschreibung", "Lagerfuge")
+        mk.anwenden()
+        app.processEvents()
+        check("Kontaktbedingung: Beschreibung übernommen, Warnzeichen vor dem Namen im Baum",
+              w.model.kontaktbedingungen["Fuge"].beschreibung == "Lagerfuge" and not fehler_
+              and any(t.startswith("⚠ Fuge") for t in zweige(w.baum)), str(fehler_[:1]))
+        w.error = alt_error
+        del w._bestaetigen
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Masken rechts (Querschnitt, Gelenk, Bericht, Kontakt)", False, str(ex)[:70])
 
     # ---- Klick und Ziehen; Bericht ohne Berechnung ---------------------------
     try:

@@ -386,11 +386,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
                  "bemassungen": "Linearmaß", "lastfaelle": "Lastfall",
-                 "kombinationen": "Kombination", "werkstoffe": "Werkstoff", "dicken": "Dicke"}
+                 "kombinationen": "Kombination", "werkstoffe": "Werkstoff", "dicken": "Dicke",
+                 "gelenke": "Gelenk", "stellungen": "Stellung"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind",
-                    "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke"}
+                    "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke",
+                    "gelenk", "stellung", "berichtseintrag"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
@@ -399,7 +401,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "wasserdruck": "generierer", "wind": "generierer",
                  "schweissnaht": "schweissnaehte", "bemassung": "bemassungen",
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
-                 "werkstoff": "werkstoffe", "dicke": "dicken"}
+                 "werkstoff": "werkstoffe", "dicke": "dicken",
+                 "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -645,7 +648,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                         "flaechenlager_einzeln", "flaechenlager")
         if model.hinges:
             gk = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke")
-            self._liste(gk, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d]
+            self._liste(gk, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d % 6]
                                               for d in h.released()) or "starr",
                               name, f"{name}: freigegeben {h.released()}")
                              for name, h in model.hinges.items()], "gelenk", "gelenke")
@@ -767,26 +770,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._zweig(bz, "+ Ansicht übernehmen", "", "bericht_neu",
                     farbe=FARBEN["akzent"])
 
-        # ---- Stellungen ----------------------------------------------------
-        # Stellungen stehen ausschliesslich hier (Vorgabe Kap. 16.1 Nr. 3);
-        # der Zweig traegt die Schaltflaeche zum Anlegen.
-        st = self._zweig(wurzel, "Stellungen", len(stellungen or []), "stellungen",
-                         fett=bool(stellungen),
-                         farbe=FARBEN["akzent"] if stellungen else None)
-        for i, x in enumerate(stellungen or [], 1):
-            eta = x.get("eta")
-            text = f"S{i} · {x.get('name', '')}" + (" ★" if x.get("fuehrt") else "")
-            zweig = self._zweig(st, text, f"{float(x.get('winkel', 0)):.0f}°",
-                                "stellung", schluessel=x.get("name", ""))
-            if eta is not None:
-                zweig.setToolTip(0, f"Ausnutzung η = {float(eta):.3f}".replace(".", ","))
-        self._zweig(st, "+ Stellung anlegen", "", "stellung_neu",
-                    farbe=FARBEN["akzent"])
-        st.setExpanded(True)
-
-        # ---- Subsysteme und Situationen ------------------------------------
+        # ---- Subsysteme, Stellungen, Situationen ---------------------------
         # Das Gesamtsystem und die Grundstellung sind immer da; alles weitere
         # legt der Anwender an (Rechtsklick: Neu, oder der Eintrag "+ …").
+        # Reihenfolge: erst die Teile (Subsysteme), dann die Lagen (Stellungen),
+        # dann die Situationen, die einer Stellung ihre Lastfaelle zuordnen.
         from ..model import GRUNDSTELLUNG, GESAMTSYSTEM
         subs = getattr(model, "subsysteme", {}) or {}
         sz = self._zweig(wurzel, "Subsysteme", 1 + len(subs), "subsysteme", fett=bool(subs),
@@ -798,11 +786,31 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(sz, [(name, f"{len(s.elemente)} El", name, f"{name}: {s.bezug()}")
                          for name, s in subs.items()], "subsystem", "subsysteme")
         self._zweig(sz, "+ Subsystem anlegen", "", "subsystem_neu", farbe=FARBEN["akzent"])
+
+        # Stellungen stehen ausschliesslich hier (Vorgabe Kap. 16.1 Nr. 3);
+        # der Zweig traegt die Schaltflaeche zum Anlegen.
+        st = self._zweig(wurzel, "Stellungen", len(stellungen or []), "stellungen",
+                         fett=bool(stellungen),
+                         farbe=FARBEN["akzent"] if stellungen else None,
+                         hinweis="Lagen des Systems: Ausgangsstellung, Verschiebung, "
+                                 "Verdrehung, deaktivierte Stäbe, Flächen, Volumen, "
+                                 "Gelenke und Lager")
+        for i, x in enumerate(stellungen or [], 1):
+            eta = x.get("eta")
+            text = f"S{i} · {x.get('name', '')}" + (" ★" if x.get("fuehrt") else "")
+            zweig = self._zweig(st, text, f"{float(x.get('winkel', 0)):.0f}°",
+                                "stellung", schluessel=x.get("name", ""))
+            if eta is not None:
+                zweig.setToolTip(0, f"Ausnutzung η = {float(eta):.3f}".replace(".", ","))
+        self._zweig(st, "+ Stellung anlegen", "", "stellung_neu",
+                    farbe=FARBEN["akzent"])
+        st.setExpanded(True)
+
         sits = getattr(model, "situationen", {}) or {}
         siz = self._zweig(wurzel, "Situationen", 1 + len(sits), "situationen",
                           fett=bool(sits), farbe=FARBEN["akzent"] if sits else None,
-                          hinweis="Stellung und wirksame Elemente; Lastfälle und "
-                                  "Kombinationen nennen ihre Situation")
+                          hinweis="Eine Stellung und die Lastfälle und Kombinationen, "
+                                  "die in ihr gelten")
         self._zweig(siz, GRUNDSTELLUNG, "alles aktiv", "situation", schluessel=GRUNDSTELLUNG,
                     hinweis="unbewegt, alle Elemente wirken")
         self._liste(siz, [(name, s.bezug(), name, f"{name}: {s.bezug()}")

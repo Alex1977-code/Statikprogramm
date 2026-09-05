@@ -707,6 +707,9 @@ class MemberHinge:
     end: int = 0
     typ: list[str] = field(default_factory=lambda: ["fixed"] * 6)
     stiffness: list[float] = field(default_factory=lambda: [0.0] * 6)
+    #: Elemente, auf die das Gelenk gelegt wurde (apply_hinge) - damit eine
+    #: Stellung es wieder biegesteif machen kann
+    elemente: list[int] = field(default_factory=list)
 
     def released(self) -> list[int]:
         """Lokale Element-FHG (0..11), die gelenkig sind (fuer die Kondensation)."""
@@ -2638,6 +2641,12 @@ class Model:
         for i in sit.deaktiviert:
             if 0 <= int(i) < len(aktiv):
                 aktiv[int(i)] = False
+        # Die Stellung der Situation schaltet ihre Staebe, Flaechen und
+        # Volumen ab - das gehoert zur Wirkung des Systems in dieser Stellung
+        st = self.stellung(sit.stellung) if sit.stellung else None
+        if st is not None and hasattr(st, "deaktivierte_elemente"):
+            for i in st.deaktivierte_elemente(self):
+                aktiv[int(i)] = False
         return aktiv
 
     def theorie_von(self, objekt) -> str:
@@ -2711,6 +2720,8 @@ class Model:
             sub.beruehrung = um(sub.beruehrung)
         for sit in (getattr(self, "situationen", None) or {}).values():
             sit.deaktiviert = um(sit.deaktiviert)
+        for h in self.hinges.values():
+            h.elemente = um(getattr(h, "elemente", []) or [])
         return len(wegmenge)
 
     @staticmethod
@@ -3314,6 +3325,9 @@ class Model:
     def apply_hinge(self, elem: int, hinge, end: int = None):
         """Gelenkdefinition auf ein Stabelement legen."""
         h = self.hinges[hinge] if isinstance(hinge, str) else hinge
+        vorrat = self.hinges.get(hinge if isinstance(hinge, str) else getattr(h, "name", ""))
+        if vorrat is not None:
+            vorrat.elemente = sorted(set(getattr(vorrat, "elemente", []) or []) | {int(elem)})
         if end is not None:
             h = MemberHinge(h.name, int(end), list(h.typ), list(h.stiffness))
         e = self.elements[int(elem)]
@@ -3713,6 +3727,7 @@ class Model:
             for s in m.stellungen:
                 s.dreh_achse = tuple(s.dreh_achse)
                 s.dreh_punkt = tuple(s.dreh_punkt)
+                s.verschiebung = tuple(getattr(s, "verschiebung", None) or (0.0, 0.0, 0.0))
                 if s.antrieb is not None:
                     s.antrieb = (int(s.antrieb[0]), tuple(s.antrieb[1]))
         return m

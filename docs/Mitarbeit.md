@@ -170,9 +170,13 @@ Punkte:
 * **Subsysteme** sind bisher eine Gliederung (Auswahl, Baum, Speichern);
   eine Berechnung je Subsystem (Teilsystem freischneiden, Schnittkräfte an
   den verdoppelten Berührungselementen) steht noch aus.
-* **Situationen mit Stellung** rechnen auf einer gedrehten Kopie des Modells;
-  der Antrieb (`Stellung.antrieb`) und die Lastfallauswahl der Stellung
-  (`faelle`) gelten nur in der Stellungsreihe, nicht in der Situation.
+* **Situationen mit Stellung** rechnen auf einer Kopie des Modells, auf die
+  `Stellung.anwenden` Ausgangsstellung, Verschiebung, Verdrehung, Lager und
+  Gelenke legt; die abgeschalteten Stäbe, Flächen und Volumen der Stellung
+  gehen als Aktivmaske in das System. Der Antrieb (`Stellung.antrieb`) und
+  die Lastfallauswahl der Stellung (`faelle`) gelten nur in der
+  Stellungsreihe (`bridges.positions`), nicht in der Situation; die Situation
+  ordnet ihre Lastfälle und Kombinationen selbst zu.
 * **Torsion freier Polygonquerschnitte** (`sections.polygon`) ist eine
   Näherung nach Saint-Venant (A⁴/(4π²·Ip)); exakt wäre die Lösung der
   Prandtlschen Spannungsfunktion auf dem Polygon (kleines FE-Problem). Der

@@ -33,13 +33,14 @@ def situationsmodell(model: Model, name: str = "") -> tuple:
             raise ValueError(f"Situation '{sit.name}': Stellung '{sit.stellung}' unbekannt")
         m = model.copy()
         m.name = f"{model.name} – {sit.name}"
-        if st.dreh_winkel:
-            st._drehen(m, log)
-        st._lager(m, log)
+        # Ausgangsstellung, Verschiebung, Verdrehung, Lager und Gelenke der
+        # Stellung - alles, was ihre Lage und Wirkung ausmacht
+        st.anwenden(m, model, log)
         m.stellungen = list(model.stellungen)
     aktiv = None
-    if sit.deaktiviert:
-        aktiv = model.aktive_elemente(sit.name)
+    maske = model.aktive_elemente(sit.name)
+    if not maske.all():
+        aktiv = maske
         if not aktiv.any():
             raise ValueError(f"Situation '{sit.name}': alle Elemente deaktiviert")
         log.append(f"  {sit.name}: {int((~aktiv).sum())} Elemente ohne Wirkung")

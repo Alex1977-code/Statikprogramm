@@ -338,6 +338,13 @@ class Maskenrand(QtCore.QObject):
             if self.ziel is not None:
                 self.ziel.removeWidget(m)
             m.hide()
+            # Auch eine ersetzte Maske ist „zu“: wer auf ihr Schliessen hoert
+            # (etwa die Vorschau einer Stellung, die Elemente ausblendet),
+            # muss es erfahren - sonst blieben die Elemente ausgeblendet
+            try:
+                m.geschlossen.emit()
+            except (RuntimeError, AttributeError):
+                pass
             m.deleteLater()
 
     def _vergessen(self):

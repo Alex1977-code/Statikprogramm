@@ -73,7 +73,7 @@ Dreizehn Register nach Arbeitsschritt:
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, Übernehmen aus fremden Formaten, Exportieren, Beispiele |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
 | **Geometrie** | Knoten, Netzgeneratoren (Stabzug, Platte, Quader) |
-| **Struktur** | Stab, Schale, Querschnitte, Werkstoffe, Dicken, Zuweisen, Stäbe für Nachweise |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Platte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen, Netz löschen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzvorschau, Netz löschen, Kontaktfugen |
@@ -109,7 +109,8 @@ Die Arbeitsfläche in drei Spalten:
   | Lasten | alle Lasten aller Lastfälle, je Lastfall gezählt |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
   | Einwirkungen | Lastfälle und Kombinationen |
-  | Stellungen, Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte |
+  | Subsysteme → Stellungen → Situationen | erst die Teile des Tragwerks, dann seine Lagen, dann die Situationen, die einer Stellung ihre Lastfälle und Kombinationen zuordnen |
+  | Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte |
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
   | **Bericht** | die aus der Ansicht übernommenen Ergebnisbilder |
 
@@ -135,8 +136,10 @@ Die Arbeitsfläche in drei Spalten:
   Elemente mit, ein Stab mit Nachweis lässt seine Elemente stehen. Wie alles
   ist auch das Löschen mit **Rückgängig** zurückzunehmen.
 
-  **Ein Doppelklick bearbeitet** die übrigen Objekte in ihrer Maske
-  (Querschnitt, Werkstoff, Dicke, Lager, Gelenk, Lastfall, Kombination …).
+  **Ein Doppelklick bearbeitet** die übrigen Objekte in ihrer Maske rechts
+  (Querschnitt mit seinen Kennwerten in cm und mm, Werkstoff, Dicke, Gelenk
+  mit Wirkung je Freiheitsgrad, Lastfall, Kombination, Stellung,
+  Situation, Berichtsbild, Kontaktbedingung …); Lager öffnen ihren Dialog.
   Zweige mit sehr vielen Einträgen zeigen die ersten 20 000 und verweisen für
   den Rest auf die Tabelle unten, wo gefiltert werden kann.
   Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
@@ -819,30 +822,57 @@ Subsystem wählt es in der Ansicht und zeigt rechts, was es enthält; Name
 und Beschreibung sind dort änderbar, Entf löscht es. Subsysteme werden mit
 dem Modell gespeichert.
 
-### Situationen: Stellung und wirksame Elemente
+### Stellungen: Lage und Wirkung des Systems
 
-Unter „Situationen“ steht immer die **Grundstellung**: unbewegt, alle
-Elemente aktiviert. Eine weitere Situation entsteht mit **Rechtsklick →
-Neu: Situation** (oder „+ Situation anlegen“). In ihrer Maske wählt man die
-**Stellung** (eine der angelegten Stellungen des Systems oder „unbewegt“)
-und bestimmt, welche Elemente **nicht wirken**: Elemente, Stäbe, Flächen
-oder Volumen in der Ansicht anklicken und **„Auswahl deaktivieren“** — sie
+Eine **Stellung** ist eine Lage des Systems samt allem, was in ihr nicht
+wirkt. Sie wird — wie alles — **rechts in der Maske** angelegt und
+geändert: Modellbaum → Stellungen → **Rechtsklick → Neu: Stellung** oder
+„+ Stellung anlegen“, im Register *Berechnung → Stellung anlegen* oder
+„+ Stellung“ im Register Stellungen; ein Klick auf eine Stellung im Baum
+zeigt ihre Maske, Entf löscht sie. Die Maske enthält genau:
+
+| Feld | Bedeutung |
+|---|---|
+| Bezeichnung | der Name der Stellung |
+| Ausgangsstellung | „unbewegtes Modell“ oder eine andere Stellung, auf deren Lage die eigene Verschiebung und Verdrehung **aufsetzen** — so entsteht eine Kette von Stellungen (geschlossen → 30° → 60°) |
+| Verschiebung x, y, z [m] | Verschiebung der bewegten Knoten gegen die Ausgangsstellung |
+| Verdrehung [°], Drehachse, Punkt der Achse | Drehung der bewegten Knoten um die Achse gegen die Ausgangsstellung (bewegt sind alle nicht gelagerten Knoten bzw. die Elementgruppen der Stellung) |
+| Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten |
+| Deaktivierte Gelenke | diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
+| Deaktivierte Knoten-, Linien-, Flächenlager | sie greifen in dieser Stellung nicht — Namen oder Nummern wie im Modellbaum |
+
+Stäbe, Flächen, Volumen oder Knoten (für ihre Lager) in der Ansicht
+anklicken und **„Auswahl deaktivieren“** trägt sie in die Listen ein — sie
 verschwinden im Bild; „Auswahl aktivieren“ und „Alle aktivieren“ nehmen es
-zurück. **OK** legt die Situation an.
+zurück. Solange die Maske offen ist, zeigt die Ansicht die Stellung ohne
+ihre abgeschalteten Elemente. Stellungen werden mit dem Modell gespeichert.
 
-**Jeder Lastfall und jede Kombination nennt seine Situation** — im
+### Situationen: Stellung und ihre Lastfälle
+
+Unter „Situationen“ steht immer die **Grundstellung**: unbewegt, alles
+wirkt; Lastfälle ohne Situation gelten hier. Eine weitere Situation
+entsteht mit **Rechtsklick → Neu: Situation** (oder „+ Situation
+anlegen“). Ihre Maske hat nur noch drei Angaben: die **Stellung**, die
+**Lastfälle** und die **Kombinationen**, die in dieser Situation gelten
+(Namen, durch Komma; „Alle Lastfälle und Kombinationen“ trägt alle ein).
+**OK** legt die Situation an und ordnet die genannten Lastfälle und
+Kombinationen zu; nicht mehr genannte fallen in die Grundstellung zurück.
+Was in der Stellung nicht wirkt (Stäbe, Flächen, Volumen, Gelenke, Lager),
+steht in der Stellung selbst — die Maske der Situation zeigt es nur an.
+
+**Jeder Lastfall und jede Kombination nennt seine Situation** — auch im
 Lastfalldialog und im Kombinationsdialog als Feld „Situation“; die
 Tabellen unten und der Modellbaum zeigen sie mit. Eine Kombination
 überlagert nur Lastfälle **derselben** Situation (die anderen Felder sind
 im Dialog gesperrt, die Modellprüfung meldet eine Mischung als Fehler);
 die automatischen Kombinationen nach DIN EN 1990 entstehen je Situation.
 Gerechnet wird jede Situation mit ihrem eigenen System: die Stellung wird
-angewandt, die deaktivierten Elemente tragen weder Steifigkeit noch Last,
-ihre Schnittgrößen sind null, Knoten ohne wirksames Element werden
+angewandt (Ausgangsstellung, Verschiebung, Verdrehung, Lager, Gelenke),
+die deaktivierten Elemente tragen weder Steifigkeit noch Last, ihre
+Schnittgrößen sind null, Knoten ohne wirksames Element werden
 festgehalten. Im Ergebnisbild einer solchen Situation fehlen die
-abgeschalteten Elemente, und bei einer Stellung steht das Modell in der
-gedrehten Lage, mit der gerechnet wurde. Stellungen werden jetzt mit dem
-Modell gespeichert.
+abgeschalteten Elemente, und das Modell steht in der Lage, mit der
+gerechnet wurde.
 
 ### Register „Auswahl"
 
@@ -1741,9 +1771,12 @@ genannt (siehe „Situationen“ in Kapitel 2).
 
 Im Register **⟳ Stellungen** stehen alle Stellungen in einer Tabelle mit Winkel,
 ausgefallenen Lagern, geltenden Lastfällen, η und größter Verformung.
-„+ Stellung" öffnet den Dialog (Name, Winkel, Lager, Lastfälle, Drehung des
-bewegten Bauteils, Antriebsmoment), „Ändern" und „Entfernen" arbeiten auf der
-gewählten Zeile. **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln
+„+ Stellung" und „Ändern" öffnen die **Maske rechts** (Bezeichnung,
+Ausgangsstellung, Verschiebung, Verdrehung, deaktivierte Stäbe, Flächen,
+Volumen, Gelenke und Lager — siehe „Stellungen: Lage und Wirkung des
+Systems“ in Kapitel 2); „Entfernen" arbeitet auf der gewählten Zeile.
+Lastfälle je Stellung und Antriebsmoment kommen aus der Python-Schnittstelle
+(`Stellung(faelle=…, antrieb=…)`). **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln
 und schreibt die Umhüllende darunter; der Filmstreifen unter der 3D-Ansicht
 zeigt danach je Karte das η, die maßgebende mit ★.
 

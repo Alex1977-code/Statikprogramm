@@ -2376,23 +2376,46 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # -- Struktur ----------------------------------------------------
         r = rb.register("Struktur")
-        g = r.gruppe("Elemente")
+        # Nach Objektart gegliedert: Staebe, Flaechen, Volumen, Gelenke - und
+        # in jeder Gruppe die Befehle, die zu dieser Art gehoeren
+        g = r.gruppe("Stäbe")
         g.gross("Stab", "╲", self.maske_stab, "",
                 "Zwei Knoten anklicken oder ihre Nummern eintragen")
+        g.gross("Stabzug", "╱", self.maske_stabzug,
+                hinweis="Stabzug zwischen zwei Punkten, in n Elemente geteilt")
+        g.klein("Stäbe für Nachweise", lambda: self.maske_zeigen("Nachweise"),
+                hinweis="Stäbe mit Knick- und Kipplängen")
+        g.klein("Stäbe automatisch erkennen", self.auto_members)
+        g.klein("Querschnitt zuweisen…", lambda: self.maske_zeigen("Auswahl"),
+                hinweis="Querschnitt und Werkstoff an die gewählten Elemente")
+        g = r.gruppe("Flächen")
         g.gross("Schale", "◫", self.maske_schale, "",
                 "Drei oder vier Knoten in der Ansicht anklicken")
-        g.klein("Elemente löschen", self.delete_elements)
+        g.gross("Fläche aus Linien", "▱", self.add_flaeche_aus_auswahl, "",
+                "Die gewählten Linien beranden die Fläche - Randlinien auch in der Maske anklicken")
+        g.klein("Platte", self.maske_platte, hinweis="Rechteckplatte, gleich vernetzt")
+        g.klein("Flächen vernetzen", self.geometrie_vernetzen)
+        g.klein("Dicke zuweisen…", lambda: self.maske_zeigen("Auswahl"))
+        g = r.gruppe("Volumen")
+        g.gross("Volumen aus Flächen", "▣", self.add_koerper_aus_auswahl, "",
+                "Die gewählten Flächen beranden den Volumenkörper - Randflächen auch in der Maske anklicken")
+        g.klein("Quader", self.maske_quader, hinweis="Quader, gleich vernetzt")
+        g.klein("Volumen vernetzen", self.geometrie_vernetzen)
+        g.klein("Netz löschen", self.netz_loeschen_geometrie)
+        g = r.gruppe("Gelenke")
+        g.gross("Gelenk", "○", self.add_hinge,
+                hinweis="Stabendgelenk anlegen: je Freiheitsgrad biegesteif, gelenkig oder Feder "
+                        "- rechts in der Maske")
+        g.klein("Gelenke setzen…", lambda: self.maske_zeigen("Auswahl"),
+                hinweis="Gelenke an den gewählten Elementen setzen")
+        g.klein("Tabelle Gelenke", lambda: self.tabelle_zeigen("Gelenke"))
         g = r.gruppe("Eigenschaften")
         g.gross("Querschnitte", "⌶", lambda: self.tabelle_zeigen("Querschnitte"),
                 hinweis="Querschnitte aus der Profildatenbank")
         g.gross("Werkstoffe", "⬗", lambda: self.tabelle_zeigen("Werkstoffe"),
                 hinweis="Werkstoffe und ihre Kennwerte")
         g.klein("Schalendicken", lambda: self.tabelle_zeigen("Dicken"))
-        g.klein("Zuweisen an Auswahl…", lambda: self.maske_zeigen("Auswahl"))
-        g.klein("Gelenke setzen…", lambda: self.maske_zeigen("Auswahl"))
-        g = r.gruppe("Stäbe für Nachweise")
-        g.gross("Stäbe", "≣", lambda: self.maske_zeigen("Nachweise"),
-                hinweis="Stäbe mit Knick- und Kipplängen")
+        g.klein("Elemente löschen", self.delete_elements)
 
         # -- Lager / Gelenke / Kontakt -----------------------------------
         r = rb.register("Lager / Kontakt")
@@ -2485,6 +2508,9 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Stellungen")
         g.gross("Alle Stellungen", "⟳", self.stellungen_rechnen,
                 hinweis="Jede Stellung rechnen und die Umhüllende bilden")
+        g.klein("Stellung anlegen…", self.neue_stellung,
+                hinweis="Rechts die Maske: Bezeichnung, Ausgangsstellung, Verschiebung, Verdrehung, "
+                        "deaktivierte Stäbe, Flächen, Volumen, Gelenke und Lager")
         g.klein("DIN 19704: Kombinationen", self.din19704_bilden)
         g = r.gruppe("Einstellungen")
         g.gross("Einstellungen", "⚙", lambda: self.maske_zeigen("Berechnung"),
@@ -2867,6 +2893,8 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Zweige des Modellbaums, die eine Tabelle unten zeigen statt eine Maske
     BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe",
                     "querschnitt": "Querschnitte", "werkstoff": "Werkstoffe",
+                    "gelenke": "Gelenke", "gelenk": "Gelenke", "berichtseintrag": "Bericht",
+                    "kontaktbedingung": "Kontaktbedingungen",
                     "dicken": "Dicken", "dicke": "Dicken",
                     "knoten": "Knoten", "elemente": "Stäbe",
                     "stabelemente": "Stäbe", "flaechen": "Stäbe",
@@ -2899,7 +2927,9 @@ class MainWindow(QtWidgets.QMainWindow):
     OBJEKT_ARTEN = {"knoten", "linien", "linie", "stabelemente", "stabelement", "staebe",
                     "stab", "geoflaechen", "geoflaeche", "geokoerper", "geokoerper_einzeln",
                     "lastfaelle", "lastfall", "kombinationen", "kombination",
-                    "werkstoffe", "werkstoff", "dicken", "dicke"}
+                    "werkstoffe", "werkstoff", "dicken", "dicke",
+                    "querschnitt", "gelenke", "gelenk", "berichtseintrag",
+                    "kontaktbedingung", "stellungen", "stellung"}
 
     #: Zweige und Eintraege fuer Subsysteme und Situationen
     SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
@@ -3074,6 +3104,34 @@ class MainWindow(QtWidgets.QMainWindow):
             if eintrag and name in m.koerper:
                 self.leuchtet = [int(e) for e in (m.koerper[name].elemente or [])]
             self.lbl_sel.setText(f"{len(self.sel_koerper)} Volumen ausgewählt (Modellbaum)")
+        elif art == "querschnitt" and eintrag:
+            self.leuchtet = [i for i, e in enumerate(m.elements) if getattr(e, "sec", "") == name]
+            self.lbl_sel.setText(f"Querschnitt {name}: {len(self.leuchtet)} Elemente (Modellbaum)")
+        elif art in ("gelenke", "gelenk"):
+            h = m.hinges.get(name) if eintrag else None
+            self.leuchtet = [int(e) for e in (getattr(h, "elemente", []) or [])
+                             if 0 <= int(e) < len(m.elements)] if h is not None else []
+            if h is not None:
+                self.lbl_sel.setText(f"Gelenk {name}: an {len(self.leuchtet)} Elementen (Modellbaum)")
+        elif art == "kontaktbedingung" and eintrag:
+            kb = m.kontaktbedingungen.get(name)
+            self.auswahlart_setzen("Fläche")
+            self.selection = np.array([], dtype=int)
+            self.sel_linien, self.sel_koerper, self.sel_staebe = [], [], []
+            self.sel_flaechen = [x for x in (getattr(kb, "flaechennamen", []) or []) if x in m.flaechen]
+            self.lbl_sel.setText(f"Kontaktbedingung {name}: {len(self.sel_flaechen)} Flächen (Modellbaum)")
+        elif art == "stellung" and eintrag:
+            st = m.stellung(name)
+            if st is not None:
+                self.selection = np.array([], dtype=int)
+                self.sel_linien = []
+                self.sel_staebe = [x for x in st.staebe_aus if x in m.members]
+                self.sel_flaechen = [x for x in st.flaechen_aus if x in m.flaechen]
+                self.sel_koerper = [x for x in st.koerper_aus if x in m.koerper]
+                self.leuchtet = list(st.deaktivierte_elemente(m))
+                self.lbl_sel.setText(f"Stellung {name}: {len(self.leuchtet)} Elemente ohne Wirkung "
+                                     "(Modellbaum)")
+                self._stellung_gewaehlt(name)
         self._auswahl_register()
         self.redraw()
 
@@ -3100,6 +3158,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return name in m.materials
         if art == "dicke":
             return name in m.shells
+        if art == "querschnitt":
+            return name in m.sections
+        if art == "gelenk":
+            return name in m.hinges
+        if art == "berichtseintrag":
+            return name.isdigit() and int(name) < len(m.bericht)
+        if art == "kontaktbedingung":
+            return name in m.kontaktbedingungen
+        if art == "stellung":
+            return m.stellung(name) is not None
         return False
 
     @staticmethod
@@ -3133,6 +3201,8 @@ class MainWindow(QtWidgets.QMainWindow):
         F = msk.Feld
         felder, titel, hinweis = [], "", ""
         knopf = "OK" if neu else "Übernehmen"
+        zusatz: list = []
+        halter: dict = {}
         if art == "knoten":
             if not eintrag:
                 nrn = [f"K{i}" for i in range(m.nn)]
@@ -3325,6 +3395,142 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("benutzt", "benutzt von", "info",
                             f"{sum(1 for e in m.elements if e.mat == name)} Elementen" if mt else "–")]
                 titel = f"Werkstoff {name}"
+        elif art == "querschnitt":
+            sec = m.sections.get(name)
+            benutzt = sum(1 for e in m.elements if getattr(e, "sec", "") == name)
+            felder = [F("name", "Name", "text", name, breite=140),
+                      F("typ", "Typ", "info", (sec.typ if sec else "free")
+                        + (f" ({sec.fabrication})" if sec and sec.fabrication else "")),
+                      F("A", "A [cm²]", "zahl", (sec.A if sec else 0.0) * 1e4),
+                      F("Iy", "Iy [cm⁴]", "zahl", (sec.Iy if sec else 0.0) * 1e8),
+                      F("Iz", "Iz [cm⁴]", "zahl", (sec.Iz if sec else 0.0) * 1e8),
+                      F("It", "It [cm⁴]", "zahl", (sec.It if sec else 0.0) * 1e8),
+                      F("Iw", "Iw [cm⁶]", "zahl", (sec.Iw if sec else 0.0) * 1e12),
+                      F("Wel_y", "Wel,y [cm³]", "zahl", (sec.Wel_y if sec else 0.0) * 1e6),
+                      F("Wel_z", "Wel,z [cm³]", "zahl", (sec.Wel_z if sec else 0.0) * 1e6),
+                      F("Wpl_y", "Wpl,y [cm³]", "zahl", (sec.Wpl_y if sec else 0.0) * 1e6),
+                      F("Wpl_z", "Wpl,z [cm³]", "zahl", (sec.Wpl_z if sec else 0.0) * 1e6),
+                      F("Asy", "Asy [cm²]", "zahl", (sec.Asy if sec else 0.0) * 1e4,
+                        hinweis="0 = schubstarr"),
+                      F("Asz", "Asz [cm²]", "zahl", (sec.Asz if sec else 0.0) * 1e4),
+                      F("h", "h [mm]", "zahl", (sec.h if sec else 0.0) * 1e3),
+                      F("b", "b [mm]", "zahl", (sec.b if sec else 0.0) * 1e3),
+                      F("tw", "t_w [mm]", "zahl", (sec.tw if sec else 0.0) * 1e3),
+                      F("tf", "t_f [mm]", "zahl", (sec.tf if sec else 0.0) * 1e3),
+                      F("r", "r [mm]", "zahl", (sec.r if sec else 0.0) * 1e3),
+                      F("fabrication", "Herstellung", "wahl", (sec.fabrication if sec else "rolled"),
+                        ["rolled", "welded", "cold_formed"]),
+                      F("benutzt", "benutzt von", "info", f"{benutzt} Elementen")]
+            titel = f"Querschnitt {name}"
+            hinweis = ("Kennwerte in cm und mm - Umbenennen zieht die Elemente nach. "
+                       "„Neu aus Profil“ legt einen weiteren Querschnitt aus der Datenbank an.")
+            zusatz = [("Neu aus Profil …", self.querschnitt_neu)]
+        elif art in ("gelenke", "gelenk"):
+            if not eintrag:
+                felder = [F("anzahl", "Anzahl", "info", str(len(m.hinges))),
+                          F("spanne", "Namen", "info", self._spanne(m.hinges)),
+                          F("gesetzt", "gesetzt an", "info",
+                            f"{sum(len(getattr(h, 'elemente', []) or []) for h in m.hinges.values())} Elementen")]
+                titel, knopf = "Gelenke", "Neues Gelenk"
+            else:
+                h = m.hinges.get(name)
+                typen = list(getattr(h, "typ", None) or ["fixed"] * 6)
+                federn = list(getattr(h, "stiffness", None) or [0.0] * 6)
+                felder = [F("name", "Name", "text", name, breite=120),
+                          F("end", "Lage", "wahl", self.GELENKLAGE[int(getattr(h, "end", 0) or 0)],
+                            list(self.GELENKLAGE))]
+                for d, (kurz, lang) in enumerate(self.GELENK_FHG):
+                    felder.append(F(f"typ{d}", lang, "wahl",
+                                    self.GELENKART.get(typen[d], "biegesteif"), list(self.GELENKART.values())))
+                    felder.append(F(f"k{d}", f"Feder {kurz} [{'kNm/rad' if d >= 3 else 'kN/m'}]", "zahl",
+                                    float(federn[d]) / 1e3))
+                felder.append(F("elemente", "gesetzt an", "info",
+                                self._elemente_text(getattr(h, "elemente", []) or []) if h else "–"))
+                titel = f"Gelenk {name}"
+                hinweis = ("Je Freiheitsgrad: biegesteif, gelenkig oder Feder (Steifigkeit in kN/m bzw. "
+                           "kNm/rad). Gesetzt wird das Gelenk über „Gelenke setzen“ im Register Struktur.")
+        elif art == "berichtseintrag":
+            i = int(name)
+            e = m.bericht[i]
+            felder = [F("name", "Name", "text", e.name or "", breite=170),
+                      F("beschriftung", "Bildunterschrift", "text", getattr(e, "beschriftung", "") or "",
+                        breite=170),
+                      F("bemerkung", "Bemerkung", "text", getattr(e, "bemerkung", "") or "", breite=170),
+                      F("bezug", "zeigt", "info", e.bezug())]
+            titel = f"Berichtsbild {i + 1}"
+            hinweis = "Name, Bildunterschrift und Bemerkung erscheinen so im Bericht."
+        elif art == "kontaktbedingung":
+            kb = m.kontaktbedingungen.get(name)
+            wirkung = ", ".join(f"{n}={self._fhg_text(kb.dof_behaviour(d))}"
+                                for d, n in enumerate(("ux", "uy", "uz", "φx", "φy", "φz"))) if kb else "–"
+            felder = [F("name", "Name", "text", name, breite=170),
+                      F("flaechennamen", "Flächen", "text", ", ".join(kb.flaechennamen) if kb else "",
+                        breite=170, hinweis="freigegebene Flächen in diesem Modell"),
+                      F("koerpernamen", "Volumen", "text", ", ".join(kb.koerpernamen) if kb else "",
+                        breite=170),
+                      F("gegenflaechen", "Gegenseite", "info", ", ".join(kb.gegenflaechen) or "–" if kb else "–"),
+                      F("typ", "Typ / Ort", "info", f"{kb.typ or '–'} / {kb.ort}" if kb else "–"),
+                      F("wirkung", "Wirkung je FHG", "info", wirkung),
+                      F("ausgefuehrt", "Trennung", "info",
+                        ("ausgeführt" if kb.ausgefuehrt else "⚠ nicht ausgeführt - hier zu steif") if kb else "–"),
+                      F("beschreibung", "Beschreibung", "text", getattr(kb, "beschreibung", "") or "" if kb else "",
+                        breite=170)]
+            titel = f"Kontaktbedingung {name}"
+            hinweis = ("Die Fuge wirkt erst, wenn die Trennung ausgeführt ist - „Kontaktfugen ausführen“. "
+                       "Bis dahin rechnet das Modell dort durchverbunden.")
+            zusatz = [("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
+        elif art in ("stellungen", "stellung"):
+            if not eintrag:
+                namen = [s.name for s in m.stellungen]
+                felder = [F("anzahl", "Anzahl", "info", str(len(namen))),
+                          F("spanne", "Namen", "info", ", ".join(namen) if namen else "–"),
+                          F("situationen", "Situationen", "info", str(len(m.situationen)))]
+                titel, knopf = "Stellungen", "Neue Stellung"
+                hinweis = ("Eine Stellung ist eine Lage des Systems: Ausgangsstellung, Verschiebung, "
+                           "Verdrehung und was darin nicht wirkt. Situationen ordnen ihr Lastfälle zu.")
+            else:
+                st = m.stellung(name)
+                andere = [s.name for s in m.stellungen if s.name != name]
+                v = list(getattr(st, "verschiebung", None) or (0.0, 0.0, 0.0)) if st else [0.0, 0.0, 0.0]
+                a = list(st.dreh_achse) if st else [0.0, 1.0, 0.0]
+                p = list(st.dreh_punkt) if st else [0.0, 0.0, 0.0]
+                basis = (st.basis if st and st.basis in andere else self.STELLUNG_GRUND)
+
+                def liste(attr):
+                    return ", ".join(getattr(st, attr, []) or []) if st else ""
+
+                felder = [F("name", "Bezeichnung", "text", name, breite=150),
+                          F("basis", "Ausgangsstellung", "wahl", basis, [self.STELLUNG_GRUND] + andere,
+                            hinweis="Verschiebung und Verdrehung setzen auf der Lage dieser Stellung auf"),
+                          F("dx", "Verschiebung x [m]", "zahl", v[0]),
+                          F("dy", "Verschiebung y [m]", "zahl", v[1]),
+                          F("dz", "Verschiebung z [m]", "zahl", v[2]),
+                          F("winkel", "Verdrehung [°]", "zahl", st.dreh_winkel if st else 0.0,
+                            hinweis="Drehung der bewegten Knoten um die Achse - gegen die Ausgangsstellung"),
+                          F("ax", "Drehachse x", "zahl", a[0]), F("ay", "Drehachse y", "zahl", a[1]),
+                          F("az", "Drehachse z", "zahl", a[2]),
+                          F("px", "Punkt der Achse x [m]", "zahl", p[0]),
+                          F("py", "Punkt der Achse y [m]", "zahl", p[1]),
+                          F("pz", "Punkt der Achse z [m]", "zahl", p[2]),
+                          F("staebe_aus", "Deaktivierte Stäbe", "text", liste("staebe_aus"), breite=170,
+                            hinweis="Namen, durch Komma - oder in der Ansicht wählen und „Auswahl deaktivieren“"),
+                          F("flaechen_aus", "Deaktivierte Flächen", "text", liste("flaechen_aus"), breite=170),
+                          F("koerper_aus", "Deaktivierte Volumen", "text", liste("koerper_aus"), breite=170),
+                          F("gelenke_aus", "Deaktivierte Gelenke", "text", liste("gelenke_aus"), breite=170,
+                            hinweis="diese Gelenke sind in der Stellung biegesteif"),
+                          F("lager_aus", "Deaktivierte Knotenlager", "text", liste("lager_aus"), breite=170,
+                            hinweis="Namen oder Nummern wie im Modellbaum"),
+                          F("linienlager_aus", "Deaktivierte Linienlager", "text", liste("linienlager_aus"),
+                            breite=170),
+                          F("flaechenlager_aus", "Deaktivierte Flächenlager", "text",
+                            liste("flaechenlager_aus"), breite=170)]
+                titel = f"Stellung {name}"
+                hinweis = ("Lage gegen die Ausgangsstellung und alles, was in dieser Stellung nicht wirkt. "
+                           "Stäbe, Flächen, Volumen oder Knoten in der Ansicht wählen und „Auswahl "
+                           "deaktivieren“ - sie verschwinden im Bild.")
+                zusatz = [("Auswahl deaktivieren", lambda: self._stellung_auswahl(halter.get("m"), name, True)),
+                          ("Auswahl aktivieren", lambda: self._stellung_auswahl(halter.get("m"), name, False)),
+                          ("Alle aktivieren", lambda: self._stellung_alle_aktiv(halter.get("m"), name))]
         elif art in ("dicken", "dicke"):
             if not eintrag:
                 felder = [F("anzahl", "Anzahl", "info", str(len(m.shells))),
@@ -3344,8 +3550,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if neu:
             titel = "Neu: " + titel
             hinweis = "Felder ausfüllen und OK - Abbrechen legt nichts an."
-        zusatz: list = []
-        halter: dict = {}
         if eintrag and art in ("geoflaeche", "geokoerper_einzeln"):
             # Randlinien bzw. Randflaechen in der Ansicht anklicken statt tippen
             zusatz = [("Randlinien anklicken" if art == "geoflaeche" else "Randflächen anklicken",
@@ -3355,8 +3559,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                               "Rechtsklick auf den Zweig: Neu. Entf löscht den gewählten Eintrag."),
                           zusatz=zusatz, abbrechen="Abbrechen" if neu else "")
         halter["m"] = maske
-        if zusatz:
+        if zusatz and art in ("geoflaeche", "geokoerper_einzeln"):
             self._objektmaske_klickmodus(maske, art)
+        if art == "stellung" and eintrag:
+            # Vorschau: die abgeschalteten Elemente der Stellung verschwinden im Bild
+            self._stellung_vorschau(maske, name)
+            maske.geschlossen.connect(lambda: self._situation_vorschau(None))
+            maske.abgebrochen.connect(lambda: self._situation_vorschau(None))
         zweigart = self.baum.ELTERNART.get(art, art)
         if not eintrag:
             maske.angewendet.connect(lambda _w, z=zweigart: self._baum_neu(z))
@@ -3371,6 +3580,102 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Flaechen- und Volumenmaske: welches Feld der Klickmodus fuellt
     MASKENKLICK = {"geoflaeche": ("linien", "linie", "Randlinien"),
                    "geokoerper_einzeln": ("flaechen", "flaeche", "Randflächen")}
+    #: Gelenkmaske: Lage, Freiheitsgrade und Wirkung im Klartext
+    GELENKLAGE = ["Stabanfang", "Stabende"]
+    GELENK_FHG = [("ux", "ux (längs)"), ("uy", "uy (quer)"), ("uz", "uz (quer)"),
+                  ("φx", "φx (Torsion)"), ("φy", "φy (My)"), ("φz", "φz (Mz)")]
+    GELENKART = {"fixed": "biegesteif", "free": "gelenkig", "spring": "Feder"}
+    #: Stellungsmaske: die Ausgangsstellung „unbewegtes Modell“
+    STELLUNG_GRUND = "– (unbewegtes Modell)"
+
+    @staticmethod
+    def _fhg_text(b) -> str:
+        """Wirkung eines Freiheitsgrads einer Kontaktbedingung im Klartext."""
+        art = getattr(b, "typ", "") or getattr(b, "type", "") or "free"
+        text = {"rigid": "starr", "free": "frei", "spring": "Feder"}.get(str(art), str(art))
+        ausfall = getattr(b, "failure", "") or ""
+        return text + (f" (Ausfall bei {ausfall.capitalize()})" if ausfall else "")
+
+    def _stellung_aus_maske(self, w: dict, alt):
+        """Eine Stellung aus den Feldern der Maske - alles, was die Maske nicht
+        kennt (Lastfälle, Antrieb, Winkelbeschriftung), bleibt vom Original."""
+        from ..bridges.positions import Stellung
+        import dataclasses
+        m = self.model
+        name = str(w.get("name", "") or "").strip()
+        basis = str(w.get("basis", "") or "")
+        basis = "" if basis.startswith("–") or basis == name else basis
+
+        def zahl(key, vorgabe=0.0):
+            try:
+                return float(w.get(key, vorgabe))
+            except (TypeError, ValueError):
+                return vorgabe
+
+        felder = dict(name=name, basis=basis,
+                      verschiebung=(zahl("dx"), zahl("dy"), zahl("dz")),
+                      dreh_winkel=zahl("winkel"),
+                      dreh_achse=(zahl("ax"), zahl("ay", 1.0), zahl("az")),
+                      dreh_punkt=(zahl("px"), zahl("py"), zahl("pz")),
+                      staebe_aus=self._namensliste(w.get("staebe_aus")),
+                      flaechen_aus=self._namensliste(w.get("flaechen_aus")),
+                      koerper_aus=self._namensliste(w.get("koerper_aus")),
+                      gelenke_aus=self._namensliste(w.get("gelenke_aus")),
+                      lager_aus=self._namensliste(w.get("lager_aus")),
+                      linienlager_aus=self._namensliste(w.get("linienlager_aus")),
+                      flaechenlager_aus=self._namensliste(w.get("flaechenlager_aus")))
+        felder["winkel"] = felder["dreh_winkel"]
+        vorlage = alt if alt is not None else None
+        if vorlage is not None:
+            return dataclasses.replace(vorlage, **felder)
+        return Stellung(**felder)
+
+    def _stellung_vorschau(self, maske, name: str):
+        """Die abgeschalteten Elemente der Stellung (nach den Feldern der
+        Maske) im Bild ausblenden."""
+        if maske is None:
+            return
+        try:
+            st = self._stellung_aus_maske(maske.werte(), self.model.stellung(name))
+            aus = set(st.deaktivierte_elemente(self.model))
+        except Exception:                   # noqa: BLE001
+            aus = set()
+        self.leuchtet = sorted(aus)
+        self._situation_vorschau(aus)
+
+    def _stellung_auswahl(self, maske, name: str, aus: bool):
+        """„Auswahl deaktivieren“ / „Auswahl aktivieren“: die gewaehlten Staebe,
+        Flaechen, Volumen und die Knotenlager der gewaehlten Knoten in die
+        Listen der Maske schreiben oder daraus streichen."""
+        if maske is None:
+            return
+        m = self.model
+        gewaehlt = {int(n) for n in self.selection}
+        # Knotenlager der gewaehlten Knoten - mit Namen, sonst mit ihrer Nummer
+        lager = [((s.name or "").strip() or str(i))
+                 for i, s in enumerate(m.supports) if int(s.node) in gewaehlt]
+        for feld, neue in (("staebe_aus", [x for x in self.sel_staebe if x in m.members]),
+                           ("flaechen_aus", [x for x in self.sel_flaechen if x in m.flaechen]),
+                           ("koerper_aus", [x for x in self.sel_koerper if x in m.koerper]),
+                           ("lager_aus", lager)):
+            if not neue:
+                continue
+            namen = self._namensliste(maske.werte().get(feld))
+            if aus:
+                namen += [x for x in neue if x not in namen]
+            else:
+                namen = [x for x in namen if x not in neue]
+            maske.setzen(feld, ", ".join(namen))
+        self._stellung_vorschau(maske, name)
+        self.statusBar().showMessage("Auswahl in der Stellung " + ("deaktiviert" if aus else "aktiviert"), 3000)
+
+    def _stellung_alle_aktiv(self, maske, name: str):
+        if maske is None:
+            return
+        for feld in ("staebe_aus", "flaechen_aus", "koerper_aus", "gelenke_aus",
+                     "lager_aus", "linienlager_aus", "flaechenlager_aus"):
+            maske.setzen(feld, "")
+        self._stellung_vorschau(maske, name)
 
     def _objektmaske_klickmodus(self, maske, art: str):
         """Die Maske einer Flaeche oder eines Volumens nimmt Klicks aus der
@@ -3427,7 +3732,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Die Felder der Objektmaske ins Modell schreiben (oder das Objekt anlegen)."""
         m = self.model
         try:
-            if art in ("lastfall", "kombination", "werkstoff", "dicke"):
+            if art in ("lastfall", "kombination", "werkstoff", "dicke", "querschnitt", "gelenk",
+                       "berichtseintrag", "kontaktbedingung", "stellung"):
                 return self._eigenschaften_uebernehmen(art, name, w, neu)
             if art == "knoten":
                 i = int(name)
@@ -3675,6 +3981,122 @@ class MainWindow(QtWidgets.QMainWindow):
                         k.material = neuname
             m.materials[neuname] = mt
             name = neuname
+        elif art == "querschnitt":
+            import dataclasses
+            sec = m.sections.get(name)
+            if sec is None:
+                return self.error(f"Querschnitt {name} gibt es nicht")
+            if neuname != name and neuname in m.sections:
+                return self.error(f"Querschnitt „{neuname}“ gibt es schon")
+            werte = {}
+            for key, faktor in (("A", 1e-4), ("Iy", 1e-8), ("Iz", 1e-8), ("It", 1e-8), ("Iw", 1e-12),
+                                ("Wel_y", 1e-6), ("Wel_z", 1e-6), ("Wpl_y", 1e-6), ("Wpl_z", 1e-6),
+                                ("Asy", 1e-4), ("Asz", 1e-4), ("h", 1e-3), ("b", 1e-3), ("tw", 1e-3),
+                                ("tf", 1e-3), ("r", 1e-3)):
+                werte[key] = float(zahl(key, getattr(sec, key) / faktor)) * faktor
+            if werte["A"] <= 0 or werte["Iy"] <= 0 or werte["Iz"] <= 0:
+                return self.error("A, Iy und Iz müssen größer als null sein")
+            self.merken(f"Querschnitt {neuname}")
+            neu_sec = dataclasses.replace(sec, name=neuname, fabrication=str(w.get("fabrication", sec.fabrication)),
+                                          **werte)
+            del m.sections[name]
+            m.add_section(neu_sec)
+            if neuname != name:
+                for e in m.elements:
+                    if getattr(e, "sec", "") == name:
+                        e.sec = neuname
+                for mm in m.members.values():
+                    if getattr(mm, "section", "") == name:
+                        mm.section = neuname
+            name = neuname
+        elif art == "gelenk":
+            from ..model import MemberHinge
+            if (neu or neuname != name) and neuname in m.hinges:
+                return self.error(f"Gelenk „{neuname}“ gibt es schon")
+            rueck = {v: k for k, v in self.GELENKART.items()}
+            typen = [rueck.get(str(w.get(f"typ{d}", "biegesteif")), "fixed") for d in range(6)]
+            federn = [float(zahl(f"k{d}", 0.0)) * 1e3 for d in range(6)]
+            for d in range(6):
+                if typen[d] == "spring" and federn[d] <= 0:
+                    return self.error(f"Feder {self.GELENK_FHG[d][0]}: Steifigkeit größer als null eingeben")
+            end = self.GELENKLAGE.index(str(w.get("end", self.GELENKLAGE[0]))) \
+                if str(w.get("end", "")) in self.GELENKLAGE else 0
+            self.merken(f"Gelenk {neuname}")
+            alt = m.hinges.pop(name, None) if not neu else None
+            h = MemberHinge(neuname, end, typen, federn)
+            h.elemente = list(getattr(alt, "elemente", []) or [])
+            m.hinges[neuname] = h
+            # die Elemente, an denen es sitzt, bekommen die neue Wirkung
+            for e in h.elemente:
+                if 0 <= int(e) < len(m.elements):
+                    el = m.elements[int(e)]
+                    if alt is not None:
+                        el.hinges = [d for d in el.hinges if d not in set(alt.released())]
+                        weg = {d for d, _k in alt.springs()}
+                        el.hinge_springs = [(d, k) for d, k in el.hinge_springs if d not in weg]
+                    m.apply_hinge(int(e), h)
+            name = neuname
+        elif art == "berichtseintrag":
+            i = int(name)
+            if not 0 <= i < len(m.bericht):
+                return self.error("Berichtsbild gibt es nicht mehr")
+            e = m.bericht[i]
+            self.merken(f"Berichtsbild {e.name}")
+            e.name = str(w.get("name", "") or "").strip() or e.name
+            e.beschriftung = str(w.get("beschriftung", "") or "").strip()
+            e.bemerkung = str(w.get("bemerkung", "") or "").strip()
+        elif art == "kontaktbedingung":
+            kb = m.kontaktbedingungen.get(name)
+            if kb is None:
+                return self.error(f"Kontaktbedingung {name} gibt es nicht")
+            if neuname != name and neuname in m.kontaktbedingungen:
+                return self.error(f"Kontaktbedingung „{neuname}“ gibt es schon")
+            flaechen = self._namensliste(w.get("flaechennamen"))
+            fehlt = [x for x in flaechen if x not in m.flaechen]
+            if fehlt:
+                return self.error("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
+            koerper = self._namensliste(w.get("koerpernamen"))
+            fehlt = [x for x in koerper if x not in m.koerper]
+            if fehlt:
+                return self.error("Unbekannte Volumen: " + ", ".join(fehlt[:5]))
+            self.merken(f"Kontaktbedingung {neuname}")
+            kb.flaechennamen, kb.koerpernamen = flaechen, koerper
+            kb.beschreibung = str(w.get("beschreibung", "") or "").strip()
+            if neuname != name:
+                del m.kontaktbedingungen[name]
+                kb.name = neuname
+                m.kontaktbedingungen[neuname] = kb
+            name = neuname
+        elif art == "stellung":
+            liste = self._stellungen_obj()
+            alt = m.stellung(name) if not neu else None
+            if not neuname:
+                return self.error("Bitte eine Bezeichnung für die Stellung eingeben")
+            if (neu or neuname != name) and m.stellung(neuname) is not None:
+                return self.error(f"Stellung „{neuname}“ gibt es schon")
+            st = self._stellung_aus_maske(w, alt)
+            fehlt = ([x for x in st.staebe_aus if x not in m.members]
+                     + [x for x in st.flaechen_aus if x not in m.flaechen]
+                     + [x for x in st.koerper_aus if x not in m.koerper]
+                     + [x for x in st.gelenke_aus if x not in m.hinges])
+            if fehlt:
+                return self.error("Unbekannt: " + ", ".join(fehlt[:6]))
+            if st.basis and m.stellung(st.basis) is None:
+                return self.error(f"Ausgangsstellung „{st.basis}“ gibt es nicht")
+            self.merken(f"Stellung {neuname}")
+            liste[:] = [x for x in liste if x.name != name]
+            liste.append(st)
+            liste.sort(key=lambda x: (float(x.winkel), x.name))
+            if not neu and neuname != name:
+                for sit in m.situationen.values():
+                    if sit.stellung == name:
+                        sit.stellung = neuname
+                for x in liste:
+                    if getattr(x, "basis", "") == name:
+                        x.basis = neuname
+            self.umhuellende = None
+            self._situation_vorschau(None)
+            name = neuname
         elif art == "dicke":
             if (neu or neuname != name) and neuname in m.shells:
                 return self.error(f"Dicke „{neuname}“ gibt es schon")
@@ -3734,6 +4156,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._objektmaske("linie", m.naechster_name("L", m.lines), neu=True)
         if zweigart == "stabelemente":
             return self._objektmaske("stabelement", str(len(m.elements)), neu=True)
+        if zweigart == "gelenke":
+            return self._objektmaske("gelenk", m.naechster_name("G", m.hinges), neu=True)
+        if zweigart == "stellungen":
+            return self._objektmaske("stellung", m.naechster_name("St", [s.name for s in m.stellungen]),
+                                     neu=True)
         if zweigart == "staebe":
             return self._objektmaske("stab", m.naechster_name("S", m.members), neu=True)
         if zweigart == "geoflaechen":
@@ -3939,42 +4366,49 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redraw()
 
     def _situationsmaske(self, sit, neu: bool):
-        """Die Maske einer Situation (neu oder vorhanden)."""
+        """Die Maske einer Situation (neu oder vorhanden): eine Stellung und
+        die Lastfälle und Kombinationen, die in ihr gelten - mehr nicht. Was
+        in der Stellung nicht wirkt, steht in der Stellung selbst."""
         m = self.model
         F = msk.Feld
         unbewegt = "– (unbewegt)"
         stellungen = [unbewegt] + [s.name for s in m.stellungen]
         wahl = sit.stellung if sit.stellung in stellungen else unbewegt
-        halter = {"aus": {int(i) for i in sit.deaktiviert}}
+        faelle = [k for k, lc in m.load_cases.items() if (lc.situation or "") == sit.name] if not neu else []
+        kombis = [k for k, c in m.combinations.items() if (c.situation or "") == sit.name] if not neu else []
         felder = [F("name", "Name", "text", sit.name, breite=150),
-                  F("stellung", "Stellung", "wahl", wahl, stellungen),
+                  F("stellung", "Stellung", "wahl", wahl, stellungen,
+                    hinweis="die Lage des Systems samt allem, was darin nicht wirkt"),
                   F("beschreibung", "Beschreibung", "text", sit.beschreibung, breite=170),
-                  F("aus", "Deaktiviert", "info", self._elemente_text(halter["aus"]))]
+                  F("lastfaelle", "Lastfälle", "text", ", ".join(faelle), breite=170,
+                    hinweis="Lastfälle, die in dieser Situation gelten - Namen, durch Komma"),
+                  F("kombinationen", "Kombinationen", "text", ", ".join(kombis), breite=170,
+                    hinweis="Kombinationen dieser Situation - sie überlagern nur ihre Lastfälle")]
+        halter: dict = {}
+        if not neu:
+            aus = set(int(i) for i in np.where(~m.aktive_elemente(sit.name))[0]) if m.elements else set()
+            felder.append(F("aus", "ohne Wirkung", "info", self._elemente_text(aus)))
+        else:
+            aus = set()
 
-        def setzen(neue):
-            halter["aus"] = {int(i) for i in neue}
-            halter["m"].setzen("aus", self._elemente_text(halter["aus"]))
-            self._situation_vorschau(halter["aus"])
+        def alle_faelle():
+            halter["m"].setzen("lastfaelle", ", ".join(m.load_cases))
+            halter["m"].setzen("kombinationen", ", ".join(m.combinations))
 
-        zusatz = [("Auswahl deaktivieren",
-                   lambda: setzen(halter["aus"] | set(self._ausgewaehlte_elemente()))),
-                  ("Auswahl aktivieren",
-                   lambda: setzen(halter["aus"] - set(self._ausgewaehlte_elemente()))),
-                  ("Alle aktivieren", lambda: setzen(set()))]
+        zusatz = [("Alle Lastfälle und Kombinationen", alle_faelle)]
         maske = msk.Maske("Neu: Situation" if neu else f"Situation {sit.name}", felder,
                           knopf="OK" if neu else "Übernehmen",
                           abbrechen="Abbrechen" if neu else "",
-                          hinweis="Stellung wählen; Elemente, Stäbe, Flächen oder Volumen in der "
-                                  "Ansicht anklicken und „Auswahl deaktivieren“ - sie wirken in "
-                                  "dieser Situation nicht (im Bild ausgeblendet). Lastfälle und "
-                                  "Kombinationen nennen dann ihre Situation.",
+                          hinweis="Stellung wählen und die Lastfälle und Kombinationen nennen, die in "
+                                  "dieser Situation gelten. Was in der Stellung nicht wirkt (Stäbe, "
+                                  "Flächen, Volumen, Gelenke, Lager), steht in der Stellung.",
                           zusatz=zusatz)
         halter["m"] = maske
         alt = None if neu else sit.name
-        maske.angewendet.connect(lambda w, a=alt: self._situation_uebernehmen(a, w, halter["aus"]))
+        maske.angewendet.connect(lambda w, a=alt: self._situation_uebernehmen(a, w))
         maske.abgebrochen.connect(lambda: self._situation_vorschau(None))
         maske.geschlossen.connect(lambda: self._situation_vorschau(None))
-        self._situation_vorschau(halter["aus"])
+        self._situation_vorschau(aus)
         return self.maske_erzeugen(maske)
 
     def situation_neu(self):
@@ -3990,10 +4424,15 @@ class MainWindow(QtWidgets.QMainWindow):
             F = msk.Feld
             n_lf = sum(1 for lc in m.load_cases.values() if not lc.situation)
             felder = [F("stellung", "Stellung", "info", "unbewegt"),
-                      F("aus", "Deaktiviert", "info", "keine - alle Elemente wirken"),
-                      F("lastfaelle", "Lastfälle", "info", f"{n_lf} von {len(m.load_cases)}")]
+                      F("aus", "ohne Wirkung", "info", "nichts - alle Elemente wirken"),
+                      F("lastfaelle", "Lastfälle", "info",
+                        f"{n_lf} von {len(m.load_cases)}: "
+                        + ", ".join(k for k, lc in m.load_cases.items() if not lc.situation)),
+                      F("kombinationen", "Kombinationen", "info",
+                        ", ".join(k for k, c in m.combinations.items() if not c.situation) or "–")]
             maske = msk.Maske("Grundstellung", felder, knopf="Neue Situation",
-                              hinweis="Die Grundstellung ist immer da: unbewegt, alles aktiv.")
+                              hinweis="Die Grundstellung ist immer da: unbewegt, alles aktiv. Lastfälle "
+                                      "ohne Situation gelten hier.")
             maske.angewendet.connect(lambda _w: self.situation_neu())
             maske.geschlossen.connect(lambda: self._situation_vorschau(None))
             return self.maske_erzeugen(maske)
@@ -4001,7 +4440,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error(f"Situation {name} gibt es nicht")
         return self._situationsmaske(m.situationen[name], False)
 
-    def _situation_uebernehmen(self, alt, w: dict, aus):
+    def _situation_uebernehmen(self, alt, w: dict, aus=None):
         m = self.model
         from ..model import Situation
         name = str(w.get("name", "")).strip()
@@ -4009,26 +4448,40 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error("Bitte einen eigenen Namen für die Situation eingeben")
         if name != alt and name in m.situationen:
             return self.error(f"Situation „{name}“ gibt es schon")
-        aus = sorted(int(i) for i in aus if 0 <= int(i) < len(m.elements))
-        if len(aus) >= len(m.elements) and m.elements:
-            return self.error("Alle Elemente deaktiviert - so bleibt nichts zu rechnen")
         stellung = str(w.get("stellung", ""))
         stellung = "" if stellung.startswith("–") else stellung
+        if stellung and m.stellung(stellung) is None:
+            return self.error(f"Stellung „{stellung}“ gibt es nicht")
+        faelle = self._namensliste(w.get("lastfaelle"))
+        kombis = self._namensliste(w.get("kombinationen"))
+        fehlt = [x for x in faelle if x not in m.load_cases] + [x for x in kombis if x not in m.combinations]
+        if fehlt:
+            return self.error("Unbekannt: " + ", ".join(fehlt[:6]))
+        if stellung and m.elements:
+            st = m.stellung(stellung)
+            if len(st.deaktivierte_elemente(m)) >= len(m.elements):
+                return self.error("In dieser Stellung wirkt kein Element - so bleibt nichts zu rechnen")
         self.merken(f"Situation {name}")
         if alt and alt in m.situationen:
             sit = m.situationen.pop(alt)
         else:
             sit = Situation(name)
-        sit.name, sit.stellung, sit.deaktiviert = name, stellung, aus
+        sit.name, sit.stellung = name, stellung
         sit.beschreibung = str(w.get("beschreibung", ""))
         m.situationen[name] = sit
-        if alt and alt != name:
-            for lc in m.load_cases.values():
-                if lc.situation == alt:
-                    lc.situation = name
-            for c in m.combinations.values():
-                if c.situation == alt:
-                    c.situation = name
+        # Die Zuordnung: genannte Lastfaelle und Kombinationen gehoeren zu
+        # dieser Situation, bisher zugeordnete, die nicht mehr genannt sind,
+        # fallen in die Grundstellung zurueck
+        for k, lc in m.load_cases.items():
+            if k in faelle:
+                lc.situation = name
+            elif lc.situation in (alt, name):
+                lc.situation = ""
+        for k, c in m.combinations.items():
+            if k in kombis:
+                c.situation = name
+            elif c.situation in (alt, name):
+                c.situation = ""
         self.analysis = None
         self.results = None
         self._situation_vorschau(None)
@@ -4060,6 +4513,8 @@ class MainWindow(QtWidgets.QMainWindow):
                "geoflaeche": f"Fläche {name} samt ihren Elementen",
                "geokoerper_einzeln": f"Volumen {name} samt seinen Elementen",
                "querschnitt": f"Querschnitt {name}",
+               "gelenk": f"Gelenk {name}", "stellung": f"Stellung {name}",
+               "berichtseintrag": f"Berichtsbild {int(name) + 1 if name.isdigit() else name}",
                "subsystem": f"Subsystem {name}", "situation": f"Situation {name}",
                "wasserdruck": f"Wasserdruck {name} samt seinen Lasten",
                "wind": f"Wind {name} samt seinen Lasten",
@@ -4185,6 +4640,37 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.merken(f"{was} gelöscht")
                 del m.subsysteme[name]
+        elif art == "gelenk":
+            if name not in m.hinges:
+                grund = f"Gelenk {name} gibt es nicht"
+            else:
+                self.merken(f"{was} gelöscht")
+                h = m.hinges.pop(name)
+                # die Elemente werden wieder biegesteif
+                frei, federn = set(h.released()), {d for d, _k in h.springs()}
+                for e in (getattr(h, "elemente", []) or []):
+                    if 0 <= int(e) < len(m.elements):
+                        el = m.elements[int(e)]
+                        el.hinges = [d for d in el.hinges if d not in frei]
+                        el.hinge_springs = [(d, k) for d, k in el.hinge_springs if d not in federn]
+        elif art == "stellung":
+            nutzer = [k for k, sit in m.situationen.items() if sit.stellung == name] \
+                + [s.name for s in m.stellungen if getattr(s, "basis", "") == name]
+            if m.stellung(name) is None:
+                grund = f"Stellung {name} gibt es nicht"
+            elif nutzer:
+                grund = (f"Stellung {name} wird benutzt von {', '.join(nutzer[:6])}"
+                         + (" …" if len(nutzer) > 6 else "") + " - dort zuerst umstellen")
+            else:
+                self.merken(f"{was} gelöscht")
+                m.stellungen[:] = [s for s in m.stellungen if s.name != name]
+                self.umhuellende = None
+        elif art == "berichtseintrag":
+            if not (name.isdigit() and int(name) < len(m.bericht)):
+                grund = "Berichtsbild gibt es nicht"
+            else:
+                self.merken(f"{was} gelöscht")
+                del m.bericht[int(name)]
         elif art == "situation":
             nutzer = [k for k, lc in m.load_cases.items() if lc.situation == name] \
                 + [k for k, c in m.combinations.items() if c.situation == name]
@@ -4281,17 +4767,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "ergebnis":
                 self.ergebnis_zeigen(name)
                 return self.ansicht_in_bericht()
-            if art == "berichtseintrag":
-                return self.berichtseintrag_bearbeiten(name)
-            if art == "querschnitt":
-                return self.querschnitt_bearbeiten(name)
-            if art in ("werkstoff", "dicke", "lastfall", "kombination"):
+            if art in ("werkstoff", "dicke", "lastfall", "kombination", "querschnitt", "gelenk",
+                       "berichtseintrag", "kontaktbedingung", "stellung"):
                 self._baum_objekt_waehlen(art, name)
                 return self._objektmaske(art, name)
             if art in ("lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"):
                 return self.lagerobjekt_bearbeiten(art, name)
-            if art == "gelenk":
-                return self.gelenk_bearbeiten(name)
             if art == "subsystem":
                 return self._subsystem_zeigen(name)
             if art == "situation":
@@ -4454,12 +4935,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not (0 <= i < len(self.model.bericht)):
             return
-        e = self.model.bericht[i]
-        d = dg.BerichtseintragDialog(self, e)
-        if d.exec():
-            self.merken(f"Berichtsbild {e.name}")
-            d.apply(e)
-            self.refresh_all()
+        return self._objektmaske("berichtseintrag", str(i))
 
     def bericht_leeren(self):
         if not self.model.bericht:
@@ -4604,6 +5080,8 @@ class MainWindow(QtWidgets.QMainWindow):
             kb.elemente = um(kb.elemente)
         for vb in m.volumenbereiche.values():
             vb.elemente = um(vb.elemente)
+        for h in m.hinges.values():
+            h.elemente = um(getattr(h, "elemente", []) or [])
         for lc in m.load_cases.values():
             lc.beam_loads = [l for l in lc.beam_loads if l.elem in neu_nr]
             for l in lc.beam_loads:
@@ -4763,27 +5241,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def querschnitt_bearbeiten(self, name: str):
-        sec = self.model.sections.get(name)
-        if sec is None:
-            return self.add_section()
-        d = dg.SectionDialog(self, sec)
-        if not d.exec():
-            return
-        try:
-            neu = d.result_section()
-        except Exception as ex:      # noqa: BLE001
-            return self.error(ex)
-        self.merken(f"Querschnitt {name}")
-        del self.model.sections[name]
-        self.model.add_section(neu)
-        if neu.name != name:
-            for e in self.model.elements:
-                if e.sec == name:
-                    e.sec = neu.name
-            for mm in self.model.members.values():
-                if getattr(mm, "section", "") == name:
-                    mm.section = neu.name
-        self.refresh_all()
+        """Doppelklick auf einen Querschnitt: seine Maske rechts."""
+        if name not in self.model.sections:
+            return self.querschnitt_neu()
+        self._baum_objekt_waehlen("querschnitt", name)
+        return self._objektmaske("querschnitt", name)
 
     def werkstoff_bearbeiten(self, name: str):
         mat = self.model.materials.get(name)
@@ -4820,29 +5282,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def add_hinge(self):
-        d = dg.GelenkDialog(self)
-        if not d.exec():
-            return
-        from ..model import MemberHinge
-        w = d.werte()
-        self.merken(f"Gelenk {w['name']}")
-        self.model.hinges[w["name"]] = MemberHinge(**w)
-        self.refresh_all()
+        """Neues Gelenk: die Maske rechts (wie Modellbaum → Gelenke → Neu)."""
+        return self._baum_neu("gelenke")
 
     def gelenk_bearbeiten(self, name: str):
-        h = self.model.hinges.get(name)
-        if h is None:
+        """Doppelklick auf ein Gelenk: seine Maske rechts."""
+        if name not in self.model.hinges:
             return self.add_hinge()
-        d = dg.GelenkDialog(self, h)
-        if not d.exec():
-            return
-        w = d.werte()
-        self.merken(f"Gelenk {name}")
-        if w["name"] != name:
-            del self.model.hinges[name]
-        from ..model import MemberHinge
-        self.model.hinges[w["name"]] = MemberHinge(**w)
-        self.refresh_all()
+        self._baum_objekt_waehlen("gelenk", name)
+        return self._objektmaske("gelenk", name)
 
     def lastfall_bearbeiten(self, name: str):
         lc = self.model.load_cases.get(name)
@@ -6816,30 +7264,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 break
 
     def neue_stellung(self):
-        from .dialogs import StellungDialog
-        d = StellungDialog(self, None, self.model)
-        if d.exec():
-            s = d.stellung()
-            liste = self._stellungen_obj()
-            liste[:] = [x for x in liste if x.name != s.name]
-            liste.append(s)
-            liste.sort(key=lambda x: x.winkel)
-            self.umhuellende = None
-            self.info(f"Stellung {s.name} angelegt ({s.beschriftung()})")
-            self.refresh_all()
+        """Neue Stellung: die Maske rechts (Bezeichnung, Ausgangsstellung,
+        Verschiebung, Verdrehung, deaktivierte Stäbe, Flächen, Volumen,
+        Gelenke und Lager) - wie Modellbaum → Stellungen → Neu."""
+        return self._baum_neu("stellungen")
 
     def stellung_aendern(self):
-        from .dialogs import StellungDialog
+        """„Ändern“ im Register Stellungen: die Maske der gewählten Zeile."""
         z = self.tbl_stellung.currentRow()
         liste = self._stellungen_obj()
         if not (0 <= z < len(liste)):
             return self.error("Zuerst eine Stellung in der Liste wählen")
-        d = StellungDialog(self, liste[z], self.model)
-        if d.exec():
-            liste[z] = d.stellung()
-            liste.sort(key=lambda x: x.winkel)
-            self.umhuellende = None
-            self.refresh_all()
+        name = liste[z].name
+        self._baum_objekt_waehlen("stellung", name)
+        return self._objektmaske("stellung", name)
 
     def stellung_entfernen(self):
         z = self.tbl_stellung.currentRow()
