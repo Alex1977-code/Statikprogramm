@@ -36,6 +36,8 @@ from typing import Optional
 
 import numpy as np
 
+from .einheiten import Einheiten
+
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
 DOF_ALIASES = {"ux": 0, "uy": 1, "uz": 2, "rx": 3, "ry": 4, "rz": 5,
                "phix": 3, "phiy": 4, "phiz": 5, "mx": 3, "my": 4, "mz": 5,
@@ -705,6 +707,9 @@ class MemberHinge:
     end: int = 0
     typ: list[str] = field(default_factory=lambda: ["fixed"] * 6)
     stiffness: list[float] = field(default_factory=lambda: [0.0] * 6)
+    #: Elemente, auf die das Gelenk gelegt wurde (apply_hinge) - damit eine
+    #: Stellung es wieder biegesteif machen kann
+    elemente: list[int] = field(default_factory=list)
 
     def released(self) -> list[int]:
         """Lokale Element-FHG (0..11), die gelenkig sind (fuer die Kondensation)."""
@@ -815,15 +820,18 @@ class Geometrielast:
     #: Erddruck), drei Punkte eine Ebene der Lastwerte. Leer = gleichmaessig p.
     verlauf: dict = field(default_factory=dict)
 
-    def wert(self, punkt) -> float:
+    def wert(self, punkt, normale=None, beidseitig: bool = False) -> float:
         """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig, linear oder
-        aus dem Wasserdruck-Generierer (verlauf["art"] == "wasser")."""
+        aus dem Wasserdruck-Generierer (verlauf["art"] == "wasser") bzw. dem
+        Wind. ``normale`` ist die Aussennormale der Elementseite (die
+        Stroemungsfelder tasten ihr Gitter vor der Seite ab), ``beidseitig``
+        sagt, dass eine duenne Schale von beiden Seiten belastet ist (Netto)."""
         if self.verlauf and self.verlauf.get("art") == "wasser":
             from .wasserdruck import druck_aus_verlauf
-            return druck_aus_verlauf(self.verlauf, punkt)
+            return druck_aus_verlauf(self.verlauf, punkt, normale=normale, beidseitig=beidseitig)
         if self.verlauf and self.verlauf.get("art") == "wind":
             from .wind import druck_aus_verlauf as wind_druck
-            return wind_druck(self.verlauf, punkt)
+            return wind_druck(self.verlauf, punkt, normale=normale, beidseitig=beidseitig)
         if not self.verlauf or self.verlauf.get("art") != "linear":
             return float(self.p)
         P = np.asarray(self.verlauf.get("punkte") or [], float).reshape(-1, 4)
@@ -968,6 +976,7 @@ class LoadCase:
     exclusive_group: str = ""              # Lastfaelle derselben Gruppe wirken nie gemeinsam
     situation: str = ""                    # Situation (Stellung + wirksame Elemente); "" = Grundstellung
     theorie: str = ""                      # "" (wie Einstellung) | I | II | III
+    nummer: int = 0                        # Lastfallnummer (0 = keine vergeben)
     nodal_loads: list[NodalLoad] = field(default_factory=list)
     beam_loads: list[BeamLoad] = field(default_factory=list)
     face_loads: list[FaceLoad] = field(default_factory=list)
@@ -1020,6 +1029,7 @@ class LoadCase:
             "exclusive_group": self.exclusive_group,
             "situation": self.situation,
             "theorie": self.theorie,
+            "nummer": int(self.nummer or 0),
             # Aus Objektlasten erzeugte Elementlasten werden **nicht**
             # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
             # laegen sie nach dem Laden doppelt auf dem Netz.
@@ -1040,6 +1050,7 @@ class LoadCase:
                       d.get("psi"), d.get("exclusive_group", ""))
         lc.situation = d.get("situation", "") or ""
         lc.theorie = d.get("theorie", "") or ""
+        lc.nummer = int(d.get("nummer", 0) or 0)
         lc.nodal_loads = [NodalLoad(**l) for l in d.get("nodal_loads", [])]
         lc.beam_loads = [BeamLoad(**l) for l in d.get("beam_loads", [])]
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
@@ -1344,6 +1355,17 @@ class Netzeinstellungen:
     ordnung: int = 1
     splitter: float = 0.1
     quelle: str = ""              # woher die Werte stammen
+    #: Netzdichte: grob | mittel | fein (Elemente ueber die Objektgroesse) oder
+    #: eigene (die absolute Ziellaenge); siehe netzdichte.py
+    dichte: str = "mittel"
+    #: intelligente Anpassung: kleine Kanten feiner, gedeckelt durch h_min/h_max
+    #: (0 = ein Viertel bzw. das Vierfache der Dichte-Laenge) und max_elemente
+    intelligent: bool = True
+    h_min: float = 0.0
+    h_max: float = 0.0
+    max_elemente: int = 100000
+    #: Teilung je Flaeche aus der Netzdichte ableiten (sonst bleibt die eigene)
+    teilung_uebersteuern: bool = True
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""
@@ -1352,8 +1374,14 @@ class Netzeinstellungen:
         return max(1, int(round(float(laenge) / self.ziellaenge)))
 
     def beschreibung(self) -> str:
-        return (f"Ziellänge {self.ziellaenge * 1e3:.0f} mm, "
-                f"Stabteilung {self.stabteilung}, "
+        from .netzdichte import DICHTEN, FORMEN
+        dichte = getattr(self, "dichte", "mittel") or "mittel"
+        kopf = (f"Netzdichte {dichte} ({DICHTEN[dichte]} Elemente über die Objektgröße), "
+                if dichte in DICHTEN else "")
+        return (kopf + f"Ziellänge {self.ziellaenge * 1e3:.0f} mm, "
+                + FORMEN.get(int(getattr(self, "form", 2)), "") + ", "
+                + ("intelligent angepasst, " if getattr(self, "intelligent", True) else "")
+                + f"Stabteilung {self.stabteilung}, "
                 f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}, "
                 + ("quadratische Volumenelemente (tet10)" if self.ordnung >= 2
                    else "lineare Volumenelemente (tet4)")
@@ -2059,6 +2087,11 @@ class Model:
         self.schwingungen: dict = {}
         # Schweissnaehte (schweissnaehte.Schweissnaht), nach Name
         self.schweissnaehte: dict = {}
+        # Bemassungen (bemassung.Bemassung) und ihre Einstellungen
+        self.bemassungen: dict = {}
+        self.bemassung_einstellung = None      # None = Vorgabe (bemassung.BemassungEinstellung)
+        # Einheiten und Nachkommastellen fuer Ansicht und Tabellen (einheiten.Einheiten)
+        self.einheiten = Einheiten()
         # Metadaten (Bericht)
         self.meta: dict[str, str] = {"projekt": "", "bauteil": "", "bearbeiter": "",
                                      "auftraggeber": "", "position": ""}
@@ -2577,6 +2610,10 @@ class Model:
         return sub
 
     # ---------------- Situationen ----------------
+    def naechste_lastfallnummer(self) -> int:
+        """Die naechste freie Lastfallnummer (1 + groesste vergebene)."""
+        return 1 + max([int(getattr(lc, "nummer", 0) or 0) for lc in self.load_cases.values()] + [0])
+
     def situationsnamen(self) -> list[str]:
         return [GRUNDSTELLUNG] + list(self.situationen)
 
@@ -2603,6 +2640,12 @@ class Model:
         sit = self.situation(situation)
         for i in sit.deaktiviert:
             if 0 <= int(i) < len(aktiv):
+                aktiv[int(i)] = False
+        # Die Stellung der Situation schaltet ihre Staebe, Flaechen und
+        # Volumen ab - das gehoert zur Wirkung des Systems in dieser Stellung
+        st = self.stellung(sit.stellung) if sit.stellung else None
+        if st is not None and hasattr(st, "deaktivierte_elemente"):
+            for i in st.deaktivierte_elemente(self):
                 aktiv[int(i)] = False
         return aktiv
 
@@ -2677,6 +2720,8 @@ class Model:
             sub.beruehrung = um(sub.beruehrung)
         for sit in (getattr(self, "situationen", None) or {}).values():
             sit.deaktiviert = um(sit.deaktiviert)
+        for h in self.hinges.values():
+            h.elemente = um(getattr(h, "elemente", []) or [])
         return len(wegmenge)
 
     @staticmethod
@@ -2987,6 +3032,17 @@ class Model:
         s = seiten[int(seite) % len(seiten)]
         return self.nodes[[int(e.nodes[j]) for j in s]].mean(axis=0)
 
+    def _seitennormale_oder_schale(self, elem: int, seite: int):
+        """Aussennormale einer Volumenseite - oder die Normale einer Schale
+        (Knotenreihenfolge) - oder None."""
+        e = self.elements[int(elem)]
+        if e.typ in ("shell3", "shell4"):
+            X = self.nodes[[int(k) for k in e.nodes[:3]]]
+            n = np.cross(X[1] - X[0], X[2] - X[0])
+            L = float(np.linalg.norm(n))
+            return n / L if L > 0 else None
+        return self._seitennormale(elem, seite)
+
     def _seitennormale(self, elem: int, seite: int):
         """Aussennormale einer Elementseite (Einheitsvektor) - oder None.
 
@@ -3044,7 +3100,11 @@ class Model:
             mitte = self._seitenmitte(e, seite)
             if gl.bereich and not gl.trifft(mitte):
                 return
-            p = gl.wert(mitte) if gl.verlauf else gl.p
+            if gl.verlauf:
+                p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in ("shell3", "shell4")))
+            else:
+                p = gl.p
             if gl.verlauf and p == 0.0:
                 return              # ausserhalb des Verlaufs (ueber dem Wasserspiegel)
             if d is not None:
@@ -3265,6 +3325,9 @@ class Model:
     def apply_hinge(self, elem: int, hinge, end: int = None):
         """Gelenkdefinition auf ein Stabelement legen."""
         h = self.hinges[hinge] if isinstance(hinge, str) else hinge
+        vorrat = self.hinges.get(hinge if isinstance(hinge, str) else getattr(h, "name", ""))
+        if vorrat is not None:
+            vorrat.elemente = sorted(set(getattr(vorrat, "elemente", []) or []) | {int(elem)})
         if end is not None:
             h = MemberHinge(h.name, int(end), list(h.typ), list(h.stiffness))
         e = self.elements[int(elem)]
@@ -3434,6 +3497,13 @@ class Model:
             members.append(self.add_member(f"{prefix}{k}", chain))
         return members
 
+    def bemassung_einstellungen(self):
+        """Die Einstellungen der Bemassung - bei Bedarf mit den Vorgaben angelegt."""
+        if getattr(self, "bemassung_einstellung", None) is None:
+            from .bemassung import BemassungEinstellung
+            self.bemassung_einstellung = BemassungEinstellung()
+        return self.bemassung_einstellung
+
     def check(self) -> list[str]:
         """Einfache Modellpruefung. Gibt Liste von Warnungen/Fehlern zurueck."""
         msgs = []
@@ -3509,6 +3579,11 @@ class Model:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Flaeche")
             if not cp.slave_nodes:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Slave-Knoten")
+        # Rechenbarkeit: unvernetzte Geometrie (WARNUNG) und Teiltragwerke ohne
+        # Lager (FEHLER - das Gleichungssystem waere singulaer)
+        if self.elements:
+            from .diagnose import meldungen
+            msgs += [z for z in meldungen(self) if not z.startswith("Hinweis")]
         return msgs
 
     # ---------------- Speichern / Laden ----------------
@@ -3556,6 +3631,10 @@ class Model:
             "winde": [asdict(x) for x in self.winde.values()],
             "schwingungen": [asdict(x) for x in self.schwingungen.values()],
             "schweissnaehte": [asdict(x) for x in self.schweissnaehte.values()],
+            "bemassungen": [asdict(x) for x in self.bemassungen.values()],
+            "bemassung_einstellung": (asdict(self.bemassung_einstellung)
+                                      if self.bemassung_einstellung is not None else None),
+            "einheiten": asdict(self.einheiten),
         }
 
     def save(self, path: str):
@@ -3635,12 +3714,20 @@ class Model:
         if d.get("schweissnaehte"):
             from .schweissnaehte import Schweissnaht
             m.schweissnaehte = {x["name"]: _dc(Schweissnaht, x) for x in d["schweissnaehte"]}
+        if d.get("bemassungen") or d.get("bemassung_einstellung"):
+            from .bemassung import Bemassung, BemassungEinstellung
+            m.bemassungen = {x["name"]: _dc(Bemassung, x) for x in d.get("bemassungen") or []}
+            if d.get("bemassung_einstellung"):
+                m.bemassung_einstellung = _dc(BemassungEinstellung, d["bemassung_einstellung"])
+        if d.get("einheiten"):
+            m.einheiten = _dc(Einheiten, d["einheiten"])
         if d.get("stellungen"):
             from .bridges.positions import Stellung
             m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]
             for s in m.stellungen:
                 s.dreh_achse = tuple(s.dreh_achse)
                 s.dreh_punkt = tuple(s.dreh_punkt)
+                s.verschiebung = tuple(getattr(s, "verschiebung", None) or (0.0, 0.0, 0.0))
                 if s.antrieb is not None:
                     s.antrieb = (int(s.antrieb[0]), tuple(s.antrieb[1]))
         return m

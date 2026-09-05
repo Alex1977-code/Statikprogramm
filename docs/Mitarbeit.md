@@ -74,6 +74,8 @@ Der Code ist so geschnitten, dass zwei Leute sich nicht ins Gehege kommen:
 | `statik3d/ec3/`, `joints/`, `bridges/` | Nachweise |
 | `statik3d/importers/` | Schnittstellen (RFEM, IFC, DXF, SAF, …) |
 | `statik3d/gui/` | Oberfläche |
+| `statik3d/einheiten.py` | Einheiten und Nachkommastellen der Anzeige (Tabellen, Lastwerte, Kennwerte); gerechnet wird in SI |
+| `statik3d/stroemung.py` | Strömungsnumerik im Schnitt: Rasterung, Potentialströmung (Wasser), Gitter-Boltzmann (Wind), Abtastung, Feldbilder |
 | `statik3d/report/` | Bericht |
 | `docs/` | Handbücher |
 
@@ -125,6 +127,24 @@ Punkte:
   Bilder 7.23, 7.28, 7.33 und 7.36 sind stückweise log-linear
   nachgezeichnet; Seitenwand- und Dachzonen setzen ein rechteckiges
   Gebäude voraus (Hüllquader der gewählten Flächen).
+* **Netzdichte**: die intelligente Anpassung kennt nur Kantenlängen
+  (kleinste Randlinie je Objekt), keine Krümmung und keine Nachbarschaft;
+  Übergänge zwischen grob und fein vernetzten Nachbarflächen entstehen nur,
+  soweit die gemeinsame Kante dieselbe Teilung bekommt.
+* **Bemaßungen** werden nur in der Ansicht gezeichnet (und damit in
+  Bildern, die man in den Bericht übernimmt); die SVG-Systemskizzen des
+  Berichts kennen sie noch nicht. Verschieben eines Maßes heißt löschen und
+  neu anlegen; Bogenmaße auf Kreislinien und Durchmesser fehlen.
+* **Wasserdruck strömungsnumerisch**: Potentialströmung ohne freie
+  Oberfläche und ohne Reibung im ebenen Schnitt; Pfeiler, Nischen und der
+  Wechselsprung fehlen, das Druckfeld hängt als Liste an der Objektlast
+  (bei feinem Gitter wächst die Modelldatei).
+* **Windkanal**: zweidimensional (Grundriss oder Aufriss), BGK mit
+  Modell-Reynolds-Zahl ≤ ~300, keine turbulente Anströmung; Beiwerte
+  qualitativ, Laufzeit einige zehn Sekunden je Generierer.
+* **Einheiten**: die Einstellung gilt für Ansicht und Tabellen; der Bericht
+  und die Masken rechts bleiben bei kN, m, mm und N/mm², Winkel und
+  Temperatur sind nicht umschaltbar.
 * **Schweißnähte**: die Kerbfalltabelle ist eine Auswahl (Tab. 8.2 bis 8.5);
   Details mit Radien (Tab. 8.4, 4/5), Hohlprofilknoten (Tab. 8.6/8.7) und
   Bolzen fehlen und sind über die Kerbfall-Vorgabe einzugeben. Nähte an
@@ -150,9 +170,13 @@ Punkte:
 * **Subsysteme** sind bisher eine Gliederung (Auswahl, Baum, Speichern);
   eine Berechnung je Subsystem (Teilsystem freischneiden, Schnittkräfte an
   den verdoppelten Berührungselementen) steht noch aus.
-* **Situationen mit Stellung** rechnen auf einer gedrehten Kopie des Modells;
-  der Antrieb (`Stellung.antrieb`) und die Lastfallauswahl der Stellung
-  (`faelle`) gelten nur in der Stellungsreihe, nicht in der Situation.
+* **Situationen mit Stellung** rechnen auf einer Kopie des Modells, auf die
+  `Stellung.anwenden` Ausgangsstellung, Verschiebung, Verdrehung, Lager und
+  Gelenke legt; die abgeschalteten Stäbe, Flächen und Volumen der Stellung
+  gehen als Aktivmaske in das System. Der Antrieb (`Stellung.antrieb`) und
+  die Lastfallauswahl der Stellung (`faelle`) gelten nur in der
+  Stellungsreihe (`bridges.positions`), nicht in der Situation; die Situation
+  ordnet ihre Lastfälle und Kombinationen selbst zu.
 * **Torsion freier Polygonquerschnitte** (`sections.polygon`) ist eine
   Näherung nach Saint-Venant (A⁴/(4π²·Ip)); exakt wäre die Lösung der
   Prandtlschen Spannungsfunktion auf dem Polygon (kleines FE-Problem). Der

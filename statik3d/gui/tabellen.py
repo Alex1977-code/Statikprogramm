@@ -48,6 +48,20 @@ VERGLEICHE = (("<=", operator.le), (">=", operator.ge), ("!=", operator.ne),
               ("<", operator.lt), (">", operator.gt), ("=", operator.eq))
 
 
+_PAAR = re.compile(r"^\s*(-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?)\s*/\s*"
+                   r"(-?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?)\s*$")
+
+
+def _paar(wert):
+    """„min / max“-Text einer Umhuellenden als zwei Zahlen, sonst None."""
+    if not isinstance(wert, str):
+        return None
+    m = _PAAR.match(wert)
+    if not m:
+        return None
+    return (float(m.group(1).replace(",", ".")), float(m.group(2).replace(",", ".")))
+
+
 def _zahl(x):
     """Der Wert als Zahl - oder None, wenn er keine ist."""
     if isinstance(x, bool):
@@ -201,6 +215,17 @@ class Spalte:
     editierbar: bool = False
     werte: list = field(default_factory=list)
     hinweis: str = ""
+    #: fn(zeile) -> Liste der Wahlwerte, wenn sie von der Zeile oder vom
+    #: Modellstand abhaengen (Werkstoffe, Querschnitte, Dicken)
+    werte_fn: object = None
+
+    def wahlwerte(self, zeile=None) -> list:
+        if self.werte_fn is not None:
+            try:
+                return [str(v) for v in self.werte_fn(zeile)]
+            except Exception:               # noqa: BLE001
+                return [str(v) for v in self.werte]
+        return [str(v) for v in self.werte]
 
     def kopf(self) -> str:
         return f"{self.name} [{self.einheit}]" if self.einheit else self.name
@@ -217,6 +242,54 @@ class TabellenModell(QtCore.QAbstractTableModel):
         self.spalten = list(spalten)
         self.zeilen = [list(z) for z in (zeilen or [])]
         self.aendern = None          # fn(zeile, spalte, wert) -> bool
+        #: fn() -> einheiten.Einheiten oder None. Die Zeilen stehen in den
+        #: Grundeinheiten der Spalten (kN, kNm, m, mm, N/mm² ...); gezeigt,
+        #: gefiltert, bearbeitet und exportiert wird in den eingestellten
+        #: Einheiten mit deren Nachkommastellen.
+        self.einheiten_quelle = None
+
+    # -- Einheiten -------------------------------------------------------
+    def anzeige(self, k: int) -> tuple:
+        """(Faktor Grundeinheit -> Anzeige, Einheitentext, Nachkommastellen)
+        der Spalte *k*."""
+        sp = self.spalten[k]
+        e = self.einheiten_quelle() if self.einheiten_quelle is not None else None
+        if e is None or sp.art != "zahl":
+            return 1.0, sp.einheit, sp.nachkomma
+        return e.anzeige(sp.einheit, sp.nachkomma)
+
+    def kopf(self, k: int) -> str:
+        sp = self.spalten[k]
+        _f, einheit, _nk = self.anzeige(k)
+        return f"{sp.name} [{einheit}]" if einheit else sp.name
+
+    def angezeigt(self, k: int, wert):
+        """Zahlenwert der Spalte *k* in der Anzeigeeinheit (Text bleibt Text;
+        ein „min / max“-Paar wird als Paar umgerechnet)."""
+        if self.spalten[k].art != "zahl":
+            return wert
+        if isinstance(wert, (int, float)) and not isinstance(wert, bool):
+            f, _e, nk = self.anzeige(k)
+            return round(float(wert) * f, int(nk) + 6)
+        paar = _paar(wert)
+        if paar is not None:
+            f, _e, nk = self.anzeige(k)
+            if f != 1.0:
+                return " / ".join(f"{x * f:.{nk}f}" for x in paar)
+        return wert
+
+    def zeilen_angezeigt(self, zeilen: list) -> list:
+        """Zeilen in Anzeigeeinheiten - fuer Zwischenablage, CSV und Excel."""
+        return [[self.angezeigt(k, w) if k < len(self.spalten) else w
+                 for k, w in enumerate(z)] for z in zeilen]
+
+    def einheiten_aktualisieren(self):
+        """Nach geaenderten Einheiten Kopf und Zellen neu zeichnen."""
+        if self.columnCount():
+            self.headerDataChanged.emit(QtCore.Qt.Horizontal, 0, self.columnCount() - 1)
+        if self.rowCount() and self.columnCount():
+            self.dataChanged.emit(self.index(0, 0),
+                                  self.index(self.rowCount() - 1, self.columnCount() - 1))
 
     # -- Qt --------------------------------------------------------------
     def rowCount(self, _eltern=QtCore.QModelIndex()) -> int:
@@ -228,10 +301,10 @@ class TabellenModell(QtCore.QAbstractTableModel):
     def headerData(self, i, richtung, rolle=QtCore.Qt.DisplayRole):
         if rolle == QtCore.Qt.DisplayRole:
             if richtung == QtCore.Qt.Horizontal:
-                return self.spalten[i].kopf()
+                return self.kopf(i)
             return str(i + 1)
         if rolle == QtCore.Qt.ToolTipRole and richtung == QtCore.Qt.Horizontal:
-            return self.spalten[i].hinweis or self.spalten[i].kopf()
+            return self.spalten[i].hinweis or self.kopf(i)
         return None
 
     def data(self, index, rolle=QtCore.Qt.DisplayRole):
@@ -241,19 +314,27 @@ class TabellenModell(QtCore.QAbstractTableModel):
         wert = self.zeilen[z][k] if k < len(self.zeilen[z]) else ""
         if rolle in (QtCore.Qt.DisplayRole, QtCore.Qt.EditRole):
             sp = self.spalten[k]
+            if sp.art == "zahl" and isinstance(wert, (int, float)):
+                f, _e, nk = self.anzeige(k)
+                if rolle == QtCore.Qt.EditRole:
+                    return f"{self.angezeigt(k, wert):g}"
+                return f"{float(wert) * f:.{nk}f}".replace(".", ",")
+            if sp.art == "zahl" and rolle == QtCore.Qt.DisplayRole and _paar(wert) is not None:
+                f, _e, nk = self.anzeige(k)
+                if f != 1.0:
+                    return " / ".join(f"{x * f:.{nk}f}".replace(".", ",") for x in _paar(wert))
             if rolle == QtCore.Qt.EditRole:
                 return str(wert)
-            if sp.art in ("zahl",) and isinstance(wert, (int, float)):
-                return f"{float(wert):.{sp.nachkomma}f}".replace(".", ",")
             if sp.art == "ganz" and isinstance(wert, (int, float)):
                 return str(int(wert))
             return str(wert)
         if rolle == QtCore.Qt.TextAlignmentRole and self.spalten[k].art != "text":
             return int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         if rolle == QtCore.Qt.UserRole:
+            # Sortieren, Filtern und Markieren in der Anzeigeeinheit
             if self.spalten[k].art in ("zahl", "ganz"):
                 z = _zahl(wert)
-                return wert if z is None else z
+                return wert if z is None else self.angezeigt(k, z)
             return wert
         return None
 
@@ -274,6 +355,11 @@ class TabellenModell(QtCore.QAbstractTableModel):
             return False
         if sp.art == "ganz":
             neu = int(round(neu))
+        elif sp.art == "zahl":
+            # eingegeben in der Anzeigeeinheit, gespeichert in der Grundeinheit
+            f, _e, _nk = self.anzeige(k)
+            if f and f != 1.0:
+                neu = float(neu) / f
         if self.aendern is not None and not self.aendern(z, k, neu):
             return False
         while len(self.zeilen[z]) <= k:
@@ -288,6 +374,42 @@ class TabellenModell(QtCore.QAbstractTableModel):
         self.beginResetModel()
         self.zeilen = [list(z) for z in zeilen]
         self.endResetModel()
+
+
+class WahlDelegate(QtWidgets.QStyledItemDelegate):
+    """Aufklappliste fuer Spalten mit art == "wahl" (Werkstoff, Querschnitt,
+    Dicke, Nahtart …); alle anderen Spalten bekommen den Standard-Editor."""
+
+    def __init__(self, tabelle):
+        super().__init__(tabelle.view)
+        self.tabelle = tabelle
+
+    def _spalte(self, index):
+        q = self.tabelle.filter.mapToSource(index)
+        sp = self.tabelle.modell.spalten[q.column()]
+        zeile = self.tabelle.modell.zeilen[q.row()] if q.row() < len(self.tabelle.modell.zeilen) else None
+        return sp, zeile
+
+    def createEditor(self, parent, option, index):
+        sp, zeile = self._spalte(index)
+        if sp.art != "wahl":
+            return super().createEditor(parent, option, index)
+        cb = QtWidgets.QComboBox(parent)
+        cb.addItems(sp.wahlwerte(zeile))
+        cb.setEditable(False)
+        return cb
+
+    def setEditorData(self, editor, index):
+        if isinstance(editor, QtWidgets.QComboBox):
+            editor.setCurrentText(str(index.data(QtCore.Qt.EditRole) or ""))
+            return
+        super().setEditorData(editor, index)
+
+    def setModelData(self, editor, model, index):
+        if isinstance(editor, QtWidgets.QComboBox):
+            model.setData(index, editor.currentText(), QtCore.Qt.EditRole)
+            return
+        super().setModelData(editor, model, index)
 
 
 class Filtermodell(QtCore.QSortFilterProxyModel):
@@ -339,6 +461,13 @@ class Datentabelle(QtWidgets.QWidget):
 
     #: Zeile angeklickt - der erste Spaltenwert (meist die Objektnummer)
     zeile_gewaehlt = QtCore.Signal(object)
+    #: mehrere Zeilen markiert (Umschalt/Strg): die Werte der ersten Spalte
+    zeilen_gewaehlt = QtCore.Signal(list)
+    #: Hoehe der Filterzeile
+    FILTER_HOEHE = 22
+    #: Breiter wird keine Spalte aus ihrem Inhalt (eine Elementliste mit
+    #: tausend Nummern bekommt sonst eine Spalte ueber die ganze Wand)
+    SPALTE_MAX = 360
 
     def __init__(self, spalten: list, titel: str = "", parent=None,
                  mit_kennwerten: bool = False):
@@ -373,11 +502,16 @@ class Datentabelle(QtWidgets.QWidget):
             werkzeug.addWidget(b)
         lay.addLayout(werkzeug)
 
-        # Filterzeile
+        # Filterzeile: ein Feld je Spalte, ueber der Kopfzeile ausgerichtet.
+        # Bewusst **ohne Layout**: ein Layout machte die Summe der Spalten-
+        # breiten zur Mindestbreite der Tabelle - und ueber den Reiterstapel
+        # zur Mindestbreite des Fensters, das mit jeder breiten Spalte wuchs
+        # und sich dann nicht mehr verkleinern liess. Die Felder werden in
+        # _filterbreiten auf die Kopfzeile gelegt und mit ihr gerollt.
         self.filterzeile = QtWidgets.QWidget(self)
-        self.fz_lay = QtWidgets.QHBoxLayout(self.filterzeile)
-        self.fz_lay.setContentsMargins(4, 0, 4, 0)
-        self.fz_lay.setSpacing(1)
+        self.filterzeile.setFixedHeight(self.FILTER_HOEHE)
+        self.filterzeile.setMinimumWidth(0)
+        self.filterzeile.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
         self.felder: list[QtWidgets.QLineEdit] = []
         for k, sp in enumerate(spalten):
             e = QtWidgets.QLineEdit(self.filterzeile)
@@ -386,7 +520,6 @@ class Datentabelle(QtWidgets.QWidget):
             e.setToolTip("Filter: > 0,9   1..5   = HEB 200   !Riegel")
             e.textChanged.connect(lambda t, i=k: self._filter(i, t))
             self.felder.append(e)
-            self.fz_lay.addWidget(e)
         lay.addWidget(self.filterzeile)
 
         self.view = QtWidgets.QTableView(self)
@@ -397,6 +530,8 @@ class Datentabelle(QtWidgets.QWidget):
         self.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
         self.view.setAlternatingRowColors(True)
         self.view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        # Umschalt markiert einen Bereich, Strg nimmt einzelne Zeilen dazu
+        self.view.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         kopf = self.view.horizontalHeader()
         kopf.setSectionsMovable(True)
         kopf.setStretchLastSection(False)
@@ -410,6 +545,8 @@ class Datentabelle(QtWidgets.QWidget):
         self.view.verticalHeader().setDefaultSectionSize(22)
         self.view.setWordWrap(False)
         self.view.clicked.connect(self._geklickt)
+        # Wahlspalten bekommen eine Aufklappliste, alles andere den Standard
+        self.view.setItemDelegate(WahlDelegate(self))
         lay.addWidget(self.view, 1)
 
         # Fusszeile: Max und Min der *sichtbaren* Zeilen. Sie steht in einer
@@ -433,8 +570,12 @@ class Datentabelle(QtWidgets.QWidget):
 
         self.view.horizontalHeader().sectionResized.connect(
             lambda *_a: self._filterbreiten())
+        self.view.horizontalHeader().sectionMoved.connect(
+            lambda *_a: self._filterbreiten())
         self.view.horizontalScrollBar().valueChanged.connect(
             self.fuss.horizontalScrollBar().setValue)
+        self.view.horizontalScrollBar().valueChanged.connect(
+            lambda *_a: self._filterbreiten())
         self.modell.modelReset.connect(self._nachfuehren)
         self.filter.rowsInserted.connect(lambda *_a: self._nachfuehren())
         self.filter.rowsRemoved.connect(lambda *_a: self._nachfuehren())
@@ -445,8 +586,15 @@ class Datentabelle(QtWidgets.QWidget):
         if mit_kennwerten is not None:
             self.kennwerte_zeigen = bool(mit_kennwerten)
         self.modell.setzen(zahlen_wandeln(zeilen, self.modell.spalten))
-        self.view.resizeColumnsToContents()
+        self._spaltenbreiten()
         self._nachfuehren()
+
+    def _spaltenbreiten(self):
+        """Spaltenbreiten aus dem Inhalt, nach oben gedeckelt."""
+        self.view.resizeColumnsToContents()
+        for k in range(self.modell.columnCount()):
+            if self.view.columnWidth(k) > self.SPALTE_MAX:
+                self.view.setColumnWidth(k, self.SPALTE_MAX)
 
     def sichtbare_zeilen(self) -> list:
         out = []
@@ -464,7 +612,21 @@ class Datentabelle(QtWidgets.QWidget):
         return self.filter.rowCount()
 
     def kopfzeile(self) -> list:
-        return [sp.kopf() for sp in self.modell.spalten]
+        return [self.modell.kopf(k) for k in range(len(self.modell.spalten))]
+
+    def einheiten_setzen(self, quelle):
+        """*quelle*: fn() -> einheiten.Einheiten (oder None fuer Grundeinheiten).
+        Kopf, Zellen, Filter, Fusszeile und Export folgen den Einheiten."""
+        self.modell.einheiten_quelle = quelle
+        self.fussmodell.einheiten_quelle = quelle
+        self.einheiten_aktualisieren()
+
+    def einheiten_aktualisieren(self):
+        self.modell.einheiten_aktualisieren()
+        self.fussmodell.einheiten_aktualisieren()
+        self.filter.invalidate()
+        self._spaltenbreiten()
+        self._nachfuehren()
 
     @staticmethod
     def _schluessel(x):
@@ -528,19 +690,26 @@ class Datentabelle(QtWidgets.QWidget):
         self.fuss.setVisible(bool(hoch))
 
     def _filterbreiten(self):
-        """Filterfelder und Fusszeile auf die Spaltenbreiten legen."""
+        """Filterfelder und Fusszeile auf die Spalten legen - Lage und Breite
+        wie die Kopfzeile, auch nach Rollen und Umsortieren der Spalten."""
         kopf = self.view.horizontalHeader()
+        x0 = self.view.frameWidth()
+        if self.view.verticalHeader().isVisible():
+            x0 += self.view.verticalHeader().width()
+        h = self.filterzeile.height()
         for k, e in enumerate(self.felder):
             versteckt = self.view.isColumnHidden(k)
             e.setVisible(not versteckt)
-            e.setFixedWidth(max(30, kopf.sectionSize(k) - 2))
+            if not versteckt:
+                x = x0 + kopf.sectionViewportPosition(k)
+                e.setGeometry(x + 1, 1, max(30, kopf.sectionSize(k) - 2), max(16, h - 2))
             self.fuss.setColumnHidden(k, versteckt)
             self.fuss.setColumnWidth(k, kopf.sectionSize(k))
 
     def _spaltenwahl(self):
         m = QtWidgets.QMenu(self)
         for k, sp in enumerate(self.modell.spalten):
-            a = m.addAction(sp.kopf())
+            a = m.addAction(self.modell.kopf(k))
             a.setCheckable(True)
             a.setChecked(not self.view.isColumnHidden(k))
             a.toggled.connect(lambda an, i=k: (self.view.setColumnHidden(i, not an),
@@ -549,16 +718,30 @@ class Datentabelle(QtWidgets.QWidget):
 
     def _geklickt(self, index):
         wert = self.filter.data(self.filter.index(index.row(), 0), QtCore.Qt.UserRole)
-        self.zeile_gewaehlt.emit(wert)
+        werte = self.gewaehlte_schluessel()
+        if len(werte) > 1:
+            self.zeilen_gewaehlt.emit(werte)
+        else:
+            self.zeile_gewaehlt.emit(werte[0] if werte else wert)
+
+    def gewaehlte_schluessel(self) -> list:
+        """Die erste Spalte aller markierten Zeilen, in Tabellenreihenfolge."""
+        sm = self.view.selectionModel()
+        if sm is None:
+            return []
+        zeilen = sorted({i.row() for i in sm.selectedRows()}
+                        | {i.row() for i in sm.selectedIndexes()})
+        return [self.filter.data(self.filter.index(r, 0), QtCore.Qt.UserRole) for r in zeilen]
 
     # -- Export ----------------------------------------------------------
     def zeilen_fuer_export(self) -> list:
-        """Was gerade zu sehen ist, samt Max- und Min-Zeile."""
+        """Was gerade zu sehen ist, samt Max- und Min-Zeile - in den
+        Anzeigeeinheiten, so wie der Kopf sie nennt."""
         z = self.sichtbare_zeilen()
         if self.kennwerte_zeigen and z:
             hoch, tief = kennwerte(z, self.modell.spalten)
             z = z + [hoch, tief]
-        return z
+        return self.modell.zeilen_angezeigt(z)
 
     def text(self) -> str:
         return als_csv(self.kopfzeile(), self.zeilen_fuer_export())

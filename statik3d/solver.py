@@ -396,7 +396,12 @@ class StaticSystem:
         """Faktorisierung der Grundsteifigkeit (bei Bedarf)."""
         if self._solver is None:
             t0 = time.time()
-            self._solver = LinearSolver(self.Kff)
+            try:
+                self._solver = LinearSolver(self.Kff)
+            except (RuntimeError, ValueError) as ex:
+                # "Factor is exactly singular" sagt niemandem, was fehlt
+                from .diagnose import singulaer_text
+                raise RuntimeError(singulaer_text(self.model, ex)) from None
             self.backend = self._solver.backend
             self.t_assemble += time.time() - t0
             if self._progress:
@@ -415,21 +420,28 @@ class StaticSystem:
         if F_extra is not None:
             rhs = rhs + F_extra[self.fi]
         vorgabe = np.any(u[self.si])
-        if K_extra is None:
-            if vorgabe:
-                if self.Kfs is None:
-                    self.Kfs = self.K[self.fi][:, self.si].tocsc()
-                rhs = rhs - self.Kfs @ u[self.si]
-            u[self.fi] = self.solver.solve(rhs)
-        else:
-            Kt = (self.K + K_extra)
-            Ktff = Kt[self.fi][:, self.fi].tocsc()
-            if vorgabe:
-                Ktfs = Kt[self.fi][:, self.si]
-                rhs = rhs - Ktfs @ u[self.si]
-            ls = LinearSolver(Ktff)
-            self.backend = ls.backend
-            u[self.fi] = ls.solve(rhs)
+        try:
+            if K_extra is None:
+                if vorgabe:
+                    if self.Kfs is None:
+                        self.Kfs = self.K[self.fi][:, self.si].tocsc()
+                    rhs = rhs - self.Kfs @ u[self.si]
+                u[self.fi] = self.solver.solve(rhs)
+            else:
+                Kt = (self.K + K_extra)
+                Ktff = Kt[self.fi][:, self.fi].tocsc()
+                if vorgabe:
+                    Ktfs = Kt[self.fi][:, self.si]
+                    rhs = rhs - Ktfs @ u[self.si]
+                ls = LinearSolver(Ktff)
+                self.backend = ls.backend
+                u[self.fi] = ls.solve(rhs)
+        except (RuntimeError, ValueError) as ex:
+            # Singulaer (Faktorisierung oder Residuum): sagen, was dem Modell fehlt
+            if "Teiltragwerk" in str(ex) or "ohne Netz" in str(ex):
+                raise
+            from .diagnose import singulaer_text
+            raise RuntimeError(singulaer_text(self.model, ex)) from None
         return u
 
     def reactions(self, u: np.ndarray, F: np.ndarray, K_extra=None) -> np.ndarray:
@@ -788,11 +800,17 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
 # ==========================================================================
 # Kontakt-Iteration
 # ==========================================================================
-def _contact_singular(it: int, ex, cs) -> str:
+def _contact_singular(it: int, ex, cs, model=None) -> str:
     n_open = sum(1 for c in cs.cons if not c.active)
-    return (f"Kontakt-Iteration {it}: {ex}\nHinweis: {n_open} von {len(cs.cons)} "
+    text = (f"Kontakt-Iteration {it}: {ex}\nHinweis: {n_open} von {len(cs.cons)} "
             "Kontaktbedingungen offen - vermutlich hebt ein Bauteil vollstaendig ab "
             "oder rutscht ohne Halt (kein statisches Gleichgewicht moeglich).")
+    if model is not None and "Teiltragwerk" not in str(ex) and "ohne Netz" not in str(ex):
+        from .diagnose import meldungen
+        befund = [z for z in meldungen(model) if not z.startswith("Hinweis")]
+        if befund:
+            text += "\n" + "\n".join(befund)
+    return text
 
 
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
@@ -831,15 +849,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 try:
                     u = system.solve(F, Kc, Fc, us=us)
                 except RuntimeError as ex2:
-                    raise RuntimeError(_contact_singular(it, ex2, cs)) from None
+                    raise RuntimeError(_contact_singular(it, ex2, cs, model)) from None
                 cs.select_by_direction(u)
                 Kc, Fc = cs.matrices(model.ndof)
                 try:
                     u = system.solve(F, Kc, Fc, us=us)
                 except RuntimeError as ex3:
-                    raise RuntimeError(_contact_singular(it, ex3, cs)) from None
+                    raise RuntimeError(_contact_singular(it, ex3, cs, model)) from None
             else:
-                raise RuntimeError(_contact_singular(it, ex, cs)) from None
+                raise RuntimeError(_contact_singular(it, ex, cs, model)) from None
         changed = cs.update(u)
         if progress:
             progress(f"Kontakt-Iteration {it}: {cs.n_active} aktiv")

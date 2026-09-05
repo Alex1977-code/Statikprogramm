@@ -143,6 +143,84 @@ def test_stellung():
     check("unbekannte Stellung ist ein FEHLER", any("gibt es nicht" in x for x in m.check()))
 
 
+def test_stellung_lage_und_wirkung():
+    """Ausgangsstellung, Verschiebung, abgeschaltete Staebe, biegesteife
+    Gelenke und Lager je Stellung - gegen geschlossene Loesungen."""
+    from statik3d.model import Member
+    m, ids, sec = _balken(2, 2 * L)               # Knoten 0, 1, 2 bei x = 0, L, 2L
+    EI = E * sec.Iy
+    m.members["M1"] = Member("M1", [0])
+    m.members["M2"] = Member("M2", [1])
+    m.add_load_case("LF1", "G")
+    m.load_node(ids[1], Fz=-F, case="LF1")        # Last in Balkenmitte
+    m.add_load_case("LF2", "G")
+    m.load_node(ids[2], Fz=-F, case="LF2")        # Last am Ende
+    # Stellung "kurz": der aeussere Stab M2 wirkt nicht -> Kragarm der Laenge L
+    m.stellungen.append(Stellung("kurz", 0.0, "ohne M2", staebe_aus=["M2"]))
+    m.situationen["kurz"] = Situation("kurz", "kurz")
+    m.load_cases["LF1"].situation = "kurz"
+    # Stellung "hoch": 90 Grad um y; "hoch+1": darauf aufsetzend um 1 m in x verschoben
+    m.stellungen.append(Stellung("hoch", 90.0, dreh_achse=(0, 1, 0), dreh_punkt=(0, 0, 0),
+                                 dreh_winkel=90.0))
+    m.stellungen.append(Stellung("hoch+1", 90.0, basis="hoch", verschiebung=(1.0, 0.0, 0.0)))
+    m.situationen["oben"] = Situation("oben", "hoch+1")
+    m.load_cases["LF2"].situation = "oben"
+    an = solver.solve_all(m)
+    r1 = an.cases["LF1"]
+    close("Stab M2 abgeschaltet: w(L) = FL³/3EI des kurzen Kragarms", r1.u[ids[1], 2],
+          -F * L ** 3 / (3 * EI), 1e-9, "m")
+    check("abgeschaltetes Element ohne Schnittgroessen, Endknoten festgehalten",
+          np.allclose(r1.beam_end[1], 0.0) and abs(r1.u[ids[2], 2]) < 1e-12
+          and list(r1.info.get("inaktiv", [])) == [1], str(r1.info.get("inaktiv")))
+    check("aktive_elemente kennt die Abschaltung der Stellung",
+          list(m.aktive_elemente("kurz")) == [True, False])
+    r2 = an.cases["LF2"]
+    check("Ausgangsstellung + Verschiebung: Kette aus Drehung und Verschiebung",
+          np.allclose(r2.model.nodes[ids[2]], [1.0, 0.0, -2 * L], atol=1e-9)
+          and np.allclose(r2.model.nodes[ids[0]], [0.0, 0.0, 0.0], atol=1e-9),
+          str(r2.model.nodes[ids[2]]))
+    # Gelenk am Ende von Element 0 - in Stellung "steif" wieder biegesteif
+    m.add_hinge("G1", end=1, phiy="free")
+    m.apply_hinge(0, "G1")
+    check("apply_hinge merkt sich das Element", m.hinges["G1"].elemente == [0]
+          and m.elements[0].hinges == [10])
+    m.stellungen.append(Stellung("steif", 0.0, gelenke_aus=["G1"]))
+    m2 = m.copy()
+    m.stellungen[-1].anwenden(m2, m)
+    check("Stellung macht das Gelenk biegesteif (nur in der Kopie)",
+          m2.elements[0].hinges == [] and m.elements[0].hinges == [10])
+    m.situationen["steif"] = Situation("steif", "steif")
+    m.add_load_case("LF3", "G")
+    m.load_node(ids[2], Fz=-F, case="LF3")
+    m.load_cases["LF3"].situation = "steif"
+    an = solver.solve_all(m, names=["LF3"]) if "names" in solver.solve_all.__code__.co_varnames \
+        else solver.solve_all(m)
+    close("Gelenk biegesteif: Kragarm 2L, w = F(2L)³/3EI", an.cases["LF3"].u[ids[2], 2],
+          -F * (2 * L) ** 3 / (3 * EI), 1e-9, "m")
+    # Lager ueber Nummer statt Namen abschalten
+    m.fix(ids[2], "all")                          # Lager 1: Einspannung am Ende
+    st = Stellung("frei", 0.0, lager_aus=["1"])
+    m3 = m.copy()
+    st.anwenden(m3, m)
+    check("Lager ueber seine Nummer abgeschaltet", len(m3.supports) == 1
+          and int(m3.supports[0].node) == ids[0] and len(m.supports) == 2)
+    # Elemente loeschen zieht die Gelenk-Elemente nach
+    m4 = m.copy()
+    m4.elemente_loeschen([1])
+    check("Elemente loeschen: Gelenk zeigt weiter auf sein Element",
+          m4.hinges["G1"].elemente == [0])
+    m4.elemente_loeschen([0])
+    check("… und verliert es, wenn es geloescht wird", m4.hinges["G1"].elemente == [])
+    d = m.to_dict()
+    import json
+    m5 = Model.from_dict(json.loads(json.dumps(d)))
+    st5 = m5.stellung("hoch+1")
+    check("Ausgangsstellung, Verschiebung und Abschaltungen ueberleben Speichern",
+          st5.basis == "hoch" and st5.verschiebung == (1.0, 0.0, 0.0)
+          and m5.stellung("kurz").staebe_aus == ["M2"] and m5.stellung("steif").gelenke_aus == ["G1"]
+          and m5.hinges["G1"].elemente == [0])
+
+
 def test_speichern():
     m, ids, sec = _balken(2, L)
     m.add_load_case("LF1", "G")
@@ -245,8 +323,8 @@ def test_kombinationen_je_situation():
 
 
 def main():
-    for t in (test_abgeschaltete_elemente, test_stellung, test_speichern, test_subsystem,
-              test_kombinationen_je_situation):
+    for t in (test_abgeschaltete_elemente, test_stellung, test_stellung_lage_und_wirkung,
+              test_speichern, test_subsystem, test_kombinationen_je_situation):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

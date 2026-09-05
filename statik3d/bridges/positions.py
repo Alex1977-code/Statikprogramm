@@ -91,6 +91,20 @@ class Stellung:
     dreh_gruppen: list = field(default_factory=list)
     antrieb: tuple = None
     windlast: float = 0.0
+    # -- Lage gegenueber der Ausgangsstellung und Wirkung (Maske rechts) ----
+    #: Ausgangsstellung: Name einer anderen Stellung, auf deren Lage die
+    #: eigene Verschiebung und Verdrehung aufsetzen; "" = das unbewegte Modell
+    basis: str = ""
+    #: Verschiebung der bewegten Knoten [m] gegenueber der Ausgangsstellung
+    verschiebung: tuple = (0.0, 0.0, 0.0)
+    #: Was in dieser Stellung nicht wirkt - Staebe, Flaechen und Volumen ueber
+    #: ihre Elemente, Gelenke werden biegesteif, Lager greifen nicht
+    staebe_aus: list = field(default_factory=list)
+    flaechen_aus: list = field(default_factory=list)
+    koerper_aus: list = field(default_factory=list)
+    gelenke_aus: list = field(default_factory=list)
+    linienlager_aus: list = field(default_factory=list)
+    flaechenlager_aus: list = field(default_factory=list)
 
     def beschriftung(self) -> str:
         t = f"{self.name} ({self.winkel:g}°)"
@@ -98,16 +112,99 @@ class Stellung:
 
     # -- Modell fuer diese Stellung -------------------------------------
     def modell(self, basis: Model, log: list = None) -> Model:
-        """Das Modell dieser Stellung: gedrehte Geometrie, wirksame Lager, Lasten."""
+        """Das Modell dieser Stellung: verschobene und gedrehte Geometrie,
+        wirksame Lager und Gelenke, Lasten, abgeschaltete Elemente."""
         m = basis.copy()
         m.name = f"{basis.name} - {self.name}"
-        if self.dreh_winkel:
-            self._drehen(m, log)
-        self._lager(m, log)
+        self.anwenden(m, basis, log)
         self._faelle(m, log)
+        self._deaktivieren(m, basis, log)
         if self.antrieb:
             self._antrieb(m, log)
         return m
+
+    def anwenden(self, m: Model, basis: Model, log: list = None, kette=None,
+                 nur_lage: bool = False):
+        """Lage und Wirkung dieser Stellung auf die Kopie *m* von *basis* legen.
+
+        Erst die Ausgangsstellung (ihre Lage, rekursiv), dann die eigene
+        Verschiebung und Verdrehung; danach - nur fuer die Stellung selbst,
+        nicht fuer die Kette - die Lager, die nicht greifen, und die Gelenke,
+        die biegesteif werden.
+        """
+        kette = set(kette or ()) | {self.name}
+        if self.basis and self.basis not in kette and hasattr(basis, "stellung"):
+            st = basis.stellung(self.basis)
+            if st is not None:
+                st.anwenden(m, basis, log, kette, nur_lage=True)
+        idx = self._bewegte_knoten(basis)
+        v = np.asarray(self.verschiebung or (0.0, 0.0, 0.0), float).ravel()[:3]
+        if len(idx) and np.any(np.abs(v) > 0):
+            m.nodes[idx] = m.nodes[idx] + v
+            if log is not None:
+                log.append(f"  {self.name}: {len(idx)} Knoten um ({v[0]:g}, {v[1]:g}, {v[2]:g}) m "
+                           "verschoben")
+        if self.dreh_winkel:
+            self._drehen(m, log, idx)
+        if not nur_lage:
+            self._lager(m, log)
+            self._gelenke(m, log)
+
+    def deaktivierte_elemente(self, basis: Model) -> list:
+        """Die Elemente der abgeschalteten Staebe, Flaechen und Volumen."""
+        els: set = set()
+        for name in self.staebe_aus:
+            mem = basis.members.get(name)
+            if mem is not None:
+                els.update(int(e) for e in (mem.elements or []))
+        for name in self.flaechen_aus:
+            f = basis.flaechen.get(name)
+            if f is not None:
+                els.update(int(e) for e in (f.elemente or []))
+        for name in self.koerper_aus:
+            k = basis.koerper.get(name)
+            if k is not None:
+                els.update(int(e) for e in (k.elemente or []))
+        return sorted(e for e in els if 0 <= e < len(basis.elements))
+
+    def _deaktivieren(self, m: Model, basis: Model, log: list = None):
+        """Abgeschaltete Elemente: als Situation im Stellungsmodell, damit der
+        Loeser sie ohne Steifigkeit und Last fuehrt - die Elementnummern
+        bleiben, sonst liesse sich keine Umhuellende ueber die Stellungen bilden."""
+        els = self.deaktivierte_elemente(basis)
+        if not els:
+            return
+        from ..model import Situation
+        name = f"Stellung {self.name}"
+        m.situationen[name] = Situation(name, "", list(els),
+                                        f"Elemente ohne Wirkung in Stellung {self.name}")
+        for lc in m.load_cases.values():
+            lc.situation = name
+        for c in m.combinations.values():
+            c.situation = name
+        if log is not None:
+            log.append(f"  {self.name}: {len(els)} Elemente ohne Wirkung ("
+                       + ", ".join(self.staebe_aus + self.flaechen_aus + self.koerper_aus) + ")")
+
+    def _gelenke(self, m: Model, log: list = None):
+        """Gelenke, die in dieser Stellung nicht wirken, werden biegesteif:
+        ihre Freigaben und Federn gehen von den Elementen herunter, an denen
+        sie gesetzt wurden."""
+        weg = []
+        for name in self.gelenke_aus:
+            h = m.hinges.get(name)
+            if h is None:
+                continue
+            frei = set(h.released())
+            federn = {d for d, _k in h.springs()}
+            for e in (getattr(h, "elemente", None) or []):
+                if 0 <= int(e) < len(m.elements):
+                    el = m.elements[int(e)]
+                    el.hinges = [d for d in el.hinges if d not in frei]
+                    el.hinge_springs = [(d, k) for d, k in el.hinge_springs if d not in federn]
+            weg.append(name)
+        if weg and log is not None:
+            log.append(f"  {self.name}: Gelenke biegesteif: " + ", ".join(weg))
 
     def _bewegte_knoten(self, m: Model) -> np.ndarray:
         if self.dreh_gruppen:
@@ -119,8 +216,9 @@ class Stellung:
         fest = {s.node for s in m.supports}
         return np.array([i for i in range(m.nn) if i not in fest], dtype=int)
 
-    def _drehen(self, m: Model, log: list = None):
-        idx = self._bewegte_knoten(m)
+    def _drehen(self, m: Model, log: list = None, idx=None):
+        if idx is None:
+            idx = self._bewegte_knoten(m)
         if not len(idx):
             return
         R = drehmatrix(self.dreh_achse, math.radians(self.dreh_winkel))
@@ -130,27 +228,34 @@ class Stellung:
             log.append(f"  {self.name}: {len(idx)} Knoten um {self.dreh_winkel:g}° "
                        f"um die Achse {tuple(self.dreh_achse)} gedreht")
 
+    @staticmethod
+    def _gemeint(s, i: int, namen: set) -> bool:
+        """Ist das Lager *s* (Nummer *i* in seiner Liste) in *namen* genannt -
+        mit seinem Namen oder seiner Nummer (so wie der Modellbaum sie fuehrt)?"""
+        nm = (getattr(s, "name", "") or "").strip()
+        return (bool(nm) and nm in namen) or str(i) in namen
+
     def _lager(self, m: Model, log: list = None):
         aus = set(self.lager_aus)
         ein = set(self.lager_aktiv)
         behalten = []
         entfernt = []
-        for s in m.supports:
-            nm = (s.name or "").strip()
-            if nm and nm in aus:
+        for i, s in enumerate(m.supports):
+            nm = (s.name or "").strip() or f"Knotenlager {i}"
+            if self._gemeint(s, i, aus):
                 entfernt.append(nm)
                 continue
-            if ein and nm and nm not in ein:
+            if ein and s.name and s.name.strip() not in ein:
                 entfernt.append(nm)
                 continue
             behalten.append(s)
         m.supports = behalten
-        for coll, art in ((m.line_supports, "Linienlager"),
-                          (m.surface_supports, "Flächenlager")):
+        for coll, art, extra in ((m.line_supports, "Linienlager", set(self.linienlager_aus)),
+                                 (m.surface_supports, "Flächenlager", set(self.flaechenlager_aus))):
             rest = []
-            for s in coll:
-                nm = (s.name or "").strip()
-                if nm and (nm in aus or (ein and nm not in ein)):
+            for i, s in enumerate(coll):
+                nm = (s.name or "").strip() or f"{art} {i}"
+                if self._gemeint(s, i, aus | extra) or (ein and s.name and s.name.strip() not in ein):
                     entfernt.append(nm)
                     continue
                 rest.append(s)

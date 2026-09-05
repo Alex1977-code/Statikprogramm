@@ -48,16 +48,29 @@ class Maske(QtWidgets.QFrame):
     angewendet = QtCore.Signal(dict)
     geschlossen = QtCore.Signal()
     abgebrochen = QtCore.Signal()
+    #: Klickmodus fuer Objekte der Ansicht: "" (keiner), "linie", "flaeche"
+    #: oder "objekt" (Flaeche oder Volumen). Ist er gesetzt, gehen Klicks auf
+    #: solche Objekte an objekt_angeklickt(art, name) statt in die Auswahl.
+    objekt_modus: str = ""
+
+    def objekt_angeklickt(self, art: str, name: str):
+        """Ein Objekt der Ansicht wurde im Klickmodus getroffen (wird je Maske
+        als Instanzattribut ueberschrieben)."""
 
     def __init__(self, titel: str, felder: list, parent=None, knoten: int = 0,
                  hinweis: str = "", knopf: str = "Anwenden", abbrechen: str = "",
-                 zusatz: list = None):
+                 zusatz: list = None, punkte: bool = False):
         super().__init__(parent)
         self.setObjectName("maske")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.titel = titel
         self.n_knoten = int(knoten)
+        # punkte=True: die Maske sammelt Weltpunkte (Fang auf Knoten, Kanten,
+        # Linien, Raster, Arbeitsebene) statt Knotennummern - Messen und
+        # Bemassen legen dafuer keine Knoten an
+        self.punkte = bool(punkte)
+        self.gewaehlt_punkte: list = []
         self.gewaehlt: list[int] = []
         self._felder: dict[str, QtWidgets.QWidget] = {}
 
@@ -157,6 +170,12 @@ class Maske(QtWidgets.QFrame):
     def _klickhinweis(self) -> str:
         if not self.n_knoten:
             return "Werte eintragen und „Anwenden“ – die Maske bleibt offen."
+        if self.punkte:
+            if self.n_knoten >= 20:
+                return ("In der Ansicht Punkte der Reihe nach anklicken (Knoten, Kanten, "
+                        "Linien, Raster) – „Anwenden“ beendet. Esc schließt.")
+            return (f"In der Ansicht {self.n_knoten} Punkt{'e' if self.n_knoten > 1 else ''} "
+                    "anklicken (Knoten, Kanten, Linien, Raster, Arbeitsebene). Esc schließt.")
         return (f"In der Ansicht {self.n_knoten} Knoten anklicken – oder die "
                 "Nummern eintragen. Esc schließt.")
 
@@ -180,6 +199,8 @@ class Maske(QtWidgets.QFrame):
                     except ValueError:
                         out[name] = 0.0
         out["knoten"] = list(self.gewaehlt)
+        if self.punkte:
+            out["punkte"] = [[float(x) for x in p] for p in self.gewaehlt_punkte]
         return out
 
     def setzen(self, name: str, wert):
@@ -215,12 +236,31 @@ class Maske(QtWidgets.QFrame):
         if len(self.gewaehlt) >= self.n_knoten:
             self.anwenden()
 
+    def punkt_angeklickt(self, p):
+        """Ein Weltpunkt wurde in der Ansicht angeklickt (Maske mit punkte=True)."""
+        if not self.n_knoten or not self.punkte:
+            return
+        self.gewaehlt_punkte.append([float(x) for x in p])
+        self._zeige_auswahl()
+        if len(self.gewaehlt_punkte) >= self.n_knoten:
+            self.anwenden()
+
     def auswahl_leeren(self):
         self.gewaehlt.clear()
+        self.gewaehlt_punkte.clear()
         self._zeige_auswahl()
 
     def _zeige_auswahl(self):
         if not self.n_knoten:
+            return
+        if self.punkte:
+            n = len(self.gewaehlt_punkte)
+            if not n:
+                self.lbl_hinweis.setText(self._klickhinweis())
+            else:
+                p = self.gewaehlt_punkte[-1]
+                ziel = f"{n} von {self.n_knoten}" if self.n_knoten < 20 else f"{n}, „Anwenden“ beendet"
+                self.lbl_hinweis.setText(f"Punkt {n}: ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f})  ({ziel})")
             return
         n = len(self.gewaehlt)
         liste = ", ".join(str(i + 1) for i in self.gewaehlt) or "keiner"
@@ -298,6 +338,13 @@ class Maskenrand(QtCore.QObject):
             if self.ziel is not None:
                 self.ziel.removeWidget(m)
             m.hide()
+            # Auch eine ersetzte Maske ist „zu“: wer auf ihr Schliessen hoert
+            # (etwa die Vorschau einer Stellung, die Elemente ausblendet),
+            # muss es erfahren - sonst blieben die Elemente ausgeblendet
+            try:
+                m.geschlossen.emit()
+            except (RuntimeError, AttributeError):
+                pass
             m.deleteLater()
 
     def _vergessen(self):
@@ -311,6 +358,22 @@ class Maskenrand(QtCore.QObject):
         if not self.offen() or not self.maske.n_knoten:
             return False
         self.maske.knoten_angeklickt(i)
+        return True
+
+    def will_punkte(self) -> bool:
+        """Sammelt die offene Maske Weltpunkte statt Knoten?"""
+        return self.offen() and bool(self.maske.n_knoten) and bool(getattr(self.maske, "punkte", False))
+
+    def objekt_modus(self) -> str:
+        """Klickmodus der offenen Maske ("" = keiner): Linien, Flaechen oder
+        Objekte gehen dann an die Maske statt in die Auswahl."""
+        return str(getattr(self.maske, "objekt_modus", "") or "") if self.offen() else ""
+
+    def punkt_angeklickt(self, p) -> bool:
+        """Einen Weltpunkt an die Maske geben; True, wenn sie ihn genommen hat."""
+        if not self.will_punkte():
+            return False
+        self.maske.punkt_angeklickt(p)
         return True
 
     def _platzieren(self):

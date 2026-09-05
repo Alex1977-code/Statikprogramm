@@ -1162,7 +1162,7 @@ def main():
             check(f"Modellbaum: Zweig „{zweig}“", zweig in namen)
 
         register = [w.tab_unten.tabText(i) for i in range(w.tab_unten.count())]
-        for reg in ("Knoten", "Linien", "Elemente", "Lager", "Gelenke",
+        for reg in ("Knoten", "Linien", "Stäbe", "Lager", "Gelenke",
                     "Lastfälle", "Kombinationen"):
             check(f"Tabelle unten: „{reg}“", reg in register)
         check("Knotentabelle gefüllt", len(w.tbl_knoten.modell.zeilen) == mb.nn,
@@ -1197,8 +1197,10 @@ def main():
               and mb.supports[0].name == "Fußpunkt links")
         check("Symbolgröße in der Tabelle editierbar",
               w._lager_aendern(0, 6, 2.5) and mb.supports[0].groesse == 2.5)
+        check("Lastfallnummer in der Tabelle editierbar",
+              w._lastfall_aendern(0, 1, 7) and mb.load_cases[list(mb.load_cases)[0]].nummer == 7)
         check("Lastfallbeschreibung editierbar",
-              w._lastfall_aendern(0, 2, "Eigenlast Dach")
+              w._lastfall_aendern(0, 3, "Eigenlast Dach")
               and list(mb.load_cases.values())[0].description == "Eigenlast Dach")
 
         # Modellbaum: Klick waehlt aus, Doppelklick oeffnet
@@ -1295,6 +1297,7 @@ def main():
         w.new_model()
         w.error = lambda msg: check("Geometrie: unerwarteter Fehler", False, str(msg)[:60])
         mg = w.model
+        mg.netz.teilung_uebersteuern = False     # die Teilung der Flächen gilt hier
         mg.add_nodes(np.array([[0, 0, 0], [4, 0, 0], [4, 2, 0], [0, 2, 0.]]))
         for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
             mg.add_line(f"L{i + 1}", [a, b])
@@ -1306,14 +1309,24 @@ def main():
               and w.cb_auswahlart.currentText() == "Linie")
         check("Linie unter dem Zeiger gefunden",
               vpg.line_at(mg, [2.0, 0.0, 0.0], mg.characteristic_size()) == "L1")
+        # Intelligente Auswahl (Vorgabe: an): ein Klick auf eine Linie des
+        # geschlossenen Rands holt den ganzen Ring, der naechste nimmt ihn weg
+        w._picked([2.0, 0, 0])
+        check("ein Klick wählt den geschlossenen Rand (intelligente Auswahl): vier Linien",
+              sorted(w.sel_linien) == ["L1", "L2", "L3", "L4"], str(w.sel_linien))
+        w._picked([2.0, 0.0, 0.0])
+        check("nochmaliger Klick nimmt den ganzen Zug wieder heraus",
+              not w.sel_linien, str(w.sel_linien))
+        w.act_klug.setChecked(False)
         for punkt in ([2.0, 0, 0], [4.0, 1.0, 0], [2.0, 2.0, 0], [0, 1.0, 0]):
             w._picked(punkt)
-        check("vier Linien ausgewählt", w.sel_linien == ["L1", "L2", "L3", "L4"],
+        check("Schalter aus: vier Klicks, vier Linien", w.sel_linien == ["L1", "L2", "L3", "L4"],
               str(w.sel_linien))
         w._picked([2.0, 0.0, 0.0])
-        check("nochmaliger Klick nimmt die Linie wieder heraus",
-              "L1" not in w.sel_linien, str(w.sel_linien))
+        check("Schalter aus: nochmaliger Klick nimmt nur die eine Linie heraus",
+              "L1" not in w.sel_linien and len(w.sel_linien) == 3, str(w.sel_linien))
         w._picked([2.0, 0.0, 0.0])
+        w.act_klug.setChecked(True)
 
         f = mg.add_flaeche("F1", w.sel_linien, dicke=list(mg.shells)[0],
                            material=list(mg.materials)[0], teilung=[8, 4])
@@ -1816,7 +1829,7 @@ def main():
               and tu.tabText(tu.currentIndex()) == "Nachweise EC3"
               and tu.currentWidget() is w.tbl_design, tu.currentGroup())
         check("Reihenfolge in der Gruppe folgt der Vorgabe",
-              tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
+              tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Stäbe",
                                         "Schweißnähte"],
               str(tu.tabellen("Modell")))
         check("eine Gruppe mit nur einer Tabelle zeigt keine zweite Leiste",
@@ -1976,27 +1989,74 @@ def main():
         check("Subsystem löschen, Rückgängig holt es zurück", "Stiel A" not in m_.subsysteme
               and (w.undo() or True) and "Stiel A" in w.model.subsysteme)
         m_ = w.model
-        # Situation: die Elemente des Stabs deaktivieren
-        w._baum_geklickt("situation_neu", "+ Situation anlegen")
+        # Stellung (Maske rechts): der Riegel wirkt nicht - ohne ihn bleibt die
+        # Halle stabil (die Stiele stehen unten eingespannt), ohne Stiel nicht
+        from statik3d.gui import masken as msk_
+        stab = "Riegel"
+        els = set(m_.members[stab].elements)
+        w._baum_geklickt("stellung_neu", "+ Stellung anlegen")
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Neu: Situation-Maske mit Stellung, Deaktiviert und drei Knöpfen",
-              mk.titel == "Neu: Situation" and mk.werte()["stellung"].startswith("–")
-              and set(mk.zusatzknoepfe) == {"Auswahl deaktivieren", "Auswahl aktivieren", "Alle aktivieren"})
+        check("Neu: Stellung-Maske rechts: Bezeichnung, Ausgangsstellung, Verschiebung, Verdrehung, "
+              "deaktivierte Stäbe/Flächen/Volumen/Gelenke/Lager - mehr nicht",
+              isinstance(mk, msk_.Maske) and mk.titel.startswith("Neu: Stellung")
+              and {"name", "basis", "dx", "dy", "dz", "winkel", "ax", "ay", "az", "px", "py", "pz",
+                   "staebe_aus", "flaechen_aus", "koerper_aus", "gelenke_aus", "lager_aus",
+                   "linienlager_aus", "flaechenlager_aus"} <= set(mk.werte())
+              and "beschreibung" not in mk.werte() and "faelle" not in mk.werte()
+              and set(mk.zusatzknoepfe) == {"Auswahl deaktivieren", "Auswahl aktivieren", "Alle aktivieren"},
+              str(sorted(mk.werte())))
         w.clear_selection()
         w.sel_staebe = [stab]
         mk.zusatzknoepfe["Auswahl deaktivieren"].click()
         app.processEvents()
-        check("„Auswahl deaktivieren“: Elemente in der Maske und im Bild ausgeblendet",
-              f"{len(els)} Elemente" in mk.werte()["aus"] and set(w.versteckt["elemente"]) == els,
-              mk.werte()["aus"])
-        mk.setzen("name", "ohne Stiel")
+        check("„Auswahl deaktivieren“: Stab in der Liste, seine Elemente im Bild ausgeblendet",
+              stab in w._namensliste(mk.werte()["staebe_aus"]) and set(w.versteckt["elemente"]) == els,
+              mk.werte()["staebe_aus"])
+        mk.setzen("name", "ohne Riegel")
+        mk.anwenden()
+        app.processEvents()
+        st = w.model.stellung("ohne Riegel")
+        check("OK legt die Stellung an (Stab deaktiviert), Eintrag im Baum, ihre Maske bleibt offen und "
+              "zeigt die Stellung ohne den Stab",
+              st is not None and st.staebe_aus == [stab] and set(w.versteckt["elemente"]) == els
+              and any("ohne Riegel" in t for t in zweige(w.baum))
+              and w.maskenrand.maske.titel == "Stellung ohne Riegel", str((st, len(w.versteckt["elemente"]))))
+        w.maskenrand.schliessen()
+        app.processEvents()
+        check("Maske zu: Sicht wieder hergestellt", not w.versteckt["elemente"], str(len(w.versteckt["elemente"])))
+        m_ = w.model
+        w._baum_geklickt("stellung_neu", "+ Stellung anlegen")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("name", "hoch"); mk.setzen("basis", "ohne Riegel"); mk.setzen("dz", 0.5); mk.setzen("winkel", 10.0)
+        mk.anwenden()
+        app.processEvents()
+        st2 = w.model.stellung("hoch")
+        check("Stellung mit Ausgangsstellung, Verschiebung und Verdrehung",
+              st2 is not None and st2.basis == "ohne Riegel" and st2.verschiebung == (0.0, 0.0, 0.5)
+              and st2.dreh_winkel == 10.0 and st2.winkel == 10.0, str(st2))
+        m_ = w.model
+        wurzel_ = w.baum.topLevelItem(0)
+        oben_ = [wurzel_.child(i).text(0) for i in range(wurzel_.childCount())]
+        check("Baum: Subsysteme vor Stellungen vor Situationen",
+              oben_.index("Subsysteme") < oben_.index("Stellungen") < oben_.index("Situationen"), str(oben_))
+        # Situation: nur noch Stellung + Lastfaelle/Kombinationen
+        w._baum_geklickt("situation_neu", "+ Situation anlegen")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neu: Situation-Maske: Stellung, Lastfälle, Kombinationen - keine Deaktivierung mehr",
+              mk.titel == "Neu: Situation" and mk.werte()["stellung"].startswith("–")
+              and {"lastfaelle", "kombinationen"} <= set(mk.werte()) and "aus" not in mk.werte()
+              and set(mk.zusatzknoepfe) == {"Alle Lastfälle und Kombinationen"}, str(sorted(mk.werte())))
+        mk.setzen("name", "ohne Stiel"); mk.setzen("stellung", "ohne Riegel")
         mk.anwenden()
         app.processEvents()
         sit = m_.situationen.get("ohne Stiel")
-        check("OK legt die Situation an und stellt die Sicht wieder her",
-              sit is not None and set(sit.deaktiviert) == els and not w.versteckt["elemente"]
-              and "ohne Stiel" in zweige(w.baum), str(sit))
+        check("OK legt die Situation an: Stellung zugeordnet, Elemente der Stellung ohne Wirkung",
+              sit is not None and sit.stellung == "ohne Riegel" and not w.versteckt["elemente"]
+              and "ohne Stiel" in zweige(w.baum)
+              and set(np.where(~m_.aktive_elemente("ohne Stiel"))[0]) == els, str(sit))
         d = dg.LoadCaseDialog(w, existing=list(m_.load_cases), situationen=m_.situationsnamen())
         check("Lastfalldialog bietet die Situationen",
               [d.situation.itemText(i) for i in range(d.situation.count())] == [GRUND, "ohne Stiel"])
@@ -2030,31 +2090,41 @@ def main():
                 break
         app.processEvents()
         r_ = w.current_result()
-        check("Ergebnis der Situation: abgeschaltete Elemente ohne Schnittgrößen, im Bild weggelassen",
+        check("Ergebnis der Situation: Elemente der Stellung ohne Schnittgrößen, im Bild weggelassen",
               r_ is not None and r_.info.get("situation") == "ohne Stiel"
               and all(np.allclose(r_.beam_end[i], 0) for i in els)
               and set(r_.info.get("inaktiv", [])) == els, str(r_.name if r_ else None))
         w._baum_geklickt("situation", "ohne Stiel")
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Situation zeigen: Maske und ausgeblendete Elemente",
-              mk.titel == "Situation ohne Stiel" and set(w.versteckt["elemente"]) == els)
-        mk.zusatzknoepfe["Alle aktivieren"].click()
+        check("Situation zeigen: Maske nennt Lastfall und Kombination, Elemente der Stellung ausgeblendet",
+              mk.titel == "Situation ohne Stiel" and "LFS" in mk.werte()["lastfaelle"]
+              and "KS" in mk.werte()["kombinationen"] and set(w.versteckt["elemente"]) == els,
+              str((mk.werte()["lastfaelle"], mk.werte()["kombinationen"])))
+        mk.setzen("kombinationen", "")
         mk.anwenden()
         app.processEvents()
-        check("Übernehmen: alles wieder aktiv", m_.situationen["ohne Stiel"].deaktiviert == []
+        check("Übernehmen: nicht mehr genannte Kombination fällt in die Grundstellung zurück, Sicht wieder da",
+              m_.combinations["KS"].situation == "" and m_.load_cases["LFS"].situation == "ohne Stiel"
               and not w.versteckt["elemente"])
+        fehler.clear()
+        w._baum_loeschen("stellung", "ohne Riegel")
+        check("eine benutzte Stellung wird abgewiesen", bool(fehler) and "benutzt" in fehler[0]
+              and m_.stellung("ohne Riegel") is not None, str(fehler[:1]))
         fehler.clear()
         w._baum_loeschen("situation", "ohne Stiel")
         check("eine benutzte Situation wird abgewiesen", bool(fehler) and "benutzt" in fehler[0]
               and "ohne Stiel" in m_.situationen, str(fehler[:1]))
         w._baum_loeschen("situation", GRUND)
         check("die Grundstellung lässt sich nicht löschen", len(fehler) == 2 and "Grundstellung" in fehler[1])
+        w._baum_loeschen("stellung", "hoch")
+        check("eine freie Stellung lässt sich löschen", w.model.stellung("hoch") is None and len(fehler) == 2)
+        m_ = w.model
         w.error = fehler_alt
         del w._bestaetigen
         check("Modellangaben nennen Subsysteme, Situationen, Stellungen",
               dict(w.modellangaben())["Situationen"] == "2" and dict(w.modellangaben())["Subsysteme"] == "2"
-              and "Stellungen" in dict(w.modellangaben()))
+              and dict(w.modellangaben())["Stellungen"] == "1")
         w.maskenrand.schliessen()
 
         # ---- Knicklaengen aus der Knickfigur ----
@@ -2156,24 +2226,69 @@ def main():
         w._baum_geklickt("wasserdruck_neu", "+")
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Wasserdruck-Maske mit der gewählten Fläche und den Knöpfen",
+        check("Wasserdruck-Maske mit der gewählten Fläche und den Knöpfen (Anklicken, Kennwerte)",
               mk.titel == "Neu: Wasserdruck" and "Haut" in mk.werte()["ziele"]
-              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kennwerte"}, str(mk.werte().get("ziele")))
+              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Benetzt anklicken", "Dichtlinie anklicken",
+                                            "OW-Fläche anklicken", "UW-Fläche anklicken", "Kennwerte"},
+              str(sorted(mk.zusatzknoepfe)))
+        check("Maske kennt Verfahren, Lastfall-Nr., Referenzflächen mit Seite, Sohle und Gitter",
+              all(k in mk.werte() for k in ("verfahren", "fall_nr", "ow_flaeche", "ow_seite", "uw_flaeche",
+                                             "uw_seite", "z_sohle", "gitter", "unterdruck"))
+              and str(mk.werte()["verfahren"]).startswith("strömungsnumerisch")
+              and int(mk.werte()["fall_nr"]) >= 1, str(mk.werte().get("verfahren")))
+        # Klickmodus: Dichtlinie anklicken -> Linienklick geht an die Maske
+        m_.add_line("Dicht", [ids_[0][0], ids_[nx_][0]])
+        mk.zusatzknoepfe["Dichtlinie anklicken"].click()
+        app.processEvents()
+        check("Klickmodus Dichtlinie an (Maske will Linien)", w.maskenrand.objekt_modus() == "linie")
+        mk.objekt_angeklickt("linie", "Dicht")
+        app.processEvents()
+        check("angeklickte Linie wird Dichtlinie und ist markiert",
+              "Dicht" in mk.werte()["dichtung"] and w.sel_linien == ["Dicht"], str(mk.werte().get("dichtung")))
+        mk.zusatzknoepfe["Dichtlinie anklicken"].click()
+        app.processEvents()
+        check("Klickmodus wieder aus", w.maskenrand.objekt_modus() == "")
         mk.setzen("h_ow", 4.0)
         mk.setzen("richtung", "global x")
         mk.setzen("absenkung", False)
+        mk.setzen("fall_nr", 5)
         mk.zusatzknoepfe["Kennwerte"].click()
         app.processEvents()
-        check("Kennwerte in der Maske: F = ½ρgh²b = 235,4 kN", "235.4 kN" in mk.werte()["kennwerte"],
+        check("Kennwerte in der Maske: F = ½ρgh²b = 235,4 kN aus dem Druckfeld (numerisch)",
+              "235.4 kN" in mk.werte()["kennwerte"] and "numerisch" in mk.werte()["kennwerte"],
               mk.werte()["kennwerte"])
+        fortschritt_ = []
+        alt_fort = w._fortschritt
+        w._fortschritt = lambda wert, text: (fortschritt_.append(wert), alt_fort(wert, text))[1]
         mk.anwenden()
         app.processEvents()
+        w._fortschritt = alt_fort
         wd_ = m_.wasserdruecke.get("W1")
-        check("„Lasten erzeugen“: Generierer, Lastfall, Objektlast, Elementlasten nur unter Wasser",
-              wd_ is not None and wd_.lastfall in m_.load_cases
-              and any(gl.verlauf.get("art") == "wasser" for gl in m_.load_cases[wd_.lastfall].geometrielasten)
+        check("„Lasten erzeugen“: Generierer, Lastfall Nr. 5, Objektlast mit Druckfeld, Elementlasten nur unter Wasser",
+              wd_ is not None and wd_.lastfall in m_.load_cases and m_.load_cases[wd_.lastfall].nummer == 5
+              and any(gl.verlauf.get("art") == "wasser" and gl.verlauf.get("feld")
+                      for gl in m_.load_cases[wd_.lastfall].geometrielasten)
               and len(m_.load_cases[wd_.lastfall].face_loads) == 6 * 16 and "W1" in zweige(w.baum),
               str(len(m_.load_cases[wd_.lastfall].face_loads) if wd_ else None))
+        check("Fortschrittsbalken lief mit und ist wieder weg",
+              fortschritt_ and max(fortschritt_) == 100 and not w.progress_bar.isVisible(), str(fortschritt_[-3:]))
+        check("Lastfälle-Tabelle zeigt die Nummer",
+              any(str(z[0]) == wd_.lastfall and z[1] == 5 for z in w.tbl_lastfall.modell.zeilen))
+        # Abbruch: Modell bleibt unveraendert
+        w._baum_geklickt("wasserdruck_neu", "+")
+        app.processEvents()
+        mk2 = w.maskenrand.maske
+        mk2.setzen("name", "Wabbruch")
+        mk2.setzen("h_ow", 3.0)
+        w.sel_flaechen = ["Haut"]
+        mk2.zusatzknoepfe["Auswahl übernehmen"].click()
+        w._fortschritt = lambda wert, text: False
+        mk2.anwenden()
+        app.processEvents()
+        w._fortschritt = alt_fort
+        check("Abbrechen während der Strömungsberechnung lässt das Modell unverändert",
+              "Wabbruch" not in m_.wasserdruecke and not w.progress_bar.isVisible()
+              and "abgebrochen" in w.log.toPlainText())
         w._baum_geklickt("wasserdruck", "W1")
         app.processEvents()
         mk = w.maskenrand.maske
@@ -2190,9 +2305,10 @@ def main():
               wd_.ueberstroemt and wd_.unterstroemt and wd_.lastfall_dyn in m_.load_cases
               and len(m_.wasserdruecke) == 1, str(list(m_.load_cases)))
         bl_ = Rep(m_, None).chapter_lastgenerierer()
-        check("Bericht: Kapitel Lastgenerierer mit Tabelle, Erläuterung (Poleni) und Skizze",
-              any(x[0] == "table" for x in bl_) and any(x[0] == "figure" and "<svg" in x[1] for x in bl_)
-              and any(x[0] == "p" and "Poleni" in x[1] for x in bl_), str([x[0] for x in bl_]))
+        check("Bericht: Kapitel Lastgenerierer mit Tabelle, Erläuterung (Poleni, Potentialströmung), Druckfeld und Skizze",
+              any(x[0] == "table" for x in bl_) and sum(1 for x in bl_ if x[0] == "figure" and "<svg" in x[1]) >= 2
+              and any(x[0] == "p" and "Poleni" in x[1] for x in bl_)
+              and any(x[0] == "p" and "Potentialströmung" in x[1] for x in bl_), str([x[0] for x in bl_]))
         w._bestaetigen = lambda text: True
         w._baum_loeschen("wasserdruck", "W1")
         app.processEvents()
@@ -2235,6 +2351,10 @@ def main():
         check("Wind-Maske mit den gewählten Flächen und den Knöpfen",
               mk.titel == "Neu: Wind" and "Luv" in mk.werte()["ziele"] and "Dach" in mk.werte()["ziele"]
               and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kennwerte"}, str(mk.werte().get("ziele")))
+        check("Wind-Maske kennt Verfahren (Norm/Windkanal), Schnitt, Gitter, Reynolds, Schritte, Lastfall-Nr.",
+              all(k in mk.werte() for k in ("verfahren", "schnittart", "z_schnitt", "gitter", "re", "schritte",
+                                             "fall_nr"))
+              and str(mk.werte()["verfahren"]).startswith("Norm"), str(mk.werte().get("verfahren")))
         mk.setzen("zone", "Zone 2 (v_b,0 = 25 m/s)")
         mk.setzen("profil", "Binnenland")
         mk.setzen("richtung", "+x")
@@ -2258,6 +2378,31 @@ def main():
         check("Wind-Maske zum Bearbeiten vorbelegt",
               mk.titel == "Wind Wind1" and mk.werte()["profil"] == "Binnenland" and mk.werte()["richtung"] == "+x",
               str((mk.titel, mk.werte()["profil"], mk.werte()["richtung"])))
+        # Windkanal aus der Maske: kleines Gitter, wenige Schritte, Fortschritt
+        mk.setzen("verfahren", w.WINDVERFAHREN[1])
+        mk.setzen("gitter", 8)
+        mk.setzen("schritte", 200)
+        mk.setzen("re", 80.0)
+        fort_ = []
+        alt_fort = w._fortschritt
+        w._fortschritt = lambda wert, text: (fort_.append(wert), alt_fort(wert, text))[1]
+        mk.anwenden()
+        app.processEvents()
+        w._fortschritt = alt_fort
+        wd_ = m_.winde.get("Wind1")
+        lc_ = m_.load_cases.get(wd_.lastfall) if wd_ else None
+        check("Windkanal aus der Maske: Generierer mit Verfahren, Lasten mit c_p-Feld an den Wänden, Fortschritt lief",
+              wd_ is not None and wd_.windkanal() and lc_ is not None
+              and sum(1 for gl in lc_.geometrielasten if gl.verlauf.get("feld")) == 4
+              and fort_ and max(fort_) == 100 and "Windkanal" in w.log.toPlainText(),
+              str((wd_ and wd_.verfahren, lc_ and sum(1 for gl in lc_.geometrielasten if gl.verlauf.get("feld")),
+                   fort_[-2:])))
+        w._baum_geklickt("wind", "Wind1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Wind-Maske zeigt den Windkanal vorbelegt", str(mk.werte()["verfahren"]).startswith("numerisch")
+              and int(mk.werte()["gitter"]) == 8)
+        mk.setzen("verfahren", w.WINDVERFAHREN[0])
         mk.setzen("richtung", "Winkel [°] von +x")
         mk.setzen("winkel", 90.0)
         mk.setzen("c_pi", -0.3)
@@ -2518,6 +2663,409 @@ def main():
         del w._bestaetigen
         w.error = alt_error
 
+        # ---- Vor dem Rechnen: unvernetzte Geometrie und Teiltragwerke ohne Lager ----
+        w.new_model()
+        m_ = w.model
+        m_.netz.teilung_uebersteuern = False
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(2, 0, 0)
+        k2 = m_.add_node(0, 3, 0)
+        k3 = m_.add_node(2, 3, 0)
+        m_.add_element("beam", [k0, k1], mat_, sec_)
+        m_.add_element("beam", [k2, k3], mat_, sec_)
+        m_.fix(k0, "all")
+        m_.load_node(k1, Fz=-1000.0)
+        w.refresh_all()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w.do_solve("case")
+        app.processEvents()
+        check("„Berechnen“ bei einem Teiltragwerk ohne Lager: Meldung mit Knoten statt Solver-Abbruch",
+              bool(fehler_) and "Teiltragwerk" in fehler_[-1] and "K2" in fehler_[-1]
+              and (w.worker is None or not w.worker.isRunning()), str(fehler_[-1:])[:160])
+        m_.fix(k2, "all")
+        # Flaeche ohne Netz: Rueckfrage, Vernetzen, dann rechenbar
+        for i, (a, b) in enumerate([(k0, k1), (k1, k3), (k3, k2), (k2, k0)]):
+            m_.add_line(f"L{i + 1}", [a, b])
+        f_ = m_.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke=list(m_.shells)[0],
+                            material=mat_, teilung=[4, 4])
+        fragen_ = []
+        w._fragen = lambda titel, text: (fragen_.append(text), False)[1]
+        check("Vor dem Rechnen: Fläche ohne Netz → Rückfrage; „Nein“ bricht ab",
+              w._vor_rechnung_vernetzen() is False and fragen_ and "1 Flächen" in fragen_[-1], str(fragen_[-1:])[:120])
+        w._fragen = lambda titel, text: True
+        check("„Ja“ vernetzt die Fläche und gibt die Berechnung frei",
+              w._vor_rechnung_vernetzen() is True and len(m_.flaechen["F1"].elemente or []) == 16
+              and not [x for x in m_.check() if x.startswith("FEHLER")], str(len(m_.flaechen["F1"].elemente or [])))
+        del w._fragen
+        w.error = alt_error
+
+        # ---- Messen und Bemaßen (Register Messen) ----
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(4, 3, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1])
+        w.refresh_all()
+        w.blickrichtung("+z")
+        w.zoom_alles()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+
+        def akteure():
+            return list(w.plotter.renderer.actors)
+
+        check("Ribbon-Register „Messen“ vorhanden", "Messen" in w.ribbon._register)
+        w.messen("abstand")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Messmaske sammelt zwei Punkte statt Knoten",
+              mk.titel == "Abstand messen" and mk.punkte and mk.n_knoten == 2 and w.maskenrand.will_punkte())
+        w.maskenrand.punkt_angeklickt([0, 0, 0])
+        w.maskenrand.punkt_angeklickt([3, 4, 0])
+        app.processEvents()
+        check("Abstand 3-4-5: Messung 5.000 m mit Δx/Δy, orange gezeichnet, Maske für die nächste Messung geleert",
+              bool(w.messungen) and w.messungen[0]["text"].startswith("Abstand 5.000 m") and "Δx 3.000 m" in w.messungen[0]["text"]
+              and "messung" in akteure() and any(a.startswith("messung_text") for a in akteure())
+              and not mk.gewaehlt_punkte and "5.000 m" in mk.werte()["ergebnis"], str(w.messungen[:1]))
+        nn0 = m_.nn
+        xy_, _ = w._projizieren(np.atleast_2d(m_.nodes[k2]))
+        w.plotter.iren.interactor.SetEventInformation(int(round(xy_[0, 0])), int(round(xy_[0, 1])))
+        w._picked(None)
+        app.processEvents()
+        check("Klick auf Knoten K2 gibt der Messmaske den Punkt, ohne einen Knoten anzulegen",
+              len(mk.gewaehlt_punkte) == 1 and np.allclose(mk.gewaehlt_punkte[0], [4, 3, 0]) and m_.nn == nn0,
+              str((mk.gewaehlt_punkte, m_.nn)))
+        w.messungen_loeschen()
+        app.processEvents()
+        check("„Messungen löschen“ nimmt sie aus der Ansicht", not w.messungen and "messung" not in akteure())
+        w.messen("winkel")
+        app.processEvents()
+        for p_ in ([4, 0, 0], [0, 0, 0], [0, 3, 0]):
+            w.maskenrand.punkt_angeklickt(p_)
+        app.processEvents()
+        check("Winkelmessung 90°", bool(w.messungen) and w.messungen[-1]["text"].startswith("Winkel 90.00°"))
+        w.sel_staebe = ["S1", "S2"]
+        t_ = w.messen_auswahl()
+        check("Länge der gewählten Stäbe 4 + 3 = 7 m", bool(t_) and "Länge gesamt 7.0000 m" in t_, str(t_))
+        w.bemassung_neu("linear")
+        app.processEvents()
+        w.maskenrand.punkt_angeklickt([0, 0, 0])
+        w.maskenrand.punkt_angeklickt([4, 0, 0])
+        app.processEvents()
+        b_ = m_.bemassungen.get("M1")
+        check("Linearmaß M1: Versatzrichtung aus der Blickrichtung festgehalten, gezeichnet, im Modellbaum",
+              b_ is not None and b_.art == "linear" and b_.richtung is not None
+              and abs(np.linalg.norm(b_.richtung) - 1) < 1e-9 and abs(float(np.dot(b_.richtung, [1, 0, 0]))) < 1e-9
+              and "bemassung" in akteure() and any(a.startswith("bemassung_text") for a in akteure())
+              and "M1" in zweige(w.baum) and "Bemaßungen" in zweige(w.baum), str((b_, fehler_)))
+        w.bemassung_neu("hoehenkote")
+        app.processEvents()
+        w.maskenrand.punkt_angeklickt([4, 3, 2.5])
+        app.processEvents()
+        check("Höhenkote M2 z = 2.500 m", "M2" in m_.bemassungen and m_.bemassungen["M2"].bezug() == "Höhenkote z = 2.500 m")
+        w.bemassung_neu("kette")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        for p_ in ([0, 0, 0], [2, 0, 0], [4, 0, 0]):
+            w.maskenrand.punkt_angeklickt(p_)
+        mk.anwenden()
+        app.processEvents()
+        check("Maßkette M3 mit „Anwenden“ abgeschlossen: 2 Glieder", "M3" in m_.bemassungen and "2 Glieder" in m_.bemassungen["M3"].bezug())
+        w.bemassung_bearbeiten("M1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        r0 = list(m_.bemassungen["M1"].richtung)
+        mk.setzen("text", "L")
+        mk.setzen("umkehren", True)
+        mk.setzen("einheit", "cm")
+        mk.anwenden()
+        app.processEvents()
+        b_ = m_.bemassungen["M1"]
+        check("Bemaßung bearbeiten: Text, Einheit, Versatz umgekehrt",
+              b_.text == "L" and b_.einheit == "cm" and np.allclose(b_.richtung, -np.array(r0)))
+        w.bemassung_einstellungen()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("einheit", "mm")
+        mk.setzen("nachkomma", 0)
+        mk.anwenden()
+        app.processEvents()
+        e_ = m_.bemassung_einstellungen()
+        check("Einstellungen übernommen: mm, 0 Nachkommastellen", e_.einheit == "mm" and e_.nachkomma == 0)
+        import json as _json
+        from statik3d.model import Model as _Modell
+        m2_ = _Modell.from_dict(_json.loads(_json.dumps(m_.to_dict())))
+        check("Bemaßungen und Einstellungen werden gespeichert",
+              sorted(m2_.bemassungen) == ["M1", "M2", "M3"] and m2_.bemassung_einstellung.einheit == "mm")
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("bemassung", "M2")
+        app.processEvents()
+        check("Löschen über den Modellbaum", "M2" not in m_.bemassungen)
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt M2 zurück", "M2" in w.model.bemassungen)
+        w.bemassung_loeschen(None)
+        app.processEvents()
+        check("„Letzte Bemaßung löschen“ entfernt M3", "M3" not in w.model.bemassungen)
+        w.bemassungen_alle_loeschen()
+        app.processEvents()
+        check("„Alle Bemaßungen löschen“", not w.model.bemassungen and "bemassung" not in akteure())
+        del w._bestaetigen
+        w.error = alt_error
+
+        # ---- Fortschrittsbalken beim Vernetzen, Abbrechen ----
+        w.new_model()
+        m_ = w.model
+        m_.netz.teilung_uebersteuern = False
+        mat_ = list(m_.materials)[0]
+        t_ = list(m_.shells)[0]
+        for k in range(3):
+            y0 = 3.0 * k
+            ids_ = [m_.add_node(0, y0, 0), m_.add_node(2, y0, 0), m_.add_node(2, y0 + 2, 0), m_.add_node(0, y0 + 2, 0)]
+            for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+                m_.add_line(f"L{k}{i}", [ids_[a], ids_[b]])
+            m_.add_flaeche(f"F{k}", [f"L{k}{i}" for i in range(4)], dicke=t_, material=mat_, teilung=[4, 4])
+        w.refresh_all()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+        werte_ = []
+        alt_setvalue = w.progress_bar.setValue
+        w.progress_bar.setValue = lambda v: (werte_.append(int(v)), alt_setvalue(v))
+        w.sel_flaechen = []
+        w.geometrie_vernetzen()
+        app.processEvents()
+        check("Vernetzen: Fortschritt 0…3 je Fläche, Balken danach aus und wieder unbestimmt",
+              werte_[:4] == [0, 0, 1, 2] and werte_[-1] == 3 and not w.progress_bar.isVisible()
+              and w.progress_bar.maximum() == 0 and all(len(m_.flaechen[f"F{k}"].elemente) == 16 for k in range(3)),
+              str(werte_))
+        check("Abbrechen-Knopf in der Statuszeile, nach dem Lauf versteckt",
+              getattr(w, "btn_abbrechen", None) is not None and not w.btn_abbrechen.isVisible())
+        for k in range(3):
+            m_.flaechen[f"F{k}"].elemente = []
+        werte_.clear()
+
+        def setv_(v):
+            alt_setvalue(v)
+            werte_.append(int(v))
+            if int(v) == 1:
+                w._fortschritt_abbrechen()
+        w.progress_bar.setValue = setv_
+        w.geometrie_vernetzen()
+        app.processEvents()
+        n_el = [len(m_.flaechen[f"F{k}"].elemente or []) for k in range(3)]
+        check("Abbrechen nach der ersten Fläche: eine vernetzt, zwei ohne Netz, Protokoll nennt den Abbruch",
+              n_el[0] == 16 and n_el[1] == 0 and n_el[2] == 0 and "abgebrochen" in w.log.toPlainText()
+              and not w.progress_bar.isVisible() and not w._abbruch, str(n_el))
+        w.progress_bar.setValue = alt_setvalue
+        del w._bestaetigen
+        w.error = alt_error
+
+        # ---- Rechts nur Modellinformation; Ribbon Netz: Vernetzen, Netzeinstellungen, Generator-Masken ----
+        w.new_model()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+
+        def tab_():
+            return w.tabs.tabText(w.tabs.currentIndex())
+
+        check("Nach „Neues Modell“ steht rechts die Modellinformation", tab_() == "Modell", tab_())
+        w.maske_zeigen("Netz")
+        w.clear_selection()
+        app.processEvents()
+        check("Auswahl aufheben ohne offene Maske holt die Modellinformation zurück (kein Netz-Panel)",
+              tab_() == "Modell", tab_())
+        check("Ribbon Netz: Vernetzen, Netzeinstellungen, Vorschau; Generatoren als Masken",
+              all(hasattr(w, a) for a in ("geometrie_vernetzen", "maske_netzeinstellungen", "netz_vorschau",
+                                          "maske_stabzug", "maske_platte", "maske_quader")))
+        w.maske_platte()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("lx", 2.0)
+        mk.setzen("ly", 1.0)
+        mk.setzen("nx", 2)
+        mk.setzen("ny", 1)
+        mk.anwenden()
+        app.processEvents()
+        check("Platte-Maske erzeugt 2 Viereckelemente", len(m_.elements) == 2 and all(e.typ == "shell4" for e in m_.elements), str(fehler_))
+        w.maske_stabzug()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("z1", 1.0)
+        mk.setzen("x2", 3.0)
+        mk.setzen("z2", 1.0)
+        mk.setzen("n", 3)
+        mk.anwenden()
+        app.processEvents()
+        check("Stabzug-Maske erzeugt 3 Balken und einen Stab mit Nachweis",
+              sum(1 for e in m_.elements if e.typ == "beam") == 3 and len(m_.members) == 1, str(fehler_))
+        w.maske_quader()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("nx", 1)
+        mk.setzen("ny", 1)
+        mk.setzen("nz", 1)
+        mk.setzen("z0", 3.0)
+        mk.anwenden()
+        app.processEvents()
+        check("Quader-Maske erzeugt einen Hexaeder", sum(1 for e in m_.elements if e.typ == "hex8") == 1, str(fehler_))
+        w.maskenrand.schliessen()
+        w.clear_selection()
+        app.processEvents()
+        check("Maske geschlossen, nichts gewählt: Modellinformation", tab_() == "Modell", tab_())
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        t_ = list(m_.shells)[0]
+        ids_ = [m_.add_node(0, 0, 0), m_.add_node(4, 0, 0), m_.add_node(4, 2, 0), m_.add_node(0, 2, 0)]
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            m_.add_line(f"L{i}", [ids_[a], ids_[b]])
+        f_ = m_.add_flaeche("F1", ["L0", "L1", "L2", "L3"], dicke=t_, material=mat_, teilung=[2, 2])
+        w.refresh_all()
+        app.processEvents()
+        w.maske_netzeinstellungen()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("dichte", "eigene")
+        mk.setzen("ziellaenge", 0.5)
+        mk.setzen("intelligent", False)
+        mk.setzen("form", "Dreiecke")
+        mk.zusatzknoepfe["Vorschau"].click()
+        app.processEvents()
+        check("Netzeinstellungen: Vorschau schätzt 8 m² / 0,5² = 32 Elemente", "1 Flächen ≈ 32" in mk.werte()["vorschau"],
+              mk.werte()["vorschau"])
+        mk.anwenden()
+        app.processEvents()
+        check("Netzeinstellungen übernommen (eigene Ziellänge 0,5 m, Dreiecke, ohne Anpassung)",
+              m_.netz.dichte == "eigene" and m_.netz.ziellaenge == 0.5 and not m_.netz.intelligent and m_.netz.form == 0, str(fehler_))
+        w.maskenrand.schliessen()
+        w.sel_flaechen = []
+        w.geometrie_vernetzen()
+        app.processEvents()
+        check("Vernetzen: Teilung 8 × 4 aus der Netzdichte, 64 Dreieckelemente, Protokoll nennt die Netzdichte",
+              f_.teilung == [8, 4] and len(f_.elemente) == 64 and all(m_.elements[e].typ == "shell3" for e in f_.elemente)
+              and "Netzdichte Fläche F1" in w.log.toPlainText(), str((f_.teilung, len(f_.elemente))))
+        v_ = w.netz_vorschau()
+        check("Netzvorschau: 32 Elemente geschätzt", bool(v_) and v_["n"] == 32)
+        m_.netz.dichte = "mittel"
+        m_.netz.intelligent = True
+        m_.netz.form = 2
+        w.geometrie_vernetzen()
+        app.processEvents()
+        D_ = (16 + 4) ** 0.5
+        check("Netzdichte mittel: 16 Elemente über die Diagonale → Teilung 14 × 7, Vierecke",
+              f_.teilung == [round(4 / (D_ / 16)), round(2 / (D_ / 16))] and all(m_.elements[e].typ == "shell4" for e in f_.elemente),
+              str(f_.teilung))
+        del w._bestaetigen
+        w.error = alt_error
+
+        # ---- Lastwerte in der Ansicht; Kontextmenü der Auswahl mit Sammelmaske ----
+        w.new_model()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(4, 3, 0)
+        k3 = m_.add_node(0, 3, 0)
+        k4 = m_.add_node(0, 6, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1], beta_y=2.0)
+        m_.fix(k0, "all")
+        m_.fix(k3, [0, 1, 2])
+        for i, (a, b) in enumerate([(k0, k1), (k1, k2), (k2, k3), (k3, k0)]):
+            m_.add_line(f"L{i}", [a, b])
+        m_.load_node(k1, Fz=-12500.0)
+        m_.load_node(k2, Fx=3000.0, Mx=2000.0)
+        m_.load_beam(e0, qz=-5000.0)
+        w.refresh_all()
+        app.processEvents()
+        ak_ = list(w.plotter.renderer.actors)
+        check("Lastwerte als Zahlen an den Lasten, Einheiten [kN, kNm, kN/m] unter dem Lastfall",
+              any(a.startswith("lastwerte") for a in ak_) and any("[kN, kNm, kN/m]" in z for z in w._kopfzeile_zeilen),
+              str(w._kopfzeile_zeilen))
+        w.act_lastwerte.setChecked(False)
+        app.processEvents()
+        check("Schalter „Lastwerte“ aus: keine Zahlen, Einheiten bleiben",
+              not any(a.startswith("lastwerte") for a in w.plotter.renderer.actors)
+              and any("[kN" in z for z in w._kopfzeile_zeilen))
+        w.act_lastwerte.setChecked(True)
+        w.selection = np.array([k0, k1], int)
+        w.sel_linien = ["L0", "L1"]
+        w.sel_staebe = ["S1", "S2"]
+        menu_ = QtWidgets.QMenu()
+        ok_ = w._auswahlmenue(menu_)
+        texte_ = [a.text() for a in menu_.actions() if a.text()]
+        check("Kontextmenü der Auswahl: „Selektiertes anzeigen“, „Selektiertes ausblenden“, dann die Gruppen",
+              ok_ and texte_[:2] == ["Selektiertes anzeigen", "Selektiertes ausblenden"]
+              and "Knoten (2)" in texte_ and "Lager (1)" in texte_ and "Linien (2)" in texte_ and "Stäbe (2)" in texte_,
+              str(texte_))
+        sub_ = next(a.menu() for a in menu_.actions() if a.text() == "Knoten (2)")
+        check("Untermenü je Gruppe: Bearbeiten…, Löschen", [a.text() for a in sub_.actions()] == ["Bearbeiten…", "Löschen"])
+        w.sammelmaske("knoten", [k0, k1])
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Sammelmaske Knoten: x verschieden (leer), z gleich", mk.werte()["x"] == "" and mk.werte()["z"] == "0", str(mk.werte()))
+        mk.setzen("z", "1.5")
+        mk.anwenden()
+        app.processEvents()
+        check("z = 1,5 für beide Knoten, x bleibt je Knoten", m_.nodes[k0][2] == 1.5 and m_.nodes[k1][2] == 1.5 and m_.nodes[k1][0] == 4.0)
+        w.sammelmaske("stab", ["S1", "S2"])
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Sammelmaske Stäbe: β_y verschieden, β_z gleich", mk.werte()["beta_y"] == "" and mk.werte()["beta_z"] == "1")
+        mk.setzen("beta_y", "0.7")
+        mk.setzen("lt_check", "nein")
+        mk.anwenden()
+        app.processEvents()
+        check("β_y = 0,7 und Biegedrillknicken aus für beide Stäbe",
+              all(m_.members[s].beta_y == 0.7 and not m_.members[s].lt_check for s in ("S1", "S2")))
+        w.sammelmaske("lager", [0, 1])
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Sammelmaske Lager: u_x bei beiden gesperrt, φ_x verschieden → „(unverändert)“",
+              mk.werte()["d0"] == "ja" and mk.werte()["d3"] == "(unverändert)")
+        mk.setzen("d3", "ja")
+        mk.anwenden()
+        app.processEvents()
+        check("φ_x jetzt bei beiden Lagern gesperrt", all(3 in s.dofs for s in m_.supports))
+        w.auswahl_loeschen("linie", ["L0", "L1"])
+        app.processEvents()
+        check("Löschen der Gruppe: beide Linien weg, Auswahl leer", "L0" not in m_.lines and "L1" not in m_.lines
+              and "L2" in m_.lines and not w.sel_linien)
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt beide Linien zurück", "L0" in w.model.lines and "L1" in w.model.lines)
+        w.auswahl_loeschen("knoten", [k4])
+        app.processEvents()
+        check("Freien Knoten über das Menü löschen", w.model.nn == 4, str(w.model.nn))
+        del w._bestaetigen
+        w.error = alt_error
+
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
         w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))
@@ -2617,9 +3165,14 @@ def main():
         kn = w.glasleiste.knoepfe
         check("Glasleiste: Darstellung, Sichtbarkeit, Sicht, Fang und Auswahlart als Knöpfe",
               all(k in kn for k in ("Voll", "Drahtmodell", "knoten", "staebe", "flaechen",
-                                    "volumen", "netz", "nur_auswahl", "ausblenden",
+                                    "volumen", "netz", "auswahl_weg", "nur_auswahl", "ausblenden",
                                     "zurueck", "alles", "fang", "auswahl_Knoten",
                                     "auswahl_Volumen", "auswahl_Netz")), str(sorted(kn)))
+        check("„Alles deselektieren“ steht in der Glasleiste und nicht mehr im Schnellzugriff",
+              kn["auswahl_weg"].defaultAction() is w.act_auswahl_weg
+              and w.act_auswahl_weg.text() == "Alles deselektieren"
+              and w.act_auswahl_weg not in w.ribbon.schnellzugriff.actions(),
+              str([a.text() for a in w.ribbon.schnellzugriff.actions()]))
         check("Glasleiste: nur Symbole, der Text kommt beim Überfahren",
               all((not b.icon().isNull()) and b.toolTip()
                   and b.toolButtonStyle() == QtCore.Qt.ToolButtonIconOnly
@@ -2629,14 +3182,20 @@ def main():
               not any("zoom" in k.lower() or "holen" in k.lower() for k in kn))
         ansicht = w.centralWidget()
         mitte_leiste = w.glasleiste.x() + w.glasleiste.width() / 2
-        # mittig - oder, wenn der Wuerfel im Weg ist, knapp links von ihm
-        frei_vom_wuerfel = w.glasleiste.geometry().right() < w.ansichtswuerfel.x()
+        # mittig - oder, wenn der Wuerfel im Weg ist, knapp links von ihm; reicht
+        # die Breite (seit die Tabellen dem Fenster keine Mindestbreite mehr
+        # aufzwingen, ist es unter xvfb 1280 px breit) fuer beide nebeneinander
+        # nicht, rueckt der Wuerfel unter die Leiste - ueberschneiden nie.
+        gl0_, wf0_ = w.glasleiste.geometry(), w.ansichtswuerfel.geometry()
+        frei_vom_wuerfel = gl0_.right() < wf0_.x()
+        wuerfel_darunter = (not gl0_.intersects(wf0_)) and wf0_.y() >= gl0_.bottom()
         check("die Glasleiste steht mittig oben und nie unter dem Würfel",
               (abs(mitte_leiste - ansicht.width() / 2) <= 3 or
-               (frei_vom_wuerfel and abs(mitte_leiste - ansicht.width() / 2) < 60))
-              and frei_vom_wuerfel and w.glasleiste.y() <= 16,
+               (frei_vom_wuerfel and abs(mitte_leiste - ansicht.width() / 2) < 60)
+               or wuerfel_darunter)
+              and (frei_vom_wuerfel or wuerfel_darunter) and w.glasleiste.y() <= 16,
               f"Mitte {mitte_leiste:.0f} von {ansicht.width()} px, y = {w.glasleiste.y()}, "
-              f"rechts {w.glasleiste.geometry().right()} < Würfel {w.ansichtswuerfel.x()}")
+              f"rechts {gl0_.right()} / Würfel x {wf0_.x()} y {wf0_.y()}")
 
         # Schmales Fenster: Leiste und Wuerfel duerfen sich nie ueberschneiden
         breite_alt = w.width()
@@ -2723,13 +3282,41 @@ def main():
         w.sel_staebe = [stab]
         w.nur_auswahl_zeigen()
         app.processEvents()
-        check("Nur Auswahl zeigen blendet den Rest aus",
+        check("Selektion anzeigen blendet den Rest aus",
               w.versteckt["elemente"] == alle - elems, str(len(w.versteckt["elemente"])))
+        stabknoten = {int(n) for e in elems for n in w.model.elements[e].nodes}
+        akt = dict(w.plotter.renderer.actors)
+        punkte = np.asarray(akt["knoten"].GetMapper().GetInput().points) if "knoten" in akt else np.zeros((0, 3))
+        check("… auch die Knoten des Restes: nur die Stabknoten bleiben als Punkte",
+              w.versteckt["knoten"] == set(range(w.model.nn)) - stabknoten
+              and len(punkte) == len(stabknoten),
+              f"{len(punkte)} Punkte, {len(stabknoten)} Stabknoten, {len(w.versteckt['knoten'])} versteckt")
+        lager_akt = [a for a in akt if a.startswith("supports")]
+        lager_da = {int(s_.node) for s_ in w.model.supports} & stabknoten
+        check("… und Lager nur an sichtbaren Knoten",
+              bool(lager_akt) == bool(lager_da), str((lager_akt, sorted(lager_da))))
+        check("Befehl heißt „Selektion anzeigen“", w.act_nur_auswahl.text() == "Selektion anzeigen",
+              w.act_nur_auswahl.text())
         w.alles_zeigen()
         app.processEvents()
         check("Alles zeigen räumt auf",
               not any(w.versteckt.values()) and not w.act_alles_zeigen.isEnabled())
         w.sel_staebe = []
+        # Doppelklick mit der mittleren Maustaste: alles Sichtbare einpassen
+        from PySide6 import QtCore, QtGui
+        zaehler_ = []
+        alt_zoom = w.zoom_alles
+        w.zoom_alles = lambda: (zaehler_.append(1), alt_zoom())
+        it_ = w.plotter.interactor
+        pos_ = QtCore.QPointF(it_.width() / 2, it_.height() / 2)
+        for knopf_ in (QtCore.Qt.MiddleButton, QtCore.Qt.LeftButton):
+            ev_ = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonDblClick, pos_, pos_, knopf_, knopf_,
+                                    QtCore.Qt.NoModifier)
+            QtWidgets.QApplication.sendEvent(it_, ev_)
+            app.processEvents()
+        w.zoom_alles = alt_zoom
+        check("Doppelklick mit der mittleren Maustaste passt alles Sichtbare ein (links nicht)",
+              len(zaehler_) == 1, str(len(zaehler_)))
 
         # Drehen eines grossen Modells: Nebendarsteller bleiben kurz weg
         w.SCHNELLDREHEN_AB = 1
@@ -2996,6 +3583,538 @@ def main():
         import traceback
         traceback.print_exc()
         check("Lasten und Auswahl", False, str(ex)[:70])
+
+    # ---- Eigenschaftsmasken rechts: Lastfall, Kombination, Werkstoff, Dicke ---
+    try:
+        from statik3d.model import ShellProp as ShP_
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+        w._baum_geklickt("lastfall", "LF1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Klick auf einen Lastfall: Eigenschaftsmaske rechts (Name, Nummer, Einwirkung, Situation, Theorie, g_z)",
+              mk is not None and mk.titel == "Lastfall LF1" and w.eingaben_dock.windowTitle() == "Lastfall LF1"
+              and all(k in mk.werte() for k in ("name", "nummer", "kategorie", "beschreibung", "situation",
+                                                 "theorie", "g_z", "psi", "aktiv")), str(mk.titel if mk else None))
+        mk.setzen("name", "LF!")
+        mk.setzen("nummer", 3)
+        mk.setzen("beschreibung", "umbenannt")
+        mk.setzen("aktiv", True)
+        mk.anwenden()
+        app.processEvents()
+        check("Umbenennen aus der Maske: Modell, Kombinationen und aktiver Lastfall folgen",
+              "LF!" in m_.load_cases and "LF1" not in m_.load_cases and m_.load_cases["LF!"].nummer == 3
+              and m_.active_case == "LF!" and all("LF1" not in c.factors for c in m_.combinations.values())
+              and not fehler_, str(fehler_))
+        w._baum_bearbeiten("lastfall", "LF1")
+        app.processEvents()
+        check("Bearbeiten eines nicht mehr vorhandenen Namens stürzt nicht (Zweigmaske)", not fehler_, str(fehler_))
+        w._baum_neu("lastfaelle")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neu aus dem Zweig: Maske „Neu: Lastfall“ mit OK und Abbrechen",
+              mk is not None and mk.titel.startswith("Neu: Lastfall") and mk.btn_abbrechen is not None)
+        n_lf = len(m_.load_cases)
+        mk.anwenden()
+        app.processEvents()
+        check("OK legt den Lastfall an", len(m_.load_cases) == n_lf + 1 and not fehler_, str(fehler_))
+        kname_ = list(m_.combinations)[0]
+        w._baum_geklickt("kombination", kname_)
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("faktoren", "LF!: 1.35, S: 1.5")
+        mk.anwenden()
+        app.processEvents()
+        check("Kombinationsmaske: Faktoren als Text übernommen",
+              m_.combinations[kname_].factors == {"LF!": 1.35, "S": 1.5} and not fehler_, str(fehler_))
+        mk.setzen("faktoren", "gibtsnicht: 1")
+        mk.anwenden()
+        app.processEvents()
+        check("unbekannter Lastfall in den Faktoren wird abgewiesen", fehler_ and "gibtsnicht" in fehler_[-1])
+        fehler_.clear()
+        wname_ = list(m_.materials)[0]
+        w._baum_geklickt("werkstoff", wname_)
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("name", "S355x")
+        mk.setzen("fy", "355")
+        mk.anwenden()
+        app.processEvents()
+        check("Werkstoffmaske: Umbenennen zieht die Elemente mit, f_y in N/mm²",
+              "S355x" in m_.materials and all(e.mat != wname_ for e in m_.elements)
+              and abs(m_.materials["S355x"].fy - 355e6) < 1 and not fehler_, str(fehler_))
+        m_.add_shell_prop(ShP_("t9", 0.012))
+        w.refresh_all()
+        w._baum_geklickt("dicke", "t9")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("t", 15.0)
+        mk.anwenden()
+        app.processEvents()
+        check("Dickenmaske: t in mm", abs(m_.shells["t9"].t - 0.015) < 1e-12 and not fehler_, str(fehler_))
+        w.selection = np.array([0, 1], int)
+        w._auswahl_register()
+        app.processEvents()
+        w.selection = np.array([], int)
+        w._auswahl_register()
+        app.processEvents()
+        w.refresh_all()
+        app.processEvents()
+        check("Kontextregister weg: refresh_all greift nicht auf gelöschte Felder zu", True)
+        w.error = alt_error
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Eigenschaftsmasken rechts", False, str(ex)[:70])
+
+    # ---- Tabellen unten direkt bearbeiten, Aufklapplisten ---------------------
+    try:
+        from PySide6 import QtCore
+        from statik3d.model import Material as Mat_, ShellProp as ShP_
+        from statik3d.schweissnaehte import Schweissnaht as Sn_
+        w.new_model()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        mat_ = list(m_.materials)[0]
+        m_.add_material(Mat_("S2"))
+        t0_ = list(m_.shells)[0]
+        m_.add_shell_prop(ShP_("t2", 0.02))
+        ids_ = [m_.add_node(0, 0, 0), m_.add_node(4, 0, 0), m_.add_node(4, 2, 0), m_.add_node(0, 2, 0),
+                m_.add_node(0, 0, 2)]
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            m_.add_line(f"L{i}", [ids_[a], ids_[b]])
+        m_.add_flaeche("F1", ["L0", "L1", "L2", "L3"], dicke=t0_, material=mat_, teilung=[2, 2])
+        e0 = m_.add_element("beam", [ids_[0], ids_[4]], mat_, list(m_.sections)[0])
+        m_.schweissnaehte["N1"] = Sn_("N1", art="Kehlnaht", a=5.0)
+        w.refresh_all()
+        app.processEvents()
+        check("Tabelle „Stäbe“ (statt „Elemente“) in der Gruppe Modell",
+              "Stäbe" in w.tab_unten.tabellen("Modell") and "Elemente" not in w.tab_unten.tabellen("Modell"),
+              str(w.tab_unten.tabellen("Modell")))
+
+        def setz_(tbl, zeile, spalte, wert):
+            md = tbl.modell
+            ok = md.setData(md.index(zeile, spalte), wert, QtCore.Qt.EditRole)
+            app.processEvents()
+            return ok
+
+        check("Linien: Knotenfolge und Bemerkung in der Zelle bearbeitbar",
+              setz_(w.tbl_linie, 0, 4, f"{ids_[0]}, {ids_[2]}") and m_.lines["L0"].nodes == [ids_[0], ids_[2]]
+              and setz_(w.tbl_linie, 0, 5, "Kante") and m_.lines["L0"].comment == "Kante")
+        check("Linien: unbekannte Knoten werden abgewiesen", not setz_(w.tbl_linie, 0, 4, "99, 100"))
+        z_e = [i for i, z in enumerate(w.tbl_elem.modell.zeilen) if int(z[0]) == e0][0]
+        check("Stäbe: Knoten und Werkstoff in der Zelle bearbeitbar",
+              setz_(w.tbl_elem, z_e, 2, f"{ids_[1]}, {ids_[4]}") and m_.elements[e0].nodes == [ids_[1], ids_[4]]
+              and setz_(w.tbl_elem, z_e, 3, "S2") and m_.elements[e0].mat == "S2")
+        sp_ = w.tbl_elem.modell.spalten
+        check("Wahlspalten kennen die Aufklappwerte (Werkstoffe, Querschnitte je Zeile)",
+              sp_[3].art == "wahl" and "S2" in sp_[3].wahlwerte(w.tbl_elem.modell.zeilen[z_e])
+              and set(sp_[4].wahlwerte(w.tbl_elem.modell.zeilen[z_e])) == set(m_.sections))
+        view_ = w.tbl_elem.view
+        deleg_ = view_.itemDelegate()
+        idx_ = w.tbl_elem.filter.mapFromSource(w.tbl_elem.modell.index(z_e, 3))
+        ed_ = deleg_.createEditor(view_, QtWidgets.QStyleOptionViewItem(), idx_)
+        check("Aufklappliste als Zelleditor der Wahlspalte", isinstance(ed_, QtWidgets.QComboBox) and ed_.count() >= 2)
+        ed_.setCurrentText(mat_)
+        deleg_.setModelData(ed_, w.tbl_elem.filter, idx_)
+        app.processEvents()
+        check("Auswahl aus der Aufklappliste landet im Modell", m_.elements[e0].mat == mat_)
+        check("Flächen: Dicke, Werkstoff, Teilung in der Zelle bearbeitbar; falsche Randlinie abgewiesen",
+              setz_(w.tbl_geoflaeche, 0, 2, "t2") and m_.flaechen["F1"].dicke == "t2"
+              and setz_(w.tbl_geoflaeche, 0, 3, "S2") and m_.flaechen["F1"].material == "S2"
+              and setz_(w.tbl_geoflaeche, 0, 4, "3 × 5") and m_.flaechen["F1"].teilung == [3, 5]
+              and not setz_(w.tbl_geoflaeche, 0, 1, "L0, Lx, L2"))
+        check("Schweißnähte: Nahtart, a und Lage in der Zelle bearbeitbar, Kerbfall folgt",
+              setz_(w.tbl_naht, 0, 1, "Stumpfnaht") and m_.schweissnaehte["N1"].art == "Stumpfnaht"
+              and setz_(w.tbl_naht, 0, 3, 7.0) and m_.schweissnaehte["N1"].a == 7.0
+              and setz_(w.tbl_naht, 0, 2, "quer") and m_.schweissnaehte["N1"].lage == "quer")
+        app.processEvents()
+        check("Nahttabelle nach der Änderung neu gefüllt", w.tbl_naht.modell.zeilen[0][1] == "Stumpfnaht")
+        w.undo()
+        app.processEvents()
+        check("Zelländerung ist rückgängig machbar", w.model.schweissnaehte["N1"].lage == "längs")
+        w.error = alt_error
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Tabellen direkt bearbeiten", False, str(ex)[:70])
+
+    # ---- Mehrfachauswahl, Randlinien anklicken, intelligente Auswahl, Leuchten --
+    try:
+        from PySide6 import QtCore
+        from statik3d.gui import masken as msk_
+        w.new_model()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        mat_, t0_, sec_ = list(m_.materials)[0], list(m_.shells)[0], list(m_.sections)[0]
+        # Kette 0-1-2-3, an 3 Verzweigung nach 4 und 5; Ring 6-7-8-9 als Fläche F1
+        P_ = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 1, 0), (4, -1, 0),
+              (0, 3, 0), (2, 3, 0), (2, 5, 0), (0, 5, 0)]
+        ids_ = [m_.add_node(*p) for p in P_]
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 4), (3, 5)]):
+            m_.add_line(f"L{i}", [ids_[a], ids_[b]])
+        for i, (a, b) in enumerate([(6, 7), (7, 8), (8, 9), (9, 6)]):
+            m_.add_line(f"R{i}", [ids_[a], ids_[b]])
+        m_.add_flaeche("F1", ["R0", "R1", "R2", "R3"], dicke=t0_, material=mat_, teilung=[2, 2])
+        e_ = [m_.add_element("beam", [ids_[a], ids_[b]], mat_, sec_)
+              for a, b in [(0, 1), (1, 2), (2, 3), (3, 4), (3, 5)]]
+        for i, e in enumerate(e_):
+            m_.add_member(f"M{i}", [e])
+        w.refresh_all(); app.processEvents()
+        t_ = w.tbl_knoten
+        check("Tabellen: Mehrfachauswahl mit Umschalt/Strg (ExtendedSelection)",
+              t_.view.selectionMode() == QtWidgets.QAbstractItemView.ExtendedSelection)
+        sm_ = t_.view.selectionModel(); sm_.clearSelection()
+        for r in (0, 2, 5):
+            sm_.select(t_.filter.index(r, 0), QtCore.QItemSelectionModel.Select | QtCore.QItemSelectionModel.Rows)
+        t_._geklickt(t_.filter.index(5, 0)); app.processEvents()
+        check("drei Knotenzeilen markiert -> drei Knoten in der Ansicht, Zeilen bleiben markiert",
+              len(w.selection) == 3 and len(sm_.selectedRows()) == 3
+              and sorted(int(x) for x in t_.gewaehlte_schluessel()) == sorted(int(x) for x in w.selection),
+              str(w.selection.tolist()))
+        t2_ = w.tbl_elem; sm2_ = t2_.view.selectionModel(); sm2_.clearSelection()
+        for r in (0, 1):
+            sm2_.select(t2_.filter.index(r, 0), QtCore.QItemSelectionModel.Select | QtCore.QItemSelectionModel.Rows)
+        t2_._geklickt(t2_.filter.index(1, 0)); app.processEvents()
+        check("zwei Stabzeilen -> die Knoten beider Elemente, Statuszeile nennt Tabellenzeilen",
+              len(w.selection) == 3 and "2 Tabellenzeilen" in w.lbl_sel.text(), w.lbl_sel.text())
+        enden_ = w._linienenden()
+        check("Kette: L0 -> L0, L1, L2 (hält an der Verzweigung); Ring R0 -> alle vier; L3 allein",
+              w._kette("L0", enden_, set(enden_)) == ["L0", "L1", "L2"]
+              and sorted(w._kette("R0", enden_, set(enden_))) == ["R0", "R1", "R2", "R3"]
+              and w._kette("L3", enden_, set(enden_)) == ["L3"])
+        w.auswahlart_setzen("Linie"); w.sel_linien = []
+        w.act_klug.setChecked(True)
+        w._objekt_umschalten_klug(w.sel_linien, "L1", "Linien", enden_)
+        w._objekt_umschalten_klug(w.sel_linien, "L3", "Linien", enden_)
+        zug_ = list(w.sel_linien)
+        w._objekt_umschalten_klug(w.sel_linien, "L2", "Linien", enden_)
+        check("intelligente Auswahl: Klick auf L1 wählt L0..L2, L3 einzeln; Klick auf L2 wählt den Zug ab",
+              set(zug_) == {"L0", "L1", "L2", "L3"} and w.sel_linien == ["L3"], str((zug_, w.sel_linien)))
+        w.act_klug.setChecked(False)
+        w._objekt_umschalten_klug(w.sel_linien, "L1", "Linien", enden_)
+        check("Schalter aus: nur die angeklickte Linie", set(w.sel_linien) == {"L3", "L1"}, str(w.sel_linien))
+        w._klick_umschalt = True
+        w._objekt_umschalten_klug(w.sel_linien, "L0", "Linien", enden_)
+        w._klick_umschalt = False
+        check("Umschalt+Klick erzwingt die Kette (L0 mit L2 dazu)", set(w.sel_linien) == {"L3", "L1", "L0", "L2"},
+              str(w.sel_linien))
+        w.act_klug.setChecked(True)
+        w.sel_linien = []; w.sel_staebe = []
+        w._objekt_umschalten_klug(w.sel_staebe, "M0", "Stäbe", w._stabenden())
+        check("Stabzug M0..M2 gewählt, hält an der Verzweigung", set(w.sel_staebe) == {"M0", "M1", "M2"},
+              str(w.sel_staebe))
+        check("„Intelligente Auswahl“ als Schalter in der Glasleiste mit Symbol",
+              "auswahl_klug" in w.glasleiste.knoepfe
+              and w.glasleiste.knoepfe["auswahl_klug"].defaultAction() is w.act_klug
+              and not w.act_klug.icon().isNull() and w.act_klug.isCheckable())
+        w.sel_staebe = []; w.sel_flaechen = ["F1"]; w.redraw(); app.processEvents()
+        ak_ = list(w.plotter.renderer.actors)
+        check("gewählte unvernetzte Fläche leuchtet als Polygon", "auswahl_flaechen" in ak_ and "auswahl" in ak_,
+              str([a for a in ak_ if "auswahl" in a]))
+        w.sel_flaechen = []; w.sel_staebe = ["M0"]; w.redraw(); app.processEvents()
+        check("gewählter Stab leuchtet über seine Elemente", "auswahl_elemente" in list(w.plotter.renderer.actors))
+        w.sel_staebe = []
+        mk_ = w.flaeche_bearbeiten("F1"); app.processEvents()
+        check("Doppelklick Fläche: Maske rechts (kein Dialog) mit „Randlinien anklicken“",
+              isinstance(mk_, msk_.Maske) and mk_.titel == "Fläche F1" and w.maskenrand.maske is mk_
+              and "Randlinien anklicken" in mk_.zusatzknoepfe, str(getattr(mk_, "titel", mk_)))
+        mk_.zusatzknoepfe["Randlinien anklicken"].click(); app.processEvents()
+        check("Klickmodus: Maske erwartet Linien, die Randlinien leuchten",
+              mk_.objekt_modus == "linie" and w.maskenrand.objekt_modus() == "linie"
+              and set(w.sel_linien) == {"R0", "R1", "R2", "R3"}, str((mk_.objekt_modus, w.sel_linien)))
+        mk_.objekt_angeklickt("linie", "R1")
+        weg_ = "R1" not in w._namensliste(mk_.werte()["linien"]) and "R1" not in w.sel_linien
+        w._linie_am_zeiger = lambda: "L1"
+        w._maskenobjekt_klick("linie", np.zeros(3)); app.processEvents()
+        check("Klick nimmt R1 heraus; Klick auf L1 bringt den Zug L0, L1, L2 in die Maske",
+              weg_ and {"L0", "L1", "L2"} <= set(w._namensliste(mk_.werte()["linien"])), mk_.werte()["linien"])
+        mk_.objekt_angeklickt("flaeche", "F1")
+        mk_.zusatzknoepfe["Randlinien anklicken"].click(); app.processEvents()
+        check("falsche Art abgewiesen, Klickmodus wieder aus", "F1" not in mk_.werte()["linien"] and mk_.objekt_modus == "")
+        mk_.setzen("linien", "R0, R1, R2, R3"); mk_.setzen("vernetzen", True)
+        mk_.anwenden(); app.processEvents()
+        check("Übernehmen mit „gleich vernetzen“: F1 hat Elemente, keine Fehler",
+              len(w.model.flaechen["F1"].elemente) > 0 and not fehler_, str(fehler_[:1]))
+        w.undo(); app.processEvents()
+        check("Rückgängig nimmt das Netz wieder", not w.model.flaechen["F1"].elemente)
+        w.error = alt_error
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Mehrfachauswahl und intelligente Auswahl", False, str(ex)[:70])
+
+    # ---- Masken rechts: Querschnitt, Gelenk, Berichtsbild, Kontaktbedingung; Ribbon Struktur --
+    try:
+        from statik3d.gui import masken as msk_
+        from statik3d.model import Kontaktbedingung as Kb_, DofBehaviour as Db_
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+        gruppen_ = list(dict.fromkeys(b.gruppe for b in w.ribbon.befehle if b.register == "Struktur"))
+        texte_ = {(b.gruppe, b.text) for b in w.ribbon.befehle if b.register == "Struktur"}
+        check("Ribbon Struktur nach Objektart: Stäbe, Flächen, Volumen, Gelenke, Eigenschaften",
+              gruppen_ == ["Stäbe", "Flächen", "Volumen", "Gelenke", "Eigenschaften"]
+              and {("Stäbe", "Stab"), ("Stäbe", "Stabzug"), ("Flächen", "Schale"), ("Flächen", "Fläche aus Linien"),
+                   ("Volumen", "Volumen aus Flächen"), ("Gelenke", "Gelenk"), ("Gelenke", "Gelenke setzen…"),
+                   ("Eigenschaften", "Querschnitte")} <= texte_, str(gruppen_))
+        sec_ = list(m_.sections)[0]
+        A_alt = m_.sections[sec_].A
+        mk = w.querschnitt_bearbeiten(sec_)
+        app.processEvents()
+        check("Querschnitt: Maske rechts mit Kennwerten in cm und „Neu aus Profil“",
+              isinstance(mk, msk_.Maske) and mk.titel == f"Querschnitt {sec_}"
+              and abs(mk.werte()["A"] - A_alt * 1e4) < 1e-9 and "Neu aus Profil …" in mk.zusatzknoepfe
+              and isinstance(w.leuchtet, list), str(mk.werte().get("A") if mk else None))
+        mk.setzen("A", 123.4); mk.setzen("name", sec_ + "x")
+        mk.anwenden()
+        app.processEvents()
+        check("Querschnitt übernommen: A in cm², umbenannt, Elemente und Tabelle nachgezogen",
+              sec_ + "x" in w.model.sections and abs(w.model.sections[sec_ + "x"].A - 123.4e-4) < 1e-12
+              and all(e.sec != sec_ for e in w.model.elements if e.typ == "beam") and not fehler_
+              and any(str(z[0]) == sec_ + "x" for z in w.tbl_sec.modell.zeilen), str(fehler_[:1]))
+        w.undo()
+        app.processEvents()
+        check("Querschnitt rückgängig", sec_ in w.model.sections and abs(w.model.sections[sec_].A - A_alt) < 1e-15)
+        m_ = w.model
+        mk = w.add_hinge()
+        app.processEvents()
+        check("Gelenk neu (Ribbon Struktur → Gelenk): Maske rechts mit sechs Freiheitsgraden",
+              isinstance(mk, msk_.Maske) and mk.titel.startswith("Neu: Gelenk") and "typ4" in mk.werte()
+              and "k4" in mk.werte() and mk.werte()["end"] == "Stabanfang")
+        mk.setzen("name", "G1"); mk.setzen("end", "Stabende"); mk.setzen("typ4", "gelenkig")
+        mk.setzen("typ5", "Feder"); mk.setzen("k5", 1500.0)
+        mk.anwenden()
+        app.processEvents()
+        h_ = w.model.hinges.get("G1")
+        check("Gelenk angelegt: Stabende, φy gelenkig, φz Feder 1500 kNm/rad; Baum verträgt Gelenke am Stabende",
+              h_ is not None and h_.end == 1 and h_.typ[4] == "free" and h_.typ[5] == "spring"
+              and abs(h_.stiffness[5] - 1.5e6) < 1e-6 and not fehler_ and "G1" in zweige(w.baum),
+              str((h_, fehler_[:1])))
+        m_ = w.model
+        e0 = m_.members["Riegel"].elements[0]
+        m_.apply_hinge(e0, "G1")
+        mk = w.gelenk_bearbeiten("G1")
+        app.processEvents()
+        check("Gelenk bearbeiten: Maske nennt die Elemente, sie leuchten",
+              mk.titel == "Gelenk G1" and f"E{e0}" in mk.werte()["elemente"] and w.leuchtet == [e0],
+              str(mk.werte()["elemente"]))
+        mk.setzen("typ4", "biegesteif")
+        mk.anwenden()
+        app.processEvents()
+        check("Gelenk geändert: Element folgt (φy nicht mehr frei, Feder φz bleibt)",
+              10 not in w.model.elements[e0].hinges and any(d == 11 for d, k in w.model.elements[e0].hinge_springs),
+              str((w.model.elements[e0].hinges, w.model.elements[e0].hinge_springs)))
+        w._baum_loeschen("gelenk", "G1")
+        app.processEvents()
+        check("Gelenk gelöscht: Element wieder biegesteif",
+              "G1" not in w.model.hinges and not w.model.elements[e0].hinge_springs)
+        m_ = w.model
+        w.ansicht_in_bericht()
+        app.processEvents()
+        mk = w.berichtseintrag_bearbeiten("0") if m_.bericht else None
+        app.processEvents()
+        check("Berichtsbild: Maske rechts statt Dialog", isinstance(mk, msk_.Maske) and mk.titel == "Berichtsbild 1")
+        mk.setzen("beschriftung", "Momente am Rahmen")
+        mk.anwenden()
+        app.processEvents()
+        check("Bildunterschrift übernommen", w.model.bericht[0].beschriftung == "Momente am Rahmen")
+        m_ = w.model
+        m_.kontaktbedingungen["Fuge"] = Kb_("Fuge", flaechen=[1], volumen=[], ziele=1, typ="4",
+                                           behaviour={0: Db_("rigid"), 2: Db_("free", failure="zug")})
+        w.refresh_all()
+        app.processEvents()
+        w._baum_geklickt("kontaktbedingung", "Fuge")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Kontaktbedingung: Maske rechts mit Wirkung je FHG, Trennung und „Kontaktfugen ausführen“",
+              mk.titel == "Kontaktbedingung Fuge" and "uz=frei (Ausfall bei Zug)" in mk.werte()["wirkung"]
+              and "nicht ausgeführt" in mk.werte()["ausgefuehrt"] and "Kontaktfugen ausführen" in mk.zusatzknoepfe,
+              str(mk.werte()))
+        mk.setzen("beschreibung", "Lagerfuge")
+        mk.anwenden()
+        app.processEvents()
+        check("Kontaktbedingung: Beschreibung übernommen, Warnzeichen vor dem Namen im Baum",
+              w.model.kontaktbedingungen["Fuge"].beschreibung == "Lagerfuge" and not fehler_
+              and any(t.startswith("⚠ Fuge") for t in zweige(w.baum)), str(fehler_[:1]))
+        w.error = alt_error
+        del w._bestaetigen
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Masken rechts (Querschnitt, Gelenk, Bericht, Kontakt)", False, str(ex)[:70])
+
+    # ---- Klick und Ziehen; Bericht ohne Berechnung ---------------------------
+    try:
+        from PySide6 import QtCore, QtGui
+        from statik3d.gui import dialogs as dlg_
+        w.load_example("hall")
+        app.processEvents()
+        it_ = w.plotter.interactor
+        treffer_ = []
+        alt_picked = w._picked
+        w._picked = lambda point, *a: treffer_.append(np.asarray(point))
+
+        def maus_(typ, pos, knopf, knoepfe):
+            ev = QtGui.QMouseEvent(typ, QtCore.QPointF(pos), QtCore.QPointF(pos), knopf, knoepfe,
+                                   QtCore.Qt.NoModifier)
+            QtWidgets.QApplication.sendEvent(it_, ev)
+            app.processEvents()
+
+        mitte_ = QtCore.QPoint(it_.width() // 2, it_.height() // 2)
+        maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.LeftButton, QtCore.Qt.LeftButton)
+        maus_(QtCore.QEvent.MouseButtonRelease, mitte_, QtCore.Qt.LeftButton, QtCore.Qt.NoButton)
+        check("Klick ohne Bewegung wählt (beim Loslassen)", len(treffer_) == 1 and w._klick_wartend is None,
+              str(len(treffer_)))
+        maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.LeftButton, QtCore.Qt.LeftButton)
+        for d_ in (5, 15, 30):
+            maus_(QtCore.QEvent.MouseMove, mitte_ + QtCore.QPoint(d_, d_), QtCore.Qt.NoButton, QtCore.Qt.LeftButton)
+        maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(30, 30), QtCore.Qt.LeftButton,
+              QtCore.Qt.NoButton)
+        check("Klicken und Ziehen (Drehen) wählt nichts", len(treffer_) == 1, str(len(treffer_)))
+        w._picked = alt_picked
+        alt_exec = dlg_.ReportDialog.exec
+        dlg_.ReportDialog.exec = lambda self: 0
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w.analysis = None
+        w.results = None
+        w.make_report()
+        app.processEvents()
+        dlg_.ReportDialog.exec = alt_exec
+        w.error = alt_error
+        check("Bericht ohne Berechnung: kein „Zuerst berechnen“, Dialog öffnet, Hinweis im Protokoll",
+              not fehler_ and "Bericht ohne Berechnung" in w.log.toPlainText(), str(fehler_))
+        from statik3d.report.html import Report as Rep_
+        html_ = Rep_(w.model).html()
+        check("Bericht ohne Ergebnisse enthält Modell und Einwirkungen und nennt fehlende Ergebnisse",
+              "Einwirkungen" in html_ and "keine Berechnungsergebnisse" in html_, str(len(html_)))
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Klick und Ziehen / Bericht ohne Berechnung", False, str(ex)[:70])
+
+    # ---- Einheiten und Genauigkeiten (Ansicht -> Einheiten) ----------------
+    try:
+        import json
+        from statik3d.model import Member as Mb
+        w.new_model()
+        m_ = w.model
+        w.error = lambda text: None
+        w._bestaetigen = lambda text: True
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(4, 3, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1])
+        m_.fix(k0, "all")
+        m_.fix(k2, [0, 1, 2])
+        m_.load_node(k1, Fz=-12500.0)
+        m_.load_beam(e0, qz=-5000.0)
+        w.refresh_all()
+        app.processEvents()
+        mk_ = w.tbl_knoten.modell
+        check("Vorgabe: Knotentabelle x [m] mit 4,000, Lasten [kN, kN/m]",
+              w.tbl_knoten.kopfzeile()[1] == "x [m]" and mk_.data(mk_.index(1, 1)) == "4,000"
+              and any("[kN, kN/m]" in z for z in w._kopfzeile_zeilen),
+              str((w.tbl_knoten.kopfzeile()[:2], mk_.data(mk_.index(1, 1)), w._kopfzeile_zeilen)))
+        an_ = solver.solve_all(m_, design=True)
+        w._solve_done("all", an_)
+        app.processEvents()
+        check("Kennwerte unten links: u in [mm], Rz in [kN]",
+              any(z.startswith("u ") and "[mm]" in z for z in w._kennwerte_zeilen)
+              and any(z.startswith("Rz") and "[kN]" in z for z in w._kennwerte_zeilen),
+              str(w._kennwerte_zeilen[:3]))
+        rk_ = w.tbl_react.modell
+        # Auflagerkraefte stehen als „min / max“-Paar (Umhuellende) oder als Zahl
+        roh_ = str(rk_.zeilen[0][3])
+        rz_kN = float(roh_.split("/")[0].replace(",", "."))
+        paar_ = "/" in roh_
+        maske_ = w.maske_einheiten()
+        check("Maske „Einheiten und Genauigkeiten“ rechts mit Kraft, Länge, Verformung, Spannung",
+              w.eingaben_dock.windowTitle() == "Einheiten und Genauigkeiten"
+              and all(k in maske_.werte() for k in ("kraft", "laenge", "verformung", "spannung", "nk_kraft")),
+              str(sorted(maske_.werte())))
+        w._einheiten_setzen({"kraft": "N", "laenge": "mm", "verformung": "cm", "spannung": "kN/cm²",
+                             "nk_kraft": 0, "nk_last": 1, "nk_laenge": 1, "nk_verformung": 3,
+                             "nk_spannung": 2, "nk_winkel": 1, "nk_ausnutzung": 2})
+        app.processEvents()
+        check("Modell trägt die Einheiten (N, mm, cm, kN/cm²)",
+              m_.einheiten.kraft == "N" and m_.einheiten.laenge == "mm" and m_.einheiten.nk_kraft == 0)
+        check("Tabellenköpfe folgen: x [mm], Rx [N], Mx [Nmm]",
+              w.tbl_knoten.kopfzeile()[1] == "x [mm]" and w.tbl_react.kopfzeile()[1] == "Rx [N]"
+              and w.tbl_react.kopfzeile()[4] == "Mx [Nmm]",
+              str((w.tbl_knoten.kopfzeile()[1], w.tbl_react.kopfzeile()[1:5])))
+        rz_zelle = str(rk_.data(rk_.index(0, 3)))
+        check("Zellen folgen: x = 4000,0 mm; Rz in N ohne Nachkomma (auch als min/max-Paar)",
+              mk_.data(mk_.index(1, 1)) == "4000,0"
+              and rz_zelle.split("/")[0].strip() == f"{rz_kN * 1000:.0f}".replace(".", ","),
+              str((mk_.data(mk_.index(1, 1)), rz_zelle, rz_kN)))
+        if not paar_:
+            check("Filter und Sortierung in der Anzeigeeinheit (UserRole = N)",
+                  abs(float(rk_.data(rk_.index(0, 3), QtCore.Qt.UserRole)) - rz_kN * 1000) < 1e-6)
+        csv_ = w.tbl_react.text().splitlines()
+        check("CSV-Export in der Anzeigeeinheit: Kopf [N], Wert in N",
+              csv_[0].startswith("Knoten;Rx [N];Ry [N];Rz [N];Mx [Nmm]")
+              and abs(float(csv_[1].split(";")[3].split("/")[0].replace(",", ".")) - rz_kN * 1000) < 1e-6,
+              str(csv_[:2]))
+        check("Lasten oben links in [N, N/mm], Kennwerte u in [cm], Rz in [N]",
+              any("[N, N/mm]" in z for z in w._kopfzeile_zeilen)
+              and any(z.startswith("u ") and "[cm]" in z for z in w._kennwerte_zeilen)
+              and any(z.startswith("Rz") and "[N]" in z for z in w._kennwerte_zeilen),
+              str((w._kopfzeile_zeilen, w._kennwerte_zeilen[:2])))
+        ok_ = mk_.setData(mk_.index(1, 1), "4500", QtCore.Qt.EditRole)
+        check("Eingabe in der Tabelle in mm: 4500 -> Knoten x = 4,5 m",
+              ok_ and abs(float(m_.nodes[1, 0]) - 4.5) < 1e-9, str(m_.nodes[1, 0]))
+        m2_ = Model.from_dict(json.loads(json.dumps(m_.to_dict())))
+        check("Einheiten werden mit dem Modell gespeichert",
+              m2_.einheiten.kraft == "N" and m2_.einheiten.nk_last == 1 and m2_.einheiten.spannung == "kN/cm²")
+        breiten_ = []
+        for name_ in w.tab_unten.tabellen("Modell"):
+            w.tab_unten.zeigen(name_)
+            app.processEvents()
+            breiten_.append(w.tab_unten.minimumSizeHint().width())
+        check("Tabellen zwingen dem Fenster keine Mindestbreite auf (< 700 px, auch nach dem Durchgehen)",
+              max(breiten_) < 700 and w.minimumSizeHint().width() < 900,
+              str((breiten_, w.minimumSizeHint().width())))
+        t_ = w.tbl_knoten
+        check("Filterfelder liegen über den Spalten der Kopfzeile",
+              all(abs(t_.felder[k].width() - (t_.view.columnWidth(k) - 2)) <= 2
+                  for k in range(min(3, len(t_.felder)))) and t_.filterzeile.minimumWidth() == 0,
+              str([(t_.felder[k].width(), t_.view.columnWidth(k)) for k in range(3)]))
+        w.undo()
+        w.undo()
+        app.processEvents()
+        # Rueckgaengig tauscht das Modellobjekt - darum ueber w.model pruefen
+        check("Rückgängig stellt kN und m wieder her",
+              w.model.einheiten.kraft == "kN" and w.tbl_knoten.kopfzeile()[1] == "x [m]"
+              and w.tbl_react.kopfzeile()[1] == "Rx [kN]",
+              str((w.model.einheiten.kraft, w.tbl_knoten.kopfzeile()[1])))
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Einheiten und Genauigkeiten", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
