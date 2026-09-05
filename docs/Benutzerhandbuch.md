@@ -378,7 +378,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 |---|---|
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
-| Sicht | Nur Auswahl zeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen |
+| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Ansicht → Fang*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente) — genau einer ist gedrückt |
 
@@ -387,12 +387,19 @@ nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
 und als **iso** unter dem Ansichtswürfel.
 
 **Sicht — ausblenden und wieder zeigen.** Was man nicht sieht, stört nicht:
-*Auswahl ausblenden* nimmt die gewählten Stäbe, Flächen, Volumen, Linien
-oder die Elemente an den gewählten Knoten aus dem Bild; *Nur Auswahl zeigen*
-blendet alles andere aus. *Vorherige Sicht* nimmt den letzten Schritt
+*Auswahl ausblenden* nimmt die gewählten Stäbe, Flächen, Volumen, Linien,
+Knoten oder die Elemente an den gewählten Knoten aus dem Bild; *Selektion
+anzeigen* blendet **alles andere** aus — ist nur ein Volumen gewählt,
+verschwinden auch die Stäbe, Linien, Flächen und Knoten des Restmodells samt
+ihren Lagern und Lasten. Knoten bleiben nur im Bild, wenn sie gewählt sind
+oder an einem sichtbaren Teil hängen; die Netzknoten eines ausgeblendeten
+Körpers gehen mit ihm. *Vorherige Sicht* nimmt den letzten Schritt
 zurück (bis zu zwanzig Schritte), *Alles zeigen* holt alles wieder her. Die
 Ausblendung ist nur eine Sicht — am Modell und an der Berechnung ändert sie
-nichts. Ein neues Netz oder ein anderes Modell hebt sie auf.
+nichts. Ein neues Netz oder ein anderes Modell hebt sie auf. Ein
+**Doppelklick mit der mittleren Maustaste** im Bild passt die Kamera auf
+alles ein, was gerade zu sehen ist (wie *Zoom alles*); Ausgeblendetes zählt
+dabei nicht mit.
 
 **Der Ansichtswürfel** oben rechts dreht sich mit der Ansicht und lässt sich
 **mit der Maus drehen**: auf den Würfel klicken und ziehen dreht die Kamera um
@@ -457,7 +464,10 @@ Jede Tabelle unten hat über der Kopfzeile eine **Filterzeile** — ein Feld je
 Spalte. Was dort steht, gilt sofort; mehrere Felder wirken zusammen (und, nicht
 oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist. Zahlen-
 spalten stehen in den Einheiten aus *Ansicht → Einheiten*; Filterwerte werden
-in derselben Einheit eingegeben.
+in derselben Einheit eingegeben. Spalten werden aus ihrem Inhalt breit,
+aber höchstens 360 Punkte (eine Elementliste mit tausend Nummern bleibt
+lesbar, ohne die Tabelle über die ganze Wand zu ziehen); die Tabellen
+zwingen dem Fenster keine Mindestbreite auf.
 
 | Eingabe | wirkt |
 |---|---|
@@ -1461,6 +1471,8 @@ Strg+Umschalt+C vordere Tabelle kopieren.
 
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
+Maus im Bild: Rad zoomt zum Zeiger, Doppelklick mit der mittleren Taste
+passt alles Sichtbare ein, linke Taste dreht, mittlere schiebt.
 Strg+B übernimmt die Ansicht in den Bericht.
 Fang: F3 ein/aus, Umschalt+F1 Knoten, Umschalt+F2 Kantenmitte,
 Umschalt+F3 Raster.

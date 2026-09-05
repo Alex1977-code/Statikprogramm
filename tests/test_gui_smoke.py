@@ -3033,14 +3033,20 @@ def main():
               not any("zoom" in k.lower() or "holen" in k.lower() for k in kn))
         ansicht = w.centralWidget()
         mitte_leiste = w.glasleiste.x() + w.glasleiste.width() / 2
-        # mittig - oder, wenn der Wuerfel im Weg ist, knapp links von ihm
-        frei_vom_wuerfel = w.glasleiste.geometry().right() < w.ansichtswuerfel.x()
+        # mittig - oder, wenn der Wuerfel im Weg ist, knapp links von ihm; reicht
+        # die Breite (seit die Tabellen dem Fenster keine Mindestbreite mehr
+        # aufzwingen, ist es unter xvfb 1280 px breit) fuer beide nebeneinander
+        # nicht, rueckt der Wuerfel unter die Leiste - ueberschneiden nie.
+        gl0_, wf0_ = w.glasleiste.geometry(), w.ansichtswuerfel.geometry()
+        frei_vom_wuerfel = gl0_.right() < wf0_.x()
+        wuerfel_darunter = (not gl0_.intersects(wf0_)) and wf0_.y() >= gl0_.bottom()
         check("die Glasleiste steht mittig oben und nie unter dem Würfel",
               (abs(mitte_leiste - ansicht.width() / 2) <= 3 or
-               (frei_vom_wuerfel and abs(mitte_leiste - ansicht.width() / 2) < 60))
-              and frei_vom_wuerfel and w.glasleiste.y() <= 16,
+               (frei_vom_wuerfel and abs(mitte_leiste - ansicht.width() / 2) < 60)
+               or wuerfel_darunter)
+              and (frei_vom_wuerfel or wuerfel_darunter) and w.glasleiste.y() <= 16,
               f"Mitte {mitte_leiste:.0f} von {ansicht.width()} px, y = {w.glasleiste.y()}, "
-              f"rechts {w.glasleiste.geometry().right()} < Würfel {w.ansichtswuerfel.x()}")
+              f"rechts {gl0_.right()} / Würfel x {wf0_.x()} y {wf0_.y()}")
 
         # Schmales Fenster: Leiste und Wuerfel duerfen sich nie ueberschneiden
         breite_alt = w.width()
@@ -3127,13 +3133,41 @@ def main():
         w.sel_staebe = [stab]
         w.nur_auswahl_zeigen()
         app.processEvents()
-        check("Nur Auswahl zeigen blendet den Rest aus",
+        check("Selektion anzeigen blendet den Rest aus",
               w.versteckt["elemente"] == alle - elems, str(len(w.versteckt["elemente"])))
+        stabknoten = {int(n) for e in elems for n in w.model.elements[e].nodes}
+        akt = dict(w.plotter.renderer.actors)
+        punkte = np.asarray(akt["knoten"].GetMapper().GetInput().points) if "knoten" in akt else np.zeros((0, 3))
+        check("… auch die Knoten des Restes: nur die Stabknoten bleiben als Punkte",
+              w.versteckt["knoten"] == set(range(w.model.nn)) - stabknoten
+              and len(punkte) == len(stabknoten),
+              f"{len(punkte)} Punkte, {len(stabknoten)} Stabknoten, {len(w.versteckt['knoten'])} versteckt")
+        lager_akt = [a for a in akt if a.startswith("supports")]
+        lager_da = {int(s_.node) for s_ in w.model.supports} & stabknoten
+        check("… und Lager nur an sichtbaren Knoten",
+              bool(lager_akt) == bool(lager_da), str((lager_akt, sorted(lager_da))))
+        check("Befehl heißt „Selektion anzeigen“", w.act_nur_auswahl.text() == "Selektion anzeigen",
+              w.act_nur_auswahl.text())
         w.alles_zeigen()
         app.processEvents()
         check("Alles zeigen räumt auf",
               not any(w.versteckt.values()) and not w.act_alles_zeigen.isEnabled())
         w.sel_staebe = []
+        # Doppelklick mit der mittleren Maustaste: alles Sichtbare einpassen
+        from PySide6 import QtCore, QtGui
+        zaehler_ = []
+        alt_zoom = w.zoom_alles
+        w.zoom_alles = lambda: (zaehler_.append(1), alt_zoom())
+        it_ = w.plotter.interactor
+        pos_ = QtCore.QPointF(it_.width() / 2, it_.height() / 2)
+        for knopf_ in (QtCore.Qt.MiddleButton, QtCore.Qt.LeftButton):
+            ev_ = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonDblClick, pos_, pos_, knopf_, knopf_,
+                                    QtCore.Qt.NoModifier)
+            QtWidgets.QApplication.sendEvent(it_, ev_)
+            app.processEvents()
+        w.zoom_alles = alt_zoom
+        check("Doppelklick mit der mittleren Maustaste passt alles Sichtbare ein (links nicht)",
+              len(zaehler_) == 1, str(len(zaehler_)))
 
         # Drehen eines grossen Modells: Nebendarsteller bleiben kurz weg
         w.SCHNELLDREHEN_AB = 1
@@ -3480,6 +3514,19 @@ def main():
         m2_ = Model.from_dict(json.loads(json.dumps(m_.to_dict())))
         check("Einheiten werden mit dem Modell gespeichert",
               m2_.einheiten.kraft == "N" and m2_.einheiten.nk_last == 1 and m2_.einheiten.spannung == "kN/cm²")
+        breiten_ = []
+        for name_ in w.tab_unten.tabellen("Modell"):
+            w.tab_unten.zeigen(name_)
+            app.processEvents()
+            breiten_.append(w.tab_unten.minimumSizeHint().width())
+        check("Tabellen zwingen dem Fenster keine Mindestbreite auf (< 700 px, auch nach dem Durchgehen)",
+              max(breiten_) < 700 and w.minimumSizeHint().width() < 900,
+              str((breiten_, w.minimumSizeHint().width())))
+        t_ = w.tbl_knoten
+        check("Filterfelder liegen über den Spalten der Kopfzeile",
+              all(abs(t_.felder[k].width() - (t_.view.columnWidth(k) - 2)) <= 2
+                  for k in range(min(3, len(t_.felder)))) and t_.filterzeile.minimumWidth() == 0,
+              str([(t_.felder[k].width(), t_.view.columnWidth(k)) for k in range(3)]))
         w.undo()
         w.undo()
         app.processEvents()

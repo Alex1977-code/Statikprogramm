@@ -414,6 +414,11 @@ class Datentabelle(QtWidgets.QWidget):
 
     #: Zeile angeklickt - der erste Spaltenwert (meist die Objektnummer)
     zeile_gewaehlt = QtCore.Signal(object)
+    #: Hoehe der Filterzeile
+    FILTER_HOEHE = 22
+    #: Breiter wird keine Spalte aus ihrem Inhalt (eine Elementliste mit
+    #: tausend Nummern bekommt sonst eine Spalte ueber die ganze Wand)
+    SPALTE_MAX = 360
 
     def __init__(self, spalten: list, titel: str = "", parent=None,
                  mit_kennwerten: bool = False):
@@ -448,11 +453,16 @@ class Datentabelle(QtWidgets.QWidget):
             werkzeug.addWidget(b)
         lay.addLayout(werkzeug)
 
-        # Filterzeile
+        # Filterzeile: ein Feld je Spalte, ueber der Kopfzeile ausgerichtet.
+        # Bewusst **ohne Layout**: ein Layout machte die Summe der Spalten-
+        # breiten zur Mindestbreite der Tabelle - und ueber den Reiterstapel
+        # zur Mindestbreite des Fensters, das mit jeder breiten Spalte wuchs
+        # und sich dann nicht mehr verkleinern liess. Die Felder werden in
+        # _filterbreiten auf die Kopfzeile gelegt und mit ihr gerollt.
         self.filterzeile = QtWidgets.QWidget(self)
-        self.fz_lay = QtWidgets.QHBoxLayout(self.filterzeile)
-        self.fz_lay.setContentsMargins(4, 0, 4, 0)
-        self.fz_lay.setSpacing(1)
+        self.filterzeile.setFixedHeight(self.FILTER_HOEHE)
+        self.filterzeile.setMinimumWidth(0)
+        self.filterzeile.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
         self.felder: list[QtWidgets.QLineEdit] = []
         for k, sp in enumerate(spalten):
             e = QtWidgets.QLineEdit(self.filterzeile)
@@ -461,7 +471,6 @@ class Datentabelle(QtWidgets.QWidget):
             e.setToolTip("Filter: > 0,9   1..5   = HEB 200   !Riegel")
             e.textChanged.connect(lambda t, i=k: self._filter(i, t))
             self.felder.append(e)
-            self.fz_lay.addWidget(e)
         lay.addWidget(self.filterzeile)
 
         self.view = QtWidgets.QTableView(self)
@@ -508,8 +517,12 @@ class Datentabelle(QtWidgets.QWidget):
 
         self.view.horizontalHeader().sectionResized.connect(
             lambda *_a: self._filterbreiten())
+        self.view.horizontalHeader().sectionMoved.connect(
+            lambda *_a: self._filterbreiten())
         self.view.horizontalScrollBar().valueChanged.connect(
             self.fuss.horizontalScrollBar().setValue)
+        self.view.horizontalScrollBar().valueChanged.connect(
+            lambda *_a: self._filterbreiten())
         self.modell.modelReset.connect(self._nachfuehren)
         self.filter.rowsInserted.connect(lambda *_a: self._nachfuehren())
         self.filter.rowsRemoved.connect(lambda *_a: self._nachfuehren())
@@ -520,8 +533,15 @@ class Datentabelle(QtWidgets.QWidget):
         if mit_kennwerten is not None:
             self.kennwerte_zeigen = bool(mit_kennwerten)
         self.modell.setzen(zahlen_wandeln(zeilen, self.modell.spalten))
-        self.view.resizeColumnsToContents()
+        self._spaltenbreiten()
         self._nachfuehren()
+
+    def _spaltenbreiten(self):
+        """Spaltenbreiten aus dem Inhalt, nach oben gedeckelt."""
+        self.view.resizeColumnsToContents()
+        for k in range(self.modell.columnCount()):
+            if self.view.columnWidth(k) > self.SPALTE_MAX:
+                self.view.setColumnWidth(k, self.SPALTE_MAX)
 
     def sichtbare_zeilen(self) -> list:
         out = []
@@ -552,7 +572,7 @@ class Datentabelle(QtWidgets.QWidget):
         self.modell.einheiten_aktualisieren()
         self.fussmodell.einheiten_aktualisieren()
         self.filter.invalidate()
-        self.view.resizeColumnsToContents()
+        self._spaltenbreiten()
         self._nachfuehren()
 
     @staticmethod
@@ -617,12 +637,19 @@ class Datentabelle(QtWidgets.QWidget):
         self.fuss.setVisible(bool(hoch))
 
     def _filterbreiten(self):
-        """Filterfelder und Fusszeile auf die Spaltenbreiten legen."""
+        """Filterfelder und Fusszeile auf die Spalten legen - Lage und Breite
+        wie die Kopfzeile, auch nach Rollen und Umsortieren der Spalten."""
         kopf = self.view.horizontalHeader()
+        x0 = self.view.frameWidth()
+        if self.view.verticalHeader().isVisible():
+            x0 += self.view.verticalHeader().width()
+        h = self.filterzeile.height()
         for k, e in enumerate(self.felder):
             versteckt = self.view.isColumnHidden(k)
             e.setVisible(not versteckt)
-            e.setFixedWidth(max(30, kopf.sectionSize(k) - 2))
+            if not versteckt:
+                x = x0 + kopf.sectionViewportPosition(k)
+                e.setGeometry(x + 1, 1, max(30, kopf.sectionSize(k) - 2), max(16, h - 2))
             self.fuss.setColumnHidden(k, versteckt)
             self.fuss.setColumnWidth(k, kopf.sectionSize(k))
 

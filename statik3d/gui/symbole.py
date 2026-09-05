@@ -1008,6 +1008,7 @@ RATEN = [
     ("öffnen", "oeffnen"), ("neu", "neu"), ("import", "import"),
     ("export", "export"), ("beispiel", "beispiel"),
     ("auswahl aufheben", "auswahl_weg"), ("nur auswahl", "sicht_nur_auswahl"),
+    ("selektion anzeigen", "sicht_nur_auswahl"),
     ("auswahl ausblenden", "sicht_ausblenden"), ("vorherige sicht", "sicht_zurueck"),
     ("alles zeigen", "sicht_alles"), ("auswahl", "auswahl"),
     ("löschen", "loeschen"), ("netz löschen", "netz_loeschen"),

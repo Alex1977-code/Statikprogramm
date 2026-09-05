@@ -78,10 +78,10 @@ class MainWindow(QtWidgets.QMainWindow):
         #: Elemente, die aus dem Modellbaum heraus aufleuchten
         self.leuchtet: list[int] = []
         #: Sicht: was ausgeblendet ist - Elemente (Nummern), Linien, Flaechen
-        #: und Koerper (Namen) - und die Schritte davor, damit "Vorherige
-        #: Sicht" zurueckgehen kann.
+        #: und Koerper (Namen), Knoten (Nummern) - und die Schritte davor,
+        #: damit "Vorherige Sicht" zurueckgehen kann.
         self.versteckt = {"elemente": set(), "linien": set(), "flaechen": set(),
-                          "koerper": set()}
+                          "koerper": set(), "knoten": set()}
         self._sicht_verlauf: list = []
         self._sicht_stand = None
 
@@ -228,6 +228,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 t = ereignis.type()
                 if t == QtCore.QEvent.Wheel:
                     self._rad(ereignis)
+                    return True
+                if t == QtCore.QEvent.MouseButtonDblClick and ereignis.button() == QtCore.Qt.MiddleButton:
+                    # Doppelklick mit der mittleren Maustaste: alles, was gerade
+                    # im Bild ist, einpassen (Ausgeblendetes zaehlt nicht mit)
+                    self.zoom_alles()
                     return True
                 if t == QtCore.QEvent.MouseButtonPress:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
@@ -2455,8 +2460,9 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Sicht")
         # Was man nicht sieht, stoert nicht: die Auswahl allein zeigen, die
         # Auswahl ausblenden, einen Schritt zurueck, alles wieder her.
-        self.act_nur_auswahl = g.klein("Nur Auswahl zeigen", self.nur_auswahl_zeigen,
-                                       hinweis="Alles ausser der Auswahl ausblenden",
+        self.act_nur_auswahl = g.klein("Selektion anzeigen", self.nur_auswahl_zeigen,
+                                       hinweis="Alles außer der Selektion ausblenden - auch Knoten, "
+                                               "Stäbe, Linien, Flächen, Lager und Lasten des Restes",
                                        symbol="sicht_nur_auswahl")
         self.act_auswahl_weg_sicht = g.klein("Auswahl ausblenden", self.auswahl_ausblenden,
                                              hinweis="Die ausgewählten Objekte ausblenden",
@@ -9904,14 +9910,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if getattr(r, "contact", None):
                 vp.add_contact_markers(self.plotter, m, r.contact, size)
 
+        sichtbare_knoten = self._sichtbare_knoten()      # None = alle
         try:
-            vp.add_supports(self.plotter, m, size, self.lagergroesse)
+            vp.add_supports(self.plotter, m, size, self.lagergroesse, nur=sichtbare_knoten)
             if self.act_linien.isChecked():
                 vp.add_linien(self.plotter, m, self.sel_linien,
                               ausser=self.versteckt["linien"], netz=self._linien_netz())
             vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
-                vp.add_nodes(self.plotter, m)
+                vp.add_nodes(self.plotter, m, nur=sichtbare_knoten)
             self._auswahl_zeichnen()
             if (getattr(m, "bemassungen", None) or getattr(self, "messungen", None)):
                 try:
@@ -9922,12 +9929,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._lasteinheiten = vp.add_loads(self.plotter, m, m.case(), size, raender=self._raender(),
                              seiten=self._randseiten(),
                              beschriften=getattr(self, 'act_lastwerte', None) is not None and self.act_lastwerte.isChecked(),
-                             textgroesse=int(self.model.bemassung_einstellungen().textgroesse) - 1)
+                             textgroesse=int(self.model.bemassung_einstellungen().textgroesse) - 1,
+                             ausser=self.versteckt["elemente"], knoten=sichtbare_knoten,
+                             ausser_flaechen=self.versteckt["flaechen"],
+                             ausser_linien=self.versteckt["linien"])
         except Exception as ex:
             self.log.appendPlainText(f"Darstellung: {ex}")
         if self.act_nodes.isChecked() and m.nn <= 3000:
-            self.plotter.add_point_labels(m.nodes, [str(i) for i in range(m.nn)], font_size=10,
-                                          point_size=1, shape=None, always_visible=True, name="nlabels")
+            nummern = np.arange(m.nn) if sichtbare_knoten is None else np.asarray(sichtbare_knoten, int)
+            if len(nummern):
+                self.plotter.add_point_labels(m.nodes[nummern], [str(i) for i in nummern], font_size=10,
+                                              point_size=1, shape=None, always_visible=True, name="nlabels")
         if self.act_elems.isChecked() and len(m.elements) <= 3000:
             cen = np.array([m.nodes[e.nodes].mean(axis=0) for e in m.elements])
             self.plotter.add_point_labels(cen, [str(i) for i in range(len(m.elements))], font_size=9,
@@ -10042,7 +10054,10 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
     def zoom_alles(self):
-        """Alles ins Bild holen - und zwar nur, wenn man es verlangt."""
+        """Alles, was gerade gezeichnet ist, ins Bild holen - und zwar nur,
+        wenn man es verlangt (Ribbon, iso-Knopf, Doppelklick mit der mittleren
+        Maustaste). Ausgeblendete Teile sind nicht gezeichnet und zaehlen
+        darum nicht mit."""
         try:
             self.plotter.reset_camera()
             self._kamera_steht = True
@@ -10105,11 +10120,58 @@ class MainWindow(QtWidgets.QMainWindow):
             self.versteckt = {k: set() for k in self.versteckt}
             self._sicht_verlauf = []
         else:
-            # gleiches Modell, anderes Netz: die Elementnummern sind neu
+            # gleiches Modell, anderes Netz: Element- und Netzknotennummern sind neu
             self.versteckt["elemente"] = set()
+            self.versteckt["knoten"] = set()
             for schritt in self._sicht_verlauf:
                 schritt["elemente"] = set()
+                schritt["knoten"] = set()
         self._sicht_knoepfe()
+
+    def _sichtbare_knoten(self):
+        """Die Knoten, die im Bild bleiben - oder None, wenn nichts ausgeblendet ist.
+
+        Ein Knoten bleibt, wenn ein sichtbares Element oder eine sichtbare
+        Linie an ihm haengt, oder wenn er an gar nichts haengt (ein eben
+        gesetzter Punkt). Was an ausgeblendeten Teilen haengt - auch die
+        Netzknoten eines ausgeblendeten Koerpers - verschwindet mit ihnen;
+        ausdruecklich ausgeblendete Knoten ebenso.
+        """
+        if not any(self.versteckt.values()):
+            return None
+        m = self.model
+        stand = (id(m), len(m.elements), m.nn, len(m.lines or {}))
+        if getattr(self, "_belegung_stand", None) != stand:
+            # Zugehoerigkeit einmal je Modellstand: (Element, Knoten) und (Linie, Knoten)
+            ek = [(i, int(n)) for i, e in enumerate(m.elements) for n in e.nodes
+                  if 0 <= int(n) < m.nn]
+            lk = [(name, int(n)) for name, ln in (m.lines or {}).items() for n in ln.nodes
+                  if 0 <= int(n) < m.nn]
+            self._belegung = (np.asarray([a for a, _ in ek], int), np.asarray([b for _, b in ek], int),
+                              [a for a, _ in lk], np.asarray([b for _, b in lk], int))
+            self._belegung_stand = stand
+        e_id, e_kn, l_name, l_kn = self._belegung
+        belegt = np.zeros(m.nn, bool)
+        sichtbar = np.zeros(m.nn, bool)
+        if len(e_kn):
+            belegt[e_kn] = True
+            weg = self.versteckt["elemente"]
+            if weg:
+                halten = ~np.isin(e_id, np.fromiter(weg, int, len(weg)))
+                sichtbar[e_kn[halten]] = True
+            else:
+                sichtbar[e_kn] = True
+        if len(l_kn):
+            belegt[l_kn] = True
+            weg_l = self.versteckt["linien"]
+            halten = np.array([nm not in weg_l for nm in l_name], bool) if weg_l \
+                else np.ones(len(l_kn), bool)
+            sichtbar[l_kn[halten]] = True
+        sichtbar |= ~belegt
+        if self.versteckt["knoten"]:
+            idx = [int(i) for i in self.versteckt["knoten"] if 0 <= int(i) < m.nn]
+            sichtbar[idx] = False
+        return np.flatnonzero(sichtbar)
 
     def _auswahl_leeren(self):
         self.selection = np.array([], dtype=int)
@@ -10119,7 +10181,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._auswahl_register()
 
     def nur_auswahl_zeigen(self):
-        """Alles ausser der Auswahl ausblenden - die Auswahl bleibt allein im Bild."""
+        """Selektion anzeigen: alles ausser der Auswahl ausblenden - die
+        Auswahl bleibt allein im Bild.
+
+        Ausgeblendet wird jede Objektart, die nicht zur Auswahl gehoert: bei
+        einem gewaehlten Koerper also auch die Staebe, Linien, Flaechen und
+        Knoten des Restmodells samt ihren Lagern und Lasten. Knoten bleiben
+        nur, wenn sie gewaehlt sind oder an einem sichtbaren Teil haengen.
+        """
         m = self.model
         elems = self._ausgewaehlte_elemente()
         flaechen = set(self.sel_flaechen)
@@ -10135,18 +10204,27 @@ class MainWindow(QtWidgets.QMainWindow):
                 linien.update(f.linien)
                 for o in (f.oeffnungen or []):
                     linien.update(o)
-        if not (elems or linien or flaechen or koerper):
+        knoten = {int(i) for i in self.selection} if len(self.selection) else set()
+        if not (elems or linien or flaechen or koerper or knoten):
             return self.error("Erst etwas auswählen - dann bleibt nur das im Bild.")
+        for i in elems:
+            knoten.update(int(n) for n in m.elements[i].nodes)
+        for name in linien:
+            ln = (m.lines or {}).get(name)
+            if ln is not None:
+                knoten.update(int(n) for n in ln.nodes)
         self._sicht_merken()
         self.versteckt["elemente"] = set(range(len(m.elements))) - elems
         self.versteckt["linien"] = set(m.lines or {}) - linien
         self.versteckt["flaechen"] = set(m.flaechen or {}) - flaechen
         self.versteckt["koerper"] = set(m.koerper or {}) - koerper
+        self.versteckt["knoten"] = {i for i in range(m.nn) if i not in knoten}
         self._sicht_knoepfe()
         teile = [f"{n} {was}" for n, was in ((len(elems), "Elemente"), (len(koerper), "Körper"),
-                                             (len(flaechen), "Flächen"), (len(linien), "Linien"))
+                                             (len(flaechen), "Flächen"), (len(linien), "Linien"),
+                                             (len(knoten), "Knoten"))
                  if n]
-        self.info("Nur die Auswahl im Bild (" + ", ".join(teile) + ") - "
+        self.info("Nur die Selektion im Bild (" + ", ".join(teile) + ") - "
                   "„Alles zeigen“ holt den Rest zurück")
         self.redraw()
 
@@ -10161,6 +10239,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.versteckt["linien"] |= set(self.sel_linien)
         self.versteckt["flaechen"] |= set(self.sel_flaechen)
         self.versteckt["koerper"] |= set(self.sel_koerper)
+        if len(self.selection):
+            self.versteckt["knoten"] |= {int(i) for i in self.selection}
         for name in self.sel_koerper:
             k = m.koerper.get(name)
             if k is not None:
