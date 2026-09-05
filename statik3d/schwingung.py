@@ -68,7 +68,7 @@ class Schwingungsnachweis:
     hydromasse: bool = True            # hydrodynamische Masse nach Westergaard
     betriebsstunden: float = 0.0       # Stunden je Jahr mit Durch-/Überströmung
     jahre: float = 50.0                # Nutzungsdauer
-    kerbfall: float = 71.0             # Δσ_C [MPa]
+    kerbfall: Optional[float] = 71.0   # Δσ_C [MPa]; None = aus den Schweißnähten der Haut
     gamma_Mf: float = 1.15
     gamma_Ff: float = 1.0
     kommentar: str = ""
@@ -402,10 +402,16 @@ def nachweis(model, sn: Schwingungsnachweis, analysis=None, progress=None,
                 from .ec3.fatigue import sn_life
                 N = erg.f_s * 3600.0 * float(sn.betriebsstunden) * float(sn.jahre)
                 ds_Ed = float(sn.gamma_Ff) * dyn["delta_sigma"]
-                N_R = sn_life(ds_Ed, float(sn.kerbfall) * 1e6, float(sn.gamma_Mf))
+                kf = float(sn.kerbfall) if sn.kerbfall else None
+                if kf is None:
+                    from .schweissnaehte import kerbfall_fuer_flaechen
+                    kf = kerbfall_fuer_flaechen(model, wd.flaechen, wd.dichtung)
+                    dyn["kerbfall_quelle"] = "aus den Schweißnähten" if kf else "Vorgabe 71 (keine Naht)"
+                    kf = kf or 71.0
+                N_R = sn_life(ds_Ed, kf * 1e6, float(sn.gamma_Mf))
                 D = N / N_R if np.isfinite(N_R) and N_R > 0 else 0.0
                 dyn.update({"N": N, "delta_sigma_Ed": ds_Ed, "N_R": N_R, "D": D,
-                            "kerbfall": float(sn.kerbfall), "gamma_Mf": float(sn.gamma_Mf),
+                            "kerbfall": kf, "gamma_Mf": float(sn.gamma_Mf),
                             "gamma_Ff": float(sn.gamma_Ff)})
     erg.dyn = dyn
     # Status

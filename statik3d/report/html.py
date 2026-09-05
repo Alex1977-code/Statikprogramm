@@ -664,6 +664,28 @@ class Report:
                                      "Biegedrillknicken, Kerbfall)", None, "compact"))
             if note:
                 b.append(("note", note))
+        # ---- Schweissnaehte und Kerbfaelle
+        naehte = getattr(m, "schweissnaehte", {}) or {}
+        if naehte:
+            from ..schweissnaehte import tabelle as naht_tabelle, kerbfaelle_je_stab
+            b.append(self._h(2, "Schweißnähte und Kerbfälle"))
+            b.append(("p", "Kerbfälle nach DIN EN 1993-1-9, Tabellen 8.2 bis 8.5, aus Nahtart, Lage zur "
+                           "Beanspruchung und Ausführung; Größeneinfluss k_s = (25/t)^0,2 für "
+                           "Blechdicken über 25 mm. Eine äquivalente Naht steht stellvertretend für "
+                           "die nicht einzeln modellierten Nähte; je Stab gilt der ungünstigste "
+                           "Kerbfall aller Nähte, die ihn betreffen."))
+            rows, note = self._truncate(naht_tabelle(m))
+            b.append(("table", rows, "Schweißnähte", None, "compact"))
+            if note:
+                b.append(("note", note))
+            je = kerbfaelle_je_stab(m)
+            if je:
+                rows = [["Stab", "Δσ_C [MPa]", "Δτ_C [MPa]", "aus Naht", "Fundstelle"]]
+                for stab, k in je.items():
+                    rows.append([stab, fmt(k["dsC"] / 1e6, 0), fmt(k["dtC"] / 1e6, 0),
+                                 k["naht"] + (" (äquivalent)" if k["aequivalent"] else ""), k["detail"]])
+                rows, note = self._truncate(rows)
+                b.append(("table", rows, "Kerbfälle der Stäbe aus den Schweißnähten", None, "compact"))
         # ---- Materialien
         if self.opt("materials"):
             b.append(self._h(2, "Materialien"))
@@ -2687,6 +2709,10 @@ class Report:
             "Ausnutzung = D_σ + D_τ (sinngemäß Gl. 8.3); zusätzlich wird die schadensäquivalente "
             "Schwingbreite Δσ_E,2 bei 2·10⁶ Lastspielen ausgewiesen.",
         ]))
+        if getattr(m, "schweissnaehte", None):
+            b.append(("p", "Die Kerbfälle der Stäbe folgen aus den Schweißnähten des Modells "
+                           "(Kapitel System, „Schweißnähte und Kerbfälle“): je Stab der ungünstigste "
+                           "Kerbfall aller Nähte, die ihn betreffen."))
         b.append(self._h(2, "Übersicht"))
         rows = [["Stab", "Kerbfall Δσ_C [MPa]", "γ_Mf", "max Δσ [MPa]", "Δσ_E,2 [MPa]",
                  "D_σ (Miner)", "D_τ", "Ausnutzung", "maßgebende Ermüdungslast"]]

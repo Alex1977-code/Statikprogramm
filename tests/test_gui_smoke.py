@@ -2345,6 +2345,178 @@ def main():
               and any(x[0] == "p" and "Westergaard" in x[1] for x in bl_), str([x[0] for x in bl_]))
         w.error = alt_error
 
+        # ---- Klick in der Ansicht: Fangradius, Objekt unter dem Zeiger, Auswahlfenster ----
+        from statik3d.model import Member as Mb
+        from PySide6 import QtCore
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(4, 3, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1])
+        w.refresh_all()
+        w.blickrichtung("+z")
+        w.zoom_alles()
+        app.processEvents()
+        s_ = w._pixelmass()
+        h_qt = w.plotter.interactor.height()
+
+        def klick_bei(x, y):
+            """Linksklick an der VTK-Anzeigeposition (x, y) nachstellen."""
+            w.plotter.iren.interactor.SetEventInformation(int(round(x)), int(round(y)))
+            w._letzter_klick = QtCore.QPoint(int(round(x / s_)), int(round(h_qt - 1 - y / s_)))
+            w._picked(None)
+            app.processEvents()
+
+        def px(P):
+            xy, _ = w._projizieren(np.atleast_2d(P))
+            return float(xy[0, 0]), float(xy[0, 1])
+
+        xv, yv = w._qt_nach_vtk(QtCore.QPoint(10, 20))
+        check("Qt-Bildpunkt → VTK-Anzeigepunkt: x·s, (h−y−1)·s",
+              abs(xv - round(10 * s_)) < 1e-9 and abs(yv - round((h_qt - 21) * s_)) < 1e-9
+              and abs(w._fangradius() - 14 * s_) < 1e-9, str((xv, yv, s_)))
+        w.auswahlart_setzen("Knoten")
+        w.selection = np.array([], int)
+        x_, y_ = px(m_.nodes[k1])
+        klick_bei(x_ + 5, y_ + 3)
+        check("Klick 5 Bildpunkte neben dem Knoten trifft ihn", k1 in w.selection, str(w.selection))
+        w.selection = np.array([], int)
+        x_, y_ = px(0.5 * (m_.nodes[k0] + m_.nodes[k1]) + [0.6, 0, 0])
+        klick_bei(x_, y_ + 4)
+        check("Klick auf die Stabachse in Auswahlart Knoten wählt den Stab, Auswahlart folgt",
+              w.auswahlart == "Stab" and w.sel_staebe == ["S1"], str((w.auswahlart, w.sel_staebe)))
+        w.auswahlart_setzen("Netz")
+        w.sel_elemente = []
+        x_, y_ = px(0.5 * (m_.nodes[k1] + m_.nodes[k2]))
+        w.plotter.iren.interactor.SetEventInformation(int(round(x_ + 4)), int(round(y_)))
+        check("Netz: Stabelement 4 Bildpunkte neben der Linie gefunden", w._element_am_zeiger() == e1,
+              str(w._element_am_zeiger()))
+        klick_bei(x_ + 4, y_)
+        check("… und der Klick wählt es (Elementnummer in der Anzeige)", w.sel_elemente == [e1], str(w.sel_elemente))
+        w.auswahlart_setzen("Knoten")
+        w.selection = np.array([], int)
+        w.sel_staebe = []
+        xy_, _ = w._projizieren(m_.nodes)
+        xa, ya = float(xy_[:, 0].min()) - 40, float(xy_[:, 1].min()) - 40
+        xb, yb = float(xy_[:, 0].max()) + 40, float(xy_[:, 1].max()) + 40
+        klick_bei(xa, ya)
+        check("Klick ins Leere beginnt das Auswahlfenster", w._fenster_ecke is not None)
+        klick_bei(xb, yb)
+        check("zweiter Linksklick schließt das Fenster ab: alle drei Knoten gewählt",
+              w._fenster_ecke is None and sorted(int(i) for i in w.selection) == [k0, k1, k2], str(w.selection))
+        w.selection = np.array([], int)
+        klick_bei(xa, ya)
+        klick_bei(xa + 1, ya)
+        check("Klick auf der ersten Ecke verwirft das Fenster", w._fenster_ecke is None and len(w.selection) == 0)
+        w.auswahlart_setzen("Stab")
+        w.sel_staebe = []
+        xm_, ym_ = px(0.5 * (m_.nodes[k0] + m_.nodes[k1]))
+        klick_bei(xm_ + 30, ym_ + 30)
+        klick_bei(xm_ - 30, ym_ - 30)
+        check("kreuzendes Fenster (rechts nach links) über der Stabmitte wählt den Stab",
+              w.sel_staebe == ["S1"], str(w.sel_staebe))
+        P_ = w._weltpunkt(int(round(xm_ / s_)), int(round(h_qt - 1 - ym_ / s_)))
+        check("Weltpunkt unter dem Qt-Punkt (Gerätepixel-Umrechnung) liegt auf der Stabmitte",
+              P_ is not None and np.linalg.norm(P_[:2] - [2.0, 0.0]) < 0.3, str(P_))
+        w.auswahlart_setzen("Knoten")
+        w.sel_staebe = []
+        w.sel_elemente = []
+
+        # ---- Schweißnähte und Kerbfälle ----
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(8, 0, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1])
+        w.refresh_all()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        check("Baum: Zweig Schweißnähte mit „+ Schweißnaht anlegen“",
+              "Schweißnähte" in zweige(w.baum) and "+ Schweißnaht anlegen" in zweige(w.baum))
+        w.sel_staebe = ["S1"]
+        w._baum_geklickt("schweissnaht_neu", "+")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Schweißnaht-Maske mit dem gewählten Stab und den Knöpfen",
+              mk.titel == "Neu: Schweißnaht" and "S1" in mk.werte()["ziele"]
+              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kerbfall ermitteln"}, str(mk.werte().get("ziele")))
+        mk.setzen("art", "Kehlnaht")
+        mk.setzen("lage", "quer")
+        mk.setzen("l", 90.0)
+        mk.setzen("t", 40.0)
+        mk.zusatzknoepfe["Kerbfall ermitteln"].click()
+        app.processEvents()
+        kft = mk.werte()["kerbfall"]
+        check("„Kerbfall ermitteln“: Kehlnaht quer ℓ = 90 → 63·(25/40)^0,2 = 57 N/mm², Δτ 80, Tab. 8.5",
+              "57 N/mm²" in kft and "Δτ_C = 80" in kft and "8.5" in kft, kft)
+        mk.anwenden()
+        app.processEvents()
+        ks_ = (25.0 / 40.0) ** 0.2
+        check("„Übernehmen“: Naht im Modell, Kerbfall im Stab S1, S2 ohne; Tabelle Schweißnähte (Gruppe Modell)",
+              "Naht1" in m_.schweissnaehte and m_.schweissnaehte["Naht1"].staebe == ["S1"]
+              and abs(m_.members["S1"].detail_category - 63e6 * ks_) < 1 and m_.members["S2"].detail_category is None
+              and len(w.tbl_naht.modell.zeilen) == 1 and w.tab_unten.currentGroup() == "Modell"
+              and "Naht1" in zweige(w.baum), str(fehler_))
+        w.sel_staebe = []
+        w.maske_schweissnaht()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("art", "Stumpfnaht")
+        mk.setzen("lage", "quer")
+        mk.setzen("geprueft", True)
+        mk.setzen("aequivalent", True)
+        mk.anwenden()
+        app.processEvents()
+        check("äquivalente Naht ohne Zuordnung: S2 bekommt 90, S1 behält den ungünstigeren Wert",
+              "Naht2" in m_.schweissnaehte and abs(m_.members["S2"].detail_category - 90e6) < 1
+              and abs(m_.members["S1"].detail_category - 63e6 * ks_) < 1, str(fehler_))
+        w._baum_geklickt("schweissnaht", "Naht1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Schweißnaht-Maske zum Bearbeiten vorbelegt",
+              mk.titel == "Schweißnaht Naht1" and mk.werte()["lage"] == "quer" and float(mk.werte()["l"]) == 90.0)
+        bl_ = Rep(m_, None).chapter_system()
+        check("Bericht: Tabellen „Schweißnähte“ und „Kerbfälle der Stäbe“ im Kapitel System",
+              any(x[0] == "table" and x[2] == "Schweißnähte" for x in bl_)
+              and any(x[0] == "table" and "Kerbfälle der Stäbe" in x[2] for x in bl_))
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("schweissnaht", "Naht1")
+        app.processEvents()
+        check("Löschen der Einzelnaht: S1 bekommt die äquivalente Naht (90)",
+              "Naht1" not in m_.schweissnaehte and abs(m_.members["S1"].detail_category - 90e6) < 1)
+        w._baum_loeschen("schweissnaht", "Naht2")
+        app.processEvents()
+        check("Löschen der letzten Naht: kein Kerbfall mehr in den Stäben",
+              not m_.schweissnaehte and m_.members["S1"].detail_category is None)
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt die Naht zurück (Schnappschuss vor dem Löschen)",
+              "Naht2" in w.model.schweissnaehte)
+        k3 = w.model.add_node(0, 3, 0)          # freier Knoten (kein Element haengt daran)
+        nn0 = w.model.nn
+        w._baum_loeschen("knoten", str(k3))
+        app.processEvents()
+        check("freien Knoten löschen", w.model.nn == nn0 - 1, str((nn0, w.model.nn, fehler_[-1:])))
+        w.undo()
+        app.processEvents()
+        check("Rückgängig: Knoten wieder da (Schnappschuss vor dem Löschen)", w.model.nn == nn0, str(w.model.nn))
+        del w._bestaetigen
+        w.error = alt_error
+
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
         w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))

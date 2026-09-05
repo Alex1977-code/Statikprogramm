@@ -384,16 +384,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "situationen": "Situation", "generierer": "Wasserdruck",
                  "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
-                 "geokoerper": "Volumen"}
+                 "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
-                    "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind"}
+                    "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind",
+                    "schweissnaht"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
                  "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte",
                  "subsystem": "subsysteme", "situation": "situationen",
-                 "wasserdruck": "generierer", "wind": "generierer"}
+                 "wasserdruck": "generierer", "wind": "generierer",
+                 "schweissnaht": "schweissnaehte"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -549,6 +551,15 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           for name, mm in sorted(model.members.items(),
                                                  key=lambda kv: _natuerlich(kv[0]))],
                     "stab", "staebe")
+        naehte = getattr(model, "schweissnaehte", {}) or {}
+        nz = self._zweig(st, "Schweißnähte", len(naehte), "schweissnaehte",
+                         farbe=FARBEN["akzent"] if naehte else None,
+                         hinweis="Nahtart, Lage und Ausführung → Kerbfall nach EN 1993-1-9; "
+                                 "„äquivalent“ = Ersatznaht für alle nicht einzeln "
+                                 "modellierten Nähte. Rechtsklick: Neu, Löschen.")
+        self._liste(nz, [(name, x.bezug(), name, f"Schweißnaht {name}: {x.bezug()}")
+                         for name, x in naehte.items()], "schweissnaht", "schweissnaehte")
+        self._zweig(nz, "+ Schweißnaht anlegen", "", "schweissnaht_neu", farbe=FARBEN["akzent"])
         self._liste(st, [(f"E{i}", (e.sec or "") if e.typ == "beam" else f"Fachwerk {e.sec or ''}",
                           str(i), "Element {}: {} K{}–K{}, {}, {}".format(
                               i, "Balken" if e.typ == "beam" else "Fachwerkstab",

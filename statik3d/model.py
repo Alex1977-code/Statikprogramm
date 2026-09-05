@@ -2057,6 +2057,8 @@ class Model:
         self.winde: dict = {}
         # Schwingungsnachweise (schwingung.Schwingungsnachweis), nach Name
         self.schwingungen: dict = {}
+        # Schweissnaehte (schweissnaehte.Schweissnaht), nach Name
+        self.schweissnaehte: dict = {}
         # Metadaten (Bericht)
         self.meta: dict[str, str] = {"projekt": "", "bauteil": "", "bearbeiter": "",
                                      "auftraggeber": "", "position": ""}
@@ -3553,6 +3555,7 @@ class Model:
             "wasserdruecke": [asdict(x) for x in self.wasserdruecke.values()],
             "winde": [asdict(x) for x in self.winde.values()],
             "schwingungen": [asdict(x) for x in self.schwingungen.values()],
+            "schweissnaehte": [asdict(x) for x in self.schweissnaehte.values()],
         }
 
     def save(self, path: str):
@@ -3629,6 +3632,9 @@ class Model:
         if d.get("schwingungen"):
             from .schwingung import Schwingungsnachweis
             m.schwingungen = {x["name"]: _dc(Schwingungsnachweis, x) for x in d["schwingungen"]}
+        if d.get("schweissnaehte"):
+            from .schweissnaehte import Schweissnaht
+            m.schweissnaehte = {x["name"]: _dc(Schweissnaht, x) for x in d["schweissnaehte"]}
         if d.get("stellungen"):
             from .bridges.positions import Stellung
             m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]

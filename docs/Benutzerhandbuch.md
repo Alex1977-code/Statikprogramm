@@ -483,11 +483,18 @@ Programm geometrisch in der Nähe des Klicks. Was ein Klick trifft, sagt die
 *Start*; der Modellbaum stellt sie beim Anklicken eines Zweigs passend um.
 Mit der Auswahlart **Netz** trifft ein Klick ein einzelnes Element des
 FE-Netzes (Stab-, Flächen- oder Volumenelement); die gewählten Elemente
-leuchten in der Ansicht.
+leuchten in der Ansicht. Steht die Auswahlart auf **Knoten** und liegt unter
+dem Zeiger kein Knoten (und keine Maske wartet auf einen Punkt), nimmt der
+Klick das Objekt, das dort liegt - Stab, Fläche, Volumen oder Linie - und
+stellt die Auswahlart darauf um. Gemessen wird in Bildpunkten um den Zeiger
+(14 Bildpunkte, auf skalierten Bildschirmen entsprechend mehr Gerätepixel):
+ein Klick knapp neben einem Knoten, einer Linie oder einer Stabachse trifft
+noch.
 
 **Auswahlfenster.** Ein Klick mit der **linken** Maustaste ins Leere setzt
-die erste Ecke, ein Klick mit der **rechten** Maustaste die zweite; dazwischen
-zeigt ein durchscheinendes Rechteck, was das Fenster fassen wird.
+die erste Ecke, ein zweiter Klick - **links oder rechts** - die zweite;
+dazwischen zeigt ein durchscheinendes Rechteck, was das Fenster fassen wird.
+Ein Klick auf der ersten Ecke verwirft das Fenster wieder.
 
 | aufgezogen | Rechteck | gewählt wird |
 |---|---|---|
@@ -996,6 +1003,31 @@ Knickfigur wählen (Ergebnismaske) und erneut ermitteln. **β übernehmen**
 schreibt die Beiwerte der beteiligten Stäbe in die Stäbe; die
 Stabilitätsnachweise rechnen dann damit (Rückgängig nimmt es zurück). Die
 Tabelle steht auch im Bericht.
+
+### Schweißnähte und Kerbfälle
+
+*Nachweise → Führen → Schweißnähte…* oder Modellbaum → Stäbe → Schweißnähte →
+„+ Schweißnaht anlegen“ (Tabelle unten in der Gruppe *Modell*). Vorher die
+Stäbe (Auswahlart Stab), Linien oder Flächen wählen, an denen die Naht
+liegt, dann „Auswahl übernehmen“.
+
+| Angabe | Bedeutung |
+|---|---|
+| Nahtart | Stumpfnaht, HV-/DHV-Naht (durchgeschweißt), Kehlnaht, Doppelkehlnaht, Steifenanschluss (Quersteife), Längssteife, Deckblech-Ende |
+| Lage | längs oder quer zur Beanspruchung |
+| a, t, ℓ | Nahtdicke (Kehlnaht), Blechdicke (Größeneinfluss ab 25 mm, Deckblechdicke), Anschlussbreite in Beanspruchungsrichtung (Steifen, Kreuzstoß) |
+| Ausführung, Merkmale | automatisch / mit Ansatzstellen / von Hand; blecheben bearbeitet, geprüft, einseitig, Gegenlage, unterbrochen, Freischnitte |
+| äquivalent | Ersatznaht: steht für alle nicht einzeln modellierten Nähte; ohne Zuordnung gilt sie für alle Stäbe, ungünstigere Einzelnähte gehen vor |
+| Kerbfall Vorgabe | überschreibt den Wert aus der Nahtart (z. B. aus einer Detailtabelle, die das Programm nicht kennt) |
+
+**Kerbfall ermitteln** zeigt Δσ_C und Δτ_C mit der Fundstelle in DIN EN
+1993-1-9 (Tabellen 8.2 bis 8.5, Größeneinfluss k_s = (25/t)^0,2); die
+Erläuterung steht im Protokoll. **Übernehmen** schreibt jedem betroffenen
+Stab den ungünstigsten Kerbfall aller seiner Nähte - damit rechnet der
+Ermüdungsnachweis. Stäbe ohne Naht behalten die Angabe aus der Stabmaske.
+Der Schwingungsnachweis des Verschlusses kann seinen Kerbfall „aus
+Schweißnähten“ nehmen (Nähte an den benetzten Flächen). Der Bericht führt
+im Kapitel System die Nähte und die Kerbfälle der Stäbe auf.
 
 ### Anschlüsse nach EC3-1-8
 

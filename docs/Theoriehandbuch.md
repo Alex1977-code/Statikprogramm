@@ -772,6 +772,28 @@ schadensäquivalente Schwingbreite bei 2·10⁶ Lastspielen ausgewiesen. γMf na
 Tabelle 3.1 (Schadenstoleranz/Sicherheit gegen Versagen, geringe/hohe
 Schadensfolge), γFf = 1,0.
 
+#### 5.5a Kerbfälle aus Schweißnähten (`schweissnaehte.py`)
+
+Jede Naht liefert nach Nahtart, Lage zur Beanspruchung und Ausführung den
+Kerbfall (Auswahl aus DIN EN 1993-1-9):
+
+| Naht | Kerbfall Δσ_C [N/mm²] | Fundstelle |
+|---|---|---|
+| Längsnaht automatisch ohne / mit Ansatzstellen; von Hand | 125 / 112; 100 | Tab. 8.2, Details 1–4 |
+| Längsnaht unterbrochen; mit Freischnitten; einseitig (geprüft / ungeprüft) | 71; 63; 80 / 71 | Tab. 8.2, Details 8, 9, 6 |
+| Querstumpfnaht bearbeitet + geprüft; geprüft; unbearbeitet; einseitig mit Badsicherung; einseitig ungeprüft | 112; 90; 80; 71; 36 | Tab. 8.3, Details 1, 2/3, 5, 9, 11 |
+| Kehlnaht quer (Kreuz-/T-Stoß) nach ℓ ≤ 50/80/100/120/200/300/> | 80/71/63/56/50/45/40, Wurzel 36 | Tab. 8.5, Detail 3 |
+| Quersteife ℓ ≤ 50 / ≤ 80; Längssteife L ≤ 50/80/100/> | 80 / 71; 80/71/63/56 | Tab. 8.4, Details 6/7, 1/2 |
+| Deckblech-Ende t ≤ 20/30/50/>; Stirnnaht bearbeitet (t ≤ 20) | 56/50/45/40; 71 | Tab. 8.5, Details 5, 6 |
+
+Schub: Δτ_C = 100 (durchgeschweißt, Grundwerkstoff) bzw. 80 (Kehlnaht,
+Tab. 8.5 Detail 8). Größeneinfluss für Quernähte, Steifen und Kreuzstöße:
+k_s = (25/t)^0,2 für t > 25 mm. Je Stab gilt der kleinste Kerbfall aller
+Nähte, die ihn nennen, oder einer **äquivalenten** Naht ohne Zuordnung
+(Ersatznaht für alle); Δτ_C ebenso. `tests/test_schweissnaehte.py` prüft die
+Tabellenwerte, k_s, die Zuordnung, die Übernahme in die Stäbe und den
+Ermüdungsnachweis mit dem Kerbfall aus der Naht.
+
 ## 5c Plattenbeulen (DIN EN 1993-1-5)
 
 Ein dünnes Blech unter Druck oder Schub versagt nicht durch Fließen, sondern

@@ -358,10 +358,9 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:                   # noqa: BLE001
                 return None
         try:
-            iren = self.plotter.interactor
-            h = iren.height()
+            xv, yv = self._qt_nach_vtk(QtCore.QPoint(int(x), int(y)))
             picker = vtkPropPicker()
-            if picker.Pick(float(x), float(h - 1 - y), 0.0, self.plotter.renderer):
+            if picker.Pick(xv, yv, 0.0, self.plotter.renderer):
                 return np.asarray(picker.GetPickPosition(), float)
         except Exception:                       # noqa: BLE001
             return None
@@ -499,8 +498,9 @@ class MainWindow(QtWidgets.QMainWindow):
             liste.remove(name)
         else:
             liste.append(name)
+        # Elementnummern sind Zahlen, Objektnamen Zeichenketten - beides anzeigbar
         self.lbl_sel.setText(f"{len(liste)} {was} ausgewählt"
-                             + (f" ({', '.join(liste[:6])}"
+                             + (f" ({', '.join(str(x) for x in liste[:6])}"
                                 + (" …" if len(liste) > 6 else "") + ")" if liste else ""))
         self.redraw()
 
@@ -509,8 +509,35 @@ class MainWindow(QtWidgets.QMainWindow):
     #: man gerade hineingezoomt hat.
     FANGRADIUS = 14
 
+    def _pixelmass(self) -> float:
+        """Geraetepixel je Qt-Bildpunkt (HiDPI: 1,25 … 2; sonst 1).
+
+        VTK misst in Geraetepixeln, Qt in Bildpunkten. Alles, was in Pixeln
+        gemessen wird (Fangradius, Auswahlfenster, Zeigerposition), muss
+        dieselbe Einheit haben - sonst geht der Klick auf einem skalierten
+        Bildschirm daneben.
+        """
+        try:
+            return float(self.plotter.interactor.devicePixelRatioF()) or 1.0
+        except Exception:                   # noqa: BLE001
+            return 1.0
+
+    def _qt_nach_vtk(self, pos):
+        """Qt-Bildpunkt (y von oben, logisch) -> VTK-Anzeigepunkt (y von unten,
+        Geraetepixel) - genau die Umrechnung, die auch die Mausereignisse nehmen."""
+        s = self._pixelmass()
+        try:
+            h = self.plotter.interactor.height()
+        except Exception:                   # noqa: BLE001
+            h = 0
+        return float(round(pos.x() * s)), float(round((h - pos.y() - 1) * s))
+
+    def _fangradius(self, radius: float = None) -> float:
+        """Fangradius in Geraetepixeln (FANGRADIUS gilt in Bildpunkten)."""
+        return (self.FANGRADIUS if radius is None else radius) * self._pixelmass()
+
     def _zeigerposition(self):
-        """Mausposition im Fenster (VTK zaehlt von unten) - oder None."""
+        """Mausposition im Fenster (VTK zaehlt von unten, Geraetepixel) - oder None."""
         try:
             x, y = self.plotter.iren.interactor.GetEventPosition()
             return float(x), float(y)
@@ -553,7 +580,7 @@ class MainWindow(QtWidgets.QMainWindow):
         d = np.linalg.norm(xy - np.asarray(zp, float), axis=1)
         d[~sichtbar] = np.inf
         i = int(np.argmin(d))
-        r = self.FANGRADIUS if radius is None else radius
+        r = self._fangradius(radius)
         return (i, float(d[i])) if d[i] <= r else None
 
     def _strecken_treffer(self, A, B, radius: float = None):
@@ -579,7 +606,7 @@ class MainWindow(QtWidgets.QMainWindow):
         d = np.linalg.norm(q - fuss, axis=1)
         d[~(sa | sb)] = np.inf
         i = int(np.argmin(d))
-        r = self.FANGRADIUS if radius is None else radius
+        r = self._fangradius(radius)
         return (i, float(t[i]), float(d[i])) if d[i] <= r else None
 
     def _strecken_am_zeiger(self, A, B, radius: float = None):
@@ -724,7 +751,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not namen:
             return None
         picker = vtkCellPicker()
-        picker.SetTolerance(0.001)
+        # Anteil der Fensterdiagonale: 0,004 sind ein paar Bildpunkte - genug,
+        # um eine als Linie gezeichnete Stabkante zu treffen, zu wenig, um
+        # eine Nachbarflaeche zu erwischen
+        picker.SetTolerance(0.004)
         picker.PickFromListOn()
         for n in namen:
             picker.AddPickList(akteure[n])
@@ -795,17 +825,33 @@ class MainWindow(QtWidgets.QMainWindow):
         return None
 
     def _element_am_zeiger(self):
-        """Nummer des Elements unter dem Zeiger (Zellenpicker) - oder None."""
+        """Nummer des Elements unter dem Zeiger - oder None.
+
+        Erst der Zellenpicker (trifft Schalen, Volumen und Stabkoerper), dann
+        die Stabelemente als Strecken in Bildschirmpunkten: eine als Linie
+        gezeichnete Stabkante ist fuer den Picker sonst kaum zu treffen.
+        """
         treffer = self._zellentreffer()
-        if treffer is None:
+        if treffer is not None:
+            name, zelle, _punkt, daten = treffer
+            if name != "geo_flaechen":
+                el = daten.cell_data.get("elem")
+                if el is not None and zelle < len(el):
+                    return int(el[zelle])
+        return self._stabelement_am_zeiger()
+
+    def _stabelement_am_zeiger(self):
+        """Nummer des Stabelements unter dem Zeiger (Bildschirmpunkte) - oder None."""
+        m = self.model
+        idx = [i for i, e in enumerate(m.elements)
+               if e.typ in vp.TYPEN_STAEBE and len(e.nodes) >= 2]
+        if not idx:
             return None
-        name, zelle, _punkt, daten = treffer
-        if name == "geo_flaechen":
+        A, B = self._stabstrecken()
+        if len(A) != len(idx):
             return None
-        el = daten.cell_data.get("elem")
-        if el is None or zelle >= len(el):
-            return None
-        return int(el[zelle])
+        treffer = self._strecken_am_zeiger(A, B)
+        return idx[treffer[0]] if treffer is not None else None
 
     # ---- Fensterauswahl -------------------------------------------------
     def _zeiger_qt(self):
@@ -857,15 +903,13 @@ class MainWindow(QtWidgets.QMainWindow):
         p2 = QtCore.QPoint(int(pos.x()), int(pos.y()))
         kreuzend = p2.x() < p1.x()
         self._fenster_abbrechen()
-        try:
-            h = self.plotter.render_window.GetSize()[1]
-        except Exception:                   # noqa: BLE001
-            h = self.plotter.interactor.height()
-        # Qt zaehlt die Zeilen von oben, VTK von unten
-        x1, x2 = sorted((p1.x(), p2.x()))
-        y1, y2 = sorted((h - 1 - p1.y(), h - 1 - p2.y()))
-        if x2 - x1 < 2 or y2 - y1 < 2:
+        if abs(p2.x() - p1.x()) < 2 or abs(p2.y() - p1.y()) < 2:
             return False
+        # Qt zaehlt die Zeilen von oben in Bildpunkten, VTK von unten in
+        # Geraetepixeln - die Projektion der Knoten liefert Geraetepixel
+        a, b = self._qt_nach_vtk(p1), self._qt_nach_vtk(p2)
+        x1, x2 = sorted((a[0], b[0]))
+        y1, y2 = sorted((a[1], b[1]))
         n = self._fenster_auswaehlen((x1, y1, x2, y2), kreuzend)
         self.info(f"Fensterauswahl ({'auch angeschnittene' if kreuzend else 'nur ganz im Fenster'}): "
                   f"{n} {self.auswahlart}")
@@ -1086,9 +1130,18 @@ class MainWindow(QtWidgets.QMainWindow):
         return self.arbeitsebene.schnitt(punkte[0], richtung)
 
     def _picked(self, point, *args):
-        # Ein laufendes Auswahlfenster: der Linksklick setzt die Ecke neu
+        # Ein laufendes Auswahlfenster: der zweite Linksklick schliesst es ab
+        # (wie der Rechtsklick); ein Klick auf der ersten Ecke verwirft es und
+        # waehlt normal weiter. So schluckt ein versehentlicher Klick ins
+        # Leere nicht alle folgenden Klicks.
         if self._fenster_ecke is not None:
-            return self._fenster_beginnen()
+            pos = self._letzter_klick or self._zeiger_qt()
+            if pos is not None and max(abs(pos.x() - self._fenster_ecke.x()),
+                                       abs(pos.y() - self._fenster_ecke.y())) >= 3:
+                self._fenster_abschliessen(pos)
+                return
+            self._fenster_abbrechen()
+            return
         art = getattr(self, "auswahlart", "Knoten")
         if art != "Knoten":
             m = self.model
@@ -1121,13 +1174,21 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.model.nn == 0:
             return
         p, fangart, i = self._fangpunkt()
+        maske_will_punkt = bool(self.maskenrand.offen()
+                                and getattr(self.maskenrand.maske, "n_knoten", 0))
+        if (p is None or i < 0) and not maske_will_punkt:
+            # Kein Knoten unter dem Zeiger und keine Maske, die einen Punkt
+            # erwartet: dann meint der Klick das Objekt, das dort liegt - Stab,
+            # Flaeche, Volumen oder Linie - und die Auswahlart folgt ihm.
+            if self._objekt_unter_zeiger_waehlen():
+                return
         if p is None:
             # Klick ins Leere: erste Ecke eines Auswahlfensters
             return self._fenster_beginnen()
         if i < 0:
             # Kantenmitte oder Rasterpunkt: erst wenn eine Maske einen Punkt
             # erwartet, wird daraus ein Knoten - sonst blieben Streuknoten liegen.
-            if not (self.maskenrand.offen() and getattr(self.maskenrand.maske, "n_knoten", 0)):
+            if not maske_will_punkt:
                 return self.statusBar().showMessage(
                     f"Gefangen: {fangart} bei {np.round(p, 4)} - "
                     "es ist keine Maske offen, die einen Punkt erwartet", 4000)
@@ -1145,6 +1206,29 @@ class MainWindow(QtWidgets.QMainWindow):
                              f"{np.round(self.model.nodes[i], 3)})")
         self._auswahl_register()
         self.redraw()
+
+    def _objekt_unter_zeiger_waehlen(self) -> bool:
+        """Stab, Flaeche, Volumen oder Linie unter dem Zeiger auswaehlen und
+        die Auswahlart darauf umstellen. True, wenn etwas getroffen wurde."""
+        m = self.model
+        if not len(m.elements) and not getattr(m, "lines", None) and not m.flaechen:
+            return False
+        proben = (("Stab", lambda: self._stab_am_zeiger() or self._objekt_am_zeiger("Stab"),
+                   self.sel_staebe, "Stäbe"),
+                  ("Fläche", lambda: self._objekt_am_zeiger("Fläche"), self.sel_flaechen, "Flächen"),
+                  ("Volumen", lambda: self._objekt_am_zeiger("Volumen"), self.sel_koerper, "Volumen"),
+                  ("Linie", self._linie_am_zeiger, self.sel_linien, "Linien"))
+        for art, finder, liste, was in proben:
+            try:
+                name = finder()
+            except Exception:               # noqa: BLE001
+                name = None
+            if name:
+                if self.auswahlart != art:
+                    self.auswahlart_setzen(art)
+                self._objekt_umschalten(liste, name, was)
+                return True
+        return False
 
     def _linie_am_zeiger(self):
         """Name der Linie unter dem Zeiger - in Bildschirmpunkten gemessen."""
@@ -1635,6 +1719,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Querschnitt und Stabilität nach EN 1993-1-1")
         g.gross("Ermüdung", "∿", self.do_fatigue,
                 hinweis="Nachweis nach EN 1993-1-9")
+        g.klein("Schweißnähte…", lambda: self.maske_schweissnaht(),
+                hinweis="Schweißnähte angeben (Nahtart, Lage, Ausführung, äquivalente "
+                        "Ersatznaht) - daraus die Kerbfälle der Stäbe nach EN 1993-1-9")
         g = r.gruppe("Einstellungen")
         g.gross("Konfiguration", "⚙", self.design_settings,
                 hinweis="Teilsicherheitsbeiwerte und Nachweisstellen")
@@ -1990,7 +2077,8 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Zweige und Eintraege fuer Subsysteme und Situationen
     SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
                     "situationen", "situation", "situation_neu",
-                    "generierer", "wasserdruck", "wasserdruck_neu", "wind", "wind_neu"}
+                    "generierer", "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
+                    "schweissnaehte", "schweissnaht", "schweissnaht_neu"}
 
     def _baum_geklickt(self, art: str, name: str):
         if art in self.SYSTEM_ARTEN:
@@ -2494,6 +2582,10 @@ class MainWindow(QtWidgets.QMainWindow):
     # Subsysteme und Situationen
     # ------------------------------------------------------------------
     def _baum_system_geklickt(self, art: str, name: str):
+        if art in ("schweissnaehte", "schweissnaht_neu"):
+            return self.maske_schweissnaht()
+        if art == "schweissnaht":
+            return self.maske_schweissnaht(name)
         if art in ("generierer", "wasserdruck_neu"):
             return self.maske_wasserdruck()
         if art == "wasserdruck":
@@ -2802,12 +2894,19 @@ class MainWindow(QtWidgets.QMainWindow):
                "querschnitt": f"Querschnitt {name}",
                "subsystem": f"Subsystem {name}", "situation": f"Situation {name}",
                "wasserdruck": f"Wasserdruck {name} samt seinen Lasten",
-               "wind": f"Wind {name} samt seinen Lasten"}.get(art)
+               "wind": f"Wind {name} samt seinen Lasten",
+               "schweissnaht": f"Schweißnaht {name}"}.get(art)
         if was is None:
             return
         if not self._bestaetigen(f"{was} wirklich löschen?"):
             return
         grund = ""
+        # Der Stand **vor** dem Loeschen gehoert auf den Rueckgaengig-Stapel;
+        # die Arten, die unten selbst merken, tun es an ihrer Stelle.
+        SELBST = ("stabelement", "querschnitt", "subsystem", "situation", "wasserdruck", "wind",
+                  "schweissnaht")
+        if art not in SELBST:
+            self.merken(f"{was} gelöscht")
         if art == "knoten":
             grund = m.knoten_loeschen(int(name)) if name.isdigit() else "keine Nummer"
         elif art == "linie":
@@ -2849,6 +2948,25 @@ class MainWindow(QtWidgets.QMainWindow):
                                        if not (ll.kommentar or "").startswith(f"Wind {name}:")]
                 del m.winde[name]
                 m.lasten_verteilen()
+        elif art == "schweissnaht":
+            if name not in m.schweissnaehte:
+                grund = f"Schweißnaht {name} gibt es nicht"
+            else:
+                from ..schweissnaehte import kerbfaelle_je_stab, kerbfaelle_uebernehmen
+                self.merken(f"{was} gelöscht")
+                vorher = kerbfaelle_je_stab(m)
+                del m.schweissnaehte[name]
+                nachher = kerbfaelle_je_stab(m)
+                verloren = []
+                for stab, kf in vorher.items():
+                    if stab not in nachher and kf["naht"] == name and stab in m.members:
+                        # der Kerbfall kam nur aus dieser Naht - ohne sie gibt es keinen
+                        m.members[stab].detail_category = None
+                        m.members[stab].detail_category_shear = None
+                        verloren.append(stab)
+                kerbfaelle_uebernehmen(m)
+                if verloren:
+                    self.info("Ohne Naht kein Kerbfall mehr bei " + ", ".join(verloren))
         elif art == "subsystem":
             if name == GESAMTSYSTEM or name not in m.subsysteme:
                 grund = "Das Gesamtsystem ist immer da - es lässt sich nicht löschen" \
@@ -2883,9 +3001,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.merken(f"{was} gelöscht")
                     del m.sections[name]
         if grund:
+            if art not in SELBST and self._undo and self._undo[-1][0] == f"{was} gelöscht":
+                self._undo.pop()
+                self._undo_knoepfe()
             return self.error(grund)
-        if art not in ("stabelement", "querschnitt", "subsystem", "situation", "wasserdruck", "wind"):
-            self.merken(f"{was} gelöscht")
         self.analysis = None
         self.results = None
         self.selection = np.array([], dtype=int)
@@ -3961,6 +4080,24 @@ class MainWindow(QtWidgets.QMainWindow):
         bv3 = QtWidgets.QPushButton("Löschen")
         bv3.clicked.connect(lambda: self._geometrie_loeschen(
             self.tbl_geokoerper, self.model.koerper))
+        # Schweissnaehte: Nahtart, Lage, Ausfuehrung -> Kerbfall (EN 1993-1-9)
+        self.tbl_naht = tab.Datentabelle([
+            Spalte("Naht"), Spalte("Nahtart"), Spalte("Lage"), Spalte("a", "mm", "zahl", 1),
+            Spalte("t", "mm", "zahl", 1), Spalte("ℓ", "mm", "zahl", 0), Spalte("Ausführung"),
+            Spalte("Merkmale"), Spalte("gilt für"),
+            Spalte("Δσ_C", "MPa", "zahl", 0, hinweis="Kerbfall mit Größeneinfluss"),
+            Spalte("k_s", "", "zahl", 3, hinweis="Größeneinfluss (25/t)^0,2 für t > 25 mm"),
+            Spalte("Δτ_C", "MPa", "zahl", 0), Spalte("Fundstelle")],
+            "Schweissnaehte", self, mit_kennwerten=True)
+        self.tbl_naht.zeile_gewaehlt.connect(
+            lambda w: self._baum_geklickt("schweissnaht", str(w)))
+        bn1 = QtWidgets.QPushButton("Schweißnaht…")
+        bn1.clicked.connect(lambda: self.maske_schweissnaht())
+        bn2 = QtWidgets.QPushButton("Löschen")
+        bn2.clicked.connect(lambda: self._baum_loeschen(
+            "schweissnaht", str(self._tabellenschluessel(self.tbl_naht))))
+        tabs.addTab(self._eingabetabelle(self.tbl_naht, bn1, bn2), "Schweißnähte")
+
         tabs.addTab(self._eingabetabelle(self.tbl_geokoerper, bv1, bv2, bv3),
                     "Volumenkörper")
 
@@ -4181,6 +4318,7 @@ class MainWindow(QtWidgets.QMainWindow):
                            " × ".join(str(x) for x in k.teilung),
                            len(k.elemente or []), V, k.kommentar])
         self._fill(self.tbl_geokoerper, zeilen)
+        self._naehte_fuellen()
         self._lasten_fuellen()
         self._fill(self.tbl_bericht,
                    [[i, x.name, x.bezug(), x.beschriftung, x.bemerkung,
@@ -4868,7 +5006,7 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Tabelle. Beides in derselben Ordnung zu halten spart das Suchen.
     TABELLENGRUPPEN = [
         ("Protokoll", ["Protokoll"]),
-        ("Modell", ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente"]),
+        ("Modell", ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente", "Schweißnähte"]),
         ("Eigenschaften", ["Werkstoffe", "Querschnitte", "Dicken"]),
         ("Lager", ["Lager", "Gelenke", "Kontaktbedingungen"]),
         ("Lasten", ["Lastfälle", "Lasten", "Kombinationen"]),
@@ -5653,7 +5791,9 @@ class MainWindow(QtWidgets.QMainWindow):
             sn.wasserdruck = next(iter(m.wasserdruecke))
         F = msk.Feld
         wds = list(m.wasserdruecke)
-        kerb = [f"{k:g}" for k in DETAIL_CATEGORIES]
+        kerb = ["aus Schweißnähten"] + [f"{k:g}" for k in DETAIL_CATEGORIES]
+        kerb_wert = "aus Schweißnähten" if not sn.kerbfall else (
+            f"{sn.kerbfall:g}" if f"{sn.kerbfall:g}" in kerb else "71")
         felder = [F("name", "Name", "text", sn.name, breite=140),
                   F("wasserdruck", "Wasserdruck", "wahl",
                     sn.wasserdruck if sn.wasserdruck in wds else wds[0], wds),
@@ -5669,8 +5809,8 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("betriebsstunden", "Betrieb [h/Jahr]", "zahl", float(sn.betriebsstunden),
                     hinweis="Stunden je Jahr mit Durch- oder Überströmung (0 = keine Ermüdung)"),
                   F("jahre", "Nutzungsdauer [Jahre]", "zahl", float(sn.jahre)),
-                  F("kerbfall", "Kerbfall Δσ_C [N/mm²]", "wahl",
-                    f"{sn.kerbfall:g}" if f"{sn.kerbfall:g}" in kerb else "71", kerb),
+                  F("kerbfall", "Kerbfall Δσ_C [N/mm²]", "wahl", kerb_wert, kerb,
+                    hinweis="„aus Schweißnähten“: ungünstigste Naht an der Haut (Modellbaum → Schweißnähte)"),
                   F("gamma_Mf", "γ_Mf", "zahl", float(sn.gamma_Mf)),
                   F("gamma_Ff", "γ_Ff", "zahl", float(sn.gamma_Ff))]
         maske = msk.Maske("Neu: Schwingungsnachweis" if neu else f"Schwingung {sn.name}", felder,
@@ -5704,7 +5844,8 @@ class MainWindow(QtWidgets.QMainWindow):
                        band=float(w.get("band", 20.0) or 20.0) / 100.0,
                        betriebsstunden=float(w.get("betriebsstunden", 0.0) or 0.0),
                        jahre=float(w.get("jahre", 50.0) or 50.0),
-                       kerbfall=float(str(w.get("kerbfall", "71")).replace(",", ".") or 71.0),
+                       kerbfall=(None if str(w.get("kerbfall", "71")).startswith("aus")
+                                 else float(str(w.get("kerbfall", "71")).replace(",", ".") or 71.0)),
                        gamma_Mf=float(w.get("gamma_Mf", 1.15) or 1.15),
                        gamma_Ff=float(w.get("gamma_Ff", 1.0) or 1.0))
 
@@ -5745,6 +5886,170 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabelle_zeigen("Schwingung")
         self._refresh_baum()
         return erg
+
+    # ---- Schweissnaehte und Kerbfaelle -------------------------------
+    def _naehte_fuellen(self):
+        from .. import schweissnaehte as swn
+        m = self.model
+        zeilen = []
+        for name, n in (getattr(m, "schweissnaehte", {}) or {}).items():
+            try:
+                kf = swn.kerbfall(n)
+            except ValueError:
+                kf = {"dsC_wirksam": 0.0, "k_s": 1.0, "dtC": 0.0, "detail": "Nahtart unbekannt"}
+            merk = [w_ for w_, ok in (("bearbeitet", n.bearbeitet), ("geprüft", n.geprueft),
+                                      ("einseitig", n.einseitig), ("Gegenlage", n.gegenlage),
+                                      ("unterbrochen", n.unterbrochen), ("Freischnitt", n.freischnitt),
+                                      ("äquivalent", n.aequivalent)) if ok]
+            ziele = n.staebe + n.linien + n.flaechen
+            zeilen.append([name, n.art, n.lage, n.a if (n.a and n.art in swn.KEHLNAEHTE) else "–",
+                           n.t if n.t else "–", n.l_anschluss if n.l_anschluss else "–",
+                           n.ausfuehrung, ", ".join(merk) or "–",
+                           ", ".join(ziele) if ziele else ("alle Stäbe" if n.aequivalent else "–"),
+                           kf["dsC_wirksam"], kf["k_s"], kf["dtC"], kf["detail"]])
+        self._fill(self.tbl_naht, zeilen)
+
+    @staticmethod
+    def _naht_ziele_text(n) -> str:
+        teile = []
+        if n.staebe:
+            teile.append("Stäbe " + ", ".join(n.staebe[:6]) + (" …" if len(n.staebe) > 6 else ""))
+        if n.linien:
+            teile.append("Linien " + ", ".join(n.linien[:6]) + (" …" if len(n.linien) > 6 else ""))
+        if n.flaechen:
+            teile.append("Flächen " + ", ".join(n.flaechen[:6]) + (" …" if len(n.flaechen) > 6 else ""))
+        if teile:
+            return " · ".join(teile)
+        return ("alle Stäbe (äquivalente Naht ohne Zuordnung)" if n.aequivalent
+                else "nichts gewählt - Stäbe, Linien oder Flächen anklicken, dann „Auswahl übernehmen“")
+
+    def maske_schweissnaht(self, name: str = None):
+        """Schweissnaht anlegen oder bearbeiten: Nahtart, Lage, Ausfuehrung -> Kerbfall."""
+        from .. import schweissnaehte as swn
+        m = self.model
+        n = m.schweissnaehte.get(name) if name else None
+        neu = n is None
+        if neu:
+            n = swn.Schweissnaht(m.naechster_name("Naht", m.schweissnaehte))
+            n.staebe = list(self.sel_staebe)
+            n.linien = list(self.sel_linien)
+            n.flaechen = list(self.sel_flaechen)
+        F = msk.Feld
+
+        def txt(v):
+            return "" if v is None else f"{v:g}"
+
+        felder = [F("name", "Name", "text", n.name, breite=140),
+                  F("art", "Nahtart", "wahl", n.art if n.art in swn.NAHTARTEN else swn.NAHTARTEN[0],
+                    list(swn.NAHTARTEN)),
+                  F("lage", "Lage zur Beanspruchung", "wahl", n.lage if n.lage in swn.LAGEN else "längs",
+                    list(swn.LAGEN)),
+                  F("a", "Nahtdicke a [mm]", "zahl", float(n.a)),
+                  F("t", "Blechdicke t [mm]", "zahl", float(n.t),
+                    hinweis="Größeneinfluss k_s = (25/t)^0,2 ab 25 mm; beim Deckblech-Ende die Deckblechdicke"),
+                  F("l", "Anschlussbreite ℓ [mm]", "zahl", float(n.l_anschluss),
+                    hinweis="Breite des angeschlossenen Teils in Beanspruchungsrichtung "
+                            "(Quersteife, Kreuzstoß, Längssteife)"),
+                  F("ausfuehrung", "Ausführung", "wahl",
+                    n.ausfuehrung if n.ausfuehrung in swn.AUSFUEHRUNGEN else "von Hand",
+                    list(swn.AUSFUEHRUNGEN)),
+                  F("bearbeitet", "blecheben bearbeitet", "haken", bool(n.bearbeitet)),
+                  F("geprueft", "zerstörungsfrei geprüft", "haken", bool(n.geprueft)),
+                  F("einseitig", "einseitig geschweißt", "haken", bool(n.einseitig)),
+                  F("gegenlage", "mit Gegenlage (Badsicherung)", "haken", bool(n.gegenlage)),
+                  F("unterbrochen", "unterbrochene Naht", "haken", bool(n.unterbrochen)),
+                  F("freischnitt", "mit Freischnitten", "haken", bool(n.freischnitt)),
+                  F("aequivalent", "äquivalent (Ersatznaht)", "haken", bool(n.aequivalent),
+                    hinweis="steht für alle nicht einzeln modellierten Nähte; ohne Zuordnung "
+                            "gilt sie für alle Stäbe, ungünstigere Einzelnähte gehen vor"),
+                  F("ziele", "Gilt für", "info", self._naht_ziele_text(n)),
+                  F("kf_vorgabe", "Kerbfall Vorgabe [N/mm²]", "text", txt(n.kerbfall_vorgabe), breite=78,
+                    hinweis="leer = aus der Nahtart"),
+                  F("kerbfall", "Kerbfall", "info", "–"),
+                  F("kommentar", "Kommentar", "text", n.kommentar, breite=200)]
+        halter: dict = {}
+
+        def kerbfall_zeigen():
+            try:
+                n_ = self._naht_aus_maske(halter["m"].werte(), n)
+                kf = swn.kerbfall(n_)
+                halter["m"].setzen("kerbfall", f"Δσ_C = {kf['dsC_wirksam']:.0f} N/mm²"
+                                   + (f" (k_s = {kf['k_s']:.3f})" if kf["k_s"] < 1 else "")
+                                   + f", Δτ_C = {kf['dtC']:.0f} N/mm² - {kf['detail']}")
+                for zeile in swn.erlaeuterung(n_, kf):
+                    self.log.appendPlainText("  " + zeile)
+            except Exception as ex:            # noqa: BLE001
+                halter["m"].setzen("kerbfall", str(ex))
+
+        def auswahl_lesen():
+            n.staebe = list(self.sel_staebe)
+            n.linien = list(self.sel_linien)
+            n.flaechen = list(self.sel_flaechen)
+            halter["m"].setzen("ziele", self._naht_ziele_text(n))
+
+        maske = msk.Maske("Neu: Schweißnaht" if neu else f"Schweißnaht {n.name}", felder,
+                          knopf="Übernehmen",
+                          hinweis="Stäbe (Auswahlart Stab), Linien oder Flächen in der Ansicht "
+                                  "wählen und „Auswahl übernehmen“; Nahtart, Lage zur "
+                                  "Beanspruchung und Ausführung angeben. „Kerbfall ermitteln“ "
+                                  "zeigt Δσ_C/Δτ_C mit der Fundstelle in EN 1993-1-9; beim "
+                                  "Übernehmen bekommt jeder betroffene Stab den ungünstigsten "
+                                  "Kerbfall seiner Nähte (Ermüdungsnachweis). „Äquivalent“ macht "
+                                  "die Naht zur Ersatznaht für alle nicht einzeln modellierten Nähte.",
+                          zusatz=[("Auswahl übernehmen", auswahl_lesen), ("Kerbfall ermitteln", kerbfall_zeigen)])
+        halter["m"] = maske
+        maske.angewendet.connect(lambda w, alt=(None if neu else n.name), vorlage=n:
+                                 self._schweissnaht_anlegen(w, vorlage, alt))
+        return self.maske_erzeugen(maske)
+
+    @staticmethod
+    def _naht_aus_maske(w: dict, vorlage):
+        from dataclasses import replace
+
+        def zahl(key, vorgabe=None):
+            s = str(w.get(key, "")).strip().replace(",", ".")
+            return vorgabe if not s else float(s)
+
+        return replace(vorlage, name=str(w.get("name", "")).strip() or vorlage.name,
+                       art=str(w.get("art", vorlage.art)), lage=str(w.get("lage", vorlage.lage)),
+                       a=float(w.get("a", 0.0) or 0.0), t=float(w.get("t", 0.0) or 0.0),
+                       l_anschluss=float(w.get("l", 0.0) or 0.0),
+                       ausfuehrung=str(w.get("ausfuehrung", vorlage.ausfuehrung)),
+                       bearbeitet=bool(w.get("bearbeitet")), geprueft=bool(w.get("geprueft")),
+                       einseitig=bool(w.get("einseitig")), gegenlage=bool(w.get("gegenlage")),
+                       unterbrochen=bool(w.get("unterbrochen")), freischnitt=bool(w.get("freischnitt")),
+                       aequivalent=bool(w.get("aequivalent")),
+                       kerbfall_vorgabe=zahl("kf_vorgabe"),
+                       kommentar=str(w.get("kommentar", "")))
+
+    def _schweissnaht_anlegen(self, w: dict, vorlage, alt: str = None):
+        from .. import schweissnaehte as swn
+        m = self.model
+        try:
+            n = self._naht_aus_maske(w, vorlage)
+            kf = swn.kerbfall(n)
+        except ValueError as ex:
+            return self.error(f"Eingabe: {ex}")
+        if n.name != alt and n.name in m.schweissnaehte:
+            return self.error(f"Schweißnaht „{n.name}“ gibt es schon")
+        if not (n.staebe or n.linien or n.flaechen or n.aequivalent):
+            return self.error("Zuerst Stäbe, Linien oder Flächen wählen und „Auswahl übernehmen“ - "
+                              "oder die Naht als äquivalente Ersatznaht für alle Stäbe kennzeichnen")
+        self.merken(f"Schweißnaht {n.name}")
+        if alt and alt != n.name and alt in m.schweissnaehte:
+            del m.schweissnaehte[alt]
+        m.schweissnaehte[n.name] = n
+        log = []
+        geaendert = swn.kerbfaelle_uebernehmen(m, log)
+        self.analysis = None
+        self.results = None
+        self.info(f"Schweißnaht {n.name}: {n.bezug()} - Kerbfall {kf['dsC_wirksam']:.0f} N/mm² "
+                  f"({kf['detail']})" + (f"; Kerbfall geändert bei {', '.join(geaendert)}" if geaendert else ""))
+        for zeile in swn.erlaeuterung(n, kf) + log:
+            self.log.appendPlainText("  " + zeile)
+        self.refresh_all()
+        self.tabelle_zeigen("Schweißnähte")
+        return n
         self.tabelle_zeigen("Nachweise EC3") if False else None
         return geaendert
 
