@@ -436,6 +436,42 @@ Fließgelenke, keine Imperfektionsform aus der Knickeigenform nach 5.3.2(11)
 (die Eigenform wird berechnet, aber nur als α_cr ausgewertet) und keine
 Imperfektionen für Aussteifungsverbände nach 5.3.3.
 
+### 5.1b Theorie III. Ordnung: große Verformungen
+
+`theorie3.py` rechnet Stabtragwerke geometrisch nichtlinear — große
+Verschiebungen und endliche Drehungen bei kleinen Dehnungen — in
+**korotationaler Formulierung** (Crisfield):
+
+* Jeder Knoten trägt eine Drehmatrix R, die je Iterationsschritt
+  multiplikativ fortgeschrieben wird: R ← exp(Δθ)·R (Rodrigues).
+* Jedes Stabelement bekommt ein mitgehendes Bezugssystem: e₁ entlang der
+  aktuellen Sehne, e₂ aus der mittleren Drehung der beiden Knotentriaden
+  (R₁·exp(½·log(R₁ᵀR₂))), auf die Sehnennormale projiziert, e₃ = e₁ × e₂.
+* Die im mitgehenden System verbleibende Verformung ist klein:
+  d_l = (0, θ₁ˡ, ΔL, θ₂ˡ) mit θᵢˡ = log(Eᵀ·Rᵢ·E₀ᵀ) und ΔL = L − L₀. Darauf
+  wirkt die lineare lokale Steifigkeit (Timoshenko/Bernoulli, Federgelenke
+  und Gelenke kondensiert): f_l = k_l·d_l, f_int = Tᵀ f_l.
+* Gleichgewicht f_int(u, R) = λ·F + F_imp, gelöst mit Newton-Raphson in
+  Laststufen λ = 1/n … 1 mit der Tangente Tᵀ(k_l + k_g(N))T. Der Rest der
+  konsistenten Tangente fehlt; das Residuum ist exakt, die Iteration
+  konvergiert deshalb gegen das richtige Gleichgewicht (linear statt
+  quadratisch). Konvergenz: ‖Residuum‖ < 10⁻⁶·‖λF‖.
+* Lasten sind richtungstreu (konservativ) und werden als äquivalente
+  Knotenlasten der Ausgangslage angesetzt; Ersatzimperfektionen nach 5.3.2
+  wie bei Theorie II. Ordnung, je Laststufe aus den Normalkräften.
+* Fachwerkstäbe: nur Normalkraft, geometrische Steifigkeit N/L quer zum Stab.
+
+Geprüft (`tests/test_theorie3.py`) gegen geschlossene Lösungen: Kragarm
+unter Endmoment M = (π/2)·EI/L wird zum Viertelkreis (Spitze bei 2L/π,
+Drehung 90°, Moment konstant), Elastica-Kragarm unter Querlast
+PL²/EI = 1 (Mattiasson 1981: w/L = 0,30172, u/L = 0,05643, θ = 0,46135),
+Seil aus zwei Fachwerkstäben (exakt), Druckstab mit Querlast bei
+P = 0,5·P_cr (II. = III. Ordnung, Vergrößerung 2).
+
+Die **Theorie je Lastfall und Kombination** (Feld ``theorie``: I, II, III,
+leer = wie Einstellung) entscheidet im Rechenkern, welches Ergebnis das
+lineare ersetzt; nach II. und III. Ordnung gilt keine Superposition.
+
 ### 5.2 Querschnittsklassifizierung (5.5, Tabelle 5.2)
 
 * I-Profile: Flansch als einseitig gestütztes Teil c = (b − tw − 2r)/2,

@@ -291,6 +291,7 @@ class Report:
         self.volumen = None
         self.theorie2 = None
         self.knicklaengen = None
+        self.theorie3 = None
         self.info: dict = {}
         if analysis is not None:
             self.cases = dict(getattr(analysis, "cases", {}) or {})
@@ -305,6 +306,7 @@ class Report:
             self.volumen = getattr(analysis, "volumen", None)
             self.theorie2 = getattr(analysis, "theorie2", None)
             self.knicklaengen = getattr(analysis, "knicklaengen", None)
+            self.theorie3 = getattr(analysis, "theorie3", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
             name = results.name or "Ergebnis"
@@ -423,7 +425,7 @@ class Report:
             self._warnings = []
             b = []
             for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
-                       self.chapter_theorie2,
+                       self.chapter_theorie2, self.chapter_theorie3,
                        self.chapter_results, self.chapter_knicklaengen,
                        self.chapter_design, self.chapter_beulen,
                        self.chapter_volumen,
@@ -945,7 +947,7 @@ class Report:
         b = [self._h(1, "Einwirkungen")]
         b.append(self._h(2, "Lastfälle"))
         rows = [["Lastfall", "Kategorie", "Einwirkung", "Beschreibung", "ψ_0", "ψ_1", "ψ_2",
-                 "γ_sup", "γ_inf", "Gruppe", "Situation", "Lasten"]]
+                 "γ_sup", "γ_inf", "Gruppe", "Situation", "Theorie", "Lasten"]]
         ds = m.design
         for lc in m.load_cases.values():
             psi = lc.psi_factors
@@ -961,6 +963,7 @@ class Report:
             rows.append([lc.name, lc.category, cat, lc.description or "–", fmt(psi[0], 2),
                          fmt(psi[1], 2), fmt(psi[2], 2), fmt(gs, 2), fmt(gi, 2),
                          lc.exclusive_group or "–", getattr(lc, "situation", "") or "Grundstellung",
+                         m.theorie_von(lc) if hasattr(m, "theorie_von") else "I",
                          str(lc.n_loads)])
         b.append(("table", rows, "Lastfälle und Einwirkungskategorien (DIN EN 1990/NA)",
                   None, ""))
@@ -1180,6 +1183,38 @@ class Report:
         return b
 
     # ==================================== Theorie II. Ordnung (eigenes Kapitel)
+    def chapter_theorie3(self) -> list:
+        """Berechnung nach Theorie III. Ordnung (grosse Verformungen)."""
+        t3 = getattr(self, "theorie3", None)
+        if t3 is None or not getattr(t3, "kombinationen", None):
+            return []
+        st = t3.settings or {}
+        b = [self._h(1, "Berechnung nach Theorie III. Ordnung (große Verformungen)")]
+        b.append(("p", "Gleichgewicht am verformten System mit großen Verformungen und "
+                       "endlichen Drehungen (geometrisch nichtlinear). Korotationale "
+                       "Formulierung: jedes Stabelement erhält ein mitgehendes Bezugssystem "
+                       "aus seiner aktuellen Sehne und der mittleren Drehung seiner Knoten; "
+                       "die darin verbleibende Verformung (Längenänderung, kleine "
+                       "Knotendrehungen relativ zur Sehne) ist die elastische Verformung. "
+                       "Gelöst wird mit Newton-Raphson in "
+                       f"{st.get('schritte', 10)} Laststufen; Lasten wirken richtungstreu. "
+                       + ("Ersatzimperfektionen nach DIN EN 1993-1-1, 5.3.2 werden je "
+                          "Laststufe aus den Normalkräften neu gebildet. "
+                          if st.get("imperfektionen") else "")
+                       + "Nach Theorie III. Ordnung gilt keine Superposition: jeder Lastfall "
+                         "und jede Kombination wird einzeln gerechnet."))
+        rows = [["Lastfall / Kombination", "Laststufen", "Iterationen", "Residuum",
+                 "u_max I [mm]", "u_max III [mm]", "Zuwachs", "größte Drehung", "Hinweis"]]
+        for i in t3.kombinationen.values():
+            rows.append([i.name, str(i.schritte), str(i.iterationen),
+                         f"{i.konvergenz:.1e}" if i.gerechnet else "–",
+                         fmt(i.u_max_I * 1e3, 3), fmt(i.u_max_III * 1e3, 3) if i.gerechnet else "–",
+                         f"{i.zuwachs * 100:+.1f} %" if i.gerechnet else "–",
+                         f"{math.degrees(i.drehung_max):.2f}°" if i.gerechnet else "–",
+                         i.fehler or "; ".join(i.hinweise) or "–"])
+        b.append(("table", rows, "Theorie III. Ordnung je Lastfall und Kombination", None, "compact"))
+        return b
+
     def chapter_knicklaengen(self) -> list:
         """Knicklaengenbeiwerte aus der Knickfigur."""
         kl = getattr(self, "knicklaengen", None)

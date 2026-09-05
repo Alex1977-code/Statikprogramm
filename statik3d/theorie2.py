@@ -548,7 +548,7 @@ class Th2Results:
 
 
 def check_theorie2(model: Model, analysis, combos: list = None, system=None,
-                   progress=None, systeme: dict = None) -> Th2Results:
+                   progress=None, systeme: dict = None, erzwungen=None) -> Th2Results:
     """
     Alle GZT-Kombinationen nach Theorie II. Ordnung rechnen und die
     Ergebnisse der Berechnung **ersetzen**.
@@ -570,10 +570,15 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
         "richtung": getattr(ds, "th2_richtung", None),
         "alle_vorkruemmungen": bool(getattr(ds, "th2_alle_vorkruemmungen", False)),
         "Norm": "DIN EN 1993-1-1, 5.2 und 5.3"})
-    if modus == "aus":
+    erzwungen = set(erzwungen or ())
+    if modus == "aus" and not erzwungen:
         return out
     names = combos if combos is not None else [
         n for n, c in model.combinations.items() if c.is_uls]
+    if modus == "aus":
+        # Nur die ausdruecklich auf II. Ordnung gestellten Kombinationen
+        names = [n for n in names if n in erzwungen]
+        out.settings["modus"] = "je Kombination"
     if not names:
         return out
     system = system or StaticSystem(model, progress=progress)
@@ -587,7 +592,7 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             model, system = systeme[sit]
         else:
             model = basis
-        if modus == "auto":
+        if modus == "auto" and n not in (erzwungen or ()):
             # Grundzustand und alpha_cr zuerst
             from .solver import case_loads, case_prescribed
             F, _feq, _q, _temp = case_loads(model, combo.factors, getattr(system, "aktiv", None))

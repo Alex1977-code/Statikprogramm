@@ -201,10 +201,11 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
 def combination_table(model: Model) -> list[list[str]]:
     """Tabellarische Darstellung (fuer Bericht/GUI): Kopfzeile + Zeilen."""
     names = list(model.load_cases)
-    head = ["Kombination", "Typ", "Leit", "Situation"] + names + ["Beschreibung"]
+    head = ["Kombination", "Typ", "Leit", "Situation", "Theorie"] + names + ["Beschreibung"]
     rows = [head]
     for c in model.combinations.values():
-        rows.append([c.name, c.typ, c.leading, getattr(c, "situation", "") or "Grundstellung"]
+        rows.append([c.name, c.typ, c.leading, getattr(c, "situation", "") or "Grundstellung",
+                     model.theorie_von(c) if hasattr(model, "theorie_von") else "I"]
                     + [f"{c.factors.get(n, 0):g}" if c.factors.get(n, 0) else "" for n in names]
                     + [c.description])
     return rows

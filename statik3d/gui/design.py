@@ -665,7 +665,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
         ew = self._zweig(wurzel, "Einwirkungen", "", "modell", fett=True)
         lf = self._zweig(ew, "Lastfälle", len(model.load_cases), "lastfaelle")
         self._liste(lf, [(name, f"{lc.category} · {lc.n_loads}"
-                          + (f" · {lc.situation}" if getattr(lc, "situation", "") else ""),
+                          + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
+                          + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
                           name, f"{name}: {lc.description or lc.category}, "
                           f"{lc.n_loads} Lasten"
                           + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
@@ -679,7 +680,10 @@ class Modellbaum(QtWidgets.QTreeWidget):
             if lc.n_loads:
                 self._zweig(la, name, lc.n_loads, "last", schluessel=name)
         kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
-        self._liste(kb, [(name, getattr(c, "situation", "") or "", name,
+        self._liste(kb, [(name, " · ".join(x for x in (getattr(c, "situation", "") or "",
+                                                       (f"{c.theorie.upper()}. O."
+                                                        if getattr(c, "theorie", "") else "")) if x),
+                          name,
                           name + (f": Situation {c.situation}" if getattr(c, "situation", "") else ""))
                          for name, c in model.combinations.items()], "kombination",
                     "kombinationen")

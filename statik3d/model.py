@@ -955,6 +955,7 @@ class LoadCase:
     psi: Optional[list[float]] = None      # (psi0, psi1, psi2); None -> aus Kategorie
     exclusive_group: str = ""              # Lastfaelle derselben Gruppe wirken nie gemeinsam
     situation: str = ""                    # Situation (Stellung + wirksame Elemente); "" = Grundstellung
+    theorie: str = ""                      # "" (wie Einstellung) | I | II | III
     nodal_loads: list[NodalLoad] = field(default_factory=list)
     beam_loads: list[BeamLoad] = field(default_factory=list)
     face_loads: list[FaceLoad] = field(default_factory=list)
@@ -1006,6 +1007,7 @@ class LoadCase:
             "description": self.description, "psi": self.psi,
             "exclusive_group": self.exclusive_group,
             "situation": self.situation,
+            "theorie": self.theorie,
             # Aus Objektlasten erzeugte Elementlasten werden **nicht**
             # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
             # laegen sie nach dem Laden doppelt auf dem Netz.
@@ -1025,6 +1027,7 @@ class LoadCase:
         lc = LoadCase(d["name"], d.get("category", "G"), d.get("description", ""),
                       d.get("psi"), d.get("exclusive_group", ""))
         lc.situation = d.get("situation", "") or ""
+        lc.theorie = d.get("theorie", "") or ""
         lc.nodal_loads = [NodalLoad(**l) for l in d.get("nodal_loads", [])]
         lc.beam_loads = [BeamLoad(**l) for l in d.get("beam_loads", [])]
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
@@ -1052,6 +1055,7 @@ class Combination:
     description: str = ""
     leading: str = ""       # Leiteinwirkung (Information)
     situation: str = ""     # Situation, in der die Kombination gilt; "" = Grundstellung
+    theorie: str = ""       # "" (wie Einstellung) | I | II | III (grosse Verformungen)
 
     @property
     def is_uls(self) -> bool:
@@ -1833,6 +1837,7 @@ class DesignSettings:
     th2_richtung: Optional[list] = None  # Richtung der Schiefstellung [x, y]
                                        # (None = aus der Kombination bestimmt)
     th2_alle_vorkruemmungen: bool = False  # 5.3.2(6) uebergehen und alle ansetzen
+    th3_schritte: int = 10             # Laststufen der Theorie III. Ordnung
 
 
 # --------------------------------------------------------------------------
@@ -2581,6 +2586,20 @@ class Model:
             if 0 <= int(i) < len(aktiv):
                 aktiv[int(i)] = False
         return aktiv
+
+    def theorie_von(self, objekt) -> str:
+        """Die Rechentheorie eines Lastfalls oder einer Kombination: I, II oder III.
+
+        Leer heisst "wie Einstellung": Lastfaelle nach Theorie I. Ordnung;
+        Kombinationen im Grenzzustand der Tragfaehigkeit nach der globalen
+        Einstellung ``design.theorie2`` (aus / auto / ein) - bei auto
+        entscheidet alpha_cr nach 5.2.1(3)."""
+        th = (getattr(objekt, "theorie", "") or "").strip().upper()
+        if th in ("I", "II", "III"):
+            return th
+        if isinstance(objekt, Combination) and self.design.theorie2 != "aus" and objekt.is_uls:
+            return "II"
+        return "I"
 
     def lastfaelle_je_situation(self, namen=None) -> dict[str, list[str]]:
         """{Situation: [Lastfaelle]} in der Reihenfolge der Lastfaelle."""

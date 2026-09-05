@@ -2086,6 +2086,52 @@ def main():
         w.ergebnis_zeigen("nachweis:knicklaengen")
         check("Baumklick holt die Knicklängen-Tabelle", w.tab_unten.tabText(w.tab_unten.currentIndex()) == "Knicklängen")
 
+        # ---- Theorie je Lastfall / Kombination ----
+        w.load_example("frame")
+        app.processEvents()
+        m_ = w.model
+        d = dg.LoadCaseDialog(w, existing=list(m_.load_cases), situationen=m_.situationsnamen())
+        check("Lastfalldialog bietet die Theorie I, II, III",
+              [d.theorie.itemData(i) for i in range(d.theorie.count())] == ["", "I", "II", "III"])
+        d.theorie.setCurrentIndex(3)
+        check("Theorie III wählbar", d.theorie_name() == "III")
+        lf = list(m_.load_cases)[0]
+        m_.load_cases[lf].theorie = "III"
+        dk = dg.CombinationDialog(w, m_)
+        dk.theorie.setCurrentIndex(2)
+        dk.factors[lf].set(1.35)
+        dk.name.setText("K2")
+        ck = dk.result()
+        check("Kombinationsdialog setzt die Theorie", ck.theorie == "II")
+        m_.combinations["K2"] = ck
+        w.refresh_all()
+        app.processEvents()
+        def zusaetze(baum):
+            out = []
+
+            def lauf(it):
+                out.append(it.text(1))
+                for i in range(it.childCount()):
+                    lauf(it.child(i))
+            for i in range(baum.topLevelItemCount()):
+                lauf(baum.topLevelItem(i))
+            return out
+        check("Theorie steht in Tabelle und Baum",
+              any("III" in str(z) for z in w.tbl_lastfall.modell.zeilen)
+              and any("II" in str(z) for z in w.tbl_kombi.modell.zeilen)
+              and any("III. O." in t for t in zusaetze(w.baum)))
+        an_ = solver.solve_all(m_)
+        w._solve_done("all", an_)
+        app.processEvents()
+        check("Lastfall nach Theorie III. Ordnung gerechnet, Kombination nach II.",
+              an_.cases[lf].info.get("theorie") == "III. Ordnung"
+              and an_.theorie3 is not None and lf in an_.theorie3.kombinationen
+              and an_.theorie2 is not None and "K2" in an_.theorie2.kombinationen
+              and "Theorie III" in w.txt_summary.toPlainText(),
+              str(an_.cases[lf].info.get("theorie")))
+        m_.load_cases[lf].theorie = ""
+        m_.combinations["K2"].theorie = ""
+
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
         w.model.add_nodes(np.array([[i, 0, 0] for i in range(20)], float))

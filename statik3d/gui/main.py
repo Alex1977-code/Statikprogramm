@@ -3436,6 +3436,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.merken(f"Lastfall {name}")
         lc.category, lc.description, lc.exclusive_group = cat, desc, grp
         lc.situation = d.situation_name()
+        lc.theorie = d.theorie_name()
         if nm != name and nm not in self.model.load_cases:
             self.model.load_cases = {(nm if k == name else k): v
                                      for k, v in self.model.load_cases.items()}
@@ -3597,7 +3598,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                ("gzg", "Verformungen (GZG)"), ("beulen", "Beulen"),
                                ("lasteinleitung", "Lasteinleitung"),
                                ("volumen", "Volumen"), ("joints", "Anschlüsse"),
-                               ("theorie2", "Theorie II. Ordnung")):
+                               ("theorie2", "Theorie II. Ordnung"),
+                               ("theorie3", "Theorie III. Ordnung")):
                 erg = getattr(an, feld, None)
                 if erg is None:
                     continue
@@ -3854,7 +3856,8 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Lastfall"), Spalte("Einwirkung"), Spalte("Beschreibung", "", "text", 3, True),
             Spalte("Lasten", "", "ganz"), Spalte("Eigengewicht", "m/s²", "zahl", 2),
             Spalte("Ausschlussgruppe"),
-            Spalte("Situation", hinweis="Stellung und wirksame Elemente, in denen der Lastfall gilt")],
+            Spalte("Situation", hinweis="Stellung und wirksame Elemente, in denen der Lastfall gilt"),
+            Spalte("Theorie", hinweis="I, II oder III. Ordnung; leer = wie Einstellung")],
             "Lastfälle", self)
         self.tbl_lastfall.modell.aendern = self._lastfall_aendern
         self.tbl_lastfall.view.doubleClicked.connect(
@@ -3960,7 +3963,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tbl_kombi = tab.Datentabelle([
             Spalte("Kombination"), Spalte("Typ"), Spalte("Formel"),
-            Spalte("Beschreibung"), Spalte("Situation")], "Kombinationen", self)
+            Spalte("Beschreibung"), Spalte("Situation"),
+            Spalte("Theorie", hinweis="I, II oder III. Ordnung; leer = wie Einstellung")],
+            "Kombinationen", self)
         self.tbl_kombi.view.doubleClicked.connect(
             lambda _i: self.kombination_bearbeiten(str(self._tabellenschluessel(self.tbl_kombi))))
         bc1 = QtWidgets.QPushButton("Kombination hinzufügen…")
@@ -4080,11 +4085,13 @@ class MainWindow(QtWidgets.QMainWindow):
                    [[name, f"{lc.category}", lc.description, lc.n_loads,
                      float(lc.gravity[2]) if len(lc.gravity) > 2 else 0.0,
                      getattr(lc, "exclusive_group", "") or "",
-                     getattr(lc, "situation", "") or GRUNDSTELLUNG]
+                     getattr(lc, "situation", "") or GRUNDSTELLUNG,
+                     (getattr(lc, "theorie", "") or "").upper() or "–"]
                     for name, lc in m.load_cases.items()])
         self._fill(self.tbl_kombi,
                    [[name, c.typ, c.formula(), c.description,
-                     getattr(c, "situation", "") or GRUNDSTELLUNG]
+                     getattr(c, "situation", "") or GRUNDSTELLUNG,
+                     (getattr(c, "theorie", "") or "").upper() or "–"]
                     for name, c in m.combinations.items()])
         from .viewport import polygon_flaeche as _pf
         from ..elements import solid as _so
@@ -7231,6 +7238,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.error(f"Lastfall '{name}' existiert bereits")
             self.model.add_load_case(name, cat, desc, exclusive_group=grp)
             self.model.load_cases[name].situation = d.situation_name()
+            self.model.load_cases[name].theorie = d.theorie_name()
             self.refresh_all()
 
     def edit_case(self):
@@ -7241,6 +7249,7 @@ class MainWindow(QtWidgets.QMainWindow):
             old = lc.name
             lc.category, lc.description, lc.exclusive_group = cat, desc, grp
             lc.situation = d.situation_name()
+            lc.theorie = d.theorie_name()
             if name != old:
                 self.model.load_cases = {(name if k == old else k): v for k, v in self.model.load_cases.items()}
                 lc.name = name
@@ -7645,6 +7654,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if an is not None and getattr(an, "theorie2", None) is not None \
                 and an.theorie2.kombinationen:
             lines.append(an.theorie2.summary())
+        if an is not None and getattr(an, "theorie3", None) is not None \
+                and an.theorie3.kombinationen:
+            lines.append(an.theorie3.summary())
         self.refresh_joints()
         self.refresh_verformungen()
         self.refresh_beulfelder()

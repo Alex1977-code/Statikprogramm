@@ -227,6 +227,24 @@ class SectionDialog(QtWidgets.QDialog):
 
 
 # ==========================================================================
+#: Rechentheorie je Lastfall / Kombination: Anzeige -> Wert im Modell
+THEORIEN = [("wie Einstellung", ""), ("I. Ordnung (linear)", "I"),
+            ("II. Ordnung (verformtes System, K_g)", "II"),
+            ("III. Ordnung (große Verformungen)", "III")]
+
+
+def theorie_feld(wert: str = "") -> QtWidgets.QComboBox:
+    cb = QtWidgets.QComboBox()
+    for text, v in THEORIEN:
+        cb.addItem(text, v)
+    i = cb.findData((wert or "").upper())
+    cb.setCurrentIndex(max(i, 0))
+    cb.setToolTip("I: linear. II: Gleichgewicht am verformten System mit geometrischer "
+                  "Steifigkeit und Ersatzimperfektionen (EC3 5.2/5.3). III: große Verformungen, "
+                  "korotational mit Laststufen (nur Stabtragwerke).")
+    return cb
+
+
 class LoadCaseDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, lc: LoadCase = None, existing=(), situationen=()):
         super().__init__(parent)
@@ -240,6 +258,7 @@ class LoadCaseDialog(QtWidgets.QDialog):
             if lc.situation not in namen:
                 self.situation.addItem(lc.situation)
             self.situation.setCurrentText(lc.situation)
+        self.theorie = theorie_feld(getattr(lc, "theorie", "") if lc else "")
         self.cat = QtWidgets.QComboBox()
         for k, (desc, psi) in ACTION_CATEGORIES.items():
             self.cat.addItem(f"{k}: {desc}  (ψ {psi[0]}/{psi[1]}/{psi[2]})", k)
@@ -254,6 +273,7 @@ class LoadCaseDialog(QtWidgets.QDialog):
         f.addRow("Beschreibung", self.desc)
         f.addRow("Ausschlussgruppe", self.group)
         f.addRow("Situation", self.situation)
+        f.addRow("Theorie", self.theorie)
         f.addRow(buttons(self))
 
     def values(self):
@@ -264,6 +284,9 @@ class LoadCaseDialog(QtWidgets.QDialog):
         """"" fuer die Grundstellung, sonst der Name der Situation."""
         s = self.situation.currentText()
         return "" if s == "Grundstellung" else s
+
+    def theorie_name(self) -> str:
+        return self.theorie.currentData() or ""
 
 
 class CombinationDialog(QtWidgets.QDialog):
@@ -290,6 +313,8 @@ class CombinationDialog(QtWidgets.QDialog):
         f.addRow("Typ", self.typ)
         f.addRow("Beschreibung", self.desc)
         f.addRow("Situation", self.situation)
+        self.theorie = theorie_feld(getattr(combo, "theorie", "") if combo else "")
+        f.addRow("Theorie", self.theorie)
         for k, lc in model.load_cases.items():
             e = NumEdit(combo.factors.get(k, 0.0) if combo else 0.0, 80)
             self.factors[k] = e
@@ -316,7 +341,8 @@ class CombinationDialog(QtWidgets.QDialog):
                            {k: e.value() for k, e in self.factors.items()
                             if e.value() and e.isEnabled()},
                            self.typ.currentText(), self.desc.text(),
-                           situation=self.situation_name())
+                           situation=self.situation_name(),
+                           theorie=self.theorie.currentData() or "")
 
 
 class AutoCombinationDialog(QtWidgets.QDialog):
@@ -487,6 +513,12 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         f.addRow(self.imp)
         f.addRow(self.th2_pl)
         f.addRow(self.th2_alle)
+        self.th3_schritte = QtWidgets.QSpinBox()
+        self.th3_schritte.setRange(1, 200)
+        self.th3_schritte.setValue(int(getattr(ds, "th3_schritte", 10) or 10))
+        self.th3_schritte.setToolTip("Laststufen der Theorie III. Ordnung (große Verformungen); "
+                                     "mehr Stufen bei großen Drehungen")
+        f.addRow("Theorie III: Laststufen", self.th3_schritte)
         hint = QtWidgets.QLabel(
             "Nach Theorie II. Ordnung gilt keine Superposition: jede Kombination\n"
             "wird einzeln am verformten System gerechnet. Das dauert länger.")
@@ -505,6 +537,7 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         ds.imperfektionen = self.imp.isChecked()
         ds.th2_plastisch = self.th2_pl.isChecked()
         ds.th2_alle_vorkruemmungen = self.th2_alle.isChecked()
+        ds.th3_schritte = int(self.th3_schritte.value())
 
 
 # ==========================================================================

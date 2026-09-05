@@ -964,6 +964,7 @@ class Analysis:
     #: (Grundstellung: das Modell selbst; Stellung: gedrehte Kopie)
     systeme: dict = field(default_factory=dict)
     modelle: dict = field(default_factory=dict)
+    theorie3: object = None
 
     def all_results(self) -> dict:
         d = dict(self.cases)
@@ -978,6 +979,10 @@ class Analysis:
              f"Rechenzeit: {self.info.get('time', 0):.2f} s ({self.info.get('parallel', '')})"]
         for k, env in self.envelopes.items():
             s.append(env.summary())
+        if self.theorie2 is not None and getattr(self.theorie2, "kombinationen", None):
+            s.append(self.theorie2.summary())
+        if self.theorie3 is not None and getattr(self.theorie3, "kombinationen", None):
+            s.append(self.theorie3.summary())
         if self.design is not None:
             s.append(self.design.summary())
         if self.fatigue is not None:
@@ -995,6 +1000,44 @@ class Analysis:
         if self.theorie2 is not None and self.theorie2.kombinationen:
             s.append(self.theorie2.summary())
         return "\n".join(s)
+
+
+def _lastfaelle_hoeherer_ordnung(model: Model, an, systeme: dict, progress=None):
+    """Lastfaelle mit theorie II oder III: das lineare Ergebnis ersetzen."""
+    from .theorie2 import solve_theorie2, Th2Results
+    from .theorie3 import solve_theorie3, Th3Results
+    ds = model.design
+    for name, lc in model.load_cases.items():
+        th = model.theorie_von(lc)
+        if th not in ("II", "III") or name not in an.cases:
+            continue
+        m_s, sys_s = systeme[lc.situation or GRUNDSTELLUNG]
+        try:
+            if th == "II":
+                res, info = solve_theorie2(m_s, {name: 1.0}, name, sys_s,
+                                           imperfektionen=bool(getattr(ds, "imperfektionen", True)),
+                                           elastisch=not getattr(ds, "th2_plastisch", False),
+                                           richtung=getattr(ds, "th2_richtung", None),
+                                           alle_vorkruemmungen=bool(getattr(ds, "th2_alle_vorkruemmungen", False)),
+                                           progress=progress)
+                if an.theorie2 is None:
+                    an.theorie2 = Th2Results(settings={"modus": "je Lastfall/Kombination"})
+                an.theorie2.kombinationen[name] = info
+            else:
+                res, info = solve_theorie3(m_s, {name: 1.0}, name,
+                                           schritte=int(getattr(ds, "th3_schritte", 10) or 10),
+                                           aktiv=getattr(sys_s, "aktiv", None), progress=progress)
+                if an.theorie3 is None:
+                    an.theorie3 = Th3Results(settings={"schritte": int(getattr(ds, "th3_schritte", 10) or 10)})
+                an.theorie3.kombinationen[name] = info
+        except ValueError as ex:
+            an.info.setdefault("warnungen", []).append(f"Lastfall {name}: {ex}")
+            continue
+        if not info.fehler:
+            res.kind = "case"
+            if lc.situation:
+                res.info["situation"] = lc.situation
+            an.cases[name] = res
 
 
 def solve_all(model: Model, workers: int = None, progress=None, combinations: bool = True,
@@ -1021,13 +1064,33 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         an.combinations = solve_combinations(model, case_results=an.cases, system=None,
                                              workers=workers, progress=progress,
                                              systeme=systeme)
-    if model.design.theorie2 != "aus" and an.combinations:
-        # Gleichgewicht am verformten System: die GZT-Kombinationen werden
+    # Theorie je Lastfall: II. oder III. Ordnung ersetzt das lineare Ergebnis
+    _lastfaelle_hoeherer_ordnung(model, an, systeme, progress)
+    th2 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "II"]
+    if th2 and an.combinations:
+        # Gleichgewicht am verformten System: die Kombinationen werden
         # ersetzt, denn nach Theorie II. Ordnung gilt keine Superposition
         # mehr (EN 1993-1-1, 5.2). Danach erst die Umhuellenden bilden.
+        # Ausdruecklich auf "II" gestellte Kombinationen werden immer
+        # gerechnet, die uebrigen nach der Einstellung (auto: alpha_cr).
         from .theorie2 import check_theorie2
-        an.theorie2 = check_theorie2(model, an, system=system, progress=progress,
-                                     systeme=systeme)
+        erzwungen = {n for n in th2 if (model.combinations[n].theorie or "").upper() == "II"}
+        t2 = check_theorie2(model, an, combos=th2, system=system, progress=progress,
+                            systeme=systeme, erzwungen=erzwungen)
+        if an.theorie2 is None:
+            an.theorie2 = t2
+        else:                       # Lastfaelle nach II. Ordnung stehen schon darin
+            an.theorie2.kombinationen.update(t2.kombinationen)
+            an.theorie2.settings.update(t2.settings)
+    th3 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "III"]
+    if th3 and an.combinations:
+        from .theorie3 import check_theorie3
+        t3 = check_theorie3(model, an, combos=th3, progress=progress, systeme=systeme)
+        if an.theorie3 is None:
+            an.theorie3 = t3
+        else:
+            an.theorie3.kombinationen.update(t3.kombinationen)
+            an.theorie3.settings.update(t3.settings)
     if envelopes:
         groups: dict[str, dict] = {}
         for n, r in an.combinations.items():

@@ -120,6 +120,11 @@ Punkte:
   dorthin wäre ein Stabelement mit sieben Freiheitsgraden.
 * **Wölbordinaten nur für I und U** – für andere offene Querschnitte wird der
   Momentenanteil ausgewiesen, aber keine Wölbspannung; sie würde geraten.
+* **Theorie III. Ordnung** rechnet mit der korotationalen Tangente
+  Tᵀ(k_l + k_g)T ohne die Zusatzterme der konsistenten Tangente (Crisfield
+  Kap. 17) — Konvergenz linear statt quadratisch; Lasten richtungstreu,
+  keine Folgelasten; nur Stabtragwerke. Ein Bogenlängenverfahren für
+  Durchschlagprobleme fehlt.
 * **Subsysteme** sind bisher eine Gliederung (Auswahl, Baum, Speichern);
   eine Berechnung je Subsystem (Teilsystem freischneiden, Schnittkräfte an
   den verdoppelten Berührungselementen) steht noch aus.

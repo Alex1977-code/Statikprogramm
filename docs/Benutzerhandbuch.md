@@ -1127,6 +1127,24 @@ Kombination wird einzeln gerechnet — das dauert länger als eine lineare
 Überlagerung. Die Ergebnisse der einzelnen **Lastfälle** bleiben Ergebnisse
 nach Theorie I. Ordnung und dürfen nicht mehr von Hand überlagert werden.
 
+### Theorie je Lastfall und Kombination: I., II., III. Ordnung
+
+Im Lastfall- und im Kombinationsdialog steht das Feld **Theorie**:
+
+| Wahl | Rechnung |
+|---|---|
+| wie Einstellung | Lastfälle linear; GZT-Kombinationen nach der Einstellung *Nachweise → Konfiguration* (aus / automatisch nach 5.2.1(3) / ein) |
+| I. Ordnung | linear, Superposition |
+| II. Ordnung | Gleichgewicht am verformten System mit geometrischer Steifigkeit und Ersatzimperfektionen (5.2, 5.3) — immer, unabhängig von der Einstellung |
+| III. Ordnung | **große Verformungen** und endliche Drehungen (geometrisch nichtlinear, korotational), Newton-Raphson in Laststufen (Anzahl in der Konfiguration) — nur für Stabtragwerke, ohne Kontakt und Zwangsverformungen |
+
+Nach II. und III. Ordnung gilt keine Superposition: der Lastfall bzw. die
+Kombination wird einzeln gerechnet und ersetzt das lineare Ergebnis. Die
+Tabellen unten und der Modellbaum zeigen die Wahl; der Bericht führt je
+Lastfall und Kombination die Theorie und für III. Ordnung Laststufen,
+Iterationen, Residuum, u_max nach I. und III. Ordnung und die größte
+Drehung auf.
+
 ### Verformungsnachweise (GZG)
 
 Die Kombinationen des Grenzzustands der Gebrauchstauglichkeit rechnet Statik3D
