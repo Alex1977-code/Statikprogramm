@@ -817,15 +817,18 @@ class Geometrielast:
     #: Erddruck), drei Punkte eine Ebene der Lastwerte. Leer = gleichmaessig p.
     verlauf: dict = field(default_factory=dict)
 
-    def wert(self, punkt) -> float:
+    def wert(self, punkt, normale=None, beidseitig: bool = False) -> float:
         """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig, linear oder
-        aus dem Wasserdruck-Generierer (verlauf["art"] == "wasser")."""
+        aus dem Wasserdruck-Generierer (verlauf["art"] == "wasser") bzw. dem
+        Wind. ``normale`` ist die Aussennormale der Elementseite (die
+        Stroemungsfelder tasten ihr Gitter vor der Seite ab), ``beidseitig``
+        sagt, dass eine duenne Schale von beiden Seiten belastet ist (Netto)."""
         if self.verlauf and self.verlauf.get("art") == "wasser":
             from .wasserdruck import druck_aus_verlauf
-            return druck_aus_verlauf(self.verlauf, punkt)
+            return druck_aus_verlauf(self.verlauf, punkt, normale=normale, beidseitig=beidseitig)
         if self.verlauf and self.verlauf.get("art") == "wind":
             from .wind import druck_aus_verlauf as wind_druck
-            return wind_druck(self.verlauf, punkt)
+            return wind_druck(self.verlauf, punkt, normale=normale, beidseitig=beidseitig)
         if not self.verlauf or self.verlauf.get("art") != "linear":
             return float(self.p)
         P = np.asarray(self.verlauf.get("punkte") or [], float).reshape(-1, 4)
@@ -970,6 +973,7 @@ class LoadCase:
     exclusive_group: str = ""              # Lastfaelle derselben Gruppe wirken nie gemeinsam
     situation: str = ""                    # Situation (Stellung + wirksame Elemente); "" = Grundstellung
     theorie: str = ""                      # "" (wie Einstellung) | I | II | III
+    nummer: int = 0                        # Lastfallnummer (0 = keine vergeben)
     nodal_loads: list[NodalLoad] = field(default_factory=list)
     beam_loads: list[BeamLoad] = field(default_factory=list)
     face_loads: list[FaceLoad] = field(default_factory=list)
@@ -1022,6 +1026,7 @@ class LoadCase:
             "exclusive_group": self.exclusive_group,
             "situation": self.situation,
             "theorie": self.theorie,
+            "nummer": int(self.nummer or 0),
             # Aus Objektlasten erzeugte Elementlasten werden **nicht**
             # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
             # laegen sie nach dem Laden doppelt auf dem Netz.
@@ -1042,6 +1047,7 @@ class LoadCase:
                       d.get("psi"), d.get("exclusive_group", ""))
         lc.situation = d.get("situation", "") or ""
         lc.theorie = d.get("theorie", "") or ""
+        lc.nummer = int(d.get("nummer", 0) or 0)
         lc.nodal_loads = [NodalLoad(**l) for l in d.get("nodal_loads", [])]
         lc.beam_loads = [BeamLoad(**l) for l in d.get("beam_loads", [])]
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
@@ -2601,6 +2607,10 @@ class Model:
         return sub
 
     # ---------------- Situationen ----------------
+    def naechste_lastfallnummer(self) -> int:
+        """Die naechste freie Lastfallnummer (1 + groesste vergebene)."""
+        return 1 + max([int(getattr(lc, "nummer", 0) or 0) for lc in self.load_cases.values()] + [0])
+
     def situationsnamen(self) -> list[str]:
         return [GRUNDSTELLUNG] + list(self.situationen)
 
@@ -3011,6 +3021,17 @@ class Model:
         s = seiten[int(seite) % len(seiten)]
         return self.nodes[[int(e.nodes[j]) for j in s]].mean(axis=0)
 
+    def _seitennormale_oder_schale(self, elem: int, seite: int):
+        """Aussennormale einer Volumenseite - oder die Normale einer Schale
+        (Knotenreihenfolge) - oder None."""
+        e = self.elements[int(elem)]
+        if e.typ in ("shell3", "shell4"):
+            X = self.nodes[[int(k) for k in e.nodes[:3]]]
+            n = np.cross(X[1] - X[0], X[2] - X[0])
+            L = float(np.linalg.norm(n))
+            return n / L if L > 0 else None
+        return self._seitennormale(elem, seite)
+
     def _seitennormale(self, elem: int, seite: int):
         """Aussennormale einer Elementseite (Einheitsvektor) - oder None.
 
@@ -3068,7 +3089,11 @@ class Model:
             mitte = self._seitenmitte(e, seite)
             if gl.bereich and not gl.trifft(mitte):
                 return
-            p = gl.wert(mitte) if gl.verlauf else gl.p
+            if gl.verlauf:
+                p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in ("shell3", "shell4")))
+            else:
+                p = gl.p
             if gl.verlauf and p == 0.0:
                 return              # ausserhalb des Verlaufs (ueber dem Wasserspiegel)
             if d is not None:

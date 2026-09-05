@@ -34,6 +34,16 @@ from .worker import SolveWorker
 from . import ribbon as rib
 from . import masken as msk
 from . import tabellen as tab
+
+
+def _lebt(obj) -> bool:
+    """Lebt das Qt-Objekt hinter dem Python-Namen noch? (Register und Masken
+    werden mit deleteLater entsorgt; ein Zugriff danach stuerzt sonst.)"""
+    try:
+        import shiboken6
+        return obj is not None and shiboken6.isValid(obj)
+    except Exception:                       # noqa: BLE001
+        return obj is not None
 from .tabellen import Spalte
 from .. import ks
 from . import viewport as vp
@@ -1398,6 +1408,30 @@ class MainWindow(QtWidgets.QMainWindow):
     #: damit es noch ein Klick ist [Bildpunkte]; mehr ist ein Ziehen (Drehen).
     KLICK_TOLERANZ = 4
 
+    def _maskenobjekt_klick(self, modus: str, point):
+        """Eine Maske im Klickmodus: das getroffene Objekt (Linie, Flaeche,
+        Volumen) geht an sie statt in die Auswahl."""
+        m = self.model
+        size = m.characteristic_size() if m.nn else 1.0
+        proben = []
+        if modus in ("flaeche", "objekt"):
+            proben.append(("flaeche", lambda: self._objekt_am_zeiger("Fläche") or vp.flaeche_at(m, point, size)))
+        if modus == "objekt":
+            proben.append(("volumen", lambda: self._objekt_am_zeiger("Volumen") or vp.koerper_at(m, point, size)))
+        if modus == "linie":
+            proben.append(("linie", lambda: self._linie_am_zeiger() or vp.line_at(m, point, size)))
+        for art, finder in proben:
+            try:
+                name = finder()
+            except Exception:               # noqa: BLE001
+                name = None
+            if name:
+                self.maskenrand.maske.objekt_angeklickt(art, name)
+                self.redraw()
+                return
+        self.statusBar().showMessage("Nichts getroffen - Objekt anklicken oder den Klickmodus in der Maske "
+                                     "beenden", 3000)
+
     def _klick_gedrueckt(self, point, *args):
         """VTK meldet den Linksklick beim Druecken - gemerkt, ausgefuehrt wird
         beim Loslassen (siehe _klick_loslassen)."""
@@ -1432,6 +1466,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self._fenster_abbrechen()
             return
+        modus = self.maskenrand.objekt_modus()
+        if modus:
+            return self._maskenobjekt_klick(modus, point)
         art = getattr(self, "auswahlart", "Knoten")
         if art != "Knoten":
             m = self.model
@@ -2689,16 +2726,12 @@ class MainWindow(QtWidgets.QMainWindow):
     BAUM_ZIEL = {
         "modell": "Modell",
         "querschnitte": "Modell", "querschnitt": "Modell",
-        "werkstoffe": "Modell", "werkstoff": "Modell",
-        "dicken": "Modell", "dicke": "Modell",
         "elemente": "Netz", "stabelemente": "Netz", "flaechen": "Netz",
         "volumen": "Netz",
         "lager": "Lager/Lasten", "lager_einzeln": "Lager/Lasten",
         "linienlager": "Lager/Lasten", "linienlager_einzeln": "Lager/Lasten",
         "flaechenlager": "Lager/Lasten", "flaechenlager_einzeln": "Lager/Lasten",
         "lasten": "Lager/Lasten", "last": "Lager/Lasten",
-        "lastfaelle": "Lastfälle", "lastfall": "Lastfälle",
-        "kombinationen": "Lastfälle", "kombination": "Lastfälle",
         "kontakt": "Kontakt",
         "staebe": "Nachweise", "stab": "Nachweise",
         "stellungen": "Stellungen", "stellung": "Stellungen",
@@ -2748,7 +2781,9 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Zweige und Eintraege des Modellbaums, die ein Objekt meinen: Klick waehlt
     #: es in der Ansicht und zeigt rechts seine Maske.
     OBJEKT_ARTEN = {"knoten", "linien", "linie", "stabelemente", "stabelement", "staebe",
-                    "stab", "geoflaechen", "geoflaeche", "geokoerper", "geokoerper_einzeln"}
+                    "stab", "geoflaechen", "geoflaeche", "geokoerper", "geokoerper_einzeln",
+                    "lastfaelle", "lastfall", "kombinationen", "kombination",
+                    "werkstoffe", "werkstoff", "dicken", "dicke"}
 
     #: Zweige und Eintraege fuer Subsysteme und Situationen
     SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
@@ -2941,6 +2976,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return name in m.flaechen
         if art == "geokoerper_einzeln":
             return name in m.koerper
+        if art == "lastfall":
+            return name in m.load_cases
+        if art == "kombination":
+            return name in m.combinations
+        if art == "werkstoff":
+            return name in m.materials
+        if art == "dicke":
+            return name in m.shells
         return False
 
     @staticmethod
@@ -3078,6 +3121,104 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("elemente", "Elemente", "info", str(len(k.elemente)) if k else "0"),
                           F("kommentar", "Kommentar", "text", (k.kommentar if k else ""), breite=160)]
                 titel = f"Volumen {name}"
+        elif art in ("lastfaelle", "lastfall"):
+            from ..model import ACTION_CATEGORIES
+            from .dialogs import THEORIEN
+            kats = [f"{k}: {d}" for k, (d, _p) in ACTION_CATEGORIES.items()]
+            if not eintrag:
+                felder = [F("anzahl", "Anzahl", "info", str(len(m.load_cases))),
+                          F("spanne", "Namen", "info", self._spanne(m.load_cases)),
+                          F("aktiv", "aktiver Lastfall", "info", m.active_case or "–"),
+                          F("nummern", "Nummern", "info",
+                            ", ".join(str(lc.nummer) for lc in m.load_cases.values() if getattr(lc, "nummer", 0))
+                            or "keine vergeben")]
+                titel, knopf = "Lastfälle", "Neuer Lastfall"
+                hinweis = ("Rechtsklick auf den Zweig: Neu. Entf löscht den gewählten Eintrag. Kombinationen "
+                           "automatisch: Ribbon Lasten → Kombinationen.")
+            else:
+                lc = m.load_cases.get(name)
+                situationen = m.situationsnamen()
+                kat = next((t for t in kats if lc is not None and t.startswith(f"{lc.category}:")), kats[0])
+                th = next((t for t, v in THEORIEN if v == ((lc.theorie if lc else "") or "").upper()), THEORIEN[0][0])
+                psi = "" if lc is None or lc.psi is None else "/".join(f"{p:g}" for p in lc.psi)
+                g = float(lc.gravity[2]) if (lc is not None and len(lc.gravity) > 2) else 0.0
+                felder = [F("name", "Name", "text", name, breite=140),
+                          F("nummer", "Nummer", "ganz", int(getattr(lc, "nummer", 0) or 0) if lc else
+                            m.naechste_lastfallnummer(), hinweis="Lastfallnummer (0 = keine)"),
+                          F("kategorie", "Einwirkung", "wahl", kat, kats),
+                          F("beschreibung", "Beschreibung", "text", (lc.description if lc else ""), breite=180),
+                          F("gruppe", "Ausschlussgruppe", "text", (lc.exclusive_group if lc else ""), breite=120,
+                            hinweis="Lastfälle einer Gruppe wirken nie gemeinsam"),
+                          F("situation", "Situation", "wahl",
+                            (lc.situation if lc and lc.situation in situationen else situationen[0]), situationen),
+                          F("theorie", "Theorie", "wahl", th, [t for t, _v in THEORIEN]),
+                          F("g_z", "Eigengewicht g_z [m/s²]", "zahl", g,
+                            hinweis="−9,81 = Eigengewicht nach unten in diesem Lastfall, 0 = keines"),
+                          F("psi", "ψ0/ψ1/ψ2 (leer = aus Kategorie)", "text", psi, breite=100),
+                          F("lasten", "Lasten", "info", str(lc.n_loads) if lc else "0"),
+                          F("aktiv", "aktiver Lastfall (in der Ansicht)", "haken",
+                            bool(lc is not None and m.active_case == name))]
+                titel = f"Lastfall {name}"
+        elif art in ("kombinationen", "kombination"):
+            from .dialogs import THEORIEN
+            typen = ["ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "USER"]
+            if not eintrag:
+                felder = [F("anzahl", "Anzahl", "info", str(len(m.combinations))),
+                          F("spanne", "Namen", "info", self._spanne(m.combinations)),
+                          F("typen", "Typen", "info",
+                            ", ".join(sorted({c.typ for c in m.combinations.values()})) or "–")]
+                titel, knopf = "Kombinationen", "Neue Kombination"
+                hinweis = ("Rechtsklick auf den Zweig: Neu. Automatisch nach DIN EN 1990: Ribbon Lasten → "
+                           "Kombinationen. Entf löscht den gewählten Eintrag.")
+            else:
+                c = m.combinations.get(name)
+                situationen = m.situationsnamen()
+                th = next((t for t, v in THEORIEN if v == ((c.theorie if c else "") or "").upper()), THEORIEN[0][0])
+                fak = ", ".join(f"{k}: {v:g}" for k, v in (c.factors.items() if c else [])) if c else ""
+                felder = [F("name", "Name", "text", name, breite=140),
+                          F("typ", "Typ", "wahl", (c.typ if c and c.typ in typen else "ULS"), typen),
+                          F("beschreibung", "Beschreibung", "text", (c.description if c else ""), breite=180),
+                          F("situation", "Situation", "wahl",
+                            (c.situation if c and c.situation in situationen else situationen[0]), situationen),
+                          F("theorie", "Theorie", "wahl", th, [t for t, _v in THEORIEN]),
+                          F("faktoren", "Faktoren (Lastfall: Faktor, …)", "text", fak, breite=220,
+                            hinweis="z. B. „LF1: 1,35, Wind: 1,5“ - nur Lastfälle derselben Situation"),
+                          F("formel", "Formel", "info", c.formula() if c else "–")]
+                titel = f"Kombination {name}"
+        elif art in ("werkstoffe", "werkstoff"):
+            if not eintrag:
+                felder = [F("anzahl", "Anzahl", "info", str(len(m.materials))),
+                          F("spanne", "Namen", "info", self._spanne(m.materials))]
+                titel, knopf = "Werkstoffe", "Neuer Werkstoff"
+            else:
+                mt = m.materials.get(name)
+                felder = [F("name", "Name", "text", name, breite=120),
+                          F("E", "E [GPa]", "zahl", (mt.E / 1e9 if mt else 210.0)),
+                          F("nu", "Querdehnzahl ν", "zahl", (mt.nu if mt else 0.3)),
+                          F("rho", "Dichte [kg/m³]", "zahl", (mt.rho if mt else 7850.0)),
+                          F("alpha", "α_T [1e-6/K]", "zahl", (mt.alpha * 1e6 if mt else 12.0)),
+                          F("fy", "f_y [N/mm²]", "text", (f"{mt.fy / 1e6:g}" if mt and mt.fy else ""), breite=78,
+                            hinweis="leer = aus der Stahlsorte"),
+                          F("fu", "f_u [N/mm²]", "text", (f"{mt.fu / 1e6:g}" if mt and mt.fu else ""), breite=78),
+                          F("grade", "Stahlsorte", "text", (mt.grade if mt else ""), breite=100,
+                            hinweis="S235, S355 … für die Nachweise"),
+                          F("benutzt", "benutzt von", "info",
+                            f"{sum(1 for e in m.elements if e.mat == name)} Elementen" if mt else "–")]
+                titel = f"Werkstoff {name}"
+        elif art in ("dicken", "dicke"):
+            if not eintrag:
+                felder = [F("anzahl", "Anzahl", "info", str(len(m.shells))),
+                          F("spanne", "Namen", "info", self._spanne(m.shells))]
+                titel, knopf = "Dicken", "Neue Dicke"
+            else:
+                sp = m.shells.get(name)
+                felder = [F("name", "Name", "text", name, breite=120),
+                          F("t", "Dicke t [mm]", "zahl", (sp.t * 1e3 if sp else 10.0)),
+                          F("benutzt", "benutzt von", "info",
+                            f"{sum(1 for e in m.elements if e.typ in ('shell3', 'shell4') and e.sec == name)} "
+                            f"Schalenelementen, {sum(1 for f in m.flaechen.values() if f.dicke == name)} Flächen"
+                            if sp else "–")]
+                titel = f"Dicke {name}"
         else:
             return None
         if neu:
@@ -3102,6 +3243,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Die Felder der Objektmaske ins Modell schreiben (oder das Objekt anlegen)."""
         m = self.model
         try:
+            if art in ("lastfall", "kombination", "werkstoff", "dicke"):
+                return self._eigenschaften_uebernehmen(art, name, w, neu)
             if art == "knoten":
                 i = int(name)
                 if not 0 <= i < m.nn:
@@ -3224,11 +3367,166 @@ class MainWindow(QtWidgets.QMainWindow):
         # rechts bleibt die Maske des Objekts, jetzt im Bearbeiten-Zustand
         self._objektmaske(art if art != "stabelement" else "stabelement", name)
 
+    def _eigenschaften_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False):
+        """Lastfall, Kombination, Werkstoff oder Dicke aus der Objektmaske
+        schreiben - auch umbenennen; Verweise (Elemente, Flächen, Kombinationen)
+        werden mitgezogen."""
+        from ..model import ACTION_CATEGORIES, Material, ShellProp, Combination, GRUNDSTELLUNG
+        from .dialogs import THEORIEN
+        m = self.model
+        neuname = str(w.get("name", "") or "").strip() or name
+
+        def zahl(key, vorgabe=None):
+            t = str(w.get(key, "")).strip().replace(",", ".")
+            return vorgabe if not t else float(t)
+
+        if art == "lastfall":
+            if neu and neuname in m.load_cases:
+                return self.error(f"Lastfall „{neuname}“ gibt es schon")
+            if not neu and neuname != name and neuname in m.load_cases:
+                return self.error(f"Lastfall „{neuname}“ gibt es schon")
+            kat = str(w.get("kategorie", "G")).split(":")[0].strip() or "G"
+            if kat not in ACTION_CATEGORIES:
+                kat = "G"
+            self.merken(f"Lastfall {neuname}")
+            if neu:
+                m.add_load_case(neuname, kat, str(w.get("beschreibung", "") or ""),
+                                exclusive_group=str(w.get("gruppe", "") or "").strip(), activate=False)
+                lc = m.load_cases[neuname]
+            else:
+                lc = m.load_cases[name]
+                if neuname != name:
+                    m.load_cases = {(neuname if k == name else k): v for k, v in m.load_cases.items()}
+                    lc.name = neuname
+                    for c in m.combinations.values():
+                        if name in c.factors:
+                            c.factors[neuname] = c.factors.pop(name)
+                    if m.active_case == name:
+                        m.active_case = neuname
+                lc.category = kat
+                lc.description = str(w.get("beschreibung", "") or "")
+                lc.exclusive_group = str(w.get("gruppe", "") or "").strip()
+            sit = str(w.get("situation", "") or "")
+            lc.situation = "" if sit in ("", GRUNDSTELLUNG) else sit
+            lc.theorie = next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), "")
+            try:
+                lc.nummer = max(0, int(round(float(w.get("nummer", 0) or 0))))
+            except (TypeError, ValueError):
+                lc.nummer = 0
+            g = zahl("g_z", 0.0)
+            grav = list(lc.gravity) + [0.0] * (3 - len(lc.gravity))
+            grav[2] = float(g)
+            lc.gravity = grav[:3]
+            psi = str(w.get("psi", "") or "").strip()
+            if psi:
+                teile = [float(t.replace(",", ".")) for t in psi.replace(";", "/").split("/") if t.strip()]
+                if len(teile) != 3:
+                    return self.error("ψ als drei Zahlen ψ0/ψ1/ψ2 angeben - oder leer lassen")
+                lc.psi = teile
+            else:
+                lc.psi = None
+            if w.get("aktiv"):
+                m.active_case = neuname
+            self.info(f"Lastfall {neuname}: {kat}, Nr. {lc.nummer}" + (f", Situation {lc.situation}" if lc.situation else ""))
+            name = neuname
+        elif art == "kombination":
+            faktoren: dict = {}
+            text = str(w.get("faktoren", "") or "").strip()
+            for teil in [t for t in text.replace(";", ",").split(",") if t.strip()]:
+                for tr in (":", "=", "×", "*"):
+                    if tr in teil:
+                        k, v = teil.split(tr, 1)
+                        break
+                else:
+                    return self.error(f"Faktor „{teil.strip()}“: bitte als „Lastfall: Faktor“ schreiben")
+                k = k.strip()
+                if k not in m.load_cases:
+                    return self.error(f"Lastfall „{k}“ gibt es nicht")
+                try:
+                    faktoren[k] = float(v.strip().replace(",", "."))
+                except ValueError:
+                    return self.error(f"Faktor von {k} ist keine Zahl: {v.strip()}")
+            if (neu or neuname != name) and neuname in m.combinations:
+                return self.error(f"Kombination „{neuname}“ gibt es schon")
+            sit = str(w.get("situation", "") or "")
+            sit = "" if sit in ("", GRUNDSTELLUNG) else sit
+            fremd = [k for k in faktoren if (getattr(m.load_cases[k], "situation", "") or "") != sit]
+            if fremd:
+                return self.error("Lastfälle einer anderen Situation lassen sich nicht kombinieren: "
+                                  + ", ".join(fremd))
+            self.merken(f"Kombination {neuname}")
+            c = Combination(neuname, faktoren, str(w.get("typ", "ULS") or "ULS"),
+                            str(w.get("beschreibung", "") or ""), situation=sit,
+                            theorie=next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), ""))
+            if not neu and name in m.combinations and neuname != name:
+                del m.combinations[name]
+            m.combinations[neuname] = c
+            self.info(f"Kombination {neuname}: {c.formula()}")
+            name = neuname
+        elif art == "werkstoff":
+            if (neu or neuname != name) and neuname in m.materials:
+                return self.error(f"Werkstoff „{neuname}“ gibt es schon")
+            self.merken(f"Werkstoff {neuname}")
+            fy, fu = zahl("fy"), zahl("fu")
+            mt = Material(neuname, E=float(w.get("E", 210.0) or 210.0) * 1e9, nu=float(w.get("nu", 0.3) or 0.3),
+                          rho=float(w.get("rho", 7850.0) or 7850.0),
+                          alpha=float(w.get("alpha", 12.0) or 12.0) * 1e-6,
+                          fy=None if fy is None else fy * 1e6, fu=None if fu is None else fu * 1e6,
+                          grade=str(w.get("grade", "") or "").strip())
+            if not neu and neuname != name and name in m.materials:
+                del m.materials[name]
+                for e in m.elements:
+                    if e.mat == name:
+                        e.mat = neuname
+                for f in m.flaechen.values():
+                    if getattr(f, "material", "") == name:
+                        f.material = neuname
+                for k in m.koerper.values():
+                    if getattr(k, "material", "") == name:
+                        k.material = neuname
+            m.materials[neuname] = mt
+            name = neuname
+        elif art == "dicke":
+            if (neu or neuname != name) and neuname in m.shells:
+                return self.error(f"Dicke „{neuname}“ gibt es schon")
+            t = float(w.get("t", 10.0) or 10.0) * 1e-3
+            if t <= 0:
+                return self.error("Die Dicke muss größer als null sein")
+            self.merken(f"Dicke {neuname}")
+            if not neu and neuname != name and name in m.shells:
+                del m.shells[name]
+                for e in m.elements:
+                    if e.typ in ("shell3", "shell4") and e.sec == name:
+                        e.sec = neuname
+                for f in m.flaechen.values():
+                    if getattr(f, "dicke", "") == name:
+                        f.dicke = neuname
+            m.shells[neuname] = ShellProp(neuname, t)
+            name = neuname
+        self.analysis = None
+        self.results = None
+        self.refresh_all()
+        if neu:
+            self.maskenrand.schliessen()
+        try:
+            self.baum.eintrag_waehlen(art, name)
+        except Exception:                   # noqa: BLE001
+            pass
+        return self._objektmaske(art, name)
+
     def _baum_neu(self, zweigart: str):
         """Rechtsklick „Neu“: naechste fortlaufende Nummer, rechts die Maske
         mit OK und Abbrechen. Ein Knoten entsteht sofort (Abbrechen nimmt ihn
         zurueck), alles andere erst mit OK."""
         m = self.model
+        if zweigart == "lastfaelle":
+            return self._objektmaske("lastfall", m.naechster_name("LF", m.load_cases), neu=True)
+        if zweigart == "kombinationen":
+            return self._objektmaske("kombination", m.naechster_name("K", m.combinations), neu=True)
+        if zweigart == "werkstoffe":
+            return self._objektmaske("werkstoff", m.naechster_name("S", m.materials), neu=True)
+        if zweigart == "dicken":
+            return self._objektmaske("dicke", m.naechster_name("t", m.shells), neu=True)
         if zweigart == "querschnitte":
             return self.querschnitt_neu()
         if zweigart == "subsysteme":
@@ -3577,7 +3875,10 @@ class MainWindow(QtWidgets.QMainWindow):
                "wasserdruck": f"Wasserdruck {name} samt seinen Lasten",
                "wind": f"Wind {name} samt seinen Lasten",
                "schweissnaht": f"Schweißnaht {name}",
-               "bemassung": f"Bemaßung {name}"}.get(art)
+               "bemassung": f"Bemaßung {name}",
+               "lastfall": f"Lastfall {name} samt seinen Lasten (Kombinationen verlieren ihn)",
+               "kombination": f"Kombination {name}",
+               "werkstoff": f"Werkstoff {name}", "dicke": f"Dicke {name}"}.get(art)
         if was is None:
             return
         if not self._bestaetigen(f"{was} wirklich löschen?"):
@@ -3606,6 +3907,39 @@ class MainWindow(QtWidgets.QMainWindow):
             grund = m.flaeche_loeschen(name)
         elif art == "geokoerper_einzeln":
             grund = m.koerper_loeschen(name)
+        elif art == "lastfall":
+            if name not in m.load_cases:
+                grund = "gibt es nicht"
+            else:
+                del m.load_cases[name]
+                for c in m.combinations.values():
+                    c.factors.pop(name, None)
+                if m.active_case == name:
+                    m.active_case = next(iter(m.load_cases), "")
+        elif art == "kombination":
+            if name not in m.combinations:
+                grund = "gibt es nicht"
+            else:
+                del m.combinations[name]
+        elif art == "werkstoff":
+            benutzt = (sum(1 for e in m.elements if e.mat == name)
+                       + sum(1 for f in m.flaechen.values() if getattr(f, "material", "") == name)
+                       + sum(1 for k in m.koerper.values() if getattr(k, "material", "") == name))
+            if name not in m.materials:
+                grund = "gibt es nicht"
+            elif benutzt:
+                grund = f"wird noch von {benutzt} Elementen/Flächen/Volumen benutzt"
+            else:
+                del m.materials[name]
+        elif art == "dicke":
+            benutzt = (sum(1 for e in m.elements if e.typ in ("shell3", "shell4") and e.sec == name)
+                       + sum(1 for f in m.flaechen.values() if getattr(f, "dicke", "") == name))
+            if name not in m.shells:
+                grund = "gibt es nicht"
+            elif benutzt:
+                grund = f"wird noch von {benutzt} Schalenelementen/Flächen benutzt"
+            else:
+                del m.shells[name]
         elif art == "wasserdruck":
             if name not in m.wasserdruecke:
                 grund = f"Wasserdruck {name} gibt es nicht"
@@ -3762,10 +4096,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.berichtseintrag_bearbeiten(name)
             if art == "querschnitt":
                 return self.querschnitt_bearbeiten(name)
-            if art == "werkstoff":
-                return self.werkstoff_bearbeiten(name)
-            if art == "dicke":
-                return self.dicke_bearbeiten(name)
+            if art in ("werkstoff", "dicke", "lastfall", "kombination"):
+                self._baum_objekt_waehlen(art, name)
+                return self._objektmaske(art, name)
             if art in ("lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"):
                 return self.lagerobjekt_bearbeiten(art, name)
             if art == "gelenk":
@@ -3774,10 +4107,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self._subsystem_zeigen(name)
             if art == "situation":
                 return self._situation_zeigen(name)
-            if art == "lastfall":
-                return self.lastfall_bearbeiten(name)
-            if art == "kombination":
-                return self.kombination_bearbeiten(name)
             if art == "stab":
                 self._tabelle_stab(name)
                 return self.edit_member()
@@ -4355,7 +4684,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def lastfall_bearbeiten(self, name: str):
         lc = self.model.load_cases.get(name)
         if lc is None:
-            return self.add_load_case()
+            return self.add_case()
         d = dg.LoadCaseDialog(self, lc, self.model.load_cases, self.model.situationsnamen())
         if not d.exec():
             return
@@ -4784,7 +5113,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ---- Lastfaelle und Kombinationen ---------------------------------
         self.tbl_lastfall = tab.Datentabelle([
-            Spalte("Lastfall"), Spalte("Einwirkung"), Spalte("Beschreibung", "", "text", 3, True),
+            Spalte("Lastfall"), Spalte("Nr", "", "ganz", 0, True, hinweis="Lastfallnummer"),
+            Spalte("Einwirkung"), Spalte("Beschreibung", "", "text", 3, True),
             Spalte("Lasten", "", "ganz"), Spalte("Eigengewicht", "m/s²", "zahl", 2),
             Spalte("Ausschlussgruppe"),
             Spalte("Situation", hinweis="Stellung und wirksame Elemente, in denen der Lastfall gilt"),
@@ -5031,7 +5361,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill(self.tbl_gelenk, zeilen)
         # Lastfaelle
         self._fill(self.tbl_lastfall,
-                   [[name, f"{lc.category}", lc.description, lc.n_loads,
+                   [[name, int(getattr(lc, "nummer", 0) or 0) or "", f"{lc.category}", lc.description, lc.n_loads,
                      float(lc.gravity[2]) if len(lc.gravity) > 2 else 0.0,
                      getattr(lc, "exclusive_group", "") or "",
                      getattr(lc, "situation", "") or GRUNDSTELLUNG,
@@ -5317,9 +5647,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def _lastfall_aendern(self, z: int, k: int, wert) -> bool:
         name = str(self.tbl_lastfall.modell.zeilen[z][0])
         lc = self.model.load_cases.get(name)
-        if lc is None or k != 2:
+        if lc is None or k not in (1, 3):
             return False
         self.merken(f"Lastfall {name}")
+        if k == 1:
+            try:
+                lc.nummer = max(0, int(round(float(wert))))
+            except (TypeError, ValueError):
+                lc.nummer = 0
+            self._zelle_uebernommen(f"Lastfall {name}: Nr = {lc.nummer}")
+            return True
         lc.description = str(wert)
         self._zelle_uebernommen(f"Lastfall {name}: Beschreibung = {wert}")
         return True
@@ -7221,7 +7558,7 @@ class MainWindow(QtWidgets.QMainWindow):
                          (self.cb_shell, m.shells),
                          (getattr(self, "cb_assign_sec", None), m.sections),
                          (getattr(self, "cb_assign_mat", None), m.materials)):
-            if cb is None:
+            if cb is None or not _lebt(cb):
                 continue
             cur = cb.currentText()
             cb.blockSignals(True)
@@ -8114,9 +8451,18 @@ class MainWindow(QtWidgets.QMainWindow):
                         "senkrecht zur Fläche, mit der Normale",
                         "global x", "global y", "global z", "global −x", "global −y", "global −z"]
 
+    WASSERVERFAHREN = ["strömungsnumerisch (Potentialströmung im Schnitt)", "analytisch (Näherungsformeln)"]
+    WASSERKLICK = {"benetzt": "objekt", "dichtung": "linie", "ow": "flaeche", "uw": "flaeche"}
+    WASSERHINWEIS = ("Benetzte Flächen/Volumen und die Dichtlinie in der Ansicht anklicken (Knöpfe unten "
+                     "schalten den Klickmodus), Referenzflächen für Ober- und Unterwasser wählen und sagen, "
+                     "welche Seite dem Wasser zugewandt ist, Wasserstände eintragen. „Lasten erzeugen“ rechnet "
+                     "strömungsnumerisch die Druckverteilung (Fortschrittsbalken, Abbrechen) und legt die "
+                     "Objektlasten in den Lastfall der Situation; sie folgen jedem Neuvernetzen. Kennwerte "
+                     "und Erläuterung stehen im Protokoll und im Bericht (mit Druckfeld und Skizze).")
+
     def maske_wasserdruck(self, name: str = None):
         """Lastgenerierer Wasserdruck: neu oder einen vorhandenen bearbeiten."""
-        from ..wasserdruck import Wasserdruck
+        from ..wasserdruck import Wasserdruck, SEITEN
         m = self.model
         wd = m.wasserdruecke.get(name) if name else None
         neu = wd is None
@@ -8125,6 +8471,9 @@ class MainWindow(QtWidgets.QMainWindow):
             wd.flaechen = list(self.sel_flaechen)
             wd.koerper = list(self.sel_koerper)
             wd.dichtung = list(self.sel_linien)
+            wd.lastfall_nr = m.naechste_lastfallnummer()
+            if wd.flaechen:
+                wd.ow_flaeche = wd.flaechen[0]
         F = msk.Feld
 
         def txt(v):
@@ -8138,29 +8487,57 @@ class MainWindow(QtWidgets.QMainWindow):
         elif wd.seite < 0:
             richtung = self.WASSERRICHTUNGEN[1]
         situationen = m.situationsnamen()
+        flaechen = ["(keine)"] + sorted(m.flaechen)
+        verfahren = self.WASSERVERFAHREN[0 if wd.numerisch() else 1]
         felder = [F("name", "Name", "text", wd.name, breite=140),
                   F("situation", "Situation", "wahl", wd.situation or situationen[0], situationen),
                   F("fall", "Lastfall", "text", wd.lastfall or f"Wasser {wd.name}", breite=140),
+                  F("fall_nr", "Lastfall-Nr.", "ganz", int(wd.lastfall_nr or m.naechste_lastfallnummer()),
+                    hinweis="Nummer des Lastfalls (0 = nächste freie)"),
+                  F("verfahren", "Verfahren", "wahl", verfahren, list(self.WASSERVERFAHREN),
+                    hinweis="strömungsnumerisch: Potentialströmung im lotrechten Schnitt, Druck aus Bernoulli; "
+                            "analytisch: Poleni, Torricelli, Absenkung nach Naudascher"),
                   F("ziele", "Benetzt", "info", self._wasser_ziele_text(wd)),
-                  F("richtung", "Wirkt", "wahl", richtung, list(self.WASSERRICHTUNGEN)),
+                  F("dichtung", "Dichtlinie", "info", self._wasser_dichtung_text(wd)),
+                  F("ow_flaeche", "Oberwasser: Referenzfläche", "wahl",
+                    wd.ow_flaeche if wd.ow_flaeche in m.flaechen else "(keine)", flaechen,
+                    hinweis="Fläche, an der das Oberwasser steht (anklicken mit „OW-Fläche anklicken“)"),
+                  F("ow_seite", "Oberwasser an der", "wahl", wd.ow_seite if wd.ow_seite in SEITEN else SEITEN[0],
+                    list(SEITEN), hinweis="Oberseite = in Richtung der Flächennormale, Unterseite = dagegen"),
                   F("h_ow", "Oberwasser [m]", "zahl", float(wd.h_ow)),
-                  F("h_uw", "Unterwasser [m]", "text", txt(wd.h_uw), breite=78,
-                    hinweis="leer = trocken"),
+                  F("uw_flaeche", "Unterwasser: Referenzfläche", "wahl",
+                    wd.uw_flaeche if wd.uw_flaeche in m.flaechen else "(keine)", flaechen),
+                  F("uw_seite", "Unterwasser an der", "wahl", wd.uw_seite if wd.uw_seite in SEITEN else SEITEN[1],
+                    list(SEITEN)),
+                  F("h_uw", "Unterwasser [m]", "text", txt(wd.h_uw), breite=78, hinweis="leer = trocken"),
                   F("rho", "Dichte [kg/m³]", "zahl", float(wd.rho)),
+                  F("z_sohle", "Sohle z [m]", "text", txt(wd.z_sohle), breite=78,
+                    hinweis="leer = Dichtung minus Öffnung (unterströmt) bzw. Dichtung"),
                   F("z_uk", "Dichtung z [m]", "text", txt(wd.z_uk), breite=78,
-                    hinweis="leer = aus der Dichtungslinie oder der Unterkante der Flächen"),
+                    hinweis="leer = aus der Dichtlinie oder der Unterkante der Flächen"),
                   F("z_ok", "Oberkante z [m]", "text", txt(wd.z_ok), breite=78, hinweis="leer = aus Geometrie"),
                   F("breite", "Breite [m]", "text", txt(wd.breite), breite=78, hinweis="leer = aus Geometrie"),
+                  F("richtung", "Wirkt", "wahl", richtung, list(self.WASSERRICHTUNGEN),
+                    hinweis="senkrecht zur Fläche (aus dem Druckfeld) oder in einer globalen Richtung"),
                   F("ueber", "überströmt (Wasser über der Oberkante)", "haken", bool(wd.ueberstroemt)),
                   F("mu_ue", "μ Überfall (Poleni)", "zahl", float(wd.mu_ue)),
                   F("unter", "unterströmt (Öffnung unter dem Verschluss)", "haken", bool(wd.unterstroemt)),
                   F("spalt", "Öffnung a [m]", "zahl", float(wd.spalt)),
                   F("mu_a", "μ Ausfluss (Kontraktion)", "zahl", float(wd.mu_a)),
-                  F("absenkung", "Absenkung des Wasserspiegels berücksichtigen", "haken", bool(wd.absenkung)),
+                  F("gitter", "Gitter: Zellen über die Verschlusshöhe", "ganz", int(wd.gitter or 40),
+                    hinweis="strömungsnumerisch; 40 ist ein guter Anfang, mehr ist genauer und langsamer"),
+                  F("unterdruck", "Unterdruck (Sog) ansetzen (strömungsnumerisch)", "haken", bool(wd.unterdruck)),
+                  F("absenkung", "Absenkung des Wasserspiegels berücksichtigen (analytisch)", "haken",
+                    bool(wd.absenkung)),
                   F("cp_dyn", "Druckschwankungsbeiwert c_p'", "zahl", float(wd.cp_dyn),
                     hinweis="0 = keine dynamische Amplitude; sonst eigener Lastfall Δp = c_p'·ρ·v²/2"),
                   F("kennwerte", "Kennwerte", "info", "–")]
         halter: dict = {}
+        modus = {"art": ""}
+
+        def ziele_zeigen():
+            halter["m"].setzen("ziele", self._wasser_ziele_text(wd))
+            halter["m"].setzen("dichtung", self._wasser_dichtung_text(wd))
 
         def kennwerte_zeigen():
             from .. import wasserdruck as wdm
@@ -8168,11 +8545,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 w_ = self._wasserdruck_aus_maske(halter["m"].werte(), wd)
                 kw = wdm.kennwerte(w_, m)
                 text = (f"F = {kw['F'] / 1e3:.1f} kN (z_R = {kw['z_R']:.2f} m)"
+                        + (f", numerisch: q = {kw['q']:.3f} m³/(s·m), v_max = {kw['v_max']:.2f} m/s, "
+                           f"p_max = {kw['p_max'] / 1e3:.1f} kN/m², Gitter {kw['gitter'][0]}×{kw['gitter'][1]}"
+                           if kw.get("verfahren") == "numerisch" else "")
                         + (f", h_ü = {kw['h_ue']:.2f} m, q = {kw['q_ue']:.2f} m³/(s·m), v_c = {kw['v_c']:.2f} m/s"
                            if kw.get("h_ue", 0) > 0 else "")
                         + (f", v_a = {kw['v_a']:.2f} m/s, q = {kw['q_a']:.2f} m³/(s·m), Fr = {kw['Fr_a']:.2f}"
                            if kw.get("spalt", 0) > 0 else "")
-                        + (f", Δp_dyn = {kw['dp_dyn'] / 1e3:.2f} kN/m²" if kw.get("dp_dyn", 0) > 0 else ""))
+                        + (f", Δp_dyn = {kw['dp_dyn'] / 1e3:.2f} kN/m²" if kw.get("dp_dyn", 0) > 0 else "")
+                        + (f" - {kw['numerik_fehler']}" if kw.get("numerik_fehler") else ""))
                 halter["m"].setzen("kennwerte", text)
                 for zeile in wdm.erlaeuterung(w_, kw):
                     self.log.appendPlainText("  " + zeile)
@@ -8183,16 +8564,58 @@ class MainWindow(QtWidgets.QMainWindow):
             wd.flaechen = list(self.sel_flaechen)
             wd.koerper = list(self.sel_koerper)
             wd.dichtung = list(self.sel_linien)
-            halter["m"].setzen("ziele", self._wasser_ziele_text(wd))
+            ziele_zeigen()
+
+        def klickmodus(art: str, text: str):
+            def fn():
+                modus["art"] = "" if modus["art"] == art else art
+                halter["m"].objekt_modus = self.WASSERKLICK[art] if modus["art"] else ""
+                halter["m"].lbl_hinweis.setText(f"Klickmodus: {text} - derselbe Knopf beendet ihn."
+                                                if modus["art"] else self.WASSERHINWEIS)
+                self.statusBar().showMessage(f"Wasserdruck: {text}" if modus["art"] else
+                                             "Klickmodus beendet", 4000)
+            return fn
+
+        def objekt_angeklickt(art_obj: str, name: str):
+            a = modus["art"]
+            if a == "dichtung" and art_obj == "linie":
+                if name in wd.dichtung:
+                    wd.dichtung.remove(name)
+                else:
+                    wd.dichtung.append(name)
+                self.sel_linien = list(wd.dichtung)
+            elif a == "benetzt" and art_obj == "flaeche":
+                if name in wd.flaechen:
+                    wd.flaechen.remove(name)
+                else:
+                    wd.flaechen.append(name)
+                self.sel_flaechen = list(wd.flaechen)
+            elif a == "benetzt" and art_obj == "volumen":
+                if name in wd.koerper:
+                    wd.koerper.remove(name)
+                else:
+                    wd.koerper.append(name)
+                self.sel_koerper = list(wd.koerper)
+            elif a == "ow" and art_obj == "flaeche":
+                wd.ow_flaeche = name
+                halter["m"].setzen("ow_flaeche", name)
+            elif a == "uw" and art_obj == "flaeche":
+                wd.uw_flaeche = name
+                halter["m"].setzen("uw_flaeche", name)
+            else:
+                return self.statusBar().showMessage(f"{name} passt nicht zum Klickmodus", 3000)
+            ziele_zeigen()
+            self.statusBar().showMessage(f"Wasserdruck: {name} übernommen", 3000)
 
         maske = msk.Maske("Neu: Wasserdruck" if neu else f"Wasserdruck {wd.name}", felder,
-                          knopf="Lasten erzeugen",
-                          hinweis="Benetzte Flächen (Auswahlart Fläche/Volumen) und die Dichtungslinie "
-                                  "(Linien) in der Ansicht wählen, Wasserstände eintragen. „Lasten "
-                                  "erzeugen“ legt die Objektlasten in den Lastfall der Situation; sie "
-                                  "folgen jedem Neuvernetzen. Kennwerte und Erläuterung stehen im "
-                                  "Protokoll und im Bericht (mit Skizze).",
-                          zusatz=[("Auswahl übernehmen", auswahl_lesen), ("Kennwerte", kennwerte_zeigen)])
+                          knopf="Lasten erzeugen", hinweis=self.WASSERHINWEIS,
+                          zusatz=[("Auswahl übernehmen", auswahl_lesen),
+                                  ("Benetzt anklicken", klickmodus("benetzt", "benetzte Flächen/Volumen anklicken")),
+                                  ("Dichtlinie anklicken", klickmodus("dichtung", "Linien der Dichtung anklicken")),
+                                  ("OW-Fläche anklicken", klickmodus("ow", "Referenzfläche des Oberwassers anklicken")),
+                                  ("UW-Fläche anklicken", klickmodus("uw", "Referenzfläche des Unterwassers anklicken")),
+                                  ("Kennwerte", kennwerte_zeigen)])
+        maske.objekt_angeklickt = objekt_angeklickt
         halter["m"] = maske
         maske.angewendet.connect(lambda w, alt=(None if neu else wd.name), vorlage=wd:
                                  self._wasserdruck_anlegen(w, vorlage, alt))
@@ -8377,9 +8800,12 @@ class MainWindow(QtWidgets.QMainWindow):
             teile.append("Flächen " + ", ".join(wd.flaechen[:6]) + (" …" if len(wd.flaechen) > 6 else ""))
         if wd.koerper:
             teile.append("Volumen " + ", ".join(wd.koerper[:6]))
-        if wd.dichtung:
-            teile.append("Dichtung " + ", ".join(wd.dichtung[:6]))
-        return " · ".join(teile) or "nichts gewählt - Flächen anklicken, dann „Auswahl übernehmen“"
+        return " · ".join(teile) or "nichts gewählt - „Benetzt anklicken“ oder Auswahl übernehmen"
+
+    @staticmethod
+    def _wasser_dichtung_text(wd) -> str:
+        return (", ".join(wd.dichtung[:8]) + (" …" if len(wd.dichtung) > 8 else "")) if wd.dichtung \
+            else "– (Linien mit „Dichtlinie anklicken“; leer = Unterkante der Flächen)"
 
     def _wasserdruck_aus_maske(self, w: dict, vorlage):
         from ..wasserdruck import Wasserdruck
@@ -8393,12 +8819,29 @@ class MainWindow(QtWidgets.QMainWindow):
         vektor = self.LASTRICHTUNG_VEKTOR.get(richtung)
         seite = -1 if richtung == self.WASSERRICHTUNGEN[1] else 1
         situation = str(w.get("situation", ""))
+        verfahren = "analytisch" if str(w.get("verfahren", "")).startswith("analytisch") else "numerisch"
+
+        def flaeche(key):
+            t = str(w.get(key, "")).strip()
+            return "" if t in ("", "(keine)") else t
+
+        try:
+            fall_nr = max(0, int(round(float(w.get("fall_nr", 0) or 0))))
+        except (TypeError, ValueError):
+            fall_nr = 0
+        try:
+            gitter = min(400, max(8, int(round(float(w.get("gitter", 40) or 40)))))
+        except (TypeError, ValueError):
+            gitter = 40
         wd = replace(vorlage, name=str(w.get("name", "")).strip() or vorlage.name,
                      situation="" if situation == GRUNDSTELLUNG else situation,
-                     lastfall=str(w.get("fall", "")).strip(),
+                     lastfall=str(w.get("fall", "")).strip(), lastfall_nr=fall_nr, verfahren=verfahren,
                      h_ow=float(w.get("h_ow", 0.0) or 0.0), h_uw=zahl("h_uw"),
                      rho=float(w.get("rho", 1000.0) or 1000.0),
                      richtung=list(vektor) if vektor else None, seite=seite,
+                     ow_flaeche=flaeche("ow_flaeche"), ow_seite=str(w.get("ow_seite", "Oberseite")),
+                     uw_flaeche=flaeche("uw_flaeche"), uw_seite=str(w.get("uw_seite", "Unterseite")),
+                     z_sohle=zahl("z_sohle"), gitter=gitter, unterdruck=bool(w.get("unterdruck")),
                      z_uk=zahl("z_uk"), z_ok=zahl("z_ok"), breite=zahl("breite"),
                      ueberstroemt=bool(w.get("ueber")), mu_ue=float(w.get("mu_ue", 0.62) or 0.62),
                      unterstroemt=bool(w.get("unter")), spalt=float(w.get("spalt", 0.0) or 0.0),
@@ -8425,16 +8868,32 @@ class MainWindow(QtWidgets.QMainWindow):
                                       if not (gl.verlauf.get("art") == "wasser"
                                               and gl.verlauf.get("name") == alt)]
             del m.wasserdruecke[alt]
+        from .. import stroemung as strm
+        self._fortschritt_beginnen(100, f"Wasserdruck {wd.name}: Strömungsberechnung …")
         try:
-            kw = wdm.lasten_erzeugen(m, wd)
+            kw = wdm.lasten_erzeugen(m, wd, fortschritt=lambda a, t: self._fortschritt(int(round(100 * a)), t))
+        except strm.Abgebrochen:
+            self._undo.pop()
+            self._fortschritt_ende()
+            return self.info(f"Wasserdruck {wd.name}: abgebrochen - das Modell ist unverändert")
         except ValueError as ex:
             self._undo.pop()
+            self._fortschritt_ende()
             return self.error(ex)
+        except Exception:                        # noqa: BLE001
+            self._undo.pop()
+            self._fortschritt_ende()
+            self.log.appendPlainText(traceback.format_exc())
+            return self.error("Wasserdruck: Strömungsberechnung fehlgeschlagen - siehe Protokoll")
+        self._fortschritt_ende()
         self.analysis = None
         self.results = None
-        self.info(f"Wasserdruck {wd.name}: {kw['objektlasten']} Objektlasten, {kw['elementlasten']} "
-                  f"Elementlasten in {', '.join(kw['lastfaelle'])}; F = {kw['F'] / 1e3:.1f} kN, "
-                  f"Kontrollsumme {kw['kontrolle']['betrag'] / 1e3:.1f} kN")
+        self.info(f"Wasserdruck {wd.name} ({kw.get('verfahren', 'analytisch')}): {kw['objektlasten']} Objektlasten, "
+                  f"{kw['elementlasten']} Elementlasten in {', '.join(kw['lastfaelle'])} (Nr. {kw.get('lastfall_nr', 0)}); "
+                  f"F = {kw['F'] / 1e3:.1f} kN bei z = {kw['z_R']:.2f} m, "
+                  f"Kontrollsumme {kw['kontrolle']['betrag'] / 1e3:.1f} kN"
+                  + (f", q = {kw['q']:.3f} m³/(s·m), v_max = {kw['v_max']:.2f} m/s, p_max = {kw['p_max'] / 1e3:.1f} kN/m²"
+                     if kw.get("verfahren") == "numerisch" else ""))
         for zeile in wdm.erlaeuterung(wd, kw):
             self.log.appendPlainText("  " + zeile)
         self.refresh_all()
@@ -8554,6 +9013,8 @@ class MainWindow(QtWidgets.QMainWindow):
         n = len(self.selection)
         if not n:
             self.ribbon.kontext_aus()
+            # die Felder des Registers sind mit ihm geloescht - kein Zugriff mehr
+            self.cb_assign_sec = self.cb_assign_mat = None
             self._info_zeigen()
             return
         r = self.ribbon.kontext(f"Auswahl: {n} Knoten")

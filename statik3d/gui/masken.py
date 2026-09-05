@@ -48,6 +48,14 @@ class Maske(QtWidgets.QFrame):
     angewendet = QtCore.Signal(dict)
     geschlossen = QtCore.Signal()
     abgebrochen = QtCore.Signal()
+    #: Klickmodus fuer Objekte der Ansicht: "" (keiner), "linie", "flaeche"
+    #: oder "objekt" (Flaeche oder Volumen). Ist er gesetzt, gehen Klicks auf
+    #: solche Objekte an objekt_angeklickt(art, name) statt in die Auswahl.
+    objekt_modus: str = ""
+
+    def objekt_angeklickt(self, art: str, name: str):
+        """Ein Objekt der Ansicht wurde im Klickmodus getroffen (wird je Maske
+        als Instanzattribut ueberschrieben)."""
 
     def __init__(self, titel: str, felder: list, parent=None, knoten: int = 0,
                  hinweis: str = "", knopf: str = "Anwenden", abbrechen: str = "",
@@ -348,6 +356,11 @@ class Maskenrand(QtCore.QObject):
     def will_punkte(self) -> bool:
         """Sammelt die offene Maske Weltpunkte statt Knoten?"""
         return self.offen() and bool(self.maske.n_knoten) and bool(getattr(self.maske, "punkte", False))
+
+    def objekt_modus(self) -> str:
+        """Klickmodus der offenen Maske ("" = keiner): Linien, Flaechen oder
+        Objekte gehen dann an die Maske statt in die Auswahl."""
+        return str(getattr(self.maske, "objekt_modus", "") or "") if self.offen() else ""
 
     def punkt_angeklickt(self, p) -> bool:
         """Einen Weltpunkt an die Maske geben; True, wenn sie ihn genommen hat."""

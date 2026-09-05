@@ -161,8 +161,8 @@ bedienen sind, steht im nächsten Abschnitt.
 | Elemente | Werkstoff, Querschnitt bzw. Dicke, Drehung der lokalen Achsen |
 | Lager | Name und Symbolgröße; Doppelklick öffnet die Wirkung je Freiheitsgrad |
 | Gelenke | über die Maske (Doppelklick) |
-| Lastfälle | Beschreibung; Doppelklick öffnet Name, Einwirkung, Ausschlussgruppe |
-| Kombinationen | über die Maske (Doppelklick) |
+| Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts die Maske mit Name, Nummer, Einwirkung, Beschreibung, Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerten und „aktiver Lastfall“ |
+| Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ, Beschreibung, Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske (Doppelklick): Randlinien bzw. Randflächen, Dicke, Werkstoff, Teilung |
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
@@ -904,32 +904,50 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
 ### Lastgenerierer Wasserdruck (Stahlwasserbau)
 
 *Lasten → Generierer → Wasserdruck* (oder Modellbaum → Einwirkungen →
-Lastgenerierer → „+ Wasserdruck anlegen“). Vorher in der Ansicht die
-**benetzten Flächen** (Haut des Verschlusses, Auswahlart Fläche oder
-Volumen) und die **Dichtungslinie** (Linien, Auswahlart Linie) wählen; die
-Maske übernimmt sie mit „Auswahl übernehmen“. Je Generierer gilt eine
-**Situation** (Stellung und wirksame Elemente); der Lastfall wird angelegt
-und trägt die Situation.
+Lastgenerierer → „+ Wasserdruck anlegen“). Die Maske rechts sammelt alles,
+was die Strömungsrechnung braucht; die Knöpfe unten schalten einen
+**Klickmodus** in der Ansicht: *Benetzt anklicken* (Flächen und Volumen der
+Haut), *Dichtlinie anklicken* (Linien der Dichtung, unten), *OW-Fläche
+anklicken* und *UW-Fläche anklicken* (je eine **Referenzfläche**, an der
+das Ober- bzw. Unterwasser steht; dazu die Angabe, ob das Wasser an der
+**Oberseite** (in Richtung der Flächennormale) oder an der **Unterseite**
+liegt - daraus folgt die Strömungsrichtung). Derselbe Knopf beendet den
+Modus; „Auswahl übernehmen“ nimmt stattdessen die laufende Auswahl. Je
+Generierer gilt eine **Situation**; der Lastfall wird angelegt, trägt die
+Situation und die **Lastfall-Nr.** aus der Maske (0 = nächste freie).
 
 | Angabe | Bedeutung |
 |---|---|
-| Oberwasser, Unterwasser | Wasserstände in m über dem Bezug des Modells (leer = trocken) |
-| Dichtung z, Oberkante z, Breite | leer = aus der Dichtungslinie bzw. der Geometrie der Flächen |
-| Wirkt | senkrecht zur Fläche (gegen oder mit der Normale) oder in einer globalen Richtung |
-| überströmt | Wasser über der Oberkante: Überfallhöhe, Abfluss nach Poleni (μ), kritische Tiefe und Geschwindigkeit auf der Krone |
-| unterströmt | Öffnung a unter dem Verschluss: Ausfluss nach Torricelli mit Kontraktionsbeiwert μ_a, Geschwindigkeit, Froude-Zahl |
-| Absenkung des Wasserspiegels | zieht die Geschwindigkeitshöhe vom Druck ab: an der Krone wirkt ⅔·ρ·g·h_ü statt ρ·g·h_ü, an der Unterkante der Druck des Strahls bzw. des Unterwassers; die Fehlbeträge klingen über 2·h_ü bzw. 2·a ab |
-| Druckschwankungsbeiwert c_p' | > 0 legt einen zweiten Lastfall mit der Amplitude Δp = c_p'·ρ·v²/2 an (Eingang für den Schwingungsnachweis) |
+| Verfahren | **strömungsnumerisch** (Vorgabe): Potentialströmung im lotrechten Schnitt durch den Verschluss, Druck aus Bernoulli - die Absenkung an Krone und Unterkante kommt aus der Rechnung; **analytisch**: Näherungsformeln (Poleni, Torricelli, Naudascher) |
+| Oberwasser, Unterwasser | Wasserstände in m über dem Bezug des Modells (leer = trocken), je mit Referenzfläche und Seite |
+| Sohle z | Unterkante des Wassers; leer = Dichtung minus Öffnung (unterströmt) bzw. Dichtung |
+| Dichtung z, Oberkante z, Breite | leer = aus der Dichtlinie bzw. der Geometrie der Flächen |
+| Wirkt | senkrecht zur Fläche (aus dem Druckfeld, netto aus beiden Seiten einer Schale) oder in einer globalen Richtung |
+| überströmt | Wasser über der Oberkante: Überfallhöhe, Abfluss nach Poleni (μ), kritische Tiefe auf der Krone |
+| unterströmt | Öffnung a unter dem Verschluss: Ausfluss nach Torricelli mit Kontraktionsbeiwert μ_a; das Unterwasser ertränkt den Strahl, wenn es über der Dichtung steht |
+| Gitter | Zellen über die Verschlusshöhe (40 ist ein guter Anfang; feiner ist genauer und langsamer, gedeckelt bei 250 000 Zellen) |
+| Unterdruck ansetzen | Sog unter Atmosphärendruck mitnehmen (bis −70 kN/m²); sonst wird bei null gekappt (belüftet) |
+| Absenkung berücksichtigen | nur analytisch: Geschwindigkeitshöhe vom Druck abziehen (⅔·ρ·g·h_ü an der Krone, Strahldruck an der Unterkante) |
+| Druckschwankungsbeiwert c_p' | > 0 legt einen zweiten Lastfall mit der Amplitude Δp = c_p'·ρ·v²/2 an (v aus dem Druckfeld) - Eingang für den Schwingungsnachweis |
 
-**Lasten erzeugen** schreibt Objektlasten (Verlauf „Wasser“) an die Flächen;
-sie werden beim Vernetzen auf die Elemente gelegt (nur wo Druck wirkt) und
-folgen jedem Neuvernetzen. Das Protokoll nennt Resultierende, Angriffspunkt
-und eine Kontrollsumme der Elementlasten; „Kennwerte“ in der Maske zeigt
-sie vorab. Der Bericht (Kapitel „Lastgenerierer“) führt Angaben, Kennwerte
-und Erläuterungen auf und zeichnet den **Schnitt durch den Verschluss**:
-Wasserstände, Druckfigur, Überfall bzw. Ausflussstrahl und Resultierende.
-Ein Generierer lässt sich im Modellbaum anklicken (ändern, erneut erzeugen)
-und mit Entf samt seinen Lasten löschen.
+**Lasten erzeugen** rechnet zuerst das Druckfeld - mit **Fortschrittsbalken**
+in der Statuszeile und **Abbrechen** (auch Esc); ein Abbruch lässt das Modell
+unverändert. Dann schreibt es Objektlasten (Verlauf „Wasser“) mit dem Druckfeld
+an die Flächen; beim Vernetzen wird das Feld je Elementseite vor der Fläche
+abgetastet (bei einer dünnen Schale netto aus Vorder- und Rückseite), die
+Lasten folgen jedem Neuvernetzen und überleben das Speichern. Das Protokoll
+nennt Verfahren, Resultierende, Angriffspunkt, Abfluss, größte Geschwindigkeit,
+größten Druck und eine Kontrollsumme der Elementlasten; „Kennwerte“ in der
+Maske zeigt sie vorab. Der Bericht (Kapitel „Lastgenerierer“) führt Angaben,
+Kennwerte und Erläuterungen auf, zeichnet das **Druckfeld des Schnitts**
+(Verschluss dunkel, Wasser blau bis rot, Farbskala in kN/m²) und den **Schnitt
+durch den Verschluss** mit Druckfigur und Resultierender. Ein Generierer lässt
+sich im Modellbaum anklicken (ändern, erneut erzeugen) und mit Entf samt seinen
+Lasten löschen.
+
+Was die Strömungsrechnung annimmt und nicht kann, steht im Theoriehandbuch
+(Abschnitt 2.1a): reibungsfreie Potentialströmung in einer Schnittebene,
+Wasserspiegel als feste Deckel, keine Wechselsprünge, keine Wellen.
 
 ### Lastgenerierer Wind (DIN EN 1991-1-4)
 

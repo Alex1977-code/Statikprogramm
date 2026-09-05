@@ -75,6 +75,7 @@ Der Code ist so geschnitten, dass zwei Leute sich nicht ins Gehege kommen:
 | `statik3d/importers/` | Schnittstellen (RFEM, IFC, DXF, SAF, …) |
 | `statik3d/gui/` | Oberfläche |
 | `statik3d/einheiten.py` | Einheiten und Nachkommastellen der Anzeige (Tabellen, Lastwerte, Kennwerte); gerechnet wird in SI |
+| `statik3d/stroemung.py` | Strömungsnumerik im Schnitt: Rasterung, Potentialströmung (Wasser), Gitter-Boltzmann (Wind), Abtastung, Feldbilder |
 | `statik3d/report/` | Bericht |
 | `docs/` | Handbücher |
 
@@ -134,6 +135,10 @@ Punkte:
   Bildern, die man in den Bericht übernimmt); die SVG-Systemskizzen des
   Berichts kennen sie noch nicht. Verschieben eines Maßes heißt löschen und
   neu anlegen; Bogenmaße auf Kreislinien und Durchmesser fehlen.
+* **Wasserdruck strömungsnumerisch**: Potentialströmung ohne freie
+  Oberfläche und ohne Reibung im ebenen Schnitt; Pfeiler, Nischen und der
+  Wechselsprung fehlen, das Druckfeld hängt als Liste an der Objektlast
+  (bei feinem Gitter wächst die Modelldatei).
 * **Einheiten**: die Einstellung gilt für Ansicht und Tabellen; der Bericht
   und die Masken rechts bleiben bei kN, m, mm und N/mm², Winkel und
   Temperatur sind nicht umschaltbar.

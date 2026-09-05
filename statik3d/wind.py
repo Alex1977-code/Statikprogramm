@@ -380,7 +380,7 @@ def beiwert_am_punkt(param: dict, geo: dict, rolle: str, punkt) -> tuple:
     return 0.0, "–"
 
 
-def druck_aus_verlauf(verlauf: dict, punkt) -> float:
+def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = False) -> float:
     """p [Pa] für eine Geometrielast mit verlauf["art"] == "wind": positiv drückt
     in den Körper (gegen die Außennormale), negativ ist Sog."""
     param = verlauf.get("param") or {}

@@ -180,6 +180,40 @@ Druck ist die Resultierende je Element damit exakt). `tests/test_wasserdruck.py`
 prüft Druckverlauf, Kennwerte (Rechteckschütz, Netto mit Unterwasser, Poleni,
 Torricelli) und die Summe der Elementlasten auf einem Netz.
 
+### 2.1a Strömungsnumerische Berechnung des Wasserdrucks (`stroemung.py`)
+
+Vorgabe des Generierers. Die Strömung um den Verschluss wird in einem
+**lotrechten Schnitt** in Strömungsrichtung als **Potentialströmung**
+(reibungsfrei, drehungsfrei, inkompressibel) gerechnet: Δφ = 0 auf einem
+Rechteckgitter (Finite Volumen, Zellgröße h = Verschlusshöhe/Gitterzahl),
+v = ∇φ. Der Verschluss wird aus den benetzten Flächen und Körpern in die
+Ebene gerastert (Kanten dicht abgetastet, um eine Zelle verdickt, damit
+schräge dünne Wände dicht bleiben), Sohle und Schwelle unter der Dichtung sind
+Wand, die Wasserspiegel feste Deckel (Oberwasser links, Unterwasser rechts,
+über der Krone die kritische Tiefe h_c = ⅔·h_ü). Randbedingungen: Zufluss
+links mit U = q/(h_ow − z_Sohle), Abfluss über die Krone mit q nach Poleni
+und unter dem Verschluss mit q = μ_a·a·√(2·g·Δh) nach Torricelli - frei ins
+Trockene an der Verschlussrückseite, sonst am rechten Rand ins Unterwasser;
+alle übrigen Ränder undurchlässig. Je zusammenhängendem Gebiet wird φ in
+einer Zelle festgehalten (reine Neumann-Aufgabe).
+
+Der Druck folgt aus Bernoulli p = ρ·g·(E − z) − ½·ρ·|v|² mit der
+Energiehöhe E_ow = h_ow + U²/2g vor und im Verschluss und E_uw hinter ihm;
+Unterdruck wird bei 0 gekappt (belüftet), auf Wunsch bis −70 kN/m² angesetzt.
+Die Resultierende je Breite ist die Summe der Zelldrücke auf die
+Verschlusszellen; die Elementseiten tasten das Feld 1,5 … 3,5 Zellen vor der
+Fläche ab, dünne Schalen netto aus beiden Seiten.
+
+Geschlossene Lösungen, die die Rechnung exakt trifft (`tests/test_stroemung.py`):
+Kanal ohne Hindernis (v = U überall), geschlossener Verschluss
+(F = ½·ρ·g·h², z_R = h/3, mit Unterwasser F = ½·ρ·g·(h_ow² − h_uw²)),
+Massenbilanz beim Ausfluss. Näherungsweise geprüft: Druck an der Krone
+zwischen ⅔·ρ·g·h_ü (Naudascher) und ρ·g·h_ü, Druckabfall an der Unterkante beim
+Unterströmen. Nicht abgebildet: Reibung und Turbulenz, freie Oberfläche
+(Absenkung des Spiegels wird nicht iteriert), Wechselsprung im Unterwasser,
+Wellen, Luftaufnahme, dreidimensionale Effekte (Pfeiler, Nischen) - der
+Schnitt gilt über die ganze Breite.
+
 ### 2.2 Wind nach DIN EN 1991-1-4 (`wind.py`)
 
 Strömung: v_b = c_dir·c_season·v_b,0; k_r = 0,19·(z_0/0,05)^0,07,

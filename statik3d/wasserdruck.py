@@ -33,19 +33,40 @@ Fehlbetrag klingt nach oben linear über 2·a ab.
 benetzten Fläche als eigener Lastfall - der Eingang für den
 Schwingungsnachweis des Verschlusses.
 
+**Strömungsnumerisch** (Vorgabe, ``verfahren = "numerisch"``): statt der
+Näherungsformeln wird die Strömung im lotrechten Schnitt durch den Verschluss
+als Potentialströmung auf einem Gitter gelöst (:mod:`statik3d.stroemung`):
+Zufluss aus dem Oberwasser, Abfluss über die Krone (Poleni) und/oder unter
+dem Verschluss (Torricelli) oder ins Unterwasser, Wasserspiegel als feste
+Deckel, der Verschluss aus den benetzten Flächen und Körpern gerastert. Der
+Druck folgt aus Bernoulli p = ρ·g·(E − z) − ½·ρ·|v|² und wird je Elementseite
+vor der Fläche abgetastet - das ergibt die **resultierende Druckverteilung**
+mit der Absenkung an Krone und Unterkante aus der Rechnung statt aus der
+Näherung. Wo Oberwasser und Unterwasser liegen, sagt je eine
+**Referenzfläche** mit der Angabe, ob ihre Oberseite (+Normale) oder
+Unterseite (−Normale) dem Wasser zugewandt ist. Die Dichtungslinie kann in
+der Ansicht angeklickt werden. Die Rechnung läuft mit Fortschrittsbalken und
+ist abbrechbar (:class:`statik3d.stroemung.Abgebrochen`).
+
 Alle Höhen in m über dem Bezug des Modells (z-Achse nach oben), Drücke in
 Pa, Kräfte in N. Bezug: DIN 19704-1 (Stahlwasserbauten), Naudascher,
 Hydrodynamic Forces (IAHR 1991).
 """
 from __future__ import annotations
 
+import json
 import math
+import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 import numpy as np
 
+from . import stroemung as st
+
 G = 9.81
+VERFAHREN = ("numerisch", "analytisch")
+SEITEN = ("Oberseite", "Unterseite")
 
 
 @dataclass
@@ -71,9 +92,22 @@ class Wasserdruck:
     unterstroemt: bool = False
     spalt: float = 0.0                     # Öffnungshöhe a unter dem Verschluss [m]
     mu_a: float = 0.61                     # Kontraktionsbeiwert des Ausflusses
-    absenkung: bool = True                 # Absenkung des Wasserspiegels berücksichtigen
+    absenkung: bool = True                 # Absenkung des Wasserspiegels berücksichtigen (analytisch)
     cp_dyn: float = 0.0                    # Druckschwankungsbeiwert c_p'
     kommentar: str = ""
+    # -- strömungsnumerische Berechnung --------------------------------------
+    verfahren: str = "numerisch"           # "numerisch" (Potentialströmung im Schnitt) | "analytisch"
+    lastfall_nr: int = 0                   # Lastfallnummer (0 = nächste freie)
+    ow_flaeche: str = ""                   # Referenzfläche des Oberwassers
+    ow_seite: str = "Oberseite"            # Oberseite (+Normale) oder Unterseite (−Normale) ist Oberwasser
+    uw_flaeche: str = ""                   # Referenzfläche des Unterwassers
+    uw_seite: str = "Unterseite"
+    z_sohle: Optional[float] = None        # Sohle [m]; None = Dichtung − Öffnung
+    gitter: int = 40                       # Zellen über die Verschlusshöhe
+    unterdruck: bool = False               # Unterdruck (Sog) ansetzen statt bei 0 zu kappen
+
+    def numerisch(self) -> bool:
+        return str(self.verfahren or "").lower().startswith("num")
 
     def bezug(self) -> str:
         t = f"OW {self.h_ow:g} m"
@@ -147,8 +181,50 @@ def geometrie(wd: Wasserdruck, model=None) -> dict:
             "breite": 1.0 if b is None else float(b)}
 
 
-def kennwerte(wd: Wasserdruck, model=None) -> dict:
-    """Strömungskennwerte: Überfall, Ausfluss, Geschwindigkeiten, Druckschwankung."""
+def kennwerte(wd: Wasserdruck, model=None, fortschritt=None) -> dict:
+    """Strömungskennwerte: Überfall, Ausfluss, Geschwindigkeiten, Druckschwankung.
+    Mit Modell und ``verfahren = "numerisch"`` kommen Resultierende,
+    Angriffspunkt, Geschwindigkeiten und Druckverlauf aus dem Druckfeld der
+    Potentialströmung (Schlüssel ``verfahren``, ``q``, ``p_max``, ``profil``,
+    ``gitter``; das Feld selbst unter ``_feld``)."""
+    out = _kennwerte_analytisch(wd, model)
+    if model is not None and wd.numerisch() and (wd.flaechen or wd.koerper):
+        try:
+            fr = feld_rechnen(wd, model, fortschritt=fortschritt)
+        except st.Abgebrochen:
+            raise
+        except (ValueError, KeyError, RuntimeError) as ex:
+            out["verfahren"] = "analytisch"
+            out["numerik_fehler"] = str(ex)
+            return out
+        out.update(_kennwerte_aus_feld(wd, fr, out))
+    else:
+        out["verfahren"] = "analytisch"
+    return out
+
+
+def _kennwerte_aus_feld(wd: Wasserdruck, fr: dict, out: dict) -> dict:
+    """Was aus dem Druckfeld kommt - ueberschreibt die Naeherungswerte."""
+    f = fr["feld"]
+    b = out["breite"]
+    z_s = fr["z_sohle"]
+    # Die groesste Geschwindigkeit bleibt die des Strahls bzw. der Krone
+    # (Torricelli, kritischer Abfluss) - die Potentialstroemung kann sie nicht
+    # uebertreffen; das Feld liefert seinen eigenen Hoechstwert unter v_feld.
+    profil = [(z_s + z, p) for z, p in f["profil"]]
+    F = float(f["F_je_m"])
+    z_R = z_s + float(f["z_R"])
+    sch = fr["schnitt"]
+    return {"verfahren": "numerisch", "F_je_m": F, "F": F * b, "z_R": z_R, "hebel": z_R - out["z_uk"],
+            "v_feld": max(float(f["v_max"]), 0.0),
+            "q": float(f["q"]), "Q": float(f["q"]) * b, "U": float(f["U"]), "p_max": float(f["p_max"]),
+            "E_ow": z_s + float(f["E_ow"]), "profil": profil, "z_sohle": z_s,
+            "gitter": (sch.nx, sch.nz, sch.h), "n_fluid": int(f["n_fluid"]),
+            "richtung_stroemung": list(sch.ex), "hinweise": list(fr.get("hinweise", [])), "_feld": fr}
+
+
+def _kennwerte_analytisch(wd: Wasserdruck, model=None) -> dict:
+    """Die Näherungsformeln (Poleni, Torricelli, Naudascher)."""
     g = geometrie(wd, model)
     z_uk, z_ok = g["z_uk"], g["z_ok"]
     out = dict(g)
@@ -234,9 +310,43 @@ def druck(wd, z: float, g: dict = None) -> float:
     return p
 
 
-def druck_aus_verlauf(verlauf: dict, punkt) -> float:
-    """Der Druck an einem Punkt für eine Geometrielast mit verlauf["art"] == "wasser"."""
+#: Entpackte Druckfelder je Objektlast (Schluessel: id des verlauf-dicts und
+#: sein Stempel) - das Entpacken darf nicht je Elementseite anfallen
+_FELDER: dict = {}
+
+
+def _feld_aus_verlauf(verlauf: dict):
+    key = (id(verlauf), (verlauf.get("feld") or {}).get("stempel"))
+    hit = _FELDER.get(key)
+    if hit is None:
+        hit = st.feld_entpacken(verlauf["feld"])
+        if len(_FELDER) > 12:
+            _FELDER.clear()
+        _FELDER[key] = hit
+    return hit
+
+
+def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = False) -> float:
+    """Der Druck an einem Punkt für eine Geometrielast mit verlauf["art"] == "wasser".
+
+    Mit Druckfeld (``verlauf["feld"]``, strömungsnumerisch) wird das Gitter
+    vor der Elementseite abgetastet - entlang ``normale``, bei einer dünnen
+    Schale (``beidseitig``) netto aus Vorder- und Rückseite; positiv drückt
+    gegen die Außennormale. Sonst die Näherungsformel p(z)."""
     wd = _param(verlauf.get("param") or {})
+    if verlauf.get("feld"):
+        schnitt, p, fluid, _block = _feld_aus_verlauf(verlauf)
+        # Nettodruck gegen die Aussennormale der Seite (positiv: drueckt hinein)
+        p_n = float(st.wert_am_punkt(p, fluid, schnitt, punkt, normale, beidseitig))
+        if verlauf.get("dyn"):
+            p_n = math.copysign(float(verlauf.get("dp_dyn", 0.0)), p_n) if p_n != 0.0 else 0.0
+        if wd.richtung is not None and normale is not None:
+            # Last in einer vorgegebenen Richtung d: die Kraft −p_n·A·n wird
+            # als p_d·A·d geschrieben, p_d = −p_n·sign(n·d)
+            c = float(np.asarray(normale, float)[:3] @ np.asarray(wd.richtung, float)[:3])
+            if abs(c) > 1e-9:
+                return -p_n if c > 0 else p_n
+        return p_n
     g = verlauf.get("geometrie") or geometrie(wd)
     z = float(np.asarray(punkt, float)[2])
     if verlauf.get("dyn"):
@@ -246,12 +356,175 @@ def druck_aus_verlauf(verlauf: dict, punkt) -> float:
 
 
 # ==========================================================================
+# Strömungsnumerische Berechnung im Schnitt
+# ==========================================================================
+def flaechennormale(model, name: str):
+    """Mittlere Außennormale einer Fläche - aus den Schalenelementen, sonst
+    aus dem Randpolygon (Newell)."""
+    f = model.flaechen.get(name)
+    if f is None:
+        return None
+    n = np.zeros(3)
+    for e in f.elemente or []:
+        if not 0 <= int(e) < len(model.elements):
+            continue
+        el = model.elements[int(e)]
+        if el.typ not in ("shell3", "shell4"):
+            continue
+        X = model.nodes[[int(k) for k in el.nodes[:3]]]
+        n += np.cross(X[1] - X[0], X[2] - X[0])
+    if float(np.linalg.norm(n)) <= 1e-12:
+        try:
+            P = np.asarray(f.randpunkte(model), float)
+        except Exception:                    # noqa: BLE001
+            P = np.zeros((0, 3))
+        for j in range(len(P)):
+            a, b = P[j], P[(j + 1) % len(P)]
+            n += np.cross(a, b)
+    L = float(np.linalg.norm(n))
+    return n / L if L > 1e-12 else None
+
+
+def _seitennormale(model, name: str, seite: str):
+    n = flaechennormale(model, name)
+    if n is None:
+        return None
+    return -n if str(seite or "").lower().startswith("unter") else n
+
+
+def stroemungsrichtung(wd: Wasserdruck, model) -> np.ndarray:
+    """Waagerechte Einheitsrichtung der Strömung (vom Oberwasser durch den
+    Verschluss): aus der Referenzfläche des Oberwassers, sonst aus der
+    Lastrichtung, sonst aus der Normale der ersten benetzten Fläche."""
+    ex = None
+    if wd.ow_flaeche and wd.ow_flaeche in model.flaechen:
+        n = _seitennormale(model, wd.ow_flaeche, wd.ow_seite)
+        if n is not None:
+            ex = -n
+    if ex is None and wd.richtung is not None:
+        ex = np.asarray(wd.richtung, float)[:3].copy()
+    if ex is None:
+        for name in list(wd.flaechen) + [n for k in wd.koerper for n in
+                                         (model.koerper[k].flaechen if k in model.koerper else [])]:
+            n = flaechennormale(model, name)
+            if n is not None:
+                ex = -float(wd.seite or 1) * n
+                break
+    if ex is None:
+        ex = np.array([1.0, 0.0, 0.0])
+    ex = np.asarray(ex, float)[:3].copy()
+    ex[2] = 0.0
+    L = float(np.linalg.norm(ex))
+    return ex / L if L > 1e-9 else np.array([1.0, 0.0, 0.0])
+
+
+def schnitt_anlegen(wd: Wasserdruck, model, g: dict, punkte: np.ndarray) -> tuple:
+    """Schnittebene und Gitter um den Verschluss: (Schnitt, z_sohle)."""
+    ex = stroemungsrichtung(wd, model)
+    ez = np.array([0.0, 0.0, 1.0])
+    P = np.asarray(punkte, float).reshape(-1, 3)
+    xs = P @ ex
+    H = max(float(g["z_ok"] - g["z_uk"]), 1e-3)
+    a = float(wd.spalt) if wd.unterstroemt else 0.0
+    z_sohle = float(wd.z_sohle) if wd.z_sohle is not None else float(g["z_uk"]) - a
+    if z_sohle > g["z_uk"] - a + 1e-9:
+        z_sohle = float(g["z_uk"]) - a
+    h_uw = float(wd.h_uw) if wd.h_uw is not None else -math.inf
+    tiefe = max(float(wd.h_ow), float(g["z_ok"]), h_uw) - z_sohle
+    n_h = min(400, max(8, int(wd.gitter or 40)))
+    h = H / n_h
+    vor = max(2.5 * H, 2.0 * tiefe)
+    nach = max(1.5 * H, 1.5 * tiefe)
+    x0 = float(xs.min()) - vor
+    x1 = float(xs.max()) + nach
+    z_top = max(float(wd.h_ow), float(g["z_ok"]), h_uw) + max(0.2 * H, 2 * h)
+    nx = int(math.ceil((x1 - x0) / h))
+    nz = int(math.ceil((z_top - z_sohle) / h))
+    if nx * nz > 250000:
+        f = math.sqrt(nx * nz / 250000.0)
+        h *= f
+        nx = int(math.ceil((x1 - x0) / h))
+        nz = int(math.ceil((z_top - z_sohle) / h))
+    c = P.mean(axis=0)
+    ursprung = c + (x0 - float(c @ ex)) * ex + (z_sohle - float(c[2])) * ez
+    return st.Schnitt(ursprung, ex, ez, h, nx, nz), z_sohle
+
+
+_FELD_CACHE: dict = {}
+
+
+def feld_rechnen(wd: Wasserdruck, model, fortschritt=None) -> dict:
+    """Die Potentialströmung um den Verschluss rechnen: Rückgabe
+    {"schnitt", "z_sohle", "feld" (siehe stroemung.wasserdruck_feld), "g",
+    "hinweise"}. Je Parametersatz und Modellstand einmal (Zwischenspeicher)."""
+    g = geometrie(wd, model)
+    stand = (id(model), model.nn, len(model.elements), len(model.flaechen),
+             json.dumps({k: v for k, v in asdict(wd).items() if k not in ("name", "kommentar")}, sort_keys=True,
+                        default=str))
+    hit = _FELD_CACHE.get(stand)
+    if hit is not None:
+        return hit
+    tris = st.objekt_dreiecke(model, wd.flaechen, wd.koerper)
+    if not tris:
+        raise ValueError("Die benetzten Flächen haben keine Geometrie (weder Netz noch Randlinien)")
+    punkte = np.concatenate([np.asarray(t, float) for t in tris]).reshape(-1, 3)
+    schnitt, z_sohle = schnitt_anlegen(wd, model, g, punkte)
+    st._melden(fortschritt, 0.0, f"Wasserdruck {wd.name}: Gitter {schnitt.nx} × {schnitt.nz}")
+    ver = st.rastern(schnitt, tris,
+                     fortschritt=(lambda a_, t_: fortschritt(0.02 + 0.28 * a_, t_)) if fortschritt else None,
+                     text=f"Wasserdruck {wd.name}: Verschluss rastern")
+    ver = st.verdicken(ver)
+    h_uw = None if wd.h_uw is None else float(wd.h_uw) - z_sohle
+    feld = st.wasserdruck_feld(
+        schnitt, ver, h_ow=float(wd.h_ow) - z_sohle, h_uw=h_uw, z_uk=float(g["z_uk"]) - z_sohle,
+        z_ok=float(g["z_ok"]) - z_sohle, ueberstroemt=bool(wd.ueberstroemt),
+        unterstroemt=bool(wd.unterstroemt), spalt=float(wd.spalt), mu_ue=float(wd.mu_ue),
+        mu_a=float(wd.mu_a), rho=float(wd.rho), unterdruck=bool(wd.unterdruck),
+        fortschritt=(lambda a_, t_: fortschritt(0.3 + 0.6 * a_, t_)) if fortschritt else None)
+    hinweise = []
+    if wd.uw_flaeche and wd.uw_flaeche in model.flaechen:
+        n = _seitennormale(model, wd.uw_flaeche, wd.uw_seite)
+        if n is not None and float(n @ np.asarray(schnitt.ex)) < 0:
+            hinweise.append(f"Die Unterwasserseite der Fläche {wd.uw_flaeche} zeigt gegen die Strömung - "
+                            "Ober- und Unterwasser vertauscht?")
+    if feld["q"] > 0 and feld["n_fluid"] < 50:
+        hinweise.append("Sehr wenige Fluidzellen - Gitter feiner wählen")
+    out = {"schnitt": schnitt, "z_sohle": z_sohle, "feld": feld, "g": g, "hinweise": hinweise}
+    if len(_FELD_CACHE) > 6:
+        _FELD_CACHE.clear()
+    _FELD_CACHE[stand] = out
+    return out
+
+
+def feld_svg_bericht(wd: Wasserdruck, kw: dict, breite: int = 620) -> str:
+    """Das Druckfeld des Schnitts als Bild fuer den Bericht (nur numerisch)."""
+    fr = kw.get("_feld")
+    if not fr:
+        return ""
+    sch, f, z_s = fr["schnitt"], fr["feld"], fr["z_sohle"]
+    L = sch.nx * sch.h
+    linien = [((0.0, float(wd.h_ow) - z_s), (L * 0.5, float(wd.h_ow) - z_s), "#1467c6")]
+    texte = [((0.5 * sch.h, float(wd.h_ow) - z_s), f"OW {wd.h_ow:g} m", "#1467c6")]
+    if wd.h_uw is not None:
+        linien.append(((L * 0.6, float(wd.h_uw) - z_s), (L, float(wd.h_uw) - z_s), "#1467c6"))
+        texte.append(((L * 0.62, float(wd.h_uw) - z_s), f"UW {wd.h_uw:g} m", "#1467c6"))
+    if kw.get("z_R") is not None:
+        texte.append(((L * 0.02, float(kw["z_R"]) - z_s), f"F = {kw['F'] / 1e3:.1f} kN, z_R = {kw['z_R']:.2f} m",
+                      "#c62828"))
+    return st.feld_svg(sch, f["p"], f["fluid"], f["block"], "wasser", breite=breite,
+                       titel=f"Wasserdruck {wd.name}: Druckfeld der Potentialströmung [kN/m²]",
+                       einheit="kN/m²", faktor=1e-3, linien=linien, texte=texte)
+
+
+# ==========================================================================
 # Lasten erzeugen
 # ==========================================================================
-def lasten_erzeugen(model, wd: Wasserdruck) -> dict:
+def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
     """Die Objektlasten des Generierers in seine Lastfälle schreiben (vorher
     seine alten Lasten entfernen), auf das Netz verteilen; Rückgabe: die
-    Kennwerte samt Zahl der Elementlasten."""
+    Kennwerte samt Zahl der Elementlasten. Strömungsnumerisch wird zuerst
+    das Druckfeld gerechnet (``fortschritt(anteil, text) -> bool``; False
+    bricht ab, das Modell bleibt dann unverändert)."""
     from .model import GRUNDSTELLUNG
     if not (wd.flaechen or wd.koerper):
         raise ValueError("Keine benetzte Fläche gewählt")
@@ -261,8 +534,16 @@ def lasten_erzeugen(model, wd: Wasserdruck) -> dict:
         raise ValueError("Unbekannt: " + ", ".join(fehlt))
     if wd.situation and wd.situation not in model.situationsnamen():
         raise ValueError(f"Situation '{wd.situation}' unbekannt")
+    for name, was in ((wd.ow_flaeche, "Oberwasser"), (wd.uw_flaeche, "Unterwasser")):
+        if name and name not in model.flaechen:
+            raise ValueError(f"Referenzfläche {was}: {name} unbekannt")
     g = geometrie(wd, model)
-    kw = kennwerte(wd, model)
+    kw = kennwerte(wd, model, fortschritt=fortschritt)
+    feld = None
+    if kw.get("verfahren") == "numerisch":
+        fr = kw["_feld"]
+        feld = st.feld_packen(fr["schnitt"], fr["feld"]["p"], fr["feld"]["fluid"], fr["feld"]["block"],
+                              nachkomma=1, z_sohle=fr["z_sohle"], stempel=uuid.uuid4().hex)
     if not wd.lastfall:
         wd.lastfall = f"Wasser {wd.name}"
     lastfaelle = [(wd.lastfall, False)]
@@ -277,14 +558,20 @@ def lasten_erzeugen(model, wd: Wasserdruck) -> dict:
                                       and gl.verlauf.get("name") == wd.name)]
     param = asdict(wd)
     n_lasten = 0
-    for fall, dyn in lastfaelle:
+    st._melden(fortschritt, 0.92, f"Wasserdruck {wd.name}: Lasten auf das Netz")
+    for j, (fall, dyn) in enumerate(lastfaelle):
         if fall not in model.load_cases:
             model.add_load_case(fall, "Q", f"Wasserdruck {wd.name}" + (" (Schwankung)" if dyn else ""),
                                 activate=False)
         lc = model.load_cases[fall]
         lc.situation = "" if wd.situation == GRUNDSTELLUNG else wd.situation
+        if not getattr(lc, "nummer", 0):
+            lc.nummer = (int(wd.lastfall_nr) + j) if int(wd.lastfall_nr or 0) > 0 \
+                else model.naechste_lastfallnummer()
         verlauf = {"art": "wasser", "name": wd.name, "param": param, "geometrie": g,
                    "dyn": dyn, "dp_dyn": kw["dp_dyn"]}
+        if feld is not None:
+            verlauf["feld"] = feld
         for name in wd.flaechen:
             model.add_geometrielast(name, 0.0, art="flaeche", richtung=wd.richtung, case=fall,
                                     verlauf=dict(verlauf))
@@ -298,7 +585,9 @@ def lasten_erzeugen(model, wd: Wasserdruck) -> dict:
     kw["objektlasten"] = n_lasten
     kw["elementlasten"] = n_elem
     kw["lastfaelle"] = [f for f, _ in lastfaelle]
+    kw["lastfall_nr"] = int(getattr(model.load_cases[wd.lastfall], "nummer", 0) or 0)
     kw["kontrolle"] = kontrollsumme(model, wd)
+    st._melden(fortschritt, 1.0, f"Wasserdruck {wd.name}: {n_elem} Elementlasten")
     return kw
 
 
@@ -389,6 +678,24 @@ def erlaeuterung(wd: Wasserdruck, kw: dict) -> list:
                  f"(Lastfall {wd.lastfall_dyn}) - Eingang für den Schwingungsnachweis.")
     if not (kw.get("h_ue", 0) > 0 or kw.get("spalt", 0) > 0):
         z.append("Kein Überströmen und kein Unterströmen: rein hydrostatische Belastung.")
+    if kw.get("verfahren") == "numerisch":
+        nx, nz, h = kw.get("gitter", (0, 0, 0.0))
+        z.append(f"Strömungsnumerisch: Potentialströmung (reibungsfrei, drehungsfrei) im lotrechten Schnitt "
+                 f"durch den Verschluss auf einem Gitter {nx} × {nz} (Zelle {h:.3g} m, {kw.get('n_fluid', 0)} "
+                 f"Fluidzellen), Sohle z = {kw.get('z_sohle', 0):g} m, Strömungsrichtung "
+                 f"({kw['richtung_stroemung'][0]:+.2f}, {kw['richtung_stroemung'][1]:+.2f}). "
+                 f"Wasserspiegel als feste Deckel, Zufluss q = {kw.get('q', 0):.3f} m³/(s·m) "
+                 f"(U = {kw.get('U', 0):.2f} m/s), Druck aus Bernoulli p = ρ·g·(E − z) − ½·ρ·v² mit der "
+                 f"Energiehöhe E = {kw.get('E_ow', 0):.3f} m; größte Geschwindigkeit {kw['v_max']:.2f} m/s, "
+                 f"größter Druck {kw.get('p_max', 0) / 1e3:.1f} kN/m². Die Elementseiten tasten das Feld vor "
+                 f"der Fläche ab; die Resultierende {kw['F'] / 1e3:.1f} kN bei z = {kw['z_R']:.3f} m ist die "
+                 f"Summe der Zelldrücke auf den Verschluss." + (" Unterdruck (Sog) angesetzt."
+                                                               if wd.unterdruck else
+                                                               " Unterdruck bei 0 gekappt (belüftet)."))
+        for hw in kw.get("hinweise", []):
+            z.append("Hinweis: " + hw)
+    elif kw.get("numerik_fehler"):
+        z.append(f"Strömungsnumerische Berechnung nicht möglich ({kw['numerik_fehler']}) - Näherungsformeln.")
     return z
 
 
@@ -396,13 +703,26 @@ def skizze_svg(wd: Wasserdruck, kw: dict, breite: int = 560, hoehe: int = 380) -
     """Schnitt durch den Verschluss: Wasserstände, Druckfigur, Über-/Unterströmung,
     Resultierende - als SVG-Text."""
     z_uk, z_ok = kw["z_uk"], kw["z_ok"]
+    profil = kw.get("profil") or []
+
+    def pz(z: float) -> float:
+        """Druck an der Oberwasserseite: aus dem Feld (numerisch) oder der Formel."""
+        if len(profil) >= 2:
+            zz = np.array([q[0] for q in profil])
+            pp = np.array([q[1] for q in profil])
+            o = np.argsort(zz)
+            if zz[o][0] - 1e-9 <= z <= zz[o][-1] + 1e-9:
+                return float(np.interp(z, zz[o], pp[o]))
+            return 0.0
+        return druck(wd, z, kw)
+
     z_lo = min(z_uk - (wd.spalt if wd.unterstroemt else 0.0) - 0.15 * (z_ok - z_uk), z_uk - 0.2)
     z_hi = max(z_ok, wd.h_ow, wd.h_uw if wd.h_uw is not None else z_ok) + 0.25 * max(z_ok - z_uk, 0.5)
     H = max(z_hi - z_lo, 1e-6)
     rand = 40
     sy = (hoehe - 2 * rand) / H
     x_gate = breite * 0.5
-    p_max = max(1e-9, max(abs(druck(wd, z, kw)) for z in np.linspace(z_uk, min(z_ok, max(wd.h_ow, z_uk)), 50))
+    p_max = max(1e-9, max(abs(pz(z)) for z in np.linspace(z_uk, min(z_ok, max(wd.h_ow, z_uk)), 50))
                 if wd.h_ow > z_uk else 1e-9)
     sx = (breite * 0.3) / p_max
 
@@ -433,10 +753,10 @@ def skizze_svg(wd: Wasserdruck, kw: dict, breite: int = 560, hoehe: int = 380) -
     # Druckfigur
     if wd.h_ow > z_uk:
         zz = np.linspace(z_uk, min(z_ok, max(wd.h_ow, wd.h_uw or z_uk)), 60)
-        pts = [f"{x_gate:.1f},{Y(zz[0]):.1f}"] + [f"{X(druck(wd, z, kw)):.1f},{Y(z):.1f}" for z in zz] \
+        pts = [f"{x_gate:.1f},{Y(zz[0]):.1f}"] + [f"{X(pz(z)):.1f},{Y(z):.1f}" for z in zz] \
             + [f"{x_gate:.1f},{Y(zz[-1]):.1f}"]
         s.append(f'<polygon points="{" ".join(pts)}" fill="#e5701c" opacity="0.35" stroke="#e5701c"/>')
-        pw = [druck(wd, z, kw) for z in zz]
+        pw = [pz(z) for z in zz]
         k_max = int(np.argmax(pw))
         s.append(f'<text x="{X(pw[k_max]) + 6:.1f}" y="{Y(zz[k_max]) - 6:.1f}" fill="#7a3a06">'
                  f'p_max = {pw[k_max] / 1e3:.1f} kN/m²</text>')

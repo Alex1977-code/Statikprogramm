@@ -385,18 +385,21 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
-                 "bemassungen": "Linearmaß"}
+                 "bemassungen": "Linearmaß", "lastfaelle": "Lastfall",
+                 "kombinationen": "Kombination", "werkstoffe": "Werkstoff", "dicken": "Dicke"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind",
-                    "schweissnaht", "bemassung"}
+                    "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
                  "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte",
                  "subsystem": "subsysteme", "situation": "situationen",
                  "wasserdruck": "generierer", "wind": "generierer",
-                 "schweissnaht": "schweissnaehte", "bemassung": "bemassungen"}
+                 "schweissnaht": "schweissnaehte", "bemassung": "bemassungen",
+                 "lastfall": "lastfaelle", "kombination": "kombinationen",
+                 "werkstoff": "werkstoffe", "dicke": "dicken"}
 
     def __init__(self, parent=None):
         super().__init__(parent)

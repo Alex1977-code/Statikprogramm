@@ -1221,9 +1221,10 @@ class Report:
         b = [self._h(1, "Lastgenerierer")]
         b.append(("p", "Die Lasten dieser Generierer hängen als Objektlasten an den benetzten "
                        "Flächen und werden beim Vernetzen auf die Elemente gelegt. Wasserdruck: "
-                       "DIN 19704-1; Strömungskennwerte nach Poleni (Überfall) und Torricelli "
-                       "(Ausfluss); Druckminderung durch die Absenkung des Wasserspiegels als "
-                       "Näherung nach Naudascher (Hydrodynamic Forces, IAHR)."))
+                       "DIN 19704-1; strömungsnumerisch als Potentialströmung im lotrechten Schnitt "
+                       "(Druck aus Bernoulli, Zufluss nach Poleni bzw. Torricelli) oder analytisch mit "
+                       "der Absenkung des Wasserspiegels als Näherung nach Naudascher (Hydrodynamic "
+                       "Forces, IAHR)."))
         for name, wd in wds.items():
             b.append(self._h(2, f"Wasserdruck {name}"))
             try:
@@ -1231,13 +1232,20 @@ class Report:
             except Exception as ex:                # noqa: BLE001
                 b.append(("p", f"Kennwerte nicht berechenbar: {ex}"))
                 continue
+            lc = m.load_cases.get(wd.lastfall)
+            nr = int(getattr(lc, "nummer", 0) or 0) if lc is not None else 0
             rows = [["Angabe", "Wert"],
                     ["Situation", wd.situation or "Grundstellung"],
-                    ["Lastfall", wd.lastfall or "–"],
+                    ["Lastfall", (wd.lastfall or "–") + (f" (Nr. {nr})" if nr else "")],
+                    ["Verfahren", "strömungsnumerisch (Potentialströmung im Schnitt)"
+                     if kw.get("verfahren") == "numerisch" else "analytisch (Näherungsformeln)"],
                     ["Benetzte Flächen / Volumen", ", ".join(wd.flaechen + wd.koerper) or "–"],
                     ["Dichtungslinie", ", ".join(wd.dichtung) or f"Unterkante z = {kw['z_uk']:g} m"],
                     ["Oberwasser / Unterwasser", f"{wd.h_ow:g} m / "
                      + (f"{wd.h_uw:g} m" if wd.h_uw is not None else "trocken")],
+                    ["Referenzflächen", (f"Oberwasser an der {wd.ow_seite} von {wd.ow_flaeche}"
+                                         if wd.ow_flaeche else "Oberwasser: aus der Wirkrichtung")
+                     + (f"; Unterwasser an der {wd.uw_seite} von {wd.uw_flaeche}" if wd.uw_flaeche else "")],
                     ["Dichte", f"{wd.rho:g} kg/m³"],
                     ["Verschluss", f"z = {kw['z_uk']:g} … {kw['z_ok']:g} m, Breite {kw['breite']:g} m"],
                     ["Wirkung", "senkrecht zur Fläche" if wd.richtung is None
@@ -1256,10 +1264,23 @@ class Report:
             if kw.get("dp_dyn", 0) > 0:
                 rows.append(["Druckschwankung", f"Δp = {kw['dp_dyn'] / 1e3:.3f} kN/m² (c_p' = {wd.cp_dyn:g}), "
                                                 f"Lastfall {wd.lastfall_dyn}"])
+            if kw.get("verfahren") == "numerisch":
+                nx_, nz_, h_ = kw.get("gitter", (0, 0, 0.0))
+                rows.append(["Strömungsrechnung", f"Gitter {nx_} × {nz_} (Zelle {h_:.3g} m), Sohle z = "
+                                                  f"{kw.get('z_sohle', 0):g} m, q = {kw.get('q', 0):.3f} m³/(s·m), "
+                                                  f"v_max = {kw['v_max']:.2f} m/s, p_max = {kw.get('p_max', 0) / 1e3:.1f} kN/m²"])
             b.append(("table", rows, f"Wasserdruck {name}: Angaben und Kennwerte", None, "compact"))
             for zeile in wdm.erlaeuterung(wd, kw):
                 b.append(("p", zeile))
             if self.opt("figures"):
+                if kw.get("verfahren") == "numerisch":
+                    try:
+                        svg_feld = wdm.feld_svg_bericht(wd, kw)
+                    except Exception:               # noqa: BLE001
+                        svg_feld = ""
+                    if svg_feld:
+                        b.append(self._figure(svg_feld, f"Wasserdruck {name}: Druckfeld der Potentialströmung im "
+                                                        f"Schnitt (Verschluss dunkel, Wasser blau bis rot)"))
                 b.append(self._figure(wdm.skizze_svg(wd, kw),
                                       f"Wasserdruck {name}: Wasserstände, Druckfigur, Strömung und Resultierende"))
         for name, w in winde.items():

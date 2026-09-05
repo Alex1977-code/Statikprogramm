@@ -1197,8 +1197,10 @@ def main():
               and mb.supports[0].name == "Fußpunkt links")
         check("Symbolgröße in der Tabelle editierbar",
               w._lager_aendern(0, 6, 2.5) and mb.supports[0].groesse == 2.5)
+        check("Lastfallnummer in der Tabelle editierbar",
+              w._lastfall_aendern(0, 1, 7) and mb.load_cases[list(mb.load_cases)[0]].nummer == 7)
         check("Lastfallbeschreibung editierbar",
-              w._lastfall_aendern(0, 2, "Eigenlast Dach")
+              w._lastfall_aendern(0, 3, "Eigenlast Dach")
               and list(mb.load_cases.values())[0].description == "Eigenlast Dach")
 
         # Modellbaum: Klick waehlt aus, Doppelklick oeffnet
@@ -2157,24 +2159,69 @@ def main():
         w._baum_geklickt("wasserdruck_neu", "+")
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Wasserdruck-Maske mit der gewählten Fläche und den Knöpfen",
+        check("Wasserdruck-Maske mit der gewählten Fläche und den Knöpfen (Anklicken, Kennwerte)",
               mk.titel == "Neu: Wasserdruck" and "Haut" in mk.werte()["ziele"]
-              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kennwerte"}, str(mk.werte().get("ziele")))
+              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Benetzt anklicken", "Dichtlinie anklicken",
+                                            "OW-Fläche anklicken", "UW-Fläche anklicken", "Kennwerte"},
+              str(sorted(mk.zusatzknoepfe)))
+        check("Maske kennt Verfahren, Lastfall-Nr., Referenzflächen mit Seite, Sohle und Gitter",
+              all(k in mk.werte() for k in ("verfahren", "fall_nr", "ow_flaeche", "ow_seite", "uw_flaeche",
+                                             "uw_seite", "z_sohle", "gitter", "unterdruck"))
+              and str(mk.werte()["verfahren"]).startswith("strömungsnumerisch")
+              and int(mk.werte()["fall_nr"]) >= 1, str(mk.werte().get("verfahren")))
+        # Klickmodus: Dichtlinie anklicken -> Linienklick geht an die Maske
+        m_.add_line("Dicht", [ids_[0][0], ids_[nx_][0]])
+        mk.zusatzknoepfe["Dichtlinie anklicken"].click()
+        app.processEvents()
+        check("Klickmodus Dichtlinie an (Maske will Linien)", w.maskenrand.objekt_modus() == "linie")
+        mk.objekt_angeklickt("linie", "Dicht")
+        app.processEvents()
+        check("angeklickte Linie wird Dichtlinie und ist markiert",
+              "Dicht" in mk.werte()["dichtung"] and w.sel_linien == ["Dicht"], str(mk.werte().get("dichtung")))
+        mk.zusatzknoepfe["Dichtlinie anklicken"].click()
+        app.processEvents()
+        check("Klickmodus wieder aus", w.maskenrand.objekt_modus() == "")
         mk.setzen("h_ow", 4.0)
         mk.setzen("richtung", "global x")
         mk.setzen("absenkung", False)
+        mk.setzen("fall_nr", 5)
         mk.zusatzknoepfe["Kennwerte"].click()
         app.processEvents()
-        check("Kennwerte in der Maske: F = ½ρgh²b = 235,4 kN", "235.4 kN" in mk.werte()["kennwerte"],
+        check("Kennwerte in der Maske: F = ½ρgh²b = 235,4 kN aus dem Druckfeld (numerisch)",
+              "235.4 kN" in mk.werte()["kennwerte"] and "numerisch" in mk.werte()["kennwerte"],
               mk.werte()["kennwerte"])
+        fortschritt_ = []
+        alt_fort = w._fortschritt
+        w._fortschritt = lambda wert, text: (fortschritt_.append(wert), alt_fort(wert, text))[1]
         mk.anwenden()
         app.processEvents()
+        w._fortschritt = alt_fort
         wd_ = m_.wasserdruecke.get("W1")
-        check("„Lasten erzeugen“: Generierer, Lastfall, Objektlast, Elementlasten nur unter Wasser",
-              wd_ is not None and wd_.lastfall in m_.load_cases
-              and any(gl.verlauf.get("art") == "wasser" for gl in m_.load_cases[wd_.lastfall].geometrielasten)
+        check("„Lasten erzeugen“: Generierer, Lastfall Nr. 5, Objektlast mit Druckfeld, Elementlasten nur unter Wasser",
+              wd_ is not None and wd_.lastfall in m_.load_cases and m_.load_cases[wd_.lastfall].nummer == 5
+              and any(gl.verlauf.get("art") == "wasser" and gl.verlauf.get("feld")
+                      for gl in m_.load_cases[wd_.lastfall].geometrielasten)
               and len(m_.load_cases[wd_.lastfall].face_loads) == 6 * 16 and "W1" in zweige(w.baum),
               str(len(m_.load_cases[wd_.lastfall].face_loads) if wd_ else None))
+        check("Fortschrittsbalken lief mit und ist wieder weg",
+              fortschritt_ and max(fortschritt_) == 100 and not w.progress_bar.isVisible(), str(fortschritt_[-3:]))
+        check("Lastfälle-Tabelle zeigt die Nummer",
+              any(str(z[0]) == wd_.lastfall and z[1] == 5 for z in w.tbl_lastfall.modell.zeilen))
+        # Abbruch: Modell bleibt unveraendert
+        w._baum_geklickt("wasserdruck_neu", "+")
+        app.processEvents()
+        mk2 = w.maskenrand.maske
+        mk2.setzen("name", "Wabbruch")
+        mk2.setzen("h_ow", 3.0)
+        w.sel_flaechen = ["Haut"]
+        mk2.zusatzknoepfe["Auswahl übernehmen"].click()
+        w._fortschritt = lambda wert, text: False
+        mk2.anwenden()
+        app.processEvents()
+        w._fortschritt = alt_fort
+        check("Abbrechen während der Strömungsberechnung lässt das Modell unverändert",
+              "Wabbruch" not in m_.wasserdruecke and not w.progress_bar.isVisible()
+              and "abgebrochen" in w.log.toPlainText())
         w._baum_geklickt("wasserdruck", "W1")
         app.processEvents()
         mk = w.maskenrand.maske
@@ -2191,9 +2238,10 @@ def main():
               wd_.ueberstroemt and wd_.unterstroemt and wd_.lastfall_dyn in m_.load_cases
               and len(m_.wasserdruecke) == 1, str(list(m_.load_cases)))
         bl_ = Rep(m_, None).chapter_lastgenerierer()
-        check("Bericht: Kapitel Lastgenerierer mit Tabelle, Erläuterung (Poleni) und Skizze",
-              any(x[0] == "table" for x in bl_) and any(x[0] == "figure" and "<svg" in x[1] for x in bl_)
-              and any(x[0] == "p" and "Poleni" in x[1] for x in bl_), str([x[0] for x in bl_]))
+        check("Bericht: Kapitel Lastgenerierer mit Tabelle, Erläuterung (Poleni, Potentialströmung), Druckfeld und Skizze",
+              any(x[0] == "table" for x in bl_) and sum(1 for x in bl_ if x[0] == "figure" and "<svg" in x[1]) >= 2
+              and any(x[0] == "p" and "Poleni" in x[1] for x in bl_)
+              and any(x[0] == "p" and "Potentialströmung" in x[1] for x in bl_), str([x[0] for x in bl_]))
         w._bestaetigen = lambda text: True
         w._baum_loeschen("wasserdruck", "W1")
         app.processEvents()
@@ -3439,6 +3487,94 @@ def main():
         import traceback
         traceback.print_exc()
         check("Lasten und Auswahl", False, str(ex)[:70])
+
+    # ---- Eigenschaftsmasken rechts: Lastfall, Kombination, Werkstoff, Dicke ---
+    try:
+        from statik3d.model import ShellProp as ShP_
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w._bestaetigen = lambda text: True
+        w._baum_geklickt("lastfall", "LF1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Klick auf einen Lastfall: Eigenschaftsmaske rechts (Name, Nummer, Einwirkung, Situation, Theorie, g_z)",
+              mk is not None and mk.titel == "Lastfall LF1" and w.eingaben_dock.windowTitle() == "Lastfall LF1"
+              and all(k in mk.werte() for k in ("name", "nummer", "kategorie", "beschreibung", "situation",
+                                                 "theorie", "g_z", "psi", "aktiv")), str(mk.titel if mk else None))
+        mk.setzen("name", "LF!")
+        mk.setzen("nummer", 3)
+        mk.setzen("beschreibung", "umbenannt")
+        mk.setzen("aktiv", True)
+        mk.anwenden()
+        app.processEvents()
+        check("Umbenennen aus der Maske: Modell, Kombinationen und aktiver Lastfall folgen",
+              "LF!" in m_.load_cases and "LF1" not in m_.load_cases and m_.load_cases["LF!"].nummer == 3
+              and m_.active_case == "LF!" and all("LF1" not in c.factors for c in m_.combinations.values())
+              and not fehler_, str(fehler_))
+        w._baum_bearbeiten("lastfall", "LF1")
+        app.processEvents()
+        check("Bearbeiten eines nicht mehr vorhandenen Namens stürzt nicht (Zweigmaske)", not fehler_, str(fehler_))
+        w._baum_neu("lastfaelle")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neu aus dem Zweig: Maske „Neu: Lastfall“ mit OK und Abbrechen",
+              mk is not None and mk.titel.startswith("Neu: Lastfall") and mk.btn_abbrechen is not None)
+        n_lf = len(m_.load_cases)
+        mk.anwenden()
+        app.processEvents()
+        check("OK legt den Lastfall an", len(m_.load_cases) == n_lf + 1 and not fehler_, str(fehler_))
+        kname_ = list(m_.combinations)[0]
+        w._baum_geklickt("kombination", kname_)
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("faktoren", "LF!: 1.35, S: 1.5")
+        mk.anwenden()
+        app.processEvents()
+        check("Kombinationsmaske: Faktoren als Text übernommen",
+              m_.combinations[kname_].factors == {"LF!": 1.35, "S": 1.5} and not fehler_, str(fehler_))
+        mk.setzen("faktoren", "gibtsnicht: 1")
+        mk.anwenden()
+        app.processEvents()
+        check("unbekannter Lastfall in den Faktoren wird abgewiesen", fehler_ and "gibtsnicht" in fehler_[-1])
+        fehler_.clear()
+        wname_ = list(m_.materials)[0]
+        w._baum_geklickt("werkstoff", wname_)
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("name", "S355x")
+        mk.setzen("fy", "355")
+        mk.anwenden()
+        app.processEvents()
+        check("Werkstoffmaske: Umbenennen zieht die Elemente mit, f_y in N/mm²",
+              "S355x" in m_.materials and all(e.mat != wname_ for e in m_.elements)
+              and abs(m_.materials["S355x"].fy - 355e6) < 1 and not fehler_, str(fehler_))
+        m_.add_shell_prop(ShP_("t9", 0.012))
+        w.refresh_all()
+        w._baum_geklickt("dicke", "t9")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("t", 15.0)
+        mk.anwenden()
+        app.processEvents()
+        check("Dickenmaske: t in mm", abs(m_.shells["t9"].t - 0.015) < 1e-12 and not fehler_, str(fehler_))
+        w.selection = np.array([0, 1], int)
+        w._auswahl_register()
+        app.processEvents()
+        w.selection = np.array([], int)
+        w._auswahl_register()
+        app.processEvents()
+        w.refresh_all()
+        app.processEvents()
+        check("Kontextregister weg: refresh_all greift nicht auf gelöschte Felder zu", True)
+        w.error = alt_error
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Eigenschaftsmasken rechts", False, str(ex)[:70])
 
     # ---- Klick und Ziehen; Bericht ohne Berechnung ---------------------------
     try:
