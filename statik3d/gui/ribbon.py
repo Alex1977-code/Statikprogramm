@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
+from . import symbole as sym
 
 
 @dataclass
@@ -51,8 +52,23 @@ class Befehl:
         return f"{self.text} {self.register} {self.gruppe} {self.hinweis}".lower()
 
 
+#: Hoehe des Knopffelds einer Gruppe [px]. Jede Gruppe ist gleich hoch, und
+#: der Gruppenname steht darunter immer auf derselben Hoehe - ein Register,
+#: das beim Umschalten in der Hoehe springt, ist eine Zumutung.
+INHALT_HOEHE = 68
+TITEL_HOEHE = 16
+#: Symbolgroessen der Knoepfe
+SYMBOL_GROSS = 28
+SYMBOL_KLEIN = 16
+
+
 class Gruppe(QtWidgets.QWidget):
-    """Eine Gruppe im Ribbon: Knoepfe oben, Gruppenname unten."""
+    """Eine Gruppe im Ribbon: Knoepfe oben, Gruppenname unten.
+
+    Jeder Knopf traegt ein Symbol **und** seine Beschriftung; beim Ueberfahren
+    erscheint der Hinweis mit dem Tastenkuerzel. Das Symbol kommt aus
+    :mod:`symbole` - nach Name, sonst nach der Beschriftung geraten.
+    """
 
     def __init__(self, name: str, ribbon: "Ribbon", register: str, parent=None):
         super().__init__(parent)
@@ -62,16 +78,22 @@ class Gruppe(QtWidgets.QWidget):
         self._ribbon = ribbon
         self._register = register
         aussen = QtWidgets.QVBoxLayout(self)
-        aussen.setContentsMargins(6, 4, 6, 2)
+        aussen.setContentsMargins(6, 3, 6, 2)
         aussen.setSpacing(2)
-        self.reihe = QtWidgets.QHBoxLayout()
+        # Das Knopffeld hat eine feste Hoehe; darunter sitzt der Titel. So
+        # steht der Titel in jeder Gruppe und jedem Register auf derselben Hoehe.
+        self.feld = QtWidgets.QWidget(self)
+        self.feld.setFixedHeight(INHALT_HOEHE)
+        self.reihe = QtWidgets.QHBoxLayout(self.feld)
         self.reihe.setContentsMargins(0, 0, 0, 0)
         self.reihe.setSpacing(3)
-        aussen.addLayout(self.reihe, 1)
+        aussen.addWidget(self.feld)
         titel = QtWidgets.QLabel(name)
         titel.setObjectName("gruppentitel")
         titel.setAlignment(QtCore.Qt.AlignHCenter)
+        titel.setFixedHeight(TITEL_HOEHE)
         aussen.addWidget(titel)
+        self.setFixedHeight(INHALT_HOEHE + TITEL_HOEHE + 3 + 2 + 2)
         self.spalte: QtWidgets.QVBoxLayout | None = None
 
     # -- Knoepfe ---------------------------------------------------------
@@ -87,44 +109,56 @@ class Gruppe(QtWidgets.QWidget):
         self._ribbon.merken(Befehl(self._register, self._name, text, a, hinweis))
         return a
 
-    def gross(self, text: str, zeichen: str, fn=None, kuerzel: str = "",
-              hinweis: str = "", rolle: str = "") -> QtGui.QAction:
-        """Hauptbefehl: grosses Zeichen ueber der Beschriftung."""
+    def gross(self, text: str, zeichen: str = "", fn=None, kuerzel: str = "",
+              hinweis: str = "", rolle: str = "", symbol: str = "") -> QtGui.QAction:
+        """Hauptbefehl: Symbol ueber der Beschriftung.
+
+        ``zeichen`` ist das alte Schriftzeichen; es dient nur noch dazu, das
+        Symbol zu raten, wenn ``symbol`` nicht genannt ist.
+        """
         a = self._aktion(text, fn, kuerzel, hinweis)
+        a.setIcon(sym.fuer_befehl(text, zeichen, symbol))
         b = QtWidgets.QToolButton(self)
         b.setDefaultAction(a)
         b.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
-        b.setText(f"{zeichen}\n{text}" if zeichen else text)
+        b.setIconSize(QtCore.QSize(SYMBOL_GROSS, SYMBOL_GROSS))
+        b.setText(text)
         b.setObjectName("ribbongross")
         if rolle:
             b.setProperty("rolle", rolle)
-        b.setMinimumWidth(56)
-        b.setMaximumWidth(120)
+        b.setMinimumWidth(58)
+        b.setMaximumWidth(124)
+        b.setFixedHeight(INHALT_HOEHE)
         self.spalte = None
         self.reihe.addWidget(b, 0, QtCore.Qt.AlignTop)
         return a
 
     def klein(self, text: str, fn=None, kuerzel: str = "", hinweis: str = "",
-              zeichen: str = "") -> QtGui.QAction:
-        """Nebenbefehl: kleine Zeile, bis zu drei uebereinander."""
+              zeichen: str = "", symbol: str = "") -> QtGui.QAction:
+        """Nebenbefehl: Symbol neben der Beschriftung, bis zu drei uebereinander."""
         a = self._aktion(text, fn, kuerzel, hinweis)
+        a.setIcon(sym.fuer_befehl(text, zeichen, symbol))
         b = QtWidgets.QToolButton(self)
         b.setDefaultAction(a)
-        b.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        b.setText(f"{zeichen} {text}" if zeichen else text)
+        b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        b.setIconSize(QtCore.QSize(SYMBOL_KLEIN, SYMBOL_KLEIN))
+        b.setText(text)
         b.setObjectName("ribbonklein")
         b.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+        b.setFixedHeight((INHALT_HOEHE - 4) // 3)
         if self.spalte is None or self.spalte.count() >= 3:
             self.spalte = QtWidgets.QVBoxLayout()
             self.spalte.setContentsMargins(0, 0, 0, 0)
             self.spalte.setSpacing(2)
+            self.spalte.setAlignment(QtCore.Qt.AlignTop)
             self.reihe.addLayout(self.spalte)
         self.spalte.addWidget(b)
         return a
 
-    def schalter(self, text: str, fn=None, an: bool = False, hinweis: str = "") -> QtGui.QAction:
+    def schalter(self, text: str, fn=None, an: bool = False, hinweis: str = "",
+                 symbol: str = "") -> QtGui.QAction:
         """Ein Nebenbefehl zum Ein- und Ausschalten."""
-        a = self.klein(text, None, "", hinweis)
+        a = self.klein(text, None, "", hinweis, symbol=symbol)
         a.setCheckable(True)
         a.setChecked(an)
         if fn is not None:
@@ -141,6 +175,9 @@ class Gruppe(QtWidgets.QWidget):
 class Register(QtWidgets.QWidget):
     """Ein Register des Ribbons: eine Reihe von Gruppen."""
 
+    #: Hoehe jedes Registers - dieselbe fuer alle, damit nichts springt
+    HOEHE = INHALT_HOEHE + TITEL_HOEHE + 3 + 2 + 2 + 4
+
     def __init__(self, name: str, ribbon: "Ribbon", parent=None):
         super().__init__(parent)
         self._name = name
@@ -148,7 +185,9 @@ class Register(QtWidgets.QWidget):
         self.lay = QtWidgets.QHBoxLayout(self)
         self.lay.setContentsMargins(4, 2, 4, 2)
         self.lay.setSpacing(0)
+        self.lay.setAlignment(QtCore.Qt.AlignTop)
         self.lay.addStretch(1)
+        self.setFixedHeight(self.HOEHE)
 
     def gruppe(self, name: str) -> Gruppe:
         g = Gruppe(name, self._ribbon, self._name, self)
@@ -185,8 +224,8 @@ class Ribbon(QtWidgets.QWidget):
         kopf.setSpacing(4)
         self.schnellzugriff = QtWidgets.QToolBar(self)
         self.schnellzugriff.setObjectName("schnellzugriff")
-        self.schnellzugriff.setIconSize(QtCore.QSize(14, 14))
-        self.schnellzugriff.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        self.schnellzugriff.setIconSize(QtCore.QSize(18, 18))
+        self.schnellzugriff.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         kopf.addWidget(self.schnellzugriff)
         kopf.addStretch(1)
         self.suche = QtWidgets.QLineEdit(self)
@@ -309,13 +348,13 @@ QToolButton#ribbongross[rolle="start"] {{ background: {akzent}; color: #fff;
     border-color: {akzent}; font-weight: 600; }}
 QToolButton#ribbongross[rolle="start"]:hover {{ background: #0f4f9a; }}
 QToolButton#ribbonklein {{ border: 1px solid transparent; border-radius: 6px;
-    padding: 3px 8px; font-size: 12px; text-align: left; }}
+    padding: 1px 8px 1px 4px; font-size: 12px; text-align: left; }}
 QToolButton#ribbonklein:hover {{ background: {akzent_hell}; border-color: {linie}; }}
 QToolButton#ribbonklein:checked {{ background: {akzent_hell}; color: {akzent};
     border-color: {akzent}; }}
 QToolBar#schnellzugriff {{ background: transparent; border: 0; spacing: 2px; }}
 QToolBar#schnellzugriff QToolButton {{ border: 1px solid transparent;
-    border-radius: 6px; padding: 2px 7px; font-size: 12px; color: {matt}; }}
+    border-radius: 6px; padding: 3px 4px; color: {matt}; }}
 QToolBar#schnellzugriff QToolButton:hover {{ background: {akzent_hell};
     color: {akzent}; }}
 QLineEdit#befehlssuche {{ padding: 3px 8px; border: 1px solid {linie};
