@@ -554,15 +554,21 @@ def import_rfem_native(path: str, model: Model = None, log: list = None,
                                 "(merge_nodes=True). Kontaktfugen und "
                                 "Kontaktbedingungen sind damit verschweisst.")
             elif doppelt:
-                # Frueher wurde hier stillschweigend verschmolzen. In einem
-                # RFEM-6-Volumenmodell liegen die Knoten an jeder Kontaktfuge
-                # und jeder Kontaktbedingung absichtlich aufeinander -
-                # zusammengefuehrt ist das Modell dort verschweisst und zu
-                # steif, und die Freigaben laufen ins Leere.
-                C.say(log, f"{doppelt} Knoten liegen auf einem anderen. Sie werden "
-                           "NICHT zusammengefuehrt: das sind die Fugen der "
-                           "Kontaktbedingungen und Kontaktflaechen. Zum "
-                           "Zusammenfuehren die Datei mit merge_nodes=True lesen.")
+                # In einem RFEM-6-Volumenmodell liegen die Knoten an jeder
+                # Fuge zwischen zwei Koerpern aufeinander. RFEM verbindet
+                # solche Flaechen von sich aus; getrennt sind nur die Fugen
+                # mit einer Flaechenfreigabe (hier: Kontaktbedingung). Der
+                # Leser laesst die Knoten getrennt; die Nachbereitung in
+                # importers.import_file fuehrt sie zusammen, und die
+                # Kontaktbedingungen trennen ihre Flaechen beim Vernetzen
+                # wieder (fugen.kontaktfugen_ausfuehren). So ist das Modell
+                # dort verbunden, wo RFEM es verbindet, und dort geloest, wo
+                # RFEM es loest.
+                C.say(log, f"{doppelt} Knoten liegen auf einem anderen (Fugen zwischen "
+                           "den Koerpern). Die Nachbereitung des Imports fuehrt sie "
+                           "zusammen - wie RFEM beruehrende Flaechen verbindet; die "
+                           "Fugen der Kontaktbedingungen werden beim Vernetzen wieder "
+                           "getrennt.")
             return m6
         except ImportError as exc:
             C.say(log, f"Kein RFEM-6-Schema ({exc}); Behaelter wird untersucht.")

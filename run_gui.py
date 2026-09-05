@@ -42,13 +42,44 @@ def _selftest() -> int:
     return code
 
 
+def _packerbild(text: str = None, schliessen: bool = False):
+    """Das Startbild des Packers (PyInstaller) beschriften oder schliessen.
+
+    Es gibt das Modul pyi_splash nur in der exe; ueberall sonst passiert nichts.
+    """
+    try:
+        import pyi_splash          # noqa: PLC0415
+        if text:
+            pyi_splash.update_text(text)
+        if schliessen:
+            pyi_splash.close()
+    except Exception:              # noqa: BLE001
+        pass
+
+
 def _start():
     if "--version" in sys.argv:
+        _packerbild(schliessen=True)
         from statik3d import __version__
         print(__version__)
         sys.exit(0)
     if "--selbsttest" in sys.argv:
+        _packerbild(schliessen=True)
         sys.exit(_selftest())
+    # Startbild, solange Grafik und Rechenkern geladen werden - das dauert
+    # in der exe zehn bis dreissig Sekunden, und ohne Bild klickt man ein
+    # zweites Mal.
+    _packerbild("Oberfläche wird geladen …")
+    app = splash = None
+    try:
+        from PySide6 import QtWidgets
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+        from statik3d.gui import start
+        splash = start.Startbild()
+        splash.show()
+        splash.melden("Grafik und Rechenkern werden geladen …")
+    except Exception:              # noqa: BLE001 - dann eben ohne Startbild
+        splash = None
     try:
         from statik3d.gui.main import main
     except ImportError as ex:
@@ -64,7 +95,7 @@ def _start():
         update.melde_neustart()
     except Exception:          # noqa: BLE001 - eine Rueckmeldung haelt nichts auf
         pass
-    main()
+    main(app=app, splash=splash)
 
 
 if __name__ == "__main__":       # wichtig fuer multiprocessing (Windows: spawn / exe)

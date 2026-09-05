@@ -23,7 +23,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import splu, eigsh
 
-from .model import Model, NDOF, Combination, LoadCase, Member
+from .model import Model, NDOF, Combination, LoadCase, Member, GRUNDSTELLUNG
 from . import assemble as asm
 from .elements import beam3d as bm
 from .elements import shell as sh
@@ -128,7 +128,7 @@ class Results:
     u: np.ndarray = None                    # (nn, 6) Verschiebungen/Verdrehungen
     reactions: np.ndarray = None            # (nn, 6) Auflagerreaktionen
     beam_end: dict = field(default_factory=dict)    # elem -> lokale Stabendkraefte (12,)
-    beam_q: dict = field(default_factory=dict)      # elem -> lokale Streckenlast (2,3)
+    beam_q: dict = field(default_factory=dict)      # elem -> Abschnittslasten (n,8): a, b, q1, q2
     shell_res: dict = field(default_factory=dict)   # elem -> [nx ny nxy mx my mxy]
     solid_res: dict = field(default_factory=dict)   # elem -> Spannungen (6,)
     contact: list = field(default_factory=list)
@@ -224,7 +224,8 @@ class Results:
             for i, v in r.beam_end.items():
                 out.beam_end[i] = out.beam_end.get(i, 0.0) + f * v
             for i, v in r.beam_q.items():
-                out.beam_q[i] = out.beam_q.get(i, 0.0) + f * v
+                out.beam_q[i] = asm.abschnitte_zusammen(out.beam_q.get(i),
+                                                        asm.skaliere_abschnitte(v, f))
             for i, v in r.shell_res.items():
                 out.shell_res[i] = out.shell_res.get(i, 0.0) + f * v
             for i, v in r.solid_res.items():
@@ -299,19 +300,20 @@ def beam_end_forces(model: Model, i: int, fl: np.ndarray) -> dict:
 
 
 def beam_station_forces(model: Model, res: Results, i: int, n: int = 9) -> dict:
-    """Schnittgroessen entlang eines Stabelements an n Stellen (x von 0 bis L)."""
+    """Schnittgroessen entlang eines Stabelements an n Stellen (x von 0 bis L).
+
+    Gleichgewicht am Teilstab: Stabendkraefte am Anfang plus die Resultierende
+    der Abschnittslasten ueber [0, x] und ihr Moment um x. Bei einer
+    abschnittsweisen Last knickt der Querkraftverlauf an den Abschnittsenden;
+    liegt ein Abschnittsende zwischen zwei Stellen, steht es nicht im Feld -
+    die Stellen sind gleichmaessig verteilt, n hoch genug waehlen.
+    """
     fl = res.beam_end[i]
     L = model.element_length(i)
     q = res.beam_q.get(i)
     x = np.linspace(0.0, L, n)
-    if q is None:
-        q1 = q2 = np.zeros(3)
-    else:
-        q1, q2 = q[0], q[1]
-    dq = (q2 - q1) / L if L > 0 else np.zeros(3)
     # Lastresultierende ueber [0,x] und deren Moment um die Stelle x
-    Q = q1 * x[:, None] + dq * x[:, None] ** 2 / 2.0              # (n,3)
-    Mq = q1 * x[:, None] ** 2 / 2.0 + dq * x[:, None] ** 3 / 6.0   # (n,3)
+    Q, Mq = asm.lastresultierende(q, x)                            # (n,3)
     N = -fl[0] - Q[:, 0]
     Vy = -fl[1] - Q[:, 1]
     Vz = -fl[2] - Q[:, 2]
@@ -367,10 +369,14 @@ def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
 class StaticSystem:
     """Assemblierte und faktorisierte Steifigkeit fuer beliebig viele Lastfaelle."""
 
-    def __init__(self, model: Model, workers: int = None, progress=None):
+    def __init__(self, model: Model, workers: int = None, progress=None,
+                 aktiv=None, situation: str = ""):
         t0 = time.time()
         self.model = model
-        self.K = asm.stiffness(model, workers)
+        #: Situation: Maske der wirksamen Elemente (None = alle) und ihr Name
+        self.aktiv = None if aktiv is None else np.asarray(aktiv, bool)
+        self.situation = situation
+        self.K = asm.stiffness(model, workers, self.aktiv)
         self.fixed, self.vals = asm.constrained_dofs(model, self.K)
         self.fi = np.where(~self.fixed)[0]
         self.si = np.where(self.fixed)[0]
@@ -398,23 +404,29 @@ class StaticSystem:
         return self._solver
 
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
-              F_extra: np.ndarray = None) -> np.ndarray:
-        """Loesen fuer Lastvektor F; optional zusaetzliche Steifigkeit (Kontakt)."""
+              F_extra: np.ndarray = None, us: np.ndarray = None) -> np.ndarray:
+        """Loesen fuer Lastvektor F; optional zusaetzliche Steifigkeit (Kontakt)
+        und vorgegebene Verschiebungen ``us`` des Lastfalls (Zwangsverformungen,
+        wirksam nur an gesperrten FHG): K_ff u_f = F_f - K_fs u_s."""
         u = self.vals.copy()
+        if us is not None:
+            u[self.si] += us[self.si]
         rhs = F[self.fi]
         if F_extra is not None:
             rhs = rhs + F_extra[self.fi]
-        if self.Kfs is not None:
-            rhs = rhs - self.Kfs @ self.vals[self.si]
+        vorgabe = np.any(u[self.si])
         if K_extra is None:
+            if vorgabe:
+                if self.Kfs is None:
+                    self.Kfs = self.K[self.fi][:, self.si].tocsc()
+                rhs = rhs - self.Kfs @ u[self.si]
             u[self.fi] = self.solver.solve(rhs)
         else:
             Kt = (self.K + K_extra)
             Ktff = Kt[self.fi][:, self.fi].tocsc()
-            if np.any(self.vals[self.si]):
+            if vorgabe:
                 Ktfs = Kt[self.fi][:, self.si]
-                rhs = F[self.fi] + (F_extra[self.fi] if F_extra is not None else 0) \
-                    - Ktfs @ self.vals[self.si]
+                rhs = rhs - Ktfs @ u[self.si]
             ls = LinearSolver(Ktff)
             self.backend = ls.backend
             u[self.fi] = ls.solve(rhs)
@@ -436,10 +448,11 @@ class StaticSystem:
 # ==========================================================================
 # Lasten eines Lastfalls / einer Kombination
 # ==========================================================================
-def case_loads(model: Model, factors: dict) -> tuple:
+def case_loads(model: Model, factors: dict, aktiv=None) -> tuple:
     """(F, feq, q, temp) fuer eine Linearkombination von Lastfaellen.
     feq: elem -> lokale aequivalente Knotenlasten (unkondensiert),
-    q: elem -> lokale Streckenlast (2,3), temp: elem -> dT."""
+    q: elem -> lokale Streckenlast (2,3), temp: elem -> dT.
+    ``aktiv``: abgeschaltete Elemente einer Situation tragen keine Last."""
     F = np.zeros(model.ndof)
     feq: dict = {}
     q: dict = {}
@@ -448,14 +461,40 @@ def case_loads(model: Model, factors: dict) -> tuple:
         if not f:
             continue
         lc = model.case(name)
-        F += f * asm.load_vector(model, lc)
-        for i, v in asm.element_equivalent_loads(model, lc).items():
+        F += f * asm.load_vector(model, lc, aktiv)
+        for i, v in asm.element_equivalent_loads(model, lc, aktiv).items():
             feq[i] = feq.get(i, 0.0) + f * v
-        for i, v in asm.element_distributed_loads(model, lc).items():
-            q[i] = q.get(i, 0.0) + f * v
+        for i, v in asm.element_distributed_loads(model, lc, aktiv).items():
+            q[i] = asm.abschnitte_zusammen(q.get(i), asm.skaliere_abschnitte(v, f))
         for tl in lc.temp_loads:
             temp[tl.elem] = temp.get(tl.elem, 0.0) + f * tl.dT
     return F, feq, q, temp
+
+
+def case_prescribed(model: Model, factors: dict, warn=None):
+    """Vorgegebene Verschiebungen (Zwangsverformungen) einer Linearkombination
+    von Lastfaellen als Vektor ueber alle FHG - oder None, wenn es keine gibt.
+    ``warn(text)`` meldet vorgegebene FHG ohne Lager (dort unwirksam)."""
+    us = np.zeros(model.ndof)
+    gibt = False
+    for name, f in factors.items():
+        if not f:
+            continue
+        lc = model.case(name)
+        if not lc.zwangsverformungen:
+            continue
+        gibt = True
+        for zv in lc.zwangsverformungen:
+            for d in zv.dofs:
+                us[NDOF * int(zv.node) + int(d)] += f * float(zv.u[d])
+        if warn is not None:
+            ohne = model.zwang_ohne_lager(name)
+            if ohne:
+                namen = ("ux", "uy", "uz", "phix", "phiy", "phiz")
+                warn(f"Zwangsverformung im Lastfall {name} ohne Lager - unwirksam: "
+                     + ", ".join(f"Knoten {n} {namen[d]}" for n, d in ohne[:8])
+                     + (" ..." if len(ohne) > 8 else ""))
+    return us if gibt else None
 
 
 # ==========================================================================
@@ -531,14 +570,26 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
 
 
 def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
-                q: dict = None, temp: dict = None, workers: int = None):
-    """Rohgroessen je Element aus dem Verschiebungsvektor u (ndof,)."""
+                q: dict = None, temp: dict = None, workers: int = None, aktiv=None):
+    """Rohgroessen je Element aus dem Verschiebungsvektor u (ndof,).
+    Abgeschaltete Elemente (``aktiv`` False) bekommen Nullen: sie wirken nicht."""
     feq = feq if feq is not None else {}
     q = q if q is not None else {}
     temp = temp if temp is not None else {}
-    idx = list(range(len(model.elements)))
+    idx = asm.aktive_indizes(model, aktiv)
     items = parallel.map_elements(_post_chunk, model, idx, workers=workers,
                                   extra={"u": u, "feq": feq, "temp": temp})
+    if aktiv is not None:
+        inaktiv = [i for i in range(len(model.elements)) if not aktiv[i]]
+        res.info["inaktiv"] = inaktiv
+        for i in inaktiv:
+            e = model.elements[i]
+            if e.typ in asm.LINE_TYPES:
+                res.beam_end[i] = np.zeros(12)
+            elif e.typ in asm.SHELL_TYPES:
+                res.shell_res[i] = np.zeros(6)
+            else:
+                res.solid_res[i] = np.zeros(6)
     for i, kind, val in items:
         if kind == "beam":
             res.beam_end[i] = val
@@ -557,22 +608,53 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
 def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  kind: str, workers=None, progress=None) -> Results:
     t0 = time.time()
-    F, feq, q, temp = case_loads(model, factors)
+    aktiv = getattr(system, "aktiv", None)
+    F, feq, q, temp = case_loads(model, factors, aktiv)
+    us = case_prescribed(model, factors, warn=progress)
     res = Results(name=name, kind=kind, model=model)
+    if getattr(system, "situation", ""):
+        res.info["situation"] = system.situation
     if model.has_contact:
         u, R, res.contact, res.contact_forces, cinfo = solve_with_contact(
-            model, system, F, progress=progress)
+            model, system, F, progress=progress, us=us)
         res.info.update(cinfo)
     else:
-        u = system.solve(F)
+        u = system.solve(F, us=us)
         R = system.reactions(u, F)
     res.u = u.reshape(-1, NDOF)
     res.reactions = R.reshape(-1, NDOF)
     res.info.update({"ndof": model.ndof, "nfree": len(system.fi),
                      "solver": system.backend, "factors": dict(factors)})
-    postprocess(model, u, res, feq, q, temp, workers)
+    postprocess(model, u, res, feq, q, temp, workers, aktiv)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
+
+
+# ==========================================================================
+# Situationen: je Situation ein eigenes System
+# ==========================================================================
+def situationssystem(model: Model, name: str = "", workers: int = None,
+                     progress=None) -> tuple:
+    """(Modell, StaticSystem) der Situation: Stellung angewandt, abgeschaltete
+    Elemente weggelassen. Fuer die Grundstellung ist das Modell das Original."""
+    from .situationen import situationsmodell
+    m_s, aktiv, log = situationsmodell(model, name)
+    if progress:
+        for z in log:
+            progress(z.strip())
+    system = StaticSystem(m_s, workers, progress, aktiv=aktiv, situation=name or GRUNDSTELLUNG)
+    return m_s, system
+
+
+def systeme_je_situation(model: Model, namen=None, workers: int = None, progress=None,
+                         systeme: dict = None) -> dict:
+    """{Situation: (Modell, System)} fuer die Situationen der genannten
+    Lastfaelle (alle, wenn keine genannt). ``systeme`` wird ergaenzt."""
+    systeme = systeme if systeme is not None else {}
+    for sit in model.lastfaelle_je_situation(namen):
+        if sit not in systeme:
+            systeme[sit] = situationssystem(model, sit, workers, progress)
+    return systeme
 
 
 def solve_static(model: Model, progress=None, case: str = None,
@@ -594,29 +676,66 @@ def solve_static(model: Model, progress=None, case: str = None,
 
 
 def solve_cases(model: Model, cases: list = None, workers: int = None,
-                progress=None, system: StaticSystem = None) -> dict:
-    """Alle (oder ausgewaehlte) Lastfaelle mit einer Faktorisierung loesen."""
-    system = system or StaticSystem(model, workers, progress)
+                progress=None, system: StaticSystem = None, systeme: dict = None) -> dict:
+    """Alle (oder ausgewaehlte) Lastfaelle loesen - je Situation mit ihrem
+    System (eine Faktorisierung je Situation). Ein uebergebenes ``system``
+    gilt fuer alle genannten Lastfaelle."""
     names = cases if cases is not None else list(model.load_cases)
     out = {}
-    for k, name in enumerate(names):
-        out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers)
-        if progress:
-            progress(f"Lastfall {name} ({k+1}/{len(names)})")
+    if system is not None:
+        for k, name in enumerate(names):
+            out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers)
+            if progress:
+                progress(f"Lastfall {name} ({k+1}/{len(names)})")
+        return out
+    systeme = systeme_je_situation(model, names, workers, progress, systeme)
+    k = 0
+    for sit, sit_names in model.lastfaelle_je_situation(names).items():
+        m_s, sys_s = systeme[sit]
+        for name in sit_names:
+            out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers)
+            k += 1
+            if progress:
+                progress(f"Lastfall {name} ({k}/{len(names)})"
+                         + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""))
     return out
+
+
+def _kombination_pruefen(model: Model, combo: Combination) -> str:
+    """Die Situation der Kombination; ihre Lastfaelle muessen dazu gehoeren."""
+    sit = combo.situation or GRUNDSTELLUNG
+    fremd = [k for k, f in combo.factors.items() if f and k in model.load_cases
+             and (model.load_cases[k].situation or GRUNDSTELLUNG) != sit]
+    if fremd:
+        raise ValueError(f"Kombination '{combo.name}' (Situation {sit}) enthält Lastfall "
+                         f"{', '.join(fremd)} aus einer anderen Situation")
+    return sit
 
 
 def solve_combination(model: Model, combo: Combination, case_results: dict = None,
                       system: StaticSystem = None, workers: int = None,
-                      progress=None) -> Results:
-    """Eine Kombination: Superposition (linear) oder direkte Loesung (Kontakt)."""
+                      progress=None, systeme: dict = None) -> Results:
+    """Eine Kombination: Superposition (linear) oder direkte Loesung (Kontakt) -
+    in der Situation der Kombination."""
+    sit = _kombination_pruefen(model, combo)
     if not model.has_contact and case_results is not None \
             and all(k in case_results for k, f in combo.factors.items() if f):
-        res = Results.combine(model, [(case_results[k], f) for k, f in combo.factors.items()
-                                      if f], combo.name)
+        teile = [(case_results[k], f) for k, f in combo.factors.items() if f]
+        basis = next((r.model for r, _f in teile if getattr(r, "model", None) is not None), model)
+        res = Results.combine(basis, teile, combo.name)
         res.info["typ"] = combo.typ
+        if sit != GRUNDSTELLUNG:
+            res.info["situation"] = sit
+        if teile and "inaktiv" in teile[0][0].info:
+            res.info["inaktiv"] = list(teile[0][0].info["inaktiv"])
         return res
-    system = system or StaticSystem(model, workers, progress)
+    if system is None:
+        if systeme is not None and sit in systeme:
+            model, system = systeme[sit]
+        elif sit != GRUNDSTELLUNG or model.situation(sit).deaktiviert:
+            model, system = situationssystem(model, sit, workers, progress)
+        else:
+            system = StaticSystem(model, workers, progress)
     res = _solve_loads(model, system, combo.factors, combo.name, "combination", workers,
                        progress)
     res.info["typ"] = combo.typ
@@ -625,7 +744,7 @@ def solve_combination(model: Model, combo: Combination, case_results: dict = Non
 
 def solve_combinations(model: Model, combos: list = None, case_results: dict = None,
                        system: StaticSystem = None, workers: int = None,
-                       progress=None, use_jobs: bool = None) -> dict:
+                       progress=None, use_jobs: bool = None, systeme: dict = None) -> dict:
     """Alle Kombinationen. Bei Kontakt (nichtlinear) werden die Kombinationen
     als Auftraege parallel bzw. auf der Farm gerechnet."""
     names = combos if combos is not None else list(model.combinations)
@@ -634,9 +753,11 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
         return out
     if not model.has_contact:
         if case_results is None:
-            case_results = solve_cases(model, workers=workers, progress=progress, system=system)
+            case_results = solve_cases(model, workers=workers, progress=progress,
+                                       system=system, systeme=systeme)
         for n in names:
-            out[n] = solve_combination(model, model.combinations[n], case_results)
+            out[n] = solve_combination(model, model.combinations[n], case_results,
+                                       systeme=systeme)
         return out
     # nichtlinear: Auftraege
     st = parallel.settings()
@@ -656,9 +777,9 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
             res.model = model
             out[n] = res
         return out
-    system = system or StaticSystem(model, workers, progress)
     for k, n in enumerate(names):
-        out[n] = solve_combination(model, model.combinations[n], None, system, workers)
+        out[n] = solve_combination(model, model.combinations[n], None, system, workers,
+                                   systeme=systeme)
         if progress:
             progress(f"Kombination {n} ({k+1}/{len(names)})")
     return out
@@ -675,7 +796,7 @@ def _contact_singular(it: int, ex, cs) -> str:
 
 
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
-                       max_iter: int = 120, progress=None):
+                       max_iter: int = 120, progress=None, us: np.ndarray = None):
     from .contact import ContactSystem
     log: list[str] = []
     cs = ContactSystem(model, system.K, log)
@@ -685,7 +806,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     it = 0
     Kc = Fc = None
     if not cs.cons:
-        u = system.solve(F)
+        u = system.solve(F, us=us)
         R = system.reactions(u, F)
         return u, R, [], np.zeros((model.nn, 3)), {"contact_iterations": 0,
                                                    "contact_converged": True,
@@ -695,7 +816,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     for it in range(1, max_iter + 1):
         Kc, Fc = cs.matrices(model.ndof)
         try:
-            u = system.solve(F, Kc, Fc)
+            u = system.solve(F, Kc, Fc, us=us)
         except RuntimeError as ex:
             if it == 1 and not forced and cs.stabilise():
                 # Im ersten Schritt haelt keine Bedingung - etwa eine Schraube,
@@ -708,13 +829,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                            "Schritt keine Kontaktbedingung haelt")
                 Kc, Fc = cs.matrices(model.ndof)
                 try:
-                    u = system.solve(F, Kc, Fc)
+                    u = system.solve(F, Kc, Fc, us=us)
                 except RuntimeError as ex2:
                     raise RuntimeError(_contact_singular(it, ex2, cs)) from None
                 cs.select_by_direction(u)
                 Kc, Fc = cs.matrices(model.ndof)
                 try:
-                    u = system.solve(F, Kc, Fc)
+                    u = system.solve(F, Kc, Fc, us=us)
                 except RuntimeError as ex3:
                     raise RuntimeError(_contact_singular(it, ex3, cs)) from None
             else:
@@ -839,6 +960,12 @@ class Analysis:
     volumen: object = None
     theorie2: object = None
     info: dict = field(default_factory=dict)
+    #: je Situation das System und das Modell, mit dem gerechnet wurde
+    #: (Grundstellung: das Modell selbst; Stellung: gedrehte Kopie)
+    systeme: dict = field(default_factory=dict)
+    modelle: dict = field(default_factory=dict)
+    theorie3: object = None
+    schwingung: object = None
 
     def all_results(self) -> dict:
         d = dict(self.cases)
@@ -853,6 +980,10 @@ class Analysis:
              f"Rechenzeit: {self.info.get('time', 0):.2f} s ({self.info.get('parallel', '')})"]
         for k, env in self.envelopes.items():
             s.append(env.summary())
+        if self.theorie2 is not None and getattr(self.theorie2, "kombinationen", None):
+            s.append(self.theorie2.summary())
+        if self.theorie3 is not None and getattr(self.theorie3, "kombinationen", None):
+            s.append(self.theorie3.summary())
         if self.design is not None:
             s.append(self.design.summary())
         if self.fatigue is not None:
@@ -872,6 +1003,44 @@ class Analysis:
         return "\n".join(s)
 
 
+def _lastfaelle_hoeherer_ordnung(model: Model, an, systeme: dict, progress=None):
+    """Lastfaelle mit theorie II oder III: das lineare Ergebnis ersetzen."""
+    from .theorie2 import solve_theorie2, Th2Results
+    from .theorie3 import solve_theorie3, Th3Results
+    ds = model.design
+    for name, lc in model.load_cases.items():
+        th = model.theorie_von(lc)
+        if th not in ("II", "III") or name not in an.cases:
+            continue
+        m_s, sys_s = systeme[lc.situation or GRUNDSTELLUNG]
+        try:
+            if th == "II":
+                res, info = solve_theorie2(m_s, {name: 1.0}, name, sys_s,
+                                           imperfektionen=bool(getattr(ds, "imperfektionen", True)),
+                                           elastisch=not getattr(ds, "th2_plastisch", False),
+                                           richtung=getattr(ds, "th2_richtung", None),
+                                           alle_vorkruemmungen=bool(getattr(ds, "th2_alle_vorkruemmungen", False)),
+                                           progress=progress)
+                if an.theorie2 is None:
+                    an.theorie2 = Th2Results(settings={"modus": "je Lastfall/Kombination"})
+                an.theorie2.kombinationen[name] = info
+            else:
+                res, info = solve_theorie3(m_s, {name: 1.0}, name,
+                                           schritte=int(getattr(ds, "th3_schritte", 10) or 10),
+                                           aktiv=getattr(sys_s, "aktiv", None), progress=progress)
+                if an.theorie3 is None:
+                    an.theorie3 = Th3Results(settings={"schritte": int(getattr(ds, "th3_schritte", 10) or 10)})
+                an.theorie3.kombinationen[name] = info
+        except ValueError as ex:
+            an.info.setdefault("warnungen", []).append(f"Lastfall {name}: {ex}")
+            continue
+        if not info.fehler:
+            res.kind = "case"
+            if lc.situation:
+                res.info["situation"] = lc.situation
+            an.cases[name] = res
+
+
 def solve_all(model: Model, workers: int = None, progress=None, combinations: bool = True,
               envelopes: bool = True, design: bool = False, fatigue: bool = False) -> Analysis:
     """Alle Lastfaelle, alle Kombinationen, Umhuellende, optional Nachweise."""
@@ -883,17 +1052,46 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         # als Drehfeder am Stabende (EN 1993-1-8, 5.1.2).
         from .joints.anschluss import federn_setzen
         an.info["anschlussfedern"] = federn_setzen(model)
-    system = StaticSystem(model, workers, progress)
-    an.cases = solve_cases(model, workers=workers, progress=progress, system=system)
+    # Je Situation ein System: die Grundstellung (unbewegt, alles aktiv) und
+    # jede Situation, in der ein Lastfall steht
+    systeme: dict = {}
+    an.cases = solve_cases(model, workers=workers, progress=progress, systeme=systeme)
+    if GRUNDSTELLUNG not in systeme:
+        systeme[GRUNDSTELLUNG] = (model, StaticSystem(model, workers, progress))
+    an.systeme = {k: v[1] for k, v in systeme.items()}
+    an.modelle = {k: v[0] for k, v in systeme.items()}
+    system = an.systeme[GRUNDSTELLUNG]
     if combinations and model.combinations:
-        an.combinations = solve_combinations(model, case_results=an.cases, system=system,
-                                             workers=workers, progress=progress)
-    if model.design.theorie2 != "aus" and an.combinations:
-        # Gleichgewicht am verformten System: die GZT-Kombinationen werden
+        an.combinations = solve_combinations(model, case_results=an.cases, system=None,
+                                             workers=workers, progress=progress,
+                                             systeme=systeme)
+    # Theorie je Lastfall: II. oder III. Ordnung ersetzt das lineare Ergebnis
+    _lastfaelle_hoeherer_ordnung(model, an, systeme, progress)
+    th2 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "II"]
+    if th2 and an.combinations:
+        # Gleichgewicht am verformten System: die Kombinationen werden
         # ersetzt, denn nach Theorie II. Ordnung gilt keine Superposition
         # mehr (EN 1993-1-1, 5.2). Danach erst die Umhuellenden bilden.
+        # Ausdruecklich auf "II" gestellte Kombinationen werden immer
+        # gerechnet, die uebrigen nach der Einstellung (auto: alpha_cr).
         from .theorie2 import check_theorie2
-        an.theorie2 = check_theorie2(model, an, system=system, progress=progress)
+        erzwungen = {n for n in th2 if (model.combinations[n].theorie or "").upper() == "II"}
+        t2 = check_theorie2(model, an, combos=th2, system=system, progress=progress,
+                            systeme=systeme, erzwungen=erzwungen)
+        if an.theorie2 is None:
+            an.theorie2 = t2
+        else:                       # Lastfaelle nach II. Ordnung stehen schon darin
+            an.theorie2.kombinationen.update(t2.kombinationen)
+            an.theorie2.settings.update(t2.settings)
+    th3 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "III"]
+    if th3 and an.combinations:
+        from .theorie3 import check_theorie3
+        t3 = check_theorie3(model, an, combos=th3, progress=progress, systeme=systeme)
+        if an.theorie3 is None:
+            an.theorie3 = t3
+        else:
+            an.theorie3.kombinationen.update(t3.kombinationen)
+            an.theorie3.settings.update(t3.settings)
     if envelopes:
         groups: dict[str, dict] = {}
         for n, r in an.combinations.items():
@@ -936,10 +1134,16 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
 # ==========================================================================
 # Modalanalyse
 # ==========================================================================
-def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = None) -> Results:
+def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = None,
+                aktiv=None, zusatzmasse=None) -> Results:
+    """Eigenfrequenzen und Eigenformen. ``aktiv``: Elementmaske einer Situation;
+    ``zusatzmasse``: zusaetzliche Massenmatrix (ndof x ndof), z. B. die
+    hydrodynamische Masse eines Verschlusses (schwingung.zusatzmassen)."""
     t0 = time.time()
-    K = asm.stiffness(model, workers)
-    M = asm.mass(model, workers)
+    K = asm.stiffness(model, workers, aktiv)
+    M = asm.mass(model, workers, aktiv)
+    if zusatzmasse is not None:
+        M = (M + zusatzmasse).tocsr()
     fixed, vals = asm.constrained_dofs(model, K)
     md = np.asarray(M.diagonal()).ravel()
     fixed = fixed | (md <= 0)
@@ -968,7 +1172,8 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     res.reactions = np.zeros((model.nn, NDOF))
     res.freqs = freqs
     res.modes = modes.reshape(k, model.nn, NDOF)
-    res.info = {"ndof": model.ndof, "nfree": len(fi), "time": time.time() - t0}
+    res.info = {"ndof": model.ndof, "nfree": len(fi), "time": time.time() - t0,
+                "zusatzmasse": zusatzmasse is not None}
     return res
 
 

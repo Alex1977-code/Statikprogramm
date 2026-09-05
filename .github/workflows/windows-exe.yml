@@ -34,6 +34,9 @@ jobs:
       - name: Build-Stempel schreiben
         run: python packaging/write_build.py ${{ github.sha }}
 
+      - name: Programmsymbol und Startbild erzeugen
+        run: python packaging/make_icon.py
+
       - name: exe bauen (PyInstaller)
         run: pyinstaller --noconfirm --clean packaging/Statik3D.spec
 

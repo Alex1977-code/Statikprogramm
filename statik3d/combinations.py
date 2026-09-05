@@ -72,34 +72,53 @@ def generate_combinations(model: Model, uls: bool = True, sls: bool = True,
                           g_favourable: bool = True, replace: bool = True,
                           max_combinations: int = 2000) -> list[Combination]:
     """Kombinationen erzeugen und im Modell ablegen (replace=True ersetzt
-    vorhandene automatisch erzeugte Kombinationen)."""
+    vorhandene automatisch erzeugte Kombinationen).
+
+    Kombiniert wird **je Situation**: Lastfaelle verschiedener Situationen
+    (Stellung, abgeschaltete Elemente) stehen nie in einer Kombination; jede
+    erzeugte Kombination traegt ihre Situation."""
     ds = model.design
     rule = rule or ds.combination_rule
-    perm = [lc for lc in model.load_cases.values() if lc.is_permanent]
-    var = [lc for lc in model.load_cases.values() if lc.is_variable]
-    acc = [lc for lc in model.load_cases.values() if lc.is_accidental]
-
     combos: list[Combination] = []
     if replace:
         model.combinations = {k: c for k, c in model.combinations.items()
                               if not c.description.startswith("auto")}
-    n = len(model.combinations)
+    zaehler = [len(model.combinations)]
+    seen: set = set()
+    for sit, namen in model.lastfaelle_je_situation().items():
+        faelle = [model.load_cases[k] for k in namen]
+        _kombinationen_bilden(model, faelle, sit, uls, sls, accidental, rule, g_favourable,
+                              max_combinations, combos, seen, zaehler)
+    return combos
+
+
+def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool, sls: bool,
+                          accidental: bool, rule: str, g_favourable: bool,
+                          max_combinations: int, combos: list, seen: set, zaehler: list):
+    """Die Kombinationen einer Situation nach DIN EN 1990 (6.10, 6.10a/b,
+    6.11b, 6.14b, 6.15b, 6.16b)."""
+    from .model import GRUNDSTELLUNG
+    ds = model.design
+    perm = [lc for lc in faelle if lc.is_permanent]
+    var = [lc for lc in faelle if lc.is_variable]
+    acc = [lc for lc in faelle if lc.is_accidental]
+    sit = "" if situation == GRUNDSTELLUNG else situation
+    zusatz = f" [{situation}]" if sit else ""
 
     def add(name_prefix, factors, typ, desc, leading=""):
-        nonlocal n
         factors = {k: round(v, 6) for k, v in factors.items() if abs(v) > 1e-12}
         if not factors:
             return
-        key = (typ, tuple(sorted(factors.items())))
+        key = (typ, sit, tuple(sorted(factors.items())))
         if key in seen:
             return
         seen.add(key)
-        n += 1
-        c = Combination(f"{name_prefix}{n}", factors, typ, "auto: " + desc, leading)
+        zaehler[0] += 1
+        c = Combination(f"{name_prefix}{zaehler[0]}", factors, typ, "auto: " + desc + zusatz,
+                        leading, situation=sit)
         combos.append(c)
         model.combinations[c.name] = c
 
-    seen = set()
     g_variants = [False, True] if (g_favourable and var) else [False]
     var_sets = _variable_sets(var) if var else [[]]
     if len(var_sets) * max(1, len(var)) > max_combinations:
@@ -177,16 +196,16 @@ def generate_combinations(model: Model, uls: bool = True, sls: bool = True,
             for lc in vs:
                 f[lc.name] = lc.psi_factors[2]
             add("GZG", f, "SLS_QP", "6.16b quasi-staendig")
-    return combos
 
 
 def combination_table(model: Model) -> list[list[str]]:
     """Tabellarische Darstellung (fuer Bericht/GUI): Kopfzeile + Zeilen."""
     names = list(model.load_cases)
-    head = ["Kombination", "Typ", "Leit"] + names + ["Beschreibung"]
+    head = ["Kombination", "Typ", "Leit", "Situation", "Theorie"] + names + ["Beschreibung"]
     rows = [head]
     for c in model.combinations.values():
-        rows.append([c.name, c.typ, c.leading]
+        rows.append([c.name, c.typ, c.leading, getattr(c, "situation", "") or "Grundstellung",
+                     model.theorie_von(c) if hasattr(model, "theorie_von") else "I"]
                     + [f"{c.factors.get(n, 0):g}" if c.factors.get(n, 0) else "" for n in names]
                     + [c.description])
     return rows

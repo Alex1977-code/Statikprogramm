@@ -185,19 +185,23 @@ PIPE_US = {  # (Aussendurchmesser, Nennwanddicke) in Zoll; gerechnet mit 0.93 t 
     "PIPE 12 STD": (12.75, 0.375),
 }
 
-FAMILIES = ("IPE", "HEA", "HEB", "HEM", "UPN", "UPE", "L", "LU", "SHS", "RHS", "CHS",
+FAMILIES = ("IPE", "HEA", "HEB", "HEM", "IPET", "HEAT", "HEBT",
+            "UPN", "UPE", "L", "LU", "SHS", "RHS", "CHS",
             "UB", "UC", "PFC", "W", "C", "HSS", "PIPE")
 
 # Land -> (Bezeichnung, Norm, Familien)
 COUNTRIES = {
     "EU": ("Europa / Deutschland", "EN 10365, DIN 1026, EN 10056, EN 10210",
-           ["IPE", "HEA", "HEB", "HEM", "UPN", "UPE", "L", "LU", "SHS", "RHS", "CHS"]),
+           ["IPE", "HEA", "HEB", "HEM", "IPET", "HEAT", "HEBT",
+            "UPN", "UPE", "L", "LU", "SHS", "RHS", "CHS"]),
     "GB": ("Grossbritannien", "BS 4-1, BS EN 10365", ["UB", "UC", "PFC"]),
     "US": ("USA / Kanada", "AISC Steel Construction Manual", ["W", "C", "HSS", "PIPE"]),
 }
 FAMILY_INFO = {
     "IPE": ("Doppel-T schmal (EN 10365)", "EU"), "HEA": ("Breitflansch HE-A (EN 10365)", "EU"),
     "HEB": ("Breitflansch HE-B (EN 10365)", "EU"), "HEM": ("Breitflansch HE-M (EN 10365)", "EU"),
+    "IPET": ("T aus halbiertem IPE", "EU"), "HEAT": ("T aus halbiertem HE-A", "EU"),
+    "HEBT": ("T aus halbiertem HE-B", "EU"),
     "UPN": ("U-Profil geneigte Flansche (DIN 1026-1)", "EU"),
     "UPE": ("U-Profil parallele Flansche (DIN 1026-2)", "EU"),
     "L": ("Winkel gleichschenklig (EN 10056-1)", "EU"),
@@ -297,6 +301,12 @@ def list_profiles(family: str = None, country: str = None) -> list[str]:
     f = family.upper() if family else None
     if f in (None, "IPE"):
         out += [f"IPE {h}" for h in IPE]
+    if f in (None, "IPET"):
+        out += [f"IPET {h}" for h in IPE]
+    if f in (None, "HEAT"):
+        out += [f"HEAT {h}" for h in HEA]
+    if f in (None, "HEBT"):
+        out += [f"HEBT {h}" for h in HEB]
     if f in (None, "HEA"):
         out += [f"HEA {h}" for h in HEA]
     if f in (None, "HEB"):
@@ -341,6 +351,15 @@ def make_section(designation: str, name: str = None) -> Section:
     'RHS 200x100x8', 'CHS 168.3x5'. Auch 'HE 200 B', 'HE200A', 'Ro 168.3x5'."""
     s = _norm(designation)
     nm = name or s
+    mm = re.match(r"(IPET|HEAT|HEBT) (\d+)$", s)
+    if mm:
+        # Halbiertes Doppel-T: T-Profil mit der halben Hoehe des Ausgangsprofils
+        fam, h = mm.group(1), int(mm.group(2))
+        tab = {"IPET": IPE, "HEAT": HEA, "HEBT": HEB}[fam]
+        if h not in tab:
+            raise KeyError(f"{fam} {h} nicht in der Datenbank")
+        H, B, tw, tf, r = tab[h]
+        return Section.tee(nm, H * 1e-3 / 2.0, B * 1e-3, tw * 1e-3, tf * 1e-3, r * 1e-3)
     mm = re.match(r"(IPE|HEA|HEB|HEM) (\d+)$", s)
     if mm:
         fam, h = mm.group(1), int(mm.group(2))

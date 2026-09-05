@@ -227,11 +227,38 @@ class SectionDialog(QtWidgets.QDialog):
 
 
 # ==========================================================================
+#: Rechentheorie je Lastfall / Kombination: Anzeige -> Wert im Modell
+THEORIEN = [("wie Einstellung", ""), ("I. Ordnung (linear)", "I"),
+            ("II. Ordnung (verformtes System, K_g)", "II"),
+            ("III. Ordnung (große Verformungen)", "III")]
+
+
+def theorie_feld(wert: str = "") -> QtWidgets.QComboBox:
+    cb = QtWidgets.QComboBox()
+    for text, v in THEORIEN:
+        cb.addItem(text, v)
+    i = cb.findData((wert or "").upper())
+    cb.setCurrentIndex(max(i, 0))
+    cb.setToolTip("I: linear. II: Gleichgewicht am verformten System mit geometrischer "
+                  "Steifigkeit und Ersatzimperfektionen (EC3 5.2/5.3). III: große Verformungen, "
+                  "korotational mit Laststufen (nur Stabtragwerke).")
+    return cb
+
+
 class LoadCaseDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, lc: LoadCase = None, existing=()):
+    def __init__(self, parent=None, lc: LoadCase = None, existing=(), situationen=()):
         super().__init__(parent)
         self.setWindowTitle("Lastfall")
         self.name = QtWidgets.QLineEdit(lc.name if lc else f"LF{len(existing)+1}")
+        # Die Situation, in der der Lastfall gilt (Stellung + wirksame Elemente)
+        self.situation = QtWidgets.QComboBox()
+        namen = list(situationen) or ["Grundstellung"]
+        self.situation.addItems(namen)
+        if lc and getattr(lc, "situation", ""):
+            if lc.situation not in namen:
+                self.situation.addItem(lc.situation)
+            self.situation.setCurrentText(lc.situation)
+        self.theorie = theorie_feld(getattr(lc, "theorie", "") if lc else "")
         self.cat = QtWidgets.QComboBox()
         for k, (desc, psi) in ACTION_CATEGORIES.items():
             self.cat.addItem(f"{k}: {desc}  (ψ {psi[0]}/{psi[1]}/{psi[2]})", k)
@@ -245,11 +272,21 @@ class LoadCaseDialog(QtWidgets.QDialog):
         f.addRow("Einwirkung", self.cat)
         f.addRow("Beschreibung", self.desc)
         f.addRow("Ausschlussgruppe", self.group)
+        f.addRow("Situation", self.situation)
+        f.addRow("Theorie", self.theorie)
         f.addRow(buttons(self))
 
     def values(self):
         return (self.name.text().strip() or "LF", self.cat.currentData(),
                 self.desc.text(), self.group.text().strip())
+
+    def situation_name(self) -> str:
+        """"" fuer die Grundstellung, sonst der Name der Situation."""
+        s = self.situation.currentText()
+        return "" if s == "Grundstellung" else s
+
+    def theorie_name(self) -> str:
+        return self.theorie.currentData() or ""
 
 
 class CombinationDialog(QtWidgets.QDialog):
@@ -263,20 +300,49 @@ class CombinationDialog(QtWidgets.QDialog):
             self.typ.setCurrentText(combo.typ)
         self.desc = QtWidgets.QLineEdit(combo.description if combo else "")
         self.factors = {}
+        self.model = model
+        # Die Situation der Kombination: nur Lastfaelle derselben Situation
+        # lassen sich ueberlagern - die anderen Felder werden gesperrt
+        self.situation = QtWidgets.QComboBox()
+        self.situation.addItems(model.situationsnamen() if hasattr(model, "situationsnamen")
+                                else ["Grundstellung"])
+        if combo and getattr(combo, "situation", ""):
+            self.situation.setCurrentText(combo.situation)
         f = QtWidgets.QFormLayout(self)
         f.addRow("Name", self.name)
         f.addRow("Typ", self.typ)
         f.addRow("Beschreibung", self.desc)
-        for k in model.load_cases:
+        f.addRow("Situation", self.situation)
+        self.theorie = theorie_feld(getattr(combo, "theorie", "") if combo else "")
+        f.addRow("Theorie", self.theorie)
+        for k, lc in model.load_cases.items():
             e = NumEdit(combo.factors.get(k, 0.0) if combo else 0.0, 80)
             self.factors[k] = e
-            f.addRow(f"Faktor {k}", e)
+            sit = getattr(lc, "situation", "") or ""
+            f.addRow(f"Faktor {k}" + (f"  [{sit}]" if sit else ""), e)
+        self.situation.currentTextChanged.connect(self._situation_gewechselt)
+        self._situation_gewechselt()
         f.addRow(buttons(self))
+
+    def situation_name(self) -> str:
+        s = self.situation.currentText()
+        return "" if s == "Grundstellung" else s
+
+    def _situation_gewechselt(self, _t=None):
+        sit = self.situation_name()
+        for k, e in self.factors.items():
+            lc = self.model.load_cases.get(k)
+            passt = (getattr(lc, "situation", "") or "") == sit if lc is not None else True
+            e.setEnabled(passt)
+            e.setToolTip("" if passt else "Lastfall einer anderen Situation - nicht kombinierbar")
 
     def result(self) -> Combination:
         return Combination(self.name.text().strip() or "K",
-                           {k: e.value() for k, e in self.factors.items() if e.value()},
-                           self.typ.currentText(), self.desc.text())
+                           {k: e.value() for k, e in self.factors.items()
+                            if e.value() and e.isEnabled()},
+                           self.typ.currentText(), self.desc.text(),
+                           situation=self.situation_name(),
+                           theorie=self.theorie.currentData() or "")
 
 
 class AutoCombinationDialog(QtWidgets.QDialog):
@@ -447,6 +513,12 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         f.addRow(self.imp)
         f.addRow(self.th2_pl)
         f.addRow(self.th2_alle)
+        self.th3_schritte = QtWidgets.QSpinBox()
+        self.th3_schritte.setRange(1, 200)
+        self.th3_schritte.setValue(int(getattr(ds, "th3_schritte", 10) or 10))
+        self.th3_schritte.setToolTip("Laststufen der Theorie III. Ordnung (große Verformungen); "
+                                     "mehr Stufen bei großen Drehungen")
+        f.addRow("Theorie III: Laststufen", self.th3_schritte)
         hint = QtWidgets.QLabel(
             "Nach Theorie II. Ordnung gilt keine Superposition: jede Kombination\n"
             "wird einzeln am verformten System gerechnet. Das dauert länger.")
@@ -465,6 +537,7 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         ds.imperfektionen = self.imp.isChecked()
         ds.th2_plastisch = self.th2_pl.isChecked()
         ds.th2_alle_vorkruemmungen = self.th2_alle.isChecked()
+        ds.th3_schritte = int(self.th3_schritte.value())
 
 
 # ==========================================================================
@@ -884,6 +957,16 @@ class ImportDialog(QtWidgets.QDialog):
         self.cad_dim = QtWidgets.QComboBox(); self.cad_dim.addItems(["Volumen (3D)", "Schale (2D)"])
         self.subdiv = QtWidgets.QSpinBox(); self.subdiv.setRange(1, 50); self.subdiv.setValue(1)
         self.members = QtWidgets.QCheckBox("Stäbe automatisch erkennen (für EC3)"); self.members.setChecked(True)
+        # RFEM legt seine Modelle mit der Z-Achse nach **unten** an (Vorgabe).
+        # Das Programm rechnet mit z nach oben; der Haken dreht das Modell um
+        # die x-Achse (z nach oben, y gespiegelt) - eine Spiegelung allein
+        # machte aus rechts links.
+        self.z_unten = QtWidgets.QCheckBox("Z-Achse der Datei zeigt nach unten (RFEM-Vorgabe): "
+                                           "Modell um x drehen, z zeigt dann nach oben")
+        self.z_unten.setToolTip("Drehung um 180° um die globale x-Achse: (x, y, z) → (x, −y, −z). "
+                                "Knoten, Bögen, Lasten, Richtungen, Lastfenster und Schwerkraft "
+                                "werden mitgedreht. Nur bei einem neuen Modell, nicht beim Anhängen.")
+        self.z_unten.setChecked(ext in (".rf6", ".rf5", ".rs6", ".rs5"))
         f = QtWidgets.QFormLayout(self)
         f.addRow("Längeneinheit der Datei", self.unit)
         f.addRow("Standard-Querschnitt (Linien → Stäbe)", self.section)
@@ -895,6 +978,9 @@ class ImportDialog(QtWidgets.QDialog):
             f.addRow("Vernetzung", self.cad_dim)
         f.addRow(self.append)
         f.addRow(self.members)
+        if ext in (".rf6", ".rf5", ".rs6", ".rs5"):
+            f.addRow(self.z_unten)
+            self.append.toggled.connect(lambda an: self.z_unten.setEnabled(not an))
         f.addRow(buttons(self))
         self.ext = ext
 
@@ -905,7 +991,9 @@ class ImportDialog(QtWidgets.QDialog):
                "shell_prop": self.shell.currentText(), "subdivide": self.subdiv.value(),
                "size": self.cad_size.value(),
                "order": 2 if self.cad_order.currentIndex() == 0 else 1,
-               "dim": 3 if self.cad_dim.currentIndex() == 0 else 2}
+               "dim": 3 if self.cad_dim.currentIndex() == 0 else 2,
+               "z_drehen": bool(self.z_unten.isChecked() and self.z_unten.isEnabled()
+                                and self.ext in (".rf6", ".rf5", ".rs6", ".rs5"))}
         return opt
 
 

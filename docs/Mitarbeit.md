@@ -120,10 +120,60 @@ Punkte:
   dorthin wäre ein Stabelement mit sieben Freiheitsgraden.
 * **Wölbordinaten nur für I und U** – für andere offene Querschnitte wird der
   Momentenanteil ausgewiesen, aber keine Wölbspannung; sie würde geraten.
+* **Wind**: Dächer werden als Flachdach mit scharfen Traufen behandelt
+  (Sattel-, Pult- und Walmdächer, Tab. 7.3 ff., fehlen); die Kurven der
+  Bilder 7.23, 7.28, 7.33 und 7.36 sind stückweise log-linear
+  nachgezeichnet; Seitenwand- und Dachzonen setzen ein rechteckiges
+  Gebäude voraus (Hüllquader der gewählten Flächen).
+* **Schweißnähte**: die Kerbfalltabelle ist eine Auswahl (Tab. 8.2 bis 8.5);
+  Details mit Radien (Tab. 8.4, 4/5), Hohlprofilknoten (Tab. 8.6/8.7) und
+  Bolzen fehlen und sind über die Kerbfall-Vorgabe einzugeben. Nähte an
+  Flächen und Linien gehen nur in den Schwingungsnachweis ein - einen
+  Ermüdungsnachweis für Schalen gibt es noch nicht.
+* **Schwingungsnachweis**: die hydrodynamische Masse nach Westergaard gilt
+  für die senkrechte, starre Wand vor tiefem Wasser (inkompressibel, keine
+  Oberflächenwellen); für geneigte Häute, Segmentverschlüsse und
+  Wasserkörper endlicher Länge (Kolkman-Kurven) ist sie eine Näherung.
+  Selbsterregte (bewegungsinduzierte) Schwingungen werden nur über V_r
+  eingegrenzt, nicht berechnet; Strouhal-Zahl und Kantenbreite sind Eingaben.
+* **Wasserdruck**: die Druckminderung durch die Absenkung des Wasserspiegels
+  (Überfall: ⅓·ρ·g·h_ü über 2·h_ü; Ausfluss: über 2·a) ist eine Näherung
+  nach Naudascher; für Segmentverschlüsse mit gekrümmter Haut wirkt der
+  Druck senkrecht zur Fläche (richtig), die Kennwerte (Breite, Oberkante)
+  kommen aus der Geometrie der Flächen. Wind (#89) und der
+  Schwingungsnachweis (#90) folgen.
+* **Theorie III. Ordnung** rechnet mit der korotationalen Tangente
+  Tᵀ(k_l + k_g)T ohne die Zusatzterme der konsistenten Tangente (Crisfield
+  Kap. 17) — Konvergenz linear statt quadratisch; Lasten richtungstreu,
+  keine Folgelasten; nur Stabtragwerke. Ein Bogenlängenverfahren für
+  Durchschlagprobleme fehlt.
+* **Subsysteme** sind bisher eine Gliederung (Auswahl, Baum, Speichern);
+  eine Berechnung je Subsystem (Teilsystem freischneiden, Schnittkräfte an
+  den verdoppelten Berührungselementen) steht noch aus.
+* **Situationen mit Stellung** rechnen auf einer gedrehten Kopie des Modells;
+  der Antrieb (`Stellung.antrieb`) und die Lastfallauswahl der Stellung
+  (`faelle`) gelten nur in der Stellungsreihe, nicht in der Situation.
+* **Torsion freier Polygonquerschnitte** (`sections.polygon`) ist eine
+  Näherung nach Saint-Venant (A⁴/(4π²·Ip)); exakt wäre die Lösung der
+  Prandtlschen Spannungsfunktion auf dem Polygon (kleines FE-Problem). Der
+  Wert lässt sich in der Tabelle „Querschnitte“ von Hand überschreiben.
 * **Werkstoff- und Querschnittsnamen** aus der Dlubal-Datenbank
   (`C:\Program Files\Dlubal`) – die Dateien liegen nur lokal vor.
 * **Splitter am Rand**: Tetraeder, deren vier Knoten alle auf der Oberfläche
   liegen, lassen sich nicht glätten. Sie werden gezählt und gemeldet.
+* **Startbild des Packers** (`Splash` in `packaging/Statik3D.spec`) braucht
+  Tcl/Tk des Build-Python; auf dem GitHub-Windows-Läufer ist es dabei. Fehlt
+  es einmal, bricht PyInstaller mit einer klaren Meldung ab — dann die
+  `Splash`-Zeilen aus dem Rezept nehmen, das Qt-Startbild
+  (`statik3d/gui/start.py`) läuft unabhängig davon.
+* **RFEM-Linienlasten und Volumen-Temperaturlasten** werden über die
+  Spaltennamen der Tabellen `LineLoadImpl*` und `SolidLoadImpl*` gelesen;
+  eine Datei mit solchen Lasten lag noch nicht vor, die Namen folgen dem
+  Muster der anderen Lasttabellen (magnitude/magnitudeFirst/Second,
+  distanceA/B, loadDirection). Beim ersten echten Fall prüfen.
+* **Z-Achse nach unten** (Importhaken) ist für RFEM-Dateien vorbelegt; die
+  Einstellung `ModelData.globalAxesOrientation` der Datei wird noch nicht
+  ausgewertet (0 im Drehlager, vermutlich „Z nach unten“).
 * **Fang auf krummen Flächen ohne Netz** greift auf der gezeichneten
   Coons-Fläche (Dreiecke), nicht auf der exakten Zylinderfläche — bei 16
   Stücken je Bogen liegt der Punkt bis 0,5 % des Radius neben dem Mantel.

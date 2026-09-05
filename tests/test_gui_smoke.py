@@ -25,7 +25,7 @@ def main():
     if not os.environ.get("DISPLAY") and sys.platform.startswith("linux"):
         print("Kein DISPLAY - Test uebersprungen (xvfb-run verwenden)")
         return 0
-    from PySide6 import QtWidgets
+    from PySide6 import QtWidgets, QtGui
     from statik3d import solver
     from statik3d.gui.main import MainWindow, FIELDS, DIAGRAMS
     from statik3d.gui import dialogs as dg
@@ -276,7 +276,7 @@ def main():
         from statik3d.gui import design as dsg
         w.load_example("gate")
         w.model.meta["Bauteil"] = "Klappbruecke"
-        w.stellungen = [Stellung(name=f"S{i}", winkel=float(a), beschreibung=t)
+        w._stellungen_obj()[:] = [Stellung(name=f"S{i}", winkel=float(a), beschreibung=t)
                         for i, (a, t) in enumerate(((0, "geschlossen"), (32, "Zwischen"),
                                                     (82, "offen")), 1)]
         w.refresh_all()
@@ -385,7 +385,7 @@ def main():
               str(len(w.model.combinations)))
 
         w.stellung_entfernen()
-        check("Stellung entfernt", len(w.stellungen) == 2, str(len(w.stellungen)))
+        check("Stellung entfernt", len(w._stellungen_obj()) == 2, str(len(w._stellungen_obj())))
 
         # Nicht-modale Masken: „Maske oder Klick“ (Vorgabe Kap. 3.8)
         w.load_example("frame")
@@ -1155,8 +1155,8 @@ def main():
             return namen
 
         namen = zweige(w.baum)
-        for zweig in ("Geometrie", "Knoten", "Linien", "Elemente", "Stäbe",
-                      "Eigenschaften", "Querschnitte", "Werkstoffe", "Dicken",
+        for zweig in ("Knoten", "Linien", "Stäbe", "Stäbe mit Nachweis", "Flächen",
+                      "Volumen", "Eigenschaften", "Querschnitte", "Werkstoffe", "Dicken",
                       "Lager", "Knotenlager", "Gelenke", "Einwirkungen",
                       "Lastfälle", "Kombinationen"):
             check(f"Modellbaum: Zweig „{zweig}“", zweig in namen)
@@ -1209,8 +1209,8 @@ def main():
         check("Klick auf ein Lager wählt seinen Knoten",
               list(w.selection) == [int(mb.supports[0].node)], str(w.selection))
         w._baum_geklickt("linie", "L1")
-        check("Klick auf die Linie wählt ihre Knoten", len(w.selection) == 3,
-              str(w.selection))
+        check("Klick auf die Linie wählt die Linie", w.sel_linien == ["L1"]
+              and w.auswahlart == "Linie", str(w.sel_linien))
         w.clear_selection()
 
         # Bearbeitungsmasken lassen sich bauen und lesen die Werte zurueck
@@ -1358,7 +1358,7 @@ def main():
         w.refresh_all()
         app.processEvents()
         check("Volumen aus Flächen vernetzt", n == 16, f"{n} Elemente")
-        check("Volumenkörper stehen im Modellbaum", "Volumenkörper" in zweige(w.baum))
+        check("Volumen stehen im Modellbaum", "Volumen" in zweige(w.baum))
         zv = w.tbl_geokoerper.modell.zeilen
         check("Volumentabelle nennt das Volumen", abs(zv[0][5] - 2.0) < 1e-9, str(zv[0][5]))
         w.auswahlart_setzen("Volumen")
@@ -1575,9 +1575,8 @@ def main():
               f"{np.round(ziel_v, 4)} -> {np.round(ziel_n, 4)}")
 
         w.auswahlart_setzen("Linie")
-        check("Auswahlart auch in der Glasleiste",
-              w.cb_auswahlart_glas.currentText() == "Linie",
-              w.cb_auswahlart_glas.currentText())
+        check("die Glasleiste kommt ohne Auswahlfeld aus", getattr(w, "cb_auswahlart_glas", None) is None
+              and w.cb_auswahlart.currentText() == w.auswahlart, w.auswahlart)
         w.auswahlart_setzen("Knoten")
 
         # Erzeuge-Maske steht rechts, nicht über der Ansicht
@@ -1604,11 +1603,920 @@ def main():
         check("Klick auf einen Stab lässt seine Elemente aufleuchten",
               len(w.leuchtet) == len(w.model.members[stab].elements),
               f"{len(w.leuchtet)} Elemente")
-        check("und öffnet die Nachweismaske",
-              w.eingaben_dock.windowTitle() == "Nachweise",
+        check("und öffnet rechts die Stabmaske",
+              w.eingaben_dock.windowTitle() == f"Stab {stab}" and w.sel_staebe == [stab],
               w.eingaben_dock.windowTitle())
         w.clear_selection()
         check("Auswahl aufheben löscht auch das Aufleuchten", not w.leuchtet)
+
+        # ---- Modellbaum: Zweige, Auswahl, Masken, Neu, Loeschen ----
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        wurzel = w.baum.topLevelItem(0)
+        oben = [wurzel.child(i).text(0) for i in range(wurzel.childCount())]
+        check("Baum: Knoten, Linien, Stäbe, Flächen, Volumen ganz oben, ohne Geometrie/Elemente",
+              oben[:5] == ["Knoten", "Linien", "Stäbe", "Flächen", "Volumen"]
+              and "Geometrie" not in oben and "Elemente" not in oben, str(oben[:7]))
+        kn_zweig = wurzel.child(0)
+        check("alle Knoten numerisch untereinander",
+              kn_zweig.childCount() == m_.nn and kn_zweig.child(0).text(0) == "K0"
+              and kn_zweig.child(m_.nn - 1).text(0) == f"K{m_.nn - 1}",
+              f"{kn_zweig.childCount()} Einträge")
+        st_zweig = wurzel.child(2)
+        check("unter Stäbe zuerst die Stäbe mit Nachweis und die Schweißnähte, dann alle Stabelemente",
+              st_zweig.child(0).text(0) == "Stäbe mit Nachweis" and st_zweig.child(1).text(0) == "Schweißnähte"
+              and st_zweig.childCount() == 2 + sum(1 for e in m_.elements if e.typ in ("beam", "truss")),
+              f"{st_zweig.childCount()} Einträge")
+        w._baum_geklickt("knoten", "Knoten")
+        check("Klick auf „Knoten“ wählt alle Knoten", len(w.selection) == m_.nn
+              and w.eingaben_dock.windowTitle() == "Knoten", str(len(w.selection)))
+        w._baum_geklickt("knoten", "3")
+        mk = w.maskenrand.maske
+        check("Klick auf K3 wählt nur K3 und zeigt Nummer und Koordinaten editierbar",
+              list(w.selection) == [3] and mk is not None and mk.titel == "Knoten K3"
+              and abs(mk.werte()["x"] - m_.nodes[3][0]) < 1e-9, str(mk.titel if mk else None))
+        x_alt = m_.nodes[3].copy()
+        w._objekt_uebernehmen("knoten", "3", {"nr": 3, "x": x_alt[0] + 0.25, "y": x_alt[1], "z": x_alt[2]})
+        check("Übernehmen verschiebt den Knoten", abs(m_.nodes[3][0] - x_alt[0] - 0.25) < 1e-9)
+        w._objekt_uebernehmen("knoten", "3", {"nr": 3, "x": x_alt[0], "y": x_alt[1], "z": x_alt[2]})
+        x5 = m_.nodes[5].copy()
+        w._objekt_uebernehmen("knoten", "3", {"nr": 5, "x": x_alt[0], "y": x_alt[1], "z": x_alt[2]})
+        check("eine andere Nummer tauscht die Knoten", np.allclose(m_.nodes[5], x_alt)
+              and np.allclose(m_.nodes[3], x5))
+        w._objekt_uebernehmen("knoten", "5", {"nr": 3, "x": x_alt[0], "y": x_alt[1], "z": x_alt[2]})
+        w._baum_geklickt("staebe", "Stäbe mit Nachweis")
+        check("Klick auf „Stäbe mit Nachweis“ wählt alle Stäbe", set(w.sel_staebe) == set(m_.members)
+              and w.auswahlart == "Stab")
+        w._baum_geklickt("linien", "Linien")
+        mk = w.maskenrand.maske
+        check("Klick auf „Linien“ zeigt Anzahl und Namen von … bis",
+              mk is not None and mk.werte().get("anzahl") == str(len(m_.lines))
+              and "…" in str(mk.werte().get("spanne", "")) or len(m_.lines) < 2,
+              str(mk.werte() if mk else None))
+        # Neu: Knoten mit fortlaufender Nummer, OK und Abbrechen
+        n0 = m_.nn
+        w._baum_neu("knoten")
+        mk = w.maskenrand.maske
+        check("Neu: Knoten bekommt die nächste Nummer und eine Maske mit OK und Abbrechen",
+              m_.nn == n0 + 1 and mk is not None and mk.titel == f"Neu: Knoten K{n0}"
+              and mk.btn_abbrechen is not None, str(mk.titel if mk else None))
+        mk.abbrechen()
+        app.processEvents()
+        check("Abbrechen nimmt den neuen Knoten zurück", m_.nn == n0)
+        w._baum_neu("knoten")
+        w.maskenrand.maske.setzen("x", 1.5)
+        w.maskenrand.maske.setzen("y", 2.5)
+        w.maskenrand.maske.setzen("z", 0.5)
+        w.maskenrand.maske.anwenden()
+        app.processEvents()
+        check("OK übernimmt die Koordinaten des neuen Knotens",
+              m_.nn == n0 + 1 and np.allclose(m_.nodes[n0], [1.5, 2.5, 0.5]))
+        # Neu: Linie mit naechstem Namen, erst mit OK angelegt
+        nl0 = len(m_.lines)
+        w._baum_neu("linien")
+        mk = w.maskenrand.maske
+        neuname = mk.werte()["name"]
+        check("Neu: Linie bekommt den nächsten Namen, wird erst mit OK angelegt",
+              neuname == w.model.naechster_name("L", m_.lines) and len(m_.lines) == nl0,
+              neuname)
+        mk.setzen("kn", f"0, {n0}")
+        mk.anwenden()
+        app.processEvents()
+        check("OK legt die Linie an", neuname in m_.lines and m_.lines[neuname].nodes == [0, n0])
+        # Umbenennen samt Verweisen
+        w._objekt_uebernehmen("linie", neuname, {"name": "Lx99", "kn": f"0, {n0}", "kommentar": "Test"})
+        check("Umbenennen der Linie", "Lx99" in m_.lines and neuname not in m_.lines
+              and m_.lines["Lx99"].comment == "Test")
+        # Loeschen mit Rueckfrage: erst Nein, dann Ja; benutzte Knoten werden abgewiesen
+        antworten = []
+        w._bestaetigen = lambda text: (antworten.append(text), False)[1]
+        w._baum_loeschen("linie", "Lx99")
+        check("Löschen fragt nach - Nein lässt die Linie stehen", "Lx99" in m_.lines and antworten)
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("linie", "Lx99")
+        check("Ja löscht die Linie", "Lx99" not in m_.lines)
+        w._baum_loeschen("knoten", str(n0))
+        check("und den freien Knoten", m_.nn == n0)
+        fehler = []
+        fehler_alt = w.error
+        w.error = lambda msg: fehler.append(str(msg))
+        w._baum_loeschen("knoten", "0")
+        w.error = fehler_alt
+        check("ein benutzter Knoten wird mit Grund abgewiesen", m_.nn == n0 and fehler
+              and "benutzt" in fehler[0], str(fehler[:1]))
+        # Entf-Taste im Baum loescht den gewaehlten Eintrag (mit Rueckfrage)
+        w.refresh_all()
+        app.processEvents()
+        stab_zweig = w.baum.topLevelItem(0).child(2).child(0)
+        eintrag = stab_zweig.child(0)
+        stabname = eintrag.data(0, QtCore.Qt.UserRole + 1)
+        w.baum.setCurrentItem(eintrag)
+        ev = QtGui.QKeyEvent(QtCore.QEvent.KeyPress, QtCore.Qt.Key_Delete, QtCore.Qt.NoModifier)
+        app.sendEvent(w.baum, ev)
+        app.processEvents()
+        check("Entf im Baum löscht den Stab mit Nachweis (nach Rückfrage)",
+              stabname not in m_.members, str(stabname))
+        check("Rechtsklickmenü kennt Neu und Löschen",
+              "knoten" in w.baum.NEU_ARTEN and "geoflaeche" in w.baum.LOESCH_ARTEN)
+        w.undo()
+        del w._bestaetigen
+
+        # ---- Wurzel des Baums, Auswahlart Netz, Fensterauswahl, Tabellen unten ----
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        w._baum_geklickt("modell", m_.name or "Modell")
+        angaben = dict(w.modellangaben())
+        check("Klick auf die Wurzel zeigt rechts das Register „Modell“ mit den Angaben",
+              w.eingaben_dock.windowTitle() == "Modell" and angaben["Knoten"] == str(m_.nn)
+              and angaben["Stäbe mit Nachweis"] == str(len(m_.members))
+              and "Abmessungen" in w.lbl_modellangaben.text(),
+              f"{w.eingaben_dock.windowTitle()} {angaben.get('Knoten')}")
+        from statik3d.gui import symbole as symq
+        check("Auswahlart als Knöpfe in der Glasleiste, auch „Netz“",
+              all(f"auswahl_{a}" in w.glasleiste.knoepfe for a in w.AUSWAHLARTEN)
+              and set(w.act_auswahlart) == set(w.AUSWAHLARTEN)
+              and "Netz" in w.AUSWAHLARTEN and symq.hat_zeichnung("fang_netz"),
+              str([k for k in w.glasleiste.knoepfe if k.startswith("auswahl_")]))
+        w.auswahlart_setzen("Netz")
+        check("Auswahlart Netz schaltet den Knopf, die anderen aus",
+              w.auswahlart == "Netz" and w.act_auswahlart["Netz"].isChecked()
+              and not w.act_auswahlart["Knoten"].isChecked())
+        # Fensterauswahl: Bildpunkte der Knoten (VTK zaehlt von unten, Qt von oben)
+        w.clear_selection()
+        w.plotter.view_isometric()
+        w.plotter.reset_camera()
+        w.redraw()
+        app.processEvents()
+        xy, sicht = w._projizieren(m_.nodes)
+        hoehe = w.plotter.render_window.GetSize()[1]
+
+        def qt(x, y):
+            return QtCore.QPoint(int(round(x)), int(round(hoehe - 1 - y)))
+
+        w.auswahlart_setzen("Knoten")
+        drei = [0, 1, 2]
+        x1, y1 = xy[drei].min(axis=0) - 4
+        x2, y2 = xy[drei].max(axis=0) + 4
+        rect = (x1, y1, x2, y2)
+        w._fenster_beginnen(qt(x1, y2))
+        check("Erste Ecke (links) öffnet das Gummiband",
+              w._fenster_ecke is not None and not w._gummiband.isHidden()
+              and not w._gummiband.kreuzend)
+        w._fenster_nachziehen(qt(x2, y1))
+        w._fenster_abschliessen(qt(x2, y1))
+        erwartet = set(np.where(w._im_rechteck(xy, rect) & sicht)[0].tolist())
+        check("Fenster links → rechts wählt genau die Knoten, die ganz im Fenster liegen",
+              set(w.selection.tolist()) == erwartet and erwartet >= set(drei)
+              and w._fenster_ecke is None and w._gummiband.isHidden(),
+              f"{sorted(w.selection.tolist())[:8]} statt {sorted(erwartet)[:8]}")
+        # Ein schmaler Streifen quer durchs Bild: kein Stab liegt ganz darin,
+        # aber viele werden angeschnitten
+        w.auswahlart_setzen("Stab")
+        w.clear_selection()
+        xm = 0.5 * (xy[sicht, 0].min() + xy[sicht, 0].max())
+        ym = 0.5 * (xy[sicht, 1].min() + xy[sicht, 1].max())
+        xa, xb = xy[sicht, 0].min() - 10, xy[sicht, 0].max() + 10
+        w._fenster_beginnen(qt(xa, ym + 3))
+        w._fenster_abschliessen(qt(xb, ym - 3))
+        n_fenster = len(w.sel_staebe)
+        w._fenster_beginnen(qt(xb, ym + 3))
+        w._fenster_nachziehen(qt(xa, ym - 3))
+        check("rechts → links: das Gummiband ist gestrichelt (kreuzend)", w._gummiband.kreuzend)
+        w._fenster_abschliessen(qt(xa, ym - 3))
+        n_kreuzend = len(w.sel_staebe)
+        check("Streifen links → rechts trifft keinen Stab ganz, rechts → links die angeschnittenen",
+              n_fenster == 0 and n_kreuzend > 0, f"{n_fenster} / {n_kreuzend}")
+        # Netz: alle Elemente im grossen Fenster, gezeichnet als eigener Darsteller
+        w.auswahlart_setzen("Netz")
+        w.clear_selection()
+        ya, yb = xy[sicht, 1].min() - 10, xy[sicht, 1].max() + 10
+        w._fenster_beginnen(qt(xa, yb))
+        w._fenster_abschliessen(qt(xb, ya))
+        app.processEvents()
+        check("Netz: das große Fenster nimmt alle Elemente, die Auswahl wird gezeichnet",
+              len(w.sel_elemente) == len(m_.elements)
+              and "auswahl_elemente" in dict(w.plotter.renderer.actors),
+              f"{len(w.sel_elemente)} von {len(m_.elements)}")
+        w._fenster_beginnen(qt(xa, yb))
+        w._fenster_abbrechen()
+        check("Esc bricht das Fenster ab", w._fenster_ecke is None and w._gummiband.isHidden())
+        w.clear_selection()
+        check("Auswahl aufheben leert auch die Elemente", not w.sel_elemente)
+        # Der untere Bereich: Gruppen, darunter die Tabellen
+        tu = w.tab_unten
+        check("Tabellen unten in Gruppen statt 27 Register nebeneinander",
+              tu.gruppennamen() == ["Protokoll", "Modell", "Eigenschaften", "Lager", "Lasten",
+                                    "Ergebnisse", "Nachweise", "Bericht"]
+              and tu.count() >= 25 and "Weitere" not in tu.gruppennamen(),
+              str(tu.gruppennamen()))
+        check("Tabelle vorholen wechselt die Gruppe",
+              w.tabelle_zeigen("Nachweise EC3") and tu.currentGroup() == "Nachweise"
+              and tu.tabText(tu.currentIndex()) == "Nachweise EC3"
+              and tu.currentWidget() is w.tbl_design, tu.currentGroup())
+        check("Reihenfolge in der Gruppe folgt der Vorgabe",
+              tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
+                                        "Schweißnähte"],
+              str(tu.tabellen("Modell")))
+        check("eine Gruppe mit nur einer Tabelle zeigt keine zweite Leiste",
+              tu.seiten["Protokoll"].tabBar().isHidden()
+              and not tu.seiten["Modell"].tabBar().isHidden())
+        w.do_check()
+        check("Modellprüfung holt das Protokoll nach vorn", tu.currentGroup() == "Protokoll")
+
+        # ---- Querschnitte: Maske rechts mit Normprofilen, Parametern, freiem Editor ----
+        from statik3d.gui import profilmaske as pm
+        from statik3d import sections as secs
+        from statik3d.model import Section as Sec
+        n0 = len(m_.sections)
+        w._baum_geklickt("querschnitte", "Querschnitte")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Klick auf „Querschnitte“ zeigt rechts die Querschnittsmaske",
+              isinstance(mk, pm.QuerschnittMaske) and w.eingaben_dock.windowTitle() == "Neuer Querschnitt",
+              w.eingaben_dock.windowTitle())
+        check("Normprofile nach Art: Doppel-T, U, Hohl, T, L",
+              list(mk.typknoepfe) == ["Doppel-T", "U", "Hohl", "T", "L"])
+        mk.typknoepfe["T"].click()
+        app.processEvents()
+        check("„T“ bietet die halbierten Doppel-T (IPET, HEAT, HEBT)",
+              mk.cb_reihe.currentData() == "IPET" and mk.cb_profil.count() > 10,
+              f"{mk.cb_reihe.currentData()} {mk.cb_profil.count()}")
+        mk.typknoepfe["Hohl"].click()
+        reihen = [mk.cb_reihe.itemData(i) for i in range(mk.cb_reihe.count())]
+        mk.cb_reihe.setCurrentIndex(reihen.index("CHS"))
+        mk.cb_profil.setCurrentText("CHS 168.3x5")
+        app.processEvents()
+        check("Bild (Außen und Loch) und Kennwerte des Normprofils",
+              len(mk.bild_norm.umrisse) == 2 and "A = " in mk.lbl_norm.text(), mk.lbl_norm.text()[:40])
+        mk.anwenden_norm()
+        app.processEvents()
+        check("„Anlegen“ nimmt das Normprofil ins Modell",
+              "CHS 168.3x5" in m_.sections and len(m_.sections) == n0 + 1, str(sorted(m_.sections)))
+        mk = w.maskenrand.maske
+        check("Maske bleibt offen und zählt die Querschnitte mit",
+              isinstance(mk, pm.QuerschnittMaske) and f"{n0 + 1} Querschnitte" in mk.lbl_vorhanden.text(),
+              mk.lbl_vorhanden.text() if mk else None)
+        fehler = []
+        fehler_alt = w.error
+        w.error = lambda msg: fehler.append(str(msg))
+        mk.anwenden_norm()
+        w.error = fehler_alt
+        check("ein doppelter Name wird abgewiesen", bool(fehler) and "gibt es schon" in fehler[0])
+        mk.cb_art.setCurrentText("T geschweißt")
+        app.processEvents()
+        check("Parameterprofil mit Vorschau und Wpl",
+              len(mk.bild_param.umrisse) == 1 and "Wpl" in mk.lbl_param.text())
+        for e, v in zip(mk.par, ("200", "100", "10", "12")):
+            e.setText(v)
+        mk.ed_name.setText("T-Eigen")
+        mk.anwenden_parameter()
+        app.processEvents()
+        s_ = m_.sections.get("T-Eigen")
+        check("Parameterprofil T 200/100/10/12 angelegt (A = b·tf + (h−tf)·tw)",
+              s_ is not None and abs(s_.A - (0.1 * 0.012 + 0.188 * 0.01)) < 1e-12)
+        w.undo()
+        app.processEvents()
+        m_ = w.model                      # Rueckgaengig setzt eine Kopie ein
+        check("Rückgängig nimmt den Querschnitt zurück", "T-Eigen" not in m_.sections)
+        # Der freie Editor: drei Blechstreifen = geschweisstes I
+        ed = pm.ProfilEditor(w, vorhandene=m_.sections, name="Frei")
+        h_, b_, tw_, tf_ = 0.4, 0.2, 0.01, 0.016
+        hw_ = h_ - 2 * tf_
+        ed.setze(knoten={1: (-b_ / 2, (h_ - tf_) / 2), 2: (b_ / 2, (h_ - tf_) / 2),
+                         3: (-b_ / 2, -(h_ - tf_) / 2), 4: (b_ / 2, -(h_ - tf_) / 2),
+                         5: (0, -hw_ / 2), 6: (0, hw_ / 2)},
+                 elemente=[(1, 2, tf_), (3, 4, tf_), (5, 6, tw_)])
+        app.processEvents()
+        ref = Sec.i_profile("I", h_, b_, tw_, tf_, 0.0)
+        check("Editor: drei Streifen ergeben das geschweißte I (Iy exakt)",
+              ed.sec is not None and abs(ed.sec.Iy - ref.Iy) < 1e-10
+              and ed.knoepfe.button(QtWidgets.QDialogButtonBox.Ok).isEnabled(), ed.lbl_werte.text()[:60])
+        ed.teil_zufuegen("IPE 200", 0, (h_ / 2 + 0.1) * 1e3)
+        app.processEvents()
+        check("Editor: Standardprofil dazu, das Bild zeigt alle Teile",
+              ed.sec.A > ref.A and len(ed.bild.umrisse) == 4, str(len(ed.bild.umrisse)))
+        ed.tb_elemente.item(0, 2).setText("abc")
+        app.processEvents()
+        check("Editor: Fehler wird gemeldet, OK gesperrt",
+              ed.sec is None and not ed.knoepfe.button(QtWidgets.QDialogButtonBox.Ok).isEnabled(),
+              ed.lbl_werte.text()[:50])
+        ed.tb_elemente.item(0, 2).setText("16")
+        app.processEvents()
+        sec_frei = ed.ergebnis()
+        check("Editor: Ergebnis trägt den Editorinhalt",
+              sec_frei is not None and secs.editor_inhalt(sec_frei) is not None and sec_frei.name == "Frei")
+        w._querschnitt_anlegen(sec_frei)
+        app.processEvents()
+        ed2 = pm.ProfilEditor(w, vorhandene=m_.sections)
+        check("Editor: ein freies Profil lässt sich wieder öffnen",
+              ed2.laden(m_.sections["Frei"]) and ed2.tb_knoten.rowCount() == 6
+              and abs(ed2.sec.Iy - sec_frei.Iy) < 1e-12)
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("querschnitt", "Frei")
+        app.processEvents()
+        check("Baum: ein unbenutzter Querschnitt lässt sich löschen", "Frei" not in m_.sections)
+        fehler = []
+        w.error = lambda msg: fehler.append(str(msg))
+        w._baum_loeschen("querschnitt", "IPE 500")
+        w.error = fehler_alt
+        del w._bestaetigen
+        check("Baum: ein benutzter Querschnitt wird mit Grund abgewiesen",
+              "IPE 500" in m_.sections and bool(fehler) and "benutzt" in fehler[0], str(fehler[:1]))
+        check("Baum: Neu und Löschen für Querschnitte",
+              "querschnitte" in w.baum.NEU_ARTEN and "querschnitt" in w.baum.LOESCH_ARTEN)
+        w.maskenrand.schliessen()
+
+        # ---- Subsysteme und Situationen ----
+        from statik3d.model import GRUNDSTELLUNG as GRUND, GESAMTSYSTEM as GESAMT
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        namen = zweige(w.baum)
+        check("Baum: Subsysteme mit Gesamtsystem, Situationen mit Grundstellung",
+              "Subsysteme" in namen and GESAMT in namen and "Situationen" in namen
+              and GRUND in namen and "+ Subsystem anlegen" in namen and "+ Situation anlegen" in namen)
+        stab = list(m_.members)[0]
+        w._baum_geklickt("stab", stab)
+        w._baum_geklickt("subsystem_neu", "+ Subsystem anlegen")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neu: Subsystem-Maske zeigt die Auswahl und den Haken Berührung",
+              mk is not None and mk.titel == "Neu: Subsystem" and "1 Stäbe" in mk.werte()["auswahl"]
+              and mk.werte()["beruehrung"] is True and "Auswahl neu lesen" in mk.zusatzknoepfe,
+              str(mk.werte() if mk else None))
+        mk.setzen("name", "Stiel")
+        mk.anwenden()
+        app.processEvents()
+        sub = m_.subsysteme.get("Stiel")
+        els = set(m_.members[stab].elements)
+        check("OK bildet das Subsystem: Elemente des Stabs, Berührungselemente, Knoten, Lager",
+              sub is not None and els <= set(sub.elemente)
+              and set(sub.beruehrung) == set(sub.elemente) - els and len(sub.beruehrung) >= 1
+              and sub.staebe == [stab] and sub.knoten and sub.lager, sub.bezug() if sub else None)
+        check("Subsystem in der Ansicht gewählt, Maske rechts, Eintrag im Baum",
+              set(w.sel_elemente) == set(sub.elemente) and set(w.selection.tolist()) == set(sub.knoten)
+              and w.maskenrand.maske.titel == "Subsystem Stiel" and "Stiel" in zweige(w.baum))
+        w._baum_geklickt("subsystem", GESAMT)
+        app.processEvents()
+        check("Gesamtsystem wählt alles", len(w.sel_elemente) == len(m_.elements))
+        w._baum_geklickt("subsystem", "Stiel")
+        w.maskenrand.maske.setzen("name", "Stiel A")
+        w.maskenrand.maske.anwenden()
+        app.processEvents()
+        check("Subsystem umbenennen", "Stiel A" in m_.subsysteme and "Stiel" not in m_.subsysteme)
+        fehler = []
+        w.error = lambda msg: fehler.append(str(msg))
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("subsystem", GESAMT)
+        check("Gesamtsystem lässt sich nicht löschen", bool(fehler) and "Gesamtsystem" in fehler[0])
+        w._baum_loeschen("subsystem", "Stiel A")
+        app.processEvents()
+        check("Subsystem löschen, Rückgängig holt es zurück", "Stiel A" not in m_.subsysteme
+              and (w.undo() or True) and "Stiel A" in w.model.subsysteme)
+        m_ = w.model
+        # Situation: die Elemente des Stabs deaktivieren
+        w._baum_geklickt("situation_neu", "+ Situation anlegen")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neu: Situation-Maske mit Stellung, Deaktiviert und drei Knöpfen",
+              mk.titel == "Neu: Situation" and mk.werte()["stellung"].startswith("–")
+              and set(mk.zusatzknoepfe) == {"Auswahl deaktivieren", "Auswahl aktivieren", "Alle aktivieren"})
+        w.clear_selection()
+        w.sel_staebe = [stab]
+        mk.zusatzknoepfe["Auswahl deaktivieren"].click()
+        app.processEvents()
+        check("„Auswahl deaktivieren“: Elemente in der Maske und im Bild ausgeblendet",
+              f"{len(els)} Elemente" in mk.werte()["aus"] and set(w.versteckt["elemente"]) == els,
+              mk.werte()["aus"])
+        mk.setzen("name", "ohne Stiel")
+        mk.anwenden()
+        app.processEvents()
+        sit = m_.situationen.get("ohne Stiel")
+        check("OK legt die Situation an und stellt die Sicht wieder her",
+              sit is not None and set(sit.deaktiviert) == els and not w.versteckt["elemente"]
+              and "ohne Stiel" in zweige(w.baum), str(sit))
+        d = dg.LoadCaseDialog(w, existing=list(m_.load_cases), situationen=m_.situationsnamen())
+        check("Lastfalldialog bietet die Situationen",
+              [d.situation.itemText(i) for i in range(d.situation.count())] == [GRUND, "ohne Stiel"])
+        d.situation.setCurrentText("ohne Stiel")
+        d.name.setText("LFS")
+        name, cat, desc, grp = d.values()
+        m_.add_load_case(name, cat, desc, exclusive_group=grp)
+        m_.load_cases[name].situation = d.situation_name()
+        m_.load_node(0, Fz=-1e3, case="LFS")
+        w.refresh_all()
+        app.processEvents()
+        check("Lastfall trägt die Situation (Tabelle unten, Baum)",
+              m_.load_cases["LFS"].situation == "ohne Stiel"
+              and any("ohne Stiel" in str(z) for z in w.tbl_lastfall.modell.zeilen)
+              and any("ohne Stiel" in t for t in zweige(w.baum)))
+        dk = dg.CombinationDialog(w, m_)
+        dk.situation.setCurrentText("ohne Stiel")
+        check("Kombinationsdialog sperrt Lastfälle anderer Situationen",
+              not dk.factors["LF1"].isEnabled() and dk.factors["LFS"].isEnabled())
+        dk.factors["LFS"].set(1.35)
+        dk.name.setText("KS")
+        ck = dk.result()
+        check("Kombination trägt die Situation", ck.situation == "ohne Stiel" and ck.factors == {"LFS": 1.35})
+        m_.combinations["KS"] = ck
+        an_ = solver.solve_all(m_)
+        w._solve_done("all", an_)
+        app.processEvents()
+        for i in range(w.cb_result.count()):
+            if w.cb_result.itemText(i).endswith("LFS"):
+                w.cb_result.setCurrentIndex(i)
+                break
+        app.processEvents()
+        r_ = w.current_result()
+        check("Ergebnis der Situation: abgeschaltete Elemente ohne Schnittgrößen, im Bild weggelassen",
+              r_ is not None and r_.info.get("situation") == "ohne Stiel"
+              and all(np.allclose(r_.beam_end[i], 0) for i in els)
+              and set(r_.info.get("inaktiv", [])) == els, str(r_.name if r_ else None))
+        w._baum_geklickt("situation", "ohne Stiel")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Situation zeigen: Maske und ausgeblendete Elemente",
+              mk.titel == "Situation ohne Stiel" and set(w.versteckt["elemente"]) == els)
+        mk.zusatzknoepfe["Alle aktivieren"].click()
+        mk.anwenden()
+        app.processEvents()
+        check("Übernehmen: alles wieder aktiv", m_.situationen["ohne Stiel"].deaktiviert == []
+              and not w.versteckt["elemente"])
+        fehler.clear()
+        w._baum_loeschen("situation", "ohne Stiel")
+        check("eine benutzte Situation wird abgewiesen", bool(fehler) and "benutzt" in fehler[0]
+              and "ohne Stiel" in m_.situationen, str(fehler[:1]))
+        w._baum_loeschen("situation", GRUND)
+        check("die Grundstellung lässt sich nicht löschen", len(fehler) == 2 and "Grundstellung" in fehler[1])
+        w.error = fehler_alt
+        del w._bestaetigen
+        check("Modellangaben nennen Subsysteme, Situationen, Stellungen",
+              dict(w.modellangaben())["Situationen"] == "2" and dict(w.modellangaben())["Subsysteme"] == "2"
+              and "Stellungen" in dict(w.modellangaben()))
+        w.maskenrand.schliessen()
+
+        # ---- Knicklaengen aus der Knickfigur ----
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        beta_alt = {k: (mem.beta_y, mem.beta_z) for k, mem in m_.members.items()}
+        erg = w.do_knicklaengen()
+        app.processEvents()
+        check("Knicklängen: Verzweigungsproblem gelöst und je Stab ausgewertet",
+              erg is not None and set(erg.staebe) == set(m_.members)
+              and w.results is not None and getattr(w.results, "buckling_modes", None) is not None
+              and len(w.tbl_knick.modell.zeilen) == len(m_.members), str(erg.summary() if erg else None))
+        check("Knicklängen: Tabelle vorn, Eintrag im Baum, Hinweis im Protokoll",
+              w.tab_unten.tabText(w.tab_unten.currentIndex()) == "Knicklängen"
+              and any("Knicklängen" in t for t in zweige(w.baum)))
+        beteiligt = [k for k, v in erg.staebe.items() if v.beteiligt and (v.beta_y or v.beta_z)]
+        w.knicklaengen_uebernehmen()
+        app.processEvents()
+        check("β übernehmen schreibt nur beteiligte Stäbe",
+              bool(beteiligt) and all((m_.members[k].beta_y, m_.members[k].beta_z) != beta_alt[k]
+                                      for k in beteiligt)
+              and all((m_.members[k].beta_y, m_.members[k].beta_z) == beta_alt[k]
+                      for k in m_.members if k not in beteiligt), str(beteiligt))
+        w.undo()
+        app.processEvents()
+        check("Rückgängig stellt die β wieder her",
+              all((w.model.members[k].beta_y, w.model.members[k].beta_z) == beta_alt[k]
+                  for k in beta_alt))
+        w.ergebnis_zeigen("nachweis:knicklaengen")
+        check("Baumklick holt die Knicklängen-Tabelle", w.tab_unten.tabText(w.tab_unten.currentIndex()) == "Knicklängen")
+
+        # ---- Theorie je Lastfall / Kombination ----
+        w.load_example("frame")
+        app.processEvents()
+        m_ = w.model
+        d = dg.LoadCaseDialog(w, existing=list(m_.load_cases), situationen=m_.situationsnamen())
+        check("Lastfalldialog bietet die Theorie I, II, III",
+              [d.theorie.itemData(i) for i in range(d.theorie.count())] == ["", "I", "II", "III"])
+        d.theorie.setCurrentIndex(3)
+        check("Theorie III wählbar", d.theorie_name() == "III")
+        lf = list(m_.load_cases)[0]
+        m_.load_cases[lf].theorie = "III"
+        dk = dg.CombinationDialog(w, m_)
+        dk.theorie.setCurrentIndex(2)
+        dk.factors[lf].set(1.35)
+        dk.name.setText("K2")
+        ck = dk.result()
+        check("Kombinationsdialog setzt die Theorie", ck.theorie == "II")
+        m_.combinations["K2"] = ck
+        w.refresh_all()
+        app.processEvents()
+        def zusaetze(baum):
+            out = []
+
+            def lauf(it):
+                out.append(it.text(1))
+                for i in range(it.childCount()):
+                    lauf(it.child(i))
+            for i in range(baum.topLevelItemCount()):
+                lauf(baum.topLevelItem(i))
+            return out
+        check("Theorie steht in Tabelle und Baum",
+              any("III" in str(z) for z in w.tbl_lastfall.modell.zeilen)
+              and any("II" in str(z) for z in w.tbl_kombi.modell.zeilen)
+              and any("III. O." in t for t in zusaetze(w.baum)))
+        an_ = solver.solve_all(m_)
+        w._solve_done("all", an_)
+        app.processEvents()
+        check("Lastfall nach Theorie III. Ordnung gerechnet, Kombination nach II.",
+              an_.cases[lf].info.get("theorie") == "III. Ordnung"
+              and an_.theorie3 is not None and lf in an_.theorie3.kombinationen
+              and an_.theorie2 is not None and "K2" in an_.theorie2.kombinationen
+              and "Theorie III" in w.txt_summary.toPlainText(),
+              str(an_.cases[lf].info.get("theorie")))
+        m_.load_cases[lf].theorie = ""
+        m_.combinations["K2"].theorie = ""
+
+        # ---- Lastgenerierer Wasserdruck ----
+        from statik3d.model import ShellProp as ShP, Flaeche as Fl
+        from statik3d.report.html import Report as Rep
+        w.new_model()
+        m_ = w.model
+        m_.add_material(Material("S"))
+        m_.add_shell_prop(ShP("t", 0.012))
+        nx_, nz_, b_, h_ = 6, 20, 3.0, 5.0
+        ids_ = [[m_.add_node(0.0, i * b_ / nx_, k * h_ / nz_) for k in range(nz_ + 1)] for i in range(nx_ + 1)]
+        el_ = [m_.add_element("shell4", [ids_[i][k], ids_[i + 1][k], ids_[i + 1][k + 1], ids_[i][k + 1]], "S", "t")
+               for i in range(nx_) for k in range(nz_)]
+        m_.flaechen["Haut"] = Fl("Haut", dicke="t", material="S", elemente=el_)
+        for k in range(nz_ + 1):
+            m_.fix(ids_[0][k], "all")
+            m_.fix(ids_[nx_][k], "all")
+        w.refresh_all()
+        app.processEvents()
+        check("Baum: Lastgenerierer mit „+ Wasserdruck anlegen“",
+              "Lastgenerierer" in zweige(w.baum) and "+ Wasserdruck anlegen" in zweige(w.baum))
+        w.sel_flaechen = ["Haut"]
+        w._baum_geklickt("wasserdruck_neu", "+")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Wasserdruck-Maske mit der gewählten Fläche und den Knöpfen",
+              mk.titel == "Neu: Wasserdruck" and "Haut" in mk.werte()["ziele"]
+              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kennwerte"}, str(mk.werte().get("ziele")))
+        mk.setzen("h_ow", 4.0)
+        mk.setzen("richtung", "global x")
+        mk.setzen("absenkung", False)
+        mk.zusatzknoepfe["Kennwerte"].click()
+        app.processEvents()
+        check("Kennwerte in der Maske: F = ½ρgh²b = 235,4 kN", "235.4 kN" in mk.werte()["kennwerte"],
+              mk.werte()["kennwerte"])
+        mk.anwenden()
+        app.processEvents()
+        wd_ = m_.wasserdruecke.get("W1")
+        check("„Lasten erzeugen“: Generierer, Lastfall, Objektlast, Elementlasten nur unter Wasser",
+              wd_ is not None and wd_.lastfall in m_.load_cases
+              and any(gl.verlauf.get("art") == "wasser" for gl in m_.load_cases[wd_.lastfall].geometrielasten)
+              and len(m_.load_cases[wd_.lastfall].face_loads) == 6 * 16 and "W1" in zweige(w.baum),
+              str(len(m_.load_cases[wd_.lastfall].face_loads) if wd_ else None))
+        w._baum_geklickt("wasserdruck", "W1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("h_ow", 6.0)
+        mk.setzen("ueber", True)
+        mk.setzen("unter", True)
+        mk.setzen("spalt", 0.4)
+        mk.setzen("cp_dyn", 0.2)
+        mk.setzen("absenkung", True)
+        mk.anwenden()
+        app.processEvents()
+        wd_ = m_.wasserdruecke["W1"]
+        check("Ändern: überströmt, unterströmt, Druckschwankung als eigener Lastfall",
+              wd_.ueberstroemt and wd_.unterstroemt and wd_.lastfall_dyn in m_.load_cases
+              and len(m_.wasserdruecke) == 1, str(list(m_.load_cases)))
+        bl_ = Rep(m_, None).chapter_lastgenerierer()
+        check("Bericht: Kapitel Lastgenerierer mit Tabelle, Erläuterung (Poleni) und Skizze",
+              any(x[0] == "table" for x in bl_) and any(x[0] == "figure" and "<svg" in x[1] for x in bl_)
+              and any(x[0] == "p" and "Poleni" in x[1] for x in bl_), str([x[0] for x in bl_]))
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("wasserdruck", "W1")
+        app.processEvents()
+        check("Löschen entfernt den Generierer samt Lasten",
+              "W1" not in m_.wasserdruecke
+              and not any(getattr(f, "_geo", False) for lc in m_.load_cases.values() for f in lc.face_loads))
+        del w._bestaetigen
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt den Generierer zurück", "W1" in w.model.wasserdruecke)
+
+        # ---- Lastgenerierer Wind ----
+        w.new_model()
+        m_ = w.model
+        m_.add_material(Material("S"))
+        m_.add_shell_prop(ShP("t", 0.01))
+        bq, dq, hq, nq = 8.0, 5.0, 6.0, 4
+
+        def quaderflaeche(name, ecken, aussen):
+            P0, P1, _P2, P3 = map(lambda a: np.asarray(a, float), ecken)
+            u_, v_ = P1 - P0, P3 - P0
+            if float(np.cross(u_, v_) @ np.asarray(aussen, float)) < 0:
+                u_, v_ = v_, u_
+            ids2 = [[m_.add_node(*(P0 + u_ * i / nq + v_ * k / nq)) for k in range(nq + 1)] for i in range(nq + 1)]
+            el2 = [m_.add_element("shell4", [ids2[i][k], ids2[i + 1][k], ids2[i + 1][k + 1], ids2[i][k + 1]], "S", "t")
+                   for i in range(nq) for k in range(nq)]
+            m_.flaechen[name] = Fl(name, dicke="t", material="S", elemente=el2)
+        quaderflaeche("Luv", [(0, 0, 0), (0, bq, 0), (0, bq, hq), (0, 0, hq)], (-1, 0, 0))
+        quaderflaeche("Lee", [(dq, 0, 0), (dq, bq, 0), (dq, bq, hq), (dq, 0, hq)], (1, 0, 0))
+        quaderflaeche("Seite1", [(0, 0, 0), (dq, 0, 0), (dq, 0, hq), (0, 0, hq)], (0, -1, 0))
+        quaderflaeche("Seite2", [(0, bq, 0), (dq, bq, 0), (dq, bq, hq), (0, bq, hq)], (0, 1, 0))
+        quaderflaeche("Dach", [(0, 0, hq), (dq, 0, hq), (dq, bq, hq), (0, bq, hq)], (0, 0, 1))
+        w.refresh_all()
+        app.processEvents()
+        check("Baum: „+ Wind anlegen“ unter Lastgenerierer", "+ Wind anlegen" in zweige(w.baum))
+        w.sel_flaechen = ["Luv", "Lee", "Seite1", "Seite2", "Dach"]
+        w._baum_geklickt("wind_neu", "+")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Wind-Maske mit den gewählten Flächen und den Knöpfen",
+              mk.titel == "Neu: Wind" and "Luv" in mk.werte()["ziele"] and "Dach" in mk.werte()["ziele"]
+              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kennwerte"}, str(mk.werte().get("ziele")))
+        mk.setzen("zone", "Zone 2 (v_b,0 = 25 m/s)")
+        mk.setzen("profil", "Binnenland")
+        mk.setzen("richtung", "+x")
+        mk.zusatzknoepfe["Kennwerte"].click()
+        app.processEvents()
+        kwt = mk.werte()["kennwerte"]
+        check("Kennwerte in der Maske: v_b = 25 m/s, q_b = ½·1,25·25² = 391 N/m², h/d = 1,2 → c_pe,D = +0,80",
+              "v_b = 25.0 m/s" in kwt and "q_b = 391 N/m²" in kwt and "c_pe,D = +0.80" in kwt, kwt)
+        mk.anwenden()
+        app.processEvents()
+        wd_ = m_.winde.get("Wind1")
+        lc_ = m_.load_cases.get(wd_.lastfall) if wd_ else None
+        check("„Lasten erzeugen“: Generierer, Lastfall W, fünf Objektlasten, Elementlasten auf allen Flächen",
+              wd_ is not None and lc_ is not None and lc_.category == "W"
+              and sum(1 for gl in lc_.geometrielasten if gl.verlauf.get("art") == "wind") == 5
+              and len(lc_.face_loads) == 5 * nq * nq and "Wind1" in zweige(w.baum),
+              str((wd_ and wd_.lastfall, lc_ and lc_.category, lc_ and len(lc_.face_loads))))
+        w._baum_geklickt("wind", "Wind1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Wind-Maske zum Bearbeiten vorbelegt",
+              mk.titel == "Wind Wind1" and mk.werte()["profil"] == "Binnenland" and mk.werte()["richtung"] == "+x",
+              str((mk.titel, mk.werte()["profil"], mk.werte()["richtung"])))
+        mk.setzen("richtung", "Winkel [°] von +x")
+        mk.setzen("winkel", 90.0)
+        mk.setzen("c_pi", -0.3)
+        mk.anwenden()
+        app.processEvents()
+        wd_ = m_.winde["Wind1"]
+        check("Ändern: Anströmung unter 90° (+y), Innendruck c_pi",
+              abs(wd_.richtung[1] - 1.0) < 1e-9 and abs(wd_.c_pi + 0.3) < 1e-12 and len(m_.winde) == 1,
+              str((wd_.richtung, wd_.c_pi)))
+        bl_ = Rep(m_, None).chapter_lastgenerierer()
+        check("Bericht: Wind mit Tabellen, Erläuterung (Basiswindgeschwindigkeit) und Skizze",
+              sum(1 for x in bl_ if x[0] == "table") >= 2 and any(x[0] == "figure" and "<svg" in x[1] for x in bl_)
+              and any(x[0] == "p" and "Basiswindgeschwindigkeit" in x[1] for x in bl_), str([x[0] for x in bl_]))
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("wind", "Wind1")
+        app.processEvents()
+        check("Löschen entfernt den Wind samt Lasten",
+              "Wind1" not in m_.winde
+              and not any(gl.verlauf.get("art") == "wind" for lc in m_.load_cases.values() for gl in lc.geometrielasten)
+              and not any(getattr(f, "_geo", False) for lc in m_.load_cases.values() for f in lc.face_loads))
+        del w._bestaetigen
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt den Wind zurück", "Wind1" in w.model.winde)
+
+        # ---- Schwingungsnachweis des Verschlusses ----
+        w.new_model()
+        m_ = w.model
+        m_.add_material(Material("S"))
+        m_.add_shell_prop(ShP("t", 0.012))
+        nx_, nz_, b_, h_ = 6, 20, 3.0, 5.0
+        ids_ = [[m_.add_node(0.0, i * b_ / nx_, k * h_ / nz_) for k in range(nz_ + 1)] for i in range(nx_ + 1)]
+        el_ = [m_.add_element("shell4", [ids_[i][k], ids_[i + 1][k], ids_[i + 1][k + 1], ids_[i][k + 1]], "S", "t")
+               for i in range(nx_) for k in range(nz_)]
+        m_.flaechen["Haut"] = Fl("Haut", dicke="t", material="S", elemente=el_)
+        for k in range(nz_ + 1):
+            m_.fix(ids_[0][k], "all")
+            m_.fix(ids_[nx_][k], "all")
+        w.refresh_all()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w.maske_schwingung()
+        app.processEvents()
+        check("Schwingung ohne Wasserdruck: Hinweis statt Maske", bool(fehler_) and "Wasserdruck" in fehler_[-1])
+        w.sel_flaechen = ["Haut"]
+        w._baum_geklickt("wasserdruck_neu", "+")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("h_ow", 4.0)
+        mk.setzen("richtung", "global x")
+        mk.setzen("unter", True)
+        mk.setzen("spalt", 0.3)
+        mk.setzen("cp_dyn", 0.1)
+        mk.anwenden()
+        app.processEvents()
+        w.maske_schwingung()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Schwingungs-Maske mit dem Wasserdruck W1 vorbelegt",
+              mk.titel == "Neu: Schwingungsnachweis" and mk.werte()["wasserdruck"] == "W1", str(mk.werte().get("wasserdruck")))
+        mk.setzen("n_moden", 3)
+        mk.setzen("d_kante", "0.2")
+        mk.setzen("betriebsstunden", 500.0)
+        mk.anwenden()
+        app.processEvents()
+        erg_ = w.schwingung
+        check("„Nachweis führen“: 3 Moden nass/trocken, Angaben im Modell, Tabelle Schwingung, Eigenformen im Wasser",
+              erg_ is not None and len(erg_.moden) == 3 and all(x.f_wasser < x.f_luft for x in erg_.moden)
+              and m_.schwingungen["Schwingung1"].d_kante == 0.2
+              and len(w.tbl_schwing.modell.zeilen) == 3 and w.tab_unten.currentGroup() == "Nachweise"
+              and getattr(w.results, "modes", None) is not None and "Wasser" in w.results.name,
+              str(fehler_[1:] or (erg_ and erg_.summary())))
+        check("Schwingung im Baum unter Nachweise", any("Schwingung Verschluss" in z for z in zweige(w.baum)))
+        w.maske_schwingung()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Schwingungs-Maske zum Bearbeiten vorbelegt",
+              mk.titel == "Schwingung Schwingung1" and mk.werte()["d_kante"] == "0.2", str(mk.werte().get("d_kante")))
+        an_ = w.analysis if w.analysis is not None else solver.Analysis(m_)
+        an_.schwingung = erg_
+        bl_ = Rep(m_, an_).chapter_schwingung()
+        check("Bericht: Kapitel Schwingungsnachweis mit drei Tabellen, Erläuterung und Frequenzbild",
+              sum(1 for x in bl_ if x[0] == "table") == 3 and any(x[0] == "figure" and "<svg" in x[1] for x in bl_)
+              and any(x[0] == "p" and "Westergaard" in x[1] for x in bl_), str([x[0] for x in bl_]))
+        w.error = alt_error
+
+        # ---- Klick in der Ansicht: Fangradius, Objekt unter dem Zeiger, Auswahlfenster ----
+        from statik3d.model import Member as Mb
+        from PySide6 import QtCore
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(4, 3, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1])
+        w.refresh_all()
+        w.blickrichtung("+z")
+        w.zoom_alles()
+        app.processEvents()
+        s_ = w._pixelmass()
+        h_qt = w.plotter.interactor.height()
+
+        def klick_bei(x, y):
+            """Linksklick an der VTK-Anzeigeposition (x, y) nachstellen."""
+            w.plotter.iren.interactor.SetEventInformation(int(round(x)), int(round(y)))
+            w._letzter_klick = QtCore.QPoint(int(round(x / s_)), int(round(h_qt - 1 - y / s_)))
+            w._picked(None)
+            app.processEvents()
+
+        def px(P):
+            xy, _ = w._projizieren(np.atleast_2d(P))
+            return float(xy[0, 0]), float(xy[0, 1])
+
+        xv, yv = w._qt_nach_vtk(QtCore.QPoint(10, 20))
+        check("Qt-Bildpunkt → VTK-Anzeigepunkt: x·s, (h−y−1)·s",
+              abs(xv - round(10 * s_)) < 1e-9 and abs(yv - round((h_qt - 21) * s_)) < 1e-9
+              and abs(w._fangradius() - 14 * s_) < 1e-9, str((xv, yv, s_)))
+        w.auswahlart_setzen("Knoten")
+        w.selection = np.array([], int)
+        x_, y_ = px(m_.nodes[k1])
+        klick_bei(x_ + 5, y_ + 3)
+        check("Klick 5 Bildpunkte neben dem Knoten trifft ihn", k1 in w.selection, str(w.selection))
+        w.selection = np.array([], int)
+        x_, y_ = px(0.5 * (m_.nodes[k0] + m_.nodes[k1]) + [0.6, 0, 0])
+        klick_bei(x_, y_ + 4)
+        check("Klick auf die Stabachse in Auswahlart Knoten wählt den Stab, Auswahlart folgt",
+              w.auswahlart == "Stab" and w.sel_staebe == ["S1"], str((w.auswahlart, w.sel_staebe)))
+        w.auswahlart_setzen("Netz")
+        w.sel_elemente = []
+        x_, y_ = px(0.5 * (m_.nodes[k1] + m_.nodes[k2]))
+        w.plotter.iren.interactor.SetEventInformation(int(round(x_ + 4)), int(round(y_)))
+        check("Netz: Stabelement 4 Bildpunkte neben der Linie gefunden", w._element_am_zeiger() == e1,
+              str(w._element_am_zeiger()))
+        klick_bei(x_ + 4, y_)
+        check("… und der Klick wählt es (Elementnummer in der Anzeige)", w.sel_elemente == [e1], str(w.sel_elemente))
+        w.auswahlart_setzen("Knoten")
+        w.selection = np.array([], int)
+        w.sel_staebe = []
+        xy_, _ = w._projizieren(m_.nodes)
+        xa, ya = float(xy_[:, 0].min()) - 40, float(xy_[:, 1].min()) - 40
+        xb, yb = float(xy_[:, 0].max()) + 40, float(xy_[:, 1].max()) + 40
+        klick_bei(xa, ya)
+        check("Klick ins Leere beginnt das Auswahlfenster", w._fenster_ecke is not None)
+        klick_bei(xb, yb)
+        check("zweiter Linksklick schließt das Fenster ab: alle drei Knoten gewählt",
+              w._fenster_ecke is None and sorted(int(i) for i in w.selection) == [k0, k1, k2], str(w.selection))
+        w.selection = np.array([], int)
+        klick_bei(xa, ya)
+        klick_bei(xa + 1, ya)
+        check("Klick auf der ersten Ecke verwirft das Fenster", w._fenster_ecke is None and len(w.selection) == 0)
+        w.auswahlart_setzen("Stab")
+        w.sel_staebe = []
+        xm_, ym_ = px(0.5 * (m_.nodes[k0] + m_.nodes[k1]))
+        klick_bei(xm_ + 30, ym_ + 30)
+        klick_bei(xm_ - 30, ym_ - 30)
+        check("kreuzendes Fenster (rechts nach links) über der Stabmitte wählt den Stab",
+              w.sel_staebe == ["S1"], str(w.sel_staebe))
+        P_ = w._weltpunkt(int(round(xm_ / s_)), int(round(h_qt - 1 - ym_ / s_)))
+        check("Weltpunkt unter dem Qt-Punkt (Gerätepixel-Umrechnung) liegt auf der Stabmitte",
+              P_ is not None and np.linalg.norm(P_[:2] - [2.0, 0.0]) < 0.3, str(P_))
+        w.auswahlart_setzen("Knoten")
+        w.sel_staebe = []
+        w.sel_elemente = []
+
+        # ---- Schweißnähte und Kerbfälle ----
+        w.new_model()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        k0 = m_.add_node(0, 0, 0)
+        k1 = m_.add_node(4, 0, 0)
+        k2 = m_.add_node(8, 0, 0)
+        e0 = m_.add_element("beam", [k0, k1], mat_, sec_)
+        e1 = m_.add_element("beam", [k1, k2], mat_, sec_)
+        m_.members["S1"] = Mb("S1", elements=[e0])
+        m_.members["S2"] = Mb("S2", elements=[e1])
+        w.refresh_all()
+        app.processEvents()
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        check("Baum: Zweig Schweißnähte mit „+ Schweißnaht anlegen“",
+              "Schweißnähte" in zweige(w.baum) and "+ Schweißnaht anlegen" in zweige(w.baum))
+        w.sel_staebe = ["S1"]
+        w._baum_geklickt("schweissnaht_neu", "+")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Schweißnaht-Maske mit dem gewählten Stab und den Knöpfen",
+              mk.titel == "Neu: Schweißnaht" and "S1" in mk.werte()["ziele"]
+              and set(mk.zusatzknoepfe) == {"Auswahl übernehmen", "Kerbfall ermitteln"}, str(mk.werte().get("ziele")))
+        mk.setzen("art", "Kehlnaht")
+        mk.setzen("lage", "quer")
+        mk.setzen("l", 90.0)
+        mk.setzen("t", 40.0)
+        mk.zusatzknoepfe["Kerbfall ermitteln"].click()
+        app.processEvents()
+        kft = mk.werte()["kerbfall"]
+        check("„Kerbfall ermitteln“: Kehlnaht quer ℓ = 90 → 63·(25/40)^0,2 = 57 N/mm², Δτ 80, Tab. 8.5",
+              "57 N/mm²" in kft and "Δτ_C = 80" in kft and "8.5" in kft, kft)
+        mk.anwenden()
+        app.processEvents()
+        ks_ = (25.0 / 40.0) ** 0.2
+        check("„Übernehmen“: Naht im Modell, Kerbfall im Stab S1, S2 ohne; Tabelle Schweißnähte (Gruppe Modell)",
+              "Naht1" in m_.schweissnaehte and m_.schweissnaehte["Naht1"].staebe == ["S1"]
+              and abs(m_.members["S1"].detail_category - 63e6 * ks_) < 1 and m_.members["S2"].detail_category is None
+              and len(w.tbl_naht.modell.zeilen) == 1 and w.tab_unten.currentGroup() == "Modell"
+              and "Naht1" in zweige(w.baum), str(fehler_))
+        w.sel_staebe = []
+        w.maske_schweissnaht()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("art", "Stumpfnaht")
+        mk.setzen("lage", "quer")
+        mk.setzen("geprueft", True)
+        mk.setzen("aequivalent", True)
+        mk.anwenden()
+        app.processEvents()
+        check("äquivalente Naht ohne Zuordnung: S2 bekommt 90, S1 behält den ungünstigeren Wert",
+              "Naht2" in m_.schweissnaehte and abs(m_.members["S2"].detail_category - 90e6) < 1
+              and abs(m_.members["S1"].detail_category - 63e6 * ks_) < 1, str(fehler_))
+        w._baum_geklickt("schweissnaht", "Naht1")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Schweißnaht-Maske zum Bearbeiten vorbelegt",
+              mk.titel == "Schweißnaht Naht1" and mk.werte()["lage"] == "quer" and float(mk.werte()["l"]) == 90.0)
+        bl_ = Rep(m_, None).chapter_system()
+        check("Bericht: Tabellen „Schweißnähte“ und „Kerbfälle der Stäbe“ im Kapitel System",
+              any(x[0] == "table" and x[2] == "Schweißnähte" for x in bl_)
+              and any(x[0] == "table" and "Kerbfälle der Stäbe" in x[2] for x in bl_))
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("schweissnaht", "Naht1")
+        app.processEvents()
+        check("Löschen der Einzelnaht: S1 bekommt die äquivalente Naht (90)",
+              "Naht1" not in m_.schweissnaehte and abs(m_.members["S1"].detail_category - 90e6) < 1)
+        w._baum_loeschen("schweissnaht", "Naht2")
+        app.processEvents()
+        check("Löschen der letzten Naht: kein Kerbfall mehr in den Stäben",
+              not m_.schweissnaehte and m_.members["S1"].detail_category is None)
+        w.undo()
+        app.processEvents()
+        check("Rückgängig holt die Naht zurück (Schnappschuss vor dem Löschen)",
+              "Naht2" in w.model.schweissnaehte)
+        k3 = w.model.add_node(0, 3, 0)          # freier Knoten (kein Element haengt daran)
+        nn0 = w.model.nn
+        w._baum_loeschen("knoten", str(k3))
+        app.processEvents()
+        check("freien Knoten löschen", w.model.nn == nn0 - 1, str((nn0, w.model.nn, fehler_[-1:])))
+        w.undo()
+        app.processEvents()
+        check("Rückgängig: Knoten wieder da (Schnappschuss vor dem Löschen)", w.model.nn == nn0, str(w.model.nn))
+        del w._bestaetigen
+        w.error = alt_error
 
         # Viele freie Knoten übertönen die Hervorhebung nicht
         w.new_model()
@@ -1623,7 +2531,6 @@ def main():
     # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
     try:
         import pyvista as pvx
-        from PySide6 import QtGui
         from statik3d import ks as ksm
         from statik3d.gui import ribbon as ribm, symbole as symm
         from statik3d.model import Model as Mdl, Line, Flaeche
@@ -1708,11 +2615,11 @@ def main():
 
         # Glasleiste: Symbole mit Text beim Ueberfahren, mittig, ohne "Alles holen"
         kn = w.glasleiste.knoepfe
-        check("Glasleiste: Darstellung, Sichtbarkeit, Sicht und Fang als Knöpfe",
+        check("Glasleiste: Darstellung, Sichtbarkeit, Sicht, Fang und Auswahlart als Knöpfe",
               all(k in kn for k in ("Voll", "Drahtmodell", "knoten", "staebe", "flaechen",
                                     "volumen", "netz", "nur_auswahl", "ausblenden",
-                                    "zurueck", "alles", "fang", "fang_knoten",
-                                    "fang_volumen")), str(sorted(kn)))
+                                    "zurueck", "alles", "fang", "auswahl_Knoten",
+                                    "auswahl_Volumen", "auswahl_Netz")), str(sorted(kn)))
         check("Glasleiste: nur Symbole, der Text kommt beim Überfahren",
               all((not b.icon().isNull()) and b.toolTip()
                   and b.toolButtonStyle() == QtCore.Qt.ToolButtonIconOnly
@@ -1730,6 +2637,23 @@ def main():
               and frei_vom_wuerfel and w.glasleiste.y() <= 16,
               f"Mitte {mitte_leiste:.0f} von {ansicht.width()} px, y = {w.glasleiste.y()}, "
               f"rechts {w.glasleiste.geometry().right()} < Würfel {w.ansichtswuerfel.x()}")
+
+        # Schmales Fenster: Leiste und Wuerfel duerfen sich nie ueberschneiden
+        breite_alt = w.width()
+        w.resize(1100, 900)
+        app.processEvents()
+        w.ansichtsrand.platzieren()
+        app.processEvents()
+        gl_, wf_ = w.glasleiste.geometry(), w.ansichtswuerfel.geometry()
+        check("im schmalen Fenster rückt der Würfel unter die Leiste, nichts überschneidet sich",
+              not gl_.intersects(wf_) and wf_.width() > 100 and wf_.height() > 80
+              and wf_.right() <= w.centralWidget().width(),
+              f"Leiste {gl_.x()}..{gl_.right()} x {gl_.y()}..{gl_.bottom()}, "
+              f"Würfel {wf_.x()}..{wf_.right()} x {wf_.y()}..{wf_.bottom()}")
+        w.resize(breite_alt, 980)
+        app.processEvents()
+        w.ansichtsrand.platzieren()
+        app.processEvents()
 
         # Ribbon: gleiche Hoehe, Gruppentitel auf gleicher Hoehe, Symbole
         register = w.ribbon.findChildren(ribm.Register)
@@ -1901,10 +2825,177 @@ def main():
         vpl.add_geometrie(pl, mz, raender={}, seiten={}, ausser_flaechen={"Mantel"})
         check("eine ausgeblendete Fläche fehlt im Bild", "geo_flaechen" not in pl.renderer.actors)
         pl.close()
+        # Die Darstellungsarten gelten auch fuer Flaechen und Volumen ohne Netz
+        from statik3d.model import Volumenkoerper
+        mz.koerper["K1"] = Volumenkoerper("K1", flaechen=["Mantel"])
+        for modus in ("Voll", "Transparent", "Hidden-Line", "Drahtmodell"):
+            pl = pvx.Plotter(off_screen=True)
+            vpl.add_geometrie(pl, mz, raender={}, seiten={}, modus=modus)
+            akt = dict(pl.renderer.actors)
+            fl = akt.get("geo_flaechen")
+            if modus == "Drahtmodell":
+                ok = fl is None and "geo_raender" in akt
+            else:
+                deckkraft = fl.GetProperty().GetOpacity() if fl is not None else -1
+                farbe = fl.GetProperty().GetColor() if fl is not None else None
+                ok = fl is not None and "geo_raender" in akt and (
+                    (modus == "Voll" and deckkraft >= 0.99 and farbe[0] < 0.7)
+                    or (modus == "Transparent" and deckkraft < 0.6)
+                    or (modus == "Hidden-Line" and deckkraft >= 0.99 and min(farbe) > 0.95))
+            check(f"Geometrie ohne Netz folgt der Darstellungsart {modus}", ok,
+                  str(sorted(akt)))
+            pl.close()
+
+        # Startbild
+        from statik3d.gui import start as st
+        pm = st.startbild("9.9.9", "abc1234")
+        check("Startbild wird gezeichnet", not pm.isNull() and pm.width() == st.BREITE
+              and pm.height() == st.HOEHE)
+        sb = st.Startbild(version="9.9.9", stand="abc1234")
+        sb.show()
+        sb.melden("Grafik und Rechenkern werden geladen …")
+        app.processEvents()
+        check("Startbild zeigt die Meldung", sb.isVisible()
+              and sb.message() == "Grafik und Rechenkern werden geladen …", sb.message())
+        sb.fertig(w)
+        app.processEvents()
+        check("und schließt sich, sobald das Fenster steht", not sb.isVisible())
+        check("ohne Packer bleibt packer_schliessen folgenlos",
+              st.packer_schliessen() is None and st.packer_melden("x") is None)
     except Exception as ex:      # noqa: BLE001
         import traceback
         traceback.print_exc()
         check("Neue Oberfläche", False, str(ex)[:70])
+
+    # ---- Lasten: Masken, Tabelle, Bild; Auswahl per Zellenpicker; Import-Haken ----
+    try:
+        import pyvista as pvx
+        from statik3d.gui.dialogs import ImportDialog
+        w.load_example("hall")
+        app.processEvents()
+        lc = w.model.case()
+        stab = list(w.model.members)[0]
+        n0 = len(lc.beam_loads)
+        w.sel_staebe = [stab]
+        w._linienlast_aufbringen({"qx": 0, "qy": 0, "qz": -10.0, "trapez": True, "q2x": 0,
+                                  "q2y": 0, "q2z": -20.0, "system": "global", "von": 0.5,
+                                  "bis": 0.0, "fall": lc.name})
+        app.processEvents()
+        check("Linienlast-Maske haengt die Last an den Stab und verteilt sie",
+              len(lc.linienlasten) == 1 and lc.linienlasten[0].von == 0.5
+              and len(lc.beam_loads) > n0 and all(getattr(b, "_geo", False)
+                                                  for b in lc.beam_loads[n0:]),
+              f"{len(lc.linienlasten)} Linienlasten, {len(lc.beam_loads) - n0} Elementlasten")
+        w.sel_staebe = []
+        meldungen = []
+        fehler_alt = w.error
+        w.error = lambda msg: meldungen.append(str(msg))
+        w._linienlast_aufbringen({"qz": -1.0, "fall": lc.name})
+        w.error = fehler_alt
+        check("ohne Auswahl sagt die Maske es (keine zweite Last)",
+              len(lc.linienlasten) == 1 and meldungen and "wählen" in meldungen[0])
+        w.sel_staebe = [stab]
+        w._temperaturlast_aufbringen({"dT": 25.0, "dTz": 0.0, "alle": False, "fall": lc.name})
+        n_t = len(lc.temp_loads)
+        check("Temperatur-Maske auf den gewaehlten Stab",
+              n_t == len(w.model.members[stab].elements) and lc.temp_loads[0].dT == 25.0)
+        w.sel_staebe = []
+        knoten = int(w.model.supports[0].node)
+        w._set_selection([knoten])
+        w._zwangsverformung_aufbringen({"ux": 0, "uy": 0, "uz": -3.0, "px": 0, "py": 0,
+                                        "pz": 0, "lager": True, "fall": lc.name})
+        check("Zwangsverformungs-Maske am gewaehlten gelagerten Knoten",
+              len(lc.zwangsverformungen) == 1 and lc.zwangsverformungen[0].dofs == [2]
+              and abs(lc.zwangsverformungen[0].u[2] + 0.003) < 1e-12)
+        w.clear_selection()
+        # Lastentabelle: Objektlasten drin, abgeleitete Elementlasten nicht
+        w.tabelle_zeigen("Lasten")
+        app.processEvents()
+        arten = [str(z[2]) for z in w.tbl_last.modell.zeilen]
+        check("Lastentabelle zeigt Linienlast, Temperatur und Zwangsverformung",
+              "Linienlast" in arten and "Zwangsverformung" in arten and "Temperatur" in arten,
+              str(sorted(set(arten))))
+        check("und keine abgeleiteten Elementlasten",
+              sum(1 for z in w.tbl_last.modell.zeilen if str(z[2]) == "Streckenlast")
+              == sum(len(c.eigene("beam_loads")) for c in w.model.load_cases.values()))
+        akt = dict(w.plotter.renderer.actors)
+        check("Lasten im Bild: Pfeile, Temperaturpunkte, Zwang",
+              "loads" in akt and "temp_warm" in akt and "zwang" in akt,
+              str([k for k in akt if k in ("loads", "temp_warm", "temp_kalt", "zwang")]))
+        # Loeschen ueber die Tabelle nimmt die Objektlast samt Ableitungen
+        zeile = next(i for i, z in enumerate(w.tbl_last.modell.zeilen) if str(z[2]) == "Linienlast")
+        w.tbl_last.view.selectRow(zeile)
+        w.last_loeschen()
+        check("Loeschen der Linienlast nimmt ihre Elementlasten mit",
+              not lc.linienlasten and len(lc.beam_loads) == n0,
+              f"{len(lc.linienlasten)} Linienlasten, {len(lc.beam_loads)} statt {n0} Stablasten")
+        w.sel_staebe = [stab]
+        w.redraw()
+        app.processEvents()
+        check("die Auswahl leuchtet in einem einzigen Darsteller",
+              "auswahl" in dict(w.plotter.renderer.actors)
+              and not any(k.startswith("sel_") for k in dict(w.plotter.renderer.actors)))
+        w.sel_staebe = []
+        # Flaechenlast-Maske auf der Platte (Flaeche aus allen Schalen)
+        w.load_example("plate")
+        app.processEvents()
+        from statik3d.model import Flaeche
+        w.model.flaechen["F1"] = Flaeche("F1", linien=[], elemente=list(range(len(w.model.elements))))
+        w.sel_flaechen = ["F1"]
+        lcp = w.model.case()
+        w._flaechenlast_aufbringen({"p": 2.0, "richtung": "senkrecht zur Fläche (Druck)",
+                                    "projiziert": False, "verlauf": "linear von Punkt A nach B",
+                                    "p2": 6.0, "ax": 0, "ay": 0, "az": 0, "bx": 3, "by": 0, "bz": 0,
+                                    "fall": lcp.name})
+        check("Flaechenlast-Maske: lineare Last auf die Flaeche, verteilt auf die Elemente",
+              len(lcp.geometrielasten) == 1 and lcp.geometrielasten[0].verlauf
+              and len([f for f in lcp.face_loads if getattr(f, "_geo", False)]) == len(w.model.elements))
+        w.sel_flaechen = []
+        # Auswahl per Zellenpicker: Klick auf die Platte trifft die Flaeche
+        w.blickrichtung("+z")
+        w.zoom_alles()
+        app.processEvents()
+        breite, hoehe = w.plotter.render_window.GetSize()
+        w.plotter.iren.interactor.SetEventPosition(breite // 2, hoehe // 2)
+        check("Zellenpicker findet die Flaeche unter dem Zeiger",
+              w._objekt_am_zeiger("Fläche") == "F1", str(w._objekt_am_zeiger("Fläche")))
+        w.auswahlart_setzen("Fläche")
+        w._picked(np.array([1.5, 1.0, 0.0]))
+        app.processEvents()
+        check("und der Klick waehlt sie aus", w.sel_flaechen == ["F1"], str(w.sel_flaechen))
+        w.auswahlart_setzen("Knoten")
+        w.sel_flaechen = []
+        # Importdialog: Z-Achse-Haken nur bei RFEM-Dateien, Option kommt an
+        d = ImportDialog(w, "x.rf6", w.model)
+        check("Importdialog rf6: Haken „Z nach unten“ vorbelegt und als Option",
+              d.z_unten.isChecked() and d.options().get("z_drehen") is True)
+        d.append.setChecked(True)
+        check("beim Anhaengen ist der Haken gesperrt", not d.z_unten.isEnabled()
+              and d.options().get("z_drehen") is False)
+        d2 = ImportDialog(w, "x.dxf", w.model)
+        check("bei anderen Dateien keine Drehung", d2.options().get("z_drehen") is False)
+        # Drehung um x: Knoten und Lasten
+        from statik3d.model import Model as Mdl
+        mz = Mdl("Dreh")
+        mz.add_nodes(np.array([[1.0, 2.0, 3.0]]))
+        mz.load_node(0, Fx=1, Fy=2, Fz=3, Mx=4, My=5, Mz=6)
+        mz.um_x_drehen()
+        check("um_x_drehen: (x, y, z) -> (x, -y, -z), Kraefte und Momente mit",
+              np.allclose(mz.nodes[0], [1, -2, -3])
+              and mz.case().nodal_loads[0].F == [1, -2, -3, 4, -5, -6])
+        # Ansichtswuerfel zeichnet sich mit Schatten und Knopfzeile
+        pm = QtGui.QPixmap(w.ansichtswuerfel.size())
+        pm.fill(QtGui.QColor("#ffffff"))
+        w.ansichtswuerfel.render(pm)
+        bild = pm.toImage()
+        farben = {bild.pixelColor(x, y).name() for x in range(0, bild.width(), 4)
+                  for y in range(0, bild.height(), 4)}
+        check("der Ansichtswuerfel ist gezeichnet (viele Farbstufen)", len(farben) > 25, str(len(farben)))
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Lasten und Auswahl", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

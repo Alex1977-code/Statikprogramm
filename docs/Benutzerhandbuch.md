@@ -20,7 +20,11 @@ python -m statik3d.cli --beispiel hall --nachweise --ermuedung --bericht halle.h
 Windows-Programm ohne Python: `Statik3D.exe` von
 https://github.com/Alex1977-code/Statikprogramm/releases/latest/download/Statik3D.exe
 (eine Datei, doppelklicken; SmartScreen beim ersten Start mit „Weitere
-Informationen → Trotzdem ausführen“ bestätigen). Der Knopf **Update suchen**
+Informationen → Trotzdem ausführen“ bestätigen). Der Start dauert zehn bis
+dreißig Sekunden — die Datei packt sich aus und lädt die Grafik- und
+Rechenbibliotheken. Solange steht ein **Startbild** mit Programmsymbol,
+Fassung und der Meldung, was gerade geladen wird; es verschwindet, sobald
+das Fenster steht. Kein zweiter Doppelklick nötig. Der Knopf **Update suchen**
 unten rechts holt die neueste Version: prüfen, herunterladen, austauschen,
 Neustart. Dasselbe leistet Hilfe → Nach Update suchen… in jeder Installation.
 
@@ -91,8 +95,12 @@ Die Arbeitsfläche in drei Spalten:
 
   | Zweig | Inhalt |
   |---|---|
-  | Geometrie | Knoten (mit Koordinaten), Linien, **Flächen**, **Volumenkörper** |
-  | Elemente | Stäbe, Flächen, Volumen — je nach Elementart, dazu die Stäbe für die Nachweise |
+  | *Wurzel* (Modellname) | ein Klick zeigt rechts die **Angaben zum Modell**: Anzahl Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lastfälle und die Abmessungen |
+  | Knoten | alle Knoten **numerisch untereinander** (K0, K1, …) mit Koordinaten |
+  | Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
+  | Stäbe | zuerst der Zweig **Stäbe mit Nachweis**, darunter alle Stabelemente E0, E1, … |
+  | Flächen | die Flächenobjekte, darunter der Zweig „Flächenelemente“ |
+  | Volumen | die Volumenkörper, darunter der Zweig „Volumenelemente“ |
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden |
@@ -104,14 +112,32 @@ Die Arbeitsfläche in drei Spalten:
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
   | **Bericht** | die aus der Ansicht übernommenen Ergebnisbilder |
 
-  **Ein Klick** wählt aus: der Zweig holt seine Tabelle nach vorn, öffnet
-  rechts die Maske, die dazu gehört, und lässt das Objekt in der Ansicht
-  **aufleuchten**. **Ein Doppelklick bearbeitet**: er öffnet die
-  Maske des Objekts (Knotenkoordinaten, Linie, Querschnitt, Werkstoff, Dicke,
-  Lager, Gelenk, Lastfall, Kombination …). Ein Doppelklick auf den
-  Sammelzweig — „Werkstoffe“, „Gelenke“, „Linien“ — legt ein **neues** Objekt an.
-  Zweige mit vielen Einträgen zeigen die ersten 60 und verweisen für den Rest
-  auf die Tabelle unten, wo gefiltert werden kann.
+  **Ein Klick wählt aus** — links im Baum, gleichzeitig in der Ansicht: der
+  Zweig „Knoten“ wählt **alle** Knoten, der Eintrag „K3“ nur diesen; ebenso
+  bei Linien, Stäben, Flächen und Volumen. Die Auswahlart springt mit um.
+  Rechts folgt die Anzeige: beim Zweig eine Info mit **Anzahl** und
+  **kleinster und größter Nummer**, beim Einzelobjekt seine Felder
+  **editierbar** — Nummer und Koordinaten des Knotens, Name und Knoten der
+  Linie, Querschnitt und Werkstoff des Stabs, Linien der Fläche, Flächen des
+  Volumens. Eine andere Knotennummer tauscht die beiden Knoten, ein anderer
+  Name benennt das Objekt samt aller Verweise um.
+
+  **Rechtsklick → Neu** legt am Zweig ein neues Objekt mit der **nächsten
+  fortlaufenden Nummer** an (K17, L8, S3, F5, V2); rechts erscheint seine
+  Maske mit **OK** und **Abbrechen**. Ein Knoten steht sofort im Modell (bei
+  Nullpunkt, bis man Koordinaten eingibt; Abbrechen nimmt ihn zurück), alles
+  andere entsteht erst mit OK.
+
+  **Löschen**: Rechtsklick → „Löschen“ oder den Eintrag anklicken und
+  **Entf** drücken. Das Programm fragt nach. Ein Knoten, an dem noch etwas
+  hängt, wird mit Grund abgewiesen; eine Fläche oder ein Volumen nimmt seine
+  Elemente mit, ein Stab mit Nachweis lässt seine Elemente stehen. Wie alles
+  ist auch das Löschen mit **Rückgängig** zurückzunehmen.
+
+  **Ein Doppelklick bearbeitet** die übrigen Objekte in ihrer Maske
+  (Querschnitt, Werkstoff, Dicke, Lager, Gelenk, Lastfall, Kombination …).
+  Zweige mit sehr vielen Einträgen zeigen die ersten 20 000 und verweisen für
+  den Rest auf die Tabelle unten, wo gefiltert werden kann.
   Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
   Zweiges; die maßgebende trägt ★.
 * **in der Mitte die 3D-Ansicht** — frei für die Grafik.
@@ -302,6 +328,12 @@ I-Profil, ein Rohr als Rohr, mit dem Drehwinkel des Stabes), bei Hidden-Line
 und Drahtmodell als Linie. Ergebnisfarben liegen auf dem Stabkörper genauso
 wie auf dem Netz.
 
+Die Darstellungsart gilt ebenso für **Flächen und Volumen ohne Netz** (die
+Geometrie eines RFEM-Modells vor dem Vernetzen): Voll deckend, Transparent
+durchscheinend, Hidden-Line weiß mit dunklen Randlinien, Drahtmodell nur die
+Randlinien der Flächen. Die Dreiecke, aus denen eine gewölbte Fläche
+gezeichnet wird, sind kein Netz und werden nie als Kanten gezeigt.
+
 **Krumme Flächen** — der Mantel einer Bohrung, einer Buchse, eines Bolzens,
 in RFEM eine Fläche aus zwei Bögen und zwei Geraden — werden als gewölbte
 Fläche zwischen ihren vier Randlinien gezeichnet (Coons-Fläche). Vorher
@@ -322,8 +354,8 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Sicht | Nur Auswahl zeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen |
-| Fang | Fang ein/aus, dann je Art: Knoten, Linie, Stab, Fläche, Volumen |
-| Auswahlart | was ein Klick trifft: Knoten, Linie, Fläche, Volumen, Stab |
+| Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Ansicht → Fang*) |
+| Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente) — genau einer ist gedrückt |
 
 Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen, Sicht, Fang*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
@@ -380,6 +412,22 @@ Menü mit „Größe dieses Lagers…", „Größe aller Lager…", „Lager bea
 
 ### Tabellen: filtern, sortieren, ausgeben
 
+Der Bereich unten ist in **zwei Ebenen** gegliedert: oben die Gruppe, darunter
+ihre Tabellen als Register. Eine Gruppe mit nur einer Tabelle (Protokoll,
+Bericht) zeigt keine zweite Leiste. Ein Klick im Modellbaum holt die
+passende Tabelle nach vorn — samt ihrer Gruppe.
+
+| Gruppe | Tabellen |
+|---|---|
+| Protokoll | das Protokoll der Berechnung und der Modellprüfung |
+| Modell | Knoten, Linien, Flächen, Volumenkörper, Elemente |
+| Eigenschaften | Werkstoffe, Querschnitte, Dicken |
+| Lager | Lager, Gelenke, Kontaktbedingungen |
+| Lasten | Lastfälle, Lasten, Kombinationen |
+| Ergebnisse | Stabkräfte, Auflagerkräfte, Umhüllende, Kontakt |
+| Nachweise | Nachweise EC3, Ermüdung, Anschlüsse, Verformungen, Beulfelder, Volumen, Lasteinleitung |
+| Bericht | die Einträge des Berichts |
+
 Jede Tabelle unten hat über der Kopfzeile eine **Filterzeile** — ein Feld je
 Spalte. Was dort steht, gilt sofort; mehrere Felder wirken zusammen (und, nicht
 oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist.
@@ -424,6 +472,38 @@ Rückgängig-Stapel (Strg+Z) und verwirft die vorhandenen Ergebnisse — gerechn
 werden muss danach neu. Wer A, Iy, Iz, It oder Wpl,y von Hand ändert, löst den
 Querschnitt von der Profildatenbank; sein Typ wird `free`, die Nachweise
 laufen dann elastisch.
+
+### Auswahl per Klick
+
+Ein Klick trifft, was gezeichnet ist: Stäbe auch auf ihrem Körper, Flächen
+auch auf einem Zylindermantel, Volumen auf ihrer Oberfläche (Zellenpicker
+der Grafik, in Millisekunden). Erst wenn dort nichts liegt, sucht das
+Programm geometrisch in der Nähe des Klicks. Was ein Klick trifft, sagt die
+**Auswahlart** — die Knöpfe in der Glasleiste oder das Feld im Register
+*Start*; der Modellbaum stellt sie beim Anklicken eines Zweigs passend um.
+Mit der Auswahlart **Netz** trifft ein Klick ein einzelnes Element des
+FE-Netzes (Stab-, Flächen- oder Volumenelement); die gewählten Elemente
+leuchten in der Ansicht. Steht die Auswahlart auf **Knoten** und liegt unter
+dem Zeiger kein Knoten (und keine Maske wartet auf einen Punkt), nimmt der
+Klick das Objekt, das dort liegt - Stab, Fläche, Volumen oder Linie - und
+stellt die Auswahlart darauf um. Gemessen wird in Bildpunkten um den Zeiger
+(14 Bildpunkte, auf skalierten Bildschirmen entsprechend mehr Gerätepixel):
+ein Klick knapp neben einem Knoten, einer Linie oder einer Stabachse trifft
+noch.
+
+**Auswahlfenster.** Ein Klick mit der **linken** Maustaste ins Leere setzt
+die erste Ecke, ein zweiter Klick - **links oder rechts** - die zweite;
+dazwischen zeigt ein durchscheinendes Rechteck, was das Fenster fassen wird.
+Ein Klick auf der ersten Ecke verwirft das Fenster wieder.
+
+| aufgezogen | Rechteck | gewählt wird |
+|---|---|---|
+| von **links nach rechts** | blau, durchgezogen | nur, was **ganz** im Fenster liegt |
+| von **rechts nach links** | grün, gestrichelt | alles im Fenster **und** alles, was das Fenster nur **anschneidet** |
+
+Gefasst wird, was die Auswahlart sagt: Knoten, Linien, Stäbe, Flächen,
+Volumen oder Elemente des Netzes. Das Fenster ergänzt die vorhandene
+Auswahl; **Esc** bricht es ab, *Auswahl aufheben* leert alles.
 
 ### Maske oder Klick
 
@@ -509,6 +589,87 @@ Im Ribbon *Ansicht → Blickrichtung* stehen dieselben Richtungen, dazu
 „Rückseite (180°)", das die laufende Ansicht am Blickpunkt umkehrt, und
 „Zoom alles".
 
+### Querschnitte anlegen: Normprofile, eigene Profile, freier Editor
+
+Ein Klick auf **Querschnitte** im Modellbaum (oder Rechtsklick → *Neu:
+Querschnitt*, oder *Struktur → Querschnitt hinzufügen*) zeigt rechts die
+Querschnittsmaske. Sie hat drei Teile, von oben nach unten:
+
+1. **Normprofile** aus der Profildatenbank. Oben das Land mit seiner Norm,
+   darunter die **Art** als Knöpfe — *Doppel-T* (IPE, HEA, HEB, HEM; UB, UC;
+   W), *U* (UPN, UPE; PFC; C), *Hohl* (SHS, RHS, CHS; HSS, PIPE), *T*
+   (halbierte Doppel-T: IPET, HEAT, HEBT) und *L* (gleich- und
+   ungleichschenklig) —, dann Reihe und Profil. Das Bild und die Kennwerte
+   (A, Iy, Iz, It, Wel, Wpl) laufen mit; **Anlegen** nimmt das Profil ins
+   Modell. Der Name ist die Profilbezeichnung, wenn das Namensfeld leer bleibt.
+2. **Eigene Profile** mit Parametern in mm: Rechteck, Kreis, Rundrohr,
+   Rechteckrohr, geschweißtes Doppel-T, U, T, Winkel, Kasten aus Blechen —
+   oder *frei* nach Steifigkeiten (A, Iy, Iz, It). Auch hier Bild und
+   Kennwerte, dann **Anlegen**.
+3. **Profil frei erstellen …** öffnet den Editor. Dort setzt man ein Profil aus
+   drei Dingen zusammen:
+   * **Standardprofile** (aus der Datenbank oder ein Querschnitt des Modells)
+     mit der Lage ihres Schwerpunkts dy, dz [mm], Drehung [°] und Spiegeln;
+   * **Knoten** (Nr, y, z in mm; y nach rechts, z nach oben) und **Elemente**:
+     Blechstreifen der Dicke t zwischen zwei Knoten — so entstehen
+     dünnwandige Profile beliebiger Form;
+   * **Flächen**: eine Knotenfolge als geschlossenes Polygon, wahlweise als
+     **Loch** (wird von der Fläche abgezogen, in der es liegt) — so entstehen
+     Vollquerschnitte und Kästen.
+
+   Rechts stehen Bild und Kennwerte, die bei jeder Änderung mitlaufen; ein
+   Fehler (Knoten fehlt, Element ohne Länge) steht rot dort und sperrt OK.
+   Das Ergebnis ist ein zusammengesetzter Querschnitt nach dem Satz von
+   Steiner mit Hauptachsen und Hauptachsenwinkel; der Editorinhalt reist mit
+   und lässt sich über den Editor wieder öffnen. It ist bei Elementen der
+   offene Wert Σ L·t³/3, bei Flächen die Näherung nach Saint-Venant (siehe
+   Theoriehandbuch 1.4); wer It genauer kennt, trägt ihn in der Tabelle
+   „Querschnitte“ ein.
+
+**Löschen**: ein Querschnitt, den kein Element und kein Stab mehr benutzt,
+geht per Rechtsklick → *Löschen* oder Entf aus dem Modellbaum; ein benutzter
+wird mit der Zahl seiner Elemente abgewiesen.
+
+### Subsysteme
+
+Standardmäßig ist die ganze Struktur **ein** Subsystem — das *Gesamtsystem*
+im Modellbaum unter „Subsysteme“. Ein weiteres Subsystem entsteht mit
+**Rechtsklick → Neu: Subsystem** (oder „+ Subsystem anlegen“): Stäbe,
+Flächen oder Volumen in der Ansicht anklicken — auch mit dem
+Auswahlfenster —, Name eingeben, **OK**. Zum Subsystem gehören dann
+**alle zugehörigen Elemente, Knoten, Linien, Lager und Kontakte**. An der
+Berührungsstelle zu den übrigen Teilen werden die Elemente **verdoppelt**:
+jedes Subsystem hat sie, ähnlich wie bei Kontakten (der Haken
+„Berührungselemente mitnehmen“ schaltet das ab). Ein Klick auf ein
+Subsystem wählt es in der Ansicht und zeigt rechts, was es enthält; Name
+und Beschreibung sind dort änderbar, Entf löscht es. Subsysteme werden mit
+dem Modell gespeichert.
+
+### Situationen: Stellung und wirksame Elemente
+
+Unter „Situationen“ steht immer die **Grundstellung**: unbewegt, alle
+Elemente aktiviert. Eine weitere Situation entsteht mit **Rechtsklick →
+Neu: Situation** (oder „+ Situation anlegen“). In ihrer Maske wählt man die
+**Stellung** (eine der angelegten Stellungen des Systems oder „unbewegt“)
+und bestimmt, welche Elemente **nicht wirken**: Elemente, Stäbe, Flächen
+oder Volumen in der Ansicht anklicken und **„Auswahl deaktivieren“** — sie
+verschwinden im Bild; „Auswahl aktivieren“ und „Alle aktivieren“ nehmen es
+zurück. **OK** legt die Situation an.
+
+**Jeder Lastfall und jede Kombination nennt seine Situation** — im
+Lastfalldialog und im Kombinationsdialog als Feld „Situation“; die
+Tabellen unten und der Modellbaum zeigen sie mit. Eine Kombination
+überlagert nur Lastfälle **derselben** Situation (die anderen Felder sind
+im Dialog gesperrt, die Modellprüfung meldet eine Mischung als Fehler);
+die automatischen Kombinationen nach DIN EN 1990 entstehen je Situation.
+Gerechnet wird jede Situation mit ihrem eigenen System: die Stellung wird
+angewandt, die deaktivierten Elemente tragen weder Steifigkeit noch Last,
+ihre Schnittgrößen sind null, Knoten ohne wirksames Element werden
+festgehalten. Im Ergebnisbild einer solchen Situation fehlen die
+abgeschalteten Elemente, und bei einer Stellung steht das Modell in der
+gedrehten Lage, mit der gerechnet wurde. Stellungen werden jetzt mit dem
+Modell gespeichert.
+
 ### Register „Auswahl"
 
 Sobald Knoten gewählt sind, erscheint rechts im Ribbon ein zusätzliches
@@ -548,6 +709,43 @@ Kontaktbeispiele.
 
 ## 4 Lastfälle und Kombinationen
 
+### Lastarten
+
+Register **Lasten**, alles mit Symbol. Jede Maske arbeitet auf der
+**Auswahl** in der Ansicht (Auswahlart im Register *Start* oder im
+Modellbaum) und schreibt in den gewählten Lastfall:
+
+| Last | Ziel | Maske | Was sie kann |
+|---|---|---|---|
+| Knotenlast | gewählte Knoten | Kräfte F_x…F_z [kN], Momente M_x…M_z [kNm] | — |
+| Linienlast | gewählte **Stäbe** oder **Linien** | q [kN/m] am Anfang, q2 am Ende, global oder lokal, **von/bis** [m] | gleichmäßig, trapezförmig, abschnittsweise |
+| Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], Richtung (senkrecht oder global), auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
+| Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
+| Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
+| Eigengewicht | Lastfall | Register *Lasten → Weitere* | — |
+
+Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
+werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
+Knoten verteilt: eine Linienlast auf einem Stab wird zu Abschnittslasten auf
+seinen Elementen, eine Linienlast auf einer Linie zu Knotenlasten der
+Netzknoten auf dieser Linie (nach Zutrittslängen, linear veränderlich), eine
+Flächenlast zu Elementflächenlasten, eine Temperatur zu Temperaturlasten
+aller Elemente. Die abgeleiteten Elementlasten stehen weder in der Tabelle
+noch im Bericht einzeln (bei einem Volumenmodell wären es Hunderttausende);
+die Objektlast steht dafür mit dem Vermerk, wie viele Elementlasten sie
+erzeugt hat. Eine Flächenlast auf einer noch nicht vernetzten Fläche wird
+trotzdem **gezeichnet** — so sieht man die Lasten eines eben eingelesenen
+RFEM-Modells.
+
+**Im Bild**: Kräfte und Streckenlasten rot (Pfeile), Temperatur als Punkte
+(orange warm, blau kalt), Zwangsverformungen grün, das Fenster einer freien
+Rechtecklast als Rahmen. Der Schalter „Lasten“ (Glasleiste, Register
+*Ansicht*) blendet sie aus.
+
+**Tabelle Lasten** (unten): jede Last mit Lastfall, Art, Ziel und Wert; ein
+Klick auf eine Zeile wählt das Ziel in der Ansicht, „Löschen“ nimmt die
+Last heraus (bei Objektlasten samt ihren Elementlasten).
+
 * Einwirkungskategorien: G (ständig), Q_A … Q_H (Nutzlasten), Q_K (Kran),
   S / S_H (Schnee), W (Wind), T (Temperatur), H (Wasserdruck), A
   (außergewöhnlich), P (Vorspannung), SET (Setzung), FAT (nur Ermüdung).
@@ -562,6 +760,59 @@ Kontaktbeispiele.
   erneuter Erzeugung ersetzt, manuelle bleiben erhalten.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
+
+### Lastgenerierer Wasserdruck (Stahlwasserbau)
+
+*Lasten → Generierer → Wasserdruck* (oder Modellbaum → Einwirkungen →
+Lastgenerierer → „+ Wasserdruck anlegen“). Vorher in der Ansicht die
+**benetzten Flächen** (Haut des Verschlusses, Auswahlart Fläche oder
+Volumen) und die **Dichtungslinie** (Linien, Auswahlart Linie) wählen; die
+Maske übernimmt sie mit „Auswahl übernehmen“. Je Generierer gilt eine
+**Situation** (Stellung und wirksame Elemente); der Lastfall wird angelegt
+und trägt die Situation.
+
+| Angabe | Bedeutung |
+|---|---|
+| Oberwasser, Unterwasser | Wasserstände in m über dem Bezug des Modells (leer = trocken) |
+| Dichtung z, Oberkante z, Breite | leer = aus der Dichtungslinie bzw. der Geometrie der Flächen |
+| Wirkt | senkrecht zur Fläche (gegen oder mit der Normale) oder in einer globalen Richtung |
+| überströmt | Wasser über der Oberkante: Überfallhöhe, Abfluss nach Poleni (μ), kritische Tiefe und Geschwindigkeit auf der Krone |
+| unterströmt | Öffnung a unter dem Verschluss: Ausfluss nach Torricelli mit Kontraktionsbeiwert μ_a, Geschwindigkeit, Froude-Zahl |
+| Absenkung des Wasserspiegels | zieht die Geschwindigkeitshöhe vom Druck ab: an der Krone wirkt ⅔·ρ·g·h_ü statt ρ·g·h_ü, an der Unterkante der Druck des Strahls bzw. des Unterwassers; die Fehlbeträge klingen über 2·h_ü bzw. 2·a ab |
+| Druckschwankungsbeiwert c_p' | > 0 legt einen zweiten Lastfall mit der Amplitude Δp = c_p'·ρ·v²/2 an (Eingang für den Schwingungsnachweis) |
+
+**Lasten erzeugen** schreibt Objektlasten (Verlauf „Wasser“) an die Flächen;
+sie werden beim Vernetzen auf die Elemente gelegt (nur wo Druck wirkt) und
+folgen jedem Neuvernetzen. Das Protokoll nennt Resultierende, Angriffspunkt
+und eine Kontrollsumme der Elementlasten; „Kennwerte“ in der Maske zeigt
+sie vorab. Der Bericht (Kapitel „Lastgenerierer“) führt Angaben, Kennwerte
+und Erläuterungen auf und zeichnet den **Schnitt durch den Verschluss**:
+Wasserstände, Druckfigur, Überfall bzw. Ausflussstrahl und Resultierende.
+Ein Generierer lässt sich im Modellbaum anklicken (ändern, erneut erzeugen)
+und mit Entf samt seinen Lasten löschen.
+
+### Lastgenerierer Wind (DIN EN 1991-1-4)
+
+*Lasten → Generierer → Wind* (oder Modellbaum → Lastgenerierer → „+ Wind
+anlegen“). Wände und Dach (Auswahlart Fläche) und Stäbe (Auswahlart Stab)
+in der Ansicht wählen, „Auswahl übernehmen“, dann:
+
+| Angabe | Bedeutung |
+|---|---|
+| Windzone / v_b | v_b,0 der Zone 1–4 (22,5 / 25 / 27,5 / 30 m/s) oder v_b unmittelbar; c_dir, c_season |
+| Geländekategorie / Profil | 0, I, II, III, IV nach Tab. 4.1 (c_r, v_m, I_v, q_p = (1 + 7·I_v)·½·ρ·v_m²) oder die Mischprofile des NA (Binnenland, Küste, Inseln der Nordsee) |
+| Anströmung | ±x, ±y oder ein Winkel von +x; Geländeoberkante (leer = Unterkante der Objekte) |
+| Flächen sind | Gebäude (Wände und Dach nach ihrer Normale: Luv D, Lee E, Seiten A/B/C, Flachdach F/G/H/I), freistehende Wand (Tab. 7.9) oder Anzeigetafel (c_f = 1,8) |
+| Stäbe | Kraftbeiwert aus dem Querschnitt: Rechteck (Bild 7.23), scharfkantige Profile (2,0), Kreiszylinder (Reynoldszahl, Rauigkeit k), Fachwerk (Völligkeitsgrad φ); Schlankheitsabminderung ψ_λ; oder c_f vorgeben |
+| c_pi, c_s·c_d | Innendruck (wird von allen Zonen abgezogen), Strukturbeiwert |
+
+**Lasten erzeugen** schreibt Objektlasten an die Flächen (Verlauf „Wind“:
+q_p in der Höhe des Elements mal dem Beiwert seiner Zone) und trapezförmige
+Streckenlasten auf die Stäbe (w = c_f·q_p(z)·b_ref) in einen Lastfall der
+Kategorie W. Protokoll und Bericht nennen v_b, q_b, das Höhenprofil (v_m,
+I_v, q_p), die Beiwerte je Zone und Stab (mit Re, λ, ψ_λ), Resultierende
+und Kontrollsummen; der Bericht zeichnet **Höhenprofil und Grundriss** mit
+Anströmung und Zonen.
 
 ## 5 Lager: Ausfall, Schlupf, Reibung
 
@@ -614,6 +865,17 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
   Halt, wird das als Fehler gemeldet – dann Lagerung oder Lasten prüfen.
 
 ## 7 Import
+
+**Z-Achse nach unten (RFEM).** RFEM legt seine Modelle mit der Z-Achse nach
+unten an. Das Programm rechnet mit z nach oben. Im Importdialog für .rf6,
+.rf5, .rs6 und .rs5 steht darum der Haken „Z-Achse der Datei zeigt nach
+unten“ (vorbelegt). Er dreht das Modell beim Einlesen um 180° um die
+x-Achse: (x, y, z) → (x, −y, −z). Eine bloße Spiegelung z → −z wäre
+falsch, sie machte aus dem rechtshändigen System ein linkshändiges — Momente
+und Drehwinkel liefen dann verkehrt. Mitgedreht werden Knoten, Bögen,
+Lastvektoren, Richtungen, Lastfenster, Schwerkraft, Zwangsverformungen und
+Lagerwerte; das Protokoll vermerkt es. Beim Anhängen an ein vorhandenes
+Modell ist der Haken gesperrt.
 
 Datei → Importieren (Details in `Schnittstellen.md`):
 
@@ -688,6 +950,84 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
+
+### Schwingungsnachweis des Verschlusses
+
+*Nachweise → Schwingung → Verschluss* (Ergebnis unten in der Tabelle
+„Schwingung“, Eigenformen im Wasser in der Ansicht, Erläuterung im Protokoll
+und im Bericht). Der Nachweis nimmt **benetzte Flächen, Wasserstände und
+Strömung aus einem Wasserdruck-Generierer** - deshalb zuerst den Wasserdruck
+anlegen (mit „unterströmt“ bzw. „überströmt“ für die Strömungsgeschwindigkeit
+und c_p' > 0 für die Druckschwankung).
+
+| Angabe | Bedeutung |
+|---|---|
+| Wasserdruck | Generierer, dessen Flächen, Situation, Wasserstände und Strömung gelten |
+| Eigenformen | Anzahl der gerechneten Eigenfrequenzen |
+| Hydrodynamische Masse | mitschwingendes Wasser nach Westergaard (m'' = 7/8·ρ·√(H·y)) auf den benetzten Flächen, je Wasserseite, in Richtung der Flächennormalen |
+| Dämpfungsgrad ζ | Lehrsches Dämpfungsmaß (Stahlwasserbau 0,01 … 0,03; im Wasser eher mehr) |
+| Strouhal-Zahl St, Kantenbreite d | Wirbelablösung f_s = St·v/d an der Unterkante bzw. Dichtung; d ist die Breite der Kante in Strömungsrichtung (leer = Blechdicke) |
+| Grenze V_r | reduzierte Geschwindigkeit V_r = v/(f·d); unterhalb der Grenze (≈ 1) sind instabilitäts- oder bewegungsinduzierte Schwingungen nicht zu erwarten |
+| Resonanzband | ± um f_s: liegt eine Eigenfrequenz darin, gilt der Nachweis als nicht erfüllt |
+| Betrieb, Nutzungsdauer, Kerbfall, γ_Mf, γ_Ff | Ermüdung aus der Antwort auf die Druckschwankung: N = f_s·t Lastspiele, Δσ = 2·V·σ_amp, D = N/N_R ≤ 1 (EN 1993-1-9) |
+
+Die Tabelle nennt je Eigenform f in Luft und im Wasser, das modale
+Massenverhältnis m_h/m, V_r, f_s/f, die Vergrößerungsfunktion V und die
+Beurteilung (unkritisch, Hinweis V_r, Resonanz). Der Bericht (Kapitel
+„Schwingungsnachweis des Verschlusses“) enthält Angaben, Modentabelle,
+Antwort auf die Druckschwankung mit Ermüdung, die Erläuterung und das
+**Frequenzbild** (Eigenfrequenzen nass und trocken, Band der Wirbelablösung,
+Grenze V_r) samt der Westergaard-Verteilung über die Höhe. Die Angaben
+bleiben im Modell und werden mit der Datei gespeichert.
+
+### Knicklängen aus der Knickfigur
+
+*Nachweise → Knicklängen → Aus Knickfigur* (oder die Tabelle „Knicklängen“
+unten, Gruppe *Nachweise*). Das Programm löst das Verzweigungsproblem —
+Grundzustand ist die in der Ergebnismaske gewählte Kombination, sonst der
+aktive Lastfall; liegt schon ein Knickergebnis vor, wird die dort gewählte
+Knickfigur ausgewertet — und bestimmt für jeden Stab mit Nachweis:
+
+| Spalte | Bedeutung |
+|---|---|
+| N_Ed | die maßgebende Druckkraft des Stabs im Grundzustand |
+| α_cr, N_cr | Verzweigungslastfaktor der Knickfigur und N_cr = α_cr·\|N_Ed\| |
+| Achse | um welche Achse der Stab in der Knickfigur biegt (aus der Eigenform) |
+| L_cr, β | L_cr = π·√(E·I/N_cr), β = L_cr/L für diese Achse; die andere bleibt offen |
+| Beteiligung | Anteil des Stabs an der Formänderungsenergie der Knickfigur |
+
+Ein Stab, der in der Knickfigur gerade bleibt (Beteiligung unter 5 %),
+bekommt seinen Wert nur als **Obergrenze** gekennzeichnet — die Formel
+setzt voraus, dass er es ist, der ausknickt. Für solche Stäbe eine höhere
+Knickfigur wählen (Ergebnismaske) und erneut ermitteln. **β übernehmen**
+schreibt die Beiwerte der beteiligten Stäbe in die Stäbe; die
+Stabilitätsnachweise rechnen dann damit (Rückgängig nimmt es zurück). Die
+Tabelle steht auch im Bericht.
+
+### Schweißnähte und Kerbfälle
+
+*Nachweise → Führen → Schweißnähte…* oder Modellbaum → Stäbe → Schweißnähte →
+„+ Schweißnaht anlegen“ (Tabelle unten in der Gruppe *Modell*). Vorher die
+Stäbe (Auswahlart Stab), Linien oder Flächen wählen, an denen die Naht
+liegt, dann „Auswahl übernehmen“.
+
+| Angabe | Bedeutung |
+|---|---|
+| Nahtart | Stumpfnaht, HV-/DHV-Naht (durchgeschweißt), Kehlnaht, Doppelkehlnaht, Steifenanschluss (Quersteife), Längssteife, Deckblech-Ende |
+| Lage | längs oder quer zur Beanspruchung |
+| a, t, ℓ | Nahtdicke (Kehlnaht), Blechdicke (Größeneinfluss ab 25 mm, Deckblechdicke), Anschlussbreite in Beanspruchungsrichtung (Steifen, Kreuzstoß) |
+| Ausführung, Merkmale | automatisch / mit Ansatzstellen / von Hand; blecheben bearbeitet, geprüft, einseitig, Gegenlage, unterbrochen, Freischnitte |
+| äquivalent | Ersatznaht: steht für alle nicht einzeln modellierten Nähte; ohne Zuordnung gilt sie für alle Stäbe, ungünstigere Einzelnähte gehen vor |
+| Kerbfall Vorgabe | überschreibt den Wert aus der Nahtart (z. B. aus einer Detailtabelle, die das Programm nicht kennt) |
+
+**Kerbfall ermitteln** zeigt Δσ_C und Δτ_C mit der Fundstelle in DIN EN
+1993-1-9 (Tabellen 8.2 bis 8.5, Größeneinfluss k_s = (25/t)^0,2); die
+Erläuterung steht im Protokoll. **Übernehmen** schreibt jedem betroffenen
+Stab den ungünstigsten Kerbfall aller seiner Nähte - damit rechnet der
+Ermüdungsnachweis. Stäbe ohne Naht behalten die Angabe aus der Stabmaske.
+Der Schwingungsnachweis des Verschlusses kann seinen Kerbfall „aus
+Schweißnähten“ nehmen (Nähte an den benetzten Flächen). Der Bericht führt
+im Kapitel System die Nähte und die Kerbfälle der Stäbe auf.
 
 ### Anschlüsse nach EC3-1-8
 
@@ -900,6 +1240,24 @@ Knicklinie, e_0, q und V.
 Kombination wird einzeln gerechnet — das dauert länger als eine lineare
 Überlagerung. Die Ergebnisse der einzelnen **Lastfälle** bleiben Ergebnisse
 nach Theorie I. Ordnung und dürfen nicht mehr von Hand überlagert werden.
+
+### Theorie je Lastfall und Kombination: I., II., III. Ordnung
+
+Im Lastfall- und im Kombinationsdialog steht das Feld **Theorie**:
+
+| Wahl | Rechnung |
+|---|---|
+| wie Einstellung | Lastfälle linear; GZT-Kombinationen nach der Einstellung *Nachweise → Konfiguration* (aus / automatisch nach 5.2.1(3) / ein) |
+| I. Ordnung | linear, Superposition |
+| II. Ordnung | Gleichgewicht am verformten System mit geometrischer Steifigkeit und Ersatzimperfektionen (5.2, 5.3) — immer, unabhängig von der Einstellung |
+| III. Ordnung | **große Verformungen** und endliche Drehungen (geometrisch nichtlinear, korotational), Newton-Raphson in Laststufen (Anzahl in der Konfiguration) — nur für Stabtragwerke, ohne Kontakt und Zwangsverformungen |
+
+Nach II. und III. Ordnung gilt keine Superposition: der Lastfall bzw. die
+Kombination wird einzeln gerechnet und ersetzt das lineare Ergebnis. Die
+Tabellen unten und der Modellbaum zeigen die Wahl; der Bericht führt je
+Lastfall und Kombination die Theorie und für III. Ordnung Laststufen,
+Iterationen, Residuum, u_max nach I. und III. Ordnung und die größte
+Drehung auf.
 
 ### Verformungsnachweise (GZG)
 
@@ -1149,6 +1507,12 @@ Grenzmoment der Rutschkupplung), `WIND_B` (Wind während der Bewegung), `EIS`,
 > wäre schlimmer als eines, das die Tabelle offen zur Bestätigung vorlegt.
 
 ### Stellungen im Programmfenster
+
+Die Stellungen gehören zum Modell und werden mit ihm gespeichert; eine
+**Situation** (Modellbaum → Situationen) verbindet eine Stellung mit den
+Elementen, die darin nicht wirken, und wird von Lastfällen und Kombinationen
+genannt (siehe „Situationen“ in Kapitel 2).
+
 
 Im Register **⟳ Stellungen** stehen alle Stellungen in einer Tabelle mit Winkel,
 ausgefallenen Lagern, geltenden Lastfällen, η und größter Verformung.

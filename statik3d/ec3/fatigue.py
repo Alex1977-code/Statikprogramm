@@ -150,6 +150,10 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> Fatig
     ds = model.design
     n = n or ds.stations
     out = FatigueResults(gamma_Ff=ds.gamma_Ff)
+    # Kerbfaelle aus den Schweissnaehten des Modells (ungünstigste je Stab)
+    if getattr(model, "schweissnaehte", None):
+        from ..schweissnaehte import kerbfaelle_uebernehmen
+        kerbfaelle_uebernehmen(model, out.warnings if hasattr(out, "warnings") else None)
     all_res = analysis.all_results() if hasattr(analysis, "all_results") else analysis
     for mname, member in model.members.items():
         if not member.design or member.detail_category is None:

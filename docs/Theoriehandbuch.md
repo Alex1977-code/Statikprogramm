@@ -48,14 +48,87 @@ mit derselben Faktorisierung gelöst. Nach dem Lösen wird das Residuum
 freie Bauteile) werden als Fehler gemeldet statt unbemerkt falsche Ergebnisse
 zu liefern.
 
+### 1.4 Querschnittswerte freier Profile
+
+Der freie Profileditor vereinigt Teile nach dem **Satz von Steiner**
+(`sections.build`): mit den Teilwerten A_i, I_y,i, I_z,i, I_yz,i im
+gemeinsamen y-z-Bezug und den Schwerpunktlagen (y_i, z_i) ist
+
+    A = Σ A_i,   y_c = Σ A_i y_i / A,   z_c = Σ A_i z_i / A
+    I_y = Σ (I_y,i + A_i (z_i − z_c)²),   I_z = Σ (I_z,i + A_i (y_i − y_c)²)
+    I_yz = Σ (I_yz,i + A_i (y_i − y_c)(z_i − z_c))
+
+Daraus die Hauptwerte I_1,2 = (I_y + I_z)/2 ± √(((I_y − I_z)/2)² + I_yz²) und
+der Hauptachsenwinkel α = ½·atan2(2 I_yz, I_y − I_z). Gedrehte Teile gehen mit
+ihrem gedrehten Tensor R^T I R ein; ein gespiegeltes Teil wechselt das
+Vorzeichen von I_yz.
+
+**T-Profil** (`Section.tee`, auch halbierte Doppel-T IPET/HEAT/HEBT): Flansch
+b·t_f, Steg (h − t_f)·t_w, Ausrundungen wie beim Doppel-T; z_c von der
+Flanschoberkante. W_pl,y folgt aus der plastischen Nulllinie, die die Fläche
+halbiert (im Flansch oder im Steg).
+
+**Element (Blechstreifen)** von Knoten 1 nach Knoten 2, Länge L, Dicke t,
+Richtung e = (e_y, e_z): mit I_l = t L³/12 (um die Querachse) und
+I_q = L t³/12 (um die Längsachse)
+
+    I_y = I_l e_z² + I_q e_y²,   I_z = I_l e_y² + I_q e_z²,   I_yz = (I_l − I_q) e_y e_z
+    I_t = L t³/3   (offener dünnwandiger Querschnitt)
+
+**Fläche (Polygon)** mit den Eckpunkten (y_i, z_i), c_i = y_i z_{i+1} − y_{i+1} z_i
+(Green über die Kanten, unabhängig vom Umlaufsinn):
+
+    A = ½ Σ c_i,   S_y = ∫z dA = ⅙ Σ (z_i + z_{i+1}) c_i,   S_z = ∫y dA = ⅙ Σ (y_i + y_{i+1}) c_i
+    ∫z² dA = 1/12 Σ (z_i² + z_i z_{i+1} + z_{i+1}²) c_i,   ∫y² dA entsprechend
+    ∫yz dA = 1/24 Σ (y_i z_{i+1} + 2 y_i z_i + 2 y_{i+1} z_{i+1} + y_{i+1} z_i) c_i
+
+Ein Loch wird mit seinen Werten abgezogen; danach Steiner zum Schwerpunkt.
+Für die **Torsion** eines Polygons gibt es keine geschlossene Lösung; genommen
+wird die Näherung nach Saint-Venant
+
+    I_t ≈ A⁴ / (4π² I_p),   I_p = I_y + I_z um den eigenen Schwerpunkt,
+
+die für den Kreis exakt ist und für ein Quadrat 8 % zu hoch liegt. Bei
+Löchern wird als Differenz von Außen- und Lochwert gerechnet, was für den
+dünnen Ring den Bredtschen Wert 2π r_m³ t trifft (`tests/test_sections.py`
+prüft Kreis, Ring, Rechteck mit Loch und das aus drei Streifen gebaute I
+gegen die geschlossenen Formeln).
+
 ## 2 Lasten
 
 * Knotenlasten, Momente, vorgegebene Verschiebungen, Federlager.
 * Streckenlasten auf Stäben, global oder lokal, konstant oder linear
-  veränderlich (Trapez). Die äquivalenten Knotenlasten folgen aus den
-  Volleinspannwerten; die Schnittgrößen an Zwischenstellen werden aus den
-  Stabendkräften und der Streckenlast durch Gleichgewicht am Teilstab
-  berechnet (Momentenverlauf quadratisch bzw. kubisch).
+  veränderlich (Trapez), auch **abschnittsweise** auf [a, b] innerhalb eines
+  Elements. Die äquivalenten Knotenlasten sind das Integral der Last über die
+  Ansatzfunktionen des Stabes, f = ∫ₐᵇ Nᵀ(x) q(x) dx — linear für die
+  Längskraft, Hermite-Polynome dritten Grades für die Biegung —, mit
+  vier Gauß-Punkten ausgewertet (Integrand höchstens vierten Grades, also
+  exakt). Für a = 0, b = L ergibt das die Volleinspannwerte der Trapezlast,
+  für b → a die der Einzellast P a b²/L² und P a² b/L². Die Schnittgrößen an
+  Zwischenstellen folgen aus den Stabendkräften und den Abschnittslasten
+  durch Gleichgewicht am Teilstab: Resultierende Q(x) und ihr Moment um x je
+  Abschnitt, stückweise integriert; der Querkraftverlauf knickt an den
+  Abschnittsenden.
+* **Linienlasten** hängen am Stab (Kette von Elementen) oder an einer Linie.
+  Auf dem Stab werden sie in Abschnittslasten der Elemente zerlegt (q am
+  Elementanfang und -ende linear interpoliert). Auf einer Linie — dem Rand
+  einer Schale, der Kante eines Körpers — gehen sie auf die Netzknoten der
+  Linie: je Teilstück zwischen zwei Knoten Resultierende ½(qₐ+q_b)·l und
+  Schwerpunkt l(qₐ+2q_b)/(3(qₐ+q_b)), aufgeteilt nach dem Hebelgesetz.
+* **Zwangsverformungen** (vorgegebene Verschiebungen und Verdrehungen an
+  gelagerten Knoten, je Lastfall): K_ff u_f = F_f − K_fs u_s mit den
+  vorgegebenen Werten u_s; die Auflagerkräfte folgen aus R_s = K_sf u_f +
+  K_ss u_s − F_s. Ein vorgegebener Freiheitsgrad ohne Lager bleibt unwirksam
+  und wird gemeldet. In Kombinationen gehen die Vorgaben mit ihren Faktoren
+  ein (lineare Überlagerung).
+* **Ungleichmäßige Flächenlast**: p(x) = a + g·x, festgelegt durch zwei
+  Stützpunkte (linear entlang ihrer Verbindung, darüber hinaus fortgesetzt)
+  oder drei Stützpunkte (Ebene der Lastwerte, Lösung kleinster Norm). Jede
+  Elementseite bekommt den Wert an ihrem Schwerpunkt — bei Elementen, die
+  klein gegen die Lastveränderung sind, ist das die Resultierende der Seite
+  genau, ihr Angriffspunkt weicht um weniger als eine Elementgröße ab.
+* **Temperatur als Objektlast** auf Flächen und Volumen: ΔT und ΔT_z
+  hängen am Objekt und werden beim Vernetzen auf alle Elemente gelegt.
 * Flächenlasten auf Schalen (normal oder in vorgegebener globaler Richtung)
   und auf Volumenoberflächen (Flächennummer).
 * **Lasten an der Geometrie** (`Geometrielast`): Eine Last, die an einer Fläche
@@ -77,6 +150,91 @@ zu liefern.
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
   Anfangsdehnung wird bei der Spannungsrückrechnung abgezogen.
+
+### 2.1 Wasserdruck auf Verschlüsse (`wasserdruck.py`)
+
+Nettodruck p(z) = ρ·g·(h_ow − z) − ρ·g·(h_uw − z) (jeder Anteil nur unter
+seinem Wasserspiegel). Resultierende und Angriffspunkt durch Integration
+über die Verschlusshöhe: für ein senkrechtes Rechteck F = ½·ρ·g·h²·b,
+Hebel h/3 über der Dichtung; mit Unterwasser F = ½·ρ·g·b·(h_ow² − h_uw²),
+Hebel (h_ow³ − h_uw³)/(3·(h_ow² − h_uw²)).
+
+* **Überströmen**: h_ü = h_ow − z_ok, Abfluss je Breite nach Poleni
+  q = ⅔·μ·√(2g)·h_ü^1,5, auf der Krone kritischer Abfluss h_c = ⅔·h_ü,
+  v_c = √(g·h_c), Fr = 1. Mit Absenkung: Druck an der Krone
+  ρ·g·h_ü − ρ·v_c²/2 = ⅔·ρ·g·h_ü, der Fehlbetrag ⅓·ρ·g·h_ü klingt linear über
+  2·h_ü nach unten ab (Näherung nach Naudascher).
+* **Unterströmen**: kontrahierter Strahl μ_a·a, wirksame Fallhöhe
+  Δh = h_ow − max(h_uw, z_uk + μ_a·a), v_a = √(2·g·Δh) (Torricelli),
+  q = μ_a·a·v_a, Fr = v_a/√(g·μ_a·a). Mit Absenkung: an der Unterkante der
+  Druck des Strahls bzw. des Unterwassers statt ρ·g·(h_ow − z_uk), Fehlbetrag
+  linear über 2·a nach oben abklingend.
+* **Druckschwankung**: Δp = c_p'·ρ·v²/2 mit v = max(v_c, v_a) als Amplitude
+  auf der benetzten Fläche (eigener Lastfall).
+
+Die Lasten liegen als Objektlasten mit ``verlauf["art"] == "wasser"`` an den
+Flächen; je Elementseite wird p am Schwerpunkt ausgewertet (bei linearem
+Druck ist die Resultierende je Element damit exakt). `tests/test_wasserdruck.py`
+prüft Druckverlauf, Kennwerte (Rechteckschütz, Netto mit Unterwasser, Poleni,
+Torricelli) und die Summe der Elementlasten auf einem Netz.
+
+### 2.2 Wind nach DIN EN 1991-1-4 (`wind.py`)
+
+Strömung: v_b = c_dir·c_season·v_b,0; k_r = 0,19·(z_0/0,05)^0,07,
+c_r(z) = k_r·ln(z/z_0) für z_min ≤ z ≤ 200 m; v_m = c_r·c_o·v_b;
+I_v = k_I/(c_o·ln(z/z_0)); q_p = (1 + 7·I_v)·½·ρ·v_m² mit ρ = 1,25 kg/m³.
+Mischprofile des NA (Tab. NA.B.2) als Vielfache von q_b = ½·ρ·v_b².
+
+Beiwerte: Wände Tab. 7.1 (D: 0,7 … 0,8 und E: −0,3 … −0,7 über h/d
+interpoliert; A/B/C = −1,2/−0,8/−0,5 in Bändern e/5, e ab der Luvkante mit
+e = min(b, 2h)), Flachdach Tab. 7.2 (F/G/H/I = −1,8/−1,2/−0,7/−0,2 nach
+Bild 7.6), freistehende Wand Tab. 7.9 (A–D ab dem freien Ende), Anzeigetafel
+c_f = 1,8; Stäbe: Rechteck Bild 7.23 (log-linear über d/b) mit ψ_r,
+Kreiszylinder Gl. 7.19 (c_f,0 = 1,2 + 0,18·lg(10k/b)/(1 + 0,4·lg(Re/10⁶)),
+mindestens 0,4; unterkritisch 1,2), scharfkantige Profile 2,0, Fachwerk
+Bild 7.33/7.34 über φ; ψ_λ nach Bild 7.36 mit λ nach Tab. 7.16. Die Rolle
+einer Fläche (Luv, Lee, Seite, Dach) folgt aus ihrer mittleren Normale gegen
+die Anströmung; der Druck je Elementseite ist c·q_p(z) am Schwerpunkt,
+positiv gegen die Außennormale. `tests/test_wind.py` prüft die Formeln mit
+Zahlenwerten der Norm und die Summen der Elementlasten an einem Quader
+(Luvdruck + Leesog, Dachsog nach Zonen, Innendruck) sowie die Stablasten
+eines Rohrmasts.
+
+### 2.3 Strömungsinduzierte Schwingungen eines Verschlusses (`schwingung.py`)
+
+Grundlagen: Naudascher/Rockwell, *Flow-Induced Vibrations*; Kolkman;
+DIN 19704-1 (Schwingungen); Westergaard (1933).
+
+* **Hydrodynamische Masse.** Für eine senkrechte Wand vor einem Wasserkörper
+  der Tiefe H wirkt bei horizontaler Beschleunigung die Massenbelegung
+  m''(y) = 7/8·ρ·√(H·y) (y Tiefe unter dem Spiegel), in Summe
+  7/12·ρ·H² je Breite. Sie wird je benetztem Schalenelement mit 2×2
+  Gauß-Punkten (Dreieck: Seitenmitten) integriert, gleichmäßig auf die
+  Knoten verteilt und als Block m·n·nᵀ (n Elementnormale) zur Massenmatrix
+  addiert - je Wasserseite (Ober- und Unterwasser) getrennt. Die
+  Eigenfrequenzen folgen aus (K − ω²(M + M_h))φ = 0; bei gleichmäßiger
+  Zusatzmasse exakt f_w = f_l/√(1 + m_h/m), sonst gibt das modale
+  Verhältnis φᵀM_hφ/φᵀMφ die Abminderung an.
+* **Wirbelablösung** an der Kante: f_s = St·v/d mit St ≈ 0,2, v aus dem
+  Wasserdruck (Ausflussstrahl v_a = √(2gΔh) bzw. Überfall v_c = √(g·h_c)), d
+  Kantenbreite in Strömungsrichtung. Resonanz, wenn |f_s/f − 1| ≤ band.
+* **Reduzierte Geschwindigkeit** V_r = v/(f·d). Für V_r ≤ V_r,grenz (≈ 1)
+  ist die Anregung quasistatisch (f_s/f = St·V_r ≤ 0,2); darüber sind
+  instabilitäts- (Scherschichtinstabilität an der Kante) und
+  bewegungsinduzierte Schwingungen (Kolkman: Verschlüsse mit Dichtung
+  stromab, Unterdruck hinter der Kante) möglich - das Programm gibt den
+  Hinweis, ein Ausschluss verlangt Konstruktion oder Versuch.
+* **Antwort auf die Druckschwankung** Δp = c_p'·ρ·v²/2 (Lastfall des
+  Generierers, statisch gerechnet: σ_amp, u_amp): Vergrößerungsfunktion
+  V = 1/√((1 − r²)² + (2ζr)²) mit r = f_s/f₁; σ_dyn = V·σ_amp,
+  Δσ = 2·σ_dyn. Ermüdung: N = f_s·3600·h·a Lastspiele, Δσ_Ed = γ_Ff·Δσ,
+  N_R aus der Wöhlerlinie des Kerbfalls (EN 1993-1-9, m = 3/5,
+  Dauerfestigkeit, Schwellenwert), D = N/N_R ≤ 1.
+
+`tests/test_schwingung.py` prüft die Westergaard-Summe auf dem Netz, die
+exakte Frequenzabminderung bei gleichmäßiger Zusatzmasse, die
+Rayleigh-Schranke der nassen Grundfrequenz, Strouhal, V_r, V(r = 1) = 1/(2ζ),
+die Resonanzerkennung und die Ermüdungskette.
 
 ## 3 Lastfälle, Kombinationen, Umhüllende
 
@@ -100,6 +258,39 @@ wird jede Kombination einzeln gelöst.
 
 Umhüllende: je Ergebnisgruppe (GZT, GZG …) werden Minimum und Maximum jeder
 Größe an jeder Nachweisstelle mit der maßgebenden Kombination gespeichert.
+
+### 3.1 Situationen: Stellung und wirksame Elemente
+
+Jeder Lastfall und jede Kombination gehört zu einer **Situation**; die
+Grundstellung (unbewegt, alle Elemente) ist die Vorgabe. Für jede Situation,
+in der ein Lastfall steht, wird ein eigenes Gleichungssystem aufgestellt:
+
+* **Stellung**: die bewegten Knoten werden um die Achse der Stellung gedreht
+  (Rotationsmatrix nach Rodrigues, `bridges.positions.drehmatrix`), die in
+  der Stellung unwirksamen Lager entfallen. Gerechnet wird auf dieser Kopie
+  des Modells; Ergebnisse und Bild beziehen sich auf die gedrehte Lage.
+* **Deaktivierte Elemente** liefern keinen Beitrag zur Steifigkeitsmatrix,
+  keine Elementlasten (Streckenlast, Eigengewicht, Temperatur, Flächenlast)
+  und bekommen Schnittgrößen null. Knotenlasten an Knoten, an denen kein
+  wirksames Element mehr hängt, entfallen; solche Knoten werden über die
+  Regel „Freiheitsgrad ohne Steifigkeit wird festgehalten“ gesperrt.
+  Kopplungen einer Kontaktfuge an solchen Knoten entfallen ebenfalls.
+* **Kombinationen** überlagern nur Lastfälle derselben Situation (gleiche
+  Steifigkeitsmatrix — sonst wäre die Superposition falsch); eine Mischung
+  meldet die Modellprüfung als Fehler, der Rechenkern weist sie ab. Die
+  Theorie II. Ordnung rechnet jede Kombination mit dem System ihrer
+  Situation (geometrische Steifigkeit ebenfalls nur aus wirksamen Elementen).
+* **Umhüllende** und Nachweise laufen wie bisher über alle Kombinationen –
+  die Stablängen bleiben bei einer Drehung erhalten.
+
+`tests/test_situationen.py` prüft das gegen geschlossene Lösungen:
+eingespannt-gestützter Balken (7PL³/96EI) gegen den Kragarm nach Abschalten
+des zweiten Elements (PL³/3EI), Eigengewicht nur der wirksamen Elemente,
+Kragarm um 90° hochgeklappt unter Vertikallast (PL/EA statt PL³/3EI).
+
+**Subsysteme** sind eine Gliederung des Modells (Elemente, Knoten, Linien,
+Lager, Kontakte je Teil; Elemente an der Berührungsstelle gehören beiden);
+sie ändern die Berechnung nicht.
 
 ## 4 Kontakt
 
@@ -330,6 +521,42 @@ Fließgelenke, keine Imperfektionsform aus der Knickeigenform nach 5.3.2(11)
 (die Eigenform wird berechnet, aber nur als α_cr ausgewertet) und keine
 Imperfektionen für Aussteifungsverbände nach 5.3.3.
 
+### 5.1b Theorie III. Ordnung: große Verformungen
+
+`theorie3.py` rechnet Stabtragwerke geometrisch nichtlinear — große
+Verschiebungen und endliche Drehungen bei kleinen Dehnungen — in
+**korotationaler Formulierung** (Crisfield):
+
+* Jeder Knoten trägt eine Drehmatrix R, die je Iterationsschritt
+  multiplikativ fortgeschrieben wird: R ← exp(Δθ)·R (Rodrigues).
+* Jedes Stabelement bekommt ein mitgehendes Bezugssystem: e₁ entlang der
+  aktuellen Sehne, e₂ aus der mittleren Drehung der beiden Knotentriaden
+  (R₁·exp(½·log(R₁ᵀR₂))), auf die Sehnennormale projiziert, e₃ = e₁ × e₂.
+* Die im mitgehenden System verbleibende Verformung ist klein:
+  d_l = (0, θ₁ˡ, ΔL, θ₂ˡ) mit θᵢˡ = log(Eᵀ·Rᵢ·E₀ᵀ) und ΔL = L − L₀. Darauf
+  wirkt die lineare lokale Steifigkeit (Timoshenko/Bernoulli, Federgelenke
+  und Gelenke kondensiert): f_l = k_l·d_l, f_int = Tᵀ f_l.
+* Gleichgewicht f_int(u, R) = λ·F + F_imp, gelöst mit Newton-Raphson in
+  Laststufen λ = 1/n … 1 mit der Tangente Tᵀ(k_l + k_g(N))T. Der Rest der
+  konsistenten Tangente fehlt; das Residuum ist exakt, die Iteration
+  konvergiert deshalb gegen das richtige Gleichgewicht (linear statt
+  quadratisch). Konvergenz: ‖Residuum‖ < 10⁻⁶·‖λF‖.
+* Lasten sind richtungstreu (konservativ) und werden als äquivalente
+  Knotenlasten der Ausgangslage angesetzt; Ersatzimperfektionen nach 5.3.2
+  wie bei Theorie II. Ordnung, je Laststufe aus den Normalkräften.
+* Fachwerkstäbe: nur Normalkraft, geometrische Steifigkeit N/L quer zum Stab.
+
+Geprüft (`tests/test_theorie3.py`) gegen geschlossene Lösungen: Kragarm
+unter Endmoment M = (π/2)·EI/L wird zum Viertelkreis (Spitze bei 2L/π,
+Drehung 90°, Moment konstant), Elastica-Kragarm unter Querlast
+PL²/EI = 1 (Mattiasson 1981: w/L = 0,30172, u/L = 0,05643, θ = 0,46135),
+Seil aus zwei Fachwerkstäben (exakt), Druckstab mit Querlast bei
+P = 0,5·P_cr (II. = III. Ordnung, Vergrößerung 2).
+
+Die **Theorie je Lastfall und Kombination** (Feld ``theorie``: I, II, III,
+leer = wie Einstellung) entscheidet im Rechenkern, welches Ergebnis das
+lineare ersetzt; nach II. und III. Ordnung gilt keine Superposition.
+
 ### 5.2 Querschnittsklassifizierung (5.5, Tabelle 5.2)
 
 * I-Profile: Flansch als einseitig gestütztes Teil c = (b − tw − 2r)/2,
@@ -501,6 +728,33 @@ steht im Bericht.
   Beträge entlang des Stabes angesetzt (auf der sicheren Seite).
 * Teilsicherheitsbeiwerte: γM0 = 1,0, γM1 = 1,1 (deutscher NA), γM2 = 1,25.
 
+#### 5.4a Knicklängen aus der Knickfigur
+
+Aus dem linearen Verzweigungsproblem (K + α·K_g) v = 0 mit dem
+Spannungszustand einer Kombination als Grundzustand folgen der
+Verzweigungslastfaktor α_cr und die Knickfigur v. Für einen Stab mit der
+Druckkraft N_Ed ist die ideale Knicklast N_cr = α_cr·|N_Ed| und damit
+
+    L_cr = π · √(E·I / N_cr),   β = L_cr / L.
+
+Die Eigenform liefert zwei Angaben, die α_cr allein nicht enthält
+(`ec3/knicklaengen.py`):
+
+* die **Biegeachse**: die modale Formänderungsenergie ½ vᵀ k v jedes
+  Elements wird nach den Biegefreiheitsgraden um die lokale y- und z-Achse
+  getrennt; die Knicklänge gilt für die Achse mit dem größeren Anteil, die
+  andere bleibt unbestimmt;
+* die **Beteiligung**: der Anteil des Stabs an der Gesamtenergie der
+  Knickfigur. Ein unbeteiligter Stab bekommt nach der Formel eine viel zu
+  große Knicklänge — der Wert wird als Obergrenze gekennzeichnet; für ihn
+  ist eine höhere Knickfigur auszuwerten.
+
+Geprüft (`tests/test_knicklaengen.py`) gegen die Eulerfälle β = 1, 2, 0,5
+und 0,699 (Abweichung < 0,3 % bei 12 bis 16 Elementen), die Achse bei
+gehaltener schwacher Achse, den zweistieligen Rahmen mit starrem Riegel
+(β = 1 bei eingespannten Füßen, β = 2 bei Fußgelenken, Beteiligung je 50 %)
+und den kaum belasteten Nachbarstiel (unbeteiligt, Obergrenze).
+
 ### 5.5 Ermüdung (DIN EN 1993-1-9)
 
 Nennspannungskonzept. Aus zwei Zuständen (Lastfälle oder Kombinationen)
@@ -517,6 +771,28 @@ abgeminderten Kerbfallklasse; Nachweis D_σ + D_τ ≤ 1. Zusätzlich wird die
 schadensäquivalente Schwingbreite bei 2·10⁶ Lastspielen ausgewiesen. γMf nach
 Tabelle 3.1 (Schadenstoleranz/Sicherheit gegen Versagen, geringe/hohe
 Schadensfolge), γFf = 1,0.
+
+#### 5.5a Kerbfälle aus Schweißnähten (`schweissnaehte.py`)
+
+Jede Naht liefert nach Nahtart, Lage zur Beanspruchung und Ausführung den
+Kerbfall (Auswahl aus DIN EN 1993-1-9):
+
+| Naht | Kerbfall Δσ_C [N/mm²] | Fundstelle |
+|---|---|---|
+| Längsnaht automatisch ohne / mit Ansatzstellen; von Hand | 125 / 112; 100 | Tab. 8.2, Details 1–4 |
+| Längsnaht unterbrochen; mit Freischnitten; einseitig (geprüft / ungeprüft) | 71; 63; 80 / 71 | Tab. 8.2, Details 8, 9, 6 |
+| Querstumpfnaht bearbeitet + geprüft; geprüft; unbearbeitet; einseitig mit Badsicherung; einseitig ungeprüft | 112; 90; 80; 71; 36 | Tab. 8.3, Details 1, 2/3, 5, 9, 11 |
+| Kehlnaht quer (Kreuz-/T-Stoß) nach ℓ ≤ 50/80/100/120/200/300/> | 80/71/63/56/50/45/40, Wurzel 36 | Tab. 8.5, Detail 3 |
+| Quersteife ℓ ≤ 50 / ≤ 80; Längssteife L ≤ 50/80/100/> | 80 / 71; 80/71/63/56 | Tab. 8.4, Details 6/7, 1/2 |
+| Deckblech-Ende t ≤ 20/30/50/>; Stirnnaht bearbeitet (t ≤ 20) | 56/50/45/40; 71 | Tab. 8.5, Details 5, 6 |
+
+Schub: Δτ_C = 100 (durchgeschweißt, Grundwerkstoff) bzw. 80 (Kehlnaht,
+Tab. 8.5 Detail 8). Größeneinfluss für Quernähte, Steifen und Kreuzstöße:
+k_s = (25/t)^0,2 für t > 25 mm. Je Stab gilt der kleinste Kerbfall aller
+Nähte, die ihn nennen, oder einer **äquivalenten** Naht ohne Zuordnung
+(Ersatznaht für alle); Δτ_C ebenso. `tests/test_schweissnaehte.py` prüft die
+Tabellenwerte, k_s, die Zuordnung, die Übernahme in die Stäbe und den
+Ermüdungsnachweis mit dem Kerbfall aus der Naht.
 
 ## 5c Plattenbeulen (DIN EN 1993-1-5)
 

@@ -31,7 +31,7 @@ class Feld:
     """Ein Eingabefeld der Maske."""
     name: str
     text: str
-    art: str = "zahl"            # zahl | ganz | text | wahl | haken
+    art: str = "zahl"            # zahl | ganz | text | wahl | haken | info
     wert: object = 0.0
     werte: list = field(default_factory=list)   # fuer art="wahl"
     breite: int = 78
@@ -47,9 +47,11 @@ class Maske(QtWidgets.QFrame):
 
     angewendet = QtCore.Signal(dict)
     geschlossen = QtCore.Signal()
+    abgebrochen = QtCore.Signal()
 
     def __init__(self, titel: str, felder: list, parent=None, knoten: int = 0,
-                 hinweis: str = "", knopf: str = "Anwenden"):
+                 hinweis: str = "", knopf: str = "Anwenden", abbrechen: str = "",
+                 zusatz: list = None):
         super().__init__(parent)
         self.setObjectName("maske")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -102,15 +104,38 @@ class Maske(QtWidgets.QFrame):
         self.btn_anwenden.setDefault(True)
         self.btn_anwenden.clicked.connect(self.anwenden)
         knoepfe.addWidget(self.btn_anwenden)
+        self.btn_abbrechen = None
+        if abbrechen:
+            # Ein neues Objekt braucht ein "Abbrechen", das es wieder wegnimmt
+            self.btn_abbrechen = QtWidgets.QPushButton(abbrechen, self)
+            self.btn_abbrechen.clicked.connect(self.abbrechen)
+            knoepfe.addWidget(self.btn_abbrechen)
         if self.n_knoten:
             b = QtWidgets.QPushButton("Auswahl leeren", self)
             b.clicked.connect(self.auswahl_leeren)
             knoepfe.addWidget(b)
         lay.addLayout(knoepfe)
+        # Weitere Knoepfe (Situation: Auswahl deaktivieren / aktivieren)
+        self.zusatzknoepfe: dict[str, QtWidgets.QPushButton] = {}
+        if zusatz:
+            zeile = QtWidgets.QHBoxLayout()
+            for text, ruf in zusatz:
+                b = QtWidgets.QPushButton(text, self)
+                b.clicked.connect(lambda _c=False, r=ruf: r())
+                zeile.addWidget(b)
+                self.zusatzknoepfe[text] = b
+            lay.addLayout(zeile)
         self.setMinimumWidth(232)
 
     # -- Aufbau ----------------------------------------------------------
     def _bauen(self, f: Feld) -> QtWidgets.QWidget:
+        if f.art == "info":
+            # Nur zum Lesen: Anzahl, kleinste und groesste Nummer, Bezuege
+            w = QtWidgets.QLabel(str(f.wert), self)
+            w.setObjectName("maskeninfo")
+            w.setWordWrap(True)
+            w.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+            return w
         if f.art == "haken":
             w = QtWidgets.QCheckBox(f.text, self)
             w.setChecked(bool(f.wert))
@@ -139,7 +164,9 @@ class Maske(QtWidgets.QFrame):
     def werte(self) -> dict:
         out: dict = {}
         for name, w in self._felder.items():
-            if isinstance(w, QtWidgets.QCheckBox):
+            if isinstance(w, QtWidgets.QLabel):
+                out[name] = w.text()
+            elif isinstance(w, QtWidgets.QCheckBox):
                 out[name] = w.isChecked()
             elif isinstance(w, QtWidgets.QComboBox):
                 out[name] = w.currentText()
@@ -163,6 +190,8 @@ class Maske(QtWidgets.QFrame):
             w.setChecked(bool(wert))
         elif isinstance(w, QtWidgets.QComboBox):
             w.setCurrentText(str(wert))
+        elif isinstance(w, QtWidgets.QLabel):
+            w.setText(str(wert))
         else:
             w.setText(f"{wert:g}" if isinstance(wert, float) else str(wert))
 
@@ -202,6 +231,12 @@ class Maske(QtWidgets.QFrame):
     # -- Bedienung -------------------------------------------------------
     def anwenden(self):
         self.angewendet.emit(self.werte())
+
+    def abbrechen(self):
+        """Abbrechen: erst melden (das Fenster nimmt ein neues Objekt zurueck),
+        dann schliessen."""
+        self.abgebrochen.emit()
+        self.schliessen()
 
     def schliessen(self):
         self.hide()
@@ -243,7 +278,10 @@ class Maskenrand(QtCore.QObject):
         self.maske = maske
         maske.geschlossen.connect(self._vergessen)
         if self.ziel is not None:
-            self.ziel.insertWidget(0, maske)
+            # Eine lange Maske (Querschnitte) meldet eine Dehnung an und
+            # bekommt damit den groesseren Teil der Hoehe; die kurzen Masken
+            # bleiben bei ihrer natuerlichen Hoehe
+            self.ziel.insertWidget(0, maske, int(getattr(maske, "dehnung", 0)))
             maske.show()
             maske.setFocus()
         else:
@@ -538,37 +576,85 @@ class Ansichtswuerfel(QtWidgets.QWidget):
                 self.gewaehlt.emit(r)
 
     # -- Zeichnen --------------------------------------------------------
+    #: Lichtrichtung im Bild (x nach rechts, y nach oben, z zum Betrachter)
+    LICHT = (-0.35, 0.55, 0.76)
+    #: Grundfarben der Seiten je Achse: x rot-, y gruen-, z blaustichig, wie
+    #: das Achsenkreuz - so erkennt man die Seite auch ohne Text
+    SEITENFARBEN = {"x": (222, 214, 206), "y": (208, 222, 208), "z": (206, 214, 228)}
+
+    def _seitenfarbe(self, richtung: str, n_bild, hell: bool) -> QtGui.QColor:
+        if hell:
+            return QtGui.QColor(dsg.FARBEN["akzent"])
+        grund = self.SEITENFARBEN.get(richtung.strip("+-").lower(), (214, 216, 220))
+        L = self.LICHT
+        lnorm = math.sqrt(sum(x * x for x in L))
+        cos = sum(n_bild[i] * L[i] for i in range(3)) / lnorm
+        schatt = 0.58 + 0.42 * max(0.0, cos)
+        return QtGui.QColor(*[int(min(255, c * schatt + 18)) for c in grund])
+
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        p.setRenderHint(QtGui.QPainter.TextAntialiasing, True)
         f = p.font()
         f.setPointSize(8)
         f.setBold(True)
         p.setFont(f)
         linie = QtGui.QColor(dsg.FARBEN["linie"])
-        for _tiefe, nz, text, richtung, poly in self._projektion():
+        R = self._matrix()
+        feld = self._wuerfelfeld()
+        # Weicher Schatten unter dem Wuerfel
+        schatten = QtGui.QRadialGradient(feld.center().x(), feld.bottom() - 6,
+                                         self.WUERFEL * 0.48)
+        schatten.setColorAt(0.0, QtGui.QColor(0, 0, 0, 55))
+        schatten.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QBrush(schatten))
+        p.drawEllipse(QtCore.QPointF(feld.center().x(), feld.bottom() - 6),
+                      self.WUERFEL * 0.46, self.WUERFEL * 0.13)
+        seiten = self._projektion()
+        normalen = {richtung: n for _t, richtung, n, _e in self.SEITEN}
+        for _tiefe, nz, text, richtung, poly in seiten:
             if nz <= 0:
                 continue
             hell = richtung == self._unter
-            # Schattierung nach der Neigung zur Blickrichtung
-            grau = int(236 - 40 * (1.0 - min(max(nz, 0.0), 1.0)))
-            p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if hell
-                                    else QtGui.QColor(grau, grau + 4, grau + 8)))
-            p.setPen(QtGui.QPen(QtGui.QColor(dsg.FARBEN["matt"]) if not hell else linie, 1.1))
+            n = normalen.get(richtung, (0, 0, 1))
+            n_bild = [sum(R[i][k] * n[k] for k in range(3)) for i in range(3)]
+            farbe = self._seitenfarbe(richtung, n_bild, hell)
+            # leichter Verlauf ueber die Seite: oben heller, unten dunkler
+            br = poly.boundingRect()
+            verlauf = QtGui.QLinearGradient(br.topLeft(), br.bottomLeft())
+            verlauf.setColorAt(0.0, farbe.lighter(108))
+            verlauf.setColorAt(1.0, farbe.darker(108))
+            p.setBrush(QtGui.QBrush(verlauf))
+            p.setPen(QtGui.QPen(QtGui.QColor(30, 40, 55, 150) if not hell else linie, 1.0))
             p.drawPolygon(poly)
-            if nz > 0.25:
-                p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["text"]))
-                p.drawText(poly.boundingRect(), QtCore.Qt.AlignCenter, text)
-        # Die Richtungszeile
+            if nz > 0.3:
+                # Beschriftung mit feinem Schatten, dann klar lesbar auf hell und dunkel
+                rect = poly.boundingRect()
+                f.setPointSize(9 if nz > 0.7 else 8)
+                p.setFont(f)
+                p.setPen(QtGui.QColor(255, 255, 255, 110))
+                p.drawText(rect.translated(0.5, 0.5), QtCore.Qt.AlignCenter, text)
+                p.setPen(QtGui.QColor("#ffffff" if hell else "#1c2a3a"))
+                p.drawText(rect, QtCore.Qt.AlignCenter, text)
+        # Glanzkante: die sichtbaren Aussenkanten etwas heller nachziehen
+        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 90), 1.0))
+        p.setBrush(QtCore.Qt.NoBrush)
+        for _tiefe, nz, _text, _richtung, poly in seiten:
+            if nz > 0:
+                p.drawPolyline(poly)
+        # Die Richtungszeile: runde Knoepfe
         for rect, text, richtung in self._felder():
             hell = richtung == self._unter
+            r2 = rect.adjusted(0.5, 1.0, -0.5, -1.0)
             p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if hell else "#f7f9fb"))
-            p.setPen(QtGui.QPen(linie, 1.0))
-            p.drawRoundedRect(rect, 3, 3)
-            p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["matt"]))
+            p.setPen(QtGui.QPen(QtGui.QColor(dsg.FARBEN["akzent"]) if hell else linie, 1.0))
+            p.drawRoundedRect(r2, 5, 5)
+            p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["text"]))
             f.setPointSize(7 if len(text) > 2 else 8)
             p.setFont(f)
-            p.drawText(rect, QtCore.Qt.AlignCenter, text)
+            p.drawText(r2, QtCore.Qt.AlignCenter, text)
         p.end()
 
 
@@ -595,15 +681,22 @@ class Ansichtsrand(QtCore.QObject):
         """
         b = self.ansicht.width()
         g = self.leiste.sizeHint()
-        w = self.wuerfel.width()
+        # feste Groesse des Wuerfels (setFixedSize) - sizeHint waere -1
+        w = max(1, self.wuerfel.width())
+        h = max(1, self.wuerfel.height())
         wx = max(12, b - w - 14)
+        wy = 12
         x = (b - g.width()) // 2
         if x + g.width() > wx - 8:
             x = wx - 8 - g.width()
-        x = max(12, x)
+        if x < 12:
+            # Leiste und Wuerfel passen nicht nebeneinander: der Wuerfel
+            # rueckt unter die Leiste, ueberschneiden darf sich nichts.
+            x = 12
+            wy = 10 + g.height() + 8
         self.leiste.setGeometry(x, 10, g.width(), g.height())
         self.leiste.raise_()
-        self.wuerfel.setGeometry(wx, 12, w, self.wuerfel.height())
+        self.wuerfel.setGeometry(wx, wy, w, h)
         self.wuerfel.raise_()
 
     def eventFilter(self, obj, ev):
@@ -612,6 +705,46 @@ class Ansichtsrand(QtCore.QObject):
         return False
 
 
-def stil() -> str:
-    return STIL.format(**dsg.FARBEN)
+# ==========================================================================
+# Gummiband: das Auswahlfenster ueber der Ansicht
+# ==========================================================================
+class Gummiband(QtWidgets.QWidget):
+    """Das Auswahlfenster: ein durchscheinendes Rechteck ueber der Ansicht.
+
+    Die erste Ecke setzt die linke Maustaste, die zweite die rechte. Von
+    links nach rechts aufgezogen (blau, durchgezogen) zaehlt nur, was ganz
+    im Fenster liegt; von rechts nach links (gruen, gestrichelt) auch alles,
+    was das Fenster nur anschneidet - die Farben, wie sie CAD-Anwender
+    kennen. Das Band faengt keine Mausereignisse; die Ansicht darunter
+    bekommt sie weiter.
+    """
+
+    def __init__(self, ansicht: QtWidgets.QWidget):
+        super().__init__(ansicht)
+        self.setObjectName("gummiband")
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.kreuzend = False
+        self.hide()
+
+    def setzen(self, p1: QtCore.QPoint, p2: QtCore.QPoint, kreuzend: bool):
+        """Die beiden Ecken (Bildpunkte der Ansicht, y von oben) uebernehmen."""
+        self.kreuzend = bool(kreuzend)
+        r = QtCore.QRect(QtCore.QPoint(p1), QtCore.QPoint(p2)).normalized()
+        self.setGeometry(r.adjusted(-1, -1, 2, 2))
+        self.update()
+
+    def paintEvent(self, ev):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, False)
+        farbe = QtGui.QColor(dsg.FARBEN["gut"] if self.kreuzend else dsg.FARBEN["akzent"])
+        stift = QtGui.QPen(farbe, 1,
+                           QtCore.Qt.DashLine if self.kreuzend else QtCore.Qt.SolidLine)
+        fuellung = QtGui.QColor(farbe)
+        fuellung.setAlpha(38)
+        p.setPen(stift)
+        p.setBrush(fuellung)
+        p.drawRect(self.rect().adjusted(1, 1, -2, -2))
+        p.end()
 

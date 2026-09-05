@@ -290,6 +290,9 @@ class Report:
         self.lasteinleitung = None
         self.volumen = None
         self.theorie2 = None
+        self.knicklaengen = None
+        self.theorie3 = None
+        self.schwingung = None
         self.info: dict = {}
         if analysis is not None:
             self.cases = dict(getattr(analysis, "cases", {}) or {})
@@ -303,6 +306,9 @@ class Report:
             self.lasteinleitung = getattr(analysis, "lasteinleitung", None)
             self.volumen = getattr(analysis, "volumen", None)
             self.theorie2 = getattr(analysis, "theorie2", None)
+            self.knicklaengen = getattr(analysis, "knicklaengen", None)
+            self.theorie3 = getattr(analysis, "theorie3", None)
+            self.schwingung = getattr(analysis, "schwingung", None)
             self.info = dict(getattr(analysis, "info", {}) or {})
         if results is not None:
             name = results.name or "Ergebnis"
@@ -421,8 +427,11 @@ class Report:
             self._warnings = []
             b = []
             for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
-                       self.chapter_theorie2,
-                       self.chapter_results, self.chapter_design, self.chapter_beulen,
+                       self.chapter_lastgenerierer,
+                       self.chapter_theorie2, self.chapter_theorie3,
+                       self.chapter_results, self.chapter_knicklaengen,
+                       self.chapter_schwingung,
+                       self.chapter_design, self.chapter_beulen,
                        self.chapter_volumen,
                        self.chapter_fatigue,
                        self.chapter_joints, self.chapter_gzg,
@@ -655,6 +664,28 @@ class Report:
                                      "Biegedrillknicken, Kerbfall)", None, "compact"))
             if note:
                 b.append(("note", note))
+        # ---- Schweissnaehte und Kerbfaelle
+        naehte = getattr(m, "schweissnaehte", {}) or {}
+        if naehte:
+            from ..schweissnaehte import tabelle as naht_tabelle, kerbfaelle_je_stab
+            b.append(self._h(2, "Schweißnähte und Kerbfälle"))
+            b.append(("p", "Kerbfälle nach DIN EN 1993-1-9, Tabellen 8.2 bis 8.5, aus Nahtart, Lage zur "
+                           "Beanspruchung und Ausführung; Größeneinfluss k_s = (25/t)^0,2 für "
+                           "Blechdicken über 25 mm. Eine äquivalente Naht steht stellvertretend für "
+                           "die nicht einzeln modellierten Nähte; je Stab gilt der ungünstigste "
+                           "Kerbfall aller Nähte, die ihn betreffen."))
+            rows, note = self._truncate(naht_tabelle(m))
+            b.append(("table", rows, "Schweißnähte", None, "compact"))
+            if note:
+                b.append(("note", note))
+            je = kerbfaelle_je_stab(m)
+            if je:
+                rows = [["Stab", "Δσ_C [MPa]", "Δτ_C [MPa]", "aus Naht", "Fundstelle"]]
+                for stab, k in je.items():
+                    rows.append([stab, fmt(k["dsC"] / 1e6, 0), fmt(k["dtC"] / 1e6, 0),
+                                 k["naht"] + (" (äquivalent)" if k["aequivalent"] else ""), k["detail"]])
+                rows, note = self._truncate(rows)
+                b.append(("table", rows, "Kerbfälle der Stäbe aus den Schweißnähten", None, "compact"))
         # ---- Materialien
         if self.opt("materials"):
             b.append(self._h(2, "Materialien"))
@@ -798,10 +829,16 @@ class Report:
     # ============================================================ Kapitel 3
     def _load_tables(self, lc) -> list:
         b = []
+        # Aus Objektlasten abgeleitete Elementlasten (_geo) stehen nicht einzeln
+        # im Bericht - die Objektlast steht dafuer, mit Ziel und Verlauf.
+        nodal = lc.eigene("nodal_loads") if hasattr(lc, "eigene") else lc.nodal_loads
+        beam = lc.eigene("beam_loads") if hasattr(lc, "eigene") else lc.beam_loads
+        face = lc.eigene("face_loads") if hasattr(lc, "eigene") else lc.face_loads
+        temp = lc.eigene("temp_loads") if hasattr(lc, "eigene") else lc.temp_loads
         # Knotenlasten (gleiche Lastvektoren zusammenfassen)
-        if lc.nodal_loads:
+        if nodal:
             groups = {}
-            for l in lc.nodal_loads:
+            for l in nodal:
                 key = tuple(round(float(v), 6) for v in l.F)
                 groups.setdefault(key, []).append(l.node)
             rows = [["Knoten", "Anzahl", "F_x [kN]", "F_y [kN]", "F_z [kN]", "M_x [kNm]",
@@ -813,28 +850,49 @@ class Report:
             b.append(("table", rows, f"Knotenlasten Lastfall {lc.name}", None, ""))
             if note:
                 b.append(("note", note))
-        if lc.beam_loads:
+        if beam:
             groups = {}
-            for l in lc.beam_loads:
+            for l in beam:
                 q2 = l.q2 if l.q2 is not None else l.q
+                abschnitt = (f"{l.a:g} – {l.b:g} m" if l.b is not None else f"ab {l.a:g} m") \
+                    if getattr(l, "teilweise", False) else "ganz"
                 key = (tuple(round(float(v), 6) for v in l.q),
-                       tuple(round(float(v), 6) for v in q2), l.system)
+                       tuple(round(float(v), 6) for v in q2), l.system, abschnitt)
                 groups.setdefault(key, []).append(l.elem)
-            rows = [["Elemente", "Anzahl", "System", "q_x [kN/m]", "q_y [kN/m]", "q_z [kN/m]",
-                     "q_x,Ende", "q_y,Ende", "q_z,Ende"]]
-            for (q1, q2, system), elems in groups.items():
+            rows = [["Elemente", "Anzahl", "System", "Abschnitt", "q_x [kN/m]", "q_y [kN/m]",
+                     "q_z [kN/m]", "q_x,Ende", "q_y,Ende", "q_z,Ende"]]
+            for (q1, q2, system, abschnitt), elems in groups.items():
                 rows.append([_ids_text(elems), str(len(elems)),
-                             "global" if system == "global" else "lokal"]
+                             "global" if system == "global" else "lokal", abschnitt]
                             + [fmt(v / 1e3, 3) for v in q1]
                             + ([fmt(v / 1e3, 3) for v in q2] if q2 != q1 else ["=", "=", "="]))
             rows, note = self._truncate(rows)
             b.append(("table", rows, f"Streckenlasten Lastfall {lc.name} "
-                                     "(Werte am Elementanfang / -ende)", None, ""))
+                                     "(Werte am Anfang / Ende des Abschnitts)", None, ""))
             if note:
                 b.append(("note", note))
-        if lc.face_loads:
+        if getattr(lc, "linienlasten", None):
+            rows = [["Ziel", "System", "Abschnitt", "q_x [kN/m]", "q_y [kN/m]", "q_z [kN/m]",
+                     "q_x,Ende", "q_y,Ende", "q_z,Ende", "Elementlasten"]]
+            for l in lc.linienlasten:
+                q2 = l.q2 if l.q2 is not None else l.q
+                abschnitt = "ganze Länge"
+                if l.von or l.bis is not None:
+                    abschnitt = f"{l.von:g} – " + (f"{l.bis:g} m" if l.bis is not None else "Ende")
+                rows.append([("Stab " if l.art == "stab" else "Linie ") + str(l.ziel),
+                             "global" if l.system == "global" else "lokal", abschnitt]
+                            + [fmt(v / 1e3, 3) for v in l.q]
+                            + ([fmt(v / 1e3, 3) for v in q2] if list(q2) != list(l.q)
+                               else ["=", "=", "="])
+                            + [l.kommentar or "–"])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, f"Linienlasten Lastfall {lc.name} (auf Stäben und Linien; "
+                                     "beim Vernetzen auf Elemente und Knoten verteilt)", None, ""))
+            if note:
+                b.append(("note", note))
+        if face:
             groups = {}
-            for l in lc.face_loads:
+            for l in face:
                 key = (round(float(l.p), 6), int(l.face),
                        tuple(round(float(v), 6) for v in l.direction)
                        if l.direction is not None else None)
@@ -847,9 +905,52 @@ class Report:
             b.append(("table", rows, f"Flächenlasten Lastfall {lc.name}", None, ""))
             if note:
                 b.append(("note", note))
-        if lc.temp_loads:
+        gls = getattr(lc, "geometrielasten", None) or []
+        druck = [g for g in gls if getattr(g, "lastart", "druck") != "temperatur"]
+        if druck:
+            rows = [["Ziel", "p [kN/m²]", "Verlauf", "Richtung", "Projektion", "Fenster",
+                     "Elementlasten"]]
+            for g in druck:
+                verlauf = "gleichmäßig"
+                if g.verlauf:
+                    P = g.verlauf.get("punkte") or []
+                    verlauf = "linear: " + "; ".join(
+                        f"({', '.join(f'{float(x):g}' for x in pt[:3])}) → {float(pt[3]) / 1e3:.3g}"
+                        for pt in P)
+                rows.append([("Fläche " if g.art == "flaeche" else "Volumen ") + str(g.ziel),
+                             fmt(g.p / 1e3, 3) if not g.verlauf else "–", verlauf,
+                             "senkrecht" if not g.richtung else
+                             "(" + ", ".join(f"{v:g}" for v in g.richtung) + ")",
+                             "ja" if g.projiziert else "nein",
+                             g.bereich.get("art", "ja") if g.bereich else "–",
+                             g.kommentar or "–"])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, f"Flächenlasten auf Flächen und Volumen, Lastfall {lc.name} "
+                                     "(p positiv drückt in den Körper)", None, ""))
+            if note:
+                b.append(("note", note))
+        warm = [g for g in gls if getattr(g, "lastart", "druck") == "temperatur"]
+        if warm:
+            rows = [["Ziel", "ΔT [K]", "ΔT_z [K]", "Elementlasten"]]
+            for g in warm:
+                rows.append([("Fläche " if g.art == "flaeche" else "Volumen ") + str(g.ziel),
+                             fmt(g.dT, 2), fmt(g.dT_z, 2), g.kommentar or "–"])
+            b.append(("table", rows, f"Temperaturlasten auf Flächen und Volumen, Lastfall {lc.name}",
+                      None, ""))
+        if getattr(lc, "zwangsverformungen", None):
+            rows = [["Knoten", "u_x [mm]", "u_y [mm]", "u_z [mm]", "φ_x [mrad]", "φ_y [mrad]",
+                     "φ_z [mrad]"]]
+            for z in lc.zwangsverformungen:
+                rows.append([str(z.node)] + [fmt(z.u[d] * 1e3, 3) if d in z.dofs else "–"
+                                             for d in range(6)])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, f"Zwangsverformungen Lastfall {lc.name} (vorgegebene "
+                                     "Verschiebungen an gelagerten Knoten)", None, ""))
+            if note:
+                b.append(("note", note))
+        if temp:
             groups = {}
-            for l in lc.temp_loads:
+            for l in temp:
                 key = (round(float(l.dT), 4), round(float(l.dT_z), 4))
                 groups.setdefault(key, []).append(l.elem)
             rows = [["Elemente", "Anzahl", "ΔT [K]", "ΔT_z (oben − unten) [K]"]]
@@ -872,7 +973,7 @@ class Report:
         b = [self._h(1, "Einwirkungen")]
         b.append(self._h(2, "Lastfälle"))
         rows = [["Lastfall", "Kategorie", "Einwirkung", "Beschreibung", "ψ_0", "ψ_1", "ψ_2",
-                 "γ_sup", "γ_inf", "Gruppe", "Lasten"]]
+                 "γ_sup", "γ_inf", "Gruppe", "Situation", "Theorie", "Lasten"]]
         ds = m.design
         for lc in m.load_cases.values():
             psi = lc.psi_factors
@@ -887,7 +988,9 @@ class Report:
                 gs, gi = 1.0, 1.0
             rows.append([lc.name, lc.category, cat, lc.description or "–", fmt(psi[0], 2),
                          fmt(psi[1], 2), fmt(psi[2], 2), fmt(gs, 2), fmt(gi, 2),
-                         lc.exclusive_group or "–", str(lc.n_loads)])
+                         lc.exclusive_group or "–", getattr(lc, "situation", "") or "Grundstellung",
+                         m.theorie_von(lc) if hasattr(m, "theorie_von") else "I",
+                         str(lc.n_loads)])
         b.append(("table", rows, "Lastfälle und Einwirkungskategorien (DIN EN 1990/NA)",
                   None, ""))
         if self.opt("load_cases"):
@@ -1106,6 +1209,212 @@ class Report:
         return b
 
     # ==================================== Theorie II. Ordnung (eigenes Kapitel)
+    def chapter_lastgenerierer(self) -> list:
+        """Lastgenerierer: Wasserdruck mit Kennwerten, Erlaeuterung und Skizze."""
+        m = self.model
+        wds = getattr(m, "wasserdruecke", {}) or {}
+        winde = getattr(m, "winde", {}) or {}
+        if not wds and not winde:
+            return []
+        from .. import wasserdruck as wdm
+        from .. import wind as wm
+        b = [self._h(1, "Lastgenerierer")]
+        b.append(("p", "Die Lasten dieser Generierer hängen als Objektlasten an den benetzten "
+                       "Flächen und werden beim Vernetzen auf die Elemente gelegt. Wasserdruck: "
+                       "DIN 19704-1; Strömungskennwerte nach Poleni (Überfall) und Torricelli "
+                       "(Ausfluss); Druckminderung durch die Absenkung des Wasserspiegels als "
+                       "Näherung nach Naudascher (Hydrodynamic Forces, IAHR)."))
+        for name, wd in wds.items():
+            b.append(self._h(2, f"Wasserdruck {name}"))
+            try:
+                kw = wdm.kennwerte(wd, m)
+            except Exception as ex:                # noqa: BLE001
+                b.append(("p", f"Kennwerte nicht berechenbar: {ex}"))
+                continue
+            rows = [["Angabe", "Wert"],
+                    ["Situation", wd.situation or "Grundstellung"],
+                    ["Lastfall", wd.lastfall or "–"],
+                    ["Benetzte Flächen / Volumen", ", ".join(wd.flaechen + wd.koerper) or "–"],
+                    ["Dichtungslinie", ", ".join(wd.dichtung) or f"Unterkante z = {kw['z_uk']:g} m"],
+                    ["Oberwasser / Unterwasser", f"{wd.h_ow:g} m / "
+                     + (f"{wd.h_uw:g} m" if wd.h_uw is not None else "trocken")],
+                    ["Dichte", f"{wd.rho:g} kg/m³"],
+                    ["Verschluss", f"z = {kw['z_uk']:g} … {kw['z_ok']:g} m, Breite {kw['breite']:g} m"],
+                    ["Wirkung", "senkrecht zur Fläche" if wd.richtung is None
+                     else f"in Richtung {tuple(wd.richtung)}"],
+                    ["Überströmt / unterströmt", ("ja" if wd.ueberstroemt else "nein") + " / "
+                     + (f"ja, a = {wd.spalt:g} m" if wd.unterstroemt else "nein")],
+                    ["Absenkung des Wasserspiegels", "berücksichtigt" if wd.absenkung else "nicht berücksichtigt"],
+                    ["Resultierende", f"{kw['F'] / 1e3:.1f} kN bei z = {kw['z_R']:.3f} m "
+                     f"({kw['hebel']:.3f} m über der Dichtung)"]]
+            if kw.get("h_ue", 0) > 0:
+                rows.append(["Überfall", f"h_ü = {kw['h_ue']:.3f} m, q = {kw['q_ue']:.3f} m³/(s·m), "
+                                         f"Q = {kw['Q_ue']:.2f} m³/s, v_c = {kw['v_c']:.2f} m/s"])
+            if kw.get("spalt", 0) > 0:
+                rows.append(["Ausfluss", f"Δh = {kw['dh_a']:.3f} m, v_a = {kw['v_a']:.2f} m/s, "
+                                         f"q = {kw['q_a']:.3f} m³/(s·m), Q = {kw['Q_a']:.2f} m³/s, Fr = {kw['Fr_a']:.2f}"])
+            if kw.get("dp_dyn", 0) > 0:
+                rows.append(["Druckschwankung", f"Δp = {kw['dp_dyn'] / 1e3:.3f} kN/m² (c_p' = {wd.cp_dyn:g}), "
+                                                f"Lastfall {wd.lastfall_dyn}"])
+            b.append(("table", rows, f"Wasserdruck {name}: Angaben und Kennwerte", None, "compact"))
+            for zeile in wdm.erlaeuterung(wd, kw):
+                b.append(("p", zeile))
+            if self.opt("figures"):
+                b.append(self._figure(wdm.skizze_svg(wd, kw),
+                                      f"Wasserdruck {name}: Wasserstände, Druckfigur, Strömung und Resultierende"))
+        for name, w in winde.items():
+            b.append(self._h(2, f"Wind {name} (DIN EN 1991-1-4)"))
+            try:
+                kw = wm.kennwerte(w, m)
+            except Exception as ex:                # noqa: BLE001
+                b.append(("p", f"Kennwerte nicht berechenbar: {ex}"))
+                continue
+            rows = [["Angabe", "Wert"],
+                    ["Situation / Lastfall", f"{w.situation or 'Grundstellung'} / {w.lastfall or '–'}"],
+                    ["Windzone / v_b", (f"Zone {w.zone}" if w.v_b is None else "Vorgabe")
+                     + f", v_b = {kw['v_b']:.1f} m/s (c_dir = {w.c_dir:g}, c_season = {w.c_season:g})"],
+                    ["Profil", f"{w.profil}, c_o = {w.c_o:g}"],
+                    ["Anströmung", f"({w.richtung[0]:g}, {w.richtung[1]:g})"],
+                    ["Wände / Dach", ", ".join(w.flaechen) or "–"],
+                    ["Freistehende Wände / Schilder", ", ".join(w.freie_waende + w.schilder) or "–"],
+                    ["Stäbe", ", ".join(w.staebe) or "–"],
+                    ["Innendruck c_pi / c_s·c_d", f"{w.c_pi:+g} / {w.c_scd:g}"]]
+            if "h" in kw:
+                rows.append(["Gebäude", f"h = {kw['h']:.2f} m, b = {kw['b']:.2f} m, d = {kw['d']:.2f} m, "
+                                        f"e = {kw['e']:.2f} m, h/d = {kw['h_d']:.2f}"])
+                rows.append(["c_pe Luv / Lee", f"{kw['cpe_D']:+.2f} / {kw['cpe_E']:+.2f}"])
+            b.append(("table", rows, f"Wind {name}: Angaben", None, "compact"))
+            prof = [["z [m]", "v_m [m/s]", "I_v", "q_p [N/m²]"]]
+            for z, vm_, iv, qp in kw["profil_tabelle"]:
+                prof.append([fmt(z, 1), fmt(vm_, 1), fmt(iv, 3), fmt(qp, 0)])
+            b.append(("table", prof, f"Wind {name}: Höhenprofil", None, "compact"))
+            if kw.get("staebe"):
+                st = [["Stab", "Querschnitt", "b_ref [m]", "L [m]", "λ", "ψ_λ", "Re", "c_f,0", "c_f",
+                       "w unten [N/m]", "w oben [N/m]", "F [kN]"]]
+                for sb in kw["staebe"]:
+                    st.append([sb["stab"], sb["typ"], fmt(sb["b_ref"], 3), fmt(sb["L"], 2), fmt(sb["lambda"], 1),
+                               fmt(sb["psi"], 2), f"{sb['Re']:.2e}", fmt(sb["cf0"], 2), fmt(sb["cf"], 2),
+                               fmt(sb["w1"], 1), fmt(sb["w2"], 1), fmt(sb["F"] / 1e3, 2)])
+                b.append(("table", st, f"Wind {name}: Kraftbeiwerte und Streckenlasten der Stäbe", None, "compact"))
+            for zeile in wm.erlaeuterung(w, kw):
+                b.append(("p", zeile))
+            if self.opt("figures"):
+                b.append(self._figure(wm.skizze_svg(w, kw),
+                                      f"Wind {name}: Höhenprofil q_p(z) und Grundriss mit Anströmung und Zonen"))
+        return b
+
+    def chapter_theorie3(self) -> list:
+        """Berechnung nach Theorie III. Ordnung (grosse Verformungen)."""
+        t3 = getattr(self, "theorie3", None)
+        if t3 is None or not getattr(t3, "kombinationen", None):
+            return []
+        st = t3.settings or {}
+        b = [self._h(1, "Berechnung nach Theorie III. Ordnung (große Verformungen)")]
+        b.append(("p", "Gleichgewicht am verformten System mit großen Verformungen und "
+                       "endlichen Drehungen (geometrisch nichtlinear). Korotationale "
+                       "Formulierung: jedes Stabelement erhält ein mitgehendes Bezugssystem "
+                       "aus seiner aktuellen Sehne und der mittleren Drehung seiner Knoten; "
+                       "die darin verbleibende Verformung (Längenänderung, kleine "
+                       "Knotendrehungen relativ zur Sehne) ist die elastische Verformung. "
+                       "Gelöst wird mit Newton-Raphson in "
+                       f"{st.get('schritte', 10)} Laststufen; Lasten wirken richtungstreu. "
+                       + ("Ersatzimperfektionen nach DIN EN 1993-1-1, 5.3.2 werden je "
+                          "Laststufe aus den Normalkräften neu gebildet. "
+                          if st.get("imperfektionen") else "")
+                       + "Nach Theorie III. Ordnung gilt keine Superposition: jeder Lastfall "
+                         "und jede Kombination wird einzeln gerechnet."))
+        rows = [["Lastfall / Kombination", "Laststufen", "Iterationen", "Residuum",
+                 "u_max I [mm]", "u_max III [mm]", "Zuwachs", "größte Drehung", "Hinweis"]]
+        for i in t3.kombinationen.values():
+            rows.append([i.name, str(i.schritte), str(i.iterationen),
+                         f"{i.konvergenz:.1e}" if i.gerechnet else "–",
+                         fmt(i.u_max_I * 1e3, 3), fmt(i.u_max_III * 1e3, 3) if i.gerechnet else "–",
+                         f"{i.zuwachs * 100:+.1f} %" if i.gerechnet else "–",
+                         f"{math.degrees(i.drehung_max):.2f}°" if i.gerechnet else "–",
+                         i.fehler or "; ".join(i.hinweise) or "–"])
+        b.append(("table", rows, "Theorie III. Ordnung je Lastfall und Kombination", None, "compact"))
+        return b
+
+    def chapter_knicklaengen(self) -> list:
+        """Knicklaengenbeiwerte aus der Knickfigur."""
+        kl = getattr(self, "knicklaengen", None)
+        if kl is None or not getattr(kl, "staebe", None):
+            return []
+        b = [self._h(1, "Knicklängen aus der Knickfigur")]
+        b.append(("p", f"Grundzustand: {kl.grundzustand}. Knickfigur {kl.modus + 1} mit dem "
+                       f"Verzweigungslastfaktor α_cr = {fmt(kl.alpha_cr, 3)}. Für jeden Stab "
+                       "folgt aus dem Grundzustand N_cr = α_cr·|N_Ed| und daraus die "
+                       "Knicklänge L_cr = π·√(E·I/N_cr), β = L_cr/L. Die Eigenform bestimmt "
+                       "die Biegeachse (Anteil der modalen Biegeenergie um y und z) und "
+                       "die Beteiligung des Stabs an der Knickfigur: bei einem Stab, der in "
+                       "der Knickfigur gerade bleibt, ist der Wert nur eine Obergrenze "
+                       f"(gekennzeichnet; Grenze {kl.min_beteiligung * 100:.0f} %)."))
+        rows = kl.tabelle()
+        rows, note = self._truncate(rows)
+        b.append(("table", rows, "Knicklängenbeiwerte je Stab", None, "compact"))
+        if note:
+            b.append(("p", note))
+        return b
+
+    def chapter_schwingung(self) -> list:
+        """Schwingungsnachweis des Verschlusses (stroemungsinduzierte Schwingungen)."""
+        erg = getattr(self, "schwingung", None)
+        if erg is None or not getattr(erg, "moden", None):
+            return []
+        from .. import schwingung as swm
+        kw = erg.kennwerte or {}
+        b = [self._h(1, "Schwingungsnachweis des Verschlusses")]
+        b.append(("p", "Strömungsinduzierte Schwingungen nach Naudascher/Rockwell (Flow-Induced "
+                       "Vibrations) und DIN 19704-1: Das mitschwingende Wasser wird als hydrodynamische "
+                       "Masse nach Westergaard (m'' = 7/8·ρ·√(H·y), in Summe 7/12·ρ·H² je Breite) in "
+                       "Richtung der Flächennormalen auf die benetzten Flächen gelegt; damit werden die "
+                       "Eigenfrequenzen im Wasser gerechnet. Die Wirbelablösung an der Kante regt mit "
+                       "f_s = St·v/d an; im Band um f_s droht Resonanz. Die reduzierte Geschwindigkeit "
+                       "V_r = v/(f·d) grenzt ab, ob instabilitäts- oder bewegungsinduzierte "
+                       "Schwingungen (Kolkman) möglich sind. Die Antwort auf die Druckschwankung des "
+                       "Wasserdrucks folgt aus der Vergrößerungsfunktion V = 1/√((1−r²)² + (2ζr)²) "
+                       "und wird als Spannungsschwingbreite auf Ermüdung (EN 1993-1-9) geprüft."))
+        rows = [["Angabe", "Wert"],
+                ["Wasserdruck", erg.wasserdruck],
+                ["Strömung", (f"v = {erg.v:.2f} m/s"
+                              + (f" (Ausfluss v_a = {kw['v_a']:.2f} m/s)" if kw.get("v_a", 0) > 0 else "")
+                              + (f" (Überfall v_c = {kw['v_c']:.2f} m/s)" if kw.get("v_c", 0) > 0 else ""))
+                 if erg.v > 0 else "keine Durch-/Überströmung"],
+                ["Kantenbreite d", f"{erg.d * 1e3:.0f} mm"],
+                ["Strouhal-Zahl St / Wirbelablösung f_s", f"{erg.strouhal:g} / "
+                 + (f"{erg.f_s:.2f} Hz" if erg.f_s > 0 else "–")],
+                ["Dämpfungsgrad ζ", f"{erg.zeta:g}"],
+                ["Hydrodynamische Masse", (f"{erg.m_hydro:.0f} kg (Westergaard; Theorie "
+                                           f"{erg.m_hydro_theorie:.0f} kg), Haut {erg.m_struktur:.0f} kg")
+                 if erg.m_hydro > 0 else "nicht angesetzt"],
+                ["Grenze V_r / Resonanzband", f"{erg.vr_grenz:g} / ±{erg.band * 100:.0f} %"],
+                ["Ergebnis", erg.status]]
+        b.append(("table", rows, f"Schwingung {erg.name}: Angaben und Kennwerte", None, "compact"))
+        b.append(("table", erg.tabelle(), "Eigenfrequenzen in Luft und im Wasser, Beurteilung je Mode",
+                  None, "compact"))
+        d = erg.dyn or {}
+        if d:
+            rows = [["Größe", "Wert"],
+                    ["Druckschwankung Δp (Lastfall)", f"{d['dp'] / 1e3:.3f} kN/m² ({d['lastfall']})"],
+                    ["statische Amplitude σ_amp", f"{d['sigma_amp'] / 1e6:.1f} N/mm²"],
+                    ["r = f_s/f₁, Vergrößerung V", f"{d['r']:.2f}, {d['V']:.2f}"],
+                    ["σ_dyn = V·σ_amp, Δσ = 2·σ_dyn", f"{d['sigma_dyn'] / 1e6:.1f} N/mm², {d['delta_sigma'] / 1e6:.1f} N/mm²"],
+                    ["Verformungsamplitude", f"{d['u_dyn'] * 1e3:.2f} mm"]]
+            if "N" in d:
+                rows += [["Lastspiele N = f_s·t", f"{d['N']:.3g}"],
+                         ["Δσ_Ed = γ_Ff·Δσ, Kerbfall, γ_Mf", f"{d['delta_sigma_Ed'] / 1e6:.1f} N/mm², "
+                                                            f"{d['kerbfall']:g}, {d['gamma_Mf']:g}"],
+                         ["N_R, D = N/N_R", ("∞" if not np.isfinite(d["N_R"]) else f"{d['N_R']:.3g}")
+                          + f", {d['D']:.3f} " + ("≤ 1 erfüllt" if d["D"] <= 1 else "> 1 nicht erfüllt")]]
+            b.append(("table", rows, "Antwort auf die Druckschwankung und Ermüdung", None, "compact"))
+        for zeile in swm.erlaeuterung(erg):
+            b.append(("p", zeile))
+        if self.opt("figures"):
+            b.append(self._figure(swm.skizze_svg(erg),
+                                  f"Schwingung {erg.name}: Frequenzbild (Eigenfrequenzen, Wirbelablösung, "
+                                  "Grenze V_r) und hydrodynamische Masse"))
+        return b
+
     def chapter_theorie2(self) -> list:
         """Berechnung nach Theorie II. Ordnung und Ersatzimperfektionen."""
         t2 = self.theorie2
@@ -2400,6 +2709,10 @@ class Report:
             "Ausnutzung = D_σ + D_τ (sinngemäß Gl. 8.3); zusätzlich wird die schadensäquivalente "
             "Schwingbreite Δσ_E,2 bei 2·10⁶ Lastspielen ausgewiesen.",
         ]))
+        if getattr(m, "schweissnaehte", None):
+            b.append(("p", "Die Kerbfälle der Stäbe folgen aus den Schweißnähten des Modells "
+                           "(Kapitel System, „Schweißnähte und Kerbfälle“): je Stab der ungünstigste "
+                           "Kerbfall aller Nähte, die ihn betreffen."))
         b.append(self._h(2, "Übersicht"))
         rows = [["Stab", "Kerbfall Δσ_C [MPa]", "γ_Mf", "max Δσ [MPa]", "Δσ_E,2 [MPa]",
                  "D_σ (Miner)", "D_τ", "Ausnutzung", "maßgebende Ermüdungslast"]]

@@ -79,6 +79,14 @@ QTabBar::tab {{ background: transparent; color: {matt}; padding: 8px 12px;
     border-bottom: 2px solid transparent; font-weight: 600; }}
 QTabBar::tab:selected {{ color: {akzent}; border-bottom: 2px solid {akzent}; }}
 QTabBar::tab:hover {{ color: {text}; }}
+QTabBar#gruppenleiste {{ background: {grund}; border-bottom: 1px solid {linie}; }}
+QTabBar#gruppenleiste::tab {{ padding: 5px 14px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.4px; color: {matt};
+    border-bottom: 2px solid transparent; }}
+QTabBar#gruppenleiste::tab:selected {{ color: {akzent}; background: {flaeche};
+    border-bottom: 2px solid {akzent}; }}
+QTabWidget#tabellenregister::pane {{ border-top: 0; }}
+QTabWidget#tabellenregister QTabBar::tab {{ padding: 5px 11px; font-weight: 500; }}
 
 QGroupBox {{ background: {flaeche}; border: 1px solid {linie}; border-radius: 10px;
     margin-top: 12px; padding: 10px 10px 8px; font-weight: 600; }}
@@ -341,7 +349,17 @@ def _kurz(punkt) -> str:
 #: Wie viele Einzeleintraege ein Zweig hoechstens ausklappt. Darueber steht
 #: eine Sammelzeile; die vollstaendige Liste steht in der Tabelle unten, wo
 #: sie gefiltert und sortiert werden kann.
-BAUM_MAX = 60
+#: So viele Eintraege je Zweig - alle Knoten, Linien, Staebe, Flaechen und
+#: Volumen stehen numerisch untereinander; erst jenseits dieser Zahl kommt
+#: der Verweis auf die Tabelle.
+BAUM_MAX = 20000
+
+
+def _natuerlich(name) -> list:
+    """Sortierschluessel, der Zahlen als Zahlen liest: K2 vor K10, F9 vor F10."""
+    import re
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(name))]
+
 
 
 class Modellbaum(QtWidgets.QTreeWidget):
@@ -358,9 +376,31 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
     angeklickt = QtCore.Signal(str, str)      # (Art, Name)
     bearbeiten = QtCore.Signal(str, str)      # (Art, Name) - Doppelklick
+    neu = QtCore.Signal(str)                  # Zweigart: ein neues Objekt anlegen
+    loeschen = QtCore.Signal(str, str)        # (Art, Name): Objekt loeschen
+
+    #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst
+    NEU_ARTEN = {"querschnitte": "Querschnitt", "subsysteme": "Subsystem",
+                 "situationen": "Situation", "generierer": "Wasserdruck",
+                 "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
+                 "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
+                 "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht"}
+    #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
+    LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
+                    "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind",
+                    "schweissnaht"}
+    #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
+    ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
+                 "stab": "staebe", "geoflaeche": "geoflaechen",
+                 "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte",
+                 "subsystem": "subsysteme", "situation": "situationen",
+                 "wasserdruck": "generierer", "wind": "generierer",
+                 "schweissnaht": "schweissnaehte"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._menu)
         self.setHeaderHidden(True)
         self.setColumnCount(2)
         self.setRootIsDecorated(True)
@@ -382,10 +422,47 @@ class Modellbaum(QtWidgets.QTreeWidget):
         name = item.data(0, QtCore.Qt.UserRole + 1)
         return art, str(name if name is not None else item.text(0))
 
+    @staticmethod
+    def _ist_eintrag(item) -> bool:
+        """Ein Eintrag meint ein einzelnes Objekt (traegt einen Schluessel);
+        ein Zweig meint die Art."""
+        return item is not None and item.data(0, QtCore.Qt.UserRole + 1) is not None
+
     def _klick(self, item, _spalte):
         art, name = self._schluessel(item)
         if art:
             self.angeklickt.emit(art, name)
+
+    def _menu(self, pos):
+        """Rechtsklick: Neu am Zweig, Bearbeiten und Loeschen am Eintrag."""
+        item = self.itemAt(pos)
+        if item is None:
+            return
+        art, name = self._schluessel(item)
+        menu = QtWidgets.QMenu(self)
+        eintrag = self._ist_eintrag(item)
+        zweigart = self.ELTERNART.get(art, art) if eintrag else art
+        if zweigart in self.NEU_ARTEN:
+            a = menu.addAction(f"Neu: {self.NEU_ARTEN[zweigart]} …")
+            a.triggered.connect(lambda _c=False, z=zweigart: self.neu.emit(z))
+        if eintrag and art in self.LOESCH_ARTEN:
+            b = menu.addAction("Bearbeiten …")
+            b.triggered.connect(lambda _c=False: self.bearbeiten.emit(art, name))
+            menu.addSeparator()
+            d = menu.addAction("Löschen (Entf)")
+            d.triggered.connect(lambda _c=False: self.loeschen.emit(art, name))
+        if menu.actions():
+            menu.exec(self.viewport().mapToGlobal(pos))
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace):
+            item = self.currentItem()
+            if item is not None and self._ist_eintrag(item):
+                art, name = self._schluessel(item)
+                if art in self.LOESCH_ARTEN:
+                    self.loeschen.emit(art, name)
+                    return
+        super().keyPressEvent(ev)
 
     def _doppelklick(self, item, _spalte):
         art, name = self._schluessel(item)
@@ -445,69 +522,71 @@ class Modellbaum(QtWidgets.QTreeWidget):
         wurzel = self._zweig(self, model.name or "Modell", f"{model.nn} Kn",
                              "modell", fett=True)
 
-        # ---- Geometrie ---------------------------------------------------
-        geo = self._zweig(wurzel, "Geometrie", "", "modell", fett=True)
-        kn = self._zweig(geo, "Knoten", model.nn, "knoten")
+        # ---- Knoten, Linien, Staebe, Flaechen, Volumen ---------------------
+        # Je ein eigener Zweig, alle Eintraege numerisch untereinander - ohne
+        # Gruppen "Geometrie" und "Elemente" dazwischen. Unter "Staebe" stehen
+        # die Stabelemente und, als erster Eintrag, die Staebe mit Nachweis.
+        kn = self._zweig(wurzel, "Knoten", model.nn, "knoten", fett=True,
+                         hinweis="Klick wählt alle Knoten, ein Eintrag den einen. "
+                                 "Rechtsklick: Neu, Löschen.")
         self._liste(kn, [(f"K{i}", _kurz(model.nodes[i]), str(i),
                           "Knoten {}: x = {:.4f}  y = {:.4f}  z = {:.4f} m".format(
                               i, *model.nodes[i]))
                          for i in range(model.nn)], "knoten")
-        lin = self._zweig(geo, "Linien", len(model.lines), "linien")
+        lin = self._zweig(wurzel, "Linien", len(model.lines), "linien", fett=True)
         self._liste(lin, [(name, f"{ln.typ} · {len(ln.nodes)}", name,
                            f"{name}: {ln.typ} über {len(ln.nodes)} Knoten")
-                          for name, ln in model.lines.items()], "linie", "linien")
-        # Die Geometriekette: aus Linien Flaechen, aus Flaechen Volumen.
-        # Was noch kein Netz traegt, ist matt - so sieht man auf einen Blick,
-        # was noch gerechnet werden kann und was nicht.
+                          for name, ln in sorted(model.lines.items(),
+                                                 key=lambda kv: _natuerlich(kv[0]))],
+                    "linie", "linien")
+        stab_els = [(i, e) for i, e in enumerate(model.elements) if e.typ in ("beam", "truss")]
+        st = self._zweig(wurzel, "Stäbe", len(stab_els), "stabelemente", fett=True,
+                         hinweis="Stabelemente (Balken und Fachwerkstäbe); darunter "
+                                 "die Stäbe mit Nachweis")
+        mem = self._zweig(st, "Stäbe mit Nachweis", len(model.members), "staebe",
+                          hinweis="Physische Stäbe (Ketten von Stabelementen) für die "
+                                  "Nachweise nach EC3")
+        self._liste(mem, [(name, f"{len(mm.elements)} El", name,
+                           f"{name}: {len(mm.elements)} Elemente")
+                          for name, mm in sorted(model.members.items(),
+                                                 key=lambda kv: _natuerlich(kv[0]))],
+                    "stab", "staebe")
+        naehte = getattr(model, "schweissnaehte", {}) or {}
+        nz = self._zweig(st, "Schweißnähte", len(naehte), "schweissnaehte",
+                         farbe=FARBEN["akzent"] if naehte else None,
+                         hinweis="Nahtart, Lage und Ausführung → Kerbfall nach EN 1993-1-9; "
+                                 "„äquivalent“ = Ersatznaht für alle nicht einzeln "
+                                 "modellierten Nähte. Rechtsklick: Neu, Löschen.")
+        self._liste(nz, [(name, x.bezug(), name, f"Schweißnaht {name}: {x.bezug()}")
+                         for name, x in naehte.items()], "schweissnaht", "schweissnaehte")
+        self._zweig(nz, "+ Schweißnaht anlegen", "", "schweissnaht_neu", farbe=FARBEN["akzent"])
+        self._liste(st, [(f"E{i}", (e.sec or "") if e.typ == "beam" else f"Fachwerk {e.sec or ''}",
+                          str(i), "Element {}: {} K{}–K{}, {}, {}".format(
+                              i, "Balken" if e.typ == "beam" else "Fachwerkstab",
+                              e.nodes[0], e.nodes[-1], e.sec or "-", e.mat or "-"))
+                         for i, e in stab_els], "stabelement", "stabelemente")
         gf = getattr(model, "flaechen", {}) or {}
-        fl = self._zweig(geo, "Flächen", len(gf), "geoflaechen")
+        fl = self._zweig(wurzel, "Flächen", len(gf), "geoflaechen", fett=True)
+        n_schalen = sum(1 for e in model.elements if e.typ in ("shell3", "shell4"))
+        if n_schalen:
+            self._zweig(fl, "Flächenelemente", n_schalen, "flaechen",
+                        hinweis="Schalenelemente aller Flächen")
         self._liste(fl, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
                           f"{name}: {x.bezug()}"
                           + ("" if x.elemente else "\nnoch nicht vernetzt"))
-                         for name, x in gf.items()], "geoflaeche", "geoflaechen")
+                         for name, x in sorted(gf.items(), key=lambda kv: _natuerlich(kv[0]))],
+                    "geoflaeche", "geoflaechen")
         gk = getattr(model, "koerper", {}) or {}
-        vo = self._zweig(geo, "Volumenkörper", len(gk), "geokoerper")
+        vo = self._zweig(wurzel, "Volumen", len(gk), "geokoerper", fett=True)
+        n_vol = sum(1 for e in model.elements if e.typ in ("tet4", "tet10", "hex8"))
+        if n_vol:
+            self._zweig(vo, "Volumenelemente", n_vol, "volumen",
+                        hinweis="Volumenelemente (Tetraeder, Hexaeder) aller Körper")
         self._liste(vo, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
                           f"{name}: {x.bezug()}"
                           + ("" if x.elemente else "\nnoch nicht vernetzt"))
-                         for name, x in gk.items()], "geokoerper_einzeln", "geokoerper")
-
-        # ---- Elemente ----------------------------------------------------
-        arten: dict = {}
-        for e in model.elements:
-            arten[e.typ] = arten.get(e.typ, 0) + 1
-        el = self._zweig(wurzel, "Elemente", len(model.elements), "elemente", fett=True)
-        stab = sum(arten.get(k, 0) for k in ("beam", "truss"))
-        flae = sum(arten.get(k, 0) for k in ("shell3", "shell4"))
-        voll = sum(arten.get(k, 0) for k in ("tet4", "tet10", "hex8"))
-        if stab:
-            z = self._zweig(el, "Stäbe", stab, "stabelemente",
-                            hinweis="Balken- und Fachwerkelemente")
-            for k in ("beam", "truss"):
-                if arten.get(k):
-                    self._zweig(z, {"beam": "Balken", "truss": "Fachwerkstab"}[k],
-                                arten[k], "stabelemente", schluessel=k)
-        if flae:
-            z = self._zweig(el, "Flächen", flae, "flaechen",
-                            hinweis="Schalenelemente")
-            for k in ("shell3", "shell4"):
-                if arten.get(k):
-                    self._zweig(z, {"shell3": "Dreieck", "shell4": "Viereck"}[k],
-                                arten[k], "flaechen", schluessel=k)
-        if voll:
-            z = self._zweig(el, "Volumen", voll, "volumen",
-                            hinweis="Volumenelemente (Tetraeder, Hexaeder)")
-            for k in ("tet4", "tet10", "hex8"):
-                if arten.get(k):
-                    self._zweig(z, {"tet4": "Tetraeder (linear)",
-                                    "tet10": "Tetraeder (quadratisch)",
-                                    "hex8": "Hexaeder"}[k], arten[k], "volumen",
-                                schluessel=k)
-        if model.members:
-            mem = self._zweig(el, "Stäbe für Nachweise", len(model.members), "staebe")
-            self._liste(mem, [(name, getattr(mm, "section", "") or "", name,
-                               f"{name}: {len(mm.elements)} Elemente")
-                              for name, mm in model.members.items()], "stab", "staebe")
+                         for name, x in sorted(gk.items(), key=lambda kv: _natuerlich(kv[0]))],
+                    "geokoerper_einzeln", "geokoerper")
 
         # ---- Eigenschaften ----------------------------------------------
         eig = self._zweig(wurzel, "Eigenschaften", "", "modell", fett=True)
@@ -597,9 +676,12 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # ---- Einwirkungen -------------------------------------------------
         ew = self._zweig(wurzel, "Einwirkungen", "", "modell", fett=True)
         lf = self._zweig(ew, "Lastfälle", len(model.load_cases), "lastfaelle")
-        self._liste(lf, [(name, f"{lc.category} · {lc.n_loads}", name,
-                          f"{name}: {lc.description or lc.category}, "
-                          f"{lc.n_loads} Lasten")
+        self._liste(lf, [(name, f"{lc.category} · {lc.n_loads}"
+                          + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
+                          + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
+                          name, f"{name}: {lc.description or lc.category}, "
+                          f"{lc.n_loads} Lasten"
+                          + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
                          for name, lc in model.load_cases.items()], "lastfall",
                     "lastfaelle")
         n_lasten = sum(lc.n_loads for lc in model.load_cases.values())
@@ -610,9 +692,27 @@ class Modellbaum(QtWidgets.QTreeWidget):
             if lc.n_loads:
                 self._zweig(la, name, lc.n_loads, "last", schluessel=name)
         kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
-        self._liste(kb, [(name, getattr(c, "kind", "") or "", name, name)
+        self._liste(kb, [(name, " · ".join(x for x in (getattr(c, "situation", "") or "",
+                                                       (f"{c.theorie.upper()}. O."
+                                                        if getattr(c, "theorie", "") else "")) if x),
+                          name,
+                          name + (f": Situation {c.situation}" if getattr(c, "situation", "") else ""))
                          for name, c in model.combinations.items()], "kombination",
                     "kombinationen")
+
+        # ---- Lastgenerierer -------------------------------------------------
+        wds = getattr(model, "wasserdruecke", {}) or {}
+        winde = getattr(model, "winde", {}) or {}
+        lg = self._zweig(ew, "Lastgenerierer", len(wds) + len(winde), "generierer",
+                         fett=bool(wds or winde), farbe=FARBEN["akzent"] if (wds or winde) else None,
+                         hinweis="Wasserdruck (statisch, überströmt, unterströmt) und Wind "
+                                 "(DIN EN 1991-1-4) je Situation")
+        self._liste(lg, [(name, x.bezug(), name, f"Wasserdruck {name}: {x.bezug()}")
+                         for name, x in wds.items()], "wasserdruck", "generierer")
+        self._liste(lg, [(name, x.bezug(), name, f"Wind {name}: {x.bezug()}")
+                         for name, x in winde.items()], "wind", "generierer")
+        self._zweig(lg, "+ Wasserdruck anlegen", "", "wasserdruck_neu", farbe=FARBEN["akzent"])
+        self._zweig(lg, "+ Wind anlegen", "", "wind_neu", farbe=FARBEN["akzent"])
 
         # ---- Ergebnisse -------------------------------------------------
         # Ergebnisse gehoeren in denselben Baum wie das Modell: was gerechnet
@@ -665,6 +765,31 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     farbe=FARBEN["akzent"])
         st.setExpanded(True)
 
+        # ---- Subsysteme und Situationen ------------------------------------
+        # Das Gesamtsystem und die Grundstellung sind immer da; alles weitere
+        # legt der Anwender an (Rechtsklick: Neu, oder der Eintrag "+ …").
+        from ..model import GRUNDSTELLUNG, GESAMTSYSTEM
+        subs = getattr(model, "subsysteme", {}) or {}
+        sz = self._zweig(wurzel, "Subsysteme", 1 + len(subs), "subsysteme", fett=bool(subs),
+                         farbe=FARBEN["akzent"] if subs else None,
+                         hinweis="Teile des Tragwerks mit allem, was dazugehört; "
+                                 "Berührungselemente gehören beiden")
+        self._zweig(sz, GESAMTSYSTEM, f"{len(model.elements)} El", "subsystem",
+                    schluessel=GESAMTSYSTEM, hinweis="die ganze Struktur")
+        self._liste(sz, [(name, f"{len(s.elemente)} El", name, f"{name}: {s.bezug()}")
+                         for name, s in subs.items()], "subsystem", "subsysteme")
+        self._zweig(sz, "+ Subsystem anlegen", "", "subsystem_neu", farbe=FARBEN["akzent"])
+        sits = getattr(model, "situationen", {}) or {}
+        siz = self._zweig(wurzel, "Situationen", 1 + len(sits), "situationen",
+                          fett=bool(sits), farbe=FARBEN["akzent"] if sits else None,
+                          hinweis="Stellung und wirksame Elemente; Lastfälle und "
+                                  "Kombinationen nennen ihre Situation")
+        self._zweig(siz, GRUNDSTELLUNG, "alles aktiv", "situation", schluessel=GRUNDSTELLUNG,
+                    hinweis="unbewegt, alle Elemente wirken")
+        self._liste(siz, [(name, s.bezug(), name, f"{name}: {s.bezug()}")
+                          for name, s in sits.items()], "situation", "situationen")
+        self._zweig(siz, "+ Situation anlegen", "", "situation_neu", farbe=FARBEN["akzent"])
+
         # ---- Nachweisobjekte -------------------------------------------------
         # Anschluesse gehoeren zum Modell und stehen darum hier - der Zweig
         # traegt wie bei den Stellungen die Schaltflaeche zum Anlegen.
@@ -706,6 +831,156 @@ class Modellbaum(QtWidgets.QTreeWidget):
                              for name, x in stellen.items()], "lasteinleitung_einzeln",
                         "lasteinleitung")
         wurzel.setExpanded(offen.get(wurzel.text(0), True))
-        for zweig, vorgabe in ((geo, False), (el, True), (eig, False), (lg, True),
-                               (ew, False)):
+        for zweig, vorgabe in ((kn, False), (lin, False), (st, False), (fl, False),
+                               (vo, False), (eig, False), (lg, True), (ew, False)):
             zweig.setExpanded(offen.get(zweig.text(0), vorgabe))
+
+
+# ==========================================================================
+# Tabellenbereich unten: Gruppen, darunter die Tabellen
+# ==========================================================================
+class Tabellenbereich(QtWidgets.QWidget):
+    """Der untere Bereich in zwei Ebenen: **Gruppe → Tabelle**.
+
+    27 Register nebeneinander liest niemand mehr. Oben steht darum eine
+    schmale Leiste mit den Gruppen (Protokoll, Modell, Eigenschaften, Lager,
+    Lasten, Ergebnisse, Nachweise, Bericht), darunter die Tabellen der
+    gewaehlten Gruppe als Register. Eine Gruppe mit nur einer Tabelle zeigt
+    keine zweite Leiste.
+
+    Nach aussen verhaelt sich der Bereich wie ein flaches ``QTabWidget``
+    (``count``, ``tabText``, ``setCurrentIndex``, ``currentIndex``,
+    ``currentWidget``, ``addTab``): wer eine Tabelle nach vorn holt, muss
+    ihre Gruppe nicht kennen. Die Reihenfolge innerhalb einer Gruppe ist die
+    der Vorgabe, nicht die des Anlegens.
+    """
+
+    #: Gruppe fuer Tabellen, die keiner Gruppe zugeordnet sind
+    SONST = "Weitere"
+
+    def __init__(self, gruppen, parent=None):
+        super().__init__(parent)
+        self.gruppen: list[tuple[str, list[str]]] = [(g, list(n)) for g, n in gruppen]
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self.leiste = QtWidgets.QTabBar(self)
+        self.leiste.setObjectName("gruppenleiste")
+        self.leiste.setExpanding(False)
+        self.leiste.setDrawBase(False)
+        self.leiste.setUsesScrollButtons(True)
+        self.leiste.setElideMode(QtCore.Qt.ElideNone)
+        self.stapel = QtWidgets.QStackedWidget(self)
+        self.seiten: dict[str, QtWidgets.QTabWidget] = {}
+        for g, _ in self.gruppen:
+            self._gruppe_anlegen(g)
+        self.leiste.currentChanged.connect(self.stapel.setCurrentIndex)
+        lay.addWidget(self.leiste)
+        lay.addWidget(self.stapel, 1)
+
+    # ---- Aufbau ----------------------------------------------------------
+    def _gruppe_anlegen(self, g: str) -> QtWidgets.QTabWidget:
+        seite = QtWidgets.QTabWidget(self.stapel)
+        seite.setObjectName("tabellenregister")
+        seite.setUsesScrollButtons(True)
+        seite.tabBar().setExpanding(False)
+        seite.tabBar().setElideMode(QtCore.Qt.ElideNone)
+        seite.tabBar().setVisible(False)
+        self.seiten[g] = seite
+        self.stapel.addWidget(seite)
+        self.leiste.addTab(g)
+        return seite
+
+    def gruppe_von(self, name: str) -> str:
+        for g, namen in self.gruppen:
+            if name in namen:
+                return g
+        return self.SONST
+
+    def gruppennamen(self) -> list[str]:
+        return [self.leiste.tabText(i) for i in range(self.leiste.count())]
+
+    def tabellen(self, gruppe: str) -> list[str]:
+        seite = self.seiten.get(gruppe)
+        return [seite.tabText(i) for i in range(seite.count())] if seite else []
+
+    def addTab(self, w: QtWidgets.QWidget, name: str) -> int:
+        g = self.gruppe_von(name)
+        seite = self.seiten.get(g)
+        if seite is None:
+            self.gruppen.append((g, []))
+            seite = self._gruppe_anlegen(g)
+        folge = dict(self.gruppen).get(g, [])
+        rang = folge.index(name) if name in folge else len(folge)
+        pos = 0
+        for i in range(seite.count()):
+            t = seite.tabText(i)
+            if (folge.index(t) if t in folge else len(folge)) <= rang:
+                pos = i + 1
+        seite.insertTab(pos, w, name)
+        seite.tabBar().setVisible(seite.count() > 1)
+        return self.indexOf(w)
+
+    # ---- flache Sicht (wie ein QTabWidget) ---------------------------------
+    def _eintraege(self) -> list[tuple[str, QtWidgets.QWidget, str, int]]:
+        out = []
+        for i in range(self.leiste.count()):
+            g = self.leiste.tabText(i)
+            seite = self.seiten[g]
+            for j in range(seite.count()):
+                out.append((seite.tabText(j), seite.widget(j), g, j))
+        return out
+
+    def count(self) -> int:
+        return len(self._eintraege())
+
+    def tabText(self, k: int) -> str:
+        e = self._eintraege()
+        return e[k][0] if 0 <= k < len(e) else ""
+
+    def widget(self, k: int):
+        e = self._eintraege()
+        return e[k][1] if 0 <= k < len(e) else None
+
+    def indexOf(self, w) -> int:
+        for k, (_n, wi, _g, _j) in enumerate(self._eintraege()):
+            if wi is w:
+                return k
+        return -1
+
+    def currentIndex(self) -> int:
+        g = self.leiste.tabText(self.leiste.currentIndex())
+        seite = self.seiten.get(g)
+        if seite is None:
+            return -1
+        j = seite.currentIndex()
+        for k, (_n, _w, gr, jj) in enumerate(self._eintraege()):
+            if gr == g and jj == j:
+                return k
+        return -1
+
+    def currentWidget(self):
+        seite = self.stapel.currentWidget()
+        return seite.currentWidget() if isinstance(seite, QtWidgets.QTabWidget) else None
+
+    def currentGroup(self) -> str:
+        return self.leiste.tabText(self.leiste.currentIndex())
+
+    def setCurrentIndex(self, k: int):
+        e = self._eintraege()
+        if not 0 <= k < len(e):
+            return
+        _name, _w, g, j = e[k]
+        self.leiste.setCurrentIndex(self.gruppennamen().index(g))
+        self.seiten[g].setCurrentIndex(j)
+
+    def zeigen(self, name: str) -> bool:
+        """Die Tabelle mit diesem Namen nach vorn holen (Gruppe folgt)."""
+        for k, (n, _w, _g, _j) in enumerate(self._eintraege()):
+            if n == name:
+                self.setCurrentIndex(k)
+                return True
+        return False
+
+    def tabBar(self) -> QtWidgets.QTabBar:
+        return self.leiste
