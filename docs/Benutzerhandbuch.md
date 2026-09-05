@@ -95,8 +95,12 @@ Die Arbeitsfläche in drei Spalten:
 
   | Zweig | Inhalt |
   |---|---|
-  | Geometrie | Knoten (mit Koordinaten), Linien, **Flächen**, **Volumenkörper** |
-  | Elemente | Stäbe, Flächen, Volumen — je nach Elementart, dazu die Stäbe für die Nachweise |
+  | *Wurzel* (Modellname) | ein Klick zeigt rechts die **Angaben zum Modell**: Anzahl Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lastfälle und die Abmessungen |
+  | Knoten | alle Knoten **numerisch untereinander** (K0, K1, …) mit Koordinaten |
+  | Linien | alle Linien, natürlich sortiert (L1, L2, … L10) |
+  | Stäbe | zuerst der Zweig **Stäbe mit Nachweis**, darunter alle Stabelemente E0, E1, … |
+  | Flächen | die Flächenobjekte, darunter der Zweig „Flächenelemente“ |
+  | Volumen | die Volumenkörper, darunter der Zweig „Volumenelemente“ |
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden |
@@ -108,14 +112,32 @@ Die Arbeitsfläche in drei Spalten:
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
   | **Bericht** | die aus der Ansicht übernommenen Ergebnisbilder |
 
-  **Ein Klick** wählt aus: der Zweig holt seine Tabelle nach vorn, öffnet
-  rechts die Maske, die dazu gehört, und lässt das Objekt in der Ansicht
-  **aufleuchten**. **Ein Doppelklick bearbeitet**: er öffnet die
-  Maske des Objekts (Knotenkoordinaten, Linie, Querschnitt, Werkstoff, Dicke,
-  Lager, Gelenk, Lastfall, Kombination …). Ein Doppelklick auf den
-  Sammelzweig — „Werkstoffe“, „Gelenke“, „Linien“ — legt ein **neues** Objekt an.
-  Zweige mit vielen Einträgen zeigen die ersten 60 und verweisen für den Rest
-  auf die Tabelle unten, wo gefiltert werden kann.
+  **Ein Klick wählt aus** — links im Baum, gleichzeitig in der Ansicht: der
+  Zweig „Knoten“ wählt **alle** Knoten, der Eintrag „K3“ nur diesen; ebenso
+  bei Linien, Stäben, Flächen und Volumen. Die Auswahlart springt mit um.
+  Rechts folgt die Anzeige: beim Zweig eine Info mit **Anzahl** und
+  **kleinster und größter Nummer**, beim Einzelobjekt seine Felder
+  **editierbar** — Nummer und Koordinaten des Knotens, Name und Knoten der
+  Linie, Querschnitt und Werkstoff des Stabs, Linien der Fläche, Flächen des
+  Volumens. Eine andere Knotennummer tauscht die beiden Knoten, ein anderer
+  Name benennt das Objekt samt aller Verweise um.
+
+  **Rechtsklick → Neu** legt am Zweig ein neues Objekt mit der **nächsten
+  fortlaufenden Nummer** an (K17, L8, S3, F5, V2); rechts erscheint seine
+  Maske mit **OK** und **Abbrechen**. Ein Knoten steht sofort im Modell (bei
+  Nullpunkt, bis man Koordinaten eingibt; Abbrechen nimmt ihn zurück), alles
+  andere entsteht erst mit OK.
+
+  **Löschen**: Rechtsklick → „Löschen“ oder den Eintrag anklicken und
+  **Entf** drücken. Das Programm fragt nach. Ein Knoten, an dem noch etwas
+  hängt, wird mit Grund abgewiesen; eine Fläche oder ein Volumen nimmt seine
+  Elemente mit, ein Stab mit Nachweis lässt seine Elemente stehen. Wie alles
+  ist auch das Löschen mit **Rückgängig** zurückzunehmen.
+
+  **Ein Doppelklick bearbeitet** die übrigen Objekte in ihrer Maske
+  (Querschnitt, Werkstoff, Dicke, Lager, Gelenk, Lastfall, Kombination …).
+  Zweige mit sehr vielen Einträgen zeigen die ersten 20 000 und verweisen für
+  den Rest auf die Tabelle unten, wo gefiltert werden kann.
   Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
   Zweiges; die maßgebende trägt ★.
 * **in der Mitte die 3D-Ansicht** — frei für die Grafik.
@@ -332,8 +354,8 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Sicht | Nur Auswahl zeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen |
-| Fang | Fang ein/aus, dann je Art: Knoten, Linie, Stab, Fläche, Volumen |
-| Auswahlart | was ein Klick trifft: Knoten, Linie, Fläche, Volumen, Stab |
+| Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Ansicht → Fang*) |
+| Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente) — genau einer ist gedrückt |
 
 Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen, Sicht, Fang*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
@@ -390,6 +412,22 @@ Menü mit „Größe dieses Lagers…", „Größe aller Lager…", „Lager bea
 
 ### Tabellen: filtern, sortieren, ausgeben
 
+Der Bereich unten ist in **zwei Ebenen** gegliedert: oben die Gruppe, darunter
+ihre Tabellen als Register. Eine Gruppe mit nur einer Tabelle (Protokoll,
+Bericht) zeigt keine zweite Leiste. Ein Klick im Modellbaum holt die
+passende Tabelle nach vorn — samt ihrer Gruppe.
+
+| Gruppe | Tabellen |
+|---|---|
+| Protokoll | das Protokoll der Berechnung und der Modellprüfung |
+| Modell | Knoten, Linien, Flächen, Volumenkörper, Elemente |
+| Eigenschaften | Werkstoffe, Querschnitte, Dicken |
+| Lager | Lager, Gelenke, Kontaktbedingungen |
+| Lasten | Lastfälle, Lasten, Kombinationen |
+| Ergebnisse | Stabkräfte, Auflagerkräfte, Umhüllende, Kontakt |
+| Nachweise | Nachweise EC3, Ermüdung, Anschlüsse, Verformungen, Beulfelder, Volumen, Lasteinleitung |
+| Bericht | die Einträge des Berichts |
+
 Jede Tabelle unten hat über der Kopfzeile eine **Filterzeile** — ein Feld je
 Spalte. Was dort steht, gilt sofort; mehrere Felder wirken zusammen (und, nicht
 oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist.
@@ -441,8 +479,24 @@ Ein Klick trifft, was gezeichnet ist: Stäbe auch auf ihrem Körper, Flächen
 auch auf einem Zylindermantel, Volumen auf ihrer Oberfläche (Zellenpicker
 der Grafik, in Millisekunden). Erst wenn dort nichts liegt, sucht das
 Programm geometrisch in der Nähe des Klicks. Was ein Klick trifft, sagt die
-**Auswahlart** im Register *Start*; der Modellbaum stellt sie beim Anklicken
-eines Zweigs passend um.
+**Auswahlart** — die Knöpfe in der Glasleiste oder das Feld im Register
+*Start*; der Modellbaum stellt sie beim Anklicken eines Zweigs passend um.
+Mit der Auswahlart **Netz** trifft ein Klick ein einzelnes Element des
+FE-Netzes (Stab-, Flächen- oder Volumenelement); die gewählten Elemente
+leuchten in der Ansicht.
+
+**Auswahlfenster.** Ein Klick mit der **linken** Maustaste ins Leere setzt
+die erste Ecke, ein Klick mit der **rechten** Maustaste die zweite; dazwischen
+zeigt ein durchscheinendes Rechteck, was das Fenster fassen wird.
+
+| aufgezogen | Rechteck | gewählt wird |
+|---|---|---|
+| von **links nach rechts** | blau, durchgezogen | nur, was **ganz** im Fenster liegt |
+| von **rechts nach links** | grün, gestrichelt | alles im Fenster **und** alles, was das Fenster nur **anschneidet** |
+
+Gefasst wird, was die Auswahlart sagt: Knoten, Linien, Stäbe, Flächen,
+Volumen oder Elemente des Netzes. Das Fenster ergänzt die vorhandene
+Auswahl; **Esc** bricht es ab, *Auswahl aufheben* leert alles.
 
 ### Maske oder Klick
 

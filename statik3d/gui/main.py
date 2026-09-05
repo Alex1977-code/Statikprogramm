@@ -68,6 +68,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sel_flaechen: list[str] = []
         self.sel_koerper: list[str] = []
         self.sel_staebe: list[str] = []
+        #: Auswahlart "Netz": einzelne Elemente des Netzes
+        self.sel_elemente: list[int] = []
+        #: Fensterauswahl: erste Ecke (Qt-Bildpunkte) oder None
+        self._fenster_ecke = None
+        self._letzter_klick = None
         #: Elemente, die aus dem Modellbaum heraus aufleuchten
         self.leuchtet: list[int] = []
         #: Sicht: was ausgeblendet ist - Elemente (Nummern), Linien, Flaechen
@@ -214,10 +219,26 @@ class MainWindow(QtWidgets.QMainWindow):
         damit VTK nicht ein zweites Mal zoomt).
         """
         try:
-            if (obj is self.plotter.interactor
-                    and ereignis.type() == QtCore.QEvent.Wheel):
-                self._rad(ereignis)
-                return True
+            if obj is self.plotter.interactor:
+                t = ereignis.type()
+                if t == QtCore.QEvent.Wheel:
+                    self._rad(ereignis)
+                    return True
+                if t == QtCore.QEvent.MouseButtonPress:
+                    pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+                    if ereignis.button() == QtCore.Qt.LeftButton:
+                        self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
+                    elif ereignis.button() == QtCore.Qt.RightButton and self._fenster_ecke is not None:
+                        self._fenster_abschliessen(pos)
+                        return True
+                elif t == QtCore.QEvent.MouseMove and self._fenster_ecke is not None:
+                    pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+                    self._fenster_nachziehen(pos)
+                elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
+                        and self._fenster_ecke is not None:
+                    self._fenster_abbrechen()
+                    self.statusBar().showMessage("Auswahlfenster abgebrochen", 3000)
+                    return True
         except Exception:                   # noqa: BLE001
             return False
         return super().eventFilter(obj, ereignis)
@@ -345,6 +366,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _viewport_menu(self, pos):
         """Rechtsklick im Viewport: was unter dem Zeiger liegt, steht oben."""
+        if self._fenster_ecke is not None:
+            # der Rechtsklick war die zweite Ecke des Auswahlfensters
+            self._fenster_abschliessen(pos)
+            return
         m = self.model
         punkt = self._weltpunkt(pos.x(), pos.y())
         idx = vp.support_at(m, punkt, m.characteristic_size(), self.lagergroesse) \
@@ -438,7 +463,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.maske_zeigen("Lager/Lasten")
         self.redraw()
 
-    AUSWAHLARTEN = ["Knoten", "Linie", "Fläche", "Volumen", "Stab"]
+    AUSWAHLARTEN = ["Knoten", "Linie", "Stab", "Fläche", "Volumen", "Netz"]
+    #: Symbol je Auswahlart (die Fangringe: "das trifft der Klick")
+    AUSWAHLART_SYMBOL = {"Knoten": "fang_knoten", "Linie": "fang_linie", "Stab": "fang_stab",
+                         "Fläche": "fang_flaeche", "Volumen": "fang_volumen", "Netz": "fang_netz"}
+    AUSWAHLART_HINWEIS = {"Knoten": "Klick trifft Knoten", "Linie": "Klick trifft Linien",
+                          "Stab": "Klick trifft Stäbe (mit Nachweis)",
+                          "Fläche": "Klick trifft Flächen", "Volumen": "Klick trifft Volumen",
+                          "Netz": "Klick trifft Elemente des Netzes"}
 
     def auswahlart_setzen(self, art: str):
         """Umschalten, was ein Klick in der Ansicht trifft."""
@@ -451,7 +483,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 feld.blockSignals(True)
                 feld.setCurrentText(art)
                 feld.blockSignals(False)
-        self.statusBar().showMessage(f"Auswahl: {art}", 3000)
+        for name, a in (getattr(self, "act_auswahlart", None) or {}).items():
+            if a.isChecked() != (name == art):
+                a.blockSignals(True)
+                a.setChecked(name == art)
+                a.blockSignals(False)
+        self.statusBar().showMessage(f"Auswahl: {art} - {self.AUSWAHLART_HINWEIS.get(art, '')}", 3000)
 
     def _objekt_umschalten(self, liste: list, name: str, was: str):
         """Ein Objekt der Auswahl zufuegen oder herausnehmen."""
@@ -754,6 +791,220 @@ class MainWindow(QtWidgets.QMainWindow):
             return zu["koerper"].get(elem)
         return None
 
+    def _element_am_zeiger(self):
+        """Nummer des Elements unter dem Zeiger (Zellenpicker) - oder None."""
+        treffer = self._zellentreffer()
+        if treffer is None:
+            return None
+        name, zelle, _punkt, daten = treffer
+        if name == "geo_flaechen":
+            return None
+        el = daten.cell_data.get("elem")
+        if el is None or zelle >= len(el):
+            return None
+        return int(el[zelle])
+
+    # ---- Fensterauswahl -------------------------------------------------
+    def _zeiger_qt(self):
+        """Mausposition in Qt-Bildpunkten der Ansicht (y von oben) - oder None."""
+        try:
+            w = self.plotter.interactor
+            return w.mapFromGlobal(QtGui.QCursor.pos())
+        except Exception:                   # noqa: BLE001
+            return None
+
+    def _fenster_beginnen(self, pos=None):
+        """Erste Ecke des Auswahlfensters (Linksklick ins Leere)."""
+        pos = pos if pos is not None else (self._letzter_klick or self._zeiger_qt())
+        if pos is None:
+            return
+        self._fenster_ecke = QtCore.QPoint(int(pos.x()), int(pos.y()))
+        band = getattr(self, "_gummiband", None)
+        if band is None:
+            band = msk.Gummiband(self.plotter.interactor)
+            self._gummiband = band
+        band.setzen(self._fenster_ecke, self._fenster_ecke, False)
+        band.show()
+        band.raise_()
+        self.statusBar().showMessage(
+            "Auswahlfenster: zweite Ecke mit der rechten Maustaste - links nach rechts "
+            "nur ganz im Fenster, rechts nach links auch angeschnittene. Esc bricht ab.", 8000)
+
+    def _fenster_nachziehen(self, pos):
+        if self._fenster_ecke is None or getattr(self, "_gummiband", None) is None:
+            return
+        p2 = QtCore.QPoint(int(pos.x()), int(pos.y()))
+        self._gummiband.setzen(self._fenster_ecke, p2, p2.x() < self._fenster_ecke.x())
+
+    def _fenster_abbrechen(self):
+        self._fenster_ecke = None
+        band = getattr(self, "_gummiband", None)
+        if band is not None:
+            band.hide()
+
+    def _fenster_abschliessen(self, pos):
+        """Zweite Ecke (Rechtsklick): auswaehlen, was im Fenster liegt.
+
+        Von links nach rechts aufgezogen zaehlt nur, was ganz im Fenster
+        liegt; von rechts nach links auch alles, was das Fenster anschneidet.
+        """
+        if self._fenster_ecke is None:
+            return False
+        p1 = self._fenster_ecke
+        p2 = QtCore.QPoint(int(pos.x()), int(pos.y()))
+        kreuzend = p2.x() < p1.x()
+        self._fenster_abbrechen()
+        try:
+            h = self.plotter.render_window.GetSize()[1]
+        except Exception:                   # noqa: BLE001
+            h = self.plotter.interactor.height()
+        # Qt zaehlt die Zeilen von oben, VTK von unten
+        x1, x2 = sorted((p1.x(), p2.x()))
+        y1, y2 = sorted((h - 1 - p1.y(), h - 1 - p2.y()))
+        if x2 - x1 < 2 or y2 - y1 < 2:
+            return False
+        n = self._fenster_auswaehlen((x1, y1, x2, y2), kreuzend)
+        self.info(f"Fensterauswahl ({'auch angeschnittene' if kreuzend else 'nur ganz im Fenster'}): "
+                  f"{n} {self.auswahlart}")
+        self._auswahl_register()
+        self.redraw()
+        return True
+
+    @staticmethod
+    def _im_rechteck(xy, rect):
+        x1, y1, x2, y2 = rect
+        return (xy[:, 0] >= x1) & (xy[:, 0] <= x2) & (xy[:, 1] >= y1) & (xy[:, 1] <= y2)
+
+    @staticmethod
+    def _strecken_schneiden(a, b, rect):
+        """Liang-Barsky: schneidet die Strecke a-b (Bildpunkte) das Rechteck?"""
+        x1, y1, x2, y2 = rect
+        a = np.atleast_2d(np.asarray(a, float))
+        b = np.atleast_2d(np.asarray(b, float))
+        d = b - a
+        t0 = np.zeros(len(a))
+        t1 = np.ones(len(a))
+        ok = np.ones(len(a), bool)
+        for p, q in ((-d[:, 0], a[:, 0] - x1), (d[:, 0], x2 - a[:, 0]),
+                     (-d[:, 1], a[:, 1] - y1), (d[:, 1], y2 - a[:, 1])):
+            parallel = np.abs(p) < 1e-12
+            ok &= ~(parallel & (q < 0))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                r = np.where(parallel, 0.0, q / np.where(parallel, 1.0, p))
+            ein = (~parallel) & (p < 0)
+            aus = (~parallel) & (p > 0)
+            t0 = np.where(ein, np.maximum(t0, r), t0)
+            t1 = np.where(aus, np.minimum(t1, r), t1)
+        return ok & (t0 <= t1)
+
+    def _fenster_auswaehlen(self, rect, kreuzend: bool) -> int:
+        """Alles der Auswahlart im Fenster zur Auswahl nehmen; Rueckgabe: Zahl."""
+        m = self.model
+        art = self.auswahlart
+
+        def strecken_treffen(A, B):
+            """Je Strecke: ganz drin (Fenster) oder drin/angeschnitten (kreuzend)."""
+            a, sa = self._projizieren(A)
+            b, sb = self._projizieren(B)
+            drin = self._im_rechteck(a, rect) & self._im_rechteck(b, rect) & sa & sb
+            if not kreuzend:
+                return drin
+            return drin | ((sa | sb) & self._strecken_schneiden(a, b, rect))
+
+        def zug_trifft(P):
+            """Ein Punktzug (Ring, Linie): alle drin oder einer drin/angeschnitten."""
+            P = np.atleast_2d(np.asarray(P, float))
+            xy, sichtbar = self._projizieren(P)
+            drin = self._im_rechteck(xy, rect) & sichtbar
+            if not kreuzend:
+                return bool(len(P)) and bool(drin.all())
+            if drin.any():
+                return True
+            if len(P) > 1:
+                return bool(self._strecken_schneiden(xy[:-1], xy[1:], rect).any())
+            return False
+
+        if art == "Knoten":
+            if not m.nn:
+                return 0
+            xy, sichtbar = self._projizieren(m.nodes)
+            treffer = np.where(self._im_rechteck(xy, rect) & sichtbar)[0]
+            self.selection = np.array(sorted(set(self.selection.tolist()) | set(treffer.tolist())), dtype=int)
+            return int(len(treffer))
+        if art == "Linie":
+            A, B, namen = self._linienstrecken()
+            if not len(A):
+                return 0
+            treffer = strecken_treffen(A, B)
+            je_linie: dict = {}
+            for t, name in zip(treffer, namen):
+                je_linie.setdefault(name, []).append(bool(t))
+            gewaehlt = [n for n, ts in je_linie.items() if (any(ts) if kreuzend else all(ts))]
+            for n in gewaehlt:
+                if n not in self.sel_linien:
+                    self.sel_linien.append(n)
+            return len(gewaehlt)
+        if art == "Stab":
+            n = 0
+            for name, mem in m.members.items():
+                els = [int(e) for e in (mem.elements or []) if 0 <= int(e) < len(m.elements)]
+                if not els:
+                    continue
+                A = m.nodes[[int(m.elements[e].nodes[0]) for e in els]]
+                B = m.nodes[[int(m.elements[e].nodes[-1]) for e in els]]
+                t = strecken_treffen(A, B)
+                if (t.any() if kreuzend else t.all()):
+                    if name not in self.sel_staebe:
+                        self.sel_staebe.append(name)
+                    n += 1
+            return n
+        if art in ("Fläche", "Volumen"):
+            raender = self._raender()
+            n = 0
+            if art == "Fläche":
+                for name in m.flaechen:
+                    P = raender.get(name)
+                    if P is None or len(P) < 3:
+                        continue
+                    if zug_trifft(np.vstack([P, P[:1]])):
+                        if name not in self.sel_flaechen:
+                            self.sel_flaechen.append(name)
+                        n += 1
+            else:
+                for name, k in m.koerper.items():
+                    ringe = [raender.get(fn) for fn in k.flaechen if raender.get(fn) is not None
+                             and len(raender.get(fn)) >= 3]
+                    if not ringe:
+                        continue
+                    trifft = [zug_trifft(np.vstack([P, P[:1]])) for P in ringe]
+                    if (any(trifft) if kreuzend else all(trifft)):
+                        if name not in self.sel_koerper:
+                            self.sel_koerper.append(name)
+                        n += 1
+            return n
+        if art == "Netz":
+            if not len(m.elements):
+                return 0
+            xy, sichtbar = self._projizieren(m.nodes)
+            drin = self._im_rechteck(xy, rect) & sichtbar
+            n = 0
+            for i, e in enumerate(m.elements):
+                idx = [int(x) for x in e.nodes]
+                if kreuzend:
+                    ok = bool(drin[idx].any())
+                    if not ok and len(idx) > 1:
+                        a = xy[idx]
+                        b = xy[idx[1:] + idx[:1]]
+                        ok = bool(self._strecken_schneiden(a, b, rect).any())
+                else:
+                    ok = bool(drin[idx].all())
+                if ok:
+                    if i not in self.sel_elemente:
+                        self.sel_elemente.append(i)
+                    n += 1
+            return n
+        return 0
+
     def _oberflaechenfang(self, arten):
         """Der Punkt auf einer Flaeche oder einem Volumen unter dem Zeiger.
 
@@ -832,35 +1083,44 @@ class MainWindow(QtWidgets.QMainWindow):
         return self.arbeitsebene.schnitt(punkte[0], richtung)
 
     def _picked(self, point, *args):
+        # Ein laufendes Auswahlfenster: der Linksklick setzt die Ecke neu
+        if self._fenster_ecke is not None:
+            return self._fenster_beginnen()
         art = getattr(self, "auswahlart", "Knoten")
         if art != "Knoten":
             m = self.model
             size = m.characteristic_size()
+            if art == "Netz":
+                elem = self._element_am_zeiger()
+                if elem is None:
+                    return self._fenster_beginnen()
+                return self._objekt_umschalten(self.sel_elemente, int(elem), "Elemente")
             if art == "Linie":
                 name = self._linie_am_zeiger() or vp.line_at(m, point, size)
                 return self._objekt_umschalten(self.sel_linien, name, "Linien") \
-                    if name else self.info("Dort liegt keine Linie")
+                    if name else self._fenster_beginnen()
             # Erst das, was gezeichnet ist (Zellenpicker) - das trifft auch
             # Zylindermaentel und Stabkoerper; die geometrische Suche ist der
             # Rueckfall, wenn der Klick knapp danebenliegt.
             if art == "Fläche":
                 name = self._objekt_am_zeiger("Fläche") or vp.flaeche_at(m, point, size)
                 return self._objekt_umschalten(self.sel_flaechen, name, "Flächen") \
-                    if name else self.info("Dort liegt keine Fläche")
+                    if name else self._fenster_beginnen()
             if art == "Volumen":
                 name = self._objekt_am_zeiger("Volumen") or vp.koerper_at(m, point, size)
                 return self._objekt_umschalten(self.sel_koerper, name, "Volumen") \
-                    if name else self.info("Dort liegt kein Volumenkörper")
+                    if name else self._fenster_beginnen()
             if art == "Stab":
                 name = (self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")
                         or vp.member_at(m, point))
                 return self._objekt_umschalten(self.sel_staebe, name, "Stäbe") \
-                    if name else self.info("Dort liegt kein Stab")
+                    if name else self._fenster_beginnen()
         if self.model.nn == 0:
             return
         p, fangart, i = self._fangpunkt()
         if p is None:
-            return
+            # Klick ins Leere: erste Ecke eines Auswahlfensters
+            return self._fenster_beginnen()
         if i < 0:
             # Kantenmitte oder Rasterpunkt: erst wenn eine Maske einen Punkt
             # erwartet, wird daraus ein Knoten - sonst blieben Streuknoten liegen.
@@ -942,12 +1202,23 @@ class MainWindow(QtWidgets.QMainWindow):
                                       (self.act_alles_zeigen, "sicht_alles", "alles")):
             leiste.knopf(a, symbol, schluessel)
         leiste.trenner()
-        # Fang: Hauptschalter und je Art
+        # Fang: Hauptschalter (die Arten stehen im Ribbon)
         leiste.knopf(self.act_fang, "fang", "fang")
-        for art in ("knoten", "linie", "stab", "flaeche", "volumen"):
-            leiste.knopf(self.act_fangart[art], f"fang_{art}", f"fang_{art}")
-        # Kein Auswahlfeld mehr in der Leiste: die Auswahlart steht im Ribbon
-        # (Start) und folgt dem Modellbaum; die Leiste bleibt schmal.
+        leiste.trenner()
+        # Auswahlart: was ein Klick oder ein Fenster trifft - ein Knopf je Art,
+        # genau einer ist an. "Netz" trifft einzelne Elemente.
+        self.act_auswahlart = {}
+        gruppe = QtGui.QActionGroup(self)
+        gruppe.setExclusive(True)
+        for art in self.AUSWAHLARTEN:
+            a = QtGui.QAction(art, self)
+            a.setCheckable(True)
+            a.setChecked(art == self.auswahlart)
+            a.setToolTip(f"Auswahl: {art} - {self.AUSWAHLART_HINWEIS[art]}")
+            a.triggered.connect(lambda _c=False, n=art: self.auswahlart_setzen(n))
+            gruppe.addAction(a)
+            self.act_auswahlart[art] = a
+            leiste.knopf(a, self.AUSWAHLART_SYMBOL[art], f"auswahl_{art}")
         self.cb_auswahlart_glas = None
         leiste.adjustSize()
         wuerfel = msk.Ansichtswuerfel(central)
@@ -1611,6 +1882,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.baum = dsg.Modellbaum(dock)
         self.baum.angeklickt.connect(self._baum_geklickt)
         self.baum.bearbeiten.connect(self._baum_bearbeiten)
+        self.baum.neu.connect(self._baum_neu)
+        self.baum.loeschen.connect(self._baum_loeschen)
         dock.setWidget(self.baum)
         # Der Baum traegt jetzt Namen und Zusatzangabe nebeneinander (Knoten mit
         # Koordinaten, Lager mit Wirkung); unter 290 px bleibt vom Namen nichts.
@@ -1683,7 +1956,21 @@ class MainWindow(QtWidgets.QMainWindow):
                          "flaechen": ("shell3", "shell4"),
                          "volumen": ("tet4", "tet10", "hex8")}
 
+    #: Zweige und Eintraege des Modellbaums, die ein Objekt meinen: Klick waehlt
+    #: es in der Ansicht und zeigt rechts seine Maske.
+    OBJEKT_ARTEN = {"knoten", "linien", "linie", "stabelemente", "stabelement", "staebe",
+                    "stab", "geoflaechen", "geoflaeche", "geokoerper", "geokoerper_einzeln"}
+
     def _baum_geklickt(self, art: str, name: str):
+        if art in self.OBJEKT_ARTEN:
+            # Links waehlen: der Zweig alle, der Eintrag das eine; rechts die
+            # Maske mit Anzahl und Nummern oder den Feldern des Objekts.
+            self._baum_objekt_waehlen(art, name)
+            tab = self.BAUM_TABELLE.get(art)
+            if tab:
+                self.tabelle_zeigen(tab)
+            self._objektmaske(art, name)
+            return
         if art == "stellung_neu":
             return self.neue_stellung()
         if art == "bericht_neu":
@@ -1780,6 +2067,440 @@ class MainWindow(QtWidgets.QMainWindow):
         self.leuchtet = self._elemente_zu(art, name)
         self.lbl_sel.setText(f"{len(knoten)} Knoten ausgewählt (Modellbaum)")
         self.redraw()
+
+    def _baum_objekt_waehlen(self, art: str, name: str):
+        """Klick im Modellbaum: Zweig = alle Objekte der Art, Eintrag = das eine."""
+        m = self.model
+        eintrag = self._baum_ist_eintrag(art, name)
+        self.leuchtet = []
+        if art == "knoten":
+            self.auswahlart_setzen("Knoten")
+            self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
+            knoten = [int(name)] if eintrag else list(range(m.nn))
+            self.selection = np.array([n for n in knoten if 0 <= n < m.nn], dtype=int)
+            self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt (Modellbaum)")
+        elif art in ("linien", "linie"):
+            self.auswahlart_setzen("Linie")
+            self.selection = np.array([], dtype=int)
+            self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], []
+            self.sel_linien = [name] if eintrag and name in m.lines else list(m.lines)
+            self.lbl_sel.setText(f"{len(self.sel_linien)} Linien ausgewählt (Modellbaum)")
+        elif art in ("stabelemente", "stabelement"):
+            self.auswahlart_setzen("Knoten")
+            self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
+            if eintrag:
+                elems = [int(name)] if 0 <= int(name) < len(m.elements) else []
+            else:
+                elems = [i for i, e in enumerate(m.elements) if e.typ in ("beam", "truss")]
+            knoten = [int(n) for i in elems for n in m.elements[i].nodes]
+            self.selection = np.array(list(dict.fromkeys(knoten)), dtype=int)
+            self.leuchtet = elems
+            self.lbl_sel.setText(f"{len(elems)} Stabelemente ausgewählt (Modellbaum)")
+        elif art in ("staebe", "stab"):
+            self.auswahlart_setzen("Stab")
+            self.selection = np.array([], dtype=int)
+            self.sel_linien, self.sel_flaechen, self.sel_koerper = [], [], []
+            self.sel_staebe = [name] if eintrag and name in m.members else list(m.members)
+            if eintrag and name in m.members:
+                self.leuchtet = [int(e) for e in m.members[name].elements]
+            self.lbl_sel.setText(f"{len(self.sel_staebe)} Stäbe ausgewählt (Modellbaum)")
+        elif art in ("geoflaechen", "geoflaeche"):
+            self.auswahlart_setzen("Fläche")
+            self.selection = np.array([], dtype=int)
+            self.sel_linien, self.sel_koerper, self.sel_staebe = [], [], []
+            self.sel_flaechen = [name] if eintrag and name in m.flaechen else list(m.flaechen)
+            if eintrag and name in m.flaechen:
+                self.leuchtet = [int(e) for e in (m.flaechen[name].elemente or [])]
+            self.lbl_sel.setText(f"{len(self.sel_flaechen)} Flächen ausgewählt (Modellbaum)")
+        elif art in ("geokoerper", "geokoerper_einzeln"):
+            self.auswahlart_setzen("Volumen")
+            self.selection = np.array([], dtype=int)
+            self.sel_linien, self.sel_flaechen, self.sel_staebe = [], [], []
+            self.sel_koerper = [name] if eintrag and name in m.koerper else list(m.koerper)
+            if eintrag and name in m.koerper:
+                self.leuchtet = [int(e) for e in (m.koerper[name].elemente or [])]
+            self.lbl_sel.setText(f"{len(self.sel_koerper)} Volumen ausgewählt (Modellbaum)")
+        self._auswahl_register()
+        self.redraw()
+
+    def _baum_ist_eintrag(self, art: str, name: str) -> bool:
+        """Meint der Klick ein einzelnes Objekt (True) oder den ganzen Zweig?"""
+        m = self.model
+        if art == "knoten":
+            return name.isdigit()
+        if art == "stabelement":
+            return name.isdigit()
+        if art == "linie":
+            return name in m.lines
+        if art == "stab":
+            return name in m.members
+        if art == "geoflaeche":
+            return name in m.flaechen
+        if art == "geokoerper_einzeln":
+            return name in m.koerper
+        return False
+
+    @staticmethod
+    def _zahlenliste(text) -> list:
+        import re
+        return [int(t) for t in re.split(r"[,;\s]+", str(text or "").strip()) if t.strip().lstrip("-").isdigit()]
+
+    @staticmethod
+    def _namensliste(text) -> list:
+        import re
+        return [t.strip() for t in re.split(r"[,;]+|\s{2,}", str(text or "").strip()) if t.strip()]
+
+    @staticmethod
+    def _spanne(namen) -> str:
+        """„K0 … K1341“ oder „F1 … F1375“ - kleinste und groesste Nummer."""
+        namen = list(namen)
+        if not namen:
+            return "–"
+        sortiert = sorted(namen, key=dsg._natuerlich)
+        return f"{sortiert[0]} … {sortiert[-1]}" if len(sortiert) > 1 else str(sortiert[0])
+
+    def _objektmaske(self, art: str, name: str, neu: bool = False):
+        """Rechts die Maske zum angeklickten Zweig oder Eintrag.
+
+        Ein Zweig zeigt Anzahl, kleinste und groesste Nummer und den Knopf
+        fuer ein neues Objekt; ein Eintrag seine Felder zum Bearbeiten. Bei
+        ``neu`` bekommt die Maske "OK" und "Abbrechen".
+        """
+        m = self.model
+        eintrag = neu or self._baum_ist_eintrag(art, name)
+        F = msk.Feld
+        felder, titel, hinweis = [], "", ""
+        knopf = "OK" if neu else "Übernehmen"
+        if art == "knoten":
+            if not eintrag:
+                nrn = [f"K{i}" for i in range(m.nn)]
+                felder = [F("anzahl", "Anzahl", "info", str(m.nn)),
+                          F("spanne", "Nummern", "info", self._spanne(nrn)),
+                          F("frei", "ohne Element", "info", str(len(vp.unbelegte_knoten(m))))]
+                titel, knopf = "Knoten", "Neuer Knoten"
+                hinweis = "Rechtsklick auf den Zweig: Neu. Entf löscht den gewählten Eintrag."
+            else:
+                i = int(name)
+                x, y, z = (m.nodes[i] if 0 <= i < m.nn else (0.0, 0.0, 0.0))
+                felder = [F("nr", "Nummer", "ganz", i, hinweis="Eine andere Nummer tauscht mit deren Knoten"),
+                          F("x", "x [m]", "zahl", float(x)), F("y", "y [m]", "zahl", float(y)),
+                          F("z", "z [m]", "zahl", float(z)),
+                          F("benutzt", "hängt an", "info", ", ".join(m.knoten_benutzt_von(i)) or "nichts")]
+                titel = f"Knoten K{i}"
+        elif art in ("linien", "linie"):
+            if not eintrag:
+                felder = [F("anzahl", "Anzahl", "info", str(len(m.lines))),
+                          F("spanne", "Namen", "info", self._spanne(m.lines))]
+                titel, knopf = "Linien", "Neue Linie"
+            else:
+                ln = m.lines.get(name)
+                felder = [F("name", "Name", "text", name, breite=120),
+                          F("typ", "Art", "info", (ln.typ if ln else "polyline")),
+                          F("kn", "Knoten (Nummern)", "text",
+                            ", ".join(str(n) for n in (ln.nodes if ln else [])), breite=160),
+                          F("kommentar", "Kommentar", "text", (ln.comment if ln else ""), breite=160)]
+                titel = f"Linie {name}"
+        elif art in ("stabelemente", "stabelement"):
+            if not eintrag:
+                nrn = [f"E{i}" for i, e in enumerate(m.elements) if e.typ in ("beam", "truss")]
+                felder = [F("anzahl", "Stabelemente", "info", str(len(nrn))),
+                          F("spanne", "Nummern", "info", self._spanne(nrn)),
+                          F("nachweis", "Stäbe mit Nachweis", "info", str(len(m.members)))]
+                titel, knopf = "Stäbe", "Neuer Stab"
+            else:
+                i = int(name)
+                e = m.elements[i] if 0 <= i < len(m.elements) else None
+                felder = [F("nr", "Nummer", "info", f"E{i}"),
+                          F("kn", "Knoten Anfang, Ende", "text",
+                            ", ".join(str(n) for n in (e.nodes if e else [])), breite=120),
+                          F("typ", "Art", "wahl", "Fachwerkstab" if (e and e.typ == "truss") else "Balken",
+                            ["Balken", "Fachwerkstab"]),
+                          F("mat", "Werkstoff", "wahl", (e.mat if e else ""), list(m.materials)),
+                          F("sec", "Querschnitt", "wahl", (e.sec if e else ""), list(m.sections))]
+                titel = f"Stab E{i}"
+        elif art in ("staebe", "stab"):
+            if not eintrag:
+                felder = [F("anzahl", "Anzahl", "info", str(len(m.members))),
+                          F("spanne", "Namen", "info", self._spanne(m.members))]
+                titel, knopf = "Stäbe mit Nachweis", "Neuer Stab mit Nachweis"
+            else:
+                mem = m.members.get(name)
+                els = [int(e) for e in (mem.elements if mem else [])]
+                secs = {m.elements[e].sec for e in els if 0 <= e < len(m.elements)}
+                mats = {m.elements[e].mat for e in els if 0 <= e < len(m.elements)}
+                felder = [F("name", "Name", "text", name, breite=120),
+                          F("elemente", "Elemente (Nummern)", "text", ", ".join(str(e) for e in els),
+                            breite=160),
+                          F("sec", "Querschnitt", "wahl", next(iter(secs), "") if len(secs) == 1 else "",
+                            [""] + list(m.sections), hinweis="leer = unverändert"),
+                          F("mat", "Werkstoff", "wahl", next(iter(mats), "") if len(mats) == 1 else "",
+                            [""] + list(m.materials), hinweis="leer = unverändert"),
+                          F("design", "Nachweis nach EC3", "haken", bool(mem.design) if mem else True)]
+                titel = f"Stab {name}"
+        elif art in ("geoflaechen", "geoflaeche"):
+            if not eintrag:
+                felder = [F("anzahl", "Anzahl", "info", str(len(m.flaechen))),
+                          F("spanne", "Namen", "info", self._spanne(m.flaechen)),
+                          F("netz", "vernetzt", "info",
+                            str(sum(1 for f in m.flaechen.values() if f.elemente)))]
+                titel, knopf = "Flächen", "Neue Fläche"
+            else:
+                f = m.flaechen.get(name)
+                felder = [F("name", "Name", "text", name, breite=120),
+                          F("dicke", "Dicke", "wahl", (f.dicke if f else ""), [""] + list(m.shells)),
+                          F("material", "Werkstoff", "wahl", (f.material if f else ""),
+                            [""] + list(m.materials)),
+                          F("teilung", "Teilung", "text",
+                            ", ".join(str(t) for t in (f.teilung if f else [4, 4])), breite=80),
+                          F("linien", "Randlinien", "text", ", ".join(f.linien if f else []), breite=160),
+                          F("elemente", "Elemente", "info", str(len(f.elemente)) if f else "0"),
+                          F("kommentar", "Kommentar", "text", (f.kommentar if f else ""), breite=160)]
+                titel = f"Fläche {name}"
+        elif art in ("geokoerper", "geokoerper_einzeln"):
+            if not eintrag:
+                felder = [F("anzahl", "Anzahl", "info", str(len(m.koerper))),
+                          F("spanne", "Namen", "info", self._spanne(m.koerper)),
+                          F("netz", "vernetzt", "info",
+                            str(sum(1 for k in m.koerper.values() if k.elemente)))]
+                titel, knopf = "Volumen", "Neues Volumen"
+            else:
+                k = m.koerper.get(name)
+                felder = [F("name", "Name", "text", name, breite=120),
+                          F("material", "Werkstoff", "wahl", (k.material if k else ""),
+                            [""] + list(m.materials)),
+                          F("teilung", "Teilung", "text",
+                            ", ".join(str(t) for t in (k.teilung if k else [4, 4, 4])), breite=80),
+                          F("flaechen", "Randflächen", "text", ", ".join(k.flaechen if k else []),
+                            breite=160),
+                          F("elemente", "Elemente", "info", str(len(k.elemente)) if k else "0"),
+                          F("kommentar", "Kommentar", "text", (k.kommentar if k else ""), breite=160)]
+                titel = f"Volumen {name}"
+        else:
+            return None
+        if neu:
+            titel = "Neu: " + titel
+            hinweis = "Felder ausfüllen und OK - Abbrechen legt nichts an."
+        maske = msk.Maske(titel, felder, knopf=knopf,
+                          hinweis=hinweis or ("Werte ändern und „Übernehmen“." if eintrag else
+                                              "Rechtsklick auf den Zweig: Neu. Entf löscht den gewählten Eintrag."),
+                          abbrechen="Abbrechen" if neu else "")
+        zweigart = self.baum.ELTERNART.get(art, art)
+        if not eintrag:
+            maske.angewendet.connect(lambda _w, z=zweigart: self._baum_neu(z))
+        else:
+            maske.angewendet.connect(lambda w, a=art, n=name, ist_neu=neu:
+                                     self._objekt_uebernehmen(a, n, w, ist_neu))
+            if neu:
+                maske.abgebrochen.connect(lambda a=art, n=name: self._objekt_neu_abbrechen(a, n))
+        self.maske_erzeugen(maske)
+        return maske
+
+    def _objekt_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False):
+        """Die Felder der Objektmaske ins Modell schreiben (oder das Objekt anlegen)."""
+        m = self.model
+        try:
+            if art == "knoten":
+                i = int(name)
+                if not 0 <= i < m.nn:
+                    return self.error(f"Knoten {i} gibt es nicht mehr")
+                self.merken(f"Knoten K{i}")
+                m.nodes[i] = [float(w.get("x", 0.0)), float(w.get("y", 0.0)), float(w.get("z", 0.0))]
+                ziel = int(w.get("nr", i))
+                if ziel != i:
+                    if not 0 <= ziel < m.nn:
+                        return self.error(f"Nummer {ziel} gibt es nicht - Knoten sind 0 bis {m.nn - 1}")
+                    m.knoten_tauschen(i, ziel)
+                    self.info(f"Knoten {i} und {ziel} haben die Nummern getauscht")
+                    name = str(ziel)
+            elif art == "linie":
+                knoten = self._zahlenliste(w.get("kn"))
+                if len(knoten) < 2 or any(not 0 <= n < m.nn for n in knoten):
+                    return self.error("Eine Linie braucht mindestens zwei vorhandene Knoten")
+                neuname = (w.get("name") or name).strip()
+                self.merken(f"Linie {neuname}")
+                if neu:
+                    m.add_line(neuname, knoten)
+                    name = neuname
+                else:
+                    if neuname != name:
+                        m.linie_umbenennen(name, neuname)
+                        name = neuname
+                    m.lines[name].nodes = knoten
+                m.lines[name].comment = str(w.get("kommentar", "") or "")
+            elif art == "stabelement":
+                knoten = self._zahlenliste(w.get("kn"))
+                if len(knoten) != 2 or any(not 0 <= n < m.nn for n in knoten) or knoten[0] == knoten[1]:
+                    return self.error("Ein Stab braucht zwei verschiedene vorhandene Knoten")
+                typ = "truss" if str(w.get("typ", "")).startswith("Fachwerk") else "beam"
+                mat, sec = w.get("mat", ""), w.get("sec", "")
+                if mat not in m.materials or sec not in m.sections:
+                    return self.error("Werkstoff und Querschnitt wählen (erst anlegen, wenn keiner da ist)")
+                if neu:
+                    self.merken("Stab angelegt")
+                    i = m.add_element(typ, knoten, mat, sec)
+                    name = str(i)
+                else:
+                    i = int(name)
+                    self.merken(f"Stab E{i}")
+                    e = m.elements[i]
+                    e.nodes, e.typ, e.mat, e.sec = knoten, typ, mat, sec
+            elif art == "stab":
+                els = self._zahlenliste(w.get("elemente"))
+                els = [e for e in els if 0 <= e < len(m.elements) and m.elements[e].typ in ("beam", "truss")]
+                if not els:
+                    return self.error("Elemente (Nummern von Stabelementen) angeben")
+                neuname = (w.get("name") or name).strip()
+                self.merken(f"Stab {neuname}")
+                if neu:
+                    m.add_member(neuname, els, design=bool(w.get("design", True)))
+                    name = neuname
+                else:
+                    if neuname != name:
+                        m.stab_umbenennen(name, neuname)
+                        name = neuname
+                    mem = m.members[name]
+                    mem.elements = els
+                    mem.design = bool(w.get("design", True))
+                for e in els:
+                    if w.get("sec") in m.sections:
+                        m.elements[e].sec = w["sec"]
+                    if w.get("mat") in m.materials:
+                        m.elements[e].mat = w["mat"]
+            elif art == "geoflaeche":
+                linien = self._namensliste(w.get("linien"))
+                fehlt = [x for x in linien if x not in m.lines]
+                if fehlt:
+                    return self.error("Unbekannte Linien: " + ", ".join(fehlt[:5]))
+                teilung = self._zahlenliste(w.get("teilung")) or [4, 4]
+                neuname = (w.get("name") or name).strip()
+                self.merken(f"Fläche {neuname}")
+                if neu:
+                    m.add_flaeche(neuname, linien, dicke=w.get("dicke", ""), material=w.get("material", ""),
+                                  teilung=teilung, kommentar=str(w.get("kommentar", "") or ""))
+                    name = neuname
+                else:
+                    if neuname != name:
+                        m.flaeche_umbenennen(name, neuname)
+                        name = neuname
+                    f = m.flaechen[name]
+                    if list(f.linien) != linien and f.elemente:
+                        m.elemente_loeschen(f.elemente)
+                        f.elemente = []
+                    f.linien, f.dicke, f.material = linien, w.get("dicke", ""), w.get("material", "")
+                    f.teilung, f.kommentar = teilung, str(w.get("kommentar", "") or "")
+            elif art == "geokoerper_einzeln":
+                flaechen = self._namensliste(w.get("flaechen"))
+                fehlt = [x for x in flaechen if x not in m.flaechen]
+                if fehlt:
+                    return self.error("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
+                teilung = self._zahlenliste(w.get("teilung")) or [4, 4, 4]
+                neuname = (w.get("name") or name).strip()
+                self.merken(f"Volumen {neuname}")
+                if neu:
+                    m.add_koerper(neuname, flaechen, material=w.get("material", ""), teilung=teilung,
+                                  kommentar=str(w.get("kommentar", "") or ""))
+                    name = neuname
+                else:
+                    if neuname != name:
+                        m.koerper_umbenennen(name, neuname)
+                        name = neuname
+                    k = m.koerper[name]
+                    if list(k.flaechen) != flaechen and k.elemente:
+                        m.elemente_loeschen(k.elemente)
+                        k.elemente = []
+                    k.flaechen, k.material = flaechen, w.get("material", "")
+                    k.teilung, k.kommentar = teilung, str(w.get("kommentar", "") or "")
+            else:
+                return None
+        except (KeyError, ValueError, IndexError) as ex:
+            return self.error(str(ex))
+        self.analysis = None
+        self.results = None
+        self.info(("Angelegt: " if neu else "Übernommen: ") + f"{art} {name}")
+        self.refresh_all()
+        # rechts bleibt die Maske des Objekts, jetzt im Bearbeiten-Zustand
+        self._objektmaske(art if art != "stabelement" else "stabelement", name)
+
+    def _baum_neu(self, zweigart: str):
+        """Rechtsklick „Neu“: naechste fortlaufende Nummer, rechts die Maske
+        mit OK und Abbrechen. Ein Knoten entsteht sofort (Abbrechen nimmt ihn
+        zurueck), alles andere erst mit OK."""
+        m = self.model
+        if zweigart == "knoten":
+            self.merken("Knoten angelegt")
+            i = m.add_node(0.0, 0.0, 0.0)
+            self.refresh_all()
+            self._baum_objekt_waehlen("knoten", str(i))
+            return self._objektmaske("knoten", str(i), neu=True)
+        if zweigart == "linien":
+            return self._objektmaske("linie", m.naechster_name("L", m.lines), neu=True)
+        if zweigart == "stabelemente":
+            return self._objektmaske("stabelement", str(len(m.elements)), neu=True)
+        if zweigart == "staebe":
+            return self._objektmaske("stab", m.naechster_name("S", m.members), neu=True)
+        if zweigart == "geoflaechen":
+            return self._objektmaske("geoflaeche", m.naechster_name("F", m.flaechen), neu=True)
+        if zweigart == "geokoerper":
+            return self._objektmaske("geokoerper_einzeln", m.naechster_name("V", m.koerper), neu=True)
+        return None
+
+    def _objekt_neu_abbrechen(self, art: str, name: str):
+        """Abbrechen in der Neu-Maske: ein schon angelegter Knoten geht wieder weg."""
+        if art == "knoten" and name.isdigit():
+            grund = self.model.knoten_loeschen(int(name))
+            if not grund:
+                self.info(f"Knoten K{name} wieder entfernt")
+                self.selection = np.array([], dtype=int)
+                self.refresh_all()
+
+    def _bestaetigen(self, text: str) -> bool:
+        """Rueckfrage vor dem Loeschen - die Tests ueberschreiben sie."""
+        antwort = QtWidgets.QMessageBox.question(
+            self, "Löschen", text,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
+        return antwort == QtWidgets.QMessageBox.Yes
+
+    def _baum_loeschen(self, art: str, name: str):
+        """Rechtsklick „Löschen“ oder Entf im Modellbaum - mit Rueckfrage."""
+        m = self.model
+        was = {"knoten": f"Knoten K{name}", "linie": f"Linie {name}", "stabelement": f"Stab E{name}",
+               "stab": f"Stab mit Nachweis {name} (die Elemente bleiben)",
+               "geoflaeche": f"Fläche {name} samt ihren Elementen",
+               "geokoerper_einzeln": f"Volumen {name} samt seinen Elementen"}.get(art)
+        if was is None:
+            return
+        if not self._bestaetigen(f"{was} wirklich löschen?"):
+            return
+        grund = ""
+        if art == "knoten":
+            grund = m.knoten_loeschen(int(name)) if name.isdigit() else "keine Nummer"
+        elif art == "linie":
+            grund = m.linie_loeschen(name)
+        elif art == "stabelement":
+            i = int(name) if name.isdigit() else -1
+            if not 0 <= i < len(m.elements):
+                grund = "Element gibt es nicht"
+            else:
+                self.merken(f"Stab E{i} gelöscht")
+                m.elemente_loeschen([i])
+        elif art == "stab":
+            grund = m.stab_loeschen(name)
+        elif art == "geoflaeche":
+            grund = m.flaeche_loeschen(name)
+        elif art == "geokoerper_einzeln":
+            grund = m.koerper_loeschen(name)
+        if grund:
+            return self.error(grund)
+        if art != "stabelement":
+            self.merken(f"{was} gelöscht")
+        self.analysis = None
+        self.results = None
+        self.selection = np.array([], dtype=int)
+        self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
+        self.leuchtet = []
+        self.maskenrand.schliessen()
+        self.info(f"{was} gelöscht")
+        self.refresh_all()
 
     def _linienknoten(self, linien) -> list[int]:
         """Die Knoten der genannten Linien - Rueckfall, wenn der Rand nicht
@@ -2461,6 +3182,50 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "baum"):
             self.baum.fuellen(self.model, self._stellungen_liste(),
                               self._ergebnisliste())
+        if hasattr(self, "lbl_modellangaben"):
+            self.lbl_modellangaben.setText(self._modellangaben_text())
+
+    def modellangaben(self) -> list[tuple[str, str]]:
+        """Was das Modell enthaelt, als (Bezeichnung, Wert) - fuer das
+        Register „Modell“ rechts, das der Klick auf die Wurzel des
+        Modellbaums nach vorn holt."""
+        m = self.model
+        typen: dict[str, int] = {}
+        for e in m.elements:
+            typen[e.typ] = typen.get(e.typ, 0) + 1
+
+        def zahl(arten):
+            return sum(v for t, v in typen.items() if t in arten)
+
+        if m.nn:
+            d = m.nodes.max(axis=0) - m.nodes.min(axis=0)
+            masse = " × ".join(f"{float(v):.4g}" for v in d) + " m"
+        else:
+            masse = "–"
+        return [("Name", m.name or "–"),
+                ("Knoten", str(m.nn)), ("Linien", str(len(m.lines))),
+                ("Stabelemente", str(zahl(self.BAUM_ELEMENTARTEN["stabelemente"]))),
+                ("Stäbe mit Nachweis", str(len(m.members))),
+                ("Flächen", str(len(m.flaechen))),
+                ("Flächenelemente", str(zahl(self.BAUM_ELEMENTARTEN["flaechen"]))),
+                ("Volumen", str(len(m.koerper))),
+                ("Volumenelemente", str(zahl(self.BAUM_ELEMENTARTEN["volumen"]))),
+                ("Lager", str(len(m.supports) + len(m.line_supports)
+                              + len(m.surface_supports))),
+                ("Werkstoffe", str(len(m.materials))),
+                ("Querschnitte", str(len(m.sections))),
+                ("Dicken", str(len(m.shells))),
+                ("Lastfälle", str(len(m.load_cases))),
+                ("Kombinationen", str(len(m.combinations))),
+                ("Abmessungen x × y × z", masse)]
+
+    def _modellangaben_text(self) -> str:
+        matt = dsg.FARBEN["matt"]
+        zeilen = "".join(
+            f"<tr><td style='color:{matt}; padding-right:14px'>{k}</td>"
+            f"<td align='right'><b>{v}</b></td></tr>"
+            for k, v in self.modellangaben())
+        return f"<table cellspacing='0' cellpadding='1'>{zeilen}</table>"
 
     def _ergebnisliste(self) -> dict:
         """Was gerechnet vorliegt, nach Art geordnet: {Gruppe: [(Text, Zusatz, Schluessel)]}.
@@ -3628,48 +4393,37 @@ class MainWindow(QtWidgets.QMainWindow):
         dock = QtWidgets.QDockWidget("Protokoll und Tabellen", self)
         dock.setAllowedAreas(QtCore.Qt.BottomDockWidgetArea)
         self.unten_dock = dock
-        tabs = QtWidgets.QTabWidget()
-        self.tab_unten = tabs
         # Der untere Bereich traegt Protokoll, Eingabe- und Ergebnistabellen -
-        # mehr Register, als nebeneinander passen. Die Leiste bekommt darum
-        # Blaetterknoepfe; gefunden wird eine Tabelle ohnehin ueber den
-        # Modellbaum links, der sie nach vorn holt.
-        tabs.setUsesScrollButtons(True)
-        tabs.tabBar().setElideMode(QtCore.Qt.ElideNone)
-        tabs.tabBar().setExpanding(False)
+        # mehr Register, als nebeneinander lesbar sind. Darum zwei Ebenen:
+        # oben die Gruppe, darunter ihre Tabellen (Vorgabe: „der Bereich
+        # unten muss strukturiert werden“).
+        tabs = dsg.Tabellenbereich(self.TABELLENGRUPPEN)
+        self.tab_unten = tabs
         self.log = QtWidgets.QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setStyleSheet("font-family: monospace; font-size: 11px;")
         tabs.addTab(self.log, "Protokoll")
         self._build_eingabetabellen(tabs)
         self._build_ergebnistabellen(tabs)
-        self._register_ordnen(tabs)
         self.bottom_tabs = tabs
         dock.setWidget(tabs)
-        dock.setMinimumHeight(190)
+        dock.setMinimumHeight(215)
         self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, dock)
 
-    #: Reihenfolge der Register unten - dieselbe wie im Modellbaum links.
-    #: Der Baum sagt, was es gibt; hier steht dasselbe als Tabelle. Beides in
-    #: derselben Folge zu halten spart das Suchen.
-    REGISTER_FOLGE = ["Protokoll",
-                      "Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
-                      "Werkstoffe", "Querschnitte", "Dicken",
-                      "Lager", "Gelenke", "Kontaktbedingungen",
-                      "Lastfälle", "Lasten", "Kombinationen",
-                      "Stabkräfte", "Auflagerkräfte", "Umhüllende",
-                      "Nachweise EC3", "Ermüdung", "Kontakt", "Anschlüsse",
-                      "Verformungen", "Beulfelder", "Volumen", "Lasteinleitung",
-                      "Bericht"]
-
-    def _register_ordnen(self, tabs):
-        """Die Register unten in die Reihenfolge des Modellbaums bringen."""
-        bar = tabs.tabBar()
-        for ziel, name in enumerate(self.REGISTER_FOLGE):
-            jetzt = next((i for i in range(tabs.count())
-                          if tabs.tabText(i) == name), None)
-            if jetzt is not None and jetzt != ziel:
-                bar.moveTab(jetzt, ziel)
+    #: Gruppen des unteren Bereichs und die Tabellen darin - in der Folge des
+    #: Modellbaums links. Der Baum sagt, was es gibt; hier steht dasselbe als
+    #: Tabelle. Beides in derselben Ordnung zu halten spart das Suchen.
+    TABELLENGRUPPEN = [
+        ("Protokoll", ["Protokoll"]),
+        ("Modell", ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente"]),
+        ("Eigenschaften", ["Werkstoffe", "Querschnitte", "Dicken"]),
+        ("Lager", ["Lager", "Gelenke", "Kontaktbedingungen"]),
+        ("Lasten", ["Lastfälle", "Lasten", "Kombinationen"]),
+        ("Ergebnisse", ["Stabkräfte", "Auflagerkräfte", "Umhüllende", "Kontakt"]),
+        ("Nachweise", ["Nachweise EC3", "Ermüdung", "Anschlüsse", "Verformungen",
+                       "Beulfelder", "Volumen", "Lasteinleitung"]),
+        ("Bericht", ["Bericht"]),
+    ]
 
     # ---- Tab 1: Modell ------------------------------------------------
     def _tab_model(self):
@@ -3686,6 +4440,17 @@ class MainWindow(QtWidgets.QMainWindow):
             g.addWidget(QtWidgets.QLabel(label), i // 2, 2 * (i % 2))
             g.addWidget(e, i // 2, 2 * (i % 2) + 1)
         lay.addLayout(g)
+
+        # Angaben zum Modell: was es enthaelt und wie gross es ist. Der Klick
+        # auf die Wurzel des Modellbaums holt dieses Register nach vorn.
+        gm = QtWidgets.QGroupBox("Modell")
+        gml = QtWidgets.QVBoxLayout(gm)
+        self.lbl_modellangaben = QtWidgets.QLabel("–")
+        self.lbl_modellangaben.setObjectName("maskeninfo")
+        self.lbl_modellangaben.setTextFormat(QtCore.Qt.RichText)
+        self.lbl_modellangaben.setWordWrap(True)
+        gml.addWidget(self.lbl_modellangaben)
+        lay.addWidget(gm)
 
         # „Elemente ändern“ steht jetzt im Register „Auswahl: n Knoten“, das
         # erscheint, sobald etwas gewählt ist (Vorgabe Kap. 16.1 Nr. 7).
@@ -5564,7 +6329,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def clear_selection(self):
         """Auswahl aufheben - Knoten wie Objekte."""
         for liste in (self.sel_linien, self.sel_flaechen, self.sel_koerper,
-                      self.sel_staebe):
+                      self.sel_staebe, self.sel_elemente):
             liste.clear()
         self.leuchtet = []
         self._set_selection([])
@@ -5662,12 +6427,10 @@ class MainWindow(QtWidgets.QMainWindow):
         t.filter_leeren()
 
     def tabelle_zeigen(self, name: str) -> bool:
-        """Eine Tabelle im unteren Bereich nach vorn holen."""
-        for i in range(self.tab_unten.count()):
-            if self.tab_unten.tabText(i) == name:
-                self.tab_unten.setCurrentIndex(i)
-                self.unten_dock.show()
-                return True
+        """Eine Tabelle im unteren Bereich nach vorn holen (die Gruppe folgt)."""
+        if self.tab_unten.zeigen(name):
+            self.unten_dock.show()
+            return True
         return False
 
     # ---- Auswahl / Randbedingungen -----------------------------------
@@ -6554,11 +7317,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # Aus dem Modellbaum heraus Gewaehltes leuchtet auf
         leuchtet = [i for i in (getattr(self, "leuchtet", None) or [])
                     if 0 <= i < len(m.elements)]
-        if leuchtet:
+        gewaehlt = [int(i) for i in (getattr(self, "sel_elemente", None) or [])
+                    if 0 <= int(i) < len(m.elements)]
+        for elems, name in ((leuchtet, "leuchtet"), (gewaehlt, "auswahl_elemente")):
+            if not elems:
+                continue
             try:
-                teil = vp.to_grid(m).extract_cells(np.asarray(leuchtet, int))
+                teil = vp.to_grid(m).extract_cells(np.asarray(elems, int))
                 pl.add_mesh(teil, color="#ff8800", opacity=0.85, show_edges=True,
-                            edge_color="#c05000", line_width=5, name="leuchtet")
+                            edge_color="#c05000", line_width=5, name=name)
             except Exception as ex:      # noqa: BLE001
                 self.log.appendPlainText(f"Hervorhebung: {ex}")
         # Alle Umrisse der Auswahl in **einem** Darsteller: ein Koerper mit 144
@@ -7011,6 +7778,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for i, e in enumerate(m.elements):
                 if knoten.intersection(int(n) for n in e.nodes):
                     elems.add(i)
+        elems.update(int(i) for i in (getattr(self, "sel_elemente", None) or []))
         return {e for e in elems if 0 <= e < len(m.elements)}
 
     def _sicht_merken(self):
@@ -7049,6 +7817,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selection = np.array([], dtype=int)
         self.sel_linien, self.sel_flaechen = [], []
         self.sel_koerper, self.sel_staebe = [], []
+        self.sel_elemente = []
         self._auswahl_register()
 
     def nur_auswahl_zeigen(self):

@@ -2252,6 +2252,270 @@ class Model:
                 sp.values = dreh_vektor6(sp.values)
         return n
 
+    # ---- Umnummerieren, Umbenennen, Loeschen (Modellbaum) -------------------
+    def _knotenverweise_abbilden(self, abb: dict) -> None:
+        """Alle Knotenverweise durch {alt: neu} schicken; was fehlt, bleibt."""
+        def f(n):
+            return abb.get(int(n), int(n))
+        for e in self.elements:
+            e.nodes = [f(n) for n in e.nodes]
+        for ln in self.lines.values():
+            ln.nodes = [f(n) for n in ln.nodes]
+        for sp in self.supports:
+            sp.node = f(sp.node)
+        for grp in (self.line_supports, self.surface_supports):
+            for x in grp:
+                x.nodes = [f(n) for n in (x.nodes or [])]
+        for lc in self.load_cases.values():
+            for l in lc.nodal_loads:
+                l.node = f(l.node)
+            for z in lc.zwangsverformungen:
+                z.node = f(z.node)
+        for cs in getattr(self, "contact_supports", None) or []:
+            cs.node = f(cs.node)
+        for g in getattr(self, "gap_elements", None) or []:
+            g.node_a, g.node_b = f(g.node_a), f(g.node_b)
+        for cp in getattr(self, "contact_pairs", None) or []:
+            cp.slave_nodes = [f(n) for n in (cp.slave_nodes or [])]
+        for x in (getattr(self, "lasteinleitungen", None) or {}).values():
+            x.knoten = f(x.knoten)
+        for x in (getattr(self, "verformungsgrenzen", None) or {}).values():
+            x.knoten = [f(n) for n in (x.knoten or [])]
+
+    def knoten_tauschen(self, a: int, b: int) -> None:
+        """Zwei Knotennummern tauschen - samt allen Verweisen.
+
+        So laesst sich eine Knotennummer im Modellbaum "aendern": der Knoten
+        bekommt die gewuenschte Nummer, der bisherige Traeger dieser Nummer
+        die alte. Nichts geht verloren, nichts verschiebt sich sonst.
+        """
+        a, b = int(a), int(b)
+        if a == b or not (0 <= a < self.nn and 0 <= b < self.nn):
+            return
+        self.nodes[[a, b]] = self.nodes[[b, a]]
+        self._knotenverweise_abbilden({a: b, b: a})
+
+    def knoten_benutzt_von(self, i: int) -> list:
+        """Was an einem Knoten haengt: ["3 Elemente", "Linie L2", ...]."""
+        i = int(i)
+        out = []
+        n_el = sum(1 for e in self.elements if i in [int(n) for n in e.nodes])
+        if n_el:
+            out.append(f"{n_el} Elemente")
+        out += [f"Linie {nm}" for nm, ln in self.lines.items()
+                if i in [int(n) for n in ln.nodes]]
+        return out
+
+    def knoten_loeschen(self, i: int) -> str:
+        """Einen freien Knoten entfernen; die Nummern dahinter ruecken auf.
+
+        Rueckgabe "" bei Erfolg, sonst der Grund (ein benutzter Knoten wird
+        nicht geloescht - erst das Element oder die Linie, dann der Knoten).
+        """
+        i = int(i)
+        if not 0 <= i < self.nn:
+            return "Knoten gibt es nicht"
+        benutzt = self.knoten_benutzt_von(i)
+        if benutzt:
+            return f"Knoten {i} wird benutzt von " + ", ".join(benutzt) + " - erst diese löschen"
+        self.supports = [sp for sp in self.supports if int(sp.node) != i]
+        for grp in (self.line_supports, self.surface_supports):
+            for x in grp:
+                x.nodes = [n for n in (x.nodes or []) if int(n) != i]
+        for lc in self.load_cases.values():
+            lc.nodal_loads = [l for l in lc.nodal_loads if int(l.node) != i]
+            lc.zwangsverformungen = [z for z in lc.zwangsverformungen if int(z.node) != i]
+        self.contact_supports = [c for c in (getattr(self, "contact_supports", None) or [])
+                                 if int(c.node) != i]
+        self.nodes = np.delete(np.asarray(self.nodes, float), i, axis=0)
+        self._knotenverweise_abbilden({n: n - 1 for n in range(i + 1, self.nn + 1)})
+        return ""
+
+    def elemente_loeschen(self, elemente) -> int:
+        """Elemente entfernen und alle Verweise nachziehen (Elementnummern sind
+        Listenplaetze: was dahinter liegt, rueckt auf). Rueckgabe: Anzahl."""
+        wegmenge = {int(e) for e in (elemente or []) if 0 <= int(e) < len(self.elements)}
+        if not wegmenge:
+            return 0
+        neu_nr = {}
+        k = 0
+        for i in range(len(self.elements)):
+            if i in wegmenge:
+                continue
+            neu_nr[i] = k
+            k += 1
+        self.elements = [e for i, e in enumerate(self.elements) if i not in wegmenge]
+
+        def um(liste):
+            return [neu_nr[int(i)] for i in (liste or []) if int(i) in neu_nr]
+        for mem in self.members.values():
+            mem.elements = um(mem.elements)
+        for f in self.flaechen.values():
+            f.elemente = um(f.elemente)
+            f.randseiten = [[neu_nr[int(e)], int(seite)] for e, seite in (f.randseiten or [])
+                            if int(e) in neu_nr]
+        for kb in self.koerper.values():
+            kb.elemente = um(kb.elemente)
+        for vb in (getattr(self, "volumenbereiche", None) or {}).values():
+            vb.elemente = um(vb.elemente)
+        for bf in (getattr(self, "beulfelder", None) or {}).values():
+            if hasattr(bf, "elemente"):
+                bf.elemente = um(bf.elemente)
+        for lc in self.load_cases.values():
+            for liste in ("beam_loads", "face_loads", "temp_loads"):
+                behalten = [l for l in getattr(lc, liste) if int(l.elem) in neu_nr]
+                for l in behalten:
+                    l.elem = neu_nr[int(l.elem)]
+                setattr(lc, liste, behalten)
+        self.joints = {n: j for n, j in (getattr(self, "joints", None) or {}).items()
+                       if int(j.elem) in neu_nr}
+        for j in self.joints.values():
+            j.elem = neu_nr[int(j.elem)]
+        cps = getattr(self, "contact_pairs", None) or []
+        for cp in cps:
+            if hasattr(cp, "master_elements"):
+                cp.master_elements = um(cp.master_elements)
+        return len(wegmenge)
+
+    @staticmethod
+    def naechster_name(vorsilbe: str, vorhandene) -> str:
+        """Der naechste fortlaufende Name: K7 nach K6, F12 nach F11."""
+        import re
+        hoechste = 0
+        for n in vorhandene:
+            m_ = re.fullmatch(re.escape(vorsilbe) + r"(\d+)", str(n))
+            if m_:
+                hoechste = max(hoechste, int(m_.group(1)))
+        return f"{vorsilbe}{hoechste + 1}"
+
+    def linie_umbenennen(self, alt: str, neu: str) -> None:
+        if alt == neu or alt not in self.lines:
+            return
+        if neu in self.lines:
+            raise ValueError(f"Linie {neu} gibt es schon")
+        ln = self.lines.pop(alt)
+        ln.name = neu
+        self.lines[neu] = ln
+        for f in self.flaechen.values():
+            f.linien = [neu if x == alt else x for x in f.linien]
+            f.oeffnungen = [[neu if x == alt else x for x in o] for o in (f.oeffnungen or [])]
+        for lc in self.load_cases.values():
+            for ll in lc.linienlasten:
+                if ll.art == "linie" and ll.ziel == alt:
+                    ll.ziel = neu
+        for x in self.line_supports:
+            if getattr(x, "line", None) == alt:
+                x.line = neu
+
+    def flaeche_umbenennen(self, alt: str, neu: str) -> None:
+        if alt == neu or alt not in self.flaechen:
+            return
+        if neu in self.flaechen:
+            raise ValueError(f"Fläche {neu} gibt es schon")
+        f = self.flaechen.pop(alt)
+        f.name = neu
+        self.flaechen[neu] = f
+        for k in self.koerper.values():
+            k.flaechen = [neu if x == alt else x for x in k.flaechen]
+        for lc in self.load_cases.values():
+            for gl in lc.geometrielasten:
+                if gl.art == "flaeche" and gl.ziel == alt:
+                    gl.ziel = neu
+        for kb in (getattr(self, "kontaktbedingungen", None) or {}).values():
+            for feld in ("flaechen", "gegenflaechen"):
+                liste = getattr(kb, feld, None)
+                if liste:
+                    setattr(kb, feld, [neu if x == alt else x for x in liste])
+        for x in self.surface_supports:
+            if getattr(x, "flaeche", None) == alt:
+                x.flaeche = neu
+
+    def koerper_umbenennen(self, alt: str, neu: str) -> None:
+        if alt == neu or alt not in self.koerper:
+            return
+        if neu in self.koerper:
+            raise ValueError(f"Volumen {neu} gibt es schon")
+        k = self.koerper.pop(alt)
+        k.name = neu
+        self.koerper[neu] = k
+        for lc in self.load_cases.values():
+            for gl in lc.geometrielasten:
+                if gl.art != "flaeche" and gl.ziel == alt:
+                    gl.ziel = neu
+        for kb in (getattr(self, "kontaktbedingungen", None) or {}).values():
+            liste = getattr(kb, "koerpernamen", None)
+            if liste:
+                kb.koerpernamen = [neu if x == alt else x for x in liste]
+
+    def stab_umbenennen(self, alt: str, neu: str) -> None:
+        if alt == neu or alt not in self.members:
+            return
+        if neu in self.members:
+            raise ValueError(f"Stab {neu} gibt es schon")
+        mem = self.members.pop(alt)
+        mem.name = neu
+        self.members[neu] = mem
+        for lc in self.load_cases.values():
+            for ll in lc.linienlasten:
+                if ll.art == "stab" and ll.ziel == alt:
+                    ll.ziel = neu
+        for x in (getattr(self, "verformungsgrenzen", None) or {}).values():
+            if getattr(x, "stab", "") == alt:
+                x.stab = neu
+        for x in (getattr(self, "lasteinleitungen", None) or {}).values():
+            if getattr(x, "stab", "") == alt:
+                x.stab = neu
+
+    def linie_loeschen(self, name: str) -> str:
+        """Eine Linie entfernen - nicht, wenn eine Flaeche sie braucht."""
+        if name not in self.lines:
+            return "Linie gibt es nicht"
+        nutzer = [fn for fn, f in self.flaechen.items()
+                  if name in f.linien or any(name in o for o in (f.oeffnungen or []))]
+        if nutzer:
+            return f"Linie {name} berandet " + ", ".join(nutzer[:5]) + " - erst die Fläche löschen"
+        del self.lines[name]
+        for lc in self.load_cases.values():
+            lc.linienlasten = [ll for ll in lc.linienlasten
+                               if not (ll.art == "linie" and ll.ziel == name)]
+        return ""
+
+    def flaeche_loeschen(self, name: str) -> str:
+        """Eine Flaeche samt ihren Elementen entfernen - nicht, wenn ein Koerper sie braucht."""
+        f = self.flaechen.get(name)
+        if f is None:
+            return "Fläche gibt es nicht"
+        nutzer = [kn for kn, k in self.koerper.items() if name in k.flaechen]
+        if nutzer:
+            return f"Fläche {name} berandet " + ", ".join(nutzer[:5]) + " - erst das Volumen löschen"
+        self.elemente_loeschen(f.elemente)
+        del self.flaechen[name]
+        for lc in self.load_cases.values():
+            lc.geometrielasten = [gl for gl in lc.geometrielasten
+                                  if not (gl.art == "flaeche" and gl.ziel == name)]
+        return ""
+
+    def koerper_loeschen(self, name: str) -> str:
+        k = self.koerper.get(name)
+        if k is None:
+            return "Volumen gibt es nicht"
+        self.elemente_loeschen(k.elemente)
+        del self.koerper[name]
+        for lc in self.load_cases.values():
+            lc.geometrielasten = [gl for gl in lc.geometrielasten
+                                  if not (gl.art != "flaeche" and gl.ziel == name)]
+        return ""
+
+    def stab_loeschen(self, name: str) -> str:
+        """Den Stab mit Nachweis entfernen - seine Elemente bleiben."""
+        if name not in self.members:
+            return "Stab gibt es nicht"
+        del self.members[name]
+        for lc in self.load_cases.values():
+            lc.linienlasten = [ll for ll in lc.linienlasten
+                               if not (ll.art == "stab" and ll.ziel == name)]
+        return ""
+
     def knoten_auf_linie(self, name: str, tol: float = None) -> list:
         """Die Netzknoten auf einer Linie, in Reihenfolge entlang der Linie.
 

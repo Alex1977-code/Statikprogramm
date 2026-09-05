@@ -31,7 +31,7 @@ class Feld:
     """Ein Eingabefeld der Maske."""
     name: str
     text: str
-    art: str = "zahl"            # zahl | ganz | text | wahl | haken
+    art: str = "zahl"            # zahl | ganz | text | wahl | haken | info
     wert: object = 0.0
     werte: list = field(default_factory=list)   # fuer art="wahl"
     breite: int = 78
@@ -47,9 +47,10 @@ class Maske(QtWidgets.QFrame):
 
     angewendet = QtCore.Signal(dict)
     geschlossen = QtCore.Signal()
+    abgebrochen = QtCore.Signal()
 
     def __init__(self, titel: str, felder: list, parent=None, knoten: int = 0,
-                 hinweis: str = "", knopf: str = "Anwenden"):
+                 hinweis: str = "", knopf: str = "Anwenden", abbrechen: str = ""):
         super().__init__(parent)
         self.setObjectName("maske")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -102,6 +103,12 @@ class Maske(QtWidgets.QFrame):
         self.btn_anwenden.setDefault(True)
         self.btn_anwenden.clicked.connect(self.anwenden)
         knoepfe.addWidget(self.btn_anwenden)
+        self.btn_abbrechen = None
+        if abbrechen:
+            # Ein neues Objekt braucht ein "Abbrechen", das es wieder wegnimmt
+            self.btn_abbrechen = QtWidgets.QPushButton(abbrechen, self)
+            self.btn_abbrechen.clicked.connect(self.abbrechen)
+            knoepfe.addWidget(self.btn_abbrechen)
         if self.n_knoten:
             b = QtWidgets.QPushButton("Auswahl leeren", self)
             b.clicked.connect(self.auswahl_leeren)
@@ -111,6 +118,13 @@ class Maske(QtWidgets.QFrame):
 
     # -- Aufbau ----------------------------------------------------------
     def _bauen(self, f: Feld) -> QtWidgets.QWidget:
+        if f.art == "info":
+            # Nur zum Lesen: Anzahl, kleinste und groesste Nummer, Bezuege
+            w = QtWidgets.QLabel(str(f.wert), self)
+            w.setObjectName("maskeninfo")
+            w.setWordWrap(True)
+            w.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+            return w
         if f.art == "haken":
             w = QtWidgets.QCheckBox(f.text, self)
             w.setChecked(bool(f.wert))
@@ -139,7 +153,9 @@ class Maske(QtWidgets.QFrame):
     def werte(self) -> dict:
         out: dict = {}
         for name, w in self._felder.items():
-            if isinstance(w, QtWidgets.QCheckBox):
+            if isinstance(w, QtWidgets.QLabel):
+                out[name] = w.text()
+            elif isinstance(w, QtWidgets.QCheckBox):
                 out[name] = w.isChecked()
             elif isinstance(w, QtWidgets.QComboBox):
                 out[name] = w.currentText()
@@ -163,6 +179,8 @@ class Maske(QtWidgets.QFrame):
             w.setChecked(bool(wert))
         elif isinstance(w, QtWidgets.QComboBox):
             w.setCurrentText(str(wert))
+        elif isinstance(w, QtWidgets.QLabel):
+            w.setText(str(wert))
         else:
             w.setText(f"{wert:g}" if isinstance(wert, float) else str(wert))
 
@@ -202,6 +220,12 @@ class Maske(QtWidgets.QFrame):
     # -- Bedienung -------------------------------------------------------
     def anwenden(self):
         self.angewendet.emit(self.werte())
+
+    def abbrechen(self):
+        """Abbrechen: erst melden (das Fenster nimmt ein neues Objekt zurueck),
+        dann schliessen."""
+        self.abgebrochen.emit()
+        self.schliessen()
 
     def schliessen(self):
         self.hide()
@@ -667,6 +691,46 @@ class Ansichtsrand(QtCore.QObject):
         return False
 
 
-def stil() -> str:
-    return STIL.format(**dsg.FARBEN)
+# ==========================================================================
+# Gummiband: das Auswahlfenster ueber der Ansicht
+# ==========================================================================
+class Gummiband(QtWidgets.QWidget):
+    """Das Auswahlfenster: ein durchscheinendes Rechteck ueber der Ansicht.
+
+    Die erste Ecke setzt die linke Maustaste, die zweite die rechte. Von
+    links nach rechts aufgezogen (blau, durchgezogen) zaehlt nur, was ganz
+    im Fenster liegt; von rechts nach links (gruen, gestrichelt) auch alles,
+    was das Fenster nur anschneidet - die Farben, wie sie CAD-Anwender
+    kennen. Das Band faengt keine Mausereignisse; die Ansicht darunter
+    bekommt sie weiter.
+    """
+
+    def __init__(self, ansicht: QtWidgets.QWidget):
+        super().__init__(ansicht)
+        self.setObjectName("gummiband")
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.kreuzend = False
+        self.hide()
+
+    def setzen(self, p1: QtCore.QPoint, p2: QtCore.QPoint, kreuzend: bool):
+        """Die beiden Ecken (Bildpunkte der Ansicht, y von oben) uebernehmen."""
+        self.kreuzend = bool(kreuzend)
+        r = QtCore.QRect(QtCore.QPoint(p1), QtCore.QPoint(p2)).normalized()
+        self.setGeometry(r.adjusted(-1, -1, 2, 2))
+        self.update()
+
+    def paintEvent(self, ev):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, False)
+        farbe = QtGui.QColor(dsg.FARBEN["gut"] if self.kreuzend else dsg.FARBEN["akzent"])
+        stift = QtGui.QPen(farbe, 1,
+                           QtCore.Qt.DashLine if self.kreuzend else QtCore.Qt.SolidLine)
+        fuellung = QtGui.QColor(farbe)
+        fuellung.setAlpha(38)
+        p.setPen(stift)
+        p.setBrush(fuellung)
+        p.drawRect(self.rect().adjusted(1, 1, -2, -2))
+        p.end()
 

@@ -270,6 +270,17 @@ def z_fang_volumen(s: Stift):
     s.kreis(9.5, 12, 1.8)
 
 
+def z_fang_netz(s: Stift):
+    # Ein Netz aus Zellen, eine davon getroffen (gefuellt), dazu der Fangring
+    _fangkreis(s)
+    s.stift(breite=1.1)
+    for i in range(4):
+        s.linie(3, 4 + i * 5, 18, 4 + i * 5)
+        s.linie(3 + i * 5, 4, 3 + i * 5, 19)
+    s.fuellung(_mit_alpha(s.akzent, 110), s.akzent)
+    s.zug([(8, 9), (13, 9), (13, 14), (8, 14)], True)
+
+
 def z_fang_mitte(s: Stift):
     s.stift(breite=2.0)
     s.linie(3, 17, 21, 7)
