@@ -2961,9 +2961,10 @@ def main():
         w.sel_flaechen = []
         w.geometrie_vernetzen()
         app.processEvents()
-        check("Vernetzen: Teilung 8 × 4 aus der Netzdichte, 64 Dreieckelemente, Protokoll nennt die Netzdichte",
-              f_.teilung == [8, 4] and len(f_.elemente) == 64 and all(m_.elements[e].typ == "shell3" for e in f_.elemente)
-              and "Netzdichte Fläche F1" in w.log.toPlainText(), str((f_.teilung, len(f_.elemente))))
+        check("Vernetzen: Teilung 8 × 4 aus der Netzdichte (64 Dreieckelemente), die eigene Teilung 2 × 2 bleibt",
+              f_.teilung == [2, 2] and len(f_.elemente) == 64 and all(m_.elements[e].typ == "shell3" for e in f_.elemente)
+              and "Netzdichte Fläche F1" in w.log.toPlainText() and "→ 8 × 4" in w.log.toPlainText(),
+              str((f_.teilung, len(f_.elemente))))
         v_ = w.netz_vorschau()
         check("Netzvorschau: 32 Elemente geschätzt", bool(v_) and v_["n"] == 32)
         m_.netz.dichte = "mittel"
@@ -2972,9 +2973,10 @@ def main():
         w.geometrie_vernetzen()
         app.processEvents()
         D_ = (16 + 4) ** 0.5
-        check("Netzdichte mittel: 16 Elemente über die Diagonale → Teilung 14 × 7, Vierecke",
-              f_.teilung == [round(4 / (D_ / 16)), round(2 / (D_ / 16))] and all(m_.elements[e].typ == "shell4" for e in f_.elemente),
-              str(f_.teilung))
+        check("Netzdichte mittel: 16 Elemente über die Diagonale → Netz 14 × 7 Vierecke, eigene Teilung bleibt",
+              len(f_.elemente) == round(4 / (D_ / 16)) * round(2 / (D_ / 16)) and f_.teilung == [2, 2]
+              and all(m_.elements[e].typ == "shell4" for e in f_.elemente),
+              str((f_.teilung, len(f_.elemente))))
         del w._bestaetigen
         w.error = alt_error
 
@@ -4110,6 +4112,178 @@ def main():
         import traceback
         traceback.print_exc()
         check("Lastfälle nach DIN 19704 und Lastenheft", False, str(ex)[:70])
+
+    # ---- Befunde des Menütests (#120): Löschen, Zuweisen, Stabmaske, Undo, Tabellen --
+    try:
+        from statik3d.gui import masken as msk_
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        # A1: Elemente und Knoten löschen bei Stäben mit Nachweis - ohne IndexError, rücknehmbar
+        w.load_example("hall")
+        app.processEvents()
+        m_ = w.model
+        n_el, n_kn, n_mem = len(m_.elements), m_.nn, len(m_.members)
+        w._set_selection([0, 1])
+        w.delete_elements()
+        app.processEvents()
+        ok_ = all(0 <= e < len(w.model.elements)
+                  for mem in w.model.members.values() for e in mem.elements)
+        check("Elemente löschen bei Stäben mit Nachweis: Verweise nachgezogen, kein Fehler",
+              len(w.model.elements) < n_el and ok_ and not fehler_,
+              str((len(w.model.elements), n_el, fehler_[:1])))
+        w.undo(); app.processEvents()
+        check("Elemente löschen ist rücknehmbar",
+              len(w.model.elements) == n_el and len(w.model.members) == n_mem)
+        w._set_selection([0])
+        w.delete_nodes(); app.processEvents()
+        check("Knoten löschen nimmt den Knoten und seine Elemente, die Nummern rücken auf",
+              w.model.nn == n_kn - 1 and len(w.model.elements) < n_el and not fehler_
+              and all(int(n) < w.model.nn for e in w.model.elements for n in e.nodes),
+              str((w.model.nn, n_kn, fehler_[:1])))
+        w.undo(); app.processEvents()
+        check("Knoten löschen ist rücknehmbar", w.model.nn == n_kn and len(w.model.elements) == n_el)
+        # B3: Doppelklick auf einen Stab mit Nachweis → Stabmaske mit β
+        stab_ = next(iter(w.model.members))
+        w._baum_bearbeiten("stab", stab_)
+        app.processEvents()
+        mk = w.maskenrand.maske
+        check("Doppelklick auf einen Stab mit Nachweis öffnet rechts die Stabmaske mit β_y, β_z",
+              isinstance(mk, msk_.Maske) and mk.titel == f"Stab {stab_}" and "beta_y" in mk.werte()
+              and "Nachweisparameter …" in getattr(mk, "zusatzknoepfe", {}),
+              str(getattr(mk, "titel", None)))
+        mk.setzen("beta_y", 2.5); mk.anwenden(); app.processEvents()
+        check("β_y aus der Stabmaske steht im Stab", abs(w.model.members[stab_].beta_y - 2.5) < 1e-9,
+              str(w.model.members[stab_].beta_y))
+        # B4: Dezimalkomma in den Kombinationsfaktoren
+        lf_ = list(w.model.load_cases)[:2]
+        k_ = next(iter(w.model.combinations))
+        w._objektmaske("kombination", k_); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("faktoren", f"{lf_[0]}: 1,35, {lf_[1]}: 1,5")
+        mk.anwenden(); app.processEvents()
+        f_ = w.model.combinations[k_].factors
+        check("Kombinationsfaktoren mit Dezimalkomma („LF1: 1,35, LF2: 1,5“)",
+              abs(f_.get(lf_[0], 0) - 1.35) < 1e-9 and abs(f_.get(lf_[1], 0) - 1.5) < 1e-9 and not fehler_,
+              str((f_, fehler_[:1])))
+        # B1: Projektangaben, Zuweisen und Gelenke setzen tun etwas
+        w.ribbon.finden("Projektangaben…")[0].aktion.trigger(); app.processEvents()
+        check("Datei → Projektangaben… zeigt rechts die Maske „Modell“",
+              w.eingaben_dock.windowTitle() == "Modell", w.eingaben_dock.windowTitle())
+        w._set_selection([]); app.processEvents()
+        n_f = len(fehler_)
+        w.zuweisen_zeigen("querschnitt"); app.processEvents()
+        check("„Querschnitt zuweisen…“ ohne Auswahl: Hinweis statt stummem Befehl",
+              len(fehler_) == n_f + 1 and "wählen" in fehler_[-1], str(fehler_[-1:]))
+        w._set_selection([0, 1]); app.processEvents()
+        w.zuweisen_zeigen("dicke"); app.processEvents()
+        check("„Dicke zuweisen…“ mit Auswahl: Kontextregister „Auswahl“ vorn, Aufklappliste Dicke da",
+              w.ribbon._kontext is not None and w.ribbon.tabs.currentWidget() is w.ribbon._kontext
+              and getattr(w, "cb_assign_shell", None) is not None)
+        w.zuweisen_zeigen("gelenke"); app.processEvents()
+        check("„Gelenke setzen…“ mit Auswahl zeigt die Maske Lager/Lasten",
+              w.eingaben_dock.windowTitle() == "Lager/Lasten", w.eingaben_dock.windowTitle())
+        # B8: Auswahl in der Ansicht markiert die Modelltabellen
+        check("Auswahl in der Ansicht markiert die Zeilen der Knotentabelle",
+              sorted(int(x) for x in w.tbl_knoten.gewaehlte_schluessel()) == [0, 1],
+              str(w.tbl_knoten.gewaehlte_schluessel()))
+        el_ = [i for i, e in enumerate(w.model.elements) if {int(n) for n in e.nodes} <= {0, 1}]
+        check("… und der Stabtabelle",
+              sorted(int(x) for x in w.tbl_elem.gewaehlte_schluessel()) == sorted(el_),
+              str((w.tbl_elem.gewaehlte_schluessel(), el_)))
+        # B9: nach dem Rechnen Statuszeile und Docktitel
+        an = solver.solve_all(w.model)
+        w._solve_done("all", an); app.processEvents()
+        check("Nach dem Rechnen: Statuszeile nennt die Ergebnisse, rechts die Maske „Ergebnisse“",
+              "Ergebnis" in w.lbl_solver.text() and w.eingaben_dock.windowTitle() == "Ergebnisse",
+              str((w.lbl_solver.text(), w.eingaben_dock.windowTitle())))
+        # C12: Rückgängig-Stapel beim Modellwechsel leer
+        w.merken("Test")
+        w.load_example("frame"); app.processEvents()
+        check("Beispiel laden leert den Rückgängig-Stapel", not w._undo and not w.act_undo.isEnabled())
+        # B5/C8: Rückgängig für die Erzeuge-Masken, „Neu: Knoten“ ein Schritt
+        n_u = len(w._undo)
+        w._maske_knoten_anlegen({"x": 1.0, "y": 2.0, "z": 0.0}); app.processEvents()
+        check("Knotenmaske „Anlegen“ ist rücknehmbar", len(w._undo) == n_u + 1)
+        n_u = len(w._undo)
+        w._baum_neu("knoten"); app.processEvents()
+        w.maskenrand.maske.anwenden(); app.processEvents()
+        check("„Neu: Knoten“ braucht nur einen Rückgängig-Schritt", len(w._undo) == n_u + 1,
+              str((len(w._undo), n_u)))
+        # B2: Neu-Zweige Schweißnähte und Bemaßungen
+        w.new_model(); app.processEvents()
+        w._baum_neu("schweissnaehte"); app.processEvents()
+        t_ = str(getattr(w.maskenrand.maske, "titel", ""))
+        check("Modellbaum „Schweißnähte → Neu“ öffnet die Nahtmaske", "naht" in t_.lower(), t_)
+        w._baum_neu("bemassungen"); app.processEvents()
+        t_ = str(getattr(w.maskenrand.maske, "titel", ""))
+        check("Modellbaum „Bemaßungen → Neu“ öffnet die Maßmaske", t_.startswith("Neu: Linearmaß"), t_)
+        w.maskenrand.schliessen(); app.processEvents()
+        # A2 + B6: Element einer vernetzten Fläche löschen; die eigene Teilung bleibt
+        w.new_model(); app.processEvents()
+        from statik3d.model import ShellProp as _SP
+        mg = w.model
+        mg.add_shell_prop(_SP("t12", 0.012))
+        mg.add_nodes(np.array([[0, 0, 0], [3, 0, 0], [3, 2, 0], [0, 2, 0.]]))
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            mg.add_line(f"L{i + 1}", [a, b])
+        mg.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke="t12",
+                       material=next(iter(mg.materials)), teilung=[3, 2])
+        mg.netz.teilung_uebersteuern = True
+        mg.netz.dichte = "fein"
+        w.refresh_all(); app.processEvents()
+        w.sel_flaechen = ["F1"]
+        w.geometrie_vernetzen(); app.processEvents()
+        f1 = w.model.flaechen["F1"]
+        check("Vernetzen nach Netzdichte lässt die eigene Teilung der Fläche stehen",
+              list(f1.teilung) == [3, 2] and len(f1.elemente) > 6, str((f1.teilung, len(f1.elemente))))
+        n_el = len(w.model.elements)
+        w.tbl_elem.view.selectRow(0)
+        w.element_loeschen(); app.processEvents()
+        f1 = w.model.flaechen["F1"]
+        check("Tabelle Stäbe → Element löschen zieht die Elementverweise der Fläche nach",
+              len(w.model.elements) == n_el - 1 and len(f1.elemente) == n_el - 1
+              and all(0 <= e < n_el - 1 for e in f1.elemente), str((len(f1.elemente), n_el)))
+        # C10: Werkstoff mit vorhandenem Namen
+        _gm = sys.modules["statik3d.gui.main"]      # gui.main() verdeckt das Modul
+
+        class _FakeMat:
+            def __init__(self, parent=None):
+                pass
+
+            def exec(self):
+                return True
+
+            def result_material(self):
+                from statik3d.model import Material
+                return Material.steel(next(iter(w.model.materials)))
+        alt_md = _gm.MaterialDialog
+        _gm.MaterialDialog = _FakeMat
+        try:
+            n_f = len(fehler_)
+            w.add_material(); app.processEvents()
+        finally:
+            _gm.MaterialDialog = alt_md
+        check("Werkstoff mit vorhandenem Namen: klare Meldung statt nacktem KeyError",
+              len(fehler_) == n_f + 1 and "gibt es schon" in fehler_[-1], str(fehler_[-1:]))
+        # C5/C6: jeder Befehl einmal, jeder mit Hinweis
+        w._set_selection([]); app.processEvents()
+        texte = [b.text for b in w.ribbon.befehle]
+        doppelt = sorted({t for t in texte if texte.count(t) > 1})
+        check("Ribbon: jeder Befehl steht genau einmal (Schalter „Knoten“ der Ansicht ausgenommen)",
+              set(doppelt) <= {"Knoten"}, str(doppelt))
+        ohne = [f"{b.register}/{b.text}" for b in w.ribbon.befehle if not b.hinweis]
+        check("Ribbon: jeder Befehl hat einen Hinweistext", not ohne, str(ohne[:6]))
+        check("Register Ergebnisse: die Tabellenbefehle heißen „Tabelle …“",
+              bool(w.ribbon.finden("Tabelle Nachweise EC3")))
+        check("Nachweise: Befehl „Volumenbereich“, Beispiel „Abhebendes Lager“",
+              bool(w.ribbon.finden("Volumenbereich")) and bool(w.ribbon.finden("Abhebendes Lager")))
+        w.error = alt_error
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Befunde des Menütests (#120)", False, str(ex)[:70])
 
     # ---- Klick und Ziehen; Bericht ohne Berechnung ---------------------------
     try:

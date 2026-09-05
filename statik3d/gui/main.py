@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import sys
 import time
 import traceback
@@ -2366,25 +2367,29 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Öffnen", "▤", self.open_model, "Ctrl+O", "Modell aus Datei laden")
         self.act_speichern = g.gross("Speichern", "▣", self.save_model, "Ctrl+S",
                                      "Modell speichern")
-        g.klein("Speichern unter…", lambda: self.save_model(True))
-        g.klein("Projektangaben…", lambda: self.maske_zeigen("Projekt"),
-                hinweis="Projekt, Bauteil, Position, Bearbeiter")
+        g.klein("Speichern unter…", lambda: self.save_model(True),
+                hinweis="Das Modell unter neuem Namen oder an anderem Ort speichern")
+        g.klein("Projektangaben…", lambda: self.maske_zeigen("Modell"),
+                hinweis="Projekt, Bauteil, Position, Bearbeiter - rechts in der Maske „Modell“")
         g = r.gruppe("Austausch")
         g.gross("Übernehmen", "⇤", self.import_file, "Ctrl+I",
                 "Aus RFEM 6, HiCAD, IFC, DXF, SAF, INP, BDF, STEP übernehmen")
         g.gross("Exportieren", "⇥", self.export_model, "Ctrl+E",
                 "SDNF, DSTV-NC, IFC, SAF, DXF, STL, VTK, HiCAD")
-        g.klein("Ergebnisse als CSV…", self.export_csv)
-        g.klein("Netz + Ergebnisse als VTK…", self.export_vtk)
+        g.klein("Ergebnisse als CSV…", self.export_csv,
+                hinweis="Verformungen, Auflager- und Stabkräfte des gezeigten Ergebnisses als CSV")
+        g.klein("Netz + Ergebnisse als VTK…", self.export_vtk,
+                hinweis="Netz und Ergebnisfelder als VTK-Datei, etwa für ParaView")
         g = r.gruppe("Beispiele")
         for key, label in (("frame", "Rahmen"), ("truss", "Fachwerk"),
                            ("plate", "Platte"), ("solid", "Konsole"),
                            ("hall", "Hallenrahmen"), ("gate", "Stauwand"),
-                           ("contact", "Kontakt"), ("friction", "Reibung")):
+                           ("contact", "Abhebendes Lager"), ("friction", "Reibung")):
             g.klein(label, lambda k=key: self.load_example(k),
                     hinweis=f"Beispiel {label} laden")
         g = r.gruppe("Sitzung")
-        g.klein("Beenden", self.close, "Ctrl+Q")
+        g.klein("Beenden", self.close, "Ctrl+Q",
+                hinweis="Das Programm schließen")
 
         # -- Start -------------------------------------------------------
         r = rb.register("Start")
@@ -2396,8 +2401,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Auswahl")
         self.act_auswahl_weg = g.gross("Alles deselektieren", "✕", self.clear_selection,
                                        "Esc", "Auswahl aufheben - nichts bleibt gewählt (auch in der Glasleiste)")
-        g.klein("Alles auswählen", self.select_all, "Ctrl+A")
-        g.klein("Auswahl umkehren", self.invert_selection)
+        g.klein("Alles auswählen", self.select_all, "Ctrl+A",
+                hinweis="Alle Knoten des Modells wählen")
+        g.klein("Auswahl umkehren", self.invert_selection,
+                hinweis="Gewählte Knoten abwählen, alle anderen wählen")
         self.act_klug = g.schalter("Intelligente Auswahl", None, True,
                                    hinweis="Linien und Stäbe: gibt es am Ende genau eine Fortsetzung, "
                                            "wird sie mit gewählt - und beim Abwählen mit abgewählt. "
@@ -2405,9 +2412,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                    symbol="auswahl_klug")
         g = r.gruppe("Modell prüfen")
         g.gross("Prüfen", "⚑", self.do_check, "", "Modell auf Fehler prüfen")
-        g.klein("Doppelte Knoten zusammenführen", self.do_merge)
-        g.klein("Freie Stabenden anschließen…", self.staebe_anschliessen)
-        g.klein("Stäbe automatisch erkennen", self.auto_members)
+        g.klein("Doppelte Knoten zusammenführen", self.do_merge,
+                hinweis="Knoten mit gleichen Koordinaten zu einem verschmelzen - nach dem Übernehmen aus CAD")
+        g.klein("Freie Stabenden anschließen…", self.staebe_anschliessen,
+                hinweis="Freie Stabenden auf die Achse des nächsten Stabes loten und ihn dort teilen (Suchradius in mm)")
         g = r.gruppe("Berechnen")
         self.act_rechnen = g.gross("Berechnen", "▶", lambda: self.do_solve("all"),
                                    "F5", "Alle Lastfälle und Kombinationen rechnen",
@@ -2418,26 +2426,16 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Knoten")
         g.gross("Knoten", "•", self.maske_knoten, "",
                 "Knoten über Koordinaten anlegen oder in der Ansicht klicken")
-        g.klein("Knoten löschen", self.delete_nodes)
+        g.klein("Knoten löschen", self.delete_nodes,
+                hinweis="Die gewählten Knoten mit den daran hängenden Elementen entfernen - Knoten, die eine Linie braucht, bleiben")
         g = r.gruppe("Linien")
         g.gross("Linie", "◜", self.maske_linie, "",
                 "Polylinie, Bogen, Kreis, Spline oder Parabel")
         g.klein("Linie aus Knoten…", self.add_linie,
                 hinweis="Aus den ausgewählten Knoten eine Linie machen")
-        # Die Kette wie in RFEM: aus Knoten Linien, aus Linien Flaechen, aus
-        # Flaechen Volumen. Jede Stufe nimmt, was in der Ansicht ausgewaehlt ist.
-        g = r.gruppe("Flächen und Volumen")
-        g.gross("Fläche aus Linien", "▱", self.add_flaeche_aus_auswahl, "",
-                "Aus den ausgewählten Linien eine Fläche bilden")
-        g.gross("Volumen aus Flächen", "▣", self.add_koerper_aus_auswahl, "",
-                "Aus den ausgewählten Flächen einen Volumenkörper bilden")
-        g.klein("Vernetzen", self.geometrie_vernetzen,
-                hinweis="Die ausgewählten – sonst alle – Flächen und Körper vernetzen")
-        g.klein("Netz löschen", self.netz_loeschen_geometrie,
-                hinweis="Das Netz entfernen, die Geometrie bleibt")
-        g.klein("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren,
-                hinweis="Die Netze an den Kontaktbedingungen trennen "
-                        "(geschieht beim Vernetzen von selbst)")
+        # Die Kette wie in RFEM geht hier weiter: aus Linien Flaechen, aus
+        # Flaechen Volumen - die Befehle stehen im Register Struktur bei ihrer
+        # Objektart, das Vernetzen im Register Netz. Jeder Befehl genau einmal.
         g = r.gruppe("Auswahl in der Ansicht")
         self.cb_auswahlart = QtWidgets.QComboBox()
         self.cb_auswahlart.addItems(self.AUSWAHLARTEN)
@@ -2445,14 +2443,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_auswahlart.setToolTip("Was ein Klick in der Ansicht trifft")
         self.cb_auswahlart.currentTextChanged.connect(self.auswahlart_setzen)
         g.widget(self.cb_auswahlart)
-        g.klein("Alles deselektieren", self.clear_selection)
         g = r.gruppe("Koordinatensystem")
         self.cb_ks = QtWidgets.QComboBox()
         self.cb_ks.setMinimumWidth(120)
         self.cb_ks.currentTextChanged.connect(self.ks_waehlen)
         g.widget(self.cb_ks)
-        g.klein("Neues KS…", self.ks_neu)
-        g.klein("Aus drei Knoten", self.ks_aus_auswahl)
+        g.klein("Neues KS…", self.ks_neu,
+                hinweis="Ein Koordinatensystem über Ursprung und Drehwinkel anlegen - kartesisch, zylindrisch oder sphärisch")
+        g.klein("Aus drei Knoten", self.ks_aus_auswahl,
+                hinweis="Koordinatensystem aus drei gewählten Knoten: Ursprung, x-Richtung, Punkt in der xy-Ebene")
         g = r.gruppe("Arbeitsebene")
         self.cb_ebene = QtWidgets.QComboBox()
         self.cb_ebene.addItems(list(ks.EBENEN))
@@ -2489,13 +2488,6 @@ class MainWindow(QtWidgets.QMainWindow):
             a.setShortcut(QtGui.QKeySequence(kuerzel))
             a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
             self.act_fangart[art] = a
-        g = r.gruppe("Netzgeneratoren")
-        g.gross("Stabzug", "╱", self.maske_stabzug,
-                hinweis="Stabzug zwischen zwei Punkten")
-        g.gross("Platte", "▦", self.maske_platte,
-                hinweis="Rechteckplatte aus Schalen")
-        g.gross("Quader", "▩", self.maske_quader,
-                hinweis="Quader aus Volumenelementen")
 
         # -- Struktur ----------------------------------------------------
         r = rb.register("Struktur")
@@ -2508,50 +2500,62 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Stabzug zwischen zwei Punkten, in n Elemente geteilt")
         g.klein("Stäbe für Nachweise", lambda: self.maske_zeigen("Nachweise"),
                 hinweis="Stäbe mit Knick- und Kipplängen")
-        g.klein("Stäbe automatisch erkennen", self.auto_members)
-        g.klein("Querschnitt zuweisen…", lambda: self.maske_zeigen("Auswahl"),
-                hinweis="Querschnitt und Werkstoff an die gewählten Elemente")
+        g.klein("Stäbe automatisch erkennen", self.auto_members,
+                hinweis="Zusammenhängende Stabelemente gleicher Richtung zu Stäben mit Nachweis zusammenfassen")
+        g.klein("Querschnitt zuweisen…", lambda: self.zuweisen_zeigen("querschnitt"),
+                hinweis="Querschnitt und Werkstoff an die gewählten Elemente - im Register "
+                        "„Auswahl“, das erscheint, sobald etwas gewählt ist")
         g = r.gruppe("Flächen")
         g.gross("Schale", "◫", self.maske_schale, "",
                 "Drei oder vier Knoten in der Ansicht anklicken")
         g.gross("Fläche aus Linien", "▱", self.add_flaeche_aus_auswahl, "",
                 "Die gewählten Linien beranden die Fläche - Randlinien auch in der Maske anklicken")
-        g.klein("Platte", self.maske_platte, hinweis="Rechteckplatte, gleich vernetzt")
-        g.klein("Flächen vernetzen", self.geometrie_vernetzen)
-        g.klein("Dicke zuweisen…", lambda: self.maske_zeigen("Auswahl"))
+        g.klein("Rechteckplatte", self.maske_platte, hinweis="Rechteckplatte aus Schalen, gleich vernetzt")
+        g.klein("Flächen vernetzen", self.geometrie_vernetzen,
+                hinweis="Die gewählten - sonst alle - Flächen nach den Netzeinstellungen vernetzen")
+        g.klein("Dicke zuweisen…", lambda: self.zuweisen_zeigen("dicke"),
+                hinweis="Schalendicke und Werkstoff an die gewählten Flächenelemente - im Register "
+                        "„Auswahl“, das erscheint, sobald etwas gewählt ist")
         g = r.gruppe("Volumen")
         g.gross("Volumen aus Flächen", "▣", self.add_koerper_aus_auswahl, "",
                 "Die gewählten Flächen beranden den Volumenkörper - Randflächen auch in der Maske anklicken")
         g.klein("Quader", self.maske_quader, hinweis="Quader, gleich vernetzt")
-        g.klein("Volumen vernetzen", self.geometrie_vernetzen)
-        g.klein("Netz löschen", self.netz_loeschen_geometrie)
+        g.klein("Volumen vernetzen", self.geometrie_vernetzen,
+                hinweis="Die gewählten - sonst alle - Volumenkörper nach den Netzeinstellungen vernetzen")
         g = r.gruppe("Gelenke")
         g.gross("Gelenk", "○", self.add_hinge,
                 hinweis="Stabendgelenk anlegen: je Freiheitsgrad biegesteif, gelenkig oder Feder "
                         "- rechts in der Maske")
-        g.klein("Gelenke setzen…", lambda: self.maske_zeigen("Auswahl"),
-                hinweis="Gelenke an den gewählten Elementen setzen")
-        g.klein("Tabelle Gelenke", lambda: self.tabelle_zeigen("Gelenke"))
+        g.klein("Gelenke setzen…", lambda: self.zuweisen_zeigen("gelenke"),
+                hinweis="Gelenke an den Stabenden der gewählten Elemente setzen")
+        g.klein("Tabelle Gelenke", lambda: self.tabelle_zeigen("Gelenke"),
+                hinweis="Alle Gelenke unten in der Tabelle")
         g = r.gruppe("Eigenschaften")
         g.gross("Querschnitte", "⌶", lambda: self.tabelle_zeigen("Querschnitte"),
                 hinweis="Querschnitte aus der Profildatenbank")
         g.gross("Werkstoffe", "⬗", lambda: self.tabelle_zeigen("Werkstoffe"),
                 hinweis="Werkstoffe und ihre Kennwerte")
-        g.klein("Schalendicken", lambda: self.tabelle_zeigen("Dicken"))
-        g.klein("Elemente löschen", self.delete_elements)
+        g.klein("Schalendicken", lambda: self.tabelle_zeigen("Dicken"),
+                hinweis="Tabelle der Schalendicken - dort anlegen und ändern")
+        g.klein("Elemente löschen", self.delete_elements,
+                hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
 
         # -- Lager / Gelenke / Kontakt -----------------------------------
         r = rb.register("Lager / Kontakt")
         g = r.gruppe("Lager")
         g.gross("Knotenlager", "△", self.maske_lager, "",
                 "Knoten wählen, Freiheitsgrade ankreuzen")
-        g.klein("Linienlager…", self.line_support_dialog)
-        g.klein("Flächenlager…", self.surface_support_dialog)
-        g.klein("Nichtlinearität…", self.support_nonlinear_dialog)
+        g.klein("Linienlager…", self.line_support_dialog,
+                hinweis="Lager entlang einer Linie oder Knotenreihe: Freiheitsgrade, Federn je m, Ausfall")
+        g.klein("Flächenlager…", self.surface_support_dialog,
+                hinweis="Lager auf einer Fläche: Bettung je m², Ausfall bei Zug")
+        g.klein("Nichtlinearität…", self.support_nonlinear_dialog,
+                hinweis="Ausfall, Schlupf, Reibung und Grenzkraft der Lager an den gewählten Knoten")
         g = r.gruppe("Kontakt")
         g.gross("Kontakt", "⇹", lambda: self.maske_zeigen("Kontakt"),
                 hinweis="Einseitiges Lager, Spaltelement, Kontaktpaar")
-        g.klein("Kontakt löschen", self.clear_contact)
+        g.klein("Kontakt löschen", self.clear_contact,
+                hinweis="Alle einseitigen Lager, Spaltelemente und Kontaktpaare entfernen")
         g = r.gruppe("Anschlüsse")
         g.gross("Anschluss", "⊞", self.add_joint,
                 hinweis="Kopfplatte, Laschenstoß oder Diagonalanschluss am gewählten "
@@ -2559,19 +2563,23 @@ class MainWindow(QtWidgets.QMainWindow):
                         "wird bei jeder Berechnung nachgewiesen.")
         g.klein("Anschlüsse zeigen", self.show_joints,
                 hinweis="Alle Anschlüsse mit ihren Nachweisen im Klartext")
-        g.klein("Tabelle Anschlüsse", lambda: self.tabelle_zeigen("Anschlüsse"))
-        g.klein("Anschluss löschen", self.delete_joint)
+        g.klein("Tabelle Anschlüsse", lambda: self.tabelle_zeigen("Anschlüsse"),
+                hinweis="Alle Anschlüsse mit ihren Nachweisen unten in der Tabelle")
+        g.klein("Anschluss löschen", self.delete_joint,
+                hinweis="Den in der Tabelle gewählten Anschluss entfernen")
 
         # -- Lasten ------------------------------------------------------
         r = rb.register("Lasten")
         g = r.gruppe("Lastfälle")
         g.gross("Lastfälle", "≔", lambda: self.maske_zeigen("Lastfälle"),
                 hinweis="Lastfälle anlegen und verwalten")
-        g.klein("Kombinationen automatisch…", self.auto_combinations)
+        g.klein("Kombinationen automatisch…", self.auto_combinations,
+                hinweis="Kombinationen nach EN 1990 (6.10 oder 6.10a/b) aus den Lastfällen bilden - GZT, GZG, außergewöhnlich")
         g.klein("Lastfälle nach DIN 19704…", self.maske_din19704_lastfaelle,
                 hinweis="Stahlwasserbau: die üblichen Lastfälle (Eigengewicht, Wasserdruck, Wind, "
                         "Temperatur, Eis, Betriebslast, Antrieb …) mit Einwirkungsart und Nummer anlegen")
-        g.klein("Ermüdungslast…", self.fatigue_load_dialog)
+        g.klein("Ermüdungslast…", self.fatigue_load_dialog,
+                hinweis="Lastspiel für den Ermüdungsnachweis: Lastfälle für Ober- und Unterlast, Zyklenzahl")
         g = r.gruppe("Lasten")
         g.gross("Knotenlast", "", self.maske_knotenlast, "",
                 "Knoten wählen, Kräfte und Momente eintragen", symbol="knotenlast")
@@ -2622,26 +2630,32 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Weiteres")
         g.klein("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren,
                 hinweis="Die Netze an den Kontaktbedingungen trennen")
-        g.klein("Alle Elemente löschen", self.clear_mesh)
+        g.klein("Alle Elemente löschen", self.clear_mesh,
+                hinweis="Das ganze Netz entfernen - Werkstoffe, Querschnitte und Dicken bleiben")
 
         # -- Berechnung --------------------------------------------------
         r = rb.register("Berechnung")
         g = r.gruppe("Rechnen")
         g.widget(self._ribbon_knopf(self.act_rechnen, "▶", "start"))
-        g.klein("Nur aktiver Lastfall", lambda: self.do_solve("case"))
-        g.klein("Eigenschwingungen", lambda: self.do_solve("modal"))
-        g.klein("Knicken", lambda: self.do_solve("buckling"))
+        g.klein("Nur aktiver Lastfall", lambda: self.do_solve("case"),
+                hinweis="Nur den aktiven Lastfall rechnen - schnell zur Kontrolle")
+        g.klein("Eigenschwingungen", lambda: self.do_solve("modal"),
+                hinweis="Eigenfrequenzen und Eigenformen (Anzahl in den Einstellungen)")
+        g.klein("Knicken", lambda: self.do_solve("buckling"),
+                hinweis="Verzweigungslastfaktor und Knickfigur für den aktiven Lastfall oder die gewählte Kombination")
         g = r.gruppe("Stellungen")
         g.gross("Alle Stellungen", "⟳", self.stellungen_rechnen,
                 hinweis="Jede Stellung rechnen und die Umhüllende bilden")
         g.klein("Stellung anlegen…", self.neue_stellung,
                 hinweis="Rechts die Maske: Bezeichnung, Ausgangsstellung, Verschiebung, Verdrehung, "
                         "deaktivierte Stäbe, Flächen, Volumen, Gelenke und Lager")
-        g.klein("DIN 19704: Kombinationen", self.din19704_bilden)
+        g.klein("DIN 19704: Kombinationen", self.din19704_bilden,
+                hinweis="Lastkombinationen nach DIN 19704 aus den Lastfallklassen bilden")
         g = r.gruppe("Einstellungen")
         g.gross("Einstellungen", "⚙", lambda: self.maske_zeigen("Berechnung"),
                 hinweis="Analyseart, Prozesse, Rechnerfarm")
-        g.klein("Bedienung im Browser…", self.start_web_server)
+        g.klein("Bedienung im Browser…", self.start_web_server,
+                hinweis="Web-Server starten - das Modell im Browser oder auf dem Handy bedienen")
 
         # -- Nachweise ---------------------------------------------------
         r = rb.register("Nachweise")
@@ -2656,47 +2670,61 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Einstellungen")
         g.gross("Konfiguration", "⚙", self.design_settings,
                 hinweis="Teilsicherheitsbeiwerte und Nachweisstellen")
-        g.klein("Stäbe und Knicklängen…", lambda: self.maske_zeigen("Nachweise"))
+        g.klein("Stäbe und Knicklängen…", lambda: self.maske_zeigen("Nachweise"),
+                hinweis="Maske Nachweise: Stäbe mit Knick- und Kipplängen, Beiwerten und Kerbfall")
         g = r.gruppe("Knicklängen")
         g.gross("Aus Knickfigur", "β", self.do_knicklaengen,
                 hinweis="Knicklängenbeiwerte β aus Verzweigungslastfaktor und Eigenform: "
                         "N_cr = α_cr·|N_Ed|, L_cr = π·√(EI/N_cr); die Knickfigur sagt, um "
                         "welche Achse und ob der Stab beteiligt ist")
-        g.klein("β übernehmen", self.knicklaengen_uebernehmen)
-        g.klein("Tabelle Knicklängen", lambda: self.tabelle_zeigen("Knicklängen"))
+        g.klein("β übernehmen", self.knicklaengen_uebernehmen,
+                hinweis="Die aus der Knickfigur ermittelten Beiwerte β in die Stäbe schreiben")
+        g.klein("Tabelle Knicklängen", lambda: self.tabelle_zeigen("Knicklängen"),
+                hinweis="Die Knicklängenermittlung unten in der Tabelle")
         g = r.gruppe("Schwingung")
         g.gross("Verschluss", "f₁", lambda: self.maske_schwingung(),
                 hinweis="Strömungsinduzierte Schwingungen eines Verschlusses aus dem Wasserdruck: "
                         "Eigenfrequenzen in Luft und im Wasser (hydrodynamische Masse nach "
                         "Westergaard), Wirbelablösung (Strouhal), reduzierte Geschwindigkeit, "
                         "Antwort auf die Druckschwankung und Ermüdung")
-        g.klein("Tabelle Schwingung", lambda: self.tabelle_zeigen("Schwingung"))
+        g.klein("Tabelle Schwingung", lambda: self.tabelle_zeigen("Schwingung"),
+                hinweis="Eigenfrequenzen, Wirbelablösung und Beurteilung unten in der Tabelle")
 
         # -- Ergebnisse --------------------------------------------------
         g = r.gruppe("Verformung (GZG)")
         g.gross("Verformung", "↧", self.add_verformungsgrenze,
                 hinweis="Grenzwert der Verformung festlegen: Durchbiegung eines Stabes, "
                         "Verschiebung eines Knotens oder zweier Knoten gegeneinander")
-        g.klein("Tabelle Verformungen", lambda: self.tabelle_zeigen("Verformungen"))
-        g.klein("Grenze ändern…", self.edit_verformungsgrenze)
-        g.klein("Grenze löschen", self.delete_verformungsgrenze)
+        g.klein("Tabelle Verformungen", lambda: self.tabelle_zeigen("Verformungen"),
+                hinweis="Die Verformungsnachweise (GZG) unten in der Tabelle")
+        g.klein("Grenze ändern…", self.edit_verformungsgrenze,
+                hinweis="Den in der Tabelle gewählten Verformungsnachweis ändern")
+        g.klein("Grenze löschen", self.delete_verformungsgrenze,
+                hinweis="Den in der Tabelle gewählten Verformungsnachweis entfernen")
         g = r.gruppe("Beulen (EC3-1-5)")
         g.gross("Beulfeld", "▦", self.add_beulfeld,
                 hinweis="Die gewählten Flächenelemente zu einem Beulfeld "
                         "zusammenfassen und nach Abschnitt 10 nachweisen")
-        g.klein("Tabelle Beulfelder", lambda: self.tabelle_zeigen("Beulfelder"))
-        g.klein("Beulfeld ändern…", self.edit_beulfeld)
-        g.klein("Beulfeld löschen", self.delete_beulfeld)
-        g.gross("Volumen", "◧", self.add_volumenbereich,
+        g.klein("Tabelle Beulfelder", lambda: self.tabelle_zeigen("Beulfelder"),
+                hinweis="Die Beulnachweise unten in der Tabelle")
+        g.klein("Beulfeld ändern…", self.edit_beulfeld,
+                hinweis="Das in der Tabelle gewählte Beulfeld ändern")
+        g.klein("Beulfeld löschen", self.delete_beulfeld,
+                hinweis="Das in der Tabelle gewählte Beulfeld entfernen")
+        g.gross("Volumenbereich", "◧", self.add_volumenbereich,
                 hinweis="Die gewählten Volumenelemente zu einem Bereich für den "
                         "Spannungsnachweis zusammenfassen (6.2.1(5))")
-        g.klein("Tabelle Volumen", lambda: self.tabelle_zeigen("Volumen"))
-        g.klein("Volumenbereich ändern…", self.edit_volumenbereich)
-        g.klein("Volumenbereich löschen", self.delete_volumenbereich)
+        g.klein("Tabelle Volumen", lambda: self.tabelle_zeigen("Volumen"),
+                hinweis="Die Spannungsnachweise der Volumenbereiche unten in der Tabelle")
+        g.klein("Volumenbereich ändern…", self.edit_volumenbereich,
+                hinweis="Den in der Tabelle gewählten Volumenbereich ändern")
+        g.klein("Volumenbereich löschen", self.delete_volumenbereich,
+                hinweis="Den in der Tabelle gewählten Volumenbereich entfernen")
         g.gross("Lasteinleitung", "↡", self.add_lasteinleitung,
                 hinweis="Beulnachweis des Stegs unter einer örtlich eingeleiteten "
                         "Querkraft (Abschnitt 6)")
-        g.klein("Tabelle Lasteinleitung", lambda: self.tabelle_zeigen("Lasteinleitung"))
+        g.klein("Tabelle Lasteinleitung", lambda: self.tabelle_zeigen("Lasteinleitung"),
+                hinweis="Die Nachweise der Lasteinleitung unten in der Tabelle")
 
         r = rb.register("Ergebnisse")
         g = r.gruppe("Auswahl")
@@ -2710,7 +2738,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Tabellen")
         for name in ("Stabkräfte", "Auflagerkräfte", "Umhüllende",
                      "Nachweise EC3", "Ermüdung", "Kontakt"):
-            g.klein(name, lambda n=name: self.tabelle_zeigen(n),
+            g.klein(f"Tabelle {name}", lambda n=name: self.tabelle_zeigen(n),
                     hinweis=f"Tabelle {name} unten zeigen")
         g = r.gruppe("Tabelle ausgeben")
         g.gross("Excel", "▦", lambda: self.tabelle_ausgeben("xlsx"),
@@ -2734,7 +2762,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "aufnehmen – samt Ergebnis, Färbung und Verlauf")
         g.klein("Übernommene Bilder", lambda: self.tabelle_zeigen("Bericht"),
                 hinweis="Die Tabelle „Bericht“ unten zeigen")
-        g.klein("Alle Bilder verwerfen", self.bericht_leeren)
+        g.klein("Alle Bilder verwerfen", self.bericht_leeren,
+                hinweis="Alle in den Bericht übernommenen Ansichten löschen")
         g = r.gruppe("Lastenheft")
         g.gross("Lastenheft", "≡", self.make_lastenheft,
                 hinweis="Alle anzusetzenden Einwirkungen nach DIN 19704 und ZTV-ING erläutern: "
@@ -2743,14 +2772,19 @@ class MainWindow(QtWidgets.QMainWindow):
         # -- Ansicht -----------------------------------------------------
         r = rb.register("Ansicht")
         g = r.gruppe("Blickrichtung")
-        g.gross("Isometrisch", "◲", lambda: self.blickrichtung("iso"), symbol="iso")
-        g.klein("XY (Draufsicht)", lambda: self.blickrichtung("+z"), symbol="wuerfel")
-        g.klein("XZ (Ansicht)", lambda: self.blickrichtung("-y"), symbol="wuerfel")
-        g.klein("YZ (Seitenansicht)", lambda: self.blickrichtung("+x"), symbol="wuerfel")
+        g.gross("Isometrisch", "◲", lambda: self.blickrichtung("iso"), symbol="iso",
+                hinweis="Schräg von oben auf das Modell - die Grundansicht")
+        g.klein("XY (Draufsicht)", lambda: self.blickrichtung("+z"), symbol="wuerfel",
+                hinweis="Von oben auf die xy-Ebene")
+        g.klein("XZ (Ansicht)", lambda: self.blickrichtung("-y"), symbol="wuerfel",
+                hinweis="Von vorn auf die xz-Ebene")
+        g.klein("YZ (Seitenansicht)", lambda: self.blickrichtung("+x"), symbol="wuerfel",
+                hinweis="Von der Seite auf die yz-Ebene")
         g.klein("Rückseite (180°)", lambda: self.blickrichtung("kehren"),
                 hinweis="Die laufende Ansicht umkehren – zeigt die Rückseite",
                 symbol="kehren")
-        g.klein("Zoom alles", self.zoom_alles, symbol="zoom")
+        g.klein("Zoom alles", self.zoom_alles, symbol="zoom",
+                hinweis="Das ganze Modell ins Bild")
         g = r.gruppe("Darstellung")
         # Die vier Darstellungsarten liegen als eigene Knoepfe nebeneinander und
         # auf Strg+1..Strg+4 - Umschalten soll ein Griff sein, kein Klickweg
@@ -2787,16 +2821,17 @@ class MainWindow(QtWidgets.QMainWindow):
                                       "Volumenkörper und Volumenelemente zeigen",
                                       symbol="volumen")
         self.act_nodes = g.schalter("Knotennummern", lambda z: self.redraw(),
-                                    symbol="nummern")
+                                    hinweis="Die Nummer an jedem Knoten zeigen", symbol="nummern")
         self.act_elems = g.schalter("Elementnummern", lambda z: self.redraw(),
-                                    symbol="nummern")
+                                    hinweis="Die Nummer an jedem Element zeigen", symbol="nummern")
         self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True,
+                                    "Die Lasten des aktiven Lastfalls als Pfeile zeigen",
                                     symbol="lasten")
         self.act_lastwerte = g.schalter("Lastwerte", lambda z: self.redraw(), True,
                                         "Die Lastgröße als Zahl an jeder Last; die Einheit steht "
                                         "oben links unter dem Lastfall", symbol="lasten")
         self.act_members = g.schalter("Stäbe farbig", lambda z: self.redraw(),
-                                      symbol="farbig")
+                                    hinweis="Jeden Stab mit Nachweis in eigener Farbe zeigen", symbol="farbig")
         g = r.gruppe("Sicht")
         # Was man nicht sieht, stoert nicht: die Auswahl allein zeigen, die
         # Auswahl ausblenden, einen Schritt zurueck, alles wieder her.
@@ -2876,21 +2911,26 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Verwalten")
         g.klein("Einstellungen…", self.bemassung_einstellungen,
                 hinweis="Einheit, Nachkommastellen, Textgröße, Versatz, Höhenbezug, Farbe")
-        g.klein("Letzte Bemaßung löschen", lambda: self.bemassung_loeschen(None))
-        g.klein("Alle Bemaßungen löschen", self.bemassungen_alle_loeschen)
+        g.klein("Letzte Bemaßung löschen", lambda: self.bemassung_loeschen(None),
+                hinweis="Die zuletzt gesetzte Bemaßung entfernen")
+        g.klein("Alle Bemaßungen löschen", self.bemassungen_alle_loeschen,
+                hinweis="Alle Bemaßungen aus der Ansicht entfernen")
 
         r = rb.register("Extras")
         g = r.gruppe("Handbücher")
-        g.gross("Handbuch", "❓", lambda: self.open_doc("Benutzerhandbuch.md"))
-        g.klein("Theoriehandbuch", lambda: self.open_doc("Theoriehandbuch.md"))
-        g.klein("Schnittstellen", lambda: self.open_doc("Schnittstellen.md"))
-        g.klein("Rechnerfarm", lambda: self.open_doc("Rechnerfarm.md"))
+        g.gross("Handbuch", "❓", lambda: self.open_doc("Benutzerhandbuch.md"),
+                hinweis="Das Benutzerhandbuch öffnen")
+        g.klein("Theoriehandbuch", lambda: self.open_doc("Theoriehandbuch.md"),
+                hinweis="Mechanik, Elemente und Nachweise - die Theorie hinter dem Programm")
+        g.klein("Schnittstellen", lambda: self.open_doc("Schnittstellen.md"),
+                hinweis="Die Import- und Exportformate im Einzelnen")
+        g.klein("Rechnerfarm", lambda: self.open_doc("Rechnerfarm.md"),
+                hinweis="Verteiltes Rechnen auf mehreren Rechnern einrichten")
         g = r.gruppe("Programm")
         g.gross("Info", "ⓘ", self.about,
                 hinweis="Fassung, Build und Gültigkeitsbereich")
-        g.klein("Nach Update suchen…", self.check_update)
-        g.klein("Einheiten und Genauigkeiten…", self.maske_einheiten,
-                hinweis="Einheiten und Nachkommastellen für Ansicht und Tabellen")
+        g.klein("Nach Update suchen…", self.check_update,
+                hinweis="Eine neue Programmfassung suchen und einspielen")
 
         # „Alles deselektieren“ steht in der Glasleiste, nicht mehr ganz oben
         rb.schnell(self.act_speichern, self.act_undo, self.act_redo, self.act_rechnen)
@@ -3430,8 +3470,16 @@ class MainWindow(QtWidgets.QMainWindow):
                             [""] + list(m.sections), hinweis="leer = unverändert"),
                           F("mat", "Werkstoff", "wahl", next(iter(mats), "") if len(mats) == 1 else "",
                             [""] + list(m.materials), hinweis="leer = unverändert"),
-                          F("design", "Nachweis nach EC3", "haken", bool(mem.design) if mem else True)]
+                          F("design", "Nachweis nach EC3", "haken", bool(mem.design) if mem else True),
+                          F("beta_y", "β_y (Knicken um y)", "zahl", float(mem.beta_y) if mem else 1.0,
+                            breite=60, hinweis="Knicklängenbeiwert: L_cr,y = β_y · L"),
+                          F("beta_z", "β_z (Knicken um z)", "zahl", float(mem.beta_z) if mem else 1.0,
+                            breite=60, hinweis="Knicklängenbeiwert: L_cr,z = β_z · L"),
+                          F("lt", "Biegedrillknicken nachweisen", "haken",
+                            bool(mem.lt_check) if mem else True)]
                 titel = f"Stab {name}"
+                if mem is not None:
+                    zusatz = [("Nachweisparameter …", lambda: self.stab_nachweisparameter(name))]
         elif art in ("geoflaechen", "geoflaeche"):
             if not eintrag:
                 felder = [F("anzahl", "Anzahl", "info", str(len(m.flaechen))),
@@ -4027,7 +4075,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 i = int(name)
                 if not 0 <= i < m.nn:
                     return self.error(f"Knoten {i} gibt es nicht mehr")
-                self.merken(f"Knoten K{i}")
+                if not neu:            # ein neuer Knoten ist schon beim Anlegen gemerkt
+                    self.merken(f"Knoten K{i}")
                 m.nodes[i] = [float(w.get("x", 0.0)), float(w.get("y", 0.0)), float(w.get("z", 0.0))]
                 ziel = int(w.get("nr", i))
                 if ziel != i:
@@ -4085,6 +4134,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     mem = m.members[name]
                     mem.elements = els
                     mem.design = bool(w.get("design", True))
+                mem = m.members[name]
+                for k in ("beta_y", "beta_z"):
+                    if w.get(k) not in (None, ""):
+                        setattr(mem, k, float(w.get(k)) or 1.0)
+                if "lt" in w:
+                    mem.lt_check = bool(w.get("lt"))
                 for e in els:
                     if w.get("sec") in m.sections:
                         m.elements[e].sec = w["sec"]
@@ -4215,6 +4270,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "kombination":
             faktoren: dict = {}
             text = str(w.get("faktoren", "") or "").strip()
+            # Das Dezimalkomma vor dem Trennen retten: „LF1: 1,35, Wind: 1,5“
+            text = re.sub(r"(\d),(\d)", r"\1.\2", text)
             for teil in [t for t in text.replace(";", ",").split(",") if t.strip()]:
                 for tr in (":", "=", "×", "*"):
                     if tr in teil:
@@ -4468,6 +4525,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.situation_neu()
         if zweigart == "generierer":
             return self.maske_wasserdruck()
+        if zweigart == "schweissnaehte":
+            return self.maske_schweissnaht()
+        if zweigart == "bemassungen":
+            return self.bemassung_neu("linear")
         if zweigart == "knoten":
             self.merken("Knoten angelegt")
             i = m.add_node(0.0, 0.0, 0.0)
@@ -5119,8 +5180,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "situation":
                 return self._situation_zeigen(name)
             if art == "stab":
-                self._tabelle_stab(name)
-                return self.edit_member()
+                self._baum_objekt_waehlen("stab", name)
+                return self._objektmaske("stab", name)
             if art == "anschluss":
                 return self._anschluss_gewaehlt(name)
             if art == "verformung":
@@ -5485,6 +5546,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Netzeinstellungen und der Groesse des Objekts
         from .. import netzdichte as nd
         netz = self.model.netz
+        # Die eigene Teilung jeder Flaeche bleibt erhalten: die Netzdichte
+        # bestimmt dieses Netz, nicht die Eingabe - schaltet man „Teilung aus
+        # der Netzdichte" wieder aus, gilt wieder, was der Nutzer eingab.
+        eigene_teilung = {f.name: list(f.teilung or []) for f in flaechen}
         hs = nd.anwenden(self.model, netz, flaechen, koerper, log)
         log.append(f"Netzeinstellungen: {netz.beschreibung()}")
         try:
@@ -5518,6 +5583,9 @@ class MainWindow(QtWidgets.QMainWindow):
             fugen.kontaktfugen_ausfuehren(self.model, log)
         finally:
             self._fortschritt_ende()
+            for f in flaechen:
+                if eigene_teilung.get(f.name):
+                    f.teilung = eigene_teilung[f.name]
         if abgebrochen:
             log.append(f"Vernetzen abgebrochen: {n} Elemente erzeugt, die übrigen Objekte bleiben ohne Netz")
         for z in log:
@@ -6887,18 +6955,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not (0 <= i < len(m.elements)):
             return self.error("Zuerst eine Zeile wählen")
         self.merken(f"Element {i} gelöscht")
-        del m.elements[i]
-        for mem in m.members.values():
-            mem.elements = [(e - 1 if e > i else e) for e in mem.elements if e != i]
-        for lc in m.load_cases.values():
-            lc.beam_loads = [l for l in lc.beam_loads if l.elem != i]
-            for l in lc.beam_loads:
-                if l.elem > i:
-                    l.elem -= 1
-            lc.face_loads = [l for l in lc.face_loads if l.elem != i]
-            for l in lc.face_loads:
-                if l.elem > i:
-                    l.elem -= 1
+        # Ein Listenplatz weniger: Stäbe, Flächen, Volumen, Lasten, Anschlüsse,
+        # Beulfelder und Subsysteme zeigen danach auf die neuen Nummern.
+        m.elemente_loeschen([i])
+        self._objektauswahl_leeren()
         self.refresh_all()
 
     # ---- Editieren in den Eingabetabellen ------------------------------
@@ -8010,7 +8070,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                           case=None if combo else m.active_case,
                                           combination=combo)
             except Exception as ex:                    # noqa: BLE001
-                return self.error(ex)
+                return self.error(f"Das Verzweigungsproblem konnte nicht gelöst werden "
+                                  f"({type(ex).__name__}: {ex}). Modell prüfen: Werkstoffe und "
+                                  "Querschnitte aller Elemente, Netz der Flächen und Volumen, Lager.")
             finally:
                 QtWidgets.QApplication.restoreOverrideCursor()
             self._solve_done("buckling", r)
@@ -8018,7 +8080,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             erg = knicklaengen_aus_eigenform(m, r, max(0, modus))
         except ValueError as ex:
-            return self.error(ex)
+            return self.error(f"Knicklängen aus der Knickfigur: {ex}")
         self.knicklaengen = erg
         if self.analysis is not None:
             self.analysis.knicklaengen = erg
@@ -8762,6 +8824,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_env.markieren(el)
         self.tbl_react.markieren(sorted(sel))
         self.tbl_contact.markieren(sorted(sel))
+        # Modelltabellen: Knoten, Stäbe (Elemente), Lager, Linien, Flächen, Volumen
+        if hasattr(self, "tbl_knoten"):
+            self.tbl_knoten.markieren(sorted(sel))
+            self.tbl_elem.markieren(el)
+            n_k, n_l = len(m.supports), len(m.line_supports)
+            lager = {i for i, sp in enumerate(m.supports) if int(sp.node) in sel}
+            for art, j in (getattr(self, "sel_lager", None) or []):
+                lager.add({"lager": 0, "linienlager": n_k, "flaechenlager": n_k + n_l}.get(art, 0) + int(j))
+            self.tbl_lager.markieren(sorted(lager))
+            self.tbl_linie.markieren(list(self.sel_linien))
+            self.tbl_geoflaeche.markieren(list(self.sel_flaechen))
+            self.tbl_geokoerper.markieren(list(self.sel_koerper))
         dabei = set(el)
         staebe = [mem.name for mem in m.members.values()
                   if mem.elements and set(mem.elements) <= dabei]
@@ -8784,7 +8858,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for cb, keys in ((self.cb_mat, m.materials), (self.cb_sec, m.sections),
                          (self.cb_shell, m.shells),
                          (getattr(self, "cb_assign_sec", None), m.sections),
-                         (getattr(self, "cb_assign_mat", None), m.materials)):
+                         (getattr(self, "cb_assign_mat", None), m.materials),
+                         (getattr(self, "cb_assign_shell", None), m.shells)):
             if cb is None or not _lebt(cb):
                 continue
             cur = cb.currentText()
@@ -8861,7 +8936,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def add_material(self):
         d = MaterialDialog(self)
         if d.exec():
-            self.model.add_material(d.result_material())
+            mat = d.result_material()
+            if mat.name in self.model.materials:
+                return self.error(f"Werkstoff „{mat.name}“ gibt es schon - einen anderen Namen eingeben")
+            self.merken(f"Werkstoff {mat.name}")
+            self.model.add_material(mat)
             self.refresh_all()
 
     def add_section(self):
@@ -8902,6 +8981,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def add_shell_prop(self):
         t = self.ed_t.value()
         if t > 0:
+            self.merken(f"Dicke t = {t * 1000:g} mm")
             self.model.add_shell_prop(ShellProp(f"t = {t*1000:g} mm", t))
             self.refresh_all()
 
@@ -8918,10 +8998,15 @@ class MainWindow(QtWidgets.QMainWindow):
         els = self._elements_from_text(self.ed_elist.text())
         if not els:
             return self.error("Keine Elemente angegeben (Nr. eintragen oder alle Knoten der Elemente auswählen)")
+        self.merken("Zuweisung an die Auswahl")
+        dicke = (self.cb_assign_shell.currentText()
+                 if getattr(self, "cb_assign_shell", None) is not None else "")
         for i in els:
             e = self.model.elements[i]
             if e.typ in ("beam", "truss"):
                 e.sec = self.cb_assign_sec.currentText()
+            elif e.typ in ("shell3", "shell4") and dicke in self.model.shells:
+                e.sec = dicke
             e.mat = self.cb_assign_mat.currentText()
         self.info(f"{len(els)} Elemente geändert")
         self.refresh_all()
@@ -8932,6 +9017,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error("Keine Elemente angegeben")
         k = self.ed_hinge.currentIndex()
         h = {0: [], 1: [4, 5], 2: [10, 11], 3: [4, 5, 10, 11], 4: [3, 4, 5, 9, 10, 11]}[k]
+        self.merken(f"Gelenke an {len(els)} Elementen")
         for i in els:
             if self.model.elements[i].typ == "beam":
                 self.model.elements[i].hinges = list(h)
@@ -9465,6 +9551,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.maske_erzeugen(m)
 
     def _maske_knoten_anlegen(self, w: dict):
+        self.merken("Knoten angelegt")
         i = self.model.add_node(w["x"], w["y"], w["z"])
         self.info(f"Knoten {i + 1} angelegt bei "
                   f"({w['x']:g}, {w['y']:g}, {w['z']:g}) m")
@@ -9487,6 +9574,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(kn) < 2:
             return self.error("Zwei Knoten in der Ansicht anklicken")
         typ = "truss" if w.get("fachwerk") else "beam"
+        self.merken("Stab angelegt")
         self.model.add_element(typ, [kn[0], kn[1]], w["mat"], w["sec"])
         self.info(f"{'Fachwerkstab' if typ == 'truss' else 'Stab'} "
                   f"{kn[0] + 1}–{kn[1] + 1} mit {w['sec']} angelegt")
@@ -9511,6 +9599,7 @@ class MainWindow(QtWidgets.QMainWindow):
         n = 4 if w.get("vier") else 3
         if len(kn) < n:
             return self.error(f"{n} Knoten in der Ansicht anklicken")
+        self.merken("Schale angelegt")
         self.model.add_element("shell4" if n == 4 else "shell3", kn[:n],
                                w["mat"], w["dicke"])
         self.info(f"Schale aus {n} Knoten angelegt")
@@ -9533,6 +9622,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dofs = [i for i in range(6) if w.get(f"d{i}")]
         if not dofs:
             return self.error("Kein Freiheitsgrad angekreuzt")
+        self.merken(f"Lager an {len(self.selection)} Knoten")
         for i in self.selection:
             self.model.support(int(i), dofs)
         self.info(f"Lager an {len(self.selection)} Knoten: "
@@ -9557,6 +9647,7 @@ class MainWindow(QtWidgets.QMainWindow):
         werte = {k: w.get(k, 0.0) * 1e3 for k in ("Fx", "Fy", "Fz", "Mx", "My", "Mz")}
         if not any(werte.values()):
             return self.error("Alle Werte sind null")
+        self.merken(f"Knotenlast auf {len(self.selection)} Knoten")
         for i in self.selection:
             self.model.load_node(int(i), case=w.get("fall") or None, **werte)
         self.info(f"Knotenlast auf {len(self.selection)} Knoten "
@@ -10286,7 +10377,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not n:
             self.ribbon.kontext_aus()
             # die Felder des Registers sind mit ihm geloescht - kein Zugriff mehr
-            self.cb_assign_sec = self.cb_assign_mat = None
+            self.cb_assign_sec = self.cb_assign_mat = self.cb_assign_shell = None
             self._info_zeigen()
             return
         r = self.ribbon.kontext(f"Auswahl: {n} Knoten")
@@ -10295,23 +10386,51 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Zuweisen")
         self.cb_assign_sec = QtWidgets.QComboBox()
         self.cb_assign_mat = QtWidgets.QComboBox()
+        self.cb_assign_shell = QtWidgets.QComboBox()
         self.cb_assign_sec.addItems(list(self.model.sections))
         self.cb_assign_mat.addItems(list(self.model.materials))
+        self.cb_assign_shell.addItems([""] + list(self.model.shells))
+        self.cb_assign_sec.setToolTip("Querschnitt für die Stabelemente der Auswahl")
+        self.cb_assign_mat.setToolTip("Werkstoff für alle Elemente der Auswahl")
+        self.cb_assign_shell.setToolTip("Dicke für die Schalenelemente der Auswahl (leer = unverändert)")
         g.widget(self.cb_assign_sec)
         g.widget(self.cb_assign_mat)
+        g.widget(self.cb_assign_shell)
         g.gross("Zuweisen", "⇄", self.assign_props,
-                hinweis="Querschnitt und Material den Elementen der Auswahl geben")
+                hinweis="Querschnitt, Werkstoff und Dicke den Elementen der Auswahl geben")
         g = r.gruppe("Elemente")
         g.gross("Gelenke", "○", lambda: self.maske_zeigen("Lager/Lasten"),
                 hinweis="Gelenke an den Stabenden setzen")
-        g.klein("Elemente löschen", self.delete_elements)
-        g.klein("Knoten löschen", self.delete_nodes)
+        g.klein("Elemente löschen", self.delete_elements,
+                hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
+        g.klein("Knoten löschen", self.delete_nodes,
+                hinweis="Die gewählten Knoten mit den daran hängenden Elementen entfernen - Knoten, die eine Linie braucht, bleiben")
         g = r.gruppe("Randbedingungen")
         g.gross("Lager", "△", self.maske_lager, hinweis="Lager an der Auswahl")
         g.gross("Last", "↓", self.maske_knotenlast, hinweis="Knotenlast auf die Auswahl")
         g = r.gruppe("Auswahl")
         g.klein("Alles deselektieren", self.clear_selection, "Esc")
-        g.klein("Auswahl umkehren", self.invert_selection)
+        g.klein("Auswahl umkehren", self.invert_selection,
+                hinweis="Gewählte Knoten abwählen, alle anderen wählen")
+
+    def zuweisen_zeigen(self, was: str = "querschnitt"):
+        """Struktur → „Querschnitt/Dicke zuweisen…“, „Gelenke setzen…“: die
+        Befehle liegen im Kontextregister „Auswahl“, das erscheint, sobald
+        Knoten gewählt sind. Ohne Auswahl gibt es den Hinweis - kein stummer
+        Befehl."""
+        if not len(self.selection):
+            return self.error("Zuerst in der Ansicht wählen (Auswahlart Knoten, Stab, Fläche oder Netz) - "
+                              "dann erscheint das Register „Auswahl“ mit Zuweisen und Gelenken")
+        self._auswahl_register()
+        if hasattr(self.ribbon, "kontext_zeigen"):
+            self.ribbon.kontext_zeigen()
+        if was == "gelenke":
+            self.maske_zeigen("Lager/Lasten")
+            return True
+        feld = self.cb_assign_shell if was == "dicke" else self.cb_assign_sec
+        if feld is not None:
+            feld.setFocus()
+        return True
 
     # ---- Befehle des Ribbons -----------------------------------------
     def clear_selection(self):
@@ -10344,32 +10463,54 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_selection(np.setdiff1d(alle, self.selection))
 
     def delete_nodes(self):
-        """Die gewählten Knoten und die daran hängenden Elemente entfernen."""
+        """Die gewählten Knoten mitsamt den daran hängenden Elementen entfernen.
+
+        Die Elemente nimmt ``Model.elemente_loeschen`` heraus und zieht dabei
+        alle Verweise nach (Stäbe, Flächen, Volumen, Lasten, Anschlüsse,
+        Beulfelder). Danach verschwinden die Knoten selbst - die Nummern
+        dahinter rücken auf -, soweit keine Linie sie noch braucht; solche
+        Knoten bleiben und werden genannt. Rückgängig nimmt alles zurück.
+        """
         if not len(self.selection):
             return self.error("Zuerst Knoten wählen")
-        weg = set(int(i) for i in self.selection)
+        weg = sorted({int(i) for i in self.selection}, reverse=True)
+        wegmenge = set(weg)
         m = self.model
-        behalten = [e for e in m.elements if not (set(int(n) for n in e.nodes) & weg)]
-        n_el = len(m.elements) - len(behalten)
-        m.elements = behalten
-        m.supports = [x for x in m.supports if int(x.node) not in weg]
+        els = [i for i, e in enumerate(m.elements) if {int(n) for n in e.nodes} & wegmenge]
+        self.merken(f"{len(weg)} Knoten gelöscht")
+        n_el = m.elemente_loeschen(els)
+        m.supports = [x for x in m.supports if int(x.node) not in wegmenge]
         for lc in m.load_cases.values():
-            lc.nodal_loads = [l for l in lc.nodal_loads if int(l.node) not in weg]
-        self.info(f"{len(weg)} Knoten und {n_el} Elemente entfernt "
-                  "(die Knotennummern bleiben bestehen)")
+            lc.nodal_loads = [l for l in lc.nodal_loads if int(l.node) not in wegmenge]
         self._set_selection([])
+        self._objektauswahl_leeren()
+        bleiben = []
+        for i in weg:                 # von hinten: die Nummern davor bleiben gültig
+            if m.knoten_loeschen(i):
+                bleiben.append(i)
+        text = f"{len(weg) - len(bleiben)} Knoten und {n_el} Elemente entfernt"
+        if bleiben:
+            text += (f"; {len(bleiben)} Knoten bleiben, weil Linien sie brauchen: "
+                     + ", ".join(str(i) for i in sorted(bleiben)[:8])
+                     + (" …" if len(bleiben) > 8 else ""))
+        self.info(text)
         self.refresh_all()
 
     def delete_elements(self):
-        """Alle Elemente entfernen, deren Knoten sämtlich gewählt sind."""
+        """Alle Elemente entfernen, deren Knoten sämtlich gewählt sind - die
+        Verweise von Stäben, Flächen, Volumen, Lasten und Anschlüssen ziehen
+        mit (``Model.elemente_loeschen``); Rückgängig nimmt es zurück."""
         if not len(self.selection):
             return self.error("Zuerst Knoten wählen")
         sel = set(int(i) for i in self.selection)
         m = self.model
-        vorher = len(m.elements)
-        m.elements = [e for e in m.elements
-                      if not set(int(n) for n in e.nodes) <= sel]
-        self.info(f"{vorher - len(m.elements)} Elemente entfernt")
+        els = [i for i, e in enumerate(m.elements) if set(int(n) for n in e.nodes) <= sel]
+        if not els:
+            return self.error("Kein Element hat alle seine Knoten in der Auswahl")
+        self.merken(f"{len(els)} Elemente gelöscht")
+        n = m.elemente_loeschen(els)
+        self._objektauswahl_leeren()
+        self.info(f"{n} Elemente entfernt")
         self.refresh_all()
 
     def staebe_anschliessen(self):
@@ -10473,6 +10614,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not dofs:
             return self.error("Keine Freiheitsgrade angehakt")
         k = self.ed_spring.value()
+        self.merken(f"Lager an {len(self.selection)} Knoten")
         for n in self.selection:
             self.model.fix(int(n), dofs, stiffness=[k] * len(dofs) if k > 0 else None)
         self.refresh_all()
@@ -10489,6 +10631,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not d.exec():
             return
         beh = d.behaviours()
+        self.merken("Nichtlinearität der Lager")
         for node in self.selection:
             s = next((x for x in self.model.supports if x.node == int(node)), None)
             if s is None:
@@ -10688,6 +10831,7 @@ class MainWindow(QtWidgets.QMainWindow):
         v = np.array([e.value() for e in self.ld])
         if self.ld_split.isChecked():
             v = v / len(self.selection)
+        self.merken(f"Knotenlast auf {len(self.selection)} Knoten")
         for n in self.selection:
             self.model.load_node(int(n), *v)
         self.refresh_all()
@@ -10698,6 +10842,7 @@ class MainWindow(QtWidgets.QMainWindow):
         els = self._elements_from_text(self.ed_qelems.text())
         if not els:
             els = [i for i, e in enumerate(self.model.elements) if e.typ in ("beam", "truss")]
+        self.merken("Streckenlast")
         n = 0
         for i in els:
             if self.model.elements[i].typ in ("beam", "truss"):
@@ -10710,6 +10855,7 @@ class MainWindow(QtWidgets.QMainWindow):
         p = self.p_face.value()
         k = self.p_dir.currentIndex()
         direction = None if k == 0 else [(1, 0, 0), (0, 1, 0), (0, 0, 1)][k - 1]
+        self.merken("Flächenlast")
         n = 0
         for i, e in enumerate(self.model.elements):
             if e.typ in ("shell3", "shell4"):
@@ -10763,6 +10909,7 @@ class MainWindow(QtWidgets.QMainWindow):
             name, cat, desc, grp = d.values()
             if name in self.model.load_cases:
                 return self.error(f"Lastfall '{name}' existiert bereits")
+            self.merken(f"Lastfall {name}")
             self.model.add_load_case(name, cat, desc, exclusive_group=grp)
             self.model.load_cases[name].situation = d.situation_name()
             self.model.load_cases[name].theorie = d.theorie_name()
@@ -10774,6 +10921,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if d.exec():
             name, cat, desc, grp = d.values()
             old = lc.name
+            self.merken(f"Lastfall {old}")
             lc.category, lc.description, lc.exclusive_group = cat, desc, grp
             lc.situation = d.situation_name()
             lc.theorie = d.theorie_name()
@@ -10791,11 +10939,13 @@ class MainWindow(QtWidgets.QMainWindow):
         lc = self.model.case()
         new = copy.deepcopy(lc)
         new.name = lc.name + "_Kopie"
+        self.merken(f"Lastfall {new.name}")
         self.model.load_cases[new.name] = new
         self.model.active_case = new.name
         self.refresh_all()
 
     def remove_case(self):
+        self.merken(f"Lastfall {self.model.active_case} gelöscht")
         self.model.remove_load_case(self.model.active_case)
         self.refresh_all()
 
@@ -10807,6 +10957,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ds.combination_rule = "6.10ab" if d.rule.currentIndex() == 1 else "6.10"
             ds.gamma_G_sup = d.gG.value() or 1.35
             ds.gamma_Q = d.gQ.value() or 1.5
+            self.merken("Kombinationen erzeugt")
             try:
                 cs = generate_combinations(self.model, d.uls.isChecked(), d.sls.isChecked(),
                                            d.acc.isChecked(), g_favourable=d.gfav.isChecked(),
@@ -10820,6 +10971,7 @@ class MainWindow(QtWidgets.QMainWindow):
         d = CombinationDialog(self, self.model)
         if d.exec():
             c = d.result()
+            self.merken(f"Kombination {c.name}")
             self.model.combinations[c.name] = c
             self.refresh_all()
 
@@ -10850,6 +11002,7 @@ class MainWindow(QtWidgets.QMainWindow):
         d = FatigueLoadDialog(self, self.model)
         if d.exec():
             name, cmax, cmin, n, f = d.values()
+            self.merken("Ermüdungslast")
             self.model.add_fatigue_load(name or f"E{len(self.model.fatigue_loads)+1}", cmax, cmin, n, f)
             self.refresh_all()
 
@@ -10857,6 +11010,7 @@ class MainWindow(QtWidgets.QMainWindow):
         r = self.tbl_fatl.currentRow()
         names = list(self.model.fatigue_loads)
         if 0 <= r < len(names):
+            self.merken(f"Ermüdungslast {names[r]} gelöscht")
             del self.model.fatigue_loads[names[r]]
             self.refresh_all()
 
@@ -10867,6 +11021,7 @@ class MainWindow(QtWidgets.QMainWindow):
         d = [e.value() for e in self.cs_dir]
         if not any(d):
             return self.error("Stützrichtung angeben")
+        self.merken("Einseitiges Lager")
         for n in self.selection:
             self.model.add_contact_support(int(n), d, self.cs_gap.value(), self.cs_k.value(),
                                            self.cs_mu.value())
@@ -10876,6 +11031,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(self.selection) != 2:
             return self.error("Genau zwei Knoten auswählen (a, b)")
         d = [e.value() for e in self.ge_dir]
+        self.merken("Spaltelement")
         self.model.add_gap_element(int(self.selection[0]), int(self.selection[1]),
                                    d if any(d) else None, self.ge_gap.value(), self.ge_k.value(),
                                    self.ge_mu.value())
@@ -10889,6 +11045,7 @@ class MainWindow(QtWidgets.QMainWindow):
             els = d.master_elements(self.model)
             if not els:
                 return self.error("Keine Master-Elemente")
+            self.merken("Kontaktpaar")
             self.model.add_contact_pair(d.name.text() or "Kontakt", [int(n) for n in self.selection],
                                         els, stiffness=d.k.value(), mu=d.mu.value(), gap=d.gap.value(),
                                         search_radius=d.radius.value() or None,
@@ -10901,6 +11058,7 @@ class MainWindow(QtWidgets.QMainWindow):
         n1, n2 = len(m.contact_supports), len(m.gap_elements)
         if r < 0:
             return
+        self.merken("Kontakt gelöscht")
         if r < n1:
             del m.contact_supports[r]
         elif r < n1 + n2:
@@ -10910,11 +11068,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def clear_contact(self):
+        self.merken("Kontakt gelöscht")
         self.model.contact_supports.clear(); self.model.gap_elements.clear(); self.model.contact_pairs.clear()
         self.refresh_all()
 
     # ---- Nachweise ---------------------------------------------------
     def auto_members(self):
+        self.merken("Stäbe erkannt")
         n = len(self.model.auto_members())
         self.info(f"{n} Stäbe erkannt (gesamt {len(self.model.members)})")
         self.refresh_all()
@@ -10924,6 +11084,7 @@ class MainWindow(QtWidgets.QMainWindow):
         els = [i for i in els if self.model.elements[i].typ in ("beam", "truss")]
         if not els:
             return self.error("Keine Stabelemente angegeben")
+        self.merken("Stab mit Nachweis")
         self.model.add_member(f"S{len(self.model.members)+1}", els)
         self.refresh_all()
 
@@ -10931,16 +11092,27 @@ class MainWindow(QtWidgets.QMainWindow):
         r = self.tbl_mem.currentRow()
         names = list(self.model.members)
         if 0 <= r < len(names):
-            mem = self.model.members[names[r]]
-            d = MemberDialog(self, mem, self.model.member_length(mem))
-            if d.exec():
-                d.apply(mem)
-                self.refresh_all()
+            return self.stab_nachweisparameter(names[r])
+
+    def stab_nachweisparameter(self, name: str):
+        """Alle Nachweisparameter eines Stabes im Dialog: Knick- und Kipplängen,
+        Momentenbeiwerte, Lastangriff, Wölbkrafttorsion, Kerbfall."""
+        mem = self.model.members.get(name)
+        if mem is None:
+            return self.error(f"Stab {name} gibt es nicht")
+        d = MemberDialog(self, mem, self.model.member_length(mem))
+        if d.exec():
+            self.merken(f"Nachweisparameter {name}")
+            d.apply(mem)
+            self.refresh_all()
+            if self.maskenrand.maske is not None and getattr(self.maskenrand.maske, "titel", "") == f"Stab {name}":
+                self._objektmaske("stab", name)
 
     def remove_member(self):
         r = self.tbl_mem.currentRow()
         names = list(self.model.members)
         if 0 <= r < len(names):
+            self.merken(f"Stab {names[r]} gelöscht")
             del self.model.members[names[r]]
             self.refresh_all()
 
@@ -11121,11 +11293,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(text)
         self.txt_summary.setPlainText(text)
         self._fill_result_selector()
-        self.tabs.setCurrentIndex(7)
+        self.maske_zeigen("Ergebnisse")
         self.show_results()
         # Die Ergebnisse stehen jetzt auch im Modellbaum - er muss davon wissen.
         self._refresh_baum()
         self._refresh_kopf()
+        self._refresh_status()
 
     # ---- Ergebnisse --------------------------------------------------
     def _fill_result_selector(self):
@@ -12128,6 +12301,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(f"--- {titel}  ({datetime.now():%d.%m.%Y %H:%M}) ---")
         except Exception:                   # noqa: BLE001
             pass
+        # Ein neues Modell hat keine Vergangenheit: der Rueckgaengig-Stapel des
+        # vorigen darf nicht in dieses hineinreichen.
+        self._undo_init()
+        self._undo_knoepfe()
 
     def new_model(self):
         self._protokoll_neu("Neues Modell")

@@ -66,14 +66,14 @@ rechts zwei Marken mit dem Umfang des Modells und dem Zustand („bereit",
 
 Darunter das **Ribbon** — die Befehlsleiste. Jeder Befehl steht dort genau
 einmal; es gibt keine Menüleiste und keine zweite Werkzeugleiste daneben.
-Dreizehn Register nach Arbeitsschritt:
+Vierzehn Register nach Arbeitsschritt:
 
 | Register | Inhalt |
 |---|---|
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, Übernehmen aus fremden Formaten, Exportieren, Beispiele |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
-| **Geometrie** | Knoten, Netzgeneratoren (Stabzug, Platte, Quader) |
-| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Platte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen, Netz löschen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
+| **Geometrie** | Knoten, Linien, Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzvorschau, Netz löschen, Kontaktfugen |
@@ -81,7 +81,8 @@ Dreizehn Register nach Arbeitsschritt:
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
 | **Bericht** | Statischer Bericht, Ansicht übernehmen, **Lastenheft** (anzusetzende Einwirkungen nach DIN 19704/ZTV-ING mit Hintergrund, Ansatz und Skizzen) |
-| **Ansicht** | Blickrichtungen, Darstellungsart (Voll, Transparent, Hidden-Line, Drahtmodell), FE-Netz, Knoten, Nummern, Lasten, Stäbe farbig, Lagergröße |
+| **Ansicht** | Blickrichtungen, Darstellungsart (Voll, Transparent, Hidden-Line, Drahtmodell), FE-Netz, Knoten, Nummern, Lasten, Stäbe farbig, Lagergröße und Lagerdichte, Einheiten |
+| **Messen** | Abstand, Winkel, Koordinaten, Fläche eines Polygons, Länge/Fläche der Auswahl; Bemaßung (Linearmaß, Maßkette, Höhenkote, Winkelmaß, Radius) mit Einstellungen |
 | **Extras** | Handbücher, Info, Update |
 
 Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Rückgängig,
@@ -104,11 +105,10 @@ Die Arbeitsfläche in drei Spalten:
   | Volumen | die Volumenkörper, darunter der Zweig „Volumenelemente“ |
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
-  | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden |
+  | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden (der Zweig erscheint, sobald es Gelenke gibt) |
   | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
-  | Lasten | alle Lasten aller Lastfälle, je Lastfall gezählt |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
-  | Einwirkungen | Lastfälle und Kombinationen |
+  | Einwirkungen | Lastfälle und Kombinationen; darunter die Lasten aller Lastfälle, je Lastfall gezählt |
   | Subsysteme → Stellungen → Situationen | erst die Teile des Tragwerks, dann seine Lagen, dann die Situationen, die einer Stellung ihre Lastfälle und Kombinationen zuordnen |
   | Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte |
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
@@ -121,7 +121,10 @@ Die Arbeitsfläche in drei Spalten:
   **kleinster und größter Nummer**, beim Einzelobjekt seine Felder
   **editierbar** — Nummer und Koordinaten des Knotens, Name und Knoten der
   Linie, Querschnitt und Werkstoff des Stabs, Linien der Fläche, Flächen des
-  Volumens. Eine andere Knotennummer tauscht die beiden Knoten, ein anderer
+  Volumens. Ein Stab mit Nachweis zeigt dazu die Knicklängenbeiwerte β_y und
+  β_z und den Haken für das Biegedrillknicken; der Knopf „Nachweisparameter …“
+  öffnet alle weiteren (Kipplänge, Momentenbeiwerte, Lastangriff,
+  Wölbkrafttorsion, Kerbfall). Eine andere Knotennummer tauscht die beiden Knoten, ein anderer
   Name benennt das Objekt samt aller Verweise um.
 
   **Rechtsklick → Neu** legt am Zweig ein neues Objekt mit der **nächsten
@@ -179,15 +182,20 @@ zusammenpassen, hält sie ein Spaltelement je Knotenpaar oder ein Kontaktpaar
 über die Fläche. Die Fuge trägt dann Druck und geht unter Zug auf.
 
 Wer nur einzelne Körper neu vernetzt oder ein Modell von Hand aufgebaut hat,
-findet den Befehl auch einzeln: **Geometrie → Kontaktfugen ausführen**. Die
+findet den Befehl auch einzeln: **Netz → Kontaktfugen ausführen**. Die
 Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 („ja (68 Spaltelemente)", „ja (Kontaktpaar)"); steht dort „nein", rechnet das
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
 
-Ein Knoten wird nur gelöscht, wenn **kein** Element mehr an ihm hängt — sonst
-sagt das Programm, welches Element im Weg ist. Beim Löschen eines Elements
-oder Knotens werden Stabzüge, Lager und Lasten mitgeführt.
+In der Tabelle „Knoten“ wird ein Knoten nur gelöscht, wenn **kein** Element
+mehr an ihm hängt — sonst sagt das Programm, welches Element im Weg ist. Der
+Befehl *Geometrie → Knoten löschen* (und im Kontextregister „Auswahl“) nimmt
+dagegen die gewählten Knoten **mitsamt** ihren Elementen; nur Knoten, die eine
+Linie noch braucht, bleiben und werden genannt. Beim Löschen eines Elements
+oder Knotens werden Stabzüge, Flächen, Volumen, Lager, Lasten, Anschlüsse und
+Beulfelder mitgeführt, die Nummern dahinter rücken auf — und alles ist mit
+Rückgängig zurückzunehmen.
 
 ### Die Geometriekette: Knoten → Linien → Flächen → Volumen
 
@@ -198,8 +206,8 @@ Ansicht ausgewählt ist:
 |---|---|---|
 | Knoten | *Geometrie → Knoten* | – |
 | Linie aus Knoten | *Geometrie → Linien → Linie aus Knoten* | mindestens zwei Knoten ausgewählt |
-| **Fläche aus Linien** | *Geometrie → Flächen und Volumen* | die ausgewählten Linien bilden einen **geschlossenen** Rand |
-| **Volumen aus Flächen** | *Geometrie → Flächen und Volumen* | mindestens vier Flächen ausgewählt |
+| **Fläche aus Linien** | *Struktur → Flächen* | die ausgewählten Linien bilden einen **geschlossenen** Rand |
+| **Volumen aus Flächen** | *Struktur → Volumen* | mindestens vier Flächen ausgewählt |
 
 Wonach ein Klick in der Ansicht greift, stellt das Auswahlfeld
 **Geometrie → Auswahl in der Ansicht** ein: *Knoten, Linie, Fläche, Volumen,
@@ -383,10 +391,10 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Auswahl und Sicht | Alles deselektieren, Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Intelligente Auswahl** (Schalter) |
-| Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Ansicht → Fang*) |
+| Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager) — genau einer ist gedrückt |
 
-Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen, Sicht, Fang*),
+Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen* und *Sicht*, der Fang unter *Geometrie → Arbeitsebene*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
 und als **iso** unter dem Ansichtswürfel.
 
@@ -730,7 +738,7 @@ leiste zeigt im Hinweistext, worum es beim nächsten Schritt geht.
 
 ### Koordinatensysteme, Arbeitsebene, Fang
 
-Im Register **Geometrie** stehen drei Gruppen für die Eingabehilfen:
+Im Register **Geometrie** stehen zwei Gruppen für die Eingabehilfen - der Fang gehört zur Arbeitsebene:
 
 * **Koordinatensystem** — das aktive System wählen, ein neues über Ursprung und
   Drehwinkel anlegen oder aus drei gewählten Knoten aufspannen (Ursprung,
@@ -927,7 +935,7 @@ auf ein Update erscheint nur, wenn wirklich eines vorliegt.
 7. **Ergebnisse**: Umhüllende GZT zeigt Extremwerte mit maßgebender
    Kombination; Färbung „Ausnutzung EC3“ zeigt die Stabausnutzung; Verlauf
    „My“ zeichnet den Momentenverlauf.
-8. **Bericht**: Datei → Statischer Bericht (HTML, im Browser druckbar/als PDF
+8. **Bericht**: Bericht → Bericht (HTML, im Browser druckbar/als PDF
    speichern; PDF direkt bei installiertem reportlab).
 
 Beispiele im Menü **Beispiele** zeigen jeden dieser Schritte fertig
@@ -940,8 +948,8 @@ Kontaktbeispiele.
 ### Lastarten
 
 Register **Lasten**, alles mit Symbol. Jede Maske arbeitet auf der
-**Auswahl** in der Ansicht (Auswahlart im Register *Start* oder im
-Modellbaum) und schreibt in den gewählten Lastfall:
+**Auswahl** in der Ansicht (Auswahlart in der Glasleiste, unter *Geometrie →
+Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastfall:
 
 | Last | Ziel | Maske | Was sie kann |
 |---|---|---|---|
@@ -1086,7 +1094,7 @@ Modellbaum, in der Tabelle „Lager" oder in der Ansicht mit der Auswahlart
 Lager; Rechtsklick auf das Symbol → „Lager bearbeiten…"): je Freiheitsgrad
 Wirkung, Federsteifigkeit (Knotenlager kN/m bzw. kNm/rad, Linienlager je m,
 Flächenlager je m²) und Ausfall; Schlupf, Reibung und Grenzkraft öffnet der
-Knopf „Schlupf, Reibung, Grenzkraft …" (Register Lager/Lasten →
+Knopf „Schlupf, Reibung, Grenzkraft …" (Register Lager / Kontakt →
 **Nichtlinearität…** für die gewählten Knoten; auf dem Handy Modell →
 Nichtlineare Lager):
 
@@ -1200,7 +1208,7 @@ Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 
 Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
 Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
-zerfällt zunächst in Teile. Im Register **Mehr → Aus CAD übernommenes Modell**
+zerfällt zunächst in Teile. Unter **Start → Modell prüfen**
 schließt „Freie Stabenden anschließen" (Suchradius 60 mm) jedes freie Ende an die
 Achse des nächsten Stabes an und teilt diesen dort; der Versatz steht im
 Protokoll, die Ausmitte des Anschlusses wird nicht abgebildet.
