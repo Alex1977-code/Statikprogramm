@@ -39,9 +39,25 @@ a = Analysis(
     noarchive=False,
 )
 pyz = PYZ(a.pure)
+# Startbild schon beim Auspacken der exe (Tcl/Tk des Build-Python; tkinter
+# selbst bleibt ausgeschlossen, die Splash-Stufe bringt ihre Bibliotheken
+# selbst mit). run_gui.py schliesst es, sobald Qt das Startbild uebernimmt.
+splash = Splash(
+    os.path.join(SPECPATH, "splash.png"),
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=(24, 268),
+    text_size=10,
+    text_color="#dfe8f2",
+    text_font="Segoe UI",
+    minify_script=True,
+    always_on_top=False,
+)
 exe = EXE(
     pyz,
     a.scripts,
+    splash,
+    splash.binaries,
     a.binaries,
     a.datas,
     [],

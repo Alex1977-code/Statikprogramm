@@ -20,7 +20,11 @@ python -m statik3d.cli --beispiel hall --nachweise --ermuedung --bericht halle.h
 Windows-Programm ohne Python: `Statik3D.exe` von
 https://github.com/Alex1977-code/Statikprogramm/releases/latest/download/Statik3D.exe
 (eine Datei, doppelklicken; SmartScreen beim ersten Start mit „Weitere
-Informationen → Trotzdem ausführen“ bestätigen). Der Knopf **Update suchen**
+Informationen → Trotzdem ausführen“ bestätigen). Der Start dauert zehn bis
+dreißig Sekunden — die Datei packt sich aus und lädt die Grafik- und
+Rechenbibliotheken. Solange steht ein **Startbild** mit Programmsymbol,
+Fassung und der Meldung, was gerade geladen wird; es verschwindet, sobald
+das Fenster steht. Kein zweiter Doppelklick nötig. Der Knopf **Update suchen**
 unten rechts holt die neueste Version: prüfen, herunterladen, austauschen,
 Neustart. Dasselbe leistet Hilfe → Nach Update suchen… in jeder Installation.
 
@@ -301,6 +305,12 @@ Stab mit seinem Querschnitt über die Stablänge gezeichnet (ein IPE als
 I-Profil, ein Rohr als Rohr, mit dem Drehwinkel des Stabes), bei Hidden-Line
 und Drahtmodell als Linie. Ergebnisfarben liegen auf dem Stabkörper genauso
 wie auf dem Netz.
+
+Die Darstellungsart gilt ebenso für **Flächen und Volumen ohne Netz** (die
+Geometrie eines RFEM-Modells vor dem Vernetzen): Voll deckend, Transparent
+durchscheinend, Hidden-Line weiß mit dunklen Randlinien, Drahtmodell nur die
+Randlinien der Flächen. Die Dreiecke, aus denen eine gewölbte Fläche
+gezeichnet wird, sind kein Netz und werden nie als Kanten gezeigt.
 
 **Krumme Flächen** — der Mantel einer Bohrung, einer Buchse, eines Bolzens,
 in RFEM eine Fläche aus zwei Bögen und zwei Geraden — werden als gewölbte

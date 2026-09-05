@@ -6435,7 +6435,8 @@ class MainWindow(QtWidgets.QMainWindow):
                              flaechen_an=self.act_flaechen.isChecked(),
                              koerper_an=self.act_volumen.isChecked(),
                              ausser_flaechen=self.versteckt["flaechen"],
-                             ausser_koerper=self.versteckt["koerper"])
+                             ausser_koerper=self.versteckt["koerper"],
+                             modus=modus)
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
                 vp.add_nodes(self.plotter, m)
             self._auswahl_zeichnen()
@@ -7196,20 +7197,36 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 # ==========================================================================
-def main():
-    app = QtWidgets.QApplication(sys.argv)
+def main(app=None, splash=None):
+    """Die Oberflaeche starten.
+
+    ``app`` und ``splash`` kommen aus run_gui.py: die Anwendung ist dort schon
+    angelegt, damit das Startbild steht, waehrend dieses Modul (und mit ihm
+    pyvista, VTK, numpy, scipy) geladen wird.
+    """
+    app = app or QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
     try:
         from . import symbole as sym
         app.setWindowIcon(sym.programmsymbol())
     except Exception:                       # noqa: BLE001 - dann ohne Symbol
         pass
+    if splash is not None:
+        try:
+            splash.melden("Oberfläche wird aufgebaut …")
+        except Exception:                   # noqa: BLE001
+            pass
     win = MainWindow()
     try:
         win.setWindowIcon(app.windowIcon())
     except Exception:                       # noqa: BLE001
         pass
     win.show()
+    if splash is not None:
+        try:
+            splash.fertig(win)
+        except Exception:                   # noqa: BLE001
+            pass
     sys.exit(app.exec())
 
 

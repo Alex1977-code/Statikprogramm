@@ -1901,6 +1901,43 @@ def main():
         vpl.add_geometrie(pl, mz, raender={}, seiten={}, ausser_flaechen={"Mantel"})
         check("eine ausgeblendete Fläche fehlt im Bild", "geo_flaechen" not in pl.renderer.actors)
         pl.close()
+        # Die Darstellungsarten gelten auch fuer Flaechen und Volumen ohne Netz
+        from statik3d.model import Volumenkoerper
+        mz.koerper["K1"] = Volumenkoerper("K1", flaechen=["Mantel"])
+        for modus in ("Voll", "Transparent", "Hidden-Line", "Drahtmodell"):
+            pl = pvx.Plotter(off_screen=True)
+            vpl.add_geometrie(pl, mz, raender={}, seiten={}, modus=modus)
+            akt = dict(pl.renderer.actors)
+            fl = akt.get("geo_flaechen")
+            if modus == "Drahtmodell":
+                ok = fl is None and "geo_raender" in akt
+            else:
+                deckkraft = fl.GetProperty().GetOpacity() if fl is not None else -1
+                farbe = fl.GetProperty().GetColor() if fl is not None else None
+                ok = fl is not None and "geo_raender" in akt and (
+                    (modus == "Voll" and deckkraft >= 0.99 and farbe[0] < 0.7)
+                    or (modus == "Transparent" and deckkraft < 0.6)
+                    or (modus == "Hidden-Line" and deckkraft >= 0.99 and min(farbe) > 0.95))
+            check(f"Geometrie ohne Netz folgt der Darstellungsart {modus}", ok,
+                  str(sorted(akt)))
+            pl.close()
+
+        # Startbild
+        from statik3d.gui import start as st
+        pm = st.startbild("9.9.9", "abc1234")
+        check("Startbild wird gezeichnet", not pm.isNull() and pm.width() == st.BREITE
+              and pm.height() == st.HOEHE)
+        sb = st.Startbild(version="9.9.9", stand="abc1234")
+        sb.show()
+        sb.melden("Grafik und Rechenkern werden geladen …")
+        app.processEvents()
+        check("Startbild zeigt die Meldung", sb.isVisible()
+              and sb.message() == "Grafik und Rechenkern werden geladen …", sb.message())
+        sb.fertig(w)
+        app.processEvents()
+        check("und schließt sich, sobald das Fenster steht", not sb.isVisible())
+        check("ohne Packer bleibt packer_schliessen folgenlos",
+              st.packer_schliessen() is None and st.packer_melden("x") is None)
     except Exception as ex:      # noqa: BLE001
         import traceback
         traceback.print_exc()

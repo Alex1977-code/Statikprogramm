@@ -253,9 +253,19 @@ def flaechen_dreiecke(ring, seiten=None):
     return P, zellen
 
 
+#: Wie Flaechen und Volumen ohne Netz je Darstellungsart gezeichnet werden:
+#: (Flaeche zeichnen, Angaben fuer add_mesh, Randlinien zeichnen, Randfarbe)
+GEOMETRIE_DARSTELLUNG = {
+    "Voll": (True, {"color": "#7fb3d5", "opacity": 1.0}, True, "#20638f"),
+    "Transparent": (True, {"color": "#7fb3d5", "opacity": 0.45}, True, "#20638f"),
+    "Hidden-Line": (True, {"color": "#ffffff", "opacity": 1.0, "lighting": False}, True, "#202020"),
+    "Drahtmodell": (False, {}, True, "#20638f"),
+}
+
+
 def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = None,
                   seiten: dict = None, flaechen_an: bool = True, koerper_an: bool = True,
-                  ausser_flaechen=None, ausser_koerper=None):
+                  ausser_flaechen=None, ausser_koerper=None, modus: str = "Transparent"):
     """Flaechen und Volumenkoerper zeichnen, die **noch nicht vernetzt** sind.
 
     Ein Objekt, das man nicht sieht, kann man auch nicht anklicken. Eine eben
@@ -282,6 +292,12 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
 
     ``flaechen_an``/``koerper_an`` sind die Sichtbarkeitsschalter,
     ``ausser_flaechen``/``ausser_koerper`` die ausgeblendeten Namen.
+
+    ``modus`` ist die Darstellungsart der Ansicht - sie gilt auch fuer
+    Flaechen und Volumen ohne Netz: Voll deckend, Transparent durchscheinend,
+    Hidden-Line weiss mit dunklen Randlinien, Drahtmodell nur die Randlinien.
+    Die Kanten der Dreiecke einer Coons-Flaeche sind kein Netz und werden
+    nie gezeichnet; die Raender kommen aus den Randlinien der Flaechen.
     """
     flaechen = getattr(model, "flaechen", {}) or {}
     if not flaechen:
@@ -317,9 +333,13 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
             seiten[name] = r
         return r
 
+    flaeche_zeichnen, angaben, rand_zeichnen, randfarbe = GEOMETRIE_DARSTELLUNG.get(
+        modus, GEOMETRIE_DARSTELLUNG["Transparent"])
     pts: list = []
     zellen: list = []
     zelle_flaeche: list = []
+    rpts: list = []
+    rlines: list = []
     for nr, (name, f) in enumerate(flaechen.items()):
         if f.elemente or name in ausser_flaechen:
             continue
@@ -327,6 +347,14 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
             continue
         ring = ring_von(name, f)
         if len(ring) < 3:
+            continue
+        if rand_zeichnen:
+            basis = len(rpts)
+            P = np.asarray(ring, float)
+            rpts.extend(np.vstack([P, P[:1]]))
+            for i in range(len(P)):
+                rlines.extend([2, basis + i, basis + i + 1])
+        if not flaeche_zeichnen:
             continue
         P, Z = flaechen_dreiecke(ring, seiten_von(name, f))
         if P is None:
@@ -345,8 +373,10 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
     if pts:
         pd = pv.PolyData(np.asarray(pts, float), faces=np.asarray(zellen))
         pd.cell_data["flaeche"] = np.asarray(zelle_flaeche, int)
-        plotter.add_mesh(pd, color="#7fb3d5", opacity=0.45, show_edges=True,
-                         edge_color="#20638f", line_width=1, name="geo_flaechen")
+        plotter.add_mesh(pd, show_edges=False, name="geo_flaechen", **angaben)
+    if rpts:
+        plotter.add_mesh(pv.PolyData(np.asarray(rpts, float), lines=np.asarray(rlines)),
+                         color=randfarbe, line_width=1, name="geo_raender")
     # Randkanten der noch nicht vernetzten Volumenkoerper - ebenfalls gebuendelt
     if not koerper_an:
         return
@@ -370,7 +400,8 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
     if kpts:
         plotter.add_mesh(pv.PolyData(np.asarray(kpts, float),
                                      lines=np.asarray(klines)),
-                         color="#8e44ad", line_width=2, name="geo_volumen")
+                         color="#8e44ad" if modus != "Hidden-Line" else "#202020",
+                         line_width=2, name="geo_volumen")
 
 
 def line_at(model: Model, punkt, size: float):

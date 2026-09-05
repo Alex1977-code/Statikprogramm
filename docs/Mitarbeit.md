@@ -124,6 +124,11 @@ Punkte:
   (`C:\Program Files\Dlubal`) – die Dateien liegen nur lokal vor.
 * **Splitter am Rand**: Tetraeder, deren vier Knoten alle auf der Oberfläche
   liegen, lassen sich nicht glätten. Sie werden gezählt und gemeldet.
+* **Startbild des Packers** (`Splash` in `packaging/Statik3D.spec`) braucht
+  Tcl/Tk des Build-Python; auf dem GitHub-Windows-Läufer ist es dabei. Fehlt
+  es einmal, bricht PyInstaller mit einer klaren Meldung ab — dann die
+  `Splash`-Zeilen aus dem Rezept nehmen, das Qt-Startbild
+  (`statik3d/gui/start.py`) läuft unabhängig davon.
 * **Fang auf krummen Flächen ohne Netz** greift auf der gezeichneten
   Coons-Fläche (Dreiecke), nicht auf der exakten Zylinderfläche — bei 16
   Stücken je Bogen liegt der Punkt bis 0,5 % des Radius neben dem Mantel.

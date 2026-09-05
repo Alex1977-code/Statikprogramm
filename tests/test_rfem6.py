@@ -1372,7 +1372,7 @@ def test_kein_stilles_verschmelzen():
         m = import_rfem_native(f, log=log)
         check("die Fuge bleibt offen", m.nn == 4, f"nn = {m.nn}")
         check("und das Protokoll sagt es",
-              any("NICHT zusammengefuehrt" in z for z in log),
+              any("Nachbereitung des Imports fuehrt sie zusammen" in z for z in log),
               next((z for z in log if "liegen auf" in z), ""))
         log2 = []
         m2 = import_rfem_native(f, log=log2, merge_nodes=True)

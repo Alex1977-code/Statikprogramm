@@ -314,7 +314,10 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     # Nachbereitung
     n_merged = C.merge_duplicate_nodes(model, tol) if model.nn > n_nodes0 else 0
     if n_merged:
-        C.say(log, f"{n_merged} doppelte Knoten zusammengefuehrt")
+        kb = getattr(model, "kontaktbedingungen", None) or {}
+        C.say(log, f"{n_merged} doppelte Knoten zusammengefuehrt"
+                   + (f" - die Flaechen der {len(kb)} Kontaktbedingungen werden beim "
+                      "Vernetzen wieder getrennt" if kb else ""))
     ext = os.path.splitext(path)[1].lower()
     if ext in _NO_MEMBER_INFO or kind == "cad":
         members = model.auto_members()
