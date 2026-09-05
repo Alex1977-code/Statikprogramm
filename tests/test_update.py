@@ -86,7 +86,8 @@ def test_befund_und_bat():
     # Austauschskript: Platzhalter, Wartezeit, Fehlerbehandlung
     bat = upd.UPDATE_BAT.format(exe=r"C:\Statik3D\Statik3D.exe",
                                 new=r"C:\Statik3D\Statik3D.exe.new",
-                                log=r"C:\Statik3D\statik3d_update.log")
+                                log=r"C:\Statik3D\statik3d_update.log",
+                                ok=r"C:\Statik3D\statik3d_update.ok")
     check("Skript: verzoegerte Erweiterung eingeschaltet",
           "enabledelayedexpansion" in bat)
     check("Skript: Zaehler mit ! statt % gelesen", "!n! lss 120" in bat, "!n!")
@@ -187,6 +188,44 @@ def test_befund_und_bat():
         check(f"Skript loescht {name}", f'set "{name}="' in bat)
     check("Skript schliesst zum Schluss sein Fenster",
           bat.rstrip().endswith('& exit'), bat.rstrip().splitlines()[-1])
+
+    # ---- Der Neustart muss sich melden ----------------------------------
+    #
+    # "start" sagt nur, dass ein Prozess entstanden ist. Eine exe, die gleich
+    # wieder mit einer Meldung abbricht, gilt dabei als gestartet - das Skript
+    # meldete "neu gestartet", loeschte sich, und der Anwender stand vor einem
+    # Fenster ohne Erklaerung. Jetzt legt die neue Fassung eine Marke an, auf
+    # die das Skript wartet; bleibt sie aus, sagt es, was zu tun ist.
+    check("Skript verlangt eine Rueckmeldung (Umgebungsvariable)",
+          'set "STATIK3D_NEUSTART=%OK%"' in bat)
+    check("und setzt sie vor dem Start der exe",
+          bat.index('set "STATIK3D_NEUSTART=') < bat.index('start "" "%EXE%"'))
+    check("alte Marke wird vorher geloescht",
+          bat.index('del "%OK%"') < bat.index('start "" "%EXE%"'))
+    check("Skript wartet auf die Marke", 'if exist "%OK%" goto gemeldet' in bat)
+    check("und gibt nach 90 s eine Anleitung statt zu verschwinden",
+          "lss 90 goto melden" in bat and "aus dem Explorer heraus" in bat
+          and "exit /b 5" in bat)
+    check("die Meldung nennt den Sicherheitshinweis des Ladeteils",
+          "Security validation failure" in bat)
+    check("erst nach der Rueckmeldung loescht sich das Skript",
+          bat.index(":gemeldet") < bat.index('del "%~f0"'))
+    # Die Rueckmeldung selbst
+    marke = os.path.join(d2, "statik3d_update.ok")
+    umgebung = {"STATIK3D_NEUSTART": marke, "PATH": "bleibt"}
+    pfad = upd.melde_neustart(umgebung)
+    check("melde_neustart legt die Marke an", pfad == marke and os.path.isfile(marke),
+          pfad)
+    check("und nimmt die Variable aus der Umgebung",
+          "STATIK3D_NEUSTART" not in umgebung and umgebung.get("PATH") == "bleibt")
+    check("ohne Variable geschieht nichts", upd.melde_neustart({"PATH": "x"}) == "")
+    check("ein unschreibbarer Pfad haelt nichts auf",
+          upd.melde_neustart({"STATIK3D_NEUSTART":
+                              os.path.join(d2, "gibts", "nicht", "x.ok")}) == "")
+    wurzel = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    check("run_gui meldet den Neustart vor dem Start der Oberflaeche",
+          "update.melde_neustart()" in open(os.path.join(wurzel, "run_gui.py"),
+                                             encoding="utf-8").read())
 
     # Neustart an Ort und Stelle: ebenfalls mit gesaeuberter Umgebung
     gerufen_exec = []

@@ -298,6 +298,14 @@ if errorlevel 1 (
 )
 echo [%date% %time%] Austausch erfolgreich>> "%LOG%"
 cd /d "%~dp0"
+rem Die neue Fassung soll sich melden, sobald sie wirklich laeuft: sie legt
+rem die Datei %OK% an. "start" allein sagt nur, dass ein Prozess entstanden
+rem ist - eine exe, die gleich wieder mit einer Meldung abbricht, gilt dabei
+rem als gestartet. Ohne diese Rueckmeldung loeschte sich das Skript und der
+rem Anwender staende vor einem Fenster ohne Erklaerung.
+set "OK={ok}"
+del "%OK%" >nul 2>&1
+set "STATIK3D_NEUSTART=%OK%"
 start "" "%EXE%"
 if errorlevel 1 (
     echo [Fehler] Neustart fehlgeschlagen.>> "%LOG%"
@@ -306,7 +314,31 @@ if errorlevel 1 (
     pause
     exit /b 4
 )
-echo [%date% %time%] neu gestartet>> "%LOG%"
+set /a m=0
+:melden
+timeout /t 1 /nobreak >nul
+if exist "%OK%" goto gemeldet
+set /a m+=1
+if !m! lss 90 goto melden
+echo [Fehler] Keine Rueckmeldung der neuen Fassung nach 90 s.>> "%LOG%"
+echo.
+echo Der Austausch hat geklappt - die neue Fassung liegt an ihrer Stelle.
+echo Sie hat sich aber nicht gemeldet; vermutlich ist sie beim Start
+echo abgebrochen.
+echo.
+echo Bitte Statik3D aus dem Explorer heraus starten (Doppelklick):
+echo   "%EXE%"
+echo.
+echo Meldet Windows dabei "Security validation failure: parent process has
+echo different executable", so lag es an den Umgebungsvariablen dieser
+echo Eingabeaufforderung - aus dem Explorer heraus tritt das nicht auf.
+echo.
+echo Protokoll:  "%LOG%"
+pause
+exit /b 5
+:gemeldet
+del "%OK%" >nul 2>&1
+echo [%date% %time%] neu gestartet und gemeldet>> "%LOG%"
 rem Das Skript loescht sich selbst und schliesst sein Fenster. (goto) verlaesst
 rem den Skriptzusammenhang, damit die Datei beim Loeschen nicht mehr in
 rem Benutzung ist; das anschliessende exit schliesst die Eingabeaufforderung
@@ -345,12 +377,48 @@ def apply_exe(info: UpdateInfo, progress: Callable = None, restart: bool = True,
         raise UpdateError("Heruntergeladene Datei ist kein Windows-Programm")
     log = os.path.join(ordner, "statik3d_update.log")
     bat = os.path.join(ordner, "statik3d_update.bat")
+    ok = os.path.join(ordner, "statik3d_update.ok")
     with open(bat, "w", encoding="ascii", errors="replace", newline="\r\n") as f:
-        f.write(UPDATE_BAT.format(exe=exe, new=new, log=log))
+        f.write(UPDATE_BAT.format(exe=exe, new=new, log=log, ok=ok))
     if restart:
         start_helper(bat, new)
     return ("Neue Version heruntergeladen. Statik3D wird jetzt beendet, ausgetauscht "
             f"und neu gestartet.\nProtokoll des Austauschs: {log}")
+
+
+#: Umgebungsvariable, mit der das Austauschskript eine Rueckmeldung verlangt.
+#: Sie enthaelt den Pfad der Datei, die die neu gestartete Fassung anlegen soll.
+NEUSTART_MARKE = "STATIK3D_NEUSTART"
+
+
+def melde_neustart(umgebung: dict = None) -> str:
+    """Dem Austauschskript melden, dass die neue Fassung wirklich laeuft.
+
+    ``start`` sagt nur, dass ein Prozess entstanden ist. Eine exe, die gleich
+    wieder abbricht - etwa weil der Ladeteil sie fuer einen fremden
+    Kindprozess haelt -, gilt dabei als gestartet: das Skript meldete
+    "neu gestartet", loeschte sich und der Anwender stand vor einem
+    Meldungsfenster ohne Erklaerung. Darum legt die neue Fassung hier eine
+    Datei an, auf die das Skript wartet.
+
+    Die Variable wird danach aus der Umgebung genommen, damit
+    Unterprozesse (Rechenknechte, Browser-Server) sie nicht erben und die
+    Marke nicht ein zweites Mal setzen.
+
+    Rueckgabe: der Pfad der angelegten Datei - oder "", wenn nichts zu
+    melden war. Scheitern darf das nie: eine misslungene Rueckmeldung ist
+    kein Grund, das Programm nicht zu starten.
+    """
+    umgebung = os.environ if umgebung is None else umgebung
+    pfad = (umgebung.pop(NEUSTART_MARKE, "") or "").strip()
+    if not pfad:
+        return ""
+    try:
+        with open(pfad, "w", encoding="ascii") as f:
+            f.write(f"{__version__} {int(time.time())}\n")
+    except OSError:
+        return ""
+    return pfad
 
 
 def helper_path(exe_path: str = None) -> str:

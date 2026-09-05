@@ -55,6 +55,15 @@ def _start():
         print("Fehlende Abhaengigkeit:", ex)
         print("Bitte installieren:  pip install -r requirements.txt")
         sys.exit(1)
+    # Kommt der Start aus dem Austauschskript einer Aktualisierung, wartet
+    # dieses auf eine Rueckmeldung. Sie wird hier gegeben - erst nachdem die
+    # Pakete geladen sind, denn genau daran scheitert eine misslungene
+    # Aktualisierung: die neue exe bricht ab, bevor Python laeuft.
+    try:
+        from statik3d import update
+        update.melde_neustart()
+    except Exception:          # noqa: BLE001 - eine Rueckmeldung haelt nichts auf
+        pass
     main()
 
 
