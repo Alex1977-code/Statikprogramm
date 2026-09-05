@@ -75,6 +75,10 @@ class MainWindow(QtWidgets.QMainWindow):
         #: Fensterauswahl: erste Ecke (Qt-Bildpunkte) oder None
         self._fenster_ecke = None
         self._letzter_klick = None
+        #: Der Linksklick wird beim Druecken gemerkt und erst beim Loslassen
+        #: ausgefuehrt - und nur, wenn der Zeiger dazwischen nicht gezogen
+        #: wurde (Drehen der Ansicht waehlt nichts aus).
+        self._klick_wartend = None
         #: Elemente, die aus dem Modellbaum heraus aufleuchten
         self.leuchtet: list[int] = []
         #: Sicht: was ausgeblendet ist - Elemente (Nummern), Linien, Flaechen
@@ -187,7 +191,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # pickable_window=True: der Rueckruf kommt auch, wenn der Klick
             # keinen Koerper trifft. Ob etwas getroffen ist, entscheiden wir
             # selbst - in Bildschirmpunkten, nicht ueber die VTK-Trefferprobe.
-            self.plotter.enable_point_picking(callback=self._picked, show_message=False,
+            self.plotter.enable_point_picking(callback=self._klick_gedrueckt, show_message=False,
                                               left_clicking=True, show_point=False,
                                               pickable_window=True)
         except Exception:
@@ -241,6 +245,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     elif ereignis.button() == QtCore.Qt.RightButton and self._fenster_ecke is not None:
                         self._fenster_abschliessen(pos)
                         return True
+                elif t == QtCore.QEvent.MouseButtonRelease and ereignis.button() == QtCore.Qt.LeftButton:
+                    self._klick_loslassen(ereignis)
                 elif t == QtCore.QEvent.MouseMove and self._fenster_ecke is not None:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     self._fenster_nachziehen(pos)
@@ -1388,6 +1394,31 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         return self.arbeitsebene.schnitt(punkte[0], richtung)
 
+    #: So weit darf sich der Zeiger zwischen Druecken und Loslassen bewegen,
+    #: damit es noch ein Klick ist [Bildpunkte]; mehr ist ein Ziehen (Drehen).
+    KLICK_TOLERANZ = 4
+
+    def _klick_gedrueckt(self, point, *args):
+        """VTK meldet den Linksklick beim Druecken - gemerkt, ausgefuehrt wird
+        beim Loslassen (siehe _klick_loslassen)."""
+        self._klick_wartend = (point, args)
+
+    def _klick_loslassen(self, ereignis):
+        """Linke Taste losgelassen: der gemerkte Klick zaehlt nur, wenn der
+        Zeiger nicht gezogen wurde - wer die Ansicht dreht, will nichts waehlen."""
+        wartend = self._klick_wartend
+        self._klick_wartend = None
+        if wartend is None:
+            return
+        try:
+            pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+            start = self._letzter_klick
+            if start is not None and max(abs(pos.x() - start.x()), abs(pos.y() - start.y())) > self.KLICK_TOLERANZ:
+                return                      # gezogen: gedreht, nicht geklickt
+        except Exception:                   # noqa: BLE001
+            pass
+        self._picked(wartend[0], *wartend[1])
+
     def _picked(self, point, *args):
         # Ein laufendes Auswahlfenster: der zweite Linksklick schliesst es ab
         # (wie der Rechtsklick); ein Klick auf der ersten Ecke verwirft es und
@@ -1865,8 +1896,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                       (self.act_loads, "lasten", "lasten")):
             leiste.knopf(a, symbol, schluessel)
         leiste.trenner()
-        # Sicht: nur die Auswahl, Auswahl weg, zurueck, alles
-        for a, symbol, schluessel in ((self.act_nur_auswahl, "sicht_nur_auswahl", "nur_auswahl"),
+        # Auswahl und Sicht: alles deselektieren, nur die Selektion, Auswahl
+        # weg, zurueck, alles
+        for a, symbol, schluessel in ((self.act_auswahl_weg, "auswahl_weg", "auswahl_weg"),
+                                      (self.act_nur_auswahl, "sicht_nur_auswahl", "nur_auswahl"),
                                       (self.act_auswahl_weg_sicht, "sicht_ausblenden", "ausblenden"),
                                       (self.act_sicht_zurueck, "sicht_zurueck", "zurueck"),
                                       (self.act_alles_zeigen, "sicht_alles", "alles")):
@@ -2092,8 +2125,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_redo = g.gross("Wiederholen", "↷", self.redo, "Ctrl+Y",
                                 "Zurückgenommene Änderung wiederholen")
         g = r.gruppe("Auswahl")
-        self.act_auswahl_weg = g.gross("Auswahl aufheben", "✕", self.clear_selection,
-                                       "Esc", "Alle gewählten Knoten abwählen")
+        self.act_auswahl_weg = g.gross("Alles deselektieren", "✕", self.clear_selection,
+                                       "Esc", "Auswahl aufheben - nichts bleibt gewählt (auch in der Glasleiste)")
         g.klein("Alles auswählen", self.select_all, "Ctrl+A")
         g.klein("Auswahl umkehren", self.invert_selection)
         g = r.gruppe("Modell prüfen")
@@ -2138,7 +2171,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_auswahlart.setToolTip("Was ein Klick in der Ansicht trifft")
         self.cb_auswahlart.currentTextChanged.connect(self.auswahlart_setzen)
         g.widget(self.cb_auswahlart)
-        g.klein("Auswahl aufheben", self.clear_selection)
+        g.klein("Alles deselektieren", self.clear_selection)
         g = r.gruppe("Koordinatensystem")
         self.cb_ks = QtWidgets.QComboBox()
         self.cb_ks.setMinimumWidth(120)
@@ -2541,8 +2574,8 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Einheiten und Genauigkeiten…", self.maske_einheiten,
                 hinweis="Einheiten und Nachkommastellen für Ansicht und Tabellen")
 
-        rb.schnell(self.act_speichern, self.act_undo, self.act_redo,
-                   self.act_rechnen, self.act_auswahl_weg)
+        # „Alles deselektieren“ steht in der Glasleiste, nicht mehr ganz oben
+        rb.schnell(self.act_speichern, self.act_undo, self.act_redo, self.act_rechnen)
         self._undo_knoepfe()
         self.setMenuWidget(dsg.kopfhalter(self, self.kopf, rb))
 
@@ -8544,7 +8577,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Lager", "△", self.maske_lager, hinweis="Lager an der Auswahl")
         g.gross("Last", "↓", self.maske_knotenlast, hinweis="Knotenlast auf die Auswahl")
         g = r.gruppe("Auswahl")
-        g.klein("Auswahl aufheben", self.clear_selection, "Esc")
+        g.klein("Alles deselektieren", self.clear_selection, "Esc")
         g.klein("Auswahl umkehren", self.invert_selection)
 
     # ---- Befehle des Ribbons -----------------------------------------
@@ -10413,8 +10446,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"exportiert: {p}  (z.B. in ParaView zu öffnen)")
 
     def make_report(self):
+        """Bericht schreiben - auch ohne Berechnung: dann mit den Eingabekapiteln
+        (Modell, Lager, Lastfaelle, Lasten, Generierer, uebernommene Bilder) und
+        dem Hinweis, dass keine Ergebnisse vorliegen."""
         if self.analysis is None and self.results is None:
-            return self.error("Zuerst berechnen")
+            self.info("Bericht ohne Berechnung: Modell, Lasten und Generierer; die Ergebnis- und "
+                      "Nachweiskapitel folgen nach „Berechnen“")
         base = os.path.splitext(self.path)[0] if self.path else "bericht"
         d = ReportDialog(self, self.model, base + "_bericht.html")
         if not d.exec():

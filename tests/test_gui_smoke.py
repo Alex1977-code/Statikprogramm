@@ -3021,9 +3021,14 @@ def main():
         kn = w.glasleiste.knoepfe
         check("Glasleiste: Darstellung, Sichtbarkeit, Sicht, Fang und Auswahlart als Knöpfe",
               all(k in kn for k in ("Voll", "Drahtmodell", "knoten", "staebe", "flaechen",
-                                    "volumen", "netz", "nur_auswahl", "ausblenden",
+                                    "volumen", "netz", "auswahl_weg", "nur_auswahl", "ausblenden",
                                     "zurueck", "alles", "fang", "auswahl_Knoten",
                                     "auswahl_Volumen", "auswahl_Netz")), str(sorted(kn)))
+        check("„Alles deselektieren“ steht in der Glasleiste und nicht mehr im Schnellzugriff",
+              kn["auswahl_weg"].defaultAction() is w.act_auswahl_weg
+              and w.act_auswahl_weg.text() == "Alles deselektieren"
+              and w.act_auswahl_weg not in w.ribbon.schnellzugriff.actions(),
+              str([a.text() for a in w.ribbon.schnellzugriff.actions()]))
         check("Glasleiste: nur Symbole, der Text kommt beim Überfahren",
               all((not b.icon().isNull()) and b.toolTip()
                   and b.toolButtonStyle() == QtCore.Qt.ToolButtonIconOnly
@@ -3434,6 +3439,57 @@ def main():
         import traceback
         traceback.print_exc()
         check("Lasten und Auswahl", False, str(ex)[:70])
+
+    # ---- Klick und Ziehen; Bericht ohne Berechnung ---------------------------
+    try:
+        from PySide6 import QtCore, QtGui
+        from statik3d.gui import dialogs as dlg_
+        w.load_example("hall")
+        app.processEvents()
+        it_ = w.plotter.interactor
+        treffer_ = []
+        alt_picked = w._picked
+        w._picked = lambda point, *a: treffer_.append(np.asarray(point))
+
+        def maus_(typ, pos, knopf, knoepfe):
+            ev = QtGui.QMouseEvent(typ, QtCore.QPointF(pos), QtCore.QPointF(pos), knopf, knoepfe,
+                                   QtCore.Qt.NoModifier)
+            QtWidgets.QApplication.sendEvent(it_, ev)
+            app.processEvents()
+
+        mitte_ = QtCore.QPoint(it_.width() // 2, it_.height() // 2)
+        maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.LeftButton, QtCore.Qt.LeftButton)
+        maus_(QtCore.QEvent.MouseButtonRelease, mitte_, QtCore.Qt.LeftButton, QtCore.Qt.NoButton)
+        check("Klick ohne Bewegung wählt (beim Loslassen)", len(treffer_) == 1 and w._klick_wartend is None,
+              str(len(treffer_)))
+        maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.LeftButton, QtCore.Qt.LeftButton)
+        for d_ in (5, 15, 30):
+            maus_(QtCore.QEvent.MouseMove, mitte_ + QtCore.QPoint(d_, d_), QtCore.Qt.NoButton, QtCore.Qt.LeftButton)
+        maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(30, 30), QtCore.Qt.LeftButton,
+              QtCore.Qt.NoButton)
+        check("Klicken und Ziehen (Drehen) wählt nichts", len(treffer_) == 1, str(len(treffer_)))
+        w._picked = alt_picked
+        alt_exec = dlg_.ReportDialog.exec
+        dlg_.ReportDialog.exec = lambda self: 0
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        w.analysis = None
+        w.results = None
+        w.make_report()
+        app.processEvents()
+        dlg_.ReportDialog.exec = alt_exec
+        w.error = alt_error
+        check("Bericht ohne Berechnung: kein „Zuerst berechnen“, Dialog öffnet, Hinweis im Protokoll",
+              not fehler_ and "Bericht ohne Berechnung" in w.log.toPlainText(), str(fehler_))
+        from statik3d.report.html import Report as Rep_
+        html_ = Rep_(w.model).html()
+        check("Bericht ohne Ergebnisse enthält Modell und Einwirkungen und nennt fehlende Ergebnisse",
+              "Einwirkungen" in html_ and "keine Berechnungsergebnisse" in html_, str(len(html_)))
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Klick und Ziehen / Bericht ohne Berechnung", False, str(ex)[:70])
 
     # ---- Einheiten und Genauigkeiten (Ansicht -> Einheiten) ----------------
     try:

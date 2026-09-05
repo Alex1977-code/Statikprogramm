@@ -84,8 +84,9 @@ Dreizehn Register nach Arbeitsschritt:
 | **Ansicht** | Blickrichtungen, Darstellungsart (Voll, Transparent, Hidden-Line, Drahtmodell), FE-Netz, Knoten, Nummern, Lasten, Stäbe farbig, Lagergröße |
 | **Extras** | Handbücher, Info, Update |
 
-Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Berechnen,
-Auswahl aufheben) — dieselben Befehle, nur schneller erreichbar. Rechts die
+Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Rückgängig,
+Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
+„Alles deselektieren“ steht in der Glasleiste über der Ansicht. Rechts die
 **Befehlssuche**: Namen eintippen, Eingabetaste, der Befehl läuft und sein
 Register kommt nach vorn.
 
@@ -378,7 +379,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 |---|---|
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
-| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen |
+| Auswahl und Sicht | Alles deselektieren, Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Ansicht → Fang*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente) — genau einer ist gedrückt |
 
@@ -540,7 +541,11 @@ Ein Klick auf der ersten Ecke verwirft das Fenster wieder.
 
 Gefasst wird, was die Auswahlart sagt: Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente des Netzes. Das Fenster ergänzt die vorhandene
-Auswahl; **Esc** bricht es ab, *Auswahl aufheben* leert alles.
+Auswahl; **Esc** bricht es ab, *Alles deselektieren* (Glasleiste, Esc) leert
+alles. **Klicken und Ziehen wählt nichts**: gezählt wird der Klick erst beim
+Loslassen, und nur, wenn der Zeiger dazwischen höchstens vier Bildpunkte
+gewandert ist — wer die Ansicht mit gedrückter Taste dreht, ändert die
+Auswahl nicht.
 
 Ist **nichts gewählt** und keine Erzeuge-Maske offen, zeigt der rechte
 Bereich nur die **Information zum Modell** (Projekt und Modellangaben) -
