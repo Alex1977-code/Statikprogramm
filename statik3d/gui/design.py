@@ -387,12 +387,14 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
                  "bemassungen": "Linearmaß", "lastfaelle": "Lastfall",
                  "kombinationen": "Kombination", "werkstoffe": "Werkstoff", "dicken": "Dicke",
-                 "gelenke": "Gelenk", "stellungen": "Stellung"}
+                 "gelenke": "Gelenk", "stellungen": "Stellung",
+                 "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind",
                     "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke",
-                    "gelenk", "stellung", "berichtseintrag"}
+                    "gelenk", "stellung", "berichtseintrag",
+                    "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
                  "stab": "staebe", "geoflaeche": "geoflaechen",
@@ -402,7 +404,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "schweissnaht": "schweissnaehte", "bemassung": "bemassungen",
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
                  "werkstoff": "werkstoffe", "dicke": "dicken",
-                 "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht"}
+                 "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht",
+                 "lager_einzeln": "lager", "linienlager_einzeln": "linienlager",
+                 "flaechenlager_einzeln": "flaechenlager"}
 
     def __init__(self, parent=None):
         super().__init__(parent)

@@ -75,12 +75,12 @@ Dreizehn Register nach Arbeitsschritt:
 | **Geometrie** | Knoten, Netzgeneratoren (Stabzug, Platte, Quader) |
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Platte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen, Netz löschen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
-| **Lasten** | Lastfälle, Kombinationen, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht |
+| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzvorschau, Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
-| **Bericht** | Statischer Bericht |
+| **Bericht** | Statischer Bericht, Ansicht übernehmen, **Lastenheft** (anzusetzende Einwirkungen nach DIN 19704/ZTV-ING mit Hintergrund, Ansatz und Skizzen) |
 | **Ansicht** | Blickrichtungen, Darstellungsart (Voll, Transparent, Hidden-Line, Drahtmodell), FE-Netz, Knoten, Nummern, Lasten, Stäbe farbig, Lagergröße |
 | **Extras** | Handbücher, Info, Update |
 
@@ -162,7 +162,7 @@ bedienen sind, steht im nächsten Abschnitt.
 | Knoten | x, y, z; dazu Elementzahl am Knoten und Lagername (Doppelklick öffnet die Maske) |
 | Linien | über die Maske (Doppelklick): Name, Art, Knoten, Bemerkung |
 | Elemente | Werkstoff, Querschnitt bzw. Dicke, Drehung der lokalen Achsen |
-| Lager | Name und Symbolgröße; Doppelklick öffnet die Wirkung je Freiheitsgrad |
+| Lager | Name und Symbolgröße; Klick oder Doppelklick öffnet rechts die Lagermaske: Wirkung, Feder und Ausfall je Freiheitsgrad, Bettung auf/an Beton als Vorschlag, Schlupf/Reibung/Grenzkraft über den Knopf |
 | Gelenke | über die Maske (Doppelklick) |
 | Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts die Maske mit Name, Nummer, Einwirkung, Beschreibung, Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerten und „aktiver Lastfall“ |
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ, Beschreibung, Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
@@ -384,7 +384,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Auswahl und Sicht | Alles deselektieren, Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Intelligente Auswahl** (Schalter) |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Ansicht → Fang*) |
-| Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente) — genau einer ist gedrückt |
+| Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager) — genau einer ist gedrückt |
 
 Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen, Sicht, Fang*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
@@ -438,13 +438,35 @@ Umschalt+F3 den Rasterfang, Umschalt+F4 bis F7 den Fang auf Linien, Stäbe,
 Flächen und Volumen. Was gerade gefangen wird, steht in der Statuszeile
 („Fang: alle" oder die Liste der Arten).
 
-**Lagersymbole**: Die Form sagt, was das Lager hält — Würfel für die
-Einspannung, Kegel für das gelenkige Lager, Zylinder für ein Federlager.
-Linienlager und Flächenlager werden kleiner und in eigener Farbe gezeichnet.
-Die **Größe** stellt der Schieber „Lager" im Register *Ansicht* für alle
-zusammen ein; **ein Rechtsklick auf ein Lagersymbol** öffnet dessen eigenes
-Menü mit „Größe dieses Lagers…", „Größe aller Lager…", „Lager bearbeiten…" und
-„Lager löschen". Die eingestellte Größe wird mitgespeichert.
+**Lagersymbole** — das klassische Bild der Statik; die Form sagt, was das
+Lager hält:
+
+| Lager | Symbol |
+|---|---|
+| Einspannung (alles gehalten) | Würfel |
+| Verschiebung gehalten | **Pyramide**, Spitze am Knoten; das Symbol zeigt in die gehaltene Richtung (meist nach unten) |
+| eine Verschiebung frei (Rollenlager) | Pyramide auf einer **Gleitebene**, die sich mit zwei Rollen in die freie Richtung streckt |
+| alle Verdrehungen frei (Gelenk) | **Kugel** an der Spitze |
+| genau eine Verdrehung frei (Scharnier) | **Zylinder** in Richtung der Drehachse |
+| Feder | **Schraubenfeder** in Richtung des Freiheitsgrads (in der Achse zwischen Spitze und Ebene, seitlich vom Knoten weg mit Endplatte); eine Drehfeder als Spirale um ihre Achse |
+
+**Linienlager** werden mit kleineren Symbolen **entlang der ganzen Linie**
+gezeichnet, dazu die Linie selbst; **Flächenlager** im Raster **über die
+ganze gebettete Fläche**, die Symbole in Richtung der Flächennormale (bei
+Volumen nach außen) — nicht mehr nur an den Knoten. Wie dicht die Symbole
+stehen, sagt die **Lagerdichte**: Schieber „Dichte" im Register *Ansicht →
+Symbole* (1,0 = alle 5 % der Modellgröße ein Symbol), Rechtsklick in die
+Ansicht → „Lagerdichte…" oder auf ein Linien-/Flächenlager. Die **Größe**
+stellt der Schieber „Lager" für alle zusammen ein; **ein Rechtsklick auf ein
+Lagersymbol** öffnet dessen eigenes Menü mit „Größe dieses Lagers…", „Größe
+aller Lager…", „Lager bearbeiten…" (die Maske rechts) und „Lager löschen".
+Die eingestellte Größe wird mitgespeichert.
+
+**Lager auswählen**: mit der Auswahlart **Lager** (Glasleiste) trifft ein
+Klick ein Knotenlager an seinem Symbol, ein Linien- oder Flächenlager an
+einem seiner Symbole; auch das Auswahlfenster fasst Lager. Gewählte Lager
+leuchten; Rechtsklick zeigt sie als Gruppe (Bearbeiten, Symbolgröße bzw.
+Lagerdichte, Löschen), *Alles deselektieren* leert auch sie.
 
 ### Tabellen: filtern, sortieren, ausgeben
 
@@ -1056,11 +1078,17 @@ Geschwindigkeitsfeld v/v∞ des Schnitts. Die Beiwerte sind **qualitativ** -
 Modell-Reynolds-Zahl, ebener Schnitt - und gegen die Norm zu prüfen; der
 Lastfall trägt die Lastfall-Nr. aus der Maske.
 
-## 5 Lager: Ausfall, Schlupf, Reibung
+## 5 Lager: Ausfall, Schlupf, Reibung, Bettung
 
-Jedes Lager wirkt je Freiheitsgrad **starr**, als **Feder** oder ist **frei**;
-zusätzlich lassen sich Nichtlinearitäten einstellen (Register Lager/Lasten →
-**Nichtlinearität…**, auf dem Handy Modell → Nichtlineare Lager):
+Jedes Lager wirkt je Freiheitsgrad **starr**, als **Feder** oder ist **frei**.
+Eingestellt wird das **in der Lagermaske rechts** (Klick auf das Lager im
+Modellbaum, in der Tabelle „Lager" oder in der Ansicht mit der Auswahlart
+Lager; Rechtsklick auf das Symbol → „Lager bearbeiten…"): je Freiheitsgrad
+Wirkung, Federsteifigkeit (Knotenlager kN/m bzw. kNm/rad, Linienlager je m,
+Flächenlager je m²) und Ausfall; Schlupf, Reibung und Grenzkraft öffnet der
+Knopf „Schlupf, Reibung, Grenzkraft …" (Register Lager/Lasten →
+**Nichtlinearität…** für die gewählten Knoten; auf dem Handy Modell →
+Nichtlineare Lager):
 
 | Einstellung | Bedeutung |
 |---|---|
@@ -1073,6 +1101,17 @@ zusätzlich lassen sich Nichtlinearitäten einstellen (Register Lager/Lasten →
 **Vorzeichen:** Das Lager wirkt entlang der positiven Achse seines
 Freiheitsgrads. Bewegt sich der Knoten in das Lager hinein, entsteht **Druck**;
 zieht er daran, **Zug**.
+
+**Bettung auf oder an Beton** — ein Vorschlag in der Lagermaske: „auf Beton
+(Druckkontakt)" setzt in uz eine Feder mit der Winkler-Bettung
+k_s = E_cm / d (E_cm des Betons, d die wirksame Dicke: Fugen- oder
+Mörteldicke bzw. mitwirkende Betontiefe) und **Ausfall bei Zug**; „an Beton
+(Schubverbund)" setzt in ux und uy die Schubbettung k_t = G / d mit
+G = E_cm / (2·(1 + 0,2)). Knotenlager erhalten den Wert mal Einflussfläche,
+Linienlager mal Einflussbreite, Flächenlager je m². „Bettung übernehmen"
+schreibt die Zahlen in die Felder — sie sind ein Vorschlag und **vor
+„Übernehmen" zu prüfen** (Vorgaben: C20/25 30 000, C30/37 33 000, C50/60
+37 000 N/mm²).
 
 **Linienlager** (Knopf *Linienlager…*): Lager entlang der gewählten Knoten in
 Auswahlreihenfolge. Die Steifigkeit wird **je Meter** angegeben und über die
@@ -1729,6 +1768,38 @@ größte Auflagerkraft je Knoten — **jeweils mit der Stellung, in der sie
 auftritt**. `umh.kurve()` liefert `(Winkel, η, u_max)` für die Kurve über den
 Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
 ausgewiesen, nicht stillschweigend übergangen.
+
+### Lastfälle nach DIN 19704 anlegen und das Lastenheft
+
+**Lastfälle nach DIN 19704…** (Register *Lasten → Lastfälle*) legt die
+Lastfälle eines Stahlwasserbaus mit einem Klick an: rechts in der Maske ein
+Haken je Einwirkung — vorgehakt sind Eigengewicht G, Ausrüstung G_A,
+Wasserdruck ständig W_S und veränderlich W_V, Wind W, Temperatur T, Eis EIS,
+Betriebslast Q_BEW und Antriebsmoment A_M; die übrigen (Verkehr,
+Grenzmoment, Wind während der Bewegung, Schwall, Anprall, Verklemmen,
+Montage, Erdbeben) nach Bedarf. Jeder Lastfall bekommt das Kürzel als
+Namen, die Einwirkungsart, die Beschreibung der Einwirkung und eine
+fortlaufende Lastfallnummer ab der eingetragenen ersten Nummer; das
+Eigengewicht trägt g. Die Lasten selbst kommen danach aus den Masken und
+Generierern (Wasserdruck, Wind) in diese Lastfälle; „Kombinationen nach
+DIN 19704 bilden" kombiniert sie je Lastfallklasse.
+
+**Lastenheft** (Register *Bericht*) schreibt ein eigenes Dokument (HTML,
+mit Strg+P als PDF; auch Markdown), das **alle anzusetzenden Einwirkungen
+erläutert**: je Einwirkung der normative Hintergrund (DIN 19704-1/-2/-3,
+ZTV-ING, DIN EN 1990/1991, Betreibervorgaben), was sie ist, wie sie
+angesetzt wird (Ansatz und Formel), ihre Lastfallklassen und Beiwerte
+(γ_F je Klasse, ψ₀ — Voreinstellungen mit * gekennzeichnet), was das Modell
+dazu schon kennt (Lastfälle mit Nummer, Wasserdruck- und Windgenerierer,
+Antriebsmomente der Stellungen) und eine **Skizze** des Ansatzes
+(hydrostatisches Druckdreieck zwischen Ober- und Unterwasser mit den
+Wasserständen des Modells, Wind, Eisdruck am Spiegel, Temperatur,
+Antrieb, Betriebslast, Anprall, Schwall, Verklemmen, Montage, Erdbeben).
+Dazu die Kombinationsregel der Lastfallklassen, die Teilsicherheitsbeiwerte
+der Widerstände und die ZTV-ING-Prüfliste. Zahlenwerte, die als Vorgabe
+stehen (Eisdruck, Temperaturunterschied, Betriebswind, Anprall, Wichten),
+sind **zu bestätigen** — das Heft weist sie aus; Fundstellen werden als
+Norm und Thema genannt.
 
 ### Lastfallklassen nach DIN 19704
 
