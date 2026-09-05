@@ -735,28 +735,196 @@ def util_colors(values: np.ndarray):
     return "RdYlGn_r"
 
 
-def support_shape(support) -> str:
-    """Symbolart eines Lagers aus seinen Freiheitsgraden.
+# ---- Lagersymbole ------------------------------------------------------
+def _fhg_lage(support) -> tuple:
+    """(starr gehaltene FHG, Feder-FHG) eines Lagers als Mengen 0..5."""
+    fest, federn = set(), set()
+    for d in range(6):
+        try:
+            b = support.dof_behaviour(d)
+        except Exception:               # noqa: BLE001
+            continue
+        typ = getattr(b, "typ", None) or (b.get("typ") if isinstance(b, dict) else "free")
+        if typ == "rigid":
+            fest.add(d)
+        elif typ == "spring":
+            federn.add(d)
+    return fest, federn
 
-    Ein Wuerfel steht fuer die Einspannung (alle sechs Freiheitsgrade), ein
-    Kegel fuer das gelenkige Lager, ein Zylinder fuer ein Federlager. So sagt
-    das Symbol, was es haelt - erst dadurch ist seine Groesse eine Angabe und
-    nicht nur Zierde.
-    """
-    dofs = set(int(d) for d in getattr(support, "dofs", []) or [])
-    beh = getattr(support, "behaviour", None) or {}
-    for b in beh.values():
-        typ = getattr(b, "typ", None) or (b.get("typ") if isinstance(b, dict) else None)
-        if typ == "spring":
-            return "feder"
-    if getattr(support, "stiffness", None) and any(support.stiffness):
+
+def support_shape(support) -> str:
+    """Grobe Symbolart eines Lagers: einspannung, gelenk oder feder."""
+    fest, federn = _fhg_lage(support)
+    if federn:
         return "feder"
-    if dofs >= {0, 1, 2, 3, 4, 5}:
+    if fest >= {0, 1, 2, 3, 4, 5}:
         return "einspannung"
     return "gelenk"
 
 
+def lager_symbol(support) -> tuple:
+    """Der Schluessel des Lagersymbols - das klassische Bild der Statik:
+
+    * Einspannung: Wuerfel.
+    * gehaltene Verschiebung: Pyramide, Spitze am Knoten; ist eine der
+      uebrigen Verschiebungen frei, steht sie auf einer **Gleitebene**, die
+      sich in die freie Richtung streckt (Rollenlager).
+    * freie Verdrehung: **Kugel** an der Spitze (alle Verdrehungen frei),
+      **Zylinder** in Richtung der Achse (genau eine Verdrehung frei).
+    * Feder: Schraubenfeder in Richtung des Freiheitsgrads, Drehfeder als
+      Spirale um seine Achse.
+
+    Rueckgabe (achse, grundform, verdrehung, freie Verschiebungen, Federn):
+    achse 0/1/2 sagt, in welche Richtung das Symbol unter den Knoten zeigt.
+    """
+    fest, federn = _fhg_lage(support)
+    T = {d for d in fest if d < 3}
+    R = {d for d in fest if d >= 3}
+    Tf = {d for d in federn if d < 3}
+    Rf = {d for d in federn if d >= 3}
+    if 2 in T or 2 in Tf:
+        achse = 2
+    elif T:
+        achse = min(T)
+    elif Tf:
+        achse = min(Tf)
+    else:
+        achse = 2
+    if T == {0, 1, 2} and R == {3, 4, 5}:
+        return (2, "einspannung", "", (), ())
+    if T:
+        grund = "pyramide"
+    elif Tf:
+        grund = "federlager"
+    elif R or Rf:
+        grund = "drehlager"
+    else:
+        grund = "frei"
+    frei_R = {3, 4, 5} - R - Rf
+    if len(frei_R) == 1:
+        dreh = f"zyl{min(frei_R) - 3}"
+    elif frei_R:
+        dreh = "kugel"
+    else:
+        dreh = ""
+    frei_T = tuple(sorted({0, 1, 2} - T - Tf - {achse})) if (T or Tf) else ()
+    return (achse, grund, dreh, frei_T, tuple(sorted(federn)))
+
+
+def _drehung_auf(richtung) -> np.ndarray:
+    """Drehmatrix, die die lokale Symbolachse -z auf die Richtung *richtung* legt."""
+    v = np.asarray(richtung, float).ravel()[:3]
+    n = np.linalg.norm(v)
+    if n <= 0:
+        return np.eye(3)
+    v = v / n
+    a = np.array([0.0, 0.0, -1.0])
+    c = float(np.dot(a, v))
+    if c > 1 - 1e-9:
+        return np.eye(3)
+    if c < -1 + 1e-9:
+        return np.diag([1.0, -1.0, -1.0])      # um x um 180 Grad
+    k = np.cross(a, v)
+    s_ = np.linalg.norm(k)
+    k = k / s_
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]], float)
+    return np.eye(3) + s_ * K + (1 - c) * (K @ K)
+
+
+def _helix(laenge: float, radius: float, windungen: float = 3.0, n: int = 60) -> np.ndarray:
+    t = np.linspace(0.0, 1.0, n)
+    return np.column_stack([radius * np.cos(2 * np.pi * windungen * t),
+                            radius * np.sin(2 * np.pi * windungen * t), -laenge * t])
+
+
+def _spirale(r0: float, r1: float, windungen: float = 2.5, n: int = 60) -> np.ndarray:
+    t = np.linspace(0.0, 1.0, n)
+    r = r0 + (r1 - r0) * t
+    return np.column_stack([r * np.cos(2 * np.pi * windungen * t),
+                            r * np.sin(2 * np.pi * windungen * t), np.zeros(n)])
+
+
+def _achsen_rahmen(u) -> np.ndarray:
+    """Drehmatrix, die -z auf u legt (fuer Federn in Richtung u)."""
+    return _drehung_auf(u)
+
+
+def lagerglyph(key: tuple, d: float, richtung=None) -> pv.PolyData:
+    """Das Symbol zu einem Schluessel aus :func:`lager_symbol`, Grundmass d.
+
+    ``richtung`` legt die Symbolachse frei (Flaechenlager: die Normale der
+    gebetteten Flaeche); sonst zeigt sie in -e_achse (unter den Knoten).
+    """
+    achse, grund, dreh, frei_T, federn = key
+    ez = -np.eye(3)[int(achse)] if richtung is None else np.asarray(richtung, float)
+    R = _drehung_auf(ez)
+
+    def lokal(g: int) -> np.ndarray:
+        return R.T @ np.eye(3)[g]
+
+    teile = []
+    if grund == "einspannung":
+        teile.append(pv.Cube(x_length=1.6 * d, y_length=1.6 * d, z_length=1.2 * d,
+                             center=(0, 0, -0.6 * d)))
+    else:
+        if grund == "pyramide":
+            teile.append(pv.Cone(direction=(0, 0, 1), height=2 * d, radius=d,
+                                 center=(0, 0, -d), resolution=4))
+        elif grund == "drehlager":
+            teile.append(pv.Cube(x_length=0.9 * d, y_length=0.9 * d, z_length=0.9 * d))
+        frei_lokal = {int(np.argmax(np.abs(lokal(g)))) for g in frei_T}
+        if frei_lokal or grund == "federlager":
+            # Gleitebene: die Platte streckt sich in die freie Richtung
+            lx = 3.2 * d if 0 in frei_lokal else 1.9 * d
+            ly = 3.2 * d if 1 in frei_lokal else 1.9 * d
+            teile.append(pv.Cube(center=(0, 0, -2.25 * d), x_length=lx, y_length=ly, z_length=0.16 * d))
+            if frei_lokal and grund == "pyramide":
+                # zwei Rollen zwischen Pyramide und Ebene
+                for sx in (-0.55 * d, 0.55 * d):
+                    if 0 in frei_lokal:
+                        teile.append(pv.Cylinder(center=(sx, 0, -2.08 * d), direction=(0, 1, 0),
+                                                 radius=0.08 * d, height=1.2 * d))
+                    else:
+                        teile.append(pv.Cylinder(center=(0, sx, -2.08 * d), direction=(1, 0, 0),
+                                                 radius=0.08 * d, height=1.2 * d))
+        if dreh == "kugel":
+            teile.append(pv.Sphere(radius=0.42 * d, center=(0, 0, 0)))
+        elif dreh.startswith("zyl"):
+            g = int(dreh[3:])
+            teile.append(pv.Cylinder(center=(0, 0, 0), direction=tuple(lokal(g)),
+                                     radius=0.36 * d, height=1.5 * d))
+        for f in federn:
+            if f < 3:
+                u = lokal(f)
+                if abs(u[2]) > 0.7:
+                    # Feder in Symbolachse: von der Spitze bis zur Ebene
+                    pts = _helix(2.0 * d, 0.45 * d, 3.5)
+                    teile.append(pv.Spline(pts, 80).tube(radius=0.07 * d))
+                else:
+                    # seitliche Feder: vom Knoten weg, mit Endplatte
+                    Ru = _achsen_rahmen(u)
+                    pts = _helix(1.6 * d, 0.28 * d, 3.0) @ Ru.T
+                    teile.append(pv.Spline(pts, 70).tube(radius=0.06 * d))
+                    platte = pv.Cube(center=(0, 0, -1.7 * d), x_length=0.9 * d, y_length=0.9 * d,
+                                     z_length=0.12 * d)
+                    platte.points = platte.points @ Ru.T
+                    teile.append(platte)
+            else:
+                # Drehfeder: Spirale um die Achse des Freiheitsgrads
+                u = lokal(f - 3)
+                Ru = _achsen_rahmen(u)
+                pts = _spirale(0.15 * d, 0.7 * d) @ Ru.T
+                teile.append(pv.Spline(pts, 70).tube(radius=0.06 * d))
+        if not teile:
+            teile.append(pv.Sphere(radius=0.3 * d))
+    mesh = pv.merge(teile) if len(teile) > 1 else teile[0]
+    mesh = mesh.triangulate() if not mesh.is_all_triangles else mesh
+    mesh.points = np.asarray(mesh.points, float) @ R.T
+    return mesh
+
+
 def _glyph(shape: str, d: float):
+    """Die alten drei Grundformen - fuer Kontaktlager und den Rueckfall."""
     if shape == "einspannung":
         return pv.Cube(x_length=1.6 * d, y_length=1.6 * d, z_length=1.2 * d,
                        center=(0, 0, -0.6 * d))
@@ -771,13 +939,170 @@ def support_size(model: Model, faktor: float = 1.0) -> float:
     return 0.012 * model.characteristic_size() * max(float(faktor), 0.05)
 
 
-def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=None):
+def lager_abstand(size: float, dichte: float = 1.0) -> float:
+    """Abstand der Symbole eines Linien- oder Flaechenlagers [m]: die
+    Lagerdichte 1,0 setzt alle 5 % der Modellgroesse ein Symbol."""
+    return 0.05 * size / max(float(dichte), 0.05)
+
+
+def _polylinie_abtasten(P: np.ndarray, abstand: float) -> np.ndarray:
+    """Punkte entlang eines Linienzugs, gleichmaessig im Abstand *abstand*
+    (Anfang und Ende immer dabei)."""
+    P = np.atleast_2d(np.asarray(P, float))
+    if len(P) < 2:
+        return P
+    seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
+    L = float(seg.sum())
+    if L <= 0:
+        return P[:1]
+    n = max(1, int(np.ceil(L / max(abstand, 1e-9))))
+    s = np.linspace(0.0, L, n + 1)
+    cum = np.concatenate([[0.0], np.cumsum(seg)])
+    out = []
+    for si in s:
+        k = min(int(np.searchsorted(cum, si, side="right")) - 1, len(seg) - 1)
+        k = max(k, 0)
+        t = 0.0 if seg[k] <= 0 else (si - cum[k]) / seg[k]
+        out.append(P[k] + t * (P[k + 1] - P[k]))
+    return np.asarray(out, float)
+
+
+def _flaeche_abtasten(P: np.ndarray, abstand: float) -> np.ndarray:
+    """Punkte im Inneren eines Drei- oder Vierecks im Raster *abstand*."""
+    P = np.asarray(P, float)
+    if len(P) == 3:
+        A, B, C = P
+        l = max(np.linalg.norm(B - A), np.linalg.norm(C - A), np.linalg.norm(C - B))
+        k = max(1, int(np.ceil(l / max(abstand, 1e-9))))
+        out = []
+        for i in range(k):
+            for j in range(k - i):
+                u = (i + 1.0 / 3.0) / k
+                v = (j + 1.0 / 3.0) / k
+                out.append(A + u * (B - A) + v * (C - A))
+        return np.asarray(out, float)
+    A, B, C, D = P[:4]
+    lu = max(np.linalg.norm(B - A), np.linalg.norm(C - D))
+    lv = max(np.linalg.norm(D - A), np.linalg.norm(C - B))
+    ku = max(1, int(np.ceil(lu / max(abstand, 1e-9))))
+    kv = max(1, int(np.ceil(lv / max(abstand, 1e-9))))
+    out = []
+    for i in range(ku):
+        for j in range(kv):
+            u = (i + 0.5) / ku
+            v = (j + 0.5) / kv
+            out.append((1 - u) * (1 - v) * A + u * (1 - v) * B + u * v * C + (1 - u) * v * D)
+    return np.asarray(out, float)
+
+
+#: Hoechstzahl der Symbole je Linien- oder Flaechenlager
+LAGERSYMBOLE_MAX = 4000
+
+
+def _flaechenlager_flaechen(model: Model, ss) -> list:
+    """[(Punkte der Flaeche, Normale nach aussen)] eines Flaechenlagers - die
+    belegten Aussenflaechen seiner Elemente."""
+    from ..supports import element_faces
+    gezaehlt: dict = {}
+    mitte: dict = {}
+    for ei in (ss.elements or []):
+        ei = int(ei)
+        if not 0 <= ei < len(model.elements):
+            continue
+        e = model.elements[ei]
+        for f in element_faces(model, ei, ss.face):
+            key = tuple(sorted(int(n) for n in f))
+            if key in gezaehlt:
+                gezaehlt[key] = None
+            else:
+                gezaehlt[key] = [int(n) for n in f]
+                mitte[key] = model.nodes[[int(n) for n in e.nodes]].mean(axis=0)
+    out = []
+    for key, f in gezaehlt.items():
+        if f is None:
+            continue
+        P = model.nodes[f]
+        n = np.cross(P[1] - P[0], P[2] - P[0])
+        ln = np.linalg.norm(n)
+        if ln <= 0:
+            continue
+        n = n / ln
+        e = model.elements[0] if False else None      # noqa: F841 - nur der Lesbarkeit halber
+        if len(f) >= 3 and np.dot(n, P.mean(axis=0) - mitte[key]) < 0:
+            n = -n                                     # Volumen: nach aussen
+        elif abs(np.dot(n, P.mean(axis=0) - mitte[key])) < 1e-12 and n[2] > 0:
+            n = -n                                     # Schale: nach unten weisend
+        out.append((P, n))
+    return out
+
+
+def lager_punkte(model: Model, obj, size: float, dichte: float = 1.0) -> tuple:
+    """(Punkte, Richtungen) der Symbole eines Linien- oder Flaechenlagers.
+
+    Linienlager: entlang des Linienzugs im Abstand der Lagerdichte, Richtung
+    -z. Flaechenlager: im Raster ueber die belegten Flaechen seiner Elemente,
+    Richtung die Flaechennormale nach aussen; ohne Elemente an den Knoten.
+    """
+    abstand = lager_abstand(size, dichte)
+    if hasattr(obj, "elements"):
+        flaechen = _flaechenlager_flaechen(model, obj)
+        if not flaechen:
+            nodes = [int(n) for n in (obj.nodes or []) if 0 <= int(n) < model.nn]
+            pts = model.nodes[nodes] if nodes else np.zeros((0, 3))
+            return pts, np.tile([0.0, 0.0, -1.0], (len(pts), 1))
+        gesamt = sum(_polygonflaeche(P) for P, _n in flaechen)
+        if gesamt > 0 and gesamt / abstand ** 2 > LAGERSYMBOLE_MAX:
+            abstand = float(np.sqrt(gesamt / LAGERSYMBOLE_MAX))
+        pts, ri = [], []
+        for P, n in flaechen:
+            Q = _flaeche_abtasten(P, abstand)
+            pts.append(Q)
+            ri.append(np.tile(n, (len(Q), 1)))
+        return (np.vstack(pts) if pts else np.zeros((0, 3)),
+                np.vstack(ri) if ri else np.zeros((0, 3)))
+    nodes = [int(n) for n in (obj.nodes or []) if 0 <= int(n) < model.nn]
+    if not nodes:
+        return np.zeros((0, 3)), np.zeros((0, 3))
+    P = model.nodes[nodes]
+    L = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum()) if len(P) > 1 else 0.0
+    if L / abstand > LAGERSYMBOLE_MAX:
+        abstand = L / LAGERSYMBOLE_MAX
+    pts = _polylinie_abtasten(P, abstand)
+    return pts, np.tile([0.0, 0.0, -1.0], (len(pts), 1))
+
+
+def _polygonflaeche(P) -> float:
+    P = np.asarray(P, float)
+    if len(P) < 3:
+        return 0.0
+    if len(P) == 3:
+        return 0.5 * float(np.linalg.norm(np.cross(P[1] - P[0], P[2] - P[0])))
+    return 0.5 * float(np.linalg.norm(np.cross(P[1] - P[0], P[2] - P[0]))
+                       + np.linalg.norm(np.cross(P[2] - P[0], P[3] - P[0])))
+
+
+def _richtungsgruppen(pts: np.ndarray, ri: np.ndarray) -> dict:
+    """Punkte nach gerundeter Richtung buendeln (26 Richtungen): ein
+    Glyphensatz je Richtung statt einer Drehung je Punkt."""
+    gruppen: dict = {}
+    for p, r in zip(pts, ri):
+        q = tuple(int(x) for x in np.round(np.asarray(r, float) / max(np.abs(r).max(), 1e-12)))
+        if q == (0, 0, 0):
+            q = (0, 0, -1)
+        gruppen.setdefault(q, []).append(p)
+    return gruppen
+
+
+def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=None,
+                 dichte: float = 1.0):
     """Knoten-, Linien- und Flaechenlager sowie Kontaktlager zeichnen.
 
     ``faktor`` skaliert alle Symbole, ``Support.groesse`` zusaetzlich das
     einzelne Lager (Rechtsklick auf das Lager im Viewport). ``nur`` (Knoten-
     nummern) beschraenkt die Lager auf die sichtbaren Knoten, wenn Teile des
-    Modells ausgeblendet sind.
+    Modells ausgeblendet sind. ``dichte`` ist die Lagerdichte: wie dicht die
+    Symbole eines Linien- oder Flaechenlagers ueber die Linie bzw. Flaeche
+    verteilt sind (1,0 = alle 5 % der Modellgroesse eines).
     """
     d0 = 0.012 * size * max(float(faktor), 0.05)
     sicht = None if nur is None else {int(i) for i in nur}
@@ -785,32 +1110,53 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
     def da(n) -> bool:
         return 0 <= int(n) < model.nn and (sicht is None or int(n) in sicht)
 
-    # Nach Symbolart und Groesse buendeln: ein Glyphensatz je Kombination
+    # Knotenlager: nach Symbol und Groesse buendeln - ein Glyphensatz je Art
     gruppen: dict[tuple, list] = {}
     for s in model.supports:
         if not da(s.node):
             continue
         g = round(float(getattr(s, "groesse", 1.0) or 1.0), 3)
-        gruppen.setdefault((support_shape(s), g), []).append(s.node)
-    for i, ((shape, g), nodes) in enumerate(sorted(gruppen.items())):
+        gruppen.setdefault((lager_symbol(s), g), []).append(s.node)
+    for i, ((key, g), nodes) in enumerate(sorted(gruppen.items(), key=str)):
         pts = model.nodes[nodes]
-        plotter.add_mesh(pv.PolyData(pts).glyph(geom=_glyph(shape, d0 * g),
+        plotter.add_mesh(pv.PolyData(pts).glyph(geom=lagerglyph(key, d0 * g),
                                                 scale=False, orient=False),
                          color=FARBE_LAGER, name=f"supports{i}")
+    # Linienlager: Symbole entlang der ganzen Linie und die Linie selbst
     for j, ls in enumerate(getattr(model, "line_supports", []) or []):
         nodes = [int(n) for n in ls.nodes if da(n)]
         if not nodes:
             continue
-        plotter.add_mesh(pv.PolyData(model.nodes[nodes]).glyph(
-            geom=_glyph("gelenk", 0.6 * d0), scale=False, orient=False),
-            color=FARBE_LINIENLAGER, name=f"lsupports{j}")
-    for j, ss in enumerate(getattr(model, "surface_supports", []) or []):
-        nodes = [int(n) for n in ss.nodes if da(n)]
-        if not nodes:
+        pts, _ri = lager_punkte(model, ls, size, dichte)
+        if not len(pts):
             continue
-        plotter.add_mesh(pv.PolyData(model.nodes[nodes]).glyph(
-            geom=_glyph("feder", 0.5 * d0), scale=False, orient=False),
-            color=FARBE_FLAECHENLAGER, name=f"fsupports{j}")
+        key = lager_symbol(ls)
+        plotter.add_mesh(pv.PolyData(pts).glyph(geom=lagerglyph(key, 0.55 * d0),
+                                                scale=False, orient=False),
+                         color=FARBE_LINIENLAGER, name=f"lsupports{j}")
+        P = model.nodes[nodes]
+        if len(P) > 1:
+            plotter.add_mesh(pv.lines_from_points(P), color=FARBE_LINIENLAGER, line_width=4,
+                             name=f"lsupports_linie{j}")
+    # Flaechenlager: Symbole im Raster ueber die gebettete Flaeche, in
+    # Richtung ihrer Normale
+    for j, ss in enumerate(getattr(model, "surface_supports", []) or []):
+        pts, ri = lager_punkte(model, ss, size, dichte)
+        if not len(pts):
+            continue
+        if sicht is not None:
+            nodes = {int(n) for n in (ss.nodes or [])}
+            for ei in (ss.elements or []):
+                if 0 <= int(ei) < len(model.elements):
+                    nodes.update(int(n) for n in model.elements[int(ei)].nodes)
+            if nodes and not (nodes & sicht):
+                continue
+        key = lager_symbol(ss)
+        for k, (q, punkte) in enumerate(sorted(_richtungsgruppen(pts, ri).items())):
+            plotter.add_mesh(pv.PolyData(np.asarray(punkte, float)).glyph(
+                geom=lagerglyph(key, 0.45 * d0, richtung=np.asarray(q, float)),
+                scale=False, orient=False),
+                color=FARBE_FLAECHENLAGER, name=f"fsupports{j}_{k}")
     kontakt = [c.node for c in model.contact_supports if da(c.node)]
     if kontakt:
         pts = model.nodes[kontakt]
@@ -820,7 +1166,7 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
 
 
 def support_at(model: Model, punkt, size: float, faktor: float = 1.0):
-    """Das Lager, das am dichtesten an ``punkt`` liegt - oder None.
+    """Das Knotenlager, das am dichtesten an ``punkt`` liegt - oder None.
 
     Der Fangbereich ist die Symbolgroesse selbst: was man anklickt, muss man
     auch sehen.
@@ -836,6 +1182,31 @@ def support_at(model: Model, punkt, size: float, faktor: float = 1.0):
         dist = float(np.linalg.norm(model.nodes[int(s.node)] - p))
         if dist <= max(2.5 * d0, 0.01 * size) and (bestd is None or dist < bestd):
             best, bestd = i, dist
+    return best
+
+
+def lager_at(model: Model, punkt, size: float, faktor: float = 1.0, dichte: float = 1.0):
+    """Das Lager unter dem Zeiger: ("lager", i), ("linienlager", j) oder
+    ("flaechenlager", k) - oder None. Knotenlager ueber ihr Symbol, Linien-
+    und Flaechenlager ueber ihre Symbole entlang der Linie bzw. Flaeche."""
+    if punkt is None or not model.nn:
+        return None
+    i = support_at(model, punkt, size, faktor)
+    if i is not None:
+        return ("lager", int(i))
+    p = np.asarray(punkt, float).ravel()[:3]
+    radius = max(1.5 * 0.012 * size * max(float(faktor), 0.05), 0.01 * size,
+                 0.6 * lager_abstand(size, dichte))
+    best, bestd = None, None
+    for art, liste in (("linienlager", getattr(model, "line_supports", []) or []),
+                       ("flaechenlager", getattr(model, "surface_supports", []) or [])):
+        for j, obj in enumerate(liste):
+            pts, _ri = lager_punkte(model, obj, size, dichte)
+            if not len(pts):
+                continue
+            dist = float(np.linalg.norm(pts - p, axis=1).min())
+            if dist <= radius and (bestd is None or dist < bestd):
+                best, bestd = (art, j), dist
     return best
 
 

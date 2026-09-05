@@ -257,6 +257,26 @@ def z_fang_linie(s: Stift):
     s.kreis(15.5, 15.5 - 3.3, 1.6)
 
 
+def z_fang_lager(s: Stift):
+    # Auswahlart Lager: die Pyramide mit Grundlinie im Fangkreis
+    _fangkreis(s)
+    s.stift(breite=1.6)
+    s.fuellung(s.akzent)
+    s.zug([(9, 8), (4.5, 16), (13.5, 16)], schliessen=True)
+    s.stift(breite=1.8)
+    s.linie(2.5, 18.5, 15.5, 18.5)
+
+
+def z_fang_lager(s: Stift):
+    # Auswahlart Lager: die Pyramide mit Grundlinie im Fangkreis
+    _fangkreis(s)
+    s.stift(breite=1.6)
+    s.fuellung(s.akzent)
+    s.zug([(9, 8), (4.5, 16), (13.5, 16)], schliessen=True)
+    s.stift(breite=1.8)
+    s.linie(2.5, 18.5, 15.5, 18.5)
+
+
 def z_fang_stab(s: Stift):
     _fangkreis(s)
     s.stift(breite=3.0)
