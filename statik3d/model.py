@@ -684,11 +684,23 @@ class NodalLoad:
 class BeamLoad:
     """Streckenlast auf Stabelement (linear veraenderlich q1 -> q2 moeglich).
     system: 'global' (auf wahre Laenge bezogen) oder 'local'.
+
+    ``a`` und ``b`` grenzen den belasteten **Abschnitt** ein [m vom
+    Elementanfang]; ``b = None`` heisst bis zum Elementende. q gilt bei a,
+    q2 bei b. So kommt eine abschnittsweise Linienlast (Radlast, Teillast)
+    ohne Elementteilung aus; die Volleinspannkraefte folgen aus dem Integral
+    ueber die Ansatzfunktionen (assemble.partial_trapezoid_fixed_end_forces).
     """
     elem: int
     q: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])  # qx qy qz [N/m] am Anfang
     system: str = "global"
     q2: Optional[list[float]] = None   # Wert am Stabende (None = gleich q)
+    a: float = 0.0                     # Anfang des Abschnitts [m]
+    b: Optional[float] = None          # Ende des Abschnitts [m], None = Elementende
+
+    @property
+    def teilweise(self) -> bool:
+        return self.a > 0.0 or self.b is not None
 
 
 @dataclass
@@ -739,15 +751,57 @@ class Geometrielast:
     #: darauf heraus. Ohne Projektion wirkt p auf die wahre Flaeche.
     projiziert: bool = False
     kommentar: str = ""
+    #: Was die Last ist: "druck" (Flaechenlast p) oder "temperatur" (dT, dT_z
+    #: auf alle Elemente der Flaeche oder des Koerpers).
+    lastart: str = "druck"
+    dT: float = 0.0
+    dT_z: float = 0.0
+    #: Ungleichmaessige Flaechenlast: {"art": "linear", "punkte":
+    #: [[x, y, z, p], ...]} mit zwei oder drei Stuetzpunkten. Zwei Punkte
+    #: geben einen linearen Verlauf entlang ihrer Verbindung (Wasserdruck,
+    #: Erddruck), drei Punkte eine Ebene der Lastwerte. Leer = gleichmaessig p.
+    verlauf: dict = field(default_factory=dict)
+
+    def wert(self, punkt) -> float:
+        """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig oder linear."""
+        if not self.verlauf or self.verlauf.get("art") != "linear":
+            return float(self.p)
+        P = np.asarray(self.verlauf.get("punkte") or [], float).reshape(-1, 4)
+        if len(P) == 0:
+            return float(self.p)
+        if len(P) == 1:
+            return float(P[0, 3])
+        x = np.asarray(punkt, float)
+        if len(P) == 2:
+            # linear entlang der Verbindung der beiden Punkte, davor und
+            # dahinter fortgesetzt
+            d = P[1, :3] - P[0, :3]
+            L2 = float(d @ d)
+            t = float((x - P[0, :3]) @ d) / L2 if L2 > 0 else 0.0
+            return float(P[0, 3] + t * (P[1, 3] - P[0, 3]))
+        # drei und mehr Punkte: Ebene p = a + g . x (kleinste Norm: quer zur
+        # Punktebene aendert sich nichts)
+        A = np.hstack([np.ones((len(P), 1)), P[:, :3]])
+        koeff = np.linalg.lstsq(A, P[:, 3], rcond=None)[0]
+        return float(koeff[0] + koeff[1:] @ x)
 
     def bezug(self) -> str:
-        t = f"{self.ziel}: {self.p / 1e3:.3g} kN/m²"
-        if self.richtung:
-            t += " in " + ", ".join(f"{x:g}" for x in self.richtung)
-        if self.projiziert:
-            t += " (auf die Projektion)"
-        if self.bereich:
-            t += f" im {self.bereich.get('art', 'Bereich')}"
+        if self.lastart == "temperatur":
+            t = f"{self.ziel}: ΔT = {self.dT:g} K"
+            if self.dT_z:
+                t += f", ΔT_z = {self.dT_z:g} K"
+        else:
+            t = f"{self.ziel}: {self.p / 1e3:.3g} kN/m²"
+            if self.verlauf:
+                P = self.verlauf.get("punkte") or []
+                werte = ", ".join(f"{float(x[3]) / 1e3:.3g}" for x in P)
+                t = f"{self.ziel}: linear {werte} kN/m²"
+            if self.richtung:
+                t += " in " + ", ".join(f"{x:g}" for x in self.richtung)
+            if self.projiziert:
+                t += " (auf die Projektion)"
+            if self.bereich:
+                t += f" im {self.bereich.get('art', 'Bereich')}"
         return t + (" – noch nicht vernetzt" if not self.kommentar else
                     f" – {self.kommentar}")
 
@@ -766,6 +820,67 @@ class Geometrielast:
         xy = np.array([float(d @ u), float(d @ v)])
         lo, hi = np.minimum(von, bis), np.maximum(von, bis)
         return bool(np.all(xy >= lo) and np.all(xy <= hi))
+
+
+@dataclass
+class Linienlast:
+    """Linienlast auf einem **Stab** (physischer Stab = Kette von Elementen)
+    oder auf einer **Linie** (Rand einer Flaeche, Kante eines Koerpers).
+
+    q [N/m] gilt bei ``von``, q2 bei ``bis`` (None = wie q: gleichmaessig);
+    ``von``/``bis`` in Metern entlang des Objekts, ``bis = None`` heisst bis
+    zum Ende - so sind gleichmaessige, trapezfoermige und **abschnittsweise**
+    Lasten dieselbe Sache. ``system`` "global" oder "local" (nur Stab).
+
+    Die Last haengt am Objekt und ueberlebt das Neuvernetzen: beim Verteilen
+    (:meth:`Model.lasten_verteilen`) wird sie auf die Stabelemente
+    (Abschnittslasten) oder die Knoten der vernetzten Linie (Knotenlasten
+    aus den Zutrittslaengen) gelegt.
+    """
+    ziel: str = ""
+    art: str = "stab"                  # stab | linie
+    q: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    q2: Optional[list[float]] = None
+    system: str = "global"
+    von: float = 0.0
+    bis: Optional[float] = None
+    kommentar: str = ""
+
+    def bezug(self) -> str:
+        q = ", ".join(f"{v / 1e3:g}" for v in self.q)
+        t = f"{self.ziel}: q = ({q}) kN/m"
+        if self.q2 is not None and list(self.q2) != list(self.q):
+            t += " bis (" + ", ".join(f"{v / 1e3:g}" for v in self.q2) + ")"
+        if self.von or self.bis is not None:
+            t += f" von {self.von:g} m" + (f" bis {self.bis:g} m" if self.bis is not None
+                                          else " bis zum Ende")
+        if self.system == "local":
+            t += " (lokal)"
+        return t + (f" – {self.kommentar}" if self.kommentar else "")
+
+
+@dataclass
+class Zwangsverformung:
+    """Vorgegebene Verschiebung oder Verdrehung an einem **gelagerten** Knoten
+    (Lagersetzung, Anhebung, Verdrehung) - je Lastfall, mit Faktor
+    kombinierbar. ``dofs`` nennt die vorgegebenen Freiheitsgrade (0..5 =
+    ux, uy, uz, phix, phiy, phiz), ``u`` die Werte [m, rad] an allen sechs
+    Stellen. Ein Freiheitsgrad ohne Lager bleibt unwirksam (der Solver sagt
+    es): eine Verschiebung laesst sich nur erzwingen, wo man festhaelt.
+    """
+    node: int = 0
+    dofs: list[int] = field(default_factory=list)
+    u: list[float] = field(default_factory=lambda: [0.0] * 6)
+
+    def bezug(self) -> str:
+        namen = ("ux", "uy", "uz", "φx", "φy", "φz")
+        teile = []
+        for d in self.dofs:
+            if d < 3:
+                teile.append(f"{namen[d]} = {self.u[d] * 1e3:g} mm")
+            else:
+                teile.append(f"{namen[d]} = {self.u[d] * 1e3:g} mrad")
+        return f"Knoten {self.node}: " + (", ".join(teile) or "nichts vorgegeben")
 
 
 @dataclass
@@ -790,6 +905,8 @@ class LoadCase:
     beam_loads: list[BeamLoad] = field(default_factory=list)
     face_loads: list[FaceLoad] = field(default_factory=list)
     geometrielasten: list[Geometrielast] = field(default_factory=list)
+    linienlasten: list[Linienlast] = field(default_factory=list)
+    zwangsverformungen: list[Zwangsverformung] = field(default_factory=list)
     temp_loads: list[TempLoad] = field(default_factory=list)
     gravity: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     gamma_sup: Optional[float] = None      # Teilsicherheitsbeiwert (None -> aus Kategorie)
@@ -815,24 +932,35 @@ class LoadCase:
 
     @property
     def n_loads(self) -> int:
-        return (len(self.nodal_loads) + len(self.beam_loads) + len(self.face_loads)
-                + len(self.geometrielasten) + len(self.temp_loads)
+        """Zahl der **eingegebenen** Lasten - aus Objektlasten abgeleitete
+        Elementlasten zaehlen nicht mit, sonst staende an einer Flaechenlast
+        nach dem Vernetzen die Zahl ihrer Elementseiten."""
+        eigen = sum(1 for liste in (self.nodal_loads, self.beam_loads,
+                                    self.face_loads, self.temp_loads)
+                    for l in liste if not getattr(l, "_geo", False))
+        return (eigen + len(self.geometrielasten) + len(self.linienlasten)
+                + len(self.zwangsverformungen)
                 + (1 if np.any(self.gravity) else 0))
+
+    def eigene(self, liste: str) -> list:
+        """Die Lasten einer Liste ohne die aus Objektlasten abgeleiteten."""
+        return [l for l in getattr(self, liste) if not getattr(l, "_geo", False)]
 
     def to_dict(self) -> dict:
         return {
             "name": self.name, "category": self.category,
             "description": self.description, "psi": self.psi,
             "exclusive_group": self.exclusive_group,
-            "nodal_loads": [asdict(l) for l in self.nodal_loads],
-            "beam_loads": [asdict(l) for l in self.beam_loads],
-            # Aus Geometrielasten erzeugte Elementlasten werden **nicht**
+            # Aus Objektlasten erzeugte Elementlasten werden **nicht**
             # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
             # laegen sie nach dem Laden doppelt auf dem Netz.
-            "face_loads": [asdict(l) for l in self.face_loads
-                           if not getattr(l, "_geo", False)],
+            "nodal_loads": [asdict(l) for l in self.eigene("nodal_loads")],
+            "beam_loads": [asdict(l) for l in self.eigene("beam_loads")],
+            "face_loads": [asdict(l) for l in self.eigene("face_loads")],
             "geometrielasten": [asdict(l) for l in self.geometrielasten],
-            "temp_loads": [asdict(l) for l in self.temp_loads],
+            "linienlasten": [asdict(l) for l in self.linienlasten],
+            "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
+            "temp_loads": [asdict(l) for l in self.eigene("temp_loads")],
             "gravity": list(map(float, self.gravity)),
             "gamma_sup": self.gamma_sup, "gamma_inf": self.gamma_inf,
         }
@@ -846,6 +974,9 @@ class LoadCase:
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
         lc.geometrielasten = [Geometrielast(**l)
                               for l in d.get("geometrielasten", [])]
+        lc.linienlasten = [Linienlast(**l) for l in d.get("linienlasten", [])]
+        lc.zwangsverformungen = [Zwangsverformung(**l)
+                                 for l in d.get("zwangsverformungen", [])]
         lc.temp_loads = [TempLoad(**l) for l in d.get("temp_loads", [])]
         lc.gravity = list(d.get("gravity", [0, 0, 0]))
         lc.gamma_sup = d.get("gamma_sup")
@@ -1986,44 +2117,274 @@ class Model:
         return self.add_kontaktbedingung(name, **kw)
 
     def lasten_verteilen(self, log: list = None) -> int:
-        """Geometrielasten auf die inzwischen vorhandenen Elemente legen.
+        """Objektlasten auf die inzwischen vorhandenen Elemente legen.
 
-        Eine Last, die an einer Flaeche haengt, kann erst wirken, wenn die
-        Flaeche vernetzt ist. Diese Methode holt das nach - nach jedem
-        Vernetzen. Sie ist **wiederholbar**: die aus einer Geometrielast
-        erzeugten Elementlasten werden vorher wieder entfernt, sonst
+        Eine Last, die an einer Flaeche, einem Koerper, einem Stab oder einer
+        Linie haengt, kann erst wirken, wenn es dort Elemente oder Knoten
+        gibt. Diese Methode holt das nach - nach jedem Vernetzen. Sie ist
+        **wiederholbar**: die aus Objektlasten erzeugten Elementlasten
+        (Kennzeichen ``_geo``) werden vorher wieder entfernt, sonst
         verdoppelte sich die Last bei jedem Neuvernetzen.
+
+        * Geometrielast "druck": Flaechenlasten auf die Elementseiten
+        * Geometrielast "temperatur": Temperaturlasten auf alle Elemente
+        * Linienlast auf einem Stab: Abschnittslasten auf seine Elemente
+        * Linienlast auf einer Linie: Knotenlasten auf die Knoten der
+          vernetzten Linie (Zutrittslaengen, linear veraenderlich)
 
         Rueckgabe: Zahl der erzeugten Elementlasten.
         """
         erzeugt = 0
         offen = 0
         for lc in self.load_cases.values():
-            if not lc.geometrielasten:
+            # Alles wegwerfen, was aus Objektlasten stammt - auch dann, wenn
+            # die letzte Objektlast eben geloescht wurde: sonst blieben ihre
+            # Elementlasten als Waisen liegen.
+            for liste in ("face_loads", "temp_loads", "beam_loads", "nodal_loads"):
+                setattr(lc, liste, [f for f in getattr(lc, liste)
+                                    if not getattr(f, "_geo", False)])
+            if not (lc.geometrielasten or lc.linienlasten):
                 continue
-            # Alles wegwerfen, was aus Geometrielasten stammt
-            lc.face_loads = [f for f in lc.face_loads if not getattr(f, "_geo", False)]
             for gl in lc.geometrielasten:
                 neue = self._geometrielast_legen(gl)
                 for f in neue:
                     f._geo = True
-                    lc.face_loads.append(f)
+                    (lc.temp_loads if isinstance(f, TempLoad) else lc.face_loads).append(f)
                 erzeugt += len(neue)
                 gl.kommentar = f"{len(neue)} Elementlasten" if neue else self._warum_leer(gl)
+                offen += not neue
+            for ll in lc.linienlasten:
+                neue = self._linienlast_legen(ll)
+                for f in neue:
+                    f._geo = True
+                    (lc.beam_loads if isinstance(f, BeamLoad) else lc.nodal_loads).append(f)
+                erzeugt += len(neue)
+                ll.kommentar = (f"{len(neue)} Elementlasten" if neue
+                                else self._warum_leer_linie(ll))
                 offen += not neue
         if log is not None and (erzeugt or offen):
             from .importers import _common as C
             if erzeugt:
-                C.say(log, f"{erzeugt} Elementlasten aus Geometrielasten erzeugt")
+                C.say(log, f"{erzeugt} Elementlasten aus Objektlasten erzeugt")
             if offen:
                 gruende: dict = {}
                 for lc in self.load_cases.values():
-                    for gl in lc.geometrielasten:
+                    for gl in list(lc.geometrielasten) + list(lc.linienlasten):
                         if "Elementlasten" not in (gl.kommentar or ""):
                             gruende[gl.kommentar] = gruende.get(gl.kommentar, 0) + 1
                 for grund, k in sorted(gruende.items()):
-                    C.say(log, f"  {k} Geometrielasten ohne Elementlast: {grund}")
+                    C.say(log, f"  {k} Objektlasten ohne Elementlast: {grund}")
         return erzeugt
+
+    def um_x_drehen(self) -> int:
+        """Das ganze Modell um 180 Grad um die globale x-Achse drehen:
+        (x, y, z) -> (x, -y, -z).
+
+        Dafuer gedacht: eine RFEM-Datei, deren Z-Achse nach **unten** zeigt.
+        Das Programm rechnet mit z nach oben; eine blosse Spiegelung z -> -z
+        machte aus dem rechtshaendigen System ein linkshaendiges (Momente,
+        Drehwinkel, lokale Achsen liefen dann falsch herum). Die Drehung um x
+        erhaelt die Haendigkeit: z zeigt danach nach oben, y ist gespiegelt.
+        Gedreht werden Knoten, Linienpunkte (Boegen, Kreise), Lastvektoren,
+        Richtungen, Lastfenster, Verlaufspunkte, Schwerkraft, Zwangs-
+        verformungen und Lagerwerte. Rueckgabe: Zahl der gedrehten Knoten.
+        """
+        def dreh_punkt(p):
+            p = [float(x) for x in p]
+            if len(p) >= 3:
+                p[1], p[2] = -p[1], -p[2]
+            return p
+
+        def dreh_vektor6(v):
+            v = [float(x) for x in v]
+            # Kraefte/Verschiebungen y, z und Momente/Drehungen y, z wechseln
+            for k in (1, 2, 4, 5):
+                if k < len(v):
+                    v[k] = -v[k]
+            return v
+
+        n = 0
+        if self.nn:
+            self.nodes = np.asarray(self.nodes, float)
+            self.nodes[:, 1] *= -1.0
+            self.nodes[:, 2] *= -1.0
+            n = int(self.nn)
+        for ln in (self.lines or {}).values():
+            g = ln.geometrie or {}
+            for key in ("punkte", "steuerpunkte"):
+                if key in g and g[key] is not None:
+                    g[key] = [dreh_punkt(q) for q in g[key]]
+            for key in ("mitte", "zentrum", "normale", "achse", "richtung"):
+                if key in g and g[key] is not None and hasattr(g[key], "__len__"):
+                    g[key] = dreh_punkt(g[key])
+        for lc in self.load_cases.values():
+            for l in lc.nodal_loads:
+                l.F = dreh_vektor6(l.F)
+            for bl in lc.beam_loads:
+                if bl.system != "local":
+                    bl.q = dreh_punkt(bl.q)
+                    if bl.q2 is not None:
+                        bl.q2 = dreh_punkt(bl.q2)
+            for fl in lc.face_loads:
+                if fl.direction is not None:
+                    fl.direction = dreh_punkt(fl.direction)
+            for gl in lc.geometrielasten:
+                if gl.richtung:
+                    gl.richtung = dreh_punkt(gl.richtung)
+                if gl.bereich:
+                    for key in ("ursprung", "u", "v"):
+                        if key in gl.bereich:
+                            gl.bereich[key] = dreh_punkt(gl.bereich[key])
+                if gl.verlauf and gl.verlauf.get("punkte"):
+                    gl.verlauf["punkte"] = [dreh_punkt(q[:3]) + [float(q[3])]
+                                            for q in gl.verlauf["punkte"]]
+            for ll in lc.linienlasten:
+                if ll.system != "local":
+                    ll.q = dreh_punkt(ll.q)
+                    if ll.q2 is not None:
+                        ll.q2 = dreh_punkt(ll.q2)
+            for zv in lc.zwangsverformungen:
+                zv.u = dreh_vektor6(zv.u)
+            if lc.gravity is not None and len(lc.gravity) >= 3:
+                lc.gravity = dreh_punkt(list(lc.gravity))
+        for sp in self.supports:
+            if getattr(sp, "values", None):
+                sp.values = dreh_vektor6(sp.values)
+        return n
+
+    def knoten_auf_linie(self, name: str, tol: float = None) -> list:
+        """Die Netzknoten auf einer Linie, in Reihenfolge entlang der Linie.
+
+        Der Vernetzer legt seine Knoten genau auf die Kurve (oder die Sehnen)
+        der Linie, merkt sie sich aber nicht an der Linie. Sie werden hier
+        geometrisch gesucht: jeder Knoten, der naeher als ``tol`` an der
+        abgetasteten Linie liegt, gehoert dazu; sortiert nach seiner Lage
+        entlang der Linie. Rueckgabe [(Knoten, Bogenlaenge s [m]), ...].
+        """
+        ln = self.lines.get(name)
+        if ln is None or self.nn == 0:
+            return []
+        idx = [int(n) for n in ln.nodes if 0 <= int(n) < self.nn]
+        if len(idx) < 2:
+            return []
+        try:
+            X = np.asarray(ln.punkte(self, 64), float)
+        except Exception:                   # noqa: BLE001
+            X = self.nodes[idx]
+        if len(X) < 2:
+            return []
+        seg = np.diff(X, axis=0)
+        L = np.linalg.norm(seg, axis=1)
+        gut = L > 1e-15
+        X = np.vstack([X[:1], X[1:][gut]])
+        seg, L = seg[gut], L[gut]
+        if not len(seg):
+            return []
+        s0 = np.concatenate([[0.0], np.cumsum(L)])
+        if tol is None:
+            tol = 1e-4 * max(float(s0[-1]), 1e-9)
+        # Abstand aller Knoten zu allen Strecken (Fusspunkt), blockweise
+        N = self.nodes
+        best = np.full(self.nn, np.inf)
+        lage = np.zeros(self.nn)
+        for k in range(len(seg)):
+            d = seg[k]
+            t = np.clip(((N - X[k]) @ d) / (L[k] ** 2), 0.0, 1.0)
+            fuss = X[k] + t[:, None] * d
+            dist = np.linalg.norm(N - fuss, axis=1)
+            naeher = dist < best
+            best[naeher] = dist[naeher]
+            lage[naeher] = s0[k] + t[naeher] * L[k]
+        treffer = np.where(best <= tol)[0]
+        return sorted(((int(i), float(lage[i])) for i in treffer), key=lambda x: x[1])
+
+    def _linienlast_legen(self, ll: "Linienlast") -> list:
+        """Die Elementlasten einer Linienlast - oder [], wenn nichts da ist."""
+        out: list = []
+        q1 = np.asarray(ll.q, float)
+        q2 = np.asarray(ll.q2, float) if ll.q2 is not None else q1.copy()
+        if ll.art == "stab":
+            mem = self.members.get(ll.ziel)
+            if mem is None or not mem.elements:
+                return out
+            # Laufkoordinate entlang der Elementkette
+            s = 0.0
+            laengen = []
+            for e in mem.elements:
+                if not 0 <= int(e) < len(self.elements):
+                    continue
+                L = self.element_length(int(e))
+                laengen.append((int(e), s, s + L))
+                s += L
+            gesamt = s
+            A = max(0.0, float(ll.von))
+            B = gesamt if ll.bis is None else min(float(ll.bis), gesamt)
+            if B <= A or gesamt <= 0:
+                return out
+            for e, s0, s1 in laengen:
+                lo, hi = max(A, s0), min(B, s1)
+                if hi - lo <= 1e-12:
+                    continue
+                t_lo = (lo - A) / (B - A)
+                t_hi = (hi - A) / (B - A)
+                qa = (1 - t_lo) * q1 + t_lo * q2
+                qb = (1 - t_hi) * q1 + t_hi * q2
+                out.append(BeamLoad(int(e), qa.tolist(), ll.system, qb.tolist(),
+                                    a=float(lo - s0),
+                                    b=None if hi >= s1 - 1e-12 else float(hi - s0)))
+            return out
+        # Linie: Knotenlasten aus den Zutrittslaengen
+        knoten = self.knoten_auf_linie(ll.ziel)
+        if len(knoten) < 2:
+            return out
+        gesamt = knoten[-1][1]
+        A = max(0.0, float(ll.von))
+        B = gesamt if ll.bis is None else min(float(ll.bis), gesamt)
+        if B <= A:
+            return out
+        F = {}
+
+        def q_bei(x):
+            t = (x - A) / (B - A)
+            return (1 - t) * q1 + t * q2
+        for (n0, s0), (n1, s1) in zip(knoten[:-1], knoten[1:]):
+            lo, hi = max(A, s0), min(B, s1)
+            if hi - lo <= 1e-12 or s1 <= s0:
+                continue
+            # Last auf [lo, hi] linear; auf die beiden Knoten nach dem
+            # Hebelgesetz (Resultierende und Lage), das ist fuer lineare
+            # Ansaetze die verteilungstreue Aufteilung
+            qa, qb = q_bei(lo), q_bei(hi)
+            l = hi - lo
+            R = 0.5 * (qa + qb) * l
+            # Schwerpunktabstand vom Anfang des Teilstuecks je Komponente
+            for k in range(3):
+                if not R[k]:
+                    continue
+                xs = lo + (l * (qa[k] + 2 * qb[k]) / (3 * (qa[k] + qb[k]))
+                           if (qa[k] + qb[k]) else l / 2)
+                t = (xs - s0) / (s1 - s0)
+                F.setdefault(n0, np.zeros(3))[k] += R[k] * (1 - t)
+                F.setdefault(n1, np.zeros(3))[k] += R[k] * t
+        for n, f in F.items():
+            if np.any(f):
+                out.append(NodalLoad(int(n), [float(f[0]), float(f[1]), float(f[2]),
+                                              0.0, 0.0, 0.0]))
+        return out
+
+    def _warum_leer_linie(self, ll: "Linienlast") -> str:
+        if ll.art == "stab":
+            mem = self.members.get(ll.ziel)
+            if mem is None:
+                return "Stab gibt es im Modell nicht"
+            if not mem.elements:
+                return "Stab hat keine Elemente"
+            return "Abschnitt liegt ausserhalb des Stabes"
+        if ll.ziel not in self.lines:
+            return "Linie gibt es im Modell nicht"
+        if len(self.knoten_auf_linie(ll.ziel)) < 2:
+            return "Linie noch nicht vernetzt"
+        return "Abschnitt liegt ausserhalb der Linie"
 
     def _warum_leer(self, gl: "Geometrielast") -> str:
         """Warum eine Geometrielast keine Elementlast erzeugt hat.
@@ -2041,6 +2402,9 @@ class Model:
             return "Ziel noch nicht vernetzt"
         if gl.art != "flaeche" and not ziel.elemente:
             return "Ziel noch nicht vernetzt"
+        if gl.lastart == "temperatur":
+            return ("Randflaeche eines Koerpers traegt keine Elemente - die Temperatur "
+                    "gehoert auf den Koerper" if gl.art == "flaeche" else "keine Elemente")
         if gl.projiziert and gl.richtung:
             return "liegt ganz im Windschatten der Last"
         if gl.bereich:
@@ -2088,6 +2452,20 @@ class Model:
     def _geometrielast_legen(self, gl: "Geometrielast") -> list:
         """Die Elementlasten einer Geometrielast - oder [], wenn kein Netz da ist."""
         out: list = []
+        if gl.lastart == "temperatur":
+            # Temperatur auf alle Elemente der Flaeche (Schalen) oder des
+            # Koerpers (Volumen) - eine Randflaeche eines Koerpers traegt
+            # keine Elemente, die Temperatur gehoert dann auf den Koerper.
+            if gl.art == "flaeche":
+                f = self.flaechen.get(gl.ziel)
+                elems = list(f.elemente or []) if f is not None else []
+            else:
+                k = self.koerper.get(gl.ziel)
+                elems = list(k.elemente or []) if k is not None else []
+            for e in elems:
+                if 0 <= int(e) < len(self.elements):
+                    out.append(TempLoad(int(e), float(gl.dT), float(gl.dT_z)))
+            return out
         richtung = list(gl.richtung) if gl.richtung else None
         d = None
         if gl.projiziert and richtung:
@@ -2097,9 +2475,10 @@ class Model:
         def nimm(e: int, seite: int):
             if not 0 <= int(e) < len(self.elements):
                 return
-            if gl.bereich and not gl.trifft(self._seitenmitte(e, seite)):
+            mitte = self._seitenmitte(e, seite)
+            if gl.bereich and not gl.trifft(mitte):
                 return
-            p = gl.p
+            p = gl.wert(mitte) if gl.verlauf else gl.p
             if d is not None:
                 n = self._seitennormale(e, seite)
                 if n is None:
@@ -2107,7 +2486,7 @@ class Model:
                 c = float(n @ d)
                 if c >= 0:
                     return          # diese Seite liegt im Windschatten der Last
-                p = gl.p * (-c)     # Last je Quadratmeter der Projektion
+                p = p * (-c)        # Last je Quadratmeter der Projektion
             out.append(FaceLoad(int(e), p, int(seite), richtung))
 
         flaechen = []
@@ -2127,16 +2506,69 @@ class Model:
                 nimm(e, seite)
         return out
 
-    def add_geometrielast(self, ziel: str, p: float, art: str = "flaeche",
+    def add_geometrielast(self, ziel: str, p: float = 0.0, art: str = "flaeche",
                           richtung=None, case: str = None,
                           bereich: dict = None,
-                          projiziert: bool = False) -> "Geometrielast":
-        """Eine Last an ein Geometrieobjekt haengen (wirkt nach dem Vernetzen)."""
+                          projiziert: bool = False, lastart: str = "druck",
+                          dT: float = 0.0, dT_z: float = 0.0,
+                          verlauf: dict = None) -> "Geometrielast":
+        """Eine Last an ein Geometrieobjekt haengen (wirkt nach dem Vernetzen).
+
+        ``lastart`` "druck" (Flaechenlast p, gleichmaessig oder mit
+        ``verlauf``) oder "temperatur" (dT, dT_z auf alle Elemente).
+        """
         gl = Geometrielast(str(ziel), art, float(p),
                            list(richtung) if richtung else None,
-                           dict(bereich or {}), bool(projiziert))
+                           dict(bereich or {}), bool(projiziert),
+                           lastart=str(lastart), dT=float(dT), dT_z=float(dT_z),
+                           verlauf=dict(verlauf or {}))
         self.case(case).geometrielasten.append(gl)
         return gl
+
+    def add_linienlast(self, ziel: str, q, art: str = "stab", q2=None,
+                       system: str = "global", von: float = 0.0, bis: float = None,
+                       case: str = None) -> "Linienlast":
+        """Eine Linienlast an einen Stab oder eine Linie haengen.
+
+        Sie wird sofort auf vorhandene Elemente gelegt (lasten_verteilen) und
+        nach jedem Neuvernetzen wieder.
+        """
+        ll = Linienlast(str(ziel), str(art), [float(x) for x in q],
+                        [float(x) for x in q2] if q2 is not None else None,
+                        str(system), float(von), None if bis is None else float(bis))
+        self.case(case).linienlasten.append(ll)
+        return ll
+
+    def add_zwangsverformung(self, node: int, dofs, values, case: str = None) -> "Zwangsverformung":
+        """Eine vorgegebene Verschiebung/Verdrehung an einem gelagerten Knoten.
+
+        ``dofs`` die vorgegebenen Freiheitsgrade (0..5), ``values`` die Werte
+        dazu (gleich lang) oder alle sechs.
+        """
+        dofs = [int(d) for d in dofs]
+        values = [float(v) for v in values]
+        u = [0.0] * 6
+        if len(values) == 6:
+            u = values
+        else:
+            for d, v in zip(dofs, values):
+                u[d] = v
+        zv = Zwangsverformung(int(node), dofs, u)
+        self.case(case).zwangsverformungen.append(zv)
+        return zv
+
+    def zwang_ohne_lager(self, case: str = None) -> list:
+        """Vorgegebene Freiheitsgrade, an denen kein Lager haelt - unwirksam."""
+        lc = self.case(case)
+        gehalten: dict = {}
+        for s in self.supports:
+            gehalten.setdefault(int(s.node), set()).update(int(d) for d in (s.dofs or []))
+        out = []
+        for zv in lc.zwangsverformungen:
+            for d in zv.dofs:
+                if d not in gehalten.get(int(zv.node), set()):
+                    out.append((int(zv.node), int(d)))
+        return out
 
     def add_kontaktbedingung(self, name: str, **kw) -> Kontaktbedingung:
         """Eine Kontaktbedingung aufnehmen (aus RFEM gelesen oder von Hand).
@@ -2279,9 +2711,11 @@ class Model:
         self.case(case).nodal_loads.append(NodalLoad(int(node), [Fx, Fy, Fz, Mx, My, Mz]))
 
     def load_beam(self, elem: int, qx=0.0, qy=0.0, qz=0.0, system="global",
-                  case: str = None, q2=None):
+                  case: str = None, q2=None, a: float = 0.0, b: float = None):
+        """Streckenlast auf ein Stabelement; a..b grenzt den Abschnitt ein [m]."""
         self.case(case).beam_loads.append(
-            BeamLoad(int(elem), [qx, qy, qz], system, list(q2) if q2 is not None else None))
+            BeamLoad(int(elem), [qx, qy, qz], system, list(q2) if q2 is not None else None,
+                     float(a), None if b is None else float(b)))
 
     def load_face(self, elem: int, p: float, face: int = 0, case: str = None,
                   direction=None):

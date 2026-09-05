@@ -798,10 +798,16 @@ class Report:
     # ============================================================ Kapitel 3
     def _load_tables(self, lc) -> list:
         b = []
+        # Aus Objektlasten abgeleitete Elementlasten (_geo) stehen nicht einzeln
+        # im Bericht - die Objektlast steht dafuer, mit Ziel und Verlauf.
+        nodal = lc.eigene("nodal_loads") if hasattr(lc, "eigene") else lc.nodal_loads
+        beam = lc.eigene("beam_loads") if hasattr(lc, "eigene") else lc.beam_loads
+        face = lc.eigene("face_loads") if hasattr(lc, "eigene") else lc.face_loads
+        temp = lc.eigene("temp_loads") if hasattr(lc, "eigene") else lc.temp_loads
         # Knotenlasten (gleiche Lastvektoren zusammenfassen)
-        if lc.nodal_loads:
+        if nodal:
             groups = {}
-            for l in lc.nodal_loads:
+            for l in nodal:
                 key = tuple(round(float(v), 6) for v in l.F)
                 groups.setdefault(key, []).append(l.node)
             rows = [["Knoten", "Anzahl", "F_x [kN]", "F_y [kN]", "F_z [kN]", "M_x [kNm]",
@@ -813,28 +819,49 @@ class Report:
             b.append(("table", rows, f"Knotenlasten Lastfall {lc.name}", None, ""))
             if note:
                 b.append(("note", note))
-        if lc.beam_loads:
+        if beam:
             groups = {}
-            for l in lc.beam_loads:
+            for l in beam:
                 q2 = l.q2 if l.q2 is not None else l.q
+                abschnitt = (f"{l.a:g} – {l.b:g} m" if l.b is not None else f"ab {l.a:g} m") \
+                    if getattr(l, "teilweise", False) else "ganz"
                 key = (tuple(round(float(v), 6) for v in l.q),
-                       tuple(round(float(v), 6) for v in q2), l.system)
+                       tuple(round(float(v), 6) for v in q2), l.system, abschnitt)
                 groups.setdefault(key, []).append(l.elem)
-            rows = [["Elemente", "Anzahl", "System", "q_x [kN/m]", "q_y [kN/m]", "q_z [kN/m]",
-                     "q_x,Ende", "q_y,Ende", "q_z,Ende"]]
-            for (q1, q2, system), elems in groups.items():
+            rows = [["Elemente", "Anzahl", "System", "Abschnitt", "q_x [kN/m]", "q_y [kN/m]",
+                     "q_z [kN/m]", "q_x,Ende", "q_y,Ende", "q_z,Ende"]]
+            for (q1, q2, system, abschnitt), elems in groups.items():
                 rows.append([_ids_text(elems), str(len(elems)),
-                             "global" if system == "global" else "lokal"]
+                             "global" if system == "global" else "lokal", abschnitt]
                             + [fmt(v / 1e3, 3) for v in q1]
                             + ([fmt(v / 1e3, 3) for v in q2] if q2 != q1 else ["=", "=", "="]))
             rows, note = self._truncate(rows)
             b.append(("table", rows, f"Streckenlasten Lastfall {lc.name} "
-                                     "(Werte am Elementanfang / -ende)", None, ""))
+                                     "(Werte am Anfang / Ende des Abschnitts)", None, ""))
             if note:
                 b.append(("note", note))
-        if lc.face_loads:
+        if getattr(lc, "linienlasten", None):
+            rows = [["Ziel", "System", "Abschnitt", "q_x [kN/m]", "q_y [kN/m]", "q_z [kN/m]",
+                     "q_x,Ende", "q_y,Ende", "q_z,Ende", "Elementlasten"]]
+            for l in lc.linienlasten:
+                q2 = l.q2 if l.q2 is not None else l.q
+                abschnitt = "ganze Länge"
+                if l.von or l.bis is not None:
+                    abschnitt = f"{l.von:g} – " + (f"{l.bis:g} m" if l.bis is not None else "Ende")
+                rows.append([("Stab " if l.art == "stab" else "Linie ") + str(l.ziel),
+                             "global" if l.system == "global" else "lokal", abschnitt]
+                            + [fmt(v / 1e3, 3) for v in l.q]
+                            + ([fmt(v / 1e3, 3) for v in q2] if list(q2) != list(l.q)
+                               else ["=", "=", "="])
+                            + [l.kommentar or "–"])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, f"Linienlasten Lastfall {lc.name} (auf Stäben und Linien; "
+                                     "beim Vernetzen auf Elemente und Knoten verteilt)", None, ""))
+            if note:
+                b.append(("note", note))
+        if face:
             groups = {}
-            for l in lc.face_loads:
+            for l in face:
                 key = (round(float(l.p), 6), int(l.face),
                        tuple(round(float(v), 6) for v in l.direction)
                        if l.direction is not None else None)
@@ -847,9 +874,52 @@ class Report:
             b.append(("table", rows, f"Flächenlasten Lastfall {lc.name}", None, ""))
             if note:
                 b.append(("note", note))
-        if lc.temp_loads:
+        gls = getattr(lc, "geometrielasten", None) or []
+        druck = [g for g in gls if getattr(g, "lastart", "druck") != "temperatur"]
+        if druck:
+            rows = [["Ziel", "p [kN/m²]", "Verlauf", "Richtung", "Projektion", "Fenster",
+                     "Elementlasten"]]
+            for g in druck:
+                verlauf = "gleichmäßig"
+                if g.verlauf:
+                    P = g.verlauf.get("punkte") or []
+                    verlauf = "linear: " + "; ".join(
+                        f"({', '.join(f'{float(x):g}' for x in pt[:3])}) → {float(pt[3]) / 1e3:.3g}"
+                        for pt in P)
+                rows.append([("Fläche " if g.art == "flaeche" else "Volumen ") + str(g.ziel),
+                             fmt(g.p / 1e3, 3) if not g.verlauf else "–", verlauf,
+                             "senkrecht" if not g.richtung else
+                             "(" + ", ".join(f"{v:g}" for v in g.richtung) + ")",
+                             "ja" if g.projiziert else "nein",
+                             g.bereich.get("art", "ja") if g.bereich else "–",
+                             g.kommentar or "–"])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, f"Flächenlasten auf Flächen und Volumen, Lastfall {lc.name} "
+                                     "(p positiv drückt in den Körper)", None, ""))
+            if note:
+                b.append(("note", note))
+        warm = [g for g in gls if getattr(g, "lastart", "druck") == "temperatur"]
+        if warm:
+            rows = [["Ziel", "ΔT [K]", "ΔT_z [K]", "Elementlasten"]]
+            for g in warm:
+                rows.append([("Fläche " if g.art == "flaeche" else "Volumen ") + str(g.ziel),
+                             fmt(g.dT, 2), fmt(g.dT_z, 2), g.kommentar or "–"])
+            b.append(("table", rows, f"Temperaturlasten auf Flächen und Volumen, Lastfall {lc.name}",
+                      None, ""))
+        if getattr(lc, "zwangsverformungen", None):
+            rows = [["Knoten", "u_x [mm]", "u_y [mm]", "u_z [mm]", "φ_x [mrad]", "φ_y [mrad]",
+                     "φ_z [mrad]"]]
+            for z in lc.zwangsverformungen:
+                rows.append([str(z.node)] + [fmt(z.u[d] * 1e3, 3) if d in z.dofs else "–"
+                                             for d in range(6)])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, f"Zwangsverformungen Lastfall {lc.name} (vorgegebene "
+                                     "Verschiebungen an gelagerten Knoten)", None, ""))
+            if note:
+                b.append(("note", note))
+        if temp:
             groups = {}
-            for l in lc.temp_loads:
+            for l in temp:
                 key = (round(float(l.dT), 4), round(float(l.dT_z), 4))
                 groups.setdefault(key, []).append(l.elem)
             rows = [["Elemente", "Anzahl", "ΔT [K]", "ΔT_z (oben − unten) [K]"]]

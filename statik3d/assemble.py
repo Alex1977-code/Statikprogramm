@@ -336,6 +336,48 @@ def trapezoid_fixed_end_forces(q1, q2, L) -> np.ndarray:
     return f
 
 
+def partial_trapezoid_fixed_end_forces(q1, q2, a, b, L) -> np.ndarray:
+    """Aequivalente Knotenlasten einer Trapezlast auf dem **Abschnitt** [a, b]
+    eines Stabes (lokal, Bernoulli): q1 bei x = a, q2 bei x = b.
+
+    f = Integral von a bis b ueber N(x)^T q(x) dx mit den Ansatzfunktionen des
+    Stabes (linear fuer die Laengskraft, Hermite-Polynome fuer die Biegung).
+    Der Integrand ist hoechstens vom Grad 4; vier Gauss-Punkte sind exakt.
+    Fuer a = 0, b = L ergibt sich dasselbe wie trapezoid_fixed_end_forces;
+    fuer b -> a die Einzellast q (b - a) an der Stelle a.
+    """
+    q1 = np.asarray(q1, float)
+    q2 = np.asarray(q2, float)
+    a = max(0.0, float(a))
+    b = L if b is None else min(float(b), L)
+    f = np.zeros(12)
+    if b <= a or L <= 0:
+        return f
+    xg, wg = np.polynomial.legendre.leggauss(4)
+    for xi_g, w in zip(xg, wg):
+        x = 0.5 * (a + b) + 0.5 * (b - a) * xi_g
+        dw = 0.5 * (b - a) * w
+        t = (x - a) / (b - a)
+        q = (1.0 - t) * q1 + t * q2
+        xi = x / L
+        n1, n7 = 1.0 - xi, xi
+        h1 = 1.0 - 3.0 * xi ** 2 + 2.0 * xi ** 3
+        h2 = L * (xi - 2.0 * xi ** 2 + xi ** 3)
+        h3 = 3.0 * xi ** 2 - 2.0 * xi ** 3
+        h4 = L * (-xi ** 2 + xi ** 3)
+        f[0] += dw * n1 * q[0]
+        f[6] += dw * n7 * q[0]
+        f[1] += dw * h1 * q[1]
+        f[5] += dw * h2 * q[1]
+        f[7] += dw * h3 * q[1]
+        f[11] += dw * h4 * q[1]
+        f[2] += dw * h1 * q[2]
+        f[4] += -dw * h2 * q[2]
+        f[8] += dw * h3 * q[2]
+        f[10] += -dw * h4 * q[2]
+    return f
+
+
 def beam_load_local(model: Model, e, bl) -> tuple[np.ndarray, np.ndarray]:
     """Lokale Streckenlast (q1, q2) eines BeamLoad."""
     X = model.nodes[e.nodes]
@@ -360,7 +402,11 @@ def element_equivalent_loads(model: Model, case: LoadCase) -> dict[int, np.ndarr
             continue
         q1, q2 = beam_load_local(model, e, bl)
         L = model.element_length(bl.elem)
-        out[bl.elem] = out.get(bl.elem, np.zeros(12)) + trapezoid_fixed_end_forces(q1, q2, L)
+        if getattr(bl, "teilweise", False):
+            f = partial_trapezoid_fixed_end_forces(q1, q2, bl.a, bl.b, L)
+        else:
+            f = trapezoid_fixed_end_forces(q1, q2, L)
+        out[bl.elem] = out.get(bl.elem, np.zeros(12)) + f
     if np.any(g):
         for i, e in enumerate(model.elements):
             if e.typ in LINE_TYPES:
@@ -389,16 +435,27 @@ def element_equivalent_loads(model: Model, case: LoadCase) -> dict[int, np.ndarr
 
 
 def element_distributed_loads(model: Model, case: LoadCase) -> dict[int, np.ndarray]:
-    """Lokale Streckenlasten (q1, q2) je Stabelement inkl. Eigengewicht,
-    Form (2,3). Fuer die Schnittgroessen an Zwischenstellen."""
+    """Lokale Streckenlasten je Stabelement als **Abschnitte**, inkl.
+    Eigengewicht: Feld (n, 8) mit Zeilen [a, b, q1x, q1y, q1z, q2x, q2y, q2z] -
+    q1 bei x = a, q2 bei x = b. Fuer die Schnittgroessen an Zwischenstellen.
+    Eine Last ueber die ganze Laenge ist ein Abschnitt [0, L]."""
     out: dict[int, np.ndarray] = {}
     g = np.asarray(case.gravity, float)
+
+    def anhaengen(i, zeile):
+        z = np.asarray(zeile, float).reshape(1, 8)
+        out[i] = np.vstack([out[i], z]) if i in out else z
     for bl in case.beam_loads:
         e = model.elements[bl.elem]
         if e.typ not in LINE_TYPES:
             continue
         q1, q2 = beam_load_local(model, e, bl)
-        out[bl.elem] = out.get(bl.elem, np.zeros((2, 3))) + np.vstack([q1, q2])
+        L = model.element_length(bl.elem)
+        a = max(0.0, float(getattr(bl, "a", 0.0) or 0.0))
+        b = L if getattr(bl, "b", None) is None else min(float(bl.b), L)
+        if b <= a:
+            continue
+        anhaengen(bl.elem, [a, b, *q1, *q2])
     if np.any(g):
         for i, e in enumerate(model.elements):
             if e.typ in LINE_TYPES:
@@ -407,8 +464,46 @@ def element_distributed_loads(model: Model, case: LoadCase) -> dict[int, np.ndar
                 X = model.nodes[e.nodes]
                 T3, L = bm.local_axes(X[0], X[1], e.roll)
                 q = T3 @ (mat.rho * sec.A * g)
-                out[i] = out.get(i, np.zeros((2, 3))) + np.vstack([q, q])
+                anhaengen(i, [0.0, L, *q, *q])
     return out
+
+
+def skaliere_abschnitte(q: np.ndarray, f: float) -> np.ndarray:
+    """Abschnittslasten (n, 8) mit einem Faktor versehen (a, b bleiben)."""
+    q = np.asarray(q, float).reshape(-1, 8).copy()
+    q[:, 2:] *= f
+    return q
+
+
+def abschnitte_zusammen(alt, neu) -> np.ndarray:
+    """Zwei Abschnittslisten aneinanderhaengen (None = leer)."""
+    if alt is None:
+        return np.asarray(neu, float).reshape(-1, 8)
+    return np.vstack([np.asarray(alt, float).reshape(-1, 8),
+                      np.asarray(neu, float).reshape(-1, 8)])
+
+
+def lastresultierende(abschnitte, x: np.ndarray):
+    """Resultierende Q(x) der Abschnittslasten ueber [0, x] und ihr Moment
+    Mq(x) um die Stelle x (je Komponente) - fuer das Gleichgewicht am
+    Teilstab. Rueckgabe (Q, Mq) mit Form (len(x), 3)."""
+    x = np.asarray(x, float)
+    Q = np.zeros((len(x), 3))
+    Mq = np.zeros((len(x), 3))
+    if abschnitte is None:
+        return Q, Mq
+    for zeile in np.asarray(abschnitte, float).reshape(-1, 8):
+        a, b = float(zeile[0]), float(zeile[1])
+        q1, q2 = zeile[2:5], zeile[5:8]
+        if b <= a:
+            continue
+        s = np.clip(x, a, b) - a
+        k = (q2 - q1) / (b - a)
+        sN = s[:, None]
+        R = q1 * sN + k * sN ** 2 / 2.0
+        Q += R
+        Mq += (x - a)[:, None] * R - (q1 * sN ** 2 / 2.0 + k * sN ** 3 / 3.0)
+    return Q, Mq
 
 
 def shell_thermal_loads(model: Model, e, dT: float) -> np.ndarray:

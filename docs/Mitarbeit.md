@@ -129,6 +129,14 @@ Punkte:
   es einmal, bricht PyInstaller mit einer klaren Meldung ab — dann die
   `Splash`-Zeilen aus dem Rezept nehmen, das Qt-Startbild
   (`statik3d/gui/start.py`) läuft unabhängig davon.
+* **RFEM-Linienlasten und Volumen-Temperaturlasten** werden über die
+  Spaltennamen der Tabellen `LineLoadImpl*` und `SolidLoadImpl*` gelesen;
+  eine Datei mit solchen Lasten lag noch nicht vor, die Namen folgen dem
+  Muster der anderen Lasttabellen (magnitude/magnitudeFirst/Second,
+  distanceA/B, loadDirection). Beim ersten echten Fall prüfen.
+* **Z-Achse nach unten** (Importhaken) ist für RFEM-Dateien vorbelegt; die
+  Einstellung `ModelData.globalAxesOrientation` der Datei wird noch nicht
+  ausgewertet (0 im Drehlager, vermutlich „Z nach unten“).
 * **Fang auf krummen Flächen ohne Netz** greift auf der gezeichneten
   Coons-Fläche (Dreiecke), nicht auf der exakten Zylinderfläche — bei 16
   Stücken je Bogen liegt der Punkt bis 0,5 % des Radius neben dem Mantel.

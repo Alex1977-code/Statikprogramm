@@ -931,12 +931,67 @@ def z_sicht_alles(s: Stift):
     s.kreis(12, 12, 3.2)
 
 
+def z_knotenlast(s: Stift):
+    """Einzelkraft: Pfeil auf einen Knoten."""
+    s.stift(breite=2.0)
+    s.pfeil(12, 3, 12, 15.5, kopf=4.0)
+    s.fuellung(s.akzent)
+    s.kreis(12, 19, 2.6)
+
+
+def z_linienlast(s: Stift):
+    """Streckenlast: Pfeilreihe auf einen Stab, trapezfoermig."""
+    s.stift(breite=2.0)
+    s.linie(3, 19, 21, 19)
+    s.stift(breite=1.5)
+    for x, h in ((5, 6), (9, 8), (13, 10), (17, 12)):
+        s.pfeil(x, 17 - h, x, 17, kopf=2.6)
+    s.linie(5, 11, 17, 5)
+
+
+def z_flaechenlast(s: Stift):
+    """Flaechenlast: Pfeile auf ein Parallelogramm."""
+    s.stift(breite=1.6)
+    s.zug([(3, 20), (12, 14), (21, 20), (12, 21.5)], schliessen=False)
+    s.zug([(3, 20), (9, 15.5), (21, 15.5), (15, 20)], schliessen=True)
+    for x, y in ((8, 17.5), (13, 17.5), (18, 17.5)):
+        s.pfeil(x, y - 10, x, y - 1.5, kopf=2.6)
+
+
+def z_temperatur(s: Stift):
+    """Thermometer mit Plus."""
+    s.stift(breite=1.8)
+    s.rechteck(8.5, 3, 5, 12, radius=2.5)
+    s.fuellung(s.akzent)
+    s.kreis(11, 18.5, 3.4)
+    s.rechteck(9.8, 9, 2.4, 8)
+    s.stift(breite=1.6)
+    s.linie(16, 6, 21, 6)
+    s.linie(18.5, 3.5, 18.5, 8.5)
+
+
+def z_zwang(s: Stift):
+    """Lagersetzung: Lagerdreieck, das nach unten geschoben wird."""
+    s.stift(breite=1.8)
+    s.linie(4, 9, 20, 9)
+    s.zug([(12, 9), (7, 16), (17, 16)], schliessen=True)
+    s.stift(breite=1.2, gestrichelt=True)
+    s.linie(4, 4, 20, 4)
+    s.stift(breite=1.8)
+    s.pfeil(21.5, 3, 21.5, 15, kopf=3.0)
+    s.linie(6, 19.5, 18, 19.5)
+
+
 VORSCHRIFTEN = {n[2:]: f for n, f in list(globals().items())
                 if n.startswith("z_") and callable(f)}
 
 #: Beschriftung (kleingeschrieben, Teilwort) -> Symbolname. Die Reihenfolge
 #: zaehlt: der erste Treffer gewinnt, darum stehen die genaueren vorn.
 RATEN = [
+    ("knotenlast", "knotenlast"), ("linienlast", "linienlast"),
+    ("stablast", "linienlast"), ("streckenlast", "linienlast"),
+    ("flächenlast", "flaechenlast"), ("temperatur", "temperatur"),
+    ("zwangsverformung", "zwang"), ("setzung", "zwang"),
     ("rückgängig", "rueckgaengig"), ("wiederholen", "wiederholen"),
     ("speichern unter", "speichern_unter"), ("speichern", "speichern"),
     ("öffnen", "oeffnen"), ("neu", "neu"), ("import", "import"),

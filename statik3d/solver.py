@@ -128,7 +128,7 @@ class Results:
     u: np.ndarray = None                    # (nn, 6) Verschiebungen/Verdrehungen
     reactions: np.ndarray = None            # (nn, 6) Auflagerreaktionen
     beam_end: dict = field(default_factory=dict)    # elem -> lokale Stabendkraefte (12,)
-    beam_q: dict = field(default_factory=dict)      # elem -> lokale Streckenlast (2,3)
+    beam_q: dict = field(default_factory=dict)      # elem -> Abschnittslasten (n,8): a, b, q1, q2
     shell_res: dict = field(default_factory=dict)   # elem -> [nx ny nxy mx my mxy]
     solid_res: dict = field(default_factory=dict)   # elem -> Spannungen (6,)
     contact: list = field(default_factory=list)
@@ -224,7 +224,8 @@ class Results:
             for i, v in r.beam_end.items():
                 out.beam_end[i] = out.beam_end.get(i, 0.0) + f * v
             for i, v in r.beam_q.items():
-                out.beam_q[i] = out.beam_q.get(i, 0.0) + f * v
+                out.beam_q[i] = asm.abschnitte_zusammen(out.beam_q.get(i),
+                                                        asm.skaliere_abschnitte(v, f))
             for i, v in r.shell_res.items():
                 out.shell_res[i] = out.shell_res.get(i, 0.0) + f * v
             for i, v in r.solid_res.items():
@@ -299,19 +300,20 @@ def beam_end_forces(model: Model, i: int, fl: np.ndarray) -> dict:
 
 
 def beam_station_forces(model: Model, res: Results, i: int, n: int = 9) -> dict:
-    """Schnittgroessen entlang eines Stabelements an n Stellen (x von 0 bis L)."""
+    """Schnittgroessen entlang eines Stabelements an n Stellen (x von 0 bis L).
+
+    Gleichgewicht am Teilstab: Stabendkraefte am Anfang plus die Resultierende
+    der Abschnittslasten ueber [0, x] und ihr Moment um x. Bei einer
+    abschnittsweisen Last knickt der Querkraftverlauf an den Abschnittsenden;
+    liegt ein Abschnittsende zwischen zwei Stellen, steht es nicht im Feld -
+    die Stellen sind gleichmaessig verteilt, n hoch genug waehlen.
+    """
     fl = res.beam_end[i]
     L = model.element_length(i)
     q = res.beam_q.get(i)
     x = np.linspace(0.0, L, n)
-    if q is None:
-        q1 = q2 = np.zeros(3)
-    else:
-        q1, q2 = q[0], q[1]
-    dq = (q2 - q1) / L if L > 0 else np.zeros(3)
     # Lastresultierende ueber [0,x] und deren Moment um die Stelle x
-    Q = q1 * x[:, None] + dq * x[:, None] ** 2 / 2.0              # (n,3)
-    Mq = q1 * x[:, None] ** 2 / 2.0 + dq * x[:, None] ** 3 / 6.0   # (n,3)
+    Q, Mq = asm.lastresultierende(q, x)                            # (n,3)
     N = -fl[0] - Q[:, 0]
     Vy = -fl[1] - Q[:, 1]
     Vz = -fl[2] - Q[:, 2]
@@ -398,23 +400,29 @@ class StaticSystem:
         return self._solver
 
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
-              F_extra: np.ndarray = None) -> np.ndarray:
-        """Loesen fuer Lastvektor F; optional zusaetzliche Steifigkeit (Kontakt)."""
+              F_extra: np.ndarray = None, us: np.ndarray = None) -> np.ndarray:
+        """Loesen fuer Lastvektor F; optional zusaetzliche Steifigkeit (Kontakt)
+        und vorgegebene Verschiebungen ``us`` des Lastfalls (Zwangsverformungen,
+        wirksam nur an gesperrten FHG): K_ff u_f = F_f - K_fs u_s."""
         u = self.vals.copy()
+        if us is not None:
+            u[self.si] += us[self.si]
         rhs = F[self.fi]
         if F_extra is not None:
             rhs = rhs + F_extra[self.fi]
-        if self.Kfs is not None:
-            rhs = rhs - self.Kfs @ self.vals[self.si]
+        vorgabe = np.any(u[self.si])
         if K_extra is None:
+            if vorgabe:
+                if self.Kfs is None:
+                    self.Kfs = self.K[self.fi][:, self.si].tocsc()
+                rhs = rhs - self.Kfs @ u[self.si]
             u[self.fi] = self.solver.solve(rhs)
         else:
             Kt = (self.K + K_extra)
             Ktff = Kt[self.fi][:, self.fi].tocsc()
-            if np.any(self.vals[self.si]):
+            if vorgabe:
                 Ktfs = Kt[self.fi][:, self.si]
-                rhs = F[self.fi] + (F_extra[self.fi] if F_extra is not None else 0) \
-                    - Ktfs @ self.vals[self.si]
+                rhs = rhs - Ktfs @ u[self.si]
             ls = LinearSolver(Ktff)
             self.backend = ls.backend
             u[self.fi] = ls.solve(rhs)
@@ -452,10 +460,36 @@ def case_loads(model: Model, factors: dict) -> tuple:
         for i, v in asm.element_equivalent_loads(model, lc).items():
             feq[i] = feq.get(i, 0.0) + f * v
         for i, v in asm.element_distributed_loads(model, lc).items():
-            q[i] = q.get(i, 0.0) + f * v
+            q[i] = asm.abschnitte_zusammen(q.get(i), asm.skaliere_abschnitte(v, f))
         for tl in lc.temp_loads:
             temp[tl.elem] = temp.get(tl.elem, 0.0) + f * tl.dT
     return F, feq, q, temp
+
+
+def case_prescribed(model: Model, factors: dict, warn=None):
+    """Vorgegebene Verschiebungen (Zwangsverformungen) einer Linearkombination
+    von Lastfaellen als Vektor ueber alle FHG - oder None, wenn es keine gibt.
+    ``warn(text)`` meldet vorgegebene FHG ohne Lager (dort unwirksam)."""
+    us = np.zeros(model.ndof)
+    gibt = False
+    for name, f in factors.items():
+        if not f:
+            continue
+        lc = model.case(name)
+        if not lc.zwangsverformungen:
+            continue
+        gibt = True
+        for zv in lc.zwangsverformungen:
+            for d in zv.dofs:
+                us[NDOF * int(zv.node) + int(d)] += f * float(zv.u[d])
+        if warn is not None:
+            ohne = model.zwang_ohne_lager(name)
+            if ohne:
+                namen = ("ux", "uy", "uz", "phix", "phiy", "phiz")
+                warn(f"Zwangsverformung im Lastfall {name} ohne Lager - unwirksam: "
+                     + ", ".join(f"Knoten {n} {namen[d]}" for n, d in ohne[:8])
+                     + (" ..." if len(ohne) > 8 else ""))
+    return us if gibt else None
 
 
 # ==========================================================================
@@ -558,13 +592,14 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  kind: str, workers=None, progress=None) -> Results:
     t0 = time.time()
     F, feq, q, temp = case_loads(model, factors)
+    us = case_prescribed(model, factors, warn=progress)
     res = Results(name=name, kind=kind, model=model)
     if model.has_contact:
         u, R, res.contact, res.contact_forces, cinfo = solve_with_contact(
-            model, system, F, progress=progress)
+            model, system, F, progress=progress, us=us)
         res.info.update(cinfo)
     else:
-        u = system.solve(F)
+        u = system.solve(F, us=us)
         R = system.reactions(u, F)
     res.u = u.reshape(-1, NDOF)
     res.reactions = R.reshape(-1, NDOF)
@@ -675,7 +710,7 @@ def _contact_singular(it: int, ex, cs) -> str:
 
 
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
-                       max_iter: int = 120, progress=None):
+                       max_iter: int = 120, progress=None, us: np.ndarray = None):
     from .contact import ContactSystem
     log: list[str] = []
     cs = ContactSystem(model, system.K, log)
@@ -685,7 +720,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     it = 0
     Kc = Fc = None
     if not cs.cons:
-        u = system.solve(F)
+        u = system.solve(F, us=us)
         R = system.reactions(u, F)
         return u, R, [], np.zeros((model.nn, 3)), {"contact_iterations": 0,
                                                    "contact_converged": True,
@@ -695,7 +730,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     for it in range(1, max_iter + 1):
         Kc, Fc = cs.matrices(model.ndof)
         try:
-            u = system.solve(F, Kc, Fc)
+            u = system.solve(F, Kc, Fc, us=us)
         except RuntimeError as ex:
             if it == 1 and not forced and cs.stabilise():
                 # Im ersten Schritt haelt keine Bedingung - etwa eine Schraube,
@@ -708,13 +743,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                            "Schritt keine Kontaktbedingung haelt")
                 Kc, Fc = cs.matrices(model.ndof)
                 try:
-                    u = system.solve(F, Kc, Fc)
+                    u = system.solve(F, Kc, Fc, us=us)
                 except RuntimeError as ex2:
                     raise RuntimeError(_contact_singular(it, ex2, cs)) from None
                 cs.select_by_direction(u)
                 Kc, Fc = cs.matrices(model.ndof)
                 try:
-                    u = system.solve(F, Kc, Fc)
+                    u = system.solve(F, Kc, Fc, us=us)
                 except RuntimeError as ex3:
                     raise RuntimeError(_contact_singular(it, ex3, cs)) from None
             else:

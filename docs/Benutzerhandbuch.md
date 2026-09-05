@@ -435,6 +435,15 @@ werden muss danach neu. Wer A, Iy, Iz, It oder Wpl,y von Hand ändert, löst den
 Querschnitt von der Profildatenbank; sein Typ wird `free`, die Nachweise
 laufen dann elastisch.
 
+### Auswahl per Klick
+
+Ein Klick trifft, was gezeichnet ist: Stäbe auch auf ihrem Körper, Flächen
+auch auf einem Zylindermantel, Volumen auf ihrer Oberfläche (Zellenpicker
+der Grafik, in Millisekunden). Erst wenn dort nichts liegt, sucht das
+Programm geometrisch in der Nähe des Klicks. Was ein Klick trifft, sagt die
+**Auswahlart** im Register *Start*; der Modellbaum stellt sie beim Anklicken
+eines Zweigs passend um.
+
 ### Maske oder Klick
 
 Jeder Erzeuge-Befehl — Knoten, Stab, Schale, Lager, Knotenlast — öffnet eine
@@ -558,6 +567,43 @@ Kontaktbeispiele.
 
 ## 4 Lastfälle und Kombinationen
 
+### Lastarten
+
+Register **Lasten**, alles mit Symbol. Jede Maske arbeitet auf der
+**Auswahl** in der Ansicht (Auswahlart im Register *Start* oder im
+Modellbaum) und schreibt in den gewählten Lastfall:
+
+| Last | Ziel | Maske | Was sie kann |
+|---|---|---|---|
+| Knotenlast | gewählte Knoten | Kräfte F_x…F_z [kN], Momente M_x…M_z [kNm] | — |
+| Linienlast | gewählte **Stäbe** oder **Linien** | q [kN/m] am Anfang, q2 am Ende, global oder lokal, **von/bis** [m] | gleichmäßig, trapezförmig, abschnittsweise |
+| Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], Richtung (senkrecht oder global), auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
+| Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
+| Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
+| Eigengewicht | Lastfall | Register *Lasten → Weitere* | — |
+
+Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
+werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
+Knoten verteilt: eine Linienlast auf einem Stab wird zu Abschnittslasten auf
+seinen Elementen, eine Linienlast auf einer Linie zu Knotenlasten der
+Netzknoten auf dieser Linie (nach Zutrittslängen, linear veränderlich), eine
+Flächenlast zu Elementflächenlasten, eine Temperatur zu Temperaturlasten
+aller Elemente. Die abgeleiteten Elementlasten stehen weder in der Tabelle
+noch im Bericht einzeln (bei einem Volumenmodell wären es Hunderttausende);
+die Objektlast steht dafür mit dem Vermerk, wie viele Elementlasten sie
+erzeugt hat. Eine Flächenlast auf einer noch nicht vernetzten Fläche wird
+trotzdem **gezeichnet** — so sieht man die Lasten eines eben eingelesenen
+RFEM-Modells.
+
+**Im Bild**: Kräfte und Streckenlasten rot (Pfeile), Temperatur als Punkte
+(orange warm, blau kalt), Zwangsverformungen grün, das Fenster einer freien
+Rechtecklast als Rahmen. Der Schalter „Lasten“ (Glasleiste, Register
+*Ansicht*) blendet sie aus.
+
+**Tabelle Lasten** (unten): jede Last mit Lastfall, Art, Ziel und Wert; ein
+Klick auf eine Zeile wählt das Ziel in der Ansicht, „Löschen“ nimmt die
+Last heraus (bei Objektlasten samt ihren Elementlasten).
+
 * Einwirkungskategorien: G (ständig), Q_A … Q_H (Nutzlasten), Q_K (Kran),
   S / S_H (Schnee), W (Wind), T (Temperatur), H (Wasserdruck), A
   (außergewöhnlich), P (Vorspannung), SET (Setzung), FAT (nur Ermüdung).
@@ -624,6 +670,17 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
   Halt, wird das als Fehler gemeldet – dann Lagerung oder Lasten prüfen.
 
 ## 7 Import
+
+**Z-Achse nach unten (RFEM).** RFEM legt seine Modelle mit der Z-Achse nach
+unten an. Das Programm rechnet mit z nach oben. Im Importdialog für .rf6,
+.rf5, .rs6 und .rs5 steht darum der Haken „Z-Achse der Datei zeigt nach
+unten“ (vorbelegt). Er dreht das Modell beim Einlesen um 180° um die
+x-Achse: (x, y, z) → (x, −y, −z). Eine bloße Spiegelung z → −z wäre
+falsch, sie machte aus dem rechtshändigen System ein linkshändiges — Momente
+und Drehwinkel liefen dann verkehrt. Mitgedreht werden Knoten, Bögen,
+Lastvektoren, Richtungen, Lastfenster, Schwerkraft, Zwangsverformungen und
+Lagerwerte; das Protokoll vermerkt es. Beim Anhängen an ein vorhandenes
+Modell ist der Haken gesperrt.
 
 Datei → Importieren (Details in `Schnittstellen.md`):
 

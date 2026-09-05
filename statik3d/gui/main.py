@@ -657,14 +657,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stabstrecken_zwischen = out
         return out
 
-    def _oberflaechenfang(self, arten):
-        """Der Punkt auf einer Flaeche oder einem Volumen unter dem Zeiger.
+    def _zellentreffer(self):
+        """Was der VTK-Zellenpicker unter dem Zeiger trifft.
 
-        Genommen wird die **gezeichnete Oberflaeche** selbst (VTK-Zellenpicker
-        auf den Netz- und Geometriedarstellern): so faengt man auf einem
-        Zylindermantel oder einer Schale genau dort, wo der Zeiger steht.
-        Rueckgabe (Punkt, Art) mit Art "flaeche" oder "volumen" - je nachdem,
-        was getroffen ist und welche Fangarten an sind - oder None.
+        Auf den Netz- und Geometriedarstellern (Elemente, Stabkoerper,
+        Flaechen ohne Netz). Rueckgabe (Darstellername, Zellennummer, Punkt,
+        Daten des Darstellers) oder None. So trifft ein Klick genau das, was
+        man sieht - auch auf einem Zylindermantel.
         """
         zp = self._zeigerposition()
         if zp is None:
@@ -676,7 +675,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 from vtk import vtkCellPicker   # aeltere VTK-Pakete
             except Exception:                   # noqa: BLE001
                 return None
-        m = self.model
         try:
             akteure = dict(self.plotter.renderer.actors)
         except Exception:                       # noqa: BLE001
@@ -706,6 +704,70 @@ class MainWindow(QtWidgets.QMainWindow):
             daten = pv.wrap(akteur.GetMapper().GetInput())
         except Exception:                       # noqa: BLE001
             return None
+        return name, zelle, punkt, daten
+
+    def _elementzuordnung(self) -> dict:
+        """{Element: Stab}, {Element: Flaeche}, {Element: Koerper} - je Modellstand."""
+        m = self.model
+        stand = (id(m), len(m.elements), len(m.members), len(m.flaechen), len(m.koerper))
+        if getattr(self, "_zuordnung_stand", None) == stand:
+            return self._zuordnung
+        zu_stab = {int(e): n for n, mem in m.members.items() for e in (mem.elements or [])}
+        zu_flaeche = {int(e): n for n, f in m.flaechen.items() for e in (f.elemente or [])}
+        zu_koerper = {int(e): n for n, k in m.koerper.items() for e in (k.elemente or [])}
+        self._zuordnung = {"stab": zu_stab, "flaeche": zu_flaeche, "koerper": zu_koerper}
+        self._zuordnung_stand = stand
+        return self._zuordnung
+
+    def _objekt_am_zeiger(self, art: str):
+        """Name der Flaeche, des Volumens oder des Stabes unter dem Zeiger.
+
+        Ueber den Zellenpicker: getroffene Zelle -> Element -> Objekt, oder
+        auf der Geometrie ohne Netz -> Flaeche -> (Koerper). None, wenn dort
+        nichts Passendes liegt.
+        """
+        treffer = self._zellentreffer()
+        if treffer is None:
+            return None
+        name, zelle, _punkt, daten = treffer
+        m = self.model
+        zu = self._elementzuordnung()
+        if name == "geo_flaechen":
+            fl = daten.cell_data.get("flaeche")
+            if fl is None or zelle >= len(fl):
+                return None
+            fname = list(m.flaechen)[int(fl[zelle])]
+            if art == "Fläche":
+                return fname
+            if art == "Volumen":
+                return next((kn for kn, k in m.koerper.items() if fname in k.flaechen), None)
+            return None
+        el = daten.cell_data.get("elem")
+        if el is None or zelle >= len(el):
+            return None
+        elem = int(el[zelle])
+        if art == "Stab":
+            return zu["stab"].get(elem)
+        if art == "Fläche":
+            return zu["flaeche"].get(elem)
+        if art == "Volumen":
+            return zu["koerper"].get(elem)
+        return None
+
+    def _oberflaechenfang(self, arten):
+        """Der Punkt auf einer Flaeche oder einem Volumen unter dem Zeiger.
+
+        Genommen wird die **gezeichnete Oberflaeche** selbst (Zellenpicker):
+        so faengt man auf einem Zylindermantel oder einer Schale genau dort,
+        wo der Zeiger steht. Rueckgabe (Punkt, Art) mit Art "flaeche" oder
+        "volumen" - je nachdem, was getroffen ist und welche Fangarten an
+        sind - oder None.
+        """
+        treffer = self._zellentreffer()
+        if treffer is None:
+            return None
+        name, zelle, punkt, daten = treffer
+        m = self.model
         koerper = getattr(m, "koerper", {}) or {}
         if name == "geo_flaechen":
             fl = daten.cell_data.get("flaeche")
@@ -778,16 +840,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 name = self._linie_am_zeiger() or vp.line_at(m, point, size)
                 return self._objekt_umschalten(self.sel_linien, name, "Linien") \
                     if name else self.info("Dort liegt keine Linie")
+            # Erst das, was gezeichnet ist (Zellenpicker) - das trifft auch
+            # Zylindermaentel und Stabkoerper; die geometrische Suche ist der
+            # Rueckfall, wenn der Klick knapp danebenliegt.
             if art == "Fläche":
-                name = vp.flaeche_at(m, point, size)
+                name = self._objekt_am_zeiger("Fläche") or vp.flaeche_at(m, point, size)
                 return self._objekt_umschalten(self.sel_flaechen, name, "Flächen") \
                     if name else self.info("Dort liegt keine Fläche")
             if art == "Volumen":
-                name = vp.koerper_at(m, point, size)
+                name = self._objekt_am_zeiger("Volumen") or vp.koerper_at(m, point, size)
                 return self._objekt_umschalten(self.sel_koerper, name, "Volumen") \
                     if name else self.info("Dort liegt kein Volumenkörper")
             if art == "Stab":
-                name = self._stab_am_zeiger() or vp.member_at(m, point)
+                name = (self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")
+                        or vp.member_at(m, point))
                 return self._objekt_umschalten(self.sel_staebe, name, "Stäbe") \
                     if name else self.info("Dort liegt kein Stab")
         if self.model.nn == 0:
@@ -880,12 +946,9 @@ class MainWindow(QtWidgets.QMainWindow):
         leiste.knopf(self.act_fang, "fang", "fang")
         for art in ("knoten", "linie", "stab", "flaeche", "volumen"):
             leiste.knopf(self.act_fangart[art], f"fang_{art}", f"fang_{art}")
-        leiste.trenner()
-        cb = QtWidgets.QComboBox()
-        cb.addItems(self.AUSWAHLARTEN)
-        cb.setToolTip("Was ein Klick in der Ansicht trifft")
-        cb.currentTextChanged.connect(self.auswahlart_setzen)
-        self.cb_auswahlart_glas = leiste.widget(cb)
+        # Kein Auswahlfeld mehr in der Leiste: die Auswahlart steht im Ribbon
+        # (Start) und folgt dem Modellbaum; die Leiste bleibt schmal.
+        self.cb_auswahlart_glas = None
         leiste.adjustSize()
         wuerfel = msk.Ansichtswuerfel(central)
         wuerfel.kamera = self._kamera_matrix
@@ -934,8 +997,10 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Ab so vielen Knoten und Elementen wird beim Drehen vereinfacht gezeichnet
     SCHNELLDREHEN_AB = 20000
     #: Darsteller, die beim Drehen eines grossen Modells kurz wegbleiben
-    NEBENDARSTELLER = ("knoten", "knoten_frei", "linien", "geo_volumen", "nlabels",
-                       "elabels", "loads", "undeformed_netz", "undeformed_stabkoerper")
+    NEBENDARSTELLER = ("knoten", "knoten_frei", "linien", "geo_volumen", "geo_raender",
+                       "nlabels", "elabels", "loads", "lastfenster", "temp_warm",
+                       "temp_kalt", "zwang", "zwang_drehung", "undeformed_netz",
+                       "undeformed_stabkoerper")
 
     def _interaktion_beginnt(self, *_):
         """Drehen, Schieben, Zoomen beginnt: bei einem grossen Modell bleiben
@@ -1234,13 +1299,28 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Kombinationen automatisch…", self.auto_combinations)
         g.klein("Ermüdungslast…", self.fatigue_load_dialog)
         g = r.gruppe("Lasten")
-        g.gross("Knotenlast", "↓", self.maske_knotenlast, "",
-                "Knoten wählen, Kräfte und Momente eintragen")
-        g.gross("Stablast", "⇊", lambda: self.maske_zeigen("Lager/Lasten"),
-                hinweis="Streckenlast auf Stabelemente")
-        g.klein("Flächenlast", lambda: self.maske_zeigen("Lager/Lasten"))
-        g.klein("Temperaturlast", lambda: self.maske_zeigen("Lager/Lasten"))
-        g.klein("Eigengewicht", lambda: self.maske_zeigen("Lager/Lasten"))
+        g.gross("Knotenlast", "", self.maske_knotenlast, "",
+                "Knoten wählen, Kräfte und Momente eintragen", symbol="knotenlast")
+        g.gross("Linienlast", "", self.maske_linienlast, "",
+                "Streckenlast auf gewählte Stäbe oder Linien: gleichmäßig, "
+                "trapezförmig oder abschnittsweise (von/bis)", symbol="linienlast")
+        g.gross("Flächenlast", "", self.maske_flaechenlast, "",
+                "Flächenlast auf gewählte Flächen oder Volumen: gleichmäßig oder "
+                "linear veränderlich, senkrecht oder in einer Richtung",
+                symbol="flaechenlast")
+        g.gross("Temperatur", "", self.maske_temperaturlast, "",
+                "Temperaturänderung auf gewählte Stäbe, Flächen oder Volumen",
+                symbol="temperatur")
+        g.gross("Zwangsverformung", "", self.maske_zwangsverformung, "",
+                "Vorgegebene Verschiebung oder Verdrehung an gewählten gelagerten "
+                "Knoten (Setzung)", symbol="zwang")
+        g = r.gruppe("Weitere")
+        g.klein("Eigengewicht", lambda: self.maske_zeigen("Lager/Lasten"),
+                hinweis="Eigengewicht im aktiven Lastfall ein- und ausschalten")
+        g.klein("Stablast auf Elemente", lambda: self.maske_zeigen("Lager/Lasten"),
+                hinweis="Streckenlast unmittelbar auf Stabelemente (Elementnummern)")
+        g.klein("Tabelle Lasten", lambda: self.tabelle_zeigen("Lasten"),
+                hinweis="Alle Lasten des Modells unten in der Tabelle")
 
         # -- Netz --------------------------------------------------------
         r = rb.register("Netz")
@@ -2950,29 +3030,72 @@ class MainWindow(QtWidgets.QMainWindow):
                 zeilen.append([i, lcname, "Eigengewicht", "ganzes Modell",
                                f"{float(lc.gravity[2]):.2f} m/s²", "global Z", ""])
                 i += 1
-            for l in lc.nodal_loads:
+            # Aus Objektlasten abgeleitete Elementlasten (_geo) stehen nicht
+            # in der Tabelle: bei einem Volumenmodell waeren es Hunderttausende,
+            # und sie entstehen beim Verteilen neu. Die Objektlast steht dafuer.
+            for l in lc.eigene("nodal_loads"):
                 teile = [f"{self.LASTRICHTUNG[k]} = {v / 1e3:.3f}"
                          for k, v in enumerate(l.F) if v]
                 zeilen.append([i, lcname, "Knotenlast", f"K{l.node}",
                                ", ".join(teile) or "0",
                                "global", ""])
                 i += 1
-            for l in lc.beam_loads:
+            for l in lc.eigene("beam_loads"):
                 q = ", ".join(f"{v / 1e3:.3f}" for v in l.q)
+                abschnitt = (f"von {l.a:g} m" + (f" bis {l.b:g} m" if l.b is not None else "")
+                             if getattr(l, "teilweise", False) else "")
                 zeilen.append([i, lcname, "Streckenlast", f"E{l.elem}",
                                f"q = ({q}) kN/m", l.system,
-                               "veränderlich" if l.q2 is not None else ""])
+                               " ".join(x for x in ("veränderlich" if l.q2 is not None else "",
+                                                    abschnitt) if x)])
                 i += 1
-            for l in lc.face_loads:
+            for l in lc.eigene("face_loads"):
                 zeilen.append([i, lcname, "Flächenlast", f"E{l.elem}",
                                f"p = {l.p / 1e3:.4f} kN/m²",
                                "Richtungsvektor" if l.direction else "lokal z", ""])
                 i += 1
-            for l in lc.temp_loads:
+            for l in lc.eigene("temp_loads"):
                 zeilen.append([i, lcname, "Temperatur", f"E{l.elem}",
                                f"ΔT = {l.dT:.2f} K",
                                f"ΔT_z = {l.dT_z:.2f} K" if l.dT_z else "gleichmäßig",
                                ""])
+                i += 1
+            for l in lc.geometrielasten:
+                ziel = ("Fläche " if l.art == "flaeche" else "Volumen ") + str(l.ziel)
+                if getattr(l, "lastart", "druck") == "temperatur":
+                    zeilen.append([i, lcname, "Temperatur", ziel, f"ΔT = {l.dT:.2f} K",
+                                   f"ΔT_z = {l.dT_z:.2f} K" if l.dT_z else "gleichmäßig",
+                                   l.kommentar or "noch nicht vernetzt"])
+                else:
+                    if l.verlauf:
+                        P = l.verlauf.get("punkte") or []
+                        wert = "linear " + " → ".join(f"{float(x[3]) / 1e3:.3g}" for x in P) + " kN/m²"
+                    else:
+                        wert = f"p = {l.p / 1e3:.4f} kN/m²"
+                    richtung = ("(" + ", ".join(f"{x:g}" for x in l.richtung) + ")"
+                                if l.richtung else "senkrecht")
+                    if l.projiziert:
+                        richtung += " projiziert"
+                    zeilen.append([i, lcname, "Flächenlast", ziel, wert, richtung,
+                                   (("Fenster " if l.bereich else "")
+                                    + (l.kommentar or "noch nicht vernetzt"))])
+                i += 1
+            for l in lc.linienlasten:
+                ziel = ("Stab " if l.art == "stab" else "Linie ") + str(l.ziel)
+                q = ", ".join(f"{v / 1e3:.3f}" for v in l.q)
+                wert = f"q = ({q}) kN/m"
+                if l.q2 is not None and list(l.q2) != list(l.q):
+                    wert += " → (" + ", ".join(f"{v / 1e3:.3f}" for v in l.q2) + ")"
+                abschnitt = ""
+                if l.von or l.bis is not None:
+                    abschnitt = f"von {l.von:g} m" + (f" bis {l.bis:g} m" if l.bis is not None
+                                                      else " bis Ende")
+                zeilen.append([i, lcname, "Linienlast", ziel, wert, l.system,
+                               " ".join(x for x in (abschnitt, l.kommentar or "") if x)])
+                i += 1
+            for l in lc.zwangsverformungen:
+                zeilen.append([i, lcname, "Zwangsverformung", f"K{l.node}",
+                               l.bezug().split(": ", 1)[-1], "global", ""])
                 i += 1
         self._fill(self.tbl_last, zeilen)
 
@@ -2988,8 +3111,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 if i == nr:
                     return lc, "gravity", 0
                 i += 1
-            for liste in ("nodal_loads", "beam_loads", "face_loads", "temp_loads"):
-                for k in range(len(getattr(lc, liste))):
+            for liste in ("nodal_loads", "beam_loads", "face_loads", "temp_loads",
+                          "geometrielasten", "linienlasten", "zwangsverformungen"):
+                for k, l in enumerate(getattr(lc, liste)):
+                    if getattr(l, "_geo", False):
+                        continue
                     if i == nr:
                         return lc, liste, k
                     i += 1
@@ -3006,8 +3132,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         obj = getattr(lc, liste)[k]
         m = self.model
-        if liste == "nodal_loads":
+        if liste in ("nodal_loads", "zwangsverformungen"):
             self._set_selection([int(obj.node)])
+        elif liste == "geometrielasten":
+            self.sel_flaechen = [obj.ziel] if obj.art == "flaeche" else []
+            self.sel_koerper = [obj.ziel] if obj.art != "flaeche" else []
+            self.redraw()
+        elif liste == "linienlasten":
+            self.sel_staebe = [obj.ziel] if obj.art == "stab" else []
+            self.sel_linien = [obj.ziel] if obj.art != "stab" else []
+            self.redraw()
         elif 0 <= int(obj.elem) < len(m.elements):
             self._set_selection([int(n) for n in m.elements[int(obj.elem)].nodes])
 
@@ -3021,6 +3155,9 @@ class MainWindow(QtWidgets.QMainWindow):
             lc.gravity = [0.0, 0.0, 0.0]
         else:
             del getattr(lc, liste)[k]
+            if liste in ("geometrielasten", "linienlasten"):
+                # die daraus abgeleiteten Elementlasten gehen mit
+                self.model.lasten_verteilen()
         self.analysis = None
         self.results = None
         self.refresh_all()
@@ -5175,6 +5312,213 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"im Lastfall {w.get('fall')}")
         self.refresh_all()
 
+    # ---- Linien-, Flaechen-, Temperatur- und Zwangslasten ------------
+    def _lastfallfeld(self):
+        return msk.Feld("fall", "Lastfall", "wahl", self.model.active_case,
+                        list(self.model.load_cases))
+
+    def maske_linienlast(self):
+        """Linienlast auf Staebe oder Linien: gleichmaessig, trapezfoermig,
+        abschnittsweise."""
+        felder = [msk.Feld("qx", "q_x [kN/m]"), msk.Feld("qy", "q_y [kN/m]"),
+                  msk.Feld("qz", "q_z [kN/m]", wert=-10.0),
+                  msk.Feld("trapez", "trapezförmig (q2 am Ende)", "haken", False),
+                  msk.Feld("q2x", "q2_x [kN/m]"), msk.Feld("q2y", "q2_y [kN/m]"),
+                  msk.Feld("q2z", "q2_z [kN/m]"),
+                  msk.Feld("system", "Bezug", "wahl", "global", ["global", "lokal (Stab)"]),
+                  msk.Feld("von", "Abschnitt von [m]", wert=0.0),
+                  msk.Feld("bis", "bis [m] (0 = Ende)", wert=0.0),
+                  self._lastfallfeld()]
+        m = msk.Maske("Linienlast", felder, knopf="Last aufbringen",
+                      hinweis="Stäbe oder Linien in der Ansicht wählen (Auswahlart „Stab“ "
+                              "oder „Linie“), Werte eintragen, „Last aufbringen“. q gilt "
+                              "bei „von“, q2 bei „bis“; von/bis in Metern vom Anfang.")
+        m.angewendet.connect(self._linienlast_aufbringen)
+        self.maske_erzeugen(m)
+
+    def _linienlast_aufbringen(self, w: dict):
+        ziele = [(n, "stab") for n in self.sel_staebe] + [(n, "linie") for n in self.sel_linien]
+        if not ziele:
+            return self.error("Zuerst Stäbe oder Linien in der Ansicht wählen "
+                              "(Auswahlart „Stab“ oder „Linie“)")
+        q = [float(w.get(k, 0.0) or 0.0) * 1e3 for k in ("qx", "qy", "qz")]
+        q2 = ([float(w.get(k, 0.0) or 0.0) * 1e3 for k in ("q2x", "q2y", "q2z")]
+              if w.get("trapez") else None)
+        if not any(q) and not (q2 and any(q2)):
+            return self.error("Alle Werte sind null")
+        von = float(w.get("von", 0.0) or 0.0)
+        bis = float(w.get("bis", 0.0) or 0.0) or None
+        system = "local" if str(w.get("system", "")).startswith("lokal") else "global"
+        fall = w.get("fall") or None
+        self.merken("Linienlast")
+        for name, art in ziele:
+            self.model.add_linienlast(name, q, art=art, q2=q2, system=system,
+                                      von=von, bis=bis, case=fall)
+        n = self.model.lasten_verteilen()
+        self.analysis = None
+        self.results = None
+        self.info(f"Linienlast auf {len(ziele)} Objekte im Lastfall "
+                  f"{fall or self.model.active_case} ({n} Elementlasten)")
+        self.refresh_all()
+
+    #: Richtungen einer Flaechenlast in der Maske
+    LASTRICHTUNGEN = ["senkrecht zur Fläche (Druck)", "global x", "global y", "global z",
+                      "global −x", "global −y", "global −z"]
+    LASTRICHTUNG_VEKTOR = {"global x": (1, 0, 0), "global y": (0, 1, 0), "global z": (0, 0, 1),
+                           "global −x": (-1, 0, 0), "global −y": (0, -1, 0),
+                           "global −z": (0, 0, -1)}
+
+    def maske_flaechenlast(self):
+        """Flaechenlast auf Flaechen oder Volumen: gleichmaessig oder linear."""
+        felder = [msk.Feld("p", "p [kN/m²]", wert=5.0,
+                           hinweis="positiv drückt in den Körper (Druck)"),
+                  msk.Feld("richtung", "Richtung", "wahl", self.LASTRICHTUNGEN[0],
+                           list(self.LASTRICHTUNGEN)),
+                  msk.Feld("projiziert", "auf die Projektion (Schnee, Wind)", "haken", False),
+                  msk.Feld("verlauf", "Verlauf", "wahl", "gleichmäßig",
+                           ["gleichmäßig", "linear von Punkt A nach B"]),
+                  msk.Feld("p2", "p bei B [kN/m²]", wert=0.0),
+                  msk.Feld("ax", "A x [m]"), msk.Feld("ay", "A y [m]"), msk.Feld("az", "A z [m]"),
+                  msk.Feld("bx", "B x [m]"), msk.Feld("by", "B y [m]"), msk.Feld("bz", "B z [m]"),
+                  self._lastfallfeld()]
+        m = msk.Maske("Flächenlast", felder, knopf="Last aufbringen",
+                      hinweis="Flächen oder Volumen in der Ansicht wählen (Auswahlart "
+                              "„Fläche“ oder „Volumen“). Die Last hängt am Objekt und "
+                              "wirkt auf dem Netz, auch nach dem Neuvernetzen. Linear: "
+                              "p bei A, „p bei B“ bei B, dazwischen und darüber hinaus "
+                              "linear (Wasserdruck, Erddruck).")
+        m.angewendet.connect(self._flaechenlast_aufbringen)
+        self.maske_erzeugen(m)
+
+    def _flaechenlast_aufbringen(self, w: dict):
+        ziele = [(n, "flaeche") for n in self.sel_flaechen] + [(n, "koerper") for n in self.sel_koerper]
+        if not ziele:
+            return self.error("Zuerst Flächen oder Volumen in der Ansicht wählen "
+                              "(Auswahlart „Fläche“ oder „Volumen“)")
+        p = float(w.get("p", 0.0) or 0.0) * 1e3
+        richtung = self.LASTRICHTUNG_VEKTOR.get(str(w.get("richtung", "")))
+        verlauf = None
+        if str(w.get("verlauf", "")).startswith("linear"):
+            A = [float(w.get(k, 0.0) or 0.0) for k in ("ax", "ay", "az")]
+            B = [float(w.get(k, 0.0) or 0.0) for k in ("bx", "by", "bz")]
+            if np.allclose(A, B):
+                return self.error("Die Punkte A und B liegen aufeinander - so gibt es "
+                                  "keinen Verlauf")
+            verlauf = {"art": "linear",
+                       "punkte": [[*A, p], [*B, float(w.get("p2", 0.0) or 0.0) * 1e3]]}
+        elif not p:
+            return self.error("p ist null")
+        fall = w.get("fall") or None
+        self.merken("Flächenlast")
+        for name, art in ziele:
+            self.model.add_geometrielast(name, p, art=art, richtung=richtung, case=fall,
+                                         projiziert=bool(w.get("projiziert")),
+                                         verlauf=verlauf)
+        n = self.model.lasten_verteilen()
+        self.analysis = None
+        self.results = None
+        self.info(f"Flächenlast auf {len(ziele)} Objekte im Lastfall "
+                  f"{fall or self.model.active_case}"
+                  + (f" ({n} Elementlasten)" if n else " - wirkt, sobald vernetzt ist"))
+        self.refresh_all()
+
+    def maske_temperaturlast(self):
+        """Temperaturaenderung auf Staebe, Flaechen oder Volumen."""
+        felder = [msk.Feld("dT", "ΔT [K]", wert=20.0),
+                  msk.Feld("dTz", "ΔT_z oben − unten [K] (Stäbe)", wert=0.0),
+                  msk.Feld("alle", "alle Elemente des Modells", "haken", False),
+                  self._lastfallfeld()]
+        m = msk.Maske("Temperaturlast", felder, knopf="Last aufbringen",
+                      hinweis="Stäbe, Flächen oder Volumen in der Ansicht wählen. Bei "
+                              "Flächen und Volumen hängt die Temperatur am Objekt und "
+                              "wirkt auf allen Elementen, auch nach dem Neuvernetzen.")
+        m.angewendet.connect(self._temperaturlast_aufbringen)
+        self.maske_erzeugen(m)
+
+    def _temperaturlast_aufbringen(self, w: dict):
+        dT = float(w.get("dT", 0.0) or 0.0)
+        dTz = float(w.get("dTz", 0.0) or 0.0)
+        if not dT and not dTz:
+            return self.error("ΔT ist null")
+        fall = w.get("fall") or None
+        m = self.model
+        n_el = 0
+        objekte = 0
+        self.merken("Temperaturlast")
+        if w.get("alle"):
+            for i in range(len(m.elements)):
+                m.load_temp(i, dT, dTz, case=fall)
+                n_el += 1
+        else:
+            for name in self.sel_staebe:
+                mem = m.members.get(name)
+                for e in (mem.elements if mem else []):
+                    if 0 <= int(e) < len(m.elements):
+                        m.load_temp(int(e), dT, dTz, case=fall)
+                        n_el += 1
+                objekte += 1
+            for name in self.sel_flaechen:
+                m.add_geometrielast(name, art="flaeche", lastart="temperatur", dT=dT,
+                                    dT_z=dTz, case=fall)
+                objekte += 1
+            for name in self.sel_koerper:
+                m.add_geometrielast(name, art="koerper", lastart="temperatur", dT=dT,
+                                    dT_z=dTz, case=fall)
+                objekte += 1
+            if not objekte:
+                return self.error("Zuerst Stäbe, Flächen oder Volumen wählen - oder "
+                                  "„alle Elemente“ ankreuzen")
+            n_el += m.lasten_verteilen()
+        self.analysis = None
+        self.results = None
+        self.info(f"Temperatur ΔT = {dT:g} K auf {objekte or 'alle'} Objekte "
+                  f"({n_el} Elemente) im Lastfall {fall or m.active_case}")
+        self.refresh_all()
+
+    def maske_zwangsverformung(self):
+        """Vorgegebene Verschiebung/Verdrehung an gelagerten Knoten."""
+        felder = [msk.Feld("ux", "u_x [mm]"), msk.Feld("uy", "u_y [mm]"),
+                  msk.Feld("uz", "u_z [mm]", wert=-5.0),
+                  msk.Feld("px", "φ_x [mrad]"), msk.Feld("py", "φ_y [mrad]"),
+                  msk.Feld("pz", "φ_z [mrad]"),
+                  msk.Feld("lager", "fehlende Lager dafür setzen", "haken", True),
+                  self._lastfallfeld()]
+        m = msk.Maske("Zwangsverformung", felder, knoten=0, knopf="Vorgeben",
+                      hinweis="Knoten in der Ansicht wählen. Eine Verschiebung lässt "
+                              "sich nur erzwingen, wo ein Lager hält - fehlende Lager "
+                              "werden gesetzt, wenn angekreuzt. Nur die Werte ungleich "
+                              "null werden vorgegeben.")
+        m.angewendet.connect(self._zwangsverformung_aufbringen)
+        self.maske_erzeugen(m)
+
+    def _zwangsverformung_aufbringen(self, w: dict):
+        if not len(self.selection):
+            return self.error("Zuerst Knoten in der Ansicht wählen")
+        werte = [float(w.get(k, 0.0) or 0.0) * 1e-3 for k in ("ux", "uy", "uz", "px", "py", "pz")]
+        dofs = [d for d, v in enumerate(werte) if v]
+        if not dofs:
+            return self.error("Alle Werte sind null")
+        fall = w.get("fall") or None
+        m = self.model
+        self.merken("Zwangsverformung")
+        gesetzt = 0
+        for n in self.selection:
+            m.add_zwangsverformung(int(n), dofs, werte, case=fall)
+        if w.get("lager", True):
+            ohne = m.zwang_ohne_lager(fall)
+            je_knoten: dict = {}
+            for n, d in ohne:
+                je_knoten.setdefault(n, []).append(d)
+            for n, ds in je_knoten.items():
+                m.support(int(n), sorted(set(ds)))
+                gesetzt += 1
+        self.analysis = None
+        self.results = None
+        self.info(f"Zwangsverformung an {len(self.selection)} Knoten im Lastfall "
+                  f"{fall or m.active_case}"
+                  + (f" - an {gesetzt} Knoten dafür Lager gesetzt" if gesetzt else ""))
+        self.refresh_all()
+
     @staticmethod
     def _erst(d: dict) -> str:
         return next(iter(d), "")
@@ -5623,8 +5967,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def clear_loads(self):
         lc = self.model.case()
-        lc.nodal_loads.clear(); lc.beam_loads.clear(); lc.face_loads.clear(); lc.temp_loads.clear()
+        for liste in ("nodal_loads", "beam_loads", "face_loads", "temp_loads",
+                      "geometrielasten", "linienlasten", "zwangsverformungen"):
+            getattr(lc, liste).clear()
         lc.gravity = [0.0, 0.0, 0.0]
+        self.analysis = None
+        self.results = None
         self.refresh_all()
 
     def clear_supports(self):
@@ -6128,6 +6476,62 @@ class MainWindow(QtWidgets.QMainWindow):
             self._randseiten_zwischen = {}
         return self._randseiten_zwischen
 
+    def _linien_netz(self):
+        """Das Liniennetz je Modellstand, Auswahl und Sicht einmal."""
+        m = self.model
+        stand = (id(m), len(m.lines or {}), m.nn,
+                 hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
+                 tuple(self.sel_linien), frozenset(self.versteckt["linien"]))
+        if getattr(self, "_liniennetz_stand", None) == stand:
+            return self._liniennetz
+        self._liniennetz = vp.linien_netz(m, self.sel_linien, self.versteckt["linien"])
+        self._liniennetz_stand = stand
+        return self._liniennetz
+
+    class _Stille:
+        """Waehrend des Aufbaus nicht nach jedem Darsteller neu zeichnen.
+
+        pyvista rendert bei jedem add_mesh; bei vierzehn Darstellern sind das
+        vierzehn Bilder je Klick. Hier wird render() fuer die Dauer des
+        Aufbaus stillgelegt, am Ende zeichnet redraw einmal.
+        """
+
+        def __init__(self, plotter):
+            self.plotter = plotter
+
+        def __enter__(self):
+            self.plotter.render = lambda *a, **k: None
+            return self
+
+        def __exit__(self, *exc):
+            try:
+                del self.plotter.render
+            except AttributeError:
+                pass
+            return False
+
+    def _geometrie_netze(self):
+        """Die Netze der Geometrie ohne Elemente - je Modellstand und Sicht einmal.
+
+        Der Aufbau (Coons-Flaechen der Zylindermaentel) kostet beim Drehlager
+        eine Sekunde; er darf nicht bei jedem Klick anfallen.
+        """
+        m = self.model
+        stand = (id(m), len(m.flaechen), len(m.koerper), len(m.lines), m.nn,
+                 hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
+                 len(m.elements), sum(len(f.elemente) for f in m.flaechen.values()),
+                 self.act_flaechen.isChecked(), self.act_volumen.isChecked(),
+                 frozenset(self.versteckt["flaechen"]), frozenset(self.versteckt["koerper"]))
+        if getattr(self, "_geonetze_stand", None) == stand:
+            return self._geonetze
+        self._geonetze = vp.geometrie_netze(m, raender=self._raender(), seiten=self._randseiten(),
+                                            flaechen_an=self.act_flaechen.isChecked(),
+                                            koerper_an=self.act_volumen.isChecked(),
+                                            ausser_flaechen=self.versteckt["flaechen"],
+                                            ausser_koerper=self.versteckt["koerper"])
+        self._geonetze_stand = stand
+        return self._geonetze
+
     def _inhalte(self) -> dict:
         """{Flaechenname: Flaecheninhalt [m^2]} - einmal je Modellstand.
 
@@ -6157,7 +6561,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             edge_color="#c05000", line_width=5, name="leuchtet")
             except Exception as ex:      # noqa: BLE001
                 self.log.appendPlainText(f"Hervorhebung: {ex}")
-        for i, name in enumerate(self.sel_linien):
+        # Alle Umrisse der Auswahl in **einem** Darsteller: ein Koerper mit 144
+        # Flaechen brauchte sonst 144 add_mesh-Aufrufe je Klick.
+        zuege: list = []
+        for name in self.sel_linien:
             ln = m.lines.get(name)
             if ln is None:
                 continue
@@ -6169,37 +6576,44 @@ class MainWindow(QtWidgets.QMainWindow):
                         X = np.asarray(ln.punkte(m, vp.TEILUNG_KURVE), float)
                     except Exception:      # noqa: BLE001 - dann eben die Sehne
                         X = m.nodes[idx]
-                pl.add_mesh(pv.lines_from_points(X), color="#ff8800",
-                            line_width=6, name=f"sel_l{i}")
-        for i, name in enumerate(self.sel_flaechen):
+                zuege.append(np.asarray(X, float))
+        raender = self._raender()
+        for name in self.sel_flaechen:
             f = m.flaechen.get(name)
             if f is None:
                 continue
-            P = np.asarray(self._raender().get(name, f.randpunkte(m)), float)
+            P = np.asarray(raender.get(name, f.randpunkte(m)), float)
             if len(P) >= 3:
-                pl.add_mesh(pv.lines_from_points(np.vstack([P, P[:1]])),
-                            color="#ff8800", line_width=6, name=f"sel_f{i}")
-        for i, name in enumerate(self.sel_koerper):
+                zuege.append(np.vstack([P, P[:1]]))
+        for name in self.sel_koerper:
             k = m.koerper.get(name)
             if k is None:
                 continue
-            for j, fn in enumerate(k.flaechen):
+            for fn in k.flaechen:
                 f = m.flaechen.get(fn)
                 if f is None:
                     continue
-                P = np.asarray(self._raender().get(fn, f.randpunkte(m)), float)
+                P = np.asarray(raender.get(fn, f.randpunkte(m)), float)
                 if len(P) >= 3:
-                    pl.add_mesh(pv.lines_from_points(np.vstack([P, P[:1]])),
-                                color="#ff8800", line_width=5, name=f"sel_k{i}_{j}")
-        for i, name in enumerate(self.sel_staebe):
+                    zuege.append(np.vstack([P, P[:1]]))
+        for name in self.sel_staebe:
             mem = m.members.get(name)
             if mem is None:
                 continue
-            for j, e in enumerate(mem.elements or []):
+            for e in (mem.elements or []):
                 if e < len(m.elements):
                     idx = [int(n) for n in m.elements[e].nodes]
-                    pl.add_mesh(pv.lines_from_points(m.nodes[idx]), color="#ff8800",
-                                line_width=7, name=f"sel_s{i}_{j}")
+                    zuege.append(m.nodes[[idx[0], idx[-1]]])
+        if zuege:
+            pts: list = []
+            lines: list = []
+            for X in zuege:
+                basis = len(pts)
+                pts.extend(X)
+                for j in range(len(X) - 1):
+                    lines.extend([2, basis + j, basis + j + 1])
+            pl.add_mesh(pv.PolyData(np.asarray(pts, float), lines=np.asarray(lines)),
+                        color="#ff8800", line_width=6, name="auswahl")
 
     def _scale(self, u):
         umax = np.abs(u[:, :3]).max() if u.size else 0.0
@@ -6290,6 +6704,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self._kamera_setzen(kamera)
             self.plotter.render()
             return
+        with self._Stille(self.plotter):
+            r = self._aufbauen(m)
+        self._kamera_setzen(kamera)
+        self.plotter.render()
+
+    def _aufbauen(self, m):
+        """Alle Darsteller der Ansicht aufbauen (ohne Zwischenbilder)."""
         show_edges = self.act_edges.isChecked()
         modus = getattr(self, "darstellung", "Voll")
         size = m.characteristic_size()
@@ -6429,19 +6850,14 @@ class MainWindow(QtWidgets.QMainWindow):
             vp.add_supports(self.plotter, m, size, self.lagergroesse)
             if self.act_linien.isChecked():
                 vp.add_linien(self.plotter, m, self.sel_linien,
-                              ausser=self.versteckt["linien"])
-            vp.add_geometrie(self.plotter, m, raender=self._raender(),
-                             seiten=self._randseiten(),
-                             flaechen_an=self.act_flaechen.isChecked(),
-                             koerper_an=self.act_volumen.isChecked(),
-                             ausser_flaechen=self.versteckt["flaechen"],
-                             ausser_koerper=self.versteckt["koerper"],
-                             modus=modus)
+                              ausser=self.versteckt["linien"], netz=self._linien_netz())
+            vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
                 vp.add_nodes(self.plotter, m)
             self._auswahl_zeichnen()
             if self.act_loads.isChecked() and (u is None or not modal):
-                vp.add_loads(self.plotter, m, m.case(), size)
+                vp.add_loads(self.plotter, m, m.case(), size, raender=self._raender(),
+                             seiten=self._randseiten())
         except Exception as ex:
             self.log.appendPlainText(f"Darstellung: {ex}")
         if self.act_nodes.isChecked() and m.nn <= 3000:
@@ -6465,8 +6881,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plotter.show_axes()
             except Exception:
                 pass
-        self._kamera_setzen(kamera)
-        self.plotter.render()
+        return r
 
     def _kopfzeile_zeichnen(self, r, faktor: float = 0.0) -> list:
         """Oben links: was die Ansicht zeigt.

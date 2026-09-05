@@ -538,37 +538,85 @@ class Ansichtswuerfel(QtWidgets.QWidget):
                 self.gewaehlt.emit(r)
 
     # -- Zeichnen --------------------------------------------------------
+    #: Lichtrichtung im Bild (x nach rechts, y nach oben, z zum Betrachter)
+    LICHT = (-0.35, 0.55, 0.76)
+    #: Grundfarben der Seiten je Achse: x rot-, y gruen-, z blaustichig, wie
+    #: das Achsenkreuz - so erkennt man die Seite auch ohne Text
+    SEITENFARBEN = {"x": (222, 214, 206), "y": (208, 222, 208), "z": (206, 214, 228)}
+
+    def _seitenfarbe(self, richtung: str, n_bild, hell: bool) -> QtGui.QColor:
+        if hell:
+            return QtGui.QColor(dsg.FARBEN["akzent"])
+        grund = self.SEITENFARBEN.get(richtung.strip("+-").lower(), (214, 216, 220))
+        L = self.LICHT
+        lnorm = math.sqrt(sum(x * x for x in L))
+        cos = sum(n_bild[i] * L[i] for i in range(3)) / lnorm
+        schatt = 0.58 + 0.42 * max(0.0, cos)
+        return QtGui.QColor(*[int(min(255, c * schatt + 18)) for c in grund])
+
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        p.setRenderHint(QtGui.QPainter.TextAntialiasing, True)
         f = p.font()
         f.setPointSize(8)
         f.setBold(True)
         p.setFont(f)
         linie = QtGui.QColor(dsg.FARBEN["linie"])
-        for _tiefe, nz, text, richtung, poly in self._projektion():
+        R = self._matrix()
+        feld = self._wuerfelfeld()
+        # Weicher Schatten unter dem Wuerfel
+        schatten = QtGui.QRadialGradient(feld.center().x(), feld.bottom() - 6,
+                                         self.WUERFEL * 0.48)
+        schatten.setColorAt(0.0, QtGui.QColor(0, 0, 0, 55))
+        schatten.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QBrush(schatten))
+        p.drawEllipse(QtCore.QPointF(feld.center().x(), feld.bottom() - 6),
+                      self.WUERFEL * 0.46, self.WUERFEL * 0.13)
+        seiten = self._projektion()
+        normalen = {richtung: n for _t, richtung, n, _e in self.SEITEN}
+        for _tiefe, nz, text, richtung, poly in seiten:
             if nz <= 0:
                 continue
             hell = richtung == self._unter
-            # Schattierung nach der Neigung zur Blickrichtung
-            grau = int(236 - 40 * (1.0 - min(max(nz, 0.0), 1.0)))
-            p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if hell
-                                    else QtGui.QColor(grau, grau + 4, grau + 8)))
-            p.setPen(QtGui.QPen(QtGui.QColor(dsg.FARBEN["matt"]) if not hell else linie, 1.1))
+            n = normalen.get(richtung, (0, 0, 1))
+            n_bild = [sum(R[i][k] * n[k] for k in range(3)) for i in range(3)]
+            farbe = self._seitenfarbe(richtung, n_bild, hell)
+            # leichter Verlauf ueber die Seite: oben heller, unten dunkler
+            br = poly.boundingRect()
+            verlauf = QtGui.QLinearGradient(br.topLeft(), br.bottomLeft())
+            verlauf.setColorAt(0.0, farbe.lighter(108))
+            verlauf.setColorAt(1.0, farbe.darker(108))
+            p.setBrush(QtGui.QBrush(verlauf))
+            p.setPen(QtGui.QPen(QtGui.QColor(30, 40, 55, 150) if not hell else linie, 1.0))
             p.drawPolygon(poly)
-            if nz > 0.25:
-                p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["text"]))
-                p.drawText(poly.boundingRect(), QtCore.Qt.AlignCenter, text)
-        # Die Richtungszeile
+            if nz > 0.3:
+                # Beschriftung mit feinem Schatten, dann klar lesbar auf hell und dunkel
+                rect = poly.boundingRect()
+                f.setPointSize(9 if nz > 0.7 else 8)
+                p.setFont(f)
+                p.setPen(QtGui.QColor(255, 255, 255, 110))
+                p.drawText(rect.translated(0.5, 0.5), QtCore.Qt.AlignCenter, text)
+                p.setPen(QtGui.QColor("#ffffff" if hell else "#1c2a3a"))
+                p.drawText(rect, QtCore.Qt.AlignCenter, text)
+        # Glanzkante: die sichtbaren Aussenkanten etwas heller nachziehen
+        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 90), 1.0))
+        p.setBrush(QtCore.Qt.NoBrush)
+        for _tiefe, nz, _text, _richtung, poly in seiten:
+            if nz > 0:
+                p.drawPolyline(poly)
+        # Die Richtungszeile: runde Knoepfe
         for rect, text, richtung in self._felder():
             hell = richtung == self._unter
+            r2 = rect.adjusted(0.5, 1.0, -0.5, -1.0)
             p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"] if hell else "#f7f9fb"))
-            p.setPen(QtGui.QPen(linie, 1.0))
-            p.drawRoundedRect(rect, 3, 3)
-            p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["matt"]))
+            p.setPen(QtGui.QPen(QtGui.QColor(dsg.FARBEN["akzent"]) if hell else linie, 1.0))
+            p.drawRoundedRect(r2, 5, 5)
+            p.setPen(QtGui.QColor("#ffffff" if hell else dsg.FARBEN["text"]))
             f.setPointSize(7 if len(text) > 2 else 8)
             p.setFont(f)
-            p.drawText(rect, QtCore.Qt.AlignCenter, text)
+            p.drawText(r2, QtCore.Qt.AlignCenter, text)
         p.end()
 
 
@@ -595,15 +643,22 @@ class Ansichtsrand(QtCore.QObject):
         """
         b = self.ansicht.width()
         g = self.leiste.sizeHint()
-        w = self.wuerfel.width()
+        # feste Groesse des Wuerfels (setFixedSize) - sizeHint waere -1
+        w = max(1, self.wuerfel.width())
+        h = max(1, self.wuerfel.height())
         wx = max(12, b - w - 14)
+        wy = 12
         x = (b - g.width()) // 2
         if x + g.width() > wx - 8:
             x = wx - 8 - g.width()
-        x = max(12, x)
+        if x < 12:
+            # Leiste und Wuerfel passen nicht nebeneinander: der Wuerfel
+            # rueckt unter die Leiste, ueberschneiden darf sich nichts.
+            x = 12
+            wy = 10 + g.height() + 8
         self.leiste.setGeometry(x, 10, g.width(), g.height())
         self.leiste.raise_()
-        self.wuerfel.setGeometry(wx, 12, w, self.wuerfel.height())
+        self.wuerfel.setGeometry(wx, wy, w, h)
         self.wuerfel.raise_()
 
     def eventFilter(self, obj, ev):

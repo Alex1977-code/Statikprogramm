@@ -52,10 +52,37 @@ zu liefern.
 
 * Knotenlasten, Momente, vorgegebene Verschiebungen, Federlager.
 * Streckenlasten auf Stäben, global oder lokal, konstant oder linear
-  veränderlich (Trapez). Die äquivalenten Knotenlasten folgen aus den
-  Volleinspannwerten; die Schnittgrößen an Zwischenstellen werden aus den
-  Stabendkräften und der Streckenlast durch Gleichgewicht am Teilstab
-  berechnet (Momentenverlauf quadratisch bzw. kubisch).
+  veränderlich (Trapez), auch **abschnittsweise** auf [a, b] innerhalb eines
+  Elements. Die äquivalenten Knotenlasten sind das Integral der Last über die
+  Ansatzfunktionen des Stabes, f = ∫ₐᵇ Nᵀ(x) q(x) dx — linear für die
+  Längskraft, Hermite-Polynome dritten Grades für die Biegung —, mit
+  vier Gauß-Punkten ausgewertet (Integrand höchstens vierten Grades, also
+  exakt). Für a = 0, b = L ergibt das die Volleinspannwerte der Trapezlast,
+  für b → a die der Einzellast P a b²/L² und P a² b/L². Die Schnittgrößen an
+  Zwischenstellen folgen aus den Stabendkräften und den Abschnittslasten
+  durch Gleichgewicht am Teilstab: Resultierende Q(x) und ihr Moment um x je
+  Abschnitt, stückweise integriert; der Querkraftverlauf knickt an den
+  Abschnittsenden.
+* **Linienlasten** hängen am Stab (Kette von Elementen) oder an einer Linie.
+  Auf dem Stab werden sie in Abschnittslasten der Elemente zerlegt (q am
+  Elementanfang und -ende linear interpoliert). Auf einer Linie — dem Rand
+  einer Schale, der Kante eines Körpers — gehen sie auf die Netzknoten der
+  Linie: je Teilstück zwischen zwei Knoten Resultierende ½(qₐ+q_b)·l und
+  Schwerpunkt l(qₐ+2q_b)/(3(qₐ+q_b)), aufgeteilt nach dem Hebelgesetz.
+* **Zwangsverformungen** (vorgegebene Verschiebungen und Verdrehungen an
+  gelagerten Knoten, je Lastfall): K_ff u_f = F_f − K_fs u_s mit den
+  vorgegebenen Werten u_s; die Auflagerkräfte folgen aus R_s = K_sf u_f +
+  K_ss u_s − F_s. Ein vorgegebener Freiheitsgrad ohne Lager bleibt unwirksam
+  und wird gemeldet. In Kombinationen gehen die Vorgaben mit ihren Faktoren
+  ein (lineare Überlagerung).
+* **Ungleichmäßige Flächenlast**: p(x) = a + g·x, festgelegt durch zwei
+  Stützpunkte (linear entlang ihrer Verbindung, darüber hinaus fortgesetzt)
+  oder drei Stützpunkte (Ebene der Lastwerte, Lösung kleinster Norm). Jede
+  Elementseite bekommt den Wert an ihrem Schwerpunkt — bei Elementen, die
+  klein gegen die Lastveränderung sind, ist das die Resultierende der Seite
+  genau, ihr Angriffspunkt weicht um weniger als eine Elementgröße ab.
+* **Temperatur als Objektlast** auf Flächen und Volumen: ΔT und ΔT_z
+  hängen am Objekt und werden beim Vernetzen auf alle Elemente gelegt.
 * Flächenlasten auf Schalen (normal oder in vorgegebener globaler Richtung)
   und auf Volumenoberflächen (Flächennummer).
 * **Lasten an der Geometrie** (`Geometrielast`): Eine Last, die an einer Fläche

@@ -237,6 +237,10 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         raise FileNotFoundError(f"Datei '{path}' nicht gefunden")
     kind = _detect(path)
     fresh = model is None
+    # Z-Achse der Datei zeigt nach unten (RFEM-Vorgabe): nach dem Lesen um x
+    # drehen - nur bei einem frischen Modell, ein angehaengtes Modell wuerde
+    # sonst mitgedreht.
+    z_drehen = bool(options.pop("z_drehen", False)) and fresh
     stem = os.path.splitext(os.path.basename(os.path.normpath(path)))[0]
     tol = float(options.get("tol", C.DEFAULT_TOL))
 
@@ -312,6 +316,10 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         _from_zip_member(path, {".ifc"}, "ifc", model, log, **options)
 
     # Nachbereitung
+    if z_drehen:
+        n_gedreht = model.um_x_drehen()
+        C.say(log, f"Modell um die x-Achse gedreht ({n_gedreht} Knoten): die Z-Achse der "
+                   "Datei zeigte nach unten, hier zeigt z nach oben (y gespiegelt).")
     n_merged = C.merge_duplicate_nodes(model, tol) if model.nn > n_nodes0 else 0
     if n_merged:
         kb = getattr(model, "kontaktbedingungen", None) or {}

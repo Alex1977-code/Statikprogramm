@@ -120,20 +120,15 @@ def polygon_flaeche(punkte) -> float:
     return float(np.linalg.norm(n)) / 2.0
 
 
-def add_linien(plotter, model: Model, hervor: list = None, ausser=None):
-    """Die Linien des Modells zeichnen.
+def linien_netz(model: Model, hervor: list = None, ausser=None):
+    """Alle Linien als ein Liniennetz (PolyData) - oder None.
 
-    Linien sind Geometrie, keine Elemente - sie wurden bisher gar nicht
-    dargestellt. In einem aus RFEM uebernommenen Modell besteht die Geometrie
-    fast nur aus Linien; ohne sie sieht man ein leeres Bild und haelt den
-    Import fuer gescheitert.
-
-    Krumme Linien werden auf ihrer **wahren Kurve** gezeichnet, nicht als
-    Sehne durch die Stuetzknoten - sonst wird aus einer Bohrung eine Strecke.
+    Reine Daten, damit sie je Modellstand einmal entstehen: 1356 Boegen
+    abzutasten kostet eine halbe Sekunde, und das fiel bisher bei jedem Klick an.
     """
     linien = getattr(model, "lines", {}) or {}
     if not linien:
-        return
+        return None
     hervor = set(hervor or [])
     ausser = set(ausser or ())
     pts, zellen = [], []
@@ -153,9 +148,26 @@ def add_linien(plotter, model: Model, hervor: list = None, ausser=None):
         pts.extend(X)
         for i in range(len(X) - 1):
             zellen.extend([2, basis + i, basis + i + 1])
-    if pts:
-        plotter.add_mesh(pv.PolyData(np.asarray(pts, float), lines=np.asarray(zellen)),
-                         color=FARBE_LINIE, line_width=2, name="linien")
+    if not pts:
+        return None
+    return pv.PolyData(np.asarray(pts, float), lines=np.asarray(zellen))
+
+
+def add_linien(plotter, model: Model, hervor: list = None, ausser=None, netz=None):
+    """Die Linien des Modells zeichnen.
+
+    Linien sind Geometrie, keine Elemente - sie wurden bisher gar nicht
+    dargestellt. In einem aus RFEM uebernommenen Modell besteht die Geometrie
+    fast nur aus Linien; ohne sie sieht man ein leeres Bild und haelt den
+    Import fuer gescheitert.
+
+    Krumme Linien werden auf ihrer **wahren Kurve** gezeichnet, nicht als
+    Sehne durch die Stuetzknoten - sonst wird aus einer Bohrung eine Strecke.
+    """
+    if netz is None:
+        netz = linien_netz(model, hervor, ausser)
+    if netz is not None:
+        plotter.add_mesh(netz, color=FARBE_LINIE, line_width=2, name="linien")
 
 
 FARBE_LINIE = "#7a8a99"
@@ -263,9 +275,113 @@ GEOMETRIE_DARSTELLUNG = {
 }
 
 
+def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
+                    flaechen_an: bool = True, koerper_an: bool = True,
+                    ausser_flaechen=None, ausser_koerper=None):
+    """Die Netze der Geometrie ohne Elemente: (Flaechen, Raender, Koerperkanten).
+
+    Reine Daten, kein Zeichnen - damit sie je Modellstand **einmal** entstehen
+    (bei 786 Zylindermaenteln kostet der Aufbau eine Sekunde, und die darf
+    nicht bei jedem Klick anfallen). Jedes Ergebnis kann None sein.
+    """
+    flaechen = getattr(model, "flaechen", {}) or {}
+    if not flaechen:
+        return None, None, None
+    raender = raender if raender is not None else {}
+    seiten = seiten if seiten is not None else {}
+    ausser_flaechen = set(ausser_flaechen or ())
+    ausser_koerper = set(ausser_koerper or ())
+    koerper = getattr(model, "koerper", {}) or {}
+    for kn in ausser_koerper:
+        k = koerper.get(kn)
+        if k is not None:
+            ausser_flaechen.update(k.flaechen)
+    if not koerper_an:
+        for k in koerper.values():
+            ausser_flaechen.update(k.flaechen)
+
+    def ring_von(name, f):
+        r = raender.get(name)
+        if r is None:
+            r = f.randpunkte(model)
+            raender[name] = r
+        return r
+
+    def seiten_von(name, f):
+        r = seiten.get(name)
+        if r is None:
+            try:
+                r = f.randseiten_punkte(model)
+            except Exception:            # noqa: BLE001
+                r = []
+            seiten[name] = r
+        return r
+
+    pts: list = []
+    zellen: list = []
+    zelle_flaeche: list = []
+    rpts: list = []
+    rlines: list = []
+    for nr, (name, f) in enumerate(flaechen.items()):
+        if f.elemente or name in ausser_flaechen:
+            continue
+        if not flaechen_an and not any(name in k.flaechen for k in koerper.values()):
+            continue
+        ring = ring_von(name, f)
+        if len(ring) < 3:
+            continue
+        basis = len(rpts)
+        P = np.asarray(ring, float)
+        rpts.extend(np.vstack([P, P[:1]]))
+        for i in range(len(P)):
+            rlines.extend([2, basis + i, basis + i + 1])
+        P, Z = flaechen_dreiecke(ring, seiten_von(name, f))
+        if P is None:
+            continue
+        basis = len(pts)
+        pts.extend(np.asarray(P, float))
+        i = 0
+        n_zellen = 0
+        while i < len(Z):
+            k = int(Z[i])
+            zellen.append(k)
+            zellen.extend(int(z) + basis for z in Z[i + 1:i + 1 + k])
+            i += k + 1
+            n_zellen += 1
+        zelle_flaeche.extend([nr] * n_zellen)
+    pd_f = pd_r = pd_k = None
+    if pts:
+        pd_f = pv.PolyData(np.asarray(pts, float), faces=np.asarray(zellen))
+        pd_f.cell_data["flaeche"] = np.asarray(zelle_flaeche, int)
+    if rpts:
+        pd_r = pv.PolyData(np.asarray(rpts, float), lines=np.asarray(rlines))
+    if koerper_an:
+        kpts: list = []
+        klines: list = []
+        for kn, k in koerper.items():
+            if k.elemente or kn in ausser_koerper:
+                continue
+            for fname in k.flaechen:
+                f = flaechen.get(fname)
+                if f is None or f.elemente:
+                    continue
+                ring = ring_von(fname, f)
+                if len(ring) < 3:
+                    continue
+                basis = len(kpts)
+                P = np.asarray(ring, float)
+                kpts.extend(np.vstack([P, P[:1]]))
+                for i in range(len(P)):
+                    klines.extend([2, basis + i, basis + i + 1])
+        if kpts:
+            pd_k = pv.PolyData(np.asarray(kpts, float), lines=np.asarray(klines))
+    return pd_f, pd_r, pd_k
+
+
 def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = None,
                   seiten: dict = None, flaechen_an: bool = True, koerper_an: bool = True,
-                  ausser_flaechen=None, ausser_koerper=None, modus: str = "Transparent"):
+                  ausser_flaechen=None, ausser_koerper=None, modus: str = "Transparent",
+                  netze=None):
     """Flaechen und Volumenkoerper zeichnen, die **noch nicht vernetzt** sind.
 
     Ein Objekt, das man nicht sieht, kann man auch nicht anklicken. Eine eben
@@ -299,108 +415,18 @@ def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = N
     Die Kanten der Dreiecke einer Coons-Flaeche sind kein Netz und werden
     nie gezeichnet; die Raender kommen aus den Randlinien der Flaechen.
     """
-    flaechen = getattr(model, "flaechen", {}) or {}
-    if not flaechen:
-        return
-    raender = raender if raender is not None else {}
-    seiten = seiten if seiten is not None else {}
-    ausser_flaechen = set(ausser_flaechen or ())
-    ausser_koerper = set(ausser_koerper or ())
-    koerper = getattr(model, "koerper", {}) or {}
-    # Flaechen eines ausgeblendeten Koerpers sind mit ihm weg
-    for kn in ausser_koerper:
-        k = koerper.get(kn)
-        if k is not None:
-            ausser_flaechen.update(k.flaechen)
-    if not koerper_an:
-        for k in koerper.values():
-            ausser_flaechen.update(k.flaechen)
-
-    def ring_von(name, f):
-        r = raender.get(name)
-        if r is None:
-            r = f.randpunkte(model)
-            raender[name] = r
-        return r
-
-    def seiten_von(name, f):
-        r = seiten.get(name)
-        if r is None:
-            try:
-                r = f.randseiten_punkte(model)
-            except Exception:            # noqa: BLE001
-                r = []
-            seiten[name] = r
-        return r
-
+    if netze is None:
+        netze = geometrie_netze(model, raender, seiten, flaechen_an, koerper_an,
+                                ausser_flaechen, ausser_koerper)
+    pd_f, pd_r, pd_k = netze
     flaeche_zeichnen, angaben, rand_zeichnen, randfarbe = GEOMETRIE_DARSTELLUNG.get(
         modus, GEOMETRIE_DARSTELLUNG["Transparent"])
-    pts: list = []
-    zellen: list = []
-    zelle_flaeche: list = []
-    rpts: list = []
-    rlines: list = []
-    for nr, (name, f) in enumerate(flaechen.items()):
-        if f.elemente or name in ausser_flaechen:
-            continue
-        if not flaechen_an and not any(name in k.flaechen for k in koerper.values()):
-            continue
-        ring = ring_von(name, f)
-        if len(ring) < 3:
-            continue
-        if rand_zeichnen:
-            basis = len(rpts)
-            P = np.asarray(ring, float)
-            rpts.extend(np.vstack([P, P[:1]]))
-            for i in range(len(P)):
-                rlines.extend([2, basis + i, basis + i + 1])
-        if not flaeche_zeichnen:
-            continue
-        P, Z = flaechen_dreiecke(ring, seiten_von(name, f))
-        if P is None:
-            continue
-        basis = len(pts)
-        pts.extend(np.asarray(P, float))
-        i = 0
-        n_zellen = 0
-        while i < len(Z):
-            k = int(Z[i])
-            zellen.append(k)
-            zellen.extend(int(z) + basis for z in Z[i + 1:i + 1 + k])
-            i += k + 1
-            n_zellen += 1
-        zelle_flaeche.extend([nr] * n_zellen)
-    if pts:
-        pd = pv.PolyData(np.asarray(pts, float), faces=np.asarray(zellen))
-        pd.cell_data["flaeche"] = np.asarray(zelle_flaeche, int)
-        plotter.add_mesh(pd, show_edges=False, name="geo_flaechen", **angaben)
-    if rpts:
-        plotter.add_mesh(pv.PolyData(np.asarray(rpts, float), lines=np.asarray(rlines)),
-                         color=randfarbe, line_width=1, name="geo_raender")
-    # Randkanten der noch nicht vernetzten Volumenkoerper - ebenfalls gebuendelt
-    if not koerper_an:
-        return
-    kpts: list = []
-    klines: list = []
-    for kn, k in koerper.items():
-        if k.elemente or kn in ausser_koerper:
-            continue
-        for fname in k.flaechen:
-            f = flaechen.get(fname)
-            if f is None or f.elemente:
-                continue
-            ring = ring_von(fname, f)
-            if len(ring) < 3:
-                continue
-            basis = len(kpts)
-            P = np.asarray(ring, float)
-            kpts.extend(np.vstack([P, P[:1]]))
-            for i in range(len(P)):
-                klines.extend([2, basis + i, basis + i + 1])
-    if kpts:
-        plotter.add_mesh(pv.PolyData(np.asarray(kpts, float),
-                                     lines=np.asarray(klines)),
-                         color="#8e44ad" if modus != "Hidden-Line" else "#202020",
+    if pd_f is not None and flaeche_zeichnen:
+        plotter.add_mesh(pd_f, show_edges=False, name="geo_flaechen", **angaben)
+    if pd_r is not None and rand_zeichnen:
+        plotter.add_mesh(pd_r, color=randfarbe, line_width=1, name="geo_raender")
+    if pd_k is not None:
+        plotter.add_mesh(pd_k, color="#8e44ad" if modus != "Hidden-Line" else "#202020",
                          line_width=2, name="geo_volumen")
 
 
@@ -764,36 +790,288 @@ def support_at(model: Model, punkt, size: float, faktor: float = 1.0):
     return best
 
 
-def add_loads(plotter, model: Model, case, size: float):
-    """Knotenlasten (Pfeile) und Streckenlasten (Pfeilreihen) eines Lastfalls."""
+#: Farben der Lastsymbole
+FARBE_LAST = "#c02020"          # Kraefte, Momente, Strecken- und Flaechenlasten
+FARBE_LAST_WARM = "#e06a10"     # Temperatur: Erwaermung
+FARBE_LAST_KALT = "#2060c0"     # Temperatur: Abkuehlung
+FARBE_ZWANG = "#1e8a40"         # Zwangsverformung
+#: Hoechstzahl der Pfeile je Lastart - mehr sieht man nicht, es kostet nur
+PFEILE_MAX = 6000
+
+
+def _pfeile(plotter, pts, vec, size: float, name: str, farbe: str = FARBE_LAST):
+    """Pfeile, deren Spitze auf dem Angriffspunkt steht; Laenge nach Betrag."""
+    if not len(pts):
+        return
+    P = np.asarray(pts, float).reshape(-1, 3)
+    V = np.asarray(vec, float).reshape(-1, 3)
+    if len(P) > PFEILE_MAX:
+        wahl = np.linspace(0, len(P) - 1, PFEILE_MAX).astype(int)
+        P, V = P[wahl], V[wahl]
+    groesst = float(np.abs(V).max()) or 1.0
+    V = V / groesst * 0.06 * size
+    pd = pv.PolyData(P - V)
+    pd["v"] = V
+    plotter.add_mesh(pd.glyph(orient="v", scale="v", factor=1.0), color=farbe, name=name)
+
+
+def _dreiecksmitten(model: Model, f, raender: dict = None, seiten: dict = None,
+                    hoechstens: int = 24):
+    """Punkte und Normalen auf einer Flaeche (mit oder ohne Netz) fuer Lastpfeile."""
+    ring = (raender or {}).get(f.name)
+    if ring is None:
+        ring = f.randpunkte(model)
+    if len(ring) < 3:
+        return np.zeros((0, 3)), np.zeros((0, 3))
+    sd = (seiten or {}).get(f.name)
+    if sd is None:
+        try:
+            sd = f.randseiten_punkte(model)
+        except Exception:                # noqa: BLE001
+            sd = []
+    P, Z = flaechen_dreiecke(ring, sd)
+    if P is None:
+        return np.zeros((0, 3)), np.zeros((0, 3))
+    P = np.asarray(P, float)
+    mitten, normalen = [], []
+    i = 0
+    while i < len(Z):
+        k = int(Z[i])
+        idx = [int(z) for z in Z[i + 1:i + 1 + k]]
+        i += k + 1
+        Q = P[idx]
+        c = Q.mean(axis=0)
+        n = np.zeros(3)
+        for j in range(k):
+            n += np.cross(Q[j], Q[(j + 1) % k])
+        ln = float(np.linalg.norm(n))
+        if ln <= 0:
+            continue
+        n = n / ln
+        if k > 3:
+            # ebenes Vieleck: mehrere Pfeile ueber die Flaeche verteilt
+            for t in (0.5,) if k <= 4 else (0.5,):
+                mitten.append(c)
+                normalen.append(n)
+        else:
+            mitten.append(c)
+            normalen.append(n)
+    mitten = np.asarray(mitten, float).reshape(-1, 3)
+    normalen = np.asarray(normalen, float).reshape(-1, 3)
+    if len(mitten) > hoechstens:
+        wahl = np.linspace(0, len(mitten) - 1, hoechstens).astype(int)
+        mitten, normalen = mitten[wahl], normalen[wahl]
+    return mitten, normalen
+
+
+def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
+              seiten: dict = None):
+    """Alle Lasten eines Lastfalls ins Bild.
+
+    * Knotenlasten: rote Pfeile auf den Knoten
+    * Streckenlasten auf Elementen (auch abschnittsweise): Pfeilreihen
+    * Flaechenlasten auf Elementseiten: Pfeile an den Seitenmitten
+    * Objektlasten (Geometrielasten, Linienlasten) auf der **Geometrie** -
+      auch ohne Netz, so sieht man die Lasten eines eben eingelesenen
+      RFEM-Modells; die daraus abgeleiteten Elementlasten (``_geo``) werden
+      nicht ein zweites Mal gezeichnet
+    * Lastfenster einer freien Rechtecklast als Rahmen
+    * Temperaturlasten: Punkte (orange warm, blau kalt) am Element oder
+      auf der Flaeche
+    * Zwangsverformungen: gruene Pfeile am Knoten (Verschiebung), gruene
+      Ringe fuer Verdrehungen
+    """
+    if case is None:
+        return
+    # ---- Kraefte: Knoten, Strecken, Elementseiten -------------------------
     pts, vec = [], []
     for l in case.nodal_loads:
+        if getattr(l, "_geo", False):
+            continue
         f = np.asarray(l.F[:3], float)
-        if np.any(f):
-            pts.append(model.nodes[l.node])
+        if np.any(f) and 0 <= int(l.node) < model.nn:
+            pts.append(model.nodes[int(l.node)])
             vec.append(f)
     for bl in case.beam_loads:
+        if getattr(bl, "_geo", False) or not 0 <= int(bl.elem) < len(model.elements):
+            continue
         e = model.elements[bl.elem]
         X = model.nodes[e.nodes]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        T3, L = bm.local_axes(X[0], X[-1], getattr(e, "roll", 0.0) or 0.0)
         q1 = np.asarray(bl.q, float)
         q2 = np.asarray(bl.q2, float) if bl.q2 is not None else q1
         if bl.system == "local":
             q1, q2 = T3.T @ q1, T3.T @ q2
+        a = max(0.0, float(getattr(bl, "a", 0.0) or 0.0))
+        b = L if getattr(bl, "b", None) is None else min(float(bl.b), L)
+        if b <= a or L <= 0:
+            continue
         for t in np.linspace(0.1, 0.9, 4):
+            x = a + t * (b - a)
             q = (1 - t) * q1 + t * q2
             if np.any(q):
-                pts.append(X[0] + t * (X[1] - X[0]))
+                pts.append(X[0] + (x / L) * (X[-1] - X[0]))
                 vec.append(q)
-    if not pts:
-        return
-    pd = pv.PolyData(np.array(pts))
-    v = np.array(vec, float)
-    v = v / (np.abs(v).max() or 1.0) * 0.06 * size
-    # Pfeile zeigen auf den Angriffspunkt: Startpunkt = Punkt - Vektor
-    pd.points = pd.points - v
-    pd["v"] = v
-    plotter.add_mesh(pd.glyph(orient="v", scale="v", factor=1.0), color="#c02020", name="loads")
+    for fl in case.face_loads:
+        if getattr(fl, "_geo", False) or not 0 <= int(fl.elem) < len(model.elements):
+            continue
+        mitte = model._seitenmitte(fl.elem, fl.face)
+        if fl.direction is not None:
+            d = np.asarray(fl.direction, float)
+            d = d / (np.linalg.norm(d) or 1.0)
+        else:
+            n = model._seitennormale(fl.elem, fl.face)
+            if n is None:
+                e = model.elements[fl.elem]
+                X = model.nodes[e.nodes]
+                n = np.cross(X[1] - X[0], X[2] - X[0])
+                n = n / (np.linalg.norm(n) or 1.0)
+            d = -n            # positiv drueckt in den Koerper hinein
+        pts.append(mitte)
+        vec.append(d * fl.p)
+    # ---- Objektlasten auf der Geometrie -------------------------------------
+    warm, kalt = [], []
+    rahmen_pts, rahmen_lines = [], []
+    for gl in getattr(case, "geometrielasten", []) or []:
+        if gl.art == "flaeche":
+            f = model.flaechen.get(gl.ziel)
+            flaechen = [f] if f is not None else []
+        else:
+            k = model.koerper.get(gl.ziel)
+            flaechen = [model.flaechen[n] for n in (k.flaechen if k else [])
+                        if n in model.flaechen]
+        if gl.bereich and gl.bereich.get("art") == "rechteck":
+            o = np.asarray(gl.bereich.get("ursprung", [0, 0, 0]), float)
+            u = np.asarray(gl.bereich.get("u", [1, 0, 0]), float)
+            v = np.asarray(gl.bereich.get("v", [0, 1, 0]), float)
+            von = np.asarray(gl.bereich.get("von", [0, 0]), float)
+            bis = np.asarray(gl.bereich.get("bis", [0, 0]), float)
+            ecken = [o + von[0] * u + von[1] * v, o + bis[0] * u + von[1] * v,
+                     o + bis[0] * u + bis[1] * v, o + von[0] * u + bis[1] * v]
+            basis = len(rahmen_pts)
+            rahmen_pts.extend(ecken)
+            for j in range(4):
+                rahmen_lines.extend([2, basis + j, basis + (j + 1) % 4])
+        for f in flaechen:
+            mitten, normalen = _dreiecksmitten(model, f, raender, seiten)
+            if not len(mitten):
+                continue
+            if gl.bereich:
+                halten = np.array([gl.trifft(m_) for m_ in mitten], bool)
+                mitten, normalen = mitten[halten], normalen[halten]
+                if not len(mitten):
+                    continue
+            if getattr(gl, "lastart", "druck") == "temperatur":
+                (warm if gl.dT >= 0 else kalt).extend(mitten)
+                continue
+            if gl.richtung:
+                d = np.asarray(gl.richtung, float)
+                d = d / (np.linalg.norm(d) or 1.0)
+                D = np.repeat(d[None, :], len(mitten), axis=0)
+                if gl.projiziert:
+                    # nur die zugewandten Seiten tragen die Last
+                    c = normalen @ d
+                    halten = c < 0
+                    mitten, D = mitten[halten], D[halten]
+                    if not len(mitten):
+                        continue
+            else:
+                D = -normalen       # positiv drueckt hinein
+            for m_, d_ in zip(mitten, D):
+                p = gl.wert(m_) if getattr(gl, "verlauf", None) else gl.p
+                pts.append(m_)
+                vec.append(d_ * p)
+    for ll in getattr(case, "linienlasten", []) or []:
+        q1 = np.asarray(ll.q, float)
+        q2 = np.asarray(ll.q2, float) if ll.q2 is not None else q1
+        if ll.art == "stab":
+            mem = model.members.get(ll.ziel)
+            if mem is None:
+                continue
+            stuecke = []
+            for e in mem.elements or []:
+                if 0 <= int(e) < len(model.elements):
+                    el = model.elements[int(e)]
+                    stuecke.append((model.nodes[int(el.nodes[0])], model.nodes[int(el.nodes[-1])],
+                                    getattr(el, "roll", 0.0) or 0.0))
+        else:
+            ln = model.lines.get(ll.ziel)
+            if ln is None:
+                continue
+            idx = [int(n) for n in ln.nodes if 0 <= int(n) < model.nn]
+            if len(idx) < 2:
+                continue
+            X = model.nodes[idx]
+            if (ln.typ or "polyline") != "polyline":
+                try:
+                    X = np.asarray(ln.punkte(model, TEILUNG_KURVE), float)
+                except Exception:        # noqa: BLE001
+                    pass
+            stuecke = [(X[k], X[k + 1], 0.0) for k in range(len(X) - 1)]
+        if not stuecke:
+            continue
+        laengen = [float(np.linalg.norm(B - A)) for A, B, _ in stuecke]
+        gesamt = sum(laengen)
+        A_ = max(0.0, float(ll.von))
+        B_ = gesamt if ll.bis is None else min(float(ll.bis), gesamt)
+        if B_ <= A_ or gesamt <= 0:
+            continue
+        n_pfeile = max(4, min(40, int(gesamt / max(size, 1e-9) * 40)))
+        s0 = 0.0
+        for (A, B, roll), L in zip(stuecke, laengen):
+            if L <= 0:
+                s0 += L
+                continue
+            for x in np.linspace(s0, s0 + L, max(2, int(round(n_pfeile * L / gesamt)) + 1))[:-1] \
+                    + 0.5 * L / max(2, int(round(n_pfeile * L / gesamt)) + 1):
+                if x < A_ or x > B_:
+                    continue
+                t = (x - A_) / (B_ - A_)
+                q = (1 - t) * q1 + t * q2
+                if ll.system == "local" and ll.art == "stab":
+                    T3, _ = bm.local_axes(A, B, roll)
+                    q = T3.T @ q
+                if np.any(q):
+                    pts.append(A + (x - s0) / L * (B - A))
+                    vec.append(q)
+            s0 += L
+    _pfeile(plotter, pts, vec, size, "loads")
+    if rahmen_pts:
+        plotter.add_mesh(pv.PolyData(np.asarray(rahmen_pts, float),
+                                     lines=np.asarray(rahmen_lines)),
+                         color=FARBE_LAST, line_width=2, name="lastfenster")
+    # ---- Temperatur auf Elementen -------------------------------------------
+    for tl in case.temp_loads:
+        if getattr(tl, "_geo", False) or not 0 <= int(tl.elem) < len(model.elements):
+            continue
+        e = model.elements[tl.elem]
+        c = model.nodes[[int(n) for n in e.nodes]].mean(axis=0)
+        (warm if tl.dT >= 0 else kalt).append(c)
+    d = max(4.0, 0.012 * size)
+    for punkte, farbe, name in ((warm, FARBE_LAST_WARM, "temp_warm"),
+                                (kalt, FARBE_LAST_KALT, "temp_kalt")):
+        if punkte:
+            P = np.asarray(punkte, float).reshape(-1, 3)
+            if len(P) > PFEILE_MAX:
+                P = P[np.linspace(0, len(P) - 1, PFEILE_MAX).astype(int)]
+            plotter.add_points(P, color=farbe, point_size=9, render_points_as_spheres=True,
+                               name=name)
+    # ---- Zwangsverformungen -------------------------------------------------
+    zpts, zvec, ringe = [], [], []
+    for zv in getattr(case, "zwangsverformungen", []) or []:
+        if not 0 <= int(zv.node) < model.nn:
+            continue
+        X = model.nodes[int(zv.node)]
+        u = np.array([float(zv.u[k]) if k in zv.dofs else 0.0 for k in range(3)])
+        if np.any(u):
+            zpts.append(X)
+            zvec.append(u)
+        if any(k in zv.dofs and zv.u[k] for k in (3, 4, 5)):
+            ringe.append(X)
+    _pfeile(plotter, zpts, zvec, size, "zwang", FARBE_ZWANG)
+    if ringe:
+        plotter.add_points(np.asarray(ringe, float), color=FARBE_ZWANG, point_size=13,
+                           render_points_as_spheres=True, name="zwang_drehung")
 
 
 def add_contact_markers(plotter, model: Model, contact: list, size: float):

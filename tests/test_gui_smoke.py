@@ -1575,9 +1575,8 @@ def main():
               f"{np.round(ziel_v, 4)} -> {np.round(ziel_n, 4)}")
 
         w.auswahlart_setzen("Linie")
-        check("Auswahlart auch in der Glasleiste",
-              w.cb_auswahlart_glas.currentText() == "Linie",
-              w.cb_auswahlart_glas.currentText())
+        check("die Glasleiste kommt ohne Auswahlfeld aus", getattr(w, "cb_auswahlart_glas", None) is None
+              and w.cb_auswahlart.currentText() == w.auswahlart, w.auswahlart)
         w.auswahlart_setzen("Knoten")
 
         # Erzeuge-Maske steht rechts, nicht über der Ansicht
@@ -1730,6 +1729,23 @@ def main():
               and frei_vom_wuerfel and w.glasleiste.y() <= 16,
               f"Mitte {mitte_leiste:.0f} von {ansicht.width()} px, y = {w.glasleiste.y()}, "
               f"rechts {w.glasleiste.geometry().right()} < Würfel {w.ansichtswuerfel.x()}")
+
+        # Schmales Fenster: Leiste und Wuerfel duerfen sich nie ueberschneiden
+        breite_alt = w.width()
+        w.resize(1100, 900)
+        app.processEvents()
+        w.ansichtsrand.platzieren()
+        app.processEvents()
+        gl_, wf_ = w.glasleiste.geometry(), w.ansichtswuerfel.geometry()
+        check("im schmalen Fenster rückt der Würfel unter die Leiste, nichts überschneidet sich",
+              not gl_.intersects(wf_) and wf_.width() > 100 and wf_.height() > 80
+              and wf_.right() <= w.centralWidget().width(),
+              f"Leiste {gl_.x()}..{gl_.right()} x {gl_.y()}..{gl_.bottom()}, "
+              f"Würfel {wf_.x()}..{wf_.right()} x {wf_.y()}..{wf_.bottom()}")
+        w.resize(breite_alt, 980)
+        app.processEvents()
+        w.ansichtsrand.platzieren()
+        app.processEvents()
 
         # Ribbon: gleiche Hoehe, Gruppentitel auf gleicher Hoehe, Symbole
         register = w.ribbon.findChildren(ribm.Register)
@@ -1942,6 +1958,136 @@ def main():
         import traceback
         traceback.print_exc()
         check("Neue Oberfläche", False, str(ex)[:70])
+
+    # ---- Lasten: Masken, Tabelle, Bild; Auswahl per Zellenpicker; Import-Haken ----
+    try:
+        import pyvista as pvx
+        from statik3d.gui.dialogs import ImportDialog
+        w.load_example("hall")
+        app.processEvents()
+        lc = w.model.case()
+        stab = list(w.model.members)[0]
+        n0 = len(lc.beam_loads)
+        w.sel_staebe = [stab]
+        w._linienlast_aufbringen({"qx": 0, "qy": 0, "qz": -10.0, "trapez": True, "q2x": 0,
+                                  "q2y": 0, "q2z": -20.0, "system": "global", "von": 0.5,
+                                  "bis": 0.0, "fall": lc.name})
+        app.processEvents()
+        check("Linienlast-Maske haengt die Last an den Stab und verteilt sie",
+              len(lc.linienlasten) == 1 and lc.linienlasten[0].von == 0.5
+              and len(lc.beam_loads) > n0 and all(getattr(b, "_geo", False)
+                                                  for b in lc.beam_loads[n0:]),
+              f"{len(lc.linienlasten)} Linienlasten, {len(lc.beam_loads) - n0} Elementlasten")
+        w.sel_staebe = []
+        meldungen = []
+        fehler_alt = w.error
+        w.error = lambda msg: meldungen.append(str(msg))
+        w._linienlast_aufbringen({"qz": -1.0, "fall": lc.name})
+        w.error = fehler_alt
+        check("ohne Auswahl sagt die Maske es (keine zweite Last)",
+              len(lc.linienlasten) == 1 and meldungen and "wählen" in meldungen[0])
+        w.sel_staebe = [stab]
+        w._temperaturlast_aufbringen({"dT": 25.0, "dTz": 0.0, "alle": False, "fall": lc.name})
+        n_t = len(lc.temp_loads)
+        check("Temperatur-Maske auf den gewaehlten Stab",
+              n_t == len(w.model.members[stab].elements) and lc.temp_loads[0].dT == 25.0)
+        w.sel_staebe = []
+        knoten = int(w.model.supports[0].node)
+        w._set_selection([knoten])
+        w._zwangsverformung_aufbringen({"ux": 0, "uy": 0, "uz": -3.0, "px": 0, "py": 0,
+                                        "pz": 0, "lager": True, "fall": lc.name})
+        check("Zwangsverformungs-Maske am gewaehlten gelagerten Knoten",
+              len(lc.zwangsverformungen) == 1 and lc.zwangsverformungen[0].dofs == [2]
+              and abs(lc.zwangsverformungen[0].u[2] + 0.003) < 1e-12)
+        w.clear_selection()
+        # Lastentabelle: Objektlasten drin, abgeleitete Elementlasten nicht
+        w.tabelle_zeigen("Lasten")
+        app.processEvents()
+        arten = [str(z[2]) for z in w.tbl_last.modell.zeilen]
+        check("Lastentabelle zeigt Linienlast, Temperatur und Zwangsverformung",
+              "Linienlast" in arten and "Zwangsverformung" in arten and "Temperatur" in arten,
+              str(sorted(set(arten))))
+        check("und keine abgeleiteten Elementlasten",
+              sum(1 for z in w.tbl_last.modell.zeilen if str(z[2]) == "Streckenlast")
+              == sum(len(c.eigene("beam_loads")) for c in w.model.load_cases.values()))
+        akt = dict(w.plotter.renderer.actors)
+        check("Lasten im Bild: Pfeile, Temperaturpunkte, Zwang",
+              "loads" in akt and "temp_warm" in akt and "zwang" in akt,
+              str([k for k in akt if k in ("loads", "temp_warm", "temp_kalt", "zwang")]))
+        # Loeschen ueber die Tabelle nimmt die Objektlast samt Ableitungen
+        zeile = next(i for i, z in enumerate(w.tbl_last.modell.zeilen) if str(z[2]) == "Linienlast")
+        w.tbl_last.view.selectRow(zeile)
+        w.last_loeschen()
+        check("Loeschen der Linienlast nimmt ihre Elementlasten mit",
+              not lc.linienlasten and len(lc.beam_loads) == n0,
+              f"{len(lc.linienlasten)} Linienlasten, {len(lc.beam_loads)} statt {n0} Stablasten")
+        w.sel_staebe = [stab]
+        w.redraw()
+        app.processEvents()
+        check("die Auswahl leuchtet in einem einzigen Darsteller",
+              "auswahl" in dict(w.plotter.renderer.actors)
+              and not any(k.startswith("sel_") for k in dict(w.plotter.renderer.actors)))
+        w.sel_staebe = []
+        # Flaechenlast-Maske auf der Platte (Flaeche aus allen Schalen)
+        w.load_example("plate")
+        app.processEvents()
+        from statik3d.model import Flaeche
+        w.model.flaechen["F1"] = Flaeche("F1", linien=[], elemente=list(range(len(w.model.elements))))
+        w.sel_flaechen = ["F1"]
+        lcp = w.model.case()
+        w._flaechenlast_aufbringen({"p": 2.0, "richtung": "senkrecht zur Fläche (Druck)",
+                                    "projiziert": False, "verlauf": "linear von Punkt A nach B",
+                                    "p2": 6.0, "ax": 0, "ay": 0, "az": 0, "bx": 3, "by": 0, "bz": 0,
+                                    "fall": lcp.name})
+        check("Flaechenlast-Maske: lineare Last auf die Flaeche, verteilt auf die Elemente",
+              len(lcp.geometrielasten) == 1 and lcp.geometrielasten[0].verlauf
+              and len([f for f in lcp.face_loads if getattr(f, "_geo", False)]) == len(w.model.elements))
+        w.sel_flaechen = []
+        # Auswahl per Zellenpicker: Klick auf die Platte trifft die Flaeche
+        w.blickrichtung("+z")
+        w.zoom_alles()
+        app.processEvents()
+        breite, hoehe = w.plotter.render_window.GetSize()
+        w.plotter.iren.interactor.SetEventPosition(breite // 2, hoehe // 2)
+        check("Zellenpicker findet die Flaeche unter dem Zeiger",
+              w._objekt_am_zeiger("Fläche") == "F1", str(w._objekt_am_zeiger("Fläche")))
+        w.auswahlart_setzen("Fläche")
+        w._picked(np.array([1.5, 1.0, 0.0]))
+        app.processEvents()
+        check("und der Klick waehlt sie aus", w.sel_flaechen == ["F1"], str(w.sel_flaechen))
+        w.auswahlart_setzen("Knoten")
+        w.sel_flaechen = []
+        # Importdialog: Z-Achse-Haken nur bei RFEM-Dateien, Option kommt an
+        d = ImportDialog(w, "x.rf6", w.model)
+        check("Importdialog rf6: Haken „Z nach unten“ vorbelegt und als Option",
+              d.z_unten.isChecked() and d.options().get("z_drehen") is True)
+        d.append.setChecked(True)
+        check("beim Anhaengen ist der Haken gesperrt", not d.z_unten.isEnabled()
+              and d.options().get("z_drehen") is False)
+        d2 = ImportDialog(w, "x.dxf", w.model)
+        check("bei anderen Dateien keine Drehung", d2.options().get("z_drehen") is False)
+        # Drehung um x: Knoten und Lasten
+        from statik3d.model import Model as Mdl
+        mz = Mdl("Dreh")
+        mz.add_nodes(np.array([[1.0, 2.0, 3.0]]))
+        mz.load_node(0, Fx=1, Fy=2, Fz=3, Mx=4, My=5, Mz=6)
+        mz.um_x_drehen()
+        check("um_x_drehen: (x, y, z) -> (x, -y, -z), Kraefte und Momente mit",
+              np.allclose(mz.nodes[0], [1, -2, -3])
+              and mz.case().nodal_loads[0].F == [1, -2, -3, 4, -5, -6])
+        # Ansichtswuerfel zeichnet sich mit Schatten und Knopfzeile
+        pm = QtGui.QPixmap(w.ansichtswuerfel.size())
+        pm.fill(QtGui.QColor("#ffffff"))
+        w.ansichtswuerfel.render(pm)
+        bild = pm.toImage()
+        farben = {bild.pixelColor(x, y).name() for x in range(0, bild.width(), 4)
+                  for y in range(0, bild.height(), 4)}
+        check("der Ansichtswuerfel ist gezeichnet (viele Farbstufen)", len(farben) > 25, str(len(farben)))
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Lasten und Auswahl", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

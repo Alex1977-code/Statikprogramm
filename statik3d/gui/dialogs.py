@@ -884,6 +884,16 @@ class ImportDialog(QtWidgets.QDialog):
         self.cad_dim = QtWidgets.QComboBox(); self.cad_dim.addItems(["Volumen (3D)", "Schale (2D)"])
         self.subdiv = QtWidgets.QSpinBox(); self.subdiv.setRange(1, 50); self.subdiv.setValue(1)
         self.members = QtWidgets.QCheckBox("Stäbe automatisch erkennen (für EC3)"); self.members.setChecked(True)
+        # RFEM legt seine Modelle mit der Z-Achse nach **unten** an (Vorgabe).
+        # Das Programm rechnet mit z nach oben; der Haken dreht das Modell um
+        # die x-Achse (z nach oben, y gespiegelt) - eine Spiegelung allein
+        # machte aus rechts links.
+        self.z_unten = QtWidgets.QCheckBox("Z-Achse der Datei zeigt nach unten (RFEM-Vorgabe): "
+                                           "Modell um x drehen, z zeigt dann nach oben")
+        self.z_unten.setToolTip("Drehung um 180° um die globale x-Achse: (x, y, z) → (x, −y, −z). "
+                                "Knoten, Bögen, Lasten, Richtungen, Lastfenster und Schwerkraft "
+                                "werden mitgedreht. Nur bei einem neuen Modell, nicht beim Anhängen.")
+        self.z_unten.setChecked(ext in (".rf6", ".rf5", ".rs6", ".rs5"))
         f = QtWidgets.QFormLayout(self)
         f.addRow("Längeneinheit der Datei", self.unit)
         f.addRow("Standard-Querschnitt (Linien → Stäbe)", self.section)
@@ -895,6 +905,9 @@ class ImportDialog(QtWidgets.QDialog):
             f.addRow("Vernetzung", self.cad_dim)
         f.addRow(self.append)
         f.addRow(self.members)
+        if ext in (".rf6", ".rf5", ".rs6", ".rs5"):
+            f.addRow(self.z_unten)
+            self.append.toggled.connect(lambda an: self.z_unten.setEnabled(not an))
         f.addRow(buttons(self))
         self.ext = ext
 
@@ -905,7 +918,9 @@ class ImportDialog(QtWidgets.QDialog):
                "shell_prop": self.shell.currentText(), "subdivide": self.subdiv.value(),
                "size": self.cad_size.value(),
                "order": 2 if self.cad_order.currentIndex() == 0 else 1,
-               "dim": 3 if self.cad_dim.currentIndex() == 0 else 2}
+               "dim": 3 if self.cad_dim.currentIndex() == 0 else 2,
+               "z_drehen": bool(self.z_unten.isChecked() and self.z_unten.isEnabled()
+                                and self.ext in (".rf6", ".rf5", ".rs6", ".rs5"))}
         return opt
 
 
