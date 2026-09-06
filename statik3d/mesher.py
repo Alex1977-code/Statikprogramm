@@ -572,6 +572,8 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                             "Netz. In der Quelldatei ist das ein Hilfsobjekt ohne "
                             "Dicke; es trägt nichts.")
                 koerper.elemente = []
+                koerper.kommentar = (f"ohne Netz: kein Rauminhalt (Eckknoten spannen kein "
+                                     f"Volumen auf, {abs(v_hex):.3e} m³)")
                 return []
             if v_hex < 0:
                 order = order[4:] + order[:4]
@@ -598,6 +600,8 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                         "Element. In der Quelldatei ist das ein Hilfsobjekt ohne "
                         "Dicke; es trägt nichts.")
             koerper.elemente = []
+            koerper.kommentar = (f"ohne Netz: kein Rauminhalt (Eckknoten in einer Ebene, "
+                                 f"{abs(v) / 6.0:.3e} m³)")
             return []
         nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
         els = [model.add_element("tet4", nodes, mat, group=koerper.name)]
@@ -612,6 +616,8 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                 f"{len(knoten)} Eckknoten - abgebildet vernetzen lassen sich nur "
                 "Sechsflächner (6 Vierecke, 8 Knoten) und Tetraeder (4 Dreiecke, "
                 "4 Knoten). Der freie Vernetzer ist abgeschaltet - nicht vernetzt.")
+    koerper.kommentar = (f"ohne Netz: {len(flaechen)} Randflächen, {len(knoten)} Eckknoten - "
+                         "freier Vernetzer abgeschaltet")
     return []
 
 

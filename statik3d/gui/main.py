@@ -3000,6 +3000,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Fassung, Build und Gültigkeitsbereich")
         g.klein("Nach Update suchen…", self.check_update,
                 hinweis="Eine neue Programmfassung suchen und einspielen")
+        g.klein("Protokoll speichern…", self.protokoll_speichern,
+                hinweis="Das ganze Protokoll als Textdatei sichern - zum Nachlesen, "
+                        "Ablegen oder Weitergeben")
 
         # „Alles deselektieren“ steht in der Glasleiste, nicht mehr ganz oben
         rb.schnell(self.act_speichern, self.act_undo, self.act_redo, self.act_rechnen)
@@ -12641,6 +12644,43 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.Yes)
         return antwort == QtWidgets.QMessageBox.Yes
 
+    def protokoll_speichern(self):
+        """Das Protokoll als Textdatei sichern.
+
+        Bei einem grossen Modell stehen dort tausend Zeilen - zu jeder Flaeche,
+        jedem Volumen, jeder Kontaktfuge. Wer einer Meldung nachgehen will,
+        braucht sie als Datei, nicht als Bildausschnitt.
+        """
+        vor = (os.path.splitext(os.path.basename(self.path))[0] if self.path
+               else self.model.name or "protokoll")
+        ziel, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Protokoll speichern", f"{vor}_protokoll.txt", "Text (*.txt)")
+        if not ziel:
+            return
+        try:
+            with open(ziel, "w", encoding="utf-8") as f:
+                f.write(self.log.toPlainText())
+        except OSError as ex:
+            return self.error(f"Protokoll nicht geschrieben: {ex}")
+        zeilen = self.log.toPlainText().count("\n") + 1
+        self.info(f"Protokoll gespeichert ({zeilen} Zeilen): {ziel}")
+
+    def _ohne_netz_text(self, d: dict) -> str:
+        """„3 Flaechen (F1, F2, F7) und 10 Volumen (V41, V42, …)“.
+
+        Die Namen gehoeren in die Meldung: „das Protokoll sagt, warum“ hilft
+        bei tausend Zeilen niemandem, wenn man nicht weiss, wonach man sucht.
+        """
+        def liste(namen, wort):
+            if not namen:
+                return ""
+            gezeigt = ", ".join(str(x) for x in namen[:8])
+            return (f"{len(namen)} {wort} ({gezeigt}"
+                    + (f" und {len(namen) - 8} weitere" if len(namen) > 8 else "") + ")")
+
+        return " und ".join(x for x in (liste(d["unvernetzte_flaechen"], "Flächen"),
+                                        liste(d["unvernetzte_koerper"], "Volumen")) if x)
+
     def _vor_rechnung_vernetzen(self) -> bool:
         """Flaechen und Volumen ohne Netz tragen nichts: vor dem Rechnen
         vernetzen (nach Rueckfrage). False, wenn der Anwender abbricht."""
@@ -12658,7 +12698,8 @@ class MainWindow(QtWidgets.QMainWindow):
         nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
         if not nf and not nk:
             return True
-        was = " und ".join(x for x in (f"{nf} Flächen" if nf else "", f"{nk} Volumen" if nk else "") if x)
+        was = self._ohne_netz_text(d)
+        self._ohne_netz_protokoll(d)
         if not self._fragen("Vernetzen", f"{was} haben noch kein Netz - Geometrie ohne Elemente trägt "
                                          "nichts, und die Lasten darauf gehen verloren.\n\n"
                                          "Jetzt mit den Netzeinstellungen vernetzen und dann rechnen?"):
@@ -12672,10 +12713,37 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sel_flaechen, self.sel_koerper = alte
         d = diagnose(self.model)
         if d["unvernetzte_flaechen"] or d["unvernetzte_koerper"]:
-            self.error(f"{len(d['unvernetzte_flaechen'])} Flächen und {len(d['unvernetzte_koerper'])} Volumen "
-                       "sind weiterhin ohne Netz - das Protokoll sagt, warum. Die Berechnung wird nicht gestartet.")
+            self._ohne_netz_protokoll(d)
+            self.error(f"{self._ohne_netz_text(d)} sind weiterhin ohne Netz. "
+                       "Die vollständige Liste und der Grund je Objekt stehen im Protokoll "
+                       "(Extras → Protokoll speichern…). Die Berechnung wird nicht gestartet.")
             return False
         return True
+
+    def _ohne_netz_protokoll(self, d: dict) -> None:
+        """Die vollstaendige Liste ins Protokoll - mit dem, was das Objekt
+        ueber sich weiss (Bemerkung aus dem Vernetzen)."""
+        self.log.appendPlainText("--- Objekte ohne Netz ---")
+        for name in d["unvernetzte_flaechen"]:
+            f = self.model.flaechen.get(name)
+            grund = (getattr(f, "kommentar", "") or "").strip()
+            self.log.appendPlainText(f"  Fläche {name}" + (f": {grund}" if grund else ""))
+        for name in d["unvernetzte_koerper"]:
+            k = self.model.koerper.get(name)
+            grund = (getattr(k, "kommentar", "") or "").strip()
+            n_f = len(getattr(k, "flaechen", []) or [])
+            kn = set()
+            for fn in (getattr(k, "flaechen", []) or []):
+                fl = self.model.flaechen.get(fn)
+                if fl is not None:
+                    try:
+                        kn.update(int(x) for x in fl.randknoten(self.model))
+                    except Exception:      # noqa: BLE001
+                        pass
+            self.log.appendPlainText(
+                f"  Volumen {name}: {n_f} Randflächen, {len(kn)} Eckknoten"
+                + (f" - {grund}" if grund else ""))
+        self.bottom_tabs.setCurrentIndex(0)
 
     def do_solve(self, kind: str = None):
         if not self._vor_rechnung_vernetzen():

@@ -4,6 +4,7 @@ Rauchtest der Oberflaeche ohne Benutzer (X-Server noetig, z.B. xvfb-run):
 Laedt alle Beispiele, rechnet, schaltet alle Anzeigen durch, erzeugt Dialoge
 und einen Screenshot.
 """
+import io
 import os
 import sys
 import time
@@ -5248,6 +5249,48 @@ def main():
             w._fragen, w.error = alt_fragen, alt_fehler
         check("zweiter Durchgang: keine Nachfrage mehr", ok and not gefragt, str(gefragt))
         check("und kein FEHLER „weiterhin ohne Netz“", not fehler, str(fehler)[:90])
+
+        # Die Meldung muss die Objekte beim Namen nennen - „das Protokoll sagt,
+        # warum“ hilft bei tausend Zeilen niemandem
+        m.koerper["V_gut"].elemente = []
+        d = _diag(m)
+        text = w._ohne_netz_text(d)
+        check("die Meldung nennt das Volumen beim Namen",
+              text == "1 Volumen (V_gut)", text)
+        gefragt = []
+        alt_fragen = w._fragen
+        w._fragen = lambda t, x: (gefragt.append(x), False)[1]
+        try:
+            w._vor_rechnung_vernetzen()
+        finally:
+            w._fragen = alt_fragen
+        check("und die Nachfrage auch", bool(gefragt) and "V_gut" in gefragt[0],
+              (gefragt[0][:70] if gefragt else ""))
+        check("die volle Liste steht im Protokoll",
+              "--- Objekte ohne Netz ---" in w.log.toPlainText()
+              and "Volumen V_gut: 4 Randflächen" in w.log.toPlainText())
+
+        # Protokoll als Textdatei sichern
+        ziel = os.path.join(_tf.mkdtemp(), "protokoll.txt")
+        vorher = w.log.toPlainText()          # danach kommt die Bestätigungszeile dazu
+        alt_dlg = QtWidgets.QFileDialog.getSaveFileName
+        QtWidgets.QFileDialog.getSaveFileName = staticmethod(
+            lambda *a, **k: (ziel, "Text (*.txt)"))
+        try:
+            w.protokoll_speichern()
+        finally:
+            QtWidgets.QFileDialog.getSaveFileName = alt_dlg
+        check("Extras → Protokoll speichern schreibt die Datei",
+              os.path.exists(ziel) and os.path.getsize(ziel) > 50,
+              f"{os.path.getsize(ziel) if os.path.exists(ziel) else 0} Bytes")
+        check("und sie enthält das Protokoll wortgleich",
+              io.open(ziel, encoding="utf-8").read() == vorher)
+        check("die Bestätigung nennt Zeilenzahl und Pfad",
+              "Protokoll gespeichert" in w.log.toPlainText()
+              and os.path.basename(ziel) in w.log.toPlainText())
+        check("Ribbon Extras hat den Befehl",
+              any("Protokoll speichern" in b.text for b in w.ribbon.befehle),
+              str([b.text for b in w.ribbon.befehle if "Protokoll" in b.text]))
         w.new_model()
 
     except Exception as ex:      # noqa: BLE001

@@ -1970,9 +1970,11 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
             log.append(z)
     if aus.get("abgebrochen"):
         C.say(log, f"Volumen {koerper.name}: abgebrochen - bleibt ohne Netz.")
+        koerper.kommentar = "ohne Netz: Vernetzen abgebrochen"
         return []
     if aus.get("fehler"):
         C.warn(log, f"Volumen {koerper.name}: {aus['fehler']}")
+        koerper.kommentar = f"ohne Netz: {aus['fehler']}"
         return []
     if ordnung <= 0:
         ordnung = int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1)
