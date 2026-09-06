@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
+from .. import elemente as EL
 
 #: Farben des Entwurfs
 FARBEN = {
@@ -552,7 +553,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           for name, ln in sorted(model.lines.items(),
                                                  key=lambda kv: _natuerlich(kv[0]))],
                     "linie", "linien")
-        stab_els = [(i, e) for i, e in enumerate(model.elements) if e.typ in ("beam", "truss")]
+        stab_els = [(i, e) for i, e in enumerate(model.elements) if e.typ in EL.STAB_TYPEN]
         st = self._zweig(wurzel, "Stäbe", len(stab_els), "stabelemente", fett=True,
                          hinweis="Stabelemente (Balken und Fachwerkstäbe); darunter "
                                  "die Stäbe mit Nachweis")
@@ -580,7 +581,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                          for i, e in stab_els], "stabelement", "stabelemente")
         gf = getattr(model, "flaechen", {}) or {}
         fl = self._zweig(wurzel, "Flächen", len(gf), "geoflaechen", fett=True)
-        n_schalen = sum(1 for e in model.elements if e.typ in ("shell3", "shell4"))
+        n_schalen = sum(1 for e in model.elements if e.typ in EL.SCHALEN_TYPEN)
         if n_schalen:
             self._zweig(fl, "Flächenelemente", n_schalen, "flaechen",
                         hinweis="Schalenelemente aller Flächen")
@@ -591,7 +592,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     "geoflaeche", "geoflaechen")
         gk = getattr(model, "koerper", {}) or {}
         vo = self._zweig(wurzel, "Volumen", len(gk), "geokoerper", fett=True)
-        n_vol = sum(1 for e in model.elements if e.typ in ("tet4", "tet10", "hex8"))
+        n_vol = sum(1 for e in model.elements if e.typ in EL.VOLUMEN_TYPEN)
         if n_vol:
             self._zweig(vo, "Volumenelemente", n_vol, "volumen",
                         hinweis="Volumenelemente (Tetraeder, Hexaeder) aller Körper")
@@ -652,6 +653,49 @@ class Modellbaum(QtWidgets.QTreeWidget):
                               f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
                              for i, x in enumerate(model.surface_supports)],
                         "flaechenlager_einzeln", "flaechenlager")
+        # ---- Punkt- und Verbindungselemente -------------------------------
+        pm = getattr(model, "punktmassen", None) or []
+        dp = getattr(model, "daempfer", None) or []
+        fed = getattr(model, "federn", None) or {}
+        sk = getattr(model, "starrkoerper", None) or []
+        gs = getattr(model, "grenzschichten", None) or {}
+        n_verb = len(pm) + len(dp) + len(fed) + len(sk) + len(gs)
+        if n_verb:
+            vb = self._zweig(wurzel, "Verbindungen", n_verb, "kontakt", fett=True,
+                             hinweis="Punktmassen, Dämpfer, Federn, starre Körper "
+                                     "(RBE2/RBE3) und Grenzschichten ohne Dicke")
+            if pm:
+                z = self._zweig(vb, "Punktmassen", len(pm), "kontakt")
+                self._liste(z, [(x.name or f"Punktmasse {i + 1}",
+                                 f"{x.masse:g} kg", str(i),
+                                 f"Knoten {x.node}: m = {x.masse:g} kg, "
+                                 f"J = {', '.join(f'{v:g}' for v in (x.traegheit or []))} kg m²")
+                                for i, x in enumerate(pm)], "punktmasse", "punktmassen")
+            if dp:
+                z = self._zweig(vb, "Dämpfer", len(dp), "kontakt")
+                self._liste(z, [(x.name or f"Dämpfer {i + 1}",
+                                 f"K{x.node_a}" + (f"–K{x.node_b}" if int(x.node_b) >= 0 else ""),
+                                 str(i),
+                                 f"c = {', '.join(f'{v:g}' for v in (x.c or []))}")
+                                for i, x in enumerate(dp)], "daempfer", "daempfer")
+            if fed:
+                z = self._zweig(vb, "Federn", len(fed), "kontakt")
+                self._liste(z, [(name, ", ".join(f"{v:g}" for v in (x.k or [])[:3]), name,
+                                 f"{name}: k = {', '.join(f'{v:g}' for v in (x.k or []))}")
+                                for name, x in fed.items()], "feder", "federn")
+            if sk:
+                z = self._zweig(vb, "Starre Körper", len(sk), "kontakt")
+                self._liste(z, [(x.name or f"Starrkörper {i + 1}",
+                                 f"{x.art}, {len(x.slaves)} Kn", str(i),
+                                 f"{x.art}: Master K{x.master}, "
+                                 f"{len(x.slaves)} angeschlossene Knoten")
+                                for i, x in enumerate(sk)], "starrkoerper", "starrkoerper")
+            if gs:
+                z = self._zweig(vb, "Grenzschichten", len(gs), "kontakt")
+                self._liste(z, [(name, f"kn = {x.kn:g}", name,
+                                 f"{name}: kn = {x.kn:g} N/m je m², kt = {x.kt:g}")
+                                for name, x in gs.items()], "grenzschicht", "grenzschichten")
+
         if model.hinges:
             gk = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke")
             self._liste(gk, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d % 6]

@@ -115,6 +115,252 @@ def tributary_areas(model: Model, elements: list[int], face: int = -1) -> dict[i
 
 
 # --------------------------------------------------------------------------
+# Lager folgen dem Netz
+# --------------------------------------------------------------------------
+def _ringflaeche(P) -> float:
+    """Inhalt eines ebenen Vielecks (Newell)."""
+    P = np.asarray(P, float)
+    if len(P) < 3:
+        return 0.0
+    n = np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
+    return 0.5 * float(np.linalg.norm(n))
+
+
+def _geometrieknoten(model: Model, f) -> list[int]:
+    """Die Knoten der Randlinien einer Flaeche (Eckknoten der Geometrie)."""
+    out: list[int] = []
+    for ln in (f.linien or []):
+        line = (model.lines or {}).get(ln)
+        for n in (line.nodes if line is not None else []):
+            n = int(n)
+            if 0 <= n < model.nn and n not in out:
+                out.append(n)
+    return out
+
+
+def _facetten_geometrisch(model: Model, f) -> list:
+    """Die Aussenfacetten eines vernetzten Koerpers, die auf der ebenen
+    Flaeche *f* liegen - fuer Netze, die keine Randseiten je Flaeche
+    fuehren (abgebildete Hexaedernetze). Rueckgabe [(Element, Knoten, None)].
+    """
+    from .fugen import _punkte_im_polygon
+    koerper = getattr(model, "koerper", {}) or {}
+    k = next((k for k in koerper.values() if f.name in k.flaechen and k.elemente), None)
+    if k is None:
+        return []
+    try:
+        P = np.asarray(f.randpunkte(model), float)
+    except Exception:                   # noqa: BLE001
+        return []
+    if len(P) < 3:
+        return []
+    n = np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
+    ln = float(np.linalg.norm(n))
+    if ln <= 0:
+        return []
+    n = n / ln
+    c = P.mean(axis=0)
+    groesse = float(np.linalg.norm(P - c, axis=1).max()) or 1.0
+    tol = 1e-6 * groesse + 1e-9
+    if np.abs((P - c) @ n).max() > 1e-3 * groesse:
+        return []                       # krumme Flaeche: keine Ebene
+    kanten = np.diff(np.vstack([P, P[:1]]), axis=0)
+    u = kanten[int(np.argmax(np.linalg.norm(kanten, axis=1)))]
+    u = u - (u @ n) * n
+    u = u / (np.linalg.norm(u) or 1.0)
+    v = np.cross(n, u)
+    P2 = np.column_stack([(P - c) @ u, (P - c) @ v])
+    # Aussenfacetten des Koerpers: nur einmal belegte Seiten
+    gezaehlt: dict = {}
+    for ei in k.elemente:
+        ei = int(ei)
+        if not 0 <= ei < len(model.elements):
+            continue
+        for seite in element_faces(model, ei, -1):
+            key = tuple(sorted(int(x) for x in seite))
+            gezaehlt[key] = None if key in gezaehlt else (ei, [int(x) for x in seite])
+    aussen = [x for x in gezaehlt.values() if x is not None]
+    if not aussen:
+        return []
+    out = []
+    for ei, nd in aussen:
+        X = model.nodes[nd]
+        if np.abs((X - c) @ n).max() > tol:
+            continue
+        s = X.mean(axis=0) - c
+        if _punkte_im_polygon(P2, np.array([[s @ u, s @ v]]), rand=tol)[0]:
+            out.append((ei, nd, None))
+    return out
+
+
+def _nur_in_der_ebene(model: Model, f, facetten: list) -> list:
+    """Bei einer **ebenen** Flaeche nur die Facetten, die in ihrer Ebene liegen.
+
+    Die Randseiten eines Koerpers werden je Flaeche gefuehrt; an den Kanten
+    einer Platte koennen dabei auch Seitenfacetten an der Deckflaeche
+    haengen. Fuer die Bettung zaehlt nur, was auf der Flaeche liegt - sonst
+    waere die Einflussflaeche um die Seitenflaechen zu gross. Krumme Flaechen
+    bleiben, wie sie sind.
+    """
+    if not facetten:
+        return facetten
+    try:
+        P = np.asarray(f.randpunkte(model), float)
+    except Exception:                   # noqa: BLE001
+        return facetten
+    if len(P) < 3:
+        return facetten
+    n = np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
+    ln = float(np.linalg.norm(n))
+    if ln <= 0:
+        return facetten
+    n = n / ln
+    c = P.mean(axis=0)
+    groesse = float(np.linalg.norm(P - c, axis=1).max()) or 1.0
+    if np.abs((P - c) @ n).max() > 1e-3 * groesse:
+        return facetten                 # krumm: keine Ebene
+    tol = 1e-4 * groesse + 1e-9
+    out = []
+    for e, nd, nf in facetten:
+        X = model.nodes[[int(x) for x in nd]]
+        if np.abs((X - c) @ n).max() <= tol:
+            out.append((e, nd, nf))
+    return out
+
+
+def flaechen_einflussflaechen(model: Model, flaechen: list) -> dict[int, float]:
+    """Einflussflaeche je Knoten auf diesen Geometrieflaechen.
+
+    Vernetzte Flaechen: aus den Facetten des Netzes (Schalenelemente, oder
+    die Randseiten der Volumen auf der Flaeche; fehlen sie am Netz, die
+    Aussenfacetten des Koerpers in der Ebene der Flaeche) - jede Facette gibt
+    ihren Inhalt gleichmaessig an ihre Knoten. Flaechen ohne Netz: die
+    Eckknoten der Randlinien, der Flaecheninhalt gleich verteilt (wie beim
+    Import).
+    """
+    from .fugen import _dreiecke_der_fuge
+    trib: dict[int, float] = {}
+    for f in flaechen:
+        facetten = _dreiecke_der_fuge(model, [f])
+        if not facetten and not (f.elemente or f.randseiten):
+            facetten = _facetten_geometrisch(model, f)
+        facetten = _nur_in_der_ebene(model, f, facetten)
+        if facetten:
+            for _e, nd, _n in facetten:
+                nd = [int(x) for x in nd]
+                P = model.nodes[nd]
+                A = _triangle_area(P[:3]) if len(nd) == 3 \
+                    else _triangle_area(P[[0, 1, 2]]) + _triangle_area(P[[0, 2, 3]])
+                for n in nd:
+                    trib[n] = trib.get(n, 0.0) + A / len(nd)
+            continue
+        ecken = _geometrieknoten(model, f)
+        if not ecken:
+            continue
+        try:
+            A = float(f.inhalt(model))
+        except Exception:               # noqa: BLE001 - offener Rand: kein Inhalt
+            A = 0.0
+        for n in ecken:
+            trib[n] = trib.get(n, 0.0) + A / len(ecken)
+    return trib
+
+
+def knoten_auf_linie(model: Model, P: np.ndarray, tol: float) -> list[int]:
+    """Alle Knoten, die auf dem Linienzug P liegen - in Reihenfolge der Linie."""
+    P = np.atleast_2d(np.asarray(P, float))
+    if len(P) < 2 or not model.nn:
+        return []
+    from scipy.spatial import cKDTree
+    baum = cKDTree(model.nodes)
+    seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
+    cum = np.concatenate([[0.0], np.cumsum(seg)])
+    lage: dict[int, float] = {}
+    for k in range(len(P) - 1):
+        a, b = P[k], P[k + 1]
+        d = b - a
+        L2 = float(d @ d)
+        if L2 <= 0:
+            continue
+        kand = baum.query_ball_point(0.5 * (a + b), 0.5 * np.sqrt(L2) + tol)
+        if not kand:
+            continue
+        Q = model.nodes[kand]
+        t = np.clip(((Q - a) @ d) / L2, 0.0, 1.0)
+        abstand = np.linalg.norm(Q - (a + t[:, None] * d), axis=1)
+        for i, ti, di in zip(kand, t, abstand):
+            if di <= tol:
+                s = cum[k] + ti * seg[k]
+                if int(i) not in lage or s < lage[int(i)]:
+                    lage[int(i)] = float(s)
+    return [n for n, _s in sorted(lage.items(), key=lambda x: x[1])]
+
+
+def lager_auf_netz(model: Model, log: list = None) -> dict:
+    """Linien- und Flaechenlager von der Geometrie auf das Netz bringen.
+
+    Ein aus RFEM uebernommenes Flaechenlager kennt seine Flaechen; seine
+    Knoten sind zunaechst nur die Eckknoten der Geometrie, der Inhalt der
+    Flaeche gleich verteilt. Nach dem Vernetzen liegen auf der Flaeche viele
+    Netzknoten - die Bettung muss auf **sie** wirken, sonst haengt die
+    Platte zwischen vier Eckfedern. Hier bekommt jedes Lager mit
+    Flaechenangabe seine Knoten und Einflussflaechen aus dem Netz seiner
+    Flaechen (Schalenelemente oder Randseiten der Volumen); Flaechen ohne
+    Netz behalten die Eckknoten. Ein Linienlager mit Linienangabe bekommt
+    alle Netzknoten auf seinen Linien, in Reihenfolge der Linie - auch auf
+    einem Bogen. Das Ergebnis haengt nur von Geometrie und Netz ab; der
+    Aufruf ist beliebig wiederholbar (nach dem Vernetzen, nach dem Loeschen
+    des Netzes, vor jeder Rechnung).
+
+    Rueckgabe {"flaechenlager": n, "linienlager": n} - so viele Lager haben
+    ihre Knoten aus dem Netz bekommen.
+    """
+    flaechen = getattr(model, "flaechen", {}) or {}
+    linien = getattr(model, "lines", {}) or {}
+    n_f = n_l = 0
+    for ss in (model.surface_supports or []):
+        namen = [n for n in (getattr(ss, "flaechen", None) or []) if n in flaechen]
+        if not namen:
+            continue
+        trib = flaechen_einflussflaechen(model, [flaechen[n] for n in namen])
+        if not trib:
+            continue
+        ss.nodes = sorted(trib)
+        ss.areas = [trib[n] for n in ss.nodes]
+        ss.elements = []
+        n_f += 1
+    if model.nn:
+        groesse = float(np.ptp(np.asarray(model.nodes, float), axis=0).max() or 1.0)
+    else:
+        groesse = 1.0
+    for ls in (model.line_supports or []):
+        namen = [n for n in (getattr(ls, "linien", None) or []) if n in linien]
+        if not namen:
+            continue
+        kette: list[int] = []
+        for name in namen:
+            ln = linien[name]
+            try:
+                P = np.asarray(ln.punkte(model, 64), float)
+            except Exception:           # noqa: BLE001 - Linie ohne Kurve: die Knoten
+                idx = [int(n) for n in ln.nodes if 0 <= int(n) < model.nn]
+                P = model.nodes[idx] if len(idx) > 1 else np.zeros((0, 3))
+            if len(P) < 2:
+                continue
+            L = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum())
+            tol = max(2e-3 * L, 1e-6 * groesse)
+            for n in knoten_auf_linie(model, P, tol):
+                if n not in kette:
+                    kette.append(n)
+        if kette:
+            ls.nodes = kette
+            n_l += 1
+    if log is not None and (n_f or n_l):
+        log.append(f"  Lager auf dem Netz: {n_f} Flächenlager, {n_l} Linienlager")
+    return {"flaechenlager": n_f, "linienlager": n_l}
+
+
+# --------------------------------------------------------------------------
 # Expansion
 # --------------------------------------------------------------------------
 def _entry(node: int, dof: int, b: DofBehaviour, factor: float, label: str,
@@ -132,6 +378,10 @@ def expand(model: Model, log: list = None) -> list[NodalDof]:
     """Alle Lager als Knoten-FHG. Mehrfach belegte FHG werden zusammengefasst:
     starr schlaegt Feder, Federn addieren sich."""
     out: list[NodalDof] = []
+    # Lager mit Geometriebezug folgen dem Netz - was gerade vernetzt ist
+    if any(getattr(x, "flaechen", None) for x in (model.surface_supports or [])) \
+            or any(getattr(x, "linien", None) for x in (model.line_supports or [])):
+        lager_auf_netz(model)
     for si, s in enumerate(model.supports):
         label = s.name or f"Knotenlager {s.node}"
         for dof in range(NDOF):

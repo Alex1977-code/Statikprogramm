@@ -172,8 +172,12 @@ def _blechfeld(a=2.0, b=1.0, t=0.008, nx=8, ny=4, druck=200e3, schub=0.0):
                                      "S355", "t"))
     for j in range(ny + 1):
         m.fix(ids[(0, j)], "all")
+    # Konsistente Randlasten: die Eckknoten tragen den halben Streifen. Mit
+    # gleichen Knotenlasten entstuende am Rand eine Spannungsspitze, und die
+    # Handrechnung N/(b t) traefe nur im Mittel.
     for j in range(ny + 1):
-        m.load_node(ids[(nx, j)], Fx=-druck / (ny + 1), Fz=schub / (ny + 1))
+        anteil = 0.5 if j in (0, ny) else 1.0
+        m.load_node(ids[(nx, j)], Fx=-druck * anteil / ny, Fz=schub * anteil / ny)
     return m, els, ids
 
 

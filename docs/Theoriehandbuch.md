@@ -27,18 +27,115 @@ Dokumentation in statischen Berichten.
 
 ### 1.2 Finite Elemente
 
-| Element | Formulierung | Freiheitsgrade |
-|---|---|---|
-| beam | Räumlicher Balken, Timoshenko-Schubverformung wenn Schubflächen > 0, Saint-Venant-Torsion, Momentengelenke durch statische Kondensation | 12 |
-| truss | Fachwerkstab, nur Normalkraft | 6 (Translation) |
-| shell3 | Ebene Schale = CST-Scheibe (Membran) + DKT-Platte (Batoz/Bathe/Ho), künstliche Drillsteifigkeit | 18 |
-| shell4 | Viereck als Mittelung beider Diagonalzerlegungen in shell3 | 24 |
-| tet4 | Linearer Tetraeder (konstante Dehnung) | 12 |
-| tet10 | Quadratischer Tetraeder, 4 Gaußpunkte | 30 |
-| hex8 | Trilinearer Hexaeder mit inkompatiblen Moden (Wilson/Taylor), 8 Gaußpunkte | 24 |
+Welche Elementtypen es gibt, steht an **einer** Stelle: im Verzeichnis
+`statik3d/elemente.py` (Familie, Knotenzahl, Freiheitsgrade je Knoten,
+VTK-Zelle für die Ansicht, Klartext für den Bericht). Assemblierung, Löser,
+Ansicht, Vernetzer, Import, Export und Bericht fragen dieses Verzeichnis;
+nirgends sonst steht eine Aufzählung von Elementnamen.
 
-Die Elemente sind gegen analytische Lösungen und Patch-Tests verifiziert
-(`python -m tests.test_verification`, 26 Benchmarks).
+**Stäbe** (2 Knoten, 6 Freiheitsgrade je Knoten)
+
+| Element | Formulierung | FHG |
+|---|---|---|
+| beam | Räumlicher Balken, Timoshenko-Schubverformung wenn Schubflächen > 0, Saint-Venant-Torsion, Momentengelenke durch statische Kondensation; mit **Exzentrizität** (starrer Versatz der Stabenden) und **Wölbkrafttorsion** (7. Freiheitsgrad je Knoten) | 12 (14) |
+| truss | Fachwerkstab, nur Normalkraft; mit `nur` = zug/druck ein **Ausfallstab** | 6 (Translation) |
+| seil | Seil: nach Theorie I. Ordnung ein Zugstab mit Ausfall, nach Theorie III. Ordnung die **elastische Kettenlinie** | 6 (Translation) |
+
+**Schalen** (6 Freiheitsgrade je Knoten, Drillsteifigkeit künstlich stabilisiert)
+
+| Element | Formulierung | FHG |
+|---|---|---|
+| shell3 | Dünn: CST-Scheibe + DKT-Platte (Batoz/Bathe/Ho). Dick (Eigenschaft „mindlin“): MITC3 (Lee/Bathe) | 18 |
+| shell4 | Bilineare Scheibe mit inkompatiblen Moden + **MITC4**-Platte (Bathe/Dvorkin, Reissner-Mindlin, schublockierungsfrei). Eigenschaft „dkt“ schaltet auf die alte Zerlegung in zwei DKT-Dreiecke zurück | 24 |
+| shell6 | Quadratisches Dreieck, Reissner-Mindlin, Querschub selektiv reduziert | 36 |
+| shell8 | Serendipity-Viereck, Reissner-Mindlin, Biegung 3×3, Querschub 2×2 | 48 |
+
+Jede Schale kann **geschichtet** sein: die Eigenschaft trägt statt einer Dicke
+eine Liste von Lagen (Dicke, E, ν oder orthotrop E₁, E₂, ν₁₂, G₁₂, G₁₃, G₂₃,
+Winkel). Daraus folgen nach der klassischen Laminattheorie die Steifigkeiten
+A (Membran), B (Kopplung), D (Biegung) und Ds (Querschub, Schubkorrektur 5/6);
+ein unsymmetrischer Aufbau koppelt Dehnung und Krümmung (B ≠ 0).
+
+**Volumen** (3 Verschiebungsfreiheitsgrade je Knoten)
+
+| Element | Formulierung | Integration |
+|---|---|---|
+| tet4 | Linearer Tetraeder (konstante Dehnung) | 1 Punkt (exakt) |
+| tet10 | Quadratischer Tetraeder | 4 Punkte |
+| hex8 | Trilinearer Hexaeder mit inkompatiblen Moden (Wilson/Taylor) | 2×2×2 |
+| hex20 | Quadratischer Hexaeder (Serendipity, 20 Knoten) | 3×3×3 |
+| pent6 | Keil (Prisma), linear | 3 × 2 |
+| pent15 | Keil, quadratisch | 6 × 3 |
+| pyr5 | Pyramide (rationale Formfunktionen nach Bedrosian) | kollabierte 2×2×2-Regel |
+
+Keil und Pyramide sind die Übergangselemente zwischen Hexaeder- und
+Tetraedernetzen: eine Hexaederschicht endet über eine Pyramidenlage im
+Tetraedernetz, ohne dass Knoten hängen.
+
+**Ebene Elemente** (3 Verschiebungsfreiheitsgrade je Knoten, Steifigkeit nur in
+der Elementebene) als ebene3, ebene4, ebene6, ebene8 mit dem Zustand
+**Scheibe** (ebener Spannungszustand, Dicke t), **ebener Dehnungszustand**
+(Scheibe je Tiefe t) oder **rotationssymmetrisch** (die Elementebene ist die
+x-z-Ebene, r = x, Drehachse = z, Integration über 2π·r). Das Viereck trägt in
+den ebenen Zuständen inkompatible Moden; auf der Drehachse (r → 0) wird die
+Umfangsdehnung durch ∂u_r/∂r ersetzt.
+
+**Punkt- und Verbindungselemente**
+
+| Element / Objekt | Wirkung |
+|---|---|
+| feder | Zwei Knoten, sechs Steifigkeiten in lokalen Achsen (Weg und Verdrehung); mit `nur` ein Ausfallelement |
+| grenzschicht6/8 | Grenzschicht **ohne Dicke** zwischen zwei Flächen: Normal- und Schubsteifigkeit je Fläche (Klebeschicht, weiche Fuge) |
+| Punktmasse | Masse und Drehträgheiten an einem Knoten (Eigenfrequenzen, Eigengewicht m·g) |
+| Dämpfer | Viskoser Dämpfer zwischen zwei Knoten oder gegen den Boden (Dämpfungsmatrix) |
+| Starrer Körper | RBE2 (die Slaves folgen dem Master starr) und RBE3 (der Master ist der gewichtete Mittelpunkt: eine Last verteilt sich, ohne zu versteifen) - als Zwangsbedingung im Strafverfahren |
+
+Die Elemente sind gegen analytische Lösungen und Patch-Tests verifiziert:
+`tests/test_verification.py` (26 Benchmarks), dazu je Familie
+`tests/test_elemente_volumen.py`, `tests/test_elemente_schalen.py`,
+`tests/test_elemente_ebene.py`, `tests/test_elemente_stab.py` und - für das
+Zusammenspiel mit Modell, Löser, Netz, Bericht und Schnittstellen -
+`tests/test_elemente.py`.
+
+### 1.2a Ausfallstäbe, Seile und der siebte Freiheitsgrad
+
+**Nur Zug oder nur Druck.** Ein Fachwerkstab, ein Seil oder eine Feder mit
+`nur` = „zug“ bzw. „druck“ trägt nur in einer Richtung. Gerechnet wird mit
+einer **Aktivmengen-Iteration** (`solver.solve_with_ausfall`): erst tragen
+alle, dann wird herausgenommen, wer die falsche Kraft trägt - seine
+Steifigkeit wird als Zusatzmatrix wieder abgezogen, das System selbst bleibt
+stehen -, und es wird neu gelöst, bis sich die Menge nicht mehr ändert. Wer
+herausgenommen wurde, darf im nächsten Schritt wieder hinein. Kontakt läuft
+innen weiter mit.
+
+**Seile.** Nach Theorie III. Ordnung ist ein Seil die **elastische
+Kettenlinie** (Peyrot/Goulois, Jayaraman/Knudson): aus der ungedehnten Länge
+L₀, der Dehnsteifigkeit EA und der Streckenlast w folgen der Horizontalzug H,
+der Durchhang und die Tangente ∂f/∂u für das Newton-Verfahren. Das Eigengewicht
+steckt in der Kettenlinie selbst und wird nicht noch einmal als Knotenlast
+angesetzt. Ist die Sehne länger als L₀, wird das Seil zum Zugstab EA/L₀; ist
+sie kürzer, wird es kraftlos.
+
+**Wölbkrafttorsion.** Ein Balken mit dem Haken `woelb` und einem Querschnitt
+mit Wölbwiderstand I_w > 0 bekommt an jedem seiner Knoten einen **siebten
+Freiheitsgrad**: die Verwölbung ω = θ'. Diese Freiheitsgrade stehen hinter
+den 6·n Knotenfreiheitsgraden (`Model.woelb_index`). Die lokale Steifigkeit
+ist 14×14: die zwölf des Balkens, in denen der Saint-Venant-Anteil durch die
+gemischte Torsion ersetzt ist
+
+  K_t = G·I_t/(30L)·[36, 3L, −36, 3L; …] + E·I_w/L³·[12, 6L, −12, 6L; …]
+
+(Hermite-Ansatz für θ). Ein Lager mit dem Haken „Wölbeinspannung“ sperrt ω an
+seinem Knoten (Stirnplatte, Einspannung); ohne ihn ist die Verwölbung frei
+(Gabellagerung). Im Ergebnis stehen die **Bimomente** B = −E·I_w·θ'' an beiden
+Stabenden und die Verwölbung je Knoten. Ohne I_w rechnet der Stab wie bisher
+mit zwölf Freiheitsgraden - ein siebter ohne eigene Steifigkeit würde die
+Verwölbung nur künstlich stetig machen.
+
+**Exzentrizität.** Liegt die Stabachse neben dem Knoten (Versatz r in lokalen
+Achsen), gilt u_Stab = A·u_Knoten mit u_Ende = u_Knoten + θ×r; Steifigkeit und
+Lasten werden mit Aᵀ(…)A auf die Knoten umgerechnet. Eine Normalkraft N
+erzeugt dann im Stab das Moment N·e, während der Knoten nur N sieht.
 
 ### 1.3 Gleichungslöser
 
@@ -527,6 +624,22 @@ Einflusslänge (halbe Nachbarabschnitte), Flächenlager über die Einflussfläch
 der Knoten. Lineare Anteile (starr, Feder) gehen in die Sperrung bzw. in die
 Steifigkeitsmatrix, nichtlineare Anteile in dieselbe Aktivmengen-Iteration wie
 der Kontakt.
+
+**Lager mit Geometriebezug** (RFEM: Linienlager an Linien, Flächenlager an
+Flächen) kennen ihre Linien bzw. Flächen und werden vor jeder Rechnung auf
+das aktuelle Netz gebracht (`supports.lager_auf_netz`): Ein Linienlager
+bekommt alle Netzknoten, die auf seinen Linien liegen (Abstand zur
+abgetasteten Kurve ≤ 0,2 % der Linienlänge), in Reihenfolge der Bogenlänge;
+die Einflusslängen folgen daraus. Ein Flächenlager bekommt die Knoten und
+Einflussflächen aus den Facetten des Netzes auf seinen Flächen — bei
+Schalen die Elemente, bei Volumen die Randseiten des Körpers auf der
+Fläche (fehlen sie, die Außenfacetten des Körpers in der Ebene der Fläche);
+jede Facette gibt ihren Inhalt gleichmäßig an ihre Knoten (Dreieck A/3,
+Viereck A/4). Flächen ohne Netz behalten die Eckknoten der Randlinien mit
+dem Flächeninhalt gleich verteilt. Damit ist Σ Einflussflächen = Inhalt der
+vernetzten Fläche und Σ Einflusslängen = Linienlänge — die Bettung c·A
+wirkt über die ganze Fläche, nicht als vier Eckfedern (Test
+`test_lager_folgen_dem_netz`: steife Platte auf Bettung setzt sich um p/c).
 
 Ein Lagerfreiheitsgrad wirkt entlang der positiven Achse. Mit der
 Knotenverschiebung u ist die Lagerkraft F = −k·u; u < 0 (Knoten drückt hinein)
@@ -1371,6 +1484,20 @@ Zum Schluss wird **gerechnet, nicht gehofft**. Im Protokoll steht je Körper:
   liegt, und ihr größter Abstand dazu. Verglichen wird geometrisch, nicht
   Dreieck gegen Dreieck: ein ebenes Viereck lässt sich über beide Diagonalen
   teilen, ohne dass eine der beiden falsch wäre.
+
+**Randseiten je Fläche.** Auf der Randfläche eines Volumenkörpers gibt es
+keine Schalenelemente; Flächenlasten, Kontaktfugen und Flächenlager brauchen
+darum die Paare (Tetraeder, Seite), die auf der Fläche liegen
+(`Flaeche.randseiten`). Gegangen wird vom Netz aus: jede freie Elementseite
+sucht unter ihren acht nächsten Hülldreiecken das, das sie **überdeckt** —
+alle drei Seitenknoten liegen in der Ebene des Hülldreiecks (Abstand ≤ 10⁻³
+der Kantenlänge) und die Normalen sind parallel (|n·n_h| > 0,9); unter
+diesen das nächste. Die Nähe allein reicht nicht: an einer dünnen Platte
+liegen die Seitenfacetten der Schmalseite näher an der Deckfläche als ein
+Viertel der Kantenlänge und hingen früher an ihr — die Deckfläche trug dann
+36 % zu viel Fläche (Test `test_duenne_platte_randseiten`). Nur wenn kein
+Dreieck überdeckt (Randknoten nicht exakt auf der Hülle), gilt der alte Weg
+über die Nähe, sofern die Normale nicht quer steht.
 
 **Gemeinsame Randflächen.** Zwei Körper, die *dieselbe* Fläche berandet,
 bekommen dort dieselben Knoten und hängen zusammen. Geteilt wird ausdrücklich

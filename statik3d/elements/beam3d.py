@@ -191,3 +191,152 @@ def fixed_end_forces(q_local, L, Asy=0.0, Asz=0.0) -> np.ndarray:
     f[4] += -qz * L ** 2 / 12.0
     f[10] += qz * L ** 2 / 12.0
     return f
+
+
+# ==========================================================================
+# Stabexzentrizitaet (starre Versaetze der Stabenden)
+# ==========================================================================
+def _skew(r) -> np.ndarray:
+    """Schiefsymmetrische Matrix [r]x mit [r]x v = r x v."""
+    r = np.asarray(r, float)
+    return np.array([[0.0, -r[2], r[1]],
+                     [r[2], 0.0, -r[0]],
+                     [-r[1], r[0], 0.0]])
+
+
+def versatz_matrix(r1, r2) -> np.ndarray:
+    """Starre Versaetze der Stabenden gegenueber den Knoten, Matrix A (12x12).
+
+    r_i (3,) = Vektor vom Knoten i zum Stabende i in **lokalen** Koordinaten
+    des Stabes. Das Stabende bewegt sich starr mit dem Knoten:
+
+        u_ende  = u_knoten + theta_knoten x r_i,   theta_ende = theta_knoten
+
+    also u_stab = A u_knoten. Damit K_knoten = A^T K_stab A, f_knoten = A^T f_stab
+    (eine Stabendkraft F erzeugt am Knoten zusaetzlich das Moment r_i x F).
+    A ist invertierbar; Starrkoerpermoden bleiben Starrkoerpermoden.
+    """
+    A = np.eye(12)
+    for i, r in enumerate((r1, r2)):
+        # theta x r = -[r]x theta
+        A[6 * i:6 * i + 3, 6 * i + 3:6 * i + 6] = -_skew(r)
+    return A
+
+
+# ==========================================================================
+# Woelbkrafttorsion (7. Freiheitsgrad: Verwoelbung omega = theta_x')
+# ==========================================================================
+# Lage der Torsions-FHG [theta_x1, omega1, theta_x2, omega2] im 14-FHG-Element
+IDX_TORSION14 = (3, 12, 9, 13)
+
+
+def _hermite_ableitungen(L: float, x):
+    """Kubische Hermite-Ansaetze fuer [w1, w1', w2, w2'] und ihre Ableitungen
+    nach x an der Stelle x (0..L). Rueckgabe (N, N', N'', N''') je (4,) bzw.
+    (4, n) bei Vektor x."""
+    xi = np.asarray(x, float) / L
+    one = np.ones_like(xi)
+    N = np.array([1 - 3 * xi ** 2 + 2 * xi ** 3,
+                  L * (xi - 2 * xi ** 2 + xi ** 3),
+                  3 * xi ** 2 - 2 * xi ** 3,
+                  L * (-xi ** 2 + xi ** 3)])
+    dN = np.array([(-6 * xi + 6 * xi ** 2) / L,
+                   1 - 4 * xi + 3 * xi ** 2,
+                   (6 * xi - 6 * xi ** 2) / L,
+                   -2 * xi + 3 * xi ** 2])
+    ddN = np.array([(-6 + 12 * xi) / L ** 2,
+                    (-4 + 6 * xi) / L,
+                    (6 - 12 * xi) / L ** 2,
+                    (-2 + 6 * xi) / L])
+    dddN = np.array([12 / L ** 3 * one, 6 / L ** 2 * one,
+                     -12 / L ** 3 * one, 6 / L ** 2 * one])
+    return N, dN, ddN, dddN
+
+
+def _hermite_steifigkeit_1(L: float) -> np.ndarray:
+    """int N'^T N' dx  (mal 30 L) fuer kubische Hermite-Ansaetze."""
+    L2 = L * L
+    return np.array([[36.0, 3 * L, -36.0, 3 * L],
+                     [3 * L, 4 * L2, -3 * L, -L2],
+                     [-36.0, -3 * L, 36.0, -3 * L],
+                     [3 * L, -L2, -3 * L, 4 * L2]]) / (30.0 * L)
+
+
+def _hermite_steifigkeit_2(L: float) -> np.ndarray:
+    """int N''^T N'' dx  (mal L^3) fuer kubische Hermite-Ansaetze."""
+    L2 = L * L
+    return np.array([[12.0, 6 * L, -12.0, 6 * L],
+                     [6 * L, 4 * L2, -6 * L, 2 * L2],
+                     [-12.0, -6 * L, 12.0, -6 * L],
+                     [6 * L, 2 * L2, -6 * L, 4 * L2]]) / L ** 3
+
+
+def k_local_torsion_woelb(E, G, It, Iw, L) -> np.ndarray:
+    """Steifigkeit der gemischten Torsion (4x4) fuer die FHG
+    [theta_x1, omega1, theta_x2, omega2] mit omega = theta_x' (Verwoelbung).
+
+    theta_x wird kubisch (Hermite) interpoliert; die Formaenderungsenergie ist
+    1/2 int (G It theta'^2 + E Iw theta''^2) dx. Fuer Iw = 0 bleibt die
+    St.-Venant-Torsion (mit kubischem Ansatz, die lineare Loesung ist exakt).
+    """
+    return G * It * _hermite_steifigkeit_1(L) + E * Iw * _hermite_steifigkeit_2(L)
+
+
+def k_local_beam14(E, G, A, Iy, Iz, It, Iw, L, Asy=0.0, Asz=0.0) -> np.ndarray:
+    """Lokale Steifigkeitsmatrix 14x14 mit Woelbfreiheitsgrad.
+
+    FHG 0..11 wie ``k_local_beam`` [u1x u1y u1z r1x r1y r1z u2x ... r2z],
+    FHG 12 = omega1, 13 = omega2 (Verwoelbung = theta_x'). Die reine
+    St.-Venant-Torsion ([3,3], [3,9], [9,9]) ist durch die gemischte Torsion
+    aus ``k_local_torsion_woelb`` ersetzt.
+    """
+    k = np.zeros((14, 14))
+    k12 = k_local_beam(E, G, A, Iy, Iz, It, L, Asy, Asz)
+    k12[3, 3] = k12[9, 9] = k12[3, 9] = k12[9, 3] = 0.0
+    k[:12, :12] = k12
+    ix = np.ix_(IDX_TORSION14, IDX_TORSION14)
+    k[ix] += k_local_torsion_woelb(E, G, It, Iw, L)
+    return k
+
+
+def m_local_beam14(rho, A, L, Ip, Iw) -> np.ndarray:
+    """Konsistente Massenmatrix 14x14: ``m_local_beam`` (mit polarer
+    Drehtraegheit rho Ip) plus Woelbtraegheit rho Iw.
+
+    Die Verwoelbung u_x = -omega(s) theta_x' liefert die kinetische Energie
+    1/2 rho Iw int (d theta_x'/dt)^2 dx, also die Matrix rho Iw int N'^T N' dx
+    der Hermite-Ansaetze auf den FHG [3, 12, 9, 13].
+    """
+    m = np.zeros((14, 14))
+    m[:12, :12] = m_local_beam(rho, A, L, Ip)
+    if Iw > 0:
+        ix = np.ix_(IDX_TORSION14, IDX_TORSION14)
+        m[ix] += rho * Iw * _hermite_steifigkeit_1(L)
+    return m
+
+
+def torsion_verlauf(E, G, It, Iw, L, ul14, x) -> dict:
+    """Torsionsgroessen an der Stelle x (0..L, Skalar oder Vektor) aus den
+    lokalen Elementverschiebungen ul14 (14,) mittels Hermite-Interpolation
+    von theta_x:
+
+        theta  = Verdrehung
+        B      = -E Iw theta''   (Woelbbimoment)
+        Mt_p   =  G It theta'    (primaeres, St.-Venant-Torsionsmoment)
+        Mt_s   = -E Iw theta'''  (sekundaeres Torsionsmoment aus Woelbkrafttorsion)
+        Mt     = Mt_p + Mt_s
+
+    Innerhalb eines Elements ist theta' quadratisch, Mt also nur naeherungsweise
+    konstant; die Elementendkraefte K u erfuellen das Gleichgewicht exakt.
+    """
+    ul14 = np.asarray(ul14, float)
+    d = ul14[list(IDX_TORSION14)]
+    N, dN, ddN, dddN = _hermite_ableitungen(L, x)
+    th = d @ N
+    th1 = d @ dN
+    th2 = d @ ddN
+    th3 = d @ dddN
+    B = -E * Iw * th2
+    Mt_p = G * It * th1
+    Mt_s = -E * Iw * th3
+    return {"theta": th, "B": B, "Mt_p": Mt_p, "Mt_s": Mt_s, "Mt": Mt_p + Mt_s}

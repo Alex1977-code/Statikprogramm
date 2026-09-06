@@ -33,6 +33,7 @@ import numpy as np
 
 from .. import __version__
 from ..model import ACTION_CATEGORIES, DOF_NAMES
+from .. import elemente as _EL
 from ..combinations import combination_table
 from . import svg as sv
 
@@ -51,15 +52,8 @@ NORMS = [
                  "Vorzeichenkonvention der Schnittgrößen"),
 ]
 
-ELEMENT_TYPES = {
-    "beam": "Balken 3D (12 FHG, Timoshenko-Schub)",
-    "truss": "Fachwerkstab (nur Normalkraft)",
-    "shell3": "Schale, Dreieck (CST + DKT)",
-    "shell4": "Schale, Viereck (in 2 Dreiecke zerlegt)",
-    "tet4": "Tetraeder, linear",
-    "tet10": "Tetraeder, quadratisch",
-    "hex8": "Hexaeder mit inkompatiblen Moden",
-}
+#: Klartext je Elementtyp - aus dem Elementverzeichnis (statik3d.elemente)
+ELEMENT_TYPES = {t: a.name for t, a in _EL.ELEMENTE.items()}
 
 COMBO_TYPES = {"ULS": "GZT (STR/GEO)", "EQU": "GZT (EQU)", "ACC": "außergewöhnlich",
                "SLS_CH": "GZG charakteristisch", "SLS_FR": "GZG häufig",

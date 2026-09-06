@@ -1197,11 +1197,15 @@ def main():
               and mb.supports[0].name == "Fußpunkt links")
         check("Symbolgröße in der Tabelle editierbar",
               w._lager_aendern(0, 6, 2.5) and mb.supports[0].groesse == 2.5)
+        # Die Tabelle ist nach der ersten Spalte sortiert - Zeile 0 ist der
+        # Lastfall mit dem ersten Namen, nicht der zuerst angelegte
+        lf0 = str(w.tbl_lastfall.modell.zeilen[0][0])
         check("Lastfallnummer in der Tabelle editierbar",
-              w._lastfall_aendern(0, 1, 7) and mb.load_cases[list(mb.load_cases)[0]].nummer == 7)
+              w._lastfall_aendern(0, 1, 7) and mb.load_cases[lf0].nummer == 7,
+              f"{lf0}: {mb.load_cases[lf0].nummer}")
         check("Lastfallbeschreibung editierbar",
               w._lastfall_aendern(0, 3, "Eigenlast Dach")
-              and list(mb.load_cases.values())[0].description == "Eigenlast Dach")
+              and mb.load_cases[lf0].description == "Eigenlast Dach")
 
         # Modellbaum: Klick waehlt aus, Doppelklick oeffnet
         w._baum_geklickt("stabelemente", "beam")
@@ -4762,6 +4766,235 @@ def main():
         import traceback
         traceback.print_exc()
         check("Einheiten und Genauigkeiten", False, str(ex)[:70])
+
+    # ---- Glasleiste rechts, Geist im Hintergrund, Wahlregel, Lagerdichte ----
+    try:
+        # ---- Glasleiste: „Alles deselektieren“ ganz rechts, Geist-Knopf ----------
+        kn = w.glasleiste.knoepfe
+        lay = w.glasleiste.lay
+        letzter = lay.itemAt(lay.count() - 1).widget()
+        check("Glasleiste: „Alles deselektieren“ steht ganz rechts",
+              letzter is kn["auswahl_weg"], type(letzter).__name__)
+        check("Glasleiste: Knopf „Verborgenes im Hintergrund“",
+              "geist" in kn and kn["geist"].defaultAction() is w.act_geist and w.act_geist.isCheckable())
+
+        # ---- Geist: Verborgenes blass im Hintergrund, nicht anklickbar -----------
+        from statik3d import examples_lib as _ex
+        from statik3d.gui import viewport as _vp
+        import pyvista as pvx
+        w.model = _ex.hall_frame_example()
+        w.refresh_all()
+        app.processEvents()
+        stab = list(w.model.members)[0]
+        elems = {int(e) for e in w.model.members[stab].elements}
+        w.sel_staebe = [stab]
+        w.auswahl_ausblenden()
+        app.processEvents()
+        check("Geist aus: kein Geist-Darsteller",
+              not any(n.startswith("geist_") for n in dict(w.plotter.renderer.actors)))
+        w.act_geist.setChecked(True)
+        app.processEvents()
+        akt = dict(w.plotter.renderer.actors)
+        check("Geist an: die ausgeblendeten Elemente stehen als Geist im Bild",
+              w.geist and "geist_netz" in akt, str([n for n in akt if n.startswith("geist")]))
+        if "geist_netz" in akt:
+            g_ = pvx.wrap(akt["geist_netz"].GetMapper().GetInput())
+            check("Geist zeigt genau die ausgeblendeten Elemente",
+                  set(np.asarray(g_.cell_data["elem"]).tolist()) == elems, str(len(elems)))
+            check("Geist ist nicht anklickbar", not akt["geist_netz"].GetPickable())
+            check("Geist ist blass", akt["geist_netz"].GetProperty().GetOpacity() < 0.3,
+                  str(akt["geist_netz"].GetProperty().GetOpacity()))
+        check("Zellenpicker kennt den Geist nicht: Ausgeblendetes ist nicht wählbar",
+              not w._objekt_sichtbar("Stab", stab) and all(not w._objekt_sichtbar("Netz", e) for e in elems))
+        andere = [n for n in w.model.members if n != stab]
+        check("Sichtbare Stäbe bleiben wählbar", all(w._objekt_sichtbar("Stab", n) for n in andere))
+        w.auswahlart_setzen("Stab")
+        w.sel_staebe = []
+        w.plotter.view_isometric()
+        w.plotter.reset_camera()
+        w.redraw()
+        app.processEvents()
+        xy_, _s = w._projizieren(w.model.nodes)
+        rect_ = (xy_[:, 0].min() - 4, xy_[:, 1].min() - 4, xy_[:, 0].max() + 4, xy_[:, 1].max() + 4)
+        n_ = w._fenster_auswaehlen(rect_, True)
+        check("Fensterauswahl lässt den ausgeblendeten Stab aus",
+              stab not in w.sel_staebe and n_ == len(andere), f"{n_} von {len(andere)}: {w.sel_staebe}")
+        w.sel_staebe = []
+        w.act_staebe.setChecked(False)
+        app.processEvents()
+        n_ = w._fenster_auswaehlen(rect_, True)
+        check("Schalter „Stäbe“ aus: Stäbe sind nicht dargestellt und nicht wählbar",
+              not w._dargestellt("Stab") and n_ == 0 and not w.sel_staebe, str(n_))
+        w.act_staebe.setChecked(True)
+        w.act_geist.setChecked(False)
+        app.processEvents()
+        check("Geist aus: Darsteller wieder weg",
+              not w.geist and not any(n.startswith("geist_") for n in dict(w.plotter.renderer.actors)))
+        w.alles_zeigen()
+        w.auswahlart_setzen("Knoten")
+        app.processEvents()
+
+        # ---- Lagerdichte wirkt: Flächenlager über die Geometriefläche -------------
+        from statik3d.model import Model as _M, Material as _Mat, ShellProp as _SP
+        from statik3d import mesher as _me, supports as _su
+        mp = _M("Platte auf Bettung")
+        mp.add_material(_Mat("steif", E=210e12))
+        mp.add_shell_prop(_SP("t", 0.2))
+        mp.add_nodes([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]])
+        for i_ in range(4):
+            mp.add_line(f"L{i_ + 1}", [i_, (i_ + 1) % 4], "polyline")
+        fp = mp.add_flaeche("Platte", ["L1", "L2", "L3", "L4"], material="steif", dicke="t", teilung=[4, 2])
+        _me.mesh_flaeche(mp, fp)
+        ssp = mp.add_surface_support(name="Bettung", nodes=[0, 1, 2, 3], areas=[0.5] * 4,
+                                     uz=dict(typ="spring", stiffness=1e8))
+        ssp.flaechen = ["Platte"]
+        _su.lager_auf_netz(mp)
+        w.model = mp
+        w.refresh_all()
+        app.processEvents()
+        size_ = mp.characteristic_size()
+        n_duenn = len(_vp.lager_punkte(mp, ssp, size_, 0.5)[0])
+        n_dicht = len(_vp.lager_punkte(mp, ssp, size_, 3.0)[0])
+        check("Lagerdichte wirkt: mehr Symbole bei höherer Dichte",
+              n_dicht > 4 * n_duenn > 0, f"{n_duenn} -> {n_dicht}")
+        def _lagerpunkte():
+            akt_ = dict(w.plotter.renderer.actors)
+            return sum(akt_[n].GetMapper().GetInput().GetNumberOfPoints() for n in akt_ if n.startswith("fsupports"))
+        w.sl_lagerdichte.setValue(5)
+        app.processEvents()
+        p_duenn = _lagerpunkte()
+        w.sl_lagerdichte.setValue(30)
+        app.processEvents()
+        p_dicht = _lagerpunkte()
+        check("Schieber „Dichte“ zeichnet sofort neu: mehr Symbole im Bild",
+              w.lagerdichte == 3.0 and p_dicht > 2 * p_duenn > 0, f"{p_duenn} -> {p_dicht} Punkte")
+        check("Schieber „Lager“ (Größe) steht daneben",
+              w.sl_lager.isVisibleTo(w) or w.sl_lager.parent() is not None)
+        w.lagerdichte_zuruecksetzen()
+        app.processEvents()
+        check("Lagerdichte zurücksetzen: 1,0 und Schieber auf 10",
+              w.lagerdichte == 1.0 and w.sl_lagerdichte.value() == 10)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Geist, Glasleiste, Lagerdichte", False, str(ex)[:70])
+
+    # ---- Elementtypen: Verbindungsobjekte, Stabmaske, Lagermaske ---------
+    try:
+        # --- Verbindungsobjekte in der Oberflaeche --------------------------------
+        import numpy as _np
+        from statik3d.model import Material as _Mat, Section as _Sec
+        w.new_model()
+        mv = w.model
+        mv.add_material(_Mat("S235", E=210e9, nu=0.3, rho=7850))
+        mv.add_section(_Sec("R", A=1e-2, Iy=1e-5, Iz=1e-5, It=1e-5, Iw=1e-7))
+        n0 = mv.add_node(0, 0, 0); n1 = mv.add_node(1, 0, 0); n2 = mv.add_node(2, 0, 0)
+        mv.add_element("beam", [n0, n1], "S235", "R")
+        mv.add_feder_prop("F1", [1e6, 1e6, 1e6, 0, 0, 0])
+        mv.add_element("feder", [n1, n2], "S235", "F1")
+        mv.add_punktmasse(n2, 250.0, [1.0, 2.0, 3.0])
+        mv.add_daempfer(n2, -1, [40.0, 0, 0, 0, 0, 0])
+        mv.add_starrkoerper(n0, [n1], "RBE2")
+        mv.add_grenzschicht_prop("GS", 1e9, 5e8)
+        w.refresh_all()
+        app.processEvents()
+
+        def _zweige(baum):
+            aus = {}
+            def lauf(x, tiefe=0):
+                for k in range(x.childCount()):
+                    kind = x.child(k)
+                    aus[kind.text(0)] = kind
+                    lauf(kind, tiefe + 1)
+            lauf(baum.invisibleRootItem())
+            return aus
+
+        zw = _zweige(w.baum)
+        check("Modellbaum: Zweig „Verbindungen“", "Verbindungen" in zw, str(sorted(zw)[:12]))
+        for name in ("Punktmassen", "Dämpfer", "Federn", "Starre Körper", "Grenzschichten"):
+            check(f"Modellbaum: Unterzweig „{name}“", name in zw)
+
+        # Maske einer Punktmasse
+        w._objektmaske("punktmasse", "0")
+        mk = w.maskenrand.maske
+        check("Punktmassenmaske öffnet", mk is not None and "Punktmasse" in mk.titel, str(mk and mk.titel))
+        werte = mk.werte()
+        check("Punktmassenmaske zeigt Masse und Drehträgheit",
+              abs(float(werte["masse"]) - 250.0) < 1e-9 and abs(float(werte["Jy"]) - 2.0) < 1e-9,
+              str({k: werte[k] for k in ("masse", "Jx", "Jy", "Jz")}))
+        mk.setzen("masse", 400.0)
+        w._objekt_uebernehmen("punktmasse", "0", mk.werte(), False)
+        check("Punktmasse geändert", abs(w.model.punktmassen[0].masse - 400.0) < 1e-9,
+              str(w.model.punktmassen[0].masse))
+
+        # Feder
+        w._objektmaske("feder", "F1")
+        mk = w.maskenrand.maske
+        check("Federmaske öffnet", mk is not None and "Feder" in mk.titel)
+        mk.setzen("kx", 2.5e6)
+        w._objekt_uebernehmen("feder", "F1", mk.werte(), False)
+        check("Federsteifigkeit geändert", abs(w.model.federn["F1"].k[0] - 2.5e6) < 1e-6,
+              str(w.model.federn["F1"].k[:3]))
+
+        # Starrer Koerper
+        w._objektmaske("starrkoerper", "0")
+        mk = w.maskenrand.maske
+        mk.setzen("art", "RBE3")
+        w._objekt_uebernehmen("starrkoerper", "0", mk.werte(), False)
+        check("Starrer Körper auf RBE3 umgestellt", w.model.starrkoerper[0].art == "RBE3",
+              w.model.starrkoerper[0].art)
+
+        # Grenzschicht
+        w._objektmaske("grenzschicht", "GS")
+        mk = w.maskenrand.maske
+        mk.setzen("kn", 2e9)
+        w._objekt_uebernehmen("grenzschicht", "GS", mk.werte(), False)
+        check("Grenzschicht geändert", abs(w.model.grenzschichten["GS"].kn - 2e9) < 1e-3)
+
+        # Klick im Baum waehlt die Knoten
+        w._baum_objekt_waehlen("punktmasse", "0")
+        check("Klick auf die Punktmasse wählt ihren Knoten",
+              list(w.selection) == [n2], str(list(w.selection)))
+
+        # --- Stabmaske: neue Felder ------------------------------------------------
+        w._objektmaske("stabelement", "0")
+        mk = w.maskenrand.maske
+        werte = mk.werte()
+        check("Stabmaske: Art, trägt nur, Versatz, Wölbkrafttorsion",
+              all(k in werte for k in ("typ", "nur", "laenge0", "ex_a", "ex_e", "woelb")),
+              str(sorted(werte)))
+        check("Stabmaske: Seil ist wählbar", "Seil" in w.STABARTEN)
+        mk.setzen("nur", "nur Zug")
+        mk.setzen("typ", "Fachwerkstab")
+        mk.setzen("ex_a", "0, 50")
+        mk.setzen("woelb", True)
+        w._objekt_uebernehmen("stabelement", "0", mk.werte(), False)
+        e0 = w.model.elements[0]
+        check("Stab: nur Zug übernommen", e0.nur == "zug" and e0.typ == "truss", f"{e0.typ}/{e0.nur}")
+        check("Stab: Versatz in Metern gespeichert",
+              abs(e0.exzentrizitaet[0][2] - 0.05) < 1e-12, str(e0.exzentrizitaet))
+        check("Stab: Wölbkrafttorsion gesetzt", bool(e0.woelb))
+
+        # --- Lagermaske: Woelbeinspannung -----------------------------------------
+        w.model.fix(n0, "all")
+        w.refresh_all()
+        w._objektmaske("lager_einzeln", "0")
+        mk = w.maskenrand.maske
+        check("Lagermaske hat die Wölbeinspannung", "woelb" in mk.werte(), str(sorted(mk.werte()))[:120])
+        mk.setzen("woelb", True)
+        w._objekt_uebernehmen("lager_einzeln", "0", mk.werte(), False)
+        check("Wölbeinspannung übernommen", bool(w.model.supports[0].woelb))
+
+        # --- Netzeinstellungen: Elementansatz --------------------------------------
+        check("Netzmaske: quadratisch nennt shell6/shell8 und hex20",
+              any("shell8" in k and "hex20" in k for k in w.NETZORDNUNG),
+              str(list(w.NETZORDNUNG)))
+        w.new_model()
+
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Verbindungsobjekte und neue Masken", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

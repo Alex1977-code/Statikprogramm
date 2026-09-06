@@ -269,10 +269,99 @@ def test_federgelenke():
     check("Gelenkbeschreibung", 1.0 if "phiy" in h.describe() and "phiz" in h.describe() else 0.0, 1.0, 0)
 
 
+def test_lager_folgen_dem_netz():
+    """Linien- und Flaechenlager mit Geometriebezug (RFEM: Lager an Linien und
+    Flaechen) bekommen nach dem Vernetzen die Netzknoten: Einflusslaengen =
+    Linienlaenge, Einflussflaechen = Flaecheninhalt; die steife Platte auf der
+    Bettung setzt sich um p/c, obwohl das Lager nur seine Flaeche kennt."""
+    lx, ly, p, c = 2.0, 1.0, 50e3, 1e8
+
+    def platte():
+        m = Model("Lager auf dem Netz")
+        m.add_material(Material("steif", E=210e12))
+        m.add_shell_prop(ShellProp("t", 0.2))
+        m.add_nodes([[0, 0, 0], [lx, 0, 0], [lx, ly, 0], [0, ly, 0]])
+        for i in range(4):
+            m.add_line(f"L{i + 1}", [i, (i + 1) % 4], "polyline")
+        f = m.add_flaeche("Platte", ["L1", "L2", "L3", "L4"], material="steif", dicke="t",
+                          teilung=[4, 2])
+        mesher.mesh_flaeche(m, f)
+        return m
+
+    m = platte()
+    ls = m.add_line_support([0, 1], name="Kante", uz=dict(typ="spring", stiffness=1e9))
+    ls.linien = ["L1"]
+    ss = m.add_surface_support(name="Bettung", nodes=[0, 1, 2, 3], areas=[lx * ly / 4] * 4,
+                               uz=dict(typ="spring", stiffness=c))
+    ss.flaechen = ["Platte"]
+    n0 = supports.lager_auf_netz(m)
+    kante = [int(i) for i in np.flatnonzero(np.abs(m.nodes[:, 1]) < 1e-9)]
+    check("Netz: Linienlager hat alle Netzknoten der Linie", len(ls.nodes), len(kante), 0)
+    check("Netz: Linienlager in Reihenfolge der Linie",
+          1.0 if list(ls.nodes) == sorted(kante, key=lambda n: m.nodes[n, 0]) else 0.0, 1.0, 0)
+    check("Netz: Einflusslaengen = L", sum(supports.tributary_lengths(m, ls.nodes).values()), lx, 1e-9, "m")
+    check("Netz: Flaechenlager hat alle Netzknoten der Flaeche", len(ss.nodes), m.nn, 0)
+    check("Netz: Einflussflaechen = A", sum(ss.areas), lx * ly, 1e-9, "m^2")
+    check("Netz: Rueckgabe zaehlt beide Lager", n0["flaechenlager"] + n0["linienlager"], 2, 0)
+    # wiederholbar: derselbe Stand
+    supports.lager_auf_netz(m)
+    check("Netz: zweiter Aufruf aendert nichts", len(ss.nodes) + len(ls.nodes), m.nn + len(kante), 0)
+
+    # Rechnung: die Bettung wirkt ueber die ganze Flaeche (expand ruft lager_auf_netz)
+    m2 = platte()
+    ss2 = m2.add_surface_support(name="Bettung", nodes=[0, 1, 2, 3], areas=[lx * ly / 4] * 4,
+                                 uz=dict(typ="spring", stiffness=c))
+    ss2.flaechen = ["Platte"]
+    m2.fix(0, [0, 1, 5])
+    m2.fix(1, [1, 5])
+    for e in range(len(m2.elements)):
+        m2.load_face(e, -p)
+    r = solver.solve_static(m2)
+    mitte = int(np.argmin(np.linalg.norm(m2.nodes - [lx / 2, ly / 2, 0], axis=1)))
+    check("Netz: Platte auf Bettung setzt sich um p/c", r.u[mitte, 2], -p / c, 5e-3, "m")
+    check("Netz: Summe Lagerkraft = p A", -r.reactions[:, 2].sum(), -p * lx * ly, 1e-2, "N")
+
+    # Volumen: Flaechenlager auf der Bodenflaeche eines vernetzten Wuerfels
+    m3 = Model("Wuerfel auf Bettung")
+    m3.add_material(Material.steel("S235"))
+    P = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]])
+    m3.add_nodes(P)
+    nr = [0]
+
+    def linie(a, b):
+        nr[0] += 1
+        m3.add_line(f"L{nr[0]}", [a, b], "polyline")
+        return f"L{nr[0]}"
+
+    R0 = [linie(i, (i + 1) % 4) for i in range(4)]
+    R1 = [linie(4 + i, 4 + (i + 1) % 4) for i in range(4)]
+    V = [linie(i, i + 4) for i in range(4)]
+    m3.add_flaeche("Boden", R0, material="S235")
+    m3.add_flaeche("Deckel", R1, material="S235")
+    seiten = []
+    for i in range(4):
+        m3.add_flaeche(f"S{i}", [R0[i], V[(i + 1) % 4], R1[i], V[i]], material="S235")
+        seiten.append(f"S{i}")
+    k = m3.add_koerper("W", ["Boden", "Deckel"] + seiten, material="S235")
+    m3.netz.ziellaenge = 0.5
+    mesher.mesh_koerper(m3, k, frei=True, h=0.5)
+    ss3 = m3.add_surface_support(name="Boden", nodes=[0, 1, 2, 3], areas=[0.25] * 4,
+                                 uz=dict(typ="spring", stiffness=c))
+    ss3.flaechen = ["Boden"]
+    supports.lager_auf_netz(m3)
+    boden = [int(i) for i in np.flatnonzero(np.abs(m3.nodes[:, 2]) < 1e-9)]
+    check("Volumen: Flaechenlager hat alle Netzknoten der Bodenflaeche",
+          len(ss3.nodes), len(boden), 0)
+    check("Volumen: nur Knoten der Bodenflaeche", 1.0 if set(ss3.nodes) <= set(boden) else 0.0, 1.0, 0)
+    check("Volumen: Einflussflaechen = 1 m^2", sum(ss3.areas), 1.0, 1e-9, "m^2")
+
+
 def main():
     for t in (test_federlager_mit_schlupf, test_zug_und_druckausfall, test_grenzkraft,
               test_reibung_knotenlager, test_linienlager, test_flaechenlager,
-              test_rotationslager_und_zusammenfassung, test_federgelenke):
+              test_rotationslager_und_zusammenfassung, test_federgelenke,
+              test_lager_folgen_dem_netz):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

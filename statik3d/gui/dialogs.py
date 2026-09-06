@@ -10,6 +10,7 @@ from ..model import (Model, Material, Section, LoadCase, Combination, Member,
                      ACTION_CATEGORIES, STEEL_GRADES, DesignSettings)
 from .. import profiles
 from ..ec3.fatigue import DETAIL_CATEGORIES, DETAIL_EXAMPLES
+from .. import elemente as EL
 
 
 class NumEdit(QtWidgets.QLineEdit):
@@ -577,7 +578,7 @@ class ContactPairDialog(QtWidgets.QDialog):
         if kind == "shells":
             return [i for i, e in enumerate(model.elements) if e.typ.startswith("shell")]
         if kind == "solids":
-            return [i for i, e in enumerate(model.elements) if e.typ in ("tet4", "tet10", "hex8")]
+            return [i for i, e in enumerate(model.elements) if e.typ in EL.VOLUMEN_TYPEN]
         if kind == "group":
             return [i for i, e in enumerate(model.elements) if e.group == g]
         return parse_int_list(self.elist.text(), len(model.elements))

@@ -439,8 +439,8 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     # --- Theorie I. Ordnung als Ausgangspunkt
     u1 = system.solve(F, us=us)
     res1 = Results(name=name, kind="combination", model=model)
-    res1.u = u1.reshape(-1, NDOF)
-    res1.reactions = system.reactions(u1, F).reshape(-1, NDOF)
+    from .solver import verschiebungen_eintragen
+    verschiebungen_eintragen(model, res1, u1, system.reactions(u1, F))
     postprocess(model, u1, res1, feq, q, temp, aktiv=aktiv)
 
     info = Th2Info(kombination=name, u_max_I=float(np.abs(u1).max()))
@@ -471,8 +471,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         bezug = max(float(np.abs(u_neu).max()), 1e-12)
         u = u_neu
         res = Results(name=name, kind="combination", model=model)
-        res.u = u.reshape(-1, NDOF)
-        res.reactions = system.reactions(u, Fges, K_extra=Kg).reshape(-1, NDOF)
+        verschiebungen_eintragen(model, res, u, system.reactions(u, Fges, K_extra=Kg))
         postprocess(model, u, res, feq, q, temp, aktiv=aktiv)
         info.iterationen = it
         info.konvergenz = d / bezug

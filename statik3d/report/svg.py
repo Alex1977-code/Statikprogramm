@@ -24,6 +24,7 @@ import math
 from xml.sax.saxutils import escape as _escape
 
 import numpy as np
+from .. import elemente as EL
 
 FONT = "Helvetica, Arial, sans-serif"
 
@@ -330,11 +331,11 @@ class Projection:
 def _element_groups(model):
     beams, shells, solids = [], [], []
     for i, e in enumerate(model.elements):
-        if e.typ in ("beam", "truss"):
+        if e.typ in EL.STAB_TYPEN:
             beams.append(i)
-        elif e.typ in ("shell3", "shell4"):
+        elif e.typ in EL.SCHALEN_TYPEN:
             shells.append(i)
-        elif e.typ in ("tet4", "tet10", "hex8"):
+        elif e.typ in EL.VOLUMEN_TYPEN:
             solids.append(i)
     return beams, shells, solids
 
@@ -794,7 +795,7 @@ def _draw_loads(model, lc, proj, P0, X0, nn, notes) -> str:
     n_solid_faces = 0
     for l in fl:
         e = model.elements[l.elem]
-        if e.typ not in ("shell3", "shell4"):
+        if e.typ not in EL.SCHALEN_TYPEN:
             n_solid_faces += 1
             continue
         Xe = X0[e.nodes]

@@ -677,6 +677,62 @@ def test_zylinder_in_bohrung():
           all(0 <= j < len(bohrung) for j in paare.values()))
 
 
+def test_starre_flaeche():
+    """Eine starre Scheibe (RFEM: starre Flaeche, ohne Dicke) auf dem Dach des
+    oberen Wuerfels, in ihrer Mitte das Ende eines Zugstabs, der nach oben zu
+    einem festen Knoten laeuft. Die Scheibe haengt die Netzknoten darunter
+    starr an das Stabende. Der Stab wird mit F_v vorgespannt: er zieht den
+    Wuerfel nach oben, das Fundament traegt F_v, und die Knoten in der Scheibe
+    bewegen sich wie das Stabende - starr."""
+    from statik3d.model import Section
+    m = zwei_bloecke("gemeinsam", 0.15)
+    b = Bauer(m)
+    ecken = [m.add_node(x, y, 2.0) for x, y in ((0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8))]
+    linien = [b.linie(ecken[i], ecken[(i + 1) % 4]) for i in range(4)]
+    m.add_flaeche("Scheibe", linien, material="S235")
+    m.flaechen["Scheibe"].steifigkeit = "starr"
+    mitte = m.add_node(0.5, 0.5, 2.0)
+    oben = m.add_node(0.5, 0.5, 3.0)
+    m.add_section(Section("Rund", 1e-4, 1e-9, 1e-9, 1e-9))
+    e = m.add_element("truss", [mitte, oben], "S235", "Rund", group="Zugstab")
+    m.add_member("Zugstab", [e])
+    log = []
+    b_ = fugen.starre_flaechen_koppeln(m, log)
+    check("die starre Scheibe wird als Kopplung umgesetzt, Master ist das Stabende",
+          b_["flaechen"] == 1 and b_["kopplungen"] >= 4 and not b_["offen"]
+          and all(k.node_a == mitte for k in m.kopplungen), f"{b_} / {log[:1]}")
+    check("die Scheibe zaehlt nicht als unvernetzte Flaeche",
+          not m.flaeche_traegt("Scheibe"), m.flaechen["Scheibe"].kommentar)
+    check("ein zweiter Aufruf legt die Kopplungen nicht doppelt an",
+          fugen.starre_flaechen_koppeln(m, [])["kopplungen"] == len(m.kopplungen))
+    slaves = sorted({int(k.node_b) for k in m.kopplungen})
+    for i in _flaechenknoten(m, 0.0):
+        m.fix(i, [0, 1, 2])
+    m.fix(oben, "all")
+    Fv = 50e3
+    m.add_load_case("LF1").gravity = [0, 0, 0]
+    m.add_vorspannung("Zugstab", Fv, case="LF1")
+    r = solver.solve_static(m, case="LF1")
+    unten = _flaechenknoten(m, 0.0)
+    # Der Wuerfel gibt unter dem Zug etwas nach: um die Anhebung der Scheibe
+    # wird der Stab weniger gedehnt, seine Kraft ist F_v - (EA/L) u_z
+    u_m = r.u[mitte, :3]
+    soll = Fv - 210e9 * 1e-4 / 1.0 * float(u_m[2])
+    close("der vorgespannte Stab zieht am Wuerfel: das Fundament traegt die Stabkraft",
+          -float(r.reactions[unten, 2].sum()), soll, 1e-6 * Fv, " N")
+    close("… und der feste Stabknoten oben ebenso",
+          float(r.reactions[oben, 2]), soll, 1e-6 * Fv, " N")
+    check("die Stabkraft liegt knapp unter F_v (Nachgiebigkeit des Wuerfels)",
+          0.999 * Fv < soll < Fv, f"{soll:.1f} N")
+    abw = max(float(np.linalg.norm(r.u[s, :3] - u_m)) for s in slaves)
+    check("die Knoten in der Scheibe bewegen sich wie das Stabende (starr)",
+          abw <= 1e-3 * float(np.linalg.norm(u_m)) and float(np.linalg.norm(u_m)) > 0,
+          f"Abweichung {abw:.2e} m bei u = {float(np.linalg.norm(u_m)):.2e} m")
+    d = Model.from_dict(m.to_dict())
+    check("Steifigkeitsart und Kopplungen ueberleben Speichern und Laden",
+          d.flaechen["Scheibe"].steifigkeit == "starr" and len(d.kopplungen) == len(m.kopplungen))
+
+
 def test_naechste_punkte():
     """Der vektorisierte naechste Punkt auf Dreiecken liefert dasselbe wie der
     einzelne (Ericson) - Eckpunkte, Kanten und Inneres."""
@@ -696,7 +752,7 @@ def main():
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
               test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,
               test_lager_werden_mitgenommen, test_verschieden_feine_netze, test_verbund,
-              test_spalt_schliessen, test_zylinder_in_bohrung, test_naechste_punkte,
+              test_spalt_schliessen, test_zylinder_in_bohrung, test_starre_flaeche, test_naechste_punkte,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung):
         print(f"\n--- {t.__name__} ---")

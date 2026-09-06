@@ -6,9 +6,25 @@ import numpy as np
 from ..model import Model
 from . import _common as C
 
-#: Statik3D-Element -> Abaqus-Elementart
-ABQ = {"beam": "B31", "truss": "T3D2", "shell3": "S3", "shell4": "S4",
-       "tet4": "C3D4", "tet10": "C3D10", "hex8": "C3D8"}
+#: Statik3D-Element -> Abaqus-Elementart. Die ebenen Elemente bekommen ihren
+#: Namen aus dem Zustand (Scheibe CPS, ebener Dehnungszustand CPE,
+#: rotationssymmetrisch CAX), siehe :func:`abq_typ`.
+ABQ = {"beam": "B31", "truss": "T3D2", "seil": "T3D2",
+       "shell3": "S3", "shell4": "S4", "shell6": "STRI65", "shell8": "S8R",
+       "tet4": "C3D4", "tet10": "C3D10", "hex8": "C3D8", "hex20": "C3D20",
+       "pent6": "C3D6", "pent15": "C3D15", "pyr5": "C3D5"}
+#: Ebene Elemente: (Zustand, Knotenzahl) -> Abaqus-Name
+ABQ_EBENE = {("spannung", 3): "CPS3", ("spannung", 4): "CPS4", ("spannung", 6): "CPS6",
+             ("spannung", 8): "CPS8", ("dehnung", 3): "CPE3", ("dehnung", 4): "CPE4",
+             ("dehnung", 6): "CPE6", ("dehnung", 8): "CPE8", ("rotation", 3): "CAX3",
+             ("rotation", 4): "CAX4", ("rotation", 6): "CAX6", ("rotation", 8): "CAX8"}
+
+
+def abq_typ(e) -> str:
+    """Abaqus-Elementart eines Elements ("" = nicht exportierbar)."""
+    if e.typ.startswith("ebene"):
+        return ABQ_EBENE.get((getattr(e, "zustand", "spannung"), len(e.nodes)), "")
+    return ABQ.get(e.typ, "")
 
 
 def write_inp(model: Model, path: str, results=None, log: list = None, **_) -> str:
@@ -17,9 +33,10 @@ def write_inp(model: Model, path: str, results=None, log: list = None, **_) -> s
         z.append(f"{i}, {p[0]:.8g}, {p[1]:.8g}, {p[2]:.8g}")
     gruppen: dict[str, list] = {}
     for i, e in enumerate(model.elements, 1):
-        if e.typ not in ABQ:
+        art = abq_typ(e)
+        if not art:
             continue
-        gruppen.setdefault((ABQ[e.typ], e.mat, e.sec or ""), []).append((i, e))
+        gruppen.setdefault((art, e.mat, e.sec or ""), []).append((i, e))
     for (art, mat, sec), items in gruppen.items():
         setname = f"E_{art}_{_safe(mat)}_{_safe(sec)}"
         z.append(f"*ELEMENT, TYPE={art}, ELSET={setname}")

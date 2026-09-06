@@ -7,14 +7,13 @@ import pyvista as pv
 from ..model import Model, NDOF
 from ..elements import beam3d as bm
 from .. import mesher
+from .. import elemente as EL
 
 VTK_LINE, VTK_TRI, VTK_QUAD, VTK_TETRA, VTK_HEX, VTK_TET10 = 3, 5, 9, 10, 12, 24
 
-CELL_MAP = {
-    "beam": (VTK_LINE, 2), "truss": (VTK_LINE, 2),
-    "shell3": (VTK_TRI, 3), "shell4": (VTK_QUAD, 4),
-    "tet4": (VTK_TETRA, 4), "tet10": (VTK_TET10, 10), "hex8": (VTK_HEX, 8),
-}
+#: Elementtyp -> (VTK-Zelltyp, Knotenzahl) aus dem Elementverzeichnis. Die
+#: Grenzschichten ohne Dicke werden als (flacher) Keil bzw. Hexaeder gezeichnet.
+CELL_MAP = {t: (a.vtk, a.knoten) for t, a in EL.ELEMENTE.items()}
 
 STATUS_COLOR = {"offen": "#9e9e9e", "Kontakt": "#1565c0", "Haften": "#2e7d32", "Gleiten": "#e65100"}
 
@@ -567,7 +566,7 @@ def koerper_at(model: Model, punkt, size: float):
 
 def member_at(model: Model, punkt):
     """Name des Stabes (Stabzug), dessen Element unter dem Zeiger liegt."""
-    el = element_at(model, punkt, ("beam", "truss"))
+    el = element_at(model, punkt, TYPEN_STAEBE)
     if el is None:
         return None
     for name, mem in (model.members or {}).items():
@@ -577,12 +576,12 @@ def member_at(model: Model, punkt):
 
 
 #: Elementtypen je Sichtbarkeitsschalter
-TYPEN_STAEBE = ("beam", "truss")
-TYPEN_FLAECHEN = ("shell3", "shell4")
-TYPEN_VOLUMEN = ("tet4", "tet10", "hex8")
+TYPEN_STAEBE = EL.STAB_TYPEN + ("feder",)
+TYPEN_FLAECHEN = EL.SCHALEN_TYPEN + EL.EBENE_TYPEN
+TYPEN_VOLUMEN = EL.VOLUMEN_TYPEN + ("grenzschicht6", "grenzschicht8")
 
 
-def to_grid(model: Model, typen=None, ausser=None) -> pv.UnstructuredGrid:
+def to_grid(model: Model, typen=None, ausser=None, nur=None) -> pv.UnstructuredGrid:
     """Das Elementnetz als VTK-Gitter.
 
     ``typen`` beschraenkt auf Elementtypen (Sichtbarkeitsschalter Staebe,
@@ -598,6 +597,8 @@ def to_grid(model: Model, typen=None, ausser=None) -> pv.UnstructuredGrid:
         if typen is not None and e.typ not in typen:
             continue
         if i in ausser:
+            continue
+        if nur is not None and i not in nur:
             continue
         ct, n = CELL_MAP[e.typ]
         cells.append(n)
@@ -967,9 +968,60 @@ def _polylinie_abtasten(P: np.ndarray, abstand: float) -> np.ndarray:
     return np.asarray(out, float)
 
 
-def _flaeche_abtasten(P: np.ndarray, abstand: float) -> np.ndarray:
-    """Punkte im Inneren eines Drei- oder Vierecks im Raster *abstand*."""
+def _ringflaeche(P) -> float:
+    """Inhalt eines ebenen Vielecks (Newell) - auch mit vielen Ecken."""
     P = np.asarray(P, float)
+    if len(P) < 3:
+        return 0.0
+    return 0.5 * float(np.linalg.norm(np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)))
+
+
+def _ringnormale(P) -> np.ndarray:
+    P = np.asarray(P, float)
+    n = np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
+    ln = float(np.linalg.norm(n))
+    return n / ln if ln > 0 else np.array([0.0, 0.0, 1.0])
+
+
+def _polygon_abtasten(P: np.ndarray, abstand: float) -> np.ndarray:
+    """Punkte im Inneren eines beliebigen ebenen Vielecks im Raster *abstand*
+    (Rand einer Geometrieflaeche, auch krumm abgetastet)."""
+    from ..fugen import _punkte_im_polygon
+    P = np.asarray(P, float)
+    if len(P) < 3:
+        return np.zeros((0, 3))
+    n = _ringnormale(P)
+    c = P.mean(axis=0)
+    kanten = np.diff(np.vstack([P, P[:1]]), axis=0)
+    u = kanten[int(np.argmax(np.linalg.norm(kanten, axis=1)))]
+    u = u - (u @ n) * n
+    lu = float(np.linalg.norm(u))
+    if lu <= 0:
+        return np.zeros((0, 3))
+    u = u / lu
+    v = np.cross(n, u)
+    P2 = np.column_stack([(P - c) @ u, (P - c) @ v])
+    h = max(float(abstand), 1e-9)
+    xs = np.arange(P2[:, 0].min() + 0.5 * h, P2[:, 0].max(), h)
+    ys = np.arange(P2[:, 1].min() + 0.5 * h, P2[:, 1].max(), h)
+    if not len(xs) or not len(ys):
+        return np.atleast_2d(c)
+    X, Y = np.meshgrid(xs, ys)
+    Q2 = np.column_stack([X.ravel(), Y.ravel()])
+    innen = _punkte_im_polygon(P2, Q2)
+    if not innen.any():
+        return np.atleast_2d(c)
+    Q2 = Q2[innen]
+    return c + Q2[:, :1] * u + Q2[:, 1:] * v
+
+
+def _flaeche_abtasten(P: np.ndarray, abstand: float) -> np.ndarray:
+    """Punkte im Inneren eines Drei- oder Vierecks im Raster *abstand*;
+    ein Vieleck mit mehr Ecken (Rand einer Geometrieflaeche) im Raster
+    ueber seine Ebene."""
+    P = np.asarray(P, float)
+    if len(P) > 4:
+        return _polygon_abtasten(P, abstand)
     if len(P) == 3:
         A, B, C = P
         l = max(np.linalg.norm(B - A), np.linalg.norm(C - A), np.linalg.norm(C - B))
@@ -995,8 +1047,9 @@ def _flaeche_abtasten(P: np.ndarray, abstand: float) -> np.ndarray:
     return np.asarray(out, float)
 
 
-#: Hoechstzahl der Symbole je Linien- oder Flaechenlager
-LAGERSYMBOLE_MAX = 4000
+#: Hoechstzahl der Symbole je Linien- oder Flaechenlager - ein Glyphensatz
+#: je Richtung, darum bleiben auch zwoelftausend Pyramiden fluessig
+LAGERSYMBOLE_MAX = 12000
 
 
 def _flaechenlager_flaechen(model: Model, ss) -> list:
@@ -1036,6 +1089,56 @@ def _flaechenlager_flaechen(model: Model, ss) -> list:
     return out
 
 
+def _flaechenlager_geometrie(model: Model, ss) -> list:
+    """[(Randpunkte, Normale)] der Geometrieflaechen eines Flaechenlagers.
+
+    Ein aus RFEM uebernommenes Flaechenlager liegt auf Flaechen der
+    Geometrie; seine Knoten sind nur die Eckknoten. Damit die Symbole die
+    ganze Flaeche belegen - und die Lagerdichte wirkt -, kommt der Rand von
+    der Flaeche selbst. Die Normale zeigt bei einer Flaeche eines Koerpers
+    aus dem Koerper heraus, sonst nach unten.
+    """
+    flaechen = getattr(model, "flaechen", {}) or {}
+    koerper = getattr(model, "koerper", {}) or {}
+    namen = [n for n in (getattr(ss, "flaechen", None) or []) if n in flaechen]
+    if not namen:
+        return []
+    mitten: dict = {}
+    for kn, k in koerper.items():
+        if not any(fn in namen for fn in k.flaechen):
+            continue
+        ringe = []
+        for fn in k.flaechen:
+            f = flaechen.get(fn)
+            if f is not None:
+                try:
+                    R = np.asarray(f.randpunkte(model), float)
+                except Exception:       # noqa: BLE001
+                    continue
+                if len(R):
+                    ringe.append(R)
+        if ringe:
+            mitten[kn] = np.vstack(ringe).mean(axis=0)
+    out = []
+    for name in namen:
+        f = flaechen[name]
+        try:
+            P = np.asarray(f.randpunkte(model), float)
+        except Exception:               # noqa: BLE001
+            continue
+        if len(P) < 3:
+            continue
+        n = _ringnormale(P)
+        kn = next((kn for kn, k in koerper.items() if name in k.flaechen and kn in mitten), None)
+        if kn is not None:
+            if float(n @ (P.mean(axis=0) - mitten[kn])) < 0:
+                n = -n
+        elif n[2] > 0:
+            n = -n
+        out.append((P, n))
+    return out
+
+
 def lager_punkte(model: Model, obj, size: float, dichte: float = 1.0) -> tuple:
     """(Punkte, Richtungen) der Symbole eines Linien- oder Flaechenlagers.
 
@@ -1047,10 +1150,13 @@ def lager_punkte(model: Model, obj, size: float, dichte: float = 1.0) -> tuple:
     if hasattr(obj, "elements"):
         flaechen = _flaechenlager_flaechen(model, obj)
         if not flaechen:
+            # ohne belegte Elemente: die Geometrieflaechen des Lagers
+            flaechen = _flaechenlager_geometrie(model, obj)
+        if not flaechen:
             nodes = [int(n) for n in (obj.nodes or []) if 0 <= int(n) < model.nn]
             pts = model.nodes[nodes] if nodes else np.zeros((0, 3))
             return pts, np.tile([0.0, 0.0, -1.0], (len(pts), 1))
-        gesamt = sum(_polygonflaeche(P) for P, _n in flaechen)
+        gesamt = sum(_ringflaeche(P) for P, _n in flaechen)
         if gesamt > 0 and gesamt / abstand ** 2 > LAGERSYMBOLE_MAX:
             abstand = float(np.sqrt(gesamt / LAGERSYMBOLE_MAX))
         pts, ri = [], []
@@ -1060,15 +1166,37 @@ def lager_punkte(model: Model, obj, size: float, dichte: float = 1.0) -> tuple:
             ri.append(np.tile(n, (len(Q), 1)))
         return (np.vstack(pts) if pts else np.zeros((0, 3)),
                 np.vstack(ri) if ri else np.zeros((0, 3)))
-    nodes = [int(n) for n in (obj.nodes or []) if 0 <= int(n) < model.nn]
-    if not nodes:
-        return np.zeros((0, 3)), np.zeros((0, 3))
-    P = model.nodes[nodes]
+    P = _linienlager_kurve(model, obj)
+    if P is None:
+        nodes = [int(n) for n in (obj.nodes or []) if 0 <= int(n) < model.nn]
+        if not nodes:
+            return np.zeros((0, 3)), np.zeros((0, 3))
+        P = model.nodes[nodes]
     L = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum()) if len(P) > 1 else 0.0
     if L / abstand > LAGERSYMBOLE_MAX:
         abstand = L / LAGERSYMBOLE_MAX
     pts = _polylinie_abtasten(P, abstand)
     return pts, np.tile([0.0, 0.0, -1.0], (len(pts), 1))
+
+
+def _linienlager_kurve(model: Model, ls):
+    """Der Linienzug eines Linienlagers auf seinen Geometrielinien - krumme
+    Linien auf ihrer wahren Kurve; None, wenn das Lager keine Linien kennt."""
+    linien = getattr(model, "lines", {}) or {}
+    namen = [n for n in (getattr(ls, "linien", None) or []) if n in linien]
+    if not namen:
+        return None
+    teile = []
+    for name in namen:
+        ln = linien[name]
+        try:
+            Q = np.asarray(ln.punkte(model, TEILUNG_KURVE), float)
+        except Exception:               # noqa: BLE001
+            idx = [int(n) for n in ln.nodes if 0 <= int(n) < model.nn]
+            Q = model.nodes[idx] if len(idx) > 1 else None
+        if Q is not None and len(Q) > 1:
+            teile.append(Q)
+    return np.vstack(teile) if teile else None
 
 
 def _polygonflaeche(P) -> float:
@@ -1707,7 +1835,7 @@ def beam_diagram(model: Model, res, quantity: str, scale: float, n: int = 9):
     pts, lines, vals = [], [], []
     base = 0
     for i, e in enumerate(model.elements):
-        if e.typ not in ("beam", "truss"):
+        if e.typ not in TYPEN_STAEBE:
             continue
         X = model.nodes[e.nodes]
         T3, L = bm.local_axes(X[0], X[1], e.roll)

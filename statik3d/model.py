@@ -37,6 +37,7 @@ from typing import Optional
 import numpy as np
 
 from .einheiten import Einheiten
+from . import elemente as _EL
 
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
 DOF_ALIASES = {"ux": 0, "uy": 1, "uz": 2, "rx": 3, "ry": 4, "rz": 5,
@@ -58,7 +59,7 @@ def dof_index(key) -> int:
         raise KeyError(f"Freiheitsgrad {key} liegt nicht zwischen 0 und 5")
     return i
 NDOF = 6
-FORMAT_VERSION = 6
+FORMAT_VERSION = 7
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -478,9 +479,35 @@ class Section:
 
 @dataclass
 class ShellProp:
-    """Eigenschaften eines Flaechenelements."""
+    """Eigenschaften eines Flaechenelements.
+
+    t:            Dicke [m]
+    lagen:        geschichteter Aufbau (Laminat): Liste von Lagen, jede ein
+                  dict {t, E, nu, winkel} (isotrop) oder {t, E1, E2, nu12, G12,
+                  G13, G23, winkel} (orthotrop; Winkel in rad zur lokalen
+                  x-Achse), optional rho. Leer = homogen aus Werkstoff und t.
+                  Die Steifigkeiten A, B, D kommen aus der klassischen
+                  Laminattheorie; ein unsymmetrischer Aufbau koppelt Membran-
+                  und Biegeverhalten (B != 0).
+    formulierung: "" = Vorgabe (Dreieck: DKT/CST duenn, Viereck: MITC4
+                  Reissner-Mindlin), "mindlin" = auch das Dreieck als MITC3
+                  (dicke Platten), "dkt" = das Viereck wie frueher in zwei
+                  DKT-Dreiecke zerlegt.
+    """
     name: str
     t: float = 0.01           # Dicke [m]
+    lagen: list = field(default_factory=list)
+    formulierung: str = ""
+
+    @property
+    def geschichtet(self) -> bool:
+        return bool(self.lagen)
+
+    def dicke(self) -> float:
+        """Gesamtdicke: Summe der Lagen, sonst t."""
+        if self.lagen:
+            return float(sum(float(l.get("t", 0.0)) for l in self.lagen))
+        return float(self.t)
 
 
 # --------------------------------------------------------------------------
@@ -489,13 +516,32 @@ class ShellProp:
 @dataclass
 class Element:
     """
-    typ:  'beam'   2 Knoten,  Balken/Stab 3D (12 FHG)
-          'truss'  2 Knoten,  Fachwerkstab (nur Normalkraft)
-          'shell3' 3 Knoten,  ebenes Schalenelement (CST + DKT)
-          'shell4' 4 Knoten,  in 2 shell3 zerlegt
+    Die Typen stehen in :mod:`statik3d.elemente` (Verzeichnis):
+          'beam'   2 Knoten,  Balken/Stab 3D (12 FHG; woelb: 14 FHG)
+          'truss'  2 Knoten,  Fachwerkstab (nur Normalkraft; nur = zug/druck)
+          'seil'   2 Knoten,  Seil (nur Zug; Kettenlinie nach Theorie III)
+          'shell3' 3 Knoten,  Schale (CST + DKT, dick: MITC3)
+          'shell4' 4 Knoten,  Schale (bilinear + MITC4)
+          'shell6' 6 Knoten,  quadratische Schale (Dreieck)
+          'shell8' 8 Knoten,  quadratische Schale (Viereck)
           'tet4'   4 Knoten,  linearer Tetraeder
           'tet10' 10 Knoten,  quadratischer Tetraeder
-          'hex8'   8 Knoten,  Trilinearer Hexaeder
+          'hex8'   8 Knoten,  trilinearer Hexaeder (inkompatible Moden)
+          'hex20' 20 Knoten,  quadratischer Hexaeder
+          'pent6'  6 Knoten,  Keil (Prisma), 'pent15' quadratisch
+          'pyr5'   5 Knoten,  Pyramide
+          'ebene3/4/6/8'      ebene Elemente (Scheibe, ebener Dehnungszustand,
+                              rotationssymmetrisch), Zustand in 'zustand'
+          'feder'  2 Knoten,  Feder mit 6 Steifigkeiten (sec = FederProp)
+          'grenzschicht6/8'   Grenzschicht ohne Dicke (sec = GrenzschichtProp)
+
+    nur:            "" | "zug" | "druck" - Fachwerkstab, Seil oder Feder, der
+                    nur Zug bzw. nur Druck aufnimmt (Aktivmengen-Iteration).
+    exzentrizitaet: [[x, y, z] Anfang, [x, y, z] Ende] - starrer Versatz des
+                    Stabendes gegenueber dem Knoten in lokalen Achsen [m].
+    woelb:          Stab mit Woelbkrafttorsion: die Verwoelbung ist ein
+                    siebter Freiheitsgrad je Knoten (Bimoment im Ergebnis).
+    zustand:        ebene Elemente: "spannung" | "dehnung" | "rotation".
     """
     typ: str
     nodes: list[int]
@@ -506,6 +552,13 @@ class Element:
     hinges: list[int] = field(default_factory=list)  # Momentengelenke: lokale FHG 3..5 / 9..11
     hinge_springs: list = field(default_factory=list)  # [(lokaler FHG 0..11, Steifigkeit)]
     line: str = ""                  # zugehoerige Linie (RFEM-Import)
+    nur: str = ""                   # "" | "zug" | "druck"
+    exzentrizitaet: list = field(default_factory=list)
+    woelb: bool = False
+    zustand: str = "spannung"
+    #: Seil: ungedehnte Laenge [m] (0 = Sehnenlaenge, das Seil haengt dann
+    #: nur unter seinem Gewicht durch); daraus folgen Durchhang und Zugkraft
+    laenge0: float = 0.0
 
 
 FAILURE_MODES = {
@@ -587,6 +640,10 @@ class Support:
     #: Darstellung, ohne Einfluss auf die Rechnung - sie wird mitgespeichert,
     #: damit ein eingestelltes Symbol beim naechsten Oeffnen wieder stimmt.
     groesse: float = 1.0
+    #: Woelbeinspannung: die Verwoelbung (7. FHG eines Stabes mit
+    #: Woelbkrafttorsion) ist an diesem Knoten behindert (Stirnplatte,
+    #: Einspannung). False = Gabellagerung, die Verwoelbung ist frei.
+    woelb: bool = False
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         """Wirkung eines FHG; setzt 'dofs'/'stiffness' in DofBehaviour um."""
@@ -628,6 +685,10 @@ class LineSupport:
     line: str = ""
     behaviour: dict = field(default_factory=dict)     # {FHG: DofBehaviour}
     axis: str = "global"                              # global (weitere Systeme spaeter)
+    #: Linien der Geometrie, auf denen das Lager liegt (RFEM: Linienlager an
+    #: Linien). Mit ihnen folgt das Lager dem Netz: nach dem Vernetzen bekommt
+    #: es alle Netzknoten auf diesen Linien (supports.lager_auf_netz).
+    linien: list[str] = field(default_factory=list)
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -652,6 +713,12 @@ class SurfaceSupport:
     areas: list[float] = field(default_factory=list)  # Einflussflaechen zu 'nodes' [m^2]
     face: int = -1
     behaviour: dict = field(default_factory=dict)     # {FHG: DofBehaviour}
+    #: Flaechen der Geometrie, auf denen das Lager liegt (RFEM: Flaechenlager
+    #: an Flaechen). Mit ihnen folgt das Lager dem Netz: nach dem Vernetzen
+    #: werden 'nodes' und 'areas' aus den Netzknoten und Einflussflaechen
+    #: dieser Flaechen neu bestimmt (supports.lager_auf_netz); die Ansicht
+    #: verteilt die Symbole ueber die ganze Flaeche.
+    flaechen: list[str] = field(default_factory=list)
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -1399,11 +1466,13 @@ class Netzeinstellungen:
     seitenverhaeltnis: groesstes zulaessiges Seitenverhaeltnis eines Elements
     form:         0 Dreiecke, 1 Vierecke, 2 Dreiecke und Vierecke
     abgebildet:   abgebildetes (mapped) Netz bevorzugen
-    ordnung:      1 = lineare Volumenelemente (tet4), 2 = quadratische (tet10).
-                  Der lineare Tetraeder hat eine konstante Dehnung: er ist zu
-                  steif und gibt Spannungen erst mit sehr feinem Netz richtig
-                  wieder. Der quadratische kostet je Element mehr, braucht aber
-                  viel weniger davon.
+    ordnung:      1 = lineare Elemente, 2 = quadratische. Sie gilt fuer alle
+                  Netze: Flaechen bekommen shell6/shell8 statt shell3/shell4,
+                  abgebildete Volumen hex20 statt hex8, freie Volumen tet10
+                  statt tet4. Das lineare Element hat eine konstante Dehnung:
+                  es ist zu steif und gibt Spannungen erst mit sehr feinem Netz
+                  richtig wieder. Das quadratische kostet je Element mehr,
+                  braucht aber viel weniger davon.
     splitter:     Guete, unter der ein Tetraeder als Splitter gilt und aus dem
                   Netz herausgeglaettet wird (0 = nicht glaetten). 1 waere der
                   regelmaessige Tetraeder, 0 der flache.
@@ -1445,8 +1514,8 @@ class Netzeinstellungen:
                 + ("intelligent angepasst, " if getattr(self, "intelligent", True) else "")
                 + f"Stabteilung {self.stabteilung}, "
                 f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}, "
-                + ("quadratische Volumenelemente (tet10)" if self.ordnung >= 2
-                   else "lineare Volumenelemente (tet4)")
+                + ("quadratische Elemente (shell6/shell8, tet10, hex20)"
+                   if self.ordnung >= 2 else "lineare Elemente (shell3/shell4, tet4, hex8)")
                 + (f" ({self.quelle})" if self.quelle else ""))
 
 
@@ -1517,6 +1586,10 @@ class Flaeche:
     #: die Randflaeche eines Volumenkoerpers legen: dort gibt es keine
     #: Schalenelemente, nur Tetraeder, die mit einer Seite anliegen.
     randseiten: list[list[int]] = field(default_factory=list)
+    #: Steifigkeitsart aus der Quelldatei, wenn die Flaeche **keine** eigene
+    #: hat ("starr", "ohne Dicke (Null-Element)", "Lastverteilung" …): so eine
+    #: Flaeche traegt nichts, braucht kein Netz und haelt die Rechnung nicht auf
+    steifigkeit: str = ""
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
@@ -2088,6 +2161,70 @@ class Kopplung:
 
 
 @dataclass
+class Punktmasse:
+    """Punktmasse an einem Knoten (Masse [kg], Drehtraegheiten [kg m^2] um die
+    globalen Achsen). Sie wirkt in der Massenmatrix (Eigenfrequenzen) und als
+    Eigengewicht m·g im Lastfall."""
+    node: int
+    masse: float = 0.0
+    traegheit: list = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    name: str = ""
+    kommentar: str = ""
+
+
+@dataclass
+class Daempfer:
+    """Viskoser Daempfer zwischen zwei Knoten (oder gegen den Boden: node_b =
+    -1) mit den Daempfungskonstanten c [N s/m] bzw. [N m s/rad] je lokaler
+    Achse (Achse a -> b, sonst 'achse'). Er wirkt in der Daempfungsmatrix
+    (modale Daempfung im Schwingungsnachweis), nicht in der Statik."""
+    node_a: int
+    node_b: int = -1
+    c: list = field(default_factory=lambda: [0.0] * 6)
+    achse: list = field(default_factory=lambda: [1.0, 0.0, 0.0])
+    name: str = ""
+    kommentar: str = ""
+
+
+@dataclass
+class FederProp:
+    """Eigenschaften eines Federelements (typ 'feder'): Steifigkeiten
+    [kx, ky, kz] in N/m und [krx, kry, krz] in Nm/rad entlang der lokalen
+    Achsen (x von Knoten a nach b; fallen die Knoten zusammen: 'achse')."""
+    name: str
+    k: list = field(default_factory=lambda: [0.0] * 6)
+    achse: list = field(default_factory=lambda: [1.0, 0.0, 0.0])
+    kommentar: str = ""
+
+
+@dataclass
+class StarrKoerper:
+    """Starrer Koerper / Verteilkopplung (Nastran RBE2, RBE3).
+
+    art 'RBE2': die Slave-Knoten folgen dem Master starr (Verschiebung und
+    Verdrehung; u_s = u_m + theta_m x r). art 'RBE3': der Master ist der
+    gewichtete Mittelpunkt der Slaves - eine Last am Master verteilt sich auf
+    die Slaves, ohne sie zu versteifen. Umgesetzt als Zwangsbedingungen im
+    Strafverfahren (assemble.starrkoerper)."""
+    name: str
+    master: int = 0
+    slaves: list = field(default_factory=list)
+    art: str = "RBE2"
+    gewichte: list = field(default_factory=list)
+    kommentar: str = ""
+
+
+@dataclass
+class GrenzschichtProp:
+    """Eigenschaften einer Grenzschicht ohne Dicke (typ 'grenzschicht6/8'):
+    Steifigkeiten je Flaeche normal kn [N/m je m^2] und tangential kt."""
+    name: str
+    kn: float = 1e12
+    kt: float = 1e12
+    kommentar: str = ""
+
+
+@dataclass
 class ContactPair:
     """Knoten-Flaeche-Kontakt: slave_nodes gegen die Oberflaeche von master_elements
     (Schalenelemente oder Volumenelemente, deren Aussenflaechen benutzt werden)
@@ -2117,6 +2254,14 @@ class ContactPair:
 # --------------------------------------------------------------------------
 #: Alter Name der Kontaktbedingung (RFEM: Flaechenfreigabe)
 Flaechenfreigabe = Kontaktbedingung
+
+#: Steifigkeitsarten einer Flaeche **ohne** eigene Steifigkeit (Klartext, wie
+#: der RFEM-Import sie in ``Flaeche.steifigkeit`` schreibt)
+FLAECHEN_OHNE_STEIFIGKEIT = {
+    "ohne Dicke (Null-Element)", "starr", "Lastverteilung", "Grundwasser", "Diskontinuitaet",
+    "Steifigkeitsanpassung", "Deckenscheibe", "starre Deckenscheibe",
+    "nachgiebige Deckenscheibe", "halbstarre Deckenscheibe",
+}
 
 #: Vorgefertigte Kontakte - benannt wie in ANSYS, in der Wirkung je Richtung:
 #: zug   "starr"   = Zug wird uebertragen (die Fuge oeffnet nicht)
@@ -2239,6 +2384,12 @@ class Model:
         self.lasteinleitungen: dict[str, Lasteinleitung] = {}
         self.kontaktbedingungen: dict[str, Kontaktbedingung] = {}
         self.kopplungen: list[Kopplung] = []
+        # Punkt- und Verbindungselemente
+        self.punktmassen: list[Punktmasse] = []
+        self.daempfer: list[Daempfer] = []
+        self.federn: dict[str, FederProp] = {}
+        self.starrkoerper: list[StarrKoerper] = []
+        self.grenzschichten: dict[str, GrenzschichtProp] = {}
         self.flaechen: dict[str, Flaeche] = {}
         self.koerper: dict[str, Volumenkoerper] = {}
         #: Aus der Ansicht in den Bericht uebernommene Ergebnisse, in der
@@ -2362,10 +2513,121 @@ class Model:
         return s
 
     def add_element(self, typ: str, nodes, mat: str, sec: str = None,
-                    roll: float = 0.0, group: str = "default", hinges=None) -> int:
-        self.elements.append(Element(typ, [int(n) for n in nodes], mat, sec, roll, group,
-                                     list(hinges) if hinges else []))
+                    roll: float = 0.0, group: str = "default", hinges=None, **kw) -> int:
+        """Ein Element anlegen; ``kw`` setzt weitere Felder (nur, exzentrizitaet,
+        woelb, zustand, line)."""
+        from .elemente import ELEMENTE
+        if typ not in ELEMENTE:
+            raise KeyError(f"Elementtyp '{typ}' unbekannt: {', '.join(ELEMENTE)}")
+        e = Element(typ, [int(n) for n in nodes], mat, sec, roll, group,
+                    list(hinges) if hinges else [])
+        for k, v in kw.items():
+            if not hasattr(e, k):
+                raise KeyError(f"Element hat kein Feld '{k}'")
+            setattr(e, k, v)
+        if kw.get("woelb"):
+            self._woelb_version = getattr(self, "_woelb_version", 0) + 1
+        self.elements.append(e)
         return len(self.elements) - 1
+
+    # ---------------- Punkt- und Verbindungselemente ----------------
+    def add_punktmasse(self, node: int, masse: float, traegheit=None, name: str = "",
+                       kommentar: str = "") -> Punktmasse:
+        pm = Punktmasse(int(node), float(masse),
+                        [float(x) for x in (traegheit or [0.0, 0.0, 0.0])],
+                        name or f"M{len(self.punktmassen) + 1}", kommentar)
+        self.punktmassen.append(pm)
+        return pm
+
+    def add_daempfer(self, node_a: int, node_b: int = -1, c=None, achse=None,
+                     name: str = "", kommentar: str = "") -> Daempfer:
+        cc = [0.0] * 6
+        if c is not None:
+            c = list(np.atleast_1d(np.asarray(c, float)).ravel())
+            cc[:len(c)] = c[:6]
+        d = Daempfer(int(node_a), int(node_b), cc,
+                     [float(x) for x in (achse or [1.0, 0.0, 0.0])],
+                     name or f"D{len(self.daempfer) + 1}", kommentar)
+        self.daempfer.append(d)
+        return d
+
+    def add_feder_prop(self, name: str, k=None, achse=None, kommentar: str = "") -> FederProp:
+        kk = [0.0] * 6
+        if k is not None:
+            k = list(np.atleast_1d(np.asarray(k, float)).ravel())
+            kk[:len(k)] = k[:6]
+        fp = FederProp(name, kk, [float(x) for x in (achse or [1.0, 0.0, 0.0])], kommentar)
+        self.federn[name] = fp
+        return fp
+
+    def add_grenzschicht_prop(self, name: str, kn: float = 1e12, kt: float = 1e12,
+                              kommentar: str = "") -> GrenzschichtProp:
+        gp = GrenzschichtProp(name, float(kn), float(kt), kommentar)
+        self.grenzschichten[name] = gp
+        return gp
+
+    def add_starrkoerper(self, master: int, slaves, art: str = "RBE2", gewichte=None,
+                         name: str = "", kommentar: str = "") -> StarrKoerper:
+        art = str(art).upper()
+        if art not in ("RBE2", "RBE3"):
+            raise KeyError("Starrkoerper-Art: RBE2 oder RBE3")
+        sk = StarrKoerper(name or f"SK{len(self.starrkoerper) + 1}", int(master),
+                          [int(n) for n in slaves], art,
+                          [float(w) for w in (gewichte or [])], kommentar)
+        self.starrkoerper.append(sk)
+        return sk
+
+    # ---------------- Woelbkrafttorsion: 7. Freiheitsgrad ----------------
+    def woelb_knoten(self) -> list:
+        """Knoten, die eine Verwoelbung als Freiheitsgrad tragen: alle Knoten
+        von Stabelementen mit ``woelb``. Ihre FHG stehen **hinter** den
+        6·nn Knotenfreiheitsgraden (Index woelb_index).
+
+        Das Ergebnis wird je Modellstand gehalten (Knoten- und Elementzahl,
+        Aenderungszaehler ``_woelb_version``): die Assemblierung fragt es je
+        Element, und ueber eine halbe Million Elemente darf das nicht jedes
+        Mal laufen. Wer ``woelb`` an einem Element umstellt, ruft
+        :meth:`stab_woelb_setzen` oder zaehlt ``_woelb_version`` hoch.
+        """
+        stand = (self.nn, len(self.elements), getattr(self, "_woelb_version", 0))
+        zw = getattr(self, "_woelb_zwischen", None)
+        if zw is not None and zw[0] == stand:
+            return zw[1]
+        out = set()
+        for e in self.elements:
+            if self.stab_woelbt(e):
+                out.update(int(n) for n in e.nodes)
+        res = sorted(out)
+        self._woelb_zwischen = (stand, res)
+        return res
+
+    def woelb_index(self) -> dict:
+        """{Knoten: globaler FHG-Index der Verwoelbung}."""
+        basis = self.nn * NDOF
+        return {n: basis + k for k, n in enumerate(self.woelb_knoten())}
+
+    def stab_woelbt(self, e) -> bool:
+        """Rechnet dieses Element mit Woelbkrafttorsion?
+
+        Nur ein Balken mit dem Haken ``woelb`` **und** einem Querschnitt mit
+        Woelbwiderstand Iw > 0. Ohne Iw brauchte der siebte Freiheitsgrad
+        keine eigene Steifigkeit: er wuerde die Verwoelbung nur kuenstlich
+        stetig machen und die St.-Venant-Loesung verfaelschen.
+        """
+        if e.typ != "beam" or not getattr(e, "woelb", False):
+            return False
+        sec = self.sections.get(e.sec)
+        return bool(sec is not None and float(getattr(sec, "Iw", 0.0) or 0.0) > 0.0)
+
+    def stab_woelb_setzen(self, i: int, an: bool = True) -> None:
+        """Woelbkrafttorsion an einem Stabelement ein- oder ausschalten."""
+        self.elements[int(i)].woelb = bool(an)
+        self._woelb_version = getattr(self, "_woelb_version", 0) + 1
+
+    def hat_ausfallstaebe(self) -> bool:
+        """Elemente, die nur Zug oder nur Druck aufnehmen (truss/feder mit
+        ``nur``, Seile) - sie brauchen die Aktivmengen-Iteration."""
+        return any(getattr(e, "nur", "") or e.typ == "seil" for e in self.elements)
 
     def add_elements(self, typ: str, conn, mat: str, sec: str = None,
                      group: str = "default") -> list[int]:
@@ -2419,7 +2681,7 @@ class Model:
         for e in els:
             if not 0 <= e < len(self.elements):
                 raise IndexError(f"Element {e} gibt es nicht")
-            if self.elements[e].typ not in ("tet4", "tet10", "hex8"):
+            if self.elements[e].typ not in _EL.VOLUMEN_TYPEN:
                 raise ValueError(f"Element {e + 1} ist kein Volumenelement")
         v = Volumenbereich(name, els, **kw)
         self.volumenbereiche[name] = v
@@ -2645,6 +2907,16 @@ class Model:
             x.knoten = [f(n) for n in (x.knoten or [])]
         for sub in (getattr(self, "subsysteme", None) or {}).values():
             sub.knoten = [f(n) for n in (sub.knoten or [])]
+        for pm in getattr(self, "punktmassen", None) or []:
+            pm.node = f(pm.node)
+        for dp in getattr(self, "daempfer", None) or []:
+            dp.node_a = f(dp.node_a)
+            if int(dp.node_b) >= 0:
+                dp.node_b = f(dp.node_b)
+        for sk in getattr(self, "starrkoerper", None) or []:
+            sk.master = f(sk.master)
+            sk.slaves = [f(n) for n in (sk.slaves or [])]
+        self._woelb_version = getattr(self, "_woelb_version", 0) + 1
 
     def knoten_tauschen(self, a: int, b: int) -> None:
         """Zwei Knotennummern tauschen - samt allen Verweisen.
@@ -2691,6 +2963,14 @@ class Model:
             lc.zwangsverformungen = [z for z in lc.zwangsverformungen if int(z.node) != i]
         self.contact_supports = [c for c in (getattr(self, "contact_supports", None) or [])
                                  if int(c.node) != i]
+        self.punktmassen = [x for x in (getattr(self, "punktmassen", None) or []) if int(x.node) != i]
+        self.daempfer = [x for x in (getattr(self, "daempfer", None) or [])
+                         if int(x.node_a) != i and int(x.node_b) != i]
+        for sk in (getattr(self, "starrkoerper", None) or []):
+            if i in sk.slaves:
+                sk.slaves = [n for n in sk.slaves if int(n) != i]
+        self.starrkoerper = [sk for sk in (getattr(self, "starrkoerper", None) or [])
+                             if int(sk.master) != i and sk.slaves]
         self.nodes = np.delete(np.asarray(self.nodes, float), i, axis=0)
         self._knotenverweise_abbilden({n: n - 1 for n in range(i + 1, self.nn + 1)})
         return ""
@@ -2914,7 +3194,15 @@ class Model:
         f = (self.flaechen or {}).get(name)
         if f is None:
             return False
-        return bool(f.dicke) or name not in self.koerperflaechen()
+        if f.dicke:
+            return True
+        if name in self.koerperflaechen():
+            return False
+        # Eine Flaeche ohne Dicke, die laut Quelldatei keine eigene Steifigkeit
+        # hat (starr, Null-Element, Lastverteilung), traegt nichts. Aeltere
+        # Dateien tragen die Art nur in der Bemerkung.
+        art = (getattr(f, "steifigkeit", "") or "") or (f.kommentar or "")
+        return art not in FLAECHEN_OHNE_STEIFIGKEIT
 
     @staticmethod
     def naechster_name(vorsilbe: str, vorhandene) -> str:
@@ -3228,7 +3516,7 @@ class Model:
         """Aussennormale einer Volumenseite - oder die Normale einer Schale
         (Knotenreihenfolge) - oder None."""
         e = self.elements[int(elem)]
-        if e.typ in ("shell3", "shell4"):
+        if e.typ in _EL.SCHALEN_TYPEN:
             X = self.nodes[[int(k) for k in e.nodes[:3]]]
             n = np.cross(X[1] - X[0], X[2] - X[0])
             L = float(np.linalg.norm(n))
@@ -3294,7 +3582,7 @@ class Model:
                 return
             if gl.verlauf:
                 p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
-                            beidseitig=(seite == 0 and self.elements[int(e)].typ in ("shell3", "shell4")))
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
             else:
                 p = gl.p
             if gl.verlauf and p == 0.0:
@@ -3446,17 +3734,21 @@ class Model:
         e = int(elem)
         if not 0 <= e < len(self.elements):
             raise IndexError(f"Element {e} gibt es nicht")
-        if self.elements[e].typ not in ("beam", "truss"):
+        if self.elements[e].typ not in _EL.STAB_TYPEN:
             raise ValueError(f"Element {e + 1} ist kein Stab")
         j = Joint(name, typ, e, int(end), **kw)
         self.joints[name] = j
         return j
 
     def fix(self, node: int, dofs="all", values=None, stiffness=None):
+        """Knotenlager: ``dofs`` ist "all", "pinned" oder eine Liste der
+        Freiheitsgrade - als Zahl (0..5) oder als Name ("uz", "phiy")."""
         if dofs == "all":
             dofs = [0, 1, 2, 3, 4, 5]
         elif dofs == "pinned":
             dofs = [0, 1, 2]
+        else:
+            dofs = [dof_index(d) for d in dofs]
         self.supports.append(Support(int(node), list(dofs),
                                      list(values) if values is not None else None,
                                      list(stiffness) if stiffness is not None else None))
@@ -3476,7 +3768,7 @@ class Model:
             dofs = [0, 1, 2]
         elif dofs == "free":
             dofs = []
-        s = Support(int(node), [int(d) for d in dofs], name=name)
+        s = Support(int(node), [dof_index(d) for d in dofs], name=name)
         for key, val in behaviour.items():
             d = dof_index(key)
             s.set_behaviour(d, **(val if isinstance(val, dict) else asdict(val)))
@@ -3638,7 +3930,9 @@ class Model:
 
     @property
     def ndof(self) -> int:
-        return self.nn * NDOF
+        """6 FHG je Knoten, dahinter je ein Woelb-FHG fuer die Knoten der
+        Staebe mit Woelbkrafttorsion."""
+        return self.nn * NDOF + len(self.woelb_knoten())
 
     def element_nodes(self, e: Element) -> np.ndarray:
         return self.nodes[e.nodes]
@@ -3661,7 +3955,7 @@ class Model:
         return d if d > 0 else 1.0
 
     def beam_elements(self) -> list[int]:
-        return [i for i, e in enumerate(self.elements) if e.typ in ("beam", "truss")]
+        return [i for i, e in enumerate(self.elements) if e.typ in _EL.STAB_TYPEN]
 
     def auto_members(self, prefix: str = "S", angle_tol: float = 1e-3,
                      replace: bool = False) -> list[Member]:
@@ -3750,9 +4044,9 @@ class Model:
         for i, e in enumerate(self.elements):
             if e.mat not in self.materials:
                 msgs.append(f"FEHLER: Element {i}: Material '{e.mat}' unbekannt")
-            if e.typ in ("beam", "truss") and e.sec not in self.sections:
+            if e.typ in _EL.STAB_TYPEN and e.sec not in self.sections:
                 msgs.append(f"FEHLER: Element {i}: Querschnitt '{e.sec}' unbekannt")
-            if e.typ in ("shell3", "shell4") and e.sec not in self.shells:
+            if e.typ in _EL.SCHALEN_TYPEN and e.sec not in self.shells:
                 msgs.append(f"FEHLER: Element {i}: Schalendicke '{e.sec}' unbekannt")
             for n in e.nodes:
                 if n < 0 or n >= self.nn:
@@ -3795,7 +4089,7 @@ class Model:
             for i in m.elements:
                 if i < 0 or i >= len(self.elements):
                     msgs.append(f"FEHLER: Stab '{m.name}': Element {i} existiert nicht")
-                elif self.elements[i].typ not in ("beam", "truss"):
+                elif self.elements[i].typ not in _EL.STAB_TYPEN:
                     msgs.append(f"FEHLER: Stab '{m.name}': Element {i} ist kein Stabelement")
         n_loads = sum(lc.n_loads for lc in self.load_cases.values())
         if n_loads == 0:
@@ -3856,6 +4150,11 @@ class Model:
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "kopplungen": [asdict(k) for k in self.kopplungen],
             "contact_pairs": [asdict(c) for c in self.contact_pairs],
+            "punktmassen": [asdict(x) for x in self.punktmassen],
+            "daempfer": [asdict(x) for x in self.daempfer],
+            "federn": [asdict(x) for x in self.federn.values()],
+            "starrkoerper": [asdict(x) for x in self.starrkoerper],
+            "grenzschichten": [asdict(x) for x in self.grenzschichten.values()],
             "subsysteme": [asdict(x) for x in self.subsysteme.values()],
             "situationen": [asdict(x) for x in self.situationen.values()],
             "stellungen": [asdict(s) if hasattr(s, "__dataclass_fields__") else dict(s)
@@ -3933,6 +4232,12 @@ class Model:
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]
         m.contact_pairs = [_dc(ContactPair, c) for c in d.get("contact_pairs", [])]
+        m.punktmassen = [_dc(Punktmasse, x) for x in d.get("punktmassen", [])]
+        m.daempfer = [_dc(Daempfer, x) for x in d.get("daempfer", [])]
+        m.federn = {x["name"]: _dc(FederProp, x) for x in d.get("federn", [])}
+        m.starrkoerper = [_dc(StarrKoerper, x) for x in d.get("starrkoerper", [])]
+        m.grenzschichten = {x["name"]: _dc(GrenzschichtProp, x)
+                            for x in d.get("grenzschichten", [])}
         m.subsysteme = {x["name"]: _dc(Subsystem, x) for x in d.get("subsysteme", [])}
         m.situationen = {x["name"]: _dc(Situation, x) for x in d.get("situationen", [])}
         if d.get("wasserdruecke"):
