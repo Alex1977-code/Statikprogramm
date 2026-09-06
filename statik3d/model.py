@@ -31,6 +31,7 @@ model.gravity ...) arbeitet auf dem *aktiven* Lastfall weiter.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field, asdict, fields
 from typing import Optional
 
@@ -4114,13 +4115,29 @@ class Model:
         return msgs
 
     # ---------------- Speichern / Laden ----------------
-    def to_dict(self) -> dict:
+    def to_dict(self, fortschritt=None) -> dict:
+        # Knoten, Elemente und Lastfaelle machen bei grossen Modellen fast die
+        # ganze Zeit aus; sie werden vorweg berechnet, damit der Balken sie
+        # einzeln melden kann. Die Reihenfolge der Schluessel bleibt gleich.
+        _melde(fortschritt, 0.02, f"{self.nn} Knoten aufbereiten")
+        knoten = self.nodes.tolist()
+        n_el = len(self.elements)
+        _melde(fortschritt, 0.10, f"{n_el} Elemente aufbereiten")
+        elemente = []
+        for i, e in enumerate(self.elements):
+            elemente.append(asdict(e))
+            if fortschritt is not None and (i & 8191) == 0 and i:
+                _melde(fortschritt, 0.10 + 0.55 * i / max(1, n_el),
+                       f"Element {i} von {n_el} aufbereiten")
+        _melde(fortschritt, 0.65, "Lastfälle aufbereiten")
+        lastfaelle = [lc.to_dict() for lc in self.load_cases.values()]
+        _melde(fortschritt, 0.85, "übriges Modell aufbereiten")
         return {
             "format": FORMAT_VERSION,
             "name": self.name,
             "meta": dict(self.meta),
-            "nodes": self.nodes.tolist(),
-            "elements": [asdict(e) for e in self.elements],
+            "nodes": knoten,
+            "elements": elemente,
             "materials": {k: asdict(v) for k, v in self.materials.items()},
             "sections": {k: asdict(v) for k, v in self.sections.items()},
             "shells": {k: asdict(v) for k, v in self.shells.items()},
@@ -4129,7 +4146,7 @@ class Model:
             "surface_supports": [_beh_dict(asdict(x)) for x in self.surface_supports],
             "lines": [asdict(x) for x in self.lines.values()],
             "hinges": [asdict(x) for x in self.hinges.values()],
-            "load_cases": [lc.to_dict() for lc in self.load_cases.values()],
+            "load_cases": lastfaelle,
             "active_case": self.active_case,
             "combinations": [asdict(c) for c in self.combinations.values()],
             "fatigue_loads": [asdict(f) for f in self.fatigue_loads.values()],
@@ -4169,16 +4186,48 @@ class Model:
             "einheiten": asdict(self.einheiten),
         }
 
-    def save(self, path: str):
+    def save(self, path: str, fortschritt=None):
+        """Modell als JSON schreiben; ``fortschritt(anteil, text)`` optional.
+
+        Geschrieben wird Schluessel fuer Schluessel statt in einem Zug - so
+        laesst sich sagen, woran das Programm gerade ist. Das Ergebnis ist
+        dieselbe JSON-Datei; nur die Einrueckung der obersten Ebene ist
+        knapper.
+        """
+        d = self.to_dict(fortschritt=(None if fortschritt is None
+                                      else lambda a, t: _melde(fortschritt, 0.6 * a, t)))
+        # Nach Umfang gewichten: "elements" wiegt bei einem Volumennetz mehr
+        # als alle anderen Schluessel zusammen.
+        gewicht = {k: (len(v) if isinstance(v, (list, dict)) else 1) for k, v in d.items()}
+        gesamt = max(1, sum(gewicht.values()))
+        getan = 0
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=1)
+            f.write("{\n")
+            for i, (k, v) in enumerate(d.items()):
+                if i:
+                    f.write(",\n")
+                f.write(json.dumps(k) + ": ")
+                json.dump(v, f, indent=1)
+                getan += gewicht[k]
+                _melde(fortschritt, 0.6 + 0.4 * getan / gesamt, f"{k} geschrieben")
+            f.write("\n}\n")
+        _melde(fortschritt, 1.0, "gespeichert")
 
     @staticmethod
-    def from_dict(d: dict) -> "Model":
+    def from_dict(d: dict, fortschritt=None) -> "Model":
         m = Model(d.get("name", "Modell"))
         m.meta.update(d.get("meta", {}))
+        _melde(fortschritt, 0.05, "Knoten aufbauen")
         m.nodes = np.asarray(d["nodes"], dtype=float).reshape(-1, 3)
-        m.elements = [_dc(Element, e) for e in d["elements"]]
+        n_el = len(d["elements"])
+        _melde(fortschritt, 0.15, f"{n_el} Elemente aufbauen")
+        m.elements = []
+        for i, e in enumerate(d["elements"]):
+            m.elements.append(_dc(Element, e))
+            if fortschritt is not None and (i & 8191) == 0 and i:
+                _melde(fortschritt, 0.15 + 0.60 * i / max(1, n_el),
+                       f"Element {i} von {n_el} aufbauen")
+        _melde(fortschritt, 0.78, "übriges Modell aufbauen")
         m.materials = {k: _dc(Material, v) for k, v in d["materials"].items()}
         m.sections = {k: _dc(Section, v) for k, v in d["sections"].items()}
         m.shells = {k: _dc(ShellProp, v) for k, v in d.get("shells", {}).items()}
@@ -4268,16 +4317,45 @@ class Model:
                 s.verschiebung = tuple(getattr(s, "verschiebung", None) or (0.0, 0.0, 0.0))
                 if s.antrieb is not None:
                     s.antrieb = (int(s.antrieb[0]), tuple(s.antrieb[1]))
+        _melde(fortschritt, 1.0, "Modell gelesen")
         return m
 
     @staticmethod
-    def load(path: str) -> "Model":
-        with open(path, encoding="utf-8") as f:
-            d = json.load(f)
-        return Model.from_dict(d)
+    def load(path: str, fortschritt=None) -> "Model":
+        """Modell aus einer JSON-Datei lesen; ``fortschritt(anteil, text)``
+        optional. Gelesen wird blockweise, damit der Balken auch waehrend der
+        Datei laeuft und nicht erst danach springt."""
+        if fortschritt is None:
+            with open(path, encoding="utf-8") as f:
+                return Model.from_dict(json.load(f))
+        groesse = max(1, os.path.getsize(path))
+        teile, gelesen = [], 0
+        with open(path, "rb") as f:
+            while True:
+                block = f.read(1 << 20)
+                if not block:
+                    break
+                teile.append(block)
+                gelesen += len(block)
+                _melde(fortschritt, 0.30 * min(1.0, gelesen / groesse),
+                       f"Datei lesen ({gelesen / 1e6:.0f} von {groesse / 1e6:.0f} MB)")
+        _melde(fortschritt, 0.32, "Daten auswerten")
+        d = json.loads(b"".join(teile).decode("utf-8"))
+        return Model.from_dict(d, fortschritt=lambda a, t: _melde(fortschritt, 0.4 + 0.6 * a, t))
 
     def copy(self) -> "Model":
         return Model.from_dict(json.loads(json.dumps(self.to_dict())))
+
+
+def _melde(fortschritt, anteil: float, text: str) -> None:
+    """Fortschritt weitergeben: ``fortschritt(anteil 0…1, text)``.
+
+    Speichern und Laden eines Modells mit hunderttausend Knoten und einer
+    halben Million Elementen dauern Minuten. Ohne Rueckmeldung sieht das aus
+    wie ein haengendes Programm.
+    """
+    if fortschritt is not None:
+        fortschritt(float(anteil), str(text))
 
 
 def _beh_dict(d: dict) -> dict:

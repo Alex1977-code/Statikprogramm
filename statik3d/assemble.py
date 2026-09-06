@@ -345,11 +345,32 @@ def element_masse_knoten(model: Model, e) -> np.ndarray:
 # --------------------------------------------------------------------------
 # Elementschleifen (seriell oder parallel)
 # --------------------------------------------------------------------------
+def elementfehler(model: Model, i: int, ex: Exception) -> ValueError:
+    """Aus einem Fehler tief in der Elementformulierung eine Meldung machen,
+    mit der man das Element auch findet.
+
+    Bisher kam aus einer halben Million Elementen nur „entartetes Tet4“
+    zurueck - ohne Nummer, ohne Knoten, ohne Koerper. Wer das Netz reparieren
+    soll, braucht beides.
+    """
+    try:
+        e = model.elements[i]
+        kn = ", ".join(str(int(k) + 1) for k in e.nodes)
+        wo = f" im Volumen/Objekt '{e.group}'" if getattr(e, "group", "") else ""
+        return ValueError(f"Element {i + 1} ({e.typ}{wo}, Knoten {kn}): {ex}")
+    except Exception:      # noqa: BLE001 - die Meldung darf nie selbst scheitern
+        return ValueError(f"Element {i + 1}: {ex}")
+
+
 def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
     out = []
     for i in idx:
         e = model.elements[i]
-        out.append((element_dofs(e, model), np.asarray(element_matrix(model, e), float)))
+        try:
+            ke = np.asarray(element_matrix(model, e), float)
+        except Exception as ex:      # noqa: BLE001
+            raise elementfehler(model, i, ex) from ex
+        out.append((element_dofs(e, model), ke))
     return out
 
 
@@ -357,7 +378,11 @@ def _mass_chunk(model: Model, idx: list[int]) -> list[tuple]:
     out = []
     for i in idx:
         e = model.elements[i]
-        out.append((element_dofs(e, model), np.asarray(element_mass(model, e), float)))
+        try:
+            me = np.asarray(element_mass(model, e), float)
+        except Exception as ex:      # noqa: BLE001
+            raise elementfehler(model, i, ex) from ex
+        out.append((element_dofs(e, model), me))
     return out
 
 

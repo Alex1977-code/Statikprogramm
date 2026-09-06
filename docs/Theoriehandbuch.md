@@ -1548,6 +1548,42 @@ und das gemeldet.
   Parameterstudien) laufen im lokalen Prozess-Pool oder auf der
   Rechnerfarm (siehe Rechnerfarm.md).
 * Die Ergebnisse sind unabhängig von der Anzahl der Prozesse (getestet).
+* Fällt der Prozess-Pool aus (kein `fork`/`spawn` möglich, ein
+  Arbeitsprozess stirbt), wird derselbe Block seriell nachgerechnet. Ein
+  Fehler **aus** der Elementschleife dagegen ist ein Befund am Modell und
+  wird unverändert weitergereicht - er darf nicht in einem stillen
+  seriellen Neuversuch verschwinden. Hinweise gehen nur dann nach
+  `sys.stderr`, wenn es einen gibt: die gepackte Windows-Fassung läuft ohne
+  Konsole.
+
+## 7a Entartete Elemente
+
+Ein Element ohne Ausdehnung hat keine Steifigkeit; seine Jacobi-Matrix ist
+singulär und die Formulierung bricht ab. Zwei Fälle treten auf:
+
+* **Doppelte Knoten** - zwei Ecken zeigen auf denselben Modellknoten. Beim
+  Vernetzen entsteht das, wenn die Knoten auf einer gemeinsamen Fläche
+  zusammengelegt werden und dabei zwei Ecken eines flachen Tetraeders auf
+  denselben Punkt fallen.
+* **Verschwindendes Maß** - die Punkte liegen auf einer Geraden bzw. in
+  einer Ebene.
+
+Geprüft wird je Familie das natürliche Maß: Länge bei Stäben, Fläche bei
+Schalen und Scheiben, Volumen bei Tetraedern. Für Sechsflächner, Keile und
+Pyramiden dient die Streumatrix **C** der Eckpunkte,
+
+    C = (1/n) · Σ (x_i − x̄)(x_i − x̄)ᵀ ,     Maß = √det C  ,
+
+deren Determinante genau dann verschwindet, wenn die Punkte in einer Ebene
+liegen; die Wurzel hat die Einheit eines Volumens. Das läuft für alle
+Elemente auf einmal und kostet bei 380 000 Tetraedern rund 1,5 s - die
+exakte Integration je Element bräuchte Minuten, und geprüft wird vor jeder
+Rechnung.
+
+Die Grenzen (10⁻⁹ m, 10⁻¹² m², 10⁻¹⁵ m³) liegen weit unter allem, was ein
+Bauteil je ist - ein Würfel mit 0,1 µm Kante hat 10⁻²¹ m³ -, sodass nur
+wirklich entartete Elemente anschlagen, kein dünnes Blech. Federn und
+Grenzschichten sind ausgenommen: sie dürfen die Dicke null haben.
 
 ## 8 Gültigkeitsbereich
 

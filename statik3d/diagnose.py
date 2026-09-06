@@ -82,6 +82,94 @@ def gehaltene_knoten(model) -> tuple:
     return fest, kontakt
 
 
+# Ein Element ohne Ausdehnung hat keine Steifigkeit: die Elementmatrix wird
+# singulaer und die Formulierung bricht ab ("Tetraeder ohne Volumen"). Die
+# Grenzen liegen weit unter allem, was ein Bauteil je ist - ein Wuerfel mit
+# 0,1 um Kante hat 1e-21 m^3 - und treffen damit nur wirklich entartete
+# Elemente, nicht bloss sehr kleine.
+GRENZE_LAENGE = 1e-9        # m
+GRENZE_FLAECHE = 1e-12      # m^2
+GRENZE_VOLUMEN = 1e-15      # m^3
+
+
+def entartete_elemente(model, hoechstens: int = 0) -> list:
+    """Elemente ohne Ausdehnung: doppelte Knoten oder (nahezu) kein Mass.
+
+    Rueckgabe: Liste von (elementindex, art, grund). ``hoechstens`` begrenzt
+    die Ausgabe (0 = alle). Vektorisiert je Elementart, weil ein Volumennetz
+    mit einer halben Million Tetraedern sonst Minuten braucht - die Pruefung
+    laeuft vor **jeder** Rechnung.
+    """
+    import numpy as _np
+    from . import elemente as _EL
+
+    treffer = []
+    nn = int(getattr(model, "nn", 0))
+    gruppen: dict = {}
+    for i, e in enumerate(model.elements):
+        gruppen.setdefault(e.typ, []).append(i)
+
+    for typ, idx in gruppen.items():
+        art = _EL.ELEMENTE.get(typ)
+        familie = art.familie if art is not None else ""
+        if familie == "verbindung":
+            continue                     # Federn und Grenzschichten duerfen dick null sein
+        idx = _np.asarray(idx, int)
+        try:
+            K = _np.array([[int(x) for x in model.elements[i].nodes] for i in idx], dtype=int)
+        except Exception:                # noqa: BLE001 - uneinheitliche Knotenzahl
+            continue
+        if K.ndim != 2 or not K.size:
+            continue
+        gueltig = (K >= 0).all(axis=1) & (K < nn).all(axis=1)
+        # 1) doppelte Knoten - das ist immer falsch, unabhaengig von der Lage.
+        #    Sortieren und Nachbarn vergleichen statt set() je Zeile: bei
+        #    370 000 Tetraedern sind das Sekunden Unterschied.
+        sortiert = _np.sort(K, axis=1)
+        doppelt = (sortiert[:, 1:] == sortiert[:, :-1]).any(axis=1)
+        for i in idx[doppelt & gueltig]:
+            treffer.append((int(i), typ, "zwei Knoten des Elements sind derselbe"))
+        # 2) Mass des Elements
+        pruef = gueltig & ~doppelt
+        if not pruef.any():
+            continue
+        jdx, X = idx[pruef], model.nodes[K[pruef]]
+        mass, grenze, wort = None, 0.0, ""
+        if familie == "stab":
+            mass = _np.linalg.norm(X[:, 1] - X[:, 0], axis=1)
+            grenze, wort = GRENZE_LAENGE, "Länge"
+        elif familie in ("schale", "ebene"):
+            e1, e2 = X[:, 1] - X[:, 0], X[:, 2] - X[:, 0]
+            mass = 0.5 * _np.linalg.norm(_np.cross(e1, e2), axis=1)
+            if K.shape[1] >= 4 and typ in ("shell4", "shell8", "ebene4", "ebene8"):
+                e3 = X[:, 3] - X[:, 0]
+                mass = mass + 0.5 * _np.linalg.norm(_np.cross(e2, e3), axis=1)
+            grenze, wort = GRENZE_FLAECHE, "Fläche"
+        elif familie == "volumen":
+            if typ in ("tet4", "tet10"):
+                mass = _np.abs(_np.einsum("ij,ij->i", X[:, 1] - X[:, 0],
+                                          _np.cross(X[:, 2] - X[:, 0], X[:, 3] - X[:, 0]))) / 6.0
+            else:
+                # Fuer Sechsflaechner, Keile und Pyramiden reicht ein Mass, das
+                # nur die *Entartung* erkennt: die Streumatrix der Eckpunkte.
+                # Ihre Determinante ist genau dann null, wenn die Punkte in
+                # einer Ebene liegen; die dritte Wurzel daraus hat die Einheit
+                # eines Volumens. Das laeuft fuer alle Elemente auf einmal,
+                # waehrend die exakte Integration je Element Minuten kostet.
+                Xc = X - X.mean(axis=1, keepdims=True)
+                C = _np.einsum("nki,nkj->nij", Xc, Xc) / X.shape[1]
+                mass = _np.sqrt(_np.maximum(_np.linalg.det(C), 0.0))
+            grenze, wort = GRENZE_VOLUMEN, "Volumen"
+        if mass is None:
+            continue
+        for i, m in zip(jdx[mass <= grenze], mass[mass <= grenze]):
+            treffer.append((int(i), typ, f"{wort} praktisch null ({float(m):.3e})"))
+        if hoechstens and len(treffer) >= hoechstens:
+            break
+    treffer.sort()
+    return treffer[:hoechstens] if hoechstens else treffer
+
+
 def diagnose(model) -> dict:
     """Kennzahlen zur Rechenbarkeit: unvernetzte Geometrie, Teiltragwerke
     ohne Lager, nur durch Kontakt gehaltene Teile, lose Knoten."""
@@ -96,7 +184,9 @@ def diagnose(model) -> dict:
     ohne = [g for g in teile if not (set(g) & fest) and not (set(g) & kontakt)]
     nur_kontakt = [g for g in teile if not (set(g) & fest) and (set(g) & kontakt)]
     belegt = set(k for g in teile for k in g)
-    return {"unvernetzte_flaechen": flaechen, "unvernetzte_koerper": koerper,
+    entartet = entartete_elemente(model)
+    return {"entartete_elemente": entartet,
+            "unvernetzte_flaechen": flaechen, "unvernetzte_koerper": koerper,
             "teile": len(teile), "groesstes_teil": max((len(g) for g in teile), default=0),
             "ohne_lager": ohne, "nur_kontakt": nur_kontakt,
             "lose_knoten": int(model.nn - len(belegt)),
@@ -107,6 +197,16 @@ def meldungen(model, d: dict = None) -> list:
     """Die Diagnose als Zeilen mit Vorsatz FEHLER/WARNUNG/Hinweis."""
     d = d or diagnose(model)
     z = []
+    ent = d.get("entartete_elemente") or []
+    if ent:
+        beispiel = "; ".join(f"Element {i + 1} ({t}): {g}" for i, t, g in ent[:3])
+        wort = ("1 entartetes Element" if len(ent) == 1
+                else f"{len(ent)} entartete Elemente")
+        z.append(f"FEHLER: {wort} ohne Ausdehnung - ohne "
+                 f"Steifigkeit bricht die Rechnung ab ({beispiel}"
+                 + (" …" if len(ent) > 3 else "") + "). Das Netz dort neu erzeugen "
+                 "(Netz → Vernetzen); bei importierten Netzen die doppelten Knoten "
+                 "zusammenlegen")
     nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
     if nf or nk:
         z.append("WARNUNG: " + " und ".join(x for x in (f"{nf} Flächen" if nf else "", f"{nk} Volumen" if nk else "") if x)

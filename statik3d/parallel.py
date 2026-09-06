@@ -25,6 +25,7 @@ import platform
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -78,6 +79,23 @@ _WORKER_MODEL = None
 _WORKER_EXTRA = None
 
 
+def _melden(text: str) -> None:
+    """Hinweis ausgeben, ohne sich auf ``sys.stderr`` zu verlassen.
+
+    Die gepackte exe laeuft ohne Konsole; dort ist ``sys.stderr`` None. Ein
+    ``write`` darauf brach die ganze Rechnung mit einem nichtssagenden
+    ``AttributeError: 'NoneType' object has no attribute 'write'`` ab - und
+    verdeckte damit den Fehler, den es eigentlich melden sollte.
+    """
+    strom = getattr(sys, "stderr", None)
+    if strom is None:
+        return
+    try:
+        strom.write(text)
+    except Exception:               # noqa: BLE001 - ein Hinweis darf nie stoeren
+        pass
+
+
 def _init_model_worker(model, extra=None):
     global _WORKER_MODEL, _WORKER_EXTRA
     _WORKER_MODEL = model
@@ -112,11 +130,20 @@ def map_elements(func: Callable, model, indices: list[int], workers: int = None,
     chunks = [list(indices[i:i + chunk]) for i in range(0, n, chunk)]
     ctx = _context()
     try:
-        with ProcessPoolExecutor(max_workers=min(w, len(chunks)), mp_context=ctx,
-                                 initializer=_init_model_worker, initargs=(model, extra)) as ex:
-            parts = list(ex.map(_run_chunk, [func] * len(chunks), chunks))
-    except Exception as ex:   # z.B. kein fork/spawn moeglich -> seriell
-        sys.stderr.write(f"[parallel] Pool nicht verfuegbar ({ex}), rechne seriell\n")
+        pool = ProcessPoolExecutor(max_workers=min(w, len(chunks)), mp_context=ctx,
+                                   initializer=_init_model_worker, initargs=(model, extra))
+    except Exception as fehler:   # z.B. kein fork/spawn moeglich -> seriell
+        _melden(f"[parallel] Pool nicht verfuegbar ({fehler}), rechne seriell\n")
+        return serial()
+    try:
+        with pool:
+            parts = list(pool.map(_run_chunk, [func] * len(chunks), chunks))
+    except (BrokenProcessPool, OSError, EOFError) as fehler:
+        # Der Pool selbst ist ausgefallen (Speicher, abgestuerzter Prozess) -
+        # das laesst sich seriell nachholen. Ein Fehler *aus* func dagegen ist
+        # ein echter Befund am Modell und muss unveraendert nach oben; frueher
+        # verschwand er hier und die Rechnung lief ein zweites Mal ins Leere.
+        _melden(f"[parallel] Arbeitsprozess ausgefallen ({fehler}), rechne seriell\n")
         return serial()
     out = []
     for p in parts:
@@ -204,8 +231,8 @@ def run_jobs(jobs: list[Job], workers: int = None, backend: str = None,
                 results[r.id] = r
                 if progress:
                     progress(len(results), len(jobs))
-    except Exception as ex:
-        sys.stderr.write(f"[parallel] Pool nicht verfuegbar ({ex}), rechne seriell\n")
+    except (BrokenProcessPool, OSError, EOFError) as fehler:
+        _melden(f"[parallel] Pool nicht verfuegbar ({fehler}), rechne seriell\n")
         return [execute_job(j) for j in jobs]
     return [results[j.id] for j in jobs]
 

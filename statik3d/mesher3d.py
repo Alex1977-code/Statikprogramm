@@ -1662,6 +1662,27 @@ def randschale(model: Model, koerper, h: float, log: list = None,
     return P, T, bericht
 
 
+def _entartete_weglassen(model, ecken: list) -> tuple:
+    """Tetraeder ohne Volumen aussortieren - Rueckgabe (Rest, Anzahl).
+
+    Entartet heisst hier: zwei Ecken zeigen auf denselben Modellknoten, oder
+    die vier Punkte liegen in einer Ebene. Beides ergibt eine singulaere
+    Elementmatrix.
+    """
+    if not ecken:
+        return ecken, 0
+    E = np.asarray(ecken, int)
+    sortiert = np.sort(E, axis=1)
+    doppelt = (sortiert[:, 1:] == sortiert[:, :-1]).any(axis=1)
+    X = model.nodes[E]
+    V = np.abs(np.einsum("ij,ij->i", X[:, 1] - X[:, 0],
+                         np.cross(X[:, 2] - X[:, 0], X[:, 3] - X[:, 0]))) / 6.0
+    gut = ~doppelt & (V > 1e-15)
+    if gut.all():
+        return ecken, 0
+    return [ecken[i] for i in np.nonzero(gut)[0]], int(np.count_nonzero(~gut))
+
+
 def _knoten_anlegen(model: Model, koerper, Pn: np.ndarray, benutzt: np.ndarray,
                     n_rand: int, T: np.ndarray, quelle: list,
                     cache: dict = None) -> np.ndarray:
@@ -1965,6 +1986,15 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     benutzt = np.unique(TET)
     neu = _knoten_anlegen(model, koerper, Pn, benutzt, len(P), T, quelle, cache)
     ecken = [[int(neu[i]) for i in t] for t in TET]
+    ecken, entartet = _entartete_weglassen(model, ecken)
+    if entartet:
+        # Das Zusammenlegen der Knoten auf gemeinsamen Flaechen kann zwei Ecken
+        # eines flachen Tetraeders auf denselben Modellknoten legen. So ein
+        # Element hat kein Volumen, keine Steifigkeit - und brachte frueher die
+        # ganze Rechnung mit "entartetes Tet4" zu Fall. Es traegt nichts, also
+        # kommt es gar nicht erst ins Modell.
+        C.say(log, f"  Volumen {koerper.name}: {entartet} entartete Tetraeder "
+                   f"weggelassen (Knoten auf gemeinsamen Flächen zusammengelegt)")
     if ordnung >= 2:
         # Das Woerterbuch der Kanten muss ueber alle Elemente gehen - sonst
         # bekaeme jedes Element eigene Seitenmittenknoten und das Netz fiele
