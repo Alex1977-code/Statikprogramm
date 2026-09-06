@@ -388,12 +388,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "bemassungen": "Linearmaß", "lastfaelle": "Lastfall",
                  "kombinationen": "Kombination", "werkstoffe": "Werkstoff", "dicken": "Dicke",
                  "gelenke": "Gelenk", "stellungen": "Stellung",
+                 "kontaktbedingungen": "Kontaktbedingung",
                  "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind",
                     "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke",
-                    "gelenk", "stellung", "berichtseintrag",
+                    "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
                     "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
@@ -405,6 +406,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
                  "werkstoff": "werkstoffe", "dicke": "dicken",
                  "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht",
+                 "kontaktbedingung": "kontaktbedingungen",
                  "lager_einzeln": "lager", "linienlager_einzeln": "linienlager",
                  "flaechenlager_einzeln": "flaechenlager"}
 
@@ -662,33 +664,44 @@ class Modellbaum(QtWidgets.QTreeWidget):
         flaechenkontakte = getattr(model, "kontaktbedingungen", {}) or {}
         n_kontakt = (len(flaechenkontakte) + len(model.contact_supports)
                      + len(model.gap_elements) + len(model.contact_pairs))
-        if n_kontakt:
-            offen_noch = sum(1 for x in flaechenkontakte.values() if not x.ausgefuehrt)
+        # Der Zweig steht auch ohne Kontakte, sobald es Volumen gibt: dort legt
+        # man einen an („+ Kontaktbedingung anlegen“).
+        if n_kontakt or model.koerper:
+            # Ein Warnzeichen nur, wo es einen Mangel gibt: Netz da, Fuge nicht
+            # getrennt. Vor dem Vernetzen ist „noch nicht getrennt" der Normalfall.
+            offen_noch = sum(1 for x in flaechenkontakte.values() if x.zu_steif(model))
             kt = self._zweig(wurzel, "Kontaktbedingungen", n_kontakt, "kontakt",
                              fett=True,
                              farbe=FARBEN["warn"] if offen_noch else FARBEN["akzent"],
                              hinweis="Kontaktfugen zwischen Flächen und Körpern "
                                      "(in RFEM „Flächenfreigaben“) sowie die "
                                      "knotenweisen Bedingungen.")
-            if flaechenkontakte:
+            if flaechenkontakte or model.koerper:
                 fk = self._zweig(kt, "Flächenkontakte", len(flaechenkontakte),
                                  "kontaktbedingungen",
                                  farbe=FARBEN["warn"] if offen_noch else None,
-                                 hinweis="Solange die Trennung nicht ausgeführt "
-                                         "ist, rechnet das Modell dort "
-                                         "durchverbunden – also zu steif.")
+                                 hinweis="Die Fugen werden beim Vernetzen getrennt. "
+                                         "Ist das Netz da und eine Fuge trotzdem nicht "
+                                         "getrennt, rechnet das Modell dort durchverbunden "
+                                         "– also zu steif (⚠).")
                 # Das Warnzeichen steht **vor** dem Namen: hinten wuerde es
                 # bei langen Namen mit dem „…“ der Spalte verschwinden, und
                 # dann sahe es aus, als seien nur die kurzen Namen betroffen
-                self._liste(fk, [(("" if x.ausgefuehrt else "⚠ ") + name,
-                                  x.bezug() + ("" if x.ausgefuehrt else " ⚠"),
+                self._liste(fk, [(("⚠ " if x.zu_steif(model) else "") + name,
+                                  x.bezug(model) + (" ⚠" if x.zu_steif(model) else ""),
                                   name, f"{name}: {x.describe()}"
-                                  + ("" if x.ausgefuehrt
-                                     else "\n⚠ Trennung nicht ausgeführt – das Modell rechnet hier "
-                                          "durchverbunden, also zu steif. Register „Lager / Kontakt“ → "
-                                          "„Kontaktfugen ausführen“."))
+                                  + ("" if x.ausgefuehrt else
+                                     ("\nWird beim Vernetzen getrennt (Netz → Vernetzen)."
+                                      if x.wartet_auf_netz(model) else
+                                      "\n⚠ Trennung nicht ausgeführt – das Modell rechnet hier "
+                                      "durchverbunden, also zu steif. Netz → „Kontaktfugen ausführen“.")))
                                  for name, x in flaechenkontakte.items()],
                             "kontaktbedingung", "kontaktbedingungen")
+                self._zweig(fk, "+ Kontaktbedingung anlegen", "", "kontaktbedingung_neu",
+                            farbe=FARBEN["akzent"],
+                            hinweis="Kontakt zwischen zwei Körpern: Körper A und B, Kontaktflächen, "
+                                    "Standardkontakt (Verbund, ohne Trennung, reibungsfrei, "
+                                    "reibungsbehaftet, rau) - jede Richtung von Hand änderbar")
             if model.contact_supports:
                 self._zweig(kt, "einseitige Lager", len(model.contact_supports),
                             "kontakt", schluessel="supports")
@@ -701,22 +714,38 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
         # ---- Einwirkungen -------------------------------------------------
         ew = self._zweig(wurzel, "Einwirkungen", "", "modell", fett=True)
+        from ..model import LASTARTEN_NAMEN
         lf = self._zweig(ew, "Lastfälle", len(model.load_cases), "lastfaelle")
-        self._liste(lf, [(name, f"{lc.category} · {lc.n_loads}"
-                          + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
-                          + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
-                          name, f"{name}: {lc.description or lc.category}, "
-                          f"{lc.n_loads} Lasten"
-                          + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
-                         for name, lc in model.load_cases.items()], "lastfall",
-                    "lastfaelle")
-        n_lasten = sum(lc.n_loads for lc in model.load_cases.values())
-        la = self._zweig(ew, "Lasten", n_lasten, "lasten",
-                         hinweis="Alle Lasten aller Lastfälle – die Tabelle "
-                                 "unten zeigt sie einzeln")
-        for name, lc in model.load_cases.items():
-            if lc.n_loads:
-                self._zweig(la, name, lc.n_loads, "last", schluessel=name)
+        for i, (name, lc) in enumerate(model.load_cases.items()):
+            if i >= BAUM_MAX:
+                self._zweig(lf, f"… {len(model.load_cases) - BAUM_MAX} weitere", "", "lastfaelle",
+                            farbe=FARBEN["matt"],
+                            hinweis="Die vollständige Liste steht in der Tabelle unten.")
+                break
+            nr = int(getattr(lc, "nummer", 0) or 0)
+            it = self._zweig(lf, name, f"{lc.category} · {lc.n_loads}"
+                             + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
+                             + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
+                             "lastfall", schluessel=name,
+                             hinweis=(f"Lastfall {nr}: " if nr else "") + f"{name}: "
+                                     f"{lc.description or lc.category}, {lc.n_loads} Lasten"
+                                     + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
+            # Die Lasten des Lastfalls nach Art als Unterpunkte - jeder einzeln
+            # anklickbar: rechts stehen dann nur diese Lasten
+            je_art = lc.lasten_je_art()
+            for art, titel in LASTARTEN_NAMEN:
+                lasten = je_art.get(art)
+                if not lasten:
+                    continue
+                if art == "eigengewicht":
+                    g = lasten[0]
+                    zahl = (f"g = ({g[0]:g}, {g[1]:g}, {g[2]:g}) m/s²" if (g[0] or g[1])
+                            else f"g_z = {g[2]:g} m/s²")
+                else:
+                    zahl = len(lasten)
+                self._zweig(it, titel, zahl, "lastart", schluessel=f"{name}|{art}",
+                            hinweis=f"{titel} im Lastfall {name} - ein Klick zeigt sie rechts, "
+                                    "in der Tabelle unten und in der Ansicht")
         kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
         self._liste(kb, [(name, " · ".join(x for x in (getattr(c, "situation", "") or "",
                                                        (f"{c.theorie.upper()}. O."

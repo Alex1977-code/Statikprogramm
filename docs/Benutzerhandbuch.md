@@ -75,7 +75,7 @@ Vierzehn Register nach Arbeitsschritt:
 | **Geometrie** | Knoten, Linien, Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang |
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
-| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht, Generierer Wasserdruck und Wind |
+| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzvorschau, Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
@@ -108,7 +108,7 @@ Die Arbeitsfläche in drei Spalten:
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden (der Zweig erscheint, sobald es Gelenke gibt) |
   | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
-  | Einwirkungen | Lastfälle und Kombinationen; darunter die Lasten aller Lastfälle, je Lastfall gezählt |
+  | Einwirkungen | Lastfälle und Kombinationen. **Unter jedem Lastfall stehen seine Lasten nach Art** (Eigengewicht, Knotenlasten, Stablasten, Linienlasten, Flächenlasten, Temperaturlasten, Vorspannung, Zwangsverformungen), einzeln anklickbar: rechts stehen dann nur diese Lasten, die Tabelle unten zeigt den Lastfall, die belasteten Objekte leuchten; „Lastfall bearbeiten“ holt die Maske des Lastfalls zurück, „Diese Lasten löschen“ nimmt sie heraus |
   | Subsysteme → Stellungen → Situationen | erst die Teile des Tragwerks, dann seine Lagen, dann die Situationen, die einer Stellung ihre Lastfälle und Kombinationen zuordnen |
   | Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte |
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
@@ -148,9 +148,12 @@ Die Arbeitsfläche in drei Spalten:
   Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
   Zweiges; die maßgebende trägt ★.
 * **in der Mitte die 3D-Ansicht** — frei für die Grafik.
-* **rechts die Eingabemaske** — es ist immer genau **eine** sichtbar, gewählt
-  über den Befehl im Ribbon; der Titel der Maske nennt sie. Eine Registerleiste
-  mit denselben Namen wie im Ribbon gibt es nicht mehr.
+* **rechts die Eingabemaske** — es ist immer genau **eine** sichtbar: die
+  Maske des gewählten Objekts oder das Register zum Befehl im Ribbon; der Titel
+  nennt sie. Ist nichts gewählt und kein Befehl aktiv, ist der Bereich leer.
+  Die **Projektangaben** stehen nicht von selbst darunter: sie holt der oberste
+  Punkt des Modellbaums (der Modellname) oder *Datei → Projektangaben*. Eine
+  Registerleiste mit denselben Namen wie im Ribbon gibt es nicht.
 
 Unten die **Tabellen**. Erst die Eingaben — Protokoll, Werkstoffe,
 Querschnitte, Dicken, **Knoten, Linien, Elemente, Lager, Gelenke, Lastfälle,
@@ -167,12 +170,36 @@ bedienen sind, steht im nächsten Abschnitt.
 | Elemente | Werkstoff, Querschnitt bzw. Dicke, Drehung der lokalen Achsen |
 | Lager | Name und Symbolgröße; Klick oder Doppelklick öffnet rechts die Lagermaske: Wirkung, Feder und Ausfall je Freiheitsgrad, Bettung auf/an Beton als Vorschlag, Schlupf/Reibung/Grenzkraft über den Knopf |
 | Gelenke | über die Maske (Doppelklick) |
-| Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts die Maske mit Name, Nummer, Einwirkung, Beschreibung, Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerten und „aktiver Lastfall“ |
+| Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung, darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ, Beschreibung, Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
-| Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM; ausgeführt werden sie beim Vernetzen |
+| Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** in der Ansicht gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
+
+**Lasten anklicken.** Mit der Auswahlart **„Last“** in der Glasleiste trifft
+der Klick in der Ansicht die Lastsymbole des aktiven Lastfalls - Pfeile von
+Knoten-, Strecken-, Flächen- und Linienlasten, die Temperaturpunkte, Zwangs-
+und Vorspannungspfeile. Die getroffene Last leuchtet gelb, rechts steht ihre
+Maske mit den Werten (Kräfte, q und q2, Abschnitt, p, ΔT, u, F_v) und dem
+Lastfall: Werte ändern und „Übernehmen“, ein anderer Lastfall verschiebt die
+Last dorthin, „Löschen“ nimmt sie heraus. Dasselbe geschieht beim Klick auf
+eine Zeile der Lastentabelle unten.
+
+**Vorspannung als Last** (*Lasten → Vorspannung*): Stäbe (Zugstange, Seil,
+Anker) oder Volumen (Schraubenschaft) in der Ansicht wählen, die Vorspannkraft
+F_v in kN eintragen, bei Volumen die Achse (automatisch die längste Abmessung
+des Körpers, oder global x/y/z), „Last aufbringen“. Die Vorspannung ist eine
+**Anfangsdehnung**: das Bauteil will sich um F_v/(E·A) verkürzen. Hält die
+Umgebung es fest, trägt es F_v als Zug und klemmt die Umgebung - wie eine
+angezogene Schraube zwischen zwei Platten, deren Kontaktfuge dann die
+Klemmkraft F_v überträgt. Ein freies Bauteil verkürzt sich nur, ohne Kraft.
+Bei Volumen wirkt sie als einachsige Anfangsspannung −F_v/A längs der Achse
+in allen Elementen des Körpers (A = Volumen / Länge, der Schaftquerschnitt);
+die Spannungen im Ergebnis enthalten die Vorspannung. In der Ansicht stehen
+an beiden Enden violette Pfeile nach außen mit der Kraft, im Modellbaum steht
+sie als Unterpunkt „Vorspannung“ des Lastfalls, in Tabelle und Bericht mit
+Bauteil, Kraft und Achse.
 
 **Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
 Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall. RFEM legt sie
@@ -182,8 +209,11 @@ Flächen der Gegenseite - so die Grundplatte eines Lagerbocks, die an den
 sechzehn Oberseiten ihrer Unterlegbleche gelöst wird („0 Flächen, 1 Volumen,
 an 16 Objekten“ im Modellbaum). Beide Arten werden beim Vernetzen ausgeführt;
 in der zweiten sucht das Programm die Randseiten des Körpers, die auf den
-Gegenflächen liegen. Bis dahin steht am Eintrag ein ⚠ („Trennung nicht
-ausgeführt“): das ist vor dem Vernetzen der Normalfall, kein Fehler. Statik3D liest sie
+Gegenflächen liegen. Vor dem Vernetzen steht am Eintrag „wird beim Vernetzen
+getrennt“ - ohne Warnzeichen, denn ohne Netz gibt es nichts, was zu steif sein
+könnte. Ein ⚠ mit „nicht ausgeführt - hier zu steif“ erscheint nur, wenn das
+Netz da ist und die Fuge trotzdem nicht getrennt werden konnte; das Protokoll
+nennt dann den Grund. Statik3D liest sie
 aus der RFEM-Datei vollständig ein und **führt sie beim Vernetzen auch aus**:
 die Netze werden an der Fuge getrennt, und je nachdem, ob sie Knoten für Knoten
 zusammenpassen, hält sie ein Spaltelement je Knotenpaar oder ein Kontaktpaar
@@ -195,6 +225,54 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 („ja (68 Spaltelemente)", „ja (Kontaktpaar)"); steht dort „nein", rechnet das
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
+
+#### Kontaktbedingungen anlegen und einstellen
+
+Ein Kontakt wird **wie in ANSYS** angelegt: zwei Körper, mindestens eine
+Fläche, dann die Wirkung an dieser Fläche. Der Weg: im Modellbaum unter
+*Kontaktbedingungen → Flächenkontakte* auf **„+ Kontaktbedingung anlegen“**
+(oder *Lager / Kontakt → Kontaktbedingung…*, oder Rechtsklick → Neu). Rechts
+erscheint die Maske:
+
+| Feld | Bedeutung |
+|---|---|
+| Körper A (Kontaktseite) | der Körper, dessen Flächen die Kontaktseite bilden - er wird an ihnen gelöst |
+| Körper B (Gegenseite) | der Körper, gegen den der Kontakt wirkt; „(alle anderen Körper)“ sucht die Gegenseite unter allen Bauteilen |
+| Kontaktflächen | mindestens eine Fläche von Körper A - getippt oder mit **„Kontaktflächen anklicken“** in der Ansicht gewählt (jeder Klick nimmt dazu oder heraus) |
+| Standardkontakt | setzt die Richtungen darunter mit einem Griff (Tabelle unten); danach lässt sich jede Richtung von Hand ändern, der Standard wird dann „Benutzerdefiniert“ |
+| Druck | wird immer übertragen - das ist Kontakt |
+| Zug | *abheben möglich* (die Fuge öffnet unter Zug), *wird übertragen* (Verbund, kein Abheben) oder *Feder* |
+| Schub x, Schub y | in der Fugenebene *frei (gleiten)* - mit dem Reibbeiwert als Coulomb-Reibung -, *starr (haften)* oder *Feder* |
+| Reibbeiwert μ | Coulomb-Reibung in der Fugenebene; 0 = reibungsfrei |
+| Verdrehungen | φx, φy, φz starr oder frei - nur bei Schalen wirksam, Volumen haben keine Verdrehungen |
+| Feder c | Steifigkeit [kN/m je m²] für Richtungen mit „Feder“ |
+| Suchradius | wie weit die Gegenseite entfernt liegen darf (ANSYS: „Pinball“). 0 = automatisch: die größere mittlere Kantenlänge beider Netze. Damit findet eine fein vernetzte Achse (2 mm) ihre grob vernetzte Bohrung (15 mm) auch mit Spiel; was weiter weg liegt, gehört nicht zur Fuge |
+| Anfangsspalt | *wie modelliert*: ein Spalt bleibt offen, bis die Last ihn schließt; *auf Berührung setzen*: jeder Knoten gilt in seiner Lage als anliegend - Spiel und Facettenfehler zwischen verschieden feinen Netzen verschwinden (ANSYS: „adjust to touch“) |
+
+Die **Standardkontakte** heißen wie in ANSYS:
+
+| Standard | Zug | Schub | Verdrehungen | Reibung |
+|---|---|---|---|---|
+| Verbund | wird übertragen | starr (haften) | starr | - |
+| Ohne Trennung | wird übertragen | frei (gleiten) | frei | 0 |
+| Reibungsfrei | abheben möglich | frei | frei | 0 |
+| Reibungsbehaftet | abheben möglich | frei | frei | μ (Vorgabe 0,2) |
+| Rau | abheben möglich | starr (haften) | frei | - |
+
+Die Flächen der beiden Körper müssen **weder deckungsgleich noch gleich fein
+vernetzt** sein: das Kontaktpaar verbindet jeden Knoten der Kontaktseite mit
+der nächsten Facette der Gegenseite im Suchradius (Knoten gegen Fläche). Steht
+schon ein Netz, wird die Fuge mit „OK“ bzw. „Übernehmen“ sofort getrennt und
+das Protokoll sagt, wie viel der Kontaktseite eine Gegenseite gefunden hat
+(„599 von 3430 cm²“, Spalt im Mittel und größter) - die übrige Kontaktseite
+liegt weiter als der Suchradius von jedem anderen Bauteil entfernt. Ohne Netz
+geschieht es beim Vernetzen. Ändert man eine Bedingung später, wird ihr
+Kontaktpaar ersetzt; Löschen (Rechtsklick oder Entf) nimmt es mit.
+
+Aus RFEM eingelesene Flächenfreigaben stehen in derselben Maske: Körper A ist
+der gelöste Körper, die Kontaktflächen sind die freigegebenen Flächen, die
+Gegenflächen der Quelldatei stehen zur Information darunter. Auch sie lassen
+sich auf einen Standardkontakt umstellen oder Richtung für Richtung ändern.
 
 In der Tabelle „Knoten“ wird ein Knoten nur gelöscht, wenn **kein** Element
 mehr an ihm hängt — sonst sagt das Programm, welches Element im Weg ist. Der
@@ -640,9 +718,10 @@ Flächen über ihre Elemente, unvernetzte Flächen als durchscheinendes
 Polygon, Volumen über ihre Oberfläche — dieselbe Hervorhebung wie beim
 Anklicken im Modellbaum.
 
-Ist **nichts gewählt** und keine Erzeuge-Maske offen, zeigt der rechte
-Bereich nur die **Information zum Modell** (Projekt und Modellangaben) -
-kein Netz-, Werkstoff- oder Generatorpanel. Stabzug, Platte und Quader sind
+Ist **nichts gewählt** und keine Maske offen, bleibt der rechte Bereich
+**leer** - kein Netz-, Werkstoff- oder Generatorpanel und auch keine
+Projektangaben; die stehen unter dem obersten Punkt des Modellbaums. Solange
+eine Maske offen ist, steht rechts nur sie. Stabzug, Platte und Quader sind
 Masken im Register *Geometrie*, der Import steht im Register *Datei*.
 
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
@@ -1607,7 +1686,9 @@ Nachweis mit seiner Verformung je Kombination.
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
 * **Nur aktiver Lastfall**, **Eigenschwingungen**, **Knicken** (Grundzustand
   = aktiver Lastfall).
-* Prozesse: Anzahl der Kerne; Backend „Rechnerfarm“ mit Server, Port und
+* Prozesse: Zahl der Arbeitsprozesse für Elementschleifen, Aufträge und die
+  Vernetzung - Vorgabe alle Kerne bis auf einen, der bleibt der Oberfläche;
+  Backend „Rechnerfarm“ mit Server, Port und
   Schlüssel (siehe `Rechnerfarm.md`). „Lokalen Server + Worker starten“
   macht den eigenen Rechner zum Farm-Server.
 * Die Berechnung läuft im Hintergrund; Fortschritt im Protokoll.

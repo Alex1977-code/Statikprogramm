@@ -1493,7 +1493,169 @@ def main():
         arten = {z[2] for z in w.tbl_last.modell.zeilen}
         check("die Lastarten stehen dabei",
               {"Eigengewicht", "Streckenlast"} <= arten, str(sorted(arten)))
-        check("Lasten stehen im Modellbaum", "Lasten" in zweige(w.baum))
+        check("Lasten stehen im Modellbaum als Unterpunkte der Lastfälle",
+              any(t in zweige(w.baum) for t in ("Eigengewicht", "Stablasten", "Knotenlasten",
+                                                  "Flächenlasten", "Linienlasten")),
+              str([t for t in zweige(w.baum) if t.endswith("lasten") or t == "Eigengewicht"][:5]))
+        # Unterpunkte je Lastart (#132): ein Klick zeigt rechts nur diese Lasten
+        fall_ = next((n for n, lc in ml.load_cases.items() if lc.lasten_je_art().get("stab")), None)
+        if fall_:
+            w._baum_geklickt("lastart", f"{fall_}|stab")
+            app.processEvents()
+            mk_ = w.maskenrand.maske
+            check("Unterpunkt „Stablasten“: rechts nur diese Lasten, Tabelle auf den Lastfall, Stäbe leuchten",
+                  mk_ is not None and mk_.titel == f"Lastfall {fall_}: Stablasten" and w.rechts_zeigt() == "maske"
+                  and w.cb_lastfilter.currentText() == fall_ and len(w.leuchtet) > 0
+                  and "l0" in mk_.werte() and "q =" in mk_.werte()["l0"],
+                  str(mk_.werte() if mk_ else None)[:160])
+            mk_.anwenden()
+            app.processEvents()
+            mk_ = w.maskenrand.maske
+            check("„Lastfall bearbeiten“ holt die Maske des Lastfalls: Nummer, Name, Beschreibung, Einwirkung, Lasten",
+                  mk_ is not None and mk_.titel == f"Lastfall {fall_}" and "last_stab" in mk_.werte()
+                  and list(mk_.werte())[:4] == ["nummer", "name", "beschreibung", "kategorie"],
+                  str(list(mk_.werte())[:6] if mk_ else None))
+        else:
+            check("Beispiel hat Stablasten für den Unterpunkt-Test", False)
+        # Vorspannung als Last (#131): Maske, Lastfall-Unterpunkt, Tabelle, Ansicht
+        fehler_v = []
+        alt_error_v = w.error
+        w.error = lambda text: fehler_v.append(str(text))
+        check("Ribbon Lasten hat „Vorspannung“",
+              any(b.register == "Lasten" and b.text == "Vorspannung" for b in w.ribbon.befehle))
+        w.maske_vorspannung()
+        app.processEvents()
+        mk_ = w.maskenrand.maske
+        check("Vorspannungsmaske: Kraft, Achse, Bemerkung, Lastfall",
+              mk_ is not None and all(k in mk_.werte() for k in ("F", "achse", "kommentar", "fall")),
+              str(mk_.werte() if mk_ else None)[:120])
+        mk_.anwenden()
+        app.processEvents()
+        check("Vorspannung ohne Auswahl: Hinweis", bool(fehler_v) and "wählen" in fehler_v[-1], str(fehler_v[-1:]))
+        stab_ = next(iter(ml.members))
+        w.sel_staebe = [stab_]
+        mk_.setzen("F", 150.0)
+        mk_.setzen("kommentar", "Zugstange")
+        n_fv = len(fehler_v)
+        mk_.anwenden()
+        app.processEvents()
+        lc_ = ml.case()
+        check("„Last aufbringen“ legt die Vorspannung im aktiven Lastfall an",
+              len(lc_.vorspannungen) == 1 and lc_.vorspannungen[0].ziel == stab_
+              and abs(lc_.vorspannungen[0].kraft - 150e3) < 1e-6 and len(fehler_v) == n_fv,
+              str((fehler_v[n_fv:], lc_.vorspannungen)))
+        check("Modellbaum: Unterpunkt „Vorspannung“ am Lastfall", "Vorspannung" in zweige(w.baum))
+        zv_ = [r for r in w.tbl_last.modell.zeilen if r[2] == "Vorspannung"]
+        check("Lastentabelle nennt die Vorspannung mit F_v",
+              len(zv_) == 1 and "150" in str(zv_[0][4]) and stab_ in str(zv_[0][3]), str(zv_[:1]))
+        w._baum_geklickt("lastart", f"{lc_.name}|vorspannung")
+        app.processEvents()
+        mk_ = w.maskenrand.maske
+        check("Unterpunkt „Vorspannung“: rechts die Last, der Stab leuchtet",
+              mk_ is not None and mk_.titel == f"Lastfall {lc_.name}: Vorspannung"
+              and "F_v = 150 kN" in mk_.werte().get("l0", "") and w.sel_staebe == [stab_],
+              str(mk_.werte().get("l0") if mk_ else None))
+        w.redraw()
+        app.processEvents()
+        check("Ansicht zeichnet die Vorspannung (Pfeile)", "vorspannung" in w.plotter.renderer.actors)
+        fr_ = Model.from_dict(ml.to_dict())
+        check("Vorspannung überlebt Speichern und Laden",
+              len(fr_.case().vorspannungen) == 1 and fr_.case().vorspannungen[0].kommentar == "Zugstange")
+        lc_.vorspannungen.clear()
+        w.error = alt_error_v
+        w.clear_selection()
+        w.refresh_all()
+        app.processEvents()
+        # Lasten anklicken (#130): Auswahlart „Last“, Maske je Last, ändern, verschieben, löschen
+        fehler_l = []
+        alt_error_l = w.error
+        w.error = lambda text: fehler_l.append(str(text))
+        hatte_best = "_bestaetigen" in w.__dict__
+        w._bestaetigen = lambda text: True
+        check("Auswahlart „Last“ in der Glasleiste", "Last" in w.AUSWAHLARTEN and "Last" in w.act_auswahlart)
+        fall_k = next((n for n, lc in ml.load_cases.items() if lc.lasten_je_art().get("knoten")), None)
+        alt_aktiv = ml.active_case
+        if fall_k:
+            ml.active_case = fall_k
+            w.refresh_all()
+            w.redraw()
+            app.processEvents()
+            lc_k = ml.load_cases[fall_k]
+            check("die Ansicht merkt sich die gezeichneten Lastsymbole",
+                  any(x[0] == "nodal_loads" for x in w._lastpunkte), str(len(w._lastpunkte)))
+            w.auswahlart_setzen("Last")
+            k0 = next(i for i, l in enumerate(lc_k.nodal_loads) if not getattr(l, "_geo", False))
+            w._picked(np.array(ml.nodes[int(lc_k.nodal_loads[k0].node)], float))
+            app.processEvents()
+            mk_ = w.maskenrand.maske
+            check("Klick auf den Lastpfeil wählt die Knotenlast und öffnet rechts ihre Maske",
+                  w.sel_lasten == [(fall_k, "nodal_loads", k0)] and mk_ is not None
+                  and mk_.titel.startswith("Knotenlast K")
+                  and all(k in mk_.werte() for k in ("Fx", "Fy", "Fz", "Mx", "My", "Mz", "fall")),
+                  str((w.sel_lasten, mk_.titel if mk_ else None)))
+            check("die angeklickte Last leuchtet in der Ansicht", "last_hervor" in w.plotter.renderer.actors)
+            mk_.setzen("Fz", -33.0)
+            mk_.anwenden()
+            app.processEvents()
+            check("„Übernehmen“ ändert die Kraft, die Maske bleibt offen",
+                  abs(float(lc_k.nodal_loads[k0].F[2]) + 33e3) < 1e-6 and not fehler_l
+                  and w.maskenrand.maske is not None and abs(float(w.maskenrand.maske.werte()["Fz"]) + 33.0) < 1e-9,
+                  str((lc_k.nodal_loads[k0].F[2], fehler_l[:1])))
+            mk_ = w.maskenrand.maske
+            anderer = next(n for n in ml.load_cases if n != fall_k)
+            n_alt, n_neu = len(lc_k.nodal_loads), len(ml.load_cases[anderer].nodal_loads)
+            mk_.setzen("fall", anderer)
+            mk_.anwenden()
+            app.processEvents()
+            check("ein anderer Lastfall in der Maske verschiebt die Last dorthin",
+                  len(lc_k.nodal_loads) == n_alt - 1 and len(ml.load_cases[anderer].nodal_loads) == n_neu + 1
+                  and w.sel_lasten and w.sel_lasten[0][0] == anderer, str(w.sel_lasten))
+            w.undo()
+            app.processEvents()
+            ml = w.model
+            w.undo()
+            app.processEvents()
+            ml = w.model
+            check("Rückgängig stellt die Last zurück",
+                  len(ml.load_cases[fall_k].nodal_loads) == n_alt
+                  and abs(float(ml.load_cases[fall_k].nodal_loads[k0].F[2]) + 33e3) > 1.0,
+                  str(ml.load_cases[fall_k].nodal_loads[k0].F[2]))
+            fall_s = next((n for n, lc in ml.load_cases.items() if lc.lasten_je_art().get("stab")), None)
+            ml.active_case = fall_s
+            w.refresh_all()
+            w.redraw()
+            app.processEvents()
+            eintrag = next(x for x in w._lastpunkte if x[0] == "beam_loads")
+            w._picked(np.array(eintrag[2], float))
+            app.processEvents()
+            mk_ = w.maskenrand.maske
+            check("Klick auf eine Streckenlast: Maske mit q, q2, Bezug, Abschnitt",
+                  mk_ is not None and mk_.titel.startswith("Stablast E")
+                  and all(k in mk_.werte() for k in ("qx", "qz", "trapez", "system", "a", "b")),
+                  str(mk_.titel if mk_ else None))
+            n_vor = len(ml.load_cases[fall_s].beam_loads)
+            mk_.zusatzknoepfe["Löschen"].click()
+            app.processEvents()
+            check("„Löschen“ in der Lastmaske nimmt die Last heraus und schließt die Maske",
+                  len(ml.load_cases[fall_s].beam_loads) == n_vor - 1 and not w.sel_lasten
+                  and w.rechts_zeigt() != "maske", str((n_vor, len(ml.load_cases[fall_s].beam_loads))))
+            w.undo()
+            app.processEvents()
+            ml = w.model
+            w._picked(np.array([1e3, 1e3, 1e3]))
+            app.processEvents()
+            check("Klick ins Leere trifft keine Last", not w.sel_lasten)
+            w._fenster_abbrechen()
+            ml.active_case = alt_aktiv
+        else:
+            check("Beispiel hat Knotenlasten für den Klick-Test", False)
+        w.auswahlart_setzen("Knoten")
+        w.error = alt_error_l
+        if not hatte_best:
+            del w._bestaetigen
+        w.clear_selection()
+        w.refresh_all()
+        app.processEvents()
         erster = list(ml.load_cases)[0]
         w.cb_lastfilter.setCurrentText(erster)
         app.processEvents()
@@ -1743,7 +1905,8 @@ def main():
         w._baum_geklickt("modell", m_.name or "Modell")
         angaben = dict(w.modellangaben())
         check("Klick auf die Wurzel zeigt rechts das Register „Modell“ mit den Angaben",
-              w.eingaben_dock.windowTitle() == "Modell" and angaben["Knoten"] == str(m_.nn)
+              w.eingaben_dock.windowTitle() == "Modell" and not w.tabs.isHidden()
+              and angaben["Knoten"] == str(m_.nn)
               and angaben["Stäbe mit Nachweis"] == str(len(m_.members))
               and "Abmessungen" in w.lbl_modellangaben.text(),
               f"{w.eingaben_dock.windowTitle()} {angaben.get('Knoten')}")
@@ -2889,18 +3052,29 @@ def main():
         def tab_():
             return w.tabs.tabText(w.tabs.currentIndex())
 
-        check("Nach „Neues Modell“ steht rechts die Modellinformation", tab_() == "Modell", tab_())
+        check("Nach „Neues Modell“ steht rechts nichts - kein Register, keine Projektangaben",
+              w.rechts_zeigt() == "leer" and not w.rechts_leer.isHidden(), w.rechts_zeigt())
         w.maske_zeigen("Netz")
+        check("Ein Ribbon-Befehl holt sein Register nach vorn", w.rechts_zeigt() == "Netz", w.rechts_zeigt())
         w.clear_selection()
         app.processEvents()
-        check("Auswahl aufheben ohne offene Maske holt die Modellinformation zurück (kein Netz-Panel)",
-              tab_() == "Modell", tab_())
+        check("Auswahl aufheben ohne offene Maske lässt rechts nichts stehen (kein Netz-Panel)",
+              w.rechts_zeigt() == "leer", w.rechts_zeigt())
+        w._baum_geklickt("modell", m_.name or "Modell")
+        check("Klick auf die Wurzel des Modellbaums holt die Projektangaben (Register „Modell“)",
+              w.rechts_zeigt() == "Modell" and not w.tabs.isHidden(), w.rechts_zeigt())
+        w.clear_selection()
+        app.processEvents()
+        check("… und ein Klick ins Leere nimmt sie wieder weg", w.rechts_zeigt() == "leer", w.rechts_zeigt())
         check("Ribbon Netz: Vernetzen, Netzeinstellungen, Vorschau; Generatoren als Masken",
               all(hasattr(w, a) for a in ("geometrie_vernetzen", "maske_netzeinstellungen", "netz_vorschau",
                                           "maske_stabzug", "maske_platte", "maske_quader")))
         w.maske_platte()
         app.processEvents()
         mk = w.maskenrand.maske
+        check("Offene Maske: rechts steht nur sie, die Register darunter sind weg",
+              w.rechts_zeigt() == "maske" and w.tabs.isHidden() and w.rechts_leer.isHidden(),
+              w.rechts_zeigt())
         mk.setzen("lx", 2.0)
         mk.setzen("ly", 1.0)
         mk.setzen("nx", 2)
@@ -2929,10 +3103,16 @@ def main():
         mk.anwenden()
         app.processEvents()
         check("Quader-Maske erzeugt einen Hexaeder", sum(1 for e in m_.elements if e.typ == "hex8") == 1, str(fehler_))
+        w.maske_zeigen("Lastfälle")
+        check("Ein Ribbon-Register löst die offene Maske ab",
+              not w.maskenrand.offen() and w.rechts_zeigt() == "Lastfälle", w.rechts_zeigt())
+        w.maske_quader()
+        app.processEvents()
         w.maskenrand.schliessen()
         w.clear_selection()
         app.processEvents()
-        check("Maske geschlossen, nichts gewählt: Modellinformation", tab_() == "Modell", tab_())
+        check("Maske geschlossen, nichts gewählt: rechts nichts (keine Projektangaben)",
+              w.rechts_zeigt() == "leer", w.rechts_zeigt())
         w.new_model()
         m_ = w.model
         mat_ = list(m_.materials)[0]
@@ -3442,6 +3622,8 @@ def main():
         pm = st.startbild("9.9.9", "abc1234")
         check("Startbild wird gezeichnet", not pm.isNull() and pm.width() == st.BREITE
               and pm.height() == st.HOEHE)
+        check("Startbild: eine echte Schrift ist da (kein Kästchenbild)", st.schrift_vorhanden(),
+              QtGui.QFontInfo(st.schrift(12)).family())
         sb = st.Startbild(version="9.9.9", stand="abc1234")
         sb.show()
         sb.melden("Grafik und Rechenkern werden geladen …")
@@ -3955,6 +4137,64 @@ def main():
         check("Kontaktbedingung: Beschreibung übernommen, Warnzeichen vor dem Namen im Baum",
               w.model.kontaktbedingungen["Fuge"].beschreibung == "Lagerfuge" and not fehler_
               and any(t.startswith("⚠ Fuge") for t in zweige(w.baum)), str(fehler_[:1]))
+        from tests.test_fugen import zwei_bloecke
+        # ---- Kontaktmaske: zwei Koerper, Kontaktflaechen, Standardkontakte (#129) ----
+        w.new_model()
+        fehler_.clear()
+        w.model = zwei_bloecke("eigene", 0.5, 0.15)
+        w.refresh_all(); app.processEvents()
+        m_ = w.model
+        check("Modellbaum bietet „+ Kontaktbedingung anlegen“ an, sobald es Volumen gibt",
+              "+ Kontaktbedingung anlegen" in zweige(w.baum) and "Flächenkontakte" in zweige(w.baum), str([z for z in zweige(w.baum) if "ontakt" in z]))
+        w._baum_geklickt("kontaktbedingung_neu", ""); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neue Kontaktbedingung: Maske mit Körper A/B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Spalt",
+              mk is not None and mk.titel.startswith("Neu: Kontaktbedingung KB")
+              and all(k in mk.werte() for k in ("standard", "koerper_a", "koerper_b", "flaechennamen", "zug", "schub_x", "schub_y", "mu", "dreh", "suchweite", "spalt"))
+              and "Kontaktflächen anklicken" in mk.zusatzknoepfe, str(mk.werte() if mk else None)[:200])
+        check("Vorgabe: reibungsbehaftet, μ = 0,2, abheben möglich",
+              mk.werte()["standard"] == "Reibungsbehaftet" and abs(float(mk.werte()["mu"]) - 0.2) < 1e-9 and mk.werte()["zug"].startswith("abheben"), str(mk.werte()["standard"]))
+        mk.setzen("standard", "Verbund"); app.processEvents()
+        check("Standardkontakt „Verbund“ setzt Zug übertragen, Schub starr, Verdrehungen starr, μ = 0",
+              mk.werte()["zug"].startswith("wird übertragen") and mk.werte()["schub_x"].startswith("starr") and mk.werte()["schub_y"].startswith("starr")
+              and mk.werte()["dreh"] == "starr" and float(mk.werte()["mu"]) == 0, str(mk.werte())[:200])
+        mk.setzen("schub_x", w.KONTAKT_SCHUB["frei"]); app.processEvents()
+        check("Handänderung einer Richtung macht daraus „Benutzerdefiniert“", mk.werte()["standard"] == "Benutzerdefiniert", mk.werte()["standard"])
+        mk.setzen("standard", "Reibungsbehaftet"); app.processEvents()
+        mk.setzen("mu", 0.3)
+        mk.setzen("koerper_a", "Oben"); mk.setzen("koerper_b", "Unten"); mk.setzen("flaechennamen", "")
+        mk.anwenden(); app.processEvents()
+        check("ohne Kontaktfläche: Hinweis statt Anlage", bool(fehler_) and "Kontaktfläche" in fehler_[-1] and not m_.kontaktbedingungen, str(fehler_[-1:]))
+        mk = w.maskenrand.maske
+        mk.setzen("flaechennamen", "FugeU"); mk.anwenden(); app.processEvents()
+        check("Fläche eines anderen Körpers: Hinweis", "gehören nicht zu Körper A" in fehler_[-1], str(fehler_[-1:]))
+        mk = w.maskenrand.maske
+        mk.setzen("flaechennamen", "FugeO")
+        n_f = len(fehler_)
+        mk.anwenden(); app.processEvents()
+        kb = m_.kontaktbedingungen.get("KB1")
+        check("OK legt die Kontaktbedingung an: Körper A Oben, B Unten, Fläche FugeO, reibungsbehaftet μ = 0,3",
+              kb is not None and kb.koerpernamen == ["Oben"] and kb.gegenkoerper == ["Unten"] and kb.flaechennamen == ["FugeO"]
+              and kb.standard == "Reibungsbehaftet" and abs(kb.reibbeiwert() - 0.3) < 1e-9 and kb.dof_behaviour(2).failure == "zug" and len(fehler_) == n_f,
+              str((fehler_[n_f:], kb.describe() if kb else None)))
+        check("… und führt sie am vorhandenen Netz gleich aus: ein Kontaktpaar mit Reibung",
+              kb is not None and kb.ausgefuehrt and len(m_.contact_pairs) == 1 and abs(m_.contact_pairs[0].mu - 0.3) < 1e-9 and not m_.contact_pairs[0].zug,
+              f"{len(m_.contact_pairs)} Paare")
+        mk = w.maskenrand.maske
+        check("Rechts steht danach die Maske der neuen Kontaktbedingung mit „getrennt“",
+              mk is not None and mk.titel == "Kontaktbedingung KB1" and "getrennt" in mk.werte()["ausgefuehrt"] and w.rechts_zeigt() == "maske",
+              str(mk.werte()["ausgefuehrt"] if mk else None))
+        z = w.tbl_freigabe.modell.zeilen
+        check("Tabelle nennt Standard, Körper A und B", len(z) == 1 and z[0][8] == "Reibungsbehaftet" and z[0][9] == "Oben" and z[0][10] == "Unten", str(z[0] if z else z))
+        mk.setzen("standard", "Verbund"); app.processEvents(); mk.anwenden(); app.processEvents()
+        kb = m_.kontaktbedingungen.get("KB1")
+        check("Übernehmen mit „Verbund“ ersetzt das Kontaktpaar: Zug und Haften",
+              kb is not None and kb.standard == "Verbund" and len(m_.contact_pairs) == 1 and m_.contact_pairs[0].zug and m_.contact_pairs[0].haften, str(fehler_[n_f:]))
+        fr = Model.from_dict(m_.to_dict()).kontaktbedingungen["KB1"]
+        check("Standard, Gegenkörper, Suchradius und Spalt überleben Speichern und Laden",
+              fr.standard == "Verbund" and fr.gegenkoerper == ["Unten"] and fr.suchweite == 0.0 and fr.spalt_schliessen is False, fr.describe())
+        w._baum_loeschen("kontaktbedingung", "KB1"); app.processEvents()
+        check("Löschen im Modellbaum nimmt Bedingung und Kontaktpaar", "KB1" not in m_.kontaktbedingungen and not m_.contact_pairs, str(fehler_[n_f:]))
         w.error = alt_error
         del w._bestaetigen
         w.new_model()

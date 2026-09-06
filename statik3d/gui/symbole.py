@@ -277,6 +277,15 @@ def z_fang_lager(s: Stift):
     s.linie(2.5, 18.5, 15.5, 18.5)
 
 
+def z_fang_last(s: Stift):
+    # Auswahlart Last: ein Lastpfeil im Fangkreis
+    _fangkreis(s)
+    s.stift(breite=2.0)
+    s.linie(11, 4.5, 11, 13)
+    s.fuellung(s.akzent)
+    s.zug([(7, 12.5), (15, 12.5), (11, 18.5)], schliessen=True)
+
+
 def z_fang_stab(s: Stift):
     _fangkreis(s)
     s.stift(breite=3.0)

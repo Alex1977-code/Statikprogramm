@@ -12,6 +12,13 @@ import io
 import os
 import sys
 
+if sys.platform.startswith("win"):
+    # Die Plattform offscreen hat auf Windows keine Schriftdatenbank: ohne
+    # QT_QPA_FONTDIR zeichnet sie jeden Buchstaben als Kaestchen - und genau
+    # so saehe dann das Startbild des Packers aus (acht Kaestchen statt
+    # „Statik3D"). Mit dem Schriftenordner von Windows findet sie Segoe UI.
+    os.environ.setdefault("QT_QPA_FONTDIR",
+                          os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 here = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(here))
@@ -44,8 +51,15 @@ try:
 except Exception:  # noqa: BLE001
     stand = ""
 out_splash = os.path.join(here, "splash.png")
-start.startbild(__version__, stand).save(out_splash, "PNG")
-print(out_splash)
+if start.schrift_vorhanden():
+    start.startbild(__version__, stand).save(out_splash, "PNG")
+    print(out_splash)
+else:
+    # Lieber das eingecheckte Bild mit alter Fassungsnummer als eines aus
+    # Kaestchen: ohne Schrift wird nicht neu gerendert.
+    print(f"WARNUNG: keine Schrift gefunden (Plattform {os.environ.get('QT_QPA_PLATFORM')}, "
+          f"QT_QPA_FONTDIR={os.environ.get('QT_QPA_FONTDIR')}) - {out_splash} bleibt, wie es "
+          "eingecheckt ist")
 out = os.path.join(here, "statik3d.ico")
 try:
     from PIL import Image

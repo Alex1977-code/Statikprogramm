@@ -283,10 +283,105 @@ def test_speichern_linienlast_zwang():
           and "-10 mm" in zv.bezug(), ll.bezug() + " | " + zv.bezug())
 
 
+def test_vorspannung():
+    """Vorspannung als Anfangsdehnung, geschlossen geprueft:
+    * beidseitig gehaltener Stab: keine Verschiebung, die Lager tragen F_v
+      (der Stab steht unter dem Zug F_v);
+    * freier Stab: keine Lagerkraft, Verkuerzung F_v L / (E A);
+    * Volumen (Schraubenschaft als Quader): eingespannt tragen die Lager
+      F_v, frei verkuerzt er sich um F_v L / (E A) - und die Spannung im
+      Element ist die Vorspannung -F_v/A (frei) bzw. null nach Abzug."""
+    print("--- Vorspannung ---")
+    Fv = 100e3
+    m, els = balken(L=6.0, n=4)
+    m.fix(0, "all")
+    tip = m.nn - 1
+    m.fix(tip, [0, 1, 2])
+    v = m.add_vorspannung("Traeger", Fv)
+    check("Vorspannung haengt am Stab im aktiven Lastfall",
+          m.case().vorspannungen == [v] and v.art == "stab" and m.case().n_loads == 1)
+    r = solver.solve_static(m)
+    EA = 210e9 * m.sections["IPE 300"].A
+    check("gehaltener Stab: keine Verschiebung", abs(r.u).max() < 1e-12, f"{abs(r.u).max():.2e}")
+    check("Stabendkraefte: der Stab steht unter dem Zug F_v",
+          all(np.isclose(abs(r.beam_end[e][0]), Fv, rtol=1e-9) and np.isclose(r.beam_end[e][6], -r.beam_end[e][0], rtol=1e-9)
+              for e in els), f"{r.beam_end[els[0]][0] / 1e3:.3f} / {r.beam_end[els[0]][6] / 1e3:.3f} kN")
+    check("die Lager tragen F_v - gegeneinander gerichtet",
+          np.isclose(abs(r.reactions[0, 0]), Fv, rtol=1e-9) and np.isclose(abs(r.reactions[tip, 0]), Fv, rtol=1e-9)
+          and r.reactions[0, 0] * r.reactions[tip, 0] < 0,
+          f"{r.reactions[0, 0] / 1e3:.3f} / {r.reactions[tip, 0] / 1e3:.3f} kN")
+    m2, _ = balken(L=6.0, n=4)
+    m2.fix(0, "all")
+    m2.add_vorspannung("Traeger", Fv)
+    r2 = solver.solve_static(m2)
+    check("freier Stab: Verkuerzung F_v L / (E A), keine Lagerkraft",
+          np.isclose(r2.u[m2.nn - 1, 0], -Fv * 6.0 / EA, rtol=1e-9) and abs(r2.reactions[0, 0]) < 1e-6 * Fv,
+          f"{r2.u[m2.nn - 1, 0] * 1e3:.4f} mm gegen {-Fv * 6.0 / EA * 1e3:.4f}")
+    d = Model.from_dict(m2.to_dict())
+    check("Vorspannung ueberlebt Speichern und Laden",
+          len(d.case().vorspannungen) == 1 and d.case().vorspannungen[0].kraft == Fv)
+    # Volumen: Quader 0,1 x 0,1 x 0,4 m, Achse z (laengste Abmessung)
+    from statik3d.model import Volumenkoerper
+    a, b, L = 0.1, 0.1, 0.4
+    nx, ny, nz = 2, 2, 8
+    mv = Model("Schraube")
+    mv.add_material(Material("S235", 210e9, 0.3, 7850, fy=235e6))
+    ids = {}
+    for k in range(nz + 1):
+        for j in range(ny + 1):
+            for i in range(nx + 1):
+                ids[(i, j, k)] = mv.add_node(a * i / nx, b * j / ny, L * k / nz)
+    hexe = []
+    for k in range(nz):
+        for j in range(ny):
+            for i in range(nx):
+                hexe.append(mv.add_element("hex8", [
+                    ids[(i, j, k)], ids[(i + 1, j, k)], ids[(i + 1, j + 1, k)], ids[(i, j + 1, k)],
+                    ids[(i, j, k + 1)], ids[(i + 1, j, k + 1)], ids[(i + 1, j + 1, k + 1)],
+                    ids[(i, j + 1, k + 1)]], "S235"))
+    for e in hexe:
+        mv.elements[e].group = "Schaft"
+    mv.koerper["Schaft"] = Volumenkoerper("Schaft", flaechen=[], material="S235", elemente=list(hexe))
+    for k in range(nz + 1):
+        for j in range(ny + 1):
+            mv.fix(ids[(0, j, k)], [0])
+        for i in range(nx + 1):
+            mv.fix(ids[(i, 0, k)], [1])
+    for j in range(ny + 1):
+        for i in range(nx + 1):
+            mv.fix(ids[(i, j, 0)], [2])
+    mv.add_vorspannung("Schaft", Fv)
+    elems, achse, A_q = mv.vorspannung_koerper(mv.case().vorspannungen[0])
+    check("Achse = laengste Abmessung (z), A = Volumen / Laenge",
+          np.allclose(achse, [0, 0, 1]) and np.isclose(A_q, a * b, rtol=1e-9), f"{achse} A = {A_q:.5f} m²")
+    rv = solver.solve_static(mv)
+    oben = [ids[(i, j, nz)] for j in range(ny + 1) for i in range(nx + 1)]
+    check("freier Schaft: Verkuerzung F_v L / (E A) an der Stirnflaeche",
+          np.allclose(rv.u[oben, 2], -Fv * L / (210e9 * a * b), rtol=1e-6),
+          f"{rv.u[oben, 2].mean() * 1e3:.4f} mm gegen {-Fv * L / (210e9 * a * b) * 1e3:.4f}")
+    sp = list(rv.solid_res.values())
+    check("freier Schaft: Spannung null (die Dehnung hebt die Vorspannung auf)",
+          bool(sp) and max(abs(float(s[2])) for s in sp) < 1e-6 * Fv / (a * b),
+          f"{max(abs(float(s[2])) for s in sp) if sp else float('nan'):.3e} Pa")
+    for j in range(ny + 1):
+        for i in range(nx + 1):
+            mv.fix(ids[(i, j, nz)], [2])
+    rv2 = solver.solve_static(mv)
+    unten = [ids[(i, j, 0)] for j in range(ny + 1) for i in range(nx + 1)]
+    check("eingespannter Schaft: die Stirnflaechen tragen F_v",
+          np.isclose(abs(rv2.reactions[unten, 2].sum()), Fv, rtol=1e-9)
+          and np.isclose(abs(rv2.reactions[oben, 2].sum()), Fv, rtol=1e-9),
+          f"{rv2.reactions[unten, 2].sum() / 1e3:.3f} / {rv2.reactions[oben, 2].sum() / 1e3:.3f} kN")
+    sp2 = list(rv2.solid_res.values())
+    check("eingespannter Schaft: sigma_z = F_v / A (Zug) in jedem Element",
+          bool(sp2) and all(np.isclose(float(s[2]), Fv / (a * b), rtol=1e-6) for s in sp2),
+          f"{float(sp2[0][2]) / 1e6 if sp2 else float('nan'):.3f} MPa gegen {Fv / (a * b) / 1e6:.3f}")
+
+
 def main():
     for t in (test_volleinspannkraefte, test_teillast_einfeldtraeger, test_zwangsverformung,
               test_flaechenlast_linear, test_linienlast_auf_linie, test_temperatur_objektlast,
-              test_speichern_linienlast_zwang):
+              test_speichern_linienlast_zwang, test_vorspannung):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

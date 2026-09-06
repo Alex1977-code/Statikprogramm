@@ -957,6 +957,34 @@ class Zwangsverformung:
 
 
 @dataclass
+class Vorspannung:
+    """Vorspannung als Last: eine Vorspannkraft F_v in einem Stab (Zugstange,
+    Seil, Anker) oder in einem Volumenkoerper (Schraube).
+
+    Umgesetzt als **Anfangsdehnung**: das Bauteil will sich um
+    eps0 = -F_v/(E A) verkuerzen (der Stab ueber seine Elemente, die Schraube
+    als einachsige Anfangsspannung -F_v/A laengs ihrer Achse). Haelt die
+    Umgebung es fest, traegt es die Zugkraft F_v und klemmt die Umgebung -
+    wie eine angezogene Schraube. Ein freies Bauteil verkuerzt sich nur, ohne
+    Kraft.
+
+    ziel:   Name des Stabes (``members``) oder des Volumenkoerpers
+    art:    "stab" | "koerper"
+    kraft:  Vorspannkraft [N], positiv = Zug im vorgespannten Bauteil
+    achse:  Achsrichtung beim Koerper; None = seine laengste Abmessung
+    """
+    ziel: str = ""
+    art: str = "stab"
+    kraft: float = 0.0
+    achse: Optional[list[float]] = None
+    kommentar: str = ""
+
+    def bezug(self) -> str:
+        return (("Stab " if self.art == "stab" else "Volumen ") + str(self.ziel)
+                + f": F_v = {self.kraft / 1e3:g} kN")
+
+
+@dataclass
 class TempLoad:
     """Gleichmaessige Temperaturaenderung dT [K] eines Elements
     (Stab, Schale oder Volumen). Optional dT_z = Temperaturdifferenz ueber die
@@ -964,6 +992,15 @@ class TempLoad:
     elem: int
     dT: float = 0.0
     dT_z: float = 0.0
+
+
+#: Die Lastarten eines Lastfalls - in der Reihenfolge, in der sie im
+#: Modellbaum unter dem Lastfall und in seiner Maske stehen
+LASTARTEN_NAMEN = (("eigengewicht", "Eigengewicht"), ("knoten", "Knotenlasten"),
+                   ("stab", "Stablasten"), ("linie", "Linienlasten"),
+                   ("flaeche", "Flächenlasten"), ("temperatur", "Temperaturlasten"),
+                   ("vorspannung", "Vorspannung"),
+                   ("zwang", "Zwangsverformungen (Lagerverschiebung)"))
 
 
 @dataclass
@@ -983,6 +1020,7 @@ class LoadCase:
     geometrielasten: list[Geometrielast] = field(default_factory=list)
     linienlasten: list[Linienlast] = field(default_factory=list)
     zwangsverformungen: list[Zwangsverformung] = field(default_factory=list)
+    vorspannungen: list[Vorspannung] = field(default_factory=list)
     temp_loads: list[TempLoad] = field(default_factory=list)
     gravity: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     gamma_sup: Optional[float] = None      # Teilsicherheitsbeiwert (None -> aus Kategorie)
@@ -1006,6 +1044,28 @@ class LoadCase:
     def is_accidental(self) -> bool:
         return self.category == "A"
 
+    def lasten_je_art(self) -> dict:
+        """{Lastart: [Lasten]} - nur die eingegebenen, nicht die aus Objektlasten
+        abgeleiteten Elementlasten. Die Schluessel sind die von
+        :data:`LASTARTEN_NAMEN`; Arten ohne Lasten fehlen."""
+        def eigen(liste):
+            return [l for l in (liste or []) if not getattr(l, "_geo", False)]
+        geo = list(self.geometrielasten or [])
+        out: dict = {}
+        g = [] if self.gravity is None else [float(x) for x in np.asarray(self.gravity, float).ravel()]
+        if any(g):
+            out["eigengewicht"] = [g]
+        out["knoten"] = eigen(self.nodal_loads)
+        out["stab"] = eigen(self.beam_loads)
+        out["linie"] = list(self.linienlasten or [])
+        out["flaeche"] = eigen(self.face_loads) + [g for g in geo
+                                                   if getattr(g, "lastart", "druck") != "temperatur"]
+        out["temperatur"] = eigen(self.temp_loads) + [g for g in geo
+                                                      if getattr(g, "lastart", "druck") == "temperatur"]
+        out["vorspannung"] = list(getattr(self, "vorspannungen", None) or [])
+        out["zwang"] = list(self.zwangsverformungen or [])
+        return {k: v for k, v in out.items() if v}
+
     @property
     def n_loads(self) -> int:
         """Zahl der **eingegebenen** Lasten - aus Objektlasten abgeleitete
@@ -1015,7 +1075,7 @@ class LoadCase:
                                     self.face_loads, self.temp_loads)
                     for l in liste if not getattr(l, "_geo", False))
         return (eigen + len(self.geometrielasten) + len(self.linienlasten)
-                + len(self.zwangsverformungen)
+                + len(self.zwangsverformungen) + len(getattr(self, "vorspannungen", None) or [])
                 + (1 if np.any(self.gravity) else 0))
 
     def eigene(self, liste: str) -> list:
@@ -1039,6 +1099,7 @@ class LoadCase:
             "geometrielasten": [asdict(l) for l in self.geometrielasten],
             "linienlasten": [asdict(l) for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
+            "vorspannungen": [asdict(l) for l in (getattr(self, "vorspannungen", None) or [])],
             "temp_loads": [asdict(l) for l in self.eigene("temp_loads")],
             "gravity": list(map(float, self.gravity)),
             "gamma_sup": self.gamma_sup, "gamma_inf": self.gamma_inf,
@@ -1059,6 +1120,7 @@ class LoadCase:
         lc.linienlasten = [Linienlast(**l) for l in d.get("linienlasten", [])]
         lc.zwangsverformungen = [Zwangsverformung(**l)
                                  for l in d.get("zwangsverformungen", [])]
+        lc.vorspannungen = [_dc(Vorspannung, l) for l in d.get("vorspannungen", [])]
         lc.temp_loads = [TempLoad(**l) for l in d.get("temp_loads", [])]
         lc.gravity = list(d.get("gravity", [0, 0, 0]))
         lc.gamma_sup = d.get("gamma_sup")
@@ -1747,6 +1809,43 @@ class Kontaktbedingung:
     aus: bool = False                    # in der Quelldatei deaktiviert
     ausgefuehrt: bool = False            # Trennung im Netz umgesetzt?
     beschreibung: str = ""
+    #: Namen der Koerper der **Gegenseite** (Zielkoerper). Leer: die Gegenseite
+    #: wird unter allen anderen Bauteilen geometrisch gesucht.
+    gegenkoerper: list[str] = field(default_factory=list)
+    #: Suchradius [m] fuer die Gegenseite (ANSYS: Pinball). 0 = automatisch,
+    #: die groessere mittlere Kantenlaenge beider Seiten.
+    suchweite: float = 0.0
+    #: Anfangsspalt schliessen (ANSYS: „auf Beruehrung setzen“): jeder Knoten
+    #: gilt in seiner Lage als anliegend - Spiel und Facettenfehler zwischen
+    #: unterschiedlich feinen Netzen verschwinden.
+    spalt_schliessen: bool = False
+    #: Der Standardkontakt, aus dem die Wirkung kam ("" = benutzerdefiniert).
+    standard: str = ""
+
+    def standard_anwenden(self, name: str, mu: float = None) -> "Kontaktbedingung":
+        """Die Wirkung je Freiheitsgrad aus einem Standardkontakt setzen.
+
+        Die Namen sind die von ANSYS; was sie bedeuten, steht in
+        :data:`STANDARDKONTAKTE`. Danach laesst sich jede Richtung von Hand
+        aendern - der Standard ist ein Ausgangspunkt, kein Zwang.
+        """
+        s = STANDARDKONTAKTE[name]
+        mu = float(s["mu"] if mu is None else mu)
+        b: dict = {}
+        b[2] = DofBehaviour("rigid") if s["zug"] == "starr" else DofBehaviour("free", failure="zug")
+        for d in (0, 1):
+            b[d] = DofBehaviour("rigid" if s["schub"] == "starr" else "free")
+            if mu > 0 and s["schub"] != "starr":
+                b[d].mu = mu
+        for d in (3, 4, 5):
+            b[d] = DofBehaviour("rigid" if s["dreh"] == "starr" else "free")
+        self.behaviour = b
+        self.standard = name
+        return self
+
+    def reibbeiwert(self) -> float:
+        """Der Reibbeiwert der Fuge (der groesste an den Freiheitsgraden)."""
+        return max([0.0] + [float(self.dof_behaviour(d).mu or 0.0) for d in range(3)])
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -1754,21 +1853,67 @@ class Kontaktbedingung:
             return DofBehaviour("free")
         return b if isinstance(b, DofBehaviour) else _dc(DofBehaviour, b)
 
-    def bezug(self) -> str:
-        teile = [f"{len(self.flaechen)} Flächen"]
+    def wartet_auf_netz(self, model) -> bool:
+        """Noch nicht ausgefuehrt, weil die beteiligten Koerper und Flaechen
+        noch kein Netz haben - vor dem Vernetzen der Normalfall, kein Mangel.
+
+        Erst **mit** Netz ist eine nicht ausgefuehrte Fuge ein Fehler: dann
+        rechnet das Modell dort durchverbunden, also zu steif. Vorher gibt es
+        nichts, was zu steif sein koennte - und ein Warnzeichen an jeder
+        frisch eingelesenen Kontaktbedingung wuerde nur abstumpfen.
+        """
+        if self.ausgefuehrt or self.aus:
+            return False
+        # Gibt es im Modell gar kein Objekt dieser Bedingung, wartet sie auf
+        # nichts - dann ist sie nicht ausfuehrbar, und das ist ein Mangel.
+        gefunden = False
+        for name in (self.koerpernamen or []):
+            k = (getattr(model, "koerper", {}) or {}).get(name)
+            if k is not None:
+                gefunden = True
+                if k.elemente:
+                    return False
+        for name in list(self.flaechennamen or []) + list(self.gegenflaechen or []):
+            f = (getattr(model, "flaechen", {}) or {}).get(name)
+            if f is not None:
+                gefunden = True
+                if f.elemente or f.randseiten:
+                    return False
+        return gefunden
+
+    def zustand(self, model=None) -> str:
+        """Der Stand der Trennung in Worten - fuer Baum, Maske, Tabelle, Bericht."""
+        if self.ausgefuehrt:
+            return "getrennt"
+        if self.aus:
+            return "in der Quelldatei deaktiviert"
+        if model is not None and self.wartet_auf_netz(model):
+            return "wird beim Vernetzen getrennt"
+        return "nicht ausgeführt - hier zu steif"
+
+    def zu_steif(self, model) -> bool:
+        """Netz da, Fuge nicht ausgefuehrt: das Modell rechnet hier zu steif."""
+        return not self.ausgefuehrt and not self.aus and not self.wartet_auf_netz(model)
+
+    def bezug(self, model=None) -> str:
+        teile = ([self.standard] if self.standard else []) + [f"{len(self.flaechen)} Flächen"]
         if self.volumen:
             teile.append(f"{len(self.volumen)} Volumen")
         if self.ziele:
             teile.append(f"an {self.ziele} Objekten")
         # Ob die Trennung ausgefuehrt ist, gehoert an jede Stelle, an der die
-        # Bedingung auftaucht: eine nicht getrennte Fuge rechnet zu steif.
-        teile.append("getrennt" if self.ausgefuehrt else "noch durchverbunden")
+        # Bedingung auftaucht: eine nicht getrennte Fuge rechnet zu steif -
+        # aber erst, wenn es ein Netz gibt (mit ``model`` wird das unterschieden).
+        if model is not None:
+            teile.append(self.zustand(model))
+        else:
+            teile.append("getrennt" if self.ausgefuehrt else "noch durchverbunden")
         return ", ".join(teile)
 
     def art_der_trennung(self, model) -> str:
         """Wie die Fuge im Netz umgesetzt ist - fuer Tabelle und Bericht."""
         if not self.ausgefuehrt:
-            return "nein"
+            return "noch nicht (beim Vernetzen)" if self.wartet_auf_netz(model) else "nein"
         teile = []
         n = sum(1 for g in (model.gap_elements or [])
                 if str(getattr(g, "group", "")) == self.name)
@@ -1958,6 +2103,13 @@ class ContactPair:
     gap: float = 0.0
     search_radius: Optional[float] = None
     flip_normal: bool = False
+    #: Zug uebertragen (Verbund, ohne Trennung): die Fuge oeffnet nicht
+    zug: bool = False
+    #: Haften: in der Fugenebene kein Gleiten, unabhaengig vom Reibbeiwert
+    haften: bool = False
+    #: Anfangsspalt schliessen: jeder Slave-Knoten gilt in seiner Lage als
+    #: anliegend (ANSYS „auf Beruehrung setzen“)
+    anliegend: bool = False
 
 
 # --------------------------------------------------------------------------
@@ -1965,6 +2117,28 @@ class ContactPair:
 # --------------------------------------------------------------------------
 #: Alter Name der Kontaktbedingung (RFEM: Flaechenfreigabe)
 Flaechenfreigabe = Kontaktbedingung
+
+#: Vorgefertigte Kontakte - benannt wie in ANSYS, in der Wirkung je Richtung:
+#: zug   "starr"   = Zug wird uebertragen (die Fuge oeffnet nicht)
+#:       "abheben" = frei mit Ausfall bei Zug (die Fuge kann aufgehen)
+#: schub "starr"   = in der Fugenebene haftend, "frei" = gleitend (mit mu Reibung)
+#: dreh  Verdrehungen (nur bei Schalen wirksam)
+#: Druck wird immer uebertragen - das ist Kontakt.
+STANDARDKONTAKTE = {
+    "Verbund":          {"zug": "starr",   "schub": "starr", "dreh": "starr", "mu": 0.0},
+    "Ohne Trennung":    {"zug": "starr",   "schub": "frei",  "dreh": "frei",  "mu": 0.0},
+    "Reibungsfrei":     {"zug": "abheben", "schub": "frei",  "dreh": "frei",  "mu": 0.0},
+    "Reibungsbehaftet": {"zug": "abheben", "schub": "frei",  "dreh": "frei",  "mu": 0.2},
+    "Rau":              {"zug": "abheben", "schub": "starr", "dreh": "frei",  "mu": 0.0},
+}
+#: Was jeder Standardkontakt bedeutet - fuer Maske und Handbuch
+STANDARDKONTAKT_TEXT = {
+    "Verbund": "wie verschweißt: kein Abheben, kein Gleiten (Zug, Druck und Schub werden übertragen)",
+    "Ohne Trennung": "kein Abheben, aber reibungsfreies Gleiten in der Fuge",
+    "Reibungsfrei": "kann abheben und reibungsfrei gleiten - nur Druck wird übertragen",
+    "Reibungsbehaftet": "kann abheben; in der Fuge Coulomb-Reibung mit dem Reibbeiwert μ",
+    "Rau": "kann abheben, gleitet aber nicht (unendliche Reibung)",
+}
 
 
 #: Die Situation, in der alles wirkt und nichts bewegt ist
@@ -3202,6 +3376,47 @@ class Model:
         zv = Zwangsverformung(int(node), dofs, u)
         self.case(case).zwangsverformungen.append(zv)
         return zv
+
+    def add_vorspannung(self, ziel: str, kraft: float, art: str = None, achse=None,
+                        case: str = None, kommentar: str = "") -> Vorspannung:
+        """Vorspannkraft [N] in einem Stab oder Volumenkoerper (siehe
+        :class:`Vorspannung`); ``art`` wird am Namen erkannt."""
+        ziel = str(ziel)
+        if art is None:
+            art = ("stab" if ziel in self.members else
+                   "koerper" if ziel in (self.koerper or {}) else "")
+        if art == "stab" and ziel not in self.members:
+            raise KeyError(f"Stab {ziel} gibt es nicht")
+        if art == "koerper" and ziel not in (self.koerper or {}):
+            raise KeyError(f"Volumen {ziel} gibt es nicht")
+        if art not in ("stab", "koerper"):
+            raise KeyError(f"{ziel} ist weder Stab noch Volumenkörper")
+        v = Vorspannung(ziel, art, float(kraft),
+                        None if achse is None else [float(x) for x in achse], str(kommentar or ""))
+        self.case(case).vorspannungen.append(v)
+        return v
+
+    def vorspannung_koerper(self, v) -> tuple:
+        """(Elemente, Achse als Einheitsvektor, Querschnittsflaeche A) eines
+        vorgespannten Koerpers. A = Volumen / Laenge laengs der Achse - die
+        mittlere Querschnittsflaeche, bei einer Schraube der Schaft."""
+        from .elements import solid as sl
+        k = (self.koerper or {}).get(v.ziel)
+        elems = [int(e) for e in (k.elemente if k else []) if 0 <= int(e) < len(self.elements)]
+        if not elems:
+            return [], None, 0.0
+        knoten = sorted({int(x) for e in elems for x in self.elements[e].nodes})
+        P = self.nodes[knoten]
+        if v.achse is not None and float(np.linalg.norm(v.achse)) > 0:
+            a = np.asarray(v.achse, float)
+            a = a / float(np.linalg.norm(a))
+        else:
+            a = np.zeros(3)
+            a[int(np.argmax(np.ptp(P, axis=0)))] = 1.0
+        L = float(np.ptp(P @ a))
+        V = sum(float(sl.solid_volume(self.elements[e].typ, self.nodes[self.elements[e].nodes]))
+                for e in elems)
+        return elems, a, (V / L if L > 0 else 0.0)
 
     def zwang_ohne_lager(self, case: str = None) -> list:
         """Vorgegebene Freiheitsgrade, an denen kein Lager haelt - unwirksam."""

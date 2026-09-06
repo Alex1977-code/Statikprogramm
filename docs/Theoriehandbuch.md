@@ -96,6 +96,22 @@ dünnen Ring den Bredtschen Wert 2π r_m³ t trifft (`tests/test_sections.py`
 prüft Kreis, Ring, Rechteck mit Loch und das aus drei Streifen gebaute I
 gegen die geschlossenen Formeln).
 
+### Vorspannung als Anfangsdehnung
+
+Eine Vorspannkraft F_v in einem Stab oder einer Schraube wird nicht als
+äußere Kraft, sondern als **Anfangsdehnung** ε₀ = −F_v/(E·A) aufgebracht -
+dieselbe Umsetzung wie eine Abkühlung um ΔT = −F_v/(E·A·α). Für Stäbe sind
+die äquivalenten Knotenlasten f = [+F_v, 0, …, −F_v, 0, …] in lokalen
+Koordinaten (sie ziehen die Enden zusammen); die Stabendkräfte folgen aus
+f_l = k·u − f₀ und enthalten damit die Vorspannung: beidseitig gehalten steht
+der Stab unter N = F_v ohne Verschiebung, frei verkürzt er sich um F_v·L/(E·A)
+ohne Kraft. Für Volumenkörper (Schraubenschaft) ist die Anfangsspannung
+einachsig σ₀ = −F_v/A · a⊗a längs der Achse a; die Knotenlasten sind
+f = ∫Bᵀσ₀ dV über alle Elemente des Körpers, die Querschnittsfläche A das
+Volumen des Körpers geteilt durch seine Länge längs a. Die Spannungen im
+Ergebnis sind σ = D·ε − σ₀. Geprüft an geschlossenen Werten (tests/test_lasten.py):
+Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaft.
+
 ## 2 Lasten
 
 * Knotenlasten, Momente, vorgegebene Verschiebungen, Federlager.
@@ -436,7 +452,31 @@ ihrer gemeinsamen **Randlinien**. Daraus folgen zwei Fälle:
 | Netze an der Fuge | Woran man es erkennt | Umsetzung |
 |---|---|---|
 | passen Knoten für Knoten | **jeder** Fugenknoten gehört beiden Bauteilen | Knoten verdoppeln, je Paar ein Spaltelement (und Kopplungen für die Fugenebene) |
-| passen nicht | nur der gemeinsame Rand gehört beiden | den Rand trennen, die Fläche über ein **Kontaktpaar** (Knoten–Fläche, Abschnitt 4) |
+| passen nicht | nur der gemeinsame Rand gehört beiden (oder gar kein Knoten) | den Rand trennen, die Fläche über ein **Kontaktpaar** (Knoten–Fläche, Abschnitt 4) |
+
+**Die Gegenseite des Kontaktpaars** wird nicht über die Liste der Flächen
+gesucht, an denen die Freigabe hängt (die ist in RFEM-Dateien unvollständig),
+sondern über die Geometrie - wie in ANSYS über einen **Suchradius** (Pinball):
+eine Randfacette eines anderen Bauteils gehört zur Fuge, wenn ihre Normale der
+Kontaktfacette entgegen zeigt (n·n′ < −0,7) und der **nächste Punkt auf ihr**
+höchstens den Suchradius vom Schwerpunkt der Kontaktfacette entfernt liegt.
+Maßgebend ist der nächste Punkt, nicht der Schwerpunkt der Gegenfacette: nur
+so findet ein 2-mm-Netz eine 15-mm-Gegenseite, ein Zylinder seine Bohrung mit
+Spiel, und deckungsgleich müssen die Flächen nicht sein. Der Suchradius ist
+vorgebbar, sonst die größere mittlere Kantenlänge beider Seiten. Alle Knoten
+der Kontaktfacetten mit Gegenseite werden Slave, die gefundenen Gegenfacetten
+Master; der Löser ordnet dann jedem Slave-Knoten die nächste Master-Facette
+im doppelten Suchradius zu (nächster Punkt auf dem Dreieck, vektorisiert über
+einen KD-Baum). Der Abstand wird zum **Anfangsspalt** g₀ der Bedingung - oder
+zu null, wenn die Bedingung „auf Berührung gesetzt“ ist (ANSYS: adjust to
+touch) oder ein Verbund ist, der nur die Relativverschiebung misst.
+
+Aus der Wirkung je Freiheitsgrad folgt die Art des Kontaktpaars: Zug *starr*
+(oder Feder) → die Bedingung öffnet nie, auch Zug wird übertragen (Verbund,
+ohne Trennung); Schub *starr* → **haftend**, die Fugenebene ist eine Feder ohne
+Gleiten (Rau, Verbund); sonst Kontakt mit Abheben und Coulomb-Reibung μ.
+Verdrehungen wirken nur bei Schalen; zwischen Volumen bleiben sie ohne Wirkung
+(das Protokoll sagt es).
 
 Die Verbindung je Freiheitsgrad folgt der Freigabe: *starr* → Kopplung mit
 Straffeder, *Feder c* [N/m je m²] → Kopplung mit c · A (A = Einflussfläche des
