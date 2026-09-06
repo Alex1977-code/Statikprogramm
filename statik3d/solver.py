@@ -480,6 +480,14 @@ def case_loads(model: Model, factors: dict, aktiv=None) -> tuple:
             q[i] = asm.abschnitte_zusammen(q.get(i), asm.skaliere_abschnitte(v, f))
         for tl in lc.temp_loads:
             temp[tl.elem] = temp.get(tl.elem, 0.0) + f * tl.dT
+        # Anfangsspannungen der Vorspannung in Volumen - fuer die Spannungs-
+        # rueckrechnung (sigma = D eps - sigma0); unter dem Schluessel "sigma0",
+        # damit die Elementnummern von temp unberuehrt bleiben
+        for v in getattr(lc, "vorspannungen", None) or []:
+            if getattr(v, "art", "stab") == "koerper" and v.kraft:
+                sig = temp.setdefault("sigma0", {})
+                for i, s0 in asm.solid_prestress(model, v).items():
+                    sig[i] = sig.get(i, 0.0) + f * s0
     return F, feq, q, temp
 
 
@@ -577,6 +585,9 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             if i in temp:
                 s = s - sl.D_matrix(mat.E, mat.nu) @ (
                     mat.alpha * temp[i] * np.array([1.0, 1.0, 1.0, 0, 0, 0]))
+            sig0 = temp.get("sigma0") if isinstance(temp, dict) else None
+            if sig0 and i in sig0:
+                s = s - np.asarray(sig0[i], float)      # Vorspannung: sigma = D eps - sigma0
             out.append((i, "solid", s))
     return out
 

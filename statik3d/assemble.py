@@ -454,6 +454,21 @@ def element_equivalent_loads(model: Model, case: LoadCase, aktiv=None) -> dict[i
             f[4] -= Mt_
             f[10] += Mt_
         out[tl.elem] = out.get(tl.elem, np.zeros(12)) + f
+    # Vorspannung in Staeben: der Stab will sich um F/(EA) verkuerzen - wie
+    # eine Abkuehlung ziehen die aequivalenten Knotenlasten die Enden zusammen
+    for v in getattr(case, "vorspannungen", None) or []:
+        if getattr(v, "art", "stab") != "stab" or not v.kraft:
+            continue
+        mem = model.members.get(v.ziel)
+        for i in (mem.elements if mem else []):
+            i = int(i)
+            if (not 0 <= i < len(model.elements) or model.elements[i].typ not in LINE_TYPES
+                    or not _wirkt(aktiv, i)):
+                continue
+            f = np.zeros(12)
+            f[0] += float(v.kraft)
+            f[6] -= float(v.kraft)
+            out[i] = out.get(i, np.zeros(12)) + f
     return out
 
 
@@ -551,11 +566,20 @@ def shell_thermal_loads(model: Model, e, dT: float) -> np.ndarray:
 
 
 def solid_thermal_loads(model: Model, e, dT: float) -> np.ndarray:
+    """Aequivalente Knotenlasten einer gleichmaessigen Temperaturaenderung
+    eines Volumenelements: die Anfangsspannung D eps0."""
     mat = model.materials[e.mat]
-    X = model.nodes[e.nodes]
     D = sl.D_matrix(mat.E, mat.nu)
     eps0 = mat.alpha * dT * np.array([1.0, 1.0, 1.0, 0, 0, 0])
-    s0 = D @ eps0
+    return solid_initial_stress_loads(model, e, D @ eps0)
+
+
+def solid_initial_stress_loads(model: Model, e, s0) -> np.ndarray:
+    """Aequivalente Knotenlasten einer Anfangsspannung s0 (Voigt: xx, yy, zz,
+    xy, yz, xz) im Volumenelement: f = ∫ Bᵀ s0 dV - Temperatur, Vorspannung."""
+    mat = model.materials[e.mat]
+    X = model.nodes[e.nodes]
+    s0 = np.asarray(s0, float)
     if e.typ == "tet4":
         _, B, V = sl.k_tet4(X, mat.E, mat.nu)
         return V * (B.T @ s0)
@@ -568,14 +592,27 @@ def solid_thermal_loads(model: Model, e, dT: float) -> np.ndarray:
             B = sl._B_from_grad(dN)
             f += w * np.linalg.det(J) * (B.T @ s0)
         return f
-    f = np.zeros(24)
-    for (r, s, t), w in zip(sl._HEX_GP, sl._HEX_W):
-        _, dNr = sl.hex8_N_dN(r, s, t)
-        J = dNr.T @ X
-        dN = np.linalg.solve(J, dNr.T).T
-        B = sl._B_from_grad(dN)
-        f += w * np.linalg.det(J) * (B.T @ s0)
-    return f
+    if e.typ == "hex8":
+        f = np.zeros(24)
+        for (r, s, t), w in zip(sl._HEX_GP, sl._HEX_W):
+            _, dNr = sl.hex8_N_dN(r, s, t)
+            J = dNr.T @ X
+            dN = np.linalg.solve(J, dNr.T).T
+            B = sl._B_from_grad(dN)
+            f += w * np.linalg.det(J) * (B.T @ s0)
+        return f
+    return np.zeros(3 * len(e.nodes))
+
+
+def solid_prestress(model: Model, v) -> dict:
+    """{Element: Anfangsspannung (Voigt)} einer Vorspannung in einem
+    Volumenkoerper: einachsig -F/A laengs der Achse, in allen Elementen."""
+    elems, a, A_q = model.vorspannung_koerper(v)
+    if not elems or A_q <= 0 or not v.kraft:
+        return {}
+    s = -float(v.kraft) / A_q
+    s0 = s * np.array([a[0] * a[0], a[1] * a[1], a[2] * a[2], a[0] * a[1], a[1] * a[2], a[0] * a[2]])
+    return {i: s0 for i in elems if model.elements[i].typ in SOLID_TYPES}
 
 
 def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
@@ -639,6 +676,14 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
             F[element_dofs(e)] += shell_thermal_loads(model, e, tl.dT)
         elif e.typ in SOLID_TYPES:
             F[element_dofs(e)] += solid_thermal_loads(model, e, tl.dT)
+    # Vorspannung in Volumenkoerpern (Schrauben): einachsige Anfangsspannung
+    # -F/A laengs der Achse in allen Elementen des Koerpers
+    for v in getattr(case, "vorspannungen", None) or []:
+        if getattr(v, "art", "stab") != "koerper":
+            continue
+        for i, s0 in solid_prestress(model, v).items():
+            if _wirkt(aktiv, i):
+                F[element_dofs(model.elements[i])] += solid_initial_stress_loads(model, model.elements[i], s0)
 
     # Eigengewicht Schalen und Volumen (Staebe: siehe oben)
     g = np.asarray(case.gravity, float)

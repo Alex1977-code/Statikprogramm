@@ -954,6 +954,19 @@ class Report:
                                      "Verschiebungen an gelagerten Knoten)", None, ""))
             if note:
                 b.append(("note", note))
+        if getattr(lc, "vorspannungen", None):
+            rows = [["Bauteil", "Art", "F_v [kN]", "Achse", "Bemerkung"]]
+            for v in lc.vorspannungen:
+                rows.append([str(v.ziel), "Stab" if v.art == "stab" else "Volumen",
+                             fmt(v.kraft / 1e3, 2),
+                             "Stabachse" if v.art == "stab" else
+                             ("längste Abmessung" if v.achse is None else
+                              "(" + ", ".join(f"{float(x):g}" for x in v.achse) + ")"),
+                             v.kommentar or "–"])
+            b.append(("table", rows, f"Vorspannung Lastfall {lc.name}: Vorspannkraft als "
+                                     "Anfangsdehnung - das Bauteil will sich um F_v/(EA) verkürzen; "
+                                     "hält die Umgebung es fest, trägt es F_v als Zug und klemmt sie",
+                      None, ""))
         if temp:
             groups = {}
             for l in temp:

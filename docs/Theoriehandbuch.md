@@ -96,6 +96,22 @@ dünnen Ring den Bredtschen Wert 2π r_m³ t trifft (`tests/test_sections.py`
 prüft Kreis, Ring, Rechteck mit Loch und das aus drei Streifen gebaute I
 gegen die geschlossenen Formeln).
 
+### Vorspannung als Anfangsdehnung
+
+Eine Vorspannkraft F_v in einem Stab oder einer Schraube wird nicht als
+äußere Kraft, sondern als **Anfangsdehnung** ε₀ = −F_v/(E·A) aufgebracht -
+dieselbe Umsetzung wie eine Abkühlung um ΔT = −F_v/(E·A·α). Für Stäbe sind
+die äquivalenten Knotenlasten f = [+F_v, 0, …, −F_v, 0, …] in lokalen
+Koordinaten (sie ziehen die Enden zusammen); die Stabendkräfte folgen aus
+f_l = k·u − f₀ und enthalten damit die Vorspannung: beidseitig gehalten steht
+der Stab unter N = F_v ohne Verschiebung, frei verkürzt er sich um F_v·L/(E·A)
+ohne Kraft. Für Volumenkörper (Schraubenschaft) ist die Anfangsspannung
+einachsig σ₀ = −F_v/A · a⊗a längs der Achse a; die Knotenlasten sind
+f = ∫Bᵀσ₀ dV über alle Elemente des Körpers, die Querschnittsfläche A das
+Volumen des Körpers geteilt durch seine Länge längs a. Die Spannungen im
+Ergebnis sind σ = D·ε − σ₀. Geprüft an geschlossenen Werten (tests/test_lasten.py):
+Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaft.
+
 ## 2 Lasten
 
 * Knotenlasten, Momente, vorgegebene Verschiebungen, Federlager.

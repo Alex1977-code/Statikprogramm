@@ -1214,7 +1214,9 @@ def lager_at(model: Model, punkt, size: float, faktor: float = 1.0, dichte: floa
 FARBE_LAST = "#c02020"          # Kraefte, Momente, Strecken- und Flaechenlasten
 FARBE_LAST_WARM = "#e06a10"     # Temperatur: Erwaermung
 FARBE_LAST_KALT = "#2060c0"     # Temperatur: Abkuehlung
+FARBE_VORSPANNUNG = "#8030c0"   # Vorspannung: Pfeile, die den Stab spannen
 FARBE_ZWANG = "#1e8a40"         # Zwangsverformung
+FARBE_LAST_HERVOR = "#ffb000"   # die angeklickte Last
 #: Hoechstzahl der Pfeile je Lastart - mehr sieht man nicht, es kostet nur
 PFEILE_MAX = 6000
 
@@ -1292,7 +1294,8 @@ def _lastzahl(v: float, nachkomma: int = 2) -> str:
 
 #: Lastart der Beschriftung -> Groesse in einheiten.Einheiten
 LASTARTEN = {"kraft": "kraft", "moment": "moment", "strecke": "strecke",
-             "flaeche": "flaechenlast", "temperatur": "temperatur", "zwang": "zwang"}
+             "flaeche": "flaechenlast", "temperatur": "temperatur", "zwang": "zwang",
+             "vorspannung": "kraft"}
 #: hoechstens so viele Lastwerte je Lastart beschriften
 LASTWERTE_MAX = 60
 
@@ -1300,7 +1303,7 @@ LASTWERTE_MAX = 60
 def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
               seiten: dict = None, beschriften: bool = False, textgroesse: int = 10,
               einheiten=None, ausser=None, knoten=None, ausser_flaechen=None,
-              ausser_linien=None) -> list:
+              ausser_linien=None, merker: list = None, hervor=None) -> list:
     """Alle Lasten eines Lastfalls ins Bild. Rueckgabe: die Einheiten der
     gezeichneten Lastarten (fuer die Kopfzeile), z. B. ["kN", "kN/m²"].
 
@@ -1310,7 +1313,10 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
     (einheiten.Einheiten, sonst ``model.einheiten``) bestimmt Einheit und
     Nachkommastellen der Zahlen. Lasten auf ausgeblendeten Teilen bleiben
     weg: ``ausser`` (Elementnummern), ``knoten`` (die sichtbaren Knoten, sonst
-    alle), ``ausser_flaechen`` und ``ausser_linien`` (Namen).
+    alle), ``ausser_flaechen`` und ``ausser_linien`` (Namen). ``merker`` (eine Liste) sammelt je gezeichnetem
+    Lastsymbol (Listenname, Index der Last, Punkt) - damit ein Klick in der
+    Ansicht die Last findet (:func:`last_at`); ``hervor`` (Menge von
+    (Listenname, Index)) zeichnet diese Lasten hervorgehoben.
 
     * Knotenlasten: rote Pfeile auf den Knoten
     * Streckenlasten auf Elementen (auch abschnittsweise): Pfeilreihen
@@ -1338,6 +1344,19 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         return 0 <= int(n) < model.nn and (sicht_k is None or int(n) in sicht_k)
     arten: list = []
     texte: dict = {}            # Lastart -> [(Punkt, Text)]
+    hervor = {(str(a), int(b)) for a, b in (hervor or ())}
+    h_pts, h_vec, h_punkte = [], [], []
+
+    def merke(liste, k, punkt, vec_=None):
+        """Ein Lastsymbol fuer den Klick merken - und hervorheben, wenn gewaehlt."""
+        if merker is not None:
+            merker.append((liste, int(k), np.asarray(punkt, float)))
+        if (liste, int(k)) in hervor:
+            if vec_ is not None:
+                h_pts.append(np.asarray(punkt, float))
+                h_vec.append(np.asarray(vec_, float))
+            else:
+                h_punkte.append(np.asarray(punkt, float))
 
     def merken(art, punkt, text):
         if art not in arten:
@@ -1354,7 +1373,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
 
     # ---- Kraefte: Knoten, Strecken, Elementseiten -------------------------
     pts, vec = [], []
-    for l in case.nodal_loads:
+    for k_l, l in enumerate(case.nodal_loads):
         if getattr(l, "_geo", False) or not knoten_da(l.node):
             continue
         f = np.asarray(l.F[:3], float)
@@ -1362,10 +1381,13 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             pts.append(model.nodes[int(l.node)])
             vec.append(f)
             merken("kraft", model.nodes[int(l.node)], lz(np.linalg.norm(f), "kraft"))
+            merke("nodal_loads", k_l, model.nodes[int(l.node)], f)
         mo = np.asarray(l.F[3:6], float) if len(l.F) >= 6 else np.zeros(3)
         if np.any(mo) and 0 <= int(l.node) < model.nn:
             merken("moment", model.nodes[int(l.node)], lz(np.linalg.norm(mo), "moment"))
-    for bl in case.beam_loads:
+            if not np.any(f):
+                merke("nodal_loads", k_l, model.nodes[int(l.node)])
+    for k_l, bl in enumerate(case.beam_loads):
         if getattr(bl, "_geo", False) or not 0 <= int(bl.elem) < len(model.elements) \
                 or int(bl.elem) in weg_e:
             continue
@@ -1386,10 +1408,11 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             if np.any(q):
                 pts.append(X[0] + (x / L) * (X[-1] - X[0]))
                 vec.append(q)
+                merke("beam_loads", k_l, pts[-1], q)
         if np.any(q1) or np.any(q2):
             merken("strecke", X[0] + (0.5 * (a + b) / L) * (X[-1] - X[0]),
                    spanne(np.linalg.norm(q1), np.linalg.norm(q2), "strecke"))
-    for fl in case.face_loads:
+    for k_l, fl in enumerate(case.face_loads):
         if getattr(fl, "_geo", False) or not 0 <= int(fl.elem) < len(model.elements) \
                 or int(fl.elem) in weg_e:
             continue
@@ -1408,10 +1431,11 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         pts.append(mitte)
         vec.append(d * fl.p)
         merken("flaeche", mitte, lz(fl.p, "flaeche"))
+        merke("face_loads", k_l, mitte, d * fl.p)
     # ---- Objektlasten auf der Geometrie -------------------------------------
     warm, kalt = [], []
     rahmen_pts, rahmen_lines = [], []
-    for gl in getattr(case, "geometrielasten", []) or []:
+    for k_l, gl in enumerate(getattr(case, "geometrielasten", []) or []):
         if gl.art == "flaeche":
             f = model.flaechen.get(gl.ziel)
             flaechen = [f] if f is not None else []
@@ -1446,6 +1470,8 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             if getattr(gl, "lastart", "druck") == "temperatur":
                 (warm if gl.dT >= 0 else kalt).extend(mitten)
                 merken("temperatur", mitten.mean(axis=0), f"ΔT {_lastzahl(gl.dT, 1)}")
+                for m_ in mitten:
+                    merke("geometrielasten", k_l, m_)
                 continue
             if gl.richtung:
                 d = np.asarray(gl.richtung, float)
@@ -1466,9 +1492,10 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                 pts.append(m_)
                 vec.append(d_ * p)
                 werte.append(float(p))
+                merke("geometrielasten", k_l, m_, d_ * p)
             if werte:
                 merken("flaeche", mitten.mean(axis=0), spanne(min(werte), max(werte), "flaeche", "…"))
-    for ll in getattr(case, "linienlasten", []) or []:
+    for k_l, ll in enumerate(getattr(case, "linienlasten", []) or []):
         q1 = np.asarray(ll.q, float)
         q2 = np.asarray(ll.q2, float) if ll.q2 is not None else q1
         if ll.art == "stab":
@@ -1532,6 +1559,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                 if np.any(q):
                     pts.append(A + (x - s0) / L * (B - A))
                     vec.append(q)
+                    merke("linienlasten", k_l, pts[-1], q)
             s0 += L
     _pfeile(plotter, pts, vec, size, "loads")
     if rahmen_pts:
@@ -1539,7 +1567,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                                      lines=np.asarray(rahmen_lines)),
                          color=FARBE_LAST, line_width=2, name="lastfenster")
     # ---- Temperatur auf Elementen -------------------------------------------
-    for tl in case.temp_loads:
+    for k_l, tl in enumerate(case.temp_loads):
         if getattr(tl, "_geo", False) or not 0 <= int(tl.elem) < len(model.elements) \
                 or int(tl.elem) in weg_e:
             continue
@@ -1547,6 +1575,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         c = model.nodes[[int(n) for n in e.nodes]].mean(axis=0)
         (warm if tl.dT >= 0 else kalt).append(c)
         merken("temperatur", c, f"ΔT {_lastzahl(tl.dT, 1)}")
+        merke("temp_loads", k_l, c)
     d = max(4.0, 0.012 * size)
     for punkte, farbe, name in ((warm, FARBE_LAST_WARM, "temp_warm"),
                                 (kalt, FARBE_LAST_KALT, "temp_kalt")):
@@ -1558,7 +1587,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                                name=name)
     # ---- Zwangsverformungen -------------------------------------------------
     zpts, zvec, ringe = [], [], []
-    for zv in getattr(case, "zwangsverformungen", []) or []:
+    for k_l, zv in enumerate(getattr(case, "zwangsverformungen", []) or []):
         if not knoten_da(zv.node):
             continue
         X = model.nodes[int(zv.node)]
@@ -1567,12 +1596,40 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             zpts.append(X)
             zvec.append(u)
             merken("zwang", X, eh.zahl(np.linalg.norm(u), "zwang"))
+            merke("zwangsverformungen", k_l, X, u)
         if any(k in zv.dofs and zv.u[k] for k in (3, 4, 5)):
             ringe.append(X)
+            if not np.any(u):
+                merke("zwangsverformungen", k_l, X)
     _pfeile(plotter, zpts, zvec, size, "zwang", FARBE_ZWANG)
     if ringe:
         plotter.add_points(np.asarray(ringe, float), color=FARBE_ZWANG, point_size=13,
                            render_points_as_spheres=True, name="zwang_drehung")
+    # ---- Vorspannung: an beiden Enden ein Pfeil nach aussen (Zug im Bauteil) --
+    vpts, vvec = [], []
+    for k_l, v in enumerate(getattr(case, "vorspannungen", []) or []):
+        enden = vorspannung_enden(model, v, weg_e)
+        if enden is None:
+            continue
+        a, b = enden
+        d = b - a
+        L = float(np.linalg.norm(d))
+        if L <= 0:
+            continue
+        d = d / L
+        Fv = float(v.kraft)
+        vpts += [a, b]
+        vvec += [-d * Fv, d * Fv]
+        merke("vorspannungen", k_l, a, -d * Fv)
+        merke("vorspannungen", k_l, b, d * Fv)
+        merken("vorspannung", 0.5 * (a + b), "F_v " + lz(abs(Fv), "vorspannung"))
+    _pfeile(plotter, vpts, vvec, size, "vorspannung", FARBE_VORSPANNUNG)
+    # ---- die angeklickte Last: dieselben Symbole in der Hervorhebungsfarbe ----
+    if h_pts:
+        _pfeile(plotter, h_pts, h_vec, size, "last_hervor", FARBE_LAST_HERVOR)
+    if h_punkte:
+        plotter.add_points(np.asarray(h_punkte, float), color=FARBE_LAST_HERVOR, point_size=16,
+                           render_points_as_spheres=True, name="last_hervor_punkte")
     # ---- Lastwerte als Zahlen ----------------------------------------------
     if beschriften and texte:
         punkte, zeilen = [], []
@@ -1588,6 +1645,50 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                                      text_color=FARBE_LAST, shape=None, show_points=False,
                                      always_visible=True, name="lastwerte")
     return [eh.einheit(LASTARTEN[a]) for a in arten if a in LASTARTEN]
+
+
+def last_at(punkt, merker, size: float):
+    """Die Last unter dem Zeiger: (Listenname, Index) des naechsten gezeichneten
+    Lastsymbols (aus ``merker`` von :func:`add_loads`) im Umkreis einer
+    Pfeillaenge - oder None."""
+    if punkt is None or not merker:
+        return None
+    p = np.asarray(punkt, float).ravel()[:3]
+    P = np.array([x[2] for x in merker], float).reshape(-1, 3)
+    d = np.linalg.norm(P - p, axis=1)
+    j = int(np.argmin(d))
+    if d[j] > 0.08 * max(float(size), 1e-9):
+        return None
+    return str(merker[j][0]), int(merker[j][1])
+
+
+def vorspannung_enden(model: Model, v, weg_e=None):
+    """Anfang und Ende des vorgespannten Bauteils (Stab: seine Endknoten,
+    Koerper: die Achse durch den Schwerpunkt) - oder None."""
+    weg = set(weg_e or ())
+    if getattr(v, "art", "stab") == "stab":
+        mem = (getattr(model, "members", None) or {}).get(v.ziel)
+        elems = [int(e) for e in (mem.elements if mem else [])
+                 if 0 <= int(e) < len(model.elements) and int(e) not in weg]
+        if not elems:
+            return None
+        return (np.asarray(model.nodes[int(model.elements[elems[0]].nodes[0])], float),
+                np.asarray(model.nodes[int(model.elements[elems[-1]].nodes[-1])], float))
+    k = (getattr(model, "koerper", None) or {}).get(v.ziel)
+    elems = [int(e) for e in (k.elemente if k else []) if 0 <= int(e) < len(model.elements)]
+    if not elems:
+        return None
+    knoten = sorted({int(x) for e in elems for x in model.elements[e].nodes})
+    P = model.nodes[knoten]
+    if v.achse is not None and float(np.linalg.norm(v.achse)) > 0:
+        ax = np.asarray(v.achse, float)
+        ax = ax / float(np.linalg.norm(ax))
+    else:
+        ax = np.zeros(3)
+        ax[int(np.argmax(np.ptp(P, axis=0)))] = 1.0
+    c = P.mean(axis=0)
+    t = (P - c) @ ax
+    return c + ax * float(t.min()), c + ax * float(t.max())
 
 
 def add_contact_markers(plotter, model: Model, contact: list, size: float):

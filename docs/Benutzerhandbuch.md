@@ -75,7 +75,7 @@ Vierzehn Register nach Arbeitsschritt:
 | **Geometrie** | Knoten, Linien, Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang |
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
-| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Eigengewicht, Generierer Wasserdruck und Wind |
+| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzvorschau, Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
@@ -108,7 +108,7 @@ Die Arbeitsfläche in drei Spalten:
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden (der Zweig erscheint, sobald es Gelenke gibt) |
   | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
-  | Einwirkungen | Lastfälle und Kombinationen; darunter die Lasten aller Lastfälle, je Lastfall gezählt |
+  | Einwirkungen | Lastfälle und Kombinationen. **Unter jedem Lastfall stehen seine Lasten nach Art** (Eigengewicht, Knotenlasten, Stablasten, Linienlasten, Flächenlasten, Temperaturlasten, Vorspannung, Zwangsverformungen), einzeln anklickbar: rechts stehen dann nur diese Lasten, die Tabelle unten zeigt den Lastfall, die belasteten Objekte leuchten; „Lastfall bearbeiten“ holt die Maske des Lastfalls zurück, „Diese Lasten löschen“ nimmt sie heraus |
   | Subsysteme → Stellungen → Situationen | erst die Teile des Tragwerks, dann seine Lagen, dann die Situationen, die einer Stellung ihre Lastfälle und Kombinationen zuordnen |
   | Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte |
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
@@ -170,12 +170,36 @@ bedienen sind, steht im nächsten Abschnitt.
 | Elemente | Werkstoff, Querschnitt bzw. Dicke, Drehung der lokalen Achsen |
 | Lager | Name und Symbolgröße; Klick oder Doppelklick öffnet rechts die Lagermaske: Wirkung, Feder und Ausfall je Freiheitsgrad, Bettung auf/an Beton als Vorschlag, Schlupf/Reibung/Grenzkraft über den Knopf |
 | Gelenke | über die Maske (Doppelklick) |
-| Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts die Maske mit Name, Nummer, Einwirkung, Beschreibung, Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerten und „aktiver Lastfall“ |
+| Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung, darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ, Beschreibung, Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** in der Ansicht gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
+
+**Lasten anklicken.** Mit der Auswahlart **„Last“** in der Glasleiste trifft
+der Klick in der Ansicht die Lastsymbole des aktiven Lastfalls - Pfeile von
+Knoten-, Strecken-, Flächen- und Linienlasten, die Temperaturpunkte, Zwangs-
+und Vorspannungspfeile. Die getroffene Last leuchtet gelb, rechts steht ihre
+Maske mit den Werten (Kräfte, q und q2, Abschnitt, p, ΔT, u, F_v) und dem
+Lastfall: Werte ändern und „Übernehmen“, ein anderer Lastfall verschiebt die
+Last dorthin, „Löschen“ nimmt sie heraus. Dasselbe geschieht beim Klick auf
+eine Zeile der Lastentabelle unten.
+
+**Vorspannung als Last** (*Lasten → Vorspannung*): Stäbe (Zugstange, Seil,
+Anker) oder Volumen (Schraubenschaft) in der Ansicht wählen, die Vorspannkraft
+F_v in kN eintragen, bei Volumen die Achse (automatisch die längste Abmessung
+des Körpers, oder global x/y/z), „Last aufbringen“. Die Vorspannung ist eine
+**Anfangsdehnung**: das Bauteil will sich um F_v/(E·A) verkürzen. Hält die
+Umgebung es fest, trägt es F_v als Zug und klemmt die Umgebung - wie eine
+angezogene Schraube zwischen zwei Platten, deren Kontaktfuge dann die
+Klemmkraft F_v überträgt. Ein freies Bauteil verkürzt sich nur, ohne Kraft.
+Bei Volumen wirkt sie als einachsige Anfangsspannung −F_v/A längs der Achse
+in allen Elementen des Körpers (A = Volumen / Länge, der Schaftquerschnitt);
+die Spannungen im Ergebnis enthalten die Vorspannung. In der Ansicht stehen
+an beiden Enden violette Pfeile nach außen mit der Kraft, im Modellbaum steht
+sie als Unterpunkt „Vorspannung“ des Lastfalls, in Tabelle und Bericht mit
+Bauteil, Kraft und Achse.
 
 **Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
 Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall. RFEM legt sie

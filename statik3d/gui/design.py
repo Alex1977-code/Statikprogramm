@@ -714,22 +714,38 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
         # ---- Einwirkungen -------------------------------------------------
         ew = self._zweig(wurzel, "Einwirkungen", "", "modell", fett=True)
+        from ..model import LASTARTEN_NAMEN
         lf = self._zweig(ew, "Lastfälle", len(model.load_cases), "lastfaelle")
-        self._liste(lf, [(name, f"{lc.category} · {lc.n_loads}"
-                          + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
-                          + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
-                          name, f"{name}: {lc.description or lc.category}, "
-                          f"{lc.n_loads} Lasten"
-                          + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
-                         for name, lc in model.load_cases.items()], "lastfall",
-                    "lastfaelle")
-        n_lasten = sum(lc.n_loads for lc in model.load_cases.values())
-        la = self._zweig(ew, "Lasten", n_lasten, "lasten",
-                         hinweis="Alle Lasten aller Lastfälle – die Tabelle "
-                                 "unten zeigt sie einzeln")
-        for name, lc in model.load_cases.items():
-            if lc.n_loads:
-                self._zweig(la, name, lc.n_loads, "last", schluessel=name)
+        for i, (name, lc) in enumerate(model.load_cases.items()):
+            if i >= BAUM_MAX:
+                self._zweig(lf, f"… {len(model.load_cases) - BAUM_MAX} weitere", "", "lastfaelle",
+                            farbe=FARBEN["matt"],
+                            hinweis="Die vollständige Liste steht in der Tabelle unten.")
+                break
+            nr = int(getattr(lc, "nummer", 0) or 0)
+            it = self._zweig(lf, name, f"{lc.category} · {lc.n_loads}"
+                             + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
+                             + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
+                             "lastfall", schluessel=name,
+                             hinweis=(f"Lastfall {nr}: " if nr else "") + f"{name}: "
+                                     f"{lc.description or lc.category}, {lc.n_loads} Lasten"
+                                     + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
+            # Die Lasten des Lastfalls nach Art als Unterpunkte - jeder einzeln
+            # anklickbar: rechts stehen dann nur diese Lasten
+            je_art = lc.lasten_je_art()
+            for art, titel in LASTARTEN_NAMEN:
+                lasten = je_art.get(art)
+                if not lasten:
+                    continue
+                if art == "eigengewicht":
+                    g = lasten[0]
+                    zahl = (f"g = ({g[0]:g}, {g[1]:g}, {g[2]:g}) m/s²" if (g[0] or g[1])
+                            else f"g_z = {g[2]:g} m/s²")
+                else:
+                    zahl = len(lasten)
+                self._zweig(it, titel, zahl, "lastart", schluessel=f"{name}|{art}",
+                            hinweis=f"{titel} im Lastfall {name} - ein Klick zeigt sie rechts, "
+                                    "in der Tabelle unten und in der Ansicht")
         kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
         self._liste(kb, [(name, " · ".join(x for x in (getattr(c, "situation", "") or "",
                                                        (f"{c.theorie.upper()}. O."

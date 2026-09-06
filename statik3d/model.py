@@ -957,6 +957,34 @@ class Zwangsverformung:
 
 
 @dataclass
+class Vorspannung:
+    """Vorspannung als Last: eine Vorspannkraft F_v in einem Stab (Zugstange,
+    Seil, Anker) oder in einem Volumenkoerper (Schraube).
+
+    Umgesetzt als **Anfangsdehnung**: das Bauteil will sich um
+    eps0 = -F_v/(E A) verkuerzen (der Stab ueber seine Elemente, die Schraube
+    als einachsige Anfangsspannung -F_v/A laengs ihrer Achse). Haelt die
+    Umgebung es fest, traegt es die Zugkraft F_v und klemmt die Umgebung -
+    wie eine angezogene Schraube. Ein freies Bauteil verkuerzt sich nur, ohne
+    Kraft.
+
+    ziel:   Name des Stabes (``members``) oder des Volumenkoerpers
+    art:    "stab" | "koerper"
+    kraft:  Vorspannkraft [N], positiv = Zug im vorgespannten Bauteil
+    achse:  Achsrichtung beim Koerper; None = seine laengste Abmessung
+    """
+    ziel: str = ""
+    art: str = "stab"
+    kraft: float = 0.0
+    achse: Optional[list[float]] = None
+    kommentar: str = ""
+
+    def bezug(self) -> str:
+        return (("Stab " if self.art == "stab" else "Volumen ") + str(self.ziel)
+                + f": F_v = {self.kraft / 1e3:g} kN")
+
+
+@dataclass
 class TempLoad:
     """Gleichmaessige Temperaturaenderung dT [K] eines Elements
     (Stab, Schale oder Volumen). Optional dT_z = Temperaturdifferenz ueber die
@@ -964,6 +992,15 @@ class TempLoad:
     elem: int
     dT: float = 0.0
     dT_z: float = 0.0
+
+
+#: Die Lastarten eines Lastfalls - in der Reihenfolge, in der sie im
+#: Modellbaum unter dem Lastfall und in seiner Maske stehen
+LASTARTEN_NAMEN = (("eigengewicht", "Eigengewicht"), ("knoten", "Knotenlasten"),
+                   ("stab", "Stablasten"), ("linie", "Linienlasten"),
+                   ("flaeche", "Flächenlasten"), ("temperatur", "Temperaturlasten"),
+                   ("vorspannung", "Vorspannung"),
+                   ("zwang", "Zwangsverformungen (Lagerverschiebung)"))
 
 
 @dataclass
@@ -983,6 +1020,7 @@ class LoadCase:
     geometrielasten: list[Geometrielast] = field(default_factory=list)
     linienlasten: list[Linienlast] = field(default_factory=list)
     zwangsverformungen: list[Zwangsverformung] = field(default_factory=list)
+    vorspannungen: list[Vorspannung] = field(default_factory=list)
     temp_loads: list[TempLoad] = field(default_factory=list)
     gravity: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     gamma_sup: Optional[float] = None      # Teilsicherheitsbeiwert (None -> aus Kategorie)
@@ -1006,6 +1044,28 @@ class LoadCase:
     def is_accidental(self) -> bool:
         return self.category == "A"
 
+    def lasten_je_art(self) -> dict:
+        """{Lastart: [Lasten]} - nur die eingegebenen, nicht die aus Objektlasten
+        abgeleiteten Elementlasten. Die Schluessel sind die von
+        :data:`LASTARTEN_NAMEN`; Arten ohne Lasten fehlen."""
+        def eigen(liste):
+            return [l for l in (liste or []) if not getattr(l, "_geo", False)]
+        geo = list(self.geometrielasten or [])
+        out: dict = {}
+        g = [] if self.gravity is None else [float(x) for x in np.asarray(self.gravity, float).ravel()]
+        if any(g):
+            out["eigengewicht"] = [g]
+        out["knoten"] = eigen(self.nodal_loads)
+        out["stab"] = eigen(self.beam_loads)
+        out["linie"] = list(self.linienlasten or [])
+        out["flaeche"] = eigen(self.face_loads) + [g for g in geo
+                                                   if getattr(g, "lastart", "druck") != "temperatur"]
+        out["temperatur"] = eigen(self.temp_loads) + [g for g in geo
+                                                      if getattr(g, "lastart", "druck") == "temperatur"]
+        out["vorspannung"] = list(getattr(self, "vorspannungen", None) or [])
+        out["zwang"] = list(self.zwangsverformungen or [])
+        return {k: v for k, v in out.items() if v}
+
     @property
     def n_loads(self) -> int:
         """Zahl der **eingegebenen** Lasten - aus Objektlasten abgeleitete
@@ -1015,7 +1075,7 @@ class LoadCase:
                                     self.face_loads, self.temp_loads)
                     for l in liste if not getattr(l, "_geo", False))
         return (eigen + len(self.geometrielasten) + len(self.linienlasten)
-                + len(self.zwangsverformungen)
+                + len(self.zwangsverformungen) + len(getattr(self, "vorspannungen", None) or [])
                 + (1 if np.any(self.gravity) else 0))
 
     def eigene(self, liste: str) -> list:
@@ -1039,6 +1099,7 @@ class LoadCase:
             "geometrielasten": [asdict(l) for l in self.geometrielasten],
             "linienlasten": [asdict(l) for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
+            "vorspannungen": [asdict(l) for l in (getattr(self, "vorspannungen", None) or [])],
             "temp_loads": [asdict(l) for l in self.eigene("temp_loads")],
             "gravity": list(map(float, self.gravity)),
             "gamma_sup": self.gamma_sup, "gamma_inf": self.gamma_inf,
@@ -1059,6 +1120,7 @@ class LoadCase:
         lc.linienlasten = [Linienlast(**l) for l in d.get("linienlasten", [])]
         lc.zwangsverformungen = [Zwangsverformung(**l)
                                  for l in d.get("zwangsverformungen", [])]
+        lc.vorspannungen = [_dc(Vorspannung, l) for l in d.get("vorspannungen", [])]
         lc.temp_loads = [TempLoad(**l) for l in d.get("temp_loads", [])]
         lc.gravity = list(d.get("gravity", [0, 0, 0]))
         lc.gamma_sup = d.get("gamma_sup")
@@ -3314,6 +3376,47 @@ class Model:
         zv = Zwangsverformung(int(node), dofs, u)
         self.case(case).zwangsverformungen.append(zv)
         return zv
+
+    def add_vorspannung(self, ziel: str, kraft: float, art: str = None, achse=None,
+                        case: str = None, kommentar: str = "") -> Vorspannung:
+        """Vorspannkraft [N] in einem Stab oder Volumenkoerper (siehe
+        :class:`Vorspannung`); ``art`` wird am Namen erkannt."""
+        ziel = str(ziel)
+        if art is None:
+            art = ("stab" if ziel in self.members else
+                   "koerper" if ziel in (self.koerper or {}) else "")
+        if art == "stab" and ziel not in self.members:
+            raise KeyError(f"Stab {ziel} gibt es nicht")
+        if art == "koerper" and ziel not in (self.koerper or {}):
+            raise KeyError(f"Volumen {ziel} gibt es nicht")
+        if art not in ("stab", "koerper"):
+            raise KeyError(f"{ziel} ist weder Stab noch Volumenkörper")
+        v = Vorspannung(ziel, art, float(kraft),
+                        None if achse is None else [float(x) for x in achse], str(kommentar or ""))
+        self.case(case).vorspannungen.append(v)
+        return v
+
+    def vorspannung_koerper(self, v) -> tuple:
+        """(Elemente, Achse als Einheitsvektor, Querschnittsflaeche A) eines
+        vorgespannten Koerpers. A = Volumen / Laenge laengs der Achse - die
+        mittlere Querschnittsflaeche, bei einer Schraube der Schaft."""
+        from .elements import solid as sl
+        k = (self.koerper or {}).get(v.ziel)
+        elems = [int(e) for e in (k.elemente if k else []) if 0 <= int(e) < len(self.elements)]
+        if not elems:
+            return [], None, 0.0
+        knoten = sorted({int(x) for e in elems for x in self.elements[e].nodes})
+        P = self.nodes[knoten]
+        if v.achse is not None and float(np.linalg.norm(v.achse)) > 0:
+            a = np.asarray(v.achse, float)
+            a = a / float(np.linalg.norm(a))
+        else:
+            a = np.zeros(3)
+            a[int(np.argmax(np.ptp(P, axis=0)))] = 1.0
+        L = float(np.ptp(P @ a))
+        V = sum(float(sl.solid_volume(self.elements[e].typ, self.nodes[self.elements[e].nodes]))
+                for e in elems)
+        return elems, a, (V / L if L > 0 else 0.0)
 
     def zwang_ohne_lager(self, case: str = None) -> list:
         """Vorgegebene Freiheitsgrade, an denen kein Lager haelt - unwirksam."""

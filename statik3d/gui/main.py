@@ -88,6 +88,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sel_elemente: list[int] = []
         #: gewaehlte Lager: ("lager" | "linienlager" | "flaechenlager", Nummer)
         self.sel_lager: list[tuple] = []
+        #: die angeklickte Last: (Lastfall, Listenname, Index)
+        self.sel_lasten: list[tuple] = []
+        #: die gezeichneten Lastsymbole (Listenname, Index, Punkt) - fuer den Klick
+        self._lastpunkte: list = []
         #: Fensterauswahl: erste Ecke (Qt-Bildpunkte) oder None
         self._fenster_ecke = None
         self._letzter_klick = None
@@ -804,16 +808,18 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         return self.lagerobjekt_bearbeiten("lager_einzeln", str(idx))
 
-    AUSWAHLARTEN = ["Knoten", "Linie", "Stab", "Fläche", "Volumen", "Netz", "Lager"]
+    AUSWAHLARTEN = ["Knoten", "Linie", "Stab", "Fläche", "Volumen", "Netz", "Lager", "Last"]
     #: Symbol je Auswahlart (die Fangringe: "das trifft der Klick")
     AUSWAHLART_SYMBOL = {"Knoten": "fang_knoten", "Linie": "fang_linie", "Stab": "fang_stab",
                          "Fläche": "fang_flaeche", "Volumen": "fang_volumen", "Netz": "fang_netz",
-                         "Lager": "fang_lager"}
+                         "Lager": "fang_lager", "Last": "fang_last"}
     AUSWAHLART_HINWEIS = {"Knoten": "Klick trifft Knoten", "Linie": "Klick trifft Linien",
                           "Stab": "Klick trifft Stäbe (mit Nachweis)",
                           "Fläche": "Klick trifft Flächen", "Volumen": "Klick trifft Volumen",
                           "Netz": "Klick trifft Elemente des Netzes",
-                          "Lager": "Klick trifft Lager (Knoten-, Linien- und Flächenlager)"}
+                          "Lager": "Klick trifft Lager (Knoten-, Linien- und Flächenlager)",
+                          "Last": "Klick trifft Lasten (Pfeile, Temperaturpunkte, Zwang, Vorspannung) "
+                                  "- rechts steht ihre Maske"}
     #: Lagerarten: Zweig im Baum, Liste im Modell, Titel, Einheiten (Kraft, Moment)
     LAGER_ARTEN = {"lager_einzeln": ("supports", "Knotenlager", "kN/m", "kNm/rad"),
                    "linienlager_einzeln": ("line_supports", "Linienlager", "kN/m je m", "kNm/rad je m"),
@@ -1730,6 +1736,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "Lager":
                 treffer = vp.lager_at(m, point, size, self.lagergroesse, self.lagerdichte)
                 return self._lager_umschalten(treffer) if treffer else self._fenster_beginnen()
+            if art == "Last":
+                treffer = vp.last_at(point, getattr(self, "_lastpunkte", None), size)
+                return (self._last_waehlen(m.active_case, treffer[0], treffer[1]) if treffer
+                        else self._fenster_beginnen())
         if self.model.nn == 0:
             return
         p, fangart, i = self._fangpunkt()
@@ -2599,6 +2609,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Zwangsverformung", "", self.maske_zwangsverformung, "",
                 "Vorgegebene Verschiebung oder Verdrehung an gewählten gelagerten "
                 "Knoten (Setzung)", symbol="zwang")
+        g.gross("Vorspannung", "", self.maske_vorspannung, "",
+                "Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
+                "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
+                "die Umgebung", symbol="lasten")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
@@ -3189,6 +3203,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _baum_geklickt(self, art: str, name: str):
         if art in self.SYSTEM_ARTEN:
             return self._baum_system_geklickt(art, name)
+        if art == "lastart":
+            return self._lastart_geklickt(name)
         if art == "querschnitte":
             # Der Zweig: Tabelle unten, rechts gleich die Maske fuer einen neuen
             self.tabelle_zeigen("Querschnitte")
@@ -3608,12 +3624,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 th = next((t for t, v in THEORIEN if v == ((lc.theorie if lc else "") or "").upper()), THEORIEN[0][0])
                 psi = "" if lc is None or lc.psi is None else "/".join(f"{p:g}" for p in lc.psi)
                 g = float(lc.gravity[2]) if (lc is not None and len(lc.gravity) > 2) else 0.0
-                felder = [F("name", "Name", "text", name, breite=140),
-                          F("nummer", "Nummer", "ganz", int(getattr(lc, "nummer", 0) or 0) if lc else
+                from ..model import LASTARTEN_NAMEN
+                # Rechts steht nur der Lastfall: Nummer, Name, Beschreibung,
+                # Einwirkung - und dann alle enthaltenen Lasten untereinander,
+                # dieselben Punkte wie im Modellbaum unter dem Lastfall
+                felder = [F("nummer", "Lastfall Nr.", "ganz", int(getattr(lc, "nummer", 0) or 0) if lc else
                             m.naechste_lastfallnummer(), hinweis="Lastfallnummer (0 = keine)"),
-                          F("kategorie", "Einwirkung", "wahl", kat, kats),
+                          F("name", "Name", "text", name, breite=140),
                           F("beschreibung", "Beschreibung", "text", (lc.description if lc else ""), breite=180),
-                          F("gruppe", "Ausschlussgruppe", "text", (lc.exclusive_group if lc else ""), breite=120,
+                          F("kategorie", "Einwirkung", "wahl", kat, kats)]
+                je_art = lc.lasten_je_art() if lc is not None else {}
+                for art_, titel_ in LASTARTEN_NAMEN:
+                    if je_art.get(art_):
+                        felder.append(F(f"last_{art_}", titel_, "info", self._lastart_kurz(art_, je_art[art_])))
+                if not je_art:
+                    felder.append(F("last_keine", "Lasten", "info",
+                                    "keine - Ribbon Lasten: Knotenlast, Linienlast, Flächenlast, Temperatur …"))
+                felder += [F("gruppe", "Ausschlussgruppe", "text", (lc.exclusive_group if lc else ""), breite=120,
                             hinweis="Lastfälle einer Gruppe wirken nie gemeinsam"),
                           F("situation", "Situation", "wahl",
                             (lc.situation if lc and lc.situation in situationen else situationen[0]), situationen),
@@ -3621,10 +3648,11 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("g_z", "Eigengewicht g_z [m/s²]", "zahl", g,
                             hinweis="−9,81 = Eigengewicht nach unten in diesem Lastfall, 0 = keines"),
                           F("psi", "ψ0/ψ1/ψ2 (leer = aus Kategorie)", "text", psi, breite=100),
-                          F("lasten", "Lasten", "info", str(lc.n_loads) if lc else "0"),
+                          F("lasten", "Lasten gesamt", "info", str(lc.n_loads) if lc else "0"),
                           F("aktiv", "aktiver Lastfall (in der Ansicht)", "haken",
                             bool(lc is not None and m.active_case == name))]
                 titel = f"Lastfall {name}"
+                zusatz = [("Lasten in der Tabelle", lambda n_=name: self._lasten_tabelle(n_))]
         elif art in ("kombinationen", "kombination"):
             from .dialogs import THEORIEN
             typen = ["ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "USER"]
@@ -4257,6 +4285,412 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
         elif b.get("grund"):
             self.info(f"Kontaktbedingung {kb.name}: {b['grund']}")
+
+    # ---- Lastfall: Unterpunkte je Lastart ------------------------------------
+    def _lasttext(self, art: str, l) -> str:
+        """Eine Last in einer Zeile - fuer die Maske des Lastfalls und seiner
+        Unterpunkte (kN, kN/m, kN/m², K, mm)."""
+        def kn(v):
+            return f"{float(v) / 1e3:g}"
+
+        def vek(v, einheit="kN"):
+            v = (list(v or []) + [0.0, 0.0, 0.0])[:3]
+            return "(" + ", ".join(kn(x) for x in v) + f") {einheit}"
+
+        if art == "eigengewicht":
+            g = (list(l) + [0.0, 0.0, 0.0])[:3]
+            return f"g = ({g[0]:g}, {g[1]:g}, {g[2]:g}) m/s²"
+        if art == "knoten":
+            F = (list(getattr(l, "F", None) or []) + [0.0] * 6)[:6]
+            t = f"K{l.node}: F = {vek(F[:3])}"
+            if any(F[3:6]):
+                t += f", M = {vek(F[3:6], 'kNm')}"
+            return t
+        if art == "stab":
+            t = f"E{l.elem}: q = {vek(l.q, 'kN/m')}"
+            if getattr(l, "q2", None) is not None:
+                t += f" → {vek(l.q2, 'kN/m')}"
+            if getattr(l, "system", "global") == "local":
+                t += ", lokal"
+            a = float(getattr(l, "a", 0.0) or 0.0)
+            b = getattr(l, "b", None)
+            if a or b is not None:
+                t += f", von {a:g} m" + (f" bis {float(b):g} m" if b is not None else "")
+            return t
+        if art == "linie":
+            t = f"{l.ziel} ({'Stab' if l.art == 'stab' else 'Linie'}): q = {vek(l.q, 'kN/m')}"
+            if l.q2 is not None:
+                t += f" → {vek(l.q2, 'kN/m')}"
+            if l.von or l.bis is not None:
+                t += f", von {l.von:g} m" + (f" bis {l.bis:g} m" if l.bis is not None else "")
+            return t
+        if art == "flaeche":
+            if hasattr(l, "ziel"):                      # Objektlast auf Flaeche oder Volumen
+                t = f"{l.ziel}: p = {kn(l.p)} kN/m²"
+                if getattr(l, "verlauf", None):
+                    t += " (linear)"
+                if getattr(l, "richtung", None):
+                    t += ", Richtung (" + ", ".join(f"{float(x):g}" for x in l.richtung) + ")"
+                if getattr(l, "projiziert", False):
+                    t += ", projiziert"
+                if getattr(l, "bereich", None):
+                    t += ", im Fenster"
+                return t
+            seite = getattr(l, "face", None)
+            return f"E{l.elem}" + (f" Seite {seite}" if seite is not None else "") + f": p = {kn(l.p)} kN/m²"
+        if art == "temperatur":
+            ziel = getattr(l, "ziel", None)
+            t = (str(ziel) if ziel else f"E{l.elem}") + f": ΔT = {float(l.dT):g} K"
+            if getattr(l, "dT_z", 0.0):
+                t += f", ΔT oben−unten = {float(l.dT_z):g} K"
+            return t
+        if art == "zwang":
+            namen = ["ux", "uy", "uz", "φx", "φy", "φz"]
+            u = (list(l.u or []) + [0.0] * 6)[:6]
+            teile = [f"{namen[d]} = {u[d] * 1e3:g} mm" if d < 3 else f"{namen[d]} = {u[d]:g} rad"
+                     for d in (l.dofs or []) if 0 <= int(d) < 6]
+            return f"K{l.node}: " + (", ".join(teile) or "–")
+        if art == "vorspannung":
+            return f"{getattr(l, 'ziel', '?')}: F_v = {kn(getattr(l, 'kraft', 0.0))} kN"
+        return str(l)
+
+    def _lastart_kurz(self, art: str, lasten: list) -> str:
+        """Anzahl und die ersten Lasten einer Art - eine Zeile der Lastfallmaske."""
+        if art == "eigengewicht":
+            return self._lasttext(art, lasten[0])
+        n_ = len(lasten)
+        return f"{n_}: " + "; ".join(self._lasttext(art, l) for l in lasten[:2]) + (" …" if n_ > 2 else "")
+
+    def _lasten_tabelle(self, fall: str):
+        """Die Lastentabelle unten auf diesen Lastfall stellen."""
+        self.tabelle_zeigen("Lasten")
+        if fall in self.model.load_cases:
+            self.cb_lastfilter.setCurrentText(fall)
+
+    def _lastart_geklickt(self, schluessel: str):
+        """Unterpunkt eines Lastfalls im Modellbaum (Knotenlasten, Stablasten …):
+        rechts nur diese Lasten, unten die Tabelle des Lastfalls, in der Ansicht
+        leuchten die belasteten Objekte. „Lastfall bearbeiten“ holt die Maske
+        des Lastfalls zurueck."""
+        from ..model import LASTARTEN_NAMEN
+        m = self.model
+        fall, _, art = str(schluessel).partition("|")
+        lc = m.load_cases.get(fall)
+        if lc is None:
+            return
+        titel = dict(LASTARTEN_NAMEN).get(art, art)
+        lasten = lc.lasten_je_art().get(art, [])
+        if m.active_case != fall:
+            m.active_case = fall                # seine Lasten sind in der Ansicht zu sehen
+        self._lasten_hervorheben(fall, art, titel, lasten)
+        self._lasten_tabelle(fall)
+        F = msk.Feld
+        felder = [F("fall", "Lastfall", "info",
+                    fall + (f" (Nr. {lc.nummer})" if getattr(lc, "nummer", 0) else "")),
+                  F("art", "Lastart", "info", titel),
+                  F("anzahl", "Anzahl", "info", str(len(lasten)))]
+        for i, l in enumerate(lasten[:40]):
+            felder.append(F(f"l{i}", str(i + 1), "info", self._lasttext(art, l)))
+        if len(lasten) > 40:
+            felder.append(F("mehr", "…", "info", f"{len(lasten) - 40} weitere - siehe Tabelle unten"))
+        maske = msk.Maske(f"Lastfall {fall}: {titel}", felder, knopf="Lastfall bearbeiten",
+                          hinweis="Die belasteten Objekte leuchten in der Ansicht, die Tabelle unten "
+                                  "zeigt den Lastfall. „Lastfall bearbeiten“ holt seine Maske zurück.",
+                          zusatz=[("Diese Lasten löschen", lambda: self._lastart_loeschen(fall, art))])
+        maske.angewendet.connect(lambda _w, n_=fall: self._baum_geklickt("lastfall", n_))
+        self.maske_erzeugen(maske)
+        self.redraw()
+
+    def _lasten_hervorheben(self, fall: str, art: str, titel: str, lasten: list):
+        """Die Objekte dieser Lasten in der Ansicht leuchten lassen."""
+        m = self.model
+        self._objektauswahl_leeren()
+        knoten, elems, flaechen, koerper, linien, staebe = set(), set(), set(), set(), set(), set()
+        for l in lasten:
+            if art in ("knoten", "zwang"):
+                knoten.add(int(l.node))
+            elif art == "stab":
+                elems.add(int(l.elem))
+            elif art == "linie":
+                (staebe if getattr(l, "art", "stab") == "stab" else linien).add(str(l.ziel))
+            elif art in ("flaeche", "temperatur"):
+                if hasattr(l, "ziel"):
+                    (flaechen if getattr(l, "art", "flaeche") == "flaeche" else koerper).add(str(l.ziel))
+                else:
+                    elems.add(int(l.elem))
+            elif art == "vorspannung":
+                (staebe if getattr(l, "art", "stab") == "stab" else koerper).add(str(getattr(l, "ziel", "")))
+        self.selection = np.array(sorted(k for k in knoten if 0 <= k < m.nn), dtype=int)
+        self.leuchtet = sorted(e for e in elems if 0 <= e < len(m.elements))
+        self.sel_flaechen = [f for f in flaechen if f in m.flaechen]
+        self.sel_koerper = [k for k in koerper if k in m.koerper]
+        self.sel_linien = [x for x in linien if x in (getattr(m, "lines", None) or {})]
+        self.sel_staebe = [s for s in staebe if s in (getattr(m, "members", None) or {})]
+        self.lbl_sel.setText(f"{titel} des Lastfalls {fall}: {len(lasten)} (Modellbaum)")
+
+    def _lastart_loeschen(self, fall: str, art: str):
+        """Alle Lasten einer Art aus dem Lastfall nehmen - mit Rueckfrage."""
+        from ..model import LASTARTEN_NAMEN
+        m = self.model
+        lc = m.load_cases.get(fall)
+        if lc is None:
+            return
+        titel = dict(LASTARTEN_NAMEN).get(art, art)
+        n_ = len(lc.lasten_je_art().get(art, []))
+        if not n_:
+            return self.info(f"Im Lastfall {fall} gibt es keine {titel}")
+        if not self._bestaetigen(f"{n_} {titel} im Lastfall {fall} löschen?"):
+            return
+        self.merken(f"{titel} in {fall} gelöscht")
+
+        def geo(liste):
+            return [l for l in liste if getattr(l, "_geo", False)]
+
+        if art == "eigengewicht":
+            lc.gravity = [0.0, 0.0, 0.0]
+        elif art == "knoten":
+            lc.nodal_loads = geo(lc.nodal_loads)
+        elif art == "stab":
+            lc.beam_loads = geo(lc.beam_loads)
+        elif art == "linie":
+            lc.linienlasten = []
+        elif art == "flaeche":
+            lc.face_loads = geo(lc.face_loads)
+            lc.geometrielasten = [g for g in lc.geometrielasten if getattr(g, "lastart", "druck") == "temperatur"]
+        elif art == "temperatur":
+            lc.temp_loads = geo(lc.temp_loads)
+            lc.geometrielasten = [g for g in lc.geometrielasten if getattr(g, "lastart", "druck") != "temperatur"]
+        elif art == "zwang":
+            lc.zwangsverformungen = []
+        elif art == "vorspannung":
+            lc.vorspannungen = []
+        m.lasten_verteilen()
+        self.analysis = None
+        self.results = None
+        self.maskenrand.schliessen()
+        self.refresh_all()
+        self._baum_geklickt("lastfall", fall)
+
+    # ---- Eine einzelne Last: anklicken, Maske, aendern, loeschen ---------------
+    #: Listenname im Lastfall -> Lastart (fuer _lasttext) und Titel
+    LASTLISTEN = {"nodal_loads": ("knoten", "Knotenlast"), "beam_loads": ("stab", "Stablast"),
+                  "face_loads": ("flaeche", "Flächenlast"), "geometrielasten": ("flaeche", "Objektlast"),
+                  "linienlasten": ("linie", "Linienlast"), "temp_loads": ("temperatur", "Temperaturlast"),
+                  "zwangsverformungen": ("zwang", "Zwangsverformung"),
+                  "vorspannungen": ("vorspannung", "Vorspannung"), "gravity": ("eigengewicht", "Eigengewicht")}
+
+    def _lastobjekt(self, fall: str, liste: str, k: int):
+        """(Lastfall, Lastobjekt) - oder (None, None), wenn es die Last nicht gibt."""
+        lc = self.model.load_cases.get(fall)
+        if lc is None:
+            return None, None
+        if liste == "gravity":
+            return lc, lc.gravity
+        objekte = getattr(lc, liste, None)
+        if objekte is None or not 0 <= int(k) < len(objekte):
+            return None, None
+        return lc, objekte[int(k)]
+
+    def _lastart_von(self, liste: str, obj) -> str:
+        art = self.LASTLISTEN.get(liste, ("", ""))[0]
+        if liste == "geometrielasten" and getattr(obj, "lastart", "druck") == "temperatur":
+            art = "temperatur"
+        return art
+
+    def _last_waehlen(self, fall: str, liste: str, k: int):
+        """Eine Last waehlen (Klick in der Ansicht oder in der Tabelle): sie
+        leuchtet, rechts steht ihre Maske."""
+        lc, obj = self._lastobjekt(fall, liste, k)
+        if lc is None:
+            return
+        self.sel_lasten = [(fall, liste, int(k))]
+        art = self._lastart_von(liste, obj)
+        self.lbl_sel.setText(f"Last gewählt ({fall}): {self._lasttext(art, obj)}")
+        self._lastmaske(fall, liste, int(k))
+        self.redraw()
+
+    def _lastmaske(self, fall: str, liste: str, k: int):
+        """Die Maske einer einzelnen Last: ihre Werte, der Lastfall, Loeschen."""
+        lc, obj = self._lastobjekt(fall, liste, k)
+        if lc is None:
+            return
+        m = self.model
+        F = msk.Feld
+        art, titel = self.LASTLISTEN.get(liste, ("", "Last"))
+        art = self._lastart_von(liste, obj)
+        felder = []
+        if liste != "gravity":
+            felder.append(F("fall", "Lastfall", "wahl", fall, list(m.load_cases),
+                            hinweis="ein anderer Lastfall verschiebt die Last dorthin"))
+        if liste == "nodal_loads":
+            titel = f"Knotenlast K{obj.node}"
+            Fw = (list(obj.F or []) + [0.0] * 6)[:6]
+            felder += [F(nm, f"{nm} [kN{'m' if nm.startswith('M') else ''}]", "zahl", Fw[i] / 1e3)
+                       for i, nm in enumerate(self.LASTRICHTUNG)]
+        elif liste == "beam_loads":
+            titel = f"Stablast E{obj.elem}"
+            q = (list(obj.q or []) + [0.0] * 3)[:3]
+            q2 = (list(obj.q2) + [0.0] * 3)[:3] if obj.q2 is not None else q
+            felder += [F("qx", "q_x [kN/m]", "zahl", q[0] / 1e3), F("qy", "q_y [kN/m]", "zahl", q[1] / 1e3),
+                       F("qz", "q_z [kN/m]", "zahl", q[2] / 1e3),
+                       F("trapez", "trapezförmig (q2 am Ende)", "haken", obj.q2 is not None),
+                       F("q2x", "q2_x [kN/m]", "zahl", q2[0] / 1e3), F("q2y", "q2_y [kN/m]", "zahl", q2[1] / 1e3),
+                       F("q2z", "q2_z [kN/m]", "zahl", q2[2] / 1e3),
+                       F("system", "Bezug", "wahl", "lokal (Stab)" if obj.system == "local" else "global",
+                         ["global", "lokal (Stab)"]),
+                       F("a", "Abschnitt von [m]", "zahl", float(getattr(obj, "a", 0.0) or 0.0)),
+                       F("b", "bis [m] (0 = Ende)", "zahl", float(getattr(obj, "b", None) or 0.0))]
+        elif liste == "face_loads":
+            titel = f"Flächenlast E{obj.elem}"
+            felder += [F("p", "p [kN/m²]", "zahl", float(obj.p) / 1e3,
+                         hinweis="positiv drückt in den Körper (Druck)")]
+        elif liste == "geometrielasten":
+            titel = ("Temperatur " if art == "temperatur" else "Flächenlast ") + \
+                    ("Fläche " if obj.art == "flaeche" else "Volumen ") + str(obj.ziel)
+            if art == "temperatur":
+                felder += [F("dT", "ΔT [K]", "zahl", float(obj.dT)),
+                           F("dTz", "ΔT_z oben − unten [K]", "zahl", float(getattr(obj, "dT_z", 0.0) or 0.0))]
+            else:
+                felder += [F("p", "p [kN/m²]", "zahl", float(obj.p) / 1e3,
+                             hinweis="positiv drückt in den Körper (Druck)"),
+                           F("projiziert", "auf die Projektion (Schnee, Wind)", "haken",
+                             bool(getattr(obj, "projiziert", False)))]
+                if getattr(obj, "richtung", None):
+                    felder.append(F("richtung", "Richtung", "info",
+                                    "(" + ", ".join(f"{float(x):g}" for x in obj.richtung) + ")"))
+                if getattr(obj, "verlauf", None):
+                    felder.append(F("verlauf", "Verlauf", "info", "linear (p bei A, p2 bei B)"))
+                if getattr(obj, "bereich", None):
+                    felder.append(F("bereich", "Bereich", "info", "im Lastfenster (freie Rechtecklast)"))
+        elif liste == "linienlasten":
+            titel = f"Linienlast {obj.ziel}"
+            q = (list(obj.q or []) + [0.0] * 3)[:3]
+            q2 = (list(obj.q2) + [0.0] * 3)[:3] if obj.q2 is not None else q
+            felder += [F("qx", "q_x [kN/m]", "zahl", q[0] / 1e3), F("qy", "q_y [kN/m]", "zahl", q[1] / 1e3),
+                       F("qz", "q_z [kN/m]", "zahl", q[2] / 1e3),
+                       F("trapez", "trapezförmig (q2 am Ende)", "haken", obj.q2 is not None),
+                       F("q2x", "q2_x [kN/m]", "zahl", q2[0] / 1e3), F("q2y", "q2_y [kN/m]", "zahl", q2[1] / 1e3),
+                       F("q2z", "q2_z [kN/m]", "zahl", q2[2] / 1e3),
+                       F("von", "Abschnitt von [m]", "zahl", float(obj.von or 0.0)),
+                       F("bis", "bis [m] (0 = Ende)", "zahl", float(obj.bis or 0.0))]
+        elif liste == "temp_loads":
+            titel = f"Temperaturlast E{obj.elem}"
+            felder += [F("dT", "ΔT [K]", "zahl", float(obj.dT)),
+                       F("dTz", "ΔT_z oben − unten [K]", "zahl", float(getattr(obj, "dT_z", 0.0) or 0.0))]
+        elif liste == "zwangsverformungen":
+            titel = f"Zwangsverformung K{obj.node}"
+            u = (list(obj.u or []) + [0.0] * 6)[:6]
+            namen = ["ux", "uy", "uz", "phix", "phiy", "phiz"]
+            felder += [F(nm, f"{nm} [{'mm' if i < 3 else 'mrad'}]", "zahl", u[i] * 1e3)
+                       for i, nm in enumerate(namen)]
+            felder.append(F("dofs", "vorgegebene Richtungen", "text",
+                            ", ".join(namen[int(d)] for d in (obj.dofs or []) if 0 <= int(d) < 6), breite=150,
+                            hinweis="welche Richtungen vorgegeben sind (auch mit dem Wert 0), durch Komma"))
+        elif liste == "vorspannungen":
+            titel = f"Vorspannung {'Stab' if obj.art == 'stab' else 'Volumen'} {obj.ziel}"
+            felder += [F("F", "Vorspannkraft F_v [kN]", "zahl", float(obj.kraft) / 1e3),
+                       F("kommentar", "Bemerkung", "text", obj.kommentar or "", breite=150)]
+        elif liste == "gravity":
+            titel = "Eigengewicht"
+            g = (list(obj) + [0.0] * 3)[:3]
+            felder += [F("gz", "g_z [m/s²]", "zahl", float(g[2]),
+                         hinweis="−9,81 = Eigengewicht nach unten, 0 = keines")]
+        maske = msk.Maske(f"{titel} ({fall})", felder, knopf="Übernehmen",
+                          hinweis=self._lasttext(art, obj) + " - Werte ändern und „Übernehmen“.",
+                          zusatz=[("Löschen", lambda: self._last_loeschen(fall, liste, k))])
+        maske.angewendet.connect(lambda w, f_=fall, l_=liste, k_=k: self._last_uebernehmen(f_, l_, k_, w))
+        self.maske_erzeugen(maske)
+
+    def _last_uebernehmen(self, fall: str, liste: str, k: int, w: dict):
+        m = self.model
+        lc, obj = self._lastobjekt(fall, liste, k)
+        if lc is None:
+            return self.error("Die Last gibt es nicht mehr")
+
+        def z(key, vorgabe=0.0):
+            try:
+                return float(str(w.get(key, vorgabe)).replace(",", "."))
+            except (TypeError, ValueError):
+                return vorgabe
+
+        self.merken("Last geändert")
+        if liste == "nodal_loads":
+            obj.F = [z(nm) * 1e3 for nm in self.LASTRICHTUNG]
+        elif liste in ("beam_loads", "linienlasten"):
+            obj.q = [z("qx") * 1e3, z("qy") * 1e3, z("qz") * 1e3]
+            obj.q2 = [z("q2x") * 1e3, z("q2y") * 1e3, z("q2z") * 1e3] if w.get("trapez") else None
+            if liste == "beam_loads":
+                obj.system = "local" if str(w.get("system", "")).startswith("lokal") else "global"
+                obj.a = max(0.0, z("a"))
+                obj.b = z("b") or None
+                if hasattr(obj, "teilweise"):
+                    obj.teilweise = bool(obj.a > 0 or obj.b is not None)
+            else:
+                obj.von = max(0.0, z("von"))
+                obj.bis = z("bis") or None
+        elif liste == "face_loads":
+            obj.p = z("p") * 1e3
+        elif liste == "geometrielasten":
+            if getattr(obj, "lastart", "druck") == "temperatur":
+                obj.dT = z("dT")
+                obj.dT_z = z("dTz")
+            else:
+                obj.p = z("p") * 1e3
+                obj.projiziert = bool(w.get("projiziert"))
+        elif liste == "temp_loads":
+            obj.dT = z("dT")
+            obj.dT_z = z("dTz")
+        elif liste == "zwangsverformungen":
+            namen = ["ux", "uy", "uz", "phix", "phiy", "phiz"]
+            obj.u = [z(nm) / 1e3 for nm in namen]
+            obj.dofs = [namen.index(t) for t in self._namensliste(w.get("dofs")) if t in namen]
+        elif liste == "vorspannungen":
+            obj.kraft = z("F") * 1e3
+            obj.kommentar = str(w.get("kommentar", "") or "")
+        elif liste == "gravity":
+            lc.gravity = [0.0, 0.0, z("gz")]
+        neu = str(w.get("fall", fall) or fall)
+        if neu != fall and neu in m.load_cases and liste != "gravity":
+            getattr(lc, liste).pop(int(k))
+            getattr(m.load_cases[neu], liste).append(obj)
+            fall = neu
+        m.lasten_verteilen()
+        self.analysis = None
+        self.results = None
+        # die Last wiederfinden - das Verteilen kann die Listen umsortieren
+        if liste != "gravity":
+            objekte = getattr(m.load_cases[fall], liste)
+            k = next((i for i, o in enumerate(objekte) if o is obj), -1)
+        if k < 0:
+            self.sel_lasten = []
+            self.maskenrand.schliessen()
+            self.refresh_all()
+            return
+        self.sel_lasten = [(fall, liste, int(k))]
+        self.refresh_all()
+        self.info("Last übernommen")
+        self._lastmaske(fall, liste, int(k))
+
+    def _last_loeschen(self, fall: str, liste: str, k: int):
+        m = self.model
+        lc, obj = self._lastobjekt(fall, liste, k)
+        if lc is None:
+            return
+        art = self._lastart_von(liste, obj)
+        if not self._bestaetigen(f"{self._lasttext(art, obj)} im Lastfall {fall} löschen?"):
+            return
+        self.merken("Last gelöscht")
+        if liste == "gravity":
+            lc.gravity = [0.0, 0.0, 0.0]
+        else:
+            getattr(lc, liste).pop(int(k))
+        m.lasten_verteilen()
+        self.analysis = None
+        self.results = None
+        self.sel_lasten = []
+        self.maskenrand.schliessen()
+        self.refresh_all()
+        self.info("Last gelöscht")
 
     def _objektmaske_klickmodus(self, maske, art: str):
         """Die Maske einer Flaeche oder eines Volumens nimmt Klicks aus der
@@ -6895,6 +7329,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 zeilen.append([i, lcname, "Zwangsverformung", f"K{l.node}",
                                l.bezug().split(": ", 1)[-1], "global", ""])
                 i += 1
+            for l in getattr(lc, "vorspannungen", None) or []:
+                zeilen.append([i, lcname, "Vorspannung",
+                               ("Stab " if l.art == "stab" else "Volumen ") + str(l.ziel),
+                               f"F_v = {l.kraft / 1e3:g} kN",
+                               "Stabachse" if l.art == "stab" else
+                               ("längste Abmessung" if l.achse is None else
+                                "(" + ", ".join(f"{float(x):g}" for x in l.achse) + ")"),
+                               l.kommentar or ""])
+                i += 1
         self._fill(self.tbl_last, zeilen)
 
     def _lastzeiger(self, nr: int):
@@ -6910,7 +7353,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     return lc, "gravity", 0
                 i += 1
             for liste in ("nodal_loads", "beam_loads", "face_loads", "temp_loads",
-                          "geometrielasten", "linienlasten", "zwangsverformungen"):
+                          "geometrielasten", "linienlasten", "zwangsverformungen", "vorspannungen"):
                 for k, l in enumerate(getattr(lc, liste)):
                     if getattr(l, "_geo", False):
                         continue
@@ -6942,6 +7385,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.redraw()
         elif 0 <= int(obj.elem) < len(m.elements):
             self._set_selection([int(n) for n in m.elements[int(obj.elem)].nodes])
+        # … und rechts die Maske der Last, wie beim Klick in der Ansicht
+        self._last_waehlen(lc.name, liste, k)
 
     def last_loeschen(self):
         nr = self._zeilenzahl(self.tbl_last)
@@ -10016,6 +10461,49 @@ class MainWindow(QtWidgets.QMainWindow):
         return msk.Feld("fall", "Lastfall", "wahl", self.model.active_case,
                         list(self.model.load_cases))
 
+    #: Achse der Vorspannung eines Volumenkoerpers in der Maske
+    VORSPANN_ACHSEN = ["automatisch (längste Abmessung)", "global x", "global y", "global z"]
+
+    def maske_vorspannung(self):
+        """Vorspannkraft in Staeben oder Volumenkoerpern - als Anfangsdehnung."""
+        felder = [msk.Feld("F", "Vorspannkraft F_v [kN]", wert=100.0,
+                           hinweis="positiv = Zug im vorgespannten Bauteil (es klemmt die Umgebung)"),
+                  msk.Feld("achse", "Achse (Volumen)", "wahl", self.VORSPANN_ACHSEN[0],
+                           list(self.VORSPANN_ACHSEN),
+                           hinweis="Richtung der Schraube; bei Stäben ist es die Stabachse"),
+                  msk.Feld("kommentar", "Bemerkung", "text", "", breite=150),
+                  self._lastfallfeld()]
+        m = msk.Maske("Vorspannung", felder, knopf="Last aufbringen",
+                      hinweis="Stäbe oder Volumen in der Ansicht wählen (Auswahlart „Stab“ oder "
+                              "„Volumen“), Kraft eintragen, „Last aufbringen“. Das Bauteil will "
+                              "sich um F_v/(EA) verkürzen; hält die Umgebung es fest, trägt es "
+                              "F_v als Zug - wie eine angezogene Schraube.")
+        m.angewendet.connect(self._vorspannung_aufbringen)
+        self.maske_erzeugen(m)
+
+    def _vorspannung_aufbringen(self, w: dict):
+        m = self.model
+        ziele = [(n, "stab") for n in self.sel_staebe if n in m.members] \
+            + [(n, "koerper") for n in self.sel_koerper if n in m.koerper]
+        if not ziele:
+            return self.error("Zuerst Stäbe oder Volumen in der Ansicht wählen "
+                              "(Auswahlart „Stab“ oder „Volumen“)")
+        F = float(w.get("F", 0.0) or 0.0) * 1e3
+        if not F:
+            return self.error("Die Vorspannkraft ist null")
+        achse = {"global x": [1.0, 0.0, 0.0], "global y": [0.0, 1.0, 0.0],
+                 "global z": [0.0, 0.0, 1.0]}.get(str(w.get("achse", "")))
+        fall = w.get("fall") or None
+        self.merken("Vorspannung")
+        for name, art in ziele:
+            m.add_vorspannung(name, F, art=art, achse=achse if art == "koerper" else None,
+                              case=fall, kommentar=str(w.get("kommentar", "") or ""))
+        self.analysis = None
+        self.results = None
+        self.info(f"Vorspannung F_v = {F / 1e3:g} kN auf {len(ziele)} Bauteile im Lastfall "
+                  f"{fall or m.active_case}")
+        self.refresh_all()
+
     def maske_linienlast(self):
         """Linienlast auf Staebe oder Linien: gleichmaessig, trapezfoermig,
         abschnittsweise."""
@@ -10793,7 +11281,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def clear_selection(self):
         """Auswahl aufheben - Knoten wie Objekte."""
         for liste in (self.sel_linien, self.sel_flaechen, self.sel_koerper,
-                      self.sel_staebe, self.sel_elemente, self.sel_lager):
+                      self.sel_staebe, self.sel_elemente, self.sel_lager, self.sel_lasten):
             liste.clear()
         self.leuchtet = []
         self._set_selection([])
@@ -10807,7 +11295,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "maskenrand", None) is not None and self.maskenrand.offen():
             return
         if any((len(self.selection), self.sel_linien, self.sel_flaechen, self.sel_koerper,
-                self.sel_staebe, self.sel_elemente, self.sel_lager)):
+                self.sel_staebe, self.sel_elemente, self.sel_lager, self.sel_lasten)):
             return
         aktuell = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
         if aktuell in ("Netz", "Modell") and not self.tabs.isHidden():
@@ -12299,13 +12787,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 except Exception as ex:          # noqa: BLE001 - ein Mass darf die Ansicht nicht sperren
                     self.log.appendPlainText(f"Bemaßung nicht gezeichnet: {ex}")
             if self.act_loads.isChecked() and (u is None or not modal):
+                self._lastpunkte = []
                 self._lasteinheiten = vp.add_loads(self.plotter, m, m.case(), size, raender=self._raender(),
                              seiten=self._randseiten(),
                              beschriften=getattr(self, 'act_lastwerte', None) is not None and self.act_lastwerte.isChecked(),
                              textgroesse=int(self.model.bemassung_einstellungen().textgroesse) - 1,
                              ausser=self.versteckt["elemente"], knoten=sichtbare_knoten,
                              ausser_flaechen=self.versteckt["flaechen"],
-                             ausser_linien=self.versteckt["linien"])
+                             ausser_linien=self.versteckt["linien"],
+                             merker=self._lastpunkte,
+                             hervor={(l_, k_) for f_, l_, k_ in self.sel_lasten if f_ == m.active_case})
         except Exception as ex:
             self.log.appendPlainText(f"Darstellung: {ex}")
         if self.act_nodes.isChecked() and m.nn <= 3000:
@@ -12685,7 +13176,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Gewaehlte Linien, Staebe, Flaechen, Volumen und Elemente vergessen -
         nach einem Modellwechsel zeigen sie sonst auf Objekte, die es nicht
         mehr gibt, und eine neue Maske uebernaehme sie stillschweigend."""
-        for name in ("sel_linien", "sel_flaechen", "sel_koerper", "sel_staebe", "sel_elemente"):
+        for name in ("sel_linien", "sel_flaechen", "sel_koerper", "sel_staebe", "sel_elemente",
+                     "sel_lasten"):
             if isinstance(getattr(self, name, None), list):
                 getattr(self, name).clear()
         if isinstance(getattr(self, "leuchtet", None), list):
