@@ -3205,6 +3205,41 @@ class Model:
         art = (getattr(f, "steifigkeit", "") or "") or (f.kommentar or "")
         return art not in FLAECHEN_OHNE_STEIFIGKEIT
 
+    def koerper_traegt(self, name: str) -> bool:
+        """Kann der Volumenkoerper ueberhaupt ein Netz tragen?
+
+        Liegen alle seine Randknoten in einer Ebene, hat er kein Volumen - in
+        Dateien aus RFEM stehen solche Null-Volumen als Hilfsobjekte. Er
+        bekommt kein Netz und darf darum auch nicht als „unvernetzt“ gelten:
+        sonst fragte das Programm vor jeder Rechnung nach einem Netz, das es
+        nie geben kann.
+
+        Gemessen wird wie bei der Entartungspruefung ueber die Streumatrix
+        der Randknoten; ihre Determinante verschwindet genau dann, wenn die
+        Punkte in einer Ebene liegen.
+        """
+        k = (self.koerper or {}).get(name)
+        if k is None:
+            return False
+        if k.elemente:
+            return True                     # es traegt schon
+        kn = set()
+        for fname in (k.flaechen or []):
+            f = (self.flaechen or {}).get(fname)
+            if f is None:
+                continue
+            try:
+                kn.update(int(x) for x in f.randknoten(self))
+            except Exception:               # noqa: BLE001 - kaputte Geometrie
+                continue
+        kn = [i for i in kn if 0 <= i < self.nn]
+        if len(kn) < 4:
+            return False
+        P = np.asarray(self.nodes[kn], float)
+        Xc = P - P.mean(axis=0)
+        C = (Xc.T @ Xc) / len(P)
+        return float(np.sqrt(max(float(np.linalg.det(C)), 0.0))) > 1e-15
+
     @staticmethod
     def naechster_name(vorsilbe: str, vorhandene) -> str:
         """Der naechste fortlaufende Name: K7 nach K6, F12 nach F11."""

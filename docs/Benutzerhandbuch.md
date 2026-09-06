@@ -1815,6 +1815,10 @@ Nachweis mit seiner Verformung je Kombination.
   Hilfsobjekte); und beim Zusammenlegen der Knoten auf gemeinsamen Flächen
   fallen flach gewordene Tetraeder heraus. Scheitert doch ein Element in der
   Elementschleife, nennt die Meldung Nummer, Art, Volumenkörper und Knoten.
+* **Volumen ohne Rauminhalt** gelten nicht als „unvernetzt“. Sie können gar
+  kein Netz bekommen, und so fragte das Programm sonst vor jeder Rechnung
+  nach einem Netz, das es nie geben kann. Statt der Warnung „ohne Netz“
+  steht ein Hinweis mit ihren Namen im Protokoll, und die Rechnung läuft.
 
 ## 10 Ergebnisse und Bericht
 

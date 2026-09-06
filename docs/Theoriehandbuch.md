@@ -1648,6 +1648,13 @@ Entstehen können sie an drei Stellen, alle drei prüfen jetzt vorher:
   fallen (`mesher3d._entartete_weglassen`).
 * Importierte Netze mit doppelten Knoten.
 
+Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
+**unvernetzt** (`Model.koerper_traegt`, geprüft an derselben Streumatrix
+seiner Randknoten). Sonst forderte die Rechenbarkeitsprüfung vor jeder
+Rechnung ein Netz, das nicht entstehen kann. Er erscheint stattdessen als
+Hinweis „Volumen ohne Rauminhalt“ - das Gegenstück zu `flaeche_traegt` für
+Randflächen ohne Dicke.
+
 ## 8 Gültigkeitsbereich
 
 * Kleine Verformungen, linear-elastisches Material (keine Plastizität,
