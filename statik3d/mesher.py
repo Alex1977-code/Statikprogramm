@@ -526,6 +526,12 @@ def _seiten_aus_linien(model: Model, flaeche):
     return kette if kette[-1][0][-1] == kette[0][0][0] else None
 
 
+#: Ein Volumen darunter ist keines mehr: die Elementmatrix wird singulaer.
+#: Weit unter allem, was ein Bauteil je ist - ein Wuerfel mit 0,1 um Kante
+#: hat 1e-21 m^3 (siehe diagnose.GRENZE_VOLUMEN).
+ENTARTET_VOLUMEN = 1e-15
+
+
 def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                  h: float = 0.0, cache: dict = None, ordnung: int = 0,
                  fortschritt=None) -> list[int]:
@@ -559,7 +565,15 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
         from .importers.rfem6_db import _hex_order, _hex_volumen
         order = _hex_order(ringe)
         if order:
-            if _hex_volumen(model.nodes[order]) < 0:
+            v_hex = float(_hex_volumen(model.nodes[order]))
+            if abs(v_hex) <= ENTARTET_VOLUMEN:
+                C.warn(log, f"Volumen {koerper.name}: die acht Eckknoten spannen kein "
+                            f"Volumen auf ({abs(v_hex):.3e} m³) - kein Körper, kein "
+                            "Netz. In der Quelldatei ist das ein Hilfsobjekt ohne "
+                            "Dicke; es trägt nichts.")
+                koerper.elemente = []
+                return []
+            if v_hex < 0:
                 order = order[4:] + order[:4]
             nx, ny, nz = (list(koerper.teilung) + [4, 4, 4])[:3]
             ord_ = netz_ordnung(model, ordnung)
@@ -574,6 +588,17 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     if len(flaechen) == 4 and len(knoten) == 4:
         X = model.nodes[knoten]
         v = float(np.dot(np.cross(X[1] - X[0], X[2] - X[0]), X[3] - X[0]))
+        if abs(v) / 6.0 <= ENTARTET_VOLUMEN:
+            # Vier Punkte in einer Ebene sind kein Koerper. In Dateien aus
+            # RFEM stehen solche Null-Volumen als Hilfsobjekte; ein Element
+            # daraus haette keine Steifigkeit und braechte spaeter die ganze
+            # Rechnung zu Fall.
+            C.warn(log, f"Volumen {koerper.name}: die vier Eckknoten liegen in einer "
+                        f"Ebene (Volumen {abs(v) / 6.0:.3e} m³) - kein Körper, kein "
+                        "Element. In der Quelldatei ist das ein Hilfsobjekt ohne "
+                        "Dicke; es trägt nichts.")
+            koerper.elemente = []
+            return []
         nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
         els = [model.add_element("tet4", nodes, mat, group=koerper.name)]
         koerper.elemente = els

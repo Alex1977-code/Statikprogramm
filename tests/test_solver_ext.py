@@ -307,9 +307,11 @@ def test_parallel_assembly():
     finally:
         parallel.configure(min_elements=old)
     # 1e-9 statt 1e-12: die parallelen Elementschleifen summieren in anderer
-    # Reihenfolge, das letzte Bit kann sich unterscheiden.
+    # Reihenfolge, das letzte Bit kann sich unterscheiden. Die Spannung erbt
+    # das aus den Verschiebungen - 1e-9 von 60 N/mm² sind 6e-8 N/mm², weit
+    # unter jeder Ablesegenauigkeit.
     check("Parallel: Verschiebung identisch", r2.umag.max(), r1.umag.max(), 1e-9)
-    check("Parallel: Spannung identisch", np.nanmax(r2.node_vm), np.nanmax(r1.node_vm), 1e-12)
+    check("Parallel: Spannung identisch", np.nanmax(r2.node_vm), np.nanmax(r1.node_vm), 1e-9)
 
 
 def test_farm():

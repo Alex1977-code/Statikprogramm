@@ -2686,6 +2686,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         "Anpassung an kleine Kanten, kleinste/größte Elementgröße, Höchstzahl je Objekt")
         g.klein("Netzvorschau", self.netz_vorschau,
                 hinweis="Geschätzte Elementzahl je Fläche und Volumen ins Protokoll - vor dem Vernetzen")
+        g.klein("Netzqualität…", self.maske_netzguete,
+                hinweis="Die Form der Elemente bewerten und einfärben: Formgüte (1 = beste Form), "
+                        "Seitenverhältnis, Kantenlänge; Kennwerte und die schlechtesten Elemente "
+                        "ins Protokoll, Splitter auswählbar")
         g.klein("Netz löschen", self.netz_loeschen_geometrie, symbol="netz_loeschen",
                 hinweis="Das Netz der Flächen und Volumen entfernen - die Geometrie bleibt")
         g = r.gruppe("Weiteres")
@@ -6795,6 +6799,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not flaechen and not koerper:
             return self.error("Es gibt keine Flächen oder Volumenkörper zum Vernetzen.")
         self.merken("Geometrie vernetzt")
+        self.netzguete_feld = None      # die alte Einfaerbung gilt nicht mehr
         n = self._vernetzen(flaechen, koerper)
         self.statusBar().showMessage("Modellbaum, Tabellen und Ansicht aufbauen …")
         QtWidgets.QApplication.processEvents()
@@ -6834,6 +6839,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not els:
             return self.error("Es liegt kein Netz aus Flächen oder Volumen vor.")
         self.merken("Netz der Geometrie gelöscht")
+        self.netzguete_feld = None
         self._netz_loeschen(els)
         for f in m.flaechen.values():
             f.elemente = []
@@ -10334,6 +10340,91 @@ class MainWindow(QtWidgets.QMainWindow):
         maske.angewendet.connect(self._netzeinstellungen_setzen)
         return self.maske_erzeugen(maske)
 
+    def maske_netzguete(self):
+        """Netzqualität: bewerten, einfärben, die schlechtesten finden.
+
+        Ein FE-Ergebnis ist nur so gut wie das Netz. Lang gezogene und flache
+        Elemente machen vor allem die Spannungen an dieser Stelle unbrauchbar;
+        die Maske sagt, wie viele es sind und wo sie liegen.
+        """
+        from .. import netzguete as ng
+        F = msk.Feld
+        if not self.model.elements:
+            return self.error("Kein Netz vorhanden - erst vernetzen (Netz → Vernetzen)")
+        halter = {}
+        vorgabe = next(k for k, v in self.GUETEMASSE.items()
+                       if v == (self.netzguete_feld or {}).get("mass", "formguete"))
+        felder = [F("mass", "Maß", "wahl", vorgabe, list(self.GUETEMASSE),
+                    hinweis="Formgüte: wie nah das Element an seiner regelmäßigen Gestalt ist "
+                            "(regelmäßiger Tetraeder, Würfel, Quadrat, gleichseitiges Dreieck = 1). "
+                            "Stäbe, Federn und Grenzschichten haben keine Form in diesem Sinn."),
+                  F("grenze", "Grenze für „schlecht“", "zahl", ng.SPLITTER,
+                    hinweis="Elemente unter dieser Formgüte gelten als Splitter; „Schlechte wählen“ "
+                            "markiert sie in der Ansicht"),
+                  F("anzahl", "Elemente bewertet", "info", "–"),
+                  F("kennwerte", "min / Mittel / max", "info", "–"),
+                  F("stufen", "Verteilung", "info", "–"),
+                  F("splitter", "Splitter und umgestülpte", "info", "–"),
+                  F("schlecht", "Schlechteste", "info", "–")]
+
+        def rechnen(anzeigen=True):
+            mass = self.GUETEMASSE.get(halter["m"].werte().get("mass"), "formguete")
+            werte = ng.guete(self.model, mass)
+            d = ng.kennwerte(self.model, mass, werte)
+            m_ = halter["m"]
+            einheit = " m" if mass == "kantenlaenge" else ""
+            m_.setzen("anzahl", f"{d['bewertet']} von {d['elemente']}"
+                                + (f" ({d['ohne_form']} ohne Form)" if d["ohne_form"] else ""))
+            if d["bewertet"]:
+                m_.setzen("kennwerte", f"{d['min']:.3f}{einheit} / {d['mittel']:.3f}{einheit} / "
+                                       f"{d['max']:.3f}{einheit}")
+                m_.setzen("stufen", ", ".join(f"{nm} {k}" for nm, k, _g in d["stufen"] if k) or "–")
+                m_.setzen("splitter", f"{d['splitter']} Splitter, {d['umgestuelpt']} umgestülpt"
+                          if d["stufen"] else "–")
+                m_.setzen("schlecht", ", ".join(f"Nr. {i + 1} ({v:.3f})"
+                                                for i, v in d["schlechteste"][:5]) or "–")
+            else:
+                for k in ("kennwerte", "stufen", "splitter", "schlecht"):
+                    m_.setzen(k, "–")
+            for z in ng.bericht(self.model, mass, werte):
+                self.log.appendPlainText(z)
+            self.bottom_tabs.setCurrentIndex(0)
+            if anzeigen:
+                self.netzguete_feld = {"werte": werte, "mass": mass}
+                self.results = None
+                self.redraw()
+            return werte, d
+
+        def schlechte_waehlen():
+            werte, _d = rechnen(anzeigen=True)
+            try:
+                grenze = float(str(halter["m"].werte().get("grenze", ng.SPLITTER)).replace(",", "."))
+            except ValueError:
+                grenze = ng.SPLITTER
+            import numpy as _np
+            treffer = _np.where(_np.isfinite(werte) & (werte < grenze))[0]
+            self.selection = _np.asarray(treffer, dtype=int)
+            self.auswahlart_setzen("Netz")
+            self.redraw()
+            self.info(f"{len(treffer)} Elemente unter {grenze:g} markiert")
+
+        def aus():
+            self.netzguete_feld = None
+            self.redraw()
+            self.info("Netzqualität ausgeblendet")
+
+        maske = msk.Maske("Netzqualität", felder, knopf="Anzeigen",
+                          hinweis="Die Form jedes Elements wird bewertet und die Ansicht danach "
+                                  "eingefärbt: grün gut, rot schlecht. Stäbe, Federn und "
+                                  "Grenzschichten bleiben grau. Die Kennwerte und die zwanzig "
+                                  "schlechtesten Elemente stehen im Protokoll.",
+                          zusatz=[("Schlechte wählen", schlechte_waehlen), ("Aus", aus)])
+        halter["m"] = maske
+        maske.angewendet.connect(lambda _w: rechnen())
+        rahmen = self.maske_erzeugen(maske)
+        rechnen(anzeigen=False)
+        return rahmen
+
     def _netz_aus_maske(self, w: dict):
         from dataclasses import replace
 
@@ -10566,6 +10657,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def clear_mesh(self):
+        self.netzguete_feld = None
         old = self.model
         self.model = Model(old.name)
         self.model.materials = dict(old.materials)
@@ -13182,6 +13274,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 ps = np.asarray(point_scalars, float)
                 if np.isfinite(ps).any():
                     clim = [float(np.nanmin(ps)), float(np.nanmax(ps))]
+        # Netzguete faerbt nur, solange kein Ergebnis gezeigt wird - ein
+        # Spannungsbild und eine Guetekarte im selben Fenster waeren nur
+        # verwirrend.
+        guete, guete_name, guete_clim = None, "", [0.0, 1.0]
+        gf = self.netzguete_feld if u is None else None
+        if gf is not None and len(np.asarray(gf["werte"])) == len(m.elements):
+            guete = np.asarray(gf["werte"], float)
+            guete_name = {"formguete": "Formgüte",
+                          "seitenverhaeltnis": "Seitenverhältnis",
+                          "kantenlaenge": "Kantenlänge [m]"}.get(gf["mass"], "Netzgüte")
+            endlich = guete[np.isfinite(guete)]
+            if gf["mass"] == "kantenlaenge" and len(endlich):
+                guete_clim = [float(endlich.min()), float(max(endlich.max(), endlich.min() + 1e-12))]
+            elif len(endlich):
+                guete_clim = [float(min(0.0, endlich.min())), 1.0]
         col = None
         if u is None and self.act_members.isChecked() and m.members:
             col = np.full(len(m.elements), np.nan)
@@ -13224,6 +13331,17 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.plotter.add_mesh(warped, name=f"result_{nm}",
                                           **dict({"color": farbe, "line_width": breit},
                                                  **vp.darstellung(modus, show_edges)))
+            elif guete is not None:
+                # Netzguete: gruen gut, rot schlecht. Elemente ohne Form
+                # (Staebe, Federn, Grenzschichten) bleiben grau.
+                farbig = netz.copy()
+                farbig.cell_data[guete_name] = np.asarray(guete, float)[eidx]
+                self.plotter.add_mesh(farbig, scalars=guete_name, cmap="RdYlGn",
+                                      clim=guete_clim, nan_color="#9fb8d0",
+                                      scalar_bar_args=dict(self._farbskala(), title=guete_name),
+                                      name=f"model_{nm}",
+                                      **dict({"line_width": 4 if nm == "netz" else 1},
+                                             **vp.darstellung(modus, show_edges, True)))
             elif col is not None:
                 farbig = netz.copy()
                 farbig.cell_data["Stab"] = col[eidx]
@@ -13810,6 +13928,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selection = np.array([], dtype=int)
         self._objektauswahl_leeren()
         self.path = None
+        self.netzguete_feld = None
         self.refresh_all()
         self._refresh_title()
         # Ein neues Modell: keine Maske mehr, rechts nichts - die Projektangaben
@@ -13817,6 +13936,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "maskenrand", None) is not None:
             self.maskenrand.schliessen()
         self.rechts_leeren()
+
+    #: Eingefaerbte Netzguete: {"werte": Reihe je Element, "mass": Name} oder
+    #: None. Sie liegt neben den Ergebnissen, nicht in ihnen - ein Netz laesst
+    #: sich auch ohne Rechnung beurteilen.
+    netzguete_feld = None
+
+    GUETEMASSE = {"Formgüte (1 = beste Form)": "formguete",
+                  "Seitenverhältnis (1 = alle Kanten gleich)": "seitenverhaeltnis",
+                  "Längste Kante [m]": "kantenlaenge"}
 
     def _objektauswahl_leeren(self):
         """Gewaehlte Linien, Staebe, Flaechen, Volumen und Elemente vergessen -

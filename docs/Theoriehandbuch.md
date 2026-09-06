@@ -1539,6 +1539,47 @@ Verschiebungsfeld bleibt die Restkraft an jedem inneren Knoten unter 1e-8 N.
 Elemente über seine größte Ausdehnung), wird sie für dieses Bauteil verkleinert
 und das gemeldet.
 
+## 6b Netzqualität (`netzguete.py`)
+
+Die Formgüte misst, wie nah ein Element an seiner regelmäßigen Gestalt ist;
+1 ist die beste Form, 0 die entartete.
+
+Für **Tetraeder** und **Dreiecke** gibt es einen geschlossenen Ausdruck:
+
+    Tetraeder:  q = 12 · (3V)^(2/3) / Σ l_i²
+    Dreieck:    q = 4√3 · A / Σ l_i²
+
+Der Vorfaktor ist so gewählt, dass der regelmäßige Tetraeder bzw. das
+gleichseitige Dreieck genau 1 bekommt. Das ist das übliche Maß; ANSYS und
+RFEM nennen es *element quality*.
+
+Für **Vierecke, Sechsflächner, Keile und Pyramiden** dient die **skalierte
+Jacobi-Determinante**: an jeder Ecke werden die Kantenvektoren zu den
+Nachbarecken normiert und ihre Determinante gebildet,
+
+    räumlich:  det[ e₁/|e₁|  e₂/|e₂|  e₃/|e₃| ]
+    eben:      | e₁/|e₁| × e₂/|e₂| |  =  sin α ,
+
+das Minimum über alle Ecken ist der Wert des Elements. Er wird auf die
+**beste Form dieser Art** normiert: beim Würfel und beim Quadrat stoßen die
+Kanten rechtwinklig aufeinander (Faktor 1), beim Keil ist die Grundfläche ein
+gleichseitiges Dreieck (√3/2), bei der Pyramide mit gleich langen Kanten
+√2/2. Ohne diese Normierung bekäme der beste Keil nur 0,866.
+
+Ein **negativer** Wert heißt: die Ecke ist umgestülpt, die Jacobi-Determinante
+wechselt im Element das Vorzeichen. Solche Elemente rechnen falsch und werden
+eigens gezählt. Unter 0,10 spricht man von einem **Splitter** (*sliver*);
+dort sind die Spannungen unbrauchbar, die Verschiebungen meist noch nicht.
+
+Bei quadratischen Elementen (tet10, hex20, shell6, shell8, ebene6, ebene8)
+zählen die Eckknoten; die Seitenmittenknoten ändern die Form nicht. Stäbe,
+Seile, Federn und Grenzschichten haben keine Form in diesem Sinn und bleiben
+unbewertet.
+
+Als zweites Maß steht das **Seitenverhältnis** (kürzeste durch längste Kante)
+zur Verfügung, als drittes die längste Kante als Elementgröße. Alles ist je
+Elementart vektorisiert: 380 000 Tetraeder brauchen rund 1,5 s.
+
 ## 7 Parallelisierung
 
 * Elementschleifen (Assemblierung, Nachlauf) werden ab 1500 Elementen in
@@ -1584,6 +1625,28 @@ Die Grenzen (10⁻⁹ m, 10⁻¹² m², 10⁻¹⁵ m³) liegen weit unter allem,
 Bauteil je ist - ein Würfel mit 0,1 µm Kante hat 10⁻²¹ m³ -, sodass nur
 wirklich entartete Elemente anschlagen, kein dünnes Blech. Federn und
 Grenzschichten sind ausgenommen: sie dürfen die Dicke null haben.
+
+**Behandlung.** Solche Elemente werden in `assemble.aktive_indizes`
+übergangen, also aus Steifigkeit, Masse und Nachlauf herausgenommen. Das ist
+keine Näherung: aus einem verschwindenden Maß folgt
+
+    K_e = ∫ Bᵀ D B dV = 0 ,   M_e = ∫ ρ Nᵀ N dV = 0 ,
+
+das Gleichungssystem bleibt Zeichen für Zeichen dasselbe. Nur die
+Elementmatrix selbst wäre singulär und brächte die Assemblierung zu Fall.
+Die Modellprüfung meldet sie als Warnung - nicht als Fehler, denn ein
+Modell darf daran nicht scheitern -, weil sie auf eine Schwäche im Netz
+oder in der Quelldatei zeigen.
+
+Entstehen können sie an drei Stellen, alle drei prüfen jetzt vorher:
+
+* Ein Volumenkörper aus vier Dreiecksflächen, dessen vier Eckknoten in einer
+  Ebene liegen, bzw. ein Sechsflächner ohne Rauminhalt (`mesher.mesh_koerper`).
+  In Dateien aus RFEM stehen solche Null-Volumen als Hilfsobjekte.
+* Der freie Vernetzer, wenn beim Zusammenlegen der Knoten auf gemeinsamen
+  Flächen zwei Ecken eines flachen Tetraeders auf denselben Modellknoten
+  fallen (`mesher3d._entartete_weglassen`).
+* Importierte Netze mit doppelten Knoten.
 
 ## 8 Gültigkeitsbereich
 

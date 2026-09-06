@@ -5079,17 +5079,109 @@ def main():
         check("Rechnung: hinterher ist der Balken wieder weg und unbestimmt",
               not w.progress_bar.isVisible() and w.progress_bar.maximum() == 0)
 
-        # Entartetes Element: klare Meldung statt Absturz mitten im Aufbau
+        # Entartetes Element: klare Meldung statt Absturz mitten im Aufbau -
+        # und die Rechnung laeuft trotzdem, denn es traegt ohnehin nichts
         w.model.add_element("tet4", [0, 1, 2, 3], "S355")
-        fehler = [z for z in w.model.check() if z.startswith("FEHLER") and "entartete" in z]
+        zeilen = w.model.check()
+        hinweis = [z for z in zeilen if "entartet" in z]
         check("Modellprüfung meldet das entartete Element vor dem Rechnen",
-              len(fehler) == 1, fehler[0][:90] if fehler else "")
+              len(hinweis) == 1, hinweis[0][:90] if hinweis else "")
+        check("als Warnung - die Rechnung wird nicht gesperrt",
+              bool(hinweis) and hinweis[0].startswith("WARNUNG")
+              and not [z for z in zeilen if z.startswith("FEHLER")],
+              hinweis[0][:40] if hinweis else "")
+        from statik3d import assemble as _asm
+        check("die Assemblierung übergeht es",
+              len(_asm.aktive_indizes(w.model)) == len(w.model.elements) - 1,
+              f"{len(_asm.aktive_indizes(w.model))} von {len(w.model.elements)}")
         w.new_model()
 
     except Exception as ex:      # noqa: BLE001
         import traceback
         traceback.print_exc()
         check("Fortschritt beim Speichern, Laden und Rechnen", False, str(ex)[:70])
+
+    # ------------------------------------------------------------------
+    # Ribbon Netz: Netzqualität anzeigen
+    # ------------------------------------------------------------------
+    try:
+        from statik3d.model import Material as _Mat
+        from statik3d import netzguete as _ng
+        w.new_model()
+        m = w.model
+        m.add_material(_Mat("S355", E=210e9, nu=0.3, rho=7850))
+        for p in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                  (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]:
+            m.add_node(*p)
+        for t in [(0, 1, 3, 4), (1, 2, 3, 6), (1, 4, 5, 6), (3, 4, 6, 7), (1, 3, 4, 6)]:
+            m.add_element("tet4", list(t), "S355")
+        m.add_element("tet4", [0, 1, 2, 3], "S355")          # eben: Formgüte 0
+        w.refresh_all()
+
+        netzbefehle = [b for b in w.ribbon.befehle if b.register == "Netz"]
+        check("Ribbon Netz hat den Befehl „Netzqualität…“",
+              any("Netzqualität" in b.text for b in netzbefehle),
+              str([b.text for b in netzbefehle])[:120])
+        check("und er hat einen Hinweistext",
+              all(b.hinweis for b in netzbefehle if "Netzqualität" in b.text))
+
+        w.maske_netzguete()
+        mk = w.maskenrand.maske
+        werte = mk.werte()
+        check("Netzqualität: Maske mit Maß, Grenze und Kennwerten",
+              all(k in werte for k in ("mass", "grenze", "anzahl", "kennwerte",
+                                       "stufen", "splitter", "schlecht")),
+              str(sorted(werte)))
+        check("Netzqualität: die Kennwerte stehen ohne Knopfdruck da",
+              werte["anzahl"] == "6 von 6" and werte["kennwerte"] != "–",
+              f"{werte['anzahl']} | {werte['kennwerte']}")
+        check("Netzqualität: das entartete Element ist der schlechteste Wert",
+              werte["kennwerte"].startswith("0.000") and "Nr. 6 (0.000)" in werte["schlecht"],
+              f"{werte['kennwerte']} | {werte['schlecht'][:40]}")
+        check("Netzqualität: Splitter werden gezählt",
+              werte["splitter"].startswith("1 Splitter"), werte["splitter"])
+        check("Netzqualität: die Kennwerte stehen im Protokoll",
+              "Netzqualität (Formgüte)" in w.log.toPlainText())
+
+        check("Netzqualität: vor „Anzeigen“ ist nichts eingefärbt", w.netzguete_feld is None)
+        mk.angewendet.emit(mk.werte())
+        check("Netzqualität: „Anzeigen“ färbt die Ansicht",
+              w.netzguete_feld is not None
+              and len(w.netzguete_feld["werte"]) == len(m.elements)
+              and w.netzguete_feld["mass"] == "formguete",
+              str(None if w.netzguete_feld is None else w.netzguete_feld["mass"]))
+
+        mk.setzen("mass", "Seitenverhältnis (1 = alle Kanten gleich)")
+        mk.angewendet.emit(mk.werte())
+        check("Netzqualität: das Maß lässt sich wechseln",
+              w.netzguete_feld["mass"] == "seitenverhaeltnis", w.netzguete_feld["mass"])
+        mk.setzen("mass", "Längste Kante [m]")
+        mk.angewendet.emit(mk.werte())
+        check("Netzqualität: auch die Kantenlänge",
+              w.netzguete_feld["mass"] == "kantenlaenge", w.netzguete_feld["mass"])
+
+        knoepfe = {b.text(): b for b in mk.findChildren(QtWidgets.QPushButton)}
+        check("Netzqualität: Knöpfe Anzeigen, Schlechte wählen, Aus",
+              all(k in knoepfe for k in ("Anzeigen", "Schlechte wählen", "Aus")),
+              str(sorted(knoepfe)))
+        mk.setzen("mass", "Formgüte (1 = beste Form)")
+        knoepfe["Schlechte wählen"].click()
+        check("Netzqualität: „Schlechte wählen“ markiert das entartete Element",
+              list(w.selection) == [5] and w.auswahlart == "Netz",
+              f"{list(w.selection)} / {w.auswahlart}")
+        knoepfe["Aus"].click()
+        check("Netzqualität: „Aus“ nimmt die Einfärbung weg", w.netzguete_feld is None)
+
+        mk.angewendet.emit(mk.werte())
+        w.netz_loeschen_geometrie() if m.flaechen or m.koerper else w.clear_mesh()
+        check("Netzqualität: nach dem Löschen des Netzes ist sie weg",
+              w.netzguete_feld is None)
+        w.new_model()
+
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Netzqualität im Ribbon Netz", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

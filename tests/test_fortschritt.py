@@ -95,16 +95,23 @@ def test_entartete_elemente():
 def test_modellpruefung_meldet_entartung():
     m = wuerfelmodell()
     m.load_node(4, Fz=-1000.0)
-    fehler = [z for z in m.check() if z.startswith("FEHLER")]
-    check("gesundes Modell: kein FEHLER", not fehler, "; ".join(fehler)[:70])
+    check("gesundes Modell: keine Meldung",
+          not [z for z in m.check() if "entartet" in z])
 
     m.add_element("tet4", [0, 1, 2, 3], "S355")
-    fehler = [z for z in m.check() if z.startswith("FEHLER")]
-    treffer = [z for z in fehler if "entartet" in z]
-    check("Modellpruefung meldet die Entartung als FEHLER", len(treffer) == 1,
+    zeilen = m.check()
+    treffer = [z for z in zeilen if "entartet" in z]
+    check("Modellpruefung meldet die Entartung", len(treffer) == 1,
           treffer[0][:100] if treffer else "")
-    check("die Meldung nennt Elementnummer und Weg zur Abhilfe",
-          bool(treffer) and "Element 6" in treffer[0] and "Vernetzen" in treffer[0])
+    check("als WARNUNG, nicht als FEHLER - sonst rechnet das Modell gar nicht",
+          bool(treffer) and treffer[0].startswith("WARNUNG"),
+          treffer[0][:40] if treffer else "")
+    check("die Meldung nennt Elementnummer, Folge und Abhilfe",
+          bool(treffer) and "Element 6" in treffer[0]
+          and "übergangen" in treffer[0] and "Vernetzen" in treffer[0])
+    check("kein FEHLER, der die Rechnung sperrt",
+          not [z for z in zeilen if z.startswith("FEHLER")],
+          "; ".join(z for z in zeilen if z.startswith("FEHLER"))[:70])
 
 
 def test_elementfehler_nennt_das_element():
@@ -187,16 +194,85 @@ def test_fehler_aus_dem_arbeitsprozess():
               str(ex)[:60])
 
 
-def test_assemblierung_meldet_das_element():
-    """Der ganze Weg: Steifigkeit eines Modells mit einem entarteten Element."""
-    m = wuerfelmodell()
-    i = m.add_element("tet4", [0, 1, 2, 3], "S355")
-    try:
-        assemble.stiffness(m)
-        check("Steifigkeitsaufbau meldet das entartete Element", False, "kein Fehler")
-    except ValueError as ex:
-        check("Steifigkeitsaufbau meldet das entartete Element",
-              f"Element {i + 1} " in str(ex), str(ex)[:90])
+def test_entartete_werden_uebergangen():
+    """Ein Element ohne Ausdehnung hat weder Steifigkeit noch Masse. Es
+    wegzulassen ist exakt, nicht genaehert - und die Rechnung laeuft."""
+    gesund = wuerfelmodell()
+    gesund.load_node(6, Fz=-100000.0)
+    krank = wuerfelmodell()
+    krank.add_element("tet4", [0, 1, 2, 3], "S355")        # eben
+    krank.add_element("tet4", [4, 5, 6, 6], "S355")        # doppelter Knoten
+    krank.load_node(6, Fz=-100000.0)
+
+    idx = assemble.aktive_indizes(krank)
+    check("die Assemblierung laesst sie weg", len(idx) == 5 and idx == list(range(5)),
+          f"{len(idx)} von {len(krank.elements)}")
+    check("ohne Befund bleibt jedes Element drin",
+          assemble.aktive_indizes(gesund) == list(range(5)))
+
+    ra = solver.solve_static(gesund)
+    rb = solver.solve_static(krank)
+    check("das Ergebnis ist bitgleich - kein Naeherungsfehler",
+          ra.u[6, 2] == rb.u[6, 2], f"{ra.u[6, 2]:.12g} / {rb.u[6, 2]:.12g}")
+
+    # Auch die Massenmatrix und der Nachlauf duerfen nicht darueber stolpern
+    ma = assemble.mass(gesund)
+    mb = assemble.mass(krank)
+    check("auch die Massenmatrix kommt durch",
+          abs(ma.diagonal().sum() - mb.diagonal().sum()) < 1e-9,
+          f"{ma.diagonal().sum():.6g} / {mb.diagonal().sum():.6g}")
+
+    # Situationsmaske und Entartung greifen zusammen
+    aktiv = [True] * len(krank.elements)
+    aktiv[0] = False
+    idx = assemble.aktive_indizes(krank, aktiv)
+    check("Situationsmaske und Entartung wirken zusammen", idx == [1, 2, 3, 4], str(idx))
+
+
+def test_vernetzer_ohne_volumen():
+    """Vier Punkte in einer Ebene sind kein Koerper. In Dateien aus RFEM
+    stehen solche Null-Volumen als Hilfsobjekte; der abgebildete Vernetzer
+    machte daraus bisher ungeprueft einen Tetraeder - genau die 48 Elemente,
+    an denen die Rechnung des Drehlagers scheiterte."""
+    from statik3d import mesher
+    m = Model("Null")
+    m.add_material(Material("S235", E=210e9, nu=0.3, rho=7850))
+    for p in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)]:
+        m.add_node(*p)
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3)]):
+        m.add_line(f"L{i}", [a, b])
+    m.add_flaeche("F1", ["L0", "L1", "L2"], material="S235")
+    m.add_flaeche("F2", ["L0", "L4", "L3"], material="S235")
+    m.add_flaeche("F3", ["L1", "L5", "L4"], material="S235")
+    m.add_flaeche("F4", ["L2", "L3", "L5"], material="S235")
+    k = m.add_koerper("V_flach", ["F1", "F2", "F3", "F4"], material="S235")
+    log = []
+    els = mesher.mesh_koerper(m, k, log=log, frei=False)
+    check("flacher Vierflaechner gibt kein Element", els == [] and k.elemente == [],
+          str(els))
+    check("und sagt warum", any("einer Ebene" in z and "V_flach" in z for z in log),
+          (log[0] if log else "")[:100])
+    check("es bleibt kein entartetes Element im Modell",
+          not diagnose.entartete_elemente(m))
+
+    # Der gesunde Fall muss weiter ein Element geben
+    m2 = Model("Tet")
+    m2.add_material(Material("S235", E=210e9, nu=0.3, rho=7850))
+    for p in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]:
+        m2.add_node(*p)
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3)]):
+        m2.add_line(f"L{i}", [a, b])
+    m2.add_flaeche("F1", ["L0", "L1", "L2"], material="S235")
+    m2.add_flaeche("F2", ["L0", "L4", "L3"], material="S235")
+    m2.add_flaeche("F3", ["L1", "L5", "L4"], material="S235")
+    m2.add_flaeche("F4", ["L2", "L3", "L5"], material="S235")
+    k2 = m2.add_koerper("V_gut", ["F1", "F2", "F3", "F4"], material="S235")
+    els2 = mesher.mesh_koerper(m2, k2, log=[], frei=False)
+    check("der gesunde Tetraeder wird weiter angelegt", len(els2) == 1, str(els2))
+    check("und ist rechts orientiert (positives Volumen)",
+          float(np.linalg.det(np.array(
+              [m2.nodes[n] - m2.nodes[m2.elements[els2[0]].nodes[0]]
+               for n in m2.elements[els2[0]].nodes[1:]]))) > 0)
 
 
 # ==========================================================================
@@ -326,8 +402,9 @@ def main():
     print("=" * 92)
     for t in (test_entartete_elemente, test_modellpruefung_meldet_entartung,
               test_elementfehler_nennt_das_element, test_vernetzer_laesst_entartete_weg,
+              test_vernetzer_ohne_volumen,
               test_hinweis_ohne_konsole, test_fehler_aus_dem_arbeitsprozess,
-              test_assemblierung_meldet_das_element,
+              test_entartete_werden_uebergangen,
               test_speichern_mit_fortschritt, test_ergebnis_bleibt_gleich,
               test_rechnung_meldet_anteil, test_alter_rueckruf_bleibt_gueltig):
         print(f"\n--- {t.__name__} ---")
