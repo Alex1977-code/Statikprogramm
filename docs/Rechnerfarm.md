@@ -2,7 +2,8 @@
 
 ## Mehrere Kerne auf einem Rechner
 
-Standardmäßig nutzt Statik3D alle Prozessorkerne des Rechners:
+Standardmäßig nutzt Statik3D alle Prozessorkerne des Rechners bis auf einen
+(der bleibt der Oberfläche; Einstellung „Prozesse“):
 
 * Elementschleifen (Assemblierung der Steifigkeitsmatrix, Nachlaufrechnung)
   werden ab 1500 Elementen auf einen Prozess-Pool verteilt.

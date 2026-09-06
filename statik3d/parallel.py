@@ -32,7 +32,10 @@ from typing import Callable, Optional
 # --------------------------------------------------------------------------
 @dataclass
 class Settings:
-    workers: int = max(1, (os.cpu_count() or 2))
+    #: Arbeitsprozesse fuer Elementschleifen, Auftraege und die Vernetzung:
+    #: alle Kerne bis auf einen - der bleibt der Oberflaeche, damit sich das
+    #: Programm waehrend einer Rechnung noch bedienen laesst.
+    workers: int = max(1, (os.cpu_count() or 2) - 1)
     backend: str = "local"            # local | farm
     farm_host: str = "127.0.0.1"
     farm_port: int = 5555

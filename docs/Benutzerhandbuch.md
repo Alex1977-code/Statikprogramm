@@ -1607,7 +1607,9 @@ Nachweis mit seiner Verformung je Kombination.
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
 * **Nur aktiver Lastfall**, **Eigenschwingungen**, **Knicken** (Grundzustand
   = aktiver Lastfall).
-* Prozesse: Anzahl der Kerne; Backend „Rechnerfarm“ mit Server, Port und
+* Prozesse: Zahl der Arbeitsprozesse für Elementschleifen, Aufträge und die
+  Vernetzung - Vorgabe alle Kerne bis auf einen, der bleibt der Oberfläche;
+  Backend „Rechnerfarm“ mit Server, Port und
   Schlüssel (siehe `Rechnerfarm.md`). „Lokalen Server + Worker starten“
   macht den eigenen Rechner zum Farm-Server.
 * Die Berechnung läuft im Hintergrund; Fortschritt im Protokoll.
