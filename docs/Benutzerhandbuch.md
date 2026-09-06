@@ -148,9 +148,12 @@ Die Arbeitsfläche in drei Spalten:
   Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
   Zweiges; die maßgebende trägt ★.
 * **in der Mitte die 3D-Ansicht** — frei für die Grafik.
-* **rechts die Eingabemaske** — es ist immer genau **eine** sichtbar, gewählt
-  über den Befehl im Ribbon; der Titel der Maske nennt sie. Eine Registerleiste
-  mit denselben Namen wie im Ribbon gibt es nicht mehr.
+* **rechts die Eingabemaske** — es ist immer genau **eine** sichtbar: die
+  Maske des gewählten Objekts oder das Register zum Befehl im Ribbon; der Titel
+  nennt sie. Ist nichts gewählt und kein Befehl aktiv, ist der Bereich leer.
+  Die **Projektangaben** stehen nicht von selbst darunter: sie holt der oberste
+  Punkt des Modellbaums (der Modellname) oder *Datei → Projektangaben*. Eine
+  Registerleiste mit denselben Namen wie im Ribbon gibt es nicht.
 
 Unten die **Tabellen**. Erst die Eingaben — Protokoll, Werkstoffe,
 Querschnitte, Dicken, **Knoten, Linien, Elemente, Lager, Gelenke, Lastfälle,
@@ -182,8 +185,11 @@ Flächen der Gegenseite - so die Grundplatte eines Lagerbocks, die an den
 sechzehn Oberseiten ihrer Unterlegbleche gelöst wird („0 Flächen, 1 Volumen,
 an 16 Objekten“ im Modellbaum). Beide Arten werden beim Vernetzen ausgeführt;
 in der zweiten sucht das Programm die Randseiten des Körpers, die auf den
-Gegenflächen liegen. Bis dahin steht am Eintrag ein ⚠ („Trennung nicht
-ausgeführt“): das ist vor dem Vernetzen der Normalfall, kein Fehler. Statik3D liest sie
+Gegenflächen liegen. Vor dem Vernetzen steht am Eintrag „wird beim Vernetzen
+getrennt“ - ohne Warnzeichen, denn ohne Netz gibt es nichts, was zu steif sein
+könnte. Ein ⚠ mit „nicht ausgeführt - hier zu steif“ erscheint nur, wenn das
+Netz da ist und die Fuge trotzdem nicht getrennt werden konnte; das Protokoll
+nennt dann den Grund. Statik3D liest sie
 aus der RFEM-Datei vollständig ein und **führt sie beim Vernetzen auch aus**:
 die Netze werden an der Fuge getrennt, und je nachdem, ob sie Knoten für Knoten
 zusammenpassen, hält sie ein Spaltelement je Knotenpaar oder ein Kontaktpaar
@@ -640,9 +646,10 @@ Flächen über ihre Elemente, unvernetzte Flächen als durchscheinendes
 Polygon, Volumen über ihre Oberfläche — dieselbe Hervorhebung wie beim
 Anklicken im Modellbaum.
 
-Ist **nichts gewählt** und keine Erzeuge-Maske offen, zeigt der rechte
-Bereich nur die **Information zum Modell** (Projekt und Modellangaben) -
-kein Netz-, Werkstoff- oder Generatorpanel. Stabzug, Platte und Quader sind
+Ist **nichts gewählt** und keine Maske offen, bleibt der rechte Bereich
+**leer** - kein Netz-, Werkstoff- oder Generatorpanel und auch keine
+Projektangaben; die stehen unter dem obersten Punkt des Modellbaums. Solange
+eine Maske offen ist, steht rechts nur sie. Stabzug, Platte und Quader sind
 Masken im Register *Geometrie*, der Import steht im Register *Datei*.
 
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,

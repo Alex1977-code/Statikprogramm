@@ -2983,6 +2983,19 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
         lay.addWidget(self.tabs, 1)
+        # Ohne Auswahl und ohne Befehl steht rechts nichts - nur dieser Hinweis.
+        # Die Projektangaben (Register „Modell“) kommen nicht von selbst: sie
+        # holt der oberste Punkt des Modellbaums oder Datei → Projektangaben.
+        self.rechts_leer = QtWidgets.QLabel(
+            "Nichts gewählt.\n\nEin Klick auf ein Objekt in der Ansicht oder im Modellbaum "
+            "zeigt hier seine Maske, ein Befehl im Ribbon seine Einstellungen. "
+            "Die Angaben zum Modell stehen unter dem obersten Punkt des Modellbaums.")
+        self.rechts_leer.setObjectName("rechtsleer")
+        self.rechts_leer.setWordWrap(True)
+        self.rechts_leer.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignLeft)
+        self.rechts_leer.setContentsMargins(14, 14, 14, 14)
+        self.rechts_leer.hide()
+        lay.addWidget(self.rechts_leer, 1)
         self.maskenplatz = lay
         self.maskenrand.setze_ziel(lay)
         dock.setWidget(halter)
@@ -3004,6 +3017,13 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i) == name:
+                # Rechts steht immer nur eines: das Register loest eine offene
+                # Maske ab und nimmt den Platz des Hinweises ein.
+                if getattr(self, "maskenrand", None) is not None and self.maskenrand.offen():
+                    self.maskenrand.schliessen()
+                if hasattr(self, "rechts_leer"):
+                    self.rechts_leer.hide()
+                self.tabs.show()
                 self.tabs.setCurrentIndex(i)
                 if hasattr(self, "eingaben_dock"):
                     self.eingaben_dock.setWindowTitle(name)
@@ -3017,11 +3037,51 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_auswahl_sammeln", False):
             return maske                    # Mehrfachauswahl: keine Maske je Zeile
         self.maskenrand.zeigen(maske)
+        # Rechts steht nur die Maske: die Register darunter - zuletzt standen
+        # dort immer die Projektangaben - verschwinden, solange sie offen ist.
+        try:
+            maske.geschlossen.connect(self._maske_geschlossen)
+        except (AttributeError, RuntimeError):
+            pass
+        if hasattr(self, "tabs"):
+            self.tabs.hide()
+        if hasattr(self, "rechts_leer"):
+            self.rechts_leer.hide()
         if hasattr(self, "eingaben_dock"):
             self.eingaben_dock.setWindowTitle(getattr(maske, "titel", "") or "Erzeugen")
             self.eingaben_dock.show()
             self.eingaben_dock.raise_()
         return maske
+
+    def rechts_leeren(self):
+        """Rechts nichts zeigen: kein Register, keine Maske - nur den Hinweis.
+
+        So sieht der Bereich aus, wenn nichts gewaehlt ist. Die Projektangaben
+        stehen nicht mehr von selbst darunter; wer sie will, klickt den
+        obersten Punkt des Modellbaums oder Datei → Projektangaben.
+        """
+        if hasattr(self, "tabs"):
+            self.tabs.hide()
+        if hasattr(self, "rechts_leer"):
+            self.rechts_leer.show()
+        if hasattr(self, "eingaben_dock"):
+            self.eingaben_dock.setWindowTitle("Eingaben")
+
+    def rechts_zeigt(self) -> str:
+        """Was rechts steht: "maske", "leer" oder der Name des Registers."""
+        if getattr(self, "maskenrand", None) is not None and self.maskenrand.offen():
+            return "maske"
+        if not hasattr(self, "tabs") or self.tabs.isHidden():
+            return "leer"
+        return self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else "leer"
+
+    def _maske_geschlossen(self):
+        """Die Maske ist zu: rechts bleibt nichts, bis die naechste Auswahl
+        oder der naechste Befehl etwas hinstellt. Ein Register kommt nicht
+        von selbst zurueck - und die Projektangaben schon gar nicht."""
+        if getattr(self, "maskenrand", None) is not None and self.maskenrand.offen():
+            return                      # schon die naechste Maske da
+        self.rechts_leeren()
 
     def _build_baum(self):
         """Modellbaum links: was im Modell steckt."""
@@ -3683,12 +3743,13 @@ class MainWindow(QtWidgets.QMainWindow):
                       F("typ", "Typ / Ort", "info", f"{kb.typ or '–'} / {kb.ort}" if kb else "–"),
                       F("wirkung", "Wirkung je FHG", "info", wirkung),
                       F("ausgefuehrt", "Trennung", "info",
-                        ("ausgeführt" if kb.ausgefuehrt else "⚠ nicht ausgeführt - hier zu steif") if kb else "–"),
+                        (("⚠ " if kb.zu_steif(m) else "") + kb.zustand(m)) if kb else "–"),
                       F("beschreibung", "Beschreibung", "text", getattr(kb, "beschreibung", "") or "" if kb else "",
                         breite=170)]
             titel = f"Kontaktbedingung {name}"
-            hinweis = ("Die Fuge wirkt erst, wenn die Trennung ausgeführt ist - „Kontaktfugen ausführen“. "
-                       "Bis dahin rechnet das Modell dort durchverbunden.")
+            hinweis = ("Die Fuge wird beim Vernetzen getrennt (oder mit „Kontaktfugen ausführen“). "
+                       "Ist das Netz da und die Fuge nicht getrennt, rechnet das Modell dort "
+                       "durchverbunden - also zu steif.")
             zusatz = [("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
         elif art in ("stellungen", "stellung"):
             if not eintrag:
@@ -10489,17 +10550,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._info_zeigen()
 
     def _info_zeigen(self):
-        """Ohne Auswahl und ohne offene Erzeuge-Maske steht rechts nur die
-        Information zum Modell (Register „Modell“) - kein Netz-, Material-
-        oder Generatorpanel."""
+        """Ohne Auswahl und ohne offene Maske steht rechts nichts: kein Netz-,
+        Material- oder Generatorpanel - und auch nicht die Projektangaben, die
+        holt der oberste Punkt des Modellbaums. Ein Register, das ein Befehl
+        im Ribbon geoeffnet hat (Lastfaelle, Ergebnisse …), bleibt stehen."""
         if getattr(self, "maskenrand", None) is not None and self.maskenrand.offen():
             return
         if any((len(self.selection), self.sel_linien, self.sel_flaechen, self.sel_koerper,
                 self.sel_staebe, self.sel_elemente, self.sel_lager)):
             return
         aktuell = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
-        if aktuell in ("Netz", "Modell"):
-            self.maske_zeigen("Modell")
+        if aktuell in ("Netz", "Modell") and not self.tabs.isHidden():
+            self.rechts_leeren()
 
     def select_all(self):
         self._set_selection(np.arange(self.model.nn, dtype=int))
@@ -12363,10 +12425,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.path = None
         self.refresh_all()
         self._refresh_title()
-        # Ein neues Modell: keine Erzeuge-Maske mehr, rechts die Modellinformation
+        # Ein neues Modell: keine Maske mehr, rechts nichts - die Projektangaben
+        # holt man sich ueber den obersten Punkt des Modellbaums
         if getattr(self, "maskenrand", None) is not None:
             self.maskenrand.schliessen()
-        self.maske_zeigen("Modell")
+        self.rechts_leeren()
 
     def _objektauswahl_leeren(self):
         """Gewaehlte Linien, Staebe, Flaechen, Volumen und Elemente vergessen -

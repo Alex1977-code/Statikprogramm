@@ -21,6 +21,30 @@ from . import symbole as sym
 BREITE, HOEHE = 520, 300
 #: Zeile, in der die Meldungen stehen (auch fuer den Packer: text_pos)
 MELDUNG_Y = HOEHE - 40
+#: Schrift des Startbilds - auf Windows Segoe UI, sonst ersetzt Qt sie
+SCHRIFT = "Segoe UI"
+
+
+def schrift(punkt: int, fett: bool = False) -> QtGui.QFont:
+    f = QtGui.QFont(SCHRIFT)
+    f.setPointSize(punkt)
+    f.setBold(fett)
+    return f
+
+
+def schrift_vorhanden() -> bool:
+    """Ob Qt eine echte Schrift hat.
+
+    Ohne Schriftdatenbank - die Plattform ``offscreen`` auf Windows hat keine,
+    solange ``QT_QPA_FONTDIR`` nicht gesetzt ist - zeichnet Qt jedes Zeichen als
+    Kaestchen gleicher Breite. Ein so gerendertes Startbild des Packers zeigte
+    statt „Statik3D“ acht Kaestchen. Eine echte Schrift erkennt man daran,
+    dass ein „i“ schmaler ist als ein „W“.
+    """
+    if not QtGui.QFontDatabase.families():
+        return False
+    fm = QtGui.QFontMetrics(schrift(12))
+    return fm.horizontalAdvance("i") < fm.horizontalAdvance("W")
 
 
 def startbild(version: str = "", stand: str = "") -> QtGui.QPixmap:
@@ -43,16 +67,11 @@ def startbild(version: str = "", stand: str = "") -> QtGui.QPixmap:
     # Programmsymbol links
     p.drawPixmap(36, 46, sym.programmbild(128))
     # Name und Untertitel
-    schrift = QtGui.QFont()
-    schrift.setPointSize(30)
-    schrift.setBold(True)
-    p.setFont(schrift)
+    p.setFont(schrift(30, True))
     p.setPen(QtGui.QColor("#ffffff"))
     p.drawText(QtCore.QRect(190, 52, BREITE - 210, 50), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
                "Statik3D")
-    schrift = QtGui.QFont()
-    schrift.setPointSize(11)
-    p.setFont(schrift)
+    p.setFont(schrift(11))
     p.setPen(QtGui.QColor("#c9d6e6"))
     p.drawText(QtCore.QRect(192, 102, BREITE - 212, 70), QtCore.Qt.AlignLeft | QtCore.Qt.TextWordWrap,
                "Statik, Nachweise nach Eurocode 3\nund Ermüdung für Stahlbau\nund Stahlwasserbau")
@@ -60,8 +79,7 @@ def startbild(version: str = "", stand: str = "") -> QtGui.QPixmap:
     if stand:
         fassung += (" · " if fassung else "") + f"Stand {stand}"
     if fassung:
-        schrift.setPointSize(10)
-        p.setFont(schrift)
+        p.setFont(schrift(10))
         p.setPen(QtGui.QColor("#f3c744"))
         p.drawText(QtCore.QRect(192, 178, BREITE - 212, 24), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
                    fassung)
@@ -120,9 +138,7 @@ class Startbild(QtWidgets.QSplashScreen):
         QtWidgets.QApplication.processEvents()
 
     def drawContents(self, p: QtGui.QPainter):
-        schrift = QtGui.QFont()
-        schrift.setPointSize(10)
-        p.setFont(schrift)
+        p.setFont(schrift(10))
         p.setPen(QtGui.QColor("#dfe8f2"))
         p.drawText(QtCore.QRect(24, MELDUNG_Y - 6, BREITE - 48, 28),
                    QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, self.message())

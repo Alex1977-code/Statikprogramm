@@ -793,7 +793,7 @@ class Report:
                 rows = [["Kontaktbedingung", "Bezug", "Wirkung je Freiheitsgrad",
                          "Trennung ausgeführt"]]
                 for name, kb in kbs.items():
-                    rows.append([name, kb.bezug(), kb.describe(),
+                    rows.append([name, kb.bezug(m), kb.describe(),
                                  kb.art_der_trennung(m)])
                 rows, note = self._truncate(rows)
                 b.append(("table", rows,
@@ -803,7 +803,8 @@ class Report:
                           "durchverbunden – also zu steif.", None, "compact"))
                 if note:
                     b.append(("note", note))
-                offen = [n for n, kb in kbs.items() if not kb.ausgefuehrt and not kb.aus]
+                offen = [n for n, kb in kbs.items() if kb.zu_steif(m)]
+                wartend = [n for n, kb in kbs.items() if kb.wartet_auf_netz(m)]
                 if offen:
                     b.append(("note", f"{len(offen)} Kontaktbedingung(en) sind "
                                       "nicht ausgeführt: "
@@ -811,6 +812,10 @@ class Report:
                                       + (" …" if len(offen) > 8 else "")
                                       + ". Das Modell ist dort zu steif und "
                                       "überträgt Zug, wo eine Fuge aufginge."))
+                if wartend:
+                    b.append(("note", f"{len(wartend)} Kontaktbedingung(en) werden beim "
+                                      "Vernetzen getrennt: " + ", ".join(wartend[:8])
+                                      + (" …" if len(wartend) > 8 else "") + "."))
         # ---- Figuren
         if self.opt("figures") and m.nn:
             b.append(self._h(2, "Systemdarstellung"))

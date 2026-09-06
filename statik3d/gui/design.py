@@ -663,7 +663,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
         n_kontakt = (len(flaechenkontakte) + len(model.contact_supports)
                      + len(model.gap_elements) + len(model.contact_pairs))
         if n_kontakt:
-            offen_noch = sum(1 for x in flaechenkontakte.values() if not x.ausgefuehrt)
+            # Ein Warnzeichen nur, wo es einen Mangel gibt: Netz da, Fuge nicht
+            # getrennt. Vor dem Vernetzen ist „noch nicht getrennt" der Normalfall.
+            offen_noch = sum(1 for x in flaechenkontakte.values() if x.zu_steif(model))
             kt = self._zweig(wurzel, "Kontaktbedingungen", n_kontakt, "kontakt",
                              fett=True,
                              farbe=FARBEN["warn"] if offen_noch else FARBEN["akzent"],
@@ -674,19 +676,21 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 fk = self._zweig(kt, "Flächenkontakte", len(flaechenkontakte),
                                  "kontaktbedingungen",
                                  farbe=FARBEN["warn"] if offen_noch else None,
-                                 hinweis="Solange die Trennung nicht ausgeführt "
-                                         "ist, rechnet das Modell dort "
-                                         "durchverbunden – also zu steif.")
+                                 hinweis="Die Fugen werden beim Vernetzen getrennt. "
+                                         "Ist das Netz da und eine Fuge trotzdem nicht "
+                                         "getrennt, rechnet das Modell dort durchverbunden "
+                                         "– also zu steif (⚠).")
                 # Das Warnzeichen steht **vor** dem Namen: hinten wuerde es
                 # bei langen Namen mit dem „…“ der Spalte verschwinden, und
                 # dann sahe es aus, als seien nur die kurzen Namen betroffen
-                self._liste(fk, [(("" if x.ausgefuehrt else "⚠ ") + name,
-                                  x.bezug() + ("" if x.ausgefuehrt else " ⚠"),
+                self._liste(fk, [(("⚠ " if x.zu_steif(model) else "") + name,
+                                  x.bezug(model) + (" ⚠" if x.zu_steif(model) else ""),
                                   name, f"{name}: {x.describe()}"
-                                  + ("" if x.ausgefuehrt
-                                     else "\n⚠ Trennung nicht ausgeführt – das Modell rechnet hier "
-                                          "durchverbunden, also zu steif. Register „Lager / Kontakt“ → "
-                                          "„Kontaktfugen ausführen“."))
+                                  + ("" if x.ausgefuehrt else
+                                     ("\nWird beim Vernetzen getrennt (Netz → Vernetzen)."
+                                      if x.wartet_auf_netz(model) else
+                                      "\n⚠ Trennung nicht ausgeführt – das Modell rechnet hier "
+                                      "durchverbunden, also zu steif. Netz → „Kontaktfugen ausführen“.")))
                                  for name, x in flaechenkontakte.items()],
                             "kontaktbedingung", "kontaktbedingungen")
             if model.contact_supports:

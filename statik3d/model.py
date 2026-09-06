@@ -1754,21 +1754,67 @@ class Kontaktbedingung:
             return DofBehaviour("free")
         return b if isinstance(b, DofBehaviour) else _dc(DofBehaviour, b)
 
-    def bezug(self) -> str:
+    def wartet_auf_netz(self, model) -> bool:
+        """Noch nicht ausgefuehrt, weil die beteiligten Koerper und Flaechen
+        noch kein Netz haben - vor dem Vernetzen der Normalfall, kein Mangel.
+
+        Erst **mit** Netz ist eine nicht ausgefuehrte Fuge ein Fehler: dann
+        rechnet das Modell dort durchverbunden, also zu steif. Vorher gibt es
+        nichts, was zu steif sein koennte - und ein Warnzeichen an jeder
+        frisch eingelesenen Kontaktbedingung wuerde nur abstumpfen.
+        """
+        if self.ausgefuehrt or self.aus:
+            return False
+        # Gibt es im Modell gar kein Objekt dieser Bedingung, wartet sie auf
+        # nichts - dann ist sie nicht ausfuehrbar, und das ist ein Mangel.
+        gefunden = False
+        for name in (self.koerpernamen or []):
+            k = (getattr(model, "koerper", {}) or {}).get(name)
+            if k is not None:
+                gefunden = True
+                if k.elemente:
+                    return False
+        for name in list(self.flaechennamen or []) + list(self.gegenflaechen or []):
+            f = (getattr(model, "flaechen", {}) or {}).get(name)
+            if f is not None:
+                gefunden = True
+                if f.elemente or f.randseiten:
+                    return False
+        return gefunden
+
+    def zustand(self, model=None) -> str:
+        """Der Stand der Trennung in Worten - fuer Baum, Maske, Tabelle, Bericht."""
+        if self.ausgefuehrt:
+            return "getrennt"
+        if self.aus:
+            return "in der Quelldatei deaktiviert"
+        if model is not None and self.wartet_auf_netz(model):
+            return "wird beim Vernetzen getrennt"
+        return "nicht ausgeführt - hier zu steif"
+
+    def zu_steif(self, model) -> bool:
+        """Netz da, Fuge nicht ausgefuehrt: das Modell rechnet hier zu steif."""
+        return not self.ausgefuehrt and not self.aus and not self.wartet_auf_netz(model)
+
+    def bezug(self, model=None) -> str:
         teile = [f"{len(self.flaechen)} Flächen"]
         if self.volumen:
             teile.append(f"{len(self.volumen)} Volumen")
         if self.ziele:
             teile.append(f"an {self.ziele} Objekten")
         # Ob die Trennung ausgefuehrt ist, gehoert an jede Stelle, an der die
-        # Bedingung auftaucht: eine nicht getrennte Fuge rechnet zu steif.
-        teile.append("getrennt" if self.ausgefuehrt else "noch durchverbunden")
+        # Bedingung auftaucht: eine nicht getrennte Fuge rechnet zu steif -
+        # aber erst, wenn es ein Netz gibt (mit ``model`` wird das unterschieden).
+        if model is not None:
+            teile.append(self.zustand(model))
+        else:
+            teile.append("getrennt" if self.ausgefuehrt else "noch durchverbunden")
         return ", ".join(teile)
 
     def art_der_trennung(self, model) -> str:
         """Wie die Fuge im Netz umgesetzt ist - fuer Tabelle und Bericht."""
         if not self.ausgefuehrt:
-            return "nein"
+            return "noch nicht (beim Vernetzen)" if self.wartet_auf_netz(model) else "nein"
         teile = []
         n = sum(1 for g in (model.gap_elements or [])
                 if str(getattr(g, "group", "")) == self.name)

@@ -1743,7 +1743,8 @@ def main():
         w._baum_geklickt("modell", m_.name or "Modell")
         angaben = dict(w.modellangaben())
         check("Klick auf die Wurzel zeigt rechts das Register „Modell“ mit den Angaben",
-              w.eingaben_dock.windowTitle() == "Modell" and angaben["Knoten"] == str(m_.nn)
+              w.eingaben_dock.windowTitle() == "Modell" and not w.tabs.isHidden()
+              and angaben["Knoten"] == str(m_.nn)
               and angaben["Stäbe mit Nachweis"] == str(len(m_.members))
               and "Abmessungen" in w.lbl_modellangaben.text(),
               f"{w.eingaben_dock.windowTitle()} {angaben.get('Knoten')}")
@@ -2889,18 +2890,29 @@ def main():
         def tab_():
             return w.tabs.tabText(w.tabs.currentIndex())
 
-        check("Nach „Neues Modell“ steht rechts die Modellinformation", tab_() == "Modell", tab_())
+        check("Nach „Neues Modell“ steht rechts nichts - kein Register, keine Projektangaben",
+              w.rechts_zeigt() == "leer" and not w.rechts_leer.isHidden(), w.rechts_zeigt())
         w.maske_zeigen("Netz")
+        check("Ein Ribbon-Befehl holt sein Register nach vorn", w.rechts_zeigt() == "Netz", w.rechts_zeigt())
         w.clear_selection()
         app.processEvents()
-        check("Auswahl aufheben ohne offene Maske holt die Modellinformation zurück (kein Netz-Panel)",
-              tab_() == "Modell", tab_())
+        check("Auswahl aufheben ohne offene Maske lässt rechts nichts stehen (kein Netz-Panel)",
+              w.rechts_zeigt() == "leer", w.rechts_zeigt())
+        w._baum_geklickt("modell", m_.name or "Modell")
+        check("Klick auf die Wurzel des Modellbaums holt die Projektangaben (Register „Modell“)",
+              w.rechts_zeigt() == "Modell" and not w.tabs.isHidden(), w.rechts_zeigt())
+        w.clear_selection()
+        app.processEvents()
+        check("… und ein Klick ins Leere nimmt sie wieder weg", w.rechts_zeigt() == "leer", w.rechts_zeigt())
         check("Ribbon Netz: Vernetzen, Netzeinstellungen, Vorschau; Generatoren als Masken",
               all(hasattr(w, a) for a in ("geometrie_vernetzen", "maske_netzeinstellungen", "netz_vorschau",
                                           "maske_stabzug", "maske_platte", "maske_quader")))
         w.maske_platte()
         app.processEvents()
         mk = w.maskenrand.maske
+        check("Offene Maske: rechts steht nur sie, die Register darunter sind weg",
+              w.rechts_zeigt() == "maske" and w.tabs.isHidden() and w.rechts_leer.isHidden(),
+              w.rechts_zeigt())
         mk.setzen("lx", 2.0)
         mk.setzen("ly", 1.0)
         mk.setzen("nx", 2)
@@ -2929,10 +2941,16 @@ def main():
         mk.anwenden()
         app.processEvents()
         check("Quader-Maske erzeugt einen Hexaeder", sum(1 for e in m_.elements if e.typ == "hex8") == 1, str(fehler_))
+        w.maske_zeigen("Lastfälle")
+        check("Ein Ribbon-Register löst die offene Maske ab",
+              not w.maskenrand.offen() and w.rechts_zeigt() == "Lastfälle", w.rechts_zeigt())
+        w.maske_quader()
+        app.processEvents()
         w.maskenrand.schliessen()
         w.clear_selection()
         app.processEvents()
-        check("Maske geschlossen, nichts gewählt: Modellinformation", tab_() == "Modell", tab_())
+        check("Maske geschlossen, nichts gewählt: rechts nichts (keine Projektangaben)",
+              w.rechts_zeigt() == "leer", w.rechts_zeigt())
         w.new_model()
         m_ = w.model
         mat_ = list(m_.materials)[0]
@@ -3442,6 +3460,8 @@ def main():
         pm = st.startbild("9.9.9", "abc1234")
         check("Startbild wird gezeichnet", not pm.isNull() and pm.width() == st.BREITE
               and pm.height() == st.HOEHE)
+        check("Startbild: eine echte Schrift ist da (kein Kästchenbild)", st.schrift_vorhanden(),
+              QtGui.QFontInfo(st.schrift(12)).family())
         sb = st.Startbild(version="9.9.9", stand="abc1234")
         sb.show()
         sb.melden("Grafik und Rechenkern werden geladen …")
