@@ -53,6 +53,8 @@ class Constraint:
     yielding: bool = False
     g_yield: float = 0.0
     dof: int = -1                  # Lager-FHG 0..5 bei kind 'dof'/'dof_rot'
+    zug: bool = False              # Verbund: die Bedingung oeffnet nie (Zug wird uebertragen)
+    haften: bool = False           # in der Fugenebene kein Gleiten
     active: bool = False
     slip: bool = False
     slip_dir: Optional[np.ndarray] = None   # Gleitrichtung (2,) im Tangentialsystem
@@ -87,7 +89,7 @@ def contact_dofs(model, K=None) -> set:
     for c in st.cons:
         dofs = np.asarray(c.dofs, dtype=int)
         out.update(int(d) for d in dofs[np.abs(c.cn) > 1e-12])
-        if c.ct is not None and c.mu > 0:
+        if c.ct is not None and (c.mu > 0 or c.haften):
             for row in c.ct:
                 out.update(int(d) for d in dofs[np.abs(row) > 1e-12])
     return out
@@ -150,6 +152,72 @@ def closest_point_triangle(p, a, b, c):
     v = vb * denom
     w = vc * denom
     return a + ab * v + ac * w, np.array([1 - v - w, v, w])
+
+
+def naechste_punkte_dreiecke(p, A, B, C):
+    """Naechster Punkt von p auf jedem Dreieck (A[i], B[i], C[i]) - vektorisiert.
+
+    Dasselbe Verfahren wie :func:`closest_point_triangle` (Ericson, Real-Time
+    Collision Detection 5.1.5), nur fuer viele Dreiecke auf einmal: die sieben
+    Bereiche (drei Ecken, drei Kanten, das Innere) werden ueber Masken
+    zugewiesen. ``p`` ist ein Punkt (3,) fuer alle Dreiecke oder je Dreieck
+    einer (n, 3). Rueckgabe (q (n,3), w (n,3)) mit den baryzentrischen Gewichten.
+    """
+    A = np.asarray(A, float).reshape(-1, 3)
+    B = np.asarray(B, float).reshape(-1, 3)
+    C = np.asarray(C, float).reshape(-1, 3)
+    p = np.asarray(p, float).reshape(-1, 3)
+    ab, ac = B - A, C - A
+    ap = p - A
+    d1 = (ab * ap).sum(1)
+    d2 = (ac * ap).sum(1)
+    bp = p - B
+    d3 = (ab * bp).sum(1)
+    d4 = (ac * bp).sum(1)
+    cp = p - C
+    d5 = (ab * cp).sum(1)
+    d6 = (ac * cp).sum(1)
+    nq = len(A)
+    q = np.empty((nq, 3))
+    w = np.empty((nq, 3))
+    fertig = np.zeros(nq, bool)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        m = (d1 <= 0) & (d2 <= 0)                       # Ecke A
+        q[m], w[m] = A[m], (1.0, 0.0, 0.0)
+        fertig |= m
+        m = ~fertig & (d3 >= 0) & (d4 <= d3)            # Ecke B
+        q[m], w[m] = B[m], (0.0, 1.0, 0.0)
+        fertig |= m
+        vc = d1 * d4 - d3 * d2
+        m = ~fertig & (vc <= 0) & (d1 >= 0) & (d3 <= 0)  # Kante AB
+        v = np.where(m, d1 / np.where(d1 - d3 != 0, d1 - d3, 1.0), 0.0)
+        q[m] = A[m] + v[m, None] * ab[m]
+        w[m] = np.column_stack([1 - v[m], v[m], np.zeros(m.sum())])
+        fertig |= m
+        m = ~fertig & (d6 >= 0) & (d5 <= d6)            # Ecke C
+        q[m], w[m] = C[m], (0.0, 0.0, 1.0)
+        fertig |= m
+        vb = d5 * d2 - d1 * d6
+        m = ~fertig & (vb <= 0) & (d2 >= 0) & (d6 <= 0)  # Kante AC
+        v = np.where(m, d2 / np.where(d2 - d6 != 0, d2 - d6, 1.0), 0.0)
+        q[m] = A[m] + v[m, None] * ac[m]
+        w[m] = np.column_stack([1 - v[m], np.zeros(m.sum()), v[m]])
+        fertig |= m
+        va = d3 * d6 - d5 * d4
+        m = ~fertig & (va <= 0) & ((d4 - d3) >= 0) & ((d5 - d6) >= 0)   # Kante BC
+        nenner = (d4 - d3) + (d5 - d6)
+        v = np.where(m, (d4 - d3) / np.where(nenner != 0, nenner, 1.0), 0.0)
+        q[m] = B[m] + v[m, None] * (C[m] - B[m])
+        w[m] = np.column_stack([np.zeros(m.sum()), 1 - v[m], v[m]])
+        fertig |= m
+        m = ~fertig                                     # Inneres
+        nenner = va + vb + vc
+        nenner = np.where(nenner != 0, nenner, 1.0)
+        v = vb / nenner
+        u = vc / nenner
+        q[m] = A[m] + ab[m] * v[m, None] + ac[m] * u[m, None]
+        w[m] = np.column_stack([1 - v[m] - u[m], v[m], u[m]])
+    return q, w
 
 
 def master_facets(model: Model, cp) -> list[tuple[int, ...]]:
@@ -336,6 +404,18 @@ class ContactSystem:
                 mu, node, base * sgn, label, axes=axes, limit=float(e.limit), dof=dof))
 
     def _build_pair(self, cp):
+        """Ein Kontaktpaar in Bedingungen umsetzen: jeder Slave-Knoten gegen
+        die naechste Master-Facette im Suchradius.
+
+        Die Suche laeuft ueber einen KD-Baum der Facettenschwerpunkte und den
+        vektorisierten naechsten Punkt (:func:`naechste_punkte_dreiecke`) - bei
+        Tausenden Knoten gegen Tausende Facetten sonst Minuten. Der Suchradius
+        ist der des Paares (aus der Kontaktbedingung: Pinball) oder ein Zehntel
+        der Modellgroesse. ``anliegend`` und ``zug`` setzen den Anfangsspalt auf
+        null: der Knoten gilt in seiner Lage als anliegend (ANSYS „auf
+        Beruehrung setzen“), ein Verbund misst nur die Relativverschiebung.
+        """
+        from scipy.spatial import cKDTree
         m = self.model
         facets = master_facets(m, cp)
         if not facets:
@@ -343,7 +423,7 @@ class ContactSystem:
             return
         cen_of = _solid_outward(m, cp)
         radius = cp.search_radius if cp.search_radius else 0.1 * self.size
-        tris = []   # (nodes(3), P(3,3), n, facet_key)
+        tris, ecken = [], []   # (nodes(3), n, facet_key), (A, B, C)
         for f in facets:
             key = tuple(sorted(f))
             if len(f) == 3:
@@ -360,27 +440,40 @@ class ContactSystem:
                 if key in cen_of:            # Volumen: Normale nach aussen
                     if nv @ (cen_of[key] - P.mean(axis=0)) > 0:
                         nv = -nv
-                tris.append((tri, P, nv, key))
+                tris.append((tri, nv, key))
+                ecken.append(P)
+        if not tris:
+            self.log.append(f"Kontaktpaar '{cp.name}': alle Master-Facetten entartet")
+            return
+        E = np.array(ecken)                       # (T, 3, 3)
+        A, B, Cc = E[:, 0], E[:, 1], E[:, 2]
+        S = E.mean(axis=1)
+        R = np.sqrt(((E - S[:, None, :]) ** 2).sum(2).max(1))   # Umkreis (grob)
+        rmax = float(R.max())
+        knoten = np.array([t[0] for t in tris], dtype=int)
+        baum = cKDTree(S)
         n_paired = 0
+        ohne: list = []
         for s in cp.slave_nodes:
             p = m.nodes[s]
-            best = None
-            for tri, P, nv, key in tris:
-                if s in tri:
-                    continue
-                q, w = closest_point_triangle(p, P[0], P[1], P[2])
-                dist = np.linalg.norm(p - q)
-                if dist > radius:
-                    continue
-                if best is None or dist < best[0]:
-                    best = (dist, tri, w, nv, q, key)
-            if best is None:
-                self.log.append(f"Kontaktpaar '{cp.name}': Knoten {s} ohne Master-Facette "
-                                f"im Suchradius {radius:.3g} m")
+            idx = np.asarray(baum.query_ball_point(p, radius + rmax), dtype=int)
+            if idx.size:
+                idx = idx[~np.any(knoten[idx] == s, axis=1)]       # nicht gegen sich selbst
+            if idx.size:
+                idx = idx[np.linalg.norm(S[idx] - p, axis=1) <= radius + R[idx]]
+            if not idx.size:
+                ohne.append(int(s))
                 continue
-            dist, tri, w, nv, q, key = best
+            q, w = naechste_punkte_dreiecke(p, A[idx], B[idx], Cc[idx])
+            dist = np.linalg.norm(q - p, axis=1)
+            j = int(np.argmin(dist))
+            if dist[j] > radius:
+                ohne.append(int(s))
+                continue
+            tri, nv, key = tris[int(idx[j])]
+            qj, wj = q[j], w[j]
             n = nv.copy()
-            d = (p - q) @ n
+            d = (p - qj) @ n
             if cp.flip_normal:
                 n = -n
                 d = -d
@@ -389,28 +482,32 @@ class ContactSystem:
                 if d < 0:
                     n = -n
                     d = -d
-            g0 = d - cp.gap
+            g0 = 0.0 if (cp.anliegend or cp.zug) else d - cp.gap
             dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
-            cn = np.concatenate([n] + [-wi * n for wi in w])
+            cn = np.concatenate([n] + [-wi * n for wi in wj])
             kn = cp.stiffness if cp.stiffness > 0 else self._auto_k([s])
             ct = None
-            if cp.mu > 0:
+            if cp.mu > 0 or cp.haften:
                 t1, t2 = _tangent_basis(n)
-                ct = np.vstack([np.concatenate([t1] + [-wi * t1 for wi in w]),
-                                np.concatenate([t2] + [-wi * t2 for wi in w])])
+                ct = np.vstack([np.concatenate([t1] + [-wi * t1 for wi in wj]),
+                                np.concatenate([t2] + [-wi * t2 for wi in wj])])
             self.cons.append(Constraint("surface", dofs, cn, ct, float(g0), kn,
                                         TANGENT_FACTOR * kn, cp.mu, s, n,
                                         f"{cp.name}: Knoten {s} -> Facette {tri}",
-                                        master=(list(tri), list(w))))
+                                        master=(list(tri), list(wj)),
+                                        zug=bool(cp.zug), haften=bool(cp.haften)))
             n_paired += 1
         self.log.append(f"Kontaktpaar '{cp.name}': {n_paired} von {len(cp.slave_nodes)} "
-                        f"Slave-Knoten zugeordnet")
+                        f"Slave-Knoten zugeordnet"
+                        + (f" - {len(ohne)} ohne Master-Facette im Suchradius "
+                           f"{radius:.3g} m (z. B. Knoten {', '.join(str(x) for x in ohne[:5])})"
+                           if ohne else ""))
 
     # ---- Zustand ---------------------------------------------------------
     def initialize(self):
         """Anfangszustand: beruehrende oder durchdringende Bedingungen aktiv."""
         for c in self.cons:
-            c.active = c.g0 <= self.tol
+            c.active = True if c.zug else c.g0 <= self.tol
             c.slip = False
             c.slip_dir = None
             c.dir_updates = 0
@@ -467,7 +564,7 @@ class ContactSystem:
                 kmat = c.kn * np.outer(c.cn, c.cn)
                 if not (self.stabilising and getattr(c, "stabilised", False)):
                     Fc[c.dofs] += -c.kn * c.g0 * c.cn
-            if c.ct is not None and c.mu > 0:
+            if c.ct is not None and (c.mu > 0 or c.haften):
                 if not c.slip:
                     kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
                 else:
@@ -560,7 +657,9 @@ class ContactSystem:
                 if c.slip:
                     self.dF_slip = max(self.dF_slip, c.mu * abs(max(Fn, 0.0) - c.Fn))
                 new_active = Fn > -self.f_tol   # Druckkraft (bzw. winziger Zug) -> bleibt
-                c.Fn = max(Fn, 0.0)
+                # Im Verbund bleibt die Bedingung auch unter Zug zu - und die
+                # Zugkraft gehoert ins Ergebnis, nicht auf null gekappt
+                c.Fn = Fn if c.zug else max(Fn, 0.0)
                 if c.limit > 0:
                     if not c.yielding and new_active and -c.kn * g > c.limit:
                         c.yielding = True       # Grenzkraft erreicht -> plastisch
@@ -572,7 +671,7 @@ class ContactSystem:
             else:
                 c.Fn = 0.0
                 new_active = g < -self.tol
-            if c.frozen:
+            if c.frozen or c.zug:
                 new_active = c.active
             if new_active != c.active:
                 c.toggles += 1
@@ -587,10 +686,14 @@ class ContactSystem:
                     c.slip_dir = None
                     c.yielding = False
                     c.Ft[:] = 0
-            if c.active and c.ct is not None and c.mu > 0:
+            if c.active and c.ct is not None and c.haften:
+                # Haften: die Fugenebene ist eine Feder, nie ein Gleiten
+                dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+                c.Ft = c.kt * dt
+            elif c.active and c.ct is not None and c.mu > 0:
                 dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
                 Ft_el = c.kt * dt
-                limit = c.mu * c.Fn
+                limit = c.mu * max(c.Fn, 0.0)
                 nrm = np.linalg.norm(dt)
                 if not c.slip:
                     c.Ft = Ft_el
@@ -664,9 +767,13 @@ class ContactSystem:
                 status = "offen"
             elif c.yielding:
                 status = "Fliessen"
+            elif c.zug and c.haften:
+                status = "Verbund"
+            elif c.zug:
+                status = "ohne Trennung"
             elif c.mu > 0 and c.slip:
                 status = "Gleiten"
-            elif c.mu > 0:
+            elif c.mu > 0 or c.haften:
                 status = "Haften"
             else:
                 status = "Kontakt"

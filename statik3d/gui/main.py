@@ -2554,6 +2554,9 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Kontakt")
         g.gross("Kontakt", "⇹", lambda: self.maske_zeigen("Kontakt"),
                 hinweis="Einseitiges Lager, Spaltelement, Kontaktpaar")
+        g.klein("Kontaktbedingung…", lambda: self._baum_neu("kontaktbedingungen"),
+                hinweis="Kontakt zwischen zwei Körpern: Kontaktflächen, Standardkontakt (Verbund, "
+                        "ohne Trennung, reibungsfrei, reibungsbehaftet, rau), Reibung, Suchradius")
         g.klein("Kontakt löschen", self.clear_contact,
                 hinweis="Alle einseitigen Lager, Spaltelemente und Kontaktpaare entfernen")
         g = r.gruppe("Anschlüsse")
@@ -3202,6 +3205,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if art == "stellung_neu":
             return self.neue_stellung()
+        if art == "kontaktbedingung_neu":
+            return self._baum_neu("kontaktbedingungen")
         if art == "bericht_neu":
             return self.ansicht_in_bericht()
         if art == "ergebnis":
@@ -3731,26 +3736,13 @@ class MainWindow(QtWidgets.QMainWindow):
             titel = f"Berichtsbild {i + 1}"
             hinweis = "Name, Bildunterschrift und Bemerkung erscheinen so im Bericht."
         elif art == "kontaktbedingung":
+            from ..model import Kontaktbedingung
             kb = m.kontaktbedingungen.get(name)
-            wirkung = ", ".join(f"{n}={self._fhg_text(kb.dof_behaviour(d))}"
-                                for d, n in enumerate(("ux", "uy", "uz", "φx", "φy", "φz"))) if kb else "–"
-            felder = [F("name", "Name", "text", name, breite=170),
-                      F("flaechennamen", "Flächen", "text", ", ".join(kb.flaechennamen) if kb else "",
-                        breite=170, hinweis="freigegebene Flächen in diesem Modell"),
-                      F("koerpernamen", "Volumen", "text", ", ".join(kb.koerpernamen) if kb else "",
-                        breite=170),
-                      F("gegenflaechen", "Gegenseite", "info", ", ".join(kb.gegenflaechen) or "–" if kb else "–"),
-                      F("typ", "Typ / Ort", "info", f"{kb.typ or '–'} / {kb.ort}" if kb else "–"),
-                      F("wirkung", "Wirkung je FHG", "info", wirkung),
-                      F("ausgefuehrt", "Trennung", "info",
-                        (("⚠ " if kb.zu_steif(m) else "") + kb.zustand(m)) if kb else "–"),
-                      F("beschreibung", "Beschreibung", "text", getattr(kb, "beschreibung", "") or "" if kb else "",
-                        breite=170)]
+            if kb is None:
+                # Neu: ein reibungsbehafteter Kontakt als Ausgangspunkt
+                kb = Kontaktbedingung(name).standard_anwenden("Reibungsbehaftet")
+            felder, hinweis, zusatz = self._kontaktmaske(kb, name, halter)
             titel = f"Kontaktbedingung {name}"
-            hinweis = ("Die Fuge wird beim Vernetzen getrennt (oder mit „Kontaktfugen ausführen“). "
-                       "Ist das Netz da und die Fuge nicht getrennt, rechnet das Modell dort "
-                       "durchverbunden - also zu steif.")
-            zusatz = [("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
         elif art in ("stellungen", "stellung"):
             if not eintrag:
                 namen = [s.name for s in m.stellungen]
@@ -3846,8 +3838,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                               "Rechtsklick auf den Zweig: Neu. Entf löscht den gewählten Eintrag."),
                           zusatz=zusatz, abbrechen="Abbrechen" if neu else "")
         halter["m"] = maske
-        if zusatz and art in ("geoflaeche", "geokoerper_einzeln"):
+        if zusatz and art in ("geoflaeche", "geokoerper_einzeln", "kontaktbedingung"):
             self._objektmaske_klickmodus(maske, art)
+        if art == "kontaktbedingung":
+            self._kontaktmaske_verbinden(maske)
         if art == "stellung" and eintrag:
             # Vorschau: die abgeschalteten Elemente der Stellung verschwinden im Bild
             self._stellung_vorschau(maske, name)
@@ -3976,7 +3970,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     #: Flaechen- und Volumenmaske: welches Feld der Klickmodus fuellt
     MASKENKLICK = {"geoflaeche": ("linien", "linie", "Randlinien"),
-                   "geokoerper_einzeln": ("flaechen", "flaeche", "Randflächen")}
+                   "geokoerper_einzeln": ("flaechen", "flaeche", "Randflächen"),
+                   "kontaktbedingung": ("flaechennamen", "flaeche", "Kontaktflächen")}
+    #: Kontaktmaske: Wirkung je Richtung im Klartext (Druck wird immer uebertragen)
+    KONTAKT_ZUG = {"abheben": "abheben möglich (nur Druck)",
+                   "starr": "wird übertragen (kein Abheben)", "feder": "Feder"}
+    KONTAKT_SCHUB = {"frei": "frei (gleiten)", "starr": "starr (haften)", "feder": "Feder"}
+    KONTAKT_DREH = {"frei": "frei", "starr": "starr"}
+    KONTAKT_SPALT = ["wie modelliert", "auf Berührung setzen (Spalt schließen)"]
+    KONTAKT_FREI = "Benutzerdefiniert"
+    KONTAKT_ALLE = "(alle anderen Körper)"
     #: Gelenkmaske: Lage, Freiheitsgrade und Wirkung im Klartext
     GELENKLAGE = ["Stabanfang", "Stabende"]
     GELENK_FHG = [("ux", "ux (längs)"), ("uy", "uy (quer)"), ("uz", "uz (quer)"),
@@ -4074,6 +4077,187 @@ class MainWindow(QtWidgets.QMainWindow):
             maske.setzen(feld, "")
         self._stellung_vorschau(maske, name)
 
+    def _kontaktmaske(self, kb, name: str, halter: dict) -> tuple:
+        """Felder der Kontaktmaske: die beiden Koerper, die Kontaktflaechen und
+        die Wirkung je Richtung - Druck immer, Zug, Schub x und y, Verdrehungen,
+        Reibung -, dazu Suchradius und Anfangsspalt. Ein Standardkontakt (wie
+        in ANSYS benannt) setzt die Richtungen; jede laesst sich danach aendern.
+        """
+        from ..model import STANDARDKONTAKTE
+        F = msk.Feld
+        m = self.model
+        koerper = list(m.koerper)
+        a = list(kb.koerpernamen or [])
+        b = list(getattr(kb, "gegenkoerper", None) or [])
+        b_n, b_x, b_y = kb.dof_behaviour(2), kb.dof_behaviour(0), kb.dof_behaviour(1)
+
+        def zug_text(bh):
+            return self.KONTAKT_ZUG["starr" if bh.typ == "rigid" else "feder" if bh.typ == "spring" else "abheben"]
+
+        def schub_text(bh):
+            return self.KONTAKT_SCHUB["starr" if bh.typ == "rigid" else "feder" if bh.typ == "spring" else "frei"]
+
+        dreh = "starr" if all(kb.dof_behaviour(d).typ == "rigid" for d in (3, 4, 5)) else "frei"
+        c = max(float(bh.stiffness or 0.0) for bh in (b_n, b_x, b_y)) / 1e3
+        standard = kb.standard if kb.standard in STANDARDKONTAKTE else self.KONTAKT_FREI
+        felder = [F("name", "Name", "text", name, breite=170),
+                  F("standard", "Standardkontakt", "wahl", standard,
+                    [self.KONTAKT_FREI] + list(STANDARDKONTAKTE),
+                    hinweis="setzt Zug, Schub, Verdrehungen und Reibung wie in ANSYS - danach frei änderbar")]
+        if len(a) > 1:
+            felder.append(F("koerper_a", "Körper A (Kontaktseite)", "text", ", ".join(a), breite=170,
+                            hinweis="die gelösten Körper, durch Komma"))
+        else:
+            felder.append(F("koerper_a", "Körper A (Kontaktseite)", "wahl", a[0] if a else "–",
+                            ["–"] + koerper,
+                            hinweis="der Körper, dessen Flächen die Kontaktseite bilden - er wird gelöst"))
+        felder.append(F("koerper_b", "Körper B (Gegenseite)", "wahl",
+                        b[0] if b else self.KONTAKT_ALLE, [self.KONTAKT_ALLE] + koerper,
+                        hinweis="der Körper, gegen den der Kontakt wirkt; „alle anderen“ sucht "
+                                "die Gegenseite unter allen Bauteilen"))
+        felder.append(F("flaechennamen", "Kontaktflächen", "text", ", ".join(kb.flaechennamen or []),
+                        breite=170,
+                        hinweis="mindestens eine Fläche von Körper A - getippt oder mit "
+                                "„Kontaktflächen anklicken“ in der Ansicht gewählt"))
+        if kb.gegenflaechen:
+            felder.append(F("gegenflaechen", "Gegenflächen (Quelldatei)", "info",
+                            ", ".join(kb.gegenflaechen[:12]) + (" …" if len(kb.gegenflaechen) > 12 else "")))
+        felder += [F("druck", "Druck", "info", "wird übertragen (Kontakt)"),
+                   F("zug", "Zug", "wahl", zug_text(b_n), list(self.KONTAKT_ZUG.values()),
+                     hinweis="abheben: die Fuge öffnet unter Zug; übertragen: Verbund ohne Trennung"),
+                   F("schub_x", "Schub x", "wahl", schub_text(b_x), list(self.KONTAKT_SCHUB.values()),
+                     hinweis="in der Fugenebene: gleiten (mit Reibung μ) oder haften"),
+                   F("schub_y", "Schub y", "wahl", schub_text(b_y), list(self.KONTAKT_SCHUB.values())),
+                   F("mu", "Reibbeiwert μ", "zahl", kb.reibbeiwert(),
+                     hinweis="Coulomb-Reibung in der Fugenebene; 0 = reibungsfrei"),
+                   F("dreh", "Verdrehungen", "wahl", dreh, list(self.KONTAKT_DREH.values()),
+                     hinweis="φx, φy, φz - nur bei Schalen wirksam; Volumen haben keine Verdrehungen"),
+                   F("c", "Feder c [kN/m je m²]", "zahl", c, hinweis="für Richtungen mit „Feder“"),
+                   F("suchweite", "Suchradius [mm]", "zahl",
+                     float(getattr(kb, "suchweite", 0.0) or 0.0) * 1e3,
+                     hinweis="wie weit die Gegenseite entfernt liegen darf (ANSYS: Pinball); "
+                             "0 = automatisch, die größere Kantenlänge beider Netze"),
+                   F("spalt", "Anfangsspalt", "wahl",
+                     self.KONTAKT_SPALT[1 if getattr(kb, "spalt_schliessen", False) else 0],
+                     self.KONTAKT_SPALT,
+                     hinweis="„auf Berührung setzen“: jeder Knoten gilt in seiner Lage als anliegend - "
+                             "Spiel und Facettenfehler zwischen verschieden feinen Netzen verschwinden"),
+                   F("wirkung", "Wirkung je FHG", "info", kb.describe()),
+                   F("ausgefuehrt", "Trennung", "info",
+                     (("⚠ " if kb.zu_steif(m) else "") + kb.zustand(m))
+                     if name in m.kontaktbedingungen else "beim Vernetzen"),
+                   F("beschreibung", "Beschreibung", "text", getattr(kb, "beschreibung", "") or "",
+                     breite=170)]
+        if kb.typ:
+            felder.insert(-1, F("typ", "Typ / Ort (Quelldatei)", "info", f"{kb.typ} / {kb.ort}"))
+        hinweis = ("Körper A wird an seinen Kontaktflächen gegen Körper B gelöst; die Gegenseite wird im "
+                   "Suchradius gefunden - die Flächen müssen weder deckungsgleich noch gleich fein "
+                   "vernetzt sein. Getrennt wird beim Vernetzen oder mit „Kontaktfugen ausführen“.")
+        zusatz = [("Kontaktflächen anklicken",
+                   lambda: self._objektmaske_klick_umschalten(halter.get("m"), "kontaktbedingung")),
+                  ("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
+        return felder, hinweis, zusatz
+
+    def _kontaktmaske_verbinden(self, maske):
+        """Der Standardkontakt setzt die Richtungen; eine Handaenderung an einer
+        Richtung macht daraus „Benutzerdefiniert“."""
+        from ..model import STANDARDKONTAKTE, STANDARDKONTAKT_TEXT
+        w = maske._felder.get("standard")
+        if not isinstance(w, QtWidgets.QComboBox):
+            return
+        maske._standard_setzen = False
+
+        def gewaehlt(text):
+            s = STANDARDKONTAKTE.get(text)
+            if not s:
+                return
+            maske._standard_setzen = True
+            try:
+                maske.setzen("zug", self.KONTAKT_ZUG["starr" if s["zug"] == "starr" else "abheben"])
+                maske.setzen("schub_x", self.KONTAKT_SCHUB[s["schub"]])
+                maske.setzen("schub_y", self.KONTAKT_SCHUB[s["schub"]])
+                maske.setzen("dreh", self.KONTAKT_DREH[s["dreh"]])
+                mu_alt = float(maske.werte().get("mu") or 0.0)
+                if text != "Reibungsbehaftet" or mu_alt <= 0:
+                    maske.setzen("mu", float(s["mu"]))
+            finally:
+                maske._standard_setzen = False
+            maske.lbl_hinweis.setText(f"{text}: {STANDARDKONTAKT_TEXT[text]}. "
+                                      "Jede Richtung lässt sich darunter von Hand ändern.")
+
+        w.currentTextChanged.connect(gewaehlt)
+        for feld in ("zug", "schub_x", "schub_y", "dreh"):
+            f = maske._felder.get(feld)
+            if isinstance(f, QtWidgets.QComboBox):
+                f.currentTextChanged.connect(lambda _t, mk=maske: self._kontaktmaske_standard_pruefen(mk))
+        f = maske._felder.get("mu")
+        if isinstance(f, QtWidgets.QLineEdit):
+            f.textEdited.connect(lambda _t, mk=maske: self._kontaktmaske_standard_pruefen(mk))
+
+    def _kontakt_richtungen(self, w: dict) -> tuple:
+        """(zug, schub_x, schub_y, dreh, mu) aus den Werten der Kontaktmaske."""
+        rz = {t: k for k, t in self.KONTAKT_ZUG.items()}
+        rs = {t: k for k, t in self.KONTAKT_SCHUB.items()}
+        rd = {t: k for k, t in self.KONTAKT_DREH.items()}
+        try:
+            mu = float(str(w.get("mu", 0) or 0).replace(",", "."))
+        except ValueError:
+            mu = 0.0
+        return (rz.get(str(w.get("zug")), "abheben"), rs.get(str(w.get("schub_x")), "frei"),
+                rs.get(str(w.get("schub_y")), "frei"), rd.get(str(w.get("dreh")), "frei"), mu)
+
+    @staticmethod
+    def _kontakt_ist_standard(name: str, zug: str, sx: str, sy: str, dreh: str, mu: float) -> bool:
+        """Entsprechen die Richtungen dem Standardkontakt ``name``?"""
+        from ..model import STANDARDKONTAKTE
+        s = STANDARDKONTAKTE.get(name)
+        if not s:
+            return False
+        zug_ok = (zug == "starr") if s["zug"] == "starr" else (zug == "abheben")
+        schub_ok = sx == sy == s["schub"]
+        dreh_ok = dreh == s["dreh"]
+        mu_ok = mu > 0 if name == "Reibungsbehaftet" else mu == 0
+        return zug_ok and schub_ok and dreh_ok and mu_ok
+
+    def _kontaktmaske_standard_pruefen(self, maske):
+        if getattr(maske, "_standard_setzen", False):
+            return
+        w = maske._felder.get("standard")
+        if not isinstance(w, QtWidgets.QComboBox) or w.currentText() == self.KONTAKT_FREI:
+            return
+        if not self._kontakt_ist_standard(w.currentText(), *self._kontakt_richtungen(maske.werte())):
+            w.blockSignals(True)
+            w.setCurrentText(self.KONTAKT_FREI)
+            w.blockSignals(False)
+            maske.lbl_hinweis.setText("Benutzerdefiniert: die Richtungen sind von Hand gesetzt.")
+
+    def _kontakt_zuruecknehmen(self, kb) -> int:
+        """Was aus dieser Kontaktbedingung im Netz entstanden ist - Spaltelemente,
+        Kopplungen, Kontaktpaar - zuruecknehmen: es gehoert zur alten Einstellung."""
+        m = self.model
+        vorher = len(m.gap_elements) + len(m.kopplungen) + len(m.contact_pairs)
+        m.gap_elements = [g for g in m.gap_elements if str(getattr(g, "group", "")) != kb.name]
+        m.kopplungen = [k for k in m.kopplungen if str(getattr(k, "gruppe", "")) != kb.name]
+        m.contact_pairs = [c for c in m.contact_pairs if c.name != kb.name]
+        kb.ausgefuehrt = False
+        return vorher - (len(m.gap_elements) + len(m.kopplungen) + len(m.contact_pairs))
+
+    def _kontakt_ausfuehren_wenn_netz(self, kb) -> None:
+        """Steht schon ein Netz, wird die Fuge gleich getrennt - sonst beim Vernetzen."""
+        from .. import fugen
+        m = self.model
+        if not m.elements or kb.wartet_auf_netz(m):
+            return
+        log: list = []
+        b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+        for z in log:
+            self.log.appendPlainText(z)
+        if kb.ausgefuehrt:
+            self.analysis = None
+            self.results = None
+        elif b.get("grund"):
+            self.info(f"Kontaktbedingung {kb.name}: {b['grund']}")
+
     def _objektmaske_klickmodus(self, maske, art: str):
         """Die Maske einer Flaeche oder eines Volumens nimmt Klicks aus der
         Ansicht entgegen: jede angeklickte Randlinie (Randflaeche) kommt in
@@ -4086,7 +4270,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def angeklickt(art_obj: str, name: str):
             if art_obj != modus:
-                return self.statusBar().showMessage(f"{name} ist keine {was[:-1]}e - Klickmodus: {was}", 3000)
+                return self.statusBar().showMessage(f"{name} ist keine {was[:-1]} - Klickmodus: {was}", 3000)
             namen = liste()
             if name in namen:
                 namen.remove(name)
@@ -4452,27 +4636,78 @@ class MainWindow(QtWidgets.QMainWindow):
             e.beschriftung = str(w.get("beschriftung", "") or "").strip()
             e.bemerkung = str(w.get("bemerkung", "") or "").strip()
         elif art == "kontaktbedingung":
+            from ..model import DofBehaviour, STANDARDKONTAKTE
             kb = m.kontaktbedingungen.get(name)
-            if kb is None:
+            if kb is None and not neu:
                 return self.error(f"Kontaktbedingung {name} gibt es nicht")
-            if neuname != name and neuname in m.kontaktbedingungen:
+            if neuname in m.kontaktbedingungen and (neu or neuname != name):
                 return self.error(f"Kontaktbedingung „{neuname}“ gibt es schon")
             flaechen = self._namensliste(w.get("flaechennamen"))
             fehlt = [x for x in flaechen if x not in m.flaechen]
             if fehlt:
                 return self.error("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
-            koerper = self._namensliste(w.get("koerpernamen"))
-            fehlt = [x for x in koerper if x not in m.koerper]
+            a_wert = str(w.get("koerper_a", "") or "").strip()
+            koerper_a = self._namensliste(a_wert) if a_wert and a_wert != "–" else []
+            fehlt = [x for x in koerper_a if x not in m.koerper]
             if fehlt:
                 return self.error("Unbekannte Volumen: " + ", ".join(fehlt[:5]))
+            b_wert = str(w.get("koerper_b", "") or "").strip()
+            koerper_b = [b_wert] if b_wert and b_wert != self.KONTAKT_ALLE else []
+            if koerper_b and koerper_b[0] not in m.koerper:
+                return self.error(f"Unbekanntes Volumen: {koerper_b[0]}")
+            if koerper_a and koerper_b and set(koerper_a) & set(koerper_b):
+                return self.error("Körper A und Körper B müssen verschieden sein")
+            # Eine neue Bedingung braucht mindestens eine Flaeche; eine eingelesene
+            # darf auch nur ueber Koerper und Gegenflaechen der Quelldatei stehen
+            if neu and not flaechen and not (koerper_a and kb is not None and kb.gegenflaechen):
+                return self.error("Mindestens eine Kontaktfläche angeben - „Kontaktflächen anklicken“ "
+                                  "wählt sie in der Ansicht")
+            fremd = [f for f in flaechen if koerper_a and f not in
+                     {x for k in koerper_a for x in (m.koerper[k].flaechen or [])}]
+            if fremd:
+                return self.error("Diese Flächen gehören nicht zu Körper A: " + ", ".join(fremd[:5]))
+            zug, sx, sy, dreh, mu = self._kontakt_richtungen(w)
+            if mu < 0:
+                return self.error("Der Reibbeiwert kann nicht negativ sein")
+            c = float(zahl("c", 0.0) or 0.0) * 1e3
+            if "feder" in (zug, sx, sy) and c <= 0:
+                return self.error("Für „Feder“ eine Federsteifigkeit größer als null eingeben")
+
+            def wirkung(art_):
+                if art_ == "starr":
+                    return DofBehaviour("rigid")
+                if art_ == "feder":
+                    return DofBehaviour("spring", c)
+                return DofBehaviour("free")
+
+            beh = {2: DofBehaviour("free", failure="zug") if zug == "abheben" else wirkung(zug),
+                   0: wirkung(sx), 1: wirkung(sy)}
+            for d in (0, 1):
+                if beh[d].typ == "free" and mu > 0:
+                    beh[d].mu = mu
+            for d in (3, 4, 5):
+                beh[d] = DofBehaviour("rigid" if dreh == "starr" else "free")
             self.merken(f"Kontaktbedingung {neuname}")
-            kb.flaechennamen, kb.koerpernamen = flaechen, koerper
+            if kb is None:
+                kb = m.add_kontaktbedingung(neuname)
+                name = neuname
+            else:
+                self._kontakt_zuruecknehmen(kb)
+            kb.flaechennamen, kb.koerpernamen = flaechen, koerper_a
+            kb.gegenkoerper = koerper_b
+            kb.behaviour = beh
+            standard = str(w.get("standard", "") or "")
+            kb.standard = (standard if standard in STANDARDKONTAKTE
+                           and self._kontakt_ist_standard(standard, zug, sx, sy, dreh, mu) else "")
+            kb.suchweite = max(float(zahl("suchweite", 0.0) or 0.0), 0.0) / 1e3
+            kb.spalt_schliessen = str(w.get("spalt", "")) == self.KONTAKT_SPALT[1]
             kb.beschreibung = str(w.get("beschreibung", "") or "").strip()
             if neuname != name:
                 del m.kontaktbedingungen[name]
                 kb.name = neuname
                 m.kontaktbedingungen[neuname] = kb
             name = neuname
+            self._kontakt_ausfuehren_wenn_netz(kb)
         elif art in self.LAGER_ARTEN:
             from ..model import DofBehaviour
             attr, titel_art, _ek, _em = self.LAGER_ARTEN[art]
@@ -4608,6 +4843,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.add_line_support()
         if zweigart == "flaechenlager":
             return self.add_surface_support()
+        if zweigart == "kontaktbedingungen":
+            return self._objektmaske("kontaktbedingung", m.naechster_name("KB", m.kontaktbedingungen),
+                                     neu=True)
         if zweigart == "stellungen":
             return self._objektmaske("stellung", m.naechster_name("St", [s.name for s in m.stellungen]),
                                      neu=True)
@@ -4964,6 +5202,7 @@ class MainWindow(QtWidgets.QMainWindow):
                "geokoerper_einzeln": f"Volumen {name} samt seinen Elementen",
                "querschnitt": f"Querschnitt {name}",
                "gelenk": f"Gelenk {name}", "stellung": f"Stellung {name}",
+               "kontaktbedingung": f"Kontaktbedingung {name}",
                "lager_einzeln": f"Knotenlager {int(name) + 1 if name.isdigit() else name}",
                "linienlager_einzeln": f"Linienlager {int(name) + 1 if name.isdigit() else name}",
                "flaechenlager_einzeln": f"Flächenlager {int(name) + 1 if name.isdigit() else name}",
@@ -5061,6 +5300,12 @@ class MainWindow(QtWidgets.QMainWindow):
                                        if not (ll.kommentar or "").startswith(f"Wind {name}:")]
                 del m.winde[name]
                 m.lasten_verteilen()
+        elif art == "kontaktbedingung":
+            if name not in m.kontaktbedingungen:
+                grund = f"Kontaktbedingung {name} gibt es nicht"
+            else:
+                kb = m.kontaktbedingungen.pop(name)
+                self._kontakt_zuruecknehmen(kb)
         elif art == "bemassung":
             if name not in m.bemassungen:
                 grund = f"Bemaßung {name} gibt es nicht"
@@ -6375,7 +6620,9 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Objekte", "", "ganz"), Spalte("Wirkung je FHG"),
             Spalte("Trennung ausgeführt", "", "text",
                    hinweis="Solange „nein“, rechnet das Modell an der Fuge "
-                           "durchverbunden - also zu steif")],
+                           "durchverbunden - also zu steif"),
+            Spalte("Standard"), Spalte("Körper A"), Spalte("Körper B"),
+            Spalte("Suchradius [mm]", "", "text")],
             "Kontaktbedingungen", self)
         self.tbl_freigabe.zeile_gewaehlt.connect(
             lambda w: self.info(f"Kontaktbedingung {w}"))
@@ -6550,7 +6797,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     for i, x in enumerate(getattr(m, "bericht", None) or [])])
         self._fill(self.tbl_freigabe,
                    [[name, x.typ, x.ort, len(x.flaechen), len(x.volumen), x.ziele,
-                     x.describe(), x.art_der_trennung(m)]
+                     x.describe(), x.art_der_trennung(m), x.standard or "benutzerdefiniert",
+                     ", ".join(x.koerpernamen or []) or "–",
+                     ", ".join(getattr(x, "gegenkoerper", None) or []) or "alle anderen",
+                     f"{x.suchweite * 1e3:g}" if getattr(x, "suchweite", 0.0) else "automatisch"]
                     for name, x in (getattr(m, "kontaktbedingungen", {}) or {}).items()])
 
     #: Richtungsnamen der Knotenlast

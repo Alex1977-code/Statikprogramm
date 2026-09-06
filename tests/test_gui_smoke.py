@@ -3975,6 +3975,64 @@ def main():
         check("Kontaktbedingung: Beschreibung übernommen, Warnzeichen vor dem Namen im Baum",
               w.model.kontaktbedingungen["Fuge"].beschreibung == "Lagerfuge" and not fehler_
               and any(t.startswith("⚠ Fuge") for t in zweige(w.baum)), str(fehler_[:1]))
+        from tests.test_fugen import zwei_bloecke
+        # ---- Kontaktmaske: zwei Koerper, Kontaktflaechen, Standardkontakte (#129) ----
+        w.new_model()
+        fehler_.clear()
+        w.model = zwei_bloecke("eigene", 0.5, 0.15)
+        w.refresh_all(); app.processEvents()
+        m_ = w.model
+        check("Modellbaum bietet „+ Kontaktbedingung anlegen“ an, sobald es Volumen gibt",
+              "+ Kontaktbedingung anlegen" in zweige(w.baum) and "Flächenkontakte" in zweige(w.baum), str([z for z in zweige(w.baum) if "ontakt" in z]))
+        w._baum_geklickt("kontaktbedingung_neu", ""); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Neue Kontaktbedingung: Maske mit Körper A/B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Spalt",
+              mk is not None and mk.titel.startswith("Neu: Kontaktbedingung KB")
+              and all(k in mk.werte() for k in ("standard", "koerper_a", "koerper_b", "flaechennamen", "zug", "schub_x", "schub_y", "mu", "dreh", "suchweite", "spalt"))
+              and "Kontaktflächen anklicken" in mk.zusatzknoepfe, str(mk.werte() if mk else None)[:200])
+        check("Vorgabe: reibungsbehaftet, μ = 0,2, abheben möglich",
+              mk.werte()["standard"] == "Reibungsbehaftet" and abs(float(mk.werte()["mu"]) - 0.2) < 1e-9 and mk.werte()["zug"].startswith("abheben"), str(mk.werte()["standard"]))
+        mk.setzen("standard", "Verbund"); app.processEvents()
+        check("Standardkontakt „Verbund“ setzt Zug übertragen, Schub starr, Verdrehungen starr, μ = 0",
+              mk.werte()["zug"].startswith("wird übertragen") and mk.werte()["schub_x"].startswith("starr") and mk.werte()["schub_y"].startswith("starr")
+              and mk.werte()["dreh"] == "starr" and float(mk.werte()["mu"]) == 0, str(mk.werte())[:200])
+        mk.setzen("schub_x", w.KONTAKT_SCHUB["frei"]); app.processEvents()
+        check("Handänderung einer Richtung macht daraus „Benutzerdefiniert“", mk.werte()["standard"] == "Benutzerdefiniert", mk.werte()["standard"])
+        mk.setzen("standard", "Reibungsbehaftet"); app.processEvents()
+        mk.setzen("mu", 0.3)
+        mk.setzen("koerper_a", "Oben"); mk.setzen("koerper_b", "Unten"); mk.setzen("flaechennamen", "")
+        mk.anwenden(); app.processEvents()
+        check("ohne Kontaktfläche: Hinweis statt Anlage", bool(fehler_) and "Kontaktfläche" in fehler_[-1] and not m_.kontaktbedingungen, str(fehler_[-1:]))
+        mk = w.maskenrand.maske
+        mk.setzen("flaechennamen", "FugeU"); mk.anwenden(); app.processEvents()
+        check("Fläche eines anderen Körpers: Hinweis", "gehören nicht zu Körper A" in fehler_[-1], str(fehler_[-1:]))
+        mk = w.maskenrand.maske
+        mk.setzen("flaechennamen", "FugeO")
+        n_f = len(fehler_)
+        mk.anwenden(); app.processEvents()
+        kb = m_.kontaktbedingungen.get("KB1")
+        check("OK legt die Kontaktbedingung an: Körper A Oben, B Unten, Fläche FugeO, reibungsbehaftet μ = 0,3",
+              kb is not None and kb.koerpernamen == ["Oben"] and kb.gegenkoerper == ["Unten"] and kb.flaechennamen == ["FugeO"]
+              and kb.standard == "Reibungsbehaftet" and abs(kb.reibbeiwert() - 0.3) < 1e-9 and kb.dof_behaviour(2).failure == "zug" and len(fehler_) == n_f,
+              str((fehler_[n_f:], kb.describe() if kb else None)))
+        check("… und führt sie am vorhandenen Netz gleich aus: ein Kontaktpaar mit Reibung",
+              kb is not None and kb.ausgefuehrt and len(m_.contact_pairs) == 1 and abs(m_.contact_pairs[0].mu - 0.3) < 1e-9 and not m_.contact_pairs[0].zug,
+              f"{len(m_.contact_pairs)} Paare")
+        mk = w.maskenrand.maske
+        check("Rechts steht danach die Maske der neuen Kontaktbedingung mit „getrennt“",
+              mk is not None and mk.titel == "Kontaktbedingung KB1" and "getrennt" in mk.werte()["ausgefuehrt"] and w.rechts_zeigt() == "maske",
+              str(mk.werte()["ausgefuehrt"] if mk else None))
+        z = w.tbl_freigabe.modell.zeilen
+        check("Tabelle nennt Standard, Körper A und B", len(z) == 1 and z[0][8] == "Reibungsbehaftet" and z[0][9] == "Oben" and z[0][10] == "Unten", str(z[0] if z else z))
+        mk.setzen("standard", "Verbund"); app.processEvents(); mk.anwenden(); app.processEvents()
+        kb = m_.kontaktbedingungen.get("KB1")
+        check("Übernehmen mit „Verbund“ ersetzt das Kontaktpaar: Zug und Haften",
+              kb is not None and kb.standard == "Verbund" and len(m_.contact_pairs) == 1 and m_.contact_pairs[0].zug and m_.contact_pairs[0].haften, str(fehler_[n_f:]))
+        fr = Model.from_dict(m_.to_dict()).kontaktbedingungen["KB1"]
+        check("Standard, Gegenkörper, Suchradius und Spalt überleben Speichern und Laden",
+              fr.standard == "Verbund" and fr.gegenkoerper == ["Unten"] and fr.suchweite == 0.0 and fr.spalt_schliessen is False, fr.describe())
+        w._baum_loeschen("kontaktbedingung", "KB1"); app.processEvents()
+        check("Löschen im Modellbaum nimmt Bedingung und Kontaktpaar", "KB1" not in m_.kontaktbedingungen and not m_.contact_pairs, str(fehler_[n_f:]))
         w.error = alt_error
         del w._bestaetigen
         w.new_model()

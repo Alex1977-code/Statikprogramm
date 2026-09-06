@@ -1747,6 +1747,43 @@ class Kontaktbedingung:
     aus: bool = False                    # in der Quelldatei deaktiviert
     ausgefuehrt: bool = False            # Trennung im Netz umgesetzt?
     beschreibung: str = ""
+    #: Namen der Koerper der **Gegenseite** (Zielkoerper). Leer: die Gegenseite
+    #: wird unter allen anderen Bauteilen geometrisch gesucht.
+    gegenkoerper: list[str] = field(default_factory=list)
+    #: Suchradius [m] fuer die Gegenseite (ANSYS: Pinball). 0 = automatisch,
+    #: die groessere mittlere Kantenlaenge beider Seiten.
+    suchweite: float = 0.0
+    #: Anfangsspalt schliessen (ANSYS: „auf Beruehrung setzen“): jeder Knoten
+    #: gilt in seiner Lage als anliegend - Spiel und Facettenfehler zwischen
+    #: unterschiedlich feinen Netzen verschwinden.
+    spalt_schliessen: bool = False
+    #: Der Standardkontakt, aus dem die Wirkung kam ("" = benutzerdefiniert).
+    standard: str = ""
+
+    def standard_anwenden(self, name: str, mu: float = None) -> "Kontaktbedingung":
+        """Die Wirkung je Freiheitsgrad aus einem Standardkontakt setzen.
+
+        Die Namen sind die von ANSYS; was sie bedeuten, steht in
+        :data:`STANDARDKONTAKTE`. Danach laesst sich jede Richtung von Hand
+        aendern - der Standard ist ein Ausgangspunkt, kein Zwang.
+        """
+        s = STANDARDKONTAKTE[name]
+        mu = float(s["mu"] if mu is None else mu)
+        b: dict = {}
+        b[2] = DofBehaviour("rigid") if s["zug"] == "starr" else DofBehaviour("free", failure="zug")
+        for d in (0, 1):
+            b[d] = DofBehaviour("rigid" if s["schub"] == "starr" else "free")
+            if mu > 0 and s["schub"] != "starr":
+                b[d].mu = mu
+        for d in (3, 4, 5):
+            b[d] = DofBehaviour("rigid" if s["dreh"] == "starr" else "free")
+        self.behaviour = b
+        self.standard = name
+        return self
+
+    def reibbeiwert(self) -> float:
+        """Der Reibbeiwert der Fuge (der groesste an den Freiheitsgraden)."""
+        return max([0.0] + [float(self.dof_behaviour(d).mu or 0.0) for d in range(3)])
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -1797,7 +1834,7 @@ class Kontaktbedingung:
         return not self.ausgefuehrt and not self.aus and not self.wartet_auf_netz(model)
 
     def bezug(self, model=None) -> str:
-        teile = [f"{len(self.flaechen)} Flächen"]
+        teile = ([self.standard] if self.standard else []) + [f"{len(self.flaechen)} Flächen"]
         if self.volumen:
             teile.append(f"{len(self.volumen)} Volumen")
         if self.ziele:
@@ -2004,6 +2041,13 @@ class ContactPair:
     gap: float = 0.0
     search_radius: Optional[float] = None
     flip_normal: bool = False
+    #: Zug uebertragen (Verbund, ohne Trennung): die Fuge oeffnet nicht
+    zug: bool = False
+    #: Haften: in der Fugenebene kein Gleiten, unabhaengig vom Reibbeiwert
+    haften: bool = False
+    #: Anfangsspalt schliessen: jeder Slave-Knoten gilt in seiner Lage als
+    #: anliegend (ANSYS „auf Beruehrung setzen“)
+    anliegend: bool = False
 
 
 # --------------------------------------------------------------------------
@@ -2011,6 +2055,28 @@ class ContactPair:
 # --------------------------------------------------------------------------
 #: Alter Name der Kontaktbedingung (RFEM: Flaechenfreigabe)
 Flaechenfreigabe = Kontaktbedingung
+
+#: Vorgefertigte Kontakte - benannt wie in ANSYS, in der Wirkung je Richtung:
+#: zug   "starr"   = Zug wird uebertragen (die Fuge oeffnet nicht)
+#:       "abheben" = frei mit Ausfall bei Zug (die Fuge kann aufgehen)
+#: schub "starr"   = in der Fugenebene haftend, "frei" = gleitend (mit mu Reibung)
+#: dreh  Verdrehungen (nur bei Schalen wirksam)
+#: Druck wird immer uebertragen - das ist Kontakt.
+STANDARDKONTAKTE = {
+    "Verbund":          {"zug": "starr",   "schub": "starr", "dreh": "starr", "mu": 0.0},
+    "Ohne Trennung":    {"zug": "starr",   "schub": "frei",  "dreh": "frei",  "mu": 0.0},
+    "Reibungsfrei":     {"zug": "abheben", "schub": "frei",  "dreh": "frei",  "mu": 0.0},
+    "Reibungsbehaftet": {"zug": "abheben", "schub": "frei",  "dreh": "frei",  "mu": 0.2},
+    "Rau":              {"zug": "abheben", "schub": "starr", "dreh": "frei",  "mu": 0.0},
+}
+#: Was jeder Standardkontakt bedeutet - fuer Maske und Handbuch
+STANDARDKONTAKT_TEXT = {
+    "Verbund": "wie verschweißt: kein Abheben, kein Gleiten (Zug, Druck und Schub werden übertragen)",
+    "Ohne Trennung": "kein Abheben, aber reibungsfreies Gleiten in der Fuge",
+    "Reibungsfrei": "kann abheben und reibungsfrei gleiten - nur Druck wird übertragen",
+    "Reibungsbehaftet": "kann abheben; in der Fuge Coulomb-Reibung mit dem Reibbeiwert μ",
+    "Rau": "kann abheben, gleitet aber nicht (unendliche Reibung)",
+}
 
 
 #: Die Situation, in der alles wirkt und nichts bewegt ist

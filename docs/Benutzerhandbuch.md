@@ -172,7 +172,7 @@ bedienen sind, steht im nächsten Abschnitt.
 | Gelenke | über die Maske (Doppelklick) |
 | Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts die Maske mit Name, Nummer, Einwirkung, Beschreibung, Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerten und „aktiver Lastfall“ |
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ, Beschreibung, Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
-| Kontaktbedingungen | nur Anzeige — die Flächenkontakte kommen aus RFEM; ausgeführt werden sie beim Vernetzen |
+| Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** in der Ansicht gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
@@ -201,6 +201,54 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 („ja (68 Spaltelemente)", „ja (Kontaktpaar)"); steht dort „nein", rechnet das
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
+
+#### Kontaktbedingungen anlegen und einstellen
+
+Ein Kontakt wird **wie in ANSYS** angelegt: zwei Körper, mindestens eine
+Fläche, dann die Wirkung an dieser Fläche. Der Weg: im Modellbaum unter
+*Kontaktbedingungen → Flächenkontakte* auf **„+ Kontaktbedingung anlegen“**
+(oder *Lager / Kontakt → Kontaktbedingung…*, oder Rechtsklick → Neu). Rechts
+erscheint die Maske:
+
+| Feld | Bedeutung |
+|---|---|
+| Körper A (Kontaktseite) | der Körper, dessen Flächen die Kontaktseite bilden - er wird an ihnen gelöst |
+| Körper B (Gegenseite) | der Körper, gegen den der Kontakt wirkt; „(alle anderen Körper)“ sucht die Gegenseite unter allen Bauteilen |
+| Kontaktflächen | mindestens eine Fläche von Körper A - getippt oder mit **„Kontaktflächen anklicken“** in der Ansicht gewählt (jeder Klick nimmt dazu oder heraus) |
+| Standardkontakt | setzt die Richtungen darunter mit einem Griff (Tabelle unten); danach lässt sich jede Richtung von Hand ändern, der Standard wird dann „Benutzerdefiniert“ |
+| Druck | wird immer übertragen - das ist Kontakt |
+| Zug | *abheben möglich* (die Fuge öffnet unter Zug), *wird übertragen* (Verbund, kein Abheben) oder *Feder* |
+| Schub x, Schub y | in der Fugenebene *frei (gleiten)* - mit dem Reibbeiwert als Coulomb-Reibung -, *starr (haften)* oder *Feder* |
+| Reibbeiwert μ | Coulomb-Reibung in der Fugenebene; 0 = reibungsfrei |
+| Verdrehungen | φx, φy, φz starr oder frei - nur bei Schalen wirksam, Volumen haben keine Verdrehungen |
+| Feder c | Steifigkeit [kN/m je m²] für Richtungen mit „Feder“ |
+| Suchradius | wie weit die Gegenseite entfernt liegen darf (ANSYS: „Pinball“). 0 = automatisch: die größere mittlere Kantenlänge beider Netze. Damit findet eine fein vernetzte Achse (2 mm) ihre grob vernetzte Bohrung (15 mm) auch mit Spiel; was weiter weg liegt, gehört nicht zur Fuge |
+| Anfangsspalt | *wie modelliert*: ein Spalt bleibt offen, bis die Last ihn schließt; *auf Berührung setzen*: jeder Knoten gilt in seiner Lage als anliegend - Spiel und Facettenfehler zwischen verschieden feinen Netzen verschwinden (ANSYS: „adjust to touch“) |
+
+Die **Standardkontakte** heißen wie in ANSYS:
+
+| Standard | Zug | Schub | Verdrehungen | Reibung |
+|---|---|---|---|---|
+| Verbund | wird übertragen | starr (haften) | starr | - |
+| Ohne Trennung | wird übertragen | frei (gleiten) | frei | 0 |
+| Reibungsfrei | abheben möglich | frei | frei | 0 |
+| Reibungsbehaftet | abheben möglich | frei | frei | μ (Vorgabe 0,2) |
+| Rau | abheben möglich | starr (haften) | frei | - |
+
+Die Flächen der beiden Körper müssen **weder deckungsgleich noch gleich fein
+vernetzt** sein: das Kontaktpaar verbindet jeden Knoten der Kontaktseite mit
+der nächsten Facette der Gegenseite im Suchradius (Knoten gegen Fläche). Steht
+schon ein Netz, wird die Fuge mit „OK“ bzw. „Übernehmen“ sofort getrennt und
+das Protokoll sagt, wie viel der Kontaktseite eine Gegenseite gefunden hat
+(„599 von 3430 cm²“, Spalt im Mittel und größter) - die übrige Kontaktseite
+liegt weiter als der Suchradius von jedem anderen Bauteil entfernt. Ohne Netz
+geschieht es beim Vernetzen. Ändert man eine Bedingung später, wird ihr
+Kontaktpaar ersetzt; Löschen (Rechtsklick oder Entf) nimmt es mit.
+
+Aus RFEM eingelesene Flächenfreigaben stehen in derselben Maske: Körper A ist
+der gelöste Körper, die Kontaktflächen sind die freigegebenen Flächen, die
+Gegenflächen der Quelldatei stehen zur Information darunter. Auch sie lassen
+sich auf einen Standardkontakt umstellen oder Richtung für Richtung ändern.
 
 In der Tabelle „Knoten“ wird ein Knoten nur gelöscht, wenn **kein** Element
 mehr an ihm hängt — sonst sagt das Programm, welches Element im Weg ist. Der

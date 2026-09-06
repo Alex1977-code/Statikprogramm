@@ -436,7 +436,31 @@ ihrer gemeinsamen **Randlinien**. Daraus folgen zwei Fälle:
 | Netze an der Fuge | Woran man es erkennt | Umsetzung |
 |---|---|---|
 | passen Knoten für Knoten | **jeder** Fugenknoten gehört beiden Bauteilen | Knoten verdoppeln, je Paar ein Spaltelement (und Kopplungen für die Fugenebene) |
-| passen nicht | nur der gemeinsame Rand gehört beiden | den Rand trennen, die Fläche über ein **Kontaktpaar** (Knoten–Fläche, Abschnitt 4) |
+| passen nicht | nur der gemeinsame Rand gehört beiden (oder gar kein Knoten) | den Rand trennen, die Fläche über ein **Kontaktpaar** (Knoten–Fläche, Abschnitt 4) |
+
+**Die Gegenseite des Kontaktpaars** wird nicht über die Liste der Flächen
+gesucht, an denen die Freigabe hängt (die ist in RFEM-Dateien unvollständig),
+sondern über die Geometrie - wie in ANSYS über einen **Suchradius** (Pinball):
+eine Randfacette eines anderen Bauteils gehört zur Fuge, wenn ihre Normale der
+Kontaktfacette entgegen zeigt (n·n′ < −0,7) und der **nächste Punkt auf ihr**
+höchstens den Suchradius vom Schwerpunkt der Kontaktfacette entfernt liegt.
+Maßgebend ist der nächste Punkt, nicht der Schwerpunkt der Gegenfacette: nur
+so findet ein 2-mm-Netz eine 15-mm-Gegenseite, ein Zylinder seine Bohrung mit
+Spiel, und deckungsgleich müssen die Flächen nicht sein. Der Suchradius ist
+vorgebbar, sonst die größere mittlere Kantenlänge beider Seiten. Alle Knoten
+der Kontaktfacetten mit Gegenseite werden Slave, die gefundenen Gegenfacetten
+Master; der Löser ordnet dann jedem Slave-Knoten die nächste Master-Facette
+im doppelten Suchradius zu (nächster Punkt auf dem Dreieck, vektorisiert über
+einen KD-Baum). Der Abstand wird zum **Anfangsspalt** g₀ der Bedingung - oder
+zu null, wenn die Bedingung „auf Berührung gesetzt“ ist (ANSYS: adjust to
+touch) oder ein Verbund ist, der nur die Relativverschiebung misst.
+
+Aus der Wirkung je Freiheitsgrad folgt die Art des Kontaktpaars: Zug *starr*
+(oder Feder) → die Bedingung öffnet nie, auch Zug wird übertragen (Verbund,
+ohne Trennung); Schub *starr* → **haftend**, die Fugenebene ist eine Feder ohne
+Gleiten (Rau, Verbund); sonst Kontakt mit Abheben und Coulomb-Reibung μ.
+Verdrehungen wirken nur bei Schalen; zwischen Volumen bleiben sie ohne Wirkung
+(das Protokoll sagt es).
 
 Die Verbindung je Freiheitsgrad folgt der Freigabe: *starr* → Kopplung mit
 Straffeder, *Feder c* [N/m je m²] → Kopplung mit c · A (A = Einflussfläche des

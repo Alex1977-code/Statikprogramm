@@ -793,7 +793,8 @@ class Report:
                 rows = [["Kontaktbedingung", "Bezug", "Wirkung je Freiheitsgrad",
                          "Trennung ausgeführt"]]
                 for name, kb in kbs.items():
-                    rows.append([name, kb.bezug(m), kb.describe(),
+                    rows.append([name, kb.bezug(m),
+                                 (kb.standard + ": " if kb.standard else "") + kb.describe(),
                                  kb.art_der_trennung(m)])
                 rows, note = self._truncate(rows)
                 b.append(("table", rows,

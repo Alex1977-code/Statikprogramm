@@ -388,12 +388,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "bemassungen": "Linearmaß", "lastfaelle": "Lastfall",
                  "kombinationen": "Kombination", "werkstoffe": "Werkstoff", "dicken": "Dicke",
                  "gelenke": "Gelenk", "stellungen": "Stellung",
+                 "kontaktbedingungen": "Kontaktbedingung",
                  "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind",
                     "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke",
-                    "gelenk", "stellung", "berichtseintrag",
+                    "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
                     "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
     ELTERNART = {"knoten": "knoten", "linie": "linien", "stabelement": "stabelemente",
@@ -405,6 +406,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
                  "werkstoff": "werkstoffe", "dicke": "dicken",
                  "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht",
+                 "kontaktbedingung": "kontaktbedingungen",
                  "lager_einzeln": "lager", "linienlager_einzeln": "linienlager",
                  "flaechenlager_einzeln": "flaechenlager"}
 
@@ -662,7 +664,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
         flaechenkontakte = getattr(model, "kontaktbedingungen", {}) or {}
         n_kontakt = (len(flaechenkontakte) + len(model.contact_supports)
                      + len(model.gap_elements) + len(model.contact_pairs))
-        if n_kontakt:
+        # Der Zweig steht auch ohne Kontakte, sobald es Volumen gibt: dort legt
+        # man einen an („+ Kontaktbedingung anlegen“).
+        if n_kontakt or model.koerper:
             # Ein Warnzeichen nur, wo es einen Mangel gibt: Netz da, Fuge nicht
             # getrennt. Vor dem Vernetzen ist „noch nicht getrennt" der Normalfall.
             offen_noch = sum(1 for x in flaechenkontakte.values() if x.zu_steif(model))
@@ -672,7 +676,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                              hinweis="Kontaktfugen zwischen Flächen und Körpern "
                                      "(in RFEM „Flächenfreigaben“) sowie die "
                                      "knotenweisen Bedingungen.")
-            if flaechenkontakte:
+            if flaechenkontakte or model.koerper:
                 fk = self._zweig(kt, "Flächenkontakte", len(flaechenkontakte),
                                  "kontaktbedingungen",
                                  farbe=FARBEN["warn"] if offen_noch else None,
@@ -693,6 +697,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                       "durchverbunden, also zu steif. Netz → „Kontaktfugen ausführen“.")))
                                  for name, x in flaechenkontakte.items()],
                             "kontaktbedingung", "kontaktbedingungen")
+                self._zweig(fk, "+ Kontaktbedingung anlegen", "", "kontaktbedingung_neu",
+                            farbe=FARBEN["akzent"],
+                            hinweis="Kontakt zwischen zwei Körpern: Körper A und B, Kontaktflächen, "
+                                    "Standardkontakt (Verbund, ohne Trennung, reibungsfrei, "
+                                    "reibungsbehaftet, rau) - jede Richtung von Hand änderbar")
             if model.contact_supports:
                 self._zweig(kt, "einseitige Lager", len(model.contact_supports),
                             "kontakt", schluessel="supports")

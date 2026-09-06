@@ -17,6 +17,12 @@ zwei Wuerfeln uebereinander, deren Zugstab-Loesung in einer Zeile steht:
   angeschrieben. Hat jeder Koerper seine **eigene** Flaeche - so legt RFEM ein
   Volumenmodell an -, ist nur der gemeinsame Rand verschweisst: der wird
   getrennt, die Flaeche dazwischen traegt ein Kontaktpaar.
+* **Verschieden feine Netze, Verbund, Spalt** - wie in ANSYS muessen die
+  Flaechen einer Fuge weder deckungsgleich noch gleich fein vernetzt sein:
+  das Kontaktpaar findet seine Gegenseite im Suchradius. Ein Verbund
+  uebertraegt auch Zug, ein geschlossener Spalt (auf Beruehrung gesetzt)
+  traegt sofort. Eine feine Achse in einer groben Bohrung mit Spiel findet
+  die Bohrung nur dort, wo beide sich ueberdecken.
 * **Freie Rechtecklast** - die Last wirkt in einem Fenster. Deckt das Fenster
   die ganze Flaeche, muss die Summe der Auflagerkraefte genau p mal A sein;
   deckt es nichts, darf keine Last entstehen; und jede belastete Elementseite
@@ -67,7 +73,7 @@ class Bauer:
         return f"L{self.i}"
 
 
-def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5) -> Model:
+def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5, h_oben: float = 0.0) -> Model:
     """Zwei Einheitswuerfel uebereinander, vernetzt.
 
     art = "gemeinsam": beide Koerper haben **dieselbe** Trennflaeche - der
@@ -75,6 +81,7 @@ def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5) -> Model:
     art = "eigene":    jeder Koerper hat seine **eigene** Trennflaeche ueber
           denselben Linien - nur der Rand ist gemeinsam (nicht passende
           Netze, so kommt es aus RFEM).
+    h_oben > 0: der obere Wuerfel bekommt eine eigene, andere Kantenlaenge.
     """
     m = Model()
     m.add_material(Material.steel("S235"))
@@ -108,7 +115,7 @@ def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5) -> Model:
     m.netz.ziellaenge = h
     cache = {}
     M3.mesh_koerper_frei(m, k1, log=[], cache=cache)
-    M3.mesh_koerper_frei(m, k2, log=[], cache=cache)
+    M3.mesh_koerper_frei(m, k2, h=float(h_oben or 0.0), log=[], cache=cache)
     return m
 
 
@@ -132,7 +139,7 @@ def _flaechenknoten(m: Model, z: float) -> list:
     return [int(i) for i in np.flatnonzero(im & (np.abs(m.nodes[:, 2] - z) < 1e-9))]
 
 
-def rechnen(m: Model, p: float, federn: float = 0.0):
+def rechnen(m: Model, p: float, federn: float = 0.0, z_oben: float = 2.0):
     """Unten eingespannt, oben die Flaechenlast p [N/m^2].
 
     p ist wie in RFEM und in :class:`FaceLoad` gezaehlt: **positiv drueckt in
@@ -146,7 +153,7 @@ def rechnen(m: Model, p: float, federn: float = 0.0):
     Wuerfel bei geoeffneter Fuge davonfliegen.
     """
     unten = _flaechenknoten(m, 0.0)
-    oben = _flaechenknoten(m, 2.0)
+    oben = _flaechenknoten(m, z_oben)
     for i in unten:
         m.fix(i, [0, 1, 2])
     if federn > 0:
@@ -530,11 +537,167 @@ def test_projizierte_last_bohrung():
           f"|R_quer| = {float(np.linalg.norm(R[1:])):.3e} N")
 
 
+# --------------------------------------------------------------------------
+# 3) Wie in ANSYS: verschieden feine Netze, Verbund, Spalt, Zylinder in Bohrung
+# --------------------------------------------------------------------------
+def test_verschieden_feine_netze():
+    """Oben 0,15 m, unten 0,5 m (die Mindestteilung macht daraus 0,22 m): die
+    Netze passen nirgends zusammen. Das
+    Kontaktpaar muss die ganze Fuge finden - jeden Knoten der feinen Seite -
+    und Druck wie der durchverbundene Stab tragen, Zug gar nicht."""
+    m = zwei_bloecke("eigene", 0.5, 0.15)
+    kb = kontaktbedingung(m, "eigene")
+    log = []
+    b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+    check("die Fuge wird als Kontaktpaar ausgeführt",
+          kb.ausgefuehrt and b["kontaktpaar"] == 1, b["grund"])
+    fugenknoten = {n for _e, nd, _n in fugen._dreiecke_der_fuge(m, [m.flaechen["FugeO"]]) for n in nd}
+    cp = m.contact_pairs[0]
+    check("jeder Knoten der feinen Fugenfläche ist Slave",
+          set(cp.slave_nodes) == fugenknoten, f"{len(cp.slave_nodes)} von {len(fugenknoten)}")
+    check("die ganze Kontaktseite findet ihre Gegenseite, ohne Spalt",
+          abs(b["anteil"] - 1.0) < 1e-9 and b["spalt_max"] < 1e-9,
+          f"Anteil {b['anteil']:.3f}, Spalt {b['spalt_max']:.2e} m")
+    check("die Gegenseite ist die grobe Fläche (Vierecke oder Dreiecke, aber weniger als Slave-Knoten)",
+          0 < len(cp.master_faces) < len(cp.slave_nodes), f"{len(cp.master_faces)} Masterflächen")
+    p = 1.0e6
+    F = p * A_FUGE
+    getrennt = rechnen(m, p)
+    soll = -F * L_STAB / (E_STAHL * A_FUGE)
+    close("Druck: Stauchung wie im durchverbundenen Stab", getrennt["u_oben"], soll,
+          abs(soll) * 0.03, " m")
+    close("… und das Fundament trägt die volle Last", getrennt["R_fundament"], F, abs(F) * 1e-6, " N")
+    m2 = zwei_bloecke("eigene", 0.5, 0.15)
+    fugen.kontaktfuge_ausfuehren(m2, kontaktbedingung(m2, "eigene"), [])
+    zug = rechnen(m2, -p, federn=1.0e11)
+    check("Zug: die Fuge geht auf, das Fundament trägt nichts",
+          abs(zug["R_fundament"]) <= 1e-6 * F, f"R = {zug['R_fundament']:.3e} N (Sollwert 0)")
+
+
+def test_verbund():
+    """Standardkontakt „Verbund“: Zug wird uebertragen - unter Zug dehnt sich
+    der Stab wie durchverbunden, ohne Federn, die ihn halten muessten."""
+    m = zwei_bloecke("eigene", 0.5, 0.15)
+    kb = m.add_kontaktbedingung("Fuge", flaechennamen=["FugeO"], gegenflaechen=["FugeU"],
+                                koerpernamen=["Oben"])
+    kb.standard_anwenden("Verbund")
+    b = fugen.kontaktfuge_ausfuehren(m, kb, [])
+    cp = m.contact_pairs[0]
+    check("Verbund: Zug und Haften stehen am Kontaktpaar",
+          kb.ausgefuehrt and cp.zug and cp.haften and cp.mu == 0, b["grund"])
+    p = -1.0e6
+    F = p * A_FUGE
+    r = rechnen(m, p)
+    soll = -F * L_STAB / (E_STAHL * A_FUGE)
+    close("Zug: Dehnung wie im durchverbundenen Stab", r["u_oben"], soll, abs(soll) * 0.03, " m")
+    close("… und das Fundament trägt die volle Zugkraft", r["R_fundament"], F, abs(F) * 1e-6, " N")
+    for name, zug, haften, mu in (("Ohne Trennung", True, False, 0.0), ("Reibungsfrei", False, False, 0.0),
+                                  ("Reibungsbehaftet", False, False, 0.2), ("Rau", False, True, 0.0)):
+        kb2 = m.add_kontaktbedingung("Probe " + name)
+        kb2.standard_anwenden(name)
+        b_n, b_t = kb2.dof_behaviour(2), kb2.dof_behaviour(0)
+        check(f"Standardkontakt {name}: Wirkung je Richtung",
+              (b_n.typ == "rigid") == zug and (b_t.typ == "rigid") == haften
+              and abs(kb2.reibbeiwert() - mu) < 1e-12 and kb2.standard == name,
+              kb2.describe())
+
+
+def test_spalt_schliessen():
+    """Der obere Wuerfel schwebt 1 mm ueber dem unteren. Auf Beruehrung gesetzt
+    traegt die Fuge sofort; sonst bleibt der Spalt offen und der Wuerfel haengt
+    in seinen Federn - das Fundament traegt nichts."""
+    p = 1.0e6
+    F = p * A_FUGE
+    soll = -F * L_STAB / (E_STAHL * A_FUGE)
+    for schliessen in (True, False):
+        m = zwei_bloecke("eigene", 0.5, 0.15)
+        kb = kontaktbedingung(m, "eigene")
+        kb.spalt_schliessen = schliessen
+        b = fugen.kontaktfuge_ausfuehren(m, kb, [])
+        assert b["kontaktpaar"] == 1, b["grund"]
+        oben = sorted({int(x) for e in m.koerper["Oben"].elemente for x in m.elements[e].nodes})
+        m.nodes[oben, 2] += 0.001
+        # Federn nur, wo der Wuerfel sonst davonfliegt: liegt er auf, wuerden
+        # sie einen Teil der Last an der Fuge vorbei tragen
+        r = rechnen(m, p, federn=0.0 if schliessen else 1.0e11, z_oben=2.001)
+        if schliessen:
+            close("Spalt geschlossen: der Stab trägt, als läge er auf", r["u_oben"], soll,
+                  abs(soll) * 0.03, " m")
+            close("… und das Fundament trägt die volle Last", r["R_fundament"], F, abs(F) * 1e-6, " N")
+        else:
+            check("Spalt offen: das Fundament trägt nichts, der Würfel hängt in den Federn",
+                  abs(r["R_fundament"]) <= 1e-6 * F and abs(r["u_oben"] + F / 1.0e11) < 1e-6,
+                  f"R = {r['R_fundament']:.3e} N, u = {r['u_oben']:.3e} m")
+
+
+def test_zylinder_in_bohrung():
+    """Eine fein vernetzte Achse (r = 100 mm, 3-mm-Facetten) in einer grob
+    vernetzten Bohrung (r = 100,5 mm, 15-mm-Facetten) mit 0,5 mm Spiel: die
+    Gegenseite wird nur dort gefunden, wo Achse und Bohrung sich ueberdecken -
+    dort aber vollstaendig, mit dem Spiel als Abstand."""
+    def mantel(m, r, z0, z1, n_phi, dz, nach_aussen):
+        z = np.arange(z0, z1 + 1e-9, dz)
+        phi = np.linspace(0, 2 * np.pi, n_phi, endpoint=False)
+        ids = np.array([[m.add_node(r * np.cos(a), r * np.sin(a), zz) for a in phi] for zz in z])
+        fac = []
+        for i in range(len(z) - 1):
+            for j in range(n_phi):
+                k = (j + 1) % n_phi
+                for nd in ((ids[i, j], ids[i, k], ids[i + 1, k]), (ids[i, j], ids[i + 1, k], ids[i + 1, j])):
+                    c = m.nodes[list(nd)].mean(axis=0)
+                    nrm = np.array([c[0], c[1], 0.0])
+                    nrm /= np.linalg.norm(nrm)
+                    fac.append((0, [int(x) for x in nd], nrm if nach_aussen else -nrm))
+        return fac
+    m = Model()
+    achse = mantel(m, 0.100, 0.0, 0.3, 200, 0.003, True)
+    bohrung = mantel(m, 0.1005, 0.1, 0.2, 42, 0.1 / 7, False)
+    weite = fugen.suchweite(m, achse, bohrung)
+    check("Suchradius ist die größere Kantenlänge (die der Bohrung, mit Diagonalen)",
+          0.012 < weite < 0.022, f"{weite * 1e3:.1f} mm")
+    paare, abstand = fugen.gegenseite_finden(m, achse, bohrung, weite)
+    zc = np.array([m.nodes[nd].mean(axis=0)[2] for _e, nd, _n in achse])
+    innen = (zc > 0.1 + 1e-6) & (zc < 0.2 - 1e-6)
+    aussen = (zc < 0.1 - weite) | (zc > 0.2 + weite)
+    gefunden = np.zeros(len(achse), bool)
+    gefunden[list(paare)] = True
+    check("jede Achsenfacette im Bereich der Bohrung findet die Bohrung",
+          gefunden[innen].all(), f"{gefunden[innen].sum()} von {innen.sum()}")
+    check("außerhalb des Suchradius findet keine etwas",
+          not gefunden[aussen].any(), f"{gefunden[aussen].sum()} von {aussen.sum()}")
+    d = abstand[innen]
+    # Spiel 0,5 mm; die Sehnen der 42-eckigen Bohrung liegen bis 0,28 mm weiter innen
+    check("im Überdeckungsbereich ist der Abstand das Spiel (0,5 mm, minus Sehnenfehler der Bohrung)",
+          0.0002 < np.median(d) < 0.0005 and d.max() < 0.0006,
+          f"Median {np.median(d) * 1e3:.2f} mm, max {d.max() * 1e3:.2f} mm")
+    rand = gefunden & ~innen
+    check("am Rand der Bohrung wird bis zum Suchradius zugeordnet - mit dem Abstand als Anfangsspalt",
+          rand.any() and abstand[rand].max() <= weite + 1e-12, f"{rand.sum()} Facetten")
+    check("die Gegenfacetten liegen alle in der Bohrung",
+          all(0 <= j < len(bohrung) for j in paare.values()))
+
+
+def test_naechste_punkte():
+    """Der vektorisierte naechste Punkt auf Dreiecken liefert dasselbe wie der
+    einzelne (Ericson) - Eckpunkte, Kanten und Inneres."""
+    from statik3d.contact import closest_point_triangle, naechste_punkte_dreiecke
+    rng = np.random.default_rng(7)
+    A, B, C = (rng.normal(size=(500, 3)) for _ in range(3))
+    p = rng.normal(size=3) * 0.7
+    q, w = naechste_punkte_dreiecke(p, A, B, C)
+    dq = max(np.linalg.norm(closest_point_triangle(p, A[i], B[i], C[i])[0] - q[i]) for i in range(500))
+    rek = np.abs(w[:, :1] * A + w[:, 1:2] * B + w[:, 2:] * C - q).max()
+    check("nächster Punkt: vektorisiert = einzeln", dq < 1e-12 and rek < 1e-12,
+          f"max Abweichung {dq:.1e}, Rekonstruktion {rek:.1e}")
+
+
 def main():
     for t in (test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
               test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,
-              test_lager_werden_mitgenommen, test_freie_rechtecklast,
+              test_lager_werden_mitgenommen, test_verschieden_feine_netze, test_verbund,
+              test_spalt_schliessen, test_zylinder_in_bohrung, test_naechste_punkte,
+              test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung):
         print(f"\n--- {t.__name__} ---")
         try:

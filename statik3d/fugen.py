@@ -47,6 +47,13 @@ Ausgefuehrt wird in vier Schritten:
    Spaltelement; die Reibkraft ist damit an die wirkliche Kontaktkraft
    gebunden und nicht an eine geratene.
 
+   Passen die Netze nicht Knoten fuer Knoten - jeder Koerper hat seine eigene
+   Flaeche, die Netze sind verschieden fein, die Flaechen sind gekruemmt oder
+   nicht deckungsgleich -, traegt ein **Kontaktpaar** die Fuge (Knoten gegen
+   Flaeche, wie in ANSYS): die Gegenseite wird im Suchradius gefunden
+   (:func:`gegenseite_finden`), Zug „starr“ macht daraus einen Verbund ohne
+   Trennung, Schub „starr“ ein Haften ohne Gleiten.
+
 Zum Vorzeichen des Ausfalls
 ---------------------------
 
@@ -98,31 +105,53 @@ def _dreiecke_der_fuge(model: Model, flaechen: list) -> list:
     Knotenreihenfolge geraten, sondern am gegenueberliegenden Knoten geprueft:
     die Normale zeigt von ihm weg. Ohne diese Probe waere ihr Vorzeichen
     beliebig - und das Spaltelement traege dann Zug statt Druck.
+
+    Gerechnet wird im Block je (Elementtyp, Seite): hunderttausend Randseiten
+    einzeln durch numpy zu schicken kostete zwoelf Sekunden je Durchgang.
     """
     from .assemble import SOLID_FACES
-    out = []
+    ne = len(model.elements)
+    gruppen: dict = {}          # (typ, seite) -> [Element]
+    schalen: dict = {}          # Knotenzahl -> [Element]
     for f in flaechen:
         for e, seite in (f.randseiten or []):
-            e = int(e)
-            if not 0 <= e < len(model.elements):
+            e, seite = int(e), int(seite)
+            if not 0 <= e < ne:
                 continue
             el = model.elements[e]
             seiten = SOLID_FACES.get(el.typ)
-            if not seiten or int(seite) >= len(seiten):
+            if not seiten or seite >= len(seiten):
                 continue
-            nd = [int(el.nodes[j]) for j in seiten[int(seite)]]
-            n = _aussennormale(model, nd, [int(x) for x in el.nodes])
-            if n is not None:
-                out.append((e, nd, n))
+            gruppen.setdefault((el.typ, seite), []).append(e)
         for e in (f.elemente or []):
             e = int(e)
-            if not 0 <= e < len(model.elements):
-                continue
-            nd = [int(x) for x in model.elements[e].nodes]
-            n = _aussennormale(model, nd[:3], nd)
-            if n is not None:
-                out.append((e, nd, n))
+            if 0 <= e < ne and len(model.elements[e].nodes) >= 3:
+                schalen.setdefault(len(model.elements[e].nodes), []).append(e)
+    out = []
+    for (typ, seite), elems in gruppen.items():
+        K = np.array([[int(x) for x in model.elements[e].nodes] for e in elems], dtype=int)
+        vorn = list(SOLID_FACES[typ][seite])
+        rest = [j for j in range(K.shape[1]) if j not in vorn]
+        out.extend(_aussennormalen_block(model, elems, K[:, vorn], K[:, rest] if rest else None))
+    for _k, elems in schalen.items():
+        K = np.array([[int(x) for x in model.elements[e].nodes] for e in elems], dtype=int)
+        out.extend(_aussennormalen_block(model, elems, K, K[:, 3:] if K.shape[1] > 3 else None))
     return out
+
+
+def _aussennormalen_block(model: Model, elems: list, vorn: np.ndarray, rest) -> list:
+    """Die Aussennormalen vieler Seitenflaechen auf einmal (siehe _aussennormale)."""
+    X = model.nodes[vorn[:, :3]]                             # (n, 3, 3)
+    nrm = np.cross(X[:, 1] - X[:, 0], X[:, 2] - X[:, 0])
+    L = np.linalg.norm(nrm, axis=1)
+    gut = L > 0
+    nrm = nrm / np.where(gut, L, 1.0)[:, None]
+    if rest is not None and rest.shape[1]:
+        innen = model.nodes[rest].mean(axis=1) - X.mean(axis=1)
+        drehen = (nrm * innen).sum(1) > 0
+        nrm[drehen] = -nrm[drehen]
+    knoten = vorn.tolist()
+    return [(int(e), knoten[i], nrm[i]) for i, e in enumerate(elems) if gut[i]]
 
 
 def _aussennormale(model: Model, nd: list, alle: list):
@@ -147,43 +176,170 @@ def _gruppe(model: Model, elem: int) -> str:
     return str(getattr(model.elements[elem], "group", "") or "")
 
 
-def _seiten_des_koerpers_auf(model: Model, koerpernamen, gegen: list) -> list:
+def _facetten_felder(model: Model, facetten: list) -> tuple:
+    """Die Facetten als Felder fuer die vektorisierte Suche.
+
+    Rueckgabe (A, B, C, von, zweite, schwer, norm, umkreis): die Ecken der
+    Dreiecke - ein Viereck gibt zwei -, je Dreieck der Index seiner Facette,
+    je Facette der Index ihres zweiten Dreiecks (-1 bei einem Dreieck), sowie
+    Schwerpunkt, Normale und Umkreis (groesster Abstand vom Schwerpunkt zu
+    einer Ecke). Das erste Dreieck der Facette i ist das Dreieck i.
+    """
+    nf = len(facetten)
+    if not nf:
+        leer = np.zeros((0, 3))
+        return leer, leer, leer, np.zeros(0, int), np.zeros(0, int), leer, leer, np.zeros(0)
+    K = np.zeros((nf, 4), dtype=int)
+    vier = np.zeros(nf, dtype=bool)
+    for i, x in enumerate(facetten):
+        nd = x[1]
+        K[i, :len(nd)] = [int(k) for k in nd[:4]]
+        if len(nd) >= 4:
+            vier[i] = True
+        else:
+            K[i, 3] = K[i, 0]                       # Fuellung: ohne Wirkung auf Dreiecke
+    P = model.nodes[K]                                # (nf, 4, 3)
+    schwer = np.where(vier[:, None], P.mean(axis=1), P[:, :3].mean(axis=1))
+    d = np.linalg.norm(P - schwer[:, None, :], axis=2)
+    d[~vier, 3] = 0.0
+    umkreis = d.max(axis=1)
+    norm = np.array([np.asarray(x[2], float) for x in facetten]).reshape(-1, 3)
+    j4 = np.flatnonzero(vier)
+    A = np.concatenate([P[:, 0], P[j4, 0]])
+    B = np.concatenate([P[:, 1], P[j4, 2]])
+    C = np.concatenate([P[:, 2], P[j4, 3]])
+    von = np.concatenate([np.arange(nf), j4])
+    zweite = np.full(nf, -1, dtype=int)
+    zweite[j4] = nf + np.arange(len(j4))
+    return A, B, C, von, zweite, schwer, norm, umkreis
+
+
+def _kantenlaenge(model: Model, facetten: list) -> float:
+    """Mittlere (Median-)Kantenlaenge der Facetten."""
+    if not facetten:
+        return 0.0
+    a = np.array([int(x[1][0]) for x in facetten if len(x[1]) > 1], dtype=int)
+    b = np.array([int(x[1][1]) for x in facetten if len(x[1]) > 1], dtype=int)
+    if not a.size:
+        return 0.0
+    return float(np.median(np.linalg.norm(model.nodes[a] - model.nodes[b], axis=1)))
+
+
+def _facettenflaechen(model: Model, facetten: list) -> np.ndarray:
+    """Die Flaeche jeder Facette (Dreieck oder Viereck) im Block."""
+    if not facetten:
+        return np.zeros(0)
+    A, B, C, von, _zw, _s, _n, _u = _facetten_felder(model, facetten)
+    dreieck = 0.5 * np.linalg.norm(np.cross(B - A, C - A), axis=1)
+    out = np.zeros(len(facetten))
+    np.add.at(out, von, dreieck)
+    return out
+
+
+def _facettenflaeche(model: Model, nd) -> float:
+    return float(_facettenflaechen(model, [(0, list(nd), (0.0, 0.0, 1.0))])[0])
+
+
+def suchweite(model: Model, seite: list, gegen: list, vorgabe: float = 0.0) -> float:
+    """Der Suchradius fuer die Gegenseite (ANSYS: Pinball).
+
+    Vorgegeben aus der Kontaktbedingung, sonst die groessere mittlere
+    Kantenlaenge beider Seiten: so weit darf eine Gegenfacette vom Schwerpunkt
+    einer Facette entfernt liegen und gehoert noch zur Fuge. Das deckt die
+    Facettierung eines groben Netzes auf einer gekruemmten Flaeche und ein
+    Spiel in der Groessenordnung der Elemente - und laesst den Rest, der
+    wirklich nicht anliegt, in Ruhe.
+    """
+    if vorgabe and float(vorgabe) > 0:
+        return float(vorgabe)
+    return max(_kantenlaenge(model, seite), _kantenlaenge(model, gegen), 1e-9)
+
+
+def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> tuple:
+    """Zu jeder Facette der Kontaktseite die naechste Gegenfacette.
+
+    ``seite`` und ``gegen`` sind Listen (Element, Knoten, Aussennormale).
+    Gesucht wird wie in ANSYS ueber einen Suchradius (Pinball): eine
+    Gegenfacette gehoert dazu, wenn ihre Normale der Facette entgegen zeigt
+    und der **naechste Punkt auf ihr** hoechstens ``weite`` vom Schwerpunkt
+    der Facette entfernt liegt - nicht ihr Schwerpunkt. So findet ein feines
+    Netz auch eine grobe Gegenseite, ein Zylinder seine Bohrung mit Spiel, und
+    deckungsgleich muessen die Flaechen nicht sein. Frueher zaehlte der
+    Abstand der Schwerpunkte bis zu einer Kantenlaenge der Kontaktseite: bei
+    2-mm-Netz gegen 15-mm-Netz fand das von einer Achse in ihrer Bohrung
+    sieben Quadratzentimeter.
+
+    Gerechnet wird ohne Schleife ueber die Facetten: die Kandidatenpaare
+    kommen aus zwei KD-Baeumen, alles Weitere sind Felder ueber die Paare.
+
+    Rueckgabe ({Index der Facette: Index der Gegenfacette}, Abstand je Facette,
+    inf ohne Gegenseite).
+    """
+    from scipy.spatial import cKDTree
+    from .contact import naechste_punkte_dreiecke
+    abstand = np.full(len(seite), np.inf)
+    if not seite or not gegen:
+        return {}, abstand
+    A, B, C, von, zweite, cg, ng, rg = _facetten_felder(model, gegen)
+    _a, _b, _c, _v, _z, cs, ns, _r = _facetten_felder(model, seite)
+    # Vorauswahl: nur Gegenfacetten, deren Umkreis den Kasten der Kontaktseite
+    # (um den Suchradius erweitert) beruehrt - von hunderttausend Randseiten
+    # eines grossen Modells bleiben so die in der Naehe
+    lo, hi = cs.min(axis=0) - weite, cs.max(axis=0) + weite
+    kand = np.flatnonzero(np.all(cg + rg[:, None] >= lo, axis=1)
+                          & np.all(cg - rg[:, None] <= hi, axis=1))
+    if not kand.size:
+        return {}, abstand
+    # Je Gegenfacette die Facetten der Kontaktseite, deren Schwerpunkt im
+    # Suchradius plus ihrem Umkreis liegt (Radius je Abfragepunkt)
+    listen = cKDTree(cs).query_ball_point(cg[kand], weite + rg[kand])
+    anzahl = np.array([len(x) for x in listen], dtype=int)
+    if not anzahl.sum():
+        return {}, abstand
+    J = np.repeat(kand, anzahl)
+    I = np.concatenate([np.asarray(x, dtype=int) for x in listen if x])
+    # die Gegenseite zeigt entgegen
+    gut = (ng[J] * ns[I]).sum(1) < -0.7
+    I, J = I[gut], J[gut]
+    if not I.size:
+        return {}, abstand
+    zw = zweite[J]
+    hat2 = zw >= 0
+    T = np.concatenate([J, zw[hat2]])           # Dreiecke der Kandidaten
+    Ip = np.concatenate([I, I[hat2]])
+    q, _w = naechste_punkte_dreiecke(cs[Ip], A[T], B[T], C[T])
+    d = np.linalg.norm(q - cs[Ip], axis=1)
+    reihe = np.lexsort((d, Ip))                 # je Facette der naechste zuerst
+    Ip, d, T = Ip[reihe], d[reihe], T[reihe]
+    erste = np.r_[True, Ip[1:] != Ip[:-1]]
+    Ip, d, T = Ip[erste], d[erste], T[erste]
+    nah = d <= weite
+    paare = {int(i): int(von[t]) for i, t in zip(Ip[nah], T[nah])}
+    abstand[Ip[nah]] = d[nah]
+    return paare, abstand
+
+
+def _seiten_des_koerpers_auf(model: Model, koerpernamen, gegen: list,
+                             weite: float = 0.0, cache: dict = None) -> list:
     """Die Randseiten der genannten Koerper, die auf den Gegenflaechen liegen.
 
     RFEM kann eine Flaechenfreigabe auch **ohne** freigegebene Flaechen
     anlegen: dann steht nur der geloeste Koerper da (``releasedSolids``), und
     die zugeordneten Flaechen sind die Gegenseite - etwa die Grundplatte, die
     an den sechzehn Oberseiten der Unterlegbleche geloest wird. Die Fuge sind
-    dann die Randseiten des Koerpers, die auf diesen Flaechen liegen: Seite
-    und Gegendreieck haben denselben Ort und entgegengesetzte Normalen.
-    Gesucht wird ueber die Geometrie, nicht ueber gemeinsame Knoten - so geht
-    es auch, wenn die Netze beider Seiten nicht zusammenpassen.
+    dann die Randseiten des Koerpers, die auf diesen Flaechen liegen -
+    gefunden mit :func:`gegenseite_finden`, also auch bei Netzen, die nicht
+    zusammenpassen.
     """
-    from scipy.spatial import cKDTree
     if not gegen:
         return []
     geloest = {str(x) for x in (koerpernamen or [])}
-    seiten = [x for x in _randseiten_aller(model) if x[3] in geloest]
+    seiten = [(e, nd, n) for e, nd, n, g in _randseiten_aller(model, cache) if g in geloest]
     if not seiten:
         return []
-    schwer_g = np.array([model.nodes[nd].mean(axis=0) for _e, nd, _n in gegen])
-    norm_g = np.array([n for _e, _nd, n in gegen])
-    laengen = [float(np.linalg.norm(model.nodes[nd[0]] - model.nodes[nd[1]]))
-               for _e, nd, _n in gegen if len(nd) > 1]
-    weite = max(float(np.median(laengen)) if laengen else 0.0, 1e-9)
-    baum = cKDTree(schwer_g)
-    out = []
-    for e, nd, n, _g in seiten:
-        c = model.nodes[nd].mean(axis=0)
-        for j in baum.query_ball_point(c, weite):
-            if float(norm_g[j] @ n) > -0.7:
-                continue                    # die Gegenseite muss entgegen zeigen
-            # und die Seite muss in der Ebene des Gegendreiecks liegen
-            if abs(float((c - schwer_g[j]) @ norm_g[j])) > 0.25 * weite:
-                continue
-            out.append((e, nd, n))
-            break
-    return out
+    w = suchweite(model, seiten, gegen, weite)
+    paare, _ab = gegenseite_finden(model, seiten, gegen, w)
+    return [seiten[i] for i in sorted(paare)]
 
 
 def gruppen_je_knoten(model: Model) -> dict:
@@ -202,7 +358,7 @@ def gruppen_je_knoten(model: Model) -> dict:
 
 
 def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
-                           knotengruppen: dict = None) -> dict:
+                           knotengruppen: dict = None, cache: dict = None) -> dict:
     """Eine einzelne Kontaktbedingung im Netz umsetzen.
 
     Rueckgabe ein Bericht: verdoppelte Knoten, gesetzte Spaltelemente und
@@ -234,7 +390,8 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
         bericht["grund"] = "die Flächen sind noch nicht vernetzt"
         return bericht
     if ueber_gegenseite:
-        dreiecke = _seiten_des_koerpers_auf(model, kb.koerpernamen, dreiecke)
+        dreiecke = _seiten_des_koerpers_auf(model, kb.koerpernamen, dreiecke,
+                                            getattr(kb, "suchweite", 0.0), cache)
         if not dreiecke:
             bericht["grund"] = ("der gelöste Körper liegt im Netz nicht auf den zugeordneten "
                                 "Flächen - Körper und Gegenseite vernetzen")
@@ -303,6 +460,8 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     for k, n in neu.items():
         knotengruppen[n] = set(geloest)
         knotengruppen[k] = knotengruppen.get(k, set()) - geloest
+    if neu:
+        _randseiten_vergessen(cache, geloest)
     _lager_mitnehmen(model, neu, log)
     bericht["knoten"] = len(neu)
 
@@ -312,10 +471,11 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
         # Seiten werden neu gelesen: die verdoppelten Knoten haben neue Nummern.
         if ueber_gegenseite:
             seite_neu = _seiten_des_koerpers_auf(model, geloest,
-                                                 _dreiecke_der_fuge(model, flaechen))
+                                                 _dreiecke_der_fuge(model, flaechen),
+                                                 getattr(kb, "suchweite", 0.0), cache)
         else:
             seite_neu = _dreiecke_der_fuge(model, flaechen)
-        return _fuge_ueber_kontaktpaar(model, kb, seite_neu, geloest, bericht, log)
+        return _fuge_ueber_kontaktpaar(model, kb, seite_neu, geloest, bericht, log, cache)
 
     # ---- 5) Verbinden ---------------------------------------------------
     b_n = kb.dof_behaviour(2)
@@ -421,13 +581,63 @@ def _lager_mitnehmen(model: Model, neu: dict, log: list = None) -> int:
     return n
 
 
-def _randseiten_aller(model: Model) -> list:
-    """[(Element, Knoten, Aussennormale, Gruppe)] aller Randseiten des Modells."""
-    out = []
+def _randseiten_aller(model: Model, cache: dict = None) -> list:
+    """[(Element, Knoten, Aussennormale, Gruppe)] aller Randseiten des Modells.
+
+    Mit ``cache`` - einem Woerterbuch ueber alle Fugen eines Durchgangs hinweg -
+    wird je Bauteil nur einmal gerechnet: bei einem halben Millionen Tetraedern
+    kostet das Sammeln der Randseiten Sekunden, und acht Fugen brauchten es
+    sonst achtmal. Nach dem Verdoppeln von Knoten nimmt
+    :func:`_randseiten_vergessen` das betroffene Bauteil heraus, es wird beim
+    naechsten Aufruf allein nachgerechnet.
+    """
+    if cache is None:
+        gruppen = _randseiten_rechnen(model, None)
+    else:
+        gruppen = cache.get("randseiten")
+        if gruppen is None:
+            gruppen = cache["randseiten"] = _randseiten_rechnen(model, None)
+            cache["randseiten_fehlend"] = set()
+        fehlend = cache.get("randseiten_fehlend") or set()
+        if fehlend:
+            neu = _randseiten_rechnen(model, fehlend)
+            for g in fehlend:
+                gruppen[g] = neu.get(g, [])
+            cache["randseiten_fehlend"] = set()
+            cache.pop("randseiten_flach", None)
+        if "randseiten_flach" in cache:
+            return cache["randseiten_flach"]
+    flach = [(e, nd, n, g) for g, lst in gruppen.items() for e, nd, n in lst]
+    if cache is not None:
+        cache["randseiten_flach"] = flach
+    return flach
+
+
+def _randseiten_rechnen(model: Model, nur) -> dict:
+    """{Bauteil: [(Element, Knoten, Aussennormale)]} - alle oder nur ``nur``."""
+    out: dict = {}
+    ne = len(model.elements)
     for f in (model.flaechen or {}).values():
+        if nur is not None:
+            gs = {_gruppe(model, int(e)) for e, _s in (f.randseiten or []) if 0 <= int(e) < ne}
+            gs |= {_gruppe(model, int(e)) for e in (f.elemente or []) if 0 <= int(e) < ne}
+            if not (gs & nur):
+                continue
         for e, nd, n in _dreiecke_der_fuge(model, [f]):
-            out.append((e, nd, n, _gruppe(model, e)))
+            g = _gruppe(model, e)
+            if nur is None or g in nur:
+                out.setdefault(g, []).append((e, nd, n))
     return out
+
+
+def _randseiten_vergessen(cache: dict, gruppen) -> None:
+    """Die Randseiten dieser Bauteile gelten nicht mehr (Knoten verdoppelt)."""
+    if cache is None or "randseiten" not in cache:
+        return
+    for g in gruppen:
+        cache["randseiten"].pop(g, None)
+    cache.pop("randseiten_flach", None)
+    cache.setdefault("randseiten_fehlend", set()).update(gruppen)
 
 
 def _nach_normale(model: Model, nd: list, n: np.ndarray) -> list:
@@ -449,74 +659,96 @@ def _nach_normale(model: Model, nd: list, n: np.ndarray) -> list:
 
 
 def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
-                            bericht: dict, log: list = None) -> dict:
+                            bericht: dict, log: list = None, cache: dict = None) -> dict:
     """Zwei getrennte, aufeinanderliegende Netze ueber ein Kontaktpaar verbinden.
 
     Passen die Netze an der Fuge nicht Knoten fuer Knoten zusammen, gibt es
     nichts zu trennen - die Bauteile stehen unverbunden nebeneinander und das
-    Gleichungssystem waere singulaer. Gesucht werden dann die Gegenflaechen:
-    Randseiten anderer Bauteile, die demselben Ort und der entgegengesetzten
-    Richtung folgen. Sie werden Master, die Knoten der freigegebenen Seite
-    Slave. Das Kontaktpaar traegt Druck und Reibung und laesst Abheben zu - und
-    es verlangt **nicht**, dass die beiden Netze zusammenpassen.
+    Gleichungssystem waere singulaer. Gesucht wird dann die Gegenseite: die
+    Randseiten der Gegenkoerper (sind keine genannt: aller anderen Bauteile),
+    die der Kontaktseite entgegen zeigen und im Suchradius liegen
+    (:func:`gegenseite_finden`). Sie werden Master, die Knoten der
+    Kontaktseite Slave. Das Kontaktpaar verlangt **nicht**, dass die Netze
+    zusammenpassen oder die Flaechen deckungsgleich sind - wie in ANSYS.
+
+    Aus der Wirkung je Freiheitsgrad wird: Zug „starr“ oder „Feder“ - die
+    Fuge oeffnet nicht (Verbund, ohne Trennung); Schub „starr“ - haftend,
+    kein Gleiten (Rau, Verbund); sonst Kontakt mit Abheben und Reibung.
     """
     from .importers import _common as C
     from .model import ContactPair
-    from scipy.spatial import cKDTree
     # Gesucht wird ueber die **Geometrie**, nicht ueber die Liste der Flaechen,
     # an denen die Freigabe haengt: die ist unvollstaendig. Im Beispielmodell
     # nennt sie fuer 36 freigegebene Flaechen nur 5 Gegenflaechen - die
     # restliche Fuge bliebe unverbunden. Wer aufeinanderliegt und entgegen-
     # gesetzt zeigt, gehoert zur Fuge; das ist nachpruefbar, die Liste nicht.
-    alle = [x for x in _randseiten_aller(model) if x[3] not in geloest]
+    alle = [x for x in _randseiten_aller(model, cache) if x[3] not in geloest]
+    ziel = {str(x) for x in (getattr(kb, "gegenkoerper", None) or [])} - set(geloest)
+    if ziel and any(x[3] in ziel for x in alle):
+        alle = [x for x in alle if x[3] in ziel]
     if not alle:
         bericht["grund"] = "keine Gegenfläche eines anderen Bauteils gefunden"
         return bericht
-    schwer_a = np.array([model.nodes[nd].mean(axis=0) for _e, nd, _n, _g in alle])
-    norm_a = np.array([n for _e, _nd, n, _g in alle])
-    baum = cKDTree(schwer_a)
-    # Suchweite: die mittlere Seitenlaenge der Fuge
-    laengen = [float(np.linalg.norm(model.nodes[nd[0]] - model.nodes[nd[1]]))
-               for _e, nd, _n in seite_b if len(nd) > 1]
-    weite = max(float(np.median(laengen)) if laengen else 0.0, 1e-9)
-    master, slave = [], set()
-    for _e, nd, n in seite_b:
-        c = model.nodes[nd].mean(axis=0)
-        for j in baum.query_ball_point(c, weite):
-            if float(norm_a[j] @ n) > -0.7:
-                continue                    # Gegenflaeche muss entgegengesetzt zeigen
-            master.append(_nach_normale(model, alle[j][1], alle[j][2]))
-            slave.update(int(x) for x in nd)
-    if not master:
-        bericht["grund"] = ("keine Gegenfläche in Reichweite – die Bauteile "
-                            "berühren sich im Netz nicht")
+    gegen = [(e, nd, n) for e, nd, n, _g in alle]
+    weite = suchweite(model, seite_b, gegen, getattr(kb, "suchweite", 0.0))
+    paare, abstand = gegenseite_finden(model, seite_b, gegen, weite)
+    if not paare:
+        bericht["grund"] = (f"keine Gegenfläche im Suchradius {weite * 1e3:.0f} mm – die "
+                            "Bauteile berühren sich im Netz nicht (Suchradius der "
+                            "Kontaktbedingung vergrößern?)")
         return bericht
-    einmal = {tuple(x): x for x in master}
+    master: dict = {}
+    for i, j in paare.items():
+        _e, nd, n = gegen[j]
+        master.setdefault(tuple(sorted(int(x) for x in nd)), _nach_normale(model, nd, n))
+    slave = sorted({int(x) for i in paare for x in seite_b[i][1]})
+    flaechen_b = _facettenflaechen(model, seite_b)
+    A_zu = float(flaechen_b[sorted(paare)].sum()) if paare else 0.0
+    A_alle = float(flaechen_b.sum()) or A_zu or 1.0
+    spalt = np.array([abstand[i] for i in paare])
     b_n = kb.dof_behaviour(2)
     b_t = [kb.dof_behaviour(0), kb.dof_behaviour(1)]
     mu = max(float(b.mu or 0.0) for b in (b_n, *b_t))
+    zug = b_n.typ in ("rigid", "spring")
+    haften = any(b.typ == "rigid" for b in b_t)
+    steif = 0.0
+    if b_n.typ == "spring" and float(b_n.stiffness or 0.0) > 0:
+        # Feder je Flaeche -> je Knoten ueber die mittlere Einflussflaeche
+        steif = float(b_n.stiffness) * A_zu / max(len(slave), 1)
     model.contact_pairs.append(ContactPair(
-        name=kb.name, slave_nodes=sorted(slave),
-        master_faces=[list(v) for v in einmal.values()], mu=mu))
+        name=kb.name, slave_nodes=slave,
+        master_faces=[list(v) for v in master.values()], mu=mu,
+        stiffness=steif, search_radius=2.0 * weite,
+        zug=zug, haften=haften, anliegend=bool(getattr(kb, "spalt_schliessen", False))))
     kb.ausgefuehrt = True
     bericht["kontaktpaar"] = 1
     bericht["slave"] = len(slave)
-    bericht["master"] = len(einmal)
+    bericht["master"] = len(master)
+    bericht["anteil"] = A_zu / A_alle
+    bericht["spalt_max"] = float(spalt.max()) if spalt.size else 0.0
     if log is not None:
+        art = ("Verbund" if zug and haften else "ohne Trennung" if zug
+               else "haftend" if haften else "")
         C.say(log, f"Kontaktbedingung {kb.name}: "
                    + (f"{bericht['knoten']} Randknoten getrennt, " if bericht["knoten"] else "")
-                   + f"Kontaktpaar mit {len(slave)} Knoten gegen "
-                   f"{len(einmal)} Gegenflächen"
-                   + (f", Reibung mu = {mu:g}" if mu else "")
+                   + f"Kontaktpaar mit {len(slave)} Knoten gegen {len(master)} Gegenfacetten "
+                   f"({A_zu * 1e4:.0f} von {A_alle * 1e4:.0f} cm² der Kontaktseite, "
+                   f"Suchradius {weite * 1e3:.0f} mm, Spalt im Mittel "
+                   f"{float(np.median(spalt)) * 1e3:.2f} mm, größter {float(spalt.max()) * 1e3:.2f} mm"
+                   + (", wird auf Berührung gesetzt" if getattr(kb, "spalt_schliessen", False) else "")
+                   + ")"
+                   + (f", Reibung mu = {mu:g}" if mu and not haften else "")
+                   + (f", {art}" if art else "")
                    + f" (gelöst: {', '.join(sorted(geloest))})")
+        if A_zu < 0.5 * A_alle:
+            C.say(log, f"  {kb.name}: nur {100 * A_zu / A_alle:.0f} % der Kontaktseite finden "
+                       "eine Gegenfläche - der Rest liegt weiter als der Suchradius von "
+                       "jedem anderen Bauteil entfernt")
+        if any(kb.dof_behaviour(d).typ == "rigid" for d in (3, 4, 5)):
+            C.say(log, f"  {kb.name}: Verdrehungen starr - im Kontaktpaar zwischen Volumen "
+                       "ohne Wirkung (Volumen haben keine Verdrehungsfreiheitsgrade)")
         _vorzeichen_melden(kb, b_n, log)
-        if any(b.typ == "rigid" for b in b_t):
-            C.warn(log, f"  {kb.name}: in der Fugenebene ist die Freigabe starr, "
-                        "die Netze passen dort aber nicht Knoten für Knoten "
-                        "zusammen. Das Kontaktpaar trägt Druck und Reibung; eine "
-                        "starre Verbindung in der Fugenebene gibt es nicht. Wer "
-                        "sie braucht, vernetzt beide Seiten gleich fein.")
-        else:
+        if not zug and not haften:
             _gleiten_melden(kb, b_n, b_t, mu, log)
     return bericht
 
@@ -537,8 +769,9 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
     if not offene:
         return gesamt
     knotengruppen = gruppen_je_knoten(model)
+    cache: dict = {}
     for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
-        b = kontaktfuge_ausfuehren(model, kb, log, knotengruppen)
+        b = kontaktfuge_ausfuehren(model, kb, log, knotengruppen, cache)
         if kb.ausgefuehrt and not b["grund"]:
             gesamt["fugen"] += 1
             for x in ("knoten", "spalt", "kopplung", "kontaktpaar"):
