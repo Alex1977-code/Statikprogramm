@@ -13,11 +13,11 @@ import zlib
 import numpy as np
 
 from ..model import Model
+from .. import elemente as _EL
 from . import _common as C
 
-#: Statik3D-Element -> (VTK-Zellart, Knotenzahl)
-VTK_CELLS = {"beam": (3, 2), "truss": (3, 2), "shell3": (5, 3), "shell4": (9, 4),
-             "tet4": (10, 4), "tet10": (24, 10), "hex8": (12, 8)}
+#: Statik3D-Element -> (VTK-Zellart, Knotenzahl), aus dem Elementverzeichnis
+VTK_CELLS = {t: (a.vtk, a.knoten) for t, a in _EL.ELEMENTE.items()}
 
 
 def _array(name: str, data: np.ndarray, comps: int = 1) -> str:

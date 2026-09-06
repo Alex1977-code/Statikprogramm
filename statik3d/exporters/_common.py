@@ -7,6 +7,7 @@ from typing import Optional
 import numpy as np
 
 from ..model import Model
+from .. import elemente as EL
 
 
 def say(log: Optional[list], msg: str) -> None:
@@ -15,7 +16,7 @@ def say(log: Optional[list], msg: str) -> None:
 
 
 def beam_elements(model: Model) -> list[int]:
-    return [i for i, e in enumerate(model.elements) if e.typ in ("beam", "truss")]
+    return [i for i, e in enumerate(model.elements) if e.typ in EL.STAB_TYPEN]
 
 
 def shell_elements(model: Model) -> list[int]:
@@ -23,7 +24,7 @@ def shell_elements(model: Model) -> list[int]:
 
 
 def solid_elements(model: Model) -> list[int]:
-    return [i for i, e in enumerate(model.elements) if e.typ in ("tet4", "tet10", "hex8")]
+    return [i for i, e in enumerate(model.elements) if e.typ in EL.VOLUMEN_TYPEN]
 
 
 def member_chains(model: Model) -> list[tuple[str, list[int]]]:

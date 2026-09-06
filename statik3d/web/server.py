@@ -1140,19 +1140,34 @@ def _op_add_element(st, m, d):
     typ = d.get("typ") or "beam"
     nodes = _ilist(d, "nodes")
     _check_nodes(m, nodes)
-    need = {"beam": 2, "truss": 2, "shell3": 3, "shell4": 4, "tet4": 4, "hex8": 8, "tet10": 10}
-    if typ not in need:
-        raise ApiError(f"Elementtyp '{typ}' unbekannt")
-    if len(nodes) != need[typ]:
-        raise ApiError(f"{typ} braucht {need[typ]} Knoten")
+    from .. import elemente as _EL
+    art = _EL.ELEMENTE.get(typ)
+    if art is None:
+        raise ApiError(f"Elementtyp '{typ}' unbekannt: " + ", ".join(_EL.ELEMENTE))
+    if len(nodes) != art.knoten:
+        raise ApiError(f"{typ} braucht {art.knoten} Knoten")
     mat = _need_mat(m, d)
-    if typ in ("beam", "truss"):
+    if art.familie == "stab":
         sec = _need_sec(m, d)
-    elif typ.startswith("shell"):
+    elif art.familie in ("schale", "ebene"):
         sec = _need_prop(m, d)
+    elif typ == "feder":
+        sec = str(d.get("prop") or "")
+        if sec not in m.federn:
+            raise ApiError(f"Federeigenschaft '{sec}' unbekannt")
+    elif art.familie == "verbindung":
+        sec = str(d.get("prop") or "")
+        if sec not in m.grenzschichten:
+            raise ApiError(f"Grenzschicht '{sec}' unbekannt")
     else:
         sec = None
-    m.add_element(typ, nodes, mat, sec, roll=float(np.radians(_f(d, "roll_deg", 0.0))))
+    kw = {}
+    if art.familie == "ebene":
+        zustand = str(d.get("zustand") or "spannung")
+        if zustand not in _EL.EBENE_ZUSTAENDE:
+            raise ApiError(f"Zustand '{zustand}' unbekannt: " + ", ".join(_EL.EBENE_ZUSTAENDE))
+        kw["zustand"] = zustand
+    m.add_element(typ, nodes, mat, sec, roll=float(np.radians(_f(d, "roll_deg", 0.0))), **kw)
     return {"elem": len(m.elements) - 1, "message": f"Element {len(m.elements) - 1} ({typ}) angelegt"}
 
 

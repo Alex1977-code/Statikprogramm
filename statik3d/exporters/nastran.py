@@ -69,10 +69,23 @@ def write_bdf(model: Model, path: str, results=None, log: list = None, **_) -> s
             p = pid(("solid", e.mat))
             karten.append("CTETRA  " + _i(eid) + _i(p) + "".join(_i(x) for x in n[:4]))
             z.append("PSOLID  " + _i(p) + _i(mid))
-        elif e.typ == "hex8":
+        elif e.typ in ("shell6", "shell8"):
+            t = model.shells.get(e.sec)
+            p = pid(("shell", e.sec, e.mat))
+            karte = "CTRIA6  " if e.typ == "shell6" else "CQUAD8  "
+            karten.append(karte + _i(eid) + _i(p) + "".join(_i(x) for x in n[:6]))
+            if e.typ == "shell8":
+                karten.append("        " + "".join(_i(x) for x in n[6:8]))
+            z.append("PSHELL  " + _i(p) + _i(mid) + _f(t.t if t else 0.01))
+        elif e.typ in ("hex8", "hex20", "pent6", "pent15", "pyr5"):
             p = pid(("solid", e.mat))
-            karten.append("CHEXA   " + _i(eid) + _i(p) + "".join(_i(x) for x in n[:6]))
-            karten.append("        " + _i(n[6]) + _i(n[7]))
+            karte = {"hex8": "CHEXA   ", "hex20": "CHEXA   ", "pent6": "CPENTA  ",
+                     "pent15": "CPENTA  ", "pyr5": "CPYRAM  "}[e.typ]
+            karten.append(karte + _i(eid) + _i(p) + "".join(_i(x) for x in n[:6]))
+            rest = n[6:]
+            while rest:
+                karten.append("        " + "".join(_i(x) for x in rest[:8]))
+                rest = rest[8:]
             z.append("PSOLID  " + _i(p) + _i(mid))
         else:
             eid -= 1

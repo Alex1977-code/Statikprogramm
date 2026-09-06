@@ -184,6 +184,36 @@ class _Stab:
         return fl, T, kg, N, L
 
 
+class _Seil:
+    """Ein Seil als elastische Kettenlinie (verbindung.seil_kettenlinie).
+
+    Das Seil traegt nur Zug und haengt unter seinem Eigengewicht durch. Seine
+    ungedehnte Laenge steht am Element (``laenge0``); ist sie 0, wird die
+    Sehnenlaenge der Ausgangslage genommen - das Seil ist dann gerade
+    gespannt und haengt nur unter seinem Gewicht durch.
+    """
+
+    def __init__(self, model: Model, i: int, g):
+        e = model.elements[i]
+        mat = model.materials[e.mat]
+        sec = model.sections[e.sec]
+        self.i = i
+        self.nodes = [int(n) for n in e.nodes]
+        X = model.nodes[self.nodes]
+        L = float(np.linalg.norm(X[1] - X[0]))
+        self.L0 = float(getattr(e, "laenge0", 0.0) or 0.0) or L
+        self.EA = float(mat.E * sec.A)
+        # Streckenlast je ungedehnter Laenge: das Eigengewicht des Lastfalls
+        self.w = np.asarray(g, float) * mat.rho * sec.A
+        self.dofs = np.array([NDOF * self.nodes[0] + k for k in range(3)]
+                             + [NDOF * self.nodes[1] + k for k in range(3)], int)
+
+    def zustand(self, X: np.ndarray):
+        """(innere Knotenkraefte (6,), Tangente (6,6), Angaben) in dieser Lage."""
+        from .elements.verbindung import seil_kettenlinie
+        return seil_kettenlinie(X[self.nodes[0]], X[self.nodes[1]], self.L0, self.EA, self.w)
+
+
 # ==========================================================================
 # Loesung
 # ==========================================================================
@@ -213,7 +243,22 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         raise ValueError("Theorie III. Ordnung nicht mit Zwangsverformungen")
     F_ref, feq, q, temp = case_loads(model, factors, aktiv)
     nn, ndof = model.nn, model.ndof
-    staebe = [_Stab(model, i, feq) for i in wirksam]
+    # Seile rechnen als Kettenlinie: ihr Eigengewicht steckt in der
+    # Kettenlinie selbst und darf nicht noch einmal als Knotenlast wirken.
+    g_ges = np.zeros(3)
+    for name, f in factors.items():
+        lc = model.load_cases.get(name)
+        if lc is not None:
+            g_ges = g_ges + float(f) * np.asarray(lc.gravity, float)
+    seile = [_Seil(model, i, g_ges) for i in wirksam if model.elements[i].typ == "seil"]
+    for sl_ in seile:
+        e = model.elements[sl_.i]
+        kl, T3, T, L = asm.beam_local(model, e)
+        F_ref[asm.element_dofs(e, model)[:12]] -= T.T @ np.asarray(feq.get(sl_.i, np.zeros(12)), float)
+        feq.pop(sl_.i, None)
+        q.pop(sl_.i, None)
+    staebe = [_Stab(model, i, feq) for i in wirksam
+              if model.elements[i].typ != "seil"]
 
     # Lager: starr (u = 0) und Federn
     lin, _ = sup.split(sup.expand(model))
@@ -249,6 +294,18 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         f_int = np.zeros(ndof)
         rows, cols, vals = [], [], []
         zust = {}
+        for sl_ in seile:
+            f_e, Kt, info = sl_.zustand(X)
+            d = sl_.dofs
+            f_int[d] += f_e
+            r, c = np.meshgrid(d, d, indexing="ij")
+            rows.append(r.ravel())
+            cols.append(c.ravel())
+            vals.append(np.asarray(Kt, float).ravel())
+            fl12 = np.zeros(12)
+            fl12[0] = -float(info.get("H", 0.0))
+            fl12[6] = float(info.get("Tmax", 0.0))
+            zust[sl_.i] = (fl12, float(info.get("Tmax", 0.0)))
         for st in staebe:
             fl, T, kg, N, L = st.zustand(X, R)
             zust[st.i] = (fl, N)
@@ -290,6 +347,9 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             res.beam_end[st.i] = fl - st.f0
             if st.i in q:
                 res.beam_q[st.i] = np.asarray(q[st.i], float)
+        for sl_ in seile:
+            fl, _N = zust.get(sl_.i, (np.zeros(12), 0.0))
+            res.beam_end[sl_.i] = fl
         if aktiv is not None:
             res.info["inaktiv"] = [i for i in range(ne) if not aktiv[i]]
             for i in res.info["inaktiv"]:

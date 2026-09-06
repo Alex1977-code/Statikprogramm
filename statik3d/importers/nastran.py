@@ -9,8 +9,13 @@ Karten:
     GRID (inkl. PS), GRDSET
     CBAR/CBEAM + PBAR/PBEAM/PBARL/PBEAML (BAR, ROD, TUBE, BOX, I)
     CROD/CONROD + PROD                 -> Fachwerkstab
-    CTRIA3/CQUAD4 + PSHELL             -> Schalen
-    CTETRA (4/10 Knoten), CHEXA (8)    -> Volumen
+    CTRIA3/CQUAD4 + PSHELL             -> Schalen (CTRIA6/CQUAD8 quadratisch)
+    CTETRA (4/10), CHEXA (8/20),       -> Volumen
+    CPENTA (6/15), CPYRAM (5)
+    CONM2                              -> Punktmasse
+    CELAS1/2, CBUSH + PBUSH            -> Feder
+    CDAMP1/2                           -> Daempfer
+    RBE2, RBE3                         -> starrer Koerper / Verteilkopplung
     MAT1 (E, G, NU, RHO, A, ST -> fy)
     SPC / SPC1                         -> Lager (Komponenten 123456)
     FORCE / MOMENT (SID -> Lastfall 'SID n'), PLOAD2 / PLOAD4, GRAV
@@ -286,8 +291,24 @@ def import_bdf(path: str, model: Model = None, log: list = None,
             elif name in ("PSOLID", "PLSOLID"):
                 pid = _int(_f(card, 1))
                 props[pid] = {"kind": "solid", "mid": _int(_f(card, 2))}
+            elif name == "PBUSH":
+                # PBUSH pid K k1 k2 k3 k4 k5 k6 - das Schluesselwort "K" steht
+                # vor den sechs Steifigkeiten (danach koennen B, GE, RCV folgen)
+                pid = _int(_f(card, 1))
+                werte = [0.0] * 6
+                for k in range(2, len(card)):
+                    if _f(card, k).strip().upper() == "K":
+                        werte = [(_num(_f(card, k + 1 + j)) or 0.0) for j in range(6)]
+                        break
+                props[pid] = {"kind": "bush", "k": werte}
+            elif name == "PELAS":
+                # PELAS pid k ge s
+                pid = _int(_f(card, 1))
+                props[pid] = {"kind": "elas", "k": [(_num(_f(card, 2)) or 0.0)] + [0.0] * 5}
             elif name in ("CBAR", "CBEAM", "CROD", "CONROD", "CTRIA3", "CQUAD4",
-                          "CTETRA", "CHEXA", "CTRIAR", "CQUADR"):
+                          "CTETRA", "CHEXA", "CTRIAR", "CQUADR", "CTRIA6", "CQUAD8",
+                          "CPENTA", "CPYRAM", "CONM2", "CELAS1", "CELAS2", "CBUSH",
+                          "CDAMP1", "CDAMP2", "RBE2", "RBE3"):
                 elem_cards.append(card)
             elif name in ("FORCE", "MOMENT", "PLOAD2", "PLOAD4", "GRAV", "LOAD"):
                 load_cards.append(card)
@@ -387,9 +408,102 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                     elems[eid] = model.add_element("tet4", ids, mat_for(info))
             elif name == "CHEXA":
                 pid = _int(_f(card, 2))
-                gids = [_int(_f(card, 3 + k)) for k in range(8)]
+                gids = [_int(_f(card, 3 + k)) for k in range(20)]
+                gids = [g for g in gids if g is not None]
                 ids = [grids[g] for g in gids]
-                elems[eid] = model.add_element("hex8", ids, mat_for(props.get(pid)))
+                if len(ids) >= 20:
+                    elems[eid] = model.add_element("hex20", ids[:20], mat_for(props.get(pid)))
+                else:
+                    elems[eid] = model.add_element("hex8", ids[:8], mat_for(props.get(pid)))
+            elif name == "CPENTA":
+                pid = _int(_f(card, 2))
+                gids = [_int(_f(card, 3 + k)) for k in range(15)]
+                gids = [g for g in gids if g is not None]
+                ids = [grids[g] for g in gids]
+                if len(ids) >= 15:
+                    elems[eid] = model.add_element("pent15", ids[:15], mat_for(props.get(pid)))
+                else:
+                    elems[eid] = model.add_element("pent6", ids[:6], mat_for(props.get(pid)))
+            elif name == "CPYRAM":
+                pid = _int(_f(card, 2))
+                gids = [_int(_f(card, 3 + k)) for k in range(5)]
+                ids = [grids[g] for g in gids if g is not None]
+                elems[eid] = model.add_element("pyr5", ids[:5], mat_for(props.get(pid)))
+            elif name in ("CTRIA6", "CQUAD8"):
+                pid = _int(_f(card, 2))
+                nk = 6 if name == "CTRIA6" else 8
+                gids = [_int(_f(card, 3 + k)) for k in range(nk)]
+                gids = [g for g in gids if g is not None]
+                ids = [grids[g] for g in gids]
+                info = props.get(pid)
+                prop = C.ensure_shell_prop(model, f"PID {pid}",
+                                           info.get("t") if info else None, log)
+                if len(ids) >= nk:
+                    elems[eid] = model.add_element("shell6" if nk == 6 else "shell8",
+                                                   ids[:nk], mat_for(info), prop)
+                else:
+                    elems[eid] = model.add_element("shell3" if nk == 6 else "shell4",
+                                                   ids[:3 if nk == 6 else 4],
+                                                   mat_for(info), prop)
+            elif name == "CONM2":
+                # CONM2 eid G cid M X1 X2 X3 / I11 I21 I22 I31 I32 I33
+                g = grids[_int(_f(card, 2))]
+                masse = _num(_f(card, 4)) or 0.0
+                # I11, I22, I33 stehen im Fortsetzungsteil (Felder 9, 11, 14)
+                J = [(_num(_f(card, 9)) or 0.0) * scale ** 2,
+                     (_num(_f(card, 11)) or 0.0) * scale ** 2,
+                     (_num(_f(card, 14)) or 0.0) * scale ** 2]
+                model.add_punktmasse(g, masse, J, name=f"CONM2 {eid}")
+            elif name in ("CELAS1", "CELAS2", "CBUSH"):
+                # CELAS1 eid pid G1 C1 G2 C2 / CELAS2 eid k G1 C1 G2 C2
+                if name == "CELAS2":
+                    k = _num(_f(card, 2)) or 0.0
+                    g1, c1 = _int(_f(card, 3)), _int(_f(card, 4))
+                    g2 = _int(_f(card, 5))
+                    kk = [0.0] * 6
+                    if c1 and 1 <= c1 <= 6:
+                        kk[c1 - 1] = k
+                elif name == "CELAS1":
+                    pid = _int(_f(card, 2))
+                    g1, c1 = _int(_f(card, 3)), _int(_f(card, 4))
+                    g2 = _int(_f(card, 5))
+                    info = props.get(pid) or {}
+                    k = float((info.get("k") or [0.0])[0])
+                    kk = [0.0] * 6
+                    if c1 and 1 <= c1 <= 6:
+                        kk[c1 - 1] = k
+                else:
+                    pid = _int(_f(card, 2))
+                    g1, g2 = _int(_f(card, 3)), _int(_f(card, 4))
+                    info = props.get(pid) or {}
+                    kk = list(info.get("k", [0.0] * 6))
+                if g1 is None or g2 is None or g2 not in grids:
+                    C.warn(log, f"{name} {eid}: braucht zwei Knoten - übergangen")
+                else:
+                    fp = model.add_feder_prop(C.unique_name(model.federn, f"{name} {eid}"), kk)
+                    elems[eid] = model.add_element("feder", [grids[g1], grids[g2]],
+                                                   default_mat, fp.name)
+            elif name in ("CDAMP1", "CDAMP2"):
+                c = _num(_f(card, 2)) or 0.0 if name == "CDAMP2" else 0.0
+                g1, c1 = _int(_f(card, 3)), _int(_f(card, 4))
+                g2 = _int(_f(card, 5))
+                cc = [0.0] * 6
+                if c1 and 1 <= c1 <= 6:
+                    cc[c1 - 1] = c
+                model.add_daempfer(grids[g1], grids[g2] if g2 in grids else -1, cc,
+                                   name=f"{name} {eid}")
+            elif name in ("RBE2", "RBE3"):
+                if name == "RBE2":
+                    master = _int(_f(card, 2))
+                    slaves = [_int(x) for x in card[4:] if _int(x) is not None]
+                else:
+                    # RBE3 eid blank refgrid refc wt c g1 g2 ...
+                    master = _int(_f(card, 3))
+                    slaves = [_int(x) for x in card[7:] if _int(x) is not None]
+                slaves = [grids[g] for g in slaves if g in grids]
+                if master in grids and slaves:
+                    model.add_starrkoerper(grids[master], slaves, name,
+                                           name=f"{name} {eid}")
         except KeyError as ex:
             C.warn(log, f"{name} {eid}: Knoten {ex} unbekannt")
         except Exception as ex:

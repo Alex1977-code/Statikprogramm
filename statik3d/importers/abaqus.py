@@ -4,8 +4,12 @@ Abaqus / CalculiX Eingabedateien (.inp).
 Unterstuetzte Schluesselwoerter (Gross-/Kleinschreibung egal, '**' = Kommentar):
     *NODE [NSET=]                 Knoten (id, x, y[, z])
     *ELEMENT, TYPE=, [ELSET=]     B31/B32/B33/B21 -> beam, T3D2/T2D2 -> truss,
-                                  S3/S3R/STRI3/STRI65 -> shell3, S4/S4R/S4R5 -> shell4,
-                                  C3D4 -> tet4, C3D10/C3D10M -> tet10, C3D8* -> hex8
+                                  S3/S3R/STRI3 -> shell3, S4/S4R -> shell4,
+                                  S6/STRI65 -> shell6, S8R -> shell8,
+                                  C3D4 -> tet4, C3D10 -> tet10, C3D8* -> hex8,
+                                  C3D20 -> hex20, C3D6 -> pent6, C3D15 -> pent15,
+                                  C3D5 -> pyr5, CPS/CPE/CAX -> ebene3/4/6/8
+                                  (Scheibe, ebener Dehnungszustand, rotationssymmetrisch)
     *NSET / *ELSET [GENERATE]     Knoten-/Elementmengen (auch verschachtelt)
     *MATERIAL, *ELASTIC, *DENSITY, *EXPANSION, *PLASTIC (fy)
     *BEAM SECTION SECTION=RECT|CIRC|PIPE|BOX|I, *BEAM GENERAL SECTION
@@ -31,16 +35,31 @@ ELEMENT_TYPES = {
     "beam": ("B31", "B31H", "B32", "B32H", "B33", "B33H", "B21", "B21H", "B22", "B23",
              "B31OS", "B32OS", "PIPE31", "PIPE32"),
     "truss": ("T3D2", "T3D2H", "T2D2", "T2D2H", "T3D3", "T2D3"),
-    "shell3": ("S3", "S3R", "S3RS", "STRI3", "STRI65", "S6", "M3D3", "CPS3", "CPE3"),
-    "shell4": ("S4", "S4R", "S4RS", "S4R5", "S4RSW", "S8R", "S8R5", "M3D4", "M3D4R",
-               "CPS4", "CPS4R", "CPE4", "CPE4R"),
+    "shell3": ("S3", "S3R", "S3RS", "STRI3", "M3D3"),
+    "shell4": ("S4", "S4R", "S4RS", "S4R5", "S4RSW", "M3D4", "M3D4R"),
+    "shell6": ("STRI65", "S6", "M3D6"),
+    "shell8": ("S8R", "S8R5", "S8", "M3D8", "M3D8R"),
     "tet4": ("C3D4", "C3D4H"),
     "tet10": ("C3D10", "C3D10M", "C3D10H", "C3D10MH", "C3D10I"),
-    "hex8": ("C3D8", "C3D8R", "C3D8I", "C3D8H", "C3D8RH", "C3D8IH", "C3D20", "C3D20R"),
+    "hex8": ("C3D8", "C3D8R", "C3D8I", "C3D8H", "C3D8RH", "C3D8IH"),
+    "hex20": ("C3D20", "C3D20R", "C3D20H", "C3D20RH"),
+    "pent6": ("C3D6", "C3D6H", "SC6R"),
+    "pent15": ("C3D15", "C3D15H"),
+    "pyr5": ("C3D5", "C3D5H"),
+    # Ebene Elemente: Scheibe (CPS), ebener Dehnungszustand (CPE),
+    # rotationssymmetrisch (CAX) - der Zustand steht am Element
+    "ebene3": ("CPS3", "CPE3", "CAX3"),
+    "ebene4": ("CPS4", "CPS4R", "CPE4", "CPE4R", "CAX4", "CAX4R"),
+    "ebene6": ("CPS6", "CPE6", "CAX6"),
+    "ebene8": ("CPS8", "CPS8R", "CPE8", "CPE8R", "CAX8", "CAX8R"),
 }
 _TYPE_MAP = {abq: typ for typ, names in ELEMENT_TYPES.items() for abq in names}
-_CORNER_NODES = {"beam": 2, "truss": 2, "shell3": 3, "shell4": 4, "tet4": 4,
-                 "tet10": 10, "hex8": 8}
+#: Zustand der ebenen Elemente aus dem Abaqus-Namen
+_EBENE_ZUSTAND = {"CPS": "spannung", "CPE": "dehnung", "CAX": "rotation"}
+_CORNER_NODES = {"beam": 2, "truss": 2, "shell3": 3, "shell4": 4, "shell6": 6,
+                 "shell8": 8, "tet4": 4, "tet10": 10, "hex8": 8, "hex20": 20,
+                 "pent6": 6, "pent15": 15, "pyr5": 5,
+                 "ebene3": 3, "ebene4": 4, "ebene6": 6, "ebene8": 8}
 
 _BOUNDARY_NAMES = {
     "ENCASTRE": [0, 1, 2, 3, 4, 5], "PINNED": [0, 1, 2],
@@ -437,6 +456,8 @@ def import_inp(path: str, model: Model = None, log: list = None,
                     conn = conn[:4]
                 elif typ == "hex8" and len(conn) > 8:
                     conn = conn[:8]
+                elif typ == "pent6" and len(conn) > 6:
+                    conn = conn[:6]
                 if len(conn) < need:
                     C.warn(log, f"Element {eid}: {len(conn)} Knoten, {need} erwartet")
                     continue
@@ -444,8 +465,12 @@ def import_inp(path: str, model: Model = None, log: list = None,
                 if typ == "tet10":
                     # Abaqus: 5..10 = (1,2),(2,3),(3,1),(1,4),(2,4),(3,4)
                     idx = normalize_tet10(idx, model.nodes[idx])
+                kw_el = {}
+                if typ.startswith("ebene"):
+                    kw_el["zustand"] = _EBENE_ZUSTAND.get(
+                        (b.get("TYPE") or "").upper()[:3], "spannung")
                 e = model.add_element(typ, idx, default_mat, None,
-                                      group=str(elset or "default"))
+                                      group=str(elset or "default"), **kw_el)
                 st.eid[eid] = e
                 elem_abq_type[e] = (b.get("TYPE") or "").upper()
                 if ids is not None:
@@ -501,7 +526,12 @@ def import_inp(path: str, model: Model = None, log: list = None,
                         model, C.unique_name(model.shells, str(b.get("ELSET") or "t")), t, log)
                 elif kw == "SOLID SECTION":
                     area = C.parse_number(_split(b.lines[0])[0]) if b.lines else None
-                    if area and any(model.elements[e].typ == "truss" for e in elems):
+                    if area and any(model.elements[e].typ.startswith("ebene") for e in elems):
+                        # ebene Elemente: die Zahl ist die Dicke der Scheibe
+                        sec_name = C.ensure_shell_prop(
+                            model, C.unique_name(model.shells, str(b.get("ELSET") or "t")),
+                            area * st.scale, log)
+                    elif area and any(model.elements[e].typ == "truss" for e in elems):
                         st.sec_counter += 1
                         name = C.unique_name(model.sections,
                                              str(b.get("ELSET") or f"SEC-{st.sec_counter}"))
@@ -512,9 +542,10 @@ def import_inp(path: str, model: Model = None, log: list = None,
                     el = model.elements[e]
                     el.mat = mat
                     sec_assigned.add(e)
-                    if el.typ in ("beam", "truss") and sec_name in model.sections:
+                    if el.typ in ("beam", "truss", "seil") and sec_name in model.sections:
                         el.sec = sec_name
-                    elif el.typ.startswith("shell") and sec_name in model.shells:
+                    elif (el.typ.startswith("shell") or el.typ.startswith("ebene")) \
+                            and sec_name in model.shells:
                         el.sec = sec_name
             elif kw == "STEP":
                 st.step += 1

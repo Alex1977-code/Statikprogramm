@@ -7,14 +7,13 @@ import pyvista as pv
 from ..model import Model, NDOF
 from ..elements import beam3d as bm
 from .. import mesher
+from .. import elemente as EL
 
 VTK_LINE, VTK_TRI, VTK_QUAD, VTK_TETRA, VTK_HEX, VTK_TET10 = 3, 5, 9, 10, 12, 24
 
-CELL_MAP = {
-    "beam": (VTK_LINE, 2), "truss": (VTK_LINE, 2),
-    "shell3": (VTK_TRI, 3), "shell4": (VTK_QUAD, 4),
-    "tet4": (VTK_TETRA, 4), "tet10": (VTK_TET10, 10), "hex8": (VTK_HEX, 8),
-}
+#: Elementtyp -> (VTK-Zelltyp, Knotenzahl) aus dem Elementverzeichnis. Die
+#: Grenzschichten ohne Dicke werden als (flacher) Keil bzw. Hexaeder gezeichnet.
+CELL_MAP = {t: (a.vtk, a.knoten) for t, a in EL.ELEMENTE.items()}
 
 STATUS_COLOR = {"offen": "#9e9e9e", "Kontakt": "#1565c0", "Haften": "#2e7d32", "Gleiten": "#e65100"}
 
@@ -567,7 +566,7 @@ def koerper_at(model: Model, punkt, size: float):
 
 def member_at(model: Model, punkt):
     """Name des Stabes (Stabzug), dessen Element unter dem Zeiger liegt."""
-    el = element_at(model, punkt, ("beam", "truss"))
+    el = element_at(model, punkt, TYPEN_STAEBE)
     if el is None:
         return None
     for name, mem in (model.members or {}).items():
@@ -577,9 +576,9 @@ def member_at(model: Model, punkt):
 
 
 #: Elementtypen je Sichtbarkeitsschalter
-TYPEN_STAEBE = ("beam", "truss")
-TYPEN_FLAECHEN = ("shell3", "shell4")
-TYPEN_VOLUMEN = ("tet4", "tet10", "hex8")
+TYPEN_STAEBE = EL.STAB_TYPEN + ("feder",)
+TYPEN_FLAECHEN = EL.SCHALEN_TYPEN + EL.EBENE_TYPEN
+TYPEN_VOLUMEN = EL.VOLUMEN_TYPEN + ("grenzschicht6", "grenzschicht8")
 
 
 def to_grid(model: Model, typen=None, ausser=None, nur=None) -> pv.UnstructuredGrid:
@@ -1836,7 +1835,7 @@ def beam_diagram(model: Model, res, quantity: str, scale: float, n: int = 9):
     pts, lines, vals = [], [], []
     base = 0
     for i, e in enumerate(model.elements):
-        if e.typ not in ("beam", "truss"):
+        if e.typ not in TYPEN_STAEBE:
             continue
         X = model.nodes[e.nodes]
         T3, L = bm.local_axes(X[0], X[1], e.roll)

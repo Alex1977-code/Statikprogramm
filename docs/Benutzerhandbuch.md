@@ -334,7 +334,8 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Netzdichte | **grob / mittel / fein**: 8 / 16 / 32 Elemente über die größte Abmessung jedes Objekts - ein 4 m langer Träger und eine 8 cm dicke Lasche bekommen so je ihr passendes Netz; **eigene**: die Ziellänge gilt absolut (so übernimmt sie der RFEM-Import) |
 | Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz **der Flächen** dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge). Bei **Volumen** bleibt die Kantenlänge - der freie Vernetzer folgt der Feinheit des Randes von selbst (Bohrung fein, Inneres grob); eine ganze Platte auf ihre Bohrung herunterzuteilen gäbe nur das Vielfache an Tetraedern |
 | Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)) |
-| Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall; Volumen linear (tet4) oder quadratisch (tet10) |
+| Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall |
+| Elementansatz | **linear** (shell3/shell4, tet4, hex8) oder **quadratisch**: Flächen bekommen Mittenknoten (shell6/shell8), abgebildete Volumen hex20, freie Volumen tet10. Quadratisch braucht für dieselbe Genauigkeit deutlich weniger Elemente, je Element aber mehr Rechenzeit |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
 
 **Vorschau** in der Maske und *Netz → Netzvorschau* schätzen die Elementzahl
@@ -1213,6 +1214,51 @@ Fortschrittsbalken und ist abbrechbar. Der Bericht zeigt das c_p-Feld und das
 Geschwindigkeitsfeld v/v∞ des Schnitts. Die Beiwerte sind **qualitativ** -
 Modell-Reynolds-Zahl, ebener Schnitt - und gegen die Norm zu prüfen; der
 Lastfall trägt die Lastfall-Nr. aus der Maske.
+
+## 4a Elemente: was das Programm rechnen kann
+
+Das Netz besteht aus **finiten Elementen**. Welche es gibt, steht im
+Verzeichnis der Elementarten; jede Tabelle, die Ansicht, der Bericht und die
+Schnittstellen fragen dieses Verzeichnis, deshalb kennt jeder Teil des
+Programms jeden Typ.
+
+| Familie | Elemente | wofür |
+|---|---|---|
+| **Stäbe** | beam, truss, seil | Balken (mit Schub, Gelenken, **Exzentrizität** und **Wölbkrafttorsion**), Fachwerkstab (auch **nur Zug** oder **nur Druck**), Seil |
+| **Schalen** | shell3, shell4, shell6, shell8 | dünne und dicke Platten und Schalen; die quadratischen (shell6, shell8) mit Mittenknoten; **geschichtet** (Laminat) möglich |
+| **Volumen** | tet4, tet10, hex8, hex20, pent6, pent15, pyr5 | Tetraeder, Hexaeder, Keil und Pyramide, linear und quadratisch |
+| **Ebene Elemente** | ebene3, ebene4, ebene6, ebene8 | Scheibe (ebener Spannungszustand), ebener Dehnungszustand und **rotationssymmetrisch** (Rohr, Behälter, Fundament um eine Achse) |
+| **Verbindungen** | feder, grenzschicht6/8 | Feder mit sechs Steifigkeiten in eigenen Achsen; Grenzschicht ohne Dicke (Klebefuge, weiche Lagerfuge) |
+
+Dazu kommen Objekte ohne eigenes Netz, die im Modellbaum unter
+**Verbindungen** stehen: **Punktmassen** (Masse und Drehträgheit an einem
+Knoten - sie wiegen im Eigengewicht und schwingen mit), **Dämpfer**,
+**Federn** (die Eigenschaft, die ein Federelement benutzt) und **starre
+Körper** (RBE2: die angeschlossenen Knoten folgen einem Masterknoten starr;
+RBE3: eine Last am Master verteilt sich auf die Knoten, ohne sie zu
+versteifen).
+
+**Zugband und Druckstab.** In der Stabmaske stellt „trägt nur“ auf *Zug* oder
+*Druck*. Das Programm rechnet dann mit einer Iteration: Stäbe mit der falschen
+Kraft fallen aus, die übrigen tragen weiter, bis sich nichts mehr ändert. Das
+Protokoll nennt, wie viele Stäbe ausgefallen sind.
+
+**Seile** rechnen nach Theorie I. Ordnung wie ein Zugband. Wählt man für den
+Lastfall **Theorie III. Ordnung**, wird daraus die echte Kettenlinie: das Seil
+hängt unter seinem Eigengewicht durch, der Horizontalzug folgt aus der
+ungedehnten Länge (Feld „Länge₀“ in der Stabmaske; 0 = die Sehne).
+
+**Wölbkrafttorsion.** Der Haken „Wölbkrafttorsion“ am Stab gibt jedem seiner
+Knoten einen siebten Freiheitsgrad, die Verwölbung. Voraussetzung ist ein
+Querschnitt mit Wölbwiderstand I_w (die Profildatenbank bringt ihn mit). Am
+Lager sagt der Haken „Wölbeinspannung“, ob die Verwölbung dort behindert ist
+(Stirnplatte) oder frei (Gabellagerung). Im Ergebnis stehen das **Bimoment**
+und die Verwölbung je Knoten.
+
+**Geschichtete Schalen.** Trägt eine Dicke statt eines Werts eine Liste von
+Lagen (Dicke, Werkstoff, Winkel), rechnet das Programm mit den
+Laminatsteifigkeiten. Ein unsymmetrischer Aufbau koppelt Dehnung und Biegung -
+eine Scheibe unter Zug krümmt sich dann.
 
 ## 5 Lager: Ausfall, Schlupf, Reibung, Bettung
 

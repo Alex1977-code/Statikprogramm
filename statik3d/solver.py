@@ -131,6 +131,10 @@ class Results:
     beam_q: dict = field(default_factory=dict)      # elem -> Abschnittslasten (n,8): a, b, q1, q2
     shell_res: dict = field(default_factory=dict)   # elem -> [nx ny nxy mx my mxy]
     solid_res: dict = field(default_factory=dict)   # elem -> Spannungen (6,)
+    feder_res: dict = field(default_factory=dict)   # elem -> lokale Federkraefte (6,)
+    grenzschicht_res: dict = field(default_factory=dict)  # elem -> (sn, st1, st2)
+    bimomente: dict = field(default_factory=dict)   # elem -> (B Anfang, B Ende) [Nm^2]
+    woelb: dict = field(default_factory=dict)       # Knoten -> Verwoelbung [1/m]
     contact: list = field(default_factory=list)
     contact_forces: np.ndarray = None       # (nn, 3)
     modes: np.ndarray = None                # (nmodes, nn, 6)
@@ -529,12 +533,30 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
         e = model.elements[i]
         mat = model.materials[e.mat]
         X = model.nodes[e.nodes]
-        d = asm.element_dofs(e)
+        d = asm.element_dofs(e, model)
         ue = u[d]
         if e.typ in asm.LINE_TYPES:
+            f0 = feq.get(i, np.zeros(12))
+            if model.stab_woelbt(e):
+                # 14 FHG: Stabendkraefte und die Bimomente an beiden Enden
+                kl, T3, L = asm.beam_woelb_local(model, e)
+                ul = asm.transform14(T3) @ ue
+                A = asm.beam_versatz(e)
+                if A is not None:
+                    A14 = np.eye(14)
+                    A14[:12, :12] = A
+                    ul = A14 @ ul
+                f14 = np.zeros(14)
+                f14[:12] = f0
+                fl = kl @ ul - f14
+                out.append((i, "beam", fl[:12]))
+                out.append((i, "bimoment", (-float(fl[12]), float(fl[13]))))
+                continue
             kl, T3, T, L = asm.beam_local(model, e)
             ul = T @ ue
-            f0 = feq.get(i, np.zeros(12))
+            A = asm.beam_versatz(e)
+            if A is not None:
+                ul = A @ ul                     # Verschiebung des Stabendes hinter dem Versatz
             kl_s, f_s, rec = kl, f0, None
             if getattr(e, "hinge_springs", None):
                 kl_s, f_s, rec = asm.hinge_springs(kl, f0, e.hinge_springs)
@@ -548,7 +570,18 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             fl = kl @ ul - f0
             out.append((i, "beam", fl))
         elif e.typ in asm.SHELL_TYPES:
-            t = model.shells[e.sec].t
+            prop = model.shells[e.sec]
+            t = prop.t
+            if asm.schalen_formulierung(e, prop) != "dkt":
+                from .elements import shell_rm
+                lam = asm.laminat_von(model, prop)
+                st = shell_rm.stress_schale(e.typ, X, mat.E, mat.nu, t, ue, laminat=lam)
+                acc = np.concatenate([np.asarray(st["n"], float), np.asarray(st["m"], float)])
+                if i in temp:
+                    A_ = lam.A if lam is not None else sh._material_matrices(mat.E, mat.nu, t)[0]
+                    acc[:3] -= A_ @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 0.0]))
+                out.append((i, "shell", acc))
+                continue
             tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
             acc = np.zeros(6)
             # Beim Viereck haben die beiden Dreiecke verschiedene lokale
@@ -576,19 +609,42 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 acc[:3] -= Dm @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 0.0]))
             out.append((i, "shell", acc))
         elif e.typ in asm.SOLID_TYPES:
-            if e.typ == "tet4":
-                s = sl.stress_tet4(X, mat.E, mat.nu, ue)
-            elif e.typ == "tet10":
-                s = sl.stress_tet10(X, mat.E, mat.nu, ue)
-            else:
-                s = sl.stress_hex8(X, mat.E, mat.nu, ue)
+            mitte = sl.AUSWERTEPUNKTE[e.typ][0]
+            s_ = sl.stress_points(e.typ, X, mat.E, mat.nu, ue, punkte=[mitte])[0]
+            s_ = np.asarray(s_, float)
             if i in temp:
-                s = s - sl.D_matrix(mat.E, mat.nu) @ (
+                s_ = s_ - sl.D_matrix(mat.E, mat.nu) @ (
                     mat.alpha * temp[i] * np.array([1.0, 1.0, 1.0, 0, 0, 0]))
             sig0 = temp.get("sigma0") if isinstance(temp, dict) else None
             if sig0 and i in sig0:
-                s = s - np.asarray(sig0[i], float)      # Vorspannung: sigma = D eps - sigma0
-            out.append((i, "solid", s))
+                s_ = s_ - np.asarray(sig0[i], float)      # Vorspannung: sigma = D eps - sigma0
+            out.append((i, "solid", s_))
+        elif e.typ in asm.PLANE_TYPES:
+            from .elements import ebene
+            t = model.shells[e.sec].t if e.sec and e.sec in model.shells else 1.0
+            zustand = getattr(e, "zustand", "spannung")
+            s_ = np.asarray(ebene.stress_ebene(e.typ, X, mat.E, mat.nu, t, zustand, ue), float)
+            if i in temp:
+                # Waermedehnung ohne Spannung: sigma = D (eps - eps_T)
+                if zustand == "spannung":
+                    k = mat.E * mat.alpha * temp[i] / (1.0 - mat.nu)
+                    s_[0] -= k
+                    s_[1] -= k
+                else:
+                    k = mat.E * mat.alpha * temp[i] / (1.0 - 2.0 * mat.nu)
+                    s_[:3] -= k
+            out.append((i, "solid", s_))
+        elif e.typ == "feder":
+            from .elements import verbindung as vb
+            fp = model.federn[e.sec]
+            T3 = vb.feder_achsen(X[0], X[1], fp.achse, e.roll)
+            out.append((i, "feder", np.asarray(vb.feder_kraefte(fp.k, T3, ue), float)))
+        elif e.typ in asm.GRENZSCHICHT_TYPES:
+            from .elements import verbindung as vb
+            gp = model.grenzschichten[e.sec]
+            k = len(e.nodes) // 2
+            out.append((i, "grenzschicht",
+                        np.asarray(vb.grenzschicht_spannung(X[:k], X[k:], gp.kn, gp.kt, ue), float)))
     return out
 
 
@@ -611,6 +667,10 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 res.beam_end[i] = np.zeros(12)
             elif e.typ in asm.SHELL_TYPES:
                 res.shell_res[i] = np.zeros(6)
+            elif e.typ == "feder":
+                res.feder_res[i] = np.zeros(6)
+            elif e.typ in asm.GRENZSCHICHT_TYPES:
+                res.grenzschicht_res[i] = np.zeros(3)
             else:
                 res.solid_res[i] = np.zeros(6)
     for i, kind, val in items:
@@ -618,8 +678,14 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
             res.beam_end[i] = val
             if i in q:
                 res.beam_q[i] = np.asarray(q[i], float)
+        elif kind == "bimoment":
+            res.bimomente[i] = val
         elif kind == "shell":
             res.shell_res[i] = val
+        elif kind == "feder":
+            res.feder_res[i] = val
+        elif kind == "grenzschicht":
+            res.grenzschicht_res[i] = val
         else:
             res.solid_res[i] = val
     res._cache.clear()
@@ -637,20 +703,128 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     res = Results(name=name, kind=kind, model=model)
     if getattr(system, "situation", ""):
         res.info["situation"] = system.situation
-    if model.has_contact:
+    aktiv_eff = aktiv
+    if model.hat_ausfallstaebe():
+        u, R, aktiv_eff, ausfall, alog, kontakt = solve_with_ausfall(
+            model, system, F, us=us, progress=progress)
+        res.info["ausfall"] = ausfall
+        res.info["ausfall_log"] = alog
+        if kontakt is not None:
+            res.contact, res.contact_forces, cinfo = kontakt
+            res.info.update(cinfo)
+    elif model.has_contact:
         u, R, res.contact, res.contact_forces, cinfo = solve_with_contact(
             model, system, F, progress=progress, us=us)
         res.info.update(cinfo)
     else:
         u = system.solve(F, us=us)
         R = system.reactions(u, F)
-    res.u = u.reshape(-1, NDOF)
-    res.reactions = R.reshape(-1, NDOF)
+    verschiebungen_eintragen(model, res, u, R)
     res.info.update({"ndof": model.ndof, "nfree": len(system.fi),
                      "solver": system.backend, "factors": dict(factors)})
-    postprocess(model, u, res, feq, q, temp, workers, aktiv)
+    postprocess(model, u, res, feq, q, temp, workers, aktiv_eff)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
+
+
+def verschiebungen_eintragen(model: Model, res: Results, u: np.ndarray, R: np.ndarray) -> None:
+    """u und R (ndof,) in die Ergebnisfelder (nn, 6) schreiben; die Woelb-FHG
+    hinter den Knotenfreiheitsgraden landen in res.woelb."""
+    n6 = model.nn * NDOF
+    res.u = np.asarray(u[:n6], float).reshape(-1, NDOF)
+    res.reactions = np.asarray(R[:n6], float).reshape(-1, NDOF)
+    if len(u) > n6:
+        res.woelb = {int(n): float(u[k]) for n, k in model.woelb_index().items()}
+
+
+def _normalkraft(model: Model, e, u: np.ndarray) -> float:
+    """Normalkraft (Zug positiv) eines Zug-/Druckstabs, Seils oder der
+    Laengskraft einer Feder aus dem Verschiebungsvektor."""
+    d = asm.element_dofs(e, model)[:12]
+    X = model.nodes[e.nodes]
+    if e.typ == "feder":
+        from .elements import verbindung as vb
+        fp = model.federn[e.sec]
+        T3 = vb.feder_achsen(X[0], X[1], fp.achse, e.roll)
+        return float(vb.feder_kraefte(fp.k, T3, u[d])[0])
+    kl, T3, T, L = asm.beam_local(model, e)
+    ul = T @ u[d]
+    mat = model.materials[e.mat]
+    sec = model.sections[e.sec]
+    return float(mat.E * sec.A / L * (ul[6] - ul[0]))
+
+
+def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=None,
+                       progress=None, max_iter: int = 50):
+    """Aktivmengen-Iteration fuer Staebe, die nur Zug oder nur Druck aufnehmen
+    (Fachwerkstab/Feder mit ``nur``, Seile).
+
+    Gerechnet wird mit allen Staeben; wer die falsche Kraft traegt, wird
+    herausgenommen (seine Steifigkeit wird als K_extra wieder abgezogen -
+    das System muss nicht neu aufgestellt werden), und es wird neu geloest,
+    bis sich die Menge nicht mehr aendert. Herausgenommene Staebe duerfen
+    wieder hinein, wenn sie im naechsten Schritt die richtige Kraft
+    truegen. Kontakt laeuft innen weiter mit.
+
+    Rueckgabe (u, R, aktiv, ausgefallen, log, kontakt) - kontakt = None oder
+    (contact, contact_forces, info) aus der Kontaktiteration.
+    """
+    ne = len(model.elements)
+    kand = [i for i, e in enumerate(model.elements)
+            if (getattr(e, "nur", "") or e.typ == "seil")
+            and (system.aktiv is None or system.aktiv[i])]
+    Ke = {}
+    for i in kand:
+        e = model.elements[i]
+        Ke[i] = (asm.element_dofs(e, model), np.asarray(asm.element_matrix(model, e), float))
+    aus: set = set()
+    log: list[str] = []
+    n = model.ndof
+    u = R = None
+    kontakt = None
+    for it in range(1, max_iter + 1):
+        K_aus = None
+        if aus:
+            rows, cols, vals = [], [], []
+            for i in aus:
+                d, K_e = Ke[i]
+                r, c = np.meshgrid(d, d, indexing="ij")
+                rows.append(r.ravel())
+                cols.append(c.ravel())
+                vals.append(-K_e.ravel())
+            K_aus = sparse.coo_matrix(
+                (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+                shape=(n, n)).tocsr()
+        if model.has_contact:
+            u, R, cons, cf, cinfo = solve_with_contact(model, system, F, progress=progress,
+                                                       us=us, K_zusatz=K_aus)
+            kontakt = (cons, cf, cinfo)
+        else:
+            u = system.solve(F, K_extra=K_aus, us=us)
+            R = system.reactions(u, F, K_aus)
+        kraefte = {i: _normalkraft(model, model.elements[i], u) for i in kand}
+        gross = max([abs(v) for v in kraefte.values()] + [1.0])
+        tol = 1e-9 * gross
+        neu = set()
+        for i, N in kraefte.items():
+            art = getattr(model.elements[i], "nur", "") or "zug"
+            if (art == "zug" and N < -tol) or (art == "druck" and N > tol):
+                neu.add(i)
+        if progress:
+            progress(f"Ausfall-Iteration {it}: {len(neu)} von {len(kand)} Stäben ausgefallen")
+        if neu == aus:
+            break
+        aus = neu
+    else:
+        log.append(f"Ausfall-Iteration nach {max_iter} Schritten nicht konvergiert")
+    if aus:
+        log.append(f"{len(aus)} Stäbe tragen nicht (nur Zug/Druck): "
+                   + ", ".join(str(i) for i in sorted(aus)[:12])
+                   + (" …" if len(aus) > 12 else ""))
+    aktiv = np.ones(ne, dtype=bool) if system.aktiv is None else np.asarray(system.aktiv, bool).copy()
+    for i in aus:
+        aktiv[i] = False
+    return u, R, aktiv, sorted(int(i) for i in aus), log, kontakt
 
 
 # ==========================================================================
@@ -825,7 +999,10 @@ def _contact_singular(it: int, ex, cs, model=None) -> str:
 
 
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
-                       max_iter: int = 120, progress=None, us: np.ndarray = None):
+                       max_iter: int = 120, progress=None, us: np.ndarray = None,
+                       K_zusatz: sparse.spmatrix = None):
+    """Kontakt-Iteration; ``K_zusatz`` (z. B. die abgezogene Steifigkeit
+    ausgefallener Zugstaebe) kommt in jedem Schritt zur Kontaktsteifigkeit."""
     from .contact import ContactSystem
     log: list[str] = []
     cs = ContactSystem(model, system.K, log)
@@ -834,16 +1011,23 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     converged = False
     it = 0
     Kc = Fc = None
+
+    def matrizen():
+        Kc_, Fc_ = cs.matrices(model.ndof)
+        if K_zusatz is not None:
+            Kc_ = (Kc_ + K_zusatz) if Kc_ is not None else K_zusatz
+        return Kc_, Fc_
+
     if not cs.cons:
-        u = system.solve(F, us=us)
-        R = system.reactions(u, F)
+        u = system.solve(F, K_extra=K_zusatz, us=us)
+        R = system.reactions(u, F, K_zusatz)
         return u, R, [], np.zeros((model.nn, 3)), {"contact_iterations": 0,
                                                    "contact_converged": True,
                                                    "contact_log": log}
     u = None
     forced = False
     for it in range(1, max_iter + 1):
-        Kc, Fc = cs.matrices(model.ndof)
+        Kc, Fc = matrizen()
         try:
             u = system.solve(F, Kc, Fc, us=us)
         except RuntimeError as ex:
@@ -856,13 +1040,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 forced = True
                 log.append("Hilfsschritt: Bewegungsrichtung bestimmt, weil im ersten "
                            "Schritt keine Kontaktbedingung haelt")
-                Kc, Fc = cs.matrices(model.ndof)
+                Kc, Fc = matrizen()
                 try:
                     u = system.solve(F, Kc, Fc, us=us)
                 except RuntimeError as ex2:
                     raise RuntimeError(_contact_singular(it, ex2, cs, model)) from None
                 cs.select_by_direction(u)
-                Kc, Fc = cs.matrices(model.ndof)
+                Kc, Fc = matrizen()
                 try:
                     u = system.solve(F, Kc, Fc, us=us)
                 except RuntimeError as ex3:
@@ -878,9 +1062,10 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     R = system.reactions(u, F + (Fc if Fc is not None else 0.0), Kc)
     # Einseitige Lager als Auflagerreaktionen ausweisen
     Rsup = cs.support_reactions(model.nn)
-    R = R.reshape(-1, NDOF)
-    R[:, :3] += Rsup
-    R = R.ravel()
+    n6 = model.nn * NDOF
+    Rk = R[:n6].reshape(-1, NDOF)
+    Rk[:, :3] += Rsup
+    R[:n6] = Rk.ravel()
     if not converged:
         log.append(f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert")
     log.extend(cs.warnings())
@@ -1200,7 +1385,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     res.u = np.zeros((model.nn, NDOF))
     res.reactions = np.zeros((model.nn, NDOF))
     res.freqs = freqs
-    res.modes = modes.reshape(k, model.nn, NDOF)
+    res.modes = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
     res.info = {"ndof": model.ndof, "nfree": len(fi), "time": time.time() - t0,
                 "zusatzmasse": zusatzmasse is not None}
     return res
@@ -1246,6 +1431,6 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     res = static
     res.kind = "buckling"
     res.buckling_factors = vals_
-    res.buckling_modes = modes.reshape(k, model.nn, NDOF)
+    res.buckling_modes = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
     res.info["time"] = time.time() - t0
     return res

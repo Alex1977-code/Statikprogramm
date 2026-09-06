@@ -383,7 +383,32 @@ def _verdichten(model: Model, kante: list[int], n: int, linie: str = "") -> list
     return out
 
 
-def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None) -> list[int]:
+def kantenknoten(model: Model, a: int, b: int, cache: dict = None) -> int:
+    """Der Knoten in der Mitte der Kante a-b - je Kante nur einmal.
+
+    Quadratische Elemente teilen ihre Kantenmitten mit dem Nachbarn; ohne
+    ``cache`` entstuenden doppelte Knoten und das Netz fiele auseinander.
+    """
+    a, b = int(a), int(b)
+    key = (min(a, b), max(a, b))
+    if cache is not None and key in cache:
+        return int(cache[key])
+    P = 0.5 * (model.nodes[a] + model.nodes[b])
+    i = int(model.add_node(*P))
+    if cache is not None:
+        cache[key] = i
+    return i
+
+
+def netz_ordnung(model: Model, ordnung: int = 0) -> int:
+    """1 = lineare, 2 = quadratische Elemente (aus den Netzeinstellungen)."""
+    if ordnung and ordnung > 0:
+        return int(ordnung)
+    return max(1, int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1))
+
+
+def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None,
+                 ordnung: int = 0, kanten: dict = None) -> list[int]:
     """Eine Flaeche in Schalenelemente umsetzen.
 
     Vier Randabschnitte geben ein abgebildetes Vierecknetz mit der in
@@ -399,6 +424,8 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None)
         return []
     if dreiecke is None:
         dreiecke = int(getattr(getattr(model, "netz", None), "form", 2) or 0) == 0
+    ordnung = netz_ordnung(model, ordnung)
+    kanten = {} if kanten is None else kanten
     ring = flaeche.randknoten(model)
     if not ring:
         C.warn(log, f"Fläche {flaeche.name}: die Linien bilden keinen geschlossenen Rand.")
@@ -424,17 +451,15 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None)
             for j in range(ids.shape[1] - 1):
                 a, b, c, d = (int(ids[i, j]), int(ids[i + 1, j]),
                               int(ids[i + 1, j + 1]), int(ids[i, j + 1]))
-                if dreiecke:
-                    els.append(model.add_element("shell3", [a, b, c], mat, prop, group=flaeche.name))
-                    els.append(model.add_element("shell3", [a, c, d], mat, prop, group=flaeche.name))
-                else:
-                    els.append(model.add_element("shell4", [a, b, c, d], mat, prop, group=flaeche.name))
+                els.extend(_flaechenelemente(model, [a, b, c, d], mat, prop,
+                                             flaeche.name, dreiecke, ordnung, kanten))
         flaeche.elemente = els
         C.say(log, f"Fläche {flaeche.name}: {len(els)} "
-                   + ("Dreieckelemente" if dreiecke else "Viereckelemente") + f" ({nu} x {nv})")
+                   + ("Dreieckelemente" if dreiecke else "Viereckelemente")
+                   + (" (quadratisch)" if ordnung >= 2 else "") + f" ({nu} x {nv})")
         return els
     if len(ring) == 3:
-        els = [model.add_element("shell3", ring, mat, prop, group=flaeche.name)]
+        els = [_dreieck(model, ring, mat, prop, flaeche.name, ordnung, kanten)]
         flaeche.elemente = els
         C.say(log, f"Fläche {flaeche.name}: ein Dreieckelement")
         return els
@@ -442,6 +467,37 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None)
                 f"{len(ring)} Knoten - für ein abgebildetes Netz sind vier "
                 "Randabschnitte nötig. Nicht vernetzt.")
     return []
+
+
+def _dreieck(model: Model, knoten, mat, prop, gruppe: str, ordnung: int, kanten: dict) -> int:
+    """Ein Dreieckelement: shell3 (linear) oder shell6 (quadratisch)."""
+    a, b, c = [int(x) for x in knoten[:3]]
+    if ordnung < 2:
+        return model.add_element("shell3", [a, b, c], mat, prop, group=gruppe)
+    m1 = kantenknoten(model, a, b, kanten)
+    m2 = kantenknoten(model, b, c, kanten)
+    m3 = kantenknoten(model, c, a, kanten)
+    return model.add_element("shell6", [a, b, c, m1, m2, m3], mat, prop, group=gruppe)
+
+
+def _viereck(model: Model, knoten, mat, prop, gruppe: str, ordnung: int, kanten: dict) -> int:
+    """Ein Viereckelement: shell4 (linear) oder shell8 (quadratisch)."""
+    a, b, c, d = [int(x) for x in knoten[:4]]
+    if ordnung < 2:
+        return model.add_element("shell4", [a, b, c, d], mat, prop, group=gruppe)
+    m = [kantenknoten(model, *p, kanten) for p in ((a, b), (b, c), (c, d), (d, a))]
+    return model.add_element("shell8", [a, b, c, d] + m, mat, prop, group=gruppe)
+
+
+def _flaechenelemente(model: Model, viereck, mat, prop, gruppe: str, dreiecke: bool,
+                      ordnung: int, kanten: dict) -> list[int]:
+    """Ein Viereck des abgebildeten Netzes als ein Viereck- oder zwei
+    Dreieckelemente, linear oder quadratisch."""
+    a, b, c, d = [int(x) for x in viereck]
+    if dreiecke:
+        return [_dreieck(model, [a, b, c], mat, prop, gruppe, ordnung, kanten),
+                _dreieck(model, [a, c, d], mat, prop, gruppe, ordnung, kanten)]
+    return [_viereck(model, [a, b, c, d], mat, prop, gruppe, ordnung, kanten)]
 
 
 def _seiten_aus_linien(model: Model, flaeche):
@@ -506,11 +562,14 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             if _hex_volumen(model.nodes[order]) < 0:
                 order = order[4:] + order[:4]
             nx, ny, nz = (list(koerper.teilung) + [4, 4, 4])[:3]
+            ord_ = netz_ordnung(model, ordnung)
             els = _hex_netz(model, order, max(1, nx), max(1, ny), max(1, nz), mat,
-                            koerper.name)
+                            koerper.name, ord_, (cache or {}).setdefault("kanten", {})
+                            if cache is not None else None)
             koerper.elemente = els
-            C.say(log, f"Volumen {koerper.name}: {len(els)} Hexaeder "
-                       f"({nx} x {ny} x {nz})")
+            C.say(log, f"Volumen {koerper.name}: {len(els)} Hexaeder"
+                       + (" (quadratisch, 20 Knoten)" if ord_ >= 2 else "")
+                       + f" ({nx} x {ny} x {nz})")
             return els
     if len(flaechen) == 4 and len(knoten) == 4:
         X = model.nodes[knoten]
@@ -743,9 +802,15 @@ def _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
     return aus
 
 
+#: Kanten des Hexaeders in der Knotenreihenfolge von hex20 (unten, oben, senkrecht)
+HEX_KANTEN = ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+              (0, 4), (1, 5), (2, 6), (3, 7))
+
+
 def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,
-              mat: str, gruppe: str) -> list[int]:
-    """Abgebildetes Hexaedernetz in einem Sechsflaechner (trilineare Abbildung)."""
+              mat: str, gruppe: str, ordnung: int = 1, kanten: dict = None) -> list[int]:
+    """Abgebildetes Hexaedernetz in einem Sechsflaechner (trilineare Abbildung);
+    ``ordnung`` 2 gibt Hexaeder mit 20 Knoten (Kantenmitten dazu)."""
     P = model.nodes[ecken]
     ids = np.zeros((nx + 1, ny + 1, nz + 1), dtype=int)
     ecknr = {(0, 0, 0): 0, (1, 0, 0): 1, (1, 1, 0): 2, (0, 1, 0): 3,
@@ -764,12 +829,16 @@ def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,
                               r * s * t, (1 - r) * s * t])
                 ids[i, j, k] = model.add_node(*(N @ P))
     els = []
+    kanten = {} if kanten is None else kanten
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
-                c = [ids[i, j, k], ids[i + 1, j, k], ids[i + 1, j + 1, k],
-                     ids[i, j + 1, k], ids[i, j, k + 1], ids[i + 1, j, k + 1],
-                     ids[i + 1, j + 1, k + 1], ids[i, j + 1, k + 1]]
-                els.append(model.add_element("hex8", [int(x) for x in c], mat,
-                                             group=gruppe))
+                c = [int(ids[i, j, k]), int(ids[i + 1, j, k]), int(ids[i + 1, j + 1, k]),
+                     int(ids[i, j + 1, k]), int(ids[i, j, k + 1]), int(ids[i + 1, j, k + 1]),
+                     int(ids[i + 1, j + 1, k + 1]), int(ids[i, j + 1, k + 1])]
+                if ordnung >= 2:
+                    c = c + [kantenknoten(model, c[a], c[b], kanten) for a, b in HEX_KANTEN]
+                    els.append(model.add_element("hex20", c, mat, group=gruppe))
+                else:
+                    els.append(model.add_element("hex8", c, mat, group=gruppe))
     return els

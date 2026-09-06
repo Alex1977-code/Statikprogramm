@@ -4879,6 +4879,123 @@ def main():
         traceback.print_exc()
         check("Geist, Glasleiste, Lagerdichte", False, str(ex)[:70])
 
+    # ---- Elementtypen: Verbindungsobjekte, Stabmaske, Lagermaske ---------
+    try:
+        # --- Verbindungsobjekte in der Oberflaeche --------------------------------
+        import numpy as _np
+        from statik3d.model import Material as _Mat, Section as _Sec
+        w.new_model()
+        mv = w.model
+        mv.add_material(_Mat("S235", E=210e9, nu=0.3, rho=7850))
+        mv.add_section(_Sec("R", A=1e-2, Iy=1e-5, Iz=1e-5, It=1e-5, Iw=1e-7))
+        n0 = mv.add_node(0, 0, 0); n1 = mv.add_node(1, 0, 0); n2 = mv.add_node(2, 0, 0)
+        mv.add_element("beam", [n0, n1], "S235", "R")
+        mv.add_feder_prop("F1", [1e6, 1e6, 1e6, 0, 0, 0])
+        mv.add_element("feder", [n1, n2], "S235", "F1")
+        mv.add_punktmasse(n2, 250.0, [1.0, 2.0, 3.0])
+        mv.add_daempfer(n2, -1, [40.0, 0, 0, 0, 0, 0])
+        mv.add_starrkoerper(n0, [n1], "RBE2")
+        mv.add_grenzschicht_prop("GS", 1e9, 5e8)
+        w.refresh_all()
+        app.processEvents()
+
+        def _zweige(baum):
+            aus = {}
+            def lauf(x, tiefe=0):
+                for k in range(x.childCount()):
+                    kind = x.child(k)
+                    aus[kind.text(0)] = kind
+                    lauf(kind, tiefe + 1)
+            lauf(baum.invisibleRootItem())
+            return aus
+
+        zw = _zweige(w.baum)
+        check("Modellbaum: Zweig „Verbindungen“", "Verbindungen" in zw, str(sorted(zw)[:12]))
+        for name in ("Punktmassen", "Dämpfer", "Federn", "Starre Körper", "Grenzschichten"):
+            check(f"Modellbaum: Unterzweig „{name}“", name in zw)
+
+        # Maske einer Punktmasse
+        w._objektmaske("punktmasse", "0")
+        mk = w.maskenrand.maske
+        check("Punktmassenmaske öffnet", mk is not None and "Punktmasse" in mk.titel, str(mk and mk.titel))
+        werte = mk.werte()
+        check("Punktmassenmaske zeigt Masse und Drehträgheit",
+              abs(float(werte["masse"]) - 250.0) < 1e-9 and abs(float(werte["Jy"]) - 2.0) < 1e-9,
+              str({k: werte[k] for k in ("masse", "Jx", "Jy", "Jz")}))
+        mk.setzen("masse", 400.0)
+        w._objekt_uebernehmen("punktmasse", "0", mk.werte(), False)
+        check("Punktmasse geändert", abs(w.model.punktmassen[0].masse - 400.0) < 1e-9,
+              str(w.model.punktmassen[0].masse))
+
+        # Feder
+        w._objektmaske("feder", "F1")
+        mk = w.maskenrand.maske
+        check("Federmaske öffnet", mk is not None and "Feder" in mk.titel)
+        mk.setzen("kx", 2.5e6)
+        w._objekt_uebernehmen("feder", "F1", mk.werte(), False)
+        check("Federsteifigkeit geändert", abs(w.model.federn["F1"].k[0] - 2.5e6) < 1e-6,
+              str(w.model.federn["F1"].k[:3]))
+
+        # Starrer Koerper
+        w._objektmaske("starrkoerper", "0")
+        mk = w.maskenrand.maske
+        mk.setzen("art", "RBE3")
+        w._objekt_uebernehmen("starrkoerper", "0", mk.werte(), False)
+        check("Starrer Körper auf RBE3 umgestellt", w.model.starrkoerper[0].art == "RBE3",
+              w.model.starrkoerper[0].art)
+
+        # Grenzschicht
+        w._objektmaske("grenzschicht", "GS")
+        mk = w.maskenrand.maske
+        mk.setzen("kn", 2e9)
+        w._objekt_uebernehmen("grenzschicht", "GS", mk.werte(), False)
+        check("Grenzschicht geändert", abs(w.model.grenzschichten["GS"].kn - 2e9) < 1e-3)
+
+        # Klick im Baum waehlt die Knoten
+        w._baum_objekt_waehlen("punktmasse", "0")
+        check("Klick auf die Punktmasse wählt ihren Knoten",
+              list(w.selection) == [n2], str(list(w.selection)))
+
+        # --- Stabmaske: neue Felder ------------------------------------------------
+        w._objektmaske("stabelement", "0")
+        mk = w.maskenrand.maske
+        werte = mk.werte()
+        check("Stabmaske: Art, trägt nur, Versatz, Wölbkrafttorsion",
+              all(k in werte for k in ("typ", "nur", "laenge0", "ex_a", "ex_e", "woelb")),
+              str(sorted(werte)))
+        check("Stabmaske: Seil ist wählbar", "Seil" in w.STABARTEN)
+        mk.setzen("nur", "nur Zug")
+        mk.setzen("typ", "Fachwerkstab")
+        mk.setzen("ex_a", "0, 50")
+        mk.setzen("woelb", True)
+        w._objekt_uebernehmen("stabelement", "0", mk.werte(), False)
+        e0 = w.model.elements[0]
+        check("Stab: nur Zug übernommen", e0.nur == "zug" and e0.typ == "truss", f"{e0.typ}/{e0.nur}")
+        check("Stab: Versatz in Metern gespeichert",
+              abs(e0.exzentrizitaet[0][2] - 0.05) < 1e-12, str(e0.exzentrizitaet))
+        check("Stab: Wölbkrafttorsion gesetzt", bool(e0.woelb))
+
+        # --- Lagermaske: Woelbeinspannung -----------------------------------------
+        w.model.fix(n0, "all")
+        w.refresh_all()
+        w._objektmaske("lager_einzeln", "0")
+        mk = w.maskenrand.maske
+        check("Lagermaske hat die Wölbeinspannung", "woelb" in mk.werte(), str(sorted(mk.werte()))[:120])
+        mk.setzen("woelb", True)
+        w._objekt_uebernehmen("lager_einzeln", "0", mk.werte(), False)
+        check("Wölbeinspannung übernommen", bool(w.model.supports[0].woelb))
+
+        # --- Netzeinstellungen: Elementansatz --------------------------------------
+        check("Netzmaske: quadratisch nennt shell6/shell8 und hex20",
+              any("shell8" in k and "hex20" in k for k in w.NETZORDNUNG),
+              str(list(w.NETZORDNUNG)))
+        w.new_model()
+
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Verbindungsobjekte und neue Masken", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:
