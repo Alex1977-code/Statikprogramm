@@ -526,11 +526,67 @@ def _seiten_aus_linien(model: Model, flaeche):
     return kette if kette[-1][0][-1] == kette[0][0][0] else None
 
 
+#: Linienarten, die eine Strecke sind. Alles andere (Bogen, Kreis, Ellipse,
+#: Spline, Parabel) kruemmt sich und passt nicht in ein abgebildetes Netz.
+GERADE_LINIEN = ("", "polyline", "line", "strecke", "gerade")
+
+
+def _nur_gerade(model, flaechen) -> bool:
+    """Sind alle Randlinien dieser Flaechen Strecken?"""
+    for f in flaechen:
+        raender = list(f.linien or []) + [x for loch in (f.oeffnungen or []) for x in loch]
+        for nm in raender:
+            ln = (model.lines or {}).get(nm)
+            if ln is None:
+                return False
+            if str(getattr(ln, "typ", "polyline") or "polyline").lower() not in GERADE_LINIEN:
+                return False
+    return True
+
+
+def _dreiflaechner(ringe, flaechen, model) -> bool:
+    """Vier Randflaechen, die wirklich vier Dreiecke sind.
+
+    ``len(knoten) == 4`` allein reicht nicht: ein **Zylinder** aus zwei
+    Mantelflaechen (je 4 Knoten) und zwei Kreisen hat auch vier Randflaechen
+    und vier Eckknoten - die Kreise liefern gar keinen Ring, weil sich ein aus
+    zwei Boegen geschlossener Kreis nicht als Kette aus vier Strecken lesen
+    laesst. Ohne diese Pruefung wurde der Zylinder als flacher Tetraeder
+    gelesen, dessen vier Ecken auf zwei Kreisen liegen.
+    """
+    return (len(flaechen) == 4 and all(len(r) == 3 for r in ringe)
+            and _nur_gerade(model, flaechen))
+
+
 def _entartungspruefung():
     """Die gemeinsame Grenze - eine Stelle, an der „entartet“ definiert ist."""
     from .diagnose import entartetes_volumen
     from .model import OHNE_NETZ
     return entartetes_volumen, OHNE_NETZ
+
+
+def _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
+              grund: str, ohne_netz: str) -> list:
+    """Das abgebildete Muster hat gegriffen, der Koerper hat aber kein Volumen.
+
+    Das heisst nicht, dass er keines **hat** - es heisst, dass das Muster
+    nicht passt. Ein Zylinder aus zwei Mantelflaechen und zwei Kreisen sieht
+    an den Eckknoten aus wie ein flacher Tetraeder. Darum uebernimmt hier der
+    freie Vernetzer; erst wenn auch der nichts findet, bleibt der Koerper
+    ohne Netz.
+    """
+    from .importers import _common as C
+    if frei:
+        C.say(log, f"Volumen {koerper.name}: {grund} - das abgebildete Muster passt "
+                   "nicht, der freie Vernetzer übernimmt.")
+        from .mesher3d import mesh_koerper_frei
+        return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
+                                 ordnung=ordnung, fortschritt=fortschritt)
+    C.warn(log, f"Volumen {koerper.name}: {grund} - kein Körper, kein Element "
+                "(freier Vernetzer abgeschaltet).")
+    koerper.elemente = []
+    koerper.kommentar = f"{ohne_netz} kein Rauminhalt ({grund})"
+    return []
 
 
 def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
@@ -571,15 +627,10 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             v_hex = float(_hex_volumen(X_hex))
             d_hex = float(np.linalg.norm(X_hex.max(axis=0) - X_hex.min(axis=0)))
             if entartetes_volumen(v_hex, d_hex):
-                C.warn(log, f"Volumen {koerper.name}: die acht Eckknoten spannen kein "
-                            f"Volumen auf ({abs(v_hex):.3e} m³) - kein Körper, kein "
-                            "Netz. In der Quelldatei ist das ein Hilfsobjekt ohne "
-                            "Dicke; es trägt nichts.")
-                koerper.elemente = []
-                koerper.kommentar = (f"{OHNE_NETZ} kein Rauminhalt (Eckknoten spannen kein "
-                                     f"Volumen auf, {abs(v_hex):.3e} m³ bei "
-                                     f"{d_hex * 1e3:.0f} mm Größe)")
-                return []
+                return _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
+                                 f"die acht Eckknoten spannen kein Volumen auf "
+                                 f"({abs(v_hex):.3e} m³ bei {d_hex * 1e3:.0f} mm Größe)",
+                                 OHNE_NETZ)
             if v_hex < 0:
                 order = order[4:] + order[:4]
             nx, ny, nz = (list(koerper.teilung) + [4, 4, 4])[:3]
@@ -592,23 +643,15 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                        + (" (quadratisch, 20 Knoten)" if ord_ >= 2 else "")
                        + f" ({nx} x {ny} x {nz})")
             return els
-    if len(flaechen) == 4 and len(knoten) == 4:
+    if len(knoten) == 4 and _dreiflaechner(ringe, flaechen, model):
         X = model.nodes[knoten]
         v = float(np.dot(np.cross(X[1] - X[0], X[2] - X[0]), X[3] - X[0]))
         d = float(np.linalg.norm(X.max(axis=0) - X.min(axis=0)))
         if entartetes_volumen(abs(v) / 6.0, d):
-            # Vier Punkte in einer Ebene sind kein Koerper. In Dateien aus
-            # RFEM stehen solche Null-Volumen als Hilfsobjekte; ein Element
-            # daraus haette keine Steifigkeit und braechte spaeter die ganze
-            # Rechnung zu Fall.
-            C.warn(log, f"Volumen {koerper.name}: die vier Eckknoten liegen in einer "
-                        f"Ebene (Volumen {abs(v) / 6.0:.3e} m³) - kein Körper, kein "
-                        "Element. In der Quelldatei ist das ein Hilfsobjekt ohne "
-                        "Dicke; es trägt nichts.")
-            koerper.elemente = []
-            koerper.kommentar = (f"{OHNE_NETZ} kein Rauminhalt (Eckknoten in einer Ebene, "
-                                 f"{abs(v) / 6.0:.3e} m³ bei {d * 1e3:.0f} mm Größe)")
-            return []
+            return _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
+                             f"die vier Eckknoten liegen in einer Ebene "
+                             f"({abs(v) / 6.0:.3e} m³ bei {d * 1e3:.0f} mm Größe)",
+                             OHNE_NETZ)
         nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
         els = [model.add_element("tet4", nodes, mat, group=koerper.name)]
         koerper.elemente = els

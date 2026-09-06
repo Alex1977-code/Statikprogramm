@@ -1678,6 +1678,28 @@ Darum gilt:
   absolute Schranke in m³ hängt sonst an der gewählten Längeneinheit und
   liegt bei Metern unter dem, was sich überhaupt auflösen lässt.
 
+**Wann das abgebildete Muster greifen darf.** Ein Körper wird nur dann
+abgebildet vernetzt, wenn seine Randflächen wirklich die Form haben, die das
+Muster voraussetzt - Zählen allein reicht nicht:
+
+* Sechsflächner: sechs Randflächen, acht Eckknoten, **jeder** Ring mit vier
+  Knoten.
+* Tetraeder: vier Randflächen, vier Eckknoten, **jeder** Ring mit drei Knoten
+  und alle Randlinien Strecken.
+
+Die zweite Bedingung fehlte und kostete ein Modell die Rechnung: ein
+**Zylinder** aus zwei Mantelflächen (je vier Knoten) und zwei Kreisen hat
+ebenfalls vier Randflächen und vier Eckknoten. Die Kreise liefern gar keinen
+Ring - ein aus zwei Bögen geschlossener Kreis lässt sich nicht als Kette aus
+Strecken lesen -, sodass die Ringe [4, 4, 0, 0] ergeben und die Vereinigung
+vier Knoten. Das Muster griff und las die vier Ecken, die auf zwei Kreisen
+liegen, als flachen Tetraeder.
+
+Greift ein Muster und stellt sich der Körper dabei als volumenlos heraus,
+heißt das nicht, dass er kein Volumen **hat** - es heißt, dass das Muster
+nicht passt. Darum übernimmt dann der **freie Vernetzer**; erst wenn auch der
+nichts findet, bleibt der Körper ohne Netz.
+
 Bleiben nach dem Vernetzen Objekte ohne Netz, wird die Rechnung **nicht mehr
 abgewiesen**: was der Vernetzer eben nicht vernetzen konnte, kann er auch
 beim nächsten Versuch nicht, und ein erneuter Abbruch wäre eine Sackgasse.

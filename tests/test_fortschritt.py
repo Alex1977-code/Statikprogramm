@@ -318,6 +318,108 @@ def test_ein_kriterium():
     check("eine Erfolgsbemerkung ist keine Ablehnung", m.koerper_traegt("V_gut"), k.kommentar)
 
 
+def _zylinder(m, name, r=0.02, hoehe=0.08, x0=0.0):
+    """Ein Zylinder, wie ihn RFEM abliefert: zwei Mantelflaechen (je vier
+    Knoten) und zwei Kreise aus je zwei Boegen. Vier Randflaechen, vier
+    Eckknoten - und trotzdem kein Tetraeder."""
+    a_u, b_u = m.add_node(x0 - r, 0, 0), m.add_node(x0 + r, 0, 0)
+    a_o, b_o = m.add_node(x0 - r, 0, hoehe), m.add_node(x0 + r, 0, hoehe)
+    for tag, (A, B, z) in {"u": (a_u, b_u, 0.0), "o": (a_o, b_o, hoehe)}.items():
+        m.add_line(f"{name}_{tag}1", [A, B], "arc",
+                   punkte=[(x0 - r, 0, z), (x0, r, z), (x0 + r, 0, z)])
+        m.add_line(f"{name}_{tag}2", [B, A], "arc",
+                   punkte=[(x0 + r, 0, z), (x0, -r, z), (x0 - r, 0, z)])
+    m.add_line(f"{name}_v1", [a_u, a_o])
+    m.add_line(f"{name}_v2", [b_u, b_o])
+    m.add_flaeche(f"{name}_M1", [f"{name}_u1", f"{name}_v2", f"{name}_o1", f"{name}_v1"],
+                  material="S355")
+    m.add_flaeche(f"{name}_M2", [f"{name}_u2", f"{name}_v1", f"{name}_o2", f"{name}_v2"],
+                  material="S355")
+    m.add_flaeche(f"{name}_Boden", [f"{name}_u1", f"{name}_u2"], material="S355")
+    m.add_flaeche(f"{name}_Deckel", [f"{name}_o1", f"{name}_o2"], material="S355")
+    return m.add_koerper(name, [f"{name}_M1", f"{name}_M2", f"{name}_Boden",
+                                f"{name}_Deckel"], material="S355")
+
+
+def test_zylinder_ist_kein_tetraeder():
+    """Der eigentliche Befund am Drehlager: die 48 „entarteten“ Volumen waren
+    gebrauchte Stifte.
+
+    Ein Zylinder aus zwei Mantelflaechen und zwei Kreisen hat vier
+    Randflaechen und vier Eckknoten - dasselbe Zaehlergebnis wie ein
+    Tetraeder. Die Kreise liefern gar keinen Ring, weil sich ein aus zwei
+    Boegen geschlossener Kreis nicht als Kette aus Strecken lesen laesst. Das
+    abgebildete Muster griff und las die vier Ecken - die auf zwei Kreisen
+    liegen - als flachen Tetraeder.
+    """
+    from statik3d import mesher
+    m = Model("Z")
+    m.add_material(Material("S355", E=210e9, nu=0.3, rho=7850))
+    k = _zylinder(m, "V51")
+    flaechen = [m.flaechen[x] for x in k.flaechen]
+    ringe = [f.randknoten(m) for f in flaechen]
+    knoten = sorted({n for r in ringe for n in r})
+    check("Zylinder: vier Randflächen, vier Eckknoten - wie ein Tetraeder",
+          len(k.flaechen) == 4 and len(knoten) == 4, f"{len(k.flaechen)} / {len(knoten)}")
+    check("die Kreise liefern keinen Ring", sorted(len(r) for r in ringe) == [0, 0, 4, 4],
+          str([len(r) for r in ringe]))
+    check("das Tetraedermuster greift nicht mehr",
+          not mesher._dreiflaechner(ringe, flaechen, m))
+
+    log = []
+    els = mesher.mesh_koerper(m, k, log=log, h=0.01)
+    check("der Zylinder wird vernetzt", len(els) > 100, f"{len(els)} Elemente")
+    check("und zwar vom freien Vernetzer",
+          all(m.elements[i].typ == "tet4" for i in els))
+    check("er gilt danach als tragend", m.koerper_traegt("V51") and bool(k.elemente))
+
+    from statik3d.elements import solid as _so
+    ist = sum(abs(float(_so.solid_volume("tet4", m.nodes[[int(x) for x in m.elements[i].nodes]])))
+              for i in els)
+    soll = np.pi * 0.02 ** 2 * 0.08
+    check("das Volumen trifft den Zylinder (Sehnenfehler des Polygonzugs)",
+          abs(ist - soll) / soll < 0.06, f"{ist:.4e} / {soll:.4e} m³")
+
+
+def test_abgebildete_muster_bleiben():
+    """Echte Tetraeder und Sechsflaechner werden weiter abgebildet vernetzt -
+    das schaerfere Muster darf sie nicht mit aussortieren."""
+    from statik3d import mesher
+    m = Model("T")
+    m.add_material(Material("S355", E=210e9, nu=0.3, rho=7850))
+    for p_ in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]:
+        m.add_node(*p_)
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3)]):
+        m.add_line(f"L{i}", [a, b])
+    for nm, ls in [("F1", ["L0", "L1", "L2"]), ("F2", ["L0", "L4", "L3"]),
+                   ("F3", ["L1", "L5", "L4"]), ("F4", ["L2", "L3", "L5"])]:
+        m.add_flaeche(nm, ls, material="S355")
+    k = m.add_koerper("V_tet", ["F1", "F2", "F3", "F4"], material="S355")
+    els = mesher.mesh_koerper(m, k, log=[], frei=False)
+    check("Tetraeder: ein Element, abgebildet", len(els) == 1
+          and m.elements[els[0]].typ == "tet4", str(els))
+
+    m2 = Model("H")
+    m2.add_material(Material("S355", E=210e9, nu=0.3, rho=7850))
+    for p_ in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+               (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]:
+        m2.add_node(*p_)
+    kanten = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+              (0, 4), (1, 5), (2, 6), (3, 7)]
+    for i, (a, b) in enumerate(kanten):
+        m2.add_line(f"K{i}", [a, b])
+    seiten = {"unten": ["K0", "K1", "K2", "K3"], "oben": ["K4", "K5", "K6", "K7"],
+              "v": ["K0", "K9", "K4", "K8"], "h": ["K2", "K11", "K6", "K10"],
+              "l": ["K3", "K8", "K7", "K11"], "r": ["K1", "K10", "K5", "K9"]}
+    for nm, ls in seiten.items():
+        m2.add_flaeche(nm, ls, material="S355")
+    k2 = m2.add_koerper("V_hex", list(seiten), material="S355")
+    k2.teilung = [2, 2, 2]
+    els2 = mesher.mesh_koerper(m2, k2, log=[], frei=False)
+    check("Sechsflächner: 2×2×2 Hexaeder, abgebildet", len(els2) == 8
+          and all(m2.elements[i].typ == "hex8" for i in els2), str(len(els2)))
+
+
 def test_vernetzer_ohne_volumen():
     """Vier Punkte in einer Ebene sind kein Koerper. In Dateien aus RFEM
     stehen solche Null-Volumen als Hilfsobjekte; der abgebildete Vernetzer
@@ -511,6 +613,7 @@ def main():
     print("=" * 92)
     for t in (test_entartete_elemente, test_modellpruefung_meldet_entartung,
               test_elementfehler_nennt_das_element, test_vernetzer_laesst_entartete_weg,
+              test_zylinder_ist_kein_tetraeder, test_abgebildete_muster_bleiben,
               test_vernetzer_ohne_volumen, test_gleiche_geometrie_gleiches_urteil,
               test_volumen_relativ_gemessen, test_ein_kriterium,
               test_hinweis_ohne_konsole, test_fehler_aus_dem_arbeitsprozess,

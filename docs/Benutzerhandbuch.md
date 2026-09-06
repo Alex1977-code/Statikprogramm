@@ -1819,6 +1819,11 @@ Nachweis mit seiner Verformung je Kombination.
   kein Netz bekommen, und so fragte das Programm sonst vor jeder Rechnung
   nach einem Netz, das es nie geben kann. Statt der Warnung „ohne Netz“
   steht ein Hinweis mit ihren Namen im Protokoll, und die Rechnung läuft.
+* **Zylinder, Stifte und Bolzen** werden vom freien Vernetzer vernetzt, auch
+  wenn sie wie ein Tetraeder aussehen: vier Randflächen und vier Eckknoten
+  hat ein Zylinder aus zwei Mantelflächen und zwei Kreisen genauso. Das
+  abgebildete Netz greift nur noch, wenn die Randflächen wirklich Dreiecke
+  mit geraden Kanten sind - sonst übernimmt der freie Vernetzer.
 * Bleiben nach dem Vernetzen **doch Objekte ohne Netz**, bricht das Programm
   nicht mehr ab: es nennt sie beim Namen, sagt, dass Lasten darauf verloren
   gehen, und rechnet ohne sie. Ein zweiter Abbruch wäre eine Sackgasse - was
