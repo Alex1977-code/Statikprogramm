@@ -204,7 +204,15 @@ def diagnose(model) -> dict:
     traegt = getattr(model, "flaeche_traegt", None)
     flaechen = [n for n, f in (getattr(model, "flaechen", {}) or {}).items()
                 if not (f.elemente or []) and (traegt is None or traegt(n))]
-    koerper = [n for n, k in (getattr(model, "koerper", {}) or {}).items() if not (k.elemente or [])]
+    # Ein Koerper ohne Volumen (alle Randknoten in einer Ebene) kann kein Netz
+    # bekommen; er zaehlt darum nicht als unvernetzt, sonst fragte das
+    # Programm vor jeder Rechnung nach einem Netz, das es nie geben kann.
+    kann = getattr(model, "koerper_traegt", None)
+    koerper, ohne_volumen = [], []
+    for n, k in (getattr(model, "koerper", {}) or {}).items():
+        if k.elemente:
+            continue
+        (koerper if (kann is None or kann(n)) else ohne_volumen).append(n)
     teile = teiltragwerke(model)
     fest, kontakt = gehaltene_knoten(model)
     ohne = [g for g in teile if not (set(g) & fest) and not (set(g) & kontakt)]
@@ -213,6 +221,7 @@ def diagnose(model) -> dict:
     entartet = entartete_elemente(model)
     return {"entartete_elemente": entartet,
             "unvernetzte_flaechen": flaechen, "unvernetzte_koerper": koerper,
+            "koerper_ohne_volumen": ohne_volumen,
             "teile": len(teile), "groesstes_teil": max((len(g) for g in teile), default=0),
             "ohne_lager": ohne, "nur_kontakt": nur_kontakt,
             "lose_knoten": int(model.nn - len(belegt)),
@@ -252,6 +261,12 @@ def meldungen(model, d: dict = None) -> list:
     if d["nur_kontakt"]:
         z.append(f"Hinweis: {len(d['nur_kontakt'])} Teiltragwerke sind nur durch Kontakt gehalten - "
                  "rechenbar, solange der Kontakt trägt (sonst hebt das Teil ab)")
+    ov = d.get("koerper_ohne_volumen") or []
+    if ov:
+        z.append(f"Hinweis: {len(ov)} Volumen ohne Rauminhalt (alle Randknoten in einer "
+                 "Ebene) - sie bekommen kein Netz und tragen nichts; in Dateien aus RFEM "
+                 "sind das Hilfsobjekte (z. B. " + ", ".join(ov[:4])
+                 + (" …" if len(ov) > 4 else "") + ")")
     if d["lose_knoten"]:
         z.append(f"Hinweis: {d['lose_knoten']} Knoten tragen kein Element (Rand nicht vernetzter Flächen)")
     return z

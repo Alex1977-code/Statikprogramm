@@ -255,6 +255,23 @@ def test_vernetzer_ohne_volumen():
     check("es bleibt kein entartetes Element im Modell",
           not diagnose.entartete_elemente(m))
 
+    # Und er darf danach nicht als „unvernetzt“ gelten: sonst fragt das
+    # Programm vor jeder Rechnung nach einem Netz, das es nie geben kann -
+    # genau die Schleife, in der das Drehlager-Modell stecken blieb.
+    check("ein Körper ohne Rauminhalt trägt nichts", not m.koerper_traegt("V_flach"))
+    d = diagnose.diagnose(m)
+    check("er zählt nicht als unvernetzt", d["unvernetzte_koerper"] == [],
+          str(d["unvernetzte_koerper"]))
+    check("sondern eigens als Körper ohne Rauminhalt",
+          d["koerper_ohne_volumen"] == ["V_flach"], str(d["koerper_ohne_volumen"]))
+    zeilen = diagnose.meldungen(m)
+    check("die Meldung ist ein Hinweis, keine Warnung „ohne Netz“",
+          any(z.startswith("Hinweis") and "ohne Rauminhalt" in z for z in zeilen)
+          and not any("Volumen ohne Netz" in z for z in zeilen),
+          "; ".join(zeilen)[:100])
+    check("und sie nennt den Körper beim Namen",
+          any("V_flach" in z for z in zeilen))
+
     # Der gesunde Fall muss weiter ein Element geben
     m2 = Model("Tet")
     m2.add_material(Material("S235", E=210e9, nu=0.3, rho=7850))
@@ -267,6 +284,9 @@ def test_vernetzer_ohne_volumen():
     m2.add_flaeche("F3", ["L1", "L5", "L4"], material="S235")
     m2.add_flaeche("F4", ["L2", "L3", "L5"], material="S235")
     k2 = m2.add_koerper("V_gut", ["F1", "F2", "F3", "F4"], material="S235")
+    check("ein gesunder Körper ohne Netz zählt weiter als unvernetzt",
+          diagnose.diagnose(m2)["unvernetzte_koerper"] == ["V_gut"]
+          and m2.koerper_traegt("V_gut"))
     els2 = mesher.mesh_koerper(m2, k2, log=[], frei=False)
     check("der gesunde Tetraeder wird weiter angelegt", len(els2) == 1, str(els2))
     check("und ist rechts orientiert (positives Volumen)",

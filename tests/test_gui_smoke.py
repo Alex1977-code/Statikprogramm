@@ -5183,6 +5183,78 @@ def main():
         traceback.print_exc()
         check("Netzqualität im Ribbon Netz", False, str(ex)[:70])
 
+    # ------------------------------------------------------------------
+    # Volumen ohne Rauminhalt halten die Rechnung nicht auf
+    # ------------------------------------------------------------------
+    try:
+        from statik3d.model import Material as _Mat
+        w.new_model()
+        m = w.model
+        m.add_material(_Mat("S235", E=210e9, nu=0.3, rho=7850))
+        # Ein flacher Körper (RFEM-Hilfsobjekt) und ein gesunder daneben
+        for pkt in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0),
+                    (5, 0, 0), (6, 0, 0), (5, 1, 0), (5, 0, 1)]:
+            m.add_node(*pkt)
+        kanten = [(0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3),
+                  (4, 5), (5, 6), (6, 4), (4, 7), (5, 7), (6, 7)]
+        for i, (a, b) in enumerate(kanten):
+            m.add_line(f"L{i}", [a, b])
+        for nr, (nm, ls) in enumerate([("A1", ["L0", "L1", "L2"]), ("A2", ["L0", "L4", "L3"]),
+                                       ("A3", ["L1", "L5", "L4"]), ("A4", ["L2", "L3", "L5"]),
+                                       ("B1", ["L6", "L7", "L8"]), ("B2", ["L6", "L10", "L9"]),
+                                       ("B3", ["L7", "L11", "L10"]), ("B4", ["L8", "L9", "L11"])]):
+            m.add_flaeche(nm, ls, material="S235")
+        m.add_koerper("V_flach", ["A1", "A2", "A3", "A4"], material="S235")
+        m.add_koerper("V_gut", ["B1", "B2", "B3", "B4"], material="S235")
+        w.refresh_all()
+
+        from statik3d.diagnose import diagnose as _diag
+        d = _diag(m)
+        # Der flache Körper wird schon vor dem Vernetzen ausgenommen: die
+        # Prüfung ist geometrisch, nicht am Netz. So wird gar nicht erst
+        # angeboten, etwas zu vernetzen, was sich nicht vernetzen lässt.
+        check("vor dem Vernetzen: nur der gesunde Körper gilt als unvernetzt",
+              d["unvernetzte_koerper"] == ["V_gut"], str(d["unvernetzte_koerper"]))
+        check("der flache steht von Anfang an unter „ohne Rauminhalt“",
+              d["koerper_ohne_volumen"] == ["V_flach"], str(d["koerper_ohne_volumen"]))
+
+        gefragt = []
+        alt_fragen = w._fragen
+        w._fragen = lambda t, x: (gefragt.append(t), True)[1]
+        try:
+            ok = w._vor_rechnung_vernetzen()
+        finally:
+            w._fragen = alt_fragen
+        check("Vernetzen wird angeboten und ausgeführt", ok and len(gefragt) == 1, str(gefragt))
+        check("der gesunde Körper hat jetzt ein Netz",
+              bool(m.koerper["V_gut"].elemente), str(len(m.koerper["V_gut"].elemente)))
+        check("der flache bekommt keines", not m.koerper["V_flach"].elemente)
+
+        d = _diag(m)
+        check("er zählt danach nicht als „weiterhin ohne Netz“",
+              d["unvernetzte_koerper"] == [], str(d["unvernetzte_koerper"]))
+        check("sondern als Volumen ohne Rauminhalt",
+              d["koerper_ohne_volumen"] == ["V_flach"], str(d["koerper_ohne_volumen"]))
+
+        # Der zweite Durchgang darf gar nicht mehr fragen - sonst laeuft man
+        # in eine Schleife aus Nachfrage und FEHLER, wie am Drehlager-Modell
+        gefragt, fehler = [], []
+        alt_fragen, alt_fehler = w._fragen, w.error
+        w._fragen = lambda t, x: (gefragt.append(t), True)[1]
+        w.error = lambda t: fehler.append(t)
+        try:
+            ok = w._vor_rechnung_vernetzen()
+        finally:
+            w._fragen, w.error = alt_fragen, alt_fehler
+        check("zweiter Durchgang: keine Nachfrage mehr", ok and not gefragt, str(gefragt))
+        check("und kein FEHLER „weiterhin ohne Netz“", not fehler, str(fehler)[:90])
+        w.new_model()
+
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Volumen ohne Rauminhalt halten die Rechnung nicht auf", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:
