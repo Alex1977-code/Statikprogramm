@@ -1649,11 +1649,63 @@ Entstehen können sie an drei Stellen, alle drei prüfen jetzt vorher:
 * Importierte Netze mit doppelten Knoten.
 
 Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
-**unvernetzt** (`Model.koerper_traegt`, geprüft an derselben Streumatrix
-seiner Randknoten). Sonst forderte die Rechenbarkeitsprüfung vor jeder
-Rechnung ein Netz, das nicht entstehen kann. Er erscheint stattdessen als
-Hinweis „Volumen ohne Rauminhalt“ - das Gegenstück zu `flaeche_traegt` für
-Randflächen ohne Dicke.
+**unvernetzt** (`Model.koerper_traegt`). Sonst forderte die
+Rechenbarkeitsprüfung vor jeder Rechnung ein Netz, das nicht entstehen kann.
+Er erscheint stattdessen als Hinweis „Volumen ohne Rauminhalt“ - das
+Gegenstück zu `flaeche_traegt` für Randflächen ohne Dicke.
+
+**Eine Wahrheit, und sie ist relativ.** Zwei Stellen, die dieselbe Frage mit
+verschiedenen Maßen beantworten, widersprechen sich früher oder später - und
+dann verlangt das Programm ein Netz, das der Vernetzer gerade abgelehnt hat.
+Darum gilt:
+
+* Hat der Vernetzer entschieden, hält er das in der Bemerkung des Körpers
+  fest (Vorsatz `Model.OHNE_NETZ`), und `koerper_traegt` übernimmt diese
+  Entscheidung, statt eine eigene zu treffen.
+* Wo noch nichts entschieden ist, wird der **kleinste Singulärwert** der
+  zentrierten Randknoten gemessen - die Ausdehnung senkrecht zur besten
+  Ebene - und ins Verhältnis zur Größe des Körpers gesetzt:
+
+      s_min / √n  ≤  10⁻⁷ · d ,      d = Diagonale der Hüllbox .
+
+  Die Singulärwertzerlegung ist rückwärtsstabil. Die zuvor benutzte
+  Determinante der Streumatrix multipliziert drei Eigenwerte und hebt damit
+  das Rauschen der letzten Bits in die dritte Potenz: bei einer absoluten
+  Schranke von 10⁻¹⁵ entschied die Lage im Raum. Gespiegelte Kopien
+  desselben flachen Bauteils - 14 × 26 × 8 mm, geometrisch identisch -
+  bekamen so gegensätzliche Urteile (√det C zwischen 0 und 2,2·10⁻¹⁵).
+* Auch die Volumenschranke des Vernetzers ist relativ, `V ≤ 10⁻⁹ · d³`. Eine
+  absolute Schranke in m³ hängt sonst an der gewählten Längeneinheit und
+  liegt bei Metern unter dem, was sich überhaupt auflösen lässt.
+
+**Wann das abgebildete Muster greifen darf.** Ein Körper wird nur dann
+abgebildet vernetzt, wenn seine Randflächen wirklich die Form haben, die das
+Muster voraussetzt - Zählen allein reicht nicht:
+
+* Sechsflächner: sechs Randflächen, acht Eckknoten, **jeder** Ring mit vier
+  Knoten.
+* Tetraeder: vier Randflächen, vier Eckknoten, **jeder** Ring mit drei Knoten
+  und alle Randlinien Strecken.
+
+Die zweite Bedingung fehlte und kostete ein Modell die Rechnung: ein
+**Zylinder** aus zwei Mantelflächen (je vier Knoten) und zwei Kreisen hat
+ebenfalls vier Randflächen und vier Eckknoten. Die Kreise liefern gar keinen
+Ring - ein aus zwei Bögen geschlossener Kreis lässt sich nicht als Kette aus
+Strecken lesen -, sodass die Ringe [4, 4, 0, 0] ergeben und die Vereinigung
+vier Knoten. Das Muster griff und las die vier Ecken, die auf zwei Kreisen
+liegen, als flachen Tetraeder.
+
+Greift ein Muster und stellt sich der Körper dabei als volumenlos heraus,
+heißt das nicht, dass er kein Volumen **hat** - es heißt, dass das Muster
+nicht passt. Darum übernimmt dann der **freie Vernetzer**; erst wenn auch der
+nichts findet, bleibt der Körper ohne Netz.
+
+Bleiben nach dem Vernetzen Objekte ohne Netz, wird die Rechnung **nicht mehr
+abgewiesen**: was der Vernetzer eben nicht vernetzen konnte, kann er auch
+beim nächsten Versuch nicht, und ein erneuter Abbruch wäre eine Sackgasse.
+Die Objekte werden benannt, die Folge (Lasten darauf gehen verloren) gesagt,
+und gerechnet wird ohne sie. Ob das Tragwerk ohne sie noch hält, beantwortet
+die Prüfung auf Teiltragwerke ohne Lager.
 
 ## 8 Gültigkeitsbereich
 
