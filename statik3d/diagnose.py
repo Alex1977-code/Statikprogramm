@@ -170,6 +170,32 @@ def entartete_elemente(model, hoechstens: int = 0) -> list:
     return treffer[:hoechstens] if hoechstens else treffer
 
 
+
+def entartete_menge(model) -> frozenset:
+    """Die Indizes der entarteten Elemente - je Modellstand einmal ermittelt.
+
+    Die Assemblierung fragt das fuer Steifigkeit, Masse und Nachlauf; bei
+    einer halben Million Elementen darf die Pruefung nicht dreimal laufen.
+    Der Modellstand ist an Knotenzahl, Elementzahl und den Knotenkoordinaten
+    festgemacht - wer einen Knoten verschiebt, bekommt eine neue Antwort.
+    """
+    import numpy as _np
+    try:
+        stand = (int(model.nn), len(model.elements),
+                 hash(_np.asarray(model.nodes[:model.nn]).tobytes()))
+    except Exception:                       # noqa: BLE001
+        return frozenset(i for i, _t, _g in entartete_elemente(model))
+    zw = getattr(model, "_entartet_zwischen", None)
+    if zw is not None and zw[0] == stand:
+        return zw[1]
+    res = frozenset(i for i, _t, _g in entartete_elemente(model))
+    try:
+        model._entartet_zwischen = (stand, res)
+    except Exception:                       # noqa: BLE001 - z.B. __slots__
+        pass
+    return res
+
+
 def diagnose(model) -> dict:
     """Kennzahlen zur Rechenbarkeit: unvernetzte Geometrie, Teiltragwerke
     ohne Lager, nur durch Kontakt gehaltene Teile, lose Knoten."""
@@ -202,11 +228,15 @@ def meldungen(model, d: dict = None) -> list:
         beispiel = "; ".join(f"Element {i + 1} ({t}): {g}" for i, t, g in ent[:3])
         wort = ("1 entartetes Element" if len(ent) == 1
                 else f"{len(ent)} entartete Elemente")
-        z.append(f"FEHLER: {wort} ohne Ausdehnung - ohne "
-                 f"Steifigkeit bricht die Rechnung ab ({beispiel}"
-                 + (" …" if len(ent) > 3 else "") + "). Das Netz dort neu erzeugen "
-                 "(Netz → Vernetzen); bei importierten Netzen die doppelten Knoten "
-                 "zusammenlegen")
+        # Kein FEHLER: ein Element ohne Ausdehnung hat auch keine Steifigkeit
+        # und keine Masse. Es wegzulassen ist exakt, nicht genaehert - die
+        # Rechnung darf daran nicht scheitern. Gesagt wird es trotzdem, denn
+        # es zeigt eine Schwaeche im Netz oder in der Quelldatei.
+        z.append(f"WARNUNG: {wort} ohne Ausdehnung - ohne Steifigkeit tragen sie "
+                 f"nichts und werden bei der Rechnung übergangen ({beispiel}"
+                 + (" …" if len(ent) > 3 else "") + "). Wo sie stören, das Netz "
+                 "dort neu erzeugen (Netz → Vernetzen); bei importierten Netzen "
+                 "die doppelten Knoten zusammenlegen")
     nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
     if nf or nk:
         z.append("WARNUNG: " + " und ".join(x for x in (f"{nf} Flächen" if nf else "", f"{nk} Volumen" if nk else "") if x)

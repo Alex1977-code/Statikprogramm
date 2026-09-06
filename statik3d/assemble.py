@@ -387,11 +387,19 @@ def _mass_chunk(model: Model, idx: list[int]) -> list[tuple]:
 
 
 def aktive_indizes(model: Model, aktiv=None) -> list[int]:
-    """Die Elemente, die wirken: alle oder die der Aktivmaske (Situation)."""
+    """Die Elemente, die wirken: alle oder die der Aktivmaske (Situation).
+
+    Entartete Elemente ohne Ausdehnung bleiben immer draussen. Sie haben
+    weder Steifigkeit noch Masse, ihr Weglassen ist also exakt und nicht
+    genaehert; ihre Elementmatrix waere aber singulaer und braechte die
+    ganze Rechnung zu Fall. Die Modellpruefung nennt sie als Warnung.
+    """
+    from .diagnose import entartete_menge
     ne = len(model.elements)
+    raus = entartete_menge(model)
     if aktiv is None:
-        return list(range(ne))
-    return [i for i in range(ne) if aktiv[i]]
+        return [i for i in range(ne)] if not raus else [i for i in range(ne) if i not in raus]
+    return [i for i in range(ne) if aktiv[i] and i not in raus]
 
 
 def _assemble_triplets(model: Model, chunk_func, workers=None, idx=None) -> sparse.csr_matrix:

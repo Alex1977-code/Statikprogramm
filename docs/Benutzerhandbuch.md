@@ -338,6 +338,26 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Elementansatz | **linear** (shell3/shell4, tet4, hex8) oder **quadratisch**: Flächen bekommen Mittenknoten (shell6/shell8), abgebildete Volumen hex20, freie Volumen tet10. Quadratisch braucht für dieselbe Genauigkeit deutlich weniger Elemente, je Element aber mehr Rechenzeit |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
 
+**Netz → Netzqualität…** bewertet die **Form** jedes Elements und färbt die
+Ansicht danach ein: grün gut, rot schlecht. Ein FE-Ergebnis ist nur so gut
+wie das Netz - lang gezogene und flache Elemente machen vor allem die
+Spannungen an dieser Stelle unbrauchbar.
+
+| Maß | Bedeutung | 1 bedeutet |
+|---|---|---|
+| Formgüte | wie nah das Element an seiner regelmäßigen Gestalt ist | regelmäßiger Tetraeder, Würfel, Quadrat, gleichseitiges Dreieck |
+| Seitenverhältnis | kürzeste durch längste Kante | alle Kanten gleich lang |
+| Längste Kante [m] | die Elementgröße | – |
+
+Die Maske nennt, wie viele Elemente bewertet wurden, min / Mittel / max, die
+Verteilung auf die Stufen (sehr gut, gut, brauchbar, schlecht, unbrauchbar),
+die Zahl der **Splitter** (Formgüte unter 0,10) und der **umgestülpten**
+Elemente (negative Jacobi-Determinante - die rechnen falsch). Dieselben
+Kennwerte und die zwanzig schlechtesten Elemente stehen im Protokoll.
+**Schlechte wählen** markiert alle Elemente unter der eingestellten Grenze in
+der Ansicht, **Aus** nimmt die Einfärbung wieder weg. Stäbe, Federn und
+Grenzschichten haben keine Form in diesem Sinn und bleiben grau.
+
 **Speichern und Öffnen** zeigen ebenfalls einen Fortschrittsbalken mit
 Prozentzahl und Laufzeit: „Modell speichern: Drehlager.json …“ mit den
 Schritten Knoten, Elemente, Lastfälle und dem Schreiben der Datei; beim
@@ -1784,13 +1804,17 @@ Nachweis mit seiner Verformung je Kombination.
   abbricht. Teile, die nur ein einseitiges Lager oder ein Kontaktpaar hält,
   sind ein Hinweis, kein Fehler - ob sie tragen, entscheidet die
   Kontakt-Iteration. **Entartete Elemente** ohne Ausdehnung (zwei Ecken auf
-  demselben Knoten oder vier Punkte in einer Ebene) haben keine Steifigkeit;
-  die Modellprüfung nennt sie mit Elementnummer, Art und Grund. Der
-  Vernetzer legt sie gar nicht erst an - beim Zusammenlegen der Knoten auf
-  gemeinsamen Flächen konnten früher flache Tetraeder entstehen, an denen
-  die ganze Rechnung mit „entartetes Tet4“ abbrach, ohne zu sagen, wo.
-  Scheitert doch ein Element in der Elementschleife, nennt die Meldung
-  Nummer, Art, Volumenkörper und Knoten.
+  demselben Knoten oder alle Punkte in einer Ebene) haben weder Steifigkeit
+  noch Masse. Sie **werden bei der Rechnung übergangen** - das ist exakt und
+  nicht genähert, denn sie tragen ohnehin nichts - und die Modellprüfung
+  nennt sie als **Warnung** mit Elementnummer, Art und Grund. Früher brach
+  die ganze Rechnung an ihnen mit „entartetes Tet4“ ab, ohne zu sagen, wo.
+  Der Vernetzer legt sie gar nicht erst an: ein Volumenkörper, dessen
+  Eckknoten in einer Ebene liegen, bekommt kein Element und eine Warnung mit
+  seinem Namen (in Dateien aus RFEM stehen solche Null-Volumen als
+  Hilfsobjekte); und beim Zusammenlegen der Knoten auf gemeinsamen Flächen
+  fallen flach gewordene Tetraeder heraus. Scheitert doch ein Element in der
+  Elementschleife, nennt die Meldung Nummer, Art, Volumenkörper und Knoten.
 
 ## 10 Ergebnisse und Bericht
 
