@@ -528,6 +528,22 @@ der Knoten. Lineare Anteile (starr, Feder) gehen in die Sperrung bzw. in die
 Steifigkeitsmatrix, nichtlineare Anteile in dieselbe Aktivmengen-Iteration wie
 der Kontakt.
 
+**Lager mit Geometriebezug** (RFEM: Linienlager an Linien, Flächenlager an
+Flächen) kennen ihre Linien bzw. Flächen und werden vor jeder Rechnung auf
+das aktuelle Netz gebracht (`supports.lager_auf_netz`): Ein Linienlager
+bekommt alle Netzknoten, die auf seinen Linien liegen (Abstand zur
+abgetasteten Kurve ≤ 0,2 % der Linienlänge), in Reihenfolge der Bogenlänge;
+die Einflusslängen folgen daraus. Ein Flächenlager bekommt die Knoten und
+Einflussflächen aus den Facetten des Netzes auf seinen Flächen — bei
+Schalen die Elemente, bei Volumen die Randseiten des Körpers auf der
+Fläche (fehlen sie, die Außenfacetten des Körpers in der Ebene der Fläche);
+jede Facette gibt ihren Inhalt gleichmäßig an ihre Knoten (Dreieck A/3,
+Viereck A/4). Flächen ohne Netz behalten die Eckknoten der Randlinien mit
+dem Flächeninhalt gleich verteilt. Damit ist Σ Einflussflächen = Inhalt der
+vernetzten Fläche und Σ Einflusslängen = Linienlänge — die Bettung c·A
+wirkt über die ganze Fläche, nicht als vier Eckfedern (Test
+`test_lager_folgen_dem_netz`: steife Platte auf Bettung setzt sich um p/c).
+
 Ein Lagerfreiheitsgrad wirkt entlang der positiven Achse. Mit der
 Knotenverschiebung u ist die Lagerkraft F = −k·u; u < 0 (Knoten drückt hinein)
 bedeutet **Druck**, u > 0 **Zug**. Daraus folgt die Umsetzung als
@@ -1371,6 +1387,20 @@ Zum Schluss wird **gerechnet, nicht gehofft**. Im Protokoll steht je Körper:
   liegt, und ihr größter Abstand dazu. Verglichen wird geometrisch, nicht
   Dreieck gegen Dreieck: ein ebenes Viereck lässt sich über beide Diagonalen
   teilen, ohne dass eine der beiden falsch wäre.
+
+**Randseiten je Fläche.** Auf der Randfläche eines Volumenkörpers gibt es
+keine Schalenelemente; Flächenlasten, Kontaktfugen und Flächenlager brauchen
+darum die Paare (Tetraeder, Seite), die auf der Fläche liegen
+(`Flaeche.randseiten`). Gegangen wird vom Netz aus: jede freie Elementseite
+sucht unter ihren acht nächsten Hülldreiecken das, das sie **überdeckt** —
+alle drei Seitenknoten liegen in der Ebene des Hülldreiecks (Abstand ≤ 10⁻³
+der Kantenlänge) und die Normalen sind parallel (|n·n_h| > 0,9); unter
+diesen das nächste. Die Nähe allein reicht nicht: an einer dünnen Platte
+liegen die Seitenfacetten der Schmalseite näher an der Deckfläche als ein
+Viertel der Kantenlänge und hingen früher an ihr — die Deckfläche trug dann
+36 % zu viel Fläche (Test `test_duenne_platte_randseiten`). Nur wenn kein
+Dreieck überdeckt (Randknoten nicht exakt auf der Hülle), gilt der alte Weg
+über die Nähe, sofern die Normale nicht quer steht.
 
 **Gemeinsame Randflächen.** Zwei Körper, die *dieselbe* Fläche berandet,
 bekommen dort dieselben Knoten und hängen zusammen. Geteilt wird ausdrücklich

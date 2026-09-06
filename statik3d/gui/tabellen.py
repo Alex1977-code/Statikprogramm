@@ -178,16 +178,28 @@ def zahlen_wandeln(zeilen: list, spalten: list) -> list:
     („-“, „nicht gefuehrt“) bleibt stehen.
     """
     arten = [sp.art for sp in spalten]
-    out = []
-    for z in zeilen:
-        neu = list(z)
-        for k, w in enumerate(neu):
-            if k < len(arten) and arten[k] in ("zahl", "ganz") and isinstance(w, str):
-                x = _zahl(w)
-                if x is not None:
-                    neu[k] = int(x) if arten[k] == "ganz" else x
-        out.append(neu)
+    out = [list(z) for z in zeilen]
+    # Nur Text muss gewandelt werden - was schon Zahl ist, bleibt ungeprueft.
+    # Bei 490 000 Zeilen mit je acht Zahlen kostete die Pruefung jeder Zelle
+    # sonst zehn Sekunden.
+    for k, art in enumerate(arten):
+        if art not in ("zahl", "ganz"):
+            continue
+        ganz = art == "ganz"
+        for neu in out:
+            if k < len(neu):
+                w = neu[k]
+                if w.__class__ is str:
+                    x = _zahl(w)
+                    if x is not None:
+                        neu[k] = int(x) if ganz else x
     return out
+
+
+def _schluessel_wert(x):
+    """Zahl und Text auf einen Nenner bringen: 3, „3“ und 3.0 sind dasselbe."""
+    z = _zahl(x)
+    return z if z is not None else str(x)
 
 
 def kennwerte(zeilen: list, spalten: list) -> tuple:
@@ -373,7 +385,67 @@ class TabellenModell(QtCore.QAbstractTableModel):
     def setzen(self, zeilen: list):
         self.beginResetModel()
         self.zeilen = [list(z) for z in zeilen]
+        self._index = None
+        self._sortieren()
         self.endResetModel()
+
+    #: (Spalte, Richtung) der aktuellen Sortierung - Spalte -1: unsortiert
+    sortierung = (-1, QtCore.Qt.AscendingOrder)
+
+    def sortieren(self, spalte: int, richtung=QtCore.Qt.AscendingOrder):
+        """Zeilen nach einer Spalte ordnen - einmal in Python statt ueber
+        Millionen lessThan-Aufrufe des Proxys (490 000 Zeilen: Sekunden statt
+        Minuten). Zahlen der Groesse nach vor dem Text, der ohne Ruecksicht auf
+        Gross- und Kleinschreibung. Markierungen wandern mit ihren Zeilen."""
+        self.sortierung = (int(spalte), richtung)
+        folge = self._sortfolge()
+        if folge is None:
+            return
+        self.layoutAboutToBeChanged.emit()
+        alt = self.persistentIndexList()
+        self.zeilen = [self.zeilen[i] for i in folge]
+        self._index = None
+        if alt:
+            neu_von_alt = {a: n for n, a in enumerate(folge)}
+            self.changePersistentIndexList(
+                alt, [self.index(neu_von_alt.get(i.row(), i.row()), i.column()) for i in alt])
+        self.layoutChanged.emit()
+
+    def _sortfolge(self):
+        """Zeilennummern in sortierter Reihenfolge - None, wenn nichts zu tun ist."""
+        k, richtung = self.sortierung
+        if k < 0 or k >= len(self.spalten) or not self.zeilen:
+            return None
+
+        zeilen = self.zeilen
+
+        def schluessel(r):
+            z = zeilen[r]
+            wert = z[k] if k < len(z) else ""
+            zahl = _zahl(wert)
+            if zahl is not None:
+                return (0, zahl, "")
+            return (1, 0.0, str(wert).lower())
+
+        return sorted(range(len(zeilen)), key=schluessel,
+                      reverse=(richtung == QtCore.Qt.DescendingOrder))
+
+    def _sortieren(self):
+        folge = self._sortfolge()
+        if folge is not None:
+            self.zeilen = [self.zeilen[i] for i in folge]
+
+    def zeile_zu(self, schluessel) -> list:
+        """Alle Zeilen, deren erste Spalte diesen Schluessel traegt - ueber ein
+        Verzeichnis, das beim ersten Zugriff entsteht. Bei 490 000 Zeilen kostet
+        die Suche sonst je Klick Sekunden."""
+        if getattr(self, "_index", None) is None:
+            idx: dict = {}
+            for r, z in enumerate(self.zeilen):
+                if z:
+                    idx.setdefault(_schluessel_wert(z[0]), []).append(r)
+            self._index = idx
+        return self._index.get(_schluessel_wert(schluessel), [])
 
 
 class WahlDelegate(QtWidgets.QStyledItemDelegate):
@@ -430,6 +502,16 @@ class Filtermodell(QtCore.QSortFilterProxyModel):
     def leeren(self):
         self.ausdruecke.clear()
         self.invalidateFilter()
+
+    def sort(self, spalte: int, richtung=QtCore.Qt.AscendingOrder):
+        """Sortiert wird im Quellmodell (ein Python-Sort), der Proxy bleibt
+        unsortiert - so fragt Qt nicht fuer jeden Vergleich zweimal data() ab."""
+        q = self.sourceModel()
+        if q is not None and hasattr(q, "sortieren"):
+            q.sortieren(spalte, richtung)
+            super().sort(-1, richtung)
+            return
+        super().sort(spalte, richtung)
 
     def lessThan(self, links, rechts) -> bool:
         """Zahlen der Groesse nach, Text ohne Ruecksicht auf Gross- und
@@ -589,9 +671,25 @@ class Datentabelle(QtWidgets.QWidget):
         self._spaltenbreiten()
         self._nachfuehren()
 
+    #: Ab so vielen Zeilen kommen die Spaltenbreiten aus einer Stichprobe -
+    #: Qt misst sonst jede Zelle, bei 490 000 Zeilen dauert das Minuten
+    STICHPROBE_AB = 3000
+
     def _spaltenbreiten(self):
         """Spaltenbreiten aus dem Inhalt, nach oben gedeckelt."""
-        self.view.resizeColumnsToContents()
+        n_z = self.modell.rowCount()
+        if n_z <= self.STICHPROBE_AB:
+            self.view.resizeColumnsToContents()
+        else:
+            fm = QtGui.QFontMetrics(self.view.font())
+            schritt = max(1, n_z // 300)
+            for k in range(self.modell.columnCount()):
+                breite = fm.horizontalAdvance(str(self.modell.kopf(k))) + 28
+                for r in range(0, n_z, schritt):
+                    text = self.modell.data(self.modell.index(r, k), QtCore.Qt.DisplayRole)
+                    if text:
+                        breite = max(breite, fm.horizontalAdvance(str(text)) + 16)
+                self.view.setColumnWidth(k, breite)
         for k in range(self.modell.columnCount()):
             if self.view.columnWidth(k) > self.SPALTE_MAX:
                 self.view.setColumnWidth(k, self.SPALTE_MAX)
@@ -640,17 +738,21 @@ class Datentabelle(QtWidgets.QWidget):
         Die erste getroffene Zeile wird ins Bild geholt - so findet man die
         angeklickten Elemente in einer langen Tabelle wieder.
         """
-        ziel = {self._schluessel(x) for x in (werte or [])}
         sm = self.view.selectionModel()
         sm.clearSelection()
         auswahl = QtCore.QItemSelection()
         letzte, n = -1, 0
-        for r in range(self.filter.rowCount()):
-            i = self.filter.index(r, 0)
-            if self._schluessel(self.filter.data(i, QtCore.Qt.UserRole)) in ziel:
+        # Ueber das Verzeichnis des Modells statt ueber alle Zeilen des Filters:
+        # so kostet ein Klick in der Ansicht auch bei 490 000 Zeilen nichts
+        for wert in (werte or []):
+            for r_q in self.modell.zeile_zu(wert):
+                i = self.filter.mapFromSource(self.modell.index(r_q, 0))
+                if not i.isValid():
+                    continue
+                r = i.row()
                 auswahl.select(i, self.filter.index(r, self.filter.columnCount() - 1))
                 n += 1
-                if letzte < 0:
+                if letzte < 0 or r < letzte:
                     letzte = r
         if n:
             sm.select(auswahl, QtCore.QItemSelectionModel.Select
@@ -684,7 +786,12 @@ class Datentabelle(QtWidgets.QWidget):
         if not self.kennwerte_zeigen:
             self.fuss.hide()
             return
-        sicht = self.sichtbare_zeilen()
+        # Ohne wirksamen Filter direkt aus dem Modell - der Weg ueber den
+        # Filter fragt jede Zeile einzeln ab und kostet bei grossen Tabellen Sekunden
+        if self.filter.rowCount() == self.modell.rowCount():
+            sicht = self.modell.zeilen
+        else:
+            sicht = self.sichtbare_zeilen()
         hoch, tief = kennwerte(sicht, self.modell.spalten)
         self.fussmodell.setzen([hoch, tief] if hoch else [])
         self.fuss.setVisible(bool(hoch))

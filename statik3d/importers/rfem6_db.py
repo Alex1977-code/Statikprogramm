@@ -1071,6 +1071,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
             C.say(log, f"  {name}: keiner Linie zugewiesen")
             continue
         ls = m.add_line_support(nodes, name=name)
+        ls.linien = [line_name[lid] for lid in lines if lid in line_name]
         for d, b in beh.items():
             if b.acts:
                 ls.behaviour[d] = DofBehaviour(**vars(b))
@@ -1102,6 +1103,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
             C.say(log, f"  {name}: {len(sids)} Flaechen, keine Knoten aufloesbar")
             continue
         ss = m.add_surface_support(name=name, nodes=nodes, areas=[areas[n] for n in nodes])
+        ss.flaechen = [surf_name[sid] for sid in sids if sid in surf_name]
         for d, b in beh.items():
             if b.acts:
                 ss.behaviour[d] = DofBehaviour(**vars(b))
@@ -1523,7 +1525,7 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
         n_oeffnung += len(loecher)
         f = Flaeche(fname, linien, dicke=pname, material=mname,
                     kommentar=d["text"] if d["t"] <= 0 else "",
-                    oeffnungen=loecher)
+                    oeffnungen=loecher, steifigkeit=d["text"] if d["t"] <= 0 else "")
         m.flaechen[fname] = f
         namen[sid] = fname
         if d["t"] <= 0:

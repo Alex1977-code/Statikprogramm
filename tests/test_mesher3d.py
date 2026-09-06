@@ -259,6 +259,35 @@ def test_platte_mit_bohrung():
     check("kein Element in der Bohrung", im_loch == 0, f"{im_loch} Elemente")
 
 
+def test_duenne_platte_randseiten():
+    """Duenne Platte (Dicke ein Drittel der Kantenlaenge), frei vernetzt: die
+    Randseiten der Deckflaeche sind genau die Facetten in ihrer Ebene - keine
+    Seitenwand haengt an ihr. Vorher bekam die Deckflaeche die Seitenfacetten
+    dazu (naechste Huellflaeche innerhalb eines Viertels der Kantenlaenge):
+    36 % zu viel Flaeche fuer Flaechenlast, Kontaktfuge und Flaechenlager."""
+    from statik3d.fugen import _dreiecke_der_fuge
+    lx, ly, t = 1.0, 0.6, 0.04
+    m = neues_modell()
+    k = prisma(m, [[(0, 0), (lx, 0), (lx, ly), (0, ly)]], t)
+    m.netz.ziellaenge = 0.12
+    els = M3.mesh_koerper_frei(m, k, log=[])
+    check("duenne Platte: frei vernetzt", len(els) > 0, f"{len(els)} Tetraeder")
+
+    def flaeche(fac):
+        return sum(0.5 * float(np.linalg.norm(np.cross(m.nodes[nd[1]] - m.nodes[nd[0]],
+                                                       m.nodes[nd[2]] - m.nodes[nd[0]])))
+                   for _e, nd, _n in fac)
+
+    for name, z in (("Boden", 0.0), ("Deckel", t)):
+        fac = _dreiecke_der_fuge(m, [m.flaechen[name]])
+        close(f"{name}: Summe der Randseiten = Flaecheninhalt", flaeche(fac), lx * ly,
+              0.01 * lx * ly, " m^2")
+        neben = sum(1 for _e, nd, _n in fac if np.abs(m.nodes[nd][:, 2] - z).max() > 1e-9)
+        check(f"{name}: keine Randseite neben der Ebene", neben == 0, f"{neben} von {len(fac)}")
+    seiten = sum(flaeche(_dreiecke_der_fuge(m, [m.flaechen[f"M{i}"]])) for i in range(1, 5))
+    close("Seitenwaende: Summe = Umfang x Dicke", seiten, 2 * (lx + ly) * t, 1e-9, " m^2")
+
+
 # --------------------------------------------------------------------------
 # 5) Zylinder und Buchse: krumme Randflaechen ueber ihre Kontrollpunkte
 # --------------------------------------------------------------------------
@@ -715,7 +744,8 @@ def test_parallel_vernetzen():
 
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_einspringende_ecke,
-              test_platte_mit_bohrung, test_zylinder_und_buchse,
+              test_platte_mit_bohrung, test_duenne_platte_randseiten,
+              test_zylinder_und_buchse,
               test_kleines_bauteil, test_gemeinsame_flaeche, test_zugstab,
               test_undichte_huelle, test_quadratische_tetraeder,
               test_splitter_glaetten, test_geometrielast,

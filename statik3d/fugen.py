@@ -792,6 +792,131 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
     return gesamt
 
 
+#: Gruppenvorsilbe der Kopplungen, die aus starren Flaechen entstehen
+STARR_GRUPPE = "starr "
+
+
+def starre_flaechen(model: Model) -> list:
+    """Die Flaechen, die laut Quelldatei starr sind und keine Dicke haben."""
+    out = []
+    for f in (getattr(model, "flaechen", None) or {}).values():
+        if f.dicke:
+            continue
+        art = (getattr(f, "steifigkeit", "") or "") or (f.kommentar or "")
+        if art in ("starr", "starre Deckenscheibe"):
+            out.append(f)
+    return out
+
+
+def _punkte_im_polygon(P2: np.ndarray, Q: np.ndarray, rand: float = 0.0) -> np.ndarray:
+    """Welche Punkte Q (m,2) im Vieleck P2 (n,2) liegen - Strahlprobe, im Block.
+    ``rand`` weitet das Vieleck vom Schwerpunkt aus um diesen Betrag."""
+    P2 = np.asarray(P2, float)
+    if rand > 0:
+        c = P2.mean(axis=0)
+        r = float(np.linalg.norm(P2 - c, axis=1).mean()) or 1.0
+        P2 = c + (P2 - c) * (1.0 + rand / r)
+    x, y = Q[:, 0], Q[:, 1]
+    innen = np.zeros(len(Q), dtype=bool)
+    m = len(P2)
+    for i in range(m):
+        x1, y1 = P2[i]
+        x2, y2 = P2[(i + 1) % m]
+        if y1 == y2:
+            continue
+        t = (y - y1) / (y2 - y1)
+        kreuzt = ((y1 > y) != (y2 > y)) & (x < x1 + t * (x2 - x1))
+        innen ^= kreuzt
+    return innen
+
+
+def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
+    """Starre Flaechen (RFEM: SurfaceStiffnessRigid) als starre Kopplung umsetzen.
+
+    Eine starre Flaeche hat keine Dicke und kein Netz: sie ist eine Scheibe,
+    die alles, was auf ihr liegt, starr zusammenhaelt. Im Drehlager sind das
+    die 64 Kreisscheiben, ueber die die vorgespannten Zugstaebe an den
+    Volumen haengen - der Stabknoten sitzt in der Mitte der Scheibe, die
+    Scheibe liegt auf der Oberflaeche des Koerpers. Umgesetzt wird sie wie ein
+    starrer Bereich in ANSYS: der Knoten in der Mitte (bevorzugt der
+    Stabknoten) ist Master, alle Netzknoten in der Scheibe haengen ueber
+    starre Kopplungen an ihm. So geht die Stabkraft in den Koerper, und die
+    Scheibe verformt sich nicht.
+
+    Rueckgabe {"flaechen": n, "kopplungen": n, "offen": [(Name, Grund)]}.
+    Vorhandene Kopplungen dieser Art werden vorher entfernt (neues Netz).
+    """
+    from scipy.spatial import cKDTree
+    from .importers import _common as C
+    bericht = {"flaechen": 0, "kopplungen": 0, "offen": []}
+    starre = starre_flaechen(model)
+    model.kopplungen = [k for k in (getattr(model, "kopplungen", None) or [])
+                        if not str(getattr(k, "gruppe", "")).startswith(STARR_GRUPPE)]
+    if not starre or not model.nn:
+        return bericht
+    N = np.asarray(model.nodes[:model.nn], float)
+    stab: set = set()
+    andere: set = set()
+    for e in model.elements:
+        (stab if e.typ in ("beam", "truss") else andere).update(int(x) for x in e.nodes)
+    baum = cKDTree(N)
+    unendlich = float("inf")
+    for f in starre:
+        try:
+            P = np.asarray(f.randpunkte(model, 32), float).reshape(-1, 3)
+        except Exception:                 # noqa: BLE001
+            P = np.zeros((0, 3))
+        if len(P) < 3:
+            bericht["offen"].append((f.name, "der Rand schliesst nicht"))
+            continue
+        c = P.mean(axis=0)
+        _u, _s, vt = np.linalg.svd(P - c)
+        e1, e2, nrm = vt[0], vt[1], vt[2]
+        r = float(np.linalg.norm(P - c, axis=1).max())
+        tol = max(0.5e-3, 0.1 * r)
+        # Master: der Stabknoten in der Mitte - sonst der naechste Knoten dort
+        mitte = [int(i) for i in baum.query_ball_point(c, tol)]
+        master = next((i for i in mitte if i in stab), None)
+        if master is None and mitte:
+            master = min(mitte, key=lambda i: float(np.linalg.norm(N[i] - c)))
+        if master is None:
+            bericht["offen"].append((f.name, "kein Knoten in der Mitte der Scheibe"))
+            continue
+        # Slaves: die Netzknoten in der Scheibe (in der Ebene und im Umriss)
+        kand = np.asarray(baum.query_ball_point(c, r + tol), dtype=int)
+        if not kand.size:
+            bericht["offen"].append((f.name, "keine Knoten in der Scheibe"))
+            continue
+        D = N[kand] - c
+        ebene = np.abs(D @ nrm) <= tol
+        Q = np.column_stack([D @ e1, D @ e2])
+        P2 = np.column_stack([(P - c) @ e1, (P - c) @ e2])
+        innen = _punkte_im_polygon(P2, Q, rand=tol)
+        slaves = [int(i) for i in kand[ebene & innen] if int(i) != master and int(i) in andere]
+        if not slaves:
+            bericht["offen"].append((f.name, "keine Netzknoten in der Scheibe - liegt darunter "
+                                             "kein vernetzter Koerper?"))
+            continue
+        for s_ in slaves:
+            model.kopplungen.append(Kopplung(int(master), int(s_),
+                                             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                                             [unendlich, unendlich, unendlich], STARR_GRUPPE + f.name))
+        if not (getattr(f, "steifigkeit", "") or ""):
+            f.steifigkeit = "starr"
+        f.kommentar = f"starr: koppelt {len(slaves)} Knoten an K{master}" \
+            + (" (Stabende)" if master in stab else "")
+        bericht["flaechen"] += 1
+        bericht["kopplungen"] += len(slaves)
+    if log is not None and (bericht["flaechen"] or bericht["offen"]):
+        if bericht["flaechen"]:
+            C.say(log, f"{bericht['flaechen']} starre Flächen als starre Kopplung umgesetzt: "
+                       f"{bericht['kopplungen']} Netzknoten hängen an ihrem Mittelknoten "
+                       "(Stabende ↔ Körperoberfläche, wie ein starrer Bereich in ANSYS)")
+        for name, grund in bericht["offen"]:
+            C.warn(log, f"  starre Fläche {name} nicht gekoppelt: {grund}")
+    return bericht
+
+
 def kontaktfugen_zuruecksetzen(model: Model, log: list = None) -> int:
     """Alles wieder entfernen, was aus Kontaktbedingungen entstanden ist.
 
@@ -803,7 +928,8 @@ def kontaktfugen_zuruecksetzen(model: Model, log: list = None) -> int:
     """
     from .importers import _common as C
     namen = {kb.name for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values()}
-    if not namen:
+    if not namen and not any(str(getattr(k, "gruppe", "")).startswith(STARR_GRUPPE)
+                             for k in (getattr(model, "kopplungen", None) or [])):
         return 0
     n = 0
     vorher = (len(model.gap_elements), len(model.kopplungen), len(model.contact_pairs))
@@ -812,6 +938,9 @@ def kontaktfugen_zuruecksetzen(model: Model, log: list = None) -> int:
     model.kopplungen = [k for k in model.kopplungen
                         if str(getattr(k, "gruppe", "")) not in namen]
     model.contact_pairs = [c for c in model.contact_pairs if c.name not in namen]
+    # Kopplungen starrer Flaechen zeigen ebenso auf das alte Netz
+    model.kopplungen = [k for k in model.kopplungen
+                        if not str(getattr(k, "gruppe", "")).startswith(STARR_GRUPPE)]
     n = (vorher[0] - len(model.gap_elements) + vorher[1] - len(model.kopplungen)
          + vorher[2] - len(model.contact_pairs))
     for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():

@@ -1771,6 +1771,19 @@ def _randseiten_merken(model: Model, koerper, T: np.ndarray, quelle: list,
     - Huelldreieck sucht Tetraeder - blieben die Stellen uebrig, an denen die
     Zerlegung ein ebenes Viereck ueber die andere Diagonale geteilt hat; dort
     fehlte dann ein Stueck der Lastflaeche.
+
+    Nah allein genuegt nicht: an einer duennen Platte liegen die Seitenfacetten
+    der Schmalseite naeher an der Deckflaeche als ein Viertel der Kantenlaenge
+    und wuerden ihr zugeschlagen - die Deckflaeche traegt dann Seitenwaende,
+    und Flaechenlast, Kontaktfuge und Flaechenlager sehen zu viel Flaeche.
+    Darum zaehlt ein Huelldreieck nur, wenn es die Seite wirklich
+    **ueberdeckt**: alle drei Knoten der Seite liegen in seiner Ebene
+    (Abstand <= ein Tausendstel der Kantenlaenge) und seine Normale steht
+    parallel zur Seitennormale (|n·n_h| > 0,9). Unter diesen wird das
+    naechste genommen. Erst wenn kein Dreieck so passt (ein Netz, dessen
+    Randknoten nicht exakt auf der Huelle liegen), gilt der alte Weg: das
+    naechste Dreieck innerhalb ``weite`` mal Kantenlaenge, sofern seine
+    Normale nicht quer steht (|n·n_h| > 0,7).
     """
     from .assemble import SOLID_FACES
     from scipy.spatial import cKDTree
@@ -1791,33 +1804,54 @@ def _randseiten_merken(model: Model, koerper, T: np.ndarray, quelle: list,
     frei = [v[0] for v in zaehler.values() if len(v) == 1]
     if not frei:
         return 0
-    # Huelldreiecke in Modellknoten und ihre Schwerpunkte
+    # Huelldreiecke in Modellknoten, ihre Schwerpunkte und Normalen
     HT = np.array([[int(neu[i]) for i in tri] for tri in T], int)
     HP = model.nodes
     schwer_h = HP[HT].mean(axis=1)
+    norm_h = np.cross(HP[HT[:, 1]] - HP[HT[:, 0]], HP[HT[:, 2]] - HP[HT[:, 0]])
+    norm_h /= np.maximum(np.linalg.norm(norm_h, axis=1), 1e-300)[:, None]
     baum = cKDTree(schwer_h)
-    schwer_f = np.array([HP[nd].mean(axis=0) for _e, _nr, nd in frei])
+    K = np.array([nd for _e, _nr, nd in frei], int)          # (n, 3) Knoten je Seite
+    X = HP[K]                                                 # (n, 3, 3)
+    schwer_f = X.mean(axis=1)
+    norm_f = np.cross(X[:, 1] - X[:, 0], X[:, 2] - X[:, 0])
+    norm_f /= np.maximum(np.linalg.norm(norm_f, axis=1), 1e-300)[:, None]
     kanten = np.linalg.norm(HP[HT[:, 0]] - HP[HT[:, 1]], axis=1)
-    tol = max(weite * float(np.median(kanten)) if len(kanten) else 0.0, 1e-9)
+    kante = float(np.median(kanten)) if len(kanten) else 0.0
+    tol = max(weite * kante, 1e-9)
+    tol_ebene = max(1e-3 * kante, 1e-9)
     k = min(8, len(HT))
     _, nn = baum.query(schwer_f, k=k)
     nn = np.atleast_2d(nn)
     # Alle freien Seiten gegen ihre k naechsten Huelldreiecke in einem Zug -
     # Seite fuer Seite waere bei hunderttausend Tetraedern der langsamste
     # Schritt des ganzen Vernetzers.
-    bestd = np.full(len(frei), np.inf)
+    bestd = np.full(len(frei), np.inf)        # ueberdeckende Dreiecke
     bestes = np.zeros(len(frei), int)
+    ersatzd = np.full(len(frei), np.inf)      # Rueckfall: nah und nicht quer
+    ersatz = np.zeros(len(frei), int)
     for j in range(nn.shape[1]):
         t = HT[nn[:, j]]
+        nh = norm_h[nn[:, j]]
         d = punkt_dreieck_abstand(schwer_f, HP[t[:, 0]], HP[t[:, 1]], HP[t[:, 2]])
-        naeher = d < bestd
+        parallel = np.abs((norm_f * nh).sum(axis=1))
+        # Abstand aller drei Seitenknoten zur Ebene des Huelldreiecks
+        d_ebene = np.abs(((X - HP[t[:, 0]][:, None, :]) * nh[:, None, :]).sum(axis=2)).max(axis=1)
+        deckt = (d_ebene <= tol_ebene) & (parallel > 0.9)
+        naeher = deckt & (d < bestd)
         bestd[naeher] = d[naeher]
         bestes[naeher] = nn[naeher, j]
+        nah = (~deckt) & (parallel > 0.7) & (d < ersatzd)
+        ersatzd[nah] = d[nah]
+        ersatz[nah] = nn[nah, j]
     n = 0
     for zeile, (e, nr, _nd) in enumerate(frei):
-        if bestd[zeile] > tol:
+        if np.isfinite(bestd[zeile]):
+            b = int(bestes[zeile])
+        elif ersatzd[zeile] <= tol:
+            b = int(ersatz[zeile])
+        else:
             continue
-        b = int(bestes[zeile])
         f = model.flaechen.get(quelle[b] if b < len(quelle) else "")
         if f is None:
             continue

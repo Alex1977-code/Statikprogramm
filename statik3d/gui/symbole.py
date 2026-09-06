@@ -974,6 +974,16 @@ def z_sicht_zurueck(s: Stift):
     s.pfeil(8, 11, 8, 15.5, 2.8)
 
 
+def z_sicht_geist(s: Stift):
+    """Verborgenes im Hintergrund: ein blasser Geist hinter dem gewaehlten Stueck."""
+    s.stift(_mit_alpha(s.farbe, 110), 1.2, gestrichelt=True)
+    s.fuellung(_mit_alpha(s.farbe, 40))
+    s.rechteck(3, 4, 18, 16, 1.5)
+    s.stift(s.akzent, 1.4)
+    s.fuellung(s.akzent)
+    s.rechteck(9, 9, 8, 7, 1)
+
+
 def z_sicht_alles(s: Stift):
     s.stift(breite=1.6)
     p = QtGui.QPainterPath()
@@ -1053,7 +1063,8 @@ RATEN = [
     ("auswahl aufheben", "auswahl_weg"), ("nur auswahl", "sicht_nur_auswahl"),
     ("selektion anzeigen", "sicht_nur_auswahl"),
     ("auswahl ausblenden", "sicht_ausblenden"), ("vorherige sicht", "sicht_zurueck"),
-    ("alles zeigen", "sicht_alles"), ("auswahl", "auswahl"),
+    ("alles zeigen", "sicht_alles"), ("verborgenes im hintergrund", "sicht_geist"),
+    ("auswahl", "auswahl"),
     ("löschen", "loeschen"), ("netz löschen", "netz_loeschen"),
     ("vernetz", "vernetzen"), ("fe-netz", "netz"), ("netz", "netz"),
     ("kontaktfuge", "kontakt"), ("kontakt", "kontakt"),

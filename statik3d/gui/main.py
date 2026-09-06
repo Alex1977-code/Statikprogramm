@@ -22,7 +22,7 @@ import pyvista as pv
 from pyvistaqt import QtInteractor
 
 from ..model import Model, Material, Section, ShellProp, DOF_NAMES, Member, GRUNDSTELLUNG, GESAMTSYSTEM
-from .. import solver, mesher, parallel, __version__
+from .. import solver, mesher, parallel, supports, __version__
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
                       CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
                       DesignSettingsDialog, ContactPairDialog, ImportDialog, ReportDialog,
@@ -108,6 +108,8 @@ class MainWindow(QtWidgets.QMainWindow):
                           "koerper": set(), "knoten": set()}
         self._sicht_verlauf: list = []
         self._sicht_stand = None
+        #: Verborgenes blass im Hintergrund zeigen (Ribbon Ansicht -> Sicht)
+        self.geist = False
 
         self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil() + tab.stil())
         self._undo_init()
@@ -1415,9 +1417,18 @@ class MainWindow(QtWidgets.QMainWindow):
         return ok & (t0 <= t1)
 
     def _fenster_auswaehlen(self, rect, kreuzend: bool) -> int:
-        """Alles der Auswahlart im Fenster zur Auswahl nehmen; Rueckgabe: Zahl."""
+        """Alles der Auswahlart im Fenster zur Auswahl nehmen; Rueckgabe: Zahl.
+
+        Nur, was dargestellt ist: ausgeblendete Objekte (auch als Geist im
+        Hintergrund) und Arten, deren Schalter aus ist, bleiben aussen vor.
+        """
         m = self.model
         art = self.auswahlart
+        if not self._dargestellt(art):
+            self.info(f"{art}: ausgeblendet - erst wieder einblenden (Glasleiste), dann wählen")
+            return 0
+        v = self.versteckt
+        sicht = self._sichtbare_knoten()            # None = alle
 
         def strecken_treffen(A, B):
             """Je Strecke: ganz drin (Fenster) oder drin/angeschnitten (kreuzend)."""
@@ -1445,6 +1456,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if not m.nn:
                 return 0
             xy, sichtbar = self._projizieren(m.nodes)
+            if sicht is not None:
+                da = np.zeros(m.nn, bool)
+                da[sicht] = True
+                sichtbar = sichtbar & da
             treffer = np.where(self._im_rechteck(xy, rect) & sichtbar)[0]
             self.selection = np.array(sorted(set(self.selection.tolist()) | set(treffer.tolist())), dtype=int)
             return int(len(treffer))
@@ -1456,7 +1471,8 @@ class MainWindow(QtWidgets.QMainWindow):
             je_linie: dict = {}
             for t, name in zip(treffer, namen):
                 je_linie.setdefault(name, []).append(bool(t))
-            gewaehlt = [n for n, ts in je_linie.items() if (any(ts) if kreuzend else all(ts))]
+            gewaehlt = [n for n, ts in je_linie.items() if (any(ts) if kreuzend else all(ts))
+                        and n not in v["linien"]]
             for n in gewaehlt:
                 if n not in self.sel_linien:
                     self.sel_linien.append(n)
@@ -1464,7 +1480,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if art == "Stab":
             n = 0
             for name, mem in m.members.items():
-                els = [int(e) for e in (mem.elements or []) if 0 <= int(e) < len(m.elements)]
+                els = [int(e) for e in (mem.elements or [])
+                       if 0 <= int(e) < len(m.elements) and int(e) not in v["elemente"]]
                 if not els:
                     continue
                 A = m.nodes[[int(m.elements[e].nodes[0]) for e in els]]
@@ -1481,7 +1498,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "Fläche":
                 for name in m.flaechen:
                     P = raender.get(name)
-                    if P is None or len(P) < 3:
+                    if P is None or len(P) < 3 or name in v["flaechen"]:
                         continue
                     if zug_trifft(np.vstack([P, P[:1]])):
                         if name not in self.sel_flaechen:
@@ -1489,6 +1506,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         n += 1
             else:
                 for name, k in m.koerper.items():
+                    if name in v["koerper"]:
+                        continue
                     ringe = [raender.get(fn) for fn in k.flaechen if raender.get(fn) is not None
                              and len(raender.get(fn)) >= 3]
                     if not ringe:
@@ -1503,6 +1522,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if not m.nn:
                 return 0
             xy, sichtbar = self._projizieren(m.nodes)
+            if sicht is not None:
+                da = np.zeros(m.nn, bool)
+                da[sicht] = True
+                sichtbar = sichtbar & da
             drin = self._im_rechteck(xy, rect) & sichtbar
             n = 0
             for i, s in enumerate(m.supports):
@@ -1512,6 +1535,8 @@ class MainWindow(QtWidgets.QMainWindow):
             groesse = m.characteristic_size()
             for artname, liste in (("linienlager", m.line_supports), ("flaechenlager", m.surface_supports)):
                 for j, obj in enumerate(liste):
+                    if not self._objekt_sichtbar("Lager", (artname, j)):
+                        continue
                     P, _r = vp.lager_punkte(m, obj, groesse, self.lagerdichte)
                     if len(P) and zug_trifft(P) and (artname, j) not in self.sel_lager:
                         self.sel_lager.append((artname, j))
@@ -1523,7 +1548,11 @@ class MainWindow(QtWidgets.QMainWindow):
             xy, sichtbar = self._projizieren(m.nodes)
             drin = self._im_rechteck(xy, rect) & sichtbar
             n = 0
+            typen = self._sichtbare_typen()
+            weg = v["elemente"]
             for i, e in enumerate(m.elements):
+                if i in weg or e.typ not in typen:
+                    continue
                 idx = [int(x) for x in e.nodes]
                 if kreuzend:
                     ok = bool(drin[idx].any())
@@ -1705,36 +1734,42 @@ class MainWindow(QtWidgets.QMainWindow):
         if modus:
             return self._maskenobjekt_klick(modus, point)
         art = getattr(self, "auswahlart", "Knoten")
+        if not self._dargestellt(art):
+            # Was nicht dargestellt ist, laesst sich nicht waehlen
+            return self.info(f"{art}: ausgeblendet - erst wieder einblenden (Glasleiste), dann wählen")
         if art != "Knoten":
             m = self.model
             size = m.characteristic_size()
             if art == "Netz":
-                elem = self._element_am_zeiger()
+                elem = self._wenn_sichtbar("Netz", self._element_am_zeiger())
                 if elem is None:
                     return self._fenster_beginnen()
                 return self._objekt_umschalten(self.sel_elemente, int(elem), "Elemente")
             if art == "Linie":
-                name = self._linie_am_zeiger() or vp.line_at(m, point, size)
+                name = self._wenn_sichtbar("Linie", self._linie_am_zeiger() or vp.line_at(m, point, size))
                 return self._objekt_umschalten_klug(self.sel_linien, name, "Linien", self._linienenden()) \
                     if name else self._fenster_beginnen()
             # Erst das, was gezeichnet ist (Zellenpicker) - das trifft auch
             # Zylindermaentel und Stabkoerper; die geometrische Suche ist der
             # Rueckfall, wenn der Klick knapp danebenliegt.
             if art == "Fläche":
-                name = self._objekt_am_zeiger("Fläche") or vp.flaeche_at(m, point, size)
+                name = self._wenn_sichtbar("Fläche", self._objekt_am_zeiger("Fläche")
+                                           or vp.flaeche_at(m, point, size))
                 return self._objekt_umschalten(self.sel_flaechen, name, "Flächen") \
                     if name else self._fenster_beginnen()
             if art == "Volumen":
-                name = self._objekt_am_zeiger("Volumen") or vp.koerper_at(m, point, size)
+                name = self._wenn_sichtbar("Volumen", self._objekt_am_zeiger("Volumen")
+                                           or vp.koerper_at(m, point, size))
                 return self._objekt_umschalten(self.sel_koerper, name, "Volumen") \
                     if name else self._fenster_beginnen()
             if art == "Stab":
-                name = (self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")
-                        or vp.member_at(m, point))
+                name = self._wenn_sichtbar("Stab", self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")
+                                           or vp.member_at(m, point))
                 return self._objekt_umschalten_klug(self.sel_staebe, name, "Stäbe", self._stabenden()) \
                     if name else self._fenster_beginnen()
             if art == "Lager":
-                treffer = vp.lager_at(m, point, size, self.lagergroesse, self.lagerdichte)
+                treffer = self._wenn_sichtbar(
+                    "Lager", vp.lager_at(m, point, size, self.lagergroesse, self.lagerdichte))
                 return self._lager_umschalten(treffer) if treffer else self._fenster_beginnen()
             if art == "Last":
                 treffer = vp.last_at(point, getattr(self, "_lastpunkte", None), size)
@@ -1775,6 +1810,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.maskenrand.knoten_angeklickt(i):
             self.redraw()
             return
+        if not self._objekt_sichtbar("Knoten", i):
+            return self.info(f"Knoten {i}: ausgeblendet - nicht wählbar (Sicht: „Alles zeigen“)")
         if i in self.selection:
             self.selection = self.selection[self.selection != i]
         else:
@@ -1800,6 +1837,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 name = finder()
             except Exception:               # noqa: BLE001
                 name = None
+            if name and not self._objekt_sichtbar(art, name):
+                name = None                 # nicht dargestellt: nicht waehlbar
             if name:
                 if self.auswahlart != art:
                     self.auswahlart_setzen(art)
@@ -2175,13 +2214,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                       (self.act_loads, "lasten", "lasten")):
             leiste.knopf(a, symbol, schluessel)
         leiste.trenner()
-        # Auswahl und Sicht: alles deselektieren, nur die Selektion, Auswahl
-        # weg, zurueck, alles
-        for a, symbol, schluessel in ((self.act_auswahl_weg, "auswahl_weg", "auswahl_weg"),
-                                      (self.act_nur_auswahl, "sicht_nur_auswahl", "nur_auswahl"),
+        # Sicht: nur die Selektion, Auswahl weg, zurueck, alles, Verborgenes
+        # als Geist im Hintergrund
+        for a, symbol, schluessel in ((self.act_nur_auswahl, "sicht_nur_auswahl", "nur_auswahl"),
                                       (self.act_auswahl_weg_sicht, "sicht_ausblenden", "ausblenden"),
                                       (self.act_sicht_zurueck, "sicht_zurueck", "zurueck"),
-                                      (self.act_alles_zeigen, "sicht_alles", "alles")):
+                                      (self.act_alles_zeigen, "sicht_alles", "alles"),
+                                      (self.act_geist, "sicht_geist", "geist")):
             leiste.knopf(a, symbol, schluessel)
         leiste.knopf(self.act_klug, "auswahl_klug", "auswahl_klug")
         leiste.trenner()
@@ -2202,6 +2241,9 @@ class MainWindow(QtWidgets.QMainWindow):
             gruppe.addAction(a)
             self.act_auswahlart[art] = a
             leiste.knopf(a, self.AUSWAHLART_SYMBOL[art], f"auswahl_{art}")
+        # Ganz rechts: alles deselektieren - der Griff, der jede Auswahl beendet
+        leiste.trenner()
+        leiste.knopf(self.act_auswahl_weg, "auswahl_weg", "auswahl_weg")
         self.cb_auswahlart_glas = None
         leiste.adjustSize()
         wuerfel = msk.Ansichtswuerfel(central)
@@ -2865,6 +2907,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_alles_zeigen = g.klein("Alles zeigen", self.alles_zeigen,
                                         hinweis="Alle ausgeblendeten Objekte wieder zeigen",
                                         symbol="sicht_alles")
+        self.act_geist = g.schalter("Verborgenes im Hintergrund", self._geist_umschalten, False,
+                                    "Ausgeblendete Objekte blass als Geist im Hintergrund zeigen - "
+                                    "sie bleiben dort unwählbar; nur was dargestellt ist, lässt "
+                                    "sich wählen", symbol="sicht_geist")
         g = r.gruppe("Symbole")
         self.sl_lager = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.sl_lager.setRange(2, 60)
@@ -6311,6 +6357,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Randflaechen von Volumen ohne Dicke bekommen kein Schalennetz (die
         # Tetraeder tragen) - sie zaehlen nicht in den Balken
         ohne_netz = [f.name for f in flaechen if not f.dicke and not self.model.flaeche_traegt(f.name)]
+        starr = [f.name for f in flaechen if f.name in ohne_netz
+                 and f.name not in self.model.koerperflaechen()]
         for name in ohne_netz:
             gewicht[name] = 1.0
         w_f = sum(gewicht.get(f.name, 1.0) for f in flaechen)
@@ -6325,8 +6373,12 @@ class MainWindow(QtWidgets.QMainWindow):
         hs = nd.anwenden(self.model, netz, flaechen, koerper, log)
         log.append(f"Netzeinstellungen: {netz.beschreibung()}")
         if ohne_netz:
-            log.append(f"{len(ohne_netz)} Randflächen von Volumen ohne Dicke: kein eigenes Netz - "
+            log.append(f"{len(ohne_netz) - len(starr)} Randflächen von Volumen ohne Dicke: kein eigenes Netz - "
                        "ihre Volumen tragen, Lasten darauf gehen über die Randseiten der Tetraeder")
+        if starr:
+            log.append(f"{len(starr)} Flächen ohne eigene Steifigkeit laut Quelldatei (starr, Null-Element, "
+                       "Lastverteilung): kein eigenes Netz; starre Flächen werden nach dem Vernetzen als "
+                       "starre Kopplung umgesetzt")
         try:
             # Was aus Kontaktbedingungen entstanden ist, gehoert zum alten Netz.
             fugen.kontaktfugen_zuruecksetzen(self.model, log)
@@ -6358,12 +6410,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 n += erg["elemente"]
                 prozesse = erg.get("prozesse", 1)
                 abgebrochen = abgebrochen or bool(erg.get("abgebrochen"))
-            self._fortschritt(1000, "Lasten verteilen und Kontaktfugen trennen …")
+            # Nach dem Balken kommt noch einiges - jeder Schritt sagt, was er tut,
+            # sonst sieht das Fenster bei 100 % wie eingefroren aus
+            self._fortschritt(1000, "Netz fertig - Lasten auf das Netz verteilen …")
+            QtWidgets.QApplication.processEvents()
             # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
             self.model.lasten_verteilen(log)
+            self._fortschritt(1000, "Kontaktfugen trennen …")
+            QtWidgets.QApplication.processEvents()
             # und die Kontaktfugen koennen jetzt getrennt werden - ohne sie rechnet
             # das Modell dort durchverbunden, also zu steif.
             fugen.kontaktfugen_ausfuehren(self.model, log)
+            # Starre Flaechen (Kreisscheiben der Zugstaebe) haengen ihre
+            # Netzknoten an den Mittelknoten
+            self._fortschritt(1000, "Starre Flächen koppeln …")
+            fugen.starre_flaechen_koppeln(self.model, log)
+            self._fortschritt(1000, "Lager auf das Netz bringen …")
+            supports.lager_auf_netz(self.model, log)
         finally:
             self._fortschritt_ende()
             for f in flaechen:
@@ -6380,6 +6443,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 + (f" auf {prozesse} Prozessen" if prozesse > 1 else "")
                 + (" - abgebrochen" if abgebrochen else ""))
         self.log.appendPlainText(text)
+        self._vernetzt_text = text
         self.statusBar().showMessage(text, 8000)
         return n
 
@@ -6394,9 +6458,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error("Es gibt keine Flächen oder Volumenkörper zum Vernetzen.")
         self.merken("Geometrie vernetzt")
         n = self._vernetzen(flaechen, koerper)
+        self.statusBar().showMessage("Modellbaum, Tabellen und Ansicht aufbauen …")
+        QtWidgets.QApplication.processEvents()
         self.refresh_all()
         self.info(f"{n} Elemente erzeugt" if n else
                   "Nichts vernetzt - das Protokoll sagt, warum")
+        if n and getattr(self, "_vernetzt_text", ""):
+            self.statusBar().showMessage(self._vernetzt_text, 15000)
         self._info_zeigen()
 
     def kontaktfugen_ausfuehren(self):
@@ -6408,6 +6476,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.merken("Kontaktfugen ausgeführt")
         log = []
         ges = fugen.kontaktfugen_ausfuehren(m, log)
+        fugen.starre_flaechen_koppeln(m, log)
+        supports.lager_auf_netz(m, log)
         for z in log:
             self.log.appendPlainText(z)
         if ges["fugen"]:
@@ -6431,6 +6501,8 @@ class MainWindow(QtWidgets.QMainWindow):
             f.elemente = []
         for k in m.koerper.values():
             k.elemente = []
+        # Lager mit Geometriebezug zurueck auf die Eckknoten der Geometrie
+        supports.lager_auf_netz(m)
         self.analysis = None
         self.results = None
         self.refresh_all()
@@ -7113,24 +7185,59 @@ class MainWindow(QtWidgets.QMainWindow):
                 nl.append(f"{namen[d]}: μ = {b.mu:g}")
         return ", ".join(haelt) or "frei", "; ".join(nl)
 
+    def _elementmasse(self) -> np.ndarray:
+        """Je Element Laenge [m], Flaeche [m²] oder Volumen [m³] - vektorisiert
+        je Elementart, weil die Tabelle sonst bei einer halben Million
+        Tetraeder Minuten braucht."""
+        m = self.model
+        out = np.zeros(len(m.elements))
+        gruppen: dict = {}
+        for i, e in enumerate(m.elements):
+            gruppen.setdefault(e.typ, []).append(i)
+        for typ, idx in gruppen.items():
+            idx = np.asarray(idx, int)
+            try:
+                K = np.array([[int(x) for x in m.elements[i].nodes] for i in idx], dtype=int)
+                if K.ndim != 2 or (K < 0).any() or (K >= m.nn).any():
+                    raise ValueError("Knoten")
+                X = m.nodes[K]                                   # (n, k, 3)
+                if typ in ("beam", "truss"):
+                    out[idx] = np.linalg.norm(X[:, 1] - X[:, 0], axis=1)
+                elif typ == "shell3":
+                    out[idx] = 0.5 * np.linalg.norm(np.cross(X[:, 1] - X[:, 0], X[:, 2] - X[:, 0]), axis=1)
+                elif typ == "shell4":
+                    out[idx] = 0.5 * (np.linalg.norm(np.cross(X[:, 1] - X[:, 0], X[:, 2] - X[:, 0]), axis=1)
+                                      + np.linalg.norm(np.cross(X[:, 2] - X[:, 0], X[:, 3] - X[:, 0]), axis=1))
+                elif typ in ("tet4", "tet10"):
+                    out[idx] = np.abs(np.einsum("ij,ij->i", X[:, 1] - X[:, 0],
+                                                np.cross(X[:, 2] - X[:, 0], X[:, 3] - X[:, 0]))) / 6.0
+                else:
+                    from ..elements import solid as _so
+                    for i in idx:
+                        out[i] = float(_so.solid_volume(typ, m.nodes[[int(x) for x in m.elements[i].nodes]]))
+            except Exception:      # noqa: BLE001 - eine Tabelle darf nie am Netz scheitern
+                pass
+        return out
+
     def refresh_modelltabellen(self):
         m = self.model
         self._raender_stand = None
         self._inhalte_stand = None
         if not hasattr(self, "tbl_knoten"):
             return
-        # Knoten
-        anzahl = np.zeros(m.nn, int)
-        for e in m.elements:
-            for n in e.nodes:
-                if 0 <= int(n) < m.nn:
-                    anzahl[int(n)] += 1
+        # Knoten - im Block: bei 95 000 Knoten und 490 000 Elementen darf der
+        # Aufbau der Tabellen keine Minuten kosten
+        alle_knoten = np.fromiter((int(x) for e in m.elements for x in e.nodes), dtype=np.int64,
+                                  count=sum(len(e.nodes) for e in m.elements))
+        alle_knoten = alle_knoten[(alle_knoten >= 0) & (alle_knoten < m.nn)]
+        anzahl = np.bincount(alle_knoten, minlength=m.nn) if m.nn else np.zeros(0, int)
         lagername = {}
         for i, sp in enumerate(m.supports):
             lagername.setdefault(int(sp.node), sp.name or f"Lager {i + 1}")
+        XYZ = np.asarray(m.nodes[:m.nn], float).reshape(-1, 3).tolist()
         self._fill(self.tbl_knoten,
-                   [[i, float(m.nodes[i][0]), float(m.nodes[i][1]), float(m.nodes[i][2]),
-                     int(anzahl[i]), lagername.get(i, "")] for i in range(m.nn)])
+                   [[i, x, y, z, int(c), lagername.get(i, "")]
+                    for i, ((x, y, z), c) in enumerate(zip(XYZ, anzahl.tolist()))])
         # Linien
         zeilen = []
         for name, ln in m.lines.items():
@@ -7140,23 +7247,12 @@ class MainWindow(QtWidgets.QMainWindow):
             folge = ", ".join(str(x) for x in pts)
             zeilen.append([name, ln.typ, len(pts), laenge, folge, ln.comment])
         self._fill(self.tbl_linie, zeilen)
-        # Elemente
-        zeilen = []
-        for i, e in enumerate(m.elements):
-            X = m.nodes[[int(n) for n in e.nodes]]
-            if e.typ in ("beam", "truss"):
-                mass = float(np.linalg.norm(X[1] - X[0]))
-            elif e.typ in ("shell3", "shell4"):
-                mass = vp.polygon_flaeche(X)
-            else:
-                from ..elements import solid as _so
-                try:
-                    mass = float(_so.solid_volume(e.typ, X))
-                except Exception:      # noqa: BLE001
-                    mass = 0.0
-            zeilen.append([i, e.typ, ", ".join(str(int(n)) for n in e.nodes), e.mat,
-                           e.sec or "", np.degrees(e.roll), mass,
-                           ", ".join(str(h) for h in (e.hinges or []))])
+        # Elemente: Laenge, Flaeche oder Volumen je Elementart im Block
+        mass = self._elementmasse()
+        zeilen = [[i, e.typ, ", ".join(str(int(n)) for n in e.nodes), e.mat,
+                   e.sec or "", float(np.degrees(e.roll or 0.0)), float(mass[i]),
+                   ", ".join(str(h) for h in (e.hinges or []))]
+                  for i, e in enumerate(m.elements)]
         self._fill(self.tbl_elem, zeilen)
         # Lager
         zeilen = []
@@ -7211,14 +7307,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill(self.tbl_geoflaeche, zeilen)
         zeilen = []
         for name, k in (getattr(m, "koerper", {}) or {}).items():
-            V = 0.0
-            for i in (k.elemente or []):
-                if i < len(m.elements):
-                    e = m.elements[i]
-                    try:
-                        V += float(_so.solid_volume(e.typ, m.nodes[[int(x) for x in e.nodes]]))
-                    except Exception:      # noqa: BLE001
-                        pass
+            # aus den vektorisierten Elementmassen - je Tetraeder einzeln
+            # kostete das beim Drehlager eine halbe Minute
+            idx = [int(i) for i in (k.elemente or []) if 0 <= int(i) < len(mass)]
+            V = float(mass[idx].sum()) if idx else 0.0
             zeilen.append([name, ", ".join(k.flaechen), k.material,
                            " × ".join(str(x) for x in k.teilung),
                            len(k.elemente or []), V, k.kommentar])
@@ -9646,10 +9738,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "tbl_joint"):
             self.tbl_joint.markieren([n for n, j in m.joints.items() if j.elem in dabei])
 
+    #: Ab so vielen Elementen sagt refresh_all in der Statuszeile, was es tut
+    GROSS_AB = 100000
+
     def refresh_all(self):
         m = self.model
+        gross = len(m.elements) >= self.GROSS_AB
+
+        def schritt(text):
+            if gross:
+                self.statusBar().showMessage(text)
+                QtWidgets.QApplication.processEvents()
         for k, e in self.ed_meta.items():
             e.setText(m.meta.get(k, ""))
+        schritt("Tabellen aufbauen …")
         self._fill(self.tbl_mat, [[k, v.E / 1e9, v.nu, v.rho, (v.fy or 0.0) / 1e6,
                                    v.grade] for k, v in m.materials.items()])
         self._fill(self.tbl_sec, [[k, v.typ, v.A * 1e4, v.Iy * 1e8, v.Iz * 1e8,
@@ -9682,8 +9784,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_lasteinleitungen()
         self.refresh_stellungen()
         self._refresh_kopf()
+        schritt("Modellbaum aufbauen …")
         self._refresh_baum()
+        schritt("Ansicht aufbauen …")
         self.redraw()
+        if gross:
+            self.statusBar().clearMessage()
 
     def refresh_cases(self):
         m = self.model
@@ -12077,6 +12183,15 @@ class MainWindow(QtWidgets.QMainWindow):
         """Flaechen und Volumen ohne Netz tragen nichts: vor dem Rechnen
         vernetzen (nach Rueckfrage). False, wenn der Anwender abbricht."""
         from ..diagnose import diagnose
+        from .. import fugen
+        # Starre Flaechen aus einer aelteren Datei: ihre Kopplungen fehlen noch
+        if fugen.starre_flaechen(self.model) and self.model.elements and not any(
+                str(getattr(k, "gruppe", "")).startswith(fugen.STARR_GRUPPE)
+                for k in self.model.kopplungen):
+            log = []
+            fugen.starre_flaechen_koppeln(self.model, log)
+            for z in log:
+                self.log.appendPlainText(z)
         d = diagnose(self.model)
         nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
         if not nf and not nk:
@@ -12781,6 +12896,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
                 vp.add_nodes(self.plotter, m, nur=sichtbare_knoten)
             self._auswahl_zeichnen()
+            self._geist_zeichnen(m)
             if (getattr(m, "bemassungen", None) or getattr(self, "messungen", None)):
                 try:
                     vp.add_bemassungen(self.plotter, m, size, self._blick(), self.messungen)
@@ -12991,6 +13107,166 @@ class MainWindow(QtWidgets.QMainWindow):
                 schritt["elemente"] = set()
                 schritt["knoten"] = set()
         self._sicht_knoepfe()
+
+    # ---- Verborgenes im Hintergrund (Geist) ---------------------------------
+    #: Farbe und Deckkraft des Geistes: blass, hinter allem, unantastbar
+    GEIST_FARBE = "#aab2ba"
+    GEIST_KANTE = "#c9cfd5"
+    GEIST_DECKKRAFT = 0.14
+
+    def _geist_umschalten(self, an: bool):
+        """Schalter „Verborgenes im Hintergrund“ (Ribbon Ansicht, Glasleiste)."""
+        self.geist = bool(an)
+        if self.geist:
+            self.info("Verborgenes steht blass im Hintergrund - dort ist es nicht wählbar")
+        self.redraw()
+
+    def _geist_zeichnen(self, m):
+        """Ausgeblendetes blass im Hintergrund zeichnen.
+
+        Die Geister sind nicht anklickbar (``pickable=False``) und stehen
+        nicht in der Liste des Zellenpickers: was nicht dargestellt ist,
+        laesst sich nicht waehlen - und ein Geist ist nur angedeutet.
+        """
+        if not getattr(self, "geist", False) or not any(self.versteckt.values()):
+            return
+        blass = dict(color=self.GEIST_FARBE, opacity=self.GEIST_DECKKRAFT, show_edges=False,
+                     lighting=False, pickable=False)
+        kante = dict(color=self.GEIST_KANTE, line_width=1, opacity=0.5, pickable=False)
+        weg = {int(i) for i in self.versteckt["elemente"]}
+        if weg:
+            grid = self._geist_gitter(weg)
+            if grid is not None and grid.n_cells:
+                self.plotter.add_mesh(grid, name="geist_netz", **blass)
+        fl, ko = self.versteckt["flaechen"], self.versteckt["koerper"]
+        if (fl or ko) and m.flaechen:
+            pd_f, pd_r, pd_k = self._geist_geometrie(fl, ko)
+            if pd_f is not None:
+                self.plotter.add_mesh(pd_f, name="geist_flaechen", **blass)
+            if pd_r is not None:
+                self.plotter.add_mesh(pd_r, name="geist_raender", **kante)
+            if pd_k is not None:
+                self.plotter.add_mesh(pd_k, name="geist_volumen", **kante)
+        li = self.versteckt["linien"]
+        if li and m.lines:
+            netz = vp.linien_netz(m, [], ausser=set(m.lines) - set(li))
+            if netz is not None:
+                self.plotter.add_mesh(netz, name="geist_linien", **kante)
+
+    def _geist_gitter(self, weg: set):
+        """Das Netz der ausgeblendeten Elemente (Oberflaeche) - je Stand einmal."""
+        m = self.model
+        stand = (id(m), len(m.elements), m.nn,
+                 hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0, frozenset(weg))
+        if getattr(self, "_geist_stand", None) == stand:
+            return self._geist_zwischen
+        grid = vp.to_grid(m, nur=weg)
+        if grid.n_cells:
+            try:
+                volumen_typen = {vp.CELL_MAP[t][0] for t in vp.TYPEN_VOLUMEN if t in vp.CELL_MAP}
+                if np.isin(grid.celltypes, list(volumen_typen)).any():
+                    grid = grid.extract_surface(pass_pointid=True, pass_cellid=True,
+                                                algorithm="dataset_surface")
+            except Exception as ex:             # noqa: BLE001
+                self.log.appendPlainText(f"Geist: {ex}")
+        self._geist_stand = stand
+        self._geist_zwischen = grid
+        return grid
+
+    def _geist_geometrie(self, fl, ko):
+        """Die Geometrienetze der ausgeblendeten Flaechen und Koerper - je Stand einmal."""
+        m = self.model
+        stand = (id(m), len(m.flaechen), len(m.koerper), len(m.lines), m.nn,
+                 hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
+                 len(m.elements), sum(len(f.elemente) for f in m.flaechen.values()),
+                 frozenset(fl), frozenset(ko))
+        if getattr(self, "_geistgeo_stand", None) == stand:
+            return self._geistgeo_zwischen
+        netze = vp.geometrie_netze(m, raender=self._raender(), seiten=self._randseiten(),
+                                   flaechen_an=True, koerper_an=True,
+                                   ausser_flaechen=set(m.flaechen) - set(fl),
+                                   ausser_koerper=set(m.koerper) - set(ko))
+        self._geistgeo_stand = stand
+        self._geistgeo_zwischen = netze
+        return netze
+
+    # ---- Wahlregel: was nicht dargestellt ist, laesst sich nicht waehlen ----
+    #: Sichtbarkeitsschalter je Auswahlart (Glasleiste, Ribbon Ansicht)
+    SICHT_SCHALTER = {"Knoten": "act_knoten", "Linie": "act_linien", "Stab": "act_staebe",
+                      "Fläche": "act_flaechen", "Volumen": "act_volumen", "Last": "act_loads"}
+
+    def _dargestellt(self, art: str) -> bool:
+        """Ist diese Auswahlart ueberhaupt im Bild (Schalter in der Glasleiste)?"""
+        a = getattr(self, self.SICHT_SCHALTER.get(art, ""), None)
+        return a is None or a.isChecked()
+
+    def _sichtbare_typen(self) -> set:
+        """Elementtypen, die die Sichtbarkeitsschalter gerade zeigen."""
+        typen = {t for t in vp.CELL_MAP
+                 if t not in vp.TYPEN_STAEBE + vp.TYPEN_FLAECHEN + vp.TYPEN_VOLUMEN}
+        for art, gruppe in (("Stab", vp.TYPEN_STAEBE), ("Fläche", vp.TYPEN_FLAECHEN),
+                            ("Volumen", vp.TYPEN_VOLUMEN)):
+            if self._dargestellt(art):
+                typen |= set(gruppe)
+        return typen
+
+    def _objekt_sichtbar(self, art: str, name) -> bool:
+        """Ist dieses Objekt dargestellt? Ausgeblendetes - auch als Geist im
+        Hintergrund - und was der Schalter seiner Art wegnimmt, laesst sich
+        nicht waehlen: mit der Maus, im Fenster, nicht als Lager daran."""
+        if name is None or not self._dargestellt(art):
+            return False
+        v = self.versteckt
+        m = self.model
+        if art == "Linie":
+            return name not in v["linien"]
+        if art == "Fläche":
+            return name not in v["flaechen"]
+        if art == "Volumen":
+            return name not in v["koerper"]
+        if art == "Stab":
+            mem = (m.members or {}).get(name)
+            els = [int(e) for e in (mem.elements or [])] if mem is not None else []
+            return not els or not all(e in v["elemente"] for e in els)
+        if art == "Netz":
+            try:
+                i = int(name)
+            except (TypeError, ValueError):
+                return False
+            if i in v["elemente"] or not 0 <= i < len(m.elements):
+                return False
+            return m.elements[i].typ in self._sichtbare_typen()
+        if art == "Knoten":
+            sicht = self._sichtbare_knoten()
+            try:
+                return sicht is None or bool(np.isin(int(name), sicht))
+            except (TypeError, ValueError):
+                return False
+        if art == "Lager":
+            sicht = self._sichtbare_knoten()
+            if sicht is None:
+                return True
+            da = np.zeros(m.nn, bool)
+            da[sicht] = True
+            try:
+                if name[0] == "lager":
+                    n = int(m.supports[int(name[1])].node)
+                    return 0 <= n < m.nn and bool(da[n])
+                liste = m.line_supports if name[0] == "linienlager" else m.surface_supports
+                knoten = [int(n) for n in (liste[int(name[1])].nodes or []) if 0 <= int(n) < m.nn]
+                return not knoten or bool(da[knoten].any())
+            except (IndexError, TypeError, ValueError):
+                return False
+        return True
+
+    def _wenn_sichtbar(self, art: str, name):
+        """Der Treffer, wenn er dargestellt ist - sonst None und ein Hinweis."""
+        if name is None:
+            return None
+        if self._objekt_sichtbar(art, name):
+            return name
+        self.info(f"{art} {name}: ausgeblendet - nicht wählbar (Sicht: „Alles zeigen“)")
+        return None
 
     def _sichtbare_knoten(self):
         """Die Knoten, die im Bild bleiben - oder None, wenn nichts ausgeblendet ist.

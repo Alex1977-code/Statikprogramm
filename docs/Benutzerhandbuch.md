@@ -494,9 +494,23 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 |---|---|
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
-| Auswahl und Sicht | Alles deselektieren, Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Intelligente Auswahl** (Schalter) |
+| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Intelligente Auswahl** (Schalter) |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
-| Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager) — genau einer ist gedrückt |
+| Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
+| ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
+
+**Verborgenes im Hintergrund.** Der Schalter (Register *Ansicht → Sicht*,
+auch in der Glasleiste) zeigt alles Ausgeblendete blass und durchscheinend
+als „Geist“ hinter dem Modell: man sieht, wo das Versteckte liegt, und
+arbeitet ungestört an dem, was normal dargestellt ist. Der Geist ist
+**nicht wählbar** — weder mit der Maus noch im Auswahlfenster. Das ist die
+allgemeine Regel der Ansicht: **Was nicht dargestellt ist, lässt sich nicht
+wählen.** Ausgeblendete Objekte (Sicht) bleiben außen vor, ebenso alles,
+dessen Schalter in der Glasleiste aus ist — mit ausgeschalteten Stäben
+wählt weder ein Klick noch ein Fenster einen Stab, mit ausgeschalteten
+Knoten keinen Knoten; die Statusleiste sagt dann, warum nichts geschieht.
+Lager an ausgeblendeten Knoten und Lasten an ausgeblendeten Teilen sind
+ebenso wenig zu treffen.
 
 Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen* und *Sicht*, der Fang unter *Geometrie → Arbeitsebene*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
@@ -563,16 +577,25 @@ Lager hält:
 | Feder | **Schraubenfeder** in Richtung des Freiheitsgrads (in der Achse zwischen Spitze und Ebene, seitlich vom Knoten weg mit Endplatte); eine Drehfeder als Spirale um ihre Achse |
 
 **Linienlager** werden mit kleineren Symbolen **entlang der ganzen Linie**
-gezeichnet, dazu die Linie selbst; **Flächenlager** im Raster **über die
-ganze gebettete Fläche**, die Symbole in Richtung der Flächennormale (bei
-Volumen nach außen) — nicht mehr nur an den Knoten. Wie dicht die Symbole
-stehen, sagt die **Lagerdichte**: Schieber „Dichte" im Register *Ansicht →
-Symbole* (1,0 = alle 5 % der Modellgröße ein Symbol), Rechtsklick in die
-Ansicht → „Lagerdichte…" oder auf ein Linien-/Flächenlager. Die **Größe**
-stellt der Schieber „Lager" für alle zusammen ein; **ein Rechtsklick auf ein
-Lagersymbol** öffnet dessen eigenes Menü mit „Größe dieses Lagers…", „Größe
-aller Lager…", „Lager bearbeiten…" (die Maske rechts) und „Lager löschen".
-Die eingestellte Größe wird mitgespeichert.
+gezeichnet (auf einem Bogen auf der wahren Kurve), dazu die Linie selbst;
+**Flächenlager** im Raster **über die ganze gebettete Fläche**, die Symbole
+in Richtung der Flächennormale (bei Volumen nach außen) — nicht mehr nur an
+den Knoten. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
+der Geometrie; die Symbole belegen darum die ganze Fläche, auch wenn noch
+kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
+Schieber „Dichte" im Register *Ansicht → Symbole* (1,0 = alle 5 % der
+Modellgröße ein Symbol; die Ansicht folgt dem Schieber sofort), Rechtsklick
+in die Ansicht → „Lagerdichte…" oder auf ein Linien-/Flächenlager. Die
+**Größe** stellt der Schieber „Lager" daneben für alle zusammen ein; **ein
+Rechtsklick auf ein Lagersymbol** öffnet dessen eigenes Menü mit „Größe
+dieses Lagers…", „Größe aller Lager…", „Lager bearbeiten…" (die Maske
+rechts) und „Lager löschen". Die eingestellte Größe wird mitgespeichert.
+
+**Lager folgen dem Netz.** Ein Linien- oder Flächenlager mit Geometriebezug
+wirkt nach dem Vernetzen auf **alle Netzknoten** seiner Linien bzw. Flächen
+— mit den Einflusslängen und Einflussflächen aus dem Netz, nicht nur an den
+Eckknoten der Geometrie. Das geschieht beim Vernetzen, beim Löschen des
+Netzes (zurück auf die Eckknoten) und vor jeder Rechnung von selbst.
 
 **Lager auswählen**: mit der Auswahlart **Lager** (Glasleiste) trifft ein
 Klick ein Knotenlager an seinem Symbol, ein Linien- oder Flächenlager an

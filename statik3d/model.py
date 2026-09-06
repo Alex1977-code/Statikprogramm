@@ -628,6 +628,10 @@ class LineSupport:
     line: str = ""
     behaviour: dict = field(default_factory=dict)     # {FHG: DofBehaviour}
     axis: str = "global"                              # global (weitere Systeme spaeter)
+    #: Linien der Geometrie, auf denen das Lager liegt (RFEM: Linienlager an
+    #: Linien). Mit ihnen folgt das Lager dem Netz: nach dem Vernetzen bekommt
+    #: es alle Netzknoten auf diesen Linien (supports.lager_auf_netz).
+    linien: list[str] = field(default_factory=list)
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -652,6 +656,12 @@ class SurfaceSupport:
     areas: list[float] = field(default_factory=list)  # Einflussflaechen zu 'nodes' [m^2]
     face: int = -1
     behaviour: dict = field(default_factory=dict)     # {FHG: DofBehaviour}
+    #: Flaechen der Geometrie, auf denen das Lager liegt (RFEM: Flaechenlager
+    #: an Flaechen). Mit ihnen folgt das Lager dem Netz: nach dem Vernetzen
+    #: werden 'nodes' und 'areas' aus den Netzknoten und Einflussflaechen
+    #: dieser Flaechen neu bestimmt (supports.lager_auf_netz); die Ansicht
+    #: verteilt die Symbole ueber die ganze Flaeche.
+    flaechen: list[str] = field(default_factory=list)
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -1517,6 +1527,10 @@ class Flaeche:
     #: die Randflaeche eines Volumenkoerpers legen: dort gibt es keine
     #: Schalenelemente, nur Tetraeder, die mit einer Seite anliegen.
     randseiten: list[list[int]] = field(default_factory=list)
+    #: Steifigkeitsart aus der Quelldatei, wenn die Flaeche **keine** eigene
+    #: hat ("starr", "ohne Dicke (Null-Element)", "Lastverteilung" …): so eine
+    #: Flaeche traegt nichts, braucht kein Netz und haelt die Rechnung nicht auf
+    steifigkeit: str = ""
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"
@@ -2117,6 +2131,14 @@ class ContactPair:
 # --------------------------------------------------------------------------
 #: Alter Name der Kontaktbedingung (RFEM: Flaechenfreigabe)
 Flaechenfreigabe = Kontaktbedingung
+
+#: Steifigkeitsarten einer Flaeche **ohne** eigene Steifigkeit (Klartext, wie
+#: der RFEM-Import sie in ``Flaeche.steifigkeit`` schreibt)
+FLAECHEN_OHNE_STEIFIGKEIT = {
+    "ohne Dicke (Null-Element)", "starr", "Lastverteilung", "Grundwasser", "Diskontinuitaet",
+    "Steifigkeitsanpassung", "Deckenscheibe", "starre Deckenscheibe",
+    "nachgiebige Deckenscheibe", "halbstarre Deckenscheibe",
+}
 
 #: Vorgefertigte Kontakte - benannt wie in ANSYS, in der Wirkung je Richtung:
 #: zug   "starr"   = Zug wird uebertragen (die Fuge oeffnet nicht)
@@ -2914,7 +2936,15 @@ class Model:
         f = (self.flaechen or {}).get(name)
         if f is None:
             return False
-        return bool(f.dicke) or name not in self.koerperflaechen()
+        if f.dicke:
+            return True
+        if name in self.koerperflaechen():
+            return False
+        # Eine Flaeche ohne Dicke, die laut Quelldatei keine eigene Steifigkeit
+        # hat (starr, Null-Element, Lastverteilung), traegt nichts. Aeltere
+        # Dateien tragen die Art nur in der Bemerkung.
+        art = (getattr(f, "steifigkeit", "") or "") or (f.kommentar or "")
+        return art not in FLAECHEN_OHNE_STEIFIGKEIT
 
     @staticmethod
     def naechster_name(vorsilbe: str, vorhandene) -> str:
