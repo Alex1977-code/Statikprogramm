@@ -9224,6 +9224,11 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.critical(self, "Fehler", str(msg))
         self.log.appendPlainText("FEHLER: " + str(msg))
 
+    def warnung(self, msg):
+        """Etwas stimmt nicht, aber es geht weiter - anders als bei error()."""
+        QtWidgets.QMessageBox.warning(self, "Warnung", str(msg))
+        self.log.appendPlainText("WARNUNG: " + str(msg))
+
     def _fill(self, tbl, rows, header=None):
         """Zeilen in eine Tabelle schreiben - alte QTableWidget oder Datentabelle.
 
@@ -12713,11 +12718,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sel_flaechen, self.sel_koerper = alte
         d = diagnose(self.model)
         if d["unvernetzte_flaechen"] or d["unvernetzte_koerper"]:
+            # Kein zweites Nein: was der Vernetzer eben nicht vernetzen konnte,
+            # kann er auch beim naechsten Mal nicht - ein erneuter Abbruch
+            # waere eine Sackgasse. Gesagt wird es deutlich, gerechnet wird
+            # trotzdem; die Objekte tragen nichts, und ob das Tragwerk ohne sie
+            # noch haelt, sagt die Pruefung auf Teiltragwerke ohne Lager.
             self._ohne_netz_protokoll(d)
-            self.error(f"{self._ohne_netz_text(d)} sind weiterhin ohne Netz. "
-                       "Die vollständige Liste und der Grund je Objekt stehen im Protokoll "
-                       "(Extras → Protokoll speichern…). Die Berechnung wird nicht gestartet.")
-            return False
+            self.warnung(f"{self._ohne_netz_text(d)} haben auch nach dem Vernetzen kein Netz "
+                         "und tragen nichts - Lasten darauf gehen verloren. Der Grund je "
+                         "Objekt steht im Protokoll (Extras → Protokoll speichern…). "
+                         "Es wird ohne sie gerechnet.")
         return True
 
     def _ohne_netz_protokoll(self, d: dict) -> None:

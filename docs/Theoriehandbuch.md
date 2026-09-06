@@ -1649,11 +1649,41 @@ Entstehen können sie an drei Stellen, alle drei prüfen jetzt vorher:
 * Importierte Netze mit doppelten Knoten.
 
 Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
-**unvernetzt** (`Model.koerper_traegt`, geprüft an derselben Streumatrix
-seiner Randknoten). Sonst forderte die Rechenbarkeitsprüfung vor jeder
-Rechnung ein Netz, das nicht entstehen kann. Er erscheint stattdessen als
-Hinweis „Volumen ohne Rauminhalt“ - das Gegenstück zu `flaeche_traegt` für
-Randflächen ohne Dicke.
+**unvernetzt** (`Model.koerper_traegt`). Sonst forderte die
+Rechenbarkeitsprüfung vor jeder Rechnung ein Netz, das nicht entstehen kann.
+Er erscheint stattdessen als Hinweis „Volumen ohne Rauminhalt“ - das
+Gegenstück zu `flaeche_traegt` für Randflächen ohne Dicke.
+
+**Eine Wahrheit, und sie ist relativ.** Zwei Stellen, die dieselbe Frage mit
+verschiedenen Maßen beantworten, widersprechen sich früher oder später - und
+dann verlangt das Programm ein Netz, das der Vernetzer gerade abgelehnt hat.
+Darum gilt:
+
+* Hat der Vernetzer entschieden, hält er das in der Bemerkung des Körpers
+  fest (Vorsatz `Model.OHNE_NETZ`), und `koerper_traegt` übernimmt diese
+  Entscheidung, statt eine eigene zu treffen.
+* Wo noch nichts entschieden ist, wird der **kleinste Singulärwert** der
+  zentrierten Randknoten gemessen - die Ausdehnung senkrecht zur besten
+  Ebene - und ins Verhältnis zur Größe des Körpers gesetzt:
+
+      s_min / √n  ≤  10⁻⁷ · d ,      d = Diagonale der Hüllbox .
+
+  Die Singulärwertzerlegung ist rückwärtsstabil. Die zuvor benutzte
+  Determinante der Streumatrix multipliziert drei Eigenwerte und hebt damit
+  das Rauschen der letzten Bits in die dritte Potenz: bei einer absoluten
+  Schranke von 10⁻¹⁵ entschied die Lage im Raum. Gespiegelte Kopien
+  desselben flachen Bauteils - 14 × 26 × 8 mm, geometrisch identisch -
+  bekamen so gegensätzliche Urteile (√det C zwischen 0 und 2,2·10⁻¹⁵).
+* Auch die Volumenschranke des Vernetzers ist relativ, `V ≤ 10⁻⁹ · d³`. Eine
+  absolute Schranke in m³ hängt sonst an der gewählten Längeneinheit und
+  liegt bei Metern unter dem, was sich überhaupt auflösen lässt.
+
+Bleiben nach dem Vernetzen Objekte ohne Netz, wird die Rechnung **nicht mehr
+abgewiesen**: was der Vernetzer eben nicht vernetzen konnte, kann er auch
+beim nächsten Versuch nicht, und ein erneuter Abbruch wäre eine Sackgasse.
+Die Objekte werden benannt, die Folge (Lasten darauf gehen verloren) gesagt,
+und gerechnet wird ohne sie. Ob das Tragwerk ohne sie noch hält, beantwortet
+die Prüfung auf Teiltragwerke ohne Lager.
 
 ## 8 Gültigkeitsbereich
 

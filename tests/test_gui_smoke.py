@@ -5270,6 +5270,35 @@ def main():
               "--- Objekte ohne Netz ---" in w.log.toPlainText()
               and "Volumen V_gut: 4 Randflächen" in w.log.toPlainText())
 
+        # Keine Sackgasse: ein Körper, den der Vernetzer nicht vernetzen kann,
+        # darf die Rechnung nicht dauerhaft sperren
+        from statik3d.model import OHNE_NETZ as _ON
+        m.koerper["V_gut"].elemente = []
+        m.koerper["V_gut"].kommentar = ""
+        gefragt, gewarnt, fehler = [], [], []
+        alt_fragen, alt_warn, alt_err = w._fragen, w.warnung, w.error
+        w._fragen = lambda t, x: (gefragt.append(x), True)[1]
+        w.warnung = lambda t: gewarnt.append(t)
+        w.error = lambda t: fehler.append(t)
+        alt_vernetzen = w.geometrie_vernetzen
+        # Vernetzen, das den Körper ablehnt - wie beim Null-Volumen
+        def _abgelehnt():
+            m.koerper["V_gut"].kommentar = f"{_ON} Probe"
+            m.koerper["V_gut"].elemente = []
+        try:
+            w.geometrie_vernetzen = lambda: None      # Netz bleibt aus
+            ok = w._vor_rechnung_vernetzen()
+        finally:
+            w.geometrie_vernetzen = alt_vernetzen
+            w._fragen, w.warnung, w.error = alt_fragen, alt_warn, alt_err
+        check("nach erfolglosem Vernetzen wird trotzdem gerechnet", ok is True, str(ok))
+        check("und es kommt eine Warnung statt eines Abbruchs",
+              len(gewarnt) == 1 and not fehler,
+              (gewarnt[0][:70] if gewarnt else "") + str(fehler)[:40])
+        check("die Warnung nennt das Volumen und die Folge",
+              bool(gewarnt) and "V_gut" in gewarnt[0] and "Lasten" in gewarnt[0],
+              gewarnt[0][:90] if gewarnt else "")
+
         # Protokoll als Textdatei sichern
         ziel = os.path.join(_tf.mkdtemp(), "protokoll.txt")
         vorher = w.log.toPlainText()          # danach kommt die Bestätigungszeile dazu

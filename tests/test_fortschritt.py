@@ -229,6 +229,95 @@ def test_entartete_werden_uebergangen():
     check("Situationsmaske und Entartung wirken zusammen", idx == [1, 2, 3, 4], str(idx))
 
 
+def test_gleiche_geometrie_gleiches_urteil():
+    """Der Kern des Befunds: zwei gespiegelte Kopien desselben flachen
+    Bauteils bekamen gegensaetzliche Urteile.
+
+    Das alte Mass war die Wurzel aus der Determinante der Streumatrix. Die
+    Determinante multipliziert drei Eigenwerte und hebt das Rauschen der
+    letzten Bits in die dritte Potenz; bei einer absoluten Schranke von
+    1e-15 m entschied dann die Lage im Raum. Gemessen wird jetzt der
+    kleinste Singulaerwert - die Ausdehnung senkrecht zur besten Ebene -,
+    bezogen auf die Groesse des Bauteils.
+    """
+    rng = np.random.default_rng(0)
+    u, v = np.linspace(0, 0.014, 5), np.linspace(0, 0.026, 4)
+    eben = np.array([[a, b, 0.0] for a in u for b in v])      # 14 x 26 mm, flach
+
+    urteile, alt_urteile = set(), set()
+    for _ in range(20):
+        Q, _r = np.linalg.qr(rng.normal(size=(3, 3)))
+        P = eben @ Q.T + rng.normal(size=3) * 0.5
+        urteile.add(bool(diagnose.entartete_punktwolke(P)))
+        Xc = P - P.mean(axis=0)
+        alt_urteile.add(float(np.sqrt(max(float(np.linalg.det((Xc.T @ Xc) / len(P))), 0.0))) > 1e-15)
+    check("dasselbe flache Bauteil: 20 Lagen, ein Urteil", urteile == {True}, str(urteile))
+    check("das alte Maß war uneindeutig (deshalb der Umbau)", len(alt_urteile) == 2,
+          str(alt_urteile))
+
+    # gespiegelt heisst dasselbe Urteil
+    for achse in range(3):
+        P = eben.copy()
+        P[:, achse] *= -1.0
+        check(f"gespiegelt an Achse {achse}: unverändert",
+              bool(diagnose.entartete_punktwolke(P)))
+
+    # Ein wirkliches Blech ist kein Befund - 0,1 mm bei 30 mm Größe
+    dick = eben.copy()
+    dick[:, 2] = rng.normal(size=len(dick)) * 1e-4
+    check("0,1 mm dickes Blech gilt als tragend",
+          not diagnose.entartete_punktwolke(dick))
+    # und ein handfester Körper erst recht
+    wuerfel = np.array([(x, y, z) for x in (0, 1) for y in (0, 1) for z in (0, 1)], float)
+    check("Würfel gilt als tragend", not diagnose.entartete_punktwolke(wuerfel))
+    check("weniger als vier Punkte spannen keinen Körper auf",
+          diagnose.entartete_punktwolke(wuerfel[:3]))
+
+
+def test_volumen_relativ_gemessen():
+    """Die Grenze haengt an der Groesse des Bauteils, nicht an der
+    Laengeneinheit: 1e-15 m³ absolut ist bei Metern unterhalb dessen, was
+    sich ueberhaupt aufloesen laesst."""
+    check("Null-Volumen bei 30 mm Größe ist entartet",
+          diagnose.entartetes_volumen(1.8e-20, 0.031))
+    check("dasselbe Volumen bei 1 µm Größe ist keines",
+          not diagnose.entartetes_volumen(1.8e-20, 1e-6),
+          f"Grenze {diagnose.ENTARTET_VOL_REL * 1e-18:.2e}")
+    check("ein 0,1 mm dickes Blech von 1 m ist kein Befund",
+          not diagnose.entartetes_volumen(1e-4, 1.41))
+    check("ein Würfel von 1 m schon gar nicht",
+          not diagnose.entartetes_volumen(1.0, 1.73))
+
+
+def test_ein_kriterium():
+    """Vernetzer und Rechenbarkeitspruefung duerfen sich nicht widersprechen:
+    was der Vernetzer abgelehnt hat, gilt als abgelehnt."""
+    from statik3d.model import OHNE_NETZ
+    m = Model("K")
+    m.add_material(Material("S235", E=210e9, nu=0.3, rho=7850))
+    for p_ in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]:      # gesunder Körper
+        m.add_node(*p_)
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3)]):
+        m.add_line(f"L{i}", [a, b])
+    for nm, ls in [("F1", ["L0", "L1", "L2"]), ("F2", ["L0", "L4", "L3"]),
+                   ("F3", ["L1", "L5", "L4"]), ("F4", ["L2", "L3", "L5"])]:
+        m.add_flaeche(nm, ls, material="S235")
+    k = m.add_koerper("V_gut", ["F1", "F2", "F3", "F4"], material="S235")
+    check("geometrisch gesund: trägt", m.koerper_traegt("V_gut"))
+
+    k.kommentar = f"{OHNE_NETZ} Vernetzen abgebrochen"
+    check("die Entscheidung des Vernetzers hat Vorrang vor der Geometrie",
+          not m.koerper_traegt("V_gut"), k.kommentar)
+    check("und er zählt dann nicht als unvernetzt",
+          diagnose.diagnose(m)["unvernetzte_koerper"] == [])
+
+    k.elemente = [0]
+    check("mit Elementen trägt er wieder", m.koerper_traegt("V_gut"))
+    k.elemente = []
+    k.kommentar = "1 Tetraeder (tet4), Kantenlänge 500 mm"     # Erfolgsbemerkung
+    check("eine Erfolgsbemerkung ist keine Ablehnung", m.koerper_traegt("V_gut"), k.kommentar)
+
+
 def test_vernetzer_ohne_volumen():
     """Vier Punkte in einer Ebene sind kein Koerper. In Dateien aus RFEM
     stehen solche Null-Volumen als Hilfsobjekte; der abgebildete Vernetzer
@@ -422,7 +511,8 @@ def main():
     print("=" * 92)
     for t in (test_entartete_elemente, test_modellpruefung_meldet_entartung,
               test_elementfehler_nennt_das_element, test_vernetzer_laesst_entartete_weg,
-              test_vernetzer_ohne_volumen,
+              test_vernetzer_ohne_volumen, test_gleiche_geometrie_gleiches_urteil,
+              test_volumen_relativ_gemessen, test_ein_kriterium,
               test_hinweis_ohne_konsole, test_fehler_aus_dem_arbeitsprozess,
               test_entartete_werden_uebergangen,
               test_speichern_mit_fortschritt, test_ergebnis_bleibt_gleich,

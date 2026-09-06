@@ -526,10 +526,11 @@ def _seiten_aus_linien(model: Model, flaeche):
     return kette if kette[-1][0][-1] == kette[0][0][0] else None
 
 
-#: Ein Volumen darunter ist keines mehr: die Elementmatrix wird singulaer.
-#: Weit unter allem, was ein Bauteil je ist - ein Wuerfel mit 0,1 um Kante
-#: hat 1e-21 m^3 (siehe diagnose.GRENZE_VOLUMEN).
-ENTARTET_VOLUMEN = 1e-15
+def _entartungspruefung():
+    """Die gemeinsame Grenze - eine Stelle, an der „entartet“ definiert ist."""
+    from .diagnose import entartetes_volumen
+    from .model import OHNE_NETZ
+    return entartetes_volumen, OHNE_NETZ
 
 
 def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
@@ -554,6 +555,7 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     """
     from .importers import _common as C
     from .model import _rand_aus_linien          # noqa: F401  (Doku)
+    entartetes_volumen, OHNE_NETZ = _entartungspruefung()
     flaechen = [model.flaechen.get(x) for x in koerper.flaechen]
     if any(f is None for f in flaechen):
         C.warn(log, f"Volumen {koerper.name}: eine Randfläche fehlt.")
@@ -565,15 +567,18 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
         from .importers.rfem6_db import _hex_order, _hex_volumen
         order = _hex_order(ringe)
         if order:
-            v_hex = float(_hex_volumen(model.nodes[order]))
-            if abs(v_hex) <= ENTARTET_VOLUMEN:
+            X_hex = model.nodes[order]
+            v_hex = float(_hex_volumen(X_hex))
+            d_hex = float(np.linalg.norm(X_hex.max(axis=0) - X_hex.min(axis=0)))
+            if entartetes_volumen(v_hex, d_hex):
                 C.warn(log, f"Volumen {koerper.name}: die acht Eckknoten spannen kein "
                             f"Volumen auf ({abs(v_hex):.3e} m³) - kein Körper, kein "
                             "Netz. In der Quelldatei ist das ein Hilfsobjekt ohne "
                             "Dicke; es trägt nichts.")
                 koerper.elemente = []
-                koerper.kommentar = (f"ohne Netz: kein Rauminhalt (Eckknoten spannen kein "
-                                     f"Volumen auf, {abs(v_hex):.3e} m³)")
+                koerper.kommentar = (f"{OHNE_NETZ} kein Rauminhalt (Eckknoten spannen kein "
+                                     f"Volumen auf, {abs(v_hex):.3e} m³ bei "
+                                     f"{d_hex * 1e3:.0f} mm Größe)")
                 return []
             if v_hex < 0:
                 order = order[4:] + order[:4]
@@ -590,7 +595,8 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     if len(flaechen) == 4 and len(knoten) == 4:
         X = model.nodes[knoten]
         v = float(np.dot(np.cross(X[1] - X[0], X[2] - X[0]), X[3] - X[0]))
-        if abs(v) / 6.0 <= ENTARTET_VOLUMEN:
+        d = float(np.linalg.norm(X.max(axis=0) - X.min(axis=0)))
+        if entartetes_volumen(abs(v) / 6.0, d):
             # Vier Punkte in einer Ebene sind kein Koerper. In Dateien aus
             # RFEM stehen solche Null-Volumen als Hilfsobjekte; ein Element
             # daraus haette keine Steifigkeit und braechte spaeter die ganze
@@ -600,8 +606,8 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                         "Element. In der Quelldatei ist das ein Hilfsobjekt ohne "
                         "Dicke; es trägt nichts.")
             koerper.elemente = []
-            koerper.kommentar = (f"ohne Netz: kein Rauminhalt (Eckknoten in einer Ebene, "
-                                 f"{abs(v) / 6.0:.3e} m³)")
+            koerper.kommentar = (f"{OHNE_NETZ} kein Rauminhalt (Eckknoten in einer Ebene, "
+                                 f"{abs(v) / 6.0:.3e} m³ bei {d * 1e3:.0f} mm Größe)")
             return []
         nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
         els = [model.add_element("tet4", nodes, mat, group=koerper.name)]
@@ -616,7 +622,7 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                 f"{len(knoten)} Eckknoten - abgebildet vernetzen lassen sich nur "
                 "Sechsflächner (6 Vierecke, 8 Knoten) und Tetraeder (4 Dreiecke, "
                 "4 Knoten). Der freie Vernetzer ist abgeschaltet - nicht vernetzt.")
-    koerper.kommentar = (f"ohne Netz: {len(flaechen)} Randflächen, {len(knoten)} Eckknoten - "
+    koerper.kommentar = (f"{OHNE_NETZ} {len(flaechen)} Randflächen, {len(knoten)} Eckknoten - "
                          "freier Vernetzer abgeschaltet")
     return []
 

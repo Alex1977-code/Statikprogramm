@@ -1965,16 +1965,17 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     """Das Ergebnis von :func:`koerper_vorbereiten` ins Modell uebernehmen:
     Knoten (gemeinsame Randflaechen geteilt), Elemente, Randseiten, Protokoll."""
     from .importers import _common as C
+    from .model import OHNE_NETZ as _OHNE_NETZ
     for z in aus.get("log") or []:
         if log is not None:
             log.append(z)
     if aus.get("abgebrochen"):
         C.say(log, f"Volumen {koerper.name}: abgebrochen - bleibt ohne Netz.")
-        koerper.kommentar = "ohne Netz: Vernetzen abgebrochen"
+        koerper.kommentar = f"{_OHNE_NETZ} Vernetzen abgebrochen"
         return []
     if aus.get("fehler"):
         C.warn(log, f"Volumen {koerper.name}: {aus['fehler']}")
-        koerper.kommentar = f"ohne Netz: {aus['fehler']}"
+        koerper.kommentar = f"{_OHNE_NETZ} {aus['fehler']}"
         return []
     if ordnung <= 0:
         ordnung = int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1)

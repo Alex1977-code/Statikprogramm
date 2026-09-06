@@ -3223,6 +3223,12 @@ class Model:
             return False
         if k.elemente:
             return True                     # es traegt schon
+        # Hat der Vernetzer schon entschieden, gilt seine Entscheidung. Zwei
+        # Stellen, die dieselbe Frage mit verschiedenen Massen beantworten,
+        # widersprechen sich frueher oder spaeter - und dann fragt das Programm
+        # nach einem Netz, das es nie geben kann.
+        if str(getattr(k, "kommentar", "") or "").startswith(OHNE_NETZ):
+            return False
         kn = set()
         for fname in (k.flaechen or []):
             f = (self.flaechen or {}).get(fname)
@@ -3235,10 +3241,8 @@ class Model:
         kn = [i for i in kn if 0 <= i < self.nn]
         if len(kn) < 4:
             return False
-        P = np.asarray(self.nodes[kn], float)
-        Xc = P - P.mean(axis=0)
-        C = (Xc.T @ Xc) / len(P)
-        return float(np.sqrt(max(float(np.linalg.det(C)), 0.0))) > 1e-15
+        from .diagnose import entartete_punktwolke
+        return not entartete_punktwolke(self.nodes[kn])
 
     @staticmethod
     def naechster_name(vorsilbe: str, vorhandene) -> str:
@@ -4380,6 +4384,12 @@ class Model:
 
     def copy(self) -> "Model":
         return Model.from_dict(json.loads(json.dumps(self.to_dict())))
+
+
+#: Vorsatz der Bemerkung, mit der ein Vernetzer festhaelt, dass und warum ein
+#: Objekt kein Netz bekommen hat. Die Rechenbarkeitspruefung liest ihn - so
+#: gibt es genau eine Wahrheit statt zweier Kriterien.
+OHNE_NETZ = "ohne Netz:"
 
 
 def _melde(fortschritt, anteil: float, text: str) -> None:

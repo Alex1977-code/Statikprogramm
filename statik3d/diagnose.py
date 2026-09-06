@@ -171,6 +171,45 @@ def entartete_elemente(model, hoechstens: int = 0) -> list:
 
 
 
+#: Ein Koerper gilt als entartet, wenn seine Dicke unter diesem Anteil seiner
+#: eigenen Groesse liegt. **Relativ**, nicht absolut: eine feste Schranke in m³
+#: liegt bei Metern als Einheit unter dem, was eine Determinante ueberhaupt
+#: aufloest - dasselbe Bauteil bekaeme je nach Lage im Raum ein anderes Urteil.
+ENTARTET_REL = 1e-7
+
+#: Volumen unter diesem Anteil von d³ (d = Diagonale der Huellbox) ist keines.
+ENTARTET_VOL_REL = 1e-9
+
+
+def entartete_punktwolke(P) -> bool:
+    """Liegen alle Punkte in einer Ebene (bzw. auf einer Geraden)?
+
+    Gemessen wird der **kleinste Singulaerwert** der zentrierten Koordinaten,
+    bezogen auf die Groesse der Wolke: er ist die Ausdehnung senkrecht zur
+    besten Ebene. Die Singulaerwertzerlegung ist rueckwaertsstabil; die frueher
+    benutzte Determinante der Streumatrix multipliziert drei Werte und hebt
+    damit das Rauschen in die dritte Potenz. Zwei gespiegelte Kopien desselben
+    flachen Bauteils bekamen so gegensaetzliche Urteile.
+    """
+    import numpy as _np
+    P = _np.asarray(P, float).reshape(-1, 3)
+    if len(P) < 4:
+        return True
+    d = float(_np.linalg.norm(P.max(axis=0) - P.min(axis=0)))
+    if d <= 0.0:
+        return True
+    Xc = P - P.mean(axis=0)
+    s = _np.linalg.svd(Xc, compute_uv=False)
+    return float(s[-1]) / _np.sqrt(len(P)) <= ENTARTET_REL * d
+
+
+def entartetes_volumen(V: float, d: float) -> bool:
+    """Ist das Volumen V zu klein fuer einen Koerper der Groesse d (Diagonale
+    der Huellbox)? Auch hier relativ - eine absolute Schranke haengt sonst an
+    der gewaehlten Laengeneinheit."""
+    return abs(float(V)) <= ENTARTET_VOL_REL * max(float(d), 0.0) ** 3
+
+
 def entartete_menge(model) -> frozenset:
     """Die Indizes der entarteten Elemente - je Modellstand einmal ermittelt.
 
