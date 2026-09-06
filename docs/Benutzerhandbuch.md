@@ -338,6 +338,13 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Elementansatz | **linear** (shell3/shell4, tet4, hex8) oder **quadratisch**: Flächen bekommen Mittenknoten (shell6/shell8), abgebildete Volumen hex20, freie Volumen tet10. Quadratisch braucht für dieselbe Genauigkeit deutlich weniger Elemente, je Element aber mehr Rechenzeit |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
 
+**Speichern und Öffnen** zeigen ebenfalls einen Fortschrittsbalken mit
+Prozentzahl und Laufzeit: „Modell speichern: Drehlager.json …“ mit den
+Schritten Knoten, Elemente, Lastfälle und dem Schreiben der Datei; beim
+Öffnen zusätzlich, wie viel der Datei schon gelesen ist („Datei lesen (120
+von 380 MB)“). Ein Modell mit hunderttausend Knoten braucht dafür Minuten -
+abbrechen lässt sich das nicht, eine halb geschriebene Datei wäre unbrauchbar.
+
 **Vorschau** in der Maske und *Netz → Netzvorschau* schätzen die Elementzahl
 je Objekt und gesamt ins Protokoll - vor dem Vernetzen, damit ein Modell
 mit hunderttausend Tetraedern nicht überrascht. Das Protokoll nennt beim
@@ -1760,7 +1767,12 @@ Nachweis mit seiner Verformung je Kombination.
   Backend „Rechnerfarm“ mit Server, Port und
   Schlüssel (siehe `Rechnerfarm.md`). „Lokalen Server + Worker starten“
   macht den eigenen Rechner zum Farm-Server.
-* Die Berechnung läuft im Hintergrund; Fortschritt im Protokoll.
+* Die Berechnung läuft im Hintergrund. Die Statuszeile zeigt einen
+  **Fortschrittsbalken mit Prozentzahl** und daneben, woran das Programm
+  gerade ist und wie lange es schon läuft („Berechnung: Lastfall W (5/12)
+  (48 %, 73 s)“). Die Schritte sind: Gleichungssystem aufstellen,
+  faktorisieren, Lastfälle, Kombinationen, Umhüllende, Nachweise. Jede
+  Zeile steht auch im Protokoll.
 * **Vor dem Rechnen** prüft das Programm die Rechenbarkeit. Flächen und
   Volumen **ohne Netz** tragen nichts (nach einem Import aus RFEM oder
   HiCAD besteht das Modell oft nur aus Geometrie und ein paar Stäben): es
@@ -1771,7 +1783,14 @@ Nachweis mit seiner Verformung je Kombination.
   Knotennummern, statt dass der Solver mit „Factor is exactly singular“
   abbricht. Teile, die nur ein einseitiges Lager oder ein Kontaktpaar hält,
   sind ein Hinweis, kein Fehler - ob sie tragen, entscheidet die
-  Kontakt-Iteration.
+  Kontakt-Iteration. **Entartete Elemente** ohne Ausdehnung (zwei Ecken auf
+  demselben Knoten oder vier Punkte in einer Ebene) haben keine Steifigkeit;
+  die Modellprüfung nennt sie mit Elementnummer, Art und Grund. Der
+  Vernetzer legt sie gar nicht erst an - beim Zusammenlegen der Knoten auf
+  gemeinsamen Flächen konnten früher flache Tetraeder entstehen, an denen
+  die ganze Rechnung mit „entartetes Tet4“ abbrach, ohne zu sagen, wo.
+  Scheitert doch ein Element in der Elementschleife, nennt die Meldung
+  Nummer, Art, Volumenkörper und Knoten.
 
 ## 10 Ergebnisse und Bericht
 

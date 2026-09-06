@@ -274,7 +274,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     self._fenster_nachziehen(pos)
                 elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
-                        and self.progress_bar.isVisible() and self.progress_bar.maximum() > 0:
+                        and self.progress_bar.isVisible() \
+                        and getattr(self, "btn_abbrechen", None) is not None \
+                        and self.btn_abbrechen.isVisible():
                     self._fortschritt_abbrechen()
                     return True
                 elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
@@ -6594,13 +6596,28 @@ class MainWindow(QtWidgets.QMainWindow):
             for l in lc.temp_loads:
                 l.elem = neu_nr[l.elem]
 
-    def _fortschritt_beginnen(self, gesamt: int, text: str = ""):
+    def _fortschritt_beginnen(self, gesamt: int, text: str = "", abbrechbar: bool = True):
         """Fortschrittsbalken in der Statuszeile: bestimmt (0 … gesamt), mit
-        Abbrechen-Knopf. Die Oberflaeche bleibt bedienbar (processEvents)."""
+        Abbrechen-Knopf. Die Oberflaeche bleibt bedienbar (processEvents).
+
+        ``abbrechbar=False`` fuer Vorgaenge, die man nicht mittendrin
+        anhalten darf - eine halb geschriebene Modelldatei waere kaputt.
+        """
         self._abbruch = False
         self.progress_bar.setRange(0, max(1, int(gesamt)))
         self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p %")
         self.progress_bar.setVisible(True)
+        if not abbrechbar:
+            if getattr(self, "btn_abbrechen", None) is not None:
+                self.btn_abbrechen.setVisible(False)
+            self._fortschritt_t0 = time.time()
+            self._fortschritt_tick = 0.0
+            if text:
+                self.statusBar().showMessage(text)
+            QtWidgets.QApplication.processEvents()
+            return
         if getattr(self, "btn_abbrechen", None) is None:
             self.btn_abbrechen = QtWidgets.QPushButton("Abbrechen")
             self.btn_abbrechen.setFlat(True)
@@ -6636,9 +6653,14 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QApplication.processEvents()
         return not getattr(self, "_abbruch", False)
 
+    def _dateifortschritt(self, anteil: float, text: str) -> None:
+        """Rueckruf fuer Model.save/Model.load: Anteil 0…1 auf den Balken."""
+        self._fortschritt(int(round(max(0.0, min(1.0, anteil)) * 1000)), text)
+
     def _fortschritt_ende(self):
         self.progress_bar.setVisible(False)
-        self.progress_bar.setRange(0, 0)          # die Rechnung nutzt den unbestimmten Balken
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setRange(0, 0)
         if getattr(self, "btn_abbrechen", None) is not None:
             self.btn_abbrechen.setVisible(False)
         self._abbruch = False
@@ -12470,17 +12492,44 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.worker is not None and self.worker.isRunning():
             return self.error("Es läuft bereits eine Berechnung")
         self.btn_solve.setEnabled(False)
+        # Bestimmter Balken: der Rechenkern meldet, wie weit er ist. Vorher
+        # wanderte nur ein Streifen - man sah nicht, ob und wie es vorangeht.
+        self.progress_bar.setRange(0, 1000)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p %")
         self.progress_bar.setVisible(True)
+        self._rechnung_t0 = time.time()
+        self._rechnung_name = label
+        self.statusBar().showMessage(f"{label} läuft …")
         self.log.appendPlainText(f"\n--- {label} gestartet ({parallel.describe()}) ---")
         self.worker = SolveWorker(func)
         self.worker.progress.connect(self.info)
+        self.worker.fortschritt.connect(self._rechnung_fortschritt)
         self.worker.finished_ok.connect(lambda r: self._bg_done(on_done, r))
         self.worker.failed.connect(self._bg_failed)
         self.worker.start()
 
+    def _rechnung_fortschritt(self, text: str, anteil: float) -> None:
+        """Balken und Statuszeile waehrend der Rechnung: Schritt, Anteil, Zeit."""
+        a = max(0.0, min(1.0, float(anteil)))
+        self.progress_bar.setValue(int(round(a * 1000)))
+        dt = time.time() - getattr(self, "_rechnung_t0", time.time())
+        self.statusBar().showMessage(
+            f"{getattr(self, '_rechnung_name', 'Berechnung')}: {text}  "
+            f"({a * 100:.0f} %, {dt:.0f} s)")
+
+    def _rechnung_ende(self) -> None:
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setRange(0, 0)
+        dt = time.time() - getattr(self, "_rechnung_t0", time.time())
+        self.statusBar().showMessage(
+            f"{getattr(self, '_rechnung_name', 'Berechnung')} beendet ({dt:.0f} s)", 8000)
+
     def _bg_done(self, on_done, result):
         self.btn_solve.setEnabled(True)
-        self.progress_bar.setVisible(False)
+        self._rechnung_ende()
         try:
             on_done(result)
         except Exception as ex:
@@ -12489,7 +12538,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _bg_failed(self, msg, tb):
         self.btn_solve.setEnabled(True)
-        self.progress_bar.setVisible(False)
+        self._rechnung_ende()
         self.log.appendPlainText(tb)
         self.error(msg)
 
@@ -13785,7 +13834,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if p:
             try:
                 self._protokoll_neu(f"Modell geöffnet: {p}")
-                self.model = Model.load(p)
+                # Ein Modell mit hunderttausend Knoten braucht zum Lesen
+                # Minuten; ohne Balken sieht das aus wie ein Absturz.
+                self._fortschritt_beginnen(1000, f"Modell öffnen: {os.path.basename(p)} …",
+                                           abbrechbar=False)
+                try:
+                    self.model = Model.load(p, fortschritt=self._dateifortschritt)
+                finally:
+                    self._fortschritt_ende()
                 self.__init_defaults()
                 self.analysis = None
                 self.results = None
@@ -13803,7 +13859,12 @@ class MainWindow(QtWidgets.QMainWindow):
             p, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Modell speichern",
                                                          self.path or "modell.json", "Statik3D (*.json)")
         if p:
-            self.model.save(p)
+            self._fortschritt_beginnen(1000, f"Modell speichern: {os.path.basename(p)} …",
+                                       abbrechbar=False)
+            try:
+                self.model.save(p, fortschritt=self._dateifortschritt)
+            finally:
+                self._fortschritt_ende()
             self.path = p
             self._refresh_title()
             self.info(f"gespeichert: {p}")

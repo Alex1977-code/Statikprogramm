@@ -60,6 +60,24 @@ def _find_mkl():
             os.environ["PYPARDISO_MKL_RT"] = os.path.abspath(hits[-1])
             return
 
+def _melde(progress, text: str, anteil: float = None) -> None:
+    """Fortschritt melden - Text und, wenn bekannt, der Anteil (0…1).
+
+    Empfaenger, die nur Text kennen (Protokoll, Kommandozeile, aeltere
+    Aufrufer), bekommen weiterhin nur Text; die Oberflaeche nimmt den Anteil
+    und macht daraus einen Balken statt eines endlos wandernden Streifens.
+    """
+    if progress is None:
+        return
+    if anteil is None:
+        progress(text)
+        return
+    try:
+        progress(text, float(anteil))
+    except TypeError:
+        progress(text)
+
+
 class LinearSolver:
     """Faktorisiert K einmal; solve() fuer beliebig viele rechte Seiten.
     Backends: pypardiso (MKL, mehrere Threads), scikit-sparse CHOLMOD, SuperLU."""
@@ -387,7 +405,7 @@ class StaticSystem:
         self.Kff = self.K[self.fi][:, self.fi].tocsc()
         self.Kfs = self.K[self.fi][:, self.si].tocsc() if np.any(self.vals[self.si]) else None
         if progress:
-            progress(f"Gleichungssystem aufgestellt ({len(self.fi)} aktive FHG)")
+            _melde(progress, f"Gleichungssystem aufgestellt ({len(self.fi)} aktive FHG)", 0.20)
         self._solver = None
         self.backend = "-"
         self._progress = progress
@@ -409,7 +427,8 @@ class StaticSystem:
             self.backend = self._solver.backend
             self.t_assemble += time.time() - t0
             if self._progress:
-                self._progress(f"Faktorisiert ({self.backend}, {time.time() - t0:.2f} s)")
+                _melde(self._progress,
+                       f"Faktorisiert ({self.backend}, {time.time() - t0:.2f} s)", 0.32)
         return self._solver
 
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
@@ -867,8 +886,7 @@ def solve_static(model: Model, progress=None, case: str = None,
         factors = {lc.name: 1.0}
         name = lc.name
     res = _solve_loads(model, system, factors, name, "case", workers, progress)
-    if progress:
-        progress("System geloest")
+    _melde(progress, "System gelöst", 1.0)
     return res
 
 
@@ -882,8 +900,8 @@ def solve_cases(model: Model, cases: list = None, workers: int = None,
     if system is not None:
         for k, name in enumerate(names):
             out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers)
-            if progress:
-                progress(f"Lastfall {name} ({k+1}/{len(names)})")
+            _melde(progress, f"Lastfall {name} ({k + 1}/{len(names)})",
+                   0.35 + 0.25 * (k + 1) / max(1, len(names)))
         return out
     systeme = systeme_je_situation(model, names, workers, progress, systeme)
     k = 0
@@ -892,9 +910,9 @@ def solve_cases(model: Model, cases: list = None, workers: int = None,
         for name in sit_names:
             out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers)
             k += 1
-            if progress:
-                progress(f"Lastfall {name} ({k}/{len(names)})"
-                         + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""))
+            _melde(progress, f"Lastfall {name} ({k}/{len(names)})"
+                   + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
+                   0.35 + 0.25 * k / max(1, len(names)))
     return out
 
 
@@ -978,7 +996,8 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
         out[n] = solve_combination(model, model.combinations[n], None, system, workers,
                                    systeme=systeme)
         if progress:
-            progress(f"Kombination {n} ({k+1}/{len(names)})")
+            _melde(progress, f"Kombination {n} ({k + 1}/{len(names)})",
+                   0.60 + 0.30 * (k + 1) / max(1, len(names)))
     return out
 
 
@@ -1316,8 +1335,10 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
             an.envelopes[key] = Envelope(model, rs, f"Umhuellende {key}")
         if not an.combinations:
             an.envelopes["CASES"] = Envelope(model, an.cases, "Umhuellende Lastfaelle")
+    _melde(progress, "Umhüllende gebildet", 0.92)
     if design and model.members:
         from .ec3.design import check_members
+        _melde(progress, "Nachweise EC3", 0.94)
         an.design = check_members(model, an, progress=progress)
     if fatigue and model.fatigue_loads:
         from .ec3.fatigue import check_fatigue
@@ -1342,6 +1363,7 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
     an.info.update({"time": time.time() - t0, "parallel": parallel.describe(),
                     "solver": system.backend, "ndof": model.ndof,
                     "nfree": len(system.fi)})
+    _melde(progress, f"Berechnung fertig ({time.time() - t0:.1f} s)", 1.0)
     return an
 
 
@@ -1365,7 +1387,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     Kff = K[fi][:, fi].tocsc()
     Mff = M[fi][:, fi].tocsc()
     if progress:
-        progress("Eigenwertproblem wird geloest")
+        _melde(progress, "Eigenwertproblem wird gelöst", 0.45)
 
     k = min(nmodes, Kff.shape[0] - 2)
     vals_, vecs = eigsh(Kff, k=k, M=Mff, sigma=0.0, which="LM")
@@ -1413,7 +1435,7 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     if abs(Kgff).max() == 0:
         raise RuntimeError("Keine Normalkraefte vorhanden - Knicknachweis nicht moeglich")
     if progress:
-        progress("Verzweigungsproblem wird geloest")
+        _melde(progress, "Verzweigungsproblem wird gelöst", 0.45)
 
     k = min(nmodes, Kff.shape[0] - 2)
     vals_, vecs = eigsh(Kff, k=k, M=-Kgff, sigma=0.0, which="LM")

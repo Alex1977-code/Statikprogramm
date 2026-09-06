@@ -60,7 +60,10 @@ def tet4_shape_grad(X: np.ndarray):
     detM = np.linalg.det(M)
     V = detM / 6.0
     if abs(V) < 1e-18:
-        raise ValueError("entartetes Tet4")
+        raise ValueError("Tetraeder ohne Volumen - die vier Knoten fallen "
+                         "zusammen oder liegen in einer Ebene "
+                         f"(V = {V:.3e} m^3). Das Netz an dieser Stelle neu "
+                         "erzeugen (Netz -> Vernetzen)")
     Minv = np.linalg.inv(M)
     dN = Minv[1:, :].T          # (4,3)
     return dN, abs(V)

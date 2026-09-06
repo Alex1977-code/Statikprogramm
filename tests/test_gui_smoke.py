@@ -4996,6 +4996,101 @@ def main():
         traceback.print_exc()
         check("Verbindungsobjekte und neue Masken", False, str(ex)[:70])
 
+    # ------------------------------------------------------------------
+    # Fortschritt: Speichern, Laden und Rechnen zeigen, wie weit sie sind
+    # ------------------------------------------------------------------
+    try:
+        import tempfile as _tf
+        from statik3d.model import Material as _Material
+        w.new_model()
+        m = w.model
+        m.add_material(_Material("S355", E=210e9, nu=0.3, rho=7850))
+        for p in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                  (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]:
+            m.add_node(*p)
+        for t in [(0, 1, 3, 4), (1, 2, 3, 6), (1, 4, 5, 6), (3, 4, 6, 7), (1, 3, 4, 6)]:
+            m.add_element("tet4", list(t), "S355")
+        for k in (0, 1, 2, 3):
+            m.fix(k, ["ux", "uy", "uz"])
+        m.load_node(4, Fz=-1000.0)
+        w.refresh_all()
+
+        # Balken beim Speichern - ohne Abbrechen-Knopf, denn eine halb
+        # geschriebene Datei waere kaputt
+        pfad_json = os.path.join(_tf.mkdtemp(), "modell.json")
+        w.path = pfad_json
+        gesehen = []
+        echt = w._dateifortschritt
+
+        def merken(anteil, text):
+            gesehen.append((anteil, text, w.progress_bar.isVisible(),
+                            w.progress_bar.value(), w.progress_bar.maximum()))
+            return echt(anteil, text)
+
+        w._dateifortschritt = merken
+        w.save_model()
+        w._dateifortschritt = echt
+        check("Speichern: der Fortschrittsbalken läuft mit",
+              len(gesehen) >= 3 and all(g[2] for g in gesehen), f"{len(gesehen)} Meldungen")
+        check("Speichern: der Balken ist bestimmt (0 … 1000)",
+              all(g[4] == 1000 for g in gesehen), str(gesehen[0][4]) if gesehen else "")
+        check("Speichern: die Werte steigen",
+              all(b[3] >= a[3] for a, b in zip(gesehen, gesehen[1:])),
+              f"{gesehen[0][3]} … {gesehen[-1][3]}" if gesehen else "")
+        check("Speichern: kein Abbrechen-Knopf",
+              getattr(w, "btn_abbrechen", None) is None or not w.btn_abbrechen.isVisible())
+        check("Speichern: hinterher ist der Balken wieder weg",
+              not w.progress_bar.isVisible())
+        check("die Datei ist geschrieben", os.path.getsize(pfad_json) > 500,
+              f"{os.path.getsize(pfad_json)} Bytes")
+
+        # Balken beim Laden
+        gesehen = []
+        w._dateifortschritt = merken
+        w._dateiname_zum_oeffnen = pfad_json
+        alt_dialog = QtWidgets.QFileDialog.getOpenFileName
+        QtWidgets.QFileDialog.getOpenFileName = staticmethod(
+            lambda *a, **k: (pfad_json, "Statik3D (*.json)"))
+        try:
+            w.open_model()
+        finally:
+            QtWidgets.QFileDialog.getOpenFileName = alt_dialog
+            w._dateifortschritt = echt
+        check("Laden: der Fortschrittsbalken läuft mit",
+              len(gesehen) >= 3 and all(g[2] for g in gesehen), f"{len(gesehen)} Meldungen")
+        check("Laden: das Modell ist da", w.model.nn == 8 and len(w.model.elements) == 5,
+              f"{w.model.nn} Knoten, {len(w.model.elements)} Elemente")
+        check("Laden: hinterher ist der Balken wieder weg", not w.progress_bar.isVisible())
+
+        # Berechnung: bestimmter Balken mit Prozentzahl
+        w._rechnung_t0 = time.time()
+        w._rechnung_name = "Berechnung"
+        w.progress_bar.setRange(0, 1000)
+        w.progress_bar.setVisible(True)
+        w._rechnung_fortschritt("Gleichungssystem aufgestellt", 0.2)
+        check("Rechnung: der Balken zeigt den Anteil", w.progress_bar.value() == 200,
+              str(w.progress_bar.value()))
+        text = w.statusBar().currentMessage()
+        check("Rechnung: die Statuszeile nennt Schritt, Prozent und Zeit",
+              "Gleichungssystem" in text and "20 %" in text and "s)" in text, text[:80])
+        w._rechnung_fortschritt("System gelöst", 1.0)
+        check("Rechnung: 100 % kommen an", w.progress_bar.value() == 1000)
+        w._rechnung_ende()
+        check("Rechnung: hinterher ist der Balken wieder weg und unbestimmt",
+              not w.progress_bar.isVisible() and w.progress_bar.maximum() == 0)
+
+        # Entartetes Element: klare Meldung statt Absturz mitten im Aufbau
+        w.model.add_element("tet4", [0, 1, 2, 3], "S355")
+        fehler = [z for z in w.model.check() if z.startswith("FEHLER") and "entartete" in z]
+        check("Modellprüfung meldet das entartete Element vor dem Rechnen",
+              len(fehler) == 1, fehler[0][:90] if fehler else "")
+        w.new_model()
+
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Fortschritt beim Speichern, Laden und Rechnen", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:
