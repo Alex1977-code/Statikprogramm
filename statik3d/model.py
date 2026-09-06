@@ -2724,6 +2724,24 @@ class Model:
             h.elemente = um(getattr(h, "elemente", []) or [])
         return len(wegmenge)
 
+    def koerperflaechen(self) -> set:
+        """Die Namen aller Flaechen, die einen Volumenkoerper beranden."""
+        return {str(f) for k in (self.koerper or {}).values() for f in (k.flaechen or [])}
+
+    def flaeche_traegt(self, name: str) -> bool:
+        """Traegt die Flaeche selbst - als Schale mit Dicke?
+
+        Eine Randflaeche eines Volumenkoerpers **ohne** eigene Dicke (RFEM:
+        Null-Element) ist nur Geometrie: die Tetraeder des Koerpers tragen,
+        Lasten darauf gehen ueber die Randseiten. Sie bekommt kein
+        Schalennetz - ein Schalennetz mit ersatzweiser Dicke gaebe ihr eine
+        Steifigkeit, die es nicht gibt.
+        """
+        f = (self.flaechen or {}).get(name)
+        if f is None:
+            return False
+        return bool(f.dicke) or name not in self.koerperflaechen()
+
     @staticmethod
     def naechster_name(vorsilbe: str, vorhandene) -> str:
         """Der naechste fortlaufende Name: K7 nach K6, F12 nach F11."""

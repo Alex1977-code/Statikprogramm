@@ -51,6 +51,25 @@ import numpy as np
 
 from .model import Model, _randstuecke
 
+
+class Abgebrochen(Exception):
+    """Der Anwender hat abgebrochen - der Vernetzer laesst den Koerper ohne Netz."""
+
+
+def _melden(fortschritt, anteil, text: str = "") -> None:
+    """Fortschritt innerhalb eines Koerpers melden.
+
+    ``fortschritt(anteil, text)`` bekommt den Anteil 0 … 1 der Arbeit an
+    diesem Koerper (None = nur die Zeit weiterzaehlen, der Balken bleibt) und
+    antwortet mit False, wenn der Anwender abbrechen will. Der Aufruf kommt
+    aus den Schleifen des Vernetzers, damit Balken und Laufzeit auch bei
+    einem Koerper, der Minuten braucht, im Sekundentakt mitlaufen.
+    """
+    if fortschritt is None:
+        return
+    if fortschritt(None if anteil is None else float(anteil), text) is False:
+        raise Abgebrochen(text)
+
 #: Kantenlaenge, wenn weder Koerper noch Netzeinstellungen etwas sagen [m]
 STANDARDLAENGE = 0.5
 
@@ -202,7 +221,7 @@ class Gitterindex:
 
 
 def innen(q: np.ndarray, P: np.ndarray, T: np.ndarray,
-          index: "Gitterindex" = None) -> np.ndarray:
+          index: "Gitterindex" = None, fortschritt=None) -> np.ndarray:
     """Liegt jeder Punkt in ``q`` im Koerper? (Strahlenzaehlung nach +z)
 
     Ein Strahl von jedem Punkt senkrecht nach oben schneidet eine
@@ -233,7 +252,7 @@ def innen(q: np.ndarray, P: np.ndarray, T: np.ndarray,
     if not brauchbar.all():
         out = np.zeros(len(q), bool)
         if brauchbar.any():
-            out[brauchbar] = innen(q[brauchbar], P, T, index)
+            out[brauchbar] = innen(q[brauchbar], P, T, index, fortschritt)
         return out
     zellen = np.floor(roh).astype(np.int64)
     schluessel = zellen[:, 0] * np.int64(1000003) + zellen[:, 1]
@@ -243,6 +262,8 @@ def innen(q: np.ndarray, P: np.ndarray, T: np.ndarray,
     grenzen = np.concatenate([anfang, [len(sortiert)]])
     zaehler = np.zeros(len(q), np.int64)
     for g in range(len(anfang)):
+        if g % 200 == 199:
+            _melden(fortschritt, None)
         idx = ordnung[grenzen[g]:grenzen[g + 1]]
         zelle = (int(zellen[idx[0], 0]), int(zellen[idx[0], 1]))
         kand = index.faecher.get(zelle)
@@ -1030,7 +1051,7 @@ def _ausduennen(X: np.ndarray, abstand: np.ndarray) -> np.ndarray:
 
 
 def _innere(punkte: np.ndarray, simplices: np.ndarray, P: np.ndarray,
-            T: np.ndarray, index: "Gitterindex", h: float) -> tuple:
+            T: np.ndarray, index: "Gitterindex", h: float, fortschritt=None) -> tuple:
     """Die Tetraeder der Zerlegung, die im Koerper liegen - mit ihren Volumen.
 
     Die Delaunay-Zerlegung fuellt immer die **konvexe Huelle** der Punktwolke.
@@ -1048,12 +1069,73 @@ def _innere(punkte: np.ndarray, simplices: np.ndarray, P: np.ndarray,
     TET, V = TET[behalt], V[behalt]
     if not len(TET):
         return TET, V
-    drin = innen(punkte[TET].mean(axis=1), P, T, index)
+    drin = innen(punkte[TET].mean(axis=1), P, T, index, fortschritt)
     return TET[drin], V[drin]
 
 
+#: Bis zu dieser Punktzahl fuegt die Zerlegung neue Punkte ein (Qhulls
+#: Einfuegemodus); darueber wird je Durchgang von vorn zerlegt. Der
+#: Einfuegemodus ist bei kleinen Koerpern schneller, bei grossen um ein
+#: Vielfaches langsamer: ein Lagerbock mit 50 000 Punkten brauchte eingefuegt
+#: 90 s, von vorn 10 s - bei gleicher Netzguete.
+EINFUEGEN_BIS = 15000
+#: Nur fuer Vergleiche: True erzwingt den Einfuegemodus fuer alle Groessen.
+INKREMENTELL = False
+
+
+class _Zerlegung:
+    """Delaunay-Zerlegung, die Punkte aufnehmen kann.
+
+    Kleine Punktwolken werden eingefuegt (``incremental=True``), grosse je
+    Durchgang von vorn zerlegt: Qhull zerlegt hunderttausend Punkte in
+    wenigen Sekunden, im Einfuegemodus kostet dieselbe Zahl ein Vielfaches.
+    Weil die Verfeinerung nur wenige Durchgaenge braucht, ist die Zerlegung
+    von vorn bei grossen Koerpern der schnellere Weg. Die Schnittstelle ist
+    die von :class:`scipy.spatial.Delaunay`, soweit der Vernetzer sie
+    benutzt: ``points``, ``simplices``, ``add_points``, ``close``.
+    """
+
+    def __init__(self, punkte: np.ndarray):
+        from scipy.spatial import Delaunay
+        self.points = np.array(punkte, float, copy=True)
+        self._ink = None
+        if INKREMENTELL or len(self.points) <= EINFUEGEN_BIS:
+            self._ink = Delaunay(self.points, incremental=True, qhull_options="Qc Q12")
+            self._tri = self._ink
+        else:
+            self._tri = Delaunay(self.points)
+
+    @property
+    def simplices(self) -> np.ndarray:
+        return self._tri.simplices
+
+    def add_points(self, K: np.ndarray) -> None:
+        from scipy.spatial import Delaunay
+        K = np.asarray(K, float)
+        if self._ink is not None and (INKREMENTELL or len(self.points) + len(K) <= EINFUEGEN_BIS):
+            self._ink.add_points(K)
+            self.points = np.asarray(self._ink.points, float)
+            return
+        if self._ink is not None:
+            try:
+                self._ink.close()
+            except Exception:               # noqa: BLE001
+                pass
+            self._ink = None
+        self.points = np.vstack([self.points, K])
+        self._tri = Delaunay(self.points)
+
+    def close(self) -> None:
+        if self._ink is not None:
+            try:
+                self._ink.close()
+            except Exception:               # noqa: BLE001
+                pass
+
+
 def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
-               splitter: float = SPLITTER) -> tuple:
+               splitter: float = SPLITTER, fortschritt=None,
+               anteil: tuple = (0.15, 0.9)) -> tuple:
     """Aus der geschlossenen Huelle (P, T) ein Tetraedernetz machen.
 
     **Delaunay-Verfeinerung.** Begonnen wird mit den Randpunkten allein. Dann
@@ -1093,15 +1175,22 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
         d, i = baum_rand.query(X)
         return np.minimum(h, kante[i] + WACHSTUM * d)
 
+    a0, a1 = float(anteil[0]), float(anteil[1])
+    spanne = max(a1 - a0, 1e-9)
+    _melden(fortschritt, a0, "Tetraedern: Startgitter")
     G = bcc_gitter(P, T, h, index)
     start = np.vstack([P, G]) if len(G) else P
     try:
-        tri = Delaunay(start, incremental=True, qhull_options="Qc Q12")
+        tri = _Zerlegung(start)
     except Exception as ex:                 # noqa: BLE001
         bericht["fehler"] = f"Delaunay-Zerlegung misslungen: {ex}"
         return P, np.zeros((0, 4), int), bericht
     try:
         for runde in range(MAXRUNDEN):
+            # Die Verfeinerung konvergiert geometrisch: jeder Durchgang fuegt
+            # weniger Punkte ein als der vorige. Der Balken folgt dem.
+            _melden(fortschritt, a0 + 0.55 * spanne * (1.0 - 0.8 ** runde),
+                    f"Tetraedern: Verfeinerung {runde + 1}, {len(tri.points)} Punkte")
             punkte = np.asarray(tri.points, float)
             TET = np.asarray(tri.simplices, int)
             if not len(TET):
@@ -1120,7 +1209,7 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
             if not schlecht.any():
                 break
             K = M[schlecht]
-            K = K[innen(K, P, T, index)]
+            K = K[innen(K, P, T, index, fortschritt)]
             if not len(K):
                 break
             hk = sollgroesse(K)
@@ -1151,7 +1240,10 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
             if len(K) < 0.005 * len(punkte):
                 break
         punkte = np.asarray(tri.points, float)
-        TET, V = _innere(punkte, tri.simplices, P, T, index, h)
+        _melden(fortschritt, a0 + 0.6 * spanne, "Tetraeder außerhalb des Körpers aussortieren")
+        TET, V = _innere(punkte, tri.simplices, P, T, index, h, fortschritt)
+    except Abgebrochen:
+        raise
     except Exception as ex:                 # noqa: BLE001
         bericht["fehler"] = f"Verfeinerung misslungen: {ex}"
         return P, np.zeros((0, 4), int), bericht
@@ -1164,7 +1256,8 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
     if len(TET) and splitter > 0:
         fest = np.zeros(len(punkte), bool)
         fest[:len(P)] = True
-        punkte, bewegt = glaetten(punkte, TET, fest, ziel=splitter)
+        punkte, bewegt = glaetten(punkte, TET, fest, ziel=splitter, fortschritt=fortschritt,
+                                  anteil=(a0 + 0.7 * spanne, a0 + 0.92 * spanne))
         bericht["geglaettet"] = bewegt
         if bewegt:
             V = np.abs(tetraedervolumen(punkte, TET))
@@ -1173,6 +1266,7 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
     bericht["tetraeder"] = len(TET)
     bericht["volumen"] = float(V.sum())
     if len(TET):
+        _melden(fortschritt, a0 + 0.94 * spanne, "Güte und Randtreue prüfen")
         q = guete(punkte, TET)
         bericht["guete"] = float(q.min())
         bericht["guete_mittel"] = float(q.mean())
@@ -1215,7 +1309,7 @@ def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
 
 def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
                     runden: int = 3, quelle: list = None,
-                    splitter: float = SPLITTER) -> tuple:
+                    splitter: float = SPLITTER, fortschritt=None) -> tuple:
     """Tetraedern und dabei den Rand nachfuehren, wo er nicht getroffen wurde.
 
     Eine einspringende Kante - der Innenwinkel eines L-Koerpers, die Kehle
@@ -1231,8 +1325,17 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
     """
     from scipy.spatial import cKDTree
     bestes = None
-    for runde in range(max(1, runden)):
-        Pn, TET, bericht = tetraedern(P, T, h, splitter)
+    runden = max(1, runden)
+    for runde in range(runden):
+        # Der Balken: der erste Durchgang bekommt den Loewenanteil (0.15 … 0.85),
+        # denn er ist meist der einzige; spaetere Durchgaenge sind Nacharbeit am
+        # Rand und teilen sich den Rest bis 0.95.
+        if runde == 0:
+            a0, a1 = 0.15, 0.85
+        else:
+            a0 = 0.85 + 0.10 * (runde - 1) / max(1, runden - 1)
+            a1 = a0 + 0.10 / max(1, runden - 1)
+        Pn, TET, bericht = tetraedern(P, T, h, splitter, fortschritt, (a0, a1))
         bericht["runden"] = runde + 1
         bericht["huelldreiecke"] = len(T)
         soll = bericht["sollvolumen"]
@@ -1263,7 +1366,8 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
 
 
 def glaetten(P: np.ndarray, TET: np.ndarray, fest: np.ndarray,
-             ziel: float = SPLITTER, runden: int = 6) -> tuple:
+             ziel: float = SPLITTER, runden: int = 6, fortschritt=None,
+             anteil: tuple = (0.0, 1.0)) -> tuple:
     """Splitter herausglaetten: schlechte Tetraeder durch Knotenverschieben bessern.
 
     Die Delaunay-Verfeinerung erfasst mit dem Kugel-Kanten-Kriterium jede
@@ -1296,7 +1400,9 @@ def glaetten(P: np.ndarray, TET: np.ndarray, fest: np.ndarray,
                            [1, 1, -1], [-1, -1, 1]], float)
     richtungen /= np.linalg.norm(richtungen, axis=1)[:, None]
     verschoben = 0
-    for _runde in range(max(1, runden)):
+    a0, a1 = float(anteil[0]), float(anteil[1])
+    runden = max(1, runden)
+    for _runde in range(runden):
         q = guete(P, TET)
         schlecht = np.flatnonzero(q < ziel)
         if not len(schlecht):
@@ -1306,13 +1412,17 @@ def glaetten(P: np.ndarray, TET: np.ndarray, fest: np.ndarray,
         if not kandidaten:
             break
         bewegt = 0
-        for i in kandidaten:
+        for nr, i in enumerate(kandidaten):
+            if nr % 200 == 0:
+                _melden(fortschritt,
+                        a0 + (a1 - a0) * (_runde + nr / len(kandidaten)) / runden,
+                        f"Splitter glätten: Durchgang {_runde + 1}, "
+                        f"{nr} von {len(kandidaten)} Knoten")
             els = an_knoten.get(i)
             nb = list(nachbarn.get(i, ()))
             if not els or not nb:
                 continue
             teil = TET[els]
-            vorher = float(guete(P, teil).min())
             alt = P[i].copy()
             weite = float(np.linalg.norm(P[nb] - alt, axis=1).mean())
             # Musterschritte: erst in den Schwerpunkt der Nachbarn, dann in
@@ -1322,16 +1432,28 @@ def glaetten(P: np.ndarray, TET: np.ndarray, fest: np.ndarray,
             versuche = [alt + f * (P[nb].mean(axis=0) - alt) for f in (1.0, 0.6, 0.3)]
             for w in (0.35, 0.2, 0.1):
                 versuche += list(alt + w * weite * richtungen)
-            bestes, bestq = None, vorher
-            for kandidat in versuche:
-                P[i] = kandidat
-                if tetraedervolumen(P, teil).min() <= 0:
-                    continue
-                gq = float(guete(P, teil).min())
-                if gq > bestq + 1e-12:
-                    bestes, bestq = kandidat.copy(), gq
-            P[i] = bestes if bestes is not None else alt
-            bewegt += bestes is not None
+            # Alle Versuche auf einmal bewerten: der Knoten i steht in jedem
+            # seiner Elemente an bekannter Stelle; die uebrigen Ecken bleiben.
+            # Das erspart je Kandidat ueber vierzig kleine numpy-Aufrufe.
+            V0 = np.stack([alt] + versuche)                     # (m, 3)
+            X = P[teil]                                         # (e, 4, 3)
+            wo = (teil == i)                                    # (e, 4)
+            Xm = np.broadcast_to(X, (len(V0),) + X.shape).copy()
+            Xm[:, wo] = V0[:, None, :]
+            a, b, c, d = Xm[:, :, 0], Xm[:, :, 1], Xm[:, :, 2], Xm[:, :, 3]
+            vol = np.einsum("mij,mij->mi", np.cross(b - a, c - a), d - a) / 6.0
+            L2 = np.zeros(vol.shape)
+            for ka, kb in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)):
+                L2 += np.sum((Xm[:, :, ka] - Xm[:, :, kb]) ** 2, axis=2)
+            vabs = np.abs(vol)
+            gq = np.where(L2 > 0, 12.0 * (3.0 * vabs) ** (2.0 / 3.0) / np.maximum(L2, 1e-300), 0.0)
+            gmin = gq.min(axis=1)
+            # Ein Versuch, bei dem ein Element umklappt, zaehlt nicht
+            gmin[1:][(vol[1:] * np.sign(vol[0])[None, :] <= 0).any(axis=1)] = -1.0
+            bestes = int(np.argmax(gmin))
+            if bestes > 0 and gmin[bestes] > gmin[0] + 1e-12:
+                P[i] = V0[bestes]
+                bewegt += 1
         verschoben += bewegt
         if not bewegt:
             break
@@ -1473,7 +1595,8 @@ def _ausdehnung(model: Model, koerper) -> float:
     return float(np.max(P.max(axis=0) - P.min(axis=0)))
 
 
-def randschale(model: Model, koerper, h: float, log: list = None) -> tuple:
+def randschale(model: Model, koerper, h: float, log: list = None,
+               fortschritt=None) -> tuple:
     """Die geschlossene Dreieckshuelle eines Koerpers: (P, T, Bericht).
 
     Der Bericht fuehrt unter ``quelle`` je Dreieck die Randflaeche mit, von
@@ -1497,7 +1620,10 @@ def randschale(model: Model, koerper, h: float, log: list = None) -> tuple:
         P_teile, T_teile, quelle, gruende = [], [], [], {}
         zu_grob: set = set()
         n_punkte = 0
-        for f in flaechen:
+        for i_f, f in enumerate(flaechen):
+            if i_f % 10 == 0:
+                _melden(fortschritt, 0.12 * i_f / max(1, len(flaechen)),
+                        f"Randhülle: Fläche {i_f + 1} von {len(flaechen)}")
             Pf, Tf, meldung, grob = flaechennetz(model, f, teilung)
             zu_grob.update(grob)
             if meldung or not len(Tf):
@@ -1575,6 +1701,12 @@ def _knoten_anlegen(model: Model, koerper, Pn: np.ndarray, benutzt: np.ndarray,
             for i in t:
                 if int(i) < n_rand:
                     punkt_flaeche.setdefault(int(i), q)
+    # Neue Knoten werden gesammelt und in einem Zug angelegt: add_node
+    # kopiert das ganze Knotenfeld, und bei fuenfzigtausend Knoten je Koerper
+    # summierte sich das zu Sekunden.
+    neue_punkte: list = []
+    neue_idx: list = []
+    naechste = int(model.nn)
     for i in benutzt:
         i = int(i)
         p = Pn[i]
@@ -1583,10 +1715,15 @@ def _knoten_anlegen(model: Model, koerper, Pn: np.ndarray, benutzt: np.ndarray,
         if k is None and cache is not None and i in punkt_flaeche:
             k = cache.get((punkt_flaeche[i], s))
         if k is None:
-            k = int(model.add_node(*p))
+            k = naechste
+            naechste += 1
+            neue_punkte.append(p)
+            neue_idx.append(i)
             if cache is not None and i in punkt_flaeche:
                 cache[(punkt_flaeche[i], s)] = k
         neu[i] = k
+    if neue_punkte:
+        model.add_nodes(np.asarray(neue_punkte, float))
     return neu
 
 
@@ -1665,19 +1802,23 @@ def _randseiten_merken(model: Model, koerper, T: np.ndarray, quelle: list,
     k = min(8, len(HT))
     _, nn = baum.query(schwer_f, k=k)
     nn = np.atleast_2d(nn)
+    # Alle freien Seiten gegen ihre k naechsten Huelldreiecke in einem Zug -
+    # Seite fuer Seite waere bei hunderttausend Tetraedern der langsamste
+    # Schritt des ganzen Vernetzers.
+    bestd = np.full(len(frei), np.inf)
+    bestes = np.zeros(len(frei), int)
+    for j in range(nn.shape[1]):
+        t = HT[nn[:, j]]
+        d = punkt_dreieck_abstand(schwer_f, HP[t[:, 0]], HP[t[:, 1]], HP[t[:, 2]])
+        naeher = d < bestd
+        bestd[naeher] = d[naeher]
+        bestes[naeher] = nn[naeher, j]
     n = 0
     for zeile, (e, nr, _nd) in enumerate(frei):
-        bestes, bestd = None, np.inf
-        for j in range(nn.shape[1]):
-            t = HT[nn[zeile, j]]
-            d = float(punkt_dreieck_abstand(schwer_f[zeile][None, :],
-                                            HP[t[0]][None, :], HP[t[1]][None, :],
-                                            HP[t[2]][None, :])[0])
-            if d < bestd:
-                bestes, bestd = int(nn[zeile, j]), d
-        if bestes is None or bestd > tol:
+        if bestd[zeile] > tol:
             continue
-        f = model.flaechen.get(quelle[bestes] if bestes < len(quelle) else "")
+        b = int(bestes[zeile])
+        f = model.flaechen.get(quelle[b] if b < len(quelle) else "")
         if f is None:
             continue
         f.randseiten.append([e, nr])
@@ -1685,31 +1826,16 @@ def _randseiten_merken(model: Model, koerper, T: np.ndarray, quelle: list,
     return n
 
 
-def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
-                      log: list = None, cache: dict = None,
-                      ordnung: int = 0) -> list[int]:
-    """Einen Volumenkoerper frei in Tetraeder vernetzen.
-
-    ``h`` ist die angestrebte Kantenlaenge; 0 nimmt die Netzeinstellungen des
-    Modells. ``cache`` ist ein Woerterbuch, das ueber mehrere Koerper hinweg
-    dieselben Knoten fuer **gemeinsame Randflaechen** vergibt - ohne es steht
-    jeder Koerper fuer sich und das Modell zerfaellt in Teile. Rueckgabe: die
-    Nummern der neuen Elemente (leer, wenn nicht vernetzt - der Grund steht
-    dann im Protokoll).
-    """
+def _kantenlaenge(model: Model, koerper, h: float, log: list = None) -> float:
+    """Die Kantenlaenge fuer diesen Koerper: die Vorgabe, an kleine Bauteile
+    nach unten angepasst (ein 20-mm-Bolzen bei 50 mm Zielkantenlaenge haette
+    sonst kein einziges Element)."""
     from .importers import _common as C
     if h <= 0:
         netz = getattr(model, "netz", None)
         h = float(getattr(netz, "ziellaenge", 0.0) or 0.0)
     if h <= 0:
         h = STANDARDLAENGE
-    if ordnung <= 0:
-        ordnung = int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1)
-    mat = koerper.material or C.ensure_material(model, log=log)
-
-    # Ein 20-mm-Bolzen bei 50 mm Zielkantenlaenge haette kein einziges
-    # Element. Die Kantenlaenge wird darum je Koerper an seine Groesse
-    # angepasst - nach unten, nie nach oben.
     gross = _ausdehnung(model, koerper)
     if gross > 0 and h > gross / MINDESTTEILUNG:
         h_neu = gross / MINDESTTEILUNG
@@ -1717,42 +1843,90 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
                    f"dieses Bauteil ({gross * 1e3:.0f} mm groß) zu grob - "
                    f"mit {h_neu * 1e3:.1f} mm vernetzt.")
         h = h_neu
+    return h
 
-    P, T, bericht = randschale(model, koerper, h, log)
-    if bericht.get("fehler"):
-        C.warn(log, f"Volumen {koerper.name}: {bericht['fehler']} - nicht vernetzt.")
-        return []
-    if bericht.get("offen"):
-        C.warn(log, f"Volumen {koerper.name}: die Randhülle ist nicht dicht "
-                    f"({bericht['offen']} Kanten liegen nicht in genau zwei "
-                    "Dreiecken) - nicht vernetzt. Ein Netz aus einer undichten "
-                    "Hülle wäre stillschweigend falsch.")
-        return []
-    if bericht.get("teile", 1) > 1:
-        C.warn(log, f"Volumen {koerper.name}: die Randflächen bilden "
-                    f"{bericht['teile']} getrennte Hüllen - nicht vernetzt.")
-        return []
-    if bericht.get("volumen", 0.0) <= 0:
-        C.warn(log, f"Volumen {koerper.name}: die Hülle umschließt kein Volumen "
-                    "- nicht vernetzt.")
-        return []
 
-    quelle = bericht.get("quelle") or []
-    n_rand = len(P)
-    splitter = float(getattr(getattr(model, "netz", None), "splitter", SPLITTER) or 0.0)
-    Pn, TET, tb, P, T, quelle = tetraedern_treu(P, T, h, quelle=quelle,
-                                                splitter=splitter)
-    if tb.get("fehler"):
-        C.warn(log, f"Volumen {koerper.name}: {tb['fehler']}")
-        return []
-    if not len(TET):
-        C.warn(log, f"Volumen {koerper.name}: kein Tetraeder entstanden.")
-        return []
+def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
+                        fortschritt=None) -> dict:
+    """Die Rechenarbeit eines Koerpers: Randhuelle und Tetraeder - ohne das
+    Modell zu veraendern.
 
+    Das ist der Teil, der Minuten dauern kann, und er braucht nur die
+    Geometrie. Er laesst sich darum in einem **Arbeitsprozess** rechnen
+    (siehe :func:`statik3d.mesher.koerper_vernetzen`); der Einbau ins Modell
+    folgt im Hauptprozess mit :func:`koerper_einbauen`. Rueckgabe ein
+    Woerterbuch mit den Punkten, Tetraedern, der Huelle und den
+    Protokollzeilen; ``fehler`` nennt den Grund, wenn nichts entstand.
+    """
+    from .importers import _common as C
+    zeilen: list = [] if log is None else log
+    h = _kantenlaenge(model, koerper, h, zeilen)
+    aus = {"name": koerper.name, "h": h, "log": zeilen if log is None else [],
+           "fehler": "", "abgebrochen": False}
+    try:
+        _melden(fortschritt, 0.0, "Randhülle bilden")
+        P, T, bericht = randschale(model, koerper, h, zeilen, fortschritt)
+        if bericht.get("fehler"):
+            aus["fehler"] = f"{bericht['fehler']} - nicht vernetzt."
+            return aus
+        if bericht.get("offen"):
+            aus["fehler"] = (f"die Randhülle ist nicht dicht ({bericht['offen']} Kanten "
+                             "liegen nicht in genau zwei Dreiecken) - nicht vernetzt. Ein "
+                             "Netz aus einer undichten Hülle wäre stillschweigend falsch.")
+            return aus
+        if bericht.get("teile", 1) > 1:
+            aus["fehler"] = (f"die Randflächen bilden {bericht['teile']} getrennte "
+                             "Hüllen - nicht vernetzt.")
+            return aus
+        if bericht.get("volumen", 0.0) <= 0:
+            aus["fehler"] = "die Hülle umschließt kein Volumen - nicht vernetzt."
+            return aus
+        quelle = bericht.get("quelle") or []
+        splitter = float(getattr(getattr(model, "netz", None), "splitter", SPLITTER) or 0.0)
+        Pn, TET, tb, P, T, quelle = tetraedern_treu(P, T, h, quelle=quelle,
+                                                    splitter=splitter,
+                                                    fortschritt=fortschritt)
+        if tb.get("fehler"):
+            aus["fehler"] = str(tb["fehler"])
+            return aus
+        if not len(TET):
+            aus["fehler"] = "kein Tetraeder entstanden."
+            return aus
+        _melden(fortschritt, 0.97, f"{len(TET)} Tetraeder ins Modell übernehmen")
+        aus.update({"P": np.asarray(P, float), "T": np.asarray(T, int), "quelle": list(quelle),
+                    "Pn": np.asarray(Pn, float), "TET": np.asarray(TET, int),
+                    "tb": tb, "bericht": {k: v for k, v in bericht.items()
+                                          if k not in ("quelle",)}})
+    except Abgebrochen:
+        aus["abgebrochen"] = True
+        aus["fehler"] = "abgebrochen"
+    if log is None:
+        aus["log"] = zeilen
+    return aus
+
+
+def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
+                     cache: dict = None, ordnung: int = 0) -> list[int]:
+    """Das Ergebnis von :func:`koerper_vorbereiten` ins Modell uebernehmen:
+    Knoten (gemeinsame Randflaechen geteilt), Elemente, Randseiten, Protokoll."""
+    from .importers import _common as C
+    for z in aus.get("log") or []:
+        if log is not None:
+            log.append(z)
+    if aus.get("abgebrochen"):
+        C.say(log, f"Volumen {koerper.name}: abgebrochen - bleibt ohne Netz.")
+        return []
+    if aus.get("fehler"):
+        C.warn(log, f"Volumen {koerper.name}: {aus['fehler']}")
+        return []
+    if ordnung <= 0:
+        ordnung = int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1)
+    mat = koerper.material or C.ensure_material(model, log=log)
+    P, T, quelle = aus["P"], aus["T"], aus["quelle"]
+    Pn, TET, tb, bericht, h = aus["Pn"], aus["TET"], aus["tb"], aus["bericht"], aus["h"]
     soll = bericht["volumen"]
     ist = tb["volumen"]
     abw = abs(ist - soll) / soll if soll > 0 else 1.0
-
     # Nur die wirklich benutzten Punkte ins Modell uebernehmen
     benutzt = np.unique(TET)
     neu = _knoten_anlegen(model, koerper, Pn, benutzt, len(P), T, quelle, cache)
@@ -1802,3 +1976,25 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
                     f"Güte {tb['guete']:.4f} - solche Splitter machen die "
                     "Steifigkeitsmatrix schlecht konditioniert.")
     return els
+
+
+def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
+                      log: list = None, cache: dict = None,
+                      ordnung: int = 0, fortschritt=None) -> list[int]:
+    """Einen Volumenkoerper frei in Tetraeder vernetzen.
+
+    ``h`` ist die angestrebte Kantenlaenge; 0 nimmt die Netzeinstellungen des
+    Modells. ``cache`` ist ein Woerterbuch, das ueber mehrere Koerper hinweg
+    dieselben Knoten fuer **gemeinsame Randflaechen** vergibt - ohne es steht
+    jeder Koerper fuer sich und das Modell zerfaellt in Teile. ``fortschritt``
+    ist der Rueckruf aus :func:`_melden`; antwortet er mit False, bleibt der
+    Koerper ohne Netz. Rueckgabe: die Nummern der neuen Elemente (leer, wenn
+    nicht vernetzt - der Grund steht dann im Protokoll).
+
+    Der Weg ist zweigeteilt: :func:`koerper_vorbereiten` rechnet (und laesst
+    sich in einen Arbeitsprozess auslagern), :func:`koerper_einbauen`
+    schreibt ins Modell.
+    """
+    aus = koerper_vorbereiten(model, koerper, h, log, fortschritt)
+    aus["log"] = []                     # steht schon im Protokoll
+    return koerper_einbauen(model, koerper, aus, log, cache, ordnung)

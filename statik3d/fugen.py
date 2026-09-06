@@ -147,6 +147,45 @@ def _gruppe(model: Model, elem: int) -> str:
     return str(getattr(model.elements[elem], "group", "") or "")
 
 
+def _seiten_des_koerpers_auf(model: Model, koerpernamen, gegen: list) -> list:
+    """Die Randseiten der genannten Koerper, die auf den Gegenflaechen liegen.
+
+    RFEM kann eine Flaechenfreigabe auch **ohne** freigegebene Flaechen
+    anlegen: dann steht nur der geloeste Koerper da (``releasedSolids``), und
+    die zugeordneten Flaechen sind die Gegenseite - etwa die Grundplatte, die
+    an den sechzehn Oberseiten der Unterlegbleche geloest wird. Die Fuge sind
+    dann die Randseiten des Koerpers, die auf diesen Flaechen liegen: Seite
+    und Gegendreieck haben denselben Ort und entgegengesetzte Normalen.
+    Gesucht wird ueber die Geometrie, nicht ueber gemeinsame Knoten - so geht
+    es auch, wenn die Netze beider Seiten nicht zusammenpassen.
+    """
+    from scipy.spatial import cKDTree
+    if not gegen:
+        return []
+    geloest = {str(x) for x in (koerpernamen or [])}
+    seiten = [x for x in _randseiten_aller(model) if x[3] in geloest]
+    if not seiten:
+        return []
+    schwer_g = np.array([model.nodes[nd].mean(axis=0) for _e, nd, _n in gegen])
+    norm_g = np.array([n for _e, _nd, n in gegen])
+    laengen = [float(np.linalg.norm(model.nodes[nd[0]] - model.nodes[nd[1]]))
+               for _e, nd, _n in gegen if len(nd) > 1]
+    weite = max(float(np.median(laengen)) if laengen else 0.0, 1e-9)
+    baum = cKDTree(schwer_g)
+    out = []
+    for e, nd, n, _g in seiten:
+        c = model.nodes[nd].mean(axis=0)
+        for j in baum.query_ball_point(c, weite):
+            if float(norm_g[j] @ n) > -0.7:
+                continue                    # die Gegenseite muss entgegen zeigen
+            # und die Seite muss in der Ebene des Gegendreiecks liegen
+            if abs(float((c - schwer_g[j]) @ norm_g[j])) > 0.25 * weite:
+                continue
+            out.append((e, nd, n))
+            break
+    return out
+
+
 def gruppen_je_knoten(model: Model) -> dict:
     """{Knoten: Menge der Bauteile, deren Elemente ihn benutzen}.
 
@@ -179,13 +218,27 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
         bericht["grund"] = "in der Quelldatei deaktiviert"
         return bericht
     flaechen = _seiten_flaechen(model, kb.flaechennamen)
+    ueber_gegenseite = False
+    if not flaechen and kb.koerpernamen and kb.gegenflaechen:
+        # Ohne freigegebene Flaechen: der geloeste Koerper wird an den
+        # zugeordneten Flaechen der Gegenseite getrennt.
+        flaechen = _seiten_flaechen(model, kb.gegenflaechen)
+        ueber_gegenseite = True
     if not flaechen:
-        bericht["grund"] = "keine der freigegebenen Flächen ist im Modell"
+        bericht["grund"] = ("keine der freigegebenen Flächen ist im Modell"
+                            if kb.flaechennamen or not kb.koerpernamen else
+                            "weder freigegebene Flächen noch zugeordnete Gegenflächen im Modell")
         return bericht
     dreiecke = _dreiecke_der_fuge(model, flaechen)
     if not dreiecke:
         bericht["grund"] = "die Flächen sind noch nicht vernetzt"
         return bericht
+    if ueber_gegenseite:
+        dreiecke = _seiten_des_koerpers_auf(model, kb.koerpernamen, dreiecke)
+        if not dreiecke:
+            bericht["grund"] = ("der gelöste Körper liegt im Netz nicht auf den zugeordneten "
+                                "Flächen - Körper und Gegenseite vernetzen")
+            return bericht
 
     # ---- 1) Welcher Koerper wird geloest? -------------------------------
     gruppen = {_gruppe(model, x[0]) for x in dreiecke}
@@ -255,9 +308,14 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
 
     if not passend:
         # Nur der gemeinsame Rand war verschweisst; die Flaeche dazwischen
-        # passt nicht Knoten fuer Knoten. Sie traegt ein Kontaktpaar.
-        return _fuge_ueber_kontaktpaar(
-            model, kb, _dreiecke_der_fuge(model, flaechen), geloest, bericht, log)
+        # passt nicht Knoten fuer Knoten. Sie traegt ein Kontaktpaar. Die
+        # Seiten werden neu gelesen: die verdoppelten Knoten haben neue Nummern.
+        if ueber_gegenseite:
+            seite_neu = _seiten_des_koerpers_auf(model, geloest,
+                                                 _dreiecke_der_fuge(model, flaechen))
+        else:
+            seite_neu = _dreiecke_der_fuge(model, flaechen)
+        return _fuge_ueber_kontaktpaar(model, kb, seite_neu, geloest, bericht, log)
 
     # ---- 5) Verbinden ---------------------------------------------------
     b_n = kb.dof_behaviour(2)

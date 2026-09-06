@@ -148,8 +148,18 @@ def elementlaenge(model, netz, obj) -> dict:
         h_min = float(getattr(netz, "h_min", 0.0) or 0.0) or h / 4.0
         h_max = float(getattr(netz, "h_max", 0.0) or 0.0) or h * 4.0
         if kante > 0 and kante < h:
-            h = kante
-            grund.append(f"kleinste Kante {kante * 1e3:.0f} mm")
+            if ist_flaeche:
+                h = kante
+                grund.append(f"kleinste Kante {kante * 1e3:.0f} mm")
+            else:
+                # Ein Volumen wird frei vernetzt, und der freie Vernetzer folgt
+                # der Feinheit des Randes von selbst: um eine 20-mm-Bohrung
+                # sind die Randdreiecke klein, und die Kantenlaenge waechst
+                # von dort ins Innere. Die ganze Platte auf die Bohrung
+                # herunterzuteilen gaebe das Vielfache an Tetraedern, ohne
+                # dass das Netz an der Bohrung besser wuerde.
+                grund.append(f"kleinste Kante {kante * 1e3:.0f} mm - örtlich feiner, "
+                             "vom Rand her wachsend")
         if h < h_min:
             h = h_min
             grund.append(f"nicht unter {h_min * 1e3:.0f} mm")

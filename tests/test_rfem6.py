@@ -893,9 +893,9 @@ def test_volumenkoerper():
         check("unvollstaendiger Koerper nicht uebernommen",
               not [e for e in m3.elements if e.typ in ("hex8", "tet4")],
               str([e.typ for e in m3.elements]))
-        check("Grund genannt (3D-Vernetzer)",
-              any("Vernetzer" in x for x in log3),
-              next((x for x in log3 if "Vernetzer" in x), "-"))
+        check("Grund genannt (Netz → Vernetzen)",
+              any("Vernetzen" in x or "Vernetzer" in x for x in log3),
+              next((x for x in log3 if "Vernetzen" in x or "Vernetzer" in x), "-"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -2851,8 +2851,9 @@ def main():
         w.sel_flaechen = []
         w.geometrie_vernetzen()
         app.processEvents()
-        check("Vernetzen: Fortschritt 0…3 je Fläche, Balken danach aus und wieder unbestimmt",
-              werte_[:4] == [0, 0, 1, 2] and werte_[-1] == 3 and not w.progress_bar.isVisible()
+        check("Vernetzen: Balken nach Aufwand in Promille (0 … 1000, steigend), danach aus und wieder unbestimmt",
+              werte_ and werte_[0] == 0 and werte_[-1] == 1000 and werte_ == sorted(werte_)
+              and len(set(werte_)) >= 4 and not w.progress_bar.isVisible()
               and w.progress_bar.maximum() == 0 and all(len(m_.flaechen[f"F{k}"].elemente) == 16 for k in range(3)),
               str(werte_))
         check("Abbrechen-Knopf in der Statuszeile, nach dem Lauf versteckt",
@@ -2864,7 +2865,7 @@ def main():
         def setv_(v):
             alt_setvalue(v)
             werte_.append(int(v))
-            if int(v) == 1:
+            if int(v) > 0 and not w._abbruch:       # nach der ersten Fläche
                 w._fortschritt_abbrechen()
         w.progress_bar.setValue = setv_
         w.geometrie_vernetzen()
@@ -4284,6 +4285,86 @@ def main():
         import traceback
         traceback.print_exc()
         check("Befunde des Menütests (#120)", False, str(ex)[:70])
+
+    # ---- Volumen parallel vernetzen, Balken nach Aufwand, Abbrechen mittendrin (#122/#123) --
+    try:
+        w.new_model()
+        app.processEvents()
+        mg = w.model
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda text: fehler_.append(str(text))
+        n6 = 6
+        wk_ = np.arange(n6) * 2 * np.pi / n6
+        ring_ = np.column_stack([np.cos(wk_), np.sin(wk_)])
+        mg.add_nodes(np.vstack([np.column_stack([ring_, np.full(n6, z)]) for z in (0.0, 1.0, 2.0)]))
+        zaehl_ = [0]
+
+        def linie_(a, b):
+            zaehl_[0] += 1
+            mg.add_line(f"L{zaehl_[0]}", [a, b])
+            return f"L{zaehl_[0]}"
+        E_ = [[linie_(o + i, o + (i + 1) % n6) for i in range(n6)] for o in (0, n6, 2 * n6)]
+        V01_ = [linie_(i, i + n6) for i in range(n6)]
+        V12_ = [linie_(i + n6, i + 2 * n6) for i in range(n6)]
+        mat_ = next(iter(mg.materials))
+        for j, nm in enumerate(("F0", "Fm", "F2")):
+            mg.add_flaeche(nm, E_[j], material=mat_)
+        unten_, oben_ = [], []
+        for i in range(n6):
+            mg.add_flaeche(f"A{i}", [E_[0][i], V01_[(i + 1) % n6], E_[1][i], V01_[i]], material=mat_)
+            mg.add_flaeche(f"B{i}", [E_[1][i], V12_[(i + 1) % n6], E_[2][i], V12_[i]], material=mat_)
+            unten_.append(f"A{i}")
+            oben_.append(f"B{i}")
+        mg.add_koerper("V1", ["F0", "Fm"] + unten_, material=mat_)
+        mg.add_koerper("V2", ["Fm", "F2"] + oben_, material=mat_)
+        mg.netz.dichte = "eigene"
+        mg.netz.ziellaenge = 0.3
+        w.refresh_all()
+        app.processEvents()
+        werte_ = []
+        alt_setvalue = w.progress_bar.setValue
+        w.progress_bar.setValue = lambda v: (werte_.append(int(v)), alt_setvalue(v))
+        w.sel_koerper = []
+        w.sel_flaechen = []
+        w.geometrie_vernetzen()
+        app.processEvents()
+        w.progress_bar.setValue = alt_setvalue
+        k1_, k2_ = mg.koerper["V1"], mg.koerper["V2"]
+        check("Zwei freie Volumen vernetzt (parallel, wenn Kerne da sind) - ohne Fehler",
+              len(k1_.elemente) > 100 and len(k2_.elemente) > 100 and not fehler_,
+              str((len(k1_.elemente), len(k2_.elemente), fehler_[:1])))
+        check("Der Balken ist nach Aufwand gewichtet: Promille, steigend bis 1000",
+              werte_ and werte_[0] == 0 and werte_[-1] == 1000 and werte_ == sorted(werte_),
+              str(werte_[:6]))
+        meld_ = [z for z in w.log.toPlainText().split("\n") if z.startswith("Vernetzt:")]
+        check("Das Protokoll meldet das Netz mit Laufzeit (und den Prozessen, wenn parallel)",
+              meld_ and " s" in meld_[-1], str(meld_[-1:]))
+        check("Das Protokoll nennt beide Volumen mit Tetraedern",
+              sum(1 for z in w.log.toPlainText().split("\n") if z.startswith("Volumen V") and "Tetraeder" in z) >= 2)
+        # Abbrechen beim ersten Volumen-Rückruf: Flächen bleiben, die Volumen ohne Netz
+        alt_fort = w._fortschritt
+
+        def stop_(wert, text):
+            r = alt_fort(wert, text)
+            if "Vernetze Volumen" in str(text) and not w._abbruch:
+                w._fortschritt_abbrechen()
+                return False
+            return r
+        w._fortschritt = stop_
+        w.geometrie_vernetzen()
+        app.processEvents()
+        w._fortschritt = alt_fort
+        check("Abbrechen mitten in den Volumen: kein Volumennetz, Protokoll nennt den Abbruch, Balken weg",
+              not k1_.elemente and not k2_.elemente and "abgebrochen" in w.log.toPlainText()
+              and not w.progress_bar.isVisible() and not w._abbruch,
+              str((len(k1_.elemente), len(k2_.elemente))))
+        w.error = alt_error
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Volumen parallel vernetzen (#122/#123)", False, str(ex)[:70])
 
     # ---- Klick und Ziehen; Bericht ohne Berechnung ---------------------------
     try:

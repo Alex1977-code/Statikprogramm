@@ -392,6 +392,11 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None)
     jedes Viereck in zwei Dreiecke (None = nach Netzeinstellungen ``form``).
     """
     from .importers import _common as C
+    if not flaeche.dicke and hasattr(model, "flaeche_traegt") and not model.flaeche_traegt(flaeche.name):
+        # Randflaeche eines Volumenkoerpers ohne Dicke: kein Schalennetz - die
+        # Tetraeder des Koerpers tragen (siehe Model.flaeche_traegt).
+        flaeche.elemente = []
+        return []
     if dreiecke is None:
         dreiecke = int(getattr(getattr(model, "netz", None), "form", 2) or 0) == 0
     ring = flaeche.randknoten(model)
@@ -466,7 +471,8 @@ def _seiten_aus_linien(model: Model, flaeche):
 
 
 def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
-                 h: float = 0.0, cache: dict = None, ordnung: int = 0) -> list[int]:
+                 h: float = 0.0, cache: dict = None, ordnung: int = 0,
+                 fortschritt=None) -> list[int]:
     """Einen Volumenkoerper in Volumenelemente umsetzen.
 
     Sechs Vierseit-Randflaechen mit acht Eckknoten geben ein **abgebildetes**
@@ -479,7 +485,10 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     ``frei=False`` schaltet das ab; dann bleibt alles ohne Netz, was sich
     nicht abgebildet vernetzen laesst. ``h`` ist die angestrebte Kantenlaenge
     (0 = aus den Netzeinstellungen), ``cache`` teilt die Knoten gemeinsamer
-    Randflaechen zwischen mehreren Koerpern.
+    Randflaechen zwischen mehreren Koerpern. ``fortschritt(anteil, text)``
+    wird waehrend der freien Vernetzung gerufen (Anteil 0 … 1 an diesem
+    Koerper, None = nur die Zeit zaehlt); antwortet es mit False, bleibt der
+    Koerper ohne Netz.
     """
     from .importers import _common as C
     from .model import _rand_aus_linien          # noqa: F401  (Doku)
@@ -514,12 +523,224 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     if frei:
         from .mesher3d import mesh_koerper_frei
         return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
-                                 ordnung=ordnung)
+                                 ordnung=ordnung, fortschritt=fortschritt)
     C.warn(log, f"Volumen {koerper.name}: {len(flaechen)} Randflächen mit "
                 f"{len(knoten)} Eckknoten - abgebildet vernetzen lassen sich nur "
                 "Sechsflächner (6 Vierecke, 8 Knoten) und Tetraeder (4 Dreiecke, "
                 "4 Knoten). Der freie Vernetzer ist abgeschaltet - nicht vernetzt.")
     return []
+
+
+def abgebildet(model: Model, koerper) -> bool:
+    """Wird der Koerper abgebildet vernetzt (Sechsflaechner, einzelner
+    Tetraeder)? Das ist billig und bleibt im Hauptprozess; alles andere geht
+    an den freien Vernetzer und darf in einen Arbeitsprozess."""
+    flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
+    if not flaechen or any(f is None for f in flaechen):
+        return True
+    ringe = [f.randknoten(model) for f in flaechen]
+    knoten = {n for r in ringe for n in r}
+    if len(flaechen) == 6 and len(knoten) == 8 and all(len(r) == 4 for r in ringe):
+        return True
+    return len(flaechen) == 4 and len(knoten) == 4
+
+
+# --------------------------------------------------------------------------
+# Mehrere Volumen: parallel in Arbeitsprozessen
+# --------------------------------------------------------------------------
+_WORKER_MODEL = None
+
+
+def _koerper_arbeiter_init(model: Model) -> None:
+    """Jeder Arbeitsprozess bekommt das Modell einmal - die Geometrie genuegt."""
+    global _WORKER_MODEL
+    _WORKER_MODEL = model
+
+
+def _koerper_arbeit(name: str, h: float) -> dict:
+    """Die Rechenarbeit eines Koerpers im Arbeitsprozess (siehe
+    :func:`statik3d.mesher3d.koerper_vorbereiten`)."""
+    from . import mesher3d as M3
+    k = _WORKER_MODEL.koerper[name]
+    return M3.koerper_vorbereiten(_WORKER_MODEL, k, h=float(h or 0.0))
+
+
+def prozesse_fuer_vernetzung() -> int:
+    """Wie viele Arbeitsprozesse die Vernetzung nimmt: alle Kerne bis auf
+    einen - der bleibt der Oberflaeche -, gedeckelt durch die Einstellung
+    „Prozesse" (Berechnung → Einstellungen)."""
+    from . import parallel as par
+    return max(1, min(int(par.settings().workers), par.cpu_count() - 1))
+
+
+def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
+                      cache: dict = None, workers: int = None, fortschritt=None,
+                      gewicht: dict = None, ordnung: int = 0) -> dict:
+    """Mehrere Volumenkoerper vernetzen - die freie Vernetzung parallel.
+
+    Die Rechenarbeit je Koerper (:func:`mesher3d.koerper_vorbereiten`) laeuft
+    in ``workers`` Arbeitsprozessen (Vorgabe: alle Kerne bis auf einen, siehe
+    :func:`prozesse_fuer_vernetzung`); der Einbau ins Modell
+    (:func:`mesher3d.koerper_einbauen`) geschieht im aufrufenden Prozess, in
+    der Reihenfolge des Fertigwerdens. Abgebildete Koerper (Sechsflaechner,
+    Tetraeder) werden gleich hier vernetzt. Mit einem Prozess oder einem
+    einzigen freien Koerper laeuft alles seriell - dann mit Fortschritt
+    **innerhalb** des Koerpers.
+
+    ``hs`` ist {Name: Kantenlaenge} aus der Netzdichte, ``gewicht`` {Name:
+    geschaetzte Elementzahl} fuer die Reihenfolge (grosse zuerst) und den
+    Balken. ``fortschritt(anteil, text)`` bekommt den Anteil 0 … 1 an der
+    ganzen Volumenarbeit und beendet mit False alles - laufende Prozesse
+    werden abgebrochen, das bisher Eingebaute bleibt.
+
+    Rueckgabe {"elemente": Zahl, "fertig": Koerper mit Netz, "abgebrochen":
+    bool, "prozesse": benutzte Prozesse}.
+    """
+    import time
+    from . import mesher3d as M3
+    from .importers import _common as C
+    hs = hs or {}
+    gewicht = gewicht or {}
+    cache = {} if cache is None else cache
+    koerper = list(koerper)
+    if ordnung <= 0:
+        ordnung = int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1)
+    aus = {"elemente": 0, "fertig": 0, "abgebrochen": False, "prozesse": 1}
+    if not koerper:
+        return aus
+    # Balken: nach geschaetzter Elementzahl gewichtet, nicht nach Stueckzahl -
+    # ein Lagerbock mit 90 000 Tetraedern und eine Buchse mit 150 sind nicht
+    # gleich viel Arbeit.
+    w_alle = {k.name: max(1.0, float(gewicht.get(k.name, 1.0) or 1.0)) for k in koerper}
+    summe = sum(w_alle.values())
+    erledigt = 0.0
+
+    def melden(text: str, anteil_akt: float = 0.0, w_akt: float = 0.0) -> bool:
+        if fortschritt is None:
+            return True
+        return fortschritt((erledigt + anteil_akt * w_akt) / summe, text) is not False
+
+    def einbauen(k, els_oder_aus):
+        nonlocal erledigt
+        if isinstance(els_oder_aus, dict):
+            els = M3.koerper_einbauen(model, k, els_oder_aus, log, cache, ordnung)
+        else:
+            els = els_oder_aus
+        aus["elemente"] += len(els)
+        aus["fertig"] += 1 if els else 0
+        erledigt += w_alle[k.name]
+
+    def fertig_melden():
+        if fortschritt is not None and not aus["abgebrochen"]:
+            fortschritt(1.0, f"{aus['fertig']} von {len(koerper)} Volumen vernetzt")
+
+    frei = [k for k in koerper if not abgebildet(model, k)]
+    # 1) Abgebildete Koerper gleich hier - das kostet nichts
+    for k in koerper:
+        if k in frei:
+            continue
+        if not melden(f"{k.name} abgebildet"):
+            aus["abgebrochen"] = True
+            return aus
+        einbauen(k, mesh_koerper(model, k, log, cache=cache,
+                                 h=float(hs.get(k.name, 0.0) or 0.0), ordnung=ordnung))
+    if not frei:
+        fertig_melden()
+        return aus
+    # Grosse zuerst: so wartet am Ende nicht ein Prozess allein auf den Lagerbock
+    frei.sort(key=lambda k: -w_alle[k.name])
+    w = prozesse_fuer_vernetzung() if workers is None else int(workers)
+    w = max(1, min(w, len(frei)))
+    if w <= 1:
+        for k in frei:
+            def ruf(anteil, text, _k=k):
+                return melden(f"{_k.name}: {text}" if text else _k.name,
+                              anteil or 0.0, w_alle[_k.name])
+            if not melden(f"{k.name}: Randhülle bilden", 0.0, w_alle[k.name]):
+                aus["abgebrochen"] = True
+                break
+            els = mesh_koerper(model, k, log, cache=cache,
+                               h=float(hs.get(k.name, 0.0) or 0.0), ordnung=ordnung,
+                               fortschritt=ruf)
+            einbauen(k, els)
+            if not els and log and any("abgebrochen" in z for z in log[-3:]):
+                aus["abgebrochen"] = True
+                break
+        fertig_melden()
+        return aus
+    # 2) Parallel: die Rechenarbeit in Arbeitsprozessen, der Einbau hier
+    from . import parallel as par
+    aus["prozesse"] = w
+    try:
+        ctx = par._context()
+        pool = ctx.Pool(processes=w, initializer=_koerper_arbeiter_init, initargs=(model,))
+    except Exception as ex:               # noqa: BLE001 - kein Prozess-Pool: seriell
+        C.say(log, f"Arbeitsprozesse nicht verfügbar ({ex}) - die Volumen werden nacheinander vernetzt.")
+        aus = _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
+                            aus, w_alle, summe, erledigt)
+        fertig_melden()
+        return aus
+    namen = {k.name: k for k in frei}
+    offen = {}
+    try:
+        for k in frei:
+            offen[k.name] = pool.apply_async(_koerper_arbeit,
+                                             (k.name, float(hs.get(k.name, 0.0) or 0.0)))
+        t_tick = 0.0
+        while offen:
+            fertige = [name for name, r in offen.items() if r.ready()]
+            for name in fertige:
+                r = offen.pop(name)
+                try:
+                    erg = r.get()
+                except Exception as ex:       # noqa: BLE001
+                    erg = {"fehler": f"Fehler im Arbeitsprozess: {ex}", "log": []}
+                einbauen(namen[name], erg)
+            laufend = [n for n in offen][:w]
+            if not melden(f"{aus['fertig']} von {len(koerper)} Volumen fertig, "
+                          f"{len(offen)} in Arbeit auf {w} Prozessen"
+                          + (" (" + ", ".join(laufend) + (" …" if len(offen) > w else "") + ")"
+                             if laufend else "")):
+                aus["abgebrochen"] = True
+                break
+            if offen:
+                time.sleep(0.1)
+                t_tick += 0.1
+        if aus["abgebrochen"]:
+            pool.terminate()
+            C.say(log, f"Vernetzen abgebrochen: {len(offen)} Volumen bleiben ohne Netz "
+                       "(die Arbeitsprozesse wurden beendet).")
+        else:
+            pool.close()
+        pool.join()
+    except BaseException:
+        pool.terminate()
+        pool.join()
+        raise
+    fertig_melden()
+    return aus
+
+
+def _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
+                  aus, w_alle, summe, erledigt):
+    """Rueckfall ohne Prozess-Pool: die freien Koerper nacheinander."""
+    def melden(text, anteil_akt=0.0, w_akt=0.0):
+        if fortschritt is None:
+            return True
+        return fortschritt((erledigt + anteil_akt * w_akt) / summe, text) is not False
+    for k in frei:
+        def ruf(anteil, text, _k=k):
+            return melden(f"{_k.name}: {text}" if text else _k.name, anteil or 0.0, w_alle[_k.name])
+        els = mesh_koerper(model, k, log, cache=cache, h=float(hs.get(k.name, 0.0) or 0.0),
+                           ordnung=ordnung, fortschritt=ruf)
+        aus["elemente"] += len(els)
+        aus["fertig"] += 1 if els else 0
+        erledigt += w_alle[k.name]
+        if not els and log and any("abgebrochen" in z for z in log[-3:]):
+            aus["abgebrochen"] = True
+            break
+    aus["prozesse"] = 1
+    return aus
 
 
 def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,

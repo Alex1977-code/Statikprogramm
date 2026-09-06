@@ -69,7 +69,7 @@ Der Code ist so geschnitten, dass zwei Leute sich nicht ins Gehege kommen:
 | Verzeichnis / Datei | Thema |
 |---|---|
 | `statik3d/model.py` | Datenmodell (Knoten, Linien, Flächen, Körper, Lasten) – **hier abstimmen**, alles hängt daran |
-| `statik3d/mesher.py`, `mesher3d.py` | Vernetzung, freier 3D-Vernetzer |
+| `statik3d/mesher.py`, `mesher3d.py` | Vernetzung, freier 3D-Vernetzer; `koerper_vernetzen` verteilt die Volumen auf Arbeitsprozesse (`koerper_vorbereiten` rechnet ohne Modelländerung, `koerper_einbauen` schreibt im Hauptprozess), `fortschritt(anteil, text)` meldet aus den Schleifen und bricht mit False ab (`Abgebrochen`) |
 | `statik3d/assemble.py`, `solver.py`, `elements/` | Steifigkeiten, Gleichungslöser, Elemente |
 | `statik3d/ec3/`, `joints/`, `bridges/` | Nachweise |
 | `statik3d/importers/` | Schnittstellen (RFEM, IFC, DXF, SAF, …) |
@@ -127,6 +127,13 @@ Punkte:
   Bilder 7.23, 7.28, 7.33 und 7.36 sind stückweise log-linear
   nachgezeichnet; Seitenwand- und Dachzonen setzen ein rechteckiges
   Gebäude voraus (Hüllquader der gewählten Flächen).
+* **Freier Vernetzer**: die Delaunay-Zerlegung fügt Punkte bis
+  `EINFUEGEN_BIS` (15 000) ein und zerlegt darüber je Durchgang von vorn -
+  Qhulls Einfügemodus brauchte für einen Lagerbock mit 50 000 Punkten 90 s,
+  die Zerlegung von vorn 10 s bei gleichem Netz. Das Netz eines Körpers hängt
+  nicht davon ab, ob er seriell oder in einem Arbeitsprozess gerechnet wurde;
+  gemeinsame Randflächen teilen ihre Knoten über das Wörterbuch `cache` beim
+  Einbau. Innerhalb eines Körpers wird nicht parallelisiert.
 * **Netzdichte**: die intelligente Anpassung kennt nur Kantenlängen
   (kleinste Randlinie je Objekt), keine Krümmung und keine Nachbarschaft;
   Übergänge zwischen grob und fein vernetzten Nachbarflächen entstehen nur,

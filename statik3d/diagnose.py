@@ -85,7 +85,11 @@ def gehaltene_knoten(model) -> tuple:
 def diagnose(model) -> dict:
     """Kennzahlen zur Rechenbarkeit: unvernetzte Geometrie, Teiltragwerke
     ohne Lager, nur durch Kontakt gehaltene Teile, lose Knoten."""
-    flaechen = [n for n, f in (getattr(model, "flaechen", {}) or {}).items() if not (f.elemente or [])]
+    # Randflaechen von Volumen ohne Dicke brauchen kein eigenes Netz - sie
+    # zaehlen nicht als unvernetzt (Model.flaeche_traegt)
+    traegt = getattr(model, "flaeche_traegt", None)
+    flaechen = [n for n, f in (getattr(model, "flaechen", {}) or {}).items()
+                if not (f.elemente or []) and (traegt is None or traegt(n))]
     koerper = [n for n, k in (getattr(model, "koerper", {}) or {}).items() if not (k.elemente or [])]
     teile = teiltragwerke(model)
     fest, kontakt = gehaltene_knoten(model)

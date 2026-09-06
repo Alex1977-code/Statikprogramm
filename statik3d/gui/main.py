@@ -5505,25 +5505,36 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "btn_abbrechen", None) is None:
             self.btn_abbrechen = QtWidgets.QPushButton("Abbrechen")
             self.btn_abbrechen.setFlat(True)
-            self.btn_abbrechen.setToolTip("Nach dem laufenden Objekt anhalten (auch Esc)")
+            self.btn_abbrechen.setToolTip("Anhalten - auch mitten in einem Volumen (auch Esc); "
+                                          "das bisher Erzeugte bleibt")
             self.btn_abbrechen.clicked.connect(self._fortschritt_abbrechen)
             self.statusBar().addPermanentWidget(self.btn_abbrechen)
         self.btn_abbrechen.setVisible(True)
         self._fortschritt_t0 = time.time()
+        self._fortschritt_tick = 0.0
         if text:
             self.statusBar().showMessage(text)
         QtWidgets.QApplication.processEvents()
 
     def _fortschritt_abbrechen(self):
         self._abbruch = True
-        self.statusBar().showMessage("Abbruch angefordert - nach dem laufenden Objekt wird angehalten …")
+        self.statusBar().showMessage("Abbruch angefordert - es wird angehalten …")
 
-    def _fortschritt(self, wert: int, text: str) -> bool:
-        """Balken und Text nachfuehren; False, wenn abgebrochen wurde."""
-        self.progress_bar.setValue(int(wert))
+    def _fortschritt(self, wert, text: str) -> bool:
+        """Balken und Text nachfuehren; False, wenn abgebrochen wurde.
+
+        ``wert`` None laesst den Balken stehen und zaehlt nur die Zeit weiter.
+        Die Ereignisschleife laeuft hoechstens alle 0,15 s - das reicht fuer
+        Anzeige und Abbrechen-Knopf und kostet den Vernetzer nichts.
+        """
+        if wert is not None:
+            self.progress_bar.setValue(int(wert))
         dt = time.time() - getattr(self, "_fortschritt_t0", time.time())
         self.statusBar().showMessage(f"{text}  ({dt:.0f} s)")
-        QtWidgets.QApplication.processEvents()
+        jetzt = time.time()
+        if jetzt - getattr(self, "_fortschritt_tick", 0.0) >= 0.15:
+            self._fortschritt_tick = jetzt
+            QtWidgets.QApplication.processEvents()
         return not getattr(self, "_abbruch", False)
 
     def _fortschritt_ende(self):
@@ -5534,48 +5545,80 @@ class MainWindow(QtWidgets.QMainWindow):
         self._abbruch = False
 
     def _vernetzen(self, flaechen: list, koerper: list) -> int:
-        """Flaechen und Koerper vernetzen und das Protokoll fuehren - mit
-        Fortschrittsbalken je Objekt; Abbrechen behaelt das bisher Erzeugte."""
+        """Flaechen und Koerper vernetzen und das Protokoll fuehren.
+
+        Der Balken ist nach der **geschaetzten Elementzahl** gewichtet, nicht
+        nach Objekten: 1375 Flaechen sind in Sekunden fertig, ein Lagerbock
+        allein braucht Minuten. Die Volumen laufen parallel in
+        Arbeitsprozessen (alle Kerne bis auf einen); Zeit und Text laufen im
+        Sekundentakt mit, Abbrechen wirkt auch mitten in einem Volumen und
+        behaelt das bisher Erzeugte.
+        """
         from .. import fugen
         log = []
         n = 0
-        gesamt = len(flaechen) + len(koerper)
-        self._fortschritt_beginnen(gesamt, f"Vernetzen: {len(flaechen)} Flächen, {len(koerper)} Volumen …")
-        abgebrochen = False
+        prozesse = 1
         # Netzdichte: Teilung je Flaeche und Kantenlaenge je Volumen aus den
         # Netzeinstellungen und der Groesse des Objekts
         from .. import netzdichte as nd
         netz = self.model.netz
+        gewicht: dict = {}
+        try:
+            for name, _art, _h, n_, _grund, teil in nd.vorschau(self.model, netz, flaechen, koerper)["zeilen"]:
+                gewicht[name] = max(1.0, float(n_ or 0.0))
+        except Exception:                  # noqa: BLE001 - dann zaehlt jedes Objekt gleich
+            gewicht = {}
+        # Randflaechen von Volumen ohne Dicke bekommen kein Schalennetz (die
+        # Tetraeder tragen) - sie zaehlen nicht in den Balken
+        ohne_netz = [f.name for f in flaechen if not f.dicke and not self.model.flaeche_traegt(f.name)]
+        for name in ohne_netz:
+            gewicht[name] = 1.0
+        w_f = sum(gewicht.get(f.name, 1.0) for f in flaechen)
+        w_k = sum(gewicht.get(k.name, 1.0) for k in koerper)
+        summe = max(w_f + w_k, 1.0)
+        self._fortschritt_beginnen(1000, f"Vernetzen: {len(flaechen)} Flächen, {len(koerper)} Volumen …")
+        abgebrochen = False
         # Die eigene Teilung jeder Flaeche bleibt erhalten: die Netzdichte
         # bestimmt dieses Netz, nicht die Eingabe - schaltet man „Teilung aus
         # der Netzdichte" wieder aus, gilt wieder, was der Nutzer eingab.
         eigene_teilung = {f.name: list(f.teilung or []) for f in flaechen}
         hs = nd.anwenden(self.model, netz, flaechen, koerper, log)
         log.append(f"Netzeinstellungen: {netz.beschreibung()}")
+        if ohne_netz:
+            log.append(f"{len(ohne_netz)} Randflächen von Volumen ohne Dicke: kein eigenes Netz - "
+                       "ihre Volumen tragen, Lasten darauf gehen über die Randseiten der Tetraeder")
         try:
             # Was aus Kontaktbedingungen entstanden ist, gehoert zum alten Netz.
             fugen.kontaktfugen_zuruecksetzen(self.model, log)
+            erledigt = 0.0
             for i, f in enumerate(flaechen):
-                if not self._fortschritt(i, f"Vernetze Fläche {i + 1} von {len(flaechen)}: {f.name}"):
+                if not self._fortschritt(int(1000 * erledigt / summe),
+                                         f"Vernetze Fläche {i + 1} von {len(flaechen)}: {f.name}"):
                     abgebrochen = True
                     break
                 self._netz_loeschen(f.elemente)
                 f.elemente = []
                 n += len(mesher.mesh_flaeche(self.model, f, log))
+                erledigt += gewicht.get(f.name, 1.0)
             # Ein Woerterbuch fuer alle Koerper dieses Laufs: Koerper, die sich
             # eine Randflaeche teilen, bekommen dort dieselben Knoten. Ohne das
             # stuende jeder Koerper fuer sich und das Modell zerfiele.
             cache: dict = {}
-            for i, k in enumerate(koerper):
-                if abgebrochen or not self._fortschritt(len(flaechen) + i,
-                                                        f"Vernetze Volumen {i + 1} von {len(koerper)}: {k.name}"):
-                    abgebrochen = True
-                    break
-                self._netz_loeschen(k.elemente)
-                k.elemente = []
-                n += len(mesher.mesh_koerper(self.model, k, log, cache=cache,
-                                             h=float(hs.get(k.name, 0.0) or 0.0)))
-            self._fortschritt(gesamt, "Lasten verteilen und Kontaktfugen trennen …")
+            if koerper and not abgebrochen:
+                for k in koerper:
+                    self._netz_loeschen(k.elemente)
+                    k.elemente = []
+                erledigt = w_f
+
+                def ruf(anteil, text):
+                    return self._fortschritt(int(1000 * (w_f + float(anteil or 0.0) * w_k) / summe),
+                                             f"Vernetze Volumen ({len(koerper)}): {text}")
+                erg = mesher.koerper_vernetzen(self.model, koerper, hs=hs, log=log, cache=cache,
+                                               fortschritt=ruf, gewicht=gewicht)
+                n += erg["elemente"]
+                prozesse = erg.get("prozesse", 1)
+                abgebrochen = abgebrochen or bool(erg.get("abgebrochen"))
+            self._fortschritt(1000, "Lasten verteilen und Kontaktfugen trennen …")
             # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
             self.model.lasten_verteilen(log)
             # und die Kontaktfugen koennen jetzt getrennt werden - ohne sie rechnet
@@ -5593,8 +5636,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if n:
             self.analysis = None
             self.results = None
-        self.statusBar().showMessage(f"Vernetzt: {n} Elemente in {time.time() - self._fortschritt_t0:.1f} s"
-                                     + (" - abgebrochen" if abgebrochen else ""), 8000)
+        text = (f"Vernetzt: {n} Elemente in {time.time() - self._fortschritt_t0:.1f} s"
+                + (f" auf {prozesse} Prozessen" if prozesse > 1 else "")
+                + (" - abgebrochen" if abgebrochen else ""))
+        self.log.appendPlainText(text)
+        self.statusBar().showMessage(text, 8000)
         return n
 
     def geometrie_vernetzen(self):
