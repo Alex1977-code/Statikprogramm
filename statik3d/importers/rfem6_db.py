@@ -1707,7 +1707,7 @@ def _solids(db: Db, m: Model, surf_nodes: dict, log: list,
         gesamt = sum(offen.values())
         C.say(log, f"  {gesamt} Koerper ohne Netz (Randflaechenzahl "
                    + ", ".join(f"{k2}: {v}x" for k2, v in sorted(offen.items()))
-                   + ") - dafuer waere ein 3D-Vernetzer noetig. Die Geometrie "
+                   + ") - Netz → Vernetzen fuellt sie mit Tetraedern. Die Geometrie "
                      "steht im Modellbaum und laesst sich dort weiterbearbeiten.")
     if gebogen:
         C.say(log, f"    davon {gebogen} mit krummen Randflaechen "
@@ -1862,6 +1862,14 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
                    + (f", {d['volumen']} Volumen" if d["volumen"] else "")
                    + f", zugeordnet an {d['ziele']} Objekte, Ort {d['ort']}"
                    + (" (deaktiviert)" if d["aus"] else ""))
+        if not flaechen and koerpernamen and gegenflaechen:
+            C.say(log, f"    ohne freigegebene Flaechen: der Koerper "
+                       f"{', '.join(dict.fromkeys(koerpernamen))} wird an den "
+                       f"{len(dict.fromkeys(gegenflaechen))} zugeordneten Flaechen der "
+                       "Gegenseite getrennt (beim Vernetzen)")
+        elif not flaechen and not koerpernamen:
+            C.warn(log, f"    {name}: weder freigegebene Flaechen noch ein geloester Koerper "
+                        "- die Fuge laesst sich nicht ausfuehren")
         for t in d["typen"]:
             teile = []
             for dof in range(6):

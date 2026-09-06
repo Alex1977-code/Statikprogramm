@@ -301,6 +301,47 @@ def test_eigene_flaechen_zug():
           f"R = {getrennt['R_fundament']:.3e} N (Sollwert 0)")
 
 
+def test_fuge_ueber_gegenseite():
+    """RFEM kann eine Freigabe auch ohne freigegebene Flaechen anlegen: nur der
+    geloeste Koerper und die zugeordneten Flaechen der Gegenseite (so die
+    Grundplatte auf ihren Unterlegblechen). Die Fuge entsteht dann aus den
+    Randseiten des Koerpers auf diesen Flaechen - und traegt Druck wie sonst."""
+    def bedingung(m):
+        return m.add_kontaktbedingung(
+            "Fuge", flaechennamen=[], gegenflaechen=["FugeU"], koerpernamen=["Oben"],
+            behaviour={0: DofBehaviour("free"), 1: DofBehaviour("free"),
+                       2: DofBehaviour("free", failure="zug")})
+    m = zwei_bloecke("eigene")
+    kb = bedingung(m)
+    log = []
+    b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+    check("ohne freigegebene Flächen wird die Fuge aus Körper und Gegenflächen gebildet",
+          kb.ausgefuehrt and not b["grund"], b["grund"])
+    check("… als Kontaktpaar mit getrenntem Rand", b["kontaktpaar"] == 1 and b["knoten"] > 0,
+          f"{b['kontaktpaar']} Kontaktpaare, {b['knoten']} Knoten")
+    nach = fugen.gruppen_je_knoten(m)
+    check("danach gehört kein Knoten mehr beiden Bauteilen",
+          all(len(v) == 1 for v in nach.values()),
+          f"{sum(1 for v in nach.values() if len(v) > 1)} gemeinsame Knoten")
+    p = 1.0e6
+    F = p * A_FUGE
+    getrennt = rechnen(m, p)
+    soll = -F * L_STAB / (E_STAHL * A_FUGE)
+    close("das Kontaktpaar trägt den Druck", getrennt["u_oben"], soll, abs(soll) * 0.03, " m")
+    close("und das Fundament trägt die volle Last", getrennt["R_fundament"], F, abs(F) * 1e-6, " N")
+    m2 = zwei_bloecke("eigene")
+    fugen.kontaktfuge_ausfuehren(m2, bedingung(m2), [])
+    zug = rechnen(m2, -p, federn=1.0e11)
+    check("und überträgt keinen Zug", abs(zug["R_fundament"]) <= 1e-6 * F,
+          f"R = {zug['R_fundament']:.3e} N (Sollwert 0)")
+    m3 = zwei_bloecke("eigene")
+    kb3 = m3.add_kontaktbedingung("Fuge", flaechennamen=[], gegenflaechen=[], koerpernamen=["Oben"],
+                                  behaviour={2: DofBehaviour("free", failure="zug")})
+    b3 = fugen.kontaktfuge_ausfuehren(m3, kb3, [])
+    check("ohne Flächen und ohne Gegenflächen: ein Grund statt einer stillen Fuge",
+          not kb3.ausgefuehrt and "Gegenflächen" in b3["grund"], b3["grund"])
+
+
 def test_alle_fugen():
     """kontaktfugen_ausfuehren: Summenbericht und Wiederholbarkeit."""
     m = zwei_bloecke("gemeinsam")
@@ -492,7 +533,7 @@ def test_projizierte_last_bohrung():
 def main():
     for t in (test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
-              test_eigene_flaechen_zug, test_alle_fugen,
+              test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,
               test_lager_werden_mitgenommen, test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung):
         print(f"\n--- {t.__name__} ---")

@@ -595,12 +595,131 @@ def test_geometrielast():
           m2.lasten_verteilen() == n, f"{n} Elementlasten")
 
 
+# --------------------------------------------------------------------------
+# 13) Fortschritt und Abbruch: der Rueckruf laeuft mit, False haelt an
+# --------------------------------------------------------------------------
+def test_fortschritt_und_abbruch():
+    m = neues_modell()
+    k = prisma(m, [[(0, 0), (1, 0), (1, 1), (0, 1)]], 1.0)
+    m.netz.ziellaenge = 0.125
+    rufe = []
+    els = M3.mesh_koerper_frei(m, k, log=[], fortschritt=lambda a, t: rufe.append((a, t)) or True)
+    anteile = [a for a, _ in rufe if a is not None]
+    check("der Rückruf kommt während der Vernetzung oft", bool(els) and len(rufe) >= 10,
+          f"{len(rufe)} Rückrufe")
+    rueckwaerts = sum(1 for a, b in zip(anteile, anteile[1:]) if b < a - 1e-9)
+    check("die Anteile laufen von 0 bis nahe 1 und kaum je zurück",
+          anteile and anteile[0] <= 0.05 and max(anteile) >= 0.9 and rueckwaerts <= 2,
+          f"{anteile[0]:.2f} … {max(anteile):.2f}, {rueckwaerts} Rückschritte")
+    check("die Texte nennen die Schritte",
+          any("Randhülle" in t for _, t in rufe) and any("Tetraedern" in t for _, t in rufe),
+          str([t for _, t in rufe[:4]]))
+    # Abbruch: nach ein paar Rueckrufen False - der Koerper bleibt ohne Netz,
+    # das Modell unveraendert, das Protokoll sagt es
+    m2 = neues_modell()
+    k2 = prisma(m2, [[(0, 0), (1, 0), (1, 1), (0, 1)]], 1.0)
+    m2.netz.ziellaenge = 0.125
+    nn, ne = m2.nn, len(m2.elements)
+    zaehler = [0]
+
+    def stop(_a, _t):
+        zaehler[0] += 1
+        return zaehler[0] < 5
+    log = []
+    els2 = M3.mesh_koerper_frei(m2, k2, log=log, fortschritt=stop)
+    check("Abbrechen lässt den Körper ohne Netz und das Modell unverändert",
+          not els2 and m2.nn == nn and len(m2.elements) == ne and not k2.elemente,
+          f"{len(els2)} Elemente, {m2.nn - nn} neue Knoten")
+    check("und das Protokoll nennt den Abbruch", any("abgebrochen" in z for z in log),
+          log[-1] if log else "-")
+
+
+# --------------------------------------------------------------------------
+# 14) Mehrere Koerper parallel: dasselbe Netz wie seriell, verbunden
+# --------------------------------------------------------------------------
+def _zwei_koerper():
+    """Zwei sechseckige Prismen uebereinander mit gemeinsamer Trennflaeche -
+    keine Sechsflaechner, also Arbeit fuer den freien Vernetzer."""
+    m = neues_modell()
+    n = 6
+    w = np.arange(n) * 2 * np.pi / n
+    ring = np.column_stack([np.cos(w), np.sin(w)])
+    P = np.vstack([np.column_stack([ring, np.full(n, z)]) for z in (0.0, 1.0, 2.0)])
+    m.add_nodes(P)
+    b = Bauer(m)
+    E = [[b.linie(o + i, o + (i + 1) % n) for i in range(n)] for o in (0, n, 2 * n)]
+    V01 = [b.linie(i, i + n) for i in range(n)]
+    V12 = [b.linie(i + n, i + 2 * n) for i in range(n)]
+    for j, nm in enumerate(("F0", "Fm", "F2")):
+        m.add_flaeche(nm, E[j], material="S235")
+    unten, oben = [], []
+    for i in range(n):
+        m.add_flaeche(f"A{i}", [E[0][i], V01[(i + 1) % n], E[1][i], V01[i]], material="S235")
+        m.add_flaeche(f"B{i}", [E[1][i], V12[(i + 1) % n], E[2][i], V12[i]], material="S235")
+        unten.append(f"A{i}")
+        oben.append(f"B{i}")
+    k1 = m.add_koerper("V1", ["F0", "Fm"] + unten, material="S235")
+    k2 = m.add_koerper("V2", ["Fm", "F2"] + oben, material="S235")
+    m.netz.ziellaenge = 0.3
+    return m, k1, k2
+
+
+def _teile(m, els) -> int:
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    zeilen, spalten = [], []
+    for i in els:
+        nd = [int(x) for x in m.elements[i].nodes]
+        for a in nd:
+            zeilen.append(a)
+            spalten.append(nd[0])
+    A = coo_matrix((np.ones(len(zeilen)), (zeilen, spalten)), shape=(m.nn, m.nn))
+    _, marke = connected_components(A, directed=False)
+    benutzt = sorted({int(x) for i in els for x in m.elements[i].nodes})
+    return len(set(marke[benutzt]))
+
+
+def test_parallel_vernetzen():
+    from statik3d import mesher
+    ms, s1, s2 = _zwei_koerper()
+    rufe_s = []
+    erg_s = mesher.koerper_vernetzen(ms, [s1, s2], log=[], workers=1,
+                                     fortschritt=lambda a, t: rufe_s.append((a, t)) or True)
+    check("seriell: beide Körper vernetzt", erg_s["fertig"] == 2 and erg_s["elemente"] > 0,
+          str(erg_s))
+    check("seriell: der Rückruf zählt die Volumenarbeit von 0 bis 1 durch",
+          rufe_s and rufe_s[0][0] <= 0.5 and max(a for a, _ in rufe_s) >= 0.9, str(rufe_s[-1]))
+    mp_, p1, p2 = _zwei_koerper()
+    rufe_p = []
+    log_p = []
+    erg_p = mesher.koerper_vernetzen(mp_, [p1, p2], log=log_p, workers=2,
+                                     fortschritt=lambda a, t: rufe_p.append((a, t)) or True)
+    check("parallel: zwei Arbeitsprozesse, beide Körper vernetzt",
+          erg_p["prozesse"] == 2 and erg_p["fertig"] == 2, str(erg_p))
+    check("parallel gibt genau dasselbe Netz wie seriell",
+          erg_p["elemente"] == erg_s["elemente"] and mp_.nn == ms.nn,
+          f"{erg_p['elemente']} gegen {erg_s['elemente']} Elemente, {mp_.nn} gegen {ms.nn} Knoten")
+    check("und die gemeinsame Fläche verbindet beide Netze",
+          _teile(mp_, p1.elemente + p2.elemente) == 1)
+    close("Netzvolumen beider Körper", netzvolumen(mp_, p1.elemente + p2.elemente),
+          2 * 6 * 0.5 * np.sin(np.pi / 3), 1e-9, " m^3")
+    check("das Protokoll nennt beide Körper", sum(1 for z in log_p if z.startswith("Volumen V")) >= 2,
+          str(log_p[:2]))
+    # Abbrechen: der erste Rueckruf sagt False - nichts wird eingebaut, die
+    # Prozesse werden beendet
+    ma, a1, a2 = _zwei_koerper()
+    erg_a = mesher.koerper_vernetzen(ma, [a1, a2], log=[], workers=2, fortschritt=lambda a, t: False)
+    check("Abbrechen beendet die Arbeitsprozesse und baut nichts ein",
+          erg_a["abgebrochen"] and erg_a["elemente"] == 0 and not ma.elements, str(erg_a))
+
+
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_einspringende_ecke,
               test_platte_mit_bohrung, test_zylinder_und_buchse,
               test_kleines_bauteil, test_gemeinsame_flaeche, test_zugstab,
               test_undichte_huelle, test_quadratische_tetraeder,
-              test_splitter_glaetten, test_geometrielast):
+              test_splitter_glaetten, test_geometrielast,
+              test_fortschritt_und_abbruch, test_parallel_vernetzen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

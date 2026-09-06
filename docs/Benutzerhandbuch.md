@@ -175,7 +175,15 @@ bedienen sind, steht im nächsten Abschnitt.
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
 **Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
-Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall. Statik3D liest sie
+Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall. RFEM legt sie
+auf zwei Arten an: mit **freigegebenen Flächen** (den Kopien der Fugenfläche
+am gelösten Körper) oder **nur mit dem gelösten Körper** und den zugeordneten
+Flächen der Gegenseite - so die Grundplatte eines Lagerbocks, die an den
+sechzehn Oberseiten ihrer Unterlegbleche gelöst wird („0 Flächen, 1 Volumen,
+an 16 Objekten“ im Modellbaum). Beide Arten werden beim Vernetzen ausgeführt;
+in der zweiten sucht das Programm die Randseiten des Körpers, die auf den
+Gegenflächen liegen. Bis dahin steht am Eintrag ein ⚠ („Trennung nicht
+ausgeführt“): das ist vor dem Vernetzen der Normalfall, kein Fehler. Statik3D liest sie
 aus der RFEM-Datei vollständig ein und **führt sie beim Vernetzen auch aus**:
 die Netze werden an der Fuge getrennt, und je nachdem, ob sie Knoten für Knoten
 zusammenpassen, hält sie ein Spaltelement je Knotenpaar oder ein Kontaktpaar
@@ -235,13 +243,18 @@ Knoten auf den Sehnen, denn etwas anderes hat der Anwender nicht angegeben.
 #### Netzdichte und Netzeinstellungen
 
 *Netz → Vernetzen* vernetzt die gewählten - sonst alle - Flächen und Volumen.
+**Randflächen von Volumen ohne eigene Dicke** (in RFEM „Null-Elemente“, die
+Hülle jedes Volumenkörpers) bekommen dabei kein Schalennetz: die Tetraeder
+des Körpers tragen, Lasten auf solchen Flächen gehen über die Randseiten der
+Tetraeder. Ein Schalennetz mit einer Ersatzdicke gäbe der Hülle eine
+Steifigkeit, die es nicht gibt; das Protokoll nennt die Zahl dieser Flächen.
 Die Elementgröße kommt aus den **Netzeinstellungen** (*Netz →
 Netzeinstellungen…*, mit der Datei gespeichert):
 
 | Angabe | Bedeutung |
 |---|---|
 | Netzdichte | **grob / mittel / fein**: 8 / 16 / 32 Elemente über die größte Abmessung jedes Objekts - ein 4 m langer Träger und eine 8 cm dicke Lasche bekommen so je ihr passendes Netz; **eigene**: die Ziellänge gilt absolut (so übernimmt sie der RFEM-Import) |
-| Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge) |
+| Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz **der Flächen** dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge). Bei **Volumen** bleibt die Kantenlänge - der freie Vernetzer folgt der Feinheit des Randes von selbst (Bohrung fein, Inneres grob); eine ganze Platte auf ihre Bohrung herunterzuteilen gäbe nur das Vielfache an Tetraedern |
 | Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)) |
 | Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall; Volumen linear (tet4) oder quadratisch (tet10) |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
@@ -251,11 +264,24 @@ je Objekt und gesamt ins Protokoll - vor dem Vernetzen, damit ein Modell
 mit hunderttausend Tetraedern nicht überrascht. Das Protokoll nennt beim
 Vernetzen je Objekt die gewählte Elementgröße und ihren Grund.
 
-Beim Vernetzen zeigt die Statuszeile einen **Fortschrittsbalken** („Vernetze
-Fläche 120 von 1375: …“ mit Laufzeit); die Oberfläche bleibt bedienbar.
-**Abbrechen** (Knopf neben dem Balken oder Esc) hält nach dem laufenden
-Objekt an - das bisher Erzeugte bleibt, die übrigen Objekte bleiben ohne
-Netz, das Protokoll sagt es.
+Beim Vernetzen zeigt die Statuszeile einen **Fortschrittsbalken** mit
+Laufzeit („Vernetze Fläche 120 von 1375: …“, „Vernetze Volumen (108): 12 von
+108 fertig, 5 in Arbeit auf 3 Prozessen (V30, V14, …)“). Der Balken ist nach
+der **geschätzten Elementzahl** gewichtet, nicht nach Objekten: 1375 Flächen
+sind in Sekunden fertig, ein Lagerbock allein braucht Minuten - der Balken
+zeigt darum die wirkliche Arbeit, und Zeit und Text laufen auch mitten in
+einem großen Volumen im Sekundentakt mit (Randhülle, Tetraedern mit
+Verfeinerungsdurchgang, Splitter glätten, Randtreue).
+
+Die **Volumen laufen parallel**: alle Kerne bis auf einen rechnen in
+Arbeitsprozessen (der letzte bleibt der Oberfläche, die dabei bedienbar
+bleibt), gedeckelt durch *Berechnung → Einstellungen → Prozesse*. Die großen
+Körper starten zuerst, damit am Ende nicht ein Prozess allein auf den
+Lagerbock wartet; der Einbau ins Modell geschieht in der Reihenfolge des
+Fertigwerdens, das Netz ist dasselbe wie nacheinander. **Abbrechen** (Knopf
+neben dem Balken oder Esc) wirkt sofort - auch mitten in einem Volumen; die
+Arbeitsprozesse werden beendet, das bisher Erzeugte bleibt, die übrigen
+Objekte bleiben ohne Netz, das Protokoll sagt es.
 
 #### Der freie Vernetzer
 
