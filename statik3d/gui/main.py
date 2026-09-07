@@ -63,6 +63,43 @@ ZEILENHOEHE = 15
 _namen = dsg.namen
 
 
+def protokollordner() -> str:
+    """Wohin die Mitschrift geht: in die Benutzerdaten, nicht neben die exe.
+
+    Ein installiertes Programm liegt unter Umstaenden in "Program Files", und
+    dort darf es nicht schreiben. Windows nimmt %LOCALAPPDATA%, sonst gilt
+    ~/.local/share - beides gehoert dem Anwender und ueberlebt ein Update.
+    """
+    basis = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_DATA_HOME")
+    if not basis:
+        basis = os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(basis, "Statik3D", "Protokolle")
+
+
+class Protokollfeld(QtWidgets.QPlainTextEdit):
+    """Protokollfenster, das jede Zeile zugleich in eine Datei schreibt.
+
+    Es gibt rund dreissig Stellen, die ins Protokoll schreiben. Statt sie alle
+    anzufassen, faengt das Feld selbst mit: was im Fenster steht, steht auch in
+    der Datei - und die ueberlebt einen Absturz.
+    """
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.mitschrift = None
+
+    def appendPlainText(self, text):          # noqa: N802 - Qt-Schreibweise
+        super().appendPlainText(text)
+        f = self.mitschrift
+        if f is None:
+            return
+        try:
+            f.write(str(text) + "\n")
+            f.flush()
+        except (OSError, ValueError):
+            self.mitschrift = None
+
+
 def _bewegung_kurz(s) -> str:
     """Die unausgeglichene Last einer freien Bewegung in einer Zeile.
 
@@ -8598,9 +8635,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # unten muss strukturiert werden“).
         tabs = dsg.Tabellenbereich(self.TABELLENGRUPPEN)
         self.tab_unten = tabs
-        self.log = QtWidgets.QPlainTextEdit()
+        self.log = Protokollfeld()
         self.log.setReadOnly(True)
         self.log.setStyleSheet("font-family: monospace; font-size: 11px;")
+        # Ein langer Lauf schreibt zehntausende Zeilen. Ohne Grenze waechst das
+        # Textdokument unbegrenzt, und sein Layout liegt in Qt6Gui - genau der
+        # Bibliothek, in der der Absturz vom 07.09. lag. 20.000 Zeilen reichen
+        # zum Nachlesen; alles Aeltere steht in der Protokolldatei.
+        self.log.setMaximumBlockCount(20000)
+        self._protokolldatei = None
+        self._protokoll_oeffnen()
+        self.log.mitschrift = self._protokolldatei
         tabs.addTab(self.log, "Protokoll")
         self._build_eingabetabellen(tabs)
         self._build_ergebnistabellen(tabs)
@@ -9307,6 +9352,41 @@ class MainWindow(QtWidgets.QMainWindow):
     # ==================================================================
     # Hilfen
     # ==================================================================
+    def _protokoll_oeffnen(self) -> None:
+        """Mitschrift neben dem Programm - damit ein Absturz den Lauf nicht frisst.
+
+        Der Lauf vom 07.09. lief neun Minuten und war danach weg: das Protokoll
+        stand nur im Fenster. Jetzt geht jede Zeile sofort auf die Platte, mit
+        flush - ein abgestuerzter Prozess raeumt seine Puffer nicht mehr.
+        """
+        import datetime
+        try:
+            ordner = protokollordner()
+            os.makedirs(ordner, exist_ok=True)
+            name = "Statik3D_%s.log" % datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            self._protokollpfad = os.path.join(ordner, name)
+            self._protokolldatei = open(self._protokollpfad, "a", encoding="utf-8",
+                                        buffering=1)
+            self._protokolldatei.write(f"Statik3D {datetime.datetime.now():%d.%m.%Y %H:%M:%S}\n")
+            self._protokolldatei.write(f"Mitschrift: {self._protokollpfad}\n")
+            self._protokolldatei.flush()
+        except OSError:            # ein schreibgeschuetzter Ordner darf nicht sperren
+            self._protokolldatei = None
+            self._protokollpfad = ""
+
+    def _mitschreiben(self, text: str) -> None:
+        """Eine Zeile in die Protokolldatei, sofort und ohne Puffer."""
+        f = getattr(self, "_protokolldatei", None)
+        if f is None:
+            return
+        try:
+            f.write(text + "\n")
+            f.flush()      # kein fsync: gegen einen Prozessabsturz genuegt der
+                           # Puffer des Betriebssystems, und fsync je Zeile
+                           # kostet bei zehntausenden Zeilen spuerbar Zeit
+        except (OSError, ValueError):
+            self._protokolldatei = None
+
     def info(self, msg):
         self.log.appendPlainText(str(msg))
         self.statusBar().showMessage(str(msg), 5000)
@@ -12883,7 +12963,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rechnung_t0 = time.time()
         self._rechnung_name = label
         self.statusBar().showMessage(f"{label} läuft …")
-        self.log.appendPlainText(f"\n--- {label} gestartet ({parallel.describe()}) ---")
+        from .. import solver as _slv
+        self.log.appendPlainText(
+            f"\n--- {label} gestartet ---"
+            f"\n    Prozesspool (Elementschleifen, Vernetzen): {parallel.describe()}"
+            f"\n    Gleichungsloeser: {_slv.loeser_verfuegbar()}")
         self.worker = SolveWorker(func)
         self.worker.progress.connect(self.info)
         self.worker.fortschritt.connect(self._rechnung_fortschritt)

@@ -140,9 +140,40 @@ erzeugt dann im Stab das Moment N·e, während der Knoten nur N sieht.
 ### 1.3 Gleichungslöser
 
 Die globale Steifigkeitsmatrix wird als dünnbesetzte Matrix assembliert und
-einmal faktorisiert (SuperLU; optional Intel MKL Pardiso über `pypardiso`
-oder CHOLMOD über `scikit-sparse`, wenn installiert). Alle Lastfälle werden
-mit derselben Faktorisierung gelöst. Nach dem Lösen wird das Residuum
+einmal faktorisiert. Alle Lastfälle werden mit derselben Faktorisierung
+gelöst.
+
+Der Löser wird in dieser Reihenfolge gesucht: **Intel MKL PARDISO**
+(`pypardiso`), **CHOLMOD** (`scikit-sparse`), **SuperLU** (in scipy immer
+vorhanden). Das Windows-Programm bringt MKL mit, so dass PARDISO greift; der
+Selbsttest beim Bau bricht ab, wenn es fehlt.
+
+Der Unterschied ist keine Feinheit. PARDISO rechnet über OpenMP auf mehreren
+Threads, SuperLU ist **streng einkernig** — daran ändert keine Einstellung
+etwas, es ist eine Eigenschaft des Lösers. An einem Würfel aus
+Sechsflächnern mit 34.914 Freiheitsgraden gemessen:
+
+| Löser | Faktorisieren | Speicher |
+|---|---|---|
+| SuperLU (1 Kern) | 12,25 s | +0,49 GB |
+| PARDISO (4 Threads) | **1,38 s** | **+0,39 GB** |
+
+Also 8,9-mal schneller bei 20 % weniger Speicher, mit derselben Lösung.
+Die Threadzahl ist `cpu_count() − 1`: der eine Kern bleibt der Oberfläche,
+damit sich das Fenster während der Faktorisierung noch bedienen lässt. Wer
+`MKL_NUM_THREADS` oder `OMP_NUM_THREADS` selbst setzt, behält den Vorrang.
+
+Fällt der Löser doch auf SuperLU zurück, wird **symmetrisch geordnet**
+(`MMD_AT_PLUS_A` statt `COLAMD`). Die Steifigkeitsmatrix ist strukturell
+symmetrisch, COLAMD ordnet für unsymmetrisches LU und füllt darum mehr auf:
+am Würfel mit 19.494 Freiheitsgraden 22,5 statt 25,3 Millionen Einträge in
+L+U bei 3,2 statt 4,9 Sekunden.
+
+Was in der Statuszeile steht, ist seit diesem Stand eindeutig getrennt: der
+**Prozesspool** („lokal, 31 von 32 Kernen“) gilt für Elementschleifen,
+Aufträge und die Vernetzung, der **Gleichungslöser** meldet sich mit Namen
+und Threadzahl gesondert. Vorher stand dort nur die Zahl des Prozesspools,
+und die las sich, als rechne auch der Löser so. Nach dem Lösen wird das Residuum
 |K u − F| / |F| geprüft; numerisch singuläre Systeme (fehlende Lagerung,
 freie Bauteile) werden als Fehler gemeldet statt unbemerkt falsche Ergebnisse
 zu liefern.

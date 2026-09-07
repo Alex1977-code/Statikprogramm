@@ -29,6 +29,8 @@ jobs:
       - name: Pakete installieren
         run: |
           python -m pip install --upgrade pip
+          # pypardiso und mkl stehen in requirements.txt: ohne sie faellt der
+          # Loeser auf SuperLU zurueck, und das rechnet auf genau einem Kern.
           pip install -r requirements.txt pyinstaller pillow reportlab svglib qrcode
 
       - name: Build-Stempel schreiben

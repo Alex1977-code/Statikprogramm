@@ -4,9 +4,14 @@ PySide6>=6.5
 pyvista>=0.42
 pyvistaqt>=0.11
 zstandard>=0.21     # HiCAD-Archive (.sza/.kra/.fga) sind zstd-gepackt
+# Mehrkern-Gleichungsloeser. Ohne ihn faellt der Loeser auf SuperLU zurueck,
+# und SuperLU rechnet auf genau einem Kern - am Wuerfel mit 34.914 FHG
+# 12,25 s statt 1,38 s. Die exe bringt MKL mit (siehe packaging/Statik3D.spec).
+pypardiso>=0.4
+mkl
+
 # optional:
 # gmsh>=4.11        CAD-Import (STEP/IGES/BREP/STL)
-# pypardiso mkl     Mehrkern-Gleichungsloeser (Intel MKL Pardiso): 155k FHG in 3 s statt 110 s
 # scikit-sparse     CHOLMOD-Loeser
 # reportlab, svglib PDF-Bericht direkt aus dem Programm
 # qrcode            QR-Code der Handy-Adresse beim Start von run_web.py

@@ -34,17 +34,51 @@ from . import parallel
 # ==========================================================================
 # Linearer Gleichungsloeser (Faktorisierung wiederverwendbar)
 # ==========================================================================
+def mkl_threads() -> int:
+    """Threads fuer den Mehrkern-Loeser: alle Kerne bis auf einen.
+
+    Der eine bleibt der Oberflaeche - sonst ruckelt das Fenster waehrend der
+    Faktorisierung. Ein selbst gesetztes MKL_NUM_THREADS/OMP_NUM_THREADS hat
+    Vorrang; wer die Zahl von Hand vorgibt, meint es so.
+
+    Muss **vor** dem ersten Laden von mkl_rt laufen: MKL liest die Umgebung
+    beim Initialisieren, spaeteres Setzen bleibt wirkungslos.
+    """
+    import os
+    for name in ("MKL_NUM_THREADS", "OMP_NUM_THREADS"):
+        wert = os.environ.get(name, "").strip()
+        if wert.isdigit() and int(wert) > 0:
+            return int(wert)
+    n = max(1, (os.cpu_count() or 2) - 1)
+    for name in ("MKL_NUM_THREADS", "OMP_NUM_THREADS"):
+        os.environ.setdefault(name, str(n))
+    return n
+
+
 def _find_mkl():
     """MKL-Laufzeitbibliothek fuer pypardiso finden (pip install mkl legt sie
-    ausserhalb des Suchpfads ab)."""
+    ausserhalb des Suchpfads ab; im PyInstaller-Bundle liegt sie neben der exe
+    entpackt in sys._MEIPASS)."""
     import os
     import glob
     import sys
+    mkl_threads()
     if os.environ.get("PYPARDISO_MKL_RT"):
         return
+    basen = [sys.prefix, os.path.join(sys.prefix, "Library", "bin"),
+             os.path.join(sys.prefix, "lib"), "/usr/local/lib", "/usr/lib"]
+    mei = getattr(sys, "_MEIPASS", "")
+    if mei:
+        # Im Bundle liegen die DLLs beieinander; Windows findet die
+        # Abhaengigkeiten von mkl_rt nur, wenn das Verzeichnis im Suchpfad ist.
+        basen[:0] = [mei, os.path.join(mei, "Library", "bin")]
+        if hasattr(os, "add_dll_directory") and os.path.isdir(mei):
+            try:
+                os.add_dll_directory(mei)
+            except OSError:
+                pass
     pats = []
-    for base in (sys.prefix, os.path.join(sys.prefix, "Library", "bin"),
-                 os.path.join(sys.prefix, "lib"), "/usr/local/lib", "/usr/lib"):
+    for base in basen:
         pats += [os.path.join(base, "libmkl_rt.so*"), os.path.join(base, "mkl_rt*.dll"),
                  os.path.join(base, "libmkl_rt*.dylib")]
     try:
@@ -78,13 +112,44 @@ def _melde(progress, text: str, anteil: float = None) -> None:
         progress(text)
 
 
+NAMEN = {"pardiso": "MKL PARDISO", "cholmod": "CHOLMOD", "superlu": "SuperLU",
+         "none": "keiner"}
+
+
+def loeser_verfuegbar() -> str:
+    """Welcher Loeser stuende bereit - ohne zu faktorisieren.
+
+    Fuer die Meldung beim Start einer Rechnung. Bisher stand dort, wie viele
+    Kerne der **Prozesspool fuers Vernetzen** hat; ueber das Loesen sagte das
+    nichts, und bei fehlendem MKL war es schlicht irrefuehrend.
+    """
+    try:
+        _find_mkl()
+        import pypardiso                                   # noqa: F401
+        return f"MKL PARDISO, {mkl_threads()} Threads"
+    except Exception:                                      # noqa: BLE001
+        pass
+    try:
+        from sksparse.cholmod import cholesky              # noqa: F401
+        return "CHOLMOD"
+    except Exception:                                      # noqa: BLE001
+        pass
+    return "SuperLU, einkernig (kein MKL/CHOLMOD im Programm)"
+
+
 class LinearSolver:
     """Faktorisiert K einmal; solve() fuer beliebig viele rechte Seiten.
-    Backends: pypardiso (MKL, mehrere Threads), scikit-sparse CHOLMOD, SuperLU."""
+    Backends: pypardiso (MKL, mehrere Threads), scikit-sparse CHOLMOD, SuperLU.
+
+    ``threads`` sagt, mit wie vielen Threads tatsaechlich gerechnet wurde.
+    SuperLU ist streng einkernig und meldet darum immer 1 - das ist keine
+    Einstellungssache, sondern eine Eigenschaft des Loesers.
+    """
 
     def __init__(self, K: sparse.spmatrix, backend: str = None):
         self.n = K.shape[0]
         self.backend = "none"
+        self.threads = 1
         be = backend or parallel.settings().solver_backend
         self._solve = None
         self._K = None
@@ -102,6 +167,7 @@ class LinearSolver:
                 ps.factorize(Kcsr)
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
+                self.threads = mkl_threads()
             except Exception:
                 if be == "pardiso":
                     raise
@@ -115,9 +181,18 @@ class LinearSolver:
                 if be == "cholmod":
                     raise
         if self._solve is None:
-            lu = splu(K, permc_spec="COLAMD")
+            # MMD_AT_PLUS_A statt COLAMD: die Steifigkeitsmatrix ist
+            # strukturell symmetrisch, COLAMD ordnet fuer unsymmetrisches LU.
+            # Am Wuerfel mit 19.494 FHG gemessen: 22,5 statt 25,3 Mio. Eintraege
+            # in L+U (11 % weniger Speicher) bei 3,2 statt 4,9 s.
+            lu = splu(K, permc_spec="MMD_AT_PLUS_A")
             self._solve = lu.solve
             self.backend = "superlu"
+
+    def beschreibung(self) -> str:
+        """Wie in Protokoll und Statuszeile: Loeser und Threads."""
+        return NAMEN.get(self.backend, self.backend) + (
+            f", {self.threads} Threads" if self.threads > 1 else ", einkernig")
 
     def solve(self, b: np.ndarray, check: bool = True) -> np.ndarray:
         b = np.asarray(b, float)
@@ -438,7 +513,8 @@ class StaticSystem:
             self.t_assemble += time.time() - t0
             if self._progress:
                 _melde(self._progress,
-                       f"Faktorisiert ({self.backend}, {time.time() - t0:.2f} s)", 0.32)
+                       f"Faktorisiert ({self._solver.beschreibung()}, "
+                       f"{time.time() - t0:.2f} s)", 0.32)
         return self._solver
 
     def freie_bewegungen(self, erzwingen: bool = False) -> list:
@@ -849,7 +925,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         # welche Last in der Bewegung ins Nichts geht - und entscheidet selbst.
         if not system.hilfsfesselung():
             raise
-        _melde(progress, f"{len(system.singular)} freie Bewegungen gefunden - "
+        n_sg = len(system.singular)
+        _melde(progress, f"{n_sg} freie Bewegung{'' if n_sg == 1 else 'en'} gefunden - "
                "wird mit Hilfsfesselung gerechnet")
         u, R, aktiv_eff = _rechnen()
         u = system.ohne_starrkoerper(u)

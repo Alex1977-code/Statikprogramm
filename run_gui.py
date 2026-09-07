@@ -10,6 +10,40 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
+def _absturzspur():
+    """Bei einem harten Absturz den Python-Stapel in eine Datei schreiben.
+
+    Am 07.09.2026 ist eine Rechnung nach neun Minuten mit einer
+    Zugriffsverletzung in Qt6Gui.dll weggebrochen. Zurueck blieb ein
+    Ereigniseintrag mit einer Adresse - ohne Absturzabbild und Debugger sagt
+    der nichts darueber, was das Programm gerade tat.
+
+    faulthandler kostet nichts und aendert am Ablauf nichts: er haengt sich in
+    die Signale fuer Zugriffsverletzung, Busfehler und Abbruch und schreibt im
+    Ernstfall die Aufrufkette aller Threads. Liegt der Absturz in Qt oder VTK,
+    steht wenigstens da, welche Python-Zeile ihn ausgeloest hat.
+    """
+    try:
+        import faulthandler
+        basis = (os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_DATA_HOME")
+                 or os.path.join(os.path.expanduser("~"), ".local", "share"))
+        ordner = os.path.join(basis, "Statik3D", "Protokolle")
+        os.makedirs(ordner, exist_ok=True)
+        # offen halten, solange das Programm laeuft - beim Absturz schreibt
+        # faulthandler direkt in diesen Dateizeiger
+        spur = open(os.path.join(ordner, "absturz.txt"), "a", encoding="utf-8")
+        import datetime
+        spur.write(f"\n=== Start {datetime.datetime.now():%d.%m.%Y %H:%M:%S} ===\n")
+        spur.flush()
+        faulthandler.enable(file=spur, all_threads=True)
+        globals()["_ABSTURZSPUR"] = spur          # nicht einsammeln lassen
+    except Exception:              # noqa: BLE001 - eine Diagnose darf nie sperren
+        pass
+
+
+_absturzspur()
+
+
 def _selftest() -> int:
     """Alle Pakete laden, ein Beispiel rechnen, Ergebnis (oder Fehler) in
     statik3d_selbsttest.txt schreiben. Rueckgabe 0 = in Ordnung."""
@@ -27,9 +61,20 @@ def _selftest() -> int:
         from statik3d import solver, examples_lib, update
         from statik3d.web import server  # noqa: F401
         lines.append(update.describe())
+        # Welcher Gleichungsloeser steckt wirklich in dieser exe? Fehlt MKL,
+        # rechnet SuperLU auf genau einem Kern - das ist beim Bau vom 07.09.
+        # unbemerkt ausgeliefert worden und hat eine Rechnung neun Minuten
+        # lang bei 20 % stehen lassen. Darum wird es hier geprueft und, wenn
+        # es fehlt, mit Rueckgabe 1 zum Fehler des Baus gemacht.
+        loeser = solver.loeser_verfuegbar()
+        lines.append(f"Gleichungsloeser: {loeser}")
         r = solver.solve_static(examples_lib.frame_example())
         lines.append(f"Beispiel Rahmen: umax = {r.umag.max() * 1000:.3f} mm")
-        lines.append("OK")
+        if not loeser.startswith("MKL PARDISO"):
+            lines.append("FEHLER: kein Mehrkern-Loeser im Programm - MKL fehlt im Bundle")
+            code = 1
+        else:
+            lines.append("OK")
     except BaseException:      # noqa: BLE001 - alles in die Datei, nie ein Meldungsfenster
         lines.append(traceback.format_exc())
         code = 1

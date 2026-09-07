@@ -10,7 +10,8 @@ Mehrkernrechnung, Rechnerfarm und statischem Bericht.
 ```bash
 pip install -r requirements.txt        # numpy, scipy, PySide6, pyvista, pyvistaqt
 pip install gmsh                       # optional: CAD-Import STEP/IGES/STL
-pip install pypardiso mkl              # optional: schneller Mehrkern-Gleichungslöser (Intel MKL)
+pip install pypardiso mkl              # Mehrkern-Gleichungslöser (Intel MKL); ohne ihn rechnet
+                                       # die Faktorisierung auf genau einem Kern
 pip install reportlab svglib           # optional: PDF-Bericht direkt aus dem Programm
 
 python run_gui.py                      # oder: python -m statik3d.gui
@@ -1900,12 +1901,36 @@ Nachweis mit seiner Verformung je Kombination.
   Backend „Rechnerfarm“ mit Server, Port und
   Schlüssel (siehe `Rechnerfarm.md`). „Lokalen Server + Worker starten“
   macht den eigenen Rechner zum Farm-Server.
+* **Prozesspool und Gleichungslöser sind zweierlei.** Der Pool oben verteilt
+  Elementschleifen und die Vernetzung auf Prozesse. Das Lösen des
+  Gleichungssystems macht ein einzelner Prozess mit eigenen Threads. Das
+  Protokoll nennt beim Start einer Rechnung darum beides getrennt:
+
+  ```
+  --- Berechnung gestartet ---
+      Prozesspool (Elementschleifen, Vernetzen): lokal, 31 von 32 Kernen
+      Gleichungslöser: MKL PARDISO, 31 Threads
+  ```
+
+  Steht dort „SuperLU, einkernig“, fehlt der Mehrkern-Löser: dann rechnet
+  die Faktorisierung auf genau einem Kern, gleichgültig wie viele die
+  Maschine hat. Das Windows-Programm bringt Intel MKL mit, so dass PARDISO
+  greift - an einem Modell mit 34.914 Freiheitsgraden 1,4 statt 12,3
+  Sekunden je Faktorisierung. Wer aus dem Quelltext arbeitet, installiert
+  ihn mit `pip install pypardiso mkl`.
 * Die Berechnung läuft im Hintergrund. Die Statuszeile zeigt einen
   **Fortschrittsbalken mit Prozentzahl** und daneben, woran das Programm
   gerade ist und wie lange es schon läuft („Berechnung: Lastfall W (5/12)
   (48 %, 73 s)“). Die Schritte sind: Gleichungssystem aufstellen,
   faktorisieren, Lastfälle, Kombinationen, Umhüllende, Nachweise. Jede
   Zeile steht auch im Protokoll.
+* **Das Protokoll überlebt einen Absturz.** Jede Zeile geht sofort in eine
+  Mitschrift unter `%LOCALAPPDATA%\Statik3D\Protokolle` (unter Linux
+  `~/.local/share/Statik3D/Protokolle`), eine Datei je Programmstart. Stürzt
+  das Programm mitten in einer langen Rechnung ab, ist der Verlauf dort
+  trotzdem vollständig nachzulesen - im Fenster wäre er weg. Das Fenster
+  selbst hält die letzten 20.000 Zeilen; alles Ältere steht nur noch in der
+  Datei.
 * **Vor dem Rechnen** prüft das Programm die Rechenbarkeit. Flächen und
   Volumen **ohne Netz** tragen nichts (nach einem Import aus RFEM oder
   HiCAD besteht das Modell oft nur aus Geometrie und ein paar Stäben): es
