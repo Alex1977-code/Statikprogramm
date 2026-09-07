@@ -120,6 +120,8 @@ VERFEINERN_FAKTOR = 1.5
 VERFEINERN_ANLAEUFE = 3
 #: So viele Elemente sollen ueber die duennste Abmessung liegen (6V/A)
 DICKE_TEILUNG = 5
+#: Hoechste Zahl von Abschnitten auf einer einzelnen Randlinie
+MAX_ABSCHNITTE = 400
 
 
 # --------------------------------------------------------------------------
@@ -427,8 +429,19 @@ class Linienteilung:
     weitergereicht, und die Klasse bekommt die groesste geforderte Teilung.
     """
 
-    def __init__(self, model: Model, flaechen: list, h: float):
+    def __init__(self, model: Model, flaechen: list, h: float, h_linien: dict = None,
+                 h_flaechen: dict = None):
         self.model, self.h = model, max(float(h), 1e-9)
+        #: Kantenlaenge je Linie, wenn eine andere gilt als die des Koerpers.
+        #: Eine Linie, an der zwei Koerper haengen, muss in beiden gleich
+        #: geteilt werden - sonst vernetzen sie ihre gemeinsame Flaeche
+        #: verschieden, ihre Knoten fallen nicht mehr zusammen und die Fuge
+        #: faellt auseinander. Siehe linien_kantenlaengen().
+        self.h_linien = dict(h_linien or {})
+        #: Kantenlaenge je Flaeche - das feinste h der Koerper, die sie
+        #: beranden. Bewusst **nicht** das Minimum ihrer Linien: sonst zoege
+        #: eine Bohrung die ganze Platte auf ihre Feinheit herunter.
+        self.h_flaechen = dict(h_flaechen or {})
         self.vater: dict = {}
         namen = set()
         for f in flaechen:
@@ -448,11 +461,26 @@ class Linienteilung:
         self.gruppe: dict = {}
         for name in namen:
             self.gruppe.setdefault(self._wurzel(name), []).append(name)
+        # Obergrenze je Linie. Ohne sie sprengt die Bindung gegenueberliegender
+        # Seiten das Netz: eine lange Linie, die ueber einen kleinen
+        # Nachbarkoerper dessen feines h erbt, kaeme auf zehntausende
+        # Abschnitte, und _coons_netz spannte daraus ein Gitter von
+        # 73.953 x 10.829 Punkten auf - 18 GB. Mehr als ein paar hundert
+        # Abschnitte auf einer Randlinie ist ohnehin kein sinnvolles Netz.
+        grenze = MAX_ABSCHNITTE
+        max_el = int(getattr(getattr(model, "netz", None), "max_elemente", 0) or 0)
+        if max_el > 0:
+            grenze = min(grenze, max(8, int(max_el ** 0.5)))
+        self.gekappt: list = []
         for wurzel, mitglieder in self.gruppe.items():
             k = 1
             for x in mitglieder:
-                k = max(k, int(round(_linienlaenge(model, x) / self.h)),
+                hx = max(float(self.h_linien.get(x, self.h)), 1e-9)
+                k = max(k, int(round(_linienlaenge(model, x) / hx)),
                         _bogenabschnitte(model, x))
+            if k > grenze:
+                self.gekappt.append((mitglieder[0], k, grenze))
+                k = grenze
             for x in mitglieder:
                 self.n[x] = k
 
@@ -486,6 +514,17 @@ class Linienteilung:
         ra, rb = self._wurzel(a), self._wurzel(b)
         if ra != rb:
             self.vater[ra] = rb
+
+    def h_fuer(self, flaeche) -> float:
+        """Kantenlaenge **dieser Flaeche**: die feinste ihrer Randlinien.
+
+        Nicht die des Koerpers. Sonst bekaeme eine Flaeche, die zwei Koerper
+        teilen, von jedem ein anderes Innennetz - der Rand paesste (ueber die
+        Linienteilung), das Innere nicht, und die gemeinsamen Knoten waeren
+        weg. Genau daran fiel die Fuge auseinander: der untere Block vernetzte
+        sie mit 200 mm, der obere mit 250 mm.
+        """
+        return max(float(self.h_flaechen.get(getattr(flaeche, "name", ""), self.h)), 1e-9)
 
     def punkte(self, name: str) -> np.ndarray:
         return _linienpunkte(self.model, name, self.n.get(name, 1))
@@ -629,6 +668,7 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     zug = _linienzug(teilung, model, flaeche.linien or [])
     if zug is None:
         return np.zeros((0, 3)), np.zeros((0, 3), int), "Rand schliesst nicht", []
+    hf = teilung.h_fuer(flaeche)          # gehoert der Flaeche, nicht dem Koerper
     aussen, herkunft = zug
     ringe3, quellen = [aussen], [herkunft]
     for loch in (flaeche.oeffnungen or []):
@@ -647,11 +687,11 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
                 return P, T, "", []
         achse = zylinderpassung(model, flaeche, alle)
         if achse is not None:
-            P, T, fehlt = _zylindernetz(flaeche, ringe3, teilung.h, achse)
+            P, T, fehlt = _zylindernetz(flaeche, ringe3, hf, achse)
             if len(T):
                 return P, T, "", _linien_zu(fehlt, ringe3, quellen)
     ringe = [np.stack([(R - c) @ e1, (R - c) @ e2], axis=1) for R in ringe3]
-    P2, T, fehlt = _dreiecke_2d(ringe, teilung.h)
+    P2, T, fehlt = _dreiecke_2d(ringe, hf)
     if not len(T):
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
                 "Netz in der Ebene misslungen", _linien_zu(fehlt, ringe3, quellen))
@@ -1626,8 +1666,73 @@ def _ausdehnung(model: Model, koerper) -> float:
     return float(np.max(P.max(axis=0) - P.min(axis=0)))
 
 
+def kantenlaengen_karte(model: Model, koerper=None, h: float = 0.0) -> tuple:
+    """(h je Flaeche, h je Linie) - beide vom Modell, nicht vom einzelnen Koerper.
+
+    :func:`_kantenlaenge` gibt jedem Koerper seine eigene Kantenlaenge - ein
+    kleiner Bolzen wird feiner vernetzt als die Platte, an der er sitzt. Teilen
+    sich zwei Koerper eine Flaeche und vernetzen sie verschieden, fallen ihre
+    Knoten nicht mehr zusammen: die Fuge zwischen ihnen faellt auseinander. Am
+    Fugentest liess sich das messen - von 56 Fugenknoten waren nur noch vier
+    verdoppelt, die Stauchung lag um 374 % daneben.
+
+    Darum entscheidet **nicht der Koerper**, wie fein eine Flaeche vernetzt
+    wird, sondern die Flaeche: sie bekommt das feinste h aller Koerper, die sie
+    beranden, und beide vernetzen sie danach gleich. Die Linien bekommen ihr h
+    von den Flaechen, die sie beranden - wieder das feinste; das ist der Kanal,
+    ueber den zwei benachbarte Flaechen an ihrer gemeinsamen Kante
+    zusammenpassen.
+
+    Die Trennung der beiden Karten ist der Kern. Nimmt man fuer eine Flaeche
+    das Minimum ihrer Linien, zieht eine Bohrung die ganze Platte auf ihre
+    Feinheit herunter - und das ist ausdruecklich nicht gewollt: um eine
+    Bohrung sind die Randdreiecke klein, und die Kantenlaenge waechst von dort
+    ins Innere (siehe netzdichte.elementlaenge).
+    """
+    koerper = list(koerper if koerper is not None else model.koerper.values())
+    h_flaechen: dict = {}
+    for k in koerper:
+        try:
+            hk = _kantenlaenge(model, k, h)
+        except Exception:                 # noqa: BLE001 - eine Schaetzung darf nie sperren
+            continue
+        for fn in (k.flaechen or []):
+            if fn not in h_flaechen or hk < h_flaechen[fn]:
+                h_flaechen[fn] = hk
+    h_linien: dict = {}
+    for fn, hf in h_flaechen.items():
+        f = model.flaechen.get(fn)
+        if f is None:
+            continue
+        namen = list(f.linien or [])
+        for loch in (f.oeffnungen or []):
+            namen.extend(loch)
+        for ln in namen:
+            if ln not in h_linien or hf < h_linien[ln]:
+                h_linien[ln] = hf
+    return h_flaechen, h_linien
+
+
+def linien_kantenlaengen(model: Model, koerper=None, h: float = 0.0) -> dict:
+    """Nur die Linienkarte - siehe :func:`kantenlaengen_karte`.
+
+    Warum das noetig ist: :func:`_kantenlaenge` gibt jedem Koerper seine eigene
+    Kantenlaenge - ein kleiner Bolzen wird feiner vernetzt als die Platte, an
+    der er sitzt. Die Linienteilung haengt daran, und damit auch das Netz der
+    Randflaechen. Teilen sich zwei Koerper eine Flaeche und vernetzen sie
+    verschieden, fallen ihre Knoten nicht mehr zusammen: die Fuge zwischen
+    ihnen faellt auseinander.
+
+    Am Fugentest liess sich das messen - von 56 Fugenknoten waren nur noch vier
+    verdoppelt, und die Stauchung lag um 374 % daneben.
+
+    """
+    return kantenlaengen_karte(model, koerper, h)[1]
+
+
 def randschale(model: Model, koerper, h: float, log: list = None,
-               fortschritt=None) -> tuple:
+               fortschritt=None, h_linien: dict = None,
+               h_flaechen: dict = None) -> tuple:
     """Die geschlossene Dreieckshuelle eines Koerpers: (P, T, Bericht).
 
     Der Bericht fuehrt unter ``quelle`` je Dreieck die Randflaeche mit, von
@@ -1645,7 +1750,7 @@ def randschale(model: Model, koerper, h: float, log: list = None,
     if fehlt:
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
                 {"fehler": f"Randflächen fehlen: {', '.join(fehlt)}"})
-    teilung = Linienteilung(model, flaechen, h)
+    teilung = Linienteilung(model, flaechen, h, h_linien, h_flaechen)
     nachgeteilt: set = set()
     for runde in range(4):
         P_teile, T_teile, quelle, gruende = [], [], [], {}
@@ -2009,7 +2114,8 @@ def netzguete(tb: dict, bericht: dict) -> dict:
 
 
 def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
-                        fortschritt=None) -> dict:
+                        fortschritt=None, h_linien: dict = None,
+                        h_flaechen: dict = None) -> dict:
     """Die Rechenarbeit eines Koerpers: Randhuelle und Tetraeder - ohne das
     Modell zu veraendern.
 
@@ -2040,7 +2146,10 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
         anlaeufe = VERFEINERN_ANLAEUFE if getattr(netz, "nachvernetzen", True) else 1
         for anlauf in range(1, anlaeufe + 1):
             _melden(fortschritt, 0.0, "Randhülle bilden")
-            P, T, bericht = randschale(model, koerper, h, zeilen, fortschritt)
+            # h_linien bleibt ueber alle Anlaeufe dasselbe: die Randflaechen
+            # gehoeren auch dem Nachbarn, nur das Innere wird feiner.
+            P, T, bericht = randschale(model, koerper, h, zeilen, fortschritt,
+                                       h_linien=h_linien, h_flaechen=h_flaechen)
             if bericht.get("fehler"):
                 aus["fehler"] = f"{bericht['fehler']} - nicht vernetzt."
                 return aus
@@ -2205,7 +2314,8 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
 
 def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
                       log: list = None, cache: dict = None,
-                      ordnung: int = 0, fortschritt=None) -> list[int]:
+                      ordnung: int = 0, fortschritt=None,
+                      h_linien: dict = None, h_flaechen: dict = None) -> list[int]:
     """Einen Volumenkoerper frei in Tetraeder vernetzen.
 
     ``h`` ist die angestrebte Kantenlaenge; 0 nimmt die Netzeinstellungen des
@@ -2220,6 +2330,8 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
     sich in einen Arbeitsprozess auslagern), :func:`koerper_einbauen`
     schreibt ins Modell.
     """
-    aus = koerper_vorbereiten(model, koerper, h, log, fortschritt)
+    if h_linien is None or h_flaechen is None:
+        h_flaechen, h_linien = kantenlaengen_karte(model, h=h)
+    aus = koerper_vorbereiten(model, koerper, h, log, fortschritt, h_linien, h_flaechen)
     aus["log"] = []                     # steht schon im Protokoll
     return koerper_einbauen(model, koerper, aus, log, cache, ordnung)
