@@ -1863,7 +1863,10 @@ Nachweis mit seiner Verformung je Kombination.
   Knotennummern, statt dass der Solver mit „Factor is exactly singular“
   abbricht. Teile, die nur ein einseitiges Lager oder ein Kontaktpaar hält,
   sind ein Hinweis, kein Fehler - ob sie tragen, entscheidet die
-  Kontakt-Iteration. **Entartete Elemente** ohne Ausdehnung (zwei Ecken auf
+  Kontakt-Iteration. Dabei zählen **beide Seiten** einer Kontaktfuge: ein
+  Bauteil, das ausschließlich Gegenseite ist - ein Passstift in seiner
+  Bohrung, ein Unterlegblech unter einer Grundplatte -, wird vom Kontakt
+  genauso gehalten wie die gelöste Seite. **Entartete Elemente** ohne Ausdehnung (zwei Ecken auf
   demselben Knoten oder alle Punkte in einer Ebene) haben weder Steifigkeit
   noch Masse. Sie **werden bei der Rechnung übergangen** - das ist exakt und
   nicht genähert, denn sie tragen ohnehin nichts - und die Modellprüfung

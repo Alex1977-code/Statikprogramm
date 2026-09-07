@@ -35,7 +35,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from statik3d import fugen, mesher3d as M3, solver          # noqa: E402
+from statik3d import diagnose, fugen, mesher3d as M3, solver   # noqa: E402
 from statik3d.model import DofBehaviour, Material, Model    # noqa: E402
 
 RESULTS = []
@@ -371,6 +371,55 @@ def test_alle_fugen():
     check("was nicht geht, steht mit Grund im Protokoll",
           g3["offen"] == 1 and any("nicht ausgeführt" in z for z in log2),
           "; ".join(log2)[:70])
+
+
+def test_diagnose_sieht_die_gegenseite():
+    """Die Gegenseite eines Kontaktpaars haelt ihr Bauteil - die Diagnose muss
+    das sehen.
+
+    Ein Kontaktpaar aus einer Fuge traegt seine Gegenseite als **Facetten**
+    (``master_faces``), nicht als Elementliste; ``master_elements`` bleibt leer.
+    Wer nur die Elementliste liest, sieht die Gegenseite gar nicht und haelt
+    jedes Bauteil, das ausschliesslich Gegenseite ist, fuer ein Teiltragwerk
+    ohne Lager. Im Drehlagermodell waren das 66 von 88 Teilen - die
+    Passstifte, die Unterlegbleche und die Grundplatte -, und die Rechnung
+    brach mit "FEHLER: 66 Teiltragwerke ohne Lager" ab, obwohl der Kontakt
+    sie alle haelt.
+    """
+    m = zwei_bloecke("eigene")
+    kb = m.add_kontaktbedingung(
+        "Fuge", flaechennamen=["FugeO"], gegenflaechen=["FugeU"], koerpernamen=["Oben"],
+        behaviour={2: DofBehaviour("free", failure="zug")})
+    fugen.kontaktfuge_ausfuehren(m, kb, [])
+    cp = m.contact_pairs[-1]
+    check("das Kontaktpaar trägt seine Gegenseite als Facetten, nicht als Elemente",
+          bool(cp.master_faces) and not cp.master_elements,
+          f"{len(cp.master_faces)} Facetten, {len(cp.master_elements)} Elemente")
+    fest_kn = _flaechenknoten(m, 2.0)          # nur der geloeste Koerper ist gelagert
+    for i in fest_kn:
+        m.fix(i, [0, 1, 2])
+    fest, kontakt = diagnose.gehaltene_knoten(m)
+    unten = {int(k) for e in m.elements if str(getattr(e, "group", "")) == "Unten"
+             for k in e.nodes}
+    check("die Knoten der Gegenseite zählen als durch Kontakt gehalten",
+          bool(unten & kontakt), f"{len(unten & kontakt)} von {len(unten)}")
+    d = diagnose.diagnose(m)
+    check("das Bauteil auf der Gegenseite gilt nicht als ungelagert",
+          not d["ohne_lager"], f"{len(d['ohne_lager'])} ohne Lager")
+    check("sondern als nur durch Kontakt gehalten",
+          len(d["nur_kontakt"]) == 1, f"{len(d['nur_kontakt'])} nur Kontakt")
+    check("und das Modell gilt als rechenbar", d["rechenbar"])
+    z = diagnose.meldungen(m, d)
+    check("kein FEHLER „Teiltragwerk ohne Lager“",
+          not any(x.startswith("FEHLER") and "ohne Lager" in x for x in z),
+          "; ".join(z)[:80] or "keine Meldung")
+    check("stattdessen der Hinweis auf den Kontakt",
+          any("Kontakt" in x for x in z), "; ".join(z)[:80] or "keine Meldung")
+    # Gegenprobe: ohne das Kontaktpaar ist die Gegenseite wirklich ungelagert
+    m.contact_pairs.clear()
+    check("ohne das Kontaktpaar meldet die Diagnose das Teil zu Recht",
+          len(diagnose.diagnose(m)["ohne_lager"]) == 1,
+          str(len(diagnose.diagnose(m)["ohne_lager"])))
 
 
 def test_lager_werden_mitgenommen():
@@ -751,6 +800,7 @@ def main():
     for t in (test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
               test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,
+              test_diagnose_sieht_die_gegenseite,
               test_lager_werden_mitgenommen, test_verschieden_feine_netze, test_verbund,
               test_spalt_schliessen, test_zylinder_in_bohrung, test_starre_flaeche, test_naechste_punkte,
               test_freie_rechtecklast,

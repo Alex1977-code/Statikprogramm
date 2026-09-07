@@ -73,11 +73,20 @@ def gehaltene_knoten(model) -> tuple:
         for k in (getattr(g, "nodes", None) or (getattr(g, "node_a", None), getattr(g, "node_b", None))):
             if k is not None:
                 kontakt.add(int(k))
+    from .contact import master_facets
     for cp in getattr(model, "contact_pairs", []) or []:
         kontakt.update(int(k) for k in (cp.slave_nodes or []))
-        for ei in (cp.master_elements or []):
-            if 0 <= int(ei) < len(model.elements):
-                kontakt.update(int(k) for k in model.elements[int(ei)].nodes)
+        # Beide Seiten zaehlen. Die Gegenseite steht in aller Regel als
+        # Facetten in ``master_faces`` - so legt fugen.py ein Kontaktpaar an -,
+        # als Elementliste in ``master_elements`` nur bei einem von Hand ueber
+        # Elemente gebildeten Paar. Wer nur ``master_elements`` liest, sieht
+        # die Gegenseite gar nicht: jedes Bauteil, das ausschliesslich
+        # Gegenseite ist - die Passstifte, die Unterlegbleche, die Grundplatte
+        # eines Lagerbocks -, haette dann weder Lagerknoten noch Slave-Knoten
+        # und stuende als "Teiltragwerk ohne Lager" da, obwohl der Kontakt es
+        # haelt. ``master_facets`` loest beide Felder auf.
+        for f in master_facets(model, cp):
+            kontakt.update(int(k) for k in f)
     kontakt.discard(-1)
     return fest, kontakt
 
