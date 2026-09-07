@@ -862,6 +862,133 @@ def test_naechste_punkte():
           f"max Abweichung {dq:.1e}, Rekonstruktion {rek:.1e}")
 
 
+# --------------------------------------------------------------------------
+# Der Spalt einer Fuge und der Formschluss
+# --------------------------------------------------------------------------
+def _facette(m, punkte, normale):
+    """Eine Facette (Element, Knoten, Aussennormale) aus vier Punkten."""
+    nd = [int(m.add_node(*p)) for p in punkte]
+    return (0, nd, np.asarray(normale, float))
+
+
+def test_spalt_laengs_der_normalen():
+    """Der Spalt ist der Abstand SENKRECHT zur Fuge, nicht im Raum.
+
+    An einem Absatz steht die Flanke des einen Teils regelmaessig ueber die
+    des anderen hinaus. Beide liegen dann in derselben Ebene und beruehren
+    sich - im Raum gemessen kaeme dort ein Spalt in Hoehe des Ueberstands
+    heraus. Am Beispielmodell waren das 34,4 mm bei einem Normalabstand von
+    0,000 mm.
+    """
+    m = Model()
+    # Kontaktseite: eine Flanke in der Ebene x = 0, z von 0 bis 0,1
+    seite = [_facette(m, [(0, 0, 0), (0, 0.1, 0), (0, 0.1, 0.1), (0, 0, 0.1)],
+                      (-1, 0, 0))]
+    # Gegenseite 1: dieselbe Ebene, aber 0,3 m hoeher - kein Gegenueber
+    hoch = _facette(m, [(0, 0, 0.4), (0, 0.1, 0.4), (0, 0.1, 0.5), (0, 0, 0.5)],
+                    (1, 0, 0))
+    paare, abstand = fugen.gegenseite_finden(m, seite, [hoch], 0.5)
+    check("Flanke ohne Gegenüber bleibt ungepaart (nur Querversatz)",
+          not paare and not np.isfinite(abstand[0]),
+          f"Paare {len(paare)}, Abstand {abstand[0]}")
+
+    # Gegenseite 2: genau gegenueber, 3 mm entfernt -> Spalt = 3 mm
+    m2 = Model()
+    seite2 = [_facette(m2, [(0, 0, 0), (0, 0.1, 0), (0, 0.1, 0.1), (0, 0, 0.1)],
+                       (-1, 0, 0))]
+    gegen2 = [_facette(m2, [(-0.003, 0, 0), (-0.003, 0.1, 0),
+                            (-0.003, 0.1, 0.1), (-0.003, 0, 0.1)], (1, 0, 0))]
+    paare2, abstand2 = fugen.gegenseite_finden(m2, seite2, gegen2, 0.05)
+    close("gegenüberliegende Fläche: Spalt = ihr Abstand", abstand2[0], 0.003,
+          1e-9, " m")
+
+    # Gegenseite 3: dieselbe Ebene, halb versetzt - sie ueberdeckt noch
+    m3 = Model()
+    seite3 = [_facette(m3, [(0, 0, 0), (0, 0.1, 0), (0, 0.1, 0.1), (0, 0, 0.1)],
+                       (-1, 0, 0))]
+    gegen3 = [_facette(m3, [(0, 0.05, 0.05), (0, 0.15, 0.05),
+                            (0, 0.15, 0.15), (0, 0.05, 0.15)], (1, 0, 0))]
+    paare3, abstand3 = fugen.gegenseite_finden(m3, seite3, gegen3, 0.05)
+    check("halb versetzte, anliegende Fläche zählt mit Spalt null",
+          bool(paare3) and abstand3[0] < 1e-12,
+          f"Paare {len(paare3)}, Spalt {abstand3[0]:.3e} m")
+
+
+def test_formschluss():
+    """Wie viele Richtungen die Form der Fuge haelt.
+
+    Eine ebene Fuge traegt eine Richtung (1/0/0), ein Absatz mit zwei Flanken
+    alle drei. Die Fuge des Lagerbocks im Beispielmodell hat 0,78/0,13/0,09.
+    """
+    m = Model()
+    eben = [_facette(m, [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], (0, 0, 1))]
+    w, V = fugen.formschluss(m, eben)
+    check("ebene Fuge hält nur eine Richtung",
+          abs(w[0] - 1.0) < 1e-9 and w[1] < 1e-9 and w[2] < 1e-9,
+          " / ".join(f"{x:.3f}" for x in w))
+    check("und das ist ihre Normale", abs(abs(V[2, 0]) - 1.0) < 1e-9,
+          str(np.round(V[:, 0], 3)))
+
+    m2 = Model()
+    # Boden 1 x 1 m und zwei Flanken 1 x 0,2 m in x und y
+    absatz = [
+        _facette(m2, [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], (0, 0, 1)),
+        _facette(m2, [(0, 0, 0), (0, 1, 0), (0, 1, 0.2), (0, 0, 0.2)], (-1, 0, 0)),
+        _facette(m2, [(0, 0, 0), (1, 0, 0), (1, 0, 0.2), (0, 0, 0.2)], (0, -1, 0)),
+    ]
+    w2, V2 = fugen.formschluss(m2, absatz)
+    check("Absatz mit zwei Flanken hält alle drei Richtungen",
+          int((w2 >= fugen.FORMSCHLUSS_MIN).sum()) == 3,
+          " / ".join(f"{x:.3f}" for x in w2))
+    close("und der Boden trägt 1/(1+0,2+0,2) der Fläche", w2[0], 1.0 / 1.4,
+          1e-9)
+
+
+def test_formschluss_meldung():
+    """Was das Protokoll zur reibungsfreien Fuge sagt - Form statt Pauschale."""
+    m = Model()
+    kb = m.add_kontaktbedingung("Fuge")
+    frei = DofBehaviour(typ="free")
+    kn = DofBehaviour(typ="free", failure="druck")
+
+    eben = [_facette(m, [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], (0, 0, 1))]
+    log = []
+    fugen._gleiten_melden(kb, kn, [frei, frei], 0.0, log, m, eben)
+    text = " ".join(str(x) for x in log)
+    check("ebene Fuge ohne Reibung: die Warnung bleibt",
+          "frei gleiten" in text and "WARNUNG" in text.upper(), text[:90])
+
+    m2 = Model()
+    kb2 = m2.add_kontaktbedingung("Absatz")
+    absatz = [
+        _facette(m2, [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], (0, 0, 1)),
+        _facette(m2, [(0, 0, 0), (0, 1, 0), (0, 1, 0.2), (0, 0, 0.2)], (-1, 0, 0)),
+        _facette(m2, [(0, 0, 0), (1, 0, 0), (1, 0, 0.2), (0, 0, 0.2)], (0, -1, 0)),
+    ]
+    log2 = []
+    fugen._gleiten_melden(kb2, kn, [frei, frei], 0.0, log2, m2, absatz)
+    text2 = " ".join(str(x) for x in log2)
+    check("Absatz ohne Reibung: kein Warnzeichen, sondern der Formschluss",
+          "Form" in text2 and "kann nicht gleiten" in text2
+          and "WARNUNG" not in text2.upper(), text2[:110])
+
+    m3 = Model()
+    kb3 = m3.add_kontaktbedingung("Nut")
+    nut = [
+        _facette(m3, [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], (0, 0, 1)),
+        _facette(m3, [(0, 0, 0), (0, 1, 0), (0, 1, 0.2), (0, 0, 0.2)], (-1, 0, 0)),
+    ]
+    log3 = []
+    fugen._gleiten_melden(kb3, kn, [frei, frei], 0.0, log3, m3, nut)
+    text3 = " ".join(str(x) for x in log3)
+    check("eine Flanke: hält in zwei Richtungen, die dritte wird benannt",
+          "zwei Richtungen" in text3 and "Richtung y" in text3, text3[:130])
+
+    log4 = []
+    fugen._gleiten_melden(kb3, kn, [frei, frei], 0.3, log4, m3, nut)
+    check("mit Reibung sagt die Meldung gar nichts", not log4, str(log4))
+
+
 def main():
     for t in (test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
@@ -869,6 +996,8 @@ def main():
               test_suchradius_kommt_aus_der_fuge, test_diagnose_sieht_die_gegenseite,
               test_lager_werden_mitgenommen, test_verschieden_feine_netze, test_verbund,
               test_spalt_schliessen, test_zylinder_in_bohrung, test_starre_flaeche, test_naechste_punkte,
+              test_spalt_laengs_der_normalen, test_formschluss,
+              test_formschluss_meldung,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung):
         print(f"\n--- {t.__name__} ---")

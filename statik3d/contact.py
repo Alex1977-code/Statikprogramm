@@ -493,6 +493,7 @@ class ContactSystem:
         A, B, Cc = E[:, 0], E[:, 1], E[:, 2]
         S = E.mean(axis=1)
         R = np.sqrt(((E - S[:, None, :]) ** 2).sum(2).max(1))   # Umkreis (grob)
+        N = np.array([t[1] for t in tris], dtype=float)          # Normale je Dreieck
         rmax = float(R.max())
         knoten = np.array([t[0] for t in tris], dtype=int)
         baum = cKDTree(S)
@@ -511,8 +512,22 @@ class ContactSystem:
                 ohne.append(int(s))
                 continue
             q, w = naechste_punkte_dreiecke(p, A[idx], B[idx], Cc[idx])
-            dist = np.linalg.norm(q - p, axis=1)
-            j = int(np.argmin(dist))
+            # Der Abstand zaehlt **laengs der Master-Normalen**; was quer dazu
+            # liegt, ist Versatz in der Fugenebene und kein Abheben. Und der
+            # Knoten muss auf der Facette liegen: steht er weiter als deren
+            # Umkreis ueber den Rand hinaus, steht ihm dort nichts gegenueber.
+            weg = q - p
+            laengs = np.einsum("ij,ij->i", weg, N[idx])
+            quer = np.linalg.norm(weg - laengs[:, None] * N[idx], axis=1)
+            dist = np.abs(laengs)
+            auf = quer <= np.maximum(R[idx], 1e-12)
+            if not auf.any():
+                ohne.append(int(s))
+                continue
+            wahl = np.flatnonzero(auf)
+            # Gewaehlt wird die raeumlich naechste Facette - wie bisher; nur
+            # der Abstand, der daraus als Spalt wird, zaehlt laengs der Normalen.
+            j = int(wahl[np.argmin(np.linalg.norm(weg[wahl], axis=1))])
             if dist[j] > radius:
                 ohne.append(int(s))
                 continue

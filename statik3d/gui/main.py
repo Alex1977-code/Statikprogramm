@@ -1257,8 +1257,11 @@ class MainWindow(QtWidgets.QMainWindow):
                  hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0)
         if getattr(self, "_stabstrecken_stand", None) == stand:
             return self._stabstrecken_zwischen
-        paare = [(int(e.nodes[0]), int(e.nodes[-1])) for e in m.elements
-                 if e.typ in vp.TYPEN_STAEBE and len(e.nodes) >= 2]
+        nummern, paare = [], []
+        for i, e in enumerate(m.elements):
+            if e.typ in vp.TYPEN_STAEBE and len(e.nodes) >= 2:
+                nummern.append(i)
+                paare.append((int(e.nodes[0]), int(e.nodes[-1])))
         if paare:
             idx = np.asarray(paare, int)
             out = (m.nodes[idx[:, 0]], m.nodes[idx[:, 1]])
@@ -1266,7 +1269,19 @@ class MainWindow(QtWidgets.QMainWindow):
             out = (np.zeros((0, 3)), np.zeros((0, 3)))
         self._stabstrecken_stand = stand
         self._stabstrecken_zwischen = out
+        self._stabstrecken_nummern = nummern
         return out
+
+    def _stabelemente(self) -> list:
+        """Nummern der Stabelemente - aus demselben Zwischenspeicher wie
+        :meth:`_stabstrecken`, damit beide dieselbe Reihenfolge haben.
+
+        Ohne den Speicher lief die Suche unter dem Zeiger bei jeder Mausruhe
+        einmal ueber alle Elemente; bei 389.000 Tetraedern kostet allein das
+        mehr als das Bild.
+        """
+        self._stabstrecken()
+        return getattr(self, "_stabstrecken_nummern", [])
 
     def _zellentreffer(self):
         """Was der VTK-Zellenpicker unter dem Zeiger trifft.
@@ -1386,9 +1401,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _stabelement_am_zeiger(self):
         """Nummer des Stabelements unter dem Zeiger (Bildschirmpunkte) - oder None."""
-        m = self.model
-        idx = [i for i, e in enumerate(m.elements)
-               if e.typ in vp.TYPEN_STAEBE and len(e.nodes) >= 2]
+        idx = self._stabelemente()
         if not idx:
             return None
         A, B = self._stabstrecken()
@@ -1885,7 +1898,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     pl.add_mesh(pv.lines_from_points(np.asarray(pts, float)),
                                 color=self.FARBE_HOVER, line_width=7, name="hover")
             elif elemente:
-                teil = vp.to_grid(m).extract_cells(np.asarray(elemente, int))
+                teil = vp.teilnetz(m, elemente)
                 if teil.n_cells > 2000:
                     teil = teil.extract_surface()
                 pl.add_mesh(teil, color=self.FARBE_HOVER, opacity=0.7, show_edges=True,
@@ -2426,9 +2439,17 @@ class MainWindow(QtWidgets.QMainWindow):
         treffer = self._strecken_am_zeiger(A, B)
         return namen[treffer[0]] if treffer is not None else None
 
-    def _stab_am_zeiger(self):
-        """Name des Stabes unter dem Zeiger - in Bildschirmpunkten gemessen."""
+    def _stabstrecken_benannt(self):
+        """(A, B, Namen) der Elemente aller Staebe - je Modellstand einmal.
+
+        Wie :meth:`_stabstrecken`, nur nach Staeben benannt. Auch das lief
+        vorher bei jeder Mausruhe neu.
+        """
         m = self.model
+        stand = (id(m), len(m.elements), len(m.members), m.nn,
+                 hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0)
+        if getattr(self, "_stabbenannt_stand", None) == stand:
+            return self._stabbenannt_zwischen
         A, B, namen = [], [], []
         for name, mem in (m.members or {}).items():
             for e in (mem.elements or []):
@@ -2440,9 +2461,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 A.append(m.nodes[idx[0]])
                 B.append(m.nodes[idx[-1]])
                 namen.append(name)
-        if not A:
+        out = (np.asarray(A) if A else np.zeros((0, 3)),
+               np.asarray(B) if B else np.zeros((0, 3)), namen)
+        self._stabbenannt_stand = stand
+        self._stabbenannt_zwischen = out
+        return out
+
+    def _stab_am_zeiger(self):
+        """Name des Stabes unter dem Zeiger - in Bildschirmpunkten gemessen."""
+        A, B, namen = self._stabstrecken_benannt()
+        if not len(A):
             return None
-        treffer = self._strecken_am_zeiger(np.asarray(A), np.asarray(B))
+        treffer = self._strecken_am_zeiger(A, B)
         return namen[treffer[0]] if treffer is not None else None
 
     def _build_glasleiste(self):
@@ -3437,6 +3467,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.baum.bearbeiten.connect(self._baum_bearbeiten)
         self.baum.neu.connect(self._baum_neu)
         self.baum.loeschen.connect(self._baum_loeschen)
+        self.baum.mehrfach.connect(self._baum_mehrfach)
+        self.baum.viele_bearbeiten.connect(self._baum_viele_bearbeiten)
+        self.baum.viele_loeschen.connect(self._baum_viele_loeschen)
         dock.setWidget(self.baum)
         # Der Baum traegt jetzt Namen und Zusatzangabe nebeneinander (Knoten mit
         # Koordinaten, Lager mit Wirkung); unter 290 px bleibt vom Namen nichts.
@@ -6299,8 +6332,14 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
         return antwort == QtWidgets.QMessageBox.Yes
 
-    def _baum_loeschen(self, art: str, name: str):
-        """Rechtsklick „Löschen“ oder Entf im Modellbaum - mit Rueckfrage."""
+    def _baum_loeschen(self, art: str, name: str, sammel: bool = False):
+        """Rechtsklick „Löschen“ oder Entf im Modellbaum - mit Rueckfrage.
+
+        ``sammel`` fuer das Loeschen mehrerer Eintraege auf einmal: die
+        Rueckfrage hat der Aufrufer schon gestellt, und Meldung und Neuzeichnen
+        kommen einmal am Ende statt bei jedem Objekt. Rueckgabe ist dann der
+        Grund, warum es nicht ging (leer = geloescht).
+        """
         m = self.model
         was = {"knoten": f"Knoten K{name}", "linie": f"Linie {name}", "stabelement": f"Stab E{name}",
                "stab": f"Stab mit Nachweis {name} (die Elemente bleiben)",
@@ -6323,7 +6362,7 @@ class MainWindow(QtWidgets.QMainWindow):
                "werkstoff": f"Werkstoff {name}", "dicke": f"Dicke {name}"}.get(art)
         if was is None:
             return
-        if not self._bestaetigen(f"{was} wirklich löschen?"):
+        if not sammel and not self._bestaetigen(f"{was} wirklich löschen?"):
             return
         grund = ""
         # Der Stand **vor** dem Loeschen gehoert auf den Rueckgaengig-Stapel;
@@ -6514,14 +6553,119 @@ class MainWindow(QtWidgets.QMainWindow):
             if art not in SELBST and self._undo and self._undo[-1][0] == f"{was} gelöscht":
                 self._undo.pop()
                 self._undo_knoepfe()
-            return self.error(grund)
+            return grund if sammel else self.error(grund)
         self.analysis = None
         self.results = None
         self.selection = np.array([], dtype=int)
         self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
         self.leuchtet = []
         self.maskenrand.schliessen()
+        if sammel:
+            return ""
         self.info(f"{was} gelöscht")
+        self.refresh_all()
+
+    #: Eintragsart im Modellbaum -> Art der Sammelmaske (:meth:`sammelmaske`)
+    BAUM_SAMMELART = {"knoten": "knoten", "stabelement": "element", "linie": "linie",
+                      "stab": "stab", "geoflaeche": "flaeche",
+                      "geokoerper_einzeln": "volumen", "lager_einzeln": "lager",
+                      "kontaktbedingung": "kontakt"}
+
+    #: Eintragsarten, deren Name eine Nummer ist - die Sammelmaske und das
+    #: Loeschen brauchen sie als Zahl, und geloescht wird von hinten.
+    BAUM_NUMMERNARTEN = {"knoten", "stabelement", "lager_einzeln",
+                         "linienlager_einzeln", "flaechenlager_einzeln",
+                         "berichtseintrag"}
+
+    def _baum_mehrfach(self, art: str, namen: list):
+        """Mehrere Eintraege im Modellbaum gewaehlt: alle zusammen auswaehlen.
+
+        Der einzelne Klick geht ueber :meth:`_baum_objekt_waehlen`; hier
+        stehen die Arten, die sich sinnvoll zu mehreren zeigen lassen. Alles
+        andere faellt auf den zuletzt angeklickten zurueck, damit die Auswahl
+        nie ins Leere laeuft.
+        """
+        m = self.model
+        namen = [str(x) for x in namen]
+        self.leuchtet = []
+        self.selection = np.array([], dtype=int)
+        self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
+        if art == "knoten":
+            self.auswahlart_setzen("Knoten")
+            kn = [int(x) for x in namen if x.lstrip("-").isdigit() and 0 <= int(x) < m.nn]
+            self.selection = np.array(kn, dtype=int)
+            text = f"{len(kn)} Knoten"
+        elif art == "linie":
+            self.auswahlart_setzen("Linie")
+            self.sel_linien = [x for x in namen if x in m.lines]
+            text = f"{len(self.sel_linien)} Linien"
+        elif art == "stab":
+            self.auswahlart_setzen("Stab")
+            self.sel_staebe = [x for x in namen if x in m.members]
+            self.leuchtet = [int(e) for x in self.sel_staebe
+                             for e in (m.members[x].elements or [])]
+            text = f"{len(self.sel_staebe)} Stäbe"
+        elif art == "geoflaeche":
+            self.auswahlart_setzen("Fläche")
+            self.sel_flaechen = [x for x in namen if x in m.flaechen]
+            self.leuchtet = [int(e) for x in self.sel_flaechen
+                             for e in (m.flaechen[x].elemente or [])]
+            text = f"{len(self.sel_flaechen)} Flächen"
+        elif art == "geokoerper_einzeln":
+            self.auswahlart_setzen("Volumen")
+            self.sel_koerper = [x for x in namen if x in m.koerper]
+            self.leuchtet = [int(e) for x in self.sel_koerper
+                             for e in (m.koerper[x].elemente or [])]
+            text = f"{len(self.sel_koerper)} Volumen"
+        elif art == "stabelement":
+            self.auswahlart_setzen("Knoten")
+            elems = [int(x) for x in namen
+                     if x.isdigit() and 0 <= int(x) < len(m.elements)]
+            self.leuchtet = elems
+            self.selection = np.array(list(dict.fromkeys(
+                int(n) for i in elems for n in m.elements[i].nodes)), dtype=int)
+            text = f"{len(elems)} Stabelemente"
+        else:
+            # Keine eigene Mehrfachdarstellung: der zuletzt gewaehlte zaehlt
+            return self._baum_geklickt(art, namen[-1])
+        self.lbl_sel.setText(f"{text} ausgewählt (Modellbaum)")
+        tab = self.BAUM_TABELLE.get(art)
+        if tab:
+            self.tabelle_zeigen(tab)
+        self.redraw()
+
+    def _baum_viele_bearbeiten(self, art: str, namen: list):
+        """Rechtsklick „Bearbeiten“ auf mehreren Eintraegen: die Sammelmaske."""
+        sammelart = self.BAUM_SAMMELART.get(art)
+        if not sammelart:
+            return self.error(f"Für {art} gibt es keine Sammelbearbeitung")
+        werte = [int(x) for x in namen if str(x).lstrip("-").isdigit()] \
+            if art in self.BAUM_NUMMERNARTEN else [str(x) for x in namen]
+        if not werte:
+            return
+        return self.sammelmaske(sammelart, werte)
+
+    def _baum_viele_loeschen(self, art: str, namen: list):
+        """Mehrere Eintraege auf einmal loeschen - eine Rueckfrage, ein Bild."""
+        namen = [str(x) for x in dict.fromkeys(namen)]
+        if not namen:
+            return
+        if not self._bestaetigen(f"{len(namen)} Einträge wirklich löschen?"):
+            return
+        # Nummern von hinten: sonst verschiebt das erste Loeschen alle folgenden
+        if art in self.BAUM_NUMMERNARTEN:
+            namen.sort(key=lambda x: int(x) if x.lstrip("-").isdigit() else 0,
+                       reverse=True)
+        geloescht, gruende = 0, []
+        for name in namen:
+            grund = self._baum_loeschen(art, name, sammel=True)
+            if grund:
+                gruende.append(f"{name}: {grund}")
+            else:
+                geloescht += 1
+        self.info(f"{geloescht} von {len(namen)} Einträgen gelöscht"
+                  + (" - " + "; ".join(gruende[:4])
+                     + (" …" if len(gruende) > 4 else "") if gruende else ""))
         self.refresh_all()
 
     def _linienknoten(self, linien) -> list[int]:
@@ -13699,7 +13843,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if not elems:
                 continue
             try:
-                teil = vp.to_grid(m).extract_cells(np.asarray(elems, int))
+                teil = vp.teilnetz(m, elems)
                 if teil.n_cells > 2000:
                     # grosse Koerper: nur ihre Oberflaeche leuchtet
                     teil = teil.extract_surface()
