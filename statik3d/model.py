@@ -1969,12 +1969,27 @@ class Kontaktbedingung:
         """Netz da, Fuge nicht ausgefuehrt: das Modell rechnet hier zu steif."""
         return not self.ausgefuehrt and not self.aus and not self.wartet_auf_netz(model)
 
+    def fuge(self) -> str:
+        """Woran die Fuge haengt - in Worten, fuer Baum, Maske und Bericht.
+
+        Zwei Faelle: entweder stehen die Kontaktflaechen selbst da, oder ein
+        geloester Koerper wird an den zugeordneten Flaechen der Gegenseite
+        getrennt. Aus RFEM kommt fast immer der zweite - dort nennt die Datei
+        unter ``releasedSurfaces`` die ganze Aussenhaut des Koerpers und nicht
+        die Fuge; die Fuge sind die zugeordneten Flaechen.
+        """
+        if self.flaechennamen:
+            return f"{len(self.flaechennamen)} Kontaktflächen"
+        if self.koerpernamen and self.gegenflaechen:
+            return (f"{', '.join(self.koerpernamen)} an {len(self.gegenflaechen)} Flächen")
+        if self.gegenflaechen:
+            return f"{len(self.gegenflaechen)} zugeordnete Flächen"
+        return f"{len(self.flaechen)} Flächen"
+
     def bezug(self, model=None) -> str:
-        teile = ([self.standard] if self.standard else []) + [f"{len(self.flaechen)} Flächen"]
-        if self.volumen:
+        teile = ([self.standard] if self.standard else []) + [self.fuge()]
+        if self.volumen and not self.koerpernamen:
             teile.append(f"{len(self.volumen)} Volumen")
-        if self.ziele:
-            teile.append(f"an {self.ziele} Objekten")
         # Ob die Trennung ausgefuehrt ist, gehoert an jede Stelle, an der die
         # Bedingung auftaucht: eine nicht getrennte Fuge rechnet zu steif -
         # aber erst, wenn es ein Netz gibt (mit ``model`` wird das unterschieden).

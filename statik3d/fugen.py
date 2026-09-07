@@ -12,15 +12,21 @@ Wie RFEM es ablegt
 ------------------
 
 ``SurfaceReleaseImpl_releasedSolids`` nennt den Koerper, der geloest wird,
-``releasedSurfaces`` seine Kopien der Fugenflaeche und ``assignedToObjects``
-die Flaechen der Gegenseite. Der Vernetzer legt an gemeinsamen Flaechen
-gemeinsame Knoten an - an der Fuge haengen die Bauteile also zusammen und
-muessen getrennt werden.
+``releasedSurfaces`` **dessen ganze Aussenhaut** und ``assignedToObjects`` die
+Flaechen, an denen die Freigabe haengt - und das ist die Fuge. Die Aussenhaut
+ist es nicht: an einer Lagerbock-Grundplatte sind das 36 Flaechen ueber
+1,65 m^2 - Ober- und Unterseite, alle Schmalseiten, alle Buchsenmaentel -, von
+denen nur ein Bruchteil an einer Fuge liegt. Der Leser des rf6-Formats setzt
+darum ``flaechennamen`` leer und ``gegenflaechen`` auf die zugeordneten
+Flaechen, sobald ein geloester Koerper dasteht. Der Vernetzer legt an
+gemeinsamen Flaechen gemeinsame Knoten an - an der Fuge haengen die Bauteile
+also zusammen und muessen getrennt werden.
 
 Ausgefuehrt wird in vier Schritten:
 
-1. **Seiten bestimmen.** Geloest wird der Koerper aus ``koerpernamen``;
-   ersatzweise der Koerper, dem die freigegebenen Flaechen gehoeren.
+1. **Seiten bestimmen.** Geloest wird der Koerper aus ``koerpernamen``. Sind
+   Kontaktflaechen genannt, sind sie die Fuge; sonst - der Regelfall aus RFEM -
+   die Randseiten des Koerpers, die auf den ``gegenflaechen`` liegen.
 
 2. **Knoten verdoppeln.** Jeder Knoten der Fuge, den ausser dem geloesten
    Koerper noch ein anderer benutzt, wird verdoppelt; die Elemente des

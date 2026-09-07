@@ -11,6 +11,7 @@ from ..model import (Model, Material, Section, LoadCase, Combination, Member,
 from .. import profiles
 from ..ec3.fatigue import DETAIL_CATEGORIES, DETAIL_EXAMPLES
 from .. import elemente as EL
+from .design import namen as _namen
 
 
 class NumEdit(QtWidgets.QLineEdit):
@@ -374,7 +375,7 @@ class FatigueLoadDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Ermüdungslast (Lastwechsel)")
         self.name = QtWidgets.QLineEdit(f"E{len(model.fatigue_loads)+1}")
-        cases = list(model.load_cases) + list(model.combinations)
+        cases = _namen(model.load_cases) + _namen(model.combinations)
         self.cmax = QtWidgets.QComboBox(); self.cmax.addItems(cases)
         self.cmin = QtWidgets.QComboBox(); self.cmin.addItems(["(Nullzustand)"] + cases)
         self.cycles = NumEdit(2e6, 100)
@@ -947,12 +948,12 @@ class ImportDialog(QtWidgets.QDialog):
         self.unit.setCurrentIndex(0 if ext in (".dxf",) else 2)
         self.append = QtWidgets.QCheckBox("an vorhandenes Modell anhängen")
         self.section = QtWidgets.QComboBox()
-        self.section.addItems(list(model.sections) + profiles.list_profiles("IPE")[:6]
+        self.section.addItems(_namen(model.sections) + profiles.list_profiles("IPE")[:6]
                               + profiles.list_profiles("HEA")[:6])
         self.material = QtWidgets.QComboBox()
-        self.material.addItems(list(model.materials) or ["S235"])
+        self.material.addItems(_namen(model.materials) or ["S235"])
         self.shell = QtWidgets.QComboBox()
-        self.shell.addItems(list(model.shells))
+        self.shell.addItems(_namen(model.shells))
         self.cad_size = NumEdit(0.05, 80)
         self.cad_order = QtWidgets.QComboBox(); self.cad_order.addItems(["Tet10 (quadratisch)", "Tet4 (linear)"])
         self.cad_dim = QtWidgets.QComboBox(); self.cad_dim.addItems(["Volumen (3D)", "Schale (2D)"])
@@ -1577,7 +1578,7 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
         form.addRow("Bezug", self.cb_art)
 
         self.cb_stab = QtWidgets.QComboBox()
-        self.cb_stab.addItems(list(model.members))
+        self.cb_stab.addItems(_namen(model.members))
         if g and g.stab:
             self.cb_stab.setCurrentText(g.stab)
         form.addRow("Stab", self.cb_stab)
@@ -1701,7 +1702,7 @@ class StellungDialog(QtWidgets.QDialog):
         self.ed_faelle = QtWidgets.QLineEdit(", ".join(s.faelle) if s else "")
         gl.addWidget(row("Lastfälle (leer = alle)", self.ed_faelle))
         if model is not None and model.load_cases:
-            hint = QtWidgets.QLabel("vorhanden: " + ", ".join(list(model.load_cases)[:12]))
+            hint = QtWidgets.QLabel("vorhanden: " + ", ".join(_namen(model.load_cases)[:12]))
             hint.setStyleSheet("color:#66717c; font-size:11px;")
             hint.setWordWrap(True)
             gl.addWidget(hint)

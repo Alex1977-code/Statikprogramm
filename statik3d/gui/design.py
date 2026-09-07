@@ -356,10 +356,35 @@ def _kurz(punkt) -> str:
 BAUM_MAX = 20000
 
 
-def _natuerlich(name) -> list:
-    """Sortierschluessel, der Zahlen als Zahlen liest: K2 vor K10, F9 vor F10."""
+def natuerlich(name) -> list:
+    """Sortierschluessel, der Zahlen als Zahlen liest: K2 vor K10, F9 vor F10.
+
+    Alphabetisch sortiert steht „V10“ vor „V2“, weil die 1 vor der 2 kommt -
+    eine Liste von hundert Volumen wirkt dann ungeordnet. Der Schluessel
+    zerlegt den Namen darum in Text- und Zahlstuecke und vergleicht die Zahlen
+    als Zahlen; die Stellenzahl spielt dann keine Rolle mehr. Die Zerlegung
+    wechselt sich immer ab (Text, Zahl, Text, ...), darum treffen beim
+    Vergleich zweier Namen nie eine Zahl und ein Text aufeinander.
+
+    Dieselbe Reihenfolge gilt ueberall, wo Objekte aufgezaehlt werden:
+    Modellbaum, Modelltabellen, Aufklapplisten der Masken.
+    """
     import re
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(name))]
+
+
+#: Alter Name desselben Schluessels.
+_natuerlich = natuerlich
+
+
+def namen(verzeichnis) -> list:
+    """Die Namen eines Objektverzeichnisses in natuerlicher Reihenfolge.
+
+    Der eine Weg fuer alle Aufzaehlungen in der Oberflaeche: Modellbaum,
+    Modelltabellen, Aufklapplisten der Masken. So steht ueberall dieselbe
+    Reihenfolge, und „V2“ nie hinter „V10“.
+    """
+    return sorted(verzeichnis or (), key=natuerlich)
 
 
 
@@ -500,8 +525,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
             it.setToolTip(0, hinweis)
         return it
 
-    def _liste(self, eltern, eintraege, art, sammelart=""):
-        """Eintraege unter einen Zweig haengen, gedeckelt auf BAUM_MAX."""
+    def _liste(self, eltern, eintraege, art, sammelart="", sortieren=True):
+        """Eintraege unter einen Zweig haengen, gedeckelt auf BAUM_MAX.
+
+        Sortiert wird nach dem Schluessel des Eintrags, und zwar **natuerlich**
+        (:func:`natuerlich`): „V2“ steht vor „V10“, nicht dahinter. Das ist
+        nicht nur Schoenheit - die Liste ist auf BAUM_MAX Eintraege gedeckelt,
+        und in einer alphabetisch sortierten Liste waere schon der abgeschnittene
+        Rest ein anderer. Wo die Reihenfolge selbst eine Aussage ist
+        (Ergebnisse, Berichtsbilder), schaltet ``sortieren=False`` sie ab.
+        """
+        if sortieren:
+            eintraege = sorted(eintraege, key=lambda e: natuerlich(e[2]))
         for i, (text, zahl, key, tip) in enumerate(eintraege):
             if i >= BAUM_MAX:
                 self._zweig(eltern, f"… {len(eintraege) - BAUM_MAX} weitere",
@@ -551,7 +586,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(lin, [(name, f"{ln.typ} · {len(ln.nodes)}", name,
                            f"{name}: {ln.typ} über {len(ln.nodes)} Knoten")
                           for name, ln in sorted(model.lines.items(),
-                                                 key=lambda kv: _natuerlich(kv[0]))],
+                                                 key=lambda kv: natuerlich(kv[0]))],
                     "linie", "linien")
         stab_els = [(i, e) for i, e in enumerate(model.elements) if e.typ in EL.STAB_TYPEN]
         st = self._zweig(wurzel, "Stäbe", len(stab_els), "stabelemente", fett=True,
@@ -563,7 +598,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(mem, [(name, f"{len(mm.elements)} El", name,
                            f"{name}: {len(mm.elements)} Elemente")
                           for name, mm in sorted(model.members.items(),
-                                                 key=lambda kv: _natuerlich(kv[0]))],
+                                                 key=lambda kv: natuerlich(kv[0]))],
                     "stab", "staebe")
         naehte = getattr(model, "schweissnaehte", {}) or {}
         nz = self._zweig(st, "Schweißnähte", len(naehte), "schweissnaehte",
@@ -588,7 +623,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(fl, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
                           f"{name}: {x.bezug()}"
                           + ("" if x.elemente else "\nnoch nicht vernetzt"))
-                         for name, x in sorted(gf.items(), key=lambda kv: _natuerlich(kv[0]))],
+                         for name, x in sorted(gf.items(), key=lambda kv: natuerlich(kv[0]))],
                     "geoflaeche", "geoflaechen")
         gk = getattr(model, "koerper", {}) or {}
         vo = self._zweig(wurzel, "Volumen", len(gk), "geokoerper", fett=True)
@@ -599,7 +634,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(vo, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
                           f"{name}: {x.bezug()}"
                           + ("" if x.elemente else "\nnoch nicht vernetzt"))
-                         for name, x in sorted(gk.items(), key=lambda kv: _natuerlich(kv[0]))],
+                         for name, x in sorted(gk.items(), key=lambda kv: natuerlich(kv[0]))],
                     "geokoerper_einzeln", "geokoerper")
 
         # ---- Bemassungen ---------------------------------------------------
@@ -834,7 +869,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                             schluessel=gruppe)
             self._liste(z, [(text, zusatz, key, text)
                             for text, zusatz, key in eintraege],
-                        "ergebnis", "ergebnisgruppe")
+                        "ergebnis", "ergebnisgruppe", sortieren=False)
         eintraege = list(getattr(model, "bericht", None) or [])
         bz = self._zweig(wurzel, "Bericht", len(eintraege), "bericht",
                          fett=bool(eintraege),
@@ -843,7 +878,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(bz, [(x.name or f"Bild {i + 1}", x.bezug(), str(i),
                           f"{x.name}: {x.bezug()}")
                          for i, x in enumerate(eintraege)], "berichtseintrag",
-                    "bericht")
+                    "bericht", sortieren=False)
         self._zweig(bz, "+ Ansicht übernehmen", "", "bericht_neu",
                     farbe=FARBEN["akzent"])
 
