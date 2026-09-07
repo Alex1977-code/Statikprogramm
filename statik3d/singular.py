@@ -681,7 +681,7 @@ def _gruppen_je_knoten(model) -> dict:
 # Stufe 2
 # --------------------------------------------------------------------------
 def weichster_modus(K, model, frei=None, schritte: int = 20,
-                    hoechstens: int = 1) -> list:
+                    hoechstens: int = 1, melden=None) -> list:
     """Stufe 2: der niedrigste Modus von K ueber inverse Iteration.
 
     Fuer Faelle ohne Starrkoerpermodus - weiche Mechanismen, Nullsteifigkeit,
@@ -694,7 +694,6 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
     ``feld`` als Knotenvektorfeld.
     """
     from scipy.sparse import identity
-    from scipy.sparse.linalg import splu
     K = K.tocsc()
     n = K.shape[0]
     idx = np.arange(n) if frei is None else np.asarray(frei, int)
@@ -703,10 +702,19 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
         return []
     diag = np.abs(Kf.diagonal())
     eps = 1e-10 * float(diag.max() if diag.size else 1.0)
+    # Bewusst ueber LinearSolver, nicht ueber splu: dies ist eine **zweite**
+    # volle Faktorisierung, und sie laeuft im Fehlerpfad - also gerade dann,
+    # wenn der Anwender ohnehin schon wartet. Mit splu lief sie einkernig; an
+    # einem Modell mit 237.198 Freiheitsgraden hat das den Fortschritt neun
+    # Minuten lang bei 20 % stehen lassen, ohne ein Wort dazu.
+    from .solver import LinearSolver
     try:
-        lu = splu((Kf + eps * identity(Kf.shape[0], format="csc")).tocsc())
+        lu = LinearSolver((Kf + eps * identity(Kf.shape[0], format="csc")).tocsc())
     except Exception:                     # noqa: BLE001 - auch das darf nicht sperren
         return []
+    if melden:
+        melden(f"Diagnose: weichster Modus ueber {lu.beschreibung()} "
+               f"({Kf.shape[0]} Freiheitsgrade, {schritte} Schritte)")
     rng = np.random.default_rng(0)
     v = rng.standard_normal(Kf.shape[0])
     v /= np.linalg.norm(v) or 1.0

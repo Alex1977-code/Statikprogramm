@@ -13002,10 +13002,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self.error(str(ex))
 
     def _bg_failed(self, msg, tb):
+        """Eine Rechnung ist gescheitert - ohne modales Fenster melden.
+
+        Am 07.09.2026 ist das Programm genau hier weggebrochen: eine
+        Zugriffsverletzung in Qt6Gui beim Aufbau der Meldungsbox, weil
+        findChildren<QPushButton*>() auf ein bereits freigegebenes Kindobjekt
+        stiess. Der Fehler, den die Box zeigen wollte, ging mit ihr verloren.
+
+        Eine modale Box lohnt hier ohnehin nicht: der Grund steht vollstaendig
+        im Protokoll, und das liegt seit diesem Stand auch als Datei vor. Also
+        Protokoll aufschlagen, Statuszeile setzen - kein Dialog.
+        """
         self.btn_solve.setEnabled(True)
         self._rechnung_ende()
         self.log.appendPlainText(tb)
-        self.error(msg)
+        self.log.appendPlainText("FEHLER: " + str(msg))
+        try:
+            self.tab_unten.setCurrentWidget(self.log)
+        except Exception:                  # noqa: BLE001 - Anzeige darf nie sperren
+            pass
+        self.statusBar().showMessage(f"Berechnung gescheitert: {str(msg).splitlines()[0]}"
+                                     "  - Einzelheiten im Protokoll", 0)
 
     def _fragen(self, titel: str, text: str) -> bool:
         """Ja/Nein-Rueckfrage - die Tests ueberschreiben sie."""

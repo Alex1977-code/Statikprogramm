@@ -347,8 +347,11 @@ def _matrixbefund(model, system) -> list:
     """Stufe 2: der weichste Modus der Steifigkeitsmatrix als Meldung."""
     try:
         from .singular import weichster_modus
+        # Der Fortschrittsempfaenger des Systems, falls es einen hat: diese
+        # Diagnose faktorisiert ein zweites Mal und darf nicht stumm laufen.
+        melden = getattr(system, "_progress", None)
         moden = weichster_modus(getattr(system, "K", None), model,
-                                getattr(system, "fi", None))
+                                getattr(system, "fi", None), melden=melden)
     except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
         return []
     return [f"FEHLER: {s.text} - {s.ursache}" for s in moden]
