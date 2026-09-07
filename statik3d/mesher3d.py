@@ -94,6 +94,33 @@ BOGENWINKEL = 30.0
 #: Ist die Zielkantenlaenge groeber, wird sie fuer diesen Koerper verkleinert.
 MINDESTTEILUNG = 4
 
+# --------------------------------------------------------------------------
+# Wann ein Netz nicht traegt - und was dann geschieht
+# --------------------------------------------------------------------------
+# Der Vernetzer misst diese vier Groessen ohnehin. Frueher schrieb er bei
+# Verletzung "mit kleinerer Kantenlaenge nachvernetzen" ins Protokoll und
+# ueberliess die Arbeit dem Anwender - der dafuer nur die globale Ziellaenge
+# hatte und damit das ganze Modell verfeinert haette. Jetzt verfeinert der
+# Vernetzer den **einen** Koerper, der die Grenze reisst.
+#
+# Die Glaettung (glaetten) kann das nicht leisten: sie haelt die Randknoten
+# fest und kommt an einen Splitter am Rand grundsaetzlich nicht heran.
+#
+#: Anteil des Netzrandes, der auf der Huelle liegen muss
+RANDTREUE_MIN = 0.99
+#: Zulaessige Abweichung des Netzvolumens von der Huelle
+VOLUMEN_ABW_MAX = 0.005
+#: Guete des schlechtesten Tetraeders nach dem Glaetten
+GUETE_MIN = 0.05
+#: Anteil der Tetraeder, die als Splitter gelten duerfen
+SPLITTER_ANTEIL_MAX = 0.01
+#: Um diesen Faktor wird die Kantenlaenge je Anlauf verkleinert
+VERFEINERN_FAKTOR = 1.5
+#: So viele Anlaeufe hoechstens - danach bleibt das beste Netz stehen
+VERFEINERN_ANLAEUFE = 3
+#: So viele Elemente sollen ueber die duennste Abmessung liegen (6V/A)
+DICKE_TEILUNG = 5
+
 
 # --------------------------------------------------------------------------
 # Hilfen: Ebene, Flaecheninhalt, Volumen
@@ -106,7 +133,11 @@ def ausgleichsebene(P: np.ndarray) -> tuple:
     """
     P = np.asarray(P, float)
     c = P.mean(axis=0)
-    U, S, Vt = np.linalg.svd(P - c, full_matrices=True)
+    # full_matrices=False: gebraucht wird nur Vt (3x3). Mit True baut numpy
+    # zusaetzlich ein U der Groesse n x n - bei 55.916 Randpunkten sind das
+    # 23 GB, und die Vernetzung bricht mit MemoryError ab. Vt ist in beiden
+    # Faellen dasselbe.
+    _U, _S, Vt = np.linalg.svd(P - c, full_matrices=False)
     e1, e2, n = Vt[0], Vt[1], Vt[2]
     abw = float(np.abs((P - c) @ n).max()) if len(P) else 0.0
     return c, e1, e2, n, abw
@@ -1898,7 +1929,83 @@ def _kantenlaenge(model: Model, koerper, h: float, log: list = None) -> float:
                    f"dieses Bauteil ({gross * 1e3:.0f} mm groß) zu grob - "
                    f"mit {h_neu * 1e3:.1f} mm vernetzt.")
         h = h_neu
+    # Dickenmass: massgebend fuer ein schlankes Bauteil ist nicht seine
+    # laengste, sondern seine duennste Abmessung. Ein Passstift D 25 x 67 bekam
+    # ueber die Ausdehnung 67/4 = 16,8 mm - anderthalb Elemente ueber den
+    # Querschnitt. Ueber 6V/A werden daraus 6,3 mm und vier Elemente.
+    d = 0.0
+    if getattr(getattr(model, "netz", None), "dickenmass", False):
+        try:
+            from .netzdichte import dicke as _dicke
+            d = _dicke(model, koerper)
+        except Exception:                 # noqa: BLE001 - eine Schaetzung darf nie sperren
+            d = 0.0
+    if d > 0 and h > d / DICKE_TEILUNG:
+        h_neu = d / DICKE_TEILUNG
+        C.say(log, f"Volumen {koerper.name}: nur {d / h:.1f} Elemente über die Dicke "
+                   f"({d * 1e3:.1f} mm) - mit {h_neu * 1e3:.1f} mm statt "
+                   f"{h * 1e3:.1f} mm vernetzt.")
+        h = h_neu
+    netz = getattr(model, "netz", None)
+    # Das Dickenmass darf nicht ins Uferlose fuehren: eine Platte
+    # 1000 x 1000 x 10 mm hat 6V/A = 29,4 mm und damit h = 5,9 mm - das waeren
+    # ueber 400.000 Tetraeder fuer ein Blech. Dieselbe Grenze wie in
+    # netzdichte.elementlaenge faengt das ab.
+    max_el = int(getattr(netz, "max_elemente", 0) or 0)
+    if max_el > 0 and h > 0:
+        try:
+            from .netzdichte import TET_JE_H3, volumenmass
+            V = volumenmass(model, koerper)
+        except Exception:                 # noqa: BLE001
+            V = 0.0
+        if V > 0 and V / (TET_JE_H3 * h ** 3) > max_el:
+            h_neu = (V / (TET_JE_H3 * max_el)) ** (1.0 / 3.0)
+            C.say(log, f"Volumen {koerper.name}: auf {max_el} Elemente begrenzt - "
+                       f"mit {h_neu * 1e3:.1f} mm statt {h * 1e3:.1f} mm vernetzt.")
+            h = h_neu
+    h_min = float(getattr(netz, "h_min", 0.0) or 0.0)
+    if h_min > 0 and h < h_min:
+        h = h_min
     return h
+
+
+def netzguete(tb: dict, bericht: dict) -> dict:
+    """Die vier Masse eines fertigen Koerpernetzes und was davon reisst.
+
+    Alle vier misst der Vernetzer ohnehin; hier stehen sie beieinander, damit
+    die Entscheidung ueber eine Wiederholung an einer Stelle faellt und nicht
+    ueber den Vernetzer verstreut ist.
+    """
+    soll = float(bericht.get("volumen", 0.0) or 0.0)
+    ist = float(tb.get("volumen", 0.0) or 0.0)
+    n = max(1, int(tb.get("tetraeder", 0) or 0))
+    mass = {
+        "randtreue": float(tb.get("randtreue", 1.0)),
+        "volumenabweichung": abs(ist - soll) / soll if soll > 0 else 1.0,
+        "guete": float(tb.get("guete", 1.0)),
+        "splitteranteil": float(tb.get("splitter", 0) or 0) / n,
+    }
+    gerissen = []
+    if mass["randtreue"] < RANDTREUE_MIN:
+        gerissen.append(f"Randtreue {mass['randtreue'] * 100:.1f} % unter der Grenze "
+                        f"{RANDTREUE_MIN * 100:.0f} %")
+    if mass["volumenabweichung"] > VOLUMEN_ABW_MAX:
+        gerissen.append(f"Volumen weicht um {mass['volumenabweichung'] * 100:.2f} % ab "
+                        f"(Grenze {VOLUMEN_ABW_MAX * 100:.1f} %)")
+    if mass["guete"] < GUETE_MIN:
+        gerissen.append(f"schlechtester Tetraeder {mass['guete']:.3f} unter der Grenze "
+                        f"{GUETE_MIN:.2f}")
+    if mass["splitteranteil"] > SPLITTER_ANTEIL_MAX:
+        gerissen.append(f"{mass['splitteranteil'] * 100:.1f} % Splitter (Grenze "
+                        f"{SPLITTER_ANTEIL_MAX * 100:.0f} %)")
+    mass["gerissen"] = gerissen
+    #: Wie weit das Netz von den Grenzen entfernt ist - je kleiner, desto besser.
+    #: Danach wird zwischen zwei Anlaeufen entschieden, welcher der bessere war.
+    mass["abstand"] = (max(0.0, RANDTREUE_MIN - mass["randtreue"]) / RANDTREUE_MIN
+                       + max(0.0, mass["volumenabweichung"] - VOLUMEN_ABW_MAX)
+                       + max(0.0, GUETE_MIN - mass["guete"]) / GUETE_MIN
+                       + max(0.0, mass["splitteranteil"] - SPLITTER_ANTEIL_MAX))
+    return mass
 
 
 def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
@@ -1918,35 +2025,85 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
     h = _kantenlaenge(model, koerper, h, zeilen)
     aus = {"name": koerper.name, "h": h, "log": zeilen if log is None else [],
            "fehler": "", "abgebrochen": False}
+    netz = getattr(model, "netz", None)
+    splitter = float(getattr(netz, "splitter", SPLITTER) or 0.0)
+    h_min = float(getattr(netz, "h_min", 0.0) or 0.0)
+    max_el = int(getattr(netz, "max_elemente", 0) or 0)
     try:
-        _melden(fortschritt, 0.0, "Randhülle bilden")
-        P, T, bericht = randschale(model, koerper, h, zeilen, fortschritt)
-        if bericht.get("fehler"):
-            aus["fehler"] = f"{bericht['fehler']} - nicht vernetzt."
-            return aus
-        if bericht.get("offen"):
-            aus["fehler"] = (f"die Randhülle ist nicht dicht ({bericht['offen']} Kanten "
-                             "liegen nicht in genau zwei Dreiecken) - nicht vernetzt. Ein "
-                             "Netz aus einer undichten Hülle wäre stillschweigend falsch.")
-            return aus
-        if bericht.get("teile", 1) > 1:
-            aus["fehler"] = (f"die Randflächen bilden {bericht['teile']} getrennte "
-                             "Hüllen - nicht vernetzt.")
-            return aus
-        if bericht.get("volumen", 0.0) <= 0:
-            aus["fehler"] = "die Hülle umschließt kein Volumen - nicht vernetzt."
-            return aus
-        quelle = bericht.get("quelle") or []
-        splitter = float(getattr(getattr(model, "netz", None), "splitter", SPLITTER) or 0.0)
-        Pn, TET, tb, P, T, quelle = tetraedern_treu(P, T, h, quelle=quelle,
-                                                    splitter=splitter,
-                                                    fortschritt=fortschritt)
-        if tb.get("fehler"):
-            aus["fehler"] = str(tb["fehler"])
-            return aus
-        if not len(TET):
-            aus["fehler"] = "kein Tetraeder entstanden."
-            return aus
+        # ---- Vernetzen, und wenn das Netz nicht traegt: feiner ------------
+        # Die Wiederholung schliesst die **Randhuelle** ein. Nur die Tetraeder
+        # neu zu legen brachte nichts: liegen die Randdreiecke zu grob, kann
+        # die Randtreue gar nicht besser werden. Und die Glaettung kommt an
+        # einen Splitter am Rand grundsaetzlich nicht heran, weil sie die
+        # Randknoten festhaelt.
+        bestes = None
+        anlaeufe = VERFEINERN_ANLAEUFE if getattr(netz, "nachvernetzen", True) else 1
+        for anlauf in range(1, anlaeufe + 1):
+            _melden(fortschritt, 0.0, "Randhülle bilden")
+            P, T, bericht = randschale(model, koerper, h, zeilen, fortschritt)
+            if bericht.get("fehler"):
+                aus["fehler"] = f"{bericht['fehler']} - nicht vernetzt."
+                return aus
+            if bericht.get("offen"):
+                aus["fehler"] = (f"die Randhülle ist nicht dicht ({bericht['offen']} Kanten "
+                                 "liegen nicht in genau zwei Dreiecken) - nicht vernetzt. Ein "
+                                 "Netz aus einer undichten Hülle wäre stillschweigend falsch.")
+                return aus
+            if bericht.get("teile", 1) > 1:
+                aus["fehler"] = (f"die Randflächen bilden {bericht['teile']} getrennte "
+                                 "Hüllen - nicht vernetzt.")
+                return aus
+            if bericht.get("volumen", 0.0) <= 0:
+                aus["fehler"] = "die Hülle umschließt kein Volumen - nicht vernetzt."
+                return aus
+            quelle = bericht.get("quelle") or []
+            Pn, TET, tb, P, T, quelle = tetraedern_treu(P, T, h, quelle=quelle,
+                                                        splitter=splitter,
+                                                        fortschritt=fortschritt)
+            if tb.get("fehler"):
+                aus["fehler"] = str(tb["fehler"])
+                return aus
+            if not len(TET):
+                aus["fehler"] = "kein Tetraeder entstanden."
+                return aus
+            mass = netzguete(tb, bericht)
+            stand = (h, P, T, quelle, Pn, TET, tb, bericht, mass, anlauf)
+            if bestes is None or mass["abstand"] < bestes[8]["abstand"]:
+                bestes = stand
+            if not mass["gerissen"]:
+                break
+            # Lohnt ein weiterer Anlauf?
+            h_neu = h / VERFEINERN_FAKTOR
+            grund = ", ".join(mass["gerissen"])
+            if anlauf >= anlaeufe:
+                if anlaeufe > 1:
+                    C.warn(zeilen, f"  Volumen {koerper.name}: {grund} - nach "
+                                   f"{anlauf} Anläufen (bis {h * 1e3:.1f} mm) nicht "
+                                   "behoben; das beste Netz bleibt stehen.")
+                else:
+                    C.warn(zeilen, f"  Volumen {koerper.name}: {grund} - "
+                                   "selbsttätiges Nachvernetzen ist abgeschaltet.")
+                break
+            if h_min > 0 and h_neu < h_min:
+                C.warn(zeilen, f"  Volumen {koerper.name}: {grund} - feiner als "
+                               f"{h_min * 1e3:.1f} mm ist per Netzeinstellung nicht "
+                               "erlaubt; das Netz bleibt, wie es ist.")
+                break
+            geschaetzt = len(TET) * VERFEINERN_FAKTOR ** 3
+            if max_el > 0 and geschaetzt > max_el:
+                C.warn(zeilen, f"  Volumen {koerper.name}: {grund} - eine feinere "
+                               f"Vernetzung ({h_neu * 1e3:.1f} mm) käme auf etwa "
+                               f"{geschaetzt:.0f} Tetraeder und überschritte die Grenze "
+                               f"von {max_el}; das Netz bleibt, wie es ist.")
+                break
+            C.say(zeilen, f"  Volumen {koerper.name}: {grund} - mit "
+                          f"{h_neu * 1e3:.1f} mm statt {h * 1e3:.1f} mm nachvernetzt "
+                          f"(Anlauf {anlauf + 1} von {VERFEINERN_ANLAEUFE})")
+            h = h_neu
+        h, P, T, quelle, Pn, TET, tb, bericht, mass, anlauf = bestes
+        aus["h"] = h
+        aus["anlaeufe"] = anlauf
+        aus["mass"] = mass
         _melden(fortschritt, 0.97, f"{len(TET)} Tetraeder ins Modell übernehmen")
         aus.update({"P": np.asarray(P, float), "T": np.asarray(T, int), "quelle": list(quelle),
                     "Pn": np.asarray(Pn, float), "TET": np.asarray(TET, int),
@@ -2031,17 +2188,18 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     if tb.get("splitter"):
         C.say(log, f"  {tb['splitter']} Splitter (Güte unter 0.1) von "
                    f"{len(TET)} Tetraedern")
-    if abw > 1e-3:
-        C.warn(log, f"  Volumen {koerper.name}: das Netz gibt {abw * 100:.3f} % "
-                    "weniger Volumen als die Hülle - der Rand ist nicht überall "
-                    "getroffen. Mit kleinerer Kantenlänge nachvernetzen.")
-    if tb["randtreue"] < 0.99:
-        C.warn(log, f"  Volumen {koerper.name}: nur {tb['randtreue'] * 100:.1f} % "
-                    "des Netzrandes liegen auf der Hülle.")
-    if tb.get("guete", 1.0) < 0.02:
-        C.warn(log, f"  Volumen {koerper.name}: schlechtester Tetraeder hat die "
-                    f"Güte {tb['guete']:.4f} - solche Splitter machen die "
-                    "Steifigkeitsmatrix schlecht konditioniert.")
+    # Die vier Masse hat koerper_vorbereiten schon geprueft und, wo noetig,
+    # feiner nachvernetzt. Hier steht nur noch, was danach uebrig blieb -
+    # ohne die alte Aufforderung "mit kleinerer Kantenlänge nachvernetzen",
+    # denn genau das hat der Vernetzer inzwischen selbst versucht.
+    mass = aus.get("mass") or netzguete(tb, bericht)
+    if mass.get("gerissen"):
+        C.warn(log, f"  Volumen {koerper.name}: {', '.join(mass['gerissen'])} - "
+                    f"auch nach {aus.get('anlaeufe', 1)} Anläufen "
+                    f"(bis {h * 1e3:.1f} mm Kantenlänge).")
+    elif aus.get("anlaeufe", 1) > 1:
+        C.say(log, f"  Volumen {koerper.name}: nach {aus['anlaeufe']} Anläufen "
+                   "halten alle vier Kriterien.")
     return els
 
 
