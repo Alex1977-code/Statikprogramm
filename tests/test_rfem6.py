@@ -272,7 +272,7 @@ def _spring(con, sid, owner, table, k, nl=(0,) * 6, friction=None):
 
 def build_db(path, nodes, lines, members, supports, line_supports=(),
              surface_supports=(), surfaces=(), hinges=(), partials=(),
-             solids=(), releases=(), typen_je_objekt=None,
+             solids=(), releases=(), typen_je_objekt=None, typ_userid_versatz=0,
              surface_loads=(), load_cases=(),
              free_loads=0, openings=(), nodal_loads=(), prestress=(),
              combinations=(), boundary_lines=None, stiffness_reverse=False,
@@ -286,6 +286,7 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
                    Ziele = Anzahl oder [(Tabelle, Nummer), ...]
     ``typen_je_objekt`` {Freigabe-Nummer: [Freigabetyp je Zuordnung]} - setzt
                    ``defineReleaseTypeForEachObject``
+    ``typ_userid_versatz`` Nutzernummer der Freigabetypen = Kennung + Versatz
     ``surface_loads`` (Lastfall-id, [Flaechen], Groesse [N/m^2], Richtung)
     ``load_cases`` (Name, Einwirkungskategorie, Eigengewichtsfaktor z)
     ``openings``   Flaechennummern, die eine Oeffnung tragen
@@ -448,8 +449,11 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
             con.execute("INSERT INTO SolidImplStandard_boundarySurfaces VALUES (?,?,?)",
                         (i, j, sf))
     for i, (name, srf, sol, ziele, k, nl) in enumerate(releases, 1):
+        # Nutzernummer und Datenbank-Kennung sind in echten Dateien nicht
+        # dasselbe; ``typ_userid_versatz`` zieht sie auseinander.
         con.execute("INSERT INTO SurfaceReleaseType VALUES (?,1,?,?,"
-                    "'SurfaceReleaseTypeImplVersion1')", (i, i, i))
+                    "'SurfaceReleaseTypeImplVersion1')",
+                    (i, i + int(typ_userid_versatz or 0), i))
         con.execute("INSERT INTO SurfaceReleaseTypeImplVersion1 VALUES (?,1,?,?,?,0)",
                     (i, f"Fuge {i}", i, sid))
         _spring(con, sid, i, "SurfaceReleaseTypeImplVersion1", k, nl)
@@ -1060,6 +1064,10 @@ def test_freigabetyp_je_objekt():
                 ("Hilfstyp", [], [], 0, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0, 0, 1, 0, 0, 0)),
             ],
             typen_je_objekt={1: [1, 1, 2]},
+            # Nutzernummer 101/102 gegen Datenbank-Kennung 1/2: in echten
+            # Dateien fallen sie auseinander, und wer die Typgruppen ueber die
+            # Nutzernummer sucht, verliert sie.
+            typ_userid_versatz=100,
         )
         log = []
         m = R6.read_rf6(f, log=log)
@@ -1071,24 +1079,29 @@ def test_freigabetyp_je_objekt():
               all("Typ" in n for n in geteilt), str(geteilt))
         nach_typ = {kb.typ.split()[0]: kb for kb in
                     (m.kontaktbedingungen[n] for n in geteilt)}
+        check("die Nutzernummern stehen an den Bedingungen (101/102, nicht 1/2)",
+              sorted(nach_typ) == ["101", "102"], str(sorted(nach_typ)))
         check("der haftende Typ steht an zwei Flaechen",
-              len(nach_typ["1"].gegenflaechen) == 2, str(nach_typ["1"].gegenflaechen))
+              len(nach_typ["101"].gegenflaechen) == 2, str(nach_typ["101"].gegenflaechen))
         check("und behaelt sein Haften (ux/uy starr)",
-              nach_typ["1"].dof_behaviour(0).typ == "rigid"
-              and nach_typ["1"].dof_behaviour(1).typ == "rigid",
-              nach_typ["1"].dof_behaviour(0).typ)
+              nach_typ["101"].dof_behaviour(0).typ == "rigid"
+              and nach_typ["101"].dof_behaviour(1).typ == "rigid",
+              nach_typ["101"].dof_behaviour(0).typ)
         check("der freie Typ steht an einer Flaeche",
-              len(nach_typ["2"].gegenflaechen) == 1, str(nach_typ["2"].gegenflaechen))
+              len(nach_typ["102"].gegenflaechen) == 1, str(nach_typ["102"].gegenflaechen))
         check("und bleibt in der Fugenebene frei",
-              nach_typ["2"].dof_behaviour(0).typ == "free"
-              and nach_typ["2"].dof_behaviour(1).typ == "free",
-              nach_typ["2"].dof_behaviour(0).typ)
+              nach_typ["102"].dof_behaviour(0).typ == "free"
+              and nach_typ["102"].dof_behaviour(1).typ == "free",
+              nach_typ["102"].dof_behaviour(0).typ)
         check("beide loesen denselben Koerper",
-              nach_typ["1"].koerpernamen == nach_typ["2"].koerpernamen == ["V1"],
-              f"{nach_typ['1'].koerpernamen} / {nach_typ['2'].koerpernamen}")
+              nach_typ["101"].koerpernamen == nach_typ["102"].koerpernamen == ["V1"],
+              f"{nach_typ['101'].koerpernamen} / {nach_typ['102'].koerpernamen}")
         check("das Protokoll nennt die Aufteilung",
-              "aufgeteilt in" in txt and "Typ 1 an 2 Flaechen" in txt,
+              "aufgeteilt in" in txt and "Typ 101 an 2 Flaechen" in txt,
               next((x for x in log if "aufgeteilt" in x), "-"))
+        check("und keine Typgruppe bleibt unaufgeloest",
+              not any("Typgruppen aufgeloest" in x for x in log),
+              next((x for x in log if "Typgruppen" in x), "-"))
         check("und jede Bedingung sagt, aus welchem Typ sie kommt",
               all("Freigabetyp" in m.kontaktbedingungen[n].beschreibung for n in geteilt),
               m.kontaktbedingungen[geteilt[0]].beschreibung)
