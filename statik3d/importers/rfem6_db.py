@@ -1784,6 +1784,36 @@ def _release_type(db: Db, tid: int, nlmap: dict, label: str, log: list) -> dict:
     return out
 
 
+def _tid_von(typ: dict, tids: list):
+    """Die Datenbank-Kennung eines gelesenen Freigabetyps.
+
+    ``_release_type`` gibt die **Nutzernummer** (``userID``) zurueck, der
+    Container die interne Kennung. Meist sind beide gleich; wo nicht, hilft
+    die Reihenfolge: die Typen stehen in der Reihenfolge ihres ersten
+    Auftretens im Container.
+    """
+    nr = typ.get("nummer")
+    folge = list(dict.fromkeys(tids))
+    return nr if nr in folge else None
+
+
+def _kontakt_anlegen(m, C, name: str, typ: dict, flaechen, volumen, kontaktflaechen,
+                     koerpernamen, gegenflaechen, ziele: int, d: dict,
+                     beschreibung: str):
+    """Eine Kontaktbedingung aus einer (Teil-)Flaechenfreigabe anlegen."""
+    m.add_kontaktbedingung(
+        C.unique_name(m.kontaktbedingungen, name),
+        flaechen=[int(x) for x in flaechen], volumen=[int(x) for x in volumen],
+        flaechennamen=list(kontaktflaechen),
+        koerpernamen=list(dict.fromkeys(koerpernamen)),
+        gegenflaechen=list(dict.fromkeys(gegenflaechen)),
+        ziele=ziele, ort=d["ort"],
+        typ=str(typ.get("nummer", "")) + (f" {typ['name']}" if typ.get("name") else ""),
+        behaviour={dof: DofBehaviour(**vars(b))
+                   for dof, b in (typ.get("beh") or {}).items()},
+        aus=d["aus"], ausgefuehrt=False, beschreibung=beschreibung)
+
+
 def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
                       surf_name: dict = None, solid_name: dict = None) -> list:
     """
@@ -1859,12 +1889,27 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
              "ziele": len(ziele), "linien": len(linien),
              "ort": RELEASE_LOCATION.get(impl.get("releaseLocation"), "?"),
              "aus": bool(impl.get("deactivated")), "typen": []}
+        # Der Freigabetyp kann **je zugeordnetem Objekt** ein anderer sein.
+        # ``releaseTypeForObjects_values`` ist dann so geordnet wie
+        # ``assignedToObjects``: der i-te Typ gehoert zum i-ten Objekt. Beide
+        # Container liest der Leser nach ``container_order``.
+        je_typ: dict = {}                # Typnummer -> [zugeordnete Flaechen]
+        tids: list = []
         if impl.get("defineReleaseTypeForEachObject"):
             tids = db.container("SurfaceReleaseImpl_releaseTypeForObjects_values").get(
                 impl["id"], [])
             d["je_objekt"] = True
             for tid in dict.fromkeys(tids):
                 d["typen"].append(_release_type(db, tid, nlmap, f"{name}: ", log))
+            if len(tids) == len(zeilen):
+                for r, tid in zip(zeilen, tids):
+                    if ((r.get("reference_table") or "") == "Surface"
+                            and r.get("reference_id") in surf_name):
+                        je_typ.setdefault(tid, []).append(surf_name[r["reference_id"]])
+            elif len(d["typen"]) > 1:
+                C.warn(log, f"{name}: {len(tids)} Freigabetypen zu {len(zeilen)} "
+                            "zugeordneten Objekten - die Zuordnung Typ/Objekt ist "
+                            "nicht herstellbar; der erste Typ gilt fuer die ganze Fuge")
         elif impl.get("releaseType_id"):
             d["je_objekt"] = False
             d["typen"].append(_release_type(db, impl["releaseType_id"], nlmap,
@@ -1872,20 +1917,33 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
         # Die Freigabe gehoert ins Modell, nicht nur ins Protokoll: sonst ist
         # sie nach dem Speichern weg und niemand sieht mehr, dass an dieser
         # Stelle eine Fuge gehoert.
-        haupt = d["typen"][0] if d["typen"] else {}
-        m.add_kontaktbedingung(
-            C.unique_name(m.kontaktbedingungen, name),
-            flaechen=[int(x) for x in flaechen], volumen=[int(x) for x in volumen],
-            flaechennamen=kontaktflaechen,
-            koerpernamen=list(dict.fromkeys(koerpernamen)),
-            gegenflaechen=list(dict.fromkeys(gegenflaechen)),
-            ziele=len(ziele), ort=d["ort"],
-            typ=str(haupt.get("nummer", "")) + (f" {haupt['name']}" if haupt.get("name") else ""),
-            behaviour={dof: DofBehaviour(**vars(b))
-                       for dof, b in (haupt.get("beh") or {}).items()},
-            aus=d["aus"], ausgefuehrt=False,
-            beschreibung=(f"{len(d['typen'])} Freigabetypen (je Objekt)"
-                          if d.get("je_objekt") else ""))
+        #
+        # Stehen mehrere Typen an einer Freigabe, wird sie **aufgeteilt** - je
+        # Typ eine Kontaktbedingung mit ihren eigenen Gegenflaechen. Einen Typ
+        # fuer alle zu nehmen waere in beide Richtungen falsch: an der Achse
+        # des Drehlagers tragen 48 von 52 Objekten den haftenden Typ und 4 den
+        # freien; der erste Typ haette 48 Passstiften das Haften genommen. Am
+        # Montageauge ist es umgekehrt - dort haetten 9 freie Objekte ein
+        # Haften bekommen, das die Datei nicht hergibt.
+        gruppen = [(t, je_typ.get(t["nummer"]) or je_typ.get(_tid_von(t, tids)))
+                   for t in d["typen"]] if len(je_typ) > 1 else []
+        gruppen = [(t, fl) for t, fl in gruppen if fl]
+        if len(gruppen) > 1:
+            for t, fl in gruppen:
+                _kontakt_anlegen(m, C, f"{name} (Typ {t.get('nummer', '?')})", t,
+                                 flaechen, volumen, [] if ueber_gegenseite else kontaktflaechen,
+                                 koerpernamen, fl, len(fl), d,
+                                 f"Freigabetyp {t.get('nummer', '?')} von "
+                                 f"{len(d['typen'])} an dieser Freigabe (je Objekt)")
+            C.say(log, f"    {len(gruppen)} Freigabetypen je Objekt: aufgeteilt in "
+                       + ", ".join(f"Typ {t.get('nummer', '?')} an {len(fl)} Flaechen"
+                                   for t, fl in gruppen))
+        else:
+            _kontakt_anlegen(m, C, name, d["typen"][0] if d["typen"] else {},
+                             flaechen, volumen, kontaktflaechen, koerpernamen,
+                             gegenflaechen, len(ziele), d,
+                             (f"{len(d['typen'])} Freigabetypen (je Objekt)"
+                              if d.get("je_objekt") and len(d["typen"]) > 1 else ""))
         out.append(d)
         C.say(log, f"  {name}: {d['flaechen']} freigegebene Flaechen"
                    + (f", {d['volumen']} Volumen" if d["volumen"] else "")
