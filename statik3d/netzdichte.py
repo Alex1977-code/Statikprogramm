@@ -27,6 +27,12 @@ STUFEN = ["grob", "mittel", "fein", "eigene"]
 FORMEN = {0: "Dreiecke", 1: "Vierecke", 2: "Vierecke, sonst Dreiecke"}
 #: Tetraedervolumen je h³ bei einem freien Netz (Erfahrungswert)
 TET_JE_H3 = 0.12
+#: So viele Elemente sollen ueber die duennste Abmessung eines Koerpers liegen.
+#: Ein Passstift Durchmesser 25 mal 67 mm bekam nach der alten Regel
+#: (groesste Ausdehnung / 4) 16,8 mm - anderthalb Elemente quer. Massgebend
+#: fuer ein schlankes Bauteil ist aber nicht seine laengste, sondern seine
+#: duennste Abmessung.
+DICKE_TEILUNG = 5
 STANDARDLAENGE = 0.5
 
 
@@ -79,6 +85,34 @@ def kleinste_kante(model, obj) -> float:
         if L > 1e-9:
             laengen.append(L)
     return min(laengen) if laengen else 0.0
+
+
+def oberflaeche(model, koerper) -> float:
+    """Gesamte Oberflaeche eines Koerpers [m^2] - die Summe seiner Randflaechen."""
+    return sum(flaechenmass(model, model.flaechen[fn])
+               for fn in (koerper.flaechen or []) if fn in model.flaechen)
+
+
+def dicke(model, koerper) -> float:
+    """Die duennste Abmessung eines Koerpers als hydraulischer Durchmesser 6V/A.
+
+    Warum nicht die kleinste Kante des umschliessenden Quaders: die misst bei
+    einem schraeg liegenden Zylinder falsch. ``6V/A`` ist von der Lage im Raum
+    unabhaengig und trifft beide Faelle:
+
+    ===========================  ========  =========  =======
+    Koerper                      6V/A      h = /5     Elemente quer
+    ===========================  ========  =========  =======
+    Passstift D 25 x 67 mm       31,6 mm   6,3 mm     4
+    Platte 1000 x 1000 x 10 mm   29,4 mm   5,9 mm     1,7
+    ===========================  ========  =========  =======
+
+    0.0, wenn sich Volumen oder Oberflaeche nicht bestimmen lassen - dann
+    bleibt es bei der Regel ueber die groesste Ausdehnung.
+    """
+    V = volumenmass(model, koerper)
+    A = oberflaeche(model, koerper)
+    return 6.0 * V / A if V > 0 and A > 0 else 0.0
 
 
 def flaechenmass(model, flaeche) -> float:
@@ -160,6 +194,13 @@ def elementlaenge(model, netz, obj) -> dict:
                 # dass das Netz an der Bohrung besser wuerde.
                 grund.append(f"kleinste Kante {kante * 1e3:.0f} mm - örtlich feiner, "
                              "vom Rand her wachsend")
+        if not ist_flaeche and getattr(netz, "dickenmass", False):
+            # Dickenmass: ueber die duennste Abmessung sollen DICKE_TEILUNG
+            # Elemente liegen. Das Minimum aus beiden Regeln gilt.
+            d = dicke(model, obj)
+            if d > 0 and h > d / DICKE_TEILUNG:
+                h = d / DICKE_TEILUNG
+                grund.append(f"Dicke {d * 1e3:.0f} mm - {DICKE_TEILUNG} Elemente quer")
         if h < h_min:
             h = h_min
             grund.append(f"nicht unter {h_min * 1e3:.0f} mm")

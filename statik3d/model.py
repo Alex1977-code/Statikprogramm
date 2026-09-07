@@ -1540,6 +1540,23 @@ class Netzeinstellungen:
     h_min: float = 0.0
     h_max: float = 0.0
     max_elemente: int = 100000
+    #: Netz selbsttaetig verfeinern, wo es die vier Guetekriterien reisst
+    #: (mesher3d.netzguete). Aus schaltet man es, wenn man ein Netz zu einer
+    #: bestimmten Kantenlaenge braucht - etwa um die Wirkung der Glaettung
+    #: fuer sich zu messen.
+    nachvernetzen: bool = True
+    #: Dickenmass: die Kantenlaenge zusaetzlich an der duennsten Abmessung
+    #: eines Koerpers ausrichten (6V/A, netzdichte.dicke). Ein Passstift
+    #: D 25 x 67 bekommt damit vier Elemente ueber den Querschnitt statt
+    #: anderthalb.
+    #:
+    #: **Vorgabe aus**, und zwar aus einem nachgewiesenen Grund: die Regel gibt
+    #: jedem Koerper seine eigene Kantenlaenge. Zwei Koerper, die sich eine
+    #: Flaeche teilen, bekommen dann verschieden feine Randnetze, ihre Knoten
+    #: fallen nicht mehr zusammen - und die Fuge zwischen ihnen faellt
+    #: auseinander (tests/test_fugen.py sah die Stauchung um 374 % daneben).
+    #: Solange das nicht geloest ist, bleibt die Regel eine Einstellung.
+    dickenmass: bool = False
     #: Teilung je Flaeche aus der Netzdichte ableiten (sonst bleibt die eigene)
     teilung_uebersteuern: bool = True
 

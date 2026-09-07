@@ -555,6 +555,12 @@ def test_splitter_glaetten():
                        kreis_punkte(r, 48, 1.0, 1.0, umgekehrt=True)], t)
         m.netz.ziellaenge = 0.15
         m.netz.splitter = splitter
+        # Hier wird die Wirkung der Glaettung fuer sich gemessen, und dazu
+        # muessen beide Laeufe dasselbe Netz bekommen. Das selbsttaetige
+        # Nachvernetzen reagiert aber auf die Guete - also genau auf das, was
+        # die Glaettung veraendert: ohne Glaettung reisst das Guetekriterium,
+        # es wird verfeinert, und verglichen wuerden zwei verschiedene Netze.
+        m.netz.nachvernetzen = False
         els = M3.mesh_koerper_frei(m, k, log=[])
         TET = np.array([[int(x) for x in m.elements[i].nodes] for i in els])
         q = M3.guete(m.nodes, TET)
