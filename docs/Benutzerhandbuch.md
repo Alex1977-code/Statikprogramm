@@ -202,14 +202,30 @@ sie als Unterpunkt „Vorspannung“ des Lastfalls, in Tabelle und Bericht mit
 Bauteil, Kraft und Achse.
 
 **Flächenkontakte** (in RFEM „Flächenfreigaben“) sind Kontaktfugen: in der
-Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall. RFEM legt sie
-auf zwei Arten an: mit **freigegebenen Flächen** (den Kopien der Fugenfläche
-am gelösten Körper) oder **nur mit dem gelösten Körper** und den zugeordneten
-Flächen der Gegenseite - so die Grundplatte eines Lagerbocks, die an den
-sechzehn Oberseiten ihrer Unterlegbleche gelöst wird („0 Flächen, 1 Volumen,
-an 16 Objekten“ im Modellbaum). Beide Arten werden beim Vernetzen ausgeführt;
-in der zweiten sucht das Programm die Randseiten des Körpers, die auf den
-Gegenflächen liegen. Vor dem Vernetzen steht am Eintrag „wird beim Vernetzen
+Fugenebene starr oder frei, senkrecht dazu frei mit Ausfall.
+
+**Wo die Fuge in der RFEM-Datei steht.** Eine Flächenfreigabe führt zwei
+Listen: *releasedSolids/releasedSurfaces* — **was** gelöst wird — und
+*assignedToObjects* — **woran** die Freigabe hängt. Die Fuge ist die zweite.
+Die erste zählt bei einem gelösten Volumen dessen **ganze Außenhaut** auf: bei
+der Grundplatte eines Lagerbocks 36 Flächen über 1,65 m² — Ober- und
+Unterseite, alle Schmalseiten, alle Buchsenmäntel —, von denen nur ein
+Bruchteil an einer Fuge liegt. Die zugeordneten Flächen sind dagegen genau die
+Fuge: bei einem Passstift seine beiden Mantelhälften, sonst nichts.
+
+Statik3D nimmt darum die zugeordneten Flächen als Fuge und sucht beim
+Vernetzen die Randseiten des gelösten Körpers, die auf ihnen liegen. Im
+Modellbaum steht deshalb „V14 an 16 Flächen“ und nicht „36 Flächen“. Nur wenn
+eine Freigabe **keinen** gelösten Körper und keine zugeordneten Flächen nennt —
+eine reine Flächen-an-Flächen-Freigabe —, sind die freigegebenen Flächen selbst
+die Kontaktseite.
+
+*Bis Version 1.x* wurden die freigegebenen Flächen als Kontaktseite genommen.
+Das trennte das Netz an Flächen ohne Gegenüber und paarte Knoten über
+Zentimeter Luft hinweg; an einer Grundplatte fand nur ein Viertel der
+Kontaktseite eine Gegenseite, bei einem mittleren Spalt von 29 mm. **Modelle,
+die vorher eingelesen wurden, sind neu zu importieren** — in der gespeicherten
+Datei stehen noch die alten Kontaktflächen. Vor dem Vernetzen steht am Eintrag „wird beim Vernetzen
 getrennt“ - ohne Warnzeichen, denn ohne Netz gibt es nichts, was zu steif sein
 könnte. Ein ⚠ mit „nicht ausgeführt - hier zu steif“ erscheint nur, wenn das
 Netz da ist und die Fuge trotzdem nicht getrennt werden konnte; das Protokoll
@@ -270,9 +286,15 @@ geschieht es beim Vernetzen. Ändert man eine Bedingung später, wird ihr
 Kontaktpaar ersetzt; Löschen (Rechtsklick oder Entf) nimmt es mit.
 
 Aus RFEM eingelesene Flächenfreigaben stehen in derselben Maske: Körper A ist
-der gelöste Körper, die Kontaktflächen sind die freigegebenen Flächen, die
-Gegenflächen der Quelldatei stehen zur Information darunter. Auch sie lassen
-sich auf einen Standardkontakt umstellen oder Richtung für Richtung ändern.
+der gelöste Körper, die Gegenflächen sind die zugeordneten Flächen der
+Quelldatei — die Fuge. „Kontaktflächen“ bleibt dann leer; die Fugenflächen des
+gelösten Körpers werden beim Vernetzen geometrisch gesucht. Auch diese
+Bedingungen lassen sich auf einen Standardkontakt umstellen oder Richtung für
+Richtung ändern.
+
+Ein Klick auf eine solche Bedingung im Modellbaum wählt die zugeordneten
+Flächen **und** den gelösten Körper; *Selektion anzeigen* isoliert sie damit
+wie jedes andere Objekt.
 
 In der Tabelle „Knoten“ wird ein Knoten nur gelöscht, wenn **kein** Element
 mehr an ihm hängt — sonst sagt das Programm, welches Element im Weg ist. Der
@@ -514,6 +536,39 @@ Volumen wirkten offen.
 Element** hängt, sind orange und etwas größer — so sieht man beim Modellieren,
 wo man schon war, auch wenn dort noch nichts steht.
 
+#### Nummern: je Objektart ein Schalter
+
+Im Register *Ansicht* steht die Gruppe **Nummern** — ein Schalter je Objektart,
+jeder für sich:
+
+| Schalter | zeigt | Farbe |
+|---|---|---|
+| Knotennummern | die Nummer an jedem Knoten | dunkelgrau |
+| Liniennummern | den Namen an jeder Linie, auf der Linie (bei einem Bogen auf der Kurve, nicht auf der Sehne) | blau |
+| Stabnummern | den Namen an jedem Stab, in der Mitte seines mittleren Elements | grün |
+| Flächennummern | den Namen an jeder Fläche | violett |
+| Volumennummern | den Namen an jedem Volumenkörper, in seiner Mitte | petrol |
+| Elementnummern | die Nummer an jedem finiten Element | orange |
+| Lagernummern | die Nummer (oder den Namen) an jedem Knotenlager | rot |
+
+Die benannten Objekte tragen ihren **Namen**, nicht eine laufende Nummer: in
+der Ansicht steht damit dasselbe wie im Modellbaum und in den Tabellen.
+
+Dieselben Schalter liegen im **Rechtsklickmenü der Ansicht** unter *Nummern*,
+dort mit den kurzen Namen und mit **„Alle Nummern aus"** als einem Griff. So
+lässt sich die Beschriftung beim Arbeiten umlegen, ohne das Register zu
+wechseln.
+
+Ausgeblendete Objekte bekommen **keine** Nummer, und was ein
+Sichtbarkeitsschalter wegnimmt, auch nicht — eine Nummer ohne ihr Objekt wiese
+ins Leere. Schaltet man die Volumen ab, verschwinden mit ihnen auch die
+Nummern ihrer Elemente.
+
+Jede Art hat eine **Obergrenze** (Knoten und Elemente 3000, die übrigen 2000).
+Mehr Marken überdecken das Modell und bremsen die Ansicht; die Nummern bleiben
+dann aus, und die Statuszeile sagt, wie viele es wären. Erst ausblenden, dann
+bleiben die Nummern des Restes lesbar.
+
 **Die Glasleiste** liegt mittig oben über der Ansicht, durchscheinend, und
 trägt als Symbole die Griffe, die man beim Modellieren dauernd braucht — der
 Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
@@ -683,7 +738,12 @@ zwingen dem Fenster keine Mindestbreite auf.
 `> 1` in der Spalte „Ausnutzung" zeigt in einem Griff alle Überschreitungen.
 
 **Sortieren**: Klick auf die Spaltenüberschrift; Zahlen werden der Größe nach
-sortiert, nicht als Text. **Spalten** lassen sich über „Spalten…" ein- und
+sortiert, nicht als Text. Namen werden **alphanumerisch** sortiert: die Zahl im
+Namen zählt als Zahl, nicht Zeichen für Zeichen. „V2" steht damit vor „V10"
+und nicht dahinter — alphabetisch käme die 1 vor der 2, und eine Liste von
+hundert Volumen wirkte ungeordnet. Dieselbe Reihenfolge gilt überall, wo
+Objekte aufgezählt werden: im **Modellbaum**, in den **Tabellen** und in den
+**Aufklapplisten** der Masken. **Spalten** lassen sich über „Spalten…" ein- und
 ausblenden und mit der Maus verschieben.
 
 Unter jeder Ergebnistabelle steht eine feste **Zeile „Max"/„Min"**. Sie

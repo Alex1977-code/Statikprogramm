@@ -344,14 +344,47 @@ gleichnamigen Tabelle, wird mitgespeichert und überlebt Rückgängig:
       Typ 3: ux=frei, uy=frei, uz=frei (Ausfall bei Zug), phix=frei, …
       Typ 4: ux=starr, uy=starr, uz=frei (Ausfall bei Zug), phix=frei, …
 
-**Welcher Körper gelöst wird**, steht in `SurfaceReleaseImpl_releasedSolids`;
-`releasedSurfaces` sind seine Kopien der Fugenfläche und
-`assignedToObjects` die Flächen der Gegenseite. Letztere sind **unvollständig**
-— im geprüften Modell nennt die Liste für 36 freigegebene Flächen nur 5
-Gegenflächen. Sie wird deshalb als Angabe aus der Quelldatei übernommen
-(`gegenflaechen`), zum Ausführen der Fuge aber nicht als Filter benutzt: die
-Gegenseite wird geometrisch gesucht (aufeinanderliegend, entgegengesetzt
-gerichtet).
+#### Zwei Listen — und welche die Fuge ist
+
+Eine Flächenfreigabe führt zwei Listen, und sie bedeuten Verschiedenes:
+
+| Tabelle | Inhalt |
+|---|---|
+| `SurfaceReleaseImpl_releasedSolids` | **was** gelöst wird: der Körper |
+| `SurfaceReleaseImpl_releasedSurfaces` | dessen Flächen — bei einem gelösten Volumen seine **ganze Außenhaut** |
+| `SurfaceReleaseImpl_assignedToObjects` | **woran** die Freigabe hängt: die Flächen der Fuge (`reference_table = 'Surface'`); stehen dort Volumen, sind es Zielkörper |
+
+**Die Fuge ist `assignedToObjects`.** `releasedSurfaces` ist es nicht: für die
+Grundplatte eines Lagerbocks stehen dort 36 Flächen über 1,65 m² — Ober- und
+Unterseite, alle Schmalseiten, alle Buchsenmäntel —, von denen nur ein
+Bruchteil an einer Fuge liegt. Die zugeordneten Flächen sind dagegen genau die
+Fuge; bei einem Passstift steuert er exakt seine beiden Mantelhälften bei.
+
+Statik3D setzt darum: gibt es einen gelösten Körper **und** zugeordnete
+Flächen, ist `flaechennamen` (die Kontaktseite) **leer**, `koerpernamen` der
+gelöste Körper und `gegenflaechen` die Fuge; beim Ausführen werden die
+Randseiten des Körpers gesucht, die auf diesen Flächen liegen. Fehlt
+`releasedSolids`, wird der gelöste Körper aus den freigegebenen Flächen
+erschlossen, sofern sie alle zu einem Körper gehören. Nur wenn weder ein
+gelöster Körper noch zugeordnete Flächen dastehen — eine reine
+Flächen-an-Flächen-Freigabe —, sind die freigegebenen Flächen selbst die
+Kontaktseite.
+
+    Lagerbock-Grundplatte: 36 freigegebene Flaechen, 1 Volumen, zugeordnet an 5 Objekte
+      Fuge: der Koerper V14 wird an den 5 zugeordneten Flaechen der Gegenseite
+      getrennt (beim Vernetzen); die 36 freigegebenen Flaechen sind die
+      Aussenhaut dieses Koerpers und nicht die Fuge
+
+*Bis Version 1.x* galten die freigegebenen Flächen als Kontaktseite. Das
+trennte das Netz an Flächen ohne Gegenüber und paarte Knoten über Zentimeter
+Luft hinweg: an der genannten Grundplatte fanden nur 24 % der Kontaktseite eine
+Gegenseite, bei einem mittleren Spalt von 28,9 mm und einem Suchradius von
+45 mm. Modelle, die vorher eingelesen wurden, sind **neu zu importieren**.
+
+Zum Ausführen der Fuge bleibt die Gegenseite trotzdem eine **geometrische**
+Suche (aufeinanderliegend, entgegengesetzt gerichtet): die zugeordneten Flächen
+sagen, **wo** die Fuge liegt, nicht Knoten für Knoten, welcher gegen welchen
+steht.
 
 **Ausgeführt** wird die Trennung beim Vernetzen von selbst — oder von Hand über
 „Kontaktfugen ausführen". Wie das geschieht, steht im Theoriehandbuch,

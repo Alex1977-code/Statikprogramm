@@ -1804,6 +1804,12 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
         return []
     surf_name = surf_name or {}
     solid_name = solid_name or {}
+    #: Welche Koerper eine Flaeche berandet - daraus laesst sich der geloeste
+    #: Koerper auch dann benennen, wenn ``releasedSolids`` leer bleibt.
+    besitzer_von: dict = {}
+    for k in (m.koerper or {}).values():
+        for f in (k.flaechen or []):
+            besitzer_von.setdefault(str(f), set()).add(k.name)
     out = []
     for h, impl in db.impls("SurfaceRelease"):
         name = ((impl.get("name") or "").strip() or (impl.get("comment") or "").strip()
@@ -1814,11 +1820,18 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
             impl["id"], [])
         ziele = [r.get("reference_id") for r in zeilen]
         # Welcher Koerper geloest wird, steht in RFEM ausdruecklich in
-        # ``releasedSolids`` - die Flaechen in ``releasedSurfaces`` sind seine
-        # Kopien der Fugenflaeche. ``assignedToObjects`` nennt dagegen die
-        # Flaechen, an denen die Freigabe haengt (die Gegenseite); nur wenn
-        # dort ausnahmsweise Volumen stehen, gelten sie als geloeste Seite.
+        # ``releasedSolids``. ``assignedToObjects`` nennt die Flaechen, an
+        # denen die Freigabe haengt - das ist die Fuge; nur wenn dort
+        # ausnahmsweise Volumen stehen, gelten sie als geloeste Seite.
+        freigegeben = [surf_name[x] for x in flaechen if x in surf_name]
         koerpernamen = [solid_name[x] for x in volumen if x in solid_name]
+        if not koerpernamen and freigegeben:
+            # Ohne ``releasedSolids``: gehoeren alle freigegebenen Flaechen
+            # einem Koerper, ist das der geloeste. Genau so legt RFEM die
+            # Freigabe eines Volumens ab - als seine ganze Aussenhaut.
+            besitzer = {k for f in freigegeben for k in besitzer_von.get(f, ())}
+            if len(besitzer) == 1:
+                koerpernamen = sorted(besitzer)
         if not koerpernamen:
             koerpernamen = [solid_name[r["reference_id"]] for r in zeilen
                             if (r.get("reference_table") or "") == "Solid"
@@ -1826,6 +1839,20 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
         gegenflaechen = [surf_name[r["reference_id"]] for r in zeilen
                          if (r.get("reference_table") or "") == "Surface"
                          and r.get("reference_id") in surf_name]
+        # **Die Fuge steht in ``assignedToObjects``.** ``releasedSurfaces``
+        # nennt nicht die Fugenflaeche, sondern die ganze Aussenhaut des
+        # freigegebenen Koerpers: bei der Grundplatte eines Lagerbocks sind
+        # das 36 Flaechen ueber 1,65 m^2 - Plattenober- und -unterseite, alle
+        # Schmalseiten, alle Buchsenmaentel -, von denen nur ein Bruchteil an
+        # der Fuge liegt. Nimmt man sie als Kontaktseite, trennt das Netz an
+        # Flaechen ohne Gegenueber und paart Knoten ueber Zentimeter Luft
+        # hinweg; im Beispielmodell fand nur ein Viertel der Kontaktseite eine
+        # Gegenseite, bei einem mittleren Spalt von 29 mm. Die zugeordneten
+        # Flaechen sind dagegen genau die Fuge - je Passstift seine beiden
+        # Mantelhaelften. Steht ein geloester Koerper da, werden darum seine
+        # Randseiten gesucht, die auf diesen Flaechen liegen (:mod:`.fugen`).
+        ueber_gegenseite = bool(koerpernamen and gegenflaechen)
+        kontaktflaechen = [] if ueber_gegenseite else freigegeben
         linien = db.container("SurfaceReleaseImpl_useDefinitionLines").get(impl["id"], [])
         d = {"name": name, "nummer": h.get("userID") or h["id"],
              "flaechen": len(flaechen), "volumen": len(volumen),
@@ -1849,7 +1876,7 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
         m.add_kontaktbedingung(
             C.unique_name(m.kontaktbedingungen, name),
             flaechen=[int(x) for x in flaechen], volumen=[int(x) for x in volumen],
-            flaechennamen=[surf_name[x] for x in flaechen if x in surf_name],
+            flaechennamen=kontaktflaechen,
             koerpernamen=list(dict.fromkeys(koerpernamen)),
             gegenflaechen=list(dict.fromkeys(gegenflaechen)),
             ziele=len(ziele), ort=d["ort"],
@@ -1864,11 +1891,13 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
                    + (f", {d['volumen']} Volumen" if d["volumen"] else "")
                    + f", zugeordnet an {d['ziele']} Objekte, Ort {d['ort']}"
                    + (" (deaktiviert)" if d["aus"] else ""))
-        if not flaechen and koerpernamen and gegenflaechen:
-            C.say(log, f"    ohne freigegebene Flaechen: der Koerper "
-                       f"{', '.join(dict.fromkeys(koerpernamen))} wird an den "
-                       f"{len(dict.fromkeys(gegenflaechen))} zugeordneten Flaechen der "
-                       "Gegenseite getrennt (beim Vernetzen)")
+        if ueber_gegenseite:
+            C.say(log, f"    Fuge: der Koerper {', '.join(dict.fromkeys(koerpernamen))} "
+                       f"wird an den {len(dict.fromkeys(gegenflaechen))} zugeordneten "
+                       "Flaechen der Gegenseite getrennt (beim Vernetzen)"
+                       + (f"; die {len(freigegeben)} freigegebenen Flaechen sind die "
+                          "Aussenhaut dieses Koerpers und nicht die Fuge"
+                          if freigegeben else ""))
         elif not flaechen and not koerpernamen:
             C.warn(log, f"    {name}: weder freigegebene Flaechen noch ein geloester Koerper "
                         "- die Fuge laesst sich nicht ausfuehren")

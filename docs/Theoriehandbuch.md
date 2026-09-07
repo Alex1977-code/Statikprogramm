@@ -541,8 +541,13 @@ werden, sonst rechnet das Modell an der Fuge durchverbunden – also zu steif �
 und überträgt dort Zug, wo in Wirklichkeit ein Spalt aufgeht.
 
 RFEM legt die Fuge so ab: `releasedSolids` nennt den gelösten Körper,
-`releasedSurfaces` seine Kopien der Fugenfläche, `assignedToObjects` die
-Flächen der Gegenseite. Der Vernetzer teilt Knoten nur über **dieselbe**
+`releasedSurfaces` **dessen ganze Außenhaut** und `assignedToObjects` die
+Flächen, an denen die Freigabe hängt — und das ist die Fuge. Nicht die
+Außenhaut: an einer Grundplatte sind das 36 Flächen über 1,65 m², von denen nur
+ein Bruchteil an einer Fuge liegt (siehe Schnittstellenhandbuch, „Zwei Listen —
+und welche die Fuge ist“). Die Fugenflächen des gelösten Körpers werden darum
+gesucht: seine Randseiten, die auf den zugeordneten Flächen liegen. Der
+Vernetzer teilt Knoten nur über **dieselbe**
 Fläche; zwei Bauteile mit je eigener Fugenfläche teilen deshalb nur die Knoten
 ihrer gemeinsamen **Randlinien**. Daraus folgen zwei Fälle:
 

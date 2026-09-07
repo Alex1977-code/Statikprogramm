@@ -424,8 +424,10 @@ class TabellenModell(QtCore.QAbstractTableModel):
             wert = z[k] if k < len(z) else ""
             zahl = _zahl(wert)
             if zahl is not None:
-                return (0, zahl, "")
-            return (1, 0.0, str(wert).lower())
+                return (0, zahl, [])
+            # Kein reiner Zahlwert: dann natuerlich sortieren, damit „V2“ vor
+            # „V10“ steht und nicht dahinter.
+            return (1, 0.0, dsg.natuerlich(wert))
 
         return sorted(range(len(zeilen)), key=schluessel,
                       reverse=(richtung == QtCore.Qt.DescendingOrder))

@@ -976,6 +976,40 @@ def test_kontaktbedingungen():
               str(kb.koerpernamen))
         check("und die Flaechen der Gegenseite auch", kb.gegenflaechen,
               str(kb.gegenflaechen))
+        # Die Fuge steht in assignedToObjects. releasedSurfaces zaehlt die
+        # ganze Aussenhaut des geloesten Koerpers auf - sie ist nicht die
+        # Kontaktseite; wer sie dafuer nimmt, trennt das Netz an Flaechen ohne
+        # Gegenueber und paart Knoten ueber Zentimeter Luft hinweg.
+        check("die freigegebenen Flaechen sind nicht die Kontaktseite",
+              kb.flaechennamen == [], str(kb.flaechennamen))
+        check("die Fuge nennt Koerper und zugeordnete Flaechen",
+              kb.fuge() == "V1 an 1 Flächen", kb.fuge())
+        check("das Protokoll sagt, woran getrennt wird",
+              "Fuge: der Koerper V1 wird an den 1 zugeordneten Flaechen" in txt,
+              next((x for x in log if "Fuge:" in x), "-"))
+        check("und was releasedSurfaces wirklich ist",
+              "Aussenhaut dieses Koerpers und nicht die Fuge" in txt,
+              next((x for x in log if "Aussenhaut" in x), "-"))
+
+        # Zwei Gegenproben: ohne zugeordnete Flaechen bleiben die
+        # freigegebenen Flaechen die Kontaktseite; ohne releasedSolids wird
+        # der geloeste Koerper aus ihnen erschlossen.
+        k, nl = (INF, INF, 0.0, 0.0, 0.0, 0.0), (0, 0, 1, 0, 0, 0)
+        f2 = make_rf6(
+            os.path.join(tmp, "gegenprobe.rf6"),
+            nodes=WUERFEL_KNOTEN, lines=[], members=[], supports=[],
+            surfaces=WUERFEL_FLAECHEN, solids=[[1, 2, 3, 4, 5, 6]],
+            releases=[("ohne Zuordnung", [1, 2], [], 0, k, nl),
+                      ("ohne releasedSolids", [1, 2, 3, 4, 5, 6], [], 1, k, nl)],
+        )
+        m2 = R6.read_rf6(f2, log=[])
+        a, b = [m2.kontaktbedingungen[n] for n in m2.kontaktbedingungen]
+        check("ohne zugeordnete Flaechen bleiben die freigegebenen die Kontaktseite",
+              a.flaechennamen == ["F1", "F2"] and not a.gegenflaechen,
+              f"{a.flaechennamen} / {a.gegenflaechen}")
+        check("ohne releasedSolids wird der geloeste Koerper aus den Flaechen erschlossen",
+              b.koerpernamen == ["V1"] and b.flaechennamen == [],
+              f"{b.koerpernamen} / {b.flaechennamen}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

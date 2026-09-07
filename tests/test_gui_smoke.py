@@ -4997,6 +4997,272 @@ def main():
         traceback.print_exc()
         check("Verbindungsobjekte und neue Masken", False, str(ex)[:70])
 
+    # ---- Nummerierung je Objektart: Ribbon, Zeichnen, Rechtsklick --------
+    try:
+        from statik3d.model import Material as _MatN, Section as _SecN
+        w.new_model()
+        mn = w.model
+        mn.add_material(_MatN("S235", E=210e9, nu=0.3, rho=7850))
+        mn.add_section(_SecN("R", A=1e-2, Iy=1e-5, Iz=1e-5, It=1e-5, Iw=1e-7))
+        # Quader aus zwoelf Linien und sechs Flaechen, dazu ein Stab und ein Lager
+        P = np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
+                      [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]])
+        mn.add_nodes(P)
+        kanten = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+                  (0, 4), (1, 5), (2, 6), (3, 7)]
+        for i, (a, b) in enumerate(kanten):
+            mn.add_line(f"K{i + 1}", [a, b])
+        seiten = {"Boden": ["K1", "K2", "K3", "K4"], "Deckel": ["K5", "K6", "K7", "K8"],
+                  "S1": ["K1", "K10", "K5", "K9"], "S2": ["K2", "K11", "K6", "K10"],
+                  "S3": ["K3", "K12", "K7", "K11"], "S4": ["K4", "K9", "K8", "K12"]}
+        for nme, ls in seiten.items():
+            mn.add_flaeche(nme, ls, material="S235")
+        kk = mn.add_koerper("V1", list(seiten), material="S235", teilung=[2, 1, 1])
+        w._vernetzen([], [kk])
+        a0 = mn.add_node(0, 0, 2); a1 = mn.add_node(2, 0, 2)
+        e_stab = mn.add_element("beam", [a0, a1], "S235", "R")
+        mn.add_member("St1", [e_stab])
+        mn.fix(0, "all")
+        w.refresh_all()
+        app.processEvents()
+
+        # --- Ribbon Ansicht: ein Schalter je Objektart --------------------------
+        arten = list(w.NUMMERN)
+        check("Ribbon Ansicht: Gruppe „Nummern“ mit einem Schalter je Objektart",
+              sorted(w.act_nummern) == sorted(arten) and len(arten) == 7, str(arten))
+        check("Nummernschalter sind Umschalter und anfangs aus",
+              all(a.isCheckable() and not a.isChecked() for a in w.act_nummern.values()))
+        check("Die alten Namen zeigen weiter auf Knoten und Elemente",
+              w.act_nodes is w.act_nummern["Knoten"] and w.act_elems is w.act_nummern["Elemente"])
+        check("Jeder Schalter hat einen Hinweis",
+              all(len(w.NUMMERN[a][3]) > 10 for a in arten))
+        check("und im Ribbon eine eigene Beschriftung - die Sichtbarkeitsschalter "
+              "heißen schon „Knoten“, „Linien“, „Flächen“, „Volumen“",
+              len({w.NUMMERN[a][4] for a in arten}) == 7
+              and not ({w.NUMMERN[a][4] for a in arten} & set(arten)),
+              str([w.NUMMERN[a][4] for a in arten]))
+        check("Jede Art hat ihre eigene Schriftfarbe",
+              len({w.NUMMERN[a][0] for a in arten}) == 7,
+              str([w.NUMMERN[a][0] for a in arten]))
+
+        # --- Marken je Art: Punkt und Beschriftung ------------------------------
+        pk, tk = w._nummernmarken(mn, "Knoten", None)
+        check("Knoten: eine Nummer je Knoten, am Knoten",
+              len(tk) == mn.nn and tk[0] == "0" and abs(pk[1][0] - 2.0) < 1e-9,
+              f"{len(tk)} Marken")
+        pe, te = w._nummernmarken(mn, "Elemente", None)
+        check("Elemente: eine Nummer je Element, in seiner Mitte",
+              len(te) == len(mn.elements) and te[0] == "0", f"{len(te)} Marken")
+        pl, tl = w._nummernmarken(mn, "Linien", None)
+        check("Linien: der Name an jeder Linie",
+              sorted(tl) == sorted(f"K{i + 1}" for i in range(12)), str(sorted(tl)[:4]))
+        check("Linienmarke sitzt auf der Linie",
+              abs(pl[list(tl).index("K1")][1]) < 1e-9
+              and 0.0 <= pl[list(tl).index("K1")][0] <= 2.0, str(pl[list(tl).index("K1")]))
+        ps, ts = w._nummernmarken(mn, "Stäbe", None)
+        check("Stäbe: der Name am Stab", list(ts) == ["St1"]
+              and abs(ps[0][2] - 2.0) < 1e-9, f"{list(ts)} {ps}")
+        pf, tf = w._nummernmarken(mn, "Flächen", None)
+        check("Flächen: der Name an jeder Fläche",
+              sorted(tf) == sorted(seiten), str(sorted(tf)))
+        check("Flächenmarke liegt in der Fläche (Boden bei z = 0)",
+              abs(pf[list(tf).index("Boden")][2]) < 1e-9, str(pf[list(tf).index("Boden")]))
+        pv, tv = w._nummernmarken(mn, "Volumen", None)
+        check("Volumen: der Name im Körper",
+              list(tv) == ["V1"] and np.allclose(pv[0], [1.0, 0.5, 0.5]), str(pv))
+        pg, tg = w._nummernmarken(mn, "Lager", None)
+        check("Lager: die Nummer am Lagerknoten",
+              list(tg) == ["1"] and np.allclose(pg[0], [0, 0, 0]), f"{list(tg)} {pg}")
+
+        # --- Sichtbarkeit: keine Nummer ohne ihr Objekt --------------------------
+        w.act_volumen.setChecked(False)
+        check("Volumen ausgeschaltet: keine Volumennummern",
+              not w._nummernmarken(mn, "Volumen", None)[1])
+        check("Volumen ausgeschaltet: auch die Volumenelemente bekommen keine Nummer "
+              "- nur das Stabelement bleibt",
+              w._nummernmarken(mn, "Elemente", None)[1] == [str(e_stab)],
+              str(w._nummernmarken(mn, "Elemente", None)[1])[:60])
+        w.act_volumen.setChecked(True)
+        w.versteckt["linien"] = {"K1"}
+        tl2 = w._nummernmarken(mn, "Linien", None)[1]
+        check("Ausgeblendete Linie bekommt keine Nummer",
+              "K1" not in tl2 and len(tl2) == 11, str(len(tl2)))
+        w.versteckt["linien"] = set()
+        w.versteckt["flaechen"] = {"Deckel"}
+        check("Ausgeblendete Fläche bekommt keine Nummer",
+              "Deckel" not in w._nummernmarken(mn, "Flächen", None)[1])
+        w.versteckt["flaechen"] = set()
+        check("Nur die sichtbaren Knoten bekommen eine Nummer",
+              list(w._nummernmarken(mn, "Knoten", [1, 3])[1]) == ["1", "3"])
+        check("Lager an ausgeblendeten Knoten bekommen keine Nummer",
+              not w._nummernmarken(mn, "Lager", [1, 3])[1])
+
+        # --- Zeichnen: jede Art ein eigener Darsteller ---------------------------
+        vorher = len(w.log.toPlainText())
+        for a in w.act_nummern.values():
+            a.setChecked(True)
+        w.redraw(); app.processEvents()
+        namen = set(w.plotter.renderer.actors)
+        check("Jede Objektart bekommt ihren eigenen Darsteller",
+              all(any(str(x).startswith(f"nummern:{art}") for x in namen) for art in arten),
+              str(sorted(x for x in namen if str(x).startswith("nummern"))))
+        check("Nummern zeichnen meldet keinen Fehler",
+              "Nummern " not in w.log.toPlainText()[vorher:],
+              w.log.toPlainText()[vorher:][:80])
+
+        # --- Grenze: zu viele Marken bleiben aus und sagen es -------------------
+        w.NUMMERN["Knoten"] = w.NUMMERN["Knoten"][:2] + (3,) + w.NUMMERN["Knoten"][3:]
+        w.act_nodes.setChecked(False)
+        w.act_nodes.setChecked(True)
+        check("Zu viele Nummern bleiben aus", w._nummern_zuviel.get("Knoten") == mn.nn,
+              str(w._nummern_zuviel))
+        check("und die Statuszeile sagt, warum",
+              "zu viele" in w.statusBar().currentMessage(),
+              w.statusBar().currentMessage()[:70])
+        w.NUMMERN["Knoten"] = w.NUMMERN["Knoten"][:2] + (3000,) + w.NUMMERN["Knoten"][3:]
+
+        # --- Rechtsklickmenü im Viewport ---------------------------------------
+        w.nummern_umlegen("Flächen")
+        check("Rechtsklick: eine Art einzeln umlegen",
+              not w.act_nummern["Flächen"].isChecked())
+        w.nummern_umlegen("Flächen")
+        check("und wieder an", w.act_nummern["Flächen"].isChecked())
+        w.nummern_aus()
+        check("„Alle Nummern aus“ schaltet alle sieben aus",
+              not any(a.isChecked() for a in w.act_nummern.values()))
+        check("und sagt es in der Statuszeile",
+              "Nummern aus" in w.statusBar().currentMessage(),
+              w.statusBar().currentMessage()[:60])
+        w.nummern_aus()
+        check("nochmals: es ist schon alles aus",
+              "keine Nummern" in w.statusBar().currentMessage(),
+              w.statusBar().currentMessage()[:60])
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Nummerierung je Objektart", False, str(ex)[:70])
+
+    # ---- Alphanumerische Sortierung und die Fuge einer Kontaktbedingung ----
+    try:
+        from statik3d.gui import design as _dsg
+        from statik3d.gui import tabellen as _tab
+        from statik3d.model import Material as _MatS, ShellProp as _ShS
+
+        check("Sortierschlüssel liest die Zahl als Zahl",
+              sorted(["V10", "V2", "V1", "V21"], key=_dsg.natuerlich)
+              == ["V1", "V2", "V10", "V21"],
+              str(sorted(["V10", "V2", "V1", "V21"], key=_dsg.natuerlich)))
+        check("Namen ohne Zahl bleiben alphabetisch",
+              _dsg.namen({"Beton": 1, "Aluminium": 2, "S355": 3, "S235": 4})
+              == ["Aluminium", "Beton", "S235", "S355"],
+              str(_dsg.namen({"Beton": 1, "Aluminium": 2, "S355": 3, "S235": 4})))
+        check("Zahl und Text nebeneinander vergleichen sich ohne Fehler",
+              _dsg.namen({"2x": 1, "x2": 2, "12": 3, "3": 4}) is not None)
+
+        # --- Modellbaum: jeder Zweig natürlich sortiert -------------------
+        w.new_model()
+        ms = w.model
+        ms.add_material(_MatS("S355", E=210e9, nu=0.3, rho=7850))
+        ms.add_material(_MatS("S235", E=210e9, nu=0.3, rho=7850))
+        ms.add_nodes(np.array([[float(i), 0, 0] for i in range(13)]))
+        for i in (1, 2, 10, 11, 3):            # bewusst durcheinander angelegt
+            ms.add_line(f"L{i}", [i - 1, i])
+        for i in (10, 2, 1):
+            ms.add_shell_prop(_ShS(f"D{i}", t=0.01 * i))
+        w.refresh_all()
+        app.processEvents()
+
+        def _kinder(baum, zweigname):
+            for i in range(baum.topLevelItemCount()):
+                st = [baum.topLevelItem(i)]
+                while st:
+                    x = st.pop()
+                    if x.text(0) == zweigname:
+                        return [x.child(k).text(0) for k in range(x.childCount())]
+                    st += [x.child(k) for k in range(x.childCount())]
+            return []
+
+        check("Modellbaum: Linien natürlich sortiert",
+              _kinder(w.baum, "Linien") == ["L1", "L2", "L3", "L10", "L11"],
+              str(_kinder(w.baum, "Linien")))
+        check("Modellbaum: Knoten numerisch, nicht alphabetisch",
+              _kinder(w.baum, "Knoten")[:4] == ["K0", "K1", "K2", "K3"]
+              and _kinder(w.baum, "Knoten")[-1] == "K12",
+              str(_kinder(w.baum, "Knoten")[-3:]))
+        check("Modellbaum: Dicken natürlich sortiert",
+              _kinder(w.baum, "Dicken")[:3] == ["D1", "D2", "D10"],
+              str(_kinder(w.baum, "Dicken")))
+        check("Modellbaum: Werkstoffe alphabetisch",
+              _kinder(w.baum, "Werkstoffe") == ["S235", "S355"],
+              str(_kinder(w.baum, "Werkstoffe")))
+
+        # --- Aufklapplisten der Masken ------------------------------------
+        check("Aufklappliste der Dicken natürlich sortiert",
+              [x for x in w.tbl_geoflaeche.modell.spalten
+               if x.name == "Dicke"][0].wahlwerte()[:3] == ["D1", "D2", "D10"],
+              str([x for x in w.tbl_geoflaeche.modell.spalten
+                   if x.name == "Dicke"][0].wahlwerte()))
+
+        # --- Tabellensortierung -------------------------------------------
+        sp = [_tab.Spalte("Name", "", "text", 3)]
+        mo = _tab.TabellenModell(sp) if hasattr(_tab, "TabellenModell") else None
+        if mo is not None:
+            mo.zeilen = [["L10"], ["L2"], ["L1"], ["L21"]]
+            mo.sortierung = (0, QtCore.Qt.AscendingOrder)
+            mo._sortieren()
+            check("Modelltabelle: Namensspalte natürlich sortiert",
+                  [z[0] for z in mo.zeilen] == ["L1", "L2", "L10", "L21"],
+                  str([z[0] for z in mo.zeilen]))
+            mo.zeilen = [["12"], ["2"], ["100"]]
+            mo._sortieren()
+            check("Zahlenspalten bleiben Zahlen",
+                  [z[0] for z in mo.zeilen] == ["2", "12", "100"],
+                  str([z[0] for z in mo.zeilen]))
+
+        # --- Kontaktbedingung ohne Kontaktflächen ist sichtbar und isolierbar
+        w.new_model()
+        mc = w.model
+        mc.add_material(_MatS("S235", E=210e9, nu=0.3, rho=7850))
+        P = np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
+                      [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]])
+        mc.add_nodes(P)
+        kanten = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+                  (0, 4), (1, 5), (2, 6), (3, 7)]
+        for i, (a, b) in enumerate(kanten):
+            mc.add_line(f"K{i + 1}", [a, b])
+        seiten = {"Boden": ["K1", "K2", "K3", "K4"], "Deckel": ["K5", "K6", "K7", "K8"],
+                  "S1": ["K1", "K10", "K5", "K9"], "S2": ["K2", "K11", "K6", "K10"],
+                  "S3": ["K3", "K12", "K7", "K11"], "S4": ["K4", "K9", "K8", "K12"]}
+        for nme, ls in seiten.items():
+            mc.add_flaeche(nme, ls, material="S235")
+        mc.add_koerper("V1", list(seiten), material="S235", teilung=[2, 1, 1])
+        n0 = mc.add_node(9, 9, 9); n1 = mc.add_node(9, 9, 10)
+        mc.add_line("X1", [n0, n1])            # gehoert nicht zur Fuge
+        kb = mc.add_kontaktbedingung("Lagerbock-Unterlegbleche", koerpernamen=["V1"],
+                                     gegenflaechen=["Boden"])
+        w.refresh_all()
+        app.processEvents()
+        check("Bezug nennt die Fuge statt „0 Flächen“",
+              kb.fuge() == "V1 an 1 Flächen", kb.fuge())
+        w._baum_objekt_waehlen("kontaktbedingung", "Lagerbock-Unterlegbleche")
+        check("Klick wählt die zugeordneten Flächen und den gelösten Körper",
+              w.sel_flaechen == ["Boden"] and w.sel_koerper == ["V1"],
+              f"{w.sel_flaechen} / {w.sel_koerper}")
+        gemeldet = []
+        w.error = lambda msg: gemeldet.append(str(msg))
+        w.nur_auswahl_zeigen()
+        check("und lässt sich isolieren statt „Erst etwas auswählen“",
+              not gemeldet and "X1" in w.versteckt["linien"],
+              str(gemeldet)[:70] or str(sorted(w.versteckt["linien"]))[:70])
+        w.alles_zeigen()
+        w.error = lambda msg: None
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Sortierung und Kontaktfuge", False, str(ex)[:70])
+
     # ------------------------------------------------------------------
     # Fortschritt: Speichern, Laden und Rechnen zeigen, wie weit sie sind
     # ------------------------------------------------------------------
