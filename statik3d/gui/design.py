@@ -404,6 +404,12 @@ class Modellbaum(QtWidgets.QTreeWidget):
     bearbeiten = QtCore.Signal(str, str)      # (Art, Name) - Doppelklick
     neu = QtCore.Signal(str)                  # Zweigart: ein neues Objekt anlegen
     loeschen = QtCore.Signal(str, str)        # (Art, Name): Objekt loeschen
+    #: Mehrere Eintraege derselben Art gewaehlt (Strg-Klick, Umschalt-Klick,
+    #: Umschalt-Pfeiltaste): (Art, [Namen]). Das Fenster waehlt sie zusammen
+    #: aus, statt nur den zuletzt angeklickten.
+    mehrfach = QtCore.Signal(str, list)
+    viele_bearbeiten = QtCore.Signal(str, list)   # (Art, [Namen]) - Sammelmaske
+    viele_loeschen = QtCore.Signal(str, list)     # (Art, [Namen]) - auf einmal loeschen
 
     #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst
     NEU_ARTEN = {"querschnitte": "Querschnitt", "subsysteme": "Subsystem",
@@ -452,8 +458,12 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # Spalte 0 verschwindet - der Baum waere dann unlesbar.
         self.header().setMaximumSectionSize(120)
         self.setTextElideMode(QtCore.Qt.ElideRight)
+        # Mehrfachauswahl: Strg nimmt einzelne dazu, Umschalt eine Strecke -
+        # so, wie es die Tabellen unten schon koennen.
+        self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.itemClicked.connect(self._klick)
         self.itemDoubleClicked.connect(self._doppelklick)
+        self.itemSelectionChanged.connect(self._auswahl_geaendert)
 
     @staticmethod
     def _schluessel(item) -> tuple[str, str]:
@@ -467,7 +477,38 @@ class Modellbaum(QtWidgets.QTreeWidget):
         ein Zweig meint die Art."""
         return item is not None and item.data(0, QtCore.Qt.UserRole + 1) is not None
 
+    def gewaehlte_eintraege(self) -> tuple[str, list]:
+        """(Art, [Namen]) der gewaehlten **Eintraege** einer gemeinsamen Art.
+
+        Zweige (die nur eine Art meinen) zaehlen nicht mit, und Eintraege
+        verschiedener Art auch nicht: „drei Flaechen" ist eine Auswahl, „eine
+        Flaeche und ein Lastfall" ist keine. Massgebend ist die Art des zuletzt
+        angeklickten Eintrags.
+        """
+        eintraege = [it for it in self.selectedItems() if self._ist_eintrag(it)]
+        if not eintraege:
+            return "", []
+        aktuell = self.currentItem()
+        art = self._schluessel(aktuell)[0] if aktuell in eintraege \
+            else self._schluessel(eintraege[-1])[0]
+        namen = [self._schluessel(it)[1] for it in eintraege
+                 if self._schluessel(it)[0] == art]
+        return art, list(dict.fromkeys(namen))
+
+    def _auswahl_geaendert(self) -> None:
+        """Die Auswahl hat sich geaendert - nur die Mehrfachauswahl meldet sich.
+
+        Der einzelne Eintrag laeuft weiter ueber :meth:`_klick`; sonst kaeme
+        bei jedem Klick zweimal dasselbe Signal.
+        """
+        art, namen = self.gewaehlte_eintraege()
+        if art and len(namen) > 1:
+            self.mehrfach.emit(art, namen)
+
     def _klick(self, item, _spalte):
+        art, namen = self.gewaehlte_eintraege()
+        if art and len(namen) > 1:
+            return                      # _auswahl_geaendert hat schon gemeldet
         art, name = self._schluessel(item)
         if art:
             self.angeklickt.emit(art, name)
@@ -481,6 +522,17 @@ class Modellbaum(QtWidgets.QTreeWidget):
         menu = QtWidgets.QMenu(self)
         eintrag = self._ist_eintrag(item)
         zweigart = self.ELTERNART.get(art, art) if eintrag else art
+        v_art, v_namen = self.gewaehlte_eintraege()
+        if eintrag and v_art == art and len(v_namen) > 1:
+            # Mehrere Eintraege gewaehlt: die Sammelbefehle stehen zuerst
+            b = menu.addAction(f"Bearbeiten … ({len(v_namen)})")
+            b.triggered.connect(lambda _c=False, a=v_art, n=list(v_namen):
+                                self.viele_bearbeiten.emit(a, n))
+            if art in self.LOESCH_ARTEN:
+                d = menu.addAction(f"Löschen ({len(v_namen)}, Entf)")
+                d.triggered.connect(lambda _c=False, a=v_art, n=list(v_namen):
+                                    self.viele_loeschen.emit(a, n))
+            menu.addSeparator()
         if zweigart in self.NEU_ARTEN:
             a = menu.addAction(f"Neu: {self.NEU_ARTEN[zweigart]} …")
             a.triggered.connect(lambda _c=False, z=zweigart: self.neu.emit(z))
@@ -495,6 +547,10 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
     def keyPressEvent(self, ev):
         if ev.key() in (QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace):
+            v_art, v_namen = self.gewaehlte_eintraege()
+            if len(v_namen) > 1 and v_art in self.LOESCH_ARTEN:
+                self.viele_loeschen.emit(v_art, v_namen)
+                return
             item = self.currentItem()
             if item is not None and self._ist_eintrag(item):
                 art, name = self._schluessel(item)

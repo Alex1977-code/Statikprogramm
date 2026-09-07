@@ -94,7 +94,14 @@ Register kommt nach vorn.
 
 Die Arbeitsfläche in drei Spalten:
 
-* **links der Modellbaum** — **alles, was modelliert werden kann**, mit Anzahl:
+* **links der Modellbaum** — **alles, was modelliert werden kann**, mit Anzahl.
+  Mehrere Einträge lassen sich zusammen wählen: **Strg** nimmt einzelne dazu,
+  **Umschalt** eine ganze Strecke. Alle Gewählten leuchten dann zusammen im
+  Bild, die Statuszeile nennt ihre Zahl, und der Rechtsklick bietet
+  *Bearbeiten…* (eine Sammelmaske für alle, unterschiedliche Werte stehen als
+  „verschieden“) und *Löschen* mit **einer** Rückfrage für alle. Was nicht
+  gelöscht werden kann, bleibt stehen und der Grund steht in der Meldung.
+  Der Baum enthält:
 
   | Zweig | Inhalt |
   |---|---|
@@ -282,8 +289,26 @@ der nächsten Facette der Gegenseite im Suchradius (Knoten gegen Fläche). Steht
 schon ein Netz, wird die Fuge mit „OK“ bzw. „Übernehmen“ sofort getrennt und
 das Protokoll sagt, wie viel der Kontaktseite eine Gegenseite gefunden hat
 („599 von 3430 cm²“, Spalt im Mittel und größter) - die übrige Kontaktseite
-liegt weiter als der Suchradius von jedem anderen Bauteil entfernt. Ohne Netz
-geschieht es beim Vernetzen. Ändert man eine Bedingung später, wird ihr
+liegt weiter als der Suchradius von jedem anderen Bauteil entfernt. Der
+**Spalt** ist dabei der Abstand senkrecht zur Fuge; ein Versatz **in** der
+Fugenebene zählt nicht mit, denn er bedeutet kein Abheben. Ohne Netz
+geschieht es beim Vernetzen.
+
+Zur Fugenebene selbst sagt das Protokoll, was sie hält. Ohne Reibung und ohne
+Federn trägt eine Fuge nur senkrecht zu ihren Facetten — ob das Bauteil damit
+gleiten kann, entscheidet ihre **Form**: ein Absatz, eine Nut oder eine
+Bohrung halten seitlich von selbst. Das Protokoll nennt die Anteile, mit denen
+die Fuge in ihren drei Hauptrichtungen trägt:
+
+```
+Lagerbock-Grundplatte: keine Reibung, keine Federn - die Fuge hält seitlich
+durch ihre Form (Anteile 78% / 13% / 9% in z, x, y). Das Bauteil kann nicht
+gleiten.
+```
+
+Hält nur eine Richtung — die Fuge ist eben —, kommt stattdessen die Warnung,
+dass das gelöste Bauteil frei gleiten kann und eigene Lager braucht. Hält sie
+zwei, wird die dritte beim Namen genannt. Ändert man eine Bedingung später, wird ihr
 Kontaktpaar ersetzt; Löschen (Rechtsklick oder Entf) nimmt es mit.
 
 Aus RFEM eingelesene Flächenfreigaben stehen in derselben Maske: Körper A ist

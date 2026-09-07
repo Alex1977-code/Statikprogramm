@@ -5691,6 +5691,194 @@ def main():
         traceback.print_exc()
         check("Volumen ohne Rauminhalt halten die Rechnung nicht auf", False, str(ex)[:70])
 
+    # ------------------------------------------------------------------
+    # Mehrfachauswahl im Modellbaum; Teilnetz statt ganzem Netz beim Leuchten
+    # ------------------------------------------------------------------
+    try:
+        import numpy as _np
+        from PySide6 import QtCore as _Qc, QtWidgets as _Qw
+        from statik3d.gui import viewport as _vp
+        w.load_example("frame")
+        w.refresh_all()
+        app.processEvents()
+        baum = w.baum
+
+        def _eintraege(art):
+            """Alle Baumeintraege einer Art - der Baum ist beliebig tief."""
+            out = []
+            stapel = [baum.topLevelItem(i) for i in range(baum.topLevelItemCount())]
+            while stapel:
+                it = stapel.pop()
+                if it is None:
+                    continue
+                if baum._ist_eintrag(it) and baum._schluessel(it)[0] == art:
+                    out.append(it)
+                stapel += [it.child(i) for i in range(it.childCount())]
+            return out
+
+        check("Modellbaum erlaubt Mehrfachauswahl",
+              baum.selectionMode() == _Qw.QAbstractItemView.ExtendedSelection,
+              str(baum.selectionMode()))
+
+        knoten = sorted(_eintraege("knoten"), key=lambda it: int(baum._schluessel(it)[1]))
+        check("der Baum führt Knoten als einzelne Einträge", len(knoten) >= 3,
+              str(len(knoten)))
+        if len(knoten) >= 3:
+            gemeldet = []
+            baum.mehrfach.connect(lambda a, n: gemeldet.append((a, list(n))))
+            baum.clearSelection()
+            for it in knoten[:3]:
+                it.setSelected(True)
+            baum.setCurrentItem(knoten[2], 0, _Qc.QItemSelectionModel.NoUpdate)
+            app.processEvents()
+            art, namen = baum.gewaehlte_eintraege()
+            check("gewaehlte_eintraege liefert alle drei Knoten",
+                  art == "knoten" and len(namen) == 3, f"{art} {namen}")
+            check("und das Signal „mehrfach“ ist gekommen",
+                  bool(gemeldet) and gemeldet[-1][0] == "knoten"
+                  and len(gemeldet[-1][1]) == 3, str(gemeldet[-1] if gemeldet else None))
+            w._baum_mehrfach("knoten", namen)
+            app.processEvents()
+            check("alle drei sind im Viewport gewählt",
+                  sorted(int(x) for x in w.selection) == sorted(int(x) for x in namen),
+                  f"{sorted(int(x) for x in w.selection)} / {namen}")
+            check("und die Statuszeile nennt die Zahl",
+                  "3 Knoten" in w.lbl_sel.text(), w.lbl_sel.text())
+
+        # Flaechen und Volumen genauso - zwei Tetraeder aus Geometrie
+        from statik3d.model import Material as _Mat2
+        w.new_model()
+        mm = w.model
+        mm.add_material(_Mat2("S235", E=210e9, nu=0.3, rho=7850))
+        for pkt in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+                    (5, 0, 0), (6, 0, 0), (5, 1, 0), (5, 0, 1)]:
+            mm.add_node(*pkt)
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3),
+                                    (4, 5), (5, 6), (6, 4), (4, 7), (5, 7), (6, 7)]):
+            mm.add_line(f"L{i}", [a, b])
+        for nm, ls in [("A1", ["L0", "L1", "L2"]), ("A2", ["L0", "L4", "L3"]),
+                       ("A3", ["L1", "L5", "L4"]), ("A4", ["L2", "L3", "L5"]),
+                       ("B1", ["L6", "L7", "L8"]), ("B2", ["L6", "L10", "L9"]),
+                       ("B3", ["L7", "L11", "L10"]), ("B4", ["L8", "L9", "L11"])]:
+            mm.add_flaeche(nm, ls, material="S235")
+        mm.add_koerper("VA", ["A1", "A2", "A3", "A4"], material="S235")
+        mm.add_koerper("VB", ["B1", "B2", "B3", "B4"], material="S235")
+        w.refresh_all()
+        app.processEvents()
+        vol = _eintraege("geokoerper_einzeln")
+        namen = sorted(baum._schluessel(it)[1] for it in vol)[:2]
+        check("der Baum führt beide Volumen einzeln", len(vol) == 2, str(len(vol)))
+        w._baum_mehrfach("geokoerper_einzeln", namen)
+        check("zwei Volumen zusammen gewählt",
+              sorted(w.sel_koerper) == sorted(namen), str(w.sel_koerper))
+        check("und die Auswahlart folgt", w.auswahlart == "Volumen", w.auswahlart)
+        fl = _eintraege("geoflaeche")
+        namen = sorted(baum._schluessel(it)[1] for it in fl)[:3]
+        check("der Baum führt alle acht Flächen einzeln", len(fl) == 8, str(len(fl)))
+        w._baum_mehrfach("geoflaeche", namen)
+        check("drei Flächen zusammen gewählt",
+              sorted(w.sel_flaechen) == sorted(namen), str(w.sel_flaechen))
+        # Löschen mehrerer auf einmal: eine Rückfrage, ein Bild, ein Bericht.
+        # Flächen, die ein Volumen beranden, gehen nicht - und sagen warum.
+        meldungen = []
+        alt_best2, alt_info2 = w._bestaetigen, w.info
+        w._bestaetigen = lambda *a, **k: True
+        w.info = lambda t: meldungen.append(t)
+        try:
+            w._baum_viele_loeschen("geoflaeche", ["A1", "A2"])
+        finally:
+            w._bestaetigen, w.info = alt_best2, alt_info2
+        check("berandende Flächen bleiben stehen und nennen den Grund",
+              "A1" in mm.flaechen and "A2" in mm.flaechen and meldungen
+              and "0 von 2" in meldungen[-1] and "berandet" in meldungen[-1],
+              str(meldungen[-1] if meldungen else None)[:100])
+        meldungen = []
+        alt_best2, alt_info2 = w._bestaetigen, w.info
+        w._bestaetigen = lambda *a, **k: True
+        w.info = lambda t: meldungen.append(t)
+        try:
+            w._baum_viele_loeschen("geokoerper_einzeln", ["VA", "VB"])
+        finally:
+            w._bestaetigen, w.info = alt_best2, alt_info2
+        check("beide Volumen auf einmal gelöscht - eine Rückfrage, eine Meldung",
+              not mm.koerper and len(meldungen) == 1 and "2 von 2" in meldungen[-1],
+              str(meldungen[-1] if meldungen else None)[:80])
+
+        # Sammelbearbeitung und Sammellöschen
+        w.load_example("frame")
+        w.refresh_all()
+        knoten = sorted(_eintraege("knoten"), key=lambda it: int(baum._schluessel(it)[1]))
+        namen = [baum._schluessel(it)[1] for it in knoten[:2]]
+        w._baum_viele_bearbeiten("knoten", namen)
+        app.processEvents()
+        offen = w.maskenrand.maske
+        check("Sammelmaske für mehrere Knoten öffnet",
+              offen is not None and "2 Knoten" in str(getattr(offen, "titel", "")),
+              str(getattr(offen, "titel", None)))
+
+        n_vorher = w.model.nn
+        frei = [i for i in range(w.model.nn)
+                if not any(i in (int(x) for x in e.nodes) for e in w.model.elements)]
+        w.model.add_node(99.0, 99.0, 99.0)
+        w.model.add_node(99.0, 99.0, 98.0)
+        w.refresh_all()
+        neu = [str(n_vorher), str(n_vorher + 1)]
+        alt_best = w._bestaetigen
+        w._bestaetigen = lambda *a, **k: True
+        try:
+            w._baum_viele_loeschen("knoten", neu)
+        finally:
+            w._bestaetigen = alt_best
+        check("zwei Knoten auf einmal gelöscht", w.model.nn == n_vorher,
+              f"{w.model.nn} / {n_vorher}")
+
+        # Teilnetz: dieselben Zellen wie das ganze Gitter, nur ohne den Umweg
+        m = w.model
+        elemente = list(range(min(5, len(m.elements))))
+        g_alt = _vp.to_grid(m).extract_cells(_np.asarray(elemente, int))
+        g_neu = _vp.teilnetz(m, elemente)
+        check("Teilnetz hat dieselben Zellen wie das ganze Gitter",
+              g_alt.n_cells == g_neu.n_cells == len(elemente),
+              f"{g_alt.n_cells} / {g_neu.n_cells}")
+        c1 = _np.asarray(g_alt.cell_centers().points)
+        c2 = _np.asarray(g_neu.cell_centers().points)
+        o1, o2 = _np.lexsort(c1.T), _np.lexsort(c2.T)
+        check("und dieselben Zellmitten", _np.allclose(c1[o1], c2[o2]),
+              f"max {float(_np.abs(c1[o1] - c2[o2]).max()):.2e}")
+        check("die Punkte bleiben alle Modellknoten (Knotenwerte passen weiter)",
+              g_neu.n_points == m.nn, f"{g_neu.n_points} / {m.nn}")
+        check("Elementnummern stehen am Teilnetz",
+              sorted(int(x) for x in g_neu.cell_data["elem"]) == elemente,
+              str(list(g_neu.cell_data["elem"])[:5]))
+        check("ein leeres Teilnetz ist leer, kein Fehler",
+              _vp.teilnetz(m, []).n_cells == 0)
+        check("unbekannte Elementnummern werden übergangen",
+              _vp.teilnetz(m, [-1, 10 ** 9]).n_cells == 0)
+
+        # Der Zeigerpfad darf nicht bei jeder Mausruhe alles durchgehen
+        w._stabstrecken()
+        idx = w._stabelemente()
+        von_hand = [i for i, e in enumerate(m.elements)
+                    if e.typ in _vp.TYPEN_STAEBE and len(e.nodes) >= 2]
+        check("gepufferte Stabelemente sind dieselben wie die gesuchten",
+              idx == von_hand, f"{len(idx)} / {len(von_hand)}")
+        A, B = w._stabstrecken()
+        check("und passen zu den Strecken", len(A) == len(idx), f"{len(A)} / {len(idx)}")
+        w.load_example("hall")
+        w.refresh_all()
+        A2, B2, namen2 = w._stabstrecken_benannt()
+        soll = sum(len(mem.elements or []) for mem in w.model.members.values())
+        check("benannte Stabstrecken: je Stabelement ein Eintrag mit seinem Stab",
+              len(A2) == len(B2) == len(namen2) == soll and soll > 0,
+              f"{len(namen2)} / {soll}")
+        check("und derselbe Aufruf gibt dasselbe Feld zurück (gepuffert)",
+              w._stabstrecken_benannt()[2] is namen2)
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Mehrfachauswahl im Modellbaum", False, str(ex)[:70])
+
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")
     try:

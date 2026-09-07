@@ -95,6 +95,57 @@ FUGE_DOF = ("ux", "uy", "uz")
 DURCHGAENGE = 4
 
 
+#: Ab welchem Anteil eine Richtung als durch die Form gehalten gilt.
+#: Mass ist der Eigenwert der flaechengewichteten Normalenstreuung, also der
+#: Anteil der Fuge, der in diese Richtung traegt. Eine ebene Fuge hat 1/0/0.
+#: Am Lagerbock des Beispielmodells sind es 0,779 / 0,127 / 0,094 - die
+#: seitlichen Flanken des Absatzes. 2 % trennt beide Faelle deutlich und
+#: reicht aus: es geht darum, ob eine Richtung ueberhaupt Steifigkeit hat,
+#: nicht darum, ob sie die Last auch traegt.
+FORMSCHLUSS_MIN = 0.02
+
+
+def formschluss(model: Model, facetten: list) -> tuple:
+    """Wie viele Richtungen die Fuge durch ihre Form haelt.
+
+    Eine Kontaktfuge traegt nur senkrecht zu ihren Facetten. Liegen alle in
+    einer Ebene, haelt sie eine Richtung, und in der Fugenebene ist das
+    Bauteil frei - dort braucht es Reibung, Federn oder eigene Lager. Zeigen
+    die Facetten in mehrere Richtungen - ein Absatz, eine Nut, eine Bohrung -,
+    haelt die Form selbst: seitlicher Formschluss, ganz ohne Reibung.
+
+    Gemessen wird die flaechengewichtete Streuung der Normalen,
+    ``M = sum A_i n_i n_i^T / sum A_i``. Ihre Eigenwerte sind die Anteile, mit
+    denen die Fuge in den drei Hauptrichtungen traegt; ein Eigenwert nahe null
+    heisst, dass dort nichts haelt.
+
+    Rueckgabe (Eigenwerte absteigend, Richtungen als Spalten dazu).
+    """
+    if not facetten:
+        return np.zeros(3), np.eye(3)
+    n = np.array([np.asarray(x[2], float) for x in facetten]).reshape(-1, 3)
+    laenge = np.linalg.norm(n, axis=1)
+    gut = laenge > 1e-12
+    if not gut.any():
+        return np.zeros(3), np.eye(3)
+    n = n[gut] / laenge[gut, None]
+    A = _facettenflaechen(model, facetten)[gut]
+    if A.sum() <= 0:
+        return np.zeros(3), np.eye(3)
+    M = np.einsum("i,ij,ik->jk", A, n, n) / A.sum()
+    w, V = np.linalg.eigh(M)
+    return w[::-1], V[:, ::-1]
+
+
+def _richtungstext(v: np.ndarray) -> str:
+    """Eine Richtung als Text - die Achse, wenn sie eine ist."""
+    v = np.asarray(v, float)
+    for i, name in enumerate("xyz"):
+        if abs(v[i]) > 0.95:
+            return name
+    return "(%.2f, %.2f, %.2f)" % (v[0], v[1], v[2])
+
+
 def _tangenten(n: np.ndarray) -> tuple:
     """Zwei Einheitsvektoren quer zur Normalen."""
     hilf = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
@@ -292,7 +343,22 @@ def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> t
     Gerechnet wird ohne Schleife ueber die Facetten: die Kandidatenpaare
     kommen aus zwei KD-Baeumen, alles Weitere sind Felder ueber die Paare.
 
-    Rueckgabe ({Index der Facette: Index der Gegenfacette}, Abstand je Facette,
+    Gemessen wird der Abstand **laengs der Normalen**. Das ist der Spalt: was
+    quer dazu liegt, ist Versatz in der Fugenebene und kein Abheben. An einem
+    gestuften Anschluss steht eine Flanke des einen Teils regelmaessig ueber
+    die des anderen hinaus; im Raum gemessen kaeme dort ein Spalt von
+    Zentimetern heraus, obwohl beide Flanken in derselben Ebene liegen und
+    sich beruehren. Am Lagerbock des Beispielmodells sind 252 von 271
+    auffaelligen Facetten genau dieser Fall: Normalabstand unter 0,1 mm,
+    Querversatz bis 34 mm.
+
+    Damit ein Punkt ueberhaupt eine Gegenseite hat, muss er auf ihr liegen:
+    steht er weiter als seinen eigenen Umkreis ueber deren Rand hinaus, ist
+    dort nichts mehr, was ihm gegenuebersteht - er bleibt ungepaart. Die
+    Randfacette einer Fuge, die zur Haelfte ueber die Kante ragt, bleibt so
+    dabei.
+
+    Rueckgabe ({Index der Facette: Index der Gegenfacette}, Spalt je Facette,
     inf ohne Gegenseite).
     """
     from scipy.spatial import cKDTree
@@ -301,7 +367,7 @@ def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> t
     if not seite or not gegen:
         return {}, abstand
     A, B, C, von, zweite, cg, ng, rg = _facetten_felder(model, gegen)
-    _a, _b, _c, _v, _z, cs, ns, _r = _facetten_felder(model, seite)
+    _a, _b, _c, _v, _z, cs, ns, rs = _facetten_felder(model, seite)
     # Vorauswahl: nur Gegenfacetten, deren Umkreis den Kasten der Kontaktseite
     # (um den Suchradius erweitert) beruehrt - von hunderttausend Randseiten
     # eines grossen Modells bleiben so die in der Naehe
@@ -328,8 +394,18 @@ def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> t
     T = np.concatenate([J, zw[hat2]])           # Dreiecke der Kandidaten
     Ip = np.concatenate([I, I[hat2]])
     q, _w = naechste_punkte_dreiecke(cs[Ip], A[T], B[T], C[T])
-    d = np.linalg.norm(q - cs[Ip], axis=1)
-    reihe = np.lexsort((d, Ip))                 # je Facette der naechste zuerst
+    weg = q - cs[Ip]
+    laengs = np.einsum("ij,ij->i", weg, ns[Ip])         # Anteil in Normalenrichtung
+    quer = np.linalg.norm(weg - laengs[:, None] * ns[Ip], axis=1)
+    d = np.abs(laengs)                                  # der Spalt
+    # Der Punkt muss auf der Gegenseite liegen - sonst steht ihm dort nichts
+    # gegenueber und der Normalabstand sagt nichts aus.
+    auf = quer <= np.maximum(rs[Ip], 1e-12)
+    raum = np.linalg.norm(weg, axis=1)[auf]     # Auswahl wie bisher: die naechste
+    Ip, d, T = Ip[auf], d[auf], T[auf]
+    if not Ip.size:
+        return {}, abstand
+    reihe = np.lexsort((raum, Ip))              # je Facette die naechste zuerst
     Ip, d, T = Ip[reihe], d[reihe], T[reihe]
     erste = np.r_[True, Ip[1:] != Ip[:-1]]
     Ip, d, T = Ip[erste], d[erste], T[erste]
@@ -593,7 +669,7 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
                    f"{bericht['kopplung']} Kopplungen "
                    f"(gelöst: {', '.join(sorted(geloest))})")
         _vorzeichen_melden(kb, b_n, log)
-        _gleiten_melden(kb, b_n, b_t, mu, log)
+        _gleiten_melden(kb, b_n, b_t, mu, log, model, seite_b)
     return bericht
 
 
@@ -607,16 +683,45 @@ def _vorzeichen_melden(kb, b_n, log) -> None:
                    "Druck und öffnet unter Zug; danach wird gerechnet.")
 
 
-def _gleiten_melden(kb, b_n, b_t, mu, log) -> None:
-    """Warnen, wenn die Fuge in ihrer Ebene voellig frei bleibt."""
+def _gleiten_melden(kb, b_n, b_t, mu, log, model=None, facetten=None) -> None:
+    """Sagen, was die Fuge quer zu sich haelt - und nur warnen, wenn nichts.
+
+    Ohne Reibung und ohne Federn traegt eine Fuge allein senkrecht zu ihren
+    Facetten. Ob das Bauteil damit frei gleiten kann, entscheidet die **Form**
+    der Fuge und nicht ihre Einstellung: ein Absatz, eine Nut oder eine
+    Bohrung halten seitlich, weil ihre Flanken in andere Richtungen zeigen
+    (:func:`formschluss`). Frueher wurde hier ohne Ansehen der Geometrie
+    gewarnt - am Lagerbock des Beispielmodells zu Unrecht, denn dessen Fuge
+    haelt mit 12,7 % und 9,4 % ihrer Flaeche in x und y.
+    """
     from .importers import _common as C
     if mu:
         return
-    if all(b.typ == "free" and not b.stiffness for b in b_t) and b_n.typ == "free":
-        C.warn(log, f"  {kb.name}: in der Fugenebene ist nichts gehalten (keine "
-                    "Federn, keine Reibung). Das geloeste Bauteil kann frei "
-                    "gleiten - so steht es in der Quelldatei; es braucht dann "
-                    "eigene Lager, sonst ist das Gleichungssystem singulaer.")
+    if not (all(b.typ == "free" and not b.stiffness for b in b_t) and b_n.typ == "free"):
+        return
+    w, V = (formschluss(model, facetten) if model is not None and facetten
+            else (np.array([1.0, 0.0, 0.0]), np.eye(3)))
+    gehalten = int((w >= FORMSCHLUSS_MIN).sum())
+    if gehalten >= 3:
+        C.say(log, f"  {kb.name}: keine Reibung, keine Federn - die Fuge hält "
+                   "seitlich durch ihre Form (Anteile "
+                   + " / ".join(f"{x:.0%}" for x in w) + " in "
+                   + ", ".join(_richtungstext(V[:, i]) for i in range(3))
+                   + "). Das Bauteil kann nicht gleiten.")
+        return
+    if gehalten == 2:
+        frei = _richtungstext(V[:, 2])
+        C.say(log, f"  {kb.name}: keine Reibung, keine Federn - die Fuge hält "
+                   "seitlich durch ihre Form, aber nur in zwei Richtungen "
+                   "(Anteile " + " / ".join(f"{x:.0%}" for x in w)
+                   + f"). In Richtung {frei} hält nichts; dort braucht das "
+                     "Bauteil ein eigenes Lager.")
+        return
+    C.warn(log, f"  {kb.name}: in der Fugenebene ist nichts gehalten (keine "
+                "Federn, keine Reibung, und die Fuge ist eben - sie trägt nur "
+                "senkrecht zu sich). Das geloeste Bauteil kann frei gleiten - "
+                "so steht es in der Quelldatei; es braucht dann eigene Lager, "
+                "sonst ist das Gleichungssystem singulaer.")
 
 
 def _lager_mitnehmen(model: Model, neu: dict, log: list = None) -> int:
@@ -828,7 +933,8 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
                        "ohne Wirkung (Volumen haben keine Verdrehungsfreiheitsgrade)")
         _vorzeichen_melden(kb, b_n, log)
         if not zug and not haften:
-            _gleiten_melden(kb, b_n, b_t, mu, log)
+            _gleiten_melden(kb, b_n, b_t, mu, log, model,
+                            [seite_b[i] for i in sorted(paare)])
     return bericht
 
 

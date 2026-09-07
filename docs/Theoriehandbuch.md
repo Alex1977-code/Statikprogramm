@@ -592,11 +592,51 @@ gesucht, an denen die Freigabe hängt (die ist in RFEM-Dateien unvollständig),
 sondern über die Geometrie - wie in ANSYS über einen **Suchradius** (Pinball):
 eine Randfacette eines anderen Bauteils gehört zur Fuge, wenn ihre Normale der
 Kontaktfacette entgegen zeigt (n·n′ < −0,7) und der **nächste Punkt auf ihr**
-höchstens den Suchradius vom Schwerpunkt der Kontaktfacette entfernt liegt.
-Maßgebend ist der nächste Punkt, nicht der Schwerpunkt der Gegenfacette: nur
-so findet ein 2-mm-Netz eine 15-mm-Gegenseite, ein Zylinder seine Bohrung mit
-Spiel, und deckungsgleich müssen die Flächen nicht sein. Der Suchradius ist
-vorgebbar, sonst die größere mittlere (Median-)Kantenlänge beider Seiten.
+höchstens den Suchradius von der Kontaktfacette entfernt liegt. Maßgebend ist
+der nächste Punkt, nicht der Schwerpunkt der Gegenfacette: nur so findet ein
+2-mm-Netz eine 15-mm-Gegenseite, ein Zylinder seine Bohrung mit Spiel, und
+deckungsgleich müssen die Flächen nicht sein. Der Suchradius ist vorgebbar,
+sonst die größere mittlere (Median-)Kantenlänge beider Seiten.
+
+**Der Spalt wird längs der Normalen gemessen.** Der Abstand zweier Facetten
+zerfällt in einen Anteil senkrecht zur Fuge und einen quer dazu. Nur der erste
+ist ein Spalt; der zweite ist Versatz **in** der Fugenebene und bedeutet kein
+Abheben. An einem gestuften Anschluss steht eine Flanke des einen Teils
+regelmäßig über die des anderen hinaus — im Raum gemessen käme dort ein Spalt
+von Zentimetern heraus, obwohl beide Flanken in derselben Ebene liegen und
+sich berühren. Am Lagerbock des geprüften Drehlagermodells (V14 gegen V36,
+2634 Facetten) waren das:
+
+| Maß | Median | 99 % | größter |
+|---|---|---|---|
+| Abstand im Raum | 0,000 mm | 28,9 mm | 34,4 mm |
+| Abstand längs der Normalen (**der Spalt**) | 0,000 mm | 0,000 mm | 11,5 mm |
+| Querversatz | 0,000 mm | 28,9 mm | 34,4 mm |
+
+252 der 271 auffälligen Facetten haben einen Normalabstand unter 0,1 mm: sie
+liegen an. Damit eine Facette überhaupt eine Gegenseite hat, muss sie auf ihr
+liegen — steht ihr Schwerpunkt weiter als ihren eigenen Umkreis über den Rand
+der Gegenfacette hinaus, ist dort nichts mehr, was ihr gegenübersteht, und sie
+bleibt ungepaart. Die Randfacette einer Fuge, die zur Hälfte über die Kante
+ragt, bleibt so dabei. **Gewählt** wird unter den so verbliebenen Gegenseiten
+die räumlich nächste; **gemessen** wird längs der Normalen. Dasselbe gilt im
+Löser für die Zuordnung Knoten gegen Master-Facette.
+
+**Formschluss statt Reibung.** Eine Kontaktfuge trägt nur senkrecht zu ihren
+Facetten. Ob ein Bauteil ohne Reibung frei gleiten kann, entscheidet darum die
+**Form** der Fuge und nicht ihre Einstellung. Gemessen wird die
+flächengewichtete Streuung der Normalen
+
+$$ M = \frac{\sum_i A_i\,n_i n_i^{\mathsf T}}{\sum_i A_i} $$
+
+Die Eigenwerte von M sind die Anteile, mit denen die Fuge in ihren drei
+Hauptrichtungen trägt. Eine ebene Fuge hat 1 / 0 / 0 — in ihrer Ebene hält
+nichts. Ein Absatz, eine Nut oder eine Bohrung haben drei Eigenwerte über
+null: sie halten seitlich durch ihre Form, ganz ohne Reibung. Die Fuge des
+Lagerbocks hat 0,779 / 0,127 / 0,094 (z, x, y) — die 12,7 % und 9,4 % sind die
+Flanken des Absatzes. Ab einem Anteil von 2 % (``fugen.FORMSCHLUSS_MIN``) gilt
+eine Richtung als gehalten; das Protokoll nennt die Anteile und warnt nur noch
+dort, wo wirklich nichts hält.
 
 **In zwei Durchgängen.** Welche Facetten zur Gegenseite gehören, weiß man
 vorher nicht — gesucht wird gegen die Randseiten *aller* anderen Bauteile, und

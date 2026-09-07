@@ -613,6 +613,38 @@ def to_grid(model: Model, typen=None, ausser=None, nur=None) -> pv.UnstructuredG
     return g
 
 
+def teilnetz(model: Model, elemente) -> pv.UnstructuredGrid:
+    """Ein Gitter aus **nur** den genannten Elementen.
+
+    :func:`to_grid` laeuft ueber alle Elemente des Modells. Wer ein einzelnes
+    Volumen aufleuchten lassen will, zahlt damit bei 389.000 Tetraedern ueber
+    eine Sekunde je Mausbewegung - fuer ein paar hundert Zellen. Hier wird nur
+    ueber die genannten Elemente gelaufen; die Punkte bleiben alle
+    Modellknoten, damit Knotenwerte weiter passen.
+    """
+    cells, types, idx = [], [], []
+    n_el = len(model.elements)
+    for i in elemente:
+        i = int(i)
+        if not 0 <= i < n_el:
+            continue
+        e = model.elements[i]
+        art = CELL_MAP.get(e.typ)
+        if art is None:
+            continue
+        ct, n = art
+        cells.append(n)
+        cells.extend(e.nodes[:n])
+        types.append(ct)
+        idx.append(i)
+    if not cells:
+        return pv.UnstructuredGrid()
+    g = pv.UnstructuredGrid(np.array(cells), np.array(types),
+                            np.asarray(model.nodes, float))
+    g.cell_data["elem"] = np.asarray(idx, int)
+    return g
+
+
 # --------------------------------------------------------------------------
 # Staebe mit ihrer Querschnittskontur
 # --------------------------------------------------------------------------
