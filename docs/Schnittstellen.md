@@ -331,7 +331,20 @@ Flächen von den Objekten, an denen sie hängen, und verbindet beide über die
 Federn des Freigabetyps (`SurfaceReleaseType` →
 `SurfaceReleaseTypeImplVersion1` → `SpringConstants`, hier **unmittelbar** über
 `springConstants_id`, nicht über `owner_id` wie bei den Lagern). Ist
-`defineReleaseTypeForEachObject` gesetzt, gilt je Objekt ein eigener Typ.
+`defineReleaseTypeForEachObject` gesetzt, gilt **je Objekt ein eigener Typ**:
+`SurfaceReleaseImpl_releaseTypeForObjects_values` ist dann so geordnet wie
+`assignedToObjects`, der i-te Typ gehört zum i-ten Objekt (beide Container
+werden nach `container_order` gelesen).
+
+Statik3D **teilt eine solche Freigabe auf** — je Typ eine Kontaktbedingung mit
+ihren eigenen Gegenflächen, benannt „<Name> (Typ n)". Einen Typ für alle zu
+nehmen wäre in beide Richtungen falsch: an der Fuge „Achse" des geprüften
+Drehlagers tragen 48 von 52 Objekten den haftenden Typ (die Passstifte) und 4
+den freien — der erste Typ hätte 48 Passstiften das Haften genommen. Am
+„Montageauge" ist es umgekehrt: 32 haftende gegen 9 freie Objekte, und ein
+Haften wäre auf Fugen gekommen, die es in der Datei nicht haben. Lässt sich die
+Zuordnung nicht herstellen (verschieden viele Typen und Objekte), bleibt es
+beim ersten Typ und das Protokoll warnt.
 
 Statik3D liest alles heraus — Name, Ort, freigegebene Flächen und Volumen,
 Zuordnung, Federkonstante je Freiheitsgrad samt Ausfalltyp und Reibbeiwert —

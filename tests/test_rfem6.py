@@ -272,7 +272,8 @@ def _spring(con, sid, owner, table, k, nl=(0,) * 6, friction=None):
 
 def build_db(path, nodes, lines, members, supports, line_supports=(),
              surface_supports=(), surfaces=(), hinges=(), partials=(),
-             solids=(), releases=(), surface_loads=(), load_cases=(),
+             solids=(), releases=(), typen_je_objekt=None,
+             surface_loads=(), load_cases=(),
              free_loads=0, openings=(), nodal_loads=(), prestress=(),
              combinations=(), boundary_lines=None, stiffness_reverse=False,
              rigid_surfaces=()):
@@ -281,7 +282,10 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
     ``surfaces``   Eintrag ``[Knoten...]``           -> Flaeche ohne Dicke
                    Eintrag ``([Knoten...], t)``      -> Flaeche mit Dicke t [m]
     ``solids``     Liste der Randflaechennummern je Volumenkoerper
-    ``releases``   (Name, [Flaechen], [Volumen], Zielzahl, Federn, Kennzahlen)
+    ``releases``   (Name, [Flaechen], [Volumen], Ziele, Federn, Kennzahlen);
+                   Ziele = Anzahl oder [(Tabelle, Nummer), ...]
+    ``typen_je_objekt`` {Freigabe-Nummer: [Freigabetyp je Zuordnung]} - setzt
+                   ``defineReleaseTypeForEachObject``
     ``surface_loads`` (Lastfall-id, [Flaechen], Groesse [N/m^2], Richtung)
     ``load_cases`` (Name, Einwirkungskategorie, Eigengewichtsfaktor z)
     ``openings``   Flaechennummern, die eine Oeffnung tragen
@@ -460,12 +464,24 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
         for j, n in enumerate(sol):
             con.execute("INSERT INTO SurfaceReleaseImpl_releasedSolids VALUES (?,?,?)",
                         (i, j, n))
-        for j in range(ziele):
-            # Die letzte Zuordnung ist eine **Flaeche** - so steht es in echten
-            # Dateien: dort nennt assignedToObjects die Gegenseite.
-            tabelle = "Surface" if j == ziele - 1 else "Solid"
+        # ``ziele`` ist entweder eine Anzahl - dann ist die letzte Zuordnung
+        # eine Flaeche, so steht es in echten Dateien - oder eine Liste
+        # [(Tabelle, Nummer), ...], mit der sich eine echte Gegenseite aus
+        # mehreren Flaechen nachbauen laesst.
+        eintraege = (list(ziele) if not isinstance(ziele, int) else
+                     [("Surface" if j == ziele - 1 else "Solid", j + 1)
+                      for j in range(ziele)])
+        for j, (tabelle, nummer) in enumerate(eintraege):
             con.execute("INSERT INTO SurfaceReleaseImpl_assignedToObjects "
-                        f"VALUES (?,?,?,'{tabelle}')", (i, j, j + 1))
+                        f"VALUES (?,?,?,'{tabelle}')", (i, j, nummer))
+        # Freigabetyp je Objekt: {Freigabe-Nummer: [Typ je Zuordnung]}
+        tj = (typen_je_objekt or {}).get(i)
+        if tj:
+            con.execute("UPDATE SurfaceReleaseImpl SET "
+                        "defineReleaseTypeForEachObject = 1 WHERE id = ?", (i,))
+            for j, tid in enumerate(tj):
+                con.execute("INSERT INTO SurfaceReleaseImpl_releaseTypeForObjects"
+                            "_values VALUES (?,?,?)", (i, j, tid))
     faelle = load_cases or [("Eigengewicht", 1, 1.0)]
     for i, (name, cat, gz) in enumerate(faelle, 1):
         con.execute("INSERT INTO LoadCase VALUES (?,1,?,?,'LoadCaseImplStatic')", (i, i, i))
@@ -1015,6 +1031,72 @@ def test_kontaktbedingungen():
 
 
 # --------------------------------------------------------------------------
+# 4c2) Freigabetyp je Objekt
+# --------------------------------------------------------------------------
+def test_freigabetyp_je_objekt():
+    """Steht an einer Freigabe je Objekt ein anderer Typ, wird sie aufgeteilt.
+
+    RFEM erlaubt ``defineReleaseTypeForEachObject``: dann traegt jedes
+    zugeordnete Objekt seinen eigenen Freigabetyp. Im Drehlagermodell steht an
+    der Fuge „Achse" 48 mal der haftende Typ 4 (die Passstifte) und 4 mal der
+    freie Typ 3; am „Montageauge" 32 mal Typ 4 und 9 mal ein freier Typ. Einen
+    Typ fuer alle zu nehmen ist in beide Richtungen falsch - es nimmt 48
+    Passstiften das Haften oder gibt es 9 freien Fugen dazu.
+
+    Geprueft an einer Freigabe mit zwei Typen: haftend (ux/uy starr) an zwei
+    Flaechen, frei an einer.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "jeobjekt.rf6"),
+            nodes=WUERFEL_KNOTEN, lines=[], members=[], supports=[],
+            surfaces=WUERFEL_FLAECHEN, solids=[[1, 2, 3, 4, 5, 6]],
+            releases=[
+                # Typ 1: haftend (ux/uy starr, uz frei mit Ausfall bei Zug)
+                ("Achse", [], [1], [("Surface", 2), ("Surface", 3), ("Surface", 4)],
+                 (INF, INF, 0.0, 0.0, 0.0, 0.0), (0, 0, 1, 0, 0, 0)),
+                # Typ 2: alles frei - dieselbe Freigabe verweist unten darauf
+                ("Hilfstyp", [], [], 0, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0, 0, 1, 0, 0, 0)),
+            ],
+            typen_je_objekt={1: [1, 1, 2]},
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        namen = sorted(m.kontaktbedingungen)
+        geteilt = [n for n in namen if n.startswith("Achse")]
+        check("die Freigabe mit zwei Typen wird aufgeteilt", len(geteilt) == 2, str(namen))
+        check("und die Teile nennen ihren Freigabetyp",
+              all("Typ" in n for n in geteilt), str(geteilt))
+        nach_typ = {kb.typ.split()[0]: kb for kb in
+                    (m.kontaktbedingungen[n] for n in geteilt)}
+        check("der haftende Typ steht an zwei Flaechen",
+              len(nach_typ["1"].gegenflaechen) == 2, str(nach_typ["1"].gegenflaechen))
+        check("und behaelt sein Haften (ux/uy starr)",
+              nach_typ["1"].dof_behaviour(0).typ == "rigid"
+              and nach_typ["1"].dof_behaviour(1).typ == "rigid",
+              nach_typ["1"].dof_behaviour(0).typ)
+        check("der freie Typ steht an einer Flaeche",
+              len(nach_typ["2"].gegenflaechen) == 1, str(nach_typ["2"].gegenflaechen))
+        check("und bleibt in der Fugenebene frei",
+              nach_typ["2"].dof_behaviour(0).typ == "free"
+              and nach_typ["2"].dof_behaviour(1).typ == "free",
+              nach_typ["2"].dof_behaviour(0).typ)
+        check("beide loesen denselben Koerper",
+              nach_typ["1"].koerpernamen == nach_typ["2"].koerpernamen == ["V1"],
+              f"{nach_typ['1'].koerpernamen} / {nach_typ['2'].koerpernamen}")
+        check("das Protokoll nennt die Aufteilung",
+              "aufgeteilt in" in txt and "Typ 1 an 2 Flaechen" in txt,
+              next((x for x in log if "aufgeteilt" in x), "-"))
+        check("und jede Bedingung sagt, aus welchem Typ sie kommt",
+              all("Freigabetyp" in m.kontaktbedingungen[n].beschreibung for n in geteilt),
+              m.kontaktbedingungen[geteilt[0]].beschreibung)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
 # 4d) Lastfaelle mit Lasten
 # --------------------------------------------------------------------------
 def test_lastfaelle_und_lasten():
@@ -1422,6 +1504,7 @@ def main():
     for t in (test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
               test_volumenkoerper, test_stabtypen, test_kontaktbedingungen,
+              test_freigabetyp_je_objekt,
               test_lastfaelle_und_lasten, test_lasten_und_kombinationen,
               test_dispatcher_und_hilfen,
               test_knoten_zusammenfuehren, test_boegen_und_kreisflaechen,
