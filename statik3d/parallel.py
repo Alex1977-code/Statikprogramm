@@ -238,6 +238,13 @@ def run_jobs(jobs: list[Job], workers: int = None, backend: str = None,
 
 
 def describe() -> str:
+    """Der **Prozesspool** - Elementschleifen, Auftraege, Vernetzen.
+
+    Ausdruecklich nicht der Gleichungsloeser: der faktorisiert in einem
+    Prozess und benutzt eigene Threads. Frueher stand hier nur „lokal,
+    31 von 32 Kernen“, und das las sich, als rechne auch der Loeser so.
+    Was der Loeser kann, sagt solver.loeser_verfuegbar().
+    """
     s = _settings
     if s.backend == "farm":
         return f"Rechnerfarm {s.farm_host}:{s.farm_port}"
