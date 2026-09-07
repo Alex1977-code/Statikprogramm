@@ -1550,12 +1550,19 @@ class Netzeinstellungen:
     #: D 25 x 67 bekommt damit vier Elemente ueber den Querschnitt statt
     #: anderthalb.
     #:
-    #: **Vorgabe aus**, und zwar aus einem nachgewiesenen Grund: die Regel gibt
-    #: jedem Koerper seine eigene Kantenlaenge. Zwei Koerper, die sich eine
-    #: Flaeche teilen, bekommen dann verschieden feine Randnetze, ihre Knoten
-    #: fallen nicht mehr zusammen - und die Fuge zwischen ihnen faellt
-    #: auseinander (tests/test_fugen.py sah die Stauchung um 374 % daneben).
-    #: Solange das nicht geloest ist, bleibt die Regel eine Einstellung.
+    #: Dass jeder Koerper damit seine eigene Kantenlaenge bekommt, riss anfangs
+    #: die Fugen auf: zwei Koerper mit gemeinsamer Flaeche vernetzten sie
+    #: verschieden fein und verloren ihre gemeinsamen Knoten. **Das ist
+    #: behoben** - ueber mesher3d.kantenlaengen_karte gehoert die Feinheit
+    #: einer Flaeche der Flaeche und nicht dem Koerper, und beide vernetzen sie
+    #: gleich (tests/test_netzverfeinerung.py haelt es fest).
+    #:
+    #: **Vorgabe trotzdem aus**, jetzt aus einem anderen, gemessenen Grund: die
+    #: Regel setzt h = Dicke/5 auch dort, wo das Bauteil gross und nur duenn
+    #: ist. Eine Platte 1000 x 1000 x 10 mm mit einer Bohrung brauchte damit
+    #: 95 s statt 1,3 s und lief dann aus dem Speicher. Fuer schlanke Bauteile
+    #: (Bolzen, Passstifte) ist die Regel richtig, fuer duenne grosse Bauteile
+    #: nicht - diese Unterscheidung fehlt noch.
     dickenmass: bool = False
     #: Teilung je Flaeche aus der Netzdichte ableiten (sonst bleibt die eigene)
     teilung_uebersteuern: bool = True

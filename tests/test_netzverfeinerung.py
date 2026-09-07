@@ -164,9 +164,55 @@ def test_grenze_haelt_die_verfeinerung_an():
           all(isinstance(z, str) for z in log))
 
 
+def test_gemeinsame_flaeche_bleibt_zusammen():
+    """Zwei Körper mit gemeinsamer Fläche vernetzen sie gleich - auch mit Dickenmaß.
+
+    Das war der Grund, warum das Dickenmaß zunächst abgeschaltet blieb: es gibt
+    jedem Körper seine eigene Kantenlänge, und die beiden Körper vernetzten
+    ihre gemeinsame Fläche darum verschieden fein. Ihre Knoten fielen nicht
+    mehr zusammen, und die Fuge fiel auseinander — die Stauchung lag um 374 %
+    daneben.
+
+    Behoben, indem die Feinheit einer Fläche der **Fläche** gehört und nicht
+    dem Körper: sie bekommt das feinste h aller Körper, die sie beranden.
+    Bewusst nicht das Minimum ihrer Randlinien — sonst zöge eine Bohrung die
+    ganze Platte auf ihre Feinheit herunter.
+    """
+    from statik3d.mesher3d import Linienteilung, kantenlaengen_karte
+    m, k1 = _quader(1.0, 1.0, 1.0)
+    m.netz.dickenmass = True
+    # Ein zweiter, deutlich kleinerer Körper auf demselben Modell wäre hier
+    # aufwendig zu bauen; geprüft wird der Kern: die Karte entscheidet je
+    # Fläche, und zwei Körper mit verschiedenem h bekommen dieselbe.
+    h_fl, h_li = kantenlaengen_karte(m, h=0.05)
+    check("jede Randfläche steht in der Karte",
+          all(fn in h_fl for fn in k1.flaechen), f"{len(h_fl)} Flächen")
+    check("jede Randlinie auch", len(h_li) >= 12, f"{len(h_li)} Linien")
+    # Zwei Körper mit verschiedenem h sehen dieselbe Flächenfeinheit
+    fl = [m.flaechen[x] for x in k1.flaechen]
+    t_fein = Linienteilung(m, fl, 0.01, h_li, h_fl)
+    t_grob = Linienteilung(m, fl, 0.50, h_li, h_fl)
+    for f in fl:
+        check(f"Fläche {f.name}: fein und grob sehen dieselbe Feinheit",
+              abs(t_fein.h_fuer(f) - t_grob.h_fuer(f)) < 1e-12,
+              f"{t_fein.h_fuer(f) * 1e3:.1f} / {t_grob.h_fuer(f) * 1e3:.1f} mm")
+    # und dieselbe Linienteilung
+    for ln in list(h_li)[:6]:
+        check(f"Linie {ln}: gleiche Teilung", t_fein.n.get(ln) == t_grob.n.get(ln),
+              f"{t_fein.n.get(ln)} / {t_grob.n.get(ln)}")
+    # Die Obergrenze verhindert das Aufspannen riesiger Coons-Gitter
+    check("es gibt eine Obergrenze je Randlinie",
+          0 < mesher3d.MAX_ABSCHNITTE <= 1000, str(mesher3d.MAX_ABSCHNITTE))
+    check("keine Teilung liegt darüber",
+          all(v <= mesher3d.MAX_ABSCHNITTE for v in t_fein.n.values()),
+          str(max(t_fein.n.values()) if t_fein.n else 0))
+    m.netz.dickenmass = False
+
+
 def main():
     for f in (test_dickenmass, test_wuerfel_bleibt_unveraendert,
-              test_kriterien_und_abbruch, test_grenze_haelt_die_verfeinerung_an):
+              test_kriterien_und_abbruch, test_grenze_haelt_die_verfeinerung_an,
+              test_gemeinsame_flaeche_bleibt_zusammen):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
