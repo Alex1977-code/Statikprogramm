@@ -1784,19 +1784,6 @@ def _release_type(db: Db, tid: int, nlmap: dict, label: str, log: list) -> dict:
     return out
 
 
-def _tid_von(typ: dict, tids: list):
-    """Die Datenbank-Kennung eines gelesenen Freigabetyps.
-
-    ``_release_type`` gibt die **Nutzernummer** (``userID``) zurueck, der
-    Container die interne Kennung. Meist sind beide gleich; wo nicht, hilft
-    die Reihenfolge: die Typen stehen in der Reihenfolge ihres ersten
-    Auftretens im Container.
-    """
-    nr = typ.get("nummer")
-    folge = list(dict.fromkeys(tids))
-    return nr if nr in folge else None
-
-
 def _kontakt_anlegen(m, C, name: str, typ: dict, flaechen, volumen, kontaktflaechen,
                      koerpernamen, gegenflaechen, ziele: int, d: dict,
                      beschreibung: str):
@@ -1893,14 +1880,22 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
         # ``releaseTypeForObjects_values`` ist dann so geordnet wie
         # ``assignedToObjects``: der i-te Typ gehoert zum i-ten Objekt. Beide
         # Container liest der Leser nach ``container_order``.
-        je_typ: dict = {}                # Typnummer -> [zugeordnete Flaechen]
+        je_typ: dict = {}                # Datenbank-Kennung -> [zugeordnete Flaechen]
+        typ_von: dict = {}               # Datenbank-Kennung -> gelesener Typ
         tids: list = []
         if impl.get("defineReleaseTypeForEachObject"):
             tids = db.container("SurfaceReleaseImpl_releaseTypeForObjects_values").get(
                 impl["id"], [])
             d["je_objekt"] = True
+            # Nach der **Datenbank-Kennung** merken, mit der der Container
+            # arbeitet. ``_release_type`` gibt als ``nummer`` die Nutzernummer
+            # (``userID``) zurueck; beide sind nicht dasselbe, und wer die
+            # Gruppen ueber die Nutzernummer sucht, verliert jede Gruppe, deren
+            # Kennungen auseinanderfallen - im Drehlagermodell die haftenden
+            # Anteile von Achse und Montageauge, also gerade die Passstifte.
             for tid in dict.fromkeys(tids):
-                d["typen"].append(_release_type(db, tid, nlmap, f"{name}: ", log))
+                typ_von[tid] = _release_type(db, tid, nlmap, f"{name}: ", log)
+                d["typen"].append(typ_von[tid])
             if len(tids) == len(zeilen):
                 for r, tid in zip(zeilen, tids):
                     if ((r.get("reference_table") or "") == "Surface"
@@ -1925,9 +1920,11 @@ def _surface_releases(db: Db, m: Model, log: list, nlmap: dict,
         # freien; der erste Typ haette 48 Passstiften das Haften genommen. Am
         # Montageauge ist es umgekehrt - dort haetten 9 freie Objekte ein
         # Haften bekommen, das die Datei nicht hergibt.
-        gruppen = [(t, je_typ.get(t["nummer"]) or je_typ.get(_tid_von(t, tids)))
-                   for t in d["typen"]] if len(je_typ) > 1 else []
-        gruppen = [(t, fl) for t, fl in gruppen if fl]
+        gruppen = [(typ_von[tid], je_typ[tid]) for tid in dict.fromkeys(tids)
+                   if je_typ.get(tid) and tid in typ_von] if len(je_typ) > 1 else []
+        if len(je_typ) > 1 and len(gruppen) != len(je_typ):
+            C.warn(log, f"{name}: {len(gruppen)} von {len(je_typ)} Typgruppen "
+                        "aufgeloest - der Rest bekommt keine eigene Bedingung")
         if len(gruppen) > 1:
             for t, fl in gruppen:
                 _kontakt_anlegen(m, C, f"{name} (Typ {t.get('nummer', '?')})", t,
