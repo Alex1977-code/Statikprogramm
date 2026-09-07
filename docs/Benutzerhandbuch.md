@@ -1174,6 +1174,8 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], Richtung (senkrecht oder global), auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
 | Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
 | Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
+| Vorspannung | gewählte **Stäbe** oder **Volumen** | F_v [kN], Achse (Volumen) | als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung |
+| **Übermaß** | eine **Kontaktfuge** (Fläche anklicken) | Gesamtüberdeckung [µm] oder die vier Abmaße der Passung | Presspassung: Pressspannung und Schub über den Reibbeiwert |
 | Eigengewicht | Lastfall | Register *Lasten → Weitere* | — |
 
 Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
@@ -1212,6 +1214,57 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   erneuter Erzeugung ersetzt, manuelle bleiben erhalten.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
+
+### Übermaß: die Presspassung als Last
+
+*Register Lasten → „Übermaß"*
+
+Ein Passstift hält sein Bauteil nicht, weil er im Loch steckt, sondern weil
+er zu dick dafür ist. Genau das trägt man hier ein: **Fläche in der Ansicht
+anklicken** (Auswahlart „Fläche") — die Maske stellt die Fuge ein, zu der sie
+gehört — und die **Gesamtüberdeckung** eingeben. Aus ihr entstehen die
+Pressspannung und, über den Reibbeiwert der Fuge, ihre Schubtragfähigkeit.
+
+**Gesamtüberdeckung** heißt: was die beiden Teile zusammen zu viel haben.
+
+* **Ebene Fuge** (Unterlegblech, Beilage) — die Überdeckung senkrecht zur
+  Fläche.
+* **Zylindrische Fuge** (Bohrung, Passstift, Buchse) — das Übermaß am
+  **Durchmesser**, so wie es in der Passungstabelle steht. Radial schließt
+  die Fuge davon die Hälfte; das rechnet das Programm um.
+
+Welche Form die Fuge hat, erkennt das Programm selbst — daran, wie weit die
+Fugenflächen sich herumlegen — und schreibt es ins Protokoll: „Fuge
+zylindrisch — radial wirken 20 µm". **Diese Zeile ist es wert, gelesen zu
+werden**: eine verwechselte Fugenform wäre ein Faktor zwei in der Pressung.
+
+**Statt der Überdeckung die Passung.** Wer nur „Ø40 H7/s6" hat, trägt die
+vier Abmaße aus der Passungstabelle ein — oberes und unteres Abmaß der
+Bohrung (ES, EI) und der Welle (es, ei), in µm mit Vorzeichen. Das Programm
+rechnet daraus
+
+* **Höchstübermaß** (größte Welle, kleinste Bohrung) — maßgebend für die
+  größte Pressung, also für den Werkstoffnachweis der Nabe,
+* **Mindestübermaß** (kleinste Welle, größte Bohrung) — maßgebend für die
+  kleinste Haltekraft, also für den Reibschluss,
+* das **mittlere Übermaß** als Regelfall,
+
+trägt das gewählte oben ein und schreibt die Rechnung ins Protokoll. Eine
+eingebaute ISO-286-Tabelle gibt es bewusst nicht: sie wäre nicht
+nachprüfbar, und ein Zahlendreher darin würde still zu einer falschen
+Pressspannung führen. Das Kurzzeichen lässt sich als **Bezeichnung**
+mitgeben; es steht dann in der Lastentabelle und im Bericht.
+
+**Was daraus wird.** Die Fuge steht schon vor jeder anderen Last unter Druck.
+Die Kontaktrechnung liefert die Pressverteilung (Tabelle *Kontakt*: F_n je
+Knoten), und solange eine Querlast unter µ·N bleibt, trägt die Fuge sie
+vollständig — kein Knoten gleitet. Ohne Übermaß hält in der Fugenebene
+nichts; dann sagt es die Anzeige der **freien Bewegungen** mit der Kraft, die
+dabei ins Nichts geht.
+
+**In der Kombination** zählt das Übermaß wie jede andere Last: es geht mit
+dem Beiwert seines Lastfalls ein. Wer das nicht will, legt es in einen
+ständigen Lastfall mit γ = 1,0.
 
 ### Lastgenerierer Wasserdruck (Stahlwasserbau)
 

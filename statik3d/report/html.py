@@ -961,6 +961,20 @@ class Report:
                                      "Anfangsdehnung - das Bauteil will sich um F_v/(EA) verkürzen; "
                                      "hält die Umgebung es fest, trägt es F_v als Zug und klemmt sie",
                       None, ""))
+        if getattr(lc, "uebermasse", None):
+            rows = [["Fuge", "Gesamtüberdeckung [µm]", "Passung", "Bemerkung"]]
+            for u in lc.uebermasse:
+                rows.append([str(u.ziel), fmt(u.ueberdeckung * 1e6, 1),
+                             u.passmass or "–", u.kommentar or "–"])
+            b.append(("table", rows, f"Übermaß Lastfall {lc.name}: die Fuge steht schon vor "
+                                     "der Last unter Druck. Angegeben ist die "
+                                     "Gesamtüberdeckung - bei einer zylindrischen Fuge das "
+                                     "Übermaß am Durchmesser, von dem radial die Hälfte "
+                                     "wirkt; die Fugenform erkennt das Programm aus der "
+                                     "Lage der Fugenflächen und nennt sie im Protokoll. "
+                                     "Aus der Pressung und dem Reibbeiwert der Fuge folgt "
+                                     "ihre Schubtragfähigkeit",
+                      None, ""))
         if temp:
             groups = {}
             for l in temp:

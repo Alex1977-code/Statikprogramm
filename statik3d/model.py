@@ -1053,6 +1053,45 @@ class Vorspannung:
 
 
 @dataclass
+class Uebermass:
+    """Uebermass (Presspassung) als Last: die Fuge ist zu eng.
+
+    Der Passstift ist dicker als seine Bohrung, das Unterlegblech dicker als
+    sein Spalt. Beim Fuegen entsteht daraus eine Pressspannung, und ueber den
+    Reibbeiwert der Fuge traegt sie Schub: das ist der Grund, warum ein
+    Passstift sein Bauteil ueberhaupt haelt.
+
+    Gerechnet wird es als **negativer Anfangsspalt** der Kontaktbedingung -
+    die Fuge steht schon vor der Last unter Druck. Das ist keine Naeherung,
+    sondern genau der Fuegezustand; die Kontaktrechnung liefert daraus die
+    Pressverteilung, und der Reibbeiwert der Fuge macht daraus Schubtragkraft.
+
+    Angegeben wird immer die **Gesamtueberdeckung**: das, was die beiden Teile
+    zusammen zu viel haben.
+
+    * **ebene Fuge** - die Ueberdeckung senkrecht zur Flaeche. Die Fuge muss
+      sie ganz schliessen.
+    * **zylindrische Fuge** (Bohrung, Passstift) - das Uebermass am
+      **Durchmesser**, so wie es in jeder Passungstabelle steht. Radial
+      schliesst die Fuge davon die Haelfte; das rechnet das Programm um, und
+      das Protokoll sagt, welche Form es erkannt hat.
+
+    ziel:          Name der Kontaktbedingung (Fuge)
+    ueberdeckung:  Gesamtueberdeckung [m]
+    passmass:      Bezeichnung der Passung (z. B. „Ø40 H7/s6") - nur Beleg,
+                   gerechnet wird mit ``ueberdeckung``
+    """
+    ziel: str = ""
+    ueberdeckung: float = 0.0
+    passmass: str = ""
+    kommentar: str = ""
+
+    def bezug(self) -> str:
+        return (f"Fuge {self.ziel}: Ü = {self.ueberdeckung * 1e6:g} µm"
+                + (f" ({self.passmass})" if self.passmass else ""))
+
+
+@dataclass
 class TempLoad:
     """Gleichmaessige Temperaturaenderung dT [K] eines Elements
     (Stab, Schale oder Volumen). Optional dT_z = Temperaturdifferenz ueber die
@@ -1067,7 +1106,7 @@ class TempLoad:
 LASTARTEN_NAMEN = (("eigengewicht", "Eigengewicht"), ("knoten", "Knotenlasten"),
                    ("stab", "Stablasten"), ("linie", "Linienlasten"),
                    ("flaeche", "Flächenlasten"), ("temperatur", "Temperaturlasten"),
-                   ("vorspannung", "Vorspannung"),
+                   ("vorspannung", "Vorspannung"), ("uebermass", "Übermaß"),
                    ("zwang", "Zwangsverformungen (Lagerverschiebung)"))
 
 
@@ -1089,6 +1128,7 @@ class LoadCase:
     linienlasten: list[Linienlast] = field(default_factory=list)
     zwangsverformungen: list[Zwangsverformung] = field(default_factory=list)
     vorspannungen: list[Vorspannung] = field(default_factory=list)
+    uebermasse: list[Uebermass] = field(default_factory=list)
     temp_loads: list[TempLoad] = field(default_factory=list)
     gravity: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     gamma_sup: Optional[float] = None      # Teilsicherheitsbeiwert (None -> aus Kategorie)
@@ -1131,6 +1171,7 @@ class LoadCase:
         out["temperatur"] = eigen(self.temp_loads) + [g for g in geo
                                                       if getattr(g, "lastart", "druck") == "temperatur"]
         out["vorspannung"] = list(getattr(self, "vorspannungen", None) or [])
+        out["uebermass"] = list(getattr(self, "uebermasse", None) or [])
         out["zwang"] = list(self.zwangsverformungen or [])
         return {k: v for k, v in out.items() if v}
 
@@ -1144,6 +1185,7 @@ class LoadCase:
                     for l in liste if not getattr(l, "_geo", False))
         return (eigen + len(self.geometrielasten) + len(self.linienlasten)
                 + len(self.zwangsverformungen) + len(getattr(self, "vorspannungen", None) or [])
+                + len(getattr(self, "uebermasse", None) or [])
                 + (1 if np.any(self.gravity) else 0))
 
     def eigene(self, liste: str) -> list:
@@ -1168,6 +1210,7 @@ class LoadCase:
             "linienlasten": [asdict(l) for l in self.linienlasten],
             "zwangsverformungen": [asdict(l) for l in self.zwangsverformungen],
             "vorspannungen": [asdict(l) for l in (getattr(self, "vorspannungen", None) or [])],
+            "uebermasse": [asdict(l) for l in (getattr(self, "uebermasse", None) or [])],
             "temp_loads": [asdict(l) for l in self.eigene("temp_loads")],
             "gravity": list(map(float, self.gravity)),
             "gamma_sup": self.gamma_sup, "gamma_inf": self.gamma_inf,
@@ -1189,6 +1232,7 @@ class LoadCase:
         lc.zwangsverformungen = [Zwangsverformung(**l)
                                  for l in d.get("zwangsverformungen", [])]
         lc.vorspannungen = [_dc(Vorspannung, l) for l in d.get("vorspannungen", [])]
+        lc.uebermasse = [_dc(Uebermass, l) for l in d.get("uebermasse", [])]
         lc.temp_loads = [TempLoad(**l) for l in d.get("temp_loads", [])]
         lc.gravity = list(d.get("gravity", [0, 0, 0]))
         lc.gamma_sup = d.get("gamma_sup")
@@ -3738,6 +3782,28 @@ class Model:
                         None if achse is None else [float(x) for x in achse], str(kommentar or ""))
         self.case(case).vorspannungen.append(v)
         return v
+
+    def add_uebermass(self, ziel: str, ueberdeckung: float, case: str = None,
+                      passmass: str = "", kommentar: str = "") -> Uebermass:
+        """Uebermass [m] einer Kontaktbedingung (siehe :class:`Uebermass`).
+
+        ``ziel`` ist der Name der Fuge; angegeben wird die Gesamtueberdeckung -
+        bei einer Bohrung das Uebermass am Durchmesser.
+
+        Gemeint ist die Kontaktbedingung. Ein Modell kann ein Kontaktpaar auch
+        ohne sie tragen - aus einem Import oder von Hand angelegt -, und dann
+        gilt dessen Name.
+        """
+        ziel = str(ziel)
+        bekannt = set(self.kontaktbedingungen or {})
+        bekannt |= {str(cp.name) for cp in (self.contact_pairs or [])}
+        if ziel not in bekannt:
+            raise KeyError(f"Es gibt keine Fuge \u201e{ziel}\u201c "
+                           "(Kontaktbedingung oder Kontaktpaar)")
+        u = Uebermass(ziel, float(ueberdeckung), str(passmass or ""),
+                      str(kommentar or ""))
+        self.case(case).uebermasse.append(u)
+        return u
 
     def vorspannung_koerper(self, v) -> tuple:
         """(Elemente, Achse als Einheitsvektor, Querschnittsflaeche A) eines

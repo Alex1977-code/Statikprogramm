@@ -637,6 +637,85 @@ Last (auf Rechengenauigkeit), unter Zug geht **keine** Kraft mehr durch das
 Fundament (Sollwert null, nicht „klein"), und beide Wege – passende und nicht
 passende Netze – liefern dieselbe Stauchung.
 
+### 4.0a Übermaß: die Presspassung als Last
+
+`model.Uebermass`, `contact.ContactSystem._fugen_uebermass`, `passungen.py`
+
+Ein Passstift hält sein Bauteil nicht, weil er im Loch steckt, sondern weil
+er zu dick dafür ist. Das Übermaß erzeugt eine Pressspannung, und über den
+Reibbeiwert der Fuge trägt sie Schub. Ohne das ist ein Passstift in einer
+reibungsfreien Bohrung ein Bauteil, das in der Fugenebene nichts hält -
+und die Rechnung sagt es dann auch (§ 7b).
+
+**Als negativer Anfangsspalt.** Die Kontaktbedingung eines Slave-Knotens
+lautet g = g₀ + cₙ·u ≥ 0 mit dem gemessenen Anfangsabstand g₀. Ein Übermaß
+ist nichts anderes als ein **negatives** g₀: die Fuge steht schon vor jeder
+Last unter Druck. Das ist keine Näherung, sondern genau der Fügezustand; die
+Kontaktiteration liefert daraus die Pressverteilung, und der Reibbeiwert
+macht daraus Schubtragfähigkeit. Ein Verbund (Zug übertragend) kennt weder
+Spalt noch Übermaß - dort bleibt g₀ = 0.
+
+**Gesamtüberdeckung, und was davon radial wirkt.** Angegeben wird immer, was
+die beiden Teile **zusammen** zu viel haben:
+
+* **ebene Fuge** - die Überdeckung senkrecht zur Fläche; die Fuge muss sie
+  ganz schließen.
+* **zylindrische Fuge** - das Übermaß am **Durchmesser**, so wie es in jeder
+  Passungstabelle steht. Radial schließt die Fuge davon die Hälfte.
+
+Erkannt wird die Form am Betrag der mittleren Facettennormalen der Fuge:
+
+    |Mittelwert der Einheitsnormalen| < 0,7  →  zylindrisch
+
+Bei einer ebenen Fuge zeigen alle Normalen in dieselbe Richtung, der Betrag
+ist 1. Bei einer Bohrung heben sie sich weitgehend auf; für einen Bogen mit
+dem halben Öffnungswinkel α ist der Betrag sin α / α, und 0,7 entspricht
+einem umschlossenen Bogen von rund 160°. Eine Bohrung und ein Passstift
+umschließen mehr, ein leicht gewölbtes Blech weniger.
+
+Gerechnet wird die Form aus den Facetten, die **wirklich gepaart** wurden,
+nicht aus allen Außenflächen des Master-Objekts: ein Sechsflächner als Master
+hat sechs davon, und alle sechs zusammen sähen aus wie eine Bohrung. Was
+erkannt wurde und womit gerechnet wird, steht im Protokoll - eine
+Verwechslung wäre sonst ein Faktor zwei in der Pressspannung, den niemand
+bemerkt.
+
+**Aus der Passung.** Auf der Zeichnung steht ein Kurzzeichen, „Ø40 H7/s6".
+Was das Programm braucht, ist eine Länge. Der Weg dahin führt über die vier
+Abmaße der Passungstabelle - oberes und unteres Abmaß der Bohrung (ES, EI)
+und der Welle (es, ei), alle auf dasselbe Nennmaß bezogen:
+
+    Höchstübermaß   Ü_max = es − EI      (größte Welle, kleinste Bohrung)
+    Mindestübermaß  Ü_min = ei − ES      (kleinste Welle, größte Bohrung)
+    mittleres Übermaß = (Ü_max + Ü_min)/2
+
+Ein negativer Wert ist Spiel, kein Übermaß. Maßgebend ist je nach Frage ein
+anderer Ansatz: für die **größte Pressung** (Werkstoffnachweis der Nabe) das
+Höchstübermaß, für die **kleinste Haltekraft** (Reibschluss) das
+Mindestübermaß.
+
+Eine Tabelle nach ISO 286 bringt das Programm **nicht** mit. Sie hat für
+jedes Nennmaßfeld und jede Toleranzlage eigene Werte; eine aus zweiter Hand
+abgeschriebene Tabelle wäre nicht nachprüfbar, und ein Zahlendreher darin
+würde still zu einer falschen Pressspannung führen. Eingegeben werden die
+vier Abmaße der Zeichnung - oder gleich die Gesamtüberdeckung. Das
+Kurzzeichen wird als Beleg mitgeführt und steht im Bericht.
+
+**Als Lastfall.** Das Übermaß gehört zu einem Lastfall und geht mit dessen
+Beiwert in die Kombination ein - wie jede andere Last. Geometrisch ist es
+zwar ein Maß und keine Last; wer es nicht vervielfacht sehen will, legt es
+in einen ständigen Lastfall mit γ = 1,0.
+
+**Prüfung.** Zwei Würfel übereinander, beide Deckel in z gehalten, Fuge in
+der Mitte: jeder Würfel ist eine Feder E·A/L, in Reihe nehmen sie zusammen δ
+auf, und die Pressspannung ist σ = δ·E/(2·L). Der lineare Sechsflächner
+bildet diesen gleichförmigen Dehnungszustand exakt ab; übrig bleibt nur die
+endliche Steifigkeit der Kontaktfeder (Abweichung 6·10⁻⁵). Die Halbierung
+bei der zylindrischen Fuge ist ohne Kesselformel nachgewiesen: dasselbe
+Modell mit 40 µm Übermaß trifft auf die Stelle genau, die 20 µm
+Spaltschluss ergeben, und 40 µm Spaltschluss geben das Doppelte
+(`tests/test_uebermass.py`).
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf

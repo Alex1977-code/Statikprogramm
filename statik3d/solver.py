@@ -412,7 +412,9 @@ class StaticSystem:
         #: Freie Bewegungen und ihre Hilfsfesselung - erst nach einem sonst
         #: unloesbaren System belegt (:meth:`hilfsfesselung`)
         self.singular: list = []
-        self._gesucht = False
+        #: "" (noch nicht gesucht) | "grob" (nur die Vorpruefung, ohne Befund)
+        #: | "voll" (wirklich gesucht)
+        self._gesucht = ""
         self.K_hilf = None
         self._V = None
         self._k = 0.0
@@ -439,26 +441,33 @@ class StaticSystem:
                        f"Faktorisiert ({self.backend}, {time.time() - t0:.2f} s)", 0.32)
         return self._solver
 
-    def freie_bewegungen(self) -> list:
+    def freie_bewegungen(self, erzwingen: bool = False) -> list:
         """Bewegungen, die das Modell nicht haelt - gesucht, nicht gefesselt.
 
-        Die Suche laeuft hoechstens einmal je System und nur dann, wenn
-        ueberhaupt ein Teiltragwerk ohne festes Lager dasteht. Ist jedes Teil
-        an einem Lager, kostet der Aufruf nur die beiden Topologielaeufe, die
-        die Modellpruefung ohnehin macht.
+        Die Suche laeuft hoechstens einmal je System. Nach einer geglueckten
+        Rechnung soll sie nichts kosten: dann laeuft sie nur, wenn ueberhaupt
+        ein Teiltragwerk **ohne jedes** feste Lager dasteht - zwei
+        Topologielaeufe, die die Modellpruefung ohnehin macht.
+
+        ``erzwingen`` hebt diese Vorpruefung auf. Nach einem Abbruch muss das
+        sein: ein Bauteil kann ein Lager haben und trotzdem beweglich sein -
+        eine Platte, die nur senkrecht gehalten ist, verschiebt sich in ihrer
+        Ebene. Die grobe Vorpruefung saehe sie als gehalten an.
         """
-        if self._gesucht:
+        if self._gesucht == "voll" or (self._gesucht and not erzwingen):
             return self.singular
-        self._gesucht = True
         from .diagnose import gehaltene_knoten, teiltragwerke
         from . import singular as sg
         try:
-            fest, _kontakt = gehaltene_knoten(self.model)
-            if all(set(g) & fest for g in teiltragwerke(self.model)):
-                return []
+            if not erzwingen:
+                fest, _kontakt = gehaltene_knoten(self.model)
+                if all(set(g) & fest for g in teiltragwerke(self.model)):
+                    self._gesucht = "grob"
+                    return []
             self.singular = sg.restfreiheiten(self.model)
         except Exception:                 # noqa: BLE001 - eine Diagnose darf nie sperren
             self.singular = []
+        self._gesucht = "voll"
         return self.singular
 
     def hilfsfesselung(self) -> bool:
@@ -476,7 +485,8 @@ class StaticSystem:
             return False
         from . import singular as sg
         try:
-            V, sing = sg.hilfsfesselung(self.model, self.freie_bewegungen(),
+            V, sing = sg.hilfsfesselung(self.model,
+                                        self.freie_bewegungen(erzwingen=True),
                                         frei=self.fi)
         except Exception:                 # noqa: BLE001 - das darf nie sperren
             return False
@@ -581,6 +591,25 @@ def case_loads(model: Model, factors: dict, aktiv=None) -> tuple:
                 for i, s0 in asm.solid_prestress(model, v).items():
                     sig[i] = sig.get(i, 0.0) + f * s0
     return F, feq, q, temp
+
+
+def case_uebermass(model: Model, factors: dict) -> dict:
+    """{Name der Fuge: Gesamtueberdeckung [m]} einer Linearkombination.
+
+    Das Uebermass wird wie jede andere Last mit dem Faktor der Kombination
+    vervielfacht. Geometrisch ist ein Uebermass zwar keine Last, sondern ein
+    Mass - aber es steht in einem Lastfall, und ein Lastfall geht mit seinem
+    Beiwert in die Kombination ein. Wer das nicht will, legt das Uebermass in
+    einen staendigen Lastfall mit gamma = 1,0.
+    """
+    aus: dict = {}
+    for name, f in (factors or {}).items():
+        if not f or name not in model.load_cases:
+            continue
+        for u in (getattr(model.case(name), "uebermasse", None) or []):
+            ziel = str(u.ziel)
+            aus[ziel] = aus.get(ziel, 0.0) + float(f) * float(u.ueberdeckung)
+    return {k: v for k, v in aus.items() if v}
 
 
 def case_prescribed(model: Model, factors: dict, warn=None):
@@ -788,6 +817,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     aktiv = getattr(system, "aktiv", None)
     F, feq, q, temp = case_loads(model, factors, aktiv)
     us = case_prescribed(model, factors, warn=progress)
+    ueber = case_uebermass(model, factors)
     res = Results(name=name, kind=kind, model=model)
     if getattr(system, "situation", ""):
         res.info["situation"] = system.situation
@@ -795,7 +825,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         """Der Loesungsweg des Lastfalls - einmal wiederholbar."""
         if model.hat_ausfallstaebe():
             u_, R_, aktiv_, ausfall, alog, kontakt = solve_with_ausfall(
-                model, system, F, us=us, progress=progress)
+                model, system, F, us=us, progress=progress, uebermass=ueber)
             res.info["ausfall"] = ausfall
             res.info["ausfall_log"] = alog
             if kontakt is not None:
@@ -804,7 +834,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             return u_, R_, aktiv_
         if model.has_contact:
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
-                model, system, F, progress=progress, us=us)
+                model, system, F, progress=progress, us=us, uebermass=ueber)
             res.info.update(cinfo)
             return u_, R_, aktiv
         u_ = system.solve(F, us=us)
@@ -882,7 +912,7 @@ def _normalkraft(model: Model, e, u: np.ndarray) -> float:
 
 
 def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=None,
-                       progress=None, max_iter: int = 50):
+                       progress=None, max_iter: int = 50, uebermass: dict = None):
     """Aktivmengen-Iteration fuer Staebe, die nur Zug oder nur Druck aufnehmen
     (Fachwerkstab/Feder mit ``nur``, Seile).
 
@@ -924,6 +954,7 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
                 shape=(n, n)).tocsr()
         if model.has_contact:
             u, R, cons, cf, cinfo = solve_with_contact(model, system, F, progress=progress,
+                                                       uebermass=uebermass,
                                                        us=us, K_zusatz=K_aus)
             kontakt = (cons, cf, cinfo)
         else:
@@ -1127,12 +1158,18 @@ def _contact_singular(it: int, ex, cs, model=None) -> str:
 
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
-                       K_zusatz: sparse.spmatrix = None):
+                       K_zusatz: sparse.spmatrix = None, uebermass: dict = None):
     """Kontakt-Iteration; ``K_zusatz`` (z. B. die abgezogene Steifigkeit
-    ausgefallener Zugstaebe) kommt in jedem Schritt zur Kontaktsteifigkeit."""
+    ausgefallener Zugstaebe) kommt in jedem Schritt zur Kontaktsteifigkeit.
+
+    ``uebermass`` ist das Uebermass des Lastfalls je Fuge (siehe
+    :func:`case_uebermass`): ein negativer Anfangsspalt, aus dem die
+    Kontaktrechnung die Pressspannung und ueber den Reibbeiwert die
+    Schubtragfaehigkeit macht.
+    """
     from .contact import ContactSystem
     log: list[str] = []
-    cs = ContactSystem(model, system.K, log)
+    cs = ContactSystem(model, system.K, log, uebermass)
     cs.set_force_scale(float(np.abs(F).max()) if F.size else 1.0)
     cs.initialize()
     converged = False

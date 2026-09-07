@@ -255,10 +255,21 @@ def _solid_outward(model: Model, cp) -> dict[tuple, np.ndarray]:
 
 
 # --------------------------------------------------------------------------
+#: Betrag der mittleren Facettennormalen, unter dem eine Fuge als
+#: zylindrisch gilt. Bei einer ebenen Fuge zeigen alle Normalen in dieselbe
+#: Richtung (Betrag 1), bei einer Bohrung heben sie sich weitgehend auf; 0,7
+#: entspricht einem Bogen von rund 160 Grad. Eine Bohrung und ein Passstift
+#: umschliessen mehr, ein leicht gewoelbtes Blech weniger.
+ZYLINDRISCH = 0.7
+
+
 class ContactSystem:
-    def __init__(self, model: Model, K: sparse.csr_matrix, log: list = None):
+    def __init__(self, model: Model, K: sparse.csr_matrix, log: list = None,
+                 uebermass: dict = None):
         self.model = model
         self.log = log if log is not None else []
+        #: {Name der Fuge: Gesamtueberdeckung [m]} des gerechneten Lastfalls
+        self.uebermass = {str(k): float(v) for k, v in (uebermass or {}).items() if v}
         self.phase = 1          # 1: Aktivmenge und Gleitrichtungen, 2: monotone Nachpruefung
         self.stabilising = False   # Hilfsschritt ohne Spaltkraft (siehe stabilise)
         self.cycles = 0
@@ -403,6 +414,39 @@ class ContactSystem:
                 kind, np.array(dofs), cn, ct, float(e.slip), kn, TANGENT_FACTOR * kn,
                 mu, node, base * sgn, label, axes=axes, limit=float(e.limit), dof=dof))
 
+    def _fugen_uebermass(self, cp, normalen) -> float:
+        """Wirksames Uebermass der Fuge [m] - bei einer Bohrung die Haelfte.
+
+        Angegeben wird immer die **Gesamtueberdeckung**. Bei einer ebenen Fuge
+        muss die Fuge sie ganz schliessen. Bei einer zylindrischen ist sie das
+        Uebermass am **Durchmesser** - so steht es in jeder Passungstabelle -,
+        und radial schliesst die Fuge davon die Haelfte.
+
+        Erkannt wird die Form am Betrag der mittleren Facettennormalen
+        (:data:`ZYLINDRISCH`); das Protokoll sagt, was erkannt wurde und
+        womit gerechnet wird - eine Verwechslung waere sonst ein Faktor zwei
+        in der Pressspannung, den niemand bemerkt.
+        """
+        name = str(cp.name or "")
+        u = self.uebermass.get(name)
+        if u is None:
+            # Eine Fuge kann in mehrere Kontaktpaare aufgeteilt sein (ein Paar
+            # je Freigabetyp); die tragen den Namen der Fuge als Vorsatz.
+            u = next((v for k, v in self.uebermass.items() if name.startswith(k)), 0.0)
+        u = float(u or 0.0)
+        if not u:
+            return 0.0
+        if not len(normalen):
+            return 0.0
+        mittel = float(np.linalg.norm(np.asarray(normalen, float).mean(axis=0)))
+        zyl = mittel < ZYLINDRISCH
+        self.log.append(
+            f"Kontaktpaar '{name}': Übermaß {u * 1e6:.4g} µm Gesamtüberdeckung, Fuge "
+            + (f"zylindrisch - radial wirken {0.5 * u * 1e6:.4g} µm" if zyl
+               else "eben - sie wirkt in voller Höhe")
+            + f" (mittlere Facettennormale {mittel:.3f})")
+        return 0.5 * u if zyl else u
+
     def _build_pair(self, cp):
         """Ein Kontaktpaar in Bedingungen umsetzen: jeder Slave-Knoten gegen
         die naechste Master-Facette im Suchradius.
@@ -454,6 +498,8 @@ class ContactSystem:
         baum = cKDTree(S)
         n_paired = 0
         ohne: list = []
+        erste = len(self.cons)          # ab hier gehoeren die Bedingungen zu cp
+        normalen: list = []
         for s in cp.slave_nodes:
             p = m.nodes[s]
             idx = np.asarray(baum.query_ball_point(p, radius + rmax), dtype=int)
@@ -491,12 +537,23 @@ class ContactSystem:
                 t1, t2 = _tangent_basis(n)
                 ct = np.vstack([np.concatenate([t1] + [-wi * t1 for wi in wj]),
                                 np.concatenate([t2] + [-wi * t2 for wi in wj])])
+            normalen.append(n)
             self.cons.append(Constraint("surface", dofs, cn, ct, float(g0), kn,
                                         TANGENT_FACTOR * kn, cp.mu, s, n,
                                         f"{cp.name}: Knoten {s} -> Facette {tri}",
                                         master=(list(tri), list(wj)),
                                         zug=bool(cp.zug), haften=bool(cp.haften)))
             n_paired += 1
+        # Das Uebermass erst jetzt: welche Form die Fuge hat, sagen die
+        # Facetten, die wirklich gepaart wurden - nicht alle Aussenflaechen des
+        # Masters. Ein Hexaeder hat sechs davon, und alle sechs zusammen saehen
+        # aus wie eine Bohrung.
+        ueber = self._fugen_uebermass(cp, normalen)
+        if ueber and not cp.zug:
+            # Ein Uebermass ist ein **negativer** Anfangsspalt: die Fuge steht
+            # schon vor der Last unter Druck. Ein Verbund kennt beides nicht.
+            for c in self.cons[erste:]:
+                c.g0 -= ueber
         self.log.append(f"Kontaktpaar '{cp.name}': {n_paired} von {len(cp.slave_nodes)} "
                         f"Slave-Knoten zugeordnet"
                         + (f" - {len(ohne)} ohne Master-Facette im Suchradius "
