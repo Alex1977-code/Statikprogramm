@@ -1346,6 +1346,73 @@ def main():
         z = w.tbl_geoflaeche.modell.zeilen
         check("Flächentabelle gefüllt", len(z) == 1 and z[0][5] == 32, str(z[0][:6]))
         check("Flächeninhalt in der Tabelle", abs(z[0][6] - 8.0) < 1e-9, str(z[0][6]))
+
+        # ---- Mouseover: das Objekt der gewählten Auswahlart leuchtet -------
+        # Der Zeiger soll zeigen, was ein Klick treffen würde - und die Nummer
+        # daneben stellen. Aufgelöst wird über dieselben Helfer wie beim Klick;
+        # hier werden sie gesetzt, damit der Test ohne echte Maus auskommt.
+        from PySide6 import QtCore as _Qc
+
+        def akteure():
+            return list(dict(w.plotter.renderer.actors))
+
+        w.auswahlart_setzen("Fläche")
+        w._hover_pos = _Qc.QPoint(40, 40)
+        w._objekt_am_zeiger = lambda art: "F1" if art == "Fläche" else None
+        treffer = w._hover_am_zeiger()
+        check("Mouseover findet die Fläche unter dem Zeiger",
+              treffer is not None and treffer[0] == ("Fläche", "F1"), str(treffer))
+        check("die Beschriftung nennt Art und Nummer",
+              treffer is not None and treffer[1] == "Fläche F1", str(treffer and treffer[1]))
+        w._hover_suchen()
+        app.processEvents()
+        check("die Fläche leuchtet unter dem Zeiger auf", "hover" in akteure(), str(akteure()))
+        check("die Nummer steht als Schild am Zeiger",
+              w._hover_schild is not None and w._hover_schild.isVisible()
+              and w._hover_schild.text() == "Fläche F1",
+              w._hover_schild.text() if w._hover_schild else "kein Schild")
+        # Das Schild folgt dem Zeiger und bleibt im Fenster
+        check("das Schild steht neben dem Zeiger",
+              w._hover_schild.x() >= 0 and w._hover_schild.y() >= 0,
+              f"({w._hover_schild.x()}, {w._hover_schild.y()})")
+
+        # Nichts mehr getroffen: Hervorhebung und Schild verschwinden
+        w._objekt_am_zeiger = lambda art: None
+        w._hover_suchen()
+        app.processEvents()
+        check("ohne Treffer erlischt die Hervorhebung", "hover" not in akteure(), str(akteure()))
+        check("ohne Treffer verschwindet das Schild", not w._hover_schild.isVisible())
+
+        # Ein Wechsel der Auswahlart räumt die alte Hervorhebung ab
+        w._objekt_am_zeiger = lambda art: "F1" if art == "Fläche" else None
+        w._hover_suchen()
+        app.processEvents()
+        check("wieder aufgeleuchtet", "hover" in akteure())
+        w.auswahlart_setzen("Knoten")
+        app.processEvents()
+        check("Wechsel der Auswahlart räumt die Hervorhebung ab",
+              "hover" not in akteure() and w._hover_stand is None, str(akteure()))
+
+        # Auswahlart Netz: die Elementnummer steht am Zeiger
+        w.auswahlart_setzen("Netz")
+        w._element_am_zeiger = lambda: 3
+        w._wenn_sichtbar = lambda art, name: name
+        treffer = w._hover_am_zeiger()
+        check("Mouseover nennt die Elementnummer",
+              treffer is not None and treffer[1] == "Element 3", str(treffer))
+        w._hover_suchen()
+        app.processEvents()
+        check("das Element leuchtet auf", "hover" in akteure())
+        w._hover_aus()
+        app.processEvents()
+        check("_hover_aus räumt beides ab",
+              "hover" not in akteure() and not w._hover_schild.isVisible())
+        # Während des Drehens wird nicht gesucht - das ruckelte sonst
+        w._vereinfacht = True
+        check("beim Drehen ruht die Suche", not w._hover_bereit())
+        w._vereinfacht = None
+        del w._objekt_am_zeiger, w._element_am_zeiger, w._wenn_sichtbar
+        w.auswahlart_setzen("Linie")
         w.auswahlart_setzen("Fläche")
         check("Fläche unter dem Zeiger gefunden",
               vpg.flaeche_at(mg, [2.0, 1.0, 0.0], mg.characteristic_size()) == "F1")

@@ -323,9 +323,14 @@ class MainWindow(QtWidgets.QMainWindow):
                         return True
                 elif t == QtCore.QEvent.MouseButtonRelease and ereignis.button() == QtCore.Qt.LeftButton:
                     self._klick_loslassen(ereignis)
-                elif t == QtCore.QEvent.MouseMove and self._fenster_ecke is not None:
+                elif t == QtCore.QEvent.MouseMove:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
-                    self._fenster_nachziehen(pos)
+                    if self._fenster_ecke is not None:
+                        self._fenster_nachziehen(pos)
+                    else:
+                        self._hover_anstossen(pos)
+                elif t == QtCore.QEvent.Leave:
+                    self._hover_aus()
                 elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
                         and self.progress_bar.isVisible() \
                         and getattr(self, "btn_abbrechen", None) is not None \
@@ -932,6 +937,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if art not in self.AUSWAHLARTEN:
             return
         self.auswahlart = art
+        self._hover_aus()          # die alte Hervorhebung meint eine andere Art
         for feld in (getattr(self, "cb_auswahlart", None),
                      getattr(self, "cb_auswahlart_glas", None)):
             if feld is not None and feld.currentText() != art:
@@ -1756,6 +1762,190 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
         self.statusBar().showMessage("Nichts getroffen - Objekt anklicken oder den Klickmodus in der Maske "
                                      "beenden", 3000)
+
+    #: Farbe des Objekts unter dem Zeiger - heller als das Orange der Auswahl
+    #: (#ff8800), damit man beides nebeneinander auseinanderhaelt
+    FARBE_HOVER = "#ffe14d"
+    #: Wie lange der Zeiger ruhen muss, bevor unter ihm gesucht wird [ms].
+    #: Bei jeder Mausbewegung zu picken kostet auf einem Netz mit 389.000
+    #: Elementen zu viel; 60 ms fuehlen sich noch unmittelbar an.
+    HOVER_TAKT = 60
+
+    def _hover_bereit(self) -> bool:
+        """Darf gerade nach dem Objekt unter dem Zeiger gesucht werden?"""
+        if getattr(self, "_vereinfacht", None):
+            return False                     # es wird gedreht
+        if getattr(self, "_fenster_ecke", None) is not None:
+            return False                     # ein Auswahlfenster wird aufgezogen
+        if self.maskenrand.objekt_modus():
+            return False                     # eine Maske sammelt gerade Objekte
+        return self._dargestellt(getattr(self, "auswahlart", "Knoten"))
+
+    def _hover_anstossen(self, pos) -> None:
+        """Zeiger bewegt: die Suche kurz verzoegern statt sofort zu picken."""
+        takt = getattr(self, "_hover_takt", None)
+        if takt is None:
+            takt = QtCore.QTimer(self)
+            takt.setSingleShot(True)
+            takt.timeout.connect(self._hover_suchen)
+            self._hover_takt = takt
+        self._hover_pos = QtCore.QPoint(int(pos.x()), int(pos.y()))
+        takt.start(self.HOVER_TAKT)
+
+    def _hover_am_zeiger(self):
+        """Was unter dem Zeiger liegt: (Schluessel, Beschriftung, Elemente).
+
+        Aufgeloest wird **genau wie beim Klick** (siehe _picked) - sonst
+        leuchtete etwas anderes auf, als der Klick dann waehlt. ``elemente``
+        ist die Liste der Netzelemente zum Hervorheben, ``None`` bei Knoten
+        und Linien; die zeichnet _hover_zeichnen aus der Geometrie.
+        """
+        m = self.model
+        art = getattr(self, "auswahlart", "Knoten")
+        if art == "Netz":
+            elem = self._wenn_sichtbar("Netz", self._element_am_zeiger())
+            return (("Netz", int(elem)), f"Element {elem}", [int(elem)]) if elem is not None else None
+        if art == "Stab":
+            name = self._wenn_sichtbar("Stab", self._stab_am_zeiger()
+                                       or self._objekt_am_zeiger("Stab"))
+            if not name:
+                return None
+            mem = m.members.get(name)
+            return ("Stab", name), f"Stab {name}", [int(e) for e in (mem.elements or [])] if mem else []
+        if art == "Fläche":
+            name = self._wenn_sichtbar("Fläche", self._objekt_am_zeiger("Fläche"))
+            if not name:
+                return None
+            fl = m.flaechen.get(name)
+            return ("Fläche", name), f"Fläche {name}", [int(e) for e in (fl.elemente or [])] if fl else []
+        if art == "Volumen":
+            name = self._wenn_sichtbar("Volumen", self._objekt_am_zeiger("Volumen"))
+            if not name:
+                return None
+            k = m.koerper.get(name)
+            return ("Volumen", name), f"Volumen {name}", [int(e) for e in (k.elemente or [])] if k else []
+        if art == "Linie":
+            name = self._wenn_sichtbar("Linie", self._linie_am_zeiger())
+            return (("Linie", name), f"Linie {name}", None) if name else None
+        if art == "Knoten":
+            p_, _fangart, i = self._fangpunkt()
+            if p_ is None or i < 0 or not self._objekt_sichtbar("Knoten", i):
+                return None
+            return ("Knoten", int(i)), f"Knoten {i}", None
+        return None
+
+    def _hover_suchen(self) -> None:
+        """Der Takt ist abgelaufen: nachsehen, was dort liegt, und es zeigen."""
+        if not self._hover_bereit():
+            return self._hover_aus()
+        try:
+            treffer = self._hover_am_zeiger()
+        except Exception:                    # noqa: BLE001 - Anzeige darf nie sperren
+            return self._hover_aus()
+        if treffer is None:
+            return self._hover_aus()
+        schluessel, text, elemente = treffer
+        if schluessel == getattr(self, "_hover_stand", None):
+            self._hover_schild_setzen(text)  # nur dem Zeiger nachziehen
+            return
+        self._hover_stand = schluessel
+        self._hover_zeichnen(schluessel, elemente)
+        self._hover_schild_setzen(text)
+
+    def _hover_zeichnen(self, schluessel, elemente) -> None:
+        """Das Objekt unter dem Zeiger aufleuchten lassen."""
+        pl = self.plotter
+        m = self.model
+        for name in ("hover", "hover_punkt"):
+            try:
+                pl.remove_actor(name, render=False)
+            except Exception:                # noqa: BLE001
+                pass
+        art, wert = schluessel
+        try:
+            if art == "Knoten":
+                pl.add_mesh(pv.PolyData(np.asarray([m.nodes[int(wert)]], float)),
+                            color=self.FARBE_HOVER, point_size=16,
+                            render_points_as_spheres=True, name="hover_punkt")
+            elif art == "Linie":
+                ln = (getattr(m, "lines", {}) or {}).get(wert)
+                pts = None
+                if ln is not None:
+                    idx = [int(k) for k in ln.nodes if 0 <= int(k) < m.nn]
+                    if len(idx) >= 2:
+                        pts = m.nodes[idx]
+                        if (ln.typ or "polyline") != "polyline":
+                            # Bogen: abtasten wie vp.linien_netz, sonst leuchtet
+                            # die Sehne statt der Linie
+                            try:
+                                pts = np.asarray(ln.punkte(m, vp.TEILUNG_KURVE), float)
+                            except Exception:            # noqa: BLE001
+                                pass
+                if pts is not None and len(pts) >= 2:
+                    pl.add_mesh(pv.lines_from_points(np.asarray(pts, float)),
+                                color=self.FARBE_HOVER, line_width=7, name="hover")
+            elif elemente:
+                teil = vp.to_grid(m).extract_cells(np.asarray(elemente, int))
+                if teil.n_cells > 2000:
+                    teil = teil.extract_surface()
+                pl.add_mesh(teil, color=self.FARBE_HOVER, opacity=0.7, show_edges=True,
+                            edge_color="#a08000", line_width=3, name="hover")
+        except Exception:                    # noqa: BLE001 - eine Hervorhebung darf nie sperren
+            pass
+        try:
+            pl.render()
+        except Exception:                    # noqa: BLE001
+            pass
+
+    def _hover_schild_setzen(self, text: str) -> None:
+        """Die Nummer als kleines Schild neben den Zeiger stellen."""
+        schild = getattr(self, "_hover_schild", None)
+        if schild is None:
+            schild = QtWidgets.QLabel(self.plotter.interactor)
+            schild.setStyleSheet(
+                "background: rgba(30,30,30,215); color: #ffe14d; border: 1px solid #ffe14d;"
+                "border-radius: 3px; padding: 1px 5px; font-size: 11px;")
+            schild.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+            self._hover_schild = schild
+        schild.setText(text)
+        schild.adjustSize()
+        pos = getattr(self, "_hover_pos", None)
+        if pos is not None:
+            # rechts unter dem Zeiger; am rechten oder unteren Rand umklappen,
+            # damit das Schild nicht aus dem Fenster laeuft
+            w = self.plotter.interactor.width()
+            h = self.plotter.interactor.height()
+            x = pos.x() + 16
+            y = pos.y() + 16
+            if x + schild.width() > w:
+                x = pos.x() - schild.width() - 8
+            if y + schild.height() > h:
+                y = pos.y() - schild.height() - 8
+            schild.move(max(0, x), max(0, y))
+        schild.show()
+        schild.raise_()
+
+    def _hover_aus(self) -> None:
+        """Nichts mehr unter dem Zeiger: Hervorhebung und Schild weg."""
+        if getattr(self, "_hover_stand", None) is None \
+                and getattr(self, "_hover_schild", None) is None:
+            return
+        self._hover_stand = None
+        schild = getattr(self, "_hover_schild", None)
+        if schild is not None:
+            schild.hide()
+        entfernt = False
+        for name in ("hover", "hover_punkt"):
+            try:
+                self.plotter.remove_actor(name, render=False)
+                entfernt = True
+            except Exception:                # noqa: BLE001
+                pass
+        if entfernt:
+            try:
+                self.plotter.render()
+            except Exception:                # noqa: BLE001
+                pass
 
     def _klick_gedrueckt(self, point, *args):
         """VTK meldet den Linksklick beim Druecken - gemerkt, ausgefuehrt wird
