@@ -1861,7 +1861,10 @@ Nachweis mit seiner Verformung je Kombination.
   von denen eines weder ein Lager noch eine Kopplung an ein gelagertes Teil
   hat) machen das Gleichungssystem singulär; die Modellprüfung nennt sie mit
   Knotennummern, statt dass der Solver mit „Factor is exactly singular“
-  abbricht. Teile, die nur ein einseitiges Lager oder ein Kontaktpaar hält,
+  abbricht. Abgewiesen wird die Rechnung deswegen aber nicht mehr - das
+  Programm fragt, ob es trotzdem rechnen soll, hält jede freie Bewegung fest
+  und weist danach aus, welche Last in welcher Bewegung ins Nichts geht
+  (siehe *Freie Bewegungen* weiter unten). Teile, die nur ein einseitiges Lager oder ein Kontaktpaar hält,
   sind ein Hinweis, kein Fehler - ob sie tragen, entscheidet die
   Kontakt-Iteration. Dabei zählen **beide Seiten** einer Kontaktfuge: ein
   Bauteil, das ausschließlich Gegenseite ist - ein Passstift in seiner
@@ -1893,6 +1896,64 @@ Nachweis mit seiner Verformung je Kombination.
   der Vernetzer eben nicht vernetzen konnte, kann er auch beim nächsten
   Versuch nicht. Der Grund je Objekt steht im Protokoll und in seiner
   Bemerkung im Modellbaum.
+
+### Freie Bewegungen (Singularitäten)
+
+*Register Start → Modell prüfen → „Freie Bewegungen suchen“*, und nach jeder
+Rechnung im Modellbaum unter *Ergebnisse → Freie Bewegungen*.
+
+„Factor is exactly singular“ nennt weder das Bauteil noch die Richtung. Bei
+über hundert Volumen ist das nicht prüfbar. Der Befehl sagt statt dessen für
+jedes Bauteil, das sich bewegen kann:
+
+* **welches** - der Name des Bauteils, und ein Klick stellt seine Knoten und
+  ein Sinnbild der Bewegung in die Ansicht: einen Pfeil bei einer
+  Verschiebung, einen Drehpfeil bei einer Drehung;
+* **wie** - „Verschiebung längs (0.00, 0.00, 1.00)“, „Drehung um (1.00, 0.00,
+  0.00)“, bei einer Schraubbewegung beides;
+* **warum** - „Die Fugen *Achse* übertragen nur Druck senkrecht zur Fläche;
+  in der Fugenebene ist nichts gehalten (keine Reibung, keine Federn)“ oder
+  „Das Bauteil hat weder Lager noch eine Kopplung an ein gelagertes Teil“;
+* **was es kostet** - die Last, die in dieser Bewegung ins Nichts geht.
+
+Der letzte Punkt ist der, auf den es ankommt. Unterschieden wird:
+
+* **„im Gleichgewicht“** - die Last auf dem Bauteil hebt sich in dieser
+  Bewegung auf. Spannungen und Verformungen gelten; unbestimmt ist nur die
+  Lage des Bauteils im Raum. Ein Bauteil, an dem gar nichts angreift, fällt
+  immer hierunter.
+* **eine Zahl (z. B. „43,2 kN“)** - genau diese Kraft nimmt kein Lager und
+  keine Fuge auf. Im wirklichen Bauwerk würde sich das Bauteil bewegen; für
+  dieses Bauteil ist das Ergebnis nicht verwertbar. Nach der Rechnung sagt
+  das Programm es zusätzlich als Warnung, mit den betroffenen Bauteilen.
+
+Zwei Arten von Bewegung werden getrennt, weil sie verschiedene Abhilfen
+haben:
+
+* **gleitet** - in der Fugenebene hält nichts. Abhilfe: Reibbeiwert an der
+  Kontaktbedingung, Schub starr setzen oder eine Führung modellieren.
+* **hebt ab** - die Fuge geht auf. Abhilfe: ein Lager, ein Verbund
+  (Zug übertragen) oder eine Schraube.
+
+Ein Bauteil, das auf seiner Unterlage liegt, lässt sich immer anheben - das
+allein ist noch kein Befund. Gemeldet wird „hebt ab“ mit einer Zahl nur dann,
+wenn die Last diese Bewegung auch antreibt; drückt sie in die Fuge, steht
+dort „Die Last drückt in die Fuge - das Bauteil bleibt liegen“.
+
+Findet die Suche gar nichts und ist das System dennoch singulär, greift die
+**Matrixdiagnose**: sie nennt das Bauteil, dessen Bewegung fast keine Energie
+kostet. Das ist der Fall, den die Topologie nicht sehen kann - zwei Körper,
+die nur einen Knoten teilen, hängen zusammen und sind trotzdem beweglich.
+
+**Statt abzubrechen wird gerechnet.** Jede freie Bewegung wird mit einer
+Hilfsfesselung festgehalten. Die verfälscht die Spannungen nicht (sie wirkt
+nur auf den Starrkörperanteil, und der wird nach der Rechnung wieder
+herausgenommen); sie macht die Rechnung nur möglich. Deshalb darf man das
+Ergebnis für alle **gehaltenen** Bauteile ohne Abstriche verwenden - und
+sieht an der Liste, für welche nicht.
+
+Bei vielen losen Teilen werden höchstens 40 Bewegungen angezeigt, die
+schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
 
 ## 10 Ergebnisse und Bericht
 

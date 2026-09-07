@@ -1365,6 +1365,84 @@ def _pfeile(plotter, pts, vec, size: float, name: str, farbe: str = FARBE_LAST):
     plotter.add_mesh(pd.glyph(orient="v", scale="v", factor=1.0), color=farbe, name=name)
 
 
+#: Farbe der freien Bewegungen (Singularitaeten) - dasselbe Warnorange wie
+#: beim Knoten ohne Element: „hier fehlt etwas".
+FARBE_BEWEGUNG = "#e07000"
+
+
+def _querachsen(achse) -> tuple:
+    """Zwei Einheitsvektoren e1, e2 quer zu ``achse`` mit e1 x e2 = achse."""
+    a = np.asarray(achse, float)
+    a = a / (np.linalg.norm(a) or 1.0)
+    h = np.array([0.0, 0.0, 1.0]) if abs(a[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    e1 = np.cross(h, a)
+    e1 = e1 / (np.linalg.norm(e1) or 1.0)
+    return e1, np.cross(a, e1)
+
+
+def _ringpfeil(mitte, achse, radius: float) -> list:
+    """Ein Drehpfeil um ``achse`` durch ``mitte``: Bogen und Spitze.
+
+    Ein gerader Pfeil kann eine Drehung nicht zeigen - er wuerde als
+    Verschiebung gelesen. Der Bogen laeuft ueber 270 Grad, damit die
+    Drehrichtung auch von schraeg ablesbar bleibt, und im Rechtsschraubensinn
+    um die Achse: so, wie omega gezaehlt ist.
+    """
+    a = np.asarray(achse, float)
+    if np.linalg.norm(a) <= 0 or radius <= 0:
+        return []
+    e1, e2 = _querachsen(a)
+    t = np.linspace(0.0, 1.5 * np.pi, 48)
+    P = (np.asarray(mitte, float)
+         + radius * (np.outer(np.cos(t), e1) + np.outer(np.sin(t), e2)))
+    bogen = pv.lines_from_points(P).tube(radius=0.06 * radius)
+    tang = P[-1] - P[-2]
+    tang = tang / (np.linalg.norm(tang) or 1.0)
+    spitze = pv.Cone(center=P[-1] + 0.15 * radius * tang, direction=tang,
+                     height=0.3 * radius, radius=0.13 * radius)
+    return [bogen, spitze]
+
+
+def add_singularitaet(plotter, model: Model, sing, size: float,
+                      name: str = "result_singular") -> None:
+    """Eine freie Bewegung zeigen: betroffene Knoten, Pfeil und Drehpfeil.
+
+    ``sing`` ist eine :class:`statik3d.singular.Singularitaet`; ``None``
+    loescht die Darstellung wieder. Gezeichnet wird am Bezugspunkt - bei einer
+    Verschiebung der Schwerpunkt des Teils, bei einer Drehung ein Punkt auf
+    der Drehachse -, damit das Sinnbild dort steht, wo die Bewegung ansetzt.
+    """
+    for n in (name, f"{name}_knoten"):
+        try:
+            plotter.remove_actor(n)
+        except Exception:                 # noqa: BLE001 - war noch nicht da
+            pass
+    if sing is None:
+        return
+    kn = np.asarray(getattr(sing, "knoten", None) or [], int)
+    kn = kn[(kn >= 0) & (kn < model.nn)]
+    if len(kn):
+        plotter.add_mesh(pv.PolyData(model.nodes[kn]), color=FARBE_BEWEGUNG,
+                         point_size=9, render_points_as_spheres=True,
+                         name=f"{name}_knoten")
+    p = np.asarray(getattr(sing, "bezug", None) if getattr(sing, "bezug", None)
+                   is not None else np.zeros(3), float)
+    lang = 0.25 * float(size or 1.0)
+    t = np.asarray(getattr(sing, "t", None) if getattr(sing, "t", None)
+                   is not None else np.zeros(3), float)
+    w = np.asarray(getattr(sing, "omega", None) if getattr(sing, "omega", None)
+                   is not None else np.zeros(3), float)
+    teile = []
+    if float(np.linalg.norm(t)) > 1e-9:
+        teile.append(pv.Arrow(start=p, direction=t / np.linalg.norm(t),
+                              scale=lang, tip_length=0.3, shaft_radius=0.02))
+    if float(np.linalg.norm(w)) > 1e-12:
+        teile += _ringpfeil(p, w, 0.45 * lang)
+    if teile:
+        plotter.add_mesh(teile[0].merge(teile[1:]) if len(teile) > 1 else teile[0],
+                         color=FARBE_BEWEGUNG, name=name)
+
+
 def _dreiecksmitten(model: Model, f, raender: dict = None, seiten: dict = None,
                     hoechstens: int = 24):
     """Punkte und Normalen auf einer Flaeche (mit oder ohne Netz) fuer Lastpfeile."""

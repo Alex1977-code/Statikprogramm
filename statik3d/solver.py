@@ -159,6 +159,7 @@ class Results:
     freqs: np.ndarray = None                # [Hz]
     buckling_factors: np.ndarray = None
     buckling_modes: np.ndarray = None
+    singular: list = field(default_factory=list)   # freie Bewegungen (singular.py)
     info: dict = field(default_factory=dict)
     model: Model = None
     _cache: dict = field(default_factory=dict, repr=False)
@@ -408,6 +409,13 @@ class StaticSystem:
             _melde(progress, f"Gleichungssystem aufgestellt ({len(self.fi)} aktive FHG)", 0.20)
         self._solver = None
         self.backend = "-"
+        #: Freie Bewegungen und ihre Hilfsfesselung - erst nach einem sonst
+        #: unloesbaren System belegt (:meth:`hilfsfesselung`)
+        self.singular: list = []
+        self._gesucht = False
+        self.K_hilf = None
+        self._V = None
+        self._k = 0.0
         self._progress = progress
         self.t_assemble = time.time() - t0
         if not model.has_contact:
@@ -423,13 +431,72 @@ class StaticSystem:
             except (RuntimeError, ValueError) as ex:
                 # "Factor is exactly singular" sagt niemandem, was fehlt
                 from .diagnose import singulaer_text
-                raise RuntimeError(singulaer_text(self.model, ex)) from None
+                raise RuntimeError(singulaer_text(self.model, ex, self)) from None
             self.backend = self._solver.backend
             self.t_assemble += time.time() - t0
             if self._progress:
                 _melde(self._progress,
                        f"Faktorisiert ({self.backend}, {time.time() - t0:.2f} s)", 0.32)
         return self._solver
+
+    def freie_bewegungen(self) -> list:
+        """Bewegungen, die das Modell nicht haelt - gesucht, nicht gefesselt.
+
+        Die Suche laeuft hoechstens einmal je System und nur dann, wenn
+        ueberhaupt ein Teiltragwerk ohne festes Lager dasteht. Ist jedes Teil
+        an einem Lager, kostet der Aufruf nur die beiden Topologielaeufe, die
+        die Modellpruefung ohnehin macht.
+        """
+        if self._gesucht:
+            return self.singular
+        self._gesucht = True
+        from .diagnose import gehaltene_knoten, teiltragwerke
+        from . import singular as sg
+        try:
+            fest, _kontakt = gehaltene_knoten(self.model)
+            if all(set(g) & fest for g in teiltragwerke(self.model)):
+                return []
+            self.singular = sg.restfreiheiten(self.model)
+        except Exception:                 # noqa: BLE001 - eine Diagnose darf nie sperren
+            self.singular = []
+        return self.singular
+
+    def hilfsfesselung(self) -> bool:
+        """Die freien Bewegungen mit je einer Zeile festhalten.
+
+        Statt abzubrechen wird weitergerechnet: jede Bewegung, die das Modell
+        nicht haelt, bekommt eine Straffeder auf ihren Starrkoerpermodus. Weil
+        K·v = 0 ist, bleiben Spannungen und Dehnungen davon unberuehrt - nur
+        der Starrkoerperanteil der Verschiebung kommt hinzu, und der wird in
+        :meth:`ohne_starrkoerper` wieder abgezogen.
+
+        Rueckgabe True, wenn eine Fesselung eingebaut wurde.
+        """
+        if self.K_hilf is not None:
+            return False
+        from . import singular as sg
+        try:
+            V, sing = sg.hilfsfesselung(self.model, self.freie_bewegungen(),
+                                        frei=self.fi)
+        except Exception:                 # noqa: BLE001 - das darf nie sperren
+            return False
+        if not sing or V.shape[0] == 0:
+            return False
+        _, k = sg.stabilisieren(self.Kff, V[:, self.fi])
+        self.singular, self._V, self._k = sing, V, k
+        for x in sing:
+            x.gefesselt = True
+        self.K_hilf = (k * (V.T @ V)).tocsr()
+        self.Kff = (self.Kff + self.K_hilf[self.fi][:, self.fi]).tocsc()
+        self._solver = None
+        return True
+
+    def ohne_starrkoerper(self, u: np.ndarray) -> np.ndarray:
+        """Den willkuerlichen Starrkoerperanteil der Hilfsfesselung abziehen."""
+        if self.K_hilf is None:
+            return u
+        from . import singular as sg
+        return sg.bereinigen(self._V, u)
 
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
               F_extra: np.ndarray = None, us: np.ndarray = None) -> np.ndarray:
@@ -452,6 +519,8 @@ class StaticSystem:
                 u[self.fi] = self.solver.solve(rhs)
             else:
                 Kt = (self.K + K_extra)
+                if self.K_hilf is not None:
+                    Kt = Kt + self.K_hilf
                 Ktff = Kt[self.fi][:, self.fi].tocsc()
                 if vorgabe:
                     Ktfs = Kt[self.fi][:, self.si]
@@ -464,7 +533,7 @@ class StaticSystem:
             if "Teiltragwerk" in str(ex) or "ohne Netz" in str(ex):
                 raise
             from .diagnose import singulaer_text
-            raise RuntimeError(singulaer_text(self.model, ex)) from None
+            raise RuntimeError(singulaer_text(self.model, ex, self)) from None
         return u
 
     def reactions(self, u: np.ndarray, F: np.ndarray, K_extra=None) -> np.ndarray:
@@ -722,28 +791,67 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     res = Results(name=name, kind=kind, model=model)
     if getattr(system, "situation", ""):
         res.info["situation"] = system.situation
-    aktiv_eff = aktiv
-    if model.hat_ausfallstaebe():
-        u, R, aktiv_eff, ausfall, alog, kontakt = solve_with_ausfall(
-            model, system, F, us=us, progress=progress)
-        res.info["ausfall"] = ausfall
-        res.info["ausfall_log"] = alog
-        if kontakt is not None:
-            res.contact, res.contact_forces, cinfo = kontakt
+    def _rechnen():
+        """Der Loesungsweg des Lastfalls - einmal wiederholbar."""
+        if model.hat_ausfallstaebe():
+            u_, R_, aktiv_, ausfall, alog, kontakt = solve_with_ausfall(
+                model, system, F, us=us, progress=progress)
+            res.info["ausfall"] = ausfall
+            res.info["ausfall_log"] = alog
+            if kontakt is not None:
+                res.contact, res.contact_forces, cinfo = kontakt
+                res.info.update(cinfo)
+            return u_, R_, aktiv_
+        if model.has_contact:
+            u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
+                model, system, F, progress=progress, us=us)
             res.info.update(cinfo)
-    elif model.has_contact:
-        u, R, res.contact, res.contact_forces, cinfo = solve_with_contact(
-            model, system, F, progress=progress, us=us)
-        res.info.update(cinfo)
-    else:
-        u = system.solve(F, us=us)
-        R = system.reactions(u, F)
+            return u_, R_, aktiv
+        u_ = system.solve(F, us=us)
+        return u_, system.reactions(u_, F), aktiv
+
+    try:
+        u, R, aktiv_eff = _rechnen()
+        system.freie_bewegungen()      # nur suchen - geloest ist geloest
+    except RuntimeError:
+        # Statt abzubrechen: die freien Bewegungen benennen, festhalten und
+        # weiterrechnen. Der Nutzer sieht dann die Verformung und daneben,
+        # welche Last in der Bewegung ins Nichts geht - und entscheidet selbst.
+        if not system.hilfsfesselung():
+            raise
+        _melde(progress, f"{len(system.singular)} freie Bewegungen gefunden - "
+               "wird mit Hilfsfesselung gerechnet")
+        u, R, aktiv_eff = _rechnen()
+        u = system.ohne_starrkoerper(u)
+    if system.singular:
+        from . import singular as _sg
+        # Nach Schwere geordnet: oben steht, was die Rechnung zunichte macht,
+        # nicht das erstbeste Teil nach Knotennummer.
+        res.singular = _sg.wichtigste(_sg.auswerten(model, system.singular, F),
+                                      hoechstens=len(system.singular))
+        for x in res.singular:
+            x.kegel = None            # ausgewertet - die Kegelmatrix kann weg
+        res.info["singularitaeten"] = [singularitaet_info(x)
+                                       for x in _sg.wichtigste(res.singular)]
     verschiebungen_eintragen(model, res, u, R)
     res.info.update({"ndof": model.ndof, "nfree": len(system.fi),
                      "solver": system.backend, "factors": dict(factors)})
     postprocess(model, u, res, feq, q, temp, workers, aktiv_eff)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
+
+
+def singularitaet_info(s) -> dict:
+    """Eine freie Bewegung als einfaches Woerterbuch - fuer Bericht und Web.
+
+    ``Results.singular`` haelt die Objekte fuer die Oberflaeche (sie braucht
+    Richtung und Knoten, um den Pfeil zu zeichnen); hier steht dasselbe in
+    Text und Zahlen, damit es auch durch ``to_dict`` und ueber die Farm kommt.
+    """
+    return {"art": s.art, "koerper": list(s.koerper), "text": s.text,
+            "ursache": s.ursache, "befund": s.befund(), "kraft": float(s.kraft),
+            "moment": float(s.moment), "gefesselt": bool(s.gefesselt),
+            "knoten": len(s.knoten)}
 
 
 def verschiebungen_eintragen(model: Model, res: Results, u: np.ndarray, R: np.ndarray) -> None:

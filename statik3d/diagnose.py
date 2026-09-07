@@ -320,15 +320,35 @@ def meldungen(model, d: dict = None) -> list:
     return z
 
 
-def singulaer_text(model, ex=None) -> str:
-    """Erklärung zu einem singulären Gleichungssystem (statt „Factor is exactly singular“)."""
+def singulaer_text(model, ex=None, system=None) -> str:
+    """Erklärung zu einem singulären Gleichungssystem (statt „Factor is exactly singular“).
+
+    Bleibt die Topologie stumm - kein loses Teiltragwerk, kein fehlendes Netz -,
+    kommt ``system`` zum Zuge: die Matrixdiagnose (Stufe 2 in
+    :mod:`statik3d.singular`) nennt das Bauteil, dessen Bewegung fast keine
+    Energie kostet. Das ist der Fall, den die Topologie nicht sehen kann:
+    weiche Mechanismen, Splitterelemente, Nullsteifigkeit.
+    """
     d = diagnose(model)
     kopf = "Gleichungssystem singulär (kein statisches Gleichgewicht möglich)"
     if ex is not None:
         kopf += f" - {ex}"
     z = [m for m in meldungen(model, d) if not m.startswith("Hinweis")]
+    if not z and system is not None:
+        z += _matrixbefund(model, system)
     if not z:
         z.append("Ursache nicht aus der Topologie erkennbar: Gelenke (Kette ohne Halt), fehlende "
                  "Drehfesselung eines Fachwerkknotens, Lager ohne Steifigkeit oder Nullsteifigkeit "
                  "(Querschnitt, Dicke, Werkstoff) prüfen.")
     return kopf + "\n" + "\n".join(z)
+
+
+def _matrixbefund(model, system) -> list:
+    """Stufe 2: der weichste Modus der Steifigkeitsmatrix als Meldung."""
+    try:
+        from .singular import weichster_modus
+        moden = weichster_modus(getattr(system, "K", None), model,
+                                getattr(system, "fi", None))
+    except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
+        return []
+    return [f"FEHLER: {s.text} - {s.ursache}" for s in moden]

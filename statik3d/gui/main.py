@@ -63,6 +63,17 @@ ZEILENHOEHE = 15
 _namen = dsg.namen
 
 
+def _bewegung_kurz(s) -> str:
+    """Die unausgeglichene Last einer freien Bewegung in einer Zeile.
+
+    Steht dort eine Zahl, geht sie in dieser Bewegung ins Nichts; steht
+    „im Gleichgewicht", ist nur die Lage des Bauteils unbestimmt.
+    """
+    teile = [f"{s.kraft / 1000.0:.3g} kN" for _ in (1,) if s.kraft > 0.0]
+    teile += [f"{s.moment / 1000.0:.3g} kNm" for _ in (1,) if s.moment > 0.0]
+    return " + ".join(teile) if teile else "im Gleichgewicht"
+
+
 # ==========================================================================
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -2486,6 +2497,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Knoten mit gleichen Koordinaten zu einem verschmelzen - nach dem Übernehmen aus CAD")
         g.klein("Freie Stabenden anschließen…", self.staebe_anschliessen,
                 hinweis="Freie Stabenden auf die Achse des nächsten Stabes loten und ihn dort teilen (Suchradius in mm)")
+        g.klein("Freie Bewegungen suchen", self.do_singular,
+                hinweis="Welches Bauteil kann sich wie bewegen? Nennt Teil, Richtung "
+                        "und Ursache und stellt die Bewegung als Pfeil in die Ansicht")
         g = r.gruppe("Berechnen")
         self.act_rechnen = g.gross("Berechnen", "▶", lambda: self.do_solve("all"),
                                    "F5", "Alle Lastfälle und Kombinationen rechnen",
@@ -6404,6 +6418,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def ergebnis_zeigen(self, schluessel: str):
         """Ein Ergebnis aus dem Baum in der Ansicht einstellen."""
         art, _, wert = (schluessel or "").partition(":")
+        if art == "bewegung":
+            return self.bewegung_zeigen(int(wert or 0))
         if art == "schnittgroesse":
             i = self.cb_diagram.findText(wert)
             if i >= 0:
@@ -7149,6 +7165,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 reihe.append(("kein Verlauf", "Verlauf ausblenden",
                               "schnittgroesse:kein Verlauf"))
                 out["Schnittgrößen"] = reihe
+        sing = self.singularitaeten()
+        if sing:
+            out["Freie Bewegungen"] = [
+                (x.bezeichnung(), _bewegung_kurz(x), f"bewegung:{i}")
+                for i, x in enumerate(sing)]
         r = self.results
         if r is not None:
             if getattr(r, "modes", None) is not None:
@@ -12591,6 +12612,99 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText("\n".join(msgs) if msgs else "keine Auffälligkeiten")
         self.bottom_tabs.setCurrentIndex(0)
 
+    def do_singular(self):
+        """Freie Bewegungen suchen (Stufe 1a und 1b) und in den Baum stellen."""
+        from .. import singular as sg
+        if not self.model.elements:
+            return self.info("Erst vernetzen - ohne Elemente gibt es nichts zu prüfen")
+        self._run_background(lambda p: sg.restfreiheiten(self.model),
+                             self._singular_fertig, "Freie Bewegungen")
+
+    def _singular_fertig(self, sing):
+        """Ergebnis der Suche: ins Protokoll, in den Baum, erste in die Ansicht."""
+        from .. import assemble as _asm, singular as sg
+        try:
+            sing = sg.auswerten(self.model, sing,
+                                _asm.load_vector(self.model, self.model.case()))
+        except Exception as ex:            # noqa: BLE001 - ohne Lastfall geht es auch
+            self.log.appendPlainText(f"Lastvektor nicht auswertbar: {ex}")
+        self._freie_bewegungen = sg.wichtigste(sing)
+        self._bewegung_index = None
+        self.log.appendPlainText("--- Freie Bewegungen ---")
+        if not sing:
+            self.log.appendPlainText("keine - jedes Bauteil ist gehalten")
+        for x in self._freie_bewegungen:
+            self.log.appendPlainText(f"{x.text}\n    {x.ursache}\n    {x.befund()}")
+        self.bottom_tabs.setCurrentIndex(0)
+        self._refresh_baum()
+        if self._freie_bewegungen:
+            self.bewegung_zeigen(0)
+        else:
+            self.info("Keine freie Bewegung gefunden - jedes Bauteil ist gehalten")
+
+    def singularitaeten(self) -> list:
+        """Die freien Bewegungen, die gerade vorliegen.
+
+        Erste Quelle ist das angezeigte Ergebnis: dort stehen sie mit der
+        unausgeglichenen Last des gerechneten Lastfalls. Sonst das, was
+        „Freie Bewegungen suchen" zuletzt gefunden hat.
+        """
+        try:
+            r = self.current_result() if hasattr(self, "cb_result") else None
+        except Exception:                  # noqa: BLE001 - der Baum baut auch frueh
+            r = None
+        from .. import singular as sg
+        aus = list(getattr(r, "singular", None) or []) if r is not None else []
+        if not aus:
+            # Eine Umhuellende fuehrt keine eigene Liste - sie entsteht aus
+            # den Lastfaellen. Genommen wird dann der Lastfall, in dem am
+            # meisten ins Nichts geht: die Bewegungen sind in allen dieselben,
+            # nur die Last daran ist verschieden, und massgebend ist die
+            # groesste.
+            an = getattr(self, "analysis", None)
+            kandidaten = []
+            for quelle in (getattr(an, "cases", None), getattr(an, "combinations", None)):
+                for x in (quelle or {}).values():
+                    liste = list(getattr(x, "singular", None) or [])
+                    if liste:
+                        kandidaten.append(liste)
+            if kandidaten:
+                aus = max(kandidaten,
+                          key=lambda s: max(y.kraft + y.moment for y in s))
+        return sg.wichtigste(aus or list(getattr(self, "_freie_bewegungen", None) or []))
+
+    def bewegung_zeigen(self, i: int):
+        """Eine freie Bewegung als Pfeil bzw. Drehpfeil in die Ansicht."""
+        sing = self.singularitaeten()
+        if not 0 <= i < len(sing):
+            return self.info("Diese Bewegung gibt es nicht mehr - neu suchen")
+        x = sing[i]
+        # Gemerkt, nicht nur gezeichnet: redraw() nimmt alle Darsteller weg,
+        # und die gewaehlte Bewegung soll das ueberleben.
+        self._bewegung_index = int(i)
+        self._bewegung_zeichnen(self.model)
+        try:
+            self.plotter.render()
+        except Exception as ex:            # noqa: BLE001 - ein Sinnbild darf nichts sperren
+            self.log.appendPlainText(f"Bewegung nicht gezeichnet: {ex}")
+        self.info(f"{x.text} – {x.befund()}")
+
+    def _bewegung_zeichnen(self, m) -> None:
+        """Die gewaehlte freie Bewegung ins Bild - oder nichts, wenn keine."""
+        i = getattr(self, "_bewegung_index", None)
+        sing = self.singularitaeten() if i is not None else []
+        try:
+            vp.add_singularitaet(self.plotter, m,
+                                 sing[i] if i is not None and i < len(sing) else None,
+                                 m.characteristic_size() if m.nn else 1.0)
+        except Exception as ex:            # noqa: BLE001 - ein Sinnbild darf nichts sperren
+            self.log.appendPlainText(f"Bewegung nicht gezeichnet: {ex}")
+
+    def bewegung_aus(self) -> None:
+        """Die Bewegung wieder aus der Ansicht nehmen."""
+        self._bewegung_index = None
+        self._bewegung_zeichnen(self.model)
+
     def _apply_parallel_settings(self):
         parallel.configure(workers=self.sp_workers.value(),
                            backend="farm" if self.cb_backend.currentIndex() == 1 else "local",
@@ -12799,8 +12913,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._vor_rechnung_vernetzen():
             return
         msgs = [m for m in self.model.check() if m.startswith("FEHLER")]
-        if msgs:
-            return self.error("\n".join(msgs))
+        if msgs and not self._trotzdem_rechnen(msgs):
+            return
         self._apply_parallel_settings()
         if kind is None:
             kind = ["all", "case", "modal", "buckling"][self.cb_analysis.currentIndex()]
@@ -12818,6 +12932,30 @@ class MainWindow(QtWidgets.QMainWindow):
             func = lambda p: solver.solve_buckling(model, nmodes, p)
         self._run_background(func, lambda r: self._solve_done(kind, r), "Berechnung")
 
+    def _trotzdem_rechnen(self, msgs: list) -> bool:
+        """Bei Bauteilen ohne Lager fragen statt abzuweisen.
+
+        Ein Teiltragwerk ohne Lager ist ein Modellfehler - aber einer, den man
+        erst beurteilen kann, wenn man die Verformungen sieht. Das Programm
+        haelt jede freie Bewegung mit einer Hilfsfesselung fest, rechnet und
+        weist danach aus, welche Last in welcher Bewegung ins Nichts geht.
+        Alles andere (kein Netz, keine Elemente) bleibt ein harter Fehler.
+        """
+        lose = [m for m in msgs if "Teiltragwerk" in m]
+        if len(lose) != len(msgs):
+            self.error("\n".join(msgs))
+            return False
+        if not self._fragen("Bauteile ohne Lager", "\n".join(lose)
+                            + "\n\nTrotzdem rechnen? Jede freie Bewegung wird mit "
+                              "einer Hilfsfesselung festgehalten; danach steht unter "
+                              "„Ergebnisse → Freie Bewegungen“, welches Bauteil sich "
+                              "wie bewegt und welche Last dabei ins Nichts geht."):
+            self.log.appendPlainText("FEHLER: " + "\n".join(lose))
+            return False
+        self.log.appendPlainText("WARNUNG: " + "\n".join(lose)
+                                 + "\nEs wird trotzdem gerechnet - mit Hilfsfesselung.")
+        return True
+
     def _solve_done(self, kind, r):
         if kind == "all":
             self.analysis = r
@@ -12834,12 +12972,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(text)
         self.txt_summary.setPlainText(text)
         self._fill_result_selector()
+        self._bewegungen_melden()
         self.maske_zeigen("Ergebnisse")
         self.show_results()
         # Die Ergebnisse stehen jetzt auch im Modellbaum - er muss davon wissen.
         self._refresh_baum()
         self._refresh_kopf()
         self._refresh_status()
+
+    def _bewegungen_melden(self):
+        """Freie Bewegungen aus der Rechnung ins Protokoll und in die Statuszeile."""
+        sing = self.singularitaeten()
+        if not sing:
+            return
+        schwer = [x for x in sing if x.kraft > 0.0 or x.moment > 0.0]
+        self.log.appendPlainText("--- Freie Bewegungen ---")
+        for x in sing:
+            self.log.appendPlainText(f"{x.text}\n    {x.befund()}")
+        if schwer:
+            self.warnung(f"{len(schwer)} von {len(sing)} freien Bewegungen tragen "
+                         "Last, die nirgends ankommt - für diese Bauteile ist das "
+                         "Ergebnis nicht verwertbar:\n\n"
+                         + "\n".join(f"• {x.text}\n  {x.befund()}" for x in schwer[:6])
+                         + ("\n…" if len(schwer) > 6 else "")
+                         + "\n\nDie Bewegungen stehen im Modellbaum unter "
+                           "„Ergebnisse → Freie Bewegungen“.")
+        else:
+            self.info(f"{len(sing)} Bauteile sind nicht gehalten - die Last steht "
+                      "auf ihnen aber im Gleichgewicht (Modellbaum → Ergebnisse)")
 
     # ---- Ergebnisse --------------------------------------------------
     def _fill_result_selector(self):
@@ -13527,6 +13687,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     render_points_as_spheres=True, name="selection")
         self._kopfzeile_zeichnen(r, s if (u is not None and not modal) else 0.0)
         self._kennwerte_zeichnen(r)
+        self._bewegung_zeichnen(m)
         try:
             # Achsenkreuz unten rechts - unten links stehen die Kennwerte
             self.plotter.add_axes(viewport=(0.86, 0.0, 1.0, 0.16))
