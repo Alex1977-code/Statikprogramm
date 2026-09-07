@@ -373,6 +373,72 @@ def test_alle_fugen():
           "; ".join(log2)[:70])
 
 
+def _fremdkoerper(m: Model, x0: float, kante: float, h: float) -> None:
+    """Ein grob vernetzter Quader weit weg - er hat mit keiner Fuge zu tun."""
+    b = Bauer(m)
+    b.i = 1000 + len(m.lines)
+    i0 = len(m.nodes)
+    m.add_nodes(np.array([[x0 + a * kante, y * kante, z * kante]
+                          for z in (0, 1) for a, y in ((0, 0), (1, 0), (1, 1), (0, 1))], float))
+    R = [[b.linie(i0 + o + k, i0 + o + (k + 1) % 4) for k in range(4)] for o in (0, 4)]
+    V = [b.linie(i0 + k, i0 + k + 4) for k in range(4)]
+    fl = ["FU", "FO"]
+    m.add_flaeche("FU", R[0], material="S235")
+    m.add_flaeche("FO", R[1], material="S235")
+    for k in range(4):
+        m.add_flaeche(f"FM{k}", [R[0][k], V[(k + 1) % 4], R[1][k], V[k]], material="S235")
+        fl.append(f"FM{k}")
+    M3.mesh_koerper_frei(m, m.add_koerper("Fremd", fl, material="S235"), h=h, log=[], cache={})
+
+
+def test_suchradius_kommt_aus_der_fuge():
+    """Der Suchradius muss das Netz **dieser Fuge** haben, nicht das des Modells.
+
+    Gesucht wird gegen die Randseiten aller anderen Bauteile - und der
+    Suchradius war deren Median-Kantenlaenge. Der Median haelt einen
+    einzelnen groben Ausreisser heraus, nicht aber eine grobe Mehrheit: an
+    einem Modell, das ueberwiegend grob vernetzt ist, bekam eine feine Fuge
+    die grobe Netzweite. Im Drehlagermodell waren das 45 bis 50 mm fuer
+    Fugen, deren eigenes Netz viel feiner ist - und ein Suchradius, der
+    groesser ist als das Bauteil dick, paart Knoten ueber Luft hinweg.
+
+    Geprueft an derselben Fuge, einmal allein und einmal neben einem groben
+    Fremdkoerper, der mit ihr nichts zu tun hat: der Radius muss beide Male
+    derselbe sein.
+    """
+    radien, anteile = [], []
+    for fremd in (False, True):
+        m = zwei_bloecke("eigene", h=0.25)
+        if fremd:
+            # Grob vernetzt und gross genug, dass er die **Mehrheit** der
+            # Randfacetten stellt - nur dann verschiebt er den Median. Genau
+            # so liegt es im Drehlagermodell: die feinen Stifte sind in der
+            # Minderheit gegen Lagerbock, Achse und Deckel.
+            _fremdkoerper(m, 20.0, 6.0, 1.0)
+        kb = m.add_kontaktbedingung(
+            "Fuge", flaechennamen=["FugeO"], gegenflaechen=["FugeU"], koerpernamen=["Oben"],
+            behaviour={2: DofBehaviour("free", failure="zug")})
+        b = fugen.kontaktfuge_ausfuehren(m, kb, [])
+        radien.append(m.contact_pairs[-1].search_radius / 2.0)
+        anteile.append(b["anteil"])
+    check("die Fuge wird in beiden Modellen ganz gefunden",
+          min(anteile) > 0.99, f"{anteile[0]*100:.1f} % / {anteile[1]*100:.1f} %")
+    check("der Suchradius hängt nicht am groben Fremdkörper",
+          abs(radien[0] - radien[1]) < 1e-9,
+          f"{radien[0]*1e3:.1f} mm allein / {radien[1]*1e3:.1f} mm mit Fremdkörper")
+    check("und er hat die Größenordnung des Fugennetzes (250 mm), nicht des Fremdnetzes (1 m)",
+          radien[1] < 0.5, f"{radien[1]*1e3:.1f} mm")
+
+    # Eine Vorgabe aus der Kontaktbedingung ist eine Entscheidung und bleibt
+    m2 = zwei_bloecke("eigene", h=0.25)
+    kb2 = m2.add_kontaktbedingung(
+        "Fuge", flaechennamen=["FugeO"], gegenflaechen=["FugeU"], koerpernamen=["Oben"],
+        suchweite=0.4, behaviour={2: DofBehaviour("free", failure="zug")})
+    fugen.kontaktfuge_ausfuehren(m2, kb2, [])
+    close("ein vorgegebener Suchradius wird nicht überstimmt",
+          m2.contact_pairs[-1].search_radius / 2.0, 0.4, 1e-12, " m")
+
+
 def test_diagnose_sieht_die_gegenseite():
     """Die Gegenseite eines Kontaktpaars haelt ihr Bauteil - die Diagnose muss
     das sehen.
@@ -800,7 +866,7 @@ def main():
     for t in (test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
               test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,
-              test_diagnose_sieht_die_gegenseite,
+              test_suchradius_kommt_aus_der_fuge, test_diagnose_sieht_die_gegenseite,
               test_lager_werden_mitgenommen, test_verschieden_feine_netze, test_verbund,
               test_spalt_schliessen, test_zylinder_in_bohrung, test_starre_flaeche, test_naechste_punkte,
               test_freie_rechtecklast,

@@ -565,7 +565,23 @@ höchstens den Suchradius vom Schwerpunkt der Kontaktfacette entfernt liegt.
 Maßgebend ist der nächste Punkt, nicht der Schwerpunkt der Gegenfacette: nur
 so findet ein 2-mm-Netz eine 15-mm-Gegenseite, ein Zylinder seine Bohrung mit
 Spiel, und deckungsgleich müssen die Flächen nicht sein. Der Suchradius ist
-vorgebbar, sonst die größere mittlere Kantenlänge beider Seiten. Alle Knoten
+vorgebbar, sonst die größere mittlere (Median-)Kantenlänge beider Seiten.
+
+**In zwei Durchgängen.** Welche Facetten zur Gegenseite gehören, weiß man
+vorher nicht — gesucht wird gegen die Randseiten *aller* anderen Bauteile, und
+deren Median ist die Netzweite des **Modells**, nicht die der Fuge. Der Median
+hält einen einzelnen groben Ausreißer heraus, eine grobe Mehrheit nicht: an
+einem überwiegend grob vernetzten Modell bekäme eine feine Fuge den groben
+Wert — im geprüften Drehlagermodell 45 bis 50 mm für Fugen, deren eigenes Netz
+viel feiner ist. Ein Suchradius, der größer ist als das Bauteil dick, paart
+Knoten über Luft hinweg. Der erste Durchgang dient darum nur dem **Finden**;
+danach wird der Radius aus den beiden Seiten **dieser** Fuge neu bestimmt und
+die Suche wiederholt. Er darf dabei kleiner werden (der Regelfall) oder größer
+— der Median über die ganze Außenhaut eines Bauteils ist nicht der über seine
+Fugenfläche, und ein zu enger erster Durchgang hätte einen Teil der Fuge nicht
+gesehen. Wiederholt wird, solange sich der Radius um mehr als ein Zehntel
+ändert, höchstens viermal. Ein in der Kontaktbedingung **vorgegebener**
+Suchradius wird nicht überstimmt. Alle Knoten
 der Kontaktfacetten mit Gegenseite werden Slave, die gefundenen Gegenfacetten
 Master; der Löser ordnet dann jedem Slave-Knoten die nächste Master-Facette
 im doppelten Suchradius zu (nächster Punkt auf dem Dreieck, vektorisiert über

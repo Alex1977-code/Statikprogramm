@@ -262,7 +262,7 @@ erscheint die Maske:
 | Reibbeiwert μ | Coulomb-Reibung in der Fugenebene; 0 = reibungsfrei |
 | Verdrehungen | φx, φy, φz starr oder frei - nur bei Schalen wirksam, Volumen haben keine Verdrehungen |
 | Feder c | Steifigkeit [kN/m je m²] für Richtungen mit „Feder“ |
-| Suchradius | wie weit die Gegenseite entfernt liegen darf (ANSYS: „Pinball“). 0 = automatisch: die größere mittlere Kantenlänge beider Netze. Damit findet eine fein vernetzte Achse (2 mm) ihre grob vernetzte Bohrung (15 mm) auch mit Spiel; was weiter weg liegt, gehört nicht zur Fuge |
+| Suchradius | wie weit die Gegenseite entfernt liegen darf (ANSYS: „Pinball“). 0 = automatisch: die größere mittlere Kantenlänge der **beiden Seiten dieser Fuge** — dazu sucht das Programm zweimal, erst weit, um die Gegenseite zu finden, dann mit deren Netz. So bekommt eine feine Fuge nicht die Netzweite eines groben Modells. Damit findet eine fein vernetzte Achse (2 mm) ihre grob vernetzte Bohrung (15 mm) auch mit Spiel; was weiter weg liegt, gehört nicht zur Fuge. Ein eingetragener Wert gilt unverändert |
 | Anfangsspalt | *wie modelliert*: ein Spalt bleibt offen, bis die Last ihn schließt; *auf Berührung setzen*: jeder Knoten gilt in seiner Lage als anliegend - Spiel und Facettenfehler zwischen verschieden feinen Netzen verschwinden (ANSYS: „adjust to touch“) |
 
 Die **Standardkontakte** heißen wie in ANSYS:

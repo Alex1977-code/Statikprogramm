@@ -89,6 +89,11 @@ from .model import Model, GapElement, Kopplung
 #: Freiheitsgrade der Freigabe: 0 = ux, 1 = uy (in der Fuge), 2 = uz (Normale)
 FUGE_DOF = ("ux", "uy", "uz")
 
+#: Hoechstzahl der Durchgaenge, mit denen der Suchradius auf das Netz der Fuge
+#: eingeengt wird (:func:`enger_suchen`). Zwei bis drei genuegen; die Schranke
+#: steht da, damit eine ungewoehnliche Geometrie die Fuge nicht endlos sucht.
+DURCHGAENGE = 4
+
 
 def _tangenten(n: np.ndarray) -> tuple:
     """Zwei Einheitsvektoren quer zur Normalen."""
@@ -255,6 +260,15 @@ def suchweite(model: Model, seite: list, gegen: list, vorgabe: float = 0.0) -> f
     Facettierung eines groben Netzes auf einer gekruemmten Flaeche und ein
     Spiel in der Groessenordnung der Elemente - und laesst den Rest, der
     wirklich nicht anliegt, in Ruhe.
+
+    **Welche Facetten hineingehoeren, entscheidet mit.** Das Mass ist der
+    Median; er haelt einen einzelnen groben Ausreisser aus der Rechnung, nicht
+    aber eine grobe Mehrheit. Wer als ``gegen`` die Randseiten des ganzen
+    Restmodells uebergibt, bekommt darum dessen Netzweite und nicht die der
+    Fuge: eine 5-mm-Fuge an einem Modell, das ueberwiegend mit 100 mm vernetzt
+    ist, bekaeme 100 mm - zwanzigmal ihr eigenes Netz. Die Aufrufer suchen
+    deshalb in zwei Durchgaengen (:func:`enger_suchen`): erst weit, um die
+    Gegenseite ueberhaupt zu finden, dann eng mit dem Netz **dieser** Fuge.
     """
     if vorgabe and float(vorgabe) > 0:
         return float(vorgabe)
@@ -325,6 +339,52 @@ def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> t
     return paare, abstand
 
 
+def enger_suchen(model: Model, seite: list, gegen: list, weite: float,
+                 paare: dict) -> tuple:
+    """Zweiter Durchgang mit dem Netz **dieser** Fuge statt dem des Modells.
+
+    Der erste Durchgang muss weit suchen: welche Facetten der Gegenseite zur
+    Fuge gehoeren, weiss man vorher nicht, und die Kandidatenmenge ist das
+    ganze Restmodell. Sein Radius kommt damit aus der Netzweite des
+    Restmodells - fuer eine feine Fuge an einem grob vernetzten Modell viel zu
+    gross. Sobald die Gegenseite gefunden ist, laesst sich der Radius aus den
+    beiden Seiten der Fuge selbst bestimmen und die Suche wiederholen.
+
+    Der neue Radius darf **groesser oder kleiner** sein als der erste. Kleiner
+    ist der Regelfall: der erste Durchgang hat die Netzweite des Modells. Er
+    kann aber auch groesser sein - der Median ueber die ganze Aussenhaut eines
+    Bauteils ist nicht der ueber seine Fugenflaeche, und war der erste
+    Durchgang zu eng, hat er einen Teil der Fuge gar nicht gesehen. Beide Male
+    ist der Wert aus der Fuge der richtige.
+
+    Wiederholt wird, solange sich der Radius um mehr als ein Zehntel aendert,
+    hoechstens aber DURCHGAENGE mal: der erste Schritt bringt ihn in die Naehe
+    der Fuge, findet dabei aber noch Facetten der Umgebung, die den Median
+    verschieben; der zweite laesst sie weg. Nach zwei bis drei Schritten steht
+    der Wert; die Schranke ist da, damit eine ungewoehnliche Geometrie nicht
+    endlos hin und her springt. Aufgerufen wird nur ohne vorgegebenen
+    Suchradius - eine Vorgabe aus der Kontaktbedingung ist eine Entscheidung
+    und wird nicht ueberstimmt. Findet ein Durchgang nichts, gilt der letzte,
+    der etwas gefunden hat.
+
+    Rueckgabe (Suchradius, Paare, Abstaende; Abstaende None, wenn sich nichts
+    geaendert hat).
+    """
+    ab = None
+    for _ in range(DURCHGAENGE):
+        if not paare:
+            break
+        eng = suchweite(model, [seite[i] for i in paare],
+                        [gegen[j] for j in set(paare.values())], 0.0)
+        if eng <= 0.0 or abs(eng - weite) <= 0.1 * weite:
+            break
+        p2, a2 = gegenseite_finden(model, seite, gegen, eng)
+        if not p2:
+            break
+        weite, paare, ab = eng, p2, a2
+    return weite, paare, ab
+
+
 def _seiten_des_koerpers_auf(model: Model, koerpernamen, gegen: list,
                              weite: float = 0.0, cache: dict = None) -> list:
     """Die Randseiten der genannten Koerper, die auf den Gegenflaechen liegen.
@@ -345,6 +405,11 @@ def _seiten_des_koerpers_auf(model: Model, koerpernamen, gegen: list,
         return []
     w = suchweite(model, seiten, gegen, weite)
     paare, _ab = gegenseite_finden(model, seiten, gegen, w)
+    if not weite:
+        # ``seiten`` ist die ganze Aussenhaut des Koerpers, nicht die Fuge -
+        # ihr Median ist die Netzweite des Bauteils. Mit den gefundenen
+        # Fugenfacetten laesst sich enger suchen.
+        _w, paare, _a = enger_suchen(model, seiten, gegen, w, paare)
     return [seiten[i] for i in sorted(paare)]
 
 
@@ -696,8 +761,16 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
         bericht["grund"] = "keine Gegenfläche eines anderen Bauteils gefunden"
         return bericht
     gegen = [(e, nd, n) for e, nd, n, _g in alle]
-    weite = suchweite(model, seite_b, gegen, getattr(kb, "suchweite", 0.0))
+    vorgabe = float(getattr(kb, "suchweite", 0.0) or 0.0)
+    weite = suchweite(model, seite_b, gegen, vorgabe)
     paare, abstand = gegenseite_finden(model, seite_b, gegen, weite)
+    if paare and not vorgabe:
+        # ``gegen`` sind die Randseiten **aller anderen Bauteile**; ihr Median
+        # ist die Netzweite des Modells, nicht die der Fuge. Jetzt, wo die
+        # Gegenseite feststeht, wird mit ihrem eigenen Netz nachgesucht.
+        weite, paare, a2 = enger_suchen(model, seite_b, gegen, weite, paare)
+        if a2 is not None:
+            abstand = a2
     if not paare:
         bericht["grund"] = (f"keine Gegenfläche im Suchradius {weite * 1e3:.0f} mm – die "
                             "Bauteile berühren sich im Netz nicht (Suchradius der "
