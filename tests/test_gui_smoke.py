@@ -2846,16 +2846,47 @@ def main():
         m_.add_element("beam", [k2, k3], mat_, sec_)
         m_.fix(k0, "all")
         m_.load_node(k1, Fz=-1000.0)
+        m_.load_node(k3, Fz=-1000.0)     # auf dem ungelagerten Teil
         w.refresh_all()
         app.processEvents()
         fehler_ = []
         alt_error = w.error
         w.error = lambda text: fehler_.append(str(text))
+        # Ein Teiltragwerk ohne Lager wird nicht mehr abgewiesen: das Programm
+        # fragt, haelt die freien Bewegungen fest und weist danach aus, welche
+        # Last in welcher Bewegung ins Nichts geht.
+        gefragt_ = []
+        w._fragen = lambda titel, text: (gefragt_.append(text), False)[1]
         w.do_solve("case")
         app.processEvents()
-        check("„Berechnen“ bei einem Teiltragwerk ohne Lager: Meldung mit Knoten statt Solver-Abbruch",
-              bool(fehler_) and "Teiltragwerk" in fehler_[-1] and "K2" in fehler_[-1]
-              and (w.worker is None or not w.worker.isRunning()), str(fehler_[-1:])[:160])
+        check("„Berechnen“ bei einem Teiltragwerk ohne Lager: Rückfrage mit Knoten "
+              "statt Solver-Abbruch",
+              bool(gefragt_) and "Teiltragwerk" in gefragt_[-1] and "K2" in gefragt_[-1]
+              and (w.worker is None or not w.worker.isRunning()), str(gefragt_[-1:])[:160])
+        check("„Nein“ bricht ab und schreibt den Fehler ins Protokoll",
+              "Teiltragwerk" in w.log.toPlainText(), "")
+        w._fragen = lambda titel, text: True
+        w.do_solve("case")
+        t0_ = time.time()
+        while w.worker is not None and w.worker.isRunning() and time.time() - t0_ < 120:
+            app.processEvents()
+            time.sleep(0.02)
+        app.processEvents()
+        sing_ = w.singularitaeten()
+        check("„Ja“ rechnet trotzdem und nennt die freien Bewegungen",
+              w.analysis is not None and len(sing_) == 6, f"{len(sing_)} Bewegungen")
+        check("die Bewegung des ungelagerten Stabes trägt die Last, die ins Nichts geht",
+              any(abs(x.kraft - 1000.0) < 1e-6 for x in sing_),
+              "; ".join(f"{x.kraft:.1f} N" for x in sing_))
+        check("und sie stehen im Modellbaum unter „Ergebnisse“",
+              "Freie Bewegungen" in w._ergebnisliste(), str(list(w._ergebnisliste())))
+        w.bewegung_zeigen(0)
+        app.processEvents()
+        check("ein Klick stellt die Bewegung in die Ansicht",
+              any(str(nm).startswith("result_singular")
+                  for nm in dict(w.plotter.renderer.actors)),
+              str([nm for nm in dict(w.plotter.renderer.actors) if "singular" in str(nm)]))
+        del w._fragen
         m_.fix(k2, "all")
         # Flaeche ohne Netz: Rueckfrage, Vernetzen, dann rechenbar
         for i, (a, b) in enumerate([(k0, k1), (k1, k3), (k3, k2), (k2, k0)]):

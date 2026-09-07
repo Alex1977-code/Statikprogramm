@@ -961,6 +961,20 @@ class Report:
                                      "Anfangsdehnung - das Bauteil will sich um F_v/(EA) verkürzen; "
                                      "hält die Umgebung es fest, trägt es F_v als Zug und klemmt sie",
                       None, ""))
+        if getattr(lc, "uebermasse", None):
+            rows = [["Fuge", "Gesamtüberdeckung [µm]", "Passung", "Bemerkung"]]
+            for u in lc.uebermasse:
+                rows.append([str(u.ziel), fmt(u.ueberdeckung * 1e6, 1),
+                             u.passmass or "–", u.kommentar or "–"])
+            b.append(("table", rows, f"Übermaß Lastfall {lc.name}: die Fuge steht schon vor "
+                                     "der Last unter Druck. Angegeben ist die "
+                                     "Gesamtüberdeckung - bei einer zylindrischen Fuge das "
+                                     "Übermaß am Durchmesser, von dem radial die Hälfte "
+                                     "wirkt; die Fugenform erkennt das Programm aus der "
+                                     "Lage der Fugenflächen und nennt sie im Protokoll. "
+                                     "Aus der Pressung und dem Reibbeiwert der Fuge folgt "
+                                     "ihre Schubtragfähigkeit",
+                      None, ""))
         if temp:
             groups = {}
             for l in temp:
@@ -1884,6 +1898,37 @@ class Report:
                         self._warnings.extend(f"Kontakt {name}: {s}" for s in log)
                     if res.info.get("contact_converged") is False:
                         self._warnings.append(f"Kontakt {name}: Iteration nicht konvergiert")
+        # ---- Freie Bewegungen (Singularitaeten)
+        # Sie gehoeren in den Bericht, weil sie den Geltungsbereich des
+        # Ergebnisses begrenzen: fuer ein Bauteil, an dem Last ins Nichts
+        # geht, sagt die Rechnung nichts aus. Das darf nicht nur auf dem
+        # Bildschirm stehen.
+        for name, res in allres:
+            sing = (getattr(res, "info", None) or {}).get("singularitaeten") or []
+            if not sing:
+                continue
+            b.append(self._h(2, f"Freie Bewegungen ({name})"))
+            b.append(("p", "Diese Bauteile sind nicht in jeder Richtung gehalten. "
+                           "Gerechnet wurde trotzdem: jede Bewegung ist mit einer "
+                           "Hilfsfesselung festgehalten, die Spannungen bleiben davon "
+                           "unberührt. Entscheidend ist die letzte Spalte - was dort "
+                           "steht, nimmt kein Lager und keine Fuge auf."))
+            rows = [["Bauteil", "Art", "Bewegung", "Kraft [kN]", "Moment [kNm]", "Befund"]]
+            for x in sing:
+                rows.append([", ".join(x.get("koerper") or []) or "–",
+                             x.get("art", ""), x.get("text", ""),
+                             fmt(float(x.get("kraft", 0.0)) / 1e3, 3),
+                             fmt(float(x.get("moment", 0.0)) / 1e3, 3),
+                             x.get("befund", "")])
+            rows, note = self._truncate(rows)
+            b.append(("table", rows, f"Freie Bewegungen {name}", None, "compact"))
+            if note:
+                b.append(("note", note))
+            for x in sing:
+                if float(x.get("kraft", 0.0)) > 0.0 or float(x.get("moment", 0.0)) > 0.0:
+                    self._warnings.append(
+                        f"Freie Bewegung ({name}): {x.get('text', '')} – "
+                        f"{x.get('befund', '')}")
         # ---- Modal
         if self.opt("modal"):
             modal = [(n, r) for n, r in allres if getattr(r, "freqs", None) is not None]

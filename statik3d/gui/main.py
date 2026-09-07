@@ -63,6 +63,17 @@ ZEILENHOEHE = 15
 _namen = dsg.namen
 
 
+def _bewegung_kurz(s) -> str:
+    """Die unausgeglichene Last einer freien Bewegung in einer Zeile.
+
+    Steht dort eine Zahl, geht sie in dieser Bewegung ins Nichts; steht
+    „im Gleichgewicht", ist nur die Lage des Bauteils unbestimmt.
+    """
+    teile = [f"{s.kraft / 1000.0:.3g} kN" for _ in (1,) if s.kraft > 0.0]
+    teile += [f"{s.moment / 1000.0:.3g} kNm" for _ in (1,) if s.moment > 0.0]
+    return " + ".join(teile) if teile else "im Gleichgewicht"
+
+
 # ==========================================================================
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -2486,6 +2497,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Knoten mit gleichen Koordinaten zu einem verschmelzen - nach dem Übernehmen aus CAD")
         g.klein("Freie Stabenden anschließen…", self.staebe_anschliessen,
                 hinweis="Freie Stabenden auf die Achse des nächsten Stabes loten und ihn dort teilen (Suchradius in mm)")
+        g.klein("Freie Bewegungen suchen", self.do_singular,
+                hinweis="Welches Bauteil kann sich wie bewegen? Nennt Teil, Richtung "
+                        "und Ursache und stellt die Bewegung als Pfeil in die Ansicht")
         g = r.gruppe("Berechnen")
         self.act_rechnen = g.gross("Berechnen", "▶", lambda: self.do_solve("all"),
                                    "F5", "Alle Lastfälle und Kombinationen rechnen",
@@ -2673,6 +2687,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
                 "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
                 "die Umgebung", symbol="lasten")
+        g.gross("Übermaß", "", self.maske_uebermass, "",
+                "Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
+                "Unterlegblech). Daraus entstehen Pressspannung und - über den "
+                "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
@@ -4740,6 +4758,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return f"K{l.node}: " + (", ".join(teile) or "–")
         if art == "vorspannung":
             return f"{getattr(l, 'ziel', '?')}: F_v = {kn(getattr(l, 'kraft', 0.0))} kN"
+        if art == "uebermass":
+            t = (f"Fuge {getattr(l, 'ziel', '?')}: Ü = "
+                 f"{float(getattr(l, 'ueberdeckung', 0.0)) * 1e6:g} µm Gesamtüberdeckung")
+            if getattr(l, "passmass", ""):
+                t += f" ({l.passmass})"
+            return t
         return str(l)
 
     def _lastart_kurz(self, art: str, lasten: list) -> str:
@@ -4865,7 +4889,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   "face_loads": ("flaeche", "Flächenlast"), "geometrielasten": ("flaeche", "Objektlast"),
                   "linienlasten": ("linie", "Linienlast"), "temp_loads": ("temperatur", "Temperaturlast"),
                   "zwangsverformungen": ("zwang", "Zwangsverformung"),
-                  "vorspannungen": ("vorspannung", "Vorspannung"), "gravity": ("eigengewicht", "Eigengewicht")}
+                  "vorspannungen": ("vorspannung", "Vorspannung"),
+                  "uebermasse": ("uebermass", "Übermaß"),
+                  "gravity": ("eigengewicht", "Eigengewicht")}
 
     def _lastobjekt(self, fall: str, liste: str, k: int):
         """(Lastfall, Lastobjekt) - oder (None, None), wenn es die Last nicht gibt."""
@@ -4978,6 +5004,14 @@ class MainWindow(QtWidgets.QMainWindow):
             titel = f"Vorspannung {'Stab' if obj.art == 'stab' else 'Volumen'} {obj.ziel}"
             felder += [F("F", "Vorspannkraft F_v [kN]", "zahl", float(obj.kraft) / 1e3),
                        F("kommentar", "Bemerkung", "text", obj.kommentar or "", breite=150)]
+        elif liste == "uebermasse":
+            titel = f"Übermaß Fuge {obj.ziel}"
+            felder += [F("ue", "Gesamtüberdeckung [µm]", "zahl",
+                         float(obj.ueberdeckung) * 1e6,
+                         hinweis="bei einer Bohrung das Übermaß am Durchmesser - "
+                                 "radial wirkt die Hälfte"),
+                       F("passmass", "Bezeichnung", "text", obj.passmass or "", breite=150),
+                       F("kommentar", "Bemerkung", "text", obj.kommentar or "", breite=150)]
         elif liste == "gravity":
             titel = "Eigengewicht"
             g = (list(obj) + [0.0] * 3)[:3]
@@ -5016,6 +5050,9 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 obj.von = max(0.0, z("von"))
                 obj.bis = z("bis") or None
+        elif liste == "uebermasse":
+            obj.ueberdeckung = z("ue") * 1e-6
+            obj.passmass = str(w.get("passmass", "") or "")
         elif liste == "face_loads":
             obj.p = z("p") * 1e3
         elif liste == "geometrielasten":
@@ -6404,6 +6441,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def ergebnis_zeigen(self, schluessel: str):
         """Ein Ergebnis aus dem Baum in der Ansicht einstellen."""
         art, _, wert = (schluessel or "").partition(":")
+        if art == "bewegung":
+            return self.bewegung_zeigen(int(wert or 0))
         if art == "schnittgroesse":
             i = self.cb_diagram.findText(wert)
             if i >= 0:
@@ -7149,6 +7188,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 reihe.append(("kein Verlauf", "Verlauf ausblenden",
                               "schnittgroesse:kein Verlauf"))
                 out["Schnittgrößen"] = reihe
+        sing = self.singularitaeten()
+        if sing:
+            out["Freie Bewegungen"] = [
+                (x.bezeichnung(), _bewegung_kurz(x), f"bewegung:{i}")
+                for i, x in enumerate(sing)]
         r = self.results
         if r is not None:
             if getattr(r, "modes", None) is not None:
@@ -7817,6 +7861,12 @@ class MainWindow(QtWidgets.QMainWindow):
                                 "(" + ", ".join(f"{float(x):g}" for x in l.achse) + ")"),
                                l.kommentar or ""])
                 i += 1
+            for l in getattr(lc, "uebermasse", None) or []:
+                zeilen.append([i, lcname, "Übermaß", f"Fuge {l.ziel}",
+                               f"Ü = {l.ueberdeckung * 1e6:g} µm",
+                               "Gesamtüberdeckung",
+                               " ".join(x for x in (l.passmass or "", l.kommentar or "") if x)])
+                i += 1
         self._fill(self.tbl_last, zeilen)
 
     def _lastzeiger(self, nr: int):
@@ -7832,7 +7882,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     return lc, "gravity", 0
                 i += 1
             for liste in ("nodal_loads", "beam_loads", "face_loads", "temp_loads",
-                          "geometrielasten", "linienlasten", "zwangsverformungen", "vorspannungen"):
+                          "geometrielasten", "linienlasten", "zwangsverformungen",
+                          "vorspannungen", "uebermasse"):
                 for k, l in enumerate(getattr(lc, liste)):
                     if getattr(l, "_geo", False):
                         continue
@@ -11093,6 +11144,103 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"{fall or m.active_case}")
         self.refresh_all()
 
+    #: Ansatz, mit dem aus den Abmassen einer Passung das Uebermass wird
+    UEBERMASS_ANSATZ = ["mittleres Übermaß", "Höchstübermaß (größte Pressung)",
+                        "Mindestübermaß (kleinste Haltekraft)"]
+
+    def fugen_der_auswahl(self) -> list:
+        """Namen der Kontaktbedingungen, zu denen die gewaehlten Flaechen gehoeren.
+
+        Der Nutzer klickt eine Flaeche an - das Programm muss wissen, welche
+        Fuge das ist. Gezaehlt werden beide Seiten: die freigegebenen Flaechen
+        und die, an denen die Freigabe haengt.
+        """
+        gewaehlt = set(self.sel_flaechen or [])
+        if not gewaehlt:
+            return []
+        aus = []
+        for name, kb in (self.model.kontaktbedingungen or {}).items():
+            dazu = set(getattr(kb, "flaechennamen", None) or []) \
+                | set(getattr(kb, "gegenflaechen", None) or [])
+            if gewaehlt & dazu:
+                aus.append(name)
+        return sorted(aus, key=dsg.natuerlich)
+
+    def maske_uebermass(self):
+        """Uebermass (Presspassung) einer Kontaktfuge als Last.
+
+        Angegeben wird die **Gesamtueberdeckung**: bei einer ebenen Fuge die
+        Ueberdeckung senkrecht zur Flaeche, bei einer Bohrung das Uebermass am
+        Durchmesser. Wer nur die Abmasse der Passung zur Hand hat, laesst sie
+        das Programm ausrechnen.
+        """
+        fugen = _namen(self.model.kontaktbedingungen) \
+            or sorted({str(cp.name) for cp in (self.model.contact_pairs or [])},
+                      key=dsg.natuerlich)
+        if not fugen:
+            return self.error("Das Modell hat keine Kontaktfuge - erst eine "
+                              "Kontaktbedingung anlegen (Register Lager / Kontakt)")
+        vor = (self.fugen_der_auswahl() or fugen)[0]
+        felder = [msk.Feld("fuge", "Fuge", "wahl", vor, list(fugen),
+                           hinweis="Kontaktbedingung; eine in der Ansicht gewählte "
+                                   "Fläche stellt ihre Fuge voreingestellt ein"),
+                  msk.Feld("ue", "Gesamtüberdeckung [µm]", wert=0.0,
+                           hinweis="Bei einer Bohrung das Übermaß am Durchmesser - "
+                                   "radial wirkt die Hälfte davon; die Fugenform "
+                                   "erkennt das Programm selbst"),
+                  msk.Feld("info", "aus den Abmaßen der Passung", "info",
+                           "Wer nur das Kurzzeichen hat: die vier Abmaße der "
+                           "Passungstabelle eintragen, dann rechnet das Programm "
+                           "die Überdeckung aus und trägt sie oben ein."),
+                  msk.Feld("es", "Welle oberes Abmaß es [µm]", wert=0.0),
+                  msk.Feld("ei", "Welle unteres Abmaß ei [µm]", wert=0.0),
+                  msk.Feld("ES", "Bohrung oberes Abmaß ES [µm]", wert=0.0),
+                  msk.Feld("EI", "Bohrung unteres Abmaß EI [µm]", wert=0.0),
+                  msk.Feld("ansatz", "Ansatz", "wahl", self.UEBERMASS_ANSATZ[0],
+                           list(self.UEBERMASS_ANSATZ)),
+                  msk.Feld("passmass", "Bezeichnung", "text", "", breite=150,
+                           hinweis="z. B. \u201eØ40 H7/s6\u201c - nur Beleg, "
+                                   "gerechnet wird mit der Überdeckung"),
+                  self._lastfallfeld()]
+        m = msk.Maske("Übermaß", felder, knopf="Last aufbringen",
+                      hinweis="Fläche in der Ansicht wählen (Auswahlart „Fläche“) oder "
+                              "die Fuge oben einstellen, Gesamtüberdeckung eintragen, "
+                              "„Last aufbringen“. Die Fuge steht dann schon vor der "
+                              "Last unter Druck; über ihren Reibbeiwert trägt sie Schub.")
+        m.angewendet.connect(self._uebermass_aufbringen)
+        self.maske_erzeugen(m)
+
+    def _uebermass_aufbringen(self, w: dict):
+        from .. import passungen as pss
+        m = self.model
+        fuge = str(w.get("fuge", "") or "")
+        ue = float(w.get("ue", 0.0) or 0.0) * 1e-6
+        abmasse = [float(w.get(k, 0.0) or 0.0) * 1e-6 for k in ("es", "ei", "ES", "EI")]
+        if not ue and any(abmasse):
+            ansatz = {self.UEBERMASS_ANSATZ[1]: "hoechst",
+                      self.UEBERMASS_ANSATZ[2]: "mindest"}.get(str(w.get("ansatz", "")),
+                                                               "mittel")
+            ue = pss.uebermass(*abmasse, ansatz=ansatz)
+            self.log.appendPlainText(pss.text(*abmasse,
+                                              kurzzeichen=str(w.get("passmass", "") or "")))
+        if not ue:
+            return self.error("Weder eine Gesamtüberdeckung noch Abmaße eingetragen")
+        if ue < 0:
+            return self.error(f"Das ist Spiel, kein Übermaß ({ue * 1e6:.3g} µm) - "
+                              "die Fuge bliebe offen")
+        fall = w.get("fall") or None
+        self.merken("Übermaß")
+        try:
+            m.add_uebermass(fuge, ue, case=fall,
+                            passmass=str(w.get("passmass", "") or ""))
+        except KeyError as ex:
+            return self.error(str(ex))
+        self.analysis = None
+        self.results = None
+        self.info(f"Übermaß {ue * 1e6:.4g} µm auf die Fuge {fuge} im Lastfall "
+                  f"{fall or m.active_case}")
+        self.refresh_all()
+
     def maske_linienlast(self):
         """Linienlast auf Staebe oder Linien: gleichmaessig, trapezfoermig,
         abschnittsweise."""
@@ -12591,6 +12739,99 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText("\n".join(msgs) if msgs else "keine Auffälligkeiten")
         self.bottom_tabs.setCurrentIndex(0)
 
+    def do_singular(self):
+        """Freie Bewegungen suchen (Stufe 1a und 1b) und in den Baum stellen."""
+        from .. import singular as sg
+        if not self.model.elements:
+            return self.info("Erst vernetzen - ohne Elemente gibt es nichts zu prüfen")
+        self._run_background(lambda p: sg.restfreiheiten(self.model),
+                             self._singular_fertig, "Freie Bewegungen")
+
+    def _singular_fertig(self, sing):
+        """Ergebnis der Suche: ins Protokoll, in den Baum, erste in die Ansicht."""
+        from .. import assemble as _asm, singular as sg
+        try:
+            sing = sg.auswerten(self.model, sing,
+                                _asm.load_vector(self.model, self.model.case()))
+        except Exception as ex:            # noqa: BLE001 - ohne Lastfall geht es auch
+            self.log.appendPlainText(f"Lastvektor nicht auswertbar: {ex}")
+        self._freie_bewegungen = sg.wichtigste(sing)
+        self._bewegung_index = None
+        self.log.appendPlainText("--- Freie Bewegungen ---")
+        if not sing:
+            self.log.appendPlainText("keine - jedes Bauteil ist gehalten")
+        for x in self._freie_bewegungen:
+            self.log.appendPlainText(f"{x.text}\n    {x.ursache}\n    {x.befund()}")
+        self.bottom_tabs.setCurrentIndex(0)
+        self._refresh_baum()
+        if self._freie_bewegungen:
+            self.bewegung_zeigen(0)
+        else:
+            self.info("Keine freie Bewegung gefunden - jedes Bauteil ist gehalten")
+
+    def singularitaeten(self) -> list:
+        """Die freien Bewegungen, die gerade vorliegen.
+
+        Erste Quelle ist das angezeigte Ergebnis: dort stehen sie mit der
+        unausgeglichenen Last des gerechneten Lastfalls. Sonst das, was
+        „Freie Bewegungen suchen" zuletzt gefunden hat.
+        """
+        try:
+            r = self.current_result() if hasattr(self, "cb_result") else None
+        except Exception:                  # noqa: BLE001 - der Baum baut auch frueh
+            r = None
+        from .. import singular as sg
+        aus = list(getattr(r, "singular", None) or []) if r is not None else []
+        if not aus:
+            # Eine Umhuellende fuehrt keine eigene Liste - sie entsteht aus
+            # den Lastfaellen. Genommen wird dann der Lastfall, in dem am
+            # meisten ins Nichts geht: die Bewegungen sind in allen dieselben,
+            # nur die Last daran ist verschieden, und massgebend ist die
+            # groesste.
+            an = getattr(self, "analysis", None)
+            kandidaten = []
+            for quelle in (getattr(an, "cases", None), getattr(an, "combinations", None)):
+                for x in (quelle or {}).values():
+                    liste = list(getattr(x, "singular", None) or [])
+                    if liste:
+                        kandidaten.append(liste)
+            if kandidaten:
+                aus = max(kandidaten,
+                          key=lambda s: max(y.kraft + y.moment for y in s))
+        return sg.wichtigste(aus or list(getattr(self, "_freie_bewegungen", None) or []))
+
+    def bewegung_zeigen(self, i: int):
+        """Eine freie Bewegung als Pfeil bzw. Drehpfeil in die Ansicht."""
+        sing = self.singularitaeten()
+        if not 0 <= i < len(sing):
+            return self.info("Diese Bewegung gibt es nicht mehr - neu suchen")
+        x = sing[i]
+        # Gemerkt, nicht nur gezeichnet: redraw() nimmt alle Darsteller weg,
+        # und die gewaehlte Bewegung soll das ueberleben.
+        self._bewegung_index = int(i)
+        self._bewegung_zeichnen(self.model)
+        try:
+            self.plotter.render()
+        except Exception as ex:            # noqa: BLE001 - ein Sinnbild darf nichts sperren
+            self.log.appendPlainText(f"Bewegung nicht gezeichnet: {ex}")
+        self.info(f"{x.text} – {x.befund()}")
+
+    def _bewegung_zeichnen(self, m) -> None:
+        """Die gewaehlte freie Bewegung ins Bild - oder nichts, wenn keine."""
+        i = getattr(self, "_bewegung_index", None)
+        sing = self.singularitaeten() if i is not None else []
+        try:
+            vp.add_singularitaet(self.plotter, m,
+                                 sing[i] if i is not None and i < len(sing) else None,
+                                 m.characteristic_size() if m.nn else 1.0)
+        except Exception as ex:            # noqa: BLE001 - ein Sinnbild darf nichts sperren
+            self.log.appendPlainText(f"Bewegung nicht gezeichnet: {ex}")
+
+    def bewegung_aus(self) -> None:
+        """Die Bewegung wieder aus der Ansicht nehmen."""
+        self._bewegung_index = None
+        self._bewegung_zeichnen(self.model)
+
     def _apply_parallel_settings(self):
         parallel.configure(workers=self.sp_workers.value(),
                            backend="farm" if self.cb_backend.currentIndex() == 1 else "local",
@@ -12799,8 +13040,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._vor_rechnung_vernetzen():
             return
         msgs = [m for m in self.model.check() if m.startswith("FEHLER")]
-        if msgs:
-            return self.error("\n".join(msgs))
+        if msgs and not self._trotzdem_rechnen(msgs):
+            return
         self._apply_parallel_settings()
         if kind is None:
             kind = ["all", "case", "modal", "buckling"][self.cb_analysis.currentIndex()]
@@ -12818,6 +13059,30 @@ class MainWindow(QtWidgets.QMainWindow):
             func = lambda p: solver.solve_buckling(model, nmodes, p)
         self._run_background(func, lambda r: self._solve_done(kind, r), "Berechnung")
 
+    def _trotzdem_rechnen(self, msgs: list) -> bool:
+        """Bei Bauteilen ohne Lager fragen statt abzuweisen.
+
+        Ein Teiltragwerk ohne Lager ist ein Modellfehler - aber einer, den man
+        erst beurteilen kann, wenn man die Verformungen sieht. Das Programm
+        haelt jede freie Bewegung mit einer Hilfsfesselung fest, rechnet und
+        weist danach aus, welche Last in welcher Bewegung ins Nichts geht.
+        Alles andere (kein Netz, keine Elemente) bleibt ein harter Fehler.
+        """
+        lose = [m for m in msgs if "Teiltragwerk" in m]
+        if len(lose) != len(msgs):
+            self.error("\n".join(msgs))
+            return False
+        if not self._fragen("Bauteile ohne Lager", "\n".join(lose)
+                            + "\n\nTrotzdem rechnen? Jede freie Bewegung wird mit "
+                              "einer Hilfsfesselung festgehalten; danach steht unter "
+                              "„Ergebnisse → Freie Bewegungen“, welches Bauteil sich "
+                              "wie bewegt und welche Last dabei ins Nichts geht."):
+            self.log.appendPlainText("FEHLER: " + "\n".join(lose))
+            return False
+        self.log.appendPlainText("WARNUNG: " + "\n".join(lose)
+                                 + "\nEs wird trotzdem gerechnet - mit Hilfsfesselung.")
+        return True
+
     def _solve_done(self, kind, r):
         if kind == "all":
             self.analysis = r
@@ -12834,12 +13099,37 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(text)
         self.txt_summary.setPlainText(text)
         self._fill_result_selector()
+        self._bewegungen_melden()
         self.maske_zeigen("Ergebnisse")
         self.show_results()
         # Die Ergebnisse stehen jetzt auch im Modellbaum - er muss davon wissen.
         self._refresh_baum()
         self._refresh_kopf()
         self._refresh_status()
+
+    def _bewegungen_melden(self):
+        """Freie Bewegungen aus der Rechnung ins Protokoll und in die Statuszeile."""
+        sing = self.singularitaeten()
+        if not sing:
+            return
+        # Protokoll und Statuszeile, kein Meldungsfenster: die Rechnung laeuft
+        # im Hintergrund, und ein Fenster, das nach jedem Lastfall aufgeht,
+        # macht aus einer Warnung eine Belaestigung. Nachlesen laesst es sich
+        # im Protokoll und im Modellbaum.
+        schwer = [x for x in sing if x.kraft > 0.0 or x.moment > 0.0]
+        self.log.appendPlainText("--- Freie Bewegungen ---")
+        for x in sing:
+            self.log.appendPlainText(f"{x.text}\n    {x.ursache}\n    {x.befund()}")
+        if schwer:
+            self.log.appendPlainText(
+                f"WARNUNG: {len(schwer)} von {len(sing)} freien Bewegungen tragen Last, "
+                "die nirgends ankommt - für diese Bauteile ist das Ergebnis nicht "
+                "verwertbar.")
+            self.info(f"⚠ {len(schwer)} freie Bewegungen tragen Last, die nirgends "
+                      "ankommt - Modellbaum → Ergebnisse → Freie Bewegungen")
+        else:
+            self.info(f"{len(sing)} Bauteile sind nicht gehalten - die Last steht "
+                      "auf ihnen aber im Gleichgewicht (Modellbaum → Ergebnisse)")
 
     # ---- Ergebnisse --------------------------------------------------
     def _fill_result_selector(self):
@@ -13527,6 +13817,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     render_points_as_spheres=True, name="selection")
         self._kopfzeile_zeichnen(r, s if (u is not None and not modal) else 0.0)
         self._kennwerte_zeichnen(r)
+        self._bewegung_zeichnen(m)
         try:
             # Achsenkreuz unten rechts - unten links stehen die Kennwerte
             self.plotter.add_axes(viewport=(0.86, 0.0, 1.0, 0.16))

@@ -1174,6 +1174,8 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], Richtung (senkrecht oder global), auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
 | Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
 | Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
+| Vorspannung | gewählte **Stäbe** oder **Volumen** | F_v [kN], Achse (Volumen) | als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung |
+| **Übermaß** | eine **Kontaktfuge** (Fläche anklicken) | Gesamtüberdeckung [µm] oder die vier Abmaße der Passung | Presspassung: Pressspannung und Schub über den Reibbeiwert |
 | Eigengewicht | Lastfall | Register *Lasten → Weitere* | — |
 
 Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
@@ -1212,6 +1214,57 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   erneuter Erzeugung ersetzt, manuelle bleiben erhalten.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
+
+### Übermaß: die Presspassung als Last
+
+*Register Lasten → „Übermaß"*
+
+Ein Passstift hält sein Bauteil nicht, weil er im Loch steckt, sondern weil
+er zu dick dafür ist. Genau das trägt man hier ein: **Fläche in der Ansicht
+anklicken** (Auswahlart „Fläche") — die Maske stellt die Fuge ein, zu der sie
+gehört — und die **Gesamtüberdeckung** eingeben. Aus ihr entstehen die
+Pressspannung und, über den Reibbeiwert der Fuge, ihre Schubtragfähigkeit.
+
+**Gesamtüberdeckung** heißt: was die beiden Teile zusammen zu viel haben.
+
+* **Ebene Fuge** (Unterlegblech, Beilage) — die Überdeckung senkrecht zur
+  Fläche.
+* **Zylindrische Fuge** (Bohrung, Passstift, Buchse) — das Übermaß am
+  **Durchmesser**, so wie es in der Passungstabelle steht. Radial schließt
+  die Fuge davon die Hälfte; das rechnet das Programm um.
+
+Welche Form die Fuge hat, erkennt das Programm selbst — daran, wie weit die
+Fugenflächen sich herumlegen — und schreibt es ins Protokoll: „Fuge
+zylindrisch — radial wirken 20 µm". **Diese Zeile ist es wert, gelesen zu
+werden**: eine verwechselte Fugenform wäre ein Faktor zwei in der Pressung.
+
+**Statt der Überdeckung die Passung.** Wer nur „Ø40 H7/s6" hat, trägt die
+vier Abmaße aus der Passungstabelle ein — oberes und unteres Abmaß der
+Bohrung (ES, EI) und der Welle (es, ei), in µm mit Vorzeichen. Das Programm
+rechnet daraus
+
+* **Höchstübermaß** (größte Welle, kleinste Bohrung) — maßgebend für die
+  größte Pressung, also für den Werkstoffnachweis der Nabe,
+* **Mindestübermaß** (kleinste Welle, größte Bohrung) — maßgebend für die
+  kleinste Haltekraft, also für den Reibschluss,
+* das **mittlere Übermaß** als Regelfall,
+
+trägt das gewählte oben ein und schreibt die Rechnung ins Protokoll. Eine
+eingebaute ISO-286-Tabelle gibt es bewusst nicht: sie wäre nicht
+nachprüfbar, und ein Zahlendreher darin würde still zu einer falschen
+Pressspannung führen. Das Kurzzeichen lässt sich als **Bezeichnung**
+mitgeben; es steht dann in der Lastentabelle und im Bericht.
+
+**Was daraus wird.** Die Fuge steht schon vor jeder anderen Last unter Druck.
+Die Kontaktrechnung liefert die Pressverteilung (Tabelle *Kontakt*: F_n je
+Knoten), und solange eine Querlast unter µ·N bleibt, trägt die Fuge sie
+vollständig — kein Knoten gleitet. Ohne Übermaß hält in der Fugenebene
+nichts; dann sagt es die Anzeige der **freien Bewegungen** mit der Kraft, die
+dabei ins Nichts geht.
+
+**In der Kombination** zählt das Übermaß wie jede andere Last: es geht mit
+dem Beiwert seines Lastfalls ein. Wer das nicht will, legt es in einen
+ständigen Lastfall mit γ = 1,0.
 
 ### Lastgenerierer Wasserdruck (Stahlwasserbau)
 
@@ -1861,7 +1914,10 @@ Nachweis mit seiner Verformung je Kombination.
   von denen eines weder ein Lager noch eine Kopplung an ein gelagertes Teil
   hat) machen das Gleichungssystem singulär; die Modellprüfung nennt sie mit
   Knotennummern, statt dass der Solver mit „Factor is exactly singular“
-  abbricht. Teile, die nur ein einseitiges Lager oder ein Kontaktpaar hält,
+  abbricht. Abgewiesen wird die Rechnung deswegen aber nicht mehr - das
+  Programm fragt, ob es trotzdem rechnen soll, hält jede freie Bewegung fest
+  und weist danach aus, welche Last in welcher Bewegung ins Nichts geht
+  (siehe *Freie Bewegungen* weiter unten). Teile, die nur ein einseitiges Lager oder ein Kontaktpaar hält,
   sind ein Hinweis, kein Fehler - ob sie tragen, entscheidet die
   Kontakt-Iteration. Dabei zählen **beide Seiten** einer Kontaktfuge: ein
   Bauteil, das ausschließlich Gegenseite ist - ein Passstift in seiner
@@ -1893,6 +1949,64 @@ Nachweis mit seiner Verformung je Kombination.
   der Vernetzer eben nicht vernetzen konnte, kann er auch beim nächsten
   Versuch nicht. Der Grund je Objekt steht im Protokoll und in seiner
   Bemerkung im Modellbaum.
+
+### Freie Bewegungen (Singularitäten)
+
+*Register Start → Modell prüfen → „Freie Bewegungen suchen“*, und nach jeder
+Rechnung im Modellbaum unter *Ergebnisse → Freie Bewegungen*.
+
+„Factor is exactly singular“ nennt weder das Bauteil noch die Richtung. Bei
+über hundert Volumen ist das nicht prüfbar. Der Befehl sagt statt dessen für
+jedes Bauteil, das sich bewegen kann:
+
+* **welches** - der Name des Bauteils, und ein Klick stellt seine Knoten und
+  ein Sinnbild der Bewegung in die Ansicht: einen Pfeil bei einer
+  Verschiebung, einen Drehpfeil bei einer Drehung;
+* **wie** - „Verschiebung längs (0.00, 0.00, 1.00)“, „Drehung um (1.00, 0.00,
+  0.00)“, bei einer Schraubbewegung beides;
+* **warum** - „Die Fugen *Achse* übertragen nur Druck senkrecht zur Fläche;
+  in der Fugenebene ist nichts gehalten (keine Reibung, keine Federn)“ oder
+  „Das Bauteil hat weder Lager noch eine Kopplung an ein gelagertes Teil“;
+* **was es kostet** - die Last, die in dieser Bewegung ins Nichts geht.
+
+Der letzte Punkt ist der, auf den es ankommt. Unterschieden wird:
+
+* **„im Gleichgewicht“** - die Last auf dem Bauteil hebt sich in dieser
+  Bewegung auf. Spannungen und Verformungen gelten; unbestimmt ist nur die
+  Lage des Bauteils im Raum. Ein Bauteil, an dem gar nichts angreift, fällt
+  immer hierunter.
+* **eine Zahl (z. B. „43,2 kN“)** - genau diese Kraft nimmt kein Lager und
+  keine Fuge auf. Im wirklichen Bauwerk würde sich das Bauteil bewegen; für
+  dieses Bauteil ist das Ergebnis nicht verwertbar. Nach der Rechnung sagt
+  das Programm es zusätzlich als Warnung, mit den betroffenen Bauteilen.
+
+Zwei Arten von Bewegung werden getrennt, weil sie verschiedene Abhilfen
+haben:
+
+* **gleitet** - in der Fugenebene hält nichts. Abhilfe: Reibbeiwert an der
+  Kontaktbedingung, Schub starr setzen oder eine Führung modellieren.
+* **hebt ab** - die Fuge geht auf. Abhilfe: ein Lager, ein Verbund
+  (Zug übertragen) oder eine Schraube.
+
+Ein Bauteil, das auf seiner Unterlage liegt, lässt sich immer anheben - das
+allein ist noch kein Befund. Gemeldet wird „hebt ab“ mit einer Zahl nur dann,
+wenn die Last diese Bewegung auch antreibt; drückt sie in die Fuge, steht
+dort „Die Last drückt in die Fuge - das Bauteil bleibt liegen“.
+
+Findet die Suche gar nichts und ist das System dennoch singulär, greift die
+**Matrixdiagnose**: sie nennt das Bauteil, dessen Bewegung fast keine Energie
+kostet. Das ist der Fall, den die Topologie nicht sehen kann - zwei Körper,
+die nur einen Knoten teilen, hängen zusammen und sind trotzdem beweglich.
+
+**Statt abzubrechen wird gerechnet.** Jede freie Bewegung wird mit einer
+Hilfsfesselung festgehalten. Die verfälscht die Spannungen nicht (sie wirkt
+nur auf den Starrkörperanteil, und der wird nach der Rechnung wieder
+herausgenommen); sie macht die Rechnung nur möglich. Deshalb darf man das
+Ergebnis für alle **gehaltenen** Bauteile ohne Abstriche verwenden - und
+sieht an der Liste, für welche nicht.
+
+Bei vielen losen Teilen werden höchstens 40 Bewegungen angezeigt, die
+schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
 
 ## 10 Ergebnisse und Bericht
 

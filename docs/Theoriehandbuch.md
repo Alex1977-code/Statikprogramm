@@ -637,6 +637,85 @@ Last (auf Rechengenauigkeit), unter Zug geht **keine** Kraft mehr durch das
 Fundament (Sollwert null, nicht „klein"), und beide Wege – passende und nicht
 passende Netze – liefern dieselbe Stauchung.
 
+### 4.0a Übermaß: die Presspassung als Last
+
+`model.Uebermass`, `contact.ContactSystem._fugen_uebermass`, `passungen.py`
+
+Ein Passstift hält sein Bauteil nicht, weil er im Loch steckt, sondern weil
+er zu dick dafür ist. Das Übermaß erzeugt eine Pressspannung, und über den
+Reibbeiwert der Fuge trägt sie Schub. Ohne das ist ein Passstift in einer
+reibungsfreien Bohrung ein Bauteil, das in der Fugenebene nichts hält -
+und die Rechnung sagt es dann auch (§ 7b).
+
+**Als negativer Anfangsspalt.** Die Kontaktbedingung eines Slave-Knotens
+lautet g = g₀ + cₙ·u ≥ 0 mit dem gemessenen Anfangsabstand g₀. Ein Übermaß
+ist nichts anderes als ein **negatives** g₀: die Fuge steht schon vor jeder
+Last unter Druck. Das ist keine Näherung, sondern genau der Fügezustand; die
+Kontaktiteration liefert daraus die Pressverteilung, und der Reibbeiwert
+macht daraus Schubtragfähigkeit. Ein Verbund (Zug übertragend) kennt weder
+Spalt noch Übermaß - dort bleibt g₀ = 0.
+
+**Gesamtüberdeckung, und was davon radial wirkt.** Angegeben wird immer, was
+die beiden Teile **zusammen** zu viel haben:
+
+* **ebene Fuge** - die Überdeckung senkrecht zur Fläche; die Fuge muss sie
+  ganz schließen.
+* **zylindrische Fuge** - das Übermaß am **Durchmesser**, so wie es in jeder
+  Passungstabelle steht. Radial schließt die Fuge davon die Hälfte.
+
+Erkannt wird die Form am Betrag der mittleren Facettennormalen der Fuge:
+
+    |Mittelwert der Einheitsnormalen| < 0,7  →  zylindrisch
+
+Bei einer ebenen Fuge zeigen alle Normalen in dieselbe Richtung, der Betrag
+ist 1. Bei einer Bohrung heben sie sich weitgehend auf; für einen Bogen mit
+dem halben Öffnungswinkel α ist der Betrag sin α / α, und 0,7 entspricht
+einem umschlossenen Bogen von rund 160°. Eine Bohrung und ein Passstift
+umschließen mehr, ein leicht gewölbtes Blech weniger.
+
+Gerechnet wird die Form aus den Facetten, die **wirklich gepaart** wurden,
+nicht aus allen Außenflächen des Master-Objekts: ein Sechsflächner als Master
+hat sechs davon, und alle sechs zusammen sähen aus wie eine Bohrung. Was
+erkannt wurde und womit gerechnet wird, steht im Protokoll - eine
+Verwechslung wäre sonst ein Faktor zwei in der Pressspannung, den niemand
+bemerkt.
+
+**Aus der Passung.** Auf der Zeichnung steht ein Kurzzeichen, „Ø40 H7/s6".
+Was das Programm braucht, ist eine Länge. Der Weg dahin führt über die vier
+Abmaße der Passungstabelle - oberes und unteres Abmaß der Bohrung (ES, EI)
+und der Welle (es, ei), alle auf dasselbe Nennmaß bezogen:
+
+    Höchstübermaß   Ü_max = es − EI      (größte Welle, kleinste Bohrung)
+    Mindestübermaß  Ü_min = ei − ES      (kleinste Welle, größte Bohrung)
+    mittleres Übermaß = (Ü_max + Ü_min)/2
+
+Ein negativer Wert ist Spiel, kein Übermaß. Maßgebend ist je nach Frage ein
+anderer Ansatz: für die **größte Pressung** (Werkstoffnachweis der Nabe) das
+Höchstübermaß, für die **kleinste Haltekraft** (Reibschluss) das
+Mindestübermaß.
+
+Eine Tabelle nach ISO 286 bringt das Programm **nicht** mit. Sie hat für
+jedes Nennmaßfeld und jede Toleranzlage eigene Werte; eine aus zweiter Hand
+abgeschriebene Tabelle wäre nicht nachprüfbar, und ein Zahlendreher darin
+würde still zu einer falschen Pressspannung führen. Eingegeben werden die
+vier Abmaße der Zeichnung - oder gleich die Gesamtüberdeckung. Das
+Kurzzeichen wird als Beleg mitgeführt und steht im Bericht.
+
+**Als Lastfall.** Das Übermaß gehört zu einem Lastfall und geht mit dessen
+Beiwert in die Kombination ein - wie jede andere Last. Geometrisch ist es
+zwar ein Maß und keine Last; wer es nicht vervielfacht sehen will, legt es
+in einen ständigen Lastfall mit γ = 1,0.
+
+**Prüfung.** Zwei Würfel übereinander, beide Deckel in z gehalten, Fuge in
+der Mitte: jeder Würfel ist eine Feder E·A/L, in Reihe nehmen sie zusammen δ
+auf, und die Pressspannung ist σ = δ·E/(2·L). Der lineare Sechsflächner
+bildet diesen gleichförmigen Dehnungszustand exakt ab; übrig bleibt nur die
+endliche Steifigkeit der Kontaktfeder (Abweichung 6·10⁻⁵). Die Halbierung
+bei der zylindrischen Fuge ist ohne Kesselformel nachgewiesen: dasselbe
+Modell mit 40 µm Übermaß trifft auf die Stelle genau, die 20 µm
+Spaltschluss ergeben, und 40 µm Spaltschluss geben das Doppelte
+(`tests/test_uebermass.py`).
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
@@ -1727,6 +1806,176 @@ beim nächsten Versuch nicht, und ein erneuter Abbruch wäre eine Sackgasse.
 Die Objekte werden benannt, die Folge (Lasten darauf gehen verloren) gesagt,
 und gerechnet wird ohne sie. Ob das Tragwerk ohne sie noch hält, beantwortet
 die Prüfung auf Teiltragwerke ohne Lager.
+
+## 7b Freie Bewegungen: Singularitäten auffinden statt abbrechen
+
+`singular.py`
+
+„Factor is exactly singular" nennt weder das Bauteil noch die Richtung. Bei
+108 Volumen und 88 Netzteilen ist eine Liste von Vermutungen nicht prüfbar.
+Statt dessen wird gesagt, **welches** Bauteil sich **wie** bewegen kann,
+**warum** und **was** dabei ins Nichts geht - und danach wird gerechnet.
+
+### 7b.1 Stufe 1a: Restfreiheiten je Teiltragwerk
+
+Ein Teil, das nur über Elemente und Kopplungen zusammenhängt (§ 7a,
+`diagnose.teiltragwerke`), ist in sich starr. Eine Starrkörperbewegung ist
+
+    u(p) = t + ω × r ,      r = p − c   (c = Schwerpunkt der Knoten des Teils)
+
+Eine Halterung am Knoten p in Richtung d sperrt d·u(p) = d·t + ω·(r × d).
+Auf den Unbekannten **x** = [t, L·ω] ist das die Zeile
+
+    a = [ d , (r × d) / L ] ,     L = halbe Diagonale des umschließenden Kastens
+
+Die Skalierung mit L ist nicht kosmetisch: ohne sie hinge die Rangentscheidung
+von der Längeneinheit ab - dasselbe Modell wäre in Millimetern gehalten und in
+Metern beweglich.
+
+Alle Zeilen werden auf Norm 1 gebracht, **A** = Σ a aᵀ (6 × 6) aufgestellt und
+zerlegt. Eigenwerte unter 10⁻⁶ mal dem größten spannen den Nullraum:
+Bewegungen, die keine einzige Halterung dehnt oder staucht - das Teil
+**gleitet**.
+
+Zeilen liefern Knoten-, Linien- und Flächenlager, einseitige Knotenlager,
+Kontaktpaare und Spaltelemente. Eine Feder hält dabei wie ein starres Lager -
+nur weicher; für die Frage, **ob** gehalten wird, zählt sie mit.
+
+### 7b.2 Stufe 1b: die Kegelprüfung
+
+Stufe 1a nimmt Kontaktnormalen als beidseitig. Ein geschlossener Kontakt kann
+aber nur drücken; zulässig ist der Kegel
+
+    C = { x :  a_i·x = 0   (Lager, haftende Tangenten)
+               a_j·x ≥ 0   (Kontaktnormalen; ≥ 0 heißt: die Fuge öffnet) }
+
+Das Teil ist gehalten genau dann, wenn C = {0}. Geprüft wird als kleines
+lineares Programm im Nullraum der Gleichungszeilen - höchstens sechs
+Veränderliche. Eine Bewegung im Kegel, die nicht schon im Nullraum aus 1a
+liegt, öffnet mindestens einen Kontakt: das Teil **hebt ab**.
+
+**Wozu diese Trennung.** „Hebt ab" und „rutscht" haben verschiedene Ursachen
+und verschiedene Abhilfen: gegen das eine hilft ein Lager oder ein Verbund,
+gegen das andere Reibung oder eine Führung. Eine gemeinsame Meldung nennt
+keine von beiden.
+
+**Und ihre Grenze.** Nach diesem Maßstab ist jedes Bauteil, das auf einer
+Unterlage liegt, „nicht gehalten" - anheben lässt es sich immer. Das ist
+kinematisch richtig und praktisch nutzlos. Erst die Last entscheidet
+(§ 7b.4).
+
+### 7b.3 Stufe 2: die Matrixdiagnose
+
+Nicht jede Singularität ist eine Starrkörperbewegung. Zwei Würfel, die sich
+**einen** Knoten teilen, hängen topologisch zusammen: Stufe 1 sieht ein
+einziges, gelagertes Teil und meldet nichts. Beweglich ist der zweite
+trotzdem - er dreht sich um den gemeinsamen Knoten.
+
+Für solche Fälle - weiche Mechanismen, Splitterelemente, Nullsteifigkeit -
+läuft eine inverse Iteration auf **K** + ε·**I**. Die konvergiert gegen den
+betragskleinsten Eigenvektor, und das ist die Bewegung, die fast keine
+Energie kostet; die Knoten mit der größten Amplitude nennen das Bauteil.
+Kosten: eine Faktorisierung. Stufe 2 läuft darum erst, wenn weder die
+Topologie noch Stufe 1 etwas gefunden haben.
+
+### 7b.4 Die unausgeglichene Last: was wirklich ins Nichts geht
+
+Zu jeder Bewegung gehört die verallgemeinerte Kraft der Last:
+
+    Q = t · Σ F_k  +  ω · Σ (p_k − c) × F_k
+
+über die Knoten des Teils. Sie ist genau das, was keine Halterung aufnimmt.
+Ausgewiesen werden ihre beiden Anteile getrennt: **Kraft** (Σ F)·t̂ in Newton
+und **Moment** (Σ r × F)·ω̂ in Newtonmetern.
+
+* **Q = 0** - die Last auf dem Teil steht in sich im Gleichgewicht.
+  Spannungen und Verformungen gelten; unbestimmt ist nur die Lage des Teils
+  im Raum. Ein Bauteil, an dem gar nichts angreift, fällt immer hierunter.
+* **Q ≠ 0** - diese Kraft geht ins Nichts. Im wirklichen Bauwerk würde sich
+  das Teil bewegen; für dieses Bauteil liefert die Rechnung nichts
+  Brauchbares.
+
+Bei **gleitet** sind beide Richtungen frei, es zählt der Betrag. Bei **hebt
+ab** ist nur eine Richtung frei, und die Frage lautet: gibt es im Kegel
+überhaupt eine Richtung, die die Last antreibt? Gesucht wird
+
+    max  g·x   über  x ∈ C ,  |x| ≤ 1  ,     g = [ Σ F , Σ (r × F) / L ]
+
+Mit orthonormalem **N** (Nullraumbasis, x = N y) ist das die **Projektion auf
+den Kegel**: nach Moreau zerfällt g̃ = Nᵀg in den Anteil im Kegel und den im
+Polarkegel K° = {−Bᵀμ : μ ≥ 0}, das Maximum ist |P_K(g̃)| und wird bei
+y = P_K(g̃)/|P_K(g̃)| angenommen. P_K° ist eine nichtnegative
+Ausgleichsrechnung (`nnls`) mit höchstens sechs Zeilen - sie bricht nach
+höchstens sechs Schritten ab, gleichgültig wie viele Ungleichungen der Kegel
+hat.
+
+Ein lineares Programm über dem Kasten |y| ≤ 1 täte es hier nicht: es zieht
+die Richtung in die Ecken des Kastens und meldete für einen Würfel, an dem
+100 kN ziehen, nur 82 kN. Die Projektion trifft die 100 kN genau - und
+nennt als Bewegung das reine Abheben statt eines schrägen Kippens.
+
+Damit ist auch die Grenze aus § 7b.2 aufgehoben: der Würfel unter Eigengewicht
+findet im Kegel keine angetriebene Richtung (die Last drückt in die Fuge) und
+wird als liegend gemeldet, nicht als abhebend.
+
+### 7b.5 Rechnen statt abbrechen
+
+Ein Abbruch hilft niemandem: ohne Verformungen kann niemand beurteilen, ob
+die freie Bewegung das eigene Ergebnis überhaupt berührt. Darum wird
+gerechnet. Jede gefundene Bewegung bekommt **eine** Zeile als Hilfsfesselung -
+die Projektion der Knotenverschiebungen auf ihren Starrkörpermodus v,
+normiert auf |v| = 1 - und die Steifigkeit dazu ist
+
+    K* = K + k · Vᵀ V ,      k = 10⁻⁶ · max |K_ii|
+
+Das ist der kleinstmögliche Eingriff: ein Freiheitsgrad je Bewegung, sonst
+bleibt das Modell unverändert. **Und es fälscht nichts.** Für eine
+Starrkörperbewegung eines ungehaltenen Teils ist K·v = 0; die
+Zusatzsteifigkeit wirkt allein auf den Starrkörperanteil der Lösung, nicht
+auf Dehnungen und Spannungen. Der Betrag von k geht darum auch nur in die
+Größe dieses Anteils ein - und der wird nach der Rechnung wieder abgezogen
+(u ← u − Vᵀ V u). Die Zeilen von **V** werden dafür orthonormiert
+(modifiziertes Gram-Schmidt); sie stehen ohnehin fast senkrecht aufeinander -
+Verschiebungen und Drehungen um den Schwerpunkt tun das exakt, verschiedene
+Teile berühren verschiedene Knoten -, sodass aus einer benannten Bewegung
+keine andere wird.
+
+Was die Fesselung bewirkt, lässt sich in einer Zeile nachrechnen und ist im
+Test verankert: Ein freier Würfel, an dessen Oberseite F zieht, bekommt die
+Restkraft gleichmäßig auf alle Knoten zurückverteilt (v ist die
+gleichförmige Verschiebung) - oben bleibt F/4 − F/8, unten −F/8. Durch den
+Mittelschnitt geht also genau **F/2**, und die Verlängerung ist
+(F/2)·L/(E·A). Der trilineare Sechsflächner bildet diesen gleichförmigen
+Dehnungszustand exakt ab; die Prüfschranke ist darum 10⁻⁹ und nicht ein
+Prozent.
+
+Das ist dieselbe Idee wie die Trägheitsentlastung („inertia relief"), nur mit
+gleichverteilter statt massenproportionaler Rückstellung - und ohne den
+Anspruch, ein Ergebnis zu sein: die zugehörige Kraft steht daneben in der
+Meldung.
+
+### 7b.6 Anzeige
+
+Gesucht und gefesselt werden **alle** Bewegungen - was ungefesselt bliebe,
+ließe die Matrix weiter singulär. Angezeigt werden höchstens 40, und zwar die
+schwersten zuerst: erst, wo wirklich Last ins Nichts geht (die größte
+zuerst), dann die folgenlosen. So steht bei 88 losen Teilen oben, was die
+Rechnung zunichte macht, und nicht das erstbeste Teil nach Knotennummer.
+
+Ein Teiltragwerk ohne Lager weist die Rechnung darum nicht mehr ab. Das
+Programm fragt, ob trotzdem gerechnet werden soll, und stellt die Bewegungen
+danach in den Modellbaum unter *Ergebnisse → Freie Bewegungen*; ein Klick
+zeichnet sie als Pfeil (Verschiebung) bzw. Drehpfeil (Drehung) an den
+Bezugspunkt - bei einer Verschiebung der Schwerpunkt des Teils, bei einer
+Drehung ein Punkt auf der Drehachse.
+
+### 7b.7 Zur Reibung
+
+Reibung ist kraftabhängig: vor der Rechnung ist die Normalkraft null und die
+Tangentialhaltung damit formal auch. Für die Vorabprüfung zählt µ > 0
+trotzdem als Haltung - sonst meldete jede reibungsbehaftete Fuge eine
+Bewegung, die es unter Last nicht gibt. Der Text sagt es dazu, damit niemand
+die Meldung für einen Freibrief hält.
 
 ## 8 Gültigkeitsbereich
 
