@@ -720,7 +720,13 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
     v /= np.linalg.norm(v) or 1.0
     for _ in range(schritte):
         try:
-            v = lu.solve(v)
+            # **Ohne** Residuumspruefung. K + eps*I ist hier mit Absicht fast
+            # singulaer - das ist der Sinn der inversen Iteration. Die Pruefung
+            # des Loesers schlug darum genau in den Faellen zu, fuer die diese
+            # Diagnose ueberhaupt da ist: an zwei Wuerfeln mit einem
+            # gemeinsamen Knoten stieg sie im ersten Schritt mit
+            # "Residuum 2.3e-06" aus, und Stufe 2 lieferte nie einen Befund.
+            v = lu.solve(v, check=False)
         except Exception:                 # noqa: BLE001
             return []
         nv = np.linalg.norm(v)
@@ -876,6 +882,21 @@ def stabilisieren(K, V, faktor: float = 1e-6):
     ein, nicht in die Spannungen. Gewaehlt ist er klein genug, dass die
     Kondition der Matrix nicht leidet, und gross genug, dass die
     Faktorisierung die Bewegung als gehalten sieht. Rueckgabe (K_stabil, k).
+
+    **Nicht mehr im Rechenweg.** ``V^T V`` ist ein aeusseres Produkt: es hat so
+    viele Eintraege, wie die Zeile Nichtnullen im Quadrat hat, und die Zeile
+    einer freien Bewegung besetzt **alle** Freiheitsgrade ihres Teils. Am
+    Wuerfelpaar gemessen waechst es genau quadratisch - 675 freie FHG:
+    138.625 Eintraege (1,7 MB); 4.131 freie FHG: 4.756.725 (57,1 MB). Am
+    Drehlagermodell schwebt ein Teil ueber 262.335 Freiheitsgraden: 6,9e10
+    Eintraege, rund 826 GB. Der Lauf hat 44 Minuten gerechnet, 287,5 GB
+    zugesichert und den Rechner zum Stillstand gebracht.
+
+    Der Loeser haelt die Bewegungen darum ueber einen **Lagrange-Rand**
+    (:meth:`StaticSystem.hilfsfesselung`): das ist dieselbe Bedingung, exakt
+    statt als Straffeder, und kostet nur zwei Eintraege je Nichtnull von V.
+    Diese Funktion bleibt fuer kleine Systeme und fuer den Vergleich in den
+    Tests stehen.
     """
     from scipy import sparse
     if V.shape[0] == 0:

@@ -464,6 +464,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self.itemClicked.connect(self._klick)
         self.itemDoubleClicked.connect(self._doppelklick)
         self.itemSelectionChanged.connect(self._auswahl_geaendert)
+        #: Hat _auswahl_geaendert fuer den laufenden Klick schon gemeldet?
+        self._gemeldet = False
 
     @staticmethod
     def _schluessel(item) -> tuple[str, str]:
@@ -495,23 +497,95 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  if self._schluessel(it)[0] == art]
         return art, list(dict.fromkeys(namen))
 
-    def _auswahl_geaendert(self) -> None:
-        """Die Auswahl hat sich geaendert - nur die Mehrfachauswahl meldet sich.
+    def mousePressEvent(self, ev):
+        """Vor jedem Klick vergessen, was zuletzt gemeldet wurde.
 
-        Der einzelne Eintrag laeuft weiter ueber :meth:`_klick`; sonst kaeme
-        bei jedem Klick zweimal dasselbe Signal.
+        Damit unterscheidet :meth:`_klick` einen Klick, der die Auswahl
+        **geaendert** hat (dann hat :meth:`_auswahl_geaendert` schon gemeldet),
+        von einem erneuten Klick auf den bereits gewaehlten Eintrag - der soll
+        seine Maske wieder oeffnen.
+        """
+        self._gemeldet = False
+        super().mousePressEvent(ev)
+
+    def _auswahl_geaendert(self) -> None:
+        """Die Auswahl hat sich geaendert - hier laeuft alles zusammen.
+
+        **Auch der einzelne Eintrag.** Sonst bewegen die Pfeiltasten zwar den
+        aktuellen Eintrag - Qt tut das von selbst -, aber niemand erfaehrt
+        davon: der Einzelfall haengt dann allein an ``itemClicked``, und den
+        loest keine Taste aus. Genau daran liess sich der Baum nicht mit der
+        Tastatur bedienen.
+
+        Doppelmeldungen verhindert ``_gemeldet``: hat dieser Weg gemeldet,
+        schweigt :meth:`_klick` fuer denselben Klick.
         """
         art, namen = self.gewaehlte_eintraege()
-        if art and len(namen) > 1:
+        if not art or not namen:
+            return
+        self._gemeldet = True
+        if len(namen) > 1:
             self.mehrfach.emit(art, namen)
+        else:
+            self.angeklickt.emit(art, namen[0])
 
     def _klick(self, item, _spalte):
+        """Klick, der die Auswahl nicht geaendert hat - derselbe Eintrag noch einmal."""
+        if getattr(self, "_gemeldet", False):
+            self._gemeldet = False
+            return
         art, namen = self.gewaehlte_eintraege()
         if art and len(namen) > 1:
             return                      # _auswahl_geaendert hat schon gemeldet
         art, name = self._schluessel(item)
         if art:
             self.angeklickt.emit(art, name)
+
+    def _alle_eintraege(self) -> list:
+        """Alle Eintraege des Baums von oben nach unten - fuer Pos1 und Ende."""
+        out = []
+
+        def hinab(it):
+            for i in range(it.childCount()):
+                k = it.child(i)
+                if self._ist_eintrag(k):
+                    out.append(k)
+                hinab(k)
+
+        for i in range(self.topLevelItemCount()):
+            w = self.topLevelItem(i)
+            if self._ist_eintrag(w):
+                out.append(w)
+            hinab(w)
+        return out
+
+    def eintrag_waehlen(self, art: str, name) -> bool:
+        """Den Eintrag (Art, Name) auswaehlen und den Fokus dorthin legen.
+
+        Aufgerufen, wenn in der Ansicht oder in einer Maske etwas gewaehlt
+        wurde: der Baum zieht nach, und die Tastatur landet dort, damit die
+        Pfeiltasten gleich weiterschalten koennen. Die Signale sind dabei
+        gesperrt - sonst schaukelte sich Ansicht -> Baum -> Ansicht auf.
+
+        Die Methode wurde in ``gui.main`` schon aufgerufen, hat es aber nie
+        gegeben; der Aufruf stand in einem ``try`` und lief still ins Leere.
+        """
+        ziel = str(name)
+        for it in self._alle_eintraege():
+            a, n = self._schluessel(it)
+            if a == art and n == ziel:
+                gesperrt = self.blockSignals(True)
+                try:
+                    self.clearSelection()
+                    it.setSelected(True)
+                    self.setCurrentItem(it)
+                    self.scrollToItem(it)
+                finally:
+                    self.blockSignals(gesperrt)
+                self._gemeldet = False
+                self.setFocus(QtCore.Qt.OtherFocusReason)
+                return True
+        return False
 
     def _menu(self, pos):
         """Rechtsklick: Neu am Zweig, Bearbeiten und Loeschen am Eintrag."""
@@ -546,6 +620,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
             menu.exec(self.viewport().mapToGlobal(pos))
 
     def keyPressEvent(self, ev):
+        if ev.key() in (QtCore.Qt.Key_Home, QtCore.Qt.Key_End):
+            alle = self._alle_eintraege()
+            if alle:
+                self.setCurrentItem(alle[0] if ev.key() == QtCore.Qt.Key_Home else alle[-1])
+                return
+        if ev.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            it = self.currentItem()
+            if it is not None and self._ist_eintrag(it):
+                art, name = self._schluessel(it)
+                if art:
+                    self.bearbeiten.emit(art, name)
+                    return
         if ev.key() in (QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace):
             v_art, v_namen = self.gewaehlte_eintraege()
             if len(v_namen) > 1 and v_art in self.LOESCH_ARTEN:

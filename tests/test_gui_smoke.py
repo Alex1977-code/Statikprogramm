@@ -5696,7 +5696,7 @@ def main():
     # ------------------------------------------------------------------
     try:
         import numpy as _np
-        from PySide6 import QtCore as _Qc, QtWidgets as _Qw
+        from PySide6 import QtCore as _Qc, QtGui as _Qg, QtWidgets as _Qw
         from statik3d.gui import viewport as _vp
         w.load_example("frame")
         w.refresh_all()
@@ -5744,6 +5744,69 @@ def main():
                   f"{sorted(int(x) for x in w.selection)} / {namen}")
             check("und die Statuszeile nennt die Zahl",
                   "3 Knoten" in w.lbl_sel.text(), w.lbl_sel.text())
+
+        # Pfeiltasten: ein einzelner Eintrag muss sich auch melden
+        baum.clearSelection()
+        gemeldet_einzeln = []
+        baum.angeklickt.connect(lambda a, n: gemeldet_einzeln.append((a, n)))
+        baum.setCurrentItem(knoten[0])
+        app.processEvents()
+        check("ein einzeln gewählter Eintrag meldet sich (Pfeiltaste)",
+              gemeldet_einzeln and gemeldet_einzeln[-1] == ("knoten", "0"),
+              str(gemeldet_einzeln[-1] if gemeldet_einzeln else None))
+        baum.setCurrentItem(knoten[1])
+        app.processEvents()
+        check("und der nächste ebenso - die Auswahl zieht mit",
+              len(gemeldet_einzeln) >= 2 and gemeldet_einzeln[-1] == ("knoten", "1"),
+              str(gemeldet_einzeln[-1] if gemeldet_einzeln else None))
+
+        # Pos1 und Ende
+        alle = baum._alle_eintraege()
+        baum.keyPressEvent(_Qg.QKeyEvent(_Qc.QEvent.KeyPress, _Qc.Qt.Key_End,
+                                         _Qc.Qt.NoModifier))
+        app.processEvents()
+        check("Ende springt auf den letzten Eintrag",
+              baum.currentItem() is alle[-1],
+              str(baum._schluessel(baum.currentItem())))
+        baum.keyPressEvent(_Qg.QKeyEvent(_Qc.QEvent.KeyPress, _Qc.Qt.Key_Home,
+                                         _Qc.Qt.NoModifier))
+        app.processEvents()
+        check("Pos1 auf den ersten", baum.currentItem() is alle[0],
+              str(baum._schluessel(baum.currentItem())))
+
+        # Eingabetaste öffnet den Eintrag zum Bearbeiten. Geprüft wird nur das
+        # Signal: der Empfänger im Fenster öffnet einen modalen Dialog, und der
+        # bliebe im Test stehen.
+        bearbeitet = []
+        baum.bearbeiten.disconnect(w._baum_bearbeiten)
+        baum.bearbeiten.connect(lambda a, n: bearbeitet.append((a, n)))
+        try:
+            baum.setCurrentItem(knoten[2])
+            baum.keyPressEvent(_Qg.QKeyEvent(_Qc.QEvent.KeyPress, _Qc.Qt.Key_Return,
+                                             _Qc.Qt.NoModifier))
+            app.processEvents()
+        finally:
+            baum.bearbeiten.connect(w._baum_bearbeiten)
+        check("die Eingabetaste öffnet den Eintrag zum Bearbeiten",
+              bearbeitet and bearbeitet[-1][0] == "knoten",
+              str(bearbeitet[-1] if bearbeitet else None))
+
+        # eintrag_waehlen: aus der Ansicht heraus, ohne Rückkopplung
+        vorher = len(gemeldet_einzeln)
+        got = baum.eintrag_waehlen("knoten", "1")
+        app.processEvents()
+        check("eintrag_waehlen findet den Eintrag und wählt ihn",
+              got and baum._schluessel(baum.currentItem()) == ("knoten", "1"),
+              f"{got}, {baum._schluessel(baum.currentItem())}")
+        check("und meldet dabei nichts zurück (keine Rückkopplung)",
+              len(gemeldet_einzeln) == vorher,
+              f"{vorher} -> {len(gemeldet_einzeln)}")
+        # hasFocus() setzt ein aktives Fenster voraus - unter xvfb ist keines
+        # aktiv. Massgebend ist, welches Widget im Fenster den Fokus haelt.
+        check("der Fokus liegt danach im Baum", w.focusWidget() is baum,
+              type(w.focusWidget()).__name__)
+        check("einen Eintrag, den es nicht gibt, meldet sie als False",
+              baum.eintrag_waehlen("knoten", "999999") is False)
 
         # Flaechen und Volumen genauso - zwei Tetraeder aus Geometrie
         from statik3d.model import Material as _Mat2

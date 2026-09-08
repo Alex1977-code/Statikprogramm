@@ -334,13 +334,52 @@ def singulaer_text(model, ex=None, system=None) -> str:
     if ex is not None:
         kopf += f" - {ex}"
     z = [m for m in meldungen(model, d) if not m.startswith("Hinweis")]
+    if not z:
+        # Stufe 1b: was sich bewegen kann, mit Bauteil und Richtung. Erst
+        # danach die Matrix (Stufe 2) - sie faktorisiert ein zweites Mal.
+        z += _bewegungsbefund(model)
     if not z and system is not None:
         z += _matrixbefund(model, system)
     if not z:
-        z.append("Ursache nicht aus der Topologie erkennbar: Gelenke (Kette ohne Halt), fehlende "
-                 "Drehfesselung eines Fachwerkknotens, Lager ohne Steifigkeit oder Nullsteifigkeit "
-                 "(Querschnitt, Dicke, Werkstoff) prüfen.")
+        z.append("Ursache nicht feststellbar: die Topologie ist geschlossen, es gibt "
+                 "kein loses Teiltragwerk, keine freie Starrkörperbewegung und keinen "
+                 "auffällig weichen Modus. Was hier noch bleibt, sieht keines der "
+                 "Verfahren - Gelenke, Lagersteifigkeiten und Nullwerte bei Querschnitt, "
+                 "Dicke und Werkstoff sind von Hand zu prüfen.")
     return kopf + "\n" + "\n".join(z)
+
+
+def _bewegungsbefund(model) -> list:
+    """Stufe 1b: die freien Bewegungen als Meldung - Bauteil, Art, Richtung.
+
+    Das Programm kennt diese Frage: :func:`singular.restfreiheiten` nennt je
+    Teiltragwerk, ob es **gleitet** oder **abhebt**, und in welcher Richtung.
+    Frueher wurde das hier nicht gefragt und stattdessen eine Liste von vier
+    moeglichen Ursachen ausgegeben - eine Vermutung, wo eine Messung vorlag.
+    """
+    try:
+        from .singular import restfreiheiten, wichtigste
+        sing = restfreiheiten(model)
+    except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
+        return []
+    if not sing:
+        return []
+    try:
+        zeigen = wichtigste(sing) or sing
+    except Exception:                     # noqa: BLE001
+        zeigen = sing
+    out = []
+    for s in zeigen[:6]:
+        wo = ", ".join(s.koerper[:3]) + (" …" if len(s.koerper) > 3 else "")
+        satz = f"FEHLER: {s.text or (wo + ' ist beweglich')}"
+        if s.ursache:
+            satz += f" - {s.ursache}"
+        if abs(s.kraft) > 1e-6 or abs(s.moment) > 1e-6:
+            satz += (f" (unausgeglichen: {s.kraft:.3g} N, {s.moment:.3g} Nm)")
+        out.append(satz)
+    if len(sing) > len(out):
+        out.append(f"… und {len(sing) - len(out)} weitere freie Bewegungen")
+    return out
 
 
 def _matrixbefund(model, system) -> list:

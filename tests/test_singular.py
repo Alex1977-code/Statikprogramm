@@ -434,12 +434,120 @@ def test_stufe2_nennt_das_bauteil():
         solver.solve_static(m, case="LF1")
         check("das singuläre System wird gemeldet", False, "keine Meldung")
     except RuntimeError as ex:
+        # Nicht auf Bruchstuecke pruefen: „B" und „ohne Steifigkeit" stehen
+        # auch in einem allgemeinen Hinweistext, und genau daran bestand
+        # dieser Test einmal, waehrend Stufe 2 in Wirklichkeit gar nichts
+        # lieferte - die inverse Iteration stieg an der Residuumspruefung des
+        # Loesers aus. Geprueft wird darum die ganze Zeile.
         check("die Matrixdiagnose nennt das bewegliche Bauteil",
-              "B" in str(ex) and "ohne Steifigkeit" in str(ex), str(ex)[:150])
+              "FEHLER: B: Bewegung fast ohne Steifigkeit" in str(ex), str(ex)[:200])
+    # und sie muss es auch ohne den Loeserpfad tun
+    st = solver.StaticSystem(m)
+    moden = sg.weichster_modus(st.K, m, st.fi)
+    check("Stufe 2 liefert überhaupt einen Modus", bool(moden), str(len(moden)))
+    if moden:
+        check("und ordnet ihn dem beweglichen Körper zu",
+              moden[0].koerper == ["B"], str(moden[0].koerper))
+
+
+def test_hilfsfesselung_bleibt_klein():
+    """Die Hilfsfesselung darf nicht quadratisch mit dem freien Teil wachsen.
+
+    ``K + k*V^T V`` ist ein aeusseres Produkt: es hat so viele Eintraege, wie
+    die Zeile Nichtnullen im Quadrat hat. Die Zeile einer freien Bewegung
+    besetzt alle Freiheitsgrade ihres Teils - am Drehlagermodell 262.335, also
+    6,9e10 Eintraege und rund 826 GB. Der Lagrange-Rand kostet stattdessen
+    zwei Eintraege je Nichtnull.
+
+    Geprueft wird an zwei Wuerfeln, von denen einer frei schwebt: der Rand
+    darf hoechstens linear mit den Freiheitsgraden wachsen, die Straffeder
+    tut es quadratisch. Und das Ergebnis muss dasselbe bleiben - die
+    Traegheitsentlastung haengt daran, dass die Haltekraft sich wie die
+    Bewegung verteilt.
+    """
+    from scipy import sparse
+    from statik3d import mesher
+
+    def zwei_bloecke(n):
+        """Ein gelagerter Block und ein zweiter, der voellig frei schwebt."""
+        m = Model()
+        m.add_material(Material.steel("S235"))
+        mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, n, n, n)
+        n0 = m.nn
+        mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, n, n, n)
+        m.nodes[n0:, 0] += 5.0
+        for i in range(n0):
+            if abs(m.nodes[i][2]) < 1e-9:
+                m.fix(i, [0, 1, 2])
+        lc = m.add_load_case("LF1")
+        lc.gravity = [0, 0, 0]
+        return m
+
+    groessen, feder, rand = [], [], []
+    for n in (3, 5):
+        m = zwei_bloecke(n)
+        st = solver.StaticSystem(m)
+        V, _sing = sg.hilfsfesselung(m, st.freie_bewegungen(erzwingen=True), frei=st.fi)
+        if V.shape[0] == 0:
+            continue
+        Vf = sparse.csr_matrix(V[:, st.fi])
+        groessen.append(len(st.fi))
+        feder.append(int((Vf.T @ Vf).nnz))
+        rand.append(int(2 * Vf.nnz))
+    if len(groessen) < 2:
+        return check("Hilfsfesselung: freie Bewegung gefunden", False, str(groessen))
+    w = groessen[1] / groessen[0]
+    check("die Straffeder wächst quadratisch mit den freien FHG",
+          feder[1] / feder[0] > 0.7 * w * w,
+          f"{groessen[0]} -> {groessen[1]} FHG ({w:.2f}x): "
+          f"{feder[0]} -> {feder[1]} Einträge ({feder[1] / feder[0]:.2f}x)")
+    check("der Lagrange-Rand nur linear",
+          rand[1] / rand[0] < 1.5 * w,
+          f"{rand[0]} -> {rand[1]} Einträge ({rand[1] / rand[0]:.2f}x)")
+    check("und ist bei diesem Modell schon um Größenordnungen kleiner",
+          rand[1] * 20 < feder[1],
+          f"Rand {rand[1]} gegen Feder {feder[1]} Einträge "
+          f"({feder[1] / rand[1]:.0f}x)")
+
+
+def test_rand_statt_feder_liefert_dasselbe():
+    """Rand und Straffeder muessen dieselbe Loesung geben.
+
+    Der Rand erzwingt V u = 0 exakt, die Straffeder nur naeherungsweise -
+    die Verformung des Bauteils selbst ist in beiden Faellen dieselbe, denn
+    K·v = 0. Geprueft an dem Wuerfel aus test_rechnen_statt_abbrechen: der
+    Mittelschnitt traegt die halbe Last, weil sich die Haltekraft wie die
+    Bewegung verteilt. Ein einzelner gesperrter Freiheitsgrad taete das
+    nicht - er leitete die ganze Last durch den Schnitt.
+    """
+    m = wuerfel()
+    for k in (4, 5, 6, 7):
+        m.load_node(k, Fz=F_LAST / 4)
+    st = solver.StaticSystem(m)
+    check("ohne Hilfsfesselung ist noch kein Rand da", st._rand == 0, str(st._rand))
+    # Die Verdrehungen der Volumenknoten sind von Haus aus gesperrt (ein
+    # Hexaeder hat dort keine Steifigkeit) - massgebend ist, dass die
+    # Hilfsfesselung nichts DAZU sperrt.
+    vorher = int(st.fixed.sum())
+    gebaut = st.hilfsfesselung()
+    check("die Hilfsfesselung greift", gebaut and st._rand > 0,
+          f"{gebaut}, {st._rand} Randzeilen")
+    check("und sie sperrt keinen Freiheitsgrad zusätzlich",
+          int(st.fixed.sum()) == vorher,
+          f"{vorher} -> {int(st.fixed.sum())} gesperrte FHG")
+    B = st.gerandet(st.Kff)
+    check("die geränderte Matrix ist quadratisch und um m groesser",
+          B.shape == (st.Kff.shape[0] + st._rand, st.Kff.shape[0] + st._rand),
+          f"{st.Kff.shape} -> {B.shape}")
+    check("der Rand kostet zwei Einträge je Nichtnull von V",
+          B.nnz == st.Kff.nnz + 2 * st._Vf.nnz,
+          f"{B.nnz} = {st.Kff.nnz} + 2*{st._Vf.nnz}")
 
 
 def main():
     for f in (test_freier_wuerfel, test_rechnen_statt_abbrechen,
+              test_hilfsfesselung_bleibt_klein,
+              test_rand_statt_feder_liefert_dasselbe,
               test_stab_dreht_sich_um_die_eigene_achse,
               test_bericht_nennt_die_grenze, test_kontakt_gleitet, test_kontakt_hebt_ab,
               test_reibung_und_einseitige_lager,
