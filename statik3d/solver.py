@@ -490,9 +490,10 @@ class StaticSystem:
         #: "" (noch nicht gesucht) | "grob" (nur die Vorpruefung, ohne Befund)
         #: | "voll" (wirklich gesucht)
         self._gesucht = ""
-        self.K_hilf = None
+        #: Die Hilfsfesselung als Lagrange-Rand: (m, n_frei)-Matrix der
+        #: festgehaltenen Bewegungen, None solange keine noetig war.
+        self._Vf = None
         self._V = None
-        self._k = 0.0
         self._progress = progress
         self.t_assemble = time.time() - t0
         if not model.has_contact:
@@ -504,7 +505,7 @@ class StaticSystem:
         if self._solver is None:
             t0 = time.time()
             try:
-                self._solver = LinearSolver(self.Kff)
+                self._solver = LinearSolver(self.gerandet(self.Kff))
             except (RuntimeError, ValueError) as ex:
                 # "Factor is exactly singular" sagt niemandem, was fehlt
                 from .diagnose import singulaer_text
@@ -516,6 +517,37 @@ class StaticSystem:
                        f"Faktorisiert ({self._solver.beschreibung()}, "
                        f"{time.time() - t0:.2f} s)", 0.32)
         return self._solver
+
+    def gerandet(self, Kff):
+        """Kff mit dem Lagrange-Rand der Hilfsfesselung.
+
+        Aus K wird
+
+            [ K    V^T ]   [ u ]   [ F ]
+            [ V     0  ] * [ l ] = [ 0 ]
+
+        Die Zusatzzeilen erzwingen ``V u = 0`` - der Starrkoerperanteil der
+        freien Bewegungen ist damit exakt null statt nur klein. Die Haltekraft
+        ist ``V^T l`` und verteilt sich damit ueber das Teil **wie die
+        Bewegung selbst**; das ist die Traegheitsentlastung, und genau darum
+        geht durch den Mittelschnitt eines frei schwebenden Stabes die halbe
+        Last und nicht die ganze. Ein einzelner gesperrter Freiheitsgrad
+        taete das nicht - er leitete alles in einen Punkt.
+
+        Der Rand kostet zwei Eintraege je Nichtnull von V. Die fruehere
+        Straffeder ``K + k*V^T V`` kostete deren Quadrat: am Drehlagermodell
+        826 GB (siehe :func:`singular.stabilisieren`).
+        """
+        if self._Vf is None or self._Vf.shape[0] == 0:
+            return Kff
+        m = self._Vf.shape[0]
+        return sparse.bmat([[Kff, self._Vf.T],
+                            [self._Vf, sparse.csr_matrix((m, m))]], format="csc")
+
+    @property
+    def _rand(self) -> int:
+        """Zahl der Randzeilen der Hilfsfesselung (0 = keine)."""
+        return 0 if self._Vf is None else int(self._Vf.shape[0])
 
     def freie_bewegungen(self, erzwingen: bool = False) -> list:
         """Bewegungen, die das Modell nicht haelt - gesucht, nicht gefesselt.
@@ -547,17 +579,24 @@ class StaticSystem:
         return self.singular
 
     def hilfsfesselung(self) -> bool:
-        """Die freien Bewegungen mit je einer Zeile festhalten.
+        """Die freien Bewegungen mit je einer Zeile festhalten - als Rand.
 
         Statt abzubrechen wird weitergerechnet: jede Bewegung, die das Modell
-        nicht haelt, bekommt eine Straffeder auf ihren Starrkoerpermodus. Weil
-        K·v = 0 ist, bleiben Spannungen und Dehnungen davon unberuehrt - nur
-        der Starrkoerperanteil der Verschiebung kommt hinzu, und der wird in
-        :meth:`ohne_starrkoerper` wieder abgezogen.
+        nicht haelt, bekommt eine Zeile ``v^T u = 0``. Weil K·v = 0 ist,
+        bleiben Spannungen und Dehnungen davon unberuehrt - nur der
+        Starrkoerperanteil der Verschiebung faellt weg, und der ist ohnehin
+        willkuerlich (:meth:`ohne_starrkoerper` nimmt ihn zusaetzlich heraus,
+        falls doch etwas uebrig bleibt).
+
+        Hier stand bis zuletzt eine Straffeder ``K + k*V^T V``. Das aeussere
+        Produkt hat so viele Eintraege wie die Zeile Nichtnullen im Quadrat;
+        am Drehlagermodell waren das 6,9e10 - rund 826 GB, und der Rechner
+        stand still. Der Rand leistet dasselbe exakt und kostet zwei Eintraege
+        je Nichtnull (:meth:`gerandet`).
 
         Rueckgabe True, wenn eine Fesselung eingebaut wurde.
         """
-        if self.K_hilf is not None:
+        if self._Vf is not None:
             return False
         from . import singular as sg
         try:
@@ -568,18 +607,16 @@ class StaticSystem:
             return False
         if not sing or V.shape[0] == 0:
             return False
-        _, k = sg.stabilisieren(self.Kff, V[:, self.fi])
-        self.singular, self._V, self._k = sing, V, k
+        self.singular, self._V = sing, V
+        self._Vf = sparse.csr_matrix(V[:, self.fi])
         for x in sing:
             x.gefesselt = True
-        self.K_hilf = (k * (V.T @ V)).tocsr()
-        self.Kff = (self.Kff + self.K_hilf[self.fi][:, self.fi]).tocsc()
         self._solver = None
         return True
 
     def ohne_starrkoerper(self, u: np.ndarray) -> np.ndarray:
         """Den willkuerlichen Starrkoerperanteil der Hilfsfesselung abziehen."""
-        if self.K_hilf is None:
+        if self._V is None:
             return u
         from . import singular as sg
         return sg.bereinigen(self._V, u)
@@ -602,18 +639,16 @@ class StaticSystem:
                     if self.Kfs is None:
                         self.Kfs = self.K[self.fi][:, self.si].tocsc()
                     rhs = rhs - self.Kfs @ u[self.si]
-                u[self.fi] = self.solver.solve(rhs)
+                u[self.fi] = self._geloest(self.solver, rhs)
             else:
                 Kt = (self.K + K_extra)
-                if self.K_hilf is not None:
-                    Kt = Kt + self.K_hilf
                 Ktff = Kt[self.fi][:, self.fi].tocsc()
                 if vorgabe:
                     Ktfs = Kt[self.fi][:, self.si]
                     rhs = rhs - Ktfs @ u[self.si]
-                ls = LinearSolver(Ktff)
+                ls = LinearSolver(self.gerandet(Ktff))
                 self.backend = ls.backend
-                u[self.fi] = ls.solve(rhs)
+                u[self.fi] = self._geloest(ls, rhs)
         except (RuntimeError, ValueError) as ex:
             # Singulaer (Faktorisierung oder Residuum): sagen, was dem Modell fehlt
             if "Teiltragwerk" in str(ex) or "ohne Netz" in str(ex):
@@ -621,6 +656,19 @@ class StaticSystem:
             from .diagnose import singulaer_text
             raise RuntimeError(singulaer_text(self.model, ex, self)) from None
         return u
+
+    def _geloest(self, ls: "LinearSolver", rhs: np.ndarray) -> np.ndarray:
+        """Loesen mit dem Lagrange-Rand: rechte Seite auffuellen, Rand abschneiden.
+
+        Die Randzeilen fordern ``V u = 0``; ihre rechte Seite ist null. Die
+        Multiplikatoren am Ende der Loesung sind die Haltekraefte und gehen
+        den Aufrufer nichts an.
+        """
+        m = self._rand
+        if not m:
+            return ls.solve(rhs)
+        x = ls.solve(np.concatenate([rhs, np.zeros(m)]))
+        return np.asarray(x, float).ravel()[:len(rhs)]
 
     def reactions(self, u: np.ndarray, F: np.ndarray, K_extra=None) -> np.ndarray:
         K = self.K if K_extra is None else (self.K + K_extra)
@@ -1221,10 +1269,27 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
 # Kontakt-Iteration
 # ==========================================================================
 def _contact_singular(it: int, ex, cs, model=None) -> str:
-    n_open = sum(1 for c in cs.cons if not c.active)
-    text = (f"Kontakt-Iteration {it}: {ex}\nHinweis: {n_open} von {len(cs.cons)} "
-            "Kontaktbedingungen offen - vermutlich hebt ein Bauteil vollstaendig ab "
-            "oder rutscht ohne Halt (kein statisches Gleichgewicht moeglich).")
+    """Meldung zu einem singulaeren Schritt der Kontakt-Iteration.
+
+    Der Hinweis richtet sich nach der Zahl der **offenen** Bedingungen. Sind
+    null offen, ist jede Fuge geschlossen - dann kann nichts abheben, und die
+    Bewegung liegt in der Fugenebene. Frueher stand hier in beiden Faellen
+    derselbe Satz „vermutlich hebt ein Bauteil ab", auch bei null offenen
+    Bedingungen; das widerspricht sich selbst.
+    """
+    n_zu = sum(1 for c in cs.cons if c.active)
+    n_open = len(cs.cons) - n_zu
+    if n_open:
+        hinweis = (f"{n_open} von {len(cs.cons)} Kontaktbedingungen sind offen - "
+                   "ein Bauteil hebt ab oder rutscht ohne Halt.")
+    elif cs.cons:
+        hinweis = (f"alle {len(cs.cons)} Kontaktbedingungen sind geschlossen - "
+                   "abheben kann hier nichts. Die Bewegung liegt damit **in** "
+                   "der Fugenebene: das Bauteil gleitet, oder die Fuge haelt "
+                   "quer zu sich nichts.")
+    else:
+        hinweis = "es gibt keine Kontaktbedingungen - die Ursache liegt nicht am Kontakt."
+    text = f"Kontakt-Iteration {it}: {ex}\nHinweis: {hinweis}"
     if model is not None and "Teiltragwerk" not in str(ex) and "ohne Netz" not in str(ex):
         from .diagnose import meldungen
         befund = [z for z in meldungen(model) if not z.startswith("Hinweis")]

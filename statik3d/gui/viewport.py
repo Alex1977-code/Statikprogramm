@@ -275,19 +275,68 @@ def coons_flaeche(seiten: list, n: int = None):
     return punkte, dreiecke
 
 
-def flaechen_dreiecke(ring, seiten=None):
+def eben_mit_loechern(ring, loecher):
+    """Ebene Flaeche mit Innenraendern in Dreiecke teilen: (Punkte, Dreiecke).
+
+    Ohne das geht das Randpolygon als **eine** Zelle an VTK, und VTK fuellt
+    sie: ein Ring erscheint als Scheibe, eine Bohrung verschwindet. Am
+    Drehlagermodell betrifft das alle 100 Flaechen mit Oeffnungen - und daran
+    ist die Beurteilung der Geometrie mehrfach haengengeblieben, obwohl
+    Huelle und Netz nachweislich stimmen.
+
+    Trianguliert wird mit demselben Verfahren wie im Vernetzer
+    (:func:`mesher3d._dreiecke_2d`), nur ohne Innenpunkte: fuers Bild
+    genuegen die Randpunkte, und dann stehen die Punkte des Ergebnisses in
+    derselben Reihenfolge wie die uebergebenen Ringe - sie lassen sich also
+    unmittelbar in den Raum zuruecknehmen.
+
+    Rueckgabe (None, None), wenn sich nichts bilden laesst.
+    """
+    from ..mesher3d import _dreiecke_2d
+    A = np.asarray(ring, float)
+    ringe3 = [A] + [np.asarray(L, float) for L in (loecher or []) if len(L) >= 3]
+    if len(ringe3) < 2 or len(A) < 3:
+        return None, None
+    # Lokales Achsenkreuz aus der Newell-Normalen des Aussenrands
+    n = np.cross(A, np.roll(A, -1, axis=0)).sum(axis=0)
+    nl = float(np.linalg.norm(n))
+    if nl <= 0:
+        return None, None
+    n = n / nl
+    ref = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    t1 = np.cross(n, ref)
+    t1 /= np.linalg.norm(t1) or 1.0
+    t2 = np.cross(n, t1)
+    o = A[0]
+    ringe2 = [np.column_stack([(R - o) @ t1, (R - o) @ t2]) for R in ringe3]
+    try:
+        P2, T, _ = _dreiecke_2d(ringe2, 0.0)
+    except Exception:                    # noqa: BLE001 - ein Bild darf nie sperren
+        return None, None
+    P3 = np.vstack(ringe3)
+    if not len(T) or len(P2) != len(P3):
+        return None, None
+    return P3, np.asarray(T, int)
+
+
+def flaechen_dreiecke(ring, seiten=None, loecher=None):
     """Eine Flaeche fuers Bild: (Punkte, Zellen als VTK-Liste).
 
-    Eben: das Randpolygon als **eine** Zelle. Krumm mit vier Seiten: eine
-    Coons-Flaeche aus Dreiecken. Sonst ein Faecher um den Schwerpunkt - das
-    ist fuer eine schwach gewoelbte Flaeche mit fuenf Seiten besser als gar
-    nichts.
+    Eben ohne Loecher: das Randpolygon als **eine** Zelle. Eben mit Loechern:
+    Dreiecke, Aussenrand minus Innenraender (:func:`eben_mit_loechern`).
+    Krumm mit vier Seiten: eine Coons-Flaeche aus Dreiecken. Sonst ein
+    Faecher um den Schwerpunkt - das ist fuer eine schwach gewoelbte Flaeche
+    mit fuenf Seiten besser als gar nichts.
     """
     from ..model import polygon_eben
     ring = np.asarray(ring, float)
     if len(ring) < 3:
         return None, None
     if polygon_eben(ring):
+        if loecher:
+            P, D = eben_mit_loechern(ring, loecher)
+            if P is not None:
+                return P, np.hstack([np.full((len(D), 1), 3), D]).ravel().tolist()
         return ring, [len(ring), *range(len(ring))]
     if seiten is not None and len(seiten) == 4:
         P, D = coons_flaeche(seiten)
@@ -355,6 +404,20 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
             seiten[name] = r
         return r
 
+    #: Innenraender je Flaeche. Eigener Zwischenspeicher, damit das Abtasten
+    #: der Oeffnungsringe nicht bei jedem Bildaufbau anfaellt.
+    loecher: dict = {}
+
+    def loecher_von(name, f):
+        r = loecher.get(name)
+        if r is None:
+            try:
+                r = f.oeffnungspunkte(model)
+            except Exception:            # noqa: BLE001
+                r = []
+            loecher[name] = r
+        return r
+
     pts: list = []
     zellen: list = []
     zelle_flaeche: list = []
@@ -373,7 +436,7 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
         rpts.extend(np.vstack([P, P[:1]]))
         for i in range(len(P)):
             rlines.extend([2, basis + i, basis + i + 1])
-        P, Z = flaechen_dreiecke(ring, seiten_von(name, f))
+        P, Z = flaechen_dreiecke(ring, seiten_von(name, f), loecher_von(name, f))
         if P is None:
             continue
         basis = len(pts)
