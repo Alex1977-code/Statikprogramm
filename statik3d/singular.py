@@ -119,6 +119,29 @@ DREH_ANTEIL = 1e-6
 
 
 @dataclass
+class Halteguete:
+    """Wie fest ein Teiltragwerk gehalten wird - nicht nur **ob**.
+
+    wert:      lambda_min / lambda_max der 6x6-Haltematrix, 1 = allseitig
+               gleich fest, 1e-5 = in einer Richtung fast nichts
+    richtung:  der Eigenvektor zu lambda_min (6,) - erst Verschiebung, dann
+               Verdrehung mal Bezugslaenge
+    koerper:   Namen der Bauteile des Teils
+    knoten:    seine Knoten
+    mitte:     Schwerpunkt, auf den sich ``richtung`` bezieht
+    laenge:    Bezugslaenge L
+    text:      fertige Meldung
+    """
+    wert: float = 0.0
+    richtung: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    koerper: list = field(default_factory=list)
+    knoten: list = field(default_factory=list)
+    mitte: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    laenge: float = 1.0
+    text: str = ""
+
+
+@dataclass
 class Singularitaet:
     """Eine Bewegung, die das Modell nicht haelt.
 
@@ -163,6 +186,17 @@ class Singularitaet:
     text: str = ""
     ursache: str = ""
     abhilfe: Optional[tuple] = None
+    #: Das Element, das die Bewegung traegt (-1 = keines) - nur bei
+    #: art='numerisch'. Zu jedem Fehler gehoert das Element, nicht nur das
+    #: Bauteil.
+    element: int = -1
+    #: Ausschlag a_e = max |u| ueber die Knoten dieses Elements
+    ausschlag: float = 0.0
+    #: Energie E_e = u_e^T K_e u_e [Nm] - grosser Ausschlag bei fast keiner
+    #: Energie **ist** die Diagnose
+    energie: float = 0.0
+    #: dieselbe Energie dimensionslos: E_e / (a_e^2 * mittlere Diagonale K_e)
+    anteil: float = 0.0
 
     def verschiebung(self) -> bool:
         """Reine Verschiebung (kein nennenswerter Drehanteil)?"""
@@ -450,16 +484,48 @@ def _kontaktzeilen(model, teil_von: dict, mitten: dict, laengen: dict) -> dict:
 # --------------------------------------------------------------------------
 # Stufe 1a und 1b
 # --------------------------------------------------------------------------
-def _nullraum(zeilen: list) -> np.ndarray:
-    """Nullraum der Zeilen als (6, k) - Bewegungen, die keine Zeile dehnt."""
+#: Unter dieser Haltegüte wird gewarnt: das Teil ist zwar in allen sechs
+#: Richtungen angefasst, in einer davon aber zehntausendmal weicher als in der
+#: steifsten. Genau das trennt zwei aeusserlich gleiche Bauteile voneinander.
+HALTEGUETE_MIN = 1e-4
+
+
+def _nullraum(zeilen: list, spektrum: list = None) -> np.ndarray:
+    """Nullraum der Zeilen als (6, k) - Bewegungen, die keine Zeile dehnt.
+
+    ``spektrum`` nimmt, wenn angegeben, das Paar (Eigenwerte, Eigenvektoren)
+    der Haltematrix A = Summe(a a^T) entgegen. Aus ihm kommt die
+    **Haltegüte** (:func:`halteguete_von`): der Rang allein sagt nur, ob eine
+    Richtung angefasst wird, nicht wie fest.
+    """
     if not zeilen:
+        if spektrum is not None:
+            spektrum.append((np.zeros(6), np.eye(6)))
         return np.eye(6)
     A = np.zeros((6, 6))
     for a in zeilen:
         A += np.outer(a, a)
     w, V = np.linalg.eigh(A)
+    if spektrum is not None:
+        spektrum.append((w, V))
     grenze = NULLRAUM * max(float(w.max()), 1e-300)
     return V[:, w <= grenze]
+
+
+def halteguete_von(w: np.ndarray) -> float:
+    """lambda_min / lambda_max der Haltematrix - 1 heisst allseitig gleich fest.
+
+    Die Zeilen sind auf Eins normiert, die Verdrehungsanteile mit der
+    Bezugslaenge des Teils skaliert; die Eigenwerte sind damit dimensionslos
+    und vergleichbar. Der Kehrwert ist die Konditionszahl der Haltematrix -
+    und das ist die Zahl, die den Unterschied zwischen zwei aeusserlich
+    gleichen Bauteilen sichtbar macht, **vor** dem Loesen.
+    """
+    w = np.asarray(w, float)
+    if not w.size:
+        return 0.0
+    gross = float(w.max())
+    return float(w.min()) / gross if gross > 0 else 0.0
 
 
 def _im_kegel(N: np.ndarray, ungleich: list) -> tuple:
@@ -589,7 +655,7 @@ def _klartext(x: np.ndarray, mitte, L: float, koerper: list, art: str,
     return text, ursache, bezug, t, w
 
 
-def restfreiheiten(model, hoechstens: int = 0) -> list:
+def restfreiheiten(model, hoechstens: int = 0, guete: list = None) -> list:
     """Stufe 1a und 1b: was sich bewegen kann, bevor gerechnet wird.
 
     Rueckgabe eine Liste von :class:`Singularitaet`. Kostet eine
@@ -598,6 +664,13 @@ def restfreiheiten(model, hoechstens: int = 0) -> list:
     ``hoechstens = 0`` (Vorgabe) heisst: alle. Fuer die Hilfsfesselung muss
     das so sein - was nicht gefesselt wird, macht die Matrix weiter singulaer.
     Fuer die **Anzeige** waehlt :func:`wichtigste` daraus aus.
+
+    ``guete`` nimmt, wenn angegeben, je Teiltragwerk eine :class:`Halteguete`
+    entgegen - auch fuer die Teile, die **gehalten** sind und darum keine
+    Singularitaet ergeben. Genau dort steckt die Auskunft: ein Teil kann in
+    allen sechs Richtungen angefasst und in einer davon trotzdem
+    zehntausendmal weicher sein als in der steifsten. Der Rang sieht das
+    nicht, die Eigenwerte schon - und sie liegen hier ohnehin vor.
     """
     hoechstens = hoechstens or 10 ** 9
     from .diagnose import teiltragwerke
@@ -620,8 +693,18 @@ def restfreiheiten(model, hoechstens: int = 0) -> list:
         gl = gl + kg
         ug = ug + ku
         # Stufe 1a: alles als Gleichung - findet die Gleitbewegungen
-        frei = _nullraum(gl + ug)
+        spek: list = []
+        frei = _nullraum(gl + ug, spek)
         koerper = sorted({gruppe_von[k] for k in knoten if k in gruppe_von})
+        if guete is not None and spek and not frei.shape[1]:
+            # Nur fuer die gehaltenen Teile: wo eine Bewegung frei ist, steht
+            # sie schon als Singularitaet da, und lambda_min waere die Null.
+            w, V = spek[-1]
+            guete.append(Halteguete(
+                wert=halteguete_von(w), richtung=np.asarray(V[:, 0], float),
+                koerper=koerper, knoten=sorted(knoten),
+                mitte=np.asarray(mitten[i], float), laenge=laengen[i],
+                text=_guetetext(koerper, halteguete_von(w), V[:, 0])))
         gemein = dict(knoten=sorted(knoten), koerper=koerper,
                       mitte=np.asarray(mitten[i], float), laenge=laengen[i],
                       fugen=sorted(fugen), abhilfe=_abhilfe(fugen, knoten))
@@ -646,6 +729,22 @@ def restfreiheiten(model, hoechstens: int = 0) -> list:
             if len(aus) >= hoechstens:
                 return aus
     return aus
+
+
+def _guetetext(koerper: list, wert: float, v) -> str:
+    """„V104: in Richtung x nur 3e-05 der steifsten Halterung"."""
+    # "default" ist die Elementgruppe derer ohne Gruppe - kein Bauteilname.
+    namen = [x for x in koerper if str(x) != "default"] or list(koerper)
+    wo = ", ".join(namen[:3]) + (" …" if len(namen) > 3 else "") or "Ein Teil"
+    v = np.asarray(v, float)
+    t, w = v[:3], v[3:]
+    achsen = ("x", "y", "z")
+    if float(np.linalg.norm(t)) >= float(np.linalg.norm(w)):
+        richtung = "Richtung " + achsen[int(np.argmax(np.abs(t)))]
+    else:
+        richtung = "Drehung um " + achsen[int(np.argmax(np.abs(w)))]
+    return (f"{wo}: in {richtung} nur {wert:.1e} der steifsten Halterung - "
+            "gehalten, aber dort fast ohne Steifigkeit")
 
 
 def wichtigste(sing: list, hoechstens: int = HOECHSTENS) -> list:
@@ -680,6 +779,58 @@ def _gruppen_je_knoten(model) -> dict:
 # --------------------------------------------------------------------------
 # Stufe 2
 # --------------------------------------------------------------------------
+def _weichstes_element(model, voll: np.ndarray, knoten) -> tuple:
+    """Das Element, das die Bewegung traegt: (Nummer, Ausschlag, Energie).
+
+    Zwei Kennzahlen aus dem Modus:
+
+        Ausschlag  a_e = max |u| ueber die Knoten von e   -> wo die Bewegung
+                                                             sichtbar ist
+        Energie    E_e = u_e^T K_e u_e                    -> wo sie kaum
+                                                             Widerstand findet
+
+    Gezeigt wird das Element mit dem groessten Ausschlag; die Energie steht
+    daneben, denn grosser Ausschlag bei fast keiner Energie **ist** die
+    Diagnose. Sie kommt zweimal zurueck: als Formaenderungsarbeit in Nm und
+    als Anteil E_e / (a_e^2 * mittlere Diagonale von K_e) - dimensionslos und
+    darum ohne Kenntnis des Werkstoffs lesbar. Gesucht wird nur unter den Elementen an den Knoten der Bewegung,
+    und die Elementsteifigkeit wird nur fuer den Gewinner aufgestellt - ueber
+    alle 489376 Elemente eines Volumenmodells waere es eine eigene Rechnung.
+    """
+    kn = {int(k) for k in (knoten if knoten is not None else [])}
+    if not kn or voll.size < 3 * model.nn:
+        return -1, 0.0, 0.0
+    u3 = voll.reshape(-1, 6)[:, :3]
+    bester, gross = -1, -1.0
+    for i, e in enumerate(model.elements):
+        nd = [int(x) for x in e.nodes]
+        if kn.isdisjoint(nd):
+            continue
+        a = float(np.abs(u3[nd]).max())
+        if a > gross:
+            bester, gross = i, a
+    if bester < 0:
+        return -1, 0.0, 0.0
+    energie, anteil = 0.0, 0.0
+    try:
+        from .assemble import element_dofs, element_matrix
+        e = model.elements[bester]
+        d = np.asarray(element_dofs(e, model), int)
+        if d.max() < voll.size:
+            ue = voll[d]
+            Ke = np.asarray(element_matrix(model, e), float)
+            # K_e ist positiv semidefinit; ein negatives Ergebnis ist
+            # Ausloeschung um die Null herum - und genau die ist der Befund:
+            # die Bewegung ist eine Starrkoerperbewegung dieses Elements und
+            # kostet nichts.
+            energie = max(0.0, float(ue @ (Ke @ ue)))
+            nenner = gross * gross * float(np.mean(np.abs(np.diag(Ke))))
+            anteil = energie / nenner if nenner > 0 else 0.0
+    except Exception:                     # noqa: BLE001 - eine Zahl daneben
+        energie, anteil = 0.0, 0.0        # darf die Diagnose nicht sperren
+    return bester, gross, energie, anteil
+
+
 def weichster_modus(K, model, frei=None, schritte: int = 20,
                     hoechstens: int = 1, melden=None) -> list:
     """Stufe 2: der niedrigste Modus von K ueber inverse Iteration.
@@ -744,14 +895,21 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
     koerper = sorted({gruppe_von[int(k)] for k in gross if int(k) in gruppe_von})
     wo = ", ".join(koerper[:3]) + (" …" if len(koerper) > 3 else "") or "Ein Bereich"
     schwer = (model.nodes[gross].mean(axis=0) if len(gross) else np.zeros(3))
+    nr, ausschlag, energie, anteil = _weichstes_element(model, voll, gross)
+    art = str(getattr(model.elements[nr], "typ", "")) if nr >= 0 else ""
     s = Singularitaet(
         art="numerisch", knoten=[int(k) for k in gross], koerper=koerper,
         t=(feld[gross].mean(axis=0) if len(gross) else np.zeros(3)),
         bezug=schwer, mitte=schwer, feld=feld,
-        text=f"{wo}: Bewegung fast ohne Steifigkeit",
+        element=nr, ausschlag=ausschlag, energie=energie, anteil=anteil,
+        text=f"{wo}" + (f", Element {nr} ({art})" if nr >= 0 else "")
+             + ": Bewegung fast ohne Steifigkeit",
         ursache="Die Steifigkeitsmatrix ist hier nahezu singulär. Die gezeigte "
                 "Bewegung kostet fast keine Energie - meist Splitterelemente oder "
-                "ein Bauteil mit Nullsteifigkeit.",
+                "ein Bauteil mit Nullsteifigkeit."
+                + (f" Ausschlag {ausschlag:.3g} bei {anteil:.1e} der mittleren "
+                   f"Steifigkeit dieses Elements ({energie:.3g} Nm "
+                   f"Formänderungsarbeit)." if nr >= 0 else ""),
         abhilfe=("lager", int(gross[0])) if len(gross) else None)
     return [s][:hoechstens]
 

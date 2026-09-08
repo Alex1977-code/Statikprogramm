@@ -3799,6 +3799,26 @@ def main():
             w._raender_stand = None
         check("ein Punkt auf dem Netz nennt die Fläche, auf der er liegt",
               all(a == b for a, b in treffer), str(treffer))
+
+        # Haltegüte: „gehalten" ist keine Ja-Nein-Auskunft
+        from statik3d import singular as _sg
+        zeilen0 = w.log.toPlainText().count("\n")
+        w._halteguete_melden([
+            _sg.Halteguete(wert=0.25, koerper=["V1"], text="V1: gut gehalten"),
+            _sg.Halteguete(wert=0.02, koerper=["V2"], text="V2: mäßig gehalten")])
+        text = w.log.toPlainText()
+        check("über der Schwelle nennt das Protokoll das weichste Teil",
+              "Haltegüte: am weichsten V2: mäßig gehalten" in text
+              and "WARNUNG" not in text.split("Haltegüte: am weichsten")[-1],
+              text.splitlines()[-1][:120])
+        w._halteguete_melden([
+            _sg.Halteguete(wert=1e-6, koerper=["V3"],
+                           text="V3: in Richtung y nur 1.0e-06 der steifsten Halterung")])
+        check("darunter wird gewarnt, mit Bauteil, Richtung und Wert",
+              w.log.toPlainText().splitlines()[-1]
+              == "WARNUNG: V3: in Richtung y nur 1.0e-06 der steifsten Halterung",
+              w.log.toPlainText().splitlines()[-1][:120])
+        _ = zeilen0
         # Die Darstellungsarten gelten auch fuer Flaechen und Volumen ohne Netz
         from statik3d.model import Volumenkoerper
         mz.koerper["K1"] = Volumenkoerper("K1", flaechen=["Mantel"])

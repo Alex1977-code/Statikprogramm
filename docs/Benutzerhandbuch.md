@@ -2060,6 +2060,29 @@ Der letzte Punkt ist der, auf den es ankommt. Unterschieden wird:
   dieses Bauteil ist das Ergebnis nicht verwertbar. Nach der Rechnung sagt
   das Programm es zusätzlich als Warnung, mit den betroffenen Bauteilen.
 
+Findet der Befehl **keine** freie Bewegung, ist die Frage nicht mehr *ob*,
+sondern *wie fest* gehalten wird. Dazu nennt das Protokoll die **Haltegüte**:
+
+```
+Haltegüte: am weichsten V4: in Richtung y nur 4.1e-03 der steifsten Halterung
+           (Grenze 1e-04; 17 Teiltragwerke geprüft)
+```
+
+Die Zahl ist das Verhältnis der schwächsten zur stärksten Halterichtung eines
+Bauteils. 1 hieße allseitig gleich fest; praktisch liegt ein sauber gehaltenes
+Bauteil zwischen 0,1 und 0,3, ein nur einseitig gehaltenes deutlich darunter.
+Unter 10⁻⁴ steht dort eine **WARNUNG** mit Bauteil, Richtung und Wert: das ist
+der Kandidat für die Meldung „Bewegung fast ohne Steifigkeit“ aus der
+Rechnung - nur eben schon vorher, ohne Löserlauf. So lässt sich auch
+beantworten, warum von mehreren gleich aussehenden Bauteilen nur einige
+gemeldet werden.
+
+Meldet die Rechnung „Bewegung fast ohne Steifigkeit“, steht dort jetzt das
+**Element**, nicht nur das Bauteil: „V104, Element 312487 (tet4): Bewegung
+fast ohne Steifigkeit … Ausschlag 1,0 bei 4·10⁻⁷ der mittleren Steifigkeit
+dieses Elements“. Beim Vernetzen nennt das Protokoll ebenso die
+schlechtesten Splitterelemente mit Nummer und Güte statt nur ihrer Zahl.
+
 Zwei Arten von Bewegung werden getrennt, weil sie verschiedene Abhilfen
 haben:
 

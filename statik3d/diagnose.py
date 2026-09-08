@@ -381,6 +381,28 @@ def singulaer_text(model, ex=None, system=None) -> str:
     return kopf + "\n" + "\n".join(z)
 
 
+def _halteguetebefund(guete: list, hoechstens: int = 6) -> list:
+    """Die Haltegüte der gehaltenen Teile - die weichsten zuerst.
+
+    ``wert = lambda_min / lambda_max`` der 6x6-Haltematrix: 1 heisst allseitig
+    gleich fest, 1e-5 heisst in einer Richtung fast nichts. Der Rang sieht das
+    nicht - er zaehlt nur, ob eine Richtung ueberhaupt angefasst wird. Ein
+    Teil unter :data:`singular.HALTEGUETE_MIN` ist der Kandidat fuer eine
+    Meldung aus dem Loeser, und es steht hier mit Namen, Richtung und Wert -
+    ohne Loeserlauf.
+    """
+    from .singular import HALTEGUETE_MIN
+    schwach = sorted((g for g in (guete or []) if 0.0 < g.wert < HALTEGUETE_MIN),
+                     key=lambda g: g.wert)
+    if not schwach:
+        return []
+    out = [f"WARNUNG: {g.text}" for g in schwach[:hoechstens]]
+    if len(schwach) > hoechstens:
+        out.append(f"… und {len(schwach) - hoechstens} weitere Teile unter der "
+                   f"Haltegüte {HALTEGUETE_MIN:.0e}")
+    return out
+
+
 def _bewegungsbefund(model) -> list:
     """Stufe 1b: die freien Bewegungen als Meldung - Bauteil, Art, Richtung.
 
@@ -391,11 +413,16 @@ def _bewegungsbefund(model) -> list:
     """
     try:
         from .singular import restfreiheiten, wichtigste
-        sing = restfreiheiten(model)
+        guete: list = []
+        sing = restfreiheiten(model, guete=guete)
     except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
         return []
     if not sing:
-        return []
+        # Kein Teil ist frei - dann ist die Frage nicht mehr **ob**, sondern
+        # **wie fest** gehalten wird. Genau dort steckt der Unterschied
+        # zwischen zwei aeusserlich gleichen Bauteilen, von denen eines
+        # gemeldet wird und das andere nicht.
+        return _halteguetebefund(guete)
     try:
         zeigen = wichtigste(sing) or sing
     except Exception:                     # noqa: BLE001
