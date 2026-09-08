@@ -4856,8 +4856,60 @@ def main():
             maus_(QtCore.QEvent.MouseMove, mitte_ + QtCore.QPoint(d_, d_), QtCore.Qt.NoButton, QtCore.Qt.LeftButton)
         maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(30, 30), QtCore.Qt.LeftButton,
               QtCore.Qt.NoButton)
-        check("Klicken und Ziehen (Drehen) wählt nichts", len(treffer_) == 1, str(len(treffer_)))
+        check("Klicken und Ziehen zieht ein Auswahlfenster auf, wählt aber nichts einzeln",
+              len(treffer_) == 1 and w._fenster_ecke is None, str(len(treffer_)))
+
+        # Befund N: links zieht nur das Fenster auf, rechts dreht
+        stil_ = w.plotter.iren.style
+        # VTKIS_NONE = 0. Aus den Ereignissen davor kann der Stil noch in einem
+        # Zustand stehen; fuer die Pruefung wird er zurueckgesetzt.
+        stil_.EndRotate()
+        ruhe_ = 0
+        maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.LeftButton, QtCore.Qt.LeftButton)
+        maus_(QtCore.QEvent.MouseMove, mitte_ + QtCore.QPoint(40, 40), QtCore.Qt.NoButton,
+              QtCore.Qt.LeftButton)
+        check("die linke Taste dreht nicht mehr (VTK sieht sie nicht)",
+              stil_.GetState() == ruhe_ and w._fenster_ecke is not None,
+              f"Zustand {stil_.GetState()} (Ruhe {ruhe_}), Fenster "
+              f"{w._fenster_ecke is not None}")
+        maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(40, 40),
+              QtCore.Qt.LeftButton, QtCore.Qt.NoButton)
+        check("und beim Loslassen ist das Fenster ausgewertet", w._fenster_ecke is None,
+              str(w._fenster_ecke))
+        stil_.EndRotate()
+        menues_ = []
+        alt_menu = w._viewport_menu
+        w._viewport_menu = lambda p: menues_.append(QtCore.QPoint(p))
+        maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.RightButton, QtCore.Qt.RightButton)
+        check("die rechte Taste versetzt VTK ins Drehen", stil_.GetState() != ruhe_,
+              f"Zustand {stil_.GetState()} (Ruhe {ruhe_})")
+        maus_(QtCore.QEvent.MouseButtonRelease, mitte_, QtCore.Qt.RightButton, QtCore.Qt.NoButton)
+        check("beim Loslassen ohne Zug endet das Drehen und das Menü kommt",
+              stil_.GetState() == ruhe_ and len(menues_) == 1,
+              f"Zustand {stil_.GetState()}, {len(menues_)} Menüs")
+        maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.RightButton, QtCore.Qt.RightButton)
+        maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(40, 10),
+              QtCore.Qt.RightButton, QtCore.Qt.NoButton)
+        check("mit Zug (gedreht) kommt kein Menü", len(menues_) == 1, f"{len(menues_)} Menüs")
+        w._viewport_menu = alt_menu
         w._picked = alt_picked
+
+        # Befund E: waehrend einer Rechnung oeffnet nichts Modales. error() ist
+        # in diesem Test durch einen Melder ersetzt - geprueft wird darum die
+        # Sperre selbst und der Weg von warnung() und _fragen().
+        w._rechnet_gerade = True
+        zeilen_ = w.log.toPlainText()
+        MainWindow.error(w, "Etwas ist schiefgegangen")
+        w.warnung("Und etwas anderes auch")
+        antwort_ = w._fragen("Titel", "Trotzdem weiter?")
+        w._rechnet_gerade = False
+        neu_ = w.log.toPlainText()[len(zeilen_):]
+        check("während der Rechnung geht der Fehler ins Protokoll statt in eine Box",
+              "FEHLER: Etwas ist schiefgegangen" in neu_
+              and "WARNUNG: Und etwas anderes auch" in neu_, neu_.strip()[:120])
+        check("und eine Rückfrage, die niemand sehen kann, wird verneint",
+              antwort_ is False and "während der Rechnung verneint" in neu_,
+              str(antwort_))
         alt_exec = dlg_.ReportDialog.exec
         dlg_.ReportDialog.exec = lambda self: 0
         fehler_ = []
