@@ -1266,6 +1266,21 @@ def _randkurve(m: Model, linien: list, teilung: int = TEILUNG_FLAECHE) -> np.nda
         return np.zeros((0, 3))
 
 
+#: Die Geometrieart einer Flaeche in RFEM (``Surface.impl_table``) im Klartext.
+#: Sie wird uebernommen, aber **nicht ausgewertet**: gerechnet wird ueber die
+#: Randlinien, und die tragen ihre wahre Form selbst. Am Drehlagermodell sind
+#: 782 der 1375 Flaechen Vierecke, 589 Ebenen und 4 beschnitten; das
+#: Huellvolumen von V29 trifft den exakten Ring trotzdem auf 0,4 %.
+SURFACE_ART = {
+    "SurfaceImplPlane": "Ebene",
+    "SurfaceImplQuadrangle": "Viereck",
+    "SurfaceImplTrimmed": "beschnitten",
+    "SurfaceImplNurbs": "NURBS",
+    "SurfaceImplRotated": "Rotationsfläche",
+    "SurfaceImplPipe": "Rohrmantel",
+}
+
+
 #: Federkonstanten des Flaechenlagers: Spalte -> Freiheitsgrad
 SURFACE_SPRINGS = {"springConstant_0": 0, "springConstant_1": 1, "springConstant_2": 2}
 
@@ -1499,6 +1514,7 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
     rueck = _stiffness_owner(db)
     line_name = line_name or {}
     n_oeffnung = 0
+    arten: dict = {}
     for h, impl in db.impls("Surface"):
         sid = h["id"]
         nr = h.get("userID") or sid
@@ -1528,9 +1544,13 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
             if rand:
                 loecher.append(rand)
         n_oeffnung += len(loecher)
+        tbl = str(h.get("impl_table") or "")
+        art = SURFACE_ART.get(tbl, tbl.replace("SurfaceImpl", "") if tbl else "")
+        arten[art] = arten.get(art, 0) + 1
         f = Flaeche(fname, linien, dicke=pname, material=mname,
                     kommentar=d["text"] if d["t"] <= 0 else "",
-                    oeffnungen=loecher, steifigkeit=d["text"] if d["t"] <= 0 else "")
+                    oeffnungen=loecher, steifigkeit=d["text"] if d["t"] <= 0 else "",
+                    quellart=art)
         m.flaechen[fname] = f
         namen[sid] = fname
         if d["t"] <= 0:
@@ -1568,6 +1588,11 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
     if n_oeffnung:
         C.say(log, f"  {n_oeffnung} Oeffnungen (Bohrungen, Aussparungen) mit ihren "
                    "Randlinien uebernommen")
+    if arten:
+        # Festgehalten, nicht ausgewertet: gerechnet wird ueber die Randlinien.
+        C.say(log, "  Geometrieart aus der Quelldatei: "
+                   + ", ".join(f"{n}x {k or 'ohne Angabe'}"
+                               for k, n in sorted(arten.items(), key=lambda x: -x[1])))
     if mit_oeffnung:
         C.say(log, f"  {mit_oeffnung} Flaechen mit Oeffnung ohne abgebildetes Netz")
     if ohne_rand:

@@ -2303,8 +2303,17 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
         C.say(log, f"  {tb['geglaettet']} Knoten geglättet, um Splitter zu "
                    "beseitigen (Randknoten bleiben, wo sie sind)")
     if tb.get("splitter"):
+        # Mit Nummer, nicht nur mit Zahl: zu jedem Befund gehoert das Element,
+        # sonst kann der Anwender es weder anzeigen noch nachrechnen. Gerechnet
+        # wird ueber die eingebauten Elemente, nicht ueber TET - dazwischen
+        # liegt _entartete_weglassen, und die Reihenfolge verschoebe sich.
+        q_e = guete(model.nodes, np.asarray(ecken, int)) if ecken else np.zeros(0)
+        schlecht = np.argsort(q_e)[:3] if q_e.size else np.zeros(0, int)
+        namen = ", ".join(f"Element {els[int(i)]} (Güte {q_e[int(i)]:.3f})"
+                          for i in schlecht if q_e[int(i)] < 0.1)
         C.say(log, f"  {tb['splitter']} Splitter (Güte unter 0.1) von "
-                   f"{len(TET)} Tetraedern")
+                   f"{len(TET)} Tetraedern"
+                   + (f", schlechteste: {namen}" if namen else ""))
     # Die vier Masse hat koerper_vorbereiten schon geprueft und, wo noetig,
     # feiner nachvernetzt. Hier steht nur noch, was danach uebrig blieb -
     # ohne die alte Aufforderung "mit kleinerer Kantenlänge nachvernetzen",

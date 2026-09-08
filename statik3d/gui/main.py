@@ -272,10 +272,12 @@ class MainWindow(QtWidgets.QMainWindow):
                                               pickable_window=True)
         except Exception:
             pass
-        # Rechtsklick: Kontextmenue zu dem, was unter dem Zeiger liegt
+        # Rechtsklick: Kontextmenue zu dem, was unter dem Zeiger liegt. Es
+        # oeffnet erst beim **Loslassen** ohne Ziehbewegung (:meth:`_rechts_los`) -
+        # die rechte Taste dreht seit Befund N die Ansicht, und wer dreht, will
+        # kein Menue. Qt darf es darum nicht selbst aufziehen.
         try:
-            self.plotter.interactor.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-            self.plotter.interactor.customContextMenuRequested.connect(self._viewport_menu)
+            self.plotter.interactor.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
         except Exception:
             pass
         # Mausrad: zum Zeiger zoomen statt zur Bildmitte
@@ -318,16 +320,31 @@ class MainWindow(QtWidgets.QMainWindow):
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     if ereignis.button() == QtCore.Qt.LeftButton:
                         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
-                    elif ereignis.button() == QtCore.Qt.RightButton and self._fenster_ecke is not None:
-                        self._fenster_abschliessen(pos)
+                        self._links_unten = True
+                        return True         # links dreht nicht mehr
+                    if ereignis.button() == QtCore.Qt.RightButton:
+                        if self._fenster_ecke is not None:
+                            self._fenster_abschliessen(pos)
+                            return True
+                        self._rechts_start = QtCore.QPoint(int(pos.x()), int(pos.y()))
+                        self._drehen_beginnen()
                         return True
-                elif t == QtCore.QEvent.MouseButtonRelease and ereignis.button() == QtCore.Qt.LeftButton:
-                    self._klick_loslassen(ereignis)
+                elif t == QtCore.QEvent.MouseButtonRelease:
+                    pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+                    if ereignis.button() == QtCore.Qt.LeftButton:
+                        self._links_los(pos)
+                        return True
+                    if ereignis.button() == QtCore.Qt.RightButton:
+                        self._rechts_los(pos)
+                        return True
                 elif t == QtCore.QEvent.MouseMove:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+                    if getattr(self, "_links_unten", False):
+                        self._links_ziehen(pos)
+                        return True
                     if self._fenster_ecke is not None:
                         self._fenster_nachziehen(pos)
-                    else:
+                    elif getattr(self, "_rechts_start", None) is None:
                         self._hover_anstossen(pos)
                 elif t == QtCore.QEvent.Leave:
                     self._hover_aus()
@@ -345,6 +362,68 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:                   # noqa: BLE001
             return False
         return super().eventFilter(obj, ereignis)
+
+    def _links_ziehen(self, pos) -> None:
+        """Mit gedrueckter linker Taste: das Auswahlfenster aufziehen.
+
+        Ueber die Klicktoleranz hinaus wird aus dem Druecken eine erste Ecke -
+        vorher nicht, sonst zappelte bei jedem Klick kurz ein Gummiband.
+        """
+        start = self._letzter_klick
+        if self._fenster_ecke is None and start is not None \
+                and max(abs(pos.x() - start.x()),
+                        abs(pos.y() - start.y())) > self.KLICK_TOLERANZ:
+            self._fenster_beginnen(start)
+        if self._fenster_ecke is not None:
+            self._fenster_nachziehen(pos)
+
+    def _links_los(self, pos) -> None:
+        """Linke Taste losgelassen: Fenster abschliessen oder einzeln waehlen."""
+        self._links_unten = False
+        self._klick_wartend = None
+        start = self._letzter_klick
+        gezogen = (start is not None
+                   and max(abs(pos.x() - start.x()),
+                           abs(pos.y() - start.y())) > self.KLICK_TOLERANZ)
+        if gezogen:
+            if self._fenster_ecke is not None:
+                self._fenster_abschliessen(pos)
+            return
+        # Klick ohne Bewegung: waehlen. Ein noch offenes Fenster aus einem
+        # frueheren Klick ins Leere schliesst :meth:`_picked` selbst ab.
+        self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
+        self._klick_umschalt = bool(QtWidgets.QApplication.keyboardModifiers()
+                                    & QtCore.Qt.ShiftModifier)
+        try:
+            self._picked(self._weltpunkt(int(pos.x()), int(pos.y())))
+        finally:
+            self._klick_umschalt = False
+
+    def _drehen_beginnen(self) -> None:
+        """Die rechte Taste dreht - VTK macht es selbst, mit seiner Traegheit.
+
+        Statt die Tasten im Qt-Filter umzubiegen, wird der Trackball-Stil in
+        den Drehzustand versetzt; die folgenden Mausbewegungen gehen
+        unveraendert an VTK, und ``OnMouseMove`` dreht. So bleibt das Gefuehl
+        genau das von VTK, und der Filter muss die Bewegung nicht anfassen.
+        """
+        try:
+            self.plotter.iren.style.StartRotate()
+        except Exception:                   # noqa: BLE001 - dann dreht es eben nicht
+            pass
+
+    def _rechts_los(self, pos) -> None:
+        """Rechte Taste losgelassen: Drehen beenden, ohne Zug das Menue."""
+        start = getattr(self, "_rechts_start", None)
+        self._rechts_start = None
+        try:
+            self.plotter.iren.style.EndRotate()
+        except Exception:                   # noqa: BLE001
+            pass
+        if start is None:
+            return
+        if max(abs(pos.x() - start.x()), abs(pos.y() - start.y())) <= self.KLICK_TOLERANZ:
+            self._viewport_menu(QtCore.QPoint(int(pos.x()), int(pos.y())))
 
     def _rad(self, ereignis) -> None:
         """Ein Mausradschritt: zoomen und den Punkt unter dem Zeiger festhalten."""
@@ -1514,8 +1593,9 @@ class MainWindow(QtWidgets.QMainWindow):
         band.show()
         band.raise_()
         self.statusBar().showMessage(
-            "Auswahlfenster: zweite Ecke mit der rechten Maustaste - links nach rechts "
-            "nur ganz im Fenster, rechts nach links auch angeschnittene. Esc bricht ab.", 8000)
+            "Auswahlfenster: mit gedrückter linker Taste aufziehen oder die zweite Ecke "
+            "anklicken - links nach rechts nur ganz im Fenster, rechts nach links auch "
+            "angeschnittene. Esc bricht ab.", 8000)
 
     def _fenster_nachziehen(self, pos):
         if self._fenster_ecke is None or getattr(self, "_gummiband", None) is None:
@@ -9806,12 +9886,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(str(msg))
         self.statusBar().showMessage(str(msg), 5000)
 
+    def _modal_gesperrt(self, art: str, msg) -> bool:
+        """Waehrend einer Rechnung wird kein modales Fenster geoeffnet.
+
+        Am 07.09.2026 ist das Programm beim Aufbau einer Meldungsbox
+        weggebrochen: eine Zugriffsverletzung in Qt6Gui, weil
+        ``findChildren<QPushButton*>()`` auf ein bereits freigegebenes
+        Kindobjekt stiess. **Welches** Kind tot war, ist nicht bekannt - dafuer
+        fehlen die Symbole, und geraten wird hier nicht. Solange das offen ist,
+        gilt die einfache Regel: aus dem Rechenpfad kommt kein Dialog, sondern
+        eine Protokollzeile. Die Auskunft geht dabei nicht verloren - das
+        Protokoll laesst sich als Datei sichern (Extras → Protokoll speichern).
+        """
+        if not getattr(self, "_rechnet_gerade", False):
+            return False
+        self.log.appendPlainText(f"{art}: {msg}")
+        erste = str(msg).splitlines()[0] if str(msg).strip() else str(msg)
+        self.statusBar().showMessage(f"{art}: {erste[:120]}", 8000)
+        self.bottom_tabs.setCurrentIndex(0)
+        return True
+
     def error(self, msg):
+        if self._modal_gesperrt("FEHLER", msg):
+            return
         QtWidgets.QMessageBox.critical(self, "Fehler", str(msg))
         self.log.appendPlainText("FEHLER: " + str(msg))
 
     def warnung(self, msg):
         """Etwas stimmt nicht, aber es geht weiter - anders als bei error()."""
+        if self._modal_gesperrt("WARNUNG", msg):
+            return
         QtWidgets.QMessageBox.warning(self, "Warnung", str(msg))
         self.log.appendPlainText("WARNUNG: " + str(msg))
 
@@ -13239,12 +13343,21 @@ class MainWindow(QtWidgets.QMainWindow):
         from .. import singular as sg
         if not self.model.elements:
             return self.info("Erst vernetzen - ohne Elemente gibt es nichts zu prüfen")
-        self._run_background(lambda p: sg.restfreiheiten(self.model),
-                             self._singular_fertig, "Freie Bewegungen")
+        def suchen(p):
+            # Die Haltegüte faellt bei der Suche ohnehin an: sie ist das
+            # Verhaeltnis lambda_min/lambda_max derselben 6x6-Haltematrix,
+            # deren Rang ueber "frei oder gehalten" entscheidet. Der Rang sagt
+            # nur **ob**, die Guete sagt **wie fest** - und das ist die Zahl,
+            # die zwei aeusserlich gleiche Bauteile unterscheidet.
+            g: list = []
+            return sg.restfreiheiten(self.model, guete=g), g
 
-    def _singular_fertig(self, sing):
+        self._run_background(suchen, self._singular_fertig, "Freie Bewegungen")
+
+    def _singular_fertig(self, ergebnis):
         """Ergebnis der Suche: ins Protokoll, in den Baum, erste in die Ansicht."""
         from .. import assemble as _asm, singular as sg
+        sing, guete = ergebnis if isinstance(ergebnis, tuple) else (ergebnis, [])
         try:
             sing = sg.auswerten(self.model, sing,
                                 _asm.load_vector(self.model, self.model.case()))
@@ -13257,12 +13370,38 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText("keine - jedes Bauteil ist gehalten")
         for x in self._freie_bewegungen:
             self.log.appendPlainText(f"{x.text}\n    {x.ursache}\n    {x.befund()}")
+        self._halteguete_melden(guete)
         self.bottom_tabs.setCurrentIndex(0)
         self._refresh_baum()
         if self._freie_bewegungen:
             self.bewegung_zeigen(0)
         else:
             self.info("Keine freie Bewegung gefunden - jedes Bauteil ist gehalten")
+
+    def _halteguete_melden(self, guete: list) -> None:
+        """Wie fest die gehaltenen Teile gehalten werden, die weichsten zuerst.
+
+        „Gehalten" ist keine Ja-Nein-Auskunft: ein Teil kann in allen sechs
+        Richtungen angefasst und in einer davon zehntausendmal weicher sein
+        als in der steifsten. Unter :data:`singular.HALTEGUETE_MIN` ist es der
+        Kandidat fuer die Meldung „Bewegung fast ohne Steifigkeit" aus dem
+        Loeser - und steht hier schon vorher mit Namen, Richtung und Wert.
+        """
+        from .. import singular as sg
+        werte = sorted((g for g in (guete or []) if g.wert > 0.0),
+                       key=lambda g: g.wert)
+        if not werte:
+            return
+        schwach = [g for g in werte if g.wert < sg.HALTEGUETE_MIN]
+        for g in schwach[:6]:
+            self.log.appendPlainText(f"WARNUNG: {g.text}")
+        if len(schwach) > 6:
+            self.log.appendPlainText(f"… und {len(schwach) - 6} weitere Teile unter "
+                                     f"der Haltegüte {sg.HALTEGUETE_MIN:.0e}")
+        if not schwach:
+            self.log.appendPlainText(
+                f"Haltegüte: am weichsten {werte[0].text} "
+                f"(Grenze {sg.HALTEGUETE_MIN:.0e}; {len(werte)} Teiltragwerke geprüft)")
 
     def singularitaeten(self) -> list:
         """Die freien Bewegungen, die gerade vorliegen.
@@ -13383,6 +13522,9 @@ class MainWindow(QtWidgets.QMainWindow):
             f"\n--- {label} gestartet ---"
             f"\n    Prozesspool (Elementschleifen, Vernetzen): {parallel.describe()}"
             f"\n    Gleichungsloeser: {_slv.loeser_verfuegbar()}")
+        # Ab hier oeffnet das Programm nichts Modales mehr, bis die Rechnung
+        # zurueck ist (:meth:`_modal_gesperrt`).
+        self._rechnet_gerade = True
         self.worker = SolveWorker(func)
         self.worker.progress.connect(self.info)
         self.worker.fortschritt.connect(self._rechnung_fortschritt)
@@ -13408,6 +13550,7 @@ class MainWindow(QtWidgets.QMainWindow):
             f"{getattr(self, '_rechnung_name', 'Berechnung')} beendet ({dt:.0f} s)", 8000)
 
     def _bg_done(self, on_done, result):
+        self._rechnet_gerade = False
         self.btn_solve.setEnabled(True)
         self._rechnung_ende()
         try:
@@ -13428,6 +13571,7 @@ class MainWindow(QtWidgets.QMainWindow):
         im Protokoll, und das liegt seit diesem Stand auch als Datei vor. Also
         Protokoll aufschlagen, Statuszeile setzen - kein Dialog.
         """
+        self._rechnet_gerade = False
         self.btn_solve.setEnabled(True)
         self._rechnung_ende()
         self.log.appendPlainText(tb)
@@ -13440,7 +13584,15 @@ class MainWindow(QtWidgets.QMainWindow):
                                      "  - Einzelheiten im Protokoll", 0)
 
     def _fragen(self, titel: str, text: str) -> bool:
-        """Ja/Nein-Rueckfrage - die Tests ueberschreiben sie."""
+        """Ja/Nein-Rueckfrage - die Tests ueberschreiben sie.
+
+        Waehrend einer Rechnung wird nicht gefragt, sondern verneint: eine
+        Frage, die niemand sehen kann, darf nicht stillschweigend mit „ja"
+        beantwortet werden. Sie steht dann im Protokoll.
+        """
+        if self._modal_gesperrt(
+                f"Rückfrage \u201e{titel}\u201c während der Rechnung verneint", text):
+            return False
         antwort = QtWidgets.QMessageBox.question(
             self, titel, text,
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.Yes)

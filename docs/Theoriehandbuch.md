@@ -1966,6 +1966,32 @@ Zeilen liefern Knoten-, Linien- und Flächenlager, einseitige Knotenlager,
 Kontaktpaare und Spaltelemente. Eine Feder hält dabei wie ein starres Lager -
 nur weicher; für die Frage, **ob** gehalten wird, zählt sie mit.
 
+**Der Rang sagt nur, ob - die Eigenwerte sagen, wie fest.** Aus derselben
+Zerlegung folgt die **Haltegüte**
+
+    g = λ_min / λ_max
+
+also der Kehrwert der Konditionszahl von **A**. Ein Teil kann in allen sechs
+Richtungen angefasst und in einer davon trotzdem tausendmal weicher gehalten
+sein als in der steifsten; der Rang sieht das nicht, denn er zählt nur, ob
+eine Richtung überhaupt vorkommt. Genau daran hing die Frage, warum von zwölf
+gleich definierten Passstiften nur einige als beweglich gemeldet werden.
+
+Weil alle Zeilen auf Norm 1 gebracht sind, ist λ in einer Richtung praktisch
+die **Zahl** der Halterungen, die dort wirken. Halten n Knoten einer Platte in
+z und nur zwei quer, ist λ_max von der Ordnung n und λ_min von der Ordnung
+eins - die Güte fällt wie 1/n. Gemessen an einer Platte mit 9, 25, 49 und 121
+Knoten der Unterseite: g·n = 0,517 / 0,471 / 0,456 / 0,444. Ist dieselbe
+Platte allseitig gehalten, bleibt g bei 0,15 bis 0,23, unabhängig von der
+Netzweite - die verbleibende Streuung ist der geometrische Anteil (r × d)/L
+der Drehzeilen, der nie den vollen Betrag erreicht.
+
+Unter `singular.HALTEGUETE_MIN` (10⁻⁴) wird gewarnt, mit Bauteil, Richtung
+und Wert - **vor** dem Lösen und ohne Lösermatrix. Zum Vergleich: am
+geprüften Drehlagermodell liegen die 17 Teiltragwerke zwischen 4,1·10⁻³ und
+6,3·10⁻². Ein Teil eine Zehnerpotenz darunter fällt aus der Familie und ist
+der Kandidat für die Meldung aus Stufe 2.
+
 ### 7b.2 Stufe 1b: die Kegelprüfung
 
 Stufe 1a nimmt Kontaktnormalen als beidseitig. Ein geschlossener Kontakt kann
@@ -2002,6 +2028,23 @@ betragskleinsten Eigenvektor, und das ist die Bewegung, die fast keine
 Energie kostet; die Knoten mit der größten Amplitude nennen das Bauteil.
 Kosten: eine Faktorisierung. Stufe 2 läuft darum erst, wenn weder die
 Topologie noch Stufe 1 etwas gefunden haben.
+
+**Zu jedem Befund gehört das Element, nicht nur das Bauteil.** Aus dem Modus
+**u** folgen je Element zwei Kennzahlen:
+
+    Ausschlag   a_e = max |u| über die Knoten von e     - wo die Bewegung sichtbar ist
+    Energie     E_e = u_eᵀ K_e u_e                      - wo sie kaum Widerstand findet
+
+Genannt wird das Element mit dem größten a_e, und E_e steht daneben - großer
+Ausschlag bei fast keiner Energie **ist** die Diagnose. Damit die Zahl ohne
+Kenntnis des Werkstoffs lesbar ist, steht sie zusätzlich dimensionslos als
+E_e / (a_e² · mittlere Diagonale von K_e). **K**_e ist positiv semidefinit;
+ein negatives Ergebnis wäre Auslöschung um die Null herum und wird auf null
+gesetzt - und genau die Null ist hier der Befund: die Bewegung ist eine
+Starrkörperbewegung dieses Elements und kostet nichts. Gesucht wird nur unter
+den Elementen an den Knoten der Bewegung, und **K**_e wird nur für den
+Gewinner aufgestellt; über alle 489 376 Elemente eines Volumenmodells wäre es
+eine eigene Rechnung.
 
 ### 7b.4 Die unausgeglichene Last: was wirklich ins Nichts geht
 

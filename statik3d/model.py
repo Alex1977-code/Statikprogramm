@@ -1659,6 +1659,14 @@ class Flaeche:
     #: hat ("starr", "ohne Dicke (Null-Element)", "Lastverteilung" …): so eine
     #: Flaeche traegt nichts, braucht kein Netz und haelt die Rechnung nicht auf
     steifigkeit: str = ""
+    #: Geometrieart aus der Quelldatei ("Ebene", "Viereck", "beschnitten", …).
+    #: Sie wird **festgehalten, nicht ausgewertet**: gerechnet wird ueber die
+    #: Randlinien, und die tragen ihre wahre Form (Bogen, Gerade) selbst. Am
+    #: geprueften Drehlagermodell trifft die Huelle von V29 den exakten Ring
+    #: auf 0,4 %, obwohl 10 seiner 13 Flaechen in RFEM Vierecke sind - die Art
+    #: aendert daran nichts. Sie steht hier, damit sie nicht verlorengeht und
+    #: nachpruefbar ist, wo doch einmal etwas daran haengt.
+    quellart: str = ""
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"

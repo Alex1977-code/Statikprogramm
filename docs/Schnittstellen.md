@@ -180,6 +180,25 @@ zur Geraden — **mit** Meldung im Protokoll, nie stillschweigend:
 
     2807 Linien gelesen (1356x arc, ueber ihre Kontrollpunkte gefuehrt)
 
+### Flächenarten
+
+RFEM legt auch je Flächenart eine eigene Umsetzungstabelle an. Statik3D
+**hält sie fest, wertet sie aber nicht aus** (`rfem6_db.SURFACE_ART` →
+`Flaeche.quellart`):
+
+| RFEM-Tabelle | Art | im Drehlagermodell |
+|---|---|---|
+| `SurfaceImplQuadrangle` | Viereck | 782 |
+| `SurfaceImplPlane` | Ebene | 589 |
+| `SurfaceImplTrimmed` | beschnitten | 4 |
+| `SurfaceImplNurbs`, `…Rotated`, `…Pipe` | NURBS, Rotationsfläche, Rohrmantel | — |
+
+Gerechnet und vernetzt wird über die **Randlinien**, und die tragen ihre wahre
+Form (Bogen, Gerade, Kontrollpunkte) selbst. Das ist nachprüfbar: das
+Hüllvolumen von V29 — 10 seiner 13 Flächen sind Vierecke — trifft den exakt
+gerechneten Ring auf 0,4 %. Die Art steht darum als Angabe am Objekt und im
+Protokoll, ohne dass eine Entscheidung an ihr hängt.
+
 ### Stabtypen
 
 RFEM 6 legt je Stabtyp eine eigene Umsetzungstabelle an — der Tabellenname

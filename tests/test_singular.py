@@ -35,6 +35,8 @@ Aufruf:  python -m tests.test_singular
 import os
 import sys
 
+import re
+
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -439,8 +441,9 @@ def test_stufe2_nennt_das_bauteil():
         # dieser Test einmal, waehrend Stufe 2 in Wirklichkeit gar nichts
         # lieferte - die inverse Iteration stieg an der Residuumspruefung des
         # Loesers aus. Geprueft wird darum die ganze Zeile.
-        check("die Matrixdiagnose nennt das bewegliche Bauteil",
-              "FEHLER: B: Bewegung fast ohne Steifigkeit" in str(ex), str(ex)[:200])
+        check("die Matrixdiagnose nennt das bewegliche Bauteil und sein Element",
+              re.search(r"FEHLER: B, Element \d+ \(\w+\): Bewegung fast ohne "
+                        r"Steifigkeit", str(ex)) is not None, str(ex)[:200])
     # und sie muss es auch ohne den Loeserpfad tun
     st = solver.StaticSystem(m)
     moden = sg.weichster_modus(st.K, m, st.fi)
@@ -448,6 +451,21 @@ def test_stufe2_nennt_das_bauteil():
     if moden:
         check("und ordnet ihn dem beweglichen Körper zu",
               moden[0].koerper == ["B"], str(moden[0].koerper))
+        # Zu jedem Fehler gehoert das Element, nicht nur das Bauteil.
+        el = moden[0].element
+        check("und nennt das Element, das die Bewegung trägt",
+              el >= 0 and str(m.elements[el].group) == "B",
+              f"Element {el} in {m.elements[el].group if el >= 0 else '?'}")
+        knoten_e = [int(x) for x in m.elements[el].nodes] if el >= 0 else []
+        u3 = np.zeros((m.nn, 3))
+        u3[np.asarray(moden[0].knoten, int)] = sg.modenfeld(m, moden[0])
+        check("der Ausschlag ist der größte Betrag an seinen Knoten",
+              abs(moden[0].ausschlag - float(np.abs(
+                  np.asarray(moden[0].feld, float)[knoten_e]).max())) < 1e-12,
+              f"{moden[0].ausschlag:.6g}")
+        check("und die Formänderungsarbeit dieses Elements steht daneben",
+              moden[0].energie >= 0.0 and moden[0].anteil < 1e-3,
+              f"{moden[0].energie:.3g} Nm, {moden[0].anteil:.1e} der mittleren Steifigkeit")
 
 
 def test_hilfsfesselung_bleibt_klein():
@@ -544,6 +562,111 @@ def test_rand_statt_feder_liefert_dasselbe():
           f"{B.nnz} = {st.Kff.nnz} + 2*{st._Vf.nnz}")
 
 
+def _platte(nx: int, seitlich: str) -> tuple:
+    """Eine Platte, deren Unterseite in z gehalten ist: (Modell, Knotenzahl).
+
+    ``seitlich = "zwei"``: nur zwei Knoten halten auch quer - gerade genug,
+    dass nichts mehr frei ist. ``"alle"``: jeder Knoten der Unterseite haelt
+    in allen drei Richtungen.
+    """
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    P = [[i / nx, j / nx, k * 0.2]
+         for k in range(2) for j in range(nx + 1) for i in range(nx + 1)]
+    m.add_nodes(np.array(P, float))
+    N = (nx + 1) * (nx + 1)
+
+    def idx(i, j, k):
+        return k * N + j * (nx + 1) + i
+
+    for j in range(nx):
+        for i in range(nx):
+            m.add_element("hex8", [idx(i, j, 0), idx(i + 1, j, 0), idx(i + 1, j + 1, 0),
+                                   idx(i, j + 1, 0), idx(i, j, 1), idx(i + 1, j, 1),
+                                   idx(i + 1, j + 1, 1), idx(i, j + 1, 1)], "S235", group="P")
+    unten = [idx(i, j, 0) for j in range(nx + 1) for i in range(nx + 1)]
+    for k in unten:
+        m.fix(k, [2])
+    if seitlich == "alle":
+        for k in unten:
+            m.fix(k, [0, 1])
+    else:
+        m.fix(unten[0], [0, 1])
+        m.fix(unten[nx], [1])
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0, 0, 0]
+    return m, len(unten)
+
+
+def test_halteguete():
+    """Wie **fest** ein Teil gehalten wird, nicht nur ob.
+
+    Die Haltematrix A = Summe(a a^T) ueber die auf Eins normierten Halterungs-
+    zeilen hat sechs Eigenwerte; ihr Verhaeltnis lambda_min/lambda_max ist die
+    Haltegüte. Halten n Knoten in z und nur zwei quer, ist der groesste
+    Eigenwert von der Ordnung n und der kleinste von der Ordnung eins - die
+    Guete faellt also wie 1/n. Genau das wird geprueft, an vier Netzweiten.
+
+    Der Rang sieht davon nichts: er ist in allen Faellen sechs, das Teil gilt
+    als gehalten. Deshalb blieb bisher unsichtbar, warum von zwoelf gleich
+    definierten Passstiften nur einige gemeldet werden.
+    """
+    # 1) Geschlossener Wert an einem gegebenen Spektrum
+    w = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 100.0])
+    close("Haltegüte ist lambda_min / lambda_max", sg.halteguete_von(w), 0.01, 1e-15)
+    check("ohne Halterung ist sie null", sg.halteguete_von(np.zeros(6)) == 0.0,
+          f"{sg.halteguete_von(np.zeros(6))}")
+
+    # 2) Am Modell: die Guete faellt wie 1/n
+    werte = {}
+    for nx in (2, 4, 6, 10):
+        m, n = _platte(nx, "zwei")
+        g = []
+        sing = sg.restfreiheiten(m, guete=g)
+        check(f"Platte {nx}x{nx}, quer nur zwei Knoten: nichts ist frei",
+              not sing and len(g) == 1, f"{len(sing)} Bewegungen, {len(g)} Güten")
+        if g:
+            werte[n] = g[0].wert
+    check("und die Güte fällt wie 1/n (n = Knoten der Unterseite)",
+          all(0.40 <= v * n <= 0.55 for n, v in werte.items()),
+          ", ".join(f"n={n}: g*n={v * n:.3f}" for n, v in sorted(werte.items())))
+    if 25 in werte and 121 in werte:
+        close("von 25 auf 121 Knoten also im Verhältnis 25/121",
+              werte[121] / werte[25], 25.0 / 121.0, 0.02)
+
+    # 3) Wer allseitig gehalten ist, bleibt bei jeder Netzweite gut
+    voll = {}
+    for nx in (2, 4, 6, 10):
+        m, n = _platte(nx, "alle")
+        g = []
+        sg.restfreiheiten(m, guete=g)
+        if g:
+            voll[n] = g[0].wert
+    check("allseitig gehalten: die Güte hängt nicht an der Knotenzahl",
+          bool(voll) and min(voll.values()) > 0.1,
+          ", ".join(f"n={n}: {v:.3f}" for n, v in sorted(voll.items())))
+    check("und sie ist um mehr als eine Zehnerpotenz besser als quer-nur-zwei",
+          bool(voll) and bool(werte) and voll[max(voll)] > 10 * werte[max(werte)],
+          f"{voll[max(voll)]:.4f} gegen {werte[max(werte)]:.4f}")
+
+    # 4) Die Meldung nennt Bauteil, Richtung und Wert
+    m, n = _platte(6, "zwei")
+    g = []
+    sg.restfreiheiten(m, guete=g)
+    t = g[0].text if g else ""
+    check("die Meldung nennt Bauteil, Richtung und Wert",
+          t.startswith("P: in Richtung x nur ") and "der steifsten Halterung" in t, t)
+    from statik3d.diagnose import _halteguetebefund
+    check("über der Schwelle wird nicht gewarnt",
+          not _halteguetebefund(g), str(_halteguetebefund(g)))
+    g[0].wert = 1e-6
+    g[0].text = "P: in Richtung x nur 1.0e-06 der steifsten Halterung"
+    check("darunter schon",
+          len(_halteguetebefund(g)) == 1
+          and _halteguetebefund(g)[0].startswith("WARNUNG: P: in Richtung x"),
+          str(_halteguetebefund(g)))
+
+
 def main():
     for f in (test_freier_wuerfel, test_rechnen_statt_abbrechen,
               test_hilfsfesselung_bleibt_klein,
@@ -552,7 +675,7 @@ def main():
               test_bericht_nennt_die_grenze, test_kontakt_gleitet, test_kontakt_hebt_ab,
               test_reibung_und_einseitige_lager,
               test_lagerausfall_kennt_die_richtung,
-              test_stufe2_nennt_das_bauteil):
+              test_stufe2_nennt_das_bauteil, test_halteguete):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

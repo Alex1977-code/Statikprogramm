@@ -670,6 +670,15 @@ nichts. Ein neues Netz oder ein anderes Modell hebt sie auf. Ein
 alles ein, was gerade zu sehen ist (wie *Zoom alles*); Ausgeblendetes zählt
 dabei nicht mit.
 
+**Während einer Rechnung öffnet das Programm kein Fenster.** Fehler,
+Warnungen und Rückfragen gehen dann ins Protokoll und in die Statuszeile; eine
+Rückfrage, die niemand sehen kann, gilt als verneint. Grund ist ein Absturz
+vom 07.09.2026 in Qt selbst, beim **Aufbau** einer Meldungsbox — welches
+Kindobjekt dort tot war, ließ sich ohne Symbole nicht klären, und solange das
+offen ist, kommt aus dem Rechenpfad kein Dialog. Verloren geht dabei nichts:
+das Protokoll lässt sich unter *Extras → Protokoll speichern…* als Datei
+sichern.
+
 **Der Ansichtswürfel** oben rechts dreht sich mit der Ansicht und lässt sich
 **mit der Maus drehen**: auf den Würfel klicken und ziehen dreht die Kamera um
 den Blickpunkt. Ein Klick auf eine Würfelseite stellt die Ansicht senkrecht
@@ -847,10 +856,24 @@ stellt die Auswahlart darauf um. Gemessen wird in Bildpunkten um den Zeiger
 ein Klick knapp neben einem Knoten, einer Linie oder einer Stabachse trifft
 noch.
 
-**Auswahlfenster.** Ein Klick mit der **linken** Maustaste ins Leere setzt
-die erste Ecke, ein zweiter Klick - **links oder rechts** - die zweite;
-dazwischen zeigt ein durchscheinendes Rechteck, was das Fenster fassen wird.
-Ein Klick auf der ersten Ecke verwirft das Fenster wieder.
+**Die Maustasten in der 3D-Ansicht.**
+
+| Taste | tut |
+|---|---|
+| **links** | wählen (Klick) und das **Auswahlfenster** aufziehen (ziehen) |
+| **rechts** | **drehen**; ohne Ziehbewegung das Kontextmenü |
+| **Mausrad** | zoomen, zum Zeiger hin |
+| **Mitte** | schwenken; Doppelklick passt alles Sichtbare ins Bild |
+
+Die linke Taste dreht **nicht** mehr — sie gehört ganz der Auswahl. Dadurch
+gibt es keinen Fall mehr, in dem eine Zeigerbewegung mal dreht und mal ein
+Fenster aufzieht.
+
+**Auswahlfenster.** Mit gedrückter **linker** Maustaste aufziehen: der
+Druckpunkt ist die erste Ecke, der Loslasspunkt die zweite. Wer lieber
+klickt: ein Klick ins Leere setzt ebenfalls die erste Ecke, ein zweiter die
+zweite; dazwischen zeigt ein durchscheinendes Rechteck, was das Fenster
+fassen wird. Ein Klick auf der ersten Ecke verwirft das Fenster wieder.
 
 | aufgezogen | Rechteck | gewählt wird |
 |---|---|---|
@@ -2059,6 +2082,29 @@ Der letzte Punkt ist der, auf den es ankommt. Unterschieden wird:
   keine Fuge auf. Im wirklichen Bauwerk würde sich das Bauteil bewegen; für
   dieses Bauteil ist das Ergebnis nicht verwertbar. Nach der Rechnung sagt
   das Programm es zusätzlich als Warnung, mit den betroffenen Bauteilen.
+
+Findet der Befehl **keine** freie Bewegung, ist die Frage nicht mehr *ob*,
+sondern *wie fest* gehalten wird. Dazu nennt das Protokoll die **Haltegüte**:
+
+```
+Haltegüte: am weichsten V4: in Richtung y nur 4.1e-03 der steifsten Halterung
+           (Grenze 1e-04; 17 Teiltragwerke geprüft)
+```
+
+Die Zahl ist das Verhältnis der schwächsten zur stärksten Halterichtung eines
+Bauteils. 1 hieße allseitig gleich fest; praktisch liegt ein sauber gehaltenes
+Bauteil zwischen 0,1 und 0,3, ein nur einseitig gehaltenes deutlich darunter.
+Unter 10⁻⁴ steht dort eine **WARNUNG** mit Bauteil, Richtung und Wert: das ist
+der Kandidat für die Meldung „Bewegung fast ohne Steifigkeit“ aus der
+Rechnung - nur eben schon vorher, ohne Löserlauf. So lässt sich auch
+beantworten, warum von mehreren gleich aussehenden Bauteilen nur einige
+gemeldet werden.
+
+Meldet die Rechnung „Bewegung fast ohne Steifigkeit“, steht dort jetzt das
+**Element**, nicht nur das Bauteil: „V104, Element 312487 (tet4): Bewegung
+fast ohne Steifigkeit … Ausschlag 1,0 bei 4·10⁻⁷ der mittleren Steifigkeit
+dieses Elements“. Beim Vernetzen nennt das Protokoll ebenso die
+schlechtesten Splitterelemente mit Nummer und Güte statt nur ihrer Zahl.
 
 Zwei Arten von Bewegung werden getrennt, weil sie verschiedene Abhilfen
 haben:

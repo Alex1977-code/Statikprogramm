@@ -816,6 +816,22 @@ def test_flaechen_mit_dicke():
               ", ".join(m.flaechen))
         check("Randlinien am Objekt", m.flaechen["F1"].linien == ["L1", "L2", "L3", "L4"],
               str(m.flaechen["F1"].linien))
+        # Die Geometrieart aus der Quelldatei wird festgehalten, nicht
+        # ausgewertet: gerechnet wird ueber die Randlinien, und die tragen
+        # ihre wahre Form selbst.
+        check("die Geometrieart aus der Quelldatei steht am Objekt",
+              all(f.quellart == "Ebene" for f in m.flaechen.values()),
+              str({n: f.quellart for n, f in m.flaechen.items()}))
+        check("und im Protokoll",
+              any("Geometrieart aus der Quelldatei: 4x Ebene" in z for z in log),
+              next((z for z in log if "Geometrieart" in z), "keine Zeile"))
+        from statik3d.importers.rfem6_db import SURFACE_ART
+        check("die Tabelle kennt die Arten, die im Drehlagermodell vorkommen "
+              "(782x Viereck, 589x Ebene, 4x beschnitten)",
+              SURFACE_ART["SurfaceImplQuadrangle"] == "Viereck"
+              and SURFACE_ART["SurfaceImplPlane"] == "Ebene"
+              and SURFACE_ART["SurfaceImplTrimmed"] == "beschnitten",
+              str(sorted(SURFACE_ART.items()))[:120])
         check("Objekt kennt seine Elemente", len(m.flaechen["F1"].elemente) == 1,
               str(m.flaechen["F1"].elemente))
         check("Flaeche ohne Dicke traegt kein Netz",
