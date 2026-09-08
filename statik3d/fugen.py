@@ -853,6 +853,7 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
     """
     from .importers import _common as C
     from .model import ContactPair
+    from .contact import AUFLIEGEND, verteilungstext
     # Gesucht wird ueber die **Geometrie**, nicht ueber die Liste der Flaechen,
     # an denen die Freigabe haengt: die ist unvollstaendig. Im Beispielmodell
     # nennt sie fuer 36 freigegebene Flaechen nur 5 Gegenflaechen - die
@@ -899,10 +900,17 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
     if b_n.typ == "spring" and float(b_n.stiffness or 0.0) > 0:
         # Feder je Flaeche -> je Knoten ueber die mittlere Einflussflaeche
         steif = float(b_n.stiffness) * A_zu / max(len(slave), 1)
+    # Der Suchradius des Kontaktpaars ist derselbe, der die Gegenseite gefunden
+    # hat. Frueher stand hier das Doppelte: das Protokoll nannte 9 mm, im
+    # Modell standen 18,5 mm, und der Loeser paarte Knoten, die weiter entfernt
+    # lagen als jede Facette, die zur Fuge gezaehlt worden war. Am
+    # Beispielmodell waren das an einer Fuge 213 von 290 gepaarten Knoten mit
+    # mehr als 5 mm Spalt, der groesste 121 mm - Lastpfade, die es in der
+    # Konstruktion nicht gibt. Wer zwei Buecher fuehrt, hat eines zu viel.
     model.contact_pairs.append(ContactPair(
         name=kb.name, slave_nodes=slave,
         master_faces=[list(v) for v in master.values()], mu=mu,
-        stiffness=steif, search_radius=2.0 * weite,
+        stiffness=steif, search_radius=weite,
         zug=zug, haften=haften, anliegend=bool(getattr(kb, "spalt_schliessen", False))))
     kb.ausgefuehrt = True
     bericht["kontaktpaar"] = 1
@@ -917,8 +925,8 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
                    + (f"{bericht['knoten']} Randknoten getrennt, " if bericht["knoten"] else "")
                    + f"Kontaktpaar mit {len(slave)} Knoten gegen {len(master)} Gegenfacetten "
                    f"({A_zu * 1e4:.0f} von {A_alle * 1e4:.0f} cm² der Kontaktseite, "
-                   f"Suchradius {weite * 1e3:.0f} mm, Spalt im Mittel "
-                   f"{float(np.median(spalt)) * 1e3:.2f} mm, größter {float(spalt.max()) * 1e3:.2f} mm"
+                   f"Suchradius {weite * 1e3:.0f} mm, Spalt "
+                   + verteilungstext(spalt, AUFLIEGEND * weite)
                    + (", wird auf Berührung gesetzt" if getattr(kb, "spalt_schliessen", False) else "")
                    + ")"
                    + (f", Reibung mu = {mu:g}" if mu and not haften else "")

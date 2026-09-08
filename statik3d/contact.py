@@ -31,6 +31,12 @@ SLIP_STIFFNESS = 1.0e-3      # Reststeifigkeit beim Gleiten (Regularisierung, An
 SLIP_STIFFNESS_FINE = 1.0e-8  # Phase 2: haftende Nachbarn halten das Bauteil, Feder nur noch formal
 SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
 MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel (je Runde einer)
+#: Ein Slave-Knoten gilt als deckungsgleich mit einem Master-Knoten, wenn er
+#: naeher als dieser Anteil der Modellgroesse liegt (Rundungsrauschen des
+#: Vernetzers, nicht ein Spalt).
+DECKUNGSGLEICH = 1e-6
+#: Bis zu diesem Anteil des Suchradius gilt ein Spalt als Beruehrung.
+AUFLIEGEND = 1e-3
 
 
 # --------------------------------------------------------------------------
@@ -64,6 +70,27 @@ class Constraint:
     g: float = 0.0
     toggles: int = 0
     frozen: bool = False
+
+
+def verteilungstext(werte, aufliegend: float = 0.0) -> str:
+    """Die Verteilung der Spaltmasse als Satz - nicht ihr Mittelwert.
+
+    Ein Mittelwert ueber eine zweigipflige Verteilung beschreibt keinen
+    Zustand. Liegen zwei Drittel einer Fuge auf null und der Rest bei 40 bis
+    80 mm, steht dort „im Mittel 25 mm" - eine Zahl, die an keiner Stelle der
+    Fuge vorkommt, und die verdeckt, dass ein Drittel gar nicht anliegt.
+    Genannt werden darum der Anteil, der wirklich aufliegt, der Median, das
+    90. Perzentil und der groesste Wert. ``aufliegend`` ist die Grenze, bis zu
+    der ein Spalt als Beruehrung zaehlt.
+    """
+    w = np.asarray(werte, float)
+    if not w.size:
+        return "kein Spalt gemessen"
+    auf = int((w <= aufliegend).sum())
+    return (f"{100.0 * auf / w.size:.0f} % aufliegend, Median "
+            f"{float(np.median(w)) * 1e3:.2f} mm, 90 % unter "
+            f"{float(np.percentile(w, 90)) * 1e3:.2f} mm, größter "
+            f"{float(w.max()) * 1e3:.2f} mm")
 
 
 def contact_dofs(model, K=None) -> set:
@@ -218,6 +245,33 @@ def naechste_punkte_dreiecke(p, A, B, C):
         q[m] = A[m] + ab[m] * v[m, None] + ac[m] * u[m, None]
         w[m] = np.column_stack([1 - v[m] - u[m], v[m], u[m]])
     return q, w
+
+
+def _deckender_knoten(p, s, mbaum, mknoten, nnorm, nflaeche, tol):
+    """Der Master-Knoten, auf dem ``p`` liegt - oder None.
+
+    Rueckgabe ([Knoten], [1.0], Normale, 0.0): ein Master, volles Gewicht,
+    Spalt null. Die Normale ist die flaechengewichtete Mittelung der
+    Master-Facetten in diesem Knoten. Stossen dort Facetten zusammen, die
+    einander entgegen zeigen - eine duenne Platte, deren beide Seiten zum
+    selben Kontaktpaar gehoeren -, hebt sich die Summe auf; dann gibt es keine
+    Flaechennormale und es bleibt bei der Suche.
+    """
+    dd, ii = mbaum.query(p, k=2)
+    for d0, i0 in zip(np.atleast_1d(dd), np.atleast_1d(ii)):
+        if not np.isfinite(d0) or d0 > tol:
+            break
+        t = int(mknoten[int(i0)])
+        if t == int(s):
+            continue
+        v = nnorm.get(t)
+        if v is None:
+            continue
+        laenge = float(np.linalg.norm(v))
+        if laenge <= 0.2 * float(nflaeche.get(t, 0.0)):
+            return None
+        return [t], [1.0], v / laenge, 0.0
+    return None
 
 
 def master_facets(model: Model, cp) -> list[tuple[int, ...]]:
@@ -447,6 +501,29 @@ class ContactSystem:
             + f" (mittlere Facettennormale {mittel:.3f})")
         return 0.5 * u if zyl else u
 
+    def _bedingung(self, cp, s, tri, wj, n, d, normalen, marke):
+        """Eine Kontaktbedingung fuer Slave-Knoten ``s`` gegen ``tri``/``wj``.
+
+        Gemeinsamer Teil beider Wege: der deckungsgleiche Knoten (ein Master,
+        Gewicht 1) und die Projektion auf eine Facette (drei Master mit
+        baryzentrischen Gewichten) unterscheiden sich nur darin, wer der
+        Master ist und woher die Richtung kommt.
+        """
+        g0 = 0.0 if (cp.anliegend or cp.zug) else float(d) - cp.gap
+        dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
+        cn = np.concatenate([n] + [-wi * n for wi in wj])
+        kn = cp.stiffness if cp.stiffness > 0 else self._auto_k([s])
+        ct = None
+        if cp.mu > 0 or cp.haften:
+            t1, t2 = _tangent_basis(n)
+            ct = np.vstack([np.concatenate([t1] + [-wi * t1 for wi in wj]),
+                            np.concatenate([t2] + [-wi * t2 for wi in wj])])
+        normalen.append(n)
+        self.cons.append(Constraint("surface", dofs, cn, ct, float(g0), kn,
+                                    TANGENT_FACTOR * kn, cp.mu, s, n, marke,
+                                    master=(list(tri), list(wj)),
+                                    zug=bool(cp.zug), haften=bool(cp.haften)))
+
     def _build_pair(self, cp):
         """Ein Kontaktpaar in Bedingungen umsetzen: jeder Slave-Knoten gegen
         die naechste Master-Facette im Suchradius.
@@ -468,6 +545,8 @@ class ContactSystem:
         cen_of = _solid_outward(m, cp)
         radius = cp.search_radius if cp.search_radius else 0.1 * self.size
         tris, ecken = [], []   # (nodes(3), n, facet_key), (A, B, C)
+        nnorm: dict = {}       # Knoten -> Summe Flaeche * Normale
+        nflaeche: dict = {}    # Knoten -> Summe der Facettenflaechen
         for f in facets:
             key = tuple(sorted(f))
             if len(f) == 3:
@@ -486,6 +565,21 @@ class ContactSystem:
                         nv = -nv
                 tris.append((tri, nv, key))
                 ecken.append(P)
+            # Die Flaechennormale der **ganzen** Facette (Newell), nicht die
+            # ihrer Dreiecke: ein Viereck zerfaellt in zwei, und die Ecke, die
+            # in beiden vorkommt, bekaeme sonst das doppelte Gewicht. Am
+            # Zwoelfeck reicht das, um die Knotennormale um 5 Grad zu kippen.
+            Pf = m.nodes[list(f)]
+            vf = 0.5 * np.cross(Pf, np.roll(Pf, -1, axis=0)).sum(axis=0)
+            af = float(np.linalg.norm(vf))
+            if af <= 0:
+                continue
+            if key in cen_of and vf @ (cen_of[key] - Pf.mean(axis=0)) > 0:
+                vf = -vf
+            for t in f:
+                t = int(t)
+                nnorm[t] = nnorm.get(t, 0.0) + vf
+                nflaeche[t] = nflaeche.get(t, 0.0) + af
         if not tris:
             self.log.append(f"Kontaktpaar '{cp.name}': alle Master-Facetten entartet")
             return
@@ -497,12 +591,38 @@ class ContactSystem:
         rmax = float(R.max())
         knoten = np.array([t[0] for t in tris], dtype=int)
         baum = cKDTree(S)
+        # Deckungsgleiche Knoten brauchen weder Suche noch Projektion: liegt
+        # ein Slave-Knoten auf einem Master-Knoten, ist der Spalt null und der
+        # Master dieser eine Knoten - der ANSYS-Weg fuer ein passendes Netz.
+        # Was dabei uebrig bleibt, ist die Richtung. Sie aus einer der
+        # Facetten zu nehmen, die dort zusammenstossen, waere Zufall: an einem
+        # gekruemmten Master (Bohrung, Zylinder) stehen sie im Beispielmodell
+        # im Mittel 41 Grad auseinander, an einer Fugenkante bis 90 Grad. Die
+        # Flaechennormale der Oberflaeche im Knoten ist der flaechengewichtete
+        # Mittelwert - fuer den gekruemmten Master die bessere Naeherung als
+        # jede einzelne Facette, und vor allem eindeutig.
+        mknoten = np.unique(knoten)
+        mbaum = cKDTree(m.nodes[mknoten])
+        tol_deck = DECKUNGSGLEICH * self.size
+        deckend = 0
+        spalte: list = []
         n_paired = 0
         ohne: list = []
         erste = len(self.cons)          # ab hier gehoeren die Bedingungen zu cp
         normalen: list = []
         for s in cp.slave_nodes:
             p = m.nodes[s]
+            fund = _deckender_knoten(p, s, mbaum, mknoten, nnorm, nflaeche, tol_deck)
+            if fund is not None:
+                tri, wj, n, d = fund
+                if cp.flip_normal:
+                    n = -n
+                deckend += 1
+                spalte.append(0.0)
+                self._bedingung(cp, s, tri, wj, n, d, normalen,
+                                f"{cp.name}: Knoten {s} -> Knoten {tri[0]}")
+                n_paired += 1
+                continue
             idx = np.asarray(baum.query_ball_point(p, radius + rmax), dtype=int)
             if idx.size:
                 idx = idx[~np.any(knoten[idx] == s, axis=1)]       # nicht gegen sich selbst
@@ -543,21 +663,9 @@ class ContactSystem:
                 if d < 0:
                     n = -n
                     d = -d
-            g0 = 0.0 if (cp.anliegend or cp.zug) else d - cp.gap
-            dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
-            cn = np.concatenate([n] + [-wi * n for wi in wj])
-            kn = cp.stiffness if cp.stiffness > 0 else self._auto_k([s])
-            ct = None
-            if cp.mu > 0 or cp.haften:
-                t1, t2 = _tangent_basis(n)
-                ct = np.vstack([np.concatenate([t1] + [-wi * t1 for wi in wj]),
-                                np.concatenate([t2] + [-wi * t2 for wi in wj])])
-            normalen.append(n)
-            self.cons.append(Constraint("surface", dofs, cn, ct, float(g0), kn,
-                                        TANGENT_FACTOR * kn, cp.mu, s, n,
-                                        f"{cp.name}: Knoten {s} -> Facette {tri}",
-                                        master=(list(tri), list(wj)),
-                                        zug=bool(cp.zug), haften=bool(cp.haften)))
+            spalte.append(abs(float(d)))
+            self._bedingung(cp, s, list(tri), list(wj), n, d, normalen,
+                            f"{cp.name}: Knoten {s} -> Facette {tri}")
             n_paired += 1
         # Das Uebermass erst jetzt: welche Form die Fuge hat, sagen die
         # Facetten, die wirklich gepaart wurden - nicht alle Aussenflaechen des
@@ -569,11 +677,13 @@ class ContactSystem:
             # schon vor der Last unter Druck. Ein Verbund kennt beides nicht.
             for c in self.cons[erste:]:
                 c.g0 -= ueber
-        self.log.append(f"Kontaktpaar '{cp.name}': {n_paired} von {len(cp.slave_nodes)} "
-                        f"Slave-Knoten zugeordnet"
-                        + (f" - {len(ohne)} ohne Master-Facette im Suchradius "
-                           f"{radius:.3g} m (z. B. Knoten {', '.join(str(x) for x in ohne[:5])})"
-                           if ohne else ""))
+        self.log.append(
+            f"Kontaktpaar '{cp.name}': {n_paired} von {len(cp.slave_nodes)} "
+            f"Slave-Knoten zugeordnet, davon {deckend} deckungsgleich"
+            + (f"; Spalt {verteilungstext(spalte, AUFLIEGEND * radius)}" if spalte else "")
+            + (f" - {len(ohne)} ohne Master-Facette im Suchradius "
+               f"{radius:.3g} m (z. B. Knoten {', '.join(str(x) for x in ohne[:5])})"
+               if ohne else ""))
 
     # ---- Zustand ---------------------------------------------------------
     def initialize(self):

@@ -285,14 +285,30 @@ Die **Standardkontakte** heißen wie in ANSYS:
 
 Die Flächen der beiden Körper müssen **weder deckungsgleich noch gleich fein
 vernetzt** sein: das Kontaktpaar verbindet jeden Knoten der Kontaktseite mit
-der nächsten Facette der Gegenseite im Suchradius (Knoten gegen Fläche). Steht
-schon ein Netz, wird die Fuge mit „OK“ bzw. „Übernehmen“ sofort getrennt und
-das Protokoll sagt, wie viel der Kontaktseite eine Gegenseite gefunden hat
-(„599 von 3430 cm²“, Spalt im Mittel und größter) - die übrige Kontaktseite
-liegt weiter als der Suchradius von jedem anderen Bauteil entfernt. Der
-**Spalt** ist dabei der Abstand senkrecht zur Fuge; ein Versatz **in** der
-Fugenebene zählt nicht mit, denn er bedeutet kein Abheben. Ohne Netz
-geschieht es beim Vernetzen.
+der nächsten Facette der Gegenseite im Suchradius (Knoten gegen Fläche). Liegt
+ein Knoten der Kontaktseite genau auf einem Knoten der Gegenseite, wird er
+ohne Suche direkt mit ihm gepaart. Steht schon ein Netz, wird die Fuge mit
+„OK“ bzw. „Übernehmen“ sofort getrennt und das Protokoll sagt, wie viel der
+Kontaktseite eine Gegenseite gefunden hat („599 von 3430 cm²“) - die übrige
+Kontaktseite liegt weiter als der Suchradius von jedem anderen Bauteil
+entfernt. Der **Spalt** ist dabei der Abstand senkrecht zur Fuge; ein Versatz
+**in** der Fugenebene zählt nicht mit, denn er bedeutet kein Abheben. Ohne
+Netz geschieht es beim Vernetzen.
+
+Zum Spalt nennt das Protokoll die **Verteilung**, nicht einen Mittelwert:
+
+```
+Spalt 41 % aufliegend, Median 24.94 mm, 90 % unter 33.99 mm, größter 60.56 mm
+```
+
+Das ist die Auskunft, auf die es ankommt. Eine teilweise anliegende Fuge hat
+zwei Gipfel — ein Teil liegt auf null, der Rest steht ab —, und ein Mittelwert
+darüber nennt eine Zahl, die an keiner Stelle der Fuge vorkommt. Steht dort
+ein kleiner Anteil „aufliegend“ und ein Median in der Größenordnung des
+Netzes, berühren sich die Bauteile im Modell nicht wirklich: dann stimmt
+entweder die Geometrie nicht oder der Suchradius ist zu groß gewählt. Dieselbe
+Auskunft steht beim Rechnen noch einmal je Kontaktpaar, dort für die Knoten,
+zusammen mit der Zahl derer, die gar keine Gegenfacette gefunden haben.
 
 Zur Fugenebene selbst sagt das Protokoll, was sie hält. Ohne Reibung und ohne
 Federn trägt eine Fuge nur senkrecht zu ihren Facetten — ob das Bauteil damit

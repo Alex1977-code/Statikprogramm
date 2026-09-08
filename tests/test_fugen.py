@@ -419,7 +419,7 @@ def test_suchradius_kommt_aus_der_fuge():
             "Fuge", flaechennamen=["FugeO"], gegenflaechen=["FugeU"], koerpernamen=["Oben"],
             behaviour={2: DofBehaviour("free", failure="zug")})
         b = fugen.kontaktfuge_ausfuehren(m, kb, [])
-        radien.append(m.contact_pairs[-1].search_radius / 2.0)
+        radien.append(m.contact_pairs[-1].search_radius)
         anteile.append(b["anteil"])
     check("die Fuge wird in beiden Modellen ganz gefunden",
           min(anteile) > 0.99, f"{anteile[0]*100:.1f} % / {anteile[1]*100:.1f} %")
@@ -436,7 +436,7 @@ def test_suchradius_kommt_aus_der_fuge():
         suchweite=0.4, behaviour={2: DofBehaviour("free", failure="zug")})
     fugen.kontaktfuge_ausfuehren(m2, kb2, [])
     close("ein vorgegebener Suchradius wird nicht überstimmt",
-          m2.contact_pairs[-1].search_radius / 2.0, 0.4, 1e-12, " m")
+          m2.contact_pairs[-1].search_radius, 0.4, 1e-12, " m")
 
 
 def test_diagnose_sieht_die_gegenseite():
@@ -989,6 +989,132 @@ def test_formschluss_meldung():
     check("mit Reibung sagt die Meldung gar nichts", not log4, str(log4))
 
 
+# --------------------------------------------------------------------------
+# Ein Suchradius, deckungsgleiche Knoten, die Verteilung statt des Mittelwerts
+# --------------------------------------------------------------------------
+def test_ein_suchradius():
+    """Modell und Protokoll nennen denselben Suchradius.
+
+    Frueher stand im Kontaktpaar das Doppelte dessen, was das Protokoll
+    nannte - 9 mm im Text, 18,5 mm im Modell, durchgaengig Faktor zwei. Der
+    Loeser paarte damit Knoten, die weiter entfernt lagen als jede Facette,
+    die zur Fuge gezaehlt worden war: am Beispielmodell an einer Fuge 213 von
+    290 gepaarten Knoten mit mehr als 5 mm Spalt, der groesste 121 mm.
+    """
+    import re
+    m = zwei_bloecke("eigene", h=0.25)
+    kb = m.add_kontaktbedingung(
+        "Fuge", flaechennamen=["FugeO"], gegenflaechen=["FugeU"], koerpernamen=["Oben"],
+        behaviour={2: DofBehaviour("free", failure="zug")})
+    log = []
+    fugen.kontaktfuge_ausfuehren(m, kb, log)
+    tr = re.search(r"Suchradius (\d+) mm", " ".join(log))
+    r = float(m.contact_pairs[-1].search_radius)
+    check("Protokoll und Modell nennen denselben Suchradius",
+          tr is not None and abs(float(tr.group(1)) - r * 1e3) < 0.5,
+          f"Protokoll {tr.group(1) if tr else '?'} mm, Modell {r * 1e3:.1f} mm")
+
+
+def test_verteilung_statt_mittelwert():
+    """Berichtet wird die Verteilung der Spaltmasse, nicht ihr Mittelwert.
+
+    Die Verteilung an einer teilweise anliegenden Fuge ist zweigipflig: ein
+    Teil liegt auf null, der Rest steht deutlich ab. Ein Mittelwert darueber
+    beschreibt keinen Zustand - er nennt eine Zahl, die an keiner Stelle der
+    Fuge vorkommt, und verdeckt, dass ein Teil gar nicht anliegt.
+    """
+    from statik3d.contact import verteilungstext
+    w = np.array([0.0] * 61 + [0.040] * 39)
+    t = verteilungstext(w, 0.0)
+    close("der Mittelwert dieser Fuge waere", float(w.mean()), 0.0156, 1e-9, " m")
+    check("genannt wird stattdessen der Anteil, der aufliegt",
+          "61 % aufliegend" in t, t)
+    check("der Median (0,00 mm), nicht der Mittelwert (15,60 mm)",
+          "Median 0.00 mm" in t and "15.6" not in t, t)
+    check("das 90. Perzentil und der größte Wert",
+          "90 % unter 40.00 mm" in t and "größter 40.00 mm" in t, t)
+    check("ohne Messwerte bleibt es bei einer klaren Auskunft",
+          verteilungstext([], 0.0) == "kein Spalt gemessen", verteilungstext([], 0.0))
+
+    m = zwei_bloecke("eigene", h=0.25)
+    kb = m.add_kontaktbedingung(
+        "Fuge", flaechennamen=["FugeO"], gegenflaechen=["FugeU"], koerpernamen=["Oben"],
+        behaviour={2: DofBehaviour("free", failure="zug")})
+    log = []
+    fugen.kontaktfuge_ausfuehren(m, kb, log)
+    zeile = next((z for z in log if "Kontaktpaar mit" in z), "")
+    check("und dasselbe steht im Protokoll der Fuge",
+          "aufliegend" in zeile and "90 % unter" in zeile and "im Mittel" not in zeile,
+          zeile[:150])
+
+
+def _mantelfacetten(m, r: float, n: int, h: float):
+    """Ein n-Eck als Mantel: zwei Knotenringe, dazwischen n Vierecke."""
+    w = 2.0 * np.pi * np.arange(n) / n
+    unten = [int(m.add_node(r * np.cos(a), r * np.sin(a), 0.0)) for a in w]
+    oben = [int(m.add_node(r * np.cos(a), r * np.sin(a), h)) for a in w]
+    facetten = [[unten[i], unten[(i + 1) % n], oben[(i + 1) % n], oben[i]]
+                for i in range(n)]
+    return unten, oben, facetten
+
+
+def test_deckungsgleiche_knoten_direkt():
+    """Liegt ein Slave-Knoten auf einem Master-Knoten, wird nicht gesucht.
+
+    Der Master ist dann dieser eine Knoten mit vollem Gewicht und der Spalt
+    genau null - ohne Suche, ohne Projektion, wie in ANSYS. Was bleibt, ist
+    die Richtung: sie aus einer der Facetten zu nehmen, die dort
+    zusammenstossen, waere Zufall. An einem regelmaessigen n-Eck steht jede
+    Facettennormale um pi/n neben der Flaechennormalen des Knotens - bei
+    zwoelf Segmenten 15 Grad. Die flaechengewichtete Mittelung der Facetten
+    trifft sie dagegen genau.
+    """
+    from scipy import sparse
+    from statik3d.contact import ContactSystem
+    from statik3d.model import ContactPair
+
+    # 1) Ebene Fuge mit passenden Netzen: jeder Slave-Knoten liegt auf einem
+    #    Master-Knoten
+    m = zwei_bloecke("eigene", h=0.25)
+    kb = m.add_kontaktbedingung(
+        "Fuge", flaechennamen=["FugeO"], gegenflaechen=["FugeU"], koerpernamen=["Oben"],
+        behaviour={2: DofBehaviour("free", failure="zug")})
+    fugen.kontaktfuge_ausfuehren(m, kb, [])
+    st = ContactSystem(m, sparse.identity(m.ndof, format="csr"))
+    cons = [c for c in st.cons if c.kind == "surface"]
+    einzeln = [c for c in cons if len(c.master[0]) == 1 and abs(c.master[1][0] - 1.0) < 1e-15]
+    check("jeder deckungsgleiche Knoten haengt an genau einem Master",
+          len(cons) > 0 and len(einzeln) == len(cons),
+          f"{len(einzeln)} von {len(cons)} Bedingungen")
+    check("der Anfangsspalt ist genau null - nicht fast null",
+          all(c.g0 == 0.0 for c in cons),
+          f"größter |g0| = {max((abs(c.g0) for c in cons), default=0.0):.1e} m")
+    check("und die Richtung ist die Fugennormale",
+          all(abs(abs(float(c.normal[2])) - 1.0) < 1e-12 for c in cons),
+          f"kleinstes |n_z| = {min((abs(float(c.normal[2])) for c in cons), default=0.0):.12f}")
+
+    # 2) Gekruemmter Master: die Facettennormale waere um pi/n daneben
+    n = 12
+    m2 = Model()
+    m2.add_material(Material.steel("S235"))
+    unten, oben, facetten = _mantelfacetten(m2, 0.5, n, 0.2)
+    slave = [int(m2.add_node(*m2.nodes[k])) for k in unten]      # deckungsgleich
+    m2.contact_pairs.append(ContactPair("Mantel", slave_nodes=slave,
+                                        master_faces=facetten, search_radius=0.1))
+    st2 = ContactSystem(m2, sparse.identity(m2.ndof, format="csr"))
+    cons2 = [c for c in st2.cons if c.kind == "surface"]
+    fehl = 0.0
+    for c in cons2:
+        p = m2.nodes[c.node]
+        radial = np.array([p[0], p[1], 0.0])
+        radial = radial / np.linalg.norm(radial)
+        fehl = max(fehl, np.degrees(np.arccos(min(1.0, abs(float(c.normal @ radial))))))
+    check("am Zwölfeck trifft die Richtung die Flächennormale des Knotens",
+          len(cons2) == n and fehl < 1e-9,
+          f"{len(cons2)} Bedingungen, größte Abweichung {fehl:.2e}° "
+          f"(eine Facettennormale läge {180.0 / n:.0f}° daneben)")
+
+
 def main():
     for t in (test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
@@ -998,6 +1124,8 @@ def main():
               test_spalt_schliessen, test_zylinder_in_bohrung, test_starre_flaeche, test_naechste_punkte,
               test_spalt_laengs_der_normalen, test_formschluss,
               test_formschluss_meldung,
+              test_ein_suchradius, test_verteilung_statt_mittelwert,
+              test_deckungsgleiche_knoten_direkt,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung):
         print(f"\n--- {t.__name__} ---")
