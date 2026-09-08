@@ -1348,6 +1348,80 @@ class MainWindow(QtWidgets.QMainWindow):
         self._zuordnung_stand = stand
         return self._zuordnung
 
+    def _koerperflaechen(self, kn: str):
+        """(Namen, A, B, C) der Randflaechen eines Koerpers als Dreiecke.
+
+        Je Modellstand einmal und nur fuer die Koerper, die wirklich
+        angeklickt werden - fuer alle 108 Koerper des Drehlagermodells waere
+        es dieselbe Sekunde, die das Zeichnen der Geometrie gekostet hat.
+        """
+        m = self.model
+        stand = (id(m), len(m.flaechen), len(m.koerper), m.nn)
+        if getattr(self, "_kflaechen_stand", None) != stand:
+            self._kflaechen_stand = stand
+            self._kflaechen = {}
+        fertig = self._kflaechen.get(kn)
+        if fertig is not None:
+            return fertig
+        k = (getattr(m, "koerper", {}) or {}).get(kn)
+        raender = self._raender()
+        namen, A, B, C = [], [], [], []
+        for fn in (k.flaechen if k is not None else []):
+            f = (getattr(m, "flaechen", {}) or {}).get(fn)
+            if f is None:
+                continue
+            ring = raender.get(fn)
+            if ring is None:
+                try:
+                    ring = f.randpunkte(m)
+                except Exception:            # noqa: BLE001
+                    continue
+                raender[fn] = ring
+            if len(ring) < 3:
+                continue
+            try:
+                seiten = f.randseiten_punkte(m)
+            except Exception:                # noqa: BLE001
+                seiten = []
+            try:
+                loecher = f.oeffnungspunkte(m)
+            except Exception:                # noqa: BLE001
+                loecher = []
+            P, Z = vp.flaechen_dreiecke(ring, seiten, loecher)
+            if P is None:
+                continue
+            P = np.asarray(P, float)
+            i = 0
+            while i < len(Z):
+                n = int(Z[i])
+                idx = [int(x) for x in Z[i + 1:i + 1 + n]]
+                i += n + 1
+                for j in range(1, n - 1):
+                    namen.append(fn)
+                    A.append(P[idx[0]])
+                    B.append(P[idx[j]])
+                    C.append(P[idx[j + 1]])
+        fertig = ((namen, np.asarray(A, float), np.asarray(B, float), np.asarray(C, float))
+                  if namen else ([], None, None, None))
+        self._kflaechen[kn] = fertig
+        return fertig
+
+    def _flaeche_am_punkt(self, kn: str, punkt):
+        """Die Randflaeche des Koerpers ``kn``, auf der ``punkt`` liegt.
+
+        Ein vernetzter Koerper wird als Netz gezeichnet, seine Randflaechen
+        nicht mehr als Geometrie darueber. Wer eine davon anklickt, trifft
+        also das Netz; **welche** Flaeche das war, beantwortet die Geometrie
+        beim Klick - fuer einen Punkt sind das Millisekunden.
+        """
+        from ..contact import naechste_punkte_dreiecke
+        namen, A, B, C = self._koerperflaechen(kn)
+        if not namen:
+            return None
+        p = np.asarray(punkt, float)
+        q, _w = naechste_punkte_dreiecke(p, A, B, C)
+        return namen[int(np.argmin(np.linalg.norm(q - p, axis=1)))]
+
     def _objekt_am_zeiger(self, art: str):
         """Name der Flaeche, des Volumens oder des Stabes unter dem Zeiger.
 
@@ -1358,7 +1432,7 @@ class MainWindow(QtWidgets.QMainWindow):
         treffer = self._zellentreffer()
         if treffer is None:
             return None
-        name, zelle, _punkt, daten = treffer
+        name, zelle, punkt, daten = treffer
         m = self.model
         zu = self._elementzuordnung()
         if name == "geo_flaechen":
@@ -1378,7 +1452,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if art == "Stab":
             return zu["stab"].get(elem)
         if art == "Fläche":
-            return zu["flaeche"].get(elem)
+            fname = zu["flaeche"].get(elem)
+            if fname is None:
+                # Volumenelement: die Randflaeche des Koerpers, auf der der
+                # getroffene Punkt liegt
+                kn = zu["koerper"].get(elem)
+                if kn is not None:
+                    fname = self._flaeche_am_punkt(kn, punkt)
+            return fname
         if art == "Volumen":
             return zu["koerper"].get(elem)
         return None
@@ -13768,6 +13849,7 @@ class MainWindow(QtWidgets.QMainWindow):
         stand = (id(m), len(m.flaechen), len(m.koerper), len(m.lines), m.nn,
                  hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
                  len(m.elements), sum(len(f.elemente) for f in m.flaechen.values()),
+                 sum(len(k.elemente) for k in m.koerper.values()),
                  self.act_flaechen.isChecked(), self.act_volumen.isChecked(),
                  frozenset(self.versteckt["flaechen"]), frozenset(self.versteckt["koerper"]))
         if getattr(self, "_geonetze_stand", None) == stand:

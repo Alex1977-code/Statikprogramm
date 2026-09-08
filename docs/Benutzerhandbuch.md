@@ -571,7 +571,21 @@ gezeichnet wird, sind kein Netz und werden nie als Kanten gezeigt.
 in RFEM eine Fläche aus zwei Bögen und zwei Geraden — werden als gewölbte
 Fläche zwischen ihren vier Randlinien gezeichnet (Coons-Fläche). Vorher
 fehlten sie im Bild, weil ihr Rand nicht in einer Ebene liegt, und die
-Volumen wirkten offen.
+Volumen wirkten offen. Ist eine der Geraden in der Quelldatei in **zwei
+Linien geteilt**, hat die Fläche fünf Randseiten; sie werden an der glatten
+Ecke wieder zusammengefasst, denn geometrisch ist es eine Vierseitfläche.
+Ohne das würde sie als Fächer um ihren Schwerpunkt gezeichnet, und dessen
+Dreiecke laufen bei einem Halbkreis quer durch das Bauteil — am geprüften
+Drehlagermodell betraf das die vier Bolzenmäntel, gezeichnet mit 2011 statt
+645 cm².
+
+**Wo ein Netz steht, wird das Netz gezeichnet.** Die Randflächen eines
+vernetzten Volumenkörpers werden nicht mehr zusätzlich als Geometrie darüber
+gemalt: beide liegen aufeinander, und um jeden Bildpunkt stritten dann zwei
+Dreiecke. Ihre **Umrisse** bleiben — sie zeigen als Linien über dem Netz, wo
+die Bauteilkanten laufen. Ein Klick trifft damit das Netz; welche Fläche
+darunter liegt, ermittelt das Programm beim Klick, so dass die Auswahlart
+„Fläche" unverändert arbeitet.
 
 **F9** blendet das **FE-Netz** (die Elementkanten) ein und aus. Der Schalter
 „Knoten" zeigt die gesetzten Knoten als Punkte: Knoten, an denen noch **kein

@@ -3699,6 +3699,106 @@ def main():
         vpl.add_geometrie(pl, mz, raender={}, seiten={}, ausser_flaechen={"Mantel"})
         check("eine ausgeblendete Fläche fehlt im Bild", "geo_flaechen" not in pl.renderer.actors)
         pl.close()
+
+        # Fuenf Randseiten, von denen zwei eine sind: RFEM teilt eine gerade
+        # Kante schon einmal in zwei Linien. Ohne Zusammenfassen faellt die
+        # Flaeche auf den Faecher um den Schwerpunkt zurueck - und der spannt
+        # bei einem Halbkreis die Sehne durch den Koerper.
+        mz5 = Mdl("Zylinder5")
+        mz5.add_nodes(np.array([[0.5, 0, 0], [-0.5, 0, 0], [-0.5, 0, 0.1],
+                                [-0.5, 0, 1.0], [0.5, 0, 1.0]], float))
+        mz5.lines["unten"] = Line("unten", [0, 1], "arc",
+                                  geometrie={"punkte": [[0.5, 0, 0], [0, 0.5, 0], [-0.5, 0, 0]]})
+        mz5.lines["r1"] = Line("r1", [1, 2])
+        mz5.lines["r2"] = Line("r2", [2, 3])
+        mz5.lines["oben"] = Line("oben", [3, 4], "arc",
+                                 geometrie={"punkte": [[-0.5, 0, 1.0], [0, 0.5, 1.0], [0.5, 0, 1.0]]})
+        mz5.lines["links"] = Line("links", [4, 0])
+        mz5.flaechen["Mantel"] = Flaeche("Mantel",
+                                         linien=["unten", "r1", "r2", "oben", "links"])
+        s5 = mz5.flaechen["Mantel"].randseiten_punkte(mz5)
+        check("der geteilte Rand liefert fünf Randseiten", len(s5) == 5,
+              str([len(x) for x in s5]))
+        vier = vpl.seiten_zusammenfassen(list(s5))
+        check("an der glatten Ecke werden daraus vier", len(vier) == 4,
+              str([len(x) for x in vier]))
+        ring5 = mz5.flaechen["Mantel"].randpunkte(mz5)
+        P5, Z5 = vpl.flaechen_dreiecke(ring5, s5, [])
+        P5 = np.asarray(P5, float)
+        rad5 = np.linalg.norm(P5[:, :2], axis=1)
+        check("die gezeichnete Fläche liegt genau auf dem Zylinder",
+              abs(rad5.min() - 0.5) < 1e-9 and abs(rad5.max() - 0.5) < 1e-9,
+              f"r = {rad5.min():.9f}..{rad5.max():.9f}")
+
+        def _flaecheninhalt(P, Z):
+            P = np.asarray(P, float)
+            i, A = 0, 0.0
+            while i < len(Z):
+                k = int(Z[i])
+                Q = P[[int(x) for x in Z[i + 1:i + 1 + k]]]
+                i += k + 1
+                A += 0.5 * float(np.linalg.norm(
+                    np.cross(Q, np.roll(Q, -1, axis=0)).sum(axis=0)))
+            return A
+
+        bogen = float(np.linalg.norm(np.diff(np.asarray(s5[0], float), axis=0), axis=1).sum())
+        A5 = _flaecheninhalt(P5, Z5)
+        check("und ihr Inhalt ist Bogenlänge mal Höhe (Regelfläche)",
+              abs(A5 - bogen * 1.0) < 1e-9,
+              f"{A5:.9f} m² / {bogen * 1.0:.9f} m²")
+        # Der Faecher haette den Schwerpunkt des Randes als Ecke - und der
+        # liegt beim Halbkreis 0,18 m innerhalb des Mantels: seine Dreiecke
+        # laufen durch den Koerper. Am Drehlagermodell zeichnete er den
+        # Bolzenmantel (F589) mit 2011 statt 645 cm², also 212 % zu gross.
+        mitte = np.asarray(ring5, float).mean(axis=0)
+        check("der Fächer um den Schwerpunkt liefe durch den Körper",
+              abs(float(np.linalg.norm(mitte[:2])) - 0.5) > 0.1,
+              f"Schwerpunkt bei r = {float(np.linalg.norm(mitte[:2])):.3f} m statt 0,5 m")
+
+        # Wo ein Netz steht, wird das Netz gezeichnet: die Randflaechen eines
+        # vernetzten Koerpers liegen sonst deckungsgleich auf seiner Netzhaut.
+        from statik3d.model import Volumenkoerper as VK, Material as Mat
+        mk = Mdl("Wuerfel")
+        mk.add_material(Mat.steel("S235"))
+        E = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                      [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]])
+        mk.add_nodes(E)
+        ecken = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+                 (0, 4), (1, 5), (2, 6), (3, 7)]
+        for i, (a, b) in enumerate(ecken):
+            mk.lines[f"L{i}"] = Line(f"L{i}", [a, b])
+        seiten_k = {"unten": [0, 1, 2, 3], "oben": [4, 5, 6, 7],
+                    "vorn": [0, 9, 4, 8], "rechts": [1, 10, 5, 9],
+                    "hinten": [2, 11, 6, 10], "links": [3, 8, 7, 11]}
+        for fn, ls in seiten_k.items():
+            mk.flaechen[fn] = Flaeche(fn, linien=[f"L{i}" for i in ls], material="S235")
+        mk.koerper["K"] = VK("K", flaechen=list(seiten_k), material="S235")
+        pd_f, pd_r, _pd_k = vpl.geometrie_netze(mk, {}, {})
+        check("ohne Netz werden die sechs Würfelflächen gemalt",
+              pd_f is not None and pd_f.n_cells == 6, str(None if pd_f is None else pd_f.n_cells))
+        mk.add_element("hex8", list(range(8)), "S235", group="K")
+        mk.koerper["K"].elemente = [0]
+        pd_f, pd_r, _pd_k = vpl.geometrie_netze(mk, {}, {})
+        check("mit Netz keine einzige Fläche mehr - das Netz zeichnet sie",
+              pd_f is None, str(None if pd_f is None else pd_f.n_cells))
+        check("die Umrisse bleiben aber stehen",
+              pd_r is not None and pd_r.n_cells == 24, str(None if pd_r is None else pd_r.n_cells))
+        # und ein Klick auf das Netz findet trotzdem die richtige Flaeche
+        vorher = w.model
+        try:
+            w.model = mk
+            w._kflaechen_stand = None
+            w._raender_stand = None
+            treffer = [(w._flaeche_am_punkt("K", p), soll) for p, soll in (
+                ((0.5, 0.5, 0.0), "unten"), ((0.5, 0.5, 1.0), "oben"),
+                ((0.5, 0.0, 0.5), "vorn"), ((1.0, 0.5, 0.5), "rechts"),
+                ((0.5, 1.0, 0.5), "hinten"), ((0.0, 0.5, 0.5), "links"))]
+        finally:
+            w.model = vorher
+            w._kflaechen_stand = None
+            w._raender_stand = None
+        check("ein Punkt auf dem Netz nennt die Fläche, auf der er liegt",
+              all(a == b for a, b in treffer), str(treffer))
         # Die Darstellungsarten gelten auch fuer Flaechen und Volumen ohne Netz
         from statik3d.model import Volumenkoerper
         mz.koerper["K1"] = Volumenkoerper("K1", flaechen=["Mantel"])

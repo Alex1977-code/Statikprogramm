@@ -1640,6 +1640,19 @@ Schritten, jeder für sich nachrechenbar.
 | krumm auf einem Zylinder | in der **Abwicklung** (r·φ, Achskoordinate) vernetzt und exakt zurückgelegt |
 | krumm, sonst | ebenes Netz auf der Ausgleichsebene, dann **harmonisch** in den Rand eingespannt: div grad w = 0 mit dem Rand als Randbedingung |
 
+Die **Ansicht** geht denselben Weg, wenn kein Netz da ist: eben mit
+Innenrändern, krumm über den Coons-Fleck. Hat der Rand mehr als vier Seiten,
+werden sie vorher an ihren glatten Ecken zusammengefasst — RFEM teilt eine
+gerade Kante schon einmal in zwei Linien, und eine Vierseitfläche bleibt eine
+Vierseitfläche. Ohne das griffe der Rückfall auf einen Fächer um den
+Schwerpunkt, dessen Dreiecke bei einem Halbkreis quer durch das Bauteil
+laufen: am Drehlagermodell wurden die vier Bolzenmäntel (F589, F590, F1670,
+F1671) mit 2011 statt 645 cm² gezeichnet, 212 % zu viel. Nach dem
+Zusammenfassen trifft die gezeichnete Fläche die Regelfläche (Bogenlänge mal
+Höhe) exakt, und keine der 1375 Flächen fällt mehr auf den Fächer zurück.
+Steht ein Netz, wird das Netz gezeichnet und die Geometrie nicht mehr
+darüber; nur ihre Umrisse bleiben als Linien stehen.
+
 Jede **Linie** wird dabei genau einmal abgetastet — die Teilung gehört der
 Linie, nicht der Fläche. Nur so passen die Netze benachbarter Flächen
 aufeinander. Gegenüberliegende Seiten einer abgebildet vernetzten Fläche
