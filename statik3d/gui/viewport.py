@@ -275,6 +275,52 @@ def coons_flaeche(seiten: list, n: int = None):
     return punkte, dreiecke
 
 
+#: Bis zu diesem Winkel gilt die Ecke zwischen zwei Randseiten als glatt - die
+#: beiden Seiten sind dann geometrisch eine.
+GLATTE_ECKE = 15.0
+
+
+def seiten_zusammenfassen(seiten: list, ziel: int = 4) -> list:
+    """Randseiten an glatten Ecken zusammenfassen, bis ``ziel`` uebrig sind.
+
+    RFEM teilt eine gerade Kante schon einmal in zwei Linien. Im
+    Drehlagermodell hat der Mantel des Bolzens (F589, F590, F1670, F1671)
+    darum fuenf Randseiten: eine seiner beiden Geraden besteht aus einem
+    1-mm- und einem 68-mm-Stueck, die in derselben Richtung weiterlaufen.
+    Geometrisch ist es eine Vierseitflaeche. Ohne das Zusammenfassen faellt
+    sie auf den Faecher um den Schwerpunkt zurueck, und dessen Dreiecke laufen
+    bei einem Halbkreis quer durch den Koerper - die Sehne statt des Bogens.
+    Genau das war im Bild von V30 zu sehen.
+
+    Zusammengefasst wird immer die **flachste** Ecke, und nur, solange sie
+    flacher als :data:`GLATTE_ECKE` ist: eine echte Kante bleibt eine Kante.
+    Bleiben danach mehr als ``ziel`` Seiten, kommt die Liste unveraendert
+    zurueck.
+    """
+    S = [np.asarray(x, float) for x in (seiten or []) if len(np.asarray(x, float)) >= 2]
+    if len(S) != len(seiten or []):
+        return list(seiten or [])
+    grenze = np.cos(np.deg2rad(GLATTE_ECKE))
+    while len(S) > ziel:
+        bester, wert = -1, grenze
+        for i in range(len(S)):
+            j = (i + 1) % len(S)
+            a = S[i][-1] - S[i][-2]
+            b = S[j][1] - S[j][0]
+            na, nb = np.linalg.norm(a), np.linalg.norm(b)
+            if na <= 0 or nb <= 0:
+                continue
+            c = float(a @ b) / (na * nb)
+            if c > wert:
+                bester, wert = i, c
+        if bester < 0:
+            break
+        j = (bester + 1) % len(S)
+        S[bester] = np.vstack([S[bester], S[j][1:]])
+        S.pop(j)
+    return S
+
+
 def eben_mit_loechern(ring, loecher):
     """Ebene Flaeche mit Innenraendern in Dreiecke teilen: (Punkte, Dreiecke).
 
@@ -324,9 +370,13 @@ def flaechen_dreiecke(ring, seiten=None, loecher=None):
 
     Eben ohne Loecher: das Randpolygon als **eine** Zelle. Eben mit Loechern:
     Dreiecke, Aussenrand minus Innenraender (:func:`eben_mit_loechern`).
-    Krumm mit vier Seiten: eine Coons-Flaeche aus Dreiecken. Sonst ein
-    Faecher um den Schwerpunkt - das ist fuer eine schwach gewoelbte Flaeche
-    mit fuenf Seiten besser als gar nichts.
+    Krumm mit vier Seiten: eine Coons-Flaeche aus Dreiecken; mehr Seiten
+    werden vorher an ihren glatten Ecken zusammengefasst
+    (:func:`seiten_zusammenfassen`). Sonst ein Faecher um den Schwerpunkt -
+    das ist fuer eine schwach gewoelbte Flaeche besser als gar nichts, fuer
+    eine stark gekruemmte aber falsch: seine Dreiecke laufen durch den
+    Koerper. Nach dem Zusammenfassen bleibt im Drehlagermodell keine Flaeche
+    mehr im Faecher.
     """
     from ..model import polygon_eben
     ring = np.asarray(ring, float)
@@ -338,6 +388,8 @@ def flaechen_dreiecke(ring, seiten=None, loecher=None):
             if P is not None:
                 return P, np.hstack([np.full((len(D), 1), 3), D]).ravel().tolist()
         return ring, [len(ring), *range(len(ring))]
+    if seiten is not None and len(seiten) > 4:
+        seiten = seiten_zusammenfassen(list(seiten))
     if seiten is not None and len(seiten) == 4:
         P, D = coons_flaeche(seiten)
         if P is not None:
@@ -367,6 +419,9 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
                     ausser_flaechen=None, ausser_koerper=None):
     """Die Netze der Geometrie ohne Elemente: (Flaechen, Raender, Koerperkanten).
 
+    „Ohne Elemente" heisst: die Flaeche traegt selbst keine und gehoert auch
+    zu keinem vernetzten Koerper. Wo ein Netz steht, wird das Netz gezeichnet.
+
     Reine Daten, kein Zeichnen - damit sie je Modellstand **einmal** entstehen
     (bei 786 Zylindermaenteln kostet der Aufbau eine Sekunde, und die darf
     nicht bei jedem Klick anfallen). Jedes Ergebnis kann None sein.
@@ -386,6 +441,15 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
     if not koerper_an:
         for k in koerper.values():
             ausser_flaechen.update(k.flaechen)
+    # Wo ein Netz steht, wird das Netz gezeichnet. Die Randflaechen eines
+    # vernetzten Koerpers liegen deckungsgleich auf seiner Netzhaut; beide zu
+    # malen heisst, dass um jeden Bildpunkt zwei Dreiecke streiten und mal das
+    # eine, mal das andere gewinnt. Am Drehlagermodell waren das 39103
+    # Geometriedreiecke ueber 489376 Elementen, jedes Mal 1,5 Sekunden Aufbau.
+    # Eine Flaeche, die auch an einem **unvernetzten** Koerper haengt, bleibt:
+    # dort gibt es kein Netz, das sie ersetzen koennte.
+    vom_netz = {fn for k in koerper.values() if k.elemente for fn in k.flaechen}
+    vom_netz -= {fn for k in koerper.values() if not k.elemente for fn in k.flaechen}
 
     def ring_von(name, f):
         r = raender.get(name)
@@ -436,6 +500,11 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
         rpts.extend(np.vstack([P, P[:1]]))
         for i in range(len(P)):
             rlines.extend([2, basis + i, basis + i + 1])
+        if name in vom_netz:
+            # Die Umrisse bleiben - sie liegen als Linien ueber dem Netz und
+            # zeigen, wo die Bauteilkanten laufen. Nur die Flaeche selbst
+            # zeichnet das Netz.
+            continue
         P, Z = flaechen_dreiecke(ring, seiten_von(name, f), loecher_von(name, f))
         if P is None:
             continue

@@ -1734,6 +1734,11 @@ class Volumenkoerper:
     teilung: list[int] = field(default_factory=lambda: [4, 4, 4])
     elemente: list[int] = field(default_factory=list)
     kommentar: str = ""
+    #: Warum der Koerper kein Netz hat - vom Vernetzer gesetzt, maschinenlesbar:
+    #: "" (nie versucht) | "kein_volumen" (kann keines bekommen - Hilfsobjekt)
+    #: | "abgebrochen" | "gescheitert" | "vernetzer_aus". Nur "kein_volumen"
+    #: ist harmlos; alles andere heisst, dass ein tragendes Bauteil fehlt.
+    netzgrund: str = ""
 
     def bezug(self) -> str:
         t = f"{len(self.flaechen)} Flächen"
@@ -3306,12 +3311,19 @@ class Model:
             return False
         if k.elemente:
             return True                     # es traegt schon
-        # Hat der Vernetzer schon entschieden, gilt seine Entscheidung. Zwei
-        # Stellen, die dieselbe Frage mit verschiedenen Massen beantworten,
-        # widersprechen sich frueher oder spaeter - und dann fragt das Programm
-        # nach einem Netz, das es nie geben kann.
-        if str(getattr(k, "kommentar", "") or "").startswith(OHNE_NETZ):
+        # Hat der Vernetzer entschieden, dass der Koerper **keines bekommen
+        # kann**, gilt seine Entscheidung. Nur dann. Frueher schloss jeder
+        # Vermerk "ohne Netz" hier kurz - auch der, mit dem der Vernetzer sein
+        # eigenes Scheitern festhaelt. Ein tragendes Bauteil, an dem er
+        # gescheitert war, galt damit als Hilfsobjekt und verschwand
+        # lautlos aus der Pruefung; am Drehlagermodell war das V5, mit
+        # echtem Werkstoff und 13 Randflaechen, und gerechnet wurde ohne es.
+        grund = str(getattr(k, "netzgrund", "") or "")
+        if grund == "kein_volumen":
             return False
+        if not grund and str(getattr(k, "kommentar", "") or "").startswith(
+                f"{OHNE_NETZ} kein Rauminhalt"):
+            return False                    # Dateien vor dem Feld netzgrund
         kn = set()
         for fname in (k.flaechen or []):
             f = (self.flaechen or {}).get(fname)

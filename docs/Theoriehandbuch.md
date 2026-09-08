@@ -655,10 +655,51 @@ gesehen. Wiederholt wird, solange sich der Radius um mehr als ein Zehntel
 Suchradius wird nicht überstimmt. Alle Knoten
 der Kontaktfacetten mit Gegenseite werden Slave, die gefundenen Gegenfacetten
 Master; der Löser ordnet dann jedem Slave-Knoten die nächste Master-Facette
-im doppelten Suchradius zu (nächster Punkt auf dem Dreieck, vektorisiert über
+**im selben Suchradius** zu (nächster Punkt auf dem Dreieck, vektorisiert über
 einen KD-Baum). Der Abstand wird zum **Anfangsspalt** g₀ der Bedingung - oder
 zu null, wenn die Bedingung „auf Berührung gesetzt“ ist (ANSYS: adjust to
 touch) oder ein Verbund ist, der nur die Relativverschiebung misst.
+
+**Ein Radius, nicht zwei.** Der Löser hat den Radius früher verdoppelt: das
+Protokoll nannte 9 mm, im Kontaktpaar standen 18,5 mm, durchgängig Faktor
+zwei. Er paarte damit Knoten, die weiter entfernt lagen als jede Facette, die
+die Suche zur Fuge gezählt hatte. Am Drehlagermodell waren das an der Fuge
+Lagerbock–Grundplatte 213 von 290 gepaarten Knoten mit mehr als 5 mm Spalt,
+der größte 121 mm — Lastpfade, die es in der Konstruktion nicht gibt. Mit dem
+einfachen Radius bleiben dort 249 Paarungen, der größte Spalt ist 60 mm (die
+Netzweite dieser Fuge); über acht Fugen fallen 127 Paarungen weg, alle mit
+einem Spalt größer als das Netz der eigenen Fuge.
+
+**Deckungsgleiche Knoten werden direkt gepaart.** Liegt ein Slave-Knoten auf
+einem Master-Knoten (Toleranz 10⁻⁶ der Modellgröße), gibt es nichts zu suchen
+und nichts zu projizieren: der Master ist dieser eine Knoten mit vollem
+Gewicht, der Anfangsspalt ist exakt null. Das ist der ANSYS-Weg für ein
+passendes Netz und erledigt an einer konformen Fuge die ganze Fläche
+deterministisch. Was bleibt, ist die **Richtung**. Sie aus einer der Facetten
+zu nehmen, die in diesem Knoten zusammenstoßen, wäre Zufall — welche der
+Löser fand, entschied bisher die Reihenfolge im Feld: am Drehlagermodell stand
+die gewählte Facettennormale im Median 41° neben der Flächennormalen des
+Knotens (Fuge Achse, gekrümmter Master), an Fugenkanten bis 90°. Genommen wird
+darum die flächengewichtete Mittelung der Master-Facetten in diesem Knoten,
+
+$$ n = \frac{\sum_i A_i\,n_i}{\bigl|\sum_i A_i\,n_i\bigr|} $$
+
+gerechnet über die **ganzen** Facetten und nicht über ihre Dreiecke: ein
+Viereck zerfällt in zwei Dreiecke, und die Ecke, die in beiden vorkommt,
+bekäme sonst das doppelte Gewicht — am regelmäßigen Zwölfeck genug, um die
+Normale um 5,1° zu kippen. Heben sich die Beiträge auf — eine dünne Platte,
+deren beide Seiten zum selben Kontaktpaar gehören —, gibt es keine
+Flächennormale und es bleibt bei der Suche.
+
+**Berichtet wird die Verteilung, nicht der Mittelwert.** Die Spaltmaße einer
+teilweise anliegenden Fuge sind zweigipflig: ein Teil liegt auf null, der Rest
+steht ab. Ein Mittelwert darüber beschreibt keinen Zustand — er nennt eine
+Zahl, die an keiner Stelle der Fuge vorkommt, und verdeckt, dass ein Teil gar
+nicht anliegt. Protokolliert werden darum der Anteil, der aufliegt (Spalt
+unter einem Tausendstel des Suchradius), der Median, das 90. Perzentil und der
+größte Wert — je Fuge für die Facetten und je Kontaktpaar für die Knoten,
+zusammen mit der Zahl der Knoten, die **keine** Gegenfacette im Suchradius
+gefunden haben.
 
 Aus der Wirkung je Freiheitsgrad folgt die Art des Kontaktpaars: Zug *starr*
 (oder Feder) → die Bedingung öffnet nie, auch Zug wird übertragen (Verbund,
@@ -1598,6 +1639,19 @@ Schritten, jeder für sich nachrechenbar.
 | krumm, vier Randlinien | **Coons-Fleck** zwischen den vier Randkurven; für eine Zylinderhälfte ist er die Fläche selbst, keine Näherung |
 | krumm auf einem Zylinder | in der **Abwicklung** (r·φ, Achskoordinate) vernetzt und exakt zurückgelegt |
 | krumm, sonst | ebenes Netz auf der Ausgleichsebene, dann **harmonisch** in den Rand eingespannt: div grad w = 0 mit dem Rand als Randbedingung |
+
+Die **Ansicht** geht denselben Weg, wenn kein Netz da ist: eben mit
+Innenrändern, krumm über den Coons-Fleck. Hat der Rand mehr als vier Seiten,
+werden sie vorher an ihren glatten Ecken zusammengefasst — RFEM teilt eine
+gerade Kante schon einmal in zwei Linien, und eine Vierseitfläche bleibt eine
+Vierseitfläche. Ohne das griffe der Rückfall auf einen Fächer um den
+Schwerpunkt, dessen Dreiecke bei einem Halbkreis quer durch das Bauteil
+laufen: am Drehlagermodell wurden die vier Bolzenmäntel (F589, F590, F1670,
+F1671) mit 2011 statt 645 cm² gezeichnet, 212 % zu viel. Nach dem
+Zusammenfassen trifft die gezeichnete Fläche die Regelfläche (Bogenlänge mal
+Höhe) exakt, und keine der 1375 Flächen fällt mehr auf den Fächer zurück.
+Steht ein Netz, wird das Netz gezeichnet und die Geometrie nicht mehr
+darüber; nur ihre Umrisse bleiben als Linien stehen.
 
 Jede **Linie** wird dabei genau einmal abgetastet — die Teilung gehört der
 Linie, nicht der Fläche. Nur so passen die Netze benachbarter Flächen
