@@ -141,6 +141,26 @@ Die Arbeitsfläche in drei Spalten:
   Nullpunkt, bis man Koordinaten eingibt; Abbrechen nimmt ihn zurück), alles
   andere entsteht erst mit OK.
 
+  **Mit der Tastatur.** Ein Klick in den Baum legt die Tastatur dorthin, und
+  sie bleibt dort — auch wenn rechts die Maske des angeklickten Objekts
+  aufgeht (die nimmt sie nur, wenn man selbst etwas *anlegt*, denn dann will
+  man gleich tippen). Danach gilt:
+
+  | Taste | Wirkung |
+  |---|---|
+  | ↑ / ↓ | zum vorigen / nächsten Eintrag — die Ansicht und die Maske rechts ziehen mit |
+  | Umschalt + ↑ / ↓ | die Strecke dazunehmen (mehrere Einträge derselben Art) |
+  | Strg + Klick | einen einzelnen dazunehmen oder wieder abwählen |
+  | Umschalt + Klick | alles vom zuletzt angeklickten bis hierher |
+  | Pos1 / Ende | zum ersten / letzten Eintrag des Baums |
+  | Eingabe | den Eintrag bearbeiten |
+  | Entf | den Eintrag löschen (mit Rückfrage) |
+
+  Mehrere gewählte Einträge derselben Art leuchten zusammen in der Ansicht;
+  Rechtsklick bietet dann *Bearbeiten …* (Sammelmaske) und *Löschen* für alle
+  auf einmal. Einträge **verschiedener** Art sind keine Auswahl — maßgebend
+  ist die Art des zuletzt angeklickten.
+
   **Löschen**: Rechtsklick → „Löschen“ oder den Eintrag anklicken und
   **Entf** drücken. Das Programm fragt nach. Ein Knoten, an dem noch etwas
   hängt, wird mit Grund abgewiesen; eine Fläche oder ein Volumen nimmt seine
@@ -587,6 +607,18 @@ die Bauteilkanten laufen. Ein Klick trifft damit das Netz; welche Fläche
 darunter liegt, ermittelt das Programm beim Klick, so dass die Auswahlart
 „Fläche" unverändert arbeitet.
 
+**Kanten gewinnen gegen die Fläche, auf der sie liegen.** Eine Bauteilkante
+ist zweimal im Bild: als Rand der Fläche **und** als Linie des Modells. Beide
+liegen auf demselben Fleck im Tiefenspeicher der Grafikkarte, und ohne Regel
+entscheidet dort die Rundung — Bildpunkt für Bildpunkt —, welche von beiden
+gewinnt. In der gefüllten Ansicht franste das die Umrisse aus und ließ sie
+stellenweise ganz verschwinden: Bohrungen, Rippen und Blechkanten waren nicht
+zu sehen, obwohl sie gezeichnet wurden. Im Drahtmodell fiel es nicht auf —
+dort gibt es keine Fläche, gegen die eine Linie verlieren könnte. Jetzt
+rücken die Flächen um Bruchteile einer Tiefenstufe nach hinten und die Linien
+nach vorn; am Drehlagermodell kamen damit **46 % der Körperkanten zurück**,
+die die gefüllte Ansicht verschluckt hatte.
+
 **F9** blendet das **FE-Netz** (die Elementkanten) ein und aus. Der Schalter
 „Knoten" zeigt die gesetzten Knoten als Punkte: Knoten, an denen noch **kein
 Element** hängt, sind orange und etwas größer — so sieht man beim Modellieren,
@@ -631,12 +663,23 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
+| ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt |
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Intelligente Auswahl** (Schalter) |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
 | ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
+
+**Lastfall und Kombination aus der Leiste.** Ganz links steht eine
+Aufklappliste mit **jedem Lastfall und jeder Kombination**. Sie ist die
+Angabe, die man beim Durchsehen am häufigsten wechselt; oben links im Bild
+war sie bisher nur zu *lesen*. Ein Lastfall daraus wird der aktive — seine
+Lasten stehen im Bild und die Lastentabelle unten zeigt ihn. Eine
+Kombination hat erst nach der Berechnung etwas zu zeigen: liegt ein Ergebnis
+vor, schaltet die Ergebnisliste mit um, sonst sagt das Protokoll, woran es
+liegt. Umgekehrt zieht die Leiste nach, wenn das Ergebnis woanders gewählt
+wird — beides zeigt immer dasselbe.
 
 **Verborgenes im Hintergrund.** Der Schalter (Register *Ansicht → Sicht*,
 auch in der Glasleiste) zeigt alles Ausgeblendete blass und durchscheinend

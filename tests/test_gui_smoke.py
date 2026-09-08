@@ -26,6 +26,12 @@ def main():
     if not os.environ.get("DISPLAY") and sys.platform.startswith("linux"):
         print("Kein DISPLAY - Test uebersprungen (xvfb-run verwenden)")
         return 0
+    # Keine Updatesuche im Test. Sie laeuft sonst 4 s nach dem Start von selbst
+    # los, fragt GitHub und blendet den Knopf „Update verfügbar" in die
+    # Statusleiste - dann scheitert die Pruefung „Fassung nicht mehr in der
+    # Statusleiste" an einer richtigen Meldung statt an einem Fehler. Der Test
+    # soll das Fenster pruefen, nicht den Stand des Netzes.
+    os.environ["STATIK3D_NO_UPDATE_CHECK"] = "1"
     from PySide6 import QtWidgets, QtGui
     from statik3d import solver
     from statik3d.gui.main import MainWindow, FIELDS, DIAGRAMS
@@ -338,7 +344,8 @@ def main():
               "Knoten" in w.lbl_netz.text() and w.lbl_solver.text().startswith("Solver"),
               w.lbl_netz.text())
         check("Fassung nicht mehr in der Statusleiste",
-              not w.btn_update.isVisible() and not w.lbl_version.isVisible())
+              not w.btn_update.isVisible() and not w.lbl_version.isVisible(),
+              f"Updateknopf {w.btn_update.isVisible()}, Version {w.lbl_version.isVisible()}")
         check("Modellbaum gefuellt", w.baum.topLevelItemCount() >= 1
               and w.baum.topLevelItem(0).childCount() >= 5,
               str(w.baum.topLevelItem(0).childCount()))
@@ -1103,6 +1110,46 @@ def main():
               and vp.darstellung("Hidden-Line", False).get("color") == "#ffffff")
         check("Hidden-Line überschreibt keine Ergebnisfarbe",
               "color" not in vp.darstellung("Hidden-Line", False, True))
+
+        # Kanten gegen die Flaeche, auf der sie liegen: eine Bauteilkante ist
+        # zweimal da - als Rand der Flaeche und als Linie -, beide auf
+        # demselben Fleck im Tiefenspeicher. Ohne Polygonversatz frisst die
+        # Flaeche die Linie stellenweise auf; am Drehlagermodell blieben von
+        # den Koerperkanten in der Vollansicht nur 54 % uebrig.
+        import vtk as _vtk
+        check("die Einstellung „Kanten vor Flächen“ steht", vp.KANTEN_VORN
+              and _vtk.vtkMapper.GetResolveCoincidentTopology() != 0,
+              str(_vtk.vtkMapper.GetResolveCoincidentTopology()))
+
+        def _kantenprobe():
+            """Rotes Liniengitter genau in einer blauen Ebene - wie viele
+            Bildpunkte der Linien ueberleben?"""
+            import pyvista as _pv
+            p_ = _pv.Plotter(off_screen=True, window_size=(500, 500))
+            p_.background_color = "white"
+            p_.add_mesh(_pv.Plane(center=(0, 0, 0), direction=(0, 0, 1),
+                                  i_size=20, j_size=20, i_resolution=40, j_resolution=40),
+                        color="#7fb3d5", opacity=1.0, lighting=False, show_edges=False)
+            pkt, lin = [], []
+            for k_, y_ in enumerate(np.linspace(-9, 9, 19)):
+                pkt += [[-9.5, y_, 0.0], [9.5, y_, 0.0]]
+                lin += [2, 2 * k_, 2 * k_ + 1]
+            p_.add_mesh(_pv.PolyData(np.asarray(pkt, float), lines=np.asarray(lin)),
+                        color="#ff0000", line_width=2, lighting=False)
+            p_.camera.position = (0, -60, 40); p_.camera.focal_point = (0, 0, 0)
+            p_.camera.up = (0, 0, 1)
+            p_.renderer.ResetCameraClippingRange(-500, 500, -500, 500, -500, 500)
+            b_ = np.asarray(p_.screenshot(return_img=True))[:, :, :3].astype(int)
+            p_.close()
+            return int(((b_[:, :, 0] > 200) & (b_[:, :, 1] < 80) & (b_[:, :, 2] < 80)).sum())
+
+        _vtk.vtkMapper.SetResolveCoincidentTopologyToDefault()
+        _ohne = _kantenprobe()
+        vp.kanten_vor_flaechen()
+        _mit = _kantenprobe()
+        check("und sie holt die verschluckten Kanten zurück", _mit > 2 * _ohne,
+              f"{_ohne} → {_mit} Bildpunkte ({_mit / max(1, _ohne):.1f}-fach)")
+
         w.darstellung_setzen("Voll")
         w.act_edges.setChecked(False)
         app.processEvents()
@@ -3755,6 +3802,39 @@ def main():
               abs(float(np.linalg.norm(mitte[:2])) - 0.5) > 0.1,
               f"Schwerpunkt bei r = {float(np.linalg.norm(mitte[:2])):.3f} m statt 0,5 m")
 
+        # Was eben ist, sagt die Quelldatei - nicht eine Messung. Der
+        # Planaritätstest hängt an seiner Eingabe: befragt man nur die vier
+        # Eckknoten eines Bohrungsmantels, liegen sie in einer Ebene, obwohl
+        # die Fläche sich um den Bohrungsradius wölbt.
+        from statik3d.model import polygon_eben as _peben
+        ecken4 = np.array([[0.5, 0, 0], [-0.5, 0, 0], [-0.5, 0, 1.0], [0.5, 0, 1.0]])
+        check("die vier Eckknoten eines Zylindermantels liegen in einer Ebene",
+              _peben(ecken4), str(np.round(ecken4, 3).tolist()))
+        P_o, Z_o = vpl.flaechen_dreiecke(ecken4, seiten, [], typ="")
+        check("wer nur sie befragt, hält den Mantel für eben",
+              P_o is not None and len(Z_o) == 5, f"{len(Z_o)} Zelleinträge")
+        P_t, Z_t = vpl.flaechen_dreiecke(ecken4, seiten, [], typ="regelflaeche")
+        r_t = np.linalg.norm(np.asarray(P_t, float)[:, :2], axis=1)
+        check("mit typ='regelflaeche' aus der Quelldatei liegt sie auf dem Zylinder",
+              len(Z_t) > 5 and abs(r_t.min() - 0.5) < 1e-9 and abs(r_t.max() - 0.5) < 1e-9,
+              f"{len(Z_t)} Zelleinträge, r = {r_t.min():.6f}..{r_t.max():.6f} m")
+        P_g, _Z_g = vpl.flaechen_dreiecke(np.asarray(ring5, float), s5, [], typ="eben")
+        r_g = np.linalg.norm(np.asarray(P_g, float)[:, :2], axis=1)
+        check("und typ='eben' macht aus einer gewölbten Fläche keine ebene",
+              abs(r_g.max() - 0.5) < 1e-9, f"größter Radius {r_g.max():.6f} m")
+
+        # Fünf Randlinien, vier benannte Ecken: an den Ecken zerlegt, nicht geraten
+        vier = vpl.seiten_an_ecken(s5, np.array([
+            [0.5, 0, 0], [-0.5, 0, 0], [-0.5, 0, 1.0], [0.5, 0, 1.0]]))
+        check("die vier benannten Ecken zerlegen fünf Randseiten in vier",
+              len(vier) == 4 and all(np.allclose(vier[i][-1], vier[(i + 1) % 4][0])
+                                     for i in range(4)),
+              str([len(x) for x in vier]))
+        check("ohne Ecken bleibt es beim Zusammenfassen an der glatten Ecke",
+              not vpl.seiten_an_ecken(s5, None)
+              and len(vpl.seiten_zusammenfassen(list(s5))) == 4, "")
+        _ = P_o, P_t
+
         # Wo ein Netz steht, wird das Netz gezeichnet: die Randflaechen eines
         # vernetzten Koerpers liegen sonst deckungsgleich auf seiner Netzhaut.
         from statik3d.model import Volumenkoerper as VK, Material as Mat
@@ -5070,6 +5150,59 @@ def main():
         check("Glasleiste: Knopf „Verborgenes im Hintergrund“",
               "geist" in kn and kn["geist"].defaultAction() is w.act_geist and w.act_geist.isCheckable())
 
+        # ---- Glasleiste: Aufklappliste fuer Lastfaelle und Kombinationen ---------
+        from statik3d import solver as _slv
+        w.load_example("hall")
+        app.processEvents()
+        cbl = w.cb_lastwahl
+        check("Glasleiste: Aufklappliste ganz links",
+              w.glasleiste.lay.itemAt(0).widget() is cbl
+              and w.glasleiste.listen.get("lastwahl") is cbl,
+              type(w.glasleiste.lay.itemAt(0).widget()).__name__)
+        eintr = [(cbl.itemText(i), cbl.itemData(i)) for i in range(cbl.count())]
+        check("sie führt jeden Lastfall und jede Kombination",
+              len(eintr) == len(w.model.load_cases) + len(w.model.combinations)
+              and eintr[0][1] == ("case", list(w.model.load_cases)[0])
+              and any(d[0] == "combo" for _t, d in eintr),
+              f"{len(eintr)} Einträge zu {len(w.model.load_cases)} Lastfällen "
+              f"und {len(w.model.combinations)} Kombinationen")
+        check("und steht auf dem, was die Ansicht zeigt",
+              cbl.currentData() == ("case", w.model.active_case), str(cbl.currentData()))
+        zweiter = next(i for i, (_t, d) in enumerate(eintr)
+                       if d[0] == "case" and d[1] != w.model.active_case)
+        cbl.setCurrentIndex(zweiter)
+        app.processEvents()
+        check("ein Lastfall daraus wird der aktive",
+              w.model.active_case == eintr[zweiter][1][1], w.model.active_case)
+        i_kombi = next(i for i, (_t, d) in enumerate(eintr) if d[0] == "combo")
+        cbl.setCurrentIndex(i_kombi)
+        app.processEvents()
+        check("eine Kombination ohne Ergebnis sagt, woran es liegt",
+              "sobald gerechnet ist" in w.log.toPlainText().splitlines()[-1],
+              w.log.toPlainText().splitlines()[-1][:80])
+        an_ = _slv.solve_all(w.model, design=bool(w.model.members))
+        w._solve_done("all", an_)
+        app.processEvents()
+        cbl.setCurrentIndex(i_kombi)
+        app.processEvents()
+        check("mit Ergebnis schaltet sie die Ergebnisliste mit um",
+              w.cb_result.currentData() == eintr[i_kombi][1],
+              f"{w.cb_result.currentData()} statt {eintr[i_kombi][1]}")
+        # und umgekehrt: was die Ergebnisliste zeigt, steht auch in der Leiste
+        for i_ in range(w.cb_result.count()):
+            if w.cb_result.itemData(i_)[0] == "case":
+                w.cb_result.setCurrentIndex(i_)
+                break
+        app.processEvents()
+        check("und die Leiste zieht nach, wenn das Ergebnis anders gewählt wird",
+              cbl.currentData() == w.cb_result.currentData(),
+              f"{cbl.currentData()} / {w.cb_result.currentData()}")
+        # Das Ergebnis gehoert zu diesem Modell - der naechste Abschnitt setzt
+        # ein anderes ein. Ohne Loeschen zeichnete die Ansicht Werte des alten
+        # Modells auf das neue.
+        w.analysis = None
+        w.results = None
+
         # ---- Geist: Verborgenes blass im Hintergrund, nicht anklickbar -----------
         from statik3d import examples_lib as _ex
         from statik3d.gui import viewport as _vp
@@ -5937,6 +6070,54 @@ def main():
                   f"{sorted(int(x) for x in w.selection)} / {namen}")
             check("und die Statuszeile nennt die Zahl",
                   "3 Knoten" in w.lbl_sel.text(), w.lbl_sel.text())
+
+        # Die Maske rechts darf dem Baum die Tastatur nicht wegnehmen.
+        # Sie tat es: jeder Klick im Baum oeffnete rechts eine Maske, und die
+        # rief setFocus() - danach gingen die Pfeiltasten ins Leere, obwohl
+        # der Baum sie kann. Geprueft wird der Weg, den ein Klick nimmt.
+        for art_, name_ in (("knoten", "0"), ("werkstoff", next(iter(w.model.materials), "")),
+                            ("lastfall", next(iter(w.model.load_cases), ""))):
+            if not name_:
+                continue
+            baum.setFocus(_Qc.Qt.MouseFocusReason)
+            app.processEvents()
+            w._baum_geklickt(art_, name_)
+            app.processEvents()
+            check(f"nach dem Klick auf {art_} bleibt die Tastatur im Baum",
+                  w.focusWidget() is baum, type(w.focusWidget()).__name__)
+
+        # Pfeiltaste runter bewegt und meldet, Umschalt+Pfeil nimmt dazu
+        baum.setFocus(_Qc.Qt.MouseFocusReason)
+        baum.clearSelection()
+        baum.setCurrentItem(knoten[0])
+        app.processEvents()
+        getastet = []
+        baum.angeklickt.connect(lambda a, n: getastet.append(("einzeln", a, n)))
+        baum.mehrfach.connect(lambda a, n: getastet.append(("mehrfach", a, list(n))))
+        app.sendEvent(baum, _Qg.QKeyEvent(_Qc.QEvent.KeyPress, _Qc.Qt.Key_Down,
+                                          _Qc.Qt.NoModifier))
+        app.processEvents()
+        check("Pfeil runter schaltet auf den naechsten Eintrag und meldet ihn",
+              baum._schluessel(baum.currentItem()) == ("knoten", "1")
+              and getastet and getastet[-1] == ("einzeln", "knoten", "1"),
+              str(getastet[-1] if getastet else None))
+        app.sendEvent(baum, _Qg.QKeyEvent(_Qc.QEvent.KeyPress, _Qc.Qt.Key_Down,
+                                          _Qc.Qt.ShiftModifier))
+        app.processEvents()
+        check("Umschalt+Pfeil nimmt den naechsten dazu",
+              baum.gewaehlte_eintraege() == ("knoten", ["1", "2"])
+              and getastet[-1] == ("mehrfach", "knoten", ["1", "2"]),
+              f"{baum.gewaehlte_eintraege()} / {getastet[-1]}")
+        # Strg+Klick nimmt einen einzelnen dazu, ohne die Strecke zu ziehen
+        baum.clearSelection()
+        knoten[0].setSelected(True)
+        baum.setCurrentItem(knoten[0], 0, _Qc.QItemSelectionModel.NoUpdate)
+        knoten[3].setSelected(True) if len(knoten) > 3 else None
+        app.processEvents()
+        if len(knoten) > 3:
+            art_, namen_ = baum.gewaehlte_eintraege()
+            check("Strg+Auswahl haelt zwei nicht benachbarte Eintraege",
+                  art_ == "knoten" and namen_ == ["0", "3"], f"{art_} {namen_}")
 
         # Pfeiltasten: ein einzelner Eintrag muss sich auch melden
         baum.clearSelection()

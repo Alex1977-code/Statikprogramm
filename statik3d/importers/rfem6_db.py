@@ -1083,13 +1083,14 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
         C.say(log, f"  {name}: {len(lines)} Linien, {len(nodes)} Knoten")
 
     # ---- Flaechen und Flaechenlager -------------------------------------
-    surf_nodes, surf_area = _surface_nodes(db, node_of, m, line_name)
+    surf_nodes, surf_area, surf_ecken = _surface_nodes(db, node_of, m, line_name)
     n_surf = db.count("Surface")
     C.say(log, f"{len(surf_nodes)} von {n_surf} Flaechen mit Randknoten gelesen")
     if len(surf_nodes) < n_surf:
         C.warn(log, f"  {n_surf - len(surf_nodes)} Flaechen ohne aufloesbaren Rand "
                     "(getrimmte Flaechen, Freiformraender) - sie bleiben unsichtbar.")
-    surf_els, surf_name = _surfaces(db, m, surf_nodes, log, matcache, line_name)
+    surf_els, surf_name = _surfaces(db, m, surf_nodes, log, matcache, line_name,
+                                    surf_ecken)
     for h, impl in db.impls("SurfaceSupport"):
         sids = db.container("SurfaceSupportImpl_surfaces").get(impl["id"], [])
         name = (impl.get("name") or "").strip() or f"Flaechenlager {h.get('userID') or h['id']}"
@@ -1220,9 +1221,17 @@ def _surface_nodes(db: Db, node_of: dict, m: Model,
     line_name = line_name or {}
     nodes_out: dict[int, list] = {}
     area_out: dict[int, float] = {}
+    ecken_out: dict[int, list] = {}
     for h, impl in db.impls("Surface"):
         tbl = h["impl_table"] or ""
         raw = db.container(tbl + "_cornerNodes").get(impl["id"], [])
+        # Die **benannten** Ecken getrennt festhalten: sie sagen, wo der Rand
+        # in vier Seiten zu zerlegen ist. Fuer eine Ebenheitsentscheidung sind
+        # sie untauglich - an F159 liegen alle vier bei z = -1280, waehrend die
+        # Flaeche sich um 257 mm herauswoelbt.
+        ecken = [node_of[n] for n in raw if n in node_of]
+        if len(ecken) == 4:
+            ecken_out[h["id"]] = ecken
         rand = db.container(tbl + "_boundaryLines").get(impl["id"], [])
         if raw:
             ring = [n for n in raw if n in node_of]
@@ -1242,7 +1251,7 @@ def _surface_nodes(db: Db, node_of: dict, m: Model,
         P = _randkurve(m, [line_name[x] for x in rand if x in line_name])
         area_out[h["id"]] = (_polygon_area(P) if len(P) >= 3
                              else (_polygon_area(m.nodes[idx]) if len(idx) >= 3 else 0.0))
-    return nodes_out, area_out
+    return nodes_out, area_out, ecken_out
 
 
 #: Abschnitte je krummer Randlinie beim Flaecheninhalt. Das eingeschriebene
@@ -1278,6 +1287,26 @@ SURFACE_ART = {
     "SurfaceImplNurbs": "NURBS",
     "SurfaceImplRotated": "Rotationsfläche",
     "SurfaceImplPipe": "Rohrmantel",
+}
+
+#: Und dieselbe Art als Geometrieart des Modells (:attr:`Flaeche.typ`). Sie
+#: **entscheidet**, wie die Ansicht die Flaeche aufbaut. Nachgemessen an allen
+#: 1375 Flaechen des Drehlagermodells - Randpunkte einschliesslich der
+#: Bogenscheitel, groesster Abstand zur Ausgleichsebene:
+#:
+#:     Plane        589 Flaechen   589 eben     0 gewoelbt
+#:     Quadrangle   782 Flaechen     0 eben   782 gewoelbt (Median 45 % der
+#:                                            eigenen Ausdehnung, groesste 257 mm)
+#:     Trimmed        4 Flaechen     0 eben     4 gewoelbt
+#:
+#: Keine einzige Ausnahme in beide Richtungen. In RFEM heisst Quadrangle
+#: gewoelbt und Plane eben; das ist keine Heuristik, sondern die Bedeutung des
+#: Typs. Was hier nicht steht, gilt als Regelflaeche - eine NURBS- oder
+#: Rotationsflaeche ist keine Ebene.
+SURFACE_TYP = {
+    "SurfaceImplPlane": "eben",
+    "SurfaceImplQuadrangle": "regelflaeche",
+    "SurfaceImplTrimmed": "beschnitten",
 }
 
 
@@ -1484,7 +1513,8 @@ def _opening_lines(db: Db) -> dict:
 
 
 def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
-              matcache: dict, line_name: dict = None) -> tuple[dict, dict]:
+              matcache: dict, line_name: dict = None,
+              surf_ecken: dict = None) -> tuple[dict, dict]:
     """
     Flaechen einlesen: **jede** Flaeche wird ein Modellobjekt, die mit eigener
     Dicke werden zusaetzlich vernetzt.
@@ -1515,6 +1545,7 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
     line_name = line_name or {}
     n_oeffnung = 0
     arten: dict = {}
+    n_ecken = 0
     for h, impl in db.impls("Surface"):
         sid = h["id"]
         nr = h.get("userID") or sid
@@ -1547,10 +1578,16 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
         tbl = str(h.get("impl_table") or "")
         art = SURFACE_ART.get(tbl, tbl.replace("SurfaceImpl", "") if tbl else "")
         arten[art] = arten.get(art, 0) + 1
-        f = Flaeche(fname, linien, dicke=pname, material=mname,
+        typ = SURFACE_TYP.get(tbl, "regelflaeche" if tbl else "eben")
+        # Die Eckknoten nennt RFEM nur beim Viereck - und dort ausnahmslos
+        # genau vier, auch bei den vieren mit fuenf Randlinien.
+        ecken = list((surf_ecken or {}).get(sid, []))
+        if len(ecken) == 4:
+            n_ecken += 1
+        f = Flaeche(fname, linien, typ=typ, dicke=pname, material=mname,
                     kommentar=d["text"] if d["t"] <= 0 else "",
                     oeffnungen=loecher, steifigkeit=d["text"] if d["t"] <= 0 else "",
-                    quellart=art)
+                    quellart=art, ecken=ecken)
         m.flaechen[fname] = f
         namen[sid] = fname
         if d["t"] <= 0:
@@ -1589,10 +1626,13 @@ def _surfaces(db: Db, m: Model, surf_nodes: dict, log: list,
         C.say(log, f"  {n_oeffnung} Oeffnungen (Bohrungen, Aussparungen) mit ihren "
                    "Randlinien uebernommen")
     if arten:
-        # Festgehalten, nicht ausgewertet: gerechnet wird ueber die Randlinien.
+        # Die Geometrieart **entscheidet**, wie die Ansicht die Flaeche
+        # aufbaut (SURFACE_TYP); gerechnet und vernetzt wird weiter ueber die
+        # Randlinien, die ihre wahre Form selbst tragen.
         C.say(log, "  Geometrieart aus der Quelldatei: "
                    + ", ".join(f"{n}x {k or 'ohne Angabe'}"
-                               for k, n in sorted(arten.items(), key=lambda x: -x[1])))
+                               for k, n in sorted(arten.items(), key=lambda x: -x[1]))
+                   + f"; {n_ecken} Flächen mit vier benannten Eckknoten")
     if mit_oeffnung:
         C.say(log, f"  {mit_oeffnung} Flaechen mit Oeffnung ohne abgebildetes Netz")
     if ohne_rand:

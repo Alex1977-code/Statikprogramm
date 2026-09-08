@@ -182,22 +182,39 @@ zur Geraden — **mit** Meldung im Protokoll, nie stillschweigend:
 
 ### Flächenarten
 
-RFEM legt auch je Flächenart eine eigene Umsetzungstabelle an. Statik3D
-**hält sie fest, wertet sie aber nicht aus** (`rfem6_db.SURFACE_ART` →
-`Flaeche.quellart`):
+RFEM legt je Flächenart eine eigene Umsetzungstabelle an — der Tabellenname
+**ist** die Art. Statik3D hält den Namen als Angabe fest (`SURFACE_ART` →
+`Flaeche.quellart`) und leitet daraus ab, ob die Fläche **eben oder gewölbt**
+ist (`SURFACE_TYP` → `Flaeche.typ`):
 
-| RFEM-Tabelle | Art | im Drehlagermodell |
-|---|---|---|
-| `SurfaceImplQuadrangle` | Viereck | 782 |
-| `SurfaceImplPlane` | Ebene | 589 |
-| `SurfaceImplTrimmed` | beschnitten | 4 |
-| `SurfaceImplNurbs`, `…Rotated`, `…Pipe` | NURBS, Rotationsfläche, Rohrmantel | — |
+| RFEM-Tabelle | Art | `Flaeche.typ` | im Drehlagermodell |
+|---|---|---|---|
+| `SurfaceImplQuadrangle` | Viereck | `regelflaeche` | 782 |
+| `SurfaceImplPlane` | Ebene | `eben` | 589 |
+| `SurfaceImplTrimmed` | beschnitten | `beschnitten` | 4 |
+| `SurfaceImplNurbs`, `…Rotated`, `…Pipe` | NURBS, Rotationsfläche, Rohrmantel | `regelflaeche` | — |
 
-Gerechnet und vernetzt wird über die **Randlinien**, und die tragen ihre wahre
-Form (Bogen, Gerade, Kontrollpunkte) selbst. Das ist nachprüfbar: das
-Hüllvolumen von V29 — 10 seiner 13 Flächen sind Vierecke — trifft den exakt
-gerechneten Ring auf 0,4 %. Die Art steht darum als Angabe am Objekt und im
-Protokoll, ohne dass eine Entscheidung an ihr hängt.
+`Flaeche.typ` entscheidet **nur über das Bild**: eine Fläche mit `eben` wird
+als ebenes Vieleck gezeichnet, eine mit `regelflaeche` oder `beschnitten` als
+Coons-Fläche über ihre vier Randseiten, so dass sie auf dem Zylinder liegt.
+Die Angabe darf dabei nur **zur Wölbung hin** entscheiden: findet die
+geometrische Prüfung die Randpunkte nicht in einer Ebene, wird auch eine als
+`eben` geführte Fläche gewölbt gezeichnet. Beide Wege irren so nur in eine
+Richtung — die geometrische Prüfung kann eine gewölbte Fläche für eben
+halten, nie umgekehrt. Am Drehlagermodell stimmen alle 1375 Flächen zwischen
+RFEM-Art und geometrischer Prüfung überein.
+
+`SurfaceImplQuadrangle` nennt außerdem seine vier **Eckknoten**
+(`SurfaceImplQuadrangle_cornerNodes` → `Flaeche.ecken`) — im Drehlagermodell
+bei allen 782 genau vier, auch bei denen mit fünf Randlinien. Daran wird der
+Rand in die vier Seiten der Coons-Fläche geteilt; eine in zwei Linien
+geteilte Gerade zählt damit nicht als eigene Seite. Die Eckknoten beschreiben
+die **Topologie**, nie die Ebenheit.
+
+Gerechnet und vernetzt wird weiterhin über die **Randlinien**, und die tragen
+ihre wahre Form (Bogen, Gerade, Kontrollpunkte) selbst. Das ist nachprüfbar:
+das Hüllvolumen von V29 — 10 seiner 13 Flächen sind Vierecke — trifft den
+exakt gerechneten Ring auf 0,4 %.
 
 ### Stabtypen
 

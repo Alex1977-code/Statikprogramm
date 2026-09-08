@@ -2647,6 +2647,14 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         central = self.centralWidget()
         leiste = msk.Glasleiste(central)
+        # Ganz links: was die Ansicht zeigt - Lastfall oder Kombination.
+        # Es ist die Angabe, die man beim Durchsehen am haeufigsten wechselt,
+        # und sie stand bisher nur in Tabellen und Masken; oben links im Bild
+        # war sie zwar zu **lesen** (Kopfzeile), aber nicht zu aendern.
+        self.cb_lastwahl = leiste.liste(
+            "Was die Ansicht zeigt: Lastfall oder Lastkombination", "lastwahl")
+        self.cb_lastwahl.currentIndexChanged.connect(self._glas_last_gewaehlt)
+        leiste.trenner()
         # Darstellungsart
         for name in vp.DARSTELLUNGEN:
             leiste.knopf(self.act_darstellung[name], vp.DARSTELLUNG_SYMBOL[name], name)
@@ -3567,11 +3575,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 return True
         return False
 
-    def maske_erzeugen(self, maske):
-        """Eine Erzeuge-Maske im rechten Bereich zeigen und ihn aufklappen."""
+    def maske_erzeugen(self, maske, fokus: bool = True):
+        """Eine Erzeuge-Maske im rechten Bereich zeigen und ihn aufklappen.
+
+        ``fokus=False`` laesst die Tastatur, wo sie ist. Das gilt fuer jede
+        Maske, die nur die **Folge** einer Auswahl ist: wer im Modellbaum
+        etwas anklickt, will mit den Pfeiltasten weiterblaettern koennen und
+        nicht in einem Eingabefeld rechts landen.
+        """
         if getattr(self, "_auswahl_sammeln", False):
             return maske                    # Mehrfachauswahl: keine Maske je Zeile
-        self.maskenrand.zeigen(maske)
+        self.maskenrand.zeigen(maske, fokus=fokus)
         # Rechts steht nur die Maske: die Register darunter - zuletzt standen
         # dort immer die Projektangaben - verschwinden, solange sie offen ist.
         try:
@@ -4575,7 +4589,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                      self._objekt_uebernehmen(a, n, w, ist_neu))
             if neu:
                 maske.abgebrochen.connect(lambda a=art, n=name: self._objekt_neu_abbrechen(a, n))
-        self.maske_erzeugen(maske)
+        # Ein neu angelegtes Objekt will gleich ausgefuellt werden - dort darf
+        # die Maske die Tastatur haben. Beim blossen Anklicken im Modellbaum
+        # nicht: dort blaettert der Benutzer mit den Pfeiltasten weiter.
+        self.maske_erzeugen(maske, fokus=bool(neu))
         return maske
 
     #: Bettung auf und an Beton (Vorschlag - Werte sind zu pruefen)
@@ -5231,7 +5248,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "zeigt den Lastfall. „Lastfall bearbeiten“ holt seine Maske zurück.",
                           zusatz=[("Diese Lasten löschen", lambda: self._lastart_loeschen(fall, art))])
         maske.angewendet.connect(lambda _w, n_=fall: self._baum_geklickt("lastfall", n_))
-        self.maske_erzeugen(maske)
+        self.maske_erzeugen(maske, fokus=False)   # Auswahl, nicht Eingabe
         self.redraw()
 
     def _lasten_hervorheben(self, fall: str, art: str, titel: str, lasten: list):
@@ -5442,7 +5459,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           hinweis=self._lasttext(art, obj) + " - Werte ändern und „Übernehmen“.",
                           zusatz=[("Löschen", lambda: self._last_loeschen(fall, liste, k))])
         maske.angewendet.connect(lambda w, f_=fall, l_=liste, k_=k: self._last_uebernehmen(f_, l_, k_, w))
-        self.maske_erzeugen(maske)
+        self.maske_erzeugen(maske, fokus=False)   # Auswahl, nicht Eingabe
 
     def _last_uebernehmen(self, fall: str, liste: str, k: int, w: dict):
         m = self.model
@@ -10855,6 +10872,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                    for c in m.combinations.values()])
         self._fill(self.tbl_fatl, [[f.name, f.case_max, f.case_min or "0", f"{f.cycles:g}"]
                                    for f in m.fatigue_loads.values()])
+        self._lastwahl_fuellen()
 
     def refresh_contact(self):
         m = self.model
@@ -13072,6 +13090,91 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model.supports.clear()
         self.refresh_all()
 
+    # ---- Lastfall/Kombination in der Glasleiste ------------------------
+    def _lastwahl_fuellen(self):
+        """Die Aufklappliste der Glasleiste mit Lastfaellen und Kombinationen.
+
+        Sie fuehrt genau das, was die Ansicht zeigen kann: jeden Lastfall und
+        jede Kombination. Die Auswahl wird nachgezogen, ohne dass dabei
+        wieder ein Wechsel gemeldet wird - sonst schaukelte sich
+        Liste -> Ansicht -> Liste auf.
+        """
+        cb = getattr(self, "cb_lastwahl", None)
+        if cb is None or not _lebt(cb):
+            return
+        m = self.model
+        eintraege = [(f"Lastfall {n}", ("case", n)) for n in m.load_cases]
+        eintraege += [(f"Kombination {n}", ("combo", n)) for n in m.combinations]
+        alt = [(cb.itemText(i), cb.itemData(i)) for i in range(cb.count())]
+        cb.blockSignals(True)
+        try:
+            if alt != eintraege:
+                cb.clear()
+                for text, daten in eintraege:
+                    cb.addItem(text, daten)
+            self._lastwahl_nachziehen(sperren=False)
+        finally:
+            cb.blockSignals(False)
+
+    def _lastwahl_nachziehen(self, sperren: bool = True):
+        """Die Liste auf das stellen, was gerade gezeigt wird."""
+        cb = getattr(self, "cb_lastwahl", None)
+        if cb is None or not _lebt(cb) or cb.count() == 0:
+            return
+        ziel = ("case", self.model.active_case)
+        if self.analysis is not None and getattr(self, "cb_result", None) is not None \
+                and _lebt(self.cb_result):
+            d = self.cb_result.currentData()
+            if d and d[0] in ("case", "combo") and d[1]:
+                ziel = (d[0], d[1])
+        for i in range(cb.count()):
+            if cb.itemData(i) == ziel:
+                if cb.currentIndex() == i:
+                    return
+                if sperren:
+                    cb.blockSignals(True)
+                cb.setCurrentIndex(i)
+                if sperren:
+                    cb.blockSignals(False)
+                return
+
+    def _glas_last_gewaehlt(self, _i: int = -1):
+        """Aus der Glasleiste gewaehlt: Lastfall oder Kombination zeigen.
+
+        Ein Lastfall wird zum aktiven - seine Lasten stehen im Bild. Eine
+        Kombination hat erst nach der Berechnung etwas zu zeigen; liegt ein
+        Ergebnis vor, schaltet die Ergebnisliste mit um, sonst sagt das
+        Protokoll, woran es liegt (kein Dialog - die Leiste soll nicht
+        stehenbleiben).
+        """
+        cb = getattr(self, "cb_lastwahl", None)
+        if cb is None or not _lebt(cb):
+            return
+        daten = cb.currentData()
+        if not daten:
+            return
+        art, name = daten
+        if art == "case" and name in self.model.load_cases:
+            self.model.active_case = name
+            if getattr(self, "lbl_active", None) is not None and _lebt(self.lbl_active):
+                self.lbl_active.setText(f"aktiver Lastfall: {name} ({self.model.case().category})")
+            if getattr(self, "cb_lastfilter", None) is not None and _lebt(self.cb_lastfilter):
+                self.cb_lastfilter.setCurrentText(name)
+        # Liegt ein Ergebnis vor, zeigt die Ansicht es zu genau diesem Eintrag
+        if self.analysis is not None and getattr(self, "cb_result", None) is not None \
+                and _lebt(self.cb_result):
+            for i in range(self.cb_result.count()):
+                if self.cb_result.itemData(i) == (art, name):
+                    if self.cb_result.currentIndex() != i:
+                        self.cb_result.setCurrentIndex(i)   # zeichnet selbst neu
+                    return
+        if art == "combo":
+            self.log.appendPlainText(
+                f"Kombination {name}: sie zeigt sich, sobald gerechnet ist "
+                "(Berechnung → Berechnen).")
+            return
+        self.redraw()
+
     # ---- Lastfaelle --------------------------------------------------
     def _case_selected(self):
         r = self.tbl_lc.currentRow()
@@ -13082,6 +13185,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_g.blockSignals(True)
             self.cb_g.setChecked(bool(np.any(self.model.gravity)))
             self.cb_g.blockSignals(False)
+            self._lastwahl_nachziehen()
             self.redraw()
 
     def add_case(self):
@@ -13856,6 +13960,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for k in an.cases:
                 self.cb_result.addItem(f"Lastfall {k}", ("case", k))
         self.cb_result.blockSignals(False)
+        self._lastwahl_nachziehen()
 
     def current_result(self):
         """Aktuell gewaehltes Ergebnisobjekt (Results oder Envelope) oder None."""
@@ -13896,6 +14001,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def show_results(self):
         r = self.current_result()
+        self._lastwahl_nachziehen()     # die Glasleiste zeigt dasselbe an
         self.cb_mode.blockSignals(True)
         self.cb_mode.clear()
         if r is not None and getattr(r, "freqs", None) is not None:
@@ -14048,11 +14154,15 @@ class MainWindow(QtWidgets.QMainWindow):
                  frozenset(self.versteckt["flaechen"]), frozenset(self.versteckt["koerper"]))
         if getattr(self, "_geonetze_stand", None) == stand:
             return self._geonetze
+        zeilen: list = []
         self._geonetze = vp.geometrie_netze(m, raender=self._raender(), seiten=self._randseiten(),
                                             flaechen_an=self.act_flaechen.isChecked(),
                                             koerper_an=self.act_volumen.isChecked(),
                                             ausser_flaechen=self.versteckt["flaechen"],
-                                            ausser_koerper=self.versteckt["koerper"])
+                                            ausser_koerper=self.versteckt["koerper"],
+                                            log=zeilen)
+        for z in zeilen:
+            self.log.appendPlainText(z)
         self._geonetze_stand = stand
         return self._geonetze
 

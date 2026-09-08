@@ -1643,6 +1643,22 @@ class Flaeche:
     """
     name: str
     linien: list[str] = field(default_factory=list)
+    #: Geometrieart der Flaeche - sie entscheidet, wie gezeichnet wird:
+    #:
+    #: * ``"eben"``          - das Randpolygon liegt in einer Ebene
+    #: * ``"regelflaeche"``  - gewoelbt, zwischen vier Randseiten aufgespannt
+    #:   (RFEM: Quadrangle - der Mantel einer Bohrung, einer Buchse, eines
+    #:   Bolzens)
+    #: * ``"beschnitten"``   - Traegerflaeche mit Beschneidungskurven
+    #:
+    #: Sie kommt aus der Quelldatei, nicht aus einer Messung. Ein Test auf
+    #: Ebenheit haengt an der Eingabe und kann kippen: bei F1693 des
+    #: Drehlagermodells liegen alle vier **Eckknoten** in der Ebene x = 0,
+    #: waehrend die Flaeche sich bis x = 12,5 mm woelbt - es ist die halbe Wand
+    #: einer Bohrung. Wer nur die Ecken befragt, zeichnet eine Platte quer durch
+    #: die Bohrung. Ist der Typ unbekannt (Modelle aus anderen Quellen, von Hand
+    #: gebaut), entscheidet weiter :func:`polygon_eben` ueber die **abgetasteten**
+    #: Randpunkte.
     typ: str = "eben"
     dicke: str = ""                  # Name der ShellProp
     material: str = ""
@@ -1659,6 +1675,12 @@ class Flaeche:
     #: hat ("starr", "ohne Dicke (Null-Element)", "Lastverteilung" …): so eine
     #: Flaeche traegt nichts, braucht kein Netz und haelt die Rechnung nicht auf
     steifigkeit: str = ""
+    #: Die vier Eckknoten in Umlaufrichtung, wenn die Quelldatei sie nennt
+    #: (RFEM: ``SurfaceImplQuadrangle_cornerNodes`` - genau vier bei allen 782
+    #: Vierecken des Drehlagermodells, auch bei den vieren mit **fuenf**
+    #: Randlinien). Sie sagen, **wo** der Rand in vier Seiten zu zerlegen ist;
+    #: fuer eine Ebenheitsentscheidung sind sie untauglich (siehe ``typ``).
+    ecken: list[int] = field(default_factory=list)
     #: Geometrieart aus der Quelldatei ("Ebene", "Viereck", "beschnitten", …).
     #: Sie wird **festgehalten, nicht ausgewertet**: gerechnet wird ueber die
     #: Randlinien, und die tragen ihre wahre Form (Bogen, Gerade) selbst. Am

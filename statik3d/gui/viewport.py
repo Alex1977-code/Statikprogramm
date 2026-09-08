@@ -11,6 +11,42 @@ from .. import elemente as EL
 
 VTK_LINE, VTK_TRI, VTK_QUAD, VTK_TETRA, VTK_HEX, VTK_TET10 = 3, 5, 9, 10, 12, 24
 
+
+def kanten_vor_flaechen() -> bool:
+    """Linien gewinnen gegen die Flaeche, auf der sie liegen.
+
+    Eine Bauteilkante ist zweimal da: als Rand der Flaeche **und** als Linie
+    des Modells. Beide liegen auf demselben Fleck im Tiefenspeicher, und ohne
+    Regel entscheidet dort die Rundung, welche von beiden gewinnt - Bildpunkt
+    fuer Bildpunkt. In der gefuellten Ansicht des Drehlagermodells liess das
+    die Umrisse ausfransen und stellenweise ganz verschwinden: Bohrungen,
+    Rippen und Blechkanten waren nicht mehr zu sehen, obwohl sie gezeichnet
+    wurden. Im Drahtmodell fiel es nicht auf - dort gibt es keine Flaeche,
+    gegen die eine Linie verlieren koennte.
+
+    VTK kennt dafuer den Polygonversatz: die Flaechen ruecken um Bruchteile
+    einer Tiefenstufe nach hinten, die Linien nach vorn. Die Einstellung gilt
+    fuer **alle** Abbilder (sie ist eine Klasseneigenschaft von vtkMapper),
+    darum steht sie hier einmal und nicht an 40 Zeichenbefehlen.
+
+    Gibt zurueck, ob die Einstellung steht - damit ein Test es nachsehen kann.
+    """
+    try:
+        import vtk
+    except ImportError:                  # noqa: BLE001 - ohne VTK kein Bild
+        return False
+    vtk.vtkMapper.SetResolveCoincidentTopologyToPolygonOffset()
+    # Flaechen nach hinten (Faktor 2, 2 Tiefenstufen), Linien 4 Stufen nach
+    # vorn. Mehr braucht es nicht: schon eine Stufe entscheidet den Streit,
+    # mehr liesse eine Linie vor einer Flaeche schweben, die davor liegt.
+    vtk.vtkMapper.SetResolveCoincidentTopologyPolygonOffsetFaces(1)
+    vtk.vtkMapper.SetResolveCoincidentTopologyPolygonOffsetParameters(2.0, 2.0)
+    vtk.vtkMapper.SetResolveCoincidentTopologyLineOffsetParameters(0.0, -4.0)
+    return vtk.vtkMapper.GetResolveCoincidentTopology() != 0
+
+
+KANTEN_VORN = kanten_vor_flaechen()
+
 #: Elementtyp -> (VTK-Zelltyp, Knotenzahl) aus dem Elementverzeichnis. Die
 #: Grenzschichten ohne Dicke werden als (flacher) Keil bzw. Hexaeder gezeichnet.
 CELL_MAP = {t: (a.vtk, a.knoten) for t, a in EL.ELEMENTE.items()}
@@ -280,6 +316,41 @@ def coons_flaeche(seiten: list, n: int = None):
 GLATTE_ECKE = 15.0
 
 
+def seiten_an_ecken(seiten: list, ecken) -> list:
+    """Den Rand an den **benannten** Eckpunkten in vier Seiten zerlegen.
+
+    RFEM beschreibt ein Viereck nicht nur ueber seine Randlinien, sondern
+    zusaetzlich ueber vier ausdrueckliche Eckknoten - im Drehlagermodell bei
+    allen 782 Vierecken genau vier, auch bei den vieren, deren Rand aus
+    **fuenf** Linien besteht. Damit ist nichts zu raten: die Ecken sagen, wo
+    zu teilen ist. Nur wenn sie fehlen, faellt es auf
+    :func:`seiten_zusammenfassen` zurueck, das die flachste Ecke sucht.
+
+    Rueckgabe die vier Seiten im Umlauf, oder eine leere Liste, wenn sich der
+    Rand nicht so zerlegen laesst.
+    """
+    S = [np.asarray(x, float) for x in (seiten or []) if len(np.asarray(x, float)) >= 2]
+    E = np.asarray(ecken, float).reshape(-1, 3) if ecken is not None else np.zeros((0, 3))
+    if len(E) != 4 or len(S) < 4:
+        return []
+    alle = np.vstack(S)
+    tol = 1e-6 * float(np.linalg.norm(alle.max(axis=0) - alle.min(axis=0)) or 1.0)
+    tol = max(tol, 1e-12)
+    beginn = [i for i, x in enumerate(S)
+              if float(np.linalg.norm(E - x[0], axis=1).min()) <= tol]
+    if len(beginn) != 4:
+        return []
+    aus = []
+    for k in range(4):
+        i, j = beginn[k], beginn[(k + 1) % 4]
+        anzahl = (j - i) % len(S) or len(S)
+        kette = S[i]
+        for t in range(1, anzahl):
+            kette = np.vstack([kette, S[(i + t) % len(S)][1:]])
+        aus.append(kette)
+    return aus
+
+
 def seiten_zusammenfassen(seiten: list, ziel: int = 4) -> list:
     """Randseiten an glatten Ecken zusammenfassen, bis ``ziel`` uebrig sind.
 
@@ -365,31 +436,54 @@ def eben_mit_loechern(ring, loecher):
     return P3, np.asarray(T, int)
 
 
-def flaechen_dreiecke(ring, seiten=None, loecher=None):
+def flaechen_dreiecke(ring, seiten=None, loecher=None, typ: str = "", ecken=None):
     """Eine Flaeche fuers Bild: (Punkte, Zellen als VTK-Liste).
 
     Eben ohne Loecher: das Randpolygon als **eine** Zelle. Eben mit Loechern:
     Dreiecke, Aussenrand minus Innenraender (:func:`eben_mit_loechern`).
     Krumm mit vier Seiten: eine Coons-Flaeche aus Dreiecken; mehr Seiten
-    werden vorher an ihren glatten Ecken zusammengefasst
-    (:func:`seiten_zusammenfassen`). Sonst ein Faecher um den Schwerpunkt -
-    das ist fuer eine schwach gewoelbte Flaeche besser als gar nichts, fuer
-    eine stark gekruemmte aber falsch: seine Dreiecke laufen durch den
-    Koerper. Nach dem Zusammenfassen bleibt im Drehlagermodell keine Flaeche
-    mehr im Faecher.
+    werden an den benannten Ecken zerlegt (:func:`seiten_an_ecken`) oder sonst
+    an ihren glatten Ecken zusammengefasst (:func:`seiten_zusammenfassen`).
+    Sonst ein Faecher um den Schwerpunkt - das ist fuer eine schwach
+    gewoelbte Flaeche besser als gar nichts, fuer eine stark gekruemmte aber
+    falsch: seine Dreiecke laufen durch den Koerper. Im Drehlagermodell faellt
+    keine der 1375 Flaechen mehr in den Faecher.
+
+    **Was eben ist, sagt die Quelldatei - und die Geometrie.** ``typ`` ist die
+    Geometrieart (``"eben"``, ``"regelflaeche"``, ``"beschnitten"``); gewoelbt
+    gezeichnet wird, was **eines von beiden** sagt. Beide koennen nur in eine
+    Richtung irren, darum ergaenzen sie sich: der Typ ist bei einer von Hand
+    gebauten Flaeche die blosse Vorgabe „eben" und weiss nichts. Der
+    geometrische Test kann eine gewoelbte Flaeche fuer eben halten, wenn er zu
+    grobe Punkte bekommt - befragt man die vier Eckknoten von F1693, liegen
+    sie alle in der Ebene x = 0, obwohl die Flaeche sich bis x = 12,5 mm
+    woelbt: die halbe Wand einer Bohrung, gezeichnet als Platte quer durch die
+    Bohrung. Eine ebene Flaeche fuer gewoelbt halten kann er nicht. Am
+    Drehlagermodell stimmen beide Wege in allen 1375 Faellen ueberein.
     """
     from ..model import polygon_eben
     ring = np.asarray(ring, float)
     if len(ring) < 3:
         return None, None
-    if polygon_eben(ring):
+    # Gewoelbt, wenn die Quelldatei es sagt **oder** die abgetasteten
+    # Randpunkte es zeigen. Beides zusammen, weil beide Wege nur in **eine**
+    # Richtung irren koennen: der Typ ist bei einer von Hand gebauten Flaeche
+    # schlicht die Vorgabe "eben" und weiss nichts; der geometrische Test kann
+    # eine gewoelbte Flaeche fuer eben halten, wenn er zu grob abgetastete
+    # Punkte bekommt - eine ebene fuer gewoelbt kann er nicht halten. Am
+    # Drehlagermodell stimmen beide in allen 1375 Faellen ueberein: 589 Plane
+    # eben, 782 Quadrangle und 4 Trimmed gewoelbt.
+    krumm = str(typ) in ("regelflaeche", "beschnitten") or not polygon_eben(ring)
+    if not krumm:
         if loecher:
             P, D = eben_mit_loechern(ring, loecher)
             if P is not None:
                 return P, np.hstack([np.full((len(D), 1), 3), D]).ravel().tolist()
         return ring, [len(ring), *range(len(ring))]
-    if seiten is not None and len(seiten) > 4:
-        seiten = seiten_zusammenfassen(list(seiten))
+    if seiten is not None and len(seiten) != 4:
+        seiten = (seiten_an_ecken(seiten, ecken)
+                  or (seiten_zusammenfassen(list(seiten)) if len(seiten) > 4
+                      else list(seiten)))
     if seiten is not None and len(seiten) == 4:
         P, D = coons_flaeche(seiten)
         if P is not None:
@@ -416,7 +510,7 @@ GEOMETRIE_DARSTELLUNG = {
 
 def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
                     flaechen_an: bool = True, koerper_an: bool = True,
-                    ausser_flaechen=None, ausser_koerper=None):
+                    ausser_flaechen=None, ausser_koerper=None, log: list = None):
     """Die Netze der Geometrie ohne Elemente: (Flaechen, Raender, Koerperkanten).
 
     „Ohne Elemente" heisst: die Flaeche traegt selbst keine und gehoert auch
@@ -482,6 +576,18 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
             loecher[name] = r
         return r
 
+    def ecken_von(f):
+        """Die vier benannten Eckpunkte einer Flaeche - oder None."""
+        e = [int(x) for x in (getattr(f, "ecken", None) or [])]
+        if len(e) != 4 or max(e) >= len(model.nodes):
+            return None
+        return model.nodes[e]
+
+    #: Gewoelbte Flaechen mit Oeffnungen: dort sind die Loecher im Bild nicht
+    #: ausgespart. Im Drehlagermodell kommt das nicht vor - alle 100 Flaechen
+    #: mit Oeffnungen sind eben. Traefe es zu, waere es ein Fehler mit Namen
+    #: und keine stille Auslassung.
+    krumm_mit_loch: list = []
     pts: list = []
     zellen: list = []
     zelle_flaeche: list = []
@@ -505,7 +611,12 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
             # zeigen, wo die Bauteilkanten laufen. Nur die Flaeche selbst
             # zeichnet das Netz.
             continue
-        P, Z = flaechen_dreiecke(ring, seiten_von(name, f), loecher_von(name, f))
+        loch = loecher_von(name, f)
+        if loch and str(getattr(f, "typ", "")) in ("regelflaeche", "beschnitten"):
+            krumm_mit_loch.append(name)
+        P, Z = flaechen_dreiecke(ring, seiten_von(name, f), loch,
+                                 typ=str(getattr(f, "typ", "") or ""),
+                                 ecken=ecken_von(f))
         if P is None:
             continue
         basis = len(pts)
@@ -519,6 +630,11 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
             i += k + 1
             n_zellen += 1
         zelle_flaeche.extend([nr] * n_zellen)
+    if krumm_mit_loch and log is not None:
+        log.append(f"WARNUNG: {len(krumm_mit_loch)} gewölbte Flächen tragen Öffnungen "
+                   f"(z. B. {', '.join(krumm_mit_loch[:4])}) - dort sind die Löcher "
+                   "im Bild nicht ausgespart. Am Drehlagermodell kommt das nicht vor: "
+                   "alle 100 Flächen mit Öffnungen sind eben.")
     pd_f = pd_r = pd_k = None
     if pts:
         pd_f = pv.PolyData(np.asarray(pts, float), faces=np.asarray(zellen))
