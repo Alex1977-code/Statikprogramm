@@ -5918,6 +5918,50 @@ def main():
         check("unbekannte Elementnummern werden übergangen",
               _vp.teilnetz(m, [-1, 10 ** 9]).n_cells == 0)
 
+        # Bohrungen müssen im Bild ein Loch sein, keine Scheibe.
+        # Geschlossener Wert: Platte 1 x 1 m mit Loch 0,4 x 0,4 m -> 0,84 m².
+        import pyvista as _pv
+        w.new_model()
+        ml = w.model
+        ml.add_material(_Mat2("S235", E=210e9, nu=0.3, rho=7850))
+        for pkt in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                    (0.3, 0.3, 0), (0.7, 0.3, 0), (0.7, 0.7, 0), (0.3, 0.7, 0)]:
+            ml.add_node(*pkt)
+        for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            ml.add_line(f"L{i}", [a, b])
+        for i, (a, b) in enumerate([(4, 5), (5, 6), (6, 7), (7, 4)]):
+            ml.add_line(f"O{i}", [a, b])
+        fl = ml.add_flaeche("F1", ["L0", "L1", "L2", "L3"], material="S235")
+        fl.oeffnungen = [["O0", "O1", "O2", "O3"]]
+        soll = fl.inhalt(ml)
+        ringl = fl.randpunkte(ml)
+        loecher = fl.oeffnungspunkte(ml)
+        check("die Öffnung wird als Innenrand gelesen",
+              len(loecher) == 1 and len(loecher[0]) == 4, str([len(x) for x in loecher]))
+
+        def _flaeche(P, Z):
+            return float(_pv.PolyData(_np.asarray(P, float),
+                                      faces=_np.asarray(Z, int)).triangulate().area)
+
+        P0, Z0 = _vp.flaechen_dreiecke(ringl, None, None)
+        P1, Z1 = _vp.flaechen_dreiecke(ringl, None, loecher)
+        check("ohne Innenränder füllt VTK das Polygon (eine Zelle)",
+              len(Z0) == 5 and abs(_flaeche(P0, Z0) - 1.0) < 1e-9,
+              f"{_flaeche(P0, Z0):.6f} m²")
+        check("mit Innenrändern bleibt das Loch offen - Fläche = Sollwert",
+              abs(_flaeche(P1, Z1) - soll) < 1e-9,
+              f"{_flaeche(P1, Z1):.6f} / {soll:.6f} m²")
+        w.refresh_all()
+        app.processEvents()
+        netze = _vp.geometrie_netze(ml)
+        check("und die Ansicht baut die Fläche mit dem Loch",
+              netze[0] is not None
+              and abs(float(netze[0].triangulate().area) - soll) < 1e-9,
+              f"{float(netze[0].triangulate().area):.6f} m²" if netze[0] is not None else "-")
+
+        w.load_example("frame")
+        w.refresh_all()
+        m = w.model
         # Der Zeigerpfad darf nicht bei jeder Mausruhe alles durchgehen
         w._stabstrecken()
         idx = w._stabelemente()
