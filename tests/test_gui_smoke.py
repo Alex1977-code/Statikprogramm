@@ -4910,6 +4910,27 @@ def main():
         check("und eine Rückfrage, die niemand sehen kann, wird verneint",
               antwort_ is False and "während der Rechnung verneint" in neu_,
               str(antwort_))
+
+        # Abnahme des Netzes vor dem Rechnen: jede Verletzung einzeln ins
+        # Protokoll, die Rückfrage fasst nur zusammen
+        from statik3d.model import ContactPair as CP_
+        w.model.contact_pairs.append(CP_("Prüffuge", slave_nodes=[0],
+                                         master_faces=[[0, 1, 2]], abdeckung=0.42))
+        alt_fragen = w._fragen
+        gefragt_ = []
+        w._fragen = lambda t, x: (gefragt_.append((t, x)), False)[1]
+        vorher_ = w.log.toPlainText()
+        weiter_ = w._abnahme_bestaetigen()
+        w._fragen = alt_fragen
+        w.model.contact_pairs.pop()
+        neu2_ = w.log.toPlainText()[len(vorher_):]
+        check("die Abnahme nennt jede Verletzung einzeln im Protokoll",
+              "FEHLER: [Abdeckung der Kontaktseite] Kontaktpaar Prüffuge: nur 42 %" in neu2_,
+              next((z for z in neu2_.splitlines() if "Prüffuge" in z), neu2_[:100]))
+        check("und die Rückfrage fasst sie zusammen; „Nein“ hält den Lauf an",
+              weiter_ is False and len(gefragt_) == 1
+              and "1x Abdeckung der Kontaktseite" in gefragt_[0][1],
+              str(gefragt_)[:140])
         alt_exec = dlg_.ReportDialog.exec
         dlg_.ReportDialog.exec = lambda self: 0
         fehler_ = []

@@ -180,8 +180,124 @@ def test_koerper_ohne_netz_haelt_an():
           repr(getattr(m4.koerper["V5"], "netzgrund", None)))
 
 
+def _wuerfelpaar():
+    """Zwei Hexaeder uebereinander, die sich die Trennflaeche teilen."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    U = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]])
+    m.add_nodes(np.vstack([U, U[4:] + [0, 0, 1.0]]))
+    m.add_element("hex8", list(range(8)), "S235", group="Unten")
+    m.add_element("hex8", [4, 5, 6, 7, 8, 9, 10, 11], "S235", group="Oben")
+    for k in range(4):
+        m.fix(k, "all")
+    m.case()
+    return m
+
+
+def test_abnahme():
+    """Die Abnahme des Netzes vor dem Rechnen - jede Verletzung mit Namen.
+
+    Ein Bauteil ist vollstaendig angebunden, oder es ist ein Fehler mit Namen.
+    Geprueft wird jede der Pruefungen einzeln an einem Fall, dessen Antwort
+    von Hand feststeht.
+    """
+    # 1) Ein Element, das eine ausgefuehrte Fuge ueberbrueckt
+    m = _wuerfelpaar()
+    check("ein sauberes Netz besteht die Abnahme", not dg.abnahme(m),
+          "; ".join(b.text[:60] for b in dg.abnahme(m)))
+    # Knoten 4 wurde getrennt (die Nummer 12 ist seine neue Haelfte); das
+    # obere Element benutzt beide -> es ueberbrueckt die Trennung
+    neu_k = int(m.add_node(*m.nodes[4]))
+    m.getrennte_knoten = {"Fuge": [[4, neu_k]]}
+    m.elements[1].nodes = [4, 5, 6, 7, 8, 9, 10, neu_k]
+    b = [x for x in dg.abnahme(m) if x.pruefung == "Fuge überbrückt"]
+    check("ein Element mit beiden Seiten der Fuge wird gefunden",
+          len(b) == 1 and b[0].element == 1 and sorted(b[0].knoten) == sorted([4, neu_k]),
+          str([(x.element, x.knoten) for x in b]))
+    check("und der Text nennt Element, Knoten und Fuge",
+          "Element 1" in b[0].text and f"{neu_k}" in b[0].text and "Fuge" in b[0].text,
+          b[0].text[:110])
+    m.elements[1].nodes = [4, 5, 6, 7, 8, 9, 10, 11]
+    check("ohne dieses Element ist die Fuge sauber",
+          not [x for x in dg.abnahme(m) if x.pruefung == "Fuge überbrückt"], "")
+
+    # 2) Abdeckung der Kontaktseite
+    from statik3d.model import ContactPair
+    m2 = _wuerfelpaar()
+    m2.contact_pairs.append(ContactPair("Fuge", slave_nodes=[8], master_faces=[[4, 5, 6, 7]],
+                                        abdeckung=0.55))
+    b2 = [x for x in dg.abnahme(m2) if x.pruefung == "Abdeckung der Kontaktseite"]
+    check("eine Fuge mit 55 % Abdeckung reißt die Grenze",
+          len(b2) == 1 and abs(b2[0].wert - 0.55) < 1e-12
+          and abs(b2[0].grenze - dg.ABNAHME_ABDECKUNG) < 1e-12,
+          b2[0].text[:110] if b2 else "kein Befund")
+    m2.contact_pairs[-1].abdeckung = 0.99
+    check("mit 99 % nicht",
+          not [x for x in dg.abnahme(m2) if x.pruefung == "Abdeckung der Kontaktseite"], "")
+
+    # 3) Ein Gegenkoerper, der keine Facette gestellt hat
+    m3 = _wuerfelpaar()
+    m3.add_kontaktbedingung("Fuge", flaechennamen=[], koerpernamen=["Oben"],
+                            gegenkoerper=["Unten"])
+    m3.contact_pairs.append(ContactPair("Fuge", slave_nodes=[8], master_faces=[[4, 5, 6, 7]],
+                                        abdeckung=1.0, gegenkoerper=[]))
+    b3 = [x for x in dg.abnahme(m3) if x.pruefung == "Gegenkörper ohne Facette"]
+    check("ein genannter Gegenkörper ohne Facette ist ein Fehler mit Namen",
+          len(b3) == 1 and "Unten" in b3[0].text, b3[0].text[:110] if b3 else "kein Befund")
+    m3.contact_pairs[-1].gegenkoerper = ["Unten"]
+    check("hat er Facetten gestellt, ist es keiner",
+          not [x for x in dg.abnahme(m3) if x.pruefung == "Gegenkörper ohne Facette"], "")
+
+    # 4) Knoten ohne Element und Randtreue
+    m4 = _wuerfelpaar()
+    lose = int(m4.add_node(5.0, 5.0, 5.0))
+    b4 = [x for x in dg.abnahme(m4) if x.pruefung == "Knoten ohne Element"]
+    check("ein Knoten ohne Element wird gezählt und genannt",
+          len(b4) == 1 and lose in b4[0].knoten and abs(b4[0].wert - 1.0) < 1e-12,
+          b4[0].text[:110] if b4 else "kein Befund")
+    from statik3d.model import Volumenkoerper
+    m5 = _wuerfelpaar()
+    m5.koerper["V1"] = Volumenkoerper("V1", elemente=[0], randtreue=0.90)
+    b5 = [x for x in dg.abnahme(m5) if x.pruefung == "Randtreue"]
+    check("eine Randtreue von 90 % reißt die Grenze 99 %",
+          len(b5) == 1 and abs(b5[0].wert - 0.90) < 1e-12
+          and abs(b5[0].grenze - dg.ABNAHME_RANDTREUE) < 1e-12,
+          b5[0].text[:110] if b5 else "kein Befund")
+    m5.koerper["V1"].randtreue = 0.999
+    check("eine von 99,9 % nicht",
+          not [x for x in dg.abnahme(m5) if x.pruefung == "Randtreue"], "")
+
+
+def test_abnahme_an_der_echten_fuge():
+    """Nach dem Ausfuehren einer echten Fuge ueberbrueckt kein Element sie.
+
+    Das ist die Zusage des Vernetzers und der Fugenausfuehrung zusammen: die
+    Randknoten werden verdoppelt **und** alle Elemente der geloesten Seite
+    umgehaengt. Bliebe eines mit einem Fuss auf der alten Seite, waere die
+    Fuge dort wirkungslos - von aussen sieht man das als „halb vernetzt".
+    """
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+    from test_fugen import zwei_bloecke
+    from statik3d.model import DofBehaviour
+    from statik3d import fugen
+    m = zwei_bloecke("eigene", h=0.25)
+    kb = m.add_kontaktbedingung(
+        "Fuge", flaechennamen=["FugeO"], gegenflaechen=["FugeU"], koerpernamen=["Oben"],
+        behaviour={2: DofBehaviour("free", failure="zug")})
+    bericht = fugen.kontaktfuge_ausfuehren(m, kb, [])
+    paare = m.getrennte_knoten.get("Fuge", [])
+    check("die Fuge hat Randknoten getrennt und es steht am Modell",
+          len(paare) == bericht["knoten"] > 0,
+          f"{len(paare)} Paare, Bericht {bericht['knoten']}")
+    b = [x for x in dg.abnahme(m) if x.pruefung == "Fuge überbrückt"]
+    check("und kein einziges Element benutzt beide Seiten", not b,
+          "; ".join(x.text[:60] for x in b))
+
+
 def main():
-    for f in (test_teiltragwerke, test_unvernetzt, test_koerper_ohne_netz_haelt_an, test_solver_meldung):
+    for f in (test_teiltragwerke, test_unvernetzt, test_koerper_ohne_netz_haelt_an,
+              test_abnahme, test_abnahme_an_der_echten_fuge, test_solver_meldung):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

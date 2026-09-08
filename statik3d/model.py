@@ -1747,6 +1747,9 @@ class Volumenkoerper:
     #: | "abgebrochen" | "gescheitert" | "vernetzer_aus". Nur "kein_volumen"
     #: ist harmlos; alles andere heisst, dass ein tragendes Bauteil fehlt.
     netzgrund: str = ""
+    #: Anteil der Huelle, den das Netz wirklich abdeckt (0 … 1, aus dem
+    #: Vernetzer). Die Abnahme vor dem Rechnen prueft ihn; 0 = nicht gemessen.
+    randtreue: float = 0.0
 
     def bezug(self) -> str:
         t = f"{len(self.flaechen)} Flächen"
@@ -2344,6 +2347,12 @@ class ContactPair:
     #: Anfangsspalt schliessen: jeder Slave-Knoten gilt in seiner Lage als
     #: anliegend (ANSYS „auf Beruehrung setzen“)
     anliegend: bool = False
+    #: Anteil der Kontaktseite, der eine Gegenflaeche gefunden hat (Flaeche zu
+    #: Flaeche, 0 … 1). Die Abnahme vor dem Rechnen prueft ihn
+    #: (:func:`diagnose.abnahme`); 0 heisst "nicht gemessen".
+    abdeckung: float = 0.0
+    #: Namen der Gegenkoerper, die wirklich Facetten gestellt haben
+    gegenkoerper: list = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------
@@ -2498,6 +2507,11 @@ class Model:
         self.contact_supports: list[ContactSupport] = []
         self.gap_elements: list[GapElement] = []
         self.contact_pairs: list[ContactPair] = []
+        #: Je Kontaktbedingung die Knoten, die beim Ausfuehren der Fuge
+        #: verdoppelt wurden: [[alt, neu], …]. Die Abnahme prueft daran, ob ein
+        #: Element beide Seiten benutzt und die Fuge damit ueberbrueckt
+        #: (:func:`diagnose.abnahme`).
+        self.getrennte_knoten: dict[str, list] = {}
         # Subsysteme, Situationen und Stellungen (Stellung: bridges.positions)
         self.subsysteme: dict[str, Subsystem] = {}
         self.situationen: dict[str, Situation] = {}
@@ -4331,6 +4345,8 @@ class Model:
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "kopplungen": [asdict(k) for k in self.kopplungen],
             "contact_pairs": [asdict(c) for c in self.contact_pairs],
+            "getrennte_knoten": {k: [[int(a), int(b)] for a, b in v]
+                                 for k, v in (self.getrennte_knoten or {}).items()},
             "punktmassen": [asdict(x) for x in self.punktmassen],
             "daempfer": [asdict(x) for x in self.daempfer],
             "federn": [asdict(x) for x in self.federn.values()],
@@ -4445,6 +4461,8 @@ class Model:
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]
         m.contact_pairs = [_dc(ContactPair, c) for c in d.get("contact_pairs", [])]
+        m.getrennte_knoten = {str(k): [[int(a), int(b)] for a, b in v]
+                              for k, v in (d.get("getrennte_knoten") or {}).items()}
         m.punktmassen = [_dc(Punktmasse, x) for x in d.get("punktmassen", [])]
         m.daempfer = [_dc(Daempfer, x) for x in d.get("daempfer", [])]
         m.federn = {x["name"]: _dc(FederProp, x) for x in d.get("federn", [])}

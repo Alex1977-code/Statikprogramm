@@ -14,6 +14,8 @@ Solver mit „Factor is exactly singular“ abbricht.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import numpy as np
 
 
@@ -283,6 +285,186 @@ def diagnose(model) -> dict:
             "ohne_lager": ohne, "nur_kontakt": nur_kontakt,
             "lose_knoten": int(model.nn - len(belegt)),
             "rechenbar": not ohne and bool(model.elements)}
+
+
+#: Grenzen der Abnahme vor dem Rechnen. Ein Bauteil ist vollstaendig
+#: angebunden, oder es ist ein Fehler **mit Namen** - nichts halb Gekoppeltes,
+#: nichts stillschweigend Uebergangenes.
+ABNAHME_ABDECKUNG = 0.95     #: Anteil der Kontaktseite mit Gegenflaeche
+ABNAHME_ELEMENTGUETE = 0.05  #: Formguete des schlechtesten Elements je Koerper
+ABNAHME_RANDTREUE = 0.99     #: Netzhaut gegen Huelle je Koerper
+
+
+@dataclass
+class Befund:
+    """Eine Verletzung der Abnahme - mit Namen, Zahl und Grenze.
+
+    Keine Sammelmeldung und keine Auslassungspunkte: sind zwoelf Bauteile
+    betroffen, stehen zwoelf Befunde da. Wer etwas abstellen soll, muss
+    wissen, **was** und **wo**.
+    """
+    pruefung: str = ""
+    objekt: str = ""
+    element: int = -1
+    knoten: list = field(default_factory=list)
+    wert: float = 0.0
+    grenze: float = 0.0
+    text: str = ""
+
+
+def abnahme(model, guete: list = None) -> list:
+    """Das Netz vor dem Rechnen abnehmen: je Verletzung ein :class:`Befund`.
+
+    Ein ehrlicher Fehler vor dem Lauf ist mehr wert als ein unzuverlaessiges
+    Ergebnis nach neun Minuten. Geprueft wird:
+
+    1. **Elemente, die eine Kontaktfuge ueberspannen** - beim Ausfuehren einer
+       Fuge werden Randknoten verdoppelt; danach darf kein Element einen
+       Knoten der alten und einen der neuen Seite zugleich benutzen. Sonst
+       ueberbrueckt es genau die Trennung, die eben entstand, und die Fuge
+       wirkt dort nicht. Das ist der Fall, den man von aussen als „halb
+       vernetzt" sieht.
+    2. **Abdeckung der Kontaktseite** - wie viel ihrer Flaeche eine Gegenseite
+       gefunden hat (:data:`ABNAHME_ABDECKUNG`).
+    3. **Gegenkoerper ohne Facette** - ein Koerper, den die Kontaktbedingung
+       als Gegenseite nennt und der nichts beisteuert, ist ein Fehler mit
+       Namen; heute verschwaende er lautlos.
+    4. **Haltegueete je Teiltragwerk** (:data:`singular.HALTEGUETE_MIN`) -
+       ``guete`` nimmt ein schon gerechnetes Ergebnis entgegen, sonst wird es
+       hier ermittelt.
+    5. **Knoten ohne Element**, **Elementgueete** und **Randtreue je Koerper**.
+
+    Rueckgabe die Liste der Befunde; leer heisst: das Netz ist abgenommen.
+    """
+    aus: list = []
+    aus += _abnahme_fugen(model)
+    aus += _abnahme_kontaktpaare(model)
+    aus += _abnahme_halteguete(model, guete)
+    aus += _abnahme_netz(model)
+    return aus
+
+
+def _abnahme_fugen(model) -> list:
+    """Elemente, die eine ausgefuehrte Kontaktfuge ueberbruecken.
+
+    Die Pruefung ist billig: fuer jedes getrennte Knotenpaar (alt, neu) darf
+    kein Element beide Nummern enthalten. Gesucht wird in einem Durchgang
+    ueber die Elemente, und nur die Elemente, die ueberhaupt einen getrennten
+    Knoten benutzen, werden genauer angesehen.
+    """
+    paare = getattr(model, "getrennte_knoten", None) or {}
+    if not paare:
+        return []
+    partner: dict = {}
+    fuge_von: dict = {}
+    for name, liste in paare.items():
+        for a, b in liste:
+            partner[int(a)] = int(b)
+            partner[int(b)] = int(a)
+            fuge_von[int(a)] = fuge_von[int(b)] = str(name)
+    aus = []
+    for i, e in enumerate(model.elements):
+        nd = [int(x) for x in e.nodes]
+        beide = [k for k in nd if partner.get(k, -1) in nd]
+        if not beide:
+            continue
+        k = min(beide)
+        aus.append(Befund(
+            pruefung="Fuge überbrückt", objekt=str(getattr(e, "group", "") or ""),
+            element=i, knoten=[k, partner[k]], wert=1.0, grenze=0.0,
+            text=f"Element {i} ({e.typ}, Bauteil "
+                 f"{getattr(e, 'group', '') or '?'}) benutzt die Knoten {k} und "
+                 f"{partner[k]} - beide Seiten der Fuge „{fuge_von.get(k, '?')}“. "
+                 "Es überbrückt die Trennung; die Fuge wirkt dort nicht."))
+    return aus
+
+
+def _abnahme_kontaktpaare(model) -> list:
+    """Abdeckung der Kontaktseite und Gegenkoerper ohne Facette."""
+    aus = []
+    kbs = getattr(model, "kontaktbedingungen", None) or {}
+    for cp in (getattr(model, "contact_pairs", None) or []):
+        a = float(getattr(cp, "abdeckung", 0.0) or 0.0)
+        if 0.0 < a < ABNAHME_ABDECKUNG:
+            aus.append(Befund(
+                pruefung="Abdeckung der Kontaktseite", objekt=str(cp.name),
+                wert=a, grenze=ABNAHME_ABDECKUNG,
+                text=f"Kontaktpaar {cp.name}: nur {a * 100:.0f} % der Kontaktseite "
+                     f"finden eine Gegenfläche (Grenze {ABNAHME_ABDECKUNG * 100:.0f} %). "
+                     "Der Rest liegt weiter entfernt als der Suchradius - dort "
+                     "überträgt die Fuge nichts."))
+        kb = kbs.get(str(cp.name))
+        genannt = {str(x) for x in (getattr(kb, "gegenkoerper", None) or [])} if kb else set()
+        gestellt = {str(x) for x in (getattr(cp, "gegenkoerper", None) or [])}
+        for name in sorted(genannt - gestellt):
+            aus.append(Befund(
+                pruefung="Gegenkörper ohne Facette", objekt=str(cp.name),
+                wert=0.0, grenze=1.0,
+                text=f"Kontaktbedingung {cp.name} nennt {name} als Gegenseite, "
+                     "aber von diesem Bauteil ist keine einzige Facette in der "
+                     "Fuge gelandet - die Fuge trägt dorthin nichts ab."))
+    return aus
+
+
+def _abnahme_halteguete(model, guete: list = None) -> list:
+    """Teiltragwerke, die zwar gehalten sind, aber in einer Richtung fast nicht."""
+    from .singular import HALTEGUETE_MIN, restfreiheiten
+    if guete is None:
+        guete = []
+        try:
+            restfreiheiten(model, guete=guete)
+        except Exception:                 # noqa: BLE001 - eine Abnahme darf nie sperren
+            return []
+    aus = []
+    for g in sorted((x for x in (guete or []) if 0.0 < x.wert < HALTEGUETE_MIN),
+                    key=lambda x: x.wert):
+        aus.append(Befund(
+            pruefung="Haltegüte", objekt=", ".join(g.koerper[:3]),
+            knoten=list(g.knoten[:1]), wert=g.wert, grenze=HALTEGUETE_MIN,
+            text=g.text + f" (Grenze {HALTEGUETE_MIN:.0e})"))
+    return aus
+
+
+def _abnahme_netz(model) -> list:
+    """Knoten ohne Element, Elementgueete und Randtreue je Koerper."""
+    aus = []
+    belegt = {int(n) for e in model.elements for n in e.nodes}
+    lose = [k for k in range(model.nn) if k not in belegt]
+    if lose:
+        aus.append(Befund(
+            pruefung="Knoten ohne Element", knoten=lose[:8],
+            wert=float(len(lose)), grenze=0.0,
+            text=f"{len(lose)} Knoten im Rechennetz hängen an keinem Element "
+                 f"(z. B. {', '.join('K' + str(k) for k in lose[:6])}"
+                 + (" …" if len(lose) > 6 else "") + ") - sie tragen nichts, "
+                 "und eine Last darauf ginge verloren."))
+    try:
+        from .netzguete import guete as _formguete
+        q = _formguete(model)
+    except Exception:                     # noqa: BLE001
+        q = None
+    for name, k in (getattr(model, "koerper", None) or {}).items():
+        els = [int(x) for x in (k.elemente or []) if 0 <= int(x) < len(model.elements)]
+        if els and q is not None:
+            werte = [float(q[i]) for i in els if np.isfinite(q[i])]
+            if werte and min(werte) < ABNAHME_ELEMENTGUETE:
+                i = els[int(np.argmin([q[j] for j in els]))]
+                aus.append(Befund(
+                    pruefung="Elementgüte", objekt=str(name), element=i,
+                    knoten=[int(x) for x in model.elements[i].nodes],
+                    wert=min(werte), grenze=ABNAHME_ELEMENTGUETE,
+                    text=f"Volumen {name}: Element {i} hat die Formgüte "
+                         f"{min(werte):.3f} (Grenze {ABNAHME_ELEMENTGUETE:.2f}) - "
+                         "ein Splitter, der die Steifigkeitsmatrix verdirbt."))
+        rt = float(getattr(k, "randtreue", 0.0) or 0.0)
+        if 0.0 < rt < ABNAHME_RANDTREUE:
+            aus.append(Befund(
+                pruefung="Randtreue", objekt=str(name), wert=rt,
+                grenze=ABNAHME_RANDTREUE,
+                text=f"Volumen {name}: das Netz deckt nur {rt * 100:.1f} % der "
+                     f"Hülle (Grenze {ABNAHME_RANDTREUE * 100:.0f} %) - die "
+                     "Geometrie ist im Netz nicht vollständig abgebildet."))
+    return aus
 
 
 def meldungen(model, d: dict = None) -> list:

@@ -611,6 +611,12 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
         _randseiten_vergessen(cache, geloest)
     _lager_mitnehmen(model, neu, log)
     bericht["knoten"] = len(neu)
+    if neu:
+        # Fuer die Abnahme merken, welche Knoten getrennt wurden: danach darf
+        # kein Element beide Seiten benutzen, sonst ueberbrueckt es genau die
+        # Trennung, die hier entstanden ist, und die Fuge wirkt dort nicht.
+        alt = model.getrennte_knoten.setdefault(str(kb.name), [])
+        alt.extend([int(k), int(n)] for k, n in neu.items())
 
     if not passend:
         # Nur der gemeinsame Rand war verschweisst; die Flaeche dazwischen
@@ -883,9 +889,14 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
                             "Kontaktbedingung vergrößern?)")
         return bericht
     master: dict = {}
+    gegen_koerper: dict = {}
+    gruppe_je_element = {int(x[0]): x[3] for x in alle}
     for i, j in paare.items():
-        _e, nd, n = gegen[j]
+        e_, nd, n = gegen[j]
         master.setdefault(tuple(sorted(int(x) for x in nd)), _nach_normale(model, nd, n))
+        kn = gruppe_je_element.get(int(e_), "")
+        if kn:
+            gegen_koerper[kn] = gegen_koerper.get(kn, 0) + 1
     slave = sorted({int(x) for i in paare for x in seite_b[i][1]})
     flaechen_b = _facettenflaechen(model, seite_b)
     A_zu = float(flaechen_b[sorted(paare)].sum()) if paare else 0.0
@@ -911,7 +922,8 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
         name=kb.name, slave_nodes=slave,
         master_faces=[list(v) for v in master.values()], mu=mu,
         stiffness=steif, search_radius=weite,
-        zug=zug, haften=haften, anliegend=bool(getattr(kb, "spalt_schliessen", False))))
+        zug=zug, haften=haften, anliegend=bool(getattr(kb, "spalt_schliessen", False)),
+        abdeckung=A_zu / A_alle, gegenkoerper=sorted(gegen_koerper)))
     kb.ausgefuehrt = True
     bericht["kontaktpaar"] = 1
     bericht["slave"] = len(slave)

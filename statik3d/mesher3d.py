@@ -2287,6 +2287,8 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     koerper.kommentar = (f"{len(els)} Tetraeder ({art}), "
                          f"Kantenlänge {h * 1e3:.0f} mm, "
                          f"Güte min {tb['guete']:.3f}")
+    # Fuer die Abnahme vor dem Rechnen am Objekt festhalten, nicht nur im Text
+    koerper.randtreue = float(tb.get("randtreue", 0.0) or 0.0)
     C.say(log, f"Volumen {koerper.name}: {len(els)} Tetraeder ({art}) aus "
                f"{tb.get('huelldreiecke', bericht['dreiecke'])} Randdreiecken "
                f"(Kantenlänge {h * 1e3:.0f} mm, {len(benutzt)} Knoten"

@@ -2053,6 +2053,33 @@ Nachweis mit seiner Verformung je Kombination.
   Versuch nicht. Der Grund je Objekt steht im Protokoll und in seiner
   Bemerkung im Modellbaum.
 
+### Abnahme des Netzes vor dem Rechnen
+
+Vor jedem Lauf nimmt das Programm das Netz ab. Ein Bauteil ist vollständig
+angebunden, oder es ist ein **Fehler mit Namen** — nichts halb Gekoppeltes,
+nichts stillschweigend Übergangenes:
+
+| Prüfung | Grenze |
+|---|---|
+| Elemente, die eine ausgeführte Kontaktfuge überspannen | 0 |
+| Abdeckung der Kontaktseite | ≥ 95 % |
+| Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 |
+| Haltegüte je Teiltragwerk | ≥ 10⁻⁴ |
+| Knoten im Rechennetz ohne Element | 0 |
+| Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
+| Randtreue je Körper | ≥ 99 % |
+
+Die wichtigste Zeile ist die erste: beim Ausführen einer Fuge werden die
+gemeinsamen Randknoten verdoppelt; bliebe danach ein Element mit einem Fuß auf
+der alten und einem auf der neuen Seite, überbrückte es genau die Trennung und
+die Fuge wirkte dort **nicht**. Von außen sieht man das als „halb vernetzt".
+
+Jede Verletzung steht **einzeln** im Protokoll, mit Prüfung, Bauteil, Element,
+Knoten, gemessenem Wert und Grenze — keine Sammelmeldung, keine
+Auslassungspunkte. Die Rückfrage fasst nur zusammen, wie viele je Prüfung
+anstehen; die Entscheidung bleibt beim Anwender. Wer mit 17 % Abdeckung
+rechnen will, kann es — aber nachdem er gelesen hat, dass es 17 % sind.
+
 ### Freie Bewegungen (Singularitäten)
 
 *Register Start → Modell prüfen → „Freie Bewegungen suchen“*, und nach jeder

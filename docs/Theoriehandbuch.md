@@ -1932,6 +1932,40 @@ Die Objekte werden benannt, die Folge (Lasten darauf gehen verloren) gesagt,
 und gerechnet wird ohne sie. Ob das Tragwerk ohne sie noch hält, beantwortet
 die Prüfung auf Teiltragwerke ohne Lager.
 
+## 7a-2 Abnahme des Netzes vor dem Rechnen
+
+**Grundsatz: ein Bauteil ist vollständig angebunden, oder es ist ein Fehler
+mit Namen.** Nichts halb Gekoppeltes, nichts stillschweigend Übergangenes. Ein
+ehrlicher Fehler vor dem Lauf ist mehr wert als ein unzuverlässiges Ergebnis
+nach neun Minuten. `diagnose.abnahme(model)` prüft:
+
+| Prüfung | Grenze | woher |
+|---|---|---|
+| Elemente, die eine ausgeführte Kontaktfuge überspannen | 0 | `Model.getrennte_knoten` |
+| Abdeckung der Kontaktseite | ≥ 95 % (`ABNAHME_ABDECKUNG`) | `ContactPair.abdeckung` |
+| Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 | `ContactPair.gegenkoerper` |
+| Haltegüte λ_min/λ_max je Teiltragwerk | ≥ 10⁻⁴ (`singular.HALTEGUETE_MIN`) | § 7b.1 |
+| Knoten im Rechennetz ohne Element | 0 | die Elementliste |
+| Formgüte des schlechtesten Elements je Körper | ≥ 0,05 (`ABNAHME_ELEMENTGUETE`) | `netzguete.guete` |
+| Randtreue je Körper | ≥ 99 % (`ABNAHME_RANDTREUE`) | `Volumenkoerper.randtreue` |
+
+**Elemente, die eine Fuge überspannen.** Beim Ausführen einer Fuge werden die
+gemeinsamen Randknoten verdoppelt und die Elemente der gelösten Seite auf die
+neuen Nummern umgehängt. Danach darf kein Element einen Knoten der alten und
+einen der neuen Seite zugleich benutzen — sonst überbrückt es genau die
+Trennung, die eben entstanden ist, und die Fuge wirkt dort nicht. Die Prüfung
+ist billig: für jedes getrennte Paar (alt, neu) darf kein Element beide
+Nummern enthalten; ein Durchgang über die Elemente genügt (0,44 s bei 489 376
+Elementen). Das ist der Fall, den man von außen als „halb vernetzt" sieht.
+
+Jede Verletzung nennt Prüfung, Bauteil, Element, Knoten, gemessenen Wert und
+Grenze — **einzeln**, ohne Sammelmeldung und ohne Auslassungspunkte: sind
+zwölf Bauteile betroffen, stehen zwölf Zeilen da. Angehalten wird nicht
+stillschweigend: die Oberfläche legt alles ins Protokoll, fasst in der
+Rückfrage zusammen, wie viele Verletzungen je Prüfung anstehen, und überlässt
+die Entscheidung dem Anwender. Wer mit 17 % Abdeckung rechnen will, soll es
+können — aber nachdem er gelesen hat, dass es 17 % sind.
+
 ## 7b Freie Bewegungen: Singularitäten auffinden statt abbrechen
 
 `singular.py`
