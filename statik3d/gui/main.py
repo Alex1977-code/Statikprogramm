@@ -13710,6 +13710,8 @@ class MainWindow(QtWidgets.QMainWindow):
         msgs = [m for m in self.model.check() if m.startswith("FEHLER")]
         if msgs and not self._trotzdem_rechnen(msgs):
             return
+        if not self._abnahme_bestaetigen():
+            return
         self._apply_parallel_settings()
         if kind is None:
             kind = ["all", "case", "modal", "buckling"][self.cb_analysis.currentIndex()]
@@ -13726,6 +13728,46 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             func = lambda p: solver.solve_buckling(model, nmodes, p)
         self._run_background(func, lambda r: self._solve_done(kind, r), "Berechnung")
+
+    def _abnahme_bestaetigen(self) -> bool:
+        """Das Netz vor dem Rechnen abnehmen - jede Verletzung mit Namen.
+
+        Ein ehrlicher Fehler vor dem Lauf ist mehr wert als ein
+        unzuverlaessiges Ergebnis nach neun Minuten. Im Protokoll steht jede
+        Verletzung einzeln: Pruefung, Bauteil, Element, Knoten, gemessener
+        Wert und Grenze - keine Sammelmeldung, keine Auslassungspunkte. Die
+        Rueckfrage fasst nur zusammen, wie viele es je Pruefung sind.
+
+        Angehalten wird **nicht** stillschweigend: die Entscheidung liegt beim
+        Anwender. Wer mit 17 % Abdeckung rechnen will, soll es koennen - aber
+        nachdem er gelesen hat, dass es 17 % sind.
+        """
+        from .. import diagnose as dg
+        self.statusBar().showMessage("Netz abnehmen …")
+        QtWidgets.QApplication.processEvents()
+        try:
+            befunde = dg.abnahme(self.model)
+        except Exception as ex:            # noqa: BLE001 - eine Abnahme darf nie sperren
+            self.log.appendPlainText(f"Abnahme nicht möglich: {ex}")
+            return True
+        finally:
+            self.statusBar().clearMessage()
+        self._abnahme_befunde = befunde
+        if not befunde:
+            self.log.appendPlainText("--- Abnahme des Netzes: bestanden ---")
+            return True
+        self.log.appendPlainText(f"--- Abnahme des Netzes: {len(befunde)} Verletzungen ---")
+        for b in befunde:
+            self.log.appendPlainText(f"FEHLER: [{b.pruefung}] {b.text}")
+        self.bottom_tabs.setCurrentIndex(0)
+        zahl: dict = {}
+        for b in befunde:
+            zahl[b.pruefung] = zahl.get(b.pruefung, 0) + 1
+        text = "\n".join(f"{n}x {p}" for p, n in sorted(zahl.items(), key=lambda x: -x[1]))
+        return self._fragen(
+            "Abnahme des Netzes", f"Das Netz reißt {len(befunde)} Prüfungen:\n\n{text}"
+            "\n\nJede Verletzung steht einzeln im Protokoll, mit Bauteil, Element, "
+            "gemessenem Wert und Grenze.\n\nTrotzdem rechnen?")
 
     def _trotzdem_rechnen(self, msgs: list) -> bool:
         """Bei Bauteilen ohne Lager fragen statt abzuweisen.
