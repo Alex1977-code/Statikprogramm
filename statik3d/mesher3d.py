@@ -2238,10 +2238,18 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     if aus.get("abgebrochen"):
         C.say(log, f"Volumen {koerper.name}: abgebrochen - bleibt ohne Netz.")
         koerper.kommentar = f"{_OHNE_NETZ} Vernetzen abgebrochen"
+        koerper.netzgrund = "abgebrochen"
         return []
     if aus.get("fehler"):
         C.warn(log, f"Volumen {koerper.name}: {aus['fehler']}")
         koerper.kommentar = f"{_OHNE_NETZ} {aus['fehler']}"
+        # "kein Rauminhalt" heisst: es kann keines geben. Alles andere heisst:
+        # es haette eines geben muessen, und der Vernetzer hat es nicht
+        # geschafft - das ist ein Fehler und kein Hilfsobjekt.
+        koerper.netzgrund = ("kein_volumen"
+                             if "kein Rauminhalt" in str(aus["fehler"])
+                             or "umschließt kein Volumen" in str(aus["fehler"])
+                             else "gescheitert")
         return []
     if ordnung <= 0:
         ordnung = int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1)

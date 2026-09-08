@@ -586,6 +586,7 @@ def _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
                 "(freier Vernetzer abgeschaltet).")
     koerper.elemente = []
     koerper.kommentar = f"{ohne_netz} kein Rauminhalt ({grund})"
+    koerper.netzgrund = "kein_volumen"
     return []
 
 
@@ -667,6 +668,7 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                 "4 Knoten). Der freie Vernetzer ist abgeschaltet - nicht vernetzt.")
     koerper.kommentar = (f"{OHNE_NETZ} {len(flaechen)} Randflächen, {len(knoten)} Eckknoten - "
                          "freier Vernetzer abgeschaltet")
+    koerper.netzgrund = "vernetzer_aus"
     return []
 
 

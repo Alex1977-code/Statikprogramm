@@ -290,8 +290,18 @@ def test_volumen_relativ_gemessen():
 
 
 def test_ein_kriterium():
-    """Vernetzer und Rechenbarkeitspruefung duerfen sich nicht widersprechen:
-    was der Vernetzer abgelehnt hat, gilt als abgelehnt."""
+    """Vernetzer und Rechenbarkeitspruefung duerfen sich nicht widersprechen.
+
+    Was der Vernetzer entschieden hat, gilt - aber **wie** er entschieden hat,
+    macht den Unterschied. „Kein Rauminhalt" heisst: es kann kein Netz geben,
+    das ist ein Hilfsobjekt. „Abgebrochen" oder „gescheitert" heisst: es haette
+    eines geben muessen. Frueher schloss jeder Vermerk „ohne Netz" gleich kurz;
+    ein tragendes Bauteil, an dem der Vernetzer gescheitert war, galt damit als
+    Hilfsobjekt und verschwand lautlos aus der Pruefung.
+
+    Gemeinsam bleibt beiden Faellen: ein zweites Mal zum Vernetzen angeboten
+    wird keiner von ihnen.
+    """
     from statik3d.model import OHNE_NETZ
     m = Model("K")
     m.add_material(Material("S235", E=210e9, nu=0.3, rho=7850))
@@ -306,10 +316,30 @@ def test_ein_kriterium():
     check("geometrisch gesund: trägt", m.koerper_traegt("V_gut"))
 
     k.kommentar = f"{OHNE_NETZ} Vernetzen abgebrochen"
-    check("die Entscheidung des Vernetzers hat Vorrang vor der Geometrie",
-          not m.koerper_traegt("V_gut"), k.kommentar)
-    check("und er zählt dann nicht als unvernetzt",
-          diagnose.diagnose(m)["unvernetzte_koerper"] == [])
+    k.netzgrund = "abgebrochen"
+    d = diagnose.diagnose(m)
+    check("ein abgebrochenes Vernetzen macht aus dem Körper kein Hilfsobjekt",
+          m.koerper_traegt("V_gut") and d["koerper_ohne_volumen"] == [],
+          f"{m.koerper_traegt('V_gut')} / {d['koerper_ohne_volumen']}")
+    check("er zählt trotzdem nicht als unvernetzt - ein zweiter Versuch bringt nichts",
+          d["unvernetzte_koerper"] == [], str(d["unvernetzte_koerper"]))
+    check("sondern steht als gescheitert da, mit dem Grund",
+          [n for n, _g in d["koerper_gescheitert"]] == ["V_gut"],
+          str(d["koerper_gescheitert"]))
+    check("und das ist ein FEHLER, kein Hinweis",
+          any(z.startswith("FEHLER") and "V_gut" in z
+              for z in diagnose.meldungen(m, d)),
+          str([z[:70] for z in diagnose.meldungen(m, d) if z.startswith("FEHLER")]))
+
+    # „Kein Rauminhalt" ist der andere Fall: ein Hilfsobjekt aus RFEM
+    k.kommentar = f"{OHNE_NETZ} kein Rauminhalt (alle Randknoten in einer Ebene)"
+    k.netzgrund = "kein_volumen"
+    d = diagnose.diagnose(m)
+    check("ein Körper ohne Rauminhalt bleibt Hilfsobjekt",
+          not m.koerper_traegt("V_gut") and d["koerper_ohne_volumen"] == ["V_gut"]
+          and d["koerper_gescheitert"] == [],
+          f"{d['koerper_ohne_volumen']} / {d['koerper_gescheitert']}")
+    k.netzgrund = ""
 
     k.elemente = [0]
     check("mit Elementen trägt er wieder", m.koerper_traegt("V_gut"))

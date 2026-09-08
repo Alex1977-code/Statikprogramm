@@ -99,8 +99,89 @@ def test_solver_meldung():
     check("ohne topologischen Befund: Hinweis auf Gelenke/Nullsteifigkeit", "Gelenke" in text2)
 
 
+def _koerper_ohne_netz(netzgrund: str, flach: bool = False):
+    """Ein gelagerter Wuerfel und daneben ein Koerper ohne Elemente."""
+    from statik3d.model import OHNE_NETZ
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_nodes(np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                          [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]]))
+    m.add_element("hex8", list(range(8)), "S235", group="A")
+    for i in range(4):
+        m.fix(i, [0, 1, 2])
+    n0 = m.nn
+    ecken = ([(5, 0, 0), (6, 0, 0), (5, 1, 0), (6, 1, 0)] if flach
+             else [(5, 0, 0), (6, 0, 0), (5, 1, 0), (5, 0, 1)])
+    for pkt in ecken:
+        m.add_node(*pkt)
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3)]):
+        m.add_line(f"L{i}", [n0 + a, n0 + b])
+    for nm, ls in [("A1", ["L0", "L1", "L2"]), ("A2", ["L0", "L4", "L3"]),
+                   ("A3", ["L1", "L5", "L4"]), ("A4", ["L2", "L3", "L5"])]:
+        m.add_flaeche(nm, ls, material="S235")
+    k = m.add_koerper("V5", ["A1", "A2", "A3", "A4"], material="S235")
+    if netzgrund:
+        k.kommentar = f"{OHNE_NETZ} die Randhülle ist nicht dicht (3 offene Kanten)"
+        k.netzgrund = netzgrund
+    return m
+
+
+def test_koerper_ohne_netz_haelt_an():
+    """Ein tragendes Bauteil ohne Elemente darf nicht stillschweigend fehlen.
+
+    Der Vernetzer haelt sein Scheitern im Kommentar fest. Bisher schloss
+    ``koerper_traegt`` bei **jedem** Vermerk „ohne Netz" kurz - auch bei
+    diesem. Der Koerper galt damit als Hilfsobjekt, verschwand aus der
+    Pruefung, und gerechnet wurde ohne ihn. Am Drehlagermodell war das V5,
+    mit echtem Werkstoff und 13 Randflaechen.
+
+    Unterschieden wird jetzt am Grund: nur „kein_volumen" heisst, dass es
+    kein Netz geben **kann**.
+    """
+    m = _koerper_ohne_netz("gescheitert")
+    d = dg.diagnose(m)
+    check("ein gescheiterter Körper zählt nicht als Hilfsobjekt",
+          d["koerper_ohne_volumen"] == [], str(d["koerper_ohne_volumen"]))
+    check("er steht als gescheitert da, mit dem Grund des Vernetzers",
+          [n for n, _g in d["koerper_gescheitert"]] == ["V5"]
+          and "nicht dicht" in d["koerper_gescheitert"][0][1],
+          str(d["koerper_gescheitert"]))
+    check("und wird nicht ein zweites Mal zum Vernetzen angeboten",
+          d["unvernetzte_koerper"] == [], str(d["unvernetzte_koerper"]))
+    fehler = [z for z in dg.meldungen(m, d) if z.startswith("FEHLER")]
+    check("die Meldung ist ein FEHLER und nennt Bauteil und Grund",
+          any("V5" in z and "nicht dicht" in z for z in fehler),
+          (fehler[0][:110] if fehler else "keine"))
+    check("und sie steht in der Modellprüfung",
+          any(z.startswith("FEHLER") and "V5" in z for z in m.check()),
+          str([z[:60] for z in m.check() if z.startswith("FEHLER")]))
+
+    # Gegenprobe: das flache Hilfsobjekt bleibt ein Hinweis
+    m2 = _koerper_ohne_netz("kein_volumen", flach=True)
+    d2 = dg.diagnose(m2)
+    check("ein Körper ohne Rauminhalt bleibt Hilfsobjekt",
+          d2["koerper_ohne_volumen"] == ["V5"] and d2["koerper_gescheitert"] == [],
+          f"{d2['koerper_ohne_volumen']} / {d2['koerper_gescheitert']}")
+    check("und erzeugt keinen FEHLER",
+          not any("V5" in z for z in dg.meldungen(m2, d2) if z.startswith("FEHLER")))
+
+    # Gegenprobe: noch gar nicht versucht -> vernetzen anbieten, kein FEHLER
+    m3 = _koerper_ohne_netz("")
+    d3 = dg.diagnose(m3)
+    check("ein noch nicht vernetzter Körper wird zum Vernetzen angeboten",
+          d3["unvernetzte_koerper"] == ["V5"] and d3["koerper_gescheitert"] == [],
+          f"{d3['unvernetzte_koerper']} / {d3['koerper_gescheitert']}")
+
+    # Der Grund muss Speichern und Laden ueberstehen
+    import json
+    m4 = Model.from_dict(json.loads(json.dumps(m.to_dict())))
+    check("netzgrund übersteht Speichern und Laden",
+          getattr(m4.koerper["V5"], "netzgrund", "") == "gescheitert",
+          repr(getattr(m4.koerper["V5"], "netzgrund", None)))
+
+
 def main():
-    for f in (test_teiltragwerke, test_unvernetzt, test_solver_meldung):
+    for f in (test_teiltragwerke, test_unvernetzt, test_koerper_ohne_netz_haelt_an, test_solver_meldung):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
