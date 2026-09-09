@@ -994,8 +994,213 @@ def test_mantellinie_der_bohrung():
           n1 < 3 * n0, f"{n0} -> {n1} Tetraeder")
 
 
+def test_randstrecke_wird_nicht_verdraengt():
+    """Ein Innenpunkt darf keine Randstrecke aus der Zerlegung verdraengen.
+
+    Der Fall entstand, als gemeinsame Linien nicht mehr allein nachgeteilt
+    werden: die Linie bleibt grob, das Innengitter wird feiner - und bei einer
+    achsparallelen Flaeche fiel die Gitterreihe j = 0 auf ``lo[1]``, also
+    **genau auf die Randlinie**. Der alte Filter mass den Abstand zum
+    naechsten Rand**punkt**; mitten zwischen zwei 50,5 mm auseinander
+    liegenden Ringpunkten sind das 25 mm, und die Schranke 0,65 h = 21,7 mm
+    war damit erfuellt - obwohl der Punkt 0,000 mm von der Strecke entfernt
+    lag. Die Delaunay-Zerlegung nahm ihn, die Randstrecke war keine Kante
+    mehr, die Huelle klaffte auf, und der Koerper endete ohne Netz, obwohl
+    der erste Anlauf ein gueltiges hatte (am Drehlagermodell V34, V31, V110,
+    V109, V108).
+    """
+    from scipy.spatial import Delaunay
+    h, L, B, n = 0.05 / 1.5, 0.960, 0.035, 19
+    ring = np.array([(L * i / n, 0.0) for i in range(n)] + [(L, B)]
+                    + [(L - L * i / n, B) for i in range(1, n)] + [(0.0, B)], float)
+    strecke = L / n
+
+    # 1) Das Mass selbst: der Punkt mitten auf der Strecke
+    mitte = np.array([[0.5 * strecke, 0.0]])
+    zum_punkt = float(np.linalg.norm(ring - mitte, axis=1).min())
+    zur_strecke = float(M3.randstreckenabstand(mitte, [ring])[0])
+    check("zum nächsten Randpunkt ist der Punkt weit genug weg (altes Maß)",
+          zum_punkt > M3.RANDABSTAND * h,
+          f"{zum_punkt * 1e3:.1f} mm > {M3.RANDABSTAND * h * 1e3:.1f} mm")
+    check("zur Randstrecke ist er es nicht (neues Maß)",
+          zur_strecke < 1e-12, f"{zur_strecke * 1e3:.3f} mm")
+
+    # 2) Die Folge: nimmt man ihn, fehlt die Randstrecke im Netz
+    P0 = np.vstack([ring, mitte])
+    T0 = Delaunay(P0).simplices
+    kanten0 = set()
+    for i, j in ((0, 1), (1, 2), (2, 0)):
+        for x, y in zip(T0[:, i], T0[:, j]):
+            kanten0.add((min(int(x), int(y)), max(int(x), int(y))))
+    check("ein Punkt auf der Strecke verdrängt sie aus der Zerlegung - "
+          "das ist der Mechanismus", (0, 1) not in kanten0)
+
+    # 3) Das Netz: keine Randstrecke fehlt, an keiner der beiden Flaechen
+    for nm, ringe, hh in (("Streifen 960 x 35 mm, Langseite fest", [ring], h),
+                          ("Platte 1 x 1 m", [np.array([(0., 0.), (1., 0.),
+                                                        (1., 1.), (0., 1.)])], 0.1)):
+        P2, T, fehlt = M3._dreiecke_2d(ringe, hh)
+        nr = len(ringe[0])
+        kanten = set()
+        for i, j in ((0, 1), (1, 2), (2, 0)):
+            for x, y in zip(T[:, i], T[:, j]):
+                kanten.add((min(int(x), int(y)), max(int(x), int(y))))
+        fehlend = [k for k in ((min(i, (i + 1) % nr), max(i, (i + 1) % nr))
+                               for i in range(nr)) if k not in kanten]
+        check(f"{nm}: _fehlende_randstrecken meldet nichts", len(fehlt) == 0,
+              f"{len(fehlt)} Strecken")
+        check(f"{nm}: jede Randstrecke ist eine Kante", not fehlend,
+              f"{len(fehlend)} fehlen")
+
+    # 4) Und die Regel raeumt das Innere nicht leer - sie misst zur Strecke,
+    #    nicht an ihrer Laenge. Ein Quadrat mit vier 1-m-Strecken haette sonst
+    #    650 mm Sperrzone und bliebe leer.
+    q = np.array([(0., 0.), (1., 0.), (1., 1.), (0., 1.)], float)
+    Pb, _Tb, _fb = M3._dreiecke_2d([q], 0.1)
+    check("die 1-x-1-m-Platte behält ihr Innengitter", len(Pb) - 4 > 40,
+          f"{len(Pb) - 4} Innenpunkte")
+
+
+def test_groessenfeld_an_der_festgelegten_linie():
+    """Neben einer festgelegten Randlinie richtet sich die Weite nach ihr.
+
+    Gehoert eine Randlinie einem zweiten Koerper, darf sie nicht allein
+    nachgeteilt werden - sie bleibt grob, waehrend der eigene Koerper feiner
+    vernetzt. Ein Dreieck mit 200 mm Grundseite und 25 mm hohen Nachbarn ist
+    aber ein Splitter, ganz gleich wie brav das Innengitter liegt. Gemessen am
+    Rechteck 1000 x 500 mm mit festgelegter Langseite, h = 25 mm::
+
+        Strecke/h      1      2      3      4      6      8
+        ohne Feld  0.837  0.725  0.480  0.480  0.221  0.153
+        mit Feld   0.837  0.725  0.659  0.643  0.443  0.322
+
+    Bis zum Doppelten traegt das gleichmaessige Gitter - dort ist das Feld
+    ein **Nullschritt**, und zwar ohne Schwelle: die zulaessige Weite ist die
+    Streckenlaenge geteilt durch VERHAELTNIS_FEST, und das ist bei L = 2 h
+    gerade h. Erst darueber greift es.
+    """
+    def guete2d(P, T):
+        a, b, c = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+        A = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
+                         - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1]))
+        L2 = (np.sum((b - a) ** 2, 1) + np.sum((c - b) ** 2, 1)
+              + np.sum((a - c) ** 2, 1))
+        return 4.0 * np.sqrt(3.0) * A / np.maximum(L2, 1e-300)
+
+    def teilen(a, b, s):
+        a, b = np.asarray(a, float), np.asarray(b, float)
+        k = max(int(round(float(np.linalg.norm(b - a)) / s)), 1)
+        return [tuple(a + (b - a) * i / k) for i in range(k)]
+
+    L, B, h = 1.0, 0.5, 0.025
+    mass = {}
+    for f in (1, 2, 3, 8):
+        kopf = teilen((0, 0), (L, 0), f * h)
+        ring = np.array(kopf + teilen((L, 0), (L, B), h)
+                        + teilen((L, B), (0, B), h) + teilen((0, B), (0, 0), h), float)
+        marke = np.zeros(len(ring), bool)
+        marke[:len(kopf)] = True            # nur die Langseite ist festgelegt
+        for name, fest in (("ohne", None), ("mit", [marke])):
+            P2, T, fehlt = M3._dreiecke_2d([ring], h, fest)
+            q = guete2d(P2, T)
+            mass[(f, name)] = (float(q.min()), len(T), len(fehlt),
+                               int((q < 0.2).sum()))
+    for f in (1, 2):
+        check(f"Verhältnis {f}: das Größenfeld ändert nichts",
+              mass[(f, "ohne")] == mass[(f, "mit")],
+              f"{mass[(f, 'ohne')][1]} Dreiecke, Güte {mass[(f, 'ohne')][0]:.3f}")
+    for f in (3, 8):
+        a, b = mass[(f, "ohne")], mass[(f, "mit")]
+        check(f"Verhältnis {f}: die schlechteste Güte steigt deutlich",
+              b[0] > 1.3 * a[0], f"{a[0]:.3f} -> {b[0]:.3f}")
+    check("bei Verhältnis 8 bleibt kein Splitter übrig",
+          mass[(8, "ohne")][3] > 0 and mass[(8, "mit")][3] == 0,
+          f"{mass[(8, 'ohne')][3]} -> {mass[(8, 'mit')][3]} Dreiecke unter 0.2")
+    check("und keine Randstrecke geht dabei verloren",
+          all(v[2] == 0 for v in mass.values()))
+
+
+def test_randstrecken_sind_keine_glueckssache():
+    """Dichtheit darf nicht vom Zufall abhaengen - 600 Flaechen zur Probe.
+
+    Eine freie Delaunay-Zerlegung kennt keine Randbedingung: sie *kann* eine
+    Randstrecke ueberspringen, und ob sie es tut, haengt an der Lage der
+    Innenpunkte - also an der Phase des Gitters, an der Drehung der Flaeche,
+    an Rundung. Ein Netz, dessen Dichtheit vom Zufall abhaengt, ist kein Netz;
+    genau daran endeten am Drehlagermodell fuenf Koerper ohne Netz, obwohl ihr
+    erster Anlauf ein gueltiges hatte.
+
+    :func:`_dreiecke_2d` erzwingt die Randstrecken darum, statt zu hoffen:
+    fehlt eine, fliegen die Innenpunkte in ihrer Umkreisscheibe heraus und es
+    wird neu zerlegt. Jede Runde entfernt mindestens einen Punkt, also endet
+    das Verfahren - und es fasst nie einen Randpunkt an.
+
+    Geprueft wird das nicht an einem Beispiel, sondern an einer Stichprobe
+    ueber den Raum, in dem es schiefging: Groesse, Teilung, Zielkantenlaenge,
+    Drehung und Lage zufaellig, dazu drei Bauformen - der Streifen mit einer
+    grob festgelegten Langseite (der gemessene Fall), die L-Form mit
+    einspringender Ecke und die Platte mit ein bis drei Bohrungen.
+    """
+    rng = np.random.default_rng(11)
+    zahl: dict = {}
+    offen: dict = {}
+    entartet = 0
+    for versuch in range(600):
+        art = ["Streifen", "L-Form", "Bohrungen"][versuch % 3]
+        h = float(rng.uniform(0.01, 0.4))
+        phi = float(rng.uniform(0, 2 * np.pi))
+        v = rng.uniform(-2, 2, 2)
+        R = np.array([[np.cos(phi), -np.sin(phi)], [np.sin(phi), np.cos(phi)]])
+        ungueltig = False
+        if art == "Streifen":
+            n = int(rng.integers(3, 25))
+            L, B = float(rng.uniform(0.1, 1.5)), float(rng.uniform(0.02, 1.0))
+            ringe = [np.array([(L * i / n, 0.0) for i in range(n)] + [(L, B)]
+                              + [(L - L * i / n, B) for i in range(1, n)]
+                              + [(0.0, B)], float)]
+        elif art == "L-Form":
+            a, b = float(rng.uniform(0.3, 1.2)), float(rng.uniform(0.3, 1.2))
+            ringe = [np.array([(0, 0), (a, 0), (a, b / 2), (a / 2, b / 2),
+                               (a / 2, b), (0, b)], float)]
+        else:
+            sq = float(rng.uniform(0.4, 1.2))
+            ringe = [np.array([(0, 0), (sq, 0), (sq, sq), (0, sq)], float)]
+            kreise = []
+            for _k in range(int(rng.integers(1, 4))):
+                r = float(rng.uniform(0.02, 0.12))
+                m = rng.uniform(0.2 * sq, 0.8 * sq, 2)
+                nn = int(rng.integers(8, 30))
+                w = np.linspace(0, 2 * np.pi, nn, endpoint=False)[::-1]
+                ringe.append(np.column_stack([m[0] + r * np.cos(w), m[1] + r * np.sin(w)]))
+                kreise.append((m, r))
+            # Ueberlappende oder ueberstehende Bohrungen sind keine gueltige
+            # Flaeche - sie gehoeren nicht in die Statistik.
+            for i, (m1, r1) in enumerate(kreise):
+                if (m1 - r1 < 0).any() or (m1 + r1 > sq).any():
+                    ungueltig = True
+                for (m2, r2) in kreise[i + 1:]:
+                    if float(np.linalg.norm(m1 - m2)) < r1 + r2 + 1e-9:
+                        ungueltig = True
+        if ungueltig:
+            entartet += 1
+            continue
+        ringe = [Rg @ R.T + v for Rg in ringe]
+        _P2, _T, fehlt = M3._dreiecke_2d(ringe, h)
+        zahl[art] = zahl.get(art, 0) + 1
+        if fehlt:
+            offen[art] = offen.get(art, 0) + 1
+    for art in sorted(zahl):
+        check(f"{art}: keine Fläche mit fehlender Randstrecke", offen.get(art, 0) == 0,
+              f"{offen.get(art, 0)} von {zahl[art]}")
+    check("die Stichprobe ist gross genug", sum(zahl.values()) > 400,
+          f"{sum(zahl.values())} gültige Flächen, {entartet} entartete übergangen")
+
+
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_huelle_ohne_rundungsgitter,
+              test_randstrecke_wird_nicht_verdraengt,
+              test_groessenfeld_an_der_festgelegten_linie,
+              test_randstrecken_sind_keine_glueckssache,
               test_groessenfeld_an_der_bohrung, test_mantellinie_der_bohrung,
               test_einspringende_ecke,
               test_platte_mit_bohrung, test_duenne_platte_randseiten,

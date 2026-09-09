@@ -657,10 +657,25 @@ def meldungen(model, d: dict = None) -> list:
     if d["ohne_lager"]:
         n = len(d["ohne_lager"])
         kn = sorted(d["ohne_lager"][0])
+        # Fehlt einem tragenden Bauteil das Netz, zerfaellt das Modell genau
+        # dort - die losen Teile sind die **Folge**, nicht die Ursache. Dann
+        # ist „Lager setzen" der falsche Rat: die Koerper ohne Netz gehoeren
+        # genannt, denn erst wenn sie vernetzt sind, haengt der Rest wieder
+        # zusammen. (Am Drehlagermodell: 12 Teile ohne Lager, weil V31, V34
+        # und V108-V110 ohne Netz blieben - mit Netz keine einzige Meldung.)
+        fehlt = [x for x, _g in (d.get("koerper_gescheitert") or [])]
+        if fehlt:
+            rat = ("zuerst die Volumen ohne Netz beheben ("
+                   + ", ".join(fehlt[:6]) + (" …" if len(fehlt) > 6 else "")
+                   + ") - ohne ihr Netz hängen die anderen Bauteile nicht "
+                     "zusammen; die losen Teile sind die Folge, nicht die Ursache")
+        else:
+            rat = ("Lager setzen, die Teile verbinden oder die tragenden "
+                   "Flächen/Volumen vernetzen")
         z.append(f"FEHLER: {n} Teiltragwerk{'e' if n > 1 else ''} ohne Lager (z. B. Knoten "
                  + ", ".join(f"K{k}" for k in kn[:6]) + (" …" if len(kn) > 6 else "")
                  + f"; das Netz zerfällt in {d['teile']} Teile) - so ist das Gleichungssystem singulär: "
-                   "Lager setzen, die Teile verbinden oder die tragenden Flächen/Volumen vernetzen")
+                 + rat)
     if d["nur_kontakt"]:
         z.append(f"Hinweis: {len(d['nur_kontakt'])} Teiltragwerke sind nur durch Kontakt gehalten - "
                  "rechenbar, solange der Kontakt trägt (sonst hebt das Teil ab)")
@@ -673,6 +688,11 @@ def meldungen(model, d: dict = None) -> list:
         z.append(f"FEHLER: Volumen {name}{wo} hat auch nach dem Vernetzen kein "
                  f"Element - {grund}. Ein Bauteil ohne Elemente trägt keine Last; "
                  "das Ergebnis wäre nicht ungenau, sondern falsch.")
+        # Die offenen Kanten gleich mit: „9 Kanten offen" sagt nicht, wo sie
+        # liegen. Mit Koordinaten und Randflaechen ist die Stelle im Modell zu
+        # finden, ohne erst ins Protokoll zu steigen - dort steht der Rest.
+        kanten = list(getattr(k, "netzkanten", None) or []) if k is not None else []
+        z.extend(kanten)
     ov = d.get("koerper_ohne_volumen") or []
     if ov:
         z.append(f"Hinweis: {len(ov)} Volumen ohne Rauminhalt (alle Randknoten in einer "

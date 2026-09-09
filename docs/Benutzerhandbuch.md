@@ -2125,7 +2125,11 @@ Nachweis mit seiner Verformung je Kombination.
   von denen eines weder ein Lager noch eine Kopplung an ein gelagertes Teil
   hat) machen das Gleichungssystem singulär; die Modellprüfung nennt sie mit
   Knotennummern, statt dass der Solver mit „Factor is exactly singular“
-  abbricht. Abgewiesen wird die Rechnung deswegen aber nicht mehr - das
+  abbricht. Gibt es dabei **Volumen, die der Vernetzer nicht vernetzen
+  konnte**, nennt die Meldung diese als Ursache statt Lager zu empfehlen: das
+  Modell zerfällt genau dort, wo ein tragendes Bauteil fehlt, und erst wenn
+  dessen Netz steht, hängt der Rest wieder zusammen. Die losen Teile sind die
+  Folge, nicht die Ursache. Abgewiesen wird die Rechnung deswegen aber nicht mehr - das
   Programm fragt, ob es trotzdem rechnen soll, hält jede freie Bewegung fest
   und weist danach aus, welche Last in welcher Bewegung ins Nichts geht
   (siehe *Freie Bewegungen* weiter unten). Teile, die nur ein einseitiges Lager oder ein Kontaktpaar hält,
@@ -2159,7 +2163,17 @@ Nachweis mit seiner Verformung je Kombination.
   gehen, und rechnet ohne sie. Ein zweiter Abbruch wäre eine Sackgasse - was
   der Vernetzer eben nicht vernetzen konnte, kann er auch beim nächsten
   Versuch nicht. Der Grund je Objekt steht im Protokoll und in seiner
-  Bemerkung im Modellbaum.
+  Bemerkung im Modellbaum. War die Randhülle nicht dicht, nennt die Meldung
+  die **offenen Kanten selbst** — mit Knotennummern, Koordinaten und den
+  Randflächen, aus denen die anliegenden Dreiecke stammen, höchstens zehn und
+  den Rest im Protokoll. Eine bloße Zahl („9 Kanten offen“) sagt nicht, wo;
+  zwei Zeilen mit derselben Koordinate und verschiedenen Flächen heißen: dort
+  stehen zwei Kopien desselben Punktes.
+* Der Vernetzer versucht ein Volumen in mehreren Anläufen, von grob nach fein.
+  **Reißt die Hülle erst in einem späteren Anlauf**, behält der Körper das
+  Netz des früheren — es ist gröber, aber es ist eines. Das Protokoll sagt
+  dann, welcher Anlauf stehen blieb und warum nicht feiner. Ohne Netz bleibt
+  ein Körper nur, wenn schon der erste Anlauf scheitert.
 
 ### Abnahme des Netzes vor dem Rechnen
 

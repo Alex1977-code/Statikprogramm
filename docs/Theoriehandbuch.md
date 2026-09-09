@@ -1776,6 +1776,63 @@ Fläche. Am selben Beispiel: 72 Knoten im Kranz r … 2r, Kantenverhältnis im
 Median 1,51, Güte 0,81, kein Dreieck unter 0,3 — für 56 % mehr Punkte auf
 dieser Fläche (`test_groessenfeld_an_der_bohrung`).
 
+**Randstrecken sind keine Glückssache.** Eine freie Delaunay-Zerlegung kennt
+keine Randbedingung: sie *kann* eine Randstrecke überspringen, und ob sie es
+tut, hängt an der Lage der Innenpunkte — also an der Phase des Gitters, an der
+Drehung der Fläche, an Rundung. Der Fall wurde sichtbar, seit gemeinsame
+Linien nicht mehr allein feiner geteilt werden: die Linie bleibt grob, das
+Innengitter wird feiner, und bei einer achsparallelen Fläche fiel die
+Gitterreihe j = 0 auf `lo[1]` — genau auf die Randlinie. Der alte Filter maß
+den Abstand zum nächsten Rand**punkt**; mitten zwischen zwei 50,5 mm
+auseinanderliegenden Ringpunkten sind das 25 mm, und die Schranke 0,65·h =
+21,7 mm war damit erfüllt, obwohl der Punkt **0,000 mm** von der Strecke
+entfernt lag. Die Zerlegung nahm ihn, die Randstrecke war keine Kante mehr,
+die Hülle klaffte auf, und fünf Körper des Drehlagermodells endeten ohne Netz,
+obwohl ihr erster Anlauf ein gültiges hatte.
+
+Drei Dinge stehen jetzt dagegen, in dieser Reihenfolge:
+
+1. Gemessen wird der Abstand zur Rand**strecke**, nicht zum nächsten
+   Randpunkt. (Die Umkreisscheibe der Strecke — die Gabriel/Ruppert-Regel —
+   wäre die schärfere Schranke, taugt hier aber nicht: bei einem Quadrat mit
+   vier 1-m-Strecken überdecken die Scheiben das ganze Gebiet, und es bliebe
+   kein einziger Innenpunkt übrig.)
+2. Das Innengitter liegt um eine halbe Zelle versetzt, damit die erste Reihe
+   nicht auf der Unterkante des umschließenden Rechtecks liegt. Das allein
+   genügt nicht — gedrehte Flächen —, schadet aber nicht.
+3. **Erzwungen** statt gehofft: fehlt nach der Zerlegung eine Randstrecke,
+   fliegen die Innenpunkte in ihrer Umkreisscheibe heraus und es wird neu
+   zerlegt. Jede Runde entfernt mindestens einen Punkt, also endet das
+   Verfahren; und es fasst nie einen Randpunkt an. Bleibt danach eine Strecke
+   offen, liegt es an der Geometrie selbst — und *das* wird gemeldet.
+
+Geprüft wird das nicht an einem Beispiel, sondern an einer Stichprobe über den
+Raum, in dem es schiefging: Größe, Teilung, Zielkantenlänge, Drehung und Lage
+zufällig, dazu drei Bauformen (Streifen mit grob festgelegter Langseite,
+L-Form mit einspringender Ecke, Platte mit ein bis drei Bohrungen) — 545
+gültige Flächen, **keine einzige** mit fehlender Randstrecke
+(`test_randstrecken_sind_keine_glueckssache`).
+
+**Größenfeld an einer festgelegten Linie.** Gehört eine Randlinie einem
+zweiten Körper, darf sie nicht allein nachgeteilt werden — sie bleibt grob,
+während der eigene Körper feiner vernetzt. Ein Dreieck mit 200 mm Grundseite
+und 25 mm hohen Nachbarn ist aber ein Splitter, ganz gleich wie brav das
+Innengitter liegt. Gemessen am Rechteck 1000 × 500 mm mit festgelegter
+Langseite bei h = 25 mm, schlechteste Dreiecksgüte:
+
+| Randstrecke / h | 1 | 2 | 3 | 4 | 6 | 8 |
+|---|---|---|---|---|---|---|
+| ohne Größenfeld | 0,837 | 0,725 | 0,480 | 0,480 | 0,221 | 0,153 |
+| mit Größenfeld  | 0,837 | 0,725 | 0,659 | 0,643 | 0,443 | 0,322 |
+
+Neben einer festgelegten Strecke gilt darum ihre Länge, geteilt durch zwei,
+als Sollweite; sie geht mit 25 % je Längeneinheit auf die Zielkantenlänge
+zurück — dasselbe Wachstum wie bei den Kränzen und im Tetraedernetz. Bis zum
+Verhältnis 2 ist das ein **Nullschritt**, und zwar ohne Schwelle: L/2 läuft
+dort gerade auf h hinaus. Eine Schwelle wäre hier fehl am Platz — sie läge
+genau auf den Werten, die im Modell vorkommen (`VERHAELTNIS_FEST`,
+`test_groessenfeld_an_der_festgelegten_linie`).
+
 **2 Dichtheit.** Die Flächennetze werden über die **Kennung ihrer
 Linienpunkte** zusammengesetzt, nicht über die Koordinate. Jeder Punkt einer
 geteilten Linie heißt `(Linie, k)` in der eigenen Zählrichtung der Linie, die
@@ -1807,7 +1864,17 @@ Das Volumen folgt aus dem Gaußschen Satz,
 und muss positiv sein — dann zeigt die Hülle nach außen. Ist sie nicht dicht,
 wird **nicht** vernetzt: ein Netz aus einer undichten Hülle ist stillschweigend
 falsch, und das ist schlimmer als kein Netz. Fehlt einer Fläche eine
-Randstrecke, wird die *Linie* feiner geteilt und alles neu vernetzt.
+Randstrecke, wird die *Linie* feiner geteilt und alles neu vernetzt — es sei
+denn, sie gehört einem zweiten Körper; dann bliebe die Fuge nicht konform.
+
+Reißt die Hülle erst in einem **späteren** Anlauf, wird das Netz des früheren
+nicht verworfen. Es ist gröber, aber es ist eines: V109 hatte nach Anlauf 1
+Tetraeder mit 88,6 % Randtreue und endete trotzdem ohne Netz, weil Anlauf 2
+(feiner) die Hülle aufriss. Jetzt bleibt das bessere gültige Netz stehen, und
+das Protokoll sagt, warum nicht feiner. Nur wenn schon der **erste** Anlauf
+scheitert, bleibt der Körper ohne Netz — und dann nennt der Fehlertext die
+offenen Kanten mit Koordinaten und Randflächen, höchstens zehn, den Rest im
+Protokoll.
 
 **3 Punkte.** Zuerst ein raumzentriertes kubisches Gitter (BCC) mit der
 Zielkantenlänge — das Punktmuster, dessen Delaunay-Zerlegung von sich aus gute
@@ -1911,7 +1978,18 @@ Kondition der Steifigkeitsmatrix. Sie werden nachträglich herausgeglättet
 den Schwerpunkt seiner Nachbarn und in zwölf Richtungen um seinen Platz herum,
 und der beste Schritt wird nur behalten, wenn die **schlechteste** Güte seiner
 Elemente danach höher ist und kein Element umklappt. Randknoten stehen fest —
-sie sind die Geometrie, und so bleibt das Volumen unverändert. An einer Platte
+sie sind die Geometrie, und so bleibt das Volumen unverändert.
+
+Welche Knoten das sind, wird aus dem **Verband** gelesen und nicht aus der
+Punktnummer geraten: fest ist jeder Knoten, der zu einer Seitenfläche gehört,
+die nur zu einem Tetraeder zählt. Das sind zuerst die Hüllpunkte, aber nicht
+nur sie. Beim Aussortieren fällt auch der eine oder andere fast flache
+Tetraeder im Inneren heraus, und an seiner Stelle bleibt ein volumenloser
+Schlitz; dessen Knoten liegen ebenfalls auf dem Netzrand, und sie zu
+verschieben zöge den Schlitz auf. An einer 2 × 2 m großen Platte mit Bohrung
+(26 980 Tetraeder) waren das acht Knoten, drei davon wurden verschoben, und
+das Volumen änderte sich dabei um 0,39 ppm — nach der Korrektur um **0,00
+ppm** (`test_splitter_glaetten`). An einer Platte
 mit Bohrung steigt die schlechteste Güte damit von 0,0035 auf 0,102, und kein
 Element bleibt unter 0,1. Wo alle vier Knoten eines Splitters auf dem Rand
 liegen, lässt er sich nicht glätten; seine Zahl steht dann im Protokoll.
