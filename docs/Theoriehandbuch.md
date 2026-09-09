@@ -1208,6 +1208,59 @@ schadensäquivalente Schwingbreite bei 2·10⁶ Lastspielen ausgewiesen. γMf na
 Tabelle 3.1 (Schadenstoleranz/Sicherheit gegen Versagen, geringe/hohe
 Schadensfolge), γFf = 1,0.
 
+**Die Schädigung wird am Ort aufsummiert.** Miner zählt, was *ein Punkt* des
+Bauteils erlebt. Die größte Schwingbreite aus Last A und die aus Last B liegen
+aber im Allgemeinen an verschiedenen Stellen des Stabes; wer sie addiert,
+addiert die Schädigung zweier verschiedener Punkte und erhält eine Zahl, die
+nirgends auftritt. Gerechnet wird darum D an **jeder** Nachweisstelle und an
+jedem der vier Eckpunkte des Querschnitts; maßgebend ist der größte Wert, und
+der Ort steht im Nachweis. Die Übersichtstabelle „größte Schwingbreite je
+Ermüdungslast" bleibt daneben stehen — als Übersicht, nicht als Summand.
+
+#### 5.5-1 Zählverfahren: aus dem Verlauf wird ein Kollektiv (Anhang A)
+
+Zwei Zustände reichen, solange die Beanspruchung zwischen zwei Zuständen
+pendelt. Eine Überfahrt, ein Öffnungsvorgang, ein Betriebszyklus haben mehr:
+die Zwischenstufen tragen eigene, kleinere Spiele bei, und die zählen mit. Eine
+Ermüdungslast darf darum statt zweier Zustände eine **Folge von Lastfällen**
+nennen; daraus zählt Statik3D das Kollektiv nach EN 1993-1-9, Anhang A.
+
+**Rainflow** (Vier-Punkt-Verfahren). Zuerst bleiben nur die Umkehrpunkte
+übrig — ein Wert auf dem Weg nach oben ist keine Umkehr. Liegt dann die
+mittlere von vier aufeinanderfolgenden Umkehrungen ganz innerhalb der äußeren
+(|s₂−s₃| ≤ |s₁−s₂| und ≤ |s₃−s₄|), ist sie ein **geschlossenes Spiel** und wird
+herausgenommen; der Rest wird weiterverfolgt. Was übrig bleibt, sind halbe
+Spiele (Konvention nach ASTM E1049). Am Lehrbuchbeispiel
+[−2, 1, −3, 5, −1, 3, −4, 4, −2] fällt genau das bekannte Kollektiv heraus:
+3 (½), 4 (1½), 6 (½), 8 (1), 9 (½) — zusammen 4 Spiele, also (9−1)/2.
+
+**Reservoir.** Der Verlauf ist ein Gefäß, das mit Wasser gefüllt wird; am
+tiefsten Punkt zieht man den Stöpsel, und was ausfließt, ist ein Spiel mit der
+Höhe des Wasserspiegels. Danach zerfällt das Gefäß an dieser Stelle in **zwei**
+Reservoire, links und rechts, und in jedem geht es von vorn los. Genau dieses
+Zerfallen macht das Verfahren aus; wer stattdessen weiter gegen die äußeren
+Hochpunkte misst, zählt zu große Schwingbreiten.
+
+**Beginnt und endet der Verlauf am größten Wert, liefern beide Verfahren
+dasselbe Kollektiv** — das prüft `tests/test_ec3.py` nach, und so gehört eine
+Überfahrt angesetzt. Andernfalls dürfen sie auseinandergehen: was bei Rainflow
+als Rest offen bleibt und dort mit einem halben Spiel zählt, ist beim Reservoir
+schon abgeflossen.
+
+#### 5.5-2 Die Schadensakkumulation im Statikdokument
+
+Der Nachweis zeigt die Miner-Summe **Stufe für Stufe** am maßgebenden Ort: je
+Stufe die Schwingbreite, die Lastspielzahl, die ertragbare Lastspielzahl N_R
+aus der Wöhlerlinie, der Anteil D_i = n/N und die laufende Summe. Stufen
+unterhalb des Schwellenwerts (N_R = ∞) stehen mit D_i = 0 darin — sie sind
+damit nicht verschwiegen, sondern nachweislich unschädlich.
+
+Ist ein **Bezugszeitraum** angegeben (Einstellung `ermuedung_bezugsjahre`:
+die Lastspielzahlen gelten für so viele Jahre), folgt daraus die rechnerische
+**Lebensdauer** als Bezugszeitraum / D — die Schädigung wächst linear. Ohne
+Bezugszeitraum gelten die Lastspielzahlen für die ganze Nutzungsdauer, und es
+gibt keine Lebensdauer zu nennen.
+
 #### 5.5a Kerbfälle aus Schweißnähten (`schweissnaehte.py`)
 
 Jede Naht liefert nach Nahtart, Lage zur Beanspruchung und Ausführung den

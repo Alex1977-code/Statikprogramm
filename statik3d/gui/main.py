@@ -9445,9 +9445,9 @@ class MainWindow(QtWidgets.QMainWindow):
         b8 = QtWidgets.QPushButton("Alle löschen"); b8.clicked.connect(self.clear_combinations)
         lay.addWidget(row(b5, b6, b7, b8))
 
-        lay.addWidget(QtWidgets.QLabel("<b>Ermüdungslasten</b> (Lastwechsel zwischen zwei Zuständen)"))
+        lay.addWidget(QtWidgets.QLabel("<b>Ermüdungslasten</b> (zwei Zustände oder ein Verlauf)"))
         self.tbl_fatl = QtWidgets.QTableWidget(0, 4)
-        self.tbl_fatl.setHorizontalHeaderLabels(["Name", "oben", "unten", "Lastspiele"])
+        self.tbl_fatl.setHorizontalHeaderLabels(["Name", "Beanspruchung", "Zählung", "Faktor"])
         self.tbl_fatl.horizontalHeader().setStretchLastSection(True)
         self.tbl_fatl.setMaximumHeight(110)
         lay.addWidget(self.tbl_fatl)
@@ -10877,7 +10877,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_g.blockSignals(False)
         self._fill(self.tbl_comb, [[c.name, c.typ, c.formula(), c.description]
                                    for c in m.combinations.values()])
-        self._fill(self.tbl_fatl, [[f.name, f.case_max, f.case_min or "0", f"{f.cycles:g}"]
+        self._fill(self.tbl_fatl, [[f.name, f.bezug(), getattr(f, "zaehlung", "") if f.folge
+                                    else "zwei Zustände", f"{f.factor:g}"]
                                    for f in m.fatigue_loads.values()])
         self._lastwahl_fuellen()
 
@@ -13295,8 +13296,22 @@ class MainWindow(QtWidgets.QMainWindow):
         d = FatigueLoadDialog(self, self.model)
         if d.exec():
             name, cmax, cmin, n, f = d.values()
+            folge = d.folge_namen() if d.art.currentIndex() == 1 else []
+            unbekannt = [x for x in folge
+                         if x not in self.model.load_cases and x not in self.model.combinations]
+            if folge and unbekannt:
+                return self.error("Der Verlauf nennt Lastfälle, die es nicht gibt: "
+                                  + ", ".join(unbekannt))
+            if folge and len(folge) < 2:
+                return self.error("Ein Verlauf braucht mindestens zwei Lastfälle - "
+                                  "sonst gibt es nichts zu zählen.")
             self.merken("Ermüdungslast")
-            self.model.add_fatigue_load(name or f"E{len(self.model.fatigue_loads)+1}", cmax, cmin, n, f)
+            fl = self.model.add_fatigue_load(
+                name or f"E{len(self.model.fatigue_loads)+1}", cmax, cmin, n, f)
+            if folge:
+                fl.folge = folge
+                fl.wiederholungen = float(d.wdh.value())
+                fl.zaehlung = d.zaehlung.currentText()
             self.refresh_all()
 
     def remove_fatigue_load(self):

@@ -1057,13 +1057,19 @@ class Report:
                            "werden je Lastfall ausgewiesen."))
         if m.fatigue_loads:
             b.append(self._h(2, "Ermüdungslasten"))
-            rows = [["Ermüdungslast", "Oberlast (Lastfall)", "Unterlast (Lastfall)",
-                     "Lastspiele n", "Faktor"]]
+            rows = [["Ermüdungslast", "Beanspruchung", "Lastspiele n bzw. Wiederholungen",
+                     "Zählung", "Faktor"]]
             for f in m.fatigue_loads.values():
-                rows.append([f.name, f.case_max, f.case_min or "Nullzustand", f"{f.cycles:.3g}",
-                             fmt(f.factor, 2)])
-            b.append(("table", rows, "Ermüdungsbeanspruchungen (Lastwechsel zwischen zwei "
-                                     "Lastfällen)", None, ""))
+                if getattr(f, "folge", None):
+                    rows.append([f.name, " → ".join(f.folge),
+                                 f"{getattr(f, 'wiederholungen', 1.0):.3g}",
+                                 getattr(f, "zaehlung", "rainflow"), fmt(f.factor, 2)])
+                else:
+                    rows.append([f.name,
+                                 f"{f.case_max} gegen {f.case_min or 'Nullzustand'}",
+                                 f"{f.cycles:.3g}", "zwei Zustände", fmt(f.factor, 2)])
+            b.append(("table", rows, "Ermüdungsbeanspruchungen – zwei Zustände oder ein "
+                                     "Verlauf (dann wird das Kollektiv gezählt)", None, ""))
         return b
 
     # ==================================== Volumen (eigenes Kapitel)
@@ -2808,18 +2814,31 @@ class Report:
             "Schadensfolgen).",
             "Ausnutzung = D_σ + D_τ (sinngemäß Gl. 8.3); zusätzlich wird die schadensäquivalente "
             "Schwingbreite Δσ_E,2 bei 2·10⁶ Lastspielen ausgewiesen.",
+            "Die Schädigung wird **am Ort** aufsummiert: D wird an jeder Nachweisstelle und "
+            "an jedem der vier Querschnittseckpunkte gebildet, maßgebend ist der größte Wert. "
+            "Die größten Schwingbreiten verschiedener Ermüdungslasten liegen im Allgemeinen an "
+            "verschiedenen Stellen; ihre Summe gehört zu keinem Punkt des Bauteils.",
+            "Beschreibt eine Ermüdungslast einen Verlauf (Folge von Lastfällen), wird das "
+            "Kollektiv daraus gezählt – Rainflow oder Reservoir nach Anhang A. Beide liefern "
+            "dasselbe Kollektiv, wenn der Verlauf am größten Wert beginnt und endet.",
         ]))
         if getattr(m, "schweissnaehte", None):
             b.append(("p", "Die Kerbfälle der Stäbe folgen aus den Schweißnähten des Modells "
                            "(Kapitel System, „Schweißnähte und Kerbfälle“): je Stab der ungünstigste "
                            "Kerbfall aller Nähte, die ihn betreffen."))
         b.append(self._h(2, "Übersicht"))
+        jahre = any(np.isfinite(getattr(fm, "jahre", np.inf)) for fm in f.members.values())
         rows = [["Stab", "Kerbfall Δσ_C [MPa]", "γ_Mf", "max Δσ [MPa]", "Δσ_E,2 [MPa]",
-                 "D_σ (Miner)", "D_τ", "Ausnutzung", "maßgebende Ermüdungslast"]]
+                 "D_σ (Miner)", "D_τ", "Ausnutzung"]
+                + (["Lebensdauer [a]"] if jahre else []) + ["maßgebender Ort"]]
         for fm in f.members.values():
-            rows.append([fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
-                         fmt(fm.dsig_max / 1e6, 1), fmt(fm.dsig_E2 / 1e6, 1), fmt(fm.D, 3),
-                         fmt(fm.D_shear, 3), Util(fm.util), _pretty(fm.governing)])
+            zeile = [fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
+                     fmt(fm.dsig_max / 1e6, 1), fmt(fm.dsig_E2 / 1e6, 1), fmt(fm.D, 3),
+                     fmt(fm.D_shear, 3), Util(fm.util)]
+            if jahre:
+                j = getattr(fm, "jahre", float("inf"))
+                zeile.append(fmt(j, 0) if np.isfinite(j) else "∞")
+            rows.append(zeile + [_pretty(fm.governing)])
         rows, note = self._truncate(rows, 400)
         b.append(("table", rows, "Ermüdungsnachweis je Stab", None, ""))
         if note:
@@ -2844,9 +2863,29 @@ class Report:
                    ("Schädigung D_σ / D_τ", f"{fmt(fm.D, 4)} / {fmt(fm.D_shear, 4)}"),
                    ("Δσ_E,2 / (Δσ_C/γ_Mf)", f"{fm.dsig_E2 / 1e6:.1f} / "
                                             f"{fm.category / fm.gamma_Mf / 1e6:.1f} = {fmt(fm.util_E2, 3)}"),
-                   ("Ausnutzung D_σ + D_τ", Util(fm.util)),
-                   ("Status", "Nachweis erfüllt" if fm.util <= 1.0 else "Nachweis NICHT erfüllt")]
+                   ("Ausnutzung D_σ + D_τ", Util(fm.util))]
+            if np.isfinite(getattr(fm, "jahre", np.inf)) and getattr(fm, "bezugsjahre", 0) > 0:
+                kv.append(("Rechnerische Lebensdauer",
+                           f"{fmt(fm.bezugsjahre, 0)} a / D = {fmt(fm.jahre, 0)} a"))
+            kv += [("Status", "Nachweis erfüllt" if fm.util <= 1.0 else "Nachweis NICHT erfüllt")]
             b.append(("kv", kv, f"Ermüdung Stab {fm.member}"))
+            if getattr(fm, "kollektiv", None):
+                rows = [["Stufe", "Δσ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
+                for i, (dsg, nz, NR, di, kum) in enumerate(fm.tabelle(), 1):
+                    rows.append([str(i), fmt(dsg / 1e6, 1), f"{nz:.4g}",
+                                 f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                                 fmt(di, 5), fmt(kum, 4)])
+                b.append(("table", rows,
+                          "Schadensakkumulation am maßgebenden Ort "
+                          f"({_pretty(fm.governing)}) – Stufe für Stufe nach Palmgren-Miner",
+                          None, ""))
+            if getattr(fm, "kollektiv_shear", None) and fm.D_shear > 0:
+                rows = [["Stufe", "Δτ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
+                for i, (dtu, nz, NR, di, kum) in enumerate(fm.tabelle_shear(), 1):
+                    rows.append([str(i), fmt(dtu / 1e6, 1), f"{nz:.4g}",
+                                 f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                                 fmt(di, 5), fmt(kum, 4)])
+                b.append(("table", rows, "Schadensakkumulation Schub", None, ""))
             rows = [["Ermüdungslast", "Δσ [MPa]", "n", "N_R", "n / N_R", "x [m]"]]
             for r in fm.ranges:
                 NR = sn_life(r[0], fm.category, fm.gamma_Mf)
@@ -2854,8 +2893,9 @@ class Report:
                              f"{NR:.3g}" if np.isfinite(NR) else "∞",
                              fmt(r[1] / NR, 4) if np.isfinite(NR) and NR > 0 else "0",
                              fmt(r[3], 2)])
-            b.append(("table", rows, "Spannungsschwingbreiten (Normalspannung, maßgebende "
-                                     "Stelle je Ermüdungslast)", None, ""))
+            b.append(("table", rows, "Größte Schwingbreite je Ermüdungslast – zur Übersicht. "
+                                     "Sie liegen an verschiedenen Stellen; die Schädigung "
+                                     "steht in der Tabelle darüber.", None, ""))
             if fm.ranges_shear and any(r[0] > 0 for r in fm.ranges_shear):
                 rows = [["Ermüdungslast", "Δτ [MPa]", "n", "N_R", "n / N_R", "x [m]"]]
                 for r in fm.ranges_shear:

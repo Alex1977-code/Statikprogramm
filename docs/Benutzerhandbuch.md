@@ -1683,6 +1683,36 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
 * Ermüdung: Kerbfall wählen (Δσc mit Beispielen aus den Tabellen 8.1–8.5),
   Schadensfolge/Konzept für γMf; Ermüdungslasten im Register Lastfälle.
 
+**Eine Ermüdungslast beschreibt entweder zwei Zustände oder einen Verlauf.**
+*Zwei Zustände*: der Lastwechsel pendelt zwischen oben und unten, mit einer
+Lastspielzahl — das reicht, solange es wirklich nur zwei Zustände gibt.
+*Verlauf*: eine **Folge von Lastfällen** in zeitlicher Reihenfolge (eine
+Überfahrt, ein Öffnungsvorgang, ein Betriebszyklus) und die Zahl der
+Wiederholungen. Daraus zählt Statik3D das Kollektiv selbst — Rainflow oder
+Reservoir nach EN 1993-1-9, Anhang A. Das ist der ehrlichere Weg, sobald mehr
+als zwei Zustände vorkommen: die Zwischenstufen tragen eigene, kleinere Spiele
+bei, und die zählen mit. Wer denselben Vorgang nur mit seinen beiden
+Außenwerten ansetzt, unterschätzt die Schädigung.
+
+Ein Hinweis zum Zuschnitt: **lassen Sie den Verlauf am größten Wert beginnen
+und enden.** Dann liefern beide Zählverfahren dasselbe Kollektiv und es
+entstehen nur ganze Spiele; sonst bleibt bei Rainflow ein Rest, der mit halben
+Spielen zählt.
+
+**Die Schädigung wird am Ort aufsummiert**, nicht über Orte hinweg: D wird an
+jeder Nachweisstelle und an jedem der vier Querschnittseckpunkte gebildet,
+maßgebend ist der größte Wert, und der Ort steht im Nachweis. Die größten
+Schwingbreiten verschiedener Ermüdungslasten liegen im Allgemeinen an
+verschiedenen Stellen; ihre Summe gehört zu keinem Punkt des Bauteils.
+
+Im Bericht steht die Miner-Summe **Stufe für Stufe**: je Stufe Schwingbreite,
+Lastspielzahl, ertragbare Lastspielzahl N_R, der Anteil D_i = n/N und die
+laufende Summe. Stufen unter dem Schwellenwert stehen mit D_i = 0 darin — sie
+sind nicht verschwiegen, sondern nachweislich unschädlich. Ist ein
+Bezugszeitraum eingestellt (die Lastspielzahlen gelten für so viele Jahre),
+weist der Bericht zusätzlich die rechnerische **Lebensdauer** aus:
+Bezugszeitraum / D.
+
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
