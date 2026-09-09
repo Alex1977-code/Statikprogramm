@@ -313,7 +313,17 @@ class Maskenrand(QtCore.QObject):
     def setze_ziel(self, ziel: QtWidgets.QBoxLayout):
         self.ziel = ziel
 
-    def zeigen(self, maske: Maske) -> Maske:
+    def zeigen(self, maske: Maske, fokus: bool = True) -> Maske:
+        """Die Maske rechts zeigen; mit ``fokus`` bekommt sie die Tastatur.
+
+        **Ohne ``fokus`` bleibt die Tastatur, wo sie war.** Das ist der
+        Unterschied zwischen einer Maske, die der Benutzer *bestellt* hat
+        (Ribbon „Neu …": er will gleich tippen), und einer, die nur die
+        *Folge* einer Auswahl ist (ein Klick im Modellbaum oder in einer
+        Tabelle). Im zweiten Fall nahm die Maske dem Modellbaum die Tastatur
+        weg - und genau dann taten die Pfeiltasten nichts mehr, obwohl der
+        Baum sie kann.
+        """
         self.schliessen()
         self.maske = maske
         maske.geschlossen.connect(self._vergessen)
@@ -323,12 +333,14 @@ class Maskenrand(QtCore.QObject):
             # bleiben bei ihrer natuerlichen Hoehe
             self.ziel.insertWidget(0, maske, int(getattr(maske, "dehnung", 0)))
             maske.show()
-            maske.setFocus()
+            if fokus:
+                maske.setFocus()
         else:
             maske.setParent(self.ansicht)
             maske.show()
             maske.raise_()
-            maske.setFocus()
+            if fokus:
+                maske.setFocus()
             self._platzieren()
         return maske
 
@@ -409,6 +421,11 @@ QToolButton#glasknopf {{ background: transparent; border: 0; border-radius: 6px;
 QToolButton#glasknopf:hover {{ background: {akzent_hell}; color: {akzent}; }}
 QToolButton#glasknopf:checked {{ background: {akzent}; color: #fff; }}
 QFrame#glastrenner {{ color: rgba(0, 0, 0, 40); }}
+QComboBox#glasliste {{ background: rgba(255, 255, 255, 230); color: {text};
+    border: 1px solid rgba(0, 0, 0, 40); border-radius: 6px;
+    padding: 2px 6px; font-size: 12px; }}
+QComboBox#glasliste:hover {{ border-color: {akzent}; }}
+QComboBox#glasliste::drop-down {{ border: 0; width: 16px; }}
 Ansichtswuerfel {{ background: transparent; }}
 """
 
@@ -441,6 +458,7 @@ class Glasleiste(QtWidgets.QFrame):
         self.lay.setContentsMargins(6, 3, 6, 3)
         self.lay.setSpacing(2)
         self.knoepfe: dict[str, QtWidgets.QToolButton] = {}
+        self.listen: dict[str, QtWidgets.QComboBox] = {}
 
     def knopf(self, aktion: QtGui.QAction, symbol: str = "",
               schluessel: str = "") -> QtWidgets.QToolButton:
@@ -460,6 +478,25 @@ class Glasleiste(QtWidgets.QFrame):
         self.lay.addWidget(b)
         self.knoepfe[schluessel or aktion.text()] = b
         return b
+
+    def liste(self, hinweis: str = "", schluessel: str = "",
+              breite: int = 190) -> QtWidgets.QComboBox:
+        """Eine Aufklappliste in der Leiste - fuer das, was man **auswaehlt**,
+        nicht umschaltet.
+
+        Ein Symbolknopf kann nur an oder aus; ein Lastfall unter dreissig
+        braucht eine Liste. Sie sieht aus wie die Knoepfe daneben (flach,
+        durchscheinend) und traegt denselben Namen im Formularblatt.
+        """
+        cb = QtWidgets.QComboBox(self)
+        cb.setObjectName("glasliste")
+        cb.setToolTip(hinweis)
+        cb.setMinimumWidth(breite)
+        cb.setMaxVisibleItems(24)
+        cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.lay.addWidget(cb)
+        self.listen[schluessel or hinweis] = cb
+        return cb
 
     def trenner(self):
         f = QtWidgets.QFrame(self)

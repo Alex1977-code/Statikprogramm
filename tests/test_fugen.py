@@ -847,6 +847,25 @@ def test_starre_flaeche():
     check("Steifigkeitsart und Kopplungen ueberleben Speichern und Laden",
           d.flaechen["Scheibe"].steifigkeit == "starr" and len(d.kopplungen) == len(m.kopplungen))
 
+    # Was die Kopplung **nicht** tut: ein Moment weitergeben. Sie fuehrt drei
+    # Richtungen, nicht sechs, und in der Steifigkeitsmatrix steht sie
+    # ausschliesslich auf Verschiebungsfreiheitsgraden - die Verdrehung des
+    # Stabendes kommt in keiner Zeile vor. Das ist genau die Wirkung, die RFEM
+    # hier ueber ein Liniengelenk vorschreibt (Verschiebungen starr,
+    # Verdrehungen frei); die Volumenelemente unter der Scheibe haben ohnehin
+    # keine Verdrehungsfreiheitsgrade, an denen ein Moment ankaeme.
+    check("die Kopplung fuehrt nur die drei Verschiebungen",
+          all(len(k.richtungen) == 3 and len(k.steifigkeiten) == 3
+              for k in m.kopplungen),
+          f"{len(m.kopplungen[0].richtungen)} Richtungen")
+    from statik3d import assemble as _asm
+    Kk = _asm.kopplungen(m)
+    belegt = sorted({int(i) for i in Kk.tocoo().row} | {int(j) for j in Kk.tocoo().col})
+    from statik3d.model import NDOF as _NDOF
+    dreh = [i for i in belegt if i % _NDOF >= 3]
+    check("und steht nur auf Verschiebungsfreiheitsgraden - kein Moment geht durch",
+          not dreh, f"{len(belegt)} belegte Freiheitsgrade, davon {len(dreh)} Verdrehungen")
+
 
 def test_naechste_punkte():
     """Der vektorisierte naechste Punkt auf Dreiecken liefert dasselbe wie der

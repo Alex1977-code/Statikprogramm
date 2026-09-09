@@ -338,6 +338,7 @@ def abnahme(model, guete: list = None) -> list:
     """
     aus: list = []
     aus += _abnahme_fugen(model)
+    aus += _abnahme_huellen(model)
     aus += _abnahme_kontaktpaare(model)
     aus += _abnahme_halteguete(model, guete)
     aus += _abnahme_netz(model)
@@ -376,6 +377,49 @@ def _abnahme_fugen(model) -> list:
                  f"{getattr(e, 'group', '') or '?'}) benutzt die Knoten {k} und "
                  f"{partner[k]} - beide Seiten der Fuge „{fuge_von.get(k, '?')}“. "
                  "Es überbrückt die Trennung; die Fuge wirkt dort nicht."))
+    return aus
+
+
+def _abnahme_huellen(model) -> list:
+    """Geschlossene Huellen: jede Randlinie gehoert zu genau zwei Raendern.
+
+    Ein Volumenkoerper aus RFEM ist eine Randdarstellung. Ist er dicht, kommt
+    jede seiner Randlinien in genau zwei Flaechenraendern vor - einmal von
+    jeder Seite. Kommt eine nur einmal vor, fehlt dort eine Flaeche.
+
+    **Die Oeffnungsringe zaehlen mit.** Wer sie vergisst, haelt die Haelfte der
+    Koerper fuer kaputt: am Drehlagermodell melden 26 der 108 Koerper offene
+    Kanten, wenn man nur die Aussenraender zaehlt (V33 allein 118, V14 160),
+    und **keiner einzige**, wenn man die Innenraender mitnimmt. Ein Innenrand
+    ist Teil des Randes - die Wand einer Bohrung stoesst dort an.
+
+    Geprueft wird nur, wo die Angabe vollstaendig ist: ein Koerper, dessen
+    Flaechen keine Randlinien tragen (von Hand aus Elementen gebaut), sagt zu
+    dieser Frage nichts.
+    """
+    aus = []
+    flaechen = getattr(model, "flaechen", None) or {}
+    for name, k in (getattr(model, "koerper", None) or {}).items():
+        namen = [x for x in (getattr(k, "flaechen", None) or [])]
+        teile = [flaechen.get(x) for x in namen]
+        if not namen or any(f is None or not (f.linien or []) for f in teile):
+            continue
+        zahl: dict = {}
+        for f in teile:
+            for ln in (f.linien or []):
+                zahl[ln] = zahl.get(ln, 0) + 1
+            for ring in (f.oeffnungen or []):
+                for ln in ring:
+                    zahl[ln] = zahl.get(ln, 0) + 1
+        offen = sorted(ln for ln, n in zahl.items() if n != 2)
+        if offen:
+            aus.append(Befund(
+                pruefung="Hülle offen", objekt=str(name),
+                wert=float(len(offen)), grenze=0.0,
+                text=f"Volumen {name}: {len(offen)} Randlinien gehören nicht zu "
+                     f"genau zwei Flächenrändern (z. B. "
+                     + ", ".join(offen[:5]) + (" …" if len(offen) > 5 else "")
+                     + ") - dort fehlt eine Fläche, die Hülle ist nicht dicht."))
     return aus
 
 

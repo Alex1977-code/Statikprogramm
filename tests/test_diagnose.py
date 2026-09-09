@@ -295,9 +295,53 @@ def test_abnahme_an_der_echten_fuge():
           "; ".join(x.text[:60] for x in b))
 
 
+def test_schliesstest_mit_oeffnungsringen():
+    """Eine Huelle ist dicht, wenn jede Randlinie zu genau zwei Raendern gehoert.
+
+    **Die Oeffnungsringe zaehlen mit.** Wer sie vergisst, haelt die Haelfte der
+    Koerper fuer kaputt: am Drehlagermodell melden 26 der 108 Koerper offene
+    Kanten ohne die Innenraender (V33 allein 118) und keiner einzige mit
+    ihnen. Hier derselbe Fall in klein: ein Quader mit einem Durchbruch, der
+    beide Deckflaechen durchsetzt.
+    """
+    from statik3d.model import Volumenkoerper, Line
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    # Ein Quader: 6 Flaechen, 12 Kanten. Oben und unten je ein Loch aus vier
+    # Linien, dazwischen vier Wandflaechen des Durchbruchs.
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6),
+                                (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]):
+        m.lines[f"K{i}"] = Line(f"K{i}", [a, b])
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6),
+                                (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]):
+        m.lines[f"D{i}"] = Line(f"D{i}", [a, b])       # Linien des Durchbruchs
+    aussen = {"unten": ["K0", "K1", "K2", "K3"], "oben": ["K4", "K5", "K6", "K7"],
+              "w1": ["K0", "K9", "K4", "K8"], "w2": ["K1", "K10", "K5", "K9"],
+              "w3": ["K2", "K11", "K6", "K10"], "w4": ["K3", "K8", "K7", "K11"]}
+    for n, ls in aussen.items():
+        m.flaechen[n] = Flaeche(n, ls)
+    # Der Durchbruch: seine Wand aus vier Flaechen, oben und unten als Loch
+    m.flaechen["unten"].oeffnungen = [["D0", "D1", "D2", "D3"]]
+    m.flaechen["oben"].oeffnungen = [["D4", "D5", "D6", "D7"]]
+    for i, ls in enumerate([["D0", "D9", "D4", "D8"], ["D1", "D10", "D5", "D9"],
+                            ["D2", "D11", "D6", "D10"], ["D3", "D8", "D7", "D11"]]):
+        m.flaechen[f"d{i}"] = Flaeche(f"d{i}", ls)
+    m.koerper["V1"] = Volumenkoerper("V1", flaechen=list(aussen) + [f"d{i}" for i in range(4)])
+    b = [x for x in dg._abnahme_huellen(m) if x.pruefung == "Hülle offen"]
+    check("mit Öffnungsringen ist die Hülle dicht", not b,
+          b[0].text[:110] if b else "")
+    for f in m.flaechen.values():
+        f.oeffnungen = []
+    b2 = dg._abnahme_huellen(m)
+    check("ohne sie hielte man denselben Körper für kaputt",
+          len(b2) == 1 and abs(b2[0].wert - 8.0) < 1e-12,
+          b2[0].text[:120] if b2 else "kein Befund")
+
+
 def main():
     for f in (test_teiltragwerke, test_unvernetzt, test_koerper_ohne_netz_haelt_an,
-              test_abnahme, test_abnahme_an_der_echten_fuge, test_solver_meldung):
+              test_abnahme, test_abnahme_an_der_echten_fuge,
+              test_schliesstest_mit_oeffnungsringen, test_solver_meldung):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

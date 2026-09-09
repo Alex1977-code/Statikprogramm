@@ -1641,10 +1641,23 @@ Schritten, jeder für sich nachrechenbar.
 | krumm, sonst | ebenes Netz auf der Ausgleichsebene, dann **harmonisch** in den Rand eingespannt: div grad w = 0 mit dem Rand als Randbedingung |
 
 Die **Ansicht** geht denselben Weg, wenn kein Netz da ist: eben mit
-Innenrändern, krumm über den Coons-Fleck. Hat der Rand mehr als vier Seiten,
-werden sie vorher an ihren glatten Ecken zusammengefasst — RFEM teilt eine
-gerade Kante schon einmal in zwei Linien, und eine Vierseitfläche bleibt eine
-Vierseitfläche. Ohne das griffe der Rückfall auf einen Fächer um den
+Innenrändern, krumm über den Coons-Fleck. Ob eine Fläche krumm ist, sagen
+**zwei** Zeugen, und die Entscheidung fällt immer zur Wölbung hin: die
+Flächenart aus der Quelldatei (`Flaeche.typ` — `regelflaeche` und
+`beschnitten` heißen krumm) **oder** die geometrische Probe, ob die
+Randpunkte in einer Ebene liegen. So irrt jeder der beiden nur in eine
+Richtung — die geometrische Probe kann eine gewölbte Fläche für eben halten,
+nie umgekehrt, und eine ohne Angabe geladene Fläche (die Vorgabe ist `eben`)
+wird trotzdem richtig gezeichnet. Am Drehlagermodell stimmen beide Zeugen bei
+allen 1375 Flächen überein.
+
+Hat der Rand mehr als vier Seiten, wird er in vier geteilt. Maßgebend sind
+zuerst die **vier Eckknoten**, die RFEM zum Viereck selbst nennt
+(`Flaeche.ecken`; im Drehlagermodell bei allen 782 Vierecken vorhanden) —
+sie beschreiben die Topologie und sind damit die verlässliche Auskunft. Fehlen
+sie, werden die Seiten an ihren **glatten Ecken** zusammengefasst (Knick
+≤ 15°) — RFEM teilt eine gerade Kante schon einmal in zwei Linien, und eine
+Vierseitfläche bleibt eine Vierseitfläche. Ohne das griffe der Rückfall auf einen Fächer um den
 Schwerpunkt, dessen Dreiecke bei einem Halbkreis quer durch das Bauteil
 laufen: am Drehlagermodell wurden die vier Bolzenmäntel (F589, F590, F1670,
 F1671) mit 2011 statt 645 cm² gezeichnet, 212 % zu viel. Nach dem
