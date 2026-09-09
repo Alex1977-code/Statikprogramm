@@ -339,10 +339,130 @@ def abnahme(model, guete: list = None) -> list:
     aus: list = []
     aus += _abnahme_fugen(model)
     aus += _abnahme_huellen(model)
+    aus += _abnahme_gemeinsame_flaechen(model)
     aus += _abnahme_kontaktpaare(model)
     aus += _abnahme_halteguete(model, guete)
     aus += _abnahme_netz(model)
     return aus
+
+
+def _abnahme_gemeinsame_flaechen(model) -> list:
+    """Zwei Koerper mit derselben Randflaeche teilen dort ihre Knoten.
+
+    Sonst stehen sie unverbunden nebeneinander: die Flaeche ist zweimal
+    vernetzt, die Kraefte gehen nicht hinueber, und von aussen sieht das Netz
+    tadellos aus. Es ist der stillste aller Netzfehler - und der teuerste,
+    denn er verfaelscht jede Schnittgroesse jenseits der Fuge.
+
+    Geprueft wird je Koerperpaar mit gemeinsamer Flaeche: die Randknoten des
+    einen, die auf dem Rand des anderen liegen, muessen **dieselben
+    Knotennummern** sein. Zwei Sorten Verletzung werden getrennt genannt,
+    weil sie verschiedene Ursachen haben:
+
+    * **doppelt** - gleicher Ort, andere Nummer. Die Teilung passt, aber die
+      Knoten wurden zweimal angelegt.
+    * **haengend** - kein Knoten des Nachbarn in der Naehe. Die beiden haben
+      die gemeinsame Linie oder Flaeche verschieden fein geteilt.
+    """
+    import numpy as np
+    from .assemble import SOLID_FACES
+    from . import mesher3d as M3
+    koerper = getattr(model, "koerper", None) or {}
+    if not koerper:
+        return []
+    fk: dict = {}
+    for k in koerper.values():
+        for fn in (k.flaechen or []):
+            fk.setdefault(fn, []).append(k.name)
+    paare: dict = {}
+    for fn, ks in fk.items():
+        if len(ks) == 2:
+            paare.setdefault(tuple(sorted(ks)), []).append(fn)
+    if not paare:
+        return []
+    gebraucht = {n for pp in paare for n in pp}
+    rand: dict = {}
+    for name in gebraucht:
+        k = koerper.get(name)
+        seiten = _freie_seiten_des_koerpers(model, k, SOLID_FACES)
+        if seiten is not None:
+            rand[name] = seiten
+    aus = []
+    N = np.asarray(model.nodes, float)
+    for (a, b), flaechen in sorted(paare.items()):
+        if a not in rand or b not in rand:
+            continue
+        ia, _Ta = rand[a]
+        ib, Tb = rand[b]
+        if not len(ia) or not len(Tb):
+            continue
+        # Welche Randknoten von A liegen auf dem Rand von B?
+        d_flaeche = np.asarray(M3.abstand_zur_huelle(N[ia], N, Tb))
+        auf = ia[d_flaeche < ABNAHME_FUGENWEITE]
+        if not len(auf):
+            continue
+        setb = set(int(x) for x in ib)
+        gleich = np.array([int(i) in setb for i in auf])
+        from scipy.spatial import cKDTree
+        dk, _ = cKDTree(N[ib]).query(N[auf])
+        doppelt = int(((~gleich) & (dk < ABNAHME_FUGENNAEHE)).sum())
+        haengend = int(((~gleich) & (dk >= ABNAHME_FUGENNAEHE)).sum())
+        if doppelt or haengend:
+            schlecht = [int(i) for i, g in zip(auf, gleich) if not g]
+            aus.append(Befund(
+                pruefung="gemeinsame Fläche", objekt=f"{a} | {b}",
+                knoten=schlecht[:20],
+                wert=float(doppelt + haengend), grenze=0.0,
+                text=(f"{a} und {b} teilen sich {', '.join(sorted(flaechen)[:5])}, "
+                      f"sind dort aber nicht verbunden: {doppelt} doppelte und "
+                      f"{haengend} hängende von {len(auf)} Knoten auf der Fuge - "
+                      "die Kräfte gehen nicht hinüber")))
+    return aus
+
+
+def _freie_seiten_des_koerpers(model, koerper, SOLID_FACES):
+    """(Randknoten, Randdreiecke) eines Volumenkoerpers - oder None.
+
+    Frei heisst: die Elementseite liegt in genau einem Element. Vierecke
+    werden in zwei Dreiecke geteilt, damit sich der Abstand zu ihnen
+    ausrechnen laesst.
+    """
+    import numpy as np
+    els = [int(e) for e in (getattr(koerper, "elemente", None) or [])]
+    if not els:
+        return None
+    zahl: dict = {}
+    for e in els:
+        if not 0 <= e < len(model.elements):
+            continue
+        el = model.elements[e]
+        seiten = SOLID_FACES.get(el.typ)
+        if not seiten:
+            continue
+        for seite in seiten:
+            ecken = tuple(int(el.nodes[j]) for j in seite)
+            zahl.setdefault(tuple(sorted(ecken)), []).append(ecken)
+    dreiecke, knoten = [], set()
+    for key, vorkommen in zahl.items():
+        if len(vorkommen) != 1:
+            continue
+        ecken = vorkommen[0]
+        knoten.update(key)
+        if len(ecken) >= 3:
+            dreiecke.append(ecken[:3])
+        if len(ecken) >= 4:
+            dreiecke.append((ecken[0], ecken[2], ecken[3]))
+    if not knoten or not dreiecke:
+        return None
+    return np.array(sorted(knoten), int), np.array(dreiecke, int)
+
+
+#: Bis zu diesem Abstand gilt ein Knoten des Nachbarn als **derselbe** Punkt
+ABNAHME_FUGENNAEHE = 1e-6
+
+#: Bis zu diesem Abstand liegt ein Knoten noch auf der Flaeche des Nachbarn -
+#: findet er dort keinen Partner, haengt er
+ABNAHME_FUGENWEITE = 1e-5
 
 
 def _abnahme_fugen(model) -> list:

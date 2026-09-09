@@ -186,14 +186,24 @@ def elementlaenge(model, netz, obj) -> dict:
                 h = kante
                 grund.append(f"kleinste Kante {kante * 1e3:.0f} mm")
             else:
-                # Ein Volumen wird frei vernetzt, und der freie Vernetzer folgt
-                # der Feinheit des Randes von selbst: um eine 20-mm-Bohrung
-                # sind die Randdreiecke klein, und die Kantenlaenge waechst
-                # von dort ins Innere. Die ganze Platte auf die Bohrung
+                # Ein Volumen wird frei vernetzt, und dort ist h die Weite im
+                # **Feld**: die ganze Platte auf ihre kleinste Bohrung
                 # herunterzuteilen gaebe das Vielfache an Tetraedern, ohne
-                # dass das Netz an der Bohrung besser wuerde.
-                grund.append(f"kleinste Kante {kante * 1e3:.0f} mm - örtlich feiner, "
-                             "vom Rand her wachsend")
+                # dass das Netz an der Bohrung besser wuerde. Fein wird es
+                # oertlich, und zwar an drei Stellen, die zusammengehoeren:
+                #   * die Linie   - Kruemmung (BOGENWINKEL) und die
+                #     Wachstumsregel neben einer feineren Nachbarlinie
+                #     (mesher3d._linien_wachsen_lassen),
+                #   * die Flaeche - Kraenze um jede Oeffnung
+                #     (mesher3d._kraenze),
+                #   * das Volumen - h_lokal = min(h, Randkante + WACHSTUM * d)
+                #     (mesher3d.tetraedern).
+                # Gemessen an einer 20-mm-Bohrung von 35 mm Tiefe in einer
+                # 900-mm-Platte: der Anteil der Tetraeder unter der Guete 0,3
+                # an der Bohrungswand faellt damit von 6,8 % auf 1,0 %.
+                grund.append(f"kleinste Kante {kante * 1e3:.0f} mm - örtlich feiner "
+                             "(Bohrungsränder, Kränze darum, wachsend ins Innere); "
+                             f"im Feld {h * 1e3:.0f} mm")
         if not ist_flaeche and getattr(netz, "dickenmass", False):
             # Dickenmass: ueber die duennste Abmessung sollen DICKE_TEILUNG
             # Elemente liegen. Das Minimum aus beiden Regeln gilt.

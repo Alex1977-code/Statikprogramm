@@ -453,8 +453,14 @@ class Linienteilung:
     """
 
     def __init__(self, model: Model, flaechen: list, h: float, h_linien: dict = None,
-                 h_flaechen: dict = None):
+                 h_flaechen: dict = None, gemeinsam: tuple = None):
         self.model, self.h = model, max(float(h), 1e-9)
+        #: Flaechen und Linien, die mehr als einem Koerper gehoeren. Fuer sie
+        #: ist die Karte **bindend**: kein Koerper darf sie allein feiner
+        #: machen, auch nicht ueber die Nachvernetzung. Fuer alles andere ist
+        #: die Karte nur eine Obergrenze - eine eigene Flaeche darf ein
+        #: Koerper so fein vernetzen, wie er will.
+        self.gem_flaechen, self.gem_linien = (gemeinsam or (frozenset(), frozenset()))
         #: Kantenlaenge je Linie, wenn eine andere gilt als die des Koerpers.
         #: Eine Linie, an der zwei Koerper haengen, muss in beiden gleich
         #: geteilt werden - sonst vernetzen sie ihre gemeinsame Flaeche
@@ -498,7 +504,7 @@ class Linienteilung:
         for wurzel, mitglieder in self.gruppe.items():
             k = 1
             for x in mitglieder:
-                hx = max(float(self.h_linien.get(x, self.h)), 1e-9)
+                hx = self._h_linie(x)
                 k = max(k, int(round(_linienlaenge(model, x) / hx)),
                         _bogenabschnitte(model, x))
             if k > grenze:
@@ -538,6 +544,15 @@ class Linienteilung:
         if ra != rb:
             self.vater[ra] = rb
 
+    def _h_linie(self, name: str) -> float:
+        """Kantenlaenge dieser Linie - die Karte bindet nur bei gemeinsamen."""
+        hk = self.h_linien.get(name)
+        if hk is None:
+            return self.h
+        if name in self.gem_linien:
+            return max(float(hk), 1e-9)
+        return max(min(float(hk), self.h), 1e-9)
+
     def h_fuer(self, flaeche) -> float:
         """Kantenlaenge **dieser Flaeche**: die feinste ihrer Randlinien.
 
@@ -547,7 +562,13 @@ class Linienteilung:
         weg. Genau daran fiel die Fuge auseinander: der untere Block vernetzte
         sie mit 200 mm, der obere mit 250 mm.
         """
-        return max(float(self.h_flaechen.get(getattr(flaeche, "name", ""), self.h)), 1e-9)
+        name = getattr(flaeche, "name", "")
+        hf = self.h_flaechen.get(name)
+        if hf is None:
+            return self.h
+        if name in self.gem_flaechen:
+            return max(float(hf), 1e-9)
+        return max(min(float(hf), self.h), 1e-9)
 
     def punkte(self, name: str) -> np.ndarray:
         return _linienpunkte(self.model, name, self.n.get(name, 1))
@@ -1598,7 +1619,8 @@ def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
 
 def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
                     runden: int = 3, quelle: list = None,
-                    splitter: float = SPLITTER, fortschritt=None) -> tuple:
+                    splitter: float = SPLITTER, fortschritt=None,
+                    gemeinsam: set = None) -> tuple:
     """Tetraedern und dabei den Rand nachfuehren, wo er nicht getroffen wurde.
 
     Eine einspringende Kante - der Innenwinkel eines L-Koerpers, die Kehle
@@ -1646,10 +1668,19 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
         daneben = schwer[d > max(1e-9 * gr, 1e-12)]
         if not len(daneben):
             break
-        # Die naechstliegenden Huelldreiecke teilen
+        # Die naechstliegenden Huelldreiecke teilen - aber keines, das auf
+        # einer **gemeinsamen** Flaeche liegt: die gehoert auch dem Nachbarn,
+        # und ein Punkt, den nur einer von beiden setzt, haengt hinterher frei
+        # in der Luft. Lieber ein Stueck Randtreue verlieren als die Fuge.
         baum = cKDTree(P[T].mean(axis=1))
         _, nn = baum.query(daneben, k=min(3, len(T)))
-        P, T, quelle = huelle_verfeinern(P, T, np.unique(np.atleast_2d(nn)), quelle)
+        welche = np.unique(np.atleast_2d(nn))
+        if gemeinsam and quelle:
+            welche = np.array([k for k in welche
+                               if not (k < len(quelle) and quelle[k] in gemeinsam)], int)
+        if not len(welche):
+            break
+        P, T, quelle = huelle_verfeinern(P, T, welche, quelle)
     Pn, TET, bericht, _, P, T, quelle = bestes
     return Pn, TET, bericht, P, T, quelle
 
@@ -1884,6 +1915,32 @@ def _ausdehnung(model: Model, koerper) -> float:
     return float(np.max(P.max(axis=0) - P.min(axis=0)))
 
 
+def gemeinsame_randflaechen(model: Model) -> tuple:
+    """(Flaechennamen, Linienamen), die mehr als **einem** Koerper gehoeren.
+
+    Eine solche Flaeche ist die Fuge zwischen zwei Bauteilen: beide muessen
+    sie gleich vernetzen, sonst fallen ihre Knoten nicht zusammen und das
+    Modell zerfaellt dort. Darum darf kein Koerper ihre Teilung allein
+    aendern - weder ueber seine eigene Kantenlaenge noch ueber die
+    Nachvernetzung. Eine Flaeche, die nur einem Koerper gehoert, darf er
+    beliebig feiner machen; sie geht niemanden sonst etwas an.
+    """
+    zaehler: dict = {}
+    for k in model.koerper.values():
+        for fn in (k.flaechen or []):
+            zaehler[fn] = zaehler.get(fn, 0) + 1
+    flaechen = {fn for fn, n in zaehler.items() if n > 1}
+    linien: set = set()
+    for fn in flaechen:
+        f = model.flaechen.get(fn)
+        if f is None:
+            continue
+        linien.update(f.linien or [])
+        for loch in (f.oeffnungen or []):
+            linien.update(loch)
+    return flaechen, linien
+
+
 def kantenlaengen_karte(model: Model, koerper=None, h: float = 0.0) -> tuple:
     """(h je Flaeche, h je Linie) - beide vom Modell, nicht vom einzelnen Koerper.
 
@@ -1928,7 +1985,79 @@ def kantenlaengen_karte(model: Model, koerper=None, h: float = 0.0) -> tuple:
         for ln in namen:
             if ln not in h_linien or hf < h_linien[ln]:
                 h_linien[ln] = hf
+    if getattr(getattr(model, "netz", None), "intelligent", True):
+        h_linien = _linien_wachsen_lassen(model, h_linien)
     return h_flaechen, h_linien
+
+
+def _linien_wachsen_lassen(model: Model, h_linien: dict,
+                           wachstum: float = WACHSTUM_FLAECHE) -> dict:
+    """Eine Linie darf nicht neben einer viel feineren stehenbleiben.
+
+    Die Mantellinie einer Bohrung ist der Fall, an dem das auffiel: der
+    Bohrungsrand wird nach der Kruemmung geteilt (bei r = 10 mm und 20
+    Abschnitten eine Sehne von 3,1 mm), die Mantellinie aber nach ihrer Laenge
+    - 35 mm bei 50 mm Zielkantenlaenge sind **ein** Abschnitt. Ueber die
+    ganze Bohrtiefe stand damit ein einziges Element, 3 mm breit und 35 mm
+    hoch. Kein Groessenfeld im Inneren kann das heilen: es findet am Rand
+    schon nichts Feines vor.
+
+    Die Regel ist dieselbe wie in der Flaeche (:func:`_kraenze`): von der
+    feinen Nachbarlinie aus waechst die Weite je Lage um ``wachstum``. Wie
+    viele Lagen eine Linie der Laenge L dabei braucht, steht geschlossen da -
+
+        k = ln(1 + L * g / s) / ln(1 + g)
+
+    mit ``s`` als der feinsten Weite an ihren Enden. Das begrenzt sich selbst:
+    k waechst nur logarithmisch mit L, und sobald L/k ueber die
+    Zielkantenlaenge kaeme, gewinnt ohnehin wieder ``round(L / h)``. Eine
+    35-mm-Linie neben einer 3,1-mm-Sehne bekommt so 7 statt 1 Abschnitte, eine
+    1000-mm-Linie 20 - also genau die Zielkantenlaenge.
+
+    Weitergereicht wird ueber gemeinsame **Knoten**; drei Durchgaenge
+    genuegen, damit es um eine Bohrung herumlaeuft, ohne durch das halbe
+    Modell zu wandern.
+    """
+    g = max(float(wachstum), 1e-6)
+    laenge: dict = {}
+    weite: dict = {}
+    an_knoten: dict = {}
+    for name in list(h_linien):
+        ln = model.lines.get(name)
+        if ln is None or not len(ln.nodes):
+            continue
+        L = _linienlaenge(model, name)
+        if L <= 0:
+            continue
+        n = max(1, int(round(L / max(h_linien[name], 1e-12))), _bogenabschnitte(model, name))
+        laenge[name] = L
+        weite[name] = L / n
+        for k in (int(ln.nodes[0]), int(ln.nodes[-1])):
+            an_knoten.setdefault(k, []).append(name)
+    if not weite:
+        return h_linien
+    for _durchgang in range(3):
+        geaendert = False
+        for name, L in laenge.items():
+            ln = model.lines.get(name)
+            nachbarn = [x for k in (int(ln.nodes[0]), int(ln.nodes[-1]))
+                        for x in an_knoten.get(k, ()) if x != name]
+            if not nachbarn:
+                continue
+            s = min(weite[x] for x in nachbarn)
+            if s >= weite[name]:
+                continue
+            k = int(np.ceil(np.log1p(L * g / s) / np.log1p(g)))
+            neu = L / max(1, k)
+            if neu < weite[name] * (1.0 - 1e-9):
+                weite[name] = neu
+                geaendert = True
+        if not geaendert:
+            break
+    aus = dict(h_linien)
+    for name, w in weite.items():
+        aus[name] = min(aus[name], w)
+    return aus
 
 
 def linien_kantenlaengen(model: Model, koerper=None, h: float = 0.0) -> dict:
@@ -1961,10 +2090,13 @@ def huelle_fuegen(P_teile: list, T_teile: list, kennungen: list) -> tuple:
     Maschinengenauigkeit gleich (3e-16 bis 1,3e-15 m). Ob eine
     Toleranzpruefung das trifft, ist Arithmetik; die Kennung ist es nicht.
 
-    Rueckgabe (Punkte, Dreiecke, Zuordnung je Flaechennetz).
+    Rueckgabe (Punkte, Dreiecke, Kennung je Punkt). Die Kennung wird
+    weitergereicht bis zum Anlegen der Modellknoten: zwei Koerper, die
+    dieselbe Flaeche beranden, teilen ihre Knoten ueber sie - nicht ueber die
+    Koordinate und nicht ueber „die erste Flaeche, die den Punkt benutzt".
     """
     von_kennung: dict = {}
-    stuecke, T_neu, abbilder = [], [], []
+    stuecke, T_neu, kenn_neu = [], [], []
     n = 0
     for Pf, Tf, kf in zip(P_teile, T_teile, kennungen):
         kf = list(kf or ())
@@ -1980,18 +2112,18 @@ def huelle_fuegen(P_teile: list, T_teile: list, kennungen: list) -> tuple:
                 von_kennung[k] = n + len(neu)
             abbild[i] = n + len(neu)
             neu.append(i)
+            kenn_neu.append(k)
         stuecke.append(Pf[neu] if neu else Pf[:0])
         n += len(neu)
         T_neu.append(abbild[Tf] if len(Tf) else np.zeros((0, 3), int))
-        abbilder.append(abbild)
     P = np.vstack(stuecke) if stuecke else np.zeros((0, 3))
     T = np.vstack(T_neu) if T_neu else np.zeros((0, 3), int)
-    return P, T, abbilder
+    return P, T, kenn_neu
 
 
 def randschale(model: Model, koerper, h: float, log: list = None,
                fortschritt=None, h_linien: dict = None,
-               h_flaechen: dict = None) -> tuple:
+               h_flaechen: dict = None, gemeinsam: tuple = None) -> tuple:
     """Die geschlossene Dreieckshuelle eines Koerpers: (P, T, Bericht).
 
     Der Bericht fuehrt unter ``quelle`` je Dreieck die Randflaeche mit, von
@@ -2009,7 +2141,7 @@ def randschale(model: Model, koerper, h: float, log: list = None,
     if fehlt:
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
                 {"fehler": f"Randflächen fehlen: {', '.join(fehlt)}"})
-    teilung = Linienteilung(model, flaechen, h, h_linien, h_flaechen)
+    teilung = Linienteilung(model, flaechen, h, h_linien, h_flaechen, gemeinsam)
     nachgeteilt: set = set()
     for runde in range(4):
         P_teile, T_teile, kennungen, quelle, gruende = [], [], [], [], {}
@@ -2033,9 +2165,16 @@ def randschale(model: Model, koerper, h: float, log: list = None,
         # Erst ueber die Kennung der Linienpunkte einhaengen; was danach noch
         # doppelt daliegt (Raender ohne Knotennamen), faellt beim Vernaehen
         # nach Abstand zusammen.
-        P, T, _ = huelle_fuegen(P_teile, T_teile, kennungen)
-        P, T, _, behalten = vernaehen(P, T, tol=max(h * 1e-4, 1e-9))
+        P, T, kennung = huelle_fuegen(P_teile, T_teile, kennungen)
+        P, T, zuordnung, behalten = vernaehen(P, T, tol=max(h * 1e-4, 1e-9))
         quelle = [q for q, b in zip(quelle, behalten) if b]
+        # Die Kennung dem Vernaehen nachziehen - sie wird beim Anlegen der
+        # Modellknoten gebraucht, um gemeinsame Flaechen zu teilen.
+        kenn = [None] * len(P)
+        for i, k in enumerate(kennung):
+            if k is not None and i < len(zuordnung):
+                kenn[int(zuordnung[i])] = k
+        kennung = kenn
         T, bericht = ausrichten(P, T)
         # Nur im Fehlerfall benennen - das kostet einen Durchgang ueber alle
         # Dreiecke, und im Regelfall gibt es nichts zu benennen.
@@ -2043,11 +2182,20 @@ def randschale(model: Model, koerper, h: float, log: list = None,
                                     if bericht["offen"] else [])
         if not bericht["offen"] or not zu_grob or runde == 3:
             break
-        if not teilung.verfeinern(zu_grob):
+        # Eine gemeinsame Linie gehoert auch dem Nachbarn - sie hier feiner zu
+        # teilen risse die Fuge auf. Lieber die Huelle offen melden als das
+        # Modell stillschweigend trennen.
+        eigen = [x for x in zu_grob if x not in teilung.gem_linien]
+        if len(eigen) < len(zu_grob) and log is not None:
+            C.warn(log, f"  Volumen {koerper.name}: "
+                        f"{len(zu_grob) - len(eigen)} Randlinie(n) gehören einem "
+                        "zweiten Körper und werden nicht allein feiner geteilt")
+        if not eigen or not teilung.verfeinern(eigen):
             break
         nachgeteilt.update(zu_grob)
     bericht["gruende"] = gruende
     bericht["quelle"] = quelle
+    bericht["kennung"] = kennung
     bericht["flaechen"] = len(flaechen)
     bericht["ohne_netz"] = sum(gruende.values())
     bericht["dreiecke"] = len(T)
@@ -2085,7 +2233,7 @@ def _entartete_weglassen(model, ecken: list) -> tuple:
 
 def _knoten_anlegen(model: Model, koerper, Pn: np.ndarray, benutzt: np.ndarray,
                     n_rand: int, T: np.ndarray, quelle: list,
-                    cache: dict = None) -> np.ndarray:
+                    cache: dict = None, kennung: list = None) -> np.ndarray:
     """Die Netzpunkte als Modellknoten anlegen - gemeinsame Flaechen geteilt.
 
     Zwei Volumenkoerper, die **dieselbe** Randflaeche haben, muessen dort
@@ -2094,6 +2242,20 @@ def _knoten_anlegen(model: Model, koerper, Pn: np.ndarray, benutzt: np.ndarray,
     ueber die Koordinate: zwei Flaechen, die aufeinanderliegen, aber
     verschiedene Objekte sind, gehoeren zu einer Kontaktfuge und duerfen
     **nicht** verschweisst werden.
+
+    Geschluesselt wird nach der **Herkunft** des Punktes, die
+    :func:`randschale` mitliefert: ein Punkt auf einer Randlinie heisst
+    ``("L", Linie, k)``, eine Ecke ``("K", Knoten)``. Nur so finden sich zwei
+    Koerper. Der frueher benutzte Schluessel „erste Flaeche, die den Punkt
+    benutzt" versagt genau dort, wo es darauf ankommt: ein Punkt auf einer
+    gemeinsamen **Randlinie** gehoert zu zwei oder mehr Flaechen des Koerpers,
+    und welche davon die erste ist, entscheidet die Reihenfolge der
+    Randflaechen - beim Import eine beliebige. Nachgemessen an zwei Prismen
+    mit gemeinsamer Flaeche: 15 der 33 Fugenknoten waren doppelt, nur weil in
+    einem der beiden Koerper eine Seitenflaeche vorn in der Liste stand.
+
+    Fuer Punkte **im Inneren** einer Flaeche bleibt es beim alten Schluessel
+    (Flaeche und Koordinate): dort ist die Flaeche eindeutig.
 
     Die Eckknoten der Randlinien sind ohnehin schon Modellknoten; sie werden
     wiederverwendet, damit Lasten und Lager an der Geometrie wirksam bleiben.
@@ -2128,20 +2290,24 @@ def _knoten_anlegen(model: Model, koerper, Pn: np.ndarray, benutzt: np.ndarray,
     neue_punkte: list = []
     neue_idx: list = []
     naechste = int(model.nn)
+    kennung = list(kennung or ())
     for i in benutzt:
         i = int(i)
         p = Pn[i]
         s = schluessel(p)
+        herkunft = kennung[i] if i < len(kennung) else None
+        merk = herkunft if herkunft is not None else (
+            (punkt_flaeche[i], s) if i in punkt_flaeche else None)
         k = vorhanden.get(s)
-        if k is None and cache is not None and i in punkt_flaeche:
-            k = cache.get((punkt_flaeche[i], s))
+        if k is None and cache is not None and merk is not None:
+            k = cache.get(merk)
         if k is None:
             k = naechste
             naechste += 1
             neue_punkte.append(p)
             neue_idx.append(i)
-            if cache is not None and i in punkt_flaeche:
-                cache[(punkt_flaeche[i], s)] = k
+            if cache is not None and merk is not None:
+                cache[merk] = k
         neu[i] = k
     if neue_punkte:
         model.add_nodes(np.asarray(neue_punkte, float))
@@ -2384,7 +2550,7 @@ def netzguete(tb: dict, bericht: dict) -> dict:
 
 def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                         fortschritt=None, h_linien: dict = None,
-                        h_flaechen: dict = None) -> dict:
+                        h_flaechen: dict = None, gemeinsam: tuple = None) -> dict:
     """Die Rechenarbeit eines Koerpers: Randhuelle und Tetraeder - ohne das
     Modell zu veraendern.
 
@@ -2418,7 +2584,8 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
             # h_linien bleibt ueber alle Anlaeufe dasselbe: die Randflaechen
             # gehoeren auch dem Nachbarn, nur das Innere wird feiner.
             P, T, bericht = randschale(model, koerper, h, zeilen, fortschritt,
-                                       h_linien=h_linien, h_flaechen=h_flaechen)
+                                       h_linien=h_linien, h_flaechen=h_flaechen,
+                                       gemeinsam=gemeinsam)
             if bericht.get("fehler"):
                 aus["fehler"] = f"{bericht['fehler']} - nicht vernetzt."
                 return aus
@@ -2441,9 +2608,9 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                 aus["fehler"] = "die Hülle umschließt kein Volumen - nicht vernetzt."
                 return aus
             quelle = bericht.get("quelle") or []
-            Pn, TET, tb, P, T, quelle = tetraedern_treu(P, T, h, quelle=quelle,
-                                                        splitter=splitter,
-                                                        fortschritt=fortschritt)
+            Pn, TET, tb, P, T, quelle = tetraedern_treu(
+                P, T, h, quelle=quelle, splitter=splitter, fortschritt=fortschritt,
+                gemeinsam=(gemeinsam or (frozenset(), frozenset()))[0])
             if tb.get("fehler"):
                 aus["fehler"] = str(tb["fehler"])
                 return aus
@@ -2536,7 +2703,8 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     abw = abs(ist - soll) / soll if soll > 0 else 1.0
     # Nur die wirklich benutzten Punkte ins Modell uebernehmen
     benutzt = np.unique(TET)
-    neu = _knoten_anlegen(model, koerper, Pn, benutzt, len(P), T, quelle, cache)
+    neu = _knoten_anlegen(model, koerper, Pn, benutzt, len(P), T, quelle, cache,
+                          kennung=bericht.get("kennung"))
     ecken = [[int(neu[i]) for i in t] for t in TET]
     ecken, entartet = _entartete_weglassen(model, ecken)
     if entartet:
@@ -2626,6 +2794,7 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
     """
     if h_linien is None or h_flaechen is None:
         h_flaechen, h_linien = kantenlaengen_karte(model, h=h)
-    aus = koerper_vorbereiten(model, koerper, h, log, fortschritt, h_linien, h_flaechen)
+    aus = koerper_vorbereiten(model, koerper, h, log, fortschritt, h_linien, h_flaechen,
+                              gemeinsame_randflaechen(model))
     aus["log"] = []                     # steht schon im Protokoll
     return koerper_einbauen(model, koerper, aus, log, cache, ordnung)

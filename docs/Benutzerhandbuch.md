@@ -426,7 +426,7 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Angabe | Bedeutung |
 |---|---|
 | Netzdichte | **grob / mittel / fein**: 8 / 16 / 32 Elemente über die größte Abmessung jedes Objekts - ein 4 m langer Träger und eine 8 cm dicke Lasche bekommen so je ihr passendes Netz; **eigene**: die Ziellänge gilt absolut (so übernimmt sie der RFEM-Import) |
-| Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz **der Flächen** dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge). Bei **Volumen** bleibt die Kantenlänge - der freie Vernetzer folgt der Feinheit des Randes von selbst (Bohrung fein, Inneres grob); eine ganze Platte auf ihre Bohrung herunterzuteilen gäbe nur das Vielfache an Tetraedern |
+| Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz **der Flächen** dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge). Bei **Volumen** bleibt die Kantenlänge im Feld: eine ganze Platte auf ihre Bohrung herunterzuteilen gäbe nur das Vielfache an Tetraedern. Fein wird es **örtlich**, an drei zusammengehörenden Stellen: die Bohrungsränder nach ihrer Krümmung, eine Linie neben einer viel feineren (die **Mantellinie** einer Bohrung stand sonst mit *einem* Abschnitt über der ganzen Bohrtiefe), Kränze um jede Öffnung in der Fläche, und von dort wachsend ins Innere. Gemessen an einer 20-mm-Bohrung von 35 mm Tiefe in einer 900-mm-Platte: der Anteil der Tetraeder unter der Güte 0,3 an der Bohrungswand fällt von 6,8 % auf 1,0 % — für doppelt so viele Elemente. Ohne den Haken bleibt es bei ⌈L/h⌉ je Linie |
 | Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)) |
 | Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall |
 | Elementansatz | **linear** (shell3/shell4, tet4, hex8) oder **quadratisch**: Flächen bekommen Mittenknoten (shell6/shell8), abgebildete Volumen hex20, freie Volumen tet10. Quadratisch braucht für dieselbe Genauigkeit deutlich weniger Elemente, je Element aber mehr Rechenzeit |
@@ -2170,6 +2170,7 @@ nichts stillschweigend Übergangenes:
 | Prüfung | Grenze |
 |---|---|
 | Elemente, die eine ausgeführte Kontaktfuge überspannen | 0 |
+| **Gemeinsame Fläche zweier Körper: doppelte und hängende Knoten** | **0** |
 | Abdeckung der Kontaktseite | ≥ 95 % |
 | Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 |
 | Haltegüte je Teiltragwerk | ≥ 10⁻⁴ |
@@ -2181,6 +2182,15 @@ Die wichtigste Zeile ist die erste: beim Ausführen einer Fuge werden die
 gemeinsamen Randknoten verdoppelt; bliebe danach ein Element mit einem Fuß auf
 der alten und einem auf der neuen Seite, überbrückte es genau die Trennung und
 die Fuge wirkte dort **nicht**. Von außen sieht man das als „halb vernetzt".
+
+Die zweite ist der stillste aller Netzfehler. Zwei Körper, die *dieselbe*
+Randfläche haben, müssen dort dieselben Knoten benutzen — sonst ist die Fläche
+zweimal vernetzt, die Kräfte gehen nicht hinüber, und das Netz sieht dabei
+tadellos aus. Genannt wird beides getrennt, weil es verschiedene Ursachen hat:
+**doppelte** Knoten (gleicher Ort, andere Nummer) heißen, dass die Teilung
+passt und die Knoten nur zweimal angelegt wurden; **hängende** heißen, dass
+die beiden Körper die gemeinsame Linie oder Fläche verschieden fein geteilt
+haben.
 
 Jede Verletzung steht **einzeln** im Protokoll, mit Prüfung, Bauteil, Element,
 Knoten, gemessenem Wert und Grenze — keine Sammelmeldung, keine

@@ -1731,6 +1731,33 @@ den früheren 30° (zwölf Abschnitte) weicht die Sehne um 3,4 % des
 Halbmessers von der Bohrung ab, bei 18° um 1,2 %; für eine Kerbspannung am
 Lochrand ist das der Unterschied zwischen brauchbar und nicht.
 
+**Eine Linie neben einer feineren.** Die Mantellinie einer Bohrung ist der
+Fall, an dem das auffiel: der Bohrungsrand wird nach der Krümmung geteilt (bei
+r = 10 mm und 24 Sehnen sind das 2,6 mm), die Mantellinie aber nach ihrer
+Länge — 35 mm bei 50 mm Zielkantenlänge sind **ein** Abschnitt, ein Sprung von
+13:1. Kein Größenfeld im Inneren kann das heilen; es findet am Rand schon
+nichts Feines vor.
+
+Es gilt dieselbe Regel wie in der Fläche: von der feinen Nachbarlinie aus
+wächst die Weite je Lage um 25 %. Wie viele Lagen eine Linie der Länge L
+dafür braucht, steht geschlossen da —
+
+    k = ln(1 + L · g / s) / ln(1 + g)
+
+mit s als der feinsten Weite an ihren Enden. Das begrenzt sich selbst: k
+wächst nur logarithmisch mit L, und sobald L/k über die Zielkantenlänge käme,
+gewinnt ohnehin wieder ⌈L/h⌉. Die 35-mm-Mantellinie bekommt so 10 statt einem
+Abschnitt, eine 900-mm-Außenlinie bleibt bei 50 mm. Weitergereicht wird über
+gemeinsame Knoten, in drei Durchgängen — genug, um eine Bohrung herum, zu
+wenig, um durch das halbe Modell zu wandern. Die Regel gehört zu
+**„Intelligent anpassen"**; ohne den Haken bleibt es bei ⌈L/h⌉.
+
+Am Ergebnis gemessen (20-mm-Bohrung, 35 mm tief, in einer 900-mm-Platte bei
+50 mm Zielkantenlänge): der Anteil der Tetraeder unter der Güte 0,3 an der
+Bohrungswand fällt von **6,8 % auf 1,0 %**, die Formgüte dort steigt im Median
+von 0,70 auf 0,81 — für doppelt so viele Elemente an diesem bewusst
+bohrungsdominierten Bauteil.
+
 **Übergang von der Bohrung ins Feld.** Die feine Teilung des Bohrungsrandes
 setzte sich früher nicht ins Innere fort: das Innengitter war gleichmäßig mit
 der Zielkantenlänge, und alles näher als 0,65·h am Rand fiel weg. Gemessen an
@@ -1845,6 +1872,36 @@ bekommen dort dieselben Knoten und hängen zusammen. Geteilt wird ausdrücklich
 über die Fläche, nicht über die Koordinate: zwei Flächen, die aufeinander
 liegen, aber verschiedene Objekte sind, gehören zu einer Kontaktfuge und dürfen
 **nicht** verschweißt werden.
+
+Damit das hält, müssen drei Dinge stimmen; an jedem einzelnen fiel die Fuge
+schon auseinander, und von außen sah das Netz jedesmal tadellos aus.
+
+1. **Geschlüsselt wird nach der Herkunft des Punktes**, nicht nach „der ersten
+   Fläche, die ihn benutzt". Ein Punkt auf einer gemeinsamen *Randlinie*
+   gehört zu zwei oder mehr Flächen des Körpers; welche davon die erste ist,
+   entscheidet die Reihenfolge der Randflächenliste — beim Import eine
+   beliebige. Ein Linienpunkt heißt darum `(Linie, k)` in der eigenen
+   Zählrichtung der Linie, eine Ecke nach ihrem Knoten. Nachgemessen an zwei
+   Prismen mit gemeinsamer Fläche: **15 der 33** Fugenknoten waren doppelt,
+   nur weil in einem der beiden Körper eine Seitenfläche vorn in der Liste
+   stand.
+2. **Die Kantenlängenkarten gelten modellweit**, und der parallele Vernetzer
+   bekommt sie mit. Ein Arbeitsprozess sieht immer nur *einen* Körper und
+   könnte sie nicht bilden; ohne sie bildete jeder seine Teilung selbst.
+   Wandte nur einer sein Dickenmaß an, teilte er die gemeinsame Linie feiner
+   als der Nachbar — **13 der 33** Fugenknoten hingen dann frei in der Luft.
+3. **Eine gemeinsame Fläche oder Linie darf kein Körper allein ändern.** Die
+   Karte ist für sie bindend; für eigene Flächen ist sie nur eine Obergrenze,
+   sonst könnte die Nachvernetzung gar nichts mehr ausrichten. Auch die
+   Nachteilung bei offener Hülle und das Nachführen der Hülldreiecke
+   (`tetraedern_treu`) lassen gemeinsame Flächen unangetastet und melden das,
+   statt still zu trennen.
+
+Geprüft wird das nicht nur beim Bauen: die Abnahme vor dem Rechnen
+(*gemeinsame Fläche*) misst je Körperpaar die Randknoten des einen, die auf
+dem Rand des anderen liegen, und verlangt dieselben Knotennummern. Doppelte
+(gleicher Ort, andere Nummer) und hängende (kein Partner) werden getrennt
+genannt, weil sie verschiedene Ursachen haben.
 
 **Splitter.** Das Kugel-Kanten-Kriterium erfasst jede schlechte Form außer
 einer: vier fast in einer Ebene liegende Knoten können eine ganz gewöhnliche

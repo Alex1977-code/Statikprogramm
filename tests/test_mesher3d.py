@@ -812,7 +812,7 @@ def test_huelle_ohne_rundungsgitter():
     M3.huelle_fuegen = lambda Pt, Tt, kn: (
         np.vstack(Pt),
         np.vstack([Tx + sum(len(x) for x in Pt[:i]) for i, Tx in enumerate(Tt)]),
-        None)
+        [])
     try:
         _, _, alt = M3.randschale(m, k, h, [], None, None, None)
     finally:
@@ -912,9 +912,91 @@ def test_groessenfeld_an_der_bohrung():
           M3._bogenabschnitte(m2, "B") == 10, str(M3._bogenabschnitte(m2, "B")))
 
 
+def test_mantellinie_der_bohrung():
+    """Eine Linie darf nicht neben einer viel feineren stehenbleiben.
+
+    Die Mantellinie einer Bohrung ist der Fall: der Bohrungsrand wird nach der
+    Kruemmung geteilt (r = 10 mm, 24 Sehnen von 2,6 mm), die Mantellinie aber
+    nach ihrer Laenge - 35 mm bei 50 mm Zielkantenlaenge sind **ein**
+    Abschnitt, ein Sprung von 13:1. Die Wachstumsregel
+    (:func:`mesher3d._linien_wachsen_lassen`) macht daraus 10 Abschnitte; eine
+    900-mm-Aussenlinie bleibt dabei bei der Zielkantenlaenge - die Regel
+    begrenzt sich selbst.
+
+    Was es bringt, steht am fertigen Netz: der Anteil der Tetraeder unter der
+    Guete 0,3 an der Bohrungswand faellt von 6,8 % auf 1,0 % (Abnahmegrenze
+    der Anweisung: 5 %).
+    """
+    r, R, t, h = 0.010, 0.45, 0.035, 0.05
+
+    def modell(intelligent):
+        m = neues_modell()
+        m.netz.ziellaenge = h
+        m.netz.intelligent = intelligent
+        k = prisma(m, [[(-R, -R), (R, -R), (R, R), (-R, R)],
+                       [tuple(x) for x in kreis_punkte(r, 24, umgekehrt=True)]], t)
+        return m, k
+
+    def linien(m):
+        mantel, aussen = [], []
+        for name, ln in m.lines.items():
+            if len(ln.nodes) != 2:
+                continue
+            a, b = m.nodes[ln.nodes[0]], m.nodes[ln.nodes[1]]
+            if abs(np.linalg.norm(a[:2]) - r) < 1e-9 and abs(a[2] - b[2]) > 1e-9:
+                mantel.append(name)
+            elif np.linalg.norm(a[:2] - b[:2]) > 0.5:
+                aussen.append(name)
+        return mantel, aussen
+
+    m, k = modell(True)
+    hf, hl = M3.kantenlaengen_karte(m, h=h)
+    teil = M3.Linienteilung(m, [m.flaechen[n] for n in k.flaechen], h, hl, hf)
+    mantel, aussen = linien(m)
+    n_mantel = min(teil.n.get(x, 1) for x in mantel)
+    check("die Mantellinie bekommt mehrere Abschnitte", n_mantel >= 8,
+          f"{n_mantel} Abschnitte über {t * 1e3:.0f} mm")
+    check("ihr Segment liegt nahe an der Sehne des Bohrungsrandes",
+          t / n_mantel < 2.0 * (2 * r * np.sin(np.pi / 24)),
+          f"{t / n_mantel * 1e3:.1f} mm gegen Sehne "
+          f"{2 * r * np.sin(np.pi / 24) * 1e3:.1f} mm")
+    n_aussen = min(teil.n.get(x, 1) for x in aussen)
+    check("die 900-mm-Außenlinie bleibt bei der Zielkantenlänge - die Regel "
+          "begrenzt sich selbst", abs(0.9 / n_aussen - h) < 0.2 * h,
+          f"{0.9 / n_aussen * 1e3:.0f} mm statt {h * 1e3:.0f} mm")
+
+    # Gegenprobe ohne die Regel
+    m0, k0 = modell(False)
+    hf0, hl0 = M3.kantenlaengen_karte(m0, h=h)
+    teil0 = M3.Linienteilung(m0, [m0.flaechen[n] for n in k0.flaechen], h, hl0, hf0)
+    mantel0, _ = linien(m0)
+    check("ohne „intelligent“ steht ein Abschnitt über der ganzen Bohrtiefe - "
+          "der Test greift",
+          min(teil0.n.get(x, 1) for x in mantel0) == 1,
+          f"{min(teil0.n.get(x, 1) for x in mantel0)} Abschnitt(e)")
+
+    # Und am fertigen Netz: die Tetraeder an der Bohrungswand
+    def wandguete(mm, kk):
+        els = M3.mesh_koerper_frei(mm, kk, log=[])
+        TET = np.array([[int(x) for x in mm.elements[i].nodes] for i in els])
+        schwer = mm.nodes[TET].mean(axis=1)
+        nah = np.abs(np.linalg.norm(schwer[:, :2], axis=1) - r) < 0.5 * r
+        q = M3.guete(mm.nodes, TET)
+        return len(els), float((q[nah] < 0.3).mean()), float(np.median(q[nah]))
+
+    n1, schlecht1, med1 = wandguete(m, k)
+    n0, schlecht0, med0 = wandguete(m0, k0)
+    check("an der Bohrungswand liegen höchstens 5 % der Tetraeder unter der Güte 0,3",
+          schlecht1 <= 0.05, f"{schlecht1 * 100:.1f} % (ohne die Regel {schlecht0 * 100:.1f} %)")
+    check("und die Formgüte dort ist besser als ohne die Regel", med1 > med0,
+          f"Median {med1:.3f} gegen {med0:.3f}")
+    check("der Preis bleibt im Rahmen (höchstens dreimal so viele Elemente)",
+          n1 < 3 * n0, f"{n0} -> {n1} Tetraeder")
+
+
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_huelle_ohne_rundungsgitter,
-              test_groessenfeld_an_der_bohrung,
+              test_groessenfeld_an_der_bohrung, test_mantellinie_der_bohrung,
               test_einspringende_ecke,
               test_platte_mit_bohrung, test_duenne_platte_randseiten,
               test_zylinder_und_buchse,

@@ -690,12 +690,33 @@ def abgebildet(model: Model, koerper) -> bool:
 # Mehrere Volumen: parallel in Arbeitsprozessen
 # --------------------------------------------------------------------------
 _WORKER_MODEL = None
+_WORKER_KARTEN = None
 
 
-def _koerper_arbeiter_init(model: Model) -> None:
-    """Jeder Arbeitsprozess bekommt das Modell einmal - die Geometrie genuegt."""
-    global _WORKER_MODEL
+def netzkarten(model: Model, h: float = 0.0) -> tuple:
+    """(h je Flaeche, h je Linie, gemeinsame Flaechen/Linien) - **modellweit**.
+
+    Sie muessen einmal fuer das ganze Modell gebildet werden, nicht je
+    Koerper: eine Flaeche, die zwei Bauteile teilen, bekommt sonst von jedem
+    eine andere Teilung, ihre Knoten fallen nicht mehr zusammen und die Fuge
+    faellt auseinander. Gemessen an zwei Prismen mit gemeinsamer Flaeche, bei
+    denen nur einer sein Dickenmass anwendete: 13 der 33 Fugenknoten hingen
+    frei in der Luft.
+    """
+    from . import mesher3d as M3
+    h_flaechen, h_linien = M3.kantenlaengen_karte(model, h=h)
+    return h_flaechen, h_linien, M3.gemeinsame_randflaechen(model)
+
+
+def _koerper_arbeiter_init(model: Model, karten: tuple = None) -> None:
+    """Jeder Arbeitsprozess bekommt das Modell einmal - die Geometrie genuegt.
+
+    Dazu die modellweiten Netzkarten: der Arbeitsprozess sieht immer nur
+    **einen** Koerper und koennte sie selbst nicht bilden.
+    """
+    global _WORKER_MODEL, _WORKER_KARTEN
     _WORKER_MODEL = model
+    _WORKER_KARTEN = karten
 
 
 def _koerper_arbeit(name: str, h: float) -> dict:
@@ -703,7 +724,9 @@ def _koerper_arbeit(name: str, h: float) -> dict:
     :func:`statik3d.mesher3d.koerper_vorbereiten`)."""
     from . import mesher3d as M3
     k = _WORKER_MODEL.koerper[name]
-    return M3.koerper_vorbereiten(_WORKER_MODEL, k, h=float(h or 0.0))
+    hf, hl, gem = _WORKER_KARTEN or ({}, {}, None)
+    return M3.koerper_vorbereiten(_WORKER_MODEL, k, h=float(h or 0.0),
+                                  h_linien=hl, h_flaechen=hf, gemeinsam=gem)
 
 
 def prozesse_fuer_vernetzung() -> int:
@@ -814,7 +837,11 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     aus["prozesse"] = w
     try:
         ctx = par._context()
-        pool = ctx.Pool(processes=w, initializer=_koerper_arbeiter_init, initargs=(model,))
+        # Die Netzkarten einmal fuer das ganze Modell - der Arbeitsprozess
+        # sieht immer nur einen Koerper und koennte sie nicht bilden.
+        karten = netzkarten(model)
+        pool = ctx.Pool(processes=w, initializer=_koerper_arbeiter_init,
+                        initargs=(model, karten))
     except Exception as ex:               # noqa: BLE001 - kein Prozess-Pool: seriell
         C.say(log, f"Arbeitsprozesse nicht verfügbar ({ex}) - die Volumen werden nacheinander vernetzt.")
         aus = _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
