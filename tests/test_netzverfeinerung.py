@@ -178,28 +178,63 @@ def test_gemeinsame_flaeche_bleibt_zusammen():
     Bewusst nicht das Minimum ihrer Randlinien — sonst zöge eine Bohrung die
     ganze Platte auf ihre Feinheit herunter.
     """
-    from statik3d.mesher3d import Linienteilung, kantenlaengen_karte
+    from statik3d.mesher3d import (Linienteilung, gemeinsame_randflaechen,
+                                   kantenlaengen_karte)
     m, k1 = _quader(1.0, 1.0, 1.0)
     m.netz.dickenmass = True
-    # Ein zweiter, deutlich kleinerer Körper auf demselben Modell wäre hier
-    # aufwendig zu bauen; geprüft wird der Kern: die Karte entscheidet je
-    # Fläche, und zwei Körper mit verschiedenem h bekommen dieselbe.
+    # Ein zweiter Körper auf derselben Deckfläche: **sie** gehört beiden, alles
+    # andere gehört je einem allein. Genau diese Unterscheidung ist der Kern -
+    # eine gemeinsame Fläche darf kein Körper allein feiner machen, eine eigene
+    # sehr wohl (sonst könnte die Nachvernetzung gar nichts mehr ausrichten).
+    kn = [m.add_node(x, y, 2.0) for x, y in ((0, 0), (1, 0), (1, 1), (0, 1))]
+    for i, (u, v) in enumerate(zip(kn, kn[1:] + kn[:1])):
+        m.add_line(f"kopf_{i}", [u, v])
+    m.add_flaeche("kopf", [f"kopf_{i}" for i in range(4)], dicke=None, material="S235")
+    ecken_oben = [m.lines["oben_0"].nodes[0], m.lines["oben_1"].nodes[0],
+                  m.lines["oben_2"].nodes[0], m.lines["oben_3"].nodes[0]]
+    seiten2 = []
+    for i in range(4):
+        a, b = ecken_oben[i], ecken_oben[(i + 1) % 4]
+        m.add_line(f"auf_{i}", [a, kn[i]])
+        seiten2.append(f"auf_{i}")
+    namen2 = []
+    for i in range(4):
+        nm = f"S2_{i}"
+        m.add_flaeche(nm, [f"oben_{i}", f"auf_{(i + 1) % 4}", f"kopf_{i}", f"auf_{i}"],
+                      dicke=None, material="S235")
+        namen2.append(nm)
+    k2 = m.add_koerper("V2", ["oben", "kopf"] + namen2, material="S235")
+
     h_fl, h_li = kantenlaengen_karte(m, h=0.05)
+    gem_f, gem_l = gemeinsame_randflaechen(m)
     check("jede Randfläche steht in der Karte",
           all(fn in h_fl for fn in k1.flaechen), f"{len(h_fl)} Flächen")
     check("jede Randlinie auch", len(h_li) >= 12, f"{len(h_li)} Linien")
-    # Zwei Körper mit verschiedenem h sehen dieselbe Flächenfeinheit
-    fl = [m.flaechen[x] for x in k1.flaechen]
-    t_fein = Linienteilung(m, fl, 0.01, h_li, h_fl)
-    t_grob = Linienteilung(m, fl, 0.50, h_li, h_fl)
-    for f in fl:
-        check(f"Fläche {f.name}: fein und grob sehen dieselbe Feinheit",
-              abs(t_fein.h_fuer(f) - t_grob.h_fuer(f)) < 1e-12,
-              f"{t_fein.h_fuer(f) * 1e3:.1f} / {t_grob.h_fuer(f) * 1e3:.1f} mm")
-    # und dieselbe Linienteilung
-    for ln in list(h_li)[:6]:
-        check(f"Linie {ln}: gleiche Teilung", t_fein.n.get(ln) == t_grob.n.get(ln),
+    check("„oben“ gehört beiden Körpern, sonst nichts",
+          gem_f == {"oben"}, str(sorted(gem_f)))
+    check("und damit auch ihre vier Randlinien",
+          gem_l == {f"oben_{i}" for i in range(4)}, str(sorted(gem_l)))
+
+    # Zwei Körper mit verschiedenem h sehen dieselbe Feinheit der **gemeinsamen**
+    # Fläche - egal, wie fein oder grob jeder für sich vernetzt.
+    fl1 = [m.flaechen[x] for x in k1.flaechen]
+    fl2 = [m.flaechen[x] for x in k2.flaechen]
+    t_fein = Linienteilung(m, fl1, 0.01, h_li, h_fl, (gem_f, gem_l))
+    t_grob = Linienteilung(m, fl2, 0.50, h_li, h_fl, (gem_f, gem_l))
+    f_gem = m.flaechen["oben"]
+    check("die gemeinsame Fläche: fein und grob sehen dieselbe Feinheit",
+          abs(t_fein.h_fuer(f_gem) - t_grob.h_fuer(f_gem)) < 1e-12,
+          f"{t_fein.h_fuer(f_gem) * 1e3:.1f} / {t_grob.h_fuer(f_gem) * 1e3:.1f} mm")
+    for ln in sorted(gem_l):
+        check(f"gemeinsame Linie {ln}: gleiche Teilung",
+              t_fein.n.get(ln) == t_grob.n.get(ln),
               f"{t_fein.n.get(ln)} / {t_grob.n.get(ln)}")
+    # Eine eigene Fläche darf der Körper feiner machen - sonst brächte die
+    # Nachvernetzung nichts mehr.
+    f_eigen = m.flaechen["unten"]
+    check("eine eigene Fläche folgt dagegen der Kantenlänge des Körpers",
+          t_fein.h_fuer(f_eigen) < 0.5 * t_grob.h_fuer(f_eigen),
+          f"{t_fein.h_fuer(f_eigen) * 1e3:.1f} / {t_grob.h_fuer(f_eigen) * 1e3:.1f} mm")
     # Die Obergrenze verhindert das Aufspannen riesiger Coons-Gitter
     check("es gibt eine Obergrenze je Randlinie",
           0 < mesher3d.MAX_ABSCHNITTE <= 1000, str(mesher3d.MAX_ABSCHNITTE))

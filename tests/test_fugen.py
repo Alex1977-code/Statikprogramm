@@ -1134,6 +1134,135 @@ def test_deckungsgleiche_knoten_direkt():
           f"(eine Facettennormale läge {180.0 / n:.0f}° daneben)")
 
 
+def _zwei_prismen(n=5, r=0.30, dick=0.30, klein=0.05):
+    """Zwei Fuenfeckprismen uebereinander mit **einer** gemeinsamen Flaeche.
+
+    Fuenfeckig, damit der abgebildete Vernetzer nicht greift: es geht durch
+    den freien Weg - denselben, den ein importiertes Volumenmodell nimmt.
+    """
+    m = Model("Fuge")
+    m.add_material(Material.steel("S235"))
+    m.netz.ziellaenge = 0.10
+    w = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    P = np.column_stack([r * np.cos(w), r * np.sin(w)])
+    idx = []
+    for z in (0.0, dick, dick + klein):
+        i0 = m.nn
+        m.add_nodes(np.column_stack([P, np.full(n, z)]))
+        idx.append(i0)
+    ringe = [[m.add_line(f"R{L}_{i}", [i0 + i, i0 + (i + 1) % n]).name for i in range(n)]
+             for L, i0 in enumerate(idx)]
+    senk = [[m.add_line(f"S{L}_{i}", [idx[L] + i, idx[L + 1] + i]).name for i in range(n)]
+            for L in range(2)]
+    m.add_flaeche("Boden", ringe[0], material="S235")
+    m.add_flaeche("Fuge", ringe[1], material="S235")
+    m.add_flaeche("Dach", ringe[2], material="S235")
+    seiten = [[], []]
+    for L in range(2):
+        for i in range(n):
+            nm = f"M{L}_{i}"
+            m.add_flaeche(nm, [ringe[L][i], senk[L][(i + 1) % n], ringe[L + 1][i], senk[L][i]],
+                          material="S235")
+            seiten[L].append(nm)
+    m.add_koerper("V_unten", ["Boden", "Fuge"] + seiten[0], material="S235")
+    m.add_koerper("V_oben", ["Fuge", "Dach"] + seiten[1], material="S235")
+    return m
+
+
+def _fugenknoten(m, a="V_unten", b="V_oben"):
+    """(auf der Fuge, davon geteilt, doppelt, haengend) - wie die Abnahme misst."""
+    from statik3d.assemble import SOLID_FACES
+    from scipy.spatial import cKDTree
+    from statik3d import diagnose as D
+    ra = D._freie_seiten_des_koerpers(m, m.koerper[a], SOLID_FACES)
+    rb = D._freie_seiten_des_koerpers(m, m.koerper[b], SOLID_FACES)
+    if ra is None or rb is None:
+        return 0, 0, 0, 0
+    N = np.asarray(m.nodes, float)
+    ia, _ = ra
+    ib, Tb = rb
+    d = np.asarray(M3.abstand_zur_huelle(N[ia], N, Tb))
+    auf = ia[d < 1e-5]
+    if not len(auf):
+        return 0, 0, 0, 0
+    setb = set(int(x) for x in ib)
+    gleich = np.array([int(i) in setb for i in auf])
+    dk, _ = cKDTree(N[ib]).query(N[auf])
+    return (len(auf), int(gleich.sum()),
+            int(((~gleich) & (dk < 1e-6)).sum()),
+            int(((~gleich) & (dk >= 1e-6)).sum()))
+
+
+def test_gemeinsame_flaeche_konform():
+    """Zwei Koerper mit derselben Randflaeche muessen dort **dieselben**
+    Knoten benutzen - sonst stehen sie unverbunden nebeneinander, das Netz
+    sieht von aussen tadellos aus, und keine Kraft geht hinueber.
+
+    Zwei Wege, auf denen das schiefging, beide hier nachgebaut:
+
+    * **Die Reihenfolge der Randflaechen.** Der Knoten-Cache schluesselte
+      ueber „die erste Flaeche, die den Punkt benutzt". Ein Punkt auf einer
+      gemeinsamen **Randlinie** gehoert aber zu mehreren Flaechen des
+      Koerpers, und welche die erste ist, entscheidet die Reihenfolge der
+      Liste - beim Import eine beliebige. Geschluesselt wird jetzt nach der
+      **Herkunft** des Punktes (Linie und Nummer, Ecke nach ihrem Knoten).
+    * **Verschiedene Kantenlaengen.** Jeder Koerper bildete seine Teilung
+      selbst; wandte nur einer sein Dickenmass an, teilte er die gemeinsame
+      Linie feiner als der Nachbar. Die Karten gelten jetzt modellweit und
+      binden bei gemeinsamen Flaechen und Linien - der parallele Pfad bekommt
+      sie mit.
+    """
+    from statik3d import diagnose as D
+    from statik3d import mesher as MSH
+    for titel, mach in (("Flächenreihenfolge", "reihenfolge"), ("verschiedene h", "dicke")):
+        m = _zwei_prismen()
+        if mach == "reihenfolge":
+            k = m.koerper["V_oben"]
+            k.flaechen = [f for f in k.flaechen if f.startswith("M")] + ["Fuge", "Dach"]
+        else:
+            m.netz.dickenmass = True
+        MSH.koerper_vernetzen(m, list(m.koerper.values()), log=[], workers=2)
+        auf, gleich, doppelt, haengend = _fugenknoten(m)
+        check(f"{titel}: die Fuge trägt Knoten", auf > 10, f"{auf} Knoten")
+        check(f"{titel}: alle Fugenknoten sind geteilt", gleich == auf,
+              f"{gleich} von {auf}")
+        check(f"{titel}: keine doppelten, keine hängenden", doppelt == 0 and haengend == 0,
+              f"{doppelt} doppelt, {haengend} hängend")
+        check(f"{titel}: die Abnahme meldet nichts",
+              not [b for b in D.abnahme(m) if b.pruefung == "gemeinsame Fläche"])
+
+    # Gegenproben - ohne sie pruefte der Test nichts: er liefe auch gruen,
+    # wenn beide Ursachen zurueckkaemen.
+    m = _zwei_prismen()
+    k = m.koerper["V_oben"]
+    k.flaechen = [f for f in k.flaechen if f.startswith("M")] + ["Fuge", "Dach"]
+    echt = M3.randschale
+    def ohne_kennung(*a, **kw):
+        P, T, b = echt(*a, **kw)
+        b = dict(b); b["kennung"] = []          # wie vor dem 09.09.2026
+        return P, T, b
+    M3.randschale = ohne_kennung
+    try:
+        MSH.koerper_vernetzen(m, list(m.koerper.values()), log=[], workers=2)
+    finally:
+        M3.randschale = echt
+    _auf, _gl, doppelt, _h = _fugenknoten(m)
+    check("ohne die Herkunft wären die Knoten doppelt - der Test greift",
+          doppelt > 0, f"{doppelt} doppelte Knoten")
+
+    m = _zwei_prismen()
+    m.netz.dickenmass = True
+    echt_k = MSH.netzkarten
+    MSH.netzkarten = lambda model, h=0.0: ({}, {}, None)   # wie vor dem 09.09.2026
+    try:
+        MSH.koerper_vernetzen(m, list(m.koerper.values()), log=[], workers=2)
+    finally:
+        MSH.netzkarten = echt_k
+    _auf, _gl, _d, haengend = _fugenknoten(m)
+    check("ohne die modellweiten Karten hingen Knoten frei - der Test greift",
+          haengend > 0, f"{haengend} hängende Knoten")
+
+
 def main():
     for t in (test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
@@ -1146,7 +1275,8 @@ def main():
               test_ein_suchradius, test_verteilung_statt_mittelwert,
               test_deckungsgleiche_knoten_direkt,
               test_freie_rechtecklast,
-              test_projizierte_last_wuerfel, test_projizierte_last_bohrung):
+              test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
+              test_gemeinsame_flaeche_konform):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
