@@ -163,6 +163,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sicht_stand = None
         #: Verborgenes blass im Hintergrund zeigen (Ribbon Ansicht -> Sicht)
         self.geist = False
+        #: Schnittebene der Ansicht: None oder (Achse, Lage 0..1, umgekehrt).
+        #: Sie schneidet das Volumennetz auf, bevor seine Aussenhaut gebildet
+        #: wird - nur so sind die inneren Tetraeder ueberhaupt zu sehen.
+        self.schnitt = None
 
         self.setStyleSheet(dsg.stil() + rib.stil() + msk.stil() + tab.stil())
         self._undo_init()
@@ -3388,6 +3392,27 @@ class MainWindow(QtWidgets.QMainWindow):
                                     "Ausgeblendete Objekte blass als Geist im Hintergrund zeigen - "
                                     "sie bleiben dort unwählbar; nur was dargestellt ist, lässt "
                                     "sich wählen", symbol="sicht_geist")
+        self.act_schnitt = g.schalter("Schnittebene", self._schnitt_umschalten, False,
+                                      "Das Netz an einer Ebene aufschneiden und hineinsehen - "
+                                      "Füllung, Netzdichte und Elementform im Inneren. Gezeichnet "
+                                      "wird sonst nur die Außenhaut", symbol="sicht_schnitt")
+        self.cb_schnittachse = QtWidgets.QComboBox()
+        self.cb_schnittachse.addItems(["x", "y", "z"])
+        self.cb_schnittachse.setCurrentText("y")
+        self.cb_schnittachse.setFixedWidth(48)
+        self.cb_schnittachse.setToolTip("Achse, senkrecht zu der geschnitten wird")
+        self.cb_schnittachse.currentTextChanged.connect(lambda _t: self._schnitt_nachziehen())
+        self.sl_schnitt = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.sl_schnitt.setRange(0, 100)
+        self.sl_schnitt.setValue(50)
+        self.sl_schnitt.setFixedWidth(110)
+        self.sl_schnitt.setToolTip("Lage der Schnittebene im Bauteil")
+        self.sl_schnitt.valueChanged.connect(lambda _v: self._schnitt_nachziehen())
+        self.act_schnittseite = g.schalter("Andere Seite", self._schnitt_seite, False,
+                                           "Die andere Hälfte stehen lassen",
+                                           symbol="sicht_schnittseite")
+        g.widget(self.cb_schnittachse)
+        g.widget(self.sl_schnitt)
         g = r.gruppe("Symbole")
         self.sl_lager = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.sl_lager.setRange(2, 60)
@@ -4172,7 +4197,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 secs = {m.elements[e].sec for e in els if 0 <= e < len(m.elements)}
                 mats = {m.elements[e].mat for e in els if 0 <= e < len(m.elements)}
                 felder = [F("name", "Name", "text", name, breite=120),
-                          F("elemente", "Elemente (Nummern)", "text", ", ".join(str(e) for e in els),
+                          F("elemente", "Elemente (Nummern)", "liste", ", ".join(str(e) for e in els),
                             breite=160),
                           F("sec", "Querschnitt", "wahl", next(iter(secs), "") if len(secs) == 1 else "",
                             [""] + _namen(m.sections), hinweis="leer = unverändert"),
@@ -4282,7 +4307,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             [""] + _namen(m.materials)),
                           F("teilung", "Teilung", "text",
                             ", ".join(str(t) for t in (f.teilung if f else [4, 4])), breite=80),
-                          F("linien", "Randlinien", "text", ", ".join(f.linien if f else []), breite=160,
+                          F("linien", "Randlinien", "liste", ", ".join(f.linien if f else []), breite=160,
                             hinweis="Namen der Randlinien - oder „Randlinien anklicken“ und in der Ansicht wählen"),
                           F("elemente", "Elemente", "info", str(len(f.elemente)) if f else "0"),
                           F("vernetzen", "gleich vernetzen", "haken", not (f is not None and f.elemente)),
@@ -4302,7 +4327,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             [""] + _namen(m.materials)),
                           F("teilung", "Teilung", "text",
                             ", ".join(str(t) for t in (k.teilung if k else [4, 4, 4])), breite=80),
-                          F("flaechen", "Randflächen", "text", ", ".join(k.flaechen if k else []),
+                          F("flaechen", "Randflächen", "liste", ", ".join(k.flaechen if k else []),
                             breite=160,
                             hinweis="Namen der Randflächen - oder „Randflächen anklicken“ und in der Ansicht wählen"),
                           F("elemente", "Elemente", "info", str(len(k.elemente)) if k else "0"),
@@ -4984,7 +5009,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     [self.KONTAKT_FREI] + list(STANDARDKONTAKTE),
                     hinweis="setzt Zug, Schub, Verdrehungen und Reibung wie in ANSYS - danach frei änderbar")]
         if len(a) > 1:
-            felder.append(F("koerper_a", "Körper A (Kontaktseite)", "text", ", ".join(a), breite=170,
+            felder.append(F("koerper_a", "Körper A (Kontaktseite)", "liste", ", ".join(a), breite=170,
                             hinweis="die gelösten Körper, durch Komma"))
         else:
             felder.append(F("koerper_a", "Körper A (Kontaktseite)", "wahl", a[0] if a else "–",
@@ -4994,7 +5019,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         b[0] if b else self.KONTAKT_ALLE, [self.KONTAKT_ALLE] + koerper,
                         hinweis="der Körper, gegen den der Kontakt wirkt; „alle anderen“ sucht "
                                 "die Gegenseite unter allen Bauteilen"))
-        felder.append(F("flaechennamen", "Kontaktflächen", "text", ", ".join(kb.flaechennamen or []),
+        felder.append(F("flaechennamen", "Kontaktflächen", "liste", ", ".join(kb.flaechennamen or []),
                         breite=170,
                         hinweis="mindestens eine Fläche von Körper A - getippt oder mit "
                                 "„Kontaktflächen anklicken“ in der Ansicht gewählt"))
@@ -6392,9 +6417,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("stellung", "Stellung", "wahl", wahl, stellungen,
                     hinweis="die Lage des Systems samt allem, was darin nicht wirkt"),
                   F("beschreibung", "Beschreibung", "text", sit.beschreibung, breite=170),
-                  F("lastfaelle", "Lastfälle", "text", ", ".join(faelle), breite=170,
+                  F("lastfaelle", "Lastfälle", "liste", ", ".join(faelle), breite=170,
                     hinweis="Lastfälle, die in dieser Situation gelten - Namen, durch Komma"),
-                  F("kombinationen", "Kombinationen", "text", ", ".join(kombis), breite=170,
+                  F("kombinationen", "Kombinationen", "liste", ", ".join(kombis), breite=170,
                     hinweis="Kombinationen dieser Situation - sie überlagern nur ihre Lastfälle")]
         halter: dict = {}
         if not neu:
@@ -14366,7 +14391,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         stand = (id(m), len(m.elements), m.nn,
                  hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
-                 tuple(typen), frozenset(ausser))
+                 tuple(typen), frozenset(ausser), self.schnitt)
         if getattr(self, "_gitter_stand", None) == stand:
             return self._gitter_zwischen
         grid = vp.to_grid(m, typen=typen, ausser=ausser)
@@ -14375,6 +14400,11 @@ class MainWindow(QtWidgets.QMainWindow):
             try:
                 volumen_typen = {vp.CELL_MAP[t][0] for t in vp.TYPEN_VOLUMEN
                                  if t in vp.CELL_MAP}
+                if self.schnitt is not None:
+                    # Erst schneiden, dann die Haut bilden: andersherum bliebe
+                    # die Schnittflaeche leer, denn die Haut der ganzen Huelle
+                    # kennt die inneren Tetraeder nicht.
+                    grid = vp.schneiden(grid, *self.schnitt)
                 if np.isin(grid.celltypes, list(volumen_typen)).any():
                     flaeche = grid.extract_surface(pass_pointid=True, pass_cellid=True,
                                                    algorithm="dataset_surface")
@@ -15035,6 +15065,30 @@ class MainWindow(QtWidgets.QMainWindow):
     GEIST_FARBE = "#aab2ba"
     GEIST_KANTE = "#c9cfd5"
     GEIST_DECKKRAFT = 0.14
+
+    def _schnitt_umschalten(self, an: bool):
+        """Schalter „Schnittebene" (Ribbon Ansicht)."""
+        if an:
+            self.schnitt = (self.cb_schnittachse.currentText(),
+                            self.sl_schnitt.value() / 100.0,
+                            bool(self.act_schnittseite.isChecked()))
+            self.info("Die Ansicht ist aufgeschnitten - Achse und Lage stehen daneben")
+        else:
+            self.schnitt = None
+        self.redraw()
+
+    def _schnitt_nachziehen(self):
+        """Achse oder Lage verstellt - nur wirksam, wenn der Schnitt an ist."""
+        if self.schnitt is None:
+            return
+        self.schnitt = (self.cb_schnittachse.currentText(),
+                        self.sl_schnitt.value() / 100.0,
+                        bool(self.act_schnittseite.isChecked()))
+        self.redraw()
+
+    def _schnitt_seite(self, an: bool):
+        """Die andere Haelfte stehen lassen."""
+        self._schnitt_nachziehen()
 
     def _geist_umschalten(self, an: bool):
         """Schalter „Verborgenes im Hintergrund“ (Ribbon Ansicht, Glasleiste)."""

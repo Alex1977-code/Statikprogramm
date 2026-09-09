@@ -829,6 +829,46 @@ TYPEN_FLAECHEN = EL.SCHALEN_TYPEN + EL.EBENE_TYPEN
 TYPEN_VOLUMEN = EL.VOLUMEN_TYPEN + ("grenzschicht6", "grenzschicht8")
 
 
+#: Achsen der Schnittebene: Name -> Normale
+SCHNITTACHSEN = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
+
+
+def schneiden(grid, achse: str, lage: float, umgekehrt: bool = False):
+    """Das Gitter an einer Ebene aufschneiden - Blick ins Innere.
+
+    Gezeichnet wird von einem Volumennetz immer nur die **Aussenhaut**: die
+    inneren Tetraederflaechen liegen zwischen zwei Elementen und werden in
+    keinem FE-Programm gezeichnet. Wer beim Zoomen durch die Oberflaeche
+    faehrt, sieht darum die Innenseite der gegenueberliegenden Haut - das
+    sieht hohl aus, ist es aber nicht.
+
+    Ein Schnitt zeigt, was wirklich drin steht: Fuellung, Netzdichte und
+    Elementform im Inneren mit einem Blick. ``lage`` ist der Anteil 0 … 1
+    laengs der Achse durch den Huellquader; ``umgekehrt`` dreht die Seite, die
+    stehenbleibt.
+
+    Rueckgabe das geschnittene Gitter - oder das unveraenderte, wenn der
+    Schnitt nichts uebrig liesse (dann waere die Ansicht leer, und das ist
+    keine Auskunft).
+    """
+    if grid is None or not getattr(grid, "n_cells", 0):
+        return grid
+    n = SCHNITTACHSEN.get(str(achse).lower())
+    if n is None:
+        return grid
+    b = grid.bounds
+    k = {"x": 0, "y": 1, "z": 2}[str(achse).lower()]
+    lo, hi = float(b[2 * k]), float(b[2 * k + 1])
+    t = min(max(float(lage), 0.0), 1.0)
+    ursprung = [0.0, 0.0, 0.0]
+    ursprung[k] = lo + t * (hi - lo)
+    try:
+        teil = grid.clip(normal=n, origin=ursprung, invert=not umgekehrt)
+    except Exception:                       # noqa: BLE001 - dann eben ungeschnitten
+        return grid
+    return teil if getattr(teil, "n_cells", 0) else grid
+
+
 def to_grid(model: Model, typen=None, ausser=None, nur=None) -> pv.UnstructuredGrid:
     """Das Elementnetz als VTK-Gitter.
 

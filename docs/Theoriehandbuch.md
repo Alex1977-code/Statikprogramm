@@ -1725,11 +1725,55 @@ aufeinander. Gegenüberliegende Seiten einer abgebildet vernetzten Fläche
 müssen gleich viele Abschnitte haben; diese Bindung wird über eine
 Vereinigungssuche (union-find) durch das ganze Bauteil weitergereicht. Krumme
 Linien bekommen zusätzlich zur Längenteilung eine **Krümmungsteilung**: der
-gesamte Richtungswechsel wird durch 30° geteilt, ein Kreis bekommt also
-mindestens zwölf Abschnitte — ob er 10 mm oder 10 m Durchmesser hat.
+gesamte Richtungswechsel wird durch 18° geteilt, ein Kreis bekommt also
+mindestens zwanzig Abschnitte — ob er 10 mm oder 10 m Durchmesser hat. Bei
+den früheren 30° (zwölf Abschnitte) weicht die Sehne um 3,4 % des
+Halbmessers von der Bohrung ab, bei 18° um 1,2 %; für eine Kerbspannung am
+Lochrand ist das der Unterschied zwischen brauchbar und nicht.
 
-**2 Dichtheit.** Die Dreiecke werden vernäht und geprüft: jede Kante muss in
-genau zwei Dreiecken liegen. Das Volumen folgt aus dem Gaußschen Satz,
+**Übergang von der Bohrung ins Feld.** Die feine Teilung des Bohrungsrandes
+setzte sich früher nicht ins Innere fort: das Innengitter war gleichmäßig mit
+der Zielkantenlänge, und alles näher als 0,65·h am Rand fiel weg. Gemessen an
+einer 20-mm-Bohrung in einer 900-mm-Platte bei 50 mm Zielkantenlänge stand am
+Loch ein Kranz winziger Dreiecke (Sehne 3,1 mm) und daran unmittelbar das
+50-mm-Feld: im Kranz zwischen r und 2r lag **kein einziger** Knoten, das
+Kantenverhältnis der Dreiecke am Loch betrug im Median 17, die Formgüte 0,06,
+und 73 % der Dreiecke lagen unter 0,3.
+
+Jetzt werden um jede Öffnung **Kränze** gelegt, deren Weite vom Loch weg um
+je 25 % wächst (der Wachstumsfaktor, mit dem ein Vernetzer mit
+Größensteuerung üblicherweise arbeitet), bis sie die Zielkantenlänge
+erreicht; ab da übernimmt das gleichmäßige Gitter. Das ist dieselbe Regel,
+mit der das Tetraedernetz schon arbeitet (Schritt 3), nur jetzt auch in der
+Fläche. Am selben Beispiel: 72 Knoten im Kranz r … 2r, Kantenverhältnis im
+Median 1,51, Güte 0,81, kein Dreieck unter 0,3 — für 56 % mehr Punkte auf
+dieser Fläche (`test_groessenfeld_an_der_bohrung`).
+
+**2 Dichtheit.** Die Flächennetze werden über die **Kennung ihrer
+Linienpunkte** zusammengesetzt, nicht über die Koordinate. Jeder Punkt einer
+geteilten Linie heißt `(Linie, k)` in der eigenen Zählrichtung der Linie, die
+beiden Enden nach ihrem Knoten; zwei Nachbarflächen holen ihre gemeinsamen
+Randpunkte aus derselben Quelle und finden sich darüber.
+
+Das ist keine Feinheit. Jede Fläche hebt ihre Randpunkte über die **eigene**
+Ausgleichsebene aus 2D zurück; die beiden Kopien desselben Linienpunkts sind
+danach nur noch auf Maschinengenauigkeit gleich (3·10⁻¹⁶ … 1,3·10⁻¹⁵ m). Ein
+Vernähen über ein Rundungsgitter `round(P/tol)` legt sie nur dann zusammen,
+wenn keine Zellgrenze dazwischenliegt — und ob eine dazwischenliegt, ist reine
+Arithmetik: CAD-Koordinaten sind Vielfache von 0,25 mm, `tol` ist h/10000, und
+bei manchem h fällt `x/tol` genau auf eine halbe Ganzzahl. An einem Quader mit
+einer Ecke bei x = −421,25 mm und h = 50/1,5² mm riss die Hülle so an **156**
+Kanten auf, ohne dass an der Geometrie etwas fehlte
+(`test_huelle_ohne_rundungsgitter`).
+
+Was danach noch doppelt daliegt (Ränder ohne Knotennamen), wird nach
+**Abstand** vernäht — mit einem KD-Baum und Zusammenhangskomponenten, nicht
+mit einem Rundungsgitter. Dann wird geprüft: jede Kante muss in
+genau zwei Dreiecken liegen. Ist sie es nicht, nennt das Protokoll jede
+offene Kante mit ihren Knoten, Koordinaten und den Randflächen, von denen die
+anliegenden Dreiecke stammen — zwei Zeilen mit derselben Koordinate und
+verschiedenen Flächen heißen: dort stehen zwei Kopien desselben Punktes.
+Das Volumen folgt aus dem Gaußschen Satz,
 
     V = 1/6 · Σ (a × b) · c   über alle Dreiecke,
 
@@ -1787,8 +1831,14 @@ diesen das nächste. Die Nähe allein reicht nicht: an einer dünnen Platte
 liegen die Seitenfacetten der Schmalseite näher an der Deckfläche als ein
 Viertel der Kantenlänge und hingen früher an ihr — die Deckfläche trug dann
 36 % zu viel Fläche (Test `test_duenne_platte_randseiten`). Nur wenn kein
-Dreieck überdeckt (Randknoten nicht exakt auf der Hülle), gilt der alte Weg
-über die Nähe, sofern die Normale nicht quer steht.
+Dreieck überdeckt (Randknoten nicht exakt auf der Hülle), gilt der Rückfall
+über die Nähe — und auch der nur, wenn die Seite **beinahe** in der Ebene des
+Hülldreiecks liegt (Abstand aller drei Knoten ≤ ein Viertel der Kantenlänge)
+und die Normale nicht quer steht. Ohne diese Schranke schluckt der Rückfall
+die schrägen Seiten, die im Inneren stehenbleiben, wo eine flache Zerlegung
+einen Splitter weggelassen hat: an derselben dünnen Platte hing damit eine
+Seitenwand 7 % zu groß am Rand, und ob sie es tat, hing an der Reihenfolge
+der Knotennummern.
 
 **Gemeinsame Randflächen.** Zwei Körper, die *dieselbe* Fläche berandet,
 bekommen dort dieselben Knoten und hängen zusammen. Geteilt wird ausdrücklich

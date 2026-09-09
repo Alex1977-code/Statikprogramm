@@ -79,6 +79,23 @@ RANDABSTAND = 0.65
 #: Ein Tetraeder unter diesem Anteil von h^3 gilt als flach und faellt weg
 FLACH = 1e-6
 
+#: Wie schnell die Kante des Flaechennetzes vom Rand einer Oeffnung weg
+#: waechst. 0,25 heisst: jede Lage ist ein Viertel breiter als die davor -
+#: der Wachstumsfaktor 1,25, mit dem ein Vernetzer mit Groessensteuerung
+#: ueblicherweise arbeitet. Kleiner heisst mehr Lagen und mehr Elemente.
+WACHSTUM_FLAECHE = 0.25
+
+#: Hoechstzahl der Lagen um eine Oeffnung. Bei Faktor 1,25 ist die Weite nach
+#: 20 Lagen auf das 87-fache gewachsen; mehr braucht kein Uebergang.
+MAXKRAENZE = 20
+
+#: Bis zu welchem Verhaeltnis groesster zu kleinster Halbmesser eine Oeffnung
+#: als rund gilt. Nur dann werden ihre Kraenze laengs des Strahls vom
+#: Mittelpunkt nach aussen geschoben; bei einem Langloch liefen sie
+#: ineinander, und ein sich selbst durchdringender Kranz waere schlechter
+#: als gar keiner.
+RUNDGENUG = 3.0
+
 #: Groesste Abweichung von der Ausgleichsebene, bis zu der eine Flaeche als
 #: eben gilt - bezogen auf ihre eigene Ausdehnung
 EBENHEIT = 1e-6
@@ -88,7 +105,13 @@ EBENHEIT = 1e-6
 #: bekommt so immer mindestens 360/BOGENWINKEL Abschnitte, ob er nun 10 mm
 #: oder 10 m Durchmesser hat. Ohne diese Schranke wuerde eine Bohrung von
 #: 20 mm bei 50 mm Zielkantenlaenge zu einer Strecke zusammenfallen.
-BOGENWINKEL = 30.0
+#:
+#: 18 Grad heisst 20 Abschnitte je Vollkreis - der Wert, mit dem ein
+#: Vernetzer mit Groessensteuerung ueblicherweise arbeitet. Mit den
+#: vorherigen 30 Grad (12 Abschnitte) weicht die Sehne um 3,4 % des
+#: Halbmessers von der Bohrung ab und die Kerbspannung am Loch faellt
+#: entsprechend daneben; mit 18 Grad sind es 1,2 %.
+BOGENWINKEL = 18.0
 
 #: Wenigstens so viele Elemente ueber die groesste Ausdehnung eines Koerpers.
 #: Ist die Zielkantenlaenge groeber, wird sie fuer diesen Koerper verkleinert.
@@ -536,31 +559,64 @@ def seiten_im_umlauf(model: Model, linien: list) -> list | None:
     return st or None
 
 
+def punktkennung(name: str, knoten, anzahl: int, gedreht: bool) -> list:
+    """Je Punkt einer geteilten Linie eine Kennung, die alle Flaechen teilen.
+
+    Ein Punkt mitten auf der Linie heisst ``("L", Linie, k)`` mit k in der
+    **eigenen** Zaehlrichtung der Linie - gleichgueltig, von welcher Seite
+    eine Flaeche sie durchlaeuft. Die beiden Enden heissen nach ihrem
+    **Knoten**: dort stossen zwei verschiedene Linien zusammen, und nur der
+    Knoten ist beiden gemeinsam. Ohne Knotennamen bleibt das Ende ohne
+    Kennung; es wird dann nach Abstand vernaeht.
+
+    Darauf beruht das Zusammensetzen der Randhuelle: zwei Nachbarflaechen
+    bekommen ihre gemeinsamen Randpunkte aus derselben Quelle
+    (:meth:`Linienteilung.punkte`), also mit derselben Kennung.
+    """
+    kanon = list(range(anzahl))
+    if gedreht:
+        kanon = kanon[::-1]
+    enden = (int(knoten[0]), int(knoten[-1])) if knoten is not None and len(knoten) else None
+    out = []
+    for i, k in enumerate(kanon):
+        if enden and i == 0:
+            out.append(("K", enden[0]))
+        elif enden and i == anzahl - 1:
+            out.append(("K", enden[1]))
+        else:
+            out.append(("L", name, k))
+    return out
+
+
 def _linienzug(teilung: "Linienteilung", model: Model, linien: list):
     """Ein geschlossener Rand als Punktfolge - jede Linie mit ihrer Teilung.
 
-    Rueckgabe (Punkte, Herkunft): ``Herkunft[i]`` nennt die Linie, zu der die
-    Strecke vom Punkt i zum Punkt i+1 gehoert. Die Herkunft wird gebraucht,
-    wenn eine Randstrecke im Netz fehlt: dann muss **diese Linie** feiner
-    geteilt werden, und zwar fuer alle Flaechen, die sie berandet.
+    Rueckgabe (Punkte, Herkunft, Kennung): ``Herkunft[i]`` nennt die Linie, zu
+    der die Strecke vom Punkt i zum Punkt i+1 gehoert. Die Herkunft wird
+    gebraucht, wenn eine Randstrecke im Netz fehlt: dann muss **diese Linie**
+    feiner geteilt werden, und zwar fuer alle Flaechen, die sie beranden.
+    ``Kennung[i]`` benennt den Punkt selbst - siehe :func:`punktkennung`.
     """
     stuecke = seiten_im_umlauf(model, linien)
     if not stuecke:
         return None
-    punkte, herkunft = [], []
+    punkte, herkunft, kennung = [], [], []
     for name, knoten in stuecke:
         teil = teilung.punkte(name)
         if len(teil) < 2:
             return None
+        gedreht = False
         if knoten:
             p0 = model.nodes[int(knoten[0])]
             if np.linalg.norm(teil[0] - p0) > np.linalg.norm(teil[-1] - p0):
                 teil = teil[::-1]
+                gedreht = True
         punkte.extend(teil[:-1])
         herkunft.extend([name] * (len(teil) - 1))
+        kennung.extend(punktkennung(name, knoten, len(teil), gedreht)[:-1])
     if len(punkte) < 3:
         return None
-    return np.asarray(punkte, float), herkunft
+    return np.asarray(punkte, float), herkunft, kennung
 
 
 def _in_polygon_2d(q: np.ndarray, ringe: list) -> np.ndarray:
@@ -581,6 +637,62 @@ def _in_polygon_2d(q: np.ndarray, ringe: list) -> np.ndarray:
     return drin
 
 
+def _kraenze(ringe: list, h: float, wachstum: float = WACHSTUM_FLAECHE) -> np.ndarray:
+    """Punkte auf Kraenzen um jede Oeffnung - der Uebergang vom Loch ins Feld.
+
+    Ohne sie steht am Bohrungsrand ein Kranz winziger Dreiecke und daran
+    unmittelbar das grobe Feld: die Kante springt von der Bogensehne (bei
+    20 Segmenten und r = 10 mm sind das 3,1 mm) auf die Zielkantenlaenge
+    (50 mm). Gemessen an einer 20-mm-Bohrung in einer 900-mm-Platte lag im
+    Kranz zwischen r und 2r **kein einziger** Knoten, und das
+    Kantenverhaeltnis der Dreiecke am Loch betrug im Median 17.
+
+    Fuer eine Kerbspannung ist das zu wenig: der Spannungsabfall geschieht
+    ueber etwa r/2, und den kann eine einzige Elementlage nicht abbilden.
+    Darum werden hier Lagen gelegt, deren Weite vom Loch weg waechst -
+    dieselbe Regel, mit der das Tetraedernetz schon arbeitet
+    (:func:`tetraedern_treu`, ``h_lokal = min(h, Randkante + WACHSTUM * d)``),
+    nur jetzt auch in der Flaeche.
+
+    Die Lage k liegt im Abstand ``t_k = Summe der Weiten`` vom Loch, die Weite
+    waechst je Lage um den Faktor ``1 + wachstum``. Aufgehoert wird, sobald
+    die Weite die Zielkantenlaenge erreicht - von da an uebernimmt das
+    gleichmaessige Gitter. Nach aussen geschoben wird laengs des Strahls vom
+    Lochmittelpunkt; solange das Loch rund genug ist (:data:`RUNDGENUG`), wird
+    der Kranz dabei nur groesser und kann sich nicht selbst durchdringen. Ein
+    Langloch bleibt darum aussen vor: dort liefen die Strahlen ineinander, und
+    ein sich selbst durchdringender Kranz waere schlechter als gar keiner.
+    """
+    if len(ringe) < 2 or h <= 0:
+        return np.zeros((0, 2))
+    aus = []
+    for R in ringe[1:]:
+        R = np.asarray(R, float)
+        if len(R) < 3:
+            continue
+        c = R.mean(axis=0)
+        rel = R - c
+        rad = np.linalg.norm(rel, axis=1)
+        if not np.all(rad > 1e-12):
+            continue
+        u = rel / rad[:, None]
+        kante = float(np.median(np.linalg.norm(np.diff(np.vstack([R, R[:1]]), axis=0), axis=1)))
+        if kante <= 0 or kante >= h:
+            continue                      # das Loch ist schon so grob wie das Feld
+        if rad.max() > RUNDGENUG * rad.min():
+            continue                      # kein Loch, sondern ein Langloch o. ae.
+        weite, t = kante, 0.0
+        for _lage in range(MAXKRAENZE):
+            t += weite
+            aus.append(c + u * (rad + t)[:, None])
+            weite *= 1.0 + wachstum
+            if weite >= h:
+                break
+    if not aus:
+        return np.zeros((0, 2))
+    return np.vstack(aus)
+
+
 def _dreiecke_2d(ringe: list, h: float) -> tuple:
     """Ebenes Vieleck mit Loechern in Dreiecke teilen.
 
@@ -590,9 +702,28 @@ def _dreiecke_2d(ringe: list, h: float) -> tuple:
     Schwerpunkt im Gebiet liegt. Das ist die ebene Fassung genau des Weges,
     der spaeter im Raum gegangen wird.
     """
-    from scipy.spatial import Delaunay
+    from scipy.spatial import Delaunay, cKDTree
     rand = np.vstack([np.asarray(R, float) for R in ringe])
     lo, hi = rand.min(axis=0), rand.max(axis=0)
+    # Erst die Kraenze um die Oeffnungen (feiner Uebergang), dann das
+    # gleichmaessige Gitter fuer das Feld. Was zu nah an schon Gesetztem
+    # steht, faellt weg - naeher als RANDABSTAND mal der dort geltenden
+    # Weite gaebe Splitter.
+    kranz = _kraenze(ringe, h)
+    if len(kranz):
+        kranz = kranz[_in_polygon_2d(kranz, ringe)]
+    if len(kranz):
+        # Die zulaessige Naehe richtet sich nach der Weite **an diesem Ort**,
+        # also nach der Kantenlaenge des naechsten Randes - bei zwei
+        # verschieden fein geteilten Bohrungen sind das zwei Werte.
+        randkante = np.concatenate([
+            np.full(len(R), max(float(np.median(np.linalg.norm(
+                np.diff(np.vstack([np.asarray(R, float),
+                                   np.asarray(R, float)[:1]]), axis=0), axis=1))), 1e-12))
+            for R in ringe])
+        d, i = cKDTree(rand).query(kranz)
+        kranz = kranz[d > RANDABSTAND * np.minimum(h, randkante[i] + WACHSTUM_FLAECHE * d)]
+    gesetzt = np.vstack([rand, kranz]) if len(kranz) else rand
     innenpunkte = []
     if h > 0:
         # Dreiecksgitter (versetzte Reihen) - gleichseitig, also beste Form
@@ -610,9 +741,9 @@ def _dreiecke_2d(ringe: list, h: float) -> tuple:
             K = K[_in_polygon_2d(K, ringe)]
             if len(K):
                 # Nicht zu nah an den Rand: sonst entstehen dort Splitter
-                d = np.linalg.norm(K[:, None, :] - rand[None, :, :], axis=2).min(axis=1)
+                d = cKDTree(gesetzt).query(K)[0]
                 innenpunkte = K[d > RANDABSTAND * h]
-    P2 = np.vstack([rand] + ([innenpunkte] if len(innenpunkte) else []))
+    P2 = np.vstack([gesetzt] + ([innenpunkte] if len(innenpunkte) else []))
     if len(P2) < 3:
         return P2, np.zeros((0, 3), int), _randstrecken(ringe)
     try:
@@ -663,43 +794,48 @@ def _fehlende_randstrecken(ringe: list, T: np.ndarray) -> list:
 def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     """Dreiecksnetz einer Randflaeche.
 
-    Rueckgabe (Punkte, Dreiecke, Meldung, Linien-die-feiner-muessen).
+    Rueckgabe (Punkte, Dreiecke, Meldung, Linien-die-feiner-muessen, Kennung).
+    ``Kennung[i]`` benennt den Punkt i, sofern er auf einer Randlinie liegt
+    (siehe :func:`punktkennung`); Innenpunkte stehen als ``None``. Darueber
+    setzt :func:`randschale` die Huelle zusammen, ohne auf Koordinaten zu
+    vertrauen.
     """
     zug = _linienzug(teilung, model, flaeche.linien or [])
     if zug is None:
-        return np.zeros((0, 3)), np.zeros((0, 3), int), "Rand schliesst nicht", []
+        return np.zeros((0, 3)), np.zeros((0, 3), int), "Rand schliesst nicht", [], []
     hf = teilung.h_fuer(flaeche)          # gehoert der Flaeche, nicht dem Koerper
-    aussen, herkunft = zug
-    ringe3, quellen = [aussen], [herkunft]
+    aussen, herkunft, kennung = zug
+    ringe3, quellen, kennungen = [aussen], [herkunft], list(kennung)
     for loch in (flaeche.oeffnungen or []):
         z = _linienzug(teilung, model, loch)
         if z is not None and len(z[0]) >= 3:
             ringe3.append(z[0])
             quellen.append(z[1])
+            kennungen.extend(z[2])
     alle = np.vstack(ringe3)
     c, e1, e2, n, abw = ausgleichsebene(alle)
     gr = float(np.linalg.norm(alle - c, axis=1).max())
     eben = gr > 0 and abw <= EBENHEIT * gr
     if not eben:
         if len(ringe3) == 1:
-            P, T, meldung = _coons_netz(model, flaeche, teilung)
+            P, T, meldung, kenn = _coons_netz(model, flaeche, teilung)
             if not meldung:
-                return P, T, "", []
+                return P, T, "", [], kenn
         achse = zylinderpassung(model, flaeche, alle)
         if achse is not None:
             P, T, fehlt = _zylindernetz(flaeche, ringe3, hf, achse)
             if len(T):
-                return P, T, "", _linien_zu(fehlt, ringe3, quellen)
+                return P, T, "", _linien_zu(fehlt, ringe3, quellen), kennungen
     ringe = [np.stack([(R - c) @ e1, (R - c) @ e2], axis=1) for R in ringe3]
     P2, T, fehlt = _dreiecke_2d(ringe, hf)
     if not len(T):
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
-                "Netz in der Ebene misslungen", _linien_zu(fehlt, ringe3, quellen))
+                "Netz in der Ebene misslungen", _linien_zu(fehlt, ringe3, quellen), [])
     if eben:
         P = c + P2[:, 0:1] * e1 + P2[:, 1:2] * e2
     else:
         P = _harmonisch_heben(P2, T, ringe3, c, e1, e2, n)
-    return P, T, "", _linien_zu(fehlt, ringe3, quellen)
+    return P, T, "", _linien_zu(fehlt, ringe3, quellen), kennungen
 
 
 def _linien_zu(strecken: list, ringe3: list, quellen: list) -> list:
@@ -861,24 +997,30 @@ def _coons_netz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     stuecke = seiten_im_umlauf(model, flaeche.linien or [])
     if stuecke is None or len(stuecke) != 4:
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
-                f"krumme Flaeche mit {len(flaeche.linien or [])} Randlinien")
-    seiten = []
+                f"krumme Flaeche mit {len(flaeche.linien or [])} Randlinien", [])
+    seiten, kennungen = [], []
     for name, knoten in stuecke:
         pts = teilung.punkte(name)
         if len(pts) < 2:
-            return np.zeros((0, 3)), np.zeros((0, 3), int), "Randkurve leer"
+            return np.zeros((0, 3)), np.zeros((0, 3), int), "Randkurve leer", []
+        gedreht = False
         if knoten:
             p0 = model.nodes[int(knoten[0])]
             if np.linalg.norm(pts[0] - p0) > np.linalg.norm(pts[-1] - p0):
                 pts = pts[::-1]
+                gedreht = True
         seiten.append(pts)
+        kennungen.append(punktkennung(name, knoten, len(pts), gedreht))
     unten, rechts, oben, links = seiten
+    k_unten, k_rechts, k_oben, k_links = kennungen
+    k_oben = k_oben[::-1]
+    k_links = k_links[::-1]
     oben = oben[::-1]                        # gleiche Richtung wie unten
     links = links[::-1]                      # gleiche Richtung wie rechts
     nu, nv = len(unten), len(rechts)
     if len(oben) != nu or len(links) != nv:
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
-                "gegenueberliegende Randkurven verschieden fein geteilt")
+                "gegenueberliegende Randkurven verschieden fein geteilt", [])
     u = np.linspace(0.0, 1.0, nu)[:, None, None]
     v = np.linspace(0.0, 1.0, nv)[None, :, None]
     U = unten[:, None, :]
@@ -901,7 +1043,17 @@ def _coons_netz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
             a, b, c2, d = idx[i, j], idx[i + 1, j], idx[i + 1, j + 1], idx[i, j + 1]
             T.append((a, b, c2))
             T.append((a, c2, d))
-    return P, np.asarray(T, int), ""
+    # Die Randpunkte tragen die Kennung ihrer Linie - darueber haengt sich die
+    # Nachbarflaeche ein. Die vier Ecken schreiben beide Seiten, sie stimmen
+    # ueberein (Knotenkennung).
+    kenn = [None] * (nu * nv)
+    for i in range(nu):
+        kenn[idx[i, 0]] = k_unten[i]
+        kenn[idx[i, -1]] = k_oben[i]
+    for j in range(nv):
+        kenn[idx[0, j]] = k_links[j]
+        kenn[idx[-1, j]] = k_rechts[j]
+    return P, np.asarray(T, int), "", kenn
 
 
 # --------------------------------------------------------------------------
@@ -910,19 +1062,41 @@ def _coons_netz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
 def vernaehen(P: np.ndarray, T: np.ndarray, tol: float) -> tuple:
     """Gleiche Punkte zusammenlegen und entartete Dreiecke entfernen.
 
+    Zusammengelegt wird nach **Abstand**, nicht nach Rundungsgitter. Der
+    Unterschied ist der ganze Fehler: ein Gitter ``round(P / tol)`` trennt
+    zwei Punkte, zwischen denen zufaellig eine Zellgrenze liegt, auch wenn sie
+    nur 5e-16 m auseinanderliegen - und ob sie das tun, ist reine Arithmetik.
+    Nachgemessen an einem Punkt mit ``x / tol = -189562,5``: von vier
+    Kombinationen aus Vorzeichen und Paritaet gehen zwei schief. Eine Huelle
+    faellt dann an genau dieser Stelle auf, und keine Geometriepruefung findet
+    etwas, weil die Geometrie stimmt.
+
+    Zusammenhaengende Gruppen (A nahe B, B nahe C) werden ueber
+    ``connected_components`` gebildet; die Gruppe behaelt die Koordinate und
+    die Reihenfolge ihres **ersten** Punktes.
+
     Rueckgabe (Punkte, Dreiecke, Zuordnung alt -> neu, behaltene Dreiecke).
     """
     if not len(P):
         return P, T, np.zeros(0, int), np.zeros(0, bool)
-    key = np.round(P / max(tol, 1e-15)).astype(np.int64)
-    _, erste, invers = np.unique(key, axis=0, return_index=True, return_inverse=True)
-    invers = np.asarray(invers).reshape(-1)
+    from scipy.spatial import cKDTree
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    n = len(P)
+    paare = cKDTree(P).query_pairs(max(tol, 0.0), output_type="ndarray")
+    if len(paare):
+        G = coo_matrix((np.ones(len(paare), np.int8), (paare[:, 0], paare[:, 1])),
+                       shape=(n, n))
+        k, marke = connected_components(G, directed=False)
+    else:
+        k, marke = n, np.arange(n)
+    erste = np.full(k, n, int)
+    np.minimum.at(erste, marke, np.arange(n))
     ordnung = np.argsort(erste)
-    neu = np.zeros(len(erste), dtype=int)
-    neu[ordnung] = np.arange(len(erste))
-    index = neu[invers]
-    Pn = np.zeros((len(erste), 3))
-    Pn[index] = P
+    neu = np.zeros(k, dtype=int)
+    neu[ordnung] = np.arange(k)
+    index = neu[marke]
+    Pn = P[erste[ordnung]]
     Tn = index[T] if len(T) else T
     gut = np.ones(len(Tn), bool)
     if len(Tn):
@@ -975,6 +1149,50 @@ def ausrichten(P: np.ndarray, T: np.ndarray) -> tuple:
         T = T[:, [0, 2, 1]]
         V = -V
     return T, {"offen": offen, "teile": teile, "volumen": float(V)}
+
+
+def _offene_kanten(P: np.ndarray, T: np.ndarray, quelle: list,
+                   hoechstens: int = 20) -> list:
+    """Die Kanten, die **nicht** in genau zwei Dreiecken liegen - benannt.
+
+    Eine blosse Zahl („8 Kanten offen") sagt nicht, wo. Hier steht je Kante:
+    die beiden Knoten, ihre Koordinaten, die Zahl der anliegenden Dreiecke und
+    die Randflaechen, von denen diese stammen. Zwei Zeilen mit derselben
+    Koordinate und verschiedenen Flaechen heissen: dort sind zwei Kopien
+    desselben Punktes stehengeblieben.
+    """
+    kante: dict = {}
+    for k, (a, b, c) in enumerate(np.asarray(T, int)):
+        for x, y in ((a, b), (b, c), (c, a)):
+            kante.setdefault((min(int(x), int(y)), max(int(x), int(y))), []).append(k)
+    out = []
+    for (a, b), dreiecke in kante.items():
+        if len(dreiecke) == 2:
+            continue
+        out.append({
+            "knoten": (a, b),
+            "von": tuple(float(v) for v in P[a]),
+            "nach": tuple(float(v) for v in P[b]),
+            "dreiecke": len(dreiecke),
+            "flaechen": sorted({quelle[k] for k in dreiecke if k < len(quelle)}),
+        })
+        if len(out) >= hoechstens:
+            break
+    return out
+
+
+def offene_kanten_text(kanten: list) -> list:
+    """Die offenen Kanten als Zeilen fuer das Protokoll."""
+    zeilen = []
+    for k in kanten:
+        a, b = k["knoten"]
+        v, n = k["von"], k["nach"]
+        zeilen.append(
+            f"    Kante {a}-{b} in {k['dreiecke']} Dreieck(en), Flächen "
+            f"{', '.join(k['flaechen']) or '?'}: "
+            f"({v[0]:.4f} | {v[1]:.4f} | {v[2]:.4f}) - "
+            f"({n[0]:.4f} | {n[1]:.4f} | {n[2]:.4f})")
+    return zeilen
 
 
 # --------------------------------------------------------------------------
@@ -1730,6 +1948,47 @@ def linien_kantenlaengen(model: Model, koerper=None, h: float = 0.0) -> dict:
     return kantenlaengen_karte(model, koerper, h)[1]
 
 
+def huelle_fuegen(P_teile: list, T_teile: list, kennungen: list) -> tuple:
+    """Die Flaechennetze zur Huelle zusammensetzen - ueber die Linienpunkte.
+
+    Zwei Nachbarflaechen teilen ihre Randlinie; deren Punkte kommen aus
+    derselben Quelle (:meth:`Linienteilung.punkte`) und tragen darum dieselbe
+    Kennung. Ueber sie wird eingehaengt, **nicht ueber die Koordinate**.
+
+    Warum das der Unterschied zwischen dicht und offen ist: jede Flaeche hebt
+    ihre Randpunkte ueber die eigene Ebenenbasis aus 2D zurueck. Die beiden
+    Kopien desselben Linienpunkts sind danach nur noch auf
+    Maschinengenauigkeit gleich (3e-16 bis 1,3e-15 m). Ob eine
+    Toleranzpruefung das trifft, ist Arithmetik; die Kennung ist es nicht.
+
+    Rueckgabe (Punkte, Dreiecke, Zuordnung je Flaechennetz).
+    """
+    von_kennung: dict = {}
+    stuecke, T_neu, abbilder = [], [], []
+    n = 0
+    for Pf, Tf, kf in zip(P_teile, T_teile, kennungen):
+        kf = list(kf or ())
+        abbild = np.empty(len(Pf), int)
+        neu: list = []
+        for i in range(len(Pf)):
+            k = kf[i] if i < len(kf) else None
+            if k is not None:
+                j = von_kennung.get(k)
+                if j is not None:
+                    abbild[i] = j
+                    continue
+                von_kennung[k] = n + len(neu)
+            abbild[i] = n + len(neu)
+            neu.append(i)
+        stuecke.append(Pf[neu] if neu else Pf[:0])
+        n += len(neu)
+        T_neu.append(abbild[Tf] if len(Tf) else np.zeros((0, 3), int))
+        abbilder.append(abbild)
+    P = np.vstack(stuecke) if stuecke else np.zeros((0, 3))
+    T = np.vstack(T_neu) if T_neu else np.zeros((0, 3), int)
+    return P, T, abbilder
+
+
 def randschale(model: Model, koerper, h: float, log: list = None,
                fortschritt=None, h_linien: dict = None,
                h_flaechen: dict = None) -> tuple:
@@ -1753,30 +2012,35 @@ def randschale(model: Model, koerper, h: float, log: list = None,
     teilung = Linienteilung(model, flaechen, h, h_linien, h_flaechen)
     nachgeteilt: set = set()
     for runde in range(4):
-        P_teile, T_teile, quelle, gruende = [], [], [], {}
+        P_teile, T_teile, kennungen, quelle, gruende = [], [], [], [], {}
         zu_grob: set = set()
-        n_punkte = 0
         for i_f, f in enumerate(flaechen):
             if i_f % 10 == 0:
                 _melden(fortschritt, 0.12 * i_f / max(1, len(flaechen)),
                         f"Randhülle: Fläche {i_f + 1} von {len(flaechen)}")
-            Pf, Tf, meldung, grob = flaechennetz(model, f, teilung)
+            Pf, Tf, meldung, grob, kf = flaechennetz(model, f, teilung)
             zu_grob.update(grob)
             if meldung or not len(Tf):
                 gruende[meldung or "leer"] = gruende.get(meldung or "leer", 0) + 1
                 continue
             P_teile.append(Pf)
-            T_teile.append(Tf + n_punkte)
+            T_teile.append(Tf)
+            kennungen.append(kf)
             quelle.extend([f.name] * len(Tf))
-            n_punkte += len(Pf)
         if not P_teile:
             return (np.zeros((0, 3)), np.zeros((0, 3), int),
                     {"fehler": "keine Randfläche vernetzbar", "gruende": gruende})
-        P = np.vstack(P_teile)
-        T = np.vstack(T_teile)
+        # Erst ueber die Kennung der Linienpunkte einhaengen; was danach noch
+        # doppelt daliegt (Raender ohne Knotennamen), faellt beim Vernaehen
+        # nach Abstand zusammen.
+        P, T, _ = huelle_fuegen(P_teile, T_teile, kennungen)
         P, T, _, behalten = vernaehen(P, T, tol=max(h * 1e-4, 1e-9))
         quelle = [q for q, b in zip(quelle, behalten) if b]
         T, bericht = ausrichten(P, T)
+        # Nur im Fehlerfall benennen - das kostet einen Durchgang ueber alle
+        # Dreiecke, und im Regelfall gibt es nichts zu benennen.
+        bericht["offene_kanten"] = (_offene_kanten(P, T, quelle)
+                                    if bericht["offen"] else [])
         if not bericht["offen"] or not zu_grob or runde == 3:
             break
         if not teilung.verfeinern(zu_grob):
@@ -1998,7 +2262,12 @@ def _randseiten_merken(model: Model, koerper, T: np.ndarray, quelle: list,
         naeher = deckt & (d < bestd)
         bestd[naeher] = d[naeher]
         bestes[naeher] = nn[naeher, j]
-        nah = (~deckt) & (parallel > 0.7) & (d < ersatzd)
+        # Der Rueckfall darf nur greifen, wenn die Seite **beinahe** in der
+        # Ebene liegt. Ohne diese Schranke schluckt er die schraegen Seiten,
+        # die im Inneren stehenbleiben, wo eine flache Zerlegung einen
+        # Splitter weggelassen hat: an der duennen Platte hing damit eine
+        # Seitenwand 7 % zu gross am Rand, je nach Knotenreihenfolge.
+        nah = (~deckt) & (parallel > 0.7) & (d_ebene <= tol) & (d < ersatzd)
         ersatzd[nah] = d[nah]
         ersatz[nah] = nn[nah, j]
     n = 0
@@ -2157,6 +2426,12 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                 aus["fehler"] = (f"die Randhülle ist nicht dicht ({bericht['offen']} Kanten "
                                  "liegen nicht in genau zwei Dreiecken) - nicht vernetzt. Ein "
                                  "Netz aus einer undichten Hülle wäre stillschweigend falsch.")
+                # Die Kanten beim Namen nennen: zwei Zeilen mit derselben
+                # Koordinate und verschiedenen Flaechen heissen, dass dort zwei
+                # Kopien desselben Punktes stehengeblieben sind.
+                for zeile in offene_kanten_text(bericht.get("offene_kanten") or []):
+                    C.warn(zeilen, zeile)
+                aus["offene_kanten"] = bericht.get("offene_kanten") or []
                 return aus
             if bericht.get("teile", 1) > 1:
                 aus["fehler"] = (f"die Randflächen bilden {bericht['teile']} getrennte "
