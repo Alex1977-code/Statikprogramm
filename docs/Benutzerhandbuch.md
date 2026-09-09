@@ -202,6 +202,16 @@ bedienen sind, steht im nächsten Abschnitt.
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ (auch **FAT** für Ermüdung), Beschreibung, Bemessungssituation (nur wenn aus der Quelldatei bekannt, als Angabe), Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** in der Ansicht gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
+
+**Listenfelder der Masken.** Wo eine Maske eine Namensliste zeigt — Randlinien
+einer Fläche, Randflächen eines Volumens, Kontaktflächen, Lastfälle einer
+Situation —, steht die **Anzahl in der Beschriftung** („Randflächen (13)“),
+das Feld beginnt am Textanfang, und der Zeiger darauf zeigt die
+**vollständige** Liste, zehn Namen je Zeile. Vorher stand das einzeilige Feld
+am Zeilenende: aus dreizehn Randflächen war „9, F64, F71, F98, F46, F52“ zu
+sehen, was sich wie „neun Flächen, davon fünf genannt“ liest — und zu der
+falschen Diagnose verleitet, es fehlten Flächen. Wird die Liste in der Ansicht
+angeklickt, zählt die Beschriftung mit.
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
@@ -666,7 +676,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 | ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt |
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
-| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Intelligente Auswahl** (Schalter) |
+| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Schnittebene** (Schalter mit Achse und Schieber), **Intelligente Auswahl** (Schalter) |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
 | ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
@@ -693,6 +703,20 @@ wählt weder ein Klick noch ein Fenster einen Stab, mit ausgeschalteten
 Knoten keinen Knoten; die Statusleiste sagt dann, warum nichts geschieht.
 Lager an ausgeblendeten Knoten und Lasten an ausgeblendeten Teilen sind
 ebenso wenig zu treffen.
+
+**Schnittebene — hineinsehen statt hineinzoomen.** Von einem Volumennetz wird
+immer nur die **Außenhaut** gezeichnet: die inneren Tetraederflächen liegen
+zwischen zwei Elementen und werden in keinem FE-Programm gezeichnet. Wer beim
+Zoomen durch die Oberfläche fährt, blickt darum auf die Innenseite der
+gegenüberliegenden Haut — das *sieht* hohl aus, ist es aber nicht. Ein
+massiver Körper ist massiv gefüllt; am Drehlagermodell berühren allein in V31
+30 499 der 35 686 Tetraeder die Oberfläche gar nicht.
+
+Wer nachsehen will, schneidet auf: Schalter **Schnittebene** (*Ansicht →
+Sicht*), daneben die Achse (x, y, z) und ein Schieber für die Lage im
+Bauteil; **Andere Seite** lässt die andere Hälfte stehen. Im Schnitt stehen
+die Tetraeder des Inneren, und Füllung, Netzdichte und Elementform sind mit
+einem Blick zu prüfen. Ausgeschaltet steht das Bauteil wieder ganz da.
 
 Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen* und *Sicht*, der Fang unter *Geometrie → Arbeitsebene*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
@@ -1682,6 +1706,36 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
   Momentenverlauf, Lastangriff oben/unten), Interaktion Gl. 6.61/6.62,
 * Ermüdung: Kerbfall wählen (Δσc mit Beispielen aus den Tabellen 8.1–8.5),
   Schadensfolge/Konzept für γMf; Ermüdungslasten im Register Lastfälle.
+
+**Eine Ermüdungslast beschreibt entweder zwei Zustände oder einen Verlauf.**
+*Zwei Zustände*: der Lastwechsel pendelt zwischen oben und unten, mit einer
+Lastspielzahl — das reicht, solange es wirklich nur zwei Zustände gibt.
+*Verlauf*: eine **Folge von Lastfällen** in zeitlicher Reihenfolge (eine
+Überfahrt, ein Öffnungsvorgang, ein Betriebszyklus) und die Zahl der
+Wiederholungen. Daraus zählt Statik3D das Kollektiv selbst — Rainflow oder
+Reservoir nach EN 1993-1-9, Anhang A. Das ist der ehrlichere Weg, sobald mehr
+als zwei Zustände vorkommen: die Zwischenstufen tragen eigene, kleinere Spiele
+bei, und die zählen mit. Wer denselben Vorgang nur mit seinen beiden
+Außenwerten ansetzt, unterschätzt die Schädigung.
+
+Ein Hinweis zum Zuschnitt: **lassen Sie den Verlauf am größten Wert beginnen
+und enden.** Dann liefern beide Zählverfahren dasselbe Kollektiv und es
+entstehen nur ganze Spiele; sonst bleibt bei Rainflow ein Rest, der mit halben
+Spielen zählt.
+
+**Die Schädigung wird am Ort aufsummiert**, nicht über Orte hinweg: D wird an
+jeder Nachweisstelle und an jedem der vier Querschnittseckpunkte gebildet,
+maßgebend ist der größte Wert, und der Ort steht im Nachweis. Die größten
+Schwingbreiten verschiedener Ermüdungslasten liegen im Allgemeinen an
+verschiedenen Stellen; ihre Summe gehört zu keinem Punkt des Bauteils.
+
+Im Bericht steht die Miner-Summe **Stufe für Stufe**: je Stufe Schwingbreite,
+Lastspielzahl, ertragbare Lastspielzahl N_R, der Anteil D_i = n/N und die
+laufende Summe. Stufen unter dem Schwellenwert stehen mit D_i = 0 darin — sie
+sind nicht verschwiegen, sondern nachweislich unschädlich. Ist ein
+Bezugszeitraum eingestellt (die Lastspielzahlen gelten für so viele Jahre),
+weist der Bericht zusätzlich die rechnerische **Lebensdauer** aus:
+Bezugszeitraum / D.
 
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details

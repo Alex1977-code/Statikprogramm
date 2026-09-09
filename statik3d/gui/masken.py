@@ -26,12 +26,31 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import design as dsg
 
 
+def listeneintraege(text: str) -> list:
+    """Die Eintraege eines Listenfeldes - Kommas trennen, Leeres faellt weg."""
+    return [x.strip() for x in str(text or "").split(",") if x.strip()]
+
+
+def listenhinweis(text: str, hinweis: str = "") -> str:
+    """Der Hinweis am Zeiger: Anzahl und die **ganze** Liste, umbrochen.
+
+    Zehn Namen je Zeile - so bleibt auch eine Liste mit hundert Eintraegen
+    lesbar, und keiner wird mitten im Namen abgeschnitten.
+    """
+    teile = listeneintraege(text)
+    if not teile:
+        return hinweis or "leer"
+    zeilen = [", ".join(teile[i:i + 10]) for i in range(0, len(teile), 10)]
+    kopf = f"{len(teile)} Einträge:"
+    return "\n".join(([hinweis] if hinweis else []) + [kopf] + zeilen)
+
+
 @dataclass
 class Feld:
     """Ein Eingabefeld der Maske."""
     name: str
     text: str
-    art: str = "zahl"            # zahl | ganz | text | wahl | haken | info
+    art: str = "zahl"            # zahl | ganz | text | liste | wahl | haken | info
     wert: object = 0.0
     werte: list = field(default_factory=list)   # fuer art="wahl"
     breite: int = 78
@@ -73,6 +92,10 @@ class Maske(QtWidgets.QFrame):
         self.gewaehlt_punkte: list = []
         self.gewaehlt: list[int] = []
         self._felder: dict[str, QtWidgets.QWidget] = {}
+        #: Listenfelder: Name -> (Beschriftung, Titel, Hinweis). Ueber sie
+        #: wird die Anzahl in der Beschriftung nachgefuehrt, wenn der Wert
+        #: sich aendert (etwa weil Flaechen in der Ansicht angeklickt wurden).
+        self._listen: dict[str, tuple] = {}
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(10, 8, 10, 10)
@@ -101,8 +124,13 @@ class Maske(QtWidgets.QFrame):
             if f.art == "haken":
                 gitter.addWidget(w, i, 0, 1, 2)
             else:
-                lb = QtWidgets.QLabel(f.text)
-                lb.setToolTip(f.hinweis or f.text)
+                if f.art == "liste":
+                    lb = QtWidgets.QLabel(f"{f.text} ({len(listeneintraege(str(f.wert)))})")
+                    lb.setToolTip(listenhinweis(str(f.wert), f.hinweis or f.text))
+                    self._listen[f.name] = (lb, f.text, f.hinweis or f.text)
+                else:
+                    lb = QtWidgets.QLabel(f.text)
+                    lb.setToolTip(f.hinweis or f.text)
                 gitter.addWidget(lb, i, 0)
                 gitter.addWidget(w, i, 1)
         lay.addLayout(gitter)
@@ -164,6 +192,15 @@ class Maske(QtWidgets.QFrame):
         if f.art in ("zahl", "ganz"):
             w.setValidator(QtGui.QIntValidator() if f.art == "ganz"
                            else QtGui.QDoubleValidator(-1e30, 1e30, 10))
+        if f.art == "liste":
+            # Ein einzeiliges Feld steht sonst am **Ende** der Zeile: aus
+            # „F249, F236, ..., F69, F64, F71, F98, F46, F52" bleibt
+            # „9, F64, F71, F98, F46, F52" sichtbar - das liest sich wie neun
+            # Flaechen, davon fuenf genannt, und verleitet zu der falschen
+            # Diagnose, es fehlten welche. Darum von vorn anzeigen; die
+            # vollstaendige Liste steht im Hinweis am Zeiger.
+            w.setCursorPosition(0)
+            w.setToolTip(listenhinweis(str(f.wert), f.hinweis))
         w.returnPressed.connect(self.anwenden)
         return w
 
@@ -215,6 +252,14 @@ class Maske(QtWidgets.QFrame):
             w.setText(str(wert))
         else:
             w.setText(f"{wert:g}" if isinstance(wert, float) else str(wert))
+            eintrag = self._listen.get(name)
+            if eintrag is not None:
+                lb, titel, hinweis = eintrag
+                teile = listeneintraege(w.text())
+                lb.setText(f"{titel} ({len(teile)})")
+                lb.setToolTip(listenhinweis(w.text(), hinweis))
+                w.setToolTip(listenhinweis(w.text(), hinweis))
+                w.setCursorPosition(0)
 
     def auswahlliste(self, namen: list):
         """Auswahlfeld neu fuellen und die bisherige Wahl behalten."""

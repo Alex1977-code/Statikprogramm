@@ -1285,14 +1285,38 @@ class Combination:
 
 @dataclass
 class FatigueLoad:
-    """Ermuedungsbeanspruchung: Lastwechsel zwischen den Lastfaellen case_max und
-    case_min (None = Nullzustand) mit cycles Lastspielen ueber die Lebensdauer.
-    Die Spannungsschwingbreite folgt aus der Differenz der beiden Zustaende."""
+    """Ermuedungsbeanspruchung - auf zwei Wegen zu beschreiben.
+
+    **Zwei Zustaende.** ``case_max`` und ``case_min`` (None = Nullzustand) mit
+    ``cycles`` Lastspielen: die Schwingbreite ist die Differenz der beiden.
+    Das reicht, wo der Lastwechsel wirklich zwischen zwei Zustaenden pendelt.
+
+    **Ein Verlauf.** ``folge`` nennt Lastfaelle in ihrer zeitlichen Reihenfolge
+    - eine Ueberfahrt, ein Oeffnungsvorgang, ein Betriebszyklus -, und
+    ``wiederholungen`` sagt, wie oft er vorkommt. Aus dem Verlauf zaehlt
+    Statik3D das Kollektiv selbst (Rainflow bzw. Reservoir nach EN 1993-1-9,
+    Anhang A); ``cycles`` wird dann nicht gebraucht. Das ist der Weg, auf dem
+    aus mehr als zwei Zustaenden eine ehrliche Schadensakkumulation wird: die
+    Zwischenzustaende einer Ueberfahrt tragen eigene, kleinere Spiele bei, und
+    die zaehlen mit.
+    """
     name: str
-    case_max: str
+    case_max: str = ""
     case_min: Optional[str] = None
     cycles: float = 2e6
     factor: float = 1.0        # zusaetzlicher Faktor (z.B. dynamischer Beiwert)
+    #: Lastfaelle in zeitlicher Reihenfolge (leer = zwei Zustaende ueber case_max/min)
+    folge: list[str] = field(default_factory=list)
+    #: Wie oft der Verlauf im Bezugszeitraum vorkommt
+    wiederholungen: float = 1.0
+    #: Zaehlverfahren fuer den Verlauf: "rainflow" (Vorgabe) oder "reservoir"
+    zaehlung: str = "rainflow"
+
+    def bezug(self) -> str:
+        if self.folge:
+            return (f"Verlauf über {len(self.folge)} Lastfälle, "
+                    f"{self.wiederholungen:g}× ({self.zaehlung})")
+        return f"{self.case_max} gegen {self.case_min or 'Nullzustand'}, {self.cycles:g} Spiele"
 
 
 # --------------------------------------------------------------------------
@@ -2232,6 +2256,11 @@ class DesignSettings:
     gamma_Q: float = 1.5
     gamma_Q_fav: float = 0.0
     stations: int = 9                  # Nachweisstellen je Element
+    #: Bezugszeitraum der Ermuedungs-Lastspielzahlen [Jahre]. 0 = die
+    #: Lastspielzahlen gelten fuer die ganze Nutzungsdauer, dann gibt es keine
+    #: rechnerische Lebensdauer zu nennen. Sonst: D gilt fuer so viele Jahre,
+    #: und die Lebensdauer folgt als bezugsjahre / D.
+    ermuedung_bezugsjahre: float = 0.0
     # --- Theorie II. Ordnung und Imperfektionen (EN 1993-1-1, 5.2 und 5.3)
     theorie2: str = "aus"              # aus | auto (nach 5.2.1(3)) | ein
     imperfektionen: bool = True        # Ersatzimperfektionen nach 5.3.2 ansetzen

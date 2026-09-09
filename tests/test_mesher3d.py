@@ -748,8 +748,174 @@ def test_parallel_vernetzen():
           erg_a["abgebrochen"] and erg_a["elemente"] == 0 and not ma.elements, str(erg_a))
 
 
+def altes_rundungsgitter(P, T, tol):
+    """Das Vernaehen, wie es bis zum 09.09.2026 war - nur fuer die Gegenprobe.
+
+    Verschmolzen wird ueber ein Rundungsgitter ``round(P / tol)``. Genau das
+    trennt zwei Kopien desselben Punktes, wenn die Zellgrenze zufaellig
+    zwischen ihnen liegt.
+    """
+    key = np.round(P / max(tol, 1e-15)).astype(np.int64)
+    _, erste, invers = np.unique(key, axis=0, return_index=True, return_inverse=True)
+    invers = np.asarray(invers).reshape(-1)
+    ordnung = np.argsort(erste)
+    neu = np.zeros(len(erste), dtype=int)
+    neu[ordnung] = np.arange(len(erste))
+    index = neu[invers]
+    Pn = np.zeros((len(erste), 3))
+    Pn[index] = P
+    Tn = index[T] if len(T) else T
+    gut = np.ones(len(Tn), bool)
+    if len(Tn):
+        gut = ((Tn[:, 0] != Tn[:, 1]) & (Tn[:, 1] != Tn[:, 2]) & (Tn[:, 0] != Tn[:, 2]))
+        Tn = Tn[gut]
+    return Pn, Tn, index, gut
+
+
+def test_huelle_ohne_rundungsgitter():
+    """Die Randhuelle darf nicht an der Arithmetik der Toleranz haengen.
+
+    Jede Randflaeche hebt ihre Randpunkte ueber die **eigene** Ebenenbasis aus
+    2D zurueck. Die beiden Kopien desselben Linienpunkts sind danach nur noch
+    auf Maschinengenauigkeit gleich - Groessenordnung 1e-16 m. Ein
+    Rundungsgitter ``round(P / tol)`` legt sie nur dann zusammen, wenn keine
+    Zellgrenze dazwischen liegt; ob eine dazwischenliegt, ist reine
+    Arithmetik: die Koordinaten eines CAD-Modells sind Vielfache von 0,25 mm,
+    ``tol`` ist h/10000, und bei manchem h faellt ``x / tol`` genau auf eine
+    halbe Ganzzahl. Dann rundet die eine Kopie auf, die andere ab - zwei
+    Knoten statt einem, vier Kanten in nur einem Dreieck, Huelle offen.
+
+    Gebaut ist genau dieser Fall: Ecke bei x = -421,25 mm, h = 50/1,5^2 mm,
+    also tol = 2,2222 um und x/tol = -189562,5. Das sind die Zahlen aus der
+    Bestandsaufnahme vom 09.09.
+    """
+    h = 0.05 / 1.5 / 1.5
+    tol = max(h * 1e-4, 1e-9)
+    check("die Ecke liegt genau auf einer Zellgrenze des Rundungsgitters",
+          abs(abs(-0.42125 / tol) % 1.0 - 0.5) < 1e-6,
+          f"x/tol = {-0.42125 / tol:.4f}")
+
+    m = neues_modell()
+    k = prisma(m, [[(-0.42125, -0.38), (0.1, -0.38), (0.1, 0.2), (-0.42125, 0.2)]], 0.3)
+    P, T, bericht = M3.randschale(m, k, h, [], None, None, None)
+    check("die Hülle ist dicht", bericht["offen"] == 0,
+          f"{bericht['offen']} offene Kanten, {len(T)} Dreiecke")
+    check("sie ist ein Stück", bericht.get("teile") == 1, str(bericht.get("teile")))
+    check("und umschließt das Rauminhalt des Quaders",
+          abs(bericht["volumen"] - 0.52125 * 0.58 * 0.3) < 1e-9,
+          f"{bericht['volumen']:.6f} m^3")
+
+    # Gegenprobe: mit dem alten Weg reisst dieselbe Huelle auf. Ohne diese
+    # Zeile pruefte der Test nichts - er liefe auch mit dem Fehler gruen.
+    fuegen, naehen = M3.huelle_fuegen, M3.vernaehen
+    M3.vernaehen = altes_rundungsgitter
+    M3.huelle_fuegen = lambda Pt, Tt, kn: (
+        np.vstack(Pt),
+        np.vstack([Tx + sum(len(x) for x in Pt[:i]) for i, Tx in enumerate(Tt)]),
+        None)
+    try:
+        _, _, alt = M3.randschale(m, k, h, [], None, None, None)
+    finally:
+        M3.huelle_fuegen, M3.vernaehen = fuegen, naehen
+    check("mit dem Rundungsgitter wäre sie aufgerissen - der Test greift",
+          alt["offen"] > 0, f"{alt['offen']} offene Kanten")
+
+    # Der Einheitstest zum Vernaehen selbst: zwei Punkte 5e-16 m auseinander,
+    # auf beiden Seiten der Zellgrenze - in jeder der vier Lagen ein Punkt.
+    T0 = np.zeros((0, 3), int)
+    getrennt = 0
+    for kk in (-189562, -189563):
+        x = (kk - 0.5) * tol
+        for d in (+5e-16, -5e-16):
+            Pn = M3.vernaehen(np.array([[x, 0.0, 0.0], [x + d, 0.0, 0.0]]), T0, tol)[0]
+            getrennt += int(len(Pn) != 1)
+    check("vernaehen legt zwei Punkte im Abstand 5e-16 m immer zusammen",
+          getrennt == 0, f"{getrennt} von 4 blieben getrennt")
+    zwei = M3.vernaehen(np.array([[0.0, 0.0, 0.0], [10 * tol, 0.0, 0.0]]), T0, tol)[0]
+    check("echte Nachbarn bleiben getrennt", len(zwei) == 2, f"{len(zwei)} Punkte")
+
+    # Die offenen Kanten werden benannt, nicht nur gezaehlt
+    zeilen = M3.offene_kanten_text(M3._offene_kanten(
+        np.array([[0.0, 0, 0], [1.0, 0, 0], [0.0, 1.0, 0]]),
+        np.array([[0, 1, 2]]), ["F1"]))
+    check("eine offene Kante wird mit Fläche und Koordinaten genannt",
+          len(zeilen) == 3 and "F1" in zeilen[0] and "0.0000" in zeilen[0],
+          zeilen[0] if zeilen else "keine Zeile")
+
+
+def test_groessenfeld_an_der_bohrung():
+    """Am Bohrungsrand darf die Kante nicht in einem Schritt aufs Feld springen.
+
+    Gemessen an einer 20-mm-Bohrung in einer 900-mm-Platte bei 50 mm
+    Zielkantenlaenge: der Bohrungsrand war mit 20 Segmenten geteilt (Sehne
+    3,1 mm), und **in der ersten Elementlage** stand schon die volle
+    Zielkantenlaenge. Im Kranz zwischen r und 2r lag **kein einziger** Knoten,
+    das Kantenverhaeltnis der Dreiecke am Loch betrug im Median 17 und die
+    Formguete lag bei 0,06 - 73 % der Dreiecke unter 0,3.
+
+    Fuer eine Kerbspannung ist das zu wenig: der Spannungsabfall geschieht
+    ueber etwa r/2, und den bildet eine einzige Elementlage nicht ab. Gefordert
+    sind darum mindestens zwei Knotenringe im Kranz r … 2r, ein
+    Kantenverhaeltnis im Median unter 2 und hoechstens 5 % der Dreiecke unter
+    der Guete 0,3.
+    """
+    r, R, t, h = 0.010, 0.45, 0.05, 0.05
+    m = neues_modell()
+    k = prisma(m, [[(-R, -R), (R, -R), (R, R), (-R, R)],
+                   [tuple(x) for x in kreis_punkte(r, 24, umgekehrt=True)]], t)
+    teilung = M3.Linienteilung(m, [m.flaechen[n] for n in k.flaechen], h)
+
+    def messen(P, T):
+        d = np.linalg.norm(P[:, :2], axis=1)
+        nah = np.where(d <= 2 * r)[0]
+        maske = np.isin(T, nah).any(axis=1)
+        X = P[T[maske]]
+        L = np.linalg.norm(X[:, [1, 2, 0]] - X, axis=2)
+        A = 0.5 * np.linalg.norm(np.cross(X[:, 1] - X[:, 0], X[:, 2] - X[:, 0]), axis=1)
+        q = 4 * np.sqrt(3) * A / np.maximum((L ** 2).sum(1), 1e-30)
+        v = L.max(1) / np.maximum(L.min(1), 1e-12)
+        return (int(((d > 1.05 * r) & (d <= 2 * r)).sum()),
+                float(np.median(v)), float(v.max()),
+                float(q.min()), float((q < 0.3).mean()))
+
+    P, T, meldung, _grob, _kenn = M3.flaechennetz(m, m.flaechen["Deckel"], teilung)
+    check("Deckel mit Bohrung vernetzt", not meldung and len(T) > 0,
+          meldung or f"{len(T)} Dreiecke")
+    n_kranz, v_med, v_max, q_min, q_schlecht = messen(P, T)
+    check("mindestens zwei Knotenringe im Kranz r … 2r", n_kranz >= 2 * 20,
+          f"{n_kranz} Knoten")
+    check("Kantenverhältnis am Loch im Median unter 2", v_med < 2.0, f"{v_med:.2f}")
+    check("und im Größtwert unter 4", v_max < 4.0, f"{v_max:.2f}")
+    check("höchstens 5 % der Dreiecke unter der Güte 0,3", q_schlecht <= 0.05,
+          f"{q_schlecht * 100:.1f} %")
+    check("die schlechteste Güte über 0,1", q_min > 0.1, f"{q_min:.3f}")
+
+    # Gegenprobe ohne Kraenze - sonst pruefte der Test nichts
+    echt = M3._kraenze
+    M3._kraenze = lambda ringe, hh, wachstum=0.0: np.zeros((0, 2))
+    try:
+        P0, T0, *_ = M3.flaechennetz(m, m.flaechen["Deckel"], teilung)
+    finally:
+        M3._kraenze = echt
+    n0, v0, _vm0, q0, s0 = messen(P0, T0)
+    check("ohne Kränze läge kein Knoten im Kranz - der Test greift",
+          n0 == 0 and v0 > 5.0 and s0 > 0.5,
+          f"{n0} Knoten, Kantenverhältnis {v0:.1f}, {s0 * 100:.0f} % unter 0,3, Güte {q0:.3f}")
+    check("und der Preis dafür sind weniger als doppelt so viele Punkte",
+          len(P) < 2.0 * len(P0), f"{len(P0)} -> {len(P)} Punkte")
+
+    # Der Vollkreis bekommt 20 Abschnitte (Kruemmungswinkel 18 Grad)
+    m2 = neues_modell()
+    m2.add_nodes(np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]]))
+    m2.add_line("B", [0, 1, 2], "arc")          # Halbkreis durch drei Knoten
+    check("ein Halbkreis bekommt zehn Abschnitte (Krümmungswinkel 18 Grad)",
+          M3._bogenabschnitte(m2, "B") == 10, str(M3._bogenabschnitte(m2, "B")))
+
+
 def main():
-    for t in (test_punkt_im_koerper, test_quader, test_einspringende_ecke,
+    for t in (test_punkt_im_koerper, test_quader, test_huelle_ohne_rundungsgitter,
+              test_groessenfeld_an_der_bohrung,
+              test_einspringende_ecke,
               test_platte_mit_bohrung, test_duenne_platte_randseiten,
               test_zylinder_und_buchse,
               test_kleines_bauteil, test_gemeinsame_flaeche, test_zugstab,

@@ -1506,6 +1506,59 @@ def main():
         check("Volumenmaske liest die Randflächen zurück",
               len(d.werte()["flaechen"]) == 6 and d.werte()["teilung"] == [4, 2, 2],
               str(d.werte()["teilung"]))
+
+        # Listenfeld der Objektmaske: ein einzeiliges Feld stand bisher am
+        # Zeilenende, und aus dreizehn Randflaechen las man "9, F64, ...".
+        # Jetzt steht die Anzahl in der Beschriftung, der Zeiger zeigt die
+        # ganze Liste, und der Textanfang ist sichtbar.
+        w._objektmaske("geokoerper_einzeln", "V1"); app.processEvents()
+        mk = w.maskenrand.maske if hasattr(w, "maskenrand") else None
+        feld = mk._felder.get("flaechen") if mk is not None else None
+        check("die Volumenmaske hat ein Listenfeld für die Randflächen",
+              feld is not None and "flaechen" in (mk._listen if mk else {}),
+              str(sorted((mk._listen or {}).keys())) if mk else "keine Maske")
+        if feld is not None:
+            lb, _t, _h = mk._listen["flaechen"]
+            check("die Beschriftung nennt die Anzahl", "(6)" in lb.text(), lb.text())
+            check("der Zeiger zeigt alle sechs Namen",
+                  all(nm in feld.toolTip() for nm in seiten), feld.toolTip()[:80])
+            check("und das Feld steht am Anfang, nicht am Zeilenende",
+                  feld.cursorPosition() == 0, str(feld.cursorPosition()))
+            mk.setzen("flaechen", ", ".join(list(seiten)[:3]))
+            check("nach dem Anklicken in der Ansicht zählt die Beschriftung mit",
+                  "(3)" in lb.text() and feld.cursorPosition() == 0, lb.text())
+        w.maskenrand.schliessen()
+        app.processEvents()
+
+        # Schnittebene: von einem Volumennetz wird nur die Aussenhaut
+        # gezeichnet - wer hineinsehen will, muss aufschneiden. Gemessen wird
+        # der Huellquader des gezeichneten Gitters laengs der Schnittachse.
+        typen_v, ausser_v = tuple(vpg.TYPEN_VOLUMEN), set()
+        g0, _k0 = w._gitter(typen_v, ausser_v)
+        b0 = list(g0.bounds)
+        w.cb_schnittachse.setCurrentText("x")
+        w.sl_schnitt.setValue(50)
+        w.act_schnitt.setChecked(True); app.processEvents()
+        check("die Schnittebene ist eingeschaltet", w.schnitt is not None, str(w.schnitt))
+        g1, _k1 = w._gitter(typen_v, ausser_v)
+        b1 = list(g1.bounds)
+        check("der Schnitt nimmt längs x die halbe Ausdehnung weg",
+              abs((b1[1] - b1[0]) - 0.5 * (b0[1] - b0[0])) < 0.06 * (b0[1] - b0[0]),
+              f"{b1[1] - b1[0]:.3f} statt {b0[1] - b0[0]:.3f} m")
+        check("quer dazu bleibt das Bauteil ganz",
+              abs((b1[3] - b1[2]) - (b0[3] - b0[2])) < 1e-9,
+              f"{b1[3] - b1[2]:.3f} / {b0[3] - b0[2]:.3f} m")
+        w.act_schnittseite.setChecked(True); app.processEvents()
+        g2, _k2 = w._gitter(typen_v, ausser_v)
+        check("die andere Seite lässt die andere Hälfte stehen",
+              abs(g2.bounds[0] - b1[0]) > 0.1 * (b0[1] - b0[0]),
+              f"x von {g2.bounds[0]:.3f} statt {b1[0]:.3f} m")
+        w.act_schnitt.setChecked(False)
+        w.act_schnittseite.setChecked(False); app.processEvents()
+        g3, _k3 = w._gitter(typen_v, ausser_v)
+        check("ausgeschaltet steht das Bauteil wieder ganz da",
+              abs(g3.bounds[1] - g3.bounds[0] - (b0[1] - b0[0])) < 1e-9,
+              f"{g3.bounds[1] - g3.bounds[0]:.3f} / {b0[1] - b0[0]:.3f} m")
         # Eine berandende Fläche darf nicht einfach weg
         gemeldet = []
         w.error = lambda msg: gemeldet.append(str(msg))

@@ -1208,6 +1208,59 @@ schadensäquivalente Schwingbreite bei 2·10⁶ Lastspielen ausgewiesen. γMf na
 Tabelle 3.1 (Schadenstoleranz/Sicherheit gegen Versagen, geringe/hohe
 Schadensfolge), γFf = 1,0.
 
+**Die Schädigung wird am Ort aufsummiert.** Miner zählt, was *ein Punkt* des
+Bauteils erlebt. Die größte Schwingbreite aus Last A und die aus Last B liegen
+aber im Allgemeinen an verschiedenen Stellen des Stabes; wer sie addiert,
+addiert die Schädigung zweier verschiedener Punkte und erhält eine Zahl, die
+nirgends auftritt. Gerechnet wird darum D an **jeder** Nachweisstelle und an
+jedem der vier Eckpunkte des Querschnitts; maßgebend ist der größte Wert, und
+der Ort steht im Nachweis. Die Übersichtstabelle „größte Schwingbreite je
+Ermüdungslast" bleibt daneben stehen — als Übersicht, nicht als Summand.
+
+#### 5.5-1 Zählverfahren: aus dem Verlauf wird ein Kollektiv (Anhang A)
+
+Zwei Zustände reichen, solange die Beanspruchung zwischen zwei Zuständen
+pendelt. Eine Überfahrt, ein Öffnungsvorgang, ein Betriebszyklus haben mehr:
+die Zwischenstufen tragen eigene, kleinere Spiele bei, und die zählen mit. Eine
+Ermüdungslast darf darum statt zweier Zustände eine **Folge von Lastfällen**
+nennen; daraus zählt Statik3D das Kollektiv nach EN 1993-1-9, Anhang A.
+
+**Rainflow** (Vier-Punkt-Verfahren). Zuerst bleiben nur die Umkehrpunkte
+übrig — ein Wert auf dem Weg nach oben ist keine Umkehr. Liegt dann die
+mittlere von vier aufeinanderfolgenden Umkehrungen ganz innerhalb der äußeren
+(|s₂−s₃| ≤ |s₁−s₂| und ≤ |s₃−s₄|), ist sie ein **geschlossenes Spiel** und wird
+herausgenommen; der Rest wird weiterverfolgt. Was übrig bleibt, sind halbe
+Spiele (Konvention nach ASTM E1049). Am Lehrbuchbeispiel
+[−2, 1, −3, 5, −1, 3, −4, 4, −2] fällt genau das bekannte Kollektiv heraus:
+3 (½), 4 (1½), 6 (½), 8 (1), 9 (½) — zusammen 4 Spiele, also (9−1)/2.
+
+**Reservoir.** Der Verlauf ist ein Gefäß, das mit Wasser gefüllt wird; am
+tiefsten Punkt zieht man den Stöpsel, und was ausfließt, ist ein Spiel mit der
+Höhe des Wasserspiegels. Danach zerfällt das Gefäß an dieser Stelle in **zwei**
+Reservoire, links und rechts, und in jedem geht es von vorn los. Genau dieses
+Zerfallen macht das Verfahren aus; wer stattdessen weiter gegen die äußeren
+Hochpunkte misst, zählt zu große Schwingbreiten.
+
+**Beginnt und endet der Verlauf am größten Wert, liefern beide Verfahren
+dasselbe Kollektiv** — das prüft `tests/test_ec3.py` nach, und so gehört eine
+Überfahrt angesetzt. Andernfalls dürfen sie auseinandergehen: was bei Rainflow
+als Rest offen bleibt und dort mit einem halben Spiel zählt, ist beim Reservoir
+schon abgeflossen.
+
+#### 5.5-2 Die Schadensakkumulation im Statikdokument
+
+Der Nachweis zeigt die Miner-Summe **Stufe für Stufe** am maßgebenden Ort: je
+Stufe die Schwingbreite, die Lastspielzahl, die ertragbare Lastspielzahl N_R
+aus der Wöhlerlinie, der Anteil D_i = n/N und die laufende Summe. Stufen
+unterhalb des Schwellenwerts (N_R = ∞) stehen mit D_i = 0 darin — sie sind
+damit nicht verschwiegen, sondern nachweislich unschädlich.
+
+Ist ein **Bezugszeitraum** angegeben (Einstellung `ermuedung_bezugsjahre`:
+die Lastspielzahlen gelten für so viele Jahre), folgt daraus die rechnerische
+**Lebensdauer** als Bezugszeitraum / D — die Schädigung wächst linear. Ohne
+Bezugszeitraum gelten die Lastspielzahlen für die ganze Nutzungsdauer, und es
+gibt keine Lebensdauer zu nennen.
+
 #### 5.5a Kerbfälle aus Schweißnähten (`schweissnaehte.py`)
 
 Jede Naht liefert nach Nahtart, Lage zur Beanspruchung und Ausführung den
@@ -1672,11 +1725,55 @@ aufeinander. Gegenüberliegende Seiten einer abgebildet vernetzten Fläche
 müssen gleich viele Abschnitte haben; diese Bindung wird über eine
 Vereinigungssuche (union-find) durch das ganze Bauteil weitergereicht. Krumme
 Linien bekommen zusätzlich zur Längenteilung eine **Krümmungsteilung**: der
-gesamte Richtungswechsel wird durch 30° geteilt, ein Kreis bekommt also
-mindestens zwölf Abschnitte — ob er 10 mm oder 10 m Durchmesser hat.
+gesamte Richtungswechsel wird durch 18° geteilt, ein Kreis bekommt also
+mindestens zwanzig Abschnitte — ob er 10 mm oder 10 m Durchmesser hat. Bei
+den früheren 30° (zwölf Abschnitte) weicht die Sehne um 3,4 % des
+Halbmessers von der Bohrung ab, bei 18° um 1,2 %; für eine Kerbspannung am
+Lochrand ist das der Unterschied zwischen brauchbar und nicht.
 
-**2 Dichtheit.** Die Dreiecke werden vernäht und geprüft: jede Kante muss in
-genau zwei Dreiecken liegen. Das Volumen folgt aus dem Gaußschen Satz,
+**Übergang von der Bohrung ins Feld.** Die feine Teilung des Bohrungsrandes
+setzte sich früher nicht ins Innere fort: das Innengitter war gleichmäßig mit
+der Zielkantenlänge, und alles näher als 0,65·h am Rand fiel weg. Gemessen an
+einer 20-mm-Bohrung in einer 900-mm-Platte bei 50 mm Zielkantenlänge stand am
+Loch ein Kranz winziger Dreiecke (Sehne 3,1 mm) und daran unmittelbar das
+50-mm-Feld: im Kranz zwischen r und 2r lag **kein einziger** Knoten, das
+Kantenverhältnis der Dreiecke am Loch betrug im Median 17, die Formgüte 0,06,
+und 73 % der Dreiecke lagen unter 0,3.
+
+Jetzt werden um jede Öffnung **Kränze** gelegt, deren Weite vom Loch weg um
+je 25 % wächst (der Wachstumsfaktor, mit dem ein Vernetzer mit
+Größensteuerung üblicherweise arbeitet), bis sie die Zielkantenlänge
+erreicht; ab da übernimmt das gleichmäßige Gitter. Das ist dieselbe Regel,
+mit der das Tetraedernetz schon arbeitet (Schritt 3), nur jetzt auch in der
+Fläche. Am selben Beispiel: 72 Knoten im Kranz r … 2r, Kantenverhältnis im
+Median 1,51, Güte 0,81, kein Dreieck unter 0,3 — für 56 % mehr Punkte auf
+dieser Fläche (`test_groessenfeld_an_der_bohrung`).
+
+**2 Dichtheit.** Die Flächennetze werden über die **Kennung ihrer
+Linienpunkte** zusammengesetzt, nicht über die Koordinate. Jeder Punkt einer
+geteilten Linie heißt `(Linie, k)` in der eigenen Zählrichtung der Linie, die
+beiden Enden nach ihrem Knoten; zwei Nachbarflächen holen ihre gemeinsamen
+Randpunkte aus derselben Quelle und finden sich darüber.
+
+Das ist keine Feinheit. Jede Fläche hebt ihre Randpunkte über die **eigene**
+Ausgleichsebene aus 2D zurück; die beiden Kopien desselben Linienpunkts sind
+danach nur noch auf Maschinengenauigkeit gleich (3·10⁻¹⁶ … 1,3·10⁻¹⁵ m). Ein
+Vernähen über ein Rundungsgitter `round(P/tol)` legt sie nur dann zusammen,
+wenn keine Zellgrenze dazwischenliegt — und ob eine dazwischenliegt, ist reine
+Arithmetik: CAD-Koordinaten sind Vielfache von 0,25 mm, `tol` ist h/10000, und
+bei manchem h fällt `x/tol` genau auf eine halbe Ganzzahl. An einem Quader mit
+einer Ecke bei x = −421,25 mm und h = 50/1,5² mm riss die Hülle so an **156**
+Kanten auf, ohne dass an der Geometrie etwas fehlte
+(`test_huelle_ohne_rundungsgitter`).
+
+Was danach noch doppelt daliegt (Ränder ohne Knotennamen), wird nach
+**Abstand** vernäht — mit einem KD-Baum und Zusammenhangskomponenten, nicht
+mit einem Rundungsgitter. Dann wird geprüft: jede Kante muss in
+genau zwei Dreiecken liegen. Ist sie es nicht, nennt das Protokoll jede
+offene Kante mit ihren Knoten, Koordinaten und den Randflächen, von denen die
+anliegenden Dreiecke stammen — zwei Zeilen mit derselben Koordinate und
+verschiedenen Flächen heißen: dort stehen zwei Kopien desselben Punktes.
+Das Volumen folgt aus dem Gaußschen Satz,
 
     V = 1/6 · Σ (a × b) · c   über alle Dreiecke,
 
@@ -1734,8 +1831,14 @@ diesen das nächste. Die Nähe allein reicht nicht: an einer dünnen Platte
 liegen die Seitenfacetten der Schmalseite näher an der Deckfläche als ein
 Viertel der Kantenlänge und hingen früher an ihr — die Deckfläche trug dann
 36 % zu viel Fläche (Test `test_duenne_platte_randseiten`). Nur wenn kein
-Dreieck überdeckt (Randknoten nicht exakt auf der Hülle), gilt der alte Weg
-über die Nähe, sofern die Normale nicht quer steht.
+Dreieck überdeckt (Randknoten nicht exakt auf der Hülle), gilt der Rückfall
+über die Nähe — und auch der nur, wenn die Seite **beinahe** in der Ebene des
+Hülldreiecks liegt (Abstand aller drei Knoten ≤ ein Viertel der Kantenlänge)
+und die Normale nicht quer steht. Ohne diese Schranke schluckt der Rückfall
+die schrägen Seiten, die im Inneren stehenbleiben, wo eine flache Zerlegung
+einen Splitter weggelassen hat: an derselben dünnen Platte hing damit eine
+Seitenwand 7 % zu groß am Rand, und ob sie es tat, hing an der Reihenfolge
+der Knotennummern.
 
 **Gemeinsame Randflächen.** Zwei Körper, die *dieselbe* Fläche berandet,
 bekommen dort dieselben Knoten und hängen zusammen. Geteilt wird ausdrücklich

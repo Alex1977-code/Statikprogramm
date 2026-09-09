@@ -1046,6 +1046,29 @@ def z_zwang(s: Stift):
     s.linie(6, 19.5, 18, 19.5)
 
 
+def z_sicht_schnitt(s: Stift):
+    """Schnittebene: ein Wuerfel, halb weggeschnitten, mit der Schnittflaeche."""
+    s.stift(breite=1.4)
+    _wuerfel_umriss(s)
+    s.fuellung(_mit_alpha(s.akzent, 90))
+    s.stift(s.akzent, 1.6)
+    s.zug([(12, 3), (21, 8), (12, 13), (3, 8)], schliessen=True)
+    s.stift(s.akzent, 1.4, gestrichelt=True)
+    s.linie(3, 8, 3, 16)
+    s.linie(21, 8, 21, 16)
+
+
+def z_sicht_schnittseite(s: Stift):
+    """Andere Seite: derselbe Schnitt, die andere Haelfte gefuellt."""
+    s.stift(breite=1.4)
+    _wuerfel_umriss(s)
+    s.fuellung(_mit_alpha(s.akzent, 90))
+    s.stift(s.akzent, 1.6)
+    s.zug([(12, 3), (21, 8), (12, 13), (3, 8)], schliessen=True)
+    s.stift(s.akzent, 1.8)
+    s.pfeil(6, 19, 18, 19, kopf=3.0)
+
+
 VORSCHRIFTEN = {n[2:]: f for n, f in list(globals().items())
                 if n.startswith("z_") and callable(f)}
 
@@ -1064,6 +1087,7 @@ RATEN = [
     ("selektion anzeigen", "sicht_nur_auswahl"),
     ("auswahl ausblenden", "sicht_ausblenden"), ("vorherige sicht", "sicht_zurueck"),
     ("alles zeigen", "sicht_alles"), ("verborgenes im hintergrund", "sicht_geist"),
+    ("schnittebene", "sicht_schnitt"), ("andere seite", "sicht_schnittseite"),
     ("auswahl", "auswahl"),
     ("löschen", "loeschen"), ("netz löschen", "netz_loeschen"),
     ("vernetz", "vernetzen"), ("fe-netz", "netz"), ("netz", "netz"),

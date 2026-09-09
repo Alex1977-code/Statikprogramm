@@ -164,6 +164,153 @@ def test_fatigue():
     check("Woehler Schub: N_R", sn_life(60e6, 100e6, shear=True), 2e6 * (100 / 60) ** 5, 1e-9)
 
 
+def test_zaehlverfahren():
+    """Rainflow und Reservoir nach EN 1993-1-9, Anhang A."""
+    from statik3d.ec3.fatigue import (umkehrpunkte, rainflow, reservoir, kollektiv,
+                                      schaedigungstabelle, lebensdauer)
+    # Zwischenwerte auf dem Weg nach oben sind keine Umkehr
+    check("Umkehrpunkte: Zwischenwerte fallen weg",
+          float(umkehrpunkte([0, 40, 100, 20, 60]) == [0.0, 100.0, 20.0, 60.0]), 1.0, 0)
+    # Lehrbuchbeispiel ASTM E1049-85, Bild 6: 3:0.5, 4:1.5, 6:0.5, 8:1.0, 9:0.5
+    k = dict(kollektiv(rainflow([-2, 1, -3, 5, -1, 3, -4, 4, -2])))
+    soll = {9.0: 0.5, 8.0: 1.0, 6.0: 0.5, 4.0: 1.5, 3.0: 0.5}
+    check("Rainflow trifft das Lehrbuchbeispiel", float(k == soll), 1.0, 0)
+    check("Rainflow: Summe der Spiele = (Umkehrungen - 1)/2",
+          sum(k.values()), (9 - 1) / 2, 1e-12)
+    # Beginnt und endet der Verlauf am groessten Wert, sind beide Verfahren gleich
+    zu = [5, -1, 3, -4, 4, -2, 1, -3, 5]
+    a = kollektiv(rainflow(zu))
+    b = kollektiv(reservoir(zu))
+    check("Reservoir = Rainflow beim geschlossenen Verlauf", float(a == b), 1.0, 0)
+    check("und nur ganze Spiele", float(all(n == 1.0 for _h, n in b)), 1.0, 0)
+    # Ein einzelner Ausschlag ist ein Spiel - nicht zwei
+    check("ein Ausschlag = ein Spiel", float(kollektiv(reservoir([0, 10, 0])) == [(10.0, 1.0)]),
+          1.0, 0)
+    # Klassieren rafft auf die obere Stufengrenze (sichere Seite)
+    kl = kollektiv([(9.0, 1), (5.0, 1), (1.0, 1)], klassen=3)
+    check("Klassierung auf die obere Grenze", float(kl == [(9.0, 1.0), (6.0, 1.0), (3.0, 1.0)]),
+          1.0, 0)
+    # Schadenstabelle: die laufende Summe endet bei D
+    tab = schaedigungstabelle([(100e6, 1e6), (50e6, 5e6), (10e6, 1e9)], 71e6, 1.0)
+    check("Schadenstabelle: Stufen absteigend",
+          float([z[0] for z in tab] == sorted([z[0] for z in tab], reverse=True)), 1.0, 0)
+    check("Schadenstabelle: laufende Summe = Miner-Summe",
+          tab[-1][4], damage([(100e6, 1e6), (50e6, 5e6), (10e6, 1e9)], 71e6, 1.0), 1e-12)
+    check("Stufe unter dem Schwellenwert steht drin, schaedigt aber nicht",
+          tab[-1][3], 0.0, 1e-12)
+    check("Lebensdauer = Bezugszeit / D", lebensdauer(0.25, 100.0), 400.0, 1e-12)
+    check("D = 0 heisst rechnerisch kein Ende",
+          float(np.isinf(lebensdauer(0.0, 100.0))), 1.0, 0)
+
+
+def test_schadensakkumulation():
+    """Die Schaedigung gehoert an den Ort - und ein Verlauf traegt mehr Spiele
+    als seine beiden Aussenwerte.
+
+    Einfeldtraeger IPE 300, L = 6 m, Kerbfall 71. Zwei Ermuedungslasten
+    belasten **verschiedene** Stellen: einmal Gleichlast (groesstes Moment in
+    Feldmitte), einmal eine Einzellast im Viertelspunkt. Wer die groessten
+    Schwingbreiten beider Lasten addiert, addiert zwei verschiedene Punkte.
+    """
+    from statik3d.ec3.fatigue import sn_life as _N
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_section(make_section("IPE 300"))
+    ids = mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 0), (6, 0, 0), 8)
+    m.fix(ids[0], [0, 1, 2, 3]); m.fix(ids[-1], [1, 2, 3])
+    m.case().category = "G"
+    for e in range(8):
+        m.load_beam(e, qz=-10000.0)           # LF1: Gleichlast
+    m.add_load_case("LF2", "Q")
+    m.load_node(ids[2], Fz=-60000.0)          # LF2: Einzellast im Viertelspunkt
+    m.add_member("Traeger", list(range(8)), detail_category=71e6)
+    m.add_fatigue_load("Feld", "LF1", None, 1e6)
+    m.add_fatigue_load("Viertel", "LF2", None, 1e6)
+    an = solver.solve_all(m, design=False, fatigue=True)
+    fm = an.fatigue.members["Traeger"]
+    # Von Hand: die Schaedigung am massgebenden Ort aus seinem eigenen Kollektiv
+    hand = sum(n / _N(h, 71e6, fm.gamma_Mf) for h, n in fm.kollektiv
+               if np.isfinite(_N(h, 71e6, fm.gamma_Mf)))
+    check("Schaedigung = Miner-Summe des Kollektivs am massgebenden Ort", fm.D, hand, 1e-12)
+    # Die naive Summe der Groesstwerte beider Lasten liegt darueber - sie
+    # gehoert zu zwei verschiedenen Punkten und tritt nirgends auf.
+    naiv = sum(r[1] / _N(r[0], 71e6, fm.gamma_Mf) for r in fm.ranges
+               if np.isfinite(_N(r[0], 71e6, fm.gamma_Mf)))
+    check("die Summe der Groesstwerte ueber verschiedene Orte ist groesser",
+          float(naiv > fm.D * 1.02), 1.0, 0)
+    check("das Kollektiv nennt den Ort", float(0.0 <= fm.x_governing <= 6.0), 1.0, 0)
+    check("und fuehrt beide Lasten", float(len(fm.kollektiv) == 2), 1.0, 0)
+
+    # Derselbe Traeger als **Verlauf**: 0 -> voll -> teilweise entlastet ->
+    # voll -> 0. Eine Ueberfahrt, die zwischendurch abhebt und wieder
+    # aufsetzt. Das traegt ein grosses Spiel (0 -> voll) **und** ein kleineres
+    # (voll -> teilweise) - genau die Zwischenstufe, die zwei Zustaende nicht
+    # sehen koennen.
+    m2 = Model()
+    m2.add_material(Material.steel("S235"))
+    m2.add_section(make_section("IPE 300"))
+    ids2 = mesher.line_of_beams(m2, "S235", "IPE 300", (0, 0, 0), (6, 0, 0), 8)
+    m2.fix(ids2[0], [0, 1, 2, 3]); m2.fix(ids2[-1], [1, 2, 3])
+    m2.case().category = "G"
+    for e in range(8):
+        m2.load_beam(e, qz=-10000.0)
+    m2.add_load_case("LF2", "Q")
+    for e in range(8):
+        m2.load_beam(e, qz=-10000.0)
+    m2.load_node(ids2[4], Fz=-40000.0)
+    m2.add_load_case("LF0", "Q")              # Nullzustand
+    m2.add_member("Traeger", list(range(8)), detail_category=71e6)
+    fl = m2.add_fatigue_load("Überfahrt", "LF0", None, 0.0)
+    fl.folge = ["LF0", "LF2", "LF1", "LF2", "LF0"]
+    fl.wiederholungen = 1e6
+    an2 = solver.solve_all(m2, design=False, fatigue=True)
+    f2 = an2.fatigue.members["Traeger"]
+    check("der Verlauf liefert zwei Stufen, nicht eine",
+          float(len(f2.kollektiv) == 2), 1.0, 0)
+    check("die groesste Stufe ist der volle Ausschlag 0 -> LF2",
+          f2.kollektiv[0][0], f2.dsig_max, 1e-12)
+    check("und sie kommt genau einmal je Ueberfahrt vor",
+          f2.kollektiv[0][1], 1e6, 1e-6)
+    check("die kleinere Stufe traegt zur Schaedigung bei",
+          float(f2.D > damage([(f2.kollektiv[0][0], f2.kollektiv[0][1])], 71e6, f2.gamma_Mf)),
+          1.0, 0)
+    check("und sie ist der Sprung von voll auf teilweise entlastet",
+          float(0 < f2.kollektiv[1][0] < f2.kollektiv[0][0]), 1.0, 0)
+    # Reservoir statt Rainflow: derselbe Verlauf, dasselbe Ergebnis (er ist
+    # geschlossen und beginnt am Nullzustand)
+    fl.zaehlung = "reservoir"
+    an3 = solver.solve_all(m2, design=False, fatigue=True)
+    check("Reservoir liefert hier dieselbe Schaedigung",
+          an3.fatigue.members["Traeger"].D, f2.D, 1e-9)
+
+    # Zwei Zustaende allein saehen die Zwischenstufe nicht
+    m2.fatigue_loads.clear()
+    m2.add_fatigue_load("nur zwei Zustände", "LF2", "LF0", 1e6)
+    an_zwei = solver.solve_all(m2, design=False, fatigue=True)
+    fz = an_zwei.fatigue.members["Traeger"]
+    check("zwei Zustaende sehen nur eine Stufe", float(len(fz.kollektiv) == 1), 1.0, 0)
+    check("und unterschaetzen die Schaedigung des Verlaufs", float(fz.D < f2.D), 1.0, 0)
+
+    # Die Uebersichtszeile je Ermuedungslast nennt **ihre** groesste Stufe.
+    # Steht davor eine Last mit groesserem Ausschlag, darf deren Zahl nicht in
+    # die Zeile des Verlaufs rutschen - sonst laese der Bericht die Ueberfahrt
+    # schaerfer, als sie ist.
+    m2.fatigue_loads.clear()
+    m2.add_fatigue_load("Voll", "LF2", "LF0", 1e3)     # grosser Ausschlag zuerst
+    fl2 = m2.add_fatigue_load("Überfahrt", "LF0", None, 0.0)
+    fl2.folge = ["LF0", "LF1", "LF0"]                  # kleinerer Ausschlag
+    fl2.wiederholungen = 1e3
+    f4 = solver.solve_all(m2, design=False, fatigue=True).fatigue.members["Traeger"]
+    zeile = {r[2]: r for r in f4.ranges}
+    check("die Zeile des Verlaufs nennt nicht die Schwingbreite der Last davor",
+          float(zeile["Überfahrt"][0] < zeile["Voll"][0]), 1.0, 0)
+    check("sie zaehlt ein Spiel je Ueberfahrt", zeile["Überfahrt"][1], 1e3, 1e-6)
+    check("und sie nennt eine Stelle am Stab",
+          float(0.0 <= zeile["Überfahrt"][3] <= 6.0), 1.0, 0)
+    check("auch der Schub bekommt vom Verlauf eine Zeile",
+          float(len(f4.ranges_shear) == 2), 1.0, 0)
+
+
 def test_design_driver():
     """Einfeldtraeger IPE 300 S235, L = 6 m, q = 10 kN/m (GZT-Kombi 1.0):
     M = 45 kNm -> Querschnitt 0.305; Biegedrillknicken massgebend (Mb,Rd < Mc,Rd)."""
@@ -230,6 +377,8 @@ def main():
     test_ltb()
     test_interaction()
     test_fatigue()
+    test_zaehlverfahren()
+    test_schadensakkumulation()
     test_design_driver()
     test_frame_parallel_design()
     nok = sum(1 for r in RESULTS if r[4])

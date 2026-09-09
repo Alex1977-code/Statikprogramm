@@ -371,22 +371,53 @@ class AutoCombinationDialog(QtWidgets.QDialog):
 
 
 class FatigueLoadDialog(QtWidgets.QDialog):
+    """Eine Ermuedungsbeanspruchung - auf zwei Wegen zu beschreiben.
+
+    **Zwei Zustaende**: der Lastwechsel pendelt zwischen oben und unten.
+    **Ein Verlauf**: eine Folge von Lastfaellen (Ueberfahrt, Oeffnungsvorgang);
+    daraus zaehlt Statik3D das Kollektiv selbst. Der zweite Weg ist der
+    ehrlichere, sobald mehr als zwei Zustaende vorkommen - die
+    Zwischenstufen tragen eigene Spiele bei, und die zaehlen mit.
+    """
+
     def __init__(self, parent=None, model: Model = None):
         super().__init__(parent)
-        self.setWindowTitle("Ermüdungslast (Lastwechsel)")
+        self.setWindowTitle("Ermüdungslast (Lastwechsel oder Verlauf)")
         self.name = QtWidgets.QLineEdit(f"E{len(model.fatigue_loads)+1}")
         cases = _namen(model.load_cases) + _namen(model.combinations)
+        self.art = QtWidgets.QComboBox()
+        self.art.addItems(["Zwei Zustände", "Verlauf (Folge von Lastfällen)"])
         self.cmax = QtWidgets.QComboBox(); self.cmax.addItems(cases)
         self.cmin = QtWidgets.QComboBox(); self.cmin.addItems(["(Nullzustand)"] + cases)
         self.cycles = NumEdit(2e6, 100)
+        self.folge = QtWidgets.QLineEdit()
+        self.folge.setPlaceholderText("Lastfälle in zeitlicher Reihenfolge, z. B. LF0, LF1, LF2, LF1, LF0")
+        self.wdh = NumEdit(1e6, 100)
+        self.zaehlung = QtWidgets.QComboBox(); self.zaehlung.addItems(["rainflow", "reservoir"])
         self.factor = NumEdit(1.0, 80)
         f = QtWidgets.QFormLayout(self)
         f.addRow("Name", self.name)
+        f.addRow("Art", self.art)
         f.addRow("Oberer Zustand (Lastfall/Kombination)", self.cmax)
         f.addRow("Unterer Zustand", self.cmin)
         f.addRow("Lastspiele n", self.cycles)
+        f.addRow("Verlauf (Lastfälle, durch Komma)", self.folge)
+        f.addRow("Wiederholungen des Verlaufs", self.wdh)
+        f.addRow("Zählverfahren (EN 1993-1-9, Anhang A)", self.zaehlung)
         f.addRow("Faktor (z.B. dynamischer Beiwert)", self.factor)
         f.addRow(buttons(self))
+        self.art.currentIndexChanged.connect(self._umschalten)
+        self._umschalten()
+
+    def _umschalten(self):
+        verlauf = self.art.currentIndex() == 1
+        for w in (self.cmax, self.cmin, self.cycles):
+            w.setEnabled(not verlauf)
+        for w in (self.folge, self.wdh, self.zaehlung):
+            w.setEnabled(verlauf)
+
+    def folge_namen(self) -> list:
+        return [t.strip() for t in str(self.folge.text() or "").split(",") if t.strip()]
 
     def values(self):
         cmin = self.cmin.currentText()
