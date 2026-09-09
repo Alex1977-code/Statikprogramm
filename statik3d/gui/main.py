@@ -4361,7 +4361,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 zusatz = [("Lasten in der Tabelle", lambda n_=name: self._lasten_tabelle(n_))]
         elif art in ("kombinationen", "kombination"):
             from .dialogs import THEORIEN
-            typen = ["ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "USER"]
+            # FAT (Ermuedung) gehoert dazu: der Loeser bildet dafuer eine eigene
+            # Umhuellende, und die Querschnittsnachweise im GZT lassen sie aus.
+            typen = ["ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "FAT", "USER"]
             if not eintrag:
                 felder = [F("anzahl", "Anzahl", "info", str(len(m.combinations))),
                           F("spanne", "Namen", "info", self._spanne(m.combinations)),
@@ -4384,6 +4386,11 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("faktoren", "Faktoren (Lastfall: Faktor, …)", "text", fak, breite=220,
                             hinweis="z. B. „LF1: 1,35, Wind: 1,5“ - nur Lastfälle derselben Situation"),
                           F("formel", "Formel", "info", c.formula() if c else "–")]
+                # Die Bemessungssituation aus der Quelldatei ist eine Angabe,
+                # keine Einstellung: sie sagt, wofuer die Kombination da ist.
+                if c is not None and getattr(c, "bemessungssituation", ""):
+                    felder.insert(3, F("bemessung", "Bemessungssituation", "info",
+                                       c.bemessungssituation))
                 titel = f"Kombination {name}"
         elif art in ("werkstoffe", "werkstoff"):
             if not eintrag:

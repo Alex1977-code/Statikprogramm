@@ -138,7 +138,9 @@ CREATE TABLE LoadCase (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
                    impl_id bigint, impl_table TEXT);
 CREATE TABLE LoadCaseImplStatic (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
                    parent_id bigint, actionCategoryId INTEGER, selfWeightActive boolean,
-                   selfWeightFactors_x REAL, selfWeightFactors_y REAL, selfWeightFactors_z REAL);
+                   selfWeightFactors_x REAL, selfWeightFactors_y REAL, selfWeightFactors_z REAL,
+                   isStructureModificationEnabled boolean,
+                   structureModification_id bigint);
 CREATE TABLE SurfaceImplPlane (id INTEGER PRIMARY KEY, version INTEGER, parent_id bigint,
                    stiffness_id bigint, stiffness_table TEXT,
                    isDeactivatedForCalculation boolean);
@@ -230,7 +232,44 @@ CREATE TABLE MemberTypeLoadImplInitialPrestress_assignedTo (id INTEGER,
 CREATE TABLE ResultCombination (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
                    impl_id bigint, impl_table TEXT);
 CREATE TABLE ResultCombinationImpl (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
-                   parent_id bigint, designSituationType INTEGER);
+                   parent_id bigint, designSituationType INTEGER,
+                   designSituation_id bigint);
+CREATE TABLE DesignSituation (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE DesignSituationImpl (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
+                   parent_id bigint, designSituationTypeId INTEGER, isActive boolean);
+CREATE TABLE StructureModification (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE StructureModificationImpl (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
+                   parent_id bigint,
+                   deactivateMembersEnabled boolean,
+                   deactivateObjectSelectionForMembers_id bigint,
+                   deactivateObjectSelectionForMembers_table TEXT,
+                   deactivateSupportOnNodesEnabled boolean,
+                   deactivateObjectSelectionForSupportOnNodes_id bigint,
+                   deactivateObjectSelectionForSupportOnNodes_table TEXT);
+CREATE TABLE StructureModificationImpl_modifyStiffnessEnabled_values (id INTEGER,
+                   container_order INTEGER, value INTEGER);
+CREATE TABLE ObjectSelection (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE ObjectSelectionImpl (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
+                   parent_id bigint, parent_table TEXT);
+CREATE TABLE ObjectSelectionImpl_objectSelectors_keys (id INTEGER,
+                   container_order INTEGER, value TEXT);
+CREATE TABLE ObjectSelectionImpl_objectSelectors_values (id INTEGER,
+                   container_order INTEGER, conditions_id bigint, typeActive INTEGER);
+CREATE TABLE ObjectSelectionImpl_TypeSelector_Conditions_conditions (id INTEGER,
+                   container_order INTEGER, condition INTEGER, operator INTEGER,
+                   value_id bigint, value_table TEXT,
+                   hasLeftParenthesis boolean, hasRightParenthesis boolean);
+CREATE TABLE ObjectListConditionValue (id INTEGER PRIMARY KEY, version INTEGER,
+                   attributeStringId TEXT, objects_packed TEXT);
+CREATE TABLE LineHinge (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
+                   impl_id bigint, impl_table TEXT);
+CREATE TABLE LineHingeImpl (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
+                   parent_id bigint, springConstants_id bigint);
+CREATE TABLE SurfaceImplPlane_surfaceLineHingeAssignments (id INTEGER,
+                   container_order INTEGER, line_id bigint, lineHinge_id bigint);
 CREATE TABLE ResultCombinationImpl_items (id INTEGER, container_order INTEGER,
                    modelObject_id bigint, modelObject_table TEXT,
                    modelObjectFactor REAL, groupFactor REAL,
@@ -276,7 +315,8 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
              surface_loads=(), load_cases=(),
              free_loads=0, openings=(), nodal_loads=(), prestress=(),
              combinations=(), boundary_lines=None, stiffness_reverse=False,
-             rigid_surfaces=()):
+             rigid_surfaces=(), strukturmodifikation=None, liniengelenk=None,
+             bemessungssituationen=()):
     """Modelldatenbank im RFEM-6-Schema erzeugen.
 
     ``surfaces``   Eintrag ``[Knoten...]``           -> Flaeche ohne Dicke
@@ -487,10 +527,13 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
                 con.execute("INSERT INTO SurfaceReleaseImpl_releaseTypeForObjects"
                             "_values VALUES (?,?,?)", (i, j, tid))
     faelle = load_cases or [("Eigengewicht", 1, 1.0)]
-    for i, (name, cat, gz) in enumerate(faelle, 1):
+    for i, eintrag in enumerate(faelle, 1):
+        # Vier Werte: der vierte schaltet die Strukturmodifikation ein
+        name, cat, gz = eintrag[:3]
+        mod = int(eintrag[3]) if len(eintrag) > 3 else 0
         con.execute("INSERT INTO LoadCase VALUES (?,1,?,?,'LoadCaseImplStatic')", (i, i, i))
-        con.execute("INSERT INTO LoadCaseImplStatic VALUES (?,1,?,?,?,?,0,0,?)",
-                    (i, name, i, cat, 1 if gz else 0, gz))
+        con.execute("INSERT INTO LoadCaseImplStatic VALUES (?,1,?,?,?,?,0,0,?,?,?)",
+                    (i, name, i, cat, 1 if gz else 0, gz, 1 if mod else 0, mod or None))
     for i, (lc, srf, p, richtung) in enumerate(surface_loads, 1):
         con.execute("INSERT INTO SurfaceLoad VALUES (?,1,?,'LoadCase',?,?,"
                     "'SurfaceTypeLoadImplForce')", (i, lc, i, i))
@@ -521,14 +564,56 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
         for j, n in enumerate(staebe):
             con.execute("INSERT INTO MemberTypeLoadImplInitialPrestress_assignedTo "
                         "VALUES (?,?,?)", (i, j, n))
-    for i, (name, situation, faktoren) in enumerate(combinations, 1):
+    for i, (name, sname, tid) in enumerate(bemessungssituationen, 1):
+        con.execute("INSERT INTO DesignSituation VALUES (?,1,?,?,'DesignSituationImpl')",
+                    (i, i, i))
+        con.execute("INSERT INTO DesignSituationImpl VALUES (?,1,?,?,?,1)",
+                    (i, sname, i, tid))
+    for i, eintrag in enumerate(combinations, 1):
+        # Vier Werte: der vierte verweist auf eine Bemessungssituation
+        name, situation, faktoren = eintrag[:3]
+        ds = int(eintrag[3]) if len(eintrag) > 3 else None
         con.execute("INSERT INTO ResultCombination VALUES (?,1,?,?,"
                     "'ResultCombinationImpl')", (i, i, i))
-        con.execute("INSERT INTO ResultCombinationImpl VALUES (?,1,?,?,?)",
-                    (i, name, i, situation))
+        con.execute("INSERT INTO ResultCombinationImpl VALUES (?,1,?,?,?,?)",
+                    (i, name, i, situation, ds))
         for j, (lcid, f) in enumerate(faktoren.items()):
             con.execute("INSERT INTO ResultCombinationImpl_items VALUES "
                         "(?,?,?,'LoadCase',?,1.0,0,0,0,0)", (i, j, lcid, f))
+    if strukturmodifikation:
+        # (Name, [Stabnummern], [Knotennummern]) - je eine Objektauswahl
+        smname, staebe, knoten = strukturmodifikation
+        for sel, art, nummern, attribut in ((1, "Member", staebe, "id"),
+                                            (2, "Nodal_Support", knoten, "support_on_object")):
+            con.execute("INSERT INTO ObjectSelection VALUES (?,1,?,?,'ObjectSelectionImpl')",
+                        (sel, sel, sel))
+            con.execute("INSERT INTO ObjectSelectionImpl VALUES (?,1,NULL,?,'ObjectSelection')",
+                        (sel, sel))
+            # Der Waehler steht an derselben Stelle wie sein Name in den keys
+            for k, name_ in enumerate(("Node", "Line", art)):
+                con.execute("INSERT INTO ObjectSelectionImpl_objectSelectors_keys "
+                            "VALUES (?,?,?)", (sel, k, name_))
+                con.execute("INSERT INTO ObjectSelectionImpl_objectSelectors_values "
+                            "VALUES (?,?,?,?)", (sel, k, 10 * sel + k, 1 if k == 2 else 0))
+            con.execute("INSERT INTO ObjectSelectionImpl_TypeSelector_Conditions_conditions "
+                        "VALUES (?,0,0,1,?,'ObjectListConditionValue',0,0)",
+                        (10 * sel + 2, sel))
+            con.execute("INSERT INTO ObjectListConditionValue VALUES (?,0,?,?)",
+                        (sel, attribut, ",".join(str(n) for n in nummern)))
+        con.execute("INSERT INTO StructureModification VALUES (1,1,1,1,"
+                    "'StructureModificationImpl')")
+        con.execute("INSERT INTO StructureModificationImpl VALUES "
+                    "(1,1,?,1,1,1,'ObjectSelection',1,2,'ObjectSelection')", (smname,))
+    if liniengelenk:
+        # (Federkonstanten, {SurfaceImplPlane-id: [Linien-id, ...]})
+        federn, zuordnung = liniengelenk
+        con.execute("INSERT INTO LineHinge VALUES (1,1,1,1,'LineHingeImpl')")
+        con.execute("INSERT INTO LineHingeImpl VALUES (1,1,NULL,1,900)")
+        _spring(con, 900, 1, "LineHingeImpl", federn)
+        for sid, linien in zuordnung.items():
+            for k, lid in enumerate(linien):
+                con.execute("INSERT INTO SurfaceImplPlane_surfaceLineHingeAssignments "
+                            "VALUES (?,?,?,1)", (sid, k, lid))
     con.commit()
     con.close()
 
@@ -1128,6 +1213,138 @@ def test_freigabetyp_je_objekt():
 # --------------------------------------------------------------------------
 # 4d) Lastfaelle mit Lasten
 # --------------------------------------------------------------------------
+def test_ausfallszenario_gelenk_und_bemessungssituation():
+    """Drei Angaben, die der Import bisher fallen liess.
+
+    * ``StructureModification`` - ein Ausfallszenario. Es schaltet genannte
+      Staebe und Knotenlager ab, und die Lastfaelle, die darauf verweisen,
+      rechnen mit diesem verkleinerten System. Im Drehlagermodell heisst es
+      „Ankerausfall" und betrifft 128 von 422 Lastfaellen.
+    * ``LineHinge`` - was eine Flaeche entlang einer Randlinie weitergibt.
+    * ``DesignSituation`` - wofuer eine Kombination da ist. Kennzahl 7505 ist
+      die Ermuedung; im Drehlagermodell tragen 50 der 52 Kombinationen sie.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "ausfall.rf6"),
+            nodes=[(0, 0, 0), (4, 0, 0), (0, 0, 3), (4, 0, 3),
+                   (0, 2, 0), (4, 2, 0)],
+            lines=[[1, 3], [2, 4], [3, 4], [1, 2], [2, 5], [5, 6], [6, 1]],
+            # drei Staebe; ausfallen soll der mittlere (Nutzernummer 2)
+            members=[(1, None, None), (2, None, None), (3, None, None)],
+            # Ein Lager „Fest“ an zwei Knoten - ausfallen soll genau eines
+            supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1, 2])],
+            # Eine starre Flaeche - genau die traegt im Drehlagermodell das Gelenk
+            surfaces=[([1, 2, 5, 6], 0.0)],
+            rigid_surfaces=(1,),
+            load_cases=[("Grundfall", 1, 1.0),
+                        ("Ankerausfall - Fall 1", 1, 0.0, 1),
+                        ("Ankerausfall - Fall 2", 1, 0.0, 1)],
+            bemessungssituationen=[("GZT", "GZT - staendig", 6193),
+                                   ("FAT", "GZT (FAT) - Ermuedung - Zeitpunkt 1", 7505)],
+            combinations=[("GZT 1", 0, {1: 1.35}, 1),
+                          ("Spannungsschwingbreiten", 0, {2: 1.0, 3: 1.0}, 2)],
+            strukturmodifikation=("Ankerausfall", [2], [2]),
+            liniengelenk=(("inf", "inf", "inf", 0.0, 0.0, 0.0), {1: [4, 6]}),
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+
+        # ---- 1) Ausfallszenario ---------------------------------------
+        check("Objektliste mit Bereichen aufgeloest",
+              R6.objektliste("288-290,293,304-307") ==
+              [288, 289, 290, 293, 304, 305, 306, 307],
+              str(R6.objektliste("288-290,293,304-307")))
+        check("Strukturmodifikation wird zur Stellung",
+              [st.name for st in m.stellungen] == ["Ankerausfall"],
+              str([st.name for st in m.stellungen]))
+        st = m.stellungen[0]
+        check("sie schaltet genau den genannten Stab ab",
+              st.staebe_aus == ["S2"], str(st.staebe_aus))
+        check("und genau ein Knotenlager - nicht alle mit demselben Namen",
+              len(st.lager_aus) == 1 and len(m.supports) == 2,
+              f"{st.lager_aus} von {len(m.supports)} Lagern")
+        check("die Situation zeigt auf die Stellung",
+              "Ankerausfall" in m.situationen
+              and m.situationen["Ankerausfall"].stellung == "Ankerausfall",
+              str(list(m.situationen)))
+        mit = [n for n, lc in m.load_cases.items() if lc.situation == "Ankerausfall"]
+        check("beide Lastfaelle mit Strukturmodifikation stehen darin",
+              sorted(mit) == ["LF2", "LF3"], str(sorted(mit)))
+        check("der Grundfall bleibt am vollen System",
+              not m.load_cases["LF1"].situation, m.load_cases["LF1"].situation or "(leer)")
+        check("das Protokoll nennt Stab, Lager und Anzahl",
+              "Ankerausfall" in txt and "1 Stäbe (S2)" in txt
+              and "2 davon in der Situation" in txt,
+              next((x for x in log if "Strukturmodifikation" in x), "-"))
+        # Das verkleinerte System steht wirklich: ein Lager und ein Stab weniger
+        from statik3d.situationen import situationsmodell
+        voll, _a0, _l0 = situationsmodell(m, "")
+        klein, aktiv, _l1 = situationsmodell(m, "Ankerausfall")
+        check("im Ausfall fehlt ein Lager",
+              len(klein.supports) == len(voll.supports) - 1,
+              f"{len(klein.supports)} statt {len(voll.supports)}")
+        check("und die Elemente des ausgefallenen Stabes wirken nicht",
+              aktiv is not None
+              and sorted(int(i) for i in np.where(~aktiv)[0])
+              == sorted(int(e) for e in m.members["S2"].elements),
+              str(sorted(int(i) for i in np.where(~aktiv)[0])) if aktiv is not None else "-")
+
+        # ---- 2) Liniengelenk ------------------------------------------
+        gelenkig = [fl for fl in m.flaechen.values() if fl.gelenklinien]
+        check("das Liniengelenk steht an der Flaeche", len(gelenkig) == 1,
+              str(len(gelenkig)))
+        check("mit beiden Randlinien", len(gelenkig[0].gelenklinien) == 2,
+              str(gelenkig[0].gelenklinien))
+        check("und seiner Wirkung im Klartext: Verschiebungen starr, Verdrehungen frei",
+              gelenkig[0].gelenkwirkung ==
+              "ux=starr, uy=starr, uz=starr, phix=frei, phiy=frei, phiz=frei",
+              gelenkig[0].gelenkwirkung)
+        check("das Protokoll vermerkt es", "Liniengelenke an 1 Flächen" in txt,
+              next((x for x in log if "Liniengelenke" in x), "-"))
+
+        # ---- 3) Bemessungssituationen ---------------------------------
+        k_fat = m.combinations["Spannungsschwingbreiten"]
+        k_gzt = m.combinations["GZT 1"]
+        check("die Ermuedungssituation macht aus der Kombination eine FAT-Kombination",
+              k_fat.typ == "FAT" and k_fat.is_fat and not k_fat.is_uls, k_fat.typ)
+        check("und ihr Name bleibt erhalten",
+              k_fat.bemessungssituation == "GZT (FAT) - Ermuedung - Zeitpunkt 1",
+              k_fat.bemessungssituation)
+        check("die andere bleibt GZT", k_gzt.typ == "ULS" and k_gzt.is_uls, k_gzt.typ)
+        check("das Protokoll zaehlt die Arten",
+              "1x FAT" in txt and "1x ULS" in txt,
+              next((x for x in log if "Kombinationen uebernommen" in x), "-"))
+        check("und sagt, dass daraus keine Ermuedungsbeanspruchung folgt",
+              "Ermuedungsbeanspruchungen" in txt and not m.fatigue_loads,
+              f"{len(m.fatigue_loads)} Ermuedungsbeanspruchungen")
+        check("unbekannte Kennzahlen werden genannt, nicht verschwiegen",
+              "unbekannter Kennzahl" in txt and "6193" in txt,
+              next((x for x in log if "unbekannter Kennzahl" in x), "-"))
+        # Eine Kombination gilt in der Situation ihrer Lastfaelle - sonst
+        # rechnete sie das verkleinerte System mit dem vollen zusammen.
+        check("die Kombination folgt ihren Lastfaellen in die Situation",
+              k_fat.situation == "Ankerausfall" and not k_gzt.situation,
+              f"{k_fat.situation!r} / {k_gzt.situation!r}")
+        check("und das Protokoll sagt es",
+              "Kombinationen gelten in der Situation" in txt,
+              next((x for x in log if "gelten in der Situation" in x), "-"))
+        # Die Umhuellende trennt Ermuedung von GZT
+        an = solver.solve_all(m, combinations=True, envelopes=True)
+        check("der Loeser bildet eine eigene Umhuellende „FAT“",
+              "FAT" in an.envelopes and "ULS" in an.envelopes,
+              str(sorted(an.envelopes)))
+        # Mischt eine Kombination zwei Situationen, wird das benannt
+        m.combinations["Gemischt"] = type(k_fat)("Gemischt", {"LF1": 1.0, "LF2": 1.0})
+        sits = {m.load_cases[k].situation for k in m.combinations["Gemischt"].factors}
+        check("zwei Situationen in einer Kombination sind zwei Tragwerke",
+              len(sits) == 2, str(sorted(sits)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_lastfaelle_und_lasten():
     tmp = tempfile.mkdtemp()
     try:
@@ -1535,6 +1752,7 @@ def main():
               test_volumenkoerper, test_stabtypen, test_kontaktbedingungen,
               test_freigabetyp_je_objekt,
               test_lastfaelle_und_lasten, test_lasten_und_kombinationen,
+              test_ausfallszenario_gelenk_und_bemessungssituation,
               test_dispatcher_und_hilfen,
               test_knoten_zusammenfuehren, test_boegen_und_kreisflaechen,
               test_steifigkeit_rueckzeiger, test_kein_stilles_verschmelzen):

@@ -944,10 +944,15 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     # ---- Knoten -------------------------------------------------------
     node_of: dict[int, int] = {}
     user_of: dict[int, int] = {}
+    #: RFEM-Nummer (userID) -> Knotenindex. Objektlisten (Strukturmodifikation)
+    #: nennen die **benutzersichtbare** Nummer, nicht den Datenbankschluessel.
+    node_user: dict[int, int] = {}
     coords = []
     for h, impl in db.impls("Node"):
         node_of[h["id"]] = len(coords)
         user_of[h["id"]] = h.get("userID")
+        if h.get("userID") is not None:
+            node_user[int(h["userID"])] = len(coords)
         coords.append((impl.get("coordinates_x") or 0.0,
                        impl.get("coordinates_y") or 0.0,
                        impl.get("coordinates_z") or 0.0))
@@ -982,6 +987,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     seccache: dict[int, tuple] = {}
     matcache: dict[int, str] = {}
     member_name: dict[int, str] = {}      # Member.id -> Name des Stabzugs
+    member_user: dict[int, str] = {}      # RFEM-Nummer (userID) -> Name des Stabzugs
     n_beams = 0
     typen: dict[str, int] = {}
     hinweise: dict[str, str] = {}
@@ -1015,6 +1021,8 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
             continue
         mem = m.add_member(C.unique_name(m.members, f"S{h.get('userID') or h['id']}"), elems)
         member_name[h["id"]] = mem.name
+        if h.get("userID") is not None:
+            member_user[int(h["userID"])] = mem.name
         if impl.get("isDeactivatedForCalculation"):
             C.say(log, f"  Stab {h.get('userID')} ist in RFEM deaktiviert - dennoch uebernommen.")
         for end, key in ((0, "memberHingeStart_id"), (1, "memberHingeEnd_id")):
@@ -1118,8 +1126,10 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
 
     solid_name = _solids(db, m, surf_nodes, log, matcache, surf_name)
     _surface_releases(db, m, log, nlmap, surf_name, solid_name)
+    _liniengelenke(db, m, log, line_name, surf_name)
+    strukturmod = _strukturmodifikationen(db, m, log, member_user, node_user)
     _load_cases(db, m, log, surf_els, node_of, member_name, surf_name,
-                line_name, solid_name)
+                line_name, solid_name, strukturmod)
     _diagnose(m, log)
 
 
@@ -1175,7 +1185,8 @@ ACTION_CATEGORY = {1: "G", 2: "G", 3: "Q", 11: "Q", 12: "Q", 13: "Q"}
 
 def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
                 node_of: dict = None, member_name: dict = None,
-                surf_name: dict = None, line_name: dict = None, solid_name: dict = None) -> None:
+                surf_name: dict = None, line_name: dict = None,
+                solid_name: dict = None, strukturmod: dict = None) -> None:
     """Lastfaelle mit Namen, Kategorie und Eigengewichtsfaktor uebernehmen.
 
     Die Lasten selbst (Vorspannung, Flaechenlasten, freie Lasten) haengen in
@@ -1184,6 +1195,8 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     """
     n = 0
     lc_name: dict[int, str] = {}
+    mit_mod: dict[str, int] = {}
+    ohne_mod = 0
     cases = db.impls("LoadCase")
     if cases:
         # Den leeren Standardlastfall vorab abmelden, damit LF1 aus RFEM
@@ -1201,10 +1214,24 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
         gz = impl.get("selfWeightFactors_z")
         if impl.get("selfWeightActive") and gz:
             lc.gravity = [0.0, 0.0, -9.81 * float(gz)]
+        # Rechnet der Lastfall mit einer Strukturmodifikation, gilt er in deren
+        # Situation - mit dem verkleinerten System, nicht mit dem vollen.
+        if impl.get("isStructureModificationEnabled"):
+            sit = (strukturmod or {}).get(impl.get("structureModification_id"))
+            if sit:
+                lc.situation = sit
+                mit_mod[sit] = mit_mod.get(sit, 0) + 1
+            else:
+                ohne_mod += 1
         n += 1
     if n:
         C.say(log, f"{n} Lastfaelle uebernommen (Namen, Einwirkungskategorie, "
                    "Eigengewichtsfaktor)")
+    for sit, k in sorted(mit_mod.items()):
+        C.say(log, f"  {k} davon in der Situation „{sit}“ (Strukturmodifikation)")
+    if ohne_mod:
+        C.warn(log, f"  {ohne_mod} Lastfaelle verweisen auf eine Strukturmodifikation, "
+                    "die nicht zu lesen war - sie rechnen mit dem vollen System.")
     _loads(db, m, lc_name, surf_els or {}, log, node_of, member_name, surf_name,
            line_name, solid_name)
     _combinations(db, m, lc_name, log)
@@ -2482,8 +2509,267 @@ def _freie_rechtecklasten(db: Db, m: Model, lc_name: dict, surf_name: dict,
                     "dazu (kein FreeRectangularLoadImpl).")
 
 
+# --------------------------------------------------------------------------
+# Objektlisten, Strukturmodifikationen, Liniengelenke
+# --------------------------------------------------------------------------
+def objektliste(text: str) -> list[int]:
+    """RFEMs gepackte Objektliste in Nummern aufloesen.
+
+    ``'288-290,293,304-307'`` -> ``[288, 289, 290, 293, 304, 305, 306, 307]``.
+    Die Nummern sind die **benutzersichtbaren** (``userID``), nicht die
+    Datenbankschluessel - so, wie sie in RFEM auf dem Bildschirm stehen.
+    """
+    out: list[int] = []
+    for teil in str(text or "").replace(";", ",").split(","):
+        teil = teil.strip()
+        if not teil:
+            continue
+        if "-" in teil[1:]:
+            a, _, b = teil.partition("-")
+            try:
+                von, bis = int(a), int(b)
+            except ValueError:
+                continue
+            if von <= bis:
+                out.extend(range(von, bis + 1))
+        else:
+            try:
+                out.append(int(teil))
+            except ValueError:
+                continue
+    return out
+
+
+def _auswahl(db: Db, sel_id: int) -> dict[str, list[int]]:
+    """``ObjectSelection`` -> {Objektart: [Nummern]} der **aktiven** Arten.
+
+    Eine Auswahl fuehrt fuer jede Objektart einen Waehler; nur die mit
+    ``typeActive`` zaehlen. Der Waehler zeigt auf Bedingungen, deren Wert die
+    gepackte Objektliste traegt.
+    """
+    out: dict[str, list[int]] = {}
+    if not sel_id:
+        return out
+    impl = None
+    for h in db.rows("ObjectSelection", "id=?", (sel_id,)):
+        impl = (db.by_id(h.get("impl_table") or "ObjectSelectionImpl") or {}).get(h.get("impl_id"))
+    if impl is None:
+        return out
+    arten = [r["value"] for r in
+             db.rows("ObjectSelectionImpl_objectSelectors_keys", "id=?", (impl["id"],))]
+    werte = db.rows("ObjectSelectionImpl_objectSelectors_values", "id=?", (impl["id"],))
+    bed = db.container_rows("ObjectSelectionImpl_TypeSelector_Conditions_conditions")
+    listen = db.by_id("ObjectListConditionValue")
+    for w in werte:
+        if not w.get("typeActive"):
+            continue
+        k = int(w.get("container_order") or 0)
+        art = arten[k] if 0 <= k < len(arten) else ""
+        nummern: list[int] = []
+        for c in bed.get(w.get("conditions_id"), []):
+            if (c.get("value_table") or "") != "ObjectListConditionValue":
+                continue
+            v = listen.get(c.get("value_id"))
+            if v is not None:
+                nummern.extend(objektliste(v.get("objects_packed")))
+        if art and nummern:
+            out.setdefault(art, []).extend(nummern)
+    return out
+
+
+def _strukturmodifikationen(db: Db, m: Model, log: list, member_user: dict,
+                            node_user: dict) -> dict:
+    """``StructureModification`` als Stellung und Situation uebernehmen.
+
+    Eine Strukturmodifikation ist ein **Ausfallszenario**: sie schaltet
+    genannte Staebe, Flaechen, Volumen und Lager ab und rechnet die Lastfaelle,
+    die auf sie verweisen, mit diesem verkleinerten System. Im Drehlagermodell
+    heisst die eine „Ankerausfall" und nimmt Stab 14 und das Knotenlager an
+    Knoten 775 heraus; 128 der 422 Lastfaelle verweisen darauf. Ohne sie
+    rechnen diese 128 Faelle mit einem Anker und einem Lager, die in der
+    Quelldatei ausgefallen sein sollen.
+
+    Umgesetzt wird sie als **Stellung** (unbewegt - sie verschiebt nichts, sie
+    schaltet nur ab) und einer **Situation**, die auf sie zeigt. Rueckgabe
+    {StructureModification.id: Situationsname}.
+    """
+    from ..bridges.positions import Stellung
+    from ..model import Situation
+    out: dict[int, str] = {}
+    if not db.count("StructureModification"):
+        return out
+    # Lagerindex je Knotennummer: das Lager sitzt am Knoten, nicht am Namen -
+    # „Fest" traegt 16 Knoten, ausfallen soll genau einer.
+    lager_am_knoten: dict[int, list[int]] = {}
+    for i, sup in enumerate(m.supports):
+        lager_am_knoten.setdefault(int(sup.node), []).append(i)
+    for h, impl in db.impls("StructureModification"):
+        name = (impl.get("name") or "").strip() or f"Strukturmodifikation {h.get('userID') or h['id']}"
+        staebe: list[str] = []
+        lager: list[str] = []
+        flaechen: list[str] = []
+        koerper: list[str] = []
+        offen: list[str] = []
+        if impl.get("deactivateMembersEnabled"):
+            wahl = _auswahl(db, impl.get("deactivateObjectSelectionForMembers_id"))
+            for nr in wahl.get("Member", []):
+                nm = member_user.get(int(nr))
+                (staebe if nm else offen).append(nm or f"Stab {nr}")
+        if impl.get("deactivateSupportOnNodesEnabled"):
+            wahl = _auswahl(db, impl.get("deactivateObjectSelectionForSupportOnNodes_id"))
+            for nr in wahl.get("Nodal_Support", []) + wahl.get("Node", []):
+                knoten = node_user.get(int(nr))
+                idx = lager_am_knoten.get(knoten, []) if knoten is not None else []
+                if idx:
+                    lager.extend(str(i) for i in idx)
+                else:
+                    offen.append(f"Knotenlager an Knoten {nr}")
+        for schalter, wahlfeld, art, ziel, ablage in (
+                ("deactivateSurfacesEnabled", "deactivateObjectSelectionForSurfaces_id",
+                 "Surface", flaechen, m.flaechen),
+                ("deactivateSolidsEnabled", "deactivateObjectSelectionForSolids_id",
+                 "Solid", koerper, m.koerper)):
+            if not impl.get(schalter):
+                continue
+            wahl = _auswahl(db, impl.get(wahlfeld))
+            for nr in wahl.get(art, []):
+                nm = f"{'F' if art == 'Surface' else 'V'}{nr}"
+                (ziel if nm in ablage else offen).append(nm)
+        # Steifigkeitsfaktoren kann Statik3D nicht abbilden - das gehoert gesagt,
+        # nicht verschwiegen. Im Drehlagermodell stehen sie alle auf 0.
+        faktoren = [r for r in db.rows("StructureModificationImpl_modifyStiffnessEnabled_values",
+                                       "id=?", (impl["id"],)) if r.get("value")]
+        if not (staebe or lager or flaechen or koerper or faktoren):
+            C.say(log, f"  Strukturmodifikation „{name}“ schaltet nichts ab - uebergangen.")
+            continue
+        st = Stellung(name, 0.0, f"Strukturmodifikation aus RFEM: {name}",
+                      lager_aus=lager, staebe_aus=staebe,
+                      flaechen_aus=flaechen, koerper_aus=koerper)
+        m.stellungen.append(st)
+        m.situationen[name] = Situation(name, name, [],
+                                        f"Ausfallszenario aus RFEM: {name}")
+        out[h["id"]] = name
+        teile = []
+        if staebe:
+            teile.append(f"{len(staebe)} Stäbe ({', '.join(staebe[:4])})")
+        if lager:
+            teile.append(f"{len(lager)} Knotenlager")
+        if flaechen:
+            teile.append(f"{len(flaechen)} Flächen")
+        if koerper:
+            teile.append(f"{len(koerper)} Volumen")
+        C.say(log, f"Strukturmodifikation „{name}“ als Situation übernommen: "
+                   + (", ".join(teile) or "nichts") + " ohne Wirkung")
+        if offen:
+            C.warn(log, f"  „{name}“: nicht zuzuordnen - " + ", ".join(offen[:6]))
+        if faktoren:
+            C.warn(log, f"  „{name}“ ändert außerdem {len(faktoren)} Steifigkeiten "
+                        "(Faktoren auf E, G, Querschnitts- und Flächensteifigkeit). "
+                        "Das bildet Statik3D nicht ab - gerechnet wird mit den "
+                        "vollen Steifigkeiten.")
+    return out
+
+
+def _liniengelenke(db: Db, m: Model, log: list, line_name: dict,
+                   surf_name: dict) -> int:
+    """``LineHinge`` und seine Zuweisungen an den Flaechenrand lesen.
+
+    Ein Liniengelenk sagt, was eine Flaeche entlang einer ihrer Randlinien an
+    die Nachbarschaft weitergibt. Im Drehlagermodell traegt das eine Gelenk
+    ``ux = uy = uz = starr`` und **keine** Drehfeder: die Verschiebungen gehen
+    durch, die Verdrehungen nicht. Zugewiesen ist es 128-mal, je zweimal an
+    genau die 64 Flaechen, die auch ``SurfaceStiffnessRigid`` tragen - die
+    Kreisscheiben, ueber die die Zugstaebe an den Volumen haengen.
+
+    Uebernommen wird es als **Angabe an der Flaeche** (``Flaeche.gelenklinien``
+    und ``Flaeche.gelenkwirkung``). Die Kopplung selbst koppelt schon nur die
+    drei Verschiebungen - eine Verdrehung gibt sie ohnehin nicht weiter, und
+    die Volumenelemente darunter haben gar keine Verdrehungsfreiheitsgrade.
+    Die Angabe steht damit im Modell und im Bericht, ohne die Rechnung
+    stillschweigend zu aendern.
+    """
+    if not db.count("LineHinge"):
+        return 0
+    wirkung: dict[int, str] = {}
+    for h, impl in db.impls("LineHinge"):
+        sc = _spring_row(db, h.get("impl_table") or "LineHingeImpl", impl["id"])
+        teile = []
+        for feld, marke in (("springConstantAlongX", "ux"), ("springConstantAlongY", "uy"),
+                            ("springConstantAlongZ", "uz"),
+                            ("springConstantAroundX", "phix"), ("springConstantAroundY", "phiy"),
+                            ("springConstantAroundZ", "phiz")):
+            art, wert = _stiffness((sc or {}).get(feld))
+            teile.append(f"{marke}={'starr' if art == 'rigid' else ('frei' if art == 'free' else f'{wert:g}')}")
+        wirkung[h["id"]] = ", ".join(teile)
+    # Die Zuweisungstabelle haengt an der Umsetzungsart der Flaeche; im
+    # Drehlagermodell ist es SurfaceImplPlane. Gesucht wird darum nach dem
+    # Namensmuster, nicht nach einer festen Tabelle - eine andere Datei kann
+    # die Gelenke an einer anderen Flaechenart fuehren.
+    zuweisungen: list = []
+    flaeche_von_impl: dict[str, dict] = {}
+    for tbl in sorted(db.tables):
+        if not tbl.endswith("_surfaceLineHingeAssignments"):
+            continue
+        impl_tbl = tbl[:-len("_surfaceLineHingeAssignments")]
+        if impl_tbl not in flaeche_von_impl:
+            flaeche_von_impl[impl_tbl] = {
+                hh.get("impl_id"): hh["id"] for hh in db.rows("Surface")
+                if hh.get("impl_table") == impl_tbl}
+        for z in db.rows(tbl):
+            zuweisungen.append((impl_tbl, z))
+    if not zuweisungen:
+        return 0
+    n = 0
+    betroffen: set = set()
+    for impl_tbl, z in zuweisungen:
+        sid = flaeche_von_impl.get(impl_tbl, {}).get(z.get("id"))
+        nm = surf_name.get(sid)
+        f = m.flaechen.get(nm) if nm else None
+        if f is None:
+            continue
+        ln = line_name.get(z.get("line_id"))
+        if ln and ln not in f.gelenklinien:
+            f.gelenklinien.append(ln)
+        f.gelenkwirkung = wirkung.get(z.get("lineHinge_id"), "")
+        betroffen.add(nm)
+        n += 1
+    if n:
+        art = sorted({m.flaechen[nm].gelenkwirkung for nm in betroffen})
+        C.say(log, f"{n} Liniengelenke an {len(betroffen)} Flächen vermerkt "
+                   f"({'; '.join(a for a in art if a)})")
+        starr = [nm for nm in betroffen if (m.flaechen[nm].steifigkeit or "") == "starr"]
+        if starr:
+            C.say(log, f"  davon {len(starr)} an starren Flächen: deren Kopplung gibt "
+                       "ohnehin nur die drei Verschiebungen weiter, und die "
+                       "Volumenelemente darunter haben keine Verdrehungsfreiheitsgrade "
+                       "- die Freigabe der Verdrehungen ändert dort nichts.")
+    return n
+
+
+def _bemessungssituationen(db: Db) -> dict:
+    """``DesignSituation`` -> {id: (Name, Kombinationsart)}.
+
+    Der Typ steht als Kennzahl in ``designSituationTypeId``; ``SITUATION_ART``
+    bildet die bekannten ab. Der Name ist der, den der Aufsteller vergeben hat
+    („GZT (FAT) - Ermuedung - Drehlager Ost - ...").
+    """
+    out: dict[int, tuple] = {}
+    for h, impl in db.impls("DesignSituation"):
+        tid = int(impl.get("designSituationTypeId") or 0)
+        out[h["id"]] = ((impl.get("name") or "").strip(),
+                        SITUATION_ART.get(tid, ""), tid)
+    return out
+
+
 #: Kennzahl der Bemessungssituation -> Kombinationsart in Statik3D
 SITUATION_TYP = {0: "ULS", 1: "SLS_CH", 2: "SLS_FR", 3: "SLS_QP", 4: "ACC", 5: "EQU"}
+
+#: ``DesignSituationImpl.designSituationTypeId`` -> Kombinationsart. Die Kennzahlen
+#: stammen aus dem Drehlagermodell; 7505 ist dort 50-mal vergeben und traegt in
+#: jedem Namen „GZT (FAT) - Ermuedung".
+SITUATION_ART = {
+    7505: "FAT",        # GZT (FAT) - Ermuedung
+}
 
 
 def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
@@ -2499,6 +2785,9 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
     from ..model import Combination
     n = 0
     sonder = 0
+    bem = _bemessungssituationen(db)
+    arten: dict[str, int] = {}
+    unbekannt: dict[int, int] = {}
     for handle, impl_feld in (("LoadCombination", "LoadCombinationImpl_items"),
                               ("ResultCombination", "ResultCombinationImpl_items")):
         if not db.count(handle):
@@ -2529,15 +2818,70 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
             name = C.unique_name(m.combinations,
                                  (impl.get("name") or "").strip()
                                  or f"K{h.get('userID') or h['id']}")
-            typ = SITUATION_TYP.get(int(impl.get("designSituationType") or 0), "ULS")
+            # Die Art steht entweder als Kennzahl an der Kombination selbst
+            # (aeltere Dateien) oder - so im Drehlagermodell - an der
+            # Bemessungssituation, auf die sie zeigt.
+            bs_name, typ, tid = bem.get(impl.get("designSituation_id"), ("", "", 0))
+            if not typ:
+                typ = SITUATION_TYP.get(int(impl.get("designSituationType") or 0), "ULS")
+                if tid:
+                    unbekannt[tid] = unbekannt.get(tid, 0) + 1
+            arten[typ] = arten.get(typ, 0) + 1
             m.combinations[name] = Combination(
                 name, faktoren, typ,
                 (impl.get("name") or "").strip()
-                + (" (Ergebniskombination)" if handle == "ResultCombination" else ""))
+                + (" (Ergebniskombination)" if handle == "ResultCombination" else ""),
+                bemessungssituation=bs_name)
             n += 1
             sonder += bool(eigen)
+    # Eine Kombination gilt in der Situation ihrer Lastfaelle. Steht der
+    # Lastfall in einem Ausfallszenario, muss die Kombination dorthin mit -
+    # sonst rechnete sie das verkleinerte System mit dem vollen zusammen. Wo
+    # eine Kombination Lastfaelle aus **zwei** Situationen mischt, geht das
+    # nicht: es sind zwei verschiedene Tragwerke.
+    gemischt: list[str] = []
+    je_situation: dict[str, int] = {}
+    for nm, c in m.combinations.items():
+        sits = {m.load_cases[k].situation for k in c.factors if k in m.load_cases}
+        if len(sits) == 1:
+            c.situation = next(iter(sits))
+            if c.situation:
+                je_situation[c.situation] = je_situation.get(c.situation, 0) + 1
+        elif len(sits) > 1:
+            gemischt.append(nm)
+    for sit, k in sorted(je_situation.items()):
+        C.say(log, f"  {k} Kombinationen gelten in der Situation „{sit}“")
+    if gemischt:
+        C.warn(log, f"  {len(gemischt)} Kombinationen mischen Lastfaelle aus "
+                    "verschiedenen Situationen (z. B. "
+                    + ", ".join(gemischt[:2])
+                    + "). Das sind zwei verschiedene Tragwerke; eine solche "
+                      "Kombination laesst sich nicht in einem Zug rechnen. Sie "
+                      "bleiben in der Grundstellung stehen und werden beim "
+                      "Rechnen abgewiesen - in RFEM ist es eine Umhuellende "
+                      "ueber beide Systeme, und die gehoert hier in zwei "
+                      "Kombinationen aufgeteilt.")
     if n:
-        C.say(log, f"{n} Kombinationen uebernommen")
+        C.say(log, f"{n} Kombinationen uebernommen"
+                   + (" (" + ", ".join(f"{k}x {a}" for a, k in sorted(arten.items())) + ")"
+                      if arten else ""))
+    fat = sum(k for a, k in arten.items() if a == "FAT")
+    if fat:
+        C.say(log, f"  {fat} davon sind Ermuedungssituationen (GZT FAT). Sie bekommen "
+                   "eine eigene Umhuellende „FAT“ und gehen **nicht** in die "
+                   "Querschnittsnachweise im GZT ein.")
+        C.warn(log, "  Ermuedungsbeanspruchungen (Lastwechsel mit Schwingbreite und "
+                    "Lastspielzahl) werden daraus **nicht** abgeleitet: welche "
+                    "beiden Zustaende die Schwingbreite aufspannen, steht in der "
+                    "Datei nicht eindeutig - jede dieser Kombinationen fuehrt genau "
+                    "eine Oder-Verknuepfung, und ob sie die Liste in zwei Zweige "
+                    "teilt, entscheidet ueber das Ergebnis. Das ist mit dem "
+                    "Aufsteller zu klaeren; bis dahin bleibt der Ermuedungsnachweis "
+                    "aus.")
+    if unbekannt:
+        C.warn(log, "  Bemessungssituationen mit unbekannter Kennzahl: "
+                    + ", ".join(f"{t} ({k}x)" for t, k in sorted(unbekannt.items()))
+                    + " - sie werden als GZT gefuehrt.")
     if sonder:
         C.warn(log, f"  {sonder} Kombinationen enthalten Klammern, "
                     "Oder-Verknuepfungen oder Zwischenergebnisse; hier werden die "

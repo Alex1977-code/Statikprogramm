@@ -1244,7 +1244,16 @@ class LoadCase:
 class Combination:
     """Lastfallkombination: Lastfallname -> Faktor.
     typ: ULS (GZT, STR/GEO), EQU, ACC (aussergewoehnlich), SLS_CH (charakteristisch),
-         SLS_FR (haeufig), SLS_QP (quasi-staendig), USER
+         SLS_FR (haeufig), SLS_QP (quasi-staendig), FAT (Ermuedung), USER
+
+    **Zwei verschiedene Dinge heissen „Situation".** ``situation`` ist die
+    *bauliche* Situation - Stellung des Systems und abgeschaltete Elemente
+    (siehe :class:`Situation`); mit ihr wird gerechnet.
+    ``bemessungssituation`` ist der Name, den die Norm bzw. die Quelldatei der
+    *Bemessungssituation* gibt („GZT (FAT) - Ermuedung - ..."); sie sagt, wofuer
+    die Kombination da ist, und aendert am Gleichungssystem nichts. Wer beides
+    verwechselt, laesst den Loeser nach einer Stellung suchen, die es nicht
+    gibt.
     """
     name: str
     factors: dict[str, float] = field(default_factory=dict)
@@ -1253,6 +1262,8 @@ class Combination:
     leading: str = ""       # Leiteinwirkung (Information)
     situation: str = ""     # Situation, in der die Kombination gilt; "" = Grundstellung
     theorie: str = ""       # "" (wie Einstellung) | I | II | III (grosse Verformungen)
+    #: Name der Bemessungssituation aus der Norm oder der Quelldatei (Information)
+    bemessungssituation: str = ""
 
     @property
     def is_uls(self) -> bool:
@@ -1261,6 +1272,12 @@ class Combination:
     @property
     def is_sls(self) -> bool:
         return self.typ.startswith("SLS")
+
+    @property
+    def is_fat(self) -> bool:
+        """Ermuedung: sie gehoert **nicht** zu den Querschnittsnachweisen im
+        GZT. Der Loeser bildet fuer sie eine eigene Umhuellende „FAT"."""
+        return self.typ == "FAT"
 
     def formula(self) -> str:
         return " + ".join(f"{f:g}·{k}" for k, f in self.factors.items() if f)
@@ -1689,6 +1706,11 @@ class Flaeche:
     #: aendert daran nichts. Sie steht hier, damit sie nicht verlorengeht und
     #: nachpruefbar ist, wo doch einmal etwas daran haengt.
     quellart: str = ""
+    #: Randlinien, entlang derer die Flaeche **gelenkig** angeschlossen ist
+    #: (RFEM: Liniengelenk). Was dabei durchgeht und was nicht, steht in
+    #: ``gelenkwirkung`` als Klartext („ux=starr, ..., phix=frei").
+    gelenklinien: list[str] = field(default_factory=list)
+    gelenkwirkung: str = ""
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"

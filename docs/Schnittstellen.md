@@ -485,13 +485,90 @@ Vorspannung an, ohne dass das Programm eine eigene Vorspannlast bräuchte —
 und das Protokoll sagt es, damit niemand die Temperaturlast für ein Versehen
 hält.
 
+### Strukturmodifikation: das Ausfallszenario
+
+`StructureModification` schaltet Stäbe, Flächen, Volumen und Lager ab; die
+Lastfälle, deren `isStructureModificationEnabled` gesetzt ist, rechnen mit
+diesem **verkleinerten System**. Statik3D legt daraus eine **Stellung** (sie
+verschiebt nichts, sie schaltet nur ab) und eine **Situation** an, und jeder
+betroffene Lastfall bekommt sie.
+
+Welche Objekte gemeint sind, steht in zwei `ObjectSelection`-Listen: je
+Objektart ein Wähler, und nur der mit `typeActive` zählt. Sein Wert ist eine
+gepackte Nummernliste (`ObjectListConditionValue.objects_packed`,
+`"288-290,293,304-307"`), und die Nummern sind die **benutzersichtbaren**
+(`userID`), nicht die Datenbankschlüssel.
+
+Im Drehlagermodell heißt die eine „Ankerausfall": sie nimmt Stab 14 und das
+Knotenlager an Knoten 775 heraus — nicht alle 16 Knoten des Lagers „Fest",
+sondern genau dieses eine —, und 128 der 422 Lastfälle verweisen darauf.
+
+Zwei Dinge werden dabei gesagt statt verschwiegen:
+
+* Ändert die Modifikation außerdem **Steifigkeiten** (Faktoren auf E, G,
+  Querschnitts- und Flächensteifigkeit), bildet Statik3D das nicht ab und
+  meldet es. Im Drehlagermodell stehen alle 15 Faktoren auf 0.
+* Eine **Kombination folgt ihren Lastfällen** in die Situation. Mischt sie
+  Lastfälle aus zwei Situationen, sind das zwei verschiedene Tragwerke; sie
+  lässt sich nicht in einem Zug rechnen und wird benannt. Im Drehlagermodell
+  betrifft das 2 der 52 Kombinationen.
+
+### Liniengelenke
+
+`LineHinge` sagt, was eine Fläche entlang einer ihrer Randlinien weitergibt;
+die Zuweisung steht in `SurfaceImplPlane_surfaceLineHingeAssignments`.
+Übernommen wird sie als Angabe an der Fläche (`Flaeche.gelenklinien` und
+`Flaeche.gelenkwirkung` im Klartext).
+
+Im Drehlagermodell trägt das eine Gelenk `ux = uy = uz = starr` und keine
+Drehfeder — Verschiebungen durch, Verdrehungen frei — und ist 128-mal
+zugewiesen, je zweimal an genau die 64 Flächen mit `SurfaceStiffnessRigid`.
+Das sind die Kreisscheiben, über die die Zugstäbe an den Volumen hängen.
+
+**Die Rechnung ändert das nicht, und zwar nachweislich:** die starre Scheibe
+wird als Kopplung umgesetzt, die drei Richtungen führt und in der
+Steifigkeitsmatrix ausschließlich auf Verschiebungsfreiheitsgraden steht
+(`assemble.kopplungen` verwendet `_trans_dofs`). Ein Moment geht dort nicht
+durch — die Freigabe der Verdrehungen hat nichts freizugeben. Die
+Volumenelemente unter der Scheibe haben ohnehin keine
+Verdrehungsfreiheitsgrade.
+
 ### Kombinationen
 
 `LoadCombination` überlagert in RFEM die Lasten vor der Rechnung,
 `ResultCombination` die Ergebnisse danach. Solange die Rechnung linear ist,
 ist das dasselbe; beide werden darum als Kombination mit ihren Faktoren
-(`modelObjectFactor` × `groupFactor`) übernommen. Die Bemessungssituation
-(`designSituationType`) wird auf ULS/SLS/ACC/EQU abgebildet.
+(`modelObjectFactor` × `groupFactor`) übernommen.
+
+Die **Bemessungssituation** steht entweder als Kennzahl an der Kombination
+(`designSituationType`, ältere Dateien) oder — so im Drehlagermodell — an
+einer eigenen `DesignSituation`, auf die `designSituation_id` zeigt. Aus ihr
+kommen zwei Dinge: die **Art** der Kombination (`DesignSituationImpl.
+designSituationTypeId`; **7505 = Ermüdung**, daraus wird `typ = "FAT"`) und
+ihr **Name** (`Combination.bemessungssituation`). Unbekannte Kennzahlen
+werden als GZT geführt **und genannt**.
+
+> **Zwei verschiedene Dinge heißen „Situation".** `Combination.situation` ist
+> die *bauliche* Situation — Stellung und abgeschaltete Elemente —, mit ihr
+> wird gerechnet. `Combination.bemessungssituation` ist der Name aus der
+> Norm bzw. der Quelldatei („GZT (FAT) – Ermüdung – …"); sie ändert am
+> Gleichungssystem nichts. Wer beides verwechselt, lässt den Löser nach einer
+> Stellung suchen, die es nicht gibt.
+
+Im Drehlagermodell sind **50 der 52 Kombinationen Ermüdungssituationen**: das
+Modell ist die Ermüdungsuntersuchung eines Brückendrehlagers. Sie bekommen
+eine eigene Umhüllende „FAT" und gehen nicht in die Querschnittsnachweise im
+GZT ein.
+
+**Ermüdungsbeanspruchungen werden daraus nicht abgeleitet.** Eine
+Schwingbreite braucht zwei Zustände; welche beiden das sind, steht in der
+Datei nicht eindeutig: jede der 52 Kombinationen führt genau **eine**
+Oder-Verknüpfung (Operator 2 am letzten Posten, sonst 0), und ob sie die
+Liste in zwei Zweige teilt, entscheidet über das Ergebnis. Eine Kombination
+mit 82 Posten und lauter Faktoren 1,0 lässt sich weder als Summe noch als
+Hüllkurve zwanglos lesen. Das gehört mit dem Aufsteller geklärt; bis dahin
+bleibt `fatigue_loads` leer und der Ermüdungsnachweis aus — das steht im
+Protokoll, statt eine Zahl zu erfinden.
 
 Enthält eine Ergebniskombination Klammern, Oder-Verknüpfungen oder
 Zwischenergebnisse, wird das gemeldet: die einfache Überlagerung trifft die
