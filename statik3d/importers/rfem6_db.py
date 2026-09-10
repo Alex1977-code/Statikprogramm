@@ -2836,31 +2836,52 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
             sonder += bool(eigen)
     # Eine Kombination gilt in der Situation ihrer Lastfaelle. Steht der
     # Lastfall in einem Ausfallszenario, muss die Kombination dorthin mit -
-    # sonst rechnete sie das verkleinerte System mit dem vollen zusammen. Wo
-    # eine Kombination Lastfaelle aus **zwei** Situationen mischt, geht das
-    # nicht: es sind zwei verschiedene Tragwerke.
-    gemischt: list[str] = []
+    # sonst rechnete sie das verkleinerte System mit dem vollen zusammen.
+    # Mischt eine Kombination Lastfaelle aus **zwei** Situationen, sind das
+    # zwei verschiedene Tragwerke, die sich nicht in einem Zug rechnen lassen.
+    # In RFEM ist so eine Ergebniskombination eine Umhuellende ueber beide
+    # Systeme - und genau so wird sie uebernommen: je Situation ein Teil mit
+    # den Lastfaellen dieser Situation, derselben Art und derselben
+    # Bemessungssituation; die Teile stehen gemeinsam in der Umhuellenden.
+    # Bis zum 10.09.2026 blieb die gemischte Kombination in der Grundstellung
+    # stehen und der Loeser wies sie ab - am Drehlagermodell (2 von 52
+    # Kombinationen, je 64 Lastfaelle aus „Ankerausfall") stand damit die
+    # ganze Rechnung.
+    from dataclasses import replace
+    from ..model import GRUNDSTELLUNG
+    geteilt: list[str] = []
     je_situation: dict[str, int] = {}
+    neu: dict[str, Combination] = {}
     for nm, c in m.combinations.items():
         sits = {m.load_cases[k].situation for k in c.factors if k in m.load_cases}
-        if len(sits) == 1:
-            c.situation = next(iter(sits))
+        if len(sits) <= 1:
+            if sits:
+                c.situation = next(iter(sits))
+            neu[nm] = c
             if c.situation:
                 je_situation[c.situation] = je_situation.get(c.situation, 0) + 1
-        elif len(sits) > 1:
-            gemischt.append(nm)
+            continue
+        teile: list[str] = []
+        for sit in sorted(sits, key=lambda s: (s != "", s)):      # Grundstellung zuerst
+            faktoren = {k: f for k, f in c.factors.items()
+                        if k in m.load_cases and m.load_cases[k].situation == sit}
+            tn = C.unique_name({**m.combinations, **neu}, f"{nm} ({sit or GRUNDSTELLUNG})")
+            neu[tn] = replace(c, name=tn, factors=faktoren, situation=sit)
+            teile.append(tn)
+            if sit:
+                je_situation[sit] = je_situation.get(sit, 0) + 1
+        n += len(teile) - 1
+        arten[c.typ] = arten.get(c.typ, 0) + len(teile) - 1
+        geteilt.append(f"{nm} -> " + " + ".join(f"„{t}“" for t in teile))
+    m.combinations.clear()
+    m.combinations.update(neu)
     for sit, k in sorted(je_situation.items()):
         C.say(log, f"  {k} Kombinationen gelten in der Situation „{sit}“")
-    if gemischt:
-        C.warn(log, f"  {len(gemischt)} Kombinationen mischen Lastfaelle aus "
-                    "verschiedenen Situationen (z. B. "
-                    + ", ".join(gemischt[:2])
-                    + "). Das sind zwei verschiedene Tragwerke; eine solche "
-                      "Kombination laesst sich nicht in einem Zug rechnen. Sie "
-                      "bleiben in der Grundstellung stehen und werden beim "
-                      "Rechnen abgewiesen - in RFEM ist es eine Umhuellende "
-                      "ueber beide Systeme, und die gehoert hier in zwei "
-                      "Kombinationen aufgeteilt.")
+    if geteilt:
+        C.say(log, f"  {len(geteilt)} Kombinationen mischen Lastfaelle aus verschiedenen "
+                   "Situationen - in RFEM eine Umhuellende ueber zwei Tragwerke. Sie "
+                   "werden je Situation geteilt; die Teile stehen mit derselben Art in "
+                   "derselben Umhuellenden: " + "; ".join(geteilt))
     if n:
         C.say(log, f"{n} Kombinationen uebernommen"
                    + (" (" + ", ".join(f"{k}x {a}" for a, k in sorted(arten.items())) + ")"

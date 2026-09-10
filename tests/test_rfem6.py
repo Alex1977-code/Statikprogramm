@@ -1345,6 +1345,84 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_gemischte_kombination_wird_aufgeteilt():
+    """Eine Ergebniskombination ueber beide Tragwerke - mit und ohne Ausfall -
+    ist in RFEM eine Umhuellende ueber zwei Systeme. Bis zum 10.09.2026 blieb
+    sie in der Grundstellung stehen, und der Loeser wies sie ab: am
+    Drehlagermodell brach damit die ganze Rechnung ab (2 von 52 Kombinationen,
+    je 64 Lastfaelle aus „Ankerausfall"). Jetzt teilt der Import sie je
+    Situation, und die Teile stehen gemeinsam in der Umhuellenden."""
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "gemischt.rf6"),
+            nodes=[(0, 0, 0), (4, 0, 0), (0, 0, 3), (4, 0, 3),
+                   (0, 2, 0), (4, 2, 0)],
+            lines=[[1, 3], [2, 4], [3, 4], [1, 2], [2, 5], [5, 6], [6, 1]],
+            members=[(1, None, None), (2, None, None), (3, None, None)],
+            supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1, 2])],
+            surfaces=[([1, 2, 5, 6], 0.0)],
+            rigid_surfaces=(1,),
+            load_cases=[("Grundfall", 1, 1.0), ("Wind", 1, 0.0),
+                        ("Ankerausfall - Grundfall", 1, 1.0, 1),
+                        ("Ankerausfall - Wind", 1, 0.0, 1)],
+            bemessungssituationen=[("GZT", "GZT - staendig", 6193)],
+            combinations=[("Bemessung", 0, {1: 1.35, 2: 1.5, 3: 1.35, 4: 1.5}, 1),
+                          ("Nur voll", 0, {1: 1.35, 2: 1.5}, 1)],
+            strukturmodifikation=("Ankerausfall", [2], [2]),
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        check("die gemischte Kombination steht nicht mehr unter ihrem Namen",
+              "Bemessung" not in m.combinations, str(list(m.combinations)))
+        voll = m.combinations.get("Bemessung (Grundstellung)")
+        aus = m.combinations.get("Bemessung (Ankerausfall)")
+        check("stattdessen je Situation eine", voll is not None and aus is not None,
+              str(list(m.combinations)))
+        if voll is None or aus is None:
+            return
+        check("der Teil in der Grundstellung traegt nur deren Lastfaelle, mit ihren Faktoren",
+              voll.factors == {"LF1": 1.35, "LF2": 1.5} and not voll.situation,
+              f"{voll.factors} in {voll.situation!r}")
+        check("der Teil im Ausfall nur die des Ausfalls",
+              aus.factors == {"LF3": 1.35, "LF4": 1.5} and aus.situation == "Ankerausfall",
+              f"{aus.factors} in {aus.situation!r}")
+        check("Art und Bemessungssituation bleiben an beiden Teilen",
+              voll.typ == aus.typ == "ULS"
+              and voll.bemessungssituation == aus.bemessungssituation == "GZT - staendig",
+              f"{voll.typ}/{aus.typ}, {voll.bemessungssituation!r}/{aus.bemessungssituation!r}")
+        check("die Teile stehen an der Stelle des Originals, die reine Kombination dahinter",
+              list(m.combinations) == ["Bemessung (Grundstellung)", "Bemessung (Ankerausfall)",
+                                       "Nur voll"],
+              str(list(m.combinations)))
+        check("eine reine Kombination bleibt, wie sie ist",
+              m.combinations["Nur voll"].factors == {"LF1": 1.35, "LF2": 1.5}
+              and not m.combinations["Nur voll"].situation,
+              str(m.combinations["Nur voll"].factors))
+        check("das Protokoll nennt die Teilung mit beiden Teilen",
+              "Bemessung (Grundstellung)" in txt and "Bemessung (Ankerausfall)" in txt,
+              next((x for x in log if "Bemessung (" in x), "-"))
+        check("und zaehlt den Teil im Ausfall zu dessen Situation",
+              any("Kombinationen gelten in der Situation" in x and "Ankerausfall" in x
+                  for x in log),
+              next((x for x in log if "gelten in der Situation" in x), "-"))
+        fremd = [x for x in m.check() if "anderen Situation" in x]
+        check("das Modell hat nichts mehr zu beanstanden", not fremd, str(fremd))
+        an = solver.solve_all(m, combinations=True, envelopes=True)
+        check("der Loeser rechnet beide Teile",
+              "Bemessung (Grundstellung)" in an.combinations
+              and "Bemessung (Ankerausfall)" in an.combinations,
+              str(sorted(an.combinations)))
+        check("und beide stehen in der Umhuellenden GZT",
+              "ULS" in an.envelopes
+              and {"Bemessung (Grundstellung)", "Bemessung (Ankerausfall)"}
+              <= set(an.envelopes["ULS"].names),
+              str(sorted(an.envelopes["ULS"].names)) if "ULS" in an.envelopes else "keine ULS")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_lastfaelle_und_lasten():
     tmp = tempfile.mkdtemp()
     try:
@@ -1753,6 +1831,7 @@ def main():
               test_freigabetyp_je_objekt,
               test_lastfaelle_und_lasten, test_lasten_und_kombinationen,
               test_ausfallszenario_gelenk_und_bemessungssituation,
+              test_gemischte_kombination_wird_aufgeteilt,
               test_dispatcher_und_hilfen,
               test_knoten_zusammenfuehren, test_boegen_und_kreisflaechen,
               test_steifigkeit_rueckzeiger, test_kein_stilles_verschmelzen):
