@@ -546,9 +546,19 @@ def test_splitter_glaetten():
     """Splitter sind fast flache Tetraeder. Das Kugel-Kanten-Kriterium erfasst
     sie nicht - dafuer werden die freien Knoten so verschoben, dass die
     schlechteste Guete steigt. Die Randknoten bleiben, wo sie sind: das
-    Volumen darf sich dabei nicht aendern."""
+    Volumen darf sich dabei nicht aendern.
+
+    Flache Tetraeder (Volumen unter FLACH * h^3) bleiben bis nach der
+    Glaettung im Netz - sonst staende an ihrer Stelle ein Schlitz, dessen
+    Knoten festzuhalten waeren, und ein Splitter daneben mit den uebrigen
+    Knoten auf der Huelle bliebe, wie er ist (10.09.2026: Guete 0,0058 blieb
+    0,0058, weil alle vier Knoten festlagen). Repariert die Glaettung einen
+    flachen Tetraeder, ist er danach ein Element: die Elementzahl waechst um
+    genau die reparierten, und die Volumensumme um das, was ihnen vorher
+    fehlte - je unter FLACH * h^3."""
     r, t = 0.4, 0.4
     ohne = mit = None
+    flache = {}
     for splitter in (0.0, 0.1):
         m = neues_modell()
         k = prisma(m, [[(0, 0), (2, 0), (2, 2), (0, 2)],
@@ -561,10 +571,13 @@ def test_splitter_glaetten():
         # die Glaettung veraendert: ohne Glaettung reisst das Guetekriterium,
         # es wird verfeinert, und verglichen wuerden zwei verschiedene Netze.
         m.netz.nachvernetzen = False
-        els = M3.mesh_koerper_frei(m, k, log=[])
+        log = []
+        els = M3.mesh_koerper_frei(m, k, log=log)
         TET = np.array([[int(x) for x in m.elements[i].nodes] for i in els])
         q = M3.guete(m.nodes, TET)
         werte = (float(q.min()), int((q < 0.1).sum()), netzvolumen(m, els), len(els))
+        zeile = next((z for z in log if "flache Tetraeder aussortiert" in z), "0")
+        flache[splitter] = int(zeile.split()[0])
         if splitter:
             mit = werte
         else:
@@ -574,8 +587,13 @@ def test_splitter_glaetten():
     check("mit Glättung ist die schlechteste Güte deutlich besser",
           mit[0] > 5 * ohne[0], f"{ohne[0]:.4f} -> {mit[0]:.4f}")
     check("und kein Splitter bleibt übrig", mit[1] == 0, f"{mit[1]} Elemente")
-    close("das Volumen bleibt dabei unverändert", mit[2], ohne[2], 1e-9, " m^3")
-    check("und die Elementzahl auch", mit[3] == ohne[3], f"{ohne[3]} -> {mit[3]}")
+    check("die Elementzahl wächst genau um die reparierten flachen Tetraeder",
+          mit[3] - ohne[3] == flache[0.0] - flache[0.1] and flache[0.0] > 0,
+          f"{ohne[3]} -> {mit[3]}; flach aussortiert {flache[0.0]} -> {flache[0.1]}")
+    schranke = (flache[0.0] + flache[0.1]) * M3.FLACH * 0.15 ** 3
+    check("und das Volumen nur um das, was ihnen vorher fehlte",
+          -1e-12 <= mit[2] - ohne[2] <= schranke,
+          f"{mit[2] - ohne[2]:.3e} m^3, Schranke {schranke:.3e} m^3")
 
 
 # --------------------------------------------------------------------------

@@ -1259,9 +1259,12 @@ System. Der Import legt daraus eine Stellung und eine Situation an und trägt
 sie bei den betroffenen Lastfällen ein; die Kombinationen folgen ihren
 Lastfällen. Am geprüften Drehlagermodell heißt sie „Ankerausfall" und betrifft
 **128 der 422 Lastfälle** — ohne sie rechneten diese 128 Fälle mit einem Anker
-und einem Lager, die ausgefallen sein sollen. Mischt eine Kombination
-Lastfälle aus zwei Situationen, sind das zwei Tragwerke; das Protokoll sagt
-es, und der Löser weist sie ab.
+und einem Lager, die ausgefallen sein sollen. Mischt eine Kombination aus
+RFEM Lastfälle aus zwei Situationen, sind das zwei Tragwerke — in RFEM eine
+Umhüllende über beide Systeme. Der Import teilt sie je Situation
+(„… (Grundstellung)“, „… (Ankerausfall)“); beide Teile stehen in derselben
+Umhüllenden, und das Protokoll nennt die Teilung. Eine von Hand gemischte
+Kombination weist der Löser weiterhin ab.
 
 **Jeder Lastfall und jede Kombination nennt seine Situation** — auch im
 Lastfalldialog und im Kombinationsdialog als Feld „Situation“; die

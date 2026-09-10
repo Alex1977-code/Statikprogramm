@@ -510,8 +510,16 @@ Zwei Dinge werden dabei gesagt statt verschwiegen:
   meldet es. Im Drehlagermodell stehen alle 15 Faktoren auf 0.
 * Eine **Kombination folgt ihren Lastfällen** in die Situation. Mischt sie
   Lastfälle aus zwei Situationen, sind das zwei verschiedene Tragwerke; sie
-  lässt sich nicht in einem Zug rechnen und wird benannt. Im Drehlagermodell
-  betrifft das 2 der 52 Kombinationen.
+  lässt sich nicht in einem Zug rechnen. In RFEM ist so eine
+  Ergebniskombination eine Umhüllende über beide Systeme, und so wird sie
+  übernommen: **je Situation ein Teil** („… (Grundstellung)“,
+  „… (Ankerausfall)“) mit den Lastfällen dieser Situation, derselben Art und
+  derselben Bemessungssituation; die Teile stehen an der Stelle des Originals
+  und gemeinsam in derselben Umhüllenden. Im Drehlagermodell betrifft das
+  2 der 52 Kombinationen mit je 64 Lastfällen aus dem Ausfall — bis zum
+  10.09.2026 blieben sie ungeteilt in der Grundstellung stehen, der Löser
+  wies sie ab, und die ganze Rechnung stand. Eine von Hand gemischte
+  Kombination weist er weiterhin ab.
 
 ### Liniengelenke
 
