@@ -1612,12 +1612,23 @@ def _ausduennen(X: np.ndarray, abstand: np.ndarray) -> np.ndarray:
 
 
 def _innere(punkte: np.ndarray, simplices: np.ndarray, P: np.ndarray,
-            T: np.ndarray, index: "Gitterindex", h: float, fortschritt=None) -> tuple:
+            T: np.ndarray, index: "Gitterindex", h: float, fortschritt=None,
+            flache_behalten: bool = False) -> tuple:
     """Die Tetraeder der Zerlegung, die im Koerper liegen - mit ihren Volumen.
 
     Die Delaunay-Zerlegung fuellt immer die **konvexe Huelle** der Punktwolke.
     Alles, was in einer Einbuchtung des Koerpers liegt, gehoert nicht dazu und
     wird hier ueber den Schwerpunkt aussortiert.
+
+    Flache Tetraeder (Volumen unter FLACH * h^3) fliegen mit heraus - ausser
+    ``flache_behalten`` ist gesetzt. Das braucht die Glaettung: fehlt ein
+    flacher Tetraeder im Inneren, bleibt an seiner Stelle ein Schlitz, dessen
+    Knoten festgehalten werden muessen, weil sie ihn sonst aufzoegen - und ein
+    Splitter daneben, dessen uebrige Knoten auf der Huelle liegen, ist dann
+    nicht mehr zu bessern (Platte mit Bohrung, 10.09.2026: Guete 0,0058 blieb
+    0,0058). Bleibt der flache Tetraeder drin, ist das Netz eine Zerlegung ohne
+    Luecke, die Glaettung darf seine Knoten bewegen, und aussortiert wird erst
+    danach, was dann noch flach ist.
     """
     TET = np.asarray(simplices, int).copy()
     if not len(TET):
@@ -1626,8 +1637,9 @@ def _innere(punkte: np.ndarray, simplices: np.ndarray, P: np.ndarray,
     dreh = V < 0
     TET[dreh] = TET[dreh][:, [0, 2, 1, 3]]
     V = np.abs(V)
-    behalt = V > FLACH * h ** 3
-    TET, V = TET[behalt], V[behalt]
+    if not flache_behalten:
+        behalt = V > FLACH * h ** 3
+        TET, V = TET[behalt], V[behalt]
     if not len(TET):
         return TET, V
     drin = innen(punkte[TET].mean(axis=1), P, T, index, fortschritt)
@@ -1802,7 +1814,8 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
                 break
         punkte = np.asarray(tri.points, float)
         _melden(fortschritt, a0 + 0.6 * spanne, "Tetraeder außerhalb des Körpers aussortieren")
-        TET, V = _innere(punkte, tri.simplices, P, T, index, h, fortschritt)
+        TET, V = _innere(punkte, tri.simplices, P, T, index, h, fortschritt,
+                         flache_behalten=True)
     except Abgebrochen:
         raise
     except Exception as ex:                 # noqa: BLE001
@@ -1815,15 +1828,11 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
             pass
     # Splitter herausglaetten - die Randknoten bleiben, wo sie sind
     if len(TET) and splitter > 0:
-        # Fest steht, was das Netz nach aussen begrenzt. Das sind zuerst die
-        # Huellpunkte - sie sind die Geometrie. Es sind aber nicht nur sie:
-        # beim Aussortieren faellt auch der eine oder andere fast flache
-        # Tetraeder im Inneren heraus, und an seiner Stelle bleibt ein
-        # (volumenloser) Schlitz. Dessen Knoten liegen ebenfalls auf dem
-        # Netzrand, und sie zu verschieben zoege den Schlitz auf - das Volumen
-        # aendert sich, obwohl die Glaettung nur innen wirken soll. Der
-        # Netzrand wird darum aus dem Verband gelesen und nicht aus der
-        # Punktnummer geraten.
+        # Fest steht, was das Netz nach aussen begrenzt: die Huellpunkte, denn
+        # sie sind die Geometrie. Der Netzrand wird aus dem Verband gelesen
+        # und nicht aus der Punktnummer geraten; weil die flachen Tetraeder
+        # noch drin sind (siehe _innere), ist das genau die Huelle und kein
+        # Schlitz im Inneren.
         fest = np.zeros(len(punkte), bool)
         fest[:len(P)] = True
         rand = freie_seiten(TET)
@@ -1832,9 +1841,14 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
         punkte, bewegt = glaetten(punkte, TET, fest, ziel=splitter, fortschritt=fortschritt,
                                   anteil=(a0 + 0.7 * spanne, a0 + 0.92 * spanne))
         bericht["geglaettet"] = bewegt
-        if bewegt:
-            V = np.abs(tetraedervolumen(punkte, TET))
-            TET, V = TET[V > FLACH * h ** 3], V[V > FLACH * h ** 3]
+    # Was jetzt noch flach ist, traegt nichts und verdirbt die Kondition:
+    # es fliegt heraus - nach der Glaettung, nicht davor.
+    if len(TET):
+        V = np.abs(tetraedervolumen(punkte, TET))
+        flach = V <= FLACH * h ** 3
+        if flach.any():
+            bericht["flache"] = int(flach.sum())
+            TET, V = TET[~flach], V[~flach]
     bericht["innenpunkte"] = len(punkte) - len(P)
     bericht["tetraeder"] = len(TET)
     bericht["volumen"] = float(V.sum())
@@ -3028,6 +3042,9 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     if tb.get("geglaettet"):
         C.say(log, f"  {tb['geglaettet']} Knoten geglättet, um Splitter zu "
                    "beseitigen (Randknoten bleiben, wo sie sind)")
+    if tb.get("flache"):
+        C.say(log, f"  {tb['flache']} flache Tetraeder aussortiert (Volumen unter "
+                   f"{FLACH:g}·h³ - sie trügen nichts und verdürben die Kondition)")
     if tb.get("splitter"):
         # Mit Nummer, nicht nur mit Zahl: zu jedem Befund gehoert das Element,
         # sonst kann der Anwender es weder anzeigen noch nachrechnen. Gerechnet

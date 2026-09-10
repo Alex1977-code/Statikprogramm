@@ -1982,17 +1982,29 @@ sie sind die Geometrie, und so bleibt das Volumen unverändert.
 
 Welche Knoten das sind, wird aus dem **Verband** gelesen und nicht aus der
 Punktnummer geraten: fest ist jeder Knoten, der zu einer Seitenfläche gehört,
-die nur zu einem Tetraeder zählt. Das sind zuerst die Hüllpunkte, aber nicht
-nur sie. Beim Aussortieren fällt auch der eine oder andere fast flache
-Tetraeder im Inneren heraus, und an seiner Stelle bleibt ein volumenloser
-Schlitz; dessen Knoten liegen ebenfalls auf dem Netzrand, und sie zu
-verschieben zöge den Schlitz auf. An einer 2 × 2 m großen Platte mit Bohrung
-(26 980 Tetraeder) waren das acht Knoten, drei davon wurden verschoben, und
-das Volumen änderte sich dabei um 0,39 ppm — nach der Korrektur um **0,00
-ppm** (`test_splitter_glaetten`). An einer Platte
-mit Bohrung steigt die schlechteste Güte damit von 0,0035 auf 0,102, und kein
-Element bleibt unter 0,1. Wo alle vier Knoten eines Splitters auf dem Rand
-liegen, lässt er sich nicht glätten; seine Zahl steht dann im Protokoll.
+die nur zu einem Tetraeder zählt. Damit das genau die Hülle ist und kein
+Schlitz im Inneren, bleiben die **flachen Tetraeder** (Volumen unter
+FLACH · h³) bis nach der Glättung im Netz. Vorher flogen sie zuerst heraus,
+und an ihrer Stelle blieb ein volumenloser Schlitz, dessen Knoten
+festzuhalten waren, weil sie ihn sonst aufzögen (an einer 2 × 2 m großen
+Platte mit Bohrung: acht Knoten, drei verschoben, 0,39 ppm Volumenänderung).
+Festgehalten blockierten sie aber die Glättung daneben: am 10.09.2026 blieb
+an derselben Platte (26 988 Tetraeder, Windows) ein Splitter der Güte 0,0058
+stehen, weil zwei seiner Knoten auf dem Bohrungsmantel und zwei auf so einem
+Schlitz lagen. Bleibt der flache Tetraeder drin, ist das Netz eine Zerlegung
+ohne Lücke: die Glättung darf seine Knoten bewegen, das Volumen ist von
+selbst erhalten, und was danach noch flach ist, wird erst dann aussortiert;
+das Protokoll nennt die Zahl. Gemessen an der Platte mit Bohrung: 197 flache
+Tetraeder aus der Zerlegung, 6 davon repariert und jetzt Elemente, die
+Volumensumme um 1,5 · 10⁻⁸ m³ größer (ihr früher fehlendes Volumen; Schranke
+197 · FLACH · h³ = 1,3 · 10⁻⁶ m³), die schlechteste Güte von 0,0058 auf 0,102
+(Linux, wo die Zerlegung leicht anders liegt: von 0,0035 auf 0,102), und kein
+Element bleibt unter 0,1 (`test_splitter_glaetten`). Ein flacher Tetraeder
+mit genau null Volumen hat keine Orientierung; seine Knoten rührt die
+Glättung nicht an, weil der Umklapptest jeden Schritt verwirft. Darum bleiben
+191 der 197 flach und fliegen danach heraus — wie vorher, nur später. Wo alle
+vier Knoten eines Splitters auf der Hülle liegen, lässt er sich nicht glätten;
+seine Zahl steht dann im Protokoll.
 
 **Lineare und quadratische Tetraeder.** `Netzeinstellungen.ordnung` wählt
 zwischen `tet4` (linear, konstante Dehnung) und `tet10` (quadratisch). Die
