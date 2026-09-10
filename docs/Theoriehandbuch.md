@@ -468,6 +468,33 @@ wird jede Kombination einzeln gelöst.
 Umhüllende: je Ergebnisgruppe (GZT, GZG …) werden Minimum und Maximum jeder
 Größe an jeder Nachweisstelle mit der maßgebenden Kombination gespeichert.
 
+**Kombinationen mit Alternativen.** Eine RFEM-Ergebniskombination „LF1/p oder
+LF2/p oder …" ist keine Summe: ihr Ergebnis ist Minimum und Maximum je Größe
+über die *Alternativen* (`Combination.alternativen`, jede Alternative ein
+Satz Lastfall → Faktor). Der Löser bildet daraus je Kombination eine eigene
+Umhüllende und faltet sie in die Umhüllende ihrer Art ein, so dass Nachweise
+sie sehen. Zwei Dinge halten das bezahlbar:
+
+* Die Umhüllende wird **inkrementell** gebildet (`Envelope.aufnehmen`): ein
+  Ergebnis nach dem anderen geht in das laufende Minimum und Maximum ein,
+  mit Herkunft; bei Gleichstand gewinnt das erste Ergebnis, so wie `argmin`
+  beim Stapeln. Das laufende Verfahren ist darum **bitgleich** mit dem
+  gestapelten (`test_umhuellende`), braucht aber nicht alle Ergebnisse
+  gleichzeitig im Speicher — am Drehlager hätten das 128 Alternativen je
+  GZT-Kombination und über 3500 in den Ermüdungskombinationen sein müssen.
+* Eine Alternative aus genau **einem Lastfall mit Faktor 1** ist dessen
+  Lastfallergebnis und wird wiederverwendet. Am Drehlager trifft das auf alle
+  720 Einträge der 52 Ergebniskombinationen zu: die Umhüllenden kosten keine
+  einzige zusätzliche Lösung. Jede andere Alternative wird als vorübergehende
+  Kombination gerechnet (Überlagerung; im Kontaktmodell direkte Lösung) und
+  nach dem Einfalten verworfen; das Protokoll nennt die Zahl.
+
+Belegt am Kragarm mit drei Lastfällen: die Umhüllende über die Alternativen
+{LF1}, {LF2}, {1,35·LF1 + 1,5·LF3} ist gleich der Umhüllenden über dieselben,
+einzeln gerechneten Kombinationen, in Werten und Herkunft; im Kontaktmodell
+wird die zusammengesetzte Alternative direkt gelöst, die Lastfall-Alternative
+weiterhin wiederverwendet.
+
 ### 3.1 Situationen: Stellung und wirksame Elemente
 
 Jeder Lastfall und jede Kombination gehört zu einer **Situation**; die
