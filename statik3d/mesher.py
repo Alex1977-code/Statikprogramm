@@ -566,7 +566,7 @@ def _entartungspruefung():
 
 
 def _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
-              grund: str, ohne_netz: str) -> list:
+              grund: str, ohne_netz: str, karten: tuple = None) -> list:
     """Das abgebildete Muster hat gegriffen, der Koerper hat aber kein Volumen.
 
     Das heisst nicht, dass er keines **hat** - es heisst, dass das Muster
@@ -581,7 +581,7 @@ def _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
                    "nicht, der freie Vernetzer übernimmt.")
         from .mesher3d import mesh_koerper_frei
         return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
-                                 ordnung=ordnung, fortschritt=fortschritt)
+                                 ordnung=ordnung, fortschritt=fortschritt, karten=karten)
     C.warn(log, f"Volumen {koerper.name}: {grund} - kein Körper, kein Element "
                 "(freier Vernetzer abgeschaltet).")
     koerper.elemente = []
@@ -592,7 +592,7 @@ def _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
 
 def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                  h: float = 0.0, cache: dict = None, ordnung: int = 0,
-                 fortschritt=None) -> list[int]:
+                 fortschritt=None, karten: tuple = None) -> list[int]:
     """Einen Volumenkoerper in Volumenelemente umsetzen.
 
     Sechs Vierseit-Randflaechen mit acht Eckknoten geben ein **abgebildetes**
@@ -608,7 +608,9 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     Randflaechen zwischen mehreren Koerpern. ``fortschritt(anteil, text)``
     wird waehrend der freien Vernetzung gerufen (Anteil 0 … 1 an diesem
     Koerper, None = nur die Zeit zaehlt); antwortet es mit False, bleibt der
-    Koerper ohne Netz.
+    Koerper ohne Netz. ``karten`` sind die modellweiten Netzkarten aus
+    :func:`netzkarten`; ohne sie bildet der freie Vernetzer sie selbst - je
+    Koerper, am Drehlager 48 x 1,5 s.
     """
     from .importers import _common as C
     from .model import _rand_aus_linien          # noqa: F401  (Doku)
@@ -631,7 +633,7 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                 return _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
                                  f"die acht Eckknoten spannen kein Volumen auf "
                                  f"({abs(v_hex):.3e} m³ bei {d_hex * 1e3:.0f} mm Größe)",
-                                 OHNE_NETZ)
+                                 OHNE_NETZ, karten=karten)
             if v_hex < 0:
                 order = order[4:] + order[:4]
             nx, ny, nz = (list(koerper.teilung) + [4, 4, 4])[:3]
@@ -652,7 +654,7 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             return _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
                              f"die vier Eckknoten liegen in einer Ebene "
                              f"({abs(v) / 6.0:.3e} m³ bei {d * 1e3:.0f} mm Größe)",
-                             OHNE_NETZ)
+                             OHNE_NETZ, karten=karten)
         nodes = knoten if v > 0 else [knoten[0], knoten[2], knoten[1], knoten[3]]
         els = [model.add_element("tet4", nodes, mat, group=koerper.name)]
         koerper.elemente = els
@@ -661,7 +663,7 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     if frei:
         from .mesher3d import mesh_koerper_frei
         return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
-                                 ordnung=ordnung, fortschritt=fortschritt)
+                                 ordnung=ordnung, fortschritt=fortschritt, karten=karten)
     C.warn(log, f"Volumen {koerper.name}: {len(flaechen)} Randflächen mit "
                 f"{len(knoten)} Eckknoten - abgebildet vernetzen lassen sich nur "
                 "Sechsflächner (6 Vierecke, 8 Knoten) und Tetraeder (4 Dreiecke, "
@@ -708,15 +710,30 @@ def netzkarten(model: Model, h: float = 0.0) -> tuple:
     return h_flaechen, h_linien, M3.gemeinsame_randflaechen(model)
 
 
-def _koerper_arbeiter_init(model: Model, karten: tuple = None) -> None:
-    """Jeder Arbeitsprozess bekommt das Modell einmal - die Geometrie genuegt.
+def _modell_fuer_arbeiter_schreiben(model: Model, karten: tuple, pfad: str) -> None:
+    """Modell und Netzkarten einmal in eine Datei - die Arbeitsprozesse lesen sie.
 
-    Dazu die modellweiten Netzkarten: der Arbeitsprozess sieht immer nur
-    **einen** Koerper und koennte sie selbst nicht bilden.
+    Als Startargument des Pools blockierte das Modell jeden Prozessstart, bis
+    das Kind es gelesen hatte: unter Windows (spawn) startet der Pool seine
+    Prozesse nacheinander, und 1,7 MB Startargumente passen nicht in die
+    Rohrleitung, bevor das Kind hochgefahren ist. Am Drehlager waren das
+    31 x 0,83 s = 25,8 s, bevor der erste Arbeiter antwortete. Ein Pfad ist
+    ein paar Byte: der Pool steht nach 1,8 s, die Arbeit beginnt nach 4,3 s.
     """
+    import pickle
+    with open(pfad, "wb") as f:
+        pickle.dump((model, karten), f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _koerper_arbeiter_init(pfad: str) -> None:
+    """Jeder Arbeitsprozess liest das Modell einmal - die Geometrie genuegt -
+    und dazu die modellweiten Netzkarten: er sieht immer nur **einen** Koerper
+    und koennte sie selbst nicht bilden (siehe
+    :func:`_modell_fuer_arbeiter_schreiben`)."""
     global _WORKER_MODEL, _WORKER_KARTEN
-    _WORKER_MODEL = model
-    _WORKER_KARTEN = karten
+    import pickle
+    with open(pfad, "rb") as f:
+        _WORKER_MODEL, _WORKER_KARTEN = pickle.load(f)
 
 
 def _koerper_arbeit(name: str, h: float) -> dict:
@@ -800,6 +817,9 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
 
     frei = [k for k in koerper if not abgebildet(model, k)]
     # 1) Abgebildete Koerper gleich hier - das kostet nichts
+    # Die modellweiten Netzkarten einmal je Lauf - fuer alle Pfade. Je Koerper
+    # gebildet kosteten sie am Drehlager 48 x 1,5 s in der seriellen Phase.
+    karten = netzkarten(model)
     for k in koerper:
         if k in frei:
             continue
@@ -807,7 +827,8 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
             aus["abgebrochen"] = True
             return aus
         einbauen(k, mesh_koerper(model, k, log, cache=cache,
-                                 h=float(hs.get(k.name, 0.0) or 0.0), ordnung=ordnung))
+                                 h=float(hs.get(k.name, 0.0) or 0.0), ordnung=ordnung,
+                                 karten=karten))
     if not frei:
         fertig_melden()
         return aus
@@ -825,7 +846,7 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
                 break
             els = mesh_koerper(model, k, log, cache=cache,
                                h=float(hs.get(k.name, 0.0) or 0.0), ordnung=ordnung,
-                               fortschritt=ruf)
+                               fortschritt=ruf, karten=karten)
             einbauen(k, els)
             if not els and log and any("abgebrochen" in z for z in log[-3:]):
                 aus["abgebrochen"] = True
@@ -834,18 +855,25 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
         return aus
     # 2) Parallel: die Rechenarbeit in Arbeitsprozessen, der Einbau hier
     from . import parallel as par
+    import os
+    import tempfile
     aus["prozesse"] = w
+    arbeiterdatei = ""
     try:
         ctx = par._context()
-        # Die Netzkarten einmal fuer das ganze Modell - der Arbeitsprozess
-        # sieht immer nur einen Koerper und koennte sie nicht bilden.
-        karten = netzkarten(model)
+        # Der Arbeitsprozess sieht immer nur einen Koerper und koennte die
+        # Netzkarten nicht bilden; Modell und Karten gehen ueber eine Datei,
+        # nicht als Startargument.
+        fd, arbeiterdatei = tempfile.mkstemp(prefix="statik3d_netz_", suffix=".pkl")
+        os.close(fd)
+        _modell_fuer_arbeiter_schreiben(model, karten, arbeiterdatei)
         pool = ctx.Pool(processes=w, initializer=_koerper_arbeiter_init,
-                        initargs=(model, karten))
+                        initargs=(arbeiterdatei,))
     except Exception as ex:               # noqa: BLE001 - kein Prozess-Pool: seriell
+        _datei_weg(arbeiterdatei)
         C.say(log, f"Arbeitsprozesse nicht verfügbar ({ex}) - die Volumen werden nacheinander vernetzt.")
         aus = _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
-                            aus, w_alle, summe, erledigt)
+                            aus, w_alle, summe, erledigt, karten=karten)
         fertig_melden()
         return aus
     namen = {k.name: k for k in frei}
@@ -885,12 +913,24 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
         pool.terminate()
         pool.join()
         raise
+    finally:
+        _datei_weg(arbeiterdatei)
     fertig_melden()
     return aus
 
 
+def _datei_weg(pfad: str) -> None:
+    """Die Modelldatei der Arbeiter aufraeumen - auch nach Abbruch oder Fehler."""
+    import os
+    if pfad:
+        try:
+            os.remove(pfad)
+        except OSError:
+            pass
+
+
 def _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
-                  aus, w_alle, summe, erledigt):
+                  aus, w_alle, summe, erledigt, karten: tuple = None):
     """Rueckfall ohne Prozess-Pool: die freien Koerper nacheinander."""
     def melden(text, anteil_akt=0.0, w_akt=0.0):
         if fortschritt is None:
@@ -900,7 +940,7 @@ def _seriell_nach(model, frei, hs, log, cache, fortschritt, gewicht, ordnung,
         def ruf(anteil, text, _k=k):
             return melden(f"{_k.name}: {text}" if text else _k.name, anteil or 0.0, w_alle[_k.name])
         els = mesh_koerper(model, k, log, cache=cache, h=float(hs.get(k.name, 0.0) or 0.0),
-                           ordnung=ordnung, fortschritt=ruf)
+                           ordnung=ordnung, fortschritt=ruf, karten=karten)
         aus["elemente"] += len(els)
         aus["fertig"] += 1 if els else 0
         erledigt += w_alle[k.name]

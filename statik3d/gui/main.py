@@ -4401,7 +4401,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 c = m.combinations.get(name)
                 situationen = m.situationsnamen()
                 th = next((t for t, v in THEORIEN if v == ((c.theorie if c else "") or "").upper()), THEORIEN[0][0])
-                fak = ", ".join(f"{k}: {v:g}" for k, v in (c.factors.items() if c else [])) if c else ""
+                fak = (c.formula() if c and c.ist_umhuellende
+                       else ", ".join(f"{k}: {v:g}" for k, v in (c.factors.items() if c else []))) if c else ""
                 felder = [F("name", "Name", "text", name, breite=140),
                           F("typ", "Typ", "wahl", (c.typ if c and c.typ in typen else "ULS"), typen),
                           F("beschreibung", "Beschreibung", "text", (c.description if c else ""), breite=180),
@@ -5829,8 +5830,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     m.load_cases = {(neuname if k == name else k): v for k, v in m.load_cases.items()}
                     lc.name = neuname
                     for c in m.combinations.values():
-                        if name in c.factors:
-                            c.factors[neuname] = c.factors.pop(name)
+                        c.lastfall_umbenennen(name, neuname)
                     if m.active_case == name:
                         m.active_case = neuname
                 lc.category = kat
@@ -6604,7 +6604,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 del m.load_cases[name]
                 for c in m.combinations.values():
-                    c.factors.pop(name, None)
+                    c.lastfall_entfernen(name)
                 if m.active_case == name:
                     m.active_case = next(iter(m.load_cases), "")
         elif art == "kombination":
@@ -7583,8 +7583,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                      for k, v in self.model.load_cases.items()}
             lc.name = nm
             for c in self.model.combinations.values():
-                if name in c.factors:
-                    c.factors[nm] = c.factors.pop(name)
+                c.lastfall_umbenennen(name, nm)
             if self.model.active_case == name:
                 self.model.active_case = nm
         self.refresh_all()
@@ -13248,8 +13247,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.model.load_cases = {(name if k == old else k): v for k, v in self.model.load_cases.items()}
                 lc.name = name
                 for c in self.model.combinations.values():
-                    if old in c.factors:
-                        c.factors[name] = c.factors.pop(old)
+                    c.lastfall_umbenennen(old, name)
                 self.model.active_case = name
             self.refresh_all()
 

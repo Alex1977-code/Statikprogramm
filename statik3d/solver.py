@@ -1183,7 +1183,7 @@ def solve_cases(model: Model, cases: list = None, workers: int = None,
 def _kombination_pruefen(model: Model, combo: Combination) -> str:
     """Die Situation der Kombination; ihre Lastfaelle muessen dazu gehoeren."""
     sit = combo.situation or GRUNDSTELLUNG
-    fremd = [k for k, f in combo.factors.items() if f and k in model.load_cases
+    fremd = [k for k in combo.lastfaelle() if k in model.load_cases
              and (model.load_cases[k].situation or GRUNDSTELLUNG) != sit]
     if fremd:
         raise ValueError(f"Kombination '{combo.name}' (Situation {sit}) enthält Lastfall "
@@ -1221,12 +1221,53 @@ def solve_combination(model: Model, combo: Combination, case_results: dict = Non
     return res
 
 
+def umhuellende_der_kombination(model: Model, combo: Combination, case_results: dict,
+                                systeme: dict = None, workers: int = None,
+                                progress=None) -> tuple:
+    """Die Umhuellende einer Kombination mit Alternativen - Rueckgabe
+    (Envelope, Zahl der zusaetzlich geloesten Alternativen).
+
+    Eine Alternative aus genau einem Lastfall mit Faktor 1 **ist** dessen
+    Lastfallergebnis: es wird wiederverwendet, nichts neu geloest. Am
+    Drehlager sind das alle 720 Eintraege der 52 Ergebniskombinationen. Jede
+    andere Alternative wird als voruebergehende Kombination gerechnet
+    (Ueberlagerung; im Kontaktmodell direkte Loesung) und nach dem Einfalten
+    verworfen - der Speicher haengt nicht von der Zahl der Alternativen ab.
+    """
+    from dataclasses import replace
+    sit = _kombination_pruefen(model, combo)
+    env = Envelope(model, {}, combo.name)
+    geloest = 0
+    for k, alt in enumerate(combo.alternativen, 1):
+        teile = {a: f for a, f in alt.items() if f}
+        if not teile:
+            continue
+        lc = next(iter(teile))
+        if len(teile) == 1 and abs(teile[lc] - 1.0) < 1e-12 and case_results \
+                and lc in case_results:
+            env.aufnehmen(lc, case_results[lc])
+        else:
+            name = f"{combo.name} [{k}]"
+            zwischen = replace(combo, name=name, factors=teile, alternativen=[])
+            res = solve_combination(model, zwischen, case_results, workers=workers,
+                                    systeme=systeme)
+            env.aufnehmen(name, res)
+            geloest += 1
+        _melde(progress, f"Umhüllende {combo.name}: {k}/{len(combo.alternativen)}"
+               + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
+               0.60 + 0.30 * k / max(1, len(combo.alternativen)))
+    return env, geloest
+
+
 def solve_combinations(model: Model, combos: list = None, case_results: dict = None,
                        system: StaticSystem = None, workers: int = None,
                        progress=None, use_jobs: bool = None, systeme: dict = None) -> dict:
     """Alle Kombinationen. Bei Kontakt (nichtlinear) werden die Kombinationen
     als Auftraege parallel bzw. auf der Farm gerechnet."""
     names = combos if combos is not None else list(model.combinations)
+    # Kombinationen mit Alternativen sind Umhuellende - die bildet solve_all
+    # (umhuellende_der_kombination), nicht ein einzelnes Ergebnis.
+    names = [n for n in names if not model.combinations[n].ist_umhuellende]
     out = {}
     if not names:
         return out
@@ -1383,52 +1424,181 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
 # Umhuellende
 # ==========================================================================
 class Envelope:
-    """Extremwerte ueber mehrere Ergebnisse (Kombinationen) mit Herkunft."""
+    """Extremwerte ueber mehrere Ergebnisse (Kombinationen) mit Herkunft.
 
-    def __init__(self, model: Model, results: dict, name: str = "Umhuellende",
+    Gebildet wird **inkrementell**: :meth:`aufnehmen` faltet ein Ergebnis in
+    das laufende Minimum und Maximum ein, :meth:`aufnehmen_umhuellende` eine
+    ganze Umhuellende. Der Speicherbedarf haengt damit nicht von der Zahl der
+    Ergebnisse ab - das Stapeln aller Ergebnisse (``np.stack``) hielte sie
+    gleichzeitig im Speicher; eine RFEM-Ergebniskombination am Drehlager hat
+    128 Alternativen, die Ermuedungskombinationen zusammen ueber 3500.
+
+    Die Herkunft (``*_src``) ist der Index in ``names``. Bei Gleichstand
+    gewinnt das **erste** Ergebnis - so wie ``argmin``/``argmax`` beim
+    Stapeln; darum ist das laufende Verfahren bitgleich mit dem gestapelten
+    (test_umhuellende). Ein Ergebnis, dem ein Stabelement fehlt, zaehlt dort
+    mit Null - auch das wie beim Stapeln.
+
+    ``Envelope(model, results, name)`` bleibt der Aufruf fuer alle, die schon
+    ein Woerterbuch von Ergebnissen haben.
+    """
+
+    KOMPONENTEN = ("N", "Vy", "Vz", "Mt", "My", "Mz")
+
+    def __init__(self, model: Model, results: dict = None, name: str = "Umhuellende",
                  n_stations: int = None):
         self.model = model
         self.name = name
-        self.names = list(results)
-        n = n_stations or model.design.stations
-        self.n_stations = n
-        rs = [results[k] for k in self.names]
-        if not rs:
-            self.u_min = self.u_max = np.zeros((model.nn, NDOF))
-            self.r_min = self.r_max = np.zeros((model.nn, NDOF))
-            self.beam = {}
-            self.node_vm_max = np.zeros(model.nn)
-            return
-        U = np.stack([r.u for r in rs])
-        R = np.stack([r.reactions for r in rs])
-        self.u_min, self.u_max = U.min(axis=0), U.max(axis=0)
-        self.u_min_src, self.u_max_src = U.argmin(axis=0), U.argmax(axis=0)
-        self.r_min, self.r_max = R.min(axis=0), R.max(axis=0)
-        self.r_min_src, self.r_max_src = R.argmin(axis=0), R.argmax(axis=0)
-        # Staebe
+        self.names: list = []
+        self.n_stations = n_stations or model.design.stations
+        nn = model.nn
+        self.u_min = np.zeros((nn, NDOF))
+        self.u_max = np.zeros((nn, NDOF))
+        self.u_min_src = np.zeros((nn, NDOF), int)
+        self.u_max_src = np.zeros((nn, NDOF), int)
+        self.r_min = np.zeros((nn, NDOF))
+        self.r_max = np.zeros((nn, NDOF))
+        self.r_min_src = np.zeros((nn, NDOF), int)
+        self.r_max_src = np.zeros((nn, NDOF), int)
         self.beam: dict = {}
-        elems = set()
-        for r in rs:
-            elems.update(r.beam_end)
-        for i in sorted(elems):
-            per = [r.stations(n).get(i) for r in rs]
-            d = {"x": None}
-            for k in ("N", "Vy", "Vz", "Mt", "My", "Mz"):
-                arr = np.stack([p[k] if p is not None else np.zeros(n) for p in per])
-                d[k] = (arr.min(axis=0), arr.max(axis=0), arr.argmin(axis=0), arr.argmax(axis=0))
-            d["x"] = next(p["x"] for p in per if p is not None)
-            self.beam[i] = d
-        # Spannungen
-        vm = np.stack([np.nan_to_num(r.node_vm) for r in rs])
-        self.node_vm_max = vm.max(axis=0)
-        self.node_vm_src = vm.argmax(axis=0)
-        # Ausnutzung Staebe (elastisch)
-        self.util = {}
-        for i in elems:
-            vals = [r.beam_forces[i]["util"] for r in rs if i in r.beam_forces]
-            vals = [v for v in vals if v is not None]
-            self.util[i] = max(vals) if vals else None
+        self.node_vm_max = np.zeros(nn)
+        self.node_vm_src = np.zeros(nn, int)
+        self.util: dict = {}
+        for k, r in (results or {}).items():
+            self.aufnehmen(k, r)
 
+    # ---- Einfalten ------------------------------------------------------
+    @staticmethod
+    def _falten(mn, mx, imn, imx, wert, j):
+        """Laufendes Min/Max eines Feldes mit Herkunft; Gleichstand bleibt beim
+        aelteren Ergebnis (strenges < und >)."""
+        kl = wert < mn
+        gr = wert > mx
+        return (np.where(kl, wert, mn), np.where(gr, wert, mx),
+                np.where(kl, j, imn), np.where(gr, j, imx))
+
+    def _stab_neu(self, x, j: int) -> dict:
+        """Ein Stabelement, das erst im Ergebnis j auftaucht: die Ergebnisse
+        davor zaehlen mit Null (Herkunft 0, das erste), wie beim Stapeln."""
+        n = self.n_stations
+        d: dict = {"x": x}
+        null = np.zeros(n)
+        for k in self.KOMPONENTEN:
+            if j == 0:
+                d[k] = None                      # wird gleich mit dem ersten Wert belegt
+            else:
+                d[k] = (null.copy(), null.copy(), np.zeros(n, int), np.zeros(n, int))
+        return d
+
+    def aufnehmen(self, name: str, r) -> None:
+        """Ein Ergebnis einfalten: Verschiebungen, Auflagerkraefte,
+        Stabschnittgroessen je Station, Vergleichsspannung, Ausnutzung."""
+        j = len(self.names)
+        self.names.append(name)
+        n = self.n_stations
+        u = np.asarray(r.u, float)
+        R = np.asarray(r.reactions, float)
+        vm = np.nan_to_num(np.asarray(r.node_vm, float))
+        if j == 0:
+            self.u_min, self.u_max = u.copy(), u.copy()
+            self.r_min, self.r_max = R.copy(), R.copy()
+            self.node_vm_max = vm.copy()
+        else:
+            self.u_min, self.u_max, self.u_min_src, self.u_max_src = self._falten(
+                self.u_min, self.u_max, self.u_min_src, self.u_max_src, u, j)
+            self.r_min, self.r_max, self.r_min_src, self.r_max_src = self._falten(
+                self.r_min, self.r_max, self.r_min_src, self.r_max_src, R, j)
+            gr = vm > self.node_vm_max
+            self.node_vm_max = np.where(gr, vm, self.node_vm_max)
+            self.node_vm_src = np.where(gr, j, self.node_vm_src)
+        # Staebe: alle Elemente, die dieses oder ein frueheres Ergebnis kennt
+        st = r.stations(n) if r.beam_end else {}
+        null = np.zeros(n)
+        for i in sorted(set(st) | set(self.beam)):
+            p = st.get(i)
+            d = self.beam.get(i)
+            if d is None:
+                d = self._stab_neu(p["x"] if p is not None else None, j)
+                self.beam[i] = d
+            if d["x"] is None and p is not None:
+                d["x"] = p["x"]
+            for k in self.KOMPONENTEN:
+                wert = np.asarray(p[k], float) if p is not None else null
+                if d[k] is None:
+                    d[k] = (wert.copy(), wert.copy(), np.zeros(n, int), np.zeros(n, int))
+                else:
+                    d[k] = self._falten(*d[k], wert, j)
+        # Ausnutzung (elastisch) je Stab: das Maximum ueber alle Ergebnisse
+        bf = r.beam_forces if r.beam_end else {}
+        for i in set(bf) | set(self.util):
+            v = bf[i]["util"] if i in bf else None
+            vorher = self.util.get(i)
+            werte = [x for x in (vorher, v) if x is not None]
+            self.util[i] = max(werte) if werte else None
+
+    def aufnehmen_umhuellende(self, env: "Envelope") -> None:
+        """Eine Umhuellende einfalten - die Herkunft zeigt danach auf deren
+        Ergebnisse (ihre Namen werden angehaengt), nicht auf die Umhuellende."""
+        if not env.names:
+            return
+        versatz = len(self.names)
+        self.names.extend(env.names)
+        n = self.n_stations
+        if versatz == 0:
+            self.u_min, self.u_max = env.u_min.copy(), env.u_max.copy()
+            self.u_min_src, self.u_max_src = env.u_min_src.copy(), env.u_max_src.copy()
+            self.r_min, self.r_max = env.r_min.copy(), env.r_max.copy()
+            self.r_min_src, self.r_max_src = env.r_min_src.copy(), env.r_max_src.copy()
+            self.node_vm_max, self.node_vm_src = env.node_vm_max.copy(), env.node_vm_src.copy()
+            self.beam = {i: {k: (tuple(np.array(x) for x in v) if k != "x" else v)
+                             for k, v in d.items()} for i, d in env.beam.items()}
+            self.util = dict(env.util)
+            return
+        self.u_min, self.u_max, self.u_min_src, self.u_max_src = self._falten_umhuellende(
+            (self.u_min, self.u_max, self.u_min_src, self.u_max_src),
+            (env.u_min, env.u_max, env.u_min_src, env.u_max_src), versatz)
+        self.r_min, self.r_max, self.r_min_src, self.r_max_src = self._falten_umhuellende(
+            (self.r_min, self.r_max, self.r_min_src, self.r_max_src),
+            (env.r_min, env.r_max, env.r_min_src, env.r_max_src), versatz)
+        gr = env.node_vm_max > self.node_vm_max
+        self.node_vm_max = np.where(gr, env.node_vm_max, self.node_vm_max)
+        self.node_vm_src = np.where(gr, env.node_vm_src + versatz, self.node_vm_src)
+        null = np.zeros(n)
+        for i in sorted(set(env.beam) | set(self.beam)):
+            d = self.beam.get(i)
+            e = env.beam.get(i)
+            if d is None:
+                # Element nur in der eingefalteten Umhuellende: die eigenen
+                # Ergebnisse davor zaehlen mit Null, Herkunft 0
+                d = {"x": None}
+                for k in self.KOMPONENTEN:
+                    d[k] = (null.copy(), null.copy(), np.zeros(n, int), np.zeros(n, int))
+                self.beam[i] = d
+            if e is None:
+                # Element nur hier: die Ergebnisse der Umhuellende zaehlen mit
+                # Null, Herkunft = ihr erstes Ergebnis
+                e = {"x": None}
+                for k in self.KOMPONENTEN:
+                    e[k] = (null, null, np.full(n, 0, int), np.full(n, 0, int))
+            if d["x"] is None and e.get("x") is not None:
+                d["x"] = e["x"]
+            for k in self.KOMPONENTEN:
+                d[k] = self._falten_umhuellende(d[k], e[k], versatz)
+        for i in set(env.util) | set(self.util):
+            werte = [x for x in (self.util.get(i), env.util.get(i)) if x is not None]
+            self.util[i] = max(werte) if werte else None
+
+    @staticmethod
+    def _falten_umhuellende(eigen, fremd, versatz: int):
+        mn, mx, imn, imx = eigen
+        fmn, fmx, fimn, fimx = fremd
+        kl = fmn < mn
+        gr = fmx > mx
+        return (np.where(kl, fmn, mn), np.where(gr, fmx, mx),
+                np.where(kl, np.asarray(fimn) + versatz, imn),
+                np.where(gr, np.asarray(fimx) + versatz, imx))
+
+    # ---- Auswertung ------------------------------------------------------
     @property
     def umag_max(self) -> np.ndarray:
         return np.maximum(np.linalg.norm(self.u_max[:, :3], axis=1),
@@ -1438,7 +1608,7 @@ class Envelope:
         """Zeilen: Element, Groesse, min, Kombination, max, Kombination."""
         rows = []
         for i, d in self.beam.items():
-            for k in ("N", "Vy", "Vz", "Mt", "My", "Mz"):
+            for k in self.KOMPONENTEN:
                 mn, mx, imn, imx = d[k]
                 j1, j2 = int(np.argmin(mn)), int(np.argmax(mx))
                 rows.append([i, k, float(mn[j1]), self.names[imn[j1]],
@@ -1447,7 +1617,7 @@ class Envelope:
 
     def summary(self) -> str:
         s = [f"{self.name}: {len(self.names)} Ergebnisse"]
-        if self.u_max.size:
+        if self.u_max.size and self.names:
             um = self.umag_max
             i = int(np.argmax(um))
             s.append(f"max. Verschiebung       : {um[i]*1000:.3f} mm (Knoten {i})")
@@ -1585,6 +1755,17 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         an.combinations = solve_combinations(model, case_results=an.cases, system=None,
                                              workers=workers, progress=progress,
                                              systeme=systeme)
+        # Kombinationen mit Alternativen: je eine Umhuellende, keine Ergebnisse
+        # in an.combinations. Sie stehen hinter den Art-Umhuellenden (unten).
+        umhuellende_ek: dict = {}
+        for n, c in model.combinations.items():
+            if c.ist_umhuellende:
+                env, geloest = umhuellende_der_kombination(model, c, an.cases, systeme,
+                                                           workers, progress)
+                umhuellende_ek[n] = env
+                an.info.setdefault("umhuellende", {})[n] = {
+                    "alternativen": len(c.alternativen), "geloest": geloest}
+        an.info["_umhuellende_ek"] = umhuellende_ek
     # Theorie je Lastfall: II. oder III. Ordnung ersetzt das lineare Ergebnis
     _lastfaelle_hoeherer_ordnung(model, an, systeme, progress)
     th2 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "II"]
@@ -1612,6 +1793,7 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         else:
             an.theorie3.kombinationen.update(t3.kombinationen)
             an.theorie3.settings.update(t3.settings)
+    umhuellende_ek = an.info.pop("_umhuellende_ek", {}) or {}
     if envelopes:
         groups: dict[str, dict] = {}
         for n, r in an.combinations.items():
@@ -1620,8 +1802,19 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
             groups.setdefault(key, {})[n] = r
         for key, rs in groups.items():
             an.envelopes[key] = Envelope(model, rs, f"Umhuellende {key}")
-        if not an.combinations:
+        # Die Umhuellende einer Ergebniskombination gehoert in die Umhuellende
+        # ihrer Art: so sehen die Nachweise (GZT, GZG, Ermuedung) auch die
+        # Alternativen - wie in RFEM.
+        for n, env in umhuellende_ek.items():
+            typ = model.combinations[n].typ
+            key = "ULS" if typ in ("ULS", "EQU", "ACC", "USER") else typ
+            if key not in an.envelopes:
+                an.envelopes[key] = Envelope(model, {}, f"Umhuellende {key}")
+            an.envelopes[key].aufnehmen_umhuellende(env)
+        if not an.combinations and not umhuellende_ek:
             an.envelopes["CASES"] = Envelope(model, an.cases, "Umhuellende Lastfaelle")
+    for n, env in umhuellende_ek.items():
+        an.envelopes[n] = env
     _melde(progress, "Umhüllende gebildet", 0.92)
     if design and model.members:
         from .ec3.design import check_members

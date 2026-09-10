@@ -1264,6 +1264,46 @@ class Combination:
     theorie: str = ""       # "" (wie Einstellung) | I | II | III (grosse Verformungen)
     #: Name der Bemessungssituation aus der Norm oder der Quelldatei (Information)
     bemessungssituation: str = ""
+    #: Umhuellende: jede Alternative ein Satz Lastfall -> Faktor (eine Summe);
+    #: das Ergebnis ist Minimum und Maximum je Ergebnisgroesse ueber die
+    #: Alternativen, mit Herkunft. Leer = gewoehnliche Kombination. So kommt
+    #: eine RFEM-Ergebniskombination "LF1/p oder LF2/p oder ..." herein: am
+    #: Drehlager 128 Lastfaelle je Ergebniskombination, deren Summe
+    #: physikalisch sinnlos waere. Eine Kombination mit Alternativen hat
+    #: ``factors`` leer.
+    alternativen: list = field(default_factory=list)
+
+    @property
+    def ist_umhuellende(self) -> bool:
+        return bool(self.alternativen)
+
+    def lastfall_umbenennen(self, alt: str, neu: str) -> None:
+        """Ein umbenannter Lastfall heisst auch in den Faktoren und in jeder
+        Alternative neu - sonst zeigte die Umhuellende ins Leere."""
+        if alt in self.factors:
+            self.factors = {(neu if k == alt else k): v for k, v in self.factors.items()}
+        self.alternativen = [{(neu if k == alt else k): v for k, v in a.items()}
+                             for a in self.alternativen]
+
+    def lastfall_entfernen(self, name: str) -> None:
+        """Ein geloeschter Lastfall faellt aus den Faktoren und aus jeder
+        Alternative; eine leer gewordene Alternative entfaellt."""
+        self.factors.pop(name, None)
+        self.alternativen = [a for a in ({k: v for k, v in a.items() if k != name}
+                                         for a in self.alternativen) if a]
+
+    def lastfaelle(self) -> list:
+        """Alle beteiligten Lastfaelle (Faktor ungleich null), in Reihenfolge
+        des ersten Auftretens - aus ``factors`` und allen Alternativen."""
+        aus: dict = {}
+        for k, f in self.factors.items():
+            if f:
+                aus.setdefault(k, None)
+        for alt in self.alternativen:
+            for k, f in alt.items():
+                if f:
+                    aus.setdefault(k, None)
+        return list(aus)
 
     @property
     def is_uls(self) -> bool:
@@ -1280,7 +1320,16 @@ class Combination:
         return self.typ == "FAT"
 
     def formula(self) -> str:
-        return " + ".join(f"{f:g}·{k}" for k, f in self.factors.items() if f)
+        def summe(faktoren) -> str:
+            return " + ".join(f"{f:g}·{k}" for k, f in faktoren.items() if f)
+        if not self.alternativen:
+            return summe(self.factors)
+        teile = [summe(a) for a in self.alternativen]
+        # Ab sieben Alternativen wird gekuerzt: 128 Lastfaelle in einer Zeile
+        # helfen niemandem, die Zahl schon.
+        if len(teile) > 6:
+            return " oder ".join(teile[:4]) + f" … ({len(teile)} Alternativen)"
+        return " oder ".join(teile)
 
 
 @dataclass
@@ -4314,7 +4363,7 @@ class Model:
         if len(free):
             msgs.append(f"WARNUNG: {len(free)} Knoten ohne Elementanschluss")
         for c in self.combinations.values():
-            for k in c.factors:
+            for k in c.lastfaelle():
                 if k not in self.load_cases:
                     msgs.append(f"FEHLER: Kombination '{c.name}': Lastfall '{k}' unbekannt")
         # Situationen: jeder Lastfall und jede Kombination nennt eine, die es
@@ -4333,7 +4382,7 @@ class Model:
             if sit not in namen:
                 msgs.append(f"FEHLER: Kombination '{c.name}': Situation '{sit}' unbekannt")
                 continue
-            fremd = [k for k, f in c.factors.items() if f and k in self.load_cases
+            fremd = [k for k in c.lastfaelle() if k in self.load_cases
                      and (self.load_cases[k].situation or GRUNDSTELLUNG) != sit]
             if fremd:
                 msgs.append(f"FEHLER: Kombination '{c.name}' (Situation {sit}) enthält "

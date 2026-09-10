@@ -274,7 +274,7 @@ CREATE TABLE ResultCombinationImpl_items (id INTEGER, container_order INTEGER,
                    modelObject_id bigint, modelObject_table TEXT,
                    modelObjectFactor REAL, groupFactor REAL,
                    leftParenthesis boolean, rightParenthesis boolean,
-                   operator INTEGER, subResult INTEGER);
+                   operator INTEGER, subResult INTEGER, modelObjectLoadType INTEGER);
 CREATE TABLE SpringConstants (id INTEGER PRIMARY KEY, version INTEGER,
                    owner_id bigint, owner_table TEXT,
                    springConstantAlongX REAL, springConstantAlongY REAL,
@@ -332,7 +332,9 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
     ``openings``   Flaechennummern, die eine Oeffnung tragen
     ``nodal_loads``   (Lastfall-id, [Knoten], (Fx,Fy,Fz), (Mx,My,Mz))
     ``prestress``     (Lastfall-id, [Stabnummern], N_0 [N])
-    ``combinations``  (Name, Situationsart, {Lastfall-id: Faktor})
+    ``combinations``  (Name, Situationsart, {Lastfall-id: Faktor}[, Bemessungssituation-id
+                      [, Operatoren je Eintrag [, Lasttypen je Eintrag]]]) - Operator 0 = oder,
+                      2 = Ende der Liste (wie RFEM 6); Lasttyp 1 = staendig
     ``boundary_lines`` {Flaechennummer: [Liniennummern]} - Randlinien
     ``stiffness_reverse`` Vorwaertszeiger der Flaeche leer lassen; die
                    Steifigkeit ist dann nur ueber ``owner_id`` zu finden
@@ -570,16 +572,23 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
         con.execute("INSERT INTO DesignSituationImpl VALUES (?,1,?,?,?,1)",
                     (i, sname, i, tid))
     for i, eintrag in enumerate(combinations, 1):
-        # Vier Werte: der vierte verweist auf eine Bemessungssituation
+        # Vier Werte: der vierte verweist auf eine Bemessungssituation; der
+        # fuenfte nennt die Operatoren je Eintrag (0 = oder, 2 = Ende), der
+        # sechste die Lasttypen (1 = staendig) - ohne Angabe ist es die Summe
+        # mit lauter staendigen Eintraegen, wie bisher.
         name, situation, faktoren = eintrag[:3]
         ds = int(eintrag[3]) if len(eintrag) > 3 else None
+        operatoren = list(eintrag[4]) if len(eintrag) > 4 and eintrag[4] is not None else None
+        lasttypen = list(eintrag[5]) if len(eintrag) > 5 and eintrag[5] is not None else None
         con.execute("INSERT INTO ResultCombination VALUES (?,1,?,?,"
                     "'ResultCombinationImpl')", (i, i, i))
         con.execute("INSERT INTO ResultCombinationImpl VALUES (?,1,?,?,?,?)",
                     (i, name, i, situation, ds))
         for j, (lcid, f) in enumerate(faktoren.items()):
+            op = operatoren[j] if operatoren is not None else None
+            lt = lasttypen[j] if lasttypen is not None else 1
             con.execute("INSERT INTO ResultCombinationImpl_items VALUES "
-                        "(?,?,?,'LoadCase',?,1.0,0,0,0,0)", (i, j, lcid, f))
+                        "(?,?,?,'LoadCase',?,1.0,0,0,?,0,?)", (i, j, lcid, f, op, lt))
     if strukturmodifikation:
         # (Name, [Stabnummern], [Knotennummern]) - je eine Objektauswahl
         smname, staebe, knoten = strukturmodifikation
@@ -1241,10 +1250,12 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
             load_cases=[("Grundfall", 1, 1.0),
                         ("Ankerausfall - Fall 1", 1, 0.0, 1),
                         ("Ankerausfall - Fall 2", 1, 0.0, 1)],
-            bemessungssituationen=[("GZT", "GZT - staendig", 6193),
-                                   ("FAT", "GZT (FAT) - Ermuedung - Zeitpunkt 1", 7505)],
+            bemessungssituationen=[("GZT", "GZT - staendig", 7007),
+                                   ("FAT", "GZT (FAT) - Ermuedung - Zeitpunkt 1", 7505),
+                                   ("Sonder", "Sonderfall", 9999)],
             combinations=[("GZT 1", 0, {1: 1.35}, 1),
-                          ("Spannungsschwingbreiten", 0, {2: 1.0, 3: 1.0}, 2)],
+                          ("Spannungsschwingbreiten", 0, {2: 1.0, 3: 1.0}, 2),
+                          ("Sonderfall", 0, {1: 1.0}, 3)],
             strukturmodifikation=("Ankerausfall", [2], [2]),
             liniengelenk=(("inf", "inf", "inf", 0.0, 0.0, 0.0), {1: [4, 6]}),
         )
@@ -1315,13 +1326,13 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
               k_fat.bemessungssituation)
         check("die andere bleibt GZT", k_gzt.typ == "ULS" and k_gzt.is_uls, k_gzt.typ)
         check("das Protokoll zaehlt die Arten",
-              "1x FAT" in txt and "1x ULS" in txt,
+              "1x FAT" in txt and "2x ULS" in txt,
               next((x for x in log if "Kombinationen uebernommen" in x), "-"))
         check("und sagt, dass daraus keine Ermuedungsbeanspruchung folgt",
               "Ermuedungsbeanspruchungen" in txt and not m.fatigue_loads,
               f"{len(m.fatigue_loads)} Ermuedungsbeanspruchungen")
         check("unbekannte Kennzahlen werden genannt, nicht verschwiegen",
-              "unbekannter Kennzahl" in txt and "6193" in txt,
+              "unbekannter Kennzahl" in txt and "9999" in txt,
               next((x for x in log if "unbekannter Kennzahl" in x), "-"))
         # Eine Kombination gilt in der Situation ihrer Lastfaelle - sonst
         # rechnete sie das verkleinerte System mit dem vollen zusammen.
@@ -1366,7 +1377,7 @@ def test_gemischte_kombination_wird_aufgeteilt():
             load_cases=[("Grundfall", 1, 1.0), ("Wind", 1, 0.0),
                         ("Ankerausfall - Grundfall", 1, 1.0, 1),
                         ("Ankerausfall - Wind", 1, 0.0, 1)],
-            bemessungssituationen=[("GZT", "GZT - staendig", 6193)],
+            bemessungssituationen=[("GZT", "GZT - staendig", 7007)],
             combinations=[("Bemessung", 0, {1: 1.35, 2: 1.5, 3: 1.35, 4: 1.5}, 1),
                           ("Nur voll", 0, {1: 1.35, 2: 1.5}, 1)],
             strukturmodifikation=("Ankerausfall", [2], [2]),
@@ -1419,6 +1430,79 @@ def test_gemischte_kombination_wird_aufgeteilt():
               and {"Bemessung (Grundstellung)", "Bemessung (Ankerausfall)"}
               <= set(an.envelopes["ULS"].names),
               str(sorted(an.envelopes["ULS"].names)) if "ULS" in an.envelopes else "keine ULS")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_ergebniskombination_oder():
+    """Operator 0 zwischen den Zeilen ist "oder" (RFEM-Dialog: "LF1/p oder bis
+    LF24/p ..."), Operator 2 steht nur auf der letzten Zeile. So eine
+    Ergebniskombination ist keine Summe, sondern eine Umhuellende ueber ihre
+    Alternativen - am Drehlager 128 Lastfaelle je Ergebniskombination, deren
+    Summe die GZT-Werte um ein Vielfaches ueberschaetzte. Kennzahlen 7007 (GZT)
+    und 6193 (GZG charakteristisch) sind aus EK1/EK2 des Drehlagermodells
+    abgelesen."""
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "oder.rf6"),
+            nodes=[(0, 0, 0), (4, 0, 0), (0, 0, 3), (4, 0, 3), (0, 2, 0), (4, 2, 0)],
+            lines=[[1, 3], [2, 4], [3, 4], [1, 2], [2, 5], [5, 6], [6, 1]],
+            members=[(1, None, None), (2, None, None), (3, None, None)],
+            supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1, 2])],
+            surfaces=[([1, 2, 5, 6], 0.0)],
+            rigid_surfaces=(1,),
+            load_cases=[("Grundfall", 1, 1.0), ("Wind", 1, 0.0),
+                        ("Ankerausfall - Grundfall", 1, 1.0, 1),
+                        ("Ankerausfall - Wind", 1, 0.0, 1)],
+            bemessungssituationen=[("GZT", "GZT - staendig", 7007),
+                                   ("GCh", "GZG - charakteristisch", 6193)],
+            combinations=[("EK oder", 0, {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}, 1, [0, 0, 0, 2]),
+                          ("EK summe", 0, {1: 1.35, 2: 1.5}, 2, [1, 2]),
+                          ("EK lasttyp", 0, {1: 1.0, 2: 1.0}, 1, [0, 2], [1, 2]),
+                          ("EK alt", 0, {1: 1.35, 2: 1.5}, 1)],
+            strukturmodifikation=("Ankerausfall", [2], [2]),
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        voll = m.combinations.get("EK oder (Grundstellung)")
+        aus = m.combinations.get("EK oder (Ankerausfall)")
+        check("die oder-EK wird je Situation geteilt", voll is not None and aus is not None,
+              str(list(m.combinations)))
+        if voll is not None and aus is not None:
+            check("und ist je Teil eine Umhuellende ueber die Lastfaelle der Situation",
+                  voll.alternativen == [{"LF1": 1.0}, {"LF2": 1.0}] and not voll.factors
+                  and aus.alternativen == [{"LF3": 1.0}, {"LF4": 1.0}] and aus.situation == "Ankerausfall",
+                  f"{voll.alternativen} / {aus.alternativen}")
+            check("Kennzahl 7007 ist GZT", voll.typ == "ULS" and aus.typ == "ULS"
+                  and voll.bemessungssituation == "GZT - staendig", f"{voll.typ} {voll.bemessungssituation!r}")
+        summe = m.combinations["EK summe"]
+        check("ein fremder Operator summiert wie bisher und wird gemeldet",
+              summe.factors == {"LF1": 1.35, "LF2": 1.5} and not summe.ist_umhuellende
+              and any("Operator 1" in x for x in log),
+              next((x for x in log if "Operator" in x), str(summe.factors)))
+        check("Kennzahl 6193 ist GZG charakteristisch", summe.typ == "SLS_CH", summe.typ)
+        check("keine unbekannte Kennzahl mehr", "unbekannter Kennzahl" not in txt)
+        lt = m.combinations["EK lasttyp"]
+        check("ein anderer Lasttyp wird als staendig uebernommen und gemeldet",
+              lt.alternativen == [{"LF1": 1.0}, {"LF2": 1.0}] and any("Lasttyp 2" in x for x in log),
+              next((x for x in log if "Lasttyp" in x), "-"))
+        check("ohne Operatoren (aeltere Datei) bleibt es die Summe",
+              m.combinations["EK alt"].factors == {"LF1": 1.35, "LF2": 1.5}
+              and not m.combinations["EK alt"].ist_umhuellende)
+        check("das Protokoll nennt die Umhuellenden mit ihrer Zahl an Alternativen",
+              any("Umhüllende" in x and "EK oder (Grundstellung) (2)" in x for x in log),
+              next((x for x in log if "Umhüllende" in x), "-"))
+        check("die Modellpruefung hat nichts zu beanstanden",
+              not [x for x in m.check() if "anderen Situation" in x or "unbekannt" in x],
+              str([x for x in m.check() if "FEHLER" in x][:3]))
+        an = solver.solve_all(m, combinations=True, envelopes=True)
+        check("der Loeser bildet je Teil eine Umhuellende und die Umhuellende GZT darueber",
+              "EK oder (Grundstellung)" in an.envelopes and "EK oder (Ankerausfall)" in an.envelopes
+              and "ULS" in an.envelopes
+              and {"LF1", "LF2", "LF3", "LF4"} <= set(an.envelopes["ULS"].names),
+              str(sorted(an.envelopes)))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1832,6 +1916,7 @@ def main():
               test_lastfaelle_und_lasten, test_lasten_und_kombinationen,
               test_ausfallszenario_gelenk_und_bemessungssituation,
               test_gemischte_kombination_wird_aufgeteilt,
+              test_ergebniskombination_oder,
               test_dispatcher_und_hilfen,
               test_knoten_zusammenfuehren, test_boegen_und_kreisflaechen,
               test_steifigkeit_rueckzeiger, test_kein_stilles_verschmelzen):

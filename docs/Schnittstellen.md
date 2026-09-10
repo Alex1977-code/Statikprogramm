@@ -544,17 +544,41 @@ Verdrehungsfreiheitsgrade.
 ### Kombinationen
 
 `LoadCombination` überlagert in RFEM die Lasten vor der Rechnung,
-`ResultCombination` die Ergebnisse danach. Solange die Rechnung linear ist,
-ist das dasselbe; beide werden darum als Kombination mit ihren Faktoren
-(`modelObjectFactor` × `groupFactor`) übernommen.
+`ResultCombination` die Ergebnisse danach. Eine Lastkombination wird als
+Kombination mit ihren Faktoren (`modelObjectFactor` × `groupFactor`)
+übernommen. Eine **Ergebniskombination** ist in der Regel keine Summe,
+sondern eine **Umhüllende**: ihre Zeilen sind mit „oder" verknüpft, und das
+Ergebnis ist Minimum und Maximum je Ergebnisgröße über die Alternativen.
+
+**Operatoren, gemessen an allen 52 Ergebniskombinationen des
+Drehlagermodells:** `ResultCombinationImpl_items.operator` ist zwischen allen
+Zeilen 0 und auf der jeweils letzten Zeile 2 (127 × 0, dann 2). Der
+RFEM-Dialog zeigt dazu „oder" und die Syntax `LF1/p oder bis LF24/p oder …`:
+**0 = oder**, **2 = Ende der Liste**. Jeder andere Wert (vermutlich „und")
+kommt in der Datei nicht vor; solche Zeilen werden summiert und das Protokoll
+nennt den Wert. `modelObjectLoadType` ist an allen 720 Einträgen 1 =
+**ständig** (`/p`, immer wirksam); andere Lasttypen (veränderlich: nur wenn
+ungünstig) werden als ständig übernommen und genannt. Einträge, die keine
+Lastfälle sind, werden gezählt und genannt.
+
+So wird aus „Bemessungskombination im GZT" eine Kombination mit **64
+Alternativen je Situation** (Grundstellung und Ankerausfall, siehe oben), jede
+ein einzelner Lastfall mit Faktor 1; der Löser bildet daraus die Umhüllende,
+ohne einen einzigen Lastfall neu zu lösen (Theoriehandbuch, Kapitel 3). Bis
+zum 10.09.2026 wurden die 128 Zeilen **summiert** — die GZT-Werte wären um
+ein Vielfaches zu groß gewesen. Das Protokoll nennt jede Umhüllende mit der
+Zahl ihrer Alternativen.
 
 Die **Bemessungssituation** steht entweder als Kennzahl an der Kombination
 (`designSituationType`, ältere Dateien) oder — so im Drehlagermodell — an
 einer eigenen `DesignSituation`, auf die `designSituation_id` zeigt. Aus ihr
 kommen zwei Dinge: die **Art** der Kombination (`DesignSituationImpl.
-designSituationTypeId`; **7505 = Ermüdung**, daraus wird `typ = "FAT"`) und
-ihr **Name** (`Combination.bemessungssituation`). Unbekannte Kennzahlen
-werden als GZT geführt **und genannt**.
+designSituationTypeId`; **7505 = Ermüdung**, daraus wird `typ = "FAT"`;
+**7007 = GZT** und **6193 = GZG charakteristisch**, abgelesen an EK1
+„Bemessungskombination im GZT" und EK2 „Maßgebende char.Kombination" des
+Drehlagermodells, deren Bemessungssituationen in der Datei keinen Namen
+tragen) und ihr **Name** (`Combination.bemessungssituation`). Unbekannte
+Kennzahlen werden als GZT geführt **und genannt**.
 
 > **Zwei verschiedene Dinge heißen „Situation".** `Combination.situation` ist
 > die *bauliche* Situation — Stellung und abgeschaltete Elemente —, mit ihr
@@ -568,19 +592,17 @@ Modell ist die Ermüdungsuntersuchung eines Brückendrehlagers. Sie bekommen
 eine eigene Umhüllende „FAT" und gehen nicht in die Querschnittsnachweise im
 GZT ein.
 
-**Ermüdungsbeanspruchungen werden daraus nicht abgeleitet.** Eine
-Schwingbreite braucht zwei Zustände; welche beiden das sind, steht in der
-Datei nicht eindeutig: jede der 52 Kombinationen führt genau **eine**
-Oder-Verknüpfung (Operator 2 am letzten Posten, sonst 0), und ob sie die
-Liste in zwei Zweige teilt, entscheidet über das Ergebnis. Eine Kombination
-mit 82 Posten und lauter Faktoren 1,0 lässt sich weder als Summe noch als
-Hüllkurve zwanglos lesen. Das gehört mit dem Aufsteller geklärt; bis dahin
-bleibt `fatigue_loads` leer und der Ermüdungsnachweis aus — das steht im
-Protokoll, statt eine Zahl zu erfinden.
+**Ermüdungsbeanspruchungen werden daraus noch nicht abgeleitet.** Die 50
+Ermüdungskombinationen sind Umhüllende über 2 bis 82 Zustände (Operator 0 =
+oder, siehe oben — die frühere Lesart „Operator 2 ist die eine
+Oder-Verknüpfung" war falsch). Die Schwingbreite ist dort Maximum minus
+Minimum der Umhüllenden; sie in `fatigue_loads` zu überführen ist ein
+eigener Schritt. Bis dahin bleibt `fatigue_loads` leer und der
+Ermüdungsnachweis aus — das steht im Protokoll.
 
-Enthält eine Ergebniskombination Klammern, Oder-Verknüpfungen oder
-Zwischenergebnisse, wird das gemeldet: die einfache Überlagerung trifft die
-Absicht dann nur bei linearer Rechnung.
+Enthält eine Ergebniskombination Klammern oder Zwischenergebnisse, wird das
+gemeldet: die Überlagerung innerhalb einer Alternative trifft die Absicht
+dann nur bei linearer Rechnung.
 
 Die Lastrichtung (`loadDirection`) steht mit Rohwert und Deutung im Protokoll
 (`0 = lokal z`, `1 = global Z`, `2 = global X`, `3 = global Y`) — die Deutung

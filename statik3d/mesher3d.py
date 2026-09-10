@@ -269,15 +269,46 @@ class Gitterindex:
     ueber ihm liegen koennen. Ohne diesen Index waere jeder Punkt gegen jedes
     Dreieck zu pruefen - bei 100 000 Punkten und 50 000 Dreiecken sind das
     5 Milliarden Paare.
+
+    Die Zelle ist das **Doppelte der Median-Kantenlaenge** der Dreiecke,
+    hoechstens aber die halbe Zielkantenlaenge ``h`` - nicht die Ausdehnung
+    des groessten Dreiecks und nicht fest 0,5 h. Ein grosses Dreieck (eine
+    ebene Aussenflaeche) macht sonst die Zelle so gross wie das Bauteil: am
+    Drehlager (V31, 21 716 Dreiecke, Median 5 mm, groesstes Dreieck 85,5 mm)
+    22 Zellen mit 1148 Kandidaten je Zelle. Und 0,5 h = 25 mm ist bei einer
+    Huelle mit 5-mm-Dreiecken (Bohrungskraenze) immer noch das Fuenffache des
+    Medians. Gemessen fuer innen() mit 60 000 Punkten, gleiches Ergebnis in
+    jeder Spalte:
+
+        Zelle      groesstes   0,5 h   1xMed   2xMed   3xMed   4xMed   8xMed
+        V31        4,49 s      0,66    0,26    0,19    0,27    0,43    1,64
+        V30        0,93 s      0,23    0,46    0,20    0,16    0,20    0,61
+        V15        3,87 s      0,35    0,22    0,14    0,16    0,21    0,96
+        V6 (grob)  0,58 s      0,08    0,25    0,71    1,50    1,74    2,94
+
+    Bei groben Huellen (V6: Median = h) bleibt es mit der Deckelung durch
+    0,5 h beim heutigen Wert. Grosse Dreiecke liegen in jeder Zelle, die ihr
+    Schatten ueberdeckt - das war schon so und bleibt richtig.
     """
 
-    def __init__(self, P: np.ndarray, T: np.ndarray, zelle: float = 0.0):
+    def __init__(self, P: np.ndarray, T: np.ndarray, zelle: float = 0.0, h: float = 0.0):
         self.P, self.T = P, T
         a, b, c = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
         self.lo = np.minimum(np.minimum(a[:, :2], b[:, :2]), c[:, :2])
         self.hi = np.maximum(np.maximum(a[:, :2], b[:, :2]), c[:, :2])
         gr = float(np.max(self.hi - self.lo)) if len(T) else 1.0
-        self.zelle = float(zelle) if zelle > 0 else max(gr, 1e-12)
+        if zelle > 0:
+            self.zelle = float(zelle)
+        elif len(T):
+            kanten = np.concatenate([np.linalg.norm(b - a, axis=1), np.linalg.norm(c - b, axis=1),
+                                     np.linalg.norm(a - c, axis=1)])
+            med = float(np.median(kanten))
+            self.zelle = 2.0 * med if med > 0 else max(gr, 1e-12)
+            if h > 0:
+                self.zelle = min(self.zelle, 0.5 * float(h))
+            self.zelle = max(self.zelle, 1e-12)
+        else:
+            self.zelle = 1.0
         self.p0 = P[:, :2].min(axis=0) if len(P) else np.zeros(2)
         self.faecher: dict = {}
         i0 = np.floor((self.lo - self.p0) / self.zelle).astype(np.int64)
@@ -1511,7 +1542,7 @@ def bcc_gitter(P: np.ndarray, T: np.ndarray, h: float,
     if not len(K):
         return np.zeros((0, 3))
     if index is None:
-        index = Gitterindex(P, T, zelle=max(h, 1e-12))
+        index = Gitterindex(P, T, h=h)
     K = K[innen(K, P, T, index)]
     if not len(K):
         return np.zeros((0, 3))
@@ -1738,9 +1769,10 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
                "guete": 0.0, "randtreue": 0.0, "verfeinerungen": 0}
     if len(P) < 4 or not len(T):
         return P, np.zeros((0, 4), int), bericht
-    # Kleinere Zellen als die Zielkantenlaenge: je weniger Dreiecke in einer
-    # Zelle stehen, desto weniger Paare hat die Strahlenzaehlung zu pruefen.
-    index = Gitterindex(P, T, zelle=max(0.5 * h, 1e-12))
+    # Kleine Zellen: je weniger Dreiecke in einer Zelle stehen, desto weniger
+    # Paare hat die Strahlenzaehlung zu pruefen (2 x Median-Kante, hoechstens
+    # 0,5 h - siehe Gitterindex).
+    index = Gitterindex(P, T, h=h)
     kante = randkantenlaenge(P, T)
     baum_rand = cKDTree(P)
 
@@ -3075,7 +3107,8 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
 def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
                       log: list = None, cache: dict = None,
                       ordnung: int = 0, fortschritt=None,
-                      h_linien: dict = None, h_flaechen: dict = None) -> list[int]:
+                      h_linien: dict = None, h_flaechen: dict = None,
+                      karten: tuple = None) -> list[int]:
     """Einen Volumenkoerper frei in Tetraeder vernetzen.
 
     ``h`` ist die angestrebte Kantenlaenge; 0 nimmt die Netzeinstellungen des
@@ -3090,9 +3123,17 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
     sich in einen Arbeitsprozess auslagern), :func:`koerper_einbauen`
     schreibt ins Modell.
     """
+    # ``karten`` = (h je Flaeche, h je Linie, gemeinsame Flaechen/Linien) aus
+    # mesher.netzkarten - einmal je Lauf gebildet. Ohne sie entsteht die Karte
+    # hier je Koerper (48 x 1,5 s am Drehlager).
+    gemeinsam = None
+    if karten:
+        h_flaechen, h_linien, gemeinsam = karten
     if h_linien is None or h_flaechen is None:
         h_flaechen, h_linien = kantenlaengen_karte(model, h=h)
+    if gemeinsam is None:
+        gemeinsam = gemeinsame_randflaechen(model)
     aus = koerper_vorbereiten(model, koerper, h, log, fortschritt, h_linien, h_flaechen,
-                              gemeinsame_randflaechen(model))
+                              gemeinsam)
     aus["log"] = []                     # steht schon im Protokoll
     return koerper_einbauen(model, koerper, aus, log, cache, ordnung)
