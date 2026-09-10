@@ -26,6 +26,12 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if sys.platform.startswith("win"):
+    # Die Plattform offscreen hat auf Windows keine Schriftdatenbank; ohne
+    # QT_QPA_FONTDIR faellt "eine echte Schrift ist da" - so wie der Packer
+    # (packaging/make_icon.py) es setzt, findet sie Segoe UI.
+    os.environ.setdefault("QT_QPA_FONTDIR",
+                          os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 RESULTS = []

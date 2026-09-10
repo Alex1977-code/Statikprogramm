@@ -1232,7 +1232,16 @@ def test_gemeinsame_flaeche_konform():
               not [b for b in D.abnahme(m) if b.pruefung == "gemeinsame Fläche"])
 
     # Gegenproben - ohne sie pruefte der Test nichts: er liefe auch gruen,
-    # wenn beide Ursachen zurueckkaemen.
+    # wenn beide Ursachen zurueckkaemen. Sie tauschen Funktionen im Modul
+    # aus, und das erreicht nur den eigenen Prozess: unter Windows startet
+    # der Parallelbetrieb seine Arbeitsprozesse mit spawn und importiert das
+    # Modul dort unveraendert (unter Linux erbt fork den Austausch - dort
+    # fiel es nicht auf). Darum laeuft die erste Gegenprobe seriell,
+    # workers=1: ihr Austausch (randschale) wirkt im Arbeitsprozess. Die
+    # zweite bleibt parallel, workers=2: ihr Austausch (netzkarten) wirkt im
+    # Hauptprozess, und nur im parallelen Pfad teilt jeder Koerper fuer sich
+    # - seriell teilen beide ueber denselben Zwischenspeicher, und der
+    # Befund traete gar nicht auf (0 haengende Knoten).
     m = _zwei_prismen()
     k = m.koerper["V_oben"]
     k.flaechen = [f for f in k.flaechen if f.startswith("M")] + ["Fuge", "Dach"]
@@ -1243,7 +1252,7 @@ def test_gemeinsame_flaeche_konform():
         return P, T, b
     M3.randschale = ohne_kennung
     try:
-        MSH.koerper_vernetzen(m, list(m.koerper.values()), log=[], workers=2)
+        MSH.koerper_vernetzen(m, list(m.koerper.values()), log=[], workers=1)
     finally:
         M3.randschale = echt
     _auf, _gl, doppelt, _h = _fugenknoten(m)
