@@ -33,6 +33,10 @@ python -m tests.run_all --gui    # mit Oberfläche
 python -m tests.test_mesher3d    # eine einzelne Suite
 ```
 
+Unter Windows stellt `tests/__init__.py` die Ausgabe auf UTF-8 und gibt
+`PYTHONUTF8=1` weiter – in einer Pipe kodiert Python 3.11 sonst cp1252, und das
+riss 26 von 53 Suiten an einem „−“ oder „≤“ (Nachweis `tests.test_ausgabe`).
+
 `run_all` nimmt die Oberflächenprüfung **nur mit `--gui`** mit; unter Linux
 ohne `DISPLAY` startet sie selbst `xvfb-run`. Die Oberflächenprüfung schreibt
 `tests/_gui_smoke.png` und `tests/_gui_fenster.png` neu — `tests/_gui_fenster.png`

@@ -52,6 +52,13 @@ python tests/run_all.py          # alle Rechen- und Importprüfungen
 python tests/run_all.py --gui    # zusätzlich die Oberfläche (braucht einen Bildschirm)
 ```
 
+Unter Windows laufen die Prüfungen in UTF-8: `tests/__init__.py` stellt die
+Ausgabe des Prozesses um und gibt `PYTHONUTF8=1` an Kindprozesse weiter. Ohne
+das kodiert Python 3.11 eine in eine Datei oder Pipe umgeleitete Ausgabe mit
+cp1252, und jede Prüfung, deren Text ein „−“, „≤“ oder eine Hochzahl enthält,
+reißt mit `UnicodeEncodeError` – 26 von 53 Suiten. Nachweis:
+`python -m tests.test_ausgabe`.
+
 Beides muss **vollständig** durchlaufen (`ALLE TESTS BESTANDEN`). Die Prüfungen
 sind der eigentliche Schutz: Sie rechnen gegen geschlossene Lösungen
 (Balkenformeln, Gleichgewichtssätze, Volumen aus dem Gaußschen Satz), nicht
