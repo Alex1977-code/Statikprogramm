@@ -85,6 +85,22 @@ FLACH = 1e-6
 #: ueblicherweise arbeitet. Kleiner heisst mehr Lagen und mehr Elemente.
 WACHSTUM_FLAECHE = 0.25
 
+#: Um wieviel feiner das Netz neben einer **festgelegten** Randstrecke sein
+#: darf als die Strecke selbst. Gemessen am Rechteck 1000 x 500 mm mit einer
+#: festgelegten Langseite (h = 25 mm) ist die schlechteste Dreiecksguete bei
+#: Verhaeltnis 1 noch 0,837 und bei 2 noch 0,725; erst darueber faellt sie ab
+#: (0,480 / 0,221 / 0,153 bei 3 / 6 / 8). Bis zum Doppelten traegt das
+#: gleichmaessige Gitter also, und bis dahin ist das Groessenfeld ein
+#: Nullschritt - nicht durch eine Schwelle, sondern weil L/2 dort auf h
+#: hinauslaeuft. Eine Schwelle waere hier fehl am Platz: sie laege genau auf
+#: den Werten, die im Modell vorkommen.
+VERHAELTNIS_FEST = 2.0
+
+#: Hoechstzahl der Runden, in denen stoerende Innenpunkte entfernt werden,
+#: bis jede Randstrecke im Netz steht. Jede Runde entfernt mindestens einen
+#: Punkt; mehr als eine Handvoll braucht es nie.
+MAX_RANDRUNDEN = 12
+
 #: Hoechstzahl der Lagen um eine Oeffnung. Bei Faktor 1,25 ist die Weite nach
 #: 20 Lagen auf das 87-fache gewachsen; mehr braucht kein Uebergang.
 MAXKRAENZE = 20
@@ -658,6 +674,170 @@ def _in_polygon_2d(q: np.ndarray, ringe: list) -> np.ndarray:
     return drin
 
 
+def randstreckenabstand(K: np.ndarray, ringe: list) -> np.ndarray:
+    """Je Kandidat der kleinste Abstand zu einer Rand**strecke**.
+
+    Nicht zum naechsten Rand**punkt** - das ist der ganze Unterschied. Solange
+    Ring und Innengitter aehnlich fein sind, laeuft beides aufs selbe hinaus;
+    sobald der Ring grob und das Gitter fein ist, nicht mehr. Genau dieser Fall
+    entstand, als gemeinsame Linien nicht mehr allein nachgeteilt werden.
+
+    Nachgemessen an einer achsparallelen Flaeche 960 x 35 mm, deren Langseite
+    auf 19 Abschnitte (50,5 mm) festliegt, bei h = 33,3 mm: die Gitterreihe
+    j = 0 lag auf ``lo[1]``, also **genau auf der Randlinie**. Vom naechsten
+    Ringpunkt war sie 25 mm entfernt und ueberlebte damit die Schranke
+    0,65 h = 21,7 mm - von der Randstrecke war sie 0,000 mm entfernt. Die
+    Delaunay-Zerlegung nahm den Punkt, die Randstrecke war keine Kante mehr,
+    die Huelle klaffte auf, und der Koerper endete ohne Netz.
+
+    Die Umkreisscheibe der Strecke (Gabriel/Ruppert) waere die schaerfere
+    Regel, taugt hier aber nicht: bei einem Quadrat mit vier 1-m-Strecken
+    ueberdecken die Scheiben das ganze Gebiet, und es bliebe kein Innenpunkt
+    uebrig. Der Abstand zur Strecke trifft genau das Gemessene und laesst das
+    Innere in Ruhe.
+    """
+    from scipy.spatial import cKDTree
+    if not len(K):
+        return np.zeros(0)
+    A, B = [], []
+    for R in ringe:
+        R = np.asarray(R, float)
+        if len(R) < 2:
+            continue
+        S = np.vstack([R, R[:1]])
+        A.append(S[:-1])
+        B.append(S[1:])
+    if not A:
+        return np.full(len(K), np.inf)
+    A = np.vstack(A)
+    B = np.vstack(B)
+    M = 0.5 * (A + B)
+    halb = 0.5 * np.linalg.norm(B - A, axis=1)
+    baum = cKDTree(M)
+    # Erst grob: welche Strecken kommen ueberhaupt in Frage? Der Abstand zur
+    # Mitte ist hoechstens Abstand-zur-Strecke plus halbe Laenge.
+    grob = cKDTree(K).query(M)[0].min() if len(M) else 0.0
+    radius = float(halb.max() + max(grob, 0.0) + 1e-12)
+    aus = np.full(len(K), np.inf)
+    for j, nachbarn in enumerate(baum.query_ball_point(K, radius)):
+        if not nachbarn:
+            aus[j] = float(np.linalg.norm(K[j] - M, axis=1).min())
+            continue
+        n = np.asarray(nachbarn, int)
+        AB = B[n] - A[n]
+        t = ((K[j] - A[n]) * AB).sum(axis=1) / np.maximum((AB * AB).sum(axis=1), 1e-300)
+        t = np.clip(t, 0.0, 1.0)
+        aus[j] = float(np.linalg.norm(K[j] - (A[n] + t[:, None] * AB), axis=1).min())
+    return aus
+
+
+def _randkantenlaengen(ringe: list) -> np.ndarray:
+    """Je Randpunkt die Laenge der laengeren seiner beiden Strecken.
+
+    Das ist die Aufloesung, die der Rand **an diesem Ort** hat. Naeher als
+    RANDABSTAND mal dieser Laenge darf kein Innenpunkt stehen: an einer
+    geschuetzten Linie mit 50 mm Abschnitten waeren 33-mm-Innenpunkte
+    Splitterfutter, auch wenn die Zielkantenlaenge 33 mm sagt.
+    """
+    aus = []
+    for R in ringe:
+        R = np.asarray(R, float)
+        if not len(R):
+            continue
+        if len(R) < 2:
+            aus.append(np.zeros(len(R)))
+            continue
+        S = np.vstack([R, R[:1]])
+        L = np.linalg.norm(S[1:] - S[:-1], axis=1)          # Strecke i -> i+1
+        aus.append(np.maximum(L, np.roll(L, 1)))            # beide am Punkt i
+    return np.concatenate(aus) if aus else np.zeros(0)
+
+
+def _sollweite(K: np.ndarray, ringe: list, fest: list, h: float,
+               wachstum: float = WACHSTUM_FLAECHE) -> np.ndarray:
+    """Die Weite, die das Netz an diesem Ort haben soll - Groessenfeld.
+
+    Ist eine Randlinie **festgelegt** (weil sie einem zweiten Koerper gehoert
+    und nicht allein nachgeteilt werden darf), dann bestimmt ihre
+    Streckenlaenge, wie fein daneben vernetzt werden kann. Ein Dreieck mit
+    einer 200-mm-Grundseite und 25 mm hohen Nachbarn ist ein Splitter, ganz
+    gleich wie brav das Innengitter sonst liegt.
+
+    Gemessen am Rechteck 1000 x 500 mm, eine Langseite festgelegt, h = 25 mm::
+
+        Strecke/h    1      2      3      4      6      8
+        Guete    0.837  0.725  0.480  0.480  0.221  0.153
+
+    Bis zum Doppelten traegt die gleichmaessige Teilung noch; darueber faellt
+    die Form ab. Darum gilt neben einer festgelegten Strecke ihre eigene
+    Laenge als Sollweite, die mit ``wachstum`` je Laengeneinheit auf h
+    zurueckgeht - dasselbe Wachstum, mit dem auch die Kraenze und das
+    Tetraedernetz arbeiten.
+
+    Nur **festgelegte** Strecken zaehlen: eine grobe Aussenkontur, die der
+    Vernetzer selbst noch feiner teilen koennte, darf das Innere nicht
+    vergroebern - sonst bliebe ein Quadrat mit vier 1-m-Strecken leer.
+    """
+    if not len(K):
+        return np.zeros(0)
+    A, B = [], []
+    for R, f in zip(ringe, fest):
+        R = np.asarray(R, float)
+        if len(R) < 2:
+            continue
+        S = np.vstack([R, R[:1]])
+        a, b = S[:-1], S[1:]
+        marke = np.asarray(f, bool)
+        if marke.any():
+            A.append(a[marke])
+            B.append(b[marke])
+    if not A:
+        return np.full(len(K), h)
+    A, B = np.vstack(A), np.vstack(B)
+    # Die zulaessige Weite neben der Strecke: die Strecke selbst, geteilt
+    # durch das Verhaeltnis, um das feiner sein darf. Ist die Strecke nicht
+    # laenger als VERHAELTNIS_FEST mal h, kommt h heraus und das Feld ist
+    # ohne Wirkung - ohne dass dafuer eine Schwelle abgefragt werden muesste.
+    L = np.linalg.norm(B - A, axis=1) / VERHAELTNIS_FEST
+    aus = np.full(len(K), h)
+    for a, b, ell in zip(A, B, L):
+        ab = b - a
+        t = np.clip(((K - a) @ ab) / max(float(ab @ ab), 1e-300), 0.0, 1.0)
+        d = np.linalg.norm(K - (a + t[:, None] * ab), axis=1)
+        np.maximum(aus, np.maximum(h, ell - wachstum * d), out=aus)
+    return aus
+
+
+def _ausduennen_2d(K: np.ndarray, weite: np.ndarray,
+                   anteil: float = 0.85) -> np.ndarray:
+    """Innenpunkte so ausduennen, dass ueberall die Sollweite eingehalten ist.
+
+    Gierig und in fester Reihenfolge - erst die Punkte mit der **groessten**
+    Sollweite. Damit hat jeder noch offene Punkt eine kleinere oder gleiche
+    Sollweite als der gerade behaltene, und eine einzige Kugelabfrage mit
+    dessen Weite trifft genau die, die weichen muessen. Umgekehrt (fein
+    zuerst) waere die Abfrage nicht abgeschlossen.
+
+    ``anteil`` ist mit Bedacht kleiner als eins: im gleichmaessigen
+    Dreiecksgitter stehen die Nachbarn genau h auseinander, und ohne diesen
+    Abschlag fiele jeder zweite Punkt weg, wo gar nichts auszuduennen ist.
+    """
+    from scipy.spatial import cKDTree
+    if not len(K):
+        return np.zeros(0, bool)
+    baum = cKDTree(K)
+    behalten = np.zeros(len(K), bool)
+    weg = np.zeros(len(K), bool)
+    for i in np.argsort(-np.asarray(weite, float), kind="stable"):
+        if weg[i]:
+            continue
+        behalten[i] = True
+        for j in baum.query_ball_point(K[i], float(anteil * weite[i])):
+            if j != i and not behalten[j]:
+                weg[j] = True
+    return behalten
+
+
 def _kraenze(ringe: list, h: float, wachstum: float = WACHSTUM_FLAECHE) -> np.ndarray:
     """Punkte auf Kraenzen um jede Oeffnung - der Uebergang vom Loch ins Feld.
 
@@ -714,7 +894,7 @@ def _kraenze(ringe: list, h: float, wachstum: float = WACHSTUM_FLAECHE) -> np.nd
     return np.vstack(aus)
 
 
-def _dreiecke_2d(ringe: list, h: float) -> tuple:
+def _dreiecke_2d(ringe: list, h: float, fest: list = None) -> tuple:
     """Ebenes Vieleck mit Loechern in Dreiecke teilen.
 
     Randpunkte sind vorgegeben (sie sind mit den Nachbarflaechen gemeinsam).
@@ -722,6 +902,12 @@ def _dreiecke_2d(ringe: list, h: float) -> tuple:
     zusammen wird Delaunay-zerlegt, und es bleiben die Dreiecke, deren
     Schwerpunkt im Gebiet liegt. Das ist die ebene Fassung genau des Weges,
     der spaeter im Raum gegangen wird.
+
+    ``fest[r][i]`` sagt, ob die Strecke vom Punkt i zum Punkt i+1 des Ringes r
+    **festgelegt** ist - weil ihre Linie einem zweiten Koerper gehoert und
+    nicht allein nachgeteilt werden darf. Neben so einer Strecke richtet sich
+    die Weite des Netzes nach ihr und nicht nach h (:func:`_sollweite`); ohne
+    die Angabe bleibt es bei h ueberall.
     """
     from scipy.spatial import Delaunay, cKDTree
     rand = np.vstack([np.asarray(R, float) for R in ringe])
@@ -730,20 +916,19 @@ def _dreiecke_2d(ringe: list, h: float) -> tuple:
     # gleichmaessige Gitter fuer das Feld. Was zu nah an schon Gesetztem
     # steht, faellt weg - naeher als RANDABSTAND mal der dort geltenden
     # Weite gaebe Splitter.
+    randkante = _randkantenlaengen(ringe)
     kranz = _kraenze(ringe, h)
     if len(kranz):
         kranz = kranz[_in_polygon_2d(kranz, ringe)]
     if len(kranz):
         # Die zulaessige Naehe richtet sich nach der Weite **an diesem Ort**,
         # also nach der Kantenlaenge des naechsten Randes - bei zwei
-        # verschieden fein geteilten Bohrungen sind das zwei Werte.
-        randkante = np.concatenate([
-            np.full(len(R), max(float(np.median(np.linalg.norm(
-                np.diff(np.vstack([np.asarray(R, float),
-                                   np.asarray(R, float)[:1]]), axis=0), axis=1))), 1e-12))
-            for R in ringe])
+        # verschieden fein geteilten Bohrungen sind das zwei Werte. Gemessen
+        # wird zur Rand**strecke**, nicht zum Randpunkt.
         d, i = cKDTree(rand).query(kranz)
-        kranz = kranz[d > RANDABSTAND * np.minimum(h, randkante[i] + WACHSTUM_FLAECHE * d)]
+        ds = randstreckenabstand(kranz, ringe)
+        kranz = kranz[np.minimum(d, ds)
+                      > RANDABSTAND * np.minimum(h, randkante[i] + WACHSTUM_FLAECHE * d)]
     gesetzt = np.vstack([rand, kranz]) if len(kranz) else rand
     innenpunkte = []
     if h > 0:
@@ -751,38 +936,99 @@ def _dreiecke_2d(ringe: list, h: float) -> tuple:
         dy = h * np.sqrt(3.0) / 2.0
         ny = max(int(np.ceil((hi[1] - lo[1]) / dy)), 1)
         kandidaten = []
+        # Das Gitter um eine halbe Zelle versetzt: sonst faellt die Reihe
+        # j = 0 bei einer achsparallelen Flaeche genau auf die untere
+        # Randlinie. Das allein genuegt nicht (gedrehte Flaechen), schadet
+        # aber nicht - die Gabriel-Regel unten faengt den Rest.
         for j in range(ny + 1):
-            y = lo[1] + j * dy
+            y = lo[1] + (j + 0.5) * dy
             versatz = 0.5 * h if j % 2 else 0.0
             nx = max(int(np.ceil((hi[0] - lo[0]) / h)), 1)
             for i in range(nx + 1):
-                kandidaten.append((lo[0] + versatz + i * h, y))
+                kandidaten.append((lo[0] + 0.5 * h + versatz + i * h, y))
         if kandidaten:
             K = np.asarray(kandidaten, float)
             K = K[_in_polygon_2d(K, ringe)]
             if len(K):
-                # Nicht zu nah an den Rand: sonst entstehen dort Splitter
-                d = cKDTree(gesetzt).query(K)[0]
-                innenpunkte = K[d > RANDABSTAND * h]
+                # Nicht zu nah an den Rand: sonst entstehen dort Splitter -
+                # und liegt ein Punkt **auf** einer Randstrecke, verdraengt er
+                # sie aus der Zerlegung und die Huelle klafft auf. Gemessen
+                # wird darum der Abstand zur **Strecke**, nicht zum naechsten
+                # Randpunkt: ein Punkt mitten zwischen zwei 50 mm
+                # auseinanderliegenden Ringpunkten ist von beiden 25 mm
+                # entfernt und lag doch genau auf der Linie.
+                #
+                # Die Schranke bleibt RANDABSTAND * h - die Weite des Netzes.
+                # Sie an der Laenge der Randstrecke zu messen waere falsch:
+                # ein Quadrat mit vier 1-m-Strecken haette dann 650 mm
+                # Sperrzone und bliebe innen leer.
+                nah = cKDTree(gesetzt).query(K)[0]
+                ds = randstreckenabstand(K, ringe)
+                # Neben einer festgelegten, groben Randstrecke gilt deren
+                # eigene Laenge als Sollweite - sowohl fuer den Abstand zum
+                # Rand als auch untereinander. Ohne festgelegte Strecken ist
+                # die Sollweite ueberall h, und beides ist ein Nullschritt.
+                soll = (_sollweite(K, ringe, fest, h) if fest is not None
+                        else np.full(len(K), h))
+                bleibt = np.minimum(nah, ds) > RANDABSTAND * soll
+                K, soll = K[bleibt], soll[bleibt]
+                if len(K) and float(soll.max()) > h:
+                    K = K[_ausduennen_2d(K, soll)]
+                innenpunkte = K
     P2 = np.vstack([gesetzt] + ([innenpunkte] if len(innenpunkte) else []))
+    n_rand = len(rand)
     if len(P2) < 3:
         return P2, np.zeros((0, 3), int), _randstrecken(ringe)
-    try:
-        tri = Delaunay(P2, qhull_options="Qbb Qc Qz Q12")
-    except Exception:                       # noqa: BLE001 - entartete Punktwolke
-        return P2, np.zeros((0, 3), int), _randstrecken(ringe)
-    T = np.asarray(tri.simplices, int)
-    if not len(T):
-        return P2, T, _randstrecken(ringe)
-    schwer = P2[T].mean(axis=1)
-    T = T[_in_polygon_2d(schwer, ringe)]
-    # Flache Dreiecke fallen weg
-    if len(T):
-        a, b, c = P2[T[:, 0]], P2[T[:, 1]], P2[T[:, 2]]
-        A = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
-                         - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1]))
-        T = T[A > FLACH * h * h]
-    return P2, T, _fehlende_randstrecken(ringe, T)
+
+    def zerlegen(punkte):
+        try:
+            tri = Delaunay(punkte, qhull_options="Qbb Qc Qz Q12")
+        except Exception:                   # noqa: BLE001 - entartete Punktwolke
+            return np.zeros((0, 3), int)
+        T = np.asarray(tri.simplices, int)
+        if not len(T):
+            return T
+        T = T[_in_polygon_2d(punkte[T].mean(axis=1), ringe)]
+        if len(T):                          # flache Dreiecke fallen weg
+            a, b, c = punkte[T[:, 0]], punkte[T[:, 1]], punkte[T[:, 2]]
+            A = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
+                             - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1]))
+            T = T[A > FLACH * h * h]
+        return T
+
+    # ---- Die Randstrecken sind keine Glueckssache -------------------------
+    # Eine freie Delaunay-Zerlegung kennt keine Randbedingung: sie *kann* eine
+    # Randstrecke ueberspringen, und ob sie es tut, haengt an der Lage der
+    # Innenpunkte - also an der Phase des Gitters, an Rundung, am Zufall. Ein
+    # Netz, dessen Dichtheit vom Zufall abhaengt, ist kein Netz.
+    #
+    # Darum wird hier nicht gehofft, sondern **erzwungen**: fehlt eine
+    # Randstrecke, sind die Innenpunkte schuld, die sie verdraengen - die in
+    # ihrer Umkreisscheibe. Sie fliegen raus, und es wird neu zerlegt. Jede
+    # Runde entfernt mindestens einen Punkt, also endet das Verfahren; und es
+    # kann nur Innenpunkte entfernen, nie Randpunkte. Bleibt danach eine
+    # Strecke offen, liegt es an der Geometrie selbst (ein entarteter Rand) -
+    # und **das** wird gemeldet, statt es dem Zufall zu ueberlassen.
+    T = zerlegen(P2)
+    for _runde in range(MAX_RANDRUNDEN):
+        fehlt = _fehlende_randstrecken(ringe, T) if len(T) else _randstrecken(ringe)
+        if not fehlt:
+            break
+        if len(P2) <= n_rand:
+            break                           # nur noch Randpunkte - Geometrie
+        A = P2[[a for a, _b in fehlt]]
+        B = P2[[b for _a, b in fehlt]]
+        mitte = 0.5 * (A + B)
+        halb = 0.5 * np.linalg.norm(B - A, axis=1)
+        innen = P2[n_rand:]
+        stoert = np.zeros(len(innen), bool)
+        for m, r in zip(mitte, halb):
+            stoert |= np.linalg.norm(innen - m, axis=1) < r
+        if not stoert.any():
+            break                           # kein Innenpunkt schuld
+        P2 = np.vstack([P2[:n_rand], innen[~stoert]])
+        T = zerlegen(P2)
+    return P2, T, _fehlende_randstrecken(ringe, T) if len(T) else _randstrecken(ringe)
 
 
 def _randstrecken(ringe: list) -> list:
@@ -848,7 +1094,12 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
             if len(T):
                 return P, T, "", _linien_zu(fehlt, ringe3, quellen), kennungen
     ringe = [np.stack([(R - c) @ e1, (R - c) @ e2], axis=1) for R in ringe3]
-    P2, T, fehlt = _dreiecke_2d(ringe, hf)
+    # Welche Randstrecke liegt auf einer festgelegten Linie? Das sind die
+    # Linien, die einem zweiten Koerper gehoeren: sie duerfen nicht allein
+    # nachgeteilt werden, also bestimmt ihre Streckenlaenge, wie fein
+    # nebenan vernetzt werden kann (:func:`_sollweite`).
+    fest = [np.array([q in teilung.gem_linien for q in qs], bool) for qs in quellen]
+    P2, T, fehlt = _dreiecke_2d(ringe, hf, fest)
     if not len(T):
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
                 "Netz in der Ebene misslungen", _linien_zu(fehlt, ringe3, quellen), [])
@@ -1564,8 +1815,20 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
             pass
     # Splitter herausglaetten - die Randknoten bleiben, wo sie sind
     if len(TET) and splitter > 0:
+        # Fest steht, was das Netz nach aussen begrenzt. Das sind zuerst die
+        # Huellpunkte - sie sind die Geometrie. Es sind aber nicht nur sie:
+        # beim Aussortieren faellt auch der eine oder andere fast flache
+        # Tetraeder im Inneren heraus, und an seiner Stelle bleibt ein
+        # (volumenloser) Schlitz. Dessen Knoten liegen ebenfalls auf dem
+        # Netzrand, und sie zu verschieben zoege den Schlitz auf - das Volumen
+        # aendert sich, obwohl die Glaettung nur innen wirken soll. Der
+        # Netzrand wird darum aus dem Verband gelesen und nicht aus der
+        # Punktnummer geraten.
         fest = np.zeros(len(punkte), bool)
         fest[:len(P)] = True
+        rand = freie_seiten(TET)
+        if len(rand):
+            fest[np.unique(rand)] = True
         punkte, bewegt = glaetten(punkte, TET, fest, ziel=splitter, fortschritt=fortschritt,
                                   anteil=(a0 + 0.7 * spanne, a0 + 0.92 * spanne))
         bericht["geglaettet"] = bewegt
@@ -2586,27 +2849,39 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
             P, T, bericht = randschale(model, koerper, h, zeilen, fortschritt,
                                        h_linien=h_linien, h_flaechen=h_flaechen,
                                        gemeinsam=gemeinsam)
+            # Scheitert die Huelle, ist das nur beim **ersten** Anlauf das Ende.
+            # Spaeter steht schon ein gueltiges Netz da, und das ist besser als
+            # keines: der Koerper behaelt es, und das Protokoll sagt, warum
+            # nicht feiner. (V109 hatte nach Anlauf 1 Tetraeder mit 88,6 %
+            # Randtreue und endete trotzdem ohne Netz, weil Anlauf 2 die Huelle
+            # aufriss.)
+            huellfehler = ""
+            offene = list(bericht.get("offene_kanten") or [])
             if bericht.get("fehler"):
-                aus["fehler"] = f"{bericht['fehler']} - nicht vernetzt."
-                return aus
-            if bericht.get("offen"):
-                aus["fehler"] = (f"die Randhülle ist nicht dicht ({bericht['offen']} Kanten "
-                                 "liegen nicht in genau zwei Dreiecken) - nicht vernetzt. Ein "
-                                 "Netz aus einer undichten Hülle wäre stillschweigend falsch.")
+                huellfehler = f"{bericht['fehler']}"
+            elif bericht.get("offen"):
+                huellfehler = (f"die Randhülle ist nicht dicht ({bericht['offen']} Kanten "
+                               "liegen nicht in genau zwei Dreiecken). Ein Netz aus einer "
+                               "undichten Hülle wäre stillschweigend falsch.")
+            elif bericht.get("teile", 1) > 1:
+                huellfehler = f"die Randflächen bilden {bericht['teile']} getrennte Hüllen"
+            elif bericht.get("volumen", 0.0) <= 0:
+                huellfehler = "die Hülle umschließt kein Volumen"
+            if huellfehler:
                 # Die Kanten beim Namen nennen: zwei Zeilen mit derselben
                 # Koordinate und verschiedenen Flaechen heissen, dass dort zwei
                 # Kopien desselben Punktes stehengeblieben sind.
-                for zeile in offene_kanten_text(bericht.get("offene_kanten") or []):
+                for zeile in offene_kanten_text(offene):
                     C.warn(zeilen, zeile)
-                aus["offene_kanten"] = bericht.get("offene_kanten") or []
-                return aus
-            if bericht.get("teile", 1) > 1:
-                aus["fehler"] = (f"die Randflächen bilden {bericht['teile']} getrennte "
-                                 "Hüllen - nicht vernetzt.")
-                return aus
-            if bericht.get("volumen", 0.0) <= 0:
-                aus["fehler"] = "die Hülle umschließt kein Volumen - nicht vernetzt."
-                return aus
+                if bestes is None:
+                    aus["fehler"] = f"{huellfehler} - nicht vernetzt."
+                    aus["offene_kanten"] = offene
+                    return aus
+                C.warn(zeilen, f"  Volumen {koerper.name}: Anlauf {anlauf} "
+                               f"({h * 1e3:.1f} mm): {huellfehler} - das Netz aus Anlauf "
+                               f"{bestes[9]} ({bestes[0] * 1e3:.1f} mm) bleibt stehen.")
+                aus["offene_kanten"] = offene
+                break
             quelle = bericht.get("quelle") or []
             Pn, TET, tb, P, T, quelle = tetraedern_treu(
                 P, T, h, quelle=quelle, splitter=splitter, fortschritt=fortschritt,
@@ -2685,6 +2960,10 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     if aus.get("fehler"):
         C.warn(log, f"Volumen {koerper.name}: {aus['fehler']}")
         koerper.kommentar = f"{_OHNE_NETZ} {aus['fehler']}"
+        # Die offenen Kanten mit an das Objekt: die Abnahme vor dem Rechnen
+        # zeigt sie im Fehlertext, statt nur ihre Zahl zu nennen. Zehn Zeilen
+        # sind genug, um die Stelle zu finden - der Rest steht im Protokoll.
+        koerper.netzkanten = offene_kanten_text(aus.get("offene_kanten") or [])[:10]
         # "kein Rauminhalt" heisst: es kann keines geben. Alles andere heisst:
         # es haette eines geben muessen, und der Vernetzer hat es nicht
         # geschafft - das ist ein Fehler und kein Hilfsobjekt.
@@ -2732,6 +3011,8 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
                          f"Güte min {tb['guete']:.3f}")
     # Fuer die Abnahme vor dem Rechnen am Objekt festhalten, nicht nur im Text
     koerper.randtreue = float(tb.get("randtreue", 0.0) or 0.0)
+    koerper.netzgrund = ""
+    koerper.netzkanten = []
     C.say(log, f"Volumen {koerper.name}: {len(els)} Tetraeder ({art}) aus "
                f"{tb.get('huelldreiecke', bericht['dreiecke'])} Randdreiecken "
                f"(Kantenlänge {h * 1e3:.0f} mm, {len(benutzt)} Knoten"

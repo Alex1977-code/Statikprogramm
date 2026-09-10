@@ -180,6 +180,63 @@ def test_koerper_ohne_netz_haelt_an():
           repr(getattr(m4.koerper["V5"], "netzgrund", None)))
 
 
+def test_meldung_nennt_ursache_und_kanten():
+    """Die Meldung soll die Ursache nennen, nicht das naechstliegende Mittel.
+
+    Zwei Befunde aus dem Lauf 09.09. 19:43 am Drehlagermodell:
+
+    * „12 Teiltragwerke ohne Lager" war die **Folge** davon, dass V31, V34
+      und V108-V110 ohne Netz blieben. Auf dem alten, vollstaendig vernetzten
+      Modell gab es die Meldung gar nicht. „Lager setzen" waere darum der
+      falsche Rat gewesen - die Koerper ohne Netz gehoeren genannt.
+    * Der Fehlertext nannte nur die **Zahl** der offenen Kanten. Das
+      Protokoll hatte die Kanten laengst mit Koordinaten und Randflaechen;
+      sie gehoeren dorthin, wo der Anwender hinsieht.
+    """
+    from statik3d.model import OHNE_NETZ
+    m = _koerper_ohne_netz("gescheitert")
+    kante = ("    Kante 6-624 in 1 Dreieck(en), Flächen F267: "
+             "(0.6800 | 0.0200 | -0.0500) - (0.6800 | 0.0467 | -0.0500)")
+    m.koerper["V5"].netzkanten = [kante]
+    # Ein zweites, ungelagertes Bauteil - es haengt nur ueber V5 am System
+    n0 = m.nn
+    for pkt in [(9, 0, 0), (10, 0, 0), (10, 1, 0), (9, 1, 0),
+                (9, 0, 1), (10, 0, 1), (10, 1, 1), (9, 1, 1.)]:
+        m.add_node(*pkt)
+    m.add_element("hex8", list(range(n0, n0 + 8)), "S235", group="B")
+    d = dg.diagnose(m)
+    z = dg.meldungen(m, d)
+    lose = [x for x in z if "ohne Lager" in x]
+    check("es gibt die Meldung über die losen Teile", len(lose) == 1,
+          lose[0][:80] if lose else "keine")
+    check("sie nennt den Körper ohne Netz als Ursache",
+          "V5" in lose[0] and "Folge" in lose[0], lose[0][-140:] if lose else "-")
+    check("und empfiehlt nicht mehr, Lager zu setzen",
+          "Lager setzen" not in lose[0])
+    check("die offenen Kanten stehen im Fehlertext, mit Koordinaten und Fläche",
+          kante in z, f"{len([x for x in z if x.startswith('    Kante')])} Kantenzeilen")
+
+    # Gegenprobe: ohne gescheiterten Koerper bleibt der alte Rat stehen
+    m2 = _koerper_ohne_netz("")
+    m2.koerper.pop("V5", None)
+    n0 = m2.nn
+    for pkt in [(9, 0, 0), (10, 0, 0), (10, 1, 0), (9, 1, 0),
+                (9, 0, 1), (10, 0, 1), (10, 1, 1), (9, 1, 1.)]:
+        m2.add_node(*pkt)
+    m2.add_element("hex8", list(range(n0, n0 + 8)), "S235", group="B")
+    lose2 = [x for x in dg.meldungen(m2) if "ohne Lager" in x]
+    check("ohne unvernetzten Körper heißt es weiter „Lager setzen“",
+          len(lose2) == 1 and "Lager setzen" in lose2[0],
+          lose2[0][-90:] if lose2 else "keine")
+    import json
+    m3 = Model.from_dict(json.loads(json.dumps(m.to_dict())))
+    check("netzkanten überstehen Speichern und Laden",
+          list(getattr(m3.koerper["V5"], "netzkanten", [])) == [kante],
+          repr(getattr(m3.koerper["V5"], "netzkanten", None))[:80])
+    check("und der Kommentar bleibt der des Vernetzers",
+          str(m3.koerper["V5"].kommentar).startswith(OHNE_NETZ))
+
+
 def _wuerfelpaar():
     """Zwei Hexaeder uebereinander, die sich die Trennflaeche teilen."""
     m = Model()
@@ -340,6 +397,7 @@ def test_schliesstest_mit_oeffnungsringen():
 
 def main():
     for f in (test_teiltragwerke, test_unvernetzt, test_koerper_ohne_netz_haelt_an,
+              test_meldung_nennt_ursache_und_kanten,
               test_abnahme, test_abnahme_an_der_echten_fuge,
               test_schliesstest_mit_oeffnungsringen, test_solver_meldung):
         print(f"\n--- {f.__name__} ---")

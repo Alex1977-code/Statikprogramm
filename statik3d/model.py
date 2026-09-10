@@ -1815,6 +1815,11 @@ class Volumenkoerper:
     #: | "abgebrochen" | "gescheitert" | "vernetzer_aus". Nur "kein_volumen"
     #: ist harmlos; alles andere heisst, dass ein tragendes Bauteil fehlt.
     netzgrund: str = ""
+    #: Die offenen Kanten der Randhuelle als fertige Zeilen (Knoten,
+    #: Koordinaten, Randflaechen) - hoechstens zehn. Eine blosse Zahl („9
+    #: Kanten offen") sagt nicht, wo; wer die Huelle schliessen soll, muss die
+    #: Stelle sehen, ohne ins Protokoll zu steigen. Der Rest steht dort.
+    netzkanten: list[str] = field(default_factory=list)
     #: Anteil der Huelle, den das Netz wirklich abdeckt (0 … 1, aus dem
     #: Vernetzer). Die Abnahme vor dem Rechnen prueft ihn; 0 = nicht gemessen.
     randtreue: float = 0.0
