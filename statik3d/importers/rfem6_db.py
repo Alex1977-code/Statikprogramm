@@ -2769,7 +2769,22 @@ SITUATION_TYP = {0: "ULS", 1: "SLS_CH", 2: "SLS_FR", 3: "SLS_QP", 4: "ACC", 5: "
 #: jedem Namen „GZT (FAT) - Ermuedung".
 SITUATION_ART = {
     7505: "FAT",        # GZT (FAT) - Ermuedung
+    7007: "ULS",        # GZT: EK1 "Bemessungskombination im GZT" zeigt darauf (Drehlager)
+    6193: "SLS_CH",     # GZG charakteristisch: EK2 "Massgebende char.Kombination" (Drehlager)
 }
+
+#: ``ResultCombinationImpl_items.operator``: 0 verknuepft mit "oder" (der
+#: RFEM-Dialog zeigt "oder", die Syntax "LF1/p oder bis LF24/p ..."), 2 steht
+#: nur auf der letzten Zeile (kein Verknuepfer mehr). Gemessen an allen 52
+#: Ergebniskombinationen des Drehlagermodells: 127 x 0, dann einmal 2. Jeder
+#: andere Wert (vermutlich "und") ist dort nicht messbar und wird als Summe
+#: behandelt - mit Meldung.
+OPERATOR_ODER = 0
+OPERATOR_ENDE = 2
+#: ``modelObjectLoadType``: 1 = staendig (immer wirksam, "/p"); alle 720
+#: Eintraege des Drehlagermodells. Andere Werte (veraenderlich: nur wenn
+#: unguenstig) werden als staendig uebernommen - mit Meldung.
+LASTTYP_STAENDIG = 1
 
 
 def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
@@ -2788,6 +2803,9 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
     bem = _bemessungssituationen(db)
     arten: dict[str, int] = {}
     unbekannt: dict[int, int] = {}
+    fremde_operatoren: dict[int, int] = {}
+    fremde_lasttypen: dict[int, int] = {}
+    fremde_objekte: dict[str, int] = {}
     for handle, impl_feld in (("LoadCombination", "LoadCombinationImpl_items"),
                               ("ResultCombination", "ResultCombinationImpl_items")):
         if not db.count(handle):
@@ -2797,24 +2815,49 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
             zeilen = db.container_rows(tbl).get(impl["id"], [])
             if not zeilen:
                 zeilen = db.container_rows(impl_feld).get(impl["id"], [])
-            faktoren: dict[str, float] = {}
+            # In Reihenfolge der Zeilen: der Operator einer Zeile verknuepft
+            # sie mit der naechsten. "oder" schliesst eine Alternative ab
+            # (Ergebniskombination = Umhuellende ueber die Alternativen),
+            # alles andere summiert in die laufende Alternative.
+            zeilen = sorted(zeilen, key=lambda z: int(z.get("container_order") or 0))
+            alternativen: list = []
+            laufend: dict[str, float] = {}
             eigen = False
             for z in zeilen:
-                if (z.get("modelObject_table") or "") != "LoadCase":
+                tabelle = z.get("modelObject_table") or ""
+                if tabelle != "LoadCase":
+                    fremde_objekte[tabelle or "?"] = fremde_objekte.get(tabelle or "?", 0) + 1
                     continue
                 nm = lc_name.get(z.get("modelObject_id"))
                 if not nm:
                     continue
                 f = float(z.get("modelObjectFactor") or 0.0) \
                     * float(z.get("groupFactor") or 1.0)
-                if not f:
-                    continue
-                faktoren[nm] = faktoren.get(nm, 0.0) + f
+                if f:
+                    laufend[nm] = laufend.get(nm, 0.0) + f
+                lt = z.get("modelObjectLoadType")
+                if lt is not None and int(lt) != LASTTYP_STAENDIG:
+                    fremde_lasttypen[int(lt)] = fremde_lasttypen.get(int(lt), 0) + 1
                 if z.get("leftParenthesis") or z.get("rightParenthesis") \
-                        or int(z.get("operator") or 0) or int(z.get("subResult") or 0):
+                        or int(z.get("subResult") or 0):
                     eigen = True
-            if not faktoren:
+                op = z.get("operator")
+                if handle == "ResultCombination" and op is not None:
+                    op = int(op)
+                    if op == OPERATOR_ODER:
+                        if laufend:
+                            alternativen.append(laufend)
+                        laufend = {}
+                    elif op != OPERATOR_ENDE:
+                        fremde_operatoren[op] = fremde_operatoren.get(op, 0) + 1
+            if laufend:
+                alternativen.append(laufend)
+            if not alternativen:
                 continue
+            if len(alternativen) > 1:
+                faktoren = {}
+            else:
+                faktoren, alternativen = alternativen[0], []
             name = C.unique_name(m.combinations,
                                  (impl.get("name") or "").strip()
                                  or f"K{h.get('userID') or h['id']}")
@@ -2831,7 +2874,7 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
                 name, faktoren, typ,
                 (impl.get("name") or "").strip()
                 + (" (Ergebniskombination)" if handle == "ResultCombination" else ""),
-                bemessungssituation=bs_name)
+                bemessungssituation=bs_name, alternativen=alternativen)
             n += 1
             sonder += bool(eigen)
     # Eine Kombination gilt in der Situation ihrer Lastfaelle. Steht der
@@ -2850,10 +2893,21 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
     from dataclasses import replace
     from ..model import GRUNDSTELLUNG
     geteilt: list[str] = []
+    gemischte_alternativen: list[str] = []
     je_situation: dict[str, int] = {}
     neu: dict[str, Combination] = {}
+
+    def situation_von(lastfaelle) -> set:
+        return {m.load_cases[k].situation for k in lastfaelle if k in m.load_cases}
+
     for nm, c in m.combinations.items():
-        sits = {m.load_cases[k].situation for k in c.factors if k in m.load_cases}
+        sits = situation_von(c.lastfaelle())
+        # Eine Alternative, die selbst zwei Situationen mischt, laesst sich
+        # nicht teilen: sie bleibt, wird gemeldet, und der Loeser weist sie ab.
+        if c.ist_umhuellende and any(len(situation_von(a)) > 1 for a in c.alternativen):
+            gemischte_alternativen.append(nm)
+            neu[nm] = c
+            continue
         if len(sits) <= 1:
             if sits:
                 c.situation = next(iter(sits))
@@ -2863,10 +2917,14 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
             continue
         teile: list[str] = []
         for sit in sorted(sits, key=lambda s: (s != "", s)):      # Grundstellung zuerst
-            faktoren = {k: f for k, f in c.factors.items()
-                        if k in m.load_cases and m.load_cases[k].situation == sit}
             tn = C.unique_name({**m.combinations, **neu}, f"{nm} ({sit or GRUNDSTELLUNG})")
-            neu[tn] = replace(c, name=tn, factors=faktoren, situation=sit)
+            if c.ist_umhuellende:
+                alts = [a for a in c.alternativen if situation_von(a) == {sit}]
+                neu[tn] = replace(c, name=tn, factors={}, alternativen=alts, situation=sit)
+            else:
+                faktoren = {k: f for k, f in c.factors.items()
+                            if k in m.load_cases and m.load_cases[k].situation == sit}
+                neu[tn] = replace(c, name=tn, factors=faktoren, situation=sit)
             teile.append(tn)
             if sit:
                 je_situation[sit] = je_situation.get(sit, 0) + 1
@@ -2875,6 +2933,32 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
         geteilt.append(f"{nm} -> " + " + ".join(f"„{t}“" for t in teile))
     m.combinations.clear()
     m.combinations.update(neu)
+    umhuellende = [(nm, len(c.alternativen)) for nm, c in m.combinations.items()
+                   if c.ist_umhuellende]
+    if umhuellende:
+        C.say(log, f"  {len(umhuellende)} Ergebniskombinationen sind oder-verknüpft und werden "
+                   "als Umhüllende über ihre Alternativen gerechnet (Minimum und Maximum je "
+                   "Ergebnisgröße, wie in RFEM), nicht als Summe: "
+                   + ", ".join(f"{nm} ({k})" for nm, k in umhuellende))
+    if gemischte_alternativen:
+        C.warn(log, f"  {len(gemischte_alternativen)} Umhüllende enthalten eine Alternative, "
+                    "die Lastfälle zweier Situationen mischt - das sind zwei Tragwerke in "
+                    "einer Summe; sie bleiben ungeteilt und werden beim Rechnen abgewiesen: "
+                    + ", ".join(gemischte_alternativen))
+    if fremde_operatoren:
+        C.warn(log, "  Ergebniskombinationen mit Operator "
+                    + ", ".join(f"{op} ({k}x)" for op, k in sorted(fremde_operatoren.items()))
+                    + " zwischen zwei Zeilen: nur 0 (oder) und 2 (Ende) sind aus dem "
+                      "Drehlagermodell belegt; diese Zeilen werden summiert (wie 'und').")
+    if fremde_lasttypen:
+        C.warn(log, "  Einträge mit Lasttyp "
+                    + ", ".join(f"{lt} ({k}x)" for lt, k in sorted(fremde_lasttypen.items()))
+                    + ": belegt ist nur 1 (ständig, immer wirksam); sie werden als ständig "
+                      "übernommen - ein veränderlicher Eintrag wirkte in RFEM nur, wenn er "
+                      "ungünstig ist.")
+    if fremde_objekte:
+        C.warn(log, "  Einträge, die keine Lastfälle sind, werden nicht übernommen: "
+                    + ", ".join(f"{t} ({k}x)" for t, k in sorted(fremde_objekte.items())))
     for sit, k in sorted(je_situation.items()):
         C.say(log, f"  {k} Kombinationen gelten in der Situation „{sit}“")
     if geteilt:
