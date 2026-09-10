@@ -317,6 +317,17 @@ class CombinationDialog(QtWidgets.QDialog):
         f.addRow("Situation", self.situation)
         self.theorie = theorie_feld(getattr(combo, "theorie", "") if combo else "")
         f.addRow("Theorie", self.theorie)
+        # Eine Umhuellende (Alternativen aus einer RFEM-Ergebniskombination)
+        # wird hier nicht ueber Faktoren beschrieben: sie bleibt, wie sie ist,
+        # und die Faktorfelder sind gesperrt.
+        self.alternativen = [dict(a) for a in (getattr(combo, "alternativen", None) or [])]
+        self.bemessungssituation = getattr(combo, "bemessungssituation", "") if combo else ""
+        if self.alternativen:
+            hinweis = QtWidgets.QLabel(
+                f"Umhüllende über {len(self.alternativen)} Alternativen (aus der Quelldatei):\n"
+                + combo.formula())
+            hinweis.setWordWrap(True)
+            f.addRow("Alternativen", hinweis)
         for k, lc in model.load_cases.items():
             e = NumEdit(combo.factors.get(k, 0.0) if combo else 0.0, 80)
             self.factors[k] = e
@@ -335,16 +346,24 @@ class CombinationDialog(QtWidgets.QDialog):
         for k, e in self.factors.items():
             lc = self.model.load_cases.get(k)
             passt = (getattr(lc, "situation", "") or "") == sit if lc is not None else True
+            if self.alternativen:
+                passt = False
             e.setEnabled(passt)
-            e.setToolTip("" if passt else "Lastfall einer anderen Situation - nicht kombinierbar")
+            e.setToolTip("" if passt else
+                         ("Umhüllende: die Alternativen kommen aus der Quelldatei"
+                          if self.alternativen else
+                          "Lastfall einer anderen Situation - nicht kombinierbar"))
 
     def result(self) -> Combination:
         return Combination(self.name.text().strip() or "K",
+                           {} if self.alternativen else
                            {k: e.value() for k, e in self.factors.items()
                             if e.value() and e.isEnabled()},
                            self.typ.currentText(), self.desc.text(),
                            situation=self.situation_name(),
-                           theorie=self.theorie.currentData() or "")
+                           theorie=self.theorie.currentData() or "",
+                           bemessungssituation=self.bemessungssituation,
+                           alternativen=[dict(a) for a in self.alternativen])
 
 
 class AutoCombinationDialog(QtWidgets.QDialog):

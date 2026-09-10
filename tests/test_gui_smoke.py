@@ -2417,9 +2417,24 @@ def main():
         ck = dk.result()
         check("Kombination trägt die Situation", ck.situation == "ohne Stiel" and ck.factors == {"LFS": 1.35})
         m_.combinations["KS"] = ck
+        # Eine Umhuellende (Alternativen aus RFEM): der Dialog sperrt die
+        # Faktoren und gibt die Alternativen unveraendert zurueck
+        from statik3d.model import Combination as _Komb
+        m_.combinations["EK"] = _Komb("EK", {}, "ULS", alternativen=[{"LF1": 1.0}, {"LF1": 1.35}],
+                                      bemessungssituation="GZT")
+        de = dg.CombinationDialog(w, m_, m_.combinations["EK"])
+        check("Kombinationsdialog: bei einer Umhüllenden sind die Faktoren gesperrt",
+              not de.factors["LF1"].isEnabled() and not de.factors["LFS"].isEnabled())
+        ce = de.result()
+        check("und die Alternativen bleiben erhalten",
+              ce.alternativen == [{"LF1": 1.0}, {"LF1": 1.35}] and ce.factors == {}
+              and ce.bemessungssituation == "GZT", str(ce.alternativen))
         an_ = solver.solve_all(m_)
         w._solve_done("all", an_)
         app.processEvents()
+        check("Ergebnisliste zeigt die Umhüllende der Kombination",
+              any(w.cb_result.itemText(i) == "Umhüllende EK" for i in range(w.cb_result.count())),
+              str([w.cb_result.itemText(i) for i in range(w.cb_result.count())][:6]))
         for i in range(w.cb_result.count()):
             if w.cb_result.itemText(i).endswith("LFS"):
                 w.cb_result.setCurrentIndex(i)

@@ -436,7 +436,8 @@ def state_summary(st: State) -> dict:
             "load_cases": cases, "active_case": m.active_case,
             "combinations": [{"name": c.name, "typ": c.typ, "description": c.description,
                               "leading": c.leading, "formula": c.formula(),
-                              "factors": _clean(c.factors)} for c in m.combinations.values()],
+                              "factors": _clean(c.factors),
+                              "alternativen": len(c.alternativen)} for c in m.combinations.values()],
             "fatigue_loads": [_clean(asdict(f)) for f in m.fatigue_loads.values()],
             "members": members,
             "design": _clean(asdict(m.design)),
@@ -1669,8 +1670,7 @@ def _op_edit_case(st, m, d):
         lc.name = new
         m.load_cases = {(new if k == old else k): v for k, v in m.load_cases.items()}
         for c in m.combinations.values():
-            if old in c.factors:
-                c.factors = {(new if k == old else k): v for k, v in c.factors.items()}
+            c.lastfall_umbenennen(old, new)
         for fl in m.fatigue_loads.values():
             if fl.case_max == old:
                 fl.case_max = new

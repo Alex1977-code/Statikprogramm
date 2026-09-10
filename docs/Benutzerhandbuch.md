@@ -2300,6 +2300,15 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
 
 * Färbung: |u|, ux/uy/uz, Vergleichsspannung (Schalen/Volumen, Randspannung
   bei Stäben), Ausnutzung EC3 / Ermüdung / elastisch.
+* **Umhüllende einer Kombination.** Eine Kombination mit Alternativen (aus
+  einer RFEM-Ergebniskombination „LF1 oder LF2 oder …") hat kein einzelnes
+  Ergebnis, sondern eine Umhüllende: Minimum und Maximum je Größe über ihre
+  Alternativen, mit dem maßgebenden Lastfall. Sie steht in Modellbaum,
+  Ergebnismaske, Bericht und Browser als „Umhüllende *Name*" neben den
+  Umhüllenden je Art (GZT, GZG, Ermüdung), die sie mit enthalten. Im
+  Kombinationsdialog zeigt sie ihre Alternativen; die Faktorfelder sind dort
+  gesperrt, denn die Alternativen kommen aus der Quelldatei. Ein umbenannter
+  oder gelöschter Lastfall zieht durch alle Alternativen.
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
   der betragsmäßig größere Extremwert), auswählbar im Modellbaum unter
   „Ergebnisse → Schnittgrößen".
