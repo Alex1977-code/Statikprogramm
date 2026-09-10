@@ -1214,6 +1214,38 @@ def test_randstrecken_sind_keine_glueckssache():
           f"{sum(zahl.values())} gültige Flächen, {entartet} entartete übergangen")
 
 
+def test_gitterindex_zelle():
+    """Die Zelle des Gitterindex folgt der typischen Dreiecksgroesse, nicht dem
+    groessten Dreieck. Eine ebene Aussenflaeche mit einem 85-mm-Dreieck machte
+    am Drehlager (V31, 21 716 Dreiecke, Median 5 mm) 22 Zellen mit 1148
+    Kandidaten je Zelle: innen() brauchte 4,49 s fuer 60 000 Punkte, mit
+    2 x Median 0,19 s - bei gleichem Ergebnis."""
+    m = neues_modell()
+    k = prisma(m, [[(0, 0), (2, 0), (2, 2), (0, 2)],
+                   kreis_punkte(0.2, 48, 1.0, 1.0, umgekehrt=True)], 0.4)
+    m.netz.ziellaenge = 0.15
+    P, T, _b = M3.randschale(m, k, 0.15, [], None)
+    a, b, c = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    kanten = np.concatenate([np.linalg.norm(b - a, axis=1), np.linalg.norm(c - b, axis=1),
+                             np.linalg.norm(a - c, axis=1)])
+    med = float(np.median(kanten))
+    idx = M3.Gitterindex(P, T)
+    close("die Zelle ist das Doppelte der Median-Kantenlaenge", idx.zelle, 2 * med, 1e-12, " m")
+    check("und damit kleiner als das groesste Dreieck",
+          idx.zelle < float(np.max(idx.hi - idx.lo)),
+          f"Zelle {idx.zelle * 1e3:.1f} mm, groesstes Dreieck {float(np.max(idx.hi - idx.lo)) * 1e3:.1f} mm")
+    close("mit Zielkantenlaenge h ist die Zelle hoechstens 0,5 h",
+          M3.Gitterindex(P, T, h=0.01).zelle, 0.005, 1e-12, " m")
+    close("und bleibt bei grossem h das Doppelte des Medians",
+          M3.Gitterindex(P, T, h=10.0).zelle, 2 * med, 1e-12, " m")
+    rng = np.random.default_rng(3)
+    q = P.min(axis=0) + rng.random((5000, 3)) * (P.max(axis=0) - P.min(axis=0))
+    grob = M3.Gitterindex(P, T, zelle=float(np.max(idx.hi - idx.lo)))
+    fein, alt = M3.innen(q, P, T, idx), M3.innen(q, P, T, grob)
+    check("innen() liefert mit feiner und grober Zelle dasselbe",
+          np.array_equal(fein, alt), f"{int(fein.sum())} / {int(alt.sum())} Punkte innen")
+
+
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_huelle_ohne_rundungsgitter,
               test_randstrecke_wird_nicht_verdraengt,
@@ -1225,7 +1257,7 @@ def main():
               test_zylinder_und_buchse,
               test_kleines_bauteil, test_gemeinsame_flaeche, test_zugstab,
               test_undichte_huelle, test_quadratische_tetraeder,
-              test_splitter_glaetten, test_geometrielast,
+              test_splitter_glaetten, test_gitterindex_zelle, test_geometrielast,
               test_fortschritt_und_abbruch, test_parallel_vernetzen):
         print(f"\n--- {t.__name__} ---")
         try:

@@ -1898,6 +1898,26 @@ zwei völlig verschiedenen Wegen beantwortet:
 * **Strahlenzählung** — ein Strahl nach +z schneidet eine geschlossene Hülle
   ungerade oft, wenn der Punkt innen liegt; mit einem Gitterindex über die
   xy-Projektion, damit nicht jeder Punkt gegen jedes Dreieck zu prüfen ist.
+  Die Zelle des Index ist das **Doppelte der Median-Kantenlänge** der
+  Hülldreiecke, höchstens aber **0,5 h**. Bis zum 10.09.2026 nahm der
+  Vernetzer fest 0,5 h (die Vorgabe der Klasse war die Ausdehnung des größten
+  Dreiecks). Bei einer Hülle mit 5-mm-Dreiecken um die Bohrungen (V31,
+  21 716 Dreiecke, Median 5 mm) sind 25 mm noch das Fünffache des Medians:
+  175 Zellen, und `innen()` trug 103,7 von 210 s der Vernetzung dieses
+  Körpers. Gemessen für 60 000 Punkte, Ergebnis in jeder Spalte identisch
+  (`test_gitterindex_zelle`):
+
+  | Körper | Dreiecke | Median | größtes Dreieck | 0,5 h (vorher) | 1×Med | **2×Med** | 3×Med | 4×Med | 8×Med |
+  |---|---|---|---|---|---|---|---|---|---|
+  | V31 | 21 716 | 5,0 mm | 4,49 s | 0,66 | 0,26 | **0,19** | 0,27 | 0,43 | 1,64 |
+  | V30 | 23 982 | 6,6 mm | 0,93 s | 0,23 | 0,46 | 0,20 | 0,16 | 0,20 | 0,61 |
+  | V15 | 11 824 | 5,1 mm | 3,87 s | 0,35 | 0,22 | **0,14** | 0,16 | 0,21 | 0,96 |
+  | V6 | 872 | 50 mm | 0,58 s | **0,08** | 0,25 | 0,71 | 1,50 | 1,74 | 2,94 |
+
+  Für die feinen Hüllen, die die Zeit bestimmen, ist 2×Median das Optimum;
+  für grobe Hüllen (V6: Median = h) hält die Deckelung durch 0,5 h den
+  heutigen Wert. Große Dreiecke liegen in jeder Zelle, die ihr Schatten
+  überdeckt — das war schon so und bleibt richtig.
 * **Verallgemeinerte Windungszahl** — die Summe der Raumwinkel aller Dreiecke
   (van Oosterom/Strackee) ist 4π innen und 0 außen. Sie kennt keine
   Sonderfälle und ist der Prüfstein für die schnelle Strahlenzählung; die
@@ -1957,6 +1977,12 @@ schon auseinander, und von außen sah das Netz jedesmal tadellos aus.
    könnte sie nicht bilden; ohne sie bildete jeder seine Teilung selbst.
    Wandte nur einer sein Dickenmaß an, teilte er die gemeinsame Linie feiner
    als der Nachbar — **13 der 33** Fugenknoten hingen dann frei in der Luft.
+   Die Karten entstehen **einmal je Lauf** (0,8 s am Drehlager) und gehen an
+   jeden Pfad: an die Arbeitsprozesse, an die seriell vernetzten Körper und
+   an die, die abgebildet begonnen haben und doch beim freien Vernetzer
+   landen. Bis zum 10.09.2026 bildete jeder dieser Körper sie neu — am
+   Drehlager 48 Körper × 1,5 s = 36 s in der seriellen Phase vor dem
+   Parallelbetrieb (`test_karten_einmal_je_lauf`).
 3. **Eine gemeinsame Fläche oder Linie darf kein Körper allein ändern.** Die
    Karte ist für sie bindend; für eigene Flächen ist sie nur eine Obergrenze,
    sonst könnte die Nachvernetzung gar nichts mehr ausrichten. Auch die
@@ -2073,6 +2099,29 @@ Elementart vektorisiert: 380 000 Tetraeder brauchen rund 1,5 s.
 * Elementschleifen (Assemblierung, Nachlauf) werden ab 1500 Elementen in
   Blöcke zerlegt und auf einen Prozess-Pool verteilt; das Modell wird je
   Prozess einmal übertragen.
+* Die Vernetzung übergibt Modell und Netzkarten den Arbeitsprozessen **über
+  eine Datei**, nicht als Startargument des Pools. Unter Windows (`spawn`)
+  startet der Pool seine Prozesse nacheinander, und Startargumente von 1,7 MB
+  passen nicht in die Rohrleitung, bevor das Kind hochgefahren ist: am
+  Drehlager mit 31 Prozessen wartete `Pool()` 25,8 s (31 × 0,83 s), bevor der
+  erste Arbeiter antwortete. Mit einem Dateipfad steht der Pool nach 1,8 s,
+  die Arbeit beginnt nach 4,3 s; die Datei wird nach dem Lauf gelöscht
+  (`test_arbeiter_laden_aus_datei`).
+* **Bilanz am Drehlager** (108 Körper, 1.812.423 Elemente, 31 Prozesse,
+  gleiche Netze in allen Läufen, gemessen am 10.09.2026):
+
+  | Stand | Pool-Lücke | abgebildete Körper | V31 (kritischer Pfad) | Körper gesamt | gesamt |
+  |---|---|---|---|---|---|
+  | alter Vernetzer (81d9192, 2.477.062 Elemente) | 30 s | 36 s | — | 604 s | 679 s |
+  | flache Tetraeder bis nach der Glättung | 30 s | 36 s | 241 s | 315 s | 381 s |
+  | + Modell über Datei, Karten einmal je Lauf | 2 s | 3 s | 248 s | 262 s | 328 s |
+  | + Gitterzelle 2 × Median, höchstens 0,5 h | 2 s | 3 s | 152 s | 166 s | 236 s |
+
+  Was bleibt, ist der kritische Pfad: ab 120 s rechnen nur noch fünf Körper,
+  am Ende V31 allein, während 30 Prozesse warten. Der nächste Schritt dort ist
+  die Zahl der Neuaufbauten der Delaunay-Zerlegung (Startpunkte aus dem
+  Größenfeld statt gleichmäßig bei h), danach Lasten verteilen (42 s) und
+  Kontaktfugen (24 s).
 * Grobkörnige Aufträge (Kombinationen bei Kontakt, Nachweise vieler Stäbe,
   Parameterstudien) laufen im lokalen Prozess-Pool oder auf der
   Rechnerfarm (siehe Rechnerfarm.md).

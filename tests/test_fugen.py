@@ -1272,6 +1272,64 @@ def test_gemeinsame_flaeche_konform():
           haengend > 0, f"{haengend} hängende Knoten")
 
 
+def test_arbeiter_laden_aus_datei():
+    """Der Arbeitsprozess bekommt einen Dateipfad, kein Modell. Unter Windows
+    (spawn) blockiert sonst jeder Prozessstart, bis das Kind die Startargumente
+    gelesen hat: am Drehlager (1,7 MB, 31 Prozesse) 31 x 0,83 s = 25,8 s, bevor
+    der erste Arbeiter antwortete - mit Datei 1,8 s."""
+    import pickle
+    import tempfile
+    from statik3d import mesher as MSH
+    m = _zwei_prismen()
+    karten = MSH.netzkarten(m)
+    fd, pfad = tempfile.mkstemp(suffix=".pkl")
+    os.close(fd)
+    try:
+        MSH._modell_fuer_arbeiter_schreiben(m, karten, pfad)
+        MSH._koerper_arbeiter_init(pfad)
+        check("der Arbeiter liest Modell und Karten aus der Datei",
+              MSH._WORKER_MODEL is not None and len(MSH._WORKER_MODEL.koerper) == 2
+              and MSH._WORKER_KARTEN is not None and len(MSH._WORKER_KARTEN) == 3,
+              f"{type(MSH._WORKER_MODEL).__name__}, Karten {type(MSH._WORKER_KARTEN).__name__}")
+    finally:
+        MSH._WORKER_MODEL = MSH._WORKER_KARTEN = None
+        os.remove(pfad)
+    # Der parallele Pfad (Datei) liefert dasselbe Netz wie der serielle
+    a = _zwei_prismen()
+    MSH.koerper_vernetzen(a, list(a.koerper.values()), log=[], workers=1)
+    b = _zwei_prismen()
+    erg = MSH.koerper_vernetzen(b, list(b.koerper.values()), log=[], workers=2)
+    check("parallel und seriell ergeben dieselbe Elementzahl",
+          len(a.elements) == len(b.elements) and erg.get("prozesse") == 2,
+          f"{len(a.elements)} / {len(b.elements)} auf {erg.get('prozesse')} Prozessen")
+    check("die Modelldatei der Arbeiter ist danach geloescht",
+          not [f for f in os.listdir(tempfile.gettempdir()) if f.startswith("statik3d_netz_")],
+          str([f for f in os.listdir(tempfile.gettempdir()) if f.startswith("statik3d_netz_")][:3]))
+
+
+def test_karten_einmal_je_lauf():
+    """Die modellweiten Netzkarten entstehen einmal je Lauf, nicht je Koerper.
+    Am Drehlager bildete jeder der 48 seriell vernetzten Koerper sie neu:
+    48 x 1,5 s = 36 s, waehrend der parallele Pfad sie einmal (0,8 s) bildet."""
+    from statik3d import mesher as MSH
+    m = _zwei_prismen()
+    echt = M3.kantenlaengen_karte
+    zaehler = []
+
+    def gezaehlt(*a, **kw):
+        zaehler.append(1)
+        return echt(*a, **kw)
+    M3.kantenlaengen_karte = gezaehlt
+    try:
+        MSH.koerper_vernetzen(m, list(m.koerper.values()), log=[], workers=1)
+    finally:
+        M3.kantenlaengen_karte = echt
+    check("zwei Koerper seriell: die Kantenlaengenkarte entsteht genau einmal",
+          len(zaehler) == 1, f"{len(zaehler)} Aufrufe")
+    check("und beide Koerper haben ein Netz", len(m.elements) > 0 and all(k.elemente for k in m.koerper.values()),
+          f"{len(m.elements)} Elemente")
+
+
 def main():
     for t in (test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
@@ -1285,7 +1343,7 @@ def main():
               test_deckungsgleiche_knoten_direkt,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
-              test_gemeinsame_flaeche_konform):
+              test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei, test_karten_einmal_je_lauf):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
