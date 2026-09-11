@@ -10046,20 +10046,37 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error("Keine Stäbe mit Nachweis - zuerst Stäbe anlegen (Struktur → Stäbe)")
         r = self.results
         if r is None or getattr(r, "buckling_modes", None) is None:
+            # Das Verzweigungsproblem laeuft wie jede Rechnung im Hintergrund:
+            # mit Abnahme des Netzes, Fortschritt und Abbrechen. Im
+            # Oberflaechen-Thread blockierte es am Drehlager (2 Mio. Elemente)
+            # das Fenster ueber fuenf Minuten ohne Balken (Menuedurchgang
+            # 11.09.2026). Die Knicklaengen folgen, sobald es geloest ist.
+            if not self._vor_rechnung_vernetzen():
+                return None
+            msgs = [x for x in m.check() if x.startswith("FEHLER")]
+            if msgs and not self._trotzdem_rechnen(msgs):
+                return None
+            if not self._abnahme_bestaetigen():
+                return None
+            self._apply_parallel_settings()
             d = self.cb_result.currentData() if self.analysis is not None else None
             combo = d[1] if d and d[0] == "combo" else None
-            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-            try:
-                r = solver.solve_buckling(m, max(1, self.sp_modes.value()),
-                                          case=None if combo else m.active_case,
-                                          combination=combo)
-            except Exception as ex:                    # noqa: BLE001
-                return self.error(f"Das Verzweigungsproblem konnte nicht gelöst werden "
-                                  f"({type(ex).__name__}: {ex}). Modell prüfen: Werkstoffe und "
-                                  "Querschnitte aller Elemente, Netz der Flächen und Volumen, Lager.")
-            finally:
-                QtWidgets.QApplication.restoreOverrideCursor()
-            self._solve_done("buckling", r)
+            nmodes = max(1, self.sp_modes.value())
+            func = lambda p: solver.solve_buckling(m, nmodes, p, case=None if combo else m.active_case,
+                                                   combination=combo)
+
+            def fertig(res):
+                self._solve_done("buckling", res)
+                self._knicklaengen_auswerten(res)
+            self._run_background(func, fertig, "Knicken für Knicklängen")
+            return None
+        return self._knicklaengen_auswerten(r)
+
+    def _knicklaengen_auswerten(self, r):
+        """Knicklaengenbeiwerte aus der gewaehlten Knickfigur: Tabelle, Baum,
+        Protokoll. Rueckgabe das Ergebnis (None bei Fehler)."""
+        from ..ec3.knicklaengen import knicklaengen_aus_eigenform
+        m = self.model
         modus = self.cb_mode.currentIndex() if self.cb_mode.count() else 0
         try:
             erg = knicklaengen_aus_eigenform(m, r, max(0, modus))

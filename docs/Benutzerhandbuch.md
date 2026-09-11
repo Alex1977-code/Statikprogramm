@@ -1786,7 +1786,12 @@ bleiben im Modell und werden mit der Datei gespeichert.
 unten, Gruppe *Nachweise*). Das Programm löst das Verzweigungsproblem —
 Grundzustand ist die in der Ergebnismaske gewählte Kombination, sonst der
 aktive Lastfall; liegt schon ein Knickergebnis vor, wird die dort gewählte
-Knickfigur ausgewertet — und bestimmt für jeden Stab mit Nachweis:
+Knickfigur ausgewertet — und bestimmt für jeden Stab mit Nachweis die Werte
+der Tabelle unten. Muss das Verzweigungsproblem erst gelöst werden, läuft es
+wie jede Rechnung im Hintergrund, mit Abnahme des Netzes, Balken und
+Abbrechen; die Knicklängen erscheinen, sobald es gelöst ist. Bis zum
+11.09.2026 rechnete der Knopf im Fenster selbst: am Drehlager-Modell
+(2 Mio. Elemente) stand die Oberfläche dabei über fünf Minuten ohne Balken.
 
 | Spalte | Bedeutung |
 |---|---|

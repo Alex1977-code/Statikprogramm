@@ -2483,8 +2483,19 @@ def main():
         app.processEvents()
         m_ = w.model
         beta_alt = {k: (mem.beta_y, mem.beta_z) for k, mem in m_.members.items()}
-        erg = w.do_knicklaengen()
+        w.knicklaengen = None
+        rueck = w.do_knicklaengen()
+        # Ohne Knickergebnis laeuft das Verzweigungsproblem im Hintergrund -
+        # am Drehlager blockierte es sonst das Fenster ueber fuenf Minuten
+        t0_ = time.time()
+        while w.worker is not None and w.worker.isRunning() and time.time() - t0_ < 120:
+            app.processEvents()
+            time.sleep(0.05)
         app.processEvents()
+        erg = getattr(w, "knicklaengen", None)
+        check("Knicklängen: ohne Knickergebnis rechnet der Worker, nicht das Fenster",
+              rueck is None and w.worker is not None and erg is not None,
+              f"Rueckgabe {rueck!r}, Worker {w.worker is not None}")
         check("Knicklängen: Verzweigungsproblem gelöst und je Stab ausgewertet",
               erg is not None and set(erg.staebe) == set(m_.members)
               and w.results is not None and getattr(w.results, "buckling_modes", None) is not None
