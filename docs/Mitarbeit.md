@@ -68,6 +68,12 @@ Drehlager fand der erste Durchgang (11.09.2026, 203 Befehle) zwei Hänger und
 drei 113-s-Befehle, die keine Prüfung abdeckte. Rechnende, ersetzende und
 löschende Befehle stehen in der Ausnahmeliste des Skripts.
 
+Keine Prüfung öffnet einen Browser: Oberflächenprüfung und Menüdurchgang
+setzen `STATIK3D_KEIN_BROWSER`, und das Programm schreibt dann nur „(Browser
+nicht geöffnet: …)“ ins Protokoll. Am 11.09.2026 stand beim Anwender nach
+jedem Lauf ein Browserfenster mit `tests/_lastenheft_smoke.html`, die der
+Lauf gleich wieder gelöscht hatte („Zugriff auf die Datei nicht möglich“).
+
 Beides muss **vollständig** durchlaufen (`ALLE TESTS BESTANDEN`). Die Prüfungen
 sind der eigentliche Schutz: Sie rechnen gegen geschlossene Lösungen
 (Balkenformeln, Gleichgewichtssätze, Volumen aus dem Gaußschen Satz), nicht

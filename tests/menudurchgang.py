@@ -20,6 +20,8 @@ import argparse
 import faulthandler
 import json
 import os
+
+os.environ.setdefault("STATIK3D_KEIN_BROWSER", "1")     # kein Browser aus dem Durchgang
 import sys
 import time
 import traceback

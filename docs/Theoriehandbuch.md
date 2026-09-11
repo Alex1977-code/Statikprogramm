@@ -1336,6 +1336,30 @@ Grundwerkstoff; `ec3/kerbfaelle.py`) ist dafür ein Anfang, kein Befund.
 Rainflow und Reservoir zählen je Element einzeln und sind bei großen Körpern
 langsam; die Spanne ist vektorisiert.
 
+**Verschweißte Berührungsstellen.** Ein Knoten, den zwei Körper teilen, ist
+eine durchverbundene Stelle: der Vernetzer teilt Knoten nur über eine
+gemeinsame Fläche (RFEM: eine Fläche zwischen zwei Volumen), und eine
+ausgeführte Kontaktfuge verdoppelt sie (Kapitel 4.0). Ohne eingegebene
+Kontaktbedingung zwischen den beiden Körpern ist das ein Stoß, der in
+Wirklichkeit geschweißt ist (Anweisung des Anwenders vom 11.09.2026). Die
+Elemente mit einem solchen Knoten — eine Elementlage beiderseits — tragen den
+Kerbfall „Naht" ihres Körpers, Vorschlag 90 N/mm² nach Anhang B, Tabelle B.1,
+Detail 7 (Kreuzstoß mit tragenden Kehlnähten, Strukturspannung); voll
+durchgeschweißt wäre Detail 3 mit 100. Die Wöhlerlinie läuft dafür mit einem
+Kerbfall je Element (`_n_vektor` mit Feld). Die Zuordnung ist ein Durchlauf
+über alle Elementknoten (`nahtknoten`), am Drehlager 8 Mio. Einträge in
+Sekunden; Paare mit Kontaktbedingung (`kontaktpaare`, aus `koerpernamen` und
+Gegenkörpern bzw. den Besitzern der Gegenflächen) bleiben außen vor.
+Gemessen am Drehlager: 47 gemeinsame Flächen zwischen 25 Körperpaaren,
+keine davon von einer der 12 Kontaktbedingungen genannt — die Kontakte
+liegen dort auf getrennten, deckungsgleichen Flächen. Grenze: teilen zwei
+Körper nur eine Kante, zählt die Elementlage an der Kante mit — sie liegt
+ohnehin an einem Stoß. Geprüft an zwei Körpern aus einem Hexaedernetz
+(`test_naht_beruehrung`): 9 Nahtknoten in der Ebene x = 1 m, vier Elemente
+je Körper an der Naht, maßgebend eines davon mit D nach der Wöhlerlinie 90,
+der Nachbarkörper ohne Nahtkerbfall mit 160; mit Kontaktbedingung keine
+Nahtknoten.
+
 #### 5.5a Kerbfälle aus Schweißnähten (`schweissnaehte.py`)
 
 Jede Naht liefert nach Nahtart, Lage zur Beanspruchung und Ausführung den

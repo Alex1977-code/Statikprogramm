@@ -248,6 +248,70 @@ def test_volumen():
           "Ermüdungsnachweis Volumen" in html and "V1" in html and "Hauptspannung" in html)
 
 
+def test_naht_beruehrung():
+    """Zwei Volumen aus einem Netz (gemeinsame Knoten in der Ebene x = 1 m):
+    die Elemente an der Beruehrungsstelle tragen den Kerbfall Naht (90), der
+    Rest den des Koerpers (160). Eine Kontaktbedingung zwischen beiden macht
+    die Beruehrung zur Fuge - kein Nahtkerbfall."""
+    from statik3d.model import Volumenkoerper, Kontaktbedingung
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    ids = mesher.grid_box(m, "S235", 2.0, 0.1, 0.1, 20, 2, 2, typ="hex8")
+    nx, ny, nz = 20, 2, 2
+    for i in range(nx + 1):
+        for j in range(ny + 1):
+            for k in range(nz + 1):
+                dof = ([0] if i == 0 else []) + ([1] if j == 0 else []) + ([2] if k == 0 else [])
+                if dof:
+                    m.fix(int(ids[i, j, k]), dof)
+    m.case().category = "G"
+    m.add_load_case("LF2", "Q")
+    for lc, Fx in (("LF1", 1000e3), ("LF2", 400e3)):
+        m.active_case = lc
+        for j in range(ny):
+            for k in range(nz):
+                for jj, kk in ((j, k), (j + 1, k), (j, k + 1), (j + 1, k + 1)):
+                    m.load_node(int(ids[nx, jj, kk]), Fx=Fx / (ny * nz) / 4.0)
+    # Element i, j, k hat die Nummer i*ny*nz + j*nz + k (grid_box-Reihenfolge)
+    links = [e for e in range(len(m.elements)) if e // (ny * nz) < 10]
+    rechts = [e for e in range(len(m.elements)) if e // (ny * nz) >= 10]
+    m.koerper["V1"] = Volumenkoerper("V1", [], material="S235", elemente=links, kerbfall=160e6,
+                                     kerbfall_naht=90e6)
+    m.koerper["V2"] = Volumenkoerper("V2", [], material="S235", elemente=rechts, kerbfall=160e6)
+    m.fatigue_loads["Zug"] = FatigueLoad("Zug", folge=["LF1", "LF2"], wiederholungen=1e5)
+    kn = F.nahtknoten(m)
+    check("Nahtknoten: die 9 Knoten der Ebene x = 1 m, fuer beide Koerper",
+          set(kn) == {"V1", "V2"} and len(kn["V1"]) == 9 and kn["V1"] == kn["V2"]
+          and all(abs(m.nodes[nd, 0] - 1.0) < 1e-9 for nd in kn["V1"]), str({a: len(b) for a, b in kn.items()}))
+    an = solver.solve_all(m, design=False, fatigue=True)
+    f1, f2 = an.fatigue.volumen["V1"], an.fatigue.volumen["V2"]
+    dsig = 600e3 / 0.01 * m.design.gamma_Ff
+    check("V1: 4 Elemente an der Naht, massgebend eines davon mit Kerbfall 90",
+          f1.n_naht == 4 and f1.naht and f1.category == 90e6 and f1.element in links
+          and f1.element // (ny * nz) == 9, f"{f1.n_naht} {f1.category} Element {f1.element}")
+    check("V1: D mit der Woehlerlinie 90 an der Naht",
+          abs(f1.D - 1e5 / F.sn_life(dsig, 90e6, f1.gamma_Mf)) < 1e-12 * f1.D, f"{f1.D:.5f}")
+    check("V2 ohne Kerbfall Naht: 4 Elemente beruehren, aber Kerbfall 160 ueberall",
+          f2.n_naht == 4 and f2.category == 160e6
+          and abs(f2.D - 1e5 / F.sn_life(dsig, 160e6, f2.gamma_Mf)) < 1e-12 * max(f2.D, 1e-300),
+          f"{f2.n_naht} {f2.category} D {f2.D:.3e}")
+    check("Tabelle nennt beide Kerbfaelle und die Naht",
+          any("160 / Naht 90" in str(r[1]) and "(Naht)" in str(r[-1]) for r in an.fatigue.table()[1:]),
+          str(an.fatigue.table()[1]))
+    # Kontaktbedingung zwischen V1 und V2: Fuge, keine Naht
+    m.kontaktbedingungen["Fuge"] = Kontaktbedingung("Fuge", koerpernamen=["V1"], gegenkoerper=["V2"])
+    check("mit Kontaktbedingung: keine Nahtknoten", F.nahtknoten(m) == {} and F.kontaktpaare(m) == {frozenset(("V1", "V2"))})
+    f1k = solver.solve_all(m, design=False, fatigue=True).fatigue.volumen["V1"]
+    check("und V1 rechnet ueberall mit 160", f1k.n_naht == 0 and f1k.category == 160e6 and not f1k.naht)
+    # Vorschlag: Kerbfall Naht 90 kommt mit dem Volumenvorschlag
+    from statik3d.ec3 import kerbfaelle as K
+    m.koerper["V2"].kerbfall = 0.0
+    K.anwenden(m, None)
+    check("Vorschlag fuer ein Volumen: 160 und Naht 90",
+          m.koerper["V2"].kerbfall == 160e6 and m.koerper["V2"].kerbfall_naht == 90e6
+          and m.koerper["V2"].kerbfall_vorschlag)
+
+
 def test_kerbfall_vorschlaege():
     """Zugstab mit Rundquerschnitt 50, gewalzter Querschnitt 160, Volumen 160
     (Strukturspannung); Naehte gehen vor; eingegebene Werte bleiben; eine
@@ -289,7 +353,8 @@ def test_kerbfall_vorschlaege():
 
 
 def main():
-    for t in (test_spanne, test_hauptspannungen, test_volumen, test_kerbfall_vorschlaege):
+    for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
+              test_kerbfall_vorschlaege):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

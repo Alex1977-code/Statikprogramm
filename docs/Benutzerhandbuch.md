@@ -1765,8 +1765,10 @@ dem RFEM-Import stehen, ohne doppelt zu zählen.
 RFEM-Import automatisch): Schweißnähte des Modells liefern den Kerbfall ihrer
 Stäbe; Zugstäbe mit Rundquerschnitt bekommen 50 N/mm² (Tabelle 8.1, Kerbfall
 14: Stange mit Gewinde unter Zug), gewalzte Querschnitte 160 N/mm² (Kerbfall
-1, Grundwerkstoff), Volumen 160 N/mm² (Grundwerkstoff, Strukturspannung). Das
-sind Vorschläge: die Stabtabelle zeigt „(Vorschlag)", Volumenmaske und
+1, Grundwerkstoff), Volumen 160 N/mm² (Grundwerkstoff, Strukturspannung) und
+an verschweißten Berührungsstellen 90 N/mm² (Anhang B, Tabelle B.1, Detail 7:
+Kreuzstoß mit tragenden Kehlnähten; voll durchgeschweißt wäre Detail 3 mit
+100). Das sind Vorschläge: die Stabtabelle zeigt „(Vorschlag)", Volumenmaske und
 -dialog sagen es im Hinweis. Eine Eingabe in Maske, Tabelle oder Dialog
 bestätigt den Wert, und ein bestätigter Wert wird von „Kerbfälle vorschlagen"
 nicht mehr überschrieben. Anschlüsse, Steifen und Nähte mindern den Kerbfall
@@ -1783,6 +1785,18 @@ Element mit dem größten D. Das Ergebnis steht in der Tabelle Ermüdung
 Ermüdung" je Element und im Bericht (Block „Ermüdungsnachweis Volumen"). Die
 Spannung im Element ist eine Struktur- oder Kerbspannung, keine Nennspannung
 — der Kerbfall muss dazu passen (Theoriehandbuch 5.5-3).
+
+**Berührungsstellen zwischen Volumen.** Wo zwei Volumen Knoten teilen — der
+Vernetzer teilt sie nur über eine gemeinsame Fläche, in RFEM ist das ein
+durchverbundener Stoß — und keine Kontaktbedingung zwischen beiden
+eingegeben ist, gilt die Stelle als verschweißt: die Elemente mit einem
+solchen Knoten rechnen mit dem Feld „Kerbfall Naht" des Volumens (Maske,
+Tabelle Volumen, Dialog; leer = wie Kerbfall). Eine eingegebene
+Kontaktbedingung zwischen den beiden Körpern macht die Stelle zur Fuge, eine
+ausgeführte verdoppelt die Knoten ohnehin. Tabelle und Bericht nennen beide
+Kerbfälle („160 / Naht 90"), die Zahl der Elemente an Berührungsstellen und
+ob das maßgebende Element dort liegt. Am Drehlager: 47 gemeinsame Flächen
+zwischen 25 Körperpaaren, keine davon mit Kontaktbedingung.
 
 **Die Schädigung wird am Ort aufsummiert**, nicht über Orte hinweg: D wird an
 jeder Nachweisstelle und an jedem der vier Querschnittseckpunkte gebildet,

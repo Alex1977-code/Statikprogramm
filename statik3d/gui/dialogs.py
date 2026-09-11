@@ -932,6 +932,11 @@ class KoerperDialog(QtWidgets.QDialog):
                                  "(Hauptspannung im Element, EN 1993-1-9)"
                                  + (" - Vorschlag des Programms, zu prüfen"
                                     if getattr(koerper, "kerbfall_vorschlag", False) else ""))
+        self.kerbfall_naht = QtWidgets.QLineEdit(
+            f"{koerper.kerbfall_naht / 1e6:g}" if getattr(koerper, "kerbfall_naht", 0.0) else "")
+        self.kerbfall_naht.setPlaceholderText("leer = wie Kerbfall")
+        self.kerbfall_naht.setToolTip("Kerbfall an verschweißten Berührungsstellen mit anderen "
+                                      "Volumen (gemeinsame Knoten ohne Kontaktbedingung)")
         self.vernetzen = QtWidgets.QCheckBox("gleich vernetzen")
         self.vernetzen.setChecked(not getattr(koerper, "elemente", None))
         f = QtWidgets.QFormLayout(self)
@@ -944,21 +949,28 @@ class KoerperDialog(QtWidgets.QDialog):
         f.addRow("Teilung (x × y × z)", row(*self.n))
         f.addRow("Bemerkung", self.kommentar)
         f.addRow("Kerbfall Ermüdung [N/mm²]", self.kerbfall)
+        f.addRow("Kerbfall Naht [N/mm²]", self.kerbfall_naht)
         f.addRow(self.vernetzen)
         f.addRow(buttons(self))
 
     def werte(self) -> dict:
         kt = self.kerbfall.text().strip().replace(",", ".")
+        nt = self.kerbfall_naht.text().strip().replace(",", ".")
         try:
             kerbfall = float(kt) * 1e6 if kt else 0.0
         except ValueError:
             kerbfall = 0.0
+        try:
+            kerbfall_naht = float(nt) * 1e6 if nt else 0.0
+        except ValueError:
+            kerbfall_naht = 0.0
         return {"name": self.name.text().strip() or "V",
                 "flaechen": [i.text() for i in self.liste.selectedItems()],
                 "material": self.material.currentText(),
                 "teilung": [x.value() for x in self.n],
                 "kommentar": self.kommentar.text().strip(),
                 "kerbfall": kerbfall,
+                "kerbfall_naht": kerbfall_naht,
                 "vernetzen": self.vernetzen.isChecked()}
 
 

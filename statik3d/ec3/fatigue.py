@@ -289,9 +289,13 @@ class FatigueVolumen:
     dem groessten Betrag; massgebend das Element mit dem groessten D.
     """
     name: str
-    category: float
+    category: float                                  # am massgebenden Element
     gamma_Mf: float
     konzept: str = ""
+    category_grund: float = 0.0                      # Kerbfall des Koerpers
+    category_naht: float = 0.0                       # an verschweissten Beruehrungsstellen
+    n_naht: int = 0                                  # Elemente an Beruehrungsstellen
+    naht: bool = False                               # das massgebende Element liegt dort
     D: float = 0.0
     dsig_max: float = 0.0
     dsig_E2: float = 0.0
@@ -338,9 +342,12 @@ class FatigueResults:
                          f"{m.dsig_max/1e6:.1f}", f"{m.dsig_E2/1e6:.1f}", f"{m.D:.3f}",
                          f"{m.D_shear:.3f}", f"{m.util:.3f}", m.governing])
         for v in self.volumen.values():
-            rows.append([f"Volumen {v.name}", f"{v.category/1e6:.0f}", f"{v.gamma_Mf:.2f}",
+            kf = f"{v.category_grund/1e6:.0f}" + (f" / Naht {v.category_naht/1e6:.0f}"
+                                                  if v.n_naht and v.category_naht else "")
+            rows.append([f"Volumen {v.name}", kf, f"{v.gamma_Mf:.2f}",
                          f"{v.dsig_max/1e6:.1f}", f"{v.dsig_E2/1e6:.1f}", f"{v.D:.3f}",
-                         "0.000", f"{v.util:.3f}", f"Element {v.element}"])
+                         "0.000", f"{v.util:.3f}",
+                         f"Element {v.element}" + (" (Naht)" if v.naht else "")])
         return rows
 
     def util_by_element(self, model: Model) -> dict:
@@ -468,19 +475,77 @@ def signalspannung(S: np.ndarray) -> np.ndarray:
     return np.where(np.abs(h[:, 0]) >= np.abs(h[:, 2]), h[:, 0], h[:, 2])
 
 
-def _n_vektor(delta, category: float, gamma_Mf: float = 1.0) -> np.ndarray:
+def _n_vektor(delta, category, gamma_Mf: float = 1.0) -> np.ndarray:
     """Ertragbare Lastspielzahl N_R je Schwingbreite - sn_life vektorisiert
-    (Normalspannung: m = 3 bis N_D, m = 5 bis N_L, darunter unendlich)."""
+    (Normalspannung: m = 3 bis N_D, m = 5 bis N_L, darunter unendlich).
+    ``category`` ist ein Wert oder ein Feld je Element (Naht am Rand)."""
     d = np.asarray(delta, float)
-    dc = category / gamma_Mf
+    dc = np.broadcast_to(np.asarray(category, float) / gamma_Mf, d.shape)
     dD = (2.0 / 5.0) ** (1.0 / 3.0) * dc
     dL = (5.0 / 100.0) ** 0.2 * dD
     N = np.full(d.shape, np.inf)
     hoch = d >= dD
-    N[hoch] = 2e6 * (dc / d[hoch]) ** 3
+    N[hoch] = 2e6 * (dc[hoch] / d[hoch]) ** 3
     mitte = (d >= dL) & ~hoch & (d > 0)
-    N[mitte] = 5e6 * (dD / d[mitte]) ** 5
+    N[mitte] = 5e6 * (dD[mitte] / d[mitte]) ** 5
     return N
+
+
+def kontaktpaare(model: Model) -> set:
+    """Koerperpaare, zwischen denen eine Kontaktbedingung eingegeben ist -
+    dort ist die Beruehrung eine Fuge, keine Naht."""
+    besitzer: dict = {}
+    for k in (getattr(model, "koerper", {}) or {}).values():
+        for f in k.flaechen:
+            besitzer.setdefault(f, k.name)
+    paare: set = set()
+    for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
+        gegen = set(getattr(kb, "gegenkoerper", []) or [])
+        gegen |= {besitzer[f] for f in (getattr(kb, "gegenflaechen", []) or []) if f in besitzer}
+        for a in kb.koerpernamen:
+            for b in gegen:
+                if a != b:
+                    paare.add(frozenset((a, b)))
+    return paare
+
+
+def nahtknoten(model: Model) -> dict:
+    """{Koerper: Knoten an verschweissten Beruehrungsstellen}.
+
+    Verschweisst ist, was ein anderer Koerper teilt: der Vernetzer teilt
+    Knoten nur ueber eine gemeinsame Flaeche (RFEM: eine Flaeche zwischen zwei
+    Volumen = durchverbunden), eine ausgefuehrte Kontaktfuge verdoppelt sie.
+    Ausgenommen sind Paare mit eingegebener Kontaktbedingung. Ein Durchlauf
+    ueber alle Elementknoten - am Drehlager 8 Mio. Eintraege, Sekunden.
+    """
+    koerper = [k for k in (getattr(model, "koerper", {}) or {}).values() if k.elemente]
+    if len(koerper) < 2:
+        return {}
+    n_el = len(model.elements)
+    wem: dict = {}                     # Knoten -> Koerper (der erste)
+    mehrere: dict = {}                 # Knoten -> {Koerper}, wo es mehr als einer ist
+    for k in koerper:
+        for i in k.elemente:
+            if i >= n_el:
+                continue
+            for nd in model.elements[i].nodes:
+                nd = int(nd)
+                a = wem.get(nd)
+                if a is None:
+                    wem[nd] = k.name
+                elif a != k.name:
+                    mehrere.setdefault(nd, {a}).add(k.name)
+    kontakt = kontaktpaare(model)
+    out: dict = {}
+    for nd, namen in mehrere.items():
+        namen = sorted(namen)
+        for x in range(len(namen)):
+            for y in range(x + 1, len(namen)):
+                if frozenset((namen[x], namen[y])) in kontakt:
+                    continue
+                out.setdefault(namen[x], set()).add(nd)
+                out.setdefault(namen[y], set()).add(nd)
+    return out
 
 
 def _wiederholungen(fl, ds) -> float:
@@ -518,6 +583,10 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
     if not koerper:
         return
     n_el = len(model.elements)
+    # Knoten an verschweissten Beruehrungsstellen - nur gebraucht, wenn ein
+    # Koerper dort einen eigenen Kerbfall traegt
+    knoten = nahtknoten(model) if any(float(getattr(k, "kerbfall_naht", 0.0) or 0.0) > 0
+                                      for k in koerper) else {}
     for k in koerper:
         idx = [int(i) for i in k.elemente
                if 0 <= int(i) < n_el and model.elements[int(i)].typ in EL.VOLUMEN_TYPEN]
@@ -526,9 +595,20 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
         gMf = GAMMA_MF.get((getattr(k, "assessment", "damage_tolerant"),
                             getattr(k, "consequence", "low")), 1.15)
         fv = FatigueVolumen(k.name, float(k.kerbfall), gMf,
-                            konzept=str(getattr(k, "kerbfall_konzept", "") or ""))
+                            konzept=str(getattr(k, "kerbfall_konzept", "") or ""),
+                            category_grund=float(k.kerbfall),
+                            category_naht=float(getattr(k, "kerbfall_naht", 0.0) or 0.0))
         fv.bezugsjahre = bezug
         fv.n_elemente = len(idx)
+        # Kerbfall je Element: der des Koerpers, an der Naht der der Naht
+        cat = np.full(len(idx), float(k.kerbfall))
+        an_naht = np.zeros(len(idx), bool)
+        kn = knoten.get(k.name)
+        if kn:
+            an_naht = np.array([any(int(nd) in kn for nd in model.elements[i].nodes) for i in idx])
+            if fv.category_naht > 0:
+                cat[an_naht] = fv.category_naht
+        fv.n_naht = int(an_naht.sum())
         signale: dict = {}
 
         def signal(name):
@@ -562,7 +642,7 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                 verfahren = str(getattr(fl, "zaehlung", "spanne")).lower()
                 if verfahren.startswith("span"):
                     d = V.max(axis=1) - V.min(axis=1)
-                    D += wdh / _n_vektor(d, fv.category, gMf)
+                    D += wdh / _n_vektor(d, cat, gMf)
                     dsig = np.maximum(dsig, d)
                     stufen.append((d, wdh))
                     j = int(np.argmax(d))
@@ -571,7 +651,7 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                     gross, jg = 0.0, 0
                     for r in range(len(idx)):
                         for h, z in _zaehlen(V[r], verfahren):
-                            D[r] += z * wdh / sn_life(h, fv.category, gMf)
+                            D[r] += z * wdh / sn_life(h, float(cat[r]), gMf)
                             extra.setdefault(r, []).append((h, z * wdh))
                             if h > dsig[r]:
                                 dsig[r] = h
@@ -590,7 +670,7 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             a = signal(fl.case_max)
             b = signal(fl.case_min) if fl.case_min and fl.case_min in all_res else 0.0
             d = np.abs(a - b) * faktor
-            D += spiele / _n_vektor(d, fv.category, gMf)
+            D += spiele / _n_vektor(d, cat, gMf)
             dsig = np.maximum(dsig, d)
             stufen.append((d, spiele))
             j = int(np.argmax(d))
@@ -601,6 +681,8 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
         j = int(np.argmax(D))
         fv.D = float(D[j])
         fv.element = idx[j]
+        fv.category = float(cat[j])
+        fv.naht = bool(an_naht[j])
         fv.dsig_max = float(dsig.max())
         fv.kollektiv = kollektiv([(float(d[j]), n) for d, n in stufen] + list(extra.get(j, [])))
         fv.dsig_E2 = equivalent_range(fv.kollektiv)
