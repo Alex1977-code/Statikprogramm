@@ -6,6 +6,11 @@ und einen Screenshot.
 """
 import io
 import os
+
+# Keine Pruefung oeffnet einen Browser: am 11.09.2026 stand beim Anwender
+# nach jedem Lauf ein Browserfenster mit tests/_lastenheft_smoke.html, die der
+# Lauf gleich wieder geloescht hatte ("Zugriff auf die Datei nicht moeglich").
+os.environ.setdefault("STATIK3D_KEIN_BROWSER", "1")
 import sys
 import time
 
@@ -4817,7 +4822,10 @@ def main():
             check("Bericht → Lastenheft schreibt das Heft mit Einwirkungen und Skizzen",
                   out_ == pfad_ and "Lastenheft" in html_ and "W_S - Wasserdruck" in html_
                   and html_.count("<svg") >= 15 and not fehler_, str((len(html_), fehler_[:1])))
+            check("und öffnet in der Prüfung keinen Browser (die Datei wird gleich gelöscht)",
+                  not geoeffnet_ and "Browser nicht geöffnet" in w.log.toPlainText(), str(geoeffnet_))
         finally:
+            QtGui.QDesktopServices.openUrl = alt_open_
             if os.path.exists(pfad_):
                 os.remove(pfad_)
         check("Ribbon Bericht hat den Befehl „Lastenheft“",

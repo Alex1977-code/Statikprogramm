@@ -9721,6 +9721,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.maskenrand.schliessen()
         return namen
 
+    def _browser(self, url) -> bool:
+        """Eine Datei oder Adresse im Browser oeffnen - ausser in einer Pruefung.
+
+        Am 11.09.2026 oeffnete jede Oberflaechenpruefung beim Anwender einen
+        Browser mit tests/_lastenheft_smoke.html, die sie gleich wieder
+        loeschte ("Zugriff auf die Datei nicht moeglich"). Die Pruefungen
+        setzen STATIK3D_KEIN_BROWSER; ohne Anzeige (offscreen) gibt es ohnehin
+        niemanden, der den Browser sieht.
+        """
+        if os.environ.get("STATIK3D_KEIN_BROWSER") or \
+                QtWidgets.QApplication.platformName() == "offscreen":
+            self.log.appendPlainText(f"(Browser nicht geöffnet: {url.toString()})")
+            return False
+        return bool(QtGui.QDesktopServices.openUrl(url))
+
     def make_lastenheft(self, pfad: str = None):
         """Das Lastenheft schreiben: alle anzusetzenden Einwirkungen nach DIN 19704
         und ZTV-ING mit Hintergrund, Ansatz, Beiwerten und Skizzen."""
@@ -9740,7 +9755,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lastenheft_schreiben(self.model, pfad, rw, getattr(self, "stellungsreihe", None))
             self.info(f"Lastenheft geschrieben: {pfad}")
             if pfad.lower().endswith((".html", ".htm")):
-                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(os.path.abspath(pfad)))
+                self._browser(QtCore.QUrl.fromLocalFile(os.path.abspath(pfad)))
         except Exception as ex:                 # noqa: BLE001
             self.log.appendPlainText(traceback.format_exc())
             self.error(str(ex))
@@ -15618,7 +15633,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box.exec()
         if box.clickedButton() is b_open:
             ordner = out if os.path.isdir(out) else os.path.dirname(os.path.abspath(out))
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(ordner))
+            self._browser(QtCore.QUrl.fromLocalFile(ordner))
         self.info(f"exportiert: {out}")
 
     def export_csv(self):
@@ -15683,7 +15698,7 @@ class MainWindow(QtWidgets.QMainWindow):
                          path, fmt=d.format(), **d.options())
             self.info(f"Bericht geschrieben: {path}")
             if d.format() == "html":
-                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(os.path.abspath(path)))
+                self._browser(QtCore.QUrl.fromLocalFile(os.path.abspath(path)))
         except Exception as ex:
             self.log.appendPlainText(traceback.format_exc())
             self.error(str(ex))
@@ -15713,7 +15728,7 @@ class MainWindow(QtWidgets.QMainWindow):
         here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         p = os.path.join(here, "docs", name)
         if os.path.exists(p):
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(p))
+            self._browser(QtCore.QUrl.fromLocalFile(p))
         else:
             self.error(f"Dokument nicht gefunden: {p}")
 
@@ -15774,7 +15789,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box.exec()
         if box.clickedButton() is b_open:
             url = srv.local_url + (f"?key={st.key}" if st.key else "")
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
+            self._browser(QtCore.QUrl(url))
         elif box.clickedButton() is b_stop:
             self.stop_web_server()
 
@@ -15860,8 +15875,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda: QtWidgets.QApplication.clipboard().setText(txt.toPlainText()))
         zeile.addWidget(b_copy)
         b_dl = QtWidgets.QPushButton("Download im Browser öffnen")
-        b_dl.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(
-            QtCore.QUrl(upd.DOWNLOAD_URL)))
+        b_dl.clicked.connect(lambda: self._browser(QtCore.QUrl(upd.DOWNLOAD_URL)))
         zeile.addWidget(b_dl)
         zeile.addStretch(1)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
