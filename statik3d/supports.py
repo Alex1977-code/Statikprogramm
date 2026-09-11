@@ -266,6 +266,71 @@ def flaechen_einflussflaechen(model: Model, flaechen: list) -> dict[int, float]:
     return trib
 
 
+def normalengruppen(model: Model, flaechen: list, log: list = None) -> list:
+    """Knoten und Einflussflaechen je Normalenrichtung dieser Geometrieflaechen.
+
+    Rueckgabe [[Achse 0..2, Vorzeichen +1/-1, Knoten, Einflussflaechen], ...]
+    fuer ein Flaechenlager in Flaechenachsen. Die Normale kommt aus den
+    Facetten des Netzes (Aussennormale des Koerpers, am gegenueberliegenden
+    Knoten geprueft - fugen._dreiecke_der_fuge); wo das Netz keine
+    Randseiten fuehrt (abgebildete Hexaeder), aus der Facettenebene, vom
+    Schwerpunkt des Koerpers weg gerichtet. Eine Flaeche ohne Koerper zeigt
+    mit ihrer Normalen zur negativen Achse - das Lager liegt "unten", wie
+    beim globalen Lager. Schraege Flaechen (Hauptanteil unter 0,95) werden
+    der naechsten Achse zugeschlagen und genannt.
+    """
+    from .fugen import _dreiecke_der_fuge
+    koerper = getattr(model, "koerper", {}) or {}
+    gruppen: dict = {}
+    for f in flaechen:
+        facetten = _dreiecke_der_fuge(model, [f])
+        if not facetten and not (f.elemente or f.randseiten):
+            facetten = _facetten_geometrisch(model, f)
+        facetten = _nur_in_der_ebene(model, f, facetten)
+        if not facetten:
+            continue
+        k = next((k for k in koerper.values() if f.name in k.flaechen and k.elemente), None)
+        schwer = None
+        if k is not None:
+            kn = sorted({int(x) for i in k.elemente for x in model.elements[int(i)].nodes})
+            schwer = model.nodes[kn].mean(axis=0)
+        normalen = []
+        for _e, nd, n in facetten:
+            nd = [int(x) for x in nd]
+            P = model.nodes[nd]
+            if n is None:
+                n = np.cross(P[1] - P[0], P[2] - P[0])
+                ln = np.linalg.norm(n)
+                n = n / ln if ln > 0 else None
+                if n is not None and schwer is not None and np.dot(P.mean(axis=0) - schwer, n) < 0:
+                    n = -n
+            if n is not None:
+                normalen.append(np.asarray(n, float))
+        if not normalen:
+            continue
+        nm = np.mean(normalen, axis=0)
+        ln = float(np.linalg.norm(nm))
+        if ln == 0:
+            continue
+        nm /= ln
+        achse = int(np.argmax(np.abs(nm)))
+        if schwer is None and nm[achse] > 0:
+            nm = -nm
+        vz = 1 if nm[achse] >= 0 else -1
+        if abs(nm[achse]) < 0.95 and log is not None:
+            log.append(f"  Flaeche {f.name}: Normale {np.round(nm, 2).tolist()} schraeg - "
+                       f"das Lager wirkt entlang der Achse {'xyz'[achse]}")
+        trib = gruppen.setdefault((achse, vz), {})
+        for _e, nd, _n in facetten:
+            nd = [int(x) for x in nd]
+            P = model.nodes[nd]
+            A = _triangle_area(P[:3]) if len(nd) == 3 \
+                else _triangle_area(P[[0, 1, 2]]) + _triangle_area(P[[0, 2, 3]])
+            for n_ in nd:
+                trib[n_] = trib.get(n_, 0.0) + A / len(nd)
+    return [[a, vz, sorted(t), [t[n_] for n_ in sorted(t)]] for (a, vz), t in gruppen.items()]
+
+
 def knoten_auf_linie(model: Model, P: np.ndarray, tol: float) -> list[int]:
     """Alle Knoten, die auf dem Linienzug P liegen - in Reihenfolge der Linie."""
     P = np.atleast_2d(np.asarray(P, float))
@@ -328,6 +393,8 @@ def lager_auf_netz(model: Model, log: list = None) -> dict:
         ss.nodes = sorted(trib)
         ss.areas = [trib[n] for n in ss.nodes]
         ss.elements = []
+        if getattr(ss, "lokal", False):
+            ss.gruppen = normalengruppen(model, [flaechen[n] for n in namen], log)
         n_f += 1
     if model.nn:
         groesse = float(np.ptp(np.asarray(model.nodes, float), axis=0).max() or 1.0)
@@ -406,6 +473,9 @@ def expand(model: Model, log: list = None) -> list[NodalDof]:
                 if e is not None:
                     out.append(e)
     for ss in model.surface_supports:
+        if getattr(ss, "lokal", False) and getattr(ss, "gruppen", None):
+            out.extend(_flaechenachsen(ss))
+            continue
         trib = dict(zip([int(n) for n in ss.nodes], [float(a) for a in ss.areas])) \
             if ss.nodes and len(ss.nodes) == len(ss.areas) else tributary_areas(model, ss.elements, ss.face)
         if not trib and log is not None:
@@ -416,6 +486,59 @@ def expand(model: Model, log: list = None) -> list[NodalDof]:
                 if e is not None:
                     out.append(e)
     return _merge(out)
+
+
+def _flaechenachsen(ss) -> list:
+    """Ein Flaechenlager in Flaechenachsen als Knoten-FHG.
+
+    Je Normalengruppe wirkt FHG 2 des Lagers entlang der Normalenachse, FHG 0
+    und 1 entlang der beiden anderen Achsen; die Reibung bezieht sich auf die
+    Normale. Auf der positiven Seite (Normale +) tauschen Zug- und Druckausfall
+    die Rolle: ins Lager hinein heisst dort u > 0. Eine Normale schlaegt an
+    einem Knoten die Flaechenrichtung einer Nachbargruppe (Kante Boden/Knagge),
+    und jede Flaechenrichtung steht je Knoten nur einmal.
+    """
+    label = ss.name or "Flaechenlager"
+    out: list = []
+    normal_belegt: set = set()
+    ebene_belegt: set = set()
+    gruppen = [(int(g[0]), int(g[1]), list(g[2]), list(g[3])) for g in ss.gruppen]
+    b2 = ss.dof_behaviour(2)
+    for achse, vz, knoten, areas in gruppen:
+        if not b2.acts:
+            break
+        bn = DofBehaviour(**vars(b2))
+        if vz > 0 and bn.failure:
+            bn.failure = {"zug": "druck", "druck": "zug"}.get(bn.failure, bn.failure)
+        for n, A in zip(knoten, areas):
+            e = _entry(int(n), achse, bn, float(A), label, "surface")
+            if e is not None:
+                out.append(e)
+                normal_belegt.add((int(n), achse))
+    for achse, _vz, knoten, areas in gruppen:
+        ebene = [d for d in (0, 1, 2) if d != achse]
+        for ld, gd in zip((0, 1), ebene):
+            b = ss.dof_behaviour(ld)
+            if not b.acts:
+                continue
+            bt = DofBehaviour(**vars(b))
+            if bt.mu_ref is not None:
+                bt.mu_ref = achse
+            for n, A in zip(knoten, areas):
+                if (int(n), gd) in normal_belegt or (int(n), gd) in ebene_belegt:
+                    continue
+                e = _entry(int(n), gd, bt, float(A), label, "surface")
+                if e is not None:
+                    out.append(e)
+                    ebene_belegt.add((int(n), gd))
+        for d in (3, 4, 5):
+            b = ss.dof_behaviour(d)
+            if b.acts:
+                for n, A in zip(knoten, areas):
+                    e = _entry(int(n), d, b, float(A), label, "surface")
+                    if e is not None:
+                        out.append(e)
+    return out
 
 
 def _merge(entries: list[NodalDof]) -> list[NodalDof]:

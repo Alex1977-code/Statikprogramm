@@ -732,6 +732,16 @@ class SurfaceSupport:
     #: dieser Flaechen neu bestimmt (supports.lager_auf_netz); die Ansicht
     #: verteilt die Symbole ueber die ganze Flaeche.
     flaechen: list[str] = field(default_factory=list)
+    #: Achsen je Flaeche statt global: FHG 2 wirkt in der Flaechennormalen
+    #: (nach aussen), 0 und 1 in der Flaeche - so setzt RFEM ein Flaechenlager.
+    #: Am Drehlager liegt das Lager "Starr" auf 50 Flaechen, 44 davon senkrecht
+    #: (Knaggen): global gesetzt wurde aus ihrer Sperre eine senkrechte
+    #: Bettung, und die Grundplatte glitt unter 3969 kN rechnerisch 3,7 m
+    #: (11.09.2026).
+    lokal: bool = False
+    #: Je Normalenrichtung eine Gruppe [Achse 0..2, Vorzeichen, Knoten,
+    #: Einflussflaechen] - von lager_auf_netz gefuellt, nur mit ``lokal``.
+    gruppen: list = field(default_factory=list)
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))

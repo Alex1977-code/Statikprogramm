@@ -665,7 +665,20 @@ danach – so, wie RFEM es rechnet.
 
 Flächenlager werden über das Randpolygon der zugewiesenen Flächen auf deren
 Knoten gelegt, mit der Einflussfläche je Knoten (Newell-Formel, Summe = wahre
-Fläche). Trägt ein Modell seine Lasten über Flächen ohne eigene Dicke und über
+Fläche). **Sie wirken in den lokalen Achsen der Fläche** (`lokal = True`):
+RFEMs `springConstant_2` ist die Bettung in der Flächennormalen, 0 und 1
+liegen in der Fläche, die Reibung bezieht sich auf die Normale. Auf einer
+senkrechten Fläche sperrt „uz starr" damit waagerecht. Am Drehlager liegt das
+Lager „Starr" auf 50 Flächen, davon 44 senkrecht — die Knaggen der Grundplatte
+an V108–V112 — und nur 6 waagerecht; global gesetzt wurde aus der Sperre der
+Knaggen eine senkrechte Bettung, und die Grundplatte glitt unter LF1
+(Fx = 3969 kN) rechnerisch 3,7 m (11.09.2026). Nach dem Vernetzen gruppiert
+`supports.lager_auf_netz` die Knoten je Normalenrichtung
+(`SurfaceSupport.gruppen`), das Protokoll nennt die Zahl der senkrechten
+Flächen. Die Flächenlager 2 bis 6 und die beiden Linienlager der Datei sind
+keiner Fläche bzw. Linie zugeordnet (`SurfaceSupportImpl_surfaces` führt nur
+Lager 1, `LineSupportImpl_lines` ist leer) und bleiben ohne Wirkung — das
+Protokoll sagt es. Trägt ein Modell seine Lasten über Flächen ohne eigene Dicke und über
 Volumenkörper, die ein 3D-Netz brauchen, sagt das Protokoll das ausdrücklich:
 
     1831 Knoten tragen kein Element (Rand von Flaechen und Volumen).

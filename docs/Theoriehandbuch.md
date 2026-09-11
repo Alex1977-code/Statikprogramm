@@ -878,6 +878,25 @@ der Knoten. Lineare Anteile (starr, Feder) gehen in die Sperrung bzw. in die
 Steifigkeitsmatrix, nichtlineare Anteile in dieselbe Aktivmengen-Iteration wie
 der Kontakt.
 
+**Flächenlager in Flächenachsen** (`SurfaceSupport.lokal`, so setzt RFEM
+sie): der Freiheitsgrad 2 des Lagers wirkt in der Normalen der Fläche, 0 und
+1 in der Fläche, die Reibung bezieht sich auf die Normale. Nach dem Vernetzen
+werden die Knoten je Normalenrichtung gruppiert (`supports.normalengruppen`):
+die Normale kommt aus den Facetten des Netzes — die Außennormale des Körpers,
+am gegenüberliegenden Knoten geprüft (Kapitel 4.0) —, bei abgebildeten
+Hexaedern aus der Facettenebene, vom Schwerpunkt des Körpers weg. Eine Fläche
+ohne Körper zeigt zur negativen Achse (das Lager liegt „unten", wie beim
+globalen Lager). Schräge Flächen werden der nächsten Achse zugeschlagen und
+genannt. Auf der positiven Seite (Normale +) tauschen Zug- und Druckausfall
+die Rolle: ins Lager hinein heißt dort u > 0. An einer Kante (Boden/Knagge)
+schlägt die Normale die Flächenrichtung der Nachbargruppe, und jede
+Flächenrichtung steht je Knoten nur einmal. Geprüft am Klotz 2 × 1 × 1 m auf
+Bettung mit Knagge (`tests/test_supports.py`): 50 kN gegen die Knagge gehen
+ganz in sie (Rx = 49 999,9 N, u_x = 0,0005 mm), von ihr weg meldet das Modell
+das Gleiten (Reibung 10 kN < 50 kN); global gesetzt trug nur die Reibung
+(Rx = 10 kN). Am Drehlager sind 44 der 50 Lagerflächen senkrecht (Knaggen);
+global gesetzt glitt die Grundplatte unter 3969 kN rechnerisch 3,7 m.
+
 **Lager mit Geometriebezug** (RFEM: Linienlager an Linien, Flächenlager an
 Flächen) kennen ihre Linien bzw. Flächen und werden vor jeder Rechnung auf
 das aktuelle Netz gebracht (`supports.lager_auf_netz`): Ein Linienlager

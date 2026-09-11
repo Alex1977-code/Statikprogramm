@@ -801,7 +801,10 @@ Lager hält:
 gezeichnet (auf einem Bogen auf der wahren Kurve), dazu die Linie selbst;
 **Flächenlager** im Raster **über die ganze gebettete Fläche**, die Symbole
 in Richtung der Flächennormale (bei Volumen nach außen) — nicht mehr nur an
-den Knoten. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
+den Knoten. Ein aus RFEM übernommenes Flächenlager wirkt in den Achsen seiner
+Fläche: die Bettung „uz" in der Flächennormalen, „ux/uy" und die Reibung in
+der Fläche. Eine senkrechte Lagerfläche (Knagge) sperrt damit waagerecht; das
+Protokoll des Imports nennt je Lager die Zahl der senkrechten Flächen. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
 der Geometrie; die Symbole belegen darum die ganze Fläche, auch wenn noch
 kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
 Schieber „Dichte" im Register *Ansicht → Symbole* (1,0 = alle 5 % der

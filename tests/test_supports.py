@@ -357,11 +357,86 @@ def test_lager_folgen_dem_netz():
     check("Volumen: Einflussflaechen = 1 m^2", sum(ss3.areas), 1.0, 1e-9, "m^2")
 
 
+def _klotz_mit_knagge():
+    """Ein Klotz 2 x 1 x 1 m (16 Hexaeder) auf einer Bettung; die Seite x = 0
+    liegt an einer Knagge. Beide Flaechen tragen dasselbe Lager wie das
+    Drehlager: in der Flaeche starr bis mu*N (Reibung 0,1), in Normalenrichtung
+    Bettung 2,5e11 N/m^3 mit Ausfall bei Zug."""
+    m = Model("Knagge")
+    m.add_material(Material.steel("S235"))
+    P = np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]])
+    m.add_nodes(P)
+    kanten = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+              (0, 4), (1, 5), (2, 6), (3, 7)]
+    for i, (a, b) in enumerate(kanten):
+        m.add_line(f"K{i + 1}", [a, b])
+    seiten = {"Boden": ["K1", "K2", "K3", "K4"], "Deckel": ["K5", "K6", "K7", "K8"],
+              "S1": ["K1", "K10", "K5", "K9"], "S2": ["K2", "K11", "K6", "K10"],
+              "S3": ["K3", "K12", "K7", "K11"], "S4": ["K4", "K9", "K8", "K12"]}
+    for nme, ls in seiten.items():
+        m.add_flaeche(nme, ls, material="S235")
+    kk = m.add_koerper("V1", list(seiten), material="S235", teilung=[4, 2, 2])
+    mesher.koerper_vernetzen(m, [kk], log=[])
+    ss = m.add_surface_support(name="Starr",
+                               ux=dict(typ="rigid", mu=0.1, mu_ref=2),
+                               uy=dict(typ="rigid", mu=0.1, mu_ref=2),
+                               uz=dict(typ="spring", stiffness=2.5e11, failure="zug"))
+    ss.flaechen = ["Boden", "S4"]                # S4: die Seite x = 0, Normale -x
+    return m, kk, ss
+
+
+def test_flaechenlager_in_flaechenachsen():
+    """RFEM setzt ein Flaechenlager in den lokalen Achsen der Flaeche (z =
+    Normale). Am Drehlager liegt das Lager "Starr" auf 50 Flaechen, 44 davon
+    senkrecht (Knaggen): global gesetzt wurde aus ihrer Sperre eine senkrechte
+    Bettung, die Grundplatte glitt unter 3969 kN Horizontallast rechnerisch
+    3,7 m (11.09.2026). Mit ``lokal`` sperrt die Knagge in ihrer Normalen."""
+    m, kk, ss = _klotz_mit_knagge()
+    check("Klotz: 16 Hexaeder", len(m.elements), 16, 0)
+    ss.lokal = True
+    n0 = supports.lager_auf_netz(m)
+    gruppen = {(int(g[0]), int(g[1])): len(g[2]) for g in (getattr(ss, "gruppen", None) or [])}
+    check("Netz: zwei Normalengruppen, Boden -z mit 15 Knoten, Knagge -x mit 9 Knoten",
+          1.0 if gruppen == {(2, -1): 15, (0, -1): 9} else 0.0, 1.0, 0, str(gruppen))
+    oben = [int(i) for i in np.flatnonzero(np.abs(m.nodes[:, 2] - 1.0) < 1e-9)]
+    for n in oben:
+        m.load_node(n, Fx=-50e3 / len(oben), Fz=-100e3 / len(oben))     # gegen die Knagge
+    r = solver.solve_static(m)
+    check("Knagge: die Horizontallast geht in die Knagge (Rx = 50 kN)",
+          r.reactions[:, 0].sum(), 50e3, 1e-3, "N")
+    check("Knagge: der Klotz bleibt stehen (|u_x| unter 0,01 mm)",
+          1.0 if float(np.abs(r.u[:, 0]).max()) < 1e-5 else 0.0, 1.0, 0,
+          f"{float(np.abs(r.u[:, 0]).max()) * 1e3:.4f} mm")
+    check("Knagge: keine Hilfsfesselung noetig", len(getattr(r, "singular", []) or []), 0, 0)
+    check("Bettung: Vertikallast im Boden (Rz = 100 kN)", r.reactions[:, 2].sum(), 100e3, 1e-3, "N")
+    # Last von der Knagge weg: sie oeffnet, die Reibung (0,1 * 100 = 10 kN) haelt
+    # 50 kN nicht - das Modell meldet das Gleiten statt es zu verschweigen
+    for lc in m.load_cases.values():
+        for nl in lc.nodal_loads:
+            nl.F[0] = -nl.F[0]
+    r2 = solver.solve_static(m)
+    gleitet = bool(getattr(r2, "singular", None)) or any(
+        "Reibung" in str(z) for z in (getattr(r2, "info", {}) or {}).get("contact_log", []))
+    check("von der Knagge weg: Gleiten wird gemeldet (Reibung 10 kN < 50 kN)",
+          1.0 if gleitet else 0.0, 1.0, 0)
+    # Dasselbe Lager global gesetzt (der alte Weg): die Knagge sperrt nicht
+    mg, _kg, sg = _klotz_mit_knagge()
+    sg.lokal = False
+    for n in oben:
+        mg.load_node(n, Fx=-50e3 / len(oben), Fz=-100e3 / len(oben))
+    rg = solver.solve_static(mg)
+    # gemessen: Rx = 9984 N - nur die Reibung 0,1 * 100 kN, die Knagge traegt nichts
+    check("global gesetzt (alter Weg): nur die Reibung traegt (Rx unter 15 kN), die Knagge nicht",
+          1.0 if rg.reactions[:, 0].sum() < 15e3 else 0.0, 1.0, 0,
+          f"Rx = {rg.reactions[:, 0].sum() / 1e3:.1f} kN")
+
+
 def main():
     for t in (test_federlager_mit_schlupf, test_zug_und_druckausfall, test_grenzkraft,
               test_reibung_knotenlager, test_linienlager, test_flaechenlager,
               test_rotationslager_und_zusammenfassung, test_federgelenke,
-              test_lager_folgen_dem_netz):
+              test_lager_folgen_dem_netz, test_flaechenlager_in_flaechenachsen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

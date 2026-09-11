@@ -1118,11 +1118,26 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
             continue
         ss = m.add_surface_support(name=name, nodes=nodes, areas=[areas[n] for n in nodes])
         ss.flaechen = [surf_name[sid] for sid in sids if sid in surf_name]
+        # RFEM setzt das Flaechenlager in den lokalen Achsen der Flaeche (z =
+        # Normale): auf einer senkrechten Flaeche (Knagge) sperrt "uz starr"
+        # waagerecht. Global gesetzt wurde daraus am Drehlager eine senkrechte
+        # Bettung, und die Grundplatte glitt (11.09.2026).
+        ss.lokal = True
+        senkrecht = 0
+        for sid in sids:
+            ns = surf_nodes.get(sid, [])
+            if len(ns) >= 3:
+                P = np.asarray(m.nodes[[int(x) for x in ns]], float)
+                Q = P - P.mean(axis=0)
+                w_, v_ = np.linalg.eigh(Q.T @ Q)
+                if abs(v_[2, 0]) < 0.5:
+                    senkrecht += 1
         for d, b in beh.items():
             if b.acts:
                 ss.behaviour[d] = DofBehaviour(**vars(b))
-        C.say(log, f"  {name}: {len(sids)} Flaechen, {len(nodes)} Knoten, "
-                   f"A = {sum(areas.values()):.3f} m^2")
+        C.say(log, f"  {name}: {len(sids)} Flaechen ({senkrecht} senkrecht), {len(nodes)} Knoten, "
+                   f"A = {sum(areas.values()):.3f} m^2 - Lager in Flaechenachsen: uz ist die "
+                   "Flaechennormale, ux/uy liegen in der Flaeche")
 
     solid_name = _solids(db, m, surf_nodes, log, matcache, surf_name)
     _surface_releases(db, m, log, nlmap, surf_name, solid_name)
