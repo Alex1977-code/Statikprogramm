@@ -820,6 +820,13 @@ Lagerdichte, Löschen), *Alles deselektieren* leert auch sie.
 
 ### Tabellen: filtern, sortieren, ausgeben
 
+**Auswahl in den Tabellen.** Was in der Ansicht gewählt ist, steht in den
+Tabellen unten markiert. Zusammenhängende Zeilen werden dabei als ein Bereich
+markiert: „Alles auswählen" am Drehlager-Modell (400 000 Knoten) hing bis zum
+11.09.2026 über fünf Minuten, weil jede Zeile ein eigener Bereich war und Qt
+Hunderttausende Einzelbereiche quadratisch zusammenführt. Als ein Bereich
+dauert die Markierung von 200 000 Zeilen 1,1 s (`test_markieren_bereiche`).
+
 Der Bereich unten ist in **zwei Ebenen** gegliedert: oben die Gruppe, darunter
 ihre Tabellen als Register. Eine Gruppe mit nur einer Tabelle (Protokoll,
 Bericht) zeigt keine zweite Leiste. Ein Klick im Modellbaum holt die
