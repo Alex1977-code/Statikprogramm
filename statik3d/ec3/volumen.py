@@ -36,10 +36,9 @@ Spitzenspannung ueber dem Mittel des Bereichs liegt, und weist auf eine
 moegliche Singularitaet hin.
 
 **Nicht enthalten**: Stabilitaet des Volumenkoerpers (die geometrische
-Steifigkeit ist nur fuer Stabelemente gebildet), Plastizieren, Kriechen,
-Ermuedung aus dem raeumlichen Spannungszustand (dafuer waeren Kerbspannungs-
-oder Strukturspannungskonzepte noetig) und der Sproedbruchnachweis nach
-EN 1993-1-10 selbst.
+Steifigkeit ist nur fuer Stabelemente gebildet), Plastizieren, Kriechen und
+der Sproedbruchnachweis nach EN 1993-1-10 selbst. Die Ermuedung der Volumen
+(Hauptspannung im Element) steht in ec3/fatigue.py.
 """
 from __future__ import annotations
 

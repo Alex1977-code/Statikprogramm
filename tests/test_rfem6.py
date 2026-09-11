@@ -1328,9 +1328,12 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
         check("das Protokoll zaehlt die Arten",
               "1x FAT" in txt and "2x ULS" in txt,
               next((x for x in log if "Kombinationen uebernommen" in x), "-"))
-        check("und sagt, dass daraus keine Ermuedungsbeanspruchung folgt",
-              "Ermuedungsbeanspruchungen" in txt and not m.fatigue_loads,
-              f"{len(m.fatigue_loads)} Ermuedungsbeanspruchungen")
+        check("und leitet daraus eine Ermuedungslast ab (ein Zustand gegen Null)",
+              "Ermüdungslasten" in txt and list(m.fatigue_loads)
+              == [c.name for c in m.combinations.values() if c.typ == "FAT"]
+              and all((f.case_max in m.load_cases or f.case_max in m.combinations) and not f.folge
+                      for f in m.fatigue_loads.values()),
+              f"{list(m.fatigue_loads)}")
         check("unbekannte Kennzahlen werden genannt, nicht verschwiegen",
               "unbekannter Kennzahl" in txt and "9999" in txt,
               next((x for x in log if "unbekannter Kennzahl" in x), "-"))
@@ -1503,6 +1506,104 @@ def test_ergebniskombination_oder():
               and "ULS" in an.envelopes
               and {"LF1", "LF2", "LF3", "LF4"} <= set(an.envelopes["ULS"].names),
               str(sorted(an.envelopes)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_ermuedungslasten_aus_fat():
+    """Jede FAT-Umhuellende (Kennzahl 7505) wird eine Ermuedungslast mit
+    Verlauf ueber ihre Zustaende in Dateireihenfolge, Zaehlung "spanne"
+    (Maximum minus Minimum), Wiederholungen 1 - zu bestaetigen. Enthaelt die
+    Zustandsmenge einer Kombination die einer anderen vollstaendig, ist sie
+    eine Sammlung von Ereignissen (Drehlager: vier "Ermuedungslastfaelle -
+    ..." mit 9 bis 82 Zustaenden) und bekommt 0 Wiederholungen, damit nichts
+    doppelt zaehlt. Ein einzelner Zustand wird gegen den Nullzustand
+    angesetzt. Zugstaebe bekommen den Kerbfall 50 N/mm2 als Vorschlag (EN
+    1993-1-9, Tab. 8.1, Kerbfall 14: Gewindestangen unter Zug)."""
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "fat.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0), (4, 0, 0)],
+            lines=[[1, 2], [2, 3]],
+            members=[(1, None, None, "MemberImplTension"), (2, None, None, "MemberImplBeam")],
+            supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1]),
+                      ("Seitlich", (0.0, INF, INF, INF, INF, INF), (0,) * 6, None, [2, 3])],
+            load_cases=[("Eigengewicht", 1, 1.0), ("Zug 1", 1, 0.0), ("Zug 2", 1, 0.0),
+                        ("Zug 3", 1, 0.0), ("Zug 4", 1, 0.0)],
+            nodal_loads=[(2, [3], (10e3, 0.0, 0.0), (0.0, 0.0, 0.0)),
+                         (3, [3], (40e3, 0.0, 0.0), (0.0, 0.0, 0.0)),
+                         (4, [3], (25e3, 0.0, 0.0), (0.0, 0.0, 0.0)),
+                         (5, [3], (5e3, 0.0, 0.0), (0.0, 0.0, 0.0))],
+            bemessungssituationen=[("FAT1", "GZT (FAT) - Ereignis A", 7505),
+                                   ("FAT2", "GZT (FAT) - Ereignis B", 7505),
+                                   ("FATS", "Ermuedungslastfaelle", 7505),
+                                   ("GZT", "GZT - staendig", 7007)],
+            combinations=[("EK A", 0, {2: 1.0, 3: 1.0}, 1, [0, 2]),
+                          ("EK B", 0, {3: 1.0, 4: 1.0, 5: 1.0}, 2, [0, 0, 2]),
+                          ("EK Sammlung", 0, {2: 1.0, 3: 1.0, 4: 1.0, 5: 1.0}, 3, [0, 0, 0, 2]),
+                          ("EK eins", 0, {3: 1.0}, 1, [2]),
+                          ("GZT", 0, {1: 1.35, 3: 1.5}, 4)],
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        fl = m.fatigue_loads
+        check("je FAT-Umhuellende eine Ermuedungslast, keine fuer den GZT",
+              set(fl) == {"EK A", "EK B", "EK Sammlung", "EK eins"}, str(sorted(fl)))
+        a = fl.get("EK A")
+        check("Verlauf ueber die Zustaende in Dateireihenfolge, spanne, Lastspiele global, Faktor 1",
+              a is not None and a.folge == ["LF2", "LF3"] and a.zaehlung == "spanne"
+              and a.wiederholungen is None and a.factor == 1.0,
+              f"{a.folge if a else None} {a.zaehlung if a else None} {a.wiederholungen if a else None}")
+        b = fl.get("EK B")
+        check("drei Zustaende bleiben drei Zustaende",
+              b is not None and b.folge == ["LF3", "LF4", "LF5"], str(b.folge if b else None))
+        s = fl.get("EK Sammlung")
+        check("die Sammlung (enthaelt A und B) ist angelegt, aber mit 0 Wiederholungen",
+              s is not None and s.folge == ["LF2", "LF3", "LF4", "LF5"] and s.wiederholungen == 0.0,
+              f"{s.folge if s else None} {s.wiederholungen if s else None}")
+        check("und das Protokoll nennt sie mit den enthaltenen Ereignissen",
+              any("unwirksam" in x and "EK Sammlung" in x and "EK A" in x and "EK B" in x for x in log),
+              next((x for x in log if "unwirksam" in x), "-"))
+        e = fl.get("EK eins")
+        check("ein Zustand: gegen den Nullzustand, Lastspiele global",
+              e is not None and e.case_max == "LF3" and e.case_min is None and not e.folge
+              and e.cycles is None, f"{e.case_max if e else None} / {e.case_min if e else None}")
+        check("Protokoll: Ermuedungslasten aus Ergebniskombinationen, globale Lastspielzahl, zu bestaetigen",
+              any("Ermüdungslasten" in x and "zu bestätigen" in x and "globale Lastspielzahl" in x
+                  for x in log)
+              and "nicht** abgeleitet" not in txt,
+              next((x for x in log if "Ermüdungslasten" in x), "-"))
+        zug = m.members.get("S1")
+        balken = m.members.get("S2")
+        check("Zugstab: Kerbfall 50 N/mm2 als Vorschlag", zug is not None
+              and zug.detail_category == 50e6 and getattr(zug, "kerbfall_vorschlag", False),
+              f"{zug.detail_category if zug else None}")
+        check("Balken mit gewalztem Querschnitt (Rundstahl): 160 N/mm2 Grundwerkstoff als Vorschlag",
+              balken is not None and balken.detail_category == 160e6
+              and getattr(balken, "kerbfall_vorschlag", False),
+              f"{balken.detail_category if balken else None}")
+        check("Protokoll nennt die Vorschlaege mit Fundstelle",
+              any("Kerbfall 50" in x and "Zugst" in x and "Tab. 8.1" in x and "zu prüfen" in x for x in log),
+              next((x for x in log if "Kerbfall 50" in x), "-"))
+        # Gerechnet: der Zugstab bekommt aus EK A (10 -> 40 kN), EK B
+        # (40 -> 25 -> 5 kN) und EK eins (40 kN gegen Null) je eine Stufe mit
+        # der globalen Lastspielzahl; die Sammlung (0) traegt nichts bei.
+        m.design.ermuedung_lastspiele = 1.0
+        an = solver.solve_all(m, combinations=True, envelopes=True, fatigue=True)
+        fm = an.fatigue.members.get("S1") if an.fatigue is not None else None
+        A = m.sections[m.elements[zug.elements[0]].sec].A if zug else 1.0
+        soll = sorted([30e3 / A * m.design.gamma_Ff, 35e3 / A * m.design.gamma_Ff,
+                       40e3 / A * m.design.gamma_Ff], reverse=True)
+        ist = sorted([h for h, _n in (fm.kollektiv if fm else [])], reverse=True)
+        check("Ermuedungsnachweis am Zugstab: drei Stufen 40, 35, 30 kN / A, je ein Spiel",
+              fm is not None and len(ist) == 3 and all(abs(x - y) < 1e-6 * y for x, y in zip(ist, soll))
+              and all(abs(n - 1.0) < 1e-9 for _h, n in fm.kollektiv),
+              f"{[round(x / 1e6, 3) for x in ist]} MPa, soll {[round(x / 1e6, 3) for x in soll]}")
+        check("die Sammlung traegt keine Stufe bei (0 Wiederholungen = unwirksam)",
+              fm is not None and all(r[2] != "EK Sammlung" for r in fm.ranges),
+              str([r[2] for r in fm.ranges] if fm else None))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1916,7 +2017,7 @@ def main():
               test_lastfaelle_und_lasten, test_lasten_und_kombinationen,
               test_ausfallszenario_gelenk_und_bemessungssituation,
               test_gemischte_kombination_wird_aufgeteilt,
-              test_ergebniskombination_oder,
+              test_ergebniskombination_oder, test_ermuedungslasten_aus_fat,
               test_dispatcher_und_hilfen,
               test_knoten_zusammenfuehren, test_boegen_und_kreisflaechen,
               test_steifigkeit_rueckzeiger, test_kein_stilles_verschmelzen):

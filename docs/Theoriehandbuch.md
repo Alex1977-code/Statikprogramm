@@ -1250,7 +1250,21 @@ Zwei Zustände reichen, solange die Beanspruchung zwischen zwei Zuständen
 pendelt. Eine Überfahrt, ein Öffnungsvorgang, ein Betriebszyklus haben mehr:
 die Zwischenstufen tragen eigene, kleinere Spiele bei, und die zählen mit. Eine
 Ermüdungslast darf darum statt zweier Zustände eine **Folge von Lastfällen**
-nennen; daraus zählt Statik3D das Kollektiv nach EN 1993-1-9, Anhang A.
+nennen; daraus zählt Statik3D das Kollektiv — mit einem von drei Verfahren.
+
+**Spanne** (Vorgabe seit 11.09.2026). Eine Stufe: Schwingbreite = Maximum
+minus Minimum über die Zustände, ein Spiel je Wiederholung. Das ist die
+Schwingbreite, die RFEM aus einer Ergebniskombination für die Ermüdung
+bildet, und das richtige Verfahren, wenn die Zustände keine Zeitfolge sind —
+die 50 FAT-Umhüllenden des Drehlagers mit 2 bis 82 Zuständen. Rainflow zählte
+bei drei Zuständen 10 → 25 → 5 kN zwei halbe Spiele verschiedener Größe (am
+Kragarm IPE 200: Stufen 205,8 und 154,4 N/mm² zu je 0,5 Spielen statt einer
+Stufe 205,8 mit einem Spiel), ein Kollektiv ohne Grundlage. Die Spanne ist von
+der Reihenfolge unabhängig, und bei zwei Zuständen gleicht sie der
+Zwei-Zustände-Form; Rainflow zählt dort nur ein halbes Spiel (D = 0,609 statt
+1,219, `tests/test_ermuedung_verlauf.py`). Die Lastspielzahl kommt je Last
+oder — ohne eigene Angabe — global aus den Nachweiseinstellungen
+(`ermuedung_lastspiele`); 0 Wiederholungen schalten eine Last ab.
 
 **Rainflow** (Vier-Punkt-Verfahren). Zuerst bleiben nur die Umkehrpunkte
 übrig — ein Wert auf dem Weg nach oben ist keine Umkehr. Liegt dann die
@@ -1287,6 +1301,40 @@ die Lastspielzahlen gelten für so viele Jahre), folgt daraus die rechnerische
 **Lebensdauer** als Bezugszeitraum / D — die Schädigung wächst linear. Ohne
 Bezugszeitraum gelten die Lastspielzahlen für die ganze Nutzungsdauer, und es
 gibt keine Lebensdauer zu nennen.
+
+#### 5.5-3 Volumen: Hauptspannung im Element
+
+Ein Volumen hat keine Nennspannung. Als Spannungsgröße je Element und Zustand
+dient die **vorzeichenbehaftete Hauptspannung mit dem größten Betrag** aus dem
+Spannungstensor der Elementmitte: σ₁, wenn |σ₁| ≥ |σ₃|, sonst σ₃. Ein
+Zugkörper gibt +σ, ein Druckkörper −σ, und die Schwingbreite zwischen zwei
+Zuständen ist die Differenz dieser Größe — nicht die Differenz zweier Beträge,
+die einen Wechsel von Zug auf Druck verschluckte. Aus dem Verlauf der Größe
+entsteht je Element das Kollektiv wie beim Stab (spanne, Rainflow,
+Reservoir), die Schädigung nach Palmgren-Miner mit der Wöhlerlinie für
+Normalspannungen und γMf nach Konzept und Schadensfolge des Körpers;
+maßgebend je Körper das Element mit dem größten D, und die Ausnutzung je
+Element steht für die Färbung bereit.
+
+Die Hauptspannungen kommen geschlossen (Cardano, trigonometrisch) für alle
+Elemente auf einmal: 200 000 Tensoren in unter 2 s, gegen `eigvalsh` je
+Element in einer Schleife — bei 2 Mio. Elementen und 164 Zuständen des
+Drehlagers Minuten je Zustand. Geprüft an 2000 Zufallstensoren gegen
+`eigvalsh` (Abweichung unter 10 Pa bei 50 MPa), Patch-Test am Zugstab aus
+10 × 2 × 2 Hexaedern: Δσ = ΔF/A = 60,0 N/mm² auf 10⁻⁶ genau, D wie die
+Handrechnung mit `sn_life`, Druck wie Zug (`tests/test_ermuedung_verlauf.py`).
+
+**Grenzen.** Es ist die Spannung in der Elementmitte: bei Biegung durch den
+Körper liegt der Rand höher (Kapitel 5d: 43,3 gegen 60,3 N/mm² am Kragarm aus
+Hexaedern) — für Ermüdung unter Biegung ist das Netz über die Höhe fein zu
+wählen. Die Größe ist eine Struktur- oder Kerbspannung, keine Nennspannung:
+die Kerbfälle der Tabellen 8.1–8.10 gelten nur, wo das Element die
+Nennspannung abbildet (glatter Grundwerkstoff); an Nähten und Kerben gehört
+ein Kerbfall des Struktur- oder Kerbspannungskonzepts dazu (IIW: FAT 225 für
+die Kerbspannung mit r = 1 mm). Der Vorschlag des Programms (160,
+Grundwerkstoff; `ec3/kerbfaelle.py`) ist dafür ein Anfang, kein Befund.
+Rainflow und Reservoir zählen je Element einzeln und sind bei großen Körpern
+langsam; die Spanne ist vektorisiert.
 
 #### 5.5a Kerbfälle aus Schweißnähten (`schweissnaehte.py`)
 
@@ -1525,10 +1573,9 @@ mittlere Elementgröße h ≤ r/3 ist — sonst liegen weniger als drei Elemente
 
 **Grenzen**: Keine Stabilität des Volumenkörpers — die geometrische
 Steifigkeit ist nur für Stabelemente gebildet, ein Verzweigungsproblem für
-Volumen gibt es nicht. Kein Plastizieren, kein Kriechen, keine Ermüdung aus
-dem räumlichen Spannungszustand (dafür wären Kerbspannungs- oder Struktur-
-spannungskonzepte nötig) und nicht der Sprödbruchnachweis nach EN 1993-1-10
-selbst.
+Volumen gibt es nicht. Kein Plastizieren, kein Kriechen und nicht der
+Sprödbruchnachweis nach EN 1993-1-10 selbst. Die Ermüdung der Volumen aus der
+Hauptspannung im Element steht in 5.5-3.
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 

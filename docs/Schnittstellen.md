@@ -592,13 +592,40 @@ Modell ist die Ermüdungsuntersuchung eines Brückendrehlagers. Sie bekommen
 eine eigene Umhüllende „FAT" und gehen nicht in die Querschnittsnachweise im
 GZT ein.
 
-**Ermüdungsbeanspruchungen werden daraus noch nicht abgeleitet.** Die 50
-Ermüdungskombinationen sind Umhüllende über 2 bis 82 Zustände (Operator 0 =
-oder, siehe oben — die frühere Lesart „Operator 2 ist die eine
-Oder-Verknüpfung" war falsch). Die Schwingbreite ist dort Maximum minus
-Minimum der Umhüllenden; sie in `fatigue_loads` zu überführen ist ein
-eigener Schritt. Bis dahin bleibt `fatigue_loads` leer und der
-Ermüdungsnachweis aus — das steht im Protokoll.
+**Ermüdungslasten aus den Ermüdungskombinationen.** Jede FAT-Kombination
+wird eine Ermüdungslast (`fatigue_loads`) mit einem Verlauf über ihre
+Zustände in Dateireihenfolge und der Zählung `spanne`: Schwingbreite =
+Maximum minus Minimum über die Zustände, ein Spiel je Wiederholung — die
+Schwingbreite, die RFEM aus der Ergebniskombination bildet. Lastspielzahlen
+führt die Datei nicht (0 von 422 Lastfällen): die Lasten tragen
+`wiederholungen = None`, es gilt die **globale Lastspielzahl** der
+Nachweiseinstellungen (`ermuedung_lastspiele`, Nachweise → Konfiguration),
+je Last im Dialog Ermüdungslast überschreibbar. Enthält die Zustandsmenge
+einer Kombination die einer anderen mit mindestens zwei Zuständen
+vollständig, ist sie eine **Sammlung** von Ereignissen und bekommt 0
+Wiederholungen (unwirksam), damit nichts doppelt zählt; ein einzelner
+Zustand wird gegen den Nullzustand angesetzt; ein Zustand, der selbst eine
+Summe mehrerer Lastfälle ist, wird genannt und übergangen. Am Drehlager: 50
+Ermüdungslasten, 47 Verläufe mit 2 bis 82 Zuständen und 3 Sammlungen
+(„Ermüdungslastfalle – Drehlager Ost/West" mit je 82 Zuständen über 26
+Ereignissen, „… Ost – Offen" mit 9 über 6); „… Ost – Öffnen/Schließen" (65
+Zustände) enthält kein Ereignis vollständig und bleibt ein Verlauf. Alles
+steht im Protokoll.
+
+**Kerbfälle** führt die Datei ebenfalls nicht. Der Import ruft
+`ec3.kerbfaelle.anwenden`: Zugstäbe mit Rundquerschnitt 50 N/mm² (Tabelle
+8.1, Kerbfall 14), gewalzte Querschnitte 160 N/mm² (Kerbfall 1,
+Grundwerkstoff), Volumen 160 N/mm² mit dem Konzept Strukturspannung — als
+Vorschlag markiert (`kerbfall_vorschlag`), in Stab- und Volumenmaske zu
+prüfen. Am Drehlager: 64 Zugstäbe (Rund 16/20/40) mit 50, 108 Volumen mit
+160.
+
+**Vorspannung.** Die Datei enthält keine (0 von 422 Lastfällen,
+`MemberTypeLoadImplEndPrestress` leer). Eine Minderung der Schwingbreite
+durch Vorspannung entsteht erst durch die Nichtlinearität der verspannten
+Fuge und verlangt je Zustand eine Kombination „Vorspannung + Zustand" mit
+Kontakt im Verlauf; in der linearen Überlagerung hebt sich eine konstante
+Vorspannung in der Differenz zweier Zustände heraus.
 
 Enthält eine Ergebniskombination Klammern oder Zwischenergebnisse, wird das
 gemeldet: die Überlagerung innerhalb einer Alternative trifft die Absicht

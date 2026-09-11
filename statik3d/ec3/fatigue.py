@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..model import Model, Member
+from .. import elemente as EL
 
 # Kerbfallklassen [MPa] (Tabellen 8.1 - 8.10, Auswahl)
 DETAIL_CATEGORIES = [160, 140, 125, 112, 100, 90, 80, 71, 63, 56, 50, 45, 40, 36]
@@ -281,16 +282,53 @@ class FatigueMember:
 
 
 @dataclass
+class FatigueVolumen:
+    """Ermuedungsnachweis eines Volumenkoerpers.
+
+    Je Element die Schaedigung aus der vorzeichenbehafteten Hauptspannung mit
+    dem groessten Betrag; massgebend das Element mit dem groessten D.
+    """
+    name: str
+    category: float
+    gamma_Mf: float
+    konzept: str = ""
+    D: float = 0.0
+    dsig_max: float = 0.0
+    dsig_E2: float = 0.0
+    util: float = 0.0
+    element: int = -1
+    n_elemente: int = 0
+    ranges: list = field(default_factory=list)       # (Delta_sigma, n, Name, Element)
+    #: Kollektiv am massgebenden Element: [(Delta_sigma, n)], absteigend
+    kollektiv: list = field(default_factory=list)
+    jahre: float = float("inf")
+    bezugsjahre: float = 0.0
+    warnings: list = field(default_factory=list)
+    #: Elemente des Koerpers und ihre Schaedigung (float32) - fuer die Faerbung
+    elemente: list = field(default_factory=list)
+    D_je_element: object = None
+
+    def tabelle(self) -> list:
+        return schaedigungstabelle(self.kollektiv, self.category, self.gamma_Mf)
+
+
+@dataclass
 class FatigueResults:
     members: dict = field(default_factory=dict)
     gamma_Ff: float = 1.0
+    #: Ermuedungsnachweise der Volumenkoerper mit Kerbfall
+    volumen: dict = field(default_factory=dict)
 
     def summary(self) -> str:
-        if not self.members:
-            return "Ermuedung: keine Staebe mit Kerbfall"
-        worst = max(self.members.values(), key=lambda m: m.util)
-        return (f"Ermuedung: {len(self.members)} Staebe, max. Schaedigung D = {worst.util:.3f} "
-                f"({worst.member}, Kerbfall {worst.category/1e6:.0f})")
+        if not self.members and not self.volumen:
+            return "Ermuedung: keine Staebe oder Volumen mit Kerbfall"
+        alle = list(self.members.values()) + list(self.volumen.values())
+        worst = max(alle, key=lambda m: m.util)
+        wname = getattr(worst, "member", None) or f"Volumen {worst.name}"
+        teile = ([f"{len(self.members)} Staebe"] if self.members else []) + (
+            [f"{len(self.volumen)} Volumen"] if self.volumen else [])
+        return (f"Ermuedung: {', '.join(teile)}, max. Schaedigung D = {worst.util:.3f} "
+                f"({wname}, Kerbfall {worst.category/1e6:.0f})")
 
     def table(self) -> list[list]:
         rows = [["Stab", "Kerbfall", "gamma_Mf", "max Delta-sigma [MPa]", "Delta-sigma_E,2 [MPa]",
@@ -299,6 +337,10 @@ class FatigueResults:
             rows.append([m.member, f"{m.category/1e6:.0f}", f"{m.gamma_Mf:.2f}",
                          f"{m.dsig_max/1e6:.1f}", f"{m.dsig_E2/1e6:.1f}", f"{m.D:.3f}",
                          f"{m.D_shear:.3f}", f"{m.util:.3f}", m.governing])
+        for v in self.volumen.values():
+            rows.append([f"Volumen {v.name}", f"{v.category/1e6:.0f}", f"{v.gamma_Mf:.2f}",
+                         f"{v.dsig_max/1e6:.1f}", f"{v.dsig_E2/1e6:.1f}", f"{v.D:.3f}",
+                         "0.000", f"{v.util:.3f}", f"Element {v.element}"])
         return rows
 
     def util_by_element(self, model: Model) -> dict:
@@ -306,6 +348,10 @@ class FatigueResults:
         for m in self.members.values():
             for e in model.members[m.member].elements:
                 out[e] = max(out.get(e, 0.0), m.util)
+        for v in self.volumen.values():
+            if v.D_je_element is not None:
+                for e, u in zip(v.elemente, np.asarray(v.D_je_element, float).tolist()):
+                    out[int(e)] = max(out.get(int(e), 0.0), float(u))
         return out
 
 
@@ -364,10 +410,207 @@ def _groesste_stufe(eigen: dict, name: str, x) -> tuple:
 
 
 def _zaehlen(verlauf, verfahren: str) -> list:
-    """Ein Kollektiv aus einem Verlauf - nach dem gewaehlten Zaehlverfahren."""
-    if str(verfahren).lower().startswith("res"):
+    """Ein Kollektiv aus einem Verlauf - nach dem gewaehlten Zaehlverfahren.
+
+    ``"spanne"``: genau eine Stufe, Schwingbreite = Maximum minus Minimum ueber
+    die Zustaende, ein Spiel je Durchlauf. Das ist die Schwingbreite, die RFEM
+    aus einer Ergebniskombination fuer die Ermuedung bildet; sie haengt nicht
+    von der Reihenfolge der Zustaende ab, und bei zwei Zustaenden ist sie mit
+    Rainflow identisch. Rainflow zaehlt bei drei Zustaenden 1 -> 25 -> 5 zwei
+    halbe Spiele verschiedener Groesse (20 und 15 als je 0,5) - fuer eine
+    Ergebniskombination, deren Zustaende keine Zeitfolge sind, waere das ein
+    Kollektiv ohne Grundlage.
+    ``"rainflow"`` / ``"reservoir"``: EN 1993-1-9, Anhang A, fuer echte
+    Verlaeufe (Ueberfahrt, Oeffnungsvorgang).
+    """
+    v = str(verfahren).lower()
+    if v.startswith("span"):
+        w = np.asarray(verlauf, float).ravel()
+        if w.size < 2:
+            return []
+        return [(float(w.max() - w.min()), 1.0)]
+    if v.startswith("res"):
         return reservoir(verlauf)
     return [(h, n) for h, _mittel, n in rainflow(verlauf)]
+
+
+def hauptspannungen(S: np.ndarray) -> np.ndarray:
+    """Hauptspannungen (n, 3), absteigend, fuer n Tensoren (sx, sy, sz, txy, tyz, tzx).
+
+    Geschlossen (Cardano, trigonometrisch) statt eigvalsh je Element: 200 000
+    Tensoren in Bruchteilen einer Sekunde; eigvalsh in einer Python-Schleife
+    braeuchte fuer die 2 Mio. Elemente des Drehlagers Minuten je Zustand.
+    """
+    S = np.asarray(S, float).reshape(-1, 6)
+    sx, sy, sz, txy, tyz, tzx = S.T
+    p = (sx + sy + sz) / 3.0
+    dx, dy, dz = sx - p, sy - p, sz - p
+    q = np.sqrt((dx * dx + dy * dy + dz * dz + 2.0 * (txy * txy + tyz * tyz + tzx * tzx)) / 6.0)
+    q_ = np.where(q > 0.0, q, 1.0)                 # hydrostatisch: alle drei = p
+    bx, by, bz, bxy, byz, bzx = dx / q_, dy / q_, dz / q_, txy / q_, tyz / q_, tzx / q_
+    det = (bx * (by * bz - byz * byz) - bxy * (bxy * bz - byz * bzx)
+           + bzx * (bxy * byz - by * bzx))
+    phi = np.arccos(np.clip(det / 2.0, -1.0, 1.0)) / 3.0
+    e1 = p + 2.0 * q * np.cos(phi)
+    e3 = p + 2.0 * q * np.cos(phi + 2.0 * np.pi / 3.0)
+    e2 = 3.0 * p - e1 - e3
+    return np.sort(np.stack([e1, e2, e3], axis=1), axis=1)[:, ::-1]
+
+
+def signalspannung(S: np.ndarray) -> np.ndarray:
+    """Die vorzeichenbehaftete Hauptspannung mit dem groessten Betrag je Tensor.
+
+    sigma_1, wenn |sigma_1| >= |sigma_3|, sonst sigma_3: ein Zugkoerper gibt
+    +sigma, ein Druckkoerper -sigma, und die Schwingbreite zwischen zwei
+    Zustaenden ist die Differenz - nicht die Differenz zweier Betraege.
+    """
+    h = hauptspannungen(S)
+    return np.where(np.abs(h[:, 0]) >= np.abs(h[:, 2]), h[:, 0], h[:, 2])
+
+
+def _n_vektor(delta, category: float, gamma_Mf: float = 1.0) -> np.ndarray:
+    """Ertragbare Lastspielzahl N_R je Schwingbreite - sn_life vektorisiert
+    (Normalspannung: m = 3 bis N_D, m = 5 bis N_L, darunter unendlich)."""
+    d = np.asarray(delta, float)
+    dc = category / gamma_Mf
+    dD = (2.0 / 5.0) ** (1.0 / 3.0) * dc
+    dL = (5.0 / 100.0) ** 0.2 * dD
+    N = np.full(d.shape, np.inf)
+    hoch = d >= dD
+    N[hoch] = 2e6 * (dc / d[hoch]) ** 3
+    mitte = (d >= dL) & ~hoch & (d > 0)
+    N[mitte] = 5e6 * (dD / d[mitte]) ** 5
+    return N
+
+
+def _wiederholungen(fl, ds) -> float:
+    """Wiederholungen eines Verlaufs: der eigene Wert - fehlt er (None), die
+    globale Lastspielzahl der Nachweiseinstellungen. 0 heisst unwirksam."""
+    w = getattr(fl, "wiederholungen", 1.0)
+    if w is None:
+        return float(getattr(ds, "ermuedung_lastspiele", 2e6) or 0.0)
+    return float(w or 0.0)
+
+
+def _spiele(fl, ds) -> float:
+    """Lastspiele zweier Zustaende: eigener Wert oder die globale Lastspielzahl."""
+    c = getattr(fl, "cycles", 2e6)
+    if c is None:
+        return float(getattr(ds, "ermuedung_lastspiele", 2e6) or 0.0)
+    return float(c or 0.0)
+
+
+def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
+                        bezug: float, progress=None) -> None:
+    """Ermuedungsnachweis der Volumenkoerper mit Kerbfall.
+
+    Spannungsgroesse je Element und Zustand ist die vorzeichenbehaftete
+    Hauptspannung mit dem groessten Betrag aus dem Elementspannungstensor
+    (Elementmitte). Aus ihrem Verlauf entsteht je Element das Kollektiv wie
+    beim Stab (spanne / rainflow / reservoir), die Schaedigung nach
+    Palmgren-Miner mit der Woehlerlinie fuer Normalspannungen; massgebend je
+    Koerper das Element mit dem groessten D. Gerechnet wird je Koerper und
+    Last vektorisiert ueber die Elemente; Rainflow und Reservoir zaehlen je
+    Element einzeln und sind bei grossen Koerpern langsam.
+    """
+    koerper = [k for k in (getattr(model, "koerper", {}) or {}).values()
+               if float(getattr(k, "kerbfall", 0.0) or 0.0) > 0 and k.elemente]
+    if not koerper:
+        return
+    n_el = len(model.elements)
+    for k in koerper:
+        idx = [int(i) for i in k.elemente
+               if 0 <= int(i) < n_el and model.elements[int(i)].typ in EL.VOLUMEN_TYPEN]
+        if not idx:
+            continue
+        gMf = GAMMA_MF.get((getattr(k, "assessment", "damage_tolerant"),
+                            getattr(k, "consequence", "low")), 1.15)
+        fv = FatigueVolumen(k.name, float(k.kerbfall), gMf,
+                            konzept=str(getattr(k, "kerbfall_konzept", "") or ""))
+        fv.bezugsjahre = bezug
+        fv.n_elemente = len(idx)
+        signale: dict = {}
+
+        def signal(name):
+            s = signale.get(name)
+            if s is None:
+                sr = all_res[name].solid_res
+                S = np.zeros((len(idx), 6))
+                for r, i in enumerate(idx):
+                    v = sr.get(i)
+                    if v is not None:
+                        S[r] = v
+                s = signale[name] = signalspannung(S)
+            return s
+
+        D = np.zeros(len(idx))
+        dsig = np.zeros(len(idx))
+        stufen: list = []            # (Delta je Element, n) der vektorisierten Lasten
+        extra: dict = {}             # Element -> [(Delta, n)] aus Rainflow/Reservoir
+        beitrag = False
+        for fl in model.fatigue_loads.values():
+            faktor = fl.factor * ds.gamma_Ff
+            if getattr(fl, "folge", None):
+                namen = [f for f in fl.folge if f in all_res]
+                fehlt = [f for f in fl.folge if f not in all_res]
+                if fehlt:
+                    fv.warnings.append(f"Ermuedungslast {fl.name}: Ergebnis '{fehlt[0]}' fehlt")
+                wdh = _wiederholungen(fl, ds)
+                if len(namen) < 2 or wdh <= 0:
+                    continue
+                V = np.stack([signal(f) for f in namen], axis=1) * faktor     # (n, Zustaende)
+                verfahren = str(getattr(fl, "zaehlung", "spanne")).lower()
+                if verfahren.startswith("span"):
+                    d = V.max(axis=1) - V.min(axis=1)
+                    D += wdh / _n_vektor(d, fv.category, gMf)
+                    dsig = np.maximum(dsig, d)
+                    stufen.append((d, wdh))
+                    j = int(np.argmax(d))
+                    fv.ranges.append((float(d[j]), wdh, fl.name, idx[j]))
+                else:
+                    gross, jg = 0.0, 0
+                    for r in range(len(idx)):
+                        for h, z in _zaehlen(V[r], verfahren):
+                            D[r] += z * wdh / sn_life(h, fv.category, gMf)
+                            extra.setdefault(r, []).append((h, z * wdh))
+                            if h > dsig[r]:
+                                dsig[r] = h
+                            if h > gross:
+                                gross, jg = h, r
+                    n_g = sum(z for h, z in extra.get(jg, []) if h == gross)
+                    fv.ranges.append((float(gross), float(n_g), fl.name, idx[jg]))
+                beitrag = True
+                continue
+            if fl.case_max not in all_res:
+                fv.warnings.append(f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt")
+                continue
+            spiele = _spiele(fl, ds)
+            if spiele <= 0:
+                continue
+            a = signal(fl.case_max)
+            b = signal(fl.case_min) if fl.case_min and fl.case_min in all_res else 0.0
+            d = np.abs(a - b) * faktor
+            D += spiele / _n_vektor(d, fv.category, gMf)
+            dsig = np.maximum(dsig, d)
+            stufen.append((d, spiele))
+            j = int(np.argmax(d))
+            fv.ranges.append((float(d[j]), spiele, fl.name, idx[j]))
+            beitrag = True
+        if not beitrag:
+            continue
+        j = int(np.argmax(D))
+        fv.D = float(D[j])
+        fv.element = idx[j]
+        fv.dsig_max = float(dsig.max())
+        fv.kollektiv = kollektiv([(float(d[j]), n) for d, n in stufen] + list(extra.get(j, [])))
+        fv.dsig_E2 = equivalent_range(fv.kollektiv)
+        fv.util = fv.D
+        fv.jahre = lebensdauer(fv.util, bezug) if bezug > 0 else float("inf")
+        fv.elemente = idx
+        fv.D_je_element = D.astype(np.float32)
+        out.volumen[k.name] = fv
+        if progress:
+            progress(f"Ermuedung Volumen {k.name}: D = {fv.util:.3f}")
 
 
 def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> FatigueResults:
@@ -382,8 +625,11 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> Fatig
     des Querschnitts; massgebend ist der groesste Wert, und der Ort steht dabei.
 
     Eine Ermuedungslast beschreibt entweder zwei Zustaende (case_max gegen
-    case_min) oder einen **Verlauf** (``folge``) - dann wird das Kollektiv mit
-    Rainflow bzw. Reservoir gezaehlt (EN 1993-1-9, Anhang A).
+    case_min) oder einen **Verlauf** (``folge``) - dann wird das Kollektiv
+    daraus gezaehlt: Vorgabe ist die Spanne Maximum minus Minimum (ein Spiel je
+    Wiederholung), Rainflow und Reservoir (EN 1993-1-9, Anhang A) sind die
+    Option fuer eine echte Zeitfolge. Die Schadensakkumulation ist immer
+    Palmgren-Miner ueber alle Lasten am Ort.
     """
     ds = model.design
     n = n or ds.stations
@@ -412,8 +658,13 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> Fatig
                 if sig is None:
                     continue
                 xs = x
-                wdh = float(getattr(fl, "wiederholungen", 1.0) or 1.0)
-                verfahren = getattr(fl, "zaehlung", "rainflow")
+                wdh = _wiederholungen(fl, ds)
+                if wdh <= 0:
+                    # unwirksam - so kommen die Sammlungen aus dem RFEM-Import,
+                    # damit ihre Ereignisse nicht doppelt zaehlen; frueher
+                    # machte "or 1.0" aus 0 stillschweigend 1
+                    continue
+                verfahren = getattr(fl, "zaehlung", "spanne")
                 # Erst **diese** Last fuer sich zaehlen, dann anhaengen. Die
                 # Uebersichtszeile darf nicht ueber die Sammlung messen: dort
                 # stehen schon die Stufen der Lasten davor.
@@ -437,6 +688,9 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> Fatig
             if fl.case_max not in all_res:
                 fm.warnings.append(f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt")
                 continue
+            spiele = _spiele(fl, ds)
+            if spiele <= 0:
+                continue
             x, s_max, t_max = _stress_points(model, all_res[fl.case_max], member, n)
             xs = x
             if fl.case_min and fl.case_min in all_res:
@@ -448,13 +702,13 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> Fatig
             dtau = np.abs(t_max - t_min) * faktor          # (nstat,)
             for p_ in range(dsig.shape[0]):
                 for j in range(dsig.shape[1]):
-                    sammlung.setdefault((p_, j), []).append((float(dsig[p_, j]), fl.cycles))
+                    sammlung.setdefault((p_, j), []).append((float(dsig[p_, j]), spiele))
             for j in range(dtau.shape[0]):
-                sammlung_t.setdefault(j, []).append((float(dtau[j]), fl.cycles))
+                sammlung_t.setdefault(j, []).append((float(dtau[j]), spiele))
             j = int(np.argmax(dsig.max(axis=0)))
-            fm.ranges.append((float(dsig[:, j].max()), fl.cycles, fl.name, float(x[j])))
+            fm.ranges.append((float(dsig[:, j].max()), spiele, fl.name, float(x[j])))
             k = int(np.argmax(dtau))
-            fm.ranges_shear.append((float(dtau[k]), fl.cycles, fl.name, float(x[k])))
+            fm.ranges_shear.append((float(dtau[k]), spiele, fl.name, float(x[k])))
         if not sammlung:
             continue
         # Massgebend ist der Ort mit der groessten Schaedigung - nicht die
@@ -484,4 +738,5 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> Fatig
         out.members[mname] = fm
         if progress:
             progress(f"Ermuedung {mname}: D = {fm.util:.3f}")
+    _volumen_nachweisen(model, all_res, ds, out, bezug, progress)
     return out

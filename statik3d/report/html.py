@@ -2788,7 +2788,7 @@ class Report:
         m = self.model
         b = [self._h(1, "Ermüdungsnachweis nach DIN EN 1993-1-9")]
         f = self.fatigue if self.opt("fatigue") else None
-        if f is None or not getattr(f, "members", None):
+        if f is None or not (getattr(f, "members", None) or getattr(f, "volumen", None)):
             if not self.opt("fatigue"):
                 b.append(("p", "Die Ausgabe des Ermüdungsnachweises ist deaktiviert."))
             elif not m.fatigue_loads:
@@ -2915,9 +2915,76 @@ class Report:
             if fm.warnings:
                 b.append(("list", [f"Hinweis: {w}" for w in fm.warnings]))
                 self._warnings.extend(f"Ermüdung {fm.member}: {w}" for w in fm.warnings)
+        if getattr(f, "volumen", None):
+            b += self._fatigue_volumen(f)
         nf = [fm.member for fm in f.members.values() if fm.util > 1.0]
+        nf += [f"Volumen {fv.name}" for fv in getattr(f, "volumen", {}).values() if fv.util > 1.0]
         if nf:
             self._warnings.append("Ermüdungsnachweis NICHT erfüllt für: " + ", ".join(nf))
+        return b
+
+    def _fatigue_volumen(self, f) -> list:
+        """Ermuedungsnachweis der Volumenkoerper: Hauptspannung je Element."""
+        from ..ec3.fatigue import sn_life
+        b = [self._h(2, "Ermüdungsnachweis Volumen")]
+        b.append(("list", [
+            "Spannungsgröße je Element und Zustand ist die vorzeichenbehaftete Hauptspannung mit "
+            "dem größten Betrag (σ₁, wenn |σ₁| ≥ |σ₃|, sonst σ₃) aus dem Spannungstensor in der "
+            "Elementmitte. Aus ihrem Verlauf über die Zustände entsteht je Element das Kollektiv "
+            "wie beim Stab; Schädigung nach Palmgren-Miner mit der Wöhlerlinie für "
+            "Normalspannungen; maßgebend je Körper das Element mit dem größten D.",
+            "Das ist die Spannung im Element – bei feinem Netz an der Kerbe eine Kerbspannung, "
+            "sonst eine Strukturspannung –, keine Nennspannung. Der Kerbfall muss zu diesem "
+            "Konzept passen (Nennspannungs-Kerbfälle der Tabellen 8.1–8.10 nur, wo das Element "
+            "die Nennspannung abbildet; Kerbspannung nach IIW: FAT 225 bei r = 1 mm).",
+        ]))
+        jahre = any(np.isfinite(getattr(fv, "jahre", np.inf)) for fv in f.volumen.values())
+        rows = [["Volumen", "Kerbfall Δσ_C [MPa]", "Konzept", "γ_Mf", "max Δσ [MPa]", "Δσ_E,2 [MPa]",
+                 "D (Miner)", "Ausnutzung"] + (["Lebensdauer [a]"] if jahre else [])
+                + ["maßgebendes Element"]]
+        for fv in f.volumen.values():
+            zeile = [fv.name, fmt(fv.category / 1e6, 0), fv.konzept or "–", fmt(fv.gamma_Mf, 2),
+                     fmt(fv.dsig_max / 1e6, 1), fmt(fv.dsig_E2 / 1e6, 1), fmt(fv.D, 3), Util(fv.util)]
+            if jahre:
+                j = getattr(fv, "jahre", float("inf"))
+                zeile.append(fmt(j, 0) if np.isfinite(j) else "∞")
+            rows.append(zeile + [f"Element {fv.element} von {fv.n_elemente}"])
+        b.append(("table", rows, "Ermüdungsnachweis je Volumenkörper", None, ""))
+        for fv in f.volumen.values():
+            b.append(self._h(3, f"Volumen {fv.name}"))
+            kv = [("Kerbfall Δσ_C", f"{fv.category / 1e6:.0f} MPa"
+                   + (f" ({fv.konzept})" if fv.konzept else "")),
+                  ("γ_Mf", fmt(fv.gamma_Mf, 2)),
+                  ("Elemente im Nachweis", str(fv.n_elemente)),
+                  ("Dauerfestigkeit Δσ_D (5·10⁶)", f"{0.737 * fv.category / fv.gamma_Mf / 1e6:.1f} MPa"),
+                  ("Schwellenwert Δσ_L (10⁸)",
+                   f"{0.549 * 0.737 * fv.category / fv.gamma_Mf / 1e6:.1f} MPa"),
+                  ("Schädigung D am maßgebenden Element", f"{fmt(fv.D, 4)} (Element {fv.element})"),
+                  ("Ausnutzung D", Util(fv.util))]
+            if np.isfinite(getattr(fv, "jahre", np.inf)) and getattr(fv, "bezugsjahre", 0) > 0:
+                kv.append(("Rechnerische Lebensdauer",
+                           f"{fmt(fv.bezugsjahre, 0)} a / D = {fmt(fv.jahre, 0)} a"))
+            kv.append(("Status", "Nachweis erfüllt" if fv.util <= 1.0 else "Nachweis NICHT erfüllt"))
+            b.append(("kv", kv, f"Ermüdung Volumen {fv.name}"))
+            if fv.kollektiv:
+                rows = [["Stufe", "Δσ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
+                for i, (dsg, nz, NR, di, kum) in enumerate(fv.tabelle(), 1):
+                    rows.append([str(i), fmt(dsg / 1e6, 1), f"{nz:.4g}",
+                                 f"{NR:.3g}" if np.isfinite(NR) else "∞", fmt(di, 5), fmt(kum, 4)])
+                b.append(("table", rows,
+                          f"Schadensakkumulation am maßgebenden Element {fv.element} – Stufe für "
+                          "Stufe nach Palmgren-Miner", None, ""))
+            rows = [["Ermüdungslast", "Δσ [MPa]", "n", "N_R", "n / N_R", "Element"]]
+            for r in fv.ranges:
+                NR = sn_life(r[0], fv.category, fv.gamma_Mf)
+                rows.append([r[2], fmt(r[0] / 1e6, 1), f"{r[1]:.3g}",
+                             f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                             fmt(r[1] / NR, 4) if np.isfinite(NR) and NR > 0 else "0", str(r[3])])
+            b.append(("table", rows, "Größte Schwingbreite je Ermüdungslast – zur Übersicht; sie "
+                                     "liegen im Allgemeinen an verschiedenen Elementen.", None, ""))
+            if fv.warnings:
+                b.append(("list", [f"Hinweis: {w}" for w in fv.warnings]))
+                self._warnings.extend(f"Ermüdung Volumen {fv.name}: {w}" for w in fv.warnings)
         return b
 
     # ============================================================ Kapitel 7

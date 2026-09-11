@@ -1734,18 +1734,55 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
 **Eine Ermüdungslast beschreibt entweder zwei Zustände oder einen Verlauf.**
 *Zwei Zustände*: der Lastwechsel pendelt zwischen oben und unten, mit einer
 Lastspielzahl — das reicht, solange es wirklich nur zwei Zustände gibt.
-*Verlauf*: eine **Folge von Lastfällen** in zeitlicher Reihenfolge (eine
-Überfahrt, ein Öffnungsvorgang, ein Betriebszyklus) und die Zahl der
-Wiederholungen. Daraus zählt Statik3D das Kollektiv selbst — Rainflow oder
-Reservoir nach EN 1993-1-9, Anhang A. Das ist der ehrlichere Weg, sobald mehr
-als zwei Zustände vorkommen: die Zwischenstufen tragen eigene, kleinere Spiele
-bei, und die zählen mit. Wer denselben Vorgang nur mit seinen beiden
-Außenwerten ansetzt, unterschätzt die Schädigung.
+*Verlauf*: eine **Folge von Lastfällen** (oder Kombinationen) und die Zahl
+der Wiederholungen. Das **Zählverfahren** bestimmt, was aus dem Verlauf wird:
 
-Ein Hinweis zum Zuschnitt: **lassen Sie den Verlauf am größten Wert beginnen
-und enden.** Dann liefern beide Zählverfahren dasselbe Kollektiv und es
-entstehen nur ganze Spiele; sonst bleibt bei Rainflow ein Rest, der mit halben
-Spielen zählt.
+* **spanne** (Vorgabe): eine Stufe mit der Schwingbreite Maximum minus
+  Minimum über alle Zustände, ein Spiel je Wiederholung — so bildet RFEM die
+  Ermüdungsschwingbreite einer Ergebniskombination, und so kommen die
+  Ermüdungslasten aus dem RFEM-Import. Die Reihenfolge der Zustände spielt
+  keine Rolle; bei zwei Zuständen ist es dasselbe wie „zwei Zustände".
+* **rainflow** / **reservoir** (EN 1993-1-9, Anhang A): für eine echte
+  Zeitfolge (Überfahrt, Öffnungsvorgang, Betriebszyklus). Die Zwischenstufen
+  tragen eigene, kleinere Spiele bei, und die zählen mit. Lassen Sie den
+  Verlauf am größten Wert beginnen und enden — dann liefern beide dasselbe
+  Kollektiv und nur ganze Spiele; sonst bleibt bei Rainflow ein Rest, der mit
+  halben Spielen zählt (bei nur zwei Zuständen ein halbes Spiel, also die
+  halbe Schädigung von „spanne").
+
+Die Schadensakkumulation ist immer Palmgren-Miner über alle Lasten am Ort.
+
+**Lastspielzahl.** Die Lastspiele bzw. Wiederholungen jeder Ermüdungslast
+sind entweder eigene Werte oder — Haken „globale Lastspielzahl" im Dialog —
+die **globale Lastspielzahl** aus Nachweise → Konfiguration (Vorgabe 2·10⁶;
+dort steht auch der Bezugszeitraum in Jahren für die Lebensdauer). So wird
+die Zahl einmal für alle Lasten gesetzt und je Nachweis überschrieben; die
+Tabelle Ermüdungslasten zeigt „global", wo die globale gilt. 0
+Wiederholungen heißt: die Last ist unwirksam — so bleiben die Sammlungen aus
+dem RFEM-Import stehen, ohne doppelt zu zählen.
+
+**Kerbfälle vorschlagen** (Nachweise → Führen → Kerbfälle vorschlagen; beim
+RFEM-Import automatisch): Schweißnähte des Modells liefern den Kerbfall ihrer
+Stäbe; Zugstäbe mit Rundquerschnitt bekommen 50 N/mm² (Tabelle 8.1, Kerbfall
+14: Stange mit Gewinde unter Zug), gewalzte Querschnitte 160 N/mm² (Kerbfall
+1, Grundwerkstoff), Volumen 160 N/mm² (Grundwerkstoff, Strukturspannung). Das
+sind Vorschläge: die Stabtabelle zeigt „(Vorschlag)", Volumenmaske und
+-dialog sagen es im Hinweis. Eine Eingabe in Maske, Tabelle oder Dialog
+bestätigt den Wert, und ein bestätigter Wert wird von „Kerbfälle vorschlagen"
+nicht mehr überschrieben. Anschlüsse, Steifen und Nähte mindern den Kerbfall
+— das Programm kennt sie nur, wenn sie als Schweißnaht oder Anschluss
+eingegeben sind.
+
+**Ermüdung für Volumen.** Ein Volumen mit Kerbfall (Maske Volumen, Feld
+„Kerbfall Ermüdung"; Tabelle Volumen, Spalte Kerbfall; Dialog Volumenkörper)
+wird mit nachgewiesen: je Element und Zustand die vorzeichenbehaftete
+Hauptspannung mit dem größten Betrag, daraus das Kollektiv wie beim Stab,
+Schädigung nach Miner mit der Wöhlerlinie für Normalspannungen, maßgebend das
+Element mit dem größten D. Das Ergebnis steht in der Tabelle Ermüdung
+(„Volumen V1", ein Klick wählt den Körper), in der Färbung „Ausnutzung
+Ermüdung" je Element und im Bericht (Block „Ermüdungsnachweis Volumen"). Die
+Spannung im Element ist eine Struktur- oder Kerbspannung, keine Nennspannung
+— der Kerbfall muss dazu passen (Theoriehandbuch 5.5-3).
 
 **Die Schädigung wird am Ort aufsummiert**, nicht über Orte hinweg: D wird an
 jeder Nachweisstelle und an jedem der vier Querschnittseckpunkte gebildet,

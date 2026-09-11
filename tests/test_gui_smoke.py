@@ -1534,6 +1534,65 @@ def main():
               len(d.werte()["flaechen"]) == 6 and d.werte()["teilung"] == [4, 2, 2],
               str(d.werte()["teilung"]))
 
+        # Kerbfall des Volumens: Maske, Tabelle, Dialog, Vorschlag - und der
+        # Ermuedungsnachweis am Volumen (Hauptspannung im Element) samt
+        # Tabelle Ermuedung, Faerbung und Auswahl per Klick (11.09.2026)
+        w._objektmaske("geokoerper_einzeln", "V1"); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Volumenmaske hat ein Feld Kerbfall", mk is not None and "kerbfall" in mk._felder,
+              str(sorted(mk._felder)) if mk else "-")
+        if mk is not None and "kerbfall" in mk._felder:
+            mk.setzen("kerbfall", "71")
+            mk.anwenden(); app.processEvents()
+        kk = mv2.koerper["V1"]
+        check("Kerbfall 71 N/mm² im Volumen, keine Vorschlagsmarke",
+              abs(float(kk.kerbfall) - 71e6) < 1.0 and not kk.kerbfall_vorschlag, str(kk.kerbfall))
+        w.refresh_all(); app.processEvents()
+        spalten = [s.name for s in w.tbl_geokoerper.modell.spalten]
+        zv = w.tbl_geokoerper.modell.zeilen
+        check("Volumentabelle: Spalte Kerbfall mit 71", "Kerbfall" in spalten
+              and abs(float(zv[0][spalten.index("Kerbfall")]) - 71.0) < 1e-9, str(zv[0]))
+        d = dgg.KoerperDialog(w, mv2, koerper=kk)
+        check("Volumendialog liest den Kerbfall",
+              abs(float(d.werte().get("kerbfall", 0.0)) - 71e6) < 1.0, str(d.werte().get("kerbfall")))
+        check("„Kerbfälle vorschlagen“ steht im Menüband",
+              any(b.text == "Kerbfälle vorschlagen" for b in w.ribbon.befehle))
+        kk.kerbfall = 0.0
+        w.do_kerbfaelle(); app.processEvents()
+        check("Vorschlag für das Volumen: 160 N/mm² Grundwerkstoff, markiert",
+              abs(float(kk.kerbfall) - 160e6) < 1.0 and kk.kerbfall_vorschlag, str(kk.kerbfall))
+        kk.kerbfall = 71e6
+        kk.kerbfall_vorschlag = False
+        for nid in range(mv2.nn):
+            if mv2.nodes[nid, 2] < 1e-9:
+                mv2.fix(nid, [0, 1, 2])
+        oben = [nid for nid in range(mv2.nn) if mv2.nodes[nid, 2] > 1.0 - 1e-9]
+        mv2.case().category = "G"
+        for nid in oben:
+            mv2.load_node(nid, Fz=-20000.0)
+        mv2.add_load_case("LF2", "Q")
+        for nid in oben:
+            mv2.load_node(nid, Fz=-5000.0)
+        from statik3d.model import FatigueLoad as _FL
+        mv2.fatigue_loads["Zyklus"] = _FL("Zyklus", folge=[list(mv2.load_cases)[0], "LF2"],
+                                          wiederholungen=1e5)
+        an_v = solver.solve_all(mv2, fatigue=True)
+        w._solve_done("all", an_v); app.processEvents()
+        fv = an_v.fatigue.volumen.get("V1") if an_v.fatigue is not None else None
+        check("Ermüdung am Volumen gerechnet (16 Elemente, Kerbfall 71)",
+              fv is not None and fv.n_elemente == 16 and fv.dsig_max > 0,
+              str(fv.dsig_max if fv else None))
+        zf = w.tbl_fat.modell.zeilen
+        check("Tabelle Ermüdung führt das Volumen", any(str(z[0]) == "Volumen V1" for z in zf),
+              str([z[0] for z in zf]))
+        um = w._util_map("Ausnutzung Ermüdung")
+        check("Färbung „Ausnutzung Ermüdung“ hat Werte für die 16 Volumenelemente",
+              um is not None and len(um) == 16, str(len(um) if um else None))
+        w._tabelle_stab("Volumen V1"); app.processEvents()
+        check("Klick auf die Volumenzeile wählt die Knoten des Körpers",
+              len(w.selection) == mv2.nn, f"{len(w.selection)} von {mv2.nn}")
+        mv2.fatigue_loads.clear()
+
         # Listenfeld der Objektmaske: ein einzeiliges Feld stand bisher am
         # Zeilenende, und aus dreizehn Randflaechen las man "9, F64, ...".
         # Jetzt steht die Anzahl in der Beschriftung, der Zeiger zeigt die

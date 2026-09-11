@@ -263,6 +263,7 @@ def test_schadensakkumulation():
     fl = m2.add_fatigue_load("Überfahrt", "LF0", None, 0.0)
     fl.folge = ["LF0", "LF2", "LF1", "LF2", "LF0"]
     fl.wiederholungen = 1e6
+    fl.zaehlung = "rainflow"                 # der Verlauf ist eine Zeitfolge - Zwischenstufen zaehlen
     an2 = solver.solve_all(m2, design=False, fatigue=True)
     f2 = an2.fatigue.members["Traeger"]
     check("der Verlauf liefert zwei Stufen, nicht eine",
@@ -300,6 +301,7 @@ def test_schadensakkumulation():
     fl2 = m2.add_fatigue_load("Überfahrt", "LF0", None, 0.0)
     fl2.folge = ["LF0", "LF1", "LF0"]                  # kleinerer Ausschlag
     fl2.wiederholungen = 1e3
+    fl2.zaehlung = "rainflow"
     f4 = solver.solve_all(m2, design=False, fatigue=True).fatigue.members["Traeger"]
     zeile = {r[2]: r for r in f4.ranges}
     check("die Zeile des Verlaufs nennt nicht die Schwingbreite der Last davor",

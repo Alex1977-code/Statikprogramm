@@ -1235,6 +1235,13 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     _loads(db, m, lc_name, surf_els or {}, log, node_of, member_name, surf_name,
            line_name, solid_name)
     _combinations(db, m, lc_name, log)
+    # Die Datei fuehrt keine Kerbfaelle (Drehlager: 64 Zugstaebe Rund 40/20/16,
+    # 108 Volumen - keiner). Vorschlaege aus dem Modell, als solche markiert.
+    from ..ec3 import kerbfaelle
+    zeilen: list = []
+    kerbfaelle.anwenden(m, zeilen)
+    for z in zeilen:
+        C.say(log, "  " + z)
 
 
 def _surface_nodes(db: Db, node_of: dict, m: Model,
@@ -2787,6 +2794,100 @@ OPERATOR_ENDE = 2
 LASTTYP_STAENDIG = 1
 
 
+def _ermuedungslasten_aus_fat(m: Model, log: list) -> None:
+    """Aus jeder Kombination einer Ermuedungssituation eine Ermuedungslast.
+
+    Eine FAT-Ergebniskombination ist in RFEM die Umhuellende ueber ihre
+    Zustaende, und die Ermuedungsschwingbreite dort Maximum minus Minimum.
+    Genau das wird sie hier: ein Verlauf ueber die Zustaende in
+    Dateireihenfolge mit der Zaehlung "spanne", Faktor 1. Lastspielzahlen
+    stehen nicht in der Datei (Drehlager: keine in 422 Lastfaellen) - darum
+    Wiederholungen None: es gilt die globale Lastspielzahl der
+    Nachweiseinstellungen, je Last ueberschreibbar; das Protokoll nennt das.
+
+    **Sammlungen.** Enthaelt die Zustandsmenge einer Kombination die einer
+    anderen vollstaendig, ist sie eine Sammlung von Ereignissen, nicht eines
+    (Drehlager: vier "Ermuedungslastfaelle - ..." mit 9 bis 82 Zustaenden
+    ueber den 46 Ereignissen mit 2 bis 8). Sie wird angelegt, aber mit 0
+    Wiederholungen: sonst zaehlte jedes Ereignis doppelt, und die Spanne der
+    Sammlung waere eine Schwingbreite zwischen zwei Ereignissen, die es als
+    Lastwechsel nicht gibt.
+
+    Ein Zustand, der selbst eine Summe mehrerer Lastfaelle ist, laesst sich
+    nicht als Name in den Verlauf schreiben; solche Kombinationen werden
+    genannt und uebergangen. Eine Kombination mit nur einem Zustand wird
+    gegen den Nullzustand angesetzt (ein Spiel).
+    """
+    from ..model import FatigueLoad
+    fat = {nm: c for nm, c in m.combinations.items() if c.typ == "FAT"}
+    if not fat:
+        return
+    zustaende: dict[str, list] = {}
+    summen: list[str] = []
+    for nm, c in fat.items():
+        alts = c.alternativen or ([dict(c.factors)] if c.factors else [])
+        zs: list[str] = []
+        for a in alts:
+            if len(a) == 1 and abs(next(iter(a.values())) - 1.0) < 1e-12:
+                lc = next(iter(a))
+                if lc not in zs:
+                    zs.append(lc)
+            elif not c.alternativen:
+                zs.append(nm)          # die Summe selbst ist der eine Zustand
+            else:
+                zs = []
+                summen.append(nm)
+                break
+        zustaende[nm] = zs
+    # Enthalten heisst: ein anderes Ereignis mit mindestens zwei Zustaenden
+    # liegt ganz darin. Ein Ein-Zustands-Fall liegt in fast jedem Ereignis
+    # und macht keines zur Sammlung.
+    sammlungen: dict[str, list] = {}
+    for nm, zs in zustaende.items():
+        drin = [o for o, oz in zustaende.items()
+                if o != nm and 2 <= len(oz) < len(zs) and set(oz) <= set(zs)]
+        if drin:
+            sammlungen[nm] = drin
+    einzeln: list[str] = []
+    laengen: list[int] = []
+    for nm in fat:
+        zs = zustaende[nm]
+        if not zs:
+            continue
+        name = C.unique_name(m.fatigue_loads, nm)
+        if len(zs) == 1:
+            fl = FatigueLoad(name, case_max=zs[0], case_min=None, cycles=None)
+            einzeln.append(name)
+        else:
+            fl = FatigueLoad(name, folge=list(zs), zaehlung="spanne",
+                             wiederholungen=0.0 if nm in sammlungen else None)
+            laengen.append(len(zs))
+        m.fatigue_loads[name] = fl
+    k = len(laengen) + len(einzeln)
+    if k:
+        spanne = (f"{min(laengen)} bis {max(laengen)}" if len(set(laengen)) > 1
+                  else str(laengen[0])) if laengen else "einen"
+        C.say(log, f"  {k} Ermüdungslasten aus diesen Kombinationen: je ein Verlauf über ihre "
+                   f"{spanne} Zustände, Schwingbreite Maximum minus Minimum („spanne“, wie in "
+                   "RFEM). Die Datei führt keine Lastspielzahlen: es gilt die globale "
+                   f"Lastspielzahl ({m.design.ermuedung_lastspiele:g}, Nachweise → Konfiguration), "
+                   "je Last im Dialog Ermüdungslast überschreibbar - zu bestätigen.")
+    if einzeln:
+        C.say(log, f"  {len(einzeln)} davon haben nur einen Zustand und werden gegen den "
+                   "Nullzustand angesetzt (ein Spiel): " + ", ".join(einzeln[:8])
+                   + (", …" if len(einzeln) > 8 else ""))
+    if sammlungen:
+        C.say(log, f"  {len(sammlungen)} davon sind Sammlungen von Ereignissen - ihre Zustände "
+                   "enthalten die anderer Kombinationen - und bleiben mit 0 Wiederholungen "
+                   "unwirksam, damit nichts doppelt zählt: "
+                   + "; ".join(f"{nm} (enthält {', '.join(d[:6])}{', …' if len(d) > 6 else ''})"
+                               for nm, d in sammlungen.items()))
+    if summen:
+        C.warn(log, f"  {len(summen)} Ermüdungskombinationen haben Zustände, die selbst Summen "
+                    "mehrerer Lastfälle sind - nicht als Ermüdungslast übernommen: "
+                    + ", ".join(summen[:8]))
+
+
 def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
     """Lastkombinationen und Ergebniskombinationen uebernehmen.
 
@@ -2975,14 +3076,7 @@ def _combinations(db: Db, m: Model, lc_name: dict, log: list) -> None:
         C.say(log, f"  {fat} davon sind Ermuedungssituationen (GZT FAT). Sie bekommen "
                    "eine eigene Umhuellende „FAT“ und gehen **nicht** in die "
                    "Querschnittsnachweise im GZT ein.")
-        C.warn(log, "  Ermuedungsbeanspruchungen (Lastwechsel mit Schwingbreite und "
-                    "Lastspielzahl) werden daraus **nicht** abgeleitet: welche "
-                    "beiden Zustaende die Schwingbreite aufspannen, steht in der "
-                    "Datei nicht eindeutig - jede dieser Kombinationen fuehrt genau "
-                    "eine Oder-Verknuepfung, und ob sie die Liste in zwei Zweige "
-                    "teilt, entscheidet ueber das Ergebnis. Das ist mit dem "
-                    "Aufsteller zu klaeren; bis dahin bleibt der Ermuedungsnachweis "
-                    "aus.")
+        _ermuedungslasten_aus_fat(m, log)
     if unbekannt:
         C.warn(log, "  Bemessungssituationen mit unbekannter Kennzahl: "
                     + ", ".join(f"{t} ({k}x)" for t, k in sorted(unbekannt.items()))
