@@ -734,6 +734,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
             def zahl_schr(attr, faktor=1.0):
                 return lambda n, v: setattr(m.members[n], attr, float(v) * faktor)
+
+            def kerbfall_schr(n, v):
+                # eine Eingabe bestaetigt den Wert: die Vorschlagsmarke faellt
+                m.members[n].detail_category = float(v) * 1e6 if str(v).strip() else None
+                m.members[n].kerbfall_vorschlag = False
             return [("beta_y", "β_y", "text", zahl_les("beta_y"), zahl_schr("beta_y"), None),
                     ("beta_z", "β_z", "text", zahl_les("beta_z"), zahl_schr("beta_z"), None),
                     ("Lcr_y", "L_cr,y [m]", "text", zahl_les("Lcr_y"), zahl_schr("Lcr_y"), None),
@@ -745,7 +750,7 @@ class MainWindow(QtWidgets.QMainWindow):
                      lambda n, v: setattr(m.members[n], "design", v), None),
                     ("kerbfall", "Kerbfall [N/mm²]", "text",
                      lambda n: "" if m.members[n].detail_category is None else f"{m.members[n].detail_category / 1e6:g}",
-                     zahl_schr("detail_category", 1e6), None)]
+                     kerbfall_schr, None)]
         if art == "flaeche":
             return [("dicke", "Dicke", "wahl", lambda n: m.flaechen[n].dicke, lambda n, v: setattr(m.flaechen[n], "dicke", v), _namen(m.shells)),
                     ("material", "Werkstoff", "wahl", lambda n: m.flaechen[n].material, lambda n, v: setattr(m.flaechen[n], "material", v), _namen(m.materials)),
@@ -3196,6 +3201,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Schweißnähte…", lambda: self.maske_schweissnaht(),
                 hinweis="Schweißnähte angeben (Nahtart, Lage, Ausführung, äquivalente "
                         "Ersatznaht) - daraus die Kerbfälle der Stäbe nach EN 1993-1-9")
+        g.klein("Kerbfälle vorschlagen", self.do_kerbfaelle,
+                hinweis="Kerbfälle aus dem Modell vorschlagen: Schweißnähte, Zugstäbe (50), "
+                        "gewalzte Querschnitte und Volumen (160, Grundwerkstoff) - als Vorschlag, "
+                        "in Stab- und Volumenmaske zu prüfen")
         g = r.gruppe("Einstellungen")
         g.gross("Konfiguration", "⚙", self.design_settings,
                 hinweis="Teilsicherheitsbeiwerte und Nachweisstellen")
@@ -4332,6 +4341,12 @@ class MainWindow(QtWidgets.QMainWindow):
                             hinweis="Namen der Randflächen - oder „Randflächen anklicken“ und in der Ansicht wählen"),
                           F("elemente", "Elemente", "info", str(len(k.elemente)) if k else "0"),
                           F("vernetzen", "gleich vernetzen", "haken", not (k is not None and k.elemente)),
+                          F("kerbfall", "Kerbfall Ermüdung [N/mm²]", "text",
+                            (f"{k.kerbfall / 1e6:g}" if k is not None and k.kerbfall else ""), breite=80,
+                            hinweis="Kerbfall Δσ_C für den Ermüdungsnachweis des Volumens (Hauptspannung "
+                                    "im Element, EN 1993-1-9), leer = kein Nachweis"
+                                    + (" - Vorschlag des Programms, zu prüfen"
+                                       if k is not None and k.kerbfall_vorschlag else "")),
                           F("kommentar", "Kommentar", "text", (k.kommentar if k else ""), breite=160)]
                 titel = f"Volumen {name}"
         elif art in ("lastfaelle", "lastfall"):
@@ -5766,6 +5781,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 if fehlt:
                     return self.error("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
                 teilung = self._zahlenliste(w.get("teilung")) or [4, 4, 4]
+                kerb_txt = str(w.get("kerbfall", "") or "").strip().replace(",", ".")
+                kerbfall = float(kerb_txt) * 1e6 if kerb_txt else 0.0
                 neuname = (w.get("name") or name).strip()
                 self.merken(f"Volumen {neuname}")
                 if neu:
@@ -5782,6 +5799,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         k.elemente = []
                     k.flaechen, k.material = flaechen, w.get("material", "")
                     k.teilung, k.kommentar = teilung, str(w.get("kommentar", "") or "")
+                kp_ = m.koerper[name]
+                if abs(float(kp_.kerbfall or 0.0) - kerbfall) > 1e-6:
+                    kp_.kerbfall = kerbfall
+                    kp_.kerbfall_vorschlag = False        # eingegeben heisst bestaetigt
             else:
                 return None
         except (KeyError, ValueError, IndexError) as ex:
@@ -7194,7 +7215,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.merken(f"Volumen {w['name']}")
             k = self.model.add_koerper(w["name"], w["flaechen"],
                                        material=w["material"], teilung=w["teilung"],
-                                       kommentar=w["kommentar"])
+                                       kommentar=w["kommentar"], kerbfall=float(w.get("kerbfall", 0.0) or 0.0))
         except (KeyError, ValueError) as ex:
             self.undo()
             return self.error(str(ex))
@@ -7271,6 +7292,7 @@ class MainWindow(QtWidgets.QMainWindow):
         anhalten darf - eine halb geschriebene Modelldatei waere kaputt.
         """
         self._abbruch = False
+        self._fortschritt_laeuft = True
         self.progress_bar.setRange(0, max(1, int(gesamt)))
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
@@ -7331,6 +7353,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "btn_abbrechen", None) is not None:
             self.btn_abbrechen.setVisible(False)
         self._abbruch = False
+        self._fortschritt_laeuft = False
 
     def _vernetzen(self, flaechen: list, koerper: list) -> int:
         """Flaechen und Koerper vernetzen und das Protokoll fuehren.
@@ -8044,7 +8067,10 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Werkstoff", "", "wahl", 3, True, werte_fn=lambda _z: _namen(self.model.materials)),
             Spalte("Teilung", "", "text", 3, True, hinweis="Teilung je Richtung, z. B. 4 × 4 × 4"),
             Spalte("Elemente", "", "ganz"),
-            Spalte("Volumen", "m³", "zahl", 5), Spalte("Bemerkung", "", "text", 3, True)],
+            Spalte("Volumen", "m³", "zahl", 5),
+            Spalte("Kerbfall", "MPa", "zahl", 0, True,
+                   hinweis="Kerbfall Δσ_C für den Ermüdungsnachweis, 0 = keiner - direkt bearbeitbar"),
+            Spalte("Bemerkung", "", "text", 3, True)],
             "Volumenkörper", self, mit_kennwerten=True)
         self.tbl_geokoerper.modell.aendern = self._geokoerper_aendern
         self.tbl_geokoerper.zeile_gewaehlt.connect(
@@ -8324,7 +8350,7 @@ class MainWindow(QtWidgets.QMainWindow):
             V = float(mass[idx].sum()) if idx else 0.0
             zeilen.append([name, ", ".join(k.flaechen), k.material,
                            " × ".join(str(x) for x in k.teilung),
-                           len(k.elemente or []), V, k.kommentar])
+                           len(k.elemente or []), V, float(k.kerbfall or 0.0) / 1e6, k.kommentar])
         self._fill(self.tbl_geokoerper, zeilen)
         self._naehte_fuellen()
         self._lasten_fuellen()
@@ -8602,7 +8628,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _geokoerper_aendern(self, z: int, k: int, wert) -> bool:
         name = str(self.tbl_geokoerper.modell.zeilen[z][0])
         kp = self.model.koerper.get(name)
-        if kp is None or k not in (1, 2, 3, 6):
+        if kp is None or k not in (1, 2, 3, 6, 7):
             return False
         m = self.model
         if k == 1:
@@ -8630,6 +8656,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 return False
             self.merken(f"Volumen {name}")
             kp.teilung = (teile + teile[-1:] * 3)[:3]
+        elif k == 6:
+            try:
+                kf = float(str(wert).replace(",", ".")) if str(wert).strip() else 0.0
+            except ValueError:
+                self.info("Kerbfall als Zahl in N/mm², 0 = keiner - nicht übernommen")
+                return False
+            self.merken(f"Volumen {name}")
+            kp.kerbfall = kf * 1e6
+            kp.kerbfall_vorschlag = False
         else:
             self.merken(f"Volumen {name}")
             kp.kommentar = str(wert)
@@ -10394,8 +10429,17 @@ class MainWindow(QtWidgets.QMainWindow):
         return geaendert
 
     def _tabelle_stab(self, wert):
-        """Zeile eines Stabes (Nachweise) angeklickt: alle seine Knoten waehlen."""
-        mem = self.model.members.get(str(wert))
+        """Zeile eines Stabes (Nachweise) angeklickt: alle seine Knoten waehlen.
+        Eine Zeile „Volumen V1“ (Tabelle Ermuedung) waehlt die Knoten des Koerpers."""
+        w = str(wert)
+        if w.startswith("Volumen "):
+            k = self.model.koerper.get(w[8:])
+            if k is not None:
+                kn = {int(n) for i in k.elemente if i < len(self.model.elements)
+                      for n in self.model.elements[i].nodes}
+                self._set_selection(sorted(kn))
+            return
+        mem = self.model.members.get(w)
         if mem is None:
             return
         kn = {int(n) for i in mem.elements if i < len(self.model.elements)
@@ -10946,7 +10990,9 @@ class MainWindow(QtWidgets.QMainWindow):
                          f"{m.member_length(mem):.2f}", e0.sec if e0 else "",
                          f"{mem.beta_y:g} / {mem.beta_z:g}",
                          f"{mem.L_LT:g}" if mem.L_LT else "L",
-                         f"{mem.detail_category/1e6:.0f}" if mem.detail_category else "-"])
+                         (f"{mem.detail_category/1e6:.0f}"
+                          + (" (Vorschlag)" if getattr(mem, "kerbfall_vorschlag", False) else ""))
+                         if mem.detail_category else "-"])
         self._fill(self.tbl_mem, rows)
 
     # ---- Modell ------------------------------------------------------
@@ -13360,7 +13406,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 name or f"E{len(self.model.fatigue_loads)+1}", cmax, cmin, n, f)
             if folge:
                 fl.folge = folge
-                fl.wiederholungen = float(d.wdh.value())
+                fl.wiederholungen = n          # None = globale Lastspielzahl
                 fl.zaehlung = d.zaehlung.currentText()
             self.refresh_all()
 
@@ -13501,6 +13547,23 @@ class MainWindow(QtWidgets.QMainWindow):
         from ..ec3.fatigue import check_fatigue
         self._run_background(lambda progress: check_fatigue(self.model, self.analysis, progress=progress),
                              self._fatigue_done, "Ermüdung")
+
+    def do_kerbfaelle(self):
+        """Kerbfaelle nach EN 1993-1-9 aus dem Modell vorschlagen (ec3.kerbfaelle)."""
+        from ..ec3 import kerbfaelle
+        self.merken("Kerbfälle vorschlagen")
+        zeilen: list = []
+        n = kerbfaelle.anwenden(self.model, zeilen)
+        for z in zeilen:
+            self.log.appendPlainText(z)
+        k = n["naht"] + n["zugstab"] + n["gewalzt"] + n["koerper"]
+        if k:
+            self.info(f"Kerbfälle: {k} vorgeschlagen, {n['behalten']} eingegebene behalten - "
+                      "in Stab- und Volumenmaske zu prüfen")
+        else:
+            self.info("Keine Kerbfälle vorzuschlagen: keine Stäbe mit Rund- oder Walzquerschnitt, "
+                      "keine Volumen")
+        self.refresh_all()
 
     def _fatigue_done(self, res):
         self.analysis.fatigue = res
@@ -15803,6 +15866,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_worker = w
         w.start()
 
+    def _update_moeglich(self) -> str:
+        """Leer, wenn der Austausch jetzt laufen darf - sonst der Grund.
+
+        Das Austauschskript wartet auf das Ende dieses Prozesses. Eine
+        laufende Berechnung (Worker) oder Vernetzung (im Oberflaechen-Thread
+        mit Balken) lebt nach quit() weiter, bis sie fertig ist - am
+        Drehlager Minuten -, und das Skript gab auf (11.09.2026: "Programm
+        laeuft nach 120 s noch", die neue Fassung startete nicht).
+        """
+        w = getattr(self, "worker", None)
+        if getattr(self, "_rechnet_gerade", False) or (w is not None and w.isRunning()):
+            return "es läuft eine Berechnung"
+        if getattr(self, "_fortschritt_laeuft", False):
+            return "es läuft eine Vernetzung oder ein Laden"
+        return ""
+
+    def _austausch_starten(self) -> None:
+        """Das Austauschskript starten und das Programm beenden - sofort.
+
+        Nach quit() raeumte der Interpreter Modell, Sicherungen und Ansicht
+        ab: bei 2 Mio. Elementen 11 s je Modellkopie. Das ist ueberfluessig -
+        die Datei ist geschlossen, nichts ist mehr zu sichern - und laesst das
+        Skript warten. main() beendet darum mit os._exit, sobald exec()
+        zurueck ist (_austausch_laeuft).
+        """
+        from .. import update as upd
+        try:
+            upd.start_helper(self._update_bat)
+        except Exception as ex:            # noqa: BLE001
+            QtWidgets.QMessageBox.warning(
+                None, "Update",
+                f"{ex}\n\nDie neue Fassung liegt bereit. Nach dem Beenden "
+                "von Statik3D das Skript ausführen:\n" + self._update_bat)
+            return
+        self._austausch_laeuft = True
+        QtWidgets.QApplication.quit()
+
     def check_update(self, quiet: bool = False):
         """Neueste Version bei GitHub erfragen (Hintergrund).
 
@@ -15814,7 +15914,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Schliessen wurde abgelehnt), nicht erneut 200 MB laden, sondern den
         # Austausch anstossen.
         bat = getattr(self, "_update_bat", "")
-        if bat and os.path.isfile(bat) and getattr(self, "_austausch_starten", None):
+        if bat and os.path.isfile(bat):
+            grund = self._update_moeglich()
+            if grund:
+                self.log.appendPlainText(f"Der Austausch wartet: {grund}.")
+                return
             if self.close():
                 self._austausch_starten()
             return
@@ -15896,6 +16000,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self.btn_update.setText("Statik3D wird beendet…")
             self._update_bat = upd.helper_path()
+            grund = self._update_moeglich()
+            if grund:
+                self.btn_update.setEnabled(True)
+                self.btn_update.setText("Update bereit")
+                self.log.appendPlainText(
+                    f"Der Austausch wartet: {grund}. Nach dem Ende über "
+                    "„Update bereit“ auslösen.")
+                return
             # Erst schliessen (das fragt bei ungespeicherten Aenderungen nach).
             # Nur wenn das Fenster wirklich zu ist, laeuft der Austausch an.
             if not self.close():
@@ -15906,19 +16018,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     "Über „Update bereit“ erneut auslösen.")
                 return
             self._austausch_starten()
-
-        def _austausch_starten(self=self):
-            try:
-                upd.start_helper(self._update_bat)
-            except Exception as ex:            # noqa: BLE001
-                QtWidgets.QMessageBox.warning(
-                    None, "Update",
-                    f"{ex}\n\nDie neue Fassung liegt bereit. Nach dem Beenden "
-                    "von Statik3D das Skript ausführen:\n" + self._update_bat)
-                return
-            QtWidgets.QApplication.quit()
-
-        self._austausch_starten = _austausch_starten
 
         def failed(msg):
             self.progress_bar.setVisible(False)
@@ -15977,7 +16076,13 @@ def main(app=None, splash=None):
             splash.fertig(win)
         except Exception:                   # noqa: BLE001
             pass
-    sys.exit(app.exec())
+    code = app.exec()
+    if getattr(win, "_austausch_laeuft", False):
+        # Das Austauschskript wartet auf das Ende dieses Prozesses; das
+        # Abraeumen von Modell, Sicherungen und Ansicht (11 s je Kopie bei
+        # 2 Mio. Elementen) ist hier ueberfluessig - nichts ist mehr zu sichern.
+        os._exit(int(code))
+    sys.exit(code)
 
 
 if __name__ == "__main__":

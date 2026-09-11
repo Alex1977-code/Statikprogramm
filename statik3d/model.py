@@ -1355,29 +1355,39 @@ class FatigueLoad:
     **Ein Verlauf.** ``folge`` nennt Lastfaelle in ihrer zeitlichen Reihenfolge
     - eine Ueberfahrt, ein Oeffnungsvorgang, ein Betriebszyklus -, und
     ``wiederholungen`` sagt, wie oft er vorkommt. Aus dem Verlauf zaehlt
-    Statik3D das Kollektiv selbst (Rainflow bzw. Reservoir nach EN 1993-1-9,
-    Anhang A); ``cycles`` wird dann nicht gebraucht. Das ist der Weg, auf dem
-    aus mehr als zwei Zustaenden eine ehrliche Schadensakkumulation wird: die
-    Zwischenzustaende einer Ueberfahrt tragen eigene, kleinere Spiele bei, und
-    die zaehlen mit.
+    Statik3D das Kollektiv selbst; ``cycles`` wird dann nicht gebraucht.
+    Vorgabe ist ``zaehlung = "spanne"``: eine Stufe mit der Schwingbreite
+    Maximum minus Minimum ueber die Zustaende, ein Spiel je Wiederholung - so
+    bildet RFEM die Ermuedungsschwingbreite einer Ergebniskombination, und so
+    kommen die 50 FAT-Umhuellenden des Drehlagers (2 bis 82 Zustaende ohne
+    Zeitfolge) aus dem Import. ``"rainflow"`` und ``"reservoir"`` (EN 1993-1-9,
+    Anhang A) sind die Option fuer eine echte Zeitfolge - eine Ueberfahrt,
+    deren Zwischenzustaende eigene, kleinere Spiele beitragen. Die
+    Schadensakkumulation ist immer Palmgren-Miner.
     """
     name: str
     case_max: str = ""
     case_min: Optional[str] = None
-    cycles: float = 2e6
+    #: Lastspiele der beiden Zustaende; None = die globale Lastspielzahl
+    #: (DesignSettings.ermuedung_lastspiele)
+    cycles: Optional[float] = None
     factor: float = 1.0        # zusaetzlicher Faktor (z.B. dynamischer Beiwert)
     #: Lastfaelle in zeitlicher Reihenfolge (leer = zwei Zustaende ueber case_max/min)
     folge: list[str] = field(default_factory=list)
-    #: Wie oft der Verlauf im Bezugszeitraum vorkommt
-    wiederholungen: float = 1.0
-    #: Zaehlverfahren fuer den Verlauf: "rainflow" (Vorgabe) oder "reservoir"
-    zaehlung: str = "rainflow"
+    #: Wie oft der Verlauf im Bezugszeitraum vorkommt; None = die globale
+    #: Lastspielzahl, 0 = unwirksam (Sammlung aus dem Import)
+    wiederholungen: Optional[float] = None
+    #: Zaehlverfahren fuer den Verlauf: "spanne" (Vorgabe seit 11.09.2026:
+    #: Maximum minus Minimum, ein Spiel je Wiederholung), "rainflow" oder
+    #: "reservoir". Aeltere Dateien fuehren ihren gespeicherten Wert mit.
+    zaehlung: str = "spanne"
 
     def bezug(self) -> str:
         if self.folge:
-            return (f"Verlauf über {len(self.folge)} Lastfälle, "
-                    f"{self.wiederholungen:g}× ({self.zaehlung})")
-        return f"{self.case_max} gegen {self.case_min or 'Nullzustand'}, {self.cycles:g} Spiele"
+            w = "global" if self.wiederholungen is None else f"{self.wiederholungen:g}"
+            return f"Verlauf über {len(self.folge)} Lastfälle, {w}× ({self.zaehlung})"
+        n = "globale Lastspielzahl" if self.cycles is None else f"{self.cycles:g} Spiele"
+        return f"{self.case_max} gegen {self.case_min or 'Nullzustand'}, {n}"
 
 
 # --------------------------------------------------------------------------
@@ -1417,6 +1427,10 @@ class Member:
     woelb_check: bool = True           # Woelbkrafttorsion nachweisen
     detail_category: Optional[float] = None       # Kerbfall Delta-sigma_c [Pa], z.B. 71e6
     detail_category_shear: Optional[float] = None  # Kerbfall Schub Delta-tau_c [Pa]
+    #: Der Kerbfall ist ein Vorschlag des Programms (RFEM-Import: Zugstaebe
+    #: 50 N/mm2, EN 1993-1-9 Tab. 8.1 Kerbfall 14), noch nicht bestaetigt.
+    #: Eine Eingabe in der Stabmaske loescht die Marke.
+    kerbfall_vorschlag: bool = False
     fatigue_points: str = "flanges"    # Spannungspunkte fuer Ermuedung
     consequence: str = "low"           # low | high (Schadensfolge, gamma_Mf)
     assessment: str = "damage_tolerant"  # damage_tolerant | safe_life
@@ -1884,6 +1898,16 @@ class Volumenkoerper:
     #: Anteil der Huelle, den das Netz wirklich abdeckt (0 … 1, aus dem
     #: Vernetzer). Die Abnahme vor dem Rechnen prueft ihn; 0 = nicht gemessen.
     randtreue: float = 0.0
+    #: Kerbfall Delta-sigma_C [Pa] fuer den Ermuedungsnachweis, 0 = keiner.
+    #: Die Spannung im Element ist eine Struktur- oder Kerbspannung, keine
+    #: Nennspannung - der Kerbfall muss zu diesem Konzept passen.
+    kerbfall: float = 0.0
+    kerbfall_konzept: str = ""         # Nennspannung | Strukturspannung | Kerbspannung
+    #: Der Kerbfall ist ein Vorschlag des Programms, noch nicht bestaetigt
+    kerbfall_vorschlag: bool = False
+    #: Bemessungskonzept und Schadensfolge fuer gamma_Mf (wie beim Stab)
+    assessment: str = "damage_tolerant"   # damage_tolerant | safe_life
+    consequence: str = "low"              # low | high
 
     def bezug(self) -> str:
         t = f"{len(self.flaechen)} Flächen"
@@ -2327,6 +2351,11 @@ class DesignSettings:
     #: rechnerische Lebensdauer zu nennen. Sonst: D gilt fuer so viele Jahre,
     #: und die Lebensdauer folgt als bezugsjahre / D.
     ermuedung_bezugsjahre: float = 0.0
+    #: Globale Lastspielzahl: gilt fuer jede Ermuedungslast, die keine eigene
+    #: nennt (cycles bzw. wiederholungen = None) - so kommen die Lasten aus
+    #: dem RFEM-Import, dessen Datei keine Lastspielzahlen fuehrt. Je Last
+    #: ist der Wert im Dialog "Ermuedungslast" ueberschreibbar.
+    ermuedung_lastspiele: float = 2e6
     # --- Theorie II. Ordnung und Imperfektionen (EN 1993-1-1, 5.2 und 5.3)
     theorie2: str = "aus"              # aus | auto (nach 5.2.1(3)) | ein
     imperfektionen: bool = True        # Ersatzimperfektionen nach 5.3.2 ansetzen
@@ -2706,7 +2735,7 @@ class Model:
         return c
 
     def add_fatigue_load(self, name: str, case_max: str, case_min: str = None,
-                         cycles: float = 2e6, factor: float = 1.0) -> FatigueLoad:
+                         cycles: Optional[float] = 2e6, factor: float = 1.0) -> FatigueLoad:
         f = FatigueLoad(name, case_max, case_min, cycles, factor)
         self.fatigue_loads[name] = f
         return f

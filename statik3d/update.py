@@ -279,8 +279,8 @@ timeout /t 1 /nobreak >nul
 del "%EXE%" >nul 2>&1
 if exist "%EXE%" (
     set /a n+=1
-    if !n! lss 120 goto warten
-    echo [Fehler] Programm laeuft nach 120 s noch.>> "%LOG%"
+    if !n! lss 300 goto warten
+    echo [Fehler] Programm laeuft nach 300 s noch.>> "%LOG%"
     echo Statik3D laeuft noch. Bitte das Programm beenden und diese Datei
     echo erneut starten:  "%~f0"
     echo Die neue Fassung liegt bereit als: "%NEW%"

@@ -408,21 +408,30 @@ class FatigueLoadDialog(QtWidgets.QDialog):
         self.art.addItems(["Zwei Zustände", "Verlauf (Folge von Lastfällen)"])
         self.cmax = QtWidgets.QComboBox(); self.cmax.addItems(cases)
         self.cmin = QtWidgets.QComboBox(); self.cmin.addItems(["(Nullzustand)"] + cases)
-        self.cycles = NumEdit(2e6, 100)
+        self.cycles = NumEdit(float(model.design.ermuedung_lastspiele or 2e6), 100)
+        self.global_n = QtWidgets.QCheckBox("globale Lastspielzahl (Nachweise → Konfiguration)")
+        self.global_n.setChecked(True)
+        self.global_n.toggled.connect(lambda ein: (self.cycles.setEnabled(not ein and self.art.currentIndex() == 0),
+                                                  self.wdh.setEnabled(not ein and self.art.currentIndex() == 1)))
         self.folge = QtWidgets.QLineEdit()
         self.folge.setPlaceholderText("Lastfälle in zeitlicher Reihenfolge, z. B. LF0, LF1, LF2, LF1, LF0")
-        self.wdh = NumEdit(1e6, 100)
-        self.zaehlung = QtWidgets.QComboBox(); self.zaehlung.addItems(["rainflow", "reservoir"])
+        self.wdh = NumEdit(float(model.design.ermuedung_lastspiele or 2e6), 100)
+        self.zaehlung = QtWidgets.QComboBox(); self.zaehlung.addItems(["spanne", "rainflow", "reservoir"])
         self.factor = NumEdit(1.0, 80)
         f = QtWidgets.QFormLayout(self)
         f.addRow("Name", self.name)
         f.addRow("Art", self.art)
         f.addRow("Oberer Zustand (Lastfall/Kombination)", self.cmax)
         f.addRow("Unterer Zustand", self.cmin)
+        f.addRow(self.global_n)
         f.addRow("Lastspiele n", self.cycles)
         f.addRow("Verlauf (Lastfälle, durch Komma)", self.folge)
         f.addRow("Wiederholungen des Verlaufs", self.wdh)
-        f.addRow("Zählverfahren (EN 1993-1-9, Anhang A)", self.zaehlung)
+        self.zaehlung.setToolTip(
+            "spanne: Schwingbreite Maximum minus Minimum über die Zustände, ein Spiel je "
+            "Wiederholung (wie die Ergebniskombination in RFEM)\n"
+            "rainflow / reservoir: Zählung einer echten Zeitfolge nach EN 1993-1-9, Anhang A")
+        f.addRow("Zählverfahren", self.zaehlung)
         f.addRow("Faktor (z.B. dynamischer Beiwert)", self.factor)
         f.addRow(buttons(self))
         self.art.currentIndexChanged.connect(self._umschalten)
@@ -430,10 +439,19 @@ class FatigueLoadDialog(QtWidgets.QDialog):
 
     def _umschalten(self):
         verlauf = self.art.currentIndex() == 1
-        for w in (self.cmax, self.cmin, self.cycles):
+        eigene = not self.global_n.isChecked()
+        for w in (self.cmax, self.cmin):
             w.setEnabled(not verlauf)
-        for w in (self.folge, self.wdh, self.zaehlung):
+        self.cycles.setEnabled(not verlauf and eigene)
+        for w in (self.folge, self.zaehlung):
             w.setEnabled(verlauf)
+        self.wdh.setEnabled(verlauf and eigene)
+
+    def lastspiele(self):
+        """Eigene Lastspielzahl - None heisst: die globale gilt."""
+        if self.global_n.isChecked():
+            return None
+        return float(self.cycles.value() if self.art.currentIndex() == 0 else self.wdh.value())
 
     def folge_namen(self) -> list:
         return [t.strip() for t in str(self.folge.text() or "").split(",") if t.strip()]
@@ -441,7 +459,7 @@ class FatigueLoadDialog(QtWidgets.QDialog):
     def values(self):
         cmin = self.cmin.currentText()
         return (self.name.text().strip(), self.cmax.currentText(),
-                None if cmin.startswith("(") else cmin, self.cycles.value(), self.factor.value())
+                None if cmin.startswith("(") else cmin, self.lastspiele(), self.factor.value())
 
 
 # ==========================================================================
@@ -525,6 +543,7 @@ class MemberDialog(QtWidgets.QDialog):
         m.woelb_ende = self.w_ende.currentText()
         c = self.cat.currentData()
         m.detail_category = float(c) * 1e6 if c else None
+        m.kerbfall_vorschlag = False                 # im Dialog bestaetigt
         m.detail_category_shear = float(self.cat_s.currentText()) * 1e6
         m.consequence = self.consequence.currentText()
         m.assessment = self.assessment.currentText()
@@ -542,6 +561,14 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         f = QtWidgets.QFormLayout(self)
         f.addRow("γM0 / γM1 / γM2", row(self.gM0, self.gM1, self.gM2))
         f.addRow("γFf (Ermüdung)", self.gFf)
+        self.lastspiele = NumEdit(float(getattr(ds, "ermuedung_lastspiele", 2e6) or 2e6), 100)
+        self.lastspiele.setToolTip("gilt für jede Ermüdungslast ohne eigene Lastspielzahl "
+                                   "(Dialog Ermüdungslast: Haken „globale Lastspielzahl“)")
+        f.addRow("Lastspielzahl global (Ermüdung)", self.lastspiele)
+        self.bezugsjahre = NumEdit(float(getattr(ds, "ermuedung_bezugsjahre", 0.0) or 0.0), 100)
+        self.bezugsjahre.setToolTip("Bezugszeitraum der Lastspielzahlen in Jahren; 0 = ganze "
+                                    "Nutzungsdauer, dann gibt es keine Lebensdauer zu nennen")
+        f.addRow("Bezugszeitraum der Lastspiele [a]", self.bezugsjahre)
         f.addRow("Biegedrillknicken: 6.3.2.2 (general) / 6.3.2.3 (rolled)", self.lt)
         f.addRow("Nachweisstellen je Element", self.stations)
         f.addRow(QtWidgets.QLabel("Interaktion: Anhang B (Methode 2)"))
@@ -583,6 +610,8 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         ds.gamma_M1 = self.gM1.value() or 1.1
         ds.gamma_M2 = self.gM2.value() or 1.25
         ds.gamma_Ff = self.gFf.value() or 1.0
+        ds.ermuedung_lastspiele = float(self.lastspiele.value() or 0.0)
+        ds.ermuedung_bezugsjahre = float(self.bezugsjahre.value() or 0.0)
         ds.lt_method = self.lt.currentText()
         ds.stations = self.stations.value()
         ds.theorie2 = self.th2.currentData()
@@ -896,6 +925,13 @@ class KoerperDialog(QtWidgets.QDialog):
             sp.setValue(int(t[i] if i < len(t) else 4))
             self.n.append(sp)
         self.kommentar = QtWidgets.QLineEdit(getattr(koerper, "kommentar", "") or "")
+        self.kerbfall = QtWidgets.QLineEdit(
+            f"{koerper.kerbfall / 1e6:g}" if getattr(koerper, "kerbfall", 0.0) else "")
+        self.kerbfall.setPlaceholderText("leer = kein Ermüdungsnachweis")
+        self.kerbfall.setToolTip("Kerbfall Δσ_C [N/mm²] für den Ermüdungsnachweis des Volumens "
+                                 "(Hauptspannung im Element, EN 1993-1-9)"
+                                 + (" - Vorschlag des Programms, zu prüfen"
+                                    if getattr(koerper, "kerbfall_vorschlag", False) else ""))
         self.vernetzen = QtWidgets.QCheckBox("gleich vernetzen")
         self.vernetzen.setChecked(not getattr(koerper, "elemente", None))
         f = QtWidgets.QFormLayout(self)
@@ -907,15 +943,22 @@ class KoerperDialog(QtWidgets.QDialog):
         f.addRow("Werkstoff", self.material)
         f.addRow("Teilung (x × y × z)", row(*self.n))
         f.addRow("Bemerkung", self.kommentar)
+        f.addRow("Kerbfall Ermüdung [N/mm²]", self.kerbfall)
         f.addRow(self.vernetzen)
         f.addRow(buttons(self))
 
     def werte(self) -> dict:
+        kt = self.kerbfall.text().strip().replace(",", ".")
+        try:
+            kerbfall = float(kt) * 1e6 if kt else 0.0
+        except ValueError:
+            kerbfall = 0.0
         return {"name": self.name.text().strip() or "V",
                 "flaechen": [i.text() for i in self.liste.selectedItems()],
                 "material": self.material.currentText(),
                 "teilung": [x.value() for x in self.n],
                 "kommentar": self.kommentar.text().strip(),
+                "kerbfall": kerbfall,
                 "vernetzen": self.vernetzen.isChecked()}
 
 
