@@ -1903,6 +1903,11 @@ class Volumenkoerper:
     #: Nennspannung - der Kerbfall muss zu diesem Konzept passen.
     kerbfall: float = 0.0
     kerbfall_konzept: str = ""         # Nennspannung | Strukturspannung | Kerbspannung
+    #: Kerbfall [Pa] an verschweissten Beruehrungsstellen: Elemente mit einem
+    #: Knoten, den ein anderer Koerper teilt, ohne Kontaktbedingung zwischen
+    #: beiden (RFEM: gemeinsame Flaeche zweier Volumen = durchverbunden =
+    #: Naht). 0 = wie kerbfall.
+    kerbfall_naht: float = 0.0
     #: Der Kerbfall ist ein Vorschlag des Programms, noch nicht bestaetigt
     kerbfall_vorschlag: bool = False
     #: Bemessungskonzept und Schadensfolge fuer gamma_Mf (wie beim Stab)

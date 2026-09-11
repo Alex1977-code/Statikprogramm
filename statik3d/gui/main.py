@@ -4347,6 +4347,11 @@ class MainWindow(QtWidgets.QMainWindow):
                                     "im Element, EN 1993-1-9), leer = kein Nachweis"
                                     + (" - Vorschlag des Programms, zu prüfen"
                                        if k is not None and k.kerbfall_vorschlag else "")),
+                          F("kerbfall_naht", "Kerbfall Naht [N/mm²]", "text",
+                            (f"{k.kerbfall_naht / 1e6:g}" if k is not None and k.kerbfall_naht else ""),
+                            breite=80,
+                            hinweis="Kerbfall an verschweißten Berührungsstellen mit anderen Volumen "
+                                    "(gemeinsame Knoten ohne Kontaktbedingung); leer = wie Kerbfall"),
                           F("kommentar", "Kommentar", "text", (k.kommentar if k else ""), breite=160)]
                 titel = f"Volumen {name}"
         elif art in ("lastfaelle", "lastfall"):
@@ -5783,6 +5788,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 teilung = self._zahlenliste(w.get("teilung")) or [4, 4, 4]
                 kerb_txt = str(w.get("kerbfall", "") or "").strip().replace(",", ".")
                 kerbfall = float(kerb_txt) * 1e6 if kerb_txt else 0.0
+                naht_txt = str(w.get("kerbfall_naht", "") or "").strip().replace(",", ".")
+                kerbfall_naht = float(naht_txt) * 1e6 if naht_txt else 0.0
                 neuname = (w.get("name") or name).strip()
                 self.merken(f"Volumen {neuname}")
                 if neu:
@@ -5803,6 +5810,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 if abs(float(kp_.kerbfall or 0.0) - kerbfall) > 1e-6:
                     kp_.kerbfall = kerbfall
                     kp_.kerbfall_vorschlag = False        # eingegeben heisst bestaetigt
+                if abs(float(getattr(kp_, "kerbfall_naht", 0.0) or 0.0) - kerbfall_naht) > 1e-6:
+                    kp_.kerbfall_naht = kerbfall_naht
+                    kp_.kerbfall_vorschlag = False
             else:
                 return None
         except (KeyError, ValueError, IndexError) as ex:
@@ -7215,7 +7225,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.merken(f"Volumen {w['name']}")
             k = self.model.add_koerper(w["name"], w["flaechen"],
                                        material=w["material"], teilung=w["teilung"],
-                                       kommentar=w["kommentar"], kerbfall=float(w.get("kerbfall", 0.0) or 0.0))
+                                       kommentar=w["kommentar"], kerbfall=float(w.get("kerbfall", 0.0) or 0.0),
+                                       kerbfall_naht=float(w.get("kerbfall_naht", 0.0) or 0.0))
         except (KeyError, ValueError) as ex:
             self.undo()
             return self.error(str(ex))
@@ -8070,6 +8081,8 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Volumen", "m³", "zahl", 5),
             Spalte("Kerbfall", "MPa", "zahl", 0, True,
                    hinweis="Kerbfall Δσ_C für den Ermüdungsnachweis, 0 = keiner - direkt bearbeitbar"),
+            Spalte("Kerbfall Naht", "MPa", "zahl", 0, True,
+                   hinweis="Kerbfall an verschweißten Berührungsstellen mit anderen Volumen, 0 = wie Kerbfall"),
             Spalte("Bemerkung", "", "text", 3, True)],
             "Volumenkörper", self, mit_kennwerten=True)
         self.tbl_geokoerper.modell.aendern = self._geokoerper_aendern
@@ -8350,7 +8363,8 @@ class MainWindow(QtWidgets.QMainWindow):
             V = float(mass[idx].sum()) if idx else 0.0
             zeilen.append([name, ", ".join(k.flaechen), k.material,
                            " × ".join(str(x) for x in k.teilung),
-                           len(k.elemente or []), V, float(k.kerbfall or 0.0) / 1e6, k.kommentar])
+                           len(k.elemente or []), V, float(k.kerbfall or 0.0) / 1e6,
+                           float(getattr(k, "kerbfall_naht", 0.0) or 0.0) / 1e6, k.kommentar])
         self._fill(self.tbl_geokoerper, zeilen)
         self._naehte_fuellen()
         self._lasten_fuellen()
@@ -8628,7 +8642,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _geokoerper_aendern(self, z: int, k: int, wert) -> bool:
         name = str(self.tbl_geokoerper.modell.zeilen[z][0])
         kp = self.model.koerper.get(name)
-        if kp is None or k not in (1, 2, 3, 6, 7):
+        if kp is None or k not in (1, 2, 3, 6, 7, 8):
             return False
         m = self.model
         if k == 1:
@@ -8656,14 +8670,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 return False
             self.merken(f"Volumen {name}")
             kp.teilung = (teile + teile[-1:] * 3)[:3]
-        elif k == 6:
+        elif k in (6, 7):
             try:
                 kf = float(str(wert).replace(",", ".")) if str(wert).strip() else 0.0
             except ValueError:
                 self.info("Kerbfall als Zahl in N/mm², 0 = keiner - nicht übernommen")
                 return False
             self.merken(f"Volumen {name}")
-            kp.kerbfall = kf * 1e6
+            if k == 6:
+                kp.kerbfall = kf * 1e6
+            else:
+                kp.kerbfall_naht = kf * 1e6
             kp.kerbfall_vorschlag = False
         else:
             self.merken(f"Volumen {name}")

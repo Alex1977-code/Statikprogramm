@@ -1539,7 +1539,8 @@ def main():
         # Tabelle Ermuedung, Faerbung und Auswahl per Klick (11.09.2026)
         w._objektmaske("geokoerper_einzeln", "V1"); app.processEvents()
         mk = w.maskenrand.maske
-        check("Volumenmaske hat ein Feld Kerbfall", mk is not None and "kerbfall" in mk._felder,
+        check("Volumenmaske hat die Felder Kerbfall und Kerbfall Naht",
+              mk is not None and "kerbfall" in mk._felder and "kerbfall_naht" in mk._felder,
               str(sorted(mk._felder)) if mk else "-")
         if mk is not None and "kerbfall" in mk._felder:
             mk.setzen("kerbfall", "71")
@@ -1559,8 +1560,11 @@ def main():
               any(b.text == "Kerbfälle vorschlagen" for b in w.ribbon.befehle))
         kk.kerbfall = 0.0
         w.do_kerbfaelle(); app.processEvents()
-        check("Vorschlag für das Volumen: 160 N/mm² Grundwerkstoff, markiert",
-              abs(float(kk.kerbfall) - 160e6) < 1.0 and kk.kerbfall_vorschlag, str(kk.kerbfall))
+        check("Vorschlag für das Volumen: 160 N/mm² Grundwerkstoff, Naht 90, markiert",
+              abs(float(kk.kerbfall) - 160e6) < 1.0 and abs(float(kk.kerbfall_naht) - 90e6) < 1.0
+              and kk.kerbfall_vorschlag, f"{kk.kerbfall} / {kk.kerbfall_naht}")
+        spalten = [s.name for s in w.tbl_geokoerper.modell.spalten]
+        check("Volumentabelle hat die Spalte Kerbfall Naht", "Kerbfall Naht" in spalten, str(spalten))
         kk.kerbfall = 71e6
         kk.kerbfall_vorschlag = False
         for nid in range(mv2.nn):
@@ -4803,6 +4807,9 @@ def main():
         app.processEvents()
         check("Rückgängig nimmt die Lastfälle wieder", len(w.model.load_cases) == n_alt)
         pfad_ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_lastenheft_smoke.html")
+        geoeffnet_ = []
+        alt_open_ = QtGui.QDesktopServices.openUrl
+        QtGui.QDesktopServices.openUrl = staticmethod(lambda u: geoeffnet_.append(u.toString()) or True)
         try:
             out_ = w.make_lastenheft(pfad_)
             app.processEvents()

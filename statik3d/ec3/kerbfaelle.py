@@ -17,7 +17,14 @@ Modell ableiten laesst, in dieser Reihenfolge:
   eingegeben sind. Darum ist das ein Vorschlag, kein Befund.
 * **Volumenkoerper**: 160 N/mm2 als Grundwerkstoff mit dem Konzept
   "Strukturspannung" - die Spannung im Element ist keine Nennspannung, und
-  Naehte oder Kerben im Koerper mindern den Kerbfall.
+  Naehte oder Kerben im Koerper mindern den Kerbfall. An **verschweissten
+  Beruehrungsstellen** - Knoten, die ein anderer Koerper teilt, ohne
+  Kontaktbedingung zwischen beiden - 90 N/mm2 (Anhang B, Tabelle B.1,
+  Detail 7: Kreuzstoss mit tragenden Kehlnaehten, Strukturspannung; voll
+  durchgeschweisst waere Detail 3 mit 100). Anweisung vom 11.09.2026: dort
+  sind die Volumen meist verschweisst, wenn kein Kontakt eingegeben wurde.
+  Am Drehlager: 47 gemeinsame Flaechen zwischen 25 Koerperpaaren, keine
+  davon von einer der 12 Kontaktbedingungen genannt.
 
 Jeder Vorschlag traegt die Marke ``kerbfall_vorschlag``; eine Eingabe in
 Maske oder Tabelle loescht sie. Eingegebene (bestaetigte) Werte bleiben.
@@ -31,6 +38,9 @@ from typing import Optional
 ZUGSTAB = 50e6
 #: Tabelle 8.1, Kerbfall 1: gewalzte Erzeugnisse, Grundwerkstoff [Pa]
 GRUNDWERKSTOFF = 160e6
+#: Anhang B, Tabelle B.1, Detail 7: Kreuzstoss mit tragenden Kehlnaehten
+#: (Strukturspannung) - fuer verschweisste Beruehrungsstellen von Volumen [Pa]
+NAHT_STRUKTUR = 90e6
 #: Querschnittstypen, die als gewalzt gelten (Section.typ); "circle" nur,
 #: wenn der Stab kein Zugstab ist (der bekommt den Gewindestangen-Kerbfall)
 GEWALZT = ("I", "RHS", "CHS", "rect", "circle")
@@ -43,6 +53,7 @@ class Vorschlag:
     kerbfall: float     # [Pa]
     grund: str
     konzept: str = ""   # nur Koerper: Nennspannung | Strukturspannung | Kerbspannung
+    kerbfall_naht: float = 0.0   # nur Koerper: an verschweissten Beruehrungsstellen
 
 
 def vorschlag_stab(model, mem) -> Optional[Vorschlag]:
@@ -67,7 +78,8 @@ def vorschlag_koerper(model, k) -> Vorschlag:
     """Der Vorschlag fuer einen Volumenkoerper: Grundwerkstoff, Strukturspannung."""
     return Vorschlag("koerper", k.name, GRUNDWERKSTOFF,
                      "Volumen: Grundwerkstoff (Tab. 8.1, Kerbfall 1) für die Strukturspannung im "
-                     "Element - Nähte und Kerben im Körper mindern", "Strukturspannung")
+                     "Element, an verschweißten Berührungsstellen 90 (Anhang B, Tab. B.1, Detail 7)",
+                     "Strukturspannung", NAHT_STRUKTUR)
 
 
 def vorschlaege(model) -> list:
@@ -118,6 +130,7 @@ def anwenden(model, log: Optional[list] = None, nur_leere: bool = True) -> dict:
                 behalten.append(v.name)
                 continue
             k.kerbfall = v.kerbfall
+            k.kerbfall_naht = v.kerbfall_naht
             k.kerbfall_konzept = v.konzept
             k.kerbfall_vorschlag = True
             n["koerper"] += 1
@@ -132,7 +145,9 @@ def anwenden(model, log: Optional[list] = None, nur_leere: bool = True) -> dict:
                          "(Tab. 8.1, Kerbfall 1: Grundwerkstoff)")
         if n["koerper"]:
             teile.append(f"{n['koerper']} Volumen: Kerbfall 160 N/mm² (Grundwerkstoff, "
-                         "Strukturspannung im Element)")
+                         "Strukturspannung im Element), an verschweißten Berührungsstellen mit "
+                         "anderen Volumen - gemeinsame Knoten ohne Kontaktbedingung - 90 N/mm² "
+                         "(Anhang B, Tab. B.1, Detail 7: Kreuzstoß mit tragenden Kehlnähten)")
         if teile:
             log.append("Kerbfälle vorgeschlagen (EN 1993-1-9): " + "; ".join(teile)
                        + ". Vorschläge - in der Stab- bzw. Volumenmaske zu prüfen; Anschlüsse, "

@@ -618,7 +618,11 @@ steht im Protokoll.
 Grundwerkstoff), Volumen 160 N/mm² mit dem Konzept Strukturspannung — als
 Vorschlag markiert (`kerbfall_vorschlag`), in Stab- und Volumenmaske zu
 prüfen. Am Drehlager: 64 Zugstäbe (Rund 16/20/40) mit 50, 108 Volumen mit
-160.
+160 und Naht 90 (an Berührungsstellen: 47 gemeinsame Flächen zwischen 25
+Körperpaaren; die 12 Kontaktbedingungen nennen keine davon, sie liegen auf
+getrennten, deckungsgleichen Flächen — der Kontakt „Lagerbock-Grundplatte"
+verbindet V14 mit V36, die 47 gemeinsamen Flächen von V14 gehen zu V5, V6,
+V11, V15, V18, V23, V24 und V34).
 
 **Vorspannung.** Die Datei enthält keine (0 von 422 Lastfällen,
 `MemberTypeLoadImplEndPrestress` leer). Eine Minderung der Schwingbreite

@@ -2937,25 +2937,37 @@ class Report:
             "sonst eine Strukturspannung –, keine Nennspannung. Der Kerbfall muss zu diesem "
             "Konzept passen (Nennspannungs-Kerbfälle der Tabellen 8.1–8.10 nur, wo das Element "
             "die Nennspannung abbildet; Kerbspannung nach IIW: FAT 225 bei r = 1 mm).",
+            "Verschweißte Berührungsstellen: Elemente mit einem Knoten, den ein anderer Körper "
+            "teilt, ohne Kontaktbedingung zwischen beiden, tragen den Kerbfall „Naht“ des Körpers "
+            "(Vorschlag 90 N/mm², Anhang B, Tabelle B.1, Detail 7: Kreuzstoß mit tragenden "
+            "Kehlnähten; voll durchgeschweißt Detail 3 mit 100).",
         ]))
         jahre = any(np.isfinite(getattr(fv, "jahre", np.inf)) for fv in f.volumen.values())
         rows = [["Volumen", "Kerbfall Δσ_C [MPa]", "Konzept", "γ_Mf", "max Δσ [MPa]", "Δσ_E,2 [MPa]",
                  "D (Miner)", "Ausnutzung"] + (["Lebensdauer [a]"] if jahre else [])
                 + ["maßgebendes Element"]]
         for fv in f.volumen.values():
-            zeile = [fv.name, fmt(fv.category / 1e6, 0), fv.konzept or "–", fmt(fv.gamma_Mf, 2),
+            kf = fmt(fv.category_grund / 1e6, 0) + (f" / Naht {fmt(fv.category_naht / 1e6, 0)}"
+                                                    if fv.n_naht and fv.category_naht else "")
+            zeile = [fv.name, kf, fv.konzept or "–", fmt(fv.gamma_Mf, 2),
                      fmt(fv.dsig_max / 1e6, 1), fmt(fv.dsig_E2 / 1e6, 1), fmt(fv.D, 3), Util(fv.util)]
             if jahre:
                 j = getattr(fv, "jahre", float("inf"))
                 zeile.append(fmt(j, 0) if np.isfinite(j) else "∞")
-            rows.append(zeile + [f"Element {fv.element} von {fv.n_elemente}"])
+            rows.append(zeile + [f"Element {fv.element}" + (" an der Naht" if fv.naht else "")
+                                 + f" von {fv.n_elemente}"])
         b.append(("table", rows, "Ermüdungsnachweis je Volumenkörper", None, ""))
         for fv in f.volumen.values():
             b.append(self._h(3, f"Volumen {fv.name}"))
-            kv = [("Kerbfall Δσ_C", f"{fv.category / 1e6:.0f} MPa"
-                   + (f" ({fv.konzept})" if fv.konzept else "")),
-                  ("γ_Mf", fmt(fv.gamma_Mf, 2)),
-                  ("Elemente im Nachweis", str(fv.n_elemente)),
+            kv = [("Kerbfall Δσ_C des Körpers", f"{fv.category_grund / 1e6:.0f} MPa"
+                   + (f" ({fv.konzept})" if fv.konzept else ""))]
+            if fv.n_naht and fv.category_naht:
+                kv.append(("Kerbfall an verschweißten Berührungsstellen",
+                           f"{fv.category_naht / 1e6:.0f} MPa an {fv.n_naht} Elementen"))
+            kv += [("Kerbfall am maßgebenden Element", f"{fv.category / 1e6:.0f} MPa"
+                    + (" (Naht)" if fv.naht else "")),
+                   ("γ_Mf", fmt(fv.gamma_Mf, 2)),
+                   ("Elemente im Nachweis", str(fv.n_elemente)),
                   ("Dauerfestigkeit Δσ_D (5·10⁶)", f"{0.737 * fv.category / fv.gamma_Mf / 1e6:.1f} MPa"),
                   ("Schwellenwert Δσ_L (10⁸)",
                    f"{0.549 * 0.737 * fv.category / fv.gamma_Mf / 1e6:.1f} MPa"),
