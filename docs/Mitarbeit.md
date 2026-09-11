@@ -59,6 +59,15 @@ cp1252, und jede Prüfung, deren Text ein „−“, „≤“ oder eine Hochzah
 reißt mit `UnicodeEncodeError` – 26 von 53 Suiten. Nachweis:
 `python -m tests.test_ausgabe`.
 
+**Menüdurchgang am echten Modell.** `python -m tests.menudurchgang MODELL.json`
+löst jeden Befehl des Menübands an einem geladenen Modell aus, mit allen
+Dialogen auf „Abbrechen“ und einem Wächter je Befehl, und schreibt je Befehl
+Dauer, Meldungen und Tracebacks nach `MODELL_menudurchgang.jsonl`. Das ist
+kein Teil von `run_all`, sondern das Werkzeug für die Prüfsitzung: am
+Drehlager fand der erste Durchgang (11.09.2026, 203 Befehle) zwei Hänger und
+drei 113-s-Befehle, die keine Prüfung abdeckte. Rechnende, ersetzende und
+löschende Befehle stehen in der Ausnahmeliste des Skripts.
+
 Beides muss **vollständig** durchlaufen (`ALLE TESTS BESTANDEN`). Die Prüfungen
 sind der eigentliche Schutz: Sie rechnen gegen geschlossene Lösungen
 (Balkenformeln, Gleichgewichtssätze, Volumen aus dem Gaußschen Satz), nicht

@@ -110,11 +110,42 @@ def test_export():
         ja("Excel: Zahlen bleiben Zahlen", abs(float(w[1][1]) - 3.5) < 1e-12, str(w[1]))
 
 
+def test_markieren_bereiche():
+    """Alles auswaehlen am Drehlager (400 000 Knoten) hing ueber fuenf Minuten in
+    markieren(): je Wert ein eigener Bereich in der QItemSelection, und Qt fuehrt
+    Hunderttausende Einzelbereiche quadratisch zusammen. Zusammenhaengende Zeilen
+    werden darum als ein Bereich markiert - die Knotentabelle ist dann einer."""
+    import os
+    import time
+    from statik3d.gui.tabellen import zeilenbereiche, Datentabelle
+    ja("Bereiche aus Zeilennummern", zeilenbereiche([5, 1, 2, 3, 9, 10, 3]) == [(1, 3), (5, 5), (9, 10)],
+       str(zeilenbereiche([5, 1, 2, 3, 9, 10, 3])))
+    ja("leer bleibt leer", zeilenbereiche([]) == [])
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    n = 200000
+    tab = Datentabelle([Spalte("Knoten", "", "ganz"), Spalte("x", "m", "zahl", 4)], "Knoten")
+    tab.setzen([[i, float(i)] for i in range(n)])
+    t0 = time.time()
+    k = tab.markieren(range(n))
+    dauer = time.time() - t0
+    sm = tab.view.selectionModel()
+    ja("alle 200 000 Zeilen markiert, als ein Bereich",
+       k == n and len(sm.selection()) == 1 and sm.isRowSelected(n - 1) and sm.isRowSelected(0),
+       f"{k} Zeilen, {len(sm.selection())} Bereiche")
+    ja("und das in Sekunden, nicht Minuten", dauer < 10.0, f"{dauer:.2f} s")
+    k = tab.markieren([3, 4, 5, 10, 20, 21])
+    ja("Luecken ergeben getrennte Bereiche", k == 6 and len(sm.selection()) == 3
+       and sm.isRowSelected(21) and not sm.isRowSelected(6), f"{len(sm.selection())} Bereiche")
+    app.processEvents()
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Tabellen (Filter, Zellformeln, Kennwerte, Export)")
     print("=" * 92)
-    for t in (test_filter, test_formel, test_zahlen_und_kennwerte, test_export):
+    for t in (test_filter, test_formel, test_zahlen_und_kennwerte, test_export, test_markieren_bereiche):
         print(f"\n--- {t.__name__} ---")
         t()
     n_ok = sum(1 for _n, ok in RESULTS if ok)

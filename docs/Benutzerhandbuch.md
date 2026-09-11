@@ -820,6 +820,13 @@ Lagerdichte, Löschen), *Alles deselektieren* leert auch sie.
 
 ### Tabellen: filtern, sortieren, ausgeben
 
+**Auswahl in den Tabellen.** Was in der Ansicht gewählt ist, steht in den
+Tabellen unten markiert. Zusammenhängende Zeilen werden dabei als ein Bereich
+markiert: „Alles auswählen" am Drehlager-Modell (400 000 Knoten) hing bis zum
+11.09.2026 über fünf Minuten, weil jede Zeile ein eigener Bereich war und Qt
+Hunderttausende Einzelbereiche quadratisch zusammenführt. Als ein Bereich
+dauert die Markierung von 200 000 Zeilen 1,1 s (`test_markieren_bereiche`).
+
 Der Bereich unten ist in **zwei Ebenen** gegliedert: oben die Gruppe, darunter
 ihre Tabellen als Register. Eine Gruppe mit nur einer Tabelle (Protokoll,
 Bericht) zeigt keine zweite Leiste. Ein Klick im Modellbaum holt die
@@ -901,7 +908,15 @@ aus einer Tabellenzelle kein Programm wird. Ein unmöglicher Wert (E ≤ 0,
 ν ≥ 0,5, eine negative Fläche) wird **nicht** übernommen; die Zelle behält
 ihren Inhalt, und die Statuszeile sagt, warum. Jede Änderung geht über den
 Rückgängig-Stapel (Strg+Z) und verwirft die vorhandenen Ergebnisse — gerechnet
-werden muss danach neu. Wer A, Iy, Iz, It oder Wpl,y von Hand ändert, löst den
+werden muss danach neu. **Der Rückgängig-Stapel sichert vor jeder Änderung das
+ganze Modell.** Diese Sicherung war ein JSON-Umweg und kostete am
+Drehlager-Modell (2 Mio. Elemente) vor jedem ändernden Befehl 105 s — „Stäbe
+automatisch erkennen“, „Kontakt löschen“, „Ansicht übernehmen“ standen im
+Menüdurchgang vom 11.09.2026 je 113 s. Jetzt wird strukturell kopiert (Knoten
+als Feld, Elemente flach, der Rest über pickle): 11 s. Der Stapel hält
+höchstens 50 Sicherungen und zusammen höchstens 5 Mio. Elemente (669 Byte je
+Element, gemessen): am Drehlager bleiben zwei Sicherungen, rund 2,8 GB; die
+letzte bleibt immer. Wer A, Iy, Iz, It oder Wpl,y von Hand ändert, löst den
 Querschnitt von der Profildatenbank; sein Typ wird `free`, die Nachweise
 laufen dann elastisch.
 
@@ -1779,7 +1794,12 @@ bleiben im Modell und werden mit der Datei gespeichert.
 unten, Gruppe *Nachweise*). Das Programm löst das Verzweigungsproblem —
 Grundzustand ist die in der Ergebnismaske gewählte Kombination, sonst der
 aktive Lastfall; liegt schon ein Knickergebnis vor, wird die dort gewählte
-Knickfigur ausgewertet — und bestimmt für jeden Stab mit Nachweis:
+Knickfigur ausgewertet — und bestimmt für jeden Stab mit Nachweis die Werte
+der Tabelle unten. Muss das Verzweigungsproblem erst gelöst werden, läuft es
+wie jede Rechnung im Hintergrund, mit Abnahme des Netzes, Balken und
+Abbrechen; die Knicklängen erscheinen, sobald es gelöst ist. Bis zum
+11.09.2026 rechnete der Knopf im Fenster selbst: am Drehlager-Modell
+(2 Mio. Elemente) stand die Oberfläche dabei über fünf Minuten ohne Balken.
 
 | Spalte | Bedeutung |
 |---|---|

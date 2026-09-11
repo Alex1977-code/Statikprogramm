@@ -540,6 +540,18 @@ class Filtermodell(QtCore.QSortFilterProxyModel):
         return True
 
 
+def zeilenbereiche(zeilen) -> list:
+    """Zeilennummern zu zusammenhaengenden Bereichen (erste, letzte), sortiert,
+    ohne Doppelte: [5, 1, 2, 3, 9, 10] -> [(1, 3), (5, 5), (9, 10)]."""
+    aus: list = []
+    for r in sorted({int(z) for z in zeilen}):
+        if aus and r == aus[-1][1] + 1:
+            aus[-1][1] = r
+        else:
+            aus.append([r, r])
+    return [(a, b) for a, b in aus]
+
+
 class Datentabelle(QtWidgets.QWidget):
     """Tabelle mit Kopfzeilenfilter, Sortierung, Spaltenwahl und Export."""
 
@@ -742,26 +754,30 @@ class Datentabelle(QtWidgets.QWidget):
         """
         sm = self.view.selectionModel()
         sm.clearSelection()
-        auswahl = QtCore.QItemSelection()
-        letzte, n = -1, 0
+        zeilen: list = []
         # Ueber das Verzeichnis des Modells statt ueber alle Zeilen des Filters:
         # so kostet ein Klick in der Ansicht auch bei 490 000 Zeilen nichts
         for wert in (werte or []):
             for r_q in self.modell.zeile_zu(wert):
                 i = self.filter.mapFromSource(self.modell.index(r_q, 0))
-                if not i.isValid():
-                    continue
-                r = i.row()
-                auswahl.select(i, self.filter.index(r, self.filter.columnCount() - 1))
-                n += 1
-                if letzte < 0 or r < letzte:
-                    letzte = r
-        if n:
-            sm.select(auswahl, QtCore.QItemSelectionModel.Select
-                      | QtCore.QItemSelectionModel.Rows)
-            self.view.scrollTo(self.filter.index(letzte, 0),
-                               QtWidgets.QAbstractItemView.EnsureVisible)
-        return n
+                if i.isValid():
+                    zeilen.append(i.row())
+        if not zeilen:
+            return 0
+        # Zusammenhaengende Zeilen als **ein** Bereich. Je Zeile ein eigener
+        # Bereich liess "Alles auswaehlen" am Drehlager (400 000 Knoten) ueber
+        # fuenf Minuten in Qt haengen: die Auswahl fuehrt Hunderttausende
+        # Einzelbereiche quadratisch zusammen. Die Knotentabelle ist so ein
+        # einziger Bereich, 200 000 Zeilen dauern Sekundenbruchteile.
+        auswahl = QtCore.QItemSelection()
+        letzte_spalte = self.filter.columnCount() - 1
+        for a, b in zeilenbereiche(zeilen):
+            auswahl.select(self.filter.index(a, 0), self.filter.index(b, letzte_spalte))
+        sm.select(auswahl, QtCore.QItemSelectionModel.Select
+                  | QtCore.QItemSelectionModel.Rows)
+        self.view.scrollTo(self.filter.index(min(zeilen), 0),
+                           QtWidgets.QAbstractItemView.EnsureVisible)
+        return len(zeilen)
 
     # -- Bedienung -------------------------------------------------------
     def _filter(self, spalte: int, text: str):
