@@ -346,6 +346,33 @@ def main():
         check("Fassung nicht mehr in der Statusleiste",
               not w.btn_update.isVisible() and not w.lbl_version.isVisible(),
               f"Updateknopf {w.btn_update.isVisible()}, Version {w.lbl_version.isVisible()}")
+        # Austausch nur, wenn nichts rechnet - und dann sofort (11.09.2026:
+        # das Skript gab nach 120 s auf, die neue Fassung startete nicht)
+        from statik3d import update as _upd
+        check("Austausch erlaubt, wenn nichts läuft", w._update_moeglich() == "", w._update_moeglich())
+        w._rechnet_gerade = True
+        check("Austausch nicht während einer Berechnung", "Berechnung" in w._update_moeglich(),
+              w._update_moeglich())
+        w._rechnet_gerade = False
+        w._fortschritt_beginnen(10, "Test")
+        check("Austausch nicht während einer Vernetzung", "Vernetzung" in w._update_moeglich(),
+              w._update_moeglich())
+        w._fortschritt_ende()
+        check("und danach wieder", w._update_moeglich() == "", w._update_moeglich())
+        aufrufe_ = []
+        alt_helper_, alt_quit_ = _upd.start_helper, QtWidgets.QApplication.quit
+        _upd.start_helper = lambda bat, new="": aufrufe_.append(("helper", bat))
+        QtWidgets.QApplication.quit = staticmethod(lambda: aufrufe_.append(("quit", "")))
+        try:
+            w._update_bat = "x.bat"
+            w._austausch_starten()
+        finally:
+            _upd.start_helper, QtWidgets.QApplication.quit = alt_helper_, alt_quit_
+        check("Austausch: Skript gestartet, quit gerufen, sofortiges Ende vorgemerkt",
+              [a for a, _ in aufrufe_] == ["helper", "quit"] and getattr(w, "_austausch_laeuft", False),
+              str(aufrufe_))
+        w._austausch_laeuft = False
+        check("das Austauschskript wartet 300 s auf das Ende", "lss 300" in _upd.UPDATE_BAT)
         check("Modellbaum gefuellt", w.baum.topLevelItemCount() >= 1
               and w.baum.topLevelItem(0).childCount() >= 5,
               str(w.baum.topLevelItem(0).childCount()))

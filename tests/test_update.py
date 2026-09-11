@@ -90,7 +90,7 @@ def test_befund_und_bat():
                                 ok=r"C:\Statik3D\statik3d_update.ok")
     check("Skript: verzoegerte Erweiterung eingeschaltet",
           "enabledelayedexpansion" in bat)
-    check("Skript: Zaehler mit ! statt % gelesen", "!n! lss 120" in bat, "!n!")
+    check("Skript: Zaehler mit ! statt % gelesen", "!n! lss 300" in bat, "!n!")
     check("Skript: Protokoll wird geschrieben", "statik3d_update.log" in bat)
     check("Skript: fehlende Datei wird gemeldet", "Die heruntergeladene Datei fehlt" in bat)
     check("Skript: Fehler beim Verschieben wird gemeldet", "errorlevel 1" in bat)

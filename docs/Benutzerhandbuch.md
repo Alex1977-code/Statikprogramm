@@ -28,6 +28,12 @@ Fassung und der Meldung, was gerade geladen wird; es verschwindet, sobald
 das Fenster steht. Kein zweiter Doppelklick nötig. Der Knopf **Update suchen**
 unten rechts holt die neueste Version: prüfen, herunterladen, austauschen,
 Neustart. Dasselbe leistet Hilfe → Nach Update suchen… in jeder Installation.
+Der Austausch läuft nicht, solange eine Berechnung oder Vernetzung läuft — der
+Knopf zeigt dann „Update bereit“, und der Austausch folgt auf Knopfdruck nach
+dem Ende. Nach dem Schließen beendet sich Statik3D sofort, ohne Modell und
+Sicherungen abzuräumen (bei 2 Mio. Elementen 11 s je Kopie); das Skript
+wartet bis zu 300 s. Am 11.09.2026 gab es nach 120 s auf, weil das Programm
+noch lief, und die neue Fassung startete nicht.
 
 Der Austausch läuft über ein kleines Skript `statik3d_update.bat` neben der
 exe: Statik3D beendet sich, das Skript ersetzt die Datei und startet die neue

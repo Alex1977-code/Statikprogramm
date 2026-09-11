@@ -7271,6 +7271,7 @@ class MainWindow(QtWidgets.QMainWindow):
         anhalten darf - eine halb geschriebene Modelldatei waere kaputt.
         """
         self._abbruch = False
+        self._fortschritt_laeuft = True
         self.progress_bar.setRange(0, max(1, int(gesamt)))
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
@@ -7331,6 +7332,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "btn_abbrechen", None) is not None:
             self.btn_abbrechen.setVisible(False)
         self._abbruch = False
+        self._fortschritt_laeuft = False
 
     def _vernetzen(self, flaechen: list, koerper: list) -> int:
         """Flaechen und Koerper vernetzen und das Protokoll fuehren.
@@ -15803,6 +15805,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_worker = w
         w.start()
 
+    def _update_moeglich(self) -> str:
+        """Leer, wenn der Austausch jetzt laufen darf - sonst der Grund.
+
+        Das Austauschskript wartet auf das Ende dieses Prozesses. Eine
+        laufende Berechnung (Worker) oder Vernetzung (im Oberflaechen-Thread
+        mit Balken) lebt nach quit() weiter, bis sie fertig ist - am
+        Drehlager Minuten -, und das Skript gab auf (11.09.2026: "Programm
+        laeuft nach 120 s noch", die neue Fassung startete nicht).
+        """
+        w = getattr(self, "worker", None)
+        if getattr(self, "_rechnet_gerade", False) or (w is not None and w.isRunning()):
+            return "es läuft eine Berechnung"
+        if getattr(self, "_fortschritt_laeuft", False):
+            return "es läuft eine Vernetzung oder ein Laden"
+        return ""
+
+    def _austausch_starten(self) -> None:
+        """Das Austauschskript starten und das Programm beenden - sofort.
+
+        Nach quit() raeumte der Interpreter Modell, Sicherungen und Ansicht
+        ab: bei 2 Mio. Elementen 11 s je Modellkopie. Das ist ueberfluessig -
+        die Datei ist geschlossen, nichts ist mehr zu sichern - und laesst das
+        Skript warten. main() beendet darum mit os._exit, sobald exec()
+        zurueck ist (_austausch_laeuft).
+        """
+        from .. import update as upd
+        try:
+            upd.start_helper(self._update_bat)
+        except Exception as ex:            # noqa: BLE001
+            QtWidgets.QMessageBox.warning(
+                None, "Update",
+                f"{ex}\n\nDie neue Fassung liegt bereit. Nach dem Beenden "
+                "von Statik3D das Skript ausführen:\n" + self._update_bat)
+            return
+        self._austausch_laeuft = True
+        QtWidgets.QApplication.quit()
+
     def check_update(self, quiet: bool = False):
         """Neueste Version bei GitHub erfragen (Hintergrund).
 
@@ -15814,7 +15853,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Schliessen wurde abgelehnt), nicht erneut 200 MB laden, sondern den
         # Austausch anstossen.
         bat = getattr(self, "_update_bat", "")
-        if bat and os.path.isfile(bat) and getattr(self, "_austausch_starten", None):
+        if bat and os.path.isfile(bat):
+            grund = self._update_moeglich()
+            if grund:
+                self.log.appendPlainText(f"Der Austausch wartet: {grund}.")
+                return
             if self.close():
                 self._austausch_starten()
             return
@@ -15896,6 +15939,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self.btn_update.setText("Statik3D wird beendet…")
             self._update_bat = upd.helper_path()
+            grund = self._update_moeglich()
+            if grund:
+                self.btn_update.setEnabled(True)
+                self.btn_update.setText("Update bereit")
+                self.log.appendPlainText(
+                    f"Der Austausch wartet: {grund}. Nach dem Ende über "
+                    "„Update bereit“ auslösen.")
+                return
             # Erst schliessen (das fragt bei ungespeicherten Aenderungen nach).
             # Nur wenn das Fenster wirklich zu ist, laeuft der Austausch an.
             if not self.close():
@@ -15906,19 +15957,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     "Über „Update bereit“ erneut auslösen.")
                 return
             self._austausch_starten()
-
-        def _austausch_starten(self=self):
-            try:
-                upd.start_helper(self._update_bat)
-            except Exception as ex:            # noqa: BLE001
-                QtWidgets.QMessageBox.warning(
-                    None, "Update",
-                    f"{ex}\n\nDie neue Fassung liegt bereit. Nach dem Beenden "
-                    "von Statik3D das Skript ausführen:\n" + self._update_bat)
-                return
-            QtWidgets.QApplication.quit()
-
-        self._austausch_starten = _austausch_starten
 
         def failed(msg):
             self.progress_bar.setVisible(False)
@@ -15977,7 +16015,13 @@ def main(app=None, splash=None):
             splash.fertig(win)
         except Exception:                   # noqa: BLE001
             pass
-    sys.exit(app.exec())
+    code = app.exec()
+    if getattr(win, "_austausch_laeuft", False):
+        # Das Austauschskript wartet auf das Ende dieses Prozesses; das
+        # Abraeumen von Modell, Sicherungen und Ansicht (11 s je Kopie bei
+        # 2 Mio. Elementen) ist hier ueberfluessig - nichts ist mehr zu sichern.
+        os._exit(int(code))
+    sys.exit(code)
 
 
 if __name__ == "__main__":
