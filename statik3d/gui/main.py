@@ -11438,6 +11438,10 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- Rueckgaengig / Wiederholen ----------------------------------
     #: so viele Schritte werden vorgehalten
     SCHRITTE = 50
+    #: Summe der Elemente ueber alle Sicherungen, ab der die aeltesten fallen.
+    #: Gemessen am Drehlager: 669 Byte je Element, 1,38 GB je Sicherung bei
+    #: 2 064 422 Elementen - mit dieser Grenze bleiben dort zwei (2,8 GB).
+    UNDO_ELEMENTE = 5_000_000
 
     def _undo_init(self):
         self._undo: list = []
@@ -11455,6 +11459,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._undo_init()
         self._undo.append((was, self.model.copy()))
         del self._undo[:-self.SCHRITTE]
+        # Und nach Elementen: 50 Sicherungen eines Modells mit 2 Mio.
+        # Elementen waeren rund 70 GB (669 Byte je Element, gemessen). Es
+        # bleibt immer die letzte Sicherung, auch wenn sie allein die Grenze
+        # ueberschreitet.
+        while len(self._undo) > 1 and sum(len(m.elements) for _w, m in self._undo) > self.UNDO_ELEMENTE:
+            del self._undo[0]
         self._redo.clear()
         self._undo_knoepfe()
 

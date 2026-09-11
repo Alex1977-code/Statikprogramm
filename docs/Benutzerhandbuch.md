@@ -908,7 +908,15 @@ aus einer Tabellenzelle kein Programm wird. Ein unmöglicher Wert (E ≤ 0,
 ν ≥ 0,5, eine negative Fläche) wird **nicht** übernommen; die Zelle behält
 ihren Inhalt, und die Statuszeile sagt, warum. Jede Änderung geht über den
 Rückgängig-Stapel (Strg+Z) und verwirft die vorhandenen Ergebnisse — gerechnet
-werden muss danach neu. Wer A, Iy, Iz, It oder Wpl,y von Hand ändert, löst den
+werden muss danach neu. **Der Rückgängig-Stapel sichert vor jeder Änderung das
+ganze Modell.** Diese Sicherung war ein JSON-Umweg und kostete am
+Drehlager-Modell (2 Mio. Elemente) vor jedem ändernden Befehl 105 s — „Stäbe
+automatisch erkennen“, „Kontakt löschen“, „Ansicht übernehmen“ standen im
+Menüdurchgang vom 11.09.2026 je 113 s. Jetzt wird strukturell kopiert (Knoten
+als Feld, Elemente flach, der Rest über pickle): 11 s. Der Stapel hält
+höchstens 50 Sicherungen und zusammen höchstens 5 Mio. Elemente (669 Byte je
+Element, gemessen): am Drehlager bleiben zwei Sicherungen, rund 2,8 GB; die
+letzte bleibt immer. Wer A, Iy, Iz, It oder Wpl,y von Hand ändert, löst den
 Querschnitt von der Profildatenbank; sein Typ wird `free`, die Nachweise
 laufen dann elastisch.
 

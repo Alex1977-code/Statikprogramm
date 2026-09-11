@@ -30,6 +30,7 @@ model.gravity ...) arbeitet auf dem *aktiven* Lastfall weiter.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 from dataclasses import dataclass, field, asdict, fields
@@ -557,6 +558,17 @@ class Element:
     exzentrizitaet: list = field(default_factory=list)
     woelb: bool = False
     zustand: str = "spannung"
+
+    def kopie(self) -> "Element":
+        """Unabhaengige Kopie - flach, mit eigenen Listen. Ein Element hat
+        keine tieferen Strukturen; copy.deepcopy braeuchte das Zehnfache."""
+        e = copy.copy(self)
+        e.nodes = list(self.nodes)
+        e.hinges = list(self.hinges)
+        e.hinge_springs = list(self.hinge_springs)
+        e.exzentrizitaet = [list(x) if isinstance(x, (list, tuple)) else x
+                            for x in self.exzentrizitaet]
+        return e
     #: Seil: ungedehnte Laenge [m] (0 = Sehnenlaenge, das Seil haengt dann
     #: nur unter seinem Gewicht durch); daraus folgen Durchhang und Zugkraft
     laenge0: float = 0.0
@@ -4653,7 +4665,26 @@ class Model:
         return Model.from_dict(d, fortschritt=lambda a, t: _melde(fortschritt, 0.4 + 0.6 * a, t))
 
     def copy(self) -> "Model":
-        return Model.from_dict(json.loads(json.dumps(self.to_dict())))
+        """Unabhaengige Kopie - fuer Rueckgaengig, Situationen und Stellungen.
+
+        Bis zum 11.09.2026 ein JSON-Umweg (to_dict, json, from_dict): am
+        Drehlager (2 064 422 Elemente) 63 s, in der Oberflaeche vor jedem
+        aendernden Befehl 105 s (Menuedurchgang). Der Umfang sind Knoten und
+        Elemente; alles andere - Lastfaelle, Flaechen, Koerper, Lager,
+        Kombinationen - sind dort 16 MB und ueber pickle in 0,2 s kopiert.
+        Darum: der Rest ueber pickle, die Knoten als Feld, die Elemente flach
+        mit eigenen Listen (Element.kopie). Gemessen: 63 s -> 11 s.
+        """
+        import pickle
+        elements, nodes = self.elements, self.nodes
+        try:
+            self.elements, self.nodes = [], np.zeros((0, 3))
+            rest = pickle.loads(pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL))
+        finally:
+            self.elements, self.nodes = elements, nodes
+        rest.nodes = np.array(nodes, dtype=float, copy=True)
+        rest.elements = [e.kopie() for e in elements]
+        return rest
 
 
 #: Vorsatz der Bemerkung, mit der ein Vernetzer festhaelt, dass und warum ein
