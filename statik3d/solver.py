@@ -153,6 +153,7 @@ class LinearSolver:
         be = backend or parallel.settings().solver_backend
         self._solve = None
         self._K = None
+        self._ps = None
         if self.n == 0:
             self._solve = lambda b: np.zeros_like(b)
             return
@@ -165,6 +166,7 @@ class LinearSolver:
                 ps = pypardiso.PyPardisoSolver()
                 Kcsr = K.tocsr()
                 ps.factorize(Kcsr)
+                self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
                 self.threads = mkl_threads()
@@ -189,12 +191,38 @@ class LinearSolver:
             self._solve = lu.solve
             self.backend = "superlu"
 
+    def freigeben(self) -> None:
+        """Den Speicher der Faktorisierung zurueckgeben.
+
+        MKL haelt die Faktorisierung ausserhalb von Python; pypardiso gibt sie
+        nur auf ausdruecklichen Aufruf frei, nie beim Einsammeln des Objekts.
+        Am Drehlager (1 028 724 FHG, 7 GB je Faktorisierung) wuchs der Prozess
+        in der Kontakt-Iteration mit jedem Schritt um diese 7 GB, bis Pardiso
+        nach 33 Schritten bei 113 GB mit Fehler -2 aufgab und SuperLU im
+        Rueckfall am Speicher scheiterte (11.09.2026).
+        """
+        ps, self._ps = self._ps, None
+        self._solve = None
+        if ps is not None:
+            try:
+                ps.free_memory(everything=True)
+            except Exception:                   # noqa: BLE001 - beim Aufraeumen nie sperren
+                pass
+
+    def __del__(self):
+        try:
+            self.freigeben()
+        except Exception:                       # noqa: BLE001
+            pass
+
     def beschreibung(self) -> str:
         """Wie in Protokoll und Statuszeile: Loeser und Threads."""
         return NAMEN.get(self.backend, self.backend) + (
             f", {self.threads} Threads" if self.threads > 1 else ", einkernig")
 
     def solve(self, b: np.ndarray, check: bool = True) -> np.ndarray:
+        if self._solve is None:
+            raise RuntimeError("Loeser ist freigegeben - erneut faktorisieren")
         b = np.asarray(b, float)
         x = self._solve(b)
         if not np.all(np.isfinite(x)):
@@ -648,7 +676,13 @@ class StaticSystem:
                     rhs = rhs - Ktfs @ u[self.si]
                 ls = LinearSolver(self.gerandet(Ktff))
                 self.backend = ls.backend
-                u[self.fi] = self._geloest(ls, rhs)
+                try:
+                    u[self.fi] = self._geloest(ls, rhs)
+                finally:
+                    # Die Faktorisierung mit Kontaktsteifigkeit gilt nur fuer
+                    # diesen Schritt - sofort zurueckgeben, nicht erst beim
+                    # Einsammeln (siehe LinearSolver.freigeben)
+                    ls.freigeben()
         except (RuntimeError, ValueError) as ex:
             # Singulaer (Faktorisierung oder Residuum): sagen, was dem Modell fehlt
             if "Teiltragwerk" in str(ex) or "ohne Netz" in str(ex):
