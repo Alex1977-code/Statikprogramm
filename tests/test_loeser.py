@@ -157,12 +157,91 @@ def test_superlu_ordnet_symmetrisch():
           bool(np.allclose(colamd.solve(b), mmd.solve(b), rtol=1e-9)))
 
 
+def _arbeitsspeicher_mb() -> float:
+    """Arbeitsspeicher des Prozesses [MB] - Windows-API oder /proc."""
+    if sys.platform.startswith("win"):
+        import ctypes
+        from ctypes import wintypes
+
+        class PMC(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+        pmc = PMC()
+        pmc.cb = ctypes.sizeof(PMC)
+        fn = ctypes.windll.kernel32.K32GetProcessMemoryInfo
+        fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
+        fn.restype = wintypes.BOOL
+        if not fn(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
+            return float("nan")
+        return pmc.WorkingSetSize / 2 ** 20
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 2 ** 20
+    except Exception:            # noqa: BLE001
+        return float("nan")
+
+
+def _laplace_3d(n: int) -> sparse.csc_matrix:
+    """7-Punkt-Laplace auf einem n x n x n Gitter - Fuellung wie ein Volumennetz."""
+    e = np.ones(n)
+    T = sparse.diags([-e[:-1], 2.0 * e, -e[:-1]], [-1, 0, 1])
+    I_ = sparse.identity(n)
+    A = sparse.kron(sparse.kron(T, I_), I_) + sparse.kron(sparse.kron(I_, T), I_) \
+        + sparse.kron(sparse.kron(I_, I_), T)
+    return (A + 0.1 * sparse.identity(n ** 3)).tocsc()
+
+
+def test_pardiso_gibt_speicher_frei():
+    """Jede Kontakt-Iteration faktorisiert neu; MKL haelt die Faktorisierung
+    ausserhalb von Python und gibt sie nur auf Aufruf frei. Am Drehlager
+    (1 028 724 FHG, 7 GB je Faktorisierung) wuchs der Prozess je Schritt um
+    7 GB bis zum Fehler -2 bei 113 GB. Hier: 25 Faktorisierungen eines
+    64 000-FHG-Systems duerfen den Prozess nicht um 25 Faktorisierungen
+    wachsen lassen."""
+    from statik3d.solver import LinearSolver
+    try:
+        import pypardiso                                        # noqa: F401
+    except Exception:                                           # noqa: BLE001
+        check("Pardiso fehlt - Speicherpruefung uebersprungen", True)
+        return
+    K = _laplace_3d(40)
+    ls = LinearSolver(K, backend="pardiso")
+    if ls.backend != "pardiso":
+        check("Pardiso nicht nutzbar - Speicherpruefung uebersprungen", True, ls.backend)
+        return
+    b = np.ones(K.shape[0])
+    x = ls.solve(b)
+    check("Pardiso loest das 64 000-FHG-System", float(np.abs(K @ x - b).max()) < 1e-8)
+    vor = _arbeitsspeicher_mb()
+    ls.freigeben()
+    nach_frei = _arbeitsspeicher_mb()
+    einzeln = max(vor - nach_frei, 1.0)
+    check("freigeben() gibt den Speicher der Faktorisierung zurueck (mindestens 10 MB)",
+          vor - nach_frei > 10.0, f"{vor - nach_frei:.0f} MB")
+    try:
+        ls.solve(b)
+        check("nach dem Freigeben loest der Loeser nicht mehr stillschweigend", False)
+    except RuntimeError:
+        check("nach dem Freigeben loest der Loeser nicht mehr stillschweigend", True)
+    start = _arbeitsspeicher_mb()
+    for _ in range(25):
+        LinearSolver(K, backend="pardiso").solve(b)          # wie eine Kontakt-Iteration
+    ende = _arbeitsspeicher_mb()
+    check("25 Faktorisierungen ohne Bezug: Wachstum unter 3 Faktorisierungen",
+          ende - start < 3.0 * einzeln + 50.0,
+          f"Wachstum {ende - start:.0f} MB bei {einzeln:.0f} MB je Faktorisierung")
+
+
 def main():
     for f in (test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
               test_pardiso_nimmt_alle_kerne_bis_auf_einen,
               test_meldung_trennt_pool_und_loeser,
-              test_superlu_ordnet_symmetrisch):
+              test_superlu_ordnet_symmetrisch, test_pardiso_gibt_speicher_frei):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

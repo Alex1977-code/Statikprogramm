@@ -2167,6 +2167,11 @@ Nachweis mit seiner Verformung je Kombination.
   Backend „Rechnerfarm“ mit Server, Port und
   Schlüssel (siehe `Rechnerfarm.md`). „Lokalen Server + Worker starten“
   macht den eigenen Rechner zum Farm-Server.
+* **Kontakt-Iteration und Speicher.** Jeder Schritt der Kontakt-Iteration
+  faktorisiert das System neu; der Speicher jeder Faktorisierung wird sofort
+  danach zurückgegeben. Am Drehlager (1 028 724 Freiheitsgrade, 7 GB je
+  Faktorisierung) wuchs der Prozess vorher je Schritt um 7 GB, bis der Löser
+  nach 33 Schritten bei 113 GB aufgab (11.09.2026).
 * **Prozesspool und Gleichungslöser sind zweierlei.** Der Pool oben verteilt
   Elementschleifen und die Vernetzung auf Prozesse. Das Lösen des
   Gleichungssystems macht ein einzelner Prozess mit eigenen Threads. Das

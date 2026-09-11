@@ -163,6 +163,20 @@ Die Threadzahl ist `cpu_count() − 1`: der eine Kern bleibt der Oberfläche,
 damit sich das Fenster während der Faktorisierung noch bedienen lässt. Wer
 `MKL_NUM_THREADS` oder `OMP_NUM_THREADS` selbst setzt, behält den Vorrang.
 
+**Der Speicher der Faktorisierung wird zurückgegeben.** MKL hält die
+Faktorisierung außerhalb von Python; `pypardiso` gibt sie nur auf
+ausdrücklichen Aufruf frei, nie beim Einsammeln des Objekts. Die
+Kontakt-Iteration faktorisiert in jedem Schritt neu (Steifigkeit mit den
+gerade geschlossenen Kontakten), und am Drehlager (1 028 724 Freiheitsgrade,
+44,3 Millionen Einträge, 7 GB je Faktorisierung in 10 bis 13 s auf 31
+Threads) wuchs der Prozess je Schritt um diese 7 GB: nach 33 Schritten
+113 GB, PARDISO brach mit Fehler −2 (kein Speicher) ab, und der Rückfall auf
+SuperLU scheiterte am Speicher (11.09.2026). `LinearSolver.freigeben()` ruft
+`free_memory(everything=True)`; der Kontaktschritt ruft es sofort nach dem
+Lösen, das Einsammeln des Objekts ebenfalls. Gemessen (`tests/test_loeser.py`,
+7-Punkt-Laplace auf 40³ = 64 000 Freiheitsgraden, 255 MB je
+Faktorisierung): 25 Faktorisierungen wachsen um 3 MB statt um 6107 MB.
+
 Fällt der Löser doch auf SuperLU zurück, wird **symmetrisch geordnet**
 (`MMD_AT_PLUS_A` statt `COLAMD`). Die Steifigkeitsmatrix ist strukturell
 symmetrisch, COLAMD ordnet für unsymmetrisches LU und füllt darum mehr auf:
