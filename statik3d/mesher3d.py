@@ -1895,14 +1895,16 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
     return punkte, TET, bericht
 
 
-def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
-                      quelle: list = None) -> tuple:
+def _huelle_schwerpunkt_teilen(P: np.ndarray, T: np.ndarray, welche,
+                               quelle: list = None) -> tuple:
     """Genannte Huelldreiecke im Schwerpunkt teilen (1 -> 3).
 
     Der neue Punkt liegt **in** dem Dreieck, also auf der Huelle: die
     Geometrie aendert sich nicht, nur ihre Aufloesung. Weil der Punkt keine
     Kante beruehrt, bleibt die Huelle dabei zusammenhaengend - es entstehen
-    keine haengenden Knoten.
+    keine haengenden Knoten. Aber die Kinder werden flach (siehe
+    :func:`huelle_verfeinern`); darum nur noch der Ausweg fuer ein Dreieck,
+    dessen Kanten alle gesperrt sind.
     """
     welche = set(int(x) for x in welche)
     if not welche:
@@ -1926,10 +1928,173 @@ def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
     return np.vstack(neu_p), np.asarray(neu_t, int), neu_q
 
 
+#: Laengster Fortpflanzungsweg beim Halbieren; ist er erschoepft, wird das
+#: Zieldreieck im Schwerpunkt geteilt statt gar nicht.
+MAX_HALBIERPFAD = 64
+
+
+def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
+                      quelle: list = None, schutz=None,
+                      gesperrt: np.ndarray = None) -> tuple:
+    """Genannte Huelldreiecke an ihrer laengsten Kante halbieren (Rivara).
+
+    Frueher wurde im Schwerpunkt geteilt (1 -> 3). Das haelt die Geometrie,
+    macht die Dreiecke aber mit jeder Runde flacher: das Kind behaelt die
+    lange Kante und bekommt ein Drittel der Hoehe. Gemessen an V15 des
+    Drehlagers (Huelle 11 824 Dreiecke, Guete min 0,165, kein Splitter):
+    nach der ersten Runde 559 Splitter (Guete < 0,1), nach der zweiten 2 391
+    (Guete min 0,018) - und daran hingen die Tetraeder mit Guete 0,028, die
+    die Abnahme bemaengelte (12.09.2026).
+
+    Das Halbieren der laengsten Kante haelt die Form: der kleinste Winkel
+    bleibt mindestens die Haelfte des kleinsten Ausgangswinkels, wie oft auch
+    geteilt wird. Der neue Punkt ist die Kantenmitte, liegt also auf der
+    Huelle. Damit kein Knoten haengt, wird der Nachbar ueber die Kante mit
+    halbiert - aber nur, wenn die Kante auch **seine** laengste ist; sonst
+    wird erst er an seiner laengsten Kante halbiert (die Fortpflanzung endet,
+    weil die Kanten laengs des Weges laenger werden) und dann von vorn
+    begonnen, bis das Zieldreieck selbst geteilt ist.
+
+    ``schutz`` nennt Dreiecke, die nicht angeruehrt werden - auf einer
+    gemeinsamen Flaeche, die auch dem Nachbarkoerper gehoert; eine Kante zu
+    so einem Dreieck wird nicht geteilt. ``gesperrt[i]`` sagt, dass Punkt i
+    auf einer gemeinsamen Linie liegt: eine Kante zwischen zwei solchen
+    Punkten bleibt ganz, sonst hinge der neue Punkt beim Nachbarn in der
+    Luft. Ist die laengste Kante gesperrt - beim Zieldreieck oder auf dem
+    Weg der Fortpflanzung -, wird das Zieldreieck im Schwerpunkt geteilt:
+    eine kuerzere Kante zu halbieren machte es nur schmaler.
+
+    Rueckgabe (Punkte, Dreiecke, Quelle je Dreieck) wie zuvor; die alten
+    Punkte behalten ihre Nummern, neue haengen hinten an.
+    """
+    ziele = [int(x) for x in welche]
+    if not ziele:
+        return P, T, list(quelle or [])
+    X = np.asarray(P, float)
+    T = np.asarray(T, int)
+    n0 = len(X)
+    neue: list = []
+    dreiecke = [tuple(int(v) for v in t) for t in T]
+    quellen = [quelle[k] if quelle is not None and k < len(quelle) else ""
+               for k in range(len(T))]
+    lebt = [True] * len(T)
+    geschuetzt = set(int(x) for x in (schutz or ()))
+    sperre = np.asarray(gesperrt, bool) if gesperrt is not None else None
+    an_kante: dict = {}
+
+    def xyz(i):
+        return X[i] if i < n0 else neue[i - n0]
+
+    def kanten(t):
+        a, b, c = t
+        return ((a, b) if a < b else (b, a),
+                (b, c) if b < c else (c, b),
+                (c, a) if c < a else (a, c))
+
+    for k, t in enumerate(dreiecke):
+        for e in kanten(t):
+            an_kante.setdefault(e, set()).add(k)
+
+    def erlaubt(e, k):
+        if (sperre is not None and e[0] < len(sperre) and e[1] < len(sperre)
+                and sperre[e[0]] and sperre[e[1]]):
+            return False
+        andere = an_kante.get(e, set()) - {k}
+        if len(andere) > 1:
+            return False                    # keine Mannigfaltigkeit
+        return not (andere & geschuetzt)
+
+    def laengste_kante(k):
+        # Die laengste Kante, ohne Ruecksicht auf Sperren: ob sie geteilt
+        # werden darf, prueft der Aufrufer. Eine kuerzere Kante zu halbieren,
+        # weil die laengste gesperrt ist, macht das Dreieck nur schmaler - am
+        # Drehlager (V15) entstanden so um einen gesperrten Eckknoten in der
+        # zweiten Runde 244 Dreiecke mit Guete unter 0,01 (Kanten 8,3 mm,
+        # 8,3 mm, 0,03 mm).
+        beste, best_l = None, -1.0
+        for e in kanten(dreiecke[k]):
+            l = float(np.linalg.norm(xyz(e[0]) - xyz(e[1])))
+            if l > best_l:
+                beste, best_l = e, l
+        return beste
+
+    def entfernen(k):
+        lebt[k] = False
+        for e in kanten(dreiecke[k]):
+            s = an_kante.get(e)
+            if s:
+                s.discard(k)
+
+    def einfuegen(t, q):
+        k = len(dreiecke)
+        dreiecke.append(t)
+        quellen.append(q)
+        lebt.append(True)
+        for e in kanten(t):
+            an_kante.setdefault(e, set()).add(k)
+
+    def neuer_punkt(x):
+        neue.append(np.asarray(x, float))
+        return n0 + len(neue) - 1
+
+    def halbieren(k, e, m):
+        t = dreiecke[k]
+        u, v, w = t
+        for p in range(3):
+            u, v, w = t[p], t[(p + 1) % 3], t[(p + 2) % 3]
+            if (u, v) == e or (v, u) == e:
+                break
+        q = quellen[k]
+        entfernen(k)
+        einfuegen((u, m, w), q)             # Umlaufsinn bleibt
+        einfuegen((m, v, w), q)
+
+    def schwerpunkt_teilen(k):
+        a, b, c = dreiecke[k]
+        m = neuer_punkt((xyz(a) + xyz(b) + xyz(c)) / 3.0)
+        q = quellen[k]
+        entfernen(k)
+        for t in ((a, b, m), (b, c, m), (c, a, m)):
+            einfuegen(t, q)
+
+    for ziel in ziele:
+        if ziel < 0 or ziel >= len(T) or ziel in geschuetzt:
+            continue
+        schritte = 0
+        while lebt[ziel]:
+            schritte += 1
+            if schritte > MAX_HALBIERPFAD:
+                schwerpunkt_teilen(ziel)
+                break
+            k, geteilt = ziel, False
+            for _ in range(MAX_HALBIERPFAD):
+                e = laengste_kante(k)
+                if e is None or not erlaubt(e, k):
+                    break                   # gesperrt: Ausweg Schwerpunkt
+                andere = an_kante.get(e, set()) - {k}
+                n = next(iter(andere)) if andere else None
+                if n is None or laengste_kante(n) == e:
+                    m = neuer_punkt(0.5 * (xyz(e[0]) + xyz(e[1])))
+                    halbieren(k, e, m)
+                    if n is not None:
+                        halbieren(n, e, m)
+                    geteilt = True
+                    break
+                k = n
+            if not geteilt:
+                schwerpunkt_teilen(ziel)
+                break
+    P_neu = np.vstack([X] + ([np.vstack(neue)] if neue else []))
+    T_neu = np.asarray([t for t, l in zip(dreiecke, lebt) if l], int).reshape(-1, 3)
+    q_neu = [q for q, l in zip(quellen, lebt) if l]
+    return P_neu, T_neu, q_neu
+
+
 def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
                     runden: int = 3, quelle: list = None,
                     splitter: float = SPLITTER, fortschritt=None,
-                    gemeinsam: set = None) -> tuple:
+                    gemeinsam: set = None, kennung: list = None,
+                    gem_linien=None) -> tuple:
     """Tetraedern und dabei den Rand nachfuehren, wo er nicht getroffen wurde.
 
     Eine einspringende Kante - der Innenwinkel eines L-Koerpers, die Kehle
@@ -1942,10 +2107,23 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
     danebenliegenden freien Seiten werden geteilt, und es wird noch einmal
     zerlegt. Das setzt die Punkte hin, wo sie gebraucht werden, statt ueberall
     - eine gleichmaessige Verfeinerung wuerde nur Splitter erzeugen.
+
+    ``kennung`` (je Huellpunkt, aus :func:`randschale`) und ``gem_linien``
+    sagen, welche Punkte auf einer **gemeinsamen** Linie liegen: zwischen
+    zweien davon wird keine Kante geteilt (:func:`huelle_verfeinern`), sonst
+    hinge der neue Punkt beim Nachbarkoerper frei.
     """
     from scipy.spatial import cKDTree
     bestes = None
     runden = max(1, runden)
+    gesperrt = None
+    if kennung:
+        linien = set(gem_linien or ())
+        gesperrt = np.zeros(len(P), bool)
+        for i, kn in enumerate(list(kennung)[:len(P)]):
+            if isinstance(kn, tuple) and len(kn) >= 2 and (
+                    kn[0] == "K" or (kn[0] == "L" and kn[1] in linien)):
+                gesperrt[i] = True
     for runde in range(runden):
         # Der Balken: der erste Durchgang bekommt den Loewenanteil (0.15 … 0.85),
         # denn er ist meist der einzige; spaetere Durchgaenge sind Nacharbeit am
@@ -1984,12 +2162,16 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
         baum = cKDTree(P[T].mean(axis=1))
         _, nn = baum.query(daneben, k=min(3, len(T)))
         welche = np.unique(np.atleast_2d(nn))
+        schutz = None
         if gemeinsam and quelle:
-            welche = np.array([k for k in welche
-                               if not (k < len(quelle) and quelle[k] in gemeinsam)], int)
+            schutz = {k for k, q in enumerate(quelle) if q in gemeinsam}
+            welche = np.array([k for k in welche if k not in schutz], int)
         if not len(welche):
             break
-        P, T, quelle = huelle_verfeinern(P, T, welche, quelle)
+        P, T, quelle = huelle_verfeinern(P, T, welche, quelle, schutz=schutz,
+                                         gesperrt=gesperrt)
+        if gesperrt is not None and len(P) > len(gesperrt):
+            gesperrt = np.concatenate([gesperrt, np.zeros(len(P) - len(gesperrt), bool)])
     Pn, TET, bericht, _, P, T, quelle = bestes
     return Pn, TET, bericht, P, T, quelle
 
@@ -2931,7 +3113,9 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
             quelle = bericht.get("quelle") or []
             Pn, TET, tb, P, T, quelle = tetraedern_treu(
                 P, T, h, quelle=quelle, splitter=splitter, fortschritt=fortschritt,
-                gemeinsam=(gemeinsam or (frozenset(), frozenset()))[0])
+                gemeinsam=(gemeinsam or (frozenset(), frozenset()))[0],
+                kennung=bericht.get("kennung"),
+                gem_linien=(gemeinsam or (frozenset(), frozenset()))[1])
             if tb.get("fehler"):
                 aus["fehler"] = str(tb["fehler"])
                 return aus

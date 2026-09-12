@@ -424,7 +424,8 @@ def grenzen(skala: Werteskala, werte, maske=None) -> dict:
     out = {"clim": [0.0, 1.0], "n_colors": int(skala.stufen), "n_labels": int(skala.stufen) + 1,
            "above_color": None, "above_label": None, "below_color": None, "below_label": None,
            "werte": w, "anzahl_ueber": 0, "anzahl_unter": 0, "wmin": None, "wmax": None,
-           "modus": skala.modus}
+           "modus": skala.modus, "nur_ueber": bool(getattr(skala, "nur_ueber", False)),
+           "grenze": None}
     if g.size == 0:
         return out
     wmin, wmax = float(g.min()), float(g.max())
@@ -435,12 +436,17 @@ def grenzen(skala: Werteskala, werte, maske=None) -> dict:
             hi = lo + 1.0
     elif skala.modus == "grenze":
         G = abs(float(skala.grenze)) or 1.0
+        out["grenze"] = G
         lo, hi = (-G if wmin < 0.0 else 0.0), G
         if skala.nur_ueber:
             betrag = np.abs(w)
             out["werte"] = np.where(betrag > G, betrag, np.nan)
-            out["anzahl_ueber"] = int(np.sum(betrag[np.isfinite(betrag)] > G))
-            hi2 = float(np.nanmax(out["werte"])) if out["anzahl_ueber"] else G + 1.0
+            # Zaehlung und oberes Skalenende aus den **sichtbaren** Werten
+            # (maske): ein einzeln gezeigter Koerper bekommt seine eigene
+            # Skala - vorher zaehlte das ganze Modell mit (12.09.2026)
+            bg = np.abs(g)
+            out["anzahl_ueber"] = int(np.sum(bg > G))
+            hi2 = float(bg[bg > G].max()) if out["anzahl_ueber"] else G + 1.0
             out["clim"] = [G, hi2 if hi2 > G else G + 1.0]
             return out
     else:

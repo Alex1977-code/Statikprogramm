@@ -1214,6 +1214,90 @@ def test_randstrecken_sind_keine_glueckssache():
           f"{sum(zahl.values())} gültige Flächen, {entartet} entartete übergangen")
 
 
+def _kantenzaehlung(T: np.ndarray) -> np.ndarray:
+    E = np.vstack([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]])
+    E.sort(axis=1)
+    return np.unique(E, axis=0, return_counts=True)[1]
+
+
+def _dreiecksguete(P: np.ndarray, T: np.ndarray) -> np.ndarray:
+    p0, p1, p2 = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    fl = 0.5 * np.linalg.norm(np.cross(p1 - p0, p2 - p0), axis=1)
+    l2 = ((p1 - p0) ** 2).sum(1) + ((p2 - p1) ** 2).sum(1) + ((p0 - p2) ** 2).sum(1)
+    return 4 * np.sqrt(3) * fl / np.maximum(l2, 1e-30)
+
+
+def test_huelle_verfeinern_haelt_form():
+    """Die Nachverfeinerung der Huelle halbiert die laengste Kante (Rivara)
+    statt im Schwerpunkt zu teilen. Nachgestellt an der Platte mit Bohrung:
+    drei Runden um die Bohrung, wie tetraedern_treu sie faehrt. Gemessen am
+    Drehlager (V15) machte das Teilen im Schwerpunkt aus einer Huelle ohne
+    Splitter in zwei Runden 2 391 Splitter (Guete min 0,165 -> 0,018)."""
+    r = 0.4
+    m = neues_modell()
+    k = prisma(m, [[(0, 0), (2, 0), (2, 2), (0, 2)],
+                   kreis_punkte(r, 48, 1.0, 1.0, umgekehrt=True)], 0.4)
+    P, T, bericht = M3.randschale(m, k, 0.15)
+    quelle = list(bericht["quelle"])
+    kennung = list(bericht["kennung"])
+    check("Huelle der Platte geschlossen", bool((_kantenzaehlung(T) == 2).all()), f"{len(T)} Dreiecke")
+    q0 = float(_dreiecksguete(P, T).min())
+    V0 = M3.huellvolumen(P, T)
+    n0 = len(P)
+    # Boden gehoert (angenommen) auch einem Nachbarn: geschuetzt. Die Linien
+    # des Deckels gelten als gemeinsam: ihre Punkte sind gesperrt.
+    deckel = m.flaechen["Deckel"]
+    linien = set(deckel.linien or [])
+    for loch in (deckel.oeffnungen or []):
+        linien.update(loch)
+    gesperrt = np.zeros(n0, bool)
+    for i, kn in enumerate(kennung[:n0]):
+        if isinstance(kn, tuple) and (kn[0] == "K" or (kn[0] == "L" and kn[1] in linien)):
+            gesperrt[i] = True
+    E0 = np.vstack([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]])
+    E0.sort(axis=1)
+    ringkanten = {tuple(e) for e in E0 if gesperrt[e[0]] and gesperrt[e[1]]}
+    check("Sperre greift: Deckelring und Eckknoten gesperrt", 0 < int(gesperrt.sum()) < n0 and len(ringkanten) >= 48,
+          f"{int(gesperrt.sum())} Punkte, {len(ringkanten)} Ringkanten")
+
+    def runden(teilen, P, T, quelle, g, n=3):
+        for _ in range(n):
+            schutz = {i for i, q in enumerate(quelle) if q == "Boden"}
+            schwer = P[T].mean(axis=1)
+            nah = np.flatnonzero(np.linalg.norm(schwer[:, :2] - np.array([1.0, 1.0]), axis=1) < 2.0 * r)
+            welche = [int(i) for i in nah if int(i) not in schutz]
+            if teilen is M3.huelle_verfeinern:
+                P, T, quelle = teilen(P, T, welche, quelle, schutz=schutz, gesperrt=g)
+            else:
+                P, T, quelle = teilen(P, T, welche, quelle)
+            g = np.concatenate([g, np.zeros(len(P) - len(g), bool)])
+        return P, T, quelle
+
+    P1, T1, q1 = runden(M3.huelle_verfeinern, P, T, quelle, gesperrt)
+    g1 = float(_dreiecksguete(P1, T1).min())
+    check("drei Runden Halbieren: Huelle bleibt geschlossen", bool((_kantenzaehlung(T1) == 2).all()), f"{len(T1)} Dreiecke")
+    check("… und feiner (mehr Dreiecke, neue Punkte)", len(T1) > 1.5 * len(T) and len(P1) > n0, f"{len(T)} -> {len(T1)}")
+    # Rivaras Schranke gilt dem kleinsten Winkel (mindestens die Haelfte).
+    # Wo die laengste Kante gesperrt ist (Boden geschuetzt, Deckelring
+    # gesperrt), bleibt nur die Teilung im Schwerpunkt; gemessen an dieser
+    # Platte: Guete min 0,555 -> 0,128 - im Schwerpunkt ueberall geteilt
+    # (alter Weg): 0,029, also Splitter.
+    print(f"    Guete min {q0:.3f} -> {g1:.3f}")
+    close("… das Huellvolumen bleibt (Punkte liegen auf der Huelle, Umlaufsinn bleibt)", M3.huellvolumen(P1, T1), V0, 1e-9, " m^3")
+    check("… kein Splitter (Guete < 0,1)", int((_dreiecksguete(P1, T1) < 0.1).sum()) == 0, f"{int((_dreiecksguete(P1, T1) < 0.1).sum())}")
+    neu = P1[n0:]
+    check("geschuetzter Boden: kein neuer Punkt auf z = 0", bool((np.abs(neu[:, 2]) > 1e-9).all()) if len(neu) else False, f"{len(neu)} neue Punkte")
+    check("… Bodendreiecke unveraendert", sum(1 for q in q1 if q == "Boden") == sum(1 for q in quelle if q == "Boden"))
+    E1 = np.vstack([T1[:, [0, 1]], T1[:, [1, 2]], T1[:, [2, 0]]])
+    E1.sort(axis=1)
+    E1 = {tuple(e) for e in E1}
+    check("gesperrte Linien: jede Ringkante des Deckels ist noch da", all(e in E1 for e in ringkanten), f"{sum(e in E1 for e in ringkanten)} von {len(ringkanten)}")
+    # Zum Vergleich der alte Weg: dieselben drei Runden im Schwerpunkt
+    P2, T2, _ = runden(M3._huelle_schwerpunkt_teilen, P, T, quelle, gesperrt)
+    g2 = float(_dreiecksguete(P2, T2).min())
+    check("Teilen im Schwerpunkt fiele durch (Guete unter 0,1)", g2 < 0.1, f"{q0:.3f} -> {g2:.3f}")
+
+
 def test_gitterindex_zelle():
     """Die Zelle des Gitterindex folgt der typischen Dreiecksgroesse, nicht dem
     groessten Dreieck. Eine ebene Aussenflaeche mit einem 85-mm-Dreieck machte
@@ -1257,7 +1341,8 @@ def main():
               test_zylinder_und_buchse,
               test_kleines_bauteil, test_gemeinsame_flaeche, test_zugstab,
               test_undichte_huelle, test_quadratische_tetraeder,
-              test_splitter_glaetten, test_gitterindex_zelle, test_geometrielast,
+              test_splitter_glaetten, test_huelle_verfeinern_haelt_form,
+              test_gitterindex_zelle, test_geometrielast,
               test_fortschritt_und_abbruch, test_parallel_vernetzen):
         print(f"\n--- {t.__name__} ---")
         try:

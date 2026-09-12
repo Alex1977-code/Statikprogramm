@@ -1808,6 +1808,53 @@ def main():
         w.act_schnitt.setChecked(False)
         w.act_schnittseite.setChecked(False); app.processEvents()
         g3, _k3 = w._gitter(typen_v, ausser_v)
+        # freie Schnittebene: schraeg durch die Mitte (viewport), dann ueber
+        # Ribbon und Maske, aus der Ansicht, und als Werkzeug im Bild
+        b0c = np.array([(b0[0] + b0[1]) / 2, (b0[2] + b0[3]) / 2, (b0[4] + b0[5]) / 2])
+        n_frei = np.array([1.0, 1.0, 0.0]) / np.sqrt(2.0)
+        gs = vpg.schneiden(g0, "frei", 0.5, False, n_frei, b0c)
+        mitten = gs.cell_centers().points if gs.n_cells else np.zeros((0, 3))
+        check("viewport.schneiden „frei“: schräge Ebene durch die Mitte, es bleibt die Seite gegen die Normale",
+              0 < gs.n_cells < g0.n_cells
+              and float(((mitten - b0c) @ n_frei).max()) < 1e-6 * (b0[1] - b0[0]) + 1e-9,
+              f"{gs.n_cells} von {g0.n_cells}")
+        w.cb_schnittachse.setCurrentText("frei"); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Achse „frei“ öffnet rechts die Maske „Schnittebene“",
+              mk is not None and getattr(mk, "titel", "") == "Schnittebene", str(getattr(mk, "titel", None)))
+        if mk is not None:
+            for k, v in (("nx", "1"), ("ny", "1"), ("nz", "0"), ("ox", f"{b0c[0]:.4f}"),
+                         ("oy", f"{b0c[1]:.4f}"), ("oz", f"{b0c[2]:.4f}")):
+                mk.setzen(k, v)
+            mk.anwenden(); app.processEvents()
+        check("„Schneiden“: Schnitt frei mit normierter Normale durch den Ursprung, Schalter an",
+              w.schnitt is not None and w.schnitt[0] == "frei" and np.allclose(w.schnitt[3], n_frei)
+              and np.allclose(w.schnitt[4], b0c, atol=1e-3) and w.act_schnitt.isChecked(), str(w.schnitt))
+        g4, _k4 = w._gitter(typen_v, ausser_v)
+        check("… und die Ansicht ist schräg aufgeschnitten", 0 < g4.n_cells < g3.n_cells,
+              f"{g4.n_cells} von {g3.n_cells}")
+        if w.maskenrand.maske is mk and mk is not None:
+            mk.setzen("quelle", "aus der Ansicht (senkrecht zum Blick, durch den Blickpunkt)")
+            mk.anwenden(); app.processEvents()
+        blick = np.asarray(w.plotter.renderer.GetActiveCamera().GetDirectionOfProjection(), float)
+        check("„aus der Ansicht“: die Ebene liegt senkrecht zum Blick",
+              w.schnitt is not None and np.allclose(w.schnitt[3], blick, atol=1e-6),
+              str(w.schnitt[3] if w.schnitt else None))
+        if w.maskenrand.maske is mk and mk is not None:
+            mk.setzen("widget", True); mk.anwenden(); app.processEvents()
+        n_wz = len(getattr(w.plotter, "plane_widgets", []) or [])
+        check("„Ebene im Bild ziehen“ legt das Ebenen-Werkzeug an",
+              n_wz == 1 and getattr(w, "_schnittwidget", None) is not None, str(n_wz))
+        w._schnittwidget_bewegt((0.0, 0.0, 1.0), b0c + np.array([0.0, 0.0, 0.01])); app.processEvents()
+        check("Ziehen der Ebene übernimmt Normale und Ursprung in den Schnitt",
+              w.schnitt is not None and np.allclose(w.schnitt[3], (0.0, 0.0, 1.0))
+              and abs(w.schnitt[4][2] - (b0c[2] + 0.01)) < 1e-9, str(w.schnitt))
+        w.act_schnitt.setChecked(False); app.processEvents()
+        check("Schnitt aus: das Werkzeug ist weg",
+              not getattr(w.plotter, "plane_widgets", []) and getattr(w, "_schnittwidget", None) is None)
+        w.maskenrand.schliessen()
+        w.cb_schnittachse.setCurrentText("y"); app.processEvents()
+        g3, _k3 = w._gitter(typen_v, ausser_v)
         check("ausgeschaltet steht das Bauteil wieder ganz da",
               abs(g3.bounds[1] - g3.bounds[0] - (b0[1] - b0[0])) < 1e-9,
               f"{g3.bounds[1] - g3.bounds[0]:.3f} / {b0[1] - b0[0]:.3f} m")
@@ -2068,6 +2115,18 @@ def main():
               np.isnan(werte).sum() > 0 and np.nanmin(werte) >= 0.5
               and np.allclose(akt.mapper.scalar_range[0], 0.5), f"{np.isnan(werte).sum()} NaN")
         w.cb_nur_ueber.setChecked(False)
+        w.cb_skala.setCurrentIndex(w.cb_skala.findData("auto")); app.processEvents()
+        check("„nur Überschreitungen“ ist auch im Modus automatisch anklickbar", w.cb_nur_ueber.isEnabled())
+        w.cb_nur_ueber.setChecked(True); app.processEvents()
+        check("… und schaltet die Skala selbst auf Grenzwert um",
+              w.cb_skala.currentData() == "grenze" and w.model.werteskala.modus == "grenze"
+              and w.model.werteskala.nur_ueber, str(w.cb_skala.currentData()))
+        w.ed_skala_grenze.setValue(round(float(np.nanmax(soll)) + 1.0, 2)); app.processEvents()
+        check("Grenze über allem: die Statuszeile sagt, dass nichts überschritten ist und alles grau bleibt",
+              "keine Überschreitung" in w.statusBar().currentMessage()
+              and "grau" in w.statusBar().currentMessage(), w.statusBar().currentMessage()[:90])
+        w.cb_nur_ueber.setChecked(False)
+        w.ed_skala_grenze.setValue(0.5); app.processEvents()
         # fest: Grenzen zwischen den Werten, damit es darunter und darueber etwas gibt
         # die Felder haben zwei Nachkommastellen (QDoubleSpinBox, decimals 2)
         u30, o70 = (round(float(np.nanpercentile(soll, 30)), 2), round(float(np.nanpercentile(soll, 70)), 2))
@@ -2519,21 +2578,72 @@ def main():
         ziel_v = np.asarray(w.plotter.camera_position[1], float)
         w.zoom_zum_zeiger(2.0, x_qt, y_qt)
         app.processEvents()
-        nachher = w._bildpunkt_in_welt(x_qt, hoehe - 1 - y_qt)
+        ren_z = w.plotter.renderer
+
+        def bildpunkt(p):
+            ren_z.SetWorldPoint(float(p[0]), float(p[1]), float(p[2]), 1.0)
+            ren_z.WorldToDisplay()
+            return np.asarray(ren_z.GetDisplayPoint()[:2], float)
+
+        nachher = bildpunkt(vorher) if vorher is not None else None
         pos_n = np.asarray(w.plotter.camera_position[0], float)
         ziel_n = np.asarray(w.plotter.camera_position[1], float)
         groesse = max(float(np.linalg.norm(pos_v - ziel_v)), 1e-9)
-        check("Mausrad zoomt zum Zeiger: der Punkt darunter bleibt liegen",
-              vorher is not None and nachher is not None
-              and float(np.linalg.norm(nachher - vorher)) < 1e-6 * groesse,
-              f"Wanderung {float(np.linalg.norm(nachher - vorher)):.3e} m "
-              f"bei Bildgröße {groesse:.3g} m")
-        check("und die Kamera kommt dabei wirklich näher",
-              float(np.linalg.norm(pos_n - ziel_n)) < 0.9 * groesse,
-              f"{groesse:.4g} m -> {float(np.linalg.norm(pos_n - ziel_n)):.4g} m")
+        wanderung = (float(np.linalg.norm(nachher - np.array([x_qt, hoehe - 1 - y_qt])))
+                     if nachher is not None else 1e9)
+        check("Mausrad zoomt zum Zeiger: der Punkt darunter bleibt liegen (auf demselben Pixel)",
+              vorher is not None and wanderung < 0.5, f"Wanderung {wanderung:.2f} px")
+        # Der Blickpunkt rueckt beim Zoomen auf die Flaeche unter dem Zeiger;
+        # ob die Kamera vorfaehrt, sagt darum ihre Bewegung, nicht der
+        # Abstand zum Blickpunkt
+        check("und die Kamera fährt dabei wirklich vor",
+              float(np.linalg.norm(pos_n - pos_v)) > 0.25 * groesse,
+              f"{float(np.linalg.norm(pos_n - pos_v)):.4g} m bei Bildgröße {groesse:.4g} m")
         check("der Zielpunkt wandert dabei mit (nicht die Bildmitte)",
               float(np.linalg.norm(ziel_n - ziel_v)) > 1e-9 * groesse,
               f"{np.round(ziel_v, 4)} -> {np.round(ziel_n, 4)}")
+        # … und zwar auf die **Oberflaeche** unter dem Zeiger zu, nicht auf die
+        # Brennebene: am Drehlager wurde die Bohrung ab dem zehnten Radschritt
+        # wieder ferner, waehrend der Blickpunktabstand auf 0,4 mm schrumpfte
+        w.blickrichtung("iso"); app.processEvents()
+        X = np.asarray(w.model.nodes, float)
+        ziel_pix = None
+        for kn in range(min(int(w.model.nn), 60)):
+            px = bildpunkt(X[kn])
+            if (2 < px[0] < breite - 3 and 2 < px[1] < hoehe - 3
+                    and w._oberflaeche_unter_zeiger(px[0], px[1]) is not None):
+                ziel_pix = px
+                break
+        flaeche = w._oberflaeche_unter_zeiger(*ziel_pix) if ziel_pix is not None else None
+        check("unter dem Zeiger liegt eine Fläche: der z-Puffer liefert ihren Weltpunkt",
+              flaeche is not None and np.isfinite(flaeche).all(), str(ziel_pix))
+        if flaeche is not None:
+            kam = w.plotter.renderer.GetActiveCamera()
+            abst = [float(np.linalg.norm(np.asarray(kam.GetPosition(), float) - flaeche))]
+            for _ in range(25):
+                w.zoom_zum_zeiger(w.RADSCHRITT, ziel_pix[0], hoehe - 1 - ziel_pix[1]); app.processEvents()
+                abst.append(float(np.linalg.norm(np.asarray(kam.GetPosition(), float) - flaeche)))
+            quot = np.array(abst[1:]) / np.maximum(np.array(abst[:-1]), 1e-12)
+            check("25 Radschritte: der Abstand zur Fläche schrumpft in jedem Schritt um denselben Anteil "
+                  "(1/1,15) und wird nie wieder größer",
+                  bool(np.all(quot < 0.9)) and bool(np.all(quot > 0.84)) and abst[-1] < 0.05 * abst[0],
+                  f"{abst[0]:.3f} -> {abst[-1]:.4f} m, Quotienten {quot.min():.3f} … {quot.max():.3f}")
+            px2 = bildpunkt(flaeche)
+            check("… die Fläche bleibt dabei unter dem Zeiger",
+                  float(np.linalg.norm(px2 - ziel_pix)) < 1.0, f"{float(np.linalg.norm(px2 - ziel_pix)):.2f} px")
+            # Der Flaechenpunkt wird je Schritt neu gelesen, und der Tiefenpuffer
+            # ist grob (gemessen 2,8 mm Unterschied zweier Lesungen bei 1,27 m,
+            # aus 40 m Abstand Zentimeter) - darum gegen den zuletzt gelesenen
+            # Punkt mit 1 % pruefen. Vorher lag der Blickpunkt 0,4 mm vor der
+            # Kamera, die Flaeche 0,34 m weit weg.
+            richtung = np.asarray(kam.GetDirectionOfProjection(), float)
+            fl2 = w._oberflaeche_unter_zeiger(*ziel_pix)
+            tiefe = (float(np.dot(fl2 - np.asarray(kam.GetPosition(), float), richtung))
+                     if fl2 is not None else -1.0)
+            check("der Blickpunkt (Drehmitte) liegt in der Tiefe der Fläche",
+                  fl2 is not None and abs(float(kam.GetDistance()) - tiefe) < 1e-2 * tiefe,
+                  f"{kam.GetDistance():.4f} / {tiefe:.4f} m")
+        w.blickrichtung("iso"); app.processEvents()
 
         w.auswahlart_setzen("Linie")
         check("die Glasleiste kommt ohne Auswahlfeld aus", getattr(w, "cb_auswahlart_glas", None) is None
