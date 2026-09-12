@@ -1954,6 +1954,7 @@ def main():
         w.error = lambda msg: check("Spannungen: unerwarteter Fehler (Dialog)", False, str(msg)[:90])
         from statik3d import spannungen as spn
         from statik3d.model import Model as _Mdl
+        from statik3d.gui import viewport as vpx
 
         def baumnamen(baum):
             namen = []
@@ -1978,9 +1979,9 @@ def main():
               w.cb_result.currentText()[:40])
         lf0 = list(w.model.load_cases)[0]
         w._baum_geklickt("ergebnis", f"case:{lf0}"); app.processEvents()
-        check("Ergebnisliste: Spannungen Volumen (12), Flächen (6), Kontaktspannungen (4); keine Stäbe",
+        check("Ergebnisliste: Spannungen Volumen (12), Flächen (6), Kontaktspannungen (5); keine Stäbe",
               len(erg.get("Spannungen Volumen", [])) == 12 and len(erg.get("Spannungen Flächen", [])) == 6
-              and len(erg.get("Kontaktspannungen", [])) == 4 and "Spannungen Stäbe" not in erg,
+              and len(erg.get("Kontaktspannungen", [])) == 5 and "Spannungen Stäbe" not in erg,
               str({k: len(v) for k, v in erg.items() if "pannung" in k}))
         namen = baumnamen(w.baum)
         check("… und sie stehen im Modellbaum", "Spannungen Volumen" in namen and "Kontaktspannungen" in namen
@@ -2049,6 +2050,45 @@ def main():
         pw = np.asarray(akt.mapper.dataset.point_data[spn.beschriftung("kontakt", "p")], float)
         check("Kontaktdruck: nur die Kontaktknoten haben Werte, Größtwert > 0",
               np.isnan(pw).sum() > 0 and np.nanmax(pw) > 0, f"{np.isfinite(pw).sum()} Knoten mit Druck")
+        check("Knoten ohne Wert sind neutral grau, die Skala schreibt Zahlen aus",
+              tuple(round(c, 2) for c in list(akt.mapper.lookup_table.nan_color)[:3])
+              == tuple(round(c, 2) for c in __import__("pyvista").Color(vpx.FARBE_OHNE_WERT).float_rgb)
+              and next(iter(w.plotter.scalar_bars.values())).GetLabelFormat()
+              == spn.skalenformat(*akt.mapper.scalar_range),
+              next(iter(w.plotter.scalar_bars.values())).GetLabelFormat())
+        # Kontaktmarken (Kugeln je Zustand) nur mit Schalter (12.09.2026)
+        check("Kontaktmarken bleiben aus, solange der Schalter aus ist",
+              not any(a.startswith("contact_") for a in w.plotter.renderer.actors)
+              and not w.act_kontaktmarken.isChecked())
+        w.act_kontaktmarken.setChecked(True); app.processEvents()
+        check("Kontaktmarken mit Schalter, die Kopfzeile erklärt die Farben",
+              any(a.startswith("contact_") for a in w.plotter.renderer.actors)
+              and "Kontaktmarken: grün haftet" in " ".join(w._kopfzeile_zeilen))
+        w.act_kontaktmarken.setChecked(False)
+        w.cb_field.setCurrentText("Vergleichsspannung"); app.processEvents()
+        check("… und nach dem Umschalten der Färbung sind sie weg",
+              not any(a.startswith("contact_") for a in w.plotter.renderer.actors))
+        w.cb_field.setCurrentText(spn.feldname("kontakt", "zustand")); app.processEvents()
+        akt = w.plotter.renderer.actors.get("result_netz")
+        lut = akt.mapper.lookup_table
+        ann = [lut.GetAnnotation(i) for i in range(lut.GetNumberOfAnnotatedValues())]
+        check("Kontakt Zustand: Klassenfärbung mit vier festen Farben und Beschriftung je Klasse",
+              lut.n_values == 4 and np.allclose(akt.mapper.scalar_range, (-0.5, 3.5))
+              and len(ann) == 4 and "haftet" in ann, f"{lut.n_values} {ann}")
+        # Skala und Kennwerte nur fuer sichtbare Teile: die Platte (Schalen) ausblenden
+        w.cb_field.setCurrentText("Vergleichsspannung"); app.processEvents()
+        alle = np.asarray(w.plotter.renderer.actors["result_netz"].mapper.scalar_range, float)
+        schalen = {i for i, e in enumerate(w.model.elements) if e.typ in vpx.TYPEN_FLAECHEN}
+        w.versteckt["elemente"] = set(schalen); w.redraw(); app.processEvents()
+        sicht = w._sichtbare_knoten()
+        soll_max = float(np.nanmax(spn.je_knoten(w.model, w.current_result(), "volumen", "sv")[sicht]))
+        rng = np.asarray(w.plotter.renderer.actors["result_netz"].mapper.scalar_range, float)
+        check("ausgeblendete Platte: die Skala folgt nur den sichtbaren Knoten, Kopfzeile sagt es",
+              np.isclose(rng[1], soll_max) and rng[1] <= alle[1] + 1e-9
+              and "Skala: nur sichtbare Teile" in " ".join(w._kopfzeile_zeilen)
+              and w._kennwerte_zeilen and w._kennwerte_zeilen[0] == "nur sichtbare Teile",
+              f"{rng} statt {alle}")
+        w.versteckt["elemente"] = set(); w.redraw(); app.processEvents()
         # Umhuellende: keine Komponenten - keine Faerbung, aber kein Fehler
         env = next((k for k, _z, key in erg.get("Umhüllende", []) for k in [key]), None) if erg.get("Umhüllende") else None
         if env:

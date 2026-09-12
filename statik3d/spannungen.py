@@ -31,10 +31,44 @@ FLAECHEN = {"sx": ("σ_x", "N/mm²"), "sy": ("σ_y", "N/mm²"), "txy": ("τ_xy",
 STAEBE = {"sx": ("σ_x Rand (|σ_N| + σ_My + σ_Mz)", "N/mm²"), "sn": ("σ_N = N/A", "N/mm²"),
           "smy": ("σ_My = |M_y| z_max/I_y", "N/mm²"), "smz": ("σ_Mz = |M_z| y_max/I_z", "N/mm²")}
 KONTAKT = {"p": ("Kontaktdruck p", "N/mm²"), "tau": ("Reibspannung τ", "N/mm²"),
-           "spalt": ("Spalt", "mm"), "fn": ("Kontaktkraft F_n", "kN")}
+           "spalt": ("Spalt", "mm"), "fn": ("Kontaktkraft F_n", "kN"),
+           "zustand": ("Zustand", "-")}
+#: Kontaktzustand als Zahl (Faerbung in Klassen, 12.09.2026: "ich sehe nicht,
+#: dass die Kontakte da wirken, wo sie sollen")
+KONTAKT_ZUSTAND = {"offen": 0, "Kontakt": 1, "Haften": 1, "Verbund": 1, "ohne Trennung": 1,
+                   "Gleiten": 2, "Fliessen": 3}
+ZUSTAND_TEXT = {0: "offen", 1: "haftet", 2: "gleitet", 3: "fließt"}
+ZUSTAND_FARBEN = ["#9e9e9e", "#2e7d32", "#e65100", "#b00020"]
 GROESSEN = {"volumen": VOLUMEN, "flaechen": FLAECHEN, "staebe": STAEBE, "kontakt": KONTAKT}
 SEITEN = ("max", "oben", "unten")
 _KOMPONENTEN = {"sx": 0, "sy": 1, "sz": 2, "txy": 3, "tyz": 4, "tzx": 5}
+
+
+def kategorien(art: str, groesse: str):
+    """{Wert: Text} fuer eine Groesse in Klassen (Kontaktzustand), sonst None."""
+    if art == "kontakt" and groesse == "zustand":
+        return dict(ZUSTAND_TEXT)
+    return None
+
+
+def skalenformat(lo: float, hi: float) -> str:
+    """Zahlenformat der Farbskala: ausgeschrieben statt „2.39e+03“ - die
+    Nachkommastellen nach der Spanne (12.09.2026)."""
+    try:
+        spanne = max(abs(float(lo)), abs(float(hi)))
+    except (TypeError, ValueError):
+        return "%.3g"
+    if not np.isfinite(spanne):
+        return "%.3g"
+    if spanne >= 100:
+        return "%.0f"
+    if spanne >= 10:
+        return "%.1f"
+    if spanne >= 1:
+        return "%.2f"
+    if spanne >= 0.01:
+        return "%.3f"
+    return "%.2e"
 
 
 def schluessel(art: str, groesse: str) -> str:
@@ -293,6 +327,9 @@ def kontakt_je_knoten(model, res, groesse: str) -> np.ndarray:
     if groesse == "fn":
         out[knoten] = Fn * 1e-3
         return out
+    if groesse == "zustand":
+        out[knoten] = [float(KONTAKT_ZUSTAND.get(str(c.get("status", "")), 1)) for c in eintraege]
+        return out
     A = kontaktflaechen(model, knoten)[knoten]
     with np.errstate(invalid="ignore", divide="ignore"):
         if groesse == "p":
@@ -349,13 +386,22 @@ def _text(x: float) -> str:
     return f"{x:.4g}"
 
 
-def grenzen(skala: Werteskala, werte) -> dict:
+def grenzen(skala: Werteskala, werte, maske=None) -> dict:
     """Die Farbskala fuer diese Werte: ``clim``, ``n_colors``, ``n_labels``,
     ``above_color``/``above_label`` und ``below_color``/``below_label`` fuer
     Werte ausserhalb, ``werte`` (bei nur_ueber: nur die Ueberschreitungen als
-    Betrag, sonst NaN), ``anzahl_ueber``/``anzahl_unter`` und ``wmin``/``wmax``."""
+    Betrag, sonst NaN), ``anzahl_ueber``/``anzahl_unter`` und ``wmin``/``wmax``.
+
+    ``maske`` (bool je Wert) beschraenkt Grenzen und Zaehlung auf die
+    sichtbaren Knoten - so bewertet man ein einzeln gezeigtes Bauteil an
+    seiner eigenen Skala (12.09.2026); ``werte`` bleibt vollstaendig."""
     w = np.asarray(werte, float)
-    g = w[np.isfinite(w)]
+    if maske is not None:
+        mk = np.asarray(maske, bool)
+        g = w[mk] if mk.shape == w.shape else w
+        g = g[np.isfinite(g)]
+    else:
+        g = w[np.isfinite(w)]
     out = {"clim": [0.0, 1.0], "n_colors": int(skala.stufen), "n_labels": int(skala.stufen) + 1,
            "above_color": None, "above_label": None, "below_color": None, "below_label": None,
            "werte": w, "anzahl_ueber": 0, "anzahl_unter": 0, "wmin": None, "wmax": None,

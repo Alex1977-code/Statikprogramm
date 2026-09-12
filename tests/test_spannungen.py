@@ -140,6 +140,26 @@ def test_volumen_und_kontakt():
     fn = sp.kontakt_je_knoten(m, res, "fn")
     check("Spalt in mm, Kontaktkraft in kN", np.isclose(np.nansum(fn), Fn / 1e3)
           and np.nanmax(np.abs(spalt)) < 1.0)
+    zustand = sp.kontakt_je_knoten(m, res, "zustand")
+    stati = {c["status"] for c in res.contact}
+    check("Kontaktzustand als Klasse: 0 offen, 1 haftet, 2 gleitet - je Status ein Wert",
+          np.isnan(zustand).sum() == m.nn - len(knoten)
+          and set(np.unique(zustand[knoten]).tolist()) == {float(sp.KONTAKT_ZUSTAND[s]) for s in stati}
+          and sp.kategorien("kontakt", "zustand") == sp.ZUSTAND_TEXT and sp.kategorien("volumen", "sv") is None,
+          str(sorted(stati)))
+    # Skala nur fuer sichtbare Knoten (Maske)
+    sv2 = sp.je_knoten(m, res, "volumen", "sv")
+    maske = np.zeros(m.nn, bool)
+    maske[knoten] = True
+    g_alle = sp.grenzen(sp.Werteskala(), sv2)
+    g_sicht = sp.grenzen(sp.Werteskala(), sv2, maske=maske)
+    check("Maske: Skalengrenzen nur aus den sichtbaren Knoten, Werte bleiben vollstaendig",
+          g_sicht["clim"][1] <= g_alle["clim"][1] and g_sicht["wmax"] == float(np.nanmax(sv2[knoten]))
+          and len(g_sicht["werte"]) == m.nn, f"{g_sicht['clim']} in {g_alle['clim']}")
+    check("Skalenformat: ausgeschriebene Zahlen nach Spanne",
+          [sp.skalenformat(0, 2390), sp.skalenformat(0, 45.2), sp.skalenformat(-2.5, 1.0),
+           sp.skalenformat(0, 0.05), sp.skalenformat(0, 1e-5)] == ["%.0f", "%.1f", "%.2f", "%.3f", "%.2e"]
+          and "2390" == "%.0f" % 2390.0)
     check("Schluessel und Beschriftung", sp.schluessel("volumen", "sv") == "spannung:volumen:sv"
           and sp.beschriftung("volumen", "sv") == "Volumen σ_v (von Mises) [N/mm²]"
           and sp.beschriftung("flaechen", "sx", "oben") == "Flächen σ_x oben [N/mm²]"

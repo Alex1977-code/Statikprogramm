@@ -52,6 +52,10 @@ KANTEN_VORN = kanten_vor_flaechen()
 CELL_MAP = {t: (a.vtk, a.knoten) for t, a in EL.ELEMENTE.items()}
 
 STATUS_COLOR = {"offen": "#9e9e9e", "Kontakt": "#1565c0", "Haften": "#2e7d32", "Gleiten": "#e65100"}
+#: Knoten und Elemente ohne Wert in der Faerbung: neutrales Grau, das in
+#: keiner Farbtafel vorkommt (bis 12.09.2026 Stahlblau, das wie ein kleiner
+#: Wert aussah)
+FARBE_OHNE_WERT = "#d0d4d8"
 
 #: Farben der Modellsymbole
 FARBE_KNOTEN = "#2f4f6f"
@@ -2588,7 +2592,7 @@ SG_EINHEIT = {"N": ("kN", 1e3), "Vy": ("kN", 1e3), "Vz": ("kN", 1e3),
               "Mt": ("kNm", 1e3), "My": ("kNm", 1e3), "Mz": ("kNm", 1e3)}
 
 
-def schnittgroessen_grenzen(model: Model, res, groessen=SCHNITTGROESSEN) -> dict:
+def schnittgroessen_grenzen(model: Model, res, groessen=SCHNITTGROESSEN, elemente=None) -> dict:
     """{Groesse: (kleinster Wert, Element, groesster Wert, Element)}.
 
     Gesucht wird ueber **alle Nachweisstellen**, nicht nur die Stabenden: das
@@ -2600,6 +2604,9 @@ def schnittgroessen_grenzen(model: Model, res, groessen=SCHNITTGROESSEN) -> dict
     quelle = st if st else getattr(res, "beam", None)
     if not quelle:
         return out
+    if elemente is not None:
+        drin = set(int(i) for i in elemente)
+        quelle = {i: d for i, d in quelle.items() if int(i) in drin}
     for q in groessen:
         klein = gross = None
         for i, d in quelle.items():
@@ -2633,7 +2640,7 @@ def _stabname(model: Model, elem: int, breite: int = 12) -> str:
 
 
 def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
-              ueberschrift: str = "", einheiten=None) -> list:
+              ueberschrift: str = "", einheiten=None, knoten=None, elemente=None) -> list:
     """Die Kennzahlen des gezeigten Ergebnisses als Textzeilen.
 
     Das sind die Zahlen, nach denen zuerst gefragt wird: groesste Ausnutzung,
@@ -2651,6 +2658,20 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
     zeilen = []
     if ueberschrift:
         zeilen.append(str(ueberschrift))
+    # nur die sichtbaren Knoten und Elemente (12.09.2026): ein einzeln
+    # gezeigtes Bauteil zeigt seine eigenen Kennwerte
+    sicht = None
+    if knoten is not None:
+        sicht = np.zeros(int(model.nn), bool)
+        kn = np.asarray(list(knoten), int)
+        sicht[kn[(kn >= 0) & (kn < model.nn)]] = True
+
+    def nur_sicht(a):
+        if sicht is None or a is None or len(a) != len(sicht):
+            return a
+        b = np.array(a, float, copy=True)
+        b[~sicht] = np.nan
+        return b
     def zeile(name, lo, ort_lo, hi, ort_hi, einheit):
         return (f"{name:<6s}{lo:>10s} {ort_lo:<11s}{hi:>10s} {ort_hi:<11s}"
                 f"[{einheit}]")
@@ -2660,15 +2681,16 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
 
     u = displacement_of(res)
     if u is not None and len(u):
+        u = nur_sicht(np.asarray(u, float)) if sicht is not None else u
         mag = np.linalg.norm(u[:, :3], axis=1)
         k = int(np.nanargmax(mag)) if np.isfinite(mag).any() else 0
         zeilen.append(zeile("u", "", "", z(mag[k], "verformung"),
                             f"Knoten {k}", E.einheit("verformung")))
         for j, nm in enumerate(("ux", "uy", "uz")):
-            zeilen.append(zeile(nm, z(u[:, j].min(), "verformung"), "",
-                                z(u[:, j].max(), "verformung"), "", E.einheit("verformung")))
+            zeilen.append(zeile(nm, z(np.nanmin(u[:, j]), "verformung"), "",
+                                z(np.nanmax(u[:, j]), "verformung"), "", E.einheit("verformung")))
     reihe = (groesse,) if groesse in SCHNITTGROESSEN else SCHNITTGROESSEN
-    grenzen = schnittgroessen_grenzen(model, res, reihe)
+    grenzen = schnittgroessen_grenzen(model, res, reihe, elemente=elemente)
     for q in reihe:
         if q not in grenzen:
             continue
@@ -2677,10 +2699,10 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         zeilen.append(zeile(q, z(lo, art), _stabname(model, e_lo, 10),
                             z(hi, art), _stabname(model, e_hi, 10), E.einheit(art)))
     # Verdrehungen - nur wo es Staebe oder Schalen gibt, sonst sind sie null
-    if u is not None and len(u) and u.shape[1] >= 6 and np.abs(u[:, 3:6]).max() > 0:
+    if u is not None and len(u) and u.shape[1] >= 6 and np.nanmax(np.abs(u[:, 3:6])) > 0:
         for j, nm in enumerate(("phix", "phiy", "phiz")):
-            zeilen.append(zeile(nm, f"{u[:, 3 + j].min() * 1000:.3f}", "",
-                                f"{u[:, 3 + j].max() * 1000:.3f}", "", "mrad"))
+            zeilen.append(zeile(nm, f"{np.nanmin(u[:, 3 + j]) * 1000:.3f}", "",
+                                f"{np.nanmax(u[:, 3 + j]) * 1000:.3f}", "", "mrad"))
     # Auflagerkraefte: kleinste und groesste je Richtung mit Knoten
     R = getattr(res, "reactions", None)
     reakt = (("Rx", "kraft"), ("Ry", "kraft"), ("Rz", "kraft"),
@@ -2704,6 +2726,8 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
     vm = getattr(res, "node_vm_max", None)
     if vm is None:
         vm = getattr(res, "node_vm", None)
+    if vm is not None and sicht is not None:
+        vm = nur_sicht(vm)
     if vm is not None and len(vm) and np.isfinite(vm).any():
         k = int(np.nanargmax(vm))
         zeilen.append(zeile("sig_v", "", "", z(float(vm[k]), "spannung"),
