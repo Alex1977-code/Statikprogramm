@@ -33,6 +33,8 @@ import io
 import math
 import operator
 import re
+
+import numpy as np
 from dataclasses import dataclass, field
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -203,11 +205,33 @@ def _schluessel_wert(x):
 
 
 def kennwerte(zeilen: list, spalten: list) -> tuple:
-    """Max- und Min-Zeile einer Ergebnistabelle (nur ueber Zahlenspalten)."""
+    """Max- und Min-Zeile einer Ergebnistabelle (nur ueber Zahlenspalten).
+
+    Spaltenweise mit numpy: die Zellenschleife (_zahl je Zelle) kostete am
+    Drehlager 44 s je Modellstand fuer 1,8 Mio. Elementzeilen (12.09.2026);
+    Spalten, die sich nicht in einem Zug wandeln lassen, gehen den alten Weg.
+    """
     if not zeilen:
         return [], []
     hoch, tief = ["Max"], ["Min"]
-    for k in range(1, len(spalten)):
+    n_sp = len(spalten)
+    breit = all(len(r) >= n_sp for r in zeilen) if len(zeilen) <= 1000 else (len(zeilen[0]) >= n_sp)
+    for k in range(1, n_sp):
+        werte = None
+        if breit:
+            try:
+                col = np.array([r[k] for r in zeilen], dtype=object)
+                if col.dtype == object and all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                                               for x in col[:200]):
+                    w = col.astype(float)
+                    w = w[np.isfinite(w)]
+                    werte = w if len(w) else None
+                    if werte is not None:
+                        hoch.append(float(werte.max()))
+                        tief.append(float(werte.min()))
+                        continue
+            except (ValueError, TypeError, IndexError):
+                werte = None
         werte = [z for z in (_zahl(r[k]) for r in zeilen if k < len(r)) if z is not None]
         hoch.append(max(werte) if werte else "")
         tief.append(min(werte) if werte else "")
@@ -677,13 +701,50 @@ class Datentabelle(QtWidgets.QWidget):
         self.filter.rowsRemoved.connect(lambda *_a: self._nachfuehren())
 
     # -- Daten -----------------------------------------------------------
+    #: Ab so vielen Zeilen wird eine Tabelle, die gerade nicht zu sehen ist,
+    #: erst beim Anzeigen gefuellt: am Drehlager kostete das Fuellen der
+    #: Elementtabelle (1,8 Mio. Zeilen) 61 s bei jedem Modellstand - fuer ein
+    #: Register, das dabei hinten lag (12.09.2026)
+    VERZOEGERT_AB = 50000
+
     def setzen(self, zeilen: list, mit_kennwerten: bool = None):
-        """Neue Zeilen. Text in Zahlenspalten wird zu Zahlen."""
+        """Neue Zeilen. Text in Zahlenspalten wird zu Zahlen. Eine grosse
+        Tabelle, die nicht zu sehen ist, merkt sich die Zeilen und fuellt sich
+        beim Anzeigen (showEvent)."""
         if mit_kennwerten is not None:
             self.kennwerte_zeigen = bool(mit_kennwerten)
+        if len(zeilen) > self.VERZOEGERT_AB and not self.isVisible():
+            self._ausstehend = zeilen
+            self.lbl_zeilen.setText(f"{len(zeilen)} Zeilen – wird beim Anzeigen gefüllt")
+            return
+        self._ausstehend = None
         self.modell.setzen(zahlen_wandeln(zeilen, self.modell.spalten))
         self._spaltenbreiten()
         self._nachfuehren()
+
+    def ausstehend(self) -> bool:
+        """Wartet die Tabelle noch auf ihre Zeilen?"""
+        return getattr(self, "_ausstehend", None) is not None
+
+    def nachholen(self) -> bool:
+        """Ausstehende Zeilen jetzt setzen (beim Anzeigen oder vor einem Export)."""
+        z = getattr(self, "_ausstehend", None)
+        if z is None:
+            return False
+        self._ausstehend = None
+        self.modell.setzen(zahlen_wandeln(z, self.modell.spalten))
+        self._spaltenbreiten()
+        self._nachfuehren()
+        marken = getattr(self, "_ausstehende_marken", None)
+        if marken:
+            self._ausstehende_marken = None
+            self.markieren(marken)
+        return True
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        if getattr(self, "_ausstehend", None) is not None:
+            QtCore.QTimer.singleShot(0, self.nachholen)
 
     #: Ab so vielen Zeilen kommen die Spaltenbreiten aus einer Stichprobe -
     #: Qt misst sonst jede Zelle, bei 490 000 Zeilen dauert das Minuten
@@ -752,6 +813,11 @@ class Datentabelle(QtWidgets.QWidget):
         Die erste getroffene Zeile wird ins Bild geholt - so findet man die
         angeklickten Elemente in einer langen Tabelle wieder.
         """
+        if getattr(self, "_ausstehend", None) is not None:
+            # Tabelle noch nicht gefuellt (verzoegert): Marken merken, sie
+            # werden mit dem Nachholen gesetzt
+            self._ausstehende_marken = list(werte or [])
+            return 0
         sm = self.view.selectionModel()
         sm.clearSelection()
         zeilen: list = []

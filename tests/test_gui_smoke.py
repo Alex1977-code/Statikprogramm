@@ -1831,6 +1831,53 @@ def main():
         traceback.print_exc()
         check("Geometriekette", False, str(ex)[:70])
 
+    # ---- Traege Grafik (12.09.2026): Knotenpruefung einmal je Netz, grosse
+    # Tabellen erst beim Anzeigen, unverformtes System als Umriss ohne Netz
+    try:
+        from statik3d.gui import viewport as vpt
+        from statik3d.gui import tabellen as tabt
+        w.load_example("friction"); app.processEvents()
+        mv = w.model
+        f1 = vpt.unbelegte_knoten(mv)
+        f2 = vpt.unbelegte_knoten(mv)
+        getragen = set()
+        for e in mv.elements:
+            getragen.update(int(n) for n in e.nodes)
+        check("unbelegte Knoten: einmal je Netz (Zwischenspeicher), gleich der Schleife",
+              f1 is f2 and list(f1) == [n for n in range(mv.nn) if n not in getragen])
+        mv.add_node(9.0, 9.0, 9.0)
+        f3 = vpt.unbelegte_knoten(mv)
+        check("… ein neuer Knoten ohne Element erneuert den Speicher", f3 is not f1 and int(f3[-1]) == mv.nn - 1)
+        an = solver.solve_all(mv, combinations=False); w._solve_done("all", an); app.processEvents()
+        w._baum_geklickt("ergebnis", f"case:{list(mv.load_cases)[0]}"); app.processEvents()
+        w.cb_undeformed.setChecked(True); w.act_edges.setChecked(True); w.redraw(); app.processEvents()
+        n_netz = w.plotter.renderer.actors["undeformed_netz"].mapper.dataset.n_cells
+        w.act_edges.setChecked(False); w.redraw(); app.processEvents()
+        u = w.plotter.renderer.actors.get("undeformed_netz")
+        n_umriss = u.mapper.dataset.n_cells if u is not None else -1
+        check("Netz aus: das unverformte System ist nur noch ein Umriss (weniger Zellen, Linien)",
+              0 < n_umriss < n_netz and u.mapper.dataset.n_lines == n_umriss, f"{n_umriss} statt {n_netz}")
+        w.act_edges.setChecked(True); w.redraw(); app.processEvents()
+        # grosse Tabelle: verzoegert, solange sie nicht zu sehen ist
+        alt_grenze = tabt.Datentabelle.VERZOEGERT_AB
+        tabt.Datentabelle.VERZOEGERT_AB = 10
+        try:
+            w.tabelle_zeigen("Knoten"); app.processEvents()
+            w.tbl_elem.setzen([[i, "hex8", 0, "S355", "-", 0.0] for i in range(40)])
+            check("Tabelle hinten: 40 Zeilen (> Grenze) bleiben ausstehend, die Zeilenzahl sagt es",
+                  w.tbl_elem.ausstehend() and "beim Anzeigen" in w.tbl_elem.lbl_zeilen.text()
+                  and w.tbl_elem.modell.rowCount() != 40, w.tbl_elem.lbl_zeilen.text())
+            w.tabelle_zeigen("Stäbe"); app.processEvents(); app.processEvents()
+            check("… beim Anzeigen wird sie gefuellt", not w.tbl_elem.ausstehend()
+                  and w.tbl_elem.modell.rowCount() == 40, str(w.tbl_elem.modell.rowCount()))
+        finally:
+            tabt.Datentabelle.VERZOEGERT_AB = alt_grenze
+        w.refresh_all(); app.processEvents()
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        check("Traege Grafik", False, str(ex)[:80])
+
     # ---- Ergebnisse neben der Modelldatei (12.09.2026) -----------------------
     try:
         _alt_error = w.error

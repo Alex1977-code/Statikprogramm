@@ -89,6 +89,30 @@ def test_zahlen_und_kennwerte():
     ja("Leere Tabelle hat keine Kennwerte", kennwerte([], sp) == ([], []))
 
 
+def test_kennwerte_vektorisiert():
+    """Kennwerte spaltenweise mit numpy = die Zellenschleife; grosse Tabelle in
+    Bruchteilen der alten Zeit."""
+    import time
+    import numpy as np
+    sp = [Spalte("Element", "", "ganz"), Spalte("N", "kN", "zahl", 2), Spalte("Vz", "kN", "zahl", 2),
+          Spalte("Status")]
+    rng = np.random.default_rng(3)
+    n = 200000
+    z = [[i, float(a), float(b), "ok"] for i, (a, b) in enumerate(rng.normal(size=(n, 2)))]
+    z[5][1] = "-"                           # eine Textzelle in der Zahlenspalte
+    z[7][2] = float("nan")
+    t0 = time.time()
+    hoch, tief = kennwerte(z, sp)
+    dt = time.time() - t0
+    alt_h = ["Max"] + [max(v for v in (float(r[k]) for r in z if not isinstance(r[k], str)) if v == v)
+                       for k in (1, 2)] + [""]
+    alt_t = ["Min"] + [min(v for v in (float(r[k]) for r in z if not isinstance(r[k], str)) if v == v)
+                       for k in (1, 2)] + [""]
+    ja("Kennwerte vektorisiert = Schleife (Text und NaN uebersprungen)",
+       hoch == alt_h and tief == alt_t, f"{hoch[1]:.4f} / {alt_h[1]:.4f}")
+    ja("… 200 000 Zeilen unter 2 s", dt < 2.0, f"{dt:.2f} s")
+
+
 def test_export():
     kopf = ["Element", "N [kN]"]
     zeilen = [[1, 3.5], [2, -1.25]]
@@ -127,6 +151,13 @@ def test_markieren_bereiche():
     n = 200000
     tab = Datentabelle([Spalte("Knoten", "", "ganz"), Spalte("x", "m", "zahl", 4)], "Knoten")
     tab.setzen([[i, float(i)] for i in range(n)])
+    # ungezeigte grosse Tabelle: die Zeilen warten, bis sie angezeigt wird (12.09.2026)
+    ja("200 000 Zeilen einer ungezeigten Tabelle warten auf das Anzeigen",
+       tab.ausstehend() and "beim Anzeigen" in tab.lbl_zeilen.text(), tab.lbl_zeilen.text())
+    k0 = tab.markieren([1, 2])
+    ja("… Marken werden gemerkt und beim Nachholen gesetzt",
+       k0 == 0 and tab.nachholen() and not tab.ausstehend()
+       and len(tab.view.selectionModel().selectedRows()) == 2)
     t0 = time.time()
     k = tab.markieren(range(n))
     dauer = time.time() - t0
@@ -145,7 +176,8 @@ def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Tabellen (Filter, Zellformeln, Kennwerte, Export)")
     print("=" * 92)
-    for t in (test_filter, test_formel, test_zahlen_und_kennwerte, test_export, test_markieren_bereiche):
+    for t in (test_filter, test_formel, test_zahlen_und_kennwerte, test_kennwerte_vektorisiert,
+              test_export, test_markieren_bereiche):
         print(f"\n--- {t.__name__} ---")
         t()
     n_ok = sum(1 for _n, ok in RESULTS if ok)

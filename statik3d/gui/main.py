@@ -13566,6 +13566,8 @@ class MainWindow(QtWidgets.QMainWindow):
         t = self.aktive_tabelle()
         if t is None:
             return self.error("Unten liegt gerade keine Tabelle vorn")
+        if hasattr(t, "nachholen"):
+            t.nachholen()
         if art == "clip":
             t.in_zwischenablage()
             return self.info(f"{t.sichtbar()} Zeilen in der Zwischenablage")
@@ -15279,6 +15281,22 @@ class MainWindow(QtWidgets.QMainWindow):
         target = 0.08 * self.model.characteristic_size() * self.sl_scale.value() / 30.0
         return target / umax, umax
 
+    def _umriss(self, netz):
+        """Kanten der Koerper (Knicke ab 35 Grad und freie Raender) des
+        gezeichneten Gitters - einmal je Gitterstand."""
+        key = (id(netz), int(netz.n_cells), int(netz.n_points))
+        if getattr(self, "_umriss_stand", None) == key:
+            return self._umriss_zwischen
+        try:
+            umriss = netz.extract_feature_edges(feature_angle=35, boundary_edges=True,
+                                                non_manifold_edges=False, manifold_edges=False)
+        except Exception as ex:             # noqa: BLE001
+            self.log.appendPlainText(f"Umriss: {ex}")
+            umriss = None
+        self._umriss_stand = key
+        self._umriss_zwischen = umriss
+        return umriss
+
     def _gitter(self, typen, ausser):
         """Das gefilterte Elementnetz und je Punkt seine Knotennummer.
 
@@ -15531,9 +15549,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 warped = netz.copy()
                 warped.points = netz.points + s * u[kn, :3]
                 if self.cb_undeformed.isChecked():
-                    self.plotter.add_mesh(netz, style="wireframe", color="#c8c8c8",
-                                          opacity=0.35, line_width=1,
-                                          name=f"undeformed_{nm}")
+                    # Netz aus: das unverformte System nur als Umriss (Kanten
+                    # der Koerper), nicht als Drahtnetz - "wenn ich das Netz
+                    # ausblende, bleibt es beim unverformten System sichtbar"
+                    # (12.09.2026). Der Umriss entsteht einmal je Gitter.
+                    if self.act_edges.isChecked() or nm != "netz":
+                        self.plotter.add_mesh(netz, style="wireframe", color="#c8c8c8",
+                                              opacity=0.35, line_width=1,
+                                              name=f"undeformed_{nm}")
+                    else:
+                        umriss = self._umriss(netz)
+                        if umriss is not None and umriss.n_cells:
+                            self.plotter.add_mesh(umriss, color="#b0b0b0", opacity=0.6,
+                                                  line_width=1, name=f"undeformed_{nm}")
                 if point_scalars is not None:
                     warped.point_data[name] = np.asarray(point_scalars)[kn]
                     farbtafel = farben.pop("cmap", "turbo") if "cmap" in farben else "turbo"
