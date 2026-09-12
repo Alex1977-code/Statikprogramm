@@ -331,12 +331,174 @@ def test_fortschritt():
     _assert_since(n0)
 
 
+def test_gliederung_und_rahmen():
+    """Umfang kurz/mittel/lang, Rahmen (Kopf-/Fusszeile, Raender, Logo) und die
+    Gliederung: Text, Ergebnistabelle und Dateien (SVG, CSV, PNG, MD) an ihrem
+    Platz im Bericht (12.09.2026)."""
+    import base64
+    from statik3d.model import Berichtseintrag, Berichtsrahmen
+    n0 = len(RESULTS)
+    m = build_beam_model()
+    m.meta.update({"projekt": "Halle Nord", "bauteil": "Rahmen", "position": "Pos. 7",
+                   "bearbeiter": "AM"})
+    an = solver.solve_all(m, design=True, fatigue=True)
+    lang = Report(m, an, options={"umfang": "lang"})
+    kurz = Report(m, an, options={"umfang": "kurz"})
+    mittel = Report(m, an, options={"umfang": "mittel"})
+    nl, nk, nm = len(lang.blocks()), len(kurz.blocks()), len(mittel.blocks())
+    check("Umfang: kurz < mittel < lang (Bloecke)", nk < nm < nl, f"{nk} / {nm} / {nl}")
+    hk = kurz.html()
+    check("Kurzform: keine Ergebnisse je Lastfall, keine Nachweisdetails, Kurzform genannt",
+          "Ergebnisse je Lastfall" not in hk and "Kurzform: die Nachweise stehen" in hk
+          and "Umfang: Kurzform" in hk and kurz.design is not None,
+          f"{'Ergebnisse je Lastfall' in hk} {'Kurzform: die Nachweise stehen' in hk} {kurz.design is not None}")
+    check("ohne Angabe: Langform (wie bisher); mit Berichtsrahmen gilt dessen Umfang (Vorgabe kurz)",
+          Report(m, an).opt("umfang") == "lang" and m.berichtsrahmen().umfang == "kurz"
+          and Report(m, an).opt("umfang") == "kurz")
+    hl = lang.html()
+    check("Langform: Ergebnisse je Lastfall und Nachweisdetails",
+          "Ergebnisse je Lastfall" in hl and "Kurzform: die Nachweise stehen" not in hl)
+    # Rahmen
+    r = m.berichtsrahmen()
+    r.kopf = "{projekt} · {bauteil} · {position}"
+    r.fuss = "{bearbeiter} · {datum}"
+    r.rand_links_mm = 25.0
+    r.schrift_pt = 9.5
+    r.logo = base64.b64encode(_PNG_1PX).decode("ascii")
+    r.inhaltsverzeichnis = False
+    h = Report(m, an, options={"umfang": "kurz", "date": "12.09.2026"}).html()
+    check("Rahmen: Kopfzeile mit Projekt, Bauteil, Position; Fusszeile mit Bearbeiter und Datum",
+          "Halle Nord · Rahmen · Pos. 7" in h and "AM · 12.09.2026" in h and 'class="kopfzeile"' in h
+          and 'class="fusszeile"' in h)
+    check("Rahmen: Raender und Schrift in @page/body, Logo auf dem Titelblatt, kein Inhaltsverzeichnis",
+          "margin: 18mm 16mm 20mm 25mm" in h and "font-size: 9.5pt" in h and 'class="logo"' in h
+          and '<nav class="toc">' not in h)
+    r.kopf = "{projekt} · {auftraggeber}"
+    m.meta["auftraggeber"] = ""
+    h = Report(m, an, options={"umfang": "kurz"}).html()
+    check("leere Platzhalter fallen weg", ">Halle Nord</span>" in h, h[h.find('class="kopfzeile"'):][:90])
+    r.titelblatt = False
+    h = Report(m, an, options={"umfang": "kurz"}).html()
+    check("ohne Titelblatt steht der Titel als Ueberschrift", 'class="titlepage"' not in h
+          and "Statischer Bericht – " in h)
+    d = Model.from_dict(m.to_dict())
+    check("Rahmen wird mit dem Modell gespeichert", d.bericht_rahmen is not None
+          and d.bericht_rahmen.rand_links_mm == 25.0 and d.bericht_rahmen.titelblatt is False)
+    # Gliederung
+    lf = list(m.load_cases)[0]
+    m.bericht = [
+        Berichtseintrag(name="Vorbemerkung", art="text", nach="general",
+                        text="# Aufgabe\nDer Rahmen wird nachgerechnet.\n\n- Lasten nach Angabe\n- Stahl S355"),
+        Berichtseintrag(name="Stabkräfte", art="tabelle", tabelle="Stabkräfte", quelle=f"case:{lf}",
+                        nach="results"),
+        Berichtseintrag(name="Skizze", art="datei", datei="skizze.svg", typ="svg",
+                        daten=base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+                                               b'<rect width="10" height="10"/></svg>').decode("ascii")),
+        Berichtseintrag(name="Messwerte", art="datei", datei="mess.csv", typ="csv",
+                        daten=base64.b64encode("Stelle;Wert\nA;1,5\nB;2,5\n".encode("utf-8")).decode("ascii")),
+        Berichtseintrag(name="Foto", art="datei", datei="foto.png", typ="png",
+                        daten=base64.b64encode(_PNG_1PX).decode("ascii"), beschriftung="Baustelle"),
+        Berichtseintrag(name="Notiz", art="datei", datei="notiz.md", typ="md",
+                        daten=base64.b64encode("Erster Absatz.\n\nZweiter Absatz.".encode("utf-8")).decode("ascii")),
+        Berichtseintrag(name="Gutachten", art="datei", datei="gutachten.pdf", typ="pdf", daten=""),
+        Berichtseintrag(name="Auflager", art="tabelle", tabelle="Auflagerkräfte", quelle="env:GZT"),
+    ]
+    r.titelblatt = True
+    r.inhaltsverzeichnis = True
+    rep = Report(m, an, options={"umfang": "kurz"})
+    h = rep.html()
+    nav = h.find("</nav>")                       # das Inhaltsverzeichnis nennt alle Kapitel
+    i_sys = h.find('id="k2"', nav)               # Kapitel 2 = System
+    i_text = h.find("Der Rahmen wird nachgerechnet.", nav)
+    check("Text nach „Allgemeines“: vor dem Kapitel System, mit Ueberschrift und Aufzaehlung",
+          nav < i_text < i_sys and "<h4>Aufgabe</h4>" in h and "<li>Stahl S355</li>" in h,
+          f"{nav} < {i_text} < {i_sys}")
+    i_tab = h.find(f"Stabkräfte – Lastfall {lf}", nav)
+    i_design = h.find("Nachweise nach DIN EN 1993-1-1", nav)
+    check("Tabelle Stabkraefte nach „Ergebnisse“: vor den Nachweisen, mit Werten",
+          nav < i_tab < i_design and "N1 [kN]" in h, f"{i_tab} < {i_design}")
+    ende = h.find("Übernommene Ergebnisse", nav)
+    i_rect = h.find('<rect width="10"', ende)
+    i_csv = h.find(">2,5<", ende)
+    check("Dateien ohne Platz stehen am Ende: SVG als Figur, CSV als Tabelle, PNG als Bild, MD als Absaetze",
+          ende > 0 and i_rect > 0 and i_csv > 0
+          and h.find("Baustelle", ende) > 0 and h.find("Zweiter Absatz.", ende) > 0,
+          f"ende {ende}, rect {i_rect}, csv {i_csv}")
+    check("PDF wird nicht eingebettet, sondern genannt; Auflagerkraefte brauchen ein Ergebnis",
+          "gutachten.pdf: PDF-Dateien werden nicht eingebettet" in h
+          and "Auflagerkräfte gibt es zu Lastfall oder Kombination" in h)
+    md = rep.to_markdown()
+    check("Markdown kennt die Ueberschrift des Textes", "#### Aufgabe" in md)
+    # Ermuedungslast mit globaler Lastspielzahl (None): der Bericht nennt "global" statt zu reissen
+    from statik3d.model import FatigueLoad
+    m.fatigue_loads["Eglobal"] = FatigueLoad("Eglobal", folge=[lf, lf], wiederholungen=None)
+    m.fatigue_loads["Zglobal"] = FatigueLoad("Zglobal", case_max=lf, case_min="", cycles=None)
+    hg = Report(m, an, options={"umfang": "kurz"}).html()
+    check("Ermuedungslasten mit globaler Lastspielzahl stehen im Bericht als „(global)“",
+          "2e+06 (global)" in hg and hg.count("(global)") >= 2, str(hg.count("(global)")))
+    del m.fatigue_loads["Eglobal"], m.fatigue_loads["Zglobal"]
+    d = Model.from_dict(m.to_dict())
+    check("Eintraege ueberleben Speichern und Laden (Art, Text, Platz)",
+          len(d.bericht) == 8 and d.bericht[0].art == "text" and d.bericht[0].nach == "general"
+          and d.bericht[1].tabelle == "Stabkräfte" and d.bericht[4].typ == "png")
+    _assert_since(n0)
+
+
+def test_grosses_netz():
+    """Grosse Netze: Umrisse der Koerper statt Facetten, Lastbilder begrenzt.
+    Die Grenze wird fuer die Pruefung auf 1 gesetzt (der Wuerfel hat mehr
+    Elemente), gemessen wird die Zeit fuer die Systemdarstellung."""
+    import time
+    from statik3d.report import svg as sv2
+    n0 = len(RESULTS)
+    m = solid_example()
+    for i in range(3):
+        m.add_load_case(f"Q{i}", "Q")
+        m.active_case = f"Q{i}"
+        m.load_node(0, Fz=-1000.0)
+    alt = sv2.GROSS_AB
+    try:
+        t0 = time.time()
+        voll = sv2.draw_structure(m, "iso", 600, 400)
+        t_voll = time.time() - t0
+        sv2.GROSS_AB = 1
+        t0 = time.time()
+        umriss = sv2.draw_structure(m, "iso", 600, 400)
+        t_umriss = time.time() - t0
+        check("gross: Umriss statt Facetten - viel weniger Polygone, mindestens ein Umriss",
+              umriss.count("<polygon") < voll.count("<polygon") and umriss.count("<polygon") >= 1
+              and "fill-opacity" in umriss,
+              f"{umriss.count('<polygon')} statt {voll.count('<polygon')} Polygone, "
+              f"{t_umriss * 1e3:.0f} ms statt {t_voll * 1e3:.0f} ms")
+        check("gross: der Hinweis nennt die vereinfachte Darstellung",
+              "Umrisse der Volumenkörper" in sv2.figur_hinweis(m) and sv2.ist_gross(m))
+        rep = Report(m, options={"umfang": "kurz"})
+        h = rep.html()
+        check("Kurzform: Lastbilder fuer 3 Lastfaelle, kein weiteres; Hinweis in der Unterschrift",
+              h.count("Lasten des Lastfalls") == 3 and "Umrisse der Volumenkörper statt des Netzes" in h,
+              f"{h.count('Lasten des Lastfalls')} Lastbilder")
+        rep2 = Report(m, options={"umfang": "kurz", "max_case_figures": 1})
+        h2 = rep2.html()
+        check("max_case_figures 1: ein Bild und der Hinweis auf die uebrigen",
+              h2.count("Lasten des Lastfalls") == 1 and "Lastbilder für die ersten 1 Lastfälle" in h2)
+    finally:
+        sv2.GROSS_AB = alt
+    check("kleines Netz: wieder Facetten", not sv2.ist_gross(m) and sv2.figur_hinweis(m) == "")
+    _assert_since(n0)
+
+
+_PNG_1PX = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da"
+    "6364f8cfc0000002030101c0d3c4e70000000049454e44ae426082")
+
+
 def main():
     print("=" * 96)
     print("STATIK3D - Test statischer Bericht (HTML / Markdown / PDF / SVG)")
     print("=" * 96)
     tests = [test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
-             test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt]
+             test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt,
+             test_gliederung_und_rahmen, test_grosses_netz]
     for t in tests:
         try:
             t()

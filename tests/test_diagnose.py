@@ -40,10 +40,54 @@ def _zwei_teile(lager_b=False):
     return m, n
 
 
+def _teiltragwerke_langsam(model) -> list:
+    """Die Vereinigungs-Suche in Python (Stand bis 12.09.2026) als Vergleich."""
+    nn = model.nn
+    eltern = list(range(nn))
+
+    def finde(a):
+        while eltern[a] != a:
+            eltern[a] = eltern[eltern[a]]
+            a = eltern[a]
+        return a
+    belegt = [False] * nn
+    for e in model.elements:
+        kn = [int(k) for k in e.nodes if 0 <= int(k) < nn]
+        for k in kn:
+            belegt[k] = True
+        for k in kn[1:]:
+            ra, rb = finde(kn[0]), finde(k)
+            if ra != rb:
+                eltern[rb] = ra
+    for kp in getattr(model, "kopplungen", []) or []:
+        a, b = int(getattr(kp, "node_a", -1)), int(getattr(kp, "node_b", -1))
+        if 0 <= a < nn and 0 <= b < nn:
+            ra, rb = finde(a), finde(b)
+            if ra != rb:
+                eltern[rb] = ra
+    gruppen = {}
+    for k in range(nn):
+        if belegt[k]:
+            gruppen.setdefault(finde(k), []).append(k)
+    return sorted(gruppen.values(), key=lambda g: (-len(g), g[0]))
+
+
 def test_teiltragwerke():
     m, n = _zwei_teile()
     teile = dg.teiltragwerke(m)
     check("zwei Teiltragwerke, je zwei Knoten", len(teile) == 2 and sorted(len(g) for g in teile) == [2, 2])
+    # vektorisiert (csgraph) = Vereinigungs-Suche, auch mit Kopplung und an groesseren Netzen
+    from statik3d.examples_lib import build_example
+    check("Teiltragwerke vektorisiert = Vereinigungs-Suche (zwei Teile)",
+          dg.teiltragwerke(m) == _teiltragwerke_langsam(m))
+    m.kopplungen.append(Kopplung(n[1], n[3], [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [1e9, 1e9, 1e9]))
+    check("… mit Kopplung ein Teil, gleich", dg.teiltragwerke(m) == _teiltragwerke_langsam(m)
+          and len(dg.teiltragwerke(m)) == 1)
+    m.kopplungen.clear()
+    for name in ("hall", "friction", "contact"):
+        mx = build_example(name)
+        a, b = dg.teiltragwerke(mx), _teiltragwerke_langsam(mx)
+        check(f"… Beispiel {name}: gleiche Teile ({len(a)})", a == b, f"{len(a)} / {len(b)}")
     d = dg.diagnose(m)
     check("Teil B ohne Lager erkannt, nicht rechenbar", len(d["ohne_lager"]) == 1 and sorted(d["ohne_lager"][0]) == [n[2], n[3]]
           and not d["rechenbar"] and d["lose_knoten"] == 0)

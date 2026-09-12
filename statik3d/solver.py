@@ -300,25 +300,40 @@ class Results:
 
     @property
     def node_vm(self) -> np.ndarray:
-        """Gemittelte Vergleichsspannung (Volumen/Schalen) bzw. Randspannung (Staebe) je Knoten."""
+        """Gemittelte Vergleichsspannung (Volumen/Schalen) bzw. Randspannung (Staebe) je Knoten.
+
+        Vektorisiert (spannungen.knotenmittel, von Mises aus den Tensoren in
+        einem Zug): am Drehlager (1,8 Mio. Tetraeder) brauchte die Schleife
+        ueber solid_stress - je Element eigvalsh und von Mises in Python -
+        etwa 50 s je Ergebnis, der Bericht mit drei Ergebnissen 154 s allein
+        in der Uebersicht (12.09.2026); jetzt Sekunden.
+        """
         if "node_vm" not in self._cache:
+            from . import spannungen as spn
             m = self.model
-            acc = np.zeros(m.nn)
-            cnt = np.zeros(m.nn)
+            kn, w = [], []
             for i, d in self.beam_forces.items():
-                for n in m.elements[i].nodes:
-                    acc[n] += d["sig_max"]
-                    cnt[n] += 1
+                nodes = m.elements[i].nodes
+                kn.extend(int(n) for n in nodes)
+                w.extend([float(d["sig_max"])] * len(nodes))
             for i, d in self.shell_stress.items():
-                for n in m.elements[i].nodes:
-                    acc[n] += d["vM"]
-                    cnt[n] += 1
-            for i, d in self.solid_stress.items():
-                for n in m.elements[i].nodes:
-                    acc[n] += d["vM"]
-                    cnt[n] += 1
-            with np.errstate(invalid="ignore", divide="ignore"):
-                self._cache["node_vm"] = np.where(cnt > 0, acc / np.maximum(cnt, 1), np.nan)
+                nodes = m.elements[i].nodes
+                kn.extend(int(n) for n in nodes)
+                w.extend([float(d["vM"])] * len(nodes))
+            if self.solid_res:
+                ids = list(self.solid_res)
+                S = np.array([self.solid_res[i] for i in ids], float).reshape(-1, 6)
+                vm = spn.volumen_werte(S, "sv")
+                laengen = np.fromiter((len(m.elements[i].nodes) for i in ids), int, count=len(ids))
+                import itertools
+                kn_s = np.fromiter(itertools.chain.from_iterable(m.elements[i].nodes for i in ids), int,
+                                   count=int(laengen.sum()))
+                w_s = np.repeat(vm, laengen)
+                knoten = np.concatenate([np.asarray(kn, int), kn_s]) if kn else kn_s
+                werte = np.concatenate([np.asarray(w, float), w_s]) if w else w_s
+            else:
+                knoten, werte = np.asarray(kn, int), np.asarray(w, float)
+            self._cache["node_vm"] = spn.knotenmittel(m.nn, knoten, werte)
         return self._cache["node_vm"]
 
     def stations(self, n: int = None) -> dict:
@@ -1006,7 +1021,7 @@ def grundlasten(model: Model, factors: dict) -> list:
 
 def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  kind: str, workers=None, progress=None, start=None,
-                 einfrieren=None) -> Results:
+                 einfrieren=None, fenster=None) -> Results:
     t0 = time.time()
     aktiv = getattr(system, "aktiv", None)
     # Grundlasten (LoadCase.grundlast) wirken in jeder direkt geloesten
@@ -1040,7 +1055,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         if model.has_contact:
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
                 model, system, F, progress=progress, us=us, uebermass=ueber, start=start,
-                einfrieren=einfrieren)
+                einfrieren=einfrieren, fenster=fenster)
             res.kontaktzustand = cinfo.pop("contact_state", None)
             res.info.update(cinfo)
             return u_, R_, aktiv
@@ -1279,13 +1294,15 @@ def solve_cases(model: Model, cases: list = None, workers: int = None,
         start = None
         for k, name in enumerate(names):
             ref, einf = _einfrieren(name)
+            n_ = max(1, len(names))
             out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers,
-                                     start=start, einfrieren=einf)
+                                     progress=progress, start=start, einfrieren=einf,
+                                     fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
             if einf is not None:
                 out[name].info["contact_frozen_from"] = ref
             start = out[name].kontaktzustand or start
             _melde(progress, f"Lastfall {name} ({k + 1}/{len(names)})",
-                   0.35 + 0.25 * (k + 1) / max(1, len(names)))
+                   0.35 + 0.25 * (k + 1) / n_)
         return out
     systeme = systeme_je_situation(model, names, workers, progress, systeme)
     k = 0
@@ -1294,8 +1311,10 @@ def solve_cases(model: Model, cases: list = None, workers: int = None,
         start = getattr(sys_s, "kontaktzustand", None)
         for name in _mit_referenzen_zuerst(list(sit_names), referenzen):
             ref, einf = _einfrieren(name)
+            n_ = max(1, len(names))
             out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers,
-                                     start=start, einfrieren=einf)
+                                     progress=progress, start=start, einfrieren=einf,
+                                     fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
             if einf is not None:
                 out[name].info["contact_frozen_from"] = ref
             start = out[name].kontaktzustand or start
@@ -1473,7 +1492,7 @@ def _contact_singular(it: int, ex, cs, model=None) -> str:
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
-                       start=None, versuch: int = 0, einfrieren=None):
+                       start=None, versuch: int = 0, einfrieren=None, fenster=None):
     """Kontakt-Iteration; ``K_zusatz`` (z. B. die abgezogene Steifigkeit
     ausgefallener Zugstaebe) kommt in jedem Schritt zur Kontaktsteifigkeit.
 
@@ -1557,7 +1576,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                            "Neustart von der Geometrie")
                 u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                     model, system, F, max_iter, progress, us, K_zusatz, uebermass,
-                    start=None, versuch=versuch + 1)
+                    start=None, versuch=versuch + 1, fenster=fenster)
                 cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
                 cinfo2["contact_warm"] = False
                 cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
@@ -1586,7 +1605,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 raise RuntimeError(_contact_singular(it, ex, cs, model)) from None
         changed = cs.update(u)
         if progress:
-            progress(f"Kontakt-Iteration {it}: {cs.n_active} aktiv")
+            # Anteil im Fenster des Lastfalls: 1 - 0,85^it waechst mit jedem
+            # Schritt und naehert sich der Fensterkante - ein wachsender Balken
+            # statt eines wandernden Streifens (Wunsch 12.09.2026); wie viele
+            # Schritte es werden, weiss vorher niemand (Drehlager 32 bis 43)
+            anteil = None
+            if fenster is not None:
+                von, bis = float(fenster[0]), float(fenster[1])
+                anteil = von + (bis - von) * (1.0 - 0.85 ** it)
+            _melde(progress, f"Kontakt-Iteration {it}: {cs.n_active} aktiv", anteil)
         if not changed:
             converged = True
             break
@@ -1609,7 +1636,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 neu_start = None
             u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                 model, system, F, max_iter, progress, us, K_zusatz, uebermass,
-                start=neu_start, versuch=versuch + 1)
+                start=neu_start, versuch=versuch + 1, fenster=fenster)
             cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
             cinfo2["contact_warm"] = bool(neu_start) and cinfo2.get("contact_warm", False)
             cinfo2["contact_iterations"] = it + cinfo2.get("contact_iterations", 0)

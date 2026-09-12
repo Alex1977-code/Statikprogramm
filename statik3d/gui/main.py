@@ -250,6 +250,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knicklaengen = None      # Knicklaengen aus der Knickfigur
         self.schwingung = None        # Schwingungsnachweis des Verschlusses
         self.messungen = []           # voruebergehende Messungen in der Ansicht
+        self.sonden = []              # Wertmarken der Sonde (Knoten, Punkt)
         if not self.model.materials:
             self.model.add_material(Material.steel("S235"))
             self.model.add_material(Material.steel("S355"))
@@ -2172,6 +2173,10 @@ class MainWindow(QtWidgets.QMainWindow):
         modus = self.maskenrand.objekt_modus()
         if modus:
             return self._maskenobjekt_klick(modus, point)
+        if getattr(self, "act_sonde", None) is not None and self.act_sonde.isChecked():
+            # Sonde: der Klick setzt eine Wertmarke statt zu waehlen
+            if self._sonde_setzen(point):
+                return None
         art = getattr(self, "auswahlart", "Knoten")
         if not self._dargestellt(art):
             # Was nicht dargestellt ist, laesst sich nicht waehlen
@@ -3276,6 +3281,23 @@ class MainWindow(QtWidgets.QMainWindow):
                      "Nachweise EC3", "Ermüdung", "Kontakt"):
             g.klein(f"Tabelle {name}", lambda n=name: self.tabelle_zeigen(n),
                     hinweis=f"Tabelle {name} unten zeigen")
+        g = r.gruppe("Werte im Bild")
+        self.act_werte_staebe = g.schalter(
+            "Werte Stäbe", lambda _z: self.redraw(), False,
+            "Zahlenwerte an den Stäben: die gewählte Schnittgröße an den Nachweisstellen "
+            "(Filter in der Maske Ergebnisse), ohne Verlauf der Färbungswert", symbol="staebe")
+        self.act_werte_flaechen = g.schalter(
+            "Werte Flächen", lambda _z: self.redraw(), False,
+            "Zahlenwerte an den Flächenelementen: der Färbungswert je Element", symbol="flaechen")
+        self.act_werte_volumen = g.schalter(
+            "Werte Volumen", lambda _z: self.redraw(), False,
+            "Je Volumenkörper der betragsgrößte Färbungswert an seinem Ort", symbol="volumen")
+        self.act_sonde = g.schalter(
+            "Sonde", self._sonde_umschalten, False,
+            "Klick auf das Modell setzt eine Marke mit dem Wert an dieser Stelle "
+            "(Färbungswert am nächsten Knoten); beliebig viele, „Sonden löschen“ räumt auf")
+        g.klein("Sonden löschen", self.sonden_loeschen,
+                hinweis="Alle Sonden aus der Ansicht nehmen")
         g = r.gruppe("Werteskala")
         self.act_werteskala = g.gross(
             "Werteskala", "▤", lambda: self.maske_zeigen("Ergebnisse"),
@@ -3304,6 +3326,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 "aufnehmen – samt Ergebnis, Färbung und Verlauf")
         g.klein("Übernommene Bilder", lambda: self.tabelle_zeigen("Bericht"),
                 hinweis="Die Tabelle „Bericht“ unten zeigen")
+        g = r.gruppe("Gliederung")
+        g.klein("Text einfügen", lambda: self.berichtstext_einfuegen(),
+                hinweis="Eigenen Text in den Bericht einfügen (Absätze, „# Titel“, „- Punkt“)")
+        g.klein("Tabelle einfügen", lambda: self.berichtstabelle_einfuegen(),
+                hinweis="Eine Ergebnistabelle zum gezeigten Ergebnis in den Bericht einfügen")
+        g.klein("Datei einfügen…", lambda: self.berichtsdatei_einfuegen(),
+                hinweis="Bild (PNG, JPG, GIF, SVG), Tabelle (CSV, XLSX) oder Text (MD, TXT) "
+                        "in den Bericht einfügen")
+        g = r.gruppe("Rahmen")
+        self.act_berichtsrahmen = g.gross(
+            "Berichtsrahmen", "▭", self.berichtsrahmen_bearbeiten,
+            hinweis="Kopf- und Fußzeile, Ränder, Logo, Titelblatt und Inhaltsverzeichnis des Berichts")
         g.klein("Alle Bilder verwerfen", self.bericht_leeren,
                 hinweis="Alle in den Bericht übernommenen Ansichten löschen")
         g = r.gruppe("Lastenheft")
@@ -3365,6 +3399,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_lager = g.schalter("Lager", lambda z: self.redraw(), True,
                                     "Knoten-, Linien- und Flächenlager als Symbole zeigen",
                                     symbol="lager")
+        self.act_lagertext = g.schalter(
+            "Lagerbeschriftung", lambda z: self.redraw(), False,
+            "An jedem Knotenlager, was es hält: fest, gelenkig oder die gehaltenen "
+            "Freiheitsgrade (u xyz, r xyz), Federn mit k, nichtlinear mit *", symbol="lager")
         self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True,
                                     "Die Lasten des aktiven Lastfalls als Pfeile zeigen",
                                     symbol="lasten")
@@ -4527,13 +4565,22 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "berichtseintrag":
             i = int(name)
             e = m.bericht[i]
+            from ..report.html import Report
+            kapitel = [tx for _s, tx in Report.KAPITEL_WAHL]
+            aktuell = next((tx for s, tx in Report.KAPITEL_WAHL
+                            if s == (getattr(e, "nach", "") or "")), kapitel[0])
             felder = [F("name", "Name", "text", e.name or "", breite=170),
                       F("beschriftung", "Bildunterschrift", "text", getattr(e, "beschriftung", "") or "",
                         breite=170),
                       F("bemerkung", "Bemerkung", "text", getattr(e, "bemerkung", "") or "", breite=170),
+                      F("nach", "Platz im Bericht", "wahl", aktuell, kapitel),
                       F("bezug", "zeigt", "info", e.bezug())]
-            titel = f"Berichtsbild {i + 1}"
-            hinweis = "Name, Bildunterschrift und Bemerkung erscheinen so im Bericht."
+            if getattr(e, "art", "bild") == "text":
+                felder.insert(1, F("text", "Text", "text", getattr(e, "text", "") or "", breite=170))
+            titel = (f"Berichtsbild {i + 1}" if getattr(e, "art", "bild") in ("", "bild")
+                     else f"Berichtseintrag {i + 1}")
+            hinweis = ("Name, Bildunterschrift und Bemerkung erscheinen so im Bericht; „Platz“ "
+                       "ist das Kapitel, hinter dem der Eintrag steht.")
         elif art == "kontaktbedingung":
             from ..model import Kontaktbedingung
             kb = m.kontaktbedingungen.get(name)
@@ -6022,10 +6069,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if not 0 <= i < len(m.bericht):
                 return self.error("Berichtsbild gibt es nicht mehr")
             e = m.bericht[i]
-            self.merken(f"Berichtsbild {e.name}")
+            self.merken(f"Berichtseintrag {e.name}")
             e.name = str(w.get("name", "") or "").strip() or e.name
             e.beschriftung = str(w.get("beschriftung", "") or "").strip()
             e.bemerkung = str(w.get("bemerkung", "") or "").strip()
+            if "text" in w:
+                e.text = str(w.get("text", "") or "")
+            if "nach" in w:
+                from ..report.html import Report
+                e.nach = next((s for s, tx in Report.KAPITEL_WAHL if tx == str(w.get("nach", ""))), "")
         elif art == "kontaktbedingung":
             from ..model import DofBehaviour, STANDARDKONTAKTE
             kb = m.kontaktbedingungen.get(name)
@@ -7162,6 +7214,97 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabelle_zeigen("Bericht")
         self.info(f"„{e.name}“ in den Bericht übernommen ({e.bezug()})")
 
+    def berichtstext_einfuegen(self, text: str = None, nach: str = ""):
+        """Eigenen Text in den Bericht einfuegen (Gliederung analog InfoCAD):
+        Absaetze durch Leerzeile, "# Titel" als Ueberschrift, "- Punkt" als
+        Aufzaehlung. ``nach`` ist das Kapitel, hinter dem er steht."""
+        from ..model import Berichtseintrag
+        if text is None:
+            text, ok = QtWidgets.QInputDialog.getMultiLineText(
+                self, "Text in den Bericht",
+                "Absätze durch Leerzeile, „# Titel“ als Überschrift, „- Punkt“ als Aufzählung:", "")
+            if not ok or not text.strip():
+                return None
+        n = sum(1 for x in self.model.bericht if getattr(x, "art", "") == "text") + 1
+        e = Berichtseintrag(name=f"Text {n}", art="text", text=str(text), nach=nach or "")
+        self.merken("Text in den Bericht eingefügt")
+        self.model.bericht.append(e)
+        self.refresh_all()
+        self.tabelle_zeigen("Bericht")
+        self.info(f"„{e.name}“ in den Bericht eingefügt")
+        return e
+
+    def berichtstabelle_einfuegen(self, tabelle: str = None, nach: str = ""):
+        """Eine Ergebnistabelle (Stabkraefte, Auflagerkraefte, Umhuellende, Nachweise,
+        Ermuedung, Kontakt, Lastfaelle, Kombinationen) zum gezeigten Ergebnis
+        in den Bericht einfuegen."""
+        from ..model import Berichtseintrag
+        from ..report.html import Report
+        if tabelle is None:
+            tabelle, ok = QtWidgets.QInputDialog.getItem(
+                self, "Tabelle in den Bericht", "Tabelle:", list(Report.TABELLEN), 0, False)
+            if not ok or not tabelle:
+                return None
+        if tabelle not in Report.TABELLEN:
+            return self.error(f"Unbekannte Tabelle „{tabelle}“")
+        quelle = ""
+        if tabelle in ("Stabkräfte", "Auflagerkräfte", "Umhüllende", "Kontakt"):
+            quelle = self._aktuelle_quelle() if self.analysis is not None else ""
+            if not quelle:
+                return self.error(f"{tabelle}: erst rechnen und ein Ergebnis zeigen")
+        e = Berichtseintrag(name=tabelle, art="tabelle", tabelle=tabelle, quelle=quelle,
+                            nach=nach or "")
+        e.name = e.bezug().replace("Tabelle ", "", 1)
+        self.merken("Tabelle in den Bericht eingefügt")
+        self.model.bericht.append(e)
+        self.refresh_all()
+        self.tabelle_zeigen("Bericht")
+        self.info(f"„{e.name}“ in den Bericht eingefügt")
+        return e
+
+    def berichtsdatei_einfuegen(self, pfad: str = None, nach: str = ""):
+        """Eine Datei in den Bericht einfuegen: Bilder (PNG, JPG, GIF, WEBP),
+        SVG, CSV und XLSX als Tabelle, Markdown und Text als Absaetze. PDF und
+        DOCX werden nicht eingebettet - der Bericht sagt es an der Stelle."""
+        import base64
+        from ..model import Berichtseintrag
+        if pfad is None:
+            pfad, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Datei in den Bericht", "",
+                "Bilder, Tabellen und Texte (*.png *.jpg *.jpeg *.gif *.webp *.svg *.csv *.xlsx "
+                "*.md *.txt);;Alle Dateien (*)")
+        if not pfad:
+            return None
+        try:
+            with open(pfad, "rb") as fh:
+                roh = fh.read()
+        except OSError as ex:
+            return self.error(f"Datei nicht lesbar: {ex}")
+        if len(roh) > 20_000_000:
+            return self.error("Die Datei ist größer als 20 MB - Bilder bitte verkleinern")
+        typ = os.path.splitext(pfad)[1].lower().lstrip(".")
+        e = Berichtseintrag(name=os.path.basename(pfad), art="datei", datei=os.path.basename(pfad),
+                            daten=base64.b64encode(roh).decode("ascii"), typ=typ, nach=nach or "")
+        self.merken("Datei in den Bericht eingefügt")
+        self.model.bericht.append(e)
+        self.refresh_all()
+        self.tabelle_zeigen("Bericht")
+        if typ in ("pdf", "docx", "doc"):
+            self.info(f"„{e.name}“ eingefügt - {typ.upper()} wird im Bericht nicht eingebettet, "
+                      "nur genannt (als Anlage beilegen)")
+        else:
+            self.info(f"„{e.name}“ in den Bericht eingefügt")
+        return e
+
+    def berichtsrahmen_bearbeiten(self):
+        """Kopf- und Fusszeile, Raender, Logo, Titelblatt des Berichts."""
+        from .dialogs import BerichtsrahmenDialog
+        d = BerichtsrahmenDialog(self, self.model)
+        if d.exec():
+            self.merken("Berichtsrahmen")
+            d.apply(self.model)
+            self.info("Rahmen des Berichts übernommen")
+
     def berichtseintrag_bearbeiten(self, nummer: str):
         """Beschriftung und Bemerkung eines Berichtsbildes."""
         try:
@@ -8269,7 +8412,13 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Nr", "", "ganz"), Spalte("Name", "", "text", 3, True),
             Spalte("Zeigt"), Spalte("Bildunterschrift", "", "text", 3, True),
             Spalte("Bemerkung", "", "text", 3, True),
-            Spalte("Bild", "kB", "zahl", 0)], "Bericht", self)
+            Spalte("Bild", "kB", "zahl", 0),
+            Spalte("Art"),
+            Spalte("Nach Kapitel", "", "text", 3, True,
+                   hinweis="Schlüssel des Kapitels, hinter dem der Eintrag steht: general, "
+                           "system, actions, results, design, volumen, fatigue, joints, gzg, "
+                           "summary; leer = am Ende unter „Übernommene Ergebnisse“")],
+            "Bericht", self)
         self.tbl_bericht.modell.aendern = self._bericht_aendern
         self.tbl_bericht.view.doubleClicked.connect(
             lambda _i: self.berichtseintrag_bearbeiten(
@@ -8284,7 +8433,18 @@ class MainWindow(QtWidgets.QMainWindow):
         bb3.clicked.connect(lambda: self.berichtseintrag_schieben(+1))
         bb4 = QtWidgets.QPushButton("Löschen")
         bb4.clicked.connect(self.berichtseintrag_loeschen)
-        tabs.addTab(self._eingabetabelle(self.tbl_bericht, bb1, bb2, bb3, bb4),
+        # Gliederung analog InfoCAD (12.09.2026): eigener Text, Ergebnistabelle,
+        # fremde Datei - alles wird ein Eintrag mit Platz im Bericht
+        bb5 = QtWidgets.QPushButton("Text")
+        bb5.setToolTip("Eigenen Text in den Bericht einfügen")
+        bb5.clicked.connect(lambda: self.berichtstext_einfuegen())
+        bb6 = QtWidgets.QPushButton("Tabelle")
+        bb6.setToolTip("Eine Ergebnistabelle zum gezeigten Ergebnis einfügen")
+        bb6.clicked.connect(lambda: self.berichtstabelle_einfuegen())
+        bb7 = QtWidgets.QPushButton("Datei…")
+        bb7.setToolTip("Bild (PNG, JPG, GIF, SVG), Tabelle (CSV, XLSX) oder Text (MD, TXT) einfügen")
+        bb7.clicked.connect(lambda: self.berichtsdatei_einfuegen())
+        tabs.addTab(self._eingabetabelle(self.tbl_bericht, bb1, bb5, bb6, bb7, bb2, bb3, bb4),
                     "Bericht")
 
         self.tbl_freigabe = tab.Datentabelle([
@@ -8487,7 +8647,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._lasten_fuellen()
         self._fill(self.tbl_bericht,
                    [[i, x.name, x.bezug(), x.beschriftung, x.bemerkung,
-                     len(x.bild or "") * 3 / 4096]
+                     (len(x.bild or "") + len(getattr(x, "daten", "") or "")) * 3 / 4096,
+                     {"bild": "Bild", "text": "Text", "tabelle": "Tabelle",
+                      "datei": "Datei"}.get(getattr(x, "art", "bild") or "bild", "Bild"),
+                     getattr(x, "nach", "") or ""]
                     for i, x in enumerate(getattr(m, "bericht", None) or [])])
         self._fill(self.tbl_freigabe,
                    [[name, x.typ, x.ort, len(x.flaechen), len(x.volumen), x.ziele,
@@ -8902,14 +9065,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _bericht_aendern(self, z: int, k: int, wert) -> bool:
         i = int(self.tbl_bericht.modell.zeilen[z][0])
-        if not (0 <= i < len(self.model.bericht)) or k not in (1, 3, 4):
+        if not (0 <= i < len(self.model.bericht)) or k not in (1, 3, 4, 7):
             return False
+        if k == 7:
+            from ..report.html import Report
+            schluessel = str(wert or "").strip().lower()
+            if schluessel and schluessel not in {s for s, _t in Report.KAPITEL_WAHL}:
+                # kein modaler Dialog fuer einen Tippfehler in der Zelle
+                self.info("Unbekanntes Kapitel „" + schluessel + "“ - möglich: "
+                          + ", ".join(s for s, _t in Report.KAPITEL_WAHL if s) + " oder leer")
+                return False
         self.merken("Bericht bearbeitet")
         e = self.model.bericht[i]
         if k == 1:
             e.name = str(wert).strip() or e.name
         elif k == 3:
             e.beschriftung = str(wert)
+        elif k == 7:
+            e.nach = str(wert or "").strip().lower()
         else:
             e.bemerkung = str(wert)
         self._zelle_uebernommen(f"Berichtsbild {e.name}")
@@ -10064,6 +10237,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_seite.currentIndexChanged.connect(self.redraw)
         lay.addWidget(row("Schalenseite", self.cb_seite))
         lay.addWidget(self._werteskala_maske())
+        lay.addWidget(self._werte_maske())
         self.cb_diagram = QtWidgets.QComboBox()
         self.cb_diagram.addItems(DIAGRAMS)
         self.cb_diagram.currentIndexChanged.connect(self.redraw)
@@ -10089,6 +10263,151 @@ class MainWindow(QtWidgets.QMainWindow):
         b3 = QtWidgets.QPushButton("Statischer Bericht…"); b3.clicked.connect(self.make_report)
         lay.addWidget(row(b1, b2, b3))
         return w
+
+    # ---- Werte im Bild ------------------------------------------------
+    WERTE_FILTER = (("nur Extremwerte je Stab", "extrem"), ("alle Stellen", "alle"),
+                    ("nur die Stabenden", "enden"), ("nur Auswahl", "auswahl"))
+
+    def _werte_maske(self) -> QtWidgets.QWidget:
+        """Gruppe „Werte im Bild“ in der Maske Ergebnisse: Filter, Schwelle,
+        jeder n-te Wert - damit 200 Marken lesbar bleiben."""
+        g = QtWidgets.QGroupBox("Werte im Bild (Register Ergebnisse: Stäbe, Flächen, Volumen)")
+        f = QtWidgets.QFormLayout(g)
+        self.cb_werte_filter = QtWidgets.QComboBox()
+        for text, wert in self.WERTE_FILTER:
+            self.cb_werte_filter.addItem(text, wert)
+        self.cb_werte_filter.setToolTip("Stäbe: welche Nachweisstellen beschriftet werden; "
+                                        "„nur Auswahl“ beschriftet nur gewählte Elemente, Stäbe, "
+                                        "Flächen und Volumen")
+        f.addRow("Stellen", self.cb_werte_filter)
+        self.ed_werte_schwelle = QtWidgets.QDoubleSpinBox()
+        self.ed_werte_schwelle.setRange(0.0, 1e9)
+        self.ed_werte_schwelle.setDecimals(2)
+        self.ed_werte_schwelle.setKeyboardTracking(False)
+        self.ed_werte_schwelle.setToolTip("Nur Werte mit |Wert| ≥ Schwelle (in der Einheit der "
+                                          "Größe); 0 = alle")
+        f.addRow("Schwelle |Wert| ≥", self.ed_werte_schwelle)
+        self.sp_werte_n = QtWidgets.QSpinBox()
+        self.sp_werte_n.setRange(1, 50)
+        self.sp_werte_n.setToolTip("Nur jeden n-ten Wert zeigen (1 = alle)")
+        f.addRow("jeder n-te Wert", self.sp_werte_n)
+        self.cb_werte_filter.currentIndexChanged.connect(self.redraw)
+        self.ed_werte_schwelle.valueChanged.connect(self.redraw)
+        self.sp_werte_n.valueChanged.connect(self.redraw)
+        return g
+
+    def _werte_arten(self) -> set:
+        arten = set()
+        for art in ("staebe", "flaechen", "volumen"):
+            a = getattr(self, f"act_werte_{art}", None)
+            if a is not None and a.isChecked():
+                arten.add(art)
+        return arten
+
+    def _werte_zeichnen(self, r, point_scalars, name: str) -> int:
+        """Ergebniswerte als Marken ins Bild (Darsteller „ergebniswerte“).
+        Rueckgabe: Zahl der Marken."""
+        arten = self._werte_arten()
+        if not arten or r is None:
+            return 0
+        q = self.cb_diagram.currentText() if getattr(self, "cb_diagram", None) else ""
+        auswahl = {"elemente": {int(i) for i in (self.sel_elemente or [])},
+                   "staebe": set(self.sel_staebe or []), "flaechen": set(self.sel_flaechen or []),
+                   "koerper": set(self.sel_koerper or [])}
+        try:
+            punkte, texte = vp.ergebniswerte(
+                self.model, r, point_scalars, arten, quantity=q,
+                filter_=str(self.cb_werte_filter.currentData() or "extrem"),
+                schwelle=float(self.ed_werte_schwelle.value()), n_te=int(self.sp_werte_n.value()),
+                auswahl=auswahl, versteckt=set(self.versteckt.get("elemente", ())),
+                nachkomma=1 if "N/mm²" in (name or "") else 2)
+        except Exception as ex:               # noqa: BLE001 - eine Marke darf die Ansicht nicht sperren
+            self.log.appendPlainText(f"Werte im Bild: {ex}")
+            return 0
+        if not texte:
+            return 0
+        self.plotter.add_point_labels(
+            np.asarray(punkte, float), texte,
+            font_size=int(self.model.bemassung_einstellungen().textgroesse),
+            text_color="#1a2a6c", point_size=4, point_color="#1a2a6c", shape=None,
+            always_visible=True, name="ergebniswerte")
+        return len(texte)
+
+    def _werte_text(self) -> str:
+        """Zusatz zur Kopfzeile: was die Marken zeigen."""
+        arten = self._werte_arten()
+        if not arten:
+            return ""
+        namen = {"staebe": "Stäbe", "flaechen": "Flächen", "volumen": "Volumen"}
+        q = self.cb_diagram.currentText() if getattr(self, "cb_diagram", None) else ""
+        was = q if ("staebe" in arten and q in vp.SCHNITTGROESSEN) else "Färbung"
+        return " · Werte im Bild: " + ", ".join(namen[a] for a in ("staebe", "flaechen", "volumen")
+                                                 if a in arten) + f" ({was})"
+
+    # ---- Sonde ----------------------------------------------------------
+    def _sonde_umschalten(self, an: bool) -> None:
+        self.info("Sonde: Klick auf das Modell setzt eine Marke mit dem Wert an dieser Stelle"
+                  if an else "Sonde aus")
+
+    def _sonde_setzen(self, point) -> bool:
+        """Eine Sonde am naechsten Knoten unter dem Zeiger: Knoten und Punkt
+        werden gemerkt, der Wert kommt bei jedem Neuzeichnen aus der
+        aktuellen Faerbung - so folgt die Sonde dem Ergebnis."""
+        m = self.model
+        if m.nn == 0:
+            return False
+        knoten = -1
+        try:
+            p, fangart, i = self._fangpunkt()
+            if fangart == "knoten" and i is not None and int(i) >= 0:
+                knoten = int(i)
+        except Exception:                        # noqa: BLE001
+            knoten = -1
+        if knoten < 0:
+            if point is None:
+                return False
+            q = np.asarray(point, float)[:3]
+            sicht = self._sichtbare_knoten()
+            kand = np.arange(m.nn) if sicht is None else np.asarray(sicht, int)
+            if kand.size == 0:
+                return False
+            d = np.linalg.norm(m.nodes[kand] - q, axis=1)
+            knoten = int(kand[int(np.argmin(d))])
+        self.sonden.append({"knoten": knoten, "punkt": np.asarray(m.nodes[knoten], float)})
+        self.info(f"Sonde {len(self.sonden)} am Knoten K{knoten}")
+        self.redraw()
+        return True
+
+    def sonden_loeschen(self) -> None:
+        if not self.sonden:
+            return self.info("Keine Sonden im Bild")
+        self.sonden = []
+        self.redraw()
+        self.info("Sonden gelöscht")
+
+    def _sonden_zeichnen(self, point_scalars, name: str) -> int:
+        """Die Sonden mit ihrem Wert aus der aktuellen Faerbung zeichnen."""
+        if not self.sonden:
+            return 0
+        ps = None if point_scalars is None else np.asarray(point_scalars, float)
+        punkte, texte = [], []
+        nk = 1 if "N/mm²" in (name or "") else 2
+        for k, s in enumerate(self.sonden, 1):
+            i = int(s["knoten"])
+            if not 0 <= i < self.model.nn:
+                continue
+            v = ps[i] if ps is not None and i < len(ps) else np.nan
+            wert = vp._wertzahl(v, nk) if np.isfinite(v) else "–"
+            punkte.append(self.model.nodes[i])
+            texte.append(f"S{k} K{i}: {wert}")
+        if not texte:
+            return 0
+        self.plotter.add_point_labels(
+            np.asarray(punkte, float), texte,
+            font_size=int(self.model.bemassung_einstellungen().textgroesse) + 1,
+            text_color="#b00020", point_size=9, point_color="#b00020", shape="rounded_rect",
+            always_visible=True, name="sonden")
+        return len(texte)
 
     # ---- Werteskala ---------------------------------------------------
     def _spannungsergebnis(self):
@@ -14143,6 +14462,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Ab hier oeffnet das Programm nichts Modales mehr, bis die Rechnung
         # zurueck ist (:meth:`_modal_gesperrt`).
         self._rechnet_gerade = True
+        self._rechnung_takt_start()
         self.worker = SolveWorker(func)
         self.worker.progress.connect(self._rechnung_zeile)
         self.worker.fortschritt.connect(self._rechnung_fortschritt)
@@ -14165,9 +14485,40 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.info(text)
 
+    #: Lebenszeichen am Balken: ein Zeichen, das sich jede halbe Sekunde
+    #: dreht - so sieht man auch waehrend einer 13-s-Faktorisierung, dass die
+    #: Rechnung laeuft und nicht eingefroren ist (Wunsch 12.09.2026)
+    TAKTZEICHEN = "◐◓◑◒"
+
+    def _rechnung_takt_start(self) -> None:
+        takt = getattr(self, "_rechnung_takt", None)
+        if takt is None:
+            takt = QtCore.QTimer(self)
+            takt.setInterval(500)
+            takt.timeout.connect(self._rechnung_tick)
+            self._rechnung_takt = takt
+        self._rechnung_takt_n = 0
+        self._rechnung_letzter_text = ""
+        takt.start()
+
+    def _rechnung_tick(self) -> None:
+        """Balkenbeschriftung: Anteil, Laufzeit und das drehende Zeichen."""
+        self._rechnung_takt_n = getattr(self, "_rechnung_takt_n", 0) + 1
+        z = self.TAKTZEICHEN[self._rechnung_takt_n % len(self.TAKTZEICHEN)]
+        dt = time.time() - getattr(self, "_rechnung_t0", time.time())
+        zeit = f"{int(dt // 60)}:{int(dt % 60):02d} min" if dt >= 60 else f"{dt:.0f} s"
+        if self.progress_bar.maximum() > 0:
+            self.progress_bar.setFormat(f"%p % · {zeit} {z}")
+            self.progress_bar.setTextVisible(True)
+        else:
+            self.statusBar().showMessage(
+                f"{getattr(self, '_rechnung_name', 'Berechnung')}: "
+                f"{getattr(self, '_rechnung_letzter_text', '') or 'läuft'} ({zeit}) {z}")
+
     def _rechnung_fortschritt(self, text: str, anteil: float) -> None:
         """Balken und Statuszeile waehrend der Rechnung: Schritt, Anteil, Zeit."""
         a = max(0.0, min(1.0, float(anteil)))
+        self._rechnung_letzter_text = str(text)
         if self.progress_bar.maximum() == 0:
             # erster gemeldeter Anteil: aus dem Streifen wird ein Balken
             self.progress_bar.setRange(0, 1000)
@@ -14185,9 +14536,13 @@ class MainWindow(QtWidgets.QMainWindow):
             f"({a * 100:.0f} %, {dt:.0f} s)")
 
     def _rechnung_ende(self, meldung: str = None, dauer: float = 8000) -> None:
+        takt = getattr(self, "_rechnung_takt", None)
+        if takt is not None:
+            takt.stop()
         self.progress_bar.setVisible(False)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setRange(0, 0)
+        self.progress_bar.setFormat("%p %")
         if getattr(self, "btn_abbrechen", None) is not None:
             self.btn_abbrechen.setVisible(False)
         self._abbruch = False
@@ -15210,6 +15565,14 @@ class MainWindow(QtWidgets.QMainWindow):
             if getattr(self, "act_lager", None) is None or self.act_lager.isChecked():
                 vp.add_supports(self.plotter, m, size, self.lagergroesse, nur=sichtbare_knoten,
                                 dichte=self.lagerdichte)
+                if getattr(self, "act_lagertext", None) is not None and self.act_lagertext.isChecked():
+                    punkte, texte = vp.lager_texte(m, nur=sichtbare_knoten)
+                    if texte:
+                        self.plotter.add_point_labels(
+                            np.asarray(punkte, float), texte,
+                            font_size=int(m.bemassung_einstellungen().textgroesse),
+                            text_color="#1f3b73", point_size=1, shape=None, always_visible=True,
+                            name="lagertext")
             if self.act_linien.isChecked():
                 vp.add_linien(self.plotter, m, self.sel_linien,
                               ausser=self.versteckt["linien"], netz=self._linien_netz())
@@ -15242,6 +15605,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                     render_points_as_spheres=True, name="selection")
         self._kopfzeile_zeichnen(r, s if (u is not None and not modal) else 0.0)
         self._kennwerte_zeichnen(r)
+        if u is not None and not modal:
+            self._werte_im_bild = self._werte_zeichnen(r, point_scalars, name)
+            self._sonden_zeichnen(point_scalars, name)
+            if self._werte_im_bild >= vp.WERTE_MAX:
+                self.statusBar().showMessage(
+                    f"Werte im Bild: nur die {vp.WERTE_MAX} betragsgrößten Werte beschriftet - "
+                    "Filter oder Schwelle in der Maske Ergebnisse", 8000)
         self._bewegung_zeichnen(m)
         try:
             # Achsenkreuz unten rechts - unten links stehen die Kennwerte
@@ -15464,7 +15834,8 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 name = ""
             zeilen = vp.kopfzeile(self.model, r, name,
-                                  (self.cb_field.currentText() + self._werteskala_text())
+                                  (self.cb_field.currentText() + self._werteskala_text()
+                                   + self._werte_text())
                                   if r is not None else "",
                                   self.cb_diagram.currentText() if r is not None else "",
                                   faktor, einheiten=list(getattr(self, "_lasteinheiten", []) or []))
@@ -16002,26 +16373,78 @@ class MainWindow(QtWidgets.QMainWindow):
     def open_model(self):
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Modell öffnen", "", "Statik3D (*.json)")
         if p:
+            self.modell_laden(p)
+
+    def modell_laden(self, p: str) -> bool:
+        """Modelldatei lesen - und die Ergebnisdatei daneben, wenn sie passt
+        (12.09.2026: „Ergebnisse wurden beim Laden nicht mitgeladen“)."""
+        from .. import ergebnisse as erg
+        try:
+            self._protokoll_neu(f"Modell geöffnet: {p}")
+            # Ein Modell mit hunderttausend Knoten braucht zum Lesen
+            # Minuten; ohne Balken sieht das aus wie ein Absturz.
+            self._fortschritt_beginnen(1000, f"Modell öffnen: {os.path.basename(p)} …",
+                                       abbrechbar=False)
             try:
-                self._protokoll_neu(f"Modell geöffnet: {p}")
-                # Ein Modell mit hunderttausend Knoten braucht zum Lesen
-                # Minuten; ohne Balken sieht das aus wie ein Absturz.
-                self._fortschritt_beginnen(1000, f"Modell öffnen: {os.path.basename(p)} …",
-                                           abbrechbar=False)
+                self.model = Model.load(p, fortschritt=self._dateifortschritt)
+            finally:
+                self._fortschritt_ende()
+            self.__init_defaults()
+            self.analysis = None
+            self.results = None
+            self.selection = np.array([], dtype=int)
+            self.path = p
+            self.refresh_all()
+            self._refresh_title()
+            self.zoom_alles()
+        except Exception as ex:
+            self.error(str(ex))
+            return False
+        epfad = erg.pfad_zu(p)
+        if os.path.exists(epfad):
+            self._fortschritt_beginnen(1000, f"Ergebnisse laden: {os.path.basename(epfad)} …",
+                                       abbrechbar=False)
+            try:
+                an = erg.lesen(epfad, self.model, fortschritt=self._dateifortschritt)
+            except Exception as ex:          # noqa: BLE001 - alte oder fremde Datei
+                self.log.appendPlainText(f"Ergebnisdatei nicht geladen: {ex}")
+                an = None
+            finally:
+                self._fortschritt_ende()
+            if an is not None:
+                self._solve_done("all", an)
+                self.info(f"Ergebnisse geladen: {len(an.cases)} Lastfälle, "
+                          f"{len(an.combinations)} Kombinationen ({os.path.basename(epfad)})")
+        return True
+
+    def ergebnisse_speichern(self, p: str = None) -> str:
+        """Die Analyse neben die Modelldatei schreiben (<modell>.ergebnisse);
+        ohne Analyse wird eine alte Ergebnisdatei entfernt, damit beim
+        naechsten Oeffnen nichts Falsches erscheint. Rueckgabe: Pfad oder ""."""
+        from .. import ergebnisse as erg
+        p = p or self.path
+        if not p:
+            return ""
+        epfad = erg.pfad_zu(p)
+        if self.analysis is None:
+            if os.path.exists(epfad):
                 try:
-                    self.model = Model.load(p, fortschritt=self._dateifortschritt)
-                finally:
-                    self._fortschritt_ende()
-                self.__init_defaults()
-                self.analysis = None
-                self.results = None
-                self.selection = np.array([], dtype=int)
-                self.path = p
-                self.refresh_all()
-                self._refresh_title()
-                self.zoom_alles()
-            except Exception as ex:
-                self.error(str(ex))
+                    os.remove(epfad)
+                    self.log.appendPlainText(f"Alte Ergebnisdatei entfernt: {epfad}")
+                except OSError:
+                    pass
+            return ""
+        self._fortschritt_beginnen(1000, f"Ergebnisse speichern: {os.path.basename(epfad)} …",
+                                   abbrechbar=False)
+        try:
+            n = erg.schreiben(epfad, self.model, self.analysis, fortschritt=self._dateifortschritt)
+        except Exception as ex:              # noqa: BLE001
+            self.error(f"Ergebnisse nicht gespeichert: {ex}")
+            return ""
+        finally:
+            self._fortschritt_ende()
+        self.info(f"Ergebnisse gespeichert: {os.path.basename(epfad)} ({erg.groesse_text(n)})")
+        return epfad
 
     def save_model(self, ask=False):
         p = self.path
@@ -16038,6 +16461,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.path = p
             self._refresh_title()
             self.info(f"gespeichert: {p}")
+            self.ergebnisse_speichern(p)
 
     def export_model(self):
         """Modell in ein fremdes Format schreiben (Endung bestimmt das Format)."""

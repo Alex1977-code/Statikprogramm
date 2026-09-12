@@ -254,12 +254,40 @@ class Report:
         "design": True, "fatigue": True, "joints": True, "gzg": True, "beulen": True,
         "volumen": True, "contact": True, "uebernommen": True,
         "modal": True, "buckling": True,
+        "design_detail": True, "max_detail_members": 0,      # 0 = alle
+        "max_case_figures": 30,                              # Lastbilder je Lastfall
         # Grenzen fuer grosse Modelle
         "max_rows": 200, "max_detail_cases": 20, "max_detail_combinations": 12,
         "max_member_diagrams": 40, "figure_width": 760, "figure_height": 480,
         "date": None,
     }
     LIST_LIMIT = 200          # Knoten-/Elementlisten oberhalb: gekuerzt
+
+    #: Umfang des Berichts (Vorgabe kurz, 12.09.2026): kurz nennt Kennwerte,
+    #: Uebersichten und Zusammenfassungen ohne Listen je Element oder je
+    #: Lastfall; mittel fuegt einige Lastfaelle, Kombinationen, Verlaeufe und
+    #: Nachweisdetails hinzu; lang ist alles (DEFAULTS).
+    UMFANG = {
+        "kurz": {"model_tables": False, "member_diagrams": False, "design_detail": False,
+                 "max_rows": 40, "max_detail_cases": 0, "max_detail_combinations": 0,
+                 "max_member_diagrams": 0, "modal": False, "buckling": False,
+                 "max_case_figures": 3},
+        "mittel": {"model_tables": False, "design_detail": True, "max_rows": 100,
+                   "max_detail_cases": 5, "max_detail_combinations": 5,
+                   "max_member_diagrams": 10, "max_detail_members": 20,
+                   "max_case_figures": 10},
+        "lang": {},
+    }
+    #: Kapitel, hinter die ein Berichtseintrag gestellt werden kann (Schluessel, Text)
+    KAPITEL_WAHL = [("", "am Ende (Übernommene Ergebnisse)"), ("general", "nach Allgemeines"),
+                    ("system", "nach System"), ("actions", "nach Einwirkungen"),
+                    ("results", "nach Ergebnisse"), ("design", "nach Nachweise EC3"),
+                    ("volumen", "nach Volumen"), ("fatigue", "nach Ermüdung"),
+                    ("joints", "nach Anschlüsse"), ("gzg", "nach Verformungen"),
+                    ("summary", "nach Zusammenfassung")]
+    #: Tabellen, die ein Berichtseintrag der Art "tabelle" einfuegen kann
+    TABELLEN = ("Stabkräfte", "Auflagerkräfte", "Umhüllende", "Nachweise EC3", "Ermüdung",
+                "Kontakt", "Lastfälle", "Kombinationen")
 
     def __init__(self, model, analysis=None, results=None, options: dict = None):
         self.model = model
@@ -271,8 +299,16 @@ class Report:
         self.analysis = analysis
         self.results = results
         self.options = dict(self.DEFAULTS)
+        # Umfang: Angabe > Berichtsrahmen des Modells > Langform. Der Dialog der
+        # Oberflaeche schlaegt die Kurzform vor (12.09.2026) und legt sie im
+        # Berichtsrahmen ab; ohne beides bleibt der Bericht, was er war.
+        umfang = (options or {}).get("umfang") or getattr(getattr(model, "bericht_rahmen", None),
+                                                          "umfang", "") or "lang"
+        if umfang in self.UMFANG:
+            self.options.update(self.UMFANG[umfang])
         if options:
-            self.options.update(options)
+            self.options.update({k: v for k, v in options.items() if k != "umfang"})
+        self.options["umfang"] = umfang
         self.cases: dict = {}
         self.combos: dict = {}
         self.envelopes: dict = {}
@@ -417,6 +453,8 @@ class Report:
     #: damit die Oberflaeche je Kapitel den Balken nachfuehren kann.
     fortschritt = None
 
+    #: Umfang als Text fuer das Titelblatt
+    UMFANG_TEXT = {"kurz": "Kurzform", "mittel": "mittlerer Umfang", "lang": "Langform"}
     #: Namen der Kapitel fuer die Statuszeile
     KAPITELNAMEN = {
         "general": "Allgemeines", "system": "System", "actions": "Einwirkungen",
@@ -444,7 +482,245 @@ class Report:
             self._melde(0.85 * k / max(1, len(kapitel)),
                         f"Kapitel {k + 1} von {len(kapitel)}: {self.KAPITELNAMEN.get(name, name)}")
             b.extend(ch())
+            b.extend(self._eingefuegt(name))
         return b
+
+    # ---------------------------------------------------- Gliederung (Eintraege)
+    def _modellpruefung(self) -> list:
+        """model.check() einmal je Bericht - Zusammenfassung und Anhang
+        brauchen dieselben Meldungen (am Drehlager 29 s je Aufruf)."""
+        if getattr(self, "_pruefung", None) is None:
+            try:
+                self._pruefung = list(self.model.check())
+            except Exception as ex:      # Modellpruefung darf den Bericht nicht verhindern
+                self._pruefung = [f"FEHLER: Modellprüfung nicht möglich ({ex})"]
+        return self._pruefung
+
+    def _eintraege(self, nach: str = None) -> list:
+        """Die Berichtseintraege des Modells - alle oder die hinter Kapitel ``nach``."""
+        alle = list(getattr(self.model, "bericht", None) or [])
+        if nach is None:
+            return alle
+        return [e for e in alle if (getattr(e, "nach", "") or "") == nach]
+
+    def _eingefuegt(self, kapitel: str) -> list:
+        """Eintraege, die hinter dieses Kapitel gestellt wurden (Berichtseintrag.nach)."""
+        if not self.opt("uebernommen"):
+            return []
+        b = []
+        for i, e in enumerate(self._eintraege(kapitel), 1):
+            b.extend(self._eintrag_bloecke(e, i, ebene=2))
+        return b
+
+    def _eintrag_bloecke(self, e, i: int, ebene: int = 2) -> list:
+        """Die Bloecke eines Berichtseintrags nach seiner Art."""
+        art = getattr(e, "art", "bild") or "bild"
+        W = self.opt("figure_width")
+        b = []
+        if art == "text":
+            if e.name and not e.name.startswith("Text "):
+                b.append(self._h(ebene, e.name))
+            b.extend(self._textbloecke(e.text or ""))
+            return b
+        if art == "tabelle":
+            b.append(self._h(ebene, e.name or e.bezug()))
+            b.extend(self._tabellenbloecke(e))
+            if e.bemerkung:
+                b.append(("p", esc(e.bemerkung)))
+            return b
+        if art == "datei":
+            b.append(self._h(ebene, e.name or e.datei or f"Datei {i}"))
+            b.extend(self._dateibloecke(e))
+            if e.bemerkung:
+                b.append(("p", esc(e.bemerkung)))
+            return b
+        b.append(self._h(ebene, e.name or f"Bild {i}"))
+        zeilen = [["Zeigt", e.quelle_text()]]
+        if e.feld:
+            zeilen.append(["Färbung", e.feld])
+        if e.verlauf and e.verlauf != "kein Verlauf":
+            zeilen.append(["Schnittgrößenverlauf", e.verlauf])
+        if e.ueberhoehung:
+            zeilen.append(["Überhöhung", f"{e.ueberhoehung:g}"])
+        b.append(("kv", zeilen, ""))
+        if e.bild:
+            b.append(self._bild(e.bild, e.beschriftung or e.bezug(), W))
+        else:
+            b.append(("p", "<i>Zu diesem Eintrag liegt kein Bild vor.</i>"))
+        if e.bemerkung:
+            b.append(("p", esc(e.bemerkung)))
+        return b
+
+    @staticmethod
+    def _textbloecke(text: str) -> list:
+        """Eigener Text: Absaetze durch Leerzeile, "# Titel" als Ueberschrift,
+        "- Punkt" als Aufzaehlung - mehr Auszeichnung braucht ein Bericht nicht."""
+        b = []
+        absatz: list = []
+        liste: list = []
+
+        def absatz_ab():
+            if absatz:
+                b.append(("p", esc(" ".join(absatz))))
+                absatz.clear()
+
+        def liste_ab():
+            if liste:
+                b.append(("list", [esc(x) for x in liste]))
+                liste.clear()
+        for zeile in (text or "").splitlines():
+            s = zeile.strip()
+            if not s:
+                absatz_ab()
+                liste_ab()
+            elif s.startswith("#"):
+                absatz_ab()
+                liste_ab()
+                b.append(("h4", s.lstrip("#").strip()))
+            elif s.startswith(("- ", "* ", "• ")):
+                absatz_ab()
+                liste.append(s[2:].strip())
+            else:
+                liste_ab()
+                absatz.append(s)
+        absatz_ab()
+        liste_ab()
+        return b
+
+    def _ergebnis_zu(self, quelle: str):
+        """(Name, Ergebnisobjekt) zu einem Quellschluessel case:/combo:/env:."""
+        art, _, wert = (quelle or "").partition(":")
+        if art == "case":
+            return wert, self.cases.get(wert)
+        if art == "combo":
+            return wert, self.combos.get(wert)
+        if art == "env":
+            return wert, self.envelopes.get(wert)
+        return "", None
+
+    def _tabellenbloecke(self, e) -> list:
+        """Eine Ergebnistabelle wie in der Oberflaeche (gekuerzt auf max_rows)."""
+        name = (e.tabelle or "").strip()
+        wert, res = self._ergebnis_zu(e.quelle)
+        m = self.model
+        rows: list = []
+        titel = f"{name} – {e.quelle_text()}" if e.quelle else name
+        if name == "Stabkräfte":
+            if res is None or not hasattr(res, "beam_forces"):
+                return [("note", f"Stabkräfte gibt es zu Lastfall oder Kombination ({e.quelle or 'kein Ergebnis'}).")]
+            rows = [["Element", "N1 [kN]", "N2 [kN]", "Vz1 [kN]", "Vz2 [kN]", "My1 [kNm]",
+                     "My2 [kNm]", "Mz max [kNm]", "σ [N/mm²]"]]
+            for i, d in sorted(res.beam_forces.items()):
+                rows.append([str(i), fmt(d["N"][0] / 1e3, 2), fmt(d["N"][1] / 1e3, 2),
+                             fmt(d["Vz"][0] / 1e3, 2), fmt(d["Vz"][1] / 1e3, 2),
+                             fmt(d["My"][0] / 1e3, 2), fmt(d["My"][1] / 1e3, 2),
+                             fmt(max(abs(d["Mz"][0]), abs(d["Mz"][1])) / 1e3, 2),
+                             fmt(d["sig_max"] / 1e6, 1)])
+        elif name == "Auflagerkräfte":
+            if res is None or getattr(res, "reactions", None) is None:
+                return [("note", f"Auflagerkräfte gibt es zu Lastfall oder Kombination ({e.quelle or 'kein Ergebnis'}).")]
+            rows = [["Knoten", "F_x [kN]", "F_y [kN]", "F_z [kN]", "M_x [kNm]", "M_y [kNm]", "M_z [kNm]"]]
+            for n in self._support_nodes():
+                rows.append([str(n)] + [fmt(v / 1e3, 2) for v in res.reactions[n]])
+        elif name == "Umhüllende":
+            if res is None or not hasattr(res, "extreme_table"):
+                return [("note", f"Eine Umhüllende ist zu nennen (env:…), nicht {e.quelle or 'nichts'}.")]
+            rows = [["Element", "Größe", "min", "aus", "max", "aus"]]
+            for el, k, mn, c1, mx, c2 in res.extreme_table():
+                rows.append([str(el), k, fmt(mn / 1e3, 2), str(c1), fmt(mx / 1e3, 2), str(c2)])
+        elif name == "Nachweise EC3":
+            if self.design is None:
+                return [("note", "Nachweise EC3 liegen nicht vor.")]
+            rows = [list(map(str, r)) for r in self.design.table()]
+        elif name == "Ermüdung":
+            if self.fatigue is None:
+                return [("note", "Ermüdungsnachweise liegen nicht vor.")]
+            rows = [list(map(str, r)) for r in self.fatigue.table()]
+        elif name == "Kontakt":
+            if res is None or not getattr(res, "contact", None):
+                return [("note", f"Kontaktergebnisse gibt es zu Lastfall oder Kombination ({e.quelle or 'kein Ergebnis'}).")]
+            rows = [["Knoten", "Art", "Zustand", "F_n [kN]", "F_t [kN]", "Spalt [mm]"]]
+            for c in res.contact:
+                rows.append([str(c["node"]), c["kind"], c["status"], fmt(c["Fn"] / 1e3, 2),
+                             fmt(c["Ft"] / 1e3, 2), fmt(c["gap"] * 1e3, 3)])
+        elif name == "Lastfälle":
+            rows = [["Lastfall", "Art", "Lasten", "Beschreibung"]]
+            for lc in m.load_cases.values():
+                rows.append([lc.name, ACTION_CATEGORIES.get(lc.category, lc.category),
+                             str(lc.n_loads), lc.description or ""])
+        elif name == "Kombinationen":
+            rows = [list(map(str, r)) for r in combination_table(m)] if m.combinations else []
+            if not rows:
+                return [("note", "Es gibt keine Kombinationen.")]
+        else:
+            return [("note", f"Unbekannte Tabelle „{name}“ - möglich: " + ", ".join(self.TABELLEN) + ".")]
+        rows, note = self._truncate(rows)
+        b = [("table", rows, titel, None, "compact")]
+        if note:
+            b.append(("note", note))
+        return b
+
+    def _dateibloecke(self, e) -> list:
+        """Eine eingefuegte Datei: Bilder als Bild, SVG als Figur, CSV als Tabelle,
+        Markdown/Text als Absaetze, XLSX (erstes Blatt) als Tabelle; PDF und
+        DOCX werden nicht eingebettet - das sagt der Bericht an der Stelle."""
+        import base64
+        typ = (e.typ or "").lower().lstrip(".")
+        daten = e.daten or ""
+        W = self.opt("figure_width")
+        unterschrift = e.beschriftung or e.datei or ""
+        if typ in ("png", "jpg", "jpeg", "gif", "webp", "bmp"):
+            return [("bild", daten, unterschrift, W, typ)]
+        try:
+            roh = base64.b64decode(daten) if daten else b""
+        except Exception:      # noqa: BLE001
+            roh = b""
+        if typ == "svg":
+            try:
+                return [self._figure(roh.decode("utf-8"), unterschrift)]
+            except UnicodeDecodeError:
+                return [("note", f"{e.datei}: kein lesbares SVG.")]
+        if typ in ("csv", "txt", "md", "markdown"):
+            try:
+                text = roh.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = roh.decode("cp1252", errors="replace")
+            if typ == "csv":
+                import csv
+                trenner = ";" if text.count(";") >= text.count(",") else ","
+                rows = [list(r) for r in csv.reader(text.splitlines(), delimiter=trenner) if r]
+                if not rows:
+                    return [("note", f"{e.datei}: leere Tabelle.")]
+                rows, note = self._truncate(rows)
+                b = [("table", rows, unterschrift, None, "compact")]
+                if note:
+                    b.append(("note", note))
+                return b
+            return self._textbloecke(text)
+        if typ in ("xlsx", "xlsm"):
+            try:
+                import openpyxl
+                import io as _io
+                wb = openpyxl.load_workbook(_io.BytesIO(roh), read_only=True, data_only=True)
+                ws = wb.worksheets[0]
+                rows = [["" if v is None else str(v) for v in r] for r in ws.iter_rows(values_only=True)]
+                rows = [r for r in rows if any(r)]
+                if not rows:
+                    return [("note", f"{e.datei}: leeres Blatt.")]
+                rows, note = self._truncate(rows)
+                b = [("table", rows, unterschrift or ws.title, None, "compact")]
+                if note:
+                    b.append(("note", note))
+                return b
+            except ImportError:
+                return [("note", f"{e.datei}: zum Lesen von Excel-Dateien fehlt das Paket openpyxl.")]
+            except Exception as ex:          # noqa: BLE001
+                return [("note", f"{e.datei}: nicht lesbar ({ex}).")]
+        if typ in ("pdf", "docx", "doc"):
+            return [("note", f"{e.datei}: {typ.upper()}-Dateien werden nicht eingebettet - "
+                             "als Anlage beilegen (Bilder, SVG, CSV, Markdown, Text und XLSX "
+                             "werden übernommen).")]
+        return [("note", f"{e.datei}: Dateityp „{typ or '?'}“ wird nicht übernommen.")]
 
     def blocks(self) -> list:
         if self._blocks is None:
@@ -854,7 +1130,7 @@ class Report:
                     title=f"System – {sv.Projection.LABELS[view]}")
                 b.append(self._figure(svg_text, f"Statisches System, {sv.Projection.LABELS[view]}"
                                       + (" (mit Knoten- und Elementnummern)"
-                                         if small and k == 0 else "")))
+                                         if small and k == 0 else "") + sv.figur_hinweis(m)))
         return b
 
     # ============================================================ Kapitel 3
@@ -1054,16 +1330,24 @@ class Report:
         if self.opt("load_cases"):
             W, H = self.opt("figure_width"), int(self.opt("figure_height") * 0.85)
             views = self._views()
+            # Lastbilder nur fuer die ersten Lastfaelle: am Drehlager (422
+            # Lastfaelle, 1,8 Mio. Elemente) kostete jedes Bild eine Minute
+            n_bilder, grenze = 0, int(self.opt("max_case_figures") or 0)
             for lc in m.load_cases.values():
                 b.append(self._h(3, f"Lastfall {lc.name}" + (f" – {lc.description}"
                                                             if lc.description else "")))
                 b.extend(self._load_tables(lc))
-                if self.opt("figures") and lc.n_loads > 0 and m.nn:
+                if self.opt("figures") and lc.n_loads > 0 and m.nn and n_bilder < grenze:
                     view = views[0] if len(views) == 1 else "iso"
                     svg_text = sv.draw_structure(m, view, W, H, show_supports=True,
                                                  show_loads=True, case=lc,
                                                  title=f"Lastfall {lc.name}")
-                    b.append(self._figure(svg_text, f"Lasten des Lastfalls {lc.name}"))
+                    b.append(self._figure(svg_text, f"Lasten des Lastfalls {lc.name}"
+                                          + sv.figur_hinweis(m)))
+                    n_bilder += 1
+            if self.opt("figures") and n_bilder >= grenze and len(m.load_cases) > grenze:
+                b.append(("note", f"Lastbilder für die ersten {grenze} Lastfälle; die übrigen "
+                                  f"{len(m.load_cases) - grenze} sind in den Tabellen beschrieben."))
         b.append(self._h(2, "Kombinationen"))
         if m.combinations:
             rows = combination_table(m)
@@ -1090,15 +1374,23 @@ class Report:
             b.append(self._h(2, "Ermüdungslasten"))
             rows = [["Ermüdungslast", "Beanspruchung", "Lastspiele n bzw. Wiederholungen",
                      "Zählung", "Faktor"]]
+            # None = globale Lastspielzahl der Nachweiseinstellungen (seit 11.09.2026);
+            # ":.3g" auf None riss den Bericht am Drehlager (12.09.2026)
+            from ..ec3.fatigue import _spiele, _wiederholungen
+            ds = m.design
             for f in m.fatigue_loads.values():
                 if getattr(f, "folge", None):
-                    rows.append([f.name, " → ".join(f.folge),
-                                 f"{getattr(f, 'wiederholungen', 1.0):.3g}",
+                    w = getattr(f, "wiederholungen", 1.0)
+                    text = (f"{_wiederholungen(f, ds):.3g} (global)" if w is None
+                            else f"{float(w or 0.0):.3g}")
+                    rows.append([f.name, " → ".join(f.folge), text,
                                  getattr(f, "zaehlung", "rainflow"), fmt(f.factor, 2)])
                 else:
+                    c = getattr(f, "cycles", 2e6)
+                    text = f"{_spiele(f, ds):.3g} (global)" if c is None else f"{float(c or 0.0):.3g}"
                     rows.append([f.name,
                                  f"{f.case_max} gegen {f.case_min or 'Nullzustand'}",
-                                 f"{f.cycles:.3g}", "zwei Zustände", fmt(f.factor, 2)])
+                                 text, "zwei Zustände", fmt(f.factor, 2)])
             b.append(("table", rows, "Ermüdungsbeanspruchungen – zwei Zustände oder ein "
                                      "Verlauf (dann wird das Kollektiv gezählt)", None, ""))
         return b
@@ -1112,32 +1404,18 @@ class Report:
         entstanden ist - Ergebnis, Faerbung, Verlauf und Ueberhoehung. Ohne
         diese Angabe waere eine Farbgrafik im Bericht nicht pruefbar.
         """
-        eintraege = list(getattr(self.model, "bericht", None) or [])
+        eintraege = self._eintraege("")
         if not eintraege or not self.opt("uebernommen"):
             return []
-        b = [self._h(1, "Übernommene Ergebnisbilder")]
-        b.append(("p", "Die folgenden Abbildungen wurden aus der Ansicht des "
-                       "Programms übernommen. Unter jedem Bild steht, welches "
-                       "Ergebnis es zeigt, wonach eingefärbt wurde, welcher "
-                       "Schnittgrößenverlauf angetragen ist und mit welcher "
-                       "Überhöhung die Verformung dargestellt wird."))
-        W = self.opt("figure_width")
+        b = [self._h(1, "Übernommene Ergebnisse")]
+        if any((getattr(e, "art", "bild") or "bild") == "bild" for e in eintraege):
+            b.append(("p", "Die folgenden Abbildungen wurden aus der Ansicht des "
+                           "Programms übernommen. Unter jedem Bild steht, welches "
+                           "Ergebnis es zeigt, wonach eingefärbt wurde, welcher "
+                           "Schnittgrößenverlauf angetragen ist und mit welcher "
+                           "Überhöhung die Verformung dargestellt wird."))
         for i, e in enumerate(eintraege, 1):
-            b.append(self._h(2, e.name or f"Bild {i}"))
-            zeilen = [["Zeigt", e.quelle_text()]]
-            if e.feld:
-                zeilen.append(["Färbung", e.feld])
-            if e.verlauf and e.verlauf != "kein Verlauf":
-                zeilen.append(["Schnittgrößenverlauf", e.verlauf])
-            if e.ueberhoehung:
-                zeilen.append(["Überhöhung", f"{e.ueberhoehung:g}"])
-            b.append(("kv", zeilen, ""))
-            if e.bild:
-                b.append(self._bild(e.bild, e.beschriftung or e.bezug(), W))
-            else:
-                b.append(("p", "<i>Zu diesem Eintrag liegt kein Bild vor.</i>"))
-            if e.bemerkung:
-                b.append(("p", e.bemerkung))
+            b.extend(self._eintrag_bloecke(e, i, ebene=2))
         return b
 
     def chapter_volumen(self) -> list:
@@ -1795,20 +2073,21 @@ class Report:
             best = max(ss.items(), key=lambda kv_: kv_[1]["vM"])
             rows.append(["σ_v [N/mm²]", fmt(best[1]["vM"] / 1e6, 1), str(best[0])])
             b.append(("table", rows, f"Schnittkräfte und Spannungen der Schalen {name}", None, ""))
-        try:
-            so = res.solid_stress
-        except Exception:
-            so = {}
+        so = getattr(res, "solid_res", None) or {}
         if so:
-            best = max(so.items(), key=lambda kv_: kv_[1]["vM"])
-            p1 = max(so.items(), key=lambda kv_: float(np.max(kv_[1]["principal"])))
-            p3 = min(so.items(), key=lambda kv_: float(np.min(kv_[1]["principal"])))
+            # vektorisiert (spannungen.volumen_werte): res.solid_stress rechnete je
+            # Element eigvalsh in Python - 38 s je Ergebnis am Drehlager (12.09.2026)
+            from .. import spannungen as spn
+            ids = list(so)
+            S = np.array([so[i] for i in ids], float).reshape(-1, 6)
+            sv = spn.volumen_werte(S, "sv")
+            s1 = spn.volumen_werte(S, "s1")
+            s3 = spn.volumen_werte(S, "s3")
+            k_v, k_1, k_3 = int(np.argmax(sv)), int(np.argmax(s1)), int(np.argmin(s3))
             rows = [["Größe", "Wert [N/mm²]", "Element"],
-                    ["max. Vergleichsspannung σ_v", fmt(best[1]["vM"] / 1e6, 1), str(best[0])],
-                    ["max. Hauptspannung σ_1", fmt(float(np.max(p1[1]["principal"])) / 1e6, 1),
-                     str(p1[0])],
-                    ["min. Hauptspannung σ_3", fmt(float(np.min(p3[1]["principal"])) / 1e6, 1),
-                     str(p3[0])]]
+                    ["max. Vergleichsspannung σ_v", fmt(float(sv[k_v]) / 1e6, 1), str(ids[k_v])],
+                    ["max. Hauptspannung σ_1", fmt(float(s1[k_1]) / 1e6, 1), str(ids[k_1])],
+                    ["min. Hauptspannung σ_3", fmt(float(s3[k_3]) / 1e6, 1), str(ids[k_3])]]
             b.append(("table", rows, f"Spannungen der Volumenelemente {name}", None, ""))
         return b
 
@@ -1865,9 +2144,10 @@ class Report:
                                          show_supports=True, show_loads=False,
                                          title=f"Verformung – {gname}")
             b.append(self._figure(svg_text, f"Verformte Lage für {gname} (Ausgangslage "
-                                            "gestrichelt, Farbe: Verschiebungsbetrag)"))
+                                            "gestrichelt, Farbe: Verschiebungsbetrag)"
+                                  + sv.figur_hinweis(m)))
         # ---- Lastfaelle
-        if self.opt("results_cases") and self.cases:
+        if self.opt("results_cases") and self.cases and int(self.opt("max_detail_cases") or 0) > 0:
             b.append(self._h(2, "Ergebnisse je Lastfall"))
             items = list(self.cases.items())
             lim = self.opt("max_detail_cases")
@@ -1878,7 +2158,7 @@ class Report:
                 b.append(("note", f"Für die übrigen {len(items) - lim} Lastfälle siehe "
                                   "Übersicht und Umhüllende."))
         # ---- Kombinationen
-        if self.opt("results_combinations") and self.combos:
+        if self.opt("results_combinations") and self.combos                 and int(self.opt("max_detail_combinations") or 0) > 0:
             b.append(self._h(2, "Ergebnisse je Kombination"))
             items = list(self.combos.items())
             lim = self.opt("max_detail_combinations")
@@ -2200,8 +2480,19 @@ class Report:
                 b.append(self._figure(svg_text, "Ausnutzung der Stäbe (Farbskala)"))
         # Einzelnachweise
         b.append(self._h(2, "Nachweise im Einzelnen"))
-        for mc in d.members.values():
-            b.extend(self._member_design_blocks(mc))
+        if self.opt("design_detail"):
+            # Details je Stab: bei "mittel" die am hoechsten ausgenutzten
+            liste = list(d.members.values())
+            grenze = int(self.opt("max_detail_members") or 0)
+            if grenze and len(liste) > grenze:
+                liste = sorted(liste, key=lambda mc: -(mc.util or 0.0))[:grenze]
+                b.append(("note", f"Nachweisdetails für die {grenze} am höchsten ausgenutzten "
+                                  f"von {len(d.members)} Stäben (Umfang „mittel“)."))
+            for mc in liste:
+                b.extend(self._member_design_blocks(mc))
+        else:
+            b.append(("note", "Kurzform: die Nachweise stehen in der Übersicht; Zwischenwerte je "
+                              "Stab liefert der Bericht im Umfang „mittel“ oder „lang“."))
         nf = [mc.member for mc in d.members.values() if mc.util > 1.0]
         if nf:
             self._warnings.append("Nachweise NICHT erfüllt für: " + ", ".join(nf))
@@ -3426,10 +3717,7 @@ class Report:
             b.append(("status", "Es wurden keine Nachweise geführt; die Ergebnisse dienen der "
                                 "Schnittgrößen- und Verformungsermittlung.", True))
         warn = list(dict.fromkeys(self._warnings))
-        try:
-            chk = [s for s in m.check() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
-        except Exception:
-            chk = []
+        chk = [s for s in self._modellpruefung() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
         warn += [f"Modellprüfung: {s}" for s in chk]
         if warn:
             b.append(("p", "Offene Hinweise und Warnungen:"))
@@ -3443,10 +3731,7 @@ class Report:
         m = self.model
         b = [self._h(1, "Anhang", appendix=True)]
         b.append(self._h(2, "Modellprüfung"))
-        try:
-            msgs = m.check()
-        except Exception as ex:      # Modellpruefung darf den Bericht nicht verhindern
-            msgs = [f"FEHLER: Modellprüfung nicht möglich ({ex})"]
+        msgs = self._modellpruefung()
         if msgs:
             b.append(("list", msgs))
         else:
@@ -3531,10 +3816,15 @@ class Report:
             return (f"<figure>{svg_text}"
                     + (f"<figcaption>{esc(caption)}</figcaption>" if caption else "")
                     + "</figure>")
+        if kind == "h4":
+            return f"<h4>{esc(blk[1])}</h4>"
         if kind == "bild":
             _, png, caption, breite = (list(blk) + [0])[:4]
+            typ = (list(blk) + [0, "png"])[4] if len(blk) > 4 else "png"
+            mime = {"jpg": "jpeg", "jpeg": "jpeg", "gif": "gif", "webp": "webp",
+                    "bmp": "bmp"}.get(str(typ).lower(), "png")
             stil = f' style="width:{int(breite)}px;max-width:100%"' if breite else ""
-            return (f'<figure><img src="data:image/png;base64,{png}"{stil} '
+            return (f'<figure><img src="data:image/{mime};base64,{png}"{stil} '
                     f'alt="{esc(caption)}">'
                     + (f"<figcaption>{esc(caption)}</figcaption>" if caption else "")
                     + "</figure>")
@@ -3558,13 +3848,55 @@ class Report:
             self._toc, num, self._appendix, self._warnings = saved
             self._num = num
 
+    def rahmen(self):
+        """Der Berichtsrahmen des Modells (model.Berichtsrahmen) oder die Vorgabe."""
+        r = getattr(self.model, "bericht_rahmen", None)
+        if r is None:
+            from ..model import Berichtsrahmen
+            r = Berichtsrahmen()
+        return r
+
+    def _rahmentext(self, vorlage: str) -> str:
+        """Kopf- oder Fusszeile mit den Platzhaltern des Projekts gefuellt."""
+        meta = getattr(self.model, "meta", {}) or {}
+        werte = {k: str(meta.get(k, "") or "") for k in
+                 ("projekt", "bauteil", "position", "auftraggeber", "bearbeiter")}
+        werte["datum"] = (self.opt("date") or datetime.date.today().strftime("%d.%m.%Y"))
+        werte["modell"] = self.model.name
+        try:
+            text = (vorlage or "").format(**werte)
+        except (KeyError, IndexError, ValueError):
+            text = vorlage or ""
+        # leere Platzhalter hinterlassen doppelte Trenner - zusammenziehen
+        teile = [s.strip() for s in text.split("·")]
+        return " · ".join(s for s in teile if s)
+
+    def _rahmen_css(self) -> str:
+        r = self.rahmen()
+        linie = "border-bottom: 1px solid #888;" if r.rahmenlinie else ""
+        linie_f = "border-top: 1px solid #888;" if r.rahmenlinie else ""
+        return (f"@page {{ size: A4; margin: {r.rand_oben_mm:g}mm {r.rand_rechts_mm:g}mm "
+                f"{r.rand_unten_mm:g}mm {r.rand_links_mm:g}mm; }}\n"
+                f"body {{ font-size: {r.schrift_pt:g}pt; }}\n"
+                f".kopfzeile {{ font-size: 8.5pt; color: #444; {linie} padding-bottom: 2px; "
+                f"margin-bottom: 4mm; display: flex; justify-content: space-between; }}\n"
+                f".fusszeile {{ font-size: 8.5pt; color: #444; {linie_f} padding-top: 2px; "
+                f"margin-top: 6mm; display: flex; justify-content: space-between; }}\n"
+                f".logo {{ width: {r.logo_breite_mm:g}mm; float: right; margin: 0 0 4mm 6mm; }}\n"
+                "@media print { .kopfzeile { position: fixed; top: 0; left: 0; right: 0; "
+                "background: #fff; } .fusszeile { position: fixed; bottom: 0; left: 0; right: 0; "
+                "background: #fff; } body { padding-top: 8mm; padding-bottom: 8mm; } }\n")
+
     def html(self) -> str:
-        """Vollstaendiges HTML5-Dokument (UTF-8, druckfaehig A4)."""
+        """Vollstaendiges HTML5-Dokument (UTF-8, druckfaehig A4) mit dem Rahmen
+        des Modells: Kopf- und Fusszeile (beim Drucken auf jeder Seite), Raender,
+        Logo, Titelblatt und Inhaltsverzeichnis nach Berichtsrahmen."""
         blocks = self.blocks()
         self._melde(0.86, f"{len(blocks)} Abschnitte als HTML ausgeben")
         body = self.render_html_blocks(blocks)
         self._melde(0.97, "Dokument zusammensetzen")
         meta = self._header_pairs()
+        r = self.rahmen()
         title = f"Statischer Bericht – {self.model.name}"
         proj = dict(meta).get("Projekt", "")
         head_rows = "".join(f"<tr><th>{esc(k)}</th><td>{esc(v)}</td></tr>" for k, v in meta)
@@ -3573,6 +3905,31 @@ class Report:
             if level <= 2:
                 toc.append(f'<li class="l{level}"><a href="#{anchor}">'
                            f'<span class="no">{esc(number)}</span> {esc(t)}</a></li>')
+        logo = (f'<img class="logo" alt="Logo" src="data:image/png;base64,{r.logo}">'
+                if r.logo else "")
+        kopf = self._rahmentext(r.kopf)
+        fuss = self._rahmentext(r.fuss)
+        kopfzeile = (f'<div class="kopfzeile"><span>{esc(kopf)}</span>'
+                     f'<span>{esc(title)}</span></div>') if kopf or r.rahmenlinie else ""
+        fusszeile = (f'<div class="fusszeile"><span>{esc(fuss)}</span>'
+                     f'<span>Statik3D {esc(__version__)}</span></div>') if fuss or r.rahmenlinie else ""
+        titelblatt = f"""<div class="titlepage">
+{logo}<div class="brand">Statik3D – Tragwerksberechnung</div>
+<h1 class="doctitle">Statischer Bericht</h1>
+<div class="subtitle">{esc(self.model.name)}{(" – " + esc(proj)) if proj and proj != "–" else ""}</div>
+<table class="kv meta"><tbody>{head_rows}</tbody></table>
+<div class="note">Prüffähige Dokumentation der Eingaben, Ergebnisse und Nachweise. Alle Werte in
+kN, kNm, mm und N/mm², sofern nicht anders angegeben. Dieses Dokument lässt sich im Browser mit
+Strg+P als PDF speichern. Umfang: {esc(self.UMFANG_TEXT.get(self.opt("umfang"), "eigene Auswahl"))}.</div>
+</div>
+""" if r.titelblatt else f"{logo}<h1 class=\"doctitle\">Statischer Bericht – {esc(self.model.name)}</h1>\n"
+        inhalt = f"""<nav class="toc">
+<h2>Inhalt</h2>
+<ul>
+{chr(10).join(toc)}
+</ul>
+</nav>
+""" if r.inhaltsverzeichnis else ""
         return f"""<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -3582,26 +3939,14 @@ class Report:
 <title>{esc(title)}</title>
 <style>
 {CSS}
+{self._rahmen_css()}
 </style>
 </head>
 <body>
-<div class="titlepage">
-<div class="brand">Statik3D – Tragwerksberechnung</div>
-<h1 class="doctitle">Statischer Bericht</h1>
-<div class="subtitle">{esc(self.model.name)}{(" – " + esc(proj)) if proj and proj != "–" else ""}</div>
-<table class="kv meta"><tbody>{head_rows}</tbody></table>
-<div class="note">Prüffähige Dokumentation der Eingaben, Ergebnisse und Nachweise. Alle Werte in
-kN, kNm, mm und N/mm², sofern nicht anders angegeben. Dieses Dokument lässt sich im Browser mit
-Strg+P als PDF speichern.</div>
-</div>
-<nav class="toc">
-<h2>Inhalt</h2>
-<ul>
-{chr(10).join(toc)}
-</ul>
-</nav>
-{body}
+{kopfzeile}
+{titelblatt}{inhalt}{body}
 <div class="footer">Statik3D {esc(__version__)} – {esc(title)}</div>
+{fusszeile}
 </body>
 </html>
 """
@@ -3628,6 +3973,10 @@ Strg+P als PDF speichern.</div>
         out.append("")
         for blk in blocks:
             kind = blk[0]
+            if kind == "h4":
+                out.append("#### " + str(blk[1]))
+                out.append("")
+                continue
             if kind == "h":
                 _, level, number, title, _a = blk
                 out.append("")

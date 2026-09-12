@@ -305,6 +305,43 @@ def main():
     d9 = dg.ContactPairDialog(w, w.model, 2)
     d10 = dg.ImportDialog(w, "test.dxf", w.model); opts = d10.options()
     d11 = dg.ReportDialog(w, w.model, "b.html"); ro = d11.options()
+    check("Berichtsdialog: Umfang Kurzform ist die Vorgabe - Elementtabellen und Verlaeufe aus",
+          ro.get("umfang") == "kurz" and ro["model_tables"] is False and ro["member_diagrams"] is False
+          and ro["design"] is True, str({k: v for k, v in ro.items() if k in ("umfang", "model_tables")}))
+    d11.umfang.setCurrentIndex(d11.umfang.findData("lang"))
+    check("… Langform schaltet alles ein", d11.options()["model_tables"] is True
+          and d11.options()["umfang"] == "lang")
+    d11.checks["figures"].setChecked(False)
+    check("… ein Haken von Hand macht eine eigene Auswahl", d11.options()["umfang"] == "eigene"
+          and d11.options()["figures"] is False)
+    d11.apply_meta(w.model)
+    check("… der Umfang steht am Modell", w.model.berichtsrahmen().umfang == "eigene")
+    d12 = dg.BerichtsrahmenDialog(w, w.model)
+    d12.kopf.setText("{projekt} · {position}"); d12.r_links.set(22.0); d12.titel.setChecked(False)
+    d12.apply(w.model)
+    check("Rahmendialog: Kopfzeile, Rand und Titelblatt am Modell",
+          w.model.bericht_rahmen.kopf == "{projekt} · {position}"
+          and w.model.bericht_rahmen.rand_links_mm == 22.0 and w.model.bericht_rahmen.titelblatt is False)
+    e_t = w.berichtstext_einfuegen("# Hinweis\nProbe", nach="general")
+    e_b = w.berichtstabelle_einfuegen("Lastfälle")
+    import tempfile as _tf
+    _fd, _p = _tf.mkstemp(suffix=".csv"); os.close(_fd)
+    with open(_p, "w", encoding="utf-8") as _fh:
+        _fh.write("a;b\n1;2\n")
+    e_d = w.berichtsdatei_einfuegen(_p)
+    os.unlink(_p)
+    check("Bericht: Text, Tabelle und Datei eingefuegt, Tabelle Bericht zeigt Art und Platz",
+          e_t is not None and e_t.art == "text" and e_t.nach == "general"
+          and e_b is not None and e_b.tabelle == "Lastfälle" and e_d is not None and e_d.typ == "csv"
+          and [z[6] for z in w.tbl_bericht.modell.zeilen][-3:] == ["Text", "Tabelle", "Datei"]
+          and w.tbl_bericht.modell.zeilen[-3][7] == "general",
+          str([z[6] for z in w.tbl_bericht.modell.zeilen][-3:]))
+    check("Bericht: Platz im Bericht ueber die Tabelle aenderbar, Unsinn abgewiesen",
+          w._bericht_aendern(len(w.tbl_bericht.modell.zeilen) - 1, 7, "results")
+          and w.model.bericht[-1].nach == "results"
+          and not w._bericht_aendern(len(w.tbl_bericht.modell.zeilen) - 1, 7, "kapitelx"))
+    check("Ribbon Bericht: Gliederung und Rahmen", getattr(w, "act_berichtsrahmen", None) is not None)
+    del w.model.bericht[-3:]
     check("Dialoge erzeugt", mat.fy == 355e6 and sec.typ == "I" and "unit_scale" in opts and ro["design"],
           f"{mat.name} {sec.name}")
 
@@ -1794,8 +1831,127 @@ def main():
         traceback.print_exc()
         check("Geometriekette", False, str(ex)[:70])
 
+    # ---- Ergebnisse neben der Modelldatei (12.09.2026) -----------------------
+    try:
+        _alt_error = w.error
+        w.error = lambda msg: check("Ergebnisdatei: unerwarteter Fehler (Dialog)", False, str(msg)[:90])
+        import tempfile as _tf2
+        from statik3d import ergebnisse as _erg
+        w.load_example("frame"); app.processEvents()
+        an = solver.solve_all(w.model, design=True); w._solve_done("all", an); app.processEvents()
+        ordner = _tf2.mkdtemp()
+        pfad = os.path.join(ordner, "rahmen.json")
+        w.path = pfad
+        w.save_model()
+        app.processEvents()
+        epfad = _erg.pfad_zu(pfad)
+        check("Speichern schreibt die Ergebnisdatei neben das Modell",
+              os.path.exists(pfad) and os.path.exists(epfad), epfad)
+        n_res = w.cb_result.count()
+        w.analysis = None; w.results = None; w.path = ""
+        ok = w.modell_laden(pfad)
+        app.processEvents()
+        check("Öffnen lädt die Ergebnisse mit: Analyse da, Ergebnisliste wie vor dem Speichern",
+              ok and w.analysis is not None and w.cb_result.count() == n_res and n_res > 0,
+              f"{w.cb_result.count()} / {n_res}")
+        w.analysis = None; w.results = None
+        w.save_model(); app.processEvents()
+        check("Speichern ohne Analyse entfernt die alte Ergebnisdatei", not os.path.exists(epfad))
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        check("Ergebnisse neben der Modelldatei", False, str(ex)[:80])
+    finally:
+        w.error = _alt_error
+
+    # ---- Werte im Bild und Sonde (12.09.2026) --------------------------------
+    try:
+        _alt_error = w.error
+        w.error = lambda msg: check("Werte im Bild: unerwarteter Fehler (Dialog)", False, str(msg)[:90])
+        from statik3d.gui import viewport as vpw
+        w.load_example("hall"); app.processEvents()
+        an = solver.solve_all(w.model, design=True); w._solve_done("all", an); app.processEvents()
+        erg = w._ergebnisliste()
+        w._baum_geklickt("ergebnis", erg["Kombinationen"][0][2]); app.processEvents()
+        w.cb_diagram.setCurrentText("My"); app.processEvents()
+        check("Werte im Bild: Schalter Stäbe/Flächen/Volumen und Sonde im Ribbon, anfangs aus",
+              all(getattr(w, f"act_werte_{a}", None) is not None and not getattr(w, f"act_werte_{a}").isChecked()
+                  for a in ("staebe", "flaechen", "volumen")) and not w.act_sonde.isChecked()
+              and not any(a.startswith("ergebniswerte") for a in w.plotter.renderer.actors))
+        w.act_werte_staebe.setChecked(True); app.processEvents()
+        n_extrem = int(getattr(w, "_werte_im_bild", 0))
+        check("Stäbe an: Marken mit My an den Extremstellen, Kopfzeile nennt es",
+              any(a.startswith("ergebniswerte") for a in w.plotter.renderer.actors) and 0 < n_extrem <= vpw.WERTE_MAX
+              and "Werte im Bild: Stäbe (My)" in " ".join(w._kopfzeile_zeilen), f"{n_extrem} Marken")
+        w.cb_werte_filter.setCurrentIndex(w.cb_werte_filter.findData("alle")); app.processEvents()
+        n_alle = int(getattr(w, "_werte_im_bild", 0))
+        check("Filter „alle Stellen“ zeigt mehr Marken als „Extremwerte“", n_alle > n_extrem, f"{n_alle} > {n_extrem}")
+        w.sp_werte_n.setValue(2); app.processEvents()
+        n_halb = int(getattr(w, "_werte_im_bild", 0))
+        check("jeder 2. Wert: etwa die Hälfte", 0 < n_halb <= n_alle // 2 + 1, f"{n_halb}")
+        w.sp_werte_n.setValue(1)
+        w.ed_werte_schwelle.setValue(1e8); app.processEvents()
+        check("Schwelle über allem: keine Marke, kein Darsteller",
+              int(getattr(w, "_werte_im_bild", 0)) == 0
+              and not any(a.startswith("ergebniswerte") for a in w.plotter.renderer.actors))
+        w.ed_werte_schwelle.setValue(0.0)
+        w.cb_werte_filter.setCurrentIndex(w.cb_werte_filter.findData("auswahl")); app.processEvents()
+        check("nur Auswahl ohne Auswahl: keine Marke", int(getattr(w, "_werte_im_bild", 0)) == 0)
+        e0 = next(i for i, e in enumerate(w.model.elements) if e.typ in vpw.TYPEN_STAEBE)
+        w.sel_elemente = [e0]; w.redraw(); app.processEvents()
+        check("nur Auswahl mit einem Element: dessen zwei Extremwerte", int(getattr(w, "_werte_im_bild", 0)) == 2,
+              str(getattr(w, "_werte_im_bild", 0)))
+        w.sel_elemente = []
+        w.cb_werte_filter.setCurrentIndex(0)
+        w.act_werte_staebe.setChecked(False)
+        # Sonde: Klick auf einen Knoten setzt eine Marke mit dem Faerbungswert
+        w.cb_field.setCurrentText(FIELDS[0]); app.processEvents()
+        w.act_sonde.setChecked(True)
+        k2 = 2
+        xy_, _s = w._projizieren(np.atleast_2d(w.model.nodes[k2]))
+        w.plotter.iren.interactor.SetEventInformation(int(round(xy_[0, 0])), int(round(xy_[0, 1])))
+        w._picked(w.model.nodes[k2]); app.processEvents()
+        check("Sonde: ein Klick setzt eine Marke am Knoten, mit Wert der Färbung",
+              len(w.sonden) == 1 and any(a.startswith("sonden") for a in w.plotter.renderer.actors)
+              and w.sonden[0]["knoten"] == k2, str(w.sonden))
+        xy_, _s = w._projizieren(np.atleast_2d(w.model.nodes[5]))
+        w.plotter.iren.interactor.SetEventInformation(int(round(xy_[0, 0])), int(round(xy_[0, 1])))
+        w._picked(w.model.nodes[5] + 1e-4); app.processEvents()
+        check("… zweite Sonde am nächsten Knoten", len(w.sonden) == 2 and w.sonden[1]["knoten"] == 5)
+        w.cb_field.setCurrentText("Vergleichsspannung"); app.processEvents()
+        check("die Sonden folgen der Färbung (bleiben beim Umschalten)", len(w.sonden) == 2
+              and any(a.startswith("sonden") for a in w.plotter.renderer.actors))
+        w.act_sonde.setChecked(False)
+        w.sonden_loeschen(); app.processEvents()
+        check("Sonden löschen räumt auf", not w.sonden
+              and not any(a.startswith("sonden") for a in w.plotter.renderer.actors))
+        # Volumen: ein Wert je Koerper
+        w.load_example("friction"); app.processEvents()
+        an = solver.solve_all(w.model, combinations=False); w._solve_done("all", an); app.processEvents()
+        erg = w._ergebnisliste()
+        w._baum_geklickt("ergebnis", f"case:{list(w.model.load_cases)[0]}"); app.processEvents()
+        w.cb_field.setCurrentText("Vergleichsspannung"); app.processEvents()
+        w.act_werte_volumen.setChecked(True); app.processEvents()
+        n_vol = int(getattr(w, "_werte_im_bild", 0))
+        check("Volumen an: ein Wert je Volumenkörper (oder einer für das ganze Netz)",
+              n_vol == max(1, len([k for k in w.model.koerper.values() if k.elemente])), str(n_vol))
+        w.act_werte_volumen.setChecked(False)
+        w.act_werte_flaechen.setChecked(True); app.processEvents()
+        n_fl = int(getattr(w, "_werte_im_bild", 0))
+        check("Flächen an: eine Marke je Schalenelement",
+              n_fl == sum(1 for e in w.model.elements if e.typ in vpw.TYPEN_FLAECHEN), str(n_fl))
+        w.act_werte_flaechen.setChecked(False); app.processEvents()
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        check("Werte im Bild und Sonde", False, str(ex)[:80])
+    finally:
+        w.error = _alt_error
+
     # ---- Spannungen im Modellbaum und Werteskala (12.09.2026) ----------------
     try:
+        _alt_error = w.error
+        w.error = lambda msg: check("Spannungen: unerwarteter Fehler (Dialog)", False, str(msg)[:90])
         from statik3d import spannungen as spn
         from statik3d.model import Model as _Mdl
 
@@ -1909,6 +2065,8 @@ def main():
         import traceback
         traceback.print_exc()
         check("Spannungen und Werteskala", False, str(ex)[:80])
+    finally:
+        w.error = _alt_error
 
     # ---- Ergebnisse im Modellbaum und Übernahme in den Bericht -------------
     try:
@@ -1990,8 +2148,8 @@ def main():
               and w.model.bericht[0].beschriftung == "Verformung im GZG")
         from statik3d.report.html import Report
         html = Report(w.model, w.analysis).html()
-        check("Bericht hat das Kapitel „Übernommene Ergebnisbilder“",
-              "Übernommene Ergebnisbilder" in html)
+        check("Bericht hat das Kapitel „Übernommene Ergebnisse“ (bis 12.09.2026: Ergebnisbilder)",
+              "Übernommene Ergebnisse" in html)
         check("die Bilder stehen im Bericht",
               html.count("data:image/png;base64") >= 2,
               f"{html.count('data:image/png;base64')} Bilder")
@@ -3974,6 +4132,18 @@ def main():
         namen = [n for n in w.plotter.renderer.actors if "supports" in n]
         check("Lager an: die Lagersymbole sind wieder da", bool(namen) and w._dargestellt("Lager"),
               str(namen[:3]))
+        # Lagerart als Farbe, Beschriftung schaltbar (12.09.2026)
+        from statik3d.gui import viewport as vpl
+        farben = {tuple(round(c, 2) for c in list(w.plotter.renderer.actors[n].prop.color)[:3])
+                  for n in namen if n.startswith("supports") and n != "supports_nichtlinear"}
+        soll = {tuple(round(c, 2) for c in __import__("pyvista").Color(vpl.lager_farbe(s)).float_rgb)
+                for s in w.model.supports}
+        check("Knotenlager sind nach Lagerart gefärbt", farben == soll, f"{farben} / {soll}")
+        w.act_lagertext.setChecked(True); w.redraw()
+        check("Lagerbeschriftung an: ein Darsteller mit Text je Knotenlager",
+              any(a.startswith("lagertext") for a in w.plotter.renderer.actors))
+        w.act_lagertext.setChecked(False); w.redraw()
+        check("Lagerbeschriftung aus", not any(a.startswith("lagertext") for a in w.plotter.renderer.actors))
         check("„Alles holen“ ist aus der Glasleiste weg",
               not any("zoom" in k.lower() or "holen" in k.lower() for k in kn))
         ansicht = w.centralWidget()
@@ -6227,6 +6397,12 @@ def main():
         w.progress_bar.setRange(0, 1000)
         w.progress_bar.setVisible(True)
         w._rechnung_fortschritt("Gleichungssystem aufgestellt", 0.2)
+        # Lebenszeichen: der Takt dreht ein Zeichen in der Balkenbeschriftung (12.09.2026)
+        w._rechnung_takt_start(); w._rechnung_tick(); f1 = w.progress_bar.format(); w._rechnung_tick()
+        check("Balken bestimmt, mit Laufzeit und drehendem Zeichen",
+              w.progress_bar.maximum() == 1000 and w.progress_bar.isTextVisible()
+              and any(z in f1 for z in w.TAKTZEICHEN) and ("s" in f1 or "min" in f1)
+              and w.progress_bar.format() != f1 and w._rechnung_takt.isActive(), f1)
         check("Rechnung: der Balken zeigt den Anteil", w.progress_bar.value() == 200,
               str(w.progress_bar.value()))
         text = w.statusBar().currentMessage()
@@ -6234,6 +6410,9 @@ def main():
               "Gleichungssystem" in text and "20 %" in text and "s)" in text, text[:80])
         w._rechnung_fortschritt("System gelöst", 1.0)
         check("Rechnung: 100 % kommen an", w.progress_bar.value() == 1000)
+        w._rechnung_ende()
+        check("Rechnungsende hält den Takt an, Beschriftung zurück", not w._rechnung_takt.isActive()
+              and w.progress_bar.format() == "%p %")
         w._rechnung_ende()
         check("Rechnung: hinterher ist der Balken wieder weg und unbestimmt",
               not w.progress_bar.isVisible() and w.progress_bar.maximum() == 0)

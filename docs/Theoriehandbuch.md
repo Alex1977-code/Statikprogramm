@@ -898,7 +898,21 @@ Kontaktbild. Das Ergebnis trägt `info["contact_frozen"]` und
 Zuordnung. Geprüft am Block mit Reibung (`tests/test_kontaktzustand.py`,
 `test_einfrieren`): H2 = 1,1·H1 eingefroren gegen nichtlinear 7,0 %
 Abweichung der Verschiebungen, 1 Schritt, 0 Faktorisierungen, Gleichgewicht
-exakt. DREHLAGER_EINFRIEREN_THEORIE
+exakt. Am Drehlager (Vorspannung 735 kN je Anker als Grundlast, Ereignis
+„Zugüberfahrt und Reibung“, Zustände LF401 und LF404; venv mit Pardiso,
+12.09.2026): LF401 nichtlinear 1055 s, 42 Schritte, 41 Faktorisierungen;
+LF404 mit dem eingefrorenen Zustand von LF401: 1 Schritt, 0
+Faktorisierungen, 15 s für die Lösung und 250 s samt Nachlauf (Spannungen
+je Element, bei jedem Zustand gleich; zweite Messung mit LF401 in 1209 s /
+41 Schritten); LF404 nichtlinear (Warmstart aus LF401, diesmal
+angenommen): 798 s, 40 Schritte, 39 Faktorisierungen. Eingefroren gegen
+nichtlinear: Verschiebungen |Δu|max 0,16 % von |u|max (1,657 mm beide),
+Auflager Rx 10,8 gegen 9,1 kN, Rz −5420 gegen −5414 kN, Signalspannung
+(vorzeichenbehaftete Hauptspannung je Element) Median der Abweichung 0,00,
+99 % 0,1 N/mm², größte 216 N/mm² an einer Spannungsspitze von 4656 N/mm²
+(Kopplung). Für die Schwingbreite eines Ermüdungsnachweises ist das die
+Genauigkeit der Kontaktsteifigkeit selbst; die 164 Zustände des Drehlagers
+kosten so 47 nichtlineare Lösungen statt 164.
 
 **Angeschweißte Nachbarn lösen sich mit.** Beim Trennen der Fuge werden
 die Knoten verdoppelt, die der gelöste Körper mit anderen teilt. Bis zum
