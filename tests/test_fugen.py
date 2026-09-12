@@ -119,6 +119,51 @@ def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5, h_oben: float = 0.0) ->
     return m
 
 
+def drei_bloecke() -> Model:
+    """Wie zwei_bloecke("eigene"), dazu eine Rippe neben dem oberen Wuerfel,
+    die dessen Seitenflaeche MO1 (x = 1) als eigene Randflaeche fuehrt -
+    verschweisst. Ihre Unterkante ist die Linie R[1][1] auf der Fuge: die
+    Knoten dort gehoeren Unten, Oben und Rippe."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    P = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
+                  [0, 0, 2], [1, 0, 2], [1, 1, 2], [0, 1, 2.],
+                  [2, 0, 1], [2, 1, 1], [2, 0, 2], [2, 1, 2.]])
+    m.add_nodes(P)
+    b = Bauer(m)
+    R = [[b.linie(o + i, o + (i + 1) % 4) for i in range(4)] for o in (0, 4, 8)]
+    V01 = [b.linie(i, i + 4) for i in range(4)]
+    V12 = [b.linie(i + 4, i + 8) for i in range(4)]
+    m.add_flaeche("Boden", R[0], material="S235")
+    m.add_flaeche("Dach", R[2], material="S235")
+    m.add_flaeche("FugeU", R[1], material="S235")
+    m.add_flaeche("FugeO", R[1], material="S235")
+    unten, oben = [], []
+    for i in range(4):
+        m.add_flaeche(f"MU{i}", [R[0][i], V01[(i + 1) % 4], R[1][i], V01[i]], material="S235")
+        m.add_flaeche(f"MO{i}", [R[1][i], V12[(i + 1) % 4], R[2][i], V12[i]], material="S235")
+        unten.append(f"MU{i}")
+        oben.append(f"MO{i}")
+    # Rippe: x von 1 bis 2, z von 1 bis 2; Knoten 5, 6, 9, 10 sind die von Oben
+    l_6_13, l_13_12, l_12_5 = b.linie(6, 13), b.linie(13, 12), b.linie(12, 5)
+    l_10_15, l_15_14, l_14_9 = b.linie(10, 15), b.linie(15, 14), b.linie(14, 9)
+    l_12_14, l_13_15 = b.linie(12, 14), b.linie(13, 15)
+    m.add_flaeche("RB", [R[1][1], l_6_13, l_13_12, l_12_5], material="S235")        # Boden der Rippe
+    m.add_flaeche("RD", [R[2][1], l_10_15, l_15_14, l_14_9], material="S235")       # Dach der Rippe
+    m.add_flaeche("RX", [l_13_12, l_12_14, l_15_14, l_13_15], material="S235")      # x = 2
+    m.add_flaeche("RY0", [l_12_5, V12[1], l_14_9, l_12_14], material="S235")        # y = 0
+    m.add_flaeche("RY1", [l_6_13, l_13_15, l_10_15, V12[2]], material="S235")       # y = 1
+    k1 = m.add_koerper("Unten", ["Boden", "FugeU"] + unten, material="S235")
+    k2 = m.add_koerper("Oben", ["FugeO", "Dach"] + oben, material="S235")
+    k3 = m.add_koerper("Rippe", ["MO1", "RB", "RD", "RX", "RY0", "RY1"], material="S235")
+    m.netz.ziellaenge = 0.5
+    cache = {}
+    for k in (k1, k2, k3):
+        M3.mesh_koerper_frei(m, k, log=[], cache=cache)
+    return m
+
+
 def kontaktbedingung(m: Model, art: str, failure: str = "zug",
                      tangential: str = "free"):
     """Die Kontaktbedingung der Trennflaeche - wie sie aus RFEM kaeme."""
@@ -347,6 +392,38 @@ def test_fuge_ueber_gegenseite():
     b3 = fugen.kontaktfuge_ausfuehren(m3, kb3, [])
     check("ohne Flächen und ohne Gegenflächen: ein Grund statt einer stillen Fuge",
           not kb3.ausgefuehrt and "Gegenflächen" in b3["grund"], b3["grund"])
+
+
+def test_fuge_laesst_schweissnaht_ganz():
+    """Eine Fuge loest den Koerper samt seiner angeschweissten Nachbarn: die
+    Knoten, die er nur mit ihnen teilt, werden nicht verdoppelt, und die
+    Nachbarn bekommen dieselben Kopien. Am Drehlager verlor der Lagerbock
+    sonst an der Fugenkante den Anschluss an vier Rippen (12.09.2026)."""
+    m = drei_bloecke()
+    check("drei Koerper vernetzt", len(m.koerper) == 3 and all(k.elemente for k in m.koerper.values()))
+    vorher = diagnose._abnahme_gemeinsame_flaechen(m)
+    check("vor der Fuge: Oben und Rippe verbunden (keine Befunde)", not vorher,
+          str([x.text[:60] for x in vorher]))
+    gruppen = fugen.gruppen_je_knoten(m)
+    dreifach = [k for k, v in gruppen.items() if v >= {"Unten", "Oben", "Rippe"}]
+    check("Knoten der Fugenkante gehoeren Unten, Oben und Rippe", len(dreifach) > 0, f"{len(dreifach)} Knoten")
+    check("verschweisste Gruppe von Oben ist Oben+Rippe, nicht Unten",
+          fugen.verschweisste_gruppe(m, {"Oben"}, {"FugeO", "FugeU"}) == {"Oben", "Rippe"})
+    kb = kontaktbedingung(m, "eigene")
+    log = []
+    b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+    check("Fuge ausgefuehrt, Kontaktpaar, Rippe mitgeloest",
+          kb.ausgefuehrt and b["kontaktpaar"] == 1 and b.get("mitgeloest") == ["Rippe"], str(b))
+    nachher = diagnose._abnahme_gemeinsame_flaechen(m)
+    check("nach der Fuge: Oben und Rippe weiter verbunden (keine doppelten Knoten)",
+          not [x for x in nachher if "Rippe" in x.objekt], str([x.text[:80] for x in nachher]))
+    nach = fugen.gruppen_je_knoten(m)
+    check("kein Knoten gehoert Unten und Oben oder Rippe zugleich",
+          not any(("Unten" in v) and (v & {"Oben", "Rippe"}) for v in nach.values()),
+          f"{sum(1 for v in nach.values() if 'Unten' in v and v & {'Oben', 'Rippe'})} Knoten")
+    check("Rippe und Oben teilen weiter Knoten", any(v >= {"Oben", "Rippe"} for v in nach.values()))
+    check("Protokoll nennt die mitgeloeste Rippe",
+          any("Rippe" in z and "angeschweißt" in z for z in log), str([z for z in log if "Rippe" in z])[:120])
 
 
 def test_alle_fugen():
@@ -1331,7 +1408,7 @@ def test_karten_einmal_je_lauf():
 
 
 def main():
-    for t in (test_passende_netze_druck, test_passende_netze_zug,
+    for t in (test_fuge_laesst_schweissnaht_ganz, test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
               test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,
               test_suchradius_kommt_aus_der_fuge, test_diagnose_sieht_die_gegenseite,

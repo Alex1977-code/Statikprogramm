@@ -279,6 +279,7 @@ timeout /t 1 /nobreak >nul
 del "%EXE%" >nul 2>&1
 if exist "%EXE%" (
     set /a n+=1
+    if !n! equ 20 if not defined GEFRAGT call :fragen
     if !n! lss 300 goto warten
     echo [Fehler] Programm laeuft nach 300 s noch.>> "%LOG%"
     echo Statik3D laeuft noch. Bitte das Programm beenden und diese Datei
@@ -287,6 +288,31 @@ if exist "%EXE%" (
     pause
     exit /b 1
 )
+goto tauschen
+
+rem Nach 20 s haelt noch ein Statik3D.exe die Datei fest. Das sind meist
+rem Reste einer frueheren Sitzung ohne Fenster (11.09.2026: drei Prozesse vom
+rem Vorabend, 4 bis 43 MB) - der Anwender sieht kein Programm und versteht
+rem "laeuft noch" nicht. Die Prozesse werden gezeigt, beendet nur auf Wunsch.
+:fragen
+set "GEFRAGT=1"
+tasklist /FI "IMAGENAME eq Statik3D.exe" 2>nul | find /I "Statik3D.exe" >nul
+if errorlevel 1 exit /b 0
+echo.
+echo Diese Statik3D-Prozesse halten die Programmdatei noch fest
+echo (ohne Fenster sind es Reste einer frueheren Sitzung):
+tasklist /FI "IMAGENAME eq Statik3D.exe"
+echo.
+choice /C JN /T 60 /D N /M "Diese Prozesse jetzt beenden und den Austausch fortsetzen"
+if errorlevel 2 (
+    echo Prozesse bleiben - bitte im Task-Manager beenden und diese Datei erneut starten.
+    exit /b 0
+)
+taskkill /F /IM Statik3D.exe >nul 2>&1
+echo [%date% %time%] Statik3D-Prozesse auf Wunsch beendet>> "%LOG%"
+exit /b 0
+
+:tauschen
 move /y "%NEW%" "%EXE%" >nul 2>&1
 if errorlevel 1 (
     echo [Fehler] Umbenennen fehlgeschlagen ^(Schreibrecht^?^).>> "%LOG%"
@@ -419,6 +445,40 @@ def melde_neustart(umgebung: dict = None) -> str:
     except OSError:
         return ""
     return pfad
+
+
+def andere_instanzen() -> list:
+    """PIDs weiterer Statik3D.exe-Prozesse (Windows, sonst leer).
+
+    Reste einer frueheren Sitzung halten die Programmdatei fest, und der
+    Austausch scheitert mit "laeuft noch", obwohl kein Fenster offen ist
+    (11.09.2026: drei Prozesse vom Vorabend, 4 bis 43 MB). Der eigene
+    Prozess zaehlt nicht mit.
+    """
+    if not sys.platform.startswith("win"):
+        return []
+    try:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Statik3D.exe", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, timeout=10,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except Exception:                       # noqa: BLE001 - ohne tasklist keine Aussage
+        return []
+    return _pids_aus_tasklist(out, os.getpid())
+
+
+def _pids_aus_tasklist(text: str, eigener: int) -> list:
+    """Die PIDs aus der CSV-Ausgabe von tasklist - ohne den eigenen Prozess."""
+    pids = []
+    for line in (text or "").splitlines():
+        teile = [t.strip().strip('"') for t in line.split('","')]
+        if len(teile) >= 2 and teile[0].lower() == "statik3d.exe":
+            try:
+                pid = int(teile[1])
+            except ValueError:
+                continue
+            if pid != eigener:
+                pids.append(pid)
+    return pids
 
 
 def helper_path(exe_path: str = None) -> str:

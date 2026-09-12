@@ -328,6 +328,7 @@ class ContactSystem:
         self.stabilising = False   # Hilfsschritt ohne Spaltkraft (siehe stabilise)
         self.cycles = 0
         self.settle = 0
+        self.warm = False       # nach zustand_setzen: Phase 2 mit gesichertem Zustand
         self.dF_slip = 0.0      # groesste Aenderung von mu*Fn an gleitenden Knoten je Runde
         self.f_ref = 1.0
         self.diag = np.asarray(K.diagonal()).ravel()
@@ -699,6 +700,105 @@ class ContactSystem:
     @property
     def n_active(self) -> int:
         return sum(1 for c in self.cons if c.active)
+
+    # ---- Zustand sichern, wiederverwenden, kennzeichnen ----------------------
+    def _kennung(self) -> tuple:
+        """Woran eine Sicherung erkennt, dass sie zu diesen Bedingungen gehoert:
+        Zahl und eine Stichprobe der Bezeichnungen."""
+        schritt = max(1, len(self.cons) // 16)
+        return (len(self.cons), tuple(c.label for c in self.cons[::schritt]))
+
+    def zustand(self) -> dict:
+        """Der Kontaktzustand als Sicherung fuer den Warmstart des naechsten
+        Lastfalls (solve_with_contact(start=...)): Aktivmenge, Gleiten mit
+        Richtung, Fliessen und die Normalkraefte, aus denen die Reibkraft
+        mu*Fn aufgebaut wird."""
+        return {"kennung": self._kennung(), "phase": self.phase,
+                "aktiv": np.array([c.active for c in self.cons], bool),
+                "gleitet": np.array([c.slip for c in self.cons], bool),
+                "fliesst": np.array([c.yielding for c in self.cons], bool),
+                "g_yield": np.array([c.g_yield for c in self.cons], float),
+                "Fn": np.array([c.Fn for c in self.cons], float),
+                "eingefroren": np.array([c.frozen for c in self.cons], bool),
+                "wechsel": np.array([c.toggles for c in self.cons], int),
+                "richtung": [None if c.slip_dir is None else np.array(c.slip_dir, float)
+                             for c in self.cons]}
+
+    def zustand_setzen(self, z) -> bool:
+        """Eine Sicherung uebernehmen - der Startpunkt der Iteration statt der
+        Geometrie. Rueckgabe False, wenn sie nicht zu diesen Bedingungen
+        passt (anderes Modell, andere Situation): dann bleibt der Anfangszustand.
+        Verbund bleibt zu, Zaehler und Marken beginnen von vorn. Es geht in
+        der Phase der Sicherung weiter (2 nach einer konvergierten Rechnung):
+        der erste Schritt loest mit derselben Matrix wie der letzte des
+        vorigen Lastfalls, Gleitrichtungen bleiben fest, neue Verstoesse
+        kommen monoton hinzu; ob die Richtungen noch stimmen, prueft
+        warmstart_verstoesse nach der Konvergenz. Gemessen (12.09.2026): so
+        braucht der Block mit Reibung fuer den Folgezustand 5 statt 21
+        Schritte; Phase 1 mit grober Reststeifigkeit 20 (kein Gewinn), Phase 1
+        mit feiner Reststeifigkeit und Phase 2 mit nachgefuehrten Richtungen
+        konvergierten nicht (120 bzw. 40 Schritte). Am Drehlager passten die
+        Richtungen des Zustands LF401 nicht zu LF404: der Warmstart wurde
+        verworfen und kalt gerechnet - fuer die Ermuedungszustaende ist das
+        Einfrieren des Kontaktzustands der Weg (solver, einfrieren)."""
+        if not z or z.get("kennung") != self._kennung():
+            return False
+        for i, c in enumerate(self.cons):
+            if c.zug:
+                continue
+            c.active = bool(z["aktiv"][i])
+            c.slip = bool(z["gleitet"][i])
+            c.yielding = bool(z["fliesst"][i])
+            c.g_yield = float(z["g_yield"][i])
+            c.Fn = float(z["Fn"][i])
+            r = z["richtung"][i]
+            c.slip_dir = None if r is None else np.array(r, float)
+            c.dir_updates = 0
+            # eingefrorene Bedingungen (oszillierten) bleiben eingefroren -
+            # sonst wechseln sie gleich wieder und die Iteration beginnt von vorn
+            c.toggles = int(z["wechsel"][i]) if "wechsel" in z else 0
+            c.frozen = bool(z["eingefroren"][i]) if "eingefroren" in z else False
+        self.phase = int(z.get("phase", 2) or 2)
+        self.warm = True
+        self.cycles = 0
+        self.settle = 0
+        return True
+
+    def warmstart_verstoesse(self, u: np.ndarray, zuruecksetzen: bool = False) -> int:
+        """Gleitende Knoten, die sich gegen ihre festgehaltene Gleitrichtung
+        bewegen - der Warmstart hat dann einen anderen Lastfall vor sich als
+        der Zustand annahm (Phase 1 setzt solche Knoten zurueck auf Haften,
+        Phase 2 nicht). Mit ``zuruecksetzen`` werden sie auf Haften gesetzt;
+        die Iteration findet ihre Richtung dann neu."""
+        n = 0
+        for c in self.cons:
+            if c.active and c.slip and c.ct is not None and c.slip_dir is not None:
+                ue = u[c.dofs]
+                dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+                nrm = float(np.linalg.norm(dt))
+                if nrm > 0 and float(dt @ c.slip_dir) < -1e-9 * nrm:
+                    n += 1
+                    if zuruecksetzen:
+                        c.slip = False
+                        c.slip_dir = None
+                        c.dir_updates = 0
+                        c.Ft = np.zeros(2)
+        return n
+
+    @property
+    def n_slip(self) -> int:
+        return sum(1 for c in self.cons if c.active and c.slip)
+
+    def signatur(self) -> tuple:
+        """Woran die Kontaktsteifigkeit Kc haengt: Phase, Aktivmenge, Gleiten,
+        Fliessen und die ganz rutschenden Gruppen. Normalkraefte und
+        Gleitrichtungen stehen nur im Lastvektor Fc. Gleiche Signatur heisst
+        gleiche Matrix - die Faktorisierung kann bleiben (StaticSystem.solve)."""
+        a = np.array([c.active for c in self.cons], bool)
+        s = np.array([c.slip for c in self.cons], bool)
+        y = np.array([c.yielding for c in self.cons], bool)
+        return (self.phase, hash(a.tobytes()), hash(s.tobytes()), hash(y.tobytes()),
+                tuple(sorted(self._full_slip_groups().items())))
 
     def stabilise(self) -> bool:
         """Hilfsschritt, wenn im ersten Schritt kein Halt besteht.

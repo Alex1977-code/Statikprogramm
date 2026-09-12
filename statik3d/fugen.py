@@ -489,6 +489,64 @@ def _seiten_des_koerpers_auf(model: Model, koerpernamen, gegen: list,
     return [seiten[i] for i in sorted(paare)]
 
 
+def kontaktpaare(model: Model) -> set:
+    """Koerperpaare, zwischen denen eine Kontaktbedingung eingegeben ist -
+    dort ist die Beruehrung eine Fuge, keine Naht."""
+    besitzer: dict = {}
+    for k in (getattr(model, "koerper", {}) or {}).values():
+        for f in k.flaechen:
+            besitzer.setdefault(f, k.name)
+    paare: set = set()
+    for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
+        gegen = set(getattr(kb, "gegenkoerper", []) or [])
+        gegen |= {besitzer[f] for f in (getattr(kb, "gegenflaechen", []) or []) if f in besitzer}
+        for a in kb.koerpernamen:
+            for b in gegen:
+                if a != b:
+                    paare.add(frozenset((a, b)))
+    return paare
+
+
+def verschweisste_gruppe(model: Model, start, flaechen_der_fuge=()) -> set:
+    """Die Koerper, die mit den genannten ueber gemeinsame Flaechen ohne
+    Kontaktbedingung zusammenhaengen - verschweisst, und darum an einer Fuge
+    als Ganzes zu loesen.
+
+    Am Drehlager verdoppelte die Fuge "Lagerbock-Grundplatte" alle Fugenknoten
+    des Lagerbocks V14, auch die auf seiner Kante zu den angeschweissten
+    Rippen V5, V6, V23, V24: der Lagerbock bekam die Kopien, die Rippen
+    behielten die Originale und verloren dort den Anschluss (Abnahme:
+    "22 doppelte von 42 Knoten", 12.09.2026). Eine Flaeche, die eine
+    Kontaktbedingung nennt, verbindet nicht; Paare mit Kontaktbedingung sind
+    keine Nachbarn.
+    """
+    kontakt = kontaktpaare(model)
+    tabu = set(flaechen_der_fuge or ())
+    for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
+        tabu |= set(getattr(kb, "flaechennamen", []) or [])
+        tabu |= set(getattr(kb, "gegenflaechen", []) or [])
+    besitzer: dict = {}
+    for k in (getattr(model, "koerper", {}) or {}).values():
+        for f in (k.flaechen or []):
+            if f not in tabu:
+                besitzer.setdefault(f, set()).add(k.name)
+    nachbarn: dict = {}
+    for ks in besitzer.values():
+        for a in ks:
+            for b in ks:
+                if a != b and frozenset((a, b)) not in kontakt:
+                    nachbarn.setdefault(a, set()).add(b)
+    gruppe = {str(x) for x in start}
+    rand = list(gruppe)
+    while rand:
+        a = rand.pop()
+        for b in nachbarn.get(a, ()):
+            if b not in gruppe:
+                gruppe.add(b)
+                rand.append(b)
+    return gruppe
+
+
 def gruppen_je_knoten(model: Model) -> dict:
     """{Knoten: Menge der Bauteile, deren Elemente ihn benutzen}.
 
@@ -536,8 +594,15 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     if not dreiecke:
         bericht["grund"] = "die Flächen sind noch nicht vernetzt"
         return bericht
+    # Angeschweisste Nachbarn des geloesten Koerpers loesen sich mit
+    # (verschweisste_gruppe): ihre gemeinsamen Knoten mit ihm werden nicht
+    # verdoppelt, ihre Elemente bekommen dieselben Kopien wie er.
+    mit: set = set()
     if ueber_gegenseite:
-        dreiecke = _seiten_des_koerpers_auf(model, kb.koerpernamen, dreiecke,
+        geloest0 = {str(x) for x in (kb.koerpernamen or [])}
+        gruppe0 = verschweisste_gruppe(model, geloest0, set(kb.gegenflaechen or []))
+        mit |= gruppe0 - geloest0
+        dreiecke = _seiten_des_koerpers_auf(model, sorted(gruppe0), dreiecke,
                                             getattr(kb, "suchweite", 0.0), cache)
         if not dreiecke:
             bericht["grund"] = ("der gelöste Körper liegt im Netz nicht auf den zugeordneten "
@@ -552,6 +617,12 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
         # Koerper - so legt RFEM sie an. Sind es mehrere, wird der nach Namen
         # letzte genommen; willkuerlich, aber wiederholbar und protokolliert.
         geloest = set(gruppen) if len(gruppen) == 1 else {sorted(gruppen)[-1]}
+    if not ueber_gegenseite:
+        gruppe0 = verschweisste_gruppe(model, geloest,
+                                       set(kb.flaechennamen or []) | set(kb.gegenflaechen or []))
+        mit |= gruppe0 - geloest
+    kern = set(geloest)
+    geloest = set(geloest) | mit
     seite_b = [x for x in dreiecke if _gruppe(model, x[0]) in geloest]
     if not seite_b:
         bericht["grund"] = "die freigegebenen Flächen gehören nicht zum gelösten Bauteil"
@@ -611,6 +682,10 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
         _randseiten_vergessen(cache, geloest)
     _lager_mitnehmen(model, neu, log)
     bericht["knoten"] = len(neu)
+    bericht["mitgeloest"] = sorted(mit)
+    if mit and log is not None:
+        C.say(log, f"  {kb.name}: angeschweißte Nachbarn lösen sich mit: "
+                   + ", ".join(sorted(mit)) + " (gemeinsame Flächen ohne Kontaktbedingung)")
     if neu:
         # Fuer die Abnahme merken, welche Knoten getrennt wurden: danach darf
         # kein Element beide Seiten benutzen, sonst ueberbrueckt es genau die
@@ -673,7 +748,8 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
         C.say(log, f"Kontaktbedingung {kb.name}: {bericht['knoten']} Knoten "
                    f"verdoppelt, {bericht['spalt']} Spaltelemente, "
                    f"{bericht['kopplung']} Kopplungen "
-                   f"(gelöst: {', '.join(sorted(geloest))})")
+                   f"(gelöst: {', '.join(sorted(kern))}"
+                   + (f", samt angeschweißter {', '.join(sorted(mit))}" if mit else "") + ")")
         _vorzeichen_melden(kb, b_n, log)
         _gleiten_melden(kb, b_n, b_t, mu, log, model, seite_b)
     return bericht

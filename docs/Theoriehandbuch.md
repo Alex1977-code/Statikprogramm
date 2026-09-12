@@ -548,6 +548,57 @@ Kragarm um 90° hochgeklappt unter Vertikallast (PL/EA statt PL³/3EI).
 Lager, Kontakte je Teil; Elemente an der Berührungsstelle gehören beiden);
 sie ändern die Berechnung nicht.
 
+## 3b Spannungsgrößen und Werteskala der Anzeige
+
+`statik3d/spannungen.py`, geprüft in `tests/test_spannungen.py`
+
+Die Anzeige färbt Knotenwerte. Jede Größe wird **je Element** aus dem
+Ergebnis gebildet und **auf die Knoten gemittelt** (arithmetisches Mittel
+der angrenzenden Elemente, `knotenmittel`, vektorisiert mit `np.add.at` —
+für die 1,8 Mio. Elemente des Drehlagers Sekunden statt der Python-Schleife
+von `Results.node_vm`). Volumen: aus dem Tensor der Elementmitte
+(`Results.solid_res`, sx, sy, sz, txy, tyz, tzx) die Komponenten, die
+Hauptspannungen nach Cardano (`ec3.fatigue.hauptspannungen`, vektorisiert),
+σ_v = √(½[(σ₁−σ₂)² + (σ₂−σ₃)² + (σ₃−σ₁)²]), σ_int = σ₁ − σ₃ (Tresca) und
+τ_max = σ_int/2. Flächen: aus den Schalenspannungen der Ober- und Unterseite
+(`shell_derived`, sx, sy, sxy) die Komponenten, die ebenen Hauptspannungen
+σ₁,₂ = (σ_x+σ_y)/2 ± √(((σ_x−σ_y)/2)² + τ²) und σ_v = √(σ_x² − σ_xσ_y + σ_y² +
+3τ²); Seite „max“ nimmt je Element den Wert mit dem größeren Betrag,
+vorzeichenbehaftet. Stäbe: aus den Stabendkräften σ_N = N/A,
+σ_My = |M_y| z_max/I_y, σ_Mz = |M_z| y_max/I_z und die Randspannung
+|σ_N| + σ_My + σ_Mz an beiden Enden — dieselbe Bildung wie `sig_max` der
+Nachweise, nur je Ende.
+
+**Kontaktdruck.** Die Kontaktbedingungen liefern Knotenkräfte F_n, |F_t| und
+den Spalt (`ContactSystem.results`). Ein Druck braucht eine Fläche: die
+**Einflussfläche** des Knotens auf der Kontaktfläche (`kontaktflaechen`).
+Sie entsteht aus den Außenseiten der Volumen- und Schalenelemente, deren
+Eckknoten alle Kontaktknoten sind — vektorisiert über die Seiten je
+Elementtyp, innere Seiten (zweimal belegt) verworfen, Dreiecke zu einem
+Drittel, Vierecke zu einem Viertel je Ecke. Damit ist Σ p·A = Σ F_n exakt
+(Block mit Reibung: 90,00 kN = Auflast, Einflussflächen 0,1600 m² =
+Grundfläche) und Σ τ·A = Σ |F_t| = 26,38 kN; das ist mehr als die
+Horizontalkraft 20 kN, weil an haftenden Knoten die elastischen
+Tangentialkräfte nicht alle parallel wirken — die Resultierende der
+Kontaktkräfte bleibt 20,00 kN.
+
+**Werteskala** (`Werteskala`, `grenzen`). Drei Modi: automatisch (Grenzen aus
+den endlichen Werten), fest (unten/oben) und Grenzwert. Der Grenzwert G (355
+für S355) spannt die Skala 0 … G auf, bei negativen Werten −G … G; Werte
+darüber bekommen `above_color` Magenta, darunter `below_color` Cyan — beides
+Farben, die in keiner Farbtafel vorkommen —, und die Skala trägt an dieser
+Stufe den tatsächlichen Größt- bzw. Kleinstwert als Beschriftung. So ist
+der oberste Eintrag das Maximum und der zweite die Grenze, wie es die
+Vorgabe verlangt. Die Zahl der Farbstufen ist die von ANSYS (9, `n_colors`),
+Beschriftungen an jeder Stufengrenze (`n_labels` = Stufen + 1). „Nur
+Überschreitungen“ setzt alle Beträge ≤ G auf NaN (grau) und spannt die
+Skala von G bis zum größten Betrag — die Überschreitungen behalten so ihre
+Abstufung, statt alle in einer Farbe zu stehen. Die Einstellung liegt am
+Modell (`Model.werteskala`) und wird mit ihm gespeichert. Geprüft: Werte
+0/100/250/400 mit G = 355 → Skala 0 … 355, oben „400“, eine Überschreitung;
+−400/−10/100 → −355 … 355 mit „−400“ unten; nur Überschreitungen → 400 bleibt,
+Skala 355 … 400.
+
 ## 4 Kontakt
 
 Kontakt wird mit dem Penalty-Verfahren und einer Aktivmengen-Iteration
@@ -789,6 +840,87 @@ geschlossene Werte: unter Druck ist die Fuge zu und die Auflagerkraft gleich der
 Last (auf Rechengenauigkeit), unter Zug geht **keine** Kraft mehr durch das
 Fundament (Sollwert null, nicht „klein"), und beide Wege – passende und nicht
 passende Netze – liefern dieselbe Stauchung.
+
+**Grundlast in der direkten Lösung.** Eine nichtlineare Rechnung kennt keine
+Überlagerung: was in einem Zustand wirken soll, muss in ihm gelöst werden.
+Ein Lastfall mit `grundlast = True` (Vorspannung der Anker, ständiges
+Eigengewicht) geht darum in jede direkt gelöste Rechnung mit Faktor 1 ein
+(`solver._solve_loads`: Modelle mit Kontakt oder Ausfallstäben), wenn er
+nicht ohnehin in den Faktoren steht; das Ergebnis nennt ihn in
+`info["grundlast"]`. Linear bleibt er ein gewöhnlicher Lastfall, denn
+dort legt die Überlagerung ihn in die Kombinationen. Geprüft am Block mit
+Reibung (Auflast als Grundlast, Horizontalkraft allein gerechnet = die
+Kombination aus beiden, Abweichung 0) und am Rahmen ohne Kontakt (die Marke
+ändert nichts).
+
+**Kontaktzustand sichern: Warmstart und Einfrieren.** Jede direkt gelöste
+Rechnung mit Kontakt sichert am Ende ihren konvergierten Kontaktzustand
+(`ContactSystem.zustand`: Aktivmenge, Gleiten mit Richtung, Fließen,
+Normalkräfte, festgehaltene Bedingungen; `Results.kontaktzustand`). Zwei
+Verwendungen:
+
+*Warmstart* (`solve_with_contact(start=…)`): der nächste Lastfall derselben
+Situation beginnt die Iteration in diesem Zustand statt bei der Geometrie,
+in Phase 2 mit festen Gleitrichtungen. Die erste Matrix ist dieselbe wie die
+letzte des vorigen Lastfalls, und `StaticSystem.solve` behält die
+Faktorisierung, solange die Signatur der Kontaktsteifigkeit (Phase,
+Aktivmenge, Gleiten, Fließen, rutschende Gruppen; `ContactSystem.signatur`)
+gleich bleibt — dann wird nur rückwärts eingesetzt. Nach der Konvergenz
+prüft `warmstart_verstoesse`, ob gleitende Knoten sich gegen ihre
+festgehaltene Richtung bewegen: wenige werden auf Haften zurückgesetzt und
+die Iteration läuft weiter, viele verwerfen den Warmstart (Neustart von der
+Geometrie, Protokoll „Warmstart verworfen“). Gemessen am 12.09.2026: Block
+mit Reibung, Folgezustand 5 statt 21 Schritte, Wiederholung desselben
+Lastfalls 1 Schritt ohne Faktorisierung. Varianten, die nicht blieben:
+Warmstart in Phase 1 mit grober Reststeifigkeit (20 Schritte, kein Gewinn),
+Phase 1 mit feiner Reststeifigkeit (120 Schritte, divergiert), Phase 2 mit
+nachgeführten Richtungen (40 Schritte, divergiert). Am Drehlager
+(Vorspannung + LF401 kalt: 1063 s, 36 Schritte, 35 Faktorisierungen) passte
+der Zustand nicht zu LF404: verworfen, mit Neustart 1250 s und 32 Schritte
+— die Gleitrichtungen der Zustände unterscheiden sich, der Warmstart bringt
+dort nichts.
+
+*Einfrieren* (`solve_with_contact(einfrieren=…)`, `solve_cases(referenzen=…)`):
+der Zustand wird nicht mehr verändert — Kontaktsteifigkeit und -kräfte des
+Referenzzustands, eine lineare Lösung ohne Iteration, mit der behaltenen
+Faktorisierung eine Rückwärtseinsetzung. Das ist der Weg für die Zustände
+einer Ermüdungslast (`solver.ermuedungsreferenzen`,
+`DesignSettings.ermuedung_kontakt_einfrieren`, Vorgabe ein): der erste
+Zustand jeder Ermüdungslast wird nichtlinear gelöst, die weiteren mit
+seinem eingefrorenen Zustand, und zwar unmittelbar nach ihm, damit die
+Faktorisierung im Speicher bleibt (`_mit_referenzen_zuerst`; ein Lastfall
+dazwischen ersetzt sie, gemessen: 1 statt 0 Faktorisierungen). Die
+Voraussetzung: die Zustände sind kleine Änderungen um den Referenzzustand —
+die Schwingbreite ist die Differenz zweier Zustände, und für sie zählt die
+Steifigkeit des Betriebszustands, nicht ein je Zustand neu gesuchtes
+Kontaktbild. Das Ergebnis trägt `info["contact_frozen"]` und
+`contact_frozen_from`, die Analyse `info["kontakt_eingefroren"]` mit der
+Zuordnung. Geprüft am Block mit Reibung (`tests/test_kontaktzustand.py`,
+`test_einfrieren`): H2 = 1,1·H1 eingefroren gegen nichtlinear 7,0 %
+Abweichung der Verschiebungen, 1 Schritt, 0 Faktorisierungen, Gleichgewicht
+exakt. DREHLAGER_EINFRIEREN_THEORIE
+
+**Angeschweißte Nachbarn lösen sich mit.** Beim Trennen der Fuge werden
+die Knoten verdoppelt, die der gelöste Körper mit anderen teilt. Bis zum
+12.09.2026 galt das für *jeden* anderen Körper — auch für die, die mit ihm
+über eine gemeinsame Fläche ohne Kontaktbedingung verschweißt sind. Am
+Drehlager verdoppelte die Fuge „Lagerbock-Grundplatte“ so auch die Knoten
+auf der Kante des Lagerbocks V14 zu den Rippen V5, V6, V23 und V24: der
+Lagerbock bekam die Kopien, die Rippen behielten die Originale und verloren
+dort den Anschluss (Abnahme: „22 doppelte von 42 Knoten auf der Fuge“).
+Jetzt bestimmt `fugen.verschweisste_gruppe` zuerst die Körper, die mit dem
+gelösten über gemeinsame Flächen ohne Kontaktbedingung zusammenhängen
+(Flächen, die eine Kontaktbedingung nennt, verbinden nicht; Paare mit
+Kontaktbedingung sind keine Nachbarn); diese Gruppe löst sich als Ganzes:
+verdoppelt werden nur Knoten, die sie mit Körpern *außerhalb* der Gruppe
+teilt, und alle Elemente der Gruppe bekommen dieselben Kopien. Das Protokoll
+nennt die mitgelösten Nachbarn. Geprüft an drei Blöcken (`test_fugen`,
+`test_fuge_laesst_schweissnaht_ganz`): der obere Würfel mit angeschweißter
+Rippe auf dem unteren, Fuge zwischen Würfel und Fundament — die fünf Knoten
+der Fugenkante gehörten allen dreien; ohne Mitnahme meldete die Abnahme
+„Oben und Rippe teilen sich MO1, sind dort aber nicht verbunden: 5
+doppelte“, mit Mitnahme bleibt die Rippe am Würfel und kein Knoten gehört
+Fundament und Würfel zugleich.
 
 ### 4.0a Übermaß: die Presspassung als Last
 

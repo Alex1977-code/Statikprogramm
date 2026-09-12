@@ -90,6 +90,15 @@ def test_dokument():
     try:
         lh.lastenheft_schreiben(m, pfad)
         check("Datei geschrieben", os.path.getsize(pfad) > 50000)
+        schritte = []
+        lh.lastenheft_schreiben(m, pfad, fortschritt=lambda a, t: schritte.append((a, t)))
+        anteile = [a for a, _t in schritte]
+        texte = " | ".join(t for _a, t in schritte)
+        check("Fortschritt: fünf Kapitel, Ausgabe, Schreiben - monoton 0 … 1",
+              len(schritte) >= 5 + 3 and anteile[0] == 0.0 and anteile[-1] == 1.0
+              and all(b >= a for a, b in zip(anteile, anteile[1:]))
+              and "Kapitel 1 von 5: Rahmen" in texte and "Prüfliste" in texte
+              and "geschrieben" in texte, f"{len(schritte)}: {texte[:120]}")
     finally:
         if os.path.exists(pfad):
             os.remove(pfad)

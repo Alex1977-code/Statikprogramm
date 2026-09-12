@@ -27,6 +27,114 @@ def check(name, ok, info=""):
     return ok
 
 
+def _kuerzel_pruefen(w, app):
+    """Tastenkuerzel des Ribbons gelten in jedem Register, und keines ist doppelt.
+
+    Gemessen 12.09.2026 (Sonde mit QTest.keyClick auf der echten Anzeige): Qt
+    haelt einen ApplicationShortcut fuer inaktiv, solange keines der Widgets
+    seiner Aktion sichtbar ist. War das einzige Widget der QToolButton im
+    hinteren Register, waehlte Strg+A im Register „Ansicht“ 0 von 17 Knoten,
+    im Register „Start“ 17 von 17 - ebenso stumm waren Strg+N/O/I/E/Q, Strg+R,
+    Strg+B, Strg+Umschalt+C und Umschalt+F1..F7 ausserhalb ihres Registers.
+    Und weil das Kontextregister „Auswahl“ eine Kopie von „Alles deselektieren“
+    mit Esc trug, loeste Esc bei sichtbarem Kontextregister gar nichts aus
+    („QAction::event: Ambiguous shortcut overload: Esc“). Ein Kuerzel loest
+    nur bei aktivem Fenster aus; ohne aktives Fenster wird die Aktion direkt
+    ausgeloest und das gesagt.
+    """
+    from PySide6 import QtCore, QtGui, QtWidgets, QtTest
+    w.load_example("frame")
+    app.processEvents()
+    nn = w.model.nn
+    w.selection = np.arange(min(3, nn))
+    w._auswahl_register()              # Kontextregister „Auswahl“ mit seiner Esc-Kopie
+    w.ribbon.kontext_zeigen()
+    app.processEvents()
+    aktionen = [a for a in w.findChildren(QtGui.QAction) if not a.shortcut().isEmpty()]
+    check("Kürzel: Aktionen mit Tastenkürzel gefunden", len(aktionen) >= 20, str(len(aktionen)))
+    ohne = sorted({a.text() for a in aktionen if w not in a.associatedObjects()})
+    check("Kürzel: jede Aktion mit Kürzel ist dem Hauptfenster zugeordnet - das Kürzel gilt in jedem Register",
+          not ohne, str(ohne[:6]))
+
+    def aktiv(a):
+        return a.isEnabled() and any(
+            isinstance(o, QtWidgets.QWidget) and o.isVisible() and o.isEnabled()
+            for o in a.associatedObjects())
+    je_folge = {}
+    for a in aktionen:
+        if aktiv(a):
+            je_folge.setdefault(a.shortcut().toString(), []).append(a.text())
+    doppelt = {k: v for k, v in je_folge.items() if len(v) > 1}
+    check("Kürzel: keines doppelt - je Tastenfolge höchstens eine aktive Aktion (Kontextregister „Auswahl“ sichtbar)",
+          not doppelt, str(doppelt))
+    esc = [a for a in aktionen if a.shortcut().toString() == "Esc"]
+    check("Kürzel: Esc trägt genau eine Aktion, „Alles deselektieren“ (die Kopie im Kontextregister ohne Kürzel)",
+          [a.text() for a in esc] == ["Alles deselektieren"] and esc[0] is w.act_auswahl_weg,
+          str([a.text() for a in esc]))
+    strg_a = next((a for a in aktionen if a.shortcut().toString() == "Ctrl+A"), None)
+    check("Kürzel: Strg+A ist „Alles auswählen“", strg_a is not None and strg_a.text() == "Alles auswählen",
+          strg_a.text() if strg_a else "-")
+
+    # Tastendruecke: Qt loest ein Kuerzel nur bei aktivem Fenster aus
+    w.ribbon.zeigen("Ansicht")
+    w.plotter.interactor.setFocus()
+    app.processEvents()
+    aktiv_fenster = w.isActiveWindow()
+    print(f"     Fenster aktiv: {aktiv_fenster} (Tastendrücke {'werden' if aktiv_fenster else 'nicht'} geprüft)")
+    w.selection = np.arange(0)
+    if aktiv_fenster:
+        QtTest.QTest.keyClick(w, QtCore.Qt.Key_A, QtCore.Qt.ControlModifier)
+    else:
+        strg_a.trigger()
+    app.processEvents()
+    check("Strg+A im Register „Ansicht“ wählt alle Knoten", len(w.selection) == nn,
+          f"{len(w.selection)} von {nn}" + ("" if aktiv_fenster else " (Aktion direkt ausgelöst)"))
+    w.selection = np.arange(min(3, nn))
+    w._auswahl_register()
+    w.ribbon.kontext_zeigen()
+    w.plotter.interactor.setFocus()
+    app.processEvents()
+    if aktiv_fenster:
+        QtTest.QTest.keyClick(w, QtCore.Qt.Key_Escape)
+    else:
+        w.act_auswahl_weg.trigger()
+    app.processEvents()
+    check("Esc bei sichtbarem Kontextregister „Auswahl“ hebt die Auswahl auf - das Kürzel ist nicht mehrdeutig",
+          len(w.selection) == 0, str(len(w.selection)) + ("" if aktiv_fenster else " (Aktion direkt ausgelöst)"))
+    w.ribbon.zeigen("Ansicht")
+    w.plotter.interactor.setFocus()
+    app.processEvents()
+    fang = w.act_fangart["knoten"]
+    vorher = fang.isChecked()
+    if aktiv_fenster:
+        QtTest.QTest.keyClick(w, QtCore.Qt.Key_F1, QtCore.Qt.ShiftModifier)
+    else:
+        fang.trigger()
+    app.processEvents()
+    check("Umschalt+F1 im Register „Ansicht“ schaltet den Fang auf Knoten um",
+          fang.isChecked() != vorher and ("knoten" in w.fang_arten) == fang.isChecked(),
+          f"{vorher} -> {fang.isChecked()}, fang_arten {sorted(w.fang_arten)}")
+    fang.setChecked(vorher)
+    # Mit dem Cursor in einem Textfeld bleibt Strg+A beim Feld: Qt fragt erst
+    # das Fokus-Widget (ShortcutOverride), und ein QLineEdit nimmt Strg+A fuer
+    # „Text markieren“ - gemessen 12.09.2026: markiert „probe“, 0 Knoten.
+    feld = w.ribbon.suche
+    feld.setText("probe")
+    feld.setFocus()
+    app.processEvents()
+    w.selection = np.arange(0)
+    if aktiv_fenster:
+        QtTest.QTest.keyClick(feld, QtCore.Qt.Key_A, QtCore.Qt.ControlModifier)
+        app.processEvents()
+        check("Strg+A mit dem Cursor im Textfeld markiert den Text und wählt keine Knoten",
+              feld.selectedText() == "probe" and len(w.selection) == 0,
+              f"markiert {feld.selectedText()!r}, {len(w.selection)} Knoten")
+    feld.clear()
+    w.plotter.interactor.setFocus()
+    w.ribbon.zeigen("Start")
+    app.processEvents()
+
+
 def main():
     if not os.environ.get("DISPLAY") and sys.platform.startswith("linux"):
         print("Kein DISPLAY - Test uebersprungen (xvfb-run verwenden)")
@@ -190,6 +298,10 @@ def main():
     mem.woelb_start = "frei"
     d7 = dg.MemberDialog(w, mem, 6.0); d7.apply(mem)
     d8 = dg.DesignSettingsDialog(w, w.model.design); d8.apply(w.model.design)
+    d8.einfrieren.setChecked(False); d8.apply(w.model.design)
+    check("Konfiguration Nachweise: Haken „Ermüdungszustände mit eingefrorenem Kontaktzustand“ wirkt",
+          w.model.design.ermuedung_kontakt_einfrieren is False)
+    d8.einfrieren.setChecked(True); d8.apply(w.model.design)
     d9 = dg.ContactPairDialog(w, w.model, 2)
     d10 = dg.ImportDialog(w, "test.dxf", w.model); opts = d10.options()
     d11 = dg.ReportDialog(w, w.model, "b.html"); ro = d11.options()
@@ -354,7 +466,14 @@ def main():
         # Austausch nur, wenn nichts rechnet - und dann sofort (11.09.2026:
         # das Skript gab nach 120 s auf, die neue Fassung startete nicht)
         from statik3d import update as _upd
+        alt_inst_ = _upd.andere_instanzen
+        _upd.andere_instanzen = lambda: []          # auf dieser Maschine koennten Reste laufen
         check("Austausch erlaubt, wenn nichts läuft", w._update_moeglich() == "", w._update_moeglich())
+        _upd.andere_instanzen = lambda: [4711]
+        check("Austausch nicht neben einer weiteren Instanz (Reste einer früheren Sitzung)",
+              "4711" in w._update_moeglich() and "Task-Manager" in w._update_moeglich(),
+              w._update_moeglich())
+        _upd.andere_instanzen = lambda: []
         w._rechnet_gerade = True
         check("Austausch nicht während einer Berechnung", "Berechnung" in w._update_moeglich(),
               w._update_moeglich())
@@ -373,6 +492,7 @@ def main():
             w._austausch_starten()
         finally:
             _upd.start_helper, QtWidgets.QApplication.quit = alt_helper_, alt_quit_
+            _upd.andere_instanzen = alt_inst_
         check("Austausch: Skript gestartet, quit gerufen, sofortiges Ende vorgemerkt",
               [a for a, _ in aufrufe_] == ["helper", "quit"] and getattr(w, "_austausch_laeuft", False),
               str(aufrufe_))
@@ -1674,6 +1794,122 @@ def main():
         traceback.print_exc()
         check("Geometriekette", False, str(ex)[:70])
 
+    # ---- Spannungen im Modellbaum und Werteskala (12.09.2026) ----------------
+    try:
+        from statik3d import spannungen as spn
+        from statik3d.model import Model as _Mdl
+
+        def baumnamen(baum):
+            namen = []
+
+            def lauf(it):
+                namen.append(it.text(0))
+                for i in range(it.childCount()):
+                    lauf(it.child(i))
+            for i in range(baum.topLevelItemCount()):
+                lauf(baum.topLevelItem(i))
+            return namen
+        w.load_example("friction"); app.processEvents()
+        an = solver.solve_all(w.model, combinations=False)
+        w._solve_done("all", an); app.processEvents()
+        erg = w._ergebnisliste()
+        namen0 = baumnamen(w.baum)
+        check("die Spannungsgruppen stehen im Baum, solange die Umhüllende vorn steht",
+              "Spannungen Volumen" in namen0, str([n for n in namen0 if "pannung" in n]))
+        w._baum_geklickt("ergebnis", "spannung:volumen:s1"); app.processEvents()
+        check("Klick auf eine Spannung bei gezeigter Umhüllender wechselt auf den Lastfall",
+              hasattr(w.current_result(), "solid_res") and w.cb_field.currentText() == spn.feldname("volumen", "s1"),
+              w.cb_result.currentText()[:40])
+        lf0 = list(w.model.load_cases)[0]
+        w._baum_geklickt("ergebnis", f"case:{lf0}"); app.processEvents()
+        check("Ergebnisliste: Spannungen Volumen (12), Flächen (6), Kontaktspannungen (4); keine Stäbe",
+              len(erg.get("Spannungen Volumen", [])) == 12 and len(erg.get("Spannungen Flächen", [])) == 6
+              and len(erg.get("Kontaktspannungen", [])) == 4 and "Spannungen Stäbe" not in erg,
+              str({k: len(v) for k, v in erg.items() if "pannung" in k}))
+        namen = baumnamen(w.baum)
+        check("… und sie stehen im Modellbaum", "Spannungen Volumen" in namen and "Kontaktspannungen" in namen
+              and "σ_v (von Mises)" in namen, str([n for n in namen if "σ" in n][:4]))
+        w._baum_geklickt("ergebnis", "spannung:volumen:sv"); app.processEvents()
+        check("Klick im Baum stellt die Färbung ein", w.cb_field.currentText() == spn.feldname("volumen", "sv"),
+              w.cb_field.currentText())
+        r0 = w.current_result()
+        soll = spn.je_knoten(w.model, r0, "volumen", "sv")
+        akt = w.plotter.renderer.actors.get("result_netz")
+        titel = spn.beschriftung("volumen", "sv")
+        ds = akt.mapper.dataset if akt is not None else None
+        werte = np.asarray(ds.point_data[titel], float) if ds is not None and titel in ds.point_data else None
+        check("die Farbwerte sind die Vergleichsspannung je Knoten in N/mm² (spannungen.je_knoten)",
+              werte is not None and np.isclose(np.nanmax(werte), np.nanmax(soll))
+              and np.isclose(np.nanmin(werte), np.nanmin(soll)) and np.nanmax(werte) > 0.5,
+              f"max {np.nanmax(werte) if werte is not None else None} / {np.nanmax(soll):.3f}")
+        check("Skala automatisch: Grenzen = kleinster … größter Wert, 9 Farbstufen (ANSYS)",
+              akt is not None and np.allclose(akt.mapper.scalar_range, (np.nanmin(soll), np.nanmax(soll)))
+              and akt.mapper.lookup_table.n_values == 9, str(akt.mapper.scalar_range if akt else None))
+        w.cb_skala.setCurrentIndex(w.cb_skala.findData("grenze")); app.processEvents()
+        w.ed_skala_grenze.setValue(0.5); app.processEvents()
+        akt = w.plotter.renderer.actors.get("result_netz")
+        lut = akt.mapper.lookup_table
+        check("Grenzwert 0,5: Skala 0 … 0,5, darüber magenta, Modell merkt sich die Einstellung",
+              np.allclose(akt.mapper.scalar_range, (0.0, 0.5)) and lut.above_range_color is not None
+              and str(lut.above_range_color.hex_rgb).lower() == spn.FARBE_UEBER
+              and w.model.werteskala.modus == "grenze" and w.model.werteskala.grenze == 0.5,
+              f"{akt.mapper.scalar_range} {lut.above_range_color}")
+        check("Statuszeile nennt die Überschreitungen", "über 0.5" in w.statusBar().currentMessage()
+              and "Knoten" in w.statusBar().currentMessage(), w.statusBar().currentMessage()[:80])
+        check("Kopfzeile/Bericht nennen die Skala", "Skala bis 0.5" in w._werteskala_text(), w._werteskala_text())
+        w.cb_nur_ueber.setChecked(True); app.processEvents()
+        akt = w.plotter.renderer.actors.get("result_netz")
+        werte = np.asarray(akt.mapper.dataset.point_data[titel], float)
+        check("nur Überschreitungen: alles unter 0,5 ist NaN (grau), der Rest ab 0,5 gefärbt",
+              np.isnan(werte).sum() > 0 and np.nanmin(werte) >= 0.5
+              and np.allclose(akt.mapper.scalar_range[0], 0.5), f"{np.isnan(werte).sum()} NaN")
+        w.cb_nur_ueber.setChecked(False)
+        # fest: Grenzen zwischen den Werten, damit es darunter und darueber etwas gibt
+        # die Felder haben zwei Nachkommastellen (QDoubleSpinBox, decimals 2)
+        u30, o70 = (round(float(np.nanpercentile(soll, 30)), 2), round(float(np.nanpercentile(soll, 70)), 2))
+        w.cb_skala.setCurrentIndex(w.cb_skala.findData("fest"))
+        w.ed_skala_unten.setValue(u30); w.ed_skala_oben.setValue(o70)
+        app.processEvents()
+        akt = w.plotter.renderer.actors.get("result_netz")
+        lut = akt.mapper.lookup_table
+        check("fest (30 % … 70 % der Werte): darunter und darüber je eigene Farbe",
+              np.allclose(akt.mapper.scalar_range, (u30, o70), atol=1e-6)
+              and lut.below_range_color is not None and lut.above_range_color is not None,
+              f"{akt.mapper.scalar_range} unter {lut.below_range_color} über {lut.above_range_color}")
+        d = w.model.to_dict(); m2 = _Mdl.from_dict(d)
+        check("die Werteskala wird mit dem Modell gespeichert und geladen",
+              m2.werteskala is not None and m2.werteskala.modus == "fest"
+              and abs(m2.werteskala.oben - o70) < 1e-9)
+        w.cb_skala.setCurrentIndex(w.cb_skala.findData("auto")); app.processEvents()
+        w.cb_field.setCurrentText(spn.feldname("flaechen", "sx"))
+        w.cb_seite.setCurrentIndex(w.cb_seite.findData("oben")); app.processEvents()
+        titel = spn.beschriftung("flaechen", "sx", "oben")
+        akt = w.plotter.renderer.actors.get("result_netz")
+        check("Flächen σ_x oben: die Schalenseite steht im Titel der Skala",
+              akt is not None and titel in akt.mapper.dataset.point_data, titel)
+        w.cb_seite.setCurrentIndex(0)
+        w.cb_field.setCurrentText(spn.feldname("kontakt", "p")); app.processEvents()
+        akt = w.plotter.renderer.actors.get("result_netz")
+        pw = np.asarray(akt.mapper.dataset.point_data[spn.beschriftung("kontakt", "p")], float)
+        check("Kontaktdruck: nur die Kontaktknoten haben Werte, Größtwert > 0",
+              np.isnan(pw).sum() > 0 and np.nanmax(pw) > 0, f"{np.isfinite(pw).sum()} Knoten mit Druck")
+        # Umhuellende: keine Komponenten - keine Faerbung, aber kein Fehler
+        env = next((k for k, _z, key in erg.get("Umhüllende", []) for k in [key]), None) if erg.get("Umhüllende") else None
+        if env:
+            w._baum_geklickt("ergebnis", env); app.processEvents()
+            w.cb_field.setCurrentText(spn.feldname("volumen", "s1")); app.processEvents()
+            check("Umhüllende: Spannungskomponenten ohne Färbung, mit Hinweis statt Fehler",
+                  "Umhüllenden" in w.statusBar().currentMessage()
+                  and not [l for l in w.log.toPlainText().splitlines() if "Darstellung:" in l],
+                  w.statusBar().currentMessage()[:70])
+        w.cb_field.setCurrentText(FIELDS[0]); app.processEvents()
+        check("Ribbon Ergebnisse: Knopf „Werteskala“", getattr(w, "act_werteskala", None) is not None
+              and w.act_werteskala.text() == "Werteskala")
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        check("Spannungen und Werteskala", False, str(ex)[:80])
+
     # ---- Ergebnisse im Modellbaum und Übernahme in den Bericht -------------
     try:
         w.error = lambda msg: check("Bericht: unerwarteter Fehler", False, str(msg)[:60])
@@ -1691,6 +1927,40 @@ def main():
         w._baum_geklickt("ergebnis", "combo:GZT7")
         check("Klick im Baum stellt das Ergebnis ein",
               "GZT7" in w.cb_result.currentText(), w.cb_result.currentText()[:40])
+        # Ergebnistabellen (12.09.2026): die Umhüllende leert „Stabkräfte“ mit
+        # Hinweis und stellt das Register auf „Umhüllende“; ein gewähltes Element
+        # findet seine Zeile auch ohne die alte Grenze von 50 000 Elementen
+        from statik3d.gui import viewport as vpx
+        tabs = w.tab_unten
+        tabs.setCurrentIndex(tabs.indexOf(w.tbl_beam)); app.processEvents()
+        check("Kombination: „Stabkräfte“ gefüllt, ohne Hinweis",
+              len(w.tbl_beam.modell.zeilen) > 0 and "Umhüllende" not in w.tbl_beam.lbl_zeilen.text(),
+              w.tbl_beam.lbl_zeilen.text()[:60])
+        env_key = erg["Umhüllende"][0][2]
+        w._baum_geklickt("ergebnis", env_key); app.processEvents()
+        check("Umhüllende: „Stabkräfte“ leer mit Hinweis, Register springt auf „Umhüllende“",
+              len(w.tbl_beam.modell.zeilen) == 0 and "Umhüllende" in w.tbl_beam.lbl_zeilen.text()
+              and tabs.currentWidget() is w.tbl_env and len(w.tbl_env.modell.zeilen) > 0,
+              w.tbl_beam.lbl_zeilen.text()[:70])
+        w._baum_geklickt("ergebnis", "combo:GZT7"); app.processEvents()
+        check("zurück zur Kombination: Register wieder „Stabkräfte“, Hinweis weg",
+              tabs.currentWidget() is w.tbl_beam and "Umhüllende" not in w.tbl_beam.lbl_zeilen.text(),
+              w.tbl_beam.lbl_zeilen.text()[:60])
+        mx = w.model
+        e0 = next(i for i, e in enumerate(mx.elements) if e.typ in vpx.TYPEN_STAEBE)
+        knoten = {int(n) for n in mx.elements[e0].nodes}
+        brute = [i for i, e in enumerate(mx.elements) if {int(n) for n in e.nodes} <= knoten]
+        check("_elemente_ganz_in: die Elemente, deren Knoten alle gewählt sind (wie die alte Schleife)",
+              list(w._elemente_ganz_in(knoten)) == brute and e0 in brute, str(brute))
+        alle = {int(n) for e in mx.elements for n in e.nodes}
+        check("… und mit allen Knoten alle Elemente, vektorisiert",
+              len(w._elemente_ganz_in(alle)) == len(mx.elements) and len(w._elemente_ganz_in(set())) == 0)
+        w._set_selection(sorted(knoten)); app.processEvents()
+        zeilen = [w.tbl_beam.filter.index(i.row(), 0).data()
+                  for i in w.tbl_beam.view.selectionModel().selectedRows()]
+        check("gewähltes Element: seine Zeile in „Stabkräfte“ ist markiert",
+              any(int(float(str(z).replace(",", "."))) == e0 for z in zeilen), f"{zeilen[:3]} / {e0}")
+        w._set_selection([]); app.processEvents()
         w.cb_field.setCurrentText("Ausnutzung EC3")
         w.cb_diagram.setCurrentText("My")
         app.processEvents()
@@ -3686,6 +3956,24 @@ def main():
                   and b.toolButtonStyle() == QtCore.Qt.ToolButtonIconOnly
                   for b in kn.values()),
               str([k for k, b in kn.items() if b.icon().isNull() or not b.toolTip()]))
+        # Lager ein- und ausblendbar, in der Leiste zwischen Volumen und Netz (12.09.2026)
+        reihe = list(kn)
+        check("Glasleiste: Schalter „Lager“ zwischen Volumen und FE-Netz, Aktion des Ribbons",
+              "lager" in kn and reihe.index("lager") == reihe.index("volumen") + 1
+              and reihe.index("netz") == reihe.index("lager") + 1
+              and kn["lager"].defaultAction() is w.act_lager and w.act_lager.isChecked(),
+              str(reihe))
+        if not w.model.supports:
+            w.model.support(0, [0, 1, 2], name="Probe")
+        w.act_lager.setChecked(False); w.redraw()
+        namen = [n for n in w.plotter.renderer.actors if "supports" in n]
+        check("Lager aus: keine Lagersymbole im Bild", not namen, str(namen[:3]))
+        check("… und ein ausgeblendetes Lager lässt sich nicht wählen (Wahlregel)",
+              not w._dargestellt("Lager") and not w._objekt_sichtbar("Lager", 0))
+        w.act_lager.setChecked(True); w.redraw()
+        namen = [n for n in w.plotter.renderer.actors if "supports" in n]
+        check("Lager an: die Lagersymbole sind wieder da", bool(namen) and w._dargestellt("Lager"),
+              str(namen[:3]))
         check("„Alles holen“ ist aus der Glasleiste weg",
               not any("zoom" in k.lower() or "holen" in k.lower() for k in kn))
         ansicht = w.centralWidget()
@@ -5973,6 +6261,224 @@ def main():
         check("Fortschritt beim Speichern, Laden und Rechnen", False, str(ex)[:70])
 
     # ------------------------------------------------------------------
+    # Abbrechen einer Hintergrundrechnung (Knopf und Esc), Balken bei
+    # Import und Bericht, ehrlicher Text vor dem Auswerten grosser Dateien
+    # ------------------------------------------------------------------
+    try:
+        import tempfile as _tf2
+        from PySide6 import QtCore as _QtC
+        from statik3d import update as _upd2
+        from statik3d.gui import dialogs as _dlg
+        from tests.test_rfem6 import INF as _INF, make_rf6 as _make_rf6
+
+        def _warten(bedingung, hoechstens=15.0):
+            t0 = time.time()
+            while not bedingung() and time.time() - t0 < hoechstens:
+                app.processEvents()
+                time.sleep(0.01)
+            app.processEvents()
+            return time.time() - t0
+
+        w.load_example("frame"); app.processEvents()
+        w._solve_done("all", solver.solve_all(w.model)); app.processEvents()
+        an_vorher_ = w.analysis
+        check("Vorbereitung: ein Ergebnis liegt vor", an_vorher_ is not None)
+
+        # 1) kuenstlich lange Rechnung: 200 Schritte à 0,02 s = 4 s
+        def lang_(p):
+            for i in range(200):
+                p(f"Schritt {i + 1}", (i + 1) / 200)
+                time.sleep(0.02)
+            return "fertig"
+
+        ergebnisse_ = []
+        zeilen_vorher_ = w.log.blockCount()
+        w._run_background(lang_, lambda r: ergebnisse_.append(r), "Probe-Rechnung")
+        app.processEvents()
+        check("Hintergrundrechnung: Abbrechen-Knopf und Balken sind sichtbar",
+              w.btn_abbrechen.isVisible() and w.progress_bar.isVisible() and w._rechnet_gerade)
+        check("… zuerst als Streifen (noch kein Anteil gemeldet)", w.progress_bar.maximum() == 0)
+        _warten(lambda: w.progress_bar.maximum() == 1000, 3.0)
+        check("… nach dem ersten Anteil ein bestimmter Balken mit Prozent",
+              w.progress_bar.maximum() == 1000 and 0 < w.progress_bar.value() < 1000
+              and w.progress_bar.isTextVisible(), f"Wert {w.progress_bar.value()}")
+        alt_inst2_ = _upd2.andere_instanzen
+        _upd2.andere_instanzen = lambda: []
+        try:
+            check("… kein Update während der Rechnung", "Berechnung" in w._update_moeglich(),
+                  w._update_moeglich())
+            w.btn_abbrechen.click()
+            t_klick_ = time.time()
+            app.processEvents()
+            check("Klick auf Abbrechen: die Statuszeile sagt, dass angehalten wird",
+                  "Abbruch angefordert" in w.statusBar().currentMessage(),
+                  w.statusBar().currentMessage()[:70])
+            dauer_ = _warten(lambda: not w._rechnet_gerade)
+            neu_ = w.log.toPlainText().splitlines()[zeilen_vorher_:]
+            check("Abbruch: die Rechnung endet beim nächsten Schritt, ohne Ergebnis",
+                  dauer_ < 1.0 and not ergebnisse_, f"{dauer_:.2f} s nach dem Klick")
+            check("Abbruch: Statuszeile und Protokoll melden „abgebrochen (nach x s)“",
+                  "abgebrochen (nach" in w.statusBar().currentMessage()
+                  and any(z.startswith("Probe-Rechnung abgebrochen (nach") for z in neu_),
+                  w.statusBar().currentMessage()[:80])
+            check("Abbruch: keine FEHLER-Zeile im Protokoll",
+                  not any(z.startswith("FEHLER") for z in neu_),
+                  str([z for z in neu_ if z.startswith("FEHLER")][:1]))
+            check("Abbruch: Knöpfe frei, Balken und Abbrechen-Knopf weg, Ergebnis unverändert",
+                  w.btn_solve.isEnabled() and not w.progress_bar.isVisible()
+                  and not w.btn_abbrechen.isVisible() and not w._rechnet_gerade
+                  and w.analysis is an_vorher_ and not w._abbruch)
+            check("… und ein Update wäre wieder möglich", w._update_moeglich() == "",
+                  w._update_moeglich())
+        finally:
+            _upd2.andere_instanzen = alt_inst2_
+
+        # 2) Esc bricht ebenso ab - als echter Tastendruck (QTest.keyClick geht
+        # wie die Tastatur ueber die Kurzbefehle; ein zugeschickter KeyPress
+        # taete das nicht). Esc ist das Kuerzel von „Alles deselektieren“ und
+        # verbrauchte den Druck bisher immer, auch waehrend eines Balkens.
+        from PySide6 import QtTest as _QtT
+        ergebnisse_ = []
+        w._run_background(lang_, lambda r: ergebnisse_.append(r), "Probe-Rechnung")
+        _warten(lambda: w.progress_bar.maximum() == 1000, 3.0)
+        w.plotter.interactor.setFocus()
+        _QtT.QTest.keyClick(w.plotter.interactor, _QtC.Qt.Key_Escape)
+        dauer_ = _warten(lambda: not w._rechnet_gerade)
+        check("Esc (Tastendruck im Bild) bricht die Hintergrundrechnung ab",
+              not ergebnisse_ and "abgebrochen (nach" in w.statusBar().currentMessage()
+              and dauer_ < 1.0 and w.analysis is an_vorher_, f"{dauer_:.2f} s")
+        # Esc ist das Kuerzel der Aktion „Alles deselektieren“ (Ribbon und
+        # Glasleiste); die Aktion verzweigt auf Laufendes. Ein Kuerzel loest
+        # Qt nur bei aktivem Fenster aus - auf dem Desktop kann ein anderes
+        # Fenster (zweiter Prueflauf, der Anwender) die Aktivierung nehmen;
+        # darum wird die Aktion hier direkt ausgeloest und der Tastendruck nur
+        # bei aktivem Fenster geprueft.
+        check("Esc ist das Kürzel von „Alles deselektieren“",
+              w.act_auswahl_weg.shortcut().toString() == "Esc",
+              w.act_auswahl_weg.shortcut().toString())
+        w._fortschritt_beginnen(10, "Probe-Balken")
+        w.act_auswahl_weg.trigger()
+        app.processEvents()
+        esc_balken_ = w._abbruch
+        w._fortschritt_ende()
+        check("die Esc-Aktion bricht einen Balken im Oberflächen-Thread ab", esc_balken_)
+        w.selection = np.arange(min(3, w.model.nn))
+        w.act_auswahl_weg.trigger()
+        app.processEvents()
+        check("ohne Laufendes hebt die Esc-Aktion wie bisher die Auswahl auf",
+              len(w.selection) == 0, str(len(w.selection)))
+        if w.isActiveWindow():
+            w._fortschritt_beginnen(10, "Probe-Balken")
+            w.baum.setFocus()
+            _QtT.QTest.keyClick(w.baum, _QtC.Qt.Key_Escape)
+            app.processEvents()
+            esc_balken_ = w._abbruch
+            w._fortschritt_ende()
+            check("Esc-Tastendruck mit Fokus im Modellbaum bricht den Balken ab (Fenster aktiv)",
+                  esc_balken_)
+        else:
+            print("     Fenster nicht aktiv - Esc-Tastendruck im Modellbaum nicht prüfbar")
+
+        # 3) ohne Abbruch kommt das Ergebnis wie bisher an
+        ergebnisse_ = []
+        w._run_background(lambda p: (p("halb", 0.5), "ok")[1],
+                          lambda r: ergebnisse_.append(r), "Probe kurz")
+        _warten(lambda: not w._rechnet_gerade)
+        check("ohne Abbruch kommt das Ergebnis an, der Abbrechen-Knopf verschwindet",
+              ergebnisse_ == ["ok"] and not w.btn_abbrechen.isVisible()
+              and not w.progress_bar.isVisible())
+
+        # 4) Import mit Balken und Phasen
+        tmp2_ = _tf2.mkdtemp()
+        rf6_ = _make_rf6(os.path.join(tmp2_, "probe.rf6"),
+                         nodes=[(0, 0, 0), (2, 0, 0), (4, 0, 0)], lines=[[1, 2, 3]],
+                         members=[(1, None, None)],
+                         supports=[("Gelenkig", (_INF,) * 6, (0,) * 6, None, [1])])
+        gesehen_ = []
+        echt_ = w._dateifortschritt
+
+        def merken_(anteil, text):
+            gesehen_.append((anteil, text, w.progress_bar.isVisible(), w.progress_bar.value(),
+                             getattr(w, "btn_abbrechen", None) is not None
+                             and w.btn_abbrechen.isVisible()))
+            return echt_(anteil, text)
+
+        w._dateifortschritt = merken_
+        alt_open2_ = QtWidgets.QFileDialog.getOpenFileName
+        alt_iexec_ = _dlg.ImportDialog.exec
+        QtWidgets.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (rf6_, ""))
+        _dlg.ImportDialog.exec = lambda self: 1
+        try:
+            w.import_file()
+            app.processEvents()
+        finally:
+            QtWidgets.QFileDialog.getOpenFileName = alt_open2_
+            _dlg.ImportDialog.exec = alt_iexec_
+            w._dateifortschritt = echt_
+        texte_ = " | ".join(g[1] for g in gesehen_)
+        check("Import: der Balken läuft während des Lesens mit und nennt die Phasen",
+              len(gesehen_) >= 12 and all(g[2] for g in gesehen_)
+              and all(s in texte_ for s in ("Knoten", "Stäbe", "Flächen", "Lasten", "Ansicht")),
+              f"{len(gesehen_)} Meldungen: {texte_[:100]}")
+        check("Import: die Werte steigen, am Ende über 950",
+              all(b[3] >= a[3] for a, b in zip(gesehen_, gesehen_[1:])) and gesehen_[-1][3] >= 950,
+              f"{gesehen_[0][3]} … {gesehen_[-1][3]}" if gesehen_ else "-")
+        check("Import: kein Abbrechen-Knopf, hinterher ist der Balken weg",
+              not any(g[4] for g in gesehen_) and not w.progress_bar.isVisible())
+        check("Import: das Modell ist da", w.model.nn == 3 and len(w.model.elements) == 2,
+              f"{w.model.nn} Knoten, {len(w.model.elements)} Elemente")
+
+        # 5) Bericht mit Balken je Kapitel
+        w.load_example("frame"); app.processEvents()
+        w.path = os.path.join(tmp2_, "probe.json")
+        gesehen_ = []
+        w._dateifortschritt = merken_
+        alt_rexec_ = _dlg.ReportDialog.exec
+        _dlg.ReportDialog.exec = lambda self: 1
+        try:
+            w.make_report()
+            app.processEvents()
+        finally:
+            _dlg.ReportDialog.exec = alt_rexec_
+            w._dateifortschritt = echt_
+            w.path = None
+        bericht_ = os.path.join(tmp2_, "probe_bericht.html")
+        check("Bericht: der Balken läuft je Kapitel mit, hinterher ist er weg",
+              len(gesehen_) >= 18 and all(g[2] for g in gesehen_)
+              and any("Kapitel 2 von" in g[1] for g in gesehen_)
+              and not w.progress_bar.isVisible() and os.path.exists(bericht_),
+              f"{len(gesehen_)} Meldungen")
+
+        # 6) vor dem Auswerten einer grossen Datei: ehrlicher Text, sofort gezeichnet
+        zaehler_pe_ = []
+        alt_pe_ = QtWidgets.QApplication.processEvents
+        QtWidgets.QApplication.processEvents = staticmethod(
+            lambda *a: (zaehler_pe_.append(1), alt_pe_(*a))[1])
+        try:
+            w._fortschritt_beginnen(1000, "Probe", abbrechbar=False)
+            w._fortschritt_tick = time.time()       # gerade erst ein Tick
+            n_vor_ = len(zaehler_pe_)
+            w._dateifortschritt(0.5, "Knoten aufbauen")
+            n_normal_ = len(zaehler_pe_) - n_vor_
+            w._fortschritt_tick = time.time()
+            n_vor_ = len(zaehler_pe_)
+            w._dateifortschritt(0.32, "Daten auswerten")
+            n_sofort_ = len(zaehler_pe_) - n_vor_
+            text_ = w.statusBar().currentMessage()
+        finally:
+            QtWidgets.QApplication.processEvents = alt_pe_
+            w._fortschritt_ende()
+        check("Öffnen: vor dem Auswerten steht der ehrliche Text („Minuten“, „antwortet nicht“)",
+              "Minuten" in text_ and "antwortet" in text_, text_[:90])
+        check("… und die Ereignisschleife lief dafür sofort, sonst erst nach 0,15 s",
+              n_sofort_ >= 1 and n_normal_ == 0, f"{n_sofort_} / {n_normal_}")
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Abbrechen, Import- und Berichtsbalken", False, str(ex)[:70])
+
+    # ------------------------------------------------------------------
     # Ribbon Netz: Netzqualität anzeigen
     # ------------------------------------------------------------------
     try:
@@ -6539,6 +7045,13 @@ def main():
         import traceback
         traceback.print_exc()
         check("Mehrfachauswahl im Modellbaum", False, str(ex)[:70])
+
+    try:
+        _kuerzel_pruefen(w, app)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Tastenkürzel unabhängig vom Register", False, str(ex)[:70])
 
     # Screenshot
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gui_smoke.png")

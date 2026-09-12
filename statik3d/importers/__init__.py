@@ -230,11 +230,17 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     model: bestehendes Modell, an das die Geometrie angehaengt wird (Knoten werden
            mit Toleranz zusammengefuehrt); None -> neues Modell mit dem Dateinamen.
     log:   Liste fuer Meldungen/Warnungen (deutsch).
-    options: unit_scale, tol und formatspezifische Optionen (siehe Module).
+    options: unit_scale, tol und formatspezifische Optionen (siehe Module);
+           ``fortschritt(anteil 0…1, text)`` meldet die Phasen - fuer die
+           Oberflaeche. Die RFEM-6-Datei meldet feiner (Knoten, Staebe,
+           Flaechen, Volumen, Lasten); die uebrigen Formate Lesen und
+           Nachbereitung.
     """
     path = os.fspath(path)
     if not os.path.exists(path):
         raise FileNotFoundError(f"Datei '{path}' nicht gefunden")
+    fortschritt = options.pop("fortschritt", None)
+    _melde(fortschritt, 0.0, f"Datei lesen: {os.path.basename(path)}")
     kind = _detect(path)
     fresh = model is None
     # Z-Achse der Datei zeigt nach unten (RFEM-Vorgabe): nach dem Lesen um x
@@ -245,7 +251,9 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     tol = float(options.get("tol", C.DEFAULT_TOL))
 
     if kind == "json":
-        loaded = Model.load(path)
+        loaded = Model.load(path, fortschritt=(None if fortschritt is None else
+                                               lambda a, t: _melde(fortschritt, 0.05 + 0.9 * a, t)))
+        _melde(fortschritt, 1.0, "Modell gelesen")
         if fresh:
             model = loaded
         else:
@@ -300,7 +308,11 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         import_rfem_tables(path, model, log, **options)
     elif kind == "native":
         from .rfem_native import import_rfem_native
-        import_rfem_native(path, model, log, **options)
+        # der RFEM-6-Leser meldet seine Phasen selbst (0,02 … 0,85)
+        import_rfem_native(path, model, log,
+                           fortschritt=(None if fortschritt is None else
+                                        lambda a, t: _melde(fortschritt, 0.02 + 0.83 * a, t)),
+                           **options)
     elif kind == "sdnf":
         from .sdnf import import_sdnf
         import_sdnf(path, model, log, **options)
@@ -316,6 +328,7 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         _from_zip_member(path, {".ifc"}, "ifc", model, log, **options)
 
     # Nachbereitung
+    _melde(fortschritt, 0.86, "Nachbereitung: Knoten zusammenführen, Stäbe bilden")
     if z_drehen:
         n_gedreht = model.um_x_drehen()
         C.say(log, f"Modell um die x-Achse gedreht ({n_gedreht} Knoten): die Z-Achse der "
@@ -341,7 +354,15 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     n_new = len(model.elements) - n_elems0
     C.say(log, f"Import abgeschlossen: {n_new} neue Elemente, {model.nn} Knoten gesamt, "
                f"{len(model.supports)} Lager, {len(model.load_cases)} Lastfaelle")
+    _melde(fortschritt, 0.95, "Import abgeschlossen")
     return model
+
+
+def _melde(fortschritt, anteil: float, text: str) -> None:
+    """Fortschritt weitergeben: ``fortschritt(anteil 0…1, text)``; ohne
+    Rueckruf geschieht nichts."""
+    if fortschritt is not None:
+        fortschritt(float(max(0.0, min(1.0, anteil))), str(text))
 
 
 def _append_model(target: Model, src: Model, tol: float) -> Model:

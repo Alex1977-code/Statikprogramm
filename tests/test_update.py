@@ -91,6 +91,17 @@ def test_befund_und_bat():
     check("Skript: verzoegerte Erweiterung eingeschaltet",
           "enabledelayedexpansion" in bat)
     check("Skript: Zaehler mit ! statt % gelesen", "!n! lss 300" in bat, "!n!")
+    # Reste einer frueheren Sitzung (11.09.2026): nach 20 s zeigt das Skript die
+    # Statik3D-Prozesse und beendet sie nur auf Wunsch
+    check("Skript: nach 20 s Prozesse zeigen und fragen (choice), beenden nur auf J",
+          ":fragen" in bat and "if !n! equ 20 if not defined GEFRAGT call :fragen" in bat
+          and "choice /C JN" in bat and "taskkill /F /IM Statik3D.exe" in bat
+          and bat.index("choice /C JN") < bat.index("taskkill /F /IM Statik3D.exe"))
+    from statik3d.update import _pids_aus_tasklist
+    csv = '"Statik3D.exe","32180","Console","3","4.252 K"\n"Statik3D.exe","44316","Console","3","43.440 K"\n'
+    check("andere_instanzen: PIDs aus tasklist ohne den eigenen Prozess",
+          _pids_aus_tasklist(csv, 44316) == [32180] and _pids_aus_tasklist("", 1) == []
+          and _pids_aus_tasklist("INFO: Es werden keine Tasks ausgefuehrt", 1) == [])
     check("Skript: Protokoll wird geschrieben", "statik3d_update.log" in bat)
     check("Skript: fehlende Datei wird gemeldet", "Die heruntergeladene Datei fehlt" in bat)
     check("Skript: Fehler beim Verschieben wird gemeldet", "errorlevel 1" in bat)

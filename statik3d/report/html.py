@@ -413,26 +413,57 @@ class Report:
         return ("bild", png_b64, caption, breite)
 
     # ---------------------------------------------------------------- Aufbau
+    #: Rueckruf ``fortschritt(anteil 0…1, text)`` - gesetzt von write_report,
+    #: damit die Oberflaeche je Kapitel den Balken nachfuehren kann.
+    fortschritt = None
+
+    #: Namen der Kapitel fuer die Statuszeile
+    KAPITELNAMEN = {
+        "general": "Allgemeines", "system": "System", "actions": "Einwirkungen",
+        "lastgenerierer": "Lastgenerierer", "theorie2": "Theorie II. Ordnung",
+        "theorie3": "Theorie III. Ordnung", "results": "Ergebnisse",
+        "knicklaengen": "Knicklängen", "schwingung": "Schwingung",
+        "design": "Nachweise EC3", "beulen": "Beulen", "volumen": "Volumen",
+        "fatigue": "Ermüdung", "joints": "Anschlüsse", "gzg": "Verformungen (GZG)",
+        "uebernommen": "übernommene Bilder", "summary": "Zusammenfassung",
+        "appendix": "Anhang", "rahmen": "Rahmen", "uebersicht": "Übersicht",
+        "einwirkungen": "Einwirkungen", "kombinationen": "Kombinationen",
+        "pruefliste": "Prüfliste"}
+
+    def _melde(self, anteil: float, text: str) -> None:
+        f = getattr(self, "fortschritt", None)
+        if f is not None:
+            f(float(max(0.0, min(1.0, anteil))), str(text))
+
+    def _kapitel_bauen(self, kapitel) -> list:
+        """Die Kapitelfunktionen der Reihe nach aufrufen und je Kapitel den
+        Fortschritt melden (Aufbau 0 … 0,85, das Rendern folgt bis 1)."""
+        b = []
+        for k, ch in enumerate(kapitel):
+            name = ch.__name__.split("_", 1)[-1]
+            self._melde(0.85 * k / max(1, len(kapitel)),
+                        f"Kapitel {k + 1} von {len(kapitel)}: {self.KAPITELNAMEN.get(name, name)}")
+            b.extend(ch())
+        return b
+
     def blocks(self) -> list:
         if self._blocks is None:
             self._toc = []
             self._num = [0, 0, 0]
             self._appendix = False
             self._warnings = []
-            b = []
-            for ch in (self.chapter_general, self.chapter_system, self.chapter_actions,
-                       self.chapter_lastgenerierer,
-                       self.chapter_theorie2, self.chapter_theorie3,
-                       self.chapter_results, self.chapter_knicklaengen,
-                       self.chapter_schwingung,
-                       self.chapter_design, self.chapter_beulen,
-                       self.chapter_volumen,
-                       self.chapter_fatigue,
-                       self.chapter_joints, self.chapter_gzg,
-                       self.chapter_uebernommen, self.chapter_summary,
-                       self.chapter_appendix):
-                b.extend(ch())
-            self._blocks = b
+            self._blocks = self._kapitel_bauen((
+                self.chapter_general, self.chapter_system, self.chapter_actions,
+                self.chapter_lastgenerierer,
+                self.chapter_theorie2, self.chapter_theorie3,
+                self.chapter_results, self.chapter_knicklaengen,
+                self.chapter_schwingung,
+                self.chapter_design, self.chapter_beulen,
+                self.chapter_volumen,
+                self.chapter_fatigue,
+                self.chapter_joints, self.chapter_gzg,
+                self.chapter_uebernommen, self.chapter_summary,
+                self.chapter_appendix))
         return self._blocks
 
     # ============================================================ Kapitel 1
@@ -3530,7 +3561,9 @@ class Report:
     def html(self) -> str:
         """Vollstaendiges HTML5-Dokument (UTF-8, druckfaehig A4)."""
         blocks = self.blocks()
+        self._melde(0.86, f"{len(blocks)} Abschnitte als HTML ausgeben")
         body = self.render_html_blocks(blocks)
+        self._melde(0.97, "Dokument zusammensetzen")
         meta = self._header_pairs()
         title = f"Statischer Bericht – {self.model.name}"
         proj = dict(meta).get("Projekt", "")
@@ -3574,8 +3607,11 @@ Strg+P als PDF speichern.</div>
 """
 
     def to_html(self, path: str) -> str:
+        text = self.html()
+        self._melde(0.99, "Datei schreiben")
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write(self.html())
+            fh.write(text)
+        self._melde(1.0, "Bericht geschrieben")
         return path
 
     def to_pdf(self, path: str) -> str:

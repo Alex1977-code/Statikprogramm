@@ -599,7 +599,10 @@ Maximum minus Minimum über die Zustände, ein Spiel je Wiederholung — die
 Schwingbreite, die RFEM aus der Ergebniskombination bildet. Lastspielzahlen
 führt die Datei nicht (0 von 422 Lastfällen): die Lasten tragen
 `wiederholungen = None`, es gilt die **globale Lastspielzahl** der
-Nachweiseinstellungen (`ermuedung_lastspiele`, Nachweise → Konfiguration),
+Nachweiseinstellungen (`ermuedung_lastspiele`, Nachweise → Konfiguration;
+daneben `ermuedung_kontakt_einfrieren`, Vorgabe ein: in Kontaktmodellen wird
+nur der erste Zustand jeder Ermüdungslast nichtlinear gelöst, die weiteren
+linear mit seinem eingefrorenen Kontaktzustand),
 je Last im Dialog Ermüdungslast überschreibbar. Enthält die Zustandsmenge
 einer Kombination die einer anderen mit mindestens zwei Zuständen
 vollständig, ist sie eine **Sammlung** von Ereignissen und bekommt 0
@@ -686,7 +689,11 @@ Volumenkörper, die ein 3D-Netz brauchen, sagt das Protokoll das ausdrücklich:
     WARNUNG: 48 Teiltragwerke ohne Lager - so ist das Modell nicht rechenbar.
 
 Mit `structure_only=True` bleibt nur das Stabtragwerk übrig; das Modell ist dann
-unmittelbar rechenbar, die Flächengeometrie entfällt.
+unmittelbar rechenbar, die Flächengeometrie entfällt. `fortschritt=f` ruft
+`f(anteil, text)` mit steigendem Anteil 0…1 je Phase (Behälter, Knoten, Linien,
+Stäbe, Lager, Flächen, Volumen, Freigaben, Lastfälle, Lasten, Kombinationen,
+Prüfung) — die Oberfläche macht daraus den Balken; `import_file` reicht den
+Rückruf durch und meldet für die anderen Formate Lesen und Nachbereitung.
 
 Ein Inhaltsverzeichnis ohne Modellaufbau liefert `rfem6_db.report(pfad)`:
 

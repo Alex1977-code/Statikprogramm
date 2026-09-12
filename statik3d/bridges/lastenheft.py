@@ -547,13 +547,9 @@ class Lastenheft(Report):
             self._num = [0, 0, 0]
             self._appendix = False
             self._warnings = []
-            b = []
-            b += self.kapitel_rahmen()
-            b += self.kapitel_uebersicht()
-            b += self.kapitel_einwirkungen()
-            b += self.kapitel_kombinationen()
-            b += self.kapitel_pruefliste()
-            self._blocks = b
+            self._blocks = self._kapitel_bauen((
+                self.kapitel_rahmen, self.kapitel_uebersicht, self.kapitel_einwirkungen,
+                self.kapitel_kombinationen, self.kapitel_pruefliste))
         return self._blocks
 
     def _lastfaelle_je_art(self) -> dict:
@@ -726,7 +722,9 @@ class Lastenheft(Report):
     # -- Dokument --------------------------------------------------------
     def html(self) -> str:
         blocks = self.blocks()
+        self._melde(0.86, f"{len(blocks)} Abschnitte als HTML ausgeben")
         body = self.render_html_blocks(blocks)
+        self._melde(0.97, "Dokument zusammensetzen")
         meta = self._header_pairs()
         from .. import __version__
         from ..report.html import CSS
@@ -775,11 +773,17 @@ PDF zu speichern.</div>
         return md.replace("# Statischer Bericht –", "# Lastenheft –", 1)
 
 
-def lastenheft_schreiben(model: Model, pfad: str, regelwerk: Regelwerk = None, reihe=None) -> str:
-    """Das Lastenheft als HTML-Datei (oder Markdown bei .md) schreiben."""
+def lastenheft_schreiben(model: Model, pfad: str, regelwerk: Regelwerk = None, reihe=None,
+                         fortschritt=None) -> str:
+    """Das Lastenheft als HTML-Datei (oder Markdown bei .md) schreiben.
+    ``fortschritt(anteil 0…1, text)`` meldet die Kapitel wie beim Bericht."""
     lh = Lastenheft(model, regelwerk, reihe)
+    lh.fortschritt = fortschritt
     if pfad.lower().endswith(".md"):
+        text = lh.to_markdown()
+        lh._melde(0.99, "Datei schreiben")
         with open(pfad, "w", encoding="utf-8") as fh:
-            fh.write(lh.to_markdown())
+            fh.write(text)
+        lh._melde(1.0, "Lastenheft geschrieben")
         return pfad
     return lh.to_html(pfad)

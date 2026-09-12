@@ -492,21 +492,9 @@ def _n_vektor(delta, category, gamma_Mf: float = 1.0) -> np.ndarray:
 
 
 def kontaktpaare(model: Model) -> set:
-    """Koerperpaare, zwischen denen eine Kontaktbedingung eingegeben ist -
-    dort ist die Beruehrung eine Fuge, keine Naht."""
-    besitzer: dict = {}
-    for k in (getattr(model, "koerper", {}) or {}).values():
-        for f in k.flaechen:
-            besitzer.setdefault(f, k.name)
-    paare: set = set()
-    for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
-        gegen = set(getattr(kb, "gegenkoerper", []) or [])
-        gegen |= {besitzer[f] for f in (getattr(kb, "gegenflaechen", []) or []) if f in besitzer}
-        for a in kb.koerpernamen:
-            for b in gegen:
-                if a != b:
-                    paare.add(frozenset((a, b)))
-    return paare
+    """Koerperpaare mit Kontaktbedingung - siehe fugen.kontaktpaare."""
+    from ..fugen import kontaktpaare as _kp
+    return _kp(model)
 
 
 def nahtknoten(model: Model) -> dict:
@@ -695,8 +683,13 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             progress(f"Ermuedung Volumen {k.name}: D = {fv.util:.3f}")
 
 
-def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> FatigueResults:
+def check_fatigue(model: Model, analysis, progress=None, n: int = None,
+                  anteil=None) -> FatigueResults:
     """Ermuedungsnachweis aller Staebe mit Kerbfall fuer alle Ermuedungslasten.
+
+    ``anteil=(von, bis)``: wie bei :func:`design.check_members` - dann meldet
+    der Fortschritt auch den Anteil (Staebe 0…0,9 des Fensters, Volumen der
+    Rest); ohne Angabe nur Text.
 
     **Die Schaedigung wird am Ort aufsummiert, nicht ueber Orte hinweg.**
     Miner zaehlt, was ein Punkt des Bauteils erlebt; die groesste Schwingbreite
@@ -722,9 +715,15 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> Fatig
         from ..schweissnaehte import kerbfaelle_uebernehmen
         kerbfaelle_uebernehmen(model, out.warnings if hasattr(out, "warnings") else None)
     all_res = analysis.all_results() if hasattr(analysis, "all_results") else analysis
+    from .design import _anteil, _melde
+    zu_pruefen = sum(1 for mem in model.members.values()
+                     if mem.design and mem.detail_category is not None)
+    _melde(progress, f"Ermuedung: {zu_pruefen} Staebe mit Kerbfall", _anteil(anteil, 0.0))
+    geprueft = 0
     for mname, member in model.members.items():
         if not member.design or member.detail_category is None:
             continue
+        geprueft += 1
         gMf = GAMMA_MF.get((member.assessment, member.consequence), 1.15)
         cat_s = member.detail_category_shear or 100e6
         fm = FatigueMember(mname, member.detail_category, cat_s, gMf)
@@ -819,6 +818,11 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None) -> Fatig
                         f"{len(fm.kollektiv)} Stufen)")
         out.members[mname] = fm
         if progress:
-            progress(f"Ermuedung {mname}: D = {fm.util:.3f}")
+            _melde(progress, f"Ermuedung {mname}: D = {fm.util:.3f}",
+                   _anteil(anteil, 0.9 * geprueft / max(1, zu_pruefen)))
+    if anteil is not None:
+        _melde(progress, "Ermuedung: Volumen", _anteil(anteil, 0.9))
     _volumen_nachweisen(model, all_res, ds, out, bezug, progress)
+    if anteil is not None:
+        _melde(progress, "Ermuedung fertig", _anteil(anteil, 1.0))
     return out

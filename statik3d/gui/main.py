@@ -49,9 +49,13 @@ from .tabellen import Spalte
 from .. import ks
 from . import viewport as vp
 from . import design as dsg
+from .. import spannungen as spn
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 
-FIELDS = ["|u| Verschiebung", "ux", "uy", "uz", "Vergleichsspannung",
+#: Faerbungen der Ansicht: Verschiebungen, Vergleichsspannung, dann die
+#: Spannungsgroessen je Art (spannungen.FELDER, analog ANSYS: Grund-, Haupt-,
+#: Vergleichs- und Kontaktspannungen), zuletzt die Ausnutzungen
+FIELDS = ["|u| Verschiebung", "ux", "uy", "uz", "Vergleichsspannung", *spn.FELDER,
           "Ausnutzung EC3", "Ausnutzung Ermüdung", "Ausnutzung elastisch", "keine Färbung"]
 DIAGRAMS = ["kein Verlauf", "N", "Vy", "Vz", "Mt", "My", "Mz"]
 #: Zeilenhoehe der Kennwerte im Bild [Bildpunkte] bei Schriftgroesse 8
@@ -353,15 +357,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif t == QtCore.QEvent.Leave:
                     self._hover_aus()
                 elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
-                        and self.progress_bar.isVisible() \
-                        and getattr(self, "btn_abbrechen", None) is not None \
-                        and self.btn_abbrechen.isVisible():
-                    self._fortschritt_abbrechen()
-                    return True
-                elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
-                        and self._fenster_ecke is not None:
-                    self._fenster_abbrechen()
-                    self.statusBar().showMessage("Auswahlfenster abgebrochen", 3000)
+                        and self._esc_abbrechen():
+                    # Ein echter Tastendruck kommt hier nie an - Esc ist das
+                    # anwendungsweite Kuerzel von „Alles deselektieren“ und
+                    # wird als Kurzbefehl verbraucht (:meth:`_esc_gedrueckt`);
+                    # der Zweig gilt fuer zugeschickte Tastenereignisse.
                     return True
         except Exception:                   # noqa: BLE001
             return False
@@ -2674,6 +2674,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                       (self.act_staebe, "staebe", "staebe"),
                                       (self.act_flaechen, "flaechen", "flaechen"),
                                       (self.act_volumen, "volumen", "volumen"),
+                                      (self.act_lager, "lager", "lager"),
                                       (self.act_edges, "netz", "netz"),
                                       (self.act_loads, "lasten", "lasten")):
             leiste.knopf(a, symbol, schluessel)
@@ -2915,8 +2916,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_redo = g.gross("Wiederholen", "↷", self.redo, "Ctrl+Y",
                                 "Zurückgenommene Änderung wiederholen")
         g = r.gruppe("Auswahl")
-        self.act_auswahl_weg = g.gross("Alles deselektieren", "✕", self.clear_selection,
-                                       "Esc", "Auswahl aufheben - nichts bleibt gewählt (auch in der Glasleiste)")
+        self.act_auswahl_weg = g.gross("Alles deselektieren", "✕", self._esc_gedrueckt,
+                                       "Esc", "Auswahl aufheben - nichts bleibt gewählt (auch in der Glasleiste); "
+                                              "läuft gerade etwas mit Balken, hält Esc das an")
         g.klein("Alles auswählen", self.select_all, "Ctrl+A",
                 hinweis="Alle Knoten des Modells wählen")
         g.klein("Auswahl umkehren", self.invert_selection,
@@ -2987,9 +2989,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda v: self.arbeitsebene_setzen(raster=v))
         g.widget(self.sp_raster)
         self.act_fang = g.schalter("Fang", self.fang_umschalten, True,
-                                   "Fang ein- und ausschalten (F3)")
-        self.act_fang.setShortcut(QtGui.QKeySequence("F3"))
-        self.act_fang.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+                                   "Fang ein- und ausschalten", kuerzel="F3")
         # Was gefangen wird, muss man beim Modellieren staendig umstellen -
         # darum je Fangart ein eigener Schalter mit Taste, nicht ein Dialog.
         self.act_fangart = {}
@@ -3002,10 +3002,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 ("flaeche", "auf Flächen", "Shift+F6", "fang_flaeche"),
                 ("volumen", "auf Volumen", "Shift+F7", "fang_volumen")):
             a = g.schalter(text, lambda z, k=art: self.fangart_umschalten(k, z),
-                           art in self.fang_arten, f"Fang {text} ({kuerzel})",
-                           symbol=symbol)
-            a.setShortcut(QtGui.QKeySequence(kuerzel))
-            a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+                           art in self.fang_arten, f"Fang {text}",
+                           symbol=symbol, kuerzel=kuerzel)
             self.act_fangart[art] = a
 
         # -- Struktur ----------------------------------------------------
@@ -3278,6 +3276,12 @@ class MainWindow(QtWidgets.QMainWindow):
                      "Nachweise EC3", "Ermüdung", "Kontakt"):
             g.klein(f"Tabelle {name}", lambda n=name: self.tabelle_zeigen(n),
                     hinweis=f"Tabelle {name} unten zeigen")
+        g = r.gruppe("Werteskala")
+        self.act_werteskala = g.gross(
+            "Werteskala", "▤", lambda: self.maske_zeigen("Ergebnisse"),
+            hinweis="Grenzen der Farbskala (Maske Ergebnisse): automatisch, fest oder "
+                    "Grenzwert wie 355 für S355 - darüber magenta, der Größtwert an der Skala; "
+                    "wahlweise nur die Überschreitungen färben")
         g = r.gruppe("Tabelle ausgeben")
         g.gross("Excel", "▦", lambda: self.tabelle_ausgeben("xlsx"),
                 hinweis="Die Tabelle, die unten vorn liegt, als xlsx speichern "
@@ -3340,9 +3344,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.act_darstellung[name] = a
         g = r.gruppe("Anzeigen")
         self.act_edges = g.schalter("FE-Netz", lambda z: self.redraw(), True,
-                                    "Die Elementkanten des Netzes zeigen (F9)")
-        self.act_edges.setShortcut(QtGui.QKeySequence("F9"))
-        self.act_edges.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+                                    "Die Elementkanten des Netzes zeigen", kuerzel="F9")
         self.act_knoten = g.schalter("Knoten", lambda z: self.redraw(), True,
                                      "Die gesetzten Knoten als Punkte zeigen",
                                      symbol="knoten")
@@ -3358,6 +3360,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_volumen = g.schalter("Volumen", lambda z: self.redraw(), True,
                                       "Volumenkörper und Volumenelemente zeigen",
                                       symbol="volumen")
+        # Lager ein- und ausblendbar (Wunsch 12.09.2026): am Drehlager mit
+        # 50 Lagerflaechen verdecken die Symbole das Bauteil
+        self.act_lager = g.schalter("Lager", lambda z: self.redraw(), True,
+                                    "Knoten-, Linien- und Flächenlager als Symbole zeigen",
+                                    symbol="lager")
         self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True,
                                     "Die Lasten des aktiven Lastfalls als Pfeile zeigen",
                                     symbol="lasten")
@@ -4396,6 +4403,11 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("situation", "Situation", "wahl",
                             (lc.situation if lc and lc.situation in situationen else situationen[0]), situationen),
                           F("theorie", "Theorie", "wahl", th, [t for t, _v in THEORIEN]),
+                          F("grundlast", "Grundlast (wirkt in jeder Rechnung mit)", "haken",
+                            bool(getattr(lc, "grundlast", False)) if lc else False,
+                            hinweis="Ständige Last wie Vorspannung oder Eigengewicht: in Modellen mit "
+                                    "Kontakt geht sie in jede direkt gelöste Rechnung ein - Lastfälle, "
+                                    "Kombinationen, Ermüdungszustände -, auch ohne dort genannt zu sein"),
                           F("g_z", "Eigengewicht g_z [m/s²]", "zahl", g,
                             hinweis="−9,81 = Eigengewicht nach unten in diesem Lastfall, 0 = keines"),
                           F("psi", "ψ0/ψ1/ψ2 (leer = aus Kategorie)", "text", psi, breite=100),
@@ -5870,6 +5882,7 @@ class MainWindow(QtWidgets.QMainWindow):
             sit = str(w.get("situation", "") or "")
             lc.situation = "" if sit in ("", GRUNDSTELLUNG) else sit
             lc.theorie = next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), "")
+            lc.grundlast = bool(w.get("grundlast", False))
             try:
                 lc.nummer = max(0, int(round(float(w.get("nummer", 0) or 0))))
             except (TypeError, ValueError):
@@ -7066,6 +7079,27 @@ class MainWindow(QtWidgets.QMainWindow):
             if tabelle and self.tabelle_zeigen(tabelle):
                 return
             return self.show_design() if hasattr(self, "show_design") else None
+        if art == "spannung":
+            a, _, g = wert.partition(":")
+            if a in spn.GROESSEN and g in spn.GROESSEN[a]:
+                i = self.cb_field.findText(spn.feldname(a, g))
+                if i >= 0:
+                    # eine Umhuellende fuehrt keine Komponenten: auf das erste
+                    # Ergebnis mit Tensoren (Lastfall, Kombination) wechseln
+                    if not hasattr(self.current_result(), "solid_res"):
+                        for k in range(self.cb_result.count()):
+                            d = self.cb_result.itemData(k)
+                            if d and d[0] in ("case", "combo"):
+                                self.cb_result.setCurrentIndex(k)
+                                self.info(f"Spannungen gibt es zu Lastfall und Kombination - "
+                                          f"gezeigt wird {self.cb_result.currentText()}")
+                                break
+                    self.cb_field.setCurrentIndex(i)     # zeichnet neu
+                    self.maske_zeigen("Ergebnisse")
+                    self.info(f"Färbung {spn.feldname(a, g)}")
+                    return
+            self.info(f"Spannung „{wert}“ ist nicht bekannt")
+            return
         for i in range(self.cb_result.count()):
             d = self.cb_result.itemData(i)
             if not d:
@@ -7318,44 +7352,122 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.statusBar().showMessage(text)
             QtWidgets.QApplication.processEvents()
             return
-        if getattr(self, "btn_abbrechen", None) is None:
-            self.btn_abbrechen = QtWidgets.QPushButton("Abbrechen")
-            self.btn_abbrechen.setFlat(True)
-            self.btn_abbrechen.setToolTip("Anhalten - auch mitten in einem Volumen (auch Esc); "
-                                          "das bisher Erzeugte bleibt")
-            self.btn_abbrechen.clicked.connect(self._fortschritt_abbrechen)
-            self.statusBar().addPermanentWidget(self.btn_abbrechen)
-        self.btn_abbrechen.setVisible(True)
+        self._abbrechen_knopf("Anhalten - auch mitten in einem Volumen (auch Esc); "
+                              "das bisher Erzeugte bleibt")
         self._fortschritt_t0 = time.time()
         self._fortschritt_tick = 0.0
         if text:
             self.statusBar().showMessage(text)
         QtWidgets.QApplication.processEvents()
 
+    def _abbrechen_knopf(self, hinweis: str) -> QtWidgets.QPushButton:
+        """Den Abbrechen-Knopf neben dem Balken zeigen (beim ersten Mal anlegen).
+
+        Ein Knopf fuer alles Abbrechbare - Vernetzen, Wind, Wasserdruck und
+        die Hintergrundrechnungen; der Hinweis sagt, was der Abbruch dort
+        bedeutet.
+        """
+        if getattr(self, "btn_abbrechen", None) is None:
+            self.btn_abbrechen = QtWidgets.QPushButton("Abbrechen")
+            self.btn_abbrechen.setFlat(True)
+            self.btn_abbrechen.clicked.connect(self._fortschritt_abbrechen)
+            self.statusBar().addPermanentWidget(self.btn_abbrechen)
+        self.btn_abbrechen.setToolTip(hinweis)
+        self.btn_abbrechen.setVisible(True)
+        return self.btn_abbrechen
+
+    def _esc_abbrechen(self) -> bool:
+        """Esc: das Laufende anhalten - True, wenn es etwas anzuhalten gab.
+
+        Zuerst ein Vorgang mit Balken und Abbrechen-Knopf (Vernetzen, Wind,
+        Wasserdruck, Hintergrundrechnung), dann ein aufgezogenes
+        Auswahlfenster. Sonst False, und Esc bedeutet, was es ohne Laufendes
+        bedeutet: alles deselektieren.
+        """
+        if self.progress_bar.isVisible() \
+                and getattr(self, "btn_abbrechen", None) is not None \
+                and self.btn_abbrechen.isVisible():
+            self._fortschritt_abbrechen()
+            return True
+        if getattr(self, "_fenster_ecke", None) is not None:
+            self._fenster_abbrechen()
+            self.statusBar().showMessage("Auswahlfenster abgebrochen", 3000)
+            return True
+        return False
+
+    def _esc_gedrueckt(self) -> None:
+        """Die Esc-Taste - anwendungsweites Kuerzel der Aktion „Alles
+        deselektieren“.
+
+        Ein Kurzbefehl verbraucht den Tastendruck, bevor ein Widget oder ein
+        Ereignisfilter einen KeyPress sieht (gemessen 12.09.2026:
+        QTest.keyClick(Esc) waehrend eines Balkens -> Aktion „Alles
+        deselektieren“, ``_abbruch`` blieb False). Darum entscheidet die
+        Aktion selbst: laeuft etwas Abbrechbares, wird abgebrochen; sonst
+        wird die Auswahl aufgehoben.
+        """
+        if not self._esc_abbrechen():
+            self.clear_selection()
+
     def _fortschritt_abbrechen(self):
+        """Knopf „Abbrechen“ oder Esc: das Laufende anhalten.
+
+        Im Oberflaechen-Thread (Vernetzen, Wind, Wasserdruck) prueft der
+        Vorgang das Flag beim naechsten Fortschrittsaufruf. Eine
+        Hintergrundrechnung bekommt den Wunsch ueber den Worker: sein
+        Rueckruf wirft dann :class:`worker.Abgebrochen`, und der Rechenkern
+        haelt beim naechsten Schritt an - eine laufende Faktorisierung laeuft
+        zu Ende.
+        """
         self._abbruch = True
+        w = getattr(self, "worker", None)
+        if w is not None and w.isRunning():
+            w.abbrechen()
+            self.statusBar().showMessage(
+                "Abbruch angefordert - die Rechnung hält beim nächsten Rechenschritt an "
+                "(eine laufende Faktorisierung läuft zu Ende) …")
+            return
         self.statusBar().showMessage("Abbruch angefordert - es wird angehalten …")
 
-    def _fortschritt(self, wert, text: str) -> bool:
+    def _fortschritt(self, wert, text: str, sofort: bool = False) -> bool:
         """Balken und Text nachfuehren; False, wenn abgebrochen wurde.
 
         ``wert`` None laesst den Balken stehen und zaehlt nur die Zeit weiter.
         Die Ereignisschleife laeuft hoechstens alle 0,15 s - das reicht fuer
         Anzeige und Abbrechen-Knopf und kostet den Vernetzer nichts.
+        ``sofort`` erzwingt sie: vor einem Schritt, der lange nichts meldet,
+        muss der Text schon stehen.
         """
         if wert is not None:
             self.progress_bar.setValue(int(wert))
         dt = time.time() - getattr(self, "_fortschritt_t0", time.time())
         self.statusBar().showMessage(f"{text}  ({dt:.0f} s)")
         jetzt = time.time()
-        if jetzt - getattr(self, "_fortschritt_tick", 0.0) >= 0.15:
+        if sofort or jetzt - getattr(self, "_fortschritt_tick", 0.0) >= 0.15:
             self._fortschritt_tick = jetzt
             QtWidgets.QApplication.processEvents()
         return not getattr(self, "_abbruch", False)
 
+    #: Model.load meldet diesen Text, bevor es die Datei mit json.loads
+    #: auswertet - und das meldet nichts mehr, bis es fertig ist.
+    TEXT_DATEN_AUSWERTEN = ("Daten auswerten - das kann bei großen Dateien Minuten dauern, "
+                            "das Fenster antwortet solange nicht")
+
     def _dateifortschritt(self, anteil: float, text: str) -> None:
-        """Rueckruf fuer Model.save/Model.load: Anteil 0…1 auf den Balken."""
-        self._fortschritt(int(round(max(0.0, min(1.0, anteil)) * 1000)), text)
+        """Rueckruf fuer Model.save/Model.load, die Importer und den Bericht:
+        Anteil 0…1 auf den Balken.
+
+        Vor dem Auswerten einer grossen JSON-Datei stand der Balken bei
+        „Daten auswerten“ minutenlang still, und ob der Text ueberhaupt
+        gezeichnet war, hing davon ab, ob seit dem letzten Block 0,15 s
+        vergangen waren. Darum hier der ehrliche Text und die Ereignisschleife
+        sofort.
+        """
+        sofort = False
+        if str(text).startswith("Daten auswerten"):
+            text = self.TEXT_DATEN_AUSWERTEN
+            sofort = True
+        self._fortschritt(int(round(max(0.0, min(1.0, anteil)) * 1000)), text, sofort=sofort)
 
     def _fortschritt_ende(self):
         self.progress_bar.setVisible(False)
@@ -7691,6 +7803,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.kopf.setzen(" · ".join(teile), modell, zustand, art)
 
     def _refresh_baum(self):
+        self._werteskala_anzeigen()
         if hasattr(self, "baum"):
             self.baum.fuellen(self.model, self._stellungen_liste(),
                               self._ergebnisliste())
@@ -7802,6 +7915,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 reihe.append(("kein Verlauf", "Verlauf ausblenden",
                               "schnittgroesse:kein Verlauf"))
                 out["Schnittgrößen"] = reihe
+        # Spannungen analog ANSYS: je Art eine Gruppe, Schluessel spannung:<art>:<groesse>
+        for art in spn.arten_im_ergebnis(self.model, self._spannungsergebnis()):
+            out[spn.GRUPPE[art]] = [(text, einheit, spn.schluessel(art, g))
+                                    for g, (text, einheit) in spn.GROESSEN[art].items()]
         sing = self.singularitaeten()
         if sing:
             out["Freie Bewegungen"] = [
@@ -9747,19 +9864,24 @@ class MainWindow(QtWidgets.QMainWindow):
             if not pfad:
                 return None
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        self._fortschritt_beginnen(1000, f"Lastenheft schreiben: {os.path.basename(pfad)} …",
+                                   abbrechbar=False)
         try:
             from ..bridges.lastenheft import lastenheft_schreiben
             from ..bridges.din19704 import Regelwerk
             rw = getattr(self, "regelwerk", None) or Regelwerk()
             self.regelwerk = rw
-            lastenheft_schreiben(self.model, pfad, rw, getattr(self, "stellungsreihe", None))
+            lastenheft_schreiben(self.model, pfad, rw, getattr(self, "stellungsreihe", None),
+                                 fortschritt=self._dateifortschritt)
             self.info(f"Lastenheft geschrieben: {pfad}")
             if pfad.lower().endswith((".html", ".htm")):
                 self._browser(QtCore.QUrl.fromLocalFile(os.path.abspath(pfad)))
         except Exception as ex:                 # noqa: BLE001
+            self._fortschritt_ende()
             self.log.appendPlainText(traceback.format_exc())
             self.error(str(ex))
         finally:
+            self._fortschritt_ende()
             QtWidgets.QApplication.restoreOverrideCursor()
         return pfad
 
@@ -9933,6 +10055,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_field.addItems(FIELDS)
         self.cb_field.currentIndexChanged.connect(self.redraw)
         lay.addWidget(row("Färbung", self.cb_field))
+        # Schalenseite fuer die Flaechenspannungen (oben/unten wie ANSYS Top/Bottom)
+        self.cb_seite = QtWidgets.QComboBox()
+        for text, wert in (("größter Betrag", "max"), ("oben", "oben"), ("unten", "unten")):
+            self.cb_seite.addItem(text, wert)
+        self.cb_seite.setToolTip("Flächenspannungen: Ober- oder Unterseite der Schale, "
+                                 "oder je Element die Seite mit dem größeren Betrag")
+        self.cb_seite.currentIndexChanged.connect(self.redraw)
+        lay.addWidget(row("Schalenseite", self.cb_seite))
+        lay.addWidget(self._werteskala_maske())
         self.cb_diagram = QtWidgets.QComboBox()
         self.cb_diagram.addItems(DIAGRAMS)
         self.cb_diagram.currentIndexChanged.connect(self.redraw)
@@ -9958,6 +10089,145 @@ class MainWindow(QtWidgets.QMainWindow):
         b3 = QtWidgets.QPushButton("Statischer Bericht…"); b3.clicked.connect(self.make_report)
         lay.addWidget(row(b1, b2, b3))
         return w
+
+    # ---- Werteskala ---------------------------------------------------
+    def _spannungsergebnis(self):
+        """Das Ergebnis, aus dem die Spannungsgruppen des Baums kommen: das
+        gezeigte, wenn es Tensoren fuehrt (Lastfall, Kombination), sonst der
+        erste Lastfall der Analyse - der Baum soll die Spannungen auch zeigen,
+        solange die Umhuellende vorn steht."""
+        r = self.current_result()
+        if hasattr(r, "solid_res"):
+            return r
+        an = self.analysis
+        for name in ("cases", "combos", "combinations"):
+            d = getattr(an, name, None) if an is not None else None
+            if isinstance(d, dict):
+                for x in d.values():
+                    if hasattr(x, "solid_res"):
+                        return x
+        return None
+
+    def _werteskala(self) -> "spn.Werteskala":
+        """Die Farbskala des Modells (spannungen.Werteskala), angelegt beim
+        ersten Zugriff - sie wird mit dem Modell gespeichert."""
+        if getattr(self.model, "werteskala", None) is None:
+            self.model.werteskala = spn.Werteskala()
+        return self.model.werteskala
+
+    def _werteskala_maske(self) -> QtWidgets.QWidget:
+        """Gruppe „Werteskala“ in der Maske Ergebnisse: automatisch, fest
+        (unten/oben) oder Grenzwert (355 für S355) - ueber der Grenze eine
+        eigene Farbe und der Groesstwert an der Skala; Farbstufen; nur die
+        Ueberschreitungen faerben."""
+        g = QtWidgets.QGroupBox("Werteskala")
+        f = QtWidgets.QFormLayout(g)
+        self.cb_skala = QtWidgets.QComboBox()
+        for text, wert in (("automatisch (kleinster … größter Wert)", "auto"),
+                           ("fest (unten … oben)", "fest"),
+                           ("Grenzwert (0 … Grenze, darüber eigene Farbe)", "grenze")):
+            self.cb_skala.addItem(text, wert)
+        self.cb_skala.setToolTip("Grenzwert: z. B. 355 für S355 - alles darüber wird magenta, "
+                                 "die Skala nennt darüber den tatsächlichen Größtwert; bei "
+                                 "negativen Werten reicht sie von −Grenze bis Grenze")
+        f.addRow("Grenzen", self.cb_skala)
+        self.ed_skala_unten = QtWidgets.QDoubleSpinBox()
+        self.ed_skala_oben = QtWidgets.QDoubleSpinBox()
+        self.ed_skala_grenze = QtWidgets.QDoubleSpinBox()
+        for ed in (self.ed_skala_unten, self.ed_skala_oben, self.ed_skala_grenze):
+            ed.setRange(-1e9, 1e9)
+            ed.setDecimals(2)
+            ed.setKeyboardTracking(False)
+        self.ed_skala_oben.setValue(100.0)
+        self.ed_skala_grenze.setValue(355.0)
+        self.ed_skala_grenze.setToolTip("Grenze in der Einheit der Färbung (Spannungen N/mm², "
+                                        "Verschiebungen mm)")
+        f.addRow("unten / oben", row(self.ed_skala_unten, self.ed_skala_oben))
+        f.addRow("Grenze", self.ed_skala_grenze)
+        self.sp_stufen = QtWidgets.QSpinBox()
+        self.sp_stufen.setRange(2, 256)
+        self.sp_stufen.setValue(9)
+        self.sp_stufen.setToolTip("Farbstufen der Skala (ANSYS: 9); 256 = stufenlos")
+        f.addRow("Farbstufen", self.sp_stufen)
+        self.cb_nur_ueber = QtWidgets.QCheckBox("nur Überschreitungen färben")
+        self.cb_nur_ueber.setToolTip("Nur Werte über der Grenze (Betrag) bekommen Farbe, von der "
+                                     "Grenze bis zum Größtwert; alles andere bleibt grau")
+        f.addRow(self.cb_nur_ueber)
+        self.cb_skala.currentIndexChanged.connect(self._werteskala_geaendert)
+        for ed in (self.ed_skala_unten, self.ed_skala_oben, self.ed_skala_grenze):
+            ed.valueChanged.connect(self._werteskala_geaendert)
+        self.sp_stufen.valueChanged.connect(self._werteskala_geaendert)
+        self.cb_nur_ueber.toggled.connect(self._werteskala_geaendert)
+        self._werteskala_felder()
+        return g
+
+    def _werteskala_felder(self) -> None:
+        """Nur die Felder des gewaehlten Modus sind bedienbar."""
+        modus = self.cb_skala.currentData()
+        self.ed_skala_unten.setEnabled(modus == "fest")
+        self.ed_skala_oben.setEnabled(modus == "fest")
+        self.ed_skala_grenze.setEnabled(modus == "grenze")
+        self.cb_nur_ueber.setEnabled(modus == "grenze")
+
+    def _werteskala_geaendert(self, *_a) -> None:
+        """Maske -> Modell -> neu zeichnen."""
+        if getattr(self, "_werteskala_sperre", False):
+            return
+        s = self._werteskala()
+        s.modus = str(self.cb_skala.currentData() or "auto")
+        s.unten = float(self.ed_skala_unten.value())
+        s.oben = float(self.ed_skala_oben.value())
+        s.grenze = float(self.ed_skala_grenze.value())
+        s.stufen = int(self.sp_stufen.value())
+        s.nur_ueber = bool(self.cb_nur_ueber.isChecked())
+        self._werteskala_felder()
+        self.redraw()
+
+    def _werteskala_anzeigen(self) -> None:
+        """Modell -> Maske (nach dem Laden eines Modells), ohne neu zu zeichnen."""
+        if getattr(self, "cb_skala", None) is None or not _lebt(self.cb_skala):
+            return
+        s = self._werteskala()
+        self._werteskala_sperre = True
+        try:
+            i = self.cb_skala.findData(s.modus)
+            self.cb_skala.setCurrentIndex(max(i, 0))
+            self.ed_skala_unten.setValue(float(s.unten))
+            self.ed_skala_oben.setValue(float(s.oben))
+            self.ed_skala_grenze.setValue(float(s.grenze))
+            self.sp_stufen.setValue(int(s.stufen))
+            self.cb_nur_ueber.setChecked(bool(s.nur_ueber))
+            self._werteskala_felder()
+        finally:
+            self._werteskala_sperre = False
+
+    def _werteskala_text(self) -> str:
+        """Zusatz zur Faerbung in Kopfzeile und Bericht, wenn die Skala nicht
+        automatisch ist."""
+        s = getattr(self.model, "werteskala", None)
+        if s is None or s.modus == "auto":
+            return ""
+        if s.modus == "fest":
+            text = f" · Skala {s.unten:g} … {s.oben:g}"
+        else:
+            text = f" · Skala bis {s.grenze:g}, darüber magenta"
+            if s.nur_ueber:
+                text = f" · nur Überschreitungen über {s.grenze:g}"
+        return text
+
+    def _werteskala_melden(self, name: str, skala: dict) -> None:
+        """Ueberschreitungen in der Statuszeile nennen."""
+        if skala.get("modus", "auto") == "auto" or not name:
+            return
+        teile = []
+        if skala.get("anzahl_ueber"):
+            teile.append(f"{skala['anzahl_ueber']} Knoten über {skala['clim'][1]:g} "
+                         f"(max {skala['wmax']:.4g})")
+        if skala.get("anzahl_unter"):
+            teile.append(f"{skala['anzahl_unter']} Knoten unter {skala['clim'][0]:g} "
+                         f"(min {skala['wmin']:.4g})")
+        if teile:
+            self.statusBar().showMessage(f"{name}: " + ", ".join(teile), 8000)
 
     # ==================================================================
     # Hilfen
@@ -10081,6 +10351,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     # ---- Tabelle und Ansicht auseinander halten ------------------------
+    def _ergebnistabelle_nachziehen(self, von, nach) -> bool:
+        """Steht unten gerade die Tabelle ``von`` und ist sie zum gezeigten
+        Ergebnis leer, das Register auf ``nach`` stellen (Umhuellende <->
+        Stabkraefte). Andere Register bleiben, wie sie sind."""
+        tabs = getattr(self, "tab_unten", None)
+        if tabs is None or not _lebt(tabs):
+            return False
+        try:
+            if tabs.currentWidget() is von and tabs.indexOf(nach) >= 0:
+                tabs.setCurrentIndex(tabs.indexOf(nach))
+                return True
+        except RuntimeError:
+            return False
+        return False
+
     def _tabelle_element(self, wert):
         """Zeile mit Elementnummer angeklickt: das Element in der Ansicht waehlen."""
         try:
@@ -10887,6 +11172,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tabellen_markieren()
         self.redraw()
 
+    def _netzverzeichnis(self) -> tuple:
+        """Knoten je Element flach (Knoten, Elementnummer, Knotenzahl je
+        Element, Stabmaske) - einmal je Netz gebaut, fuer die Frage „welche
+        Elemente liegen ganz in der Auswahl“ ohne Python-Schleife ueber alle
+        Elemente bei jedem Klick (Drehlager: 1 849 583 Elemente; bis zum
+        12.09.2026 wurde die Suche ab 50 000 Elementen ausgelassen, und kein
+        gewaehltes Element fand seine Tabellenzeile)."""
+        import itertools
+        m = self.model
+        key = (id(m), len(m.elements), int(m.nn))
+        cache = getattr(self, "_netzverzeichnis_cache", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        ne = len(m.elements)
+        lens = np.fromiter((len(e.nodes) for e in m.elements), int, count=ne)
+        flach = np.fromiter(itertools.chain.from_iterable(e.nodes for e in m.elements), int,
+                            count=int(lens.sum()))
+        elem = np.repeat(np.arange(ne), lens)
+        staebe = set(vp.TYPEN_STAEBE)
+        stab = np.fromiter((e.typ in staebe for e in m.elements), bool, count=ne)
+        daten = (flach, elem, lens, stab)
+        self._netzverzeichnis_cache = (key, daten)
+        return daten
+
+    def _elemente_ganz_in(self, sel) -> np.ndarray:
+        """Nummern der Elemente, deren Knoten alle in ``sel`` liegen - vektorisiert
+        ueber das Netzverzeichnis (Zaehlen der gewaehlten Knoten je Element)."""
+        m = self.model
+        sel = np.fromiter((int(n) for n in sel), int)
+        if sel.size == 0 or not len(m.elements):
+            return np.zeros(0, int)
+        flach, elem, lens, _stab = self._netzverzeichnis()
+        drin = np.zeros(int(m.nn), bool)
+        drin[sel[(sel >= 0) & (sel < m.nn)]] = True
+        anzahl = np.bincount(elem[drin[flach]], minlength=len(m.elements))
+        return np.nonzero(anzahl == lens)[0]
+
     def _tabellen_markieren(self):
         """Umgekehrter Weg: die Auswahl der Ansicht in den Tabellen zeigen."""
         if not hasattr(self, "tbl_beam") or getattr(self, "_auswahl_sammeln", False):
@@ -10894,11 +11216,17 @@ class MainWindow(QtWidgets.QMainWindow):
         sel = {int(n) for n in self.selection}
         m = self.model
         el = []
-        if sel and len(m.elements) <= 50000:
-            el = [i for i, e in enumerate(m.elements)
-                  if {int(n) for n in e.nodes} <= sel]
-        self.tbl_beam.markieren(el)
-        self.tbl_env.markieren(el)
+        if sel:
+            el = [int(i) for i in self._elemente_ganz_in(sel)]
+        for i in (getattr(self, "sel_elemente", None) or []):
+            if int(i) not in el:
+                el.append(int(i))
+        # Stabtabellen kennen nur Stabelemente: die Volumen einer grossen
+        # Auswahl muessen sie nicht durchsuchen
+        stab = self._netzverzeichnis()[3] if el else None
+        el_stab = [i for i in el if 0 <= i < len(stab) and stab[i]] if el else []
+        self.tbl_beam.markieren(el_stab)
+        self.tbl_env.markieren(el_stab)
         self.tbl_react.markieren(sorted(sel))
         self.tbl_contact.markieren(sorted(sel))
         # Modelltabellen: Knoten, Stäbe (Elemente), Lager, Linien, Flächen, Volumen
@@ -10913,9 +11241,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tbl_linie.markieren(list(self.sel_linien))
             self.tbl_geoflaeche.markieren(list(self.sel_flaechen))
             self.tbl_geokoerper.markieren(list(self.sel_koerper))
-        dabei = set(el)
+        dabei = set(el_stab)
         staebe = [mem.name for mem in m.members.values()
-                  if mem.elements and set(mem.elements) <= dabei]
+                  if mem.elements and set(mem.elements) <= dabei] if dabei else []
         self.tbl_design.markieren(staebe)
         self.tbl_fat.markieren(staebe)
         if hasattr(self, "tbl_joint"):
@@ -11468,30 +11796,40 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         opt = d.options()
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        # Balken wie beim Oeffnen: die Importer melden ihre Phasen (Behaelter,
+        # Knoten, Staebe, Flaechen, Volumen, Lasten, Kombinationen), danach
+        # kommen Ansicht und Modellbaum. Nicht abbrechbar - ein halb gelesenes
+        # Modell waere keines.
+        self._fortschritt_beginnen(1000, f"Import: {os.path.basename(path)} …", abbrechbar=False)
         try:
             from .. import importers
             msgs: list[str] = []
             target = self.model if d.append.isChecked() else None
             if target is None:
                 self._protokoll_neu(f"Import: {path}")
-            m = importers.import_file(path, model=target, log=msgs, **opt)
+            m = importers.import_file(path, model=target, log=msgs,
+                                      fortschritt=self._dateifortschritt, **opt)
             for s in msgs:
                 self.log.appendPlainText("  " + s)
             self.model = m
             self.__init_defaults()
             if d.members.isChecked() and not m.members:
+                self._dateifortschritt(0.96, "Stäbe erkennen")
                 m.auto_members()
             self.analysis = None
             self.results = None
             self.selection = np.array([], dtype=int)
+            self._dateifortschritt(0.98, "Ansicht und Modellbaum aufbauen")
             self.refresh_all()
             self.zoom_alles()
             self.info(f"Import: {m.nn} Knoten, {len(m.elements)} Elemente, "
                       f"{len(m.load_cases)} Lastfälle, {len(m.members)} Stäbe")
         except Exception as ex:
+            self._fortschritt_ende()               # kein Balken hinter der Meldung
             self.log.appendPlainText(traceback.format_exc())
             self.error(f"{ex}")
         finally:
+            self._fortschritt_ende()
             QtWidgets.QApplication.restoreOverrideCursor()
 
     def do_merge(self):
@@ -12745,7 +13083,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Lager", "△", self.maske_lager, hinweis="Lager an der Auswahl")
         g.gross("Last", "↓", self.maske_knotenlast, hinweis="Knotenlast auf die Auswahl")
         g = r.gruppe("Auswahl")
-        g.klein("Alles deselektieren", self.clear_selection, "Esc")
+        g.klein("Alles deselektieren", self._esc_gedrueckt, "Esc")
         g.klein("Auswahl umkehren", self.invert_selection,
                 hinweis="Gewählte Knoten abwählen, alle anderen wählen")
 
@@ -13563,7 +13901,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.model.members:
             return self.error("Keine Stäbe definiert (Nachweise → Stäbe automatisch erkennen)")
         from ..ec3.design import check_members
-        self._run_background(lambda progress: check_members(self.model, self.analysis, progress=progress),
+        # anteil=(0, 1): der ganze Balken gehoert den Nachweisen - anders als
+        # in solve_all, wo sie das letzte Stueck hinter der Rechnung sind
+        self._run_background(lambda progress: check_members(self.model, self.analysis, progress=progress,
+                                                            anteil=(0.0, 1.0)),
                              self._design_done, "Nachweise EC3")
 
     def _design_done(self, res):
@@ -13577,7 +13918,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.model.fatigue_loads:
             return self.error("Keine Ermüdungslasten definiert (Lastfälle → Ermüdungslasten)")
         from ..ec3.fatigue import check_fatigue
-        self._run_background(lambda progress: check_fatigue(self.model, self.analysis, progress=progress),
+        self._run_background(lambda progress: check_fatigue(self.model, self.analysis, progress=progress,
+                                                            anteil=(0.0, 1.0)),
                              self._fatigue_done, "Ermüdung")
 
     def do_kerbfaelle(self):
@@ -13778,13 +14120,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.worker is not None and self.worker.isRunning():
             return self.error("Es läuft bereits eine Berechnung")
         self.btn_solve.setEnabled(False)
-        # Bestimmter Balken: der Rechenkern meldet, wie weit er ist. Vorher
-        # wanderte nur ein Streifen - man sah nicht, ob und wie es vorangeht.
-        self.progress_bar.setRange(0, 1000)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
+        # Bestimmter Balken, sobald der Rechenkern meldet, wie weit er ist
+        # (:meth:`_rechnung_fortschritt`). Bis dahin - und fuer Laeufe, die
+        # keinen Anteil kennen (freie Bewegungen) - laeuft der Streifen: ein
+        # ehrliches „es arbeitet“ statt einer festen 0 %.
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(False)
         self.progress_bar.setFormat("%p %")
         self.progress_bar.setVisible(True)
+        self._abbrechen_knopf("Rechnung anhalten (auch Esc): sie hält beim nächsten Rechenschritt "
+                              "an, eine laufende Faktorisierung läuft zu Ende; Ergebnis und Netz "
+                              "bleiben, wie sie waren")
+        self._abbruch = False
         self._rechnung_t0 = time.time()
         self._rechnung_name = label
         self.statusBar().showMessage(f"{label} läuft …")
@@ -13797,28 +14144,57 @@ class MainWindow(QtWidgets.QMainWindow):
         # zurueck ist (:meth:`_modal_gesperrt`).
         self._rechnet_gerade = True
         self.worker = SolveWorker(func)
-        self.worker.progress.connect(self.info)
+        self.worker.progress.connect(self._rechnung_zeile)
         self.worker.fortschritt.connect(self._rechnung_fortschritt)
         self.worker.finished_ok.connect(lambda r: self._bg_done(on_done, r))
         self.worker.failed.connect(self._bg_failed)
+        self.worker.abgebrochen.connect(self._bg_abgebrochen)
         self.worker.start()
+
+    def _rechnung_zeile(self, text: str) -> None:
+        """Textmeldung des Rechenkerns: immer ins Protokoll, in die Statuszeile
+        nur, solange kein Abbruch angefordert ist.
+
+        Die Signale des Workers kommen ueber die Ereignisschleife; was er vor
+        dem Klick auf Abbrechen schon abgeschickt hatte, trifft danach noch
+        ein und ueberschrieb die Zusage „Abbruch angefordert“ (Sonde
+        12.09.2026: „Schritt 2“ statt der Zusage).
+        """
+        if getattr(self, "_abbruch", False):
+            self.log.appendPlainText(str(text))
+            return
+        self.info(text)
 
     def _rechnung_fortschritt(self, text: str, anteil: float) -> None:
         """Balken und Statuszeile waehrend der Rechnung: Schritt, Anteil, Zeit."""
         a = max(0.0, min(1.0, float(anteil)))
+        if self.progress_bar.maximum() == 0:
+            # erster gemeldeter Anteil: aus dem Streifen wird ein Balken
+            self.progress_bar.setRange(0, 1000)
+            self.progress_bar.setTextVisible(True)
         self.progress_bar.setValue(int(round(a * 1000)))
+        if getattr(self, "_abbruch", False):
+            # Nach dem Klick auf Abbrechen bleibt „Abbruch angefordert“ stehen:
+            # Meldungen, die der Worker vorher schon abgeschickt hatte, kommen
+            # noch an und ueberschrieben den Text (Oberflaechenpruefung
+            # 12.09.2026: „Schritt 4 (2 %, 0 s)“ statt der Zusage).
+            return
         dt = time.time() - getattr(self, "_rechnung_t0", time.time())
         self.statusBar().showMessage(
             f"{getattr(self, '_rechnung_name', 'Berechnung')}: {text}  "
             f"({a * 100:.0f} %, {dt:.0f} s)")
 
-    def _rechnung_ende(self) -> None:
+    def _rechnung_ende(self, meldung: str = None, dauer: float = 8000) -> None:
         self.progress_bar.setVisible(False)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setRange(0, 0)
+        if getattr(self, "btn_abbrechen", None) is not None:
+            self.btn_abbrechen.setVisible(False)
+        self._abbruch = False
         dt = time.time() - getattr(self, "_rechnung_t0", time.time())
         self.statusBar().showMessage(
-            f"{getattr(self, '_rechnung_name', 'Berechnung')} beendet ({dt:.0f} s)", 8000)
+            meldung or f"{getattr(self, '_rechnung_name', 'Berechnung')} beendet ({dt:.0f} s)",
+            int(dauer))
 
     def _bg_done(self, on_done, result):
         self._rechnet_gerade = False
@@ -13842,6 +14218,12 @@ class MainWindow(QtWidgets.QMainWindow):
         im Protokoll, und das liegt seit diesem Stand auch als Datei vor. Also
         Protokoll aufschlagen, Statuszeile setzen - kein Dialog.
         """
+        w = getattr(self, "worker", None)
+        if w is not None and getattr(w, "abbruch_angefordert", False):
+            # Der Worker meldet einen Abbruch als ``abgebrochen``; kommt er
+            # doch als ``failed`` (fremde Verpackung der Ausnahme), zaehlt
+            # der Wunsch des Anwenders - kein FEHLER.
+            return self._bg_abgebrochen(time.time() - getattr(self, "_rechnung_t0", time.time()))
         self._rechnet_gerade = False
         self.btn_solve.setEnabled(True)
         self._rechnung_ende()
@@ -13853,6 +14235,21 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         self.statusBar().showMessage(f"Berechnung gescheitert: {str(msg).splitlines()[0]}"
                                      "  - Einzelheiten im Protokoll", 0)
+
+    def _bg_abgebrochen(self, dauer: float) -> None:
+        """Der Anwender hat die Hintergrundrechnung angehalten.
+
+        Kein Fehler: Statuszeile und Protokoll sagen es, die Knoepfe sind
+        wieder frei. ``analysis`` und ``results`` setzt erst ``_solve_done``,
+        das nach einem Abbruch nicht laeuft; das Netz fasst der Rechenkern
+        nicht an (solver.py und contact.py schreiben nirgends in ``model.*``).
+        """
+        self._rechnet_gerade = False
+        self.btn_solve.setEnabled(True)
+        name = getattr(self, "_rechnung_name", "Berechnung")
+        text = f"{name} abgebrochen (nach {float(dauer):.0f} s) - Ergebnis und Netz unverändert"
+        self._rechnung_ende(text, dauer=0)
+        self.log.appendPlainText(text)
 
     def _fragen(self, titel: str, text: str) -> bool:
         """Ja/Nein-Rueckfrage - die Tests ueberschreiben sie.
@@ -14232,10 +14629,20 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fill(self.tbl_contact, [[c["node"], c["kind"], c["status"], c["Fn"] / 1e3,
                                            c["Ft"] / 1e3, c["gap"] * 1e3] for c in r.contact])
             self._fill(self.tbl_env, [])
+            self.tbl_beam.hinweis_setzen("")
+            self.tbl_env.hinweis_setzen("Extremwerte gibt es zur Umhüllenden - Ergebnis „Umhüllende“ wählen")
+            self._ergebnistabelle_nachziehen(self.tbl_env, self.tbl_beam)
         elif hasattr(r, "extreme_table"):
             rows = [[e, k, mn / 1e3, c1, mx / 1e3, c2] for e, k, mn, c1, mx, c2 in r.extreme_table()]
             self._fill(self.tbl_env, rows)
             self._fill(self.tbl_beam, [])
+            # Stabkraefte je Element gibt es nur zu Lastfall oder Kombination;
+            # die Umhuellende traegt ihre Extremwerte im Register Umhuellende
+            self.tbl_beam.hinweis_setzen("die Umhüllende zeigt ihre Extremwerte im Register "
+                                         "„Umhüllende“; Stabkräfte je Element gibt es zu "
+                                         "Lastfall oder Kombination (Ergebnis wählen)")
+            self.tbl_env.hinweis_setzen("")
+            self._ergebnistabelle_nachziehen(self.tbl_beam, self.tbl_env)
             react = []
             for s in sorted({s.node for s in self.model.supports}):
                 react.append([s] + [f"{r.r_min[s, i]/1e3:.2f} / {r.r_max[s, i]/1e3:.2f}" for i in range(6)])
@@ -14669,12 +15076,36 @@ class MainWindow(QtWidgets.QMainWindow):
         point_scalars = cell_scalars = None
         name = ""
         clim = None
+        farben, balken = {}, {}
         if u is not None and not modal:
-            point_scalars, cell_scalars, name = vp.result_field(m, r, field, self._util_map(field))
+            seite = str(self.cb_seite.currentData() or "max") if getattr(self, "cb_seite", None) else "max"
+            point_scalars, cell_scalars, name = vp.result_field(m, r, field, self._util_map(field),
+                                                                seite=seite)
             if point_scalars is not None:
                 ps = np.asarray(point_scalars, float)
                 if np.isfinite(ps).any():
-                    clim = [float(np.nanmin(ps)), float(np.nanmax(ps))]
+                    # Werteskala: automatisch, fest oder Grenzwert - darueber
+                    # eigene Farbe und der Groesstwert an der Skala (spannungen.grenzen)
+                    skala = spn.grenzen(self._werteskala(), ps)
+                    point_scalars = skala["werte"]
+                    clim = list(skala["clim"])
+                    farben = {"n_colors": skala["n_colors"], "nan_color": "#9fb8d0"}
+                    if skala["above_color"]:
+                        farben["above_color"] = skala["above_color"]
+                    if skala["below_color"]:
+                        farben["below_color"] = skala["below_color"]
+                    balken = {"n_labels": skala["n_labels"]}
+                    if skala["above_label"]:
+                        balken["above_label"] = skala["above_label"]
+                    if skala["below_label"]:
+                        balken["below_label"] = skala["below_label"]
+                    self._werteskala_melden(name, skala)
+                else:
+                    point_scalars = None
+                    if spn.feld(field) is not None:
+                        self.statusBar().showMessage(f"{field}: in diesem Ergebnis ohne Werte", 8000)
+            elif cell_scalars is None and spn.feld(field) is not None:
+                self.statusBar().showMessage(f"{field}: gibt es zu Lastfall und Kombination, nicht zur Umhüllenden", 8000)
         # Netzguete faerbt nur, solange kein Ergebnis gezeigt wird - ein
         # Spannungsbild und eine Guetekarte im selben Fenster waeren nur
         # verwirrend.
@@ -14713,8 +15144,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 if point_scalars is not None:
                     warped.point_data[name] = np.asarray(point_scalars)[kn]
                     self.plotter.add_mesh(warped, scalars=name, cmap="turbo", clim=clim,
-                                          scalar_bar_args=dict(self._farbskala(), title=name),
-                                          name=f"result_{nm}",
+                                          scalar_bar_args=dict(self._farbskala(), title=name, **balken),
+                                          name=f"result_{nm}", **farben,
                                           **dict({"line_width": breit},
                                                  **vp.darstellung(modus, show_edges, True)))
                 elif cell_scalars is not None and np.isfinite(np.asarray(cell_scalars, float)[eidx]).any():
@@ -14776,8 +15207,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         sichtbare_knoten = self._sichtbare_knoten()      # None = alle
         try:
-            vp.add_supports(self.plotter, m, size, self.lagergroesse, nur=sichtbare_knoten,
-                            dichte=self.lagerdichte)
+            if getattr(self, "act_lager", None) is None or self.act_lager.isChecked():
+                vp.add_supports(self.plotter, m, size, self.lagergroesse, nur=sichtbare_knoten,
+                                dichte=self.lagerdichte)
             if self.act_linien.isChecked():
                 vp.add_linien(self.plotter, m, self.sel_linien,
                               ausser=self.versteckt["linien"], netz=self._linien_netz())
@@ -15032,7 +15464,8 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 name = ""
             zeilen = vp.kopfzeile(self.model, r, name,
-                                  self.cb_field.currentText() if r is not None else "",
+                                  (self.cb_field.currentText() + self._werteskala_text())
+                                  if r is not None else "",
                                   self.cb_diagram.currentText() if r is not None else "",
                                   faktor, einheiten=list(getattr(self, "_lasteinheiten", []) or []))
         except Exception as ex:             # noqa: BLE001
@@ -15289,7 +15722,8 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- Wahlregel: was nicht dargestellt ist, laesst sich nicht waehlen ----
     #: Sichtbarkeitsschalter je Auswahlart (Glasleiste, Ribbon Ansicht)
     SICHT_SCHALTER = {"Knoten": "act_knoten", "Linie": "act_linien", "Stab": "act_staebe",
-                      "Fläche": "act_flaechen", "Volumen": "act_volumen", "Last": "act_loads"}
+                      "Fläche": "act_flaechen", "Volumen": "act_volumen", "Lager": "act_lager",
+                      "Last": "act_loads"}
 
     def _dargestellt(self, art: str) -> bool:
         """Ist diese Auswahlart ueberhaupt im Bild (Schalter in der Glasleiste)?"""
@@ -15692,17 +16126,23 @@ class MainWindow(QtWidgets.QMainWindow):
         if not path:
             return self.error("Kein Dateiname")
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        # Balken je Kapitel: am Drehlager (2 Mio. Elemente, Systemgrafiken)
+        # braucht der Bericht Minuten, ohne Balken sah das aus wie eingefroren.
+        self._fortschritt_beginnen(1000, f"Bericht schreiben: {os.path.basename(path)} …",
+                                   abbrechbar=False)
         try:
             from ..report import write_report
             write_report(self.model, self.analysis if self.analysis is not None else self.results,
-                         path, fmt=d.format(), **d.options())
+                         path, fmt=d.format(), fortschritt=self._dateifortschritt, **d.options())
             self.info(f"Bericht geschrieben: {path}")
             if d.format() == "html":
                 self._browser(QtCore.QUrl.fromLocalFile(os.path.abspath(path)))
         except Exception as ex:
+            self._fortschritt_ende()
             self.log.appendPlainText(traceback.format_exc())
             self.error(str(ex))
         finally:
+            self._fortschritt_ende()
             QtWidgets.QApplication.restoreOverrideCursor()
 
     # ---- Beispiele / Hilfe -------------------------------------------
@@ -15911,6 +16351,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return "es läuft eine Berechnung"
         if getattr(self, "_fortschritt_laeuft", False):
             return "es läuft eine Vernetzung oder ein Laden"
+        from .. import update as upd
+        andere = upd.andere_instanzen()
+        if andere:
+            # Reste einer frueheren Sitzung halten die exe fest (11.09.2026)
+            return ("weitere Statik3D-Instanzen laufen (PID "
+                    + ", ".join(str(p) for p in andere)
+                    + ") - ohne Fenster sind das Reste einer früheren Sitzung; im "
+                      "Task-Manager beenden")
         return ""
 
     def _austausch_starten(self) -> None:

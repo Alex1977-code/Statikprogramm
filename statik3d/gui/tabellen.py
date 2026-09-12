@@ -793,9 +793,21 @@ class Datentabelle(QtWidgets.QWidget):
         self.filter.leeren()
         self._nachfuehren()
 
+    def hinweis_setzen(self, text: str = "") -> None:
+        """Ein Satz neben der Zeilenzahl, solange die Tabelle leer ist - warum
+        sie leer ist und wo die Werte stehen (12.09.2026: „Stabkräfte 0 Zeilen“
+        bei einer Umhüllenden, deren Extremwerte im Register Umhüllende
+        liegen)."""
+        self._hinweis = str(text or "")
+        self._nachfuehren()
+
     def _nachfuehren(self):
         n, m = self.filter.rowCount(), self.modell.rowCount()
-        self.lbl_zeilen.setText(f"{n} von {m} Zeilen" if n != m else f"{m} Zeilen")
+        text = f"{n} von {m} Zeilen" if n != m else f"{m} Zeilen"
+        hinweis = getattr(self, "_hinweis", "")
+        if m == 0 and hinweis:
+            text += " – " + hinweis
+        self.lbl_zeilen.setText(text)
         self._kennwerte()
         self._filterbreiten()
 

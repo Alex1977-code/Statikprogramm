@@ -569,6 +569,13 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         self.bezugsjahre.setToolTip("Bezugszeitraum der Lastspielzahlen in Jahren; 0 = ganze "
                                     "Nutzungsdauer, dann gibt es keine Lebensdauer zu nennen")
         f.addRow("Bezugszeitraum der Lastspiele [a]", self.bezugsjahre)
+        self.einfrieren = QtWidgets.QCheckBox(
+            "Ermüdungszustände mit eingefrorenem Kontaktzustand rechnen")
+        self.einfrieren.setChecked(bool(getattr(ds, "ermuedung_kontakt_einfrieren", True)))
+        self.einfrieren.setToolTip("Modelle mit Kontakt: der erste Zustand jeder Ermüdungslast wird "
+                                   "nichtlinear gelöst, die weiteren linear mit seinem Kontaktzustand "
+                                   "(eine Rückwärtseinsetzung statt 30 bis 40 Kontaktschritten je Zustand)")
+        f.addRow(self.einfrieren)
         f.addRow("Biegedrillknicken: 6.3.2.2 (general) / 6.3.2.3 (rolled)", self.lt)
         f.addRow("Nachweisstellen je Element", self.stations)
         f.addRow(QtWidgets.QLabel("Interaktion: Anhang B (Methode 2)"))
@@ -612,6 +619,7 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         ds.gamma_Ff = self.gFf.value() or 1.0
         ds.ermuedung_lastspiele = float(self.lastspiele.value() or 0.0)
         ds.ermuedung_bezugsjahre = float(self.bezugsjahre.value() or 0.0)
+        ds.ermuedung_kontakt_einfrieren = bool(self.einfrieren.isChecked())
         ds.lt_method = self.lt.currentText()
         ds.stations = self.stations.value()
         ds.theorie2 = self.th2.currentData()
