@@ -1969,10 +1969,12 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         size = m.characteristic_size() if m.nn else 1.0
         proben = []
-        if modus in ("flaeche", "objekt"):
+        if modus in ("flaeche", "objekt", "stellung"):
             proben.append(("flaeche", lambda: self._objekt_am_zeiger("Fläche") or vp.flaeche_at(m, point, size)))
-        if modus == "objekt":
+        if modus in ("objekt", "stellung"):
             proben.append(("volumen", lambda: self._objekt_am_zeiger("Volumen") or vp.koerper_at(m, point, size)))
+        if modus == "stellung":
+            proben.append(("stab", lambda: self._objekt_am_zeiger("Stab") or vp.member_at(m, point)))
         if modus == "linie":
             proben.append(("linie", lambda: self._linie_am_zeiger() or vp.line_at(m, point, size)))
         for art, finder in proben:
@@ -4675,7 +4677,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 def liste(attr):
                     return ", ".join(getattr(st, attr, []) or []) if st else ""
 
+                def lagernamen(lart):
+                    return [((getattr(x, "name", "") or "").strip() or str(i))
+                            for i, x in enumerate(self._lagerliste_von(lart))]
+
                 felder = [F("name", "Bezeichnung", "text", name, breite=150),
+                          F("klick", "Klick in der Ansicht schaltet Stab, Fläche oder Volumen aus / ein",
+                            "haken", True,
+                            hinweis="Solange der Haken steht, gehen Klicks in der Ansicht an diese "
+                                    "Stellung: ein angeklickter Stab, eine Fläche oder ein Volumen wird "
+                                    "ausgeschaltet und verschwindet im Bild; noch ein Klick schaltet "
+                                    "es wieder ein"),
                           F("basis", "Ausgangsstellung", "wahl", basis, [self.STELLUNG_GRUND] + andere,
                             hinweis="Verschiebung und Verdrehung setzen auf der Lage dieser Stellung auf"),
                           F("dx", "Verschiebung x [m]", "zahl", v[0]),
@@ -4692,18 +4704,21 @@ class MainWindow(QtWidgets.QMainWindow):
                             hinweis="Namen, durch Komma - oder in der Ansicht wählen und „Auswahl deaktivieren“"),
                           F("flaechen_aus", "Deaktivierte Flächen", "text", liste("flaechen_aus"), breite=170),
                           F("koerper_aus", "Deaktivierte Volumen", "text", liste("koerper_aus"), breite=170),
-                          F("gelenke_aus", "Deaktivierte Gelenke", "text", liste("gelenke_aus"), breite=170,
-                            hinweis="diese Gelenke sind in der Stellung biegesteif"),
-                          F("lager_aus", "Deaktivierte Knotenlager", "text", liste("lager_aus"), breite=170,
-                            hinweis="Namen oder Nummern wie im Modellbaum"),
-                          F("linienlager_aus", "Deaktivierte Linienlager", "text", liste("linienlager_aus"),
-                            breite=170),
-                          F("flaechenlager_aus", "Deaktivierte Flächenlager", "text",
-                            liste("flaechenlager_aus"), breite=170)]
+                          F("gelenke_aus", "Deaktivierte Gelenke", "mehrfach", liste("gelenke_aus"),
+                            list(m.hinges), hinweis="angehakte Gelenke sind in der Stellung biegesteif"),
+                          F("lager_aus", "Deaktivierte Knotenlager", "mehrfach", liste("lager_aus"),
+                            lagernamen("lager"), hinweis="Namen oder Nummern wie im Modellbaum - anhaken; "
+                                                          "oder Knoten in der Ansicht wählen und „Auswahl "
+                                                          "deaktivieren“"),
+                          F("linienlager_aus", "Deaktivierte Linienlager", "mehrfach", liste("linienlager_aus"),
+                            lagernamen("linienlager")),
+                          F("flaechenlager_aus", "Deaktivierte Flächenlager", "mehrfach",
+                            liste("flaechenlager_aus"), lagernamen("flaechenlager"))]
                 titel = f"Stellung {name}"
                 hinweis = ("Lage gegen die Ausgangsstellung und alles, was in dieser Stellung nicht wirkt. "
-                           "Stäbe, Flächen, Volumen oder Knoten in der Ansicht wählen und „Auswahl "
-                           "deaktivieren“ - sie verschwinden im Bild.")
+                           "Stab, Fläche oder Volumen in der Ansicht anklicken: aus - noch einmal: wieder "
+                           "ein (Haken oben). Gelenke und Lager anhaken; oder wählen und „Auswahl "
+                           "deaktivieren“.")
                 zusatz = [("Auswahl deaktivieren", lambda: self._stellung_auswahl(halter.get("m"), name, True)),
                           ("Auswahl aktivieren", lambda: self._stellung_auswahl(halter.get("m"), name, False)),
                           ("Alle aktivieren", lambda: self._stellung_alle_aktiv(halter.get("m"), name))]
@@ -4759,6 +4774,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._stellung_vorschau(maske, name)
             maske.geschlossen.connect(lambda: self._situation_vorschau(None))
             maske.abgebrochen.connect(lambda: self._situation_vorschau(None))
+            self._stellung_klickmodus(maske, name)
         zweigart = self.baum.ELTERNART.get(art, art)
         if not eintrag:
             maske.angewendet.connect(lambda _w, z=zweigart: self._baum_neu(z))
@@ -5118,6 +5134,38 @@ class MainWindow(QtWidgets.QMainWindow):
             maske.setzen(feld, ", ".join(namen))
         self._stellung_vorschau(maske, name)
         self.statusBar().showMessage("Auswahl in der Stellung " + ("deaktiviert" if aus else "aktiviert"), 3000)
+
+    def _stellung_klickmodus(self, maske, name: str):
+        """Die Maske einer Stellung nimmt Klicks aus der Ansicht: ein Stab, eine
+        Flaeche oder ein Volumen wird aus- oder wieder eingeschaltet, die
+        Vorschau folgt sofort. „Bei Stellungen und Situationen nicht nur
+        Texteingabe - eine Auswahl per Maus soll moeglich sein" (12.09.2026)."""
+        feld_je_art = {"stab": "staebe_aus", "flaeche": "flaechen_aus", "volumen": "koerper_aus"}
+
+        def angeklickt(art_obj: str, obj: str):
+            feld = feld_je_art.get(art_obj)
+            if feld is None:
+                return
+            namen = self._namensliste(maske.werte().get(feld))
+            if obj in namen:
+                namen.remove(obj)
+                was = "wirkt wieder"
+            else:
+                namen.append(obj)
+                was = "ausgeschaltet"
+            maske.setzen(feld, ", ".join(namen))
+            self._stellung_vorschau(maske, name)
+            self.statusBar().showMessage(f"Stellung {name}: {obj} {was}", 4000)
+
+        maske.objekt_angeklickt = angeklickt
+
+        def modus(an: bool):
+            maske.objekt_modus = "stellung" if an else ""
+
+        haken = maske._felder.get("klick")
+        if haken is not None:
+            haken.toggled.connect(modus)
+            modus(bool(haken.isChecked()))
 
     def _stellung_alle_aktiv(self, maske, name: str):
         if maske is None:
@@ -6579,9 +6627,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("stellung", "Stellung", "wahl", wahl, stellungen,
                     hinweis="die Lage des Systems samt allem, was darin nicht wirkt"),
                   F("beschreibung", "Beschreibung", "text", sit.beschreibung, breite=170),
-                  F("lastfaelle", "Lastfälle", "liste", ", ".join(faelle), breite=170,
-                    hinweis="Lastfälle, die in dieser Situation gelten - Namen, durch Komma"),
-                  F("kombinationen", "Kombinationen", "liste", ", ".join(kombis), breite=170,
+                  F("lastfaelle", "Lastfälle", "mehrfach", ", ".join(faelle), list(m.load_cases),
+                    hinweis="Lastfälle, die in dieser Situation gelten - anhaken"),
+                  F("kombinationen", "Kombinationen", "mehrfach", ", ".join(kombis), list(m.combinations),
                     hinweis="Kombinationen dieser Situation - sie überlagern nur ihre Lastfälle")]
         halter: dict = {}
         if not neu:
@@ -6598,7 +6646,7 @@ class MainWindow(QtWidgets.QMainWindow):
         maske = msk.Maske("Neu: Situation" if neu else f"Situation {sit.name}", felder,
                           knopf="OK" if neu else "Übernehmen",
                           abbrechen="Abbrechen" if neu else "",
-                          hinweis="Stellung wählen und die Lastfälle und Kombinationen nennen, die in "
+                          hinweis="Stellung wählen und die Lastfälle und Kombinationen anhaken, die in "
                                   "dieser Situation gelten. Was in der Stellung nicht wirkt (Stäbe, "
                                   "Flächen, Volumen, Gelenke, Lager), steht in der Stellung.",
                           zusatz=zusatz)
@@ -14686,6 +14734,20 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         self.statusBar().showMessage(f"Berechnung gescheitert: {str(msg).splitlines()[0]}"
                                      "  - Einzelheiten im Protokoll", 0)
+        # Auch rechts, wo man nach der Rechnung hinsieht: sonst bleibt die
+        # Maske Ergebnisse stumm, und es sieht aus, als waere nichts geschehen
+        # („nach Berechnung keine Ergebnisse", 12.09.2026)
+        text = f"Berechnung gescheitert:\n{msg}\n\nEinzelheiten im Protokoll (unten)."
+        for feld in (getattr(self, "txt_summary", None), getattr(self, "txt_res", None)):
+            try:
+                if feld is not None:
+                    feld.setPlainText(text)
+            except Exception:              # noqa: BLE001 - Anzeige darf nie sperren
+                pass
+        try:
+            self.maske_zeigen("Ergebnisse")
+        except Exception:                  # noqa: BLE001
+            pass
 
     def _bg_abgebrochen(self, dauer: float) -> None:
         """Der Anwender hat die Hintergrundrechnung angehalten.
@@ -14843,10 +14905,22 @@ class MainWindow(QtWidgets.QMainWindow):
         elif kind == "case":
             func = lambda p: solver.solve_static(model, p)
         elif kind == "modal":
-            func = lambda p: solver.solve_modal(model, nmodes, p)
+            kontakt = self._kontaktzustand_zuletzt()
+            func = lambda p: solver.solve_modal(model, nmodes, p, kontakt=kontakt)
         else:
             func = lambda p: solver.solve_buckling(model, nmodes, p)
         self._run_background(func, lambda r: self._solve_done(kind, r), "Berechnung")
+
+    def _kontaktzustand_zuletzt(self):
+        """Der Kontaktzustand der gerade gezeigten statischen Loesung - die
+        Eigenformen schwingen dann um ihn (solver.solve_modal); None ohne
+        eine solche, dann gelten alle Kontaktpaare als verklebt."""
+        try:
+            r = self.current_result()
+            z = getattr(r, "kontaktzustand", None) if r is not None else None
+            return z if z else None
+        except Exception:                   # noqa: BLE001
+            return None
 
     def _abnahme_bestaetigen(self) -> bool:
         """Das Netz vor dem Rechnen abnehmen - jede Verletzung mit Namen.

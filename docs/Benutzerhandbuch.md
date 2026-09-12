@@ -1390,14 +1390,20 @@ zeigt ihre Maske, Entf löscht sie. Die Maske enthält genau:
 | Verschiebung x, y, z [m] | Verschiebung der bewegten Knoten gegen die Ausgangsstellung |
 | Verdrehung [°], Drehachse, Punkt der Achse | Drehung der bewegten Knoten um die Achse gegen die Ausgangsstellung (bewegt sind alle nicht gelagerten Knoten bzw. die Elementgruppen der Stellung) |
 | Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten |
-| Deaktivierte Gelenke | diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
-| Deaktivierte Knoten-, Linien-, Flächenlager | sie greifen in dieser Stellung nicht — Namen oder Nummern wie im Modellbaum |
+| Deaktivierte Gelenke | Liste zum Anhaken: diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
+| Deaktivierte Knoten-, Linien-, Flächenlager | Listen zum Anhaken (Namen oder Nummern wie im Modellbaum): sie greifen in dieser Stellung nicht |
 
-Stäbe, Flächen, Volumen oder Knoten (für ihre Lager) in der Ansicht
-anklicken und **„Auswahl deaktivieren“** trägt sie in die Listen ein — sie
-verschwinden im Bild; „Auswahl aktivieren“ und „Alle aktivieren“ nehmen es
-zurück. Solange die Maske offen ist, zeigt die Ansicht die Stellung ohne
-ihre abgeschalteten Elemente. Stellungen werden mit dem Modell gespeichert.
+**Per Maus statt Tippen.** Solange der Haken *Klick in der Ansicht schaltet
+Stab, Fläche oder Volumen aus / ein* oben in der Maske steht, gehen Klicks in
+der Ansicht an die Stellung: ein angeklickter Stab, eine Fläche oder ein
+Volumen wird ausgeschaltet, steht in der Liste und verschwindet im Bild —
+noch ein Klick schaltet es wieder ein. Gelenke und Lager werden in ihren
+Listen angehakt. Der alte Weg bleibt: Objekte oder Knoten (für ihre Lager)
+wählen und **„Auswahl deaktivieren“** / „Auswahl aktivieren“; „Alle
+aktivieren“ leert die Listen. Solange die Maske offen ist, zeigt die Ansicht
+die Stellung ohne ihre abgeschalteten Elemente. Stellungen werden mit dem
+Modell gespeichert. Geprüft in `tests/test_gui_smoke.py` (Abschnitt
+Werkbank: Klick schaltet aus und wieder ein, Listen zum Anhaken).
 
 ### Situationen: Stellung und ihre Lastfälle
 
@@ -1405,8 +1411,9 @@ Unter „Situationen“ steht immer die **Grundstellung**: unbewegt, alles
 wirkt; Lastfälle ohne Situation gelten hier. Eine weitere Situation
 entsteht mit **Rechtsklick → Neu: Situation** (oder „+ Situation
 anlegen“). Ihre Maske hat nur noch drei Angaben: die **Stellung**, die
-**Lastfälle** und die **Kombinationen**, die in dieser Situation gelten
-(Namen, durch Komma; „Alle Lastfälle und Kombinationen“ trägt alle ein).
+**Lastfälle** und die **Kombinationen**, die in dieser Situation gelten —
+als Listen zum **Anhaken** („Alle Lastfälle und Kombinationen“ hakt alle
+an), nicht mehr als getippte Namen.
 **OK** legt die Situation an und ordnet die genannten Lastfälle und
 Kombinationen zu; nicht mehr genannte fallen in die Grundstellung zurück.
 Was in der Stellung nicht wirkt (Stäbe, Flächen, Volumen, Gelenke, Lager),
@@ -2341,6 +2348,22 @@ Nachweis mit seiner Verformung je Kombination.
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
 * **Nur aktiver Lastfall**, **Eigenschwingungen**, **Knicken** (Grundzustand
   = aktiver Lastfall).
+* **Eigenschwingungen mit Kontakt.** Kontaktpaare schwingen mit: liegt eine
+  gerechnete statische Lösung vor, schwingt das System um ihren
+  **Kontaktzustand** (geschlossene Paare übertragen, offene nicht); sonst
+  gelten alle Paare als geschlossen und haftend (verklebt). Vorher fehlte der
+  Kontakt ganz — am Block mit Reibung kamen sechs Starrkörperformen mit 0 Hz
+  heraus, und ein Modell, dessen Körper nur über Kontakt gehalten sind,
+  scheiterte an einer singulären Matrix, ohne dass rechts etwas zu sehen war.
+  Gelöst wird jetzt um einen leicht negativen Shift (auch freie Körper sind
+  damit regulär) mit demselben Löser wie die Statik (MKL PARDISO, wenn
+  vorhanden). **Starrkörperformen** (f unter 0,01 Hz) zählt die
+  Zusammenfassung: „Bauteile nicht gehalten oder Kontakt offen“. Scheitert
+  eine Rechnung, steht der Grund außer im Protokoll auch **rechts in der
+  Maske Ergebnisse**, die dazu nach vorn kommt. Geprüft in
+  `tests/test_elemente.py` (`test_eigenformen_mit_kontakt`: Block mit
+  Reibung verklebt und um den statischen Zustand, freier Würfel mit sechs
+  Starrkörperformen) und `tests/test_gui_smoke.py`.
 * Prozesse: Zahl der Arbeitsprozesse für Elementschleifen, Aufträge und die
   Vernetzung - Vorgabe alle Kerne bis auf einen, der bleibt der Oberfläche;
   Backend „Rechnerfarm“ mit Server, Port und

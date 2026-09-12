@@ -531,6 +531,38 @@ def test_starrkoerper():
     close("RBE3: Last gleichmaessig verteilt", -float(np.mean(uz)) * 1e7, F / 4, 1e-3, " N")
 
 
+def test_eigenformen_mit_kontakt():
+    """Eigenformen mit Kontakt und mit freien Koerpern. Vorher fehlte die
+    Kontaktsteifigkeit (Block mit Reibung: sechs Starrkoerperformen, 0 Hz),
+    und ein singulaeres K liess die Faktorisierung scheitern."""
+    from statik3d import examples_lib as ex
+    from statik3d import mesher as _mesher
+    from statik3d.model import Model as _Model, Material as _Material
+    m = ex.block_friction_example()
+    r = solver.solve_modal(m, 6)
+    check("Block mit Reibung: Kontakt verklebt, keine Starrkoerperform, erste Eigenfrequenz ueber 100 Hz",
+          r.info.get("starrkoerper") == 0 and float(r.freqs[0]) > 100.0
+          and "verklebt" in str(r.info.get("kontakt", "")) and r.info.get("kontakt_aktiv", 0) > 0,
+          f"f = {np.round(r.freqs[:3], 1)} Hz, {r.info.get('kontakt')}, {r.info.get('kontakt_aktiv')} aktiv")
+    check("die Zusammenfassung nennt Kontakt und Loeser",
+          "Kontakt" in r.summary() and "Loeser" in r.summary(), r.summary()[-160:])
+    rs = solver.solve_static(m)
+    z = getattr(rs, "kontaktzustand", None)
+    r2 = solver.solve_modal(m, 6, kontakt=z)
+    check("um den Kontaktzustand der statischen Loesung: uebernommen, keine Starrkoerperform",
+          z is not None and str(r2.info.get("kontakt", "")).startswith("Zustand")
+          and r2.info.get("starrkoerper") == 0 and float(r2.freqs[0]) > 100.0,
+          f"{r2.info.get('kontakt')}, f = {np.round(r2.freqs[:2], 1)} Hz")
+    m2 = _Model()
+    m2.add_material(_Material.steel("S235"))
+    _mesher.grid_box(m2, "S235", 0.4, 0.4, 0.4, 2, 2, 2)
+    r3 = solver.solve_modal(m2, 8)
+    check("freier Wuerfel: sechs Starrkoerperformen (f < 0,01 Hz) statt Abbruch, danach elastische Formen",
+          r3.info.get("starrkoerper") == 6 and float(r3.freqs[6]) > 1.0
+          and "Starrkoerperformen" in r3.summary(),
+          f"f = {np.round(r3.freqs, 3)} Hz")
+
+
 def test_grenzschicht():
     """Grenzschicht ohne Dicke: zwei Bloecke, dazwischen eine weiche Fuge."""
     m = Model("Grenzschicht")
@@ -681,7 +713,7 @@ def main():
     print("=" * 92)
     for t in (test_verzeichnis, test_volumen_zug, test_schalen_kragarm, test_schalen_platte,
               test_ebene, test_zugstab, test_exzentrizitaet, test_woelbkrafttorsion,
-              test_feder_und_punktmasse, test_daempfer, test_starrkoerper, test_grenzschicht,
+              test_feder_und_punktmasse, test_daempfer, test_starrkoerper, test_eigenformen_mit_kontakt, test_grenzschicht,
               test_speichern_laden, test_netz_quadratisch, test_bericht_und_export):
         print(f"\n--- {t.__name__} ---")
         try:

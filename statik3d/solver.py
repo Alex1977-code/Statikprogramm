@@ -413,6 +413,15 @@ class Results:
         if self.freqs is not None:
             s.append("Eigenfrequenzen [Hz]    : "
                      + ", ".join(f"{f:.3f}" for f in self.freqs[:10]))
+            starr = int(self.info.get("starrkoerper", 0) or 0)
+            if starr:
+                s.append(f"Starrkoerperformen      : {starr} (f < {STARR_HZ:g} Hz) - Bauteile nicht "
+                         "gehalten oder Kontakt offen")
+            if self.info.get("kontakt"):
+                s.append(f"Kontakt                 : {self.info['kontakt']}, "
+                         f"{self.info.get('kontakt_aktiv', 0)} Bedingungen aktiv")
+            if self.info.get("loeser"):
+                s.append(f"Loeser                  : {NAMEN.get(self.info['loeser'], self.info['loeser'])}")
         if self.buckling_factors is not None:
             s.append("Knicklastfaktoren       : "
                      + ", ".join(f"{f:.3f}" for f in self.buckling_factors[:10]))
@@ -2125,16 +2134,53 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
 # ==========================================================================
 # Modalanalyse
 # ==========================================================================
+#: Eigenfrequenz, unter der eine Form als Starrkoerperform gilt [Hz]
+STARR_HZ = 1e-2
+
+
 def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = None,
-                aktiv=None, zusatzmasse=None) -> Results:
+                aktiv=None, zusatzmasse=None, kontakt=None) -> Results:
     """Eigenfrequenzen und Eigenformen. ``aktiv``: Elementmaske einer Situation;
     ``zusatzmasse``: zusaetzliche Massenmatrix (ndof x ndof), z. B. die
-    hydrodynamische Masse eines Verschlusses (schwingung.zusatzmassen)."""
+    hydrodynamische Masse eines Verschlusses (schwingung.zusatzmassen).
+
+    ``kontakt``: der Kontaktzustand einer gerechneten statischen Loesung
+    (``Results.kontaktzustand``) - dann schwingt das System um diesen
+    Zustand (geschlossene Paare uebertragen, offene nicht). Ohne ihn gelten
+    alle Kontaktpaare als **geschlossen und haftend** (verklebt). Vorher
+    fehlte der Kontakt ganz: die Koerper schwangen frei - am Block mit
+    Reibung kamen sechs Starrkoerperformen mit 0 Hz heraus, und ein Modell,
+    dessen Koerper nur ueber Kontakt gehalten sind, lief auf eine singulaere
+    Matrix (12.09.2026: „nach der Berechnung keine Ergebnisse").
+
+    Geloest wird mit Shift-Invert um einen **leicht negativen** Shift: K - sigma M
+    ist dann auch bei freien Koerpern regulaer, und Starrkoerperformen kommen
+    als Eigenwerte nahe null heraus (``info["starrkoerper"]``, in der
+    Zusammenfassung benannt) statt als Fehler. Die Faktorisierung uebernimmt
+    :class:`LinearSolver` (MKL PARDISO, wenn vorhanden) statt SuperLU.
+    """
+    from scipy.sparse.linalg import LinearOperator
     t0 = time.time()
     K = asm.stiffness(model, workers, aktiv)
     M = asm.mass(model, workers, aktiv)
     if zusatzmasse is not None:
         M = (M + zusatzmasse).tocsr()
+    kontakt_text, n_kontakt = "", 0
+    if getattr(model, "contact_pairs", None):
+        from . import contact as ct
+        cs = ct.ContactSystem(model, K.tocsr(), log=[])
+        if kontakt and cs.zustand_setzen(kontakt):
+            kontakt_text = "Zustand der statischen Loesung"
+        else:
+            for c in cs.cons:
+                c.active, c.slip, c.yielding, c.frozen = True, False, False, False
+            kontakt_text = "alle Paare geschlossen und haftend (verklebt)"
+        Kc, _Fc = cs.matrices(model.ndof)
+        n_kontakt = int(cs.n_active)
+        if Kc is not None and getattr(Kc, "nnz", 0):
+            K = (K + Kc).tocsr()
+        if progress:
+            _melde(progress, f"Kontakt: {kontakt_text}", 0.3)
     fixed, vals = asm.constrained_dofs(model, K)
     md = np.asarray(M.diagonal()).ravel()
     fixed = fixed | (md <= 0)
@@ -2145,7 +2191,17 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
         _melde(progress, "Eigenwertproblem wird gelöst", 0.45)
 
     k = min(nmodes, Kff.shape[0] - 2)
-    vals_, vecs = eigsh(Kff, k=k, M=Mff, sigma=0.0, which="LM")
+    kd = np.abs(np.asarray(Kff.diagonal()).ravel())
+    mdf = np.asarray(Mff.diagonal()).ravel()
+    sigma = -1e-6 * float(kd.mean() / max(float(mdf.mean()), 1e-300))
+    A = (Kff - sigma * Mff).tocsc()
+    loeser = LinearSolver(A)
+    try:
+        op = LinearOperator(A.shape, dtype=float,
+                            matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
+        vals_, vecs = eigsh(Kff, k=k, M=Mff, sigma=sigma, which="LM", OPinv=op)
+    finally:
+        loeser.freigeben()
     order = np.argsort(vals_)
     vals_ = np.maximum(vals_[order], 0.0)
     vecs = vecs[:, order]
@@ -2164,7 +2220,10 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     res.freqs = freqs
     res.modes = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
     res.info = {"ndof": model.ndof, "nfree": len(fi), "time": time.time() - t0,
-                "zusatzmasse": zusatzmasse is not None}
+                "zusatzmasse": zusatzmasse is not None,
+                "starrkoerper": int(np.sum(freqs < STARR_HZ)),
+                "kontakt": kontakt_text, "kontakt_aktiv": n_kontakt,
+                "loeser": loeser.backend}
     return res
 
 

@@ -50,9 +50,9 @@ class Feld:
     """Ein Eingabefeld der Maske."""
     name: str
     text: str
-    art: str = "zahl"            # zahl | ganz | text | liste | wahl | haken | info
+    art: str = "zahl"            # zahl | ganz | text | liste | wahl | mehrfach | haken | info
     wert: object = 0.0
-    werte: list = field(default_factory=list)   # fuer art="wahl"
+    werte: list = field(default_factory=list)   # fuer art="wahl" und "mehrfach"
     breite: int = 78
     hinweis: str = ""
 
@@ -187,6 +187,20 @@ class Maske(QtWidgets.QFrame):
             if f.wert:
                 w.setCurrentText(str(f.wert))
             return w
+        if f.art == "mehrfach":
+            # Mehrere aus einer Liste: Haken setzen statt Namen tippen. Der
+            # Wert ist wie beim Listenfeld die Namen, durch Komma - so bleibt
+            # alles, was Listen liest (Stellungen, Situationen), unveraendert.
+            w = QtWidgets.QListWidget(self)
+            gewaehlt = set(listeneintraege(str(f.wert)))
+            for name in f.werte:
+                it = QtWidgets.QListWidgetItem(str(name))
+                it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+                it.setCheckState(QtCore.Qt.Checked if str(name) in gewaehlt else QtCore.Qt.Unchecked)
+                w.addItem(it)
+            w.setMaximumHeight(min(21 * max(len(f.werte), 1) + 8, 150))
+            w.setToolTip(f.hinweis or "Anklicken wählt aus, noch einmal wählt ab")
+            return w
         w = QtWidgets.QLineEdit(str(f.wert), self)
         w.setFixedWidth(f.breite)
         if f.art in ("zahl", "ganz"):
@@ -226,6 +240,9 @@ class Maske(QtWidgets.QFrame):
                 out[name] = w.isChecked()
             elif isinstance(w, QtWidgets.QComboBox):
                 out[name] = w.currentText()
+            elif isinstance(w, QtWidgets.QListWidget):
+                out[name] = ", ".join(w.item(i).text() for i in range(w.count())
+                                      if w.item(i).checkState() == QtCore.Qt.Checked)
             else:
                 t = w.text().replace(",", ".").strip()
                 if w.validator() is None:
@@ -248,6 +265,11 @@ class Maske(QtWidgets.QFrame):
             w.setChecked(bool(wert))
         elif isinstance(w, QtWidgets.QComboBox):
             w.setCurrentText(str(wert))
+        elif isinstance(w, QtWidgets.QListWidget):
+            gewaehlt = set(listeneintraege(str(wert)))
+            for i in range(w.count()):
+                it = w.item(i)
+                it.setCheckState(QtCore.Qt.Checked if it.text() in gewaehlt else QtCore.Qt.Unchecked)
         elif isinstance(w, QtWidgets.QLabel):
             w.setText(str(wert))
         else:
