@@ -110,14 +110,33 @@ def darstellung(modus: str, netz: bool, farbig: bool = False) -> dict:
     return {"show_edges": netz}
 
 
+_UNBELEGT_CACHE: dict = {}
+
+
 def unbelegte_knoten(model: Model) -> np.ndarray:
-    """Knoten, die an keinem Element haengen (nur gesetzte Punkte)."""
-    getragen = np.zeros(model.nn, bool)
-    for e in model.elements:
-        idx = [int(i) for i in e.nodes if 0 <= int(i) < model.nn]
-        if idx:
-            getragen[idx] = True
-    return np.flatnonzero(~getragen)
+    """Knoten, die an keinem Element haengen (nur gesetzte Punkte).
+
+    Einmal je Netzstand (Modell, Element- und Knotenzahl, erstes und letztes
+    Element): die Schleife ueber alle Elemente lief bei **jedem** Neuzeichnen
+    - am Drehlager (1,8 Mio. Tetraeder) 6,2 von 7,3 s je Bild (12.09.2026).
+    """
+    import itertools
+    ne = len(model.elements)
+    key = (id(model), ne, int(model.nn),
+           tuple(int(i) for i in model.elements[0].nodes) if ne else (),
+           tuple(int(i) for i in model.elements[-1].nodes) if ne else ())
+    hit = _UNBELEGT_CACHE.get(key)
+    if hit is not None:
+        return hit
+    getragen = np.zeros(int(model.nn), bool)
+    if ne:
+        flach = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), int)
+        flach = flach[(flach >= 0) & (flach < model.nn)]
+        getragen[flach] = True
+    frei = np.flatnonzero(~getragen)
+    _UNBELEGT_CACHE.clear()
+    _UNBELEGT_CACHE[key] = frei
+    return frei
 
 
 #: Anteil freier Knoten, ab dem die Hervorhebung sinnlos wird

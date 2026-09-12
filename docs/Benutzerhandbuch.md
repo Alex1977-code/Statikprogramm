@@ -2563,6 +2563,18 @@ Statuszeile, Marken, Kennwerte, Tabellen —, nie mehr als „2.33e-13": die
 Nachkommastellen richten sich nach dem Betrag (ab 100 keine, ab 10 eine,
 ab 1 zwei, sonst drei), Rundungsschrott wird 0 (`spannungen.dezimal`).
 
+**Zeichenzeit bei großen Netzen.** Am Drehlager (1,8 Mio. Tetraeder) kostete
+jedes Neuzeichnen 3,9 s, davon im Profil 6,2 von 7,3 s allein die Suche
+nach Knoten ohne Element — sie lief bei jedem Bild über alle Elemente. Seit
+12.09.2026 wird sie einmal je Netz gemerkt: **0,8 s je Neuzeichnen**. Große
+Tabellen (ab 50 000 Zeilen) füllen sich erst, wenn ihr Register nach vorn
+kommt; solange steht „wird beim Anzeigen gefüllt" neben der Zeilenzahl (die
+Elementtabelle des Drehlagers kostete 61 s bei jedem Modellstand, ihre
+Kennwerte 44 s — jetzt spaltenweise mit numpy; ein Modellstand dauert 22 s
+statt 51 s). Ist das **FE-Netz** ausgeschaltet, zeigt das unverformte
+System nur noch den **Umriss** der Körper (Kanten ab 35°) statt des
+Drahtnetzes.
+
 **Skala und Kennwerte nur für das Sichtbare.** Sind Teile ausgeblendet
 (Sicht → *Selektion anzeigen*, *Auswahl ausblenden*, Schalter der
 Glasleiste), gelten die Grenzen der automatischen Werteskala und die
