@@ -864,8 +864,17 @@ TYPEN_VOLUMEN = EL.VOLUMEN_TYPEN + ("grenzschicht6", "grenzschicht8")
 SCHNITTACHSEN = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
 
 
-def schneiden(grid, achse: str, lage: float, umgekehrt: bool = False):
+def schneiden(grid, achse: str, lage: float, umgekehrt: bool = False,
+              normale=None, ursprung=None):
     """Das Gitter an einer Ebene aufschneiden - Blick ins Innere.
+
+    ``achse`` ist x, y oder z - oder ``"frei"``: dann liegt die Ebene senkrecht
+    zu ``normale`` durch ``ursprung``, und ``lage`` verschiebt sie laengs der
+    Normalen durch den Huellquader (0,5 = durch den Ursprung). So laesst sich
+    an beliebiger Stelle und in beliebiger Richtung schneiden - eine Bohrung
+    schraeg, ein Lager laengs seiner Achse -, und geschnitten wird immer das,
+    was gerade gezeichnet ist: die Ergebnisse stehen im Schnitt auf den
+    Elementen des Inneren.
 
     Gezeichnet wird von einem Volumennetz immer nur die **Aussenhaut**: die
     inneren Tetraederflaechen liegen zwischen zwei Elementen und werden in
@@ -884,15 +893,29 @@ def schneiden(grid, achse: str, lage: float, umgekehrt: bool = False):
     """
     if grid is None or not getattr(grid, "n_cells", 0):
         return grid
-    n = SCHNITTACHSEN.get(str(achse).lower())
-    if n is None:
-        return grid
     b = grid.bounds
-    k = {"x": 0, "y": 1, "z": 2}[str(achse).lower()]
-    lo, hi = float(b[2 * k]), float(b[2 * k + 1])
     t = min(max(float(lage), 0.0), 1.0)
-    ursprung = [0.0, 0.0, 0.0]
-    ursprung[k] = lo + t * (hi - lo)
+    if str(achse).lower() == "frei":
+        if normale is None or ursprung is None:
+            return grid
+        n = np.asarray(normale, float)
+        ln = float(np.linalg.norm(n))
+        if not np.isfinite(ln) or ln < 1e-12:
+            return grid
+        n = n / ln
+        ecken = np.array([[b[i], b[j], b[k]] for i in (0, 1) for j in (2, 3) for k in (4, 5)], float)
+        s = ecken @ n
+        ursprung = np.asarray(ursprung, float) + (t - 0.5) * float(s.max() - s.min()) * n
+        n = tuple(float(x) for x in n)
+        ursprung = [float(x) for x in ursprung]
+    else:
+        n = SCHNITTACHSEN.get(str(achse).lower())
+        if n is None:
+            return grid
+        k = {"x": 0, "y": 1, "z": 2}[str(achse).lower()]
+        lo, hi = float(b[2 * k]), float(b[2 * k + 1])
+        ursprung = [0.0, 0.0, 0.0]
+        ursprung[k] = lo + t * (hi - lo)
     try:
         teil = grid.clip(normal=n, origin=ursprung, invert=not umgekehrt)
     except Exception:                       # noqa: BLE001 - dann eben ungeschnitten

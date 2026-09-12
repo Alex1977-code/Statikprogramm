@@ -191,6 +191,15 @@ def test_werteskala():
     check("nur Ueberschreitungen: nur |Wert| > 355 bleibt, Skala von der Grenze bis zum Groesstwert",
           np.isnan(g["werte"][:3]).all() and g["werte"][3] == 400.0 and g["clim"] == [355.0, 400.0]
           and g["anzahl_ueber"] == 1)
+    g = sp.grenzen(s, np.array([0.0, 400.0, 500.0, 380.0]), maske=np.array([True, False, False, True]))
+    check("nur Ueberschreitungen mit Sichtmaske: Zaehlung und Skalenende aus dem Sichtbaren (380, nicht 500), "
+          "die Werte bleiben vollstaendig",
+          g["anzahl_ueber"] == 1 and g["clim"] == [355.0, 380.0] and np.isnan(g["werte"][0])
+          and g["werte"][2] == 500.0 and g["nur_ueber"] and g["grenze"] == 355.0,
+          str({k: g[k] for k in ("clim", "anzahl_ueber")}))
+    g = sp.grenzen(s, np.array([0.0, 100.0]))
+    check("nur Ueberschreitungen ohne eine: alles NaN, Skala Grenze … Grenze + 1",
+          np.isnan(g["werte"]).all() and g["anzahl_ueber"] == 0 and g["clim"] == [355.0, 356.0])
     g = sp.grenzen(sp.Werteskala(modus="fest", unten=10.0, oben=200.0), w)
     check("fest: unten/oben, darueber und darunter je eigene Farbe",
           g["clim"] == [10.0, 200.0] and g["above_label"] == "400" and g["below_label"] == "0"

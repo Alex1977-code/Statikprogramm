@@ -467,14 +467,55 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:                   # noqa: BLE001
             return None
 
-    def zoom_zum_zeiger(self, faktor: float, x_qt: float, y_qt: float) -> None:
-        """Um ``faktor`` zoomen, ohne dass sich der Punkt unter dem Zeiger bewegt.
+    def _oberflaeche_unter_zeiger(self, x: float, y: float):
+        """Weltpunkt der **gezeichneten Oberflaeche** unter dem Fensterpunkt
+        (x, y in VTK-Zaehlung, y von unten) - aus dem z-Puffer des letzten
+        Bildes. None, wenn dort Hintergrund ist.
 
-        Gemessen wird zweimal derselbe Fensterpunkt - einmal vor und einmal
-        nach dem Zoom. Die Kamera wird um die Differenz verschoben; damit
-        bleibt liegen, was unter dem Zeiger lag. Das gilt fuer beide
-        Projektionen: perspektivisch faehrt die Kamera vor, parallel wird der
-        Massstab geaendert.
+        Das kostet nichts (ein Pixel des Tiefenpuffers); ein Picker braeuchte
+        am Drehlager 60 ms (vtkPropPicker) bis 190 ms (vtkCellPicker) je
+        Radschritt und liefert denselben Punkt (gemessen 12.09.2026).
+        """
+        try:
+            ren = self.plotter.renderer
+            # Tiefe und Rueckrechnung auf **demselben** Pixel (Mitte): mit dem
+            # Bruchteil des Zeigers laege der Punkt neben der Flaeche, und
+            # jeder Radschritt traefe einen anderen Punkt (2,8 mm bei 1,3 m)
+            xi, yi = int(round(x)), int(round(y))
+            z = float(ren.GetZ(xi, yi))
+            if not (0.0 < z < 1.0 - 1e-7):
+                return None
+            ren.SetDisplayPoint(float(xi), float(yi), z)
+            ren.DisplayToWorld()
+            w = ren.GetWorldPoint()
+            if abs(w[3]) < 1e-12:
+                return None
+            return np.array(w[:3], float) / w[3]
+        except Exception:                   # noqa: BLE001
+            return None
+
+    def zoom_zum_zeiger(self, faktor: float, x_qt: float, y_qt: float) -> None:
+        """Um ``faktor`` zoomen, ohne dass sich der Punkt unter dem Zeiger bewegt
+        - und zwar auf die **Oberflaeche** unter dem Zeiger zu.
+
+        Frueher fuhr die Kamera auf ihren Blickpunkt (die Brennebene) zu, und
+        der lag irgendwo im Bauteil, nicht auf der Flaeche unter dem Zeiger.
+        Gemessen am Drehlager beim Zoomen auf eine Bohrung von V15: nach
+        zehn Radschritten war die Flaeche unter dem Zeiger 0,09 m entfernt,
+        danach wurde sie wieder **ferner** (Schritt 60: 0,34 m), waehrend der
+        Abstand zum Blickpunkt auf 0,0004 m zusammenschrumpfte - jeder
+        weitere Schritt bewegte fast nichts mehr („der Zoom wird langsam").
+
+        Jetzt ist das Ziel der Punkt der Oberflaeche unter dem Zeiger (z-Puffer,
+        :meth:`_oberflaeche_unter_zeiger`); die Kamera faehrt laengs des
+        Sehstrahls auf ihn zu und nimmt je Schritt denselben Anteil des
+        Abstands - so bleibt der Punkt unter dem Zeiger liegen, und jede
+        Bohrung ist erreichbar, ohne durch die Flaeche zu fahren. Der
+        Blickpunkt (Drehmitte) rueckt dabei in die Tiefe dieser Flaeche: wer
+        danach dreht, dreht um das, was er ansieht. Liegt unter dem Zeiger nur
+        Hintergrund, gilt wie bisher der Punkt in der Brennebene. Parallele
+        Projektion: der Massstab wird geaendert und die Kamera so verschoben,
+        dass der Punkt liegen bleibt.
         """
         if not faktor or faktor <= 0:
             return
@@ -484,16 +525,32 @@ class MainWindow(QtWidgets.QMainWindow):
             hoehe = self.plotter.render_window.GetSize()[1]
             x = float(x_qt)
             y = float(hoehe - 1 - y_qt)     # Qt zaehlt von oben, VTK von unten
-            vorher = self._bildpunkt_in_welt(x, y)
+            ziel = self._oberflaeche_unter_zeiger(x, y)
             if kam.GetParallelProjection():
+                vorher = self._bildpunkt_in_welt(x, y)
                 kam.SetParallelScale(max(kam.GetParallelScale() / faktor, 1e-12))
+                nachher = self._bildpunkt_in_welt(x, y)
+                if vorher is not None and nachher is not None:
+                    d = vorher - nachher
+                    kam.SetPosition(*(np.asarray(kam.GetPosition(), float) + d))
+                    kam.SetFocalPoint(*(np.asarray(kam.GetFocalPoint(), float) + d))
             else:
-                kam.Dolly(faktor)
-            nachher = self._bildpunkt_in_welt(x, y)
-            if vorher is not None and nachher is not None:
-                d = vorher - nachher
-                kam.SetPosition(*(np.asarray(kam.GetPosition(), float) + d))
-                kam.SetFocalPoint(*(np.asarray(kam.GetFocalPoint(), float) + d))
+                pos = np.asarray(kam.GetPosition(), float)
+                punkt = ziel if ziel is not None else self._bildpunkt_in_welt(x, y)
+                d = None if punkt is None else punkt - pos
+                if d is not None and float(np.linalg.norm(d)) > 1e-12:
+                    neu = punkt - d / faktor        # laengs des Sehstrahls
+                    kam.SetPosition(*neu)
+                    kam.SetFocalPoint(*(np.asarray(kam.GetFocalPoint(), float) + (neu - pos)))
+                else:
+                    kam.Dolly(faktor)
+            if ziel is not None:
+                # Drehmitte in die Tiefe der Flaeche unter dem Zeiger
+                pos = np.asarray(kam.GetPosition(), float)
+                richtung = np.asarray(kam.GetDirectionOfProjection(), float)
+                tiefe = float(np.dot(ziel - pos, richtung))
+                if tiefe > 1e-9:
+                    kam.SetFocalPoint(*(pos + richtung * tiefe))
             ren.ResetCameraClippingRange()
             self._kamera_steht = True
             self.plotter.render()
@@ -3457,16 +3514,19 @@ class MainWindow(QtWidgets.QMainWindow):
                                       "Füllung, Netzdichte und Elementform im Inneren. Gezeichnet "
                                       "wird sonst nur die Außenhaut", symbol="sicht_schnitt")
         self.cb_schnittachse = QtWidgets.QComboBox()
-        self.cb_schnittachse.addItems(["x", "y", "z"])
+        self.cb_schnittachse.addItems(["x", "y", "z", "frei"])
         self.cb_schnittachse.setCurrentText("y")
-        self.cb_schnittachse.setFixedWidth(48)
-        self.cb_schnittachse.setToolTip("Achse, senkrecht zu der geschnitten wird")
-        self.cb_schnittachse.currentTextChanged.connect(lambda _t: self._schnitt_nachziehen())
+        self.cb_schnittachse.setFixedWidth(56)
+        self.cb_schnittachse.setToolTip("Achse, senkrecht zu der geschnitten wird - „frei“: beliebige "
+                                        "Ebene (Normale und Ursprung in der Maske rechts, aus der "
+                                        "Ansicht oder der Arbeitsebene, oder im Bild gezogen)")
+        self.cb_schnittachse.currentTextChanged.connect(self._schnittachse_gewaehlt)
         self.sl_schnitt = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.sl_schnitt.setRange(0, 100)
         self.sl_schnitt.setValue(50)
         self.sl_schnitt.setFixedWidth(110)
-        self.sl_schnitt.setToolTip("Lage der Schnittebene im Bauteil")
+        self.sl_schnitt.setToolTip("Lage der Schnittebene im Bauteil; bei der freien Ebene die "
+                                   "Verschiebung längs der Normalen (Mitte = durch den Ursprung)")
         self.sl_schnitt.valueChanged.connect(lambda _v: self._schnitt_nachziehen())
         self.act_schnittseite = g.schalter("Andere Seite", self._schnitt_seite, False,
                                            "Die andere Hälfte stehen lassen",
@@ -10503,7 +10563,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ed_skala_unten.setEnabled(modus == "fest")
         self.ed_skala_oben.setEnabled(modus == "fest")
         self.ed_skala_grenze.setEnabled(modus == "grenze")
-        self.cb_nur_ueber.setEnabled(modus == "grenze")
+        # „nur Ueberschreitungen" bleibt immer anklickbar - es schaltet die
+        # Skala selbst auf Grenzwert um. Vorher war der Haken im Modus
+        # „automatisch" grau, und das las sich als „geht nicht" (12.09.2026).
+        self.cb_nur_ueber.setEnabled(True)
 
     def _werteskala_geaendert(self, *_a) -> None:
         """Maske -> Modell -> neu zeichnen."""
@@ -10516,6 +10579,14 @@ class MainWindow(QtWidgets.QMainWindow):
         s.grenze = float(self.ed_skala_grenze.value())
         s.stufen = int(self.sp_stufen.value())
         s.nur_ueber = bool(self.cb_nur_ueber.isChecked())
+        if s.nur_ueber and s.modus != "grenze":
+            # Ueberschreitungen setzen eine Grenze voraus: die Auswahl folgt
+            s.modus = "grenze"
+            self._werteskala_sperre = True
+            try:
+                self.cb_skala.setCurrentIndex(max(self.cb_skala.findData("grenze"), 0))
+            finally:
+                self._werteskala_sperre = False
         self._werteskala_felder()
         self.redraw()
 
@@ -10562,6 +10633,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if skala.get("anzahl_unter"):
             teile.append(f"{skala['anzahl_unter']} Knoten unter {spn.dezimal(skala['clim'][0])} "
                          f"(min {spn.dezimal(skala['wmin'])})")
+        if not teile and skala.get("grenze") is not None and skala.get("wmax") is not None:
+            # Sonst bliebe bei „nur Ueberschreitungen" alles grau, ohne dass
+            # jemand sagt, warum
+            teile.append(f"keine Überschreitung über {spn.dezimal(skala['grenze'])} "
+                         f"(größter Wert {spn.dezimal(max(abs(skala['wmax']), abs(skala['wmin'])))})"
+                         + (" – alles bleibt grau" if skala.get("nur_ueber") else ""))
         if teile:
             self.statusBar().showMessage(f"{name}: " + ", ".join(teile), 8000)
 
@@ -16072,22 +16149,197 @@ class MainWindow(QtWidgets.QMainWindow):
     def _schnitt_umschalten(self, an: bool):
         """Schalter „Schnittebene" (Ribbon Ansicht)."""
         if an:
-            self.schnitt = (self.cb_schnittachse.currentText(),
-                            self.sl_schnitt.value() / 100.0,
-                            bool(self.act_schnittseite.isChecked()))
+            self.schnitt = self._schnitt_tupel()
             self.info("Die Ansicht ist aufgeschnitten - Achse und Lage stehen daneben")
         else:
             self.schnitt = None
+            self._schnittwidget_entfernen()
         self.redraw()
 
     def _schnitt_nachziehen(self):
         """Achse oder Lage verstellt - nur wirksam, wenn der Schnitt an ist."""
-        if self.schnitt is None:
+        if self.schnitt is None or getattr(self, "_schnitt_sperre", False):
             return
-        self.schnitt = (self.cb_schnittachse.currentText(),
-                        self.sl_schnitt.value() / 100.0,
-                        bool(self.act_schnittseite.isChecked()))
+        self.schnitt = self._schnitt_tupel()
         self.redraw()
+
+    def _schnitt_tupel(self) -> tuple:
+        """Der Schnitt aus den Reglern: (Achse, Lage, andere Seite) - bei der
+        freien Ebene dazu Normale und Ursprung (siehe viewport.schneiden)."""
+        achse = self.cb_schnittachse.currentText()
+        lage = self.sl_schnitt.value() / 100.0
+        seite = bool(self.act_schnittseite.isChecked())
+        if achse != "frei":
+            return (achse, lage, seite)
+        frei = self._schnitt_frei_werte()
+        return ("frei", lage, seite, tuple(frei["normale"]), tuple(frei["ursprung"]))
+
+    def _schnitt_frei_werte(self) -> dict:
+        """Normale und Ursprung der freien Schnittebene; anfangs die y-Ebene
+        durch die Mitte des Modells."""
+        frei = getattr(self, "schnitt_frei", None)
+        if frei is None:
+            frei = {"normale": (0.0, 1.0, 0.0), "ursprung": None}
+            self.schnitt_frei = frei
+        if frei.get("ursprung") is None:
+            m = self.model
+            if m.nn:
+                X = np.asarray(m.nodes, float)
+                mitte = 0.5 * (X.min(axis=0) + X.max(axis=0))
+            else:
+                mitte = np.zeros(3)
+            frei["ursprung"] = tuple(float(x) for x in mitte)
+        return frei
+
+    def _schnittachse_gewaehlt(self, text: str):
+        """Achse im Ribbon gewaehlt; „frei“ oeffnet rechts die Maske der Ebene."""
+        maske = self.maskenrand.maske
+        if text == "frei" and not (maske is not None and getattr(maske, "titel", "") == "Schnittebene"):
+            self.maske_schnittebene()
+        self._schnitt_nachziehen()
+
+    def maske_schnittebene(self):
+        """Freie Schnittebene: Normale und Ursprung eintragen, aus der Ansicht
+        oder der Arbeitsebene uebernehmen, oder die Ebene im Bild ziehen.
+
+        „Es sollte an passender Stelle eine Option zum Schnitt an beliebiger
+        Stelle und beliebiger Ebene moeglich sein, um auch Ergebnisse im
+        Volumen grafisch anzeigen zu koennen - immer durch die Elemente, die
+        gerade angezeigt werden" (12.09.2026). Geschnitten wird das gezeichnete
+        Gitter (mit Ergebnisfarben), also genau das, was zu sehen ist.
+        """
+        frei = self._schnitt_frei_werte()
+        n, o = frei["normale"], frei["ursprung"]
+        m = msk.Maske("Schnittebene", [
+            msk.Feld("quelle", "Ebene", "wahl", "eigene Werte",
+                     ["eigene Werte",
+                      "aus der Ansicht (senkrecht zum Blick, durch den Blickpunkt)",
+                      "aus der Arbeitsebene"]),
+            msk.Feld("nx", "Normale x", "zahl", f"{n[0]:g}"),
+            msk.Feld("ny", "Normale y", "zahl", f"{n[1]:g}"),
+            msk.Feld("nz", "Normale z", "zahl", f"{n[2]:g}"),
+            msk.Feld("ox", "Ursprung x [m]", "zahl", f"{o[0]:g}"),
+            msk.Feld("oy", "Ursprung y [m]", "zahl", f"{o[1]:g}"),
+            msk.Feld("oz", "Ursprung z [m]", "zahl", f"{o[2]:g}"),
+            msk.Feld("widget", "Ebene im Bild ziehen (Pfeil dreht, Fläche schiebt)", "haken",
+                     getattr(self, "_schnittwidget", None) is not None)],
+            knopf="Schneiden",
+            hinweis="Die Ebene liegt senkrecht zur Normalen durch den Ursprung. Der Schieber im "
+                    "Ribbon verschiebt sie längs der Normalen (Mitte = durch den Ursprung), "
+                    "„Andere Seite“ lässt die andere Hälfte stehen. Nach dem Zoomen auf eine "
+                    "Bohrung liegt der Blickpunkt auf ihr - „aus der Ansicht“ schneidet dann dort.")
+        m.angewendet.connect(self._maske_schnittebene_anwenden)
+        m.geschlossen.connect(self._schnittwidget_entfernen)
+        self.maske_erzeugen(m)
+
+    def _maske_schnittebene_anwenden(self, w: dict):
+        quelle = str(w.get("quelle") or "")
+        frei = self._schnitt_frei_werte()
+        try:
+            if quelle.startswith("aus der Ansicht"):
+                kam = self.plotter.renderer.GetActiveCamera()
+                n = np.asarray(kam.GetDirectionOfProjection(), float)
+                o = np.asarray(kam.GetFocalPoint(), float)
+            elif quelle.startswith("aus der Arbeitsebene"):
+                _u, _v, n = self.arbeitsebene.achsen()
+                n = np.asarray(n, float)
+                o = np.asarray(self.arbeitsebene.ursprung(), float)
+            else:
+                n = np.array([float(w.get(k) or 0.0) for k in ("nx", "ny", "nz")])
+                o = np.array([float(w.get(k) or 0.0) for k in ("ox", "oy", "oz")])
+        except Exception as ex:                 # noqa: BLE001
+            return self.error(f"Schnittebene: {ex}")
+        ln = float(np.linalg.norm(n))
+        if not np.isfinite(ln) or ln < 1e-12:
+            return self.error("Die Normale darf nicht der Nullvektor sein")
+        n = n / ln
+        frei["normale"] = tuple(float(x) for x in n)
+        frei["ursprung"] = tuple(float(x) for x in o)
+        self._schnitt_maske_nachfuehren()
+        self._schnitt_sperre = True
+        try:
+            if self.cb_schnittachse.currentText() != "frei":
+                self.cb_schnittachse.setCurrentText("frei")
+            self.sl_schnitt.setValue(50)
+        finally:
+            self._schnitt_sperre = False
+        if self.act_schnitt.isChecked():
+            self._schnitt_nachziehen()
+        else:
+            self.act_schnitt.setChecked(True)   # ruft _schnitt_umschalten
+        if w.get("widget"):
+            self._schnittwidget_anlegen()
+        else:
+            self._schnittwidget_entfernen()
+
+    def _schnitt_maske_nachfuehren(self):
+        """Normale und Ursprung in die offene Maske schreiben."""
+        maske = self.maskenrand.maske
+        if maske is None or getattr(maske, "titel", "") != "Schnittebene":
+            return
+        frei = self._schnitt_frei_werte()
+        for k, v in zip(("nx", "ny", "nz"), frei["normale"]):
+            maske.setzen(k, f"{v:.4g}")
+        for k, v in zip(("ox", "oy", "oz"), frei["ursprung"]):
+            maske.setzen(k, f"{v:.4g}")
+        maske.setzen("quelle", "eigene Werte")
+        maske.setzen("widget", getattr(self, "_schnittwidget", None) is not None)
+
+    def _schnittwidget_anlegen(self):
+        """Die Ebene als Werkzeug ins Bild: Pfeil dreht die Normale, die
+        Flaeche laesst sich schieben; beim Loslassen wird neu geschnitten."""
+        frei = self._schnitt_frei_werte()
+        self._schnittwidget_entfernen()
+        try:
+            self._schnittwidget = self.plotter.add_plane_widget(
+                self._schnittwidget_bewegt, normal=list(frei["normale"]),
+                origin=list(frei["ursprung"]), implicit=True, interaction_event="end",
+                test_callback=False, factor=1.1, color="#d08030")
+        except Exception as ex:                 # noqa: BLE001
+            self._schnittwidget = None
+            self.error(f"Ebene im Bild: {ex}")
+            return
+        self._schnitt_maske_nachfuehren()
+        try:
+            self.plotter.render()
+        except Exception:                       # noqa: BLE001
+            pass
+
+    def _schnittwidget_entfernen(self, *_a):
+        if getattr(self, "_schnittwidget", None) is None:
+            return
+        self._schnittwidget = None
+        try:
+            self.plotter.clear_plane_widgets()
+        except Exception:                       # noqa: BLE001
+            pass
+        self._schnitt_maske_nachfuehren()
+        try:
+            self.plotter.render()
+        except Exception:                       # noqa: BLE001
+            pass
+
+    def _schnittwidget_bewegt(self, normale, ursprung):
+        """Die Ebene im Bild wurde gezogen (Ende der Bewegung)."""
+        n = np.asarray(normale, float)
+        ln = float(np.linalg.norm(n))
+        if not np.isfinite(ln) or ln < 1e-12:
+            return
+        frei = self._schnitt_frei_werte()
+        frei["normale"] = tuple(float(x) for x in n / ln)
+        frei["ursprung"] = tuple(float(x) for x in np.asarray(ursprung, float))
+        self._schnitt_maske_nachfuehren()
+        self._schnitt_sperre = True
+        try:
+            if self.cb_schnittachse.currentText() != "frei":
+                self.cb_schnittachse.setCurrentText("frei")
+            self.sl_schnitt.setValue(50)
+        finally:
+            self._schnitt_sperre = False
+        if self.act_schnitt.isChecked():
+            self._schnitt_nachziehen()
+        else:
+            self.act_schnitt.setChecked(True)
 
     def _schnitt_seite(self, an: bool):
         """Die andere Haelfte stehen lassen."""

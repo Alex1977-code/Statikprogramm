@@ -541,6 +541,33 @@ Tetraeder, 0 = flach) und die **Randtreue** — wieviel des Netzrandes wirklich
 auf der Geometrie liegt. Ist die Randhülle nicht dicht, wird gar nicht
 vernetzt: ein Netz aus einer undichten Hülle wäre stillschweigend falsch.
 
+**Nachverfeinerung der Hülle ohne Splitter.** Wo der Netzrand nach dem
+ersten Durchgang neben der Geometrie liegt (einspringende Ecken, der
+Übergang vom feinen Bohrungsring ins grobe Feld), werden die Hülldreiecke
+dort feiner gemacht und noch einmal tetraedert. Bis September 2026 wurden
+sie dazu im Schwerpunkt geteilt (1 → 3): das hält die Geometrie, macht die
+Dreiecke aber mit jeder Runde flacher, denn das Kind behält die lange Kante
+und bekommt ein Drittel der Höhe. An V15 des Drehlagers (Hülle 11 824
+Dreiecke, Güte min 0,165, kein Splitter) entstanden so in zwei Runden 2 391
+Splitterdreiecke (Güte < 0,1, min 0,018), auf der Außenhaut blieben 82, und
+daran hingen die Tetraeder mit Güte 0,028, die die Abnahme bemängelte —
+„merkwürdige Dreiecke" auf der Fläche neben der Bohrung. Jetzt wird die
+**längste Kante halbiert** (Rivara): der neue Punkt ist die Kantenmitte, der
+Nachbar über die Kante wird mit halbiert (ist die Kante nicht auch seine
+längste, wird erst er halbiert — die Fortpflanzung endet, weil die Kanten
+längs des Weges länger werden), und der kleinste Winkel bleibt mindestens die
+Hälfte des Ausgangswinkels. Kanten zu einer **gemeinsamen Fläche** oder auf
+einer **gemeinsamen Linie** werden nicht geteilt, sonst hinge der neue Knoten
+beim Nachbarkörper in der Luft; ist die längste Kante so gesperrt, bleibt
+für dieses Dreieck die Teilung im Schwerpunkt. Ergebnis an V15: 1 statt 82
+Splitterdreiecke auf der Außenhaut, schlechtester Tetraeder 0,051 statt
+0,028, Randtreue 100 % statt 97,6 % (293 000 statt 255 000 Tetraeder,
+56 s). Geprüft in `tests/test_mesher3d.py`
+(`test_huelle_verfeinern_haelt_form`: Platte mit Bohrung, drei Runden —
+Hülle dicht, Volumen unverändert, kein Splitter, geschützter Boden und
+gesperrter Deckelring unangetastet; im Schwerpunkt geteilt fiele die Güte
+auf 0,029).
+
 **Lasten, die an der Geometrie hängen.** RFEM hängt seine Flächenlasten an die
 *Fläche*, nicht an Elemente — beim Import gibt es die Elemente noch gar nicht.
 Solche Lasten fallen jetzt nicht mehr unter den Tisch: sie bleiben als
@@ -772,6 +799,22 @@ Bauteil; **Andere Seite** lässt die andere Hälfte stehen. Im Schnitt stehen
 die Tetraeder des Inneren, und Füllung, Netzdichte und Elementform sind mit
 einem Blick zu prüfen. Ausgeschaltet steht das Bauteil wieder ganz da.
 
+Die Achse **frei** schneidet an **beliebiger Stelle in beliebiger Richtung**:
+rechts öffnet sich die Maske *Schnittebene* mit Normale und Ursprung. Statt
+Zahlen einzutippen, kann die Ebene **aus der Ansicht** kommen (senkrecht zum
+Blick, durch den Blickpunkt — nach dem Zoomen auf eine Bohrung liegt der
+genau dort) oder **aus der Arbeitsebene**; mit **Ebene im Bild ziehen** steht
+sie als Werkzeug in der Ansicht: der Pfeil dreht die Normale, die Fläche
+lässt sich schieben, beim Loslassen wird neu geschnitten, und die Maske
+zeigt die neuen Werte. Der Schieber im Ribbon verschiebt die freie Ebene
+längs ihrer Normalen (Mitte = durch den Ursprung). Geschnitten wird immer
+das, was gerade **gezeichnet** ist — mit Ergebnisfarben: im Schnitt stehen
+die Spannungen und Verschiebungen auf den Elementen des Inneren, und
+ausgeblendete Teile bleiben ausgeblendet. So lassen sich Ergebnisse im
+Volumen an jeder Stelle ansehen, etwa der Spannungsverlauf durch die Wand
+einer Bohrung. Geprüft in `tests/test_gui_smoke.py` (Abschnitt Schnittebene:
+schräge Ebene durch die Mitte, aus der Ansicht, Werkzeug im Bild).
+
 Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen* und *Sicht*, der Fang unter *Geometrie → Arbeitsebene*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
 und als **iso** unter dem Ansichtswürfel.
@@ -822,6 +865,24 @@ während des Drehens, Schiebens und Zoomens die Nebendarsteller
 (Knotenpunkte, Linien, Nummern, Lasten) und die Netzkanten weg und kommen
 beim Loslassen der Maus wieder — das Bild bleibt dadurch flüssig.
 Volumennetze werden nur mit ihrer Oberfläche gezeichnet.
+
+**Zoomen auf eine Bohrung.** Das Mausrad zoomt auf die **Fläche unter dem
+Zeiger** zu, nicht auf die Brennebene der Kamera. Vorher fuhr die Kamera auf
+ihren Blickpunkt zu, und der lag irgendwo im Bauteil: beim Zoomen auf eine
+Bohrung von V15 am Drehlager war die Fläche nach zehn Radschritten 0,09 m
+entfernt und wurde danach wieder *ferner* (Schritt 60: 0,34 m), während der
+Blickpunktabstand auf 0,4 mm zusammenschrumpfte — jeder weitere Schritt
+bewegte fast nichts mehr, „der Zoom wird langsam". Jetzt nimmt jeder
+Radschritt denselben Anteil des Abstands zur Fläche (Faktor 1,15), die
+Fläche bleibt unter dem Zeiger liegen, und jede Bohrung ist erreichbar, ohne
+durch die Oberfläche zu fahren. Der **Blickpunkt** — die Mitte, um die das
+Drehen geht — rückt dabei auf diese Fläche: wer nach dem Zoomen dreht, dreht
+um das, was er ansieht. Der Flächenpunkt kommt aus dem Tiefenpuffer des
+letzten Bildes (ein Pixel, unter einer Millisekunde; ein Picker brauchte am
+Drehlager 60 bis 190 ms je Schritt). Liegt unter dem Zeiger nur Hintergrund,
+gilt wie bisher der Punkt in der Brennebene. Geprüft in
+`tests/test_gui_smoke.py` (25 Radschritte: der Abstand zur Fläche schrumpft
+in jedem Schritt um denselben Anteil und wird nie wieder größer).
 
 **Linien** sind Geometrie, keine Elemente — der Schalter „Linien" zeigt sie.
 Bei einem aus RFEM übernommenen Modell besteht die Geometrie fast nur aus
@@ -1028,7 +1089,7 @@ noch.
 |---|---|
 | **links** | wählen (Klick) und das **Auswahlfenster** aufziehen (ziehen) |
 | **rechts** | **drehen**; ohne Ziehbewegung das Kontextmenü |
-| **Mausrad** | zoomen, zum Zeiger hin |
+| **Mausrad** | zoomen, auf die Fläche unter dem Zeiger zu; die Drehmitte folgt |
 | **Mitte** | schwenken; Doppelklick passt alles Sichtbare ins Bild |
 
 Die linke Taste dreht **nicht** mehr — sie gehört ganz der Auswahl. Dadurch
@@ -2614,9 +2675,15 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   der zweite die Grenze. **Farbstufen** wie in ANSYS 9 (bis 256 = stufenlos).
   **Nur Überschreitungen färben**: nur Beträge über der Grenze bekommen Farbe,
   von der Grenze bis zum Größtwert, alles andere bleibt grau — so springen
-  die Stellen ins Auge. Die Statuszeile nennt die Zahl der Knoten über der
-  Grenze und das Maximum, Kopfzeile und Berichtsbild nennen die Skala. Die
-  Einstellung wird mit dem Modell gespeichert.
+  die Stellen ins Auge. Der Haken ist in jedem Modus anklickbar und schaltet
+  die Skala selbst auf *Grenzwert* um (vorher war er im Modus *automatisch*
+  grau, und das las sich als „geht nicht"). Bei einem einzeln gezeigten
+  Körper zählen nur dessen Knoten, und die Skala endet an dessen Größtwert.
+  Die Statuszeile nennt die Zahl der Knoten über der Grenze und das Maximum
+  — oder sagt, dass **nichts** über der Grenze liegt und deshalb alles grau
+  bleibt (mit dem Größtwert, damit man weiß, wie weit die Grenze weg ist).
+  Kopfzeile und Berichtsbild nennen die Skala. Die Einstellung wird mit dem
+  Modell gespeichert.
 * **Umhüllende einer Kombination.** Eine Kombination mit Alternativen (aus
   einer RFEM-Ergebniskombination „LF1 oder LF2 oder …") hat kein einzelnes
   Ergebnis, sondern eine Umhüllende: Minimum und Maximum je Größe über ihre
