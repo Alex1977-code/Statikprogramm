@@ -328,7 +328,17 @@ class Projection:
 # ==========================================================================
 # Systemdarstellung
 # ==========================================================================
+_GRUPPEN_CACHE: dict = {}
+
+
 def _element_groups(model):
+    """(Staebe, Schalen, Volumen) als Elementnummern - einmal je Netz: die
+    Schleife kostete am Drehlager 1,5 s, und der Bericht zeichnet sieben
+    Bilder (12.09.2026)."""
+    key = (id(model), len(model.elements))
+    hit = _GRUPPEN_CACHE.get(key)
+    if hit is not None:
+        return hit
     beams, shells, solids = [], [], []
     for i, e in enumerate(model.elements):
         if e.typ in EL.STAB_TYPEN:
@@ -337,6 +347,8 @@ def _element_groups(model):
             shells.append(i)
         elif e.typ in EL.VOLUMEN_TYPEN:
             solids.append(i)
+    _GRUPPEN_CACHE.clear()
+    _GRUPPEN_CACHE[key] = (beams, shells, solids)
     return beams, shells, solids
 
 
@@ -457,6 +469,66 @@ def _legend_ramp(x, y, vmin, vmax, unit, label) -> str:
             + text(x + 90, y + 25, f"{_fmt_tick(vmax)} {unit}", 9, "end"))
 
 
+#: Ab so vielen Elementen zeichnet die Systemdarstellung die Umrisse der
+#: Volumenkoerper statt der Aussenflaechen des Netzes. Gemessen am Drehlager
+#: (12.09.2026, 1 812 423 Tetraeder): Facetten 64 s je Ansicht und ein SVG
+#: von Dutzenden MB, das kein Browser fluessig zeigt; Umrisse in Sekunden.
+GROSS_AB = 200_000
+
+
+def ist_gross(model) -> bool:
+    return len(model.elements) > GROSS_AB
+
+
+def figur_hinweis(model) -> str:
+    """Zusatz zur Bildunterschrift, wenn vereinfacht gezeichnet wurde."""
+    if not ist_gross(model):
+        return ""
+    return (" – vereinfachte Darstellung: Umrisse der Volumenkörper statt des Netzes "
+            f"({len(model.elements)} Elemente)")
+
+
+def _koerper_umrisse(model, proj, X, P, solids) -> str:
+    """Jeder Volumenkoerper als Umriss - die 2D-Huelle seiner Knoten in der
+    Ansicht -, nach Tiefe sortiert (Maler-Algorithmus). Je Koerper hoechstens
+    20 000 Elemente abgetastet: fuer die Huelle reicht das."""
+    import itertools
+    from scipy.spatial import ConvexHull
+    items = []
+    koerper = [k for k in (getattr(model, "koerper", None) or {}).values()
+               if getattr(k, "elemente", None)]
+    gruppen = []
+    if koerper:
+        for k in koerper:
+            el = k.elemente
+            schritt = max(1, len(el) // 20000)
+            gruppen.append(el[::schritt])
+    elif solids:
+        schritt = max(1, len(solids) // 100000)
+        gruppen.append(list(solids)[::schritt])
+    for el in gruppen:
+        try:
+            ids = np.unique(np.fromiter(itertools.chain.from_iterable(
+                model.elements[i].nodes for i in el), int))
+        except (IndexError, TypeError):
+            continue
+        if ids.size < 3:
+            continue
+        items.append((float(proj.depth(X[ids].mean(axis=0))[0]), ids))
+    items.sort(key=lambda t: -t[0])
+    out = [f'<g stroke="{COL_SOLID_STROKE}" stroke-width="0.8" stroke-linejoin="round" '
+           f'fill="{COL_SOLID_FILL}" fill-opacity="0.85">']
+    for _, ids in items:
+        Q = P[ids]
+        try:
+            h = ConvexHull(Q)
+        except Exception:      # noqa: BLE001 - entartet (alle Punkte auf einer Linie)
+            continue
+        out.append(f'<polygon points="{_pts(Q[h.vertices])}"/>')
+    out.append("</g>")
+    return "".join(out)
+
+
 def draw_structure(model, projection="iso", width: int = 800, height: int = 520,
                    results=None, scale: float = None, field: str = None, util: dict = None,
                    show_nodes: bool = False, show_numbers: bool = False,
@@ -525,6 +597,7 @@ def draw_structure(model, projection="iso", width: int = 800, height: int = 520,
     P1 = proj.project(X1) if X1 is not None else None
 
     beams, shells, solids = _element_groups(model)
+    gross = bool(solids) and ist_gross(model)
 
     # ---- Farben -------------------------------------------------------------
     colours = {}
@@ -545,7 +618,10 @@ def draw_structure(model, projection="iso", width: int = 800, height: int = 520,
         um = np.linalg.norm(np.asarray(results.u, dtype=float)[:, :3], axis=1)
         lo, hi = float(um.min()), float(um.max())
         rng = hi - lo if hi > lo else 1.0
-        for i, e in enumerate(model.elements):
+        # bei Umrissen faerben nur Schalen und Staebe - nicht 1,8 Mio. Volumen
+        ids = [*shells, *beams] if gross else range(len(model.elements))
+        for i in ids:
+            e = model.elements[i]
             t = (float(um[e.nodes].mean()) - lo) / rng
             colours[i] = ramp_colour(t)
         legend = "umag"
@@ -589,7 +665,7 @@ def draw_structure(model, projection="iso", width: int = 800, height: int = 520,
 
     shell_facets = [(i, tuple(model.elements[i].nodes)) for i in shells]
     solid_facets = []
-    if solids:
+    if solids and not gross:
         from ..mesher import surface_facets
         solid_facets = [(None, tuple(f)) for f in surface_facets(model)]
 
@@ -602,7 +678,10 @@ def draw_structure(model, projection="iso", width: int = 800, height: int = 520,
     P = P1 if P1 is not None else P0
 
     # ---- Elemente -----------------------------------------------------------
-    out.append(_polygons(proj, X0, P, solid_facets, COL_SOLID_FILL, COL_SOLID_STROKE, 0.5, True))
+    if gross:
+        out.append(_koerper_umrisse(model, proj, X0, P, solids))
+    else:
+        out.append(_polygons(proj, X0, P, solid_facets, COL_SOLID_FILL, COL_SOLID_STROKE, 0.5, True))
     out.append(_polygons(proj, X0, P, shell_facets, COL_SHELL_FILL, COL_SHELL_STROKE, 0.6, True,
                          colours=colours if legend == "umag" else None))
     out.append(draw_beams(P))

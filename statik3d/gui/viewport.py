@@ -57,6 +57,14 @@ STATUS_COLOR = {"offen": "#9e9e9e", "Kontakt": "#1565c0", "Haften": "#2e7d32", "
 FARBE_KNOTEN = "#2f4f6f"
 FARBE_KNOTEN_FREI = "#e07000"      # Knoten, der (noch) an keinem Element haengt
 FARBE_LAGER = "#207020"
+#: Farbe je Lagerart (12.09.2026, "man erkennt das optisch schlecht"): die
+#: Farbe sagt auf einen Blick, was das Lager haelt
+FARBEN_LAGERART = {"fest": "#1f3b73", "gelenkig": "#1e7b34", "gleitend": "#d97706",
+                   "feder": "#7c3aed", "drehlager": "#5b6b7b", "frei": "#9aa4ae"}
+FARBE_LAGER_NICHTLINEAR = "#b00020"
+#: Grundmass der Lagersymbole als Anteil der Modellgroesse (bis 12.09.2026
+#: 0,012 - die Symbole gingen im Bild unter, siehe Benutzerhandbuch Lager)
+LAGER_GRUNDMASS = 0.015
 FARBE_LINIENLAGER = "#1f6f4f"
 FARBE_FLAECHENLAGER = "#2a7f9f"
 FARBE_KONTAKT = "#c8a000"
@@ -1073,6 +1081,87 @@ def _fhg_lage(support) -> tuple:
     return fest, federn
 
 
+def lager_art(support) -> str:
+    """Die Lagerart fuer Farbe und Beschriftung: fest (alles gehalten),
+    gelenkig (alle Verschiebungen, Verdrehungen frei), gleitend (eine
+    Verschiebung frei), feder (mindestens eine Feder), drehlager (nur
+    Verdrehungen gehalten) oder frei."""
+    fest, federn = _fhg_lage(support)
+    T = {d for d in fest if d < 3}
+    if federn:
+        return "feder"
+    if T == {0, 1, 2} and {3, 4, 5} <= fest:
+        return "fest"
+    if T == {0, 1, 2}:
+        return "gelenkig"
+    if T:
+        return "gleitend"
+    if fest:
+        return "drehlager"
+    return "frei"
+
+
+def lager_farbe(support) -> str:
+    return FARBEN_LAGERART.get(lager_art(support), FARBE_LAGER)
+
+
+def lager_text(support) -> str:
+    """Kurztext fuer die Lagerbeschriftung: fest, gelenkig, sonst die
+    gehaltenen Freiheitsgrade (u x y z, r x y z), Federn mit k, nichtlineare
+    Wirkung (Ausfall, Schlupf, Reibung, Grenzkraft) mit einem Stern."""
+    art = lager_art(support)
+    fest, federn = _fhg_lage(support)
+    if art == "fest":
+        text = "fest"
+    elif art == "gelenkig":
+        text = "gelenkig"
+    else:
+        teile = []
+        u = "".join("xyz"[d] for d in sorted(fest) if d < 3)
+        r = "".join("xyz"[d - 3] for d in sorted(fest) if d >= 3)
+        if u:
+            teile.append("u" + u)
+        if r:
+            teile.append("r" + r)
+        ku = "".join("xyz"[d] for d in sorted(federn) if d < 3)
+        kr = "".join("xyz"[d - 3] for d in sorted(federn) if d >= 3)
+        if ku:
+            teile.append("ku" + ku)
+        if kr:
+            teile.append("kr" + kr)
+        text = " ".join(teile) or "frei"
+    if getattr(support, "nonlinear", False):
+        text += " *"
+    return text
+
+
+def lager_texte(model: Model, nur=None) -> tuple:
+    """(Punkte, Texte) der Lagerbeschriftung fuer die Knotenlager."""
+    sicht = None if nur is None else {int(i) for i in nur}
+    punkte, texte = [], []
+    for s in model.supports:
+        n = int(s.node)
+        if not (0 <= n < model.nn) or (sicht is not None and n not in sicht):
+            continue
+        punkte.append(model.nodes[n])
+        texte.append(lager_text(s))
+    return punkte, texte
+
+
+def _grundplatte(d: float, z: float, breite: float) -> list:
+    """Platte mit Schraffur darunter - der Boden des klassischen Lagerbilds,
+    an dem man ein Lager sofort erkennt."""
+    teile = [pv.Cube(center=(0, 0, z), x_length=breite, y_length=breite, z_length=0.12 * d)]
+    n = 5
+    for k in range(n):
+        x = -0.5 * breite + (k + 0.5) * breite / n
+        # kurzer Strich schraeg unter der Platte (45 Grad in der x-z-Ebene)
+        strich = pv.Cylinder(center=(x - 0.15 * d, 0, z - 0.32 * d), direction=(1, 0, -1),
+                             radius=0.035 * d, height=0.5 * d)
+        teile.append(strich)
+    return teile
+
+
 def support_shape(support) -> str:
     """Grobe Symbolart eines Lagers: einspannung, gelenk oder feder."""
     fest, federn = _fhg_lage(support)
@@ -1187,6 +1276,7 @@ def lagerglyph(key: tuple, d: float, richtung=None) -> pv.PolyData:
     if grund == "einspannung":
         teile.append(pv.Cube(x_length=1.6 * d, y_length=1.6 * d, z_length=1.2 * d,
                              center=(0, 0, -0.6 * d)))
+        teile.extend(_grundplatte(d, -1.26 * d, 2.2 * d))
     else:
         if grund == "pyramide":
             teile.append(pv.Cone(direction=(0, 0, 1), height=2 * d, radius=d,
@@ -1199,6 +1289,10 @@ def lagerglyph(key: tuple, d: float, richtung=None) -> pv.PolyData:
             lx = 3.2 * d if 0 in frei_lokal else 1.9 * d
             ly = 3.2 * d if 1 in frei_lokal else 1.9 * d
             teile.append(pv.Cube(center=(0, 0, -2.25 * d), x_length=lx, y_length=ly, z_length=0.16 * d))
+            teile.extend(_grundplatte(d, -2.4 * d, max(lx, ly))[1:])
+        elif grund == "pyramide":
+            # gelenkiges Lager: Grundplatte mit Schraffur unter der Pyramide
+            teile.extend(_grundplatte(d, -2.06 * d, 2.2 * d))
             if frei_lokal and grund == "pyramide":
                 # zwei Rollen zwischen Pyramide und Ebene
                 for sx in (-0.55 * d, 0.55 * d):
@@ -1257,7 +1351,7 @@ def _glyph(shape: str, d: float):
 
 def support_size(model: Model, faktor: float = 1.0) -> float:
     """Grundgroesse der Lagersymbole [m]."""
-    return 0.012 * model.characteristic_size() * max(float(faktor), 0.05)
+    return LAGER_GRUNDMASS * model.characteristic_size() * max(float(faktor), 0.05)
 
 
 def lager_abstand(size: float, dichte: float = 1.0) -> float:
@@ -1552,24 +1646,32 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
     Symbole eines Linien- oder Flaechenlagers ueber die Linie bzw. Flaeche
     verteilt sind (1,0 = alle 5 % der Modellgroesse eines).
     """
-    d0 = 0.012 * size * max(float(faktor), 0.05)
+    d0 = LAGER_GRUNDMASS * size * max(float(faktor), 0.05)
     sicht = None if nur is None else {int(i) for i in nur}
 
     def da(n) -> bool:
         return 0 <= int(n) < model.nn and (sicht is None or int(n) in sicht)
 
-    # Knotenlager: nach Symbol und Groesse buendeln - ein Glyphensatz je Art
+    # Knotenlager: nach Symbol, Groesse und Farbe (Lagerart) buendeln - ein
+    # Glyphensatz je Art; nichtlineare Lager bekommen eine rote Kugel am Knoten
     gruppen: dict[tuple, list] = {}
+    nichtlinear = []
     for s in model.supports:
         if not da(s.node):
             continue
         g = round(float(getattr(s, "groesse", 1.0) or 1.0), 3)
-        gruppen.setdefault((lager_symbol(s), g), []).append(s.node)
-    for i, ((key, g), nodes) in enumerate(sorted(gruppen.items(), key=str)):
+        gruppen.setdefault((lager_symbol(s), g, lager_farbe(s)), []).append(s.node)
+        if getattr(s, "nonlinear", False):
+            nichtlinear.append(int(s.node))
+    for i, ((key, g, farbe), nodes) in enumerate(sorted(gruppen.items(), key=str)):
         pts = model.nodes[nodes]
         plotter.add_mesh(pv.PolyData(pts).glyph(geom=lagerglyph(key, d0 * g),
                                                 scale=False, orient=False),
-                         color=FARBE_LAGER, name=f"supports{i}")
+                         color=farbe, name=f"supports{i}")
+    if nichtlinear:
+        plotter.add_mesh(pv.PolyData(model.nodes[nichtlinear]).glyph(
+            geom=pv.Sphere(radius=0.45 * d0), scale=False, orient=False),
+            color=FARBE_LAGER_NICHTLINEAR, name="supports_nichtlinear")
     # Linienlager: Symbole entlang der ganzen Linie und die Linie selbst
     for j, ls in enumerate(getattr(model, "line_supports", []) or []):
         nodes = [int(n) for n in ls.nodes if da(n)]
@@ -1626,7 +1728,7 @@ def support_at(model: Model, punkt, size: float, faktor: float = 1.0):
     for i, s in enumerate(model.supports):
         if not (0 <= int(s.node) < model.nn):
             continue
-        d0 = 0.012 * size * max(float(faktor), 0.05) * float(getattr(s, "groesse", 1.0) or 1.0)
+        d0 = LAGER_GRUNDMASS * size * max(float(faktor), 0.05) * float(getattr(s, "groesse", 1.0) or 1.0)
         dist = float(np.linalg.norm(model.nodes[int(s.node)] - p))
         if dist <= max(2.5 * d0, 0.01 * size) and (bestd is None or dist < bestd):
             best, bestd = i, dist
@@ -1643,7 +1745,7 @@ def lager_at(model: Model, punkt, size: float, faktor: float = 1.0, dichte: floa
     if i is not None:
         return ("lager", int(i))
     p = np.asarray(punkt, float).ravel()[:3]
-    radius = max(1.5 * 0.012 * size * max(float(faktor), 0.05), 0.01 * size,
+    radius = max(1.5 * LAGER_GRUNDMASS * size * max(float(faktor), 0.05), 0.01 * size,
                  0.6 * lager_abstand(size, dichte))
     best, bestd = None, None
     for art, liste in (("linienlager", getattr(model, "line_supports", []) or []),
@@ -1816,6 +1918,143 @@ def _lastzahl(v: float, nachkomma: int = 2) -> str:
     """Lastgroesse als kurze Zahl: 12.5, 3, 0.25 - ohne Nachkommanullen."""
     s = f"{abs(float(v)):.{nachkomma}f}".rstrip("0").rstrip(".")
     return s or "0"
+
+
+#: Hoechstzahl der Ergebniswerte im Bild - mehr liest niemand, und
+#: 1,8 Mio. Marken am Drehlager wuerden die Ansicht sperren
+WERTE_MAX = 200
+
+
+def _wertzahl(v: float, nachkomma: int = 1) -> str:
+    """Ergebniswert als kurze Zahl mit Vorzeichen, deutsches Komma."""
+    s = f"{float(v):.{nachkomma}f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return (s or "0").replace(".", ",")
+
+
+def ergebniswerte(model: Model, res, point_scalars, arten, quantity: str = "",
+                  filter_: str = "extrem", schwelle: float = 0.0, n_te: int = 1,
+                  auswahl: dict = None, versteckt: set = None, nachkomma: int = 1) -> tuple:
+    """(Punkte, Texte) der Ergebniswerte im Bild (analog ANSYS Probe/Labels).
+
+    arten: Teilmenge von {"staebe", "flaechen", "volumen"}.
+    Staebe: mit Schnittgroesse ``quantity`` (N, Vy, Vz, Mt, My, Mz) die Werte
+    an den Nachweisstellen aus res.stations - Filter ``extrem`` nimmt je
+    Element die kleinste und groesste, ``enden`` beide Enden, ``alle`` jede
+    Stelle; ohne Schnittgroesse den Faerbungswert (point_scalars) in der
+    Elementmitte. Flaechen: der Faerbungswert je Element (Mittel der Knoten)
+    in der Elementmitte. Volumen: je Volumenkoerper der betragsgroesste
+    Faerbungswert an seinem Ort - ein Wert je Koerper, nicht je Element.
+
+    ``schwelle`` laesst nur |Wert| >= schwelle stehen (0 = alle), ``n_te``
+    jeden n-ten Wert, ``auswahl`` {"elemente": set, "staebe": set,
+    "flaechen": set, "koerper": set} nur die gewaehlten Objekte (Filter
+    ``auswahl``). Hoechstens WERTE_MAX Marken - die betragsgroessten.
+    """
+    ps = None if point_scalars is None else np.asarray(point_scalars, float)
+    X = np.asarray(model.nodes, float)
+    versteckt = versteckt or set()
+    auswahl = auswahl or {}
+    nur_auswahl = filter_ == "auswahl"
+    punkte, texte, betrag = [], [], []
+
+    def nimm(p, v):
+        if v is None or not np.isfinite(v):
+            return
+        if schwelle > 0 and abs(v) < schwelle:
+            return
+        punkte.append(np.asarray(p, float))
+        texte.append(_wertzahl(v, nachkomma))
+        betrag.append(abs(float(v)))
+
+    zu_stab = {int(e): n for n, mem in model.members.items() for e in (mem.elements or [])}
+    zu_flaeche = {int(e): n for n, f in model.flaechen.items() for e in (f.elemente or [])}
+    if "staebe" in arten:
+        q = quantity if quantity in SCHNITTGROESSEN else ""
+        st = None
+        if q and hasattr(res, "stations"):
+            try:
+                st = res.stations()
+            except Exception:                    # noqa: BLE001
+                st = None
+        _eh, faktor = SG_EINHEIT.get(q, ("", 1.0))
+        for i, e in enumerate(model.elements):
+            if e.typ not in TYPEN_STAEBE or i in versteckt:
+                continue
+            if nur_auswahl and i not in auswahl.get("elemente", ()) \
+                    and zu_stab.get(i) not in auswahl.get("staebe", ()):
+                continue
+            n1, n2 = int(e.nodes[0]), int(e.nodes[-1])
+            if st is not None and i in st and q in st[i]:
+                s = st[i]
+                xs = np.asarray(s["x"], float)
+                L = float(s.get("L", 0.0)) or float(np.linalg.norm(X[n2] - X[n1])) or 1.0
+                vals = np.asarray(s[q], float) / faktor
+                if not len(vals):
+                    continue
+                if filter_ == "alle":
+                    idx = range(len(vals))
+                elif filter_ == "enden":
+                    idx = sorted({0, len(vals) - 1})
+                else:
+                    idx = sorted({int(np.argmin(vals)), int(np.argmax(vals))})
+                for k in idx:
+                    tt = xs[k] / L
+                    nimm(X[n1] + tt * (X[n2] - X[n1]), vals[k])
+            elif ps is not None:
+                v = np.nanmean([ps[n1], ps[n2]]) if np.isfinite([ps[n1], ps[n2]]).any() else np.nan
+                nimm(0.5 * (X[n1] + X[n2]), v)
+    if "flaechen" in arten and ps is not None:
+        for i, e in enumerate(model.elements):
+            if e.typ not in TYPEN_FLAECHEN or i in versteckt:
+                continue
+            if nur_auswahl and i not in auswahl.get("elemente", ()) \
+                    and zu_flaeche.get(i) not in auswahl.get("flaechen", ()):
+                continue
+            kn = np.asarray(e.nodes, int)
+            w = ps[kn]
+            if not np.isfinite(w).any():
+                continue
+            nimm(X[kn].mean(axis=0), float(np.nanmean(w)))
+    if "volumen" in arten and ps is not None:
+        koerper = [(n, k) for n, k in model.koerper.items() if getattr(k, "elemente", None)]
+        gruppen = []
+        if koerper:
+            for n, k in koerper:
+                if nur_auswahl and n not in auswahl.get("koerper", ()):
+                    continue
+                el = k.elemente
+                schritt = max(1, len(el) // 50000)
+                gruppen.append((n, el[::schritt]))
+        else:
+            el = [i for i, e in enumerate(model.elements) if e.typ in TYPEN_VOLUMEN]
+            if el:
+                gruppen.append(("", el[:: max(1, len(el) // 50000)]))
+        import itertools
+        for n, el in gruppen:
+            kn = np.unique(np.fromiter(itertools.chain.from_iterable(
+                model.elements[i].nodes for i in el), int))
+            w = ps[kn]
+            ok = np.isfinite(w)
+            if not ok.any():
+                continue
+            j = int(np.nanargmax(np.abs(np.where(ok, w, 0.0))))
+            v = float(w[j])
+            if schwelle > 0 and abs(v) < schwelle:
+                continue
+            punkte.append(X[kn[j]])
+            texte.append((f"{n}: " if n else "") + _wertzahl(v, nachkomma))
+            betrag.append(abs(v))
+    if not punkte:
+        return [], []
+    order = list(range(len(punkte)))
+    if n_te and n_te > 1:
+        order = order[::int(n_te)]
+    if len(order) > WERTE_MAX:
+        order = sorted(order, key=lambda k: -betrag[k])[:WERTE_MAX]
+        order.sort()
+    return [punkte[k] for k in order], [texte[k] for k in order]
 
 
 #: Lastart der Beschriftung -> Groesse in einheiten.Einheiten

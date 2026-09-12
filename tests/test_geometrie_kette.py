@@ -286,7 +286,7 @@ def test_bericht_uebernahme():
     from statik3d.report.html import Report
     r = Report(m2, None)
     html = r.html()
-    check("Bericht hat das Kapitel", "Übernommene Ergebnisbilder" in html)
+    check("Bericht hat das Kapitel", "Übernommene Ergebnisse" in html)
     check("Bild ist eingebettet", f"data:image/png;base64,{png}" in html)
     check("Bildunterschrift steht dabei", "Ausnutzung im GZT" in html)
     check("die Einstellung steht dabei",
@@ -294,10 +294,10 @@ def test_bericht_uebernahme():
     check("Bemerkung steht dabei", "maßgebend am Rahmeneck" in html)
 
     ohne = Report(m2, None, options={"uebernommen": False})
-    check("abschaltbar", "Übernommene Ergebnisbilder" not in ohne.html())
+    check("abschaltbar", "Übernommene Ergebnisse" not in ohne.html())
     leer = Report(_rechteck(), None)
     check("ohne uebernommene Bilder fehlt das Kapitel",
-          "Übernommene Ergebnisbilder" not in leer.html())
+          "Übernommene Ergebnisse" not in leer.html())
 
     md = r.markdown() if hasattr(r, "markdown") else ""
     if md:

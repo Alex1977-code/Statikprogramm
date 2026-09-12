@@ -90,14 +90,37 @@ def to_pdf(report, path: str) -> str:
     footer_left = f"Statik3D {__version__} – Statischer Bericht {report.model.name}" + \
         (f" – {project}" if project and project != "–" else "")
 
+    # Rahmen des Berichts (model.Berichtsrahmen): Raender, Kopf- und Fusszeile
+    # auf jeder Seite, Rahmenlinien - dieselben Angaben wie im HTML
+    rahmen = report.rahmen() if hasattr(report, "rahmen") else None
+    if rahmen is not None:
+        r_links, r_rechts = rahmen.rand_links_mm * mm, rahmen.rand_rechts_mm * mm
+        r_oben, r_unten = rahmen.rand_oben_mm * mm, rahmen.rand_unten_mm * mm
+        kopf_text = report._rahmentext(rahmen.kopf)
+        fuss_text = report._rahmentext(rahmen.fuss) or footer_left
+        linien = bool(rahmen.rahmenlinie)
+    else:
+        r_links = r_rechts = r_oben = r_unten = margin
+        kopf_text, fuss_text, linien = "", footer_left, True
+    avail_w = page_w - r_links - r_rechts
+
     def on_page(canvas, doc):
         canvas.saveState()
         canvas.setFont("Helvetica", 7.5)
         canvas.setFillColor(colors.grey)
-        canvas.drawString(margin, 11 * mm, footer_left[:120])
-        canvas.drawRightString(page_w - margin, 11 * mm, f"Seite {doc.page}")
-        canvas.setStrokeColor(colors.lightgrey)
-        canvas.line(margin, 14 * mm, page_w - margin, 14 * mm)
+        if kopf_text:
+            canvas.drawString(r_links, page_h - r_oben + 3 * mm, kopf_text[:120])
+            canvas.drawRightString(page_w - r_rechts, page_h - r_oben + 3 * mm,
+                                   f"Statischer Bericht – {report.model.name}"[:80])
+        canvas.drawString(r_links, max(r_unten - 7 * mm, 4 * mm), fuss_text[:120])
+        canvas.drawRightString(page_w - r_rechts, max(r_unten - 7 * mm, 4 * mm), f"Seite {doc.page}")
+        if linien:
+            canvas.setStrokeColor(colors.lightgrey)
+            canvas.line(r_links, max(r_unten - 4 * mm, 6 * mm), page_w - r_rechts,
+                        max(r_unten - 4 * mm, 6 * mm))
+            if kopf_text:
+                canvas.line(r_links, page_h - r_oben + 1.5 * mm, page_w - r_rechts,
+                            page_h - r_oben + 1.5 * mm)
         canvas.restoreState()
 
     def cell_para(c, align_r, compact):
@@ -178,6 +201,8 @@ def to_pdf(report, path: str) -> str:
                 story.append(PageBreak())
             story.append(Paragraph(f"{_para_text(number)}&nbsp;&nbsp;{_para_text(title)}",
                                    h.get(level, h[4])))
+        elif kind == "h4":
+            story.append(Paragraph(_para_text(str(blk[1])), styles["Heading4"]))
         elif kind == "p":
             story.append(Paragraph(_para_text(blk[1]), base))
         elif kind == "note":
@@ -258,8 +283,8 @@ def to_pdf(report, path: str) -> str:
             _, txt, ok = blk
             col = "#1e7b34" if ok else "#b00020"
             story.append(Paragraph(f'<font color="{col}"><b>{_para_text(txt)}</b></font>', base))
-    doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=margin, rightMargin=margin,
-                            topMargin=margin, bottomMargin=margin + 4 * mm,
+    doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=r_links, rightMargin=r_rechts,
+                            topMargin=r_oben, bottomMargin=r_unten + 4 * mm,
                             title=f"Statischer Bericht – {report.model.name}",
                             author=meta.get("Bearbeiter", ""), subject=project or "")
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)

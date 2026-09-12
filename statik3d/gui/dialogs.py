@@ -1121,7 +1121,7 @@ class ReportDialog(QtWidgets.QDialog):
                ("envelopes", "Umhüllende"), ("member_diagrams", "Schnittgrößenverläufe"),
                ("design", "Nachweise EC3"), ("fatigue", "Ermüdung"), ("contact", "Kontakt"),
                ("modal", "Eigenfrequenzen"), ("buckling", "Knicken"),
-               ("uebernommen", "Übernommene Ergebnisbilder")]
+               ("uebernommen", "Übernommene Ergebnisse")]
 
     def __init__(self, parent=None, model: Model = None, path: str = ""):
         super().__init__(parent)
@@ -1140,6 +1140,18 @@ class ReportDialog(QtWidgets.QDialog):
         b = QtWidgets.QPushButton("…")
         b.clicked.connect(self._browse)
         f.addRow("Datei", row(self.path, b))
+        # Umfang zuerst (12.09.2026): Kurzform ist die Vorgabe - am Drehlager
+        # dauerte die Langform Minuten und niemand las die Listen je Element
+        self._model = model
+        self.umfang = QtWidgets.QComboBox()
+        for text, wert in self.UMFAENGE:
+            self.umfang.addItem(text, wert)
+        self.umfang.setToolTip("Kurzform: Kennwerte, Übersichten und Zusammenfassung - ohne Listen "
+                               "je Element und ohne Ergebnisse je Lastfall. Mittel: dazu je 5 "
+                               "Lastfälle und Kombinationen, 10 Verläufe, Nachweisdetails der 20 "
+                               "am höchsten ausgenutzten Stäbe. Langform: alles. Ein Haken "
+                               "unten macht daraus eine eigene Auswahl.")
+        f.addRow("Umfang", self.umfang)
         self.checks = {}
         grid = QtWidgets.QGridLayout()
         for i, (k, label) in enumerate(self.OPTIONS):
@@ -1147,7 +1159,52 @@ class ReportDialog(QtWidgets.QDialog):
             self.checks[k] = c
             grid.addWidget(c, i // 2, i % 2)
         f.addRow(grid)
+        self.btn_rahmen = QtWidgets.QPushButton("Rahmen…")
+        self.btn_rahmen.setToolTip("Kopf- und Fußzeile, Ränder, Logo, Titelblatt, Inhaltsverzeichnis")
+        self.btn_rahmen.clicked.connect(self._rahmen)
+        f.addRow(row(self.btn_rahmen, QtWidgets.QLabel("Kopf-/Fußzeile, Ränder, Logo, Titelblatt")))
         f.addRow(buttons(self))
+        self._sperre = False
+        self.umfang.currentIndexChanged.connect(self._umfang_gewaehlt)
+        for c in self.checks.values():
+            c.toggled.connect(self._eigene_auswahl)
+        vor = getattr(getattr(model, "bericht_rahmen", None), "umfang", "") or "kurz"
+        i = self.umfang.findData(vor)
+        self.umfang.setCurrentIndex(max(i, 0))
+        self._umfang_gewaehlt()
+
+    #: Umfang des Berichts (Report.UMFANG) - Kurzform ist die Vorgabe
+    UMFAENGE = [("Kurzform (Standard)", "kurz"), ("Mittel", "mittel"), ("Langform", "lang"),
+                ("eigene Auswahl", "eigene")]
+
+    def _umfang_gewaehlt(self, *_a):
+        """Die Haken auf die Vorgabe des Umfangs stellen."""
+        from ..report.html import Report
+        u = self.umfang.currentData()
+        if u not in Report.UMFANG:
+            return
+        werte = dict(Report.DEFAULTS)
+        werte.update(Report.UMFANG[u])
+        self._sperre = True
+        try:
+            for k, c in self.checks.items():
+                if isinstance(werte.get(k), bool):
+                    c.setChecked(werte[k])
+        finally:
+            self._sperre = False
+
+    def _eigene_auswahl(self, *_a):
+        """Ein von Hand gesetzter Haken macht aus der Vorgabe eine eigene Auswahl."""
+        if self._sperre or self.umfang.currentData() == "eigene":
+            return
+        self.umfang.blockSignals(True)
+        self.umfang.setCurrentIndex(max(self.umfang.findData("eigene"), 0))
+        self.umfang.blockSignals(False)
+
+    def _rahmen(self):
+        d = BerichtsrahmenDialog(self, self._model)
+        if d.exec():
+            d.apply(self._model)
 
     def _browse(self):
         ext = [".html", ".pdf", ".md"][self.fmt.currentIndex()]
@@ -1159,12 +1216,102 @@ class ReportDialog(QtWidgets.QDialog):
     def apply_meta(self, model: Model):
         for k, e in self.meta.items():
             model.meta[k] = e.text()
+        if hasattr(model, "berichtsrahmen"):
+            model.berichtsrahmen().umfang = str(self.umfang.currentData() or "kurz")
 
     def options(self) -> dict:
-        return {k: c.isChecked() for k, c in self.checks.items()}
+        o = {k: c.isChecked() for k, c in self.checks.items()}
+        o["umfang"] = str(self.umfang.currentData() or "kurz")
+        return o
 
     def format(self) -> str:
         return ["html", "pdf", "md"][self.fmt.currentIndex()]
+
+
+# --------------------------------------------------------------------------
+class BerichtsrahmenDialog(QtWidgets.QDialog):
+    """Rahmen des Berichts (model.Berichtsrahmen): Kopf- und Fusszeile mit
+    Platzhaltern, Raender, Logo, Schriftgroesse, Titelblatt, Inhaltsverzeichnis."""
+
+    PLATZHALTER = "{projekt} {bauteil} {position} {auftraggeber} {bearbeiter} {datum} {modell}"
+
+    def __init__(self, parent=None, model: Model = None):
+        super().__init__(parent)
+        self.setWindowTitle("Rahmen des Berichts")
+        r = model.berichtsrahmen()
+        self._logo = r.logo
+        f = QtWidgets.QFormLayout(self)
+        self.kopf = QtWidgets.QLineEdit(r.kopf)
+        self.fuss = QtWidgets.QLineEdit(r.fuss)
+        f.addRow("Kopfzeile", self.kopf)
+        f.addRow("Fußzeile", self.fuss)
+        hint = QtWidgets.QLabel("Platzhalter: " + self.PLATZHALTER + " - leere Teile fallen weg")
+        hint.setStyleSheet("color: #555;")
+        f.addRow(hint)
+        self.lbl_logo = QtWidgets.QLabel("Logo: vorhanden" if r.logo else "Logo: keines")
+        b1 = QtWidgets.QPushButton("Logo wählen…")
+        b1.clicked.connect(self._logo_waehlen)
+        b2 = QtWidgets.QPushButton("Logo entfernen")
+        b2.clicked.connect(self._logo_entfernen)
+        f.addRow(row(self.lbl_logo, b1, b2))
+        self.logo_breite = NumEdit(float(r.logo_breite_mm), 70)
+        f.addRow("Logobreite [mm]", self.logo_breite)
+        self.r_oben = NumEdit(float(r.rand_oben_mm), 60)
+        self.r_rechts = NumEdit(float(r.rand_rechts_mm), 60)
+        self.r_unten = NumEdit(float(r.rand_unten_mm), 60)
+        self.r_links = NumEdit(float(r.rand_links_mm), 60)
+        f.addRow("Ränder oben / rechts / unten / links [mm]",
+                 row(self.r_oben, self.r_rechts, self.r_unten, self.r_links))
+        self.schrift = NumEdit(float(r.schrift_pt), 60)
+        f.addRow("Schriftgröße [pt]", self.schrift)
+        self.linie = QtWidgets.QCheckBox("Rahmenlinie unter der Kopf- und über der Fußzeile")
+        self.linie.setChecked(bool(r.rahmenlinie))
+        self.titel = QtWidgets.QCheckBox("Titelblatt")
+        self.titel.setChecked(bool(r.titelblatt))
+        self.inhalt = QtWidgets.QCheckBox("Inhaltsverzeichnis")
+        self.inhalt.setChecked(bool(r.inhaltsverzeichnis))
+        f.addRow(self.linie)
+        f.addRow(self.titel)
+        f.addRow(self.inhalt)
+        f.addRow(buttons(self))
+
+    def _logo_waehlen(self):
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Logo", "", "Bilder (*.png *.jpg *.jpeg)")
+        if p:
+            self.logo_setzen(p)
+
+    def logo_setzen(self, pfad: str) -> bool:
+        import base64
+        try:
+            with open(pfad, "rb") as fh:
+                roh = fh.read()
+        except OSError:
+            return False
+        if len(roh) > 5_000_000:
+            QtWidgets.QMessageBox.warning(self, "Logo", "Das Logo ist größer als 5 MB - bitte verkleinern.")
+            return False
+        self._logo = base64.b64encode(roh).decode("ascii")
+        self.lbl_logo.setText("Logo: " + os.path.basename(pfad))
+        return True
+
+    def _logo_entfernen(self):
+        self._logo = ""
+        self.lbl_logo.setText("Logo: keines")
+
+    def apply(self, model: Model):
+        r = model.berichtsrahmen()
+        r.kopf = self.kopf.text().strip()
+        r.fuss = self.fuss.text().strip()
+        r.logo = self._logo
+        r.logo_breite_mm = float(self.logo_breite.value() or 30.0)
+        r.rand_oben_mm = float(self.r_oben.value() or 0.0)
+        r.rand_rechts_mm = float(self.r_rechts.value() or 0.0)
+        r.rand_unten_mm = float(self.r_unten.value() or 0.0)
+        r.rand_links_mm = float(self.r_links.value() or 0.0)
+        r.schrift_pt = float(self.schrift.value() or 10.5)
+        r.rahmenlinie = self.linie.isChecked()
+        r.titelblatt = self.titel.isChecked()
+        r.inhaltsverzeichnis = self.inhalt.isChecked()
 
 
 # --------------------------------------------------------------------------

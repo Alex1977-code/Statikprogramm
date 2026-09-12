@@ -1743,8 +1743,29 @@ class Berichtseintrag:
     bild: str = ""                 # PNG als Base64, ohne Praefix
     beschriftung: str = ""
     bemerkung: str = ""
+    #: Art des Eintrags (12.09.2026, Gliederung analog InfoCAD): "bild" (aus
+    #: der Ansicht), "text" (eigener Absatz), "tabelle" (Ergebnistabelle zum
+    #: Ergebnis ``quelle``), "datei" (eingefuegte Datei: Bild, SVG, CSV,
+    #: Markdown/Text, XLSX)
+    art: str = "bild"
+    text: str = ""                 # art text: Absaetze, "# Titel", "- Punkt"
+    tabelle: str = ""              # art tabelle: Stabkraefte, Auflagerkraefte, ...
+    datei: str = ""                # art datei: Dateiname
+    daten: str = ""                # art datei: Inhalt als Base64
+    typ: str = ""                  # art datei: Endung (png, svg, csv, md, ...)
+    #: Kapitel, hinter dem der Eintrag im Bericht steht (Schluessel wie
+    #: "results", "design"); leer = Kapitel "Uebernommene Ergebnisse" am Ende
+    nach: str = ""
 
     def bezug(self) -> str:
+        if self.art == "text":
+            kurz = " ".join((self.text or "").split())[:60]
+            return "Text: " + kurz if kurz else "Text"
+        if self.art == "tabelle":
+            return f"Tabelle {self.tabelle} · {self.quelle_text()}" if self.quelle \
+                else f"Tabelle {self.tabelle}"
+        if self.art == "datei":
+            return f"Datei {self.datei}" + (f" ({self.typ})" if self.typ else "")
         teile = [self.quelle_text()]
         if self.feld:
             teile.append(self.feld)
@@ -1757,6 +1778,30 @@ class Berichtseintrag:
         return {"case": f"Lastfall {wert}", "combo": f"Kombination {wert}",
                 "env": f"Umhüllende {wert}", "modal": f"Eigenform {wert}",
                 "buckling": f"Knickfigur {wert}"}.get(art, self.quelle or "-")
+
+
+@dataclass
+class Berichtsrahmen:
+    """Rahmen des statischen Berichts: Kopf- und Fusszeile, Raender, Logo,
+    Titelblatt, Inhaltsverzeichnis und der Umfang (kurz / mittel / lang).
+
+    Platzhalter in Kopf und Fuss: {projekt} {bauteil} {position} {auftraggeber}
+    {bearbeiter} {datum} {modell}. Die Raender gehen in @page, Kopf- und
+    Fusszeile stehen beim Drucken auf jeder Seite (position: fixed).
+    """
+    kopf: str = "{projekt} · {bauteil} · {position}"
+    fuss: str = "{bearbeiter} · {datum} · Statik3D"
+    logo: str = ""                     # PNG/JPG als Base64
+    logo_breite_mm: float = 30.0
+    rand_oben_mm: float = 18.0
+    rand_rechts_mm: float = 16.0
+    rand_unten_mm: float = 20.0
+    rand_links_mm: float = 20.0
+    schrift_pt: float = 10.5
+    rahmenlinie: bool = True
+    titelblatt: bool = True
+    inhaltsverzeichnis: bool = True
+    umfang: str = "kurz"               # kurz | mittel | lang | eigene
 
 
 @dataclass
@@ -2725,6 +2770,8 @@ class Model:
         self.bemassung_einstellung = None      # None = Vorgabe (bemassung.BemassungEinstellung)
         # Farbskala der Ergebnisanzeige (spannungen.Werteskala); None = automatisch
         self.werteskala = None
+        # Rahmen und Umfang des Berichts (Berichtsrahmen); None = Vorgabe
+        self.bericht_rahmen = None
         # Einheiten und Nachkommastellen fuer Ansicht und Tabellen (einheiten.Einheiten)
         self.einheiten = Einheiten()
         # Metadaten (Bericht)
@@ -4402,6 +4449,12 @@ class Model:
             members.append(self.add_member(f"{prefix}{k}", chain))
         return members
 
+    def berichtsrahmen(self) -> "Berichtsrahmen":
+        """Der Rahmen des Berichts, beim ersten Zugriff angelegt."""
+        if getattr(self, "bericht_rahmen", None) is None:
+            self.bericht_rahmen = Berichtsrahmen()
+        return self.bericht_rahmen
+
     def bemassung_einstellungen(self):
         """Die Einstellungen der Bemassung - bei Bedarf mit den Vorgaben angelegt."""
         if getattr(self, "bemassung_einstellung", None) is None:
@@ -4564,6 +4617,8 @@ class Model:
                                       if self.bemassung_einstellung is not None else None),
             "werteskala": (self.werteskala.to_dict()
                            if getattr(self, "werteskala", None) is not None else None),
+            "bericht_rahmen": (asdict(self.bericht_rahmen)
+                               if getattr(self, "bericht_rahmen", None) is not None else None),
             "einheiten": asdict(self.einheiten),
         }
 
@@ -4694,6 +4749,8 @@ class Model:
         if d.get("werteskala"):
             from .spannungen import Werteskala
             m.werteskala = Werteskala.from_dict(d["werteskala"])
+        if d.get("bericht_rahmen"):
+            m.bericht_rahmen = _dc(Berichtsrahmen, d["bericht_rahmen"])
         if d.get("stellungen"):
             from .bridges.positions import Stellung
             m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]

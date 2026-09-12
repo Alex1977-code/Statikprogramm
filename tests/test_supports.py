@@ -432,11 +432,53 @@ def test_flaechenlager_in_flaechenachsen():
           f"Rx = {rg.reactions[:, 0].sum() / 1e3:.1f} kN")
 
 
+def test_lagersymbolik():
+    """Lagerart, Farbe und Beschriftung der Symbole (12.09.2026: „man erkennt das
+    optisch schlecht“) - ohne Oberflaeche pruefbar."""
+    def pruefe(name, ok, detail=""):
+        RESULTS.append((name, bool(ok)))
+        print(f"{'OK ' if ok else 'FAIL'} {name:52s} {detail}")
+    try:
+        from statik3d.gui import viewport as vp
+    except ImportError as ex:
+        pruefe("Lagersymbolik (viewport importierbar)", False, str(ex))
+        return
+    m = Model("Lager")
+    m.add_material(Material("S355", 210e9, 0.3, 7850, fy=355e6))
+    for k in range(6):
+        m.add_node(float(k), 0.0, 0.0)
+    fest = m.support(0, [0, 1, 2, 3, 4, 5], name="Einspannung")
+    gelenk = m.support(1, [0, 1, 2], name="Gelenk")
+    rolle = m.support(2, [1, 2], name="Rolle")
+    feder = m.support(3, [2], name="Feder")
+    feder.stiffness = [1e6]
+    dreh = m.support(4, [3, 4, 5], name="Drehlager")
+    zug = m.support(5, [0, 1, 2], name="Ausfall")
+    zug.set_behaviour(2, typ="rigid", failure="zug")
+    arten = [vp.lager_art(s) for s in (fest, gelenk, rolle, feder, dreh, zug)]
+    pruefe("Lagerart: fest, gelenkig, gleitend, feder, drehlager, gelenkig",
+          arten == ["fest", "gelenkig", "gleitend", "feder", "drehlager", "gelenkig"], str(arten))
+    farben = [vp.lager_farbe(s) for s in (fest, gelenk, rolle, feder, dreh)]
+    pruefe("jede Lagerart hat ihre eigene Farbe", len(set(farben)) == 5
+          and farben[0] == vp.FARBEN_LAGERART["fest"], str(farben))
+    texte = [vp.lager_text(s) for s in (fest, gelenk, rolle, feder, dreh, zug)]
+    pruefe("Beschriftung: fest, gelenkig, u yz, ku z, r xyz, gelenkig * (nichtlinear)",
+          texte == ["fest", "gelenkig", "uyz", "kuz", "rxyz", "gelenkig *"], str(texte))
+    punkte, tt = vp.lager_texte(m, nur=[0, 1, 5])
+    pruefe("lager_texte nur fuer sichtbare Knoten", len(tt) == 3 and tt == ["fest", "gelenkig", "gelenkig *"])
+    g = vp.lagerglyph(vp.lager_symbol(gelenk), 0.1)
+    g2 = vp.lagerglyph(vp.lager_symbol(fest), 0.1)
+    pruefe("Symbole haben eine Grundplatte mit Schraffur (mehr Punkte als die blosse Pyramide)",
+          g.n_points > 200 and g2.n_points > 100 and float(g.bounds[4]) < -0.2,
+          f"{g.n_points} / {g2.n_points} Punkte, unten bis {g.bounds[4]:.3f} m")
+
+
 def main():
     for t in (test_federlager_mit_schlupf, test_zug_und_druckausfall, test_grenzkraft,
               test_reibung_knotenlager, test_linienlager, test_flaechenlager,
               test_rotationslager_und_zusammenfassung, test_federgelenke,
-              test_lager_folgen_dem_netz, test_flaechenlager_in_flaechenachsen):
+              test_lager_folgen_dem_netz, test_flaechenlager_in_flaechenachsen,
+              test_lagersymbolik):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

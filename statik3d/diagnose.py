@@ -21,36 +21,70 @@ import numpy as np
 
 def teiltragwerke(model) -> list:
     """Zusammenhängende Teile des Elementnetzes (Kopplungen verbinden),
-    jedes als Liste von Knotennummern."""
-    nn = model.nn
-    eltern = np.arange(nn)
+    jedes als Liste von Knotennummern - die groessten zuerst.
 
-    def finde(a):
-        while eltern[a] != a:
-            eltern[a] = eltern[eltern[a]]
-            a = eltern[a]
-        return a
-
-    def vereine(a, b):
-        ra, rb = finde(a), finde(b)
-        if ra != rb:
-            eltern[rb] = ra
-
+    Vektorisiert ueber scipy.sparse.csgraph.connected_components: der
+    Elementgraph (erster Knoten jedes Elements zu seinen uebrigen) als duenne
+    Matrix, die Zusammenhangskomponenten in C. Die Vereinigungs-Suche in
+    Python brauchte am Drehlager (1,8 Mio. Tetraeder, 10,9 Mio. Vereinigungen)
+    32 s je Aufruf, und die Modellpruefung des Berichts rief sie zweimal
+    (12.09.2026).
+    """
+    import itertools
+    from scipy import sparse
+    from scipy.sparse import csgraph
+    nn = int(model.nn)
+    if nn == 0:
+        return []
+    ne = len(model.elements)
+    if ne:
+        laengen = np.fromiter((len(e.nodes) for e in model.elements), int, count=ne)
+        flach = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), int,
+                            count=int(laengen.sum()))
+        elem = np.repeat(np.arange(ne), laengen)
+    else:
+        flach, elem = np.zeros(0, int), np.zeros(0, int)
+    gueltig = (flach >= 0) & (flach < nn)
+    flach, elem = flach[gueltig], elem[gueltig]
     belegt = np.zeros(nn, bool)
-    for e in model.elements:
-        kn = [int(k) for k in e.nodes if 0 <= int(k) < nn]
-        for k in kn:
-            belegt[k] = True
-        for k in kn[1:]:
-            vereine(kn[0], k)
+    belegt[flach] = True
+    zeilen, spalten = np.zeros(0, int), np.zeros(0, int)
+    if flach.size:
+        # Kante: erster gueltiger Knoten des Elements -> jeder weitere
+        # (elem ist aufsteigend: der erste Eintrag je Element per searchsorted)
+        start = np.searchsorted(elem, np.arange(ne), side="left")
+        erster = np.full(ne, -1, int)
+        hat = start < elem.size
+        idx = np.arange(ne)[hat]
+        hat2 = elem[start[hat]] == idx
+        erster[idx[hat2]] = flach[start[hat][hat2]]
+        a = erster[elem]
+        kante = a != flach
+        zeilen, spalten = a[kante], flach[kante]
+    kopp_a, kopp_b = [], []
     for kp in getattr(model, "kopplungen", []) or []:
-        a, b = int(getattr(kp, "node_a", -1)), int(getattr(kp, "node_b", -1))
-        if 0 <= a < nn and 0 <= b < nn:
-            vereine(a, b)
-    gruppen: dict = {}
-    for k in np.flatnonzero(belegt):
-        gruppen.setdefault(int(finde(int(k))), []).append(int(k))
-    return sorted(gruppen.values(), key=len, reverse=True)
+        i, j = int(getattr(kp, "node_a", -1)), int(getattr(kp, "node_b", -1))
+        if 0 <= i < nn and 0 <= j < nn:
+            kopp_a.append(i)
+            kopp_b.append(j)
+            belegt[i] = belegt[j] = True
+    if kopp_a:
+        zeilen = np.concatenate([zeilen, np.asarray(kopp_a, int)])
+        spalten = np.concatenate([spalten, np.asarray(kopp_b, int)])
+    if zeilen.size:
+        G = sparse.coo_matrix((np.ones(zeilen.size, np.int8), (zeilen, spalten)), shape=(nn, nn))
+        _n, marke = csgraph.connected_components(G, directed=False)
+    else:
+        marke = np.arange(nn)
+    knoten = np.flatnonzero(belegt)
+    if knoten.size == 0:
+        return []
+    order = np.argsort(marke[knoten], kind="stable")
+    sortiert = knoten[order]
+    grenzen = np.flatnonzero(np.diff(marke[sortiert])) + 1
+    gruppen = [g.tolist() for g in np.split(sortiert, grenzen)]
+    gruppen.sort(key=lambda g: (-len(g), g[0]))
+    return gruppen
 
 
 def gehaltene_knoten(model) -> tuple:

@@ -172,6 +172,30 @@ def test_warmstart_ohne_halt():
           f"{float(np.abs(u.reshape(kalt.u.shape) - kalt.u).max()):.2e}")
 
 
+def test_fortschritt_kontakt():
+    """Die Kontakt-Iteration meldet einen wachsenden Anteil im Fenster ihres
+    Lastfalls (0,35 … 0,60 in solve_all) - ein Balken statt eines Streifens."""
+    m = examples_lib.build_example("friction")
+    lf = list(m.load_cases)[0]
+    meldungen = []
+
+    def cb(text, anteil=None):
+        meldungen.append((str(text), anteil))
+    solver.solve_cases(m, [lf], progress=cb)
+    it = [a for tx, a in meldungen if tx.startswith("Kontakt-Iteration")]
+    check("jede Kontakt-Iteration meldet einen Anteil", len(it) > 3 and all(a is not None for a in it),
+          f"{len(it)} Schritte")
+    check("… wachsend, im Fenster 0,35 … 0,60 des Gesamtlaufs",
+          all(b > a for a, b in zip(it, it[1:])) and 0.35 <= min(it) and max(it) <= 0.60,
+          f"{it[0]:.3f} … {it[-1]:.3f}")
+    ohne = []
+    system = solver.StaticSystem(m)
+    F, _feq, _q, _temp = solver.case_loads(m, {lf: 1.0}, None)
+    solver.solve_with_contact(m, system, F, progress=lambda tx, a=None: ohne.append((tx, a)))
+    check("ohne Fenster (Einzelaufruf) bleibt es beim Text",
+          all(a is None for tx, a in ohne if tx.startswith("Kontakt-Iteration")))
+
+
 def test_grundlast():
     """Eine Grundlast (Vorspannung, Eigengewicht) wirkt in jeder direkt
     geloesten Rechnung mit: der Block mit Reibung, Auflast als Grundlast,
@@ -271,7 +295,8 @@ def test_einfrieren():
 
 
 def main():
-    for t in (test_sicherung, test_warmstart, test_warmstart_ohne_halt, test_grundlast, test_einfrieren):
+    for t in (test_sicherung, test_warmstart, test_warmstart_ohne_halt, test_fortschritt_kontakt,
+              test_grundlast, test_einfrieren):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

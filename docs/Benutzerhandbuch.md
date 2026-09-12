@@ -845,6 +845,18 @@ Lager hält:
 | genau eine Verdrehung frei (Scharnier) | **Zylinder** in Richtung der Drehachse |
 | Feder | **Schraubenfeder** in Richtung des Freiheitsgrads (in der Achse zwischen Spitze und Ebene, seitlich vom Knoten weg mit Endplatte); eine Drehfeder als Spirale um ihre Achse |
 
+**Farbe und Beschriftung der Lager** (seit 12.09.2026, „man erkennt das
+optisch schlecht"): jedes Symbol steht auf einer **Grundplatte mit
+Schraffur** — dem Boden des klassischen Lagerbilds —, und die **Farbe** sagt
+die Lagerart: dunkelblau fest (Einspannung), grün gelenkig (alle
+Verschiebungen gehalten), orange gleitend (eine Verschiebung frei), violett
+Feder, grau nur Verdrehungen gehalten. Ein Lager mit Ausfall, Schlupf,
+Reibung oder Grenzkraft trägt zusätzlich eine **rote Kugel** am Knoten. Der
+Schalter **Lagerbeschriftung** (Ribbon *Ansicht → Anzeigen*, neben *Lager*)
+schreibt an jedes Knotenlager, was es hält: „fest", „gelenkig" oder die
+gehaltenen Freiheitsgrade („uyz", „rxyz"), Federn mit „k", nichtlinear mit
+„*". Geprüft in `tests/test_supports.py` (`test_lagersymbolik`).
+
 **Linienlager** werden mit kleineren Symbolen **entlang der ganzen Linie**
 gezeichnet (auf einem Bogen auf der wahren Kurve), dazu die Linie selbst;
 **Flächenlager** im Raster **über die ganze gebettete Fläche**, die Symbole
@@ -1849,8 +1861,14 @@ die Einstellung wird abgeschaltet: Nachweise → Konfiguration, Haken
 nennt zu Beginn der Rechnung, wie viele Zustände so gerechnet werden, und je
 Zustand „Kontaktzustand eingefroren“. Geprüft am Block mit Reibung: der
 zweite Zustand (1,1-fache Horizontalkraft) weicht eingefroren um 7 % von der
-nichtlinearen Lösung ab und braucht keine Faktorisierung.
-DREHLAGER_EINFRIEREN_BENUTZER
+nichtlinearen Lösung ab und braucht keine Faktorisierung. Am Drehlager
+(12.09.2026, Zustände LF401 → LF404 einer Zugüberfahrt): der nichtlineare
+Zustand 1055–1209 s mit 41–42 Kontaktschritten, der eingefrorene 250 s —
+davon 15 s die Lösung (eine Rückwärtseinsetzung ohne Faktorisierung) und
+235 s der Nachlauf, die Spannungen der 1,8 Mio. Elemente, der jeden Zustand
+gleich trifft; Verschiebungen auf 0,16 % gleich, Spannungen im Median
+gleich, 99 % der Elemente innerhalb 0,1 N/mm² — nur an einer
+Spannungsspitze (4656 N/mm², Kopplung) weichen 216 N/mm² ab.
 
 **Lastspielzahl.** Die Lastspiele bzw. Wiederholungen jeder Ermüdungslast
 sind entweder eigene Werte oder — Haken „globale Lastspielzahl" im Dialog —
@@ -2300,7 +2318,14 @@ Nachweis mit seiner Verformung je Kombination.
   ihn mit `pip install pypardiso mkl`.
 * Die Berechnung läuft im Hintergrund. Die Statuszeile zeigt einen
   **Fortschrittsbalken mit Prozentzahl** und daneben, woran das Programm
-  gerade ist und wie lange es schon läuft („Berechnung: Lastfall W (5/12)
+  gerade ist und wie lange es schon läuft. Der Balken **wächst**: jede
+  Kontakt-Iteration rückt ihn im Fenster ihres Lastfalls weiter (1 − 0,85ⁿ,
+  denn wie viele Schritte es werden, weiß vorher niemand — am Drehlager 32
+  bis 43), und ein **drehendes Zeichen** mit der Laufzeit in der
+  Balkenbeschriftung zeigt jede halbe Sekunde, dass die Rechnung lebt — auch
+  während einer Faktorisierung von 13 s, in der sich sonst nichts rührt
+  (12.09.2026). Ein wandernder Streifen erscheint nur noch, solange der
+  Rechenkern noch keinen Anteil gemeldet hat („Berechnung: Lastfall W (5/12)
   (48 %, 73 s)“). Die Schritte sind: Gleichungssystem aufstellen,
   faktorisieren, Lastfälle, Kombinationen, Umhüllende, Nachweise. Jede
   Zeile steht auch im Protokoll. **Abbrechen** (Knopf neben dem Balken oder
@@ -2517,6 +2542,26 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
   nicht — sie führt Extremwerte, keine Tensoren; die Statuszeile sagt es, und
   gefärbt wird nichts. Die Größen und ihre Prüfung an geschlossenen Werten:
   `tests/test_spannungen.py`.
+* **Werte im Bild** (Ribbon *Ergebnisse → Werte im Bild*, seit 12.09.2026):
+  Schalter **Werte Stäbe**, **Werte Flächen**, **Werte Volumen** schreiben
+  Zahlenwerte an die Elemente. Stäbe: die gewählte Schnittgröße (Verlauf N, Vy, Vz, Mt, My, Mz)
+  an den Nachweisstellen — Filter in der Maske Ergebnisse: *nur Extremwerte
+  je Stab* (Vorgabe: kleinster und größter Wert je Element), *alle Stellen*,
+  *nur die Stabenden*, *nur Auswahl* (gewählte Elemente, Stäbe, Flächen,
+  Volumen); ohne Verlauf der Färbungswert in der Elementmitte. Flächen: der
+  Färbungswert je Element. Volumen: je Volumenkörper der betragsgrößte
+  Färbungswert an seinem Ort — ein Wert je Körper, nicht je Element.
+  Dazu eine **Schwelle** (nur |Wert| ≥ Schwelle) und *jeder n-te Wert*; mehr
+  als 200 Marken zeigt die Ansicht nicht (die betragsgrößten bleiben, die
+  Statuszeile sagt es). Die Kopfzeile nennt, was die Marken zeigen; sie
+  stehen damit auch im Berichtsbild. Zahlen mit deutschem Komma in der
+  Einheit der Größe (kN, kNm, N/mm², mm).
+* **Sonde** (Ribbon *Ergebnisse → Sonde*, Schalter): solange sie an ist,
+  setzt ein Klick auf das Modell eine Marke am nächsten Knoten mit dem Wert
+  der aktuellen Färbung — „S1 K312: 187,4". Beliebig viele Sonden; sie
+  folgen der Färbung beim Umschalten (Verschiebung, Vergleichsspannung,
+  Spannungskomponente) und bleiben, bis *Sonden löschen* sie entfernt.
+  Geprüft in `tests/test_gui_smoke.py` (Abschnitt „Werte im Bild und Sonde“).
 * **Werteskala** (Maske Ergebnisse, Ribbon *Ergebnisse → Werteskala*): die
   Grenzen der Farbskala sind **automatisch** (kleinster … größter Wert),
   **fest** (unten … oben) oder ein **Grenzwert**: 0 … Grenze, z. B. 355 für
@@ -2553,6 +2598,81 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
   Anschlüsse (jede Schraube, jede Naht), Verformungen (GZG), Kontakt,
   Zusammenfassung – HTML (Browser: Drucken → PDF), PDF (reportlab) oder
   Markdown.
+
+**Ergebnisse neben der Modelldatei.** Speichern schreibt die Rechnung —
+Lastfälle, Kombinationen, Umhüllende, Nachweise — in eine zweite Datei
+`<modell>.ergebnisse` neben die Modelldatei; Öffnen liest sie wieder ein,
+wenn sie zum Modell passt (Knoten- und Elementzahl, Koordinaten,
+Lastfallnamen), und das Programm steht danach wieder auf „berechnet“. Bis
+zum 12.09.2026 war nach dem Öffnen jede Rechnung weg — am Drehlager 18
+Minuten je Lastfall. Ein Modell, das nach der Rechnung verändert wurde,
+passt nicht mehr; das Protokoll sagt es, und die Datei bleibt liegen. Ohne
+Rechnung entfernt Speichern eine alte Ergebnisdatei. Die Datei enthält das
+Modell nicht (es steht in der Modelldatei) und kann groß werden: je
+Lastfall die Verschiebungen aller Knoten und die Spannungen aller Elemente
+(Drehlager: rund 90 MB je Lastfall). Geprüft in `tests/test_ergebnisse.py`.
+
+**Umfang des Berichts.** Der Dialog (Bericht → Bericht, Strg+R) fragt zuerst
+den **Umfang**: **Kurzform** (Vorgabe) nennt Kennwerte, Übersichten und die
+Zusammenfassung — ohne Listen je Knoten und Element, ohne Ergebnisse je
+Lastfall, ohne Schnittgrößenverläufe und ohne Nachweisdetails je Stab;
+**Mittel** fügt je fünf Lastfälle und Kombinationen, zehn Verläufe und die
+Nachweisdetails der zwanzig am höchsten ausgenutzten Stäbe hinzu;
+**Langform** ist alles. Die Haken darunter zeigen, was der Umfang enthält;
+ein von Hand gesetzter Haken macht daraus eine **eigene Auswahl**. Der
+gewählte Umfang bleibt am Modell.
+
+**Große Netze.** Ab 200 000 Elementen zeichnet der Bericht in den
+Systemdarstellungen die **Umrisse der Volumenkörper** statt der Außenflächen
+des Netzes; die Bildunterschrift sagt es. Lastbilder gibt es nur für die
+ersten Lastfälle (Kurzform 3, Mittel 10, Langform 30), die übrigen stehen in
+den Tabellen. Gemessen am Drehlager (1 812 423 Tetraeder, 422 Lastfälle, drei
+gerechnete Ergebnisse, 12.09.2026), vorher → nachher:
+
+| Kapitel | vorher | nachher |
+|---|---|---|
+| System (drei Ansichten) | 193 s, Facetten des Netzes | 5 s, Umrisse der Körper |
+| Einwirkungen (Lastbilder) | 422 Bilder, je etwa 1 min | Kurzform 3 s, Langform 24 s |
+| Ergebnisse (Übersicht, Kennwerte) | 154 s (Vergleichsspannung je Element in Python) | 13 s (vektorisiert) |
+| Zusammenfassung und Anhang (Modellprüfung) | 58 s (zweimal geprüft) | 16 s (einmal, Teiltragwerke über scipy) |
+| **Bericht gesamt** | **Stunden** | **Kurzform 41 s, Langform 120 s** |
+
+Die Kurzform-Datei des Drehlagers ist 21 MB groß (Langform 100 MB) — die
+Bilder sind SVG mit den Umrissen und den Lasten. Ein Fehler von gestern ist
+dabei behoben: Ermüdungslasten mit globaler Lastspielzahl rissen den Bericht
+(„unsupported format string passed to NoneType“); die Tabelle nennt jetzt
+„2e+06 (global)“.
+
+**Rahmen des Berichts** (Bericht → Berichtsrahmen, auch im Berichtsdialog): Kopf- und
+Fußzeile mit Platzhaltern `{projekt} {bauteil} {position} {auftraggeber}
+{bearbeiter} {datum} {modell}` (leere Teile fallen weg), beim Drucken auf
+jeder Seite; Ränder in mm, Schriftgröße, Rahmenlinie, Logo (PNG/JPG, Breite
+in mm, auf dem Titelblatt), Titelblatt und Inhaltsverzeichnis ein oder aus.
+Der Rahmen wird mit dem Modell gespeichert.
+
+**Gliederung analog InfoCAD.** Der Bericht setzt sich aus den Kapiteln des
+Programms und den **Einträgen** der Tabelle „Bericht" zusammen (Register
+Bericht → Gliederung, oder die Knöpfe an der Tabelle):
+
+* **Ansicht übernehmen** — das Bild der Ansicht samt Ergebnis, Färbung,
+  Verlauf und Überhöhung (wie bisher).
+* **Text einfügen** — ein eigener Absatz; Leerzeile trennt Absätze, „# Titel"
+  wird eine Überschrift, „- Punkt" eine Aufzählung.
+* **Tabelle einfügen** — eine Ergebnistabelle zum gezeigten Ergebnis:
+  Stabkräfte, Auflagerkräfte, Umhüllende, Nachweise EC3, Ermüdung, Kontakt,
+  Lastfälle oder Kombinationen (gekürzt wie im Bericht üblich).
+* **Datei einfügen…** — Bilder (PNG, JPG, GIF, WEBP), SVG als Grafik, CSV und
+  XLSX (erstes Blatt) als Tabelle, Markdown und Text als Absätze. PDF und DOCX
+  werden nicht eingebettet; der Bericht nennt die Datei an der Stelle, sie
+  ist als Anlage beizulegen.
+
+Jeder Eintrag hat einen **Platz im Bericht** (Spalte „Nach Kapitel" oder die
+Maske per Doppelklick): hinter Allgemeines, System, Einwirkungen,
+Ergebnisse, Nachweise EC3, Volumen, Ermüdung, Anschlüsse, Verformungen oder
+Zusammenfassung; ohne Angabe stehen die Einträge am Ende unter „Übernommene
+Ergebnisse". Reihenfolge, Name, Bildunterschrift und Bemerkung sind in der
+Tabelle änderbar (▲ ▼). Geprüft in `tests/test_report.py`
+(`test_gliederung_und_rahmen`).
 
 ## 11 Tastenkürzel
 

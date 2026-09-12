@@ -97,6 +97,23 @@ def test_volumen_und_kontakt():
     check("Volumen: von Mises je Knoten = Results.node_vm (Knoten ohne Schalenanteil)",
           np.allclose(sv[nur_vol], ref[nur_vol], rtol=1e-9, atol=1e-9) and len(nur_vol) > 50,
           f"{len(nur_vol)} Knoten, max {np.nanmax(sv):.3f} N/mm²")
+    # Results.node_vm (vektorisiert seit 12.09.2026) = die alte Schleife je Element
+    from statik3d.elements import solid as sl
+    acc, cnt = np.zeros(m.nn), np.zeros(m.nn)
+    for i, d in res.beam_forces.items():
+        for n in m.elements[i].nodes:
+            acc[n] += d["sig_max"]; cnt[n] += 1
+    for i, d in res.shell_stress.items():
+        for n in m.elements[i].nodes:
+            acc[n] += d["vM"]; cnt[n] += 1
+    for i, s in res.solid_res.items():
+        for n in m.elements[i].nodes:
+            acc[n] += sl.von_mises(s); cnt[n] += 1
+    alt_vm = np.where(cnt > 0, acc / np.maximum(cnt, 1), np.nan)
+    check("Results.node_vm vektorisiert = Schleife je Element (Staebe, Schalen, Volumen)",
+          np.allclose(res.node_vm, alt_vm, equal_nan=True, rtol=1e-9, atol=1e-6)
+          and np.isnan(res.node_vm).sum() == np.isnan(alt_vm).sum(),
+          f"max {np.nanmax(res.node_vm) / 1e6:.3f} N/mm²")
     knoten = np.array([c["node"] for c in res.contact])
     A = sp.kontaktflaechen(m, knoten)
     P = m.nodes[knoten]
