@@ -2533,7 +2533,8 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
   - **Stäbe**: σ_x Rand = |σ_N| + σ_My + σ_Mz, σ_N = N/A,
     σ_My = |M_y| z_max/I_y, σ_Mz = |M_z| y_max/I_z an den Stabenden, am Knoten
     gemittelt.
-  - **Kontakt**: Kontaktdruck p = F_n/A, Reibspannung τ = |F_t|/A, Spalt [mm]
+  - **Kontakt**: Zustand (Klassen offen, haftet, gleitet, fließt),
+    Kontaktdruck p = F_n/A, Reibspannung τ = |F_t|/A, Spalt [mm]
     und Kontaktkraft F_n [kN] an den Kontaktknoten; A ist die Einflussfläche
     des Knotens auf der Kontaktfläche, so dass Σ p·A = Σ F_n (am Block mit
     Reibung 90,00 kN = Auflast). Alle anderen Knoten bleiben grau.
@@ -2542,6 +2543,29 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
   nicht — sie führt Extremwerte, keine Tensoren; die Statuszeile sagt es, und
   gefärbt wird nichts. Die Größen und ihre Prüfung an geschlossenen Werten:
   `tests/test_spannungen.py`.
+**Kontaktergebnisse lesen** (12.09.2026, „ich sehe nicht, dass die Kontakte da
+wirken, wo sie sollen"): Die Färbung **Kontakt Zustand** zeigt je Kontaktknoten
+eine von vier Klassen in festen Farben — grau offen, grün haftet, orange
+gleitet, rot fließt — mit Beschriftung je Klasse statt einer Zahlenskala; die
+Statuszeile zählt die Knoten je Klasse. **Kontaktdruck**, **Reibspannung**,
+**Spalt** und **Kontaktkraft** färben nur die Kontaktknoten, alle anderen
+Knoten bleiben **neutral grau** (bis 12.09.2026 stahlblau, das wie ein kleiner
+Wert aussah). Die **Kugeln an den Kontaktknoten** (grün haftet, orange gleitet,
+grau offen, blau Kontakt ohne Reibung) erscheinen nur noch mit dem Schalter
+*Ergebnisse → Kontaktmarken* — vorher lagen sie über jedem Ergebnis, am
+Drehlager 21 586 Kugeln, die man für Kontaktergebnisse hielt, die „nicht
+weggehen". Die **Skala** schreibt ihre Zahlen aus („2390" statt „2.39e+03"),
+mit Nachkommastellen nach der Spanne (unter 100: eine, unter 10: zwei).
+
+**Skala und Kennwerte nur für das Sichtbare.** Sind Teile ausgeblendet
+(Sicht → *Selektion anzeigen*, *Auswahl ausblenden*, Schalter der
+Glasleiste), gelten die Grenzen der automatischen Werteskala und die
+Kennwerte im Bild nur für die sichtbaren Knoten und Elemente; die Kopfzeile
+sagt „Skala: nur sichtbare Teile", die Kennwerte tragen die Überschrift „nur
+sichtbare Teile". So bewertet man ein einzeln gezeigtes Bauteil an seiner
+eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
+`tests/test_spannungen.py` und der Oberflächenprüfung.
+
 * **Werte im Bild** (Ribbon *Ergebnisse → Werte im Bild*, seit 12.09.2026):
   Schalter **Werte Stäbe**, **Werte Flächen**, **Werte Volumen** schreiben
   Zahlenwerte an die Elemente. Stäbe: die gewählte Schnittgröße (Verlauf N, Vy, Vz, Mt, My, Mz)

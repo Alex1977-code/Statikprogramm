@@ -3298,6 +3298,12 @@ class MainWindow(QtWidgets.QMainWindow):
             "(Färbungswert am nächsten Knoten); beliebig viele, „Sonden löschen“ räumt auf")
         g.klein("Sonden löschen", self.sonden_loeschen,
                 hinweis="Alle Sonden aus der Ansicht nehmen")
+        self.act_kontaktmarken = g.schalter(
+            "Kontaktmarken", lambda _z: self.redraw(), False,
+            "Kugeln an den Kontaktknoten nach Zustand: grün haftet, orange gleitet, grau offen, "
+            "blau Kontakt ohne Reibung. Bis 12.09.2026 immer im Bild - am Drehlager 21 586 "
+            "Kugeln über jedem Ergebnis; jetzt nur mit diesem Schalter oder als Färbung "
+            "„Kontakt Zustand“")
         g = r.gruppe("Werteskala")
         self.act_werteskala = g.gross(
             "Werteskala", "▤", lambda: self.maske_zeigen("Ergebnisse"),
@@ -10333,6 +10339,16 @@ class MainWindow(QtWidgets.QMainWindow):
             always_visible=True, name="ergebniswerte")
         return len(texte)
 
+    def _sicht_text(self) -> str:
+        """Zusatz zur Kopfzeile, wenn Teile ausgeblendet sind: Skala und
+        Kennwerte gelten nur fuer das Sichtbare."""
+        text = ""
+        if any(self.versteckt.values()):
+            text += " · Skala: nur sichtbare Teile"
+        if getattr(self, "act_kontaktmarken", None) is not None and self.act_kontaktmarken.isChecked():
+            text += " · Kontaktmarken: grün haftet, orange gleitet, grau offen, blau Kontakt"
+        return text
+
     def _werte_text(self) -> str:
         """Zusatz zur Kopfzeile: was die Marken zeigen."""
         arten = self._werte_arten()
@@ -15432,24 +15448,45 @@ class MainWindow(QtWidgets.QMainWindow):
         name = ""
         clim = None
         farben, balken = {}, {}
+        sicht_knoten = self._sichtbare_knoten()          # None = alle
+        sicht_maske = None
+        if sicht_knoten is not None:
+            sicht_maske = np.zeros(m.nn, bool)
+            sk = np.asarray(sicht_knoten, int)
+            sicht_maske[sk[(sk >= 0) & (sk < m.nn)]] = True
         if u is not None and not modal:
             seite = str(self.cb_seite.currentData() or "max") if getattr(self, "cb_seite", None) else "max"
             point_scalars, cell_scalars, name = vp.result_field(m, r, field, self._util_map(field),
                                                                 seite=seite)
-            if point_scalars is not None:
+            klassen = spn.kategorien(*spn.feld(field)) if spn.feld(field) else None
+            if point_scalars is not None and klassen:
+                # Groesse in Klassen (Kontaktzustand): feste Farben, Beschriftung
+                # je Klasse, keine Werteskala
+                ps = np.asarray(point_scalars, float)
+                clim = [-0.5, len(klassen) - 0.5]
+                farben = {"cmap": list(spn.ZUSTAND_FARBEN[:len(klassen)]), "n_colors": len(klassen),
+                          "nan_color": vp.FARBE_OHNE_WERT,
+                          "annotations": {float(k): v for k, v in klassen.items()}}
+                balken = {"n_labels": 0, "fmt": "%.0f"}
+                if np.isfinite(ps).any():
+                    zahl = {v: int(np.sum(ps == float(k))) for k, v in klassen.items()}
+                    self.statusBar().showMessage(
+                        f"{name}: " + ", ".join(f"{n} {v}" for v, n in zahl.items() if n), 8000)
+            elif point_scalars is not None:
                 ps = np.asarray(point_scalars, float)
                 if np.isfinite(ps).any():
                     # Werteskala: automatisch, fest oder Grenzwert - darueber
-                    # eigene Farbe und der Groesstwert an der Skala (spannungen.grenzen)
-                    skala = spn.grenzen(self._werteskala(), ps)
+                    # eigene Farbe und der Groesstwert an der Skala
+                    # (spannungen.grenzen); Grenzen nur aus den sichtbaren Knoten
+                    skala = spn.grenzen(self._werteskala(), ps, maske=sicht_maske)
                     point_scalars = skala["werte"]
                     clim = list(skala["clim"])
-                    farben = {"n_colors": skala["n_colors"], "nan_color": "#9fb8d0"}
+                    farben = {"n_colors": skala["n_colors"], "nan_color": vp.FARBE_OHNE_WERT}
                     if skala["above_color"]:
                         farben["above_color"] = skala["above_color"]
                     if skala["below_color"]:
                         farben["below_color"] = skala["below_color"]
-                    balken = {"n_labels": skala["n_labels"]}
+                    balken = {"n_labels": skala["n_labels"], "fmt": spn.skalenformat(*clim)}
                     if skala["above_label"]:
                         balken["above_label"] = skala["above_label"]
                     if skala["below_label"]:
@@ -15498,23 +15535,26 @@ class MainWindow(QtWidgets.QMainWindow):
                                           name=f"undeformed_{nm}")
                 if point_scalars is not None:
                     warped.point_data[name] = np.asarray(point_scalars)[kn]
-                    self.plotter.add_mesh(warped, scalars=name, cmap="turbo", clim=clim,
+                    farbtafel = farben.pop("cmap", "turbo") if "cmap" in farben else "turbo"
+                    self.plotter.add_mesh(warped, scalars=name, cmap=farbtafel, clim=clim,
                                           scalar_bar_args=dict(self._farbskala(), title=name, **balken),
                                           name=f"result_{nm}", **farben,
                                           **dict({"line_width": breit},
                                                  **vp.darstellung(modus, show_edges, True)))
+                    if farbtafel != "turbo":
+                        farben["cmap"] = farbtafel
                 elif cell_scalars is not None and np.isfinite(np.asarray(cell_scalars, float)[eidx]).any():
                     warped.cell_data[name] = np.asarray(cell_scalars, float)[eidx]
                     self.plotter.add_mesh(warped, scalars=name, cmap="RdYlGn_r", clim=[0, 1.2],
-                                          nan_color="#9fb8d0",
-                                          scalar_bar_args=dict(self._farbskala(), title=name),
+                                          nan_color=vp.FARBE_OHNE_WERT,
+                                          scalar_bar_args=dict(self._farbskala(), title=name, fmt="%.2f"),
                                           name=f"result_{nm}",
                                           **dict({"line_width": 5 if nm == "netz" else 1},
                                                  **vp.darstellung(modus, show_edges, True)))
                 else:
                     # ohne Werte fuer diesen Teil (etwa Schalen bei der
                     # Stabausnutzung): in der Farbe fuer "kein Wert"
-                    farbe = "#9fb8d0" if cell_scalars is not None else "#4488cc"
+                    farbe = vp.FARBE_OHNE_WERT if cell_scalars is not None else "#4488cc"
                     self.plotter.add_mesh(warped, name=f"result_{nm}",
                                           **dict({"color": farbe, "line_width": breit},
                                                  **vp.darstellung(modus, show_edges)))
@@ -15524,8 +15564,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 farbig = netz.copy()
                 farbig.cell_data[guete_name] = np.asarray(guete, float)[eidx]
                 self.plotter.add_mesh(farbig, scalars=guete_name, cmap="RdYlGn",
-                                      clim=guete_clim, nan_color="#9fb8d0",
-                                      scalar_bar_args=dict(self._farbskala(), title=guete_name),
+                                      clim=guete_clim, nan_color=vp.FARBE_OHNE_WERT,
+                                      scalar_bar_args=dict(self._farbskala(), title=guete_name,
+                                                           fmt=spn.skalenformat(*guete_clim)),
                                       name=f"model_{nm}",
                                       **dict({"line_width": 4 if nm == "netz" else 1},
                                              **vp.darstellung(modus, show_edges, True)))
@@ -15551,13 +15592,18 @@ class MainWindow(QtWidgets.QMainWindow):
                     if pd is not None:
                         unit = "kN" if q in ("N", "Vy", "Vz") else "kNm"
                         pd["wert"] = pd["wert"] / 1e3
+                        wv = np.asarray(pd["wert"], float)
                         self.plotter.add_mesh(pd, scalars="wert", cmap="coolwarm", line_width=2,
                                               scalar_bar_args=dict(self._farbskala(True),
-                                                                   title=f"{q} [{unit}]"),
+                                                                   title=f"{q} [{unit}]",
+                                                                   fmt=spn.skalenformat(
+                                                                       float(np.nanmin(wv)) if wv.size else 0.0,
+                                                                       float(np.nanmax(wv)) if wv.size else 1.0)),
                                               name="diagram")
                 except Exception as ex:
                     self.log.appendPlainText(f"Verlauf: {ex}")
-            if getattr(r, "contact", None):
+            if getattr(r, "contact", None) and getattr(self, "act_kontaktmarken", None) is not None \
+                    and self.act_kontaktmarken.isChecked():
                 vp.add_contact_markers(self.plotter, m, r.contact, size)
 
         sichtbare_knoten = self._sichtbare_knoten()      # None = alle
@@ -15835,7 +15881,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 name = ""
             zeilen = vp.kopfzeile(self.model, r, name,
                                   (self.cb_field.currentText() + self._werteskala_text()
-                                   + self._werte_text())
+                                   + self._werte_text() + self._sicht_text())
                                   if r is not None else "",
                                   self.cb_diagram.currentText() if r is not None else "",
                                   faktor, einheiten=list(getattr(self, "_lasteinheiten", []) or []))
@@ -15878,8 +15924,12 @@ class MainWindow(QtWidgets.QMainWindow):
             # Die Ausnutzung gehoert immer dazu - auch wenn gerade nach der
             # Verformung eingefaerbt wird. Sonst muesste man erst umschalten,
             # um die Zahl zu sehen, nach der zuerst gefragt wird.
+            sicht = self._sichtbare_knoten()
+            elemente = None if sicht is None else self._elemente_ganz_in(sicht)
             zeilen = vp.kennwerte(self.model, r, self._ausnutzung_map(),
-                                  self.cb_diagram.currentText())
+                                  self.cb_diagram.currentText(), knoten=sicht, elemente=elemente)
+            if sicht is not None and zeilen:
+                zeilen.insert(0, "nur sichtbare Teile")
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kennwerte: {ex}")
             self._kennwerte_zeilen = []
