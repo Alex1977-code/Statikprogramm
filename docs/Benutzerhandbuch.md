@@ -2745,6 +2745,26 @@ Modell nicht (es steht in der Modelldatei) und kann groß werden: je
 Lastfall die Verschiebungen aller Knoten und die Spannungen aller Elemente
 (Drehlager: rund 90 MB je Lastfall). Geprüft in `tests/test_ergebnisse.py`.
 
+**Kontaktkräfte im Bericht.** Das Kapitel *Kontakt* nennt je
+**Kontaktpaar** (Kontaktbedingung, Kontaktpaar Knoten–Fläche, einseitiges
+Lager) die **Kontaktkräfte** als Zahl statt nur als Liste der Knoten: die
+Summe der Normalkräfte ΣF_n der aktiven Knoten (Druck positiv), die
+Resultierende R aller Kontaktkräfte (Normal- und Reibkräfte) auf die
+Kontaktknoten mit ihren drei Komponenten, die resultierende Reibkraft |F_t|
+(nicht die Summe der Knotenbeträge — am Block mit Reibung 20 kN statt
+26 kN), den größten Kontaktdruck p = F_n/A, die wirksame Fläche
+A der aktiven Knoten (aus den Einflussflächen der Kontaktknoten) und die
+Zahl der aktiven, haftenden und gleitenden Knoten. Zuerst steht eine
+**Übersicht** mit dem maßgebenden Ergebnis je Kontaktpaar (größte
+Normalkraftsumme), dann je Lastfall und Kombination die Tabelle der
+Kontaktpaare — in der Kurzform für die ersten 5, im mittleren Umfang für 20
+Ergebnisse, in der Langform für alle. Die Liste **je Knoten** (F_n, F_t,
+Spalt) gibt es nur noch in der Langform; die Kurzform des Drehlagers blieb
+damit lesbar. Am Block mit Reibung (Auflast 90 kN, Horizontalkraft 20 kN)
+stehen ΣF_n = 90 kN, ΣF_t = 20 kN und die Aufstandsfläche 0,16 m² — geprüft
+in `tests/test_spannungen.py` (`test_kontaktkraefte`) und
+`tests/test_report.py`.
+
 **Umfang des Berichts.** Der Dialog (Bericht → Bericht, Strg+R) fragt zuerst
 den **Umfang**: **Kurzform** (Vorgabe) nennt Kennwerte, Übersichten und die
 Zusammenfassung — ohne Listen je Knoten und Element, ohne Ergebnisse je

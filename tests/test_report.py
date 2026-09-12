@@ -198,6 +198,22 @@ def test_contact_report():
     check("Kontakt: Status offen/Kontakt", "offen" in html and "Kontakt" in html)
     check("Kontakt: Tabelle einseitige Lager", "Einseitige Lager" in html)
     check("Kontakt: Penalty im Rechenverfahren", "Penalty" in html)
+    # Kontaktkraefte je Kontaktpaar: Summe, Resultierende, massgebendes Ergebnis
+    from statik3d import spannungen as spn
+    from statik3d.report.html import fmt
+    kk = spn.kontaktkraefte(m, r)
+    check("Kontakt: Kraefte je Kontaktpaar (zwei einseitige Lager = zwei Gruppen)", len(kk) == 2,
+          str([(k["name"], round(k["Fn"])) for k in kk]))
+    check("Kontakt: Tabelle Kontaktkraefte je Kontaktpaar mit massgebendem Ergebnis",
+          "Kontaktkräfte je Kontaktpaar" in html and "maßgebend" in html and "ΣF_n [kN]" in html)
+    aktiv = [k for k in kk if k["aktiv"]]
+    check("Kontakt: die Summe der Normalkraft des tragenden Lagers steht in der Tabelle",
+          bool(aktiv) and fmt(aktiv[0]["Fn"] / 1e3, 2) in html,
+          str([fmt(k["Fn"] / 1e3, 2) for k in kk]))
+    check("Kontakt: Langform nennt auch die Knoten", "je Knoten (F_n" in html)
+    html_kurz = Report(m, results=r, options={"umfang": "kurz"}).html()
+    check("Kontakt: Kurzform nennt die Kontaktkraefte, aber nicht die Knotenliste",
+          "Kontaktkräfte je Kontaktpaar" in html_kurz and "je Knoten (F_n" not in html_kurz)
     _svgs_parse(html)
     _assert_since(n0)
 

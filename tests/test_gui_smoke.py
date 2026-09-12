@@ -1610,7 +1610,13 @@ def main():
         check("Linie unter dem Zeiger gefunden",
               vpg.line_at(mg, [2.0, 0.0, 0.0], mg.characteristic_size()) == "L1")
         # Intelligente Auswahl (Vorgabe: an): ein Klick auf eine Linie des
-        # geschlossenen Rands holt den ganzen Ring, der naechste nimmt ihn weg
+        # geschlossenen Rands holt den ganzen Ring, der naechste nimmt ihn weg.
+        # Der Klick sucht zuerst die Linie unter dem **echten** Zeiger; steht
+        # der zufaellig ueber der Ansicht, traefe er eine andere Linie als der
+        # uebergebene Punkt (Lauf 30: vier Klicks, [] statt vier Linien). Hier
+        # zaehlt allein der Punkt.
+        _linie_alt = w._linie_am_zeiger
+        w._linie_am_zeiger = lambda: None
         w._picked([2.0, 0, 0])
         check("ein Klick wählt den geschlossenen Rand (intelligente Auswahl): vier Linien",
               sorted(w.sel_linien) == ["L1", "L2", "L3", "L4"], str(w.sel_linien))
@@ -1627,6 +1633,7 @@ def main():
               "L1" not in w.sel_linien and len(w.sel_linien) == 3, str(w.sel_linien))
         w._picked([2.0, 0.0, 0.0])
         w.act_klug.setChecked(True)
+        w._linie_am_zeiger = _linie_alt
 
         f = mg.add_flaeche("F1", w.sel_linien, dicke=list(mg.shells)[0],
                            material=list(mg.materials)[0], teilung=[8, 4])

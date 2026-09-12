@@ -1059,11 +1059,20 @@ class ContactSystem:
                 status = "Haften"
             else:
                 status = "Kontakt"
+            # Die Kraft auf den Kontaktknoten, global, wie in nodal_forces:
+            # Normalkraft laengs n, Reibkraft entgegen den Tangentialrichtungen
+            f = np.zeros(3)
+            if c.active and c.kind != "dof_rot":
+                f = c.Fn * c.normal
+                if c.ct is not None:
+                    t1, t2 = _axes_of(c)
+                    f = f - (c.Ft[0] * t1 + c.Ft[1] * t2)
             out.append({"kind": c.kind, "label": c.label, "node": int(c.node),
                         "master": c.master, "gap": float(c.g), "Fn": float(c.Fn),
                         "Ft": float(np.linalg.norm(c.Ft)), "status": status,
                         "normal": c.normal.tolist(), "frozen": c.frozen,
-                        "dof": int(c.dof), "limit": float(c.limit)})
+                        "dof": int(c.dof), "limit": float(c.limit),
+                        "F_vek": [float(x) for x in f]})
         return out
 
     def nodal_forces(self, nn: int) -> np.ndarray:

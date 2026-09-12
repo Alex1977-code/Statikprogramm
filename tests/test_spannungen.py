@@ -172,6 +172,37 @@ def test_volumen_und_kontakt():
           and sp.beschriftung("kontakt", "spalt") == "Kontakt Spalt [mm]")
 
 
+def test_kontaktkraefte():
+    """Kontaktkraefte je Kontaktpaar: Block (0,4 x 0,4 m) auf starrer Platte,
+    Auflast 90 kN, Horizontalkraft 20 kN, Reibung 0,3."""
+    from statik3d import examples_lib as ex, solver
+    m = ex.block_friction_example()
+    rs = solver.solve_static(m)
+    kk = sp.kontaktkraefte(m, rs)
+    check("eine Gruppe: das Kontaktpaar Block/Platte", len(kk) == 1 and kk[0]["name"] == "Block/Platte",
+          str([k["name"] for k in kk]))
+    k = kk[0]
+    check("Summe der Normalkraefte = Auflast 90 kN (Druck positiv)", abs(k["Fn"] - 90e3) < 0.02 * 90e3,
+          f"{k['Fn'] / 1e3:.2f} kN")
+    Rn = np.asarray(k["Rn"], float)
+    check("Normalkraft-Resultierende senkrecht zur Platte, Betrag = ΣF_n",
+          abs(np.linalg.norm(Rn) - k["Fn"]) < 0.01 * k["Fn"] and abs(Rn[2]) > 0.99 * np.linalg.norm(Rn),
+          f"Rn = {np.round(Rn / 1e3, 2)} kN")
+    check("resultierende Reibkraft = Horizontalkraft 20 kN (Gleichgewicht), Summe der Betraege groesser",
+          abs(k["Ft"] - 20e3) < 0.05 * 20e3 and k["Ft_summe"] > k["Ft"],
+          f"|F_t| = {k['Ft'] / 1e3:.2f} kN, Summe der Betraege {k['Ft_summe'] / 1e3:.2f} kN")
+    check("Gesamtresultierende R = Normal- und Reibkraft: 90 kN senkrecht, 20 kN laengs x (gegen die Last)",
+          abs(k["R"][2] - 90e3) < 0.02 * 90e3 and abs(abs(k["R"][0]) - 20e3) < 0.05 * 20e3
+          and abs(k["R_betrag"] - np.hypot(90e3, 20e3)) < 0.02 * 90e3,
+          f"R = {np.round(np.asarray(k['R']) / 1e3, 2)} kN")
+    check("wirksame Flaeche der aktiven Knoten hoechstens die Aufstandsflaeche 0,16 m², mindestens die Haelfte",
+          0.08 <= k["A"] <= 0.16 * 1.001, f"{k['A']:.4f} m², {k['aktiv']} von {k['anzahl']} aktiv")
+    check("groesster Kontaktdruck mindestens der mittlere Druck ΣF_n / A",
+          k["p_max"] >= k["Fn"] / k["A"] * 0.999 and np.isfinite(k["p_max"]),
+          f"p_max {k['p_max'] / 1e6:.3f} N/mm², Mittel {k['Fn'] / k['A'] / 1e6:.3f}")
+    check("ohne Kontaktergebnis: leere Liste", sp.kontaktkraefte(m, solver.Results(name="x", kind="case", model=m)) == [])
+
+
 def test_werteskala():
     w = np.array([0.0, 100.0, 250.0, 400.0, np.nan])
     s = sp.Werteskala(modus="grenze", grenze=355.0, stufen=9)
@@ -217,7 +248,8 @@ def test_werteskala():
 
 
 def main():
-    for t in (test_volumen, test_flaechen_und_staebe, test_volumen_und_kontakt, test_werteskala):
+    for t in (test_volumen, test_flaechen_und_staebe, test_volumen_und_kontakt, test_werteskala,
+              test_kontaktkraefte):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
