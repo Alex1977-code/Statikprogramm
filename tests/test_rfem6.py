@@ -2009,6 +2009,59 @@ def test_kein_stilles_verschmelzen():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_fortschritt_beim_lesen():
+    """Der Leser meldet seine Phasen fuer den Balken der Oberflaeche - und
+    ohne Rueckruf liest er wie bisher."""
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "fortschritt.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0), (4, 0, 0)],
+            lines=[[1, 2, 3]],
+            members=[(1, None, None)],
+            supports=[("Gelenkig", (INF, INF, INF, INF, 0.0, 0.0), (0,) * 6, None, [1]),
+                      ("Gleitlager", (0.0, INF, INF, 0.0, 0.0, 0.0), (0,) * 6, None, [3])],
+        )
+        aufrufe = []
+        log = []
+        m = R6.read_rf6(f, log=log, fortschritt=lambda a, t: aufrufe.append((a, t)))
+        anteile = [a for a, _t in aufrufe]
+        check("Fortschritt: es wird gemeldet", len(aufrufe) >= 10, f"{len(aufrufe)} Meldungen")
+        check("Fortschritt: beginnt bei 0 und endet bei 1",
+              anteile and anteile[0] == 0.0 and anteile[-1] == 1.0,
+              f"{anteile[:1]} … {anteile[-1:]}")
+        check("Fortschritt: Anteile steigen monoton",
+              all(b >= a for a, b in zip(anteile, anteile[1:])),
+              str([round(a, 2) for a in anteile]))
+        texte = " | ".join(t for _a, t in aufrufe)
+        check("Fortschritt: die Texte nennen die Phasen",
+              all(w in texte for w in ("Behälter", "Knoten", "Linien", "Stäbe", "Lager",
+                                       "Flächen", "Volumen", "Lastfälle", "Lasten",
+                                       "Kombinationen", "prüfen", "gelesen")),
+              texte[:200])
+        check("Fortschritt: der letzte Text nennt Knoten und Elemente",
+              "3 Knoten" in aufrufe[-1][1] and "2 Elemente" in aufrufe[-1][1], aufrufe[-1][1])
+
+        m2 = R6.read_rf6(f, log=[])
+        check("ohne Rueckruf dasselbe Modell",
+              m2.nn == m.nn == 3 and len(m2.elements) == len(m.elements) == 2
+              and len(m2.supports) == len(m.supports) == 2)
+
+        # ueber den Dispatcher: der Rueckruf kommt bis in den Leser, die
+        # Nachbereitung meldet danach, und die Anteile steigen weiter
+        aufrufe2 = []
+        m3 = import_file(f, log=[], fortschritt=lambda a, t: aufrufe2.append((a, t)))
+        anteile2 = [a for a, _t in aufrufe2]
+        check("import_file: Leser und Nachbereitung melden, monoton, bis 0,95",
+              len(aufrufe2) > len(aufrufe) and all(b >= a for a, b in zip(anteile2, anteile2[1:]))
+              and anteile2[0] == 0.0 and abs(anteile2[-1] - 0.95) < 1e-9
+              and any("Nachbereitung" in t for _a, t in aufrufe2)
+              and any("Stäbe" in t for _a, t in aufrufe2) and m3.nn == 3,
+              f"{len(aufrufe2)} Meldungen, {anteile2[:2]} … {anteile2[-2:]}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     for t in (test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
@@ -2020,7 +2073,8 @@ def main():
               test_ergebniskombination_oder, test_ermuedungslasten_aus_fat,
               test_dispatcher_und_hilfen,
               test_knoten_zusammenfuehren, test_boegen_und_kreisflaechen,
-              test_steifigkeit_rueckzeiger, test_kein_stilles_verschmelzen):
+              test_steifigkeit_rueckzeiger, test_kein_stilles_verschmelzen,
+              test_fortschritt_beim_lesen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

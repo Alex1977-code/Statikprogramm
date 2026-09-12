@@ -1143,6 +1143,13 @@ class LoadCase:
     situation: str = ""                    # Situation (Stellung + wirksame Elemente); "" = Grundstellung
     theorie: str = ""                      # "" (wie Einstellung) | I | II | III
     nummer: int = 0                        # Lastfallnummer (0 = keine vergeben)
+    #: Grundlast: wirkt in jeder **direkt** geloesten Rechnung mit (Modelle mit
+    #: Kontakt oder Ausfallstaeben) - Lastfaelle, Kombinationen und die
+    #: Zustaende der Ermuedungslasten -, auch wenn sie dort nicht genannt ist.
+    #: Fuer die Vorspannung der Anker am Drehlager (12.09.2026): ohne sie hat
+    #: jeder der 164 Ermuedungszustaende einen anderen Kontaktzustand. In
+    #: einem linearen Modell ist sie ein gewoehnlicher Lastfall (Ueberlagerung).
+    grundlast: bool = False
     nodal_loads: list[NodalLoad] = field(default_factory=list)
     beam_loads: list[BeamLoad] = field(default_factory=list)
     face_loads: list[FaceLoad] = field(default_factory=list)
@@ -1222,6 +1229,7 @@ class LoadCase:
             "situation": self.situation,
             "theorie": self.theorie,
             "nummer": int(self.nummer or 0),
+            "grundlast": bool(getattr(self, "grundlast", False)),
             # Aus Objektlasten erzeugte Elementlasten werden **nicht**
             # gespeichert - sie entstehen beim naechsten Verteilen neu. Sonst
             # laegen sie nach dem Laden doppelt auf dem Netz.
@@ -1245,6 +1253,7 @@ class LoadCase:
         lc.situation = d.get("situation", "") or ""
         lc.theorie = d.get("theorie", "") or ""
         lc.nummer = int(d.get("nummer", 0) or 0)
+        lc.grundlast = bool(d.get("grundlast", False))
         lc.nodal_loads = [NodalLoad(**l) for l in d.get("nodal_loads", [])]
         lc.beam_loads = [BeamLoad(**l) for l in d.get("beam_loads", [])]
         lc.face_loads = [FaceLoad(**l) for l in d.get("face_loads", [])]
@@ -2371,6 +2380,11 @@ class DesignSettings:
     #: dem RFEM-Import, dessen Datei keine Lastspielzahlen fuehrt. Je Last
     #: ist der Wert im Dialog "Ermuedungslast" ueberschreibbar.
     ermuedung_lastspiele: float = 2e6
+    #: Zustaende einer Ermuedungslast in Kontaktmodellen: der erste Zustand
+    #: wird nichtlinear geloest, die weiteren mit seinem eingefrorenen
+    #: Kontaktzustand linear (eine Rueckwaertseinsetzung je Zustand statt
+    #: 30 bis 40 Kontaktschritten - am Drehlager 18 min je Zustand).
+    ermuedung_kontakt_einfrieren: bool = True
     # --- Theorie II. Ordnung und Imperfektionen (EN 1993-1-1, 5.2 und 5.3)
     theorie2: str = "aus"              # aus | auto (nach 5.2.1(3)) | ein
     imperfektionen: bool = True        # Ersatzimperfektionen nach 5.3.2 ansetzen
@@ -2709,6 +2723,8 @@ class Model:
         # Bemassungen (bemassung.Bemassung) und ihre Einstellungen
         self.bemassungen: dict = {}
         self.bemassung_einstellung = None      # None = Vorgabe (bemassung.BemassungEinstellung)
+        # Farbskala der Ergebnisanzeige (spannungen.Werteskala); None = automatisch
+        self.werteskala = None
         # Einheiten und Nachkommastellen fuer Ansicht und Tabellen (einheiten.Einheiten)
         self.einheiten = Einheiten()
         # Metadaten (Bericht)
@@ -4546,6 +4562,8 @@ class Model:
             "bemassungen": [asdict(x) for x in self.bemassungen.values()],
             "bemassung_einstellung": (asdict(self.bemassung_einstellung)
                                       if self.bemassung_einstellung is not None else None),
+            "werteskala": (self.werteskala.to_dict()
+                           if getattr(self, "werteskala", None) is not None else None),
             "einheiten": asdict(self.einheiten),
         }
 
@@ -4673,6 +4691,9 @@ class Model:
                 m.bemassung_einstellung = _dc(BemassungEinstellung, d["bemassung_einstellung"])
         if d.get("einheiten"):
             m.einheiten = _dc(Einheiten, d["einheiten"])
+        if d.get("werteskala"):
+            from .spannungen import Werteskala
+            m.werteskala = Werteskala.from_dict(d["werteskala"])
         if d.get("stellungen"):
             from .bridges.positions import Stellung
             m.stellungen = [_dc(Stellung, x) for x in d["stellungen"]]

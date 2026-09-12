@@ -20,10 +20,12 @@ from . import svg  # noqa: F401
 
 
 def write_report(model, analysis=None, path: str = "bericht.html", fmt: str = "html",
-                 results=None, **options) -> str:
+                 results=None, fortschritt=None, **options) -> str:
     """Bericht schreiben. fmt: 'html' | 'pdf' | 'md' (Markdown). Rueckgabe: Pfad.
-    Zusaetzliche Schluesselwortargumente sind Berichtsoptionen (siehe Report.DEFAULTS)."""
+    Zusaetzliche Schluesselwortargumente sind Berichtsoptionen (siehe Report.DEFAULTS).
+    ``fortschritt(anteil 0…1, text)`` meldet jedes Kapitel und das Schreiben."""
     rep = Report(model, analysis, results=results, options=options or None)
+    rep.fortschritt = fortschritt
     f = (fmt or "html").lower().lstrip(".")
     if f in ("html", "htm"):
         return rep.to_html(path)

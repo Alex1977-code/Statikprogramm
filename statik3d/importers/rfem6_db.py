@@ -889,9 +889,17 @@ def _partials(db: Db, sc: dict) -> list:
     return out
 
 
+def _melde(fortschritt, anteil: float, text: str) -> None:
+    """Fortschritt weitergeben: ``fortschritt(anteil 0…1, text)``; ohne
+    Rueckruf geschieht nichts - so bleibt der Leser ohne Oberflaeche
+    unveraendert."""
+    if fortschritt is not None:
+        fortschritt(float(anteil), str(text))
+
+
 def read_rf6(path: str, model: Model = None, log: list = None,
              nonlinearity_map=None, keep_db: bool = False,
-             structure_only: bool = False, **_) -> Model:
+             structure_only: bool = False, fortschritt=None, **_) -> Model:
     """RFEM-6-Projektdatei (.rf6) oder ``model.db`` einlesen.
 
     Uebernommen werden Knoten, Linien, Staebe mit Querschnitt, Material und
@@ -905,14 +913,21 @@ def read_rf6(path: str, model: Model = None, log: list = None,
     Flaechen und Volumen entfaellt. Ohne diese Angabe wird alles uebernommen -
     zur Ansicht vollstaendig, fuer eine Rechnung erst nach dem Vernetzen der
     Flaechen.
+
+    ``fortschritt(anteil, text)`` meldet die Phasen (Behaelter, Knoten,
+    Linien, Staebe, Lager, Flaechen, Volumen, Freigaben, Lasten,
+    Kombinationen, Pruefung) mit steigendem Anteil 0…1 - fuer den Balken der
+    Oberflaeche. Ohne Rueckruf liest der Leser wie bisher.
     """
     m = model or Model(os.path.splitext(os.path.basename(path))[0])
+    _melde(fortschritt, 0.0, f"Behälter öffnen: {os.path.basename(path)}")
     fmt = format_info(path)
     if fmt:
         C.say(log, "RFEM-Projektdatei: " + " ".join(
             f"{k}={v}" for k, v in fmt.items() if k in ("programm", "version", "format")))
     db_path = extract_db(path)
     tmp_dir = os.path.dirname(db_path) if db_path != path else None
+    _melde(fortschritt, 0.04, "Modelldatenbank öffnen")
     con = connect(db_path)
     try:
         db = Db(con)
@@ -930,17 +945,22 @@ def read_rf6(path: str, model: Model = None, log: list = None,
         else:
             C.say(log, "Keine mesh.xml im Behälter - es gilt die Vorgabe des "
                        f"Programms ({m.netz.beschreibung()}).")
-        _build(db, m, log, nlmap)
+        _build(db, m, log, nlmap, fortschritt)
         if structure_only:
+            _melde(fortschritt, 0.98, "Auf die Stabstruktur beschränken")
             keep_structure(m, log)
     finally:
         con.close()
         if tmp_dir and not keep_db:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+    _melde(fortschritt, 1.0, f"Datei gelesen: {m.nn} Knoten, {len(m.elements)} Elemente")
     return m
 
 
-def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
+def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
+    # Die Anteile sind grob nach der Lesezeit am Drehlager gesetzt (1 s
+    # gesamt): Flaechen und Volumen mit ihren Randkurven kosten das meiste.
+    _melde(fortschritt, 0.06, "Knoten lesen")
     # ---- Knoten -------------------------------------------------------
     node_of: dict[int, int] = {}
     user_of: dict[int, int] = {}
@@ -960,6 +980,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
         raise ImportError("Die Modelldatenbank enthaelt keine Knoten.")
     m.add_nodes(np.asarray(coords, float))
     C.say(log, f"{len(coords)} Knoten gelesen")
+    _melde(fortschritt, 0.12, f"{len(coords)} Knoten - Linien lesen")
 
     # ---- Linien -------------------------------------------------------
     line_nodes = _line_nodes(db)
@@ -982,6 +1003,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     krumm = ", ".join(f"{n}x {t}" for t, n in sorted(arten.items()) if t != "polyline")
     C.say(log, f"{len(line_name)} Linien gelesen"
                + (f" ({krumm}, ueber ihre Kontrollpunkte gefuehrt)" if krumm else ""))
+    _melde(fortschritt, 0.22, f"{len(line_name)} Linien - Stäbe lesen")
 
     # ---- Staebe -------------------------------------------------------
     seccache: dict[int, tuple] = {}
@@ -1040,6 +1062,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
     if weggelassen:
         C.say(log, "  nicht uebernommen (keine Tragglieder): "
                    + ", ".join(f"{n}x {k}" for k, n in sorted(weggelassen.items())))
+    _melde(fortschritt, 0.32, f"{len(m.members)} Stäbe - Lager lesen")
 
     # ---- Knotenlager ---------------------------------------------------
     n_sup = 0
@@ -1091,6 +1114,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
         C.say(log, f"  {name}: {len(lines)} Linien, {len(nodes)} Knoten")
 
     # ---- Flaechen und Flaechenlager -------------------------------------
+    _melde(fortschritt, 0.40, "Flächen lesen")
     surf_nodes, surf_area, surf_ecken = _surface_nodes(db, node_of, m, line_name)
     n_surf = db.count("Surface")
     C.say(log, f"{len(surf_nodes)} von {n_surf} Flaechen mit Randknoten gelesen")
@@ -1139,12 +1163,16 @@ def _build(db: Db, m: Model, log: list, nlmap: dict) -> None:
                    f"A = {sum(areas.values()):.3f} m^2 - Lager in Flaechenachsen: uz ist die "
                    "Flaechennormale, ux/uy liegen in der Flaeche")
 
+    _melde(fortschritt, 0.58, f"{len(surf_name)} Flächen - Volumen lesen")
     solid_name = _solids(db, m, surf_nodes, log, matcache, surf_name)
+    _melde(fortschritt, 0.70, f"{len(solid_name)} Volumen - Freigaben, Gelenke, "
+                              "Strukturmodifikationen lesen")
     _surface_releases(db, m, log, nlmap, surf_name, solid_name)
     _liniengelenke(db, m, log, line_name, surf_name)
     strukturmod = _strukturmodifikationen(db, m, log, member_user, node_user)
     _load_cases(db, m, log, surf_els, node_of, member_name, surf_name,
-                line_name, solid_name, strukturmod)
+                line_name, solid_name, strukturmod, fortschritt=fortschritt)
+    _melde(fortschritt, 0.96, "Modell prüfen")
     _diagnose(m, log)
 
 
@@ -1201,13 +1229,15 @@ ACTION_CATEGORY = {1: "G", 2: "G", 3: "Q", 11: "Q", 12: "Q", 13: "Q"}
 def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
                 node_of: dict = None, member_name: dict = None,
                 surf_name: dict = None, line_name: dict = None,
-                solid_name: dict = None, strukturmod: dict = None) -> None:
+                solid_name: dict = None, strukturmod: dict = None,
+                fortschritt=None) -> None:
     """Lastfaelle mit Namen, Kategorie und Eigengewichtsfaktor uebernehmen.
 
     Die Lasten selbst (Vorspannung, Flaechenlasten, freie Lasten) haengen in
     RFEM an Objekten, die ohne Netz nicht aufloesbar sind; ihre Anzahl steht
     im Protokoll.
     """
+    _melde(fortschritt, 0.78, "Lastfälle lesen")
     n = 0
     lc_name: dict[int, str] = {}
     mit_mod: dict[str, int] = {}
@@ -1247,9 +1277,12 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     if ohne_mod:
         C.warn(log, f"  {ohne_mod} Lastfaelle verweisen auf eine Strukturmodifikation, "
                     "die nicht zu lesen war - sie rechnen mit dem vollen System.")
+    _melde(fortschritt, 0.82, f"{n} Lastfälle - Lasten lesen")
     _loads(db, m, lc_name, surf_els or {}, log, node_of, member_name, surf_name,
            line_name, solid_name)
+    _melde(fortschritt, 0.90, "Kombinationen lesen")
     _combinations(db, m, lc_name, log)
+    _melde(fortschritt, 0.94, f"{len(m.combinations)} Kombinationen - Kerbfälle vorschlagen")
     # Die Datei fuehrt keine Kerbfaelle (Drehlager: 64 Zugstaebe Rund 40/20/16,
     # 108 Volumen - keiner). Vorschlaege aus dem Modell, als solche markiert.
     from ..ec3 import kerbfaelle

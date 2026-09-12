@@ -15,7 +15,8 @@ machen:
 
 * die **Schnellzugriffsleiste** (Speichern, Rueckgaengig, Wiederholen,
   Berechnen, Auswahl aufheben) - dieselben Aktionsobjekte, nicht neue Befehle,
-* die **Tastenkuerzel**,
+* die **Tastenkuerzel** - sie haengen am Fenster und gelten darum in jedem
+  Register; jede Tastenfolge gehoert genau einem Befehl (:meth:`Ribbon.kuerzel_setzen`),
 * die **Befehlssuche** rechts im Ribbon.
 
 Aufbau::
@@ -102,8 +103,7 @@ class Gruppe(QtWidgets.QWidget):
         if fn is not None:
             a.triggered.connect(lambda _=False, f=fn: f())
         if kuerzel:
-            a.setShortcut(QtGui.QKeySequence(kuerzel))
-            a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+            self._ribbon.kuerzel_setzen(a, kuerzel)
         h = hinweis or text
         a.setToolTip(f"{h}" + (f"   ({kuerzel})" if kuerzel else ""))
         self._ribbon.merken(Befehl(self._register, self._name, text, a, hinweis))
@@ -156,9 +156,9 @@ class Gruppe(QtWidgets.QWidget):
         return a
 
     def schalter(self, text: str, fn=None, an: bool = False, hinweis: str = "",
-                 symbol: str = "") -> QtGui.QAction:
+                 symbol: str = "", kuerzel: str = "") -> QtGui.QAction:
         """Ein Nebenbefehl zum Ein- und Ausschalten."""
-        a = self.klein(text, None, "", hinweis, symbol=symbol)
+        a = self.klein(text, None, kuerzel, hinweis, symbol=symbol)
         a.setCheckable(True)
         a.setChecked(an)
         if fn is not None:
@@ -287,6 +287,34 @@ class Ribbon(QtWidgets.QWidget):
         if self._kontext is None:
             return False
         self.tabs.setCurrentWidget(self._kontext)
+        return True
+
+    def kuerzel_setzen(self, a: QtGui.QAction, kuerzel: str) -> bool:
+        """Das Tastenkuerzel eines Befehls anlegen - einmal je Tastenfolge.
+
+        Die Aktion wird zusaetzlich dem Fenster zugeordnet. Qt haelt ein
+        anwendungsweites Kuerzel nur fuer aktiv, solange eines der Widgets
+        seiner Aktion sichtbar ist - und der Knopf im hinteren Register ist
+        es nicht (gemessen 12.09.2026 mit QTest.keyClick: Strg+A waehlte im
+        Register „Ansicht“ 0 von 17 Knoten, im Register „Start“ 17 von 17;
+        ebenso stumm ausserhalb ihres Registers waren Strg+N/O/I/E/Q, Strg+R,
+        Strg+B, Strg+Umschalt+C und Umschalt+F1..F7). Das Fenster ist immer
+        sichtbar; ein modaler Dialog sperrt die Kuerzel wie bisher.
+
+        Traegt schon ein Befehl die Tastenfolge, bekommt der neue keine: zwei
+        aktive Aktionen mit demselben Kuerzel loesen in Qt gar nichts aus
+        („QAction::event: Ambiguous shortcut overload“) - so tat Esc nichts,
+        sobald das Kontextregister „Auswahl“ mit seiner Kopie von „Alles
+        deselektieren“ vorn lag. Der Hinweis am Knopf nennt das Kuerzel
+        trotzdem, denn die Taste tut, was der Knopf tut. Gibt zurueck, ob das
+        Kuerzel vergeben wurde.
+        """
+        seq = QtGui.QKeySequence(kuerzel)
+        if any(b.aktion.shortcut() == seq for b in self.befehle):
+            return False
+        a.setShortcut(seq)
+        a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+        self.window().addAction(a)
         return True
 
     def merken(self, b: Befehl):

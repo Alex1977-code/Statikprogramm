@@ -299,12 +299,44 @@ def test_pdf():
     _assert_since(n0)
 
 
+def test_fortschritt():
+    """Der Bericht meldet je Kapitel den Fortschritt - fuer den Balken der
+    Oberflaeche; ohne Rueckruf entsteht dieselbe Datei."""
+    n0 = len(RESULTS)
+    m = build_beam_model()
+    an = solver.solve_all(m, design=True, fatigue=True)
+    schritte = []
+    p1 = write_report(m, an, os.path.join(_tmpdir(), "fortschritt.html"), fmt="html",
+                      fortschritt=lambda a, t: schritte.append((a, t)))
+    anteile = [a for a, _t in schritte]
+    check("Fortschritt: je Kapitel eine Meldung, dazu Ausgabe und Schreiben",
+          len(schritte) >= 18 + 3, f"{len(schritte)} Meldungen")
+    check("Fortschritt: Anteile steigen monoton von 0 bis 1",
+          anteile[0] == 0.0 and anteile[-1] == 1.0
+          and all(b >= a for a, b in zip(anteile, anteile[1:])),
+          f"{anteile[:2]} … {anteile[-2:]}")
+    texte = " | ".join(t for _a, t in schritte)
+    check("Fortschritt: die Texte nennen die Kapitel mit Namen",
+          all(w in texte for w in ("Kapitel 1 von", "System", "Nachweise EC3", "Ermüdung",
+                                   "Zusammenfassung", "HTML", "geschrieben")), texte[:160])
+    p2 = write_report(m, an, os.path.join(_tmpdir(), "fortschritt2.html"), fmt="html")
+    # die Verlaufskennungen der SVGs (grad12, grad13, …) zaehlen je Prozess hoch
+    ohne_grad = lambda s: re.sub(r"grad\d+", "grad", s)          # noqa: E731
+    check("ohne Rueckruf dieselbe Datei",
+          ohne_grad(open(p1, encoding="utf-8").read()) == ohne_grad(open(p2, encoding="utf-8").read()))
+    schritte_md = []
+    write_report(m, an, os.path.join(_tmpdir(), "fortschritt.md"), fmt="md",
+                 fortschritt=lambda a, t: schritte_md.append((a, t)))
+    check("auch Markdown meldet die Kapitel", len(schritte_md) >= 18, f"{len(schritte_md)}")
+    _assert_since(n0)
+
+
 def main():
     print("=" * 96)
     print("STATIK3D - Test statischer Bericht (HTML / Markdown / PDF / SVG)")
     print("=" * 96)
     tests = [test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
-             test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf]
+             test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt]
     for t in tests:
         try:
             t()

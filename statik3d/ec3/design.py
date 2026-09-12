@@ -210,9 +210,43 @@ def _uls_results(model: Model, analysis, combos=None) -> dict:
     return dict(analysis)
 
 
+def _melde(progress, text: str, anteil: float = None) -> None:
+    """Fortschritt melden - Text und, wenn bekannt, der Anteil (0…1).
+
+    Wie ``solver._melde``: Empfaenger, die nur Text kennen (Protokoll,
+    Browser, aeltere Aufrufer), bekommen weiterhin nur Text.
+    """
+    if progress is None:
+        return
+    if anteil is None:
+        progress(text)
+        return
+    try:
+        progress(text, float(anteil))
+    except TypeError:
+        progress(text)
+
+
+def _anteil(anteil, bruch: float):
+    """Den Bruchteil 0…1 in das Fenster ``anteil = (von, bis)`` legen; ohne
+    Fenster None - dann bleibt es beim Text."""
+    if anteil is None:
+        return None
+    von, bis = anteil
+    return float(von) + (float(bis) - float(von)) * max(0.0, min(1.0, bruch))
+
+
 def check_members(model: Model, analysis, combos: list = None, members: list = None,
-                  progress=None, use_jobs: bool = None, workers: int = None) -> DesignResults:
-    """Nachweise aller Staebe (parallel/verteilt bei vielen Staeben)."""
+                  progress=None, use_jobs: bool = None, workers: int = None,
+                  anteil=None) -> DesignResults:
+    """Nachweise aller Staebe (parallel/verteilt bei vielen Staeben).
+
+    ``anteil=(von, bis)`` laesst den Fortschritt ausser dem Text auch den
+    Anteil melden, auf dieses Fenster des Balkens abgebildet - die
+    Oberflaeche gibt (0, 1), wenn die Nachweise allein laufen. Ohne Angabe
+    kommt nur Text: in ``solve_all`` sind die Nachweise das letzte Stueck
+    hinter der Rechnung, und ein Anteil von hier wuerfe den Balken zurueck.
+    """
     from .. import parallel
     results = _uls_results(model, analysis, combos)
     names = members if members is not None else [k for k, m in model.members.items() if m.design]
@@ -221,6 +255,7 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         "Methode": f"Anhang {model.design.interaction_method}",
         "BDK": model.design.lt_method})
     if not names or not results:
+        _melde(progress, "Nachweise EC3: keine Staebe mit Nachweis", _anteil(anteil, 1.0))
         return out
     st = parallel.settings()
     if use_jobs is None:
@@ -236,8 +271,12 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         chunks = [names[i:i + size] for i in range(0, len(names), size)]
         jobs = [Job("design_members", {"model": model.to_dict(), "members": c,
                                        "results": stripped}) for c in chunks]
+        _melde(progress, f"Nachweise: {len(names)} Staebe in {len(jobs)} Auftraegen",
+               _anteil(anteil, 0.0))
         for r in run_jobs(jobs, workers=workers,
-                          progress=(lambda a, b: progress(f"Nachweise {a}/{b}")) if progress else None):
+                          progress=(lambda a, b: _melde(progress, f"Nachweise {a}/{b}",
+                                                        _anteil(anteil, a / max(1, b))))
+                          if progress else None):
             if not r.ok:
                 raise RuntimeError(f"Nachweis fehlgeschlagen: {r.error}")
             out.members.update(r.result)
@@ -245,7 +284,8 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     for k, nm in enumerate(names):
         out.members[nm] = check_member(model, model.members[nm], results)
         if progress and (k % 10 == 0 or k == len(names) - 1):
-            progress(f"Nachweis {nm} ({k+1}/{len(names)})")
+            _melde(progress, f"Nachweis {nm} ({k+1}/{len(names)})",
+                   _anteil(anteil, (k + 1) / len(names)))
     return out
 
 

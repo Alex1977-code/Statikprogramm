@@ -33,7 +33,12 @@ Knopf zeigt dann „Update bereit“, und der Austausch folgt auf Knopfdruck nac
 dem Ende. Nach dem Schließen beendet sich Statik3D sofort, ohne Modell und
 Sicherungen abzuräumen (bei 2 Mio. Elementen 11 s je Kopie); das Skript
 wartet bis zu 300 s. Am 11.09.2026 gab es nach 120 s auf, weil das Programm
-noch lief, und die neue Fassung startete nicht.
+noch lief, und die neue Fassung startete nicht. Meldet das Skript „läuft
+noch“, obwohl kein Fenster offen ist, halten Reste einer früheren Sitzung die
+Programmdatei fest (am 11.09.2026 drei Prozesse vom Vorabend, 4 bis 43 MB):
+nach 20 s zeigt das Skript diese Prozesse und beendet sie nur auf „J“; der
+Knopf „Update bereit“ nennt sie vorher mit ihrer PID, damit sie im
+Task-Manager beendet werden können.
 
 Der Austausch läuft über ein kleines Skript `statik3d_update.bat` neben der
 exe: Statik3D beendet sich, das Skript ersetzt die Datei und startet die neue
@@ -464,6 +469,11 @@ Schritten Knoten, Elemente, Lastfälle und dem Schreiben der Datei; beim
 Öffnen zusätzlich, wie viel der Datei schon gelesen ist („Datei lesen (120
 von 380 MB)“). Ein Modell mit hunderttausend Knoten braucht dafür Minuten -
 abbrechen lässt sich das nicht, eine halb geschriebene Datei wäre unbrauchbar.
+Nach dem Lesen steht „Daten auswerten - das kann bei großen Dateien Minuten
+dauern, das Fenster antwortet solange nicht“: in diesem Schritt wird die
+Datei in einem Zug ausgewertet, er meldet nichts zwischendurch, und der
+Balken steht darum still. Das ist kein Absturz; der Text wird vor dem Schritt
+gezeichnet und bleibt, bis die Knoten aufgebaut werden.
 
 **Vorschau** in der Maske und *Netz → Netzvorschau* schätzen die Elementzahl
 je Objekt und gesamt ins Protokoll - vor dem Vernetzen, damit ein Modell
@@ -543,6 +553,41 @@ kommen so 711 Flächenlasten, die vorher verloren gingen.
 „Netz löschen" nimmt die Elemente wieder weg, die Geometrie bleibt stehen.
 Eine Fläche, die noch einen Volumenkörper berandet, lässt sich nicht löschen —
 das Programm sagt, welcher es ist.
+
+### Statuszeile: Fortschrittsbalken und Abbrechen
+
+Unten rechts in der Statuszeile sitzt **ein** Fortschrittsbalken für alles,
+was länger als einen Augenblick dauert, und daneben - wo Anhalten sinnvoll
+ist - der Knopf **Abbrechen** (gleichwertig: **Esc**, gleich welches Feld den
+Fokus hat; Esc ist das Kürzel von „Alles deselektieren“ und hält, solange der
+Knopf zu sehen ist, stattdessen das Laufende an). Der Text links davon nennt den Schritt, den Anteil und die
+Laufzeit („Berechnung: Lastfall W (5/12) (48 %, 73 s)“). Ein *bestimmter*
+Balken zeigt Prozent; wo das Programm den Anteil noch nicht kennt, läuft ein
+Streifen, bis der erste Schritt gemeldet ist.
+
+| Aktion | Balken | Abbrechen |
+|---|---|---|
+| Modell öffnen, speichern | bestimmt: Datei lesen, Daten auswerten, Knoten, Elemente, Lastfälle, übriges Modell | nein - eine halbe Datei wäre keine |
+| Importieren (Datei → Übernehmen) | bestimmt; RFEM 6: Behälter, Knoten, Linien, Stäbe, Lager, Flächen, Volumen, Freigaben, Lastfälle, Lasten, Kombinationen, Prüfung; andere Formate: Lesen und Nachbereitung; danach Stäbe erkennen, Ansicht aufbauen | nein |
+| Vernetzen | bestimmt, nach geschätzter Elementzahl gewichtet, Zeit im Sekundentakt | ja, sofort - das bisher Erzeugte bleibt, die übrigen Objekte bleiben ohne Netz |
+| Lastgenerierer Wind, Wasserdruck | bestimmt (Strömungsberechnung) | ja - das Modell bleibt unverändert |
+| Berechnen (alle Lastfälle, Lastfall, Eigenschwingungen, Knicken), Knicklängen | Streifen bis zum ersten Schritt, dann bestimmt: aufstellen, faktorisieren, Lastfälle, Kontakt-Iteration, Kombinationen, Umhüllende, Nachweise | ja - beim nächsten Rechenschritt |
+| Nachweise EC3, Ermüdung (allein gestartet) | bestimmt je Stab | ja |
+| Freie Bewegungen | Streifen (die Suche kennt keinen Anteil) | ja |
+| Bericht, Lastenheft | bestimmt je Kapitel, dann Ausgabe und Schreiben der Datei | nein |
+| Modellprüfung, Kerbfälle vorschlagen, Netz löschen, Beispiel laden | kein Balken - Sekunden | – |
+
+**Abbrechen einer Berechnung** wirkt kooperativ: die Statuszeile sagt
+„Abbruch angefordert - die Rechnung hält beim nächsten Rechenschritt an“,
+und genau das geschieht. Eine laufende Faktorisierung lässt sich nicht
+unterbrechen, sie läuft zu Ende (am Drehlager mit 1 028 724 Freiheitsgraden
+bis 13 s); die nächste Meldung des Rechenkerns (Lastfall, Kontakt-Iteration,
+Kombination) ist dann der Ausstieg. Danach steht in Statuszeile und Protokoll
+„Berechnung abgebrochen (nach x s) - Ergebnis und Netz unverändert“ - keine
+FEHLER-Zeile, denn es ist keiner. Das zuvor vorhandene Ergebnis bleibt
+gültig, das Netz auch; Berechnen und Update sind sofort wieder frei. Beim
+Vernetzen bleibt das bisher Erzeugte, bei Wind und Wasserdruck ist das Modell
+wie vorher.
 
 ### Ergebnisse und Bericht
 
@@ -681,7 +726,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 |---|---|
 | ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt |
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
-| Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, FE-Netz, Lasten — jedes einzeln schaltbar |
+| Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Schnittebene** (Schalter mit Achse und Schieber), **Intelligente Auswahl** (Schalter) |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
@@ -708,7 +753,10 @@ dessen Schalter in der Glasleiste aus ist — mit ausgeschalteten Stäben
 wählt weder ein Klick noch ein Fenster einen Stab, mit ausgeschalteten
 Knoten keinen Knoten; die Statusleiste sagt dann, warum nichts geschieht.
 Lager an ausgeblendeten Knoten und Lasten an ausgeblendeten Teilen sind
-ebenso wenig zu treffen.
+ebenso wenig zu treffen; mit ausgeschaltetem Schalter **Lager** (Glasleiste,
+zwischen Volumen und FE-Netz; Ribbon *Ansicht → Anzeigen*) verschwinden alle
+Knoten-, Linien- und Flächenlager aus dem Bild und sind nicht wählbar — am
+Drehlager mit 50 Lagerflächen verdecken die Symbole sonst das Bauteil.
 
 **Schnittebene — hineinsehen statt hineinzoomen.** Von einem Volumennetz wird
 immer nur die **Außenhaut** gezeichnet: die inneren Tetraederflächen liegen
@@ -835,6 +883,21 @@ markiert: „Alles auswählen" am Drehlager-Modell (400 000 Knoten) hing bis zum
 11.09.2026 über fünf Minuten, weil jede Zeile ein eigener Bereich war und Qt
 Hunderttausende Einzelbereiche quadratisch zusammenführt. Als ein Bereich
 dauert die Markierung von 200 000 Zeilen 1,1 s (`test_markieren_bereiche`).
+
+**Gewähltes Element → Zeile.** Ein in der Ansicht gewähltes Element (Klick,
+Fenster, Auswahlart Netz) markiert seine Zeile in Stabkräfte, Umhüllende,
+Nachweise und Ermüdung und holt sie ins Bild — auch am Drehlager mit 1,8 Mio.
+Elementen. Bis zum 12.09.2026 unterblieb die Suche ab 50 000 Elementen (die
+Schleife über alle Elemente kostete dort 1,0 s je Klick), und kein gewähltes
+Element fand seine Zeile; jetzt läuft sie über ein Netzverzeichnis, das einmal
+je Netz entsteht (0,9 s) und die Frage danach in 13 ms beantwortet.
+
+**Stabkräfte zur Umhüllenden.** Die Tabelle „Stabkräfte" führt Stabendkräfte
+je Element und gehört zu einem Lastfall oder einer Kombination. Ist das
+gezeigte Ergebnis eine Umhüllende, bleibt sie leer und sagt neben der
+Zeilenzahl, warum: die Extremwerte stehen im Register „Umhüllende", auf das
+der Bereich unten dann selbst springt — und zurück auf „Stabkräfte", sobald
+wieder ein Lastfall oder eine Kombination gezeigt wird.
 
 Der Bereich unten ist in **zwei Ebenen** gegliedert: oben die Gruppe, darunter
 ihre Tabellen als Register. Eine Gruppe mit nur einer Tabelle (Protokoll,
@@ -1685,7 +1748,12 @@ Volumenkörper als Objekt** (mit Randlinien, Dicke und Werkstoff), die Lager,
 die Kontaktbedingungen, alle Lastfälle mit ihren Lasten (Vorspannung als
 gleichwertige Temperaturlast), die Kombinationen und die **Netzeinstellungen**
 aus `mesh.xml`. Was kein Netz bekommen konnte, steht trotzdem im Modellbaum
-und lässt sich dort vernetzen.
+und lässt sich dort vernetzen. Während des Lesens zeigt die Statuszeile den
+Fortschrittsbalken mit den Phasen (Behälter öffnen, Knoten, Linien, Stäbe,
+Lager, Flächen, Volumen, Freigaben, Lastfälle, Lasten, Kombinationen, Modell
+prüfen, Ansicht aufbauen); das Drehlager ist in rund einer Sekunde gelesen,
+das Vernetzen danach ist die eigentliche Arbeit und hat seinen eigenen
+Balken.
 
 **Krumme Linien** kommen mit ihrer wahren Form: Bögen, Kreise, Parabeln,
 Ellipsen und NURBS werden über ihre Kontrollpunkte gelesen, nicht als Sehne
@@ -1754,6 +1822,35 @@ der Wiederholungen. Das **Zählverfahren** bestimmt, was aus dem Verlauf wird:
   halbe Schädigung von „spanne").
 
 Die Schadensakkumulation ist immer Palmgren-Miner über alle Lasten am Ort.
+
+**Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
+in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder
+Ausfallstäben bei jedem Lastfall, jeder Kombination und jedem Zustand einer
+Ermüdungslast, auch ohne dort genannt zu sein. Das ist der Platz für die
+Vorspannung der Anker (Lastfall der Art P mit Lasten → Vorspannung) und für
+ein ständiges Eigengewicht: ohne sie hätte jeder der 164 Ermüdungszustände
+des Drehlagers einen anderen Kontaktzustand. Das Protokoll nennt bei jeder
+Rechnung, welche Grundlast mitwirkt; in einem linearen Modell (ohne
+Kontakt) bleibt der Lastfall ein gewöhnlicher Lastfall der Überlagerung.
+Geprüft am Block mit Reibung: Auflast als Grundlast, Horizontalkraft allein
+gerechnet, ergibt dasselbe wie die Kombination aus beiden
+(`tests/test_kontaktzustand.py`).
+
+**Kontaktzustand der Ermüdungszustände.** In Modellen mit Kontakt rechnet
+das Programm von jeder Ermüdungslast nur den ersten Zustand nichtlinear
+(Kontakt-Iteration); die weiteren Zustände übernehmen seinen Kontaktzustand
+— welche Knoten anliegen, haften oder gleiten — unverändert und werden damit
+linear gelöst: eine Rückwärtseinsetzung statt 30 bis 40 Kontaktschritten je
+Zustand. Das setzt voraus, dass die Zustände einer Ermüdungslast kleine
+Änderungen um einen Betriebszustand sind; ein Zustand mit ganz anderem
+Kontaktbild (abhebende Bauteile) gehört in eine eigene Ermüdungslast, oder
+die Einstellung wird abgeschaltet: Nachweise → Konfiguration, Haken
+„Ermüdungszustände mit eingefrorenem Kontaktzustand rechnen“. Das Protokoll
+nennt zu Beginn der Rechnung, wie viele Zustände so gerechnet werden, und je
+Zustand „Kontaktzustand eingefroren“. Geprüft am Block mit Reibung: der
+zweite Zustand (1,1-fache Horizontalkraft) weicht eingefroren um 7 % von der
+nichtlinearen Lösung ab und braucht keine Faktorisierung.
+DREHLAGER_EINFRIEREN_BENUTZER
 
 **Lastspielzahl.** Die Lastspiele bzw. Wiederholungen jeder Ermüdungslast
 sind entweder eigene Werte oder — Haken „globale Lastspielzahl" im Dialog —
@@ -2175,6 +2272,15 @@ Nachweis mit seiner Verformung je Kombination.
   danach zurückgegeben. Am Drehlager (1 028 724 Freiheitsgrade, 7 GB je
   Faktorisierung) wuchs der Prozess vorher je Schritt um 7 GB, bis der Löser
   nach 33 Schritten bei 113 GB aufgab (11.09.2026).
+* **Warmstart und behaltene Faktorisierung.** Lastfälle derselben Situation
+  beginnen die Kontakt-Iteration im Kontaktzustand des vorigen Lastfalls;
+  solange sich die Kontaktsteifigkeit nicht ändert, bleibt die Faktorisierung
+  und es wird nur rückwärts eingesetzt (am Block mit Reibung 5 statt 21
+  Schritte für den Folgezustand). Passt der Zustand nicht — gleitende Knoten
+  bewegen sich gegen ihre Richtung —, meldet das Protokoll „Warmstart
+  verworfen“ und rechnet von der Geometrie; am Drehlager war das zwischen
+  LF401 und LF404 der Fall. Für die Zustände einer Ermüdungslast greift
+  stattdessen das Einfrieren des Kontaktzustands (Kapitel 8).
 * **Prozesspool und Gleichungslöser sind zweierlei.** Der Pool oben verteilt
   Elementschleifen und die Vernetzung auf Prozesse. Das Lösen des
   Gleichungssystems macht ein einzelner Prozess mit eigenen Threads. Das
@@ -2197,7 +2303,10 @@ Nachweis mit seiner Verformung je Kombination.
   gerade ist und wie lange es schon läuft („Berechnung: Lastfall W (5/12)
   (48 %, 73 s)“). Die Schritte sind: Gleichungssystem aufstellen,
   faktorisieren, Lastfälle, Kombinationen, Umhüllende, Nachweise. Jede
-  Zeile steht auch im Protokoll.
+  Zeile steht auch im Protokoll. **Abbrechen** (Knopf neben dem Balken oder
+  Esc) hält beim nächsten Rechenschritt an - eine laufende Faktorisierung
+  läuft zu Ende -, meldet „Berechnung abgebrochen (nach x s)“ und lässt
+  Ergebnis und Netz, wie sie waren (Kapitel 2, „Statuszeile“).
 * **Das Protokoll überlebt einen Absturz.** Jede Zeile geht sofort in eine
   Mitschrift unter `%LOCALAPPDATA%\Statik3D\Protokolle` (unter Linux
   `~/.local/share/Statik3D/Protokolle`), eine Datei je Programmstart. Stürzt
@@ -2383,8 +2492,43 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
 
 ## 10 Ergebnisse und Bericht
 
-* Färbung: |u|, ux/uy/uz, Vergleichsspannung (Schalen/Volumen, Randspannung
-  bei Stäben), Ausnutzung EC3 / Ermüdung / elastisch.
+* **Färbung**: |u|, ux/uy/uz, Vergleichsspannung (Schalen/Volumen, Randspannung
+  bei Stäben), Ausnutzung EC3 / Ermüdung / elastisch — und die **Spannungen je
+  Art** analog ANSYS Mechanical, auch im Modellbaum unter „Ergebnisse →
+  Spannungen Volumen / Spannungen Flächen / Spannungen Stäbe /
+  Kontaktspannungen“ (ein Klick stellt die Färbung ein; seit 12.09.2026):
+  - **Volumen**: Grundspannungen σ_x, σ_y, σ_z, τ_xy, τ_yz, τ_zx (global),
+    Hauptspannungen σ_1 ≥ σ_2 ≥ σ_3, Vergleichsspannung σ_v (von Mises),
+    σ_int = σ_1 − σ_3 (Tresca) und τ_max = σ_int/2 — je Element in der Mitte
+    gerechnet und auf die Knoten gemittelt.
+  - **Flächen**: σ_x, σ_y, τ_xy, σ_1, σ_2, σ_v je Schalenseite; die Maske
+    wählt die **Schalenseite** — oben, unten oder je Element die Seite mit dem
+    größeren Betrag (wie Top/Bottom in ANSYS). Scheiben (ebene Elemente)
+    liefern ihren ebenen Zustand.
+  - **Stäbe**: σ_x Rand = |σ_N| + σ_My + σ_Mz, σ_N = N/A,
+    σ_My = |M_y| z_max/I_y, σ_Mz = |M_z| y_max/I_z an den Stabenden, am Knoten
+    gemittelt.
+  - **Kontakt**: Kontaktdruck p = F_n/A, Reibspannung τ = |F_t|/A, Spalt [mm]
+    und Kontaktkraft F_n [kN] an den Kontaktknoten; A ist die Einflussfläche
+    des Knotens auf der Kontaktfläche, so dass Σ p·A = Σ F_n (am Block mit
+    Reibung 90,00 kN = Auflast). Alle anderen Knoten bleiben grau.
+
+  Spannungen stehen in N/mm². Zu einer **Umhüllenden** gibt es diese Größen
+  nicht — sie führt Extremwerte, keine Tensoren; die Statuszeile sagt es, und
+  gefärbt wird nichts. Die Größen und ihre Prüfung an geschlossenen Werten:
+  `tests/test_spannungen.py`.
+* **Werteskala** (Maske Ergebnisse, Ribbon *Ergebnisse → Werteskala*): die
+  Grenzen der Farbskala sind **automatisch** (kleinster … größter Wert),
+  **fest** (unten … oben) oder ein **Grenzwert**: 0 … Grenze, z. B. 355 für
+  S355 (bei negativen Werten −Grenze … Grenze). Was über der Grenze liegt,
+  bekommt **Magenta** (unter der negativen Grenze Cyan), und die Skala nennt
+  darüber den tatsächlichen Größtwert: der oberste Eintrag ist das Maximum,
+  der zweite die Grenze. **Farbstufen** wie in ANSYS 9 (bis 256 = stufenlos).
+  **Nur Überschreitungen färben**: nur Beträge über der Grenze bekommen Farbe,
+  von der Grenze bis zum Größtwert, alles andere bleibt grau — so springen
+  die Stellen ins Auge. Die Statuszeile nennt die Zahl der Knoten über der
+  Grenze und das Maximum, Kopfzeile und Berichtsbild nennen die Skala. Die
+  Einstellung wird mit dem Modell gespeichert.
 * **Umhüllende einer Kombination.** Eine Kombination mit Alternativen (aus
   einer RFEM-Ergebniskombination „LF1 oder LF2 oder …") hat kein einzelnes
   Ergebnis, sondern eine Umhüllende: Minimum und Maximum je Größe über ihre
@@ -2421,8 +2565,28 @@ Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
 Maus im Bild: Rad zoomt zum Zeiger, Doppelklick mit der mittleren Taste
 passt alles Sichtbare ein, linke Taste dreht, mittlere schiebt.
 Strg+B übernimmt die Ansicht in den Bericht.
+Esc bricht ab, was gerade mit Fortschrittsbalken und Abbrechen-Knopf läuft
+(Vernetzen, Berechnung, Nachweise, Wind, Wasserdruck) - wie der Knopf
+**Abbrechen** neben dem Balken, gleich welches Feld den Fokus hat; läuft
+nichts, nimmt Esc ein aufgezogenes Auswahlfenster zurück oder hebt die
+Auswahl auf („Alles deselektieren“).
 Fang: F3 ein/aus, Umschalt+F1 Knoten, Umschalt+F2 Kantenmitte,
-Umschalt+F3 Raster.
+Umschalt+F3 Raster, Umschalt+F4 Linien, Umschalt+F5 Stäbe,
+Umschalt+F6 Flächen, Umschalt+F7 Volumen.
+
+Die Kürzel gelten in jedem Register des Ribbons - auch wenn der Befehl in
+einem anderen Register steht als dem, das gerade vorn liegt; sie hängen am
+Programmfenster, nicht am Knopf. (Gemessen 12.09.2026: vorher wählte Strg+A
+im Register „Ansicht“ 0 von 17 Knoten, im Register „Start“ alle 17, weil Qt
+ein Kürzel nur auslöst, solange ein Knopf des Befehls sichtbar ist; ebenso
+stumm außerhalb ihres Registers waren Strg+N, Strg+O, Strg+I, Strg+E, Strg+Q,
+Strg+R, Strg+B, Strg+Umschalt+C und Umschalt+F1 bis F7.) Jede Tastenfolge
+gehört genau einem Befehl: Das Register „Auswahl“ zeigt „Alles deselektieren“
+noch einmal, das Kürzel Esc trägt aber nur der Befehl im Register „Start“ -
+zwei Befehle mit demselben Kürzel blockierten sich in Qt gegenseitig, und Esc
+tat nichts, solange das Register „Auswahl“ vorn lag. Kürzel wirken nur,
+wenn das Programmfenster aktiv ist. Steht der Cursor in einem Textfeld, geht
+Strg+A an das Feld (Text markieren), nicht an das Modell.
 
 Browser/Handy: siehe Kapitel 12.
 

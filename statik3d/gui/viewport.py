@@ -2283,9 +2283,21 @@ def diagram_scale(model: Model, res, quantity: str, n: int = 9) -> float:
     return 0.08 * model.characteristic_size() / vmax
 
 
-def result_field(model: Model, res, field: str, util: dict = None):
-    """(Knotenskalare oder None, Zellskalare oder None, Name)."""
+def result_field(model: Model, res, field: str, util: dict = None, seite: str = "max"):
+    """(Knotenskalare oder None, Zellskalare oder None, Name).
+
+    Spannungsgroessen (spannungen.FELDER: Grund-, Haupt-, Vergleichs- und
+    Kontaktspannungen je Art) gibt es zu Lastfall und Kombination; eine
+    Umhuellende fuehrt keine Komponenten - dann bleibt es ohne Faerbung.
+    ``seite`` gilt fuer Flaechen: max, oben oder unten."""
+    from .. import spannungen as spn
     nn = model.nn
+    ak = spn.feld(field)
+    if ak is not None:
+        art, groesse = ak
+        if not hasattr(res, "solid_res") or not hasattr(res, "beam_forces"):
+            return None, None, ""
+        return spn.je_knoten(model, res, art, groesse, seite), None, spn.beschriftung(art, groesse, seite)
     if field.startswith("|u|"):
         u = res.u if hasattr(res, "u") and res.u is not None else None
         if u is None and hasattr(res, "u_max"):

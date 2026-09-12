@@ -257,6 +257,9 @@ class Results:
     bimomente: dict = field(default_factory=dict)   # elem -> (B Anfang, B Ende) [Nm^2]
     woelb: dict = field(default_factory=dict)       # Knoten -> Verwoelbung [1/m]
     contact: list = field(default_factory=list)
+    #: Sicherung des Kontaktzustands am Ende der Iteration - der Warmstart
+    #: fuer den naechsten Lastfall derselben Situation (solve_cases)
+    kontaktzustand: object = None
     contact_forces: np.ndarray = None       # (nn, 3)
     modes: np.ndarray = None                # (nmodes, nn, 6)
     freqs: np.ndarray = None                # [Hz]
@@ -649,11 +652,28 @@ class StaticSystem:
         from . import singular as sg
         return sg.bereinigen(self._V, u)
 
+    def kontakt_loeser_freigeben(self) -> None:
+        """Die behaltene Faktorisierung mit Kontaktsteifigkeit zurueckgeben."""
+        ls = getattr(self, "_kontakt_loeser", None)
+        self._kontakt_loeser = None
+        self._kontakt_signatur = None
+        if ls is not None:
+            ls.freigeben()
+
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
-              F_extra: np.ndarray = None, us: np.ndarray = None) -> np.ndarray:
+              F_extra: np.ndarray = None, us: np.ndarray = None,
+              signatur=None) -> np.ndarray:
         """Loesen fuer Lastvektor F; optional zusaetzliche Steifigkeit (Kontakt)
         und vorgegebene Verschiebungen ``us`` des Lastfalls (Zwangsverformungen,
-        wirksam nur an gesperrten FHG): K_ff u_f = F_f - K_fs u_s."""
+        wirksam nur an gesperrten FHG): K_ff u_f = F_f - K_fs u_s.
+
+        ``signatur`` kennzeichnet K_extra (ContactSystem.signatur): mit
+        derselben Signatur wie beim vorigen Aufruf bleibt die Faktorisierung
+        und es wird nur rueckwaerts eingesetzt. Die Kontakt-Iteration am
+        Drehlager brauchte 42 Schritte zu je 10 bis 13 s Faktorisierung, davon
+        viele mit unveraenderter Matrix (Setzrunden der Reibkraft, Nachfuehren
+        der Gleitrichtungen). Ohne Signatur wird wie bisher faktorisiert und
+        gleich wieder freigegeben."""
         u = self.vals.copy()
         if us is not None:
             u[self.si] += us[self.si]
@@ -674,15 +694,24 @@ class StaticSystem:
                 if vorgabe:
                     Ktfs = Kt[self.fi][:, self.si]
                     rhs = rhs - Ktfs @ u[self.si]
-                ls = LinearSolver(self.gerandet(Ktff))
+                schluessel = None if signatur is None else (signatur, self._rand, id(self._Vf))
+                ls = getattr(self, "_kontakt_loeser", None)
+                neu = schluessel is None or ls is None \
+                    or schluessel != getattr(self, "_kontakt_signatur", None)
+                if neu:
+                    self.kontakt_loeser_freigeben()
+                    ls = LinearSolver(self.gerandet(Ktff))
+                    self.faktorisierungen = getattr(self, "faktorisierungen", 0) + 1
                 self.backend = ls.backend
                 try:
                     u[self.fi] = self._geloest(ls, rhs)
                 finally:
-                    # Die Faktorisierung mit Kontaktsteifigkeit gilt nur fuer
-                    # diesen Schritt - sofort zurueckgeben, nicht erst beim
-                    # Einsammeln (siehe LinearSolver.freigeben)
-                    ls.freigeben()
+                    if schluessel is None:
+                        # ohne Signatur gilt die Faktorisierung nur fuer diesen
+                        # Schritt - sofort zurueckgeben (LinearSolver.freigeben)
+                        ls.freigeben()
+                    elif neu:
+                        self._kontakt_loeser, self._kontakt_signatur = ls, schluessel
         except (RuntimeError, ValueError) as ex:
             # Singulaer (Faktorisierung oder Residuum): sagen, was dem Modell fehlt
             if "Teiltragwerk" in str(ex) or "ohne Netz" in str(ex):
@@ -969,16 +998,34 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
 # ==========================================================================
 # Lineare Statik
 # ==========================================================================
+def grundlasten(model: Model, factors: dict) -> list:
+    """Die Grundlasten, die in dieser direkt geloesten Rechnung noch fehlen."""
+    return [n for n, lc in model.load_cases.items()
+            if getattr(lc, "grundlast", False) and not factors.get(n)]
+
+
 def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
-                 kind: str, workers=None, progress=None) -> Results:
+                 kind: str, workers=None, progress=None, start=None,
+                 einfrieren=None) -> Results:
     t0 = time.time()
     aktiv = getattr(system, "aktiv", None)
+    # Grundlasten (LoadCase.grundlast) wirken in jeder direkt geloesten
+    # Rechnung mit - dort gibt es keine Ueberlagerung, in die man sie spaeter
+    # legen koennte. Linear bleibt der Lastfall, was er ist.
+    grund = grundlasten(model, factors) if (model.has_contact or model.hat_ausfallstaebe()) else []
+    if grund:
+        factors = dict(factors)
+        for n in grund:
+            factors[n] = 1.0
+        _melde(progress, f"{name}: Grundlast wirkt mit - " + ", ".join(grund))
     F, feq, q, temp = case_loads(model, factors, aktiv)
     us = case_prescribed(model, factors, warn=progress)
     ueber = case_uebermass(model, factors)
     res = Results(name=name, kind=kind, model=model)
     if getattr(system, "situation", ""):
         res.info["situation"] = system.situation
+    if grund:
+        res.info["grundlast"] = list(grund)
     def _rechnen():
         """Der Loesungsweg des Lastfalls - einmal wiederholbar."""
         if model.hat_ausfallstaebe():
@@ -992,7 +1039,9 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             return u_, R_, aktiv_
         if model.has_contact:
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
-                model, system, F, progress=progress, us=us, uebermass=ueber)
+                model, system, F, progress=progress, us=us, uebermass=ueber, start=start,
+                einfrieren=einfrieren)
+            res.kontaktzustand = cinfo.pop("contact_state", None)
             res.info.update(cinfo)
             return u_, R_, aktiv
         u_ = system.solve(F, us=us)
@@ -1188,16 +1237,53 @@ def solve_static(model: Model, progress=None, case: str = None,
     return res
 
 
+def _mit_referenzen_zuerst(names: list, referenzen: dict) -> list:
+    """Jeder Referenzzustand unmittelbar vor den Zustaenden, die ihn
+    einfrieren, danach die uebrigen Lastfaelle. Nur so bleibt die
+    Faktorisierung seines Kontaktzustands im Speicher (StaticSystem behaelt
+    eine): ein Lastfall dazwischen ersetzt sie, und der eingefrorene Zustand
+    faktorisiert neu (gemessen am Block mit Reibung: 1 statt 0)."""
+    folge = []
+    for n in names:
+        if n in referenzen.values() and n not in folge:
+            folge.append(n)
+            folge.extend(z for z in names if referenzen.get(z) == n and z not in folge)
+    folge.extend(n for n in names if n not in folge)
+    return folge
+
+
 def solve_cases(model: Model, cases: list = None, workers: int = None,
-                progress=None, system: StaticSystem = None, systeme: dict = None) -> dict:
+                progress=None, system: StaticSystem = None, systeme: dict = None,
+                referenzen: dict = None) -> dict:
     """Alle (oder ausgewaehlte) Lastfaelle loesen - je Situation mit ihrem
     System (eine Faktorisierung je Situation). Ein uebergebenes ``system``
-    gilt fuer alle genannten Lastfaelle."""
+    gilt fuer alle genannten Lastfaelle.
+
+    ``referenzen`` {Zustand: Referenzzustand}: der Zustand wird mit dem
+    eingefrorenen Kontaktzustand seiner Referenz linear geloest (Zustaende
+    einer Ermuedungslast, siehe ermuedungsreferenzen)."""
     names = cases if cases is not None else list(model.load_cases)
+    referenzen = dict(referenzen or {})
+    if referenzen:
+        names = _mit_referenzen_zuerst(list(names), referenzen)
     out = {}
+
+    def _einfrieren(name):
+        ref = referenzen.get(name)
+        if ref and ref in out and out[ref].kontaktzustand is not None:
+            return ref, out[ref].kontaktzustand
+        return None, None
+    # Warmstart: jeder Lastfall beginnt beim Kontaktzustand des vorigen
+    # Lastfalls desselben Systems (Situation)
     if system is not None:
+        start = None
         for k, name in enumerate(names):
-            out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers)
+            ref, einf = _einfrieren(name)
+            out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers,
+                                     start=start, einfrieren=einf)
+            if einf is not None:
+                out[name].info["contact_frozen_from"] = ref
+            start = out[name].kontaktzustand or start
             _melde(progress, f"Lastfall {name} ({k + 1}/{len(names)})",
                    0.35 + 0.25 * (k + 1) / max(1, len(names)))
         return out
@@ -1205,8 +1291,15 @@ def solve_cases(model: Model, cases: list = None, workers: int = None,
     k = 0
     for sit, sit_names in model.lastfaelle_je_situation(names).items():
         m_s, sys_s = systeme[sit]
-        for name in sit_names:
-            out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers)
+        start = getattr(sys_s, "kontaktzustand", None)
+        for name in _mit_referenzen_zuerst(list(sit_names), referenzen):
+            ref, einf = _einfrieren(name)
+            out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers,
+                                     start=start, einfrieren=einf)
+            if einf is not None:
+                out[name].info["contact_frozen_from"] = ref
+            start = out[name].kontaktzustand or start
+            sys_s.kontaktzustand = start
             k += 1
             _melde(progress, f"Lastfall {name} ({k}/{len(names)})"
                    + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
@@ -1227,7 +1320,7 @@ def _kombination_pruefen(model: Model, combo: Combination) -> str:
 
 def solve_combination(model: Model, combo: Combination, case_results: dict = None,
                       system: StaticSystem = None, workers: int = None,
-                      progress=None, systeme: dict = None) -> Results:
+                      progress=None, systeme: dict = None, start=None) -> Results:
     """Eine Kombination: Superposition (linear) oder direkte Loesung (Kontakt) -
     in der Situation der Kombination."""
     sit = _kombination_pruefen(model, combo)
@@ -1249,8 +1342,12 @@ def solve_combination(model: Model, combo: Combination, case_results: dict = Non
             model, system = situationssystem(model, sit, workers, progress)
         else:
             system = StaticSystem(model, workers, progress)
+    if start is None:
+        start = getattr(system, "kontaktzustand", None)
     res = _solve_loads(model, system, combo.factors, combo.name, "combination", workers,
-                       progress)
+                       progress, start=start)
+    if res.kontaktzustand is not None:
+        system.kontaktzustand = res.kontaktzustand
     res.info["typ"] = combo.typ
     return res
 
@@ -1375,9 +1472,22 @@ def _contact_singular(it: int, ex, cs, model=None) -> str:
 
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
-                       K_zusatz: sparse.spmatrix = None, uebermass: dict = None):
+                       K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
+                       start=None, versuch: int = 0, einfrieren=None):
     """Kontakt-Iteration; ``K_zusatz`` (z. B. die abgezogene Steifigkeit
     ausgefallener Zugstaebe) kommt in jedem Schritt zur Kontaktsteifigkeit.
+
+    ``einfrieren`` ist die Sicherung eines konvergierten Kontaktzustands, der
+    **nicht** mehr veraendert wird: Kontaktsteifigkeit und -kraefte dieses
+    Zustands, eine lineare Loesung, keine Iteration. Das ist der Weg fuer die
+    Zustaende einer Ermuedungslast (kleine Aenderungen um einen Betriebszustand;
+    am Drehlager eine Rueckwaertseinsetzung statt 32 bis 43 Kontaktschritten je
+    Zustand). ``start`` ist die Sicherung eines konvergierten Kontaktzustands
+    (Results.kontaktzustand des vorigen Lastfalls): die Iteration beginnt
+    dort statt bei der Geometrie. Zustaende einer Ermuedungskombination
+    unterscheiden sich wenig - der Warmstart braucht wenige Schritte statt
+    der 42 am Drehlager. Jeder Schritt loest mit der Signatur des Zustands,
+    damit eine unveraenderte Matrix nicht neu faktorisiert wird.
 
     ``uebermass`` ist das Uebermass des Lastfalls je Fuge (siehe
     :func:`case_uebermass`): ein negativer Anfangsspalt, aus dem die
@@ -1389,6 +1499,30 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     cs = ContactSystem(model, system.K, log, uebermass)
     cs.set_force_scale(float(np.abs(F).max()) if F.size else 1.0)
     cs.initialize()
+    f0 = getattr(system, "faktorisierungen", 0)
+    if einfrieren is not None and cs.cons and cs.zustand_setzen(einfrieren):
+        Kc, Fc = cs.matrices(model.ndof)
+        if K_zusatz is not None:
+            Kc = Kc + K_zusatz
+        u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
+        cs._update_states(u)                 # nur zur Auswertung: g, Fn, Ft je Bedingung
+        R = system.reactions(u, F + Fc, Kc)
+        Rsup = cs.support_reactions(model.nn)
+        n6 = model.nn * NDOF
+        Rk = R[:n6].reshape(-1, NDOF)
+        Rk[:, :3] += Rsup
+        R[:n6] = Rk.ravel()
+        log.append("Kontaktzustand eingefroren: Kontaktsteifigkeit und -kräfte des "
+                   "Referenzzustands, lineare Lösung ohne Iteration")
+        log.extend(cs.warnings())
+        return u, R, cs.results(), cs.nodal_forces(model.nn), {
+            "contact_iterations": 1, "contact_converged": True, "contact_log": log,
+            "contact_warm": False, "contact_frozen": True,
+            "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
+            "contact_state": None}
+    warm = bool(start) and cs.zustand_setzen(start)
+    if warm:
+        log.append("Warmstart aus dem Kontaktzustand des vorigen Lastfalls")
     converged = False
     it = 0
     Kc = Fc = None
@@ -1404,14 +1538,30 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         R = system.reactions(u, F, K_zusatz)
         return u, R, [], np.zeros((model.nn, 3)), {"contact_iterations": 0,
                                                    "contact_converged": True,
-                                                   "contact_log": log}
+                                                   "contact_log": log,
+                                                   "contact_state": None}
     u = None
     forced = False
     for it in range(1, max_iter + 1):
         Kc, Fc = matrizen()
         try:
-            u = system.solve(F, Kc, Fc, us=us)
+            u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
         except RuntimeError as ex:
+            if it == 1 and warm and versuch < 3:
+                # Warmstart: eine im vorigen Lastfall offene Bedingung (Lager
+                # mit Ausfall, Schlupf) laesst dieses System im ersten Schritt
+                # ohne Halt - der kalte Start beginnt mit geschlossenen
+                # Bedingungen und hat das Problem nicht (12.09.2026, test_web:
+                # Lager mit Reibung, Ausfall bei Zug und Schlupf 2 mm)
+                log.append("Warmstart verworfen: im ersten Schritt kein Gleichgewicht - "
+                           "Neustart von der Geometrie")
+                u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
+                    model, system, F, max_iter, progress, us, K_zusatz, uebermass,
+                    start=None, versuch=versuch + 1)
+                cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
+                cinfo2["contact_warm"] = False
+                cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
+                return u2, R2, cons2, cf2, cinfo2
             if it == 1 and not forced and cs.stabilise():
                 # Im ersten Schritt haelt keine Bedingung - etwa eine Schraube,
                 # die erst nach dem Durchfahren des Lochspiels traegt. Ein
@@ -1423,13 +1573,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                            "Schritt keine Kontaktbedingung haelt")
                 Kc, Fc = matrizen()
                 try:
-                    u = system.solve(F, Kc, Fc, us=us)
+                    u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
                 except RuntimeError as ex2:
                     raise RuntimeError(_contact_singular(it, ex2, cs, model)) from None
                 cs.select_by_direction(u)
                 Kc, Fc = matrizen()
                 try:
-                    u = system.solve(F, Kc, Fc, us=us)
+                    u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
                 except RuntimeError as ex3:
                     raise RuntimeError(_contact_singular(it, ex3, cs, model)) from None
             else:
@@ -1440,6 +1590,31 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         if not changed:
             converged = True
             break
+    if warm and converged and u is not None:
+        n_v = cs.warmstart_verstoesse(u)
+        if n_v:
+            # Gleitende Knoten bewegen sich gegen ihre festgehaltene Richtung.
+            # Wenige: auf Haften zuruecksetzen und weiter (die Iteration findet
+            # die Richtung neu, die Matrix bleibt meist). Viele oder wiederholt:
+            # der Zustand passt nicht zu diesem Lastfall - von der Geometrie neu.
+            wenige = n_v <= max(2, cs.n_slip // 10) and versuch < 2
+            if wenige:
+                cs.warmstart_verstoesse(u, zuruecksetzen=True)
+                log.append(f"Warmstart: {n_v} gleitende Knoten bewegten sich gegen ihre "
+                           "Richtung - auf Haften zurueckgesetzt, Iteration fortgesetzt")
+                neu_start = cs.zustand()
+            else:
+                log.append(f"Warmstart verworfen: {n_v} gleitende Knoten bewegen sich gegen "
+                           "ihre Richtung - Neustart von der Geometrie")
+                neu_start = None
+            u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
+                model, system, F, max_iter, progress, us, K_zusatz, uebermass,
+                start=neu_start, versuch=versuch + 1)
+            cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
+            cinfo2["contact_warm"] = bool(neu_start) and cinfo2.get("contact_warm", False)
+            cinfo2["contact_iterations"] = it + cinfo2.get("contact_iterations", 0)
+            cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
+            return u2, R2, cons2, cf2, cinfo2
     R = system.reactions(u, F + (Fc if Fc is not None else 0.0), Kc)
     # Einseitige Lager als Auflagerreaktionen ausweisen
     Rsup = cs.support_reactions(model.nn)
@@ -1451,7 +1626,10 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         log.append(f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert")
     log.extend(cs.warnings())
     return u, R, cs.results(), cs.nodal_forces(model.nn), {
-        "contact_iterations": it, "contact_converged": converged, "contact_log": log}
+        "contact_iterations": it, "contact_converged": converged, "contact_log": log,
+        "contact_warm": warm,
+        "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
+        "contact_state": cs.zustand()}
 
 
 # ==========================================================================
@@ -1765,6 +1943,35 @@ def _lastfaelle_hoeherer_ordnung(model: Model, an, systeme: dict, progress=None)
             an.cases[name] = res
 
 
+def ermuedungsreferenzen(model: Model) -> dict:
+    """{Zustand: Referenzzustand} fuer die Zustaende der Ermuedungslasten eines
+    Kontaktmodells (DesignSettings.ermuedung_kontakt_einfrieren).
+
+    Der erste Zustand jeder Ermuedungslast wird nichtlinear geloest, die
+    weiteren mit seinem eingefrorenen Kontaktzustand linear. Ein Zustand, der
+    schon eingefroren ist, gibt seine Referenz weiter; ein Zustand, der selbst
+    Referenz ist, bleibt nichtlinear. Am Drehlager: 50 Ermuedungslasten mit 2
+    bis 82 Zustaenden, 164 Zustaende - statt 164 x 18 min etwa 47 x 18 min
+    und 117 Rueckwaertseinsetzungen.
+    """
+    if not model.has_contact or not getattr(model.design, "ermuedung_kontakt_einfrieren", True):
+        return {}
+    ref: dict = {}
+    refs: set = set()
+    for fl in model.fatigue_loads.values():
+        zust = [z for z in (fl.folge or []) if z in model.load_cases]
+        if not zust:
+            zust = [z for z in (fl.case_max, fl.case_min) if z and z in model.load_cases]
+        if len(zust) < 2:
+            continue
+        erster = ref.get(zust[0], zust[0])
+        refs.add(erster)
+        for z in zust[1:]:
+            if z not in ref and z not in refs and z != erster:
+                ref[z] = erster
+    return {z: r for z, r in ref.items() if z not in refs}
+
+
 def solve_all(model: Model, workers: int = None, progress=None, combinations: bool = True,
               envelopes: bool = True, design: bool = False, fatigue: bool = False) -> Analysis:
     """Alle Lastfaelle, alle Kombinationen, Umhuellende, optional Nachweise."""
@@ -1779,7 +1986,14 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
     # Je Situation ein System: die Grundstellung (unbewegt, alles aktiv) und
     # jede Situation, in der ein Lastfall steht
     systeme: dict = {}
-    an.cases = solve_cases(model, workers=workers, progress=progress, systeme=systeme)
+    referenzen = ermuedungsreferenzen(model)
+    if referenzen:
+        an.info["kontakt_eingefroren"] = dict(referenzen)
+        _melde(progress, f"Ermüdungszustände: {len(referenzen)} Zustände werden mit dem "
+                         "eingefrorenen Kontaktzustand des ersten Zustands ihrer Ermüdungslast "
+                         "linear gelöst (Nachweise → Konfiguration)")
+    an.cases = solve_cases(model, workers=workers, progress=progress, systeme=systeme,
+                           referenzen=referenzen)
     if GRUNDSTELLUNG not in systeme:
         systeme[GRUNDSTELLUNG] = (model, StaticSystem(model, workers, progress))
     an.systeme = {k: v[1] for k, v in systeme.items()}
