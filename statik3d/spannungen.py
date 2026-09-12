@@ -326,6 +326,62 @@ def kontaktflaechen(model, knoten) -> np.ndarray:
     return A
 
 
+def kontaktkraefte(model, res) -> list:
+    """Kontaktkraefte je Kontaktpaar aus den Kontaktergebnissen eines Lastfalls
+    oder einer Kombination (``res.contact``), gruppiert nach der Bezeichnung
+    vor dem Doppelpunkt (Kontaktpaar, Kontaktbedingung, einseitiges Lager).
+
+    Je Gruppe: ``Fn`` = Summe der Normalkraefte der aktiven Knoten [N] (Druck
+    positiv), ``R`` = Resultierende aller Kontaktkraefte (Normal- und
+    Reibkraefte, ``F_vek`` der Bedingungen) auf die Kontaktknoten [N] (3,),
+    ``Rn`` = Σ F_n·n nur aus den Normalkraeften, ``Ft`` = Betrag der
+    resultierenden Reibkraft |R - Rn| [N] (am Block mit Reibung 20 kN = die
+    Horizontalkraft; die Summe der Knotenbetraege ``Ft_summe`` waere 26 kN,
+    weil die Reibkraefte nicht alle gleich gerichtet sind), ``Fn_max`` =
+    groesste Knotenkraft [N],
+    ``p_max`` = groesster Kontaktdruck F_n/A [N/m²] (NaN ohne Flaeche),
+    ``A`` = wirksame Flaeche der aktiven Knoten [m²] (kontaktflaechen),
+    dazu ``anzahl``, ``aktiv``, ``haften``, ``gleiten``. Damit steht die
+    Kontaktkraft einer Fuge als Zahl im Bericht statt als Liste tausender
+    Knoten ("Kontaktkraefte im Bericht ausgeben", 12.09.2026).
+    """
+    eintraege = [c for c in (getattr(res, "contact", None) or []) if "node" in c]
+    if not eintraege:
+        return []
+    alle = np.unique(np.array([int(c["node"]) for c in eintraege], int))
+    A_alle = kontaktflaechen(model, alle)
+    gruppen: dict = {}
+    for c in eintraege:
+        name = str(c.get("label", "")).split(":")[0].strip() or "Kontakt"
+        gruppen.setdefault(name, []).append(c)
+    out = []
+    for name, liste in gruppen.items():
+        aktiv = [c for c in liste if str(c.get("status", "")) != "offen"]
+        Fn = np.array([float(c.get("Fn", 0.0)) for c in aktiv], float)
+        Ft = np.array([float(c.get("Ft", 0.0)) for c in aktiv], float)
+        N = np.array([list(c.get("normal") or (0.0, 0.0, 0.0)) for c in aktiv], float).reshape(-1, 3)
+        kn = np.array([int(c["node"]) for c in aktiv], int)
+        A = A_alle[kn] if kn.size else np.zeros(0)
+        Rn = (Fn[:, None] * N).sum(axis=0) if len(Fn) else np.zeros(3)
+        if aktiv and all(c.get("F_vek") is not None for c in aktiv):
+            R = np.array([list(c["F_vek"]) for c in aktiv], float).reshape(-1, 3).sum(axis=0)
+        else:
+            R = Rn.copy()                    # aeltere Ergebnisse ohne F_vek
+        Rt = R - Rn
+        with np.errstate(invalid="ignore", divide="ignore"):
+            p = np.where(A > 0, Fn / np.maximum(A, 1e-30), np.nan) if len(Fn) else np.zeros(0)
+        out.append({"name": name, "anzahl": len(liste), "aktiv": len(aktiv),
+                    "haften": sum(1 for c in aktiv if str(c.get("status", "")) in ("Haften", "Verbund")),
+                    "gleiten": sum(1 for c in aktiv if str(c.get("status", "")) == "Gleiten"),
+                    "Fn": float(Fn.sum()), "Ft": float(np.linalg.norm(Rt)),
+                    "Ft_summe": float(Ft.sum()),
+                    "Fn_max": float(Fn.max()) if len(Fn) else 0.0,
+                    "R": R, "R_betrag": float(np.linalg.norm(R)), "Rn": Rn, "Rt": Rt,
+                    "p_max": float(np.nanmax(p)) if len(p) and np.isfinite(p).any() else float("nan"),
+                    "A": float(A.sum())})
+    return out
+
+
 def kontakt_je_knoten(model, res, groesse: str) -> np.ndarray:
     """Kontaktdruck p = F_n/A, Reibspannung τ = F_t/A (N/mm²), Spalt (mm) oder
     Kontaktkraft (kN) je Kontaktknoten (nn,), NaN an allen anderen Knoten.

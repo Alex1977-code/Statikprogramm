@@ -253,6 +253,8 @@ class Report:
         "results_combinations": True, "envelopes": True, "member_diagrams": True,
         "design": True, "fatigue": True, "joints": True, "gzg": True, "beulen": True,
         "volumen": True, "contact": True, "uebernommen": True,
+        "contact_nodes": True,                               # Kontakt je Knoten (Langform)
+        "max_contact_results": 0,                            # 0 = alle Ergebnisse
         "modal": True, "buckling": True,
         "design_detail": True, "max_detail_members": 0,      # 0 = alle
         "max_case_figures": 30,                              # Lastbilder je Lastfall
@@ -271,11 +273,11 @@ class Report:
         "kurz": {"model_tables": False, "member_diagrams": False, "design_detail": False,
                  "max_rows": 40, "max_detail_cases": 0, "max_detail_combinations": 0,
                  "max_member_diagrams": 0, "modal": False, "buckling": False,
-                 "max_case_figures": 3},
+                 "max_case_figures": 3, "contact_nodes": False, "max_contact_results": 5},
         "mittel": {"model_tables": False, "design_detail": True, "max_rows": 100,
                    "max_detail_cases": 5, "max_detail_combinations": 5,
                    "max_member_diagrams": 10, "max_detail_members": 20,
-                   "max_case_figures": 10},
+                   "max_case_figures": 10, "contact_nodes": False, "max_contact_results": 20},
         "lang": {},
     }
     #: Kapitel, hinter die ein Berichtseintrag gestellt werden kann (Schluessel, Text)
@@ -2187,34 +2189,79 @@ class Report:
             b.extend(self._member_diagram_blocks())
         # ---- Kontakt
         if self.opt("contact"):
-            ct = [(n, r) for n, r in allres if r.contact]
+            ct = [(n, r) for n, r in allres if getattr(r, "contact", None)]
             if ct:
                 b.append(self._h(2, "Kontakt"))
                 from .. import contact as ctm
+                from .. import spannungen as spn
+                b.append(("p", "Kontaktkräfte je Kontaktpaar: ΣF_n ist die Summe der Normalkräfte "
+                               "der aktiven Knoten (Druck positiv), R die Resultierende aller "
+                               "Kontaktkräfte (Normal- und Reibkräfte) auf die Kontaktknoten, |F_t| "
+                               "die resultierende Reibkraft, p der größte Kontaktdruck F_n/A und A "
+                               "die wirksame Fläche der aktiven Knoten."))
+
+                def kraftzeile(k):
+                    p_max = k.get("p_max")
+                    return [fmt(k["Fn"] / 1e3, 2), fmt(k["R"][0] / 1e3, 2), fmt(k["R"][1] / 1e3, 2),
+                            fmt(k["R"][2] / 1e3, 2), fmt(k["Ft"] / 1e3, 2),
+                            fmt(p_max / 1e6, 2) if p_max is not None and p_max == p_max else "–",
+                            fmt(k["A"] * 1e4, 1)]
+
+                # Uebersicht: je Kontaktpaar das Ergebnis mit der groessten Normalkraftsumme
+                je_ergebnis, best = [], {}
                 for name, res in ct:
-                    b.append(self._h(3, f"Kontaktergebnisse {name}"))
-                    b.append(("p", ctm.summary(res.contact) + "."))
-                    rows = [["Knoten", "Art", "Bezeichnung", "Status", "F_n [kN]", "F_t [kN]",
-                             "Spalt [mm]"]]
-                    kinds = {"support": "einseitiges Lager", "gap": "Spaltelement",
-                             "surface": "Knoten-Fläche"}
-                    for c in res.contact:
-                        rows.append([str(c.get("node", "")), kinds.get(c.get("kind"), c.get("kind")),
-                                     c.get("label", ""), c.get("status", ""),
-                                     fmt(c.get("Fn", 0.0) / 1e3, 3), fmt(c.get("Ft", 0.0) / 1e3, 3),
-                                     fmt(c.get("gap", 0.0) * 1e3, 3)])
+                    kk = spn.kontaktkraefte(m, res)
+                    je_ergebnis.append((name, res, kk))
+                    for k in kk:
+                        if k["name"] not in best or k["Fn"] > best[k["name"]][1]["Fn"]:
+                            best[k["name"]] = (name, k)
+                if best:
+                    rows = [["Kontaktpaar", "maßgebend", "ΣF_n [kN]", "R_x [kN]", "R_y [kN]",
+                             "R_z [kN]", "|F_t| [kN]", "max p [N/mm²]", "A [cm²]", "aktiv / gesamt"]]
+                    for pn, (rn, k) in best.items():
+                        rows.append([pn, rn] + kraftzeile(k) + [f"{k['aktiv']} / {k['anzahl']}"])
                     rows, note = self._truncate(rows)
-                    b.append(("table", rows, f"Kontaktbedingungen {name} (F_n = Normalkraft, "
-                                             "F_t = Reibkraft, Spalt < 0 = Durchdringung)",
-                              None, "compact"))
+                    b.append(("table", rows, "Kontaktkräfte je Kontaktpaar – maßgebendes Ergebnis "
+                                             "(größte Normalkraftsumme)", None, "compact"))
                     if note:
                         b.append(("note", note))
+                lim = int(self.opt("max_contact_results") or 0) or len(je_ergebnis)
+                for name, res, kk in je_ergebnis[:lim]:
+                    b.append(self._h(3, f"Kontaktergebnisse {name}"))
+                    b.append(("p", ctm.summary(res.contact) + "."))
+                    if kk:
+                        rows = [["Kontaktpaar", "aktiv / gesamt", "haften", "gleiten", "ΣF_n [kN]",
+                                 "R_x [kN]", "R_y [kN]", "R_z [kN]", "|F_t| [kN]", "max p [N/mm²]",
+                                 "A [cm²]", "max F_n [kN]"]]
+                        for k in kk:
+                            rows.append([k["name"], f"{k['aktiv']} / {k['anzahl']}", str(k["haften"]),
+                                         str(k["gleiten"])] + kraftzeile(k) + [fmt(k["Fn_max"] / 1e3, 2)])
+                        b.append(("table", rows, f"Kontaktkräfte je Kontaktpaar, {name}", None, "compact"))
+                    if self.opt("contact_nodes"):
+                        rows = [["Knoten", "Art", "Bezeichnung", "Status", "F_n [kN]", "F_t [kN]",
+                                 "Spalt [mm]"]]
+                        kinds = {"support": "einseitiges Lager", "gap": "Spaltelement",
+                                 "surface": "Knoten-Fläche"}
+                        for c in res.contact:
+                            rows.append([str(c.get("node", "")), kinds.get(c.get("kind"), c.get("kind")),
+                                         c.get("label", ""), c.get("status", ""),
+                                         fmt(c.get("Fn", 0.0) / 1e3, 3), fmt(c.get("Ft", 0.0) / 1e3, 3),
+                                         fmt(c.get("gap", 0.0) * 1e3, 3)])
+                        rows, note = self._truncate(rows)
+                        b.append(("table", rows, f"Kontaktbedingungen {name} je Knoten (F_n = Normalkraft, "
+                                                 "F_t = Reibkraft, Spalt < 0 = Durchdringung)",
+                                  None, "compact"))
+                        if note:
+                            b.append(("note", note))
                     log = [s for s in res.info.get("contact_log", []) if "zugeordnet" not in s]
                     if log:
                         b.append(("list", log))
                         self._warnings.extend(f"Kontakt {name}: {s}" for s in log)
                     if res.info.get("contact_converged") is False:
                         self._warnings.append(f"Kontakt {name}: Iteration nicht konvergiert")
+                if len(je_ergebnis) > lim:
+                    b.append(("note", f"Kontaktkräfte der übrigen {len(je_ergebnis) - lim} Ergebnisse: "
+                                      "siehe die Übersicht oben; die Langform nennt alle."))
         # ---- Freie Bewegungen (Singularitaeten)
         # Sie gehoeren in den Bericht, weil sie den Geltungsbereich des
         # Ergebnisses begrenzen: fuer ein Bauteil, an dem Last ins Nichts
