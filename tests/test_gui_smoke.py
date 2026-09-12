@@ -196,6 +196,21 @@ def main():
     r = solver.solve_buckling(w.model, 3)
     w._solve_done("buckling", r); app.processEvents()
     check("Knicken dargestellt", w.cb_mode.count() == 3)
+    # Eigenformen mit Kontakt: verklebt statt frei schwingend; ein Fehler steht rechts
+    w.load_example("friction"); app.processEvents()
+    r = solver.solve_modal(w.model, 4, kontakt=w._kontaktzustand_zuletzt())
+    w._solve_done("modal", r); app.processEvents()
+    check("Block mit Reibung: Eigenformen mit verklebtem Kontakt, erste Form nicht 0 Hz, Kontakt in der Zusammenfassung",
+          w.cb_mode.count() == 4 and "0.000 Hz" not in w.cb_mode.itemText(0)
+          and "Kontakt" in w.txt_summary.toPlainText(), w.cb_mode.itemText(0))
+    w._rechnet_gerade = True
+    w._bg_failed("Probefehler: Faktorisierung gescheitert", "Traceback (Probe)")
+    app.processEvents()
+    check("gescheiterte Rechnung: der Grund steht rechts in der Maske Ergebnisse",
+          "gescheitert" in w.txt_res.toPlainText() and "Probefehler" in w.txt_res.toPlainText()
+          and w.tabs.tabText(w.tabs.currentIndex()) == "Ergebnisse" and not w._rechnet_gerade,
+          w.txt_res.toPlainText()[:60])
+    w.statusBar().clearMessage()
 
     # Hintergrund-Berechnung ueber den Worker
     w.load_example("hall"); app.processEvents()
@@ -561,6 +576,50 @@ def main():
         check("Stellung auswaehlbar", w.tbl_stellung.currentRow() == 1
               and getattr(w, "gewaehlte_stellung", "") == "S2",
               str(w.tbl_stellung.currentRow()))
+        # Stellung per Maus: Klick auf Stab, Flaeche oder Volumen schaltet aus und ein
+        w._baum_geklickt("stellung", "S2"); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Maske der Stellung: Klickmodus an (Stab, Fläche, Volumen in der Ansicht)",
+              mk is not None and getattr(mk, "objekt_modus", "") == "stellung" and "klick" in mk._felder,
+              str(getattr(mk, "objekt_modus", None)))
+        if mk is not None:
+            if w.model.members:
+                art_k, obj_k, feld_k = "stab", next(iter(w.model.members)), "staebe_aus"
+            elif w.model.flaechen:
+                art_k, obj_k, feld_k = "flaeche", next(iter(w.model.flaechen)), "flaechen_aus"
+            else:
+                art_k, obj_k, feld_k = "volumen", next(iter(w.model.koerper), ""), "koerper_aus"
+            mk.objekt_angeklickt(art_k, obj_k); app.processEvents()
+            check(f"Klick auf {obj_k} schaltet es aus (steht in der Liste, Vorschau blendet aus)",
+                  obj_k in w._namensliste(mk.werte().get(feld_k)),
+                  f"{mk.werte().get(feld_k)!r}, {len(w.versteckt['elemente'])} Elemente ausgeblendet")
+            mk.objekt_angeklickt(art_k, obj_k); app.processEvents()
+            check("… noch ein Klick schaltet es wieder ein",
+                  obj_k not in w._namensliste(mk.werte().get(feld_k)))
+            check("Gelenke und Lager sind Listen zum Anhaken",
+                  type(mk._felder.get("lager_aus")).__name__ == "QListWidget"
+                  and type(mk._felder.get("gelenke_aus")).__name__ == "QListWidget")
+            mk._felder["klick"].setChecked(False); app.processEvents()
+            check("Haken aus: kein Klickmodus mehr", getattr(mk, "objekt_modus", "") == "")
+        w.maskenrand.schliessen(); app.processEvents()
+        # Situation: Lastfaelle und Kombinationen anhaken statt tippen
+        w.situation_neu(); app.processEvents()
+        mk = w.maskenrand.maske
+        lf = next(iter(w.model.load_cases), "")
+        check("Maske der Situation: Lastfälle und Kombinationen als Listen zum Anhaken",
+              mk is not None and type(mk._felder.get("lastfaelle")).__name__ == "QListWidget"
+              and type(mk._felder.get("kombinationen")).__name__ == "QListWidget"
+              and mk._felder["lastfaelle"].count() == len(w.model.load_cases), str(len(w.model.load_cases)))
+        if mk is not None and lf:
+            mk.setzen("lastfaelle", lf)
+            check("Anhaken eines Lastfalls: die Maske liefert seinen Namen",
+                  mk.werte().get("lastfaelle") == lf, str(mk.werte().get("lastfaelle")))
+            mk.zusatzknoepfe["Alle Lastfälle und Kombinationen"].click(); app.processEvents()
+            check("„Alle Lastfälle und Kombinationen“ hakt alle an",
+                  w._namensliste(mk.werte().get("lastfaelle")) == list(w.model.load_cases),
+                  str(mk.werte().get("lastfaelle"))[:60])
+        if mk is not None:
+            mk.abbrechen(); app.processEvents()
 
         w.stellungen_rechnen()
         app.processEvents()
