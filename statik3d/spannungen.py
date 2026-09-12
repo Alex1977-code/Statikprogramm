@@ -51,6 +51,25 @@ def kategorien(art: str, groesse: str):
     return None
 
 
+def dezimal(v, nk: int = None, vorzeichen: bool = False) -> str:
+    """Ergebniswert als normale Dezimalzahl mit Punkt, wie ueberall im Programm -
+    nie „2.33e-13“ (12.09.2026). Nachkommastellen nach dem Betrag (ab 100
+    keine, ab 10 eine, ab 1 zwei, sonst drei), Rundungsschrott wird 0."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    if not np.isfinite(x):
+        return "–"
+    if nk is None:
+        a = abs(x)
+        nk = 0 if a >= 100 else 1 if a >= 10 else 2 if a >= 1 else 3
+    if abs(x) < 0.5 * 10.0 ** (-nk):
+        x = 0.0
+    s = f"{x:+.{nk}f}" if vorzeichen else f"{x:.{nk}f}"
+    return s
+
+
 def skalenformat(lo: float, hi: float) -> str:
     """Zahlenformat der Farbskala: ausgeschrieben statt „2.39e+03“ - die
     Nachkommastellen nach der Spanne (12.09.2026)."""

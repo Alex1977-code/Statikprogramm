@@ -1930,11 +1930,16 @@ WERTE_MAX = 200
 
 
 def _wertzahl(v: float, nachkomma: int = 1) -> str:
-    """Ergebniswert als kurze Zahl mit Vorzeichen, deutsches Komma."""
-    s = f"{float(v):.{nachkomma}f}"
+    """Ergebniswert als kurze Dezimalzahl mit Punkt (wie Tabellen und
+    Kennwerte); ``nachkomma`` ist die Hoechstzahl, kleine Betraege bekommen
+    mehr, Nachkommanullen fallen weg."""
+    from ..spannungen import dezimal
+    a = abs(float(v))
+    nk = nachkomma if a >= 10 else max(nachkomma, 2 if a >= 1 else 3)
+    s = dezimal(v, nk)
     if "." in s:
         s = s.rstrip("0").rstrip(".")
-    return (s or "0").replace(".", ",")
+    return s or "0"
 
 
 def ergebniswerte(model: Model, res, point_scalars, arten, quantity: str = "",

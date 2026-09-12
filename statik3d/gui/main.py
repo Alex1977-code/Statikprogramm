@@ -8058,7 +8058,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     continue
                 lo, _e1, hi, _e2 = grenzen[q]
                 eh, f = vp.SG_EINHEIT[q]
-                reihe.append((q, f"{lo / f:+.3g} … {hi / f:+.3g} {eh}",
+                reihe.append((q, f"{spn.dezimal(lo / f, vorzeichen=True)} … "
+                                 f"{spn.dezimal(hi / f, vorzeichen=True)} {eh}",
                               f"schnittgroesse:{q}"))
             if reihe:
                 reihe.append(("kein Verlauf", "Verlauf ausblenden",
@@ -10556,11 +10557,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         teile = []
         if skala.get("anzahl_ueber"):
-            teile.append(f"{skala['anzahl_ueber']} Knoten über {skala['clim'][1]:g} "
-                         f"(max {skala['wmax']:.4g})")
+            teile.append(f"{skala['anzahl_ueber']} Knoten über {spn.dezimal(skala['clim'][1])} "
+                         f"(max {spn.dezimal(skala['wmax'])})")
         if skala.get("anzahl_unter"):
-            teile.append(f"{skala['anzahl_unter']} Knoten unter {skala['clim'][0]:g} "
-                         f"(min {skala['wmin']:.4g})")
+            teile.append(f"{skala['anzahl_unter']} Knoten unter {spn.dezimal(skala['clim'][0])} "
+                         f"(min {spn.dezimal(skala['wmin'])})")
         if teile:
             self.statusBar().showMessage(f"{name}: " + ", ".join(teile), 8000)
 

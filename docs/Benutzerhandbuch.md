@@ -2557,6 +2557,12 @@ Drehlager 21 586 Kugeln, die man für Kontaktergebnisse hielt, die „nicht
 weggehen". Die **Skala** schreibt ihre Zahlen aus („2390" statt „2.39e+03"),
 mit Nachkommastellen nach der Spanne (unter 100: eine, unter 10: zwei).
 
+**Zahlen als Dezimalzahl.** Ergebniswerte stehen überall als normale
+Dezimalzahl mit Punkt — Skala, Modellbaum (Schnittgrößen „−0.00 … +943 kN"),
+Statuszeile, Marken, Kennwerte, Tabellen —, nie mehr als „2.33e-13": die
+Nachkommastellen richten sich nach dem Betrag (ab 100 keine, ab 10 eine,
+ab 1 zwei, sonst drei), Rundungsschrott wird 0 (`spannungen.dezimal`).
+
 **Skala und Kennwerte nur für das Sichtbare.** Sind Teile ausgeblendet
 (Sicht → *Selektion anzeigen*, *Auswahl ausblenden*, Schalter der
 Glasleiste), gelten die Grenzen der automatischen Werteskala und die
@@ -2578,8 +2584,9 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   Dazu eine **Schwelle** (nur |Wert| ≥ Schwelle) und *jeder n-te Wert*; mehr
   als 200 Marken zeigt die Ansicht nicht (die betragsgrößten bleiben, die
   Statuszeile sagt es). Die Kopfzeile nennt, was die Marken zeigen; sie
-  stehen damit auch im Berichtsbild. Zahlen mit deutschem Komma in der
-  Einheit der Größe (kN, kNm, N/mm², mm).
+  stehen damit auch im Berichtsbild. Zahlen als normale Dezimalzahl mit
+  Punkt wie in Tabellen und Kennwerten, in der Einheit der Größe (kN, kNm,
+  N/mm², mm).
 * **Sonde** (Ribbon *Ergebnisse → Sonde*, Schalter): solange sie an ist,
   setzt ein Klick auf das Modell eine Marke am nächsten Knoten mit dem Wert
   der aktuellen Färbung — „S1 K312: 187,4". Beliebig viele Sonden; sie

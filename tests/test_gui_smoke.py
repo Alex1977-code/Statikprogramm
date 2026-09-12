@@ -2119,6 +2119,10 @@ def main():
         for gruppe in ("Umhüllende", "Kombinationen", "Lastfälle", "Nachweise"):
             check(f"Ergebnisliste: „{gruppe}“", gruppe in erg and erg[gruppe],
                   f"{len(erg.get(gruppe, []))} Einträge")
+        sg = [z for _n, z, _k in erg.get("Schnittgrößen", [])]
+        check("Schnittgrößen im Baum als normale Dezimalzahl (kein 2.33e-13 im Modellbaum)",
+              sg and not any("e-" in z or "e+" in z for z in sg) and all("…" in z for z in sg[:-1]),
+              str(sg[:2]))
         namen = zweige(w.baum)
         check("Ergebnisse stehen im Modellbaum", "Ergebnisse" in namen)
         check("Bericht steht im Modellbaum", "Bericht" in namen)

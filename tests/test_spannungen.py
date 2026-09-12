@@ -156,6 +156,12 @@ def test_volumen_und_kontakt():
     check("Maske: Skalengrenzen nur aus den sichtbaren Knoten, Werte bleiben vollstaendig",
           g_sicht["clim"][1] <= g_alle["clim"][1] and g_sicht["wmax"] == float(np.nanmax(sv2[knoten]))
           and len(g_sicht["werte"]) == m.nn, f"{g_sicht['clim']} in {g_alle['clim']}")
+    check("dezimal: normale Dezimalzahl, Nachkommastellen nach Betrag, kein 2.33e-13",
+          [sp.dezimal(2391.22), sp.dezimal(45.26), sp.dezimal(-2.346), sp.dezimal(0.04567),
+           sp.dezimal(-2.33e-13), sp.dezimal(943.33, vorzeichen=True), sp.dezimal(0.0, vorzeichen=True),
+           sp.dezimal(float("nan"))]
+          == ["2391", "45.3", "-2.35", "0.046", "0.000", "+943", "+0.000", "–"],
+          str([sp.dezimal(2391.22), sp.dezimal(-2.33e-13), sp.dezimal(943.33, vorzeichen=True)]))
     check("Skalenformat: ausgeschriebene Zahlen nach Spanne",
           [sp.skalenformat(0, 2390), sp.skalenformat(0, 45.2), sp.skalenformat(-2.5, 1.0),
            sp.skalenformat(0, 0.05), sp.skalenformat(0, 1e-5)] == ["%.0f", "%.1f", "%.2f", "%.3f", "%.2e"]
