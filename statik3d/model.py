@@ -1724,7 +1724,9 @@ class Netzeinstellungen:
     #: beide tetraedern dieselbe Huelle des eigenen Vernetzers (Randpunkte
     #: bleiben erhalten), siehe statik3d.vernetzer_extern. Nachbesserung
     #: "mmg3d": MMG3D optimiert das fertige Netz bei fester Huelle;
-    #: mmg_pfad: das Programm mmg3d_O3, leer = aus dem Suchpfad (13.09.2026)
+    #: mmg_pfad: ein eigenes mmg3d_O3 (nur aus der Datei; kein Feld in der
+    #: Maske, seit 13.09.2026) - leer = das nachgeladene aus dem Werkzeugordner,
+    #: sonst aus dem Suchpfad
     vernetzer: str = "eigener"
     nachbessern: str = "keine"
     mmg_pfad: str = ""
