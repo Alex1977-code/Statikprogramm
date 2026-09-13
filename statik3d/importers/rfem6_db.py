@@ -488,6 +488,8 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
             if not rho and props.get("gamma"):
                 rho = props["gamma"] / 9.81      # Wichte [N/m^3] -> Dichte
             rho = rho or 7850.0
+    fy_dicke = props.get("f_y_dicke") if h is not None and impl is not None else None
+    fu_dicke = props.get("f_u_dicke") if h is not None and impl is not None else None
     if chars:
         E = chars.get("modulusOfElasticity") or E
         nu = chars.get("poissonsRatio") or nu
@@ -500,9 +502,11 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
     grade = grade or C.steel_grade_from_text(name) or ""
     name = C.unique_name(model.materials, name)
     model.add_material(Material(name, E=E, nu=nu, rho=rho, alpha=alpha,
-                                fy=fy, fu=fu, grade=grade))
+                                fy=fy, fu=fu, grade=grade,
+                                fy_dicke=list(fy_dicke or []), fu_dicke=list(fu_dicke or [])))
     C.say(log, f"  Material '{name}': E = {E / 1e9:g} GPa"
                + (f", f_y = {fy / 1e6:g} N/mm^2" if fy else "")
+               + (f" (nach Dicke: {model.materials[name].dickentext('fy')})" if fy_dicke else "")
                + (f", rho = {rho:g} kg/m^3" if rho else "")
                + (f" (Dlubal-Datenbanknummer {dbnr})" if dbnr else ""))
     cache[mat_id] = name
@@ -521,8 +525,17 @@ def _material_name(E: float, fy, userid, dbnr) -> tuple[str, str]:
 
 
 def _material_props(db: Db, impl: dict) -> dict:
-    """{'E':..., 'G':..., 'rho':...} aus MaterialData/MaterialProperties."""
-    out: dict[str, float] = {}
+    """{'E':..., 'G':..., 'rho':...} aus MaterialData/MaterialProperties.
+
+    Streckgrenze und Zugfestigkeit fuehrt RFEM 6 nicht als Zahl, sondern als
+    **Dickenbereiche** (MaterialPropertyRange -> MaterialPropertyMaterialValue
+    mit thicknessSI und valueSI: S355 bis 16 mm 355, bis 40 mm 345 ... bis
+    400 mm 265 N/mm²). Bis 13.09.2026 las der Import nur MaterialPropertyDouble,
+    darum fehlten f_y und f_u - und der aus f_y gebildete Name („S355"), das
+    Material hiess „Material 1 (DB 22175)". Jetzt: ``f_y`` = Wert der
+    duennsten Stufe, ``f_y_dicke`` = [[t_max, Wert], ...]; ebenso f_u.
+    """
+    out: dict = {}
     data = [r for r in db.rows("MaterialData") if r.get("impl_id") == impl.get("id")]
     if not data:
         vec = db.container("MaterialImpl_materialDataVector").get(impl.get("id"), [])
@@ -536,6 +549,12 @@ def _material_props(db: Db, impl: dict) -> dict:
         keys = db.container("MaterialProperties_propertiesMap_keys").get(pid, [])
         vals = db.container_rows("MaterialProperties_propertiesMap_values").get(pid, [])
         for k, v in zip(keys, vals):
+            if v.get("reference_table") == "MaterialPropertyRange":
+                stufen = _material_bereich(db, v.get("reference_id"))
+                if stufen and str(k) not in out:
+                    out[str(k)] = stufen[0][1]
+                    out[str(k) + "_dicke"] = stufen
+                continue
             if v.get("reference_table") != "MaterialPropertyDouble":
                 continue
             row = doubles.get(v.get("reference_id"))
@@ -545,6 +564,28 @@ def _material_props(db: Db, impl: dict) -> dict:
             if val not in (None, 0.0) and k not in out:
                 out[str(k)] = float(val)
     return out
+
+
+def _material_bereich(db: Db, range_id) -> list:
+    """[[t_max [m], Wert [Pa]], ...] eines MaterialPropertyRange, aufsteigend
+    nach der Dicke; leer, wenn die Tabellen fehlen (aeltere Dateien)."""
+    if range_id is None or "MaterialPropertyRange_values" not in db.tables \
+            or "MaterialPropertyMaterialValue" not in db.tables:
+        return []
+    werte = db.by_id("MaterialPropertyMaterialValue")
+    stufen = []
+    for v in db.container_rows("MaterialPropertyRange_values").get(range_id, []):
+        if v.get("reference_table") != "MaterialPropertyMaterialValue":
+            continue
+        row = werte.get(v.get("reference_id"))
+        if row is None:
+            continue
+        t_max, val = row.get("thicknessSI"), row.get("valueSI")
+        if val in (None, 0.0) or t_max is None:
+            continue
+        stufen.append([float(t_max), float(val)])
+    stufen.sort()
+    return stufen
 
 
 #: Kennwerte des Querschnitts in SectionData_parameterValues

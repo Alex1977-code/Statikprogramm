@@ -1000,7 +1000,7 @@ passende Tabelle nach vorn — samt ihrer Gruppe.
 |---|---|
 | Protokoll | das Protokoll der Berechnung und der Modellprüfung |
 | Modell | Knoten, Linien, Flächen, Volumenkörper, Stäbe (alle Elemente), Schweißnähte |
-| Eigenschaften | Werkstoffe, Querschnitte, Dicken |
+| Eigenschaften | Werkstoffe, Querschnitte, Dicken. Ein aus RFEM 6 übernommener Werkstoff bringt seit 13.09.2026 Streckgrenze und Zugfestigkeit **nach Erzeugnisdicke** mit (S355: bis 16 mm 355, bis 40 mm 345 … bis 400 mm 265 N/mm²); der Dialog zeigt die Tabelle unter „nach Dicke“, die Nachweise nehmen den Wert der Bauteildicke, der Bericht führt sie als eigene Tabelle. Vorher fehlten f_y und f_u beim rf6-Import ganz, und der Werkstoff hieß „Material 1 (DB 22175)“ statt „S355“ |
 | Lager | Lager, Gelenke, Kontaktbedingungen |
 | Lasten | Lastfälle, Lasten, Kombinationen |
 | Ergebnisse | Stabkräfte, Auflagerkräfte, Umhüllende, Kontakt |

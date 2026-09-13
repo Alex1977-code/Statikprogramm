@@ -1029,7 +1029,15 @@ class Report:
                              fmt(mat.fy / 1e6, 0) if mat.fy else "–",
                              fmt(mat.fu / 1e6, 0) if mat.fu else "–"])
             b.append(("table", rows, "Materialkennwerte", None, ""))
-            if any(mat.grade for mat in m.materials.values()):
+            mit_tabelle = [mat for mat in m.materials.values() if getattr(mat, "fy_dicke", None)]
+            if mit_tabelle:
+                rows = [["Material", "f_y nach Erzeugnisdicke [N/mm²]", "f_u nach Erzeugnisdicke [N/mm²]"]]
+                for mat in mit_tabelle:
+                    rows.append([mat.name, mat.dickentext("fy"), mat.dickentext("fu") or "–"])
+                b.append(("table", rows, "Streckgrenze und Zugfestigkeit nach Erzeugnisdicke (aus der "
+                                         "Materialdatenbank der Quelldatei; die Nachweise nehmen den "
+                                         "Wert der Dicke des Bauteils)", None, "compact"))
+            if any(mat.grade and not getattr(mat, "fy_dicke", None) for mat in m.materials.values()):
                 b.append(("note", "Streckgrenzen für Erzeugnisdicken t ≤ 40 mm nach EN 10025-2; "
                                   "für t > 40 mm werden die abgeminderten Werte nach "
                                   "DIN EN 1993-1-1 Tabelle 3.1 verwendet."))
