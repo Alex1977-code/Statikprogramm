@@ -56,9 +56,12 @@ jobs:
       - name: Probe (mmg3d_O3 -h)
         shell: pwsh
         run: |
-          $out = & paket/mmg3d_O3.exe -h 2>&1 | Out-String
+          # mmg3d_O3 -h endet mit Exit-Code 2 (gemessen 13.09.2026); pwsh mit
+          # ErrorActionPreference=Stop wuerde daran scheitern - darum ueber cmd
+          # mit erzwungenem Exit-Code 0, geprueft wird die Ausgabe
+          $out = cmd /c "paket\mmg3d_O3.exe -h 2>&1 & exit 0" | Out-String
           $out
-          if ($out -notmatch "(?i)mmg") { throw "mmg3d_O3 antwortet nicht wie erwartet" }
+          if ($out -notmatch "(?i)mmg3d") { throw "mmg3d_O3 antwortet nicht wie erwartet" }
 
       - name: Archiv packen
         shell: pwsh
