@@ -4206,6 +4206,41 @@ def main():
         mk.setzen("form", "Dreiecke")
         check("Netzeinstellungen: kein Vorschau-Knopf und kein Vorschau-Feld mehr",
               "Vorschau" not in mk.zusatzknoepfe and "vorschau" not in mk._felder)
+        # Vernetzer und Nachbesserung zur Auswahl; was fehlt, steht als "nicht installiert" dabei
+        from statik3d import vernetzer_extern as vx_
+        da_ = vx_.verfuegbar()
+        wahl_v = [mk._felder["vernetzer"].itemText(i) for i in range(mk._felder["vernetzer"].count())]
+        check("Netzeinstellungen: Auswahl Vernetzer (eigener, gmsh, Netgen) und Nachbesserung (MMG3D)",
+              len(wahl_v) == 3 and wahl_v[0].startswith("eigener") and "nachbessern" in mk._felder
+              and "mmg_pfad" in mk._felder
+              and all(("nicht installiert" in wahl_v[i]) != da_[k][1] for i, k in ((1, "gmsh"), (2, "netgen"))),
+              str(wahl_v))
+        if da_["gmsh"][1]:
+            mk.setzen("vernetzer", wahl_v[1])
+        mk.anwenden()
+        app.processEvents()
+        if da_["gmsh"][1]:
+            check("Vernetzer gmsh übernommen (steht in der Netzbeschreibung)",
+                  m_.netz.vernetzer == "gmsh" and "gmsh" in m_.netz.beschreibung(), m_.netz.beschreibung()[-60:])
+            m_.netz.vernetzer = "eigener"
+        w.maske_netzeinstellungen(); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("nachbessern", "MMG3D (nicht installiert)" if not da_["mmg3d"][1] else "keine")
+        fehler_n = []
+        alt_error = w.error
+        w.error = lambda msg: fehler_n.append(str(msg))
+        mk.anwenden(); app.processEvents()
+        w.error = alt_error
+        check("eine nicht installierte Nachbesserung wird abgewiesen, das Modell bleibt",
+              (bool(fehler_n) and "nicht installiert" in fehler_n[0]) if not da_["mmg3d"][1] else not fehler_n,
+              str(fehler_n[:1]))
+        w.maske_netzeinstellungen(); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("dichte", "eigene")
+        mk.setzen("ziellaenge", 500)
+        mk.setzen("h_min", "100")
+        mk.setzen("intelligent", False)
+        mk.setzen("form", "Dreiecke")
         mk.anwenden()
         app.processEvents()
         check("Netzeinstellungen übernommen (Maske in mm: Ziellänge 500 mm = 0,5 m, kleinste 100 mm = 0,1 m; Dreiecke, ohne Anpassung)",
@@ -4215,6 +4250,21 @@ def main():
         mk2 = w.maskenrand.maske
         check("die Maske zeigt die Längen in mm", float(mk2.werte()["ziellaenge"]) == 500.0
               and str(mk2.werte()["h_min"]).strip() == "100", str((mk2.werte()["ziellaenge"], mk2.werte()["h_min"])))
+        # Gleichungsloeser zur Auswahl (Berechnung -> Einstellungen)
+        from statik3d import solver as slv_
+        from statik3d import parallel as parallel_
+        eintraege = [w.cb_loeser.itemText(i) for i in range(w.cb_loeser.count())]
+        liste_ = {k: da for k, _n, da, *_r in slv_.loeser_liste()}
+        check("Gleichungslöser: automatisch + sechs Löser, nicht installierte grau",
+              len(eintraege) == 7 and eintraege[0].startswith("automatisch")
+              and all(w.cb_loeser.model().item(i + 1).isEnabled() == liste_[k]
+                      for i, k in enumerate(("pardiso", "cholmod", "umfpack", "mumps", "pyamg", "superlu"))),
+              str(eintraege))
+        w.cb_loeser.setCurrentIndex(w.cb_loeser.findData("superlu"))
+        w._apply_parallel_settings()
+        check("die Auswahl kommt in den Einstellungen an", parallel_.settings().solver_backend == "superlu")
+        w.cb_loeser.setCurrentIndex(0)
+        w._apply_parallel_settings()
         w.maskenrand.schliessen()
         w.sel_flaechen = []
         w.geometrie_vernetzen()

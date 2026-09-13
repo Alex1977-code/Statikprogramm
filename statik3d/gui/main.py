@@ -10322,6 +10322,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_workers = QtWidgets.QSpinBox()
         self.sp_workers.setRange(1, 256); self.sp_workers.setValue(parallel.settings().workers)
         gl.addWidget(row(f"Prozesse (Kerne, {parallel.cpu_count()} verfügbar)", self.sp_workers))
+        # Gleichungsloeser zur Auswahl; was nicht installiert ist, steht grau
+        # dabei ("nicht installiert"), damit man weiss, was es gaebe
+        self.cb_loeser = QtWidgets.QComboBox()
+        self.cb_loeser.addItem("automatisch (MKL PARDISO, sonst CHOLMOD, sonst SuperLU)", "auto")
+        for key, name, da, lizenz, art in solver.loeser_liste():
+            self.cb_loeser.addItem(f"{name} - {art}" + ("" if da else " (nicht installiert)"), key)
+            if not da:
+                i = self.cb_loeser.count() - 1
+                self.cb_loeser.model().item(i).setEnabled(False)
+            self.cb_loeser.setItemData(self.cb_loeser.count() - 1, f"Lizenz: {lizenz}", QtCore.Qt.ToolTipRole)
+        i = self.cb_loeser.findData(parallel.settings().solver_backend)
+        self.cb_loeser.setCurrentIndex(max(i, 0))
+        self.cb_loeser.setToolTip("Vorgabe MKL PARDISO (frei nutzbar, in der exe enthalten). CHOLMOD und "
+                                  "UMFPACK sind GPL-Software und nur in einer eigenen Python-Umgebung "
+                                  "nutzbar, MUMPS (CeCILL-C) ebenso; PyAMG (MIT) rechnet iterativ und "
+                                  "speicherarm; SuperLU (scipy) rechnet auf einem Kern")
+        gl.addWidget(row("Gleichungslöser", self.cb_loeser))
         self.cb_backend = QtWidgets.QComboBox()
         self.cb_backend.addItems(["lokal (Mehrkern)", "Rechnerfarm"])
         self.ed_farm_host = QtWidgets.QLineEdit(parallel.settings().farm_host)
@@ -11952,6 +11969,20 @@ class MainWindow(QtWidgets.QMainWindow):
         form = next((k for k, v in self.NETZFORMEN.items() if v == int(n.form)), "Vierecke, sonst Dreiecke")
         ordnung = next((k for k, v in self.NETZORDNUNG.items() if v == int(n.ordnung)),
                        next(iter(self.NETZORDNUNG)))
+        from .. import vernetzer_extern as vx
+        da = vx.verfuegbar(getattr(n, "mmg_pfad", ""))
+
+        def vernetzer_text(key):
+            name, ok, _liz = da.get(key, ("eigener Vernetzer", True, ""))
+            return name + ("" if ok else " (nicht installiert)")
+
+        def nachbessern_text(key):
+            if key in ("", "keine"):
+                return "keine"
+            return vernetzer_text(key)
+
+        vernetzer_liste = [vernetzer_text(k) for k in ("eigener", "gmsh", "netgen")]
+        nachbessern_liste = ["keine", vernetzer_text("mmg3d")]
         felder = [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),
                     hinweis="grob 8, mittel 16, fein 32 Elemente über die größte Abmessung jedes Objekts; "
                             "eigene = die Ziellänge gilt absolut"),
@@ -11973,7 +12004,16 @@ class MainWindow(QtWidgets.QMainWindow):
                   # (Flaeche mit vier Randabschnitten, Sechsflaechner mit acht
                   # Eckknoten); alles andere geht an den freien Vernetzer (13.09.2026).
                   F("uebersteuern", "Teilung je Fläche aus der Netzdichte", "haken", bool(n.teilung_uebersteuern),
-                    hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt")]
+                    hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt"),
+                  F("vernetzer", "Vernetzer (Volumen)", "wahl", vernetzer_text(n.vernetzer), vernetzer_liste,
+                    hinweis="eigener Vernetzer, gmsh (GPL, pip install gmsh) oder Netgen (LGPL, pip install "
+                            "netgen-mesher) - beide tetraedern dieselbe Hülle, die Randknoten bleiben; "
+                            "keiner wird mit der exe ausgeliefert"),
+                  F("nachbessern", "Nachbesserung", "wahl", nachbessern_text(n.nachbessern), nachbessern_liste,
+                    hinweis="MMG3D (LGPL, getrenntes Programm mmg3d_O3) optimiert das fertige Netz bei "
+                            "fester Hülle - der Weg zu einer Mindestgüte aller Elemente"),
+                  F("mmg_pfad", "MMG3D-Programm (Pfad)", "text", n.mmg_pfad or "", breite=170,
+                    hinweis="leer = mmg3d_O3 aus dem Suchpfad")]
         # Die „Vorschau" der Elementzahl ist heraus (13.09.2026): am Drehlager
         # schaetzte sie 76 640 Tetraeder, das Netz hat 1 812 359 - je Koerper
         # im Median Faktor 758 daneben, weil die Formel V/(0,12 h³) die
@@ -12085,10 +12125,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         n = self.model.netz
         ziel = float(w.get("ziellaenge", n.ziellaenge * 1e3) or n.ziellaenge * 1e3) / 1e3
+
+        def wahl(text, schluessel, vorgabe):
+            s = str(text or "").lower()
+            for k in schluessel:
+                if s.startswith(k) or s.startswith({"eigener": "eigener vernetzer", "mmg3d": "mmg3d"}.get(k, k)):
+                    return k
+            return vorgabe
+
+        vernetzer = wahl(w.get("vernetzer"), ("eigener", "gmsh", "netgen"), n.vernetzer)
+        nachbessern = wahl(w.get("nachbessern"), ("keine", "mmg3d"), n.nachbessern)
+        if "nicht installiert" in str(w.get("vernetzer", "")) or "nicht installiert" in str(w.get("nachbessern", "")):
+            raise ValueError("Der gewählte Vernetzer bzw. die Nachbesserung ist nicht installiert")
         return replace(n, dichte=str(w.get("dichte", n.dichte)),
                        ziellaenge=max(1e-4, ziel),
                        intelligent=bool(w.get("intelligent", True)),
                        h_min=zahl("h_min"), h_max=zahl("h_max"),
+                       vernetzer=vernetzer, nachbessern=nachbessern,
+                       mmg_pfad=str(w.get("mmg_pfad", n.mmg_pfad) or "").strip(),
                        max_elemente=max(0, int(float(w.get("max_elemente", n.max_elemente) or 0))),
                        form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
                        ordnung=self.NETZORDNUNG.get(str(w.get("ordnung", "")), n.ordnung),
@@ -14547,6 +14601,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_parallel_settings(self):
         parallel.configure(workers=self.sp_workers.value(),
+                           solver_backend=str(self.cb_loeser.currentData() or "auto"),
                            backend="farm" if self.cb_backend.currentIndex() == 1 else "local",
                            farm_host=self.ed_farm_host.text().strip() or "127.0.0.1",
                            farm_port=int(self.ed_farm_port.text() or 5555),

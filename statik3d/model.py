@@ -1714,6 +1714,14 @@ class Netzeinstellungen:
     #: bestimmten Kantenlaenge braucht - etwa um die Wirkung der Glaettung
     #: fuer sich zu messen.
     nachvernetzen: bool = True
+    #: Vernetzer der Volumen: "eigener" (mesher3d), "gmsh" oder "netgen" -
+    #: beide tetraedern dieselbe Huelle des eigenen Vernetzers (Randpunkte
+    #: bleiben erhalten), siehe statik3d.vernetzer_extern. Nachbesserung
+    #: "mmg3d": MMG3D optimiert das fertige Netz bei fester Huelle;
+    #: mmg_pfad: das Programm mmg3d_O3, leer = aus dem Suchpfad (13.09.2026)
+    vernetzer: str = "eigener"
+    nachbessern: str = "keine"
+    mmg_pfad: str = ""
     #: Dickenmass: die Kantenlaenge zusaetzlich an der duennsten Abmessung
     #: eines Koerpers ausrichten (6V/A, netzdichte.dicke). Ein Passstift
     #: D 25 x 67 bekommt damit vier Elemente ueber den Querschnitt statt
@@ -1754,6 +1762,10 @@ class Netzeinstellungen:
                 f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}, "
                 + ("quadratische Elemente (shell6/shell8, tet10, hex20)"
                    if self.ordnung >= 2 else "lineare Elemente (shell3/shell4, tet4, hex8)")
+                + (f", Vernetzer {getattr(self, 'vernetzer', 'eigener')}"
+                   if getattr(self, "vernetzer", "eigener") not in ("", "eigener") else "")
+                + (f", Nachbesserung {getattr(self, 'nachbessern', 'keine')}"
+                   if getattr(self, "nachbessern", "keine") not in ("", "keine") else "")
                 + (f" ({self.quelle})" if self.quelle else ""))
 
 
