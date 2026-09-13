@@ -73,7 +73,30 @@ def _selftest() -> int:
         if not loeser.startswith("MKL PARDISO"):
             lines.append("FEHLER: kein Mehrkern-Loeser im Programm - MKL fehlt im Bundle")
             code = 1
-        else:
+        # Die mitgelieferten Loeser der Auswahl: MKL PARDISO, PyAMG (MIT) und
+        # SuperLU muessen in der exe stecken und rechnen ("Gleichungsloeser
+        # mitinstallieren", 13.09.2026); die GPL-Loeser bleiben draussen.
+        liste = {k: da for k, _n, da, *_r in solver.loeser_liste()}
+        lines.append("Loeser in der exe: " + ", ".join(k for k, da in liste.items() if da))
+        from statik3d import parallel
+        for key in ("pyamg", "superlu"):
+            if not liste.get(key):
+                lines.append(f"FEHLER: Loeser {key} fehlt im Bundle")
+                code = 1
+                continue
+            alt_backend = parallel.settings().solver_backend
+            parallel.configure(solver_backend=key)
+            try:
+                r2 = solver.solve_static(examples_lib.frame_example())
+            finally:
+                parallel.configure(solver_backend=alt_backend)
+            abw = abs(r2.umag.max() - r.umag.max()) / max(r.umag.max(), 1e-30)
+            lines.append(f"Beispiel Rahmen mit {key}: umax = {r2.umag.max() * 1000:.3f} mm "
+                         f"(Abweichung {abw:.1e})")
+            if abw > 1e-6:
+                lines.append(f"FEHLER: Loeser {key} weicht vom Mehrkern-Loeser ab")
+                code = 1
+        if code == 0:
             lines.append("OK")
     except BaseException:      # noqa: BLE001 - alles in die Datei, nie ein Meldungsfenster
         lines.append(traceback.format_exc())
