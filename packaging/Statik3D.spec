@@ -21,12 +21,20 @@ hiddenimports = ["pyvistaqt", "zstandard", "statik3d.web.server", "statik3d.upda
                  "vtkmodules.all", "vtkmodules.util.data_model", "vtkmodules.util.execution_model"]
 hiddenimports += collect_submodules("statik3d")
 hiddenimports += collect_submodules("vtkmodules")
-for optional in ("pypardiso", "reportlab", "svglib", "qrcode"):
+for optional in ("pypardiso", "pyamg", "reportlab", "svglib", "qrcode"):
     try:
         __import__(optional)
         hiddenimports.append(optional)
     except ImportError:
         pass
+# PyAMG (MIT) kommt mit in die exe - samt seinem Rechenkern amg_core, den
+# PyInstaller sonst nicht sieht. GPL-Loeser (CHOLMOD, UMFPACK) und gmsh
+# bleiben draussen (Benutzerhandbuch Kap. 9, Lizenzen).
+try:
+    __import__("pyamg")
+    hiddenimports += collect_submodules("pyamg")
+except ImportError:
+    pass
 
 
 # --------------------------------------------------------------------------

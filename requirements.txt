@@ -9,11 +9,13 @@ zstandard>=0.21     # HiCAD-Archive (.sza/.kra/.fga) sind zstd-gepackt
 # 12,25 s statt 1,38 s. Die exe bringt MKL mit (siehe packaging/Statik3D.spec).
 pypardiso>=0.4
 mkl
+# Zweiter Loeser in der exe: PyAMG (MIT, algebraisches Mehrgitter + CG) -
+# iterativ und speicherarm; "Gleichungsloeser mitinstallieren" (13.09.2026).
+pyamg>=5
 
 # optional (keines davon in der exe - Lizenzen siehe Benutzerhandbuch, Kap. 9):
 # gmsh>=4.11        CAD-Import (STEP/IGES/BREP/STL) und Vernetzer (GPL)
 # netgen-mesher     Vernetzer Netgen (LGPL)
-# pyamg             Loeser PyAMG, iterativ (MIT) - darf in die exe
 # scikit-sparse     CHOLMOD-Loeser (LGPL/GPL)
 # scikit-umfpack    UMFPACK-Loeser (GPL)
 # pymumps           MUMPS-Loeser (CeCILL-C)

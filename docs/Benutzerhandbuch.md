@@ -2399,8 +2399,11 @@ Nachweis mit seiner Verformung je Kombination.
   LU), **MUMPS** (direkt, mehrkernig), **PyAMG** (iterativ: algebraisches
   Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu iterieren und
   einkernig) und **SuperLU** (direkt, einkernig, Rückfall). Was nicht
-  installiert ist, steht grau in der Liste. Geprüft in `tests/test_loeser.py`
-  (jeder vorhandene Löser trifft N·L/(E·A)).
+  installiert ist, steht grau in der Liste. **In der exe stecken** MKL
+  PARDISO, PyAMG und SuperLU (seit 13.09.2026; PyAMG ist MIT-lizenziert und
+  darf mit) — der Selbsttest des Baus rechnet das Rahmenbeispiel mit jedem
+  der drei und vergleicht. Geprüft in `tests/test_loeser.py` (jeder
+  vorhandene Löser trifft N·L/(E·A)).
 * **Eigenschwingungen mit Kontakt.** Kontaktpaare schwingen mit: liegt eine
   gerechnete statische Lösung vor, schwingt das System um ihren
   **Kontaktzustand** (geschlossene Paare übertragen, offene nicht); sonst
