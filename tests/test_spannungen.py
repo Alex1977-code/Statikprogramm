@@ -201,6 +201,21 @@ def test_kontaktkraefte():
           k["p_max"] >= k["Fn"] / k["A"] * 0.999 and np.isfinite(k["p_max"]),
           f"p_max {k['p_max'] / 1e6:.3f} N/mm², Mittel {k['Fn'] / k['A'] / 1e6:.3f}")
     check("ohne Kontaktergebnis: leere Liste", sp.kontaktkraefte(m, solver.Results(name="x", kind="case", model=m)) == [])
+    check("ohne Kontaktbedingung mit Flaechen: keine Zeilen je Flaeche", all(not k.get("flaeche") for k in kk))
+    # je Flaeche: Zuordnung vorgegeben - die Haelfte der Knoten auf „F_links", der Rest auf „F_rechts"
+    knoten = sorted({int(c["node"]) for c in rs.contact})
+    zuordnung = {n: ("F_links" if i < len(knoten) // 2 else "F_rechts") for i, n in enumerate(knoten)}
+    kf = sp.kontaktkraefte(m, rs, flaechen_je_knoten=zuordnung)
+    teile = [k for k in kf if k.get("flaeche")]
+    check("je Flaeche: das Paar zuerst, dann eine Zeile je Flaeche",
+          len(kf) == 3 and not kf[0].get("flaeche") and sorted(k["flaeche"] for k in teile) == ["F_links", "F_rechts"],
+          str([(k["name"], k.get("flaeche")) for k in kf]))
+    check("… und die Flaechen ergeben zusammen das Paar (ΣF_n, R, A, Knoten)",
+          abs(sum(k["Fn"] for k in teile) - kf[0]["Fn"]) < 1e-6 * abs(kf[0]["Fn"])
+          and np.allclose(sum(np.asarray(k["R"]) for k in teile), kf[0]["R"])
+          and abs(sum(k["A"] for k in teile) - kf[0]["A"]) < 1e-9
+          and sum(k["anzahl"] for k in teile) == kf[0]["anzahl"],
+          f"{[round(k['Fn'] / 1e3, 2) for k in teile]} kN gegen {kf[0]['Fn'] / 1e3:.2f} kN")
 
 
 def test_werteskala():

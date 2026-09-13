@@ -3215,8 +3215,6 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Netzeinstellungen…", self.maske_netzeinstellungen,
                 hinweis="Netzdichte (grob, mittel, fein, eigene Ziellänge), Elementform, intelligente "
                         "Anpassung an kleine Kanten, kleinste/größte Elementgröße, Höchstzahl je Objekt")
-        g.klein("Netzvorschau", self.netz_vorschau,
-                hinweis="Geschätzte Elementzahl je Fläche und Volumen ins Protokoll - vor dem Vernetzen")
         g.klein("Netzqualität…", self.maske_netzguete,
                 hinweis="Die Form der Elemente bewerten und einfärben: Formgüte (1 = beste Form), "
                         "Seitenverhältnis, Kantenlänge; Kennwerte und die schlechtesten Elemente "
@@ -7362,7 +7360,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if tabelle not in Report.TABELLEN:
             return self.error(f"Unbekannte Tabelle „{tabelle}“")
         quelle = ""
-        if tabelle in ("Stabkräfte", "Auflagerkräfte", "Umhüllende", "Kontakt"):
+        if tabelle in ("Stabkräfte", "Auflagerkräfte", "Umhüllende", "Kontakt", "Kontaktpaare"):
             quelle = self._aktuelle_quelle() if self.analysis is not None else ""
             if not quelle:
                 return self.error(f"{tabelle}: erst rechnen und ein Ergebnis zeigen")
@@ -7864,6 +7862,8 @@ class MainWindow(QtWidgets.QMainWindow):
             or list(m.koerper.values())
         if not flaechen and not koerper:
             return self.error("Es gibt keine Flächen oder Volumenkörper zum Vernetzen.")
+        if not self._netzaenderung_bestaetigen("Vernetzen"):
+            return None
         self.merken("Geometrie vernetzt")
         self.netzguete_feld = None      # die alte Einfaerbung gilt nicht mehr
         n = self._vernetzen(flaechen, koerper)
@@ -7882,6 +7882,8 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         if not (getattr(m, "kontaktbedingungen", {}) or {}):
             return self.error("Das Modell hat keine Kontaktbedingungen.")
+        if not self._netzaenderung_bestaetigen("Kontaktfugen ausführen", "Ausführen"):
+            return None
         self.merken("Kontaktfugen ausgeführt")
         log = []
         ges = fugen.kontaktfugen_ausfuehren(m, log)
@@ -7904,6 +7906,8 @@ class MainWindow(QtWidgets.QMainWindow):
         els += [e for k in m.koerper.values() for e in (k.elemente or [])]
         if not els:
             return self.error("Es liegt kein Netz aus Flächen oder Volumen vor.")
+        if not self._netzaenderung_bestaetigen("Netz löschen", "Netz löschen"):
+            return None
         self.merken("Netz der Geometrie gelöscht")
         self.netzguete_feld = None
         self._netz_loeschen(els)
@@ -9477,10 +9481,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_contact = tab.Datentabelle([
             Spalte("Knoten", "", "ganz"), Spalte("Art"), Spalte("Status"),
             Spalte("Fn", kN, "zahl", 2), Spalte("Ft", kN, "zahl", 2),
-            Spalte("Spalt", "mm", "zahl", 3)],
+            Spalte("Spalt", "mm", "zahl", 3), Spalte("Paar")],
             "Kontakt", self, mit_kennwerten=True)
         self.tbl_contact.zeile_gewaehlt.connect(self._tabelle_knoten)
         tabs.addTab(self.tbl_contact, "Kontakt")
+
+        # Kontaktkraefte je Paar (und je Flaeche, wo ein Paar mehrere umfasst):
+        # dieselben Zahlen wie im Bericht (spannungen.kontaktkraefte)
+        self.tbl_kontaktpaare = tab.Datentabelle([
+            Spalte("Paar"), Spalte("Fläche"), Spalte("aktiv", "", "ganz"), Spalte("gesamt", "", "ganz"),
+            Spalte("haften", "", "ganz"), Spalte("gleiten", "", "ganz"),
+            Spalte("ΣFn", kN, "zahl", 2, hinweis="Summe der Normalkräfte der aktiven Knoten, Druck positiv"),
+            Spalte("Rx", kN, "zahl", 2, hinweis="Resultierende aller Kontaktkräfte (Normal- und Reibkräfte) "
+                                                "auf die Kontaktknoten"),
+            Spalte("Ry", kN, "zahl", 2), Spalte("Rz", kN, "zahl", 2),
+            Spalte("|Ft|", kN, "zahl", 2, hinweis="resultierende Reibkraft"),
+            Spalte("A", "cm²", "zahl", 1, hinweis="wirksame Fläche der aktiven Knoten"),
+            Spalte("p_m", "N/mm²", "zahl", 3, hinweis="mittlere Pressung ΣFn / A - die Kraft allein sagt "
+                                                       "nichts über die Beanspruchung"),
+            Spalte("max p", "N/mm²", "zahl", 3, hinweis="größter Kontaktdruck Fn/A je Knoten"),
+            Spalte("max Fn", kN, "zahl", 2)],
+            "Kontaktpaare", self, mit_kennwerten=True)
+        tabs.addTab(self.tbl_kontaktpaare, "Kontaktpaare")
 
         # Knicklaengen aus der Knickfigur: je Stab N_Ed, alpha_cr, L_cr und beta
         self.tbl_knick = tab.Datentabelle([
@@ -9667,7 +9689,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ("Eigenschaften", ["Werkstoffe", "Querschnitte", "Dicken"]),
         ("Lager", ["Lager", "Gelenke", "Kontaktbedingungen"]),
         ("Lasten", ["Lastfälle", "Lasten", "Kombinationen"]),
-        ("Ergebnisse", ["Stabkräfte", "Auflagerkräfte", "Umhüllende", "Kontakt"]),
+        ("Ergebnisse", ["Stabkräfte", "Auflagerkräfte", "Umhüllende", "Kontakt", "Kontaktpaare"]),
         ("Nachweise", ["Nachweise EC3", "Knicklängen", "Schwingung", "Ermüdung", "Anschlüsse",
                        "Verformungen", "Beulfelder", "Volumen", "Lasteinleitung"]),
         ("Bericht", ["Bericht"]),
@@ -11923,7 +11945,9 @@ class MainWindow(QtWidgets.QMainWindow):
         F = msk.Feld
 
         def txt(v):
-            return "" if not v else f"{v:g}"
+            # Laengen in mm - so denkt man beim Vernetzen („Netzeinstellungen
+            # in mm", 13.09.2026); das Modell rechnet in m
+            return "" if not v else f"{v * 1e3:g}"
 
         form = next((k for k, v in self.NETZFORMEN.items() if v == int(n.form)), "Vierecke, sonst Dreiecke")
         ordnung = next((k for k, v in self.NETZORDNUNG.items() if v == int(n.ordnung)),
@@ -11931,11 +11955,11 @@ class MainWindow(QtWidgets.QMainWindow):
         felder = [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),
                     hinweis="grob 8, mittel 16, fein 32 Elemente über die größte Abmessung jedes Objekts; "
                             "eigene = die Ziellänge gilt absolut"),
-                  F("ziellaenge", "Ziellänge [m] (eigene)", "zahl", float(n.ziellaenge)),
+                  F("ziellaenge", "Ziellänge [mm] (eigene)", "zahl", float(n.ziellaenge) * 1e3),
                   F("intelligent", "Intelligent anpassen (kleine Kanten feiner)", "haken", bool(n.intelligent)),
-                  F("h_min", "kleinste Elementgröße [m]", "text", txt(n.h_min), breite=78,
+                  F("h_min", "kleinste Elementgröße [mm]", "text", txt(n.h_min), breite=78,
                     hinweis="leer = ein Viertel der Dichte-Länge"),
-                  F("h_max", "größte Elementgröße [m]", "text", txt(n.h_max), breite=78,
+                  F("h_max", "größte Elementgröße [mm]", "text", txt(n.h_max), breite=78,
                     hinweis="leer = das Vierfache der Dichte-Länge"),
                   F("max_elemente", "Höchstzahl Elemente je Objekt", "ganz", int(n.max_elemente)),
                   F("form", "Elementform Flächen", "wahl", form, list(self.NETZFORMEN)),
@@ -11943,31 +11967,25 @@ class MainWindow(QtWidgets.QMainWindow):
                     hinweis="quadratisch: Flächen bekommen Mittenknoten (shell6/shell8), "
                             "abgebildete Volumen hex20, freie Volumen tet10 - weniger Elemente "
                             "für dieselbe Genauigkeit, je Element aber mehr Rechenzeit"),
-                  F("abgebildet", "Abgebildetes Netz bevorzugen", "haken", bool(n.abgebildet)),
+                  # „Abgebildetes Netz bevorzugen" stand hier als Haken, den nichts las:
+                  # der Wert kommt aus der RFEM-Datei (mapped mesh preferred) und wird
+                  # nur mitgefuehrt. Abgebildet wird immer, wo die Form es hergibt
+                  # (Flaeche mit vier Randabschnitten, Sechsflaechner mit acht
+                  # Eckknoten); alles andere geht an den freien Vernetzer (13.09.2026).
                   F("uebersteuern", "Teilung je Fläche aus der Netzdichte", "haken", bool(n.teilung_uebersteuern),
-                    hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt"),
-                  F("vorschau", "Vorschau", "info", "–")]
+                    hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt")]
+        # Die „Vorschau" der Elementzahl ist heraus (13.09.2026): am Drehlager
+        # schaetzte sie 76 640 Tetraeder, das Netz hat 1 812 359 - je Koerper
+        # im Median Faktor 758 daneben, weil die Formel V/(0,12 h³) die
+        # Verfeinerung an den Bohrungen nicht kennt. Eine Zahl, die um drei
+        # Groessenordnungen daneben liegt, ist keine Auskunft.
         halter = {}
-
-        def vorschau():
-            try:
-                netz = self._netz_aus_maske(halter["m"].werte())
-                v = nd.vorschau(self.model, netz)
-                halter["m"].setzen("vorschau", f"{v['flaechen']} Flächen ≈ {v['n_flaechen']} Elemente · "
-                                               f"{v['koerper']} Volumen ≈ {v['n_koerper']} Elemente")
-                for name, art, h, n_, grund, teil in v["zeilen"][:60]:
-                    self.log.appendPlainText(f"  {art} {name}: h = {h * 1e3:.0f} mm, ≈ {n_:.0f} Elemente"
-                                             + (f" ({teil[0]} × {teil[1]})" if teil else "") + f" - {grund}")
-                if len(v["zeilen"]) > 60:
-                    self.log.appendPlainText(f"  … {len(v['zeilen']) - 60} weitere Objekte")
-            except Exception as ex:                    # noqa: BLE001
-                halter["m"].setzen("vorschau", str(ex))
 
         maske = msk.Maske("Netzeinstellungen", felder, knopf="Übernehmen",
                           hinweis="Die Netzdichte leitet die Elementgröße aus der Größe jedes Objekts ab; "
                                   "„intelligent“ verfeinert an kleinen Kanten (Löcher, Stege) innerhalb der "
-                                  "Grenzen. „Vorschau“ schätzt die Elementzahlen ins Protokoll.",
-                          zusatz=[("Vorschau", vorschau)])
+                                  "Grenzen. Das Protokoll nennt beim Vernetzen je Objekt die Elementgröße "
+                                  "und ihren Grund.")
         halter["m"] = maske
         maske.angewendet.connect(self._netzeinstellungen_setzen)
         return self.maske_erzeugen(maske)
@@ -12061,12 +12079,14 @@ class MainWindow(QtWidgets.QMainWindow):
         from dataclasses import replace
 
         def zahl(key):
+            # Maske in mm, Modell in m
             s = str(w.get(key, "")).strip().replace(",", ".")
-            return float(s) if s else 0.0
+            return float(s) / 1e3 if s else 0.0
 
         n = self.model.netz
+        ziel = float(w.get("ziellaenge", n.ziellaenge * 1e3) or n.ziellaenge * 1e3) / 1e3
         return replace(n, dichte=str(w.get("dichte", n.dichte)),
-                       ziellaenge=max(1e-4, float(w.get("ziellaenge", n.ziellaenge) or n.ziellaenge)),
+                       ziellaenge=max(1e-4, ziel),
                        intelligent=bool(w.get("intelligent", True)),
                        h_min=zahl("h_min"), h_max=zahl("h_max"),
                        max_elemente=max(0, int(float(w.get("max_elemente", n.max_elemente) or 0))),
@@ -12085,23 +12105,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info("Netzeinstellungen: " + netz.beschreibung())
         self.refresh_all()
         return netz
-
-    def netz_vorschau(self):
-        """Geschaetzte Elementzahlen der Auswahl (sonst aller Objekte) ins Protokoll."""
-        from .. import netzdichte as nd
-        m = self.model
-        flaechen = [m.flaechen[x] for x in self.sel_flaechen if x in m.flaechen] or list(m.flaechen.values())
-        koerper = [m.koerper[x] for x in self.sel_koerper if x in m.koerper] or list(m.koerper.values())
-        if not flaechen and not koerper:
-            return self.error("Es gibt keine Flächen oder Volumenkörper.")
-        v = nd.vorschau(m, m.netz, flaechen, koerper)
-        for name, art, h, n_, grund, teil in v["zeilen"]:
-            self.log.appendPlainText(f"  {art} {name}: h = {h * 1e3:.0f} mm, ≈ {n_:.0f} Elemente"
-                                     + (f" ({teil[0]} × {teil[1]})" if teil else "") + f" - {grund}")
-        text = (f"Netzvorschau: {v['flaechen']} Flächen ≈ {v['n_flaechen']} Elemente, "
-                f"{v['koerper']} Volumen ≈ {v['n_koerper']} Elemente ({m.netz.beschreibung()})")
-        self.info(text)
-        return v
 
     def maske_stabzug(self):
         m = self.model
@@ -14779,6 +14782,48 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.Yes)
         return antwort == QtWidgets.QMessageBox.Yes
 
+    def _fragen_knoepfe(self, titel: str, text: str, ja: str = "Ja", nein: str = "Abbrechen") -> bool:
+        """Rueckfrage mit benannten Knoepfen („Vernetzen" / „Abbrechen") - die
+        Tests ueberschreiben sie. Waehrend einer Rechnung wird wie bei
+        :meth:`_fragen` verneint, nicht gefragt."""
+        if self._modal_gesperrt(
+                f"Rückfrage \u201e{titel}\u201c während der Rechnung verneint", text):
+            return False
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Question)
+        box.setWindowTitle(titel)
+        box.setText(text)
+        b_ja = box.addButton(ja, QtWidgets.QMessageBox.AcceptRole)
+        box.addButton(nein, QtWidgets.QMessageBox.RejectRole)
+        box.setDefaultButton(b_ja)
+        box.exec()
+        return box.clickedButton() is b_ja
+
+    def _netzaenderung_bestaetigen(self, was: str, knopf: str = "Vernetzen") -> bool:
+        """Vor einer Aenderung des Netzes, wenn Ergebnisse da sind: sie gehoeren
+        zum bisherigen Netz und werden geloescht - Rueckfrage mit dem Knopf
+        der Aktion („Vernetzen", „Netz löschen", „Ausführen") und „Abbrechen"
+        („wenn Netzänderung, dann Hinweis, dass die bestehenden Ergebnisse
+        gelöscht werden", 13.09.2026). Abbrechen laesst Netz und Ergebnisse
+        stehen; bei Zustimmung werden die Ergebnisse hier verworfen."""
+        if self.analysis is None and self.results is None:
+            return True
+        an = self.analysis
+        n = ((len(getattr(an, "cases", {}) or {}) + len(getattr(an, "combinations", {}) or {}))
+             if an is not None else 1)
+        text = (f"{was}: Die vorhandenen Ergebnisse ({n} Lastfälle/Kombinationen"
+                + (", Nachweise" if an is not None and getattr(an, "design", None) is not None else "")
+                + ") gehören zum bisherigen Netz und werden durch diese Änderung gelöscht.\n\n"
+                f"{knopf} und die Ergebnisse verwerfen - oder abbrechen?")
+        if not self._fragen_knoepfe("Netz ändern", text, ja=knopf, nein="Abbrechen"):
+            self.info(f"{was} abgebrochen - Netz und Ergebnisse bleiben")
+            return False
+        self.analysis = None
+        self.results = None
+        self.log.appendPlainText(f"{was}: Ergebnisse verworfen - sie gehörten zum bisherigen Netz")
+        self._fill_result_selector()        # sonst blieben die alten Eintraege in der Auswahl stehen
+        return True
+
     def protokoll_speichern(self):
         """Das Protokoll als Textdatei sichern.
 
@@ -15152,7 +15197,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 react.append([s] + [float(v) / 1e3 for v in R])
             self._fill(self.tbl_react, react)
             self._fill(self.tbl_contact, [[c["node"], c["kind"], c["status"], c["Fn"] / 1e3,
-                                           c["Ft"] / 1e3, c["gap"] * 1e3] for c in r.contact])
+                                           c["Ft"] / 1e3, c["gap"] * 1e3,
+                                           str(c.get("label", "")).split(":")[0]] for c in r.contact])
+            self._fill(self.tbl_kontaktpaare, [
+                [k["name"], k.get("flaeche") or "alle", k["aktiv"], k["anzahl"], k["haften"], k["gleiten"],
+                 k["Fn"] / 1e3, k["R"][0] / 1e3, k["R"][1] / 1e3, k["R"][2] / 1e3, k["Ft"] / 1e3,
+                 k["A"] * 1e4, (k["Fn"] / k["A"] / 1e6 if k["A"] > 0 else float("nan")),
+                 (k["p_max"] / 1e6 if np.isfinite(k["p_max"]) else float("nan")),
+                 k["Fn_max"] / 1e3] for k in spn.kontaktkraefte(self.model, r)])
             self._fill(self.tbl_env, [])
             self.tbl_beam.hinweis_setzen("")
             self.tbl_env.hinweis_setzen("Extremwerte gibt es zur Umhüllenden - Ergebnis „Umhüllende“ wählen")
@@ -15161,6 +15213,12 @@ class MainWindow(QtWidgets.QMainWindow):
             rows = [[e, k, mn / 1e3, c1, mx / 1e3, c2] for e, k, mn, c1, mx, c2 in r.extreme_table()]
             self._fill(self.tbl_env, rows)
             self._fill(self.tbl_beam, [])
+            # Kontaktkraefte gibt es je Lastfall oder Kombination, nicht zur
+            # Umhuellenden - die Tabellen bleiben leer statt veraltet
+            self._fill(self.tbl_contact, [])
+            self._fill(self.tbl_kontaktpaare, [])
+            for tb in (self.tbl_contact, self.tbl_kontaktpaare):
+                tb.hinweis_setzen("Kontaktkräfte gibt es zu Lastfall oder Kombination - Ergebnis wählen")
             # Stabkraefte je Element gibt es nur zu Lastfall oder Kombination;
             # die Umhuellende traegt ihre Extremwerte im Register Umhuellende
             self.tbl_beam.hinweis_setzen("die Umhüllende zeigt ihre Extremwerte im Register "
@@ -15675,9 +15733,11 @@ class MainWindow(QtWidgets.QMainWindow):
         gf = self.netzguete_feld if u is None else None
         if gf is not None and len(np.asarray(gf["werte"])) == len(m.elements):
             guete = np.asarray(gf["werte"], float)
+            if gf["mass"] == "kantenlaenge":
+                guete = guete * 1e3          # Anzeige in mm wie die Netzeinstellungen
             guete_name = {"formguete": "Formgüte",
                           "seitenverhaeltnis": "Seitenverhältnis",
-                          "kantenlaenge": "Kantenlänge [m]"}.get(gf["mass"], "Netzgüte")
+                          "kantenlaenge": "Kantenlänge [mm]"}.get(gf["mass"], "Netzgüte")
             endlich = guete[np.isfinite(guete)]
             if gf["mass"] == "kantenlaenge" and len(endlich):
                 guete_clim = [float(endlich.min()), float(max(endlich.max(), endlich.min() + 1e-12))]

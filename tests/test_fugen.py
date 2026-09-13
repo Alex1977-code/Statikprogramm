@@ -1375,13 +1375,17 @@ def test_arbeiter_laden_aus_datei():
     a = _zwei_prismen()
     MSH.koerper_vernetzen(a, list(a.koerper.values()), log=[], workers=1)
     b = _zwei_prismen()
+    # Nur die Dateien **dieses** Laufs zaehlen: laeuft nebenan die
+    # Oberflaechenpruefung, liegt deren Arbeiterdatei im selben Ordner
+    # (run_all23 vom 13.09.2026 fiel so ueber eine fremde Datei)
+    vorher = {f for f in os.listdir(tempfile.gettempdir()) if f.startswith("statik3d_netz_")}
     erg = MSH.koerper_vernetzen(b, list(b.koerper.values()), log=[], workers=2)
     check("parallel und seriell ergeben dieselbe Elementzahl",
           len(a.elements) == len(b.elements) and erg.get("prozesse") == 2,
           f"{len(a.elements)} / {len(b.elements)} auf {erg.get('prozesse')} Prozessen")
-    check("die Modelldatei der Arbeiter ist danach geloescht",
-          not [f for f in os.listdir(tempfile.gettempdir()) if f.startswith("statik3d_netz_")],
-          str([f for f in os.listdir(tempfile.gettempdir()) if f.startswith("statik3d_netz_")][:3]))
+    neue = [f for f in os.listdir(tempfile.gettempdir())
+            if f.startswith("statik3d_netz_") and f not in vorher]
+    check("die Modelldatei der Arbeiter ist danach geloescht", not neue, str(neue[:3]))
 
 
 def test_karten_einmal_je_lauf():

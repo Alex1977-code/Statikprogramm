@@ -326,10 +326,42 @@ def kontaktflaechen(model, knoten) -> np.ndarray:
     return A
 
 
-def kontaktkraefte(model, res) -> list:
+def flaeche_je_knoten(model, namen) -> dict:
+    """Knoten -> Name der ersten der genannten Flaechen, auf deren Rand- oder
+    Schalenseiten er liegt (ueber fugen._dreiecke_der_fuge). Ein Knoten auf
+    der Kante zweier Flaechen zaehlt zur ersten - das sind wenige."""
+    out: dict = {}
+    try:
+        from . import fugen
+    except Exception:                       # noqa: BLE001
+        return out
+    for name in namen or []:
+        f = (getattr(model, "flaechen", {}) or {}).get(name)
+        if f is None:
+            continue
+        try:
+            dreiecke = fugen._dreiecke_der_fuge(model, [f])
+        except Exception:                   # noqa: BLE001
+            continue
+        for _e, nd, _n in dreiecke:
+            for k in nd:
+                out.setdefault(int(k), name)
+    return out
+
+
+def kontaktkraefte(model, res, flaechen_je_knoten: dict = None) -> list:
     """Kontaktkraefte je Kontaktpaar aus den Kontaktergebnissen eines Lastfalls
     oder einer Kombination (``res.contact``), gruppiert nach der Bezeichnung
     vor dem Doppelpunkt (Kontaktpaar, Kontaktbedingung, einseitiges Lager).
+
+    Eine Kontaktbedingung ist **ein** Paar mit allen ihren Flaechen. Umfasst
+    sie mehrere, folgen dem Eintrag des Paars Eintraege **je Flaeche**
+    (``flaeche`` = Name; Knoten, die auf keiner Flaeche liegen, unter „–"),
+    nach der Flaeche, auf der der Kontaktknoten liegt (Randseiten der
+    Flaechen der Bedingung; ``flaechen_je_knoten`` gibt die Zuordnung vor,
+    sonst kommt sie aus dem Modell). „Ist das die Kontaktkraft je Flaeche?" -
+    je Paar ist sie es nur bei einer Flaeche; darum die Aufteilung
+    (13.09.2026).
 
     Je Gruppe: ``Fn`` = Summe der Normalkraefte der aktiven Knoten [N] (Druck
     positiv), ``R`` = Resultierende aller Kontaktkraefte (Normal- und
@@ -355,7 +387,30 @@ def kontaktkraefte(model, res) -> list:
         name = str(c.get("label", "")).split(":")[0].strip() or "Kontakt"
         gruppen.setdefault(name, []).append(c)
     out = []
+    kbs = getattr(model, "kontaktbedingungen", None) or {}
     for name, liste in gruppen.items():
+        out.append(_kontaktaggregat(name, liste, A_alle))
+        kb = kbs.get(name)
+        namen = (list(getattr(kb, "flaechennamen", None) or [])
+                 + list(getattr(kb, "gegenflaechen", None) or [])) if kb is not None else []
+        zuordnung = (flaechen_je_knoten if flaechen_je_knoten is not None
+                     else (flaeche_je_knoten(model, namen) if len(namen) > 1 else {}))
+        if not zuordnung:
+            continue
+        je_flaeche: dict = {}
+        for c in liste:
+            je_flaeche.setdefault(zuordnung.get(int(c["node"]), "–"), []).append(c)
+        if len(je_flaeche) > 1:
+            for fl, teil in je_flaeche.items():
+                e = _kontaktaggregat(name, teil, A_alle)
+                e["flaeche"] = fl
+                out.append(e)
+    return out
+
+
+def _kontaktaggregat(name: str, liste: list, A_alle: np.ndarray) -> dict:
+    """Die Kennwerte einer Gruppe von Kontaktbedingungen (siehe kontaktkraefte)."""
+    if True:
         aktiv = [c for c in liste if str(c.get("status", "")) != "offen"]
         Fn = np.array([float(c.get("Fn", 0.0)) for c in aktiv], float)
         Ft = np.array([float(c.get("Ft", 0.0)) for c in aktiv], float)
@@ -370,16 +425,15 @@ def kontaktkraefte(model, res) -> list:
         Rt = R - Rn
         with np.errstate(invalid="ignore", divide="ignore"):
             p = np.where(A > 0, Fn / np.maximum(A, 1e-30), np.nan) if len(Fn) else np.zeros(0)
-        out.append({"name": name, "anzahl": len(liste), "aktiv": len(aktiv),
-                    "haften": sum(1 for c in aktiv if str(c.get("status", "")) in ("Haften", "Verbund")),
-                    "gleiten": sum(1 for c in aktiv if str(c.get("status", "")) == "Gleiten"),
-                    "Fn": float(Fn.sum()), "Ft": float(np.linalg.norm(Rt)),
-                    "Ft_summe": float(Ft.sum()),
-                    "Fn_max": float(Fn.max()) if len(Fn) else 0.0,
-                    "R": R, "R_betrag": float(np.linalg.norm(R)), "Rn": Rn, "Rt": Rt,
-                    "p_max": float(np.nanmax(p)) if len(p) and np.isfinite(p).any() else float("nan"),
-                    "A": float(A.sum())})
-    return out
+        return {"name": name, "flaeche": "", "anzahl": len(liste), "aktiv": len(aktiv),
+                "haften": sum(1 for c in aktiv if str(c.get("status", "")) in ("Haften", "Verbund")),
+                "gleiten": sum(1 for c in aktiv if str(c.get("status", "")) == "Gleiten"),
+                "Fn": float(Fn.sum()), "Ft": float(np.linalg.norm(Rt)),
+                "Ft_summe": float(Ft.sum()),
+                "Fn_max": float(Fn.max()) if len(Fn) else 0.0,
+                "R": R, "R_betrag": float(np.linalg.norm(R)), "Rn": Rn, "Rt": Rt,
+                "p_max": float(np.nanmax(p)) if len(p) and np.isfinite(p).any() else float("nan"),
+                "A": float(A.sum())}
 
 
 def kontakt_je_knoten(model, res, groesse: str) -> np.ndarray:
