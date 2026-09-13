@@ -73,13 +73,19 @@ def _selftest() -> int:
         if not loeser.startswith("MKL PARDISO"):
             lines.append("FEHLER: kein Mehrkern-Loeser im Programm - MKL fehlt im Bundle")
             code = 1
-        # Die mitgelieferten Loeser der Auswahl: MKL PARDISO, PyAMG (MIT) und
-        # SuperLU muessen in der exe stecken und rechnen ("Gleichungsloeser
-        # mitinstallieren", 13.09.2026); die GPL-Loeser bleiben draussen.
+        # Die mitgelieferten Loeser der Auswahl: MKL PARDISO, PyAMG (MIT),
+        # SuperLU und MUMPS (CeCILL-C, eigener Windows-Bau) muessen in der
+        # exe stecken und rechnen ("Gleichungsloeser mitinstallieren",
+        # 13.09.2026); die GPL-Loeser bleiben draussen.
         liste = {k: da for k, _n, da, *_r in solver.loeser_liste()}
         lines.append("Loeser in der exe: " + ", ".join(k for k, da in liste.items() if da))
+        try:
+            import mumps
+            lines.append(mumps.beschreibung())
+        except Exception as ex:                  # noqa: BLE001 - steht dann als Fehler unten
+            lines.append(f"MUMPS: {ex}")
         from statik3d import parallel
-        for key in ("pyamg", "superlu"):
+        for key in ("pyamg", "superlu", "mumps"):
             if not liste.get(key):
                 lines.append(f"FEHLER: Loeser {key} fehlt im Bundle")
                 code = 1

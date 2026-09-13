@@ -163,6 +163,62 @@ Die Threadzahl ist `cpu_count() − 1`: der eine Kern bleibt der Oberfläche,
 damit sich das Fenster während der Faktorisierung noch bedienen lässt. Wer
 `MKL_NUM_THREADS` oder `OMP_NUM_THREADS` selbst setzt, behält den Vorrang.
 
+**MUMPS** (CeCILL-C) ist seit 13.09.2026 der dritte direkte Löser in der
+exe — ein eigener Windows-Bau von MUMPS 5.8.2 mit gfortran, OpenMP,
+OpenBLAS und METIS, angebunden über `ctypes` (Paket `mumps`, Bau und
+Lizenzlage in `docs/MUMPS_Windows_Bauanleitung.md`). Zwei Befunde aus dem
+Bau, gemessen am selben Würfel (34.914 Freiheitsgrade, 2,59 Millionen
+Einträge, Ryzen 9 5950X mit 16 Kernen / 32 Threads):
+
+* Das fertige conda-forge-Binary (flang, ohne OpenMP in MUMPS, Umordnung
+  QAMD) braucht 3,4 s und wird mit keiner Threadzahl schneller. Der eigene
+  Bau mit METIS senkt die Flop der Faktorisierung von 7,6·10¹⁰ auf
+  2,5·10¹⁰ und den Faktorspeicher von 427 auf 249 MB.
+* OpenBLAS' `dgemmt` (Schalter `-DGEMMT_AVAILABLE`) macht den
+  symmetrischen Zweig mit jedem Thread langsamer (16 Threads: 4,9 s statt
+  1,6 s); der Bau lässt den Schalter weg. Über acht Threads hinaus
+  verliert MUMPS ebenfalls — am Würfel 0,86–1,09 s (8) gegen 1,58 s (16)
+  und 3,3 s (31), mit 201.720 Freiheitsgraden 8,1 s (8) gegen 9,8 s (16)
+  und 22,1 s (1) — darum kappt das Paket die Threadzahl auf acht und nie
+  mehr als physische Kerne (`MUMPS_NUM_THREADS` übersteuert).
+* Die Threadzahl wird **nur über OpenMP** gesetzt (`omp_set_num_threads`),
+  nie über `openblas_set_num_threads()`. OpenBLAS 0.3.34 (OpenMP-Fassung)
+  richtet sich sonst nicht mehr nach `omp_in_parallel()`
+  (`blas_is_num_threads_set_explicitly` in `common_thread.h`) und öffnet
+  aus MUMPS' Baumthreads (ICNTL(48), `dmumps_fac_l0_omp`) heraus
+  verschachtelte Regionen, deren Aufrufer sich in `exec_blas` um die
+  `MAX_PARALLEL_NUMBER` Puffer drehen: mit 8 Threads und SYM=0 standen fünf
+  Baumthreads in derselben Spin-Schleife, ein sechster in einer
+  verschachtelten libgomp-Region — 1 959 CPU-Sekunden ohne Fortschritt
+  (gdb-Rückverfolgung im Bauverzeichnis, 13.09.2026). Über OpenMP gesteuert
+  rechnet OpenBLAS in den Baumthreads einkernig und oben im Baum mit allen
+  Threads, so wie MUMPS es vorsieht. Mit einkerniger BLAS wäre MUMPS bei
+  3D-Modellen nicht schneller als mit einem Thread (gemessen 1,26 s bei 1
+  und 1,2–1,4 s bei 8 Threads): die Arbeit steckt in den großen Fronten
+  oben im Baum, und die rechnet die BLAS.
+
+| Löser (13.09.2026) | Faktorisieren | Faktorspeicher |
+|---|---|---|
+| SuperLU (1 Kern) | 8,25 s | +0,53 GB |
+| MUMPS, symmetrisch (SYM=2), 1 Thread | 1,26 s | 249 MB |
+| MUMPS, symmetrisch (SYM=2), 8 Threads | 0,86–1,09 s | 249 MB |
+| MUMPS, unsymmetrisch (SYM=0), 8 Threads | 0,64–0,73 s | 534 MB |
+| PARDISO, 31 Threads (MKL nimmt 16) | 0,45 s | +0,49 GB |
+
+Am Würfel mit 40³ Sechsflächnern (201.720 Freiheitsgrade, 8,0·10¹¹ Flop
+symmetrisch, 2,6 GB Faktoren): MUMPS symmetrisch 22,1 s mit einem, 8,1 s
+mit acht und 9,8 s mit sechzehn Threads; unsymmetrisch 11,6 s mit
+sechzehn Threads bei 1,6·10¹² Flop und 5,7 GB.
+
+Symmetrische Systeme übergibt `LinearSolver._mumps` als unteres Dreieck
+(SYM=2, LDLᵀ mit Pivotisierung); ob K symmetrisch ist, wird an
+‖K − Kᵀ‖ gemessen (Schranke 10⁻¹² · max|K|), nicht angenommen. Reicht die
+Arbeitsspeicher-Schätzung der Analyse wegen der Pivotisierung nicht
+(INFOG(1) = −8/−9), wird ICNTL(14) stufenweise auf 50, 100 und 200 %
+angehoben und nur die Faktorisierung wiederholt. `freigeben()` ruft
+JOB = −2; gemessen in `tests/test_loeser.py` wie bei PARDISO (25
+Faktorisierungen ohne Bezug wachsen nicht).
+
 **Der Speicher der Faktorisierung wird zurückgegeben.** MKL hält die
 Faktorisierung außerhalb von Python; `pypardiso` gibt sie nur auf
 ausdrücklichen Aufruf frei, nie beim Einsammeln des Objekts. Die

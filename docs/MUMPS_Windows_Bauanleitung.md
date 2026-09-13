@@ -11,6 +11,106 @@ exe ausgeliefert werden. Alles, was hier „prüfen“ heißt, ist beim
 Schreiben nicht auf einem Windows-Rechner nachvollzogen worden; die
 Sitzung soll es messen, nicht raten.
 
+## Ergebnis der Umsetzung (13.09.2026)
+
+Umgesetzt ist **Weg B + C**: MUMPS 5.8.2 aus dem unveränderten Quelltext
+mit MSYS2 gfortran 16.2 gebaut (OpenMP, `-DBLR_MT`, OpenBLAS 0.3.34 in der
+OpenMP-Fassung, METIS 5.1.0 statisch eingebunden, PORD) und über einen
+eigenen ctypes-Wrapper angebunden — kein PyMUMPS, kein MPI, kein Cython.
+Das Rad `packaging/mumps-5.8.2-py3-none-win_amd64.whl` (Paket `mumps`,
+Modul `mumps`, `from mumps import DMumpsContext`) enthält:
+
+| Datei | Inhalt |
+|---|---|
+| `mumps/__init__.py` | `DMumpsContext` (Schnittstelle wie PyMUMPS), `threads()`, `set_threads()`, `beschreibung()`; die C-Struktur `DMUMPS_STRUC_C` Feld für Feld aus `dmumps_c.h` 5.8.2, geprüft an der Versionsnummer, die MUMPS in die Struktur schreibt |
+| `mumps/_lib/libdmumps_seq.dll` | MUMPS (3,6 MB) samt `libopenblas.dll`, `libgomp-1.dll`, `libgfortran-5.dll`, `libquadmath-0.dll`, `libwinpthread-1.dll`, `libgcc_s_seh-1.dll` aus MSYS2 |
+| `mumps/LIZENZ/` | CeCILL-C (en/fr), MUMPS-Lizenzhinweis, `HERKUNFT.txt` (was weitergegeben wird, Quelle mit SHA-256, Zitierbitte), `Makefile.inc.statik3d`, Lizenzen der Drittanbieter (OpenBLAS, METIS, GCC-Laufzeit, winpthreads, PORD) |
+
+Bauverzeichnis: `C:/Users/alexanderm/Desktop/Statik3D_Mumps_win` (MSYS2
+entpackt unter `msys2/`, Quelltext unter `bau/MUMPS_5.8.2`, Paketquelle
+unter `paket/`, Varianten unter `varianten/`).
+
+**Weg A** (conda-forge) wurde zuerst probiert und verworfen: `mumps-seq`
+5.8.2 gibt es für win-64 (flang-Bau, mit drei Patches), aber ohne OpenMP
+in MUMPS — am Würfel 3,4 s, mit keiner Threadzahl schneller — und
+`pymumps` verlangt `mpi4py`/MS-MPI. Die OpenBLAS-Variante von conda-forge
+bringt `libomp.dll` (LLVM) mit, das neben `libiomp5md.dll` der MKL
+(PARDISO) mit „OMP: Error #15“ abbräche; die MKL-Variante der
+BLAS-Forwarder (`mkl_rt.3.dll`) lief, blieb aber einkernig. Diese DLLs
+liegen als Rückfall unter `varianten/conda-mkl`; der Wrapper lädt sie, wenn
+`libdmumps_seq.dll` fehlt.
+
+**Was beim eigenen Bau gemessen wurde** (Würfel 22³ Hex8, 34.914 FHG,
+2,59 Mio. Einträge, Ryzen 9 5950X, 16 Kerne / 32 Threads, Faktorisierung):
+
+| Löser | Threads | Zeit | Anmerkung |
+|---|---|---|---|
+| SuperLU | 1 | 8,25 s | |
+| MKL PARDISO | 31 (MKL nimmt 16) | 0,45 s | |
+| MUMPS conda-forge (QAMD, ohne OpenMP) | 2…16 | 3,4 s | 7,6·10¹⁰ Flop, 427 MB |
+| MUMPS eigener Bau, SYM=2, mit `-DGEMMT_AVAILABLE` | 1 / 4 / 16 / 31 | 1,63 / 2,0 / 4,9 / 10,2 s | `dgemmt` aus OpenBLAS skaliert rückwärts |
+| MUMPS eigener Bau, SYM=2, ohne GEMMT | 1 / 4 / 8 / 16 / 31 | 1,26 / 0,97 / 0,86–1,09 / 1,58 / 3,34 s | 2,5·10¹⁰ Flop, 249 MB (METIS) |
+| MUMPS eigener Bau, SYM=0, ohne GEMMT | 1 / 4 / 8 / 16 / 31 | 1,38 / 0,91 / 0,64–0,73 / 0,80 / 1,29 s | 4,8·10¹⁰ Flop, 534 MB |
+
+Größeres Modell, Würfel 40³ Hex8 mit 201.720 FHG (Faktorisierung, Threads
+nur über OpenMP gesetzt):
+
+| Löser | Threads | Zeit | Anmerkung |
+|---|---|---|---|
+| MUMPS SYM=2 | 1 / 8 / 16 | 22,1 / 8,1 / 9,8 s | 8,0·10¹¹ Flop, 2,6–3,3 GB Faktoren |
+| MUMPS SYM=0 | 16 | 11,6 s | 1,6·10¹² Flop, 5,7 GB |
+
+Folgerungen, die im Code stehen: kein `-DGEMMT_AVAILABLE`; Threads
+höchstens acht und nie mehr als physische Kerne
+(`mumps.threads_vorgabe()`, `MUMPS_NUM_THREADS` übersteuert); symmetrische
+Matrizen als unteres Dreieck.
+libgomp liest `OMP_NUM_THREADS` über `msvcrt.dll`, das Pythons
+`os.environ` nicht sieht — der Wrapper setzt die Zahl darum nach dem
+Laden mit `omp_set_num_threads`. **Nie `openblas_set_num_threads()`
+rufen:** danach ignoriert OpenBLAS 0.3.34 `omp_in_parallel()` und öffnet
+aus MUMPS' Baumthreads heraus verschachtelte Regionen — der Prozess blieb
+mit 8 Threads bei SYM=0 in `exec_blas` stehen (1 959 CPU-Sekunden,
+gdb-Rückverfolgung `deadlock_gdb.txt`). Auch OpenBLAS auf einen Thread zu
+nageln taugt nicht: dann skaliert MUMPS bei 3D-Modellen gar nicht (1,26 s
+bei 1, 1,2–1,4 s bei 8 Threads), weil die großen Fronten oben im Baum die
+BLAS brauchen. PARDISO (libiomp5md) und MUMPS (libgomp) laufen im selben
+Prozess in beiden Reihenfolgen (`test_koexistenz.py` im Bauverzeichnis).
+
+**Lizenz (CeCILL-C):** MUMPS wird unverändert als Objektcode weitergegeben
+(Art. 5.3.1): Lizenztext, Haftungsausschluss (Art. 8/9) und Zugang zum
+Quelltext (URL + SHA-256, Kopie im Bauverzeichnis) liegen in
+`mumps/LIZENZ` bei; die exe ist „Derivative Software“ (Art. 5.3.3) und
+darf unter eigener Lizenz stehen, muss aber die Urheberhinweise
+unverändert wiedergeben und aus der Oberfläche heraus nennen (Art. 6.4) —
+das tun das Info-Fenster, der Hinweis in der Löserauswahl und das
+Benutzerhandbuch. Der Wrapper ist eigener Quelltext, kein Teil von MUMPS.
+
+**Neu bauen** (z. B. neue MUMPS-Version): MSYS2 MINGW64 mit
+`mingw-w64-x86_64-gcc-fortran openblas metis make`, Quelltext auspacken,
+`Makefile.inc.statik3d` als `Makefile.inc` hineinlegen, `make -j8 d`,
+`make dexamples` und `dsimpletest` (Lösung 1 2 3 4 5), dann
+
+```bash
+gfortran -shared -o libdmumps_seq.dll -Wl,--whole-archive \
+    lib/libdmumps.a lib/libmumps_common.a lib/libpord.a libseq/libmpiseq.a \
+    -Wl,--no-whole-archive /mingw64/lib/libmetis.a -lopenblas -fopenmp \
+    -Wl,--out-implib,libdmumps_seq.dll.a
+```
+
+DLL und die sechs Laufzeit-DLLs nach `paket/mumps/_lib/`, `dmumps_c.h`
+mit der Struktur prüfen, `pip wheel paket --no-deps -w dist`, Rad nach
+`packaging/`.
+
+**Abnahme (13.09.2026):** `tests.test_loeser` 31/31 (MUMPS trifft
+N·L/(E·A), Threads von der Laufzeit, SYM=2 und SYM=0 richtig, Speicher
+zurück, 25 Faktorisierungen ohne Wachstum); `run_gui.py --selbsttest` OK;
+`pyinstaller packaging/Statik3D.spec` lokal gebaut (434 MB statt 371 MB,
+die sieben DLLs kommen als `datas` nach `mumps/_lib`) und
+`Statik3D.exe --selbsttest` mit Exit-Code 0: „Loeser in der exe: pardiso,
+mumps, pyamg, superlu“, „MUMPS 5.8.2 (gfortran/OpenMP, OpenBLAS, METIS),
+8 Threads“, Rahmenbeispiel mit mumps Abweichung 1,6·10⁻¹³. Die
+Abschnitte unten sind die ursprüngliche Anweisung.
+
 ## 0. Was Statik3D erwartet
 
 Datei `statik3d/solver.py`, Methode `LinearSolver._mumps`:

@@ -269,12 +269,71 @@ def test_pardiso_gibt_speicher_frei():
           f"Wachstum {ende - start:.0f} MB bei {einzeln:.0f} MB je Faktorisierung")
 
 
+def test_mumps_sagt_was_es_tut_und_gibt_speicher_frei():
+    """MUMPS (CeCILL-C) kommt unter Windows als Paket ``mumps`` aus packaging/
+    mit in die exe - eigener Bau mit gfortran, OpenMP, OpenBLAS und METIS
+    (docs/MUMPS_Windows_Bauanleitung.md). Geprueft wird, was ohne die
+    Anbindung falsch waere: die Threadzahl kommt von der Laufzeit und nicht
+    aus der Umgebung; symmetrische Matrizen laufen als unteres Dreieck
+    (SYM=2), unsymmetrische als volle Matrix - beide richtig; freigeben()
+    gibt die Faktorisierung zurueck (MUMPS haelt sie wie MKL ausserhalb von
+    Python); 25 Faktorisierungen ohne Bezug wachsen nicht."""
+    try:
+        import mumps
+    except ImportError:
+        check("Paket mumps vorhanden (unter Windows Pflicht: packaging/mumps-*.whl)",
+              not sys.platform.startswith("win"), "fehlt - uebersprungen")
+        return
+    K = _laplace_3d(30)                                     # 27 000 FHG, symmetrisch
+    n = K.shape[0]
+    b = np.arange(1.0, n + 1.0)
+    ls = LinearSolver(K, backend="mumps")
+    check("MUMPS meldet sich als MUMPS", ls.backend == "mumps", ls.beschreibung())
+    check("die Threadzahl kommt von der Laufzeit (mumps.threads())",
+          ls.threads == mumps.threads() >= 1, f"{ls.beschreibung()} / {mumps.beschreibung()}")
+    x = ls.solve(b)
+    close("MUMPS loest das symmetrische 27 000-FHG-System",
+          float(np.abs(K @ x - b).max() / np.abs(b).max()), 0.0, 1e-10)
+    X = ls.solve(np.column_stack([b, 2.0 * b]))
+    check("zwei rechte Seiten auf einmal, spaltenweise",
+          X.shape == (n, 2) and np.allclose(X[:, 0], x) and np.allclose(X[:, 1], 2.0 * x))
+    vor = _arbeitsspeicher_mb()
+    ls.freigeben()
+    nach = _arbeitsspeicher_mb()
+    einzeln = max(vor - nach, 1.0)
+    check("freigeben() gibt den Speicher der Faktorisierung zurueck (mindestens 10 MB)",
+          vor - nach > 10.0, f"{vor - nach:.0f} MB")
+    try:
+        ls.solve(b)
+        check("nach dem Freigeben loest MUMPS nicht mehr stillschweigend", False)
+    except RuntimeError:
+        check("nach dem Freigeben loest MUMPS nicht mehr stillschweigend", True)
+    # Unsymmetrisch: ein Eintrag oberhalb der Diagonale anders als sein
+    # Spiegelbild - dann darf nicht das untere Dreieck allein hinein
+    Ku = K.tolil()
+    Ku[0, 1] = 3.0 * Ku[0, 1]
+    Ku = Ku.tocsc()
+    xu = LinearSolver(Ku, backend="mumps").solve(b)
+    close("unsymmetrische Matrix: volle Matrix, richtig geloest",
+          float(np.abs(Ku @ xu - b).max() / np.abs(b).max()), 0.0, 1e-10)
+    check("und die Loesung unterscheidet sich von der symmetrischen",
+          not np.allclose(xu, x, rtol=1e-6), f"max |dx| = {np.abs(xu - x).max():.3g}")
+    start = _arbeitsspeicher_mb()
+    for _ in range(25):
+        LinearSolver(K, backend="mumps").solve(b)           # wie eine Kontakt-Iteration
+    ende = _arbeitsspeicher_mb()
+    check("25 Faktorisierungen ohne Bezug: Wachstum unter 3 Faktorisierungen",
+          ende - start < 3.0 * einzeln + 50.0,
+          f"Wachstum {ende - start:.0f} MB bei {einzeln:.0f} MB je Faktorisierung")
+
+
 def main():
     for f in (test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
               test_pardiso_nimmt_alle_kerne_bis_auf_einen,
               test_meldung_trennt_pool_und_loeser,
-              test_superlu_ordnet_symmetrisch, test_pardiso_gibt_speicher_frei):
+              test_superlu_ordnet_symmetrisch, test_pardiso_gibt_speicher_frei,
+              test_mumps_sagt_was_es_tut_und_gibt_speicher_frei):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
