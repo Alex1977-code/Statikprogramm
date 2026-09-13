@@ -417,8 +417,9 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
     for i, mem in enumerate(members, 1):
         line, hs, he = mem[:3]
         tbl = mem[3] if len(mem) > 3 else "MemberImplBeam"
+        aus = int(bool(mem[4])) if len(mem) > 4 else 0          # isDeactivatedForCalculation
         con.execute("INSERT INTO Member VALUES (?,1,?,?,?)", (i, i, i, tbl))
-        con.execute(f"INSERT INTO {tbl} VALUES (?,1,?,?,1,1,?,?,0,0)", (i, i, line, hs, he))
+        con.execute(f"INSERT INTO {tbl} VALUES (?,1,?,?,1,1,?,?,0,?)", (i, i, line, hs, he, aus))
     sid = 1
     for i, (name, k, nl, fr, nodes_) in enumerate(supports, 1):
         con.execute("INSERT INTO NodalSupport VALUES (?,1,?,?,'NodalSupportImpl')", (i, i, i))
@@ -2095,8 +2096,60 @@ def test_fortschritt_beim_lesen():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_deaktivierte_staebe():
+    """RFEM "fuer Berechnung deaktiviert": der Stab bleibt als Objekt, wirkt
+    aber nicht - ein loser, ungelagerter Stab darf das System nicht singulaer
+    machen (CBG-Trolley, 13.09.2026: 24 deaktivierte Staebe als Ring ohne
+    Lager, "1 Teiltragwerk ohne Lager")."""
+    from statik3d import diagnose, solver
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "deaktiviert.rf6"),
+            nodes=[(0, 0, 0), (4, 0, 0), (0, 3, 0), (4, 3, 0)],
+            lines=[[1, 2], [3, 4]],
+            members=[(1, None, None), (2, None, None, "MemberImplBeam", 1)],
+            supports=[("Gelenkig", (INF, INF, INF, INF, 0.0, 0.0), (0,) * 6, None, [1]),
+                      ("Gleitlager", (0.0, INF, INF, 0.0, 0.0, 0.0), (0,) * 6, None, [2])],
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        aus = [n for n, mem in m.members.items() if mem.aus]
+        check("der deaktivierte Stab kommt als Objekt mit aus=True, der andere nicht",
+              len(m.members) == 2 and len(aus) == 1 and not m.members[[n for n in m.members if n not in aus][0]].aus,
+              str({n: mem.aus for n, mem in m.members.items()}))
+        check("das Protokoll sagt 'bleibt als Objekt, wirkt nicht'",
+              any("deaktiviert - bleibt als Objekt, wirkt nicht" in z for z in log))
+        maske = m.grundmaske()
+        el_aus = set(m.members[aus[0]].elements)
+        check("grundmaske: False genau fuer seine Elemente",
+              maske is not None and all(not maske[i] for i in el_aus) and all(maske[i] for i in range(len(m.elements)) if i not in el_aus))
+        teile = diagnose.teiltragwerke(m)
+        check("Teiltragwerke: nur der wirksame Stab zaehlt (ein Teil, kein loser)", len(teile) == 1, str(teile))
+        check("Import-Protokoll ohne 'Teiltragwerke ohne Lager'", not any("Teiltragwerke ohne Lager" in z for z in log))
+        m.add_load_case("LF1", "G")
+        m.load_node(1, Fz=-1000.0, case="LF1")
+        r = solver.solve_static(m, case="LF1")
+        u_aus = max(abs(float(r.u[int(n), 2])) for e in el_aus for n in m.elements[e].nodes)
+        check("die Rechnung laeuft trotz ungelagertem deaktivierten Stab; seine Knoten bleiben in Ruhe",
+              np.isfinite(r.u).all() and u_aus < 1e-12 and r.info.get("inaktiv") == sorted(el_aus),
+              f"u_aus {u_aus:.2e}, inaktiv {r.info.get('inaktiv')}")
+        # Ermuedungslast mit einer Kombination als Zustand (RFEM-FAT-Kombinationen)
+        from statik3d.model import FatigueLoad
+        m.add_combination("FAT - Case 1", {"LF1": 1.0}, "FAT")
+        m.fatigue_loads["E1"] = FatigueLoad("E1", case_max="FAT - Case 1")
+        fehler = [z for z in m.check() if "Ermuedungslast" in z]
+        check("Ermuedungslast mit einer Kombination als Zustand wird nicht als 'Lastfall unbekannt' abgewiesen",
+              not fehler, str(fehler[:1]))
+        m.fatigue_loads["E2"] = FatigueLoad("E2", case_max="gibtsnicht")
+        check("ein wirklich unbekannter Zustand wird weiter gemeldet",
+              any("Ermuedungslast 'E2'" in z and "unbekannt" in z for z in m.check()))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
-    for t in (test_grundmodell, test_nichtlineare_lager, test_abheben,
+    for t in (test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
               test_volumenkoerper, test_stabtypen, test_kontaktbedingungen,
               test_freigabetyp_je_objekt,

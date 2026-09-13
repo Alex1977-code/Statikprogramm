@@ -1454,6 +1454,12 @@ class Member:
     name: str
     elements: list[int] = field(default_factory=list)
     design: bool = True
+    #: In der Quelldatei (RFEM: "fuer Berechnung deaktiviert") abgeschaltet:
+    #: bleibt als Objekt mit seinen Elementen, wirkt aber in keiner Situation -
+    #: weder Steifigkeit noch Last (Model.grundmaske). Am CBG-Trolley bildeten
+    #: 24 deaktivierte Staebe einen losen Ring ohne Lager, und das Gleichungs-
+    #: system war singulaer, weil sie mitrechneten (13.09.2026).
+    aus: bool = False
     beta_y: float = 1.0                # Knicklaengenbeiwert um y (Lcr,y = beta_y * L)
     beta_z: float = 1.0                # Knicklaengenbeiwert um z
     Lcr_y: Optional[float] = None      # explizite Knicklaenge [m] (ueberschreibt beta)
@@ -3491,9 +3497,27 @@ class Model:
                 return s
         return None
 
+    def grundmaske(self):
+        """Maske (n_elemente,) der Elemente, die ueberhaupt wirken: False fuer
+        die Elemente abgeschalteter Staebe (Member.aus, in RFEM „deaktiviert");
+        None, wenn kein Stab abgeschaltet ist. Gilt in jeder Situation, auch
+        in der Grundstellung."""
+        aus = [m for m in self.members.values() if getattr(m, "aus", False)]
+        if not aus:
+            return None
+        maske = np.ones(len(self.elements), dtype=bool)
+        for m in aus:
+            for i in m.elements:
+                if 0 <= int(i) < len(maske):
+                    maske[int(i)] = False
+        return maske
+
     def aktive_elemente(self, situation: str = "") -> np.ndarray:
         """Maske (n_elemente,): True, wo das Element in der Situation wirkt."""
         aktiv = np.ones(len(self.elements), dtype=bool)
+        basis = self.grundmaske()
+        if basis is not None:
+            aktiv &= basis
         sit = self.situation(situation)
         for i in sit.deaktiviert:
             if 0 <= int(i) < len(aktiv):
@@ -4559,9 +4583,13 @@ class Model:
                 msgs.append(f"FEHLER: Kombination '{c.name}' (Situation {sit}) enthält "
                             f"Lastfall {', '.join(fremd)} aus einer anderen Situation")
         for f in self.fatigue_loads.values():
+            # Ein Zustand darf ein Lastfall oder eine Kombination sein - die
+            # FAT-Kombinationen aus RFEM (CBG-Trolley: 20 Ermuedungslasten je
+            # ein Zustand gegen den Nullzustand) sind Kombinationen, und der
+            # Nachweis liest beide aus den Ergebnissen (ec3.fatigue, all_res)
             for k in (f.case_max, f.case_min):
-                if k and k not in self.load_cases:
-                    msgs.append(f"FEHLER: Ermuedungslast '{f.name}': Lastfall '{k}' unbekannt")
+                if k and k not in self.load_cases and k not in self.combinations:
+                    msgs.append(f"FEHLER: Ermuedungslast '{f.name}': Lastfall oder Kombination '{k}' unbekannt")
         for m in self.members.values():
             for i in m.elements:
                 if i < 0 or i >= len(self.elements):

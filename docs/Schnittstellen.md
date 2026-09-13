@@ -125,6 +125,16 @@ wurde an einer echten Projektdatei (RFEM 6.11/6.12) ausgelesen und wird von
 `statik3d.importers.rfem6_db` vollständig gelesen — ohne Umweg über einen
 Export. `import_file("modell.rf6")` genügt.
 
+**In RFEM „für Berechnung deaktivierte“ Stäbe** (`isDeactivatedForCalculation`)
+kommen als Objekte mit ihren Elementen herein, tragen aber weder
+Steifigkeit noch Last — in keiner Situation (Stabmaske: Haken
+„deaktiviert“). Bis 13.09.2026 wurden sie „dennoch übernommen“ und
+rechneten mit: am CBG-Trolley (648 Stäbe, 94 davon deaktiviert) bildeten
+24 von ihnen einen losen Ring ohne Lager, und die Rechnung brach mit „1
+Teiltragwerk ohne Lager … singulär“ ab. Die Zusammenhangsprüfung beim Import
+und die Modellprüfung zählen nur wirksame Stäbe. Geprüft in
+`tests/test_rfem6.py` (`test_deaktivierte_staebe`).
+
 Aufbau der Datenbank (durchgehend dasselbe Muster):
 
 | Ebene | Tabellen | Inhalt |

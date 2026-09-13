@@ -322,8 +322,34 @@ def test_kombinationen_je_situation():
     check("alle Kombinationen gerechnet", set(an.combinations) == set(m.combinations))
 
 
+def test_abgeschalteter_stab_in_jeder_situation():
+    """Member.aus (RFEM deaktiviert) wirkt in der Grundstellung und in jeder
+    Situation: kein Beitrag, keine Last, Knoten festgehalten."""
+    m, ids, sec = _balken(2)
+    n0, n1, n2 = ids
+    EI = E * sec.Iy
+    # ein loser, ungelagerter Stab daneben - abgeschaltet
+    k0 = m.add_node(0.0, 1.0, 0.0)
+    k1 = m.add_node(1.0, 1.0, 0.0)
+    e_los = m.add_element("beam", [k0, k1], "S", "R")
+    m.add_member("los", [e_los], aus=True)
+    m.add_load_case("LF1", "G")
+    m.load_node(n1, Fz=-F, case="LF1")
+    m.load_node(k1, Fz=-F, case="LF1")                # Last auf dem abgeschalteten Stab
+    check("grundmaske nennt genau das Element des abgeschalteten Stabs",
+          m.grundmaske() is not None and list(np.flatnonzero(~m.grundmaske())) == [e_los])
+    check("aktive_elemente() ohne Situation traegt die Grundmaske", not m.aktive_elemente()[e_los])
+    check("Modellpruefung ohne Beanstandung", not m.check(), str(m.check()))
+    an = solver.solve_all(m)
+    r = an.cases["LF1"]
+    close("der Kragarm rechnet wie ohne den losen Stab: am Lastpunkt w = PL³/3EI", r.u[n1, 2],
+          -F * L ** 3 / (3 * EI), 1e-9, "m")
+    check("die Knoten des abgeschalteten Stabs bleiben in Ruhe, seine Last traegt nichts",
+          np.allclose(r.u[k0], 0.0) and np.allclose(r.u[k1], 0.0) and r.info.get("inaktiv") == [e_los])
+
+
 def main():
-    for t in (test_abgeschaltete_elemente, test_stellung, test_stellung_lage_und_wirkung,
+    for t in (test_abgeschalteter_stab_in_jeder_situation, test_abgeschaltete_elemente, test_stellung, test_stellung_lage_und_wirkung,
               test_speichern, test_subsystem, test_kombinationen_je_situation):
         print(f"\n--- {t.__name__} ---")
         try:

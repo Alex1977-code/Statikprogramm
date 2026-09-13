@@ -4239,6 +4239,27 @@ def main():
         check("eine nicht installierte Nachbesserung wird abgewiesen, das Modell bleibt",
               (bool(fehler_n) and "nicht installiert" in fehler_n[0]) if not da_["mmg3d"][1] else not fehler_n,
               str(fehler_n[:1]))
+        # --- Stabmaske: Knoten, Laenge, Querschnitt mit Massen und Kennwerten, Werkstoff -----
+        w.load_example("hall"); app.processEvents()          # Hallenrahmen: Staebe mit Nachweis
+        ms_ = w.model
+        stabname_ = next(iter(ms_.members))
+        w._objektmaske("stab", stabname_); app.processEvents()
+        mk_s = w.maskenrand.maske
+        qs_ = mk_s._felder["qs_info"].text()
+        kn_ = mk_s._felder["knoten"].text()
+        mem_s = ms_.members[stabname_]
+        sec_s = ms_.sections[ms_.elements[mem_s.elements[0]].sec]
+        check("Stabmaske nennt Knoten (Anfang → Ende mit Koordinaten) und Länge",
+              kn_.startswith("K") and "→" in kn_ and " m" in kn_ and " m (" in mk_s._felder["laenge"].text(),
+              kn_[:80] + " | " + mk_s._felder["laenge"].text())
+        check("… den Querschnitt mit Bezeichnung, Maßen in mm und Kennwerten in cm-Einheiten",
+              qs_.startswith(sec_s.name) and "mm)" in qs_ and "A " in qs_ and "cm²" in qs_ and "I_y" in qs_ and "cm⁴" in qs_
+              and f"h {sec_s.h * 1e3:g}" in qs_, qs_[:120])
+        check("… und den Werkstoff mit E und f_y",
+              "E " in mk_s._felder["mat_info"].text() and "GPa" in mk_s._felder["mat_info"].text()
+              and "f_y" in mk_s._felder["mat_info"].text(), mk_s._felder["mat_info"].text()[:80])
+        w.new_model(); app.processEvents()
+
         # --- Knoten der Konstruktion gegen Netzknoten (Ribbon Netz -> Netzknoten) ---------
         w.new_model(); app.processEvents()
         mk_ = w.model
