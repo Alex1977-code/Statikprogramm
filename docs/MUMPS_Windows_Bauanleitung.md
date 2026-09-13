@@ -30,6 +30,16 @@ Bauverzeichnis: `C:/Users/alexanderm/Desktop/Statik3D_Mumps_win` (MSYS2
 entpackt unter `msys2/`, Quelltext unter `bau/MUMPS_5.8.2`, Paketquelle
 unter `paket/`, Varianten unter `varianten/`).
 
+**Verteilung.** Das Rad kommt nicht in die exe (sie bliebe 63 MB größer),
+sondern liegt im GitHub-Release `werkzeuge`; der Workflow
+`.github/workflows/werkzeuge.yml` (Job `mumps-rad`) legt es dort ab,
+nachdem er seine SHA-256-Prüfsumme mit der in `statik3d/werkzeuge.py`
+hinterlegten verglichen hat. Das Programm lädt es beim Start nach, wenn es
+fehlt oder eine andere Prüfsumme trägt (Dialog *Vernetzer, Nachbesserer und
+Gleichungslöser*, Kästchen). Nach einem Neubau: Dateiname und Prüfsumme in
+`werkzeuge.py` nachziehen (`sha256sum packaging/mumps-*.whl`), sonst lehnt
+jeder Download das Rad ab.
+
 **Weg A** (conda-forge) wurde zuerst probiert und verworfen: `mumps-seq`
 5.8.2 gibt es für win-64 (flang-Bau, mit drei Patches), aber ohne OpenMP
 in MUMPS — am Würfel 3,4 s, mit keiner Threadzahl schneller — und

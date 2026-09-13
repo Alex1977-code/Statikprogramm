@@ -17632,7 +17632,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Parallel: Mehrkern und Rechnerfarm<br>"
             "Gleichungslöser: Intel MKL PARDISO, MUMPS 5.8.2 (Copyright CERFACS, CNRS, ENS Lyon, "
             "INP Toulouse, Inria, Mumps Technologies, University of Bordeaux - Lizenz CeCILL-C, "
-            "Text unter mumps/LIZENZ), PyAMG (MIT), SuperLU (BSD)<br><br>"
+            "Text unter mumps/LIZENZ; wird beim Programmstart nachgeladen), PyAMG (MIT), SuperLU (BSD)<br><br>"
             "<b>Gültigkeitsbereich:</b> kleine Verformungen, linear-elastisches Material, "
             "Kontakt als Penalty-Näherung ohne Lastgeschichte.<br>"
             "Das Programm ist gegen analytische Lösungen und Handrechnungen verifiziert, aber "

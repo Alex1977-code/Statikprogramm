@@ -55,24 +55,48 @@ def mkl_threads() -> int:
     return n
 
 
-def _mkl_threads_setzen(ps, n: int) -> int:
+_MKL_LIB = None
+
+
+def _mkl_lib():
+    """Die MKL-Laufzeit (mkl_rt) als ctypes-Handle - ueber pypardiso, das sie
+    ohnehin laedt; None ohne pypardiso oder MKL."""
+    global _MKL_LIB
+    if _MKL_LIB is None:
+        try:
+            _find_mkl()
+            import pypardiso
+            _MKL_LIB = pypardiso.PyPardisoSolver().libmkl or False
+        except Exception:                                  # noqa: BLE001
+            _MKL_LIB = False
+    return _MKL_LIB or None
+
+
+def _mkl_threads_setzen(lib, n: int) -> int:
     """MKL zur Laufzeit auf n Threads stellen; Rueckgabe die wirksame Zahl.
 
     Die Umgebung (MKL_NUM_THREADS) liest MKL nur beim ersten Laden; danach
-    gilt mkl_set_num_threads - so laesst sich die Threadzahl in den
-    Einstellungen aendern, ohne das Programm neu zu starten.
+    gilt MKL_Set_Num_Threads - so laesst sich die Threadzahl in den
+    Einstellungen aendern, ohne das Programm neu zu starten. Es muss die
+    **C-Schnittstelle** sein (MKL_Set_Num_Threads, Wert): die kleingeschriebene
+    mkl_set_num_threads ist die Fortran-Fassung und erwartet einen Zeiger -
+    mit dem Wert 2 gerufen las sie Adresse 2 ("access violation", 13.09.2026).
+    MKL kappt selbst auf die physischen Kerne: 31 angefordert ergibt auf
+    16 Kernen / 32 Threads MKL_Get_Max_Threads() = 16.
     """
     import ctypes
-    lib = getattr(ps, "libmkl", None)
+    lib = getattr(lib, "libmkl", lib)
     if lib is None:
         return int(n)
     try:
-        lib.mkl_set_num_threads.argtypes = [ctypes.c_int]
-        lib.mkl_set_num_threads.restype = None
-        lib.mkl_set_num_threads(int(n))
-        lib.mkl_get_max_threads.argtypes = []
-        lib.mkl_get_max_threads.restype = ctypes.c_int
-        return int(lib.mkl_get_max_threads())
+        setzen = lib.MKL_Set_Num_Threads
+        setzen.argtypes = [ctypes.c_int]
+        setzen.restype = None
+        setzen(int(n))
+        lesen = lib.MKL_Get_Max_Threads
+        lesen.argtypes = []
+        lesen.restype = ctypes.c_int
+        return int(lesen())
     except (AttributeError, OSError):
         return int(n)
 
@@ -88,7 +112,8 @@ def threads_automatisch(backend: str) -> int:
         except Exception:                                  # noqa: BLE001
             return 1
     if backend == "pardiso":
-        return mkl_threads()
+        lib = _mkl_lib()
+        return _mkl_threads_setzen(lib, mkl_threads()) if lib is not None else mkl_threads()
     return 1
 
 

@@ -278,12 +278,24 @@ def test_mumps_sagt_was_es_tut_und_gibt_speicher_frei():
     (SYM=2), unsymmetrische als volle Matrix - beide richtig; freigeben()
     gibt die Faktorisierung zurueck (MUMPS haelt sie wie MKL ausserhalb von
     Python); 25 Faktorisierungen ohne Bezug wachsen nicht."""
+    from statik3d import werkzeuge
+    werkzeuge.aktivieren()
     try:
         import mumps
     except ImportError:
-        check("Paket mumps vorhanden (unter Windows Pflicht: packaging/mumps-*.whl)",
-              not sys.platform.startswith("win"), "fehlt - uebersprungen")
-        return
+        # Nicht in der Umgebung: unter Windows das Rad aus packaging/ offline
+        # in einen Wegwerf-Werkzeugordner (so kommt es auch in die exe-Umgebung)
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rad = os.path.join(here, "packaging", werkzeuge.WERKZEUGE["mumps"].rad)
+        if not sys.platform.startswith("win") or not os.path.isfile(rad):
+            check("Paket mumps: kein Windows oder kein Rad in packaging/ - uebersprungen", True)
+            return
+        import tempfile
+        os.environ["STATIK3D_WERKZEUGE"] = tempfile.mkdtemp(prefix="statik3d_loeser_mumps_")
+        os.environ["STATIK3D_WERKZEUG_QUELLE"] = os.path.join(here, "packaging")
+        werkzeuge.installieren("mumps")
+        import mumps
+        check("MUMPS aus packaging/ nachgeladen", mumps.__file__.startswith(os.environ["STATIK3D_WERKZEUGE"]))
     K = _laplace_3d(30)                                     # 27 000 FHG, symmetrisch
     n = K.shape[0]
     b = np.arange(1.0, n + 1.0)
@@ -339,10 +351,18 @@ def test_threadzahl_aus_den_einstellungen():
     alt = parallel.settings().solver_threads
     try:
         parallel.configure(solver_threads=0)
-        check("automatisch: PARDISO alle Kerne bis auf einen, MUMPS hoechstens acht",
-              threads_vorgabe("pardiso") == threads_automatisch("pardiso") == max(1, os.cpu_count() - 1)
+        n_p = threads_automatisch("pardiso")
+        check("automatisch: PARDISO alle Kerne bis auf einen (von MKL auf die physischen Kerne gekappt), MUMPS hoechstens acht",
+              threads_vorgabe("pardiso") == n_p and 1 <= n_p <= max(1, os.cpu_count() - 1)
               and 1 <= threads_automatisch("mumps") <= 8,
-              f"pardiso {threads_automatisch('pardiso')}, mumps {threads_automatisch('mumps')}")
+              f"pardiso {n_p}, mumps {threads_automatisch('mumps')}")
+        try:
+            import mumps as _mu
+            check("PARDISO automatisch = min(Kerne - 1, physische Kerne) - so kappt MKL (16 auf 16/32)",
+                  n_p == min(max(1, os.cpu_count() - 1), _mu.physische_kerne()) or not da.get("pardiso"),
+                  f"{n_p} bei {_mu.physische_kerne()} physischen Kernen")
+        except ImportError:
+            pass
         parallel.configure(solver_threads=2)
         check("Einstellung 2: die Vorgabe beider Loeser ist 2",
               threads_vorgabe("pardiso") == 2 and threads_vorgabe("mumps") == 2)

@@ -39,29 +39,14 @@ try:
     hiddenimports += collect_submodules("pyamg")
 except ImportError:
     pass
-# MUMPS (CeCILL-C) kommt ebenfalls mit: Paket "mumps" aus packaging/ (eigener
-# Windows-Bau, docs/MUMPS_Windows_Bauanleitung.md). Die DLLs liegen im
-# Paketordner _lib und mumps/__init__.py laedt sie von dort
-# (os.add_dll_directory) - darum kommen sie als datas an denselben Ort und
-# nicht als binaries: PyInstaller wuerde ihre Abhaengigkeiten sonst ein
-# zweites Mal in die Wurzel legen. Der Ordner LIZENZ liegt bei, weil die
-# CeCILL-C den Lizenztext und die Urheberhinweise neben der Weitergabe
-# verlangt (Art. 5.3.1 und 6.4).
-try:
-    import glob as _glob
-    import mumps as _mumps
-    _n_dll = 0
-    for datei in _glob.glob(os.path.join(_mumps.LIB_DIR, "*")):
-        datas.append((datei, os.path.join("mumps", "_lib")))
-        _n_dll += datei.lower().endswith(".dll")
-    for wurzel, _d, dateien in os.walk(_mumps.LIZENZ_DIR):
-        for datei in dateien:
-            datas.append((os.path.join(wurzel, datei),
-                          os.path.join("mumps", os.path.relpath(wurzel, os.path.dirname(_mumps.LIZENZ_DIR)))))
-    hiddenimports.append("mumps")
-    print(f"[Statik3D] MUMPS {_mumps.MUMPS_VERSION}: {_n_dll} DLLs aus {_mumps.LIB_DIR}")
-except ImportError:
-    print("[Statik3D] WARNUNG: kein Paket mumps - der Selbsttest der exe wird rot")
+# MUMPS (CeCILL-C) kommt **nicht** mit: das Programm laedt das Rad aus
+# packaging/ beim Start aus dem Release "werkzeuge" nach (statik3d/werkzeuge.py,
+# Anweisung MUMPS_Nachladen_Anweisung.md, 13.09.2026) - die exe bliebe sonst
+# 63 MB groesser (434 statt 371 MB), und MUMPS ist eine Wahl neben PARDISO.
+# "mumps" steht darum in excludes: sobald es in der Bau-Umgebung installiert
+# ist, naehme PyInstaller es ueber "import mumps" in solver.py sonst mit.
+# Der Wrapper braucht Standardmodule, die das Programm selbst nicht importiert.
+hiddenimports += ["glob", "ctypes", "site"]
 
 
 # --------------------------------------------------------------------------
@@ -117,7 +102,8 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "IPython", "jupyter", "pytest", "PyQt5", "PyQt6", "matplotlib.tests"],   # matplotlib: von pyvista benoetigt
+    excludes=["tkinter", "IPython", "jupyter", "pytest", "PyQt5", "PyQt6", "matplotlib.tests",
+              "mumps"],           # MUMPS wird beim Start nachgeladen, nicht mitgeliefert   # matplotlib: von pyvista benoetigt
     noarchive=False,
 )
 pyz = PYZ(a.pure)

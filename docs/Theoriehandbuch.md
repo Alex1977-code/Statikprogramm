@@ -163,10 +163,12 @@ Die Threadzahl ist `cpu_count() − 1`: der eine Kern bleibt der Oberfläche,
 damit sich das Fenster während der Faktorisierung noch bedienen lässt. Wer
 `MKL_NUM_THREADS` oder `OMP_NUM_THREADS` selbst setzt, behält den Vorrang.
 
-**MUMPS** (CeCILL-C) ist seit 13.09.2026 der dritte direkte Löser in der
-exe — ein eigener Windows-Bau von MUMPS 5.8.2 mit gfortran, OpenMP,
-OpenBLAS und METIS, angebunden über `ctypes` (Paket `mumps`, Bau und
-Lizenzlage in `docs/MUMPS_Windows_Bauanleitung.md`). Zwei Befunde aus dem
+**MUMPS** (CeCILL-C) ist seit 13.09.2026 der dritte direkte Löser unter
+Windows — ein eigener Bau von MUMPS 5.8.2 mit gfortran, OpenMP, OpenBLAS
+und METIS, angebunden über `ctypes` (Paket `mumps`, Bau und Lizenzlage in
+`docs/MUMPS_Windows_Bauanleitung.md`). Er steckt nicht in der exe: das
+Programm lädt das Rad beim Start aus dem Release `werkzeuge` nach
+(Benutzerhandbuch, „Vernetzer und Nachbesserer nachladen“). Zwei Befunde aus dem
 Bau, gemessen am selben Würfel (34.914 Freiheitsgrade, 2,59 Millionen
 Einträge, Ryzen 9 5950X mit 16 Kernen / 32 Threads):
 

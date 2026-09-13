@@ -12,12 +12,6 @@ mkl
 # Zweiter Loeser in der exe: PyAMG (MIT, algebraisches Mehrgitter + CG) -
 # iterativ und speicherarm; "Gleichungsloeser mitinstallieren" (13.09.2026).
 pyamg>=5
-# Dritter Loeser in der exe: MUMPS 5.8.2 (CeCILL-C, Lizenztext im Paket) als
-# eigenes Windows-Rad aus packaging/ - gebaut mit gfortran/OpenMP, OpenBLAS
-# und METIS (docs/MUMPS_Windows_Bauanleitung.md). --find-links gilt relativ
-# zu dieser Datei; unter Linux gibt es das Rad nicht.
---find-links packaging
-mumps==5.8.2 ; sys_platform == "win32"
 
 # optional (keines davon in der exe - Lizenzen siehe Benutzerhandbuch, Kap. 9;
 # gmsh, netgen-mesher und MMG3D laedt das Programm auf Wunsch selbst nach:
@@ -26,6 +20,8 @@ mumps==5.8.2 ; sys_platform == "win32"
 # netgen-mesher     Vernetzer Netgen (LGPL)
 # scikit-sparse     CHOLMOD-Loeser (LGPL/GPL)
 # scikit-umfpack    UMFPACK-Loeser (GPL)
-# pymumps           MUMPS-Loeser (CeCILL-C)
+# mumps             Gleichungsloeser MUMPS 5.8.2 (CeCILL-C, Lizenztext im Paket), eigenes
+#                   Windows-Rad: pip install packaging/mumps-5.8.2-py3-none-win_amd64.whl
+#                   - oder das Programm laedt es beim Start nach (Release werkzeuge)
 # reportlab, svglib PDF-Bericht direkt aus dem Programm
 # qrcode            QR-Code der Handy-Adresse beim Start von run_web.py
