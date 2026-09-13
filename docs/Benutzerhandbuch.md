@@ -614,7 +614,7 @@ Werkzeuge gilt (Stand 13.09.2026):
 | PyAMG | MIT | ja |
 | CHOLMOD (scikit-sparse) | LGPL, das Supernodal-Modul GPL | nein — nur aus der eigenen Python-Umgebung |
 | UMFPACK (scikit-umfpack) | GPL | nein — nur aus der eigenen Python-Umgebung |
-| MUMPS (pymumps) | CeCILL-C | nein — nur aus der eigenen Python-Umgebung (kein Windows-Rad) |
+| MUMPS (pymumps) | CeCILL-C | nein — nur aus der eigenen Python-Umgebung (kein Windows-Rad; Bauanleitung in `docs/MUMPS_Windows_Bauanleitung.md`) |
 | gmsh | GPL | nein — `pip install gmsh` in der eigenen Umgebung |
 | Netgen (netgen-mesher) | LGPL | nein — `pip install netgen-mesher` in der eigenen Umgebung |
 | MMG3D | LGPL | nein — getrenntes Programm, über Dateien aufgerufen |

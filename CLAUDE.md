@@ -83,7 +83,7 @@ nach `main` erfolgt **nur auf ausdrückliche Freigabe** und stößt
 | `statik3d/ec3/` | Nachweise nach EC3, Ermüdung |
 | `statik3d/importers/` | RFEM/RSTAB, IFC, SAF, DXF, HiCAD, Abaqus, Nastran |
 | `statik3d/gui/` | Qt-Oberfläche (`main.py`, `viewport.py`, `masken.py`, `symbole.py`) |
-| `docs/` | Benutzer-, Theorie-, Schnittstellen- und Farm-Handbuch |
+| `docs/` | Benutzer-, Theorie-, Schnittstellen- und Farm-Handbuch, Bauanleitung MUMPS für Windows |
 
 `docs/Theoriehandbuch.md` ist die Begründung des Verfahrens mit Messwerten,
 `docs/Benutzerhandbuch.md` beschreibt, was der Anwender sieht und tut. Beide
