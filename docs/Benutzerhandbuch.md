@@ -634,7 +634,7 @@ Quellen und Größen (gemessen 13.09.2026, Windows, Python 3.11):
 | gmsh 4.15.2 | PyPI, Rad `gmsh` (py2.py3, win_amd64) | 42 MB | 146 MB | 5 s |
 | Netgen 6.2.2607 | PyPI, Räder `netgen-mesher` (cp311) und `netgen-occt` | 8 + 19 MB | 78 MB | 6 s |
 | MMG3D 5.8.0 | Release `werkzeuge` dieses Projekts, `mmg3d_O3-windows-x64.zip` — gebaut aus MmgTools/mmg durch `.github/workflows/werkzeuge.yml` (MSVC, ohne Scotch und VTK; LICENSE und COPYING.LESSER liegen bei) | 0,4 MB | 0,7 MB | unter 1 s |
-| MUMPS 5.8.2 | Release `werkzeuge`, Rad `mumps-5.8.2-py3-none-win_amd64.whl` aus `packaging/` (eigener Windows-Bau, `docs/MUMPS_Windows_Bauanleitung.md`; der Workflow legt es ab, nachdem er die Prüfsumme gegen die im Programm hinterlegte verglichen hat) | 18 MB | 63 MB | siehe unten |
+| MUMPS 5.8.2 | Release `werkzeuge`, Rad `mumps-5.8.2-py3-none-win_amd64.whl` aus `packaging/` (eigener Windows-Bau, `docs/MUMPS_Windows_Bauanleitung.md`; der Workflow legt es ab, nachdem er die Prüfsumme gegen die im Programm hinterlegte verglichen hat) | 18 MB | 53 MB | 2 s |
 
 MUMPS ist der Sonderfall: das Rad kommt aus unserem eigenen Release, darum
 ist seine **SHA-256-Prüfsumme im Programm hinterlegt** und Pflicht — ein
@@ -685,7 +685,7 @@ Werkzeuge gilt (Stand 13.09.2026):
 | PyAMG | MIT | ja |
 | CHOLMOD (scikit-sparse) | LGPL, das Supernodal-Modul GPL | nein — nur aus der eigenen Python-Umgebung |
 | UMFPACK (scikit-umfpack) | GPL | nein — nur aus der eigenen Python-Umgebung |
-| MUMPS 5.8.2 (Paket `mumps`, eigener Windows-Bau) | CeCILL-C — LGPL-artig: die Bibliothek bleibt unverändert ein eigenes Modul, Lizenztext und Urheberhinweis liegen im Programm unter `mumps/LIZENZ` bei (Art. 5.3.1 und 6.4), das Info-Fenster nennt sie | ja (seit 13.09.2026; Bau und Messung in `docs/MUMPS_Windows_Bauanleitung.md`) |
+| MUMPS 5.8.2 (Paket `mumps`, eigener Windows-Bau) | CeCILL-C — LGPL-artig: die Bibliothek bleibt unverändert ein eigenes Modul, Lizenztext und Urheberhinweis liegen im nachgeladenen Paket unter `mumps/LIZENZ` (Art. 5.3.1 und 6.4), das Info-Fenster nennt sie | nein — wird beim ersten Start nachgeladen (Release `werkzeuge`, Kästchen im Dialog *Vernetzer, Nachbesserer und Gleichungslöser*; Bau und Messung in `docs/MUMPS_Windows_Bauanleitung.md`) |
 | gmsh | GPL | nein — auf Wunsch nachladbar von PyPI (*Extras → Vernetzer installieren…*) oder `pip install gmsh` in der eigenen Umgebung |
 | Netgen (netgen-mesher) | LGPL | nein — auf Wunsch nachladbar von PyPI oder `pip install netgen-mesher` |
 | MMG3D | LGPL | nein — getrenntes Programm, auf Wunsch nachladbar aus dem Release `werkzeuge` (dort aus dem Quelltext gebaut, Lizenz liegt bei) |
@@ -2490,19 +2490,22 @@ Nachweis mit seiner Verformung je Kombination.
   = aktiver Lastfall).
 * **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen*): Vorgabe
   **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. Zur Wahl
-  stehen **MKL PARDISO** (direkt, mehrkernig — 31 Threads auf 32 Kernen),
+  stehen **MKL PARDISO** (direkt, mehrkernig — angefordert werden alle Kerne
+  bis auf einen, MKL selbst kappt auf die physischen Kerne: 16 auf einem
+  Rechner mit 16 Kernen / 32 Threads),
   **CHOLMOD** (direkt, Cholesky, mehrkernig über BLAS), **UMFPACK** (direkt,
   LU), **MUMPS** (direkt, mehrkernig), **PyAMG** (iterativ: algebraisches
   Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu iterieren und
   einkernig) und **SuperLU** (direkt, einkernig, Rückfall). Was nicht
   installiert ist, steht grau in der Liste. **In der exe stecken** MKL
-  PARDISO, PyAMG, SuperLU und MUMPS (seit 13.09.2026; PyAMG ist
-  MIT-lizenziert, MUMPS CeCILL-C — beide dürfen mit) — der Selbsttest des
-  Baus rechnet das Rahmenbeispiel mit jedem der vier und vergleicht.
-  Geprüft in `tests/test_loeser.py` (jeder vorhandene Löser trifft
-  N·L/(E·A)).
-* **MUMPS** kommt unter Windows als eigener Bau mit (gfortran, OpenMP,
-  OpenBLAS, METIS — `docs/MUMPS_Windows_Bauanleitung.md`). Symmetrische
+  PARDISO, PyAMG und SuperLU (PyAMG ist MIT-lizenziert); **MUMPS**
+  (CeCILL-C) lädt das Programm beim Start nach (Kästchen im Dialog
+  *Vernetzer, Nachbesserer und Gleichungslöser*, Abschnitt „Vernetzer und
+  Nachbesserer nachladen“) — der Selbsttest des Baus rechnet das
+  Rahmenbeispiel mit jedem mitgelieferten Löser und vergleicht. Geprüft in
+  `tests/test_loeser.py` (jeder vorhandene Löser trifft N·L/(E·A)).
+* **MUMPS** ist unter Windows ein eigener Bau (gfortran, OpenMP, OpenBLAS,
+  METIS — `docs/MUMPS_Windows_Bauanleitung.md`), nachgeladen beim Start. Symmetrische
   Steifigkeitsmatrizen gehen als unteres Dreieck hinein (SYM=2): halber
   Speicher, halbe Flop; ob die Matrix symmetrisch ist, prüft das Programm
   an der Matrix und nimmt sonst die volle. Gemessen am Würfel mit 34.914
@@ -2514,14 +2517,18 @@ Nachweis mit seiner Verformung je Kombination.
   `MUMPS_NUM_THREADS` übersteuert das ausdrücklich. Die Statuszeile nennt
   die Threadzahl, die die Laufzeit meldet.
 * **Threads des Gleichungslösers** (Auswahl unter dem Gleichungslöser, seit
-  13.09.2026): **automatisch** = MKL PARDISO alle Kerne bis auf einen, MUMPS
-  höchstens acht (die Zahlen stehen im Eintrag); oder eine feste Zahl
+  13.09.2026): **automatisch** = MKL PARDISO alle Kerne bis auf einen, von
+  MKL auf die physischen Kerne gekappt (16 von 32 auf diesem Rechner), MUMPS
+  höchstens acht (die Zahlen stehen im Eintrag, so wie die Löser sie selbst
+  melden); oder eine feste Zahl
   (1, 2, 4, 6, 8, 12, 16, … bis zur Kernzahl), die dann für **beide** direkten
   Löser gilt — so lässt sich am eigenen Modell messen, ob mehr Threads
   etwas bringen. Die Umstellung wirkt ohne Neustart (MKL über
-  `mkl_set_num_threads`, MUMPS über `omp_set_num_threads`); die Statuszeile
+  `MKL_Set_Num_Threads`, MUMPS über `omp_set_num_threads`); die Statuszeile
   nennt nach der Rechnung die wirklich benutzte Zahl, die der Löser selbst
-  meldet. Löser, Threads und das Kästchen „MUMPS beim Programmstart
+  meldet (`MKL_Get_Max_Threads`, `omp_get_max_threads`) — bis 13.09.2026
+  stand für PARDISO die angeforderte 31 dort, tatsächlich rechnete MKL mit
+  16. Löser, Threads und das Kästchen „MUMPS beim Programmstart
   nachladen“ werden in `%LOCALAPPDATA%\Statik3D\einstellungen.json`
   gespeichert und überleben den Neustart. Geprüft in `tests/test_loeser.py`
   (2 Threads → beide Löser melden 2, zurück auf automatisch ohne Neustart)
@@ -2585,7 +2592,7 @@ Nachweis mit seiner Verformung je Kombination.
   ```
   --- Berechnung gestartet ---
       Prozesspool (Elementschleifen, Vernetzen): lokal, 31 von 32 Kernen
-      Gleichungslöser: MKL PARDISO, 31 Threads
+      Gleichungslöser: MKL PARDISO, 16 Threads
   ```
 
   Steht dort „SuperLU, einkernig“, fehlt der Mehrkern-Löser: dann rechnet

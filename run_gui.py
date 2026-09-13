@@ -73,19 +73,27 @@ def _selftest() -> int:
         if not loeser.startswith("MKL PARDISO"):
             lines.append("FEHLER: kein Mehrkern-Loeser im Programm - MKL fehlt im Bundle")
             code = 1
-        # Die mitgelieferten Loeser der Auswahl: MKL PARDISO, PyAMG (MIT),
-        # SuperLU und MUMPS (CeCILL-C, eigener Windows-Bau) muessen in der
-        # exe stecken und rechnen ("Gleichungsloeser mitinstallieren",
-        # 13.09.2026); die GPL-Loeser bleiben draussen.
+        # Die mitgelieferten Loeser der Auswahl: MKL PARDISO, PyAMG (MIT) und
+        # SuperLU muessen in der exe stecken und rechnen ("Gleichungsloeser
+        # mitinstallieren", 13.09.2026); die GPL-Loeser bleiben draussen, und
+        # MUMPS (CeCILL-C) laedt das Programm beim Start nach - im Bundle ist
+        # es nicht, wohl aber die Pruefsumme seines Rades (statik3d.werkzeuge).
         liste = {k: da for k, _n, da, *_r in solver.loeser_liste()}
         lines.append("Loeser in der exe: " + ", ".join(k for k, da in liste.items() if da))
         try:
             import mumps
-            lines.append(mumps.beschreibung())
+            lines.append(mumps.beschreibung() + " (in dieser Umgebung installiert)")
+        except ImportError:
+            lines.append("MUMPS: nicht in der exe, wird beim Start nachgeladen")
         except Exception as ex:                  # noqa: BLE001 - steht dann als Fehler unten
             lines.append(f"MUMPS: {ex}")
+        from statik3d import werkzeuge
+        import re as _re
+        if not _re.fullmatch(r"[0-9a-f]{64}", werkzeuge.WERKZEUGE["mumps"].rad_sha256 or ""):
+            lines.append("FEHLER: keine 64-stellige Pruefsumme fuer das MUMPS-Rad in statik3d/werkzeuge.py")
+            code = 1
         from statik3d import parallel
-        for key in ("pyamg", "superlu", "mumps"):
+        for key in ("pyamg", "superlu"):
             if not liste.get(key):
                 lines.append(f"FEHLER: Loeser {key} fehlt im Bundle")
                 code = 1

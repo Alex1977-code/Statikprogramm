@@ -60,8 +60,10 @@ Python 3.11 ist der Stand, mit dem gebaut wird (`requires-python >= 3.9`).
 `pypardiso`/`mkl` sind kein Beiwerk: ohne sie fällt der Löser auf SuperLU
 zurück und rechnet auf **einem** Kern (Würfel mit 34.914 FHG: 12,25 s statt
 1,38 s). Unter Linux fehlen sie oft — dann laufen die Tests trotzdem, nur
-langsamer. MUMPS kommt unter Windows als eigenes Rad aus `packaging/`
-(`requirements.txt` zeigt per `--find-links` dorthin; Bau und Messung in
+langsamer. MUMPS liegt als eigenes Windows-Rad in `packaging/`; das
+Programm lädt es beim Start aus dem Release `werkzeuge` nach (nicht in der
+exe), in einer eigenen Umgebung: `pip install
+packaging/mumps-5.8.2-py3-none-win_amd64.whl` (Bau und Messung in
 `docs/MUMPS_Windows_Bauanleitung.md`).
 
 Starten: `python run_gui.py` (Desktop), `python run_web.py` (Handy/Browser).
