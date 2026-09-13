@@ -60,6 +60,7 @@ FARBE_OHNE_WERT = "#d0d4d8"
 #: Farben der Modellsymbole
 FARBE_KNOTEN = "#2f4f6f"
 FARBE_KNOTEN_FREI = "#e07000"      # Knoten, der (noch) an keinem Element haengt
+FARBE_NETZKNOTEN = "#6b7a88"       # Knoten des FE-Netzes (Ribbon Netz -> Netzknoten)
 FARBE_LAGER = "#207020"
 #: Farbe je Lagerart (12.09.2026, "man erkennt das optisch schlecht"): die
 #: Farbe sagt auf einen Blick, was das Lager haelt
@@ -100,7 +101,11 @@ def darstellung(modus: str, netz: bool, farbig: bool = False) -> dict:
     if modus == "Drahtmodell":
         return {"style": "wireframe", "line_width": 2}
     if modus == "Transparent":
-        return {"opacity": 0.35, "show_edges": netz}
+        # Mit Ergebnis deckender: bei 0,35 ueber weissem Grund blieb von den
+        # Farben wenig (Saettigung 77 gegen 178 in Voll, Quader-Beispiel
+        # 13.09.2026: "im Transparentmodus sehe ich keine Spannungen"); 0,55
+        # bringt 104 und laesst Inneres noch durchscheinen
+        return {"opacity": 0.55 if farbig else 0.35, "show_edges": netz}
     if modus == "Hidden-Line":
         d = {"show_edges": True, "edge_color": "#202020", "line_width": 2,
              "lighting": False}
@@ -142,10 +147,96 @@ def unbelegte_knoten(model: Model) -> np.ndarray:
 #: Anteil freier Knoten, ab dem die Hervorhebung sinnlos wird
 FREI_ANTEIL = 0.25
 
+_NETZKNOTEN_CACHE: dict = {}
+
+
+def netzknoten_maske(model: Model) -> np.ndarray:
+    """True fuer jeden Knoten, der **nur** dem FE-Netz gehoert.
+
+    „Knoten" meint in der Ansicht die Knoten der Konstruktion (13.09.2026:
+    "mit Knoten sollten die Knoten der Konstruktion gemeint sein, die
+    Netzknoten gehoeren zum Netz"). Netzknoten sind die Knoten der beim
+    Vernetzen erzeugten Elemente - Schalen und Volumen einer Flaeche oder
+    eines Koerpers, die Zwischenknoten eines geteilten Stabzugs - soweit
+    keine Linie und kein Stabende an ihnen haengt. Was der Anwender selbst
+    gesetzt hat (Linienknoten, Stabenden, Knoten direkt gesetzter Elemente,
+    freie Knoten), bleibt Konstruktion. Ein Modell ohne Geometrieobjekte
+    (Beispiele, Importe nur aus Elementen) hat darum keine Netzknoten.
+
+    Einmal je Netzstand gerechnet (wie unbelegte_knoten): die Schleifen
+    ueber 1,8 Mio. Elemente des Drehlagers duerfen nicht bei jedem Bild laufen.
+    """
+    import itertools
+    nn = int(model.nn)
+    ne = len(model.elements)
+    key = (id(model), ne, nn, len(model.flaechen or {}), len(model.koerper or {}), len(model.members or {}),
+           len(model.lines or {}), len(model.supports or []),
+           tuple(int(i) for i in model.elements[0].nodes) if ne else (),
+           tuple(int(i) for i in model.elements[-1].nodes) if ne else ())
+    hit = _NETZKNOTEN_CACHE.get(key)
+    if hit is not None:
+        return hit
+    netz = np.zeros(nn, bool)
+    if ne and nn:
+        netz_el = np.zeros(ne, bool)
+        for f in (model.flaechen or {}).values():
+            idx = np.asarray([int(e) for e in (f.elemente or [])], int)
+            netz_el[idx[(idx >= 0) & (idx < ne)]] = True
+        for k in (model.koerper or {}).values():
+            idx = np.asarray([int(e) for e in (k.elemente or [])], int)
+            netz_el[idx[(idx >= 0) & (idx < ne)]] = True
+        konstruktion = np.zeros(nn, bool)
+        for mem in (model.members or {}).values():
+            els = [int(e) for e in (mem.elements or []) if 0 <= int(e) < ne]
+            if len(els) > 1:
+                netz_el[els] = True
+                # Stabanfang und Stabende bleiben Konstruktion
+                for n in (model.elements[els[0]].nodes[0], model.elements[els[-1]].nodes[-1]):
+                    if 0 <= int(n) < nn:
+                        konstruktion[int(n)] = True
+        if netz_el.any():
+            flach = np.fromiter(itertools.chain.from_iterable(
+                model.elements[i].nodes for i in np.flatnonzero(netz_el)), int)
+            flach = flach[(flach >= 0) & (flach < nn)]
+            netz[flach] = True
+            for ln in (model.lines or {}).values():
+                for n in (ln.nodes or []):
+                    if 0 <= int(n) < nn:
+                        konstruktion[int(n)] = True
+            # ein Knotenlager hat der Anwender gesetzt - sein Knoten gehoert zur Konstruktion
+            for s in (model.supports or []):
+                if 0 <= int(s.node) < nn:
+                    konstruktion[int(s.node)] = True
+            netz &= ~konstruktion
+    _NETZKNOTEN_CACHE.clear()
+    _NETZKNOTEN_CACHE[key] = netz
+    return netz
+
+
+def konstruktionsknoten(model: Model) -> np.ndarray:
+    """Die Knotennummern der Konstruktion (alle ausser den Netzknoten)."""
+    return np.flatnonzero(~netzknoten_maske(model))
+
+
+def add_netzknoten(plotter, model: Model, groesse: float = 1.0, nur=None):
+    """Die Netzknoten als kleine Punkte zeichnen (Ribbon Netz -> Netzknoten;
+    nur, wenn das FE-Netz dargestellt ist). Schlichte Punkte statt Kugeln:
+    am Drehlager sind es 380 000."""
+    if model.nn == 0:
+        return
+    idx = np.flatnonzero(netzknoten_maske(model))
+    if nur is not None:
+        idx = np.intersect1d(idx, np.asarray([int(i) for i in nur], int))
+    if not len(idx):
+        return
+    plotter.add_points(model.nodes[idx], color=FARBE_NETZKNOTEN, point_size=max(2.0, 4.0 * float(groesse)),
+                       render_points_as_spheres=False, name="netzknoten")
+
 
 def add_nodes(plotter, model: Model, groesse: float = 1.0, nur=None):
-    """Alle gesetzten Knoten als Punkte zeichnen - oder nur die in ``nur``
-    (Knotennummern), wenn Teile des Modells ausgeblendet sind.
+    """Die Knoten der Konstruktion als Punkte zeichnen - oder nur die in
+    ``nur`` (Knotennummern), wenn Teile des Modells ausgeblendet sind. Die
+    Netzknoten gehoeren zum Netz (add_netzknoten).
 
     Ein eben gesetzter Knoten haengt an keinem Element und war darum bisher
     im Viewport gar nicht zu sehen - das Modell wuchs unsichtbar. Solche
@@ -161,12 +252,12 @@ def add_nodes(plotter, model: Model, groesse: float = 1.0, nur=None):
     if model.nn == 0:
         return
     frei = unbelegte_knoten(model)
-    alle = np.arange(model.nn)
+    alle = konstruktionsknoten(model)
     if nur is not None:
-        alle = np.asarray(sorted(int(i) for i in nur if 0 <= int(i) < model.nn), int)
-        frei = np.intersect1d(frei, alle)
-        if not len(alle):
-            return
+        alle = np.intersect1d(alle, np.asarray(sorted(int(i) for i in nur if 0 <= int(i) < model.nn), int))
+    frei = np.intersect1d(frei, alle)
+    if not len(alle):
+        return
     d = max(3.0, 7.0 * float(groesse))
     if len(frei) > FREI_ANTEIL * model.nn:
         plotter.add_points(model.nodes[alle], color=FARBE_KNOTEN, point_size=d,

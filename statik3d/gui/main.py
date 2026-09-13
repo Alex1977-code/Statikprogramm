@@ -3219,6 +3219,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Die Form der Elemente bewerten und einfärben: Formgüte (1 = beste Form), "
                         "Seitenverhältnis, Kantenlänge; Kennwerte und die schlechtesten Elemente "
                         "ins Protokoll, Splitter auswählbar")
+        # „Knoten" im Register Ansicht meint die Knoten der Konstruktion; die
+        # Netzknoten gehoeren zum Netz und haben hier ihren Schalter (13.09.2026)
+        self.act_netzknoten = g.schalter("Netzknoten", lambda z: self.redraw(), False,
+                                         "Die Knoten des FE-Netzes als kleine Punkte zeigen, solange das "
+                                         "FE-Netz dargestellt ist (Ansicht → FE-Netz); „Knoten“ im Register "
+                                         "Ansicht sind die Knoten der Konstruktion", symbol="knoten")
         g.klein("Netz löschen", self.netz_loeschen_geometrie, symbol="netz_loeschen",
                 hinweis="Das Netz der Flächen und Volumen entfernen - die Geometrie bleibt")
         g = r.gruppe("Weiteres")
@@ -3443,7 +3449,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_edges = g.schalter("FE-Netz", lambda z: self.redraw(), True,
                                     "Die Elementkanten des Netzes zeigen", kuerzel="F9")
         self.act_knoten = g.schalter("Knoten", lambda z: self.redraw(), True,
-                                     "Die gesetzten Knoten als Punkte zeigen",
+                                     "Die Knoten der Konstruktion als Punkte zeigen - Linienknoten, "
+                                     "Stabenden, frei gesetzte Knoten; die Netzknoten schaltet "
+                                     "Netz → Netzknoten",
                                      symbol="knoten")
         self.act_linien = g.schalter("Linien", lambda z: self.redraw(), True,
                                      "Die Linien des Modells zeigen (Geometrie, "
@@ -15588,6 +15596,44 @@ class MainWindow(QtWidgets.QMainWindow):
         self._umriss_zwischen = umriss
         return umriss
 
+    @staticmethod
+    def _nur_linien(netz) -> bool:
+        """Besteht das Gitter nur aus Linien- und Punktzellen (Stabwerk)?"""
+        if not int(netz.n_cells):
+            return False
+        if isinstance(netz, pv.PolyData):
+            return int(netz.n_verts) + int(netz.n_lines) == int(netz.n_cells)
+        return bool((np.asarray(netz.celltypes) <= 4).all())     # VTK_VERTEX 1, VTK_LINE 3, VTK_POLY_LINE 4
+
+    def _netz_teilen(self, grid, kidx) -> list:
+        """Stabelemente (Linienzellen) von Flaechen und Volumen trennen, wenn
+        beides im Gitter steckt: die Linienbreite gilt je Darsteller, und die
+        3 px eines Stabs als Linie machten die Kanten eines Schalen- oder
+        Tetraedernetzes 3-4 px dick (gemessen im Bild, 13.09.2026: "die
+        Liniendicke des Netzes ist zu dick"). Ein reines Stabwerk bleibt ein
+        Gitter "netz" wie bisher; die Linien eines gemischten Modells heissen
+        "netz_linien". Einmal je Gitter.
+        """
+        key = (id(grid), int(grid.n_cells), int(grid.n_points))
+        if getattr(self, "_netzteile_stand", None) == key:
+            return self._netzteile_zwischen
+        if isinstance(grid, pv.PolyData):
+            # Zellen einer PolyData liegen in der Reihenfolge Punkte, Linien, Flaechen
+            linien = np.zeros(int(grid.n_cells), bool)
+            linien[:int(grid.n_verts) + int(grid.n_lines)] = True
+        else:
+            linien = np.asarray(grid.celltypes) <= 4
+        if linien.any() and not linien.all():
+            teile = []
+            for maske, name in ((~linien, "netz"), (linien, "netz_linien")):
+                teil = grid.extract_cells(np.flatnonzero(maske))
+                teile.append((teil, kidx[np.asarray(teil.point_data["vtkOriginalPointIds"], int)], name))
+        else:
+            teile = [(grid, kidx, "netz")]
+        self._netzteile_stand = key
+        self._netzteile_zwischen = teile
+        return teile
+
     def _gitter(self, typen, ausser):
         """Das gefilterte Elementnetz und je Punkt seine Knotennummer.
 
@@ -15744,7 +15790,7 @@ class MainWindow(QtWidgets.QMainWindow):
         grid, kidx = self._gitter(typen, ausser | set(koerper_elems))
         netze = []
         if grid.n_cells:
-            netze.append((grid, kidx, "netz"))
+            netze.extend(self._netz_teilen(grid, kidx))
         if koerper_elems:
             try:
                 pd = vp.stab_koerper(m, koerper_elems)
@@ -15834,10 +15880,12 @@ class MainWindow(QtWidgets.QMainWindow):
                         col[e] = k % 12
         for netz, kn, nm in netze:
             eidx = np.asarray(netz.cell_data["elem"], int)
-            breit = 3 if nm == "netz" else 1
+            # Staebe als Linien 3 px breit, die Kanten von Schalen und Volumen 1 px
+            dick = nm == "netz_linien" or (nm == "netz" and self._nur_linien(netz))
+            breit = 3 if dick else 1
             # Die Kanten eines Stabkoerpers sind Facetten des Profils, kein
             # FE-Netz - ein Rundstab mit 24 Mantelkanten wuerde schwarz.
-            show_edges = self.act_edges.isChecked() and nm == "netz"
+            show_edges = self.act_edges.isChecked() and nm in ("netz", "netz_linien")
             if u is not None:
                 warped = netz.copy()
                 warped.points = netz.points + s * u[kn, :3]
@@ -15845,8 +15893,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Netz aus: das unverformte System nur als Umriss (Kanten
                     # der Koerper), nicht als Drahtnetz - "wenn ich das Netz
                     # ausblende, bleibt es beim unverformten System sichtbar"
-                    # (12.09.2026). Der Umriss entsteht einmal je Gitter.
-                    if self.act_edges.isChecked() or nm != "netz":
+                    # (12.09.2026). Der Umriss entsteht einmal je Gitter. Bei
+                    # Transparent immer nur der Umriss: das graue Drahtnetz
+                    # des unverformten Systems lag ueber den durchscheinenden
+                    # Farben, "im Transparentmodus sehe ich keine Spannungen"
+                    # (13.09.2026).
+                    if (self.act_edges.isChecked() and modus != "Transparent") or nm != "netz":
                         self.plotter.add_mesh(netz, style="wireframe", color="#c8c8c8",
                                               opacity=0.35, line_width=1,
                                               name=f"undeformed_{nm}")
@@ -15871,7 +15923,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                           nan_color=vp.FARBE_OHNE_WERT,
                                           scalar_bar_args=dict(self._farbskala(), title=name, fmt="%.2f"),
                                           name=f"result_{nm}",
-                                          **dict({"line_width": 5 if nm == "netz" else 1},
+                                          **dict({"line_width": 5 if dick else 1},
                                                  **vp.darstellung(modus, show_edges, True)))
                 else:
                     # ohne Werte fuer diesen Teil (etwa Schalen bei der
@@ -15890,7 +15942,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                       scalar_bar_args=dict(self._farbskala(), title=guete_name,
                                                            fmt=spn.skalenformat(*guete_clim)),
                                       name=f"model_{nm}",
-                                      **dict({"line_width": 4 if nm == "netz" else 1},
+                                      **dict({"line_width": 4 if dick else 1},
                                              **vp.darstellung(modus, show_edges, True)))
             elif col is not None:
                 farbig = netz.copy()
@@ -15898,7 +15950,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plotter.add_mesh(farbig, scalars="Stab", cmap="tab20",
                                       nan_color="#8fb8d8", show_scalar_bar=False,
                                       name=f"model_{nm}",
-                                      **dict({"line_width": 4 if nm == "netz" else 1},
+                                      **dict({"line_width": 4 if dick else 1},
                                              **vp.darstellung(modus, show_edges, True)))
             else:
                 self.plotter.add_mesh(netz, name=f"model_{nm}",
@@ -15947,6 +15999,8 @@ class MainWindow(QtWidgets.QMainWindow):
             vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
                 vp.add_nodes(self.plotter, m, nur=sichtbare_knoten)
+            if self._netzknoten_sichtbar():
+                vp.add_netzknoten(self.plotter, m, nur=sichtbare_knoten)
             self._auswahl_zeichnen()
             self._geist_zeichnen(m)
             if (getattr(m, "bemassungen", None) or getattr(self, "messungen", None)):
@@ -16048,6 +16102,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                           point_size=1, shape=None, always_visible=True,
                                           name=f"nummern:{art}")
 
+    def _netzknoten_sichtbar(self) -> bool:
+        """Netzknoten werden gezeigt, wenn das FE-Netz dargestellt ist und
+        Netz -> Netzknoten an ist."""
+        a = getattr(self, "act_netzknoten", None)
+        return (a is not None and a.isChecked()
+                and getattr(self, "act_edges", None) is not None and self.act_edges.isChecked())
+
     def _nummernmarken(self, m, art: str, sichtbare_knoten=None):
         """(Punkte, Beschriftungen) einer Objektart fuer die Nummerierung.
 
@@ -16059,6 +16120,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if art == "Knoten":
             idx = (np.arange(m.nn) if sichtbare_knoten is None
                    else np.asarray(sichtbare_knoten, int))
+            if len(idx) and not self._netzknoten_sichtbar():
+                # Nummeriert wird, was gezeichnet ist: die Netzknoten nur,
+                # wenn Netz -> Netzknoten sie zeigt
+                idx = idx[~vp.netzknoten_maske(m)[idx]]
             if not len(idx):
                 return leer
             return m.nodes[idx], [str(int(i)) for i in idx]
