@@ -10344,10 +10344,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_loeser.setItemData(self.cb_loeser.count() - 1, f"Lizenz: {lizenz}", QtCore.Qt.ToolTipRole)
         i = self.cb_loeser.findData(parallel.settings().solver_backend)
         self.cb_loeser.setCurrentIndex(max(i, 0))
-        self.cb_loeser.setToolTip("Vorgabe MKL PARDISO (frei nutzbar, in der exe enthalten). CHOLMOD und "
-                                  "UMFPACK sind GPL-Software und nur in einer eigenen Python-Umgebung "
-                                  "nutzbar, MUMPS (CeCILL-C) ebenso; PyAMG (MIT) rechnet iterativ und "
-                                  "speicherarm; SuperLU (scipy) rechnet auf einem Kern")
+        self.cb_loeser.setToolTip("Vorgabe MKL PARDISO (frei nutzbar, in der exe enthalten). MUMPS "
+                                  "(CeCILL-C, Lizenztext liegt im Programm unter mumps/LIZENZ bei) ist "
+                                  "ebenfalls enthalten. CHOLMOD und UMFPACK sind GPL-Software und nur "
+                                  "in einer eigenen Python-Umgebung nutzbar; PyAMG (MIT) rechnet "
+                                  "iterativ und speicherarm; SuperLU (scipy) rechnet auf einem Kern")
         gl.addWidget(row("Gleichungslöser", self.cb_loeser))
         self.cb_backend = QtWidgets.QComboBox()
         self.cb_backend.addItems(["lokal (Mehrkern)", "Rechnerfarm"])
@@ -17552,7 +17553,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "Nachweise: DIN EN 1993-1-1 (Querschnitt, Knicken, Biegedrillknicken, Interaktion), "
             "DIN EN 1993-1-9 (Ermüdung)<br>"
             "Import: DXF, IFC, SAF, RFEM-Tabellen, Abaqus, Nastran, STEP/IGES/STL<br>"
-            "Parallel: Mehrkern und Rechnerfarm<br><br>"
+            "Parallel: Mehrkern und Rechnerfarm<br>"
+            "Gleichungslöser: Intel MKL PARDISO, MUMPS 5.8.2 (Copyright CERFACS, CNRS, ENS Lyon, "
+            "INP Toulouse, Inria, Mumps Technologies, University of Bordeaux - Lizenz CeCILL-C, "
+            "Text unter mumps/LIZENZ), PyAMG (MIT), SuperLU (BSD)<br><br>"
             "<b>Gültigkeitsbereich:</b> kleine Verformungen, linear-elastisches Material, "
             "Kontakt als Penalty-Näherung ohne Lastgeschichte.<br>"
             "Das Programm ist gegen analytische Lösungen und Handrechnungen verifiziert, aber "

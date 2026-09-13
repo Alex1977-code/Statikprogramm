@@ -664,7 +664,7 @@ Werkzeuge gilt (Stand 13.09.2026):
 | PyAMG | MIT | ja |
 | CHOLMOD (scikit-sparse) | LGPL, das Supernodal-Modul GPL | nein — nur aus der eigenen Python-Umgebung |
 | UMFPACK (scikit-umfpack) | GPL | nein — nur aus der eigenen Python-Umgebung |
-| MUMPS (pymumps) | CeCILL-C | nein — nur aus der eigenen Python-Umgebung (kein Windows-Rad; Bauanleitung in `docs/MUMPS_Windows_Bauanleitung.md`) |
+| MUMPS 5.8.2 (Paket `mumps`, eigener Windows-Bau) | CeCILL-C — LGPL-artig: die Bibliothek bleibt unverändert ein eigenes Modul, Lizenztext und Urheberhinweis liegen im Programm unter `mumps/LIZENZ` bei (Art. 5.3.1 und 6.4), das Info-Fenster nennt sie | ja (seit 13.09.2026; Bau und Messung in `docs/MUMPS_Windows_Bauanleitung.md`) |
 | gmsh | GPL | nein — auf Wunsch nachladbar von PyPI (*Extras → Vernetzer installieren…*) oder `pip install gmsh` in der eigenen Umgebung |
 | Netgen (netgen-mesher) | LGPL | nein — auf Wunsch nachladbar von PyPI oder `pip install netgen-mesher` |
 | MMG3D | LGPL | nein — getrenntes Programm, auf Wunsch nachladbar aus dem Release `werkzeuge` (dort aus dem Quelltext gebaut, Lizenz liegt bei) |
@@ -2475,10 +2475,23 @@ Nachweis mit seiner Verformung je Kombination.
   Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu iterieren und
   einkernig) und **SuperLU** (direkt, einkernig, Rückfall). Was nicht
   installiert ist, steht grau in der Liste. **In der exe stecken** MKL
-  PARDISO, PyAMG und SuperLU (seit 13.09.2026; PyAMG ist MIT-lizenziert und
-  darf mit) — der Selbsttest des Baus rechnet das Rahmenbeispiel mit jedem
-  der drei und vergleicht. Geprüft in `tests/test_loeser.py` (jeder
-  vorhandene Löser trifft N·L/(E·A)).
+  PARDISO, PyAMG, SuperLU und MUMPS (seit 13.09.2026; PyAMG ist
+  MIT-lizenziert, MUMPS CeCILL-C — beide dürfen mit) — der Selbsttest des
+  Baus rechnet das Rahmenbeispiel mit jedem der vier und vergleicht.
+  Geprüft in `tests/test_loeser.py` (jeder vorhandene Löser trifft
+  N·L/(E·A)).
+* **MUMPS** kommt unter Windows als eigener Bau mit (gfortran, OpenMP,
+  OpenBLAS, METIS — `docs/MUMPS_Windows_Bauanleitung.md`). Symmetrische
+  Steifigkeitsmatrizen gehen als unteres Dreieck hinein (SYM=2): halber
+  Speicher, halbe Flop; ob die Matrix symmetrisch ist, prüft das Programm
+  an der Matrix und nimmt sonst die volle. Gemessen am Würfel mit 34.914
+  Freiheitsgraden (Ryzen 9 5950X, 16 Kerne): SuperLU 8,25 s, MUMPS 1,26 s
+  mit einem und 0,86–1,09 s mit acht Threads, MKL PARDISO 0,45 s; mit
+  201.720 Freiheitsgraden MUMPS 22,1 s (1 Thread), 8,1 s (8), 9,8 s (16).
+  Mehr als acht Threads oder mehr als physische Kerne machen MUMPS
+  langsamer (31 Threads am Würfel: 3,3 s), darum nimmt es höchstens acht;
+  `MUMPS_NUM_THREADS` übersteuert das ausdrücklich. Die Statuszeile nennt
+  die Threadzahl, die die Laufzeit meldet.
 * **Eigenschwingungen mit Kontakt.** Kontaktpaare schwingen mit: liegt eine
   gerechnete statische Lösung vor, schwingt das System um ihren
   **Kontaktzustand** (geschlossene Paare übertragen, offene nicht); sonst

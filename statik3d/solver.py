@@ -115,15 +115,17 @@ def _melde(progress, text: str, anteil: float = None) -> None:
 #: Die Loeser zur Auswahl (Berechnung -> Einstellungen): Schluessel ->
 #: (Name, Python-Paket, Lizenz, Art). Lizenzrechtlich sauber heisst: in der
 #: gepackten exe stecken nur MKL (Intel Simplified Software License, frei
-#: weitergebbar), SuperLU (BSD, in scipy) und PyAMG (MIT). CHOLMOD (LGPL, das
-#: Supernodal-Modul GPL), UMFPACK (GPL) und MUMPS (CeCILL-C) kommen aus der
-#: eigenen Python-Umgebung des Anwenders, wenn er sie installiert - sie werden
-#: nicht mitgeliefert (13.09.2026).
+#: weitergebbar), SuperLU (BSD, in scipy), PyAMG (MIT) und MUMPS (CeCILL-C,
+#: LGPL-artig: die Bibliothek bleibt unveraendert und ein eigenes Modul, der
+#: Lizenztext liegt in mumps/LIZENZ bei; Paket "mumps" aus packaging/, eigener
+#: Windows-Bau, 13.09.2026). CHOLMOD (LGPL, das Supernodal-Modul GPL) und
+#: UMFPACK (GPL) kommen aus der eigenen Python-Umgebung des Anwenders, wenn
+#: er sie installiert - sie werden nicht mitgeliefert.
 LOESER = {
     "pardiso": ("MKL PARDISO", "pypardiso", "Intel Simplified Software License", "direkt, mehrkernig"),
     "cholmod": ("CHOLMOD", "scikit-sparse", "LGPL / Supernodal GPL - nicht in der exe", "direkt (Cholesky)"),
     "umfpack": ("UMFPACK", "scikit-umfpack", "GPL - nicht in der exe", "direkt (LU)"),
-    "mumps": ("MUMPS", "pymumps", "CeCILL-C", "direkt, mehrkernig"),
+    "mumps": ("MUMPS", "mumps", "CeCILL-C (Lizenztext liegt bei)", "direkt, mehrkernig"),
     "pyamg": ("PyAMG", "pyamg", "MIT", "iterativ (algebraisches Mehrgitter + CG)"),
     "superlu": ("SuperLU", "scipy", "BSD", "direkt, einkernig"),
 }
@@ -225,6 +227,8 @@ class LinearSolver:
         if self._solve is None and be == "mumps":
             self._solve = self._mumps(K)
             self.backend = "mumps"
+            import mumps
+            self.threads = mumps.threads()
         if self._solve is None and be == "pyamg":
             self._solve = self._pyamg(K)
             self.backend = "pyamg"
@@ -238,20 +242,50 @@ class LinearSolver:
 
     @staticmethod
     def _mumps(K):
-        """MUMPS (CeCILL-C) ueber pymumps: einmal faktorisieren, dann je rechte Seite."""
-        from mumps import DMumpsContext
-        Kc = K.tocoo()
-        ctx = DMumpsContext(sym=0, par=1)
+        """MUMPS (CeCILL-C, Paket ``mumps``): einmal faktorisieren, dann je
+        rechte Seite.
+
+        Symmetrische Matrizen gehen als unteres Dreieck mit SYM=2 hinein
+        (LDL^T mit Pivotisierung): am Wuerfel mit 34 914 FHG 249 statt
+        534 MB Faktoren und 2,5e10 statt 4,8e10 Flop (METIS-Umordnung,
+        13.09.2026). Ob K symmetrisch ist,
+        wird an der Matrix gemessen, nicht angenommen - Reibkontakt oder
+        Federn koennten es brechen, und dann rechnet SYM=0 mit der vollen
+        Matrix richtig weiter.
+
+        Fehler -8/-9 heissen: die Arbeitsspeicher-Schaetzung der Analyse
+        reichte wegen der Pivotisierung nicht. Dann wird ICNTL(14) (Zuschlag
+        in Prozent, Vorgabe 20) angehoben und nur die Faktorisierung
+        wiederholt, wie es das MUMPS-Handbuch vorsieht.
+        """
+        from mumps import DMumpsContext, MUMPSError
+        Kc = K.tocsr()
+        skala = float(abs(Kc).max()) if Kc.nnz else 1.0
+        sym = 2 if float(abs(Kc - Kc.T).max()) <= 1e-12 * skala else 0
+        coo = sparse.tril(Kc, format="coo") if sym else Kc.tocoo()
+        ctx = DMumpsContext(sym=sym, par=1)
         ctx.set_silent()
-        ctx.set_shape(Kc.shape[0])
-        ctx.set_centralized_assembled(Kc.row + 1, Kc.col + 1, Kc.data)
-        ctx.run(job=4)                       # Analyse + Faktorisierung
+        ctx.set_shape(coo.shape[0])
+        ctx.set_centralized_assembled(coo.row + 1, coo.col + 1, coo.data)
+        ctx.run(job=1)                       # Analyse (Umordnung, Schaetzung)
+        zuschlaege = (20, 50, 100, 200)
+        for zuschlag in zuschlaege:
+            ctx.set_icntl(14, zuschlag)
+            try:
+                ctx.run(job=2)               # Faktorisierung
+                break
+            except MUMPSError as ex:
+                if ex.infog1 not in (-8, -9) or zuschlag == zuschlaege[-1]:
+                    raise
 
         def loesen(b):
-            x = np.array(b, float, copy=True)
+            # MUMPS loest in place und erwartet mehrere rechte Seiten
+            # spaltenweise hintereinander (Fortran-Reihenfolge)
+            x = np.array(b, dtype=float, order="F", copy=True)
             ctx.set_rhs(x)
             ctx.run(job=3)
             return x
+        loesen.freigeben = ctx.destroy       # fuer LinearSolver.freigeben()
         return loesen
 
     @staticmethod
@@ -280,11 +314,19 @@ class LinearSolver:
         Rueckfall am Speicher scheiterte (11.09.2026).
         """
         ps, self._ps = self._ps, None
-        self._solve = None
+        loesen, self._solve = self._solve, None
         if ps is not None:
             try:
                 ps.free_memory(everything=True)
             except Exception:                   # noqa: BLE001 - beim Aufraeumen nie sperren
+                pass
+        # MUMPS haelt die Faktorisierung ebenfalls ausserhalb von Python
+        # (JOB=-2 gibt sie frei); der Loeser bringt dafuer freigeben() mit
+        frei = getattr(loesen, "freigeben", None)
+        if frei is not None:
+            try:
+                frei()
+            except Exception:                   # noqa: BLE001
                 pass
 
     def __del__(self):
