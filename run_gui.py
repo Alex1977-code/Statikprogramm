@@ -3,6 +3,8 @@
 
     --version      Versionsnummer ausgeben
     --selbsttest   Pakete laden, Beispiel rechnen, statik3d_selbsttest.txt schreiben (Build-Pruefung)
+    --rechenhilfe  nur das Fenster "Rechenhilfe": fuer einen Arbeitsplatz der Rechnerfarm mitrechnen
+                   (--host, --port, --key, --kerne optional)
 """
 import os
 import sys
@@ -148,6 +150,12 @@ def _start():
     if "--selbsttest" in sys.argv:
         _packerbild(schliessen=True)
         sys.exit(_selftest())
+    if "--rechenhilfe" in sys.argv:
+        # Nur das Rechenhilfe-Fenster: dieser Rechner rechnet fuer einen
+        # Arbeitsplatz mit (statik3d.gui.rechenhilfe) - ohne Hauptfenster
+        _packerbild(schliessen=True)
+        from statik3d.gui import rechenhilfe
+        sys.exit(rechenhilfe.main())
     # Startbild, solange Grafik und Rechenkern geladen werden - das dauert
     # in der exe zehn bis dreissig Sekunden, und ohne Bild klickt man ein
     # zweites Mal.

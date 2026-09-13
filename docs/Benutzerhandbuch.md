@@ -852,6 +852,13 @@ folgen dem: nummeriert wird, was gezeichnet ist. Geprüft in
 `tests/test_gui_smoke.py` (vernetzte Platte mit fünf gesetzten Knoten: 5
 Konstruktionsknoten, alle übrigen Netzknoten).
 
+**Flächenlasten** sind seit 13.09.2026 als Fläche erkennbar: zu den
+Pfeilen kommt eine durchscheinende **Lastfläche** an den Pfeilenden —
+je belastetem Vieleck der Fläche bzw. je belasteter Elementseite eines,
+in Lastrichtung um die Pfeillänge versetzt („aktuell sehen die aus wie
+einzelne Knotenlasten“). Sie folgt dem Schalter *Lasten*. Geprüft in
+`tests/test_gui_smoke.py`.
+
 Die Elementkanten des FE-Netzes sind **1 px** breit. Bis 13.09.2026 waren
 es 3 px: die Breite, die ein Stab als Linie bekommt, galt für das ganze
 Gitter, und im Bild maßen die Kanten eines Schalen- oder Tetraedernetzes
@@ -2570,8 +2577,13 @@ Nachweis mit seiner Verformung je Kombination.
 * Prozesse: Zahl der Arbeitsprozesse für Elementschleifen, Aufträge und die
   Vernetzung - Vorgabe alle Kerne bis auf einen, der bleibt der Oberfläche;
   Backend „Rechnerfarm“ mit Server, Port und
-  Schlüssel (siehe `Rechnerfarm.md`). „Lokalen Server + Worker starten“
-  macht den eigenen Rechner zum Farm-Server.
+  Schlüssel (siehe `Rechnerfarm.md`). **Rechnerfarm einschalten** macht den
+  eigenen Rechner zum Arbeitsplatz der Farm (Server, eigene Worker,
+  Ankündigung im Netz); auf jedem weiteren Rechner genügt *Extras → Als
+  Rechenhilfe arbeiten…* (oder `Statik3D.exe --rechenhilfe`): „Arbeitsplatz
+  suchen“, Schlüssel, „Verbinden“ — ohne Kommandozeile, seit 13.09.2026
+  („die Rechnerfarm muss benutzerfreundlicher funktionieren“). **Farm-Status**
+  zeigt die Rechenhilfen mit Version und Programmstand.
 * **Ein stehender Prozesspool je Rechnung.** Bis 13.09.2026 startete jede
   Elementschleife — die Assemblierung und der Nachlauf jedes Lastfalls —
   einen neuen Pool und gab jedem Arbeitsprozess das Modell als Startargument

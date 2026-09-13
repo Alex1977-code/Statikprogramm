@@ -4293,6 +4293,27 @@ def main():
               n_punkte_("netzknoten") == 0 and w.act_netzknoten.isChecked())
         w.act_edges.setChecked(True); w.act_netzknoten.setChecked(False); app.processEvents()
 
+        # --- Flaechenlasten als Flaeche erkennbar: durchscheinende Lastflaeche an den Pfeilenden ---
+        mk_.add_geometrielast("F1", 5000.0, "flaeche")
+        w.refresh_all(); app.processEvents()
+        akt_ = dict(w.plotter.renderer.actors)
+        n_pat = akt_["flaechenlasten"].GetMapper().GetInput().GetNumberOfCells() if "flaechenlasten" in akt_ else 0
+        check("Flächenlast auf F1: eine durchscheinende Lastfläche (Vielecke der Fläche), nicht nur Pfeile",
+              n_pat >= 1 and "loads" in akt_ and abs(akt_["flaechenlasten"].GetProperty().GetOpacity() - 0.3) < 1e-6,
+              f"{n_pat} Vielecke")
+        w.act_loads.setChecked(False); app.processEvents()
+        check("Lasten aus: auch die Lastfläche ist weg", "flaechenlasten" not in dict(w.plotter.renderer.actors))
+        w.act_loads.setChecked(True)
+        mk_.case().geometrielasten.clear(); w.refresh_all(); app.processEvents()
+        w.load_example("plate"); app.processEvents()
+        akt_ = dict(w.plotter.renderer.actors)
+        n_fl = len(w.model.case().face_loads)
+        check("Elementweise Flächenlasten (Platte): je belastete Elementseite ein Vieleck der Lastfläche",
+              "flaechenlasten" in akt_ and akt_["flaechenlasten"].GetMapper().GetInput().GetNumberOfCells() == n_fl > 0,
+              f"{n_fl} Lasten")
+        # zurueck zur vernetzten Platte mk_ - der naechste Block loest sie
+        w.model = mk_; w.analysis = None; w.results = None; w.refresh_all(); app.processEvents()
+
         # --- Netzkanten 1 px, Transparent mit Ergebnis deckender und ohne Drahtnetz ---------
         for i_ in (0, 3):
             mk_.fix(i_, "all")
@@ -4483,6 +4504,77 @@ def main():
         w.cb_loeser.setCurrentIndex(w.cb_loeser.findData("superlu"))
         w._apply_parallel_settings()
         check("die Auswahl kommt in den Einstellungen an", parallel_.settings().solver_backend == "superlu")
+        # --- Rechnerfarm ohne Kommandozeile: einschalten, Rechenhilfe sucht und verbindet ------
+        from statik3d import farm as farm_
+        import socket as _socket
+        _s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM); _s.bind(("127.0.0.1", 0)); farm_port_ = _s.getsockname()[1]; _s.close()
+        _s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM); _s.bind(("127.0.0.1", 0)); such_port_ = _s.getsockname()[1]; _s.close()
+        alt_udp_ = farm_.ANKUENDIGUNGS_PORT
+        farm_.ANKUENDIGUNGS_PORT = such_port_
+        w.ed_farm_port.setText(str(farm_port_)); w.ed_farm_key.setText("smoke")
+        check("Einstellungen nennen den Weg für die Rechenhilfe (Extras, --rechenhilfe, Adresse)",
+              "Als Rechenhilfe" in w.lbl_farm_hilfe.text() and "--rechenhilfe" in w.lbl_farm_hilfe.text()
+              and w.btn_farm_start.text() == "Rechnerfarm einschalten")
+        n_info = len(w.log.toPlainText())
+        w.farm_start_local(); app.processEvents()
+        check("Rechnerfarm einschalten: Server, Worker, Ankündigung; Backend springt auf Farm; Protokoll nennt Adresse, Port, Schlüssel-Hinweis und Firewall",
+              w._farm_ankuendigung is not None and w.cb_backend.currentIndex() == 1
+              and w.btn_farm_start.text() == "Rechnerfarm läuft"
+              and f":{farm_port_}" in w.log.toPlainText()[n_info:] and "Firewall" in w.log.toPlainText()[n_info:],
+              w.log.toPlainText()[n_info:][:160])
+        rh = w.rechenhilfe_fenster(); app.processEvents()
+        rh.prozesse = False                                  # Threads statt Prozesse: schnell und im selben Prozess
+        rh.suchport = such_port_
+        check("Extras → Als Rechenhilfe arbeiten… öffnet das Fenster mit Suche, Port, Schlüssel, Kernen, Verbinden",
+              rh.isVisible() and rh.windowTitle().endswith("Rechenhilfe") and rh.b_suchen.text() == "Arbeitsplatz suchen"
+              and rh.sp_port.value() == farm_port_ and rh.ed_key.text() == "smoke" and rh.sp_kerne.value() >= 1)
+        rh.suchen(4.0)                                         # Takt der Ankündigung 2 s
+        t_ = time.time()
+        while rh.worker is not None and rh.worker.isRunning() and time.time() - t_ < 15:
+            app.processEvents(); time.sleep(0.02)
+        app.processEvents()
+        check("„Arbeitsplatz suchen“ findet den eigenen Arbeitsplatz über die Ankündigung (Host, Port, Stand)",
+              len(rh.gefunden) >= 1 and all(d["port"] == farm_port_ for d in rh.gefunden)
+              and rh.host() in {d["host"] for d in rh.gefunden} and rh.sp_port.value() == farm_port_, str(rh.gefunden)[:160])
+        rh.sp_kerne.setValue(1)
+        rh.verbinden()
+        t_ = time.time()
+        while rh.worker is not None and rh.worker.isRunning() and time.time() - t_ < 30:
+            app.processEvents(); time.sleep(0.02)
+        app.processEvents()
+        check("„Verbinden“: Schlüssel geprüft, ein Rechenprozess arbeitet, Trennen wird möglich",
+              rh.verbunden and rh.b_trennen.isEnabled() and not rh.b_verbinden.isEnabled()
+              and "Verbunden" in rh.protokoll.toPlainText(), rh.protokoll.toPlainText()[-160:])
+        c_ = farm_.FarmClient("127.0.0.1", farm_port_, "smoke")
+        # auf den Worker der Rechenhilfe warten (die eigenen "gui#"-Worker sind schon da)
+        t_ = time.time()
+        namen_ = []
+        while time.time() - t_ < 30:
+            namen_ = [k for k, v in c_.status()["workers"].items() if "Rechenhilfe" in k and v.get("alive")]
+            if namen_:
+                break
+            app.processEvents(); time.sleep(0.2)
+        rh._stand_holen(); app.processEvents()
+        check("die Rechenhilfe steht im Farm-Status mit Version und Stand, ihr Fenster zeigt den Stand",
+              len(namen_) == 1 and c_.status()["workers"][namen_[0]].get("version") == farm_.__version__
+              and "verbunden mit " in rh.lbl_stand.text() and f":{farm_port_}" in rh.lbl_stand.text()
+              and "1 von 1 Prozessen aktiv" in rh.lbl_stand.text(),
+              rh.lbl_stand.text())
+        rh.ed_key.setText("falsch"); rh.trennen(); app.processEvents()
+        check("Trennen: nicht verbunden, Verbinden wieder möglich", not rh.verbunden and rh.b_verbinden.isEnabled())
+        rh.verbinden()
+        t_ = time.time()
+        while rh.worker is not None and rh.worker.isRunning() and time.time() - t_ < 30:
+            app.processEvents(); time.sleep(0.02)
+        app.processEvents()
+        check("falscher Schlüssel: keine Verbindung, klare Meldung mit Firewall-Hinweis",
+              not rh.verbunden and "Keine Verbindung" in rh.protokoll.toPlainText() and "Firewall" in rh.lbl_stand.text(),
+              rh.protokoll.toPlainText()[-120:])
+        rh.close(); app.processEvents()
+        w._farm_ankuendigung.set(); w._farm_ankuendigung = None
+        farm_.ANKUENDIGUNGS_PORT = alt_udp_
+        w.cb_backend.setCurrentIndex(0); w.ed_farm_key.setText("statik3d"); w.ed_farm_port.setText("5555")
+        w._apply_parallel_settings()
         # Threads des Gleichungsloesers: automatisch oder feste Zahl, wird gespeichert
         stufen_ = [w.cb_threads.itemData(i) for i in range(w.cb_threads.count())]
         check("Threads des Gleichungslösers: automatisch (nennt PARDISO und MUMPS) + Stufen bis zur Kernzahl",
