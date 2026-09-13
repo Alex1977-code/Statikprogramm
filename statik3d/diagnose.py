@@ -36,10 +36,14 @@ def teiltragwerke(model) -> list:
     nn = int(model.nn)
     if nn == 0:
         return []
-    ne = len(model.elements)
+    # Abgeschaltete Staebe (Member.aus) gehoeren nicht zum tragenden Netz:
+    # ihre Knoten haengen an nichts und werden beim Loesen festgehalten
+    basis = model.grundmaske() if hasattr(model, "grundmaske") else None
+    elemente = model.elements if basis is None else [e for i, e in enumerate(model.elements) if basis[i]]
+    ne = len(elemente)
     if ne:
-        laengen = np.fromiter((len(e.nodes) for e in model.elements), int, count=ne)
-        flach = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), int,
+        laengen = np.fromiter((len(e.nodes) for e in elemente), int, count=ne)
+        flach = np.fromiter(itertools.chain.from_iterable(e.nodes for e in elemente), int,
                             count=int(laengen.sum()))
         elem = np.repeat(np.arange(ne), laengen)
     else:

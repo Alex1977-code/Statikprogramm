@@ -140,10 +140,21 @@ Die Arbeitsfläche in drei Spalten:
   **kleinster und größter Nummer**, beim Einzelobjekt seine Felder
   **editierbar** — Nummer und Koordinaten des Knotens, Name und Knoten der
   Linie, Querschnitt und Werkstoff des Stabs, Linien der Fläche, Flächen des
-  Volumens. Ein Stab mit Nachweis zeigt dazu die Knicklängenbeiwerte β_y und
-  β_z und den Haken für das Biegedrillknicken; der Knopf „Nachweisparameter …“
-  öffnet alle weiteren (Kipplänge, Momentenbeiwerte, Lastangriff,
-  Wölbkrafttorsion, Kerbfall). Eine andere Knotennummer tauscht die beiden Knoten, ein anderer
+  Volumens. Die **Stabmaske** beginnt seit 13.09.2026 mit dem, was man beim
+  Anklicken wissen will, zum Lesen: **Knoten** (Anfang → Ende mit
+  Koordinaten, Zwischenknoten), **Länge** und Elementzahl, der
+  **Querschnitt** mit Bezeichnung, Art, Maßen in mm (h, b, t_w, t_f, r bzw.
+  d und t) und den Kennwerten A, I_y, I_z, I_t, W_el, W_pl, I_w in
+  cm-Einheiten, und der **Werkstoff** mit E und f_y (nach Dicke). Bei
+  mehreren Querschnitten oder Werkstoffen im Stab stehen alle da. Darunter
+  die editierbaren Felder. Ein Stab mit Nachweis zeigt dazu die
+  Knicklängenbeiwerte β_y und β_z und den Haken für das Biegedrillknicken;
+  der Knopf „Nachweisparameter …“ öffnet alle weiteren (Kipplänge,
+  Momentenbeiwerte, Lastangriff, Wölbkrafttorsion, Kerbfall). Der Haken
+  **deaktiviert (wirkt nicht)** schaltet den Stab ab, ohne ihn zu löschen:
+  er trägt in keiner Situation Steifigkeit oder Last (so kommen in RFEM „für
+  Berechnung deaktivierte“ Stäbe herein, `docs/Schnittstellen.md`); ein
+  Wechsel verwirft vorhandene Ergebnisse. Eine andere Knotennummer tauscht die beiden Knoten, ein anderer
   Name benennt das Objekt samt aller Verweise um.
 
   **Rechtsklick → Neu** legt am Zweig ein neues Objekt mit der **nächsten
@@ -2023,6 +2034,10 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
   Schadensfolge/Konzept für γMf; Ermüdungslasten im Register Lastfälle.
 
 **Eine Ermüdungslast beschreibt entweder zwei Zustände oder einen Verlauf.**
+Ein Zustand darf ein Lastfall **oder eine Kombination** sein — die
+FAT-Kombinationen aus RFEM sind Kombinationen, und der Nachweis liest beide
+aus den Ergebnissen (bis 13.09.2026 wies die Modellprüfung eine Kombination
+als „Lastfall unbekannt“ ab; am CBG-Trolley 20 Meldungen).
 *Zwei Zustände*: der Lastwechsel pendelt zwischen oben und unten, mit einer
 Lastspielzahl — das reicht, solange es wirklich nur zwei Zustände gibt.
 *Verlauf*: eine **Folge von Lastfällen** (oder Kombinationen) und die Zahl

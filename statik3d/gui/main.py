@@ -4329,7 +4329,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 els = [int(e) for e in (mem.elements if mem else [])]
                 secs = {m.elements[e].sec for e in els if 0 <= e < len(m.elements)}
                 mats = {m.elements[e].mat for e in els if 0 <= e < len(m.elements)}
+                info = self._stabinfo(m, els)
                 felder = [F("name", "Name", "text", name, breite=120),
+                          # Was man beim Anklicken wissen will, auf einen Blick (13.09.2026)
+                          F("knoten", "Knoten", "info", info["knoten"]),
+                          F("laenge", "Länge", "info", info["laenge"]),
+                          F("qs_info", "Querschnitt", "info", info["querschnitt"]),
+                          F("mat_info", "Werkstoff", "info", info["werkstoff"]),
                           F("elemente", "Elemente (Nummern)", "liste", ", ".join(str(e) for e in els),
                             breite=160),
                           F("sec", "Querschnitt", "wahl", next(iter(secs), "") if len(secs) == 1 else "",
@@ -4342,7 +4348,10 @@ class MainWindow(QtWidgets.QMainWindow):
                           F("beta_z", "β_z (Knicken um z)", "zahl", float(mem.beta_z) if mem else 1.0,
                             breite=60, hinweis="Knicklängenbeiwert: L_cr,z = β_z · L"),
                           F("lt", "Biegedrillknicken nachweisen", "haken",
-                            bool(mem.lt_check) if mem else True)]
+                            bool(mem.lt_check) if mem else True),
+                          F("aus", "deaktiviert (wirkt nicht)", "haken", bool(getattr(mem, "aus", False)) if mem else False,
+                            hinweis="RFEM „für Berechnung deaktiviert“: der Stab bleibt als Objekt, trägt aber "
+                                    "in keiner Situation Steifigkeit oder Last")]
                 titel = f"Stab {name}"
                 if mem is not None:
                     zusatz = [("Nachweisparameter …", lambda: self.stab_nachweisparameter(name))]
@@ -5937,6 +5946,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         setattr(mem, k, float(w.get(k)) or 1.0)
                 if "lt" in w:
                     mem.lt_check = bool(w.get("lt"))
+                if "aus" in w and bool(w.get("aus")) != bool(getattr(mem, "aus", False)):
+                    mem.aus = bool(w.get("aus"))
+                    self.analysis = None
+                    self.results = None
                 for e in els:
                     if w.get("sec") in m.sections:
                         m.elements[e].sec = w["sec"]
@@ -16138,6 +16151,75 @@ class MainWindow(QtWidgets.QMainWindow):
         a = getattr(self, "act_netzknoten", None)
         return (a is not None and a.isChecked()
                 and getattr(self, "act_edges", None) is not None and self.act_edges.isChecked())
+
+    @staticmethod
+    def querschnittstext(sec) -> str:
+        """Ein Querschnitt in einer Zeile: Name, Art, Masse in mm, Kennwerte in
+        cm-Einheiten - so, wie man ihn in einer Tabelle nachschlaegt."""
+        if sec is None:
+            return "-"
+        art = {"I": "I-Profil", "RHS": "Rechteckrohr", "CHS": "Rundrohr", "rect": "Rechteck",
+               "circle": "Rund", "U": "U-Profil", "free": "frei"}.get(str(sec.typ), str(sec.typ))
+        masse = []
+        if sec.typ == "CHS":
+            masse = [f"d {sec.h * 1e3:g}", f"t {sec.tw * 1e3:g}"]
+        elif sec.typ == "circle":
+            masse = [f"d {sec.h * 1e3:g}"]
+        else:
+            for k, v in (("h", sec.h), ("b", sec.b), ("t_w", sec.tw), ("t_f", sec.tf), ("r", sec.r)):
+                if v:
+                    masse.append(f"{k} {v * 1e3:g}")
+        kopf = f"{sec.name} – {art}" + (f" ({', '.join(masse)} mm)" if masse else "")
+        werte = [f"A {sec.A * 1e4:.4g} cm²", f"I_y {sec.Iy * 1e8:.4g} cm⁴", f"I_z {sec.Iz * 1e8:.4g} cm⁴",
+                 f"I_t {sec.It * 1e8:.4g} cm⁴"]
+        if sec.Wel_y:
+            werte.append(f"W_el,y {sec.Wel_y * 1e6:.4g} cm³")
+        if sec.Wpl_y:
+            werte.append(f"W_pl,y {sec.Wpl_y * 1e6:.4g} cm³")
+        if sec.Wel_z:
+            werte.append(f"W_el,z {sec.Wel_z * 1e6:.4g} cm³")
+        if sec.Iw:
+            werte.append(f"I_w {sec.Iw * 1e12:.4g} cm⁶")
+        return kopf + "\n" + ", ".join(werte)
+
+    def _stabinfo(self, m, els: list) -> dict:
+        """Knoten, Laenge, Querschnitt(e) und Werkstoff(e) eines Stabs fuer die
+        Maske - "wenn ein Stab angeklickt wird, sollen seine Eigenschaften
+        im rechten Menue erscheinen" (13.09.2026)."""
+        els = [int(e) for e in els if 0 <= int(e) < len(m.elements)]
+        if not els:
+            return {"knoten": "-", "laenge": "-", "querschnitt": "-", "werkstoff": "-"}
+        kette = [int(m.elements[els[0]].nodes[0])]
+        for e in els:
+            for n in m.elements[e].nodes[1:2]:
+                kette.append(int(n))
+        laenge = 0.0
+        for e in els:
+            a, b = m.elements[e].nodes[0], m.elements[e].nodes[1]
+            laenge += float(np.linalg.norm(m.nodes[int(b)] - m.nodes[int(a)]))
+        anfang, ende = kette[0], kette[-1]
+        zwischen = kette[1:-1]
+        knoten = f"K{anfang} → K{ende}" + (f" über {len(zwischen)} Zwischenknoten (K{zwischen[0]} …)"
+                                          if len(zwischen) > 1 else (f" über K{zwischen[0]}" if zwischen else ""))
+        knoten += f"; Anfang ({', '.join(f'{x:.3f}' for x in m.nodes[anfang])}) m, Ende ({', '.join(f'{x:.3f}' for x in m.nodes[ende])}) m"
+        qs = []
+        for name in dict.fromkeys(m.elements[e].sec for e in els):
+            qs.append(self.querschnittstext(m.sections.get(name)) if name in m.sections else f"{name} (unbekannt)")
+        mats = []
+        for name in dict.fromkeys(m.elements[e].mat for e in els):
+            mat = m.materials.get(name)
+            if mat is None:
+                mats.append(f"{name} (unbekannt)")
+                continue
+            fy = mat.fy
+            try:
+                fy = mat.yield_strength(0.0)
+            except Exception:                              # noqa: BLE001
+                pass
+            mats.append(f"{mat.name}: E {mat.E / 1e9:g} GPa" + (f", f_y {fy / 1e6:g} N/mm²" if fy else "")
+                        + (f", {mat.dickentext()}" if hasattr(mat, "dickentext") and mat.dickentext() else ""))
+        return {"knoten": knoten, "laenge": f"{laenge:.3f} m ({len(els)} Element{'e' if len(els) > 1 else ''})",
+                "querschnitt": "\n".join(qs), "werkstoff": "\n".join(mats)}
 
     def _nummernmarken(self, m, art: str, sichtbare_knoten=None):
         """(Punkte, Beschriftungen) einer Objektart fuer die Nummerierung.

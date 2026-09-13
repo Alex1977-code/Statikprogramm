@@ -731,6 +731,10 @@ class StaticSystem:
         self.model = model
         #: Situation: Maske der wirksamen Elemente (None = alle) und ihr Name
         self.aktiv = None if aktiv is None else np.asarray(aktiv, bool)
+        basis = model.grundmaske() if hasattr(model, "grundmaske") else None
+        if basis is not None:
+            # abgeschaltete Staebe (Member.aus) wirken in keiner Situation
+            self.aktiv = basis if self.aktiv is None else (self.aktiv & basis)
         self.situation = situation
         self.K = asm.stiffness(model, workers, self.aktiv)
         self.fixed, self.vals = asm.constrained_dofs(model, self.K)

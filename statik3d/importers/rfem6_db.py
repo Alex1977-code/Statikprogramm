@@ -1087,7 +1087,12 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
         if h.get("userID") is not None:
             member_user[int(h["userID"])] = mem.name
         if impl.get("isDeactivatedForCalculation"):
-            C.say(log, f"  Stab {h.get('userID')} ist in RFEM deaktiviert - dennoch uebernommen.")
+            # Bleibt als Objekt, wirkt aber nicht - wie in RFEM. Vorher wurde er
+            # "dennoch uebernommen" und rechnete mit: am CBG-Trolley ein loser
+            # Ring aus 24 deaktivierten Staeben ohne Lager, singulaeres System.
+            mem.aus = True
+            C.say(log, f"  Stab {h.get('userID')} ist in RFEM deaktiviert - bleibt als Objekt, wirkt nicht "
+                       "(Stabmaske: Haken „deaktiviert“).")
         for end, key in ((0, "memberHingeStart_id"), (1, "memberHingeEnd_id")):
             hid = impl.get(key)
             if not hid:
@@ -1223,7 +1228,10 @@ def _diagnose(m: Model, log: list) -> None:
         C.warn(log, "Das Modell enthaelt keine Elemente - nur Geometrie.")
         return
     adj: dict[int, set] = {}
-    for e in m.elements:
+    basis = m.grundmaske() if hasattr(m, "grundmaske") else None
+    for i, e in enumerate(m.elements):
+        if basis is not None and not basis[i]:
+            continue                        # deaktivierte Staebe tragen nicht
         for a in e.nodes:
             for b in e.nodes:
                 if a != b:
