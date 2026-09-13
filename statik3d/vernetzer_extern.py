@@ -17,11 +17,15 @@ weiter dieselben Knoten teilen und die Kontaktbedingungen greifen.
   eine Mindestguete aller Elemente, denn die schlechten Tetraeder sitzen auf
   der Huelle (Drehlager V5: alle 55 unter 0,1 mit vier Huellknoten).
 
-Lizenzrechtlich: keines der drei wird mit der exe ausgeliefert. gmsh und
-Netgen kommen aus der Python-Umgebung des Anwenders (``pip install gmsh``,
-``pip install netgen-mesher``), MMG3D als Programm (mmgtools.org); das
-Programm ruft es als getrennten Prozess ueber Dateien im Medit-Format auf.
-Was fehlt, steht in der Auswahl als „nicht installiert".
+Lizenzrechtlich: keines der drei wird mit der exe ausgeliefert. Auf Wunsch
+laedt Statik3D sie nach (:mod:`statik3d.werkzeuge`, Dialog „Vernetzer und
+Nachbesserer"): gmsh und Netgen als Raeder von PyPI, MMG3D als Programm aus
+dem Release „werkzeuge" dieses Projekts - in die Benutzerdaten, nicht in
+die exe. Wer eine eigene Python-Umgebung hat, kann sie auch dort
+installieren (``pip install gmsh``, ``pip install netgen-mesher``); MMG3D
+geht ebenso ueber den Suchpfad oder den Pfad in den Netzeinstellungen. Das
+Programm ruft MMG3D als getrennten Prozess ueber Dateien im Medit-Format
+auf. Was fehlt, steht in der Auswahl als „nicht installiert".
 
 Gemessen an einer Platte 1 x 0,6 x 0,2 m mit Bohrung r = 0,1 m, Huelle
 870 Punkte / 1 740 Dreiecke, h = 50 mm (13.09.2026): gmsh 4 414 Tetraeder,
@@ -38,17 +42,23 @@ import tempfile
 
 import numpy as np
 
+from . import werkzeuge
+
 #: Schluessel der Auswahl „Vernetzer" -> (Name, Paket/Programm, Lizenz)
 VERNETZER = {
     "eigener": ("eigener Vernetzer", "statik3d.mesher3d", "eigener Quelltext"),
-    "gmsh": ("gmsh", "pip install gmsh", "GPL - nicht in der exe"),
-    "netgen": ("Netgen", "pip install netgen-mesher", "LGPL - nicht in der exe"),
+    "gmsh": ("gmsh", "PyPI-Paket gmsh", "GPL - nicht in der exe, nachladbar"),
+    "netgen": ("Netgen", "PyPI-Paket netgen-mesher", "LGPL - nicht in der exe, nachladbar"),
 }
 #: Schluessel der Auswahl „Nachbesserung" -> (Name, Programm, Lizenz)
 NACHBESSERER = {
     "keine": ("keine", "", ""),
-    "mmg3d": ("MMG3D", "mmg3d_O3 (mmgtools.org)", "LGPL - getrenntes Programm"),
+    "mmg3d": ("MMG3D", "mmg3d_O3 (mmgtools.org)", "LGPL - getrenntes Programm, nachladbar"),
 }
+
+# Nachgeladene Werkzeuge in den Suchpfad - auch in den Arbeitsprozessen,
+# die dieses Modul beim Vernetzen importieren
+werkzeuge.aktivieren()
 
 
 def gmsh_verfuegbar() -> bool:
@@ -68,10 +78,13 @@ def netgen_verfuegbar() -> bool:
 
 
 def mmg3d_programm(pfad: str = "") -> str:
-    """Der Pfad zu mmg3d_O3 - der angegebene, sonst aus dem Suchpfad; leer,
-    wenn es nicht da ist."""
+    """Der Pfad zu mmg3d_O3 - der angegebene, sonst das nachgeladene aus dem
+    Werkzeugordner, sonst aus dem Suchpfad; leer, wenn es nicht da ist."""
     if pfad and os.path.isfile(pfad):
         return pfad
+    nachgeladen = werkzeuge.programm("mmg3d")
+    if nachgeladen:
+        return nachgeladen
     for name in ("mmg3d_O3", "mmg3d_O3.exe", "mmg3d", "mmg3d.exe"):
         p = shutil.which(name)
         if p:

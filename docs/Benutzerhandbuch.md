@@ -443,8 +443,8 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall |
 | Elementansatz | **linear** (shell3/shell4, tet4, hex8) oder **quadratisch**: Flächen bekommen Mittenknoten (shell6/shell8), abgebildete Volumen hex20, freie Volumen tet10. Quadratisch braucht für dieselbe Genauigkeit deutlich weniger Elemente, je Element aber mehr Rechenzeit |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
-| Vernetzer (Volumen) | **eigener Vernetzer** (Vorgabe), **gmsh** oder **Netgen**. Alle drei tetraedern dieselbe geschlossene Hülle, die der eigene Vernetzer aus den Randflächen bildet — die Randknoten bleiben Punkt für Punkt erhalten, gemeinsame Flächen zweier Körper und Kontaktbedingungen greifen wie bisher. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit Bohrung (h = 50 mm, Hülle 870 Punkte): gmsh 4 411 Tetraeder, Güte min 0,418, Netgen 5 811, Güte min 0,493; der eigene Vernetzer kam an V5 des Drehlagers auf 0,001. gmsh rechnet mehrkernig (HXT), beide laufen je Körper in den Arbeitsprozessen. Was nicht installiert ist, steht als „(nicht installiert)“ in der Auswahl; ein nicht verfügbarer Vernetzer wird abgewiesen, und scheitert der fremde an einem Körper, übernimmt der eigene (Protokoll) |
-| Nachbesserung | **MMG3D** optimiert das fertige Tetraedernetz bei fester Hülle (`-nosurf -optim`) — der Weg zu einer Mindestgüte aller Elemente, denn die schlechten Tetraeder sitzen auf der Hülle (V5: alle 55 unter 0,1 mit vier Hüllknoten). Das Programm `mmg3d_O3` kommt von mmgtools.org und wird als getrennter Prozess über Dateien im Medit-Format aufgerufen; Pfad im Feld darunter, leer = Suchpfad. Das Protokoll nennt Güte min vorher/nachher |
+| Vernetzer (Volumen) | **eigener Vernetzer** (Vorgabe), **gmsh** oder **Netgen**. Alle drei tetraedern dieselbe geschlossene Hülle, die der eigene Vernetzer aus den Randflächen bildet — die Randknoten bleiben Punkt für Punkt erhalten, gemeinsame Flächen zweier Körper und Kontaktbedingungen greifen wie bisher. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit Bohrung (h = 50 mm, Hülle 870 Punkte): gmsh 4 411 Tetraeder, Güte min 0,418, Netgen 5 811, Güte min 0,493; der eigene Vernetzer kam an V5 des Drehlagers auf 0,001. gmsh rechnet mehrkernig (HXT), beide laufen je Körper in den Arbeitsprozessen. Was nicht installiert ist, steht als „(nicht installiert)“ in der Auswahl; der Knopf **Vernetzer installieren…** unter der Maske (auch *Extras → Vernetzer installieren…*) lädt es nach (Abschnitt „Vernetzer und Nachbesserer nachladen“, Kap. 9). Ein nicht verfügbarer Vernetzer wird abgewiesen, und scheitert der fremde an einem Körper, übernimmt der eigene (Protokoll) |
+| Nachbesserung | **MMG3D** optimiert das fertige Tetraedernetz bei fester Hülle (`-nosurf -optim`) — der Weg zu einer Mindestgüte aller Elemente, denn die schlechten Tetraeder sitzen auf der Hülle (V5: alle 55 unter 0,1 mit vier Hüllknoten). Das Programm `mmg3d_O3` (mmgtools.org) lädt **Vernetzer installieren…** nach; es läuft als getrennter Prozess über Dateien im Medit-Format. Das Feld darunter nimmt den Pfad eines eigenen Programms; leer = das nachgeladene, sonst der Suchpfad. Gemessen an der Platte mit Bohrung (13.09.2026, MMG 5.8.0): h = 50 mm Güte min 0,103 → 0,453 (19 614 → 18 815 Tetraeder, 6,1 s), h = 30 mm 0,120 → 0,474 (60 610 → 57 817, 1,7 s); Hülle und Volumen unverändert (Randtreue 100 %). Das Protokoll nennt Güte min vorher/nachher |
 | Abgebildetes Netz | wird **nicht eingestellt**: abgebildet wird immer, wo die Form es hergibt — eine Fläche mit vier Randabschnitten als Vierecknetz, ein Körper aus **sechs Vierecken mit acht Eckknoten** als regelmäßiges **Hexaedernetz** (x × y × z, hex8 bzw. hex20), ein Körper aus vier Dreiecken als ein Tetraeder; alles andere geht an den freien Vernetzer. Der Haken „Abgebildetes Netz bevorzugen“ stand bis 13.09.2026 in der Maske, ohne dass ihn etwas las; der Wert kommt aus der RFEM-Datei („mapped mesh preferred“) und wird nur mitgeführt |
 
 **Netz → Netzqualität…** bewertet die **Form** jedes Elements und färbt die
@@ -602,6 +602,48 @@ lässt Netz und Ergebnisse stehen; bei Zustimmung werden die Ergebnisse
 verworfen (Protokollzeile) und das Netz erneuert. Ohne Ergebnisse wird
 nicht gefragt. Geprüft in `tests/test_gui_smoke.py`.
 
+### Vernetzer und Nachbesserer nachladen
+
+gmsh, Netgen und MMG3D kommen nicht mit dem Programm (Lizenzen, nächster
+Abschnitt). *Extras → Vernetzer installieren…* oder der Knopf
+**Vernetzer installieren…** unter den Netzeinstellungen öffnet den Dialog
+**Vernetzer und Nachbesserer**: je Werkzeug Aufgabe, Lizenz, Quelle und
+Stand, dazu **Installieren** bzw. **Entfernen**. Installieren lädt das
+Werkzeug von seiner Quelle in die Benutzerdaten
+(`%LOCALAPPDATA%\Statik3D\Werkzeuge`, unter Linux
+`~/.local/share/Statik3D/Werkzeuge`; **Ordner öffnen** zeigt ihn) — nicht
+neben die exe, darum überlebt es ein Programm-Update. Der Download läuft
+im Hintergrund mit Balken; danach prüft das Programm das Werkzeug (Modul
+laden bzw. `mmg3d_O3 -h`), trägt es in die Auswahl der Netzeinstellungen
+ein und baut eine offene Maske neu auf. Schlägt die Prüfung fehl, wird das
+Werkzeug wieder entfernt und der Grund gemeldet.
+
+Quellen und Größen (gemessen 13.09.2026, Windows, Python 3.11):
+
+| Werkzeug | Quelle | Download | auf der Platte | Dauer |
+|---|---|---|---|---|
+| gmsh 4.15.2 | PyPI, Rad `gmsh` (py2.py3, win_amd64) | 42 MB | 146 MB | 5 s |
+| Netgen 6.2.2607 | PyPI, Räder `netgen-mesher` (cp311) und `netgen-occt` | 8 + 19 MB | 78 MB | 6 s |
+| MMG3D 5.8.0 | Release `werkzeuge` dieses Projekts, `mmg3d_O3-windows-x64.zip` — gebaut aus MmgTools/mmg durch `.github/workflows/werkzeuge.yml` (MSVC, ohne Scotch und VTK; LICENSE und COPYING.LESSER liegen bei) | 0,4 MB | 0,7 MB | unter 1 s |
+
+Die Räder werden **ohne pip** entpackt (die exe hat keins): Python-Dateien
+nach `Lib/site-packages`, Datenanteile wie bei pip relativ dazu
+(`gmsh-4.15.dll` nach `Lib`, die OCC-Bibliotheken von Netgen nach `bin`),
+und RECORD wird passend geschrieben, weil Netgen seine OCC-Bibliotheken
+über `importlib.metadata` sucht. Das Rad wird nach Python-Version (cp311
+bzw. py3), System und Prozessor gewählt, die Prüfsumme (SHA-256 laut PyPI)
+verglichen. Der Werkzeugordner steht hinten im Suchpfad — eine eigene
+Python-Umgebung mit demselben Paket geht vor. War das Modul im laufenden
+Programm schon geladen (etwa eine ältere Fassung), wirkt die neue erst
+nach dem Neustart; der Dialog sagt es. **Entfernen** löscht den Ordner;
+sind Dateien noch in Gebrauch (geladene DLL), verschwindet der Rest beim
+nächsten Start. Geprüft in `tests/test_werkzeuge.py` (Radwahl, Entpacken
+und RECORD, Installieren mit ausgetauschter Quelle, Prüfsumme, gescheiterte
+Prüfung, Entfernen bei gesperrter Datei — ohne Netz; mit
+`STATIK3D_NETZTEST=1` echt von PyPI, beide vernetzen danach den
+Einheitswürfel aus dem Werkzeugordner) und `tests/test_gui_smoke.py`
+(Dialog, Knopf, Ribbon, Installieren im Hintergrund, Entfernen).
+
 ### Lizenzen der Rechenwerkzeuge
 
 Statik3D selbst und sein Vernetzer sind eigener Quelltext. Für fremde
@@ -615,15 +657,17 @@ Werkzeuge gilt (Stand 13.09.2026):
 | CHOLMOD (scikit-sparse) | LGPL, das Supernodal-Modul GPL | nein — nur aus der eigenen Python-Umgebung |
 | UMFPACK (scikit-umfpack) | GPL | nein — nur aus der eigenen Python-Umgebung |
 | MUMPS (pymumps) | CeCILL-C | nein — nur aus der eigenen Python-Umgebung (kein Windows-Rad; Bauanleitung in `docs/MUMPS_Windows_Bauanleitung.md`) |
-| gmsh | GPL | nein — `pip install gmsh` in der eigenen Umgebung |
-| Netgen (netgen-mesher) | LGPL | nein — `pip install netgen-mesher` in der eigenen Umgebung |
-| MMG3D | LGPL | nein — getrenntes Programm, über Dateien aufgerufen |
+| gmsh | GPL | nein — auf Wunsch nachladbar von PyPI (*Extras → Vernetzer installieren…*) oder `pip install gmsh` in der eigenen Umgebung |
+| Netgen (netgen-mesher) | LGPL | nein — auf Wunsch nachladbar von PyPI oder `pip install netgen-mesher` |
+| MMG3D | LGPL | nein — getrenntes Programm, auf Wunsch nachladbar aus dem Release `werkzeuge` (dort aus dem Quelltext gebaut, Lizenz liegt bei) |
 
 Die GPL verpflichtet den, der ein Programm **zusammen mit** GPL-Software
-weitergibt; darum enthält die exe keine davon. Wer gmsh, Netgen oder einen
-GPL-Löser nutzen will, installiert ihn in seiner eigenen Python-Umgebung
-(`python run_gui.py`) — dort ist die Nutzung frei, und das Programm meldet
-in der Auswahl, was da ist.
+weitergibt; darum enthält die exe keine davon. Wer gmsh, Netgen oder MMG3D
+nutzen will, lädt sie selbst nach (voriger Abschnitt) — das Programm holt
+sie von ihrer Quelle in die Benutzerdaten, und es gelten die Lizenzen der
+Werkzeuge; GPL-Löser (CHOLMOD, UMFPACK) kommen weiter nur aus der eigenen
+Python-Umgebung (`python run_gui.py`). Das Programm meldet in der Auswahl,
+was da ist.
 
 ### Statuszeile: Fortschrittsbalken und Abbrechen
 
