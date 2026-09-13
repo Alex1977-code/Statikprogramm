@@ -281,6 +281,12 @@ def test_programm_und_mmg3d_pfad():
         check("Tabelle: gmsh GPL Vernetzer, Netgen LGPL Vernetzer (zwei Pakete), MMG3D LGPL Nachbesserer (Programm)",
               wz.WERKZEUGE["gmsh"].lizenz == "GPL" and wz.WERKZEUGE["netgen"].pakete == ("netgen-mesher", "netgen-occt")
               and wz.WERKZEUGE["mmg3d"].programm == "mmg3d_O3" and wz.WERKZEUGE["mmg3d"].aufgabe == "Nachbesserer")
+        mu = wz.WERKZEUGE["mumps"]
+        check("MUMPS: Gleichungsloeser, CeCILL-C, eigenes Rad aus dem Release mit 64-stelliger Pruefsumme",
+              mu.aufgabe == "Gleichungslöser" and mu.lizenz == "CeCILL-C" and mu.rad.endswith("win_amd64.whl")
+              and len(mu.rad_sha256) == 64 and all(c in "0123456789abcdef" for c in mu.rad_sha256)
+              and wz.release_url(mu.rad).endswith("/releases/download/werkzeuge/" + mu.rad), str(mu)[:120])
+        check("veraltet(): ohne Installation nein", not wz.veraltet("mumps"))
 
 
 PROBE = r"""
@@ -323,9 +329,140 @@ def test_netz_wirklich():
                   r.returncode == 0 and "TETS" in r.stdout, (r.stdout.strip().splitlines() or [r.stderr[-300:]])[-1])
 
 
+def test_einstellungen_gespeichert():
+    """Loeser, Threads und „MUMPS nachladen" ueberleben den Programmstart
+    (Benutzerdaten/Statik3D/einstellungen.json; STATIK3D_EINSTELLUNGEN fuer
+    Pruefungen)."""
+    from statik3d import parallel
+    alt_env = os.environ.get("STATIK3D_EINSTELLUNGEN")
+    alt = {k: getattr(parallel.settings(), k) for k in parallel.GESPEICHERT}
+    tmp = tempfile.mkdtemp(prefix="statik3d_einst_")
+    try:
+        os.environ["STATIK3D_EINSTELLUNGEN"] = os.path.join(tmp, "unter", "einstellungen.json")
+        check("ohne Datei: laden liefert nichts und aendert nichts",
+              parallel.einstellungen_laden() == {} and parallel.settings().solver_threads == alt["solver_threads"])
+        parallel.configure(solver_backend="mumps", solver_threads=4, mumps_nachladen=False)
+        p = parallel.einstellungen_speichern()
+        parallel.configure(solver_backend="auto", solver_threads=0, mumps_nachladen=True)
+        d = parallel.einstellungen_laden()
+        check("gespeichert und wieder geladen: Loeser mumps, 4 Threads, Nachladen aus",
+              os.path.isfile(p) and parallel.settings().solver_backend == "mumps"
+              and parallel.settings().solver_threads == 4 and parallel.settings().mumps_nachladen is False
+              and set(d) == set(parallel.GESPEICHERT), str(d))
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("kaputt")
+        check("unlesbare Datei: laden liefert nichts, die Einstellungen bleiben",
+              parallel.einstellungen_laden() == {} and parallel.settings().solver_threads == 4)
+    finally:
+        parallel.configure(**alt)
+        if alt_env is None:
+            os.environ.pop("STATIK3D_EINSTELLUNGEN", None)
+        else:
+            os.environ["STATIK3D_EINSTELLUNGEN"] = alt_env
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+MUMPS_PROBE = r"""
+import sys, time
+site = sys.argv[1]
+sys.path.insert(0, site)
+import mumps
+assert mumps.__file__.startswith(site), mumps.__file__
+from statik3d import werkzeuge
+print("BESCHREIBUNG", werkzeuge.mumps_probe(mumps))
+if len(sys.argv) > 2:
+    print("HALTE", flush=True)
+    time.sleep(float(sys.argv[2]))
+"""
+
+
+def test_mumps_rad_offline():
+    """Das echte Rad aus packaging/ ueber die lokale Quelle in einen
+    Wegwerfordner: entpacken, im eigenen Prozess laden, rechnen (1 2 3 4 5);
+    falsche Pruefsumme -> abgelehnt und aufgeraeumt; Entfernen bei geladener
+    DLL -> Rest faellt beim naechsten aktivieren()."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    rad = os.path.join(here, "packaging", wz.WERKZEUGE["mumps"].rad)
+    if not sys.platform.startswith("win") or not os.path.isfile(rad):
+        print("     kein Windows oder kein Rad in packaging/ - uebersprungen")
+        return
+    alt_quelle = os.environ.get("STATIK3D_WERKZEUG_QUELLE")
+    os.environ["STATIK3D_WERKZEUG_QUELLE"] = os.path.join(here, "packaging")
+    try:
+        with Wegwerf() as tmp:
+            wz._pruefen = lambda key: "5.8.2"        # die echte Pruefung laeuft unten im eigenen Prozess
+            meldungen = []
+            s = wz.installieren("mumps", fortschritt=lambda t, a=None: meldungen.append(t))
+            site = wz.site_ordner("mumps")
+            check("Rad entpackt: Version 5.8.2 aus dem Dateinamen, Rad und Pruefsumme im Stand, Paket unter site-packages",
+                  s["version"] == "5.8.2" and s["rad"] == wz.WERKZEUGE["mumps"].rad
+                  and s["sha256"] == wz.WERKZEUGE["mumps"].rad_sha256
+                  and os.path.isfile(os.path.join(site, "mumps", "__init__.py"))
+                  and os.path.isdir(os.path.join(site, "mumps", "_lib")) and os.path.isdir(os.path.join(site, "mumps", "LIZENZ")),
+                  str(s)[:160])
+            check("nicht veraltet, solange die Pruefsumme die des Programms ist", not wz.veraltet("mumps"))
+            r = subprocess.run([sys.executable, "-c", MUMPS_PROBE, site], cwd=here, capture_output=True, text=True,
+                               timeout=300, env=dict(os.environ, PYTHONUTF8="1"))
+            check("MUMPS aus dem Werkzeugordner laedt seine DLLs und rechnet 1 2 3 4 5 (eigener Prozess)",
+                  r.returncode == 0 and "BESCHREIBUNG MUMPS 5.8.2" in r.stdout,
+                  (r.stdout.strip().splitlines() or [r.stderr[-300:]])[-1][:160])
+            # veraltet: ein anderer Stand in stand.json
+            with open(os.path.join(wz.werkzeug_ordner("mumps"), "stand.json"), encoding="utf-8") as f:
+                d = json.load(f)
+            d["sha256"] = "00" * 32
+            with open(os.path.join(wz.werkzeug_ordner("mumps"), "stand.json"), "w", encoding="utf-8") as f:
+                json.dump(d, f)
+            check("ein anderes Rad im Stand: veraltet() sagt ja", wz.veraltet("mumps"))
+            # Entfernen, waehrend ein Prozess die DLLs haelt
+            halter = subprocess.Popen([sys.executable, "-c", MUMPS_PROBE, site, "60"], cwd=here,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                      env=dict(os.environ, PYTHONUTF8="1"))
+            try:
+                zeile = halter.stdout.readline()
+                while zeile and "HALTE" not in zeile:
+                    zeile = halter.stdout.readline()
+                msg = wz.entfernen("mumps")
+                # Windows loescht eine geladene DLL nicht; der Ordner wird dann
+                # umbenannt (mumps.alt-<zeit>) oder bleibt stehen - so oder so
+                # ist der Stand sofort weg und die DLL noch da
+                reste = [n for n in os.listdir(tmp) if n.startswith("mumps")]
+                dll_da = any(os.path.isfile(os.path.join(tmp, n, "Lib", "site-packages", "mumps", "_lib", "libdmumps_seq.dll"))
+                             for n in reste)
+                check("entfernen bei geladener DLL: Stand sofort weg, die DLL bleibt bis zum naechsten Start liegen",
+                      wz.stand("mumps") is None and halter.poll() is None and dll_da and reste,
+                      f"{msg}; Reste {reste}")
+            finally:
+                halter.kill()
+                halter.wait(timeout=30)
+            # Windows gibt die DLL erst kurz nach dem Prozessende frei
+            for _ in range(100):
+                wz.aktivieren()
+                reste = [n for n in os.listdir(tmp) if n.startswith("mumps")]
+                if not reste:
+                    break
+                time.sleep(0.1)
+            check("aktivieren() raeumt den Rest weg, sobald die DLL frei ist", not reste, str(reste))
+            # falsche Pruefsumme im Programm: abgelehnt, nichts bleibt liegen
+            from dataclasses import replace
+            wz.WERKZEUGE["mumps"] = replace(wz.WERKZEUGE["mumps"], rad_sha256="00" * 32)
+            try:
+                wz.installieren("mumps")
+                check("falsche Pruefsumme im Programm: Installation abgelehnt", False)
+            except wz.WerkzeugFehler as ex:
+                check("falsche Pruefsumme im Programm: Installation abgelehnt, nichts bleibt liegen",
+                      "Prüfsumme" in str(ex) and wz.stand("mumps") is None
+                      and not os.path.exists(wz.werkzeug_ordner("mumps") + ".neu"), str(ex)[:100])
+    finally:
+        if alt_quelle is None:
+            os.environ.pop("STATIK3D_WERKZEUG_QUELLE", None)
+        else:
+            os.environ["STATIK3D_WERKZEUG_QUELLE"] = alt_quelle
+
+
 def main():
     for t in (test_radwahl, test_entpacken_und_aktivieren, test_installieren_ohne_netz,
-              test_programm_und_mmg3d_pfad, test_netz_wirklich):
+              test_programm_und_mmg3d_pfad, test_einstellungen_gespeichert, test_mumps_rad_offline,
+              test_netz_wirklich):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

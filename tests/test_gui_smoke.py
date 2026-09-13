@@ -150,6 +150,11 @@ def main():
     from statik3d.gui.main import MainWindow, FIELDS, DIAGRAMS
     from statik3d.gui import dialogs as dg
     from statik3d.model import Model
+    # Gespeicherte Einstellungen (Loeser, Threads, Nachladen) in eine
+    # Wegwerfdatei - die Pruefung darf die des Anwenders nicht ueberschreiben
+    import tempfile as _tempfile
+    os.environ["STATIK3D_EINSTELLUNGEN"] = os.path.join(_tempfile.mkdtemp(prefix="statik3d_smoke_einst_"),
+                                                        "einstellungen.json")
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     w = MainWindow()
     w.show()
@@ -4339,7 +4344,7 @@ def main():
             if fortschritt:
                 fortschritt(f"{key}: laden", 0.5)
             s = {"werkzeug": key, "version": "9.9", "pakete": {}, "quellen": [], "datum": "2026-09-13T00:00:00",
-                 "neustart": False}
+                 "neustart": False, "rad": wz_.WERKZEUGE[key].rad, "sha256": wz_.WERKZEUGE[key].rad_sha256}
             with open(os.path.join(wz_.werkzeug_ordner(key), "stand.json"), "w", encoding="utf-8") as f_:
                 json.dump(s, f_)
             if fortschritt:
@@ -4351,12 +4356,25 @@ def main():
             dlg.geaendert.connect(w._werkzeuge_geaendert)   # wie werkzeuge_dialog(), nur nicht modal
             dlg.show(); app.processEvents()
             stand_txt = [dlg.tabelle.item(i, 4).text() for i in range(dlg.tabelle.rowCount())]
-            check("Dialog: drei Zeilen gmsh (GPL, Vernetzer), Netgen (LGPL), MMG3D (LGPL, Nachbesserer) - alle „nicht installiert“, Knopf „Installieren“",
-                  dlg.tabelle.rowCount() == 3 and [dlg.tabelle.item(i, 0).text() for i in range(3)] == ["gmsh", "Netgen", "MMG3D"]
+            check("Dialog: vier Zeilen gmsh (GPL, Vernetzer), Netgen (LGPL), MMG3D (LGPL, Nachbesserer), MUMPS (CeCILL-C, Gleichungslöser) - alle „nicht installiert“, Knopf „Installieren“",
+                  dlg.tabelle.rowCount() == 4 and [dlg.tabelle.item(i, 0).text() for i in range(4)] == ["gmsh", "Netgen", "MMG3D", "MUMPS"]
                   and dlg.tabelle.item(0, 2).text() == "GPL" and dlg.tabelle.item(2, 1).text() == "Nachbesserer"
+                  and dlg.tabelle.item(3, 1).text() == "Gleichungslöser" and dlg.tabelle.item(3, 2).text() == "CeCILL-C"
                   and all("nicht installiert" in s_ for s_ in stand_txt)
                   and all(b.text() == "Installieren" for b in dlg.knoepfe.values()), str(stand_txt))
-            check("Dialog nennt Lizenzhinweis und Ablageordner", "GPL" in dlg.HINWEIS and wz_tmp in dlg.findChildren(QtWidgets.QLabel)[0].text())
+            check("Dialog nennt Lizenzhinweis (auch MUMPS) und Ablageordner",
+                  "GPL" in dlg.HINWEIS and "MUMPS" in dlg.HINWEIS and wz_tmp in dlg.findChildren(QtWidgets.QLabel)[0].text()
+                  and dlg.windowTitle() == "Vernetzer, Nachbesserer und Gleichungslöser")
+            # Kaestchen "MUMPS beim Programmstart nachladen": Einstellung und Datei
+            from statik3d import parallel as parallel_w
+            dlg.cb_nachladen.setChecked(False); app.processEvents()
+            with open(os.environ["STATIK3D_EINSTELLUNGEN"], encoding="utf-8") as fh_:
+                nachladen_datei = __import__("json").load(fh_).get("mumps_nachladen")
+            check("Kästchen aus: mumps_nachladen False in den Einstellungen und gespeichert",
+                  parallel_w.settings().mumps_nachladen is False and nachladen_datei is False)
+            check("Kästchen aus: der Start lädt nicht nach", w._mumps_nachladen() is False)
+            dlg.cb_nachladen.setChecked(True); app.processEvents()
+            check("Kästchen an: Einstellung wieder an", parallel_w.settings().mumps_nachladen is True)
             geaendert_ = []
             dlg.geaendert.connect(lambda k: geaendert_.append(k))
             n_info = len(w.log.toPlainText())
@@ -4377,6 +4395,20 @@ def main():
                   wz_.stand("mmg3d") is None and dlg.knoepfe["mmg3d"].text() == "Installieren"
                   and "Werkzeug MMG3D entfernt" in w.log.toPlainText()[n_info:] and geaendert_ == ["mmg3d", "mmg3d"])
             dlg.close(); app.processEvents()
+            # Nachladen beim Start (erzwungen, Quelle ausgetauscht): Balken, eine Protokollzeile, Maske neu
+            n_info = len(w.log.toPlainText())
+            check("Nachladen angestossen", w._mumps_nachladen(erzwingen=True) is True and w.progress_bar.isVisible())
+            t_ = time.time()
+            while w._update_worker is not None and w._update_worker.isRunning() and time.time() - t_ < 20:
+                app.processEvents(); time.sleep(0.02)
+            app.processEvents()
+            check("MUMPS beim Start nachgeladen: Protokollzeile nennt Version, Größe, Dauer und den Weg zur Auswahl; Balken wieder weg",
+                  "MUMPS 9.9 nachgeladen (18 MB" in w.log.toPlainText()[n_info:]
+                  and "Gleichungslöser" in w.log.toPlainText()[n_info:] and not w.progress_bar.isVisible()
+                  and wz_.stand("mumps") is not None, w.log.toPlainText()[n_info:][-160:])
+            check("zweiter Start: installiert und nicht veraltet - kein Download",
+                  w._mumps_nachladen() is False)
+            wz_.entfernen("mumps")
         finally:
             wz_.installieren = wz_inst_alt
             if wz_ordner_alt is None:
@@ -4413,6 +4445,21 @@ def main():
         w.cb_loeser.setCurrentIndex(w.cb_loeser.findData("superlu"))
         w._apply_parallel_settings()
         check("die Auswahl kommt in den Einstellungen an", parallel_.settings().solver_backend == "superlu")
+        # Threads des Gleichungsloesers: automatisch oder feste Zahl, wird gespeichert
+        stufen_ = [w.cb_threads.itemData(i) for i in range(w.cb_threads.count())]
+        check("Threads des Gleichungslösers: automatisch (nennt PARDISO und MUMPS) + Stufen bis zur Kernzahl",
+              w.cb_threads.itemText(0).startswith("automatisch") and "MUMPS" in w.cb_threads.itemText(0)
+              and stufen_[0] == 0 and stufen_[1:] == sorted(stufen_[1:]) and 1 in stufen_
+              and stufen_[-1] == parallel_.cpu_count(), str(stufen_))
+        w.cb_threads.setCurrentIndex(w.cb_threads.findData(2))
+        w._apply_parallel_settings()
+        import json as _json
+        with open(os.environ["STATIK3D_EINSTELLUNGEN"], encoding="utf-8") as fh_:
+            gespeichert_ = _json.load(fh_)
+        check("2 Threads kommen in den Einstellungen an und stehen in der gespeicherten Datei",
+              parallel_.settings().solver_threads == 2 and gespeichert_.get("solver_threads") == 2
+              and gespeichert_.get("solver_backend") == "superlu", str(gespeichert_))
+        w.cb_threads.setCurrentIndex(0)
         w.cb_loeser.setCurrentIndex(0)
         w._apply_parallel_settings()
         w.maskenrand.schliessen()

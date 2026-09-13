@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .. import parallel
 from .. import werkzeuge as wz
 from .worker import SolveWorker
 
@@ -16,14 +17,17 @@ from .worker import SolveWorker
 class WerkzeugeDialog(QtWidgets.QDialog):
     geaendert = QtCore.Signal(str)
 
-    HINWEIS = ("gmsh (GPL), Netgen (LGPL) und MMG3D (LGPL) kommen nicht mit Statik3D. Auf Wunsch lädt das "
-               "Programm sie von ihrer Quelle in die Benutzerdaten – es gelten die Lizenzen der jeweiligen "
-               "Werkzeuge. Vernetzer tetraedern Volumen (Netzeinstellungen → Vernetzer), der Nachbesserer "
-               "MMG3D optimiert das fertige Tetraedernetz bei fester Hülle (Netzeinstellungen → Nachbesserung).")
+    HINWEIS = ("gmsh (GPL), Netgen (LGPL), MMG3D (LGPL) und der Gleichungslöser MUMPS (CeCILL-C) kommen nicht "
+               "mit Statik3D. Auf Wunsch lädt das Programm sie von ihrer Quelle in die Benutzerdaten – es gelten "
+               "die Lizenzen der jeweiligen Werkzeuge; der Lizenztext von MUMPS liegt im nachgeladenen Paket "
+               "unter mumps/LIZENZ. Vernetzer tetraedern Volumen (Netzeinstellungen → Vernetzer), der "
+               "Nachbesserer MMG3D optimiert das fertige Tetraedernetz bei fester Hülle (Netzeinstellungen → "
+               "Nachbesserung), MUMPS steht danach unter Berechnung → Einstellungen → Gleichungslöser. Ist das "
+               "Kästchen unten an, lädt das Programm MUMPS beim Start ohne Rückfrage nach, wenn es fehlt.")
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Vernetzer und Nachbesserer")
+        self.setWindowTitle("Vernetzer, Nachbesserer und Gleichungslöser")
         self.setMinimumWidth(760)
         self.worker = None
         self.knoepfe: dict[str, QtWidgets.QPushButton] = {}
@@ -52,6 +56,13 @@ class WerkzeugeDialog(QtWidgets.QDialog):
         self.protokoll.setReadOnly(True)
         self.protokoll.setMaximumHeight(110)
         lay.addWidget(self.protokoll)
+
+        self.cb_nachladen = QtWidgets.QCheckBox("MUMPS beim Programmstart nachladen, wenn es fehlt", self)
+        self.cb_nachladen.setChecked(bool(parallel.settings().mumps_nachladen))
+        self.cb_nachladen.setToolTip("Ohne Rückfrage, Fortschritt in der Statuszeile; ein Fehler (kein Netz) "
+                                     "steht als eine Zeile im Protokoll, beim nächsten Start neuer Versuch")
+        self.cb_nachladen.toggled.connect(self._nachladen_setzen)
+        lay.addWidget(self.cb_nachladen)
 
         zeile = QtWidgets.QHBoxLayout()
         b_ordner = QtWidgets.QPushButton("Ordner öffnen")
@@ -99,6 +110,13 @@ class WerkzeugeDialog(QtWidgets.QDialog):
     def _knoepfe(self, an: bool):
         for b in self.knoepfe.values():
             b.setEnabled(an)
+
+    def _nachladen_setzen(self, an: bool):
+        parallel.configure(mumps_nachladen=bool(an))
+        try:
+            parallel.einstellungen_speichern()
+        except OSError as ex:
+            self._melden(f"Einstellung nicht gespeichert: {ex}")
 
     def _ordner_oeffnen(self):
         import os

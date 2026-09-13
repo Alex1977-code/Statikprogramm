@@ -327,13 +327,50 @@ def test_mumps_sagt_was_es_tut_und_gibt_speicher_frei():
           f"Wachstum {ende - start:.0f} MB bei {einzeln:.0f} MB je Faktorisierung")
 
 
+def test_threadzahl_aus_den_einstellungen():
+    """Berechnung -> Einstellungen -> Threads des Gleichungsloesers: 0 heisst
+    automatisch (PARDISO alle Kerne bis auf einen, MUMPS hoechstens acht),
+    sonst genau diese Zahl - fuer beide Loeser, zur Laufzeit umschaltbar
+    ohne Neustart ("dann kann ich das an meinem Modell pruefen", 13.09.2026)."""
+    from statik3d.solver import threads_automatisch, threads_vorgabe, loeser_liste
+    K = _laplace_3d(12)
+    b = np.ones(K.shape[0])
+    da = {k: ok for k, _n, ok, *_r in loeser_liste()}
+    alt = parallel.settings().solver_threads
+    try:
+        parallel.configure(solver_threads=0)
+        check("automatisch: PARDISO alle Kerne bis auf einen, MUMPS hoechstens acht",
+              threads_vorgabe("pardiso") == threads_automatisch("pardiso") == max(1, os.cpu_count() - 1)
+              and 1 <= threads_automatisch("mumps") <= 8,
+              f"pardiso {threads_automatisch('pardiso')}, mumps {threads_automatisch('mumps')}")
+        parallel.configure(solver_threads=2)
+        check("Einstellung 2: die Vorgabe beider Loeser ist 2",
+              threads_vorgabe("pardiso") == 2 and threads_vorgabe("mumps") == 2)
+        for key in ("pardiso", "mumps"):
+            if not da.get(key):
+                print(f"     {key} nicht installiert - uebersprungen")
+                continue
+            ls = LinearSolver(K, backend=key)
+            x = ls.solve(b)
+            check(f"{key} rechnet mit 2 Threads und richtig",
+                  ls.threads == 2 and float(np.abs(K @ x - b).max()) < 1e-8, ls.beschreibung())
+            parallel.configure(solver_threads=0)
+            ls0 = LinearSolver(K, backend=key)
+            check(f"{key} zurueck auf automatisch: {threads_automatisch(key)} Threads, ohne Neustart",
+                  ls0.threads == threads_automatisch(key), ls0.beschreibung())
+            parallel.configure(solver_threads=2)
+    finally:
+        parallel.configure(solver_threads=alt)
+
+
 def main():
     for f in (test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
               test_pardiso_nimmt_alle_kerne_bis_auf_einen,
               test_meldung_trennt_pool_und_loeser,
               test_superlu_ordnet_symmetrisch, test_pardiso_gibt_speicher_frei,
-              test_mumps_sagt_was_es_tut_und_gibt_speicher_frei):
+              test_mumps_sagt_was_es_tut_und_gibt_speicher_frei,
+              test_threadzahl_aus_den_einstellungen):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
