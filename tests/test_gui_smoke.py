@@ -4217,7 +4217,7 @@ def main():
         wahl_v = [mk._felder["vernetzer"].itemText(i) for i in range(mk._felder["vernetzer"].count())]
         check("Netzeinstellungen: Auswahl Vernetzer (eigener, gmsh, Netgen) und Nachbesserung (MMG3D)",
               len(wahl_v) == 3 and wahl_v[0].startswith("eigener") and "nachbessern" in mk._felder
-              and "mmg_pfad" in mk._felder
+              and "mmg_pfad" not in mk._felder          # kein Pfadfeld: wo mmg3d_O3 liegt, weiss das Programm
               and all(("nicht installiert" in wahl_v[i]) != da_[k][1] for i, k in ((1, "gmsh"), (2, "netgen"))),
               str(wahl_v))
         if da_["gmsh"][1]:
@@ -4429,6 +4429,23 @@ def main():
                   and wz_.stand("mumps") is not None, w.log.toPlainText()[n_info:][-160:])
             check("zweiter Start: installiert und nicht veraltet - kein Download",
                   w._mumps_nachladen() is False)
+            # Die Loeserauswahl folgt dem Nachladen ohne Neustart
+            from statik3d import solver as slv_w
+            liste_alt = slv_w.loeser_liste
+            mumps_da_ = {k: da for k, _n, da, *_r in liste_alt()}["mumps"]
+            slv_w.loeser_liste = lambda: [(k, n, (False if k == "mumps" else da), li, a) for k, n, da, li, a in liste_alt()]
+            w._loeserliste_neu()
+            i_m = w.cb_loeser.findData("mumps")
+            aus_ = not w.cb_loeser.model().item(i_m).isEnabled() and "nicht installiert" in w.cb_loeser.itemText(i_m)
+            slv_w.loeser_liste = liste_alt
+            w.cb_loeser.setCurrentIndex(w.cb_loeser.findData("superlu"))
+            w._werkzeuge_geaendert("mumps")
+            i_m = w.cb_loeser.findData("mumps")
+            check("Löserauswahl wird nach dem Nachladen neu aufgebaut: MUMPS von „nicht installiert“ auf verfügbar, die Wahl bleibt",
+                  aus_ and w.cb_loeser.model().item(i_m).isEnabled() == mumps_da_
+                  and w.cb_loeser.currentData() == "superlu" and w.cb_threads.itemText(0).startswith("automatisch"),
+                  f"{aus_} -> {w.cb_loeser.itemText(i_m)}, Wahl {w.cb_loeser.currentData()}")
+            w.cb_loeser.setCurrentIndex(0)
             wz_.entfernen("mumps")
         finally:
             wz_.installieren = wz_inst_alt

@@ -10351,15 +10351,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Gleichungsloeser zur Auswahl; was nicht installiert ist, steht grau
         # dabei ("nicht installiert"), damit man weiss, was es gaebe
         self.cb_loeser = QtWidgets.QComboBox()
-        self.cb_loeser.addItem("automatisch (MKL PARDISO, sonst CHOLMOD, sonst SuperLU)", "auto")
-        for key, name, da, lizenz, art in solver.loeser_liste():
-            self.cb_loeser.addItem(f"{name} - {art}" + ("" if da else " (nicht installiert)"), key)
-            if not da:
-                i = self.cb_loeser.count() - 1
-                self.cb_loeser.model().item(i).setEnabled(False)
-            self.cb_loeser.setItemData(self.cb_loeser.count() - 1, f"Lizenz: {lizenz}", QtCore.Qt.ToolTipRole)
-        i = self.cb_loeser.findData(parallel.settings().solver_backend)
-        self.cb_loeser.setCurrentIndex(max(i, 0))
+        self._loeserliste_neu(parallel.settings().solver_backend)
         self.cb_loeser.setToolTip("Vorgabe MKL PARDISO (frei nutzbar, in der exe enthalten). MUMPS "
                                   "(CeCILL-C, Lizenztext liegt im Programm unter mumps/LIZENZ bei) ist "
                                   "ebenfalls enthalten. CHOLMOD und UMFPACK sind GPL-Software und nur "
@@ -10371,8 +10363,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # ich das an meinem Modell pruefen" (13.09.2026)
         self.cb_threads = QtWidgets.QComboBox()
         n_cpu = parallel.cpu_count()
-        self.cb_threads.addItem(f"automatisch (MKL PARDISO {solver.threads_automatisch('pardiso')}, "
-                                f"MUMPS {solver.threads_automatisch('mumps')})", 0)
+        self.cb_threads.addItem(self._threads_automatisch_text(), 0)
         for n_ in sorted({1, 2, 4, 6, 8, 12, 16, 24, 32, 48, 64, max(1, n_cpu - 1), n_cpu}):
             if n_ <= n_cpu:
                 self.cb_threads.addItem(str(n_), int(n_))
@@ -12057,9 +12048,12 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("nachbessern", "Nachbesserung", "wahl", nachbessern_text(n.nachbessern), nachbessern_liste,
                     hinweis="MMG3D (LGPL, getrenntes Programm mmg3d_O3) optimiert das fertige Netz bei "
                             "fester Hülle - der Weg zu einer Mindestgüte aller Elemente; "
-                            "„Vernetzer installieren…“ lädt es nach"),
-                  F("mmg_pfad", "MMG3D-Programm (Pfad)", "text", n.mmg_pfad or "", breite=170,
-                    hinweis="leer = das nachgeladene mmg3d_O3, sonst aus dem Suchpfad")]
+                            "„Vernetzer installieren…“ lädt es nach, wo es liegt, weiß das Programm")]
+        # Das Pfadfeld fuer mmg3d_O3 ist heraus (13.09.2026): "der Pfad steht
+        # doch bei Installation fest und kann programmintern verarbeitet
+        # werden" - vernetzer_extern.mmg3d_programm nimmt das nachgeladene
+        # Programm aus dem Werkzeugordner, sonst den Suchpfad; ein in der
+        # Datei gespeicherter Pfad (Netzeinstellungen.mmg_pfad) gilt weiter.
         # Die „Vorschau" der Elementzahl ist heraus (13.09.2026): am Drehlager
         # schaetzte sie 76 640 Tetraeder, das Netz hat 1 812 359 - je Koerper
         # im Median Faktor 758 daneben, weil die Formel V/(0,12 h³) die
@@ -12189,7 +12183,7 @@ class MainWindow(QtWidgets.QMainWindow):
                        intelligent=bool(w.get("intelligent", True)),
                        h_min=zahl("h_min"), h_max=zahl("h_max"),
                        vernetzer=vernetzer, nachbessern=nachbessern,
-                       mmg_pfad=str(w.get("mmg_pfad", n.mmg_pfad) or "").strip(),
+                       mmg_pfad=n.mmg_pfad,
                        max_elemente=max(0, int(float(w.get("max_elemente", n.max_elemente) or 0))),
                        form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
                        ordnung=self.NETZORDNUNG.get(str(w.get("ordnung", "")), n.ordnung),
@@ -12218,6 +12212,8 @@ class MainWindow(QtWidgets.QMainWindow):
                       + (" - wirksam nach dem Neustart" if s.get("neustart") else ""))
         else:
             self.info(f"Werkzeug {name} entfernt")
+        if getattr(self, "cb_loeser", None) is not None:
+            self._loeserliste_neu()               # MUMPS steht sofort in der Auswahl
         m = getattr(getattr(self, "maskenrand", None), "maske", None)
         if m is not None and getattr(m, "titel", "") == "Netzeinstellungen":
             self.maske_netzeinstellungen()
@@ -14671,6 +14667,32 @@ class MainWindow(QtWidgets.QMainWindow):
         """Die Bewegung wieder aus der Ansicht nehmen."""
         self._bewegung_index = None
         self._bewegung_zeichnen(self.model)
+
+    @staticmethod
+    def _threads_automatisch_text() -> str:
+        return (f"automatisch (MKL PARDISO {solver.threads_automatisch('pardiso')}, "
+                f"MUMPS {solver.threads_automatisch('mumps')})")
+
+    def _loeserliste_neu(self, gewaehlt: str = None) -> None:
+        """Die Loeserauswahl aus solver.loeser_liste() (neu) aufbauen - beim
+        Bau des Registers und nach dem Nachladen eines Loesers: die Liste
+        entstand sonst beim Start, bevor MUMPS geladen war, und zeigte es bis
+        zum Neustart als "nicht installiert" (13.09.2026)."""
+        cb = self.cb_loeser
+        gewaehlt = gewaehlt if gewaehlt is not None else str(cb.currentData() or "auto")
+        cb.blockSignals(True)
+        cb.clear()
+        cb.addItem("automatisch (MKL PARDISO, sonst CHOLMOD, sonst SuperLU)", "auto")
+        for key, name, da, lizenz, art in solver.loeser_liste():
+            cb.addItem(f"{name} - {art}" + ("" if da else " (nicht installiert)"), key)
+            if not da:
+                cb.model().item(cb.count() - 1).setEnabled(False)
+            cb.setItemData(cb.count() - 1, f"Lizenz: {lizenz}", QtCore.Qt.ToolTipRole)
+        i = cb.findData(gewaehlt)
+        cb.setCurrentIndex(max(i, 0))
+        cb.blockSignals(False)
+        if getattr(self, "cb_threads", None) is not None:
+            self.cb_threads.setItemText(0, self._threads_automatisch_text())
 
     def _apply_parallel_settings(self):
         parallel.configure(workers=self.sp_workers.value(),

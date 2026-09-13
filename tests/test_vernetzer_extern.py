@@ -70,11 +70,24 @@ def test_mesh_rundlauf():
     check("Medit-Datei: Punkte, Tetraeder und Dreiecke ueberleben Schreiben und Lesen",
           np.allclose(X2, Pn) and np.array_equal(TET2, np.asarray(TET, int)) and np.array_equal(T2, np.asarray(T, int)),
           f"{len(X2)} Punkte, {len(TET2)} Tetraeder, {len(T2)} Dreiecke")
+    # "ohne Programm" heisst: weder ein eigener Pfad noch das nachgeladene aus
+    # dem Werkzeugordner noch eines im Suchpfad - der Werkzeugordner des
+    # Anwenders (seit 13.09.2026 mit MMG3D) darf hier nicht hineinspielen
+    alt_wz = os.environ.get("STATIK3D_WERKZEUGE")
+    alt_which = vx.shutil.which
+    os.environ["STATIK3D_WERKZEUGE"] = tempfile.mkdtemp(prefix="statik3d_ohne_werkzeuge_")
+    vx.shutil.which = lambda name: None
     try:
         vx.mmg3d_nachbessern(Pn, TET, T, 0.1, programm="C:/gibt/es/nicht/mmg3d_O3.exe")
         check("MMG3D ohne Programm: Meldung statt Absturz", False)
     except RuntimeError as ex:
         check("MMG3D ohne Programm: Meldung statt Absturz", "nicht gefunden" in str(ex), str(ex)[:60])
+    finally:
+        vx.shutil.which = alt_which
+        if alt_wz is None:
+            os.environ.pop("STATIK3D_WERKZEUGE", None)
+        else:
+            os.environ["STATIK3D_WERKZEUGE"] = alt_wz
 
 
 def _fremd(name, fn):
