@@ -124,13 +124,39 @@ class Material:
     nu: float = 0.3           # Querdehnzahl [-]
     rho: float = 7850.0       # Dichte [kg/m^3]
     alpha: float = 1.2e-5     # Waermeausdehnung [1/K]
-    fy: Optional[float] = None  # Streckgrenze [Pa]
+    fy: Optional[float] = None  # Streckgrenze [Pa] (duennste Erzeugnisdicke)
     fu: Optional[float] = None  # Zugfestigkeit [Pa]
     grade: str = ""           # Stahlsorte (S235, S355, ...) fuer Nachweise
+    #: Streckgrenze und Zugfestigkeit nach Erzeugnisdicke: [[t_max [m], Wert [Pa]], ...]
+    #: aufsteigend nach t_max - so fuehrt RFEM 6 sie (MaterialPropertyRange,
+    #: z. B. S355: bis 16 mm 355, bis 40 mm 345, bis 63 mm 335 ... bis 400 mm 265);
+    #: leer = nur fy/fu, dann gilt die Zweistufen-Regel der Stahlsorte
+    fy_dicke: list = field(default_factory=list)
+    fu_dicke: list = field(default_factory=list)
 
     @property
     def G(self) -> float:
         return self.E / (2.0 * (1.0 + self.nu))
+
+    @staticmethod
+    def _nach_dicke(tabelle, t: float):
+        """Der Wert der ersten Stufe, deren t_max die Dicke t erreicht; ueber
+        der letzten Stufe gilt deren Wert."""
+        stufen = sorted((float(a), float(b)) for a, b in (tabelle or []))
+        if not stufen:
+            return None
+        for t_max, wert in stufen:
+            if t <= t_max + 1e-12:
+                return wert
+        return stufen[-1][1]
+
+    def dickentext(self, was: str = "fy") -> str:
+        """Die Dickentabelle als Text („≤16: 355, ≤40: 345 … N/mm²")."""
+        tabelle = self.fy_dicke if was == "fy" else self.fu_dicke
+        if not tabelle:
+            return ""
+        return ", ".join(f"≤{t * 1e3:g}: {w / 1e6:g}" for t, w in sorted((float(a), float(b)) for a, b in tabelle)) \
+            + " N/mm²"
 
     @staticmethod
     def steel(grade: str = "S355", name: str = None) -> "Material":
@@ -142,12 +168,20 @@ class Material:
         return Material(name or g, 210e9, 0.3, 7850.0, 1.2e-5, fy, fu, g)
 
     def yield_strength(self, t: float = 0.0) -> float:
-        """Streckgrenze in Abhaengigkeit der Erzeugnisdicke t [m] (EN 1993-1-1 Tab. 3.1)."""
+        """Streckgrenze in Abhaengigkeit der Erzeugnisdicke t [m]: aus der
+        Dickentabelle des Materials (RFEM-Import), sonst EN 1993-1-1 Tab. 3.1
+        (zwei Stufen bei 40 mm)."""
+        wert = self._nach_dicke(self.fy_dicke, t)
+        if wert is not None:
+            return wert
         if self.grade in STEEL_GRADES and t > 0.040:
             return STEEL_GRADES[self.grade][2]
         return self.fy or 0.0
 
     def ultimate_strength(self, t: float = 0.0) -> float:
+        wert = self._nach_dicke(self.fu_dicke, t)
+        if wert is not None:
+            return wert
         if self.grade in STEEL_GRADES and t > 0.040:
             return STEEL_GRADES[self.grade][3]
         return self.fu or (1.3 * self.fy if self.fy else 0.0)

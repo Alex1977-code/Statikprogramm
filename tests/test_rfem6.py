@@ -88,6 +88,11 @@ CREATE TABLE MaterialProperties_propertiesMap_values (id INTEGER, container_orde
                    reference_id bigint, reference_table TEXT);
 CREATE TABLE MaterialPropertyDouble (id INTEGER PRIMARY KEY, version INTEGER,
                    propertyKey TEXT, valueSI REAL);
+CREATE TABLE MaterialPropertyRange (id INTEGER PRIMARY KEY, version INTEGER, propertyKey TEXT);
+CREATE TABLE MaterialPropertyRange_values (id INTEGER, container_order INTEGER,
+                   reference_id bigint, reference_table TEXT);
+CREATE TABLE MaterialPropertyMaterialValue (id INTEGER PRIMARY KEY, version INTEGER,
+                   propertyKey TEXT, thicknessSI REAL, valueSI REAL);
 CREATE TABLE Section (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
                    impl_id bigint, impl_table TEXT);
 CREATE TABLE SectionImplParametricBars (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
@@ -372,12 +377,27 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
     con.execute("INSERT INTO MaterialData VALUES (1,1,1,1)")
     con.execute("INSERT INTO MaterialProperties VALUES (1,1)")
     for j, (k, v) in enumerate([("E", 210e9), ("G", 80.769e9), ("nu", 0.3),
-                                ("rho", 7850.0), ("f_y", 355e6), ("f_u", 490e6),
-                                ("alpha", 1.2e-5)]):
+                                ("rho", 7850.0), ("alpha", 1.2e-5)]):
         con.execute("INSERT INTO MaterialPropertyDouble VALUES (?,1,?,?)", (j + 1, k, v))
         con.execute("INSERT INTO MaterialProperties_propertiesMap_keys VALUES (1,?,?)", (j, k))
         con.execute("INSERT INTO MaterialProperties_propertiesMap_values "
                     "VALUES (1,?,?,'MaterialPropertyDouble')", (j, j + 1))
+    # f_y und f_u wie RFEM 6 sie fuehrt: als Dickenbereiche (S355 nach EN 10025-2)
+    stufen = {"f_y": [(0.016, 355e6), (0.040, 345e6), (0.063, 335e6), (0.080, 325e6)],
+              "f_u": [(0.040, 470e6), (0.080, 470e6)]}
+    wert_id = 0
+    for r, (k, liste) in enumerate(stufen.items(), start=1):
+        con.execute("INSERT INTO MaterialPropertyRange VALUES (?,0,?)", (r, k))
+        con.execute("INSERT INTO MaterialProperties_propertiesMap_keys VALUES (1,?,?)", (5 + r, k))
+        con.execute("INSERT INTO MaterialProperties_propertiesMap_values "
+                    "VALUES (1,?,?,'MaterialPropertyRange')", (5 + r, r))
+        # absichtlich nicht nach Dicke sortiert eingetragen
+        for o, (t_max, val) in enumerate(reversed(liste)):
+            wert_id += 1
+            con.execute("INSERT INTO MaterialPropertyMaterialValue VALUES (?,0,?,?,?)",
+                        (wert_id, f"{k}[{o + 1},0,0]", t_max, val))
+            con.execute("INSERT INTO MaterialPropertyRange_values "
+                        "VALUES (?,?,?,'MaterialPropertyMaterialValue')", (r, o, wert_id))
     # Querschnitt: Rundstahl d = 40 mm
     d = 0.040
     con.execute("INSERT INTO Section VALUES (1,1,1,1,'SectionImplParametricBars')")
@@ -696,9 +716,22 @@ def test_grundmodell():
 
         mat = list(m.materials.values())[0]
         close("Material E", mat.E, 210e9, 1e-9, " Pa")
-        close("Material f_y", mat.fy, 355e6, 1e-9, " Pa")
+        close("Material f_y (duennste Stufe der Dickenbereiche)", mat.fy, 355e6, 1e-9, " Pa")
+        close("Material f_u", mat.fu, 470e6, 1e-9, " Pa")
         check("Materialname aus Streckgrenze", mat.name == "S355", mat.name)
         check("Stahlsorte gesetzt", mat.grade == "S355", mat.grade)
+        check("Dickenbereiche uebernommen und nach Dicke sortiert",
+              mat.fy_dicke == [[0.016, 355e6], [0.040, 345e6], [0.063, 335e6], [0.080, 325e6]]
+              and mat.fu_dicke == [[0.040, 470e6], [0.080, 470e6]], str(mat.fy_dicke))
+        check("Streckgrenze nach Dicke: 16 mm -> 355, 30 mm -> 345, 70 mm -> 325, 200 mm -> letzte Stufe 325",
+              mat.yield_strength(0.016) == 355e6 and mat.yield_strength(0.030) == 345e6
+              and mat.yield_strength(0.070) == 325e6 and mat.yield_strength(0.200) == 325e6,
+              str([mat.yield_strength(x) / 1e6 for x in (0.016, 0.03, 0.07, 0.2)]))
+        check("Dickentext fuer Dialog und Bericht", mat.dickentext("fy").startswith("≤16: 355, ≤40: 345"),
+              mat.dickentext("fy"))
+        wieder = type(m).from_dict(m.to_dict()).materials[mat.name]
+        check("Dickentabellen ueberleben Speichern und Laden", wieder.fy_dicke == mat.fy_dicke
+              and wieder.yield_strength(0.07) == 325e6)
 
         check("Lager gesetzt", len(m.supports) == 2, f"{len(m.supports)}")
         s0 = [s for s in m.supports if s.node == 0][0]

@@ -74,6 +74,14 @@ class MaterialDialog(QtWidgets.QDialog):
         f.addRow("Wärmedehnzahl [1e-6/K]", self.alpha)
         f.addRow("Streckgrenze fy [MPa]", self.fy)
         f.addRow("Zugfestigkeit fu [MPa]", self.fu)
+        if getattr(m, "fy_dicke", None):
+            # aus der Quelldatei (RFEM): die Nachweise nehmen den Wert der Bauteildicke
+            lbl = QtWidgets.QLabel("fy " + m.dickentext("fy") + ("\nfu " + m.dickentext("fu") if m.fu_dicke else ""))
+            lbl.setWordWrap(True)
+            lbl.setToolTip("Streckgrenze und Zugfestigkeit nach Erzeugnisdicke aus der Quelldatei; "
+                           "die Nachweise nehmen den Wert der Dicke des Bauteils. fy/fu oben sind "
+                           "die Werte der dünnsten Stufe.")
+            f.addRow("nach Dicke", lbl)
         f.addRow(buttons(self))
 
     def _grade_changed(self, g):

@@ -264,6 +264,25 @@ zu tun hat. Übernommen werden:
 
 Fehlt die Datei, gilt die Programmvorgabe — und das Protokoll sagt es.
 
+### Materialien: Streckgrenze und Zugfestigkeit nach Erzeugnisdicke
+
+RFEM 6 führt **f_y und f_u nicht als Zahl**, sondern als Dickenbereiche
+(`MaterialPropertyRange` → `MaterialPropertyRange_values` →
+`MaterialPropertyMaterialValue` mit `thicknessSI` und `valueSI`): S355 nach
+EN 10025-2 etwa bis 16 mm 355, bis 40 mm 345, bis 63 mm 335, bis 80 mm 325,
+bis 100 mm 315, bis 150 mm 295, bis 200 mm 285, bis 250 mm 275, bis 400 mm
+265 N/mm². Einen Namen speichert die Datei für Datenbankmaterialien nicht
+(nur die Dlubal-Nummer, am Drehlager 22175); der Name entsteht aus der
+Streckgrenze („S355"). Bis 13.09.2026 las der Import nur die Zahlenwerte
+(`MaterialPropertyDouble`) — f_y und f_u fehlten, und das Material hieß
+„Material 1 (DB 22175)". Jetzt werden die Bereiche übernommen: `fy`/`fu` des
+Werkstoffs sind die Werte der dünnsten Stufe, `fy_dicke`/`fu_dicke` die
+ganze Tabelle; die Nachweise nehmen über `yield_strength(t)` den Wert der
+Bauteildicke (bei 70 mm also 325 statt 355 N/mm²), der Werkstoffdialog zeigt
+die Tabelle unter „nach Dicke", der Bericht als eigene Tabelle. Geprüft in
+`tests/test_rfem6.py` (Bereiche absichtlich unsortiert eingetragen, Werte
+nach Dicke, Speichern und Laden).
+
 ### Flächen: Dicke und Steifigkeitsart
 
 Die Fläche zeigt über `stiffness_id`/`stiffness_table` auf ihr
