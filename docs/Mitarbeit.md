@@ -36,6 +36,12 @@ veröffentlicht sie als Release `latest` – und **jede laufende Installation ho
 sich diese Datei beim nächsten Start**. Was auf `main` liegt, ist also nicht
 „der Stand der Arbeit", sondern das, was beim Kollegen und beim Kunden startet.
 
+Ein zweiter Workflow, `.github/workflows/werkzeuge.yml`, baut MMG3D aus
+dem Quelltext von MmgTools/mmg (MSVC) und legt `mmg3d_O3-windows-x64.zip`
+im Release `werkzeuge` ab; von dort lädt das Programm den Nachbesserer auf
+Wunsch nach (*Extras → Vernetzer installieren…*). Er läuft, wenn sich die
+Datei auf `main` ändert, oder von Hand (workflow_dispatch).
+
 Darum:
 
 1. Für jede Sache einen eigenen Zweig:

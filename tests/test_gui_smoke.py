@@ -4234,6 +4234,70 @@ def main():
         check("eine nicht installierte Nachbesserung wird abgewiesen, das Modell bleibt",
               (bool(fehler_n) and "nicht installiert" in fehler_n[0]) if not da_["mmg3d"][1] else not fehler_n,
               str(fehler_n[:1]))
+        # --- Werkzeuge nachladen: Zusatzknopf in der Maske, Ribbon Extras, Dialog ---------
+        w.maske_netzeinstellungen(); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Netzeinstellungen: Zusatzknopf „Vernetzer installieren…“ und der Befehl im Ribbon Extras",
+              "Vernetzer installieren…" in mk.zusatzknoepfe and callable(getattr(w, "werkzeuge_dialog", None)))
+        import tempfile as _tf
+        from statik3d import werkzeuge as wz_
+        from statik3d.gui.werkzeuge_dialog import WerkzeugeDialog
+        wz_ordner_alt = os.environ.get("STATIK3D_WERKZEUGE")
+        wz_tmp = _tf.mkdtemp(prefix="statik3d_smoke_werkzeuge_")
+        os.environ["STATIK3D_WERKZEUGE"] = wz_tmp
+        wz_inst_alt = wz_.installieren
+
+        def wz_installieren_fake(key, fortschritt=None, timeout=0.0):
+            # ohne Netz: nur einen Stand schreiben, wie es die echte Installation zuletzt tut
+            os.makedirs(wz_.werkzeug_ordner(key), exist_ok=True)
+            if fortschritt:
+                fortschritt(f"{key}: laden", 0.5)
+            s = {"werkzeug": key, "version": "9.9", "pakete": {}, "quellen": [], "datum": "2026-09-13T00:00:00",
+                 "neustart": False}
+            with open(os.path.join(wz_.werkzeug_ordner(key), "stand.json"), "w", encoding="utf-8") as f_:
+                json.dump(s, f_)
+            if fortschritt:
+                fortschritt(f"{key} 9.9 installiert", 1.0)
+            return s
+        wz_.installieren = wz_installieren_fake
+        try:
+            dlg = WerkzeugeDialog(w)
+            dlg.geaendert.connect(w._werkzeuge_geaendert)   # wie werkzeuge_dialog(), nur nicht modal
+            dlg.show(); app.processEvents()
+            stand_txt = [dlg.tabelle.item(i, 4).text() for i in range(dlg.tabelle.rowCount())]
+            check("Dialog: drei Zeilen gmsh (GPL, Vernetzer), Netgen (LGPL), MMG3D (LGPL, Nachbesserer) - alle „nicht installiert“, Knopf „Installieren“",
+                  dlg.tabelle.rowCount() == 3 and [dlg.tabelle.item(i, 0).text() for i in range(3)] == ["gmsh", "Netgen", "MMG3D"]
+                  and dlg.tabelle.item(0, 2).text() == "GPL" and dlg.tabelle.item(2, 1).text() == "Nachbesserer"
+                  and all("nicht installiert" in s_ for s_ in stand_txt)
+                  and all(b.text() == "Installieren" for b in dlg.knoepfe.values()), str(stand_txt))
+            check("Dialog nennt Lizenzhinweis und Ablageordner", "GPL" in dlg.HINWEIS and wz_tmp in dlg.findChildren(QtWidgets.QLabel)[0].text())
+            geaendert_ = []
+            dlg.geaendert.connect(lambda k: geaendert_.append(k))
+            n_info = len(w.log.toPlainText())
+            dlg.knoepfe["mmg3d"].click()
+            t_ = time.time()
+            while dlg.worker is not None and dlg.worker.isRunning() and time.time() - t_ < 20:
+                app.processEvents(); time.sleep(0.02)
+            app.processEvents()
+            check("Installieren läuft im Hintergrund und endet: Zeile zeigt Version, Knopf wird „Entfernen“, Signal, Protokoll",
+                  geaendert_ == ["mmg3d"] and "Version 9.9" in dlg.tabelle.item(2, 4).text()
+                  and dlg.knoepfe["mmg3d"].text() == "Entfernen" and wz_.stand("mmg3d") is not None
+                  and "Werkzeug MMG3D 9.9 installiert" in w.log.toPlainText()[n_info:],
+                  dlg.tabelle.item(2, 4).text() + " | " + dlg.protokoll.toPlainText()[-120:])
+            check("die offene Netzeinstellungen-Maske wurde neu aufgebaut",
+                  w.maskenrand.maske is not mk and w.maskenrand.maske.titel == "Netzeinstellungen")
+            dlg.knoepfe["mmg3d"].click(); app.processEvents()
+            check("Entfernen: Stand weg, Knopf wieder „Installieren“, Protokoll",
+                  wz_.stand("mmg3d") is None and dlg.knoepfe["mmg3d"].text() == "Installieren"
+                  and "Werkzeug MMG3D entfernt" in w.log.toPlainText()[n_info:] and geaendert_ == ["mmg3d", "mmg3d"])
+            dlg.close(); app.processEvents()
+        finally:
+            wz_.installieren = wz_inst_alt
+            if wz_ordner_alt is None:
+                os.environ.pop("STATIK3D_WERKZEUGE", None)
+            else:
+                os.environ["STATIK3D_WERKZEUGE"] = wz_ordner_alt
+            __import__("shutil").rmtree(wz_tmp, ignore_errors=True)
         w.maske_netzeinstellungen(); app.processEvents()
         mk = w.maskenrand.maske
         mk.setzen("dichte", "eigene")

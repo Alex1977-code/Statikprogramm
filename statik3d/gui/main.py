@@ -3616,6 +3616,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Fassung, Build und Gültigkeitsbereich")
         g.klein("Nach Update suchen…", self.check_update,
                 hinweis="Eine neue Programmfassung suchen und einspielen")
+        g.klein("Vernetzer installieren…", self.werkzeuge_dialog,
+                hinweis="gmsh, Netgen und MMG3D nachladen oder entfernen - sie kommen nicht mit dem Programm")
         g.klein("Protokoll speichern…", self.protokoll_speichern,
                 hinweis="Das ganze Protokoll als Textdatei sichern - zum Nachlesen, "
                         "Ablegen oder Weitergeben")
@@ -12006,14 +12008,15 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("uebersteuern", "Teilung je Fläche aus der Netzdichte", "haken", bool(n.teilung_uebersteuern),
                     hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt"),
                   F("vernetzer", "Vernetzer (Volumen)", "wahl", vernetzer_text(n.vernetzer), vernetzer_liste,
-                    hinweis="eigener Vernetzer, gmsh (GPL, pip install gmsh) oder Netgen (LGPL, pip install "
-                            "netgen-mesher) - beide tetraedern dieselbe Hülle, die Randknoten bleiben; "
-                            "keiner wird mit der exe ausgeliefert"),
+                    hinweis="eigener Vernetzer, gmsh (GPL) oder Netgen (LGPL) - beide tetraedern dieselbe "
+                            "Hülle, die Randknoten bleiben; keiner wird mit der exe ausgeliefert, "
+                            "„Vernetzer installieren…“ lädt sie nach"),
                   F("nachbessern", "Nachbesserung", "wahl", nachbessern_text(n.nachbessern), nachbessern_liste,
                     hinweis="MMG3D (LGPL, getrenntes Programm mmg3d_O3) optimiert das fertige Netz bei "
-                            "fester Hülle - der Weg zu einer Mindestgüte aller Elemente"),
+                            "fester Hülle - der Weg zu einer Mindestgüte aller Elemente; "
+                            "„Vernetzer installieren…“ lädt es nach"),
                   F("mmg_pfad", "MMG3D-Programm (Pfad)", "text", n.mmg_pfad or "", breite=170,
-                    hinweis="leer = mmg3d_O3 aus dem Suchpfad")]
+                    hinweis="leer = das nachgeladene mmg3d_O3, sonst aus dem Suchpfad")]
         # Die „Vorschau" der Elementzahl ist heraus (13.09.2026): am Drehlager
         # schaetzte sie 76 640 Tetraeder, das Netz hat 1 812 359 - je Koerper
         # im Median Faktor 758 daneben, weil die Formel V/(0,12 h³) die
@@ -12025,7 +12028,8 @@ class MainWindow(QtWidgets.QMainWindow):
                           hinweis="Die Netzdichte leitet die Elementgröße aus der Größe jedes Objekts ab; "
                                   "„intelligent“ verfeinert an kleinen Kanten (Löcher, Stege) innerhalb der "
                                   "Grenzen. Das Protokoll nennt beim Vernetzen je Objekt die Elementgröße "
-                                  "und ihren Grund.")
+                                  "und ihren Grund.",
+                          zusatz=[("Vernetzer installieren…", self.werkzeuge_dialog)])
         halter["m"] = maske
         maske.angewendet.connect(self._netzeinstellungen_setzen)
         return self.maske_erzeugen(maske)
@@ -12148,6 +12152,29 @@ class MainWindow(QtWidgets.QMainWindow):
                        ordnung=self.NETZORDNUNG.get(str(w.get("ordnung", "")), n.ordnung),
                        abgebildet=bool(w.get("abgebildet", n.abgebildet)),
                        teilung_uebersteuern=bool(w.get("uebersteuern", True)))
+
+    def werkzeuge_dialog(self):
+        """gmsh, Netgen und MMG3D nachladen oder entfernen (Vernetzer und
+        Nachbesserer, statik3d.werkzeuge)."""
+        from .werkzeuge_dialog import WerkzeugeDialog
+        dlg = WerkzeugeDialog(self)
+        dlg.geaendert.connect(self._werkzeuge_geaendert)
+        dlg.exec()
+
+    def _werkzeuge_geaendert(self, key: str):
+        """Nach Installieren/Entfernen: protokollieren und eine offene
+        Netzeinstellungen-Maske neu aufbauen (Auswahl „nicht installiert")."""
+        from .. import werkzeuge as wz
+        s = wz.stand(key)
+        name = wz.WERKZEUGE[key].name
+        if s:
+            self.info(f"Werkzeug {name} {s.get('version', '?')} installiert ({wz.werkzeug_ordner(key)})"
+                      + (" - wirksam nach dem Neustart" if s.get("neustart") else ""))
+        else:
+            self.info(f"Werkzeug {name} entfernt")
+        m = getattr(getattr(self, "maskenrand", None), "maske", None)
+        if m is not None and getattr(m, "titel", "") == "Netzeinstellungen":
+            self.maske_netzeinstellungen()
 
     def _netzeinstellungen_setzen(self, w: dict):
         try:

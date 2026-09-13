@@ -20,6 +20,10 @@ hiddenimports = ["pyvistaqt", "zstandard", "statik3d.web.server", "statik3d.upda
                  "scipy.sparse.csgraph._validation", "scipy.special._cdflib",
                  "vtkmodules.all", "vtkmodules.util.data_model", "vtkmodules.util.execution_model"]
 hiddenimports += collect_submodules("statik3d")
+# Nachgeladene Werkzeuge (statik3d.werkzeuge): gmsh.py und Netgen kommen aus
+# dem Werkzeugordner des Anwenders und brauchen diese Standardmodule, die
+# das Programm selbst sonst nicht importiert
+hiddenimports += ["platform", "signal", "struct", "ctypes.util", "importlib.metadata", "hashlib"]
 hiddenimports += collect_submodules("vtkmodules")
 for optional in ("pypardiso", "pyamg", "reportlab", "svglib", "qrcode"):
     try:
@@ -35,6 +39,29 @@ try:
     hiddenimports += collect_submodules("pyamg")
 except ImportError:
     pass
+# MUMPS (CeCILL-C) kommt ebenfalls mit: Paket "mumps" aus packaging/ (eigener
+# Windows-Bau, docs/MUMPS_Windows_Bauanleitung.md). Die DLLs liegen im
+# Paketordner _lib und mumps/__init__.py laedt sie von dort
+# (os.add_dll_directory) - darum kommen sie als datas an denselben Ort und
+# nicht als binaries: PyInstaller wuerde ihre Abhaengigkeiten sonst ein
+# zweites Mal in die Wurzel legen. Der Ordner LIZENZ liegt bei, weil die
+# CeCILL-C den Lizenztext und die Urheberhinweise neben der Weitergabe
+# verlangt (Art. 5.3.1 und 6.4).
+try:
+    import glob as _glob
+    import mumps as _mumps
+    _n_dll = 0
+    for datei in _glob.glob(os.path.join(_mumps.LIB_DIR, "*")):
+        datas.append((datei, os.path.join("mumps", "_lib")))
+        _n_dll += datei.lower().endswith(".dll")
+    for wurzel, _d, dateien in os.walk(_mumps.LIZENZ_DIR):
+        for datei in dateien:
+            datas.append((os.path.join(wurzel, datei),
+                          os.path.join("mumps", os.path.relpath(wurzel, os.path.dirname(_mumps.LIZENZ_DIR)))))
+    hiddenimports.append("mumps")
+    print(f"[Statik3D] MUMPS {_mumps.MUMPS_VERSION}: {_n_dll} DLLs aus {_mumps.LIB_DIR}")
+except ImportError:
+    print("[Statik3D] WARNUNG: kein Paket mumps - der Selbsttest der exe wird rot")
 
 
 # --------------------------------------------------------------------------

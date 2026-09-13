@@ -1,0 +1,85 @@
+name: Werkzeuge
+
+# Baut die Programme, die Statik3D auf Wunsch nachlaedt (statik3d/werkzeuge.py,
+# Dialog "Vernetzer und Nachbesserer"), und legt sie im Release "werkzeuge" ab:
+#   mmg3d_O3-windows-x64.zip   MMG3D (LGPL, MmgTools/mmg) - Nachbesserer
+# Laeuft von Hand (workflow_dispatch) oder wenn sich diese Datei auf main aendert.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [".github/workflows/werkzeuge.yml"]
+
+permissions:
+  contents: write
+
+env:
+  MMG_TAG: v5.8.0
+
+jobs:
+  mmg3d-windows:
+    name: MMG3D fuer Windows bauen
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: MMG-Quelltext holen
+        uses: actions/checkout@v4
+        with:
+          repository: MmgTools/mmg
+          ref: ${{ env.MMG_TAG }}
+          path: mmg
+
+      - name: MMG3D bauen (CMake, MSVC)
+        shell: pwsh
+        run: |
+          cmake -S mmg -B build -DBUILD=MMG3D -DUSE_SCOTCH=OFF -DUSE_VTK=OFF -DBUILD_TESTING=OFF `
+                -DLIBMMG3D_STATIC=OFF -DLIBMMG3D_SHARED=OFF -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { throw "cmake (konfigurieren) fehlgeschlagen" }
+          cmake --build build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { throw "cmake (bauen) fehlgeschlagen" }
+          $exe = Get-ChildItem build -Recurse -Filter mmg3d_O3.exe | Select-Object -First 1
+          if (-not $exe) { throw "mmg3d_O3.exe nicht gefunden" }
+          New-Item -ItemType Directory paket | Out-Null
+          Copy-Item $exe.FullName paket/mmg3d_O3.exe
+          Copy-Item mmg/LICENSE paket/LICENSE
+          Copy-Item mmg/COPYING.LESSER paket/COPYING.LESSER
+          $quelle = @(
+            "MMG $env:MMG_TAG (mmg3d_O3, Release, MSVC, ohne Scotch und VTK)",
+            "Quelle:  https://github.com/MmgTools/mmg/tree/$env:MMG_TAG",
+            "Lizenz:  LGPL (LICENSE, COPYING.LESSER)",
+            "Gebaut:  GitHub Actions windows-latest, Statikprogramm ${{ github.sha }}, $(Get-Date -Format s)"
+          )
+          $quelle -join "`n" | Out-File paket/QUELLE.txt -Encoding utf8
+          "Groesse: {0:N1} MB" -f ((Get-Item paket/mmg3d_O3.exe).Length / 1MB)
+
+      - name: Probe (mmg3d_O3 -h)
+        shell: pwsh
+        run: |
+          $out = & paket/mmg3d_O3.exe -h 2>&1 | Out-String
+          $out
+          if ($out -notmatch "(?i)mmg") { throw "mmg3d_O3 antwortet nicht wie erwartet" }
+
+      - name: Archiv packen
+        shell: pwsh
+        run: Compress-Archive -Path paket/* -DestinationPath mmg3d_O3-windows-x64.zip
+
+      - name: als Artefakt ablegen
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmg3d_O3-windows-x64
+          path: mmg3d_O3-windows-x64.zip
+
+      - name: Release "werkzeuge" veroeffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: werkzeuge
+          name: Statik3D - Werkzeuge (nachladbar)
+          body: |
+            Programme, die Statik3D auf Wunsch nachlaedt (Extras -> Vernetzer installieren...).
+
+            mmg3d_O3-windows-x64.zip: MMG3D ${{ env.MMG_TAG }} (LGPL), gebaut aus
+            https://github.com/MmgTools/mmg - Nachbesserer fuer Tetraedernetze.
+          files: mmg3d_O3-windows-x64.zip
+          prerelease: false
+          make_latest: false
