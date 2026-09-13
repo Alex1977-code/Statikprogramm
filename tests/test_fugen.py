@@ -858,10 +858,13 @@ def test_zylinder_in_bohrung():
     check("außerhalb des Suchradius findet keine etwas",
           not gefunden[aussen].any(), f"{gefunden[aussen].sum()} von {aussen.sum()}")
     d = abstand[innen]
-    # Spiel 0,5 mm; die Sehnen der 42-eckigen Bohrung liegen bis 0,28 mm weiter innen
-    check("im Überdeckungsbereich ist der Abstand das Spiel (0,5 mm, minus Sehnenfehler der Bohrung)",
-          0.0002 < np.median(d) < 0.0005 and d.max() < 0.0006,
-          f"Median {np.median(d) * 1e3:.2f} mm, max {d.max() * 1e3:.2f} mm")
+    # Spiel 0,5 mm. Die Sehnen der 42-eckigen Bohrung liegen bis 0,28 mm
+    # weiter innen - gemessen wird aber zur wahren Bohrung (Flaechenquadriken),
+    # nicht zur Sehne: seit 13.09.2026 steht hier das Spiel, nicht das Spiel
+    # minus Sehnenfehler
+    check("im Überdeckungsbereich ist der Abstand das Spiel: 0,5 mm zur wahren Bohrung, nicht zur Sehne (0,22 … 0,5 mm)",
+          abs(np.median(d) - 0.0005) < 2e-5 and abs(d.max() - 0.0005) < 3e-5 and abs(d.min() - 0.0005) < 3e-5,
+          f"Median {np.median(d) * 1e3:.3f} mm, min {d.min() * 1e3:.3f}, max {d.max() * 1e3:.3f} mm")
     rand = gefunden & ~innen
     check("am Rand der Bohrung wird bis zum Suchradius zugeordnet - mit dem Abstand als Anfangsspalt",
           rand.any() and abstand[rand].max() <= weite + 1e-12, f"{rand.sum()} Facetten")
@@ -1211,6 +1214,110 @@ def test_deckungsgleiche_knoten_direkt():
           f"(eine Facettennormale läge {180.0 / n:.0f}° daneben)")
 
 
+def test_facettenspalt_bereinigt():
+    """Der Spalt zaehlt zur wahren Flaeche, nicht zur Sehne der Facette.
+
+    Eine passgenaue Achse (40 Knoten am Umfang) in einer Bohrung aus 36
+    Facetten (r = 300 mm, Sehne 52 mm, Pfeilhoehe 1,1 mm - das Netz der
+    Augenbleche des Drehlagers): nur die acht Knoten auf einer Ecke der
+    Bohrung lagen vorher an, die uebrigen standen um die Pfeilhoehe "offen",
+    und weil sie hinter der Sehne liegen, mit umgekehrter Normale (ins
+    Blech). Am Drehlager trug die Achse so auf 27 von 1194 Knoten, mit
+    387 kN auf einem einzigen (13.09.2026). Jetzt liegen alle an, jede
+    Normale zeigt in die Achse. Ebene Facetten bleiben, wie sie sind: eine
+    Kante wird nicht verrundet, ein Spalt ueber dem Beruehrungsband bleibt
+    offen, eine Durchdringung ist eine Durchdringung - nur eine Schale hat
+    kein Innen und richtet ihre Normale zum Knoten.
+    """
+    from scipy import sparse
+    from statik3d.contact import ContactSystem, Flaechenquadriken, facetten_felder
+    from statik3d.model import ContactPair, ShellProp
+
+    # 1) Passgenaue Achse in der Bohrung
+    r, n_b, n_a, h = 0.300, 36, 40, 0.1
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    _u, _o, facetten = _mantelfacetten(m, r, n_b, h)
+    bohrung = [[f[1], f[0], f[3], f[2]] for f in facetten]     # Umlauf umgekehrt: Normale zur Achse hin
+    wa = 2.0 * np.pi * np.arange(n_a) / n_a
+    achse = [int(m.add_node(r * np.cos(a), r * np.sin(a), z)) for z in (0.0, h) for a in wa]
+    m.contact_pairs.append(ContactPair("Achse", slave_nodes=achse, master_faces=bohrung,
+                                       search_radius=0.1))
+    log = []
+    st = ContactSystem(m, sparse.identity(m.ndof, format="csr"), log)
+    cons = [c for c in st.cons if c.kind == "surface"]
+    deck = [c for c in cons if len(c.master[0]) == 1]
+    check("jeder Achsknoten ist gepaart, acht davon liegen auf einer Ecke der Bohrung",
+          len(cons) == 2 * n_a and len(deck) == 8,
+          f"{len(cons)} Bedingungen, {len(deck)} deckungsgleich")
+    check("alle liegen an: Anfangsspalt genau null, auch zwischen den Ecken (Pfeilhöhe 1,1 mm)",
+          all(c.g0 == 0.0 for c in cons),
+          f"größter |g0| = {max(abs(c.g0) for c in cons):.2e} m, "
+          f"{sum(1 for c in cons if c.g0 == 0.0)} von {len(cons)} auf null")
+    schief = -1.0
+    for c in cons:
+        p_ = m.nodes[c.node]
+        e_r = np.array([p_[0], p_[1], 0.0]) / np.hypot(p_[0], p_[1])
+        schief = max(schief, float(c.normal @ e_r))      # < 0: zur Achse hin
+    check("und jede Normale zeigt in die Achse hinein, nicht ins Blech",
+          schief < -0.999, f"größtes n·e_r = {schief:.4f}")
+    check("das Protokoll nennt alle Knoten aufliegend",
+          any("Achse" in z and "100 % aufliegend" in z for z in log),
+          "; ".join(z for z in log if "Achse" in z)[:120])
+    # die Naeherung selbst: die Sehnenmitte kommt auf den Kreis
+    K4, g = facetten_felder(bohrung)
+    Q = Flaechenquadriken(m.nodes, K4, g)
+    mitte = m.nodes[bohrung[0]].mean(axis=0)
+    qs, ns_ = Q.punkt(mitte, 0)
+    close("die Sehnenmitte der Bohrung kommt auf den Kreis (Pfeilhöhe 1,14 mm, Rest unter 5 µm)",
+          float(np.hypot(qs[0, 0], qs[0, 1])), r, 5e-6, " m")
+    close("… und die Sehne lag um die Pfeilhöhe innen",
+          float(np.hypot(mitte[0], mitte[1])), r * np.cos(np.pi / n_b), 1e-12, " m")
+
+    # 2) Ebene Facetten bleiben, wie sie sind
+    m2 = Model()
+    m2.add_material(Material.steel("S235"))
+    b = [int(m2.add_node(*p_)) for p_ in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                                          (1, 0, 1), (1, 1, 1)]]
+    boden = [b[0], b[1], b[2], b[3]]                    # Normale +z
+    wand = [b[1], b[4], b[5], b[2]]                     # x = 1, Normale -x (zur Ecke hin)
+    lage = {"ecke": (0.95, 0.5, 0.001), "band": (0.5, 0.5, 0.00005),
+            "offen": (0.5, 0.5, 0.0005), "hinter": (0.5, 0.5, -0.01)}
+    ids = {k: int(m2.add_node(*v)) for k, v in lage.items()}
+    m2.contact_pairs.append(ContactPair("Eben", slave_nodes=list(ids.values()),
+                                        master_faces=[boden, wand], search_radius=0.1))
+    st2 = ContactSystem(m2, sparse.identity(m2.ndof, format="csr"))
+    von = {int(c.node): c for c in st2.cons if c.kind == "surface"}
+    c = von[ids["ecke"]]
+    check("an einer Kante wird nicht verrundet: 1 mm über dem Boden neben der Wand bleiben 1 mm, Normale +z",
+          abs(c.g0 - 0.001) < 1e-9 and abs(c.normal[2] - 1.0) < 1e-12,
+          f"g0 = {c.g0 * 1e3:.6f} mm, n = {np.round(c.normal, 6).tolist()}")
+    c = von[ids["band"]]
+    check("0,05 mm über dem Boden liegen im Berührungsband (ein Tausendstel des Suchradius): Spalt null",
+          c.g0 == 0.0, f"g0 = {c.g0:.2e} m")
+    c = von[ids["offen"]]
+    check("0,5 mm bleiben offen", abs(c.g0 - 0.0005) < 1e-12, f"g0 = {c.g0 * 1e3:.4f} mm")
+    c = von[ids["hinter"]]
+    check("10 mm hinter der Facette sind eine Durchdringung - kein Spalt mit umgekehrter Normale",
+          abs(c.g0 + 0.01) < 1e-12 and abs(c.normal[2] - 1.0) < 1e-12,
+          f"g0 = {c.g0 * 1e3:.3f} mm, n_z = {c.normal[2]:+.3f}")
+
+    # 3) Eine Schale hat kein Innen: die Normale zeigt zum Slave-Knoten
+    m3 = Model()
+    m3.add_material(Material.steel("S235"))
+    m3.add_shell_prop(ShellProp("t", 0.01))
+    sh = [int(m3.add_node(*p_)) for p_ in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]]
+    e = m3.add_element("shell4", sh, "S235", "t")
+    unter = int(m3.add_node(0.5, 0.5, -0.01))
+    m3.contact_pairs.append(ContactPair("Schale", slave_nodes=[unter], master_elements=[e],
+                                        search_radius=0.1))
+    st3 = ContactSystem(m3, sparse.identity(m3.ndof, format="csr"))
+    cs3 = [c for c in st3.cons if c.kind == "surface"]
+    check("unter einer Schale: Spalt 10 mm, Normale zum Knoten hin (-z)",
+          len(cs3) == 1 and abs(cs3[0].g0 - 0.01) < 1e-12 and abs(cs3[0].normal[2] + 1.0) < 1e-12,
+          f"{len(cs3)} Bedingungen" + (f", g0 = {cs3[0].g0 * 1e3:.3f} mm, n_z = {cs3[0].normal[2]:+.3f}" if cs3 else ""))
+
+
 def _zwei_prismen(n=5, r=0.30, dick=0.30, klein=0.05):
     """Zwei Fuenfeckprismen uebereinander mit **einer** gemeinsamen Flaeche.
 
@@ -1421,7 +1528,7 @@ def main():
               test_spalt_laengs_der_normalen, test_formschluss,
               test_formschluss_meldung,
               test_ein_suchradius, test_verteilung_statt_mittelwert,
-              test_deckungsgleiche_knoten_direkt,
+              test_deckungsgleiche_knoten_direkt, test_facettenspalt_bereinigt,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
               test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei, test_karten_einmal_je_lauf):

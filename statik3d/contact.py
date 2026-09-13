@@ -37,6 +37,13 @@ MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel (je
 DECKUNGSGLEICH = 1e-6
 #: Bis zu diesem Anteil des Suchradius gilt ein Spalt als Beruehrung.
 AUFLIEGEND = 1e-3
+#: Winkel [Grad] zwischen den Normalen zweier Facetten mit gemeinsamer Ecke,
+#: bis zu dem sie zur selben glatten Flaeche gehoeren: nur solche Nachbarn
+#: gehen in die Naeherung der wahren Flaeche ein (:class:`Flaechenquadriken`).
+#: Darueber liegt eine Kante, und die wird nicht verrundet. Die Facetten
+#: eines Zwoelfecks stehen 30 Grad auseinander, die eines 36-Ecks 10, eine
+#: rechtwinklige Kante 90.
+KNICK = 30.0
 
 
 # --------------------------------------------------------------------------
@@ -247,15 +254,223 @@ def naechste_punkte_dreiecke(p, A, B, C):
     return q, w
 
 
-def _deckender_knoten(p, s, mbaum, mknoten, nnorm, nflaeche, tol):
+def facetten_felder(facetten) -> tuple:
+    """Facetten (Knotenlisten mit 3 oder 4 Ecken) als Felder (K (nf, 4),
+    gueltig (nf, 4)): mit dem ersten Knoten aufgefuellt - die Newell-Summe
+    ueber vier Ecken mit P3 = P0 ist die des Dreiecks -, ``gueltig`` sagt,
+    welche Eintraege echte Ecken sind. Quadratische Facetten (6 oder 8
+    Knoten, Ecken zuerst) gehen mit ihren Ecken ein."""
+    K = np.zeros((len(facetten), 4), dtype=int)
+    gueltig = np.zeros((len(facetten), 4), dtype=bool)
+    for i, f in enumerate(facetten):
+        fk = [int(x) for x in f]
+        fk = fk[:3] if len(fk) in (3, 6) else fk[:4]
+        K[i, :len(fk)] = fk
+        K[i, len(fk):] = fk[0]
+        gueltig[i, :len(fk)] = True
+    return K, gueltig
+
+
+def knotennormalen(nodes, K, gueltig, bezug=None) -> tuple:
+    """Flaechengewichtete Knotennormalen einer Facettenmenge - als Summen.
+
+    Die Normale der **ganzen** Facette (Newell), nicht die ihrer Dreiecke:
+    ein Viereck zerfaellt in zwei, und die Ecke, die in beiden vorkommt,
+    bekaeme sonst das doppelte Gewicht - am Zwoelfeck genug, um die
+    Knotennormale um 5 Grad zu kippen. ``K``/``gueltig`` wie aus
+    :func:`facetten_felder`; ``bezug`` (nf, 3) richtet jede Facettennormale
+    (gedreht, wenn sie ihm entgegen zeigt; null laesst den Umlauf gelten).
+    Rueckgabe (Summe Flaeche * Normale (nn, 3), Summe der Flaechen (nn,)).
+    """
+    nodes = np.asarray(nodes, float)
+    nsum = np.zeros((len(nodes), 3))
+    asum = np.zeros(len(nodes))
+    K = np.asarray(K, int).reshape(-1, 4)
+    if not len(K):
+        return nsum, asum
+    P = nodes[K]                                                   # (nf, 4, 3)
+    vf = 0.5 * np.cross(P, np.roll(P, -1, axis=1)).sum(axis=1)     # Newell
+    af = np.linalg.norm(vf, axis=1)
+    if bezug is not None:
+        dreh = np.einsum("ij,ij->i", vf, np.asarray(bezug, float).reshape(-1, 3)) < 0
+        vf[dreh] = -vf[dreh]
+    g = np.asarray(gueltig, bool).reshape(-1, 4)
+    for j in range(4):
+        w = g[:, j]
+        np.add.at(nsum, K[w, j], vf[w])
+        np.add.at(asum, K[w, j], af[w])
+    return nsum, asum
+
+
+def einheitsnormalen(nsum, asum) -> np.ndarray:
+    """Einheits-Knotennormalen aus den Summen; null, wo sich die Facetten
+    aufheben (eine duenne Platte, deren beide Seiten zum selben Paar
+    gehoeren) - dort gibt es keine Flaechennormale."""
+    ln = np.linalg.norm(nsum, axis=1)
+    ok = ln > 0.2 * np.asarray(asum, float)
+    out = np.zeros_like(nsum)
+    out[ok] = nsum[ok] / ln[ok, None]
+    return out
+
+
+class Flaechenquadriken:
+    """Die wahre Flaeche hinter den Facetten - je Facette eine Quadrik durch
+    die Knoten.
+
+    Eine gekruemmte Flaeche (Bohrung, Zylinder, Kugel) liegt im Netz als
+    Sehnen vor; ihre **Knoten** aber liegen auf der wahren Flaeche. Ein
+    Knoten der Gegenseite, der ebenfalls auf ihr liegt, steht gegen die Sehne
+    um deren Pfeilhoehe ab: bei 50-mm-Facetten auf r = 300 mm ein Millimeter.
+    Als Spalt gelesen, stuende eine passgenaue Achse in ihrer Bohrung nur mit
+    den Knoten an, die auf einer Ecke liegen; hinter der Sehne (Richtung
+    Master) laege sie sogar "in" der Bohrung.
+
+    Durch die Ecken einer Facette und die ihrer **glatten Nachbarn** -
+    Facetten mit einer gemeinsamen Ecke, deren Normale hoechstens
+    :data:`KNICK` Grad von ihrer abweicht; eine Kante bleibt eine Kante, ein
+    Absatz wird nicht verrundet - wird im Rahmen der Facette (x, y in der
+    Facette laengs der Hauptrichtungen der Punkte, z laengs der Normalen) die
+    Quadrik
+
+        z + A x^2 + B y^2 + C x y + D x + E y + G z^2 + I = 0
+
+    nach kleinsten Quadraten gelegt (linear in den Beiwerten). Sie enthaelt
+    die Ebene (alle Beiwerte null), jeden Zylinder, dessen Achse in der
+    Facettenebene liegt - und das tut sie an jeder Facette eines Zylinders -,
+    die Kugel und das Ellipsoid **genau**, nicht nur bis zur zweiten Ordnung:
+    ein Hoehenfeld z = c0 + c1 x + ... + c5 y^2 liess an einem 36-Eck mit
+    r = 300 mm noch 19 µm (das Glied x^4 / 8 r^3 ueber die Nachbarn), die
+    Quadrik nichts. Bestimmen die Punkte die allgemeine Quadrik nicht - zwei
+    Knotenringe einer Bohrung, die eine Facette hoch ist, lassen Ellipsen
+    jeder Form durch -, gilt die **Zylinderform** G = A + B (die Achse liegt
+    in der Facettenebene: x^2 und z^2 bzw. y^2 und z^2 mit demselben
+    Beiwert), die auch den Kreis durch zwei Ringe festlegt; danach fallen
+    die Glieder in y weg. Mit weniger als vier Punkten bleibt es bei der
+    Facette.
+
+    Knotennormalen taugen dafuer nicht (Phong-Tessellation, 13.09.2026
+    verworfen): die flaechengewichtete Mittelung steht an einer
+    unregelmaessig vernetzten Bohrung um einige Grad neben der Radialen, und
+    die Verschiebung waechst mit dem Abstand zur Ecke - am Drehlager blieben
+    0,3 mm Durchdringung, als Uebermass gelesen 7 MN Kontaktkraft.
+    """
+
+    #: Spalten: x^2, y^2, x y, x, y, z^2, 1, x^2 + z^2, y^2 + z^2 - und die
+    #: Stufen, in denen Glieder wegfallen, wenn die Punkte sie nicht
+    #: bestimmen: allgemeine Quadrik, Zylinderform, ohne y^2, ohne x y und y
+    STUFEN = ((0, 1, 2, 3, 4, 5, 6), (7, 8, 2, 3, 4, 6), (7, 2, 3, 4, 6), (7, 3, 6))
+
+    def __init__(self, nodes, K, gueltig, bezug=None, knick: float = KNICK):
+        self.nodes = np.asarray(nodes, float)
+        self.K = np.asarray(K, int).reshape(-1, 4)
+        self.g = np.asarray(gueltig, bool).reshape(-1, 4)
+        nf = len(self.K)
+        P = self.nodes[self.K] if nf else np.zeros((0, 4, 3))
+        vf = 0.5 * np.cross(P, np.roll(P, -1, axis=1)).sum(axis=1)      # Newell
+        if bezug is not None and nf:
+            dreh = np.einsum("ij,ij->i", vf, np.asarray(bezug, float).reshape(-1, 3)) < 0
+            vf[dreh] = -vf[dreh]
+        ln = np.linalg.norm(vf, axis=1)
+        ln[ln <= 0] = 1.0
+        self.N = vf / ln[:, None]
+        self.cos_knick = float(np.cos(np.radians(knick)))
+        self._an: dict = {}                  # Knoten -> Facetten
+        for i in range(nf):
+            for j in range(4):
+                if self.g[i, j]:
+                    self._an.setdefault(int(self.K[i, j]), []).append(i)
+        self._fit: dict = {}
+
+    def _quadrik(self, i: int):
+        """(o, e1, e2, n, s, c) der Facette i - oder None."""
+        if i in self._fit:
+            return self._fit[i]
+        n = self.N[i]
+        ecken = [int(self.K[i, j]) for j in range(4) if self.g[i, j]]
+        punkte = set(ecken)
+        for e in ecken:
+            for f in self._an.get(e, ()):
+                if f != i and float(self.N[f] @ n) >= self.cos_knick:
+                    punkte.update(int(self.K[f, j]) for j in range(4) if self.g[f, j])
+        P = self.nodes[sorted(punkte)]
+        o = self.nodes[ecken].mean(axis=0)
+        D = P - o
+        z = D @ n
+        Dq = D - z[:, None] * n
+        aus = None
+        if len(P) >= 4:
+            # Hauptrichtungen der Punkte in der Facette: x laengs der
+            # groessten Ausdehnung, damit bei einer einzelnen Reihe zuerst
+            # die Glieder in y wegfallen koennen
+            _u, _s, vt = np.linalg.svd(Dq, full_matrices=False)
+            e1 = vt[0] - (vt[0] @ n) * n
+            l1 = float(np.linalg.norm(e1))
+            if l1 > 0:
+                e1 = e1 / l1
+                e2 = np.cross(n, e1)
+                s = float(np.linalg.norm(Dq, axis=1).max()) or 1.0
+                x, y, zs = (Dq @ e1) / s, (Dq @ e2) / s, z / s
+                A = np.column_stack([x * x, y * y, x * y, x, y, zs * zs, np.ones_like(x),
+                                     x * x + zs * zs, y * y + zs * zs])
+                for cols in self.STUFEN:
+                    c, _r, rang, _sv = np.linalg.lstsq(A[:, cols], -zs, rcond=None)
+                    if rang == len(cols):
+                        cc = np.zeros(9)
+                        cc[list(cols)] = c
+                        # Zylinderform zurueck auf A, B, G
+                        cc[0] += cc[7]
+                        cc[1] += cc[8]
+                        cc[5] += cc[7] + cc[8]
+                        aus = (o, e1, e2, n, s, cc[:7])
+                        break
+        self._fit[i] = aus
+        return aus
+
+    def punkt(self, q, fi) -> tuple:
+        """Zu Punkten ``q`` (k, 3) auf den Facetten ``fi`` (k,): (q* (k, 3),
+        n* (k, 3)) - Punkt und Normale auf der wahren Flaeche. Ohne
+        Naeherung bleiben es der Punkt und die Facettennormale."""
+        q = np.asarray(q, float).reshape(-1, 3)
+        fi = np.asarray(fi, int).reshape(-1)
+        qs = q.copy()
+        ns = self.N[fi].copy()
+        for i in np.unique(fi):
+            fit = self._quadrik(int(i))
+            if fit is None:
+                continue
+            o, e1, e2, n, s, c = fit
+            w = np.flatnonzero(fi == i)
+            D = q[w] - o
+            x, y = (D @ e1) / s, (D @ e2) / s
+            # G z^2 + z + R = 0: die Wurzel nahe der Facette (z klein)
+            R = c[0] * x * x + c[1] * y * y + c[2] * x * y + c[3] * x + c[4] * y + c[6]
+            G = c[5]
+            wurzel = 1.0 - 4.0 * G * R
+            gut = wurzel >= 0
+            if not gut.all():
+                w, x, y, R, wurzel = w[gut], x[gut], y[gut], R[gut], wurzel[gut]
+                D = D[gut]
+            z = -2.0 * R / (1.0 + np.sqrt(wurzel))
+            qs[w] = q[w] + (z * s - D @ n)[:, None] * n
+            gx = 2.0 * c[0] * x + c[2] * y + c[3]
+            gy = 2.0 * c[1] * y + c[2] * x + c[4]
+            gz = 1.0 + 2.0 * G * z
+            nn = gx[:, None] * e1[None, :] + gy[:, None] * e2[None, :] + gz[:, None] * n[None, :]
+            ln = np.linalg.norm(nn, axis=1)
+            ln[ln <= 0] = 1.0
+            ns[w] = nn / ln[:, None]
+        return qs, ns
+
+
+def _deckender_knoten(p, s, mbaum, mknoten, knorm, tol):
     """Der Master-Knoten, auf dem ``p`` liegt - oder None.
 
     Rueckgabe ([Knoten], [1.0], Normale, 0.0): ein Master, volles Gewicht,
     Spalt null. Die Normale ist die flaechengewichtete Mittelung der
-    Master-Facetten in diesem Knoten. Stossen dort Facetten zusammen, die
-    einander entgegen zeigen - eine duenne Platte, deren beide Seiten zum
-    selben Kontaktpaar gehoeren -, hebt sich die Summe auf; dann gibt es keine
-    Flaechennormale und es bleibt bei der Suche.
+    Master-Facetten in diesem Knoten (``knorm``). Stossen dort Facetten
+    zusammen, die einander entgegen zeigen - eine duenne Platte, deren beide
+    Seiten zum selben Kontaktpaar gehoeren -, hebt sich die Summe auf; dann
+    gibt es keine Flaechennormale und es bleibt bei der Suche.
     """
     dd, ii = mbaum.query(p, k=2)
     for d0, i0 in zip(np.atleast_1d(dd), np.atleast_1d(ii)):
@@ -264,13 +479,10 @@ def _deckender_knoten(p, s, mbaum, mknoten, nnorm, nflaeche, tol):
         t = int(mknoten[int(i0)])
         if t == int(s):
             continue
-        v = nnorm.get(t)
-        if v is None:
-            continue
-        laenge = float(np.linalg.norm(v))
-        if laenge <= 0.2 * float(nflaeche.get(t, 0.0)):
+        v = knorm[t]
+        if not np.any(v):
             return None
-        return [t], [1.0], v / laenge, 0.0
+        return [t], [1.0], np.array(v, float), 0.0
     return None
 
 
@@ -502,15 +714,26 @@ class ContactSystem:
             + f" (mittlere Facettennormale {mittel:.3f})")
         return 0.5 * u if zyl else u
 
-    def _bedingung(self, cp, s, tri, wj, n, d, normalen, marke):
+    def _bedingung(self, cp, s, tri, wj, n, d, normalen, marke, band: float = 0.0):
         """Eine Kontaktbedingung fuer Slave-Knoten ``s`` gegen ``tri``/``wj``.
 
         Gemeinsamer Teil beider Wege: der deckungsgleiche Knoten (ein Master,
         Gewicht 1) und die Projektion auf eine Facette (drei Master mit
         baryzentrischen Gewichten) unterscheiden sich nur darin, wer der
         Master ist und woher die Richtung kommt.
+
+        ``band`` ist das Beruehrungsband: ein Anfangsspalt, der dem Betrag
+        nach darunter liegt - Spalt wie Durchdringung -, wird zu null gesetzt
+        (ANSYS: ICONT). Es ist dieselbe Grenze, bis zu der das Protokoll einen
+        Knoten "aufliegend" nennt (ein Tausendstel des Suchradius): was das
+        Protokoll als Beruehrung zaehlt, rechnet der Loeser auch so. Der Rest
+        der Facettenbereinigung liegt weit darunter; ohne das Band waere er
+        bei Durchdringung ein Uebermass von einigen Mikrometern und damit
+        eine Pressspannung, die es nicht gibt.
         """
         g0 = 0.0 if (cp.anliegend or cp.zug) else float(d) - cp.gap
+        if abs(g0) <= band:
+            g0 = 0.0
         dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
         cn = np.concatenate([n] + [-wi * n for wi in wj])
         kn = cp.stiffness if cp.stiffness > 0 else self._auto_k([s])
@@ -543,12 +766,21 @@ class ContactSystem:
         if not facets:
             self.log.append(f"Kontaktpaar '{cp.name}': keine Master-Facetten")
             return
+        from .assemble import SHELL_TYPES
         cen_of = _solid_outward(m, cp)
+        # Schalen haben kein Innen: ihre Facetten werden zum Slave-Knoten hin
+        # gerichtet. Alle anderen Facetten sind gerichtet - Volumenseiten
+        # ueber den Elementschwerpunkt, explizite Facetten ueber den Umlauf
+        # ihrer Knoten (fugen._nach_normale) - und bleiben es: ein Knoten
+        # hinter der Facette ist eine Durchdringung, kein Spalt mit
+        # umgekehrter Richtung.
+        schalen = {tuple(sorted(int(x) for x in m.elements[ei].nodes))
+                   for ei in cp.master_elements if m.elements[ei].typ in SHELL_TYPES}
         radius = cp.search_radius if cp.search_radius else 0.1 * self.size
-        tris, ecken = [], []   # (nodes(3), n, facet_key), (A, B, C)
-        nnorm: dict = {}       # Knoten -> Summe Flaeche * Normale
-        nflaeche: dict = {}    # Knoten -> Summe der Facettenflaechen
-        for f in facets:
+        band = AUFLIEGEND * radius
+        tris, ecken = [], []   # (nodes(3), n, facet_key, facet_index), (A, B, C)
+        bezug = []             # je Facette: Richtung nach aussen (Volumen) oder null
+        for fi, f in enumerate(facets):
             key = tuple(sorted(f))
             if len(f) == 3:
                 parts = [(f[0], f[1], f[2])]
@@ -564,26 +796,19 @@ class ContactSystem:
                 if key in cen_of:            # Volumen: Normale nach aussen
                     if nv @ (cen_of[key] - P.mean(axis=0)) > 0:
                         nv = -nv
-                tris.append((tri, nv, key))
+                tris.append((tri, nv, key, fi))
                 ecken.append(P)
-            # Die Flaechennormale der **ganzen** Facette (Newell), nicht die
-            # ihrer Dreiecke: ein Viereck zerfaellt in zwei, und die Ecke, die
-            # in beiden vorkommt, bekaeme sonst das doppelte Gewicht. Am
-            # Zwoelfeck reicht das, um die Knotennormale um 5 Grad zu kippen.
-            Pf = m.nodes[list(f)]
-            vf = 0.5 * np.cross(Pf, np.roll(Pf, -1, axis=0)).sum(axis=0)
-            af = float(np.linalg.norm(vf))
-            if af <= 0:
-                continue
-            if key in cen_of and vf @ (cen_of[key] - Pf.mean(axis=0)) > 0:
-                vf = -vf
-            for t in f:
-                t = int(t)
-                nnorm[t] = nnorm.get(t, 0.0) + vf
-                nflaeche[t] = nflaeche.get(t, 0.0) + af
+            bezug.append(m.nodes[list(f)].mean(axis=0) - cen_of[key]
+                         if key in cen_of else np.zeros(3))
         if not tris:
             self.log.append(f"Kontaktpaar '{cp.name}': alle Master-Facetten entartet")
             return
+        # Knotennormalen der Master-Oberflaeche (flaechengewichtet ueber die
+        # ganzen Facetten, :func:`knotennormalen`): Richtung fuer
+        # deckungsgleiche Knoten und Kruemmung fuer den Facettenspalt.
+        K4, gueltig = facetten_felder(facets)
+        knorm = einheitsnormalen(*knotennormalen(m.nodes, K4, gueltig, bezug))
+        quadriken = Flaechenquadriken(m.nodes, K4, gueltig, bezug)
         E = np.array(ecken)                       # (T, 3, 3)
         A, B, Cc = E[:, 0], E[:, 1], E[:, 2]
         S = E.mean(axis=1)
@@ -613,7 +838,7 @@ class ContactSystem:
         normalen: list = []
         for s in cp.slave_nodes:
             p = m.nodes[s]
-            fund = _deckender_knoten(p, s, mbaum, mknoten, nnorm, nflaeche, tol_deck)
+            fund = _deckender_knoten(p, s, mbaum, mknoten, knorm, tol_deck)
             if fund is not None:
                 tri, wj, n, d = fund
                 if cp.flip_normal:
@@ -621,7 +846,7 @@ class ContactSystem:
                 deckend += 1
                 spalte.append(0.0)
                 self._bedingung(cp, s, tri, wj, n, d, normalen,
-                                f"{cp.name}: Knoten {s} -> Knoten {tri[0]}")
+                                f"{cp.name}: Knoten {s} -> Knoten {tri[0]}", band)
                 n_paired += 1
                 continue
             idx = np.asarray(baum.query_ball_point(p, radius + rmax), dtype=int)
@@ -652,21 +877,27 @@ class ContactSystem:
             if dist[j] > radius:
                 ohne.append(int(s))
                 continue
-            tri, nv, key = tris[int(idx[j])]
-            qj, wj = q[j], w[j]
-            n = nv.copy()
+            tri, nv, key, fi = tris[int(idx[j])]
+            # Der Spalt zur **wahren** Flaeche, nicht zur Sehne der Facette
+            # (:class:`Flaechenquadriken`): auf einer gekruemmten Gegenseite
+            # stuende der Knoten sonst um die Pfeilhoehe ab - am Drehlager ein
+            # Millimeter, und die Achse hinge nur an den Knoten, die auf einer
+            # Ecke der Bohrung liegen. Die Richtung ist die Normale der
+            # wahren Flaeche dort - auf einer ebenen Facette genau deren.
+            qs, ns_ = quadriken.punkt(q[j], fi)
+            qj, wj = qs[0], w[j]
+            n = ns_[0]
             d = (p - qj) @ n
             if cp.flip_normal:
                 n = -n
                 d = -d
-            elif key not in cen_of and abs(d) > 1e-9 * self.size:
-                # Schalen/explizite Facetten: Normale zum Slave-Knoten orientieren
-                if d < 0:
-                    n = -n
-                    d = -d
+            elif key in schalen and abs(d) > 1e-9 * self.size and d < 0:
+                # Schalen: Normale zum Slave-Knoten orientieren
+                n = -n
+                d = -d
             spalte.append(abs(float(d)))
             self._bedingung(cp, s, list(tri), list(wj), n, d, normalen,
-                            f"{cp.name}: Knoten {s} -> Facette {tri}")
+                            f"{cp.name}: Knoten {s} -> Facette {tri}", band)
             n_paired += 1
         # Das Uebermass erst jetzt: welche Form die Fuge hat, sagen die
         # Facetten, die wirklich gepaart wurden - nicht alle Aussenflaechen des
@@ -681,7 +912,8 @@ class ContactSystem:
         self.log.append(
             f"Kontaktpaar '{cp.name}': {n_paired} von {len(cp.slave_nodes)} "
             f"Slave-Knoten zugeordnet, davon {deckend} deckungsgleich"
-            + (f"; Spalt {verteilungstext(spalte, AUFLIEGEND * radius)}" if spalte else "")
+            + (f"; Spalt {verteilungstext(spalte, band)}, bis {band * 1e3:.2g} mm als "
+               "Berührung gesetzt" if spalte else "")
             + (f" - {len(ohne)} ohne Master-Facette im Suchradius "
                f"{radius:.3g} m (z. B. Knoten {', '.join(str(x) for x in ohne[:5])})"
                if ohne else ""))
