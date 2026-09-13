@@ -612,11 +612,12 @@ nicht gefragt. Geprüft in `tests/test_gui_smoke.py`.
 
 ### Vernetzer und Nachbesserer nachladen
 
-gmsh, Netgen und MMG3D kommen nicht mit dem Programm (Lizenzen, nächster
-Abschnitt). *Extras → Vernetzer installieren…* oder der Knopf
-**Vernetzer installieren…** unter den Netzeinstellungen öffnet den Dialog
-**Vernetzer und Nachbesserer**: je Werkzeug Aufgabe, Lizenz, Quelle und
-Stand, dazu **Installieren** bzw. **Entfernen**. Installieren lädt das
+gmsh, Netgen, MMG3D und der Gleichungslöser MUMPS kommen nicht mit dem
+Programm (Lizenzen, nächster Abschnitt). *Extras → Vernetzer installieren…*
+oder der Knopf **Vernetzer installieren…** unter den Netzeinstellungen
+öffnet den Dialog **Vernetzer, Nachbesserer und Gleichungslöser**: je
+Werkzeug Aufgabe, Lizenz, Quelle und Stand, dazu **Installieren** bzw.
+**Entfernen**. Installieren lädt das
 Werkzeug von seiner Quelle in die Benutzerdaten
 (`%LOCALAPPDATA%\Statik3D\Werkzeuge`, unter Linux
 `~/.local/share/Statik3D/Werkzeuge`; **Ordner öffnen** zeigt ihn) — nicht
@@ -633,6 +634,26 @@ Quellen und Größen (gemessen 13.09.2026, Windows, Python 3.11):
 | gmsh 4.15.2 | PyPI, Rad `gmsh` (py2.py3, win_amd64) | 42 MB | 146 MB | 5 s |
 | Netgen 6.2.2607 | PyPI, Räder `netgen-mesher` (cp311) und `netgen-occt` | 8 + 19 MB | 78 MB | 6 s |
 | MMG3D 5.8.0 | Release `werkzeuge` dieses Projekts, `mmg3d_O3-windows-x64.zip` — gebaut aus MmgTools/mmg durch `.github/workflows/werkzeuge.yml` (MSVC, ohne Scotch und VTK; LICENSE und COPYING.LESSER liegen bei) | 0,4 MB | 0,7 MB | unter 1 s |
+| MUMPS 5.8.2 | Release `werkzeuge`, Rad `mumps-5.8.2-py3-none-win_amd64.whl` aus `packaging/` (eigener Windows-Bau, `docs/MUMPS_Windows_Bauanleitung.md`; der Workflow legt es ab, nachdem er die Prüfsumme gegen die im Programm hinterlegte verglichen hat) | 18 MB | 63 MB | siehe unten |
+
+MUMPS ist der Sonderfall: das Rad kommt aus unserem eigenen Release, darum
+ist seine **SHA-256-Prüfsumme im Programm hinterlegt** und Pflicht — ein
+Rad mit anderer Prüfsumme wird abgelehnt und aufgeräumt. Nach dem Entpacken
+rechnet das Programm ein Fünf-Unbekannten-System (Lösung 1 2 3 4 5), denn
+die DLLs kommen erst beim ersten Kontext; ein bloßer Import sagt nichts.
+Ist das Kästchen **MUMPS beim Programmstart nachladen, wenn es fehlt** an
+(Vorgabe), holt das Programm MUMPS einige Sekunden nach dem Start ohne
+Rückfrage: Balken in der Statuszeile, danach eine Protokollzeile („MUMPS
+5.8.2 nachgeladen (18 MB, … s) — Berechnung → Einstellungen →
+Gleichungslöser“). Schlägt es fehl (kein Netz, Prüfsumme), steht das als
+eine Zeile im Protokoll, und der nächste Start versucht es erneut; im Dialog
+bleibt **Installieren**. Ein neuer Bau (andere Prüfsumme im Programm)
+wird beim Start ebenso nachgeladen. Eine eigene Python-Umgebung, in der das
+Rad installiert ist, gilt als „vorhanden“ — dann lädt der Start nichts.
+Geprüft in `tests/test_werkzeuge.py` (das echte Rad aus `packaging/` über
+die lokale Quelle `STATIK3D_WERKZEUG_QUELLE`: entpacken, im eigenen Prozess
+rechnen, falsche Prüfsumme abgelehnt, Entfernen bei geladener DLL) und
+`tests/test_gui_smoke.py` (Kästchen, Nachladen mit Balken und Protokollzeile).
 
 Die Räder werden **ohne pip** entpackt (die exe hat keins): Python-Dateien
 nach `Lib/site-packages`, Datenanteile wie bei pip relativ dazu
@@ -2492,6 +2513,19 @@ Nachweis mit seiner Verformung je Kombination.
   langsamer (31 Threads am Würfel: 3,3 s), darum nimmt es höchstens acht;
   `MUMPS_NUM_THREADS` übersteuert das ausdrücklich. Die Statuszeile nennt
   die Threadzahl, die die Laufzeit meldet.
+* **Threads des Gleichungslösers** (Auswahl unter dem Gleichungslöser, seit
+  13.09.2026): **automatisch** = MKL PARDISO alle Kerne bis auf einen, MUMPS
+  höchstens acht (die Zahlen stehen im Eintrag); oder eine feste Zahl
+  (1, 2, 4, 6, 8, 12, 16, … bis zur Kernzahl), die dann für **beide** direkten
+  Löser gilt — so lässt sich am eigenen Modell messen, ob mehr Threads
+  etwas bringen. Die Umstellung wirkt ohne Neustart (MKL über
+  `mkl_set_num_threads`, MUMPS über `omp_set_num_threads`); die Statuszeile
+  nennt nach der Rechnung die wirklich benutzte Zahl, die der Löser selbst
+  meldet. Löser, Threads und das Kästchen „MUMPS beim Programmstart
+  nachladen“ werden in `%LOCALAPPDATA%\Statik3D\einstellungen.json`
+  gespeichert und überleben den Neustart. Geprüft in `tests/test_loeser.py`
+  (2 Threads → beide Löser melden 2, zurück auf automatisch ohne Neustart)
+  und `tests/test_gui_smoke.py`.
 * **Eigenschwingungen mit Kontakt.** Kontaktpaare schwingen mit: liegt eine
   gerechnete statische Lösung vor, schwingt das System um ihren
   **Kontaktzustand** (geschlossene Paare übertragen, offene nicht); sonst

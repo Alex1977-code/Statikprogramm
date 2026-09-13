@@ -2,14 +2,16 @@ name: Werkzeuge
 
 # Baut die Programme, die Statik3D auf Wunsch nachlaedt (statik3d/werkzeuge.py,
 # Dialog "Vernetzer und Nachbesserer"), und legt sie im Release "werkzeuge" ab:
-#   mmg3d_O3-windows-x64.zip   MMG3D (LGPL, MmgTools/mmg) - Nachbesserer
-# Laeuft von Hand (workflow_dispatch) oder wenn sich diese Datei auf main aendert.
+#   mmg3d_O3-windows-x64.zip           MMG3D (LGPL, MmgTools/mmg) - Nachbesserer
+#   mumps-5.8.2-py3-none-win_amd64.whl  MUMPS (CeCILL-C), eigenes Rad aus packaging/ - Gleichungsloeser
+# Laeuft von Hand (workflow_dispatch) oder wenn sich diese Datei, das Rad oder
+# statik3d/werkzeuge.py (Pruefsumme) auf main aendert.
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [".github/workflows/werkzeuge.yml"]
+    paths: [".github/workflows/werkzeuge.yml", "packaging/mumps-*.whl", "statik3d/werkzeuge.py"]
 
 permissions:
   contents: write
@@ -84,5 +86,43 @@ jobs:
             mmg3d_O3-windows-x64.zip: MMG3D ${{ env.MMG_TAG }} (LGPL), gebaut aus
             https://github.com/MmgTools/mmg - Nachbesserer fuer Tetraedernetze.
           files: mmg3d_O3-windows-x64.zip
+          prerelease: false
+          make_latest: false
+
+  mumps-rad:
+    name: MUMPS-Rad ablegen
+    needs: mmg3d-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pruefsumme gegen statik3d/werkzeuge.py
+        shell: bash
+        run: |
+          # Das Rad im Repository muss das sein, dessen Pruefsumme das Programm
+          # beim Nachladen verlangt - sonst wurde das Rad ersetzt, ohne den
+          # Code nachzuziehen, und jeder Download wuerde abgelehnt.
+          rad=$(python3 -c "import re,io; t=io.open('statik3d/werkzeuge.py',encoding='utf-8').read(); print(re.search(r'rad=\"(mumps-[^\"]+\.whl)\"', t).group(1))")
+          soll=$(python3 -c "import re,io; t=io.open('statik3d/werkzeuge.py',encoding='utf-8').read(); print(re.search(r'rad_sha256=\"([0-9a-f]{64})\"', t).group(1))")
+          ist=$(sha256sum "packaging/$rad" | cut -d' ' -f1)
+          echo "Rad: $rad"; echo "soll $soll"; echo "ist  $ist"
+          test "$soll" = "$ist"
+          echo "RAD=packaging/$rad" >> "$GITHUB_ENV"
+
+      - name: Release "werkzeuge" ergaenzen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: werkzeuge
+          name: Statik3D - Werkzeuge (nachladbar)
+          body: |
+            Programme und Pakete, die Statik3D auf Wunsch nachlaedt (Extras -> Vernetzer installieren...).
+
+            mmg3d_O3-windows-x64.zip: MMG3D ${{ env.MMG_TAG }} (LGPL), gebaut aus
+            https://github.com/MmgTools/mmg - Nachbesserer fuer Tetraedernetze.
+            mumps-5.8.2-py3-none-win_amd64.whl: MUMPS 5.8.2 (CeCILL-C), eigener Windows-Bau
+            (gfortran/OpenMP, OpenBLAS, METIS), Lizenztexte im Rad unter mumps/LIZENZ -
+            Gleichungsloeser, wird beim Programmstart nachgeladen.
+          files: ${{ env.RAD }}
           prerelease: false
           make_latest: false

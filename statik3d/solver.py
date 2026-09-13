@@ -55,6 +55,50 @@ def mkl_threads() -> int:
     return n
 
 
+def _mkl_threads_setzen(ps, n: int) -> int:
+    """MKL zur Laufzeit auf n Threads stellen; Rueckgabe die wirksame Zahl.
+
+    Die Umgebung (MKL_NUM_THREADS) liest MKL nur beim ersten Laden; danach
+    gilt mkl_set_num_threads - so laesst sich die Threadzahl in den
+    Einstellungen aendern, ohne das Programm neu zu starten.
+    """
+    import ctypes
+    lib = getattr(ps, "libmkl", None)
+    if lib is None:
+        return int(n)
+    try:
+        lib.mkl_set_num_threads.argtypes = [ctypes.c_int]
+        lib.mkl_set_num_threads.restype = None
+        lib.mkl_set_num_threads(int(n))
+        lib.mkl_get_max_threads.argtypes = []
+        lib.mkl_get_max_threads.restype = ctypes.c_int
+        return int(lib.mkl_get_max_threads())
+    except (AttributeError, OSError):
+        return int(n)
+
+
+def threads_automatisch(backend: str) -> int:
+    """Die Vorgabe des Loesers ohne Einstellung: PARDISO alle Kerne bis auf
+    einen, MUMPS hoechstens acht (mumps.threads_vorgabe - mehr machten es
+    langsamer), sonst 1."""
+    if backend == "mumps":
+        try:
+            import mumps
+            return int(mumps.threads_vorgabe())
+        except Exception:                                  # noqa: BLE001
+            return 1
+    if backend == "pardiso":
+        return mkl_threads()
+    return 1
+
+
+def threads_vorgabe(backend: str) -> int:
+    """Wie viele Threads der Loeser nimmt: settings().solver_threads, wenn
+    gesetzt (> 0), sonst die Vorgabe des Loesers (threads_automatisch)."""
+    n = int(getattr(parallel.settings(), "solver_threads", 0) or 0)
+    return n if n > 0 else threads_automatisch(backend)
+
+
 def _find_mkl():
     """MKL-Laufzeitbibliothek fuer pypardiso finden (pip install mkl legt sie
     ausserhalb des Suchpfads ab; im PyInstaller-Bundle liegt sie neben der exe
@@ -137,6 +181,8 @@ def loeser_liste() -> list:
     """[(Schluessel, Name, verfuegbar, Lizenz, Art)] fuer die Auswahl - ohne
     zu faktorisieren; ``verfuegbar`` heisst: das Paket laesst sich laden."""
     import importlib
+    from . import werkzeuge
+    werkzeuge.aktivieren()                 # nachgeladene Pakete (MUMPS) sichtbar machen
     aus = []
     for key, (name, paket, lizenz, art) in LOESER.items():
         modul = {"pardiso": "pypardiso", "cholmod": "sksparse.cholmod", "umfpack": "scikits.umfpack",
@@ -159,10 +205,12 @@ def loeser_verfuegbar() -> str:
     Kerne der **Prozesspool fuers Vernetzen** hat; ueber das Loesen sagte das
     nichts, und bei fehlendem MKL war es schlicht irrefuehrend.
     """
+    from . import werkzeuge
+    werkzeuge.aktivieren()
     try:
         _find_mkl()
         import pypardiso                                   # noqa: F401
-        return f"MKL PARDISO, {mkl_threads()} Threads"
+        return f"MKL PARDISO, {threads_vorgabe('pardiso')} Threads"
     except Exception:                                      # noqa: BLE001
         pass
     try:
@@ -201,11 +249,12 @@ class LinearSolver:
                 import pypardiso
                 ps = pypardiso.PyPardisoSolver()
                 Kcsr = K.tocsr()
+                # Threadzahl aus den Einstellungen (0 = alle Kerne bis auf einen)
+                self.threads = _mkl_threads_setzen(ps, threads_vorgabe("pardiso"))
                 ps.factorize(Kcsr)
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
-                self.threads = mkl_threads()
             except Exception:
                 if be == "pardiso":
                     raise
@@ -225,9 +274,18 @@ class LinearSolver:
             self._solve = lu.solve
             self.backend = "umfpack"
         if self._solve is None and be == "mumps":
+            # Nachgeladenes MUMPS (statik3d.werkzeuge) in den Suchpfad - auch
+            # in Arbeitsprozessen, die vernetzer_extern nie importieren
+            from . import werkzeuge
+            werkzeuge.aktivieren()
+            try:
+                import mumps
+            except ImportError as ex:
+                raise RuntimeError("MUMPS ist nicht installiert - Extras → Vernetzer installieren… lädt es "
+                                   "nach (oder beim Programmstart, Kästchen im selben Dialog)") from ex
+            mumps.set_threads(threads_vorgabe("mumps"))
             self._solve = self._mumps(K)
             self.backend = "mumps"
-            import mumps
             self.threads = mumps.threads()
         if self._solve is None and be == "pyamg":
             self._solve = self._pyamg(K)

@@ -45,9 +45,58 @@ class Settings:
     chunk_elements: int = 400
     solver_backend: str = "auto"      # auto | pardiso | cholmod | superlu
     farm_timeout: float = 3600.0
+    #: Threads des Gleichungsloesers (MKL PARDISO, MUMPS): 0 = automatisch
+    #: (PARDISO alle Kerne bis auf einen, MUMPS hoechstens acht, siehe
+    #: mumps.threads_vorgabe); sonst genau diese Zahl - "dann kann ich das an
+    #: meinem Modell pruefen" (13.09.2026)
+    solver_threads: int = 0
+    #: MUMPS beim Programmstart nachladen, wenn es fehlt (statik3d.werkzeuge)
+    mumps_nachladen: bool = True
 
 
 _settings = Settings()
+
+#: Was ueber den Programmstart hinaus gilt (Benutzerdaten/Statik3D/einstellungen.json)
+GESPEICHERT = ("solver_backend", "solver_threads", "mumps_nachladen")
+
+
+def einstellungsdatei() -> str:
+    """STATIK3D_EINSTELLUNGEN, sonst Benutzerdaten/Statik3D/einstellungen.json."""
+    p = os.environ.get("STATIK3D_EINSTELLUNGEN")
+    if p:
+        return p
+    from . import werkzeuge
+    return os.path.join(werkzeuge.datenordner(), "einstellungen.json")
+
+
+def einstellungen_laden() -> dict:
+    """Gespeicherte Einstellungen in settings() uebernehmen; Rueckgabe, was in
+    der Datei stand (leer, wenn es keine gibt oder sie unlesbar ist)."""
+    import json
+    try:
+        with open(einstellungsdatei(), encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    for k in GESPEICHERT:
+        if k in d:
+            try:
+                setattr(_settings, k, type(getattr(_settings, k))(d[k]))
+            except (TypeError, ValueError):
+                pass
+    return d
+
+
+def einstellungen_speichern() -> str:
+    """Die gespeicherten Einstellungen schreiben; Rueckgabe der Dateipfad."""
+    import json
+    p = einstellungsdatei()
+    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump({k: getattr(_settings, k) for k in GESPEICHERT}, f, ensure_ascii=False, indent=1)
+    return p
 
 
 def configure(**kw) -> Settings:

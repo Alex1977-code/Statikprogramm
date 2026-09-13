@@ -119,6 +119,9 @@ def _bewegung_kurz(s) -> str:
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
+        # Gespeicherte Einstellungen (Loeser, Threads, MUMPS nachladen) vor
+        # dem Aufbau der Register - die Auswahlfelder lesen sie beim Bauen
+        parallel.einstellungen_laden()
         self.resize(1600, 980)
         self.model = Model("Neues Modell")
         self.__init_defaults()
@@ -10350,6 +10353,24 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "in einer eigenen Python-Umgebung nutzbar; PyAMG (MIT) rechnet "
                                   "iterativ und speicherarm; SuperLU (scipy) rechnet auf einem Kern")
         gl.addWidget(row("Gleichungslöser", self.cb_loeser))
+        # Threads des Gleichungsloesers: automatisch (PARDISO alle Kerne bis
+        # auf einen, MUMPS hoechstens acht) oder eine feste Zahl - "dann kann
+        # ich das an meinem Modell pruefen" (13.09.2026)
+        self.cb_threads = QtWidgets.QComboBox()
+        n_cpu = parallel.cpu_count()
+        self.cb_threads.addItem(f"automatisch (MKL PARDISO {solver.threads_automatisch('pardiso')}, "
+                                f"MUMPS {solver.threads_automatisch('mumps')})", 0)
+        for n_ in sorted({1, 2, 4, 6, 8, 12, 16, 24, 32, 48, 64, max(1, n_cpu - 1), n_cpu}):
+            if n_ <= n_cpu:
+                self.cb_threads.addItem(str(n_), int(n_))
+        i = self.cb_threads.findData(int(parallel.settings().solver_threads or 0))
+        self.cb_threads.setCurrentIndex(max(i, 0))
+        self.cb_threads.setToolTip("Threads für MKL PARDISO und MUMPS. automatisch: PARDISO alle Kerne bis auf "
+                                   "einen, MUMPS höchstens acht - mehr machten es langsamer (Würfel 34 914 FHG: "
+                                   "0,86-1,09 s mit 8, 3,3 s mit 31 Threads). Eine feste Zahl gilt für beide; "
+                                   "die Statuszeile nennt nach der Rechnung die wirklich benutzte Zahl. "
+                                   "Wird gespeichert.")
+        gl.addWidget(row("Threads des Gleichungslösers", self.cb_threads))
         self.cb_backend = QtWidgets.QComboBox()
         self.cb_backend.addItems(["lokal (Mehrkern)", "Rechnerfarm"])
         self.ed_farm_host = QtWidgets.QLineEdit(parallel.settings().farm_host)
@@ -12170,13 +12191,16 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.geaendert.connect(self._werkzeuge_geaendert)
         dlg.exec()
 
-    def _werkzeuge_geaendert(self, key: str):
+    def _werkzeuge_geaendert(self, key: str, text: str = ""):
         """Nach Installieren/Entfernen: protokollieren und eine offene
-        Netzeinstellungen-Maske neu aufbauen (Auswahl „nicht installiert")."""
+        Netzeinstellungen-Maske neu aufbauen (Auswahl „nicht installiert");
+        ``text`` ersetzt die Protokollzeile (Nachladen beim Start)."""
         from .. import werkzeuge as wz
         s = wz.stand(key)
         name = wz.WERKZEUGE[key].name
-        if s:
+        if text:
+            self.info(text)
+        elif s:
             self.info(f"Werkzeug {name} {s.get('version', '?')} installiert ({wz.werkzeug_ordner(key)})"
                       + (" - wirksam nach dem Neustart" if s.get("neustart") else ""))
         else:
@@ -14638,10 +14662,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_parallel_settings(self):
         parallel.configure(workers=self.sp_workers.value(),
                            solver_backend=str(self.cb_loeser.currentData() or "auto"),
+                           solver_threads=int(self.cb_threads.currentData() or 0),
                            backend="farm" if self.cb_backend.currentIndex() == 1 else "local",
                            farm_host=self.ed_farm_host.text().strip() or "127.0.0.1",
                            farm_port=int(self.ed_farm_port.text() or 5555),
                            farm_key=self.ed_farm_key.text() or "statik3d")
+        try:
+            parallel.einstellungen_speichern()      # Loeser, Threads, Nachladen ueberleben den Neustart
+        except OSError as ex:
+            self.log.appendPlainText(f"Einstellungen nicht gespeichert: {ex}")
 
     def farm_status(self):
         self._apply_parallel_settings()
@@ -17331,6 +17360,53 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_worker = None
         if os.environ.get("STATIK3D_NO_UPDATE_CHECK") != "1":
             QtCore.QTimer.singleShot(4000, lambda: self.check_update(quiet=True))
+            QtCore.QTimer.singleShot(7000, self._mumps_nachladen)
+
+    def _mumps_nachladen(self, erzwingen: bool = False) -> bool:
+        """MUMPS beim Start nachladen, wenn es fehlt oder veraltet ist
+        (statik3d.werkzeuge; Kaestchen im Dialog „Vernetzer, Nachbesserer und
+        Gleichungsloeser"). Ohne Rueckfrage, Fortschritt in der Statuszeile;
+        ein Fehler ist eine Protokollzeile, beim naechsten Start neuer Versuch.
+        Rueckgabe: ob der Download angestossen wurde."""
+        import sys as _sys
+        from .. import werkzeuge as wz
+        if not erzwingen:
+            if not parallel.settings().mumps_nachladen or not _sys.platform.startswith("win"):
+                return False
+            if wz.stand("mumps") is not None and not wz.veraltet("mumps"):
+                return False
+            if wz.stand("mumps") is None:
+                try:
+                    import mumps                          # noqa: F401 - eigene Umgebung mit dem Rad: installiert
+                    return False
+                except ImportError:
+                    pass
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return False
+        self._fortschritt_beginnen(1000, "MUMPS wird nachgeladen …", abbrechbar=False)
+        t0 = time.time()
+        groesse = wz.WERKZEUGE["mumps"].groesse_mb
+
+        def fertig(s):
+            self._fortschritt_ende()
+            self._werkzeuge_geaendert("mumps", f"MUMPS {s.get('version', '?')} nachgeladen ({groesse} MB, "
+                                               f"{time.time() - t0:.0f} s) - Berechnung → Einstellungen → "
+                                               "Gleichungslöser"
+                                               + (" - wirksam nach dem Neustart" if s.get("neustart") else ""))
+
+        def fehler(msg):
+            self._fortschritt_ende()
+            self.info(f"MUMPS nicht nachgeladen: {msg} - beim nächsten Start neuer Versuch, "
+                      "oder Extras → Vernetzer installieren…")
+
+        w = SolveWorker(lambda progress: wz.installieren("mumps", fortschritt=progress))
+        w.fortschritt.connect(lambda text, a: (self.progress_bar.setValue(int(round(1000 * a))),
+                                               self.statusBar().showMessage(str(text))))
+        w.finished_ok.connect(fertig)
+        w.failed.connect(lambda msg, _tb: fehler(msg))
+        self._update_worker = w
+        w.start()
+        return True
 
     def update_report(self):
         """Vollstaendiger Update-Befund zum Weitergeben (rechte Maustaste am Knopf)."""

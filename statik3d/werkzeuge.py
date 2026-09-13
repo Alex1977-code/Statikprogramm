@@ -64,6 +64,8 @@ class Werkzeug:
     modul: str = ""         # Modul, dessen Import die Installation prueft
     programm: str = ""      # Programmname (ohne .exe) bei Programmen
     groesse_mb: int = 0     # ungefaehre Downloadgroesse (Windows)
+    rad: str = ""           # Rad im Release "werkzeuge" (eigener Bau, etwa MUMPS)
+    rad_sha256: str = ""    # Pflicht-Pruefsumme dieses Rades - die Bindung an den geprueften Stand
 
 
 WERKZEUGE = {
@@ -75,6 +77,15 @@ WERKZEUGE = {
     "mmg3d": Werkzeug("mmg3d", "MMG3D", "Nachbesserer", "LGPL",
                       f"GitHub-Release „{WERKZEUG_RELEASE}“ von {upd.REPO}, gebaut aus MmgTools/mmg",
                       programm="mmg3d_O3", groesse_mb=2),
+    # MUMPS kommt nicht mit der exe, sondern als eigenes Rad aus dem Release
+    # (Bau: docs/MUMPS_Windows_Bauanleitung.md). Nach einem Neubau Dateiname
+    # und Pruefsumme hier nachziehen - der Workflow werkzeuge.yml vergleicht
+    # sie mit packaging/mumps-*.whl, bevor er das Rad ins Release legt.
+    "mumps": Werkzeug("mumps", "MUMPS", "Gleichungslöser", "CeCILL-C",
+                      f"GitHub-Release „{WERKZEUG_RELEASE}“ von {upd.REPO}, eigener Bau aus MUMPS 5.8.2",
+                      modul="mumps", rad="mumps-5.8.2-py3-none-win_amd64.whl",
+                      rad_sha256="9cb17e429a56e895f89b34a10acac408a5990ea3b694d09bbcf304d4d4f57a3b",
+                      groesse_mb=18),
 }
 
 
@@ -132,6 +143,14 @@ def stand(key: str) -> Optional[dict]:
 
 def stand_alle() -> dict:
     return {key: stand(key) for key in WERKZEUGE}
+
+
+def veraltet(key: str) -> bool:
+    """Installiert, aber ein anderes Rad als das im Programm hinterlegte
+    (neuer Bau): dann wird beim Start neu geladen."""
+    wz = WERKZEUGE.get(key)
+    s = stand(key)
+    return bool(wz is not None and wz.rad_sha256 and s is not None and s.get("sha256") != wz.rad_sha256)
 
 
 def bericht() -> str:
@@ -256,6 +275,15 @@ def _json(url: str, timeout: float) -> dict:
 
 
 def _laden(url: str, ziel: str, fortschritt: Callable = None, timeout: float = 60.0) -> str:
+    quelle = os.environ.get("STATIK3D_WERKZEUG_QUELLE", "")
+    if quelle:
+        # Pruefungen ohne Netz: die Datei aus einem Ordner statt aus dem Netz
+        lokal = os.path.join(quelle, os.path.basename(url))
+        if os.path.isfile(lokal):
+            shutil.copy(lokal, ziel)
+            if fortschritt:
+                fortschritt(os.path.getsize(ziel), os.path.getsize(ziel))
+            return ziel
     try:
         return upd.download(url, ziel, progress=fortschritt, timeout=timeout)
     except upd.UpdateError as ex:
@@ -341,11 +369,43 @@ def archiv_entpacken(archiv: str, ziel: str) -> list:
     return geschrieben
 
 
+def release_url(datei: str) -> str:
+    """Download-Adresse einer Datei im Release „werkzeuge“ dieses Projekts."""
+    return f"https://github.com/{upd.REPO}/releases/download/{WERKZEUG_RELEASE}/{datei}"
+
+
 def programm_url(wz: Werkzeug, plattform: str = "") -> str:
     """Download-Adresse des gebauten Programms im Release „werkzeuge“."""
     plattform = plattform or sys.platform
     system = "windows" if plattform.startswith("win") else "linux" if plattform.startswith("linux") else "macos"
-    return f"https://github.com/{upd.REPO}/releases/download/{WERKZEUG_RELEASE}/{wz.programm}-{system}-x64.zip"
+    return release_url(f"{wz.programm}-{system}-x64.zip")
+
+
+def mumps_probe(mumps) -> str:
+    """MUMPS wirklich rechnen lassen - die DLLs kommen erst beim ersten
+    Kontext, ein blosser Import sagt nichts. Fuenf Unbekannte, Loesung
+    1 2 3 4 5; Rueckgabe die Beschreibung (Bau, Threads)."""
+    import numpy as np
+    text = str(mumps.beschreibung())
+    n = 5
+    A = np.diag([4.0] * n) + np.diag([-1.0] * (n - 1), 1) + np.diag([-1.0] * (n - 1), -1)
+    x_soll = np.arange(1.0, n + 1.0)
+    b = A @ x_soll
+    i, j = np.nonzero(A)
+    ctx = mumps.DMumpsContext(sym=0, par=1)
+    try:
+        ctx.set_silent()
+        ctx.set_shape(n)
+        ctx.set_centralized_assembled((i + 1).astype(np.int32), (j + 1).astype(np.int32), A[i, j])
+        ctx.run(job=4)
+        x = b.copy()
+        ctx.set_rhs(x)
+        ctx.run(job=3)
+    finally:
+        ctx.destroy()
+    if not np.allclose(x, x_soll, atol=1e-9):
+        raise WerkzeugFehler(f"MUMPS rechnet falsch: {np.round(x, 6).tolist()} statt {x_soll.tolist()}")
+    return text
 
 
 # --------------------------------------------------------------------------
@@ -359,6 +419,8 @@ def _pruefen(key: str) -> str:
         importlib.invalidate_caches()
         importlib.import_module(wz.modul)
         oben = sys.modules[wz.modul.split(".")[0]]
+        if key == "mumps":
+            mumps_probe(oben)
         return str(getattr(oben, "__version__", "") or getattr(oben, "GMSH_API_VERSION", "") or "?")
     exe = programm(key)
     if not exe:
@@ -393,7 +455,7 @@ def installieren(key: str, fortschritt: Callable = None, timeout: float = 60.0) 
     os.makedirs(os.path.join(neu, "downloads"))
     schritte = max(1, len(wz.pakete) or 1)
     vorher_geladen = bool(wz.modul) and wz.modul.split(".")[0] in sys.modules
-    pakete, quellen, dateien = {}, [], []
+    pakete, quellen, dateien, zusatz = {}, [], [], {}
     try:
         if wz.pakete:
             for i, paket in enumerate(wz.pakete):
@@ -419,6 +481,28 @@ def installieren(key: str, fortschritt: Callable = None, timeout: float = 60.0) 
                 pakete[paket] = version
                 quellen.append(str(rad["url"]))
             version = pakete[wz.pakete[0]]
+        elif wz.rad:
+            # Eigenes Rad aus dem Release (MUMPS): die Pruefsumme im Programm
+            # ist die einzige Bindung an den geprueften Stand - Pflicht
+            url = release_url(wz.rad)
+            datei = os.path.join(neu, "downloads", wz.rad)
+            mb = float(wz.groesse_mb or 1)
+            melden(f"{wz.name}: {wz.rad} laden ({mb:.0f} MB) …", 0.0)
+            _laden(url, datei,
+                   lambda g, t: melden(f"{wz.name}: {wz.rad} laden – {g / 1e6:.0f} von {(t or mb * 1e6) / 1e6:.0f} MB",
+                                       0.9 * min(1.0, g / (t or mb * 1e6))),
+                   timeout)
+            ist = _sha256(datei)
+            if not re.fullmatch(r"[0-9a-f]{64}", wz.rad_sha256 or "") or ist != wz.rad_sha256:
+                raise WerkzeugFehler(f"{wz.rad}: Prüfsumme {ist[:12]}… stimmt nicht mit der im Programm "
+                                     f"hinterlegten {(wz.rad_sha256 or '?')[:12]}… überein")
+            melden(f"{wz.name}: entpacken …", 0.95)
+            dateien += rad_entpacken(datei, neu)
+            os.remove(datei)
+            quellen.append(url)
+            m = re.search(r"-(\d+\.\d+(?:\.\d+)?)-", wz.rad)
+            version = m.group(1) if m else "?"
+            zusatz = {"rad": wz.rad, "sha256": wz.rad_sha256}
         else:
             url = programm_url(wz)
             datei = os.path.join(neu, "downloads", os.path.basename(url))
@@ -438,7 +522,7 @@ def installieren(key: str, fortschritt: Callable = None, timeout: float = 60.0) 
         shutil.rmtree(os.path.join(neu, "downloads"), ignore_errors=True)
         neuer_stand = {"werkzeug": key, "version": version, "pakete": pakete, "quellen": quellen,
                        "datum": time.strftime("%Y-%m-%dT%H:%M:%S"), "python": f"{sys.version_info[0]}.{sys.version_info[1]}",
-                       "plattform": sys.platform, "dateien": len(dateien)}
+                       "plattform": sys.platform, "dateien": len(dateien), **zusatz}
         with open(os.path.join(neu, "stand.json"), "w", encoding="utf-8") as f:
             json.dump(neuer_stand, f, ensure_ascii=False, indent=1)
         # Alte Fassung weg, neue an ihren Platz
