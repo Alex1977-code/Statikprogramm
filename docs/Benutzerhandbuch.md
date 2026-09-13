@@ -2388,6 +2388,22 @@ Nachweis mit seiner Verformung je Kombination.
   Backend „Rechnerfarm“ mit Server, Port und
   Schlüssel (siehe `Rechnerfarm.md`). „Lokalen Server + Worker starten“
   macht den eigenen Rechner zum Farm-Server.
+* **Ein stehender Prozesspool je Rechnung.** Bis 13.09.2026 startete jede
+  Elementschleife — die Assemblierung und der Nachlauf jedes Lastfalls —
+  einen neuen Pool und gab jedem Arbeitsprozess das Modell als Startargument
+  mit, im Hauptprozess je Arbeiter neu gepickelt. Am Drehlager (1 812 423
+  Elemente, 275 MB) kostete der Nachlauf **eines** Lastfalls so 225–244 s,
+  seriell auf einem Kern wären es 60 s gewesen — die Parallelisierung machte
+  die Rechnung langsamer. Jetzt schreibt die Rechnung das Modell einmal in
+  eine Datei, jeder Arbeiter liest sie beim Start, und der Pool steht bis zum
+  Ende der Rechnung (`solve_all`, `solve_static`, `solve_cases`,
+  Eigenformen); der Verschiebungsvektor eines Aufrufs geht ebenso über eine
+  Datei einmal je Arbeiter. Gemessen: erster Aufruf 98 s (31 Arbeiter starten
+  und lesen je 275 MB), jeder weitere **6,5 s** statt 240 s; bei 422
+  Lastfällen sind das 47 Minuten statt 28 Stunden Nachlauf. Auch ohne
+  offenen Block läuft eine einzelne Elementschleife über eine Modelldatei
+  statt über Startargumente. Geprüft in `tests/test_solver_ext.py`
+  (`test_stehender_pool`).
 * **Kontakt-Iteration und Speicher.** Jeder Schritt der Kontakt-Iteration
   faktorisiert das System neu; der Speicher jeder Faktorisierung wird sofort
   danach zurückgegeben. Am Drehlager (1 028 724 Freiheitsgrade, 7 GB je

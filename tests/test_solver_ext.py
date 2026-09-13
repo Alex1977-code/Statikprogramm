@@ -314,6 +314,44 @@ def test_parallel_assembly():
     check("Parallel: Spannung identisch", np.nanmax(r2.node_vm), np.nanmax(r1.node_vm), 1e-9)
 
 
+def test_stehender_pool():
+    """Ein Prozesspool je Rechnung: das Modell einmal je Arbeiter aus der
+    Datei, verschachtelte Bloecke teilen ihn, danach ist er zu. Gemessen am
+    Drehlager: 244 s Nachlauf je Lastfall, weil jeder Aufruf einen neuen Pool
+    startete und das 275-MB-Modell je Arbeiter pickelte."""
+    from statik3d.examples_lib import plate_example
+
+    def check_bool(name, ok):
+        check(name, 1.0 if ok else 0.0, 1.0, 0.0)
+
+    m = plate_example()
+    old = parallel.settings().min_elements
+    parallel.configure(min_elements=1)
+    try:
+        r1 = solver.solve_static(m, workers=1)
+        with parallel.arbeiter(m, workers=3) as a:
+            check_bool("Pool steht und ist der aktive Block", a.pool is not None and parallel._AKTIV is a
+                       and a.pfad is not None and os.path.exists(a.pfad))
+            with parallel.arbeiter(m, workers=3) as b:
+                check_bool("verschachtelt: derselbe Pool, Tiefe 2", b is a and a.tiefe == 2)
+            check_bool("nach dem inneren Block steht er noch", parallel._AKTIV is a and a.tiefe == 1)
+            r2 = solver.solve_static(m, workers=3)
+            n1 = a.aufrufe
+            r3 = solver.solve_static(m, workers=3)
+            check_bool("zwei Rechnungen ueber denselben Pool (Aufrufe zaehlen hoch, kein Neustart)",
+                       n1 > 0 and a.aufrufe > n1 and parallel._AKTIV is a and a.pool is not None)
+            pfad = a.pfad
+        check_bool("danach ist der Pool zu, die Modelldatei weg, kein aktiver Block",
+                   parallel._AKTIV is None and a.pool is None and not os.path.exists(pfad))
+        check("stehender Pool: Verschiebung identisch", r2.umag.max(), r1.umag.max(), 1e-9)
+        check("stehender Pool: Spannung identisch", np.nanmax(r3.node_vm), np.nanmax(r1.node_vm), 1e-9)
+        keine = [f for f in os.listdir(__import__("tempfile").gettempdir())
+                 if f.startswith("statik3d_pool_") or f.startswith("statik3d_extra_")]
+        check_bool("keine Pool-Dateien bleiben liegen", not any(pfad.endswith(f) for f in keine))
+    finally:
+        parallel.configure(min_elements=old)
+
+
 def test_farm():
     """Farm-Server + Worker (Threads) + Client: Auftraege verteilen."""
     from statik3d import farm
@@ -361,6 +399,7 @@ def main():
     test_gap_element()
     test_surface_contact_friction()
     test_parallel_assembly()
+    test_stehender_pool()
     test_farm()
     nok = sum(1 for r in RESULTS if r[4])
     print("=" * 96)

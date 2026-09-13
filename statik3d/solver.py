@@ -1246,6 +1246,14 @@ def systeme_je_situation(model: Model, namen=None, workers: int = None, progress
 
 def solve_static(model: Model, progress=None, case: str = None,
                  workers: int = None, system: StaticSystem = None) -> Results:
+    """Ein Lastfall (der aktive oder ``case``) - im stehenden Prozesspool
+    (parallel.arbeiter); Einzelheiten in _solve_static_innen."""
+    with parallel.arbeiter(model, workers):
+        return _solve_static_innen(model, progress, case, workers, system)
+
+
+def _solve_static_innen(model: Model, progress=None, case: str = None,
+                        workers: int = None, system: StaticSystem = None) -> Results:
     """Ein Lastfall (default: aktiver Lastfall; case='all': alle Lastfaelle mit
     Faktor 1 ueberlagert)."""
     system = system or StaticSystem(model, workers, progress)
@@ -1276,8 +1284,15 @@ def _mit_referenzen_zuerst(names: list, referenzen: dict) -> list:
     return folge
 
 
-def solve_cases(model: Model, cases: list = None, workers: int = None,
-                progress=None, system: StaticSystem = None, systeme: dict = None,
+def solve_cases(model: Model, *args, **kwargs):
+    """Mehrere Lastfaelle - im stehenden Prozesspool (parallel.arbeiter);
+    Einzelheiten in _solve_cases_innen."""
+    with parallel.arbeiter(model, kwargs.get("workers")):
+        return _solve_cases_innen(model, *args, **kwargs)
+
+
+def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
+                       progress=None, system: StaticSystem = None, systeme: dict = None,
                 referenzen: dict = None) -> dict:
     """Alle (oder ausgewaehlte) Lastfaelle loesen - je Situation mit ihrem
     System (eine Faktorisierung je Situation). Ein uebergebenes ``system``
@@ -2010,6 +2025,15 @@ def ermuedungsreferenzen(model: Model) -> dict:
 
 def solve_all(model: Model, workers: int = None, progress=None, combinations: bool = True,
               envelopes: bool = True, design: bool = False, fatigue: bool = False) -> Analysis:
+    """Alle Lastfaelle, alle Kombinationen, Umhuellende, optional Nachweise -
+    mit einem stehenden Prozesspool fuer alle Elementschleifen der Rechnung
+    (parallel.arbeiter)."""
+    with parallel.arbeiter(model, workers):
+        return _solve_all_innen(model, workers, progress, combinations, envelopes, design, fatigue)
+
+
+def _solve_all_innen(model: Model, workers: int = None, progress=None, combinations: bool = True,
+                     envelopes: bool = True, design: bool = False, fatigue: bool = False) -> Analysis:
     """Alle Lastfaelle, alle Kombinationen, Umhuellende, optional Nachweise."""
     t0 = time.time()
     an = Analysis(model)
@@ -2161,8 +2185,9 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     """
     from scipy.sparse.linalg import LinearOperator
     t0 = time.time()
-    K = asm.stiffness(model, workers, aktiv)
-    M = asm.mass(model, workers, aktiv)
+    with parallel.arbeiter(model, workers):
+        K = asm.stiffness(model, workers, aktiv)
+        M = asm.mass(model, workers, aktiv)
     if zusatzmasse is not None:
         M = (M + zusatzmasse).tocsr()
     kontakt_text, n_kontakt = "", 0
