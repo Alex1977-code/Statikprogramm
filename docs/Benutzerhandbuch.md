@@ -88,7 +88,7 @@ Vierzehn Register nach Arbeitsschritt:
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
-| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzvorschau, Netz löschen, Kontaktfugen |
+| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
@@ -437,11 +437,13 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Angabe | Bedeutung |
 |---|---|
 | Netzdichte | **grob / mittel / fein**: 8 / 16 / 32 Elemente über die größte Abmessung jedes Objekts - ein 4 m langer Träger und eine 8 cm dicke Lasche bekommen so je ihr passendes Netz; **eigene**: die Ziellänge gilt absolut (so übernimmt sie der RFEM-Import) |
+| Ziellänge, kleinste und größte Elementgröße | in **mm** (seit 13.09.2026; vorher in m) - so, wie man beim Vernetzen denkt; gespeichert und gerechnet wird in m. Auch die Netzqualität *Kantenlänge* färbt in mm |
 | Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz **der Flächen** dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge). Bei **Volumen** bleibt die Kantenlänge im Feld: eine ganze Platte auf ihre Bohrung herunterzuteilen gäbe nur das Vielfache an Tetraedern. Fein wird es **örtlich**, an drei zusammengehörenden Stellen: die Bohrungsränder nach ihrer Krümmung, eine Linie neben einer viel feineren (die **Mantellinie** einer Bohrung stand sonst mit *einem* Abschnitt über der ganzen Bohrtiefe), Kränze um jede Öffnung in der Fläche, und von dort wachsend ins Innere. Gemessen an einer 20-mm-Bohrung von 35 mm Tiefe in einer 900-mm-Platte: der Anteil der Tetraeder unter der Güte 0,3 an der Bohrungswand fällt von 6,8 % auf 1,0 % — für doppelt so viele Elemente. Ohne den Haken bleibt es bei ⌈L/h⌉ je Linie |
 | Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)) |
 | Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall |
 | Elementansatz | **linear** (shell3/shell4, tet4, hex8) oder **quadratisch**: Flächen bekommen Mittenknoten (shell6/shell8), abgebildete Volumen hex20, freie Volumen tet10. Quadratisch braucht für dieselbe Genauigkeit deutlich weniger Elemente, je Element aber mehr Rechenzeit |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
+| Abgebildetes Netz | wird **nicht eingestellt**: abgebildet wird immer, wo die Form es hergibt — eine Fläche mit vier Randabschnitten als Vierecknetz, ein Körper aus **sechs Vierecken mit acht Eckknoten** als regelmäßiges **Hexaedernetz** (x × y × z, hex8 bzw. hex20), ein Körper aus vier Dreiecken als ein Tetraeder; alles andere geht an den freien Vernetzer. Der Haken „Abgebildetes Netz bevorzugen“ stand bis 13.09.2026 in der Maske, ohne dass ihn etwas las; der Wert kommt aus der RFEM-Datei („mapped mesh preferred“) und wird nur mitgeführt |
 
 **Netz → Netzqualität…** bewertet die **Form** jedes Elements und färbt die
 Ansicht danach ein: grün gut, rot schlecht. Ein FE-Ergebnis ist nur so gut
@@ -475,10 +477,18 @@ Datei in einem Zug ausgewertet, er meldet nichts zwischendurch, und der
 Balken steht darum still. Das ist kein Absturz; der Text wird vor dem Schritt
 gezeichnet und bleibt, bis die Knoten aufgebaut werden.
 
-**Vorschau** in der Maske und *Netz → Netzvorschau* schätzen die Elementzahl
-je Objekt und gesamt ins Protokoll - vor dem Vernetzen, damit ein Modell
-mit hunderttausend Tetraedern nicht überrascht. Das Protokoll nennt beim
-Vernetzen je Objekt die gewählte Elementgröße und ihren Grund.
+Die **Netzvorschau** (Schätzung der Elementzahl vor dem Vernetzen, im Ribbon
+und in der Maske) gibt es seit 13.09.2026 nicht mehr: sie rechnete mit
+A/h² bzw. V/(0,12·h³) und kannte weder die örtliche Verfeinerung an
+Bohrungen noch die Nachvernetzung — am Drehlager schätzte sie 76 640
+Tetraeder, das fertige Netz hat 1 812 359, je Körper im Median um den
+Faktor 758 daneben. Eine Zahl, die um drei Größenordnungen daneben liegt,
+ist keine Auskunft. Verlässlich wäre allein eine Vorschau über die
+Randhülle (gemessen über alle 108 Körper: 3,1 Tetraeder je Randdreieck,
+10–90 %: 2,7–4,8), die je Körper die Hülle rechnen müsste — ein bis zwei
+Minuten am Drehlager; sie ist als Folgearbeit vermerkt. Das Protokoll nennt
+beim Vernetzen je Objekt die gewählte Elementgröße und ihren Grund, und
+nach dem Vernetzen steht die Elementzahl je Objekt im Modellbaum.
 
 Beim Vernetzen zeigt die Statuszeile einen **Fortschrittsbalken** mit
 Laufzeit („Vernetze Fläche 120 von 1375: …“, „Vernetze Volumen (108): 12 von
@@ -580,6 +590,15 @@ kommen so 711 Flächenlasten, die vorher verloren gingen.
 „Netz löschen" nimmt die Elemente wieder weg, die Geometrie bleibt stehen.
 Eine Fläche, die noch einen Volumenkörper berandet, lässt sich nicht löschen —
 das Programm sagt, welcher es ist.
+
+**Netz ändern bei vorhandenen Ergebnissen.** *Vernetzen*, *Netz löschen* und
+*Kontaktfugen ausführen* fragen, wenn Ergebnisse vorliegen: die Ergebnisse
+gehören zum bisherigen Netz und würden durch die Änderung gelöscht — die
+Rückfrage „Netz ändern“ nennt ihre Zahl und bietet den Knopf der Aktion
+(*Vernetzen*, *Netz löschen*, *Ausführen*) und **Abbrechen**. Abbrechen
+lässt Netz und Ergebnisse stehen; bei Zustimmung werden die Ergebnisse
+verworfen (Protokollzeile) und das Netz erneuert. Ohne Ergebnisse wird
+nicht gefragt. Geprüft in `tests/test_gui_smoke.py`.
 
 ### Statuszeile: Fortschrittsbalken und Abbrechen
 
@@ -2752,9 +2771,23 @@ Summe der Normalkräfte ΣF_n der aktiven Knoten (Druck positiv), die
 Resultierende R aller Kontaktkräfte (Normal- und Reibkräfte) auf die
 Kontaktknoten mit ihren drei Komponenten, die resultierende Reibkraft |F_t|
 (nicht die Summe der Knotenbeträge — am Block mit Reibung 20 kN statt
-26 kN), den größten Kontaktdruck p = F_n/A, die wirksame Fläche
+26 kN), die **mittlere Pressung p_m = ΣF_n/A** und den größten Kontaktdruck
+p = F_n/A je Knoten — denn eine Kraft allein sagt nichts über die
+Beanspruchung: 10 kN sind viel auf einer kleinen und wenig auf einer großen
+Fläche, und der Nachweis läuft über die Pressung; die Kraft selbst braucht
+man für Gleichgewicht, Lastpfad und die Bemessung des Gegenstücks —, die
+wirksame Fläche
 A der aktiven Knoten (aus den Einflussflächen der Kontaktknoten) und die
-Zahl der aktiven, haftenden und gleitenden Knoten. Zuerst steht eine
+Zahl der aktiven, haftenden und gleitenden Knoten. **Je Paar oder je
+Fläche?** Eine Kontaktbedingung ist *ein* Paar mit allen ihren Flächen;
+umfasst sie mehrere, folgen der Zeile des Paars Zeilen **je Fläche** (nach
+der Fläche, auf der der Kontaktknoten liegt) — bei einer Fläche je
+Bedingung, wie an den Lagerflächen des Drehlagers, ist die Kraft je Paar
+die Kraft je Fläche. Dieselben Zahlen stehen in der Oberfläche in der
+Tabelle **Kontaktpaare** (*Ergebnisse → Kontaktpaare*, mit Kennwerten,
+Filter und Ausgabe wie jede Tabelle) und lassen sich als Berichtseintrag
+„Kontaktpaare“ einfügen; die Tabelle **Kontakt** je Knoten nennt jetzt in
+der Spalte *Paar*, zu welchem Paar der Knoten gehört. Zuerst steht eine
 **Übersicht** mit dem maßgebenden Ergebnis je Kontaktpaar (größte
 Normalkraftsumme), dann je Lastfall und Kombination die Tabelle der
 Kontaktpaare — in der Kurzform für die ersten 5, im mittleren Umfang für 20

@@ -606,7 +606,13 @@ class Datentabelle(QtWidgets.QWidget):
         werkzeug.setContentsMargins(4, 2, 4, 0)
         self.lbl_zeilen = QtWidgets.QLabel("0 Zeilen")
         self.lbl_zeilen.setObjectName("tabellenzahl")
-        werkzeug.addWidget(self.lbl_zeilen)
+        # Ein langer Hinweis („Kontaktkräfte gibt es zu Lastfall oder
+        # Kombination …") darf dem Fenster keine Mindestbreite aufzwingen: der
+        # untere Bereich verlangte sonst 798 statt 496 px (13.09.2026). Der
+        # ganze Text steht am Zeiger.
+        self.lbl_zeilen.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.lbl_zeilen.setMinimumWidth(0)
+        werkzeug.addWidget(self.lbl_zeilen, 1)
         werkzeug.addStretch(1)
         for text, fn, hinweis in (
                 ("Spalten…", self._spaltenwahl, "Spalten ein- und ausblenden"),
@@ -874,6 +880,7 @@ class Datentabelle(QtWidgets.QWidget):
         if m == 0 and hinweis:
             text += " – " + hinweis
         self.lbl_zeilen.setText(text)
+        self.lbl_zeilen.setToolTip(text)
         self._kennwerte()
         self._filterbreiten()
 

@@ -289,7 +289,7 @@ class Report:
                     ("summary", "nach Zusammenfassung")]
     #: Tabellen, die ein Berichtseintrag der Art "tabelle" einfuegen kann
     TABELLEN = ("Stabkräfte", "Auflagerkräfte", "Umhüllende", "Nachweise EC3", "Ermüdung",
-                "Kontakt", "Lastfälle", "Kombinationen")
+                "Kontakt", "Kontaktpaare", "Lastfälle", "Kombinationen")
 
     def __init__(self, model, analysis=None, results=None, options: dict = None):
         self.model = model
@@ -554,6 +554,28 @@ class Report:
         return b
 
     @staticmethod
+    @staticmethod
+    def _kontaktpaar_kopf() -> list:
+        return ["Kontaktpaar", "Fläche", "aktiv / gesamt", "haften", "gleiten", "ΣF_n [kN]",
+                "R_x [kN]", "R_y [kN]", "R_z [kN]", "|F_t| [kN]", "A [cm²]", "p_m [N/mm²]",
+                "max p [N/mm²]", "max F_n [kN]"]
+
+    @staticmethod
+    def _kontaktpaar_zeile(k: dict) -> list:
+        p_max = k.get("p_max")
+        # Eine Kraft allein sagt nichts ueber die Beanspruchung: 10 kN sind viel
+        # auf einer kleinen und wenig auf einer grossen Flaeche. Darum die
+        # mittlere Pressung p_m = ΣF_n / A neben dem Spitzenwert (13.09.2026).
+        p_m = (k["Fn"] / k["A"]) if k.get("A") else None
+        return [k["name"], k.get("flaeche") or "alle", f"{k['aktiv']} / {k['anzahl']}",
+                str(k["haften"]), str(k["gleiten"]), fmt(k["Fn"] / 1e3, 2),
+                fmt(k["R"][0] / 1e3, 2), fmt(k["R"][1] / 1e3, 2), fmt(k["R"][2] / 1e3, 2),
+                fmt(k["Ft"] / 1e3, 2), fmt(k["A"] * 1e4, 1),
+                fmt(p_m / 1e6, 2) if p_m is not None else "–",
+                fmt(p_max / 1e6, 2) if p_max is not None and p_max == p_max else "–",
+                fmt(k["Fn_max"] / 1e3, 2)]
+
+    @staticmethod
     def _textbloecke(text: str) -> list:
         """Eigener Text: Absaetze durch Leerzeile, "# Titel" als Ueberschrift,
         "- Punkt" als Aufzaehlung - mehr Auszeichnung braucht ein Bericht nicht."""
@@ -641,10 +663,17 @@ class Report:
         elif name == "Kontakt":
             if res is None or not getattr(res, "contact", None):
                 return [("note", f"Kontaktergebnisse gibt es zu Lastfall oder Kombination ({e.quelle or 'kein Ergebnis'}).")]
-            rows = [["Knoten", "Art", "Zustand", "F_n [kN]", "F_t [kN]", "Spalt [mm]"]]
+            rows = [["Knoten", "Paar", "Art", "Zustand", "F_n [kN]", "F_t [kN]", "Spalt [mm]"]]
             for c in res.contact:
-                rows.append([str(c["node"]), c["kind"], c["status"], fmt(c["Fn"] / 1e3, 2),
-                             fmt(c["Ft"] / 1e3, 2), fmt(c["gap"] * 1e3, 3)])
+                rows.append([str(c["node"]), str(c.get("label", "")).split(":")[0], c["kind"], c["status"],
+                             fmt(c["Fn"] / 1e3, 2), fmt(c["Ft"] / 1e3, 2), fmt(c["gap"] * 1e3, 3)])
+        elif name == "Kontaktpaare":
+            if res is None or not getattr(res, "contact", None):
+                return [("note", f"Kontaktkräfte gibt es zu Lastfall oder Kombination ({e.quelle or 'kein Ergebnis'}).")]
+            from .. import spannungen as spn
+            rows = [self._kontaktpaar_kopf()]
+            for k in spn.kontaktkraefte(m, res):
+                rows.append(self._kontaktpaar_zeile(k))
         elif name == "Lastfälle":
             rows = [["Lastfall", "Art", "Lasten", "Beschreibung"]]
             for lc in m.load_cases.values():
@@ -2197,8 +2226,10 @@ class Report:
                 b.append(("p", "Kontaktkräfte je Kontaktpaar: ΣF_n ist die Summe der Normalkräfte "
                                "der aktiven Knoten (Druck positiv), R die Resultierende aller "
                                "Kontaktkräfte (Normal- und Reibkräfte) auf die Kontaktknoten, |F_t| "
-                               "die resultierende Reibkraft, p der größte Kontaktdruck F_n/A und A "
-                               "die wirksame Fläche der aktiven Knoten."))
+                               "die resultierende Reibkraft, A die wirksame Fläche der aktiven Knoten, "
+                               "p_m = ΣF_n/A die mittlere Pressung und p der größte Kontaktdruck F_n/A "
+                               "je Knoten - eine Kraft allein sagt nichts über die Beanspruchung, "
+                               "der Nachweis läuft über die Pressung."))
 
                 def kraftzeile(k):
                     p_max = k.get("p_max")
@@ -2213,13 +2244,18 @@ class Report:
                     kk = spn.kontaktkraefte(m, res)
                     je_ergebnis.append((name, res, kk))
                     for k in kk:
+                        if k.get("flaeche"):
+                            continue                 # je Flaeche steht beim Ergebnis
                         if k["name"] not in best or k["Fn"] > best[k["name"]][1]["Fn"]:
                             best[k["name"]] = (name, k)
                 if best:
                     rows = [["Kontaktpaar", "maßgebend", "ΣF_n [kN]", "R_x [kN]", "R_y [kN]",
-                             "R_z [kN]", "|F_t| [kN]", "max p [N/mm²]", "A [cm²]", "aktiv / gesamt"]]
+                             "R_z [kN]", "|F_t| [kN]", "max p [N/mm²]", "A [cm²]", "p_m [N/mm²]",
+                             "aktiv / gesamt"]]
                     for pn, (rn, k) in best.items():
-                        rows.append([pn, rn] + kraftzeile(k) + [f"{k['aktiv']} / {k['anzahl']}"])
+                        rows.append([pn, rn] + kraftzeile(k)
+                                    + [fmt(k["Fn"] / k["A"] / 1e6, 2) if k.get("A") else "–",
+                                       f"{k['aktiv']} / {k['anzahl']}"])
                     rows, note = self._truncate(rows)
                     b.append(("table", rows, "Kontaktkräfte je Kontaktpaar – maßgebendes Ergebnis "
                                              "(größte Normalkraftsumme)", None, "compact"))
@@ -2230,13 +2266,13 @@ class Report:
                     b.append(self._h(3, f"Kontaktergebnisse {name}"))
                     b.append(("p", ctm.summary(res.contact) + "."))
                     if kk:
-                        rows = [["Kontaktpaar", "aktiv / gesamt", "haften", "gleiten", "ΣF_n [kN]",
-                                 "R_x [kN]", "R_y [kN]", "R_z [kN]", "|F_t| [kN]", "max p [N/mm²]",
-                                 "A [cm²]", "max F_n [kN]"]]
+                        rows = [self._kontaktpaar_kopf()]
                         for k in kk:
-                            rows.append([k["name"], f"{k['aktiv']} / {k['anzahl']}", str(k["haften"]),
-                                         str(k["gleiten"])] + kraftzeile(k) + [fmt(k["Fn_max"] / 1e3, 2)])
-                        b.append(("table", rows, f"Kontaktkräfte je Kontaktpaar, {name}", None, "compact"))
+                            rows.append(self._kontaktpaar_zeile(k))
+                        b.append(("table", rows, f"Kontaktkräfte je Kontaktpaar, {name}"
+                                                 + (" (Zeilen je Fläche, wo ein Paar mehrere Flächen umfasst)"
+                                                    if any(k.get("flaeche") for k in kk) else ""),
+                                  None, "compact"))
                     if self.opt("contact_nodes"):
                         rows = [["Knoten", "Art", "Bezeichnung", "Status", "F_n [kN]", "F_t [kN]",
                                  "Spalt [mm]"]]

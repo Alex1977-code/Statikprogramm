@@ -155,6 +155,9 @@ def main():
     w.show()
     app.processEvents()
     check("Fenster erzeugt", w.isVisible())
+    # Netz aendern bei vorhandenen Ergebnissen fragt (Vernetzen / Abbrechen) -
+    # im Durchlauf stimmt die Antwort zu; der eigene Abschnitt prueft die Frage
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": True
 
     for ex in ("frame", "truss", "plate", "solid", "hall", "gate", "contact", "friction"):
         t0 = time.time()
@@ -203,6 +206,56 @@ def main():
     check("Block mit Reibung: Eigenformen mit verklebtem Kontakt, erste Form nicht 0 Hz, Kontakt in der Zusammenfassung",
           w.cb_mode.count() == 4 and "0.000 Hz" not in w.cb_mode.itemText(0)
           and "Kontakt" in w.txt_summary.toPlainText(), w.cb_mode.itemText(0))
+    # Tabellen Kontakt (je Knoten, mit Paar) und Kontaktpaare (je Paar) nach einer statischen Rechnung
+    rs = solver.solve_static(w.model)
+    w._solve_done("case", rs); app.processEvents()
+    # der Lastfall, nicht die Umhuellende: Kontaktkraefte gibt es je Lastfall
+    for i_ in range(w.cb_result.count()):
+        if (w.cb_result.itemData(i_) or ("",))[0] == "case":
+            w.cb_result.setCurrentIndex(i_)
+            break
+    w.show_results(); app.processEvents()
+    w.tabelle_zeigen("Kontaktpaare"); app.processEvents()
+    zp = list(w.tbl_kontaktpaare.modell.zeilen)
+    check("Tabelle Kontaktpaare: Block/Platte mit ΣFn = 90 kN, |Ft| = 20 kN und mittlerer Pressung ΣFn/A",
+          len(zp) == 1 and zp[0][0] == "Block/Platte" and abs(float(zp[0][6]) - 90.0) < 2.0
+          and abs(float(zp[0][10]) - 20.0) < 1.0
+          and abs(float(zp[0][12]) - float(zp[0][6]) * 1e3 / (float(zp[0][11]) * 1e2)) < 1e-3, str(zp[:1]))
+    zk = list(w.tbl_contact.modell.zeilen)
+    check("Tabelle Kontakt nennt je Knoten das Paar", bool(zk) and zk[0][-1] == "Block/Platte", str(zk[:1]))
+    # Netz aendern bei vorhandenen Ergebnissen: Rueckfrage, Abbrechen laesst alles stehen
+    w.new_model(); app.processEvents()
+    mg_ = w.model
+    mg_.add_nodes(np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0.]]))
+    for i_, (a_, b_) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+        mg_.add_line(f"L{i_ + 1}", [a_, b_])
+    f_ = mg_.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke=list(mg_.shells)[0],
+                         material=list(mg_.materials)[0], teilung=[4, 2])
+    w._vernetzen([f_], []); w.refresh_all(); app.processEvents()
+    for i_ in (0, 3):
+        mg_.fix(i_, "all")
+    mg_.load_node(1, Fz=-1000.0)
+    w._solve_done("case", solver.solve_static(mg_)); app.processEvents()
+    fragen_n = []
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": (fragen_n.append((titel, ja, nein, text)), False)[1]
+    n_el = len(mg_.elements)
+    w.geometrie_vernetzen(); app.processEvents()
+    check("Vernetzen mit Ergebnissen: Rückfrage „Netz ändern“, Knöpfe Vernetzen/Abbrechen, sie nennt die Löschung",
+          len(fragen_n) == 1 and fragen_n[0][0] == "Netz ändern" and fragen_n[0][1] == "Vernetzen"
+          and fragen_n[0][2] == "Abbrechen" and "gelöscht" in fragen_n[0][3], str(fragen_n[:1])[:120])
+    check("Abbrechen: Ergebnisse und Netz bleiben", w.analysis is not None and len(mg_.elements) == n_el)
+    w.netz_loeschen_geometrie(); app.processEvents()
+    check("Netz löschen fragt ebenso (Knopf „Netz löschen“) und lässt bei Abbrechen alles stehen",
+          len(fragen_n) == 2 and fragen_n[1][1] == "Netz löschen" and w.analysis is not None
+          and len(mg_.elements) == n_el, str(fragen_n[1:2])[:80])
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": True
+    w.geometrie_vernetzen(); app.processEvents()
+    check("Vernetzen bestätigt: die Ergebnisse sind verworfen (auch aus der Auswahl), das Netz neu",
+          w.analysis is None and w.results is None and w.cb_result.count() == 0 and len(mg_.elements) > 0,
+          f"{w.cb_result.count()} Ergebnisse, {len(mg_.elements)} Elemente")
+    check("… ohne Ergebnisse wird nicht gefragt", not any(f[0] == "Netz ändern" for f in fragen_n[2:]))
+    w.load_example("friction"); app.processEvents()
+    w._solve_done("case", solver.solve_static(w.model)); app.processEvents()
     w._rechnet_gerade = True
     w._bg_failed("Probefehler: Faktorisierung gescheitert", "Traceback (Probe)")
     app.processEvents()
@@ -4085,9 +4138,10 @@ def main():
         w.clear_selection()
         app.processEvents()
         check("… und ein Klick ins Leere nimmt sie wieder weg", w.rechts_zeigt() == "leer", w.rechts_zeigt())
-        check("Ribbon Netz: Vernetzen, Netzeinstellungen, Vorschau; Generatoren als Masken",
-              all(hasattr(w, a) for a in ("geometrie_vernetzen", "maske_netzeinstellungen", "netz_vorschau",
-                                          "maske_stabzug", "maske_platte", "maske_quader")))
+        check("Ribbon Netz: Vernetzen, Netzeinstellungen; Generatoren als Masken - keine Netzvorschau mehr",
+              all(hasattr(w, a) for a in ("geometrie_vernetzen", "maske_netzeinstellungen",
+                                          "maske_stabzug", "maske_platte", "maske_quader"))
+              and not hasattr(w, "netz_vorschau"))
         w.maske_platte()
         app.processEvents()
         mk = w.maskenrand.maske
@@ -4146,17 +4200,21 @@ def main():
         app.processEvents()
         mk = w.maskenrand.maske
         mk.setzen("dichte", "eigene")
-        mk.setzen("ziellaenge", 0.5)
+        mk.setzen("ziellaenge", 500)          # Maske in mm
+        mk.setzen("h_min", "100")
         mk.setzen("intelligent", False)
         mk.setzen("form", "Dreiecke")
-        mk.zusatzknoepfe["Vorschau"].click()
-        app.processEvents()
-        check("Netzeinstellungen: Vorschau schätzt 8 m² / 0,5² = 32 Elemente", "1 Flächen ≈ 32" in mk.werte()["vorschau"],
-              mk.werte()["vorschau"])
+        check("Netzeinstellungen: kein Vorschau-Knopf und kein Vorschau-Feld mehr",
+              "Vorschau" not in mk.zusatzknoepfe and "vorschau" not in mk._felder)
         mk.anwenden()
         app.processEvents()
-        check("Netzeinstellungen übernommen (eigene Ziellänge 0,5 m, Dreiecke, ohne Anpassung)",
-              m_.netz.dichte == "eigene" and m_.netz.ziellaenge == 0.5 and not m_.netz.intelligent and m_.netz.form == 0, str(fehler_))
+        check("Netzeinstellungen übernommen (Maske in mm: Ziellänge 500 mm = 0,5 m, kleinste 100 mm = 0,1 m; Dreiecke, ohne Anpassung)",
+              m_.netz.dichte == "eigene" and m_.netz.ziellaenge == 0.5 and abs(m_.netz.h_min - 0.1) < 1e-12
+              and not m_.netz.intelligent and m_.netz.form == 0, f"{m_.netz.ziellaenge} m, h_min {m_.netz.h_min} m {fehler_}")
+        w.maske_netzeinstellungen(); app.processEvents()
+        mk2 = w.maskenrand.maske
+        check("die Maske zeigt die Längen in mm", float(mk2.werte()["ziellaenge"]) == 500.0
+              and str(mk2.werte()["h_min"]).strip() == "100", str((mk2.werte()["ziellaenge"], mk2.werte()["h_min"])))
         w.maskenrand.schliessen()
         w.sel_flaechen = []
         w.geometrie_vernetzen()
@@ -4165,8 +4223,6 @@ def main():
               f_.teilung == [2, 2] and len(f_.elemente) == 64 and all(m_.elements[e].typ == "shell3" for e in f_.elemente)
               and "Netzdichte Fläche F1" in w.log.toPlainText() and "→ 8 × 4" in w.log.toPlainText(),
               str((f_.teilung, len(f_.elemente))))
-        v_ = w.netz_vorschau()
-        check("Netzvorschau: 32 Elemente geschätzt", bool(v_) and v_["n"] == 32)
         m_.netz.dichte = "mittel"
         m_.netz.intelligent = True
         m_.netz.form = 2
