@@ -112,6 +112,168 @@ def _run_chunk(func: Callable, idx: list[int]):
     return func(_WORKER_MODEL, idx, _WORKER_EXTRA)
 
 
+# --------------------------------------------------------------------------
+# Stehender Pool je Rechnung: das Modell einmal je Arbeiter aus einer Datei
+# --------------------------------------------------------------------------
+_AKTIV = None            # der Arbeiter-Block, der gerade offen ist
+_WORKER_EXTRA_PFAD = None
+
+
+def _init_worker_datei(pfad: str) -> None:
+    """Der Arbeitsprozess liest das Modell **einmal** aus der Datei."""
+    global _WORKER_MODEL, _WORKER_EXTRA, _WORKER_EXTRA_PFAD
+    import pickle
+    with open(pfad, "rb") as f:
+        _WORKER_MODEL = pickle.load(f)
+    _WORKER_EXTRA, _WORKER_EXTRA_PFAD = None, None
+    try:
+        import statik3d.jobs  # noqa: F401  (registriert Auftragsarten)
+    except Exception:
+        pass
+
+
+def _run_chunk_datei(func: Callable, idx: list[int], extra_pfad):
+    """Ein Block im stehenden Pool; das Zusatzpaket (Verschiebungen) kommt je
+    Aufruf einmal je Arbeiter aus seiner Datei."""
+    global _WORKER_EXTRA, _WORKER_EXTRA_PFAD
+    if extra_pfad is None:
+        return func(_WORKER_MODEL, idx)
+    if extra_pfad != _WORKER_EXTRA_PFAD:
+        import pickle
+        with open(extra_pfad, "rb") as f:
+            _WORKER_EXTRA = pickle.load(f)
+        _WORKER_EXTRA_PFAD = extra_pfad
+    return func(_WORKER_MODEL, idx, _WORKER_EXTRA)
+
+
+class Arbeiter:
+    """Ein Prozesspool, der eine ganze Rechnung lang steht.
+
+    Bis 13.09.2026 startete jede Elementschleife (Assemblierung, Nachlauf je
+    Lastfall) einen neuen Pool und gab jedem Arbeiter das Modell als
+    Startargument mit - gepickelt im Hauptprozess, **je Arbeiter**. Am
+    Drehlager (1 812 423 Elemente, 275 MB gepickelt, 6,3 s) kostete das den
+    Nachlauf eines einzigen Lastfalls 244 s, bei 422 Lastfaellen den
+    Loewenanteil der Rechenzeit. Jetzt: das Modell einmal in eine Datei
+    (wie beim Vernetzen), jeder Arbeiter liest sie beim Start, und der Pool
+    bleibt bis zum Ende des Blocks stehen; das Zusatzpaket eines Aufrufs
+    (der Verschiebungsvektor) geht ebenso ueber eine Datei, einmal je
+    Arbeiter statt je Block.
+
+    Verschachtelte Bloecke fuer dasselbe Modell nutzen denselben Pool. Ein
+    Modell darf sich im Block nicht aendern - er gehoert zu **einer**
+    Rechnung (solve_all, solve_static, solve_cases, solve_modal).
+    """
+
+    def __init__(self, model, workers: int = None):
+        self.model = model
+        self.w = _settings.workers if workers is None else int(workers)
+        self.pool = None
+        self.pfad = None
+        self.tiefe = 0
+        self.vorher = None
+        self.aufrufe = 0
+        self.geteilt = None      # der Block, den ein verschachtelter Aufruf mitbenutzt
+
+    def __enter__(self):
+        global _AKTIV
+        if _AKTIV is not None and _AKTIV.model is self.model:
+            # Verschachtelt: denselben Pool mitbenutzen. Python ruft __exit__
+            # auf **diesem** Objekt, darum merkt es sich den Eigentuemer.
+            self.geteilt = _AKTIV
+            _AKTIV.tiefe += 1
+            return _AKTIV
+        self.vorher = _AKTIV
+        self.tiefe = 1
+        n = len(getattr(self.model, "elements", []) or [])
+        if self.w > 1 and n >= _settings.min_elements:
+            self._starten()
+        _AKTIV = self
+        return self
+
+    def _starten(self) -> None:
+        import pickle
+        import tempfile
+        fd, pfad = tempfile.mkstemp(prefix="statik3d_pool_", suffix=".pkl")
+        os.close(fd)
+        try:
+            with open(pfad, "wb") as f:
+                pickle.dump(self.model, f, protocol=pickle.HIGHEST_PROTOCOL)
+            self.pool = ProcessPoolExecutor(max_workers=self.w, mp_context=_context(),
+                                            initializer=_init_worker_datei, initargs=(pfad,))
+            self.pfad = pfad
+        except Exception as fehler:      # noqa: BLE001 - dann eben wie bisher je Aufruf
+            _melden(f"[parallel] Stehender Pool nicht moeglich ({fehler})\n")
+            self.pool = None
+            try:
+                os.remove(pfad)
+            except OSError:
+                pass
+
+    def map(self, func: Callable, chunks: list, extra) -> list:
+        """Die Bloecke ueber den stehenden Pool; extra einmal je Arbeiter."""
+        import pickle
+        import tempfile
+        extra_pfad = None
+        if extra is not None:
+            fd, extra_pfad = tempfile.mkstemp(prefix="statik3d_extra_", suffix=".pkl")
+            os.close(fd)
+            with open(extra_pfad, "wb") as f:
+                pickle.dump(extra, f, protocol=pickle.HIGHEST_PROTOCOL)
+        try:
+            parts = list(self.pool.map(_run_chunk_datei, [func] * len(chunks), chunks,
+                                       [extra_pfad] * len(chunks)))
+        finally:
+            if extra_pfad:
+                try:
+                    os.remove(extra_pfad)
+                except OSError:
+                    pass
+        self.aufrufe += 1
+        out = []
+        for part in parts:
+            out.extend(part)
+        return out
+
+    def verwerfen(self) -> None:
+        """Der Pool ist ausgefallen: schliessen, die Aufrufe laufen wie bisher."""
+        pool, self.pool = self.pool, None
+        if pool is not None:
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:               # noqa: BLE001
+                pass
+
+    def __exit__(self, *_a):
+        global _AKTIV
+        if self.geteilt is not None:
+            self.geteilt.tiefe -= 1
+            self.geteilt = None
+            return False
+        self.tiefe -= 1
+        if self.tiefe > 0:
+            return False
+        pool, self.pool = self.pool, None
+        if pool is not None:
+            try:
+                pool.shutdown(wait=True)
+            except Exception:               # noqa: BLE001
+                pass
+        if self.pfad:
+            try:
+                os.remove(self.pfad)
+            except OSError:
+                pass
+        _AKTIV = self.vorher
+        return False
+
+
+def arbeiter(model, workers: int = None) -> "Arbeiter":
+    """``with parallel.arbeiter(model):`` - ein stehender Pool fuer alle
+    Elementschleifen dieser Rechnung (siehe :class:`Arbeiter`)."""
+    return Arbeiter(model, workers)
+
+
 def map_elements(func: Callable, model, indices: list[int], workers: int = None,
                  min_elements: int = None, extra=None) -> list:
     """func(model, [elementindizes]) bzw. func(model, idx, extra) -> Liste;
@@ -128,27 +290,35 @@ def map_elements(func: Callable, model, indices: list[int], workers: int = None,
         return serial()
     chunk = max(_settings.chunk_elements, n // (4 * w) + 1)
     chunks = [list(indices[i:i + chunk]) for i in range(0, n, chunk)]
-    ctx = _context()
+    akt = _AKTIV
+    if akt is not None and akt.model is model and akt.pool is not None:
+        try:
+            return akt.map(func, chunks, extra)
+        except (BrokenProcessPool, OSError, EOFError) as fehler:
+            _melden(f"[parallel] Stehender Pool ausgefallen ({fehler}), rechne seriell\n")
+            akt.verwerfen()
+            return serial()
+    # Ohne offenen Block: ein Pool nur fuer diesen Aufruf - aber ebenfalls
+    # ueber die Modelldatei. Das Modell als Startargument je Arbeiter zu
+    # pickeln machte den Pool am Drehlager langsamer als die serielle
+    # Rechnung (244 s gegen 60 s, 13.09.2026).
     try:
-        pool = ProcessPoolExecutor(max_workers=min(w, len(chunks)), mp_context=ctx,
-                                   initializer=_init_model_worker, initargs=(model, extra))
-    except Exception as fehler:   # z.B. kein fork/spawn moeglich -> seriell
+        with Arbeiter(model, min(w, len(chunks))) as einmal:
+            if einmal.pool is None:
+                return serial()
+            try:
+                return einmal.map(func, chunks, extra)
+            except (BrokenProcessPool, OSError, EOFError) as fehler:
+                # Der Pool selbst ist ausgefallen (Speicher, abgestuerzter
+                # Prozess) - das laesst sich seriell nachholen. Ein Fehler
+                # *aus* func dagegen ist ein echter Befund am Modell und muss
+                # unveraendert nach oben.
+                _melden(f"[parallel] Arbeitsprozess ausgefallen ({fehler}), rechne seriell\n")
+                einmal.verwerfen()
+                return serial()
+    except (BrokenProcessPool, OSError, EOFError) as fehler:
         _melden(f"[parallel] Pool nicht verfuegbar ({fehler}), rechne seriell\n")
         return serial()
-    try:
-        with pool:
-            parts = list(pool.map(_run_chunk, [func] * len(chunks), chunks))
-    except (BrokenProcessPool, OSError, EOFError) as fehler:
-        # Der Pool selbst ist ausgefallen (Speicher, abgestuerzter Prozess) -
-        # das laesst sich seriell nachholen. Ein Fehler *aus* func dagegen ist
-        # ein echter Befund am Modell und muss unveraendert nach oben; frueher
-        # verschwand er hier und die Rechnung lief ein zweites Mal ins Leere.
-        _melden(f"[parallel] Arbeitsprozess ausgefallen ({fehler}), rechne seriell\n")
-        return serial()
-    out = []
-    for p in parts:
-        out.extend(p)
-    return out
 
 
 # --------------------------------------------------------------------------
