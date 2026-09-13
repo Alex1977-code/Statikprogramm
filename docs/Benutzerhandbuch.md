@@ -88,7 +88,7 @@ Vierzehn Register nach Arbeitsschritt:
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
-| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netz löschen, Kontaktfugen |
+| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
@@ -447,6 +447,14 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Nachbesserung | **MMG3D** optimiert das fertige Tetraedernetz bei fester Hülle (`-nosurf -optim`) — der Weg zu einer Mindestgüte aller Elemente, denn die schlechten Tetraeder sitzen auf der Hülle (V5: alle 55 unter 0,1 mit vier Hüllknoten). Das Programm `mmg3d_O3` (mmgtools.org) lädt **Vernetzer installieren…** nach; es läuft als getrennter Prozess über Dateien im Medit-Format. Das Feld darunter nimmt den Pfad eines eigenen Programms; leer = das nachgeladene, sonst der Suchpfad. Gemessen an der Platte mit Bohrung (13.09.2026, MMG 5.8.0): h = 50 mm Güte min 0,103 → 0,453 (19 614 → 18 815 Tetraeder, 6,1 s), h = 30 mm 0,120 → 0,474 (60 610 → 57 817, 1,7 s); Hülle und Volumen unverändert (Randtreue 100 %). Das Protokoll nennt Güte min vorher/nachher |
 | Abgebildetes Netz | wird **nicht eingestellt**: abgebildet wird immer, wo die Form es hergibt — eine Fläche mit vier Randabschnitten als Vierecknetz, ein Körper aus **sechs Vierecken mit acht Eckknoten** als regelmäßiges **Hexaedernetz** (x × y × z, hex8 bzw. hex20), ein Körper aus vier Dreiecken als ein Tetraeder; alles andere geht an den freien Vernetzer. Der Haken „Abgebildetes Netz bevorzugen“ stand bis 13.09.2026 in der Maske, ohne dass ihn etwas las; der Wert kommt aus der RFEM-Datei („mapped mesh preferred“) und wird nur mitgeführt |
 
+**Netz → Netzknoten** zeigt die Knoten des FE-Netzes als kleine graue
+Punkte — nur, solange das FE-Netz dargestellt ist (*Ansicht → FE-Netz*,
+F9). Der Schalter „Knoten“ im Register *Ansicht* meint die Knoten der
+Konstruktion; Netzknoten sind die Knoten der beim Vernetzen erzeugten
+Elemente, an denen keine Linie und kein Stabende hängt. Ein Modell ohne
+Geometrieobjekte (nur Elemente, etwa ein Import aus Nastran) hat keine
+Netzknoten — seine Knoten sind die Konstruktion.
+
 **Netz → Netzqualität…** bewertet die **Form** jedes Elements und färbt die
 Ansicht danach ein: grün gut, rot schlecht. Ein FE-Ergebnis ist nur so gut
 wie das Netz - lang gezogene und flache Elemente machen vor allem die
@@ -796,9 +804,32 @@ nach vorn; am Drehlagermodell kamen damit **46 % der Körperkanten zurück**,
 die die gefüllte Ansicht verschluckt hatte.
 
 **F9** blendet das **FE-Netz** (die Elementkanten) ein und aus. Der Schalter
-„Knoten" zeigt die gesetzten Knoten als Punkte: Knoten, an denen noch **kein
-Element** hängt, sind orange und etwas größer — so sieht man beim Modellieren,
-wo man schon war, auch wenn dort noch nichts steht.
+„Knoten" zeigt die **Knoten der Konstruktion** als Punkte: Linienknoten,
+Stabenden, frei gesetzte Knoten und die Knoten direkt gesetzter Elemente.
+Knoten, an denen noch **kein Element** hängt, sind orange und etwas größer —
+so sieht man beim Modellieren, wo man schon war, auch wenn dort noch nichts
+steht. Die **Netzknoten** — die Knoten, die das Vernetzen einer Fläche,
+eines Körpers oder eines geteilten Stabzugs erzeugt — gehören zum Netz und
+werden hier nicht gezeigt (seit 13.09.2026; vorher standen am Drehlager
+380 000 Netzkugeln im Bild). Sie schaltet *Netz → Netzknoten* zu: kleine
+graue Punkte, solange das FE-Netz dargestellt ist. Die **Knotennummern**
+folgen dem: nummeriert wird, was gezeichnet ist. Geprüft in
+`tests/test_gui_smoke.py` (vernetzte Platte mit fünf gesetzten Knoten: 5
+Konstruktionsknoten, alle übrigen Netzknoten).
+
+Die Elementkanten des FE-Netzes sind **1 px** breit. Bis 13.09.2026 waren
+es 3 px: die Breite, die ein Stab als Linie bekommt, galt für das ganze
+Gitter, und im Bild maßen die Kanten eines Schalen- oder Tetraedernetzes
+3–4 px („die Liniendicke des Netzes ist zu dick“). Stäbe als Linien bleiben
+3 px — in einem Modell mit Stäben **und** Flächen zeichnet das Programm die
+Linien darum als eigenen Darsteller (`netz_linien`), ein reines Stabwerk
+bleibt ein Gitter wie bisher. **Transparent** zeichnet Ergebnisse mit
+Deckkraft 0,55 statt 0,35 (die Sättigung der Ergebnisfarben lag im
+Quader-Beispiel bei 77 gegenüber 178 in Voll, mit 0,55 bei 104), und das
+unverformte System liegt dann nur als Umriss darunter, nicht als graues
+Drahtnetz — sonst verschwanden die Spannungen hinter Linien („im
+Transparentmodus sehe ich keine Spannungen“). Geprüft in
+`tests/test_gui_smoke.py`.
 
 #### Nummern: je Objektart ein Schalter
 
@@ -841,7 +872,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 |---|---|
 | ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt |
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
-| Sichtbarkeit | Knoten, Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
+| Sichtbarkeit | Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Schnittebene** (Schalter mit Achse und Schieber), **Intelligente Auswahl** (Schalter) |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |

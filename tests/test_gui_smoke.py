@@ -4234,6 +4234,92 @@ def main():
         check("eine nicht installierte Nachbesserung wird abgewiesen, das Modell bleibt",
               (bool(fehler_n) and "nicht installiert" in fehler_n[0]) if not da_["mmg3d"][1] else not fehler_n,
               str(fehler_n[:1]))
+        # --- Knoten der Konstruktion gegen Netzknoten (Ribbon Netz -> Netzknoten) ---------
+        w.new_model(); app.processEvents()
+        mk_ = w.model
+        mk_.add_nodes(np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0.], [3, 0, 0.5]]))
+        for i_, (a_, b_) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            mk_.add_line(f"L{i_ + 1}", [a_, b_])
+        fk_ = mk_.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke=list(mk_.shells)[0],
+                              material=list(mk_.materials)[0], teilung=[6, 3])
+        w._vernetzen([fk_], [])
+        w.act_knoten.setChecked(True); w.act_edges.setChecked(True); w.act_netzknoten.setChecked(False)
+        w.refresh_all(); app.processEvents()
+
+        def n_punkte_(name):
+            akt = w.plotter.renderer.actors
+            return akt[name].GetMapper().GetInput().GetNumberOfPoints() if name in akt else 0
+
+        check("„Knoten“ zeigt die Konstruktion: die 5 gesetzten Knoten, nicht die Netzknoten der Fläche; Netz → Netzknoten ist aus",
+              mk_.nn > 5 and n_punkte_("knoten") + n_punkte_("knoten_frei") == 5 and n_punkte_("netzknoten") == 0
+              and not w.act_netzknoten.isChecked(),
+              f"nn {mk_.nn}, knoten {n_punkte_('knoten')} + frei {n_punkte_('knoten_frei')}, netz {n_punkte_('netzknoten')}")
+        _P, T_ = w._nummernmarken(mk_, "Knoten")
+        check("Knotennummern nummerieren die gezeigten Knoten: 0 bis 4", sorted(T_, key=int) == ["0", "1", "2", "3", "4"], str(T_))
+        w.act_netzknoten.setChecked(True); app.processEvents()
+        check("Netz → Netzknoten an: alle übrigen Knoten als Netzknoten-Punkte, die Konstruktion bleibt bei 5",
+              n_punkte_("netzknoten") == mk_.nn - 5 and n_punkte_("knoten") + n_punkte_("knoten_frei") == 5,
+              f"netz {n_punkte_('netzknoten')} von {mk_.nn}")
+        _P, T_ = w._nummernmarken(mk_, "Knoten")
+        check("… und die Knotennummern nehmen die Netzknoten dazu (alle)", len(T_) == mk_.nn, f"{len(T_)} von {mk_.nn}")
+        w.act_edges.setChecked(False); app.processEvents()
+        check("FE-Netz aus: die Netzknoten verschwinden mit dem Netz, der Schalter bleibt an",
+              n_punkte_("netzknoten") == 0 and w.act_netzknoten.isChecked())
+        w.act_edges.setChecked(True); w.act_netzknoten.setChecked(False); app.processEvents()
+
+        # --- Netzkanten 1 px, Transparent mit Ergebnis deckender und ohne Drahtnetz ---------
+        for i_ in (0, 3):
+            mk_.fix(i_, "all")
+        mk_.load_node(1, Fz=-1000.0)
+        w._solve_done("case", solver.solve_static(mk_)); app.processEvents()
+        w.cb_field.setCurrentText("Vergleichsspannung"); app.processEvents()
+        w.darstellung_setzen("Voll"); w.act_edges.setChecked(True); w.cb_undeformed.setChecked(True); app.processEvents()
+        akt_ = dict(w.plotter.renderer.actors)
+        pr_ = akt_["result_netz"].GetProperty() if "result_netz" in akt_ else None
+        check("Schalennetz mit Ergebnis: Elementkanten 1 px breit (vorher 3 px, gemessen 3-4 px im Bild)",
+              pr_ is not None and abs(pr_.GetLineWidth() - 1.0) < 1e-6 and bool(pr_.GetEdgeVisibility()),
+              str(pr_.GetLineWidth() if pr_ else None))
+        w.darstellung_setzen("Transparent"); app.processEvents()
+        akt_ = dict(w.plotter.renderer.actors)
+        pr_ = akt_["result_netz"].GetProperty() if "result_netz" in akt_ else None
+        check("Transparent mit Ergebnis: Deckkraft 0,55 statt 0,35; das unverformte System nur als Umriss, kein Drahtnetz",
+              pr_ is not None and abs(pr_.GetOpacity() - 0.55) < 1e-6
+              and "undeformed_netz" in akt_ and akt_["undeformed_netz"].GetProperty().GetRepresentation() != 1,
+              f"{pr_.GetOpacity() if pr_ else None}, undeformed {'undeformed_netz' in akt_}")
+        w.darstellung_setzen("Voll"); app.processEvents()
+        w.new_model(); app.processEvents()
+        mm_ = w.model
+        mm_.add_nodes(np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0.], [3, 0, 0], [5, 0, 0.]]))
+        for i_, (a_, b_) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            mm_.add_line(f"L{i_ + 1}", [a_, b_])
+        fm_ = mm_.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke=list(mm_.shells)[0],
+                              material=list(mm_.materials)[0], teilung=[2, 2])
+        w._vernetzen([fm_], [])
+        mm_.add_element("beam", [4, 5], list(mm_.materials)[0], list(mm_.sections)[0])
+        w.darstellung_setzen("Hidden-Line"); w.act_edges.setChecked(True); w.refresh_all(); app.processEvents()
+        akt_ = dict(w.plotter.renderer.actors)
+        check("Stab und Schalen zusammen: zwei Darsteller - Schalennetz „netz“ und der Stab als Linie „netz_linien“",
+              "model_netz" in akt_ and "model_netz_linien" in akt_
+              and akt_["model_netz"].GetMapper().GetInput().GetNumberOfCells() == len(fm_.elemente)
+              and akt_["model_netz_linien"].GetMapper().GetInput().GetNumberOfCells() == 1,
+              str([k for k in akt_ if k.startswith("model_")]))
+        mm_.add_element("beam", [0, 4], list(mm_.materials)[0], "")
+        w.darstellung_setzen("Voll"); w.refresh_all(); app.processEvents()
+        akt_ = dict(w.plotter.renderer.actors)
+        check("Voll: Schalenkanten 1 px, ein Stab ohne Querschnitt bleibt Linie mit 3 px",
+              "model_netz" in akt_ and abs(akt_["model_netz"].GetProperty().GetLineWidth() - 1.0) < 1e-6
+              and "model_netz_linien" in akt_ and abs(akt_["model_netz_linien"].GetProperty().GetLineWidth() - 3.0) < 1e-6,
+              str({k: akt_[k].GetProperty().GetLineWidth() for k in akt_ if k.startswith("model_")}))
+        w.load_example("frame"); app.processEvents()
+        w.darstellung_setzen("Hidden-Line"); app.processEvents()
+        akt_ = dict(w.plotter.renderer.actors)
+        check("reines Stabwerk: ein Gitter „netz“ wie bisher, kein „netz_linien“",
+              "model_netz" in akt_ and "model_netz_linien" not in akt_, str([k for k in akt_ if k.startswith("model_")]))
+        w.darstellung_setzen("Voll"); app.processEvents()
+        # zurueck zum Modell des Netz-Blocks (F1 mit eigener Teilung 2 x 2, unvernetzt)
+        w.model = m_; w.analysis = None; w.results = None; w.netzguete_feld = None
+        w.refresh_all(); app.processEvents()
+
         # --- Werkzeuge nachladen: Zusatzknopf in der Maske, Ribbon Extras, Dialog ---------
         w.maske_netzeinstellungen(); app.processEvents()
         mk = w.maskenrand.maske
@@ -4690,10 +4776,14 @@ def main():
         stabknoten = {int(n) for e in elems for n in w.model.elements[e].nodes}
         akt = dict(w.plotter.renderer.actors)
         punkte = np.asarray(akt["knoten"].GetMapper().GetInput().points) if "knoten" in akt else np.zeros((0, 3))
-        check("… auch die Knoten des Restes: nur die Stabknoten bleiben als Punkte",
+        # gezeichnet werden die Knoten der Konstruktion (Stabenden, Lager);
+        # die Zwischenknoten des geteilten Stabs sind Netzknoten (13.09.2026)
+        netz_ = set(np.flatnonzero(vp.netzknoten_maske(w.model)).tolist())
+        check("… auch die Knoten des Restes: nur die Stabknoten der Konstruktion bleiben als Punkte",
               w.versteckt["knoten"] == set(range(w.model.nn)) - stabknoten
-              and len(punkte) == len(stabknoten),
-              f"{len(punkte)} Punkte, {len(stabknoten)} Stabknoten, {len(w.versteckt['knoten'])} versteckt")
+              and len(punkte) == len(stabknoten - netz_) and len(stabknoten - netz_) >= 2,
+              f"{len(punkte)} Punkte, {len(stabknoten)} Stabknoten ({len(stabknoten - netz_)} Konstruktion), "
+              f"{len(w.versteckt['knoten'])} versteckt")
         lager_akt = [a for a in akt if a.startswith("supports")]
         lager_da = {int(s_.node) for s_ in w.model.supports} & stabknoten
         check("… und Lager nur an sichtbaren Knoten",
@@ -6546,9 +6636,11 @@ def main():
 
         # --- Marken je Art: Punkt und Beschriftung ------------------------------
         pk, tk = w._nummernmarken(mn, "Knoten", None)
-        check("Knoten: eine Nummer je Knoten, am Knoten",
-              len(tk) == mn.nn and tk[0] == "0" and abs(pk[1][0] - 2.0) < 1e-9,
-              f"{len(tk)} Marken")
+        from statik3d.gui import viewport as vp_n
+        n_konstr = len(vp_n.konstruktionsknoten(mn))
+        check("Knoten: eine Nummer je Knoten der Konstruktion (Netzknoten des Körpers nicht), am Knoten",
+              len(tk) == n_konstr and 0 < n_konstr < mn.nn and tk[0] == "0" and abs(pk[1][0] - 2.0) < 1e-9,
+              f"{len(tk)} Marken, {n_konstr} Konstruktion von {mn.nn}")
         pe, te = w._nummernmarken(mn, "Elemente", None)
         check("Elemente: eine Nummer je Element, in seiner Mitte",
               len(te) == len(mn.elements) and te[0] == "0", f"{len(te)} Marken")
@@ -6613,7 +6705,7 @@ def main():
         w.NUMMERN["Knoten"] = w.NUMMERN["Knoten"][:2] + (3,) + w.NUMMERN["Knoten"][3:]
         w.act_nodes.setChecked(False)
         w.act_nodes.setChecked(True)
-        check("Zu viele Nummern bleiben aus", w._nummern_zuviel.get("Knoten") == mn.nn,
+        check("Zu viele Nummern bleiben aus", w._nummern_zuviel.get("Knoten") == n_konstr,
               str(w._nummern_zuviel))
         check("und die Statuszeile sagt, warum",
               "zu viele" in w.statusBar().currentMessage(),
