@@ -47,6 +47,8 @@ Pruefungen vergleichen beide gegeneinander.
 """
 from __future__ import annotations
 
+import time
+
 import numpy as np
 
 from .model import Model, _randstuecke
@@ -3039,6 +3041,93 @@ def netzguete(tb: dict, bericht: dict) -> dict:
     return mass
 
 
+def _netzbericht(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray) -> dict:
+    """Der Bericht eines fremden Tetraedernetzes, wie tetraedern ihn fuehrt:
+    Volumen, Guete, Splitter, Randtreue - dieselben vier Masse, an denen
+    netzguete jedes Netz misst."""
+    Pn = np.asarray(Pn, float)
+    TET = np.asarray(TET, int)
+    tb = {"randpunkte": len(P), "innenpunkte": max(0, len(Pn) - len(P)), "tetraeder": len(TET),
+          "volumen": 0.0, "sollvolumen": huellvolumen(P, T), "guete": 0.0, "guete_mittel": 0.0,
+          "splitter": 0, "randtreue": 0.0, "randabweichung": 0.0, "verfeinerungen": 0, "runden": 1,
+          "huelldreiecke": len(T)}
+    if not len(TET):
+        return tb
+    V = tetraedervolumen(Pn, TET)
+    q = guete(Pn, TET)
+    tb["volumen"] = float(V.sum())
+    tb["guete"] = float(q.min())
+    tb["guete_mittel"] = float(q.mean())
+    tb["splitter"] = int(np.count_nonzero(q < 0.1))
+    try:
+        tb["randtreue"], tb["randabweichung"] = randtreue(Pn, TET, P, T)
+    except Exception:                       # noqa: BLE001 - ein Mass darf nie sperren
+        tb["randtreue"], tb["randabweichung"] = 1.0, 0.0
+    return tb
+
+
+def _extern_tetraedern(model: Model, koerper, P, T, h: float, h_min: float, zeilen: list,
+                       fortschritt=None):
+    """Der in den Netzeinstellungen gewaehlte fremde Vernetzer (gmsh, Netgen)
+    tetraedert die Huelle; None heisst: der eigene Vernetzer ist dran.
+    Scheitert der fremde, sagt es das Protokoll, und der eigene uebernimmt."""
+    from .importers import _common as C
+    netz = getattr(model, "netz", None)
+    wahl = str(getattr(netz, "vernetzer", "eigener") or "eigener")
+    if wahl in ("", "eigener"):
+        return None
+    from . import vernetzer_extern as vx
+    da = vx.verfuegbar(getattr(netz, "mmg_pfad", ""))
+    if not da.get(wahl, ("", False, ""))[1]:
+        C.warn(zeilen, f"  Volumen {koerper.name}: Vernetzer {wahl} ist nicht installiert - "
+                       "der eigene Vernetzer übernimmt.")
+        return None
+    _melden(fortschritt, 0.4, f"{da[wahl][0]} tetraedert {koerper.name}")
+    t0 = time.time()
+    try:
+        if wahl == "gmsh":
+            Pn, TET = vx.gmsh_tetraedern(P, T, h, h_min)
+        else:
+            Pn, TET = vx.netgen_tetraedern(P, T, h)
+    except Exception as ex:                 # noqa: BLE001 - dann der eigene
+        C.warn(zeilen, f"  Volumen {koerper.name}: {da[wahl][0]} gescheitert ({str(ex)[:120]}) - "
+                       "der eigene Vernetzer übernimmt.")
+        return None
+    tb = _netzbericht(Pn, TET, P, T)
+    C.say(zeilen, f"  Volumen {koerper.name}: {da[wahl][0]}: {len(TET)} Tetraeder aus {len(T)} "
+                  f"Randdreiecken in {time.time() - t0:.1f} s, Güte min {tb['guete']:.3f} / "
+                  f"Mittel {tb['guete_mittel']:.3f}, Randtreue {tb['randtreue'] * 100:.2f} %")
+    return Pn, TET, tb
+
+
+def _nachbessern(model: Model, koerper, Pn, TET, T, P, h: float, h_min: float, tb: dict,
+                 zeilen: list, fortschritt=None) -> tuple:
+    """Nachbesserung des fertigen Netzes (MMG3D) bei fester Huelle, wenn in
+    den Netzeinstellungen gewaehlt; sonst unveraendert."""
+    from .importers import _common as C
+    netz = getattr(model, "netz", None)
+    wahl = str(getattr(netz, "nachbessern", "keine") or "keine")
+    if wahl in ("", "keine"):
+        return Pn, TET, tb
+    from . import vernetzer_extern as vx
+    if wahl != "mmg3d" or not vx.mmg3d_programm(getattr(netz, "mmg_pfad", "")):
+        C.warn(zeilen, f"  Volumen {koerper.name}: Nachbesserung {wahl} ist nicht verfügbar - "
+                       "das Netz bleibt, wie es ist.")
+        return Pn, TET, tb
+    _melden(fortschritt, 0.9, f"MMG3D bessert {koerper.name} nach")
+    t0 = time.time()
+    try:
+        Pn2, TET2 = vx.mmg3d_nachbessern(Pn, TET, T, h, getattr(netz, "mmg_pfad", ""), h_min, zeilen)
+    except Exception as ex:                 # noqa: BLE001
+        C.warn(zeilen, f"  Volumen {koerper.name}: MMG3D gescheitert ({str(ex)[:120]}) - "
+                       "das Netz bleibt, wie es ist.")
+        return Pn, TET, tb
+    tb2 = _netzbericht(Pn2, TET2, P, T)
+    C.say(zeilen, f"  Volumen {koerper.name}: MMG3D: Güte min {tb['guete']:.3f} -> {tb2['guete']:.3f}, "
+                  f"{len(TET)} -> {len(TET2)} Tetraeder in {time.time() - t0:.1f} s")
+    return Pn2, TET2, tb2
+
+
 def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                         fortschritt=None, h_linien: dict = None,
                         h_flaechen: dict = None, gemeinsam: tuple = None) -> dict:
@@ -3111,14 +3200,20 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                 aus["offene_kanten"] = offene
                 break
             quelle = bericht.get("quelle") or []
-            Pn, TET, tb, P, T, quelle = tetraedern_treu(
-                P, T, h, quelle=quelle, splitter=splitter, fortschritt=fortschritt,
-                gemeinsam=(gemeinsam or (frozenset(), frozenset()))[0],
-                kennung=bericht.get("kennung"),
-                gem_linien=(gemeinsam or (frozenset(), frozenset()))[1])
+            extern = _extern_tetraedern(model, koerper, P, T, h, h_min, zeilen, fortschritt)
+            if extern is not None:
+                Pn, TET, tb = extern
+            else:
+                Pn, TET, tb, P, T, quelle = tetraedern_treu(
+                    P, T, h, quelle=quelle, splitter=splitter, fortschritt=fortschritt,
+                    gemeinsam=(gemeinsam or (frozenset(), frozenset()))[0],
+                    kennung=bericht.get("kennung"),
+                    gem_linien=(gemeinsam or (frozenset(), frozenset()))[1])
             if tb.get("fehler"):
                 aus["fehler"] = str(tb["fehler"])
                 return aus
+            if len(TET):
+                Pn, TET, tb = _nachbessern(model, koerper, Pn, TET, T, P, h, h_min, tb, zeilen, fortschritt)
             if not len(TET):
                 aus["fehler"] = "kein Tetraeder entstanden."
                 return aus

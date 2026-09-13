@@ -112,8 +112,42 @@ def _melde(progress, text: str, anteil: float = None) -> None:
         progress(text)
 
 
+#: Die Loeser zur Auswahl (Berechnung -> Einstellungen): Schluessel ->
+#: (Name, Python-Paket, Lizenz, Art). Lizenzrechtlich sauber heisst: in der
+#: gepackten exe stecken nur MKL (Intel Simplified Software License, frei
+#: weitergebbar), SuperLU (BSD, in scipy) und PyAMG (MIT). CHOLMOD (LGPL, das
+#: Supernodal-Modul GPL), UMFPACK (GPL) und MUMPS (CeCILL-C) kommen aus der
+#: eigenen Python-Umgebung des Anwenders, wenn er sie installiert - sie werden
+#: nicht mitgeliefert (13.09.2026).
+LOESER = {
+    "pardiso": ("MKL PARDISO", "pypardiso", "Intel Simplified Software License", "direkt, mehrkernig"),
+    "cholmod": ("CHOLMOD", "scikit-sparse", "LGPL / Supernodal GPL - nicht in der exe", "direkt (Cholesky)"),
+    "umfpack": ("UMFPACK", "scikit-umfpack", "GPL - nicht in der exe", "direkt (LU)"),
+    "mumps": ("MUMPS", "pymumps", "CeCILL-C", "direkt, mehrkernig"),
+    "pyamg": ("PyAMG", "pyamg", "MIT", "iterativ (algebraisches Mehrgitter + CG)"),
+    "superlu": ("SuperLU", "scipy", "BSD", "direkt, einkernig"),
+}
 NAMEN = {"pardiso": "MKL PARDISO", "cholmod": "CHOLMOD", "superlu": "SuperLU",
-         "none": "keiner"}
+         "umfpack": "UMFPACK", "mumps": "MUMPS", "pyamg": "PyAMG", "none": "-"}
+
+
+def loeser_liste() -> list:
+    """[(Schluessel, Name, verfuegbar, Lizenz, Art)] fuer die Auswahl - ohne
+    zu faktorisieren; ``verfuegbar`` heisst: das Paket laesst sich laden."""
+    import importlib
+    aus = []
+    for key, (name, paket, lizenz, art) in LOESER.items():
+        modul = {"pardiso": "pypardiso", "cholmod": "sksparse.cholmod", "umfpack": "scikits.umfpack",
+                 "mumps": "mumps", "pyamg": "pyamg", "superlu": "scipy.sparse.linalg"}[key]
+        try:
+            if key == "pardiso":
+                _find_mkl()
+            importlib.import_module(modul)
+            da = True
+        except Exception:                                  # noqa: BLE001
+            da = False
+        aus.append((key, name, da, lizenz, art))
+    return aus
 
 
 def loeser_verfuegbar() -> str:
@@ -182,14 +216,58 @@ class LinearSolver:
             except Exception:
                 if be == "cholmod":
                     raise
+        if self._solve is None and be == "umfpack":
+            # GPL - nur aus der eigenen Python-Umgebung des Anwenders
+            from scikits.umfpack import splu as _umf_splu
+            lu = _umf_splu(K)
+            self._solve = lu.solve
+            self.backend = "umfpack"
+        if self._solve is None and be == "mumps":
+            self._solve = self._mumps(K)
+            self.backend = "mumps"
+        if self._solve is None and be == "pyamg":
+            self._solve = self._pyamg(K)
+            self.backend = "pyamg"
         if self._solve is None:
-            # MMD_AT_PLUS_A statt COLAMD: die Steifigkeitsmatrix ist
-            # strukturell symmetrisch, COLAMD ordnet fuer unsymmetrisches LU.
-            # Am Wuerfel mit 19.494 FHG gemessen: 22,5 statt 25,3 Mio. Eintraege
-            # in L+U (11 % weniger Speicher) bei 3,2 statt 4,9 s.
+            if be not in ("auto", "superlu", "pardiso", "cholmod"):
+                raise RuntimeError(f"Gleichungslöser '{be}' unbekannt - möglich: "
+                                   + ", ".join(LOESER))
             lu = splu(K, permc_spec="MMD_AT_PLUS_A")
             self._solve = lu.solve
             self.backend = "superlu"
+
+    @staticmethod
+    def _mumps(K):
+        """MUMPS (CeCILL-C) ueber pymumps: einmal faktorisieren, dann je rechte Seite."""
+        from mumps import DMumpsContext
+        Kc = K.tocoo()
+        ctx = DMumpsContext(sym=0, par=1)
+        ctx.set_silent()
+        ctx.set_shape(Kc.shape[0])
+        ctx.set_centralized_assembled(Kc.row + 1, Kc.col + 1, Kc.data)
+        ctx.run(job=4)                       # Analyse + Faktorisierung
+
+        def loesen(b):
+            x = np.array(b, float, copy=True)
+            ctx.set_rhs(x)
+            ctx.run(job=3)
+            return x
+        return loesen
+
+    @staticmethod
+    def _pyamg(K):
+        """PyAMG (MIT): algebraisches Mehrgitter als Vorkonditionierer fuer CG -
+        iterativ, speicherarm, je rechte Seite neu zu iterieren."""
+        import pyamg
+        ml = pyamg.smoothed_aggregation_solver(K.tocsr(), max_coarse=500)
+
+        def loesen(b):
+            b = np.asarray(b, float)
+            if b.ndim == 2:
+                return np.column_stack([loesen(b[:, j]) for j in range(b.shape[1])])
+            x = ml.solve(b, tol=1e-10, accel="cg", maxiter=2000)
+            return np.asarray(x, float)
+        return loesen
 
     def freigeben(self) -> None:
         """Den Speicher der Faktorisierung zurueckgeben.

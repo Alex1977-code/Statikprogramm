@@ -443,6 +443,8 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 | Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall |
 | Elementansatz | **linear** (shell3/shell4, tet4, hex8) oder **quadratisch**: Flächen bekommen Mittenknoten (shell6/shell8), abgebildete Volumen hex20, freie Volumen tet10. Quadratisch braucht für dieselbe Genauigkeit deutlich weniger Elemente, je Element aber mehr Rechenzeit |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
+| Vernetzer (Volumen) | **eigener Vernetzer** (Vorgabe), **gmsh** oder **Netgen**. Alle drei tetraedern dieselbe geschlossene Hülle, die der eigene Vernetzer aus den Randflächen bildet — die Randknoten bleiben Punkt für Punkt erhalten, gemeinsame Flächen zweier Körper und Kontaktbedingungen greifen wie bisher. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit Bohrung (h = 50 mm, Hülle 870 Punkte): gmsh 4 411 Tetraeder, Güte min 0,418, Netgen 5 811, Güte min 0,493; der eigene Vernetzer kam an V5 des Drehlagers auf 0,001. gmsh rechnet mehrkernig (HXT), beide laufen je Körper in den Arbeitsprozessen. Was nicht installiert ist, steht als „(nicht installiert)“ in der Auswahl; ein nicht verfügbarer Vernetzer wird abgewiesen, und scheitert der fremde an einem Körper, übernimmt der eigene (Protokoll) |
+| Nachbesserung | **MMG3D** optimiert das fertige Tetraedernetz bei fester Hülle (`-nosurf -optim`) — der Weg zu einer Mindestgüte aller Elemente, denn die schlechten Tetraeder sitzen auf der Hülle (V5: alle 55 unter 0,1 mit vier Hüllknoten). Das Programm `mmg3d_O3` kommt von mmgtools.org und wird als getrennter Prozess über Dateien im Medit-Format aufgerufen; Pfad im Feld darunter, leer = Suchpfad. Das Protokoll nennt Güte min vorher/nachher |
 | Abgebildetes Netz | wird **nicht eingestellt**: abgebildet wird immer, wo die Form es hergibt — eine Fläche mit vier Randabschnitten als Vierecknetz, ein Körper aus **sechs Vierecken mit acht Eckknoten** als regelmäßiges **Hexaedernetz** (x × y × z, hex8 bzw. hex20), ein Körper aus vier Dreiecken als ein Tetraeder; alles andere geht an den freien Vernetzer. Der Haken „Abgebildetes Netz bevorzugen“ stand bis 13.09.2026 in der Maske, ohne dass ihn etwas las; der Wert kommt aus der RFEM-Datei („mapped mesh preferred“) und wird nur mitgeführt |
 
 **Netz → Netzqualität…** bewertet die **Form** jedes Elements und färbt die
@@ -599,6 +601,29 @@ Rückfrage „Netz ändern“ nennt ihre Zahl und bietet den Knopf der Aktion
 lässt Netz und Ergebnisse stehen; bei Zustimmung werden die Ergebnisse
 verworfen (Protokollzeile) und das Netz erneuert. Ohne Ergebnisse wird
 nicht gefragt. Geprüft in `tests/test_gui_smoke.py`.
+
+### Lizenzen der Rechenwerkzeuge
+
+Statik3D selbst und sein Vernetzer sind eigener Quelltext. Für fremde
+Werkzeuge gilt (Stand 13.09.2026):
+
+| Werkzeug | Lizenz | in der exe? |
+|---|---|---|
+| MKL PARDISO (pypardiso, oneMKL) | Intel Simplified Software License — frei nutzbar und weitergebbar, nicht quelloffen | ja (Vorgabe) |
+| SuperLU (scipy) | BSD | ja |
+| PyAMG | MIT | ja |
+| CHOLMOD (scikit-sparse) | LGPL, das Supernodal-Modul GPL | nein — nur aus der eigenen Python-Umgebung |
+| UMFPACK (scikit-umfpack) | GPL | nein — nur aus der eigenen Python-Umgebung |
+| MUMPS (pymumps) | CeCILL-C | nein — nur aus der eigenen Python-Umgebung (kein Windows-Rad) |
+| gmsh | GPL | nein — `pip install gmsh` in der eigenen Umgebung |
+| Netgen (netgen-mesher) | LGPL | nein — `pip install netgen-mesher` in der eigenen Umgebung |
+| MMG3D | LGPL | nein — getrenntes Programm, über Dateien aufgerufen |
+
+Die GPL verpflichtet den, der ein Programm **zusammen mit** GPL-Software
+weitergibt; darum enthält die exe keine davon. Wer gmsh, Netgen oder einen
+GPL-Löser nutzen will, installiert ihn in seiner eigenen Python-Umgebung
+(`python run_gui.py`) — dort ist die Nutzung frei, und das Programm meldet
+in der Auswahl, was da ist.
 
 ### Statuszeile: Fortschrittsbalken und Abbrechen
 
@@ -2367,6 +2392,15 @@ Nachweis mit seiner Verformung je Kombination.
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
 * **Nur aktiver Lastfall**, **Eigenschwingungen**, **Knicken** (Grundzustand
   = aktiver Lastfall).
+* **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen*): Vorgabe
+  **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. Zur Wahl
+  stehen **MKL PARDISO** (direkt, mehrkernig — 31 Threads auf 32 Kernen),
+  **CHOLMOD** (direkt, Cholesky, mehrkernig über BLAS), **UMFPACK** (direkt,
+  LU), **MUMPS** (direkt, mehrkernig), **PyAMG** (iterativ: algebraisches
+  Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu iterieren und
+  einkernig) und **SuperLU** (direkt, einkernig, Rückfall). Was nicht
+  installiert ist, steht grau in der Liste. Geprüft in `tests/test_loeser.py`
+  (jeder vorhandene Löser trifft N·L/(E·A)).
 * **Eigenschwingungen mit Kontakt.** Kontaktpaare schwingen mit: liegt eine
   gerechnete statische Lösung vor, schwingt das System um ihren
   **Kontaktzustand** (geschlossene Paare übertragen, offene nicht); sonst

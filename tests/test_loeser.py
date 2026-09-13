@@ -66,7 +66,7 @@ def test_loeser_treffen_die_geschlossene_loesung():
     soll = 1.0e5 * L / (E_STAHL * A)
     print(f"    Sollwert u = N·L/(E·A) = {soll * 1e3:.6f} mm")
     gerechnet = 0
-    for backend in ("superlu", "pardiso", "cholmod"):
+    for backend in ("superlu", "pardiso", "cholmod", "umfpack", "mumps", "pyamg"):
         try:
             r = solve_static(m, backend=backend)
         except TypeError:
@@ -87,6 +87,39 @@ def test_loeser_treffen_die_geschlossene_loesung():
         gerechnet += 1
         close(f"{NAMEN[backend]} trifft N·L/(E·A)", r.u[-1, 0], soll, 1e-9 * soll, "m")
     check("mindestens ein Loeser vorhanden", gerechnet >= 1, f"{gerechnet} gerechnet")
+
+
+def test_loeser_liste():
+    """Die Auswahl nennt jeden Loeser mit Lizenz und ob er da ist; PyAMG (MIT)
+    und SuperLU (BSD) duerfen in die exe, GPL-Loeser nicht."""
+    liste = solver.loeser_liste()
+    keys = [k for k, *_ in liste]
+    check("alle sechs Loeser in der Liste", keys == ["pardiso", "cholmod", "umfpack", "mumps", "pyamg", "superlu"],
+          str(keys))
+    check("SuperLU ist immer da", dict((k, da) for k, _n, da, *_r in liste)["superlu"])
+    lizenz = {k: liz for k, _n, _da, liz, _a in liste}
+    check("GPL-Loeser sind als nicht mitgeliefert gekennzeichnet",
+          "GPL" in lizenz["umfpack"] and "nicht in der exe" in lizenz["cholmod"] and lizenz["pyamg"] == "MIT",
+          str(lizenz))
+    try:
+        import pyamg  # noqa: F401
+        m = _stab()
+        alt = parallel.settings().solver_backend
+        parallel.configure(solver_backend="pyamg")
+        try:
+            r = solve_static(m)
+        finally:
+            parallel.configure(solver_backend=alt)
+        soll = _soll(m)
+        close("PyAMG (iterativ) trifft N·L/(E·A)", r.u[-1, 0], soll, 1e-6 * soll, "m")
+    except ImportError:
+        print("    pyamg: nicht vorhanden, uebersprungen")
+    try:
+        ls = LinearSolver(sparse.eye(3, format="csc"), backend="gibtsnicht")
+        check("unbekannter Loeser wird abgewiesen", False, ls.backend)
+    except RuntimeError as ex:
+        check("unbekannter Loeser wird abgewiesen, die Meldung nennt die Auswahl",
+              "unbekannt" in str(ex) and "pyamg" in str(ex), str(ex)[:80])
 
 
 def test_superlu_nennt_sich_einkernig():

@@ -10,8 +10,12 @@ zstandard>=0.21     # HiCAD-Archive (.sza/.kra/.fga) sind zstd-gepackt
 pypardiso>=0.4
 mkl
 
-# optional:
-# gmsh>=4.11        CAD-Import (STEP/IGES/BREP/STL)
-# scikit-sparse     CHOLMOD-Loeser
+# optional (keines davon in der exe - Lizenzen siehe Benutzerhandbuch, Kap. 9):
+# gmsh>=4.11        CAD-Import (STEP/IGES/BREP/STL) und Vernetzer (GPL)
+# netgen-mesher     Vernetzer Netgen (LGPL)
+# pyamg             Loeser PyAMG, iterativ (MIT) - darf in die exe
+# scikit-sparse     CHOLMOD-Loeser (LGPL/GPL)
+# scikit-umfpack    UMFPACK-Loeser (GPL)
+# pymumps           MUMPS-Loeser (CeCILL-C)
 # reportlab, svglib PDF-Bericht direkt aus dem Programm
 # qrcode            QR-Code der Handy-Adresse beim Start von run_web.py
