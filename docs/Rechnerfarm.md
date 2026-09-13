@@ -29,8 +29,42 @@ CLI: `python -m statik3d.cli modell.json --kerne 8`
 
 Die Farm besteht aus einem Server (Auftragswarteschlange), beliebig vielen
 Workern auf den Rechnern der Farm und dem Client (GUI oder CLI). Alle Rechner
-müssen dieselbe Statik3D-Version und Python-Umgebung haben und sich im selben
-Netz erreichen (TCP-Port, Standard 5555).
+müssen denselben Programmstand haben und sich im selben Netz erreichen
+(TCP-Port, Standard 5555).
+
+### Ohne Kommandozeile: Arbeitsplatz und Rechenhilfe (seit 13.09.2026)
+
+1. **Arbeitsplatz** (der Rechner, an dem gerechnet wird): *Berechnung →
+   Einstellungen → Rechnerfarm einschalten*. Das startet den Server, eigene
+   Worker (Zahl = „Prozesse“) und eine **Ankündigung im Netz** (UDP-Rundruf
+   auf Port 5556, alle zwei Sekunden); das Backend springt auf
+   „Rechnerfarm“. Das Protokoll nennt die eigene Adresse und den Port. In der
+   Windows-Firewall muss TCP-Port 5555 eingehend frei sein.
+2. **Rechenhilfe** (jeder weitere Rechner): dieselbe `Statik3D.exe` starten
+   und *Extras → Als Rechenhilfe arbeiten…* wählen — oder gleich
+   `Statik3D.exe --rechenhilfe`. Im Fenster **Arbeitsplatz suchen** drücken:
+   die Ankündigung wird empfangen, Name, Adresse, Port und Programmstand des
+   Arbeitsplatzes erscheinen (Adresse und Port lassen sich auch von Hand
+   eintragen). Denselben **Schlüssel** wie am Arbeitsplatz eintragen, die
+   Zahl der Rechenprozesse wählen (Vorgabe alle Kerne bis auf einen),
+   **Verbinden**. Das Fenster prüft die Verbindung samt Schlüssel, lädt MUMPS
+   nach, wenn es dort fehlt (der Arbeitsplatz könnte es als Löser verlangen),
+   und startet die Worker als eigene Prozesse; danach zeigt es alle zwei
+   Sekunden, wie viele Prozesse aktiv sind und wie viele Aufträge sie
+   erledigt haben. **Trennen** beendet sie; das Schließen des Fensters ebenso.
+   `Statik3D.exe --rechenhilfe --host 192.168.1.10 --key geheim --kerne 8`
+   verbindet ohne Klick (für Verknüpfungen und Autostart).
+3. **Farm-Status** am Arbeitsplatz zeigt jede Rechenhilfe mit Rechner,
+   Version und Stand (Commit); ein anderer Stand als am Arbeitsplatz wird
+   markiert — dann dort dasselbe Programm einspielen (Update).
+
+Jeder Worker meldet Version und Stand; ein fremder Stand steht auch in der
+Statuszeile der Farm. Geprüft in `tests/test_farm.py` (Ankündigung und Suche
+auf dem eigenen Rechner, Worker-Prozess, Stand im Status) und
+`tests/test_gui_smoke.py` (Einschalten, Fenster, Suche, Verbinden, falscher
+Schlüssel, Trennen).
+
+### Mit Kommandozeile (Python-Umgebung)
 
 1. Server starten (auf einem beliebigen Rechner, z. B. dem Arbeitsplatz):
 

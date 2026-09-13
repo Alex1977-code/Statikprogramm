@@ -2002,14 +2002,14 @@ def add_singularitaet(plotter, model: Model, sing, size: float,
                          color=FARBE_BEWEGUNG, name=name)
 
 
-def _dreiecksmitten(model: Model, f, raender: dict = None, seiten: dict = None,
-                    hoechstens: int = 24):
-    """Punkte und Normalen auf einer Flaeche (mit oder ohne Netz) fuer Lastpfeile."""
+def _flaechenpolygone(model: Model, f, raender: dict = None, seiten: dict = None) -> list:
+    """Die Vielecke einer Flaeche fuers Bild als Liste von Punktfeldern (k, 3)
+    - fuer Lastpfeile und die Lastflaeche; leer, wenn die Flaeche keinen Rand hat."""
     ring = (raender or {}).get(f.name)
     if ring is None:
         ring = f.randpunkte(model)
     if len(ring) < 3:
-        return np.zeros((0, 3)), np.zeros((0, 3))
+        return []
     sd = (seiten or {}).get(f.name)
     if sd is None:
         try:
@@ -2018,8 +2018,37 @@ def _dreiecksmitten(model: Model, f, raender: dict = None, seiten: dict = None,
             sd = []
     P, Z = flaechen_dreiecke(ring, sd)
     if P is None:
-        return np.zeros((0, 3)), np.zeros((0, 3))
+        return []
     P = np.asarray(P, float)
+    aus, i = [], 0
+    while i < len(Z):
+        k = int(Z[i])
+        aus.append(P[[int(z) for z in Z[i + 1:i + 1 + k]]])
+        i += k + 1
+    return aus
+
+
+def _polygonnormale(Q) -> np.ndarray:
+    n = np.zeros(3)
+    k = len(Q)
+    for j in range(k):
+        n += np.cross(Q[j], Q[(j + 1) % k])
+    ln = float(np.linalg.norm(n))
+    return n / ln if ln > 0 else n
+
+
+def _dreiecksmitten(model: Model, f, raender: dict = None, seiten: dict = None,
+                    hoechstens: int = 24):
+    """Punkte und Normalen auf einer Flaeche (mit oder ohne Netz) fuer Lastpfeile."""
+    polygone = _flaechenpolygone(model, f, raender, seiten)
+    if not polygone:
+        return np.zeros((0, 3)), np.zeros((0, 3))
+    P = np.concatenate(polygone)
+    Z = []
+    j = 0
+    for Q in polygone:
+        Z.extend([len(Q), *range(j, j + len(Q))])
+        j += len(Q)
     mitten, normalen = [], []
     i = 0
     while i < len(Z):
@@ -2319,6 +2348,11 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         if np.any(q1) or np.any(q2):
             merken("strecke", X[0] + (0.5 * (a + b) / L) * (X[-1] - X[0]),
                    spanne(np.linalg.norm(q1), np.linalg.norm(q2), "strecke"))
+    # Flaechenlasten als Flaeche erkennbar (13.09.2026: "aktuell sehen die aus
+    # wie einzelne Knotenlasten"): je belastete Seite bzw. Vieleck eine
+    # durchscheinende Lastflaeche an den Pfeilenden - (Vieleck, Richtung, p)
+    patches: list = []
+    from ..assemble import SOLID_FACES
     for k_l, fl in enumerate(case.face_loads):
         if getattr(fl, "_geo", False) or not 0 <= int(fl.elem) < len(model.elements) \
                 or int(fl.elem) in weg_e:
@@ -2339,6 +2373,14 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
         vec.append(d * fl.p)
         merken("flaeche", mitte, lz(fl.p, "flaeche"))
         merke("face_loads", k_l, mitte, d * fl.p)
+        e = model.elements[fl.elem]
+        seiten_e = SOLID_FACES.get(e.typ)
+        if seiten_e:
+            ecken = [int(e.nodes[j]) for j in seiten_e[int(fl.face) % len(seiten_e)]]
+        else:
+            n_eck = 3 if e.typ in ("shell3", "shell6") else 4 if e.typ in ("shell4", "shell8") else len(e.nodes)
+            ecken = [int(x) for x in e.nodes[:n_eck]]
+        patches.append((model.nodes[ecken], d, float(fl.p)))
     # ---- Objektlasten auf der Geometrie -------------------------------------
     warm, kalt = [], []
     rahmen_pts, rahmen_lines = [], []
@@ -2393,6 +2435,21 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                         continue
             else:
                 D = -normalen       # positiv drueckt hinein
+            # die Lastflaeche: jedes Vieleck der Flaeche, das die Last trifft
+            for Q in _flaechenpolygone(model, f, raender, seiten):
+                c_q = Q.mean(axis=0)
+                if gl.bereich and not gl.trifft(c_q):
+                    continue
+                n_q = _polygonnormale(Q)
+                if gl.richtung:
+                    d_q = np.asarray(gl.richtung, float)
+                    d_q = d_q / (np.linalg.norm(d_q) or 1.0)
+                    if gl.projiziert and float(n_q @ d_q) >= 0:
+                        continue
+                else:
+                    d_q = -n_q
+                p_q = gl.wert(c_q) if getattr(gl, "verlauf", None) else gl.p
+                patches.append((Q, d_q, float(p_q)))
             werte = []
             for m_, d_ in zip(mitten, D):
                 p = gl.wert(m_) if getattr(gl, "verlauf", None) else gl.p
@@ -2468,6 +2525,19 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
                     vec.append(q)
                     merke("linienlasten", k_l, pts[-1], q)
             s0 += L
+    if patches:
+        # Lastflaeche an den Pfeilenden: dieselbe Laengenregel wie _pfeile,
+        # damit Pfeilspitze auf der Flaeche steht und Pfeilende in der Lastflaeche
+        groesst = float(np.abs(np.asarray(vec, float)).max()) if len(vec) else 1.0
+        pkt, zellen = [], []
+        for Q, d_q, p_q in patches:
+            L_q = abs(p_q) / (groesst or 1.0) * 0.06 * size
+            Q_off = np.asarray(Q, float) - np.asarray(d_q, float) * L_q
+            basis = len(pkt)
+            pkt.extend(Q_off.tolist())
+            zellen.extend([len(Q_off), *range(basis, basis + len(Q_off))])
+        plotter.add_mesh(pv.PolyData(np.asarray(pkt, float), faces=np.asarray(zellen, int)),
+                         color=FARBE_LAST, opacity=0.3, name="flaechenlasten")
     _pfeile(plotter, pts, vec, size, "loads")
     if rahmen_pts:
         plotter.add_mesh(pv.PolyData(np.asarray(rahmen_pts, float),

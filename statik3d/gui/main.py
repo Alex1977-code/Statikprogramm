@@ -3629,6 +3629,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Eine neue Programmfassung suchen und einspielen")
         g.klein("Vernetzer installieren…", self.werkzeuge_dialog,
                 hinweis="gmsh, Netgen und MMG3D nachladen oder entfernen - sie kommen nicht mit dem Programm")
+        g.klein("Als Rechenhilfe arbeiten…", self.rechenhilfe_fenster,
+                hinweis="Dieser Rechner rechnet für einen anderen Arbeitsplatz mit (Rechnerfarm): "
+                        "Arbeitsplatz suchen, Schlüssel, Verbinden")
         g.klein("Protokoll speichern…", self.protokoll_speichern,
                 hinweis="Das ganze Protokoll als Textdatei sichern - zum Nachlesen, "
                         "Ablegen oder Weitergeben")
@@ -10387,11 +10390,21 @@ class MainWindow(QtWidgets.QMainWindow):
         gl.addWidget(row("Schlüssel", self.ed_farm_key))
         bst = QtWidgets.QPushButton("Farm-Status")
         bst.clicked.connect(self.farm_status)
-        bsv = QtWidgets.QPushButton("Lokalen Server + Worker starten")
+        bsv = QtWidgets.QPushButton("Rechnerfarm einschalten")
+        bsv.setToolTip("Diesen Rechner zum Arbeitsplatz der Farm machen: Server, eigene Worker und die "
+                       "Ankündigung im Netz starten - Helfer finden ihn dann mit „Arbeitsplatz suchen“")
         bsv.clicked.connect(self.farm_start_local)
+        self.btn_farm_start = bsv
         gl.addWidget(row(bst, bsv))
-        gl.addWidget(QtWidgets.QLabel("Worker auf anderen Rechnern:  python -m statik3d.farm worker "
-                                      "--host <Server> --port 5555 --key <Schlüssel>"))
+        # Was der Anwender auf dem anderen Rechner tun muss - ohne Kommandozeile
+        from .. import farm as _farm
+        adressen = ", ".join(_farm.eigene_adressen()[:3]) or "(keine Netzadresse gefunden)"
+        self.lbl_farm_hilfe = QtWidgets.QLabel(
+            "Rechenhilfe auf einem anderen Rechner: dort Statik3D starten, Extras → „Als Rechenhilfe "
+            "arbeiten…“ (oder Statik3D.exe --rechenhilfe), „Arbeitsplatz suchen“ drücken oder diese "
+            f"Adresse eintragen: {adressen} (Port {parallel.settings().farm_port}), gleicher Schlüssel, „Verbinden“.")
+        self.lbl_farm_hilfe.setWordWrap(True)
+        gl.addWidget(self.lbl_farm_hilfe)
         lay.addWidget(g)
 
         bchk = QtWidgets.QPushButton("Modell prüfen")
@@ -14715,27 +14728,56 @@ class MainWindow(QtWidgets.QMainWindow):
                            parallel.settings().farm_key)
             st = c.status()
             lines = [c.describe()]
+            eigen = FarmClient.__module__ and __import__("statik3d.farm", fromlist=["build_sha"]).build_sha()
             for k, v in st["workers"].items():
+                stand = v.get("stand") or "?"
                 lines.append(f"  {k}: {'aktiv' if v.get('alive') else 'inaktiv'}, "
-                             f"{v.get('jobs', 0)} Aufträge, Rechner {v.get('host', '?')}")
+                             f"{v.get('jobs', 0)} Aufträge, Rechner {v.get('host', '?')}, "
+                             f"Version {v.get('version', '?')}, Stand {stand}"
+                             + ("  ← anderer Stand als hier!" if eigen and stand not in ("?", eigen) else ""))
             QtWidgets.QMessageBox.information(self, "Rechnerfarm", "\n".join(lines))
         except Exception as ex:
             self.error(f"Farm nicht erreichbar: {ex}")
 
     def farm_start_local(self):
+        """Rechnerfarm einschalten: Server, eigene Worker und die Ankuendigung
+        im Netz (UDP-Rundruf), damit Rechenhilfen den Arbeitsplatz finden."""
         self._apply_parallel_settings()
+        if getattr(self, "_farm_ankuendigung", None) is not None:
+            return self.info("Die Rechnerfarm läuft schon - Helfer: „Arbeitsplatz suchen“ und „Verbinden“")
         try:
             from .. import farm
             st = parallel.settings()
             farm.start_server_thread("0.0.0.0", st.farm_port, st.farm_key)
             farm.start_worker_threads("127.0.0.1", st.farm_port, st.farm_key,
                                       n=max(1, self.sp_workers.value()), name="gui")
+            self._farm_ankuendigung = farm.start_ankuendigung(st.farm_port, zusatz_ziele=("127.0.0.1",))
             self.cb_backend.setCurrentIndex(1)
-            self.info(f"Lokaler Farm-Server auf Port {st.farm_port} mit {self.sp_workers.value()} Workern "
-                      f"gestartet. Weitere Rechner: python -m statik3d.farm worker --host <diese IP> "
-                      f"--port {st.farm_port} --key <Schlüssel>")
+            self.ed_farm_host.setText("127.0.0.1")
+            self._apply_parallel_settings()
+            adressen = ", ".join(farm.eigene_adressen()[:3]) or "keine Netzadresse gefunden"
+            self.btn_farm_start.setText("Rechnerfarm läuft")
+            self.btn_farm_start.setEnabled(False)
+            self.info(f"Rechnerfarm eingeschaltet: Server auf Port {st.farm_port} mit {self.sp_workers.value()} "
+                      f"eigenen Workern, Ankündigung im Netz. Rechenhilfen erreichen diesen Rechner unter "
+                      f"{adressen}:{st.farm_port} (Schlüssel wie hier) - dort Extras → „Als Rechenhilfe arbeiten…“, "
+                      "„Arbeitsplatz suchen“, „Verbinden“. Firewall: TCP-Port "
+                      f"{st.farm_port} eingehend freigeben.")
         except Exception as ex:
             self.error(f"Farm-Start fehlgeschlagen: {ex}")
+
+    def rechenhilfe_fenster(self):
+        """Extras -> Als Rechenhilfe arbeiten...: dieser Rechner rechnet fuer
+        einen anderen Arbeitsplatz mit (gui.rechenhilfe)."""
+        from .rechenhilfe import RechenhilfeFenster
+        f = getattr(self, "_rechenhilfe", None)
+        if f is None or not f.isVisible():
+            f = RechenhilfeFenster(self, key=parallel.settings().farm_key,
+                                   port=int(parallel.settings().farm_port))
+            self._rechenhilfe = f
+        f.show()
+        f.raise_()
+        return f
 
     def _run_background(self, func, on_done, label):
         if self.worker is not None and self.worker.isRunning():
