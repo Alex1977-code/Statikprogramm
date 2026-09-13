@@ -323,7 +323,7 @@ erscheint die Maske:
 | Verdrehungen | φx, φy, φz starr oder frei - nur bei Schalen wirksam, Volumen haben keine Verdrehungen |
 | Feder c | Steifigkeit [kN/m je m²] für Richtungen mit „Feder“ |
 | Suchradius | wie weit die Gegenseite entfernt liegen darf (ANSYS: „Pinball“). 0 = automatisch: die größere mittlere Kantenlänge der **beiden Seiten dieser Fuge** — dazu sucht das Programm zweimal, erst weit, um die Gegenseite zu finden, dann mit deren Netz. So bekommt eine feine Fuge nicht die Netzweite eines groben Modells. Damit findet eine fein vernetzte Achse (2 mm) ihre grob vernetzte Bohrung (15 mm) auch mit Spiel; was weiter weg liegt, gehört nicht zur Fuge. Ein eingetragener Wert gilt unverändert |
-| Anfangsspalt | *wie modelliert*: ein Spalt bleibt offen, bis die Last ihn schließt; *auf Berührung setzen*: jeder Knoten gilt in seiner Lage als anliegend - Spiel und Facettenfehler zwischen verschieden feinen Netzen verschwinden (ANSYS: „adjust to touch“) |
+| Anfangsspalt | *wie modelliert*: ein Spalt bleibt offen, bis die Last ihn schließt. Gemessen wird zur **wahren** Fläche, nicht zur Facette: an einer Bohrung zählt der Bogen, nicht die Sehne, eine passgenaue Achse liegt darum überall an, auch zwischen den Ecken der Bohrung und auch bei verschieden feinen Netzen (seit 13.09.2026); ein Spalt unter einem Tausendstel des Suchradius gilt als Berührung. *auf Berührung setzen*: jeder Knoten gilt in seiner Lage als anliegend - auch ein wirkliches Spiel verschwindet (ANSYS: „adjust to touch“) |
 
 Die **Standardkontakte** heißen wie in ANSYS:
 
@@ -355,7 +355,14 @@ Spalt 41 % aufliegend, Median 24.94 mm, 90 % unter 33.99 mm, größter 60.56 mm
 
 Das ist die Auskunft, auf die es ankommt. Eine teilweise anliegende Fuge hat
 zwei Gipfel — ein Teil liegt auf null, der Rest steht ab —, und ein Mittelwert
-darüber nennt eine Zahl, die an keiner Stelle der Fuge vorkommt. Steht dort
+darüber nennt eine Zahl, die an keiner Stelle der Fuge vorkommt. Der Spalt
+wird zur **wahren** Fläche gemessen: an einer Bohrung zählt der Bogen, nicht
+die Sehne der Facette, auf beiden Seiten. Eine passgenaue Achse meldet darum
+„100 % aufliegend“, auch wenn Achse und Bohrung verschieden fein vernetzt
+sind; am Drehlager stand vorher „22 % aufliegend, Median 0,35 mm“ — der
+Sehnenfehler der 50-mm-Facetten —, und die Achse trug nur auf den Knoten, die
+auf einer Ecke der Bohrung lagen (13.09.2026, „der Bolzen muss in den Augen
+gelagert sein“). Steht dort
 ein kleiner Anteil „aufliegend“ und ein Median in der Größenordnung des
 Netzes, berühren sich die Bauteile im Modell nicht wirklich: dann stimmt
 entweder die Geometrie nicht oder der Suchradius ist zu groß gewählt. Dieselbe

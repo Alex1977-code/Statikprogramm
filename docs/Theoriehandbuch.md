@@ -810,6 +810,68 @@ einen KD-Baum). Der Abstand wird zum **Anfangsspalt** g₀ der Bedingung - oder
 zu null, wenn die Bedingung „auf Berührung gesetzt“ ist (ANSYS: adjust to
 touch) oder ein Verbund ist, der nur die Relativverschiebung misst.
 
+**Der Facettenspalt wird bereinigt** (13.09.2026, „der Bolzen muss in den
+Augen gelagert sein“). Eine gekrümmte Gegenseite — Bohrung, Zylinder — liegt
+im Netz als Sehnen vor; ihre **Knoten** aber liegen auf der wahren Fläche.
+Ein Slave-Knoten, der ebenfalls auf ihr liegt, steht gegen die Sehne um deren
+Pfeilhöhe ab: bei 50-mm-Facetten auf r = 300 mm ein Millimeter. Als Spalt
+gelesen, lag am Drehlager die passgenaue Achse (Kontaktbedingung „Achse
+(Typ 3)“, r 302/298 mm) im Augenblech V16 nur mit 26 von 847 Knoten an —
+denen auf einer Ecke der Bohrung —, 821 standen „offen“, und 632 davon, weil
+sie hinter der Sehne liegen, mit **umgekehrter Normale** (ins Blech statt in
+die Achse). Unter 1000 kN trug die Achse auf 27 von 1194 Knoten, mit 387 kN
+auf einem einzigen. Gemessen wird darum zur **wahren Fläche**: durch die Ecken
+jeder Master-Facette und die ihrer glatten Nachbarn (Facetten mit gemeinsamer
+Ecke, deren Normale höchstens 30° abweicht — eine Kante bleibt eine Kante,
+ein Absatz wird nicht verrundet) wird im Rahmen der Facette (x, y in der
+Facette, z längs der Normalen) die Quadrik
+
+$$ z + A x^2 + B y^2 + C x y + D x + E y + G z^2 + I = 0 $$
+
+nach kleinsten Quadraten gelegt (`contact.Flaechenquadriken`, linear in den
+Beiwerten); der nächste Punkt auf der Facette wird auf sie gehoben, die
+Richtung ist ihre Normale dort. Die Quadrik enthält die Ebene (alle Beiwerte
+null), jeden Zylinder, dessen Achse in der Facettenebene liegt — und das tut
+sie an jeder Facette eines Zylinders —, die Kugel und das Ellipsoid **exakt**:
+eine passgenaue Achse hat in ihrer Bohrung Spalt null, nicht „fast null“ (ein
+quadratisches Höhenfeld ließ am 36-Eck mit r = 300 mm noch 19 µm über das
+Glied x⁴/8r³ der Nachbarn). Steht nur eine Reihe Facetten zur Verfügung (eine
+Bohrung, eine Facette hoch), entfällt das Glied y², dann xy, dann y.
+Knotennormalen (Phong-Tessellation) taugen dafür nicht: die
+flächengewichtete Mittelung steht an einer unregelmäßig vernetzten Bohrung um
+einige Grad neben der Radialen, und der Fehler wächst mit dem Abstand zur
+Ecke — am Drehlager blieben so 0,3 mm Durchdringung, als Übermaß gelesen
+7 MN Kontaktkraft; verworfen. Dieselbe Bereinigung gilt für die
+Spaltstatistik der Fuge (`fugen.gegenseite_finden`), dort auf **beiden**
+Seiten: auch der Schwerpunkt einer Facette der Kontaktseite liegt um die
+Pfeilhöhe innen. Am Drehlager liegen jetzt in V16 649 von 847 Knoten an statt
+26, in V29 253 von 347 statt 115, keine Normale ist gekippt; die Fuge meldet
+„62 % aufliegend, Median 0,01 mm“ statt „22 %, Median 0,35 mm“. Die übrigen
+Knoten sitzen jenseits der Bohrung oder an der Stufe der Achse und sind zu
+Recht offen. Unter 1000 kN tragen 147 + 34 Knoten statt 17 + 10, die größte
+Knotenkraft ist 149 kN statt 387 kN, beide Bleche tragen je die Hälfte.
+
+**Durchdringung bleibt Durchdringung.** Master-Facetten sind gerichtet (siehe
+unten); ein Slave-Knoten hinter der Facette ist eine Durchdringung — der
+Anfangsspalt ist negativ, die Bedingung von Anfang an aktiv —, kein Spalt
+mit umgekehrter Richtung. Bisher wurde an expliziten Facetten die Normale
+zum Slave-Knoten gedreht, sobald er hinter ihr lag; genau das kippte am
+Drehlager die 632 Normalen ins Blech. Nur eine **Schale** hat kein Innen:
+dort zeigt die Normale weiter zum Knoten.
+
+**Berührungsband.** Ein Anfangsspalt, der dem Betrag nach unter einem
+Tausendstel des Suchradius liegt — Spalt wie Durchdringung —, wird zu null
+gesetzt (ANSYS: ICONT). Es ist dieselbe Grenze, bis zu der das Protokoll
+einen Knoten „aufliegend“ nennt: was das Protokoll als Berührung zählt,
+rechnet der Löser auch so. Der Rest der Bereinigung liegt weit darunter;
+ohne das Band wäre er bei Durchdringung ein Übermaß von Mikrometern und
+damit eine Pressspannung, die es nicht gibt. Geprüft in
+`tests/test_fugen.py::test_facettenspalt_bereinigt` (Achse mit 40 Knoten in
+einer 36-eckigen Bohrung: vorher 8 von 80 Knoten anliegend, jetzt alle, jede
+Normale zur Achse; Kante, Band, Durchdringung, Schale) und
+`test_zylinder_in_bohrung` (0,5 mm Spiel werden 0,5 mm gemessen, nicht
+0,22 … 0,5 mm).
+
 **Ein Radius, nicht zwei.** Der Löser hat den Radius früher verdoppelt: das
 Protokoll nannte 9 mm, im Kontaktpaar standen 18,5 mm, durchgängig Faktor
 zwei. Er paarte damit Knoten, die weiter entfernt lagen als jede Facette, die

@@ -241,16 +241,20 @@ def _gruppe(model: Model, elem: int) -> str:
 def _facetten_felder(model: Model, facetten: list) -> tuple:
     """Die Facetten als Felder fuer die vektorisierte Suche.
 
-    Rueckgabe (A, B, C, von, zweite, schwer, norm, umkreis): die Ecken der
-    Dreiecke - ein Viereck gibt zwei -, je Dreieck der Index seiner Facette,
-    je Facette der Index ihres zweiten Dreiecks (-1 bei einem Dreieck), sowie
-    Schwerpunkt, Normale und Umkreis (groesster Abstand vom Schwerpunkt zu
-    einer Ecke). Das erste Dreieck der Facette i ist das Dreieck i.
+    Rueckgabe (A, B, C, von, zweite, schwer, norm, umkreis, K, vier): die
+    Ecken der Dreiecke - ein Viereck gibt zwei -, je Dreieck der Index seiner
+    Facette, je Facette der Index ihres zweiten Dreiecks (-1 bei einem
+    Dreieck), Schwerpunkt, Normale und Umkreis (groesster Abstand vom
+    Schwerpunkt zu einer Ecke), die Knoten je Facette (nf, 4; ein Dreieck mit
+    dem ersten Knoten aufgefuellt) und ob es ein Viereck ist. Das erste
+    Dreieck der Facette i ist das Dreieck i, das zweite eines Vierecks hat
+    die Knoten (0, 2, 3).
     """
     nf = len(facetten)
     if not nf:
         leer = np.zeros((0, 3))
-        return leer, leer, leer, np.zeros(0, int), np.zeros(0, int), leer, leer, np.zeros(0)
+        return (leer, leer, leer, np.zeros(0, int), np.zeros(0, int), leer, leer, np.zeros(0),
+                np.zeros((0, 4), int), np.zeros(0, bool))
     K = np.zeros((nf, 4), dtype=int)
     vier = np.zeros(nf, dtype=bool)
     for i, x in enumerate(facetten):
@@ -273,7 +277,7 @@ def _facetten_felder(model: Model, facetten: list) -> tuple:
     von = np.concatenate([np.arange(nf), j4])
     zweite = np.full(nf, -1, dtype=int)
     zweite[j4] = nf + np.arange(len(j4))
-    return A, B, C, von, zweite, schwer, norm, umkreis
+    return A, B, C, von, zweite, schwer, norm, umkreis, K, vier
 
 
 def _kantenlaenge(model: Model, facetten: list) -> float:
@@ -291,7 +295,7 @@ def _facettenflaechen(model: Model, facetten: list) -> np.ndarray:
     """Die Flaeche jeder Facette (Dreieck oder Viereck) im Block."""
     if not facetten:
         return np.zeros(0)
-    A, B, C, von, _zw, _s, _n, _u = _facetten_felder(model, facetten)
+    A, B, C, von, _zw, _s, _n, _u, _k, _v = _facetten_felder(model, facetten)
     dreieck = 0.5 * np.linalg.norm(np.cross(B - A, C - A), axis=1)
     out = np.zeros(len(facetten))
     np.add.at(out, von, dreieck)
@@ -358,16 +362,24 @@ def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> t
     Randfacette einer Fuge, die zur Haelfte ueber die Kante ragt, bleibt so
     dabei.
 
+    Der Spalt wird zur **wahren** Flaeche gemessen, nicht zur Sehne der
+    Facette (:class:`contact.Flaechenquadriken`): auf beiden Seiten - der
+    Schwerpunkt einer Facette der Kontaktseite liegt auf einer gekruemmten
+    Flaeche selbst um die Pfeilhoehe innen - werden Punkt und Normale auf die
+    quadratische Naeherung der Flaeche durch die Knoten bezogen. Eine
+    passgenaue Achse in ihrer Bohrung hat so Spalt null, mit 0,5 mm Spiel
+    0,5 mm - vorher stand dort der Sehnenfehler beider Netze.
+
     Rueckgabe ({Index der Facette: Index der Gegenfacette}, Spalt je Facette,
     inf ohne Gegenseite).
     """
     from scipy.spatial import cKDTree
-    from .contact import naechste_punkte_dreiecke
+    from .contact import Flaechenquadriken, naechste_punkte_dreiecke
     abstand = np.full(len(seite), np.inf)
     if not seite or not gegen:
         return {}, abstand
-    A, B, C, von, zweite, cg, ng, rg = _facetten_felder(model, gegen)
-    _a, _b, _c, _v, _z, cs, ns, rs = _facetten_felder(model, seite)
+    A, B, C, von, zweite, cg, ng, rg, Kg, vg = _facetten_felder(model, gegen)
+    _a, _b, _c, _v, _z, cs, ns, rs, Ks, vs = _facetten_felder(model, seite)
     # Vorauswahl: nur Gegenfacetten, deren Umkreis den Kasten der Kontaktseite
     # (um den Suchradius erweitert) beruehrt - von hunderttausend Randseiten
     # eines grossen Modells bleiben so die in der Naehe
@@ -394,9 +406,14 @@ def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> t
     T = np.concatenate([J, zw[hat2]])           # Dreiecke der Kandidaten
     Ip = np.concatenate([I, I[hat2]])
     q, _w = naechste_punkte_dreiecke(cs[Ip], A[T], B[T], C[T])
-    weg = q - cs[Ip]
-    laengs = np.einsum("ij,ij->i", weg, ns[Ip])         # Anteil in Normalenrichtung
-    quer = np.linalg.norm(weg - laengs[:, None] * ns[Ip], axis=1)
+    # beide Seiten auf die wahre Flaeche beziehen
+    gg = np.column_stack([np.ones((len(Kg), 3), bool), vg])
+    gs = np.column_stack([np.ones((len(Ks), 3), bool), vs])
+    q, _nq = Flaechenquadriken(model.nodes, Kg, gg, ng).punkt(q, von[T])
+    ps, nps = Flaechenquadriken(model.nodes, Ks, gs, ns).punkt(cs[Ip], Ip)
+    weg = q - ps
+    laengs = np.einsum("ij,ij->i", weg, nps)            # Anteil in Normalenrichtung
+    quer = np.linalg.norm(weg - laengs[:, None] * nps, axis=1)
     d = np.abs(laengs)                                  # der Spalt
     # Der Punkt muss auf der Gegenseite liegen - sonst steht ihm dort nichts
     # gegenueber und der Normalabstand sagt nichts aus.
