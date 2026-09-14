@@ -699,11 +699,7 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
         return r
 
     def ecken_von(f):
-        """Die vier benannten Eckpunkte einer Flaeche - oder None."""
-        e = [int(x) for x in (getattr(f, "ecken", None) or [])]
-        if len(e) != 4 or max(e) >= len(model.nodes):
-            return None
-        return model.nodes[e]
+        return flaechenecken(model, f)
 
     #: Gewoelbte Flaechen mit Oeffnungen: dort sind die Loecher im Bild nicht
     #: ausgespart. Im Drehlagermodell kommt das nicht vor - alle 100 Flaechen
@@ -2065,7 +2061,16 @@ def add_singularitaet(plotter, model: Model, sing, size: float,
                          color=FARBE_BEWEGUNG, name=name)
 
 
-def flaechenpolygone(model: Model, f, raender: dict = None, seiten: dict = None) -> list:
+def flaechenecken(model: Model, f):
+    """Die vier benannten Eckpunkte einer Flaeche - oder None."""
+    e = [int(x) for x in (getattr(f, "ecken", None) or [])]
+    if len(e) != 4 or max(e) >= len(model.nodes):
+        return None
+    return model.nodes[e]
+
+
+def flaechenpolygone(model: Model, f, raender: dict = None, seiten: dict = None,
+                     loecher: dict = None) -> list:
     """Die Vielecke einer Flaeche fuers Bild als Liste von Punktfeldern (k, 3).
 
     **Der** Weg, eine Flaeche zu fuellen: Lastflaeche, Kontaktfarbe und die
@@ -2073,8 +2078,15 @@ def flaechenpolygone(model: Model, f, raender: dict = None, seiten: dict = None)
     Zylindermantel) wird dabei ueber ihre Coons-Flaeche in Dreiecke zerlegt;
     ihre Randpunkte als **ein** ebenes Vieleck zu fuellen, spannt bei einem
     Halbkreis die Sehne durch den Koerper (14.09.2026: „Fläche 304, 305, 589,
-    590 sind nicht korrekt dargestellt" - die Bohrungen der Buchsen). Leer,
-    wenn die Flaeche keinen Rand hat.
+    590 sind nicht korrekt dargestellt" - die Bohrungen der Buchsen).
+
+    **Oeffnungen bleiben Loecher.** Eine Flanschflaeche mit Bohrungen wurde
+    hier bis zum 14.09.2026 als volle Scheibe gefuellt - beim Anklicken einer
+    Kontaktbedingung sah es aus, als deckten sich zwei Fugen („es sieht aus
+    als haette Typ 3 kein Loch, sondern ueberlappt sich mit Typ 1"). Gefuellt
+    wird jetzt mit denselben Angaben wie die Geometrie: Oeffnungen,
+    Geometrieart und die benannten Ecken. Leer, wenn die Flaeche keinen Rand
+    hat.
     """
     ring = (raender or {}).get(f.name)
     if ring is None:
@@ -2087,7 +2099,14 @@ def flaechenpolygone(model: Model, f, raender: dict = None, seiten: dict = None)
             sd = f.randseiten_punkte(model)
         except Exception:                # noqa: BLE001
             sd = []
-    P, Z = flaechen_dreiecke(ring, sd)
+    loch = (loecher or {}).get(f.name)
+    if loch is None:
+        try:
+            loch = f.oeffnungspunkte(model)
+        except Exception:                # noqa: BLE001
+            loch = []
+    P, Z = flaechen_dreiecke(ring, sd, loch, typ=str(getattr(f, "typ", "") or ""),
+                             ecken=flaechenecken(model, f))
     if P is None:
         return []
     P = np.asarray(P, float)
