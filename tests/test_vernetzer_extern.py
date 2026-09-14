@@ -6,7 +6,10 @@ Gemessen (13.09.2026, Platte 1 x 0,6 x 0,2 m mit Bohrung r = 0,1 m, h = 50 mm,
 Huelle 870 Punkte / 1 740 Dreiecke): gmsh 4 411 Tetraeder, Guete min 0,418;
 Netgen 5 811, Guete min 0,493; alle Huellpunkte wiedergefunden.
 """
+import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -90,6 +93,101 @@ def test_mesh_rundlauf():
             os.environ["STATIK3D_WERKZEUGE"] = alt_wz
 
 
+#: Ein Kind, das meldet, ob es eine Konsole hat (0 = keine).
+KONSOLENFRAGE = "import ctypes; print(ctypes.windll.kernel32.GetConsoleWindow())"
+
+#: Der Fensterprozess dazwischen - er startet das Kind so, wie Statik3D es tut
+KONSOLENPROBE = """import json, subprocess, sys
+ziel, exe, kw = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+kw["capture_output"] = kw["text"] = True
+r = subprocess.run([exe, "-c", %r], **kw)
+open(ziel, "w").write(r.stdout.strip() or "?")
+""" % KONSOLENFRAGE
+
+
+def _konsole_im_kind(kw: dict) -> str:
+    """Aus einem **Fensterprozess** (pythonw, wie die Statik3D-exe) ein
+    Konsolenprogramm mit den Argumenten ``kw`` starten und melden, was dessen
+    ``GetConsoleWindow()`` liefert: „0" heisst, es gibt kein Fenster.
+
+    Der Umweg ueber pythonw ist der Kern der Sache: von einem Prozess **mit**
+    Konsole erbt das Kind deren Fenster und es entsteht keines; erst ein
+    Fensterprogramm - und das ist Statik3D - laesst Windows ein neues
+    anlegen. Gemessen am 14.09.2026: ohne Schalter Fenstergriff 136842, mit
+    CREATE_NO_WINDOW null.
+    """
+    pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if not os.path.isfile(pyw):
+        return ""
+    ordner = tempfile.mkdtemp(prefix="statik3d_konsole_")
+    skript = os.path.join(ordner, "probe.py")
+    ziel = os.path.join(ordner, "antwort.txt")
+    try:
+        with open(skript, "w", encoding="utf-8") as fh:
+            fh.write(KONSOLENPROBE)
+        subprocess.run([pyw, skript, ziel, sys.executable, json.dumps(kw)], timeout=300)
+        return open(ziel, encoding="utf-8").read().strip() if os.path.isfile(ziel) else "?"
+    finally:
+        shutil.rmtree(ordner, ignore_errors=True)
+
+
+def test_kein_konsolenfenster():
+    """Ein Fremdprogramm darf kein schwarzes Fenster aufmachen.
+
+    Statik3D ist ein Fensterprogramm (die exe wird ohne Konsole gebaut).
+    Startet ein Fensterprogramm ein **Konsolenprogramm**, legt Windows dafuer
+    eine eigene Konsole an - beim Vernetzen mit Nachbesserung je Koerper eine
+    (14.09.2026: „beim Vernetzen mit gmsh und MMG3D geht bei jedem Volumen
+    eine Eingabeaufforderung auf").
+
+    Gemessen wird nicht am Fenster, sondern am Kind: ``GetConsoleWindow()``
+    ist dort null, wenn es keine Konsole hat - und der Elternprozess der
+    Messung ist pythonw, damit die Lage dieselbe ist wie in der exe. Der
+    zweite Teil nimmt die Argumente, mit denen der Nachbesserer MMG3D
+    wirklich startet; ohne den Schalter kommt dort ein Fenstergriff heraus.
+    """
+    from statik3d import werkzeuge as wz
+    zusatz = wz.ohne_fenster()
+    if sys.platform != "win32":
+        check("außerhalb von Windows gibt es keine Konsole zu unterdrücken", zusatz == {}, str(zusatz))
+        return
+    kein = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    check("unter Windows steht CREATE_NO_WINDOW in den Zusatzargumenten",
+          bool(kein) and zusatz.get("creationflags", 0) & kein == kein, str(zusatz))
+    grund = {"capture_output": True, "text": True, "timeout": 120}
+    ohne = _konsole_im_kind(dict(grund))
+    if not ohne:
+        check("ohne pythonw lässt sich der Fensterprozess nicht nachstellen - Messung übersprungen", True)
+        return
+    check("aus einem Fensterprogramm heraus bekommt ein Konsolenprogramm ein eigenes Fenster",
+          ohne not in ("0", "?"), f"GetConsoleWindow() = {ohne!r}")
+    mit = _konsole_im_kind(dict(grund, **zusatz))
+    check("mit den Zusatzargumenten entsteht keines", mit == "0", f"GetConsoleWindow() = {mit!r}")
+
+    # 2) Mit **den** Argumenten, mit denen der Nachbesserer MMG3D startet
+    gesehen = {}
+    echt = subprocess.run
+
+    def statt(befehl, **kw):
+        gesehen["kw"] = kw
+        raise RuntimeError("Probe: hier wird nicht weitergerechnet")
+
+    P = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1.]])
+    TET = np.array([[0, 1, 2, 3]])
+    T = np.array([[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]])
+    vx.subprocess.run = statt
+    try:
+        vx.mmg3d_nachbessern(P, TET, T, 0.5, programm=sys.executable)
+    except RuntimeError:
+        pass
+    finally:
+        vx.subprocess.run = echt
+    kw = gesehen.get("kw", {})
+    mmg = _konsole_im_kind(dict(kw, timeout=120)) if kw else ""
+    check("MMG3D wird so gestartet, dass sein Fenster gar nicht erst entsteht",
+          mmg == "0", f"Argumente {sorted(kw)}, GetConsoleWindow() = {mmg!r}")
+
+
 def _fremd(name, fn):
     m, k = _platte()
     P, T, ber = m3.randschale(m, k, 0.05, [])
@@ -141,6 +239,7 @@ def test_nicht_installiert_faellt_zurueck():
 
 def main():
     for t in (test_verfuegbarkeit_und_lizenz, test_huelle_voran_und_orientierung, test_mesh_rundlauf,
+              test_kein_konsolenfenster,
               test_gmsh, test_netgen, test_nicht_installiert_faellt_zurueck):
         print(f"\n--- {t.__name__} ---")
         try:

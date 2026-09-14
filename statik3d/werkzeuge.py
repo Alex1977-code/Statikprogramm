@@ -130,6 +130,28 @@ def programm(key: str) -> str:
     return ""
 
 
+def ohne_fenster() -> dict:
+    """Zusatzargumente fuer ``subprocess``, damit ein Fremdprogramm **kein
+    Konsolenfenster** aufmacht.
+
+    Statik3D ist ein Fensterprogramm - die exe wird ohne Konsole gebaut
+    (``console=False``). Startet ein Fensterprogramm unter Windows ein
+    **Konsolenprogramm**, legt Windows dafuer eine eigene Konsole an: ein
+    schwarzes Fenster, das aufblitzt oder stehen bleibt. Beim Vernetzen mit
+    Nachbesserung kam es je Volumen einmal, denn MMG3D wird je Koerper
+    aufgerufen (14.09.2026: "beim Vernetzen mit gmsh und MMG3D geht bei jedem
+    Volumen eine Eingabeaufforderung auf"). ``CREATE_NO_WINDOW`` unterdrueckt
+    sie; die Ausgabe kommt weiter ueber die Pipes, denn das Fenster ist nicht
+    der Weg, auf dem Statik3D sie liest.
+
+    Ausserhalb von Windows gibt es nichts zu unterdruecken - dort ist die
+    Rueckgabe leer.
+    """
+    if sys.platform != "win32":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
 def stand(key: str) -> Optional[dict]:
     """Was von einem Werkzeug installiert ist (stand.json), sonst None."""
     p = os.path.join(werkzeug_ordner(key), "stand.json")
@@ -427,7 +449,7 @@ def _pruefen(key: str) -> str:
         raise WerkzeugFehler(f"{wz.programm} fehlt nach dem Entpacken")
     try:
         r = subprocess.run([exe, "-h"], capture_output=True, text=True, timeout=60,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                           **ohne_fenster())
     except (OSError, subprocess.SubprocessError) as ex:
         raise WerkzeugFehler(f"{wz.programm} lässt sich nicht starten: {ex}") from ex
     text = (r.stdout or "") + (r.stderr or "")

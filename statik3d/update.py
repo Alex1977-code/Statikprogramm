@@ -93,7 +93,8 @@ def build_info() -> dict:
     if not sha and not is_frozen() and os.path.isdir(os.path.join(root, ".git")) and shutil.which("git"):
         try:
             out = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], capture_output=True,
-                                 text=True, timeout=10)
+                                 text=True, timeout=10,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if out.returncode == 0:
                 sha = out.stdout.strip()
         except (OSError, subprocess.SubprocessError):
@@ -564,7 +565,8 @@ def apply_source(info: UpdateInfo, progress: Callable = None, restart: bool = Tr
     if os.path.isdir(os.path.join(root, ".git")) and shutil.which("git"):
         try:
             out = subprocess.run(["git", "-C", root, "pull", "--ff-only"], capture_output=True,
-                                 text=True, timeout=180)
+                                 text=True, timeout=180,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, subprocess.SubprocessError) as ex:
             raise UpdateError(f"git pull fehlgeschlagen: {ex}") from ex
         if out.returncode != 0:
