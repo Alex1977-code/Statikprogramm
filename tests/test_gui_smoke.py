@@ -4515,6 +4515,23 @@ def main():
         check("Einstellungen nennen den Weg für die Rechenhilfe (Extras, --rechenhilfe, Adresse)",
               "Als Rechenhilfe" in w.lbl_farm_hilfe.text() and "--rechenhilfe" in w.lbl_farm_hilfe.text()
               and w.btn_farm_start.text() == "Rechnerfarm einschalten")
+        # --- Die Farmeinstellungen erscheinen erst mit der Farm (14.09.2026) ---
+        w.cb_backend.setCurrentIndex(0); app.processEvents()
+        check("Backend heißt „lokal“ und „lokal und Rechnerfarm“ - die Farm kommt dazu, sie ersetzt nichts",
+              [w.cb_backend.itemText(i) for i in range(w.cb_backend.count())]
+              == ["lokal", "lokal und Rechnerfarm"],
+              str([w.cb_backend.itemText(i) for i in range(w.cb_backend.count())]))
+        check("Server, Port, Schlüssel und die Farmknöpfe stehen zusammen in einem Rahmen",
+              all(w.w_farm.isAncestorOf(x) for x in (w.ed_farm_host, w.ed_farm_port, w.ed_farm_key,
+                                                     w.btn_farm_start, w.lbl_farm_hilfe)))
+        check("lokal: der Rahmen ist zu - die sechs Felder sind nicht im Weg",
+              w.w_farm.isHidden(), f"versteckt {w.w_farm.isHidden()}")
+        w.cb_backend.setCurrentIndex(1); app.processEvents()
+        check("umgeschaltet auf die Farm: der Rahmen erscheint",
+              not w.w_farm.isHidden(), f"versteckt {w.w_farm.isHidden()}")
+        w.cb_backend.setCurrentIndex(0); app.processEvents()
+        check("und verschwinden wieder", w.w_farm.isHidden())
+        w.cb_backend.setCurrentIndex(1); app.processEvents()
         n_info = len(w.log.toPlainText())
         w.farm_start_local(); app.processEvents()
         check("Rechnerfarm einschalten: Server, Worker, Ankündigung; Backend springt auf Farm; Protokoll nennt Adresse, Port, Schlüssel-Hinweis und Firewall",
