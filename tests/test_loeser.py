@@ -172,6 +172,58 @@ def test_meldung_trennt_pool_und_loeser():
           "PARDISO" in loes or "CHOLMOD" in loes or "einkernig" in loes, loes)
 
 
+def test_kopfzeile_nennt_den_eingestellten_loeser():
+    """Die Zeile beim Start der Rechnung muss den Loeser nennen, der dann auch
+    rechnet - fuer **jeden** eingestellten, nicht den erstbesten vorhandenen.
+
+    Gemessen wird gegen den Loeser selbst: fuer jeden installierten Loeser
+    wird eingestellt, ein kleines System faktorisiert und verglichen, was
+    ``LinearSolver`` als Backend und Threadzahl meldet. Bis 14.09.2026 stand
+    dort mit eingestelltem MUMPS "MKL PARDISO, 16 Threads", waehrend MUMPS mit
+    acht Threads rechnete.
+    """
+    from statik3d.solver import NAMEN, loeser_da, loeser_liste, loeser_verfuegbar, threads_vorgabe
+    K = _laplace_3d(8)
+    alt_b = parallel.settings().solver_backend
+    alt_t = parallel.settings().solver_threads
+    try:
+        parallel.configure(solver_threads=0)
+        for key, name, da, _lz, _art in loeser_liste():
+            if not da or key == "umfpack":          # umfpack: GPL, selten vorhanden
+                print(f"     {key} nicht installiert - uebersprungen")
+                continue
+            parallel.configure(solver_backend=key)
+            zeile = loeser_verfuegbar()
+            ls = LinearSolver(K)
+            ok = NAMEN[ls.backend] in zeile and ls.backend == key
+            if key in ("pardiso", "mumps"):
+                ok = ok and f"{ls.threads} Threads" in zeile
+            check(f"eingestellt {key}: die Kopfzeile nennt ihn und seine Kernzahl",
+                  ok, f"„{zeile}“ gegen {ls.beschreibung()}")
+        parallel.configure(solver_backend="auto")
+        zeile = loeser_verfuegbar()
+        ls = LinearSolver(K)
+        check("automatisch: die Kopfzeile nennt, was die Reihenfolge ergibt, und sagt „automatisch“",
+              NAMEN[ls.backend] in zeile and "automatisch" in zeile,
+              f"„{zeile}“ gegen {ls.beschreibung()}")
+        parallel.configure(solver_backend="mumps", solver_threads=3)
+        check("die eingestellte Threadzahl steht in der Zeile",
+              loeser_verfuegbar() == "MUMPS, 3 Threads" or not loeser_da("mumps"),
+              loeser_verfuegbar())
+        parallel.configure(solver_backend="pardiso", solver_threads=0)
+        check("PARDISO nennt seine automatische Threadzahl",
+              loeser_verfuegbar() == f"MKL PARDISO, {threads_vorgabe('pardiso')} Threads"
+              or not loeser_da("pardiso"), loeser_verfuegbar())
+        parallel.configure(solver_backend="superlu")
+        check("SuperLU nennt sich einkernig, ohne Threadzahl",
+              loeser_verfuegbar() == "SuperLU, einkernig", loeser_verfuegbar())
+        parallel.configure(solver_backend="gibtesnicht")
+        check("ein unbekannter Löser wird als solcher gemeldet",
+              "unbekannter Gleichungslöser" in loeser_verfuegbar(), loeser_verfuegbar())
+    finally:
+        parallel.configure(solver_backend=alt_b, solver_threads=alt_t)
+
+
 def test_superlu_ordnet_symmetrisch():
     """MMD_AT_PLUS_A statt COLAMD: weniger Füllung bei symmetrischer Matrix."""
     from scipy.sparse.linalg import splu
@@ -387,7 +439,7 @@ def main():
     for f in (test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
               test_pardiso_nimmt_alle_kerne_bis_auf_einen,
-              test_meldung_trennt_pool_und_loeser,
+              test_meldung_trennt_pool_und_loeser, test_kopfzeile_nennt_den_eingestellten_loeser,
               test_superlu_ordnet_symmetrisch, test_pardiso_gibt_speicher_frei,
               test_mumps_sagt_was_es_tut_und_gibt_speicher_frei,
               test_threadzahl_aus_den_einstellungen):
