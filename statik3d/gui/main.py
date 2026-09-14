@@ -10384,7 +10384,11 @@ class MainWindow(QtWidgets.QMainWindow):
         gl = QtWidgets.QVBoxLayout(g)
         self.sp_workers = QtWidgets.QSpinBox()
         self.sp_workers.setRange(1, 256); self.sp_workers.setValue(parallel.settings().workers)
-        gl.addWidget(row(f"Prozesse (Kerne, {parallel.cpu_count()} verfügbar)", self.sp_workers))
+        self.sp_workers.setToolTip("Prozesse für das Vernetzen, die Elementschleifen und die "
+                                   "Nachlaufrechnung - nicht für das Lösen des Gleichungssystems. "
+                                   f"Dieser Rechner hat {parallel.cpu_count()} Kerne")
+        gl.addWidget(row(f"Prozesse fürs Vernetzen und die Elemente ({parallel.cpu_count()} Kerne)",
+                         self.sp_workers))
         # Gleichungsloeser zur Auswahl; was nicht installiert ist, steht grau
         # dabei ("nicht installiert"), damit man weiss, was es gaebe
         self.cb_loeser = QtWidgets.QComboBox()
@@ -10412,16 +10416,33 @@ class MainWindow(QtWidgets.QMainWindow):
                                    "die Statuszeile nennt nach der Rechnung die wirklich benutzte Zahl. "
                                    "Wird gespeichert.")
         gl.addWidget(row("Threads des Gleichungslösers", self.cb_threads))
+        lbl_teilung = QtWidgets.QLabel(
+            "Zweierlei: die Prozesse vernetzen und stellen die Matrizen auf, die Threads lösen "
+            "damit das Gleichungssystem. Beide Zahlen dürfen gleich sein, doppelt gezählt wird "
+            "nichts - der Löser läuft, wenn die Prozesse fertig sind.")
+        lbl_teilung.setWordWrap(True)
+        lbl_teilung.setStyleSheet("color:#555;")
+        gl.addWidget(lbl_teilung)
+        # "lokal und Rechnerfarm" statt "Rechnerfarm": die Farm kommt zu diesem
+        # Rechner dazu, sie ersetzt ihn nicht. Und die Farmeinstellungen
+        # stehen erst da, wenn sie gewaehlt ist - vorher sind sechs Felder im
+        # Weg, die niemand braucht (14.09.2026: "erst beim Umschalten des
+        # Backends sollen die Farmeinstellungen dargestellt werden").
         self.cb_backend = QtWidgets.QComboBox()
-        self.cb_backend.addItems(["lokal (Mehrkern)", "Rechnerfarm"])
+        self.cb_backend.addItems(["lokal", "lokal und Rechnerfarm"])
+        self.cb_backend.setToolTip("lokal: nur dieser Rechner. lokal und Rechnerfarm: zusätzlich "
+                                   "Helfer im Netz - erst dann erscheinen Server, Port und Schlüssel")
+        gl.addWidget(row("Backend", self.cb_backend))
+        self.w_farm = QtWidgets.QWidget()
+        fl = QtWidgets.QVBoxLayout(self.w_farm)
+        fl.setContentsMargins(0, 0, 0, 0)
         self.ed_farm_host = QtWidgets.QLineEdit(parallel.settings().farm_host)
         self.ed_farm_port = QtWidgets.QLineEdit(str(parallel.settings().farm_port))
         self.ed_farm_port.setFixedWidth(60)
         self.ed_farm_key = QtWidgets.QLineEdit(parallel.settings().farm_key)
         self.ed_farm_key.setEchoMode(QtWidgets.QLineEdit.Password)
-        gl.addWidget(row("Backend", self.cb_backend))
-        gl.addWidget(row("Farm-Server", self.ed_farm_host, "Port", self.ed_farm_port))
-        gl.addWidget(row("Schlüssel", self.ed_farm_key))
+        fl.addWidget(row("Farm-Server", self.ed_farm_host, "Port", self.ed_farm_port))
+        fl.addWidget(row("Schlüssel", self.ed_farm_key))
         bst = QtWidgets.QPushButton("Farm-Status")
         bst.clicked.connect(self.farm_status)
         bsv = QtWidgets.QPushButton("Rechnerfarm einschalten")
@@ -10429,7 +10450,7 @@ class MainWindow(QtWidgets.QMainWindow):
                        "Ankündigung im Netz starten - Helfer finden ihn dann mit „Arbeitsplatz suchen“")
         bsv.clicked.connect(self.farm_start_local)
         self.btn_farm_start = bsv
-        gl.addWidget(row(bst, bsv))
+        fl.addWidget(row(bst, bsv))
         # Was der Anwender auf dem anderen Rechner tun muss - ohne Kommandozeile
         from .. import farm as _farm
         adressen = ", ".join(_farm.eigene_adressen()[:3]) or "(keine Netzadresse gefunden)"
@@ -10438,7 +10459,12 @@ class MainWindow(QtWidgets.QMainWindow):
             "arbeiten…“ (oder Statik3D.exe --rechenhilfe), „Arbeitsplatz suchen“ drücken oder diese "
             f"Adresse eintragen: {adressen} (Port {parallel.settings().farm_port}), gleicher Schlüssel, „Verbinden“.")
         self.lbl_farm_hilfe.setWordWrap(True)
-        gl.addWidget(self.lbl_farm_hilfe)
+        fl.addWidget(self.lbl_farm_hilfe)
+        gl.addWidget(self.w_farm)
+        self.cb_backend.setCurrentIndex(1 if parallel.settings().backend == "farm" else 0)
+        self.w_farm.setVisible(self.cb_backend.currentIndex() == 1)
+        self.cb_backend.currentIndexChanged.connect(
+            lambda i: self.w_farm.setVisible(i == 1))
         lay.addWidget(g)
 
         bchk = QtWidgets.QPushButton("Modell prüfen")

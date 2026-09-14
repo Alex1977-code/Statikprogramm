@@ -2595,10 +2595,19 @@ Nachweis mit seiner Verformung je Kombination.
   `tests/test_elemente.py` (`test_eigenformen_mit_kontakt`: Block mit
   Reibung verklebt und um den statischen Zustand, freier Würfel mit sechs
   Starrkörperformen) und `tests/test_gui_smoke.py`.
-* Prozesse: Zahl der Arbeitsprozesse für Elementschleifen, Aufträge und die
-  Vernetzung - Vorgabe alle Kerne bis auf einen, der bleibt der Oberfläche;
-  Backend „Rechnerfarm“ mit Server, Port und
-  Schlüssel (siehe `Rechnerfarm.md`). **Rechnerfarm einschalten** macht den
+* **Prozesse fürs Vernetzen und die Elemente**: Zahl der Arbeitsprozesse für
+  Elementschleifen, Aufträge und die Vernetzung - Vorgabe alle Kerne bis auf
+  einen, der bleibt der Oberfläche. Das ist **nicht** dieselbe Zahl wie die
+  Threads des Gleichungslösers darunter: die Prozesse stellen die Matrizen
+  auf, die Threads lösen damit das Gleichungssystem, und sie laufen
+  nacheinander. Beide dürfen gleich groß sein; die Maske sagt es in einem
+  Satz (14.09.2026: „Prozesse und Threads des Gleichungslösers ist
+  anscheinend doppelt").
+* **Backend**: *lokal* oder *lokal und Rechnerfarm* — die Farm kommt zu
+  diesem Rechner dazu, sie ersetzt ihn nicht. Server, Port, Schlüssel, die
+  Farmknöpfe und der Hinweis für die Rechenhilfe erscheinen **erst**, wenn
+  die Farm gewählt ist (seit 14.09.2026); vorher stehen sechs Felder im Weg,
+  die niemand braucht. Siehe `Rechnerfarm.md`. **Rechnerfarm einschalten** macht den
   eigenen Rechner zum Arbeitsplatz der Farm (Server, eigene Worker,
   Ankündigung im Netz); auf jedem weiteren Rechner genügt *Extras → Als
   Rechenhilfe arbeiten…* (oder `Statik3D.exe --rechenhilfe`): „Arbeitsplatz
