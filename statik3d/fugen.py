@@ -933,6 +933,15 @@ def _nach_normale(model: Model, nd: list, n: np.ndarray) -> list:
     return nd
 
 
+def koerper_der_flaechen(model: Model, namen) -> set:
+    """Die Volumenkoerper, denen die genannten Flaechen gehoeren."""
+    gesucht = {str(x) for x in (namen or [])}
+    if not gesucht:
+        return set()
+    return {kn for kn, k in (getattr(model, "koerper", None) or {}).items()
+            if gesucht & set(k.flaechen or [])}
+
+
 def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
                             bericht: dict, log: list = None, cache: dict = None) -> dict:
     """Zwei getrennte, aufeinanderliegende Netze ueber ein Kontaktpaar verbinden.
@@ -960,6 +969,18 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
     # gesetzt zeigt, gehoert zur Fuge; das ist nachpruefbar, die Liste nicht.
     alle = [x for x in _randseiten_aller(model, cache) if x[3] not in geloest]
     ziel = {str(x) for x in (getattr(kb, "gegenkoerper", None) or [])} - set(geloest)
+    if not ziel:
+        # Nennt die Datei keinen Gegenkoerper, wohl aber die **zugeordneten
+        # Flaechen** der Gegenseite (so kommt jede RFEM-Freigabe herein), dann
+        # gehoeren diese Flaechen einem Bauteil - und nur dort liegt die Fuge.
+        # Gesucht wird weiter ueber die Geometrie, aber in diesem Bauteil:
+        # ueber das ganze Modell findet die Suche notfalls das naechstbeste
+        # Teil. Am Drehlager hingen vier Knoten der Achse V30 in der Fuge zur
+        # Buchse an einem Passstift (V76) und trugen unter Last 37 von 49 MN -
+        # die Buchse bekam sie nicht (14.09.2026: „V16 hat nicht den korrekten
+        # Flaechenkontakt mit V30"). Die Flaechenliste selbst bleibt dabei
+        # aussen vor: sie ist unvollstaendig (siehe oben), ihr Bauteil nicht.
+        ziel = koerper_der_flaechen(model, getattr(kb, "gegenflaechen", None)) - set(geloest)
     if ziel and any(x[3] in ziel for x in alle):
         alle = [x for x in alle if x[3] in ziel]
     if not alle:
