@@ -3342,6 +3342,11 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Auswahl")
         g.gross("Ergebnisse", "∿", lambda: self.maske_zeigen("Ergebnisse"),
                 hinweis="Ergebnis, Färbung, Verlauf und Überhöhung wählen")
+        self.act_ergebnisse = g.schalter(
+            "Ergebnisse zeigen", lambda _z: self.redraw(), True,
+            "Die Ergebnisdarstellung aus dem Bild nehmen: Färbung, verformtes System, "
+            "Werte, Kontaktmarken, Skala und Kopfzeile. Das Modell bleibt sichtbar, die "
+            "Ergebnisse bleiben gerechnet - der Schalter holt sie zurück")
         self.act_kennwerte = g.schalter(
             "Kennwerte im Bild", lambda _z: self.redraw(), True,
             "Größte Ausnutzung, kleinste und größte Verformung und "
@@ -10641,6 +10646,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 point_size=1, shape=None, always_visible=True, name=f"kontakttext{i}")
             self._kontakt_darsteller += [f"kontaktflaeche{i}", f"kontakttext{i}"]
 
+    def ergebnisse_sichtbar(self) -> bool:
+        """Zeigt die Ansicht die Ergebnisse? (Schalter „Ergebnisse zeigen")"""
+        a = getattr(self, "act_ergebnisse", None)
+        return a is None or a.isChecked()
+
     def _sicht_text(self) -> str:
         """Zusatz zur Kopfzeile, wenn Teile ausgeblendet sind: Skala und
         Kennwerte gelten nur fuer das Sichtbare."""
@@ -15554,6 +15564,24 @@ class MainWindow(QtWidgets.QMainWindow):
                                       for name, f in m.flaechen.items()}
         return self._raender_zwischen
 
+    def _loecher(self) -> dict:
+        """Je Flaeche ihre Oeffnungen als Punktfolgen - einmal je Modellstand.
+
+        Dieselbe Zwischenablage wie fuer Raender und Randseiten: eine Flaeche
+        mit zwanzig Bohrungen wird sonst bei jedem Klick neu abgetastet.
+        """
+        m = self.model
+        stand = (id(m), len(m.flaechen or {}), m.nn)
+        if getattr(self, "_loecher_stand", None) != stand:
+            aus = {}
+            for name, f in (m.flaechen or {}).items():
+                try:
+                    aus[name] = f.oeffnungspunkte(m)
+                except Exception:            # noqa: BLE001
+                    aus[name] = []
+            self._loecher_stand, self._loecher_zwischen = stand, aus
+        return self._loecher_zwischen
+
     def _randseiten(self) -> dict:
         """{Flaechenname: [Punktfolge je Randlinie]} - fuer krumme Flaechen.
 
@@ -15670,7 +15698,7 @@ class MainWindow(QtWidgets.QMainWindow):
             f = m.flaechen.get(fname)
             if f is None:
                 return
-            for Q in vp.flaechenpolygone(m, f, raender, self._randseiten()):
+            for Q in vp.flaechenpolygone(m, f, raender, self._randseiten(), self._loecher()):
                 P = np.asarray(Q, float)
                 if len(P) >= 3:
                     polygone.append(P)
@@ -15971,7 +15999,11 @@ class MainWindow(QtWidgets.QMainWindow):
         show_edges = self.act_edges.isChecked()
         modus = getattr(self, "darstellung", "Voll")
         size = m.characteristic_size()
-        r = self.current_result()
+        # Ohne den Schalter zeichnet die Ansicht wie vor der Rechnung: kein
+        # Ergebnis heisst keine Faerbung, keine Verformung, keine Werte, keine
+        # Kontaktmarken, keine Skala. Verworfen wird nichts (14.09.2026: "man
+        # muss Ergebnisdarstellungen auch ausschalten koennen").
+        r = self.current_result() if self.ergebnisse_sichtbar() else None
         u = None
         modal = False
         if r is not None:
@@ -16571,6 +16603,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return []
         if not zeilen:
             return []
+        if r is None and self.current_result() is not None:
+            # Es gaebe ein Ergebnis, der Schalter zeigt es nur nicht - das
+            # gehoert ins Bild, sonst sucht man den Fehler in der Rechnung
+            zeilen = list(zeilen) + ["    Ergebnisse ausgeblendet (Register Ergebnisse → „Ergebnisse zeigen“)"]
         self._kopfzeile_zeilen = zeilen
         try:
             # Oben links, aber **unterhalb** der Glasleiste: in einem schmalen

@@ -394,6 +394,14 @@ gelösten Körpers werden beim Vernetzen geometrisch gesucht. Auch diese
 Bedingungen lassen sich auf einen Standardkontakt umstellen oder Richtung für
 Richtung ändern.
 
+Gefüllte Flächen — die Hervorhebung der Auswahl, die Kontaktfarben und die
+Lastfläche — sparen ihre **Öffnungen** aus. Bis 14.09.2026 füllten sie eine
+Flanschfläche mit Bohrungen als volle Scheibe; beim Anklicken einer
+Kontaktbedingung sah es dann aus, als deckten sich zwei Fugen („es sieht aus,
+als hätte Typ 3 kein Loch, sondern überlappt sich mit Typ 1"). Gefüllt wird
+jetzt mit denselben Angaben wie die Geometrie: Öffnungen, Geometrieart und
+benannte Ecken.
+
 Ein Klick auf eine Bedingung im Modellbaum lässt **nur ihre Fuge** aufleuchten:
 die Kontaktflächen und die Gegenflächen, nicht mehr den ganzen gelösten Körper
 (bis 14.09.2026 leuchtete am Drehlager die komplette Achse statt ihrer
@@ -879,6 +887,13 @@ je belastetem Vieleck der Fläche bzw. je belasteter Elementseite eines,
 in Lastrichtung um die Pfeillänge versetzt („aktuell sehen die aus wie
 einzelne Knotenlasten“). Sie folgt dem Schalter *Lasten*. Geprüft in
 `tests/test_gui_smoke.py`.
+
+**Ergebnisse zeigen** (Register *Ergebnisse*, seit 14.09.2026) nimmt die
+ganze Ergebnisdarstellung aus dem Bild: Färbung, verformtes System, Werte,
+Kontaktmarken, Skala und Kopfzeile. Zurück bleibt das Modell, wie es vor der
+Rechnung aussah; die Ergebnisse bleiben gerechnet und kommen mit demselben
+Schalter zurück. Die Kopfzeile sagt, dass sie ausgeblendet sind. Für die
+Färbung allein gibt es weiterhin den Eintrag *keine Färbung* in der Liste.
 
 Die Elementkanten des FE-Netzes sind **1 px** breit. Bis 13.09.2026 waren
 es 3 px: die Breite, die ein Stab als Linie bekommt, galt für das ganze

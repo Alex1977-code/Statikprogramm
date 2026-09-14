@@ -2298,6 +2298,28 @@ def main():
         w.cb_field.setCurrentText("Vergleichsspannung"); app.processEvents()
         check("… und nach dem Umschalten der Färbung sind sie weg",
               not any(a.startswith("contact_") for a in w.plotter.renderer.actors))
+        # --- Ergebnisdarstellung ausschalten (14.09.2026) ---
+        w.act_kontaktmarken.setChecked(True); app.processEvents()
+        n_skalen = len(w.plotter.scalar_bars)
+        w.act_ergebnisse.setChecked(False); app.processEvents()
+        akt_ = dict(w.plotter.renderer.actors)
+        modell_ = [a for a in akt_ if a.startswith("model_")]
+        check("„Ergebnisse zeigen“ aus: keine Färbung, keine Skala, keine Kontaktmarken",
+              not len(w.plotter.scalar_bars) and n_skalen >= 1
+              and not any(a.startswith("contact_") for a in akt_)
+              and not any(a.startswith("result_") for a in akt_),
+              f"{len(w.plotter.scalar_bars)} Skalen, {sum(1 for a in akt_ if a.startswith('contact_'))} Marken, "
+              f"{sum(1 for a in akt_ if a.startswith('result_'))} Ergebnisdarsteller")
+        check("… das Modell bleibt im Bild und die Kopfzeile sagt, dass die Ergebnisse ausgeblendet sind",
+              modell_ and "Ergebnisse ausgeblendet" in " ".join(w._kopfzeile_zeilen),
+              f"{modell_}, {str(w._kopfzeile_zeilen)[:100]}")
+        check("… und die Ergebnisse sind nur versteckt, nicht verworfen",
+              w.current_result() is not None and not w.ergebnisse_sichtbar())
+        w.act_ergebnisse.setChecked(True); app.processEvents()
+        check("wieder an: Färbung und Skala sind zurück",
+              len(w.plotter.scalar_bars) >= 1 and w.ergebnisse_sichtbar()
+              and "Ergebnisse ausgeblendet" not in " ".join(w._kopfzeile_zeilen))
+        w.act_kontaktmarken.setChecked(False); app.processEvents()
         w.cb_field.setCurrentText(spn.feldname("kontakt", "zustand")); app.processEvents()
         akt = w.plotter.renderer.actors.get("result_netz")
         lut = akt.mapper.lookup_table
@@ -5117,6 +5139,25 @@ def main():
         vpl.add_geometrie(pl, mz, raender={}, seiten={}, ausser_flaechen={"Mantel"})
         check("eine ausgeblendete Fläche fehlt im Bild", "geo_flaechen" not in pl.renderer.actors)
         pl.close()
+        # --- Gefuellte Flaechen sparen ihre Oeffnungen aus (14.09.2026) ---
+        ml = Mdl("Flansch")
+        ml.add_nodes(np.array([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0],
+                               [0.5, 0.5, 0], [1.5, 0.5, 0], [1.5, 1.5, 0], [0.5, 1.5, 0.]], float))
+        for i in range(4):
+            ml.lines[f"a{i}"] = Line(f"a{i}", [i, (i + 1) % 4])
+            ml.lines[f"i{i}"] = Line(f"i{i}", [4 + i, 4 + (i + 1) % 4])
+        ml.flaechen["Flansch"] = Flaeche("Flansch", linien=[f"a{i}" for i in range(4)],
+                                         oeffnungen=[[f"i{i}" for i in range(4)]])
+        polys_ = vpl.flaechenpolygone(ml, ml.flaechen["Flansch"])
+        A_ = 0.0
+        for Q in polys_:
+            Q = np.asarray(Q, float)
+            n_ = np.zeros(3)
+            for j in range(len(Q)):
+                n_ = n_ + np.cross(Q[j], Q[(j + 1) % len(Q)])
+            A_ += 0.5 * float(np.linalg.norm(n_))
+        check("Fläche mit Loch: die Füllung lässt das Loch frei (2x2 m minus 1x1 m = 3 m²)",
+              abs(A_ - 3.0) < 1e-9, f"{A_:.4f} m² aus {len(polys_)} Vielecken")
 
         # Fuenf Randseiten, von denen zwei eine sind: RFEM teilt eine gerade
         # Kante schon einmal in zwei Linien. Ohne Zusammenfassen faellt die
