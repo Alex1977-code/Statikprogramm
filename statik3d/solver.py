@@ -200,50 +200,78 @@ LOESER = {
 }
 NAMEN = {"pardiso": "MKL PARDISO", "cholmod": "CHOLMOD", "superlu": "SuperLU",
          "umfpack": "UMFPACK", "mumps": "MUMPS", "pyamg": "PyAMG", "none": "-"}
+#: Welches Python-Modul ein Loeser braucht - an einer Stelle, damit Auswahl,
+#: Meldung und Rechnung dasselbe pruefen
+LOESER_MODUL = {"pardiso": "pypardiso", "cholmod": "sksparse.cholmod",
+                "umfpack": "scikits.umfpack", "mumps": "mumps", "pyamg": "pyamg",
+                "superlu": "scipy.sparse.linalg"}
+#: Loeser, die mehrere Threads nutzen (die uebrigen rechnen einkernig)
+MEHRKERNIG = ("pardiso", "mumps")
+
+
+def loeser_da(key: str) -> bool:
+    """Laesst sich dieser Loeser laden? (ohne zu faktorisieren)"""
+    import importlib
+    from . import werkzeuge
+    werkzeuge.aktivieren()                 # nachgeladene Pakete (MUMPS) sichtbar machen
+    modul = LOESER_MODUL.get(key)
+    if not modul:
+        return False
+    try:
+        if key == "pardiso":
+            _find_mkl()
+        importlib.import_module(modul)
+        return True
+    except Exception:                                      # noqa: BLE001
+        return False
 
 
 def loeser_liste() -> list:
     """[(Schluessel, Name, verfuegbar, Lizenz, Art)] fuer die Auswahl - ohne
     zu faktorisieren; ``verfuegbar`` heisst: das Paket laesst sich laden."""
-    import importlib
-    from . import werkzeuge
-    werkzeuge.aktivieren()                 # nachgeladene Pakete (MUMPS) sichtbar machen
     aus = []
-    for key, (name, paket, lizenz, art) in LOESER.items():
-        modul = {"pardiso": "pypardiso", "cholmod": "sksparse.cholmod", "umfpack": "scikits.umfpack",
-                 "mumps": "mumps", "pyamg": "pyamg", "superlu": "scipy.sparse.linalg"}[key]
-        try:
-            if key == "pardiso":
-                _find_mkl()
-            importlib.import_module(modul)
-            da = True
-        except Exception:                                  # noqa: BLE001
-            da = False
-        aus.append((key, name, da, lizenz, art))
+    for key, (name, _paket, lizenz, art) in LOESER.items():
+        aus.append((key, name, loeser_da(key), lizenz, art))
     return aus
 
 
-def loeser_verfuegbar() -> str:
-    """Welcher Loeser stuende bereit - ohne zu faktorisieren.
+def loeser_beschreibung(key: str) -> str:
+    """Name und Kernzahl eines Loesers, wie die Kopfzeile ihn nennt."""
+    name = NAMEN.get(key, key)
+    if key in MEHRKERNIG:
+        return f"{name}, {threads_vorgabe(key)} Threads"
+    return f"{name}, einkernig"
 
-    Fuer die Meldung beim Start einer Rechnung. Bisher stand dort, wie viele
-    Kerne der **Prozesspool fuers Vernetzen** hat; ueber das Loesen sagte das
-    nichts, und bei fehlendem MKL war es schlicht irrefuehrend.
+
+def loeser_verfuegbar(backend: str = "") -> str:
+    """Womit die naechste Rechnung loesen wird - ohne zu faktorisieren.
+
+    Fuer die Meldung beim Start einer Rechnung. Genannt wird der
+    **eingestellte** Loeser (Berechnung -> Einstellungen), nicht der
+    erstbeste vorhandene: wer MUMPS gewaehlt hatte, las hier bis zum
+    14.09.2026 "MKL PARDISO, 16 Threads", waehrend MUMPS mit acht Threads
+    rechnete - die Ergebniszeile sagte es richtig, die Kopfzeile nicht.
+
+    "Automatisch" nimmt PARDISO, sonst CHOLMOD, sonst SuperLU - dieselbe
+    Reihenfolge wie :class:`LinearSolver`. Ein eingestellter Loeser, der
+    fehlt, wird als solcher gemeldet; die Rechnung braecht damit ab, und das
+    gehoert vor die Rechnung, nicht mittendrin.
+
+    Frueher stand in dieser Zeile, wie viele Kerne der **Prozesspool fuers
+    Vernetzen** hat; ueber das Loesen sagte das nichts.
     """
-    from . import werkzeuge
-    werkzeuge.aktivieren()
-    try:
-        _find_mkl()
-        import pypardiso                                   # noqa: F401
-        return f"MKL PARDISO, {threads_vorgabe('pardiso')} Threads"
-    except Exception:                                      # noqa: BLE001
-        pass
-    try:
-        from sksparse.cholmod import cholesky              # noqa: F401
-        return "CHOLMOD"
-    except Exception:                                      # noqa: BLE001
-        pass
-    return "SuperLU, einkernig (kein MKL/CHOLMOD im Programm)"
+    be = str(backend or getattr(parallel.settings(), "solver_backend", "") or "auto").strip()
+    if be and be != "auto":
+        if be not in LOESER:
+            return f"{be} - unbekannter Gleichungslöser (möglich: {', '.join(LOESER)})"
+        if not loeser_da(be):
+            return (f"{NAMEN.get(be, be)} - eingestellt, aber nicht installiert; die Rechnung "
+                    "bricht damit ab (Berechnung → Einstellungen)")
+        return loeser_beschreibung(be)
+    for key in ("pardiso", "cholmod"):
+        if loeser_da(key):
+            return loeser_beschreibung(key) + " (automatisch)"
+    return "SuperLU, einkernig (automatisch, kein MKL/CHOLMOD im Programm)"
 
 
 class LinearSolver:

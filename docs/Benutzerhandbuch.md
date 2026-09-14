@@ -2646,6 +2646,13 @@ Nachweis mit seiner Verformung je Kombination.
       Gleichungslöser: MKL PARDISO, 16 Threads
   ```
 
+  Genannt wird der **eingestellte** Löser mit seiner Kernzahl, nicht der
+  erstbeste vorhandene: wer MUMPS gewählt hat, liest dort seit dem
+  14.09.2026 „MUMPS, 8 Threads“ (vorher stand da „MKL PARDISO, 16 Threads“,
+  während MUMPS rechnete — nur die Ergebniszeile sagte es richtig). Bei
+  *automatisch* steht dahinter „(automatisch)“, und ein eingestellter Löser,
+  der nicht installiert ist, wird vor der Rechnung als solcher gemeldet.
+
   Steht dort „SuperLU, einkernig“, fehlt der Mehrkern-Löser: dann rechnet
   die Faktorisierung auf genau einem Kern, gleichgültig wie viele die
   Maschine hat. Das Windows-Programm bringt Intel MKL mit, so dass PARDISO
