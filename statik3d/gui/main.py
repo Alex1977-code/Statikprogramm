@@ -3143,6 +3143,11 @@ class MainWindow(QtWidgets.QMainWindow):
                         "ohne Trennung, reibungsfrei, reibungsbehaftet, rau), Reibung, Suchradius")
         g.klein("Kontakt löschen", self.clear_contact,
                 hinweis="Alle einseitigen Lager, Spaltelemente und Kontaktpaare entfernen")
+        self.act_kontakte = g.schalter(
+            "Kontakte zeigen", lambda _z: self.redraw(), False,
+            "Jede Kontaktbedingung in eigener Farbe über die Geometrie legen, mit einem "
+            "Schild an der Fuge: Name und Wirkung (Zug, Schub, Reibung). So ist zu sehen, "
+            "wo welcher Kontakt wie wirkt")
         g = r.gruppe("Anschlüsse")
         g.gross("Anschluss", "⊞", self.add_joint,
                 hinweis="Kopfplatte, Laschenstoß oder Diagonalanschluss am gewählten "
@@ -4120,21 +4125,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self.auswahlart_setzen("Fläche")
             self.selection = np.array([], dtype=int)
             self.sel_linien, self.sel_koerper, self.sel_staebe = [], [], []
-            # Die Fuge zeigen: die Kontaktflaechen - und wenn es keine gibt,
-            # weil der geloeste Koerper an den zugeordneten Flaechen der
-            # Gegenseite getrennt wird, eben diese samt dem Koerper. Sonst
-            # bliebe ein solcher Eintrag unsichtbar und liesse sich auch nicht
-            # isolieren („Erst etwas auswählen“).
-            self.sel_flaechen = [x for x in (getattr(kb, "flaechennamen", []) or []) if x in m.flaechen]
+            # **Nur die Fuge** zeigen, und zwar beide Seiten: die
+            # Kontaktflaechen des geloesten Koerpers und die Gegenflaechen.
+            # Frueher kam, wo die Quelldatei keine Kontaktflaechen nennt (RFEM
+            # nennt nur die Gegenseite), der **ganze** Koerper dazu - am
+            # Drehlager leuchtete die komplette Achse statt ihrer Bohrung
+            # (14.09.2026: „wenn Kontakt angeklickt sollte auch nur der Kontakt
+            # aufleuchten bzw. die betroffenen Flächen"). Der Koerper bleibt
+            # der Ausweg, wenn es gar keine Flaechen gibt: sonst waere der
+            # Eintrag unsichtbar und liesse sich nicht isolieren.
+            eigen = [x for x in (getattr(kb, "flaechennamen", []) or []) if x in m.flaechen]
+            gegen = [x for x in (getattr(kb, "gegenflaechen", []) or []) if x in m.flaechen]
+            self.sel_flaechen = list(dict.fromkeys(eigen + gegen))
             if not self.sel_flaechen:
-                self.sel_flaechen = [x for x in (getattr(kb, "gegenflaechen", []) or [])
-                                     if x in m.flaechen]
                 self.sel_koerper = [x for x in (getattr(kb, "koerpernamen", []) or [])
                                     if x in m.koerper]
-            teile = [f"{len(self.sel_flaechen)} Flächen"]
-            if self.sel_koerper:
-                teile.append(f"{len(self.sel_koerper)} Volumen")
-            self.lbl_sel.setText(f"Kontaktbedingung {name}: {', '.join(teile)} (Modellbaum)")
+            teile = ([f"{len(eigen)} Kontaktflächen"] if eigen else []) \
+                + ([f"{len(gegen)} Gegenflächen"] if gegen else []) \
+                + ([f"{len(self.sel_koerper)} Volumen"] if self.sel_koerper else [])
+            self.lbl_sel.setText(f"Kontaktbedingung {name}: "
+                                 + (", ".join(teile) if teile else "keine Flächen zugeordnet")
+                                 + " (Modellbaum)")
         elif art == "stellung" and eintrag:
             st = m.stellung(name)
             if st is not None:
@@ -5060,7 +5071,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     MASKENKLICK = {"geoflaeche": ("linien", "linie", "Randlinien"),
                    "geokoerper_einzeln": ("flaechen", "flaeche", "Randflächen"),
-                   "kontaktbedingung": ("flaechennamen", "flaeche", "Kontaktflächen")}
+                   "kontaktbedingung": ("flaechennamen", "flaeche", "Kontaktflächen"),
+                   "kontaktbedingung_gegen": ("gegenflaechen", "flaeche", "Gegenflächen")}
     #: Kontaktmaske: Wirkung je Richtung im Klartext (Druck wird immer uebertragen)
     KONTAKT_ZUG = {"abheben": "abheben möglich (nur Druck)",
                    "starr": "wird übertragen (kein Abheben)", "feder": "Feder"}
@@ -5240,9 +5252,11 @@ class MainWindow(QtWidgets.QMainWindow):
                         breite=170,
                         hinweis="mindestens eine Fläche von Körper A - getippt oder mit "
                                 "„Kontaktflächen anklicken“ in der Ansicht gewählt"))
-        if kb.gegenflaechen:
-            felder.append(F("gegenflaechen", "Gegenflächen (Quelldatei)", "info",
-                            ", ".join(kb.gegenflaechen[:12]) + (" …" if len(kb.gegenflaechen) > 12 else "")))
+        felder.append(F("gegenflaechen", "Gegenflächen", "liste",
+                        ", ".join(kb.gegenflaechen or []), breite=170,
+                        hinweis="die Flächen der Gegenseite - getippt oder mit „Gegenflächen "
+                                "anklicken“ in der Ansicht gewählt. Leer: die Gegenseite wird im "
+                                "Suchradius gesucht (Körper B). Eine eingelesene Datei bringt sie mit"))
         felder += [F("druck", "Druck", "info", "wird übertragen (Kontakt)"),
                    F("zug", "Zug", "wahl", zug_text(b_n), list(self.KONTAKT_ZUG.values()),
                      hinweis="abheben: die Fuge öffnet unter Zug; übertragen: Verbund ohne Trennung"),
@@ -5273,9 +5287,13 @@ class MainWindow(QtWidgets.QMainWindow):
             felder.insert(-1, F("typ", "Typ / Ort (Quelldatei)", "info", f"{kb.typ} / {kb.ort}"))
         hinweis = ("Körper A wird an seinen Kontaktflächen gegen Körper B gelöst; die Gegenseite wird im "
                    "Suchradius gefunden - die Flächen müssen weder deckungsgleich noch gleich fein "
-                   "vernetzt sein. Getrennt wird beim Vernetzen oder mit „Kontaktfugen ausführen“.")
+                   "vernetzt sein. Kontaktflächen und Gegenflächen lassen sich in der Ansicht "
+                   "anklicken (Knöpfe unten); der Modellbaum lässt jede Fuge einzeln aufleuchten. "
+                   "Getrennt wird beim Vernetzen oder mit „Kontaktfugen ausführen“.")
         zusatz = [("Kontaktflächen anklicken",
                    lambda: self._objektmaske_klick_umschalten(halter.get("m"), "kontaktbedingung")),
+                  ("Gegenflächen anklicken",
+                   lambda: self._objektmaske_klick_umschalten(halter.get("m"), "kontaktbedingung_gegen")),
                   ("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
         return felder, hinweis, zusatz
 
@@ -5807,9 +5825,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def _objektmaske_klickmodus(self, maske, art: str):
         """Die Maske einer Flaeche oder eines Volumens nimmt Klicks aus der
         Ansicht entgegen: jede angeklickte Randlinie (Randflaeche) kommt in
-        die Namensliste oder geht wieder heraus, und die Liste leuchtet."""
+        die Namensliste oder geht wieder heraus, und die Liste leuchtet.
+
+        Eine Maske kann **mehrere** solche Listen haben - die Kontaktmaske
+        sammelt Kontaktflaechen und Gegenflaechen. Welche gerade gemeint ist,
+        sagt der zuletzt gedrueckte Knopf; ``_klick_art`` haelt sie fest.
+        """
         feld, modus, was = self.MASKENKLICK[art]
-        maske._klick_hinweis_alt = maske.lbl_hinweis.text()
+        if not hasattr(maske, "_klick_hinweis_alt"):
+            maske._klick_hinweis_alt = maske.lbl_hinweis.text()
+        maske._klick_art = art
 
         def liste() -> list:
             return self._namensliste(maske.werte().get(feld))
@@ -5841,13 +5866,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redraw()
 
     def _objektmaske_klick_umschalten(self, maske, art: str):
-        """Der Zusatzknopf: Klickmodus an oder aus."""
+        """Der Zusatzknopf: Klickmodus an, aus - oder auf die andere Liste um.
+
+        Steht der Klickmodus schon auf einer **anderen** Liste derselben Maske
+        (Kontaktflaechen gegen Gegenflaechen), schaltet der Knopf nicht ab,
+        sondern auf seine Liste um. Sonst muesste man erst den einen Knopf
+        loesen und dann den anderen druecken.
+        """
         if maske is None:
             return
-        feld, modus, was = self.MASKENKLICK[art]
-        an = not maske.objekt_modus
+        _feld, modus, was = self.MASKENKLICK[art]
+        an = not maske.objekt_modus or getattr(maske, "_klick_art", "") != art
         maske.objekt_modus = modus if an else ""
         if an:
+            self._objektmaske_klickmodus(maske, art)
             maske.lbl_hinweis.setText(f"Klickmodus: {was} in der Ansicht anklicken - jeder Klick nimmt "
                                       "dazu oder heraus; derselbe Knopf beendet ihn.")
             self._objektmaske_klick_zeigen(maske, art)
@@ -6227,7 +6259,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if neuname in m.kontaktbedingungen and (neu or neuname != name):
                 return self.error(f"Kontaktbedingung „{neuname}“ gibt es schon")
             flaechen = self._namensliste(w.get("flaechennamen"))
-            fehlt = [x for x in flaechen if x not in m.flaechen]
+            gegen = self._namensliste(w.get("gegenflaechen"))
+            fehlt = [x for x in flaechen + gegen if x not in m.flaechen]
             if fehlt:
                 return self.error("Unbekannte Flächen: " + ", ".join(fehlt[:5]))
             a_wert = str(w.get("koerper_a", "") or "").strip()
@@ -6243,9 +6276,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.error("Körper A und Körper B müssen verschieden sein")
             # Eine neue Bedingung braucht mindestens eine Flaeche; eine eingelesene
             # darf auch nur ueber Koerper und Gegenflaechen der Quelldatei stehen
-            if neu and not flaechen and not (koerper_a and kb is not None and kb.gegenflaechen):
+            if neu and not flaechen and not (koerper_a and gegen):
                 return self.error("Mindestens eine Kontaktfläche angeben - „Kontaktflächen anklicken“ "
-                                  "wählt sie in der Ansicht")
+                                  "wählt sie in der Ansicht (oder Körper A und Gegenflächen)")
             fremd = [f for f in flaechen if koerper_a and f not in
                      {x for k in koerper_a for x in (m.koerper[k].flaechen or [])}]
             if fremd:
@@ -6278,6 +6311,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self._kontakt_zuruecknehmen(kb)
             kb.flaechennamen, kb.koerpernamen = flaechen, koerper_a
+            kb.gegenflaechen = gegen
             kb.gegenkoerper = koerper_b
             kb.behaviour = beh
             standard = str(w.get("standard", "") or "")
@@ -10536,6 +10570,51 @@ class MainWindow(QtWidgets.QMainWindow):
             always_visible=True, name="ergebniswerte")
         return len(texte)
 
+    def kontakt_kurztext(self, kb) -> str:
+        """Was eine Kontaktbedingung tut - in einer Zeile fuers Schild.
+
+        Druck traegt jede Fuge; genannt wird darum, was **darueber hinaus**
+        gilt: ob sie unter Zug oeffnet, ob sie in der Fugenebene haelt und mit
+        welcher Reibung.
+        """
+        b_n, b_x, b_y = kb.dof_behaviour(2), kb.dof_behaviour(0), kb.dof_behaviour(1)
+        teile = ["Druck"]
+        teile.append("Zug starr" if b_n.typ == "rigid" else "Zug Feder" if b_n.typ == "spring"
+                     else "abheben")
+        schub = [("haften" if b.typ == "rigid" else "Feder" if b.typ == "spring" else "gleiten")
+                 for b in (b_x, b_y)]
+        teile.append(schub[0] if schub[0] == schub[1] else " / ".join(schub))
+        mu = kb.reibbeiwert()
+        if mu:
+            teile.append(f"μ = {mu:g}")
+        return ", ".join(teile)
+
+    def _kontakte_zeichnen(self, m) -> None:
+        """Die Kontaktbedingungen farbig ins Bild, mit Schild an jeder Fuge."""
+        alt = getattr(self, "_kontakt_darsteller", []) or []
+        for name in alt:
+            try:
+                self.plotter.remove_actor(name, render=False)
+            except Exception:                # noqa: BLE001
+                pass
+        self._kontakt_darsteller = []
+        if getattr(self, "act_kontakte", None) is None or not self.act_kontakte.isChecked():
+            return
+        try:
+            gezeichnet = vp.add_kontakte(self.plotter, m, raender=self._raender(),
+                                         seiten=self._randseiten())
+        except Exception as ex:              # noqa: BLE001 - eine Fuge darf die Ansicht nicht sperren
+            self.log.appendPlainText(f"Kontakte nicht gezeichnet: {ex}")
+            return
+        gross = int(m.bemassung_einstellungen().textgroesse)
+        for i, (name, farbe, punkt, _n) in enumerate(gezeichnet):
+            kb = m.kontaktbedingungen.get(name)
+            text = f"{name}: {self.kontakt_kurztext(kb)}" if kb is not None else name
+            self.plotter.add_point_labels(
+                np.asarray([punkt], float), [text], font_size=gross, text_color=farbe,
+                point_size=1, shape=None, always_visible=True, name=f"kontakttext{i}")
+            self._kontakt_darsteller += [f"kontaktflaeche{i}", f"kontakttext{i}"]
+
     def _sicht_text(self) -> str:
         """Zusatz zur Kopfzeile, wenn Teile ausgeblendet sind: Skala und
         Kennwerte gelten nur fuer das Sichtbare."""
@@ -10544,6 +10623,9 @@ class MainWindow(QtWidgets.QMainWindow):
             text += " · Skala: nur sichtbare Teile"
         if getattr(self, "act_kontaktmarken", None) is not None and self.act_kontaktmarken.isChecked():
             text += " · Kontaktmarken: grün haftet, orange gleitet, grau offen, blau Kontakt"
+        if getattr(self, "act_kontakte", None) is not None and self.act_kontakte.isChecked():
+            n = len(getattr(self, "_kontakt_darsteller", []) or []) // 2
+            text += f" · Kontakte: {n} Bedingungen farbig mit Schild"
         return text
 
     def _werte_text(self) -> str:
@@ -15551,12 +15633,21 @@ class MainWindow(QtWidgets.QMainWindow):
         polygone: list = []
 
         def polygon(fname: str):
+            """Die Vielecke der Flaeche - dieselben wie im Bild.
+
+            Eine krumme Flaeche als **ein** ebenes Vieleck ihrer Randpunkte zu
+            fuellen, spannt bei einem Halbkreis die Sehne durch den Koerper:
+            die Bohrung einer Buchse sah aus wie ein Keil quer durch die Achse
+            (14.09.2026). Die Zerlegung ist darum dieselbe wie fuer die
+            Geometrie (Coons-Flaeche).
+            """
             f = m.flaechen.get(fname)
             if f is None:
                 return
-            P = np.asarray(raender.get(fname, f.randpunkte(m)), float)
-            if len(P) >= 3:
-                polygone.append(P)
+            for Q in vp.flaechenpolygone(m, f, raender, self._randseiten()):
+                P = np.asarray(Q, float)
+                if len(P) >= 3:
+                    polygone.append(P)
 
         for name in self.sel_flaechen:
             f = m.flaechen.get(name)
@@ -16104,6 +16195,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 vp.add_linien(self.plotter, m, self.sel_linien,
                               ausser=self.versteckt["linien"], netz=self._linien_netz())
             vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
+            self._kontakte_zeichnen(m)
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
                 vp.add_nodes(self.plotter, m, nur=sichtbare_knoten)
             if self._netzknoten_sichtbar():

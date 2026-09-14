@@ -5078,6 +5078,24 @@ def main():
               geo.n_cells > 4 and abs(rad.min() - 0.5) < 1e-6 and abs(rad.max() - 0.5) < 1e-6
               and "flaeche" in geo.cell_data, f"{geo.n_cells} Zellen, r = {rad.min():.3f}..{rad.max():.3f}")
         pl.close()
+        # Auch die **Hervorhebung** der Auswahl muss dem Bogen folgen: als ein
+        # ebenes Vieleck der Randpunkte spannte sie bei einem Halbkreis die
+        # Sehne durch den Koerper (14.09.2026, Bohrungen der Buchsen)
+        alt_modell = w.model
+        w.model = mz
+        w.sel_flaechen = ["Mantel"]
+        w.refresh_all(); w.redraw(); app.processEvents()
+        akt_ = dict(w.plotter.renderer.actors)
+        flaeche_ = pvx.wrap(akt_["auswahl_flaechen"].GetMapper().GetInput()).area if "auswahl_flaechen" in akt_ else 0.0
+        rad_ = np.linalg.norm(pvx.wrap(akt_["auswahl_flaechen"].GetMapper().GetInput()).points[:, :2], axis=1) \
+            if "auswahl_flaechen" in akt_ else np.zeros(1)
+        check("gewählte krumme Fläche leuchtet als Mantel, nicht als Keil durch den Körper "
+              "(Halbzylinder r = 0,5 m, h = 1 m: π·r·h = 1,571 m², die Sehnenfläche wäre 1,0 m²)",
+              abs(flaeche_ - np.pi * 0.5) < 0.02 and abs(rad_.min() - 0.5) < 1e-6 and abs(rad_.max() - 0.5) < 1e-6,
+              f"{flaeche_:.3f} m², r = {rad_.min():.3f}..{rad_.max():.3f} m")
+        w.sel_flaechen = []
+        w.model = alt_modell
+        w.refresh_all(); app.processEvents()
         pl = pvx.Plotter(off_screen=True)
         vpl.add_geometrie(pl, mz, raender={}, seiten={}, ausser_flaechen={"Mantel"})
         check("eine ausgeblendete Fläche fehlt im Bild", "geo_flaechen" not in pl.renderer.actors)
@@ -5823,6 +5841,50 @@ def main():
         check("Rechts steht danach die Maske der neuen Kontaktbedingung mit „getrennt“",
               mk is not None and mk.titel == "Kontaktbedingung KB1" and "getrennt" in mk.werte()["ausgefuehrt"] and w.rechts_zeigt() == "maske",
               str(mk.werte()["ausgefuehrt"] if mk else None))
+        # --- Nur die Fuge leuchtet; Gegenflaechen per Maus; Kontakte farbig zeigen ---
+        w._baum_geklickt("kontaktbedingung", "KB1"); app.processEvents()
+        check("Kontakt im Modellbaum: nur die Fuge leuchtet, nicht der ganze Körper",
+              w.sel_flaechen == ["FugeO"] and not w.sel_koerper
+              and "1 Kontaktflächen" in w.lbl_sel.text(),
+              f"{w.sel_flaechen}, Volumen {w.sel_koerper}, „{w.lbl_sel.text()}“")
+        mk = w.maskenrand.maske
+        check("Kontaktmaske: Gegenflächen sind ein Listenfeld mit eigenem Klickknopf",
+              "gegenflaechen" in mk.werte() and "Gegenflächen anklicken" in mk.zusatzknoepfe
+              and "Kontaktflächen anklicken" in mk.zusatzknoepfe, str(sorted(mk.zusatzknoepfe)))
+        mk.zusatzknoepfe["Gegenflächen anklicken"].click(); app.processEvents()
+        check("Klickmodus Gegenflächen an", mk.objekt_modus == "flaeche" and mk._klick_art == "kontaktbedingung_gegen",
+              f"{mk.objekt_modus} / {getattr(mk, '_klick_art', '')}")
+        mk.objekt_angeklickt("flaeche", "FugeU"); app.processEvents()
+        check("angeklickte Fläche steht als Gegenfläche in der Maske und leuchtet",
+              w._namensliste(mk.werte()["gegenflaechen"]) == ["FugeU"] and w.sel_flaechen == ["FugeU"],
+              f"{mk.werte()['gegenflaechen']!r}, Auswahl {w.sel_flaechen}")
+        mk.zusatzknoepfe["Kontaktflächen anklicken"].click(); app.processEvents()
+        check("derselbe Klick schaltet auf die andere Liste um, statt den Modus zu beenden",
+              mk.objekt_modus == "flaeche" and mk._klick_art == "kontaktbedingung",
+              f"{mk.objekt_modus} / {getattr(mk, '_klick_art', '')}")
+        mk.zusatzknoepfe["Kontaktflächen anklicken"].click(); app.processEvents()
+        check("und noch einmal beendet ihn", not mk.objekt_modus, str(mk.objekt_modus))
+        n_f = len(fehler_)
+        mk.anwenden(); app.processEvents()
+        kb = m_.kontaktbedingungen.get("KB1")
+        check("Übernehmen schreibt die angeklickte Gegenfläche in die Bedingung",
+              kb is not None and kb.gegenflaechen == ["FugeU"] and len(fehler_) == n_f,
+              f"{kb.gegenflaechen if kb else None}, {fehler_[n_f:]}")
+        w._baum_geklickt("kontaktbedingung", "KB1"); app.processEvents()
+        check("jetzt leuchten beide Seiten der Fuge - Kontaktfläche und Gegenfläche",
+              w.sel_flaechen == ["FugeO", "FugeU"] and "1 Gegenflächen" in w.lbl_sel.text(),
+              f"{w.sel_flaechen}, „{w.lbl_sel.text()}“")
+        w.act_kontakte.setChecked(True); w.redraw(); app.processEvents()
+        akt_ = [a for a in w.plotter.renderer.actors if a.startswith("kontakt")]
+        check("„Kontakte zeigen“: die Fuge farbig im Bild, mit Schild aus Name und Wirkung",
+              any(a.startswith("kontaktflaeche") for a in akt_) and any(a.startswith("kontakttext") for a in akt_)
+              and "Kontakte: 1 Bedingungen" in w._sicht_text(), str(akt_))
+        check("das Schild sagt, wie der Kontakt wirkt (Druck, abheben, gleiten, μ)",
+              w.kontakt_kurztext(kb) == "Druck, abheben, gleiten, μ = 0.3", w.kontakt_kurztext(kb))
+        w.act_kontakte.setChecked(False); w.redraw(); app.processEvents()
+        check("aus: keine Kontaktfarben mehr im Bild",
+              not any(a.startswith("kontaktflaeche") or a.startswith("kontakttext")
+                      for a in w.plotter.renderer.actors))
         z = w.tbl_freigabe.modell.zeilen
         check("Tabelle nennt Standard, Körper A und B", len(z) == 1 and z[0][8] == "Reibungsbehaftet" and z[0][9] == "Oben" and z[0][10] == "Unten", str(z[0] if z else z))
         mk.setzen("standard", "Verbund"); app.processEvents(); mk.anwenden(); app.processEvents()
@@ -7014,8 +7076,8 @@ def main():
         check("Bezug nennt die Fuge statt „0 Flächen“",
               kb.fuge() == "V1 an 1 Flächen", kb.fuge())
         w._baum_objekt_waehlen("kontaktbedingung", "Lagerbock-Unterlegbleche")
-        check("Klick wählt die zugeordneten Flächen und den gelösten Körper",
-              w.sel_flaechen == ["Boden"] and w.sel_koerper == ["V1"],
+        check("Klick wählt die zugeordneten Flächen - den gelösten Körper nicht mehr (14.09.2026: nur die Fuge leuchtet)",
+              w.sel_flaechen == ["Boden"] and not w.sel_koerper,
               f"{w.sel_flaechen} / {w.sel_koerper}")
         gemeldet = []
         w.error = lambda msg: gemeldet.append(str(msg))

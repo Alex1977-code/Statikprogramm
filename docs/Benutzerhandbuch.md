@@ -315,6 +315,7 @@ erscheint die Maske:
 | Körper A (Kontaktseite) | der Körper, dessen Flächen die Kontaktseite bilden - er wird an ihnen gelöst |
 | Körper B (Gegenseite) | der Körper, gegen den der Kontakt wirkt; „(alle anderen Körper)“ sucht die Gegenseite unter allen Bauteilen |
 | Kontaktflächen | mindestens eine Fläche von Körper A - getippt oder mit **„Kontaktflächen anklicken“** in der Ansicht gewählt (jeder Klick nimmt dazu oder heraus) |
+| Gegenflächen | die Flächen der Gegenseite - ebenso mit **„Gegenflächen anklicken“** in der Ansicht wählbar (seit 14.09.2026; vorher nur Anzeige aus der Quelldatei). Leer: die Gegenseite wird im Suchradius gesucht. Der zweite Knopf schaltet den Klickmodus auf die andere Liste um, ohne ihn zu beenden |
 | Standardkontakt | setzt die Richtungen darunter mit einem Griff (Tabelle unten); danach lässt sich jede Richtung von Hand ändern, der Standard wird dann „Benutzerdefiniert“ |
 | Druck | wird immer übertragen - das ist Kontakt |
 | Zug | *abheben möglich* (die Fuge öffnet unter Zug), *wird übertragen* (Verbund, kein Abheben) oder *Feder* |
@@ -393,9 +394,19 @@ gelösten Körpers werden beim Vernetzen geometrisch gesucht. Auch diese
 Bedingungen lassen sich auf einen Standardkontakt umstellen oder Richtung für
 Richtung ändern.
 
-Ein Klick auf eine solche Bedingung im Modellbaum wählt die zugeordneten
-Flächen **und** den gelösten Körper; *Selektion anzeigen* isoliert sie damit
-wie jedes andere Objekt.
+Ein Klick auf eine Bedingung im Modellbaum lässt **nur ihre Fuge** aufleuchten:
+die Kontaktflächen und die Gegenflächen, nicht mehr den ganzen gelösten Körper
+(bis 14.09.2026 leuchtete am Drehlager die komplette Achse statt ihrer
+Bohrung). *Selektion anzeigen* isoliert sie damit wie jedes andere Objekt; gibt
+es gar keine Flächen, bleibt der Körper als Ausweg.
+
+**Wo welcher Kontakt wie wirkt** zeigt der Schalter *Lager / Kontakt →
+„Kontakte zeigen“*: jede Kontaktbedingung liegt dann in einer eigenen Farbe
+durchscheinend über der Geometrie, mit einem Schild an ihrer Fuge, das Name und
+Wirkung nennt — etwa „Achse (Typ 3): Druck, abheben, gleiten“. Ein Modell mit
+einem Dutzend Fugen ist sonst nicht zu lesen: die Flächen liegen aufeinander,
+und die Wirkung stand nur in Tabellen. Nach dem Rechnen kommt der Zustand
+hinzu (Schalter *Kontaktmarken* oder die Färbung *Kontakt Zustand*).
 
 In der Tabelle „Knoten“ wird ein Knoten nur gelöscht, wenn **kein** Element
 mehr an ihm hängt — sonst sagt das Programm, welches Element im Weg ist. Der
