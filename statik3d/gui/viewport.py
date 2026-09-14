@@ -786,6 +786,69 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
     return pd_f, pd_r, pd_k
 
 
+#: Farben der Kontaktbedingungen im Bild - je Bedingung eine, der Reihe nach.
+#: Sie unterscheiden die Fugen **voneinander** ("wo wirkt welcher Kontakt");
+#: was eine Fuge tut, steht in ihrem Schild daneben.
+KONTAKTFARBEN = ("#e74c3c", "#2980b9", "#27ae60", "#f39c12", "#8e44ad", "#16a085",
+                 "#d35400", "#34495e", "#c0392b", "#7f8c8d", "#b8860b", "#9b59b6")
+
+
+def kontaktfarbe(i: int) -> str:
+    """Die Farbe der i-ten Kontaktbedingung."""
+    return KONTAKTFARBEN[int(i) % len(KONTAKTFARBEN)]
+
+
+def kontaktflaechen(model: Model, kb) -> list:
+    """Die Flaechen **dieser** Fuge: Kontaktflaechen und Gegenflaechen.
+
+    Aus RFEM kommt fast immer nur die Gegenseite (die Datei nennt unter
+    ``releasedSurfaces`` die ganze Aussenhaut des geloesten Koerpers, nicht
+    die Fuge); dann sind die Gegenflaechen die Fuge.
+    """
+    namen = list(getattr(kb, "flaechennamen", []) or []) + list(getattr(kb, "gegenflaechen", []) or [])
+    vorhanden = getattr(model, "flaechen", {}) or {}
+    return [n for n in dict.fromkeys(namen) if n in vorhanden]
+
+
+def add_kontakte(plotter, model: Model, raender: dict = None, seiten: dict = None,
+                 nur=None) -> list:
+    """Jede Kontaktbedingung in eigener Farbe ueber die Geometrie legen.
+
+    Ohne das sieht man einem Modell mit einem Dutzend Fugen nicht an, wo
+    welche sitzt: die Flaechen liegen aufeinander, und die Wirkung steht nur
+    in Tabellen (14.09.2026: „aktuell kann ich nicht erkennen wo welcher
+    Kontakt wie wirkt"). Gezeichnet werden die Flaechen der Fuge
+    durchscheinend in der Farbe der Bedingung; das Schild dazu setzt die
+    Oberflaeche.
+
+    ``nur`` beschraenkt auf einzelne Namen (None = alle, die nicht
+    abgeschaltet sind). Rueckgabe [(Name, Farbe, Mittelpunkt, Flaechenzahl)]
+    in der Reihenfolge der Bedingungen - fuer Schilder und Legende.
+    """
+    aus = []
+    kbs = list((getattr(model, "kontaktbedingungen", {}) or {}).values())
+    for i, kb in enumerate(kbs):
+        name = str(getattr(kb, "name", "") or f"KB{i + 1}")
+        if nur is not None and name not in nur:
+            continue
+        if getattr(kb, "aus", False):
+            continue
+        punkte, zellen = [], []
+        for fn in kontaktflaechen(model, kb):
+            for Q in flaechenpolygone(model, model.flaechen[fn], raender, seiten):
+                basis = len(punkte)
+                punkte.extend(np.asarray(Q, float).tolist())
+                zellen.extend([len(Q), *range(basis, basis + len(Q))])
+        if not zellen:
+            continue
+        P = np.asarray(punkte, float)
+        farbe = kontaktfarbe(i)
+        plotter.add_mesh(pv.PolyData(P, faces=np.asarray(zellen, int)),
+                         color=farbe, opacity=0.55, name=f"kontaktflaeche{i}")
+        aus.append((name, farbe, P.mean(axis=0), len(kontaktflaechen(model, kb))))
+    return aus
+
+
 def add_geometrie(plotter, model: Model, groesse: float = 1.0, raender: dict = None,
                   seiten: dict = None, flaechen_an: bool = True, koerper_an: bool = True,
                   ausser_flaechen=None, ausser_koerper=None, modus: str = "Transparent",
@@ -2002,9 +2065,17 @@ def add_singularitaet(plotter, model: Model, sing, size: float,
                          color=FARBE_BEWEGUNG, name=name)
 
 
-def _flaechenpolygone(model: Model, f, raender: dict = None, seiten: dict = None) -> list:
-    """Die Vielecke einer Flaeche fuers Bild als Liste von Punktfeldern (k, 3)
-    - fuer Lastpfeile und die Lastflaeche; leer, wenn die Flaeche keinen Rand hat."""
+def flaechenpolygone(model: Model, f, raender: dict = None, seiten: dict = None) -> list:
+    """Die Vielecke einer Flaeche fuers Bild als Liste von Punktfeldern (k, 3).
+
+    **Der** Weg, eine Flaeche zu fuellen: Lastflaeche, Kontaktfarbe und die
+    Hervorhebung der Auswahl nehmen ihn. Eine krumme Flaeche (Bohrung,
+    Zylindermantel) wird dabei ueber ihre Coons-Flaeche in Dreiecke zerlegt;
+    ihre Randpunkte als **ein** ebenes Vieleck zu fuellen, spannt bei einem
+    Halbkreis die Sehne durch den Koerper (14.09.2026: „Fläche 304, 305, 589,
+    590 sind nicht korrekt dargestellt" - die Bohrungen der Buchsen). Leer,
+    wenn die Flaeche keinen Rand hat.
+    """
     ring = (raender or {}).get(f.name)
     if ring is None:
         ring = f.randpunkte(model)
@@ -2040,7 +2111,7 @@ def _polygonnormale(Q) -> np.ndarray:
 def _dreiecksmitten(model: Model, f, raender: dict = None, seiten: dict = None,
                     hoechstens: int = 24):
     """Punkte und Normalen auf einer Flaeche (mit oder ohne Netz) fuer Lastpfeile."""
-    polygone = _flaechenpolygone(model, f, raender, seiten)
+    polygone = flaechenpolygone(model, f, raender, seiten)
     if not polygone:
         return np.zeros((0, 3)), np.zeros((0, 3))
     P = np.concatenate(polygone)
@@ -2436,7 +2507,7 @@ def add_loads(plotter, model: Model, case, size: float, raender: dict = None,
             else:
                 D = -normalen       # positiv drueckt hinein
             # die Lastflaeche: jedes Vieleck der Flaeche, das die Last trifft
-            for Q in _flaechenpolygone(model, f, raender, seiten):
+            for Q in flaechenpolygone(model, f, raender, seiten):
                 c_q = Q.mean(axis=0)
                 if gl.bereich and not gl.trifft(c_q):
                     continue
