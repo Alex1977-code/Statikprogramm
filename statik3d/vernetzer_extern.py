@@ -260,7 +260,10 @@ def mmg3d_nachbessern(Pn: np.ndarray, TET: np.ndarray, T: np.ndarray, h: float,
     (Pn, TET) mit derselben Huellnummerierung.
 
     Aufruf als getrennter Prozess ueber Dateien - so bleibt MMG (LGPL) ein
-    eigenes Programm und kein Teil der exe.
+    eigenes Programm und kein Teil der exe. Gestartet wird er **ohne
+    Konsolenfenster** (:func:`werkzeuge.ohne_fenster`): MMG3D ist ein
+    Konsolenprogramm, Statik3D ein Fensterprogramm, und ohne den Schalter
+    legt Windows je Aufruf - also je Koerper - ein schwarzes Fenster an.
     """
     exe = mmg3d_programm(programm)
     if not exe:
@@ -275,7 +278,8 @@ def mmg3d_nachbessern(Pn: np.ndarray, TET: np.ndarray, T: np.ndarray, h: float,
                   "-hmax", f"{float(h):.9g}"]
         if h_min > 0:
             befehl += ["-hmin", f"{float(h_min):.9g}"]
-        lauf = subprocess.run(befehl, capture_output=True, text=True, timeout=3600)
+        lauf = subprocess.run(befehl, capture_output=True, text=True, timeout=3600,
+                              **werkzeuge.ohne_fenster())
         if lauf.returncode != 0 or not os.path.isfile(aus):
             raise RuntimeError(f"MMG3D gescheitert (Rückgabe {lauf.returncode}): "
                                f"{(lauf.stderr or lauf.stdout)[-300:]}")
