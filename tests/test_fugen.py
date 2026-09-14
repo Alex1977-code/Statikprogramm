@@ -1214,6 +1214,67 @@ def test_deckungsgleiche_knoten_direkt():
           f"(eine Facettennormale läge {180.0 / n:.0f}° daneben)")
 
 
+def _kasten(m, x0, x1, y0, y1, z0, z1, name, h=0.1):
+    """Ein Quader als eigener Koerper mit eigenen Flaechen, vernetzt."""
+    i0 = m.nn
+    m.add_nodes(np.array([[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+                          [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], float))
+    b = Bauer(m)
+    R = [[b.linie(i0 + o + i, i0 + o + (i + 1) % 4) for i in range(4)] for o in (0, 4)]
+    V = [b.linie(i0 + i, i0 + i + 4) for i in range(4)]
+    m.add_flaeche(f"{name}_B", R[0], material="S235")
+    m.add_flaeche(f"{name}_D", R[1], material="S235")
+    seiten = []
+    for i in range(4):
+        nm = f"{name}_M{i}"
+        m.add_flaeche(nm, [R[0][i], V[(i + 1) % 4], R[1][i], V[i]], material="S235")
+        seiten.append(nm)
+    k = m.add_koerper(name, [f"{name}_B", f"{name}_D"] + seiten, material="S235")
+    M3.mesh_koerper_frei(m, k, h=h, log=[], cache={})
+    return k
+
+
+def test_gegenseite_nur_im_genannten_bauteil():
+    """Nennt die Bedingung die zugeordneten Flaechen der Gegenseite, so gehoert
+    die Gegenseite **deren Bauteil** - nicht dem naechstbesten Teil daneben.
+
+    Gesucht wird weiter ueber die Geometrie (die Flaechenliste der Quelldatei
+    ist unvollstaendig), aber im Bauteil der genannten Flaechen. Ohne diese
+    Schranke nimmt die Suche, was im Suchradius am naechsten liegt: am
+    Drehlager hingen vier Knoten der Achse in der Fuge zur Buchse an einem
+    Passstift und trugen unter Last 37 von 49 MN, 12,9 MN auf einem einzigen
+    Knoten (14.09.2026).
+
+    Das Modell stellt genau das nach: der obere Koerper steht ueber, und unter
+    dem Ueberstand liegt ein Fremdteil, dessen Deckel die Fugenebene beruehrt.
+    Fuer die ueberstehenden Facetten ist es die naechste Gegenflaeche
+    ueberhaupt - die genannte Gegenflaeche reicht dort gar nicht hin.
+    """
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.netz.ziellaenge = 0.5
+    _kasten(m, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, "Unten", h=0.5)
+    _kasten(m, 0.0, 1.4, 0.0, 1.0, 1.0, 2.0, "Oben", h=0.5)
+    _kasten(m, 1.1, 1.3, 0.4, 0.6, 0.8, 1.0, "Stift", h=0.1)
+    kb = m.add_kontaktbedingung("Fuge", flaechennamen=[], gegenflaechen=["Unten_D"],
+                                koerpernamen=["Oben"],
+                                behaviour={2: DofBehaviour("free", failure="zug")})
+    log = []
+    b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+    cp = m.contact_pairs[-1] if m.contact_pairs else None
+    check("die Fuge wird als Kontaktpaar ausgeführt", b["kontaktpaar"] == 1, b.get("grund", ""))
+    check("die Gegenseite ist das Bauteil der genannten Fläche - das Fremdteil gehört nicht dazu",
+          cp is not None and cp.gegenkoerper == ["Unten"], str(cp.gegenkoerper if cp else None))
+    gruppe = fugen.gruppen_je_knoten(m)
+    fremd = [f for f in (cp.master_faces if cp else [])
+             if any("Stift" in gruppe.get(int(n), set()) for n in f)]
+    check("keine einzige Master-Facette stammt aus dem Fremdteil",
+          not fremd, f"{len(fremd)} von {len(cp.master_faces) if cp else 0} Facetten")
+    check("die Slave-Knoten liegen in der Fugenebene",
+          cp is not None and all(abs(float(m.nodes[int(n)][2]) - 1.0) < 1e-9 for n in cp.slave_nodes),
+          f"{len(cp.slave_nodes) if cp else 0} Knoten")
+
+
 def test_facettenspalt_bereinigt():
     """Der Spalt zaehlt zur wahren Flaeche, nicht zur Sehne der Facette.
 
@@ -1529,6 +1590,7 @@ def main():
               test_formschluss_meldung,
               test_ein_suchradius, test_verteilung_statt_mittelwert,
               test_deckungsgleiche_knoten_direkt, test_facettenspalt_bereinigt,
+              test_gegenseite_nur_im_genannten_bauteil,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
               test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei, test_karten_einmal_je_lauf):

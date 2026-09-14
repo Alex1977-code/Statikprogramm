@@ -737,6 +737,17 @@ ihrer gemeinsamen **Randlinien**. Daraus folgen zwei Fälle:
 | passen Knoten für Knoten | **jeder** Fugenknoten gehört beiden Bauteilen | Knoten verdoppeln, je Paar ein Spaltelement (und Kopplungen für die Fugenebene) |
 | passen nicht | nur der gemeinsame Rand gehört beiden (oder gar kein Knoten) | den Rand trennen, die Fläche über ein **Kontaktpaar** (Knoten–Fläche, Abschnitt 4) |
 
+**Die Gegenseite gehört dem Bauteil der genannten Flächen.** Nennt die
+Quelldatei keinen Gegenkörper, wohl aber die zugeordneten Flächen der
+Gegenseite — so kommt jede RFEM-Flächenfreigabe herein —, dann wird die
+Gegenseite nur unter den Randseiten **dieses Bauteils** gesucht. Vorher lief
+die Suche über das ganze Modell und nahm, was im Suchradius am nächsten lag:
+am Drehlager hingen vier Knoten der Achse V30 in der Fuge zur Buchse an einem
+Passstift (V76) statt an der Buchse und trugen unter Last 37 von 49 MN, mit
+12,9 MN auf einem einzigen Knoten (14.09.2026). Die Flächenliste selbst bleibt
+dabei außen vor — sie ist unvollständig (siehe unten) —, ihr Bauteil nicht.
+Geprüft in `tests/test_fugen.py::test_gegenseite_nur_im_genannten_bauteil`.
+
 **Die Gegenseite des Kontaktpaars** wird nicht über die Liste der Flächen
 gesucht, an denen die Freigabe hängt (die ist in RFEM-Dateien unvollständig),
 sondern über die Geometrie - wie in ANSYS über einen **Suchradius** (Pinball):
