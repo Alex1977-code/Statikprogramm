@@ -780,8 +780,35 @@ liegen — steht ihr Schwerpunkt weiter als ihren eigenen Umkreis über den Rand
 der Gegenfacette hinaus, ist dort nichts mehr, was ihr gegenübersteht, und sie
 bleibt ungepaart. Die Randfacette einer Fuge, die zur Hälfte über die Kante
 ragt, bleibt so dabei. **Gewählt** wird unter den so verbliebenen Gegenseiten
-die räumlich nächste; **gemessen** wird längs der Normalen. Dasselbe gilt im
-Löser für die Zuordnung Knoten gegen Master-Facette.
+die räumlich nächste; **gemessen** wird längs der Normalen.
+
+**Im Löser wirkt Kontakt nur auf der Gegenfläche.** Für die Zuordnung Knoten
+gegen Master-Facette galt bis zum 15.09.2026 dieselbe Umkreisregel — für einen
+**Knoten** heißt sie aber: Kontakt jenseits des Flächenrands. Am Drehlager
+trugen so Knoten der Achse bis 25 mm hinter dem Ende der Buchse V29 1982 kN
+und 8 mm hinter dem Ende von V16 903 kN; am Montageauge trug der Rand eines
+Passstiftlochs, 3 mm hinter dem Stiftende, 708 kN auf einem Knoten. Neben der
+ganzen Gegenfläche — keine Randseite des Gegenkörpers darunter — lagen
+tragende Knoten in elf von zwölf Fugen. Jetzt wird ein Knoten nur einer
+Facette zugeordnet, auf die er **senkrecht fällt**: sein Querversatz q zur
+Facette muss
+
+$$ q \le \varepsilon\,L + \tan\frac{\kappa}{2}\; d $$
+
+erfüllen, mit dem Abstand d längs der Normalen, der Rundungsschranke
+ε L = 10⁻⁶ der Modellgröße und dem Knickwinkel κ = 30° der glatten
+Nachbarschaft. Der zweite Term ist der Kegel einer glatten Kante: steht ein
+Knoten um d vor der gemeinsamen Ecke zweier Facetten, die um den Winkel D
+abknicken — am Mantel einer Achse jede Ecke —, liegt er neben beiden um
+d sin(D/2) bei einem Abstand d cos(D/2), also bis D = κ innerhalb der Schranke.
+Ein anliegender Knoten (d = 0) bekommt nichts nachgelassen. Wer daneben liegt,
+bekommt keine Bedingung und trägt nicht; das Protokoll zählt diese Knoten
+getrennt von denen ohne Facette im Suchradius. Geprüft an einer ebenen Fläche
+(jeder Knoten bis zum Rand gepaart, 2,5 bis 30 mm dahinter keiner) und an 48
+Fällen Achse/Bohrung über 16, 24 und 36 Facetten, 40 und 57 Knoten, Versatz,
+Spiel 0 und 0,5 mm und beide Seiten als Gegenfläche (`tests.test_fugen`,
+`test_kontakt_nur_auf_der_gegenflaeche`); mit der alten Regel standen dort je
+Fall 240 Knoten hinter dem Ende der Bohrung in Kontakt.
 
 **Formschluss statt Reibung.** Eine Kontaktfuge trägt nur senkrecht zu ihren
 Facetten. Ob ein Bauteil ohne Reibung frei gleiten kann, entscheidet darum die

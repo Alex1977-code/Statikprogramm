@@ -1379,6 +1379,98 @@ def test_facettenspalt_bereinigt():
           f"{len(cs3)} Bedingungen" + (f", g0 = {cs3[0].g0 * 1e3:.3f} mm, n_z = {cs3[0].normal[2]:+.3f}" if cs3 else ""))
 
 
+def test_kontakt_nur_auf_der_gegenflaeche():
+    """Kontakt wirkt nur, wo die Gegenflaeche gegenuebersteht - ausserhalb nie.
+
+    Bis zum 15.09.2026 durfte ein Knoten der Kontaktseite so weit neben seiner
+    Gegenfacette liegen, wie deren Umkreis misst. Die Regel stammt von der
+    Suche der Gegenseite, wo sie Facetten meint, die zur Haelfte ueber eine
+    Kante ragen; fuer einen Knoten heisst sie: Kontakt jenseits des
+    Flaechenrands. Am Drehlager trugen so Knoten der Achse bis 25 mm hinter dem
+    Ende der Buchse V29 (1982 kN) und 8 mm hinter dem Ende von V16 (903 kN),
+    und am Montageauge der Lochrand 3 mm hinter dem Passstiftende 708 kN auf
+    einem Knoten („außerhalb der Flächen darf nie ein Kontakt wirken").
+
+    Jetzt bekommt ein Knoten nur eine Facette, auf die er senkrecht faellt.
+    Nachgelassen wird die Rundung und - an einer glatten Kante zwischen zwei
+    Facetten bis zum Knickwinkel - der Kegel, den ein abstehender Knoten dort
+    ueberstreicht. Geprueft an einer ebenen Flaeche und als Stichprobe an
+    Achse und Bohrung ueber Facettenzahl, Versatz, Spiel und beide Seiten als
+    Gegenflaeche: jeder Knoten ueber der Flaeche ist gepaart, auch auf ihrem
+    Rand, keiner daneben.
+    """
+    from scipy import sparse
+    from statik3d.contact import ContactSystem
+    from statik3d.model import ContactPair
+
+    # 1) Eben: Gegenflaeche 100 x 100 mm aus 10-mm-Vierecken, die Kontaktseite
+    #    reicht im 2,5-mm-Raster bis 130 mm, anliegend und 0,3 mm abstehend
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    g = {(i, j): int(m.add_node(0.01 * i, 0.01 * j, 0.0)) for i in range(11) for j in range(11)}
+    master = [[g[i, j], g[i + 1, j], g[i + 1, j + 1], g[i, j + 1]] for i in range(10) for j in range(10)]
+    lage = {}
+    for i in range(53):
+        for y in (0.0025, 0.0525):
+            for z in (0.0, 0.0003):
+                lage[int(m.add_node(0.0025 * i, y, z))] = 0.0025 * i
+    log = []
+    m.contact_pairs.append(ContactPair("Eben", slave_nodes=list(lage), master_faces=master,
+                                       search_radius=0.05))
+    st = ContactSystem(m, sparse.identity(m.ndof, format="csr"), log)
+    bed = {int(c.node) for c in st.cons if c.kind == "surface"}
+    ueber = [k for k, x in lage.items() if x <= 0.1 + 1e-9]
+    neben = [k for k, x in lage.items() if x > 0.1 + 1e-9]
+    check("eben: jeder Knoten über der Fläche ist gepaart, auch auf ihrem Rand (x = 100 mm)",
+          all(k in bed for k in ueber), f"{sum(1 for k in ueber if k in bed)} von {len(ueber)}")
+    check("… und keiner daneben: 2,5 bis 30 mm hinter dem Rand trägt nichts",
+          not any(k in bed for k in neben),
+          f"{sum(1 for k in neben if k in bed)} von {len(neben)} gepaart, "
+          f"der weiteste bei x = {max([lage[k] for k in neben if k in bed], default=0) * 1e3:.1f} mm")
+    check("das Protokoll sagt, wie viele neben der Gegenfläche liegen",
+          any("neben der Gegenfläche" in z and f"{len(neben)} " in z for z in log),
+          "; ".join(log)[:160])
+
+    # 2) Achse ueber die Bohrung hinaus - Stichprobe
+    r, h, schritt = 0.300, 0.100, 0.010
+    fehler = []
+    faelle = 0
+    for n_b in (16, 24, 36):
+        for n_a in (40, 57):
+            for versatz in (0.0, 0.37):
+                for spiel in (0.0, 0.0005):
+                    for gegen in ("Bohrung", "Achse"):
+                        mz = Model()
+                        mz.add_material(Material.steel("S235"))
+                        _u, _o, fac = _mantelfacetten(mz, r, n_b, h)
+                        if gegen == "Bohrung":
+                            fac = [[f[1], f[0], f[3], f[2]] for f in fac]   # Normale zur Achse hin
+                            r_s = r - spiel
+                        else:
+                            r_s = r + spiel                                # Knoten der Bohrung aussen
+                        wa = 2.0 * np.pi * (np.arange(n_a) + versatz) / n_a
+                        z_s = {}
+                        for k in range(-3, 14):
+                            z = k * h / 10
+                            for a in wa:
+                                z_s[int(mz.add_node(r_s * np.cos(a), r_s * np.sin(a), z))] = z
+                        mz.contact_pairs.append(ContactPair("Fuge", slave_nodes=list(z_s),
+                                                            master_faces=fac, search_radius=0.1))
+                        stz = ContactSystem(mz, sparse.identity(mz.ndof, format="csr"))
+                        bz = {int(c.node) for c in stz.cons if c.kind == "surface"}
+                        drin = [k for k, z in z_s.items() if -1e-9 <= z <= h + 1e-9]
+                        aus = [k for k, z in z_s.items() if not -1e-9 <= z <= h + 1e-9]
+                        faelle += 1
+                        fehlt = sum(1 for k in drin if k not in bz)
+                        zuviel = sum(1 for k in aus if k in bz)
+                        if fehlt or zuviel:
+                            fehler.append(f"{n_b}-Eck, {n_a} Knoten, Versatz {versatz}, Spiel {spiel * 1e3:g} mm, "
+                                          f"Gegenfläche {gegen}: {fehlt} fehlen, {zuviel} daneben")
+    check(f"Achse und Bohrung, {faelle} Fälle (16/24/36 Facetten, 40/57 Knoten, Versatz, Spiel 0/0,5 mm, "
+          "beide Seiten als Gegenfläche): über der Bohrung alle gepaart, 10 bis 30 mm dahinter keiner",
+          not fehler, "; ".join(fehler[:3]))
+
+
 def _zwei_prismen(n=5, r=0.30, dick=0.30, klein=0.05):
     """Zwei Fuenfeckprismen uebereinander mit **einer** gemeinsamen Flaeche.
 
@@ -1590,7 +1682,7 @@ def main():
               test_formschluss_meldung,
               test_ein_suchradius, test_verteilung_statt_mittelwert,
               test_deckungsgleiche_knoten_direkt, test_facettenspalt_bereinigt,
-              test_gegenseite_nur_im_genannten_bauteil,
+              test_gegenseite_nur_im_genannten_bauteil, test_kontakt_nur_auf_der_gegenflaeche,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
               test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei, test_karten_einmal_je_lauf):

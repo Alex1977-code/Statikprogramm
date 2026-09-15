@@ -348,6 +348,18 @@ entfernt. Der **Spalt** ist dabei der Abstand senkrecht zur Fuge; ein Versatz
 **in** der Fugenebene zählt nicht mit, denn er bedeutet kein Abheben. Ohne
 Netz geschieht es beim Vernetzen.
 
+**Kontakt wirkt nur, wo sich die Flächen gegenüberstehen** (seit 15.09.2026).
+Ein Knoten der Kontaktseite, der neben der Gegenfläche liegt — hinter dem Ende
+einer Buchse, im Grund einer Stiftbohrung, die tiefer ist als der Stift, am
+Rand eines überstehenden Blechs —, bekommt keine Kontaktbedingung und trägt
+nicht. Vorher durfte er bis zur Größe einer Facette danebenliegen; am
+Drehlager trugen so Knoten der Achse bis 25 mm hinter dem Ende der Buchse
+(1982 kN), und ein Passstiftloch trug an seinem Rand, 3 mm hinter dem
+Stiftende, 708 kN auf einem Knoten. Das Protokoll nennt diese Knoten beim
+Rechnen je Kontaktpaar: „… 240 liegen neben der Gegenfläche: dort steht ihnen
+nichts gegenüber, sie tragen nicht“. Das ist kein Fehler des Modells, sondern
+die Auskunft, wie weit die Kontaktseite über die Gegenfläche hinausreicht.
+
 Zum Spalt nennt das Protokoll die **Verteilung**, nicht einen Mittelwert:
 
 ```
@@ -368,7 +380,8 @@ ein kleiner Anteil „aufliegend“ und ein Median in der Größenordnung des
 Netzes, berühren sich die Bauteile im Modell nicht wirklich: dann stimmt
 entweder die Geometrie nicht oder der Suchradius ist zu groß gewählt. Dieselbe
 Auskunft steht beim Rechnen noch einmal je Kontaktpaar, dort für die Knoten,
-zusammen mit der Zahl derer, die gar keine Gegenfacette gefunden haben.
+zusammen mit der Zahl derer, die gar keine Gegenfacette gefunden haben, und
+derer, die neben der Gegenfläche liegen.
 
 Zur Fugenebene selbst sagt das Protokoll, was sie hält. Ohne Reibung und ohne
 Federn trägt eine Fuge nur senkrecht zu ihren Facetten — ob das Bauteil damit
