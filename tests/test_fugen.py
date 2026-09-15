@@ -1275,6 +1275,60 @@ def test_gegenseite_nur_im_genannten_bauteil():
           f"{len(cp.slave_nodes) if cp else 0} Knoten")
 
 
+def test_gegenfacetten_folgen_dem_bauteil():
+    """Loest eine spaetere Fuge das Bauteil, das eine fruehere als Gegenseite
+    hat, muessen deren Gegenfacetten die neuen Knotennummern bekommen.
+
+    Die Fuge verdoppelt die Knoten, die das geloeste Bauteil mit anderen
+    teilt, und haengt **seine** Elemente an die Kopien. Ein Kontaktpaar, das
+    vorher angelegt wurde, behielt die alten Nummern - und die gehoeren danach
+    dem anderen Bauteil. Am Drehlager waren das 58 bis 73 Gegenfacetten in
+    vier Fugen: „Deckel 2 (Typ 1)" lag mit Facetten wie [82528, 82529, 753]
+    zur Haelfte auf der Achse V30 und zur anderen auf dem Passstift V101,
+    nachdem „Achse (Typ 4)" die Achse von den Stiften geloest hatte; kein
+    Element hatte diese Seite (15.09.2026).
+
+    Modell (drei_bloecke): Fuge 1 loest Unten gegen FugeO - die Gegenfacetten
+    liegen auf Oben, auch am Rand x = 1. Fuge 2 loest Oben von der Rippe, die
+    mit Oben die Flaeche MO1 teilt; deren Unterkante ist genau dieser Rand.
+    """
+    m = drei_bloecke()
+    zug = {2: DofBehaviour("free", failure="zug")}
+    m.add_kontaktbedingung("Fuge", flaechennamen=["FugeU"], gegenflaechen=["FugeO"],
+                           koerpernamen=["Unten"], behaviour=dict(zug))
+    m.add_kontaktbedingung("Rippe", flaechennamen=["MO1"], koerpernamen=["Oben"],
+                           behaviour=dict(zug))
+    log = []
+    g = fugen.kontaktfugen_ausfuehren(m, log)
+    check("beide Fugen ausgeführt", g["fugen"] == 2 and not g["offen"], str(g))
+    cp = next((c for c in m.contact_pairs if c.name == "Fuge"), None)
+    check("Fuge 1 ist ein Kontaktpaar gegen Oben", cp is not None and cp.gegenkoerper == ["Oben"],
+          str(cp.gegenkoerper if cp else None))
+    seiten = {}
+    for i, el in enumerate(m.elements):
+        for n in el.nodes:
+            seiten.setdefault(int(n), set()).add(i)
+
+    def element_der(f):
+        s = None
+        for k in f:
+            s = set(seiten.get(int(k), set())) if s is None else s & seiten.get(int(k), set())
+        return s or set()
+
+    getrennt = {int(k) for paar in m.getrennte_knoten.get("Rippe", []) for k in paar}
+    am_rand = [f for f in (cp.master_faces if cp else []) if set(int(k) for k in f) & getrennt]
+    check("Fuge 2 hat Knoten am Rand der Gegenfacetten von Fuge 1 verdoppelt",
+          len(am_rand) > 0, f"{len(am_rand)} Gegenfacetten an verdoppelten Knoten")
+    fremd = [f for f in (cp.master_faces if cp else [])
+             if not any(m.elements[e].group == "Oben" for e in element_der(f))]
+    check("jede Gegenfacette von Fuge 1 ist danach eine Seite eines Elements von Oben",
+          cp is not None and not fremd,
+          f"{len(fremd)} von {len(cp.master_faces) if cp else 0} ohne Element von Oben, z. B. "
+          f"{[sorted(int(k) for k in f) for f in fremd[:2]]}")
+    check("das Protokoll sagt, dass Gegenfacetten mitgenommen wurden",
+          any("Gegenfacetten" in z and "mitgenommen" in z for z in log), "; ".join(log)[-160:])
+
+
 def _zweigeteilt(m, name, h):
     """Quader 0..2 x 0..1 x 0..1, dessen Oberseite aus **zwei** Flaechen besteht
     (``_D1`` bis x = 1, ``_D2`` ab x = 1) - ein Bauteil, zwei Kontaktflaechen."""
@@ -1778,7 +1832,7 @@ def main():
               test_ein_suchradius, test_verteilung_statt_mittelwert,
               test_deckungsgleiche_knoten_direkt, test_facettenspalt_bereinigt,
               test_gegenseite_nur_im_genannten_bauteil, test_kontakt_nur_auf_der_gegenflaeche,
-              test_gegenseite_nur_auf_genannten_flaechen,
+              test_gegenseite_nur_auf_genannten_flaechen, test_gegenfacetten_folgen_dem_bauteil,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
               test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei, test_karten_einmal_je_lauf):

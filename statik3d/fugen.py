@@ -685,11 +685,16 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
         neu[k] = int(model.add_node(*model.nodes[k]))
     # Alle Elemente der geloesten Seite umhaengen - nicht nur die an der Fuge:
     # ein Element, das mit einer Kante an der Fuge liegt, gehoert genauso dazu.
+    an_neu: dict = {}               # neuer Knoten -> Elemente, die ihn jetzt benutzen
     if neu:
-        for el in model.elements:
+        neue = set(neu.values())
+        for i, el in enumerate(model.elements):
             if str(getattr(el, "group", "") or "") not in geloest:
                 continue
             el.nodes = [neu.get(int(n), int(n)) for n in el.nodes]
+            for n in el.nodes:
+                if n in neue:
+                    an_neu.setdefault(n, set()).add(i)
     # Die Knotenkarte nachfuehren, damit die naechste Fuge richtig sieht,
     # was noch zusammenhaengt.
     for k, n in neu.items():
@@ -698,6 +703,7 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     if neu:
         _randseiten_vergessen(cache, geloest)
     _lager_mitnehmen(model, neu, log)
+    _gegenfacetten_mitnehmen(model, neu, an_neu, log)
     bericht["knoten"] = len(neu)
     bericht["mitgeloest"] = sorted(mit)
     if mit and log is not None:
@@ -853,6 +859,48 @@ def _lager_mitnehmen(model: Model, neu: dict, log: list = None) -> int:
                 n += len(dazu)
     if n and log is not None:
         C.say(log, f"  {n} Lager an die neuen Fugenknoten mitgenommen")
+    return n
+
+
+def _gegenfacetten_mitnehmen(model: Model, neu: dict, an_neu: dict, log: list = None) -> int:
+    """Die Gegenfacetten frueherer Kontaktpaare an die verdoppelten Knoten legen.
+
+    Ein Kontaktpaar haelt seine Gegenseite als Knotenlisten fest. Loest eine
+    **spaetere** Fuge genau das Bauteil, auf dem diese Facetten liegen, bekommen
+    seine Elemente an den gemeinsamen Knoten neue Nummern; die alten bleiben dem
+    Nachbarn. Ohne Nachziehen laege eine Randfacette danach halb auf dem einen
+    und halb auf dem anderen Bauteil, und kein Element haette sie als Seite: am
+    Drehlager 58 bis 73 Gegenfacetten in vier Fugen - „Deckel 2 (Typ 1)" etwa
+    mit [82528, 82529, 753], zwei Knoten der Achse V30 und einer des
+    Passstifts V101, nachdem „Achse (Typ 4)" die Achse von den Stiften geloest
+    hatte (15.09.2026).
+
+    Uebernommen wird die neue Nummer nur, wenn die Facette mit ihr die Seite
+    eines Elements des geloesten Bauteils ist; eine Facette des Nachbarn behaelt
+    ihre Knoten. Slave-Knoten brauchen das nicht: eine Fuge verdoppelt jeden
+    Knoten ihrer Kontaktseite, den ein anderes Bauteil mitbenutzt - danach
+    gehoert er ihrem geloesten Bauteil allein, und keine spaetere Fuge findet
+    ihn noch gemeinsam.
+    """
+    from .importers import _common as C
+    if not neu:
+        return 0
+    n = 0
+    for cp in (getattr(model, "contact_pairs", None) or []):
+        for i, f in enumerate(cp.master_faces or []):
+            knoten = [int(k) for k in f]
+            if not any(k in neu for k in knoten):
+                continue
+            kand = [int(neu.get(k, k)) for k in knoten]
+            els = None
+            for k in kand:
+                if k in an_neu:
+                    els = set(an_neu[k]) if els is None else els & an_neu[k]
+            if els and any(set(kand) <= {int(x) for x in model.elements[e].nodes} for e in els):
+                cp.master_faces[i] = kand
+                n += 1
+    if n and log is not None:
+        C.say(log, f"  {n} Gegenfacetten früherer Kontaktpaare an die neuen Fugenknoten mitgenommen")
     return n
 
 

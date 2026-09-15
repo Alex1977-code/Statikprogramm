@@ -756,6 +756,27 @@ statt an der Buchse und trugen 37 von 49 MN, 12,9 MN auf einem einzigen Knoten
 Oberseite, genannt ist eine Hälfte — vorher lagen 30 von 57 Gegenfacetten auf
 der anderen) und `test_gegenseite_nur_im_genannten_bauteil`.
 
+**Spätere Fugen nehmen die Gegenseite früherer mit.** Die Fugen werden
+nacheinander ausgeführt; jede verdoppelt die Knoten, die ihr gelöstes Bauteil
+mit anderen teilt, und hängt dessen Elemente an die Kopien. Löst eine spätere
+Fuge genau das Bauteil, auf dem ein früher angelegtes Kontaktpaar seine
+Gegenseite hat, bekommen dessen Randfacetten dort neue Knotennummern — das
+Kontaktpaar hielt aber die alten, und die gehören danach dem Nachbarn. Am
+Drehlager lagen so 58 bis 73 Gegenfacetten in vier Fugen halb auf dem einen
+und halb auf dem anderen Bauteil, ohne dass ein Element sie als Seite hatte:
+„Deckel 2 (Typ 1)“ etwa mit zwei Knoten der Achse V30 und einem des
+Passstifts V101, nachdem „Achse (Typ 4)“ die Achse von den Stiften gelöst
+hatte (8 kN in LF1 auf solchen Facetten in „Deckel 2 (Typ 3)“). Jetzt zieht
+die Fuge beim Verdoppeln die Gegenfacetten aller bestehenden Kontaktpaare
+nach — aber nur die, die mit den neuen Nummern Seite eines Elements des
+gelösten Bauteils sind; eine Facette des Nachbarn behält ihre Knoten.
+Slave-Knoten brauchen das nicht: eine Fuge verdoppelt jeden Knoten ihrer
+Kontaktseite, den ein anderes Bauteil mitbenutzt, danach gehört er dem
+gelösten Bauteil allein, und keine spätere Fuge findet ihn noch gemeinsam
+(am Drehlager 0 von 32 128 Slave-Knoten fremd). Geprüft in
+`test_gegenfacetten_folgen_dem_bauteil`: vorher waren 8 von 28 Gegenfacetten
+keine Seite eines Elements ihres Bauteils mehr.
+
 **Ohne genannte Gegenflächen** wird die Gegenseite des Kontaktpaars über die
 Geometrie gesucht — unter den Gegenkörpern oder allen anderen Bauteilen —, wie
 in ANSYS über einen **Suchradius** (Pinball):
