@@ -2041,13 +2041,16 @@ class Volumenkoerper:
 
 
 def _polygoninhalt(P) -> float:
-    """Flaecheninhalt eines ebenen Vielecks im Raum (Newell-Formel)."""
+    """Flaecheninhalt eines ebenen Vielecks im Raum (Newell-Formel).
+
+    Im Block, nicht Punkt fuer Punkt: am Drehlager lief die Schleife bei
+    jeder Aktualisierung der Tabellen 201 157-mal durch np.cross und kostete
+    6,8 von 18,9 s (15.09.2026, "Grafik muss schneller sein").
+    """
     P = np.asarray(P, float)
     if len(P) < 3:
         return 0.0
-    n = np.zeros(3)
-    for a, b in zip(P, np.roll(P, -1, axis=0)):
-        n += np.cross(a, b)
+    n = np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
     return float(np.linalg.norm(n)) / 2.0
 
 
@@ -2259,6 +2262,10 @@ class Kontaktbedingung:
     spalt_schliessen: bool = False
     #: Der Standardkontakt, aus dem die Wirkung kam ("" = benutzerdefiniert).
     standard: str = ""
+    #: Von selbst angelegt, weil sich zwei Koerper beruehren (kontakte.py,
+    #: 15.09.2026). Der Name traegt dann die Wirkung und folgt ihr; wer den
+    #: Kontakt loescht, bekommt ihn nicht wieder (Model.kontakt_ausnahmen).
+    automatisch: bool = False
 
     def standard_anwenden(self, name: str, mu: float = None) -> "Kontaktbedingung":
         """Die Wirkung je Freiheitsgrad aus einem Standardkontakt setzen.
@@ -2319,8 +2326,15 @@ class Kontaktbedingung:
                     return False
         return gefunden
 
+    def verschweisst(self, model) -> bool:
+        """Starr an gemeinsamen Flaechen - eine Naht, nichts zu trennen (kontakte.ist_verschweisst)."""
+        from .kontakte import ist_verschweisst
+        return model is not None and ist_verschweisst(model, self)
+
     def zustand(self, model=None) -> str:
         """Der Stand der Trennung in Worten - fuer Baum, Maske, Tabelle, Bericht."""
+        if self.verschweisst(model):
+            return "verschweißt (starr an gemeinsamer Fläche, nichts zu trennen)"
         if self.ausgefuehrt:
             return "getrennt"
         if self.aus:
@@ -2330,8 +2344,11 @@ class Kontaktbedingung:
         return "nicht ausgeführt - hier zu steif"
 
     def zu_steif(self, model) -> bool:
-        """Netz da, Fuge nicht ausgefuehrt: das Modell rechnet hier zu steif."""
-        return not self.ausgefuehrt and not self.aus and not self.wartet_auf_netz(model)
+        """Netz da, Fuge nicht ausgefuehrt: das Modell rechnet hier zu steif.
+        Eine Naht (starr an gemeinsamer Flaeche) ist nie zu steif - sie soll
+        es sein."""
+        return (not self.ausgefuehrt and not self.aus and not self.wartet_auf_netz(model)
+                and not self.verschweisst(model))
 
     def fuge(self) -> str:
         """Woran die Fuge haengt - in Worten, fuer Baum, Maske und Bericht.
@@ -2365,6 +2382,8 @@ class Kontaktbedingung:
 
     def art_der_trennung(self, model) -> str:
         """Wie die Fuge im Netz umgesetzt ist - fuer Tabelle und Bericht."""
+        if self.verschweisst(model):
+            return "entfällt (verschweißt, gemeinsame Knoten)"
         if not self.ausgefuehrt:
             return "noch nicht (beim Vernetzen)" if self.wartet_auf_netz(model) else "nein"
         teile = []
@@ -2379,7 +2398,12 @@ class Kontaktbedingung:
         n = sum(1 for c in (model.contact_pairs or []) if c.name == self.name)
         if n:
             teile.append("Kontaktpaar")
-        return "ja (" + ", ".join(teile) + ")" if teile else "ja"
+        if not teile:
+            # Starr in allen Richtungen bei passenden Netzen: die Knoten
+            # blieben gemeinsam, es gibt nichts im Netz, das dazugehoert
+            from .kontakte import ist_naht
+            return "ja (verschweißt, gemeinsame Knoten)" if ist_naht(self) else "ja"
+        return "ja (" + ", ".join(teile) + ")"
 
     def describe(self) -> str:
         namen = ["ux", "uy", "uz", "phix", "phiy", "phiz"]
@@ -2656,6 +2680,15 @@ class ContactPair:
 #: Alter Name der Kontaktbedingung (RFEM: Flaechenfreigabe)
 Flaechenfreigabe = Kontaktbedingung
 
+#: Geometrieart einer Flaeche im Klartext (Maske, Dialog) -> Flaeche.typ.
+#: Eine Regelflaeche (RFEM: Quadrangle) spannt sich zwischen vier
+#: Randabschnitten auf - der Mantel einer Bohrung, eines Bolzens, einer
+#: Buchse - und darf gewoelbt sein; ihr Netz und ihr Bild kommen aus der
+#: Coons-Flaeche ueber den vier Seiten, auch wenn die Seiten Boegen oder
+#: Splines sind (15.09.2026: „Quadrangle und/oder Splines").
+FLAECHENARTEN = {"eben": "eben", "Regelfläche (Viereck, gewölbt)": "regelflaeche",
+                 "beschnitten (aus der Quelldatei)": "beschnitten"}
+
 #: Steifigkeitsarten einer Flaeche **ohne** eigene Steifigkeit (Klartext, wie
 #: der RFEM-Import sie in ``Flaeche.steifigkeit`` schreibt)
 FLAECHEN_OHNE_STEIFIGKEIT = {
@@ -2807,6 +2840,9 @@ class Model:
         #: Element beide Seiten benutzt und die Fuge damit ueberbrueckt
         #: (:func:`diagnose.abnahme`).
         self.getrennte_knoten: dict[str, list] = {}
+        #: Koerperpaare [A, B], zwischen denen kein Kontakt mehr von selbst
+        #: entsteht - der Anwender hat den automatischen geloescht
+        self.kontakt_ausnahmen: list = []
         # Subsysteme, Situationen und Stellungen (Stellung: bridges.positions)
         self.subsysteme: dict[str, Subsystem] = {}
         self.situationen: dict[str, Situation] = {}
@@ -4674,6 +4710,7 @@ class Model:
             "contact_pairs": [asdict(c) for c in self.contact_pairs],
             "getrennte_knoten": {k: [[int(a), int(b)] for a, b in v]
                                  for k, v in (self.getrennte_knoten or {}).items()},
+            "kontakt_ausnahmen": [[str(a), str(b)] for a, b in (getattr(self, "kontakt_ausnahmen", None) or [])],
             "punktmassen": [asdict(x) for x in self.punktmassen],
             "daempfer": [asdict(x) for x in self.daempfer],
             "federn": [asdict(x) for x in self.federn.values()],
@@ -4794,6 +4831,7 @@ class Model:
         m.contact_pairs = [_dc(ContactPair, c) for c in d.get("contact_pairs", [])]
         m.getrennte_knoten = {str(k): [[int(a), int(b)] for a, b in v]
                               for k, v in (d.get("getrennte_knoten") or {}).items()}
+        m.kontakt_ausnahmen = [[str(a), str(b)] for a, b in (d.get("kontakt_ausnahmen") or [])]
         m.punktmassen = [_dc(Punktmasse, x) for x in d.get("punktmassen", [])]
         m.daempfer = [_dc(Daempfer, x) for x in d.get("daempfer", [])]
         m.federn = {x["name"]: _dc(FederProp, x) for x in d.get("federn", [])}

@@ -667,8 +667,12 @@ class Modellbaum(QtWidgets.QTreeWidget):
             it.setToolTip(0, hinweis)
         return it
 
-    def _liste(self, eltern, eintraege, art, sammelart="", sortieren=True):
+    def _liste(self, eltern, eintraege, art, sammelart="", sortieren=True, gesamt=None):
         """Eintraege unter einen Zweig haengen, gedeckelt auf BAUM_MAX.
+
+        ``gesamt``: so viele Eintraege gibt es wirklich, wenn der Aufrufer nur
+        die ersten BAUM_MAX + 1 gebaut hat - die Sammelzeile nennt dann den
+        Rest der ganzen Liste.
 
         Sortiert wird nach dem Schluessel des Eintrags, und zwar **natuerlich**
         (:func:`natuerlich`): „V2“ steht vor „V10“, nicht dahinter. Das ist
@@ -679,14 +683,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
         """
         if sortieren:
             eintraege = sorted(eintraege, key=lambda e: natuerlich(e[2]))
-        for i, (text, zahl, key, tip) in enumerate(eintraege):
+        anzahl = len(eintraege) if gesamt is None else int(gesamt)
+        for i, e in enumerate(eintraege):
+            # ein fuenfter Wert ist die Textfarbe (Kontakte: die Wirkung)
+            text, zahl, key, tip = e[:4]
+            farbe = e[4] if len(e) > 4 else None
             if i >= BAUM_MAX:
-                self._zweig(eltern, f"… {len(eintraege) - BAUM_MAX} weitere",
+                self._zweig(eltern, f"… {anzahl - BAUM_MAX} weitere",
                             "", sammelart or art, farbe=FARBEN["matt"],
                             hinweis="Die vollständige Liste steht in der "
                                     "Tabelle unten – dort mit Filter.")
                 break
-            self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip)
+            self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip, farbe=farbe)
 
     # -- Beschriftungen ---------------------------------------------------
     @staticmethod
@@ -720,10 +728,15 @@ class Modellbaum(QtWidgets.QTreeWidget):
         kn = self._zweig(wurzel, "Knoten", model.nn, "knoten", fett=True,
                          hinweis="Klick wählt alle Knoten, ein Eintrag den einen. "
                                  "Rechtsklick: Neu, Löschen.")
+        # Nur die Knoten bauen, die der Zweig zeigt - sie stehen schon in ihrer
+        # Nummernfolge, das natuerliche Sortieren ueber alle entfaellt. Am
+        # Drehlager entstanden sonst 158 780 Eintraege samt Koordinatentext und
+        # Sortierschluessel fuer 20 000 sichtbare (2,5 s je Aktualisierung).
         self._liste(kn, [(f"K{i}", _kurz(model.nodes[i]), str(i),
                           "Knoten {}: x = {:.4f}  y = {:.4f}  z = {:.4f} m".format(
                               i, *model.nodes[i]))
-                         for i in range(model.nn)], "knoten")
+                         for i in range(min(model.nn, BAUM_MAX + 1))], "knoten",
+                    sortieren=False, gesamt=model.nn)
         lin = self._zweig(wurzel, "Linien", len(model.lines), "linien", fett=True)
         self._liste(lin, [(name, f"{ln.typ} · {len(ln.nodes)}", name,
                            f"{name}: {ln.typ} über {len(ln.nodes)} Knoten")
@@ -908,14 +921,22 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 # Das Warnzeichen steht **vor** dem Namen: hinten wuerde es
                 # bei langen Namen mit dem „…“ der Spalte verschwinden, und
                 # dann sahe es aus, als seien nur die kurzen Namen betroffen
+                # Jeder Eintrag in der Farbe seiner Wirkung (starr grau, nur
+                # Druck rot, ...) - dieselbe wie im Bild (15.09.2026, „ggf.
+                # arbeiten wir auch mit Farben, das sieht man immer schnell")
+                from ..kontakte import wirkungsfarbe, wirkungstext
                 self._liste(fk, [(("⚠ " if x.zu_steif(model) else "") + name,
                                   x.bezug(model) + (" ⚠" if x.zu_steif(model) else ""),
-                                  name, f"{name}: {x.describe()}"
+                                  name, f"{name}: {wirkungstext(x)} - {x.describe()}"
+                                  + ("\nAutomatisch angelegt: die Körper berühren sich. Löschen merkt "
+                                     "sich das Paar - der Kontakt kommt nicht von selbst wieder."
+                                     if getattr(x, "automatisch", False) else "")
                                   + ("" if x.ausgefuehrt else
                                      ("\nWird beim Vernetzen getrennt (Netz → Vernetzen)."
                                       if x.wartet_auf_netz(model) else
                                       "\n⚠ Trennung nicht ausgeführt – das Modell rechnet hier "
-                                      "durchverbunden, also zu steif. Netz → „Kontaktfugen ausführen“.")))
+                                      "durchverbunden, also zu steif. Netz → „Kontaktfugen ausführen“.")),
+                                  wirkungsfarbe(x))
                                  for name, x in flaechenkontakte.items()],
                             "kontaktbedingung", "kontaktbedingungen")
                 self._zweig(fk, "+ Kontaktbedingung anlegen", "", "kontaktbedingung_neu",

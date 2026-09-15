@@ -318,17 +318,26 @@ def main():
           f"{grenzen['My'][2]:.6g} / {my:.6g} Nm")
     check("und es steht der Stab dabei, nicht nur die Zahl",
           grenzen["My"][3] in range(len(w.model.elements)), str(grenzen["My"][3]))
-    w.cb_diagram.setCurrentText("My"); app.processEvents()
+    # Seit 15.09.2026 stehen nur die Werte des gewaehlten Ergebnisses im Bild:
+    # die Faerbung wird darum ausdruecklich gewaehlt und danach zurueckgestellt
+    feld_vorher = w.cb_field.currentText()
+    w.cb_diagram.setCurrentText("My")
+    w.cb_field.setCurrentText("|u| Verschiebung"); app.processEvents()
     zeilen = w._kennwerte_zeichnen(r)
     text = "\n".join(zeilen)
-    check("Kennwerte im Bild: größte Verformung mit Knoten",
-          any(z.startswith("u ") and "Knoten" in z for z in zeilen)
-          and any(z.startswith("uz") for z in zeilen),
-          zeilen[1] if len(zeilen) > 1 else "-")
+    check("Kennwerte im Bild: zur Färbung |u| die größte Verformung mit Knoten",
+          any(z.startswith("u ") and "Knoten" in z for z in zeilen),
+          zeilen[0] if zeilen else "-")
     check("Kennwerte im Bild: nur die gewählte Schnittgröße",
           any(z.startswith("My ") for z in zeilen)
           and not any(z.startswith("Vz ") for z in zeilen), text[:80])
+    w.cb_field.setCurrentText("uz"); app.processEvents()
+    zeilen_uz = w._kennwerte_zeichnen(r)
+    check("… zur Färbung uz die Zeile uz", any(z.startswith("uz") for z in zeilen_uz), str(zeilen_uz[:2]))
+    w.cb_field.setCurrentText("Ausnutzung EC3"); app.processEvents()
+    zeilen = w._kennwerte_zeichnen(r)
     ausn = next((z for z in zeilen if "Ausnutzung" in z), "")
+    w.cb_field.setCurrentText(feld_vorher); app.processEvents()
     stab = next(iter(w.model.members), "")
     check("Kennwerte im Bild: größte Ausnutzung mit Ort",
           "max. Ausnutzung" in ausn and " an " in ausn, ausn or "-")
@@ -4313,6 +4322,25 @@ def main():
         w.act_edges.setChecked(False); app.processEvents()
         check("FE-Netz aus: die Netzknoten verschwinden mit dem Netz, der Schalter bleibt an",
               n_punkte_("netzknoten") == 0 and w.act_netzknoten.isChecked())
+        # --- FE-Netz aus: auch die Hervorhebung ohne Elementkanten (15.09.2026:
+        # „wenn Netz ausgeschaltet, dann auch nicht anzeigen, wenn Volumen oder
+        # Fläche selektiert ist oder aufleuchtet") ---
+        w.sel_flaechen = ["F1"]; w.redraw(); app.processEvents()
+        hv_ = dict(w.plotter.renderer.actors).get("auswahl_elemente")
+        check("FE-Netz aus: die gewählte Fläche leuchtet ohne Elementkanten",
+              hv_ is not None and not hv_.GetProperty().GetEdgeVisibility(),
+              "kein Darsteller" if hv_ is None else f"Kanten {hv_.GetProperty().GetEdgeVisibility()}")
+        w.act_edges.setChecked(True); w.redraw(); app.processEvents()
+        hv_ = dict(w.plotter.renderer.actors).get("auswahl_elemente")
+        check("… FE-Netz an: mit Elementkanten",
+              hv_ is not None and bool(hv_.GetProperty().GetEdgeVisibility()))
+        w.act_edges.setChecked(False); app.processEvents()
+        w._hover_zeichnen(("Fläche", "F1"), [int(e) for e in fk_.elemente]); app.processEvents()
+        ho_ = dict(w.plotter.renderer.actors).get("hover")
+        check("… und beim Überfahren mit der Maus ebenso ohne Kanten",
+              ho_ is not None and not ho_.GetProperty().GetEdgeVisibility(),
+              "kein Darsteller" if ho_ is None else f"Kanten {ho_.GetProperty().GetEdgeVisibility()}")
+        w.plotter.remove_actor("hover", render=False); w.sel_flaechen = []
         w.act_edges.setChecked(True); w.act_netzknoten.setChecked(False); app.processEvents()
 
         # --- Flaechenlasten als Flaeche erkennbar: durchscheinende Lastflaeche an den Pfeilenden ---
@@ -4699,6 +4727,8 @@ def main():
               ok_ and texte_[:2] == ["Selektiertes anzeigen", "Selektiertes ausblenden"]
               and "Knoten (2)" in texte_ and "Knotenlager (1)" in texte_ and "Linien (2)" in texte_ and "Stäbe (2)" in texte_,
               str(texte_))
+        check("… und Verschieben, Kopieren, Drehen, Spiegeln (15.09.2026)",
+              all(t_ in texte_ for t_ in ("Verschieben…", "Kopieren…", "Drehen…", "Spiegeln…")), str(texte_))
         sub_ = next(a.menu() for a in menu_.actions() if a.text() == "Knoten (2)")
         check("Untermenü je Gruppe: Bearbeiten…, Löschen", [a.text() for a in sub_.actions()] == ["Bearbeiten…", "Löschen"])
         w.sammelmaske("knoten", [k0, k1])
@@ -4738,6 +4768,55 @@ def main():
         w.auswahl_loeschen("knoten", [k4])
         app.processEvents()
         check("Freien Knoten über das Menü löschen", w.model.nn == 4, str(w.model.nn))
+        # --- 15.09.2026: Verschieben, Kopieren, Drehen, Spiegeln aus dem Rechtsklick / Ribbon ---
+        m_ = w.model
+        k_ = 0
+        alt_k = m_.nodes[k_].copy()
+        w._auswahl_leeren(); w.selection = np.array([k_], int)
+        w.maske_transformieren("verschieben"); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Maske „Verschieben“ rechts: dx, dy, dz und die Auswahl (1 Knoten), zwei Punkte anklickbar",
+              mk is not None and mk.titel.startswith("Verschieben") and all(k in mk.werte() for k in ("dx", "dy", "dz"))
+              and "1 Knoten" in mk.werte()["auswahl"] and mk.n_knoten == 2 and mk.punkte, str(mk.werte() if mk else None))
+        mk.setzen("dx", 0.5); mk.anwenden(); app.processEvents()
+        check("Anwenden verschiebt den Knoten um dx = 0,5",
+              abs(m_.nodes[k_][0] - alt_k[0] - 0.5) < 1e-9 and abs(m_.nodes[k_][2] - alt_k[2]) < 1e-9, str(m_.nodes[k_]))
+        w.maske_transformieren("verschieben"); app.processEvents()
+        w.maskenrand.punkt_angeklickt(np.array([0.0, 0.0, 0.0])); w.maskenrand.punkt_angeklickt(np.array([0.0, 0.0, 1.5]))
+        app.processEvents()
+        check("zwei Punkte anklicken (von → nach) verschiebt sofort um ihren Abstand (0, 0, 1,5)",
+              abs(m_.nodes[k_][2] - alt_k[2] - 1.5) < 1e-9, str(m_.nodes[k_]))
+        m_.nodes[k_] = alt_k
+        w._auswahl_leeren(); w.sel_linien = ["L0"]
+        n_l, nn_ = len(m_.lines), m_.nn
+        w.maske_transformieren("kopieren"); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Maske „Kopieren“ mit Anzahl", mk is not None and mk.titel.startswith("Kopieren") and "anzahl" in mk.werte())
+        z0_ = np.sort(m_.nodes[[int(x) for x in m_.lines["L0"].nodes], 2])
+        mk.setzen("dz", 2.0); mk.setzen("anzahl", 2); mk.anwenden(); app.processEvents()
+        check("Kopieren mit dz = 2, zweimal: zwei neue Linien auf vier neuen Knoten (z + 2, z + 4), das Original bleibt",
+              len(m_.lines) == n_l + 2 and m_.nn == nn_ + 4 and "L0" in m_.lines
+              and np.allclose(np.sort(m_.nodes[nn_:nn_ + 2, 2]), z0_ + 2.0)
+              and np.allclose(np.sort(m_.nodes[nn_ + 2:, 2]), z0_ + 4.0),
+              f"{len(m_.lines)} Linien, {m_.nn} Knoten, z {m_.nodes[nn_:, 2]}")
+        w._auswahl_leeren(); w.selection = np.array([k_], int)
+        w.maske_transformieren("drehen"); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("achse", "z"); mk.setzen("winkel", 180.0); mk.setzen("px", 1.0); mk.anwenden(); app.processEvents()
+        check("Drehen 180° um z durch (1,0,0): x → 2 - x",
+              abs(m_.nodes[k_][0] - (2.0 - alt_k[0])) < 1e-9 and abs(m_.nodes[k_][1] + alt_k[1]) < 1e-9, str(m_.nodes[k_]))
+        m_.nodes[k_] = alt_k
+        w.maske_transformieren("spiegeln"); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("ebene", "xy (z = Lage)"); mk.setzen("lage", 1.0); mk.setzen("kopie", True); mk.anwenden(); app.processEvents()
+        check("Spiegeln an z = 1 als Kopie: ein neuer Knoten bei z = 2 - z, das Original bleibt",
+              m_.nn == nn_ + 5 and abs(m_.nodes[-1][2] - (2.0 - alt_k[2])) < 1e-9 and np.allclose(m_.nodes[k_], alt_k),
+              f"{m_.nn} Knoten, {m_.nodes[-1]}")
+        w.undo(); app.processEvents()
+        check("Rückgängig nimmt die Spiegelkopie zurück", w.model.nn == nn_ + 4, str(w.model.nn))
+        w._auswahl_leeren()
+        w.maske_transformieren("verschieben"); app.processEvents()
+        check("ohne Auswahl: Hinweis statt Maske", fehler_ and "Zuerst" in fehler_[-1], str(fehler_[-1:]))
         del w._bestaetigen
         w.error = alt_error
 
@@ -4989,6 +5068,9 @@ def main():
         app.processEvents()
         check("Selektion anzeigen blendet den Rest aus",
               w.versteckt["elemente"] == alle - elems, str(len(w.versteckt["elemente"])))
+        check("… und hebt die Auswahl danach auf - die Aufgabe ist erledigt (15.09.2026)",
+              not w.sel_staebe and not len(w.selection) and not w.sel_elemente,
+              f"Stäbe {w.sel_staebe}, Knoten {len(w.selection)}")
         stabknoten = {int(n) for e in elems for n in w.model.elements[e].nodes}
         akt = dict(w.plotter.renderer.actors)
         punkte = np.asarray(akt["knoten"].GetMapper().GetInput().points) if "knoten" in akt else np.zeros((0, 3))
@@ -5062,10 +5144,25 @@ def main():
         check("die Kennwerte stehen unten links",
               kw is not None and kw.GetPosition()[1] < 30 and kw.GetPosition()[0] < 30,
               str(kw.GetPosition() if kw is not None else None))
-        check("Kennwerte nennen Auflagerkräfte und Verdrehungen",
-              any(z.startswith("Rz") for z in w._kennwerte_zeilen)
-              and any(z.startswith("phiy") for z in w._kennwerte_zeilen),
-              str(w._kennwerte_zeilen[:3]))
+        # Nur die Werte des gewaehlten Ergebnisses (15.09.2026)
+        check("Kennwerte nennen nur, was gewählt ist: Ausnutzung EC3 und der Verlauf My",
+              any(z.startswith("max. Ausnutzung") for z in w._kennwerte_zeilen)
+              and any(z.startswith("My ") for z in w._kennwerte_zeilen)
+              and not any(z.startswith(("Rz", "phiy", "u ", "uz", "sig_v", "N ")) for z in w._kennwerte_zeilen),
+              str(w._kennwerte_zeilen))
+        w.cb_diagram.setCurrentText("kein Verlauf")
+        w.cb_field.setCurrentText("uz")
+        app.processEvents()
+        check("… Färbung uz ohne Verlauf: allein die Zeile uz",
+              [z.split()[0] for z in w._kennwerte_zeilen if z != "nur sichtbare Teile"] == ["uz"],
+              str(w._kennwerte_zeilen))
+        w.cb_field.setCurrentText("keine Färbung")
+        app.processEvents()
+        check("… keine Färbung und kein Verlauf: keine Kennwerte",
+              not [z for z in w._kennwerte_zeilen if z != "nur sichtbare Teile"], str(w._kennwerte_zeilen))
+        w.cb_field.setCurrentText("Ausnutzung EC3")
+        w.cb_diagram.setCurrentText("My")
+        app.processEvents()
         skalen = w.plotter.scalar_bars
         namen = list(skalen.keys())
         check("Farbskalen stehen senkrecht am rechten Rand",
@@ -5729,6 +5826,12 @@ def main():
         check("Doppelklick Fläche: Maske rechts (kein Dialog) mit „Randlinien anklicken“",
               isinstance(mk_, msk_.Maske) and mk_.titel == "Fläche F1" and w.maskenrand.maske is mk_
               and "Randlinien anklicken" in mk_.zusatzknoepfe, str(getattr(mk_, "titel", mk_)))
+        w.activateWindow(); mk_._felder["linien"].setFocus(); app.processEvents()
+        check("Klick ins Feld Randlinien: Maske erwartet Linien, das Feld ist scharf (15.09.2026)",
+              mk_.objekt_modus == "linie" and "ff8800" in mk_._felder["linien"].styleSheet().lower(),
+              f"{mk_.objekt_modus!r}")
+        mk_._felder["kommentar"].setFocus(); app.processEvents()
+        check("… ein anderes Feld beendet ihn wieder", mk_.objekt_modus == "", repr(mk_.objekt_modus))
         mk_.zusatzknoepfe["Randlinien anklicken"].click(); app.processEvents()
         check("Klickmodus: Maske erwartet Linien, die Randlinien leuchten",
               mk_.objekt_modus == "linie" and w.maskenrand.objekt_modus() == "linie"
@@ -5859,6 +5962,62 @@ def main():
         w.model = zwei_bloecke("eigene", 0.5, 0.15)
         w.refresh_all(); app.processEvents()
         m_ = w.model
+        # --- 15.09.2026: Kontakte entstehen von selbst, wenn sich Volumen beruehren ---
+        from statik3d import kontakte as kt_
+
+        def baumfarbe_(text):
+            def lauf(it):
+                if it.text(0) == text:
+                    return it.foreground(0).color().name()
+                for i_ in range(it.childCount()):
+                    r_ = lauf(it.child(i_))
+                    if r_:
+                        return r_
+                return ""
+            for i_ in range(w.baum.topLevelItemCount()):
+                r_ = lauf(w.baum.topLevelItem(i_))
+                if r_:
+                    return r_
+            return ""
+
+        auto_ = "Oben–Unten starr"
+        kb_a = m_.kontaktbedingungen.get(auto_)
+        check("zwei Volumen berühren sich: „Oben–Unten starr“ entsteht von selbst (Verbund, automatisch, FugeO/FugeU)",
+              kb_a is not None and kb_a.automatisch and kb_a.standard == "Verbund" and kb_a.flaechennamen == ["FugeO"]
+              and kb_a.gegenflaechen == ["FugeU"] and kb_a.koerpernamen == ["Oben"] and kb_a.gegenkoerper == ["Unten"],
+              str(sorted(m_.kontaktbedingungen)))
+        check("… am vorhandenen Netz gleich ausgeführt: ein Kontaktpaar mit Zug und Haften",
+              kb_a is not None and kb_a.ausgefuehrt and len(m_.contact_pairs) == 1
+              and m_.contact_pairs[0].zug and m_.contact_pairs[0].haften, f"{len(m_.contact_pairs)} Paare")
+        check("im Modellbaum steht er in der Farbe seiner Wirkung (starr = grau)",
+              baumfarbe_(auto_) == kt_.WIRKUNGSFARBEN["starr"], baumfarbe_(auto_))
+        check("das Protokoll nennt die Berührung", "Oben berührt Unten" in w.log.toPlainText())
+        w._baum_geklickt("kontaktbedingung", auto_); app.processEvents()
+        akt_b = dict(w.plotter.renderer.actors)
+        # die Fugenflaechen tragen kein Schalennetz: sie leuchten als Vielecke (auswahl_flaechen)
+        check("Klick auf den Kontakt: die Fuge leuchtet kräftig, die beiden Volumen blass dazu",
+              ("auswahl_flaechen" in akt_b or "auswahl_elemente" in akt_b) and "auswahl_blass" in akt_b
+              and abs(akt_b["auswahl_blass"].GetProperty().GetOpacity() - 0.22) < 1e-6
+              and akt_b["auswahl_blass"].GetMapper().GetInput().GetNumberOfCells() > 0
+              and "blass" in w.lbl_sel.text(),
+              f"{sorted(a_ for a_ in akt_b if a_.startswith('auswahl'))} „{w.lbl_sel.text()}“")
+        mk = w.maskenrand.maske
+        mk.setzen("standard", "Reibungsfrei"); app.processEvents(); mk.anwenden(); app.processEvents()
+        neu_ = "Oben–Unten nur Druck"
+        check("Wirkung umgestellt: der Name folgt ihr („Oben–Unten nur Druck“), die Farbe wird rot",
+              neu_ in m_.kontaktbedingungen and auto_ not in m_.kontaktbedingungen
+              and m_.kontaktbedingungen[neu_].automatisch and baumfarbe_(neu_) == kt_.WIRKUNGSFARBEN["nur Druck"]
+              and len(m_.contact_pairs) == 1 and not m_.contact_pairs[0].zug,
+              f"{sorted(m_.kontaktbedingungen)}, {baumfarbe_(neu_)}")
+        w._baum_geklickt("geokoerper_einzeln", "Oben"); app.processEvents()
+        check("ein anderes Objekt im Baum: kein blasses Volumen mehr",
+              "auswahl_blass" not in dict(w.plotter.renderer.actors))
+        w._baum_loeschen("kontaktbedingung", neu_); app.processEvents()
+        w.refresh_all(); app.processEvents()
+        check("gelöscht bleibt gelöscht: der Kontakt entsteht nicht wieder (Ausnahme Oben/Unten gemerkt)",
+              not m_.kontaktbedingungen and not m_.contact_pairs
+              and ["Oben", "Unten"] in (getattr(m_, "kontakt_ausnahmen", None) or []),
+              str((sorted(m_.kontaktbedingungen), getattr(m_, "kontakt_ausnahmen", None))))
         check("Modellbaum bietet „+ Kontaktbedingung anlegen“ an, sobald es Volumen gibt",
               "+ Kontaktbedingung anlegen" in zweige(w.baum) and "Flächenkontakte" in zweige(w.baum), str([z for z in zweige(w.baum) if "ontakt" in z]))
         w._baum_geklickt("kontaktbedingung_neu", ""); app.processEvents()
@@ -5866,7 +6025,70 @@ def main():
         check("Neue Kontaktbedingung: Maske mit Körper A/B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Spalt",
               mk is not None and mk.titel.startswith("Neu: Kontaktbedingung KB")
               and all(k in mk.werte() for k in ("standard", "koerper_a", "koerper_b", "flaechennamen", "zug", "schub_x", "schub_y", "mu", "dreh", "suchweite", "spalt"))
-              and "Kontaktflächen anklicken" in mk.zusatzknoepfe, str(mk.werte() if mk else None)[:200])
+              and "Kontaktfugen ausführen" in mk.zusatzknoepfe, str(mk.werte() if mk else None)[:200])
+        # --- 15.09.2026: „wenn neuer Kontakt angelegt wird, dann soll Volumen anklickbar
+        # sein ... die Maske damit automatisch ausfüllen, Körper und Flächen";
+        # „bei Klick in Feld Auswahl per Maus" ---
+        from PySide6 import QtTest as _QtTk
+
+        def rahmen_(feld):
+            return "ff8800" in mk._felder[feld].styleSheet().lower()
+
+        def scharf_():
+            return [f_ for f_ in ("koerper_a", "koerper_b", "flaechennamen", "gegenflaechen") if rahmen_(f_)]
+
+        check("neue Kontaktbedingung: das Feld Körper A ist scharf (orange), ein Klick in der Ansicht trifft Volumen",
+              mk.objekt_modus == "volumen" and getattr(mk, "_klick_art", "") == "kontaktbedingung_a"
+              and scharf_() == ["koerper_a"],
+              f"{mk.objekt_modus!r} / {getattr(mk, '_klick_art', '')}, scharf {scharf_()}")
+        alt_am_zeiger_ = w._objekt_am_zeiger
+        w._objekt_am_zeiger = lambda art_: {"Volumen": "Oben", "Fläche": "MO1"}.get(art_)
+        try:
+            w._maskenobjekt_klick("volumen", np.zeros(3)); app.processEvents()
+        finally:
+            w._objekt_am_zeiger = alt_am_zeiger_
+        check("Klick auf ein Volumen setzt Körper A (nicht die Fläche davor), leuchtet und geht zu Körper B",
+              mk.werte()["koerper_a"] == "Oben" and getattr(mk, "_klick_art", "") == "kontaktbedingung_b"
+              and scharf_() == ["koerper_b"] and w.sel_koerper == ["Oben"],
+              f"A {mk.werte()['koerper_a']}, {getattr(mk, '_klick_art', '')}, scharf {scharf_()}, Auswahl {w.sel_koerper}")
+        mk.objekt_angeklickt("volumen", "Unten"); app.processEvents()
+        check("… Körper B gesetzt, weiter mit den Kontaktflächen",
+              mk.werte()["koerper_b"] == "Unten" and getattr(mk, "_klick_art", "") == "kontaktbedingung"
+              and mk.objekt_modus == "flaeche" and scharf_() == ["flaechennamen"],
+              f"B {mk.werte()['koerper_b']}, {getattr(mk, '_klick_art', '')}, scharf {scharf_()}")
+        mk.objekt_angeklickt("flaeche", "FugeO"); mk.objekt_angeklickt("flaeche", "FugeU"); app.processEvents()
+        check("Flächenklick: die Fläche von Körper A wird Kontaktfläche, die des anderen Körpers Gegenfläche; beide leuchten",
+              w._namensliste(mk.werte()["flaechennamen"]) == ["FugeO"]
+              and w._namensliste(mk.werte()["gegenflaechen"]) == ["FugeU"]
+              and sorted(w.sel_flaechen) == ["FugeO", "FugeU"],
+              f"{mk.werte()['flaechennamen']!r} / {mk.werte()['gegenflaechen']!r}, Auswahl {w.sel_flaechen}")
+        mk.setzen("koerper_a", "–"); mk.setzen("koerper_b", w.KONTAKT_ALLE)
+        mk.setzen("flaechennamen", ""); mk.setzen("gegenflaechen", "")
+        mk.objekt_angeklickt("flaeche", "FugeO"); mk.objekt_angeklickt("flaeche", "FugeU"); app.processEvents()
+        check("… und füllt die Körper selbst: leere Maske, zwei Flächenklicks → Körper A Oben, Körper B Unten",
+              mk.werte()["koerper_a"] == "Oben" and mk.werte()["koerper_b"] == "Unten"
+              and w._namensliste(mk.werte()["flaechennamen"]) == ["FugeO"]
+              and w._namensliste(mk.werte()["gegenflaechen"]) == ["FugeU"],
+              str({k_: mk.werte()[k_] for k_ in ("koerper_a", "koerper_b", "flaechennamen", "gegenflaechen")}))
+        mk.objekt_angeklickt("flaeche", "FugeU"); app.processEvents()
+        check("ein zweiter Klick nimmt die Fläche wieder heraus, die Körper bleiben",
+              not w._namensliste(mk.werte()["gegenflaechen"]) and mk.werte()["koerper_b"] == "Unten",
+              repr(mk.werte()["gegenflaechen"]))
+        w.activateWindow(); mk._felder["gegenflaechen"].setFocus(); app.processEvents()
+        check("Klick ins Feld Gegenflächen: die Maus sammelt jetzt Gegenflächen, das Feld ist scharf",
+              mk.objekt_modus == "flaeche" and getattr(mk, "_klick_art", "") == "kontaktbedingung_gegen"
+              and scharf_() == ["gegenflaechen"],
+              f"{mk.objekt_modus!r} / {getattr(mk, '_klick_art', '')}, scharf {scharf_()}")
+        mk._felder["mu"].setFocus(); app.processEvents()
+        check("Klick in ein Feld ohne Klickbedeutung (μ) beendet den Klickmodus, kein Feld bleibt scharf",
+              not mk.objekt_modus and not scharf_(), f"{mk.objekt_modus!r}, scharf {scharf_()}")
+        mk._felder["flaechennamen"].setFocus(); app.processEvents()
+        _QtTk.QTest.keyClick(mk._felder["flaechennamen"], QtCore.Qt.Key_Escape); app.processEvents()
+        check("Esc im scharfen Feld beendet nur den Klickmodus - die Maske bleibt offen",
+              not mk.objekt_modus and not scharf_() and w.maskenrand.maske is mk and mk.isVisible(),
+              f"{mk.objekt_modus!r}, Maske {w.maskenrand.maske is mk}")
+        mk.setzen("koerper_a", "–"); mk.setzen("koerper_b", w.KONTAKT_ALLE)
+        mk.setzen("flaechennamen", ""); mk.setzen("gegenflaechen", "")
         check("Vorgabe: reibungsbehaftet, μ = 0,2, abheben möglich",
               mk.werte()["standard"] == "Reibungsbehaftet" and abs(float(mk.werte()["mu"]) - 0.2) < 1e-9 and mk.werte()["zug"].startswith("abheben"), str(mk.werte()["standard"]))
         mk.setzen("standard", "Verbund"); app.processEvents()
@@ -5906,22 +6128,23 @@ def main():
               and "1 Kontaktflächen" in w.lbl_sel.text(),
               f"{w.sel_flaechen}, Volumen {w.sel_koerper}, „{w.lbl_sel.text()}“")
         mk = w.maskenrand.maske
-        check("Kontaktmaske: Gegenflächen sind ein Listenfeld mit eigenem Klickknopf",
-              "gegenflaechen" in mk.werte() and "Gegenflächen anklicken" in mk.zusatzknoepfe
-              and "Kontaktflächen anklicken" in mk.zusatzknoepfe, str(sorted(mk.zusatzknoepfe)))
-        mk.zusatzknoepfe["Gegenflächen anklicken"].click(); app.processEvents()
+        check("Kontaktmaske: Gegenflächen sind ein Listenfeld, das per Klick ins Feld die Maus sammeln lässt",
+              "gegenflaechen" in mk.werte() and w.FELDKLICK["kontaktbedingung"]["gegenflaechen"] == "kontaktbedingung_gegen"
+              and "Gegenflächen anklicken" not in mk.zusatzknoepfe, str(sorted(mk.zusatzknoepfe)))
+        w.activateWindow(); mk._felder["gegenflaechen"].setFocus(); app.processEvents()
         check("Klickmodus Gegenflächen an", mk.objekt_modus == "flaeche" and mk._klick_art == "kontaktbedingung_gegen",
               f"{mk.objekt_modus} / {getattr(mk, '_klick_art', '')}")
         mk.objekt_angeklickt("flaeche", "FugeU"); app.processEvents()
-        check("angeklickte Fläche steht als Gegenfläche in der Maske und leuchtet",
-              w._namensliste(mk.werte()["gegenflaechen"]) == ["FugeU"] and w.sel_flaechen == ["FugeU"],
+        # seit 15.09.2026 leuchten beide Seiten der Fuge, nicht nur die angeklickte Liste
+        check("angeklickte Fläche steht als Gegenfläche in der Maske und leuchtet mit der Kontaktfläche",
+              w._namensliste(mk.werte()["gegenflaechen"]) == ["FugeU"] and sorted(w.sel_flaechen) == ["FugeO", "FugeU"],
               f"{mk.werte()['gegenflaechen']!r}, Auswahl {w.sel_flaechen}")
-        mk.zusatzknoepfe["Kontaktflächen anklicken"].click(); app.processEvents()
-        check("derselbe Klick schaltet auf die andere Liste um, statt den Modus zu beenden",
+        mk._felder["flaechennamen"].setFocus(); app.processEvents()
+        check("Klick ins Feld Kontaktflächen schaltet auf die andere Liste um, statt den Modus zu beenden",
               mk.objekt_modus == "flaeche" and mk._klick_art == "kontaktbedingung",
               f"{mk.objekt_modus} / {getattr(mk, '_klick_art', '')}")
-        mk.zusatzknoepfe["Kontaktflächen anklicken"].click(); app.processEvents()
-        check("und noch einmal beendet ihn", not mk.objekt_modus, str(mk.objekt_modus))
+        mk._felder["beschreibung"].setFocus(); app.processEvents()
+        check("und ein Feld ohne Klickbedeutung beendet ihn", not mk.objekt_modus, str(mk.objekt_modus))
         n_f = len(fehler_)
         mk.anwenden(); app.processEvents()
         kb = m_.kontaktbedingungen.get("KB1")
@@ -5937,6 +6160,12 @@ def main():
         check("„Kontakte zeigen“: die Fuge farbig im Bild, mit Schild aus Name und Wirkung",
               any(a.startswith("kontaktflaeche") for a in akt_) and any(a.startswith("kontakttext") for a in akt_)
               and "Kontakte: 1 Bedingungen" in w._sicht_text(), str(akt_))
+        from PySide6 import QtGui as _QtGk
+        soll_ = _QtGk.QColor(kt_.wirkungsfarbe(kb)).getRgbF()[:3]
+        ist_ = dict(w.plotter.renderer.actors)["kontaktflaeche0"].GetProperty().GetColor()
+        check("… in der Farbe ihrer Wirkung (Druck mit Reibung = orange), seit 15.09.2026",
+              kt_.wirkungstext(kb) == "Druck, Reibung" and max(abs(a_ - b_) for a_, b_ in zip(ist_, soll_)) < 0.02,
+              f"{kt_.wirkungstext(kb)} {ist_} / {soll_}")
         check("das Schild sagt, wie der Kontakt wirkt (Druck, abheben, gleiten, μ)",
               w.kontakt_kurztext(kb) == "Druck, abheben, gleiten, μ = 0.3", w.kontakt_kurztext(kb))
         w.act_kontakte.setChecked(False); w.redraw(); app.processEvents()
@@ -6449,17 +6678,27 @@ def main():
         menues_ = []
         alt_menu = w._viewport_menu
         w._viewport_menu = lambda p: menues_.append(QtCore.QPoint(p))
+        # 15.09.2026: „bei gedrückter mittlerer Maustaste soll gedreht werden",
+        # „gedrückte rechte Maustaste und halten soll schieben sein"
+        # (VTKIS_ROTATE = 1, VTKIS_PAN = 2)
+        maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.MiddleButton, QtCore.Qt.MiddleButton)
+        check("die mittlere Taste versetzt VTK ins Drehen", stil_.GetState() == 1,
+              f"Zustand {stil_.GetState()} (Drehen 1, Schieben 2)")
+        maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(30, 0),
+              QtCore.Qt.MiddleButton, QtCore.Qt.NoButton)
+        check("beim Loslassen der mittleren Taste endet das Drehen, ohne Menü",
+              stil_.GetState() == ruhe_ and not menues_, f"Zustand {stil_.GetState()}, {len(menues_)} Menüs")
         maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.RightButton, QtCore.Qt.RightButton)
-        check("die rechte Taste versetzt VTK ins Drehen", stil_.GetState() != ruhe_,
-              f"Zustand {stil_.GetState()} (Ruhe {ruhe_})")
+        check("die rechte Taste versetzt VTK ins Schieben", stil_.GetState() == 2,
+              f"Zustand {stil_.GetState()} (Drehen 1, Schieben 2)")
         maus_(QtCore.QEvent.MouseButtonRelease, mitte_, QtCore.Qt.RightButton, QtCore.Qt.NoButton)
-        check("beim Loslassen ohne Zug endet das Drehen und das Menü kommt",
+        check("beim Loslassen ohne Zug endet das Schieben und das Menü kommt",
               stil_.GetState() == ruhe_ and len(menues_) == 1,
               f"Zustand {stil_.GetState()}, {len(menues_)} Menüs")
         maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.RightButton, QtCore.Qt.RightButton)
         maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(40, 10),
               QtCore.Qt.RightButton, QtCore.Qt.NoButton)
-        check("mit Zug (gedreht) kommt kein Menü", len(menues_) == 1, f"{len(menues_)} Menüs")
+        check("mit Zug (geschoben) kommt kein Menü", len(menues_) == 1, f"{len(menues_)} Menüs")
         w._viewport_menu = alt_menu
         w._picked = alt_picked
 
@@ -6552,10 +6791,12 @@ def main():
               str((w.tbl_knoten.kopfzeile()[:2], mk_.data(mk_.index(1, 1)), w._kopfzeile_zeilen)))
         an_ = solver.solve_all(m_, design=True)
         w._solve_done("all", an_)
+        w.cb_field.setCurrentText("|u| Verschiebung")
+        w.cb_diagram.setCurrentText("kein Verlauf")
         app.processEvents()
-        check("Kennwerte unten links: u in [mm], Rz in [kN]",
+        check("Kennwerte unten links: u in [mm] - und nur u, weil |u| gewählt ist",
               any(z.startswith("u ") and "[mm]" in z for z in w._kennwerte_zeilen)
-              and any(z.startswith("Rz") and "[kN]" in z for z in w._kennwerte_zeilen),
+              and not any(z.startswith(("Rz", "ux", "sig_v")) for z in w._kennwerte_zeilen),
               str(w._kennwerte_zeilen[:3]))
         rk_ = w.tbl_react.modell
         # Auflagerkraefte stehen als „min / max“-Paar (Umhuellende) oder als Zahl
@@ -6590,10 +6831,9 @@ def main():
               csv_[0].startswith("Knoten;Rx [N];Ry [N];Rz [N];Mx [Nmm]")
               and abs(float(csv_[1].split(";")[3].split("/")[0].replace(",", ".")) - rz_kN * 1000) < 1e-6,
               str(csv_[:2]))
-        check("Lasten oben links in [N, N/mm], Kennwerte u in [cm], Rz in [N]",
+        check("Lasten oben links in [N, N/mm], Kennwerte u in [cm]",
               any("[N, N/mm]" in z for z in w._kopfzeile_zeilen)
-              and any(z.startswith("u ") and "[cm]" in z for z in w._kennwerte_zeilen)
-              and any(z.startswith("Rz") and "[N]" in z for z in w._kennwerte_zeilen),
+              and any(z.startswith("u ") and "[cm]" in z for z in w._kennwerte_zeilen),
               str((w._kopfzeile_zeilen, w._kennwerte_zeilen[:2])))
         ok_ = mk_.setData(mk_.index(1, 1), "4500", QtCore.Qt.EditRole)
         check("Eingabe in der Tabelle in mm: 4500 -> Knoten x = 4,5 m",
@@ -7170,6 +7410,8 @@ def main():
         check("und lässt sich isolieren statt „Erst etwas auswählen“",
               not gemeldet and "X1" in w.versteckt["linien"],
               str(gemeldet)[:70] or str(sorted(w.versteckt["linien"]))[:70])
+        check("… danach ist auch die gewählte Fläche abgewählt",
+              not w.sel_flaechen and not w.sel_koerper, f"{w.sel_flaechen} / {w.sel_koerper}")
         w.alles_zeigen()
         w.error = lambda msg: None
         w.new_model()
@@ -8077,6 +8319,117 @@ def main():
         import traceback
         traceback.print_exc()
         check("Mehrfachauswahl im Modellbaum", False, str(ex)[:70])
+
+    # ---- 15.09.2026: Lot / Projektion, Fang „Lot", Geometrieart, Flaechen verschneiden ----
+    try:
+        from statik3d import ks as ksm
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda msg: fehler_.append(str(msg))
+        w.new_model(); app.processEvents()
+        m_ = w.model
+        m_.add_nodes(np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0], [0.5, 0.5, 1.0], [1.5, 0.25, 2.0]]))
+        for i_, (a_, b_) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            m_.add_line(f"L{i_ + 1}", [a_, b_])
+        m_.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke=list(m_.shells)[0], material=list(m_.materials)[0])
+        w.refresh_all(); app.processEvents()
+        check("Fangart „Lot“ gibt es (Umschalt+F8), in Ribbon und Statuszeile",
+              "lot" in ksm.FANGARTEN and "lot" in w.act_fangart
+              and w.act_fangart["lot"].shortcut().toString() == "Shift+F8" and ksm.FANG_TEXT["lot"] == "Lot",
+              str(list(w.act_fangart)))
+        w.fang_umschalten(True); w.fang_arten = ["lot"]
+        w.blickrichtung("+z"); w.zoom_alles(); app.processEvents()
+        w.maske_linie(); app.processEvents()
+        w.maskenrand.maske.knoten_angeklickt(4); app.processEvents()
+        xy_, _s = w._projizieren(np.array([[0.5, 0.0, 0.0]]))
+        w.plotter.iren.interactor.SetEventPosition(int(round(xy_[0][0])), int(round(xy_[0][1])))
+        p_, art_, _i = w._fangpunkt()
+        check("Fang „Lot“: vom zuletzt gewählten Knoten (0,5; 0,5; 1) fällt das Lot auf L1 bei (0,5; 0; 0)",
+              art_ == "lot" and p_ is not None and abs(p_[0] - 0.5) < 1e-6 and abs(p_[1]) < 1e-9 and abs(p_[2]) < 1e-9,
+              f"{art_} {p_}")
+        w.maskenrand.schliessen(); app.processEvents()
+        p_, art_, _i = w._fangpunkt()
+        check("… ohne Bezugspunkt (keine Maske offen) fängt „Lot“ nichts", art_ == "", f"{art_} {p_}")
+        w.fang_arten = list(ksm.FANGARTEN)
+        w._auswahl_leeren(); w.selection = np.array([4, 5], int)
+        nn_ = m_.nn
+        w.maske_lot(); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Maske „Lot / Projektion“: Ziel, Objekt, Ergebnis, Lotlinie; zwei Knoten als Quelle",
+              mk is not None and mk.titel.startswith("Lot")
+              and all(k in mk.werte() for k in ("ziel", "objekt", "ergebnis", "lotlinie"))
+              and "2 Knoten" in mk.werte()["quelle"], str(mk.werte() if mk else None))
+        mk.setzen("ziel", "Arbeitsebene"); mk.setzen("lotlinie", True); mk.anwenden(); app.processEvents()
+        check("Lot auf die Arbeitsebene (xy): zwei neue Knoten bei z = 0 unter den Quellknoten, zwei Lotlinien",
+              m_.nn == nn_ + 2 and np.allclose(m_.nodes[nn_:, 2], 0)
+              and np.allclose(m_.nodes[nn_:, :2], m_.nodes[[4, 5], :2])
+              and sum(1 for ln in m_.lines.values() if sorted(int(x) for x in ln.nodes) in ([4, nn_], [5, nn_ + 1])) == 2,
+              f"{m_.nn}, {sorted(m_.lines)}")
+        w.selection = np.array([5], int)
+        w.maske_lot(); app.processEvents()
+        mk = w.maskenrand.maske
+        w.activateWindow(); mk._felder["objekt"].setFocus(); app.processEvents()
+        check("Klick ins Feld Objekt: die Maus sammelt Flächen, das Feld ist scharf",
+              mk.objekt_modus == "flaeche" and "ff8800" in mk._felder["objekt"].styleSheet().lower(),
+              repr(mk.objekt_modus))
+        mk.objekt_angeklickt("flaeche", "F1"); app.processEvents()
+        mk.setzen("ziel", "Ebene einer Fläche"); mk.setzen("ergebnis", "Knoten dorthin verschieben (projizieren)")
+        mk.anwenden(); app.processEvents()
+        check("Projektion auf die Ebene von F1: der Knoten (1,5; 0,25; 2) steht jetzt bei z = 0",
+              mk.werte()["objekt"] == "F1" and abs(m_.nodes[5][2]) < 1e-9 and abs(m_.nodes[5][0] - 1.5) < 1e-9
+              and m_.nn == nn_ + 2, str(m_.nodes[5]))
+        m_.nodes[5] = [3.0, 0.5, 1.0]
+        w.selection = np.array([5], int)
+        w.maske_lot(); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("ziel", "Fläche (nächster Punkt)"); mk.setzen("objekt", "F1"); mk.anwenden(); app.processEvents()
+        check("nächster Punkt der Fläche zu (3; 0,5; 1): neuer Knoten am Rand (2; 0,5; 0)",
+              m_.nn == nn_ + 3 and np.allclose(m_.nodes[-1], [2.0, 0.5, 0.0]), str(m_.nodes[-1]))
+        w.selection = np.array([5], int)
+        w.maske_lot(); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("ziel", "Linie (nächster Punkt)"); mk.setzen("objekt", "L2"); mk.anwenden(); app.processEvents()
+        check("Lot auf die Linie L2 (x = 2): neuer Knoten (2; 0,5; 0)",
+              m_.nn == nn_ + 4 and np.allclose(m_.nodes[-1], [2.0, 0.5, 0.0]), str(m_.nodes[-1]))
+        w._auswahl_leeren(); w.maske_lot(); app.processEvents()
+        check("ohne gewählte Knoten: Hinweis statt Maske", fehler_ and "Knoten" in fehler_[-1], str(fehler_[-1:]))
+        w.flaeche_bearbeiten("F1"); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Flächenmaske: Geometrieart eben / Regelfläche", "typ" in mk.werte() and mk.werte()["typ"] == "eben",
+              str(mk.werte().get("typ")))
+        # ohne „gleich vernetzen": sonst laegen Netzknoten auf der Schnittlinie unten
+        mk.setzen("typ", "Regelfläche (Viereck, gewölbt)"); mk.setzen("vernetzen", False)
+        mk.anwenden(); app.processEvents()
+        check("Übernehmen setzt die Geometrieart", m_.flaechen["F1"].typ == "regelflaeche", m_.flaechen["F1"].typ)
+        mk = w.maskenrand.maske
+        mk.setzen("typ", "eben"); mk.setzen("vernetzen", False); mk.anwenden(); app.processEvents()
+        check("… und zurück, ohne Netz", m_.flaechen["F1"].typ == "eben" and not m_.flaechen["F1"].elemente,
+              f"{m_.flaechen['F1'].typ}, {len(m_.flaechen['F1'].elemente)} Elemente")
+        b0_ = m_.nn
+        m_.add_nodes(np.array([[1, -1, -1], [1, 2, -1], [1, 2, 1], [1, -1, 1.]]))
+        for i_ in range(4):
+            m_.add_line(f"Q{i_}", [b0_ + i_, b0_ + (i_ + 1) % 4])
+        m_.add_flaeche("F2", ["Q0", "Q1", "Q2", "Q3"], material=list(m_.materials)[0])
+        w.refresh_all(); app.processEvents()
+        w._auswahl_leeren(); w.sel_flaechen = ["F1", "F2"]
+        n_l, nn2_ = len(m_.lines), m_.nn
+        alt_lines = set(m_.lines)
+        w.flaechen_verschneiden(); app.processEvents()
+        neu_l = [n for n in m_.lines if n not in alt_lines]
+        kn_ = sorted(m_.nodes[[int(x) for x in m_.lines[neu_l[0]].nodes]].tolist()) if neu_l else []
+        check("„Flächen verschneiden“: eine Schnittlinie von (1,0,0) nach (1,1,0) auf zwei neuen Knoten",
+              len(neu_l) == 1 and m_.nn == nn2_ + 2 and np.allclose(kn_, [[1, 0, 0], [1, 1, 0]]),
+              f"{neu_l} {kn_} {m_.nn - nn2_} Knoten")
+        check("… die Schnittlinie ist danach gewählt, die Flächen nicht mehr",
+              w.sel_linien == neu_l and not w.sel_flaechen, str(w.sel_linien))
+        w.sel_flaechen = ["F1"]; w.flaechen_verschneiden(); app.processEvents()
+        check("mit einer Fläche: Hinweis", "zwei" in fehler_[-1].lower(), str(fehler_[-1:]))
+        w.error = alt_error
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Lot, Fang Lot, Geometrieart, Verschneiden", False, str(ex)[:70])
 
     try:
         _kuerzel_pruefen(w, app)

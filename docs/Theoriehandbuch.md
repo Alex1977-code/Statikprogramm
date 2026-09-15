@@ -737,6 +737,27 @@ ihrer gemeinsamen **Randlinien**. Daraus folgen zwei Fälle:
 | passen Knoten für Knoten | **jeder** Fugenknoten gehört beiden Bauteilen | Knoten verdoppeln, je Paar ein Spaltelement (und Kopplungen für die Fugenebene) |
 | passen nicht | nur der gemeinsame Rand gehört beiden (oder gar kein Knoten) | den Rand trennen, die Fläche über ein **Kontaktpaar** (Knoten–Fläche, Abschnitt 4) |
 
+**Starr in allen drei Richtungen ist eine Schweißnaht** (seit 15.09.2026).
+Eine Bedingung, die Zug, Druck und Schub überträgt (Standardkontakt
+„Verbund“), trennt an **gemeinsamen** Flächen nichts: die Knoten zu
+verdoppeln und mit unendlich steifen Kopplungen wieder zu verbinden ergäbe
+dasselbe Modell mit mehr Unbekannten. Die Knoten bleiben gemeinsam, die
+Bedingung gilt ohne Ausführung als „verschweißt“ und ist nie „zu steif“. Sie
+darf auch gar nicht den normalen Weg gehen: der löst den Körper samt seiner
+angeschweißten Nachbarn — am Drehlager sind die Rippen um den Lagerbock ein
+geschlossener Ring, über den der Gegenkörper selbst in die gelöste Gruppe
+kam, und dann fand die Fuge keine Gegenseite mehr („keine Gegenfläche im
+Suchradius“, 22 von 25 automatischen Kontakten, 15.09.2026). Ebenso bleibt
+eine starre Bedingung bei Knoten für Knoten passenden Netzen ohne Trennung. Für die verschweißte Gruppe
+eines gelösten Körpers und für den Kerbfall der Naht zählt so eine Bedingung
+wie keine — sonst löste jeder der automatischen Kontakte, die das Programm an
+jeder Berührung zweier Volumen anlegt (Benutzerhandbuch, „Kontakte entstehen von
+selbst“), am Drehlager die angeschweißten Rippen vom Lagerbock. Bei nicht
+passenden Netzen (je eigene, aufeinanderliegende Flächen) bleibt es beim
+Kontaktpaar mit Zug und Haften. Geprüft in `tests/test_fugen.py`
+(`test_naht_bleibt_verschweisst`: kein Knoten verdoppelt, Dehnung unter Zug
+wie durchverbunden; `test_naht_loest_nachbarn_mit`).
+
 **Die Gegenseite sind die genannten Gegenflächen.** Nennt die
 Kontaktbedingung Gegenflächen — so kommt jede RFEM-Flächenfreigabe herein
 (die zugeordneten Flächen), und so wählt man sie in der Maske —, dann besteht

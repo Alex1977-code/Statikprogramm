@@ -21,7 +21,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import pyvista as pv
 from pyvistaqt import QtInteractor
 
-from ..model import Model, Material, Section, ShellProp, DOF_NAMES, Member, GRUNDSTELLUNG, GESAMTSYSTEM
+from ..model import (Model, Material, Section, ShellProp, DOF_NAMES, Member, GRUNDSTELLUNG, GESAMTSYSTEM,
+                     FLAECHENARTEN)
 from .. import solver, mesher, parallel, supports, __version__
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
                       CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
@@ -161,6 +162,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._klick_wartend = None
         #: Elemente, die aus dem Modellbaum heraus aufleuchten
         self.leuchtet: list[int] = []
+        #: Der im Modellbaum angeklickte Kontakt: seine Volumen leuchten blass
+        self.leuchtet_kontakt: str = ""
         #: Sicht: was ausgeblendet ist - Elemente (Nummern), Linien, Flaechen
         #: und Koerper (Namen), Knoten (Nummern) - und die Schritte davor,
         #: damit "Vorherige Sicht" zurueckgehen kann.
@@ -286,8 +289,9 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         # Rechtsklick: Kontextmenue zu dem, was unter dem Zeiger liegt. Es
         # oeffnet erst beim **Loslassen** ohne Ziehbewegung (:meth:`_rechts_los`) -
-        # die rechte Taste dreht seit Befund N die Ansicht, und wer dreht, will
-        # kein Menue. Qt darf es darum nicht selbst aufziehen.
+        # die gedrueckte rechte Taste schiebt die Ansicht (seit 15.09.2026;
+        # davor drehte sie), und wer schiebt, will kein Menue. Qt darf es darum
+        # nicht selbst aufziehen.
         try:
             self.plotter.interactor.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
         except Exception:
@@ -334,17 +338,27 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
                         self._links_unten = True
                         return True         # links dreht nicht mehr
+                    if ereignis.button() == QtCore.Qt.MiddleButton:
+                        # gedrueckte mittlere Taste dreht (15.09.2026); VTK
+                        # sieht den Druck nicht, sonst schoebe es wie von Haus aus
+                        self._mitte_unten = True
+                        self._drehen_beginnen()
+                        return True
                     if ereignis.button() == QtCore.Qt.RightButton:
                         if self._fenster_ecke is not None:
                             self._fenster_abschliessen(pos)
                             return True
                         self._rechts_start = QtCore.QPoint(int(pos.x()), int(pos.y()))
-                        self._drehen_beginnen()
+                        self._schieben_beginnen()
                         return True
                 elif t == QtCore.QEvent.MouseButtonRelease:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     if ereignis.button() == QtCore.Qt.LeftButton:
                         self._links_los(pos)
+                        return True
+                    if ereignis.button() == QtCore.Qt.MiddleButton:
+                        self._mitte_unten = False
+                        self._drehen_enden()
                         return True
                     if ereignis.button() == QtCore.Qt.RightButton:
                         self._rechts_los(pos)
@@ -356,7 +370,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         return True
                     if self._fenster_ecke is not None:
                         self._fenster_nachziehen(pos)
-                    elif getattr(self, "_rechts_start", None) is None:
+                    elif getattr(self, "_rechts_start", None) is None \
+                            and not getattr(self, "_mitte_unten", False):
                         self._hover_anstossen(pos)
                 elif t == QtCore.QEvent.Leave:
                     self._hover_aus()
@@ -408,24 +423,41 @@ class MainWindow(QtWidgets.QMainWindow):
             self._klick_umschalt = False
 
     def _drehen_beginnen(self) -> None:
-        """Die rechte Taste dreht - VTK macht es selbst, mit seiner Traegheit.
+        """Die gedrueckte mittlere Taste dreht - VTK macht es selbst.
 
         Statt die Tasten im Qt-Filter umzubiegen, wird der Trackball-Stil in
         den Drehzustand versetzt; die folgenden Mausbewegungen gehen
         unveraendert an VTK, und ``OnMouseMove`` dreht. So bleibt das Gefuehl
         genau das von VTK, und der Filter muss die Bewegung nicht anfassen.
+        Bis zum 15.09.2026 drehte die rechte Taste und die mittlere schob
+        („bei gedrückter mittlerer Maustaste soll gedreht werden").
         """
         try:
             self.plotter.iren.style.StartRotate()
         except Exception:                   # noqa: BLE001 - dann dreht es eben nicht
             pass
 
+    def _drehen_enden(self) -> None:
+        try:
+            self.plotter.iren.style.EndRotate()
+        except Exception:                   # noqa: BLE001
+            pass
+
+    def _schieben_beginnen(self) -> None:
+        """Die gedrueckte rechte Taste schiebt - derselbe Weg wie beim Drehen,
+        nur im Schiebezustand von VTK („gedrückte rechte Maustaste und halten
+        soll schieben sein", 15.09.2026)."""
+        try:
+            self.plotter.iren.style.StartPan()
+        except Exception:                   # noqa: BLE001
+            pass
+
     def _rechts_los(self, pos) -> None:
-        """Rechte Taste losgelassen: Drehen beenden, ohne Zug das Menue."""
+        """Rechte Taste losgelassen: Schieben beenden, ohne Zug das Menue."""
         start = getattr(self, "_rechts_start", None)
         self._rechts_start = None
         try:
-            self.plotter.iren.style.EndRotate()
+            self.plotter.iren.style.EndPan()
         except Exception:                   # noqa: BLE001
             pass
         if start is None:
@@ -714,6 +746,123 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.addAction("Zoom alles", self.zoom_alles)
         menu.exec(self.plotter.interactor.mapToGlobal(pos))
 
+    #: Verschieben, Kopieren, Drehen, Spiegeln: (Beschriftung, Art)
+    TRANSFORMATIONEN = (("Verschieben", "verschieben"), ("Kopieren", "kopieren"),
+                        ("Drehen", "drehen"), ("Spiegeln", "spiegeln"))
+
+    def _transform_auswahl(self):
+        """Die Auswahl der Ansicht als transformieren.Auswahl."""
+        from .. import transformieren as tr
+        return tr.Auswahl(knoten=[int(i) for i in self.selection], linien=list(self.sel_linien),
+                          staebe=list(self.sel_staebe), flaechen=list(self.sel_flaechen),
+                          koerper=list(self.sel_koerper),
+                          elemente=[int(i) for i in (getattr(self, "sel_elemente", None) or [])])
+
+    def maske_transformieren(self, art: str):
+        """Rechts die Maske zum Verschieben, Kopieren, Drehen oder Spiegeln der
+        Auswahl (15.09.2026). Zwei Wege: Werte eintippen und „Anwenden“ - oder
+        die Punkte in der Ansicht anklicken (Vektor von → nach, zwei Punkte der
+        Drehachse, drei Punkte der Spiegelebene); dann geht es sofort."""
+        a = self._transform_auswahl()
+        titel = {a: t for t, a in self.TRANSFORMATIONEN}.get(art, art)
+        if a.leer():
+            return self.error("Zuerst in der Ansicht wählen (Knoten, Linien, Stäbe, Flächen oder Volumen) - "
+                              f"dann {titel.lower()}")
+        F = msk.Feld
+        felder = [F("auswahl", "Auswahl", "info", a.text())]
+        if art in ("verschieben", "kopieren"):
+            felder += [F("dx", "dx [m]", "zahl", 0.0), F("dy", "dy [m]", "zahl", 0.0), F("dz", "dz [m]", "zahl", 0.0)]
+            n = 2
+            hinweis = ("Vektor eintippen und „Anwenden“ - oder in der Ansicht zwei Punkte anklicken "
+                       "(von → nach): dann geht es sofort. Ein Knoten, den auch ein nicht gewähltes Objekt "
+                       "benutzt, wandert mit.")
+        elif art == "drehen":
+            felder += [F("achse", "Achse", "wahl", "z", ["x", "y", "z", "durch zwei Punkte"],
+                         hinweis="parallel zur Achse durch den Punkt - oder zwei Punkte der Achse anklicken"),
+                       F("px", "Punkt x [m]", "zahl", 0.0), F("py", "Punkt y [m]", "zahl", 0.0),
+                       F("pz", "Punkt z [m]", "zahl", 0.0), F("winkel", "Winkel [°]", "zahl", 90.0)]
+            n = 2
+            hinweis = ("Achse und Punkt eintragen, Winkel (rechtsdrehend um die Achse), „Anwenden“ - oder "
+                       "zwei Punkte der Achse anklicken.")
+        else:
+            felder += [F("ebene", "Ebene", "wahl", "yz (x = Lage)",
+                         ["yz (x = Lage)", "xz (y = Lage)", "xy (z = Lage)", "durch drei Punkte"]),
+                       F("lage", "Lage [m]", "zahl", 0.0)]
+            n = 3
+            hinweis = ("Ebene und Lage, „Anwenden“ - oder drei Punkte der Ebene anklicken. Gespiegelte "
+                       "Schalen und Volumen verlieren ihr Netz (es wäre umgestülpt) - neu vernetzen.")
+        if art in ("drehen", "spiegeln"):
+            felder.append(F("kopie", "als Kopie (das Original bleibt)", "haken", False))
+        if art != "verschieben":
+            felder.append(F("anzahl", "Anzahl Kopien", "ganz", 1,
+                            hinweis="jede weitere Kopie um dieselbe Abbildung weiter"))
+        maske = msk.Maske(f"{titel}: {a.text()}", felder, knoten=n, punkte=True, knopf="Anwenden",
+                          hinweis=hinweis)
+        maske.angewendet.connect(lambda w, a_=art, aus=a: self._transformieren_anwenden(a_, aus, w))
+        return self.maske_erzeugen(maske)
+
+    def _transformieren_anwenden(self, art: str, a, w: dict):
+        from .. import transformieren as tr
+        m = self.model
+        titel = {a: t for t, a in self.TRANSFORMATIONEN}.get(art, art)
+
+        def zahl(key, vorgabe=0.0):
+            try:
+                return float(str(w.get(key, vorgabe) or 0).replace(",", "."))
+            except ValueError:
+                return float(vorgabe)
+
+        P = [np.asarray(p, float) for p in (w.get("punkte") or [])]
+        try:
+            if art in ("verschieben", "kopieren"):
+                v = P[1] - P[0] if len(P) >= 2 else np.array([zahl("dx"), zahl("dy"), zahl("dz")])
+                if float(np.linalg.norm(v)) <= 0:
+                    return self.error("Der Vektor ist null - dx, dy, dz eintragen oder zwei Punkte anklicken")
+                R, t = tr.verschiebung(v)
+            elif art == "drehen":
+                if len(P) >= 2:
+                    punkt, achse = P[0], P[1] - P[0]
+                else:
+                    wahl = str(w.get("achse", "z"))
+                    if wahl.startswith("durch"):
+                        return self.error("Zwei Punkte der Drehachse in der Ansicht anklicken - oder x, y, z wählen")
+                    punkt = np.array([zahl("px"), zahl("py"), zahl("pz")])
+                    achse = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[wahl]
+                R, t = tr.drehung(punkt, achse, zahl("winkel", 90.0))
+            else:
+                if len(P) >= 3:
+                    punkt, normale = P[0], np.cross(P[1] - P[0], P[2] - P[0])
+                else:
+                    wahl = str(w.get("ebene", ""))
+                    if wahl.startswith("durch"):
+                        return self.error("Drei Punkte der Spiegelebene in der Ansicht anklicken - oder eine Ebene wählen")
+                    normale = np.array({"yz": (1, 0, 0), "xz": (0, 1, 0), "xy": (0, 0, 1)}[wahl[:2]], float)
+                    punkt = normale * zahl("lage")
+                R, t = tr.spiegelung(punkt, normale)
+        except (ValueError, KeyError) as ex:
+            return self.error(str(ex))
+        kopie = art == "kopieren" or bool(w.get("kopie"))
+        anzahl = max(1, int(zahl("anzahl", 1)))
+        self.merken(f"{titel}: {a.text()}")
+        log: list = []
+        try:
+            if kopie:
+                tr.kopieren(m, a, R, t, anzahl, log=log)
+            else:
+                tr.anwenden(m, a, R, t, log=log)
+        except Exception as ex:                  # noqa: BLE001 - dann bleibt das Modell, wie es war
+            self.undo()
+            return self.error(f"{titel}: {ex}")
+        for z in log:
+            self.log.appendPlainText(z)
+        self.analysis = None
+        self.results = None
+        mk = self.maskenrand.maske
+        if mk is not None:
+            mk.auswahl_leeren()
+        self.refresh_all()
+        self.info(log[-1] if log else f"{titel}: fertig")
+
     # ---- Kontextmenue der Auswahl: zeigen, ausblenden, bearbeiten, loeschen ----
     AUSWAHL_TEXT = {"knoten": "Knoten", "linie": "Linien", "stab": "Stäbe", "flaeche": "Flächen",
                     "volumen": "Volumen", "element": "Elemente", "lager": "Knotenlager",
@@ -759,6 +908,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         menu.addAction("Selektiertes anzeigen", self.nur_auswahl_zeigen)
         menu.addAction("Selektiertes ausblenden", self.auswahl_ausblenden)
+        menu.addSeparator()
+        # Verschieben, Kopieren, Drehen, Spiegeln der Auswahl (15.09.2026, „per
+        # Rechtsklick auf Knoten, Linie, Stab, Fläche, Volumen")
+        for text, art in self.TRANSFORMATIONEN:
+            menu.addAction(f"{text}…", lambda _c=False, a=art: self.maske_transformieren(a))
         menu.addSeparator()
         for art, namen in gruppen:
             sub = menu.addMenu(f"{self.AUSWAHL_TEXT[art]} ({len(namen)})")
@@ -1343,6 +1497,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 treffer = self._naechster_am_zeiger(mitten)
                 if treffer is not None:
                     return mitten[treffer[0]], "mitte", -1
+        if "lot" in arten:
+            # Das Lot vom zuletzt gewaehlten Punkt der offenen Maske auf eine
+            # Linie oder Stabachse - so trifft eine neue Linie rechtwinklig
+            # auf eine andere (15.09.2026, „Fangfunktionen Mitte, Lot")
+            p0 = self._lotbezug()
+            if p0 is not None:
+                A, B = self._lotstrecken()
+                if len(A):
+                    from .. import konstruktion as ko
+                    F_, t_ = ko.fusspunkte_auf_strecken(p0, A, B)
+                    innen = (t_ > 1e-9) & (t_ < 1 - 1e-9)
+                    if innen.any():
+                        treffer = self._naechster_am_zeiger(F_[innen])
+                        if treffer is not None:
+                            return F_[innen][treffer[0]], "lot", -1
         if "linie" in arten and getattr(m, "lines", None):
             A, B, _ = self._linienstrecken()
             if len(A):
@@ -1367,6 +1536,26 @@ class MainWindow(QtWidgets.QMainWindow):
                 if treffer is not None:
                     return r, "raster", -1
         return None, "", -1
+
+    def _lotbezug(self):
+        """Der Punkt, von dem der Fang „Lot" das Lot faellt: der zuletzt
+        gewaehlte Knoten oder Punkt der offenen Maske - ohne Maske keiner."""
+        if not self.maskenrand.offen():
+            return None
+        mk = self.maskenrand.maske
+        if getattr(mk, "gewaehlt_punkte", None):
+            return np.asarray(mk.gewaehlt_punkte[-1], float)
+        kn = getattr(mk, "gewaehlt", None) or []
+        if kn and 0 <= int(kn[-1]) < self.model.nn:
+            return np.asarray(self.model.nodes[int(kn[-1])], float)
+        return None
+
+    def _lotstrecken(self):
+        """Linien (abgetastet) und Stabachsen als ein Streckenfeld (A, B)."""
+        A1, B1, _n = self._linienstrecken()
+        A2, B2 = self._stabstrecken()
+        return (np.vstack([A1, A2]) if len(A1) or len(A2) else np.zeros((0, 3)),
+                np.vstack([B1, B2]) if len(B1) or len(B2) else np.zeros((0, 3)))
 
     def _linienstrecken(self):
         """Alle Linien als Strecken: (A, B, Linienname je Strecke).
@@ -1974,7 +2163,7 @@ class MainWindow(QtWidgets.QMainWindow):
         proben = []
         if modus in ("flaeche", "objekt", "stellung"):
             proben.append(("flaeche", lambda: self._objekt_am_zeiger("Fläche") or vp.flaeche_at(m, point, size)))
-        if modus in ("objekt", "stellung"):
+        if modus in ("objekt", "stellung", "volumen"):
             proben.append(("volumen", lambda: self._objekt_am_zeiger("Volumen") or vp.koerper_at(m, point, size)))
         if modus == "stellung":
             proben.append(("stab", lambda: self._objekt_am_zeiger("Stab") or vp.member_at(m, point)))
@@ -2134,7 +2323,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 teil = vp.teilnetz(m, elemente)
                 if teil.n_cells > 2000:
                     teil = teil.extract_surface()
-                pl.add_mesh(teil, color=self.FARBE_HOVER, opacity=0.7, show_edges=True,
+                # Kanten nur, wenn das FE-Netz an ist (15.09.2026)
+                pl.add_mesh(teil, color=self.FARBE_HOVER, opacity=0.7,
+                            show_edges=self.act_edges.isChecked(),
                             edge_color="#a08000", line_width=3, name="hover")
         except Exception:                    # noqa: BLE001 - eine Hervorhebung darf nie sperren
             pass
@@ -2351,6 +2542,165 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._objekt_umschalten(liste, name, was)
                 return True
         return False
+
+    # ---- Konstruktion: Lot / Projektion, Flaechen verschneiden ---------------
+    LOTZIELE = ["Arbeitsebene", "Ebene einer Fläche", "Fläche (nächster Punkt)", "Linie (nächster Punkt)"]
+    LOTERGEBNIS = ["neuer Knoten am Fußpunkt", "Knoten dorthin verschieben (projizieren)"]
+
+    def maske_lot(self):
+        """Rechts die Maske „Lot / Projektion" (15.09.2026, „Lot auf Ebene,
+        projizierter Punkt auf Ebene"): von den gewaehlten Knoten das Lot auf
+        die Arbeitsebene, die Ebene einer Flaeche, den naechsten Punkt einer
+        Flaeche oder Linie - als neue Knoten (mit Lotlinie) oder die Knoten
+        dorthin verschoben."""
+        knoten = [int(i) for i in self.selection if 0 <= int(i) < self.model.nn]
+        if not knoten:
+            return self.error("Zuerst Knoten in der Ansicht wählen - von ihnen wird das Lot gefällt")
+        F = msk.Feld
+        hinweis = ("Ziel wählen; bei Fläche oder Linie ins Feld „Objekt“ klicken und das Objekt in der "
+                   "Ansicht anklicken (oder den Namen tippen). „Anwenden“ legt je Knoten einen neuen "
+                   "Knoten am Fußpunkt an - oder verschiebt den Knoten dorthin.")
+        felder = [F("quelle", "Quelle", "info", f"{len(knoten)} Knoten: "
+                    + ", ".join(f"K{i}" for i in knoten[:8]) + (" …" if len(knoten) > 8 else "")),
+                  F("ziel", "Ziel", "wahl", self.LOTZIELE[0], list(self.LOTZIELE)),
+                  F("objekt", "Objekt", "liste", "", breite=160,
+                    hinweis="Name der Fläche oder Linie - oder ins Feld klicken und in der Ansicht wählen"),
+                  F("ergebnis", "Ergebnis", "wahl", self.LOTERGEBNIS[0], list(self.LOTERGEBNIS)),
+                  F("lotlinie", "Lotlinie anlegen (Knoten → Fußpunkt)", "haken", False)]
+        maske = msk.Maske("Lot / Projektion", felder, knopf="Anwenden", hinweis=hinweis)
+
+        def aus():
+            if maske.objekt_modus:
+                maske.objekt_modus = ""
+                maske.klickfeld_markieren(None)
+                maske.lbl_hinweis.setText(hinweis)
+
+        def fokus(feld):
+            if feld != "objekt":
+                aus()
+                return
+            modus = "linie" if str(maske.werte().get("ziel", "")).startswith("Linie") else "flaeche"
+            maske.objekt_modus = modus
+            maske.klickfeld_markieren("objekt")
+            maske.lbl_hinweis.setText(("Linie" if modus == "linie" else "Fläche")
+                                      + " in der Ansicht anklicken - ein anderes Feld oder Esc beendet das")
+
+        def angeklickt(_art, name):
+            maske.setzen("objekt", name)
+            self.statusBar().showMessage(f"Objekt: {name}", 3000)
+
+        maske.feld_fokussiert.connect(fokus)
+        maske.klick_beenden = aus
+        maske.objekt_angeklickt = angeklickt
+        maske.angewendet.connect(lambda w, kn=list(knoten): self._lot_anwenden(kn, w))
+        return self.maske_erzeugen(maske)
+
+    def _lot_anwenden(self, knoten: list, w: dict):
+        from .. import konstruktion as ko
+        m = self.model
+        ziel = str(w.get("ziel", "") or "")
+        obj = str(w.get("objekt", "") or "").strip()
+        verschieben = str(w.get("ergebnis", "") or "").startswith("Knoten dorthin")
+        lotlinie = bool(w.get("lotlinie")) and not verschieben
+        knoten = [int(i) for i in knoten if 0 <= int(i) < m.nn]
+        if not knoten:
+            return self.error("Die Quellknoten gibt es nicht mehr - Knoten wählen und die Maske neu öffnen")
+        if ziel.startswith("Arbeitsebene"):
+            fuss = self.arbeitsebene.projizieren
+            wohin = "die Arbeitsebene"
+        elif ziel.startswith("Ebene"):
+            f = m.flaechen.get(obj)
+            if f is None:
+                return self.error("Eine Fläche ins Feld „Objekt“ - ins Feld klicken, dann in der Ansicht anklicken")
+            e = ko.ebene_der_flaeche(m, f)
+            if e is None:
+                return self.error(f"Fläche {obj} ist gewölbt - „Fläche (nächster Punkt)“ wählen")
+            fuss = lambda p, o=e[0], n=e[1]: ko.lot_auf_ebene(p, o, n)   # noqa: E731
+            wohin = f"die Ebene von {obj}"
+        elif ziel.startswith("Fläche"):
+            f = m.flaechen.get(obj)
+            if f is None:
+                return self.error("Eine Fläche ins Feld „Objekt“ - ins Feld klicken, dann in der Ansicht anklicken")
+            fuss = lambda p, f_=f: ko.lot_auf_flaeche(m, f_, p, self._raender(), self._randseiten(),   # noqa: E731
+                                                       self._loecher())
+            wohin = f"Fläche {obj}"
+        else:
+            ln = m.lines.get(obj)
+            if ln is None:
+                return self.error("Eine Linie ins Feld „Objekt“ - ins Feld klicken, dann in der Ansicht anklicken")
+            fuss = lambda p, l_=ln: ko.lot_auf_linie(m, l_, p)           # noqa: E731
+            wohin = f"Linie {obj}"
+        self.merken(f"Lot / Projektion: {len(knoten)} Knoten")
+        neue: list = []
+        linien: list = []
+        for i in knoten:
+            q = fuss(m.nodes[i])
+            if q is None:
+                continue
+            if verschieben:
+                m.nodes[i] = np.asarray(q, float)
+            else:
+                j = m.add_node(*[float(x) for x in q])
+                neue.append(j)
+                if lotlinie:
+                    name = m.naechster_name("L", m.lines)
+                    m.add_line(name, [i, j])
+                    linien.append(name)
+        self.analysis = None
+        self.results = None
+        if neue:
+            self.selection = np.array(neue, dtype=int)
+        self.refresh_all()
+        self.info((f"{len(knoten)} Knoten auf {wohin} projiziert" if verschieben else
+                   f"{len(neue)} Fußpunkte auf {wohin} als neue Knoten"
+                   + (f", {len(linien)} Lotlinien" if linien else "")))
+
+    def flaechen_verschneiden(self):
+        """Zwei gewaehlte Flaechen verschneiden: die Schnittlinie(n) als
+        Polylinien mit neuen Knoten anlegen (15.09.2026, „Verschneiden von
+        Flächen, auch Quadrangle und/oder Splines"). Die Flaechen selbst
+        bleiben, wie sie sind - die Linie ist die Grundlage, sie zu teilen."""
+        from .. import verschneiden as vs
+        m = self.model
+        namen = [x for x in self.sel_flaechen if x in m.flaechen]
+        if len(namen) != 2:
+            return self.error("Zwei Flächen in der Ansicht wählen (Auswahlart „Fläche“), dann verschneiden")
+        f1, f2 = m.flaechen[namen[0]], m.flaechen[namen[1]]
+        try:
+            zuege = vs.schnittlinien(m, f1, f2, self._raender(), self._randseiten(), self._loecher())
+        except Exception as ex:                  # noqa: BLE001
+            return self.error(f"Verschneiden: {ex}")
+        if not zuege:
+            return self.info(f"{namen[0]} und {namen[1]} schneiden sich nicht (oder liegen aufeinander)")
+        self.merken(f"Flächen {namen[0]} und {namen[1]} verschnitten")
+        tol = 1e-7 * max(m.characteristic_size(), 1.0)
+        neue_knoten = 0
+        linien: list = []
+        for zug in zuege:
+            Z = vs.ausduennen(zug)
+            idx: list = []
+            for p in Z:
+                d = np.linalg.norm(m.nodes - p, axis=1) if m.nn else np.zeros(0)
+                if len(d) and float(d.min()) <= tol:
+                    i = int(np.argmin(d))
+                else:
+                    i = m.add_node(*[float(x) for x in p])
+                    neue_knoten += 1
+                if not idx or idx[-1] != i:
+                    idx.append(i)
+            if len(idx) < 2:
+                continue
+            name = m.naechster_name("L", m.lines)
+            m.add_line(name, idx)
+            linien.append(name)
+        self.analysis = None
+        self.results = None
+        self.sel_flaechen = []
+        self.sel_linien = list(linien)
+        self.auswahlart_setzen("Linie")
+        self.refresh_all()
+        self.info(f"{namen[0]} ∩ {namen[1]}: {len(linien)} Schnittlinien ({', '.join(linien)}), "
+                  f"{neue_knoten} neue Knoten")
 
     # ---- Messen und Bemassen (Register Messen) -----------------------------
     MESSARTEN = {"abstand": ("Abstand messen", 2), "winkel": ("Winkel messen", 3),
@@ -3021,9 +3371,26 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Polylinie, Bogen, Kreis, Spline oder Parabel")
         g.klein("Linie aus Knoten…", self.add_linie,
                 hinweis="Aus den ausgewählten Knoten eine Linie machen")
+        # Aendern der Auswahl - dieselben Befehle wie im Rechtsklickmenue
+        g = r.gruppe("Ändern")
+        g.gross("Verschieben", "⇢", lambda: self.maske_transformieren("verschieben"), "",
+                "Die gewählten Knoten, Linien, Stäbe, Flächen oder Volumen verschieben: Vektor eintippen "
+                "oder zwei Punkte anklicken")
+        g.klein("Kopieren…", lambda: self.maske_transformieren("kopieren"),
+                hinweis="Die Auswahl kopieren - mit Versatz, auch mehrfach; das Netz kommt mit")
+        g.klein("Drehen…", lambda: self.maske_transformieren("drehen"),
+                hinweis="Die Auswahl um eine Achse drehen, wahlweise als Kopie")
+        g.klein("Spiegeln…", lambda: self.maske_transformieren("spiegeln"),
+                hinweis="Die Auswahl an einer Ebene spiegeln, wahlweise als Kopie (Schalen- und "
+                        "Volumennetz wird dabei gelöscht - neu vernetzen)")
         # Die Kette wie in RFEM geht hier weiter: aus Linien Flaechen, aus
         # Flaechen Volumen - die Befehle stehen im Register Struktur bei ihrer
         # Objektart, das Vernetzen im Register Netz. Jeder Befehl genau einmal.
+        g = r.gruppe("Konstruktion")
+        g.gross("Lot / Projektion", "⊥", self.maske_lot, "",
+                "Von den gewählten Knoten das Lot fällen: auf die Arbeitsebene, die Ebene einer Fläche, "
+                "den nächsten Punkt einer Fläche oder Linie - als neuer Knoten (mit Lotlinie) oder "
+                "die Knoten dorthin verschieben (projizieren)")
         g = r.gruppe("Auswahl in der Ansicht")
         self.cb_auswahlart = QtWidgets.QComboBox()
         self.cb_auswahlart.addItems(self.AUSWAHLARTEN)
@@ -3063,6 +3430,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for art, text, kuerzel, symbol in (
                 ("knoten", "auf Knoten", "Shift+F1", "fang_knoten"),
                 ("mitte", "auf Kantenmitte", "Shift+F2", "fang_mitte"),
+                ("lot", "auf Lot", "Shift+F8", "fang_lot"),
                 ("raster", "auf Raster", "Shift+F3", "fang_raster"),
                 ("linie", "auf Linien", "Shift+F4", "fang_linie"),
                 ("stab", "auf Stäbe", "Shift+F5", "fang_stab"),
@@ -3097,6 +3465,9 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Rechteckplatte", self.maske_platte, hinweis="Rechteckplatte aus Schalen, gleich vernetzt")
         g.klein("Flächen vernetzen", self.geometrie_vernetzen,
                 hinweis="Die gewählten - sonst alle - Flächen nach den Netzeinstellungen vernetzen")
+        g.klein("Flächen verschneiden", self.flaechen_verschneiden,
+                hinweis="Zwei gewählte Flächen verschneiden: die Schnittlinie wird als Linie mit Knoten "
+                        "angelegt - auch bei gewölbten Flächen und Spline-Rändern")
         g.klein("Dicke zuweisen…", lambda: self.zuweisen_zeigen("dicke"),
                 hinweis="Schalendicke und Werkstoff an die gewählten Flächenelemente - im Register "
                         "„Auswahl“, das erscheint, sobald etwas gewählt ist")
@@ -4040,6 +4411,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         eintrag = self._baum_ist_eintrag(art, name)
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         if art in self.VERBINDUNGEN or art in ("punktmassen", "federn", "grenzschichten"):
             # Die Knoten des Objekts (oder aller Objekte der Art) leuchten
             einzeln = {"punktmassen": "punktmasse", "federn": "feder",
@@ -4145,9 +4517,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self.sel_flaechen:
                 self.sel_koerper = [x for x in (getattr(kb, "koerpernamen", []) or [])
                                     if x in m.koerper]
+            # Die beteiligten Volumen leuchten blass mit (15.09.2026, „beim
+            # Anklicken des Kontaktes leuchten die betroffenen Volumen und die
+            # Fläche auf"): kraeftig die Fuge, durchscheinend die Bauteile
+            self.leuchtet_kontakt = name
+            blass = self._kontakt_koerper(kb) if kb is not None else []
             teile = ([f"{len(eigen)} Kontaktflächen"] if eigen else []) \
                 + ([f"{len(gegen)} Gegenflächen"] if gegen else []) \
-                + ([f"{len(self.sel_koerper)} Volumen"] if self.sel_koerper else [])
+                + ([f"{len(self.sel_koerper)} Volumen"] if self.sel_koerper else []) \
+                + ([f"Volumen {', '.join(blass)} blass"] if blass else [])
             self.lbl_sel.setText(f"Kontaktbedingung {name}: "
                                  + (", ".join(teile) if teile else "keine Flächen zugeordnet")
                                  + " (Modellbaum)")
@@ -4468,6 +4846,12 @@ class MainWindow(QtWidgets.QMainWindow):
                             [""] + _namen(m.materials)),
                           F("teilung", "Teilung", "text",
                             ", ".join(str(t) for t in (f.teilung if f else [4, 4])), breite=80),
+                          F("typ", "Geometrieart", "wahl",
+                            next((k for k, v in FLAECHENARTEN.items() if v == str(getattr(f, "typ", "") or "eben")),
+                                 "eben"), list(FLAECHENARTEN),
+                            hinweis="eben: der Rand liegt in einer Ebene. Regelfläche: zwischen vier "
+                                    "Randabschnitten aufgespannt, darf gewölbt sein (Bohrung, Buchse, "
+                                    "Bolzen) - auch mit Bögen und Splines als Rand"),
                           F("linien", "Randlinien", "liste", ", ".join(f.linien if f else []), breite=160,
                             hinweis="Namen der Randlinien - oder „Randlinien anklicken“ und in der Ansicht wählen"),
                           F("elemente", "Elemente", "info", str(len(f.elemente)) if f else "0"),
@@ -4806,6 +5190,10 @@ class MainWindow(QtWidgets.QMainWindow):
         halter["m"] = maske
         if zusatz and art in ("geoflaeche", "geokoerper_einzeln", "kontaktbedingung"):
             self._objektmaske_klickmodus(maske, art)
+        if eintrag and art in self.FELDKLICK:
+            # Der Klick ins Feld zieht die Auswahl per Maus auf dieses Feld
+            maske.feld_fokussiert.connect(lambda feld, mk=maske, a=art: self._maskenfeld_fokus(mk, a, feld))
+            maske.klick_beenden = lambda mk=maske: self._objektmaske_klick_aus(mk)
         if art == "kontaktbedingung":
             self._kontaktmaske_verbinden(maske)
         if art == "stellung" and eintrag:
@@ -4826,6 +5214,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # die Maske die Tastatur haben. Beim blossen Anklicken im Modellbaum
         # nicht: dort blaettert der Benutzer mit den Pfeiltasten weiter.
         self.maske_erzeugen(maske, fokus=bool(neu))
+        if art == "kontaktbedingung" and neu:
+            # Eine neue Bedingung beginnt mit dem Anklicken von Koerper A
+            # (15.09.2026, „wenn neuer Kontakt angelegt wird, dann soll Volumen
+            # anklickbar sein")
+            self._objektmaske_klick_umschalten(maske, "kontaktbedingung_a")
         return maske
 
     #: Bettung auf und an Beton (Vorschlag - Werte sind zu pruefen)
@@ -5077,7 +5470,18 @@ class MainWindow(QtWidgets.QMainWindow):
     MASKENKLICK = {"geoflaeche": ("linien", "linie", "Randlinien"),
                    "geokoerper_einzeln": ("flaechen", "flaeche", "Randflächen"),
                    "kontaktbedingung": ("flaechennamen", "flaeche", "Kontaktflächen"),
-                   "kontaktbedingung_gegen": ("gegenflaechen", "flaeche", "Gegenflächen")}
+                   "kontaktbedingung_gegen": ("gegenflaechen", "flaeche", "Gegenflächen"),
+                   "kontaktbedingung_a": ("koerper_a", "volumen", "Körper A"),
+                   "kontaktbedingung_b": ("koerper_b", "volumen", "Körper B")}
+    #: Welches Feld einer Maske beim Klick ins Feld die Auswahl per Maus auf
+    #: sich zieht (15.09.2026, „bei Klick in Feld Auswahl per Maus"): Maskenart
+    #: -> {Feldname: Klickart aus MASKENKLICK}. Ein Feld, das hier nicht steht,
+    #: beendet den Klickmodus, wenn es die Tastatur bekommt.
+    FELDKLICK = {"geoflaeche": {"linien": "geoflaeche"},
+                 "geokoerper_einzeln": {"flaechen": "geokoerper_einzeln"},
+                 "kontaktbedingung": {"koerper_a": "kontaktbedingung_a", "koerper_b": "kontaktbedingung_b",
+                                      "flaechennamen": "kontaktbedingung",
+                                      "gegenflaechen": "kontaktbedingung_gegen"}}
     #: Kontaktmaske: Wirkung je Richtung im Klartext (Druck wird immer uebertragen)
     KONTAKT_ZUG = {"abheben": "abheben möglich (nur Druck)",
                    "starr": "wird übertragen (kein Abheben)", "feder": "Feder"}
@@ -5255,14 +5659,14 @@ class MainWindow(QtWidgets.QMainWindow):
                                 "die Gegenseite unter allen Bauteilen"))
         felder.append(F("flaechennamen", "Kontaktflächen", "liste", ", ".join(kb.flaechennamen or []),
                         breite=170,
-                        hinweis="Flächen von Körper A - getippt oder mit „Kontaktflächen anklicken“ "
-                                "in der Ansicht gewählt. Leer nur mit Gegenflächen: dann ist die "
+                        hinweis="Flächen von Körper A - getippt oder ins Feld klicken und in der "
+                                "Ansicht wählen. Leer nur mit Gegenflächen: dann ist die "
                                 "Kontaktseite, was von Körper A auf ihnen liegt (so kommt jede "
                                 "RFEM-Freigabe herein)"))
         felder.append(F("gegenflaechen", "Gegenflächen", "liste",
                         ", ".join(kb.gegenflaechen or []), breite=170,
-                        hinweis="die Flächen der Gegenseite - getippt oder mit „Gegenflächen "
-                                "anklicken“ in der Ansicht gewählt. Genannt: der Kontakt wirkt nur auf "
+                        hinweis="die Flächen der Gegenseite - getippt oder ins Feld klicken und in "
+                                "der Ansicht wählen. Genannt: der Kontakt wirkt nur auf "
                                 "ihnen. Leer: die Gegenseite wird im Suchradius gesucht, in Körper B "
                                 "oder allen anderen Körpern. Eine eingelesene Datei bringt sie mit"))
         felder += [F("druck", "Druck", "info", "wird übertragen (Kontakt)"),
@@ -5301,14 +5705,14 @@ class MainWindow(QtWidgets.QMainWindow):
                    "leer, was von Körper A auf den Gegenflächen liegt. Gegenseite: die Gegenflächen - "
                    "oder, wenn leer, was im Suchradius gegenüberliegt. Kontakt wirkt nur, wo sich beide "
                    "Seiten gegenüberstehen; die Flächen müssen weder deckungsgleich noch gleich fein "
-                   "vernetzt sein. Kontaktflächen und Gegenflächen lassen sich in der Ansicht "
-                   "anklicken (Knöpfe unten); der Modellbaum lässt jede Fuge einzeln aufleuchten. "
+                   "vernetzt sein. Ins Feld klicken, dann in der Ansicht: eine Fläche bringt ihren "
+                   "Körper mit, eine Fläche außerhalb von Körper A wird Gegenfläche; der Modellbaum "
+                   "lässt jede Fuge einzeln aufleuchten. "
                    "Getrennt wird beim Vernetzen oder mit „Kontaktfugen ausführen“.")
-        zusatz = [("Kontaktflächen anklicken",
-                   lambda: self._objektmaske_klick_umschalten(halter.get("m"), "kontaktbedingung")),
-                  ("Gegenflächen anklicken",
-                   lambda: self._objektmaske_klick_umschalten(halter.get("m"), "kontaktbedingung_gegen")),
-                  ("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
+        # Keine Klickknoepfe mehr: der Klick ins Feld schaltet die Auswahl per
+        # Maus (FELDKLICK, 15.09.2026). „Kontaktfugen ausfuehren" bleibt unten
+        # bei OK - er wirkt auf das ganze Modell, nicht auf die Felder.
+        zusatz = [("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
         return felder, hinweis, zusatz
 
     def _kontaktmaske_verbinden(self, maske):
@@ -5346,6 +5750,130 @@ class MainWindow(QtWidgets.QMainWindow):
         f = maske._felder.get("mu")
         if isinstance(f, QtWidgets.QLineEdit):
             f.textEdited.connect(lambda _t, mk=maske: self._kontaktmaske_standard_pruefen(mk))
+
+    def _kontakt_a_setzen(self, maske, namen: list) -> None:
+        """Koerper A in die Maske - Auswahlfeld (ein Koerper) oder Liste (mehrere)."""
+        if isinstance(maske._felder.get("koerper_a"), QtWidgets.QComboBox):
+            maske.setzen("koerper_a", namen[0] if namen else "–")
+        else:
+            maske.setzen("koerper_a", ", ".join(namen))
+
+    def _kontaktmaske_klick(self, maske, art_obj: str, name: str) -> None:
+        """Ein Klick in der Ansicht fuellt die Kontaktmaske - Koerper und Flaechen.
+
+        Wunsch vom 15.09.2026: „wenn neuer Kontakt angelegt wird, dann soll
+        Volumen anklickbar sein; wenn Kontaktflaeche ausgewaehlt werden soll,
+        dann muss Flaeche auch selektierbar sein, automatisch Gegenflaeche auch
+        ... die Maske damit automatisch ausfuellen, Koerper und Flaechen".
+
+        * Koerper A / Koerper B: ein Volumen setzt das Feld, und der Klickmodus
+          springt weiter (A -> B -> Kontaktflaechen). Ein zweiter Klick auf
+          denselben Koerper leert das Feld wieder.
+        * Kontaktflaechen: ist Koerper A leer, wird der Koerper der Flaeche
+          Koerper A. Eine Flaeche, die **nicht** zu Koerper A gehoert, ist die
+          Gegenseite - sie kommt zu den Gegenflaechen, und ihr Koerper wird
+          Koerper B, wenn dort noch „alle anderen" steht. Eine Fuge ist so mit
+          zwei Klicks beschrieben.
+        * Gegenflaechen: ebenso fuellt ihr Koerper Koerper B.
+
+        Ein zweiter Klick auf eine Flaeche nimmt sie aus ihrer Liste; die
+        Koerper bleiben stehen.
+        """
+        m = self.model
+        art = getattr(maske, "_klick_art", "") or "kontaktbedingung"
+        _feld, modus, was = self.MASKENKLICK[art]
+        w = maske.werte()
+        a = [x for x in self._namensliste(str(w.get("koerper_a") or "")) if x in m.koerper]
+        b = str(w.get("koerper_b") or "")
+        b = b if b in m.koerper else ""
+        if modus == "volumen":
+            if art_obj != "volumen":
+                self.statusBar().showMessage(f"{name} ist kein Volumen - Klickmodus: {was}", 3000)
+                return
+            if art == "kontaktbedingung_a":
+                if name == b:
+                    self.statusBar().showMessage(f"{name} ist schon Körper B - Körper A muss ein anderer sein",
+                                                 4000)
+                    return
+                gesetzt = name not in a
+                einer = isinstance(maske._felder.get("koerper_a"), QtWidgets.QComboBox)
+                self._kontakt_a_setzen(maske, ([name] if einer else a + [name]) if gesetzt
+                                       else [x for x in a if x != name])
+                weiter = "kontaktbedingung_b"
+            else:
+                if name in a:
+                    self.statusBar().showMessage(f"{name} ist schon Körper A - Körper B muss ein anderer sein",
+                                                 4000)
+                    return
+                gesetzt = name != b
+                maske.setzen("koerper_b", name if gesetzt else self.KONTAKT_ALLE)
+                weiter = "kontaktbedingung"
+            self.statusBar().showMessage(f"{was}: {name}" + ("" if gesetzt else " herausgenommen"), 4000)
+            if gesetzt:
+                self._objektmaske_klick_umschalten(maske, weiter)
+            else:
+                self._kontaktmaske_zeigen(maske, art)
+            return
+        if art_obj != "flaeche":
+            self.statusBar().showMessage(f"{name} ist keine Fläche - Klickmodus: {was}", 3000)
+            return
+        besitzer = [k for k, kp in m.koerper.items() if name in (kp.flaechen or [])]
+        kontakt = self._namensliste(w.get("flaechennamen"))
+        gegen = self._namensliste(w.get("gegenflaechen"))
+        teile = []
+        if name in kontakt:
+            kontakt.remove(name)
+            teile.append(f"{name} aus den Kontaktflächen genommen")
+        elif name in gegen:
+            gegen.remove(name)
+            teile.append(f"{name} aus den Gegenflächen genommen")
+        elif art == "kontaktbedingung":
+            eigene = [k for k in besitzer if k != b]
+            if not a and eigene:
+                a = [eigene[0]]
+                self._kontakt_a_setzen(maske, a)
+                teile.append(f"Körper A: {a[0]}")
+            if besitzer and not set(besitzer) & set(a):
+                gegen.append(name)
+                if not b:
+                    b = besitzer[0]
+                    maske.setzen("koerper_b", b)
+                    teile.append(f"Körper B: {b}")
+                teile.append(f"{name} gehört nicht zu Körper A - als Gegenfläche übernommen")
+            else:
+                kontakt.append(name)
+                teile.append(f"Kontaktfläche {name}")
+        else:
+            gegen.append(name)
+            andere = [k for k in besitzer if k not in a]
+            if not b and andere:
+                b = andere[0]
+                maske.setzen("koerper_b", b)
+                teile.append(f"Körper B: {b}")
+            teile.append(f"Gegenfläche {name}")
+        maske.setzen("flaechennamen", ", ".join(kontakt))
+        maske.setzen("gegenflaechen", ", ".join(gegen))
+        self._kontaktmaske_zeigen(maske, art)
+        self.statusBar().showMessage("; ".join(teile), 5000)
+
+    def _kontaktmaske_zeigen(self, maske, art: str) -> None:
+        """Im Klickmodus der Kontaktmaske leuchtet, was sie sammelt: bei Koerper
+        A/B die gewaehlten Volumen, bei den Flaechen **beide** Seiten der Fuge -
+        sonst bliebe eine Flaeche dunkel, die ein Klick selbst zur Gegenseite
+        gelegt hat."""
+        if maske is None:
+            return
+        m = self.model
+        w = maske.werte()
+        if self.MASKENKLICK[art][1] == "volumen":
+            namen = self._namensliste(str(w.get("koerper_a") or "")) + [str(w.get("koerper_b") or "")]
+            self.sel_koerper = [x for x in dict.fromkeys(namen) if x in m.koerper]
+            self.sel_flaechen = []
+        else:
+            namen = self._namensliste(w.get("flaechennamen")) + self._namensliste(w.get("gegenflaechen"))
+            self.sel_flaechen = [x for x in dict.fromkeys(namen) if x in m.flaechen]
+            self.sel_koerper = []
+        self.redraw()
 
     def _kontakt_richtungen(self, w: dict) -> tuple:
         """(zug, schub_x, schub_y, dreh, mu) aus den Werten der Kontaktmaske."""
@@ -5395,14 +5923,18 @@ class MainWindow(QtWidgets.QMainWindow):
         kb.ausgefuehrt = False
         return vorher - (len(m.gap_elements) + len(m.kopplungen) + len(m.contact_pairs))
 
-    def _kontakt_ausfuehren_wenn_netz(self, kb) -> None:
-        """Steht schon ein Netz, wird die Fuge gleich getrennt - sonst beim Vernetzen."""
+    def _kontakt_ausfuehren_wenn_netz(self, kb, knotengruppen: dict = None) -> None:
+        """Steht schon ein Netz, wird die Fuge gleich getrennt - sonst beim Vernetzen.
+
+        ``knotengruppen`` (fugen.gruppen_je_knoten) laesst sich fuer mehrere
+        Fugen hintereinander mitgeben - am Drehlager kostet die Karte je
+        Aufruf rund 2,5 s."""
         from .. import fugen
         m = self.model
         if not m.elements or kb.wartet_auf_netz(m):
             return
         log: list = []
-        b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+        b = fugen.kontaktfuge_ausfuehren(m, kb, log, knotengruppen=knotengruppen)
         for z in log:
             self.log.appendPlainText(z)
         if kb.ausgefuehrt:
@@ -5410,6 +5942,94 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
         elif b.get("grund"):
             self.info(f"Kontaktbedingung {kb.name}: {b['grund']}")
+
+    def _kontakt_koerper(self, kb) -> list:
+        """Die Volumen einer Kontaktbedingung: Koerper A und B - oder, wo die
+        Bedingung nur Flaechen nennt, deren Besitzer."""
+        m = self.model
+        namen = [x for x in (getattr(kb, "koerpernamen", None) or []) if x in m.koerper]
+        gegen = [x for x in (getattr(kb, "gegenkoerper", None) or []) if x in m.koerper]
+        if not namen or not gegen:
+            besitzer: dict = {}
+            for k in m.koerper.values():
+                for fn in (k.flaechen or []):
+                    besitzer.setdefault(fn, k.name)
+            if not namen:
+                namen = [besitzer[fn] for fn in (kb.flaechennamen or []) if fn in besitzer]
+            if not gegen:
+                gegen = [besitzer[fn] for fn in (kb.gegenflaechen or []) if fn in besitzer]
+        return list(dict.fromkeys(namen + gegen))
+
+    def _kontakt_blass(self, m, ausser) -> list:
+        """Die Elemente der Volumen des angeklickten Kontakts - ohne die, die
+        schon kraeftig leuchten."""
+        kb = (getattr(m, "kontaktbedingungen", {}) or {}).get(getattr(self, "leuchtet_kontakt", "") or "")
+        if kb is None:
+            return []
+        aus: list = []
+        for name in self._kontakt_koerper(kb):
+            aus += [int(e) for e in (m.koerper[name].elemente or [])
+                    if 0 <= int(e) < len(m.elements) and int(e) not in ausser]
+        return aus
+
+    def _kontakte_stand_jetzt(self) -> tuple:
+        """Woran sich erkennen laesst, dass sich an Volumen, Flaechen oder
+        Knoten etwas geaendert hat - dann werden die Beruehrungen neu gesucht."""
+        m = self.model
+        return (id(m), tuple(sorted(m.koerper)), tuple(tuple(k.flaechen or []) for k in m.koerper.values()),
+                len(m.flaechen), len(m.lines), m.nn,
+                hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
+                tuple(sorted(m.kontaktbedingungen)), len(getattr(m, "kontakt_ausnahmen", None) or []))
+
+    def _kontakte_nachfuehren(self) -> None:
+        """Kontakte zwischen sich beruehrenden Volumen von selbst anlegen -
+        bei jedem neuen Modellstand einmal (15.09.2026, „immer automatisch":
+        nach Import, „Volumen aus Flächen", verschobenen Knoten).
+
+        Vorgabe ist „starr" (Verbund): das Modell rechnet damit wie ohne die
+        Bedingung, aber die Fuge ist ein Objekt und laesst sich rechts in der
+        Maske umstellen. Steht schon ein Netz, wird die Bedingung gleich
+        ausgefuehrt (an gemeinsamen Flaechen ist das ein Vermerk, nichts wird
+        getrennt). Am Drehlager (108 Koerper) dauert die Suche rund 3 s.
+        """
+        from .. import kontakte
+        m = self.model
+        if len(getattr(m, "koerper", {}) or {}) < 2:
+            return
+        stand = self._kontakte_stand_jetzt()
+        if getattr(self, "_kontakte_stand", None) == stand:
+            return
+        self._kontakte_stand = stand
+        if not hasattr(m, "kontakt_ausnahmen"):
+            m.kontakt_ausnahmen = []              # aeltere Sicherungen
+        log: list = []
+        t0 = time.perf_counter()
+        try:
+            erg = kontakte.kontakte_nachfuehren(m, log, raender=self._raender(), seiten=self._randseiten(),
+                                                loecher=self._loecher())
+        except Exception as ex:               # noqa: BLE001 - die Suche darf das Fenster nie sperren
+            self.log.appendPlainText(f"Berührungen nicht geprüft: {ex}")
+            return
+        for z in log:
+            self.log.appendPlainText(z)
+        # Nur, was wirklich ein Kontaktpaar braucht (starr an je eigenen
+        # Flaechen), wird gleich ausgefuehrt - eine Naht an gemeinsamen
+        # Flaechen ist ohne Ausfuehrung verschweisst. Die Knotenkarte einmal
+        # fuer alle: am Drehlager kosteten 25 Einzelausfuehrungen 65 s.
+        offen = [m.kontaktbedingungen[n] for n in erg["neu"]
+                 if not kontakte.ist_verschweisst(m, m.kontaktbedingungen[n])]
+        if offen and m.elements:
+            from .. import fugen
+            gruppen = fugen.gruppen_je_knoten(m)
+            for kb in offen:
+                self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
+        if erg["neu"] or erg["entfernt"]:
+            self.log.appendPlainText(f"Berührungen geprüft: {erg['beruehrungen']} Körperpaare, "
+                                     f"{len(erg['neu'])} Kontakte angelegt, {len(erg['entfernt'])} entfernt "
+                                     f"({time.perf_counter() - t0:.1f} s)")
+            self.statusBar().showMessage(f"{len(erg['neu'])} Kontakte automatisch angelegt (Körper berühren "
+                                         "sich, starr) - die Wirkung lässt sich rechts in der Maske ändern", 8000)
+            self._kontakte_stand = self._kontakte_stand_jetzt()
 
     # ---- Lastfall: Unterpunkte je Lastart ------------------------------------
     def _lasttext(self, art: str, l) -> str:
@@ -5849,6 +6469,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not hasattr(maske, "_klick_hinweis_alt"):
             maske._klick_hinweis_alt = maske.lbl_hinweis.text()
         maske._klick_art = art
+        if art.startswith("kontaktbedingung"):
+            # Die Kontaktmaske fuellt Koerper und Flaechen gemeinsam
+            maske.objekt_angeklickt = lambda art_obj, name: self._kontaktmaske_klick(maske, art_obj, name)
+            return
 
         def liste() -> list:
             return self._namensliste(maske.werte().get(feld))
@@ -5871,6 +6495,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Die Namensliste der Maske in der Ansicht hervorheben."""
         if maske is None:
             return
+        if art.startswith("kontaktbedingung"):
+            return self._kontaktmaske_zeigen(maske, art)
         feld, modus, _was = self.MASKENKLICK[art]
         namen = self._namensliste(maske.werte().get(feld))
         if modus == "linie":
@@ -5892,14 +6518,45 @@ class MainWindow(QtWidgets.QMainWindow):
         _feld, modus, was = self.MASKENKLICK[art]
         an = not maske.objekt_modus or getattr(maske, "_klick_art", "") != art
         maske.objekt_modus = modus if an else ""
+        # Orange eingerahmt ist das Feld, das ein Klick gerade fuellt
+        maske.klickfeld_markieren(_feld if an else None)
         if an:
             self._objektmaske_klickmodus(maske, art)
-            maske.lbl_hinweis.setText(f"Klickmodus: {was} in der Ansicht anklicken - jeder Klick nimmt "
-                                      "dazu oder heraus; derselbe Knopf beendet ihn.")
+            if modus == "volumen":
+                maske.lbl_hinweis.setText(f"{was}: ein Volumen in der Ansicht anklicken - danach geht es mit "
+                                          "dem nächsten Feld weiter. Ein Klick in ein anderes Feld oder Esc "
+                                          "beendet die Auswahl per Maus.")
+            else:
+                maske.lbl_hinweis.setText(f"{was} in der Ansicht anklicken - jeder Klick nimmt dazu oder "
+                                          "heraus. Ein Klick in ein anderes Feld oder Esc beendet die Auswahl "
+                                          "per Maus.")
             self._objektmaske_klick_zeigen(maske, art)
         else:
             maske.lbl_hinweis.setText(getattr(maske, "_klick_hinweis_alt", "") or "")
         self.statusBar().showMessage(f"{was} anklicken" if an else "Klickmodus beendet", 3000)
+
+    def _maskenfeld_fokus(self, maske, art: str, feld: str) -> None:
+        """Ein Feld der Maske hat die Tastatur bekommen: steht es in
+        :data:`FELDKLICK`, sammelt die Maus ab jetzt fuer dieses Feld; sonst
+        endet die Auswahl per Maus. So braucht es keinen eigenen Knopf je
+        Liste („bei Klick in Feld Auswahl per Maus", 15.09.2026)."""
+        ziel = self.FELDKLICK.get(art, {}).get(feld)
+        if ziel is None:
+            self._objektmaske_klick_aus(maske)
+            return
+        if maske.objekt_modus and getattr(maske, "_klick_art", "") == ziel:
+            return
+        self._objektmaske_klick_umschalten(maske, ziel)
+
+    def _objektmaske_klick_aus(self, maske) -> None:
+        """Die Auswahl per Maus beenden (anderes Feld, Esc) - ohne Meldung,
+        wenn gar keine lief."""
+        if maske is None or not maske.objekt_modus:
+            return
+        maske.objekt_modus = ""
+        maske.klickfeld_markieren(None)
+        maske.lbl_hinweis.setText(getattr(maske, "_klick_hinweis_alt", "") or "")
+        self.statusBar().showMessage("Auswahl per Maus beendet", 3000)
 
     def _objekt_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False):
         """Die Felder der Objektmaske ins Modell schreiben (oder das Objekt anlegen)."""
@@ -6012,9 +6669,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 teilung = self._zahlenliste(w.get("teilung")) or [4, 4]
                 neuname = (w.get("name") or name).strip()
                 self.merken(f"Fläche {neuname}")
+                typ = FLAECHENARTEN.get(str(w.get("typ", "") or ""), "")
                 if neu:
                     m.add_flaeche(neuname, linien, dicke=w.get("dicke", ""), material=w.get("material", ""),
-                                  teilung=teilung, kommentar=str(w.get("kommentar", "") or ""))
+                                  teilung=teilung, kommentar=str(w.get("kommentar", "") or ""),
+                                  typ=typ or "eben")
                     name = neuname
                 else:
                     if neuname != name:
@@ -6026,6 +6685,12 @@ class MainWindow(QtWidgets.QMainWindow):
                         f.elemente = []
                     f.linien, f.dicke, f.material = linien, w.get("dicke", ""), w.get("material", "")
                     f.teilung, f.kommentar = teilung, str(w.get("kommentar", "") or "")
+                    if typ and typ != f.typ:
+                        if f.elemente:
+                            # eine andere Geometrieart ist ein anderes Netz
+                            m.elemente_loeschen(f.elemente)
+                            f.elemente, f.randseiten = [], []
+                        f.typ = typ
             elif art == "geokoerper_einzeln":
                 flaechen = self._namensliste(w.get("flaechen"))
                 fehlt = [x for x in flaechen if x not in m.flaechen]
@@ -6291,8 +6956,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # Eine neue Bedingung braucht mindestens eine Flaeche; eine eingelesene
             # darf auch nur ueber Koerper und Gegenflaechen der Quelldatei stehen
             if neu and not flaechen and not (koerper_a and gegen):
-                return self.error("Mindestens eine Kontaktfläche angeben - „Kontaktflächen anklicken“ "
-                                  "wählt sie in der Ansicht (oder Körper A und Gegenflächen)")
+                return self.error("Mindestens eine Kontaktfläche angeben - ins Feld klicken und in der "
+                                  "Ansicht wählen (oder Körper A und Gegenflächen)")
             fremd = [f for f in flaechen if koerper_a and f not in
                      {x for k in koerper_a for x in (m.koerper[k].flaechen or [])}]
             if fremd:
@@ -6334,6 +6999,14 @@ class MainWindow(QtWidgets.QMainWindow):
             kb.suchweite = max(float(zahl("suchweite", 0.0) or 0.0), 0.0) / 1e3
             kb.spalt_schliessen = str(w.get("spalt", "")) == self.KONTAKT_SPALT[1]
             kb.beschreibung = str(w.get("beschreibung", "") or "").strip()
+            if getattr(kb, "automatisch", False):
+                from .. import kontakte
+                if neuname == name:
+                    # Der Name traegt die Wirkung und folgt ihr (15.09.2026:
+                    # „im Namen sollte z. B. starr stehen oder nur Druck")
+                    neuname = kontakte.name_fuer(m, kb, ausser=name)
+                else:
+                    kb.automatisch = False           # von Hand benannt: bleibt so
             if neuname != name:
                 del m.kontaktbedingungen[name]
                 kb.name = neuname
@@ -6613,6 +7286,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sel_koerper = [k for k in sub.koerper if k in m.koerper]
         self.sel_linien = [ln for ln in sub.linien if ln in m.lines]
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         self._auswahl_register()
         self.redraw()
         F = msk.Feld
@@ -6946,6 +7620,18 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 kb = m.kontaktbedingungen.pop(name)
                 self._kontakt_zuruecknehmen(kb)
+                if getattr(kb, "automatisch", False):
+                    # Ein geloeschter automatischer Kontakt kommt nicht wieder
+                    from .. import kontakte
+                    p = kontakte.paar_von(kb)
+                    if p is not None:
+                        if not hasattr(m, "kontakt_ausnahmen"):
+                            m.kontakt_ausnahmen = []
+                        if list(p) not in m.kontakt_ausnahmen:
+                            m.kontakt_ausnahmen.append(list(p))
+                        self.log.appendPlainText(f"Kontakt {name} gelöscht: zwischen {p[0]} und {p[1]} entsteht "
+                                                 "keiner mehr von selbst („+ Kontaktbedingung anlegen“ legt "
+                                                 "von Hand einen an)")
         elif art == "bemassung":
             if name not in m.bemassungen:
                 grund = f"Bemaßung {name} gibt es nicht"
@@ -7054,6 +7740,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selection = np.array([], dtype=int)
         self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         self.maskenrand.schliessen()
         if sammel:
             return ""
@@ -7083,6 +7770,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         namen = [str(x) for x in namen]
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         self.selection = np.array([], dtype=int)
         self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
         if art == "knoten":
@@ -7556,7 +8244,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.merken(f"Fläche {w['name']}")
             f = self.model.add_flaeche(w["name"], w["linien"], dicke=w["dicke"],
                                        material=w["material"], teilung=w["teilung"],
-                                       kommentar=w["kommentar"])
+                                       kommentar=w["kommentar"], typ=w.get("typ", "eben") or "eben")
         except (KeyError, ValueError) as ex:
             self.undo()
             return self.error(str(ex))
@@ -7725,6 +8413,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fenster_abbrechen()
             self.statusBar().showMessage("Auswahlfenster abgebrochen", 3000)
             return True
+        # Eine Maske, deren Feld gerade per Maus gefuellt wird (orange): Esc
+        # beendet erst diese Auswahl - der Tastendruck kommt als Kuerzel hier
+        # an, nie bei der Maske selbst (15.09.2026)
+        maske = self.maskenrand.maske if self.maskenrand.offen() else None
+        if maske is not None and getattr(maske, "objekt_modus", ""):
+            if getattr(maske, "_klick_art", "") in self.MASKENKLICK:
+                self._objektmaske_klick_aus(maske)
+                return True
+            if callable(getattr(maske, "klick_beenden", None)):
+                maske.klick_beenden()
+                return True
         return False
 
     def _esc_gedrueckt(self) -> None:
@@ -8746,6 +9445,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         self._raender_stand = None
         self._inhalte_stand = None
+        self._stabnummern_stand = None
         if not hasattr(self, "tbl_knoten"):
             return
         # Knoten - im Block: bei 95 000 Knoten und 490 000 Elementen darf der
@@ -11931,6 +12631,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def refresh_all(self):
         m = self.model
         gross = len(m.elements) >= self.GROSS_AB
+        self._kontakte_nachfuehren()
 
         def schritt(text):
             if gross:
@@ -13840,6 +14541,7 @@ class MainWindow(QtWidgets.QMainWindow):
                       self.sel_staebe, self.sel_elemente, self.sel_lager, self.sel_lasten):
             liste.clear()
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         self._set_selection([])
         self._info_zeigen()
 
@@ -15741,8 +16443,24 @@ class MainWindow(QtWidgets.QMainWindow):
                 if teil.n_cells > 2000:
                     # grosse Koerper: nur ihre Oberflaeche leuchtet
                     teil = teil.extract_surface()
-                pl.add_mesh(teil, color="#ff8800", opacity=0.85, show_edges=True,
+                # Die Elementkanten folgen dem Schalter FE-Netz: ist das Netz
+                # aus, leuchtet die Flaeche oder das Volumen ohne Netz auf
+                # (15.09.2026, „wenn Netz ausgeschaltet, dann auch nicht
+                # anzeigen, wenn Volumen oder Fläche selektiert ist")
+                pl.add_mesh(teil, color="#ff8800", opacity=0.85,
+                            show_edges=self.act_edges.isChecked(),
                             edge_color="#c05000", line_width=5, name=name)
+            except Exception as ex:      # noqa: BLE001
+                self.log.appendPlainText(f"Hervorhebung: {ex}")
+        # Der im Modellbaum angeklickte Kontakt: seine Volumen blass dazu, die
+        # Fuge selbst leuchtet kraeftig ueber sel_flaechen
+        blass = self._kontakt_blass(m, set(leuchtet) | set(gewaehlt))
+        if blass:
+            try:
+                teil = vp.teilnetz(m, blass)
+                if teil.n_cells > 2000:
+                    teil = teil.extract_surface()
+                pl.add_mesh(teil, color="#ff8800", opacity=0.22, show_edges=False, name="auswahl_blass")
             except Exception as ex:      # noqa: BLE001
                 self.log.appendPlainText(f"Hervorhebung: {ex}")
         if polygone:
@@ -15990,6 +16708,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self._kamera_setzen(kamera)
         self.plotter.render()
 
+    def _stabnummern_zum_zeichnen(self, m) -> list:
+        """Die Nummern der Stabelemente fuers Zeichnen - einmal je Modellstand.
+
+        Die Suche lief bei jedem Zeichnen ueber alle Elemente: am Drehlager
+        646 376 Tetraeder fuer keinen einzigen Stab, 0,15 von 0,39 s je
+        Auswahlklick (15.09.2026). ``refresh_modelltabellen`` vergisst die
+        Liste, wenn sich am Modell etwas geaendert haben kann.
+        """
+        stand = (id(m), len(m.elements))
+        if getattr(self, "_stabnummern_stand", None) != stand:
+            self._stabnummern_stand = stand
+            self._stabnummern_zwischen = [i for i, e in enumerate(m.elements)
+                                          if e.typ in vp.TYPEN_STAEBE]
+        return self._stabnummern_zwischen
+
     def _anzeigemodell(self):
         """Das Modell, das die Ansicht zeigt: bei einem Ergebnis aus einer
         Situation mit Stellung die gedrehte Kopie, mit der gerechnet wurde -
@@ -16049,9 +16782,9 @@ class MainWindow(QtWidgets.QMainWindow):
             ausser |= {int(i) for i in (getattr(r, "info", None) or {}).get("inaktiv", [])}
         koerper_elems: list = []
         if staebe_an and modus in vp.KOERPERLICH:
-            koerper_elems = [i for i, e in enumerate(m.elements)
-                             if e.typ in vp.TYPEN_STAEBE and i not in ausser
-                             and e.sec and e.sec in m.sections]
+            koerper_elems = [i for i in self._stabnummern_zum_zeichnen(m)
+                             if i not in ausser and m.elements[i].sec
+                             and m.elements[i].sec in m.sections]
         grid, kidx = self._gitter(typen, ausser | set(koerper_elems))
         netze = []
         if grid.n_cells:
@@ -16637,23 +17370,25 @@ class MainWindow(QtWidgets.QMainWindow):
         """Die Kennzahlen des Ergebnisses als Text unten links in die Ansicht.
 
         Sie gehoeren ins **Bild**, nicht nur in eine Tabelle: wer eine Ansicht
-        in den Bericht uebernimmt, hat die Zahlen damit gleich dabei - groesste
-        Ausnutzung, kleinste und groesste Verformung, Verdrehung,
-        Schnittgroesse, Auflagerkraft und Spannung, jeweils mit dem Ort. Die
-        Farbskalen stehen rechts, damit sich nichts ueberdeckt.
+        in den Bericht uebernimmt, hat die Zahlen damit gleich dabei, jeweils
+        mit dem Ort. Es stehen nur die Werte des **gewaehlten** Ergebnisses da
+        - der Faerbung und eines gewaehlten Schnittgroessenverlaufs -, nicht
+        mehr alles zugleich (15.09.2026). Die Farbskalen stehen rechts, damit
+        sich nichts ueberdeckt.
         """
         zeigen = getattr(self, "act_kennwerte", None) is None or self.act_kennwerte.isChecked()
         if r is None or not zeigen:
             self._kennwerte_zeilen = []
             return []
         try:
-            # Die Ausnutzung gehoert immer dazu - auch wenn gerade nach der
-            # Verformung eingefaerbt wird. Sonst muesste man erst umschalten,
-            # um die Zahl zu sehen, nach der zuerst gefragt wird.
             sicht = self._sichtbare_knoten()
             elemente = None if sicht is None else self._elemente_ganz_in(sicht)
-            zeilen = vp.kennwerte(self.model, r, self._ausnutzung_map(),
-                                  self.cb_diagram.currentText(), knoten=sicht, elemente=elemente)
+            feld = self.cb_field.currentText()
+            seite = str(self.cb_seite.currentData() or "max") if getattr(self, "cb_seite", None) else "max"
+            # dieselbe Ausnutzung wie die Faerbung
+            zeilen = vp.kennwerte(self.model, r, self._util_map(feld),
+                                  self.cb_diagram.currentText(), knoten=sicht, elemente=elemente,
+                                  feld=feld, seite=seite)
             if sicht is not None and zeilen:
                 zeilen.insert(0, "nur sichtbare Teile")
         except Exception as ex:             # noqa: BLE001
@@ -17180,6 +17915,11 @@ class MainWindow(QtWidgets.QMainWindow):
         einem gewaehlten Koerper also auch die Staebe, Linien, Flaechen und
         Knoten des Restmodells samt ihren Lagern und Lasten. Knoten bleiben
         nur, wenn sie gewaehlt sind oder an einem sichtbaren Teil haengen.
+
+        Danach ist die Auswahl erledigt und wird aufgehoben - wie bei
+        „Auswahl ausblenden“ (15.09.2026: „danach automatisch deselektieren,
+        da Aufgabe erledigt“). Sonst leuchtete das isolierte Teil orange
+        weiter, und der naechste Befehl wirkte noch auf die alte Auswahl.
         """
         m = self.model
         elems = self._ausgewaehlte_elemente()
@@ -17216,6 +17956,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              (len(flaechen), "Flächen"), (len(linien), "Linien"),
                                              (len(knoten), "Knoten"))
                  if n]
+        self._auswahl_leeren()
         self.info("Nur die Selektion im Bild (" + ", ".join(teile) + ") - "
                   "„Alles zeigen“ holt den Rest zurück")
         self.redraw()
@@ -17320,6 +18061,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 getattr(self, name).clear()
         if isinstance(getattr(self, "leuchtet", None), list):
             self.leuchtet = []
+            self.leuchtet_kontakt = ""
 
     def open_model(self):
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Modell öffnen", "", "Statik3D (*.json)")

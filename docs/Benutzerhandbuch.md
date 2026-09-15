@@ -84,8 +84,8 @@ Vierzehn Register nach Arbeitsschritt:
 |---|---|
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, Übernehmen aus fremden Formaten, Exportieren, Beispiele |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
-| **Geometrie** | Knoten, Linien, Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang |
-| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
+| **Geometrie** | Knoten, Linien, **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang (auch „Lot“) |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, verschneiden, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
@@ -223,7 +223,7 @@ bedienen sind, steht im nächsten Abschnitt.
 | Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung, darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ (auch **FAT** für Ermüdung), Beschreibung, Bemessungssituation (nur wenn aus der Quelldatei bekannt, als Angabe), Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
-| Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** in der Ansicht gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
+| Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt, per **Klick ins Feld** und dann in der Ansicht (seit 15.09.2026) oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
 
 **Listenfelder der Masken.** Wo eine Maske eine Namensliste zeigt — Randlinien
 einer Fläche, Randflächen eines Volumens, Kontaktflächen, Lastfälle einer
@@ -233,7 +233,10 @@ das Feld beginnt am Textanfang, und der Zeiger darauf zeigt die
 am Zeilenende: aus dreizehn Randflächen war „9, F64, F71, F98, F46, F52“ zu
 sehen, was sich wie „neun Flächen, davon fünf genannt“ liest — und zu der
 falschen Diagnose verleitet, es fehlten Flächen. Wird die Liste in der Ansicht
-angeklickt, zählt die Beschriftung mit.
+angeklickt, zählt die Beschriftung mit. Bei Randlinien, Randflächen, Körper
+A/B, Kontakt- und Gegenflächen macht ein **Klick ins Feld** es scharf (orange
+eingerahmt): Klicks in der Ansicht füllen dann dieses Feld; ein Klick in ein
+anderes Feld oder Esc beendet das (seit 15.09.2026).
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
@@ -302,20 +305,96 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
 
+#### Kontakte entstehen von selbst
+
+Berühren sich zwei Volumen — über eine **gemeinsame** Fläche oder über je
+eigene Flächen, die **aufeinanderliegen** —, legt das Programm von selbst eine
+Kontaktbedingung an (seit 15.09.2026): bei jedem neuen Modellstand, also nach
+dem Import, nach „Volumen aus Flächen“, nach dem Verschieben von Knoten.
+Vorgabe ist **starr** (Standardkontakt „Verbund“: Druck, Zug und Schub werden
+übertragen, wie verschweißt). Das Modell rechnet damit genau so wie ohne die
+Bedingung — aber die Fuge ist jetzt ein Objekt: im Modellbaum anklicken, rechts
+die Wirkung umstellen (nur Druck, Reibung, …), fertig. Der kleinere Körper wird
+Körper A (er wird an der Fuge gelöst), der andere Körper B; bei gemeinsamer
+Fläche steht sie als Kontaktfläche, bei eigenen Flächen die von A als Kontakt-,
+die von B als Gegenflächen.
+
+Der **Name trägt die Wirkung** — „Bolzen–Platte starr“, nach dem Umstellen
+„Bolzen–Platte nur Druck“ —, solange man den Namen nicht selbst ändert. Die
+Wirkungen und ihre **Farbe** (dieselbe im Modellbaum und bei „Kontakte
+zeigen“):
+
+| Wirkung | heißt | Farbe |
+|---|---|---|
+| Zug und Schub übertragen (Verbund) | starr | grau |
+| hebt ab, gleitet frei (Reibungsfrei) | nur Druck | rot |
+| hebt ab, Coulomb-Reibung (Reibungsbehaftet) | Druck, Reibung | orange |
+| hebt ab, haftet (Rau) | Druck/Schub | grün |
+| kein Abheben, gleitet frei (Ohne Trennung) | Zug/Druck | blau |
+| kein Abheben, mit Reibung | Zug/Druck, Reibung | türkis |
+| eine Richtung als Feder | Feder | violett |
+
+Ein **starrer** Kontakt an einer gemeinsamen Fläche ist eine Schweißnaht: er
+wird nicht ausgeführt und ist nie „zu steif“ — Zustand „verschweißt (starr an
+gemeinsamer Fläche, nichts zu trennen)“, Spalte „Trennung ausgeführt“:
+„entfällt (verschweißt)“ —, und für angeschweißte Nachbarn (die sich an einer
+Fuge mitlösen) und den Kerbfall der Naht zählt er wie keine Bedingung. Erst
+eine andere Wirkung trennt das Netz dort. (Starr zwischen je eigenen,
+aufeinanderliegenden Flächen ist dagegen ein Kontaktpaar mit Zug und Haften —
+es bindet die beiden Netze.) Einen **gelöschten** automatischen Kontakt legt das Programm nicht
+wieder an (das Paar ist als Ausnahme gemerkt; „+ Kontaktbedingung anlegen“
+legt von Hand einen an); automatische Kontakte, deren Körper sich nicht mehr
+berühren, verschwinden wieder, solange sie noch nicht im Netz ausgeführt sind.
+
+Berührung heißt: näher als 1e-5 der Modellgröße (Drehlager: 55 µm; dort
+liegen aufeinanderliegende Flächen unter 1 µm auseinander, das nächste
+getrennte Paar — ein Passstift im Loch — bei 0,1 mm), gemessen an inneren
+Probepunkten der Flächen; aufliegend ist eine Fläche, wenn mindestens ein
+Viertel ihres Inhalts auf der anderen liegt (angrenzende Flächen mit nur einer
+gemeinsamen Kante zählen so nicht). Am Drehlager (108 Körper, 1375 Flächen):
+145 berührende Paare, davon 25 ohne Kontaktbedingung — alle über gemeinsame
+Flächen, also verschweißte Rippen und Deckel —, Suche 1,9 s im Fenster (die
+Vielecke der Flächen hat die Ansicht schon; ohne sie 3,4 s); das Anlegen der
+25 Kontakte kostet darüber hinaus nichts, weil eine Naht nicht ausgeführt wird
+(Modell setzen 10 s; solange jede neue Bedingung sofort ausgeführt wurde,
+waren es 73 s, und 22 der 25 standen als „zu steif“, weil die Suche nach der
+Gegenseite sich am verschweißten Ring der Rippen festfuhr). Geprüft in
+`tests/test_kontakte.py` und `tests/test_fugen.py`
+(`test_naht_bleibt_verschweisst`, `test_naht_loest_nachbarn_mit`).
+
 #### Kontaktbedingungen anlegen und einstellen
 
 Ein Kontakt wird **wie in ANSYS** angelegt: zwei Körper, mindestens eine
 Fläche, dann die Wirkung an dieser Fläche. Der Weg: im Modellbaum unter
 *Kontaktbedingungen → Flächenkontakte* auf **„+ Kontaktbedingung anlegen“**
 (oder *Lager / Kontakt → Kontaktbedingung…*, oder Rechtsklick → Neu). Rechts
-erscheint die Maske:
+erscheint die Maske.
+
+**Mit der Maus ausfüllen** (seit 15.09.2026). Ein **Klick ins Feld** *Körper
+A*, *Körper B*, *Kontaktflächen* oder *Gegenflächen* macht das Feld **scharf**
+(orange eingerahmt): jeder Klick in der Ansicht füllt jetzt dieses Feld.
+Eine **neue** Bedingung beginnt gleich mit *Körper A*: Volumen anklicken, das
+Programm springt weiter zu *Körper B* und dann zu den *Kontaktflächen*. Beim
+Flächenklick füllt die Maske die Körper selbst: ist Körper A noch leer, wird
+der Körper der Fläche Körper A; eine Fläche, die **nicht** zu Körper A gehört,
+ist die Gegenseite — sie kommt zu den Gegenflächen, und ihr Körper wird
+Körper B, wenn dort noch „(alle anderen Körper)“ steht. Eine Fuge ist so mit
+zwei Klicks beschrieben: erst die Fläche des einen, dann die des anderen
+Körpers. Ein zweiter Klick nimmt eine Fläche wieder heraus. Im Bild leuchten
+dabei beide Seiten der Fuge (bei Körper A/B die beiden Volumen). Ein Klick in
+ein anderes Feld (Name, μ, Beschreibung …) oder **Esc** beendet die Auswahl per
+Maus; ein zweites Esc hebt wie sonst die Auswahl auf. Vorher standen dafür zwei Knöpfe
+unter der Maske („Kontaktflächen anklicken“, „Gegenflächen anklicken“), und die
+Körper ließen sich nur aus der Liste wählen.
+
+Die Felder:
 
 | Feld | Bedeutung |
 |---|---|
-| Körper A (Kontaktseite) | der Körper, dessen Flächen die Kontaktseite bilden - er wird an ihnen gelöst |
-| Körper B (Gegenseite) | der Körper, gegen den der Kontakt wirkt; „(alle anderen Körper)“ sucht die Gegenseite unter allen Bauteilen |
-| Kontaktflächen | Flächen von Körper A - getippt oder mit **„Kontaktflächen anklicken“** in der Ansicht gewählt (jeder Klick nimmt dazu oder heraus). Leer darf das Feld nur bleiben, wenn Gegenflächen genannt sind: dann ist die Kontaktseite, was von Körper A auf ihnen liegt - so kommt jede RFEM-Freigabe herein. Sind beide leer, lehnt „Übernehmen“ eine neue Bedingung ab |
-| Gegenflächen | die Flächen der Gegenseite - ebenso mit **„Gegenflächen anklicken“** in der Ansicht wählbar (seit 14.09.2026; vorher nur Anzeige aus der Quelldatei). Genannt: der Kontakt wirkt **nur auf diesen Flächen** (seit 15.09.2026). Leer: die Gegenseite wird im Suchradius gesucht. Der zweite Knopf schaltet den Klickmodus auf die andere Liste um, ohne ihn zu beenden |
+| Körper A (Kontaktseite) | der Körper, dessen Flächen die Kontaktseite bilden - er wird an ihnen gelöst; aus der Liste, per Klick ins Feld und dann auf das Volumen, oder aus der ersten angeklickten Kontaktfläche |
+| Körper B (Gegenseite) | der Körper, gegen den der Kontakt wirkt; „(alle anderen Körper)“ sucht die Gegenseite unter allen Bauteilen; per Klick ins Feld und auf das Volumen, oder aus der ersten Gegenfläche |
+| Kontaktflächen | Flächen von Körper A - getippt oder **ins Feld klicken** und in der Ansicht wählen (jeder Klick nimmt dazu oder heraus). Leer darf das Feld nur bleiben, wenn Gegenflächen genannt sind: dann ist die Kontaktseite, was von Körper A auf ihnen liegt - so kommt jede RFEM-Freigabe herein. Sind beide leer, lehnt „Übernehmen“ eine neue Bedingung ab |
+| Gegenflächen | die Flächen der Gegenseite - ebenso per Klick ins Feld in der Ansicht wählbar (seit 14.09.2026; vorher nur Anzeige aus der Quelldatei). Genannt: der Kontakt wirkt **nur auf diesen Flächen** (seit 15.09.2026). Leer: die Gegenseite wird im Suchradius gesucht. Der Klick ins andere Feld schaltet die Auswahl per Maus auf die andere Liste um |
 | Standardkontakt | setzt die Richtungen darunter mit einem Griff (Tabelle unten); danach lässt sich jede Richtung von Hand ändern, der Standard wird dann „Benutzerdefiniert“ |
 | Druck | wird immer übertragen - das ist Kontakt |
 | Zug | *abheben möglich* (die Fuge öffnet unter Zug), *wird übertragen* (Verbund, kein Abheben) oder *Feder* |
@@ -427,16 +506,20 @@ als hätte Typ 3 kein Loch, sondern überlappt sich mit Typ 1"). Gefüllt wird
 jetzt mit denselben Angaben wie die Geometrie: Öffnungen, Geometrieart und
 benannte Ecken.
 
-Ein Klick auf eine Bedingung im Modellbaum lässt **nur ihre Fuge** aufleuchten:
-die Kontaktflächen und die Gegenflächen, nicht mehr den ganzen gelösten Körper
-(bis 14.09.2026 leuchtete am Drehlager die komplette Achse statt ihrer
-Bohrung). *Selektion anzeigen* isoliert sie damit wie jedes andere Objekt; gibt
-es gar keine Flächen, bleibt der Körper als Ausweg.
+Ein Klick auf eine Bedingung im Modellbaum lässt **ihre Fuge** kräftig
+aufleuchten — die Kontaktflächen und die Gegenflächen, nicht den ganzen
+gelösten Körper (bis 14.09.2026 leuchtete am Drehlager die komplette Achse
+statt ihrer Bohrung) — und die beiden **beteiligten Volumen blass**
+durchscheinend dazu (seit 15.09.2026: „beim Anklicken des Kontakts leuchten die
+betroffenen Volumen und die Fläche auf“); die Auswahlzeile nennt sie.
+*Selektion anzeigen* isoliert die Fuge wie jedes andere Objekt; gibt es gar
+keine Flächen, bleibt der Körper als Ausweg.
 
 **Wo welcher Kontakt wie wirkt** zeigt der Schalter *Lager / Kontakt →
-„Kontakte zeigen“*: jede Kontaktbedingung liegt dann in einer eigenen Farbe
-durchscheinend über der Geometrie, mit einem Schild an ihrer Fuge, das Name und
-Wirkung nennt — etwa „Achse (Typ 3): Druck, abheben, gleiten“. Ein Modell mit
+„Kontakte zeigen“*: jede Kontaktbedingung liegt dann in der **Farbe ihrer
+Wirkung** (Tabelle unter „Kontakte entstehen von selbst“; bis 15.09.2026 je
+Bedingung eine Reihenfarbe) durchscheinend über der Geometrie, mit einem Schild
+an ihrer Fuge, das Name und Wirkung nennt — etwa „Achse (Typ 3): Druck, abheben, gleiten“. Ein Modell mit
 einem Dutzend Fugen ist sonst nicht zu lesen: die Flächen liegen aufeinander,
 und die Wirkung stand nur in Tabellen. Nach dem Rechnen kommt der Zustand
 hinzu (Schalter *Kontaktmarken* oder die Färbung *Kontakt Zustand*).
@@ -813,13 +896,16 @@ Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
 Grenzwerten daneben; ein Klick stellt den Verlauf in der Ansicht ein, „kein
 Verlauf" blendet ihn wieder aus.
 
-**Kennwerte im Bild.** Links oben in der Ansicht stehen die Zahlen, nach denen
-zuerst gefragt wird: größte Verformung mit Knoten, kleinste und größte
-Verformung je Richtung, kleinste und größte Schnittgröße mit dem Stab, an dem
-sie auftritt, die größte Ausnutzung mit ihrem Ort und die größte
-Vergleichsspannung. Steht ein Schnittgrößenverlauf an, wird nur diese Größe
-ausgeschrieben, sonst alle sechs. Der Text gehört zum Bild und kommt darum mit
-in den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
+**Kennwerte im Bild.** Unten links in der Ansicht stehen die Zahlen des
+**gewählten Ergebnisses** (seit 15.09.2026; vorher alles zugleich): zur Färbung
+|u| die größte Verformung mit Knoten, zu ux, uy oder uz die kleinste und
+größte Verformung dieser Richtung, zur Vergleichsspannung die größte mit
+Knoten, zu einer Ausnutzung die größte mit ihrem Ort, zu einer
+Spannungsgröße (Volumen, Flächen, Stäbe, Kontakt) ihr kleinster und größter
+Wert mit Knoten in der Einheit der Farbskala. Steht ein Schnittgrößenverlauf
+an, kommt diese Schnittgröße mit dem Stab dazu. Bei *keine Färbung* ohne
+Verlauf bleibt die Ecke leer. Der Text gehört zum Bild und kommt darum mit in
+den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
 Kennwerte im Bild*.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
@@ -1048,7 +1134,10 @@ anzeigen* blendet **alles andere** aus — ist nur ein Volumen gewählt,
 verschwinden auch die Stäbe, Linien, Flächen und Knoten des Restmodells samt
 ihren Lagern und Lasten. Knoten bleiben nur im Bild, wenn sie gewählt sind
 oder an einem sichtbaren Teil hängen; die Netzknoten eines ausgeblendeten
-Körpers gehen mit ihm. *Vorherige Sicht* nimmt den letzten Schritt
+Körpers gehen mit ihm. Beide Befehle heben die Auswahl danach auf — die
+Aufgabe ist erledigt, das isolierte Teil leuchtet nicht weiter, und der
+nächste Befehl wirkt nicht mehr auf die alte Auswahl (*Selektion anzeigen*
+seit 15.09.2026). *Vorherige Sicht* nimmt den letzten Schritt
 zurück (bis zu zwanzig Schritte), *Alles zeigen* holt alles wieder her. Die
 Ausblendung ist nur eine Sicht — am Modell und an der Berechnung ändert sie
 nichts. Ein neues Netz oder ein anderes Modell hebt sie auf. Ein
@@ -1075,10 +1164,10 @@ im Bild).
 **Texte im Bild.** Oben links steht, was die Ansicht zeigt: ohne Ergebnis der
 aktive Lastfall mit seiner Lastzahl, mit Ergebnis der Lastfall, die
 Kombination oder die Umhüllende samt Färbung, Schnittgrößenverlauf und
-Überhöhung. Unten links stehen die **Kennwerte**: Verformungen und
-Verdrehungen (min/max mit Knoten), Schnittgrößen (min/max mit Stab),
-Auflagerkräfte (min/max mit Knoten), die größte Vergleichsspannung und die
-größte Ausnutzung. Die Farbskalen stehen rechts, das Achsenkreuz unten
+Überhöhung. Unten links stehen die **Kennwerte** des gewählten Ergebnisses
+(Färbung und Schnittgrößenverlauf, siehe *Kennwerte im Bild*); Auflagerkräfte
+stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts, das
+Achsenkreuz unten
 rechts; der Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die
 Texte weg. Beides kommt so auch in den Bericht.
 
@@ -1310,9 +1399,12 @@ noch.
 | Taste | tut |
 |---|---|
 | **links** | wählen (Klick) und das **Auswahlfenster** aufziehen (ziehen) |
-| **rechts** | **drehen**; ohne Ziehbewegung das Kontextmenü |
+| **Mitte** gedrückt halten | **drehen**; Doppelklick passt alles Sichtbare ins Bild |
+| **rechts** gedrückt halten | **schieben**; ohne Ziehbewegung das Kontextmenü |
 | **Mausrad** | zoomen, auf die Fläche unter dem Zeiger zu; die Drehmitte folgt |
-| **Mitte** | schwenken; Doppelklick passt alles Sichtbare ins Bild |
+
+Seit 15.09.2026 dreht die mittlere und schiebt die rechte Taste; vorher war
+es umgekehrt.
 
 Die linke Taste dreht **nicht** mehr — sie gehört ganz der Auswahl. Dadurch
 gibt es keinen Fall mehr, in dem eine Zeigerbewegung mal dreht und mal ein
@@ -1366,7 +1458,9 @@ Masken im Register *Geometrie*, der Import steht im Register *Datei*.
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente gewählt (mit ihren Lagern und Kontaktbedingungen),
 öffnet der Rechtsklick in der Ansicht ein Menü: oben *Selektiertes
-anzeigen* (alles andere ausblenden) und *Selektiertes ausblenden*, darunter
+anzeigen* (alles andere ausblenden) und *Selektiertes ausblenden*, dann
+**Verschieben…**, **Kopieren…**, **Drehen…**, **Spiegeln…** (siehe
+„Verschieben, Kopieren, Drehen, Spiegeln“), darunter
 je Gruppe der markierten Objekte ein Untermenü mit **Bearbeiten…** und
 **Löschen**. *Bearbeiten…* öffnet rechts die **Sammelmaske** für alle
 Objekte der Gruppe: Felder, in denen sich die Objekte unterscheiden, zeigen
@@ -1412,8 +1506,8 @@ wird aus kNm Nmm, aus kN/m N/mm und aus kN/m² N/mm². Die Einstellung wirkt
 auf
 
 * die **Lastwerte** an den Lasten und die Einheitenzeile oben links,
-* die **Kennwerte** unten links (Verformung, Schnittgrößen, Auflagerkräfte,
-  Vergleichsspannung, Ausnutzung),
+* die **Kennwerte** unten links (Verformung, Schnittgrößen, Vergleichsspannung,
+  Ausnutzung - je nach gewähltem Ergebnis),
 * alle **Tabellen** unten: Kopfzeile, Zellen, Filter, Sortierung, Max/Min-Zeile,
   Zwischenablage, CSV und Excel. Bearbeitbare Zahlen (Knotenkoordinaten,
   Streckgrenze …) werden in der angezeigten Einheit eingegeben und in der
@@ -1472,6 +1566,36 @@ Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
 bis man sie ändert. **Esc** schließt die Maske. Ein neuer Erzeuge-Befehl löst
 die vorige Maske ab — es ist immer höchstens eine offen.
 
+### Verschieben, Kopieren, Drehen, Spiegeln
+
+Was in der Ansicht gewählt ist — Knoten, Linien, Stäbe, Flächen, Volumen,
+auch gemischt —, lässt sich seit 15.09.2026 **verschieben, kopieren, drehen
+und spiegeln**: Rechtsklick in die Ansicht oder *Geometrie → Ändern*. Rechts
+erscheint die Maske; jede hat zwei Wege:
+
+| Befehl | tippen | klicken |
+|---|---|---|
+| Verschieben | dx, dy, dz [m], „Anwenden“ | zwei Punkte: von → nach |
+| Kopieren | dx, dy, dz und Anzahl | zwei Punkte |
+| Drehen | Achse x, y oder z durch einen Punkt, Winkel [°] (rechtsdrehend um die Achse), Haken „als Kopie“, Anzahl | zwei Punkte der Achse |
+| Spiegeln | Ebene yz, xz oder xy in einer Lage, Haken „als Kopie“ | drei Punkte der Ebene |
+
+Sobald die Punkte beisammen sind (Fang wie überall), geschieht es sofort;
+sonst „Anwenden“. Jede weitere Kopie liegt um dieselbe Abbildung weiter
+(drei Kopien mit dz = 2: bei 2, 4 und 6 m). Ein Volumen bringt seine Flächen,
+die ihre Linien, die ihre Knoten mit — und das Netz: verschobene und gedrehte
+Netze bleiben, kopierte kommen mit (Elemente, Randseiten, Stäbe mit
+Nachweis; Kopien heißen L…, F…, V…, S… fortlaufend). Ein Knoten, den auch ein
+**nicht** gewähltes Objekt benutzt, wandert beim Verschieben mit (so hängt
+eine Rippe an ihrem Blech); wer das nicht will, kopiert. **Spiegeln** löscht
+das Schalen- und Volumennetz der gespiegelten Objekte — die Elemente wären
+umgestülpt —, die Geometrie bleibt, Stabelemente bleiben; danach neu
+vernetzen. Bögen, Kreise, Splines nehmen Mittelpunkt, Normale und
+Steuerpunkte mit. Lager, Lasten und Kontaktbedingungen werden nicht kopiert;
+berührt die Kopie ein anderes Volumen, entsteht der Kontakt von selbst
+(„Kontakte entstehen von selbst“). Alles ist mit Rückgängig zurückzunehmen.
+Geprüft in `tests/test_transformieren.py` und der Oberflächenprüfung.
+
 ### Rückgängig und Wiederholen
 
 **Strg+Z** nimmt die letzte Änderung zurück, **Strg+Y** stellt sie wieder her —
@@ -1494,13 +1618,31 @@ Im Register **Geometrie** stehen zwei Gruppen für die Eingabehilfen - der Fang 
   Rasterweite (0 = kein Raster).
 * **Fang** — ein Klick in der Ansicht wird auf die nächste markante Stelle
   gezogen, in dieser Reihenfolge: **Knoten**, **Kantenmitte** eines Stabes,
-  **Linie** (der Fußpunkt auf der Linie, auch auf einem Bogen), **Stab** (der
-  Fußpunkt auf der Stabachse), **Fläche** (der Punkt auf der Fläche oder
-  Schale unter dem Zeiger, auch auf einem Zylindermantel), **Volumen** (der
-  Punkt auf der Oberfläche eines Körpers), zuletzt der **Rasterpunkt**. Jede
-  Art ist einzeln schaltbar — im Ribbon, in der Glasleiste oder mit
-  Umschalt+F1 … F7; der Hauptschalter (F3) nimmt alles zurück. Die
-  Statusleiste zeigt den Zustand.
+  **Lot** (seit 15.09.2026: der Fußpunkt des Lots vom zuletzt gewählten Knoten
+  oder Punkt der offenen Maske auf eine Linie oder Stabachse — so trifft die
+  nächste Linie rechtwinklig auf eine andere; ohne offene Maske fängt „Lot“
+  nichts), **Linie** (der Fußpunkt auf der Linie, auch auf einem Bogen),
+  **Stab** (der Fußpunkt auf der Stabachse), **Fläche** (der Punkt auf der
+  Fläche oder Schale unter dem Zeiger, auch auf einem Zylindermantel),
+  **Volumen** (der Punkt auf der Oberfläche eines Körpers), zuletzt der
+  **Rasterpunkt**. Jede Art ist einzeln schaltbar — im Ribbon, in der
+  Glasleiste oder mit Umschalt+F1 … F8 (Lot: Umschalt+F8); der Hauptschalter
+  (F3) nimmt alles zurück. Die Statusleiste zeigt den Zustand.
+
+### Lot und Projektion
+
+*Geometrie → Konstruktion → Lot / Projektion* (seit 15.09.2026). Erst die
+Knoten wählen, von denen das Lot fallen soll, dann die Maske rechts:
+
+| Feld | Bedeutung |
+|---|---|
+| Ziel | **Arbeitsebene**; **Ebene einer Fläche** (die Ebene der ebenen Fläche, auch über ihren Umriss hinaus); **Fläche (nächster Punkt)** — der nächste Punkt der Fläche selbst, auch einer gewölbten (Zylindermantel), am Rand der Randpunkt; **Linie (nächster Punkt)** — der nächste Punkt der Linie, Bögen und Splines abgetastet |
+| Objekt | die Fläche oder Linie: Name tippen oder **ins Feld klicken** und in der Ansicht anklicken (orange = scharf; ein anderes Feld oder Esc beendet das) |
+| Ergebnis | **neuer Knoten am Fußpunkt** (die neuen Knoten sind danach gewählt) oder **Knoten dorthin verschieben** — das ist der projizierte Punkt |
+| Lotlinie anlegen | zu jedem neuen Fußpunkt eine Linie vom Quellknoten dorthin |
+
+Geprüft in `tests/test_konstruktion.py` (Lot auf Ebene, Strecken, Kreis,
+ebene und gewölbte Fläche) und der Oberflächenprüfung.
 
 ### Linien: Bogen, Kreis, Spline, Parabel
 
@@ -1519,6 +1661,28 @@ Mit „Stäbe daraus erzeugen" wird die Linie gleich in Stabelemente geteilt —
 Teilung steht in der Maske. Die Linie bleibt als Geometrie erhalten und kennt
 ihre exakte Länge (ein Halbkreis r = 2 m misst 6,283 m, nicht die Länge des
 Sehnenzugs).
+
+### Flächen: eben oder Regelfläche; Flächen verschneiden
+
+Die Flächenmaske (und „Fläche aus Linien“) hat seit 15.09.2026 das Feld
+**Geometrieart**: **eben** — der Rand liegt in einer Ebene — oder
+**Regelfläche (Viereck, gewölbt)**: die Fläche spannt sich zwischen vier
+Randabschnitten auf und darf gewölbt sein, wie der Mantel einer Bohrung,
+einer Buchse oder eines Bolzens (RFEM nennt das Quadrangle). Die Randlinien
+dürfen dabei Bögen oder Splines sein; Bild und Netz kommen aus der
+Coons-Fläche über den vier Seiten. Eine Fläche aus der Quelldatei kann
+außerdem „beschnitten“ sein. Wechselt man die Art einer vernetzten Fläche,
+fällt ihr Netz (es gehörte zur alten Form) — neu vernetzen.
+
+**Flächen verschneiden** (*Struktur → Flächen → Flächen verschneiden*): zwei
+Flächen wählen, der Befehl legt ihre **Schnittlinie** als Polylinie mit neuen
+Knoten an (vorhandene Knoten auf der Linie werden genommen; Zwischenpunkte auf
+einer Geraden entfallen) und wählt sie; die Flächen bleiben, wie sie sind —
+mit der Linie lassen sie sich dann in Teilflächen zerlegen. Verschnitten
+werden die Dreiecke der Flächen, dieselben wie im Bild; darum geht es auch mit
+gewölbten Flächen und Spline-Rändern, auf die Genauigkeit der Abtastung (16
+Abschnitte je Bogen: ein Viertelkreis kommt auf 1 % Bogenlänge). Aufeinander
+liegende Flächen geben keine Linie. Geprüft in `tests/test_verschneiden.py`.
 
 ### Ansichtswürfel
 
@@ -2965,7 +3129,10 @@ Elementtabelle des Drehlagers kostete 61 s bei jedem Modellstand, ihre
 Kennwerte 44 s — jetzt spaltenweise mit numpy; ein Modellstand dauert 22 s
 statt 51 s). Ist das **FE-Netz** ausgeschaltet, zeigt das unverformte
 System nur noch den **Umriss** der Körper (Kanten ab 35°) statt des
-Drahtnetzes.
+Drahtnetzes, und gewählte, aus dem Modellbaum aufleuchtende oder mit der Maus
+überfahrene Flächen und Volumen leuchten **ohne Elementkanten** (seit
+15.09.2026; vorher zeigte die Hervorhebung das Netz auch bei ausgeschaltetem
+Netz).
 
 **Skala und Kennwerte nur für das Sichtbare.** Sind Teile ausgeblendet
 (Sicht → *Selektion anzeigen*, *Auswahl ausblenden*, Schalter der
@@ -3157,8 +3324,9 @@ Strg+Umschalt+C vordere Tabelle kopieren.
 
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
-Maus im Bild: Rad zoomt zum Zeiger, Doppelklick mit der mittleren Taste
-passt alles Sichtbare ein, linke Taste dreht, mittlere schiebt.
+Maus im Bild: Rad zoomt zum Zeiger, linke Taste wählt, gedrückte mittlere
+dreht, gedrückte rechte schiebt (ohne Zug: Kontextmenü), Doppelklick mit der
+mittleren Taste passt alles Sichtbare ein.
 Strg+B übernimmt die Ansicht in den Bericht.
 Esc bricht ab, was gerade mit Fortschrittsbalken und Abbrechen-Knopf läuft
 (Vernetzen, Berechnung, Nachweise, Wind, Wasserdruck) - wie der Knopf

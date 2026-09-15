@@ -511,13 +511,21 @@ def _seiten_des_koerpers_auf(model: Model, koerpernamen, gegen: list,
 
 def kontaktpaare(model: Model) -> set:
     """Koerperpaare, zwischen denen eine Kontaktbedingung eingegeben ist -
-    dort ist die Beruehrung eine Fuge, keine Naht."""
+    dort ist die Beruehrung eine Fuge, keine Naht.
+
+    Eine Bedingung, die in allen drei Richtungen starr ist (kontakte.ist_naht
+    - so entstehen die automatischen Kontakte an jeder Beruehrung, 15.09.2026),
+    zaehlt hier nicht: sie **ist** die Naht.
+    """
+    from .kontakte import ist_naht
     besitzer: dict = {}
     for k in (getattr(model, "koerper", {}) or {}).values():
         for f in k.flaechen:
             besitzer.setdefault(f, k.name)
     paare: set = set()
     for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
+        if ist_naht(kb):
+            continue
         gegen = set(getattr(kb, "gegenkoerper", []) or [])
         gegen |= {besitzer[f] for f in (getattr(kb, "gegenflaechen", []) or []) if f in besitzer}
         for a in kb.koerpernamen:
@@ -538,11 +546,17 @@ def verschweisste_gruppe(model: Model, start, flaechen_der_fuge=()) -> set:
     behielten die Originale und verloren dort den Anschluss (Abnahme:
     "22 doppelte von 42 Knoten", 12.09.2026). Eine Flaeche, die eine
     Kontaktbedingung nennt, verbindet nicht; Paare mit Kontaktbedingung sind
-    keine Nachbarn.
+    keine Nachbarn. Ausgenommen die starre Bedingung in allen Richtungen
+    (kontakte.ist_naht): sie ist die Naht selbst und trennt nichts - sonst
+    loeste jeder automatische Kontakt an einer gemeinsamen Flaeche die
+    Rippen vom Lagerbock (15.09.2026).
     """
+    from .kontakte import ist_naht
     kontakt = kontaktpaare(model)
     tabu = set(flaechen_der_fuge or ())
     for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
+        if ist_naht(kb):
+            continue
         tabu |= set(getattr(kb, "flaechennamen", []) or [])
         tabu |= set(getattr(kb, "gegenflaechen", []) or [])
     besitzer: dict = {}
@@ -597,6 +611,20 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
         return bericht
     if kb.aus:
         bericht["grund"] = "in der Quelldatei deaktiviert"
+        return bericht
+    from .kontakte import ist_verschweisst
+    if ist_verschweisst(model, kb):
+        # Starr an gemeinsamen Flaechen: die Knoten sind schon gemeinsam, es
+        # gibt nichts zu trennen - und nichts zu suchen. Ueber den normalen
+        # Weg fuhr sich so eine Bedingung fest: verschweisste_gruppe holte
+        # ueber den Ring der Rippen den Gegenkoerper selbst herein, und dann
+        # fehlte die Gegenseite ("keine Gegenflaeche im Suchradius", Drehlager
+        # 15.09.2026, 22 von 25 automatischen Kontakten).
+        kb.ausgefuehrt = True
+        bericht["verschweisst"] = len(kb.flaechennamen or [])
+        if log is not None:
+            C.say(log, f"Kontaktbedingung {kb.name}: starr an "
+                       f"{len(kb.flaechennamen or [])} gemeinsamen Flächen - verschweißt, nichts zu trennen")
         return bericht
     flaechen = _seiten_flaechen(model, kb.flaechennamen)
     ueber_gegenseite = False
@@ -663,6 +691,22 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     #: **jeder** Fugenknoten gemeinsam, und die Fuge laesst sich Knoten gegen
     #: Knoten anschreiben. Sonst traegt ein Kontaktpaar die Flaeche.
     passend = len(gemeinsam) == len(fugenknoten)
+    if passend and fugenknoten:
+        from .kontakte import ist_naht
+        if ist_naht(kb):
+            # Starr in allen drei Richtungen und die Netze passen Knoten fuer
+            # Knoten: das ist eine Schweissnaht - Knoten verdoppeln und mit
+            # unendlich steifen Kopplungen wieder verbinden ergaebe dasselbe
+            # Modell mit mehr Unbekannten. Die Knoten bleiben gemeinsam.
+            # (15.09.2026: so entstehen die automatischen Kontakte an jeder
+            # gemeinsamen Flaeche, ohne das Netz zu veraendern.)
+            kb.ausgefuehrt = True
+            bericht["verschweisst"] = len(fugenknoten)
+            if log is not None:
+                C.say(log, f"Kontaktbedingung {kb.name}: starr in allen Richtungen, die Netze passen "
+                           f"Knoten für Knoten - die {len(fugenknoten)} gemeinsamen Knoten bleiben "
+                           "(verschweißt, nichts zu trennen)")
+            return bericht
 
     # ---- 3) Normalen und Einflussflaechen ------------------------------
     # Die Richtung des Spaltelements zeigt vom bleibenden Knoten zum geloesten,

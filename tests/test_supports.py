@@ -471,6 +471,21 @@ def test_lagersymbolik():
     pruefe("Symbole haben eine Grundplatte mit Schraffur (mehr Punkte als die blosse Pyramide)",
           g.n_points > 200 and g2.n_points > 100 and float(g.bounds[4]) < -0.2,
           f"{g.n_points} / {g2.n_points} Punkte, unten bis {g.bounds[4]:.3f} m")
+    # Aus dem Speicher (15.09.2026): am Drehlager baute jedes Neuzeichnen - also
+    # jeder Auswahlklick - die Symbole aus bis zu zwoelf Koerpern neu, 0,12 s
+    import time
+    key = vp.lager_symbol(gelenk)
+    t0 = time.perf_counter()
+    erst = vp.lagerglyph(key, 0.1234567)
+    t1 = time.perf_counter()
+    zweit = vp.lagerglyph(key, 0.1234567)
+    t2 = time.perf_counter()
+    pruefe("dasselbe Symbol ein zweites Mal kommt aus dem Speicher - mindestens fünfmal schneller",
+          (t2 - t1) * 5 < (t1 - t0), f"{(t1 - t0) * 1e3:.2f} ms gebaut, {(t2 - t1) * 1e3:.2f} ms geholt")
+    zweit.points = zweit.points + 1.0
+    dritt = vp.lagerglyph(key, 0.1234567)
+    pruefe("… als Kopie: wer sie verändert, verfälscht den Speicher nicht",
+          np.allclose(dritt.points, erst.points) and dritt.n_points == erst.n_points)
 
 
 def main():
