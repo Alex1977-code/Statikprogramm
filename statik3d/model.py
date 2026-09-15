@@ -2041,13 +2041,16 @@ class Volumenkoerper:
 
 
 def _polygoninhalt(P) -> float:
-    """Flaecheninhalt eines ebenen Vielecks im Raum (Newell-Formel)."""
+    """Flaecheninhalt eines ebenen Vielecks im Raum (Newell-Formel).
+
+    Im Block, nicht Punkt fuer Punkt: am Drehlager lief die Schleife bei
+    jeder Aktualisierung der Tabellen 201 157-mal durch np.cross und kostete
+    6,8 von 18,9 s (15.09.2026, "Grafik muss schneller sein").
+    """
     P = np.asarray(P, float)
     if len(P) < 3:
         return 0.0
-    n = np.zeros(3)
-    for a, b in zip(P, np.roll(P, -1, axis=0)):
-        n += np.cross(a, b)
+    n = np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
     return float(np.linalg.norm(n)) / 2.0
 
 

@@ -318,17 +318,26 @@ def main():
           f"{grenzen['My'][2]:.6g} / {my:.6g} Nm")
     check("und es steht der Stab dabei, nicht nur die Zahl",
           grenzen["My"][3] in range(len(w.model.elements)), str(grenzen["My"][3]))
-    w.cb_diagram.setCurrentText("My"); app.processEvents()
+    # Seit 15.09.2026 stehen nur die Werte des gewaehlten Ergebnisses im Bild:
+    # die Faerbung wird darum ausdruecklich gewaehlt und danach zurueckgestellt
+    feld_vorher = w.cb_field.currentText()
+    w.cb_diagram.setCurrentText("My")
+    w.cb_field.setCurrentText("|u| Verschiebung"); app.processEvents()
     zeilen = w._kennwerte_zeichnen(r)
     text = "\n".join(zeilen)
-    check("Kennwerte im Bild: größte Verformung mit Knoten",
-          any(z.startswith("u ") and "Knoten" in z for z in zeilen)
-          and any(z.startswith("uz") for z in zeilen),
-          zeilen[1] if len(zeilen) > 1 else "-")
+    check("Kennwerte im Bild: zur Färbung |u| die größte Verformung mit Knoten",
+          any(z.startswith("u ") and "Knoten" in z for z in zeilen),
+          zeilen[0] if zeilen else "-")
     check("Kennwerte im Bild: nur die gewählte Schnittgröße",
           any(z.startswith("My ") for z in zeilen)
           and not any(z.startswith("Vz ") for z in zeilen), text[:80])
+    w.cb_field.setCurrentText("uz"); app.processEvents()
+    zeilen_uz = w._kennwerte_zeichnen(r)
+    check("… zur Färbung uz die Zeile uz", any(z.startswith("uz") for z in zeilen_uz), str(zeilen_uz[:2]))
+    w.cb_field.setCurrentText("Ausnutzung EC3"); app.processEvents()
+    zeilen = w._kennwerte_zeichnen(r)
     ausn = next((z for z in zeilen if "Ausnutzung" in z), "")
+    w.cb_field.setCurrentText(feld_vorher); app.processEvents()
     stab = next(iter(w.model.members), "")
     check("Kennwerte im Bild: größte Ausnutzung mit Ort",
           "max. Ausnutzung" in ausn and " an " in ausn, ausn or "-")
@@ -4313,6 +4322,25 @@ def main():
         w.act_edges.setChecked(False); app.processEvents()
         check("FE-Netz aus: die Netzknoten verschwinden mit dem Netz, der Schalter bleibt an",
               n_punkte_("netzknoten") == 0 and w.act_netzknoten.isChecked())
+        # --- FE-Netz aus: auch die Hervorhebung ohne Elementkanten (15.09.2026:
+        # „wenn Netz ausgeschaltet, dann auch nicht anzeigen, wenn Volumen oder
+        # Fläche selektiert ist oder aufleuchtet") ---
+        w.sel_flaechen = ["F1"]; w.redraw(); app.processEvents()
+        hv_ = dict(w.plotter.renderer.actors).get("auswahl_elemente")
+        check("FE-Netz aus: die gewählte Fläche leuchtet ohne Elementkanten",
+              hv_ is not None and not hv_.GetProperty().GetEdgeVisibility(),
+              "kein Darsteller" if hv_ is None else f"Kanten {hv_.GetProperty().GetEdgeVisibility()}")
+        w.act_edges.setChecked(True); w.redraw(); app.processEvents()
+        hv_ = dict(w.plotter.renderer.actors).get("auswahl_elemente")
+        check("… FE-Netz an: mit Elementkanten",
+              hv_ is not None and bool(hv_.GetProperty().GetEdgeVisibility()))
+        w.act_edges.setChecked(False); app.processEvents()
+        w._hover_zeichnen(("Fläche", "F1"), [int(e) for e in fk_.elemente]); app.processEvents()
+        ho_ = dict(w.plotter.renderer.actors).get("hover")
+        check("… und beim Überfahren mit der Maus ebenso ohne Kanten",
+              ho_ is not None and not ho_.GetProperty().GetEdgeVisibility(),
+              "kein Darsteller" if ho_ is None else f"Kanten {ho_.GetProperty().GetEdgeVisibility()}")
+        w.plotter.remove_actor("hover", render=False); w.sel_flaechen = []
         w.act_edges.setChecked(True); w.act_netzknoten.setChecked(False); app.processEvents()
 
         # --- Flaechenlasten als Flaeche erkennbar: durchscheinende Lastflaeche an den Pfeilenden ---
@@ -4989,6 +5017,9 @@ def main():
         app.processEvents()
         check("Selektion anzeigen blendet den Rest aus",
               w.versteckt["elemente"] == alle - elems, str(len(w.versteckt["elemente"])))
+        check("… und hebt die Auswahl danach auf - die Aufgabe ist erledigt (15.09.2026)",
+              not w.sel_staebe and not len(w.selection) and not w.sel_elemente,
+              f"Stäbe {w.sel_staebe}, Knoten {len(w.selection)}")
         stabknoten = {int(n) for e in elems for n in w.model.elements[e].nodes}
         akt = dict(w.plotter.renderer.actors)
         punkte = np.asarray(akt["knoten"].GetMapper().GetInput().points) if "knoten" in akt else np.zeros((0, 3))
@@ -5062,10 +5093,25 @@ def main():
         check("die Kennwerte stehen unten links",
               kw is not None and kw.GetPosition()[1] < 30 and kw.GetPosition()[0] < 30,
               str(kw.GetPosition() if kw is not None else None))
-        check("Kennwerte nennen Auflagerkräfte und Verdrehungen",
-              any(z.startswith("Rz") for z in w._kennwerte_zeilen)
-              and any(z.startswith("phiy") for z in w._kennwerte_zeilen),
-              str(w._kennwerte_zeilen[:3]))
+        # Nur die Werte des gewaehlten Ergebnisses (15.09.2026)
+        check("Kennwerte nennen nur, was gewählt ist: Ausnutzung EC3 und der Verlauf My",
+              any(z.startswith("max. Ausnutzung") for z in w._kennwerte_zeilen)
+              and any(z.startswith("My ") for z in w._kennwerte_zeilen)
+              and not any(z.startswith(("Rz", "phiy", "u ", "uz", "sig_v", "N ")) for z in w._kennwerte_zeilen),
+              str(w._kennwerte_zeilen))
+        w.cb_diagram.setCurrentText("kein Verlauf")
+        w.cb_field.setCurrentText("uz")
+        app.processEvents()
+        check("… Färbung uz ohne Verlauf: allein die Zeile uz",
+              [z.split()[0] for z in w._kennwerte_zeilen if z != "nur sichtbare Teile"] == ["uz"],
+              str(w._kennwerte_zeilen))
+        w.cb_field.setCurrentText("keine Färbung")
+        app.processEvents()
+        check("… keine Färbung und kein Verlauf: keine Kennwerte",
+              not [z for z in w._kennwerte_zeilen if z != "nur sichtbare Teile"], str(w._kennwerte_zeilen))
+        w.cb_field.setCurrentText("Ausnutzung EC3")
+        w.cb_diagram.setCurrentText("My")
+        app.processEvents()
         skalen = w.plotter.scalar_bars
         namen = list(skalen.keys())
         check("Farbskalen stehen senkrecht am rechten Rand",
@@ -6449,17 +6495,27 @@ def main():
         menues_ = []
         alt_menu = w._viewport_menu
         w._viewport_menu = lambda p: menues_.append(QtCore.QPoint(p))
+        # 15.09.2026: „bei gedrückter mittlerer Maustaste soll gedreht werden",
+        # „gedrückte rechte Maustaste und halten soll schieben sein"
+        # (VTKIS_ROTATE = 1, VTKIS_PAN = 2)
+        maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.MiddleButton, QtCore.Qt.MiddleButton)
+        check("die mittlere Taste versetzt VTK ins Drehen", stil_.GetState() == 1,
+              f"Zustand {stil_.GetState()} (Drehen 1, Schieben 2)")
+        maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(30, 0),
+              QtCore.Qt.MiddleButton, QtCore.Qt.NoButton)
+        check("beim Loslassen der mittleren Taste endet das Drehen, ohne Menü",
+              stil_.GetState() == ruhe_ and not menues_, f"Zustand {stil_.GetState()}, {len(menues_)} Menüs")
         maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.RightButton, QtCore.Qt.RightButton)
-        check("die rechte Taste versetzt VTK ins Drehen", stil_.GetState() != ruhe_,
-              f"Zustand {stil_.GetState()} (Ruhe {ruhe_})")
+        check("die rechte Taste versetzt VTK ins Schieben", stil_.GetState() == 2,
+              f"Zustand {stil_.GetState()} (Drehen 1, Schieben 2)")
         maus_(QtCore.QEvent.MouseButtonRelease, mitte_, QtCore.Qt.RightButton, QtCore.Qt.NoButton)
-        check("beim Loslassen ohne Zug endet das Drehen und das Menü kommt",
+        check("beim Loslassen ohne Zug endet das Schieben und das Menü kommt",
               stil_.GetState() == ruhe_ and len(menues_) == 1,
               f"Zustand {stil_.GetState()}, {len(menues_)} Menüs")
         maus_(QtCore.QEvent.MouseButtonPress, mitte_, QtCore.Qt.RightButton, QtCore.Qt.RightButton)
         maus_(QtCore.QEvent.MouseButtonRelease, mitte_ + QtCore.QPoint(40, 10),
               QtCore.Qt.RightButton, QtCore.Qt.NoButton)
-        check("mit Zug (gedreht) kommt kein Menü", len(menues_) == 1, f"{len(menues_)} Menüs")
+        check("mit Zug (geschoben) kommt kein Menü", len(menues_) == 1, f"{len(menues_)} Menüs")
         w._viewport_menu = alt_menu
         w._picked = alt_picked
 
@@ -6552,10 +6608,12 @@ def main():
               str((w.tbl_knoten.kopfzeile()[:2], mk_.data(mk_.index(1, 1)), w._kopfzeile_zeilen)))
         an_ = solver.solve_all(m_, design=True)
         w._solve_done("all", an_)
+        w.cb_field.setCurrentText("|u| Verschiebung")
+        w.cb_diagram.setCurrentText("kein Verlauf")
         app.processEvents()
-        check("Kennwerte unten links: u in [mm], Rz in [kN]",
+        check("Kennwerte unten links: u in [mm] - und nur u, weil |u| gewählt ist",
               any(z.startswith("u ") and "[mm]" in z for z in w._kennwerte_zeilen)
-              and any(z.startswith("Rz") and "[kN]" in z for z in w._kennwerte_zeilen),
+              and not any(z.startswith(("Rz", "ux", "sig_v")) for z in w._kennwerte_zeilen),
               str(w._kennwerte_zeilen[:3]))
         rk_ = w.tbl_react.modell
         # Auflagerkraefte stehen als „min / max“-Paar (Umhuellende) oder als Zahl
@@ -6590,10 +6648,9 @@ def main():
               csv_[0].startswith("Knoten;Rx [N];Ry [N];Rz [N];Mx [Nmm]")
               and abs(float(csv_[1].split(";")[3].split("/")[0].replace(",", ".")) - rz_kN * 1000) < 1e-6,
               str(csv_[:2]))
-        check("Lasten oben links in [N, N/mm], Kennwerte u in [cm], Rz in [N]",
+        check("Lasten oben links in [N, N/mm], Kennwerte u in [cm]",
               any("[N, N/mm]" in z for z in w._kopfzeile_zeilen)
-              and any(z.startswith("u ") and "[cm]" in z for z in w._kennwerte_zeilen)
-              and any(z.startswith("Rz") and "[N]" in z for z in w._kennwerte_zeilen),
+              and any(z.startswith("u ") and "[cm]" in z for z in w._kennwerte_zeilen),
               str((w._kopfzeile_zeilen, w._kennwerte_zeilen[:2])))
         ok_ = mk_.setData(mk_.index(1, 1), "4500", QtCore.Qt.EditRole)
         check("Eingabe in der Tabelle in mm: 4500 -> Knoten x = 4,5 m",
@@ -7170,6 +7227,8 @@ def main():
         check("und lässt sich isolieren statt „Erst etwas auswählen“",
               not gemeldet and "X1" in w.versteckt["linien"],
               str(gemeldet)[:70] or str(sorted(w.versteckt["linien"]))[:70])
+        check("… danach ist auch die gewählte Fläche abgewählt",
+              not w.sel_flaechen and not w.sel_koerper, f"{w.sel_flaechen} / {w.sel_koerper}")
         w.alles_zeigen()
         w.error = lambda msg: None
         w.new_model()

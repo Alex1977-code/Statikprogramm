@@ -378,10 +378,53 @@ def test_kreisflaeche_aus_zwei_boegen():
         check("ein offener Rand wird abgewiesen", "geschlossen" in str(ex), str(ex))
 
 
+def test_flaecheninhalt_im_block():
+    """Der Flaecheninhalt (Newell) wird im Block gerechnet, nicht Punkt fuer
+    Punkt.
+
+    Am Drehlager (1375 Flaechen, 646 376 Elemente) lief die Schleife bei jeder
+    Aktualisierung der Tabellen 201 157-mal durch np.cross und kostete 6,8 von
+    18,9 s (15.09.2026, „Grafik muss schneller sein"). Geprueft: dasselbe
+    Ergebnis wie die Schleife an Zufallsvielecken im Raum, und ein Vieleck mit
+    50 000 Punkten in unter 0,1 s - die Schleife brauchte dafuer rund 0,8 s.
+    """
+    import time
+    from statik3d.model import _polygoninhalt
+
+    def schleife(P):
+        n = np.zeros(3)
+        for a, b in zip(P, np.roll(P, -1, axis=0)):
+            n += np.cross(a, b)
+        return float(np.linalg.norm(n)) / 2.0
+
+    rng = np.random.default_rng(3)
+    abw = 0.0
+    for k in range(50):
+        n = int(rng.integers(3, 200))
+        w = np.sort(rng.uniform(0, 2 * np.pi, n))
+        r = rng.uniform(0.5, 3.0, n)
+        P = np.column_stack([r * np.cos(w), r * np.sin(w), np.zeros(n)])
+        # beliebig im Raum gedreht und verschoben
+        q, _ = np.linalg.qr(rng.normal(size=(3, 3)))
+        P = P @ q.T + rng.normal(size=3) * 10
+        soll = schleife(P)
+        abw = max(abw, abs(_polygoninhalt(P) - soll) / max(soll, 1e-30))
+    check("im Block dasselbe wie Punkt für Punkt (50 Zufallsvielecke im Raum)",
+          abw < 1e-12, f"größte relative Abweichung {abw:.1e}")
+    w = np.linspace(0, 2 * np.pi, 50000, endpoint=False)
+    P = np.column_stack([np.cos(w), np.sin(w), np.zeros_like(w)])
+    t0 = time.perf_counter()
+    A = _polygoninhalt(P)
+    dt = time.perf_counter() - t0
+    check("50 000 Punkte in unter 0,1 s (Punkt für Punkt rund 0,8 s)", dt < 0.1, f"{dt * 1e3:.1f} ms")
+    close("… und der Inhalt ist der Kreis", A, np.pi, 1e-6, " m^2")
+
+
 def main():
     for t in (test_flaeche_aus_linien, test_koerper_aus_flaechen,
               test_gekruemmter_rand, test_bericht_uebernahme,
-              test_rand_zusammensetzen, test_kreisflaeche_aus_zwei_boegen):
+              test_rand_zusammensetzen, test_kreisflaeche_aus_zwei_boegen,
+              test_flaecheninhalt_im_block):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

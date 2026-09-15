@@ -286,8 +286,9 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         # Rechtsklick: Kontextmenue zu dem, was unter dem Zeiger liegt. Es
         # oeffnet erst beim **Loslassen** ohne Ziehbewegung (:meth:`_rechts_los`) -
-        # die rechte Taste dreht seit Befund N die Ansicht, und wer dreht, will
-        # kein Menue. Qt darf es darum nicht selbst aufziehen.
+        # die gedrueckte rechte Taste schiebt die Ansicht (seit 15.09.2026;
+        # davor drehte sie), und wer schiebt, will kein Menue. Qt darf es darum
+        # nicht selbst aufziehen.
         try:
             self.plotter.interactor.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
         except Exception:
@@ -334,17 +335,27 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
                         self._links_unten = True
                         return True         # links dreht nicht mehr
+                    if ereignis.button() == QtCore.Qt.MiddleButton:
+                        # gedrueckte mittlere Taste dreht (15.09.2026); VTK
+                        # sieht den Druck nicht, sonst schoebe es wie von Haus aus
+                        self._mitte_unten = True
+                        self._drehen_beginnen()
+                        return True
                     if ereignis.button() == QtCore.Qt.RightButton:
                         if self._fenster_ecke is not None:
                             self._fenster_abschliessen(pos)
                             return True
                         self._rechts_start = QtCore.QPoint(int(pos.x()), int(pos.y()))
-                        self._drehen_beginnen()
+                        self._schieben_beginnen()
                         return True
                 elif t == QtCore.QEvent.MouseButtonRelease:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     if ereignis.button() == QtCore.Qt.LeftButton:
                         self._links_los(pos)
+                        return True
+                    if ereignis.button() == QtCore.Qt.MiddleButton:
+                        self._mitte_unten = False
+                        self._drehen_enden()
                         return True
                     if ereignis.button() == QtCore.Qt.RightButton:
                         self._rechts_los(pos)
@@ -356,7 +367,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         return True
                     if self._fenster_ecke is not None:
                         self._fenster_nachziehen(pos)
-                    elif getattr(self, "_rechts_start", None) is None:
+                    elif getattr(self, "_rechts_start", None) is None \
+                            and not getattr(self, "_mitte_unten", False):
                         self._hover_anstossen(pos)
                 elif t == QtCore.QEvent.Leave:
                     self._hover_aus()
@@ -408,24 +420,41 @@ class MainWindow(QtWidgets.QMainWindow):
             self._klick_umschalt = False
 
     def _drehen_beginnen(self) -> None:
-        """Die rechte Taste dreht - VTK macht es selbst, mit seiner Traegheit.
+        """Die gedrueckte mittlere Taste dreht - VTK macht es selbst.
 
         Statt die Tasten im Qt-Filter umzubiegen, wird der Trackball-Stil in
         den Drehzustand versetzt; die folgenden Mausbewegungen gehen
         unveraendert an VTK, und ``OnMouseMove`` dreht. So bleibt das Gefuehl
         genau das von VTK, und der Filter muss die Bewegung nicht anfassen.
+        Bis zum 15.09.2026 drehte die rechte Taste und die mittlere schob
+        („bei gedrückter mittlerer Maustaste soll gedreht werden").
         """
         try:
             self.plotter.iren.style.StartRotate()
         except Exception:                   # noqa: BLE001 - dann dreht es eben nicht
             pass
 
+    def _drehen_enden(self) -> None:
+        try:
+            self.plotter.iren.style.EndRotate()
+        except Exception:                   # noqa: BLE001
+            pass
+
+    def _schieben_beginnen(self) -> None:
+        """Die gedrueckte rechte Taste schiebt - derselbe Weg wie beim Drehen,
+        nur im Schiebezustand von VTK („gedrückte rechte Maustaste und halten
+        soll schieben sein", 15.09.2026)."""
+        try:
+            self.plotter.iren.style.StartPan()
+        except Exception:                   # noqa: BLE001
+            pass
+
     def _rechts_los(self, pos) -> None:
-        """Rechte Taste losgelassen: Drehen beenden, ohne Zug das Menue."""
+        """Rechte Taste losgelassen: Schieben beenden, ohne Zug das Menue."""
         start = getattr(self, "_rechts_start", None)
         self._rechts_start = None
         try:
-            self.plotter.iren.style.EndRotate()
+            self.plotter.iren.style.EndPan()
         except Exception:                   # noqa: BLE001
             pass
         if start is None:
@@ -2134,7 +2163,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 teil = vp.teilnetz(m, elemente)
                 if teil.n_cells > 2000:
                     teil = teil.extract_surface()
-                pl.add_mesh(teil, color=self.FARBE_HOVER, opacity=0.7, show_edges=True,
+                # Kanten nur, wenn das FE-Netz an ist (15.09.2026)
+                pl.add_mesh(teil, color=self.FARBE_HOVER, opacity=0.7,
+                            show_edges=self.act_edges.isChecked(),
                             edge_color="#a08000", line_width=3, name="hover")
         except Exception:                    # noqa: BLE001 - eine Hervorhebung darf nie sperren
             pass
@@ -8746,6 +8777,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         self._raender_stand = None
         self._inhalte_stand = None
+        self._stabnummern_stand = None
         if not hasattr(self, "tbl_knoten"):
             return
         # Knoten - im Block: bei 95 000 Knoten und 490 000 Elementen darf der
@@ -15741,7 +15773,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 if teil.n_cells > 2000:
                     # grosse Koerper: nur ihre Oberflaeche leuchtet
                     teil = teil.extract_surface()
-                pl.add_mesh(teil, color="#ff8800", opacity=0.85, show_edges=True,
+                # Die Elementkanten folgen dem Schalter FE-Netz: ist das Netz
+                # aus, leuchtet die Flaeche oder das Volumen ohne Netz auf
+                # (15.09.2026, „wenn Netz ausgeschaltet, dann auch nicht
+                # anzeigen, wenn Volumen oder Fläche selektiert ist")
+                pl.add_mesh(teil, color="#ff8800", opacity=0.85,
+                            show_edges=self.act_edges.isChecked(),
                             edge_color="#c05000", line_width=5, name=name)
             except Exception as ex:      # noqa: BLE001
                 self.log.appendPlainText(f"Hervorhebung: {ex}")
@@ -15990,6 +16027,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self._kamera_setzen(kamera)
         self.plotter.render()
 
+    def _stabnummern_zum_zeichnen(self, m) -> list:
+        """Die Nummern der Stabelemente fuers Zeichnen - einmal je Modellstand.
+
+        Die Suche lief bei jedem Zeichnen ueber alle Elemente: am Drehlager
+        646 376 Tetraeder fuer keinen einzigen Stab, 0,15 von 0,39 s je
+        Auswahlklick (15.09.2026). ``refresh_modelltabellen`` vergisst die
+        Liste, wenn sich am Modell etwas geaendert haben kann.
+        """
+        stand = (id(m), len(m.elements))
+        if getattr(self, "_stabnummern_stand", None) != stand:
+            self._stabnummern_stand = stand
+            self._stabnummern_zwischen = [i for i, e in enumerate(m.elements)
+                                          if e.typ in vp.TYPEN_STAEBE]
+        return self._stabnummern_zwischen
+
     def _anzeigemodell(self):
         """Das Modell, das die Ansicht zeigt: bei einem Ergebnis aus einer
         Situation mit Stellung die gedrehte Kopie, mit der gerechnet wurde -
@@ -16049,9 +16101,9 @@ class MainWindow(QtWidgets.QMainWindow):
             ausser |= {int(i) for i in (getattr(r, "info", None) or {}).get("inaktiv", [])}
         koerper_elems: list = []
         if staebe_an and modus in vp.KOERPERLICH:
-            koerper_elems = [i for i, e in enumerate(m.elements)
-                             if e.typ in vp.TYPEN_STAEBE and i not in ausser
-                             and e.sec and e.sec in m.sections]
+            koerper_elems = [i for i in self._stabnummern_zum_zeichnen(m)
+                             if i not in ausser and m.elements[i].sec
+                             and m.elements[i].sec in m.sections]
         grid, kidx = self._gitter(typen, ausser | set(koerper_elems))
         netze = []
         if grid.n_cells:
@@ -16637,23 +16689,25 @@ class MainWindow(QtWidgets.QMainWindow):
         """Die Kennzahlen des Ergebnisses als Text unten links in die Ansicht.
 
         Sie gehoeren ins **Bild**, nicht nur in eine Tabelle: wer eine Ansicht
-        in den Bericht uebernimmt, hat die Zahlen damit gleich dabei - groesste
-        Ausnutzung, kleinste und groesste Verformung, Verdrehung,
-        Schnittgroesse, Auflagerkraft und Spannung, jeweils mit dem Ort. Die
-        Farbskalen stehen rechts, damit sich nichts ueberdeckt.
+        in den Bericht uebernimmt, hat die Zahlen damit gleich dabei, jeweils
+        mit dem Ort. Es stehen nur die Werte des **gewaehlten** Ergebnisses da
+        - der Faerbung und eines gewaehlten Schnittgroessenverlaufs -, nicht
+        mehr alles zugleich (15.09.2026). Die Farbskalen stehen rechts, damit
+        sich nichts ueberdeckt.
         """
         zeigen = getattr(self, "act_kennwerte", None) is None or self.act_kennwerte.isChecked()
         if r is None or not zeigen:
             self._kennwerte_zeilen = []
             return []
         try:
-            # Die Ausnutzung gehoert immer dazu - auch wenn gerade nach der
-            # Verformung eingefaerbt wird. Sonst muesste man erst umschalten,
-            # um die Zahl zu sehen, nach der zuerst gefragt wird.
             sicht = self._sichtbare_knoten()
             elemente = None if sicht is None else self._elemente_ganz_in(sicht)
-            zeilen = vp.kennwerte(self.model, r, self._ausnutzung_map(),
-                                  self.cb_diagram.currentText(), knoten=sicht, elemente=elemente)
+            feld = self.cb_field.currentText()
+            seite = str(self.cb_seite.currentData() or "max") if getattr(self, "cb_seite", None) else "max"
+            # dieselbe Ausnutzung wie die Faerbung
+            zeilen = vp.kennwerte(self.model, r, self._util_map(feld),
+                                  self.cb_diagram.currentText(), knoten=sicht, elemente=elemente,
+                                  feld=feld, seite=seite)
             if sicht is not None and zeilen:
                 zeilen.insert(0, "nur sichtbare Teile")
         except Exception as ex:             # noqa: BLE001
@@ -17180,6 +17234,11 @@ class MainWindow(QtWidgets.QMainWindow):
         einem gewaehlten Koerper also auch die Staebe, Linien, Flaechen und
         Knoten des Restmodells samt ihren Lagern und Lasten. Knoten bleiben
         nur, wenn sie gewaehlt sind oder an einem sichtbaren Teil haengen.
+
+        Danach ist die Auswahl erledigt und wird aufgehoben - wie bei
+        „Auswahl ausblenden“ (15.09.2026: „danach automatisch deselektieren,
+        da Aufgabe erledigt“). Sonst leuchtete das isolierte Teil orange
+        weiter, und der naechste Befehl wirkte noch auf die alte Auswahl.
         """
         m = self.model
         elems = self._ausgewaehlte_elemente()
@@ -17216,6 +17275,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              (len(flaechen), "Flächen"), (len(linien), "Linien"),
                                              (len(knoten), "Knoten"))
                  if n]
+        self._auswahl_leeren()
         self.info("Nur die Selektion im Bild (" + ", ".join(teile) + ") - "
                   "„Alles zeigen“ holt den Rest zurück")
         self.redraw()

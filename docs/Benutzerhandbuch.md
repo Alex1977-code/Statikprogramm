@@ -813,13 +813,16 @@ Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
 Grenzwerten daneben; ein Klick stellt den Verlauf in der Ansicht ein, „kein
 Verlauf" blendet ihn wieder aus.
 
-**Kennwerte im Bild.** Links oben in der Ansicht stehen die Zahlen, nach denen
-zuerst gefragt wird: größte Verformung mit Knoten, kleinste und größte
-Verformung je Richtung, kleinste und größte Schnittgröße mit dem Stab, an dem
-sie auftritt, die größte Ausnutzung mit ihrem Ort und die größte
-Vergleichsspannung. Steht ein Schnittgrößenverlauf an, wird nur diese Größe
-ausgeschrieben, sonst alle sechs. Der Text gehört zum Bild und kommt darum mit
-in den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
+**Kennwerte im Bild.** Unten links in der Ansicht stehen die Zahlen des
+**gewählten Ergebnisses** (seit 15.09.2026; vorher alles zugleich): zur Färbung
+|u| die größte Verformung mit Knoten, zu ux, uy oder uz die kleinste und
+größte Verformung dieser Richtung, zur Vergleichsspannung die größte mit
+Knoten, zu einer Ausnutzung die größte mit ihrem Ort, zu einer
+Spannungsgröße (Volumen, Flächen, Stäbe, Kontakt) ihr kleinster und größter
+Wert mit Knoten in der Einheit der Farbskala. Steht ein Schnittgrößenverlauf
+an, kommt diese Schnittgröße mit dem Stab dazu. Bei *keine Färbung* ohne
+Verlauf bleibt die Ecke leer. Der Text gehört zum Bild und kommt darum mit in
+den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
 Kennwerte im Bild*.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
@@ -1048,7 +1051,10 @@ anzeigen* blendet **alles andere** aus — ist nur ein Volumen gewählt,
 verschwinden auch die Stäbe, Linien, Flächen und Knoten des Restmodells samt
 ihren Lagern und Lasten. Knoten bleiben nur im Bild, wenn sie gewählt sind
 oder an einem sichtbaren Teil hängen; die Netzknoten eines ausgeblendeten
-Körpers gehen mit ihm. *Vorherige Sicht* nimmt den letzten Schritt
+Körpers gehen mit ihm. Beide Befehle heben die Auswahl danach auf — die
+Aufgabe ist erledigt, das isolierte Teil leuchtet nicht weiter, und der
+nächste Befehl wirkt nicht mehr auf die alte Auswahl (*Selektion anzeigen*
+seit 15.09.2026). *Vorherige Sicht* nimmt den letzten Schritt
 zurück (bis zu zwanzig Schritte), *Alles zeigen* holt alles wieder her. Die
 Ausblendung ist nur eine Sicht — am Modell und an der Berechnung ändert sie
 nichts. Ein neues Netz oder ein anderes Modell hebt sie auf. Ein
@@ -1075,10 +1081,10 @@ im Bild).
 **Texte im Bild.** Oben links steht, was die Ansicht zeigt: ohne Ergebnis der
 aktive Lastfall mit seiner Lastzahl, mit Ergebnis der Lastfall, die
 Kombination oder die Umhüllende samt Färbung, Schnittgrößenverlauf und
-Überhöhung. Unten links stehen die **Kennwerte**: Verformungen und
-Verdrehungen (min/max mit Knoten), Schnittgrößen (min/max mit Stab),
-Auflagerkräfte (min/max mit Knoten), die größte Vergleichsspannung und die
-größte Ausnutzung. Die Farbskalen stehen rechts, das Achsenkreuz unten
+Überhöhung. Unten links stehen die **Kennwerte** des gewählten Ergebnisses
+(Färbung und Schnittgrößenverlauf, siehe *Kennwerte im Bild*); Auflagerkräfte
+stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts, das
+Achsenkreuz unten
 rechts; der Schalter „Kennwerte im Bild" im Register *Ergebnisse* nimmt die
 Texte weg. Beides kommt so auch in den Bericht.
 
@@ -1310,9 +1316,12 @@ noch.
 | Taste | tut |
 |---|---|
 | **links** | wählen (Klick) und das **Auswahlfenster** aufziehen (ziehen) |
-| **rechts** | **drehen**; ohne Ziehbewegung das Kontextmenü |
+| **Mitte** gedrückt halten | **drehen**; Doppelklick passt alles Sichtbare ins Bild |
+| **rechts** gedrückt halten | **schieben**; ohne Ziehbewegung das Kontextmenü |
 | **Mausrad** | zoomen, auf die Fläche unter dem Zeiger zu; die Drehmitte folgt |
-| **Mitte** | schwenken; Doppelklick passt alles Sichtbare ins Bild |
+
+Seit 15.09.2026 dreht die mittlere und schiebt die rechte Taste; vorher war
+es umgekehrt.
 
 Die linke Taste dreht **nicht** mehr — sie gehört ganz der Auswahl. Dadurch
 gibt es keinen Fall mehr, in dem eine Zeigerbewegung mal dreht und mal ein
@@ -1412,8 +1421,8 @@ wird aus kNm Nmm, aus kN/m N/mm und aus kN/m² N/mm². Die Einstellung wirkt
 auf
 
 * die **Lastwerte** an den Lasten und die Einheitenzeile oben links,
-* die **Kennwerte** unten links (Verformung, Schnittgrößen, Auflagerkräfte,
-  Vergleichsspannung, Ausnutzung),
+* die **Kennwerte** unten links (Verformung, Schnittgrößen, Vergleichsspannung,
+  Ausnutzung - je nach gewähltem Ergebnis),
 * alle **Tabellen** unten: Kopfzeile, Zellen, Filter, Sortierung, Max/Min-Zeile,
   Zwischenablage, CSV und Excel. Bearbeitbare Zahlen (Knotenkoordinaten,
   Streckgrenze …) werden in der angezeigten Einheit eingegeben und in der
@@ -2965,7 +2974,10 @@ Elementtabelle des Drehlagers kostete 61 s bei jedem Modellstand, ihre
 Kennwerte 44 s — jetzt spaltenweise mit numpy; ein Modellstand dauert 22 s
 statt 51 s). Ist das **FE-Netz** ausgeschaltet, zeigt das unverformte
 System nur noch den **Umriss** der Körper (Kanten ab 35°) statt des
-Drahtnetzes.
+Drahtnetzes, und gewählte, aus dem Modellbaum aufleuchtende oder mit der Maus
+überfahrene Flächen und Volumen leuchten **ohne Elementkanten** (seit
+15.09.2026; vorher zeigte die Hervorhebung das Netz auch bei ausgeschaltetem
+Netz).
 
 **Skala und Kennwerte nur für das Sichtbare.** Sind Teile ausgeblendet
 (Sicht → *Selektion anzeigen*, *Auswahl ausblenden*, Schalter der
@@ -3157,8 +3169,9 @@ Strg+Umschalt+C vordere Tabelle kopieren.
 
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
-Maus im Bild: Rad zoomt zum Zeiger, Doppelklick mit der mittleren Taste
-passt alles Sichtbare ein, linke Taste dreht, mittlere schiebt.
+Maus im Bild: Rad zoomt zum Zeiger, linke Taste wählt, gedrückte mittlere
+dreht, gedrückte rechte schiebt (ohne Zug: Kontextmenü), Doppelklick mit der
+mittleren Taste passt alles Sichtbare ein.
 Strg+B übernimmt die Ansicht in den Bericht.
 Esc bricht ab, was gerade mit Fortschrittsbalken und Abbrechen-Knopf läuft
 (Vernetzen, Berechnung, Nachweise, Wind, Wasserdruck) - wie der Knopf

@@ -1455,7 +1455,27 @@ def _achsen_rahmen(u) -> np.ndarray:
     return _drehung_auf(u)
 
 
+#: Fertige Lagersymbole je (Schluessel, Grundmass, Richtung). Jedes Symbol
+#: entsteht aus bis zu zwoelf pyvista-Koerpern (Wuerfel, Kegel, Zylinder der
+#: Schraffur); am Drehlager kostete das bei jedem Neuzeichnen - also jedem
+#: Auswahlklick - 0,12 von 0,39 s (15.09.2026).
+_LAGERGLYPHEN: dict = {}
+
+
 def lagerglyph(key: tuple, d: float, richtung=None) -> pv.PolyData:
+    """Das Symbol zu einem Schluessel aus :func:`lager_symbol`, Grundmass d -
+    einmal gebaut, danach als Kopie aus dem Speicher."""
+    schluessel = (key, round(float(d), 12),
+                  None if richtung is None else tuple(np.round(np.asarray(richtung, float), 12)))
+    g = _LAGERGLYPHEN.get(schluessel)
+    if g is None:
+        if len(_LAGERGLYPHEN) > 512:
+            _LAGERGLYPHEN.clear()
+        g = _LAGERGLYPHEN[schluessel] = _lagerglyph_bauen(key, d, richtung)
+    return g.copy()
+
+
+def _lagerglyph_bauen(key: tuple, d: float, richtung=None) -> pv.PolyData:
     """Das Symbol zu einem Schluessel aus :func:`lager_symbol`, Grundmass d.
 
     ``richtung`` legt die Symbolachse frei (Flaechenlager: die Normale der
@@ -2938,7 +2958,8 @@ def _stabname(model: Model, elem: int, breite: int = 12) -> str:
 
 
 def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
-              ueberschrift: str = "", einheiten=None, knoten=None, elemente=None) -> list:
+              ueberschrift: str = "", einheiten=None, knoten=None, elemente=None,
+              feld: str = None, seite: str = "max") -> list:
     """Die Kennzahlen des gezeigten Ergebnisses als Textzeilen.
 
     Das sind die Zahlen, nach denen zuerst gefragt wird: groesste Ausnutzung,
@@ -2946,16 +2967,43 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
     jeweils **mit dem Ort**, denn ein Zahlenwert ohne Ort ist kein Ergebnis.
     Steht in *groesse* eine Schnittgroesse, wird nur diese ausgeschrieben.
 
+    Mit *feld* (dem Eintrag der Faerbung) stehen **nur die Werte des gewaehlten
+    Ergebnisses** da: zu |u| die Verformung, zu ux die Zeile ux, zur
+    Vergleichsspannung sigma_v, zu einer Ausnutzung die groesste, zu einer
+    Spannungsgroesse ihr kleinster und groesster Wert - dazu die Schnittgroesse
+    eines gewaehlten Verlaufs. Vorher stand unten links alles zugleich, auch
+    Auflagerkraefte und Verdrehungen (15.09.2026: „nur die Werte anzeigen, die
+    gerade als Ergebnis ausgewaehlt wurden"). Ohne *feld* bleibt es bei allem.
+
     Die Zeilen sind auf feste Spalten gesetzt (Schreibmaschinenschrift), damit
     die Zahlen im Bild untereinander stehen und die Zeile nicht ueber das
     Modell laeuft. Einheiten und Nachkommastellen kommen aus *einheiten*
     (einheiten.Einheiten, sonst ``model.einheiten``).
     """
     from ..einheiten import Einheiten
+    from .. import spannungen as spn
     E = einheiten or getattr(model, "einheiten", None) or Einheiten()
     zeilen = []
     if ueberschrift:
         zeilen.append(str(ueberschrift))
+    alle = feld is None
+    feld = "" if feld is None else str(feld)
+    verlauf = groesse in SCHNITTGROESSEN
+
+    def gewaehlt(was: str) -> bool:
+        if alle:
+            return True
+        if was == "u":
+            return feld.startswith("|u|")
+        if was in ("ux", "uy", "uz"):
+            return feld == was
+        if was == "sig_v":
+            return feld.startswith("Vergleich")
+        if was == "ausnutzung":
+            return feld.startswith("Ausnutzung")
+        if was == "schnitt":
+            return verlauf
+        return False
     # nur die sichtbaren Knoten und Elemente (12.09.2026): ein einzeln
     # gezeigtes Bauteil zeigt seine eigenen Kennwerte
     sicht = None
@@ -2978,17 +3026,20 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         return E.text(wert_si, art, mit_einheit=False)
 
     u = displacement_of(res)
-    if u is not None and len(u):
+    if u is not None and len(u) and (gewaehlt("u") or any(gewaehlt(c) for c in ("ux", "uy", "uz"))):
         u = nur_sicht(np.asarray(u, float)) if sicht is not None else u
         mag = np.linalg.norm(u[:, :3], axis=1)
         k = int(np.nanargmax(mag)) if np.isfinite(mag).any() else 0
-        zeilen.append(zeile("u", "", "", z(mag[k], "verformung"),
-                            f"Knoten {k}", E.einheit("verformung")))
+        if gewaehlt("u"):
+            zeilen.append(zeile("u", "", "", z(mag[k], "verformung"),
+                                f"Knoten {k}", E.einheit("verformung")))
         for j, nm in enumerate(("ux", "uy", "uz")):
-            zeilen.append(zeile(nm, z(np.nanmin(u[:, j]), "verformung"), "",
-                                z(np.nanmax(u[:, j]), "verformung"), "", E.einheit("verformung")))
-    reihe = (groesse,) if groesse in SCHNITTGROESSEN else SCHNITTGROESSEN
-    grenzen = schnittgroessen_grenzen(model, res, reihe, elemente=elemente)
+            if gewaehlt(nm):
+                zeilen.append(zeile(nm, z(np.nanmin(u[:, j]), "verformung"), "",
+                                    z(np.nanmax(u[:, j]), "verformung"), "", E.einheit("verformung")))
+    reihe = (groesse,) if verlauf else SCHNITTGROESSEN
+    grenzen = schnittgroessen_grenzen(model, res, reihe, elemente=elemente) \
+        if (alle or gewaehlt("schnitt")) else {}
     for q in reihe:
         if q not in grenzen:
             continue
@@ -2997,15 +3048,17 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         zeilen.append(zeile(q, z(lo, art), _stabname(model, e_lo, 10),
                             z(hi, art), _stabname(model, e_hi, 10), E.einheit(art)))
     # Verdrehungen - nur wo es Staebe oder Schalen gibt, sonst sind sie null
-    if u is not None and len(u) and u.shape[1] >= 6 and np.nanmax(np.abs(u[:, 3:6])) > 0:
+    if alle and u is not None and len(u) and u.shape[1] >= 6 and np.nanmax(np.abs(u[:, 3:6])) > 0:
         for j, nm in enumerate(("phix", "phiy", "phiz")):
             zeilen.append(zeile(nm, f"{np.nanmin(u[:, 3 + j]) * 1000:.3f}", "",
                                 f"{np.nanmax(u[:, 3 + j]) * 1000:.3f}", "", "mrad"))
     # Auflagerkraefte: kleinste und groesste je Richtung mit Knoten
-    R = getattr(res, "reactions", None)
+    R = getattr(res, "reactions", None) if alle else None
     reakt = (("Rx", "kraft"), ("Ry", "kraft"), ("Rz", "kraft"),
              ("Mx", "moment"), ("My", "moment"), ("Mz", "moment"))
-    if R is None and getattr(res, "r_min", None) is not None:
+    if not alle:
+        pass
+    elif R is None and getattr(res, "r_min", None) is not None:
         R = None
         rmin, rmax = res.r_min, res.r_max
         for j, (nm, art) in enumerate(reakt):
@@ -3021,8 +3074,8 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
             a, b = int(np.argmin(R[:, j])), int(np.argmax(R[:, j]))
             zeilen.append(zeile(nm, z(R[a, j], art), f"Knoten {a}",
                                 z(R[b, j], art), f"Knoten {b}", E.einheit(art)))
-    vm = getattr(res, "node_vm_max", None)
-    if vm is None:
+    vm = getattr(res, "node_vm_max", None) if gewaehlt("sig_v") else None
+    if vm is None and gewaehlt("sig_v"):
         vm = getattr(res, "node_vm", None)
     if vm is not None and sicht is not None:
         vm = nur_sicht(vm)
@@ -3030,11 +3083,25 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         k = int(np.nanargmax(vm))
         zeilen.append(zeile("sig_v", "", "", z(float(vm[k]), "spannung"),
                             f"Knoten {k}", E.einheit("spannung")))
-    werte = dict(util or {})
-    if not werte:
+    werte = dict(util or {}) if gewaehlt("ausnutzung") else {}
+    if not werte and gewaehlt("ausnutzung"):
         for i, d in (getattr(res, "beam_forces", None) or {}).items():
             if d.get("util") is not None:
                 werte[i] = d["util"]
+    ak = spn.feld(feld) if feld else None
+    if ak is not None and spn.kategorien(*ak) is None and hasattr(res, "solid_res"):
+        # eine Spannungsgroesse: kleinster und groesster Wert mit Knoten, in
+        # der Einheit ihrer Farbskala
+        try:
+            werte_k = nur_sicht(np.asarray(spn.je_knoten(model, res, ak[0], ak[1], seite), float))
+        except Exception:                   # noqa: BLE001
+            werte_k = None
+        if werte_k is not None and len(werte_k) and np.isfinite(werte_k).any():
+            a, b = int(np.nanargmin(werte_k)), int(np.nanargmax(werte_k))
+            einheit = spn.GROESSEN[ak[0]][ak[1]][1]
+            zeilen.append(f"{spn.beschriftung(*ak, seite)}: min {spn.dezimal(werte_k[a])} "
+                          f"(Knoten {a}), max {spn.dezimal(werte_k[b])} (Knoten {b}) [{einheit}]"
+                          .replace(f" [{einheit}]: ", ": "))
     if werte:
         i = max(werte, key=lambda k: werte[k])
         zeilen.append(f"max. Ausnutzung {werte[i]:.{E.nk_ausnutzung}f} an {_stabname(model, i)}"
