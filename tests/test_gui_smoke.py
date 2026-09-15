@@ -5911,6 +5911,62 @@ def main():
         w.model = zwei_bloecke("eigene", 0.5, 0.15)
         w.refresh_all(); app.processEvents()
         m_ = w.model
+        # --- 15.09.2026: Kontakte entstehen von selbst, wenn sich Volumen beruehren ---
+        from statik3d import kontakte as kt_
+
+        def baumfarbe_(text):
+            def lauf(it):
+                if it.text(0) == text:
+                    return it.foreground(0).color().name()
+                for i_ in range(it.childCount()):
+                    r_ = lauf(it.child(i_))
+                    if r_:
+                        return r_
+                return ""
+            for i_ in range(w.baum.topLevelItemCount()):
+                r_ = lauf(w.baum.topLevelItem(i_))
+                if r_:
+                    return r_
+            return ""
+
+        auto_ = "Oben–Unten starr"
+        kb_a = m_.kontaktbedingungen.get(auto_)
+        check("zwei Volumen berühren sich: „Oben–Unten starr“ entsteht von selbst (Verbund, automatisch, FugeO/FugeU)",
+              kb_a is not None and kb_a.automatisch and kb_a.standard == "Verbund" and kb_a.flaechennamen == ["FugeO"]
+              and kb_a.gegenflaechen == ["FugeU"] and kb_a.koerpernamen == ["Oben"] and kb_a.gegenkoerper == ["Unten"],
+              str(sorted(m_.kontaktbedingungen)))
+        check("… am vorhandenen Netz gleich ausgeführt: ein Kontaktpaar mit Zug und Haften",
+              kb_a is not None and kb_a.ausgefuehrt and len(m_.contact_pairs) == 1
+              and m_.contact_pairs[0].zug and m_.contact_pairs[0].haften, f"{len(m_.contact_pairs)} Paare")
+        check("im Modellbaum steht er in der Farbe seiner Wirkung (starr = grau)",
+              baumfarbe_(auto_) == kt_.WIRKUNGSFARBEN["starr"], baumfarbe_(auto_))
+        check("das Protokoll nennt die Berührung", "Oben berührt Unten" in w.log.toPlainText())
+        w._baum_geklickt("kontaktbedingung", auto_); app.processEvents()
+        akt_b = dict(w.plotter.renderer.actors)
+        # die Fugenflaechen tragen kein Schalennetz: sie leuchten als Vielecke (auswahl_flaechen)
+        check("Klick auf den Kontakt: die Fuge leuchtet kräftig, die beiden Volumen blass dazu",
+              ("auswahl_flaechen" in akt_b or "auswahl_elemente" in akt_b) and "auswahl_blass" in akt_b
+              and abs(akt_b["auswahl_blass"].GetProperty().GetOpacity() - 0.22) < 1e-6
+              and akt_b["auswahl_blass"].GetMapper().GetInput().GetNumberOfCells() > 0
+              and "blass" in w.lbl_sel.text(),
+              f"{sorted(a_ for a_ in akt_b if a_.startswith('auswahl'))} „{w.lbl_sel.text()}“")
+        mk = w.maskenrand.maske
+        mk.setzen("standard", "Reibungsfrei"); app.processEvents(); mk.anwenden(); app.processEvents()
+        neu_ = "Oben–Unten nur Druck"
+        check("Wirkung umgestellt: der Name folgt ihr („Oben–Unten nur Druck“), die Farbe wird rot",
+              neu_ in m_.kontaktbedingungen and auto_ not in m_.kontaktbedingungen
+              and m_.kontaktbedingungen[neu_].automatisch and baumfarbe_(neu_) == kt_.WIRKUNGSFARBEN["nur Druck"]
+              and len(m_.contact_pairs) == 1 and not m_.contact_pairs[0].zug,
+              f"{sorted(m_.kontaktbedingungen)}, {baumfarbe_(neu_)}")
+        w._baum_geklickt("geokoerper_einzeln", "Oben"); app.processEvents()
+        check("ein anderes Objekt im Baum: kein blasses Volumen mehr",
+              "auswahl_blass" not in dict(w.plotter.renderer.actors))
+        w._baum_loeschen("kontaktbedingung", neu_); app.processEvents()
+        w.refresh_all(); app.processEvents()
+        check("gelöscht bleibt gelöscht: der Kontakt entsteht nicht wieder (Ausnahme Oben/Unten gemerkt)",
+              not m_.kontaktbedingungen and not m_.contact_pairs
+              and ["Oben", "Unten"] in (getattr(m_, "kontakt_ausnahmen", None) or []),
+              str((sorted(m_.kontaktbedingungen), getattr(m_, "kontakt_ausnahmen", None))))
         check("Modellbaum bietet „+ Kontaktbedingung anlegen“ an, sobald es Volumen gibt",
               "+ Kontaktbedingung anlegen" in zweige(w.baum) and "Flächenkontakte" in zweige(w.baum), str([z for z in zweige(w.baum) if "ontakt" in z]))
         w._baum_geklickt("kontaktbedingung_neu", ""); app.processEvents()
@@ -6053,6 +6109,12 @@ def main():
         check("„Kontakte zeigen“: die Fuge farbig im Bild, mit Schild aus Name und Wirkung",
               any(a.startswith("kontaktflaeche") for a in akt_) and any(a.startswith("kontakttext") for a in akt_)
               and "Kontakte: 1 Bedingungen" in w._sicht_text(), str(akt_))
+        from PySide6 import QtGui as _QtGk
+        soll_ = _QtGk.QColor(kt_.wirkungsfarbe(kb)).getRgbF()[:3]
+        ist_ = dict(w.plotter.renderer.actors)["kontaktflaeche0"].GetProperty().GetColor()
+        check("… in der Farbe ihrer Wirkung (Druck mit Reibung = orange), seit 15.09.2026",
+              kt_.wirkungstext(kb) == "Druck, Reibung" and max(abs(a_ - b_) for a_, b_ in zip(ist_, soll_)) < 0.02,
+              f"{kt_.wirkungstext(kb)} {ist_} / {soll_}")
         check("das Schild sagt, wie der Kontakt wirkt (Druck, abheben, gleiten, μ)",
               w.kontakt_kurztext(kb) == "Druck, abheben, gleiten, μ = 0.3", w.kontakt_kurztext(kb))
         w.act_kontakte.setChecked(False); w.redraw(); app.processEvents()

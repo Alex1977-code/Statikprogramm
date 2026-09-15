@@ -161,6 +161,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._klick_wartend = None
         #: Elemente, die aus dem Modellbaum heraus aufleuchten
         self.leuchtet: list[int] = []
+        #: Der im Modellbaum angeklickte Kontakt: seine Volumen leuchten blass
+        self.leuchtet_kontakt: str = ""
         #: Sicht: was ausgeblendet ist - Elemente (Nummern), Linien, Flaechen
         #: und Koerper (Namen), Knoten (Nummern) - und die Schritte davor,
         #: damit "Vorherige Sicht" zurueckgehen kann.
@@ -4071,6 +4073,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         eintrag = self._baum_ist_eintrag(art, name)
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         if art in self.VERBINDUNGEN or art in ("punktmassen", "federn", "grenzschichten"):
             # Die Knoten des Objekts (oder aller Objekte der Art) leuchten
             einzeln = {"punktmassen": "punktmasse", "federn": "feder",
@@ -4176,9 +4179,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self.sel_flaechen:
                 self.sel_koerper = [x for x in (getattr(kb, "koerpernamen", []) or [])
                                     if x in m.koerper]
+            # Die beteiligten Volumen leuchten blass mit (15.09.2026, „beim
+            # Anklicken des Kontaktes leuchten die betroffenen Volumen und die
+            # Fläche auf"): kraeftig die Fuge, durchscheinend die Bauteile
+            self.leuchtet_kontakt = name
+            blass = self._kontakt_koerper(kb) if kb is not None else []
             teile = ([f"{len(eigen)} Kontaktflächen"] if eigen else []) \
                 + ([f"{len(gegen)} Gegenflächen"] if gegen else []) \
-                + ([f"{len(self.sel_koerper)} Volumen"] if self.sel_koerper else [])
+                + ([f"{len(self.sel_koerper)} Volumen"] if self.sel_koerper else []) \
+                + ([f"Volumen {', '.join(blass)} blass"] if blass else [])
             self.lbl_sel.setText(f"Kontaktbedingung {name}: "
                                  + (", ".join(teile) if teile else "keine Flächen zugeordnet")
                                  + " (Modellbaum)")
@@ -5570,14 +5579,18 @@ class MainWindow(QtWidgets.QMainWindow):
         kb.ausgefuehrt = False
         return vorher - (len(m.gap_elements) + len(m.kopplungen) + len(m.contact_pairs))
 
-    def _kontakt_ausfuehren_wenn_netz(self, kb) -> None:
-        """Steht schon ein Netz, wird die Fuge gleich getrennt - sonst beim Vernetzen."""
+    def _kontakt_ausfuehren_wenn_netz(self, kb, knotengruppen: dict = None) -> None:
+        """Steht schon ein Netz, wird die Fuge gleich getrennt - sonst beim Vernetzen.
+
+        ``knotengruppen`` (fugen.gruppen_je_knoten) laesst sich fuer mehrere
+        Fugen hintereinander mitgeben - am Drehlager kostet die Karte je
+        Aufruf rund 2,5 s."""
         from .. import fugen
         m = self.model
         if not m.elements or kb.wartet_auf_netz(m):
             return
         log: list = []
-        b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+        b = fugen.kontaktfuge_ausfuehren(m, kb, log, knotengruppen=knotengruppen)
         for z in log:
             self.log.appendPlainText(z)
         if kb.ausgefuehrt:
@@ -5585,6 +5598,94 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
         elif b.get("grund"):
             self.info(f"Kontaktbedingung {kb.name}: {b['grund']}")
+
+    def _kontakt_koerper(self, kb) -> list:
+        """Die Volumen einer Kontaktbedingung: Koerper A und B - oder, wo die
+        Bedingung nur Flaechen nennt, deren Besitzer."""
+        m = self.model
+        namen = [x for x in (getattr(kb, "koerpernamen", None) or []) if x in m.koerper]
+        gegen = [x for x in (getattr(kb, "gegenkoerper", None) or []) if x in m.koerper]
+        if not namen or not gegen:
+            besitzer: dict = {}
+            for k in m.koerper.values():
+                for fn in (k.flaechen or []):
+                    besitzer.setdefault(fn, k.name)
+            if not namen:
+                namen = [besitzer[fn] for fn in (kb.flaechennamen or []) if fn in besitzer]
+            if not gegen:
+                gegen = [besitzer[fn] for fn in (kb.gegenflaechen or []) if fn in besitzer]
+        return list(dict.fromkeys(namen + gegen))
+
+    def _kontakt_blass(self, m, ausser) -> list:
+        """Die Elemente der Volumen des angeklickten Kontakts - ohne die, die
+        schon kraeftig leuchten."""
+        kb = (getattr(m, "kontaktbedingungen", {}) or {}).get(getattr(self, "leuchtet_kontakt", "") or "")
+        if kb is None:
+            return []
+        aus: list = []
+        for name in self._kontakt_koerper(kb):
+            aus += [int(e) for e in (m.koerper[name].elemente or [])
+                    if 0 <= int(e) < len(m.elements) and int(e) not in ausser]
+        return aus
+
+    def _kontakte_stand_jetzt(self) -> tuple:
+        """Woran sich erkennen laesst, dass sich an Volumen, Flaechen oder
+        Knoten etwas geaendert hat - dann werden die Beruehrungen neu gesucht."""
+        m = self.model
+        return (id(m), tuple(sorted(m.koerper)), tuple(tuple(k.flaechen or []) for k in m.koerper.values()),
+                len(m.flaechen), len(m.lines), m.nn,
+                hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
+                tuple(sorted(m.kontaktbedingungen)), len(getattr(m, "kontakt_ausnahmen", None) or []))
+
+    def _kontakte_nachfuehren(self) -> None:
+        """Kontakte zwischen sich beruehrenden Volumen von selbst anlegen -
+        bei jedem neuen Modellstand einmal (15.09.2026, „immer automatisch":
+        nach Import, „Volumen aus Flächen", verschobenen Knoten).
+
+        Vorgabe ist „starr" (Verbund): das Modell rechnet damit wie ohne die
+        Bedingung, aber die Fuge ist ein Objekt und laesst sich rechts in der
+        Maske umstellen. Steht schon ein Netz, wird die Bedingung gleich
+        ausgefuehrt (an gemeinsamen Flaechen ist das ein Vermerk, nichts wird
+        getrennt). Am Drehlager (108 Koerper) dauert die Suche rund 3 s.
+        """
+        from .. import kontakte
+        m = self.model
+        if len(getattr(m, "koerper", {}) or {}) < 2:
+            return
+        stand = self._kontakte_stand_jetzt()
+        if getattr(self, "_kontakte_stand", None) == stand:
+            return
+        self._kontakte_stand = stand
+        if not hasattr(m, "kontakt_ausnahmen"):
+            m.kontakt_ausnahmen = []              # aeltere Sicherungen
+        log: list = []
+        t0 = time.perf_counter()
+        try:
+            erg = kontakte.kontakte_nachfuehren(m, log, raender=self._raender(), seiten=self._randseiten(),
+                                                loecher=self._loecher())
+        except Exception as ex:               # noqa: BLE001 - die Suche darf das Fenster nie sperren
+            self.log.appendPlainText(f"Berührungen nicht geprüft: {ex}")
+            return
+        for z in log:
+            self.log.appendPlainText(z)
+        # Nur, was wirklich ein Kontaktpaar braucht (starr an je eigenen
+        # Flaechen), wird gleich ausgefuehrt - eine Naht an gemeinsamen
+        # Flaechen ist ohne Ausfuehrung verschweisst. Die Knotenkarte einmal
+        # fuer alle: am Drehlager kosteten 25 Einzelausfuehrungen 65 s.
+        offen = [m.kontaktbedingungen[n] for n in erg["neu"]
+                 if not kontakte.ist_verschweisst(m, m.kontaktbedingungen[n])]
+        if offen and m.elements:
+            from .. import fugen
+            gruppen = fugen.gruppen_je_knoten(m)
+            for kb in offen:
+                self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
+        if erg["neu"] or erg["entfernt"]:
+            self.log.appendPlainText(f"Berührungen geprüft: {erg['beruehrungen']} Körperpaare, "
+                                     f"{len(erg['neu'])} Kontakte angelegt, {len(erg['entfernt'])} entfernt "
+                                     f"({time.perf_counter() - t0:.1f} s)")
+            self.statusBar().showMessage(f"{len(erg['neu'])} Kontakte automatisch angelegt (Körper berühren "
+                                         "sich, starr) - die Wirkung lässt sich rechts in der Maske ändern", 8000)
+            self._kontakte_stand = self._kontakte_stand_jetzt()
 
     # ---- Lastfall: Unterpunkte je Lastart ------------------------------------
     def _lasttext(self, art: str, l) -> str:
@@ -6546,6 +6647,14 @@ class MainWindow(QtWidgets.QMainWindow):
             kb.suchweite = max(float(zahl("suchweite", 0.0) or 0.0), 0.0) / 1e3
             kb.spalt_schliessen = str(w.get("spalt", "")) == self.KONTAKT_SPALT[1]
             kb.beschreibung = str(w.get("beschreibung", "") or "").strip()
+            if getattr(kb, "automatisch", False):
+                from .. import kontakte
+                if neuname == name:
+                    # Der Name traegt die Wirkung und folgt ihr (15.09.2026:
+                    # „im Namen sollte z. B. starr stehen oder nur Druck")
+                    neuname = kontakte.name_fuer(m, kb, ausser=name)
+                else:
+                    kb.automatisch = False           # von Hand benannt: bleibt so
             if neuname != name:
                 del m.kontaktbedingungen[name]
                 kb.name = neuname
@@ -6825,6 +6934,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sel_koerper = [k for k in sub.koerper if k in m.koerper]
         self.sel_linien = [ln for ln in sub.linien if ln in m.lines]
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         self._auswahl_register()
         self.redraw()
         F = msk.Feld
@@ -7158,6 +7268,18 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 kb = m.kontaktbedingungen.pop(name)
                 self._kontakt_zuruecknehmen(kb)
+                if getattr(kb, "automatisch", False):
+                    # Ein geloeschter automatischer Kontakt kommt nicht wieder
+                    from .. import kontakte
+                    p = kontakte.paar_von(kb)
+                    if p is not None:
+                        if not hasattr(m, "kontakt_ausnahmen"):
+                            m.kontakt_ausnahmen = []
+                        if list(p) not in m.kontakt_ausnahmen:
+                            m.kontakt_ausnahmen.append(list(p))
+                        self.log.appendPlainText(f"Kontakt {name} gelöscht: zwischen {p[0]} und {p[1]} entsteht "
+                                                 "keiner mehr von selbst („+ Kontaktbedingung anlegen“ legt "
+                                                 "von Hand einen an)")
         elif art == "bemassung":
             if name not in m.bemassungen:
                 grund = f"Bemaßung {name} gibt es nicht"
@@ -7266,6 +7388,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selection = np.array([], dtype=int)
         self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         self.maskenrand.schliessen()
         if sammel:
             return ""
@@ -7295,6 +7418,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         namen = [str(x) for x in namen]
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         self.selection = np.array([], dtype=int)
         self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
         if art == "knoten":
@@ -12152,6 +12276,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def refresh_all(self):
         m = self.model
         gross = len(m.elements) >= self.GROSS_AB
+        self._kontakte_nachfuehren()
 
         def schritt(text):
             if gross:
@@ -14061,6 +14186,7 @@ class MainWindow(QtWidgets.QMainWindow):
                       self.sel_staebe, self.sel_elemente, self.sel_lager, self.sel_lasten):
             liste.clear()
         self.leuchtet = []
+        self.leuchtet_kontakt = ""
         self._set_selection([])
         self._info_zeigen()
 
@@ -15971,6 +16097,17 @@ class MainWindow(QtWidgets.QMainWindow):
                             edge_color="#c05000", line_width=5, name=name)
             except Exception as ex:      # noqa: BLE001
                 self.log.appendPlainText(f"Hervorhebung: {ex}")
+        # Der im Modellbaum angeklickte Kontakt: seine Volumen blass dazu, die
+        # Fuge selbst leuchtet kraeftig ueber sel_flaechen
+        blass = self._kontakt_blass(m, set(leuchtet) | set(gewaehlt))
+        if blass:
+            try:
+                teil = vp.teilnetz(m, blass)
+                if teil.n_cells > 2000:
+                    teil = teil.extract_surface()
+                pl.add_mesh(teil, color="#ff8800", opacity=0.22, show_edges=False, name="auswahl_blass")
+            except Exception as ex:      # noqa: BLE001
+                self.log.appendPlainText(f"Hervorhebung: {ex}")
         if polygone:
             try:
                 pts: list = []
@@ -17569,6 +17706,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 getattr(self, name).clear()
         if isinstance(getattr(self, "leuchtet", None), list):
             self.leuchtet = []
+            self.leuchtet_kontakt = ""
 
     def open_model(self):
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Modell öffnen", "", "Statik3D (*.json)")

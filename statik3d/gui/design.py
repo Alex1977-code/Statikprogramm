@@ -684,14 +684,17 @@ class Modellbaum(QtWidgets.QTreeWidget):
         if sortieren:
             eintraege = sorted(eintraege, key=lambda e: natuerlich(e[2]))
         anzahl = len(eintraege) if gesamt is None else int(gesamt)
-        for i, (text, zahl, key, tip) in enumerate(eintraege):
+        for i, e in enumerate(eintraege):
+            # ein fuenfter Wert ist die Textfarbe (Kontakte: die Wirkung)
+            text, zahl, key, tip = e[:4]
+            farbe = e[4] if len(e) > 4 else None
             if i >= BAUM_MAX:
                 self._zweig(eltern, f"… {anzahl - BAUM_MAX} weitere",
                             "", sammelart or art, farbe=FARBEN["matt"],
                             hinweis="Die vollständige Liste steht in der "
                                     "Tabelle unten – dort mit Filter.")
                 break
-            self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip)
+            self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip, farbe=farbe)
 
     # -- Beschriftungen ---------------------------------------------------
     @staticmethod
@@ -918,14 +921,22 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 # Das Warnzeichen steht **vor** dem Namen: hinten wuerde es
                 # bei langen Namen mit dem „…“ der Spalte verschwinden, und
                 # dann sahe es aus, als seien nur die kurzen Namen betroffen
+                # Jeder Eintrag in der Farbe seiner Wirkung (starr grau, nur
+                # Druck rot, ...) - dieselbe wie im Bild (15.09.2026, „ggf.
+                # arbeiten wir auch mit Farben, das sieht man immer schnell")
+                from ..kontakte import wirkungsfarbe, wirkungstext
                 self._liste(fk, [(("⚠ " if x.zu_steif(model) else "") + name,
                                   x.bezug(model) + (" ⚠" if x.zu_steif(model) else ""),
-                                  name, f"{name}: {x.describe()}"
+                                  name, f"{name}: {wirkungstext(x)} - {x.describe()}"
+                                  + ("\nAutomatisch angelegt: die Körper berühren sich. Löschen merkt "
+                                     "sich das Paar - der Kontakt kommt nicht von selbst wieder."
+                                     if getattr(x, "automatisch", False) else "")
                                   + ("" if x.ausgefuehrt else
                                      ("\nWird beim Vernetzen getrennt (Netz → Vernetzen)."
                                       if x.wartet_auf_netz(model) else
                                       "\n⚠ Trennung nicht ausgeführt – das Modell rechnet hier "
-                                      "durchverbunden, also zu steif. Netz → „Kontaktfugen ausführen“.")))
+                                      "durchverbunden, also zu steif. Netz → „Kontaktfugen ausführen“.")),
+                                  wirkungsfarbe(x))
                                  for name, x in flaechenkontakte.items()],
                             "kontaktbedingung", "kontaktbedingungen")
                 self._zweig(fk, "+ Kontaktbedingung anlegen", "", "kontaktbedingung_neu",

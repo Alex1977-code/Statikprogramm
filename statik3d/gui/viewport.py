@@ -782,9 +782,10 @@ def geometrie_netze(model: Model, raender: dict = None, seiten: dict = None,
     return pd_f, pd_r, pd_k
 
 
-#: Farben der Kontaktbedingungen im Bild - je Bedingung eine, der Reihe nach.
-#: Sie unterscheiden die Fugen **voneinander** ("wo wirkt welcher Kontakt");
-#: was eine Fuge tut, steht in ihrem Schild daneben.
+#: Farben der Kontaktbedingungen im Bild bis 15.09.2026 - je Bedingung eine,
+#: der Reihe nach. Seit dem 15.09.2026 traegt jede Fuge die Farbe ihrer
+#: **Wirkung** (kontakte.WIRKUNGSFARBEN: starr grau, nur Druck rot, ...) - im
+#: Bild dieselbe wie im Modellbaum; die Reihenfarben bleiben fuer Aufrufer.
 KONTAKTFARBEN = ("#e74c3c", "#2980b9", "#27ae60", "#f39c12", "#8e44ad", "#16a085",
                  "#d35400", "#34495e", "#c0392b", "#7f8c8d", "#b8860b", "#9b59b6")
 
@@ -838,7 +839,8 @@ def add_kontakte(plotter, model: Model, raender: dict = None, seiten: dict = Non
         if not zellen:
             continue
         P = np.asarray(punkte, float)
-        farbe = kontaktfarbe(i)
+        from ..kontakte import wirkungsfarbe
+        farbe = wirkungsfarbe(kb)
         plotter.add_mesh(pv.PolyData(P, faces=np.asarray(zellen, int)),
                          color=farbe, opacity=0.55, name=f"kontaktflaeche{i}")
         aus.append((name, farbe, P.mean(axis=0), len(kontaktflaechen(model, kb))))

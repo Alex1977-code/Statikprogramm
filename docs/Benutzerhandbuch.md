@@ -305,6 +305,63 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
 
+#### Kontakte entstehen von selbst
+
+Berühren sich zwei Volumen — über eine **gemeinsame** Fläche oder über je
+eigene Flächen, die **aufeinanderliegen** —, legt das Programm von selbst eine
+Kontaktbedingung an (seit 15.09.2026): bei jedem neuen Modellstand, also nach
+dem Import, nach „Volumen aus Flächen“, nach dem Verschieben von Knoten.
+Vorgabe ist **starr** (Standardkontakt „Verbund“: Druck, Zug und Schub werden
+übertragen, wie verschweißt). Das Modell rechnet damit genau so wie ohne die
+Bedingung — aber die Fuge ist jetzt ein Objekt: im Modellbaum anklicken, rechts
+die Wirkung umstellen (nur Druck, Reibung, …), fertig. Der kleinere Körper wird
+Körper A (er wird an der Fuge gelöst), der andere Körper B; bei gemeinsamer
+Fläche steht sie als Kontaktfläche, bei eigenen Flächen die von A als Kontakt-,
+die von B als Gegenflächen.
+
+Der **Name trägt die Wirkung** — „Bolzen–Platte starr“, nach dem Umstellen
+„Bolzen–Platte nur Druck“ —, solange man den Namen nicht selbst ändert. Die
+Wirkungen und ihre **Farbe** (dieselbe im Modellbaum und bei „Kontakte
+zeigen“):
+
+| Wirkung | heißt | Farbe |
+|---|---|---|
+| Zug und Schub übertragen (Verbund) | starr | grau |
+| hebt ab, gleitet frei (Reibungsfrei) | nur Druck | rot |
+| hebt ab, Coulomb-Reibung (Reibungsbehaftet) | Druck, Reibung | orange |
+| hebt ab, haftet (Rau) | Druck/Schub | grün |
+| kein Abheben, gleitet frei (Ohne Trennung) | Zug/Druck | blau |
+| kein Abheben, mit Reibung | Zug/Druck, Reibung | türkis |
+| eine Richtung als Feder | Feder | violett |
+
+Ein **starrer** Kontakt an einer gemeinsamen Fläche ist eine Schweißnaht: er
+wird nicht ausgeführt und ist nie „zu steif“ — Zustand „verschweißt (starr an
+gemeinsamer Fläche, nichts zu trennen)“, Spalte „Trennung ausgeführt“:
+„entfällt (verschweißt)“ —, und für angeschweißte Nachbarn (die sich an einer
+Fuge mitlösen) und den Kerbfall der Naht zählt er wie keine Bedingung. Erst
+eine andere Wirkung trennt das Netz dort. (Starr zwischen je eigenen,
+aufeinanderliegenden Flächen ist dagegen ein Kontaktpaar mit Zug und Haften —
+es bindet die beiden Netze.) Einen **gelöschten** automatischen Kontakt legt das Programm nicht
+wieder an (das Paar ist als Ausnahme gemerkt; „+ Kontaktbedingung anlegen“
+legt von Hand einen an); automatische Kontakte, deren Körper sich nicht mehr
+berühren, verschwinden wieder, solange sie noch nicht im Netz ausgeführt sind.
+
+Berührung heißt: näher als 1e-5 der Modellgröße (Drehlager: 55 µm; dort
+liegen aufeinanderliegende Flächen unter 1 µm auseinander, das nächste
+getrennte Paar — ein Passstift im Loch — bei 0,1 mm), gemessen an inneren
+Probepunkten der Flächen; aufliegend ist eine Fläche, wenn mindestens ein
+Viertel ihres Inhalts auf der anderen liegt (angrenzende Flächen mit nur einer
+gemeinsamen Kante zählen so nicht). Am Drehlager (108 Körper, 1375 Flächen):
+145 berührende Paare, davon 25 ohne Kontaktbedingung — alle über gemeinsame
+Flächen, also verschweißte Rippen und Deckel —, Suche 1,9 s im Fenster (die
+Vielecke der Flächen hat die Ansicht schon; ohne sie 3,4 s); das Anlegen der
+25 Kontakte kostet darüber hinaus nichts, weil eine Naht nicht ausgeführt wird
+(Modell setzen 10 s; solange jede neue Bedingung sofort ausgeführt wurde,
+waren es 73 s, und 22 der 25 standen als „zu steif“, weil die Suche nach der
+Gegenseite sich am verschweißten Ring der Rippen festfuhr). Geprüft in
+`tests/test_kontakte.py` und `tests/test_fugen.py`
+(`test_naht_bleibt_verschweisst`, `test_naht_loest_nachbarn_mit`).
+
 #### Kontaktbedingungen anlegen und einstellen
 
 Ein Kontakt wird **wie in ANSYS** angelegt: zwei Körper, mindestens eine
@@ -449,16 +506,20 @@ als hätte Typ 3 kein Loch, sondern überlappt sich mit Typ 1"). Gefüllt wird
 jetzt mit denselben Angaben wie die Geometrie: Öffnungen, Geometrieart und
 benannte Ecken.
 
-Ein Klick auf eine Bedingung im Modellbaum lässt **nur ihre Fuge** aufleuchten:
-die Kontaktflächen und die Gegenflächen, nicht mehr den ganzen gelösten Körper
-(bis 14.09.2026 leuchtete am Drehlager die komplette Achse statt ihrer
-Bohrung). *Selektion anzeigen* isoliert sie damit wie jedes andere Objekt; gibt
-es gar keine Flächen, bleibt der Körper als Ausweg.
+Ein Klick auf eine Bedingung im Modellbaum lässt **ihre Fuge** kräftig
+aufleuchten — die Kontaktflächen und die Gegenflächen, nicht den ganzen
+gelösten Körper (bis 14.09.2026 leuchtete am Drehlager die komplette Achse
+statt ihrer Bohrung) — und die beiden **beteiligten Volumen blass**
+durchscheinend dazu (seit 15.09.2026: „beim Anklicken des Kontakts leuchten die
+betroffenen Volumen und die Fläche auf“); die Auswahlzeile nennt sie.
+*Selektion anzeigen* isoliert die Fuge wie jedes andere Objekt; gibt es gar
+keine Flächen, bleibt der Körper als Ausweg.
 
 **Wo welcher Kontakt wie wirkt** zeigt der Schalter *Lager / Kontakt →
-„Kontakte zeigen“*: jede Kontaktbedingung liegt dann in einer eigenen Farbe
-durchscheinend über der Geometrie, mit einem Schild an ihrer Fuge, das Name und
-Wirkung nennt — etwa „Achse (Typ 3): Druck, abheben, gleiten“. Ein Modell mit
+„Kontakte zeigen“*: jede Kontaktbedingung liegt dann in der **Farbe ihrer
+Wirkung** (Tabelle unter „Kontakte entstehen von selbst“; bis 15.09.2026 je
+Bedingung eine Reihenfarbe) durchscheinend über der Geometrie, mit einem Schild
+an ihrer Fuge, das Name und Wirkung nennt — etwa „Achse (Typ 3): Druck, abheben, gleiten“. Ein Modell mit
 einem Dutzend Fugen ist sonst nicht zu lesen: die Flächen liegen aufeinander,
 und die Wirkung stand nur in Tabellen. Nach dem Rechnen kommt der Zustand
 hinzu (Schalter *Kontaktmarken* oder die Färbung *Kontakt Zustand*).

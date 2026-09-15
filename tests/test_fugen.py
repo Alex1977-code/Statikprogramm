@@ -1970,12 +1970,153 @@ def test_karten_einmal_je_lauf():
           f"{len(m.elements)} Elemente")
 
 
+def test_naht_bleibt_verschweisst():
+    """Starr in allen drei Richtungen bei Knoten fuer Knoten passenden Netzen ist
+    eine Schweissnaht: nichts wird getrennt, kein Knoten verdoppelt (15.09.2026,
+    die automatischen Kontakte entstehen als „starr" an jeder gemeinsamen
+    Flaeche und duerfen das Netz nicht veraendern)."""
+    from statik3d import kontakte
+    m = zwei_bloecke("gemeinsam")
+    kb = m.add_kontaktbedingung("Naht", flaechennamen=["Fuge"], koerpernamen=["Oben"], gegenkoerper=["Unten"])
+    kb.standard_anwenden("Verbund")
+    check("starr in allen Richtungen ist eine Naht", kontakte.ist_naht(kb))
+    check("ein Paar mit Naht zaehlt nicht als Kontaktpaar", not fugen.kontaktpaare(m), str(fugen.kontaktpaare(m)))
+    check("die verschweisste Gruppe von Oben enthaelt Unten",
+          fugen.verschweisste_gruppe(m, {"Oben"}) == {"Oben", "Unten"}, str(fugen.verschweisste_gruppe(m, {"Oben"})))
+    nn = m.nn
+    log = []
+    b = fugen.kontaktfuge_ausfuehren(m, kb, log)
+    check("ausgefuehrt, ohne einen Knoten zu verdoppeln, ohne Kopplung und Spaltelement",
+          kb.ausgefuehrt and m.nn == nn and b.get("verschweisst", 0) > 0 and b["knoten"] == 0
+          and not m.kopplungen and not m.gap_elements and not m.contact_pairs, str(b))
+    check("Protokoll und Tabelle sagen „verschweißt“",
+          any("verschweißt" in z for z in log) and "verschweißt" in kb.art_der_trennung(m),
+          kb.art_der_trennung(m))
+    p = -1.0e6
+    F = p * A_FUGE
+    r = rechnen(m, p)
+    soll = -F * L_STAB / (E_STAHL * A_FUGE)
+    close("Zug: Dehnung wie im durchverbundenen Stab", r["u_oben"], soll, abs(soll) * 0.03, " m")
+    # Gegenprobe: nur Druck ist keine Naht und trennt
+    m2 = zwei_bloecke("gemeinsam")
+    kb2 = m2.add_kontaktbedingung("Fuge", flaechennamen=["Fuge"], koerpernamen=["Oben"])
+    kb2.standard_anwenden("Reibungsfrei")
+    nn2 = m2.nn
+    b2 = fugen.kontaktfuge_ausfuehren(m2, kb2, [])
+    check("nur Druck ist keine Naht: die Fuge wird getrennt (Knoten verdoppelt)",
+          not kontakte.ist_naht(kb2) and b2["knoten"] > 0 and m2.nn > nn2, str(b2))
+
+
+def test_naht_loest_nachbarn_mit():
+    """Ein automatischer starrer Kontakt zwischen Oben und Rippe (gemeinsame
+    Flaeche MO1) darf die Schweissnaht nicht aufloesen: die Rippe loest sich
+    an der Fuge weiter mit Oben, so wie ohne die Bedingung."""
+    m = drei_bloecke()
+    naht = m.add_kontaktbedingung("Rippe–Oben starr", flaechennamen=["MO1"], koerpernamen=["Rippe"],
+                                  gegenkoerper=["Oben"], automatisch=True)
+    naht.standard_anwenden("Verbund")
+    check("verschweisste Gruppe von Oben ist Oben+Rippe trotz starrem Kontakt",
+          fugen.verschweisste_gruppe(m, {"Oben"}, {"FugeO", "FugeU"}) == {"Oben", "Rippe"},
+          str(fugen.verschweisste_gruppe(m, {"Oben"}, {"FugeO", "FugeU"})))
+    # Die Naht zuerst: sie darf sich nicht am verschweissten Ring festfahren -
+    # am Drehlager holte verschweisste_gruppe ueber die Rippen den Gegenkoerper
+    # selbst herein, und dann fehlte die Gegenseite ("keine Gegenflaeche im
+    # Suchradius", 15.09.2026)
+    b0 = fugen.kontaktfuge_ausfuehren(m, naht, [])
+    check("die Naht gilt sofort als verschweisst - ohne Suche nach einer Gegenseite",
+          naht.ausgefuehrt and b0.get("verschweisst", 0) > 0 and b0["knoten"] == 0 and not b0["grund"], str(b0))
+    naht.ausgefuehrt = False
+    kb = kontaktbedingung(m, "eigene")
+    b = fugen.kontaktfuge_ausfuehren(m, kb, [])
+    check("Fuge ausgefuehrt, Rippe mitgeloest", kb.ausgefuehrt and b.get("mitgeloest") == ["Rippe"], str(b))
+    b2 = fugen.kontaktfuge_ausfuehren(m, naht, [])
+    check("die Naht selbst trennt nichts", naht.ausgefuehrt and b2.get("verschweisst", 0) > 0 and b2["knoten"] == 0,
+          str(b2))
+    nach = fugen.gruppen_je_knoten(m)
+    check("Rippe und Oben teilen weiter Knoten", any(v >= {"Oben", "Rippe"} for v in nach.values()))
+
+
+def _drei_im_ring() -> Model:
+    """Drei Koerper, paarweise ueber gemeinsame Flaechen verschweisst - ein
+    geschlossener Ring wie die Rippen um den Lagerbock des Drehlagers: A links
+    unten, B rechts unten (teilen die Flaeche Mitte), C als Deckel ueber beiden
+    (teilt DeckelA mit A und DeckelB mit B)."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    P = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
+                  [2, 0, 0], [2, 1, 0], [2, 0, 1], [2, 1, 1],
+                  [0, 0, 2], [1, 0, 2], [1, 1, 2], [0, 1, 2], [2, 0, 2], [2, 1, 2.]])
+    m.add_nodes(P)
+    b = Bauer(m)
+    L = {}
+
+    def l(i, j):
+        key = (min(i, j), max(i, j))
+        if key not in L:
+            L[key] = b.linie(i, j)
+        return L[key]
+
+    def flaeche(name, folge):
+        m.add_flaeche(name, [l(folge[k], folge[(k + 1) % len(folge)]) for k in range(len(folge))], material="S235")
+    flaeche("BodenA", [0, 1, 2, 3]); flaeche("DeckelA", [4, 5, 6, 7]); flaeche("FrontA", [0, 1, 5, 4])
+    flaeche("BackA", [3, 2, 6, 7]); flaeche("LinksA", [0, 3, 7, 4]); flaeche("Mitte", [1, 2, 6, 5])
+    flaeche("BodenB", [1, 8, 9, 2]); flaeche("DeckelB", [5, 10, 11, 6]); flaeche("FrontB", [1, 8, 10, 5])
+    flaeche("BackB", [2, 9, 11, 6]); flaeche("RechtsB", [8, 9, 11, 10])
+    flaeche("DeckelC", [12, 13, 16, 17, 14, 15]); flaeche("FrontC", [4, 5, 10, 16, 13, 12])
+    flaeche("BackC", [7, 6, 11, 17, 14, 15]); flaeche("LinksC", [4, 7, 15, 12]); flaeche("RechtsC", [10, 11, 17, 16])
+    ka = m.add_koerper("A", ["BodenA", "DeckelA", "FrontA", "BackA", "LinksA", "Mitte"], material="S235")
+    kb_ = m.add_koerper("B", ["Mitte", "BodenB", "DeckelB", "FrontB", "BackB", "RechtsB"], material="S235")
+    kc = m.add_koerper("C", ["DeckelA", "DeckelB", "DeckelC", "FrontC", "BackC", "LinksC", "RechtsC"], material="S235")
+    m.netz.ziellaenge = 0.5
+    cache = {}
+    for k in (ka, kb_, kc):
+        M3.mesh_koerper_frei(m, k, log=[], cache=cache)
+    return m
+
+
+def test_naht_im_ring():
+    """Ein starrer Kontakt an einer gemeinsamen Flaeche in einem verschweissten
+    Ring: der normale Weg holt ueber den Ring den Gegenkoerper selbst in die
+    geloeste Gruppe und findet dann keine Gegenseite mehr - so standen am
+    Drehlager 22 von 25 automatischen Kontakten (15.09.2026). Die Naht muss
+    darum vor allem anderen als verschweisst gelten."""
+    from statik3d import kontakte
+    m = _drei_im_ring()
+    check("drei Koerper vernetzt", all(k.elemente for k in m.koerper.values()),
+          str({k: len(v.elemente) for k, v in m.koerper.items()}))
+    check("der Ring: A-B, A-C und B-C teilen je eine Flaeche",
+          fugen.verschweisste_gruppe(m, {"A"}, {"Mitte"}) == {"A", "B", "C"},
+          str(fugen.verschweisste_gruppe(m, {"A"}, {"Mitte"})))
+    naht = m.add_kontaktbedingung("A–B starr", flaechennamen=["Mitte"], koerpernamen=["A"], gegenkoerper=["B"],
+                                  automatisch=True)
+    naht.standard_anwenden("Verbund")
+    check("starr an der gemeinsamen Flaeche: verschweisst, nicht zu steif",
+          kontakte.ist_verschweisst(m, naht) and not naht.zu_steif(m), naht.zustand(m))
+    nn = m.nn
+    log = []
+    b = fugen.kontaktfuge_ausfuehren(m, naht, log)
+    check("ausgefuehrt als Naht: kein Knoten verdoppelt, kein Grund, nichts gesucht",
+          naht.ausgefuehrt and b.get("verschweisst", 0) > 0 and b["knoten"] == 0 and not b["grund"] and m.nn == nn,
+          str(b))
+    # Gegenprobe: ohne den Fruehausstieg faehrt sich die Naht am Ring fest
+    naht.ausgefuehrt = False
+    echt = kontakte.ist_verschweisst
+    kontakte.ist_verschweisst = lambda model, kb: False
+    try:
+        b2 = fugen.kontaktfuge_ausfuehren(m, naht, [])
+    finally:
+        kontakte.ist_verschweisst = echt
+    check("ohne ihn: die Fuge findet keine Gegenseite (der Ring holt B in die geloeste Gruppe) - der Test greift",
+          not naht.ausgefuehrt and "Gegenfläche" in b2["grund"] and "B" in b2.get("mitgeloest", []), str(b2))
+
+
 def main():
     for t in (test_fuge_laesst_schweissnaht_ganz, test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
               test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,
               test_suchradius_kommt_aus_der_fuge, test_diagnose_sieht_die_gegenseite,
               test_lager_werden_mitgenommen, test_verschieden_feine_netze, test_verbund,
+              test_naht_bleibt_verschweisst, test_naht_loest_nachbarn_mit, test_naht_im_ring,
               test_spalt_schliessen, test_zylinder_in_bohrung, test_starre_flaeche, test_naechste_punkte,
               test_spalt_laengs_der_normalen, test_formschluss,
               test_formschluss_meldung,
