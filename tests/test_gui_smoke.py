@@ -4727,6 +4727,8 @@ def main():
               ok_ and texte_[:2] == ["Selektiertes anzeigen", "Selektiertes ausblenden"]
               and "Knoten (2)" in texte_ and "Knotenlager (1)" in texte_ and "Linien (2)" in texte_ and "Stäbe (2)" in texte_,
               str(texte_))
+        check("… und Verschieben, Kopieren, Drehen, Spiegeln (15.09.2026)",
+              all(t_ in texte_ for t_ in ("Verschieben…", "Kopieren…", "Drehen…", "Spiegeln…")), str(texte_))
         sub_ = next(a.menu() for a in menu_.actions() if a.text() == "Knoten (2)")
         check("Untermenü je Gruppe: Bearbeiten…, Löschen", [a.text() for a in sub_.actions()] == ["Bearbeiten…", "Löschen"])
         w.sammelmaske("knoten", [k0, k1])
@@ -4766,6 +4768,55 @@ def main():
         w.auswahl_loeschen("knoten", [k4])
         app.processEvents()
         check("Freien Knoten über das Menü löschen", w.model.nn == 4, str(w.model.nn))
+        # --- 15.09.2026: Verschieben, Kopieren, Drehen, Spiegeln aus dem Rechtsklick / Ribbon ---
+        m_ = w.model
+        k_ = 0
+        alt_k = m_.nodes[k_].copy()
+        w._auswahl_leeren(); w.selection = np.array([k_], int)
+        w.maske_transformieren("verschieben"); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Maske „Verschieben“ rechts: dx, dy, dz und die Auswahl (1 Knoten), zwei Punkte anklickbar",
+              mk is not None and mk.titel.startswith("Verschieben") and all(k in mk.werte() for k in ("dx", "dy", "dz"))
+              and "1 Knoten" in mk.werte()["auswahl"] and mk.n_knoten == 2 and mk.punkte, str(mk.werte() if mk else None))
+        mk.setzen("dx", 0.5); mk.anwenden(); app.processEvents()
+        check("Anwenden verschiebt den Knoten um dx = 0,5",
+              abs(m_.nodes[k_][0] - alt_k[0] - 0.5) < 1e-9 and abs(m_.nodes[k_][2] - alt_k[2]) < 1e-9, str(m_.nodes[k_]))
+        w.maske_transformieren("verschieben"); app.processEvents()
+        w.maskenrand.punkt_angeklickt(np.array([0.0, 0.0, 0.0])); w.maskenrand.punkt_angeklickt(np.array([0.0, 0.0, 1.5]))
+        app.processEvents()
+        check("zwei Punkte anklicken (von → nach) verschiebt sofort um ihren Abstand (0, 0, 1,5)",
+              abs(m_.nodes[k_][2] - alt_k[2] - 1.5) < 1e-9, str(m_.nodes[k_]))
+        m_.nodes[k_] = alt_k
+        w._auswahl_leeren(); w.sel_linien = ["L0"]
+        n_l, nn_ = len(m_.lines), m_.nn
+        w.maske_transformieren("kopieren"); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Maske „Kopieren“ mit Anzahl", mk is not None and mk.titel.startswith("Kopieren") and "anzahl" in mk.werte())
+        z0_ = np.sort(m_.nodes[[int(x) for x in m_.lines["L0"].nodes], 2])
+        mk.setzen("dz", 2.0); mk.setzen("anzahl", 2); mk.anwenden(); app.processEvents()
+        check("Kopieren mit dz = 2, zweimal: zwei neue Linien auf vier neuen Knoten (z + 2, z + 4), das Original bleibt",
+              len(m_.lines) == n_l + 2 and m_.nn == nn_ + 4 and "L0" in m_.lines
+              and np.allclose(np.sort(m_.nodes[nn_:nn_ + 2, 2]), z0_ + 2.0)
+              and np.allclose(np.sort(m_.nodes[nn_ + 2:, 2]), z0_ + 4.0),
+              f"{len(m_.lines)} Linien, {m_.nn} Knoten, z {m_.nodes[nn_:, 2]}")
+        w._auswahl_leeren(); w.selection = np.array([k_], int)
+        w.maske_transformieren("drehen"); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("achse", "z"); mk.setzen("winkel", 180.0); mk.setzen("px", 1.0); mk.anwenden(); app.processEvents()
+        check("Drehen 180° um z durch (1,0,0): x → 2 - x",
+              abs(m_.nodes[k_][0] - (2.0 - alt_k[0])) < 1e-9 and abs(m_.nodes[k_][1] + alt_k[1]) < 1e-9, str(m_.nodes[k_]))
+        m_.nodes[k_] = alt_k
+        w.maske_transformieren("spiegeln"); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("ebene", "xy (z = Lage)"); mk.setzen("lage", 1.0); mk.setzen("kopie", True); mk.anwenden(); app.processEvents()
+        check("Spiegeln an z = 1 als Kopie: ein neuer Knoten bei z = 2 - z, das Original bleibt",
+              m_.nn == nn_ + 5 and abs(m_.nodes[-1][2] - (2.0 - alt_k[2])) < 1e-9 and np.allclose(m_.nodes[k_], alt_k),
+              f"{m_.nn} Knoten, {m_.nodes[-1]}")
+        w.undo(); app.processEvents()
+        check("Rückgängig nimmt die Spiegelkopie zurück", w.model.nn == nn_ + 4, str(w.model.nn))
+        w._auswahl_leeren()
+        w.maske_transformieren("verschieben"); app.processEvents()
+        check("ohne Auswahl: Hinweis statt Maske", fehler_ and "Zuerst" in fehler_[-1], str(fehler_[-1:]))
         del w._bestaetigen
         w.error = alt_error
 
@@ -8268,6 +8319,117 @@ def main():
         import traceback
         traceback.print_exc()
         check("Mehrfachauswahl im Modellbaum", False, str(ex)[:70])
+
+    # ---- 15.09.2026: Lot / Projektion, Fang „Lot", Geometrieart, Flaechen verschneiden ----
+    try:
+        from statik3d import ks as ksm
+        fehler_ = []
+        alt_error = w.error
+        w.error = lambda msg: fehler_.append(str(msg))
+        w.new_model(); app.processEvents()
+        m_ = w.model
+        m_.add_nodes(np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0], [0.5, 0.5, 1.0], [1.5, 0.25, 2.0]]))
+        for i_, (a_, b_) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+            m_.add_line(f"L{i_ + 1}", [a_, b_])
+        m_.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke=list(m_.shells)[0], material=list(m_.materials)[0])
+        w.refresh_all(); app.processEvents()
+        check("Fangart „Lot“ gibt es (Umschalt+F8), in Ribbon und Statuszeile",
+              "lot" in ksm.FANGARTEN and "lot" in w.act_fangart
+              and w.act_fangart["lot"].shortcut().toString() == "Shift+F8" and ksm.FANG_TEXT["lot"] == "Lot",
+              str(list(w.act_fangart)))
+        w.fang_umschalten(True); w.fang_arten = ["lot"]
+        w.blickrichtung("+z"); w.zoom_alles(); app.processEvents()
+        w.maske_linie(); app.processEvents()
+        w.maskenrand.maske.knoten_angeklickt(4); app.processEvents()
+        xy_, _s = w._projizieren(np.array([[0.5, 0.0, 0.0]]))
+        w.plotter.iren.interactor.SetEventPosition(int(round(xy_[0][0])), int(round(xy_[0][1])))
+        p_, art_, _i = w._fangpunkt()
+        check("Fang „Lot“: vom zuletzt gewählten Knoten (0,5; 0,5; 1) fällt das Lot auf L1 bei (0,5; 0; 0)",
+              art_ == "lot" and p_ is not None and abs(p_[0] - 0.5) < 1e-6 and abs(p_[1]) < 1e-9 and abs(p_[2]) < 1e-9,
+              f"{art_} {p_}")
+        w.maskenrand.schliessen(); app.processEvents()
+        p_, art_, _i = w._fangpunkt()
+        check("… ohne Bezugspunkt (keine Maske offen) fängt „Lot“ nichts", art_ == "", f"{art_} {p_}")
+        w.fang_arten = list(ksm.FANGARTEN)
+        w._auswahl_leeren(); w.selection = np.array([4, 5], int)
+        nn_ = m_.nn
+        w.maske_lot(); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Maske „Lot / Projektion“: Ziel, Objekt, Ergebnis, Lotlinie; zwei Knoten als Quelle",
+              mk is not None and mk.titel.startswith("Lot")
+              and all(k in mk.werte() for k in ("ziel", "objekt", "ergebnis", "lotlinie"))
+              and "2 Knoten" in mk.werte()["quelle"], str(mk.werte() if mk else None))
+        mk.setzen("ziel", "Arbeitsebene"); mk.setzen("lotlinie", True); mk.anwenden(); app.processEvents()
+        check("Lot auf die Arbeitsebene (xy): zwei neue Knoten bei z = 0 unter den Quellknoten, zwei Lotlinien",
+              m_.nn == nn_ + 2 and np.allclose(m_.nodes[nn_:, 2], 0)
+              and np.allclose(m_.nodes[nn_:, :2], m_.nodes[[4, 5], :2])
+              and sum(1 for ln in m_.lines.values() if sorted(int(x) for x in ln.nodes) in ([4, nn_], [5, nn_ + 1])) == 2,
+              f"{m_.nn}, {sorted(m_.lines)}")
+        w.selection = np.array([5], int)
+        w.maske_lot(); app.processEvents()
+        mk = w.maskenrand.maske
+        w.activateWindow(); mk._felder["objekt"].setFocus(); app.processEvents()
+        check("Klick ins Feld Objekt: die Maus sammelt Flächen, das Feld ist scharf",
+              mk.objekt_modus == "flaeche" and "ff8800" in mk._felder["objekt"].styleSheet().lower(),
+              repr(mk.objekt_modus))
+        mk.objekt_angeklickt("flaeche", "F1"); app.processEvents()
+        mk.setzen("ziel", "Ebene einer Fläche"); mk.setzen("ergebnis", "Knoten dorthin verschieben (projizieren)")
+        mk.anwenden(); app.processEvents()
+        check("Projektion auf die Ebene von F1: der Knoten (1,5; 0,25; 2) steht jetzt bei z = 0",
+              mk.werte()["objekt"] == "F1" and abs(m_.nodes[5][2]) < 1e-9 and abs(m_.nodes[5][0] - 1.5) < 1e-9
+              and m_.nn == nn_ + 2, str(m_.nodes[5]))
+        m_.nodes[5] = [3.0, 0.5, 1.0]
+        w.selection = np.array([5], int)
+        w.maske_lot(); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("ziel", "Fläche (nächster Punkt)"); mk.setzen("objekt", "F1"); mk.anwenden(); app.processEvents()
+        check("nächster Punkt der Fläche zu (3; 0,5; 1): neuer Knoten am Rand (2; 0,5; 0)",
+              m_.nn == nn_ + 3 and np.allclose(m_.nodes[-1], [2.0, 0.5, 0.0]), str(m_.nodes[-1]))
+        w.selection = np.array([5], int)
+        w.maske_lot(); app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen("ziel", "Linie (nächster Punkt)"); mk.setzen("objekt", "L2"); mk.anwenden(); app.processEvents()
+        check("Lot auf die Linie L2 (x = 2): neuer Knoten (2; 0,5; 0)",
+              m_.nn == nn_ + 4 and np.allclose(m_.nodes[-1], [2.0, 0.5, 0.0]), str(m_.nodes[-1]))
+        w._auswahl_leeren(); w.maske_lot(); app.processEvents()
+        check("ohne gewählte Knoten: Hinweis statt Maske", fehler_ and "Knoten" in fehler_[-1], str(fehler_[-1:]))
+        w.flaeche_bearbeiten("F1"); app.processEvents()
+        mk = w.maskenrand.maske
+        check("Flächenmaske: Geometrieart eben / Regelfläche", "typ" in mk.werte() and mk.werte()["typ"] == "eben",
+              str(mk.werte().get("typ")))
+        # ohne „gleich vernetzen": sonst laegen Netzknoten auf der Schnittlinie unten
+        mk.setzen("typ", "Regelfläche (Viereck, gewölbt)"); mk.setzen("vernetzen", False)
+        mk.anwenden(); app.processEvents()
+        check("Übernehmen setzt die Geometrieart", m_.flaechen["F1"].typ == "regelflaeche", m_.flaechen["F1"].typ)
+        mk = w.maskenrand.maske
+        mk.setzen("typ", "eben"); mk.setzen("vernetzen", False); mk.anwenden(); app.processEvents()
+        check("… und zurück, ohne Netz", m_.flaechen["F1"].typ == "eben" and not m_.flaechen["F1"].elemente,
+              f"{m_.flaechen['F1'].typ}, {len(m_.flaechen['F1'].elemente)} Elemente")
+        b0_ = m_.nn
+        m_.add_nodes(np.array([[1, -1, -1], [1, 2, -1], [1, 2, 1], [1, -1, 1.]]))
+        for i_ in range(4):
+            m_.add_line(f"Q{i_}", [b0_ + i_, b0_ + (i_ + 1) % 4])
+        m_.add_flaeche("F2", ["Q0", "Q1", "Q2", "Q3"], material=list(m_.materials)[0])
+        w.refresh_all(); app.processEvents()
+        w._auswahl_leeren(); w.sel_flaechen = ["F1", "F2"]
+        n_l, nn2_ = len(m_.lines), m_.nn
+        alt_lines = set(m_.lines)
+        w.flaechen_verschneiden(); app.processEvents()
+        neu_l = [n for n in m_.lines if n not in alt_lines]
+        kn_ = sorted(m_.nodes[[int(x) for x in m_.lines[neu_l[0]].nodes]].tolist()) if neu_l else []
+        check("„Flächen verschneiden“: eine Schnittlinie von (1,0,0) nach (1,1,0) auf zwei neuen Knoten",
+              len(neu_l) == 1 and m_.nn == nn2_ + 2 and np.allclose(kn_, [[1, 0, 0], [1, 1, 0]]),
+              f"{neu_l} {kn_} {m_.nn - nn2_} Knoten")
+        check("… die Schnittlinie ist danach gewählt, die Flächen nicht mehr",
+              w.sel_linien == neu_l and not w.sel_flaechen, str(w.sel_linien))
+        w.sel_flaechen = ["F1"]; w.flaechen_verschneiden(); app.processEvents()
+        check("mit einer Fläche: Hinweis", "zwei" in fehler_[-1].lower(), str(fehler_[-1:]))
+        w.error = alt_error
+        w.new_model()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Lot, Fang Lot, Geometrieart, Verschneiden", False, str(ex)[:70])
 
     try:
         _kuerzel_pruefen(w, app)

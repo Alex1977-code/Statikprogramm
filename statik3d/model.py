@@ -2680,6 +2680,15 @@ class ContactPair:
 #: Alter Name der Kontaktbedingung (RFEM: Flaechenfreigabe)
 Flaechenfreigabe = Kontaktbedingung
 
+#: Geometrieart einer Flaeche im Klartext (Maske, Dialog) -> Flaeche.typ.
+#: Eine Regelflaeche (RFEM: Quadrangle) spannt sich zwischen vier
+#: Randabschnitten auf - der Mantel einer Bohrung, eines Bolzens, einer
+#: Buchse - und darf gewoelbt sein; ihr Netz und ihr Bild kommen aus der
+#: Coons-Flaeche ueber den vier Seiten, auch wenn die Seiten Boegen oder
+#: Splines sind (15.09.2026: „Quadrangle und/oder Splines").
+FLAECHENARTEN = {"eben": "eben", "Regelfläche (Viereck, gewölbt)": "regelflaeche",
+                 "beschnitten (aus der Quelldatei)": "beschnitten"}
+
 #: Steifigkeitsarten einer Flaeche **ohne** eigene Steifigkeit (Klartext, wie
 #: der RFEM-Import sie in ``Flaeche.steifigkeit`` schreibt)
 FLAECHEN_OHNE_STEIFIGKEIT = {

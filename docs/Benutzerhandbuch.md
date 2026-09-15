@@ -84,8 +84,8 @@ Vierzehn Register nach Arbeitsschritt:
 |---|---|
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, Übernehmen aus fremden Formaten, Exportieren, Beispiele |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
-| **Geometrie** | Knoten, Linien, Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang |
-| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
+| **Geometrie** | Knoten, Linien, **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang (auch „Lot“) |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, verschneiden, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
@@ -1458,7 +1458,9 @@ Masken im Register *Geometrie*, der Import steht im Register *Datei*.
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente gewählt (mit ihren Lagern und Kontaktbedingungen),
 öffnet der Rechtsklick in der Ansicht ein Menü: oben *Selektiertes
-anzeigen* (alles andere ausblenden) und *Selektiertes ausblenden*, darunter
+anzeigen* (alles andere ausblenden) und *Selektiertes ausblenden*, dann
+**Verschieben…**, **Kopieren…**, **Drehen…**, **Spiegeln…** (siehe
+„Verschieben, Kopieren, Drehen, Spiegeln“), darunter
 je Gruppe der markierten Objekte ein Untermenü mit **Bearbeiten…** und
 **Löschen**. *Bearbeiten…* öffnet rechts die **Sammelmaske** für alle
 Objekte der Gruppe: Felder, in denen sich die Objekte unterscheiden, zeigen
@@ -1564,6 +1566,36 @@ Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
 bis man sie ändert. **Esc** schließt die Maske. Ein neuer Erzeuge-Befehl löst
 die vorige Maske ab — es ist immer höchstens eine offen.
 
+### Verschieben, Kopieren, Drehen, Spiegeln
+
+Was in der Ansicht gewählt ist — Knoten, Linien, Stäbe, Flächen, Volumen,
+auch gemischt —, lässt sich seit 15.09.2026 **verschieben, kopieren, drehen
+und spiegeln**: Rechtsklick in die Ansicht oder *Geometrie → Ändern*. Rechts
+erscheint die Maske; jede hat zwei Wege:
+
+| Befehl | tippen | klicken |
+|---|---|---|
+| Verschieben | dx, dy, dz [m], „Anwenden“ | zwei Punkte: von → nach |
+| Kopieren | dx, dy, dz und Anzahl | zwei Punkte |
+| Drehen | Achse x, y oder z durch einen Punkt, Winkel [°] (rechtsdrehend um die Achse), Haken „als Kopie“, Anzahl | zwei Punkte der Achse |
+| Spiegeln | Ebene yz, xz oder xy in einer Lage, Haken „als Kopie“ | drei Punkte der Ebene |
+
+Sobald die Punkte beisammen sind (Fang wie überall), geschieht es sofort;
+sonst „Anwenden“. Jede weitere Kopie liegt um dieselbe Abbildung weiter
+(drei Kopien mit dz = 2: bei 2, 4 und 6 m). Ein Volumen bringt seine Flächen,
+die ihre Linien, die ihre Knoten mit — und das Netz: verschobene und gedrehte
+Netze bleiben, kopierte kommen mit (Elemente, Randseiten, Stäbe mit
+Nachweis; Kopien heißen L…, F…, V…, S… fortlaufend). Ein Knoten, den auch ein
+**nicht** gewähltes Objekt benutzt, wandert beim Verschieben mit (so hängt
+eine Rippe an ihrem Blech); wer das nicht will, kopiert. **Spiegeln** löscht
+das Schalen- und Volumennetz der gespiegelten Objekte — die Elemente wären
+umgestülpt —, die Geometrie bleibt, Stabelemente bleiben; danach neu
+vernetzen. Bögen, Kreise, Splines nehmen Mittelpunkt, Normale und
+Steuerpunkte mit. Lager, Lasten und Kontaktbedingungen werden nicht kopiert;
+berührt die Kopie ein anderes Volumen, entsteht der Kontakt von selbst
+(„Kontakte entstehen von selbst“). Alles ist mit Rückgängig zurückzunehmen.
+Geprüft in `tests/test_transformieren.py` und der Oberflächenprüfung.
+
 ### Rückgängig und Wiederholen
 
 **Strg+Z** nimmt die letzte Änderung zurück, **Strg+Y** stellt sie wieder her —
@@ -1586,13 +1618,31 @@ Im Register **Geometrie** stehen zwei Gruppen für die Eingabehilfen - der Fang 
   Rasterweite (0 = kein Raster).
 * **Fang** — ein Klick in der Ansicht wird auf die nächste markante Stelle
   gezogen, in dieser Reihenfolge: **Knoten**, **Kantenmitte** eines Stabes,
-  **Linie** (der Fußpunkt auf der Linie, auch auf einem Bogen), **Stab** (der
-  Fußpunkt auf der Stabachse), **Fläche** (der Punkt auf der Fläche oder
-  Schale unter dem Zeiger, auch auf einem Zylindermantel), **Volumen** (der
-  Punkt auf der Oberfläche eines Körpers), zuletzt der **Rasterpunkt**. Jede
-  Art ist einzeln schaltbar — im Ribbon, in der Glasleiste oder mit
-  Umschalt+F1 … F7; der Hauptschalter (F3) nimmt alles zurück. Die
-  Statusleiste zeigt den Zustand.
+  **Lot** (seit 15.09.2026: der Fußpunkt des Lots vom zuletzt gewählten Knoten
+  oder Punkt der offenen Maske auf eine Linie oder Stabachse — so trifft die
+  nächste Linie rechtwinklig auf eine andere; ohne offene Maske fängt „Lot“
+  nichts), **Linie** (der Fußpunkt auf der Linie, auch auf einem Bogen),
+  **Stab** (der Fußpunkt auf der Stabachse), **Fläche** (der Punkt auf der
+  Fläche oder Schale unter dem Zeiger, auch auf einem Zylindermantel),
+  **Volumen** (der Punkt auf der Oberfläche eines Körpers), zuletzt der
+  **Rasterpunkt**. Jede Art ist einzeln schaltbar — im Ribbon, in der
+  Glasleiste oder mit Umschalt+F1 … F8 (Lot: Umschalt+F8); der Hauptschalter
+  (F3) nimmt alles zurück. Die Statusleiste zeigt den Zustand.
+
+### Lot und Projektion
+
+*Geometrie → Konstruktion → Lot / Projektion* (seit 15.09.2026). Erst die
+Knoten wählen, von denen das Lot fallen soll, dann die Maske rechts:
+
+| Feld | Bedeutung |
+|---|---|
+| Ziel | **Arbeitsebene**; **Ebene einer Fläche** (die Ebene der ebenen Fläche, auch über ihren Umriss hinaus); **Fläche (nächster Punkt)** — der nächste Punkt der Fläche selbst, auch einer gewölbten (Zylindermantel), am Rand der Randpunkt; **Linie (nächster Punkt)** — der nächste Punkt der Linie, Bögen und Splines abgetastet |
+| Objekt | die Fläche oder Linie: Name tippen oder **ins Feld klicken** und in der Ansicht anklicken (orange = scharf; ein anderes Feld oder Esc beendet das) |
+| Ergebnis | **neuer Knoten am Fußpunkt** (die neuen Knoten sind danach gewählt) oder **Knoten dorthin verschieben** — das ist der projizierte Punkt |
+| Lotlinie anlegen | zu jedem neuen Fußpunkt eine Linie vom Quellknoten dorthin |
+
+Geprüft in `tests/test_konstruktion.py` (Lot auf Ebene, Strecken, Kreis,
+ebene und gewölbte Fläche) und der Oberflächenprüfung.
 
 ### Linien: Bogen, Kreis, Spline, Parabel
 
@@ -1611,6 +1661,28 @@ Mit „Stäbe daraus erzeugen" wird die Linie gleich in Stabelemente geteilt —
 Teilung steht in der Maske. Die Linie bleibt als Geometrie erhalten und kennt
 ihre exakte Länge (ein Halbkreis r = 2 m misst 6,283 m, nicht die Länge des
 Sehnenzugs).
+
+### Flächen: eben oder Regelfläche; Flächen verschneiden
+
+Die Flächenmaske (und „Fläche aus Linien“) hat seit 15.09.2026 das Feld
+**Geometrieart**: **eben** — der Rand liegt in einer Ebene — oder
+**Regelfläche (Viereck, gewölbt)**: die Fläche spannt sich zwischen vier
+Randabschnitten auf und darf gewölbt sein, wie der Mantel einer Bohrung,
+einer Buchse oder eines Bolzens (RFEM nennt das Quadrangle). Die Randlinien
+dürfen dabei Bögen oder Splines sein; Bild und Netz kommen aus der
+Coons-Fläche über den vier Seiten. Eine Fläche aus der Quelldatei kann
+außerdem „beschnitten“ sein. Wechselt man die Art einer vernetzten Fläche,
+fällt ihr Netz (es gehörte zur alten Form) — neu vernetzen.
+
+**Flächen verschneiden** (*Struktur → Flächen → Flächen verschneiden*): zwei
+Flächen wählen, der Befehl legt ihre **Schnittlinie** als Polylinie mit neuen
+Knoten an (vorhandene Knoten auf der Linie werden genommen; Zwischenpunkte auf
+einer Geraden entfallen) und wählt sie; die Flächen bleiben, wie sie sind —
+mit der Linie lassen sie sich dann in Teilflächen zerlegen. Verschnitten
+werden die Dreiecke der Flächen, dieselben wie im Bild; darum geht es auch mit
+gewölbten Flächen und Spline-Rändern, auf die Genauigkeit der Abtastung (16
+Abschnitte je Bogen: ein Viertelkreis kommt auf 1 % Bogenlänge). Aufeinander
+liegende Flächen geben keine Linie. Geprüft in `tests/test_verschneiden.py`.
 
 ### Ansichtswürfel
 

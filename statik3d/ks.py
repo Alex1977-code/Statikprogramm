@@ -37,12 +37,14 @@ ARTEN = ("kartesisch", "zylindrisch", "sphaerisch")
 EBENEN = ("xy", "yz", "xz")
 
 #: Was gefangen werden kann - in dieser Reihenfolge hat der Fang den Vorrang:
-#: ein Knoten geht der Stabmitte vor, diese dem Punkt auf einer Linie, dann
-#: Stab, Flaeche (Randmitten und Schwerpunkt), Volumen (Schwerpunkt), Raster.
-FANGARTEN = ("knoten", "mitte", "linie", "stab", "flaeche", "volumen", "raster")
+#: ein Knoten geht der Stabmitte vor, diese dem Lot (dem Fusspunkt vom zuletzt
+#: gewaehlten Punkt der offenen Maske auf eine Linie oder Stabachse, seit
+#: 15.09.2026), dieses dem Punkt auf einer Linie, dann Stab, Flaeche
+#: (Randmitten und Schwerpunkt), Volumen (Schwerpunkt), Raster.
+FANGARTEN = ("knoten", "mitte", "lot", "linie", "stab", "flaeche", "volumen", "raster")
 
 #: Klartext je Fangart
-FANG_TEXT = {"knoten": "Knoten", "mitte": "Kantenmitte", "linie": "Linie",
+FANG_TEXT = {"knoten": "Knoten", "mitte": "Kantenmitte", "lot": "Lot", "linie": "Linie",
              "stab": "Stab", "flaeche": "Fläche", "volumen": "Volumen",
              "raster": "Raster"}
 
@@ -225,7 +227,7 @@ class Fangtreffer:
             return "frei"
         if self.art == "knoten":
             return f"Knoten {self.knoten + 1}"
-        return {"mitte": "Kantenmitte", "raster": "Raster"}.get(self.art, self.art)
+        return {"mitte": "Kantenmitte", "lot": "Lot", "raster": "Raster"}.get(self.art, self.art)
 
 
 def fangen(punkt, knoten=None, kanten=None, ebene: Arbeitsebene = None,

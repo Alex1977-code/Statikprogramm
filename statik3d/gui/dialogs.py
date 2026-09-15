@@ -889,12 +889,22 @@ class FlaechenDialog(QtWidgets.QDialog):
         self.kommentar = QtWidgets.QLineEdit(getattr(flaeche, "kommentar", "") or "")
         self.vernetzen = QtWidgets.QCheckBox("gleich vernetzen")
         self.vernetzen.setChecked(not getattr(flaeche, "elemente", None))
+        from ..model import FLAECHENARTEN
+        self.typ = QtWidgets.QComboBox()
+        self.typ.addItems(list(FLAECHENARTEN))
+        self.typ.setToolTip("eben: der Rand liegt in einer Ebene. Regelfläche: zwischen vier "
+                            "Randabschnitten aufgespannt, darf gewölbt sein (Bohrung, Buchse, Bolzen)")
+        aktuell = str(getattr(flaeche, "typ", "") or "eben")
+        for text, wert in FLAECHENARTEN.items():
+            if wert == aktuell:
+                self.typ.setCurrentText(text)
         f = QtWidgets.QFormLayout(self)
         f.addRow("Name", self.name)
         f.addRow(QtWidgets.QLabel(
             "<b>Randlinien</b> – der Rand muss schließen. Vier Randabschnitte "
             "geben ein abgebildetes Vierecknetz."))
         f.addRow(self.liste)
+        f.addRow("Geometrieart", self.typ)
         f.addRow("Dicke", self.dicke)
         f.addRow("Werkstoff", self.material)
         f.addRow("Teilung (längs × quer)", row(self.nu, self.nv))
@@ -903,8 +913,10 @@ class FlaechenDialog(QtWidgets.QDialog):
         f.addRow(buttons(self))
 
     def werte(self) -> dict:
+        from ..model import FLAECHENARTEN
         return {"name": self.name.text().strip() or "F",
                 "linien": [i.text() for i in self.liste.selectedItems()],
+                "typ": FLAECHENARTEN.get(self.typ.currentText(), "eben"),
                 "dicke": self.dicke.currentText(),
                 "material": self.material.currentText(),
                 "teilung": [self.nu.value(), self.nv.value()],
