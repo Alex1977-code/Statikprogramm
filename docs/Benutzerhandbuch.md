@@ -314,7 +314,7 @@ erscheint die Maske:
 |---|---|
 | Körper A (Kontaktseite) | der Körper, dessen Flächen die Kontaktseite bilden - er wird an ihnen gelöst |
 | Körper B (Gegenseite) | der Körper, gegen den der Kontakt wirkt; „(alle anderen Körper)“ sucht die Gegenseite unter allen Bauteilen |
-| Kontaktflächen | mindestens eine Fläche von Körper A - getippt oder mit **„Kontaktflächen anklicken“** in der Ansicht gewählt (jeder Klick nimmt dazu oder heraus) |
+| Kontaktflächen | Flächen von Körper A - getippt oder mit **„Kontaktflächen anklicken“** in der Ansicht gewählt (jeder Klick nimmt dazu oder heraus). Leer darf das Feld nur bleiben, wenn Gegenflächen genannt sind: dann ist die Kontaktseite, was von Körper A auf ihnen liegt - so kommt jede RFEM-Freigabe herein. Sind beide leer, lehnt „Übernehmen“ eine neue Bedingung ab |
 | Gegenflächen | die Flächen der Gegenseite - ebenso mit **„Gegenflächen anklicken“** in der Ansicht wählbar (seit 14.09.2026; vorher nur Anzeige aus der Quelldatei). Genannt: der Kontakt wirkt **nur auf diesen Flächen** (seit 15.09.2026). Leer: die Gegenseite wird im Suchradius gesucht. Der zweite Knopf schaltet den Klickmodus auf die andere Liste um, ohne ihn zu beenden |
 | Standardkontakt | setzt die Richtungen darunter mit einem Griff (Tabelle unten); danach lässt sich jede Richtung von Hand ändern, der Standard wird dann „Benutzerdefiniert“ |
 | Druck | wird immer übertragen - das ist Kontakt |
@@ -323,7 +323,7 @@ erscheint die Maske:
 | Reibbeiwert μ | Coulomb-Reibung in der Fugenebene; 0 = reibungsfrei |
 | Verdrehungen | φx, φy, φz starr oder frei - nur bei Schalen wirksam, Volumen haben keine Verdrehungen |
 | Feder c | Steifigkeit [kN/m je m²] für Richtungen mit „Feder“ |
-| Suchradius | wie weit die Gegenseite entfernt liegen darf (ANSYS: „Pinball“). 0 = automatisch: die größere mittlere Kantenlänge der **beiden Seiten dieser Fuge** — dazu sucht das Programm zweimal, erst weit, um die Gegenseite zu finden, dann mit deren Netz. So bekommt eine feine Fuge nicht die Netzweite eines groben Modells. Damit findet eine fein vernetzte Achse (2 mm) ihre grob vernetzte Bohrung (15 mm) auch mit Spiel; was weiter weg liegt, gehört nicht zur Fuge. Ein eingetragener Wert gilt unverändert |
+| Suchradius | wie weit die Gegenseite entfernt liegen darf, damit sie noch zur Fuge gehört (ANSYS: „Pinball“); ein Tausendstel davon gilt als Berührung. Das Protokoll nennt den verwendeten Wert (am Drehlager „Achse (Typ 3)“: 50 mm, das Netz der Bohrung). Von Hand nur, wenn Spiel größer als ein Element zur Fuge gehören soll. 0 = automatisch: die größere mittlere Kantenlänge der **beiden Seiten dieser Fuge** — dazu sucht das Programm zweimal, erst weit, um die Gegenseite zu finden, dann mit deren Netz. So bekommt eine feine Fuge nicht die Netzweite eines groben Modells. Damit findet eine fein vernetzte Achse (2 mm) ihre grob vernetzte Bohrung (15 mm) auch mit Spiel; was weiter weg liegt, gehört nicht zur Fuge. Ein eingetragener Wert gilt unverändert |
 | Anfangsspalt | *wie modelliert*: ein Spalt bleibt offen, bis die Last ihn schließt. Gemessen wird zur **wahren** Fläche, nicht zur Facette: an einer Bohrung zählt der Bogen, nicht die Sehne, eine passgenaue Achse liegt darum überall an, auch zwischen den Ecken der Bohrung und auch bei verschieden feinen Netzen (seit 13.09.2026); ein Spalt unter einem Tausendstel des Suchradius gilt als Berührung. *auf Berührung setzen*: jeder Knoten gilt in seiner Lage als anliegend - auch ein wirkliches Spiel verschwindet (ANSYS: „adjust to touch“) |
 
 Die **Standardkontakte** heißen wie in ANSYS:
@@ -400,7 +400,10 @@ dass das gelöste Bauteil frei gleiten kann und eigene Lager braucht. Hält sie
 zwei, wird die dritte beim Namen genannt. Ändert man eine Bedingung später, wird ihr
 Kontaktpaar ersetzt; Löschen (Rechtsklick oder Entf) nimmt es mit.
 
-Aus RFEM eingelesene Flächenfreigaben stehen in derselben Maske: Körper A ist
+Aus RFEM eingelesene Flächenfreigaben stehen in derselben Maske. Nummer und
+Ort des RFEM-Freigabetyps stehen seit 15.09.2026 nicht mehr darin - keine
+Rechnung liest sie, die Wirkung je Richtung steht in der Maske; sie bleiben im
+Modell und in der Tabelle *Kontaktbedingungen* (Spalten „Typ“ und „Ort“). Körper A ist
 der gelöste Körper, die Gegenflächen sind die zugeordneten Flächen der
 Quelldatei — die Fuge. Der Kontakt wirkt nur auf ihnen, nicht auf
 Nachbarflächen desselben Bauteils (seit 15.09.2026; vorher trug am Drehlager

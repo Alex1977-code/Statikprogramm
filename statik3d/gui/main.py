@@ -5255,13 +5255,16 @@ class MainWindow(QtWidgets.QMainWindow):
                                 "die Gegenseite unter allen Bauteilen"))
         felder.append(F("flaechennamen", "Kontaktflächen", "liste", ", ".join(kb.flaechennamen or []),
                         breite=170,
-                        hinweis="mindestens eine Fläche von Körper A - getippt oder mit "
-                                "„Kontaktflächen anklicken“ in der Ansicht gewählt"))
+                        hinweis="Flächen von Körper A - getippt oder mit „Kontaktflächen anklicken“ "
+                                "in der Ansicht gewählt. Leer nur mit Gegenflächen: dann ist die "
+                                "Kontaktseite, was von Körper A auf ihnen liegt (so kommt jede "
+                                "RFEM-Freigabe herein)"))
         felder.append(F("gegenflaechen", "Gegenflächen", "liste",
                         ", ".join(kb.gegenflaechen or []), breite=170,
                         hinweis="die Flächen der Gegenseite - getippt oder mit „Gegenflächen "
-                                "anklicken“ in der Ansicht gewählt. Leer: die Gegenseite wird im "
-                                "Suchradius gesucht (Körper B). Eine eingelesene Datei bringt sie mit"))
+                                "anklicken“ in der Ansicht gewählt. Genannt: der Kontakt wirkt nur auf "
+                                "ihnen. Leer: die Gegenseite wird im Suchradius gesucht, in Körper B "
+                                "oder allen anderen Körpern. Eine eingelesene Datei bringt sie mit"))
         felder += [F("druck", "Druck", "info", "wird übertragen (Kontakt)"),
                    F("zug", "Zug", "wahl", zug_text(b_n), list(self.KONTAKT_ZUG.values()),
                      hinweis="abheben: die Fuge öffnet unter Zug; übertragen: Verbund ohne Trennung"),
@@ -5275,8 +5278,10 @@ class MainWindow(QtWidgets.QMainWindow):
                    F("c", "Feder c [kN/m je m²]", "zahl", c, hinweis="für Richtungen mit „Feder“"),
                    F("suchweite", "Suchradius [mm]", "zahl",
                      float(getattr(kb, "suchweite", 0.0) or 0.0) * 1e3,
-                     hinweis="wie weit die Gegenseite entfernt liegen darf (ANSYS: Pinball); "
-                             "0 = automatisch, die größere Kantenlänge beider Netze"),
+                     hinweis="wie weit die Gegenseite entfernt liegen darf, damit sie noch zur Fuge "
+                             "gehört (ANSYS: Pinball); ein Tausendstel davon gilt als Berührung. "
+                             "0 = automatisch: die größere mittlere Kantenlänge beider Seiten - das "
+                             "Protokoll nennt den Wert. Von Hand nur für Spiel größer als ein Element"),
                    F("spalt", "Anfangsspalt", "wahl",
                      self.KONTAKT_SPALT[1 if getattr(kb, "spalt_schliessen", False) else 0],
                      self.KONTAKT_SPALT,
@@ -5288,10 +5293,14 @@ class MainWindow(QtWidgets.QMainWindow):
                      if name in m.kontaktbedingungen else "beim Vernetzen"),
                    F("beschreibung", "Beschreibung", "text", getattr(kb, "beschreibung", "") or "",
                      breite=170)]
-        if kb.typ:
-            felder.insert(-1, F("typ", "Typ / Ort (Quelldatei)", "info", f"{kb.typ} / {kb.ort}"))
-        hinweis = ("Körper A wird an seinen Kontaktflächen gegen Körper B gelöst; die Gegenseite wird im "
-                   "Suchradius gefunden - die Flächen müssen weder deckungsgleich noch gleich fein "
+        # Typ und Ort der Quelldatei stehen nicht in der Maske (15.09.2026, „Typ/Ort
+        # braucht es aktuell nicht in der rechten Maske"): keine Rechnung liest
+        # sie, die Wirkung je Richtung steht darueber. Sie bleiben im Modell und
+        # in der Tabelle der Kontaktbedingungen.
+        hinweis = ("Körper A wird gegen Körper B gelöst. Kontaktseite: die Kontaktflächen - oder, wenn "
+                   "leer, was von Körper A auf den Gegenflächen liegt. Gegenseite: die Gegenflächen - "
+                   "oder, wenn leer, was im Suchradius gegenüberliegt. Kontakt wirkt nur, wo sich beide "
+                   "Seiten gegenüberstehen; die Flächen müssen weder deckungsgleich noch gleich fein "
                    "vernetzt sein. Kontaktflächen und Gegenflächen lassen sich in der Ansicht "
                    "anklicken (Knöpfe unten); der Modellbaum lässt jede Fuge einzeln aufleuchten. "
                    "Getrennt wird beim Vernetzen oder mit „Kontaktfugen ausführen“.")
