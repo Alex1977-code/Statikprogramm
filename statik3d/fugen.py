@@ -933,15 +933,6 @@ def _nach_normale(model: Model, nd: list, n: np.ndarray) -> list:
     return nd
 
 
-def koerper_der_flaechen(model: Model, namen) -> set:
-    """Die Volumenkoerper, denen die genannten Flaechen gehoeren."""
-    gesucht = {str(x) for x in (namen or [])}
-    if not gesucht:
-        return set()
-    return {kn for kn, k in (getattr(model, "koerper", None) or {}).items()
-            if gesucht & set(k.flaechen or [])}
-
-
 def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
                             bericht: dict, log: list = None, cache: dict = None) -> dict:
     """Zwei getrennte, aufeinanderliegende Netze ueber ein Kontaktpaar verbinden.
@@ -949,9 +940,10 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
     Passen die Netze an der Fuge nicht Knoten fuer Knoten zusammen, gibt es
     nichts zu trennen - die Bauteile stehen unverbunden nebeneinander und das
     Gleichungssystem waere singulaer. Gesucht wird dann die Gegenseite: die
-    Randseiten der Gegenkoerper (sind keine genannt: aller anderen Bauteile),
-    die der Kontaktseite entgegen zeigen und im Suchradius liegen
-    (:func:`gegenseite_finden`). Sie werden Master, die Knoten der
+    Randseiten der **genannten Gegenflaechen** - sind keine genannt, die der
+    Gegenkoerper oder aller anderen Bauteile -, die der Kontaktseite entgegen
+    zeigen und im Suchradius liegen (:func:`gegenseite_finden`). Sie werden
+    Master, die Knoten der
     Kontaktseite Slave. Das Kontaktpaar verlangt **nicht**, dass die Netze
     zusammenpassen oder die Flaechen deckungsgleich sind - wie in ANSYS.
 
@@ -962,27 +954,36 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
     from .importers import _common as C
     from .model import ContactPair
     from .contact import AUFLIEGEND, verteilungstext
-    # Gesucht wird ueber die **Geometrie**, nicht ueber die Liste der Flaechen,
-    # an denen die Freigabe haengt: die ist unvollstaendig. Im Beispielmodell
-    # nennt sie fuer 36 freigegebene Flaechen nur 5 Gegenflaechen - die
-    # restliche Fuge bliebe unverbunden. Wer aufeinanderliegt und entgegen-
-    # gesetzt zeigt, gehoert zur Fuge; das ist nachpruefbar, die Liste nicht.
     alle = [x for x in _randseiten_aller(model, cache) if x[3] not in geloest]
-    ziel = {str(x) for x in (getattr(kb, "gegenkoerper", None) or [])} - set(geloest)
-    if not ziel:
-        # Nennt die Datei keinen Gegenkoerper, wohl aber die **zugeordneten
-        # Flaechen** der Gegenseite (so kommt jede RFEM-Freigabe herein), dann
-        # gehoeren diese Flaechen einem Bauteil - und nur dort liegt die Fuge.
-        # Gesucht wird weiter ueber die Geometrie, aber in diesem Bauteil:
-        # ueber das ganze Modell findet die Suche notfalls das naechstbeste
-        # Teil. Am Drehlager hingen vier Knoten der Achse V30 in der Fuge zur
-        # Buchse an einem Passstift (V76) und trugen unter Last 37 von 49 MN -
-        # die Buchse bekam sie nicht (14.09.2026: „V16 hat nicht den korrekten
-        # Flaechenkontakt mit V30"). Die Flaechenliste selbst bleibt dabei
-        # aussen vor: sie ist unvollstaendig (siehe oben), ihr Bauteil nicht.
-        ziel = koerper_der_flaechen(model, getattr(kb, "gegenflaechen", None)) - set(geloest)
-    if ziel and any(x[3] in ziel for x in alle):
-        alle = [x for x in alle if x[3] in ziel]
+    genannt = _seiten_flaechen(model, getattr(kb, "gegenflaechen", None))
+    if genannt:
+        # Nennt die Bedingung Gegenflaechen - so kommt jede RFEM-Freigabe
+        # herein, und so waehlt man sie in der Maske -, dann ist die
+        # Gegenseite **genau diese** Flaechen; Kontakt wirkt nur dort. Frueher
+        # wurde im Bauteil der Flaechen geometrisch gesucht, weil die Liste als
+        # unvollstaendig galt. Gemessen am Drehlager (15.09.2026, LF1) deckten
+        # die genannten Flaechen jede der zwoelf Fugen zu 90,6 bis 100 %; was
+        # daneben trug, lag auf Nachbarflaechen desselben Bauteils - in
+        # "Achse (Typ 3)" 109 kN auf den Bohrungsstreifen F319/F320/F587/F588
+        # neben den genannten F304/F305/F589/F590 („strikt auf die genannten
+        # Gegenflaechen begrenzen"). Davor, ueber das ganze Modell gesucht,
+        # hingen dort vier Achsknoten an einem Passstift und trugen 37 von
+        # 49 MN (14.09.2026).
+        seiten = _dreiecke_der_fuge(model, genannt)
+        gruppen = {_gruppe(model, e) for e, _nd, _n in seiten}
+        auf = {frozenset(int(k) for k in nd) for _e, nd, _n in seiten}
+        alle = [x for x in alle if x[3] in gruppen and frozenset(int(k) for k in x[1]) in auf]
+        if not alle:
+            bericht["grund"] = ("die genannten Gegenflächen sind nicht vernetzt oder gehören "
+                                "zum gelösten Bauteil")
+            return bericht
+    else:
+        # Ohne genannte Gegenflaechen: geometrisch, unter den Randseiten der
+        # Gegenkoerper oder - sind auch keine genannt - aller anderen Bauteile.
+        # Wer aufeinanderliegt und entgegengesetzt zeigt, gehoert zur Fuge.
+        ziel = {str(x) for x in (getattr(kb, "gegenkoerper", None) or [])} - set(geloest)
+        if ziel and any(x[3] in ziel for x in alle):
+            alle = [x for x in alle if x[3] in ziel]
     if not alle:
         bericht["grund"] = "keine Gegenfläche eines anderen Bauteils gefunden"
         return bericht

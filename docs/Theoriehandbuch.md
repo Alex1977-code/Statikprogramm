@@ -737,20 +737,28 @@ ihrer gemeinsamen **Randlinien**. Daraus folgen zwei Fälle:
 | passen Knoten für Knoten | **jeder** Fugenknoten gehört beiden Bauteilen | Knoten verdoppeln, je Paar ein Spaltelement (und Kopplungen für die Fugenebene) |
 | passen nicht | nur der gemeinsame Rand gehört beiden (oder gar kein Knoten) | den Rand trennen, die Fläche über ein **Kontaktpaar** (Knoten–Fläche, Abschnitt 4) |
 
-**Die Gegenseite gehört dem Bauteil der genannten Flächen.** Nennt die
-Quelldatei keinen Gegenkörper, wohl aber die zugeordneten Flächen der
-Gegenseite — so kommt jede RFEM-Flächenfreigabe herein —, dann wird die
-Gegenseite nur unter den Randseiten **dieses Bauteils** gesucht. Vorher lief
-die Suche über das ganze Modell und nahm, was im Suchradius am nächsten lag:
-am Drehlager hingen vier Knoten der Achse V30 in der Fuge zur Buchse an einem
-Passstift (V76) statt an der Buchse und trugen unter Last 37 von 49 MN, mit
-12,9 MN auf einem einzigen Knoten (14.09.2026). Die Flächenliste selbst bleibt
-dabei außen vor — sie ist unvollständig (siehe unten) —, ihr Bauteil nicht.
-Geprüft in `tests/test_fugen.py::test_gegenseite_nur_im_genannten_bauteil`.
+**Die Gegenseite sind die genannten Gegenflächen.** Nennt die
+Kontaktbedingung Gegenflächen — so kommt jede RFEM-Flächenfreigabe herein
+(die zugeordneten Flächen), und so wählt man sie in der Maske —, dann besteht
+die Gegenseite des Kontaktpaars **nur** aus den Randseiten dieser Flächen;
+Kontakt wirkt nirgends sonst (seit 15.09.2026). Bis dahin wurde geometrisch
+gesucht, zuletzt im Bauteil der genannten Flächen, weil die Liste als
+unvollständig galt. Gemessen am Drehlager (LF1) trifft das nicht zu: die
+genannten Flächen decken jede der zwölf Fugen zu 90,6 bis 100 % der gepaarten
+Gegenseite, und was daneben trug, lag auf Nachbarflächen desselben Bauteils —
+in „Achse (Typ 3)“ 109 kN auf den Bohrungsstreifen F319/F320/F587/F588 neben
+den genannten F304/F305/F589/F590, in „Montageauge (Typ 1)“ 2 kN auf F226.
+Noch früher lief die Suche über das ganze Modell und nahm, was im Suchradius
+am nächsten lag: vier Knoten der Achse V30 hingen an einem Passstift (V76)
+statt an der Buchse und trugen 37 von 49 MN, 12,9 MN auf einem einzigen Knoten
+(14.09.2026). Geprüft in `tests/test_fugen.py`:
+`test_gegenseite_nur_auf_genannten_flaechen` (ein Bauteil mit zweigeteilter
+Oberseite, genannt ist eine Hälfte — vorher lagen 30 von 57 Gegenfacetten auf
+der anderen) und `test_gegenseite_nur_im_genannten_bauteil`.
 
-**Die Gegenseite des Kontaktpaars** wird nicht über die Liste der Flächen
-gesucht, an denen die Freigabe hängt (die ist in RFEM-Dateien unvollständig),
-sondern über die Geometrie - wie in ANSYS über einen **Suchradius** (Pinball):
+**Ohne genannte Gegenflächen** wird die Gegenseite des Kontaktpaars über die
+Geometrie gesucht — unter den Gegenkörpern oder allen anderen Bauteilen —, wie
+in ANSYS über einen **Suchradius** (Pinball):
 eine Randfacette eines anderen Bauteils gehört zur Fuge, wenn ihre Normale der
 Kontaktfacette entgegen zeigt (n·n′ < −0,7) und der **nächste Punkt auf ihr**
 höchstens den Suchradius von der Kontaktfacette entfernt liegt. Maßgebend ist
