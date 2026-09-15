@@ -2747,6 +2747,37 @@ Zeilen liefern Knoten-, Linien- und Flächenlager, einseitige Knotenlager,
 Kontaktpaare und Spaltelemente. Eine Feder hält dabei wie ein starres Lager -
 nur weicher; für die Frage, **ob** gehalten wird, zählt sie mit.
 
+**Kontaktzeilen nach der Regel des Lösers.** Die Vorabprüfung läuft, bevor es
+ein Kontaktsystem gibt, und paart Slave-Knoten und Master-Facetten selbst -
+aber nach derselben Regel wie der Löser (§ 4.0): eine Zeile gibt es nur gegen
+eine Facette, auf die der Knoten **senkrecht fällt**,
+
+    q ≤ ε·L + tan(κ/2)·d      (q Querversatz, d Abstand längs der Normalen)
+
+und der Suchradius zählt längs der Normalen. ε und κ kommen aus `contact.py`
+(`DECKUNGSGLEICH`, `KANTENKEGEL`) und sind nicht abgeschrieben. Bis zum
+15.09.2026 nahm die Vorabprüfung die räumlich nächste Facette, gleich ob der
+Knoten auf ihr oder hinter ihrem Rand lag: ein Teil, das nur über solche
+Knoten an seiner Unterlage hängt, stand als gehalten da, obwohl der Löser ihm
+dort keine einzige Bedingung gibt. Gesucht wird wie im Löser über **alle**
+Facetten, deren Schwerpunkt höchstens Suchradius plus Umkreis entfernt liegt.
+Die acht nächsten Schwerpunkte wie zuvor reichen mit der neuen Regel nicht:
+neben einem fein vernetzten Streifen gehören sie alle dem Streifen, und der
+Knoten fiele neben seiner eigenen Auflage heraus.
+
+Geprüft an einer Leiste (0,1 m breit, seitlich gehalten, 1 MN Druck) an der
+Kante einer Unterlage, Suchradius 0,2 m (`tests.test_singular`,
+`test_neben_der_gegenflaeche_haelt_nichts`). 5 und 15 cm vor dem Rand liegt
+sie auf: sie hebt höchstens ab, 0 N gehen ins Nichts. 5 und 15 cm dahinter
+meldete die alte Paarung dasselbe; jetzt sind drei Bewegungen frei, darunter
+das reine Heben, und die ganzen 1 MN gehen ins Nichts. Anliegend mit 15 cm
+Abstand hält die Fuge bei einem Querversatz bis zur Hälfte des Kegels, beim
+Doppelten nicht; bei 19,5 cm Abstand und 0,9 Kegel - räumlich schon 20,06 cm -
+hält sie, weil der Radius längs der Normalen zählt. Mit der Fassung vor der
+Änderung schlagen vier dieser sieben Prüfungen fehl. Die mit dem feinen
+Streifen besteht die alte Fassung; sie schlägt fehl, sobald die Regel nur über
+die acht nächsten Schwerpunkte angewandt wird.
+
 **Der Rang sagt nur, ob - die Eigenwerte sagen, wie fest.** Aus derselben
 Zerlegung folgt die **Haltegüte**
 
