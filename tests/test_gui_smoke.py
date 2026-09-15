@@ -5945,6 +5945,33 @@ def main():
                       for a in w.plotter.renderer.actors))
         z = w.tbl_freigabe.modell.zeilen
         check("Tabelle nennt Standard, Körper A und B", len(z) == 1 and z[0][8] == "Reibungsbehaftet" and z[0][9] == "Oben" and z[0][10] == "Unten", str(z[0] if z else z))
+        # --- Kontaktmaske: Typ/Ort nicht mehr rechts, Hinweise sagen, was gilt (15.09.2026) ---
+        kb.typ, kb.ort = "3", "Anfang"
+        w._baum_geklickt("kontaktbedingung", "KB1"); app.processEvents()
+        mk = w.maskenrand.maske
+        beschr_ = {lb.text(): lb.toolTip() for lb in mk.findChildren(QtWidgets.QLabel)}
+        check("eine eingelesene Bedingung (Typ 3 / Anfang) zeigt rechts kein Feld „Typ / Ort“ mehr",
+              "typ" not in mk.werte() and not any("Typ / Ort" in x for x in beschr_),
+              str(sorted(mk.werte()))[:160])
+        h_kf = mk._listen["flaechennamen"][2]
+        h_gf = mk._listen["gegenflaechen"][2]
+        h_sr = next((tip for txt, tip in beschr_.items() if txt.startswith("Suchradius")), "")
+        check("Hinweis Kontaktflächen: leer nur mit Gegenflächen - nicht mehr „mindestens eine Fläche“",
+              "Leer nur mit Gegenflächen" in h_kf and "mindestens eine" not in h_kf, h_kf)
+        check("Hinweis Gegenflächen: genannt wirkt der Kontakt nur auf ihnen, leer wird gesucht",
+              "nur auf ihnen" in h_gf and "Leer: die Gegenseite wird im Suchradius gesucht" in h_gf, h_gf)
+        check("Hinweis Suchradius: was er begrenzt, Berührungsband, automatischer Wert steht im Protokoll",
+              "noch zur Fuge" in h_sr and "Tausendstel" in h_sr and "Protokoll" in h_sr, h_sr)
+        check("Maskentext beschreibt beide Wege der Kontaktseite und dass Kontakt nur gegenüber wirkt",
+              "wenn leer" in mk.lbl_hinweis.text() and "nur, wo sich beide" in mk.lbl_hinweis.text(),
+              mk.lbl_hinweis.text()[:160])
+        w.refresh_all(); app.processEvents()
+        z = w.tbl_freigabe.modell.zeilen
+        check("… Typ und Ort stehen weiter in der Tabelle der Kontaktbedingungen",
+              len(z) == 1 and z[0][1] == "3" and z[0][2] == "Anfang", str(z[0][:3] if z else z))
+        kb.typ, kb.ort = "", "Anfang"
+        w._baum_geklickt("kontaktbedingung", "KB1"); app.processEvents()
+        mk = w.maskenrand.maske
         mk.setzen("standard", "Verbund"); app.processEvents(); mk.anwenden(); app.processEvents()
         kb = m_.kontaktbedingungen.get("KB1")
         check("Übernehmen mit „Verbund“ ersetzt das Kontaktpaar: Zug und Haften",
