@@ -893,13 +893,14 @@ Ecke, deren Normale höchstens 30° abweicht — eine Kante bleibt eine Kante,
 ein Absatz wird nicht verrundet) wird im Rahmen der Facette (x, y in der
 Facette, z längs der Normalen) die Quadrik
 
-$$ z + A x^2 + B y^2 + C x y + D x + E y + G z^2 + I = 0 $$
+$$ z + A x^2 + B y^2 + C x y + D x + E y + G z^2 + H x z + J y z + I = 0 $$
 
 nach kleinsten Quadraten gelegt (`contact.Flaechenquadriken`, linear in den
 Beiwerten); der nächste Punkt auf der Facette wird auf sie gehoben, die
 Richtung ist ihre Normale dort. Die Quadrik enthält die Ebene (alle Beiwerte
-null), jeden Zylinder, dessen Achse in der Facettenebene liegt — und das tut
-sie an jeder Facette eines Zylinders —, die Kugel und das Ellipsoid **exakt**:
+null), jeden Zylinder — auch den, dessen Achse schief zur Facette steht, wie
+an einem frei triangulierten Mantel (ohne H und J blieben dort 20 µm) —, die
+Kugel und das Ellipsoid **exakt**:
 eine passgenaue Achse hat in ihrer Bohrung Spalt null, nicht „fast null“ (ein
 quadratisches Höhenfeld ließ am 36-Eck mit r = 300 mm noch 19 µm über das
 Glied x⁴/8r³ der Nachbarn). Steht nur eine Reihe Facetten zur Verfügung (eine
@@ -917,6 +918,48 @@ Pfeilhöhe innen. Am Drehlager liegen jetzt in V16 649 von 847 Knoten an statt
 Knoten sitzen jenseits der Bohrung oder an der Stufe der Achse und sind zu
 Recht offen. Unter 1000 kN tragen 147 + 34 Knoten statt 17 + 10, die größte
 Knotenkraft ist 149 kN statt 387 kN, beide Bleche tragen je die Hälfte.
+
+**Bestimmt heißt gut konditioniert, nicht voller Rang** (15.09.2026). Auf dem
+gmsh-Netz desselben Drehlagers (646 312 Elemente) lieferte der Kontaktaufbau
+trotz Quadrik an 207 von 550 Bedingungen der Achse gegen V16 einen
+Anfangsspalt von −51 bis −618 µm, obwohl Bohrung und Achsknoten exakt auf
+r = 302 mm liegen. Die Quadrik ging dabei durch alle 9 bis 12 Stützpunkte
+(Rest unter 10⁻⁸ µm), lag aber **zwischen** ihnen bis 0,68 mm daneben. Die
+Neigung der Facetten war es nicht — alle 528 lagen parallel zur Achse. Die
+Stützpunkte lagen auf vier gleichmäßig verteilten Winkellagen (Teilung
+9,47°), symmetrisch zur Facette; dort ist z² eine gerade Funktion von x und
+von 1 und x² nicht zu unterscheiden. Die Spaltenmatrix der allgemeinen
+Quadrik hatte die Kondition 10¹⁴ mit dem Nullvektor rein in z², der Rangtest
+von `lstsq` (Maschinengenauigkeit) nannte sie trotzdem voll — ob, entschied
+die Rundung. Eine Stufe gilt darum nur, wenn ihr kleinster Singulärwert über
+10⁻⁵ mal dem größten liegt (`contact.QUADRIK_GRENZE`); sonst die nächste,
+an der Bohrung die Zylinderform (Kondition 97). Die Schranke ist gemessen: an
+beiden Netzen des Drehlagers (alle zwölf Fugen, 44 000 Facetten) liegen
+bestimmte Quadriken bei Konditionen bis 10⁹, unbestimmte ab 10¹² — dazwischen
+nichts. Gewählt ist nicht die Mitte der Lücke, weil gerundete Koordinaten die
+unbestimmten nach unten ziehen: mit 0,1 µm Rauschen auf 50-mm-Flecken kippte
+10⁻⁷ (313 µm), mit 1 µm 10⁻⁶ (313 µm); 10⁻⁵ hielt beide (Stichprobe über
+Mantellinien- und Delaunay-Netze, Radien 150 bis 1000 mm).
+
+| Drehlager, gmsh-Netz, LF1 | vorher | nachher |
+|---|---|---|
+| Anfangsspalt Achse gegen V16 unter −50 µm | 207 von 550, tiefster −618 µm | 0 |
+| tragende Knoten gegen V16 | 49 | 175 |
+| Summe der Normalkräfte gegen V16 | 17 726 kN | 5 350 kN |
+| größte Knotenkraft gegen V16 | 1 289 kN | 114 kN |
+| größte Vergleichsspannung V16 | 1 916 MPa | 407 MPa |
+| größte Vergleichsspannung V30, Achsmantel (r > 270 mm) | 1 980 MPa | 234 MPa |
+| größte Vergleichsspannung V30, Stirnring „Achse (Typ 4)“ | 2 397 MPa | 739 MPa |
+
+Die Auflagerkräfte bleiben gleich (3 968 / 9 255 kN). Die übrigen Spitzen in
+V30 sitzen am haftenden Stirnring der Fuge „Achse (Typ 4)“ — eine
+Singularität des Modells (Haften ohne Gleiten), keine des Kontakts; die in V16
+an einem Element der Güte 0,135. Geprüft in `tests.test_fugen`,
+`test_facettenspalt_unregelmaessig`: 60 Zufallsnetze (gmsh-artiges Gitter
+und verwackeltes Delaunay-Netz, Bohrung und Achse als Gegenseite, Radien 150
+bis 1000 mm, Kanten 20 und 50 mm, Knoten auf 0,01 µm gerundet); vorher
+verfehlte die Fläche den Kreis bis 1 394,73 µm und in 33 Fällen meldete der
+Kontaktaufbau eine Durchdringung, jetzt 0,00 µm und keine.
 
 **Durchdringung bleibt Durchdringung.** Master-Facetten sind gerichtet (siehe
 unten); ein Slave-Knoten hinter der Facette ist eine Durchdringung — der
@@ -979,6 +1022,17 @@ unter einem Tausendstel des Suchradius), der Median, das 90. Perzentil und der
 größte Wert — je Fuge für die Facetten und je Kontaktpaar für die Knoten,
 zusammen mit der Zahl der Knoten, die **keine** Gegenfacette im Suchradius
 gefunden haben.
+
+**Eine Durchdringung ist kein Spalt.** Die Abstände tragen ihr Vorzeichen;
+negativ heißt, der Knoten (bzw. die Gegenfacette) liegt schon vor der Last im
+anderen Bauteil. Solche Werte zählen nicht in Median, Perzentil und größten
+Spalt, sondern stehen dahinter mit Zahl und tiefster: „…; 207 durchdringend,
+tiefste 0.62 mm“. Bis zum 15.09.2026 sammelten Kontaktaufbau und Fugensuche
+den **Betrag** — am Drehlager mit gmsh-Netz meldete die Achse „Spalt 67 %
+aufliegend … größter 0.62 mm“, obwohl sie an 207 Knoten bis 0,62 mm in der
+Buchse stak und dort die zwölf größten Knotenkräfte saßen. Gepaart wird
+weiter nach dem Betrag; nur die Auskunft trennt beides
+(`tests.test_fugen`, `test_durchdringung_nicht_als_spalt`).
 
 Aus der Wirkung je Freiheitsgrad folgt die Art des Kontaktpaars: Zug *starr*
 (oder Feder) → die Bedingung öffnet nie, auch Zug wird übertragen (Verbund,

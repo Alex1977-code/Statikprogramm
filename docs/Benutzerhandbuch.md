@@ -366,6 +366,12 @@ Zum Spalt nennt das Protokoll die **Verteilung**, nicht einen Mittelwert:
 Spalt 41 % aufliegend, Median 24.94 mm, 90 % unter 33.99 mm, größter 60.56 mm
 ```
 
+Steht dahinter „; 207 durchdringend, tiefste 0.62 mm“, liegen so viele
+Knoten schon vor der Last **in** der Gegenseite (seit 15.09.2026 getrennt
+genannt; vorher gingen sie als Betrag in „größter“ auf). Eine Durchdringung
+wirkt wie ein Übermaß und drückt die Fuge vorab zusammen - bei einer
+passgenauen Achse ist sie ein Modellfehler, dem man nachgehen sollte.
+
 Das ist die Auskunft, auf die es ankommt. Eine teilweise anliegende Fuge hat
 zwei Gipfel — ein Teil liegt auf null, der Rest steht ab —, und ein Mittelwert
 darüber nennt eine Zahl, die an keiner Stelle der Fuge vorkommt. Der Spalt
