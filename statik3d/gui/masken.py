@@ -67,6 +67,13 @@ class Maske(QtWidgets.QFrame):
     angewendet = QtCore.Signal(dict)
     geschlossen = QtCore.Signal()
     abgebrochen = QtCore.Signal()
+    #: Ein Feld hat die Tastatur bekommen (Name des Feldes). Das Fenster
+    #: schaltet darueber die Auswahl per Maus auf dieses Feld („bei Klick in
+    #: Feld Auswahl per Maus", 15.09.2026).
+    feld_fokussiert = QtCore.Signal(str)
+    #: Wird gerufen, wenn Esc in einem scharfen Feld nur den Klickmodus
+    #: beenden soll (statt die Maske zu schliessen); None = schliessen.
+    klick_beenden = None
     #: Klickmodus fuer Objekte der Ansicht: "" (keiner), "linie", "flaeche"
     #: oder "objekt" (Flaeche oder Volumen). Ist er gesetzt, gehen Klicks auf
     #: solche Objekte an objekt_angeklickt(art, name) statt in die Auswahl.
@@ -121,6 +128,8 @@ class Maske(QtWidgets.QFrame):
         for i, f in enumerate(felder):
             w = self._bauen(f)
             self._felder[f.name] = w
+            w.setProperty("feldname", f.name)
+            w.installEventFilter(self)
             if f.art == "haken":
                 gitter.addWidget(w, i, 0, 1, 2)
             else:
@@ -351,9 +360,30 @@ class Maske(QtWidgets.QFrame):
 
     def keyPressEvent(self, ev):
         if ev.key() == QtCore.Qt.Key_Escape:
+            if self.objekt_modus and callable(self.klick_beenden):
+                # Esc im scharfen Feld: erst den Klickmodus beenden, die
+                # Maske bleibt - ein zweites Esc schliesst sie
+                self.klick_beenden()
+                return
             self.schliessen()
             return
         super().keyPressEvent(ev)
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QtCore.QEvent.FocusIn:
+            name = obj.property("feldname")
+            if name:
+                self.feld_fokussiert.emit(str(name))
+        return super().eventFilter(obj, ev)
+
+    def klickfeld_markieren(self, name) -> None:
+        """Das Feld, das ein Klick in der Ansicht gerade fuellt, orange
+        einrahmen - alle anderen normal. ``None`` nimmt jeden Rahmen weg."""
+        for feld, w in self._felder.items():
+            if isinstance(w, QtWidgets.QLabel):
+                continue
+            w.setStyleSheet("border: 2px solid #ff8800; background: #fff6e5;"
+                            if feld == name else "")
 
 
 class Maskenrand(QtCore.QObject):

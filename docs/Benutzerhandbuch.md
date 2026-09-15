@@ -223,7 +223,7 @@ bedienen sind, steht im nächsten Abschnitt.
 | Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung, darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
 | Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ (auch **FAT** für Ermüdung), Beschreibung, Bemessungssituation (nur wenn aus der Quelldatei bekannt, als Angabe), Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
-| Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** in der Ansicht gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
+| Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt, per **Klick ins Feld** und dann in der Ansicht (seit 15.09.2026) oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
 
 **Listenfelder der Masken.** Wo eine Maske eine Namensliste zeigt — Randlinien
 einer Fläche, Randflächen eines Volumens, Kontaktflächen, Lastfälle einer
@@ -233,7 +233,10 @@ das Feld beginnt am Textanfang, und der Zeiger darauf zeigt die
 am Zeilenende: aus dreizehn Randflächen war „9, F64, F71, F98, F46, F52“ zu
 sehen, was sich wie „neun Flächen, davon fünf genannt“ liest — und zu der
 falschen Diagnose verleitet, es fehlten Flächen. Wird die Liste in der Ansicht
-angeklickt, zählt die Beschriftung mit.
+angeklickt, zählt die Beschriftung mit. Bei Randlinien, Randflächen, Körper
+A/B, Kontakt- und Gegenflächen macht ein **Klick ins Feld** es scharf (orange
+eingerahmt): Klicks in der Ansicht füllen dann dieses Feld; ein Klick in ein
+anderes Feld oder Esc beendet das (seit 15.09.2026).
 | Bericht | Name, Bildunterschrift, Bemerkung; Reihenfolge mit ▲/▼ |
 | Lasten | nur Anzeige und Löschen; das Auswahlfeld links zeigt einen einzelnen Lastfall |
 
@@ -308,14 +311,33 @@ Ein Kontakt wird **wie in ANSYS** angelegt: zwei Körper, mindestens eine
 Fläche, dann die Wirkung an dieser Fläche. Der Weg: im Modellbaum unter
 *Kontaktbedingungen → Flächenkontakte* auf **„+ Kontaktbedingung anlegen“**
 (oder *Lager / Kontakt → Kontaktbedingung…*, oder Rechtsklick → Neu). Rechts
-erscheint die Maske:
+erscheint die Maske.
+
+**Mit der Maus ausfüllen** (seit 15.09.2026). Ein **Klick ins Feld** *Körper
+A*, *Körper B*, *Kontaktflächen* oder *Gegenflächen* macht das Feld **scharf**
+(orange eingerahmt): jeder Klick in der Ansicht füllt jetzt dieses Feld.
+Eine **neue** Bedingung beginnt gleich mit *Körper A*: Volumen anklicken, das
+Programm springt weiter zu *Körper B* und dann zu den *Kontaktflächen*. Beim
+Flächenklick füllt die Maske die Körper selbst: ist Körper A noch leer, wird
+der Körper der Fläche Körper A; eine Fläche, die **nicht** zu Körper A gehört,
+ist die Gegenseite — sie kommt zu den Gegenflächen, und ihr Körper wird
+Körper B, wenn dort noch „(alle anderen Körper)“ steht. Eine Fuge ist so mit
+zwei Klicks beschrieben: erst die Fläche des einen, dann die des anderen
+Körpers. Ein zweiter Klick nimmt eine Fläche wieder heraus. Im Bild leuchten
+dabei beide Seiten der Fuge (bei Körper A/B die beiden Volumen). Ein Klick in
+ein anderes Feld (Name, μ, Beschreibung …) oder **Esc** beendet die Auswahl per
+Maus; ein zweites Esc hebt wie sonst die Auswahl auf. Vorher standen dafür zwei Knöpfe
+unter der Maske („Kontaktflächen anklicken“, „Gegenflächen anklicken“), und die
+Körper ließen sich nur aus der Liste wählen.
+
+Die Felder:
 
 | Feld | Bedeutung |
 |---|---|
-| Körper A (Kontaktseite) | der Körper, dessen Flächen die Kontaktseite bilden - er wird an ihnen gelöst |
-| Körper B (Gegenseite) | der Körper, gegen den der Kontakt wirkt; „(alle anderen Körper)“ sucht die Gegenseite unter allen Bauteilen |
-| Kontaktflächen | Flächen von Körper A - getippt oder mit **„Kontaktflächen anklicken“** in der Ansicht gewählt (jeder Klick nimmt dazu oder heraus). Leer darf das Feld nur bleiben, wenn Gegenflächen genannt sind: dann ist die Kontaktseite, was von Körper A auf ihnen liegt - so kommt jede RFEM-Freigabe herein. Sind beide leer, lehnt „Übernehmen“ eine neue Bedingung ab |
-| Gegenflächen | die Flächen der Gegenseite - ebenso mit **„Gegenflächen anklicken“** in der Ansicht wählbar (seit 14.09.2026; vorher nur Anzeige aus der Quelldatei). Genannt: der Kontakt wirkt **nur auf diesen Flächen** (seit 15.09.2026). Leer: die Gegenseite wird im Suchradius gesucht. Der zweite Knopf schaltet den Klickmodus auf die andere Liste um, ohne ihn zu beenden |
+| Körper A (Kontaktseite) | der Körper, dessen Flächen die Kontaktseite bilden - er wird an ihnen gelöst; aus der Liste, per Klick ins Feld und dann auf das Volumen, oder aus der ersten angeklickten Kontaktfläche |
+| Körper B (Gegenseite) | der Körper, gegen den der Kontakt wirkt; „(alle anderen Körper)“ sucht die Gegenseite unter allen Bauteilen; per Klick ins Feld und auf das Volumen, oder aus der ersten Gegenfläche |
+| Kontaktflächen | Flächen von Körper A - getippt oder **ins Feld klicken** und in der Ansicht wählen (jeder Klick nimmt dazu oder heraus). Leer darf das Feld nur bleiben, wenn Gegenflächen genannt sind: dann ist die Kontaktseite, was von Körper A auf ihnen liegt - so kommt jede RFEM-Freigabe herein. Sind beide leer, lehnt „Übernehmen“ eine neue Bedingung ab |
+| Gegenflächen | die Flächen der Gegenseite - ebenso per Klick ins Feld in der Ansicht wählbar (seit 14.09.2026; vorher nur Anzeige aus der Quelldatei). Genannt: der Kontakt wirkt **nur auf diesen Flächen** (seit 15.09.2026). Leer: die Gegenseite wird im Suchradius gesucht. Der Klick ins andere Feld schaltet die Auswahl per Maus auf die andere Liste um |
 | Standardkontakt | setzt die Richtungen darunter mit einem Griff (Tabelle unten); danach lässt sich jede Richtung von Hand ändern, der Standard wird dann „Benutzerdefiniert“ |
 | Druck | wird immer übertragen - das ist Kontakt |
 | Zug | *abheben möglich* (die Fuge öffnet unter Zug), *wird übertragen* (Verbund, kein Abheben) oder *Feder* |

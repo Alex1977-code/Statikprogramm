@@ -2003,7 +2003,7 @@ class MainWindow(QtWidgets.QMainWindow):
         proben = []
         if modus in ("flaeche", "objekt", "stellung"):
             proben.append(("flaeche", lambda: self._objekt_am_zeiger("Fläche") or vp.flaeche_at(m, point, size)))
-        if modus in ("objekt", "stellung"):
+        if modus in ("objekt", "stellung", "volumen"):
             proben.append(("volumen", lambda: self._objekt_am_zeiger("Volumen") or vp.koerper_at(m, point, size)))
         if modus == "stellung":
             proben.append(("stab", lambda: self._objekt_am_zeiger("Stab") or vp.member_at(m, point)))
@@ -4837,6 +4837,10 @@ class MainWindow(QtWidgets.QMainWindow):
         halter["m"] = maske
         if zusatz and art in ("geoflaeche", "geokoerper_einzeln", "kontaktbedingung"):
             self._objektmaske_klickmodus(maske, art)
+        if eintrag and art in self.FELDKLICK:
+            # Der Klick ins Feld zieht die Auswahl per Maus auf dieses Feld
+            maske.feld_fokussiert.connect(lambda feld, mk=maske, a=art: self._maskenfeld_fokus(mk, a, feld))
+            maske.klick_beenden = lambda mk=maske: self._objektmaske_klick_aus(mk)
         if art == "kontaktbedingung":
             self._kontaktmaske_verbinden(maske)
         if art == "stellung" and eintrag:
@@ -4857,6 +4861,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # die Maske die Tastatur haben. Beim blossen Anklicken im Modellbaum
         # nicht: dort blaettert der Benutzer mit den Pfeiltasten weiter.
         self.maske_erzeugen(maske, fokus=bool(neu))
+        if art == "kontaktbedingung" and neu:
+            # Eine neue Bedingung beginnt mit dem Anklicken von Koerper A
+            # (15.09.2026, „wenn neuer Kontakt angelegt wird, dann soll Volumen
+            # anklickbar sein")
+            self._objektmaske_klick_umschalten(maske, "kontaktbedingung_a")
         return maske
 
     #: Bettung auf und an Beton (Vorschlag - Werte sind zu pruefen)
@@ -5108,7 +5117,18 @@ class MainWindow(QtWidgets.QMainWindow):
     MASKENKLICK = {"geoflaeche": ("linien", "linie", "Randlinien"),
                    "geokoerper_einzeln": ("flaechen", "flaeche", "Randflächen"),
                    "kontaktbedingung": ("flaechennamen", "flaeche", "Kontaktflächen"),
-                   "kontaktbedingung_gegen": ("gegenflaechen", "flaeche", "Gegenflächen")}
+                   "kontaktbedingung_gegen": ("gegenflaechen", "flaeche", "Gegenflächen"),
+                   "kontaktbedingung_a": ("koerper_a", "volumen", "Körper A"),
+                   "kontaktbedingung_b": ("koerper_b", "volumen", "Körper B")}
+    #: Welches Feld einer Maske beim Klick ins Feld die Auswahl per Maus auf
+    #: sich zieht (15.09.2026, „bei Klick in Feld Auswahl per Maus"): Maskenart
+    #: -> {Feldname: Klickart aus MASKENKLICK}. Ein Feld, das hier nicht steht,
+    #: beendet den Klickmodus, wenn es die Tastatur bekommt.
+    FELDKLICK = {"geoflaeche": {"linien": "geoflaeche"},
+                 "geokoerper_einzeln": {"flaechen": "geokoerper_einzeln"},
+                 "kontaktbedingung": {"koerper_a": "kontaktbedingung_a", "koerper_b": "kontaktbedingung_b",
+                                      "flaechennamen": "kontaktbedingung",
+                                      "gegenflaechen": "kontaktbedingung_gegen"}}
     #: Kontaktmaske: Wirkung je Richtung im Klartext (Druck wird immer uebertragen)
     KONTAKT_ZUG = {"abheben": "abheben möglich (nur Druck)",
                    "starr": "wird übertragen (kein Abheben)", "feder": "Feder"}
@@ -5286,14 +5306,14 @@ class MainWindow(QtWidgets.QMainWindow):
                                 "die Gegenseite unter allen Bauteilen"))
         felder.append(F("flaechennamen", "Kontaktflächen", "liste", ", ".join(kb.flaechennamen or []),
                         breite=170,
-                        hinweis="Flächen von Körper A - getippt oder mit „Kontaktflächen anklicken“ "
-                                "in der Ansicht gewählt. Leer nur mit Gegenflächen: dann ist die "
+                        hinweis="Flächen von Körper A - getippt oder ins Feld klicken und in der "
+                                "Ansicht wählen. Leer nur mit Gegenflächen: dann ist die "
                                 "Kontaktseite, was von Körper A auf ihnen liegt (so kommt jede "
                                 "RFEM-Freigabe herein)"))
         felder.append(F("gegenflaechen", "Gegenflächen", "liste",
                         ", ".join(kb.gegenflaechen or []), breite=170,
-                        hinweis="die Flächen der Gegenseite - getippt oder mit „Gegenflächen "
-                                "anklicken“ in der Ansicht gewählt. Genannt: der Kontakt wirkt nur auf "
+                        hinweis="die Flächen der Gegenseite - getippt oder ins Feld klicken und in "
+                                "der Ansicht wählen. Genannt: der Kontakt wirkt nur auf "
                                 "ihnen. Leer: die Gegenseite wird im Suchradius gesucht, in Körper B "
                                 "oder allen anderen Körpern. Eine eingelesene Datei bringt sie mit"))
         felder += [F("druck", "Druck", "info", "wird übertragen (Kontakt)"),
@@ -5332,14 +5352,14 @@ class MainWindow(QtWidgets.QMainWindow):
                    "leer, was von Körper A auf den Gegenflächen liegt. Gegenseite: die Gegenflächen - "
                    "oder, wenn leer, was im Suchradius gegenüberliegt. Kontakt wirkt nur, wo sich beide "
                    "Seiten gegenüberstehen; die Flächen müssen weder deckungsgleich noch gleich fein "
-                   "vernetzt sein. Kontaktflächen und Gegenflächen lassen sich in der Ansicht "
-                   "anklicken (Knöpfe unten); der Modellbaum lässt jede Fuge einzeln aufleuchten. "
+                   "vernetzt sein. Ins Feld klicken, dann in der Ansicht: eine Fläche bringt ihren "
+                   "Körper mit, eine Fläche außerhalb von Körper A wird Gegenfläche; der Modellbaum "
+                   "lässt jede Fuge einzeln aufleuchten. "
                    "Getrennt wird beim Vernetzen oder mit „Kontaktfugen ausführen“.")
-        zusatz = [("Kontaktflächen anklicken",
-                   lambda: self._objektmaske_klick_umschalten(halter.get("m"), "kontaktbedingung")),
-                  ("Gegenflächen anklicken",
-                   lambda: self._objektmaske_klick_umschalten(halter.get("m"), "kontaktbedingung_gegen")),
-                  ("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
+        # Keine Klickknoepfe mehr: der Klick ins Feld schaltet die Auswahl per
+        # Maus (FELDKLICK, 15.09.2026). „Kontaktfugen ausfuehren" bleibt unten
+        # bei OK - er wirkt auf das ganze Modell, nicht auf die Felder.
+        zusatz = [("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
         return felder, hinweis, zusatz
 
     def _kontaktmaske_verbinden(self, maske):
@@ -5377,6 +5397,130 @@ class MainWindow(QtWidgets.QMainWindow):
         f = maske._felder.get("mu")
         if isinstance(f, QtWidgets.QLineEdit):
             f.textEdited.connect(lambda _t, mk=maske: self._kontaktmaske_standard_pruefen(mk))
+
+    def _kontakt_a_setzen(self, maske, namen: list) -> None:
+        """Koerper A in die Maske - Auswahlfeld (ein Koerper) oder Liste (mehrere)."""
+        if isinstance(maske._felder.get("koerper_a"), QtWidgets.QComboBox):
+            maske.setzen("koerper_a", namen[0] if namen else "–")
+        else:
+            maske.setzen("koerper_a", ", ".join(namen))
+
+    def _kontaktmaske_klick(self, maske, art_obj: str, name: str) -> None:
+        """Ein Klick in der Ansicht fuellt die Kontaktmaske - Koerper und Flaechen.
+
+        Wunsch vom 15.09.2026: „wenn neuer Kontakt angelegt wird, dann soll
+        Volumen anklickbar sein; wenn Kontaktflaeche ausgewaehlt werden soll,
+        dann muss Flaeche auch selektierbar sein, automatisch Gegenflaeche auch
+        ... die Maske damit automatisch ausfuellen, Koerper und Flaechen".
+
+        * Koerper A / Koerper B: ein Volumen setzt das Feld, und der Klickmodus
+          springt weiter (A -> B -> Kontaktflaechen). Ein zweiter Klick auf
+          denselben Koerper leert das Feld wieder.
+        * Kontaktflaechen: ist Koerper A leer, wird der Koerper der Flaeche
+          Koerper A. Eine Flaeche, die **nicht** zu Koerper A gehoert, ist die
+          Gegenseite - sie kommt zu den Gegenflaechen, und ihr Koerper wird
+          Koerper B, wenn dort noch „alle anderen" steht. Eine Fuge ist so mit
+          zwei Klicks beschrieben.
+        * Gegenflaechen: ebenso fuellt ihr Koerper Koerper B.
+
+        Ein zweiter Klick auf eine Flaeche nimmt sie aus ihrer Liste; die
+        Koerper bleiben stehen.
+        """
+        m = self.model
+        art = getattr(maske, "_klick_art", "") or "kontaktbedingung"
+        _feld, modus, was = self.MASKENKLICK[art]
+        w = maske.werte()
+        a = [x for x in self._namensliste(str(w.get("koerper_a") or "")) if x in m.koerper]
+        b = str(w.get("koerper_b") or "")
+        b = b if b in m.koerper else ""
+        if modus == "volumen":
+            if art_obj != "volumen":
+                self.statusBar().showMessage(f"{name} ist kein Volumen - Klickmodus: {was}", 3000)
+                return
+            if art == "kontaktbedingung_a":
+                if name == b:
+                    self.statusBar().showMessage(f"{name} ist schon Körper B - Körper A muss ein anderer sein",
+                                                 4000)
+                    return
+                gesetzt = name not in a
+                einer = isinstance(maske._felder.get("koerper_a"), QtWidgets.QComboBox)
+                self._kontakt_a_setzen(maske, ([name] if einer else a + [name]) if gesetzt
+                                       else [x for x in a if x != name])
+                weiter = "kontaktbedingung_b"
+            else:
+                if name in a:
+                    self.statusBar().showMessage(f"{name} ist schon Körper A - Körper B muss ein anderer sein",
+                                                 4000)
+                    return
+                gesetzt = name != b
+                maske.setzen("koerper_b", name if gesetzt else self.KONTAKT_ALLE)
+                weiter = "kontaktbedingung"
+            self.statusBar().showMessage(f"{was}: {name}" + ("" if gesetzt else " herausgenommen"), 4000)
+            if gesetzt:
+                self._objektmaske_klick_umschalten(maske, weiter)
+            else:
+                self._kontaktmaske_zeigen(maske, art)
+            return
+        if art_obj != "flaeche":
+            self.statusBar().showMessage(f"{name} ist keine Fläche - Klickmodus: {was}", 3000)
+            return
+        besitzer = [k for k, kp in m.koerper.items() if name in (kp.flaechen or [])]
+        kontakt = self._namensliste(w.get("flaechennamen"))
+        gegen = self._namensliste(w.get("gegenflaechen"))
+        teile = []
+        if name in kontakt:
+            kontakt.remove(name)
+            teile.append(f"{name} aus den Kontaktflächen genommen")
+        elif name in gegen:
+            gegen.remove(name)
+            teile.append(f"{name} aus den Gegenflächen genommen")
+        elif art == "kontaktbedingung":
+            eigene = [k for k in besitzer if k != b]
+            if not a and eigene:
+                a = [eigene[0]]
+                self._kontakt_a_setzen(maske, a)
+                teile.append(f"Körper A: {a[0]}")
+            if besitzer and not set(besitzer) & set(a):
+                gegen.append(name)
+                if not b:
+                    b = besitzer[0]
+                    maske.setzen("koerper_b", b)
+                    teile.append(f"Körper B: {b}")
+                teile.append(f"{name} gehört nicht zu Körper A - als Gegenfläche übernommen")
+            else:
+                kontakt.append(name)
+                teile.append(f"Kontaktfläche {name}")
+        else:
+            gegen.append(name)
+            andere = [k for k in besitzer if k not in a]
+            if not b and andere:
+                b = andere[0]
+                maske.setzen("koerper_b", b)
+                teile.append(f"Körper B: {b}")
+            teile.append(f"Gegenfläche {name}")
+        maske.setzen("flaechennamen", ", ".join(kontakt))
+        maske.setzen("gegenflaechen", ", ".join(gegen))
+        self._kontaktmaske_zeigen(maske, art)
+        self.statusBar().showMessage("; ".join(teile), 5000)
+
+    def _kontaktmaske_zeigen(self, maske, art: str) -> None:
+        """Im Klickmodus der Kontaktmaske leuchtet, was sie sammelt: bei Koerper
+        A/B die gewaehlten Volumen, bei den Flaechen **beide** Seiten der Fuge -
+        sonst bliebe eine Flaeche dunkel, die ein Klick selbst zur Gegenseite
+        gelegt hat."""
+        if maske is None:
+            return
+        m = self.model
+        w = maske.werte()
+        if self.MASKENKLICK[art][1] == "volumen":
+            namen = self._namensliste(str(w.get("koerper_a") or "")) + [str(w.get("koerper_b") or "")]
+            self.sel_koerper = [x for x in dict.fromkeys(namen) if x in m.koerper]
+            self.sel_flaechen = []
+        else:
+            namen = self._namensliste(w.get("flaechennamen")) + self._namensliste(w.get("gegenflaechen"))
+            self.sel_flaechen = [x for x in dict.fromkeys(namen) if x in m.flaechen]
+            self.sel_koerper = []
+        self.redraw()
 
     def _kontakt_richtungen(self, w: dict) -> tuple:
         """(zug, schub_x, schub_y, dreh, mu) aus den Werten der Kontaktmaske."""
@@ -5880,6 +6024,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not hasattr(maske, "_klick_hinweis_alt"):
             maske._klick_hinweis_alt = maske.lbl_hinweis.text()
         maske._klick_art = art
+        if art.startswith("kontaktbedingung"):
+            # Die Kontaktmaske fuellt Koerper und Flaechen gemeinsam
+            maske.objekt_angeklickt = lambda art_obj, name: self._kontaktmaske_klick(maske, art_obj, name)
+            return
 
         def liste() -> list:
             return self._namensliste(maske.werte().get(feld))
@@ -5902,6 +6050,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Die Namensliste der Maske in der Ansicht hervorheben."""
         if maske is None:
             return
+        if art.startswith("kontaktbedingung"):
+            return self._kontaktmaske_zeigen(maske, art)
         feld, modus, _was = self.MASKENKLICK[art]
         namen = self._namensliste(maske.werte().get(feld))
         if modus == "linie":
@@ -5923,14 +6073,45 @@ class MainWindow(QtWidgets.QMainWindow):
         _feld, modus, was = self.MASKENKLICK[art]
         an = not maske.objekt_modus or getattr(maske, "_klick_art", "") != art
         maske.objekt_modus = modus if an else ""
+        # Orange eingerahmt ist das Feld, das ein Klick gerade fuellt
+        maske.klickfeld_markieren(_feld if an else None)
         if an:
             self._objektmaske_klickmodus(maske, art)
-            maske.lbl_hinweis.setText(f"Klickmodus: {was} in der Ansicht anklicken - jeder Klick nimmt "
-                                      "dazu oder heraus; derselbe Knopf beendet ihn.")
+            if modus == "volumen":
+                maske.lbl_hinweis.setText(f"{was}: ein Volumen in der Ansicht anklicken - danach geht es mit "
+                                          "dem nächsten Feld weiter. Ein Klick in ein anderes Feld oder Esc "
+                                          "beendet die Auswahl per Maus.")
+            else:
+                maske.lbl_hinweis.setText(f"{was} in der Ansicht anklicken - jeder Klick nimmt dazu oder "
+                                          "heraus. Ein Klick in ein anderes Feld oder Esc beendet die Auswahl "
+                                          "per Maus.")
             self._objektmaske_klick_zeigen(maske, art)
         else:
             maske.lbl_hinweis.setText(getattr(maske, "_klick_hinweis_alt", "") or "")
         self.statusBar().showMessage(f"{was} anklicken" if an else "Klickmodus beendet", 3000)
+
+    def _maskenfeld_fokus(self, maske, art: str, feld: str) -> None:
+        """Ein Feld der Maske hat die Tastatur bekommen: steht es in
+        :data:`FELDKLICK`, sammelt die Maus ab jetzt fuer dieses Feld; sonst
+        endet die Auswahl per Maus. So braucht es keinen eigenen Knopf je
+        Liste („bei Klick in Feld Auswahl per Maus", 15.09.2026)."""
+        ziel = self.FELDKLICK.get(art, {}).get(feld)
+        if ziel is None:
+            self._objektmaske_klick_aus(maske)
+            return
+        if maske.objekt_modus and getattr(maske, "_klick_art", "") == ziel:
+            return
+        self._objektmaske_klick_umschalten(maske, ziel)
+
+    def _objektmaske_klick_aus(self, maske) -> None:
+        """Die Auswahl per Maus beenden (anderes Feld, Esc) - ohne Meldung,
+        wenn gar keine lief."""
+        if maske is None or not maske.objekt_modus:
+            return
+        maske.objekt_modus = ""
+        maske.klickfeld_markieren(None)
+        maske.lbl_hinweis.setText(getattr(maske, "_klick_hinweis_alt", "") or "")
+        self.statusBar().showMessage("Auswahl per Maus beendet", 3000)
 
     def _objekt_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False):
         """Die Felder der Objektmaske ins Modell schreiben (oder das Objekt anlegen)."""
@@ -6322,8 +6503,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # Eine neue Bedingung braucht mindestens eine Flaeche; eine eingelesene
             # darf auch nur ueber Koerper und Gegenflaechen der Quelldatei stehen
             if neu and not flaechen and not (koerper_a and gegen):
-                return self.error("Mindestens eine Kontaktfläche angeben - „Kontaktflächen anklicken“ "
-                                  "wählt sie in der Ansicht (oder Körper A und Gegenflächen)")
+                return self.error("Mindestens eine Kontaktfläche angeben - ins Feld klicken und in der "
+                                  "Ansicht wählen (oder Körper A und Gegenflächen)")
             fremd = [f for f in flaechen if koerper_a and f not in
                      {x for k in koerper_a for x in (m.koerper[k].flaechen or [])}]
             if fremd:
@@ -7755,6 +7936,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_fenster_ecke", None) is not None:
             self._fenster_abbrechen()
             self.statusBar().showMessage("Auswahlfenster abgebrochen", 3000)
+            return True
+        # Eine Maske, deren Feld gerade per Maus gefuellt wird (orange): Esc
+        # beendet erst diese Auswahl - der Tastendruck kommt als Kuerzel hier
+        # an, nie bei der Maske selbst (15.09.2026)
+        maske = self.maskenrand.maske if self.maskenrand.offen() else None
+        if maske is not None and getattr(maske, "objekt_modus", "") \
+                and getattr(maske, "_klick_art", "") in self.MASKENKLICK:
+            self._objektmaske_klick_aus(maske)
             return True
         return False
 

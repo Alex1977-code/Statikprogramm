@@ -5775,6 +5775,12 @@ def main():
         check("Doppelklick Fläche: Maske rechts (kein Dialog) mit „Randlinien anklicken“",
               isinstance(mk_, msk_.Maske) and mk_.titel == "Fläche F1" and w.maskenrand.maske is mk_
               and "Randlinien anklicken" in mk_.zusatzknoepfe, str(getattr(mk_, "titel", mk_)))
+        w.activateWindow(); mk_._felder["linien"].setFocus(); app.processEvents()
+        check("Klick ins Feld Randlinien: Maske erwartet Linien, das Feld ist scharf (15.09.2026)",
+              mk_.objekt_modus == "linie" and "ff8800" in mk_._felder["linien"].styleSheet().lower(),
+              f"{mk_.objekt_modus!r}")
+        mk_._felder["kommentar"].setFocus(); app.processEvents()
+        check("… ein anderes Feld beendet ihn wieder", mk_.objekt_modus == "", repr(mk_.objekt_modus))
         mk_.zusatzknoepfe["Randlinien anklicken"].click(); app.processEvents()
         check("Klickmodus: Maske erwartet Linien, die Randlinien leuchten",
               mk_.objekt_modus == "linie" and w.maskenrand.objekt_modus() == "linie"
@@ -5912,7 +5918,70 @@ def main():
         check("Neue Kontaktbedingung: Maske mit Körper A/B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Spalt",
               mk is not None and mk.titel.startswith("Neu: Kontaktbedingung KB")
               and all(k in mk.werte() for k in ("standard", "koerper_a", "koerper_b", "flaechennamen", "zug", "schub_x", "schub_y", "mu", "dreh", "suchweite", "spalt"))
-              and "Kontaktflächen anklicken" in mk.zusatzknoepfe, str(mk.werte() if mk else None)[:200])
+              and "Kontaktfugen ausführen" in mk.zusatzknoepfe, str(mk.werte() if mk else None)[:200])
+        # --- 15.09.2026: „wenn neuer Kontakt angelegt wird, dann soll Volumen anklickbar
+        # sein ... die Maske damit automatisch ausfüllen, Körper und Flächen";
+        # „bei Klick in Feld Auswahl per Maus" ---
+        from PySide6 import QtTest as _QtTk
+
+        def rahmen_(feld):
+            return "ff8800" in mk._felder[feld].styleSheet().lower()
+
+        def scharf_():
+            return [f_ for f_ in ("koerper_a", "koerper_b", "flaechennamen", "gegenflaechen") if rahmen_(f_)]
+
+        check("neue Kontaktbedingung: das Feld Körper A ist scharf (orange), ein Klick in der Ansicht trifft Volumen",
+              mk.objekt_modus == "volumen" and getattr(mk, "_klick_art", "") == "kontaktbedingung_a"
+              and scharf_() == ["koerper_a"],
+              f"{mk.objekt_modus!r} / {getattr(mk, '_klick_art', '')}, scharf {scharf_()}")
+        alt_am_zeiger_ = w._objekt_am_zeiger
+        w._objekt_am_zeiger = lambda art_: {"Volumen": "Oben", "Fläche": "MO1"}.get(art_)
+        try:
+            w._maskenobjekt_klick("volumen", np.zeros(3)); app.processEvents()
+        finally:
+            w._objekt_am_zeiger = alt_am_zeiger_
+        check("Klick auf ein Volumen setzt Körper A (nicht die Fläche davor), leuchtet und geht zu Körper B",
+              mk.werte()["koerper_a"] == "Oben" and getattr(mk, "_klick_art", "") == "kontaktbedingung_b"
+              and scharf_() == ["koerper_b"] and w.sel_koerper == ["Oben"],
+              f"A {mk.werte()['koerper_a']}, {getattr(mk, '_klick_art', '')}, scharf {scharf_()}, Auswahl {w.sel_koerper}")
+        mk.objekt_angeklickt("volumen", "Unten"); app.processEvents()
+        check("… Körper B gesetzt, weiter mit den Kontaktflächen",
+              mk.werte()["koerper_b"] == "Unten" and getattr(mk, "_klick_art", "") == "kontaktbedingung"
+              and mk.objekt_modus == "flaeche" and scharf_() == ["flaechennamen"],
+              f"B {mk.werte()['koerper_b']}, {getattr(mk, '_klick_art', '')}, scharf {scharf_()}")
+        mk.objekt_angeklickt("flaeche", "FugeO"); mk.objekt_angeklickt("flaeche", "FugeU"); app.processEvents()
+        check("Flächenklick: die Fläche von Körper A wird Kontaktfläche, die des anderen Körpers Gegenfläche; beide leuchten",
+              w._namensliste(mk.werte()["flaechennamen"]) == ["FugeO"]
+              and w._namensliste(mk.werte()["gegenflaechen"]) == ["FugeU"]
+              and sorted(w.sel_flaechen) == ["FugeO", "FugeU"],
+              f"{mk.werte()['flaechennamen']!r} / {mk.werte()['gegenflaechen']!r}, Auswahl {w.sel_flaechen}")
+        mk.setzen("koerper_a", "–"); mk.setzen("koerper_b", w.KONTAKT_ALLE)
+        mk.setzen("flaechennamen", ""); mk.setzen("gegenflaechen", "")
+        mk.objekt_angeklickt("flaeche", "FugeO"); mk.objekt_angeklickt("flaeche", "FugeU"); app.processEvents()
+        check("… und füllt die Körper selbst: leere Maske, zwei Flächenklicks → Körper A Oben, Körper B Unten",
+              mk.werte()["koerper_a"] == "Oben" and mk.werte()["koerper_b"] == "Unten"
+              and w._namensliste(mk.werte()["flaechennamen"]) == ["FugeO"]
+              and w._namensliste(mk.werte()["gegenflaechen"]) == ["FugeU"],
+              str({k_: mk.werte()[k_] for k_ in ("koerper_a", "koerper_b", "flaechennamen", "gegenflaechen")}))
+        mk.objekt_angeklickt("flaeche", "FugeU"); app.processEvents()
+        check("ein zweiter Klick nimmt die Fläche wieder heraus, die Körper bleiben",
+              not w._namensliste(mk.werte()["gegenflaechen"]) and mk.werte()["koerper_b"] == "Unten",
+              repr(mk.werte()["gegenflaechen"]))
+        w.activateWindow(); mk._felder["gegenflaechen"].setFocus(); app.processEvents()
+        check("Klick ins Feld Gegenflächen: die Maus sammelt jetzt Gegenflächen, das Feld ist scharf",
+              mk.objekt_modus == "flaeche" and getattr(mk, "_klick_art", "") == "kontaktbedingung_gegen"
+              and scharf_() == ["gegenflaechen"],
+              f"{mk.objekt_modus!r} / {getattr(mk, '_klick_art', '')}, scharf {scharf_()}")
+        mk._felder["mu"].setFocus(); app.processEvents()
+        check("Klick in ein Feld ohne Klickbedeutung (μ) beendet den Klickmodus, kein Feld bleibt scharf",
+              not mk.objekt_modus and not scharf_(), f"{mk.objekt_modus!r}, scharf {scharf_()}")
+        mk._felder["flaechennamen"].setFocus(); app.processEvents()
+        _QtTk.QTest.keyClick(mk._felder["flaechennamen"], QtCore.Qt.Key_Escape); app.processEvents()
+        check("Esc im scharfen Feld beendet nur den Klickmodus - die Maske bleibt offen",
+              not mk.objekt_modus and not scharf_() and w.maskenrand.maske is mk and mk.isVisible(),
+              f"{mk.objekt_modus!r}, Maske {w.maskenrand.maske is mk}")
+        mk.setzen("koerper_a", "–"); mk.setzen("koerper_b", w.KONTAKT_ALLE)
+        mk.setzen("flaechennamen", ""); mk.setzen("gegenflaechen", "")
         check("Vorgabe: reibungsbehaftet, μ = 0,2, abheben möglich",
               mk.werte()["standard"] == "Reibungsbehaftet" and abs(float(mk.werte()["mu"]) - 0.2) < 1e-9 and mk.werte()["zug"].startswith("abheben"), str(mk.werte()["standard"]))
         mk.setzen("standard", "Verbund"); app.processEvents()
@@ -5952,22 +6021,23 @@ def main():
               and "1 Kontaktflächen" in w.lbl_sel.text(),
               f"{w.sel_flaechen}, Volumen {w.sel_koerper}, „{w.lbl_sel.text()}“")
         mk = w.maskenrand.maske
-        check("Kontaktmaske: Gegenflächen sind ein Listenfeld mit eigenem Klickknopf",
-              "gegenflaechen" in mk.werte() and "Gegenflächen anklicken" in mk.zusatzknoepfe
-              and "Kontaktflächen anklicken" in mk.zusatzknoepfe, str(sorted(mk.zusatzknoepfe)))
-        mk.zusatzknoepfe["Gegenflächen anklicken"].click(); app.processEvents()
+        check("Kontaktmaske: Gegenflächen sind ein Listenfeld, das per Klick ins Feld die Maus sammeln lässt",
+              "gegenflaechen" in mk.werte() and w.FELDKLICK["kontaktbedingung"]["gegenflaechen"] == "kontaktbedingung_gegen"
+              and "Gegenflächen anklicken" not in mk.zusatzknoepfe, str(sorted(mk.zusatzknoepfe)))
+        w.activateWindow(); mk._felder["gegenflaechen"].setFocus(); app.processEvents()
         check("Klickmodus Gegenflächen an", mk.objekt_modus == "flaeche" and mk._klick_art == "kontaktbedingung_gegen",
               f"{mk.objekt_modus} / {getattr(mk, '_klick_art', '')}")
         mk.objekt_angeklickt("flaeche", "FugeU"); app.processEvents()
-        check("angeklickte Fläche steht als Gegenfläche in der Maske und leuchtet",
-              w._namensliste(mk.werte()["gegenflaechen"]) == ["FugeU"] and w.sel_flaechen == ["FugeU"],
+        # seit 15.09.2026 leuchten beide Seiten der Fuge, nicht nur die angeklickte Liste
+        check("angeklickte Fläche steht als Gegenfläche in der Maske und leuchtet mit der Kontaktfläche",
+              w._namensliste(mk.werte()["gegenflaechen"]) == ["FugeU"] and sorted(w.sel_flaechen) == ["FugeO", "FugeU"],
               f"{mk.werte()['gegenflaechen']!r}, Auswahl {w.sel_flaechen}")
-        mk.zusatzknoepfe["Kontaktflächen anklicken"].click(); app.processEvents()
-        check("derselbe Klick schaltet auf die andere Liste um, statt den Modus zu beenden",
+        mk._felder["flaechennamen"].setFocus(); app.processEvents()
+        check("Klick ins Feld Kontaktflächen schaltet auf die andere Liste um, statt den Modus zu beenden",
               mk.objekt_modus == "flaeche" and mk._klick_art == "kontaktbedingung",
               f"{mk.objekt_modus} / {getattr(mk, '_klick_art', '')}")
-        mk.zusatzknoepfe["Kontaktflächen anklicken"].click(); app.processEvents()
-        check("und noch einmal beendet ihn", not mk.objekt_modus, str(mk.objekt_modus))
+        mk._felder["beschreibung"].setFocus(); app.processEvents()
+        check("und ein Feld ohne Klickbedeutung beendet ihn", not mk.objekt_modus, str(mk.objekt_modus))
         n_f = len(fehler_)
         mk.anwenden(); app.processEvents()
         kb = m_.kontaktbedingungen.get("KB1")
