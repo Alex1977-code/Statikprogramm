@@ -44,6 +44,14 @@ AUFLIEGEND = 1e-3
 #: eines Zwoelfecks stehen 30 Grad auseinander, die eines 36-Ecks 10, eine
 #: rechtwinklige Kante 90.
 KNICK = 30.0
+#: Wie weit ein Slave-Knoten neben seiner Gegenfacette liegen darf, als Anteil
+#: seines Abstands laengs der Normalen: der Kegel, den ein abstehender Knoten
+#: an einer glatten Kante zwischen zwei Facetten ueberstreicht. Steht er um d
+#: vor der gemeinsamen Ecke zweier Facetten, die um den Winkel D abknicken,
+#: liegt er neben beiden um d sin(D/2) bei einem Abstand d cos(D/2) - bis zum
+#: Knickwinkel also hoechstens tan(KNICK/2) mal dem Abstand. Ein anliegender
+#: Knoten (Abstand null) bekommt nichts nachgelassen.
+KANTENKEGEL = float(np.tan(np.radians(0.5 * KNICK)))
 
 
 # --------------------------------------------------------------------------
@@ -834,6 +842,7 @@ class ContactSystem:
         spalte: list = []
         n_paired = 0
         ohne: list = []
+        neben: list = []
         erste = len(self.cons)          # ab hier gehoeren die Bedingungen zu cp
         normalen: list = []
         for s in cp.slave_nodes:
@@ -860,15 +869,22 @@ class ContactSystem:
             q, w = naechste_punkte_dreiecke(p, A[idx], B[idx], Cc[idx])
             # Der Abstand zaehlt **laengs der Master-Normalen**; was quer dazu
             # liegt, ist Versatz in der Fugenebene und kein Abheben. Und der
-            # Knoten muss auf der Facette liegen: steht er weiter als deren
-            # Umkreis ueber den Rand hinaus, steht ihm dort nichts gegenueber.
+            # Knoten muss **auf** der Facette liegen - senkrecht auf sie
+            # fallen. Neben der Gegenflaeche steht ihm nichts gegenueber, und
+            # Kontakt wirkt dort nie. Bis zum 15.09.2026 durfte er den Umkreis
+            # der Facette weit daneben liegen (die Regel der Facettensuche,
+            # fugen.gegenseite_finden): am Drehlager trugen Knoten der Achse
+            # bis 25 mm hinter dem Ende der Buchse V29 1982 kN, und der Rand
+            # eines Passstiftlochs 3 mm hinter dem Stiftende 708 kN auf einem
+            # Knoten. Nachgelassen wird die Rundung und der Kegel einer
+            # glatten Kante (:data:`KANTENKEGEL`).
             weg = q - p
             laengs = np.einsum("ij,ij->i", weg, N[idx])
             quer = np.linalg.norm(weg - laengs[:, None] * N[idx], axis=1)
             dist = np.abs(laengs)
-            auf = quer <= np.maximum(R[idx], 1e-12)
+            auf = quer <= DECKUNGSGLEICH * self.size + KANTENKEGEL * dist
             if not auf.any():
-                ohne.append(int(s))
+                neben.append(int(s))
                 continue
             wahl = np.flatnonzero(auf)
             # Gewaehlt wird die raeumlich naechste Facette - wie bisher; nur
@@ -916,7 +932,10 @@ class ContactSystem:
                "Berührung gesetzt" if spalte else "")
             + (f" - {len(ohne)} ohne Master-Facette im Suchradius "
                f"{radius:.3g} m (z. B. Knoten {', '.join(str(x) for x in ohne[:5])})"
-               if ohne else ""))
+               if ohne else "")
+            + (f" - {len(neben)} liegen neben der Gegenfläche: dort steht ihnen nichts "
+               f"gegenüber, sie tragen nicht (z. B. Knoten {', '.join(str(x) for x in neben[:5])})"
+               if neben else ""))
 
     # ---- Zustand ---------------------------------------------------------
     def initialize(self):
