@@ -1147,6 +1147,48 @@ def test_verteilung_statt_mittelwert():
           zeile[:150])
 
 
+def test_durchdringung_nicht_als_spalt():
+    """Eine Durchdringung ist kein Spalt - das Protokoll nennt sie getrennt.
+
+    Bis zum 15.09.2026 sammelten Kontaktaufbau und Fugensuche den
+    **Betrag** des Abstands. Am Drehlager (gmsh-Netz) meldete die Zeile der
+    Achse „Spalt 67 % aufliegend … größter 0.62 mm", obwohl an 207 Knoten die
+    Achse bis 0,62 mm in der Buchse stak - und genau dort sassen die zwoelf
+    groessten Knotenkraefte.
+    """
+    from scipy import sparse
+    from statik3d.contact import ContactSystem, verteilungstext
+    from statik3d.model import ContactPair
+    t = verteilungstext([0.0, 0.0, 0.001, -0.0005, -0.0002], 1e-5)
+    check("Verteilung: aufliegend, Spalt und Durchdringung getrennt",
+          "40 % aufliegend" in t and "größter 1.00 mm" in t
+          and "2 durchdringend, tiefste 0.50 mm" in t, t)
+    check("ohne Durchdringung bleibt der Satz, wie er war",
+          verteilungstext([0.0, 0.002], 1e-5) == "50 % aufliegend, Median 1.00 mm, 90 % unter 1.80 mm, "
+                                                 "größter 2.00 mm", verteilungstext([0.0, 0.002], 1e-5))
+
+    # Kontaktaufbau: ebene Master-Facette, ein Knoten 0,3 mm davor, zwei 0,5 mm dahinter
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    b = [int(m.add_node(*p_)) for p_ in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]]
+    s = [int(m.add_node(0.3, 0.5, 0.0003)), int(m.add_node(0.5, 0.5, -0.0005)),
+         int(m.add_node(0.7, 0.5, -0.0005))]
+    log = []
+    m.contact_pairs.append(ContactPair("Eben", slave_nodes=s, master_faces=[b], search_radius=0.01))
+    ContactSystem(m, sparse.identity(m.ndof, format="csr"), log)
+    z = next((x for x in log if "Eben" in x), "")
+    check("Kontaktaufbau: zwei Knoten durchdringen 0,5 mm, der Spalt ist 0,3 mm",
+          "2 durchdringend, tiefste 0.50 mm" in z and "größter 0.30 mm" in z, z)
+
+    # Fugensuche: die Gegenflaeche liegt 2 mm im Koerper der Kontaktseite
+    m2 = Model()
+    seite = [_facette(m2, [(0, 0, 0), (0, 0.1, 0), (0, 0.1, 0.1), (0, 0, 0.1)], (-1, 0, 0))]
+    gegen = [_facette(m2, [(0.002, 0, 0), (0.002, 0.1, 0), (0.002, 0.1, 0.1), (0.002, 0, 0.1)], (1, 0, 0))]
+    paare, abstand = fugen.gegenseite_finden(m2, seite, gegen, 0.05)
+    close("Fugensuche: eine Durchdringung hat negativen Abstand", float(abstand[0]), -0.002, 1e-9, " m")
+    check("… und wird trotzdem gepaart", paare == {0: 0}, str(paare))
+
+
 def _mantelfacetten(m, r: float, n: int, h: float):
     """Ein n-Eck als Mantel: zwei Knotenringe, dazwischen n Vierecke."""
     w = 2.0 * np.pi * np.arange(n) / n
@@ -1620,6 +1662,114 @@ def test_kontakt_nur_auf_der_gegenflaeche():
           not fehler, "; ".join(fehler[:3]))
 
 
+def _mantelnetz(rng, r, h, art):
+    """Ein Stueck Zylindermantel r, unregelmaessig aus Dreiecken vernetzt.
+
+    art "gitter": gleichmaessige Winkelteilung h/r, laengs unregelmaessig
+    0,2..0,45 h, jedes Viereck ueber eine zufaellige Diagonale geteilt - so
+    vernetzt gmsh die Bohrungen des Drehlagers (9,47 Grad, 10,7 mm laengs).
+    art "frei": ein um 30 % verwackeltes Gitter mit Kante h, Delaunay - die
+    Dreiecke stehen schief zur Achse.
+    Rueckgabe (Winkel, Hoehe) je Knoten und die Dreiecke als Indizes.
+    """
+    from scipy.spatial import Delaunay
+    bogen, laenge = 8 * h / r, 6 * h
+    if art == "gitter":
+        th = np.linspace(0.0, bogen, 9)
+        y = [0.0]
+        while y[-1] < laenge - 0.45 * h:
+            y.append(y[-1] + rng.uniform(0.2, 0.45) * h)
+        y = np.array(y + [laenge])
+        pts = np.array([(a, b) for a in th for b in y])
+        k = lambda i, j: i * len(y) + j                                  # noqa: E731
+        tri = []
+        for i in range(len(th) - 1):
+            for j in range(len(y) - 1):
+                a, b, c, d = k(i, j), k(i + 1, j), k(i + 1, j + 1), k(i, j + 1)
+                tri += ([(a, b, c), (a, c, d)] if rng.random() < 0.5 else [(a, b, d), (b, c, d)])
+        return pts, np.array(tri), laenge, bogen
+    n_t, n_y = int(round(bogen * r / h)) + 1, int(round(laenge / h)) + 1
+    tt, yy = np.meshgrid(np.linspace(0, bogen, n_t), np.linspace(0, laenge, n_y), indexing="ij")
+    tt = tt + rng.uniform(-0.3, 0.3, tt.shape) * bogen / (n_t - 1)
+    yy = yy + rng.uniform(-0.3, 0.3, yy.shape) * laenge / (n_y - 1)
+    tt[0], tt[-1], yy[:, 0], yy[:, -1] = 0.0, bogen, 0.0, laenge
+    pts = np.column_stack([tt.ravel(), yy.ravel()])
+    return pts, Delaunay(np.column_stack([pts[:, 0] * r, pts[:, 1]])).simplices, laenge, bogen
+
+
+def test_facettenspalt_unregelmaessig():
+    """Eine passgenaue Achse in einer **unregelmaessig** aus Dreiecken
+    vernetzten Bohrung liegt ueberall an - die wahre Flaeche hinter den
+    Facetten trifft den Kreis auf 1 µm.
+
+    test_facettenspalt_bereinigt prueft den regelmaessigen Fall (Vierecke
+    zwischen zwei Knotenringen). Am Drehlager mit gmsh-Netz (Bohrung V16,
+    r = 302 mm, 51-mm-Kanten) lieferte der Kontaktaufbau trotzdem an 207 von
+    550 Bedingungen g0 von -51 bis -618 µm: die Stuetzpunkte der allgemeinen
+    Quadrik lagen auf vier gleichmaessig verteilten Winkellagen, symmetrisch
+    zur Facette - dort ist z^2 (gerade in x) von 1 und x^2 nicht zu
+    unterscheiden. Die Spaltenmatrix hatte die Kondition 1e14, galt dem
+    Rangtest aber als voll, und zwischen den Stuetzpunkten lag die Flaeche bis
+    0,68 mm daneben; 49 statt 179 Knoten trugen, einer 1289 kN. Schiefe
+    Dreiecke (die Achse liegt nicht in der Facettenebene) liessen zudem 20 µm,
+    weil die Glieder x z und y z fehlten.
+
+    Stichprobe: Gitter wie gmsh und verwackeltes Delaunay-Netz, Bohrung und
+    Achse als Gegenflaeche, Radien 150 bis 1000 mm, Netzweiten 20 und 50 mm,
+    je drei Zufallsnetze; die Knoten der Gegenflaeche um 0,01 µm radial
+    gerundet (ohne Rundung entscheidet der Zufall der Gleitkommarechnung, ob
+    der Rangtest die unbestimmte Quadrik annimmt).
+    """
+    from scipy import sparse
+    from statik3d.contact import ContactSystem, Flaechenquadriken, facetten_felder
+    from statik3d.model import ContactPair
+    schlimmste, ueber, faelle, durchdringend = (0.0, ""), 0, 0, 0
+    for art in ("gitter", "frei"):
+        for gegen in ("Bohrung", "Achse"):
+            for r, h in ((0.15, 0.02), (0.302, 0.02), (0.302, 0.05), (0.6, 0.05), (1.0, 0.05)):
+                for seed in range(3):
+                    rng = np.random.default_rng(seed)
+                    pts, tri, laenge, bogen = _mantelnetz(rng, r, h, art)
+                    m = Model()
+                    m.add_material(Material.steel("S235"))
+                    rr = r + rng.uniform(-1e-11, 1e-11, len(pts))
+                    ids = [int(m.add_node(ri * np.cos(a), y, ri * np.sin(a))) for (a, y), ri in zip(pts, rr)]
+                    faces = []
+                    for a, b, c in tri:
+                        f = [ids[a], ids[b], ids[c]]
+                        P = m.nodes[f]
+                        aussen = float(np.cross(P[1] - P[0], P[2] - P[0]) @ (P.mean(axis=0) * [1, 0, 1])) > 0
+                        faces.append(f if aussen == (gegen == "Achse") else f[::-1])
+                    # 1) die wahre Flaeche an Zufallspunkten der inneren Facetten
+                    K4, g = facetten_felder(faces)
+                    Q = Flaechenquadriken(m.nodes, K4, g)
+                    innen = [i for i, f in enumerate(faces)
+                             if np.all(np.abs(pts[[ids.index(k) for k in f], 0] - bogen / 2) < 0.3 * bogen)
+                             and np.all(np.abs(pts[[ids.index(k) for k in f], 1] - laenge / 2) < 0.3 * laenge)]
+                    w = rng.dirichlet([1, 1, 1], (len(innen), 3))
+                    E = m.nodes[np.array([faces[i] for i in innen])]
+                    q = np.einsum("fkj,fjd->fkd", w, E).reshape(-1, 3)
+                    qs, _ns = Q.punkt(q, np.repeat(innen, 3))
+                    fehler = float(np.abs(np.hypot(qs[:, 0], qs[:, 2]) - r).max())
+                    faelle += 1
+                    ueber += int(fehler > 1e-6)
+                    if fehler > schlimmste[0]:
+                        schlimmste = (fehler, f"{art}, {gegen}, r {r * 1e3:.0f} mm, h {h * 1e3:.0f} mm, Netz {seed}")
+                    # 2) der Kontaktaufbau meldet keine Durchdringung
+                    wa = rng.uniform(0.3, 0.7, 60) * bogen
+                    ya = rng.uniform(0.3, 0.7, 60) * laenge
+                    slave = [int(m.add_node(r * np.cos(a), y, r * np.sin(a))) for a, y in zip(wa, ya)]
+                    m.contact_pairs.append(ContactPair("F", slave_nodes=slave, master_faces=faces,
+                                                       search_radius=0.005))
+                    log = []
+                    ContactSystem(m, sparse.identity(m.ndof, format="csr"), log)
+                    durchdringend += int(any("durchdringend" in z for z in log))
+    check(f"unregelmäßige Bohrung, {faelle} Fälle: die wahre Fläche trifft den Kreis auf 1 µm",
+          ueber == 0, f"größter Fehler {schlimmste[0] * 1e6:.2f} µm ({schlimmste[1]}), über 1 µm in {ueber} Fällen")
+    check("… und der Kontaktaufbau meldet für die passgenaue Achse keine Durchdringung",
+          durchdringend == 0, f"in {durchdringend} von {faelle} Fällen")
+
+
 def _zwei_prismen(n=5, r=0.30, dick=0.30, klein=0.05):
     """Zwei Fuenfeckprismen uebereinander mit **einer** gemeinsamen Flaeche.
 
@@ -1831,8 +1981,10 @@ def main():
               test_formschluss_meldung,
               test_ein_suchradius, test_verteilung_statt_mittelwert,
               test_deckungsgleiche_knoten_direkt, test_facettenspalt_bereinigt,
+              test_facettenspalt_unregelmaessig,
               test_gegenseite_nur_im_genannten_bauteil, test_kontakt_nur_auf_der_gegenflaeche,
               test_gegenseite_nur_auf_genannten_flaechen, test_gegenfacetten_folgen_dem_bauteil,
+              test_durchdringung_nicht_als_spalt,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
               test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei, test_karten_einmal_je_lauf):

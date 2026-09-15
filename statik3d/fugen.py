@@ -370,8 +370,9 @@ def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> t
     passgenaue Achse in ihrer Bohrung hat so Spalt null, mit 0,5 mm Spiel
     0,5 mm - vorher stand dort der Sehnenfehler beider Netze.
 
-    Rueckgabe ({Index der Facette: Index der Gegenfacette}, Spalt je Facette,
-    inf ohne Gegenseite).
+    Rueckgabe ({Index der Facette: Index der Gegenfacette}, Spalt je Facette
+    mit Vorzeichen - negativ, wenn die Gegenflaeche im Koerper der
+    Kontaktseite liegt -, inf ohne Gegenseite). Gepaart wird nach dem Betrag.
     """
     from scipy.spatial import cKDTree
     from .contact import Flaechenquadriken, naechste_punkte_dreiecke
@@ -414,7 +415,7 @@ def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> t
     weg = q - ps
     laengs = np.einsum("ij,ij->i", weg, nps)            # Anteil in Normalenrichtung
     quer = np.linalg.norm(weg - laengs[:, None] * nps, axis=1)
-    d = np.abs(laengs)                                  # der Spalt
+    d = laengs                                          # der Spalt, negativ: Durchdringung
     # Der Punkt muss auf der Gegenseite liegen - sonst steht ihm dort nichts
     # gegenueber und der Normalabstand sagt nichts aus.
     auf = quer <= np.maximum(rs[Ip], 1e-12)
@@ -426,7 +427,9 @@ def gegenseite_finden(model: Model, seite: list, gegen: list, weite: float) -> t
     Ip, d, T = Ip[reihe], d[reihe], T[reihe]
     erste = np.r_[True, Ip[1:] != Ip[:-1]]
     Ip, d, T = Ip[erste], d[erste], T[erste]
-    nah = d <= weite
+    # Gepaart wird nach dem Betrag; zurueck kommt das Vorzeichen, damit das
+    # Protokoll eine Durchdringung nicht als Spalt meldet.
+    nah = np.abs(d) <= weite
     paare = {int(i): int(von[t]) for i, t in zip(Ip[nah], T[nah])}
     abstand[Ip[nah]] = d[nah]
     return paare, abstand

@@ -52,6 +52,15 @@ KNICK = 30.0
 #: Knickwinkel also hoechstens tan(KNICK/2) mal dem Abstand. Ein anliegender
 #: Knoten (Abstand null) bekommt nichts nachgelassen.
 KANTENKEGEL = float(np.tan(np.radians(0.5 * KNICK)))
+#: Eine Stufe der Flaechenquadrik gilt nur, wenn ihr kleinster Singulaerwert
+#: groesser ist als dieser Anteil des groessten (Spalten auf die Groesse des
+#: Flecks bezogen). Gemessen an beiden Netzen des Drehlagers (15.09.2026, alle
+#: 12 Fugen, 44 000 Facetten): bestimmte Quadriken liegen bei Konditionszahlen
+#: bis 1e4 (mit x z, y z) bzw. 1e9, unbestimmte ab 1e12 - dazwischen nichts.
+#: 1e-5 statt der Mitte der Luecke, weil gerundete Koordinaten die
+#: unbestimmten nach unten ziehen: bei 0,1 µm Rauschen auf 50-mm-Flecken
+#: kippte 1e-7 (313 µm), bei 1 µm 1e-6 (313 µm); 1e-5 hielt beide.
+QUADRIK_GRENZE = 1e-5
 
 
 # --------------------------------------------------------------------------
@@ -97,15 +106,27 @@ def verteilungstext(werte, aufliegend: float = 0.0) -> str:
     Genannt werden darum der Anteil, der wirklich aufliegt, der Median, das
     90. Perzentil und der groesste Wert. ``aufliegend`` ist die Grenze, bis zu
     der ein Spalt als Beruehrung zaehlt.
+
+    Die Werte tragen ihr **Vorzeichen**: negativ ist eine Durchdringung. Sie
+    zaehlt nicht in die Spaltmasse, sondern wird mit Zahl und tiefster
+    genannt. Bis zum 15.09.2026 kam hier der Betrag an; am Drehlager
+    (gmsh-Netz) stand fuer die Achse „größter 0.62 mm", obwohl sie an 207
+    Knoten bis 0,62 mm in der Buchse stak.
     """
     w = np.asarray(werte, float)
     if not w.size:
         return "kein Spalt gemessen"
-    auf = int((w <= aufliegend).sum())
-    return (f"{100.0 * auf / w.size:.0f} % aufliegend, Median "
-            f"{float(np.median(w)) * 1e3:.2f} mm, 90 % unter "
-            f"{float(np.percentile(w, 90)) * 1e3:.2f} mm, größter "
-            f"{float(w.max()) * 1e3:.2f} mm")
+    auf = int((np.abs(w) <= aufliegend).sum())
+    tief = w[w < -aufliegend]
+    spalt = np.maximum(w[w >= -aufliegend], 0.0)
+    text = f"{100.0 * auf / w.size:.0f} % aufliegend"
+    if spalt.size:
+        text += (f", Median {float(np.median(spalt)) * 1e3:.2f} mm, 90 % unter "
+                 f"{float(np.percentile(spalt, 90)) * 1e3:.2f} mm, größter "
+                 f"{float(spalt.max()) * 1e3:.2f} mm")
+    if tief.size:
+        text += f"; {tief.size} durchdringend, tiefste {float(-tief.min()) * 1e3:.2f} mm"
+    return text
 
 
 def contact_dofs(model, K=None) -> set:
@@ -340,21 +361,31 @@ class Flaechenquadriken:
     Facette laengs der Hauptrichtungen der Punkte, z laengs der Normalen) die
     Quadrik
 
-        z + A x^2 + B y^2 + C x y + D x + E y + G z^2 + I = 0
+        z + A x^2 + B y^2 + C x y + D x + E y + G z^2 + H x z + J y z + I = 0
 
     nach kleinsten Quadraten gelegt (linear in den Beiwerten). Sie enthaelt
-    die Ebene (alle Beiwerte null), jeden Zylinder, dessen Achse in der
-    Facettenebene liegt - und das tut sie an jeder Facette eines Zylinders -,
-    die Kugel und das Ellipsoid **genau**, nicht nur bis zur zweiten Ordnung:
+    die Ebene (alle Beiwerte null), jeden Zylinder - auch den, dessen Achse
+    schief zur Facette steht, wie an einem frei triangulierten Mantel (ohne
+    H und J blieben dort 20 µm) -, die Kugel und das Ellipsoid **genau**,
+    nicht nur bis zur zweiten Ordnung:
     ein Hoehenfeld z = c0 + c1 x + ... + c5 y^2 liess an einem 36-Eck mit
     r = 300 mm noch 19 µm (das Glied x^4 / 8 r^3 ueber die Nachbarn), die
-    Quadrik nichts. Bestimmen die Punkte die allgemeine Quadrik nicht - zwei
-    Knotenringe einer Bohrung, die eine Facette hoch ist, lassen Ellipsen
-    jeder Form durch -, gilt die **Zylinderform** G = A + B (die Achse liegt
-    in der Facettenebene: x^2 und z^2 bzw. y^2 und z^2 mit demselben
-    Beiwert), die auch den Kreis durch zwei Ringe festlegt; danach fallen
-    die Glieder in y weg. Mit weniger als vier Punkten bleibt es bei der
-    Facette.
+    Quadrik nichts. Bestimmen die Punkte eine Stufe nicht, gilt die naechste:
+    ohne H und J, dann die **Zylinderform** G = A + B (die Achse liegt in der
+    Facettenebene: x^2 und z^2 bzw. y^2 und z^2 mit demselben Beiwert), die
+    auch den Kreis durch zwei Knotenringe festlegt; danach fallen die Glieder
+    in y weg. Mit weniger als vier Punkten bleibt es bei der Facette.
+
+    **Bestimmt heisst gut konditioniert, nicht voller Rang.** Liegen die
+    Stuetzpunkte auf vier gleichmaessig verteilten Winkellagen - so vernetzt
+    gmsh eine Bohrung -, ist z^2 dort gerade in x und von 1 und x^2 nicht zu
+    unterscheiden. Die Spaltenmatrix hat dann die Kondition 1e14, der
+    Rangtest von lstsq (Maschinengenauigkeit) nennt sie trotzdem voll, und
+    zwischen den Punkten liegt die Flaeche beliebig daneben: am Drehlager
+    bis 0,68 mm hinter der Bohrung V16, 207 von 550 Knoten "durchdrangen"
+    die Buchse, einer trug 1289 kN (15.09.2026). Eine Stufe gilt darum nur,
+    wenn ihr kleinster Singulaerwert ueber :data:`QUADRIK_GRENZE` mal dem
+    groessten liegt.
 
     Knotennormalen taugen dafuer nicht (Phong-Tessellation, 13.09.2026
     verworfen): die flaechengewichtete Mittelung steht an einer
@@ -363,10 +394,12 @@ class Flaechenquadriken:
     0,3 mm Durchdringung, als Uebermass gelesen 7 MN Kontaktkraft.
     """
 
-    #: Spalten: x^2, y^2, x y, x, y, z^2, 1, x^2 + z^2, y^2 + z^2 - und die
-    #: Stufen, in denen Glieder wegfallen, wenn die Punkte sie nicht
-    #: bestimmen: allgemeine Quadrik, Zylinderform, ohne y^2, ohne x y und y
-    STUFEN = ((0, 1, 2, 3, 4, 5, 6), (7, 8, 2, 3, 4, 6), (7, 2, 3, 4, 6), (7, 3, 6))
+    #: Spalten: x^2, y^2, x y, x, y, z^2, 1, x^2 + z^2, y^2 + z^2, x z, y z -
+    #: und die Stufen, in denen Glieder wegfallen, wenn die Punkte sie nicht
+    #: bestimmen: allgemeine Quadrik, ohne x z und y z, Zylinderform, ohne
+    #: y^2, ohne x y und y
+    STUFEN = ((0, 1, 2, 3, 4, 5, 9, 10, 6), (0, 1, 2, 3, 4, 5, 6), (7, 8, 2, 3, 4, 6),
+              (7, 2, 3, 4, 6), (7, 3, 6))
 
     def __init__(self, nodes, K, gueltig, bezug=None, knick: float = KNICK):
         self.nodes = np.asarray(nodes, float)
@@ -419,17 +452,19 @@ class Flaechenquadriken:
                 s = float(np.linalg.norm(Dq, axis=1).max()) or 1.0
                 x, y, zs = (Dq @ e1) / s, (Dq @ e2) / s, z / s
                 A = np.column_stack([x * x, y * y, x * y, x, y, zs * zs, np.ones_like(x),
-                                     x * x + zs * zs, y * y + zs * zs])
+                                     x * x + zs * zs, y * y + zs * zs, x * zs, y * zs])
                 for cols in self.STUFEN:
-                    c, _r, rang, _sv = np.linalg.lstsq(A[:, cols], -zs, rcond=None)
-                    if rang == len(cols):
-                        cc = np.zeros(9)
+                    if len(P) < len(cols):
+                        continue
+                    c, _r, rang, sv = np.linalg.lstsq(A[:, cols], -zs, rcond=None)
+                    if rang == len(cols) and sv[-1] > QUADRIK_GRENZE * sv[0]:
+                        cc = np.zeros(11)
                         cc[list(cols)] = c
                         # Zylinderform zurueck auf A, B, G
                         cc[0] += cc[7]
                         cc[1] += cc[8]
                         cc[5] += cc[7] + cc[8]
-                        aus = (o, e1, e2, n, s, cc[:7])
+                        aus = (o, e1, e2, n, s, cc[[0, 1, 2, 3, 4, 5, 6, 9, 10]])
                         break
         self._fit[i] = aus
         return aus
@@ -450,19 +485,21 @@ class Flaechenquadriken:
             w = np.flatnonzero(fi == i)
             D = q[w] - o
             x, y = (D @ e1) / s, (D @ e2) / s
-            # G z^2 + z + R = 0: die Wurzel nahe der Facette (z klein)
+            # G z^2 + b z + R = 0 mit b = 1 + H x + J y: die Wurzel nahe der
+            # Facette (z klein)
             R = c[0] * x * x + c[1] * y * y + c[2] * x * y + c[3] * x + c[4] * y + c[6]
             G = c[5]
-            wurzel = 1.0 - 4.0 * G * R
-            gut = wurzel >= 0
+            b = 1.0 + c[7] * x + c[8] * y
+            wurzel = b * b - 4.0 * G * R
+            gut = (wurzel >= 0) & (b > 0)
             if not gut.all():
-                w, x, y, R, wurzel = w[gut], x[gut], y[gut], R[gut], wurzel[gut]
+                w, x, y, R, b, wurzel = w[gut], x[gut], y[gut], R[gut], b[gut], wurzel[gut]
                 D = D[gut]
-            z = -2.0 * R / (1.0 + np.sqrt(wurzel))
+            z = -2.0 * R / (b + np.sqrt(wurzel))
             qs[w] = q[w] + (z * s - D @ n)[:, None] * n
-            gx = 2.0 * c[0] * x + c[2] * y + c[3]
-            gy = 2.0 * c[1] * y + c[2] * x + c[4]
-            gz = 1.0 + 2.0 * G * z
+            gx = 2.0 * c[0] * x + c[2] * y + c[3] + c[7] * z
+            gy = 2.0 * c[1] * y + c[2] * x + c[4] + c[8] * z
+            gz = b + 2.0 * G * z
             nn = gx[:, None] * e1[None, :] + gy[:, None] * e2[None, :] + gz[:, None] * n[None, :]
             ln = np.linalg.norm(nn, axis=1)
             ln[ln <= 0] = 1.0
@@ -911,7 +948,7 @@ class ContactSystem:
                 # Schalen: Normale zum Slave-Knoten orientieren
                 n = -n
                 d = -d
-            spalte.append(abs(float(d)))
+            spalte.append(float(d))          # mit Vorzeichen: negativ durchdringt
             self._bedingung(cp, s, list(tri), list(wj), n, d, normalen,
                             f"{cp.name}: Knoten {s} -> Facette {tri}", band)
             n_paired += 1
