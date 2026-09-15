@@ -392,8 +392,12 @@ def _kontaktzeilen(model, teil_von: dict, mitten: dict, laengen: dict) -> dict:
 
     Die Paarung Slave-Knoten gegen Master-Facette wird hier neu gesucht statt
     aus dem Loeser uebernommen: die Vorabpruefung laeuft, **bevor** es ein
-    Kontaktsystem gibt. Gesucht wird ueber die naechste Facette; der genaue
-    Projektionspunkt spielt fuer eine Richtungsfrage keine Rolle, der
+    Kontaktsystem gibt. Die Regel ist aber die des Loesers: ein Knoten
+    bekommt eine Zeile nur gegen eine Facette, auf die er senkrecht faellt
+    (Querversatz hoechstens ``DECKUNGSGLEICH`` mal Modellgroesse plus
+    ``KANTENKEGEL`` mal Abstand laengs der Normalen), und unter diesen gegen
+    die raeumlich naechste. Die Richtung ist die Normale der Facette, nicht
+    die der wahren Flaeche; fuer eine Richtungsfrage genuegt das, der
     Hebelarm aendert sich hoechstens um eine Facettengroesse.
     """
     from scipy.spatial import cKDTree
@@ -407,7 +411,7 @@ def _kontaktzeilen(model, teil_von: dict, mitten: dict, laengen: dict) -> dict:
         (g if art == "=" else u).append(a)
         namen.add(name)
 
-    from .contact import naechste_punkte_dreiecke
+    from .contact import naechste_punkte_dreiecke, DECKUNGSGLEICH, KANTENKEGEL
     groesse = float(model.characteristic_size())
     for cp in getattr(model, "contact_pairs", None) or []:
         E, S, N, KN = _dreiecke(model, cp)
@@ -422,19 +426,42 @@ def _kontaktzeilen(model, teil_von: dict, mitten: dict, laengen: dict) -> dict:
         # ueber seiner Unterlage schwebt, ist frei und nicht etwa gelagert.
         offen = 1e-9 * groesse
         baum = cKDTree(S)
-        anzahl = min(8, len(S))
+        # Gesucht wird wie im Loeser ueber **alle** Facetten in Reichweite:
+        # steht ein Knoten im Suchradius auf einem Dreieck, liegt dessen
+        # Schwerpunkt hoechstens Radius + Umkreis entfernt. Die paar naechsten
+        # Schwerpunkte genuegen nicht mehr, seit nur zaehlt, worauf der Knoten
+        # steht - neben einem fein vernetzten Streifen gehoeren sie alle dem
+        # Streifen, und der Knoten fiele neben seiner eigenen Auflage heraus
+        # (tests.test_singular, test_neben_der_gegenflaeche_haelt_nichts).
+        umkreis = np.sqrt(((E - S[:, None, :]) ** 2).sum(2).max(1))
+        weit = radius + float(umkreis.max())
         for sk in (cp.slave_nodes or []):
             k = int(sk)
             teil = teil_von.get(k)
             if teil is None:
                 continue
             p = model.nodes[k]
-            kand = np.atleast_1d(baum.query(p, k=anzahl)[1]).astype(int)
-            q, _w = naechste_punkte_dreiecke(p, E[kand, 0], E[kand, 1], E[kand, 2])
-            d = np.linalg.norm(q - p, axis=1)
-            j = int(np.argmin(d))
-            if d[j] > radius:
+            kand = np.asarray(baum.query_ball_point(p, weit), dtype=int)
+            if kand.size:
+                kand = kand[np.linalg.norm(S[kand] - p, axis=1) <= radius + umkreis[kand]]
+            if not kand.size:
                 continue                      # ausser Reichweite
+            q, _w = naechste_punkte_dreiecke(p, E[kand, 0], E[kand, 1], E[kand, 2])
+            # Halt gibt nur eine Facette, auf die der Knoten senkrecht faellt -
+            # dieselbe Regel wie in contact.ContactSystem._build_pair, mit
+            # derselben Rundung und demselben Kegel einer glatten Kante. Neben
+            # der Gegenflaeche bekommt der Knoten dort keine Bedingung; zaehlte
+            # er hier, stuende ein Teil als gehalten da, das im Loeser frei ist.
+            weg = q - p
+            laengs = np.einsum("ij,ij->i", weg, N[kand])
+            quer = np.linalg.norm(weg - laengs[:, None] * N[kand], axis=1)
+            dist = np.abs(laengs)
+            auf = np.flatnonzero(quer <= DECKUNGSGLEICH * groesse + KANTENKEGEL * dist)
+            if not auf.size:
+                continue                      # neben der Gegenflaeche
+            j = int(auf[np.argmin(np.linalg.norm(weg[auf], axis=1))])
+            if dist[j] > radius:
+                continue                      # ausser Reichweite, laengs der Normalen
             n = N[kand[j]]
             if not (verbund or cp.anliegend) and float((p - q[j]) @ n) - spalt > offen:
                 continue                      # die Fuge steht offen

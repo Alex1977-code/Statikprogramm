@@ -315,7 +315,7 @@ erscheint die Maske:
 | Körper A (Kontaktseite) | der Körper, dessen Flächen die Kontaktseite bilden - er wird an ihnen gelöst |
 | Körper B (Gegenseite) | der Körper, gegen den der Kontakt wirkt; „(alle anderen Körper)“ sucht die Gegenseite unter allen Bauteilen |
 | Kontaktflächen | mindestens eine Fläche von Körper A - getippt oder mit **„Kontaktflächen anklicken“** in der Ansicht gewählt (jeder Klick nimmt dazu oder heraus) |
-| Gegenflächen | die Flächen der Gegenseite - ebenso mit **„Gegenflächen anklicken“** in der Ansicht wählbar (seit 14.09.2026; vorher nur Anzeige aus der Quelldatei). Leer: die Gegenseite wird im Suchradius gesucht. Der zweite Knopf schaltet den Klickmodus auf die andere Liste um, ohne ihn zu beenden |
+| Gegenflächen | die Flächen der Gegenseite - ebenso mit **„Gegenflächen anklicken“** in der Ansicht wählbar (seit 14.09.2026; vorher nur Anzeige aus der Quelldatei). Genannt: der Kontakt wirkt **nur auf diesen Flächen** (seit 15.09.2026). Leer: die Gegenseite wird im Suchradius gesucht. Der zweite Knopf schaltet den Klickmodus auf die andere Liste um, ohne ihn zu beenden |
 | Standardkontakt | setzt die Richtungen darunter mit einem Griff (Tabelle unten); danach lässt sich jede Richtung von Hand ändern, der Standard wird dann „Benutzerdefiniert“ |
 | Druck | wird immer übertragen - das ist Kontakt |
 | Zug | *abheben möglich* (die Fuge öffnet unter Zug), *wird übertragen* (Verbund, kein Abheben) oder *Feder* |
@@ -402,8 +402,11 @@ Kontaktpaar ersetzt; Löschen (Rechtsklick oder Entf) nimmt es mit.
 
 Aus RFEM eingelesene Flächenfreigaben stehen in derselben Maske: Körper A ist
 der gelöste Körper, die Gegenflächen sind die zugeordneten Flächen der
-Quelldatei — die Fuge. „Kontaktflächen“ bleibt dann leer; die Fugenflächen des
-gelösten Körpers werden beim Vernetzen geometrisch gesucht. Auch diese
+Quelldatei — die Fuge. Der Kontakt wirkt nur auf ihnen, nicht auf
+Nachbarflächen desselben Bauteils (seit 15.09.2026; vorher trug am Drehlager
+die Achse 109 kN auf Bohrungsstreifen, die in RFEM nicht zugeordnet sind).
+„Kontaktflächen“ bleibt dann leer; die Fugenflächen des gelösten Körpers
+werden beim Vernetzen geometrisch gesucht. Auch diese
 Bedingungen lassen sich auf einen Standardkontakt umstellen oder Richtung für
 Richtung ändern.
 

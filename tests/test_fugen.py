@@ -1238,9 +1238,9 @@ def test_gegenseite_nur_im_genannten_bauteil():
     """Nennt die Bedingung die zugeordneten Flaechen der Gegenseite, so gehoert
     die Gegenseite **deren Bauteil** - nicht dem naechstbesten Teil daneben.
 
-    Gesucht wird weiter ueber die Geometrie (die Flaechenliste der Quelldatei
-    ist unvollstaendig), aber im Bauteil der genannten Flaechen. Ohne diese
-    Schranke nimmt die Suche, was im Suchradius am naechsten liegt: am
+    Seit dem 15.09.2026 ist die Gegenseite sogar genau die genannten Flaechen
+    (test_gegenseite_nur_auf_genannten_flaechen); das Bauteil folgt daraus.
+    Ohne diese Schranke nimmt die Suche, was im Suchradius am naechsten liegt: am
     Drehlager hingen vier Knoten der Achse in der Fuge zur Buchse an einem
     Passstift und trugen unter Last 37 von 49 MN, 12,9 MN auf einem einzigen
     Knoten (14.09.2026).
@@ -1273,6 +1273,101 @@ def test_gegenseite_nur_im_genannten_bauteil():
     check("die Slave-Knoten liegen in der Fugenebene",
           cp is not None and all(abs(float(m.nodes[int(n)][2]) - 1.0) < 1e-9 for n in cp.slave_nodes),
           f"{len(cp.slave_nodes) if cp else 0} Knoten")
+
+
+def _zweigeteilt(m, name, h):
+    """Quader 0..2 x 0..1 x 0..1, dessen Oberseite aus **zwei** Flaechen besteht
+    (``_D1`` bis x = 1, ``_D2`` ab x = 1) - ein Bauteil, zwei Kontaktflaechen."""
+    i0 = m.nn
+    m.add_nodes(np.array([(x, y, z) for z in (0.0, 1.0) for y in (0.0, 1.0)
+                          for x in (0.0, 1.0, 2.0)], float))
+
+    def k(x, y, z):
+        return i0 + z * 6 + y * 3 + x
+
+    linien: dict = {}
+
+    def li(a, c):
+        key = tuple(sorted((a, c)))
+        if key not in linien:
+            linien[key] = f"{name}_L{len(linien)}"
+            m.add_line(linien[key], [a, c], "polyline")
+        return linien[key]
+
+    def flaeche(nm, ring):
+        m.add_flaeche(nm, [li(ring[i], ring[(i + 1) % len(ring)]) for i in range(len(ring))],
+                      material="S235")
+        return nm
+
+    namen = [
+        flaeche(f"{name}_B", [k(0, 0, 0), k(1, 0, 0), k(2, 0, 0), k(2, 1, 0), k(1, 1, 0), k(0, 1, 0)]),
+        flaeche(f"{name}_D1", [k(0, 0, 1), k(1, 0, 1), k(1, 1, 1), k(0, 1, 1)]),
+        flaeche(f"{name}_D2", [k(1, 0, 1), k(2, 0, 1), k(2, 1, 1), k(1, 1, 1)]),
+        flaeche(f"{name}_V", [k(0, 0, 0), k(1, 0, 0), k(2, 0, 0), k(2, 0, 1), k(1, 0, 1), k(0, 0, 1)]),
+        flaeche(f"{name}_H", [k(0, 1, 0), k(1, 1, 0), k(2, 1, 0), k(2, 1, 1), k(1, 1, 1), k(0, 1, 1)]),
+        flaeche(f"{name}_L", [k(0, 0, 0), k(0, 1, 0), k(0, 1, 1), k(0, 0, 1)]),
+        flaeche(f"{name}_R", [k(2, 0, 0), k(2, 1, 0), k(2, 1, 1), k(2, 0, 1)]),
+    ]
+    kp = m.add_koerper(name, namen, material="S235")
+    M3.mesh_koerper_frei(m, kp, h=h, log=[], cache={})
+    return kp
+
+
+def test_gegenseite_nur_auf_genannten_flaechen():
+    """Nennt die Kontaktbedingung Gegenflaechen, ist die Gegenseite **genau
+    diese** - nicht jede Flaeche ihres Bauteils, die im Suchradius liegt.
+
+    Bis zum 15.09.2026 wurde im Bauteil der genannten Flaechen geometrisch
+    gesucht, weil die Liste als unvollstaendig galt. Am Drehlager deckten die
+    genannten Flaechen aber jede der zwoelf Fugen zu 90,6 bis 100 %, und was
+    ausserhalb trug, lag auf Nachbarflaechen: in „Achse (Typ 3)" 109 kN auf
+    den Bohrungsstreifen F319/F320/F587/F588 neben den genannten
+    F304/F305/F589/F590 („strikt auf die genannten Gegenflächen begrenzen").
+
+    Das Modell: das Unterteil hat eine zweigeteilte Oberseite, genannt ist nur
+    die linke Haelfte D1; das Oberteil liegt auf beiden. Vorher lagen 30 von 57
+    Gegenfacetten auf D2.
+    """
+    from scipy import sparse
+    from statik3d.assemble import SOLID_FACES
+    from statik3d.contact import ContactSystem
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.netz.ziellaenge = 0.25
+    _zweigeteilt(m, "Unten", 0.25)
+    _kasten(m, 0.0, 2.0, 0.0, 1.0, 1.0, 2.0, "Oben", h=0.25)
+
+    def facetten(fn):
+        out = set()
+        for e, j in m.flaechen[fn].randseiten:
+            el = m.elements[int(e)]
+            out.add(frozenset(int(el.nodes[i]) for i in SOLID_FACES[el.typ][int(j)]))
+        return out
+
+    d1, d2 = facetten("Unten_D1"), facetten("Unten_D2")
+    kb = m.add_kontaktbedingung("Fuge", flaechennamen=["Oben_B"], gegenflaechen=["Unten_D1"],
+                                koerpernamen=["Oben"],
+                                behaviour={2: DofBehaviour("free", failure="zug")})
+    b = fugen.kontaktfuge_ausfuehren(m, kb, [])
+    cp = m.contact_pairs[-1] if m.contact_pairs else None
+    check("die Fuge wird als Kontaktpaar ausgeführt", b["kontaktpaar"] == 1 and cp is not None,
+          b.get("grund", ""))
+    master = [frozenset(int(x) for x in f) for f in (cp.master_faces if cp else [])]
+    check("jede Gegenfacette liegt auf der genannten Fläche D1, keine auf der Nachbarfläche D2",
+          master and all(f in d1 for f in master) and not any(f in d2 for f in master),
+          f"{sum(1 for f in master if f in d1)} auf D1, {sum(1 for f in master if f in d2)} auf D2, "
+          f"von {len(master)}")
+    st = ContactSystem(m, sparse.identity(m.ndof, format="csr"))
+    bed = {int(c.node) for c in st.cons if c.kind == "surface"}
+    x = {int(s): float(m.nodes[int(s)][0]) for s in (cp.slave_nodes if cp else [])}
+    ueber_d1 = [s for s, xs in x.items() if xs <= 1.0 + 1e-9]
+    ueber_d2 = [s for s, xs in x.items() if xs > 1.0 + 1e-9]
+    check("über D1 trägt jeder Knoten des Oberteils, bis zur Grenze x = 1",
+          ueber_d1 and all(s in bed for s in ueber_d1),
+          f"{sum(1 for s in ueber_d1 if s in bed)} von {len(ueber_d1)}")
+    check("über D2 keiner - dort ist keine Kontaktfläche genannt",
+          not any(s in bed for s in ueber_d2),
+          f"{sum(1 for s in ueber_d2 if s in bed)} von {len(ueber_d2)} gepaart")
 
 
 def test_facettenspalt_bereinigt():
@@ -1683,6 +1778,7 @@ def main():
               test_ein_suchradius, test_verteilung_statt_mittelwert,
               test_deckungsgleiche_knoten_direkt, test_facettenspalt_bereinigt,
               test_gegenseite_nur_im_genannten_bauteil, test_kontakt_nur_auf_der_gegenflaeche,
+              test_gegenseite_nur_auf_genannten_flaechen,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
               test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei, test_karten_einmal_je_lauf):

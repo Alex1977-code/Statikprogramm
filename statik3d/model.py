@@ -2236,10 +2236,9 @@ class Kontaktbedingung:
     #: die Kopien dieses Koerpers an der Fuge.
     koerpernamen: list[str] = field(default_factory=list)
     #: Namen der Flaechen, an denen die Freigabe **haengt** (RFEM:
-    #: ``assignedToObjects``). Sie gehoeren der Gegenseite, sind dort aber
-    #: nicht vollstaendig aufgezaehlt - zum Ausfuehren der Fuge wird die
-    #: Gegenseite darum geometrisch gesucht. Der Eintrag bleibt als Angabe
-    #: aus der Quelldatei erhalten.
+    #: ``assignedToObjects``) - die Flaechen der Gegenseite. Stehen sie da,
+    #: wirkt der Kontakt nur auf ihnen (seit 15.09.2026); leer wird die
+    #: Gegenseite geometrisch gesucht.
     gegenflaechen: list[str] = field(default_factory=list)
     ziele: int = 0                       # Zahl der Objekte, an denen sie haengt
     ort: str = "Anfang"

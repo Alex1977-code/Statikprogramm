@@ -25,6 +25,11 @@ Geprueft wird gegen geschlossene Werte, nicht gegen „ungefaehr":
   entscheidet die Last: unter Druck bleibt er liegen (null), unter Zug gehen
   genau die gezogenen 100 kN ins Nichts. Ohne dieses Vorzeichen stuende jedes
   Bauteil unter Eigengewicht als abhebend da.
+* **Neben der Gegenflaeche.** Ein Knoten, der hinter dem Rand der
+  Gegenflaeche liegt, bekommt im Loeser keine Bedingung
+  (``contact.KANTENKEGEL``). Ein Wuerfel, der nur mit solchen Knoten in
+  Reichweite der Unterlage steht, ist nicht gehalten - die ganze Last geht
+  ins Nichts.
 * **Stufe 2.** Zwei Wuerfel, die sich nur **einen** Knoten teilen, haengen
   topologisch zusammen - die Teiltragwerkssuche sieht nichts. Beweglich ist
   der zweite trotzdem: er dreht sich um den gemeinsamen Knoten. Hier muss die
@@ -42,6 +47,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from statik3d import assemble as asm, singular as sg, solver     # noqa: E402
+from statik3d.contact import KANTENKEGEL                          # noqa: E402
 from statik3d.model import ContactPair, ContactSupport, Material, Model  # noqa: E402
 
 RESULTS = []
@@ -112,6 +118,57 @@ def auf_unterlage(seitlich: bool = False, mu: float = 0.0,
     for k in (12, 13, 14, 15):
         if last or quer:
             m.load_node(k, Fz=last / 4.0, Fx=quer / 4.0)
+    return m
+
+
+def neben_der_gegenflaeche(versatz: float, breite: float = 0.1, abstand: float = 0.0,
+                           anliegend: bool = False, fein: bool = False) -> Model:
+    """Eine Leiste an der Kante einer Unterlage, seitlich gehalten, unter Druck.
+
+    Gegenflaeche ist nur die Oberseite der Unterlage (bis x = 1), als
+    ausdrueckliche Facette: hinter der Kante laege ein Knoten sonst genauso
+    nahe an der Seitenflaeche, und welche der beiden Facetten die naechste
+    ist, entschiede die Reihenfolge. Die Unterseite der Leiste reicht quer
+    zur Kante von ``versatz`` bis ``versatz + breite`` hinter dem Rand
+    (negativ: davor, auf der Flaeche) und steht um ``abstand`` darueber. Beide
+    Knotenreihen liegen im Suchradius 0,2 m - sonst hielte schon auf der
+    Flaeche nur eine Linie, und die Leiste kippte um sie.
+
+    ``fein`` setzt jenseits der Kante einen fein vernetzten Streifen der
+    Gegenflaeche an (1 cm breit, 48 Dreiecke): dessen Schwerpunkte liegen den
+    Knoten der Leiste naeher als die der beiden grossen Dreiecke, auf denen
+    sie stehen.
+    """
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    a, b = -1.0, 2.0
+    unten = np.array([[a, a, 0], [1, a, 0], [1, b, 0], [a, b, 0],
+                      [a, a, 1], [1, a, 1], [1, b, 1], [a, b, 1.]])
+    x0, x1, z0 = 1.0 + versatz, 1.0 + versatz + breite, 1.0 + abstand
+    oben = np.array([[x0, 0, z0], [x1, 0, z0], [x1, 1, z0], [x0, 1, z0],
+                     [x0, 0, z0 + 1], [x1, 0, z0 + 1], [x1, 1, z0 + 1], [x0, 1, z0 + 1]])
+    m.add_nodes(np.vstack([unten, oben]))
+    m.add_element("hex8", list(range(8)), "S235", group="Unten")
+    m.add_element("hex8", list(range(8, 16)), "S235", group="Oben")
+    for k in range(4):
+        m.fix(k, [0, 1, 2])
+    for k in (8, 9, 10, 11):
+        m.fix(k, [0, 1])
+    flaechen = [[4, 5, 6, 7]]
+    if fein:
+        ys = np.linspace(-0.1, 1.1, 25)
+        erste = m.nn
+        m.add_nodes(np.array([[x, y, 1.0] for y in ys for x in (1.0, 1.01)]))
+        for i in range(len(ys) - 1):
+            k0 = erste + 2 * i
+            flaechen.append([k0, k0 + 1, k0 + 3, k0 + 2])
+    m.contact_pairs.append(ContactPair("Fuge", slave_nodes=[8, 9, 10, 11],
+                                       master_faces=flaechen,
+                                       search_radius=0.2, anliegend=anliegend))
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0, 0, 0]
+    for k in (12, 13, 14, 15):
+        m.load_node(k, Fz=-F_LAST / 4.0)
     return m
 
 
@@ -351,6 +408,64 @@ def test_kontakt_hebt_ab():
     quer = bewegungen(auf_unterlage(seitlich=True, quer=F_LAST))[0]
     close("Querlast: das Kippmoment ist F mal dem Hebelarm 0,5 m",
           quer.moment, 0.5 * F_LAST, 1e-6, " Nm")
+
+
+def test_neben_der_gegenflaeche_haelt_nichts():
+    def kurz(s):
+        return "; ".join(f"{x.art} {x.kraft:g} N" for x in s) or "keine Bewegung"
+
+    def liegt(s):
+        return len(s) == 1 and s[0].art == "hebt ab" and s[0].kraft == 0.0
+
+    def heben_frei(s):
+        # Ohne Kontakt sind Heben und zwei Kippungen frei; welche Basis die
+        # Eigenzerlegung in diesem Raum waehlt, ist nicht festgelegt. Gefragt
+        # wird darum, ob das reine Heben in z im aufgespannten Raum liegt.
+        if not s:
+            return 0.0
+        X = np.column_stack([np.r_[x.t, x.laenge * x.omega] for x in s])
+        Q, _r = np.linalg.qr(X)
+        return float(np.linalg.norm(Q.T @ np.array([0, 0, 1.0, 0, 0, 0])))
+
+    def faellt(s):
+        return (bool(s) and all(x.art == "gleitet" for x in s)
+                and heben_frei(s) > 1 - 1e-9)
+
+    # Gegenprobe: beide Knotenreihen 5 und 15 cm vor dem Rand, auf der Flaeche
+    s = bewegungen(neben_der_gegenflaeche(-0.15))
+    check("vor dem Rand der Gegenfläche liegt die Leiste auf", liegt(s), kurz(s))
+
+    # 5 und 15 cm dahinter, im Suchradius 0,2 m - aber nichts steht ihr gegenueber
+    s = bewegungen(neben_der_gegenflaeche(0.05))
+    check("hinter dem Rand hält die Fuge nichts: die Leiste fällt in z",
+          faellt(s), kurz(s) + f"; Heben frei zu {heben_frei(s):.6f}")
+    check("und die Last geht ins Nichts", bool(s) and max(x.kraft for x in s) > 0,
+          kurz(s))
+
+    # Anliegend mit 15 cm Abstand: der Kegel der glatten Kante laesst quer
+    # KANTENKEGEL mal dem Abstand nach - wie im Loeser, nicht mehr
+    h = 0.15
+    kegel = KANTENKEGEL * h
+    s = bewegungen(neben_der_gegenflaeche(0.25 * kegel, 0.25 * kegel, h, anliegend=True))
+    check("im Kegel der Kante (Querversatz bis zur Hälfte) hält die Fuge",
+          liegt(s), kurz(s))
+    s = bewegungen(neben_der_gegenflaeche(2.0 * kegel, 0.25 * kegel, h, anliegend=True))
+    check("außerhalb des Kegels (doppelter Querversatz) nicht", faellt(s), kurz(s))
+
+    # Der Suchradius zaehlt wie im Loeser laengs der Normalen: 19,5 cm Abstand
+    # bei 0,9 bis 0,95 Kegel Querversatz sind raeumlich schon 20,06 bis 20,12 cm
+    h = 0.195
+    kegel = KANTENKEGEL * h
+    s = bewegungen(neben_der_gegenflaeche(0.9 * kegel, 0.05 * kegel, h, anliegend=True))
+    check("im Kegel zählt der Suchradius längs der Normalen", liegt(s), kurz(s))
+
+    # Neben einem fein vernetzten Streifen liegen die naechsten Schwerpunkte
+    # alle auf ihm, und auf keiner seiner Facetten steht ein Knoten der
+    # Leiste. Gesucht werden muss wie im Loeser ueber alle Facetten in
+    # Reichweite - sonst fiele die Leiste neben ihrer eigenen Auflage heraus.
+    s = bewegungen(neben_der_gegenflaeche(-0.15, fein=True))
+    check("neben feinen Facetten findet der Knoten die große, auf der er steht",
+          liegt(s), kurz(s))
 
 
 def test_reibung_und_einseitige_lager():
@@ -673,6 +788,7 @@ def main():
               test_rand_statt_feder_liefert_dasselbe,
               test_stab_dreht_sich_um_die_eigene_achse,
               test_bericht_nennt_die_grenze, test_kontakt_gleitet, test_kontakt_hebt_ab,
+              test_neben_der_gegenflaeche_haelt_nichts,
               test_reibung_und_einseitige_lager,
               test_lagerausfall_kennt_die_richtung,
               test_stufe2_nennt_das_bauteil, test_halteguete):
