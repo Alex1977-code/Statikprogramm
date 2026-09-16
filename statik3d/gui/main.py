@@ -16009,6 +16009,45 @@ class MainWindow(QtWidgets.QMainWindow):
             self.maske_zeigen("Ergebnisse")
         except Exception:                  # noqa: BLE001
             pass
+        teil = getattr(getattr(w, "ausnahme", None), "teilergebnis", None)
+        if teil is not None:
+            self._abbruch_zeigen(teil)
+
+    def _abbruch_zeigen(self, res) -> None:
+        """Nach einem Abbruch der Kontakt-Iteration (16.09.2026): die Verformung
+        der letzten geloesten Iteration als Ergebnis zeigen - mit dem Zusatz
+        "Abbruch" im Namen - und den ersten Zeiger auf das Teil setzen, das
+        sich losgerissen hat (Modellbaum -> Ergebnisse -> Freie Bewegungen)."""
+        it = res.info.get("abbruch_iteration", 0)
+        res.name = f"{res.name} - Abbruch (Iteration {it})"
+        try:
+            self._solve_done("case", res)
+            # Keine Umhuellende ueber ein Teilergebnis ohne Gleichgewicht: die
+            # Auswahl steht auf dem Lastfall selbst, sonst zeigte sie
+            # "Umhuellende CASES" ohne Zeiger und ohne Abbruch-Zusammenfassung.
+            if self.analysis is not None:
+                self.analysis.envelopes.pop("CASES", None)
+                self._fill_result_selector()
+                for i in range(self.cb_result.count()):
+                    if tuple(self.cb_result.itemData(i) or ()) == ("case", res.name):
+                        self.cb_result.setCurrentIndex(i)      # zeichnet selbst neu
+                        break
+                self._refresh_baum()
+        except Exception as ex:            # noqa: BLE001 - die Anzeige darf den Fehler nicht ueberdecken
+            self.log.appendPlainText(f"Teilergebnis nicht anzeigbar: {ex}")
+            return
+        n = len(res.singular or [])
+        self.log.appendPlainText(
+            f"ABBRUCH: gezeigt wird die Verformung der letzten Kontakt-Iteration ({it}) als Ergebnis "
+            f"„{res.name}“ - kein Gleichgewicht, keine Auflagerkräfte. "
+            + (f"{n} Zeiger stehen im Modellbaum unter Ergebnisse → Freie Bewegungen; der erste ist eingestellt."
+               if n else "Kein Teil ohne geschlossene Kontaktbedingung gefunden - die Ursache liegt in der Fugenebene "
+                         "oder in der Lagerung."))
+        if n:
+            self.bewegung_zeigen(0)
+        self.statusBar().showMessage(
+            f"Berechnung gescheitert - Verformung der letzten Kontakt-Iteration ({it}) wird gezeigt"
+            + (f"; {n} Zeiger unter Ergebnisse → Freie Bewegungen" if n else ""), 0)
 
     def _bg_abgebrochen(self, dauer: float) -> None:
         """Der Anwender hat die Hintergrundrechnung angehalten.

@@ -8487,6 +8487,46 @@ def main():
         check("Lot, Fang Lot, Geometrieart, Verschneiden", False, str(ex)[:70])
 
     try:
+        # ---- Abbruch der Kontakt-Iteration: letzte Verformung mit Zeiger (16.09.2026) ----
+        from statik3d.examples_lib import block_friction_example as bfe_
+        from types import SimpleNamespace as SN_
+        m_ = bfe_()
+        for l_ in m_.case().nodal_loads:
+            l_.F[2] = abs(l_.F[2])                 # der Block wird nach oben gezogen
+        w.model = m_; w.analysis = None; w.results = None; w.refresh_all(); app.processEvents()
+        alt_hf = solver.StaticSystem.hilfsfesselung
+        solver.StaticSystem.hilfsfesselung = lambda self: False
+        try:
+            ex_ = None
+            try:
+                solver.solve_static(m_)
+            except RuntimeError as e_:
+                ex_ = e_
+        finally:
+            solver.StaticSystem.hilfsfesselung = alt_hf
+        check("Abbruch: die Ausnahme trägt das Teilergebnis der letzten Iteration",
+              ex_ is not None and getattr(ex_, "teilergebnis", None) is not None
+              and getattr(ex_, "iteration", 0) >= 1, str(ex_)[:80])
+        w.worker = SN_(ausnahme=ex_, abbruch_angefordert=False, isRunning=lambda: False)
+        w._bg_failed(str(ex_), "Traceback (Probe)"); app.processEvents()
+        r_ = w.current_result()
+        check("… Ergebnis „Abbruch“ in der Auswahl, Verformung der letzten Iteration sichtbar",
+              r_ is not None and "Abbruch" in w.cb_result.currentText() and bool(r_.info.get("abbruch"))
+              and r_.u is not None and float(np.abs(r_.u).max()) > 0, w.cb_result.currentText())
+        s0_ = r_.singular[0] if r_ is not None and r_.singular else None
+        check("… Zeiger: freie Bewegung „hebt ab“ nach oben mit dem Großteil der 90 kN, Pfeil eingestellt",
+              s0_ is not None and s0_.art == "hebt ab" and s0_.t[2] > 0.5 and s0_.kraft > 60000
+              and getattr(w, "_bewegung_index", None) == 0 and "Block/Platte" in " ".join(s0_.fugen),
+              str(s0_ and (s0_.text, s0_.kraft)))
+        check("… Protokoll nennt den Abbruch und die Zusammenfassung beginnt mit ABBRUCH",
+              "ABBRUCH" in w.log.toPlainText() and r_.summary().startswith("ABBRUCH"))
+        w.bewegung_aus(); w.worker = None
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Abbruch", False, str(ex)[:70])
+
+    try:
         # ---- Unterlagen: Dateien, Ansichten, Skizzen (16.09.2026, analog InfoCAD) ----
         import base64 as b64_
         import tempfile as tmp_

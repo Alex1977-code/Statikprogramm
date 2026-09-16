@@ -3069,6 +3069,38 @@ Auslassungspunkte. Die Rückfrage fasst nur zusammen, wie viele je Prüfung
 anstehen; die Entscheidung bleibt beim Anwender. Wer mit 17 % Abdeckung
 rechnen will, kann es — aber nachdem er gelesen hat, dass es 17 % sind.
 
+### Abbruch der Kontakt-Iteration: die letzte Verformung bleibt sichtbar
+
+Findet die Kontakt-Iteration auch mit Hilfsfesselung kein Gleichgewicht
+(„Gleichungssystem singulär“), bricht die Rechnung ab — aber nicht stumm
+(16.09.2026: „die Verformung der letzten Iteration anzeigen, damit der
+Anwender prüfen kann, woran der Abbruch lag, und Zeiger auf die Teile, die
+ihn verursacht haben“). Das Programm hält die **Verschiebung der letzten
+gelösten Iteration** fest und stellt sie als Ergebnis *„LF … – Abbruch
+(Iteration n)“* in die Ansicht: Verformung mit Überhöhung, Färbung,
+Kontaktzustand der Fugen (welche offen waren) und die zur Verschiebung
+nachgerechneten Spannungen. Auflagerkräfte gibt es nicht, denn es gab kein
+Gleichgewicht; die Zusammenfassung beginnt mit *ABBRUCH*.
+
+Dazu die **Zeiger**: jedes Teil, dessen Kontaktbedingungen in diesem Schritt
+alle offen waren, steht als freie Bewegung „hebt ab“ im Modellbaum unter
+*Ergebnisse → Freie Bewegungen* — mit dem Pfeil in der Richtung, in die es
+sich in der letzten Iteration bewegt hat, der Kraft, die dabei ins Nichts
+geht, und den Fugen, an denen es hängt. Ebenso gezeigt wird ein Teil, bei
+dem die Mehrheit der Bedingungen offen war und das sich um mindestens das
+Fünffache dessen bewegt hat, was die übrigen Teile tun (gemessen am Mittel
+seiner Knotenverschiebungen gegen den Median der anderen): der Block, der
+auf einer Kante kippt, statt glatt abzuheben, hält an fünf von 25 Punkten
+noch Kontakt und wäre sonst nicht genannt worden. Der Text nennt in dem
+Fall „hielten nur noch 5 von 25 Kontaktbedingungen“ und die Bewegung in mm.
+Der erste Zeiger ist nach dem Abbruch schon eingestellt; die Auswahl steht
+auf dem Lastfall selbst, eine Umhüllende über ein Teilergebnis ohne
+Gleichgewicht gibt es nicht. Am Drehlager (16.09.2026) waren das die Deckel
+V33 und V35: sie hängen nur an Druck-Fugen ohne Reibung und Verbund, die
+Schrauben halten dort keinen Zug — sobald die Last sie nach außen drückt,
+öffnen alle Bedingungen, und die Deckel sind frei. Abhilfe: *Verbund* oder
+eine *Vorspannung* an den Schraubenfugen, oder die Deckel-Fugen als Verbund.
+
 ### Freie Bewegungen (Singularitäten)
 
 *Register Start → Modell prüfen → „Freie Bewegungen suchen“*, und nach jeder
