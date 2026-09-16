@@ -530,6 +530,12 @@ class Report:
             if e.bemerkung:
                 b.append(("p", esc(e.bemerkung)))
             return b
+        if art == "unterlage":
+            b.append(self._h(ebene, e.name or e.datei or f"Unterlage {i}"))
+            b.extend(self._unterlagenbloecke(e))
+            if e.bemerkung:
+                b.append(("p", esc(e.bemerkung)))
+            return b
         if art == "datei":
             b.append(self._h(ebene, e.name or e.datei or f"Datei {i}"))
             b.extend(self._dateibloecke(e))
@@ -690,6 +696,23 @@ class Report:
         if note:
             b.append(("note", note))
         return b
+
+    def _unterlagenbloecke(self, e) -> list:
+        """Eine Unterlage (16.09.2026): die Skizze als Abbildung aus ihrem
+        letzten Stand, ein Bild als Bild, eine Datei wie eine eingefuegte
+        Datei (PDF und Word werden genannt, nicht eingebettet)."""
+        from types import SimpleNamespace
+        u = (getattr(self.model, "unterlagen", None) or {}).get(getattr(e, "datei", ""))
+        if u is None:
+            return [("note", f"Unterlage „{getattr(e, 'datei', '')}“ gibt es nicht mehr.")]
+        unterschrift = e.beschriftung or u.beschriftung or u.name
+        if u.art == "skizze":
+            from .. import skizze as sk
+            return [self._figure(sk.svg(u.skizze, u.daten), unterschrift)]
+        if u.art == "bild":
+            return [("bild", u.daten or "", unterschrift, self.opt("figure_width"), u.typ or "png")]
+        return self._dateibloecke(SimpleNamespace(typ=u.typ, daten=u.daten, datei=u.datei or u.name,
+                                                  beschriftung=unterschrift))
 
     def _dateibloecke(self, e) -> list:
         """Eine eingefuegte Datei: Bilder als Bild, SVG als Figur, CSV als Tabelle,

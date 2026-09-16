@@ -1820,6 +1820,8 @@ class Berichtseintrag:
                 else f"Tabelle {self.tabelle}"
         if self.art == "datei":
             return f"Datei {self.datei}" + (f" ({self.typ})" if self.typ else "")
+        if self.art == "unterlage":
+            return f"Unterlage {self.datei}"
         teile = [self.quelle_text()]
         if self.feld:
             teile.append(self.feld)
@@ -1856,6 +1858,43 @@ class Berichtsrahmen:
     titelblatt: bool = True
     inhaltsverzeichnis: bool = True
     umfang: str = "kurz"               # kurz | mittel | lang | eigene
+
+
+@dataclass
+class Unterlage:
+    """Eine Unterlage zum Modell (16.09.2026, "analog InfoCAD"): eine
+    eingefuegte Datei (PDF, Bild, Word, Excel, ...), eine uebernommene
+    Modelldarstellung (Bild der Ansicht) oder eine Skizze mit Linien, Boegen,
+    Kreisen, Bemassungen und Text (statik3d.skizze). Sie wird mit dem Modell
+    gespeichert und laesst sich in den Bericht einfuegen: der Berichtseintrag
+    (art "unterlage") nennt nur ihren Namen und schlaegt sie beim Erzeugen des
+    Berichts nach - so zeigt der Bericht immer den letzten Stand der Skizze.
+
+    art:    "datei" | "bild" | "skizze"
+    typ:    Endung (pdf, png, jpg, docx, xlsx, ...); bei Skizzen "skizze"
+    daten:  Inhalt als Base64 - die Datei, das Bild, bei Skizzen das
+            Hintergrundbild (PNG) oder leer
+    """
+    name: str
+    art: str = "datei"
+    datei: str = ""
+    typ: str = ""
+    daten: str = ""
+    skizze: dict = field(default_factory=dict)
+    beschriftung: str = ""
+    bemerkung: str = ""
+
+    def groesse_kb(self) -> float:
+        return len(self.daten or "") * 3 / 4096
+
+    def bezug(self) -> str:
+        if self.art == "skizze":
+            from . import skizze as sk
+            return "Skizze: " + sk.beschreibung(self.skizze) + (" mit Bild" if self.daten else "")
+        if self.art == "bild":
+            return f"Bild ({self.typ or 'png'}, {self.groesse_kb():.0f} kB)"
+        return (f"Datei {self.datei or self.name}"
+                + (f" ({self.typ.upper()}, {self.groesse_kb():.0f} kB)" if self.typ else ""))
 
 
 @dataclass
@@ -2902,6 +2941,8 @@ class Model:
         self.situationen: dict[str, Situation] = {}
         #: Layer: benannte Objektgruppen fuer Sicht und Sperre (RFEM: Objektselektionen)
         self.layer: dict[str, Layer] = {}
+        #: Unterlagen: Dateien, uebernommene Ansichten und Skizzen zum Modell
+        self.unterlagen: dict[str, Unterlage] = {}
         self.stellungen: list = []
         # Lastgenerierer (wasserdruck.Wasserdruck, wind.Wind), nach Name
         self.wasserdruecke: dict = {}
@@ -4883,6 +4924,7 @@ class Model:
             "grenzschichten": [asdict(x) for x in self.grenzschichten.values()],
             "subsysteme": [asdict(x) for x in self.subsysteme.values()],
             "layer": [asdict(x) for x in self.layer.values()],
+            "unterlagen": [asdict(x) for x in self.unterlagen.values()],
             "situationen": [asdict(x) for x in self.situationen.values()],
             "stellungen": [asdict(s) if hasattr(s, "__dataclass_fields__") else dict(s)
                            for s in self.stellungen],
@@ -5006,6 +5048,7 @@ class Model:
                             for x in d.get("grenzschichten", [])}
         m.subsysteme = {x["name"]: _dc(Subsystem, x) for x in d.get("subsysteme", [])}
         m.layer = {x["name"]: _dc(Layer, x) for x in d.get("layer", [])}
+        m.unterlagen = {x["name"]: _dc(Unterlage, x) for x in d.get("unterlagen", [])}
         m.situationen = {x["name"]: _dc(Situation, x) for x in d.get("situationen", [])}
         if d.get("wasserdruecke"):
             from .wasserdruck import Wasserdruck

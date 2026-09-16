@@ -550,7 +550,7 @@ def main():
         # Ribbon: jeder Befehl genau einmal, keine zweite Leiste daneben
         register = [w.ribbon.tabs.tabText(i) for i in range(w.ribbon.tabs.count())]
         check("Ribbon mit den Registern der Vorgabe",
-              register[:5] == ["Datei", "Start", "Geometrie", "Struktur", "Lager / Kontakt"]
+              register[:6] == ["Datei", "Start", "Unterlagen", "Geometrie", "Struktur", "Lager / Kontakt"]
               and "Berechnung" in register and "Extras" in register, str(len(register)))
         check("Befehle im Ribbon vermerkt", len(w.ribbon.befehle) > 60,
               str(len(w.ribbon.befehle)))
@@ -8485,6 +8485,94 @@ def main():
         import traceback
         traceback.print_exc()
         check("Lot, Fang Lot, Geometrieart, Verschneiden", False, str(ex)[:70])
+
+    try:
+        # ---- Unterlagen: Dateien, Ansichten, Skizzen (16.09.2026, analog InfoCAD) ----
+        import base64 as b64_
+        import tempfile as tmp_
+        from PySide6 import QtGui as QtGui_
+        namen_ = [w.ribbon.tabs.tabText(i) for i in range(w.ribbon.tabs.count())]
+        check("Ribbon: Register Unterlagen zwischen Start und Geometrie",
+              "Unterlagen" in namen_ and namen_.index("Unterlagen") == namen_.index("Start") + 1
+              and namen_.index("Geometrie") == namen_.index("Unterlagen") + 1, str(namen_[:5]))
+        w.new_model(); app.processEvents()
+        m_ = w.model
+        ordner_ = tmp_.mkdtemp(prefix="statik3d_unterlagen_")
+        pfad_png = os.path.join(ordner_, "foto.png")
+        img_ = QtGui_.QImage(40, 20, QtGui_.QImage.Format_RGB32)
+        img_.fill(QtGui_.QColor("#4060a0"))
+        img_.save(pfad_png)
+        pfad_pdf = os.path.join(ordner_, "zeichnung.pdf")
+        with open(pfad_pdf, "wb") as fh_:
+            fh_.write(b"%PDF-1.4 probe")
+        w.unterlage_datei_einfuegen(pfad_png); w.unterlage_datei_einfuegen(pfad_pdf); app.processEvents()
+        check("Datei einfügen: Bild als Bild, PDF als Datei, beide mit Inhalt im Modell",
+              set(m_.unterlagen) == {"foto.png", "zeichnung.pdf"} and m_.unterlagen["foto.png"].art == "bild"
+              and m_.unterlagen["zeichnung.pdf"].art == "datei" and m_.unterlagen["zeichnung.pdf"].typ == "pdf"
+              and b64_.b64decode(m_.unterlagen["zeichnung.pdf"].daten).startswith(b"%PDF"), str(list(m_.unterlagen)))
+        w.unterlage_ansicht(); app.processEvents()
+        bilder_ = [u for u in m_.unterlagen.values() if u.name.startswith("Ansicht")]
+        check("Ansicht übernehmen: ein PNG der Ansicht liegt bei den Unterlagen",
+              len(bilder_) == 1 and bilder_[0].art == "bild"
+              and b64_.b64decode(bilder_[0].daten)[:8] == b"\x89PNG\r\n\x1a\n")
+        f_ = w.unterlage_skizze_neu(name="Blech"); app.processEvents()
+        check("Neue Skizze: Zeichenfenster offen, Blatt A4 quer", f_ is not None and f_.isVisible() and f_.skizze["breite"] == 297)
+        f_.werkzeug_setzen("linie"); f_._klick(10, 10); f_._klick(110, 10); f_.abbrechen()
+        f_.werkzeug_setzen("bemassung"); f_._klick(10, 10); f_._klick(110, 10); f_._klick(60, 0)
+        f_.werkzeug_setzen("kreis"); f_._klick(150, 60); f_._klick(170, 60)
+        f_.werkzeug_setzen("bogen"); f_._klick(200, 100); f_._klick(240, 100); f_._klick(220, 80)
+        f_.sp_massstab.setValue(10.0); f_.cb_einheit.setCurrentText("cm")
+        arten_ = [e["art"] for e in f_.skizze["elemente"]]
+        check("Werkzeuge: Linie, Maß (Maßlinie oberhalb), Kreis und Bogen stehen auf dem Blatt",
+              arten_ == ["linie", "bemassung", "kreis", "bogen"] and f_.skizze["elemente"][1]["abstand"] > 0
+              and abs(f_.skizze["elemente"][2]["r"] - 20) < 1e-9, str(arten_))
+        f_.werkzeug_setzen("auswahl"); f_._klick(150, 40)
+        getroffen_ = f_.blatt.hervor
+        f_.loeschen()
+        check("Auswählen trifft den Kreis, Löschen nimmt ihn weg",
+              getroffen_ == 2 and len(f_.skizze["elemente"]) == 3, f"{getroffen_} {len(f_.skizze['elemente'])}")
+        f_.rueckgaengig()
+        check("Rückgängig holt den Kreis zurück", len(f_.skizze["elemente"]) == 4)
+        f_.ed_beschriftung.setText("Blech mit Bohrung")
+        f_.ok(); app.processEvents()
+        u_ = m_.unterlagen.get("Blech")
+        check("OK übernimmt die Skizze ins Modell: 4 Elemente, Maßstab 10, Einheit cm, Beschriftung",
+              u_ is not None and u_.art == "skizze" and len(u_.skizze["elemente"]) == 4 and u_.skizze["massstab"] == 10
+              and u_.skizze["einheit"] == "cm" and u_.beschriftung == "Blech mit Bohrung", str(u_ and u_.bezug()))
+        w.unterlage_in_bericht("Blech"); w.unterlage_in_bericht("zeichnung.pdf"); app.processEvents()
+        eintr_ = [e for e in m_.bericht if getattr(e, "art", "") == "unterlage"]
+        check("In den Bericht: zwei Einträge der Art Unterlage",
+              len(eintr_) == 2 and {e.datei for e in eintr_} == {"Blech", "zeichnung.pdf"})
+        from statik3d.report.html import Report as Rep_
+        bl_ = Rep_(m_)._eintrag_bloecke(eintr_[0], 1)
+        fig_ = [b for b in bl_ if b[0] == "figure"]
+        check("Bericht zeichnet die Skizze als Abbildung mit der Maßzahl 100 (cm) und der Unterschrift",
+              len(fig_) == 1 and "<svg" in fig_[0][1] and ">100</text>" in fig_[0][1] and fig_[0][2] == "Blech mit Bohrung",
+              str([b[0] for b in bl_]))
+        bl2_ = Rep_(m_)._eintrag_bloecke(eintr_[1], 2)
+        check("Bericht nennt die PDF-Datei als Anlage", any(b[0] == "note" and "PDF" in b[1] for b in bl2_), str(bl2_)[:120])
+        zeilen_ = list(w.tbl_unterlagen.modell.zeilen)
+        check("Tabelle Unterlagen: vier Zeilen, die Skizze mit 1 im Bericht",
+              len(zeilen_) == 4 and any(z[1] == "Blech" and int(z[8]) == 1 for z in zeilen_), str([(z[1], z[2]) for z in zeilen_]))
+        d_ = m_.to_dict()
+        m2_ = type(m_).from_dict(d_)
+        check("Unterlagen werden mit dem Modell gespeichert und geladen",
+              set(m2_.unterlagen) == set(m_.unterlagen) and len(m2_.unterlagen["Blech"].skizze["elemente"]) == 4)
+        check("Modellbaum: Zweig Unterlagen mit der Skizze",
+              any(it.child(i).text(0) == "Blech"
+                  for it in w.baum.findItems("Unterlagen", QtCore.Qt.MatchExactly | QtCore.Qt.MatchRecursive)
+                  for i in range(it.childCount())))
+        w.unterlage_loeschen("zeichnung.pdf"); app.processEvents()
+        check("Entfernen nimmt die Unterlage und ihren Berichtseintrag weg",
+              "zeichnung.pdf" not in m_.unterlagen
+              and all(e.datei != "zeichnung.pdf" for e in m_.bericht if getattr(e, "art", "") == "unterlage"))
+        f2_ = w.unterlage_bearbeiten("Blech"); app.processEvents()
+        check("Bearbeiten öffnet die Skizze wieder mit ihren Elementen", f2_ is not None and len(f2_.skizze["elemente"]) == 4)
+        f2_.close(); app.processEvents()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Unterlagen", False, str(ex)[:70])
 
     try:
         # ---- Layer: Aufklappliste, Layerliste, sichtbar und gesperrt (16.09.2026) ----
