@@ -2764,6 +2764,60 @@ class Subsystem:
 
 
 @dataclass
+class Layer:
+    """Eine benannte Objektgruppe fuer Sicht und Sperre - in RFEM die
+    Objektselektion (16.09.2026: "Ribbon Ansicht soll eine Dropdownliste mit
+    Layern haben, in RFEM sind das die Objektselektionen").
+
+    Ein Objekt darf in mehreren Layern liegen. Es ist ausgeblendet, sobald
+    **einer** seiner Layer unsichtbar ist, und gesperrt (nicht waehlbar,
+    nicht aenderbar), sobald einer gesperrt ist.
+
+    knoten, elemente: Nummern; staebe, linien, flaechen, koerper: Namen.
+    quelle: "rfem" fuer eingelesene Objektselektionen, sonst leer.
+    """
+    name: str
+    knoten: list[int] = field(default_factory=list)
+    elemente: list[int] = field(default_factory=list)
+    staebe: list[str] = field(default_factory=list)
+    linien: list[str] = field(default_factory=list)
+    flaechen: list[str] = field(default_factory=list)
+    koerper: list[str] = field(default_factory=list)
+    sichtbar: bool = True
+    gesperrt: bool = False
+    kommentar: str = ""
+    quelle: str = ""
+
+    #: die Objektarten eines Layers (Feldname, Beschriftung)
+    ARTEN = (("koerper", "Volumen"), ("flaechen", "Flächen"), ("staebe", "Stäbe"),
+             ("linien", "Linien"), ("knoten", "Knoten"), ("elemente", "Elemente"))
+
+    def leer(self) -> bool:
+        return not any(getattr(self, a) for a, _ in self.ARTEN)
+
+    def anzahl(self) -> int:
+        return sum(len(getattr(self, a)) for a, _ in self.ARTEN)
+
+    def bezug(self) -> str:
+        teile = [f"{len(getattr(self, a))} {text}" for a, text in self.ARTEN if getattr(self, a)]
+        return ", ".join(teile) or "leer"
+
+    def enthaelt(self, art: str, name) -> bool:
+        """Liegt das Objekt im Layer? ``art`` wie die Feldnamen (knoten,
+        elemente, staebe, linien, flaechen, koerper)."""
+        liste = getattr(self, art, None)
+        if liste is None or art not in dict(self.ARTEN):
+            return False
+        if art in ("knoten", "elemente"):
+            try:
+                n = int(name)
+            except (TypeError, ValueError):
+                return False
+            return any(int(x) == n for x in liste)
+        return str(name) in liste
+
+
+@dataclass
 class Situation:
     """Eine Situation: eine Stellung des Systems und die Elemente, die darin
     **nicht** wirken.
@@ -2846,6 +2900,8 @@ class Model:
         # Subsysteme, Situationen und Stellungen (Stellung: bridges.positions)
         self.subsysteme: dict[str, Subsystem] = {}
         self.situationen: dict[str, Situation] = {}
+        #: Layer: benannte Objektgruppen fuer Sicht und Sperre (RFEM: Objektselektionen)
+        self.layer: dict[str, Layer] = {}
         self.stellungen: list = []
         # Lastgenerierer (wasserdruck.Wasserdruck, wind.Wind), nach Name
         self.wasserdruecke: dict = {}
@@ -3353,6 +3409,8 @@ class Model:
             x.knoten = [f(n) for n in (x.knoten or [])]
         for sub in (getattr(self, "subsysteme", None) or {}).values():
             sub.knoten = [f(n) for n in (sub.knoten or [])]
+        for L in (getattr(self, "layer", None) or {}).values():
+            L.knoten = [f(n) for n in (L.knoten or [])]
         for pm in getattr(self, "punktmassen", None) or []:
             pm.node = f(pm.node)
         for dp in getattr(self, "daempfer", None) or []:
@@ -3417,9 +3475,114 @@ class Model:
                 sk.slaves = [n for n in sk.slaves if int(n) != i]
         self.starrkoerper = [sk for sk in (getattr(self, "starrkoerper", None) or [])
                              if int(sk.master) != i and sk.slaves]
+        for L in (getattr(self, "layer", None) or {}).values():
+            L.knoten = [n for n in (L.knoten or []) if int(n) != i]
         self.nodes = np.delete(np.asarray(self.nodes, float), i, axis=0)
         self._knotenverweise_abbilden({n: n - 1 for n in range(i + 1, self.nn + 1)})
         return ""
+
+    # ---------------- Layer ----------------
+    def layer_anlegen(self, name: str, knoten=(), elemente=(), staebe=(), linien=(),
+                      flaechen=(), koerper=(), quelle: str = "", kommentar: str = "") -> Layer:
+        """Einen Layer anlegen oder - gleicher Name - ergaenzen. Verweise auf
+        Objekte, die es nicht gibt, bleiben draussen."""
+        L = self.layer.get(name)
+        if L is None:
+            L = Layer(str(name))
+            self.layer[L.name] = L
+        if quelle:
+            L.quelle = quelle
+        if kommentar:
+            L.kommentar = kommentar
+        self.layer_ergaenzen(L, knoten, elemente, staebe, linien, flaechen, koerper)
+        return L
+
+    def layer_ergaenzen(self, L: Layer, knoten=(), elemente=(), staebe=(), linien=(),
+                        flaechen=(), koerper=()) -> None:
+        """Objekte in einen Layer aufnehmen (nur vorhandene, jedes einmal)."""
+        nn, ne = self.nn, len(self.elements)
+        L.knoten = sorted({int(i) for i in (L.knoten or [])}
+                          | {int(i) for i in knoten if 0 <= int(i) < nn})
+        L.elemente = sorted({int(i) for i in (L.elemente or [])}
+                            | {int(i) for i in elemente if 0 <= int(i) < ne})
+        for art, neu, vorrat in (("staebe", staebe, self.members), ("linien", linien, self.lines),
+                                 ("flaechen", flaechen, self.flaechen), ("koerper", koerper, self.koerper)):
+            alt = list(getattr(L, art) or [])
+            for x in neu:
+                x = str(x)
+                if x in vorrat and x not in alt:
+                    alt.append(x)
+            setattr(L, art, alt)
+
+    def layer_entfernen(self, L: Layer, knoten=(), elemente=(), staebe=(), linien=(),
+                        flaechen=(), koerper=()) -> None:
+        """Objekte aus einem Layer nehmen."""
+        weg_k = {int(i) for i in knoten}
+        weg_e = {int(i) for i in elemente}
+        L.knoten = [i for i in (L.knoten or []) if int(i) not in weg_k]
+        L.elemente = [i for i in (L.elemente or []) if int(i) not in weg_e]
+        for art, weg in (("staebe", staebe), ("linien", linien), ("flaechen", flaechen), ("koerper", koerper)):
+            w = {str(x) for x in weg}
+            setattr(L, art, [x for x in (getattr(L, art) or []) if x not in w])
+
+    def layer_von(self, art: str, name) -> list[str]:
+        """Die Layer, in denen ein Objekt liegt (art: knoten, elemente,
+        staebe, linien, flaechen, koerper)."""
+        return [L.name for L in self.layer.values() if L.enthaelt(art, name)]
+
+    def layer_sperre(self, art: str, name) -> str:
+        """Der Name eines gesperrten Layers, in dem das Objekt liegt - oder ""."""
+        for L in self.layer.values():
+            if L.gesperrt and L.enthaelt(art, name):
+                return L.name
+        return ""
+
+    def layer_gesperrt(self) -> dict:
+        """{Art: {Objekt: Layername}} alles Gesperrten - fuer viele Abfragen
+        auf einmal (Fensterauswahl) statt Objekt fuer Objekt."""
+        out: dict = {a: {} for a, _ in Layer.ARTEN}
+        for L in self.layer.values():
+            if not L.gesperrt:
+                continue
+            for art, _text in Layer.ARTEN:
+                for x in (getattr(L, art) or []):
+                    schl = int(x) if art in ("knoten", "elemente") else str(x)
+                    out[art].setdefault(schl, L.name)
+        return out
+
+    def layer_inhalt(self, name: str) -> dict:
+        """Alles, was ein Layer im Bild ausmacht - mit dem, was dazugehoert:
+        Koerper bringen ihre Flaechen und Elemente mit, Flaechen ihre Linien
+        und Elemente, Staebe ihre Elemente, Elemente und Linien ihre Knoten.
+        Rueckgabe: Mengen je Art (koerper, flaechen, staebe, linien, elemente,
+        knoten)."""
+        L = self.layer[name]
+        koerper = {k for k in (L.koerper or []) if k in self.koerper}
+        flaechen = {f for f in (L.flaechen or []) if f in self.flaechen}
+        staebe = {s for s in (L.staebe or []) if s in self.members}
+        linien = {ln for ln in (L.linien or []) if ln in self.lines}
+        ne, nn = len(self.elements), self.nn
+        elemente = {int(e) for e in (L.elemente or []) if 0 <= int(e) < ne}
+        knoten = {int(n) for n in (L.knoten or []) if 0 <= int(n) < nn}
+        for k in koerper:
+            kb = self.koerper[k]
+            flaechen.update(f for f in (kb.flaechen or []) if f in self.flaechen)
+            elemente.update(int(e) for e in (kb.elemente or []))
+        for f in flaechen:
+            fl = self.flaechen[f]
+            linien.update(ln for ln in (fl.linien or []) if ln in self.lines)
+            for o in (getattr(fl, "oeffnungen", None) or []):
+                linien.update(ln for ln in o if ln in self.lines)
+            elemente.update(int(e) for e in (fl.elemente or []))
+        for s in staebe:
+            elemente.update(int(e) for e in (self.members[s].elements or []))
+        elemente = {e for e in elemente if 0 <= e < ne}
+        for e in elemente:
+            knoten.update(int(n) for n in self.elements[e].nodes)
+        for ln in linien:
+            knoten.update(int(n) for n in self.lines[ln].nodes)
+        return {"koerper": koerper, "flaechen": flaechen, "staebe": staebe, "linien": linien,
+                "elemente": elemente, "knoten": {n for n in knoten if 0 <= n < nn}}
 
     # ---------------- Subsysteme ----------------
     def subsystem_gesamt(self) -> Subsystem:
@@ -3636,6 +3799,8 @@ class Model:
         for sub in (getattr(self, "subsysteme", None) or {}).values():
             sub.elemente = um(sub.elemente)
             sub.beruehrung = um(sub.beruehrung)
+        for L in (getattr(self, "layer", None) or {}).values():
+            L.elemente = um(L.elemente)
         for sit in (getattr(self, "situationen", None) or {}).values():
             sit.deaktiviert = um(sit.deaktiviert)
         for h in self.hinges.values():
@@ -4717,6 +4882,7 @@ class Model:
             "starrkoerper": [asdict(x) for x in self.starrkoerper],
             "grenzschichten": [asdict(x) for x in self.grenzschichten.values()],
             "subsysteme": [asdict(x) for x in self.subsysteme.values()],
+            "layer": [asdict(x) for x in self.layer.values()],
             "situationen": [asdict(x) for x in self.situationen.values()],
             "stellungen": [asdict(s) if hasattr(s, "__dataclass_fields__") else dict(s)
                            for s in self.stellungen],
@@ -4839,6 +5005,7 @@ class Model:
         m.grenzschichten = {x["name"]: _dc(GrenzschichtProp, x)
                             for x in d.get("grenzschichten", [])}
         m.subsysteme = {x["name"]: _dc(Subsystem, x) for x in d.get("subsysteme", [])}
+        m.layer = {x["name"]: _dc(Layer, x) for x in d.get("layer", [])}
         m.situationen = {x["name"]: _dc(Situation, x) for x in d.get("situationen", [])}
         if d.get("wasserdruecke"):
             from .wasserdruck import Wasserdruck

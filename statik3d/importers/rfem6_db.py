@@ -1218,8 +1218,177 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
     strukturmod = _strukturmodifikationen(db, m, log, member_user, node_user)
     _load_cases(db, m, log, surf_els, node_of, member_name, surf_name,
                 line_name, solid_name, strukturmod, fortschritt=fortschritt)
+    _object_selections(db, m, log, node_user, line_name, member_user, surf_name, solid_name)
     _melde(fortschritt, 0.96, "Modell prüfen")
     _diagnose(m, log)
+
+
+# --------------------------------------------------------------------------
+# Objektselektionen -> Layer (16.09.2026)
+# --------------------------------------------------------------------------
+#: Objektart in der Objektselektion -> Art im Layer; alles andere (Sets,
+#: Oeffnungen, Lager, Gelenke, Notizen) hat im Layer kein Gegenstueck
+SELEKTION_ARTEN = {"Node": "knoten", "Line": "linien", "Member": "staebe",
+                   "Surface": "flaechen", "Solid": "koerper"}
+
+
+def nummern_entpacken(text) -> list[int]:
+    """"1-3,7,10-11" -> [1, 2, 3, 7, 10, 11] (Schreibweise der Objektlisten)."""
+    out: list[int] = []
+    for teil in str(text or "").replace(";", ",").split(","):
+        teil = teil.strip()
+        if not teil:
+            continue
+        m_ = re.fullmatch(r"(\d+)\s*-\s*(\d+)", teil)
+        if m_:
+            a, b = int(m_.group(1)), int(m_.group(2))
+            out.extend(range(min(a, b), max(a, b) + 1))
+        elif teil.isdigit():
+            out.append(int(teil))
+    return out
+
+
+def _selektion_listen(db: Db) -> dict:
+    """{value_id: (Attribut, [(Objektart oder "", Nummer), ...])} aller Objektlisten.
+
+    Zwei Fassungen der Tabelle ObjectListConditionValue sind belegt: mit der
+    Spalte objects_packed ("288-290,293"; die Objektart steht am Typ der
+    Bedingung) und mit der Listentabelle _model_object_indices (objectType
+    und userId je Eintrag).
+    """
+    out: dict = {}
+    if not db.has("ObjectListConditionValue"):
+        return out
+    indizes: dict = {}
+    for r in db.rows("ObjectListConditionValue_model_object_indices"):
+        indizes.setdefault(r["id"], []).append((r.get("objectType") or "", r.get("userId")))
+    gepackt = "objects_packed" in db.columns("ObjectListConditionValue")
+    for r in db.rows("ObjectListConditionValue"):
+        attr = r.get("attributeStringId") or ""
+        if gepackt and r.get("objects_packed"):
+            eintraege = [("", n) for n in nummern_entpacken(r["objects_packed"])]
+        else:
+            eintraege = [(typ, int(n)) for typ, n in indizes.get(r["id"], []) if n is not None]
+        out[r["id"]] = (attr, eintraege)
+    return out
+
+
+def _selektion_sammeln(zeilen, typ: str, listen: dict, karten: dict,
+                       gefunden: dict, uebergangen: dict) -> None:
+    """Die Nummernlisten der Bedingungen einer Objektart in ``gefunden``
+    eintragen (Vereinigung); was kein Gegenstueck hat, zaehlt ``uebergangen``."""
+    for c in zeilen:
+        attr, eintraege = listen.get(c.get("value_id"), ("", []))
+        if attr != "id":
+            if attr:
+                uebergangen[attr] = uebergangen.get(attr, 0) + 1
+            continue
+        for objtyp, nr in eintraege:
+            art = SELEKTION_ARTEN.get(objtyp or typ)
+            if art is None:
+                schl = objtyp or typ or "?"
+                uebergangen[schl] = uebergangen.get(schl, 0) + 1
+                continue
+            ziel = karten[art].get(int(nr))
+            if ziel is None:
+                uebergangen[f"{art} ohne Objekt"] = uebergangen.get(f"{art} ohne Objekt", 0) + 1
+                continue
+            gefunden[art].add(ziel)
+
+
+def _object_selections(db: Db, m: Model, log: list, node_user: dict, line_name: dict,
+                       member_user: dict, surf_name: dict, solid_name: dict) -> int:
+    """Die Objektselektionen der Datei als Layer ins Modell (16.09.2026).
+
+    Aufbau in der Datenbank (an zwei Dateien ausgelesen, RFEM 6.11/6.12):
+    ObjectSelection (Griff, userID) -> ObjectSelectionImpl (name,
+    isNameEnabled) -> je Objektart ein Eintrag in
+    ObjectSelectionImpl_objectSelectors_keys (Node, Line, Member, Surface,
+    Solid, ...) mit derselben container_order in _objectSelectors_values
+    (conditions_id) -> Bedingungen in
+    ObjectSelectionImpl_TypeSelector_Conditions_conditions (id =
+    conditions_id, value_id) -> Objektliste ObjectListConditionValue mit dem
+    Attribut "id" = Nummern der Objekte.
+
+    In einer der beiden Dateien zeigen die conditions_id ins Leere (1..1848);
+    die Bedingungen liegen dahinter in Bloecken gleicher Groesse, einer je
+    Selektion in der Reihenfolge der Selektionen, der Platz im Block ist die
+    Objektart in der Reihenfolge der keys. Das wird als Rueckfall gelesen und
+    im Protokoll als Annahme genannt (am Drehlager belegt: "Augenblech -y" =
+    Volumen 34, "Bolzen" = Volumen 30, "Passstifte_aussen" = 92-95, 113-115).
+
+    Genommen wird die Vereinigung aller Nummernlisten mit dem Attribut "id";
+    Bedingungen auf Lager oder Gelenke (support_on_object, ...) und
+    Objektarten ohne Gegenstueck bleiben draussen. Rueckgabe: Zahl der Layer.
+    """
+    if not (db.has("ObjectSelection") and db.has("ObjectSelectionImpl")):
+        return 0
+    line_user: dict = {}
+    for h, _impl in db.impls("Line"):
+        if h.get("userID") is not None and h["id"] in line_name:
+            line_user[int(h["userID"])] = line_name[h["id"]]
+    surf_user: dict = {}
+    for h, _impl in db.impls("Surface"):
+        if h.get("userID") is not None and h["id"] in surf_name:
+            surf_user[int(h["userID"])] = surf_name[h["id"]]
+    solid_user: dict = {}
+    for h, _impl in db.impls("Solid"):
+        if h.get("userID") is not None and h["id"] in solid_name:
+            solid_user[int(h["userID"])] = solid_name[h["id"]]
+    karten = {"knoten": node_user or {}, "linien": line_user, "staebe": member_user or {},
+              "flaechen": surf_user, "koerper": solid_user}
+    listen = _selektion_listen(db)
+    keys: dict = {}
+    for r in db.rows("ObjectSelectionImpl_objectSelectors_keys"):
+        keys.setdefault(r["id"], {})[int(r.get("container_order") or 0)] = r.get("value") or ""
+    werte: dict = {}
+    for r in db.rows("ObjectSelectionImpl_objectSelectors_values"):
+        werte.setdefault(r["id"], {})[int(r.get("container_order") or 0)] = r.get("conditions_id")
+    bedingungen: dict = {}
+    for r in db.rows("ObjectSelectionImpl_TypeSelector_Conditions_conditions"):
+        bedingungen.setdefault(r["id"], []).append(r)
+    selektionen = db.impls("ObjectSelection")
+    # Rueckfall: Bloecke hinter dem Verweisbereich der conditions_id
+    max_wert = max((c for d in werte.values() for c in d.values() if c is not None), default=0)
+    impl_reihe = sorted(r["id"] for r in db.rows("ObjectSelectionImpl"))
+    block = 0
+    if any(cid > max_wert for cid in bedingungen) and impl_reihe:
+        gesamt = db.count("ObjectSelectionImpl_TypeSelector_Conditions")
+        if gesamt > max_wert:
+            block = (gesamt - max_wert) // len(impl_reihe)
+    angelegt = 0
+    uebergangen: dict = {}
+    for h, impl in selektionen:
+        impl_id = impl["id"]
+        name = (impl.get("name") or "").strip() if impl.get("isNameEnabled") else ""
+        if not name:
+            name = f"Objektselektion {h.get('userID') or impl_id}"
+        gefunden: dict = {a: set() for a in karten}
+        typen = keys.get(impl_id, {})
+        for order, cid in werte.get(impl_id, {}).items():
+            if cid in bedingungen:
+                _selektion_sammeln(bedingungen[cid], typen.get(order, ""), listen, karten,
+                                   gefunden, uebergangen)
+        if block and not any(gefunden.values()) and impl_id in impl_reihe:
+            lo = max_wert + 1 + impl_reihe.index(impl_id) * block
+            for cid in range(lo, lo + block):
+                if cid in bedingungen:
+                    _selektion_sammeln(bedingungen[cid], typen.get(cid - lo, ""), listen, karten,
+                                       gefunden, uebergangen)
+        if not any(gefunden.values()):
+            continue
+        L = m.layer_anlegen(name, quelle="rfem", **{a: sorted(v) for a, v in gefunden.items()})
+        angelegt += 1
+        C.say(log, f"Layer {L.name}: {L.bezug()} (Objektselektion {h.get('userID')})")
+    if angelegt and block:
+        C.say(log, "Objektselektionen: die Bedingungen liegen hinter dem Verweisbereich - "
+                   "blockweise nach Reihenfolge gelesen (Annahme, siehe _object_selections)")
+    if uebergangen:
+        C.say(log, "Objektselektionen: ohne Gegenstueck im Layer "
+                   + ", ".join(f"{k} ({n})" for k, n in sorted(uebergangen.items())))
+    if angelegt:
+        C.say(log, f"{angelegt} Layer aus Objektselektionen (Ansicht -> Layer)")
+    return angelegt
 
 
 def _diagnose(m: Model, log: list) -> None:

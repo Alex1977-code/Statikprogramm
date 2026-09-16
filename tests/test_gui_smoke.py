@@ -3792,20 +3792,22 @@ def main():
         xy_, _ = w._projizieren(m_.nodes)
         xa, ya = float(xy_[:, 0].min()) - 40, float(xy_[:, 1].min()) - 40
         xb, yb = float(xy_[:, 0].max()) + 40, float(xy_[:, 1].max()) + 40
+        w.selection = np.array([k0], int)
         klick_bei(xa, ya)
-        check("Klick ins Leere beginnt das Auswahlfenster", w._fenster_ecke is not None)
-        klick_bei(xb, yb)
-        check("zweiter Linksklick schließt das Fenster ab: alle drei Knoten gewählt",
+        check("kurzer Klick ins Leere hebt die Auswahl auf und beginnt kein Fenster (16.09.2026)",
+              w._fenster_ecke is None and len(w.selection) == 0,
+              f"Fenster {w._fenster_ecke}, Auswahl {w.selection}")
+        qt_ = lambda x, y: QtCore.QPoint(int(round(x / s_)), int(round(h_qt - 1 - y / s_)))
+        w._fenster_beginnen(qt_(xa, ya))
+        w._fenster_abschliessen(qt_(xb, yb))
+        check("das Auswahlfenster durch Ziehen fasst alle drei Knoten",
               w._fenster_ecke is None and sorted(int(i) for i in w.selection) == [k0, k1, k2], str(w.selection))
         w.selection = np.array([], int)
-        klick_bei(xa, ya)
-        klick_bei(xa + 1, ya)
-        check("Klick auf der ersten Ecke verwirft das Fenster", w._fenster_ecke is None and len(w.selection) == 0)
         w.auswahlart_setzen("Stab")
         w.sel_staebe = []
         xm_, ym_ = px(0.5 * (m_.nodes[k0] + m_.nodes[k1]))
-        klick_bei(xm_ + 30, ym_ + 30)
-        klick_bei(xm_ - 30, ym_ - 30)
+        w._fenster_beginnen(qt_(xm_ + 30, ym_ + 30))     # gezogen, nicht geklickt (16.09.2026)
+        w._fenster_abschliessen(qt_(xm_ - 30, ym_ - 30))
         check("kreuzendes Fenster (rechts nach links) über der Stabmitte wählt den Stab",
               w.sel_staebe == ["S1"], str(w.sel_staebe))
         P_ = w._weltpunkt(int(round(xm_ / s_)), int(round(h_qt - 1 - ym_ / s_)))
@@ -5093,21 +5095,74 @@ def main():
         check("Alles zeigen räumt auf",
               not any(w.versteckt.values()) and not w.act_alles_zeigen.isEnabled())
         w.sel_staebe = []
-        # Doppelklick mit der mittleren Maustaste: alles Sichtbare einpassen
-        from PySide6 import QtCore, QtGui
+        # Doppelklicks, Taste r und Mausbewegung ohne Taste (16.09.2026: "beim
+        # Heranzoomen springt der Zoom auf die Vollansicht zurueck")
+        from PySide6 import QtCore, QtGui, QtTest
+        it_ = w.plotter.interactor
+        stil_ = w.plotter.iren.style
+        pos_ = QtCore.QPointF(it_.width() / 2, it_.height() / 2)
+        alt_menu_ = w._viewport_menu
+        w._viewport_menu = lambda p: None
+
+        def maus2_(typ_, knopf_, p_=None, knoepfe_=None):
+            p_ = pos_ if p_ is None else p_
+            ev_ = QtGui.QMouseEvent(typ_, p_, it_.mapToGlobal(p_.toPoint()), knopf_,
+                                    knopf_ if knoepfe_ is None else knoepfe_, QtCore.Qt.NoModifier)
+            QtWidgets.QApplication.sendEvent(it_, ev_)
+            app.processEvents()
+
+        def abstand_():
+            """Kameralage: Standort, Blickpunkt und Parallelmassstab, gerundet.
+            Der Rad-Zoom schiebt Standort und Blickpunkt gemeinsam laengs des
+            Sehstrahls - der Abstand der beiden bliebe gleich, der Standort nicht."""
+            kam_ = w.plotter.renderer.GetActiveCamera()
+            return (tuple(np.round(kam_.GetPosition(), 6).tolist()), tuple(np.round(kam_.GetFocalPoint(), 6).tolist()),
+                    round(float(kam_.GetParallelScale()), 6))
+
+        w.zoom_alles(); app.processEvents()
+        d_voll = abstand_()
+        w.zoom_zum_zeiger(3.0, pos_.x(), pos_.y()); app.processEvents()
+        d0_ = abstand_()
+        check("Vorbedingung: Heranzoomen ändert die Kamera", d0_ != d_voll, f"{d_voll} -> {d0_}")
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.RightButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.RightButton, knoepfe_=QtCore.Qt.NoButton)
+        z_rechts = stil_.GetState()
+        for k_ in range(1, 20):
+            maus2_(QtCore.QEvent.MouseMove, QtCore.Qt.NoButton, pos_ + QtCore.QPointF(0, -5 * k_), QtCore.Qt.NoButton)
+        check("Doppelklick rechts lässt VTK nicht in Dolly hängen: Bewegung ohne Taste zoomt nicht",
+              z_rechts == 0 and abstand_() == d0_,
+              f"Zustand {z_rechts}, Kamera {d0_} -> {abstand_()} (voll {d_voll})")
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.LeftButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.LeftButton, knoepfe_=QtCore.Qt.NoButton)
+        for k_ in range(1, 20):
+            maus2_(QtCore.QEvent.MouseMove, QtCore.Qt.NoButton, pos_ + QtCore.QPointF(5 * k_, 0), QtCore.Qt.NoButton)
+        check("Doppelklick links lässt VTK nicht in Rotate hängen",
+              stil_.GetState() == 0 and abstand_() == d0_, f"Zustand {stil_.GetState()}, Kamera {d0_} -> {abstand_()}")
+        it_.setFocus(); app.processEvents()
+        QtTest.QTest.keyClick(it_, QtCore.Qt.Key_R); app.processEvents()
+        check("Taste r im Bild setzt die Kamera nicht mehr zurück (VTK-Standard abgeschaltet)",
+              abstand_() == d0_, f"Kamera {d0_} -> {abstand_()} (voll {d_voll})")
         zaehler_ = []
         alt_zoom = w.zoom_alles
         w.zoom_alles = lambda: (zaehler_.append(1), alt_zoom())
-        it_ = w.plotter.interactor
-        pos_ = QtCore.QPointF(it_.width() / 2, it_.height() / 2)
-        for knopf_ in (QtCore.Qt.MiddleButton, QtCore.Qt.LeftButton):
-            ev_ = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonDblClick, pos_, pos_, knopf_, knopf_,
-                                    QtCore.Qt.NoModifier)
-            QtWidgets.QApplication.sendEvent(it_, ev_)
-            app.processEvents()
+        w._rad_zeit = 0.0
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.MiddleButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.MiddleButton, knoepfe_=QtCore.Qt.NoButton)
+        n1_ = len(zaehler_)
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.MiddleButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.MiddleButton, pos_ + QtCore.QPointF(30, 20),
+               QtCore.Qt.NoButton)
+        n2_ = len(zaehler_)
+        w._rad_zeit = time.time()
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.MiddleButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.MiddleButton, knoepfe_=QtCore.Qt.NoButton)
+        n3_ = len(zaehler_)
         w.zoom_alles = alt_zoom
-        check("Doppelklick mit der mittleren Maustaste passt alles Sichtbare ein (links nicht)",
-              len(zaehler_) == 1, str(len(zaehler_)))
+        w._viewport_menu = alt_menu_
+        check("Doppelklick mit der mittleren Maustaste passt alles Sichtbare ein (links und rechts nicht)",
+              n1_ == 1, str(n1_))
+        check("… nicht aber mit Zug (Drehen) oder gleich nach einem Radschritt",
+              n2_ == 1 and n3_ == 1, f"{n2_} {n3_}")
 
         # Drehen eines grossen Modells: Nebendarsteller bleiben kurz weg
         w.SCHNELLDREHEN_AB = 1
@@ -8430,6 +8485,103 @@ def main():
         import traceback
         traceback.print_exc()
         check("Lot, Fang Lot, Geometrieart, Verschneiden", False, str(ex)[:70])
+
+    try:
+        # ---- Layer: Aufklappliste, Layerliste, sichtbar und gesperrt (16.09.2026) ----
+        from statik3d.model import Member as Mb_
+        w.new_model(); app.processEvents()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        ka_, kb_, kc_, kd_, ke_ = (m_.add_node(*xyz) for xyz in ((0, 0, 0), (4, 0, 0), (4, 3, 0), (0, 3, 0), (8, 0, 0)))
+        ea_ = m_.add_element("beam", [ka_, kb_], mat_, sec_)
+        eb_ = m_.add_element("beam", [kb_, ke_], mat_, sec_)
+        m_.members["S1"] = Mb_("S1", elements=[ea_])
+        m_.members["S2"] = Mb_("S2", elements=[eb_])
+        for nm_, (a_, b_) in (("L1", (ka_, kb_)), ("L2", (kb_, kc_)), ("L3", (kc_, kd_)), ("L4", (kd_, ka_))):
+            m_.add_line(nm_, [a_, b_])
+        m_.add_flaeche("F1", ["L1", "L2", "L3", "L4"], material=mat_)
+        w.refresh_all(); app.processEvents()
+        check("Ribbon Ansicht: Aufklappliste der Layer (leer: nur „Alle Layer“, gesperrt) und Layerliste",
+              hasattr(w, "cb_layer") and w.cb_layer.count() == 1 and w.cb_layer.itemText(0) == "Alle Layer"
+              and not w.cb_layer.isEnabled() and hasattr(w, "act_layerliste"))
+        w._auswahl_leeren(); w.sel_flaechen = ["F1"]
+        w.layer_aus_auswahl("Deckel"); app.processEvents()
+        w._auswahl_leeren(); w.sel_staebe = ["S2"]; w.selection = np.array([ke_], int)
+        w.layer_aus_auswahl("Traeger"); app.processEvents()
+        check("Layer aus Auswahl: zwei Layer, die Aufklappliste nennt sie",
+              set(m_.layer) == {"Deckel", "Traeger"} and m_.layer["Deckel"].flaechen == ["F1"]
+              and m_.layer["Traeger"].staebe == ["S2"] and m_.layer["Traeger"].knoten == [ke_]
+              and [w.cb_layer.itemText(i) for i in range(w.cb_layer.count())] == ["Alle Layer", "Deckel", "Traeger"],
+              str([w.cb_layer.itemText(i) for i in range(w.cb_layer.count())]))
+        w.cb_layer.setCurrentIndex(2); app.processEvents()
+        v_ = w.verborgen
+        check("Aufklappliste: nur Traeger im Bild - Fläche, Linien und der andere Stab verborgen; von Hand ist nichts ausgeblendet",
+              w._layer_nur == "Traeger" and "F1" in v_["flaechen"] and {"L1", "L2", "L3", "L4"} <= v_["linien"]
+              and ea_ in v_["elemente"] and eb_ not in v_["elemente"] and not any(w.versteckt.values())
+              and not w._objekt_sichtbar("Fläche", "F1") and w._objekt_sichtbar("Stab", "S2"),
+              f"{sorted(v_['flaechen'])} {sorted(v_['elemente'])}")
+        w.cb_layer.setCurrentIndex(0); app.processEvents()
+        check("„Alle Layer“ zeigt wieder alles",
+              w._layer_nur == "" and w._objekt_sichtbar("Fläche", "F1") and not w._layer_versteckt())
+        w.layer_sichtbar_setzen("Deckel", False); app.processEvents()
+        check("Haken „sichtbar“ weg blendet den Layer aus, die Aufklappliste sagt es",
+              "F1" in w.verborgen["flaechen"] and not w._objekt_sichtbar("Fläche", "F1")
+              and w.cb_layer.itemText(1) == "Deckel (ausgeblendet)", w.cb_layer.itemText(1))
+        w.layer_sichtbar_setzen("Deckel", True); app.processEvents()
+        # Sperre
+        w.layer_gesperrt_setzen("Traeger", True); app.processEvents()
+        w._auswahl_leeren()
+        w.auswahlart_setzen("Stab")
+        w._objekt_umschalten(w.sel_staebe, "S2", "Stäbe")
+        check("gesperrter Layer: Klick wählt den Stab nicht, _wenn_sichtbar gibt None",
+              w.sel_staebe == [] and w._wenn_sichtbar("Stab", "S2") is None and w._wenn_sichtbar("Stab", "S1") == "S1",
+              str(w.sel_staebe))
+        w.sel_staebe = ["S1", "S2"]; w.selection = np.array([ka_, ke_], int); w._auswahl_register()
+        check("… und die Sperre räumt Stab und Knoten des Layers aus jeder Auswahl",
+              w.sel_staebe == ["S1"] and sorted(int(i) for i in w.selection) == [ka_], f"{w.sel_staebe} {w.selection}")
+        fehler_ = []
+        alt_error_ = w.error
+        w.error = lambda msg: fehler_.append(str(msg))
+        w.knoten_bearbeiten(ke_); app.processEvents()
+        w._objektmaske("stab", "S2"); app.processEvents()
+        w.error = alt_error_
+        check("gesperrter Layer: Knotendialog und Stabmaske öffnen nicht, die Meldung nennt den Layer",
+              len(fehler_) == 2 and all("Traeger" in f for f in fehler_), str(fehler_))
+        # Layerliste
+        w.layerliste_zeigen(); app.processEvents()
+        f_ = w._layer_fenster
+        check("Layerliste: Fenster mit beiden Layern, Haken „gesperrt“ bei Traeger gesetzt",
+              f_ is not None and f_.isVisible() and f_.tabelle.rowCount() == 2
+              and f_.tabelle.item(f_.zeile_von("Traeger"), 2).checkState() == QtCore.Qt.Checked)
+        f_.tabelle.item(f_.zeile_von("Traeger"), 2).setCheckState(QtCore.Qt.Unchecked); app.processEvents()
+        check("Haken „gesperrt“ im Fenster entsperrt den Layer", not m_.layer["Traeger"].gesperrt)
+        f_.tabelle.item(f_.zeile_von("Deckel"), 1).setCheckState(QtCore.Qt.Unchecked); app.processEvents()
+        check("Haken „sichtbar“ im Fenster blendet aus",
+              not m_.layer["Deckel"].sichtbar and "F1" in w.verborgen["flaechen"])
+        f_.tabelle.setCurrentCell(f_.zeile_von("Traeger"), 0)
+        f_.knoepfe["Objekte wählen"].click(); app.processEvents()
+        check("„Objekte wählen“ holt Stab und Knoten des Layers in die Auswahl, Auswahlart Stab",
+              w.sel_staebe == ["S2"] and sorted(int(i) for i in w.selection) == [ke_] and w.auswahlart == "Stab",
+              f"{w.sel_staebe} {w.selection} {w.auswahlart}")
+        ok_ = w.layer_umbenennen("Traeger", "Träger"); app.processEvents()
+        check("Umbenennen", ok_ and "Träger" in m_.layer and "Traeger" not in m_.layer and f_.zeile_von("Träger") >= 0)
+        w.layer_loeschen("Träger"); app.processEvents()
+        check("Löschen (Rückfrage bejaht) nimmt den Layer weg, die Objekte bleiben",
+              "Träger" not in m_.layer and "S2" in m_.members and w.cb_layer.count() == 2 and f_.tabelle.rowCount() == 1)
+        w.layer_alle_zeigen(); app.processEvents()
+        check("Modellbaum: Zweig Layer mit dem Eintrag Deckel",
+              any(it.child(i).text(0) == "Deckel"
+                  for it in w.baum.findItems("Layer", QtCore.Qt.MatchExactly | QtCore.Qt.MatchRecursive)
+                  for i in range(it.childCount())))
+        d_ = w.model.to_dict()
+        check("Layer werden mit dem Modell gespeichert", any(x["name"] == "Deckel" for x in d_.get("layer", [])))
+        f_.close(); app.processEvents()
+        w._auswahl_leeren()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Layer", False, str(ex)[:70])
 
     try:
         _kuerzel_pruefen(w, app)

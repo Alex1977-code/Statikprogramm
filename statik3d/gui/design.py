@@ -414,6 +414,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
     #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst
     NEU_ARTEN = {"querschnitte": "Querschnitt", "subsysteme": "Subsystem",
                  "situationen": "Situation", "generierer": "Wasserdruck",
+                 "layerliste": "Layer aus Auswahl",
                  "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
@@ -424,7 +425,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
-                    "geokoerper_einzeln", "subsystem", "situation", "wasserdruck", "wind",
+                    "geokoerper_einzeln", "subsystem", "layer", "situation", "wasserdruck", "wind",
                     "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke",
                     "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
                     "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"}
@@ -433,6 +434,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "stab": "staebe", "geoflaeche": "geoflaechen",
                  "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte",
                  "subsystem": "subsysteme", "situation": "situationen",
+                 "layer": "layerliste",
                  "wasserdruck": "generierer", "wind": "generierer",
                  "schweissnaht": "schweissnaehte", "bemassung": "bemassungen",
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
@@ -1061,6 +1063,22 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._liste(sz, [(name, f"{len(s.elemente)} El", name, f"{name}: {s.bezug()}")
                          for name, s in subs.items()], "subsystem", "subsysteme")
         self._zweig(sz, "+ Subsystem anlegen", "", "subsystem_neu", farbe=FARBEN["akzent"])
+
+        # ---- Layer (RFEM: Objektselektionen) -------------------------------
+        lay = getattr(model, "layer", {}) or {}
+        lz = self._zweig(wurzel, "Layer", len(lay), "layerliste", fett=bool(lay),
+                         farbe=FARBEN["akzent"] if lay else None,
+                         hinweis="Benannte Objektgruppen (RFEM: Objektselektionen) - sichtbar oder "
+                                 "ausgeblendet, gesperrt oder frei. Klick wählt die Objekte, "
+                                 "Doppelklick öffnet die Layerliste; Rechtsklick: Neu, Löschen.")
+        self._liste(lz, [(name, ("ausgeblendet · " if not L.sichtbar else "")
+                          + ("gesperrt · " if L.gesperrt else "") + L.bezug(), name,
+                          f"{name}: {L.bezug()}" + ("\nausgeblendet" if not L.sichtbar else "")
+                          + ("\ngesperrt - nicht wählbar, nicht änderbar" if L.gesperrt else "")
+                          + ("\naus der RFEM-Objektselektion" if L.quelle == "rfem" else ""),
+                          FARBEN["matt"] if not L.sichtbar else None)
+                         for name, L in lay.items()], "layer", "layerliste")
+        self._zweig(lz, "+ Layer aus Auswahl", "", "layer_neu", farbe=FARBEN["akzent"])
 
         # Stellungen stehen ausschliesslich hier (Vorgabe Kap. 16.1 Nr. 3);
         # der Zweig traegt die Schaltflaeche zum Anlegen.

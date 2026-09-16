@@ -50,6 +50,7 @@ from .tabellen import Spalte
 from .. import ks
 from . import viewport as vp
 from . import design as dsg
+from . import layer as lyr
 from .. import spannungen as spn
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 
@@ -171,6 +172,10 @@ class MainWindow(QtWidgets.QMainWindow):
                           "koerper": set(), "knoten": set()}
         self._sicht_verlauf: list = []
         self._sicht_stand = None
+        #: Layer: nur dieser im Bild (Aufklappliste im Ribbon Ansicht) - leer = alle
+        self._layer_nur = ""
+        self._layer_version = 0
+        self._layer_fenster = None
         #: Verborgenes blass im Hintergrund zeigen (Ribbon Ansicht -> Sicht)
         self.geist = False
         #: Schnittebene der Ansicht: None oder (Achse, Lage 0..1, umgekehrt).
@@ -327,21 +332,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 if t == QtCore.QEvent.Wheel:
                     self._rad(ereignis)
                     return True
-                if t == QtCore.QEvent.MouseButtonDblClick and ereignis.button() == QtCore.Qt.MiddleButton:
-                    # Doppelklick mit der mittleren Maustaste: alles, was gerade
-                    # im Bild ist, einpassen (Ausgeblendetes zaehlt nicht mit)
-                    self.zoom_alles()
-                    return True
-                if t == QtCore.QEvent.MouseButtonPress:
+                if t in (QtCore.QEvent.MouseButtonPress, QtCore.QEvent.MouseButtonDblClick):
+                    # Den zweiten Druck eines Doppelklicks meldet Qt als DblClick
+                    # statt als Press; er gilt hier wie ein Druck. Liefe er an
+                    # VTK durch, naehme das ihn als Tastendruck, saehe das
+                    # Loslassen aber nie (das verbraucht der Filter) und bliebe
+                    # in Dolly (rechts) oder Rotate (links) haengen - danach
+                    # zoomte jede Mausbewegung ohne Taste (gemessen 16.09.2026:
+                    # Abstand 0,70 -> 0,31), Drehen und Schieben gingen nicht mehr.
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+                    doppel = t == QtCore.QEvent.MouseButtonDblClick
                     if ereignis.button() == QtCore.Qt.LeftButton:
                         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
                         self._links_unten = True
+                        self._links_doppel = doppel
                         return True         # links dreht nicht mehr
                     if ereignis.button() == QtCore.Qt.MiddleButton:
                         # gedrueckte mittlere Taste dreht (15.09.2026); VTK
-                        # sieht den Druck nicht, sonst schoebe es wie von Haus aus
+                        # sieht den Druck nicht, sonst schoebe es wie von Haus
+                        # aus. Ein Doppelklick zaehlt beim Loslassen
+                        # (:meth:`_mitte_los`): ohne Zug passt er alles ein.
                         self._mitte_unten = True
+                        self._mitte_doppel = QtCore.QPoint(int(pos.x()), int(pos.y())) if doppel else None
                         self._drehen_beginnen()
                         return True
                     if ereignis.button() == QtCore.Qt.RightButton:
@@ -357,14 +369,15 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._links_los(pos)
                         return True
                     if ereignis.button() == QtCore.Qt.MiddleButton:
-                        self._mitte_unten = False
-                        self._drehen_enden()
+                        self._mitte_los(pos)
                         return True
                     if ereignis.button() == QtCore.Qt.RightButton:
                         self._rechts_los(pos)
                         return True
                 elif t == QtCore.QEvent.MouseMove:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+                    if ereignis.buttons() == QtCore.Qt.NoButton:
+                        self._vtk_zustand_beenden()     # ohne Taste wird nie gedreht oder gezoomt
                     if getattr(self, "_links_unten", False):
                         self._links_ziehen(pos)
                         return True
@@ -375,13 +388,15 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._hover_anstossen(pos)
                 elif t == QtCore.QEvent.Leave:
                     self._hover_aus()
-                elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
-                        and self._esc_abbrechen():
-                    # Ein echter Tastendruck kommt hier nie an - Esc ist das
-                    # anwendungsweite Kuerzel von „Alles deselektieren“ und
-                    # wird als Kurzbefehl verbraucht (:meth:`_esc_gedrueckt`);
-                    # der Zweig gilt fuer zugeschickte Tastenereignisse.
-                    return True
+                elif t == QtCore.QEvent.KeyPress:
+                    if ereignis.key() == QtCore.Qt.Key_Escape and self._esc_abbrechen():
+                        # Ein echter Tastendruck kommt hier nie an - Esc ist das
+                        # anwendungsweite Kuerzel von „Alles deselektieren“ und
+                        # wird als Kurzbefehl verbraucht (:meth:`_esc_gedrueckt`);
+                        # der Zweig gilt fuer zugeschickte Tastenereignisse.
+                        return True
+                    if self._vtk_taste(ereignis):
+                        return True         # Buchstaben, Ziffern, Pfeile: nicht an VTK
         except Exception:                   # noqa: BLE001
             return False
         return super().eventFilter(obj, ereignis)
@@ -404,6 +419,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Linke Taste losgelassen: Fenster abschliessen oder einzeln waehlen."""
         self._links_unten = False
         self._klick_wartend = None
+        doppel = getattr(self, "_links_doppel", False)
+        self._links_doppel = False
         start = self._letzter_klick
         gezogen = (start is not None
                    and max(abs(pos.x() - start.x()),
@@ -412,8 +429,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if self._fenster_ecke is not None:
                 self._fenster_abschliessen(pos)
             return
-        # Klick ohne Bewegung: waehlen. Ein noch offenes Fenster aus einem
-        # frueheren Klick ins Leere schliesst :meth:`_picked` selbst ab.
+        if doppel:
+            # der zweite Klick eines Doppelklicks waehlt nicht noch einmal -
+            # sonst waere das eben gewaehlte Objekt gleich wieder abgewaehlt
+            return
+        # Klick ohne Bewegung: waehlen - liegt dort nichts, hebt er die
+        # Auswahl auf (:meth:`_klick_ins_leere`).
         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
         self._klick_umschalt = bool(QtWidgets.QApplication.keyboardModifiers()
                                     & QtCore.Qt.ShiftModifier)
@@ -433,6 +454,7 @@ class MainWindow(QtWidgets.QMainWindow):
         („bei gedrückter mittlerer Maustaste soll gedreht werden").
         """
         try:
+            self._vtk_zustand_beenden()
             self.plotter.iren.style.StartRotate()
         except Exception:                   # noqa: BLE001 - dann dreht es eben nicht
             pass
@@ -443,11 +465,66 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:                   # noqa: BLE001
             pass
 
+    #: So lange nach einem Radschritt gilt ein Doppelklick Mitte nicht [s]:
+    #: wer beim Rollen das Rad drueckt, will nicht alles einpassen
+    RAD_SPERRE = 0.4
+
+    def _mitte_los(self, pos) -> None:
+        """Mittlere Taste losgelassen: Drehen beenden. War es der zweite Druck
+        eines Doppelklicks, ohne Zug und nicht mitten im Rollen, wird alles
+        Sichtbare eingepasst (Ausgeblendetes zaehlt nicht mit)."""
+        self._mitte_unten = False
+        self._drehen_enden()
+        doppel = getattr(self, "_mitte_doppel", None)
+        self._mitte_doppel = None
+        if doppel is None:
+            return
+        if max(abs(pos.x() - doppel.x()), abs(pos.y() - doppel.y())) > self.KLICK_TOLERANZ:
+            return                          # gezogen: das war Drehen
+        if time.time() - getattr(self, "_rad_zeit", 0.0) < self.RAD_SPERRE:
+            return                          # Radklick beim Zoomen
+        self.zoom_alles()
+
+    def _vtk_zustand_beenden(self) -> None:
+        """VTK in den Ruhezustand bringen, falls es in Rotate, Pan oder Dolly
+        haengt. Die Start-Methoden tun nichts, solange ein anderer Zustand
+        laeuft - dann draehte die mittlere Taste nicht mehr, und ein
+        haengendes Dolly zoomte bei jeder Bewegung ohne Taste."""
+        try:
+            stil = self.plotter.iren.style
+            if stil.GetState() == 0:
+                return
+            for name in ("EndDolly", "EndPan", "EndRotate", "EndSpin", "EndZoom",
+                         "EndUniformScale", "EndEnvRotate", "EndTimer"):
+                ende = getattr(stil, name, None)
+                if callable(ende):
+                    ende()                  # jedes prueft selbst, ob sein Zustand laeuft
+        except Exception:                   # noqa: BLE001
+            pass
+
+    def _vtk_taste(self, ereignis) -> bool:
+        """Tasten, auf die VTK oder pyvista von sich aus reagieren: r setzt die
+        Kamera auf die Gesamtansicht zurueck, w und s schalten Draht und
+        Flaeche, f fliegt zum Punkt, p pickt, q und e beenden, v stellt
+        isometrisch, Pfeil auf/ab zoomen, plus/minus aendern Punktgroessen.
+        Nichts davon ist hier gewollt - gemessen 16.09.2026: ein r nach dem
+        Heranzoomen warf das Bild auf die Gesamtansicht zurueck. Kuerzel mit
+        Strg oder Alt sind Befehle des Programms und bleiben unberuehrt."""
+        if ereignis.modifiers() & (QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier
+                                   | QtCore.Qt.MetaModifier):
+            return False
+        k = int(ereignis.key())
+        return (int(QtCore.Qt.Key_A) <= k <= int(QtCore.Qt.Key_Z)
+                or int(QtCore.Qt.Key_0) <= k <= int(QtCore.Qt.Key_9)
+                or k in (int(QtCore.Qt.Key_Up), int(QtCore.Qt.Key_Down),
+                         int(QtCore.Qt.Key_Plus), int(QtCore.Qt.Key_Minus)))
+
     def _schieben_beginnen(self) -> None:
         """Die gedrueckte rechte Taste schiebt - derselbe Weg wie beim Drehen,
         nur im Schiebezustand von VTK („gedrückte rechte Maustaste und halten
         soll schieben sein", 15.09.2026)."""
         try:
+            self._vtk_zustand_beenden()
             self.plotter.iren.style.StartPan()
         except Exception:                   # noqa: BLE001
             pass
@@ -478,6 +555,7 @@ class MainWindow(QtWidgets.QMainWindow):
             x_qt, y_qt = pos.x(), pos.y()
         except Exception:                   # noqa: BLE001
             x_qt, y_qt = ereignis.x(), ereignis.y()
+        self._rad_zeit = time.time()
         self.zoom_zum_zeiger(self.RADSCHRITT ** (grad / 120.0), x_qt, y_qt)
 
     def _bildpunkt_in_welt(self, x: float, y: float):
@@ -1256,6 +1334,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _objekt_umschalten(self, liste: list, name: str, was: str):
         """Ein Objekt der Auswahl zufuegen oder herausnehmen."""
+        if name not in liste:
+            art = {"Elemente": "elemente", "Linien": "linien", "Flächen": "flaechen",
+                   "Volumen": "koerper", "Stäbe": "staebe"}.get(was, "")
+            sperre = self.model.layer_sperre(art, name) if art and getattr(self.model, "layer", None) else ""
+            if sperre:
+                return self.info(f"{name}: gesperrt (Layer „{sperre}“) - nicht wählbar; "
+                                 "Layerliste: Haken „gesperrt“ weg")
         if name in liste:
             liste.remove(name)
         else:
@@ -1839,7 +1924,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
 
     def _fenster_beginnen(self, pos=None):
-        """Erste Ecke des Auswahlfensters (Linksklick ins Leere)."""
+        """Erste Ecke des Auswahlfensters (Ziehen mit gedrueckter linker Taste)."""
         pos = pos if pos is not None else (self._letzter_klick or self._zeiger_qt())
         if pos is None:
             return
@@ -1852,9 +1937,8 @@ class MainWindow(QtWidgets.QMainWindow):
         band.show()
         band.raise_()
         self.statusBar().showMessage(
-            "Auswahlfenster: mit gedrückter linker Taste aufziehen oder die zweite Ecke "
-            "anklicken - links nach rechts nur ganz im Fenster, rechts nach links auch "
-            "angeschnittene. Esc bricht ab.", 8000)
+            "Auswahlfenster: mit gedrückter linker Taste aufziehen - links nach rechts nur "
+            "ganz im Fenster, rechts nach links auch angeschnittene. Esc bricht ab.", 8000)
 
     def _fenster_nachziehen(self, pos):
         if self._fenster_ecke is None or getattr(self, "_gummiband", None) is None:
@@ -1932,7 +2016,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._dargestellt(art):
             self.info(f"{art}: ausgeblendet - erst wieder einblenden (Glasleiste), dann wählen")
             return 0
-        v = self.versteckt
+        v = self.verborgen
         sicht = self._sichtbare_knoten()            # None = alle
 
         def strecken_treffen(A, B):
@@ -2440,12 +2524,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "Netz":
                 elem = self._wenn_sichtbar("Netz", self._element_am_zeiger())
                 if elem is None:
-                    return self._fenster_beginnen()
+                    return self._klick_ins_leere()
                 return self._objekt_umschalten(self.sel_elemente, int(elem), "Elemente")
             if art == "Linie":
                 name = self._wenn_sichtbar("Linie", self._linie_am_zeiger() or vp.line_at(m, point, size))
                 return self._objekt_umschalten_klug(self.sel_linien, name, "Linien", self._linienenden()) \
-                    if name else self._fenster_beginnen()
+                    if name else self._klick_ins_leere()
             # Erst das, was gezeichnet ist (Zellenpicker) - das trifft auch
             # Zylindermaentel und Stabkoerper; die geometrische Suche ist der
             # Rueckfall, wenn der Klick knapp danebenliegt.
@@ -2453,25 +2537,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 name = self._wenn_sichtbar("Fläche", self._objekt_am_zeiger("Fläche")
                                            or vp.flaeche_at(m, point, size))
                 return self._objekt_umschalten(self.sel_flaechen, name, "Flächen") \
-                    if name else self._fenster_beginnen()
+                    if name else self._klick_ins_leere()
             if art == "Volumen":
                 name = self._wenn_sichtbar("Volumen", self._objekt_am_zeiger("Volumen")
                                            or vp.koerper_at(m, point, size))
                 return self._objekt_umschalten(self.sel_koerper, name, "Volumen") \
-                    if name else self._fenster_beginnen()
+                    if name else self._klick_ins_leere()
             if art == "Stab":
                 name = self._wenn_sichtbar("Stab", self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")
                                            or vp.member_at(m, point))
                 return self._objekt_umschalten_klug(self.sel_staebe, name, "Stäbe", self._stabenden()) \
-                    if name else self._fenster_beginnen()
+                    if name else self._klick_ins_leere()
             if art == "Lager":
                 treffer = self._wenn_sichtbar(
                     "Lager", vp.lager_at(m, point, size, self.lagergroesse, self.lagerdichte))
-                return self._lager_umschalten(treffer) if treffer else self._fenster_beginnen()
+                return self._lager_umschalten(treffer) if treffer else self._klick_ins_leere()
             if art == "Last":
                 treffer = vp.last_at(point, getattr(self, "_lastpunkte", None), size)
                 return (self._last_waehlen(m.active_case, treffer[0], treffer[1]) if treffer
-                        else self._fenster_beginnen())
+                        else self._klick_ins_leere())
         if self.model.nn == 0:
             return
         p, fangart, i = self._fangpunkt()
@@ -2492,8 +2576,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if self._objekt_unter_zeiger_waehlen():
                 return
         if p is None:
-            # Klick ins Leere: erste Ecke eines Auswahlfensters
-            return self._fenster_beginnen()
+            # Klick ins Leere: alles abwaehlen
+            return self._klick_ins_leere()
         if i < 0:
             # Kantenmitte oder Rasterpunkt: erst wenn eine Maske einen Punkt
             # erwartet, wird daraus ein Knoten - sonst blieben Streuknoten liegen.
@@ -2509,6 +2593,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self._objekt_sichtbar("Knoten", i):
             return self.info(f"Knoten {i}: ausgeblendet - nicht wählbar (Sicht: „Alles zeigen“)")
+        sperre = self._layer_sperre("Knoten", i)
+        if sperre:
+            return self.info(f"Knoten {i}: gesperrt (Layer „{sperre}“) - nicht wählbar")
         if i in self.selection:
             self.selection = self.selection[self.selection != i]
         else:
@@ -2517,6 +2604,20 @@ class MainWindow(QtWidgets.QMainWindow):
                              f"{np.round(self.model.nodes[i], 3)})")
         self._auswahl_register()
         self.redraw()
+
+    def _klick_ins_leere(self) -> None:
+        """Kurzer Linksklick, unter dem nichts liegt: die Auswahl aufheben
+        (16.09.2026: "kurz = alles deselektieren, lang = Selektionsfenster").
+        Bis dahin setzte er die erste Ecke eines Auswahlfensters, das der
+        naechste Klick schloss; das Fenster gibt es jetzt nur noch durch
+        Ziehen mit gedrueckter linker Taste (:meth:`_links_ziehen`)."""
+        if any((len(self.selection), self.sel_linien, self.sel_flaechen, self.sel_koerper,
+                self.sel_staebe, self.sel_elemente, self.sel_lager, self.sel_lasten)):
+            self.clear_selection()
+            self.statusBar().showMessage("Klick ins Leere: Auswahl aufgehoben", 3000)
+        else:
+            self.statusBar().showMessage("Nichts unter dem Zeiger - Auswahlfenster: linke Taste "
+                                         "gedrückt halten und ziehen", 4000)
 
     def _objekt_unter_zeiger_waehlen(self) -> bool:
         """Stab, Flaeche, Volumen oder Linie unter dem Zeiger auswaehlen und
@@ -3925,6 +4026,22 @@ class MainWindow(QtWidgets.QMainWindow):
                                            symbol="sicht_schnittseite")
         g.widget(self.cb_schnittachse)
         g.widget(self.sl_schnitt)
+        g = r.gruppe("Layer")
+        # Layer sind benannte Objektgruppen - in RFEM die Objektselektionen
+        # (16.09.2026): die Liste zeigt einen allein, das Fenster haelt je
+        # Layer sichtbar und gesperrt.
+        self.cb_layer = QtWidgets.QComboBox()
+        self.cb_layer.setMinimumWidth(150)
+        self.cb_layer.setToolTip("Nur diesen Layer im Bild zeigen (RFEM: Objektselektion); "
+                                 "„Alle Layer“ zeigt wieder alles")
+        self.cb_layer.currentIndexChanged.connect(self._layer_gewaehlt)
+        g.widget(self.cb_layer)
+        self.act_layerliste = g.gross("Layerliste", "≡", self.layerliste_zeigen,
+                                      hinweis="Alle Layer in einem Fenster: sichtbar und gesperrt anhaken, "
+                                              "neue aus der Auswahl, Objekte eines Layers wählen")
+        self.act_layer_neu = g.klein("Layer aus Auswahl", self.layer_aus_auswahl, zeichen="+",
+                                     hinweis="Die Auswahl in der Ansicht als neuen Layer anlegen")
+        self._layer_combo_fuellen()
         g = r.gruppe("Symbole")
         self.sl_lager = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.sl_lager.setRange(2, 60)
@@ -4283,6 +4400,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     #: Zweige und Eintraege fuer Subsysteme und Situationen
     SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
+                    "layerliste", "layer", "layer_neu",
                     "bemassungen", "bemassung", "bemassung_neu",
                     "situationen", "situation", "situation_neu",
                     "generierer", "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
@@ -4640,6 +4758,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         m = self.model
         eintrag = neu or self._baum_ist_eintrag(art, name)
+        if eintrag and not neu and self._layer_sperre_melden(art, name):
+            return None
         F = msk.Feld
         felder, titel, hinweis = [], "", ""
         knopf = "OK" if neu else "Übernehmen"
@@ -7124,6 +7244,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.querschnitt_neu()
         if zweigart == "subsysteme":
             return self.subsystem_neu()
+        if zweigart == "layerliste":
+            return self.layer_aus_auswahl()
         if zweigart == "situationen":
             return self.situation_neu()
         if zweigart == "generierer":
@@ -7184,6 +7306,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.maske_wind()
         if art == "wind":
             return self.maske_wind(name)
+        if art == "layerliste":
+            return self.layerliste_zeigen()
+        if art == "layer_neu":
+            return self.layer_aus_auswahl()
+        if art == "layer":
+            return self.layer_objekte_waehlen(name)
         if art == "subsystem_neu":
             return self.subsystem_neu()
         if art == "situation_neu":
@@ -7522,6 +7650,7 @@ class MainWindow(QtWidgets.QMainWindow):
                "flaechenlager_einzeln": f"Flächenlager {int(name) + 1 if name.isdigit() else name}",
                "berichtseintrag": f"Berichtsbild {int(name) + 1 if name.isdigit() else name}",
                "subsystem": f"Subsystem {name}", "situation": f"Situation {name}",
+               "layer": f"Layer {name} (die Objekte bleiben)",
                "wasserdruck": f"Wasserdruck {name} samt seinen Lasten",
                "wind": f"Wind {name} samt seinen Lasten",
                "schweissnaht": f"Schweißnaht {name}",
@@ -7664,6 +7793,15 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.merken(f"{was} gelöscht")
                 del m.subsysteme[name]
+        elif art == "layer":
+            if name not in m.layer:
+                grund = f"Layer {name} gibt es nicht"
+            else:
+                self.merken(f"{was} gelöscht")
+                del m.layer[name]
+                if self._layer_nur == name:
+                    self._layer_nur = ""
+                self._layer_version += 1
         elif art in self.LAGER_ARTEN:
             liste = getattr(m, self.LAGER_ARTEN[art][0])
             if not (name.isdigit() and int(name) < len(liste)):
@@ -7916,6 +8054,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self._objektmaske(art, name)
             if art == "subsystem":
                 return self._subsystem_zeigen(name)
+            if art == "layer":
+                return self.layerliste_zeigen()
             if art == "situation":
                 return self._situation_zeigen(name)
             if art == "stab":
@@ -7945,7 +8085,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- Bearbeiten einzelner Modellobjekte ---------------------------
     def knoten_bearbeiten(self, i: int):
-        if not (0 <= i < self.model.nn):
+        if not (0 <= i < self.model.nn) or self._layer_sperre_melden("knoten", i):
             return
         d = dg.KnotenDialog(self, self.model.nodes[i], i)
         if d.exec():
@@ -7972,6 +8112,8 @@ class MainWindow(QtWidgets.QMainWindow):
         ln = self.model.lines.get(name)
         if ln is None:
             return self.add_linie()
+        if self._layer_sperre_melden("linie", name):
+            return None
         d = dg.LinienDialog(self, ln, self.model.nn)
         if not d.exec():
             return
@@ -8259,6 +8401,8 @@ class MainWindow(QtWidgets.QMainWindow):
         f = self.model.flaechen.get(name)
         if f is None:
             return self.add_flaeche_aus_auswahl()
+        if self._layer_sperre_melden("geoflaeche", name):
+            return None
         self._baum_objekt_waehlen("geoflaeche", name)
         self.redraw()
         return self._objektmaske("geoflaeche", name)
@@ -8295,6 +8439,8 @@ class MainWindow(QtWidgets.QMainWindow):
         k = self.model.koerper.get(name)
         if k is None:
             return self.add_koerper_aus_auswahl()
+        if self._layer_sperre_melden("geokoerper_einzeln", name):
+            return None
         self._baum_objekt_waehlen("geokoerper_einzeln", name)
         self.redraw()
         return self._objektmaske("geokoerper_einzeln", name)
@@ -11296,7 +11442,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.model, r, point_scalars, arten, quantity=q,
                 filter_=str(self.cb_werte_filter.currentData() or "extrem"),
                 schwelle=float(self.ed_werte_schwelle.value()), n_te=int(self.sp_werte_n.value()),
-                auswahl=auswahl, versteckt=set(self.versteckt.get("elemente", ())),
+                auswahl=auswahl, versteckt=set(self.verborgen.get("elemente", ())),
                 nachkomma=1 if "N/mm²" in (name or "") else 2)
         except Exception as ex:               # noqa: BLE001 - eine Marke darf die Ansicht nicht sperren
             self.log.appendPlainText(f"Werte im Bild: {ex}")
@@ -11364,7 +11510,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Zusatz zur Kopfzeile, wenn Teile ausgeblendet sind: Skala und
         Kennwerte gelten nur fuer das Sichtbare."""
         text = ""
-        if any(self.versteckt.values()):
+        if any(self.verborgen.values()):
             text += " · Skala: nur sichtbare Teile"
         if getattr(self, "act_kontaktmarken", None) is not None and self.act_kontaktmarken.isChecked():
             text += " · Kontaktmarken: grün haftet, orange gleitet, grau offen, blau Kontakt"
@@ -12674,6 +12820,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_kopf()
         schritt("Modellbaum aufbauen …")
         self._refresh_baum()
+        self._layer_combo_fuellen()
         schritt("Ansicht aufbauen …")
         self.redraw()
         if gross:
@@ -14475,6 +14622,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         if not hasattr(self, "ribbon") or getattr(self, "_auswahl_sammeln", False):
             return
+        self._gesperrte_entfernen()
         n = len(self.selection)
         if not n:
             self.ribbon.kontext_aus()
@@ -16311,10 +16459,10 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         stand = (id(m), len(m.lines or {}), m.nn,
                  hash(np.asarray(m.nodes, float).tobytes()) if m.nn else 0,
-                 tuple(self.sel_linien), frozenset(self.versteckt["linien"]))
+                 tuple(self.sel_linien), frozenset(self.verborgen["linien"]))
         if getattr(self, "_liniennetz_stand", None) == stand:
             return self._liniennetz
-        self._liniennetz = vp.linien_netz(m, self.sel_linien, self.versteckt["linien"])
+        self._liniennetz = vp.linien_netz(m, self.sel_linien, self.verborgen["linien"])
         self._liniennetz_stand = stand
         return self._liniennetz
 
@@ -16352,15 +16500,15 @@ class MainWindow(QtWidgets.QMainWindow):
                  len(m.elements), sum(len(f.elemente) for f in m.flaechen.values()),
                  sum(len(k.elemente) for k in m.koerper.values()),
                  self.act_flaechen.isChecked(), self.act_volumen.isChecked(),
-                 frozenset(self.versteckt["flaechen"]), frozenset(self.versteckt["koerper"]))
+                 frozenset(self.verborgen["flaechen"]), frozenset(self.verborgen["koerper"]))
         if getattr(self, "_geonetze_stand", None) == stand:
             return self._geonetze
         zeilen: list = []
         self._geonetze = vp.geometrie_netze(m, raender=self._raender(), seiten=self._randseiten(),
                                             flaechen_an=self.act_flaechen.isChecked(),
                                             koerper_an=self.act_volumen.isChecked(),
-                                            ausser_flaechen=self.versteckt["flaechen"],
-                                            ausser_koerper=self.versteckt["koerper"],
+                                            ausser_flaechen=self.verborgen["flaechen"],
+                                            ausser_koerper=self.verborgen["koerper"],
                                             log=zeilen)
         for z in zeilen:
             self.log.appendPlainText(z)
@@ -16776,7 +16924,7 @@ class MainWindow(QtWidgets.QMainWindow):
             typen += list(vp.TYPEN_FLAECHEN)
         if self.act_volumen.isChecked():
             typen += list(vp.TYPEN_VOLUMEN)
-        ausser = set(self.versteckt["elemente"])
+        ausser = set(self.verborgen["elemente"])
         if r is not None:
             # Elemente, die in der Situation des Ergebnisses nicht wirken
             ausser |= {int(i) for i in (getattr(r, "info", None) or {}).get("inaktiv", [])}
@@ -16993,7 +17141,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             name="lagertext")
             if self.act_linien.isChecked():
                 vp.add_linien(self.plotter, m, self.sel_linien,
-                              ausser=self.versteckt["linien"], netz=self._linien_netz())
+                              ausser=self.verborgen["linien"], netz=self._linien_netz())
             vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
             self._kontakte_zeichnen(m)
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
@@ -17013,9 +17161,9 @@ class MainWindow(QtWidgets.QMainWindow):
                              seiten=self._randseiten(),
                              beschriften=getattr(self, 'act_lastwerte', None) is not None and self.act_lastwerte.isChecked(),
                              textgroesse=int(self.model.bemassung_einstellungen().textgroesse) - 1,
-                             ausser=self.versteckt["elemente"], knoten=sichtbare_knoten,
-                             ausser_flaechen=self.versteckt["flaechen"],
-                             ausser_linien=self.versteckt["linien"],
+                             ausser=self.verborgen["elemente"], knoten=sichtbare_knoten,
+                             ausser_flaechen=self.verborgen["flaechen"],
+                             ausser_linien=self.verborgen["linien"],
                              merker=self._lastpunkte,
                              hervor={(l_, k_) for f_, l_, k_ in self.sel_lasten if f_ == m.active_case})
         except Exception as ex:
@@ -17196,7 +17344,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return leer
             return m.nodes[idx], [str(int(i)) for i in idx]
         if art == "Elemente":
-            weg = set(self.versteckt["elemente"])
+            weg = set(self.verborgen["elemente"])
             typen = self._sichtbare_typen()
             idx = [i for i, e in enumerate(m.elements)
                    if i not in weg and e.typ in typen]
@@ -17486,6 +17634,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if alt is None or alt[0] != stand[0]:
             self.versteckt = {k: set() for k in self.versteckt}
             self._sicht_verlauf = []
+            self._layer_nur = ""
         else:
             # gleiches Modell, anderes Netz: Element- und Netzknotennummern sind neu
             self.versteckt["elemente"] = set()
@@ -17714,17 +17863,17 @@ class MainWindow(QtWidgets.QMainWindow):
         nicht in der Liste des Zellenpickers: was nicht dargestellt ist,
         laesst sich nicht waehlen - und ein Geist ist nur angedeutet.
         """
-        if not getattr(self, "geist", False) or not any(self.versteckt.values()):
+        if not getattr(self, "geist", False) or not any(self.verborgen.values()):
             return
         blass = dict(color=self.GEIST_FARBE, opacity=self.GEIST_DECKKRAFT, show_edges=False,
                      lighting=False, pickable=False)
         kante = dict(color=self.GEIST_KANTE, line_width=1, opacity=0.5, pickable=False)
-        weg = {int(i) for i in self.versteckt["elemente"]}
+        weg = {int(i) for i in self.verborgen["elemente"]}
         if weg:
             grid = self._geist_gitter(weg)
             if grid is not None and grid.n_cells:
                 self.plotter.add_mesh(grid, name="geist_netz", **blass)
-        fl, ko = self.versteckt["flaechen"], self.versteckt["koerper"]
+        fl, ko = self.verborgen["flaechen"], self.verborgen["koerper"]
         if (fl or ko) and m.flaechen:
             pd_f, pd_r, pd_k = self._geist_geometrie(fl, ko)
             if pd_f is not None:
@@ -17733,7 +17882,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plotter.add_mesh(pd_r, name="geist_raender", **kante)
             if pd_k is not None:
                 self.plotter.add_mesh(pd_k, name="geist_volumen", **kante)
-        li = self.versteckt["linien"]
+        li = self.verborgen["linien"]
         if li and m.lines:
             netz = vp.linien_netz(m, [], ausser=set(m.lines) - set(li))
             if netz is not None:
@@ -17803,7 +17952,7 @@ class MainWindow(QtWidgets.QMainWindow):
         nicht waehlen: mit der Maus, im Fenster, nicht als Lager daran."""
         if name is None or not self._dargestellt(art):
             return False
-        v = self.versteckt
+        v = self.verborgen
         m = self.model
         if art == "Linie":
             return name not in v["linien"]
@@ -17851,6 +18000,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if name is None:
             return None
         if self._objekt_sichtbar(art, name):
+            sperre = self._layer_sperre(art, name)
+            if sperre:
+                self.info(f"{art} {name}: gesperrt (Layer „{sperre}“) - nicht wählbar; "
+                          "Layerliste: Haken „gesperrt“ weg")
+                return None
             return name
         self.info(f"{art} {name}: ausgeblendet - nicht wählbar (Sicht: „Alles zeigen“)")
         return None
@@ -17864,7 +18018,8 @@ class MainWindow(QtWidgets.QMainWindow):
         Netzknoten eines ausgeblendeten Koerpers - verschwindet mit ihnen;
         ausdruecklich ausgeblendete Knoten ebenso.
         """
-        if not any(self.versteckt.values()):
+        v_ = self.verborgen
+        if not any(v_.values()):
             return None
         m = self.model
         stand = (id(m), len(m.elements), m.nn, len(m.lines or {}))
@@ -17882,7 +18037,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sichtbar = np.zeros(m.nn, bool)
         if len(e_kn):
             belegt[e_kn] = True
-            weg = self.versteckt["elemente"]
+            weg = v_["elemente"]
             if weg:
                 halten = ~np.isin(e_id, np.fromiter(weg, int, len(weg)))
                 sichtbar[e_kn[halten]] = True
@@ -17890,13 +18045,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 sichtbar[e_kn] = True
         if len(l_kn):
             belegt[l_kn] = True
-            weg_l = self.versteckt["linien"]
+            weg_l = v_["linien"]
             halten = np.array([nm not in weg_l for nm in l_name], bool) if weg_l \
                 else np.ones(len(l_kn), bool)
             sichtbar[l_kn[halten]] = True
         sichtbar |= ~belegt
-        if self.versteckt["knoten"]:
-            idx = [int(i) for i in self.versteckt["knoten"] if 0 <= int(i) < m.nn]
+        if v_["knoten"]:
+            idx = [int(i) for i in v_["knoten"] if 0 <= int(i) < m.nn]
             sichtbar[idx] = False
         return np.flatnonzero(sichtbar)
 
@@ -18005,6 +18160,313 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sicht_knoepfe()
         self.info("Alles wieder im Bild")
         self.redraw()
+
+    # ---- Layer: benannte Objektgruppen (RFEM: Objektselektionen) ---------
+    #: Auswahlart -> Art im Layer
+    LAYER_ART = {"Knoten": "knoten", "Netz": "elemente", "Stab": "staebe", "Linie": "linien",
+                 "Fläche": "flaechen", "Volumen": "koerper"}
+    #: Zweigart des Modellbaums -> Art im Layer
+    LAYER_BAUMART = {"knoten": "knoten", "stabelement": "elemente", "stab": "staebe", "linie": "linien",
+                     "geoflaeche": "flaechen", "geokoerper_einzeln": "koerper"}
+    #: Art im Layer -> Auswahlart, in der Reihenfolge, in der "Objekte waehlen" sie waehlt
+    LAYER_AUSWAHLART = (("koerper", "Volumen"), ("flaechen", "Fläche"), ("staebe", "Stab"),
+                        ("linien", "Linie"), ("knoten", "Knoten"), ("elemente", "Netz"))
+    ALLE_LAYER = "Alle Layer"
+
+    @property
+    def verborgen(self) -> dict:
+        """Was gerade nicht im Bild ist: das von Hand Ausgeblendete
+        (``versteckt``) und dazu die Objekte unsichtbarer Layer bzw. alles
+        ausser dem Layer aus der Aufklappliste. Nur zum Lesen - geschrieben
+        wird ``versteckt``; "Alles zeigen" und "Vorherige Sicht" betreffen
+        allein das von Hand Ausgeblendete."""
+        lv = self._layer_versteckt()
+        if not lv:
+            return self.versteckt
+        return {k: self.versteckt[k] | lv.get(k, set()) for k in self.versteckt}
+
+    def _layer_versteckt(self):
+        """Die Mengen, die die Layer ausblenden - oder None, wenn keine.
+        Einmal je Stand gerechnet (Modell, Haken, Aufklappliste)."""
+        m = self.model
+        lay = getattr(m, "layer", None) or {}
+        nur = getattr(self, "_layer_nur", "")
+        if nur and nur not in lay:
+            nur = self._layer_nur = ""
+        unsichtbar = tuple(sorted(n for n, L in lay.items() if not L.sichtbar))
+        if not unsichtbar and not nur:
+            return None
+        stand = (id(m), len(m.elements), m.nn, len(m.lines or {}), len(m.flaechen), len(m.koerper),
+                 unsichtbar, nur, getattr(self, "_layer_version", 0))
+        if getattr(self, "_layer_sicht_stand", None) == stand:
+            return self._layer_sicht
+        weg = {k: set() for k in self.versteckt}
+        for name in unsichtbar:
+            inhalt = m.layer_inhalt(name)
+            for k in weg:
+                weg[k] |= inhalt.get(k, set())
+        if nur:
+            inhalt = m.layer_inhalt(nur)
+            weg["elemente"] |= set(range(len(m.elements))) - inhalt["elemente"]
+            weg["linien"] |= set(m.lines or {}) - inhalt["linien"]
+            weg["flaechen"] |= set(m.flaechen or {}) - inhalt["flaechen"]
+            weg["koerper"] |= set(m.koerper or {}) - inhalt["koerper"]
+            weg["knoten"] |= set(range(m.nn)) - inhalt["knoten"]
+        self._layer_sicht_stand = stand
+        self._layer_sicht = weg
+        return weg
+
+    def _layer_gesperrt(self) -> dict:
+        """{Art: {Objekt: Layername}} alles Gesperrten - einmal je Stand."""
+        m = self.model
+        lay = getattr(m, "layer", None) or {}
+        stand = (id(m), getattr(self, "_layer_version", 0),
+                 tuple(sorted((n, L.gesperrt, L.anzahl()) for n, L in lay.items())))
+        if getattr(self, "_layer_sperre_stand", None) != stand:
+            self._layer_sperre_stand = stand
+            self._layer_sperren = m.layer_gesperrt() if lay else {}
+        return self._layer_sperren
+
+    def _layer_sperre(self, art: str, name) -> str:
+        """Der gesperrte Layer zu einem Objekt (Auswahlart oder Zweigart) - oder leer."""
+        schl = self.LAYER_ART.get(art) or self.LAYER_BAUMART.get(art)
+        if not schl or not getattr(self.model, "layer", None):
+            return ""
+        g = self._layer_gesperrt().get(schl, {})
+        if not g:
+            return ""
+        try:
+            key = int(name) if schl in ("knoten", "elemente") else str(name)
+        except (TypeError, ValueError):
+            return ""
+        return g.get(key, "")
+
+    def _layer_sperre_melden(self, art: str, name) -> bool:
+        """True (und eine Meldung), wenn das Objekt in einem gesperrten Layer liegt."""
+        sperre = self._layer_sperre(art, name)
+        if not sperre:
+            return False
+        was = {"knoten": "Knoten", "stabelement": "Element", "stab": "Stab", "linie": "Linie",
+               "geoflaeche": "Fl\u00e4che", "geokoerper_einzeln": "Volumen", "Knoten": "Knoten", "Netz": "Element",
+               "Stab": "Stab", "Linie": "Linie", "Fl\u00e4che": "Fl\u00e4che", "Volumen": "Volumen"}.get(art, "")
+        self.error(f"{was} {name} liegt im gesperrten Layer „{sperre}“ - erst entsperren "
+                   "(Ansicht → Layerliste, Haken „gesperrt“ weg), dann ändern")
+        return True
+
+    def _gesperrte_entfernen(self) -> int:
+        """Objekte gesperrter Layer aus der Auswahl nehmen; Rueckgabe: wie viele."""
+        m = self.model
+        if not any(L.gesperrt for L in (getattr(m, "layer", None) or {}).values()):
+            return 0
+        g = self._layer_gesperrt()
+        n = 0
+        if len(self.selection) and g.get("knoten"):
+            frei = [int(i) for i in self.selection if int(i) not in g["knoten"]]
+            n += len(self.selection) - len(frei)
+            self.selection = np.asarray(frei, dtype=int)
+        for attr, art in (("sel_elemente", "elemente"), ("sel_staebe", "staebe"), ("sel_linien", "linien"),
+                          ("sel_flaechen", "flaechen"), ("sel_koerper", "koerper")):
+            liste = getattr(self, attr)
+            gs = g.get(art, {})
+            if not liste or not gs:
+                continue
+            frei = [x for x in liste if (int(x) if art == "elemente" else str(x)) not in gs]
+            n += len(liste) - len(frei)
+            liste[:] = frei
+        if n:
+            self.statusBar().showMessage(f"{n} Objekte gesperrter Layer bleiben unausgewählt", 4000)
+        return n
+
+    def _layer_geaendert(self, text: str = "") -> None:
+        """Nach jeder Aenderung an den Layern: Zwischenspeicher weg, Liste,
+        Fenster und Modellbaum nachziehen, neu zeichnen."""
+        self._layer_version = getattr(self, "_layer_version", 0) + 1
+        self._layer_combo_fuellen()
+        f = getattr(self, "_layer_fenster", None)
+        if f is not None and _lebt(f):
+            f.fuellen()
+        self._refresh_baum()
+        if text:
+            self.info(text)
+        self.redraw()
+
+    def _layer_combo_fuellen(self) -> None:
+        cb = getattr(self, "cb_layer", None)
+        if cb is None or not _lebt(cb) or getattr(self, "model", None) is None:
+            return
+        lay = getattr(self.model, "layer", None) or {}
+        nur = getattr(self, "_layer_nur", "")
+        cb.blockSignals(True)
+        try:
+            cb.clear()
+            cb.addItem(self.ALLE_LAYER, "")
+            for name in sorted(lay, key=str.lower):
+                L = lay[name]
+                cb.addItem(name + ("" if L.sichtbar else " (ausgeblendet)")
+                           + (" - gesperrt" if L.gesperrt else ""), name)
+            i = cb.findData(nur) if nur else 0
+            cb.setCurrentIndex(max(int(i), 0))
+            cb.setEnabled(bool(lay))
+        finally:
+            cb.blockSignals(False)
+
+    def _layer_gewaehlt(self, index: int) -> None:
+        """Aufklappliste: ein Layer allein im Bild, oder alle."""
+        cb = self.cb_layer
+        name = cb.itemData(index) if index > 0 else ""
+        if not name:
+            return self.layer_alle_zeigen()
+        self.layer_nur_zeigen(str(name))
+
+    def layer_nur_zeigen(self, name: str) -> None:
+        m = self.model
+        if name not in m.layer:
+            return self.error(f"Layer {name} gibt es nicht")
+        self._layer_nur = name
+        self._layer_geaendert(f"Nur Layer „{name}“ im Bild ({m.layer[name].bezug()}) - "
+                              f"„{self.ALLE_LAYER}“ zeigt wieder alles")
+
+    def layer_alle_zeigen(self) -> None:
+        self._layer_nur = ""
+        for L in self.model.layer.values():
+            L.sichtbar = True
+        self._layer_geaendert("Alle Layer im Bild")
+
+    def layer_sichtbar_setzen(self, name: str, an: bool) -> None:
+        L = self.model.layer.get(name)
+        if L is None:
+            return
+        L.sichtbar = bool(an)
+        self._layer_nur = ""                     # die Haken gelten, nicht mehr "nur dieser"
+        self._layer_geaendert(f"Layer „{name}“ {'eingeblendet' if an else 'ausgeblendet'}")
+
+    def layer_gesperrt_setzen(self, name: str, an: bool) -> None:
+        L = self.model.layer.get(name)
+        if L is None:
+            return
+        L.gesperrt = bool(an)
+        self._layer_version = getattr(self, "_layer_version", 0) + 1
+        if an:
+            self._gesperrte_entfernen()
+            self._auswahl_register()
+        self._layer_geaendert(f"Layer „{name}“ "
+                              + ("gesperrt - seine Objekte sind nicht wählbar und nicht änderbar"
+                                 if an else "entsperrt"))
+
+    def _auswahl_vorhanden(self) -> bool:
+        return bool(len(self.selection) or self.sel_linien or self.sel_flaechen or self.sel_koerper
+                    or self.sel_staebe or self.sel_elemente)
+
+    def _auswahl_als_layer(self) -> dict:
+        return dict(knoten=[int(i) for i in self.selection], elemente=[int(i) for i in self.sel_elemente],
+                    staebe=list(self.sel_staebe), linien=list(self.sel_linien),
+                    flaechen=list(self.sel_flaechen), koerper=list(self.sel_koerper))
+
+    def layer_aus_auswahl(self, name: str = "") -> None:
+        """Ribbon, Modellbaum oder Layerliste: die Auswahl als neuer Layer."""
+        m = self.model
+        if not self._auswahl_vorhanden():
+            return self.error("Zuerst in der Ansicht auswählen, was in den Layer soll "
+                              "(Knoten, Linien, Stäbe, Flächen, Volumen)")
+        if not name:
+            name, ok = QtWidgets.QInputDialog.getText(self, "Neuer Layer", "Name des Layers:",
+                                                      text=m.naechster_name("Layer ", m.layer))
+            if not ok:
+                return None
+        name = str(name).strip()
+        if not name:
+            return None
+        if name in m.layer:
+            return self.error(f"Layer „{name}“ gibt es schon - in der Layerliste "
+                              "„Auswahl hinzufügen“")
+        self.merken(f"Layer {name}")
+        L = m.layer_anlegen(name, **self._auswahl_als_layer())
+        self._layer_geaendert(f"Layer „{name}“ angelegt: {L.bezug()}")
+
+    def layer_auswahl_hinzufuegen(self, name: str) -> None:
+        L = self.model.layer.get(name)
+        if L is None or not self._auswahl_vorhanden():
+            return self.error("Zuerst in der Ansicht auswählen, was in den Layer soll")
+        self.merken(f"Layer {name} ergänzt")
+        self.model.layer_ergaenzen(L, **self._auswahl_als_layer())
+        self._layer_geaendert(f"Layer „{name}“: {L.bezug()}")
+
+    def layer_auswahl_entfernen(self, name: str) -> None:
+        L = self.model.layer.get(name)
+        if L is None or not self._auswahl_vorhanden():
+            return self.error("Zuerst in der Ansicht auswählen, was aus dem Layer soll")
+        self.merken(f"Layer {name} verkleinert")
+        self.model.layer_entfernen(L, **self._auswahl_als_layer())
+        self._layer_geaendert(f"Layer „{name}“: {L.bezug()}")
+
+    def layer_objekte_waehlen(self, name: str) -> None:
+        """Die Objekte eines Layers in der Ansicht auswaehlen (Modellbaum, Layerliste)."""
+        m = self.model
+        L = m.layer.get(name)
+        if L is None:
+            return self.error(f"Layer {name} gibt es nicht")
+        if L.gesperrt:
+            return self.info(f"Layer „{name}“ ist gesperrt - seine Objekte lassen sich nicht wählen "
+                             "(Layerliste: Haken „gesperrt“ weg)")
+        ne, nn = len(m.elements), m.nn
+        self._auswahl_leeren()
+        self.selection = np.array(sorted({int(n) for n in L.knoten if 0 <= int(n) < nn}), dtype=int)
+        self.sel_elemente = sorted({int(i) for i in L.elemente if 0 <= int(i) < ne})
+        self.sel_staebe = [s for s in L.staebe if s in m.members]
+        self.sel_linien = [ln for ln in L.linien if ln in m.lines]
+        self.sel_flaechen = [f for f in L.flaechen if f in m.flaechen]
+        self.sel_koerper = [k for k in L.koerper if k in m.koerper]
+        self.leuchtet = []
+        self.leuchtet_kontakt = ""
+        for art, auswahlart in self.LAYER_AUSWAHLART:
+            if getattr(L, art):
+                self.auswahlart_setzen(auswahlart)
+                break
+        self._auswahl_register()
+        self.lbl_sel.setText(f"Layer {name} ausgewählt: {L.bezug()}")
+        self.redraw()
+        self.info(f"Layer „{name}“ gewählt: {L.bezug()}")
+
+    def layer_umbenennen(self, alt: str, neu: str) -> bool:
+        m = self.model
+        neu = str(neu).strip()
+        if alt not in m.layer or not neu:
+            return False
+        if neu in m.layer:
+            self.error(f"Layer „{neu}“ gibt es schon")
+            return False
+        self.merken(f"Layer {alt} umbenannt")
+        L = m.layer.pop(alt)
+        L.name = neu
+        m.layer[neu] = L
+        if self._layer_nur == alt:
+            self._layer_nur = neu
+        self._layer_geaendert(f"Layer „{alt}“ heißt jetzt „{neu}“")
+        return True
+
+    def layer_loeschen(self, name: str) -> None:
+        m = self.model
+        if name not in m.layer:
+            return
+        if not self._fragen_knoepfe("Layer löschen", f"Layer „{name}“ löschen? "
+                                    "Die Objekte bleiben im Modell.", "Löschen", "Abbrechen"):
+            return
+        self.merken(f"Layer {name} gelöscht")
+        del m.layer[name]
+        if self._layer_nur == name:
+            self._layer_nur = ""
+        self._layer_geaendert(f"Layer „{name}“ gelöscht - die Objekte sind noch da")
+
+    def layerliste_zeigen(self) -> None:
+        """Das Fenster mit allen Layern (Ribbon Ansicht -> Layerliste)."""
+        f = getattr(self, "_layer_fenster", None)
+        if f is None or not _lebt(f):
+            f = lyr.LayerFenster(self)
+            self._layer_fenster = f
+        f.fuellen()
+        f.show()
+        f.raise_()
+        f.activateWindow()
 
     # ---- Datei -------------------------------------------------------
     def _protokoll_neu(self, titel: str):
