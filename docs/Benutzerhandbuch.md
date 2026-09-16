@@ -1063,6 +1063,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Schnittebene** (Schalter mit Achse und Schieber), **Intelligente Auswahl** (Schalter) |
+| Layer | **Aufklappliste** (einen Layer allein zeigen, „Alle Layer“), **Layerliste** (Fenster: sichtbar und gesperrt je Layer, neu aus der Auswahl, Objekte wählen), **Layer aus Auswahl** — seit 16.09.2026 |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
 | ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
@@ -1178,6 +1179,36 @@ während des Drehens, Schiebens und Zoomens die Nebendarsteller
 (Knotenpunkte, Linien, Nummern, Lasten) und die Netzkanten weg und kommen
 beim Loslassen der Maus wieder — das Bild bleibt dadurch flüssig.
 Volumennetze werden nur mit ihrer Oberfläche gezeichnet.
+
+**Layer — Objektgruppen wie die Objektselektionen in RFEM** (16.09.2026).
+Ein Layer ist eine benannte Gruppe von Knoten, Linien, Stäben, Flächen und
+Volumen. Beim Einlesen einer RFEM-6-Datei (.rf6) werden die
+**Objektselektionen** zu Layern — am Drehlager etwa „Bolzen“, „Deckel +y“,
+„Augenblech -y“, „Passstifte_außen“ —, das Protokoll nennt jeden mit seinem
+Inhalt. Eigene Layer entstehen aus der Auswahl: *Ansicht → Layer aus Auswahl*
+(auch im Modellbaum unter *Layer* und in der Layerliste). Ein Objekt darf in
+mehreren Layern liegen; die Layer werden mit dem Modell gespeichert.
+
+* **Aufklappliste** im Ribbon *Ansicht*: ein Layer allein im Bild, alles andere
+  verschwindet (auch, was in keinem Layer liegt); *Alle Layer* holt alles
+  zurück. Ein Volumen bringt seine Flächen, Linien, Knoten und sein Netz mit,
+  ein Stab seine Elemente.
+* **Layerliste** (Fenster, bleibt offen): je Layer die Haken **sichtbar** und
+  **gesperrt**, dazu *Neu aus Auswahl*, *Auswahl hinzufügen*, *Auswahl
+  herausnehmen*, *Objekte wählen*, *Nur diesen zeigen*, *Alle zeigen*,
+  *Löschen* (die Objekte bleiben) und das Umbenennen in der Tabelle. Jede
+  Änderung wirkt sofort und lässt sich mit *Rückgängig* zurücknehmen.
+* **Ausgeblendet** ist ein Objekt, sobald *einer* seiner Layer ausgeblendet
+  ist. Die Layer wirken neben *Auswahl ausblenden* und *Selektion anzeigen*;
+  *Alles zeigen* und *Vorherige Sicht* betreffen nur das von Hand
+  Ausgeblendete, die Layer bleiben, wie sie in der Liste stehen.
+* **Gesperrt** heißt: nicht wählbar (Klick, Auswahlfenster, Modellbaum) und
+  nicht änderbar (die Maske öffnet nicht, die Meldung nennt den Layer). So
+  bleibt ein fertiges Bauteil unangetastet, während daneben modelliert wird.
+  Der Fang trifft gesperrte Knoten weiterhin.
+* **Modellbaum**: der Zweig *Layer* listet alle; Klick wählt die Objekte,
+  Doppelklick öffnet die Layerliste, Rechtsklick legt einen Layer aus der
+  Auswahl an oder löscht einen.
 
 **Zoomen auf eine Bohrung.** Das Mausrad zoomt auf die **Fläche unter dem
 Zeiger** zu, nicht auf die Brennebene der Kamera. Vorher fuhr die Kamera auf

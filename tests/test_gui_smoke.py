@@ -8487,6 +8487,103 @@ def main():
         check("Lot, Fang Lot, Geometrieart, Verschneiden", False, str(ex)[:70])
 
     try:
+        # ---- Layer: Aufklappliste, Layerliste, sichtbar und gesperrt (16.09.2026) ----
+        from statik3d.model import Member as Mb_
+        w.new_model(); app.processEvents()
+        m_ = w.model
+        mat_ = list(m_.materials)[0]
+        sec_ = list(m_.sections)[0]
+        ka_, kb_, kc_, kd_, ke_ = (m_.add_node(*xyz) for xyz in ((0, 0, 0), (4, 0, 0), (4, 3, 0), (0, 3, 0), (8, 0, 0)))
+        ea_ = m_.add_element("beam", [ka_, kb_], mat_, sec_)
+        eb_ = m_.add_element("beam", [kb_, ke_], mat_, sec_)
+        m_.members["S1"] = Mb_("S1", elements=[ea_])
+        m_.members["S2"] = Mb_("S2", elements=[eb_])
+        for nm_, (a_, b_) in (("L1", (ka_, kb_)), ("L2", (kb_, kc_)), ("L3", (kc_, kd_)), ("L4", (kd_, ka_))):
+            m_.add_line(nm_, [a_, b_])
+        m_.add_flaeche("F1", ["L1", "L2", "L3", "L4"], material=mat_)
+        w.refresh_all(); app.processEvents()
+        check("Ribbon Ansicht: Aufklappliste der Layer (leer: nur „Alle Layer“, gesperrt) und Layerliste",
+              hasattr(w, "cb_layer") and w.cb_layer.count() == 1 and w.cb_layer.itemText(0) == "Alle Layer"
+              and not w.cb_layer.isEnabled() and hasattr(w, "act_layerliste"))
+        w._auswahl_leeren(); w.sel_flaechen = ["F1"]
+        w.layer_aus_auswahl("Deckel"); app.processEvents()
+        w._auswahl_leeren(); w.sel_staebe = ["S2"]; w.selection = np.array([ke_], int)
+        w.layer_aus_auswahl("Traeger"); app.processEvents()
+        check("Layer aus Auswahl: zwei Layer, die Aufklappliste nennt sie",
+              set(m_.layer) == {"Deckel", "Traeger"} and m_.layer["Deckel"].flaechen == ["F1"]
+              and m_.layer["Traeger"].staebe == ["S2"] and m_.layer["Traeger"].knoten == [ke_]
+              and [w.cb_layer.itemText(i) for i in range(w.cb_layer.count())] == ["Alle Layer", "Deckel", "Traeger"],
+              str([w.cb_layer.itemText(i) for i in range(w.cb_layer.count())]))
+        w.cb_layer.setCurrentIndex(2); app.processEvents()
+        v_ = w.verborgen
+        check("Aufklappliste: nur Traeger im Bild - Fläche, Linien und der andere Stab verborgen; von Hand ist nichts ausgeblendet",
+              w._layer_nur == "Traeger" and "F1" in v_["flaechen"] and {"L1", "L2", "L3", "L4"} <= v_["linien"]
+              and ea_ in v_["elemente"] and eb_ not in v_["elemente"] and not any(w.versteckt.values())
+              and not w._objekt_sichtbar("Fläche", "F1") and w._objekt_sichtbar("Stab", "S2"),
+              f"{sorted(v_['flaechen'])} {sorted(v_['elemente'])}")
+        w.cb_layer.setCurrentIndex(0); app.processEvents()
+        check("„Alle Layer“ zeigt wieder alles",
+              w._layer_nur == "" and w._objekt_sichtbar("Fläche", "F1") and not w._layer_versteckt())
+        w.layer_sichtbar_setzen("Deckel", False); app.processEvents()
+        check("Haken „sichtbar“ weg blendet den Layer aus, die Aufklappliste sagt es",
+              "F1" in w.verborgen["flaechen"] and not w._objekt_sichtbar("Fläche", "F1")
+              and w.cb_layer.itemText(1) == "Deckel (ausgeblendet)", w.cb_layer.itemText(1))
+        w.layer_sichtbar_setzen("Deckel", True); app.processEvents()
+        # Sperre
+        w.layer_gesperrt_setzen("Traeger", True); app.processEvents()
+        w._auswahl_leeren()
+        w.auswahlart_setzen("Stab")
+        w._objekt_umschalten(w.sel_staebe, "S2", "Stäbe")
+        check("gesperrter Layer: Klick wählt den Stab nicht, _wenn_sichtbar gibt None",
+              w.sel_staebe == [] and w._wenn_sichtbar("Stab", "S2") is None and w._wenn_sichtbar("Stab", "S1") == "S1",
+              str(w.sel_staebe))
+        w.sel_staebe = ["S1", "S2"]; w.selection = np.array([ka_, ke_], int); w._auswahl_register()
+        check("… und die Sperre räumt Stab und Knoten des Layers aus jeder Auswahl",
+              w.sel_staebe == ["S1"] and sorted(int(i) for i in w.selection) == [ka_], f"{w.sel_staebe} {w.selection}")
+        fehler_ = []
+        alt_error_ = w.error
+        w.error = lambda msg: fehler_.append(str(msg))
+        w.knoten_bearbeiten(ke_); app.processEvents()
+        w._objektmaske("stab", "S2"); app.processEvents()
+        w.error = alt_error_
+        check("gesperrter Layer: Knotendialog und Stabmaske öffnen nicht, die Meldung nennt den Layer",
+              len(fehler_) == 2 and all("Traeger" in f for f in fehler_), str(fehler_))
+        # Layerliste
+        w.layerliste_zeigen(); app.processEvents()
+        f_ = w._layer_fenster
+        check("Layerliste: Fenster mit beiden Layern, Haken „gesperrt“ bei Traeger gesetzt",
+              f_ is not None and f_.isVisible() and f_.tabelle.rowCount() == 2
+              and f_.tabelle.item(f_.zeile_von("Traeger"), 2).checkState() == QtCore.Qt.Checked)
+        f_.tabelle.item(f_.zeile_von("Traeger"), 2).setCheckState(QtCore.Qt.Unchecked); app.processEvents()
+        check("Haken „gesperrt“ im Fenster entsperrt den Layer", not m_.layer["Traeger"].gesperrt)
+        f_.tabelle.item(f_.zeile_von("Deckel"), 1).setCheckState(QtCore.Qt.Unchecked); app.processEvents()
+        check("Haken „sichtbar“ im Fenster blendet aus",
+              not m_.layer["Deckel"].sichtbar and "F1" in w.verborgen["flaechen"])
+        f_.tabelle.setCurrentCell(f_.zeile_von("Traeger"), 0)
+        f_.knoepfe["Objekte wählen"].click(); app.processEvents()
+        check("„Objekte wählen“ holt Stab und Knoten des Layers in die Auswahl, Auswahlart Stab",
+              w.sel_staebe == ["S2"] and sorted(int(i) for i in w.selection) == [ke_] and w.auswahlart == "Stab",
+              f"{w.sel_staebe} {w.selection} {w.auswahlart}")
+        ok_ = w.layer_umbenennen("Traeger", "Träger"); app.processEvents()
+        check("Umbenennen", ok_ and "Träger" in m_.layer and "Traeger" not in m_.layer and f_.zeile_von("Träger") >= 0)
+        w.layer_loeschen("Träger"); app.processEvents()
+        check("Löschen (Rückfrage bejaht) nimmt den Layer weg, die Objekte bleiben",
+              "Träger" not in m_.layer and "S2" in m_.members and w.cb_layer.count() == 2 and f_.tabelle.rowCount() == 1)
+        w.layer_alle_zeigen(); app.processEvents()
+        check("Modellbaum: Zweig Layer mit dem Eintrag Deckel",
+              any(it.child(i).text(0) == "Deckel"
+                  for it in w.baum.findItems("Layer", QtCore.Qt.MatchExactly | QtCore.Qt.MatchRecursive)
+                  for i in range(it.childCount())))
+        d_ = w.model.to_dict()
+        check("Layer werden mit dem Modell gespeichert", any(x["name"] == "Deckel" for x in d_.get("layer", [])))
+        f_.close(); app.processEvents()
+        w._auswahl_leeren()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Layer", False, str(ex)[:70])
+
+    try:
         _kuerzel_pruefen(w, app)
     except Exception as ex:      # noqa: BLE001
         import traceback
