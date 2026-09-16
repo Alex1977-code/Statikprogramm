@@ -4904,6 +4904,52 @@ def main():
         traceback.print_exc()
         check("Kontur zeichnen", False, str(ex)[:70])
 
+    try:
+        # ---- Gelenke und Liniengelenke im Modellbaum (16.09.2026) ----
+        from tests.test_fugen import _wuerfel as _wuerfel_g
+        m_ = _wuerfel_g(0.5)               # ein Wuerfel mit Flaechen Boden, Deckel, M0..M3
+        w.model = m_
+        w.analysis = None
+        w.results = None
+        fn_ = "Deckel"
+        f_ = m_.flaechen[fn_]
+        f_.gelenklinien = list(f_.linien[:2])
+        f_.gelenkwirkung = "ux=starr, uy=starr, uz=starr, phix=frei, phiy=frei, phiz=frei"
+        w.refresh_all()
+        app.processEvents()
+
+        def zweige_g(baum):
+            out_ = []
+
+            def lauf_(it):
+                out_.append(it.text(0))
+                for i_ in range(it.childCount()):
+                    lauf_(it.child(i_))
+            for i_ in range(baum.topLevelItemCount()):
+                lauf_(baum.topLevelItem(i_))
+            return out_
+        namen = zweige_g(w.baum)
+        check("Modellbaum: Zweig „Gelenke“ auch ohne Gelenke, mit „+ Gelenk anlegen“",
+              "Gelenke" in namen and "+ Gelenk anlegen" in namen and not m_.hinges)
+        check("Modellbaum: Zweig „Liniengelenke“ mit der Fläche", "Liniengelenke" in namen and namen.count(fn_) >= 1)
+        w._baum_geklickt("liniengelenk", fn_)
+        app.processEvents()
+        check("Liniengelenk: Klick lässt die Gelenklinien leuchten und zeigt die Maske mit Wirkung",
+              sorted(w.sel_linien) == sorted(f_.gelenklinien) and w.sel_flaechen == [fn_]
+              and w.eingaben_dock.windowTitle() == f"Liniengelenk an {fn_}", w.eingaben_dock.windowTitle())
+        w._baum_geklickt("liniengelenke", "Liniengelenke")
+        app.processEvents()
+        check("Liniengelenke: der Zweig zeigt die Übersicht (Flächen, Linien, Wirkung)",
+              w.eingaben_dock.windowTitle() == "Liniengelenke" and len(w.sel_linien) == 2)
+        w._baum_geklickt("gelenk_neu", "+ Gelenk anlegen")
+        app.processEvents()
+        check("„+ Gelenk anlegen“ öffnet die Gelenkmaske", "Gelenk" in w.eingaben_dock.windowTitle(), w.eingaben_dock.windowTitle())
+        w.maskenrand.schliessen()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Gelenke und Liniengelenke im Modellbaum", False, str(ex)[:70])
+
     # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
     try:
         import pyvista as pvx
