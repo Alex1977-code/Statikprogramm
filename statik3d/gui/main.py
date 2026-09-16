@@ -51,6 +51,8 @@ from .. import ks
 from . import viewport as vp
 from . import design as dsg
 from . import layer as lyr
+from . import skizze as skg
+from .. import skizze as sk
 from .. import spannungen as spn
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 
@@ -3460,6 +3462,33 @@ class MainWindow(QtWidgets.QMainWindow):
                                    "F5", "Alle Lastfälle und Kombinationen rechnen",
                                    rolle="start")
 
+        # -- Unterlagen (16.09.2026, "analog InfoCAD"): Dateien, Ansichten, Skizzen
+        r = rb.register("Unterlagen")
+        g = r.gruppe("Dateien")
+        g.gross("Datei hinzufügen…", "▤", lambda: self.unterlage_datei_einfuegen(),
+                hinweis="PDF, Bild, Word, Excel oder eine andere Datei zum Modell nehmen - "
+                        "sie wird mit dem Modell gespeichert")
+        g.klein("Unterlage öffnen", lambda: self.unterlage_oeffnen(),
+                hinweis="Die gewählte Unterlage mit dem Programm des Systems öffnen")
+        g.klein("Entfernen", lambda: self.unterlage_loeschen(),
+                hinweis="Die gewählte Unterlage aus dem Modell nehmen")
+        g = r.gruppe("Ansichten")
+        g.gross("Ansicht aufnehmen", "⎘", self.unterlage_ansicht,
+                hinweis="Die 3D-Ansicht, wie sie gerade steht, als Bild zu den Unterlagen")
+        g.klein("Skizze aus Ansicht", lambda: self.unterlage_skizze_neu(mit_ansicht=True),
+                hinweis="Eine neue Skizze mit der Ansicht als Hintergrund - zum Bemaßen und Beschriften")
+        g = r.gruppe("Skizze")
+        g.gross("Neue Skizze", "✎", lambda: self.unterlage_skizze_neu(),
+                hinweis="Ein leeres Blatt: Linien, Kreise, Bögen, Maße und Text wie im CAD")
+        g.klein("Bearbeiten", lambda: self.unterlage_bearbeiten(),
+                hinweis="Die gewählte Skizze im Zeichenfenster öffnen (eine Datei: öffnen)")
+        g = r.gruppe("Bericht")
+        g.gross("In den Bericht", "≡", lambda: self.unterlage_in_bericht(),
+                hinweis="Die gewählte Unterlage als Eintrag in den Bericht - Skizzen und Bilder als "
+                        "Abbildung, Dateien wie eingefügte Dateien")
+        g.klein("Unterlagen zeigen", lambda: self.tabelle_zeigen("Unterlagen"),
+                hinweis="Die Tabelle „Unterlagen“ unten zeigen")
+
         # -- Geometrie ---------------------------------------------------
         r = rb.register("Geometrie")
         g = r.gruppe("Knoten")
@@ -4362,6 +4391,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "geokoerper": "Volumenkörper",
                     "geokoerper_einzeln": "Volumenkörper",
                     "berichtseintrag": "Bericht", "bericht": "Bericht",
+                    "unterlage": "Unterlagen", "unterlagen": "Unterlagen",
                     "kontaktbedingungen": "Kontaktbedingungen",
                     "kontaktbedingung": "Kontaktbedingungen",
                     "anschluesse": "Anschlüsse", "anschluss": "Anschlüsse",
@@ -4401,6 +4431,7 @@ class MainWindow(QtWidgets.QMainWindow):
     #: Zweige und Eintraege fuer Subsysteme und Situationen
     SYSTEM_ARTEN = {"subsysteme", "subsystem", "subsystem_neu",
                     "layerliste", "layer", "layer_neu",
+                    "unterlagen", "unterlage", "unterlage_neu",
                     "bemassungen", "bemassung", "bemassung_neu",
                     "situationen", "situation", "situation_neu",
                     "generierer", "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
@@ -7246,6 +7277,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.subsystem_neu()
         if zweigart == "layerliste":
             return self.layer_aus_auswahl()
+        if zweigart == "unterlagen":
+            return self.unterlage_skizze_neu()
         if zweigart == "situationen":
             return self.situation_neu()
         if zweigart == "generierer":
@@ -7306,6 +7339,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.maske_wind()
         if art == "wind":
             return self.maske_wind(name)
+        if art == "unterlagen":
+            return self.tabelle_zeigen("Unterlagen")
+        if art == "unterlage_neu":
+            return self.unterlage_skizze_neu()
+        if art == "unterlage":
+            self.tabelle_zeigen("Unterlagen")
+            liste = [u.name for u in self._unterlagen_liste()]
+            if name in liste:
+                self.tbl_unterlagen.markieren([str(liste.index(name))])
+            return None
         if art == "layerliste":
             return self.layerliste_zeigen()
         if art == "layer_neu":
@@ -7651,6 +7694,7 @@ class MainWindow(QtWidgets.QMainWindow):
                "berichtseintrag": f"Berichtsbild {int(name) + 1 if name.isdigit() else name}",
                "subsystem": f"Subsystem {name}", "situation": f"Situation {name}",
                "layer": f"Layer {name} (die Objekte bleiben)",
+               "unterlage": f"Unterlage {name} (samt ihren Einträgen im Bericht)",
                "wasserdruck": f"Wasserdruck {name} samt seinen Lasten",
                "wind": f"Wind {name} samt seinen Lasten",
                "schweissnaht": f"Schweißnaht {name}",
@@ -7793,6 +7837,14 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.merken(f"{was} gelöscht")
                 del m.subsysteme[name]
+        elif art == "unterlage":
+            if name not in m.unterlagen:
+                grund = f"Unterlage {name} gibt es nicht"
+            else:
+                self.merken(f"{was} gelöscht")
+                del m.unterlagen[name]
+                m.bericht[:] = [e for e in m.bericht
+                                if not (getattr(e, "art", "") == "unterlage" and e.datei == name)]
         elif art == "layer":
             if name not in m.layer:
                 grund = f"Layer {name} gibt es nicht"
@@ -8056,6 +8108,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self._subsystem_zeigen(name)
             if art == "layer":
                 return self.layerliste_zeigen()
+            if art == "unterlage":
+                return self.unterlage_bearbeiten(name)
             if art == "situation":
                 return self._situation_zeigen(name)
             if art == "stab":
@@ -9487,6 +9541,29 @@ class MainWindow(QtWidgets.QMainWindow):
         bb7.clicked.connect(lambda: self.berichtsdatei_einfuegen())
         tabs.addTab(self._eingabetabelle(self.tbl_bericht, bb1, bb5, bb6, bb7, bb2, bb3, bb4),
                     "Bericht")
+        # Unterlagen (16.09.2026): Dateien, Ansichten und Skizzen zum Modell
+        self.tbl_unterlagen = tab.Datentabelle([
+            Spalte("Nr", "", "ganz"), Spalte("Name", "", "text", 3, True), Spalte("Art"), Spalte("Typ"),
+            Spalte("Größe", "kB", "zahl", 0), Spalte("Inhalt"),
+            Spalte("Beschriftung", "", "text", 3, True), Spalte("Bemerkung", "", "text", 3, True),
+            Spalte("Im Bericht", "", "ganz")],
+            "Unterlagen", self)
+        self.tbl_unterlagen.modell.aendern = self._unterlage_aendern
+        self.tbl_unterlagen.view.doubleClicked.connect(lambda _i: self.unterlage_bearbeiten())
+        bu = []
+        for text, fn, tip in (
+                ("Datei…", lambda: self.unterlage_datei_einfuegen(), "PDF, Bild, Word, Excel … zum Modell nehmen"),
+                ("Ansicht", self.unterlage_ansicht, "Die 3D-Ansicht als Bild aufnehmen"),
+                ("Skizze", lambda: self.unterlage_skizze_neu(), "Neue Skizze zeichnen"),
+                ("Bearbeiten", lambda: self.unterlage_bearbeiten(), "Skizze zeichnen bzw. Datei öffnen"),
+                ("In den Bericht", lambda: self.unterlage_in_bericht(), "Als Eintrag in den Bericht"),
+                ("Öffnen", lambda: self.unterlage_oeffnen(), "Mit dem Programm des Systems öffnen"),
+                ("Löschen", lambda: self.unterlage_loeschen(), "Aus dem Modell nehmen")):
+            b = QtWidgets.QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(fn)
+            bu.append(b)
+        tabs.addTab(self._eingabetabelle(self.tbl_unterlagen, *bu), "Unterlagen")
 
         self.tbl_freigabe = tab.Datentabelle([
             Spalte("Kontaktbedingung"), Spalte("Typ"), Spalte("Ort"),
@@ -9691,9 +9768,16 @@ class MainWindow(QtWidgets.QMainWindow):
                    [[i, x.name, x.bezug(), x.beschriftung, x.bemerkung,
                      (len(x.bild or "") + len(getattr(x, "daten", "") or "")) * 3 / 4096,
                      {"bild": "Bild", "text": "Text", "tabelle": "Tabelle",
-                      "datei": "Datei"}.get(getattr(x, "art", "bild") or "bild", "Bild"),
+                      "datei": "Datei", "unterlage": "Unterlage"}.get(getattr(x, "art", "bild") or "bild", "Bild"),
                      getattr(x, "nach", "") or ""]
                     for i, x in enumerate(getattr(m, "bericht", None) or [])])
+        if hasattr(self, "tbl_unterlagen"):
+            self._fill(self.tbl_unterlagen,
+                       [[i, u.name, {"datei": "Datei", "bild": "Bild", "skizze": "Skizze"}.get(u.art, u.art),
+                         u.typ, u.groesse_kb(), u.bezug(), u.beschriftung, u.bemerkung,
+                         sum(1 for e in (getattr(m, "bericht", None) or [])
+                             if getattr(e, "art", "") == "unterlage" and e.datei == u.name)]
+                        for i, u in enumerate(self._unterlagen_liste())])
         self._fill(self.tbl_freigabe,
                    [[name, x.typ, x.ort, len(x.flaechen), len(x.volumen), x.ziele,
                      x.describe(), x.art_der_trennung(m), x.standard or "benutzerdefiniert",
@@ -10615,7 +10699,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ("Ergebnisse", ["Stabkräfte", "Auflagerkräfte", "Umhüllende", "Kontakt", "Kontaktpaare"]),
         ("Nachweise", ["Nachweise EC3", "Knicklängen", "Schwingung", "Ermüdung", "Anschlüsse",
                        "Verformungen", "Beulfelder", "Volumen", "Lasteinleitung"]),
-        ("Bericht", ["Bericht"]),
+        ("Bericht", ["Bericht", "Unterlagen"]),
     ]
 
     # ---- Tab 1: Modell ------------------------------------------------
@@ -18160,6 +18244,262 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sicht_knoepfe()
         self.info("Alles wieder im Bild")
         self.redraw()
+
+    # ---- Unterlagen: Dateien, Ansichten, Skizzen (16.09.2026, analog InfoCAD) ----
+    #: Endungen, die als Bild gelten - im Bericht eine Abbildung
+    BILD_ENDUNGEN = ("png", "jpg", "jpeg", "gif", "bmp", "webp")
+
+    def _unterlagen_liste(self) -> list:
+        """Die Unterlagen in der Reihenfolge der Tabelle (nach Namen)."""
+        return sorted((getattr(self.model, "unterlagen", None) or {}).values(),
+                      key=lambda u: str(u.name).lower())
+
+    def _unterlage_name_frei(self, wunsch: str) -> str:
+        m = self.model
+        name = str(wunsch).strip() or "Unterlage"
+        if name not in m.unterlagen:
+            return name
+        stamm, punkt, endung = name.rpartition(".")
+        k = 2
+        while True:
+            neu = f"{stamm} ({k}).{endung}" if punkt and stamm else f"{name} ({k})"
+            if neu not in m.unterlagen:
+                return neu
+            k += 1
+
+    def _unterlage_gewaehlt(self, name=None):
+        """Die Unterlage aus dem Aufruf oder der markierten Tabellenzeile - sonst None mit Hinweis."""
+        m = self.model
+        if name:
+            u = m.unterlagen.get(name)
+            if u is None:
+                self.error(f"Unterlage {name} gibt es nicht")
+            return u
+        liste = self._unterlagen_liste()
+        i = self._zeilenzahl(self.tbl_unterlagen) if hasattr(self, "tbl_unterlagen") else -1
+        if 0 <= i < len(liste):
+            return liste[i]
+        if len(liste) == 1:
+            return liste[0]
+        self.error("Zuerst eine Unterlage in der Tabelle „Unterlagen“ markieren "
+                   "(Ribbon Unterlagen → Unterlagen zeigen)")
+        return None
+
+    def _unterlage_umbenennen(self, u, neu: str) -> None:
+        m = self.model
+        alt = u.name
+        del m.unterlagen[alt]
+        u.name = neu
+        m.unterlagen[neu] = u
+        for e in (getattr(m, "bericht", None) or []):
+            if getattr(e, "art", "") == "unterlage" and e.datei == alt:
+                e.datei = neu
+                if e.name == alt:
+                    e.name = neu
+
+    def _unterlage_aendern(self, z: int, k: int, wert) -> bool:
+        liste = self._unterlagen_liste()
+        i = int(self.tbl_unterlagen.modell.zeilen[z][0])
+        if not (0 <= i < len(liste)) or k not in (1, 6, 7):
+            return False
+        u = liste[i]
+        if k == 1:
+            neu = str(wert).strip()
+            if not neu or neu == u.name:
+                return False
+            if neu in self.model.unterlagen:
+                self.info(f"Unterlage „{neu}“ gibt es schon")
+                return False
+            self.merken(f"Unterlage {u.name} umbenannt")
+            self._unterlage_umbenennen(u, neu)
+        else:
+            self.merken(f"Unterlage {u.name} bearbeitet")
+            if k == 6:
+                u.beschriftung = str(wert)
+            else:
+                u.bemerkung = str(wert)
+        self._zelle_uebernommen(f"Unterlage {u.name}")
+        return True
+
+    def _ansicht_png(self) -> str:
+        """Die Ansicht, wie sie gerade steht, als PNG (Base64) - oder leer."""
+        import base64
+        import tempfile
+        import os as _os
+        try:
+            fd, tmp = tempfile.mkstemp(suffix=".png")
+            _os.close(fd)
+            self.plotter.screenshot(tmp)
+            with open(tmp, "rb") as fh:
+                bild = base64.b64encode(fh.read()).decode("ascii")
+            _os.unlink(tmp)
+            return bild
+        except Exception as ex:      # noqa: BLE001
+            self.error(f"Die Ansicht ließ sich nicht aufnehmen: {ex}")
+            return ""
+
+    def unterlage_datei_einfuegen(self, pfad: str = None):
+        """Ribbon Unterlagen -> Datei einfuegen: PDF, Bild, Word, Excel oder
+        eine andere Datei mit dem Modell speichern."""
+        import base64
+        from ..model import Unterlage
+        if pfad is None:
+            pfad, _f = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Unterlage zum Modell nehmen", "",
+                "Alle Dateien (*);;PDF (*.pdf);;Bilder (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;"
+                "Word (*.docx *.doc);;Excel (*.xlsx *.xlsm *.csv)")
+        if not pfad:
+            return None
+        try:
+            with open(pfad, "rb") as fh:
+                roh = fh.read()
+        except OSError as ex:
+            return self.error(f"Datei nicht lesbar: {ex}")
+        if len(roh) > 30_000_000:
+            return self.error("Die Datei ist größer als 30 MB - so viel gehört nicht in die Modelldatei")
+        typ = os.path.splitext(pfad)[1].lower().lstrip(".")
+        name = self._unterlage_name_frei(os.path.basename(pfad))
+        u = Unterlage(name, art="bild" if typ in self.BILD_ENDUNGEN else "datei",
+                      datei=os.path.basename(pfad), typ=typ, daten=base64.b64encode(roh).decode("ascii"))
+        self.merken(f"Unterlage {name}")
+        self.model.unterlagen[name] = u
+        self.refresh_all()
+        self.tabelle_zeigen("Unterlagen")
+        self.info(f"„{name}“ zu den Unterlagen genommen ({u.bezug()})"
+                  + (" - im Bericht wird eine PDF- oder Word-Datei genannt, nicht eingebettet"
+                     if typ in ("pdf", "docx", "doc") else ""))
+        return u
+
+    def unterlage_ansicht(self):
+        """Ribbon Unterlagen -> Ansicht uebernehmen: die 3D-Ansicht als Bild."""
+        from ..model import Unterlage
+        png = self._ansicht_png()
+        if not png:
+            return None
+        n = sum(1 for u in self.model.unterlagen.values() if u.art == "bild" and str(u.name).startswith("Ansicht "))
+        name = self._unterlage_name_frei(f"Ansicht {n + 1}")
+        u = Unterlage(name, art="bild", datei=name + ".png", typ="png", daten=png,
+                      beschriftung=self.cb_result.currentText() if self.cb_result.count() else "")
+        self.merken(f"Unterlage {name}")
+        self.model.unterlagen[name] = u
+        self.refresh_all()
+        self.tabelle_zeigen("Unterlagen")
+        self.info(f"„{name}“ zu den Unterlagen genommen - „In den Bericht“ nimmt sie als Abbildung auf")
+        return u
+
+    def unterlage_skizze_neu(self, mit_ansicht: bool = False, name: str = ""):
+        """Ribbon Unterlagen -> Neue Skizze / Skizze aus Ansicht: das Zeichenfenster."""
+        import base64
+        from ..model import Unterlage
+        m = self.model
+        n = sum(1 for u in m.unterlagen.values() if u.art == "skizze")
+        name = self._unterlage_name_frei(name or f"Skizze {n + 1}")
+        u = Unterlage(name, art="skizze", typ="skizze", skizze=sk.neu())
+        if mit_ansicht:
+            png = self._ansicht_png()
+            if png:
+                u.daten = png
+                bild = QtGui.QImage.fromData(base64.b64decode(png))
+                if bild.width() > 0 and bild.height() > 0:
+                    b = float(u.skizze["breite"])
+                    h = float(round(b * bild.height() / bild.width()))
+                    u.skizze["hoehe"] = h
+                    u.skizze["bild"] = {"x": 0.0, "y": 0.0, "breite": b, "hoehe": h}
+        return self._skizze_oeffnen(u)
+
+    def _skizze_oeffnen(self, u):
+        f = skg.SkizzenFenster(self, u, ansicht_png=self._ansicht_png)
+        f.angewendet.connect(self._skizze_uebernehmen)
+        self._skizzen_fenster = f
+        f.show()
+        f.raise_()
+        return f
+
+    def _skizze_uebernehmen(self, d: dict) -> None:
+        """Uebernehmen/OK im Zeichenfenster: die Skizze ins Modell."""
+        from ..model import Unterlage
+        m = self.model
+        name, alt = str(d.get("name", "")).strip() or "Skizze", str(d.get("name_alt", "") or "")
+        u = m.unterlagen.get(alt) if alt else None
+        self.merken(f"Skizze {name}")
+        if u is None:
+            u = m.unterlagen.get(name)
+            if u is None:
+                u = Unterlage(name, art="skizze", typ="skizze")
+                m.unterlagen[name] = u
+        elif u.name != name:
+            if name in m.unterlagen:
+                self.error(f"Unterlage „{name}“ gibt es schon - der Name bleibt „{u.name}“")
+            else:
+                self._unterlage_umbenennen(u, name)
+        u.art, u.typ = "skizze", "skizze"
+        u.skizze = sk.pruefen(d.get("skizze") or {})
+        u.daten = str(d.get("daten", "") or "")
+        u.beschriftung = str(d.get("beschriftung", "") or "")
+        self.refresh_all()
+        self.tabelle_zeigen("Unterlagen")
+        self.info(f"Skizze „{u.name}“ übernommen: {sk.beschreibung(u.skizze)}")
+
+    def unterlage_bearbeiten(self, name: str = None):
+        """Skizze zeichnen, Datei oder Bild oeffnen."""
+        u = self._unterlage_gewaehlt(name)
+        if u is None:
+            return None
+        if u.art == "skizze":
+            return self._skizze_oeffnen(u)
+        return self.unterlage_oeffnen(u.name)
+
+    def unterlage_oeffnen(self, name: str = None):
+        """Die Unterlage mit dem Programm des Systems oeffnen (PDF-Betrachter, Word, ...)."""
+        import base64
+        import tempfile
+        u = self._unterlage_gewaehlt(name)
+        if u is None:
+            return None
+        if u.art == "skizze":
+            return self._skizze_oeffnen(u)
+        ordner = tempfile.mkdtemp(prefix="statik3d_unterlage_")
+        pfad = os.path.join(ordner, u.datei or f"{u.name}.{u.typ or 'bin'}")
+        try:
+            with open(pfad, "wb") as fh:
+                fh.write(base64.b64decode(u.daten or ""))
+        except (OSError, ValueError) as ex:
+            return self.error(f"Unterlage lässt sich nicht ablegen: {ex}")
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(pfad))
+        self.info(f"„{u.name}“ geöffnet ({pfad})")
+        return pfad
+
+    def unterlage_loeschen(self, name: str = None):
+        u = self._unterlage_gewaehlt(name)
+        if u is None:
+            return None
+        if not self._fragen_knoepfe("Unterlage entfernen",
+                                    f"„{u.name}“ aus dem Modell nehmen? Einträge im Bericht, "
+                                    "die sie zeigen, werden mit entfernt.", "Entfernen", "Abbrechen"):
+            return None
+        m = self.model
+        self.merken(f"Unterlage {u.name} entfernt")
+        del m.unterlagen[u.name]
+        m.bericht[:] = [e for e in m.bericht if not (getattr(e, "art", "") == "unterlage" and e.datei == u.name)]
+        self.refresh_all()
+        self.info(f"„{u.name}“ entfernt")
+        return True
+
+    def unterlage_in_bericht(self, name: str = None, nach: str = ""):
+        """Die Unterlage als Eintrag in den Bericht (Skizze und Bild als Abbildung)."""
+        from ..model import Berichtseintrag
+        u = self._unterlage_gewaehlt(name)
+        if u is None:
+            return None
+        e = Berichtseintrag(name=u.name, art="unterlage", datei=u.name, typ=u.typ,
+                            beschriftung=u.beschriftung or u.bezug(), bemerkung=u.bemerkung, nach=nach or "")
+        self.merken(f"Unterlage {u.name} in den Bericht")
+        self.model.bericht.append(e)
+        self.refresh_all()
+        self.tabelle_zeigen("Bericht")
+        self.info(f"„{u.name}“ in den Bericht eingefügt"
+                  + (" - als Anlage genannt, nicht eingebettet" if u.typ in ("pdf", "docx", "doc") else ""))
+        return e
 
     # ---- Layer: benannte Objektgruppen (RFEM: Objektselektionen) ---------
     #: Auswahlart -> Art im Layer

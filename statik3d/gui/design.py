@@ -414,7 +414,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
     #: Zweige, unter denen sich per Rechtsklick ein neues Objekt anlegen laesst
     NEU_ARTEN = {"querschnitte": "Querschnitt", "subsysteme": "Subsystem",
                  "situationen": "Situation", "generierer": "Wasserdruck",
-                 "layerliste": "Layer aus Auswahl",
+                 "layerliste": "Layer aus Auswahl", "unterlagen": "Skizze",
                  "knoten": "Knoten", "linien": "Linie", "stabelemente": "Stab",
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
@@ -425,7 +425,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
-                    "geokoerper_einzeln", "subsystem", "layer", "situation", "wasserdruck", "wind",
+                    "geokoerper_einzeln", "subsystem", "layer", "unterlage", "situation", "wasserdruck", "wind",
                     "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke",
                     "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
                     "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"}
@@ -434,7 +434,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "stab": "staebe", "geoflaeche": "geoflaechen",
                  "geokoerper_einzeln": "geokoerper", "querschnitt": "querschnitte",
                  "subsystem": "subsysteme", "situation": "situationen",
-                 "layer": "layerliste",
+                 "layer": "layerliste", "unterlage": "unterlagen",
                  "wasserdruck": "generierer", "wind": "generierer",
                  "schweissnaht": "schweissnaehte", "bemassung": "bemassungen",
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
@@ -1046,6 +1046,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     "bericht", sortieren=False)
         self._zweig(bz, "+ Ansicht übernehmen", "", "bericht_neu",
                     farbe=FARBEN["akzent"])
+
+        # ---- Unterlagen: Dateien, Ansichten, Skizzen (16.09.2026) ------------
+        unt = getattr(model, "unterlagen", {}) or {}
+        uz = self._zweig(wurzel, "Unterlagen", len(unt), "unterlagen", fett=bool(unt),
+                         farbe=FARBEN["akzent"] if unt else None,
+                         hinweis="Dateien (PDF, Bilder, Word, Excel), übernommene Ansichten und Skizzen "
+                                 "zum Modell - mit dem Modell gespeichert, auf Wunsch im Bericht. "
+                                 "Doppelklick öffnet; Rechtsklick: Neu (Skizze), Löschen.")
+        self._liste(uz, [(name, x.bezug(), name,
+                          f"{name}: {x.bezug()}" + (f"\n{x.beschriftung}" if x.beschriftung else ""))
+                         for name, x in unt.items()], "unterlage", "unterlagen")
+        self._zweig(uz, "+ Skizze anlegen", "", "unterlage_neu", farbe=FARBEN["akzent"])
 
         # ---- Subsysteme, Stellungen, Situationen ---------------------------
         # Das Gesamtsystem und die Grundstellung sind immer da; alles weitere

@@ -84,6 +84,7 @@ Vierzehn Register nach Arbeitsschritt:
 |---|---|
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, Übernehmen aus fremden Formaten, Exportieren, Beispiele |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
+| **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | Knoten, Linien, **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang (auch „Lot“) |
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, verschneiden, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
@@ -1179,6 +1180,37 @@ während des Drehens, Schiebens und Zoomens die Nebendarsteller
 (Knotenpunkte, Linien, Nummern, Lasten) und die Netzkanten weg und kommen
 beim Loslassen der Maus wieder — das Bild bleibt dadurch flüssig.
 Volumennetze werden nur mit ihrer Oberfläche gezeichnet.
+
+**Unterlagen — Dateien, Ansichten und Skizzen zum Modell** (16.09.2026, analog
+InfoCAD). Das Ribbon *Unterlagen* zwischen *Start* und *Geometrie* sammelt, was
+zum Modell gehört, aber kein Tragwerk ist: *Datei hinzufügen* nimmt PDF, Bilder,
+Word- und Excel-Dateien (oder jede andere) in die Modelldatei auf, *Ansicht
+aufnehmen* das Bild der 3D-Ansicht, wie sie gerade steht, *Neue Skizze* öffnet
+ein Blatt zum Zeichnen. Alles steht in der Tabelle *Unterlagen* (unten, Gruppe
+*Bericht*) und im Modellbaum unter *Unterlagen*; Name, Beschriftung und
+Bemerkung sind dort in der Zelle änderbar, Doppelklick öffnet (Skizzen im
+Zeichenfenster, Dateien im Programm des Systems).
+
+* **Skizze**: ein Blatt (Vorgabe A4 quer, Maße in mm) mit den Werkzeugen
+  *Auswählen*, *Linie* (Anfang, Ende; die nächste hängt an, rechte Taste
+  beendet), *Kreis* (Mittelpunkt, Punkt auf dem Kreis), *Bogen* (Anfang, Ende,
+  Punkt auf dem Bogen), *Maß* (zwei Punkte, dann die Lage der Maßlinie) und
+  *Text*. Der **Fang** rastet an Enden, Mitten, Mittelpunkten und Quadranten
+  ein, sonst greift das **Raster** (Schritt einstellbar). Das Rad zoomt zum
+  Zeiger, die mittlere Taste schiebt, Entf löscht das gewählte Element,
+  Strg+Z nimmt den letzten Schritt zurück. **Maßstab** (1 mm auf dem Blatt =
+  x mm am Bauteil) und **Einheit** (mm, cm, m) bestimmen die Maßzahlen; sie
+  werden aus der gezeichneten Länge gerechnet, ein eigener Text geht vor.
+* **Skizze aus Ansicht** (und im Zeichenfenster *Ansicht* /
+  *Bild…*) legt die 3D-Ansicht oder ein Bild hinter das Blatt — das Blatt
+  nimmt das Seitenverhältnis des Bildes an —, damit sich eine Darstellung
+  bemaßen und beschriften lässt.
+* **In den Bericht** macht aus der Unterlage einen Berichtseintrag (Tabelle
+  *Bericht*, Kapitel wählbar wie bei jedem Eintrag): Skizzen und Bilder als
+  Abbildung mit Bildunterschrift, Dateien wie eingefügte Dateien (Bilder, SVG,
+  CSV, XLSX, Markdown/Text werden übernommen; PDF und Word werden genannt und
+  sind als Anlage beizulegen). Der Eintrag zeigt immer den letzten Stand der
+  Skizze. *Entfernen* nimmt die Unterlage samt ihren Berichtseinträgen weg.
 
 **Layer — Objektgruppen wie die Objektselektionen in RFEM** (16.09.2026).
 Ein Layer ist eine benannte Gruppe von Knoten, Linien, Stäben, Flächen und
