@@ -141,10 +141,13 @@ def test_zusammengesetzt():
     check("2 U-Profile Kasten: A", dc.A, 2 * u.A, 1e-12, "m2")
     check("2 U-Profile Kasten: Iy", dc.Iy, 2 * u.Iy, 1e-9, "m4")
 
-    # Drehung: ein um 90 Grad gedrehtes Profil vertauscht Iy und Iz
+    # Drehung: ein um 90 Grad gedrehtes Profil vertauscht Iy und Iz - seit dem
+    # 16.09.2026 heisst die Hauptachse naeher an y auch y (vorher: der groessere
+    # Hauptwert hiess Iy, und das gedrehte Profil galt als um 90 Grad gedreht)
     rot = S.build("IPE 300 gedreht", [("IPE 300", 0, 0, 90)])
-    check("Drehung 90 Grad vertauscht Iy/Iz", rot.Iy, one.Iy, 1e-12, "m4")
-    check("Drehung 90 Grad: I2", rot.Iz, one.Iz, 1e-12, "m4")
+    check("Drehung 90 Grad vertauscht Iy/Iz: Iy = Iz(IPE)", rot.Iy, one.Iz, 1e-12, "m4")
+    check("Drehung 90 Grad: Iz = Iy(IPE)", rot.Iz, one.Iy, 1e-12, "m4")
+    check("Drehung 90 Grad: Hauptachsen ungedreht (alpha = 0)", abs(rot.alpha), 0.0, 1e-12, "rad")
 
 
 def test_querschnitt_im_modell():

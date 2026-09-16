@@ -1796,10 +1796,17 @@ Querschnittsmaske. Sie hat drei Teile, von oben nach unten:
    ungleichschenklig) —, dann Reihe und Profil. Das Bild und die Kennwerte
    (A, Iy, Iz, It, Wel, Wpl) laufen mit; **Anlegen** nimmt das Profil ins
    Modell. Der Name ist die Profilbezeichnung, wenn das Namensfeld leer bleibt.
-2. **Eigene Profile** mit Parametern in mm: Rechteck, Kreis, Rundrohr,
-   Rechteckrohr, geschweißtes Doppel-T, U, T, Winkel, Kasten aus Blechen —
-   oder *frei* nach Steifigkeiten (A, Iy, Iz, It). Auch hier Bild und
-   Kennwerte, dann **Anlegen**.
+2. **Eigene Profile** mit Parametern in mm, wie die Parameterprofile in
+   RFEM (16.09.2026): Rechteck, Kreis, Rundrohr, Rechteckrohr, geschweißtes
+   Doppel-T, U, T, Winkel, Kasten aus Blechen, **Doppel-T unsymmetrisch**
+   (h, b_o, t_o, b_u, t_u, tw), **Z**, **Hut**, **Kreuz**, **Ellipse**,
+   **Halbkreis**, **Trapez**, **Dreieck**, **Sechskant** (Schlüsselweite) —
+   oder *frei* nach Steifigkeiten (A, Iy, Iz, It). Die neuen Formen werden
+   als Polygon gerechnet: Fläche, Schwerpunkt, Trägheitsmomente und
+   Hauptachsen exakt, Wel und **Wpl** aus der plastischen Nulllinie, It bei
+   dünnwandigen offenen Formen Σ b·t³/3, bei der Ellipse geschlossen, sonst
+   nach Saint-Venant (Näherung). Auch hier Bild und Kennwerte, dann
+   **Anlegen**.
 3. **Profil frei erstellen …** öffnet den Editor. Dort setzt man ein Profil aus
    drei Dingen zusammen:
    * **Standardprofile** (aus der Datenbank oder ein Querschnitt des Modells)
@@ -1819,6 +1826,30 @@ Querschnittsmaske. Sie hat drei Teile, von oben nach unten:
    offene Wert Σ L·t³/3, bei Flächen die Näherung nach Saint-Venant (siehe
    Theoriehandbuch 1.4); wer It genauer kennt, trägt ihn in der Tabelle
    „Querschnitte“ ein.
+4. **Kontur zeichnen …** öffnet das Zeichenfenster der Skizzen (Register
+   Unterlagen) für einen Querschnitt, wie der Querschnittsgenerator in
+   InfoCAD: Linien, Bögen und Kreise in mm, Raster und Fang, wahlweise ein
+   Bild (eine Zeichnung) als Hintergrund und ein Maßstab (1 Blatt-mm =
+   n mm). Jede geschlossene Schleife ist Material, eine Schleife innerhalb
+   einer anderen ein **Loch**, eine Schleife in einem Loch wieder Material;
+   Bögen werden alle 5° abgetastet, Kreise mit 72 Ecken. Querschnittsachsen:
+   y nach rechts, z nach oben (die Blattachse zeigt nach unten, das Programm
+   dreht um). **Übernehmen** oder **OK** rechnet das Polygon (Fläche,
+   Schwerpunkt, Trägheits- und Widerstandsmomente, Wpl exakt, Hauptachsen)
+   und legt den Querschnitt an; die erste Kennwertzeile steht im Fenster.
+   Bleibt eine Kontur offen, nennt das Fenster die offenen Enden in mm statt
+   ein falsches Polygon zu rechnen. Die Kontur reist mit dem Querschnitt:
+   die Aufklappliste neben dem Knopf öffnet eine gezeichnete Kontur des
+   Modells wieder, und Übernehmen ersetzt den Querschnitt; Stäbe und
+   Elemente behalten ihren Bezug.
+
+**Hauptachsen.** Iy und Iz sind die Hauptwerte; die Hauptachse, die der
+Bezugsachse y (waagerecht, wie gezeichnet) näher liegt, heißt y, der
+Hauptachsenwinkel liegt zwischen −45° und +45°, bei Symmetrie ist er 0.
+Bis zum 16.09.2026 hieß der größere Hauptwert Iy, und ein flach liegendes
+Rechteck galt als „um 90° gedreht“ — RFEM und die Stabsteifigkeit rechnen
+mit Iy um die waagerechte Achse, so wie es gezeichnet ist. Ein Profil, das
+im freien Editor um 90° gedreht wird, tauscht deshalb Iy und Iz.
 
 **Löschen**: ein Querschnitt, den kein Element und kein Stab mehr benutzt,
 geht per Rechtsklick → *Löschen* oder Entf aus dem Modellbaum; ein benutzter

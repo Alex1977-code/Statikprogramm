@@ -91,9 +91,7 @@ def build(name: str, parts: list, fabrication: str = "welded") -> Section:
         Iw += iw + iz * ez ** 2
         zmax = max(zmax, abs(ez) + zr)
         ymax = max(ymax, abs(ey) + yr)
-    m, d2 = (Iy + Iz) / 2.0, math.hypot((Iy - Iz) / 2.0, Iyz)
-    I1, I2 = m + d2, m - d2
-    alpha = 0.5 * math.atan2(2 * Iyz, Iy - Iz) if abs(Iyz) > 1e-18 * max(Iy, 1e-18) else 0.0
+    I1, I2, alpha = _hauptwerte(Iy, Iz, Iyz)
     Wpl_y = sum(d[0].Wpl_y + d[0].A * abs(d[2] - zc) for d in data)
     Wpl_z = sum(d[0].Wpl_z + d[0].A * abs(d[1] - yc) for d in data)
     sec = Section(name, A=A, Iy=I1, Iz=I2, It=It,
@@ -116,9 +114,21 @@ def build(name: str, parts: list, fabrication: str = "welded") -> Section:
 # Freie Profile: Blechstreifen (Elemente) und Polygone (Flaechen) aus Knoten
 # --------------------------------------------------------------------------
 def _hauptwerte(Iy, Iz, Iyz):
+    """(Iy, Iz, alpha) in Hauptachsen. Die Hauptachse, die der Bezugsachse y
+    naeher liegt, heisst y (|alpha| <= 45 Grad); ohne Deviationsmoment
+    bleibt alles, wie es ist (alpha = 0). Frueher hiess der groessere
+    Hauptwert Iy und ein flach liegendes Rechteck bekam „Hauptachsen um 90
+    Grad gedreht" - RFEM und der Anwender nennen Iy die Biegung um die
+    waagerechte Achse, so wie gezeichnet."""
+    if abs(Iyz) <= 1e-12 * max(abs(Iy), abs(Iz), 1e-18):
+        return float(Iy), float(Iz), 0.0
     m, d2 = (Iy + Iz) / 2.0, math.hypot((Iy - Iz) / 2.0, Iyz)
-    alpha = 0.5 * math.atan2(2 * Iyz, Iy - Iz) if abs(Iyz) > 1e-18 * max(Iy, Iz, 1e-18) else 0.0
-    return m + d2, m - d2, alpha
+    alpha = 0.5 * math.atan2(2 * Iyz, Iy - Iz)
+    I1, I2 = m + d2, m - d2
+    if abs(alpha) > math.pi / 4:
+        I1, I2 = I2, I1
+        alpha -= math.copysign(math.pi / 2, alpha)
+    return I1, I2, alpha
 
 
 def segment(name: str, p1, p2, t: float) -> Section:
@@ -224,15 +234,102 @@ def polygon(name: str, points, holes=()) -> Section:
     Iy_g, Iz_g, Iyz_c = Iyy - A * zc ** 2, Izz - A * yc ** 2, Iyz - A * yc * zc
     I1, I2, alpha = _hauptwerte(Iy_g, Iz_g, Iyz_c)
     P = np.atleast_2d(np.asarray(points, float))
-    zmax = float(np.max(np.abs(P[:, 1] - zc)))
-    ymax = float(np.max(np.abs(P[:, 0] - yc)))
+    # Randabstaende und plastische Widerstandsmomente in den **Hauptachsen**:
+    # bei einem gedrehten Profil (Winkel, schiefes Polygon) gehoert Wel = I1 /
+    # zmax zum Hauptachsenabstand, nicht zum Abstand in Blattrichtung.
+    Pq, Hq = _hauptkoordinaten(P, [np.asarray(H, float) for H in holes], yc, zc, alpha, I1)
+    zmax = float(np.max(np.abs(Pq[:, 1])))
+    ymax = float(np.max(np.abs(Pq[:, 0])))
+    Wpl_y = _wpl(Pq, Hq, 1)
+    Wpl_z = _wpl(Pq, Hq, 0)
     return Section(name, A=A, Iy=I1, Iz=I2, It=max(It, 0.0),
                    Asy=5.0 / 6.0 * A, Asz=5.0 / 6.0 * A, zmax=zmax, ymax=ymax,
                    typ="poly", h=float(np.ptp(P[:, 1])), b=float(np.ptp(P[:, 0])),
-                   fabrication="welded",
+                   fabrication="welded", Wpl_y=Wpl_y, Wpl_z=Wpl_z,
                    yc=yc, zc=zc, alpha=alpha, Iy_geo=Iy_g, Iz_geo=Iz_g, Iyz_geo=Iyz_c,
                    parts=[{"polygon": P.tolist(),
                            "loecher": [np.asarray(H, float).tolist() for H in holes]}])
+
+
+def _hauptkoordinaten(P, holes, yc, zc, alpha, I1):
+    """Polygon und Loecher in Hauptachsen um den Schwerpunkt. Die Drehrichtung
+    wird nicht geraten: von den beiden Kandidaten ±alpha nimmt die Funktion
+    den, bei dem Iyz verschwindet und Iy dem groesseren Hauptwert I1 gleicht."""
+    P = np.asarray(P, float) - [yc, zc]
+    holes = [np.asarray(H, float) - [yc, zc] for H in holes]
+    if abs(alpha) < 1e-12:
+        return P, holes
+    beste = None
+    for a in (alpha, -alpha):
+        c, s = math.cos(a), math.sin(a)
+        R = np.array([[c, s], [-s, c]])
+        Q = P @ R.T
+        A_, Sy_, Sz_, Iyy_, Izz_, Iyz_ = _polygon_momente(Q)
+        for H in holes:
+            Ah, Syh, Szh, Iyyh, Izzh, Iyzh = _polygon_momente(H @ R.T)
+            A_, Iyy_, Iyz_ = A_ - Ah, Iyy_ - Iyyh, Iyz_ - Iyzh
+        fehler = abs(Iyz_) + abs(Iyy_ - I1)
+        if beste is None or fehler < beste[0]:
+            beste = (fehler, R)
+    R = beste[1]
+    return P @ R.T, [H @ R.T for H in holes]
+
+
+def _halbebene(P, w0: float, achse: int, oben: bool) -> list:
+    """Der Teil des Polygons mit Koordinate[achse] >= w0 (oben) bzw. <= w0
+    (Sutherland-Hodgman an einer Geraden)."""
+    out = []
+    n = len(P)
+    for i in range(n):
+        a, b = P[i], P[(i + 1) % n]
+        ia = (a[achse] >= w0) if oben else (a[achse] <= w0)
+        ib = (b[achse] >= w0) if oben else (b[achse] <= w0)
+        if ia:
+            out.append((float(a[0]), float(a[1])))
+        if ia != ib:
+            tt = (w0 - a[achse]) / (b[achse] - a[achse])
+            q = [float(a[0] + tt * (b[0] - a[0])), float(a[1] + tt * (b[1] - a[1]))]
+            q[achse] = float(w0)
+            out.append((q[0], q[1]))
+    return out
+
+
+def _wpl(P, holes, achse: int) -> float:
+    """Plastisches Widerstandsmoment eines Polygons (mit Loechern) fuer die
+    Biegung um die Achse senkrecht zur Koordinate ``achse`` (1: um y, die
+    z-Koordinate zaehlt; 0: um z). Die plastische Nulllinie halbiert die
+    Flaeche - gesucht durch Halbieren des Intervalls -, Wpl ist die Summe
+    der Flaechenmomente beider Haelften um diese Linie. Exakt fuer Polygone;
+    Rechteck b·h: b·h²/4."""
+    P = np.asarray(P, float)
+    holes = [np.asarray(H, float) for H in holes]
+
+    def teil(w0, oben):
+        A_ = S_ = 0.0
+        for Q, vz in [(P, 1.0)] + [(H, -1.0) for H in holes]:
+            Q2 = _halbebene(Q, w0, achse, oben)
+            if len(Q2) >= 3:
+                a, Sy, Sz, *_r = _polygon_momente(Q2)
+                A_ += vz * a
+                S_ += vz * (Sy if achse == 1 else Sz)
+        return A_, S_
+
+    A = teil(-np.inf, True)[0]
+    if A <= 0:
+        return 0.0
+    lo, hi = float(P[:, achse].min()), float(P[:, achse].max())
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        if teil(mid, True)[0] > 0.5 * A:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo <= 1e-12 * max(abs(hi), abs(lo), 1e-9):
+            break
+    w0 = 0.5 * (lo + hi)
+    A_o, S_o = teil(w0, True)
+    A_u, S_u = teil(w0, False)
+    return float((S_o - A_o * w0) + (A_u * w0 - S_u))
 
 
 def _teil(profil, nachschlagen=None) -> Section:
@@ -379,7 +476,9 @@ def umriss(sec: Section, nachschlagen=None) -> list:
         ny, nz = -(z2 - z1) / L * t / 2, (y2 - y1) / L * t / 2
         out.append((np.array([(y1 - my + ny, z1 - mz + nz), (y2 - my + ny, z2 - mz + nz),
                               (y2 - my - ny, z2 - mz - nz), (y1 - my - ny, z1 - mz - nz)]), False))
-    elif typ == "poly" and sec.parts:
+    elif sec.parts and isinstance(sec.parts[0], dict) and "polygon" in sec.parts[0]:
+        # Polygonquerschnitte: der freie Editor (typ "poly") und die
+        # Parameterprofile aus Massen (I2, Z, Hut, Kreuz, Ellipse, ...)
         P = np.asarray(sec.parts[0]["polygon"], float) - [sec.yc, sec.zc]
         out.append((P, False))
         for H in sec.parts[0].get("loecher", []):
@@ -407,6 +506,249 @@ def umriss(sec: Section, nachschlagen=None) -> list:
         bb = sec.A / hh if hh > 0 else hh
         out.append((np.array([(-bb / 2, -hh / 2), (bb / 2, -hh / 2), (bb / 2, hh / 2), (-bb / 2, hh / 2)]), False))
     return out
+
+
+# --------------------------------------------------------------------------
+# Parameterprofile wie in RFEM (16.09.2026): Vollquerschnitte und duennwandige
+# Profile aus Massen, als Polygon gerechnet
+# --------------------------------------------------------------------------
+def _massiv(name: str, punkte, typ: str, loecher=(), It=None, **masse) -> Section:
+    """Ein Vollquerschnitt aus seiner Kontur: Polygon (exakt), typ und Masse
+    fuer Bild und Beschreibung; ``It`` ueberschreibt die Saint-Venant-Naeherung
+    (duennwandig offen: Σ L·t³/3, Ellipse: geschlossen)."""
+    s = polygon(name, punkte, loecher)
+    s.typ = typ
+    for k, v in masse.items():
+        setattr(s, k, float(v))
+    if It is not None:
+        s.It = float(It)
+    return s
+
+
+def i_unsym(name: str, h: float, bo: float, to: float, bu: float, tu: float, tw: float) -> Section:
+    """Doppel-T mit ungleichen Flanschen (RFEM „I unsymmetrisch“): Hoehe h,
+    Obergurt bo x to, Untergurt bu x tu, Steg tw. Schwerpunkt aus dem Polygon,
+    It duennwandig Σ b·t³/3."""
+    hw = h - to - tu
+    if min(h, bo, to, bu, tu, tw) <= 0 or hw <= 0 or tw > min(bo, bu):
+        raise ValueError("Doppel-T unsymmetrisch: h > to + tu, tw <= bo, bu, alle Masse > 0")
+    P = [(-bu / 2, 0.0), (bu / 2, 0.0), (bu / 2, tu), (tw / 2, tu), (tw / 2, tu + hw),
+         (bo / 2, tu + hw), (bo / 2, h), (-bo / 2, h), (-bo / 2, tu + hw), (-tw / 2, tu + hw),
+         (-tw / 2, tu), (-bu / 2, tu)]
+    s = _massiv(name, P, "I2", It=(bo * to ** 3 + bu * tu ** 3 + hw * tw ** 3) / 3.0,
+                h=h, b=max(bo, bu), tw=tw, tf=to)
+    s.Asz, s.Asy = hw * tw, bo * to + bu * tu
+    return s
+
+
+def z_profil(name: str, h: float, b: float, t: float) -> Section:
+    """Z-Profil aus Blech: Gesamthoehe h, Flanschbreite b (je Seite, ab
+    Stegaussenkante), Dicke t. Punktsymmetrisch: Hauptachsen gedreht."""
+    if min(h, b, t) <= 0 or t >= b or 2 * t >= h:
+        raise ValueError("Z: t < b, 2t < h, alle Masse > 0")
+    P = [(0.0, 0.0), (b, 0.0), (b, t), (t, t), (t, h), (t - b, h), (t - b, h - t),
+         (0.0, h - t)]
+    s = _massiv(name, P, "Z", It=(2 * b * t ** 3 + (h - 2 * t) * t ** 3) / 3.0, h=h, b=b, tw=t, tf=t)
+    s.Asz, s.Asy = (h - 2 * t) * t, 2 * b * t
+    return s
+
+
+def hut(name: str, h: float, b: float, c: float, t: float) -> Section:
+    """Hutprofil (Omega): Steg oben b breit, zwei Schenkel h hoch, unten zwei
+    Lippen c nach aussen, Dicke t."""
+    if min(h, b, c, t) <= 0 or 2 * t >= b or t >= h:
+        raise ValueError("Hut: 2t < b, t < h, alle Masse > 0")
+    P = [(-b / 2 - c, 0.0), (-b / 2, 0.0), (-b / 2, h - t), (b / 2, h - t), (b / 2, 0.0),
+         (b / 2 + c, 0.0), (b / 2 + c, t), (b / 2 + t, t), (b / 2 + t, h), (-b / 2 - t, h),
+         (-b / 2 - t, t), (-b / 2 - c, t)]
+    s = _massiv(name, P, "Hut", It=((b + 2 * t) * t ** 3 + 2 * (h - t) * t ** 3 + 2 * (c - t) * t ** 3) / 3.0,
+                h=h, b=b + 2 * c, tw=t, tf=t)
+    s.Asz, s.Asy = 2 * (h - t) * t, (b + 2 * c) * t
+    return s
+
+
+def kreuz(name: str, h: float, b: float, t: float) -> Section:
+    """Kreuzprofil: senkrechter Steg h x t, waagerechter Steg b x t, mittig."""
+    if min(h, b, t) <= 0 or t >= min(h, b):
+        raise ValueError("Kreuz: t < h, b, alle Masse > 0")
+    P = [(-t / 2, -h / 2), (t / 2, -h / 2), (t / 2, -t / 2), (b / 2, -t / 2), (b / 2, t / 2),
+         (t / 2, t / 2), (t / 2, h / 2), (-t / 2, h / 2), (-t / 2, t / 2), (-b / 2, t / 2),
+         (-b / 2, -t / 2), (-t / 2, -t / 2)]
+    s = _massiv(name, P, "Kreuz", It=(h * t ** 3 + b * t ** 3) / 3.0, h=h, b=b, tw=t, tf=t)
+    s.Asz, s.Asy = h * t, b * t
+    return s
+
+
+def ellipse(name: str, a: float, b: float, n: int = 96) -> Section:
+    """Vollellipse mit den Achsen a (y) und b (z). A = π a b / 4, It =
+    π a³ b³ / (16 (a² + b²)) geschlossen; das Polygon liegt mit 96 Ecken bei
+    A auf 0,07 %, It wird darum aus der geschlossenen Formel genommen."""
+    if min(a, b) <= 0:
+        raise ValueError("Ellipse: a, b > 0")
+    w = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    P = np.column_stack([a / 2 * np.cos(w), b / 2 * np.sin(w)])
+    ra, rb = a / 2, b / 2
+    s = _massiv(name, P, "Ellipse", It=math.pi * ra ** 3 * rb ** 3 / (ra ** 2 + rb ** 2), h=b, b=a)
+    s.A = math.pi * ra * rb
+    s.Iy, s.Iz = math.pi * ra * rb ** 3 / 4, math.pi * rb * ra ** 3 / 4
+    s.Wel_y, s.Wel_z = s.Iy / rb, s.Iz / ra
+    s.Wpl_y, s.Wpl_z = 4 * ra * rb ** 2 / 3, 4 * rb * ra ** 2 / 3
+    return s
+
+
+def halbkreis(name: str, d: float, n: int = 64) -> Section:
+    """Halbkreis mit dem Durchmesser d, flache Seite unten (z = 0)."""
+    if d <= 0:
+        raise ValueError("Halbkreis: d > 0")
+    r = d / 2
+    w = np.linspace(0, np.pi, n + 1)
+    P = [(r * math.cos(x), r * math.sin(x)) for x in w]
+    s = _massiv(name, P, "Halbkreis", h=r, b=d)
+    s.A = math.pi * r ** 2 / 2
+    return s
+
+
+def trapez(name: str, bo: float, bu: float, h: float) -> Section:
+    """Symmetrisches Trapez: oben bo, unten bu, Hoehe h."""
+    if min(bo, bu, h) <= 0:
+        raise ValueError("Trapez: bo, bu, h > 0")
+    return _massiv(name, [(-bu / 2, 0.0), (bu / 2, 0.0), (bo / 2, h), (-bo / 2, h)], "Trapez",
+                   h=h, b=max(bo, bu))
+
+
+def dreieck(name: str, b: float, h: float) -> Section:
+    """Gleichschenkliges Dreieck: Grundseite b unten, Hoehe h."""
+    if min(b, h) <= 0:
+        raise ValueError("Dreieck: b, h > 0")
+    return _massiv(name, [(-b / 2, 0.0), (b / 2, 0.0), (0.0, h)], "Dreieck", h=h, b=b)
+
+
+def sechskant(name: str, sw: float) -> Section:
+    """Regelmaessiges Sechseck mit der Schluesselweite sw (Flach zu Flach),
+    zwei Seiten waagerecht."""
+    if sw <= 0:
+        raise ValueError("Sechskant: sw > 0")
+    R = sw / math.sqrt(3.0)                      # Eckenradius
+    P = [(R * math.cos(math.radians(30 + 60 * k)), R * math.sin(math.radians(30 + 60 * k)))
+         for k in range(6)]
+    return _massiv(name, P, "Sechskant", h=sw, b=2 * R)
+
+
+# --------------------------------------------------------------------------
+# Querschnitt aus einer gezeichneten Kontur (Skizzenwerkzeug, 16.09.2026)
+# --------------------------------------------------------------------------
+def _skizze_schleifen(skizze: dict, tol: float = 0.05, grad: float = 5.0) -> list:
+    """Die geschlossenen Schleifen einer Skizze als Punktfolgen in Blatt-mm.
+
+    Linien und Boegen werden an ihren Enden (Toleranz ``tol`` mm)
+    aneinandergehaengt, Boegen alle ``grad`` Grad abgetastet, Kreise sind
+    eigene Schleifen. Bleibt ein Ende offen, nennt der Fehler seine Lage -
+    so findet man die Luecke, statt ein falsches Polygon zu bekommen.
+    """
+    from . import skizze as sk
+    segs: list = []
+    loops: list = []
+    for el in (skizze or {}).get("elemente", []):
+        art = el.get("art")
+        if art == "linie":
+            segs.append([tuple(map(float, el["p1"])), tuple(map(float, el["p2"]))])
+        elif art == "bogen":
+            von, span = float(el["von"]), sk.bogen_spanne(float(el["von"]), float(el["bis"]))
+            n = max(2, int(math.ceil(span / grad)))
+            segs.append([tuple(sk.punkt_auf_kreis(el["mitte"], float(el["r"]), von + span * i / n))
+                         for i in range(n + 1)])
+        elif art == "kreis":
+            n = max(24, int(math.ceil(360.0 / grad)))
+            loops.append([tuple(sk.punkt_auf_kreis(el["mitte"], float(el["r"]), 360.0 * i / n))
+                          for i in range(n)])
+    benutzt = [False] * len(segs)
+
+    def naechstes(p):
+        for k, s in enumerate(segs):
+            if benutzt[k]:
+                continue
+            if math.dist(s[0], p) <= tol:
+                return k, False
+            if math.dist(s[-1], p) <= tol:
+                return k, True
+        return None, False
+
+    offen = []
+    for i in range(len(segs)):
+        if benutzt[i]:
+            continue
+        benutzt[i] = True
+        kette = list(segs[i])
+        while True:
+            if len(kette) > 3 and math.dist(kette[0], kette[-1]) <= tol:
+                kette.pop()
+                loops.append(kette)
+                break
+            j, rueck = naechstes(kette[-1])
+            if j is None:
+                kette.reverse()
+                j, rueck = naechstes(kette[-1])
+            if j is None:
+                offen.append((kette[0], kette[-1]))
+                break
+            benutzt[j] = True
+            teil = segs[j][::-1] if rueck else segs[j]
+            kette.extend(teil[1:])
+    if offen:
+        enden = "; ".join(f"({a[0]:.1f}, {a[1]:.1f}) und ({b[0]:.1f}, {b[1]:.1f}) mm" for a, b in offen[:3])
+        raise ValueError(f"Die Kontur ist nicht geschlossen - offene Enden bei {enden}"
+                         + (" …" if len(offen) > 3 else ""))
+    return loops
+
+
+def aus_skizze(name: str, skizze: dict, tol: float = 0.05) -> Section:
+    """Ein Querschnitt aus einer gezeichneten Kontur (Skizze in Blatt-mm,
+    y nach unten, ``massstab`` mm je Blatt-mm).
+
+    Jede geschlossene Schleife aus Linien, Boegen und Kreisen ist ein
+    Polygon; eine Schleife in einer anderen ist ein **Loch**, eine Schleife
+    in einem Loch wieder Material. Querschnittsachsen: y nach rechts, z nach
+    oben - die Blattachse y zeigt nach unten, darum z = -y_Blatt. Gerechnet
+    wird ueber :func:`build_free` (Flaechen mit Loechern, Steiner,
+    Hauptachsen, Wpl exakt); die Skizze reist in ``parts`` mit, damit sich
+    die Kontur wieder oeffnen laesst.
+    """
+    import copy
+    f = float((skizze or {}).get("massstab", 1.0) or 1.0) * 1e-3
+    loops = []
+    for L in _skizze_schleifen(skizze, tol):
+        P = []
+        for x, y in L:
+            q = (x * f, -y * f)
+            if not P or math.dist(P[-1], q) > 1e-9:
+                P.append(q)
+        if len(P) >= 3 and math.dist(P[0], P[-1]) <= 1e-9:
+            P.pop()
+        if len(P) >= 3 and abs(_polygon_momente(P)[0]) > 1e-14:
+            loops.append(P)
+    if not loops:
+        raise ValueError("Keine geschlossene Kontur in der Skizze (Linien, Bögen, Kreise)")
+    tiefe = [sum(1 for j, Q in enumerate(loops) if j != i and im_polygon(P[0], Q)) for i, P in enumerate(loops)]
+    knoten, flaechen = {}, []
+    nr = 1
+    for P, d in sorted(zip(loops, tiefe), key=lambda x: x[1]):
+        nrn = []
+        for q in P:
+            knoten[nr] = q
+            nrn.append(nr)
+            nr += 1
+        flaechen.append({"knoten": nrn, "loch": bool(d % 2)})
+    sec = build_free(name, knoten=knoten, flaechen=flaechen)
+    sec.parts.append({"skizze": copy.deepcopy(skizze)})
+    return sec
+
+
+def skizze_inhalt(sec: Section):
+    """Die gezeichnete Kontur eines Querschnitts - oder None."""
+    for p in getattr(sec, "parts", None) or []:
+        if isinstance(p, dict) and "skizze" in p:
+            return p["skizze"]
+    return None
 
 
 # --------------------------------------------------------------------------

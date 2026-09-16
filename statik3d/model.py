@@ -498,6 +498,10 @@ class Section:
             return f"Rechteck {self.b*1e3:.0f}x{self.h*1e3:.0f} mm"
         if self.typ == "circle":
             return f"Kreis d={self.h*1e3:.0f} mm"
+        if self.typ in ("I2", "Z", "Hut", "Kreuz", "Ellipse", "Halbkreis", "Trapez", "Dreieck", "Sechskant"):
+            # Parameterprofile aus Massen wie in RFEM (16.09.2026), als Polygon gerechnet
+            name = {"I2": "Doppel-T unsymmetrisch"}.get(self.typ, self.typ)
+            return f"{name} {self.b*1e3:.0f}x{self.h*1e3:.0f} mm" + (f", t={self.tw*1e3:g} mm" if self.tw else "")
         if self.typ == "T":
             return (f"T-Profil h={self.h*1e3:.0f} b={self.b*1e3:.0f} "
                     f"tw={self.tw*1e3:.1f} tf={self.tf*1e3:.1f} mm")
