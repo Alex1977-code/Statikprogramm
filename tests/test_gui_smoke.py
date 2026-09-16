@@ -4832,6 +4832,78 @@ def main():
         traceback.print_exc()
         check("Lasten, Fang, Glasleiste", False, str(ex)[:70])
 
+    try:
+        # ---- Kontur zeichnen (16.09.2026): Querschnitt aus dem Skizzenfenster ----
+        from statik3d.gui import profilmaske as pm_k
+        from statik3d import sections as secs_k
+        w._baum_geklickt("querschnitte", "Querschnitte")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        m_ = w.model
+        check("Querschnittsmaske: Aufklappliste „neue Kontur“ und Knopf „Kontur zeichnen …“",
+              isinstance(mk, pm_k.QuerschnittMaske) and mk.cb_kontur.count() == 1
+              and mk.btn_kontur.text().startswith("Kontur"), str(mk and mk.cb_kontur.count()))
+        check("Parameterprofile wie in RFEM in der Aufklappliste (Doppel-T unsymmetrisch, Z, Hut, Ellipse, Sechskant)",
+              all(mk.cb_art.findText(a) >= 0 for a in ("Doppel-T unsymmetrisch", "Z", "Hut", "Ellipse", "Sechskant"))
+              and len(mk.par) == pm_k.PARAMETERFELDER)
+        mk.cb_art.setCurrentText("Doppel-T unsymmetrisch")
+        app.processEvents()
+        check("Doppel-T unsymmetrisch: sechs Felder sichtbar, Bild und Kennwerte mit Wpl",
+              all(e.isVisible() for e in mk.par[:6]) and len(mk.bild_param.umrisse) == 1 and "Wpl" in mk.lbl_param.text(),
+              mk.lbl_param.text()[:60])
+        mk.ed_name.setText("Kontur-Kasten")
+        dk = mk.kontur_zeichnen()
+        app.processEvents()
+        check("Kontur: das Skizzenfenster öffnet mit leerem Blatt 400 × 400 mm",
+              dk is not None and dk.isVisible() and not dk.skizze["elemente"] and dk.skizze["breite"] == 400.0)
+        for a, b in (((50, 250), (250, 250)), ((250, 250), (250, 150)), ((250, 150), (50, 150)), ((50, 150), (50, 250))):
+            dk.element_anfuegen({"art": "linie", "p1": list(a), "p2": list(b)})
+        dk.element_anfuegen({"art": "kreis", "mitte": [150, 200], "r": 20})
+        dk.ok()
+        app.processEvents()
+        m_ = w.model
+        sk_ = m_.sections.get("Kontur-Kasten")
+        check("Kontur: Rechteck 200 × 100 mit Kreisloch r = 20 wird zum Querschnitt (A = 200·100 − π·20²)",
+              sk_ is not None and abs(sk_.A - (0.02 - np.pi * 0.02 ** 2)) < 2e-6, str(sk_ and sk_.A))
+        mk = w.maskenrand.maske
+        check("Kontur: die Skizze reist mit, die Aufklappliste bietet sie zum Bearbeiten an, Umriss mit Loch",
+              secs_k.skizze_inhalt(sk_) is not None and mk.cb_kontur.count() == 2
+              and sum(1 for _p, loch in secs_k.umriss(sk_) if loch) == 1, str(mk.cb_kontur.count()))
+        check("Kontur: Wpl aus der plastischen Nulllinie größer als Wel", sk_.Wpl_y > sk_.Wel_y * 1.05)
+        mk.cb_kontur.setCurrentIndex(1)
+        dk2 = mk.kontur_zeichnen()
+        app.processEvents()
+        check("Kontur: die gezeichnete Kontur kommt mit ihren 5 Elementen zurück",
+              len(dk2.skizze["elemente"]) == 5 and dk2.ed_name.text() == "Kontur-Kasten")
+        dk2.skizze["elemente"].pop()            # das Loch weg
+        dk2.ok()
+        app.processEvents()
+        m_ = w.model
+        check("Kontur: Übernehmen ersetzt den Querschnitt gleichen Namens (A = 0,02 m²), kein Doppel",
+              "Kontur-Kasten" in m_.sections and abs(m_.sections["Kontur-Kasten"].A - 0.02) < 1e-9
+              and sum(1 for n in m_.sections if n.startswith("Kontur")) == 1, str(sorted(m_.sections)))
+        mk = w.maskenrand.maske
+        mk.cb_kontur.setCurrentIndex(0)
+        mk.ed_name.setText("Offen")
+        dk3 = mk.kontur_zeichnen()
+        dk3.element_anfuegen({"art": "linie", "p1": [0, 0], "p2": [100, 0]})
+        dk3.element_anfuegen({"art": "linie", "p1": [100, 0], "p2": [100, 50]})
+        dk3.uebernehmen()
+        app.processEvents()
+        check("Kontur: eine offene Kontur wird im Fenster benannt, kein Querschnitt entsteht",
+              "nicht geschlossen" in dk3.lbl_status.text() and "Offen" not in w.model.sections, dk3.lbl_status.text()[:80])
+        dk3.close()
+        w._bestaetigen = lambda text: True
+        w._baum_loeschen("querschnitt", "Kontur-Kasten")
+        del w._bestaetigen
+        app.processEvents()
+        check("Kontur: der gezeichnete Querschnitt lässt sich löschen", "Kontur-Kasten" not in w.model.sections)
+        w.maskenrand.schliessen()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Kontur zeichnen", False, str(ex)[:70])
+
     # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
     try:
         import pyvista as pvx

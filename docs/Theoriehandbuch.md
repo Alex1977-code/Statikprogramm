@@ -296,6 +296,26 @@ dünnen Ring den Bredtschen Wert 2π r_m³ t trifft (`tests/test_sections.py`
 prüft Kreis, Ring, Rechteck mit Loch und das aus drei Streifen gebaute I
 gegen die geschlossenen Formeln).
 
+**Plastische Widerstandsmomente eines Polygons** (16.09.2026, auch für die
+gezeichnete Kontur und die Parameterprofile aus Maßen): die plastische
+Nulllinie halbiert die Fläche. Gesucht wird sie durch Halbieren des
+Intervalls zwischen Unter- und Oberkante (`sections._wpl`; das Polygon wird
+an der Geraden geschnitten, Sutherland-Hodgman, die Fläche der Hälfte über
+Green), Löcher gehen mit negativem Vorzeichen ein. W_pl ist die Summe der
+Flächenmomente beider Hälften um diese Linie:
+
+    W_pl,y = ∫ |z − z₀| dA,   A(z > z₀) = A/2
+
+exakt für Polygone: Rechteck b·h²/4, das Doppel-T als Polygon trifft die
+Katalogformel auf 1e-9 (`tests/test_kontur.py`). Randabstände und W_el
+werden in den **Hauptachsen** genommen; Hauptachse „y“ ist seit dem
+16.09.2026 die, die der Bezugsachse y näher liegt (|α| ≤ 45°, bei
+Symmetrie α = 0) - vorher hieß der größere Hauptwert I_y und ein flach
+liegendes Rechteck galt als um 90° gedreht. Da der Stab I_y als Biegung um
+seine lokale y-Achse ansetzt (α geht nicht in die Steifigkeit ein),
+entscheidet diese Konvention, welche Achse steif ist; ein im Editor um 90°
+gedrehtes Profil tauscht I_y und I_z.
+
 ### Vorspannung als Anfangsdehnung
 
 Eine Vorspannkraft F_v in einem Stab oder einer Schraube wird nicht als

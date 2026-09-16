@@ -49,9 +49,22 @@ PARAMETER = [
     ("T geschweißt", ("h", "b", "tw", "tf"), (150.0, 150.0, 7.0, 10.0)),
     ("Winkel", ("h", "b", "t"), (100.0, 100.0, 10.0)),
     ("Kasten aus Blechen", ("h", "b", "tw", "tf"), (400.0, 300.0, 10.0, 15.0)),
+    # wie die Parameterprofile in RFEM (16.09.2026): duennwandig und massiv
+    ("Doppel-T unsymmetrisch", ("h", "b_o", "t_o", "b_u", "t_u", "tw"),
+     (400.0, 200.0, 16.0, 300.0, 20.0, 10.0)),
+    ("Z", ("h", "b", "t"), (200.0, 80.0, 6.0)),
+    ("Hut", ("h", "b", "c", "t"), (100.0, 60.0, 20.0, 3.0)),
+    ("Kreuz", ("h", "b", "t"), (200.0, 200.0, 12.0)),
+    ("Ellipse", ("a (y)", "b (z)"), (200.0, 100.0)),
+    ("Halbkreis", ("d",), (200.0,)),
+    ("Trapez", ("b_o", "b_u", "h"), (100.0, 200.0, 150.0)),
+    ("Dreieck", ("b", "h"), (200.0, 150.0)),
+    ("Sechskant", ("Schlüsselweite",), (100.0,)),
     ("frei (Steifigkeiten)", ("A [cm²]", "Iy [cm⁴]", "Iz [cm⁴]", "It [cm⁴]"),
      (10.0, 1000.0, 500.0, 10.0)),
 ]
+#: Zahl der Parameterfelder in der Maske
+PARAMETERFELDER = 6
 
 
 def parameterprofil(art: str, werte, name: str = "") -> Section:
@@ -80,6 +93,24 @@ def parameterprofil(art: str, werte, name: str = "") -> Section:
         return Section.angle(name or f"L {masse}", m[0], m[1], m[2], fabrication="welded")
     if art == "Kasten aus Blechen":
         return sections.box_from_plates(name or f"Kasten {masse}", m[0], m[1], m[2], m[3])
+    if art == "Doppel-T unsymmetrisch":
+        return sections.i_unsym(name or f"I2 {masse}", *m[:6])
+    if art == "Z":
+        return sections.z_profil(name or f"Z {masse}", *m[:3])
+    if art == "Hut":
+        return sections.hut(name or f"Hut {masse}", *m[:4])
+    if art == "Kreuz":
+        return sections.kreuz(name or f"Kreuz {masse}", *m[:3])
+    if art == "Ellipse":
+        return sections.ellipse(name or f"Ellipse {masse}", m[0], m[1])
+    if art == "Halbkreis":
+        return sections.halbkreis(name or f"Halbkreis {masse}", m[0])
+    if art == "Trapez":
+        return sections.trapez(name or f"Trapez {masse}", *m[:3])
+    if art == "Dreieck":
+        return sections.dreieck(name or f"Dreieck {masse}", m[0], m[1])
+    if art == "Sechskant":
+        return sections.sechskant(name or f"6kt {masse}", m[0])
     if art.startswith("frei"):
         return Section(name or "Q", A=v[0] * 1e-4, Iy=v[1] * 1e-8, Iz=v[2] * 1e-8,
                        It=v[3] * 1e-8)
@@ -96,7 +127,8 @@ def kennwerte(sec: Section) -> str:
     if abs(sec.alpha) > 1e-6:
         zeilen.append(f"Hauptachsen um {math.degrees(sec.alpha):+.2f}° gedreht "
                       f"(Iy, Iz sind Hauptwerte)")
-    if sec.typ in ("composite", "poly", "seg", "L", "U", "T"):
+    if sec.typ in ("composite", "poly", "seg", "L", "U", "T", "I2", "Z", "Hut", "Halbkreis",
+                   "Trapez", "Dreieck"):
         zeilen.append(f"Schwerpunkt yc = {sec.yc * 1e3:.1f} mm, zc = {sec.zc * 1e3:.1f} mm")
     zeilen.append(sec.describe())
     return "\n".join(zeilen)
@@ -193,6 +225,7 @@ class QuerschnittMaske(QtWidgets.QFrame):
     """
 
     angewendet = QtCore.Signal(object)
+    ersetzt = QtCore.Signal(object)           # eine gezeichnete Kontur wurde geaendert
     geschlossen = QtCore.Signal()
 
     def __init__(self, parent=None, vorhandene: dict | None = None):
@@ -252,6 +285,21 @@ class QuerschnittMaske(QtWidgets.QFrame):
                                  "(Blechstreifen) und Flächen frei zusammensetzen")
         self.btn_frei.clicked.connect(self.frei_erstellen)
         lay.addWidget(self.btn_frei)
+        # Kontur zeichnen wie in InfoCAD (16.09.2026): Linien, Boegen, Kreise
+        # im Skizzenwerkzeug; Loecher als innere Schleifen
+        zk = QtWidgets.QHBoxLayout()
+        self.cb_kontur = QtWidgets.QComboBox()
+        self.cb_kontur.setToolTip("Neue Kontur - oder eine gezeichnete Kontur des Modells wieder öffnen")
+        zk.addWidget(self.cb_kontur, 1)
+        self.btn_kontur = QtWidgets.QPushButton("Kontur zeichnen …")
+        self.btn_kontur.setProperty("rolle", "start")
+        self.btn_kontur.setToolTip("Den Querschnitt als Kontur zeichnen (Linien, Bögen, Kreise; "
+                                   "y nach rechts, z nach oben; innere Schleifen sind Löcher) - "
+                                   "Fläche, Schwerpunkt, Trägheits- und Widerstandsmomente aus dem Polygon")
+        self.btn_kontur.clicked.connect(self.kontur_zeichnen)
+        zk.addWidget(self.btn_kontur)
+        lay.addLayout(zk)
+        self._kontur_liste()
         lay.addStretch(1)
         rolle.setWidget(inhalt)
         aussen.addWidget(rolle, 1)
@@ -391,7 +439,7 @@ class QuerschnittMaske(QtWidgets.QFrame):
         gitter.setHorizontalSpacing(6)
         self.par_lbl: list[QtWidgets.QLabel] = []
         self.par: list[NumEdit] = []
-        for i in range(4):
+        for i in range(PARAMETERFELDER):
             lb = QtWidgets.QLabel("")
             e = NumEdit(0.0, 74)
             e.textChanged.connect(self._parameter_vorschau)
@@ -416,7 +464,7 @@ class QuerschnittMaske(QtWidgets.QFrame):
 
     def _art_gewechselt(self):
         art, felder, vorgaben = PARAMETER[self.cb_art.currentIndex()]
-        for i in range(4):
+        for i in range(PARAMETERFELDER):
             sichtbar = i < len(felder)
             self.par_lbl[i].setVisible(sichtbar)
             self.par[i].setVisible(sichtbar)
@@ -449,6 +497,60 @@ class QuerschnittMaske(QtWidgets.QFrame):
             return
         self.angewendet.emit(sec)
 
+    # ---- Kontur zeichnen ----------------------------------------------------
+    def _kontur_liste(self) -> None:
+        """Aufklappliste: neue Kontur oder eine gezeichnete des Modells."""
+        cb = getattr(self, "cb_kontur", None)
+        if cb is None:
+            return
+        alt = cb.currentText()
+        cb.blockSignals(True)
+        cb.clear()
+        cb.addItem("neue Kontur", "")
+        for n, s in self.vorhandene.items():
+            if sections.skizze_inhalt(s) is not None:
+                cb.addItem(f"Kontur „{n}“ bearbeiten", n)
+        i = cb.findText(alt)
+        cb.setCurrentIndex(i if i >= 0 else 0)
+        cb.blockSignals(False)
+
+    def kontur_zeichnen(self):
+        """Das Skizzenfenster fuer eine Querschnittskontur oeffnen; OK oder
+        Uebernehmen rechnet das Polygon und meldet den Querschnitt."""
+        from types import SimpleNamespace
+        from .skizze import SkizzenFenster
+        from .. import skizze as sk
+        alt_name = str(self.cb_kontur.currentData() or "") if hasattr(self, "cb_kontur") else ""
+        sec_alt = self.vorhandene.get(alt_name) if alt_name else None
+        if sec_alt is not None:
+            u = SimpleNamespace(name=alt_name, skizze=sections.skizze_inhalt(sec_alt), daten="", beschriftung="")
+        else:
+            u = SimpleNamespace(name=self.ed_name.text().strip() or "Kontur",
+                                skizze=sk.neu(400.0, 400.0, 1.0, "mm", 10.0), daten="", beschriftung="")
+        d = SkizzenFenster(self.window(), unterlage=u)
+        d.setWindowTitle("Querschnitt als Kontur zeichnen - y nach rechts, z nach oben; "
+                         "geschlossene Schleifen, innen liegende sind Löcher")
+        d.ed_name.setPlaceholderText("Name des Querschnitts")
+        d.ersetzen = bool(sec_alt is not None)
+        d.angewendet.connect(lambda werte, d_=d: self._kontur_angewendet(werte, d_))
+        d.show()
+        return d
+
+    def _kontur_angewendet(self, werte: dict, d) -> None:
+        try:
+            sec = sections.aus_skizze(werte.get("name") or "Kontur", werte.get("skizze") or {})
+        except Exception as ex:                # noqa: BLE001 - dem Zeichner sagen, was fehlt
+            d.lbl_status.setText(str(ex))
+            d.lbl_status.setStyleSheet(f"color: {dsg.FARBEN['schlecht']}")
+            return
+        d.lbl_status.setStyleSheet("")
+        d.lbl_status.setText(kennwerte(sec).splitlines()[0])
+        if getattr(d, "ersetzen", False) and sec.name in self.vorhandene:
+            self.ersetzt.emit(sec)
+        else:
+            d.ersetzen = True                  # ein zweites Uebernehmen ersetzt, statt zu doppeln
+            self.angewendet.emit(sec)
+
     # ---- frei ------------------------------------------------------------
     def frei_erstellen(self):
         d = ProfilEditor(self.window(), vorhandene=self.vorhandene,
@@ -462,6 +564,7 @@ class QuerschnittMaske(QtWidgets.QFrame):
     # ---- allgemein ---------------------------------------------------------
     def vorhandene_zeigen(self, sections_: dict):
         self.vorhandene = dict(sections_ or {})
+        self._kontur_liste()
         namen = list(self.vorhandene)
         if namen:
             self.lbl_vorhanden.setText(

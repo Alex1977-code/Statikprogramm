@@ -12995,7 +12995,22 @@ class MainWindow(QtWidgets.QMainWindow):
         from .profilmaske import QuerschnittMaske
         maske = QuerschnittMaske(vorhandene=self.model.sections)
         maske.angewendet.connect(self._querschnitt_anlegen)
+        maske.ersetzt.connect(self._querschnitt_ersetzen)
         return self.maske_erzeugen(maske)
+
+    def _querschnitt_ersetzen(self, sec):
+        """Eine gezeichnete Kontur wurde geaendert: den Querschnitt gleichen
+        Namens ersetzen - Stäbe und Elemente behalten ihren Bezug."""
+        if sec.name not in self.model.sections:
+            return self._querschnitt_anlegen(sec)
+        self.merken(f"Querschnitt {sec.name}")
+        self.model.sections[sec.name] = sec
+        self.refresh_all()
+        self.info(f"Querschnitt {sec.name} geändert: A = {sec.A * 1e4:.2f} cm², "
+                  f"Iy = {sec.Iy * 1e8:.1f} cm⁴, Iz = {sec.Iz * 1e8:.1f} cm⁴")
+        maske = self.maskenrand.maske
+        if maske is not None and hasattr(maske, "vorhandene_zeigen"):
+            maske.vorhandene_zeigen(self.model.sections)
 
     def _querschnitt_anlegen(self, sec):
         """Ein Querschnitt aus der Maske kommt ins Modell."""
