@@ -327,21 +327,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 if t == QtCore.QEvent.Wheel:
                     self._rad(ereignis)
                     return True
-                if t == QtCore.QEvent.MouseButtonDblClick and ereignis.button() == QtCore.Qt.MiddleButton:
-                    # Doppelklick mit der mittleren Maustaste: alles, was gerade
-                    # im Bild ist, einpassen (Ausgeblendetes zaehlt nicht mit)
-                    self.zoom_alles()
-                    return True
-                if t == QtCore.QEvent.MouseButtonPress:
+                if t in (QtCore.QEvent.MouseButtonPress, QtCore.QEvent.MouseButtonDblClick):
+                    # Den zweiten Druck eines Doppelklicks meldet Qt als DblClick
+                    # statt als Press; er gilt hier wie ein Druck. Liefe er an
+                    # VTK durch, naehme das ihn als Tastendruck, saehe das
+                    # Loslassen aber nie (das verbraucht der Filter) und bliebe
+                    # in Dolly (rechts) oder Rotate (links) haengen - danach
+                    # zoomte jede Mausbewegung ohne Taste (gemessen 16.09.2026:
+                    # Abstand 0,70 -> 0,31), Drehen und Schieben gingen nicht mehr.
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+                    doppel = t == QtCore.QEvent.MouseButtonDblClick
                     if ereignis.button() == QtCore.Qt.LeftButton:
                         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
                         self._links_unten = True
+                        self._links_doppel = doppel
                         return True         # links dreht nicht mehr
                     if ereignis.button() == QtCore.Qt.MiddleButton:
                         # gedrueckte mittlere Taste dreht (15.09.2026); VTK
-                        # sieht den Druck nicht, sonst schoebe es wie von Haus aus
+                        # sieht den Druck nicht, sonst schoebe es wie von Haus
+                        # aus. Ein Doppelklick zaehlt beim Loslassen
+                        # (:meth:`_mitte_los`): ohne Zug passt er alles ein.
                         self._mitte_unten = True
+                        self._mitte_doppel = QtCore.QPoint(int(pos.x()), int(pos.y())) if doppel else None
                         self._drehen_beginnen()
                         return True
                     if ereignis.button() == QtCore.Qt.RightButton:
@@ -357,14 +364,15 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._links_los(pos)
                         return True
                     if ereignis.button() == QtCore.Qt.MiddleButton:
-                        self._mitte_unten = False
-                        self._drehen_enden()
+                        self._mitte_los(pos)
                         return True
                     if ereignis.button() == QtCore.Qt.RightButton:
                         self._rechts_los(pos)
                         return True
                 elif t == QtCore.QEvent.MouseMove:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
+                    if ereignis.buttons() == QtCore.Qt.NoButton:
+                        self._vtk_zustand_beenden()     # ohne Taste wird nie gedreht oder gezoomt
                     if getattr(self, "_links_unten", False):
                         self._links_ziehen(pos)
                         return True
@@ -375,13 +383,15 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._hover_anstossen(pos)
                 elif t == QtCore.QEvent.Leave:
                     self._hover_aus()
-                elif t == QtCore.QEvent.KeyPress and ereignis.key() == QtCore.Qt.Key_Escape \
-                        and self._esc_abbrechen():
-                    # Ein echter Tastendruck kommt hier nie an - Esc ist das
-                    # anwendungsweite Kuerzel von „Alles deselektieren“ und
-                    # wird als Kurzbefehl verbraucht (:meth:`_esc_gedrueckt`);
-                    # der Zweig gilt fuer zugeschickte Tastenereignisse.
-                    return True
+                elif t == QtCore.QEvent.KeyPress:
+                    if ereignis.key() == QtCore.Qt.Key_Escape and self._esc_abbrechen():
+                        # Ein echter Tastendruck kommt hier nie an - Esc ist das
+                        # anwendungsweite Kuerzel von „Alles deselektieren“ und
+                        # wird als Kurzbefehl verbraucht (:meth:`_esc_gedrueckt`);
+                        # der Zweig gilt fuer zugeschickte Tastenereignisse.
+                        return True
+                    if self._vtk_taste(ereignis):
+                        return True         # Buchstaben, Ziffern, Pfeile: nicht an VTK
         except Exception:                   # noqa: BLE001
             return False
         return super().eventFilter(obj, ereignis)
@@ -404,6 +414,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Linke Taste losgelassen: Fenster abschliessen oder einzeln waehlen."""
         self._links_unten = False
         self._klick_wartend = None
+        doppel = getattr(self, "_links_doppel", False)
+        self._links_doppel = False
         start = self._letzter_klick
         gezogen = (start is not None
                    and max(abs(pos.x() - start.x()),
@@ -412,8 +424,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if self._fenster_ecke is not None:
                 self._fenster_abschliessen(pos)
             return
-        # Klick ohne Bewegung: waehlen. Ein noch offenes Fenster aus einem
-        # frueheren Klick ins Leere schliesst :meth:`_picked` selbst ab.
+        if doppel:
+            # der zweite Klick eines Doppelklicks waehlt nicht noch einmal -
+            # sonst waere das eben gewaehlte Objekt gleich wieder abgewaehlt
+            return
+        # Klick ohne Bewegung: waehlen - liegt dort nichts, hebt er die
+        # Auswahl auf (:meth:`_klick_ins_leere`).
         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
         self._klick_umschalt = bool(QtWidgets.QApplication.keyboardModifiers()
                                     & QtCore.Qt.ShiftModifier)
@@ -433,6 +449,7 @@ class MainWindow(QtWidgets.QMainWindow):
         („bei gedrückter mittlerer Maustaste soll gedreht werden").
         """
         try:
+            self._vtk_zustand_beenden()
             self.plotter.iren.style.StartRotate()
         except Exception:                   # noqa: BLE001 - dann dreht es eben nicht
             pass
@@ -443,11 +460,66 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:                   # noqa: BLE001
             pass
 
+    #: So lange nach einem Radschritt gilt ein Doppelklick Mitte nicht [s]:
+    #: wer beim Rollen das Rad drueckt, will nicht alles einpassen
+    RAD_SPERRE = 0.4
+
+    def _mitte_los(self, pos) -> None:
+        """Mittlere Taste losgelassen: Drehen beenden. War es der zweite Druck
+        eines Doppelklicks, ohne Zug und nicht mitten im Rollen, wird alles
+        Sichtbare eingepasst (Ausgeblendetes zaehlt nicht mit)."""
+        self._mitte_unten = False
+        self._drehen_enden()
+        doppel = getattr(self, "_mitte_doppel", None)
+        self._mitte_doppel = None
+        if doppel is None:
+            return
+        if max(abs(pos.x() - doppel.x()), abs(pos.y() - doppel.y())) > self.KLICK_TOLERANZ:
+            return                          # gezogen: das war Drehen
+        if time.time() - getattr(self, "_rad_zeit", 0.0) < self.RAD_SPERRE:
+            return                          # Radklick beim Zoomen
+        self.zoom_alles()
+
+    def _vtk_zustand_beenden(self) -> None:
+        """VTK in den Ruhezustand bringen, falls es in Rotate, Pan oder Dolly
+        haengt. Die Start-Methoden tun nichts, solange ein anderer Zustand
+        laeuft - dann draehte die mittlere Taste nicht mehr, und ein
+        haengendes Dolly zoomte bei jeder Bewegung ohne Taste."""
+        try:
+            stil = self.plotter.iren.style
+            if stil.GetState() == 0:
+                return
+            for name in ("EndDolly", "EndPan", "EndRotate", "EndSpin", "EndZoom",
+                         "EndUniformScale", "EndEnvRotate", "EndTimer"):
+                ende = getattr(stil, name, None)
+                if callable(ende):
+                    ende()                  # jedes prueft selbst, ob sein Zustand laeuft
+        except Exception:                   # noqa: BLE001
+            pass
+
+    def _vtk_taste(self, ereignis) -> bool:
+        """Tasten, auf die VTK oder pyvista von sich aus reagieren: r setzt die
+        Kamera auf die Gesamtansicht zurueck, w und s schalten Draht und
+        Flaeche, f fliegt zum Punkt, p pickt, q und e beenden, v stellt
+        isometrisch, Pfeil auf/ab zoomen, plus/minus aendern Punktgroessen.
+        Nichts davon ist hier gewollt - gemessen 16.09.2026: ein r nach dem
+        Heranzoomen warf das Bild auf die Gesamtansicht zurueck. Kuerzel mit
+        Strg oder Alt sind Befehle des Programms und bleiben unberuehrt."""
+        if ereignis.modifiers() & (QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier
+                                   | QtCore.Qt.MetaModifier):
+            return False
+        k = int(ereignis.key())
+        return (int(QtCore.Qt.Key_A) <= k <= int(QtCore.Qt.Key_Z)
+                or int(QtCore.Qt.Key_0) <= k <= int(QtCore.Qt.Key_9)
+                or k in (int(QtCore.Qt.Key_Up), int(QtCore.Qt.Key_Down),
+                         int(QtCore.Qt.Key_Plus), int(QtCore.Qt.Key_Minus)))
+
     def _schieben_beginnen(self) -> None:
         """Die gedrueckte rechte Taste schiebt - derselbe Weg wie beim Drehen,
         nur im Schiebezustand von VTK („gedrückte rechte Maustaste und halten
         soll schieben sein", 15.09.2026)."""
         try:
+            self._vtk_zustand_beenden()
             self.plotter.iren.style.StartPan()
         except Exception:                   # noqa: BLE001
             pass
@@ -478,6 +550,7 @@ class MainWindow(QtWidgets.QMainWindow):
             x_qt, y_qt = pos.x(), pos.y()
         except Exception:                   # noqa: BLE001
             x_qt, y_qt = ereignis.x(), ereignis.y()
+        self._rad_zeit = time.time()
         self.zoom_zum_zeiger(self.RADSCHRITT ** (grad / 120.0), x_qt, y_qt)
 
     def _bildpunkt_in_welt(self, x: float, y: float):
@@ -1839,7 +1912,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
 
     def _fenster_beginnen(self, pos=None):
-        """Erste Ecke des Auswahlfensters (Linksklick ins Leere)."""
+        """Erste Ecke des Auswahlfensters (Ziehen mit gedrueckter linker Taste)."""
         pos = pos if pos is not None else (self._letzter_klick or self._zeiger_qt())
         if pos is None:
             return
@@ -1852,9 +1925,8 @@ class MainWindow(QtWidgets.QMainWindow):
         band.show()
         band.raise_()
         self.statusBar().showMessage(
-            "Auswahlfenster: mit gedrückter linker Taste aufziehen oder die zweite Ecke "
-            "anklicken - links nach rechts nur ganz im Fenster, rechts nach links auch "
-            "angeschnittene. Esc bricht ab.", 8000)
+            "Auswahlfenster: mit gedrückter linker Taste aufziehen - links nach rechts nur "
+            "ganz im Fenster, rechts nach links auch angeschnittene. Esc bricht ab.", 8000)
 
     def _fenster_nachziehen(self, pos):
         if self._fenster_ecke is None or getattr(self, "_gummiband", None) is None:
@@ -2440,12 +2512,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "Netz":
                 elem = self._wenn_sichtbar("Netz", self._element_am_zeiger())
                 if elem is None:
-                    return self._fenster_beginnen()
+                    return self._klick_ins_leere()
                 return self._objekt_umschalten(self.sel_elemente, int(elem), "Elemente")
             if art == "Linie":
                 name = self._wenn_sichtbar("Linie", self._linie_am_zeiger() or vp.line_at(m, point, size))
                 return self._objekt_umschalten_klug(self.sel_linien, name, "Linien", self._linienenden()) \
-                    if name else self._fenster_beginnen()
+                    if name else self._klick_ins_leere()
             # Erst das, was gezeichnet ist (Zellenpicker) - das trifft auch
             # Zylindermaentel und Stabkoerper; die geometrische Suche ist der
             # Rueckfall, wenn der Klick knapp danebenliegt.
@@ -2453,25 +2525,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 name = self._wenn_sichtbar("Fläche", self._objekt_am_zeiger("Fläche")
                                            or vp.flaeche_at(m, point, size))
                 return self._objekt_umschalten(self.sel_flaechen, name, "Flächen") \
-                    if name else self._fenster_beginnen()
+                    if name else self._klick_ins_leere()
             if art == "Volumen":
                 name = self._wenn_sichtbar("Volumen", self._objekt_am_zeiger("Volumen")
                                            or vp.koerper_at(m, point, size))
                 return self._objekt_umschalten(self.sel_koerper, name, "Volumen") \
-                    if name else self._fenster_beginnen()
+                    if name else self._klick_ins_leere()
             if art == "Stab":
                 name = self._wenn_sichtbar("Stab", self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")
                                            or vp.member_at(m, point))
                 return self._objekt_umschalten_klug(self.sel_staebe, name, "Stäbe", self._stabenden()) \
-                    if name else self._fenster_beginnen()
+                    if name else self._klick_ins_leere()
             if art == "Lager":
                 treffer = self._wenn_sichtbar(
                     "Lager", vp.lager_at(m, point, size, self.lagergroesse, self.lagerdichte))
-                return self._lager_umschalten(treffer) if treffer else self._fenster_beginnen()
+                return self._lager_umschalten(treffer) if treffer else self._klick_ins_leere()
             if art == "Last":
                 treffer = vp.last_at(point, getattr(self, "_lastpunkte", None), size)
                 return (self._last_waehlen(m.active_case, treffer[0], treffer[1]) if treffer
-                        else self._fenster_beginnen())
+                        else self._klick_ins_leere())
         if self.model.nn == 0:
             return
         p, fangart, i = self._fangpunkt()
@@ -2492,8 +2564,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if self._objekt_unter_zeiger_waehlen():
                 return
         if p is None:
-            # Klick ins Leere: erste Ecke eines Auswahlfensters
-            return self._fenster_beginnen()
+            # Klick ins Leere: alles abwaehlen
+            return self._klick_ins_leere()
         if i < 0:
             # Kantenmitte oder Rasterpunkt: erst wenn eine Maske einen Punkt
             # erwartet, wird daraus ein Knoten - sonst blieben Streuknoten liegen.
@@ -2517,6 +2589,20 @@ class MainWindow(QtWidgets.QMainWindow):
                              f"{np.round(self.model.nodes[i], 3)})")
         self._auswahl_register()
         self.redraw()
+
+    def _klick_ins_leere(self) -> None:
+        """Kurzer Linksklick, unter dem nichts liegt: die Auswahl aufheben
+        (16.09.2026: "kurz = alles deselektieren, lang = Selektionsfenster").
+        Bis dahin setzte er die erste Ecke eines Auswahlfensters, das der
+        naechste Klick schloss; das Fenster gibt es jetzt nur noch durch
+        Ziehen mit gedrueckter linker Taste (:meth:`_links_ziehen`)."""
+        if any((len(self.selection), self.sel_linien, self.sel_flaechen, self.sel_koerper,
+                self.sel_staebe, self.sel_elemente, self.sel_lager, self.sel_lasten)):
+            self.clear_selection()
+            self.statusBar().showMessage("Klick ins Leere: Auswahl aufgehoben", 3000)
+        else:
+            self.statusBar().showMessage("Nichts unter dem Zeiger - Auswahlfenster: linke Taste "
+                                         "gedrückt halten und ziehen", 4000)
 
     def _objekt_unter_zeiger_waehlen(self) -> bool:
         """Stab, Flaeche, Volumen oder Linie unter dem Zeiger auswaehlen und

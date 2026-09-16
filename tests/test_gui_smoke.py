@@ -3792,20 +3792,22 @@ def main():
         xy_, _ = w._projizieren(m_.nodes)
         xa, ya = float(xy_[:, 0].min()) - 40, float(xy_[:, 1].min()) - 40
         xb, yb = float(xy_[:, 0].max()) + 40, float(xy_[:, 1].max()) + 40
+        w.selection = np.array([k0], int)
         klick_bei(xa, ya)
-        check("Klick ins Leere beginnt das Auswahlfenster", w._fenster_ecke is not None)
-        klick_bei(xb, yb)
-        check("zweiter Linksklick schließt das Fenster ab: alle drei Knoten gewählt",
+        check("kurzer Klick ins Leere hebt die Auswahl auf und beginnt kein Fenster (16.09.2026)",
+              w._fenster_ecke is None and len(w.selection) == 0,
+              f"Fenster {w._fenster_ecke}, Auswahl {w.selection}")
+        qt_ = lambda x, y: QtCore.QPoint(int(round(x / s_)), int(round(h_qt - 1 - y / s_)))
+        w._fenster_beginnen(qt_(xa, ya))
+        w._fenster_abschliessen(qt_(xb, yb))
+        check("das Auswahlfenster durch Ziehen fasst alle drei Knoten",
               w._fenster_ecke is None and sorted(int(i) for i in w.selection) == [k0, k1, k2], str(w.selection))
         w.selection = np.array([], int)
-        klick_bei(xa, ya)
-        klick_bei(xa + 1, ya)
-        check("Klick auf der ersten Ecke verwirft das Fenster", w._fenster_ecke is None and len(w.selection) == 0)
         w.auswahlart_setzen("Stab")
         w.sel_staebe = []
         xm_, ym_ = px(0.5 * (m_.nodes[k0] + m_.nodes[k1]))
-        klick_bei(xm_ + 30, ym_ + 30)
-        klick_bei(xm_ - 30, ym_ - 30)
+        w._fenster_beginnen(qt_(xm_ + 30, ym_ + 30))     # gezogen, nicht geklickt (16.09.2026)
+        w._fenster_abschliessen(qt_(xm_ - 30, ym_ - 30))
         check("kreuzendes Fenster (rechts nach links) über der Stabmitte wählt den Stab",
               w.sel_staebe == ["S1"], str(w.sel_staebe))
         P_ = w._weltpunkt(int(round(xm_ / s_)), int(round(h_qt - 1 - ym_ / s_)))
@@ -5093,21 +5095,74 @@ def main():
         check("Alles zeigen räumt auf",
               not any(w.versteckt.values()) and not w.act_alles_zeigen.isEnabled())
         w.sel_staebe = []
-        # Doppelklick mit der mittleren Maustaste: alles Sichtbare einpassen
-        from PySide6 import QtCore, QtGui
+        # Doppelklicks, Taste r und Mausbewegung ohne Taste (16.09.2026: "beim
+        # Heranzoomen springt der Zoom auf die Vollansicht zurueck")
+        from PySide6 import QtCore, QtGui, QtTest
+        it_ = w.plotter.interactor
+        stil_ = w.plotter.iren.style
+        pos_ = QtCore.QPointF(it_.width() / 2, it_.height() / 2)
+        alt_menu_ = w._viewport_menu
+        w._viewport_menu = lambda p: None
+
+        def maus2_(typ_, knopf_, p_=None, knoepfe_=None):
+            p_ = pos_ if p_ is None else p_
+            ev_ = QtGui.QMouseEvent(typ_, p_, it_.mapToGlobal(p_.toPoint()), knopf_,
+                                    knopf_ if knoepfe_ is None else knoepfe_, QtCore.Qt.NoModifier)
+            QtWidgets.QApplication.sendEvent(it_, ev_)
+            app.processEvents()
+
+        def abstand_():
+            """Kameralage: Standort, Blickpunkt und Parallelmassstab, gerundet.
+            Der Rad-Zoom schiebt Standort und Blickpunkt gemeinsam laengs des
+            Sehstrahls - der Abstand der beiden bliebe gleich, der Standort nicht."""
+            kam_ = w.plotter.renderer.GetActiveCamera()
+            return (tuple(np.round(kam_.GetPosition(), 6).tolist()), tuple(np.round(kam_.GetFocalPoint(), 6).tolist()),
+                    round(float(kam_.GetParallelScale()), 6))
+
+        w.zoom_alles(); app.processEvents()
+        d_voll = abstand_()
+        w.zoom_zum_zeiger(3.0, pos_.x(), pos_.y()); app.processEvents()
+        d0_ = abstand_()
+        check("Vorbedingung: Heranzoomen ändert die Kamera", d0_ != d_voll, f"{d_voll} -> {d0_}")
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.RightButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.RightButton, knoepfe_=QtCore.Qt.NoButton)
+        z_rechts = stil_.GetState()
+        for k_ in range(1, 20):
+            maus2_(QtCore.QEvent.MouseMove, QtCore.Qt.NoButton, pos_ + QtCore.QPointF(0, -5 * k_), QtCore.Qt.NoButton)
+        check("Doppelklick rechts lässt VTK nicht in Dolly hängen: Bewegung ohne Taste zoomt nicht",
+              z_rechts == 0 and abstand_() == d0_,
+              f"Zustand {z_rechts}, Kamera {d0_} -> {abstand_()} (voll {d_voll})")
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.LeftButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.LeftButton, knoepfe_=QtCore.Qt.NoButton)
+        for k_ in range(1, 20):
+            maus2_(QtCore.QEvent.MouseMove, QtCore.Qt.NoButton, pos_ + QtCore.QPointF(5 * k_, 0), QtCore.Qt.NoButton)
+        check("Doppelklick links lässt VTK nicht in Rotate hängen",
+              stil_.GetState() == 0 and abstand_() == d0_, f"Zustand {stil_.GetState()}, Kamera {d0_} -> {abstand_()}")
+        it_.setFocus(); app.processEvents()
+        QtTest.QTest.keyClick(it_, QtCore.Qt.Key_R); app.processEvents()
+        check("Taste r im Bild setzt die Kamera nicht mehr zurück (VTK-Standard abgeschaltet)",
+              abstand_() == d0_, f"Kamera {d0_} -> {abstand_()} (voll {d_voll})")
         zaehler_ = []
         alt_zoom = w.zoom_alles
         w.zoom_alles = lambda: (zaehler_.append(1), alt_zoom())
-        it_ = w.plotter.interactor
-        pos_ = QtCore.QPointF(it_.width() / 2, it_.height() / 2)
-        for knopf_ in (QtCore.Qt.MiddleButton, QtCore.Qt.LeftButton):
-            ev_ = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonDblClick, pos_, pos_, knopf_, knopf_,
-                                    QtCore.Qt.NoModifier)
-            QtWidgets.QApplication.sendEvent(it_, ev_)
-            app.processEvents()
+        w._rad_zeit = 0.0
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.MiddleButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.MiddleButton, knoepfe_=QtCore.Qt.NoButton)
+        n1_ = len(zaehler_)
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.MiddleButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.MiddleButton, pos_ + QtCore.QPointF(30, 20),
+               QtCore.Qt.NoButton)
+        n2_ = len(zaehler_)
+        w._rad_zeit = time.time()
+        maus2_(QtCore.QEvent.MouseButtonDblClick, QtCore.Qt.MiddleButton)
+        maus2_(QtCore.QEvent.MouseButtonRelease, QtCore.Qt.MiddleButton, knoepfe_=QtCore.Qt.NoButton)
+        n3_ = len(zaehler_)
         w.zoom_alles = alt_zoom
-        check("Doppelklick mit der mittleren Maustaste passt alles Sichtbare ein (links nicht)",
-              len(zaehler_) == 1, str(len(zaehler_)))
+        w._viewport_menu = alt_menu_
+        check("Doppelklick mit der mittleren Maustaste passt alles Sichtbare ein (links und rechts nicht)",
+              n1_ == 1, str(n1_))
+        check("… nicht aber mit Zug (Drehen) oder gleich nach einem Radschritt",
+              n2_ == 1 and n3_ == 1, f"{n2_} {n3_}")
 
         # Drehen eines grossen Modells: Nebendarsteller bleiben kurz weg
         w.SCHNELLDREHEN_AB = 1

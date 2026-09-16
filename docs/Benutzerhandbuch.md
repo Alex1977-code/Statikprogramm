@@ -1143,7 +1143,9 @@ Ausblendung ist nur eine Sicht — am Modell und an der Berechnung ändert sie
 nichts. Ein neues Netz oder ein anderes Modell hebt sie auf. Ein
 **Doppelklick mit der mittleren Maustaste** im Bild passt die Kamera auf
 alles ein, was gerade zu sehen ist (wie *Zoom alles*); Ausgeblendetes zählt
-dabei nicht mit.
+dabei nicht mit. Er zählt beim Loslassen und nur ohne Ziehbewegung; hat das
+Mausrad in den letzten 0,4 s gerollt, gilt er nicht — wer beim Zoomen das Rad
+drückt, will nicht alles einpassen (16.09.2026).
 
 **Während einer Rechnung öffnet das Programm kein Fenster.** Fehler,
 Warnungen und Rückfragen gehen dann ins Protokoll und in die Statuszeile; eine
@@ -1398,8 +1400,8 @@ noch.
 
 | Taste | tut |
 |---|---|
-| **links** | wählen (Klick) und das **Auswahlfenster** aufziehen (ziehen) |
-| **Mitte** gedrückt halten | **drehen**; Doppelklick passt alles Sichtbare ins Bild |
+| **links** | kurzer Klick wählt, was unter dem Zeiger liegt — liegt dort nichts, hebt er die Auswahl auf (seit 16.09.2026); gedrückt halten und ziehen zieht das **Auswahlfenster** auf |
+| **Mitte** gedrückt halten | **drehen**; Doppelklick (ohne Zug, nicht beim Rollen) passt alles Sichtbare ins Bild |
 | **rechts** gedrückt halten | **schieben**; ohne Ziehbewegung das Kontextmenü |
 | **Mausrad** | zoomen, auf die Fläche unter dem Zeiger zu; die Drehmitte folgt |
 
@@ -1410,11 +1412,25 @@ Die linke Taste dreht **nicht** mehr — sie gehört ganz der Auswahl. Dadurch
 gibt es keinen Fall mehr, in dem eine Zeigerbewegung mal dreht und mal ein
 Fenster aufzieht.
 
+**Tasten und Doppelklicks im Bild** (16.09.2026, Meldung „beim Heranzoomen
+springt der Zoom auf die Vollansicht zurück“). Nachgestellt wurden drei Wege
+dorthin, alle drei sind geschlossen. Ein **Doppelklick mit der rechten oder
+linken Taste** erreichte VTK als Tastendruck, das Loslassen aber nicht — VTK
+blieb im Zoom- bzw. Drehzustand hängen; danach zoomte jede Mausbewegung ohne
+Taste (gemessen: Abstand zur Blickmitte 0,70 → 0,31), und Drehen und Schieben
+gingen nicht mehr. Jetzt gilt der zweite Druck wie ein Druck, und eine Bewegung
+ohne Taste beendet einen hängenden Zustand. Die **Taste r** setzte die Kamera
+auf die Gesamtansicht zurück (VTK-Standard; w und s schalteten Draht und
+Fläche, Pfeil auf/ab zoomten): Buchstaben, Ziffern und Pfeiltasten tun in der
+Ansicht jetzt nichts, Kürzel mit Strg oder Alt bleiben. Und der **Doppelklick
+Mitte** zählt nur noch ohne Zug und nicht beim Rollen (s. o.).
+
 **Auswahlfenster.** Mit gedrückter **linker** Maustaste aufziehen: der
-Druckpunkt ist die erste Ecke, der Loslasspunkt die zweite. Wer lieber
-klickt: ein Klick ins Leere setzt ebenfalls die erste Ecke, ein zweiter die
-zweite; dazwischen zeigt ein durchscheinendes Rechteck, was das Fenster
-fassen wird. Ein Klick auf der ersten Ecke verwirft das Fenster wieder.
+Druckpunkt ist die erste Ecke, der Loslasspunkt die zweite; dazwischen zeigt
+ein durchscheinendes Rechteck, was das Fenster fassen wird. Ein kurzer Klick
+ins Leere zieht **kein** Fenster mehr auf, sondern hebt die Auswahl auf
+(16.09.2026: „kurz = alles deselektieren, lang = Selektionsfenster“); bis dahin
+setzte er die erste Ecke, und der nächste Klick die zweite.
 
 | aufgezogen | Rechteck | gewählt wird |
 |---|---|---|
