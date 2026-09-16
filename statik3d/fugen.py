@@ -1332,6 +1332,159 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
     return bericht
 
 
+STABENDE_GRUPPE = "Stabende "
+
+
+def _tetraeder_der_koerper(model: Model) -> tuple:
+    """(T, wer, name): Tetraeder aller Koerper als Knotenvierer, dazu je
+    Tetraeder das Element und der Koerpername. Hexaeder zerfallen in sechs
+    Tetraeder um die Raumdiagonale 0-6 - fuer die Frage "liegt der Punkt
+    darin" reicht das, die Kopplung geht ohnehin an die Knoten des Elements."""
+    T, wer, name = [], [], []
+    ne = len(model.elements)
+    for kname, k in (getattr(model, "koerper", None) or {}).items():
+        for i in (k.elemente or []):
+            i = int(i)
+            if not 0 <= i < ne:
+                continue
+            nd = [int(x) for x in model.elements[i].nodes]
+            if len(nd) in (4, 10):
+                T.append(nd[:4]); wer.append(i); name.append(kname)
+            elif len(nd) in (8, 20):
+                for a, b, c, d in ((0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6),
+                                   (0, 7, 4, 6), (0, 4, 5, 6), (0, 5, 1, 6)):
+                    T.append([nd[a], nd[b], nd[c], nd[d]]); wer.append(i); name.append(kname)
+    return np.asarray(T, int).reshape(-1, 4), np.asarray(wer, int), name
+
+
+def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) -> dict:
+    """Stabenden, die auf oder in einem vernetzten Koerper liegen, an dessen
+    Netz haengen - so, wie RFEM einen Knoten auf einer Flaeche ins Netz
+    integriert.
+
+    Der freie Vernetzer kennt den Stabknoten nicht. Am Drehlager (16.09.2026)
+    endeten deshalb alle 64 Zugstaebe an keinem Element: das eine Ende hing
+    an seiner starren Scheibe, das andere lag genau in der Mitte der
+    Stirnflaeche des Schraubenvolumens (K1093 auf V49) - und an nichts. Die
+    Schrauben trugen keinen Zug, die Deckel V33/V35 hoben ab, die
+    Kontakt-Iteration brach ab. Umgesetzt wird der Anschluss wie die starre
+    Scheibe: das Stabende haengt ueber starre Kopplungen an den Knoten des
+    Elements, in dem es liegt - drei Knoten auf einer Seitenflaeche, vier im
+    Innern, einer, wenn es mit einem Netzknoten zusammenfaellt. ``toleranz``
+    [m] ist der Abstand, bis zu dem ein Punkt noch "auf" der Seite liegt
+    (RFEM-Koordinaten sind exakt; 0,1 mm faengt Rundung ab). Ein Stabende
+    an keinem Koerper (Ankerstab im Fundament, Kragarm) bleibt frei; ein
+    Stabende, das schon in einer Kopplung steht (Mitte einer starren
+    Scheibe), wird nicht doppelt angeschlossen. Dieselbe Regel gilt fuer
+    Knoten, die RFEM als **integriert** fuehrt (Flaeche.integrierte_knoten),
+    und fuer Knoten mit einer Knotenlast oder einem Lager: liegen sie auf
+    oder in einem Koerper und in keinem seiner Elemente, haengen sie so an
+    seinem Netz - sonst ginge die Last ins Leere und das Lager hielte nichts.
+
+    Rueckgabe {"stabenden": n, "kopplungen": n, "anschluesse": [(Knoten,
+    Stab oder Grund, Koerper, Zahl der Knoten)]}. Vorhandene Kopplungen
+    dieser Art werden vorher entfernt (neues Netz).
+    """
+    from scipy.spatial import cKDTree
+    from .importers import _common as C
+    bericht = {"stabenden": 0, "kopplungen": 0, "anschluesse": []}
+    model.kopplungen = [k for k in (getattr(model, "kopplungen", None) or [])
+                        if not str(getattr(k, "gruppe", "")).startswith(STABENDE_GRUPPE)]
+    if not model.nn or not model.elements:
+        return bericht
+    stab: dict = {}
+    andere: set = set()
+    for i, e in enumerate(model.elements):
+        if e.typ in ("beam", "truss"):
+            for x in e.nodes:
+                stab.setdefault(int(x), []).append(i)
+        else:
+            andere.update(int(x) for x in e.nodes)
+    schon = {int(k.node_a) for k in model.kopplungen} | {int(k.node_b) for k in model.kopplungen}
+    # Neben den Stabenden: was RFEM als integrierten Knoten fuehrt, und was
+    # eine Last oder ein Lager traegt - ein Knoten, an dem etwas haengt und
+    # der auf einem Koerper liegt, gehoert zu dessen Netz.
+    grund: dict = {int(n): "Stabende" for n in stab}
+    for f in (getattr(model, "flaechen", None) or {}).values():
+        for n in (getattr(f, "integrierte_knoten", None) or []):
+            grund.setdefault(int(n), "integriert")
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for l in (getattr(lc, "nodal_loads", None) or []):
+            grund.setdefault(int(l.node), "Last")
+    for s in (getattr(model, "supports", None) or []):
+        grund.setdefault(int(s.node), "Lager")
+    kandidaten = [n for n in grund if 0 <= n < model.nn and n not in andere and n not in schon]
+    if not kandidaten:
+        return bericht
+    T, wer, kname = _tetraeder_der_koerper(model)
+    if not len(T):
+        return bericht
+    N = np.asarray(model.nodes[:model.nn], float)
+    X = N[T]                                               # (nt, 4, 3)
+    mitte = X.mean(axis=1)
+    radius = np.linalg.norm(X - mitte[:, None, :], axis=2).max(axis=1)
+    baum = cKDTree(mitte)
+    stabname = {}
+    for mname, mem in (getattr(model, "members", None) or {}).items():
+        for i in (getattr(mem, "elements", None) or []):
+            stabname[int(i)] = str(mname)
+    unendlich = float("inf")
+    for n in sorted(kandidaten):
+        p = N[n]
+        kand = np.asarray(baum.query_ball_point(p, float(radius.max()) + toleranz), dtype=int)
+        if not kand.size:
+            continue
+        kand = kand[np.linalg.norm(mitte[kand] - p, axis=1) <= radius[kand] + toleranz]
+        if not kand.size:
+            continue
+        A = X[kand]                                        # (k, 4, 3)
+        # Baryzentrische Koordinaten ueber das 3x3-System (b-a, c-a, d-a)
+        M = np.stack([A[:, 1] - A[:, 0], A[:, 2] - A[:, 0], A[:, 3] - A[:, 0]], axis=2)
+        det = np.linalg.det(M)
+        gut = np.abs(det) > 1e-30
+        if not gut.any():
+            continue
+        lam = np.zeros((len(kand), 4))
+        rhs = (p - A[gut, 0])
+        sol = np.linalg.solve(M[gut], rhs[:, :, None])[:, :, 0]
+        lam[gut, 1:] = sol
+        lam[gut, 0] = 1.0 - sol.sum(axis=1)
+        # Abstand zur gegenueberliegenden Seite = lambda_i * Hoehe_i; die Hoehe
+        # ist 6V / (2 A_i) = 3V / A_i
+        V6 = np.abs(det)
+        hoehe = np.zeros((len(kand), 4))
+        for i, (a, b, c) in enumerate(((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2))):
+            fl = 0.5 * np.linalg.norm(np.cross(A[:, b] - A[:, a], A[:, c] - A[:, a]), axis=1)
+            hoehe[:, i] = np.where(fl > 0, V6 / np.maximum(2.0 * fl, 1e-300), 0.0)
+        abstand = lam * hoehe                              # < 0: ausserhalb dieser Seite
+        abstand[~gut] = -np.inf
+        tiefe = abstand.min(axis=1)
+        j = int(np.argmax(tiefe))
+        if tiefe[j] < -toleranz:
+            continue                                       # liegt in keinem Koerper
+        partner = [int(T[kand[j], i]) for i in range(4) if abstand[j, i] > toleranz]
+        if not partner:                                    # numerisch entartet: alle vier
+            partner = [int(x) for x in T[kand[j]]]
+        for q in partner:
+            model.kopplungen.append(Kopplung(int(n), int(q),
+                                             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                                             [unendlich, unendlich, unendlich],
+                                             STABENDE_GRUPPE + f"K{n}"))
+        sname = (", ".join(sorted({stabname.get(i, f"E{i}") for i in stab[n]}))
+                 if n in stab else grund[n])
+        bericht["stabenden"] += 1
+        bericht["kopplungen"] += len(partner)
+        bericht["anschluesse"].append((int(n), sname, kname[kand[j]], len(partner)))
+    if log is not None and bericht["stabenden"]:
+        liste = ", ".join(f"{s} (K{n}) → {k}" for n, s, k, _z in bericht["anschluesse"][:6])
+        arten = sorted({grund[n] for n, _s, _k, _z in bericht["anschluesse"]})
+        C.say(log, f"{bericht['stabenden']} Knoten an Volumen angeschlossen ({', '.join(arten)}) - "
+                   f"der Knoten liegt auf oder in dem Körper, wie in RFEM integriert; "
+                   f"{bericht['kopplungen']} starre Kopplungen an die Knoten des Elements dort: {liste}"
+                   + (" …" if len(bericht["anschluesse"]) > 6 else ""))
+    return bericht
+
+
 def kontaktfugen_zuruecksetzen(model: Model, log: list = None) -> int:
     """Alles wieder entfernen, was aus Kontaktbedingungen entstanden ist.
 

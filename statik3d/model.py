@@ -1967,6 +1967,15 @@ class Flaeche:
     #: ``gelenkwirkung`` als Klartext („ux=starr, ..., phix=frei").
     gelenklinien: list[str] = field(default_factory=list)
     gelenkwirkung: str = ""
+    #: Knoten (Modellnummern) und Linien, die in RFEM **in die Flaeche
+    #: integriert** sind: sie liegen auf der Flaeche und gehoeren zu ihrem
+    #: Netz - das Ende eines Zugstabs auf der Stirnflaeche eines
+    #: Schraubenvolumens, der Kreis einer starren Scheibe auf dem Deckel.
+    #: Die Knoten haengt fugen.stabenden_koppeln nach dem Vernetzen an das
+    #: Netz des Koerpers; die Linien stehen hier fest, das Netz folgt ihnen
+    #: (noch) nicht.
+    integrierte_knoten: list[int] = field(default_factory=list)
+    integrierte_linien: list[str] = field(default_factory=list)
 
     def bezug(self) -> str:
         t = f"{len(self.linien)} Linien"

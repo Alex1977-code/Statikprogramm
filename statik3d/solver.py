@@ -615,6 +615,10 @@ class Results:
     # ---- Ausgabe --------------------------------------------------------------
     def summary(self) -> str:
         s = []
+        if self.info.get("abbruch"):
+            s.append("ABBRUCH                 : " + str(self.info["abbruch"]))
+            s.append(f"Gezeigt wird die Verformung der letzten Kontakt-Iteration "
+                     f"({self.info.get('abbruch_iteration', '?')}) - kein Gleichgewicht, keine Auflagerkräfte")
         if self.name:
             s.append(f"Ergebnis                : {self.name} ({self.kind})")
         s += [f"Freiheitsgrade gesamt   : {self.info.get('ndof', '?')}",
@@ -1309,16 +1313,23 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     try:
         u, R, aktiv_eff = _rechnen()
         system.freie_bewegungen()      # nur suchen - geloest ist geloest
-    except RuntimeError:
+    except RuntimeError as ex:
         # Statt abzubrechen: die freien Bewegungen benennen, festhalten und
         # weiterrechnen. Der Nutzer sieht dann die Verformung und daneben,
         # welche Last in der Bewegung ins Nichts geht - und entscheidet selbst.
         if not system.hilfsfesselung():
+            _teilergebnis_anhaengen(model, system, res, ex, F, feq, q, temp, workers, aktiv)
             raise
         n_sg = len(system.singular)
         _melde(progress, f"{n_sg} freie Bewegung{'' if n_sg == 1 else 'en'} gefunden - "
                "wird mit Hilfsfesselung gerechnet")
-        u, R, aktiv_eff = _rechnen()
+        try:
+            u, R, aktiv_eff = _rechnen()
+        except RuntimeError as ex2:
+            # Auch mit Hilfsfesselung kein Gleichgewicht: die Verformung der
+            # letzten Iteration bleibt als Ergebnis "Abbruch" erhalten
+            _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv)
+            raise
         u = system.ohne_starrkoerper(u)
     if system.singular:
         from . import singular as _sg
@@ -1718,6 +1729,164 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
 # ==========================================================================
 # Kontakt-Iteration
 # ==========================================================================
+class KontaktAbbruch(RuntimeError):
+    """Die Kontakt-Iteration fand kein Gleichgewicht - mit dem, was bis dahin
+    vorlag: der Verschiebung der letzten geloesten Iteration (``u``), ihrer
+    Nummer, dem Kontaktzustand dieses Schritts und den Teilen, deren
+    Bedingungen zuletzt alle offen waren (16.09.2026: "die Verformung der
+    letzten Iteration anzeigen, damit der Anwender pruefen kann, woran der
+    Abbruch lag - und Zeiger auf die Teile, die ihn verursacht haben").
+    ``teilergebnis`` haengt _solve_loads an: das Results-Objekt dazu."""
+
+    def __init__(self, text: str, u=None, iteration: int = 0, kontakt=None, abgehoben=None):
+        super().__init__(text)
+        self.u = u
+        self.iteration = int(iteration)
+        self.kontakt = list(kontakt or [])
+        self.abgehoben = list(abgehoben or [])
+        self.teilergebnis = None
+
+
+def _teile_mit_kontakt(model, cs) -> list:
+    """[(Name, Knotenmenge, Zahl der Bedingungen, davon aktiv, Fugen)] je Teil
+    mit Kontaktbedingungen. Teile sind die Volumenkoerper; was keinem gehoert,
+    zaehlt nach zusammenhaengenden Teiltragwerken."""
+    from .diagnose import teiltragwerke
+    zu: dict = {}
+    for c in cs.cons:
+        zu.setdefault(int(c.node), []).append(c)
+    if not zu:
+        return []
+    ne = len(model.elements)
+    teile, belegt = [], set()
+    for name, k in (getattr(model, "koerper", None) or {}).items():
+        kn = {int(n) for e in (k.elemente or []) if 0 <= int(e) < ne
+              for n in model.elements[int(e)].nodes}
+        if kn:
+            teile.append((name, kn))
+            belegt |= kn
+    try:
+        for i, grp in enumerate(teiltragwerke(model), 1):
+            kn = {int(n) for n in grp} - belegt
+            if kn:
+                teile.append((f"Teil {i}", kn))
+    except Exception:                 # noqa: BLE001 - eine Diagnose darf nie sperren
+        pass
+    out = []
+    for name, kn in teile:
+        cons = [c for n in kn if n in zu for c in zu[n]]
+        if not cons:
+            continue
+        aktiv = sum(1 for c in cons if c.active)
+        fugen = sorted({(c.label or "").split(":")[0] for c in cons if c.label})
+        out.append((name, kn, len(cons), aktiv, fugen))
+    return out
+
+
+def _kontakt_abbruch(it: int, ex, cs, model, u) -> KontaktAbbruch:
+    """Die Ausnahme zum singulaeren Schritt ``it`` - mit der Loesung des
+    Schritts davor und den Teilen, die in diesem Schritt keine geschlossene
+    Bedingung mehr hatten."""
+    text = _contact_singular(it, ex, cs, model)
+    if u is None:
+        return KontaktAbbruch(text, iteration=0)
+    abgehoben = []
+    try:
+        n6 = model.nn * NDOF
+        U = np.asarray(u[:n6], float).reshape(-1, NDOF)[:, :3]
+        teile = []
+        for name, kn, n, aktiv, fugen in _teile_mit_kontakt(model, cs):
+            idx = np.fromiter(kn, int, len(kn))
+            teile.append((name, idx, n, aktiv, fugen, U[idx].mean(axis=0),
+                          float(np.linalg.norm(U[idx], axis=1).mean())))
+        betraege = np.array([x[6] for x in teile], float)
+        for k, (name, idx, n, aktiv, fugen, mittel, betrag) in enumerate(teile):
+            # Ein Teil ist frei, wenn keine seiner Bedingungen mehr haelt - oder
+            # wenn die Mehrheit offen ist und es sich um ein Vielfaches dessen
+            # bewegt, was die uebrigen Teile tun (der Block, der auf drei
+            # Knoten kippt, statt glatt abzuheben).
+            rest = np.delete(betraege, k)
+            mass = float(np.median(rest)) if len(rest) else 0.0
+            los = aktiv == 0 or (aktiv < n / 2 and betrag > 1e-9 and betrag >= 5.0 * mass)
+            if los:
+                abgehoben.append({"name": name, "knoten": idx, "n": n, "aktiv": aktiv, "fugen": fugen,
+                                  "u": mittel, "betrag": betrag, "mass": mass})
+    except Exception:                 # noqa: BLE001 - die Diagnose darf den Abbruch nicht verschlucken
+        abgehoben = []
+    try:
+        kontakt = cs.results()
+    except Exception:                 # noqa: BLE001
+        kontakt = []
+    return KontaktAbbruch(text, u=np.array(u, float), iteration=it - 1, kontakt=kontakt,
+                          abgehoben=abgehoben)
+
+
+def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=None,
+                            workers=None, aktiv=None) -> None:
+    """Nach einem Abbruch der Kontakt-Iteration: die Verschiebung der letzten
+    geloesten Iteration als Ergebnis an die Ausnahme haengen - samt den
+    Teilen, deren Kontaktbedingungen zuletzt alle offen waren, als freie
+    Bewegungen mit Pfeil. Die Oberflaeche zeigt es mit dem Zusatz "Abbruch":
+    man sieht, was sich wohin bewegt, statt nur eine Meldung zu lesen.
+    Auflagerkraefte gibt es nicht (kein Gleichgewicht); Element- und
+    Spannungsergebnisse werden zur letzten Verschiebung nachgerechnet."""
+    u = getattr(ex, "u", None)
+    if u is None or getattr(ex, "teilergebnis", None) is not None:
+        return
+    from . import singular as _sg
+    try:
+        u = system.ohne_starrkoerper(np.asarray(u, float))
+        verschiebungen_eintragen(model, res, u, np.zeros_like(u))
+        res.contact = list(getattr(ex, "kontakt", None) or [])
+        res.info.update({"abbruch": str(ex).splitlines()[0], "abbruch_iteration": int(ex.iteration),
+                         "contact_iterations": int(ex.iteration), "contact_converged": False,
+                         "ndof": model.ndof, "nfree": len(system.fi), "solver": system.backend})
+        sing = list(_sg.auswerten(model, list(system.singular or []), F))
+        n6 = model.nn * NDOF
+        K = np.asarray(F, float).ravel()[:n6].reshape(-1, NDOF)[:, :3] if F is not None else None
+        for teil in getattr(ex, "abgehoben", None) or []:
+            kn = np.asarray(teil["knoten"], int)
+            if not len(kn):
+                continue
+            mitte, L = _sg._mitte_und_laenge(model.nodes[kn])
+            v = np.asarray(teil["u"], float)
+            nv = float(np.linalg.norm(v))
+            richtung = v / nv if nv > 0 else np.zeros(3)
+            kraft = abs(float(K[kn].sum(axis=0) @ richtung)) if K is not None and nv > 0 else 0.0
+            fug = ", ".join(teil["fugen"][:3]) + (" …" if len(teil["fugen"]) > 3 else "")
+            wohin = (f" - Verschiebung längs ({richtung[0]:.2f}, {richtung[1]:.2f}, {richtung[2]:.2f})"
+                     if nv > 0 else "")
+            n_akt = int(teil.get("aktiv", 0))     # nicht "aktiv": das ist der Lastvektor fuer postprocess
+            if n_akt == 0:
+                lage = (f"in Kontakt-Iteration {ex.iteration + 1} war keine seiner {teil['n']} "
+                        f"Kontaktbedingungen mehr geschlossen")
+            else:
+                lage = (f"in Kontakt-Iteration {ex.iteration + 1} hielten nur noch {n_akt} von {teil['n']} "
+                        f"Kontaktbedingungen, und es bewegte sich um {teil.get('betrag', 0.0) * 1e3:.3g} mm "
+                        f"(die übrigen Teile um {teil.get('mass', 0.0) * 1e3:.3g} mm)")
+            sing.append(_sg.Singularitaet(
+                art="hebt ab", knoten=[int(i) for i in kn], koerper=[teil["name"]],
+                t=richtung, omega=np.zeros(3), bezug=mitte, mitte=mitte, laenge=L,
+                fugen=list(teil["fugen"]), kraft=kraft,
+                text=f"{teil['name']} hebt ab: {lage}{wohin}",
+                ursache=(f"Das Teil hängt nur an Fugen ohne Zug ({fug}); öffnen sie alle, hält "
+                         "es nichts mehr. Die Verformung der letzten Iteration zeigt, wohin es geht - "
+                         "Abhilfe: Verbund oder Vorspannung an der Fuge, ein Lager, oder die Last "
+                         "in die Fuge drücken lassen.")))
+        res.singular = _sg.wichtigste(sing, hoechstens=max(1, len(sing)))
+        for x in res.singular:
+            x.kegel = None
+        res.info["singularitaeten"] = [singularitaet_info(x) for x in _sg.wichtigste(res.singular)]
+        if feq is not None:
+            try:
+                postprocess(model, u, res, feq, q, temp, workers, aktiv)
+            except Exception as ex3:      # noqa: BLE001 - Spannungen sind Zugabe, die Verformung zaehlt
+                res.info["abbruch_nachlauf"] = str(ex3)
+    except Exception as ex2:              # noqa: BLE001 - das Teilergebnis darf den Abbruch nicht verschlucken
+        res.info["abbruch_teilergebnis_fehler"] = str(ex2)
+    ex.teilergebnis = res
+
+
 def _contact_singular(it: int, ex, cs, model=None) -> str:
     """Meldung zu einem singulaeren Schritt der Kontakt-Iteration.
 
@@ -1853,15 +2022,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 try:
                     u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
                 except RuntimeError as ex2:
-                    raise RuntimeError(_contact_singular(it, ex2, cs, model)) from None
+                    raise _kontakt_abbruch(it, ex2, cs, model, u) from None
                 cs.select_by_direction(u)
                 Kc, Fc = matrizen()
                 try:
                     u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
                 except RuntimeError as ex3:
-                    raise RuntimeError(_contact_singular(it, ex3, cs, model)) from None
+                    raise _kontakt_abbruch(it, ex3, cs, model, u) from None
             else:
-                raise RuntimeError(_contact_singular(it, ex, cs, model)) from None
+                raise _kontakt_abbruch(it, ex, cs, model, u) from None
         changed = cs.update(u)
         if progress:
             # Anteil im Fenster des Lastfalls: 1 - 0,85^it waechst mit jedem

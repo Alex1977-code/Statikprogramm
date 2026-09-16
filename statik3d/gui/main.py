@@ -8807,6 +8807,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # Netzknoten an den Mittelknoten
             self._fortschritt(1000, "Starre Flächen koppeln …")
             fugen.starre_flaechen_koppeln(self.model, log)
+            # Stabenden auf oder in einem Koerper haengen an dessen Netz (die
+            # Zugstaebe der Deckelschrauben am Drehlager, 16.09.2026)
+            self._fortschritt(1000, "Stabenden an Volumen anschließen …")
+            fugen.stabenden_koppeln(self.model, log)
             self._fortschritt(1000, "Lager auf das Netz bringen …")
             supports.lager_auf_netz(self.model, log)
         finally:
@@ -8864,6 +8868,7 @@ class MainWindow(QtWidgets.QMainWindow):
         log = []
         ges = fugen.kontaktfugen_ausfuehren(m, log)
         fugen.starre_flaechen_koppeln(m, log)
+        fugen.stabenden_koppeln(m, log)
         supports.lager_auf_netz(m, log)
         for z in log:
             self.log.appendPlainText(z)
@@ -16009,6 +16014,45 @@ class MainWindow(QtWidgets.QMainWindow):
             self.maske_zeigen("Ergebnisse")
         except Exception:                  # noqa: BLE001
             pass
+        teil = getattr(getattr(w, "ausnahme", None), "teilergebnis", None)
+        if teil is not None:
+            self._abbruch_zeigen(teil)
+
+    def _abbruch_zeigen(self, res) -> None:
+        """Nach einem Abbruch der Kontakt-Iteration (16.09.2026): die Verformung
+        der letzten geloesten Iteration als Ergebnis zeigen - mit dem Zusatz
+        "Abbruch" im Namen - und den ersten Zeiger auf das Teil setzen, das
+        sich losgerissen hat (Modellbaum -> Ergebnisse -> Freie Bewegungen)."""
+        it = res.info.get("abbruch_iteration", 0)
+        res.name = f"{res.name} - Abbruch (Iteration {it})"
+        try:
+            self._solve_done("case", res)
+            # Keine Umhuellende ueber ein Teilergebnis ohne Gleichgewicht: die
+            # Auswahl steht auf dem Lastfall selbst, sonst zeigte sie
+            # "Umhuellende CASES" ohne Zeiger und ohne Abbruch-Zusammenfassung.
+            if self.analysis is not None:
+                self.analysis.envelopes.pop("CASES", None)
+                self._fill_result_selector()
+                for i in range(self.cb_result.count()):
+                    if tuple(self.cb_result.itemData(i) or ()) == ("case", res.name):
+                        self.cb_result.setCurrentIndex(i)      # zeichnet selbst neu
+                        break
+                self._refresh_baum()
+        except Exception as ex:            # noqa: BLE001 - die Anzeige darf den Fehler nicht ueberdecken
+            self.log.appendPlainText(f"Teilergebnis nicht anzeigbar: {ex}")
+            return
+        n = len(res.singular or [])
+        self.log.appendPlainText(
+            f"ABBRUCH: gezeigt wird die Verformung der letzten Kontakt-Iteration ({it}) als Ergebnis "
+            f"„{res.name}“ - kein Gleichgewicht, keine Auflagerkräfte. "
+            + (f"{n} Zeiger stehen im Modellbaum unter Ergebnisse → Freie Bewegungen; der erste ist eingestellt."
+               if n else "Kein Teil ohne geschlossene Kontaktbedingung gefunden - die Ursache liegt in der Fugenebene "
+                         "oder in der Lagerung."))
+        if n:
+            self.bewegung_zeigen(0)
+        self.statusBar().showMessage(
+            f"Berechnung gescheitert - Verformung der letzten Kontakt-Iteration ({it}) wird gezeigt"
+            + (f"; {n} Zeiger unter Ergebnisse → Freie Bewegungen" if n else ""), 0)
 
     def _bg_abgebrochen(self, dauer: float) -> None:
         """Der Anwender hat die Hintergrundrechnung angehalten.
@@ -16130,6 +16174,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 for k in self.model.kopplungen):
             log = []
             fugen.starre_flaechen_koppeln(self.model, log)
+            for z in log:
+                self.log.appendPlainText(z)
+        # Stabenden, integrierte, belastete und gelagerte Knoten aus einer
+        # aelteren Datei: ihr Anschluss an die Koerper fehlt noch
+        if self.model.elements and getattr(self.model, "koerper", None) \
+                and not any(str(getattr(k, "gruppe", "")).startswith(fugen.STABENDE_GRUPPE)
+                            for k in self.model.kopplungen):
+            log = []
+            fugen.stabenden_koppeln(self.model, log)
             for z in log:
                 self.log.appendPlainText(z)
         d = diagnose(self.model)

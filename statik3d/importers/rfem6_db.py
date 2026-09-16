@@ -1215,6 +1215,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
                               "Strukturmodifikationen lesen")
     _surface_releases(db, m, log, nlmap, surf_name, solid_name)
     _liniengelenke(db, m, log, line_name, surf_name)
+    _integrierte_objekte(db, m, log, line_name, surf_name, node_of)
     strukturmod = _strukturmodifikationen(db, m, log, member_user, node_user)
     _load_cases(db, m, log, surf_els, node_of, member_name, surf_name,
                 line_name, solid_name, strukturmod, fortschritt=fortschritt)
@@ -2941,6 +2942,77 @@ def _strukturmodifikationen(db: Db, m: Model, log: list, member_user: dict,
                         "Das bildet Statik3D nicht ab - gerechnet wird mit den "
                         "vollen Steifigkeiten.")
     return out
+
+
+def _integrierte_objekte(db: Db, m: Model, log: list, line_name: dict,
+                         surf_name: dict, node_of: dict) -> tuple:
+    """Integrierte Knoten und Linien der Flaechen lesen
+    (``SurfaceImpl*_integratedNodes`` / ``_integratedLines``).
+
+    In RFEM gehoert ein integrierter Knoten zum Netz der Flaeche: das Ende
+    eines Zugstabs auf der Stirnflaeche eines Schraubenvolumens ist so mit
+    dem Volumen verbunden. Am Drehlager (16.09.2026) sind 112 der 128
+    Stabenden integrierte Knoten (168 Knoten an 142 Flaechen, 78 davon
+    Randflaechen von Volumen); die 394 integrierten Linien an 14 Flaechen
+    sind die Kreise der starren Scheiben auf Deckeln und Ringen. Bis dahin
+    las der Import nur die integrierten Oeffnungen - die Knoten hingen an
+    nichts, die Schrauben trugen keinen Zug. Die Knoten stehen jetzt in
+    ``Flaeche.integrierte_knoten`` (Modellnummern) und werden nach dem
+    Vernetzen an das Netz gekoppelt (fugen.stabenden_koppeln); die Linien in
+    ``Flaeche.integrierte_linien``.
+
+    Rueckgabe (Zahl der Knoten, Zahl der Linien).
+    """
+    flaeche_von_impl: dict[str, dict] = {}
+
+    def flaeche(impl_tbl: str, impl_id):
+        if impl_tbl not in flaeche_von_impl:
+            flaeche_von_impl[impl_tbl] = {
+                hh.get("impl_id"): hh["id"] for hh in db.rows("Surface")
+                if hh.get("impl_table") == impl_tbl}
+        nm = surf_name.get(flaeche_von_impl[impl_tbl].get(impl_id))
+        return m.flaechen.get(nm) if nm else None
+
+    n_k = n_l = 0
+    fk: set = set()
+    fl: set = set()
+    for tbl in sorted(db.tables):
+        if not tbl.startswith("SurfaceImpl"):
+            continue
+        if tbl.endswith("_integratedNodes"):
+            impl_tbl = tbl[:-len("_integratedNodes")]
+            for oid, lst in db.container(tbl).items():
+                f = flaeche(impl_tbl, oid)
+                if f is None:
+                    continue
+                for nid in lst:
+                    idx = node_of.get(nid)
+                    if idx is not None and int(idx) not in f.integrierte_knoten:
+                        f.integrierte_knoten.append(int(idx))
+                        n_k += 1
+                        fk.add(f.name)
+        elif tbl.endswith("_integratedLines"):
+            impl_tbl = tbl[:-len("_integratedLines")]
+            for oid, lst in db.container(tbl).items():
+                f = flaeche(impl_tbl, oid)
+                if f is None:
+                    continue
+                for lid in lst:
+                    ln = line_name.get(lid)
+                    if ln and ln not in f.integrierte_linien:
+                        f.integrierte_linien.append(ln)
+                        n_l += 1
+                        fl.add(f.name)
+    if n_k or n_l:
+        teile = []
+        if n_k:
+            teile.append(f"{n_k} integrierte Knoten an {len(fk)} Flächen")
+        if n_l:
+            teile.append(f"{n_l} integrierte Linien an {len(fl)} Flächen")
+        C.say(log, "  " + " und ".join(teile) + " übernommen - die Knoten hängen nach dem "
+                   "Vernetzen am Netz des Körpers (Stabenden auf Schraubenvolumen), die Linien "
+                   "stehen an der Fläche")
+    return n_k, n_l
 
 
 def _liniengelenke(db: Db, m: Model, log: list, line_name: dict,

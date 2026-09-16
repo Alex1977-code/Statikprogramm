@@ -41,6 +41,9 @@ class SolveWorker(QtCore.QThread):
         self._func = func
         self._abbruch = False
         self._t0 = 0.0
+        #: die Ausnahme eines gescheiterten Laufs - traegt bei einem Abbruch
+        #: der Kontakt-Iteration das Teilergebnis (solver.KontaktAbbruch)
+        self.ausnahme = None
 
     def abbrechen(self) -> None:
         """Anhalten anfordern; wirkt beim naechsten Fortschrittsaufruf."""
@@ -72,6 +75,7 @@ class SolveWorker(QtCore.QThread):
                 # gewollt war trotzdem der Abbruch, kein Fehler.
                 self.abgebrochen.emit(time.time() - self._t0)
                 return
+            self.ausnahme = ex
             self.failed.emit(str(ex), traceback.format_exc())
             return
         # Kam der Abbruch erst nach dem letzten Fortschrittsaufruf, ist das
