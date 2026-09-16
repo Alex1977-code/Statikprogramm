@@ -8807,6 +8807,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # Netzknoten an den Mittelknoten
             self._fortschritt(1000, "Starre Flächen koppeln …")
             fugen.starre_flaechen_koppeln(self.model, log)
+            # Stabenden auf oder in einem Koerper haengen an dessen Netz (die
+            # Zugstaebe der Deckelschrauben am Drehlager, 16.09.2026)
+            self._fortschritt(1000, "Stabenden an Volumen anschließen …")
+            fugen.stabenden_koppeln(self.model, log)
             self._fortschritt(1000, "Lager auf das Netz bringen …")
             supports.lager_auf_netz(self.model, log)
         finally:
@@ -8864,6 +8868,7 @@ class MainWindow(QtWidgets.QMainWindow):
         log = []
         ges = fugen.kontaktfugen_ausfuehren(m, log)
         fugen.starre_flaechen_koppeln(m, log)
+        fugen.stabenden_koppeln(m, log)
         supports.lager_auf_netz(m, log)
         for z in log:
             self.log.appendPlainText(z)
@@ -16169,6 +16174,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 for k in self.model.kopplungen):
             log = []
             fugen.starre_flaechen_koppeln(self.model, log)
+            for z in log:
+                self.log.appendPlainText(z)
+        # Stabenden, integrierte, belastete und gelagerte Knoten aus einer
+        # aelteren Datei: ihr Anschluss an die Koerper fehlt noch
+        if self.model.elements and getattr(self.model, "koerper", None) \
+                and not any(str(getattr(k, "gruppe", "")).startswith(fugen.STABENDE_GRUPPE)
+                            for k in self.model.kopplungen):
+            log = []
+            fugen.stabenden_koppeln(self.model, log)
             for z in log:
                 self.log.appendPlainText(z)
         d = diagnose(self.model)

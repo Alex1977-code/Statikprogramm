@@ -570,6 +570,33 @@ durch — die Freigabe der Verdrehungen hat nichts freizugeben. Die
 Volumenelemente unter der Scheibe haben ohnehin keine
 Verdrehungsfreiheitsgrade.
 
+**Das andere Stabende** liegt in RFEM auf der Stirnfläche des
+Schraubenvolumens (K1093 in der Mitte der Stirnfläche von V49, y = −413 mm)
+und ist dort **integriert**: `SurfaceImplPlane_integratedNodes` führt ihn
+(RFEM-Knoten 431 an Fläche 1070). Am Drehlager sind es 168 integrierte
+Knoten an 142 Flächen (78 davon Randflächen von Volumen) und 394 integrierte
+Linien an 14 Flächen (`_integratedLines`: die Kreise der starren Scheiben
+auf den Deckeln V33/V35 und den Ringen V31/V34); 112 der 128 Stabenden sind
+integrierte Knoten, die 16 übrigen sind die Ankerstabenden an festen Knoten.
+Bis zum 16.09.2026 las der Import nur die integrierten Öffnungen; die
+Stabenden hingen an nichts, die Schrauben trugen keinen Zug, die Deckel
+V33/V35 hoben ab, die Kontakt-Iteration brach ab. Seither liest
+`_integrierte_objekte` Knoten und Linien in `Flaeche.integrierte_knoten`
+(Modellnummern) und `Flaeche.integrierte_linien`, und
+`fugen.stabenden_koppeln` setzt nach dem Vernetzen jeden Knoten, der auf oder
+in einem Körper liegt und an dem etwas hängt (Stabende, integrierter Knoten,
+Knotenlast, Lager), als starre Kopplung an die Knoten des Elements dort
+(Gruppe `Stabende K…`; Toleranz 0,1 mm; Hexaeder werden für die Frage „liegt
+der Punkt darin" in sechs Tetraeder um die Raumdiagonale zerlegt). Ein Knoten,
+der schon Master einer starren Scheibe ist, wird nicht doppelt angeschlossen;
+ein Ende an keinem Körper bleibt frei. Die integrierten Linien werden vom
+Vernetzer noch nicht erzwungen (das Netz der Deckelfläche folgt dem Kreis der
+Scheibe nicht; die Scheibenkopplung nimmt die Netzknoten innerhalb des
+Kreises, am Drehlager 20 je Scheibe). Nachweis `tests/test_stabende.py`: der
+Zug von 70 kN an zwei Stäben, die in der Deckelfläche und im Innern eines
+Würfels enden, kommt im Fundament an — vorher 0; eine Knotenlast von 30 kN
+auf einem integrierten Knoten ebenso — vorher ging sie verloren.
+
 ### Kombinationen
 
 `LoadCombination` überlagert in RFEM die Lasten vor der Rechnung,

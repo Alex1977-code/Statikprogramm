@@ -2324,6 +2324,34 @@ schließt „Freie Stabenden anschließen" (Suchradius 60 mm) jedes freie Ende a
 Achse des nächsten Stabes an und teilt diesen dort; der Versatz steht im
 Protokoll, die Ausmitte des Anschlusses wird nicht abgebildet.
 
+**Integrierte Knoten und Linien, Stabenden auf Volumen.** RFEM integriert
+einen Knoten, der auf einer Fläche liegt, in deren Netz: ein Zugstab, der in
+der Mitte der Stirnfläche eines Schraubenvolumens endet, hängt dort am
+Volumen. Der Import liest diese Angaben seit dem 16.09.2026 mit (am
+Drehlager: 168 integrierte Knoten an 142 Flächen, 394 integrierte Linien an
+14 Flächen — die Kreise der starren Scheiben auf Deckeln und Ringen; 112 der
+128 Stabenden sind integrierte Knoten). Vorher endeten alle 64 Zugstäbe der
+Deckel- und Augenschrauben an keinem Element: das eine Ende hing an seiner
+starren Kreisscheibe, das andere lag genau in der Mitte der Stirnfläche des
+Schraubenvolumens (Knoten 1093 auf V49) und an nichts. Die Schrauben trugen
+keinen Zug, die Deckel V33 und V35 hoben ab, die Kontakt-Iteration brach ab.
+Nach dem Vernetzen hängt jetzt jeder Knoten, der auf oder in einem
+vernetzten Volumen liegt und an dem etwas hängt — ein Stabende, ein
+integrierter Knoten, eine Knotenlast, ein Lager —, über starre Kopplungen an
+den Knoten des Elements dort: drei Knoten auf einer Seitenfläche, vier im
+Innern, einer, wenn er mit einem Netzknoten zusammenfällt; bis 0,1 mm
+Abstand gilt ein Punkt noch als „auf" der Seite. Das ist dieselbe Umsetzung
+wie bei der starren Scheibe, und sie entspricht dem integrierten Knoten in
+RFEM. Das Protokoll nennt jeden Anschluss („2 Knoten an Volumen
+angeschlossen (Stabende) … Zug (K211) → V1"). Ein Stabende an keinem Volumen
+(Ankerstab im Fundament, Kragarm) bleibt frei; ein Knoten, der schon in einer
+Kopplung steht (Mitte einer starren Scheibe), wird nicht doppelt
+angeschlossen. Beim Öffnen einer älteren Datei mit Netz wird der Anschluss
+nachgeholt (Protokoll unten). Die integrierten Linien stehen an der Fläche
+(Modelldatei); das Netz folgt ihnen noch nicht — für die starren Scheiben
+ist das ohne Folge, ihre Kopplung nimmt die Netzknoten innerhalb des
+Kreises.
+
 ## 8 Nachweise nach EC3
 
 Stäbe (Kette von Stabelementen) werden beim Erzeugen von Stabzügen und beim
