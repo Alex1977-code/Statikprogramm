@@ -2449,6 +2449,51 @@ und eine schon ausgeführte Fuge nimmt neue Werte sonst nicht an (behoben
 17.09.2026 — vorher standen Spiel und Lochleibungsgrenze in der Bedingung,
 die Rechnung benutzte weiter die alten). Der Balken nennt dabei jede Fuge.
 
+**Reibbeiwert für viele Fugen.** Dieselbe Maske setzt **μ** für alle Fugen
+der gewählten Volumen (17.09.2026, auf Wunsch: „ist der Reibwert an diesen
+neuen Spalten einstellbar, das sollte er sein“). Ein leeres Feld lässt ihn,
+wie er ist — eine versehentliche 0 machte die Fuge reibungsfrei und das
+Bauteil beweglich. Ein eingetragener Wert stellt die Fugenebene zugleich auf
+**Gleiten**, denn eine haftende Richtung ist starr und nimmt keinen
+Reibbeiwert an. Je einzelne Fuge stehen μ und das Schubverhalten weiterhin in
+der Kontaktmaske.
+
+**Die drei Passungsarten.** In Wirklichkeit entscheidet die Passung, wie der
+Stift gehalten ist, und die Maske bildet alle drei Fälle ab. Eingetragen
+werden die vier Abmaße der Zeichnung (Welle es/ei, Bohrung ES/EI); daraus
+erkennt das Programm die Art und rechnet:
+
+| Art | woran erkennbar | was das Programm setzt | was das statisch heißt |
+|---|---|---|---|
+| Spielpassung | größte Welle unter kleinster Bohrung | **Spiel** an der Fuge | Der Stift liegt erst nach Durchfahren des Spiels an. Quer hält ihn die Form der Bohrung, längs seiner Achse nur Reibung, und die braucht Anpressung. Er kann sich um seine Achse drehen; seine Lage ändert das nicht, und er fällt nicht heraus. |
+| Übergangspassung | die Spannen überlappen | je nach Ansatz Spiel oder Übermaß | Je nach Istmaß hält ihn die Fügekraft, oder es gilt der Spielfall. Für die Spannung ist das Höchstübermaß der ungünstige Ansatz, für die Tragfähigkeit das Höchstspiel — beide Rechnungen sind sinnvoll. |
+| Presspassung | kleinste Welle über größter Bohrung | **Übermaß** als Last im aktiven Lastfall | Die Fuge steht schon vor der Last unter Druck. Diese Pressung ist eine zusätzliche Spannung im System, und über sie hält Reibung den Stift auch längs seiner Achse. |
+
+Die Wahl **Passung (Stift m6)** nennt die gängigen Paarungen nach ihrem
+Einsatzzweck — fester Sitz H7 (Übergangspassung, Standard im Maschinenbau,
+mit Presse montiert), sehr fester Sitz N7 oder P7 (Übermaßpassung, Demontage
+durch Auspressen), leichte Demontage H8 oder F7 (von Hand einschiebbar). Sie
+ist Beleg und **Prüfung**: ergeben die eingetragenen Abmaße eine andere Art,
+sagt das Protokoll es. Eine eigene Abmaßtabelle bringt das Programm nicht
+mit; beim Abgleich zweier Quellen wich ein Wert um 8 µm ab, und ein
+Zahlendreher würde still zu einer falschen Pressspannung führen. Die Zahlen
+stehen auf der Zeichnung. Zu beachten: mit einer Welle über Null (m6) ist
+H8 rechnerisch noch eine Übergangspassung — „H8 heißt Spielpassung“ gilt für
+Wellen unter Null (h, g, f).
+
+Gemessen an einem Stift Ø40 in einer Bohrung, quer mit 20 kN belastet
+(Auge außen gehalten): ohne Spiel und haftend 12 Kontakt-Iterationen und
+0,0054 mm Verschiebung; mit 0,02 mm Spiel und reibungsfrei 6 Iterationen und
+0,0114 mm — dabei meldet das Programm den Stift als längs seiner Achse frei
+beweglich und rechnet mit Hilfsfesselung weiter; mit μ = 0,2 verschwindet die
+Meldung (51 Iterationen, 0,0089 mm), und 5 kN Zug in Achsrichtung werden über
+die Reibung abgetragen (57 Iterationen). **Merke:** Quer ist ein Stift in
+einer Bohrung immer gehalten, dafür braucht es keine Reibung; frei ist er
+längs seiner Achse, und dort hält nur Reibung unter Anpressung — also
+Reibung einstellen oder, bei Presspassung, das Übermaß aufbringen. Mit
+Reibung steigt die Zahl der Kontakt-Iterationen deutlich, weil Knoten
+zwischen Haften und Gleiten pendeln.
+
 **Integrierte Knoten und Linien, Stabenden auf Volumen.** RFEM integriert
 einen Knoten, der auf einer Fläche liegt, in deren Netz: ein Zugstab, der in
 der Mitte der Stirnfläche eines Schraubenvolumens endet, hängt dort am

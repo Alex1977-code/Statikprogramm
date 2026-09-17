@@ -5039,6 +5039,65 @@ def main():
               and abs(cp_p.grenzpressung - 300e6) < 1 and len(cp_p.rand_knoten) >= 4,
               str((getattr(cp_p, "spiel", None), getattr(cp_p, "grenzpressung", None))))
         check("Ribbon: der Befehl „Passung“ steht neben „Übermaß“", any(a.text() == "Passung" for a in w.findChildren(QtGui.QAction)))
+        # ---- Reibbeiwert für viele Fugen und die drei Passungsarten (17.09.2026) ----
+        from statik3d import passungen as pss_
+        kb_p = w.model.kontaktbedingungen["Fuge P"]
+        mu_vorher = kb_p.reibbeiwert()
+        w.maske_passung()
+        app.processEvents()
+        mp = w.maskenrand.maske
+        wv_p = mp.werte()
+        check("Sammelmaske: Feld Reibbeiwert μ, Passungswahl mit den Paarungen für Passstifte, vier Abmaße",
+              "mu" in wv_p and "passung" in wv_p and all(k in wv_p for k in ("es", "ei", "ES", "EI")),
+              str(sorted(wv_p))[:120])
+        mp.setzen("mu", "")
+        mp.setzen("spiel", "0,05")
+        mp.angewendet.emit(mp.werte())
+        app.processEvents()
+        kb_p = w.model.kontaktbedingungen["Fuge P"]
+        check("leeres μ lässt den Reibbeiwert unverändert (eine 0 aus Versehen machte die Fuge frei)",
+              abs(kb_p.reibbeiwert() - mu_vorher) < 1e-12, f"{kb_p.reibbeiwert()} statt {mu_vorher}")
+        w.maske_passung()
+        app.processEvents()
+        mp = w.maskenrand.maske
+        mp.setzen("mu", "0,15")
+        mp.angewendet.emit(mp.werte())
+        app.processEvents()
+        kb_p = w.model.kontaktbedingungen["Fuge P"]
+        cp_p = next((c for c in w.model.contact_pairs if c.name == "Fuge P"), None)
+        check("μ = 0,15 wirkt an der Bedingung und im Kontaktpaar, die Fugenebene gleitet",
+              abs(kb_p.reibbeiwert() - 0.15) < 1e-12 and cp_p is not None and abs(cp_p.mu - 0.15) < 1e-12
+              and kb_p.dof_behaviour(0).typ == "free", f"{kb_p.reibbeiwert()} / {getattr(cp_p, 'mu', None)}")
+        # Presspassung: die Abmaße ergeben Übermaß, das als Last im Lastfall landet
+        n_ue = len(w.model.case().uebermasse or [])
+        w.maske_passung()
+        app.processEvents()
+        mp = w.maskenrand.maske
+        mp.setzen("passung", "sehr fester Sitz (P7)")
+        for k_, v_ in (("es", "21"), ("ei", "8"), ("ES", "-14"), ("EI", "-35")):
+            mp.setzen(k_, v_)
+        mp.angewendet.emit(mp.werte())
+        app.processEvents()
+        ue_ = w.model.case().uebermasse or []
+        check("Presspassung aus den Abmaßen: Übermaß wird als Last auf die Fugen gelegt",
+              len(ue_) > n_ue and any(abs(u.ueberdeckung - 39e-6) < 2e-6 for u in ue_),
+              str([f"{u.ziel} {u.ueberdeckung * 1e6:.0f} µm" for u in ue_[-2:]]))
+        check("das Protokoll nennt Art, Spanne und was sie statisch bedeutet",
+              "Presspassung" in w.log.toPlainText() and "vor der Last unter Druck" in w.log.toPlainText())
+        # Abmaße, die nicht zur gewählten Paarung passen: Widerspruch im Protokoll
+        w.maske_passung()
+        app.processEvents()
+        mp = w.maskenrand.maske
+        mp.setzen("passung", "leichte Demontage (H8)")
+        for k_, v_ in (("es", "21"), ("ei", "8"), ("ES", "-14"), ("EI", "-35")):
+            mp.setzen(k_, v_)
+        mp.angewendet.emit(mp.werte())
+        app.processEvents()
+        check("Presspassungs-Abmaße unter „leichte Demontage“: das Programm widerspricht",
+              "ergeben eine Presspassung, erwartet war eine Spielpassung" in w.log.toPlainText())
+        check("die drei Arten stehen mit ihrer statischen Bedeutung im Modul",
+              set(pss_.ARTEN) == {"spiel", "uebergang", "press"}
+              and "fällt nicht heraus" in pss_.ARTEN["spiel"][1], str(list(pss_.ARTEN)))
         w.maskenrand.schliessen()
     except Exception as ex:      # noqa: BLE001
         import traceback
