@@ -258,6 +258,25 @@ singuläres System bleibt über der Schranke (`tests/test_nachiteration.py`:
 ein Löser mit 3e-6 Fehler je Schritt kommt nach einer Nachiteration unter
 1e-6, einer mit 50 % Fehler nicht).
 
+**Passung** (17.09.2026): drei Angaben je Kontaktbedingung, die in den
+Aufbau der Bedingungen eingehen (`contact.ContactSystem._bedingung`). Das
+**Spiel** s kommt zum bereinigten Anfangsspalt jeder Bedingung dazu
+(g₀ → g₀ + s; bei einem Verbund entfällt es) - bei einer Bohrung das radiale
+Spiel, so dass ein Stift erst nach s auf der belasteten Seite anliegt. Die
+**Lochleibungsgrenze** p_L wird über die Einflussfläche A_i des Slave-Knotens
+(Facettenfläche zu gleichen Teilen auf ihre Knoten, `fugen._passungsdaten`)
+zur Grenzkraft F_i = p_L·A_i der Bedingung: übersteigt die Druckkraft sie,
+fließt die Bedingung mit konstanter Kraft F_i (das vorhandene plastische
+Glied `limit`/`yielding`), die Nachbarn tragen den Rest; entlastet sie, wird
+sie wieder elastisch. Die **Randabminderung** nimmt den Knoten am Rand der
+gepaarten Kontaktseite (Kanten, die nur zu einer gepaarten Facette gehören;
+weitere Reihen über die Facettenkanten) das Haften und die Reibung: sie
+gleiten reibungsfrei, die Singularität am Ende einer haftenden Fuge fällt
+weg. Nachweis `tests/test_passung.py`: Spiel 0,5 mm setzt den Block 0,5 mm
+tiefer bei gleichem Gleichgewicht; eine Grenze bei 70 % der Spitzenkraft
+kappt jede Knotenkraft dort und lässt die Summe gleich der Last; mit einer
+Randreihe haften nur die neun inneren der 25 Knoten, der Schub geht über sie.
+
 **Halt für Teile ohne geschlossene Bedingung** (17.09.2026): verliert ein
 Teil in der Kontakt-Iteration alle Bedingungen, ist das Gleichungssystem
 des nächsten Schritts wirklich singulär - am Drehlager pendelte die Zahl der

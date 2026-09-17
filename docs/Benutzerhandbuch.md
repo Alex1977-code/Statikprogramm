@@ -307,6 +307,31 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
 
+#### Passung für viele Fugen auf einmal
+
+*Lager / Kontakt → Passung* setzt Spiel, Lochleibungsgrenze und
+Randabminderung für **alle Kontaktfugen der gewählten Volumen** auf einmal
+(17.09.2026, „alle betroffenen Volumen selektieren und einmal im rechten
+Menü für alle diese Einstellung vornehmen“): Auswahlart *Volumen*, die
+Passstifte oder Bolzen in der Ansicht wählen (mehrere mit Strg oder dem
+Auswahlfenster), dann *Passung* - die Maske nennt die Volumen und die
+betroffenen Fugen (jede, an der eines der Volumen Kontakt- oder Gegenseite
+ist), die Werte eintragen, **Auf die Kontaktfugen anwenden**. Ohne Auswahl
+gelten die Werte für alle Fugen. Am vorhandenen Netz werden die Fugen gleich
+neu ausgeführt; das Protokoll nennt je Fuge die Passung („Spiel 0,020 mm je
+Knoten, Lochleibungsgrenze 355 N/mm², 24 Randknoten (1 Reihen) haften
+nicht“). RFEM kennt diese Angaben nicht - sie werden hier nach dem Import
+gesetzt und mit dem Modell gespeichert.
+
+Warum: Passstift und Bohrung haben am Drehlager beide r = 12,500 mm
+(Nullspiel). Rechnerisch liegt der Stift am ganzen Umfang an, haftet dort und
+wird am Bohrungsaustritt von der Kante gequetscht - Spannungsspitzen, die
+es real nicht gibt: ein Passstift hat Spiel, trägt auf der belasteten Seite,
+und Fase und Fließen begrenzen die Kante. Spiel und Lochleibungsgrenze
+bilden das ab; die Randabminderung nimmt die Singularität der haftenden
+Kante aus der Rechnung. Für den Nachweis zählt ohnehin die Lochleibung
+F/(d·t), nicht der Knotenwert.
+
 #### Kontakte entstehen von selbst
 
 Berühren sich zwei Volumen — über eine **gemeinsame** Fläche oder über je
@@ -406,6 +431,9 @@ Die Felder:
 | Feder c | Steifigkeit [kN/m je m²] für Richtungen mit „Feder“ |
 | Suchradius | wie weit die Gegenseite entfernt liegen darf, damit sie noch zur Fuge gehört (ANSYS: „Pinball“); ein Tausendstel davon gilt als Berührung. Das Protokoll nennt den verwendeten Wert (am Drehlager „Achse (Typ 3)“: 50 mm, das Netz der Bohrung). Von Hand nur, wenn Spiel größer als ein Element zur Fuge gehören soll. 0 = automatisch: die größere mittlere Kantenlänge der **beiden Seiten dieser Fuge** — dazu sucht das Programm zweimal, erst weit, um die Gegenseite zu finden, dann mit deren Netz. So bekommt eine feine Fuge nicht die Netzweite eines groben Modells. Damit findet eine fein vernetzte Achse (2 mm) ihre grob vernetzte Bohrung (15 mm) auch mit Spiel; was weiter weg liegt, gehört nicht zur Fuge. Ein eingetragener Wert gilt unverändert |
 | Anfangsspalt | *wie modelliert*: ein Spalt bleibt offen, bis die Last ihn schließt. Gemessen wird zur **wahren** Fläche, nicht zur Facette: an einer Bohrung zählt der Bogen, nicht die Sehne, eine passgenaue Achse liegt darum überall an, auch zwischen den Ecken der Bohrung und auch bei verschieden feinen Netzen (seit 13.09.2026); ein Spalt unter einem Tausendstel des Suchradius gilt als Berührung. *auf Berührung setzen*: jeder Knoten gilt in seiner Lage als anliegend - auch ein wirkliches Spiel verschwindet (ANSYS: „adjust to touch“) |
+| Spiel je Seite [mm] | **Passung** (17.09.2026): ein Anfangsspalt je Knoten zusätzlich zur Geometrie - bei einer Bohrung das radiale Spiel, also das halbe Durchmesserspiel (H7/h6 bei 25 mm bis 0,02 mm). Ein Passstift trägt dann nur auf der belasteten Seite statt am ganzen Umfang. Verliert ein Teil damit vorübergehend alle Bedingungen, hält die Rechnung es an den drei nächsten Punkten, bis das Spiel durchfahren ist (Abschnitt „Abbruch der Kontakt-Iteration“) |
+| Lochleibungsgrenze [N/mm²] | 0 = keine. Sonst ist die Normalkraft jedes Kontaktknotens auf Grenzpressung × Einflussfläche des Knotens begrenzt; darüber **fließt** er mit konstanter Kraft, und die Nachbarn tragen den Rest - wie das örtliche Fließen an der Bohrungskante, das die Spitze in Wirklichkeit begrenzt. Richtwert fy bis 1,5 fy. Das Kontaktergebnis zeigt „Fließen“ und die Grenzkraft je Bedingung |
+| Randabminderung [Knotenreihen] | 0 = keine. Sonst haften so viele Knotenreihen am Rand der Kontaktseite nicht, sondern gleiten reibungsfrei: die Kantensingularität der haftenden Fuge am Bohrungsaustritt bleibt aus. Eine Reihe reicht meist. Rand ist, wo eine Facettenkante nur zu einer gepaarten Facette gehört - der Rand der Kontaktseite oder der Rand des Bereichs mit Gegenseite |
 
 Die **Standardkontakte** heißen wie in ANSYS:
 

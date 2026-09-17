@@ -4979,6 +4979,64 @@ def main():
         traceback.print_exc()
         check("Genauigkeit des Gleichungslösers", False, str(ex)[:70])
 
+    try:
+        # ---- Passung: Spiel, Lochleibungsgrenze, Randabminderung - Maske und Sammelmaske (17.09.2026) ----
+        from tests.test_fugen import zwei_bloecke as _zb_p
+        m_ = _zb_p("eigene", 0.5, 0.15)
+        w.model = m_
+        w.analysis = None
+        w.results = None
+        w.refresh_all()
+        app.processEvents()
+        m_ = w.model
+        kb_p = m_.add_kontaktbedingung("Fuge P").standard_anwenden("Reibungsbehaftet")
+        kb_p.koerpernamen, kb_p.flaechennamen = ["Oben"], ["FugeO"]
+        kb_p.gegenkoerper, kb_p.gegenflaechen = ["Unten"], ["FugeU"]
+        w.refresh_all()
+        app.processEvents()
+        w._baum_geklickt("kontaktbedingung", "Fuge P")
+        app.processEvents()
+        mk = w.maskenrand.maske
+        wv = mk.werte()
+        check("Kontaktmaske: Felder Spiel, Lochleibungsgrenze, Randabminderung mit Vorgabe 0",
+              all(k in wv for k in ("spiel", "grenzpressung", "rand_frei"))
+              and float(str(wv["spiel"]).replace(",", ".")) == 0.0, str({k: wv.get(k) for k in ("spiel", "grenzpressung", "rand_frei")}))
+        mk.setzen("spiel", "0,02")
+        mk.setzen("grenzpressung", "355")
+        mk.setzen("rand_frei", "1")
+        mk.angewendet.emit(mk.werte())
+        app.processEvents()
+        kb_p = w.model.kontaktbedingungen["Fuge P"]
+        cp_p = next((c for c in w.model.contact_pairs if c.name == "Fuge P"), None)
+        check("Übernehmen speichert die Passung (m, N/m², Reihen) und führt die Fuge am Netz neu aus",
+              abs(kb_p.spiel - 2e-5) < 1e-12 and abs(kb_p.grenzpressung - 355e6) < 1 and kb_p.rand_frei == 1
+              and cp_p is not None and cp_p.spiel == kb_p.spiel and cp_p.grenzpressung == kb_p.grenzpressung
+              and len(cp_p.rand_knoten) >= 4 and cp_p.knotenflaechen, str((kb_p.spiel, kb_p.grenzpressung, kb_p.rand_frei)))
+        # Sammelmaske: Volumen waehlen, Passung fuer ihre Fugen setzen
+        w.auswahlart_setzen("Volumen")
+        w.sel_koerper = ["Oben"]
+        w.maske_passung()
+        app.processEvents()
+        mp = w.maskenrand.maske
+        check("Passung-Maske nennt die gewählten Volumen und ihre Fugen",
+              mp is not None and "Fuge P" in str(mp.werte().get("kontakte")) and "Oben" in str(mp.werte().get("koerper")),
+              str(mp.werte().get("kontakte")))
+        mp.setzen("spiel", "0,05")
+        mp.setzen("grenzpressung", "300")
+        mp.setzen("rand_frei", "2")
+        mp.angewendet.emit(mp.werte())
+        app.processEvents()
+        kb_p = w.model.kontaktbedingungen["Fuge P"]
+        check("Anwenden setzt die Passung an jeder Fuge der gewählten Volumen und protokolliert es",
+              abs(kb_p.spiel - 5e-5) < 1e-12 and abs(kb_p.grenzpressung - 300e6) < 1 and kb_p.rand_frei == 2
+              and "Passung gesetzt an" in w.log.toPlainText(), str((kb_p.spiel, kb_p.grenzpressung, kb_p.rand_frei)))
+        check("Ribbon: der Befehl „Passung“ steht neben „Übermaß“", any(a.text() == "Passung" for a in w.findChildren(QtGui.QAction)))
+        w.maskenrand.schliessen()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Passung", False, str(ex)[:70])
+
     # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
     try:
         import pyvista as pvx
