@@ -17,7 +17,7 @@ jobs:
   exe:
     name: Statik3D.exe bauen
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -69,6 +69,11 @@ jobs:
 
       - name: Release "latest" veroeffentlichen
         if: github.ref == 'refs/heads/main'
+        # Zeitlimit je Versuch (17.09.2026): der Upload der 374-MB-Datei lief
+        # sonst in Sekunden, hing am 17.09. ab 15:50 aber 14,8 min (Abbruch)
+        # und beim naechsten Lauf 38,5 min bis ins Job-Zeitlimit - dann kam
+        # der zweite Versuch gar nicht mehr dran und das Release blieb leer.
+        timeout-minutes: 12
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
@@ -93,6 +98,7 @@ jobs:
       # Schritt "Release veroeffentlichen" fehlgeschlagen).
       - name: Release "latest" veroeffentlichen - zweiter Versuch
         if: failure() && github.ref == 'refs/heads/main'
+        timeout-minutes: 20
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
