@@ -700,6 +700,12 @@ class Results:
                          f"{self.info.get('kontakt_aktiv', 0)} Bedingungen aktiv")
             if self.info.get("loeser"):
                 s.append(f"Loeser                  : {NAMEN.get(self.info['loeser'], self.info['loeser'])}")
+        pz = self.info.get("plastizitaet")
+        if pz:
+            s.append(f"Plastizität             : {pz.get('fliessend', 0)} Elemente fließen, "
+                     f"ε_p,eq max {float(pz.get('eps_p_max', 0.0)) * 100:.3f} %, "
+                     f"{pz.get('iterationen', 0)} Schritte in {pz.get('laststufen', 1)} Laststufen"
+                     + ("" if pz.get("konvergiert", True) else " - NICHT KONVERGIERT"))
         if self.buckling_factors is not None:
             s.append("Knicklastfaktoren       : "
                      + ", ".join(f"{f:.3f}" for f in self.buckling_factors[:10]))
@@ -1310,6 +1316,50 @@ def grundlasten(model: Model, factors: dict) -> list:
             if getattr(lc, "grundlast", False) and not factors.get(n)]
 
 
+def _plastisch(model) -> bool:
+    """Fliessen eingeschaltet (Model.plastizitaet.an)?"""
+    pz = getattr(model, "plastizitaet", None)
+    return bool(pz is not None and getattr(pz, "an", False))
+
+
+def _nichtlinear(model) -> bool:
+    """Kombinationen direkt rechnen statt ueberlagern: bei Kontakt - und bei
+    Fliessen, denn plastische Dehnungen ueberlagern sich nicht (17.09.2026)."""
+    return bool(model.has_contact or _plastisch(model))
+
+
+def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
+    """Fliessen der Volumen (plastizitaet.iteration) um den linearen
+    Loesungsweg eines Lastfalls: jede Loesung ist derselbe Lastfall mit der
+    Zusatzlast F_p, mit Kontakt warm gestartet vom letzten Zustand.
+    Rueckgabe (u, R, aktiv, temp); temp["sigma0"] traegt D eps_p, damit der
+    Spannungsnachlauf sigma = D eps - D eps_p rechnet."""
+    from . import plastizitaet as pl
+    halter = {"start": start, "R": None, "aktiv": aktiv}
+
+    def loesen(Fg):
+        u_, R_, a_ = rechnen(Fg, halter["start"])
+        halter["R"], halter["aktiv"] = R_, a_
+        if getattr(res, "kontaktzustand", None) is not None:
+            halter["start"] = res.kontaktzustand
+        return u_
+
+    log: list = []
+    u, zustand, F_p, info = pl.iteration(model, F, loesen, model.plastizitaet, aktiv, log=log,
+                                         progress=lambda t: _melde(progress, t))
+    if not isinstance(temp, dict):
+        temp = {}
+    sig0 = temp.setdefault("sigma0", {})
+    for i, s0 in pl.sigma0_je_element(model, zustand).items():
+        sig0[i] = np.asarray(sig0.get(i, 0.0), float) + s0
+    for z in log:
+        _melde(progress, z)
+    res.info["plastizitaet"] = {k: v for k, v in info.items() if k != "verlauf"}
+    res.info["plastizitaet"]["log"] = list(log)
+    res.info["plastisch"] = {int(i): float(v) for i, v in zustand.eps_p_eq.items() if v > 0}
+    return u, halter["R"], halter["aktiv"], temp
+
+
 def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  kind: str, workers=None, progress=None, start=None,
                  einfrieren=None, fenster=None) -> Results:
@@ -1318,7 +1368,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     # Grundlasten (LoadCase.grundlast) wirken in jeder direkt geloesten
     # Rechnung mit - dort gibt es keine Ueberlagerung, in die man sie spaeter
     # legen koennte. Linear bleibt der Lastfall, was er ist.
-    grund = grundlasten(model, factors) if (model.has_contact or model.hat_ausfallstaebe()) else []
+    grund = grundlasten(model, factors) if (_nichtlinear(model) or model.hat_ausfallstaebe()) else []
     if grund:
         factors = dict(factors)
         for n in grund:
@@ -1332,11 +1382,14 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         res.info["situation"] = system.situation
     if grund:
         res.info["grundlast"] = list(grund)
-    def _rechnen():
-        """Der Loesungsweg des Lastfalls - einmal wiederholbar."""
+    def _rechnen(F_ges=None, start_=None):
+        """Der Loesungsweg des Lastfalls - wiederholbar. F_ges ersetzt die
+        Last (Plastizitaet: F + F_p), start_ den Warmstart des Kontakts."""
+        Fg = F if F_ges is None else F_ges
+        st = start if start_ is None else start_
         if model.hat_ausfallstaebe():
             u_, R_, aktiv_, ausfall, alog, kontakt = solve_with_ausfall(
-                model, system, F, us=us, progress=progress, uebermass=ueber)
+                model, system, Fg, us=us, progress=progress, uebermass=ueber)
             res.info["ausfall"] = ausfall
             res.info["ausfall_log"] = alog
             if kontakt is not None:
@@ -1345,14 +1398,15 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             return u_, R_, aktiv_
         if model.has_contact:
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
-                model, system, F, progress=progress, us=us, uebermass=ueber, start=start,
+                model, system, Fg, progress=progress, us=us, uebermass=ueber, start=st,
                 einfrieren=einfrieren, fenster=fenster)
             res.kontaktzustand = cinfo.pop("contact_state", None)
             res.info.update(cinfo)
             return u_, R_, aktiv
-        u_ = system.solve(F, us=us)
-        return u_, system.reactions(u_, F), aktiv
+        u_ = system.solve(Fg, us=us)
+        return u_, system.reactions(u_, Fg), aktiv
 
+    hilfs = False
     try:
         u, R, aktiv_eff = _rechnen()
         system.freie_bewegungen()      # nur suchen - geloest ist geloest
@@ -1373,6 +1427,14 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             # letzten Iteration bleibt als Ergebnis "Abbruch" erhalten
             _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv)
             raise
+        hilfs = True
+    if _plastisch(model):
+        try:
+            u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp, progress, start)
+        except RuntimeError as ex3:
+            _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv)
+            raise
+    if hilfs:
         u = system.ohne_starrkoerper(u)
     if system.singular:
         from . import singular as _sg
@@ -1656,7 +1718,7 @@ def solve_combination(model: Model, combo: Combination, case_results: dict = Non
     """Eine Kombination: Superposition (linear) oder direkte Loesung (Kontakt) -
     in der Situation der Kombination."""
     sit = _kombination_pruefen(model, combo)
-    if not model.has_contact and case_results is not None \
+    if not _nichtlinear(model) and case_results is not None \
             and all(k in case_results for k, f in combo.factors.items() if f):
         teile = [(case_results[k], f) for k, f in combo.factors.items() if f]
         basis = next((r.model for r, _f in teile if getattr(r, "model", None) is not None), model)
@@ -1734,7 +1796,7 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
     out = {}
     if not names:
         return out
-    if not model.has_contact:
+    if not _nichtlinear(model):
         if case_results is None:
             case_results = solve_cases(model, workers=workers, progress=progress,
                                        system=system, systeme=systeme)

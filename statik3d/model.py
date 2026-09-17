@@ -39,6 +39,7 @@ from typing import Optional
 import numpy as np
 
 from .einheiten import Einheiten
+from .plastizitaet import Plastizitaet
 from . import elemente as _EL
 
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
@@ -2959,6 +2960,8 @@ class Model:
         self.bericht: list[Berichtseintrag] = []
         self.netz = Netzeinstellungen()
         self.design = DesignSettings()
+        #: Fliessen der Volumen (17.09.2026) - eine Einstellung am Modell
+        self.plastizitaet = Plastizitaet()
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
         self.gap_elements: list[GapElement] = []
@@ -4949,6 +4952,7 @@ class Model:
             "bericht": [asdict(x) for x in self.bericht],
             "netz": asdict(self.netz),
             "design": asdict(self.design),
+            "plastizitaet": asdict(self.plastizitaet),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "kopplungen": [asdict(k) for k in self.kopplungen],
@@ -5073,6 +5077,8 @@ class Model:
             m.netz = _dc(Netzeinstellungen, d["netz"])
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
+        if "plastizitaet" in d:
+            m.plastizitaet = _dc(Plastizitaet, d["plastizitaet"])
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]

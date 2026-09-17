@@ -11552,6 +11552,40 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda i: self.w_farm.setVisible(i == 1))
         lay.addWidget(g)
 
+        # Plastizitaet der Volumen (17.09.2026): eine Einstellung am Modell,
+        # keine Programmeinstellung - sie reist mit der Datei
+        gp = QtWidgets.QGroupBox("Plastizität der Volumen (Einstellung am Modell)")
+        gpl = QtWidgets.QVBoxLayout(gp)
+        self.cb_plast = QtWidgets.QCheckBox("Fließen rechnen: von Mises mit Verfestigung, Anfangsdehnungs-Iteration")
+        self.cb_plast.setToolTip(
+            "Volumenelemente, deren Vergleichsspannung die Streckgrenze fy ihres Werkstoffs übersteigt, "
+            "fließen: die Spannung bleibt bei fy + H·ε_p, die Verformung wächst. Werkstoffe ohne fy bleiben "
+            "elastisch. Jeder Schritt ist eine lineare Lösung mit der Zusatzlast der plastischen Dehnung, "
+            "mit Kontakt eine Kontakt-Iteration; Kombinationen werden dann direkt gerechnet.")
+        self.sp_plast_verf = QtWidgets.QDoubleSpinBox()
+        self.sp_plast_verf.setRange(0.0, 50.0)
+        self.sp_plast_verf.setDecimals(2)
+        self.sp_plast_verf.setSuffix(" %")
+        self.sp_plast_verf.setValue(1.0)
+        self.sp_plast_verf.setToolTip("Tangente E_t/E nach dem Fließen: 0 % ideal-plastisch, Vorgabe 1 %")
+        self.sp_plast_stufen = QtWidgets.QSpinBox()
+        self.sp_plast_stufen.setRange(1, 20)
+        self.sp_plast_stufen.setValue(3)
+        self.sp_plast_stufen.setToolTip("Die Last wird stufenweise aufgebracht, damit die Rückführung auf dem Pfad bleibt")
+        self.sp_plast_it = QtWidgets.QSpinBox()
+        self.sp_plast_it.setRange(1, 200)
+        self.sp_plast_it.setValue(25)
+        self.sp_plast_it.setToolTip("Höchstzahl der Schritte je Laststufe")
+        self.cb_plast_tol = QtWidgets.QComboBox()
+        for t_, v_ in (("grob 1e-2", 1e-2), ("normal 1e-3 (Vorgabe)", 1e-3), ("fein 1e-4", 1e-4)):
+            self.cb_plast_tol.addItem(t_, v_)
+        self.cb_plast_tol.setCurrentIndex(1)
+        self.cb_plast_tol.setToolTip("Änderung der plastischen Knotenlasten gegen die Last, bis zu der es konvergiert gilt")
+        gpl.addWidget(self.cb_plast)
+        gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen,
+                          "   Schritte je Stufe", self.sp_plast_it, "   Toleranz", self.cb_plast_tol))
+        lay.addWidget(gp)
+
         bchk = QtWidgets.QPushButton("Modell prüfen")
         bchk.clicked.connect(self.do_check)
         lay.addWidget(bchk)
@@ -13003,6 +13037,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         gross = len(m.elements) >= self.GROSS_AB
         self._kontakte_nachfuehren()
+        self._plast_anzeigen()          # die Einstellung am Modell in die Maske Berechnung
 
         def schritt(text):
             if gross:
@@ -16154,7 +16189,38 @@ class MainWindow(QtWidgets.QMainWindow):
         beste = min(range(cb.count()), key=lambda i: abs(math.log10(float(cb.itemData(i))) - math.log10(max(wert, 1e-30))))
         cb.setCurrentIndex(beste)
 
+    def _plast_anzeigen(self):
+        """Die Plastizitaets-Einstellung des Modells in die Maske Berechnung."""
+        if not hasattr(self, "cb_plast"):
+            return
+        pz = getattr(self.model, "plastizitaet", None)
+        if pz is None:
+            from ..plastizitaet import Plastizitaet
+            pz = self.model.plastizitaet = Plastizitaet()
+        self.cb_plast.setChecked(bool(pz.an))
+        self.sp_plast_verf.setValue(float(pz.verfestigung) * 100.0)
+        self.sp_plast_stufen.setValue(int(pz.laststufen))
+        self.sp_plast_it.setValue(int(pz.iterationen))
+        k = self.cb_plast_tol.findData(float(pz.toleranz))
+        self.cb_plast_tol.setCurrentIndex(k if k >= 0 else 1)
+
+    def _plast_uebernehmen(self):
+        """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
+        Loesereinstellungen, also vor jeder Rechnung."""
+        if not hasattr(self, "cb_plast"):
+            return
+        pz = getattr(self.model, "plastizitaet", None)
+        if pz is None:
+            from ..plastizitaet import Plastizitaet
+            pz = self.model.plastizitaet = Plastizitaet()
+        pz.an = bool(self.cb_plast.isChecked())
+        pz.verfestigung = float(self.sp_plast_verf.value()) / 100.0
+        pz.laststufen = int(self.sp_plast_stufen.value())
+        pz.iterationen = int(self.sp_plast_it.value())
+        pz.toleranz = float(self.cb_plast_tol.currentData() or 1e-3)
+
     def _apply_parallel_settings(self):
+        self._plast_uebernehmen()
         nachit = self.cb_nachit.currentData()
         parallel.configure(workers=self.sp_workers.value(),
                            solver_backend=str(self.cb_loeser.currentData() or "auto"),
