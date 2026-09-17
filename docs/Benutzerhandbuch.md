@@ -125,7 +125,8 @@ Die Arbeitsfläche in drei Spalten:
   | Volumen | die Volumenkörper, darunter der Zweig „Volumenelemente“ |
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
-  | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden (der Zweig erscheint, sobald es Gelenke gibt) |
+  | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026) |
+  | Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
   | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
   | Einwirkungen | Lastfälle und Kombinationen. **Unter jedem Lastfall stehen seine Lasten nach Art** (Eigengewicht, Knotenlasten, Stablasten, Linienlasten, Flächenlasten, Temperaturlasten, Vorspannung, Zwangsverformungen), einzeln anklickbar: rechts stehen dann nur diese Lasten, die Tabelle unten zeigt den Lastfall, die belasteten Objekte leuchten; „Lastfall bearbeiten“ holt die Maske des Lastfalls zurück, „Diese Lasten löschen“ nimmt sie heraus |
@@ -2367,9 +2368,10 @@ starren Kreisscheibe, das andere lag genau in der Mitte der Stirnfläche des
 Schraubenvolumens (Knoten 1093 auf V49) und an nichts. Die Schrauben trugen
 keinen Zug, die Deckel V33 und V35 hoben ab, die Kontakt-Iteration brach ab.
 Nach dem Vernetzen hängt jetzt jeder Knoten, der auf oder in einem
-vernetzten Volumen liegt und an dem etwas hängt — ein Stabende, ein
-integrierter Knoten, eine Knotenlast, ein Lager —, über starre Kopplungen an
-den Knoten des Elements dort: drei Knoten auf einer Seitenfläche, vier im
+vernetzten Volumen liegt und an dem etwas hängt — ein Stabende, eine
+Knotenlast, ein Lager, integriert oder nicht —, über starre Kopplungen an
+den Knoten des Elements dort (ein integrierter Knoten, an dem nichts hängt,
+bleibt frei: er trägt nichts, und jede Straffeder mehr kostet Rechengenauigkeit): drei Knoten auf einer Seitenfläche, vier im
 Innern, einer, wenn er mit einem Netzknoten zusammenfällt; bis 0,1 mm
 Abstand gilt ein Punkt noch als „auf" der Seite. Das ist dieselbe Umsetzung
 wie bei der starren Scheibe, und sie entspricht dem integrierten Knoten in

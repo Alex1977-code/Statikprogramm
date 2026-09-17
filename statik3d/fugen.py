@@ -1376,10 +1376,11 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
     an keinem Koerper (Ankerstab im Fundament, Kragarm) bleibt frei; ein
     Stabende, das schon in einer Kopplung steht (Mitte einer starren
     Scheibe), wird nicht doppelt angeschlossen. Dieselbe Regel gilt fuer
-    Knoten, die RFEM als **integriert** fuehrt (Flaeche.integrierte_knoten),
-    und fuer Knoten mit einer Knotenlast oder einem Lager: liegen sie auf
-    oder in einem Koerper und in keinem seiner Elemente, haengen sie so an
-    seinem Netz - sonst ginge die Last ins Leere und das Lager hielte nichts.
+    Knoten mit einer Knotenlast oder einem Lager: liegen sie auf oder in
+    einem Koerper und in keinem seiner Elemente, haengen sie so an seinem
+    Netz - sonst ginge die Last ins Leere und das Lager hielte nichts. Ein
+    Knoten, den RFEM als integriert fuehrt (Flaeche.integrierte_knoten), ohne
+    dass etwas an ihm haengt, bleibt frei - er traegt nichts.
 
     Rueckgabe {"stabenden": n, "kopplungen": n, "anschluesse": [(Knoten,
     Stab oder Grund, Koerper, Zahl der Knoten)]}. Vorhandene Kopplungen
@@ -1401,18 +1402,23 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
         else:
             andere.update(int(x) for x in e.nodes)
     schon = {int(k.node_a) for k in model.kopplungen} | {int(k.node_b) for k in model.kopplungen}
-    # Neben den Stabenden: was RFEM als integrierten Knoten fuehrt, und was
-    # eine Last oder ein Lager traegt - ein Knoten, an dem etwas haengt und
-    # der auf einem Koerper liegt, gehoert zu dessen Netz.
+    # Neben den Stabenden: was eine Knotenlast oder ein Lager traegt - ein
+    # Knoten, an dem etwas haengt und der auf einem Koerper liegt, gehoert zu
+    # dessen Netz. Ein integrierter Knoten ohne Anhang (Hilfspunkt auf einer
+    # Stirnflaeche, wie am Drehlager 46 Stueck auf Achse und Stiften) bleibt
+    # frei: er uebertraegt nichts, und jede Straffeder mehr kostet die
+    # Faktorisierung Stellen (Abbruch 21:10, Residuum 1,3e-6).
     grund: dict = {int(n): "Stabende" for n in stab}
-    for f in (getattr(model, "flaechen", None) or {}).values():
-        for n in (getattr(f, "integrierte_knoten", None) or []):
-            grund.setdefault(int(n), "integriert")
     for lc in (getattr(model, "load_cases", None) or {}).values():
         for l in (getattr(lc, "nodal_loads", None) or []):
             grund.setdefault(int(l.node), "Last")
     for s in (getattr(model, "supports", None) or []):
         grund.setdefault(int(s.node), "Lager")
+    integriert = {int(n) for f in (getattr(model, "flaechen", None) or {}).values()
+                  for n in (getattr(f, "integrierte_knoten", None) or [])}
+    for n in list(grund):
+        if n in integriert:
+            grund[n] = grund[n] + ", integriert"
     kandidaten = [n for n in grund if 0 <= n < model.nn and n not in andere and n not in schon]
     if not kandidaten:
         return bericht

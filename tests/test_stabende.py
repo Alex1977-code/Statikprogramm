@@ -100,6 +100,8 @@ def test_integrierte_last_und_lagerknoten():
     last = m.add_node(0.62, 0.36, 1.0)          # auf dem Deckel, integriert
     lager = m.add_node(1.0, 0.44, 0.58)         # auf der Mantelflaeche x = 1
     m.flaechen["Deckel"].integrierte_knoten.append(last)
+    leer = m.add_node(0.2, 0.7, 1.0)            # integriert, aber ohne Last, Lager, Stab
+    m.flaechen["Deckel"].integrierte_knoten.append(leer)
     lc = m.add_load_case("LF1")
     lc.gravity = [0, 0, 0]
     lc.nodal_loads.append(NodalLoad(last, [0, 0, -30e3, 0, 0, 0]))
@@ -113,8 +115,10 @@ def test_integrierte_last_und_lagerknoten():
           set(partner) == {last, lager} and 1 <= len(partner[last]) <= 3 and 1 <= len(partner[lager]) <= 3
           and all(abs(m.nodes[q][2] - 1.0) < 1e-9 for q in partner[last])
           and all(abs(m.nodes[q][0] - 1.0) < 1e-9 for q in partner[lager]), str(b["anschluesse"]))
-    check("das Protokoll nennt die Gruende integriert und Lager",
-          any("integriert" in z and "Lager" in z for z in log), str(log[:1])[:120])
+    check("das Protokoll nennt die Gruende Last, integriert und Lager",
+          any("integriert" in z and "Lager" in z and "Last" in z for z in log), str(log[:1])[:120])
+    check("ein integrierter Knoten ohne Anhang bleibt frei (er traegt nichts, keine Straffeder)",
+          leer not in partner, str(b["anschluesse"]))
     unten = _flaechenknoten(m, 0.0)
     for i in unten:
         m.fix(i, [0, 1, 2])

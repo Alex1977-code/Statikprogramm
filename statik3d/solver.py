@@ -291,6 +291,7 @@ class LinearSolver:
         self._solve = None
         self._K = None
         self._ps = None
+        self.nachiterationen = 0
         if self.n == 0:
             self._solve = lambda b: np.zeros_like(b)
             return
@@ -463,9 +464,30 @@ class LinearSolver:
             nb = np.linalg.norm(b)
             if nb > 0:
                 r = np.linalg.norm(self._K @ x - b) / nb
+                # Nachiteration (16.09.2026): Straffedern (1e4-fach die groesste
+                # Hauptdiagonale, Kopplungen und Kontakt) kosten die
+                # Faktorisierung Stellen - am Drehlager brach LF1 mit Residuum
+                # 1,3e-6 als "singulaer" ab, obwohl derselbe Aufbau kurz zuvor
+                # konvergiert war. Ein Schritt x += K^-1 (b - K x) mit der
+                # vorhandenen Faktorisierung holt die Stellen zurueck; ein
+                # wirklich singulaeres System bleibt darueber (Test
+                # tests/test_nachiteration.py).
+                schritte = 0
+                while r > 1e-6 and schritte < 3:
+                    dx = self._solve(b - self._K @ x)
+                    if not np.all(np.isfinite(dx)):
+                        break
+                    x2 = x + dx
+                    r2 = np.linalg.norm(self._K @ x2 - b) / nb
+                    schritte += 1
+                    if not r2 < r:
+                        break
+                    x, r = x2, r2
+                self.nachiterationen = schritte
                 if r > 1e-6:
                     raise RuntimeError(
-                        f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}) - "
+                        f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}"
+                        + (f" nach {schritte} Nachiterationen" if schritte else "") + ") - "
                         "Lagerung, freie Bauteile oder Kontaktdefinition pruefen.")
         return x
 

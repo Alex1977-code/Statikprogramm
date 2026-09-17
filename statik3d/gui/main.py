@@ -4375,6 +4375,7 @@ class MainWindow(QtWidgets.QMainWindow):
     BAUM_TABELLE = {"querschnitte": "Querschnitte", "werkstoffe": "Werkstoffe",
                     "querschnitt": "Querschnitte", "werkstoff": "Werkstoffe",
                     "gelenke": "Gelenke", "gelenk": "Gelenke", "berichtseintrag": "Bericht",
+                    "liniengelenke": "Flächen", "liniengelenk": "Flächen",
                     "kontaktbedingung": "Kontaktbedingungen",
                     "lager": "Lager", "lager_einzeln": "Lager", "linienlager": "Lager",
                     "linienlager_einzeln": "Lager", "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
@@ -4413,6 +4414,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "lastfaelle", "lastfall", "kombinationen", "kombination",
                     "werkstoffe", "werkstoff", "dicken", "dicke",
                     "querschnitt", "gelenke", "gelenk", "berichtseintrag",
+                    "liniengelenke", "liniengelenk",
                     "kontaktbedingung", "stellungen", "stellung",
                     "lager", "lager_einzeln", "linienlager", "linienlager_einzeln",
                     "flaechenlager", "flaechenlager_einzeln",
@@ -4460,6 +4462,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.neue_stellung()
         if art == "kontaktbedingung_neu":
             return self._baum_neu("kontaktbedingungen")
+        if art == "gelenk_neu":
+            return self._baum_neu("gelenke")
         if art == "bericht_neu":
             return self.ansicht_in_bericht()
         if art == "ergebnis":
@@ -4646,6 +4650,16 @@ class MainWindow(QtWidgets.QMainWindow):
                              if 0 <= int(e) < len(m.elements)] if h is not None else []
             if h is not None:
                 self.lbl_sel.setText(f"Gelenk {name}: an {len(self.leuchtet)} Elementen (Modellbaum)")
+        elif art in ("liniengelenke", "liniengelenk"):
+            # Die Gelenklinien leuchten, die Flaechen dazu blass mit
+            self.auswahlart_setzen("Linie")
+            self.selection = np.array([], dtype=int)
+            self.sel_koerper, self.sel_staebe = [], []
+            fl = ([name] if eintrag and name in m.flaechen
+                  else [n for n, f in m.flaechen.items() if getattr(f, "gelenklinien", None)])
+            self.sel_flaechen = fl
+            self.sel_linien = [ln for n in fl for ln in (m.flaechen[n].gelenklinien or []) if ln in m.lines]
+            self.lbl_sel.setText(f"Liniengelenke: {len(self.sel_linien)} Linien an {len(fl)} Flächen (Modellbaum)")
         elif art == "kontaktbedingung" and eintrag:
             kb = m.kontaktbedingungen.get(name)
             self.auswahlart_setzen("Fläche")
@@ -4739,6 +4753,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return name in m.shells
         if art == "querschnitt":
             return name in m.sections
+        if art == "liniengelenk":
+            return name in m.flaechen and bool(getattr(m.flaechen[name], "gelenklinien", None))
         if art == "gelenk":
             return name in m.hinges
         if art == "berichtseintrag":
@@ -5180,6 +5196,25 @@ class MainWindow(QtWidgets.QMainWindow):
             hinweis = ("Kennwerte in cm und mm - Umbenennen zieht die Elemente nach. "
                        "„Neu aus Profil“ legt einen weiteren Querschnitt aus der Datenbank an.")
             zusatz = [("Neu aus Profil …", self.querschnitt_neu)]
+        elif art in ("liniengelenke", "liniengelenk"):
+            fl = {n: f for n, f in m.flaechen.items() if getattr(f, "gelenklinien", None)}
+            hinweis = ("Liniengelenke kommen aus der Quelldatei (RFEM: LineHinge) und stehen an der "
+                       "Fläche: Verschiebungen starr, Verdrehungen frei - so wirkt auch die Kopplung "
+                       "der starren Scheiben, an deren Rändern sie am Drehlager sitzen. Ein Gelenk "
+                       "zwischen Schalen wird noch nicht gerechnet.")
+            knopf = ""
+            if not eintrag or name not in fl:
+                wirk = sorted({f.gelenkwirkung for f in fl.values() if f.gelenkwirkung})
+                felder = [F("anzahl", "Flächen mit Liniengelenk", "info", str(len(fl))),
+                          F("linien", "Gelenklinien", "info", str(sum(len(f.gelenklinien) for f in fl.values()))),
+                          F("wirkung", "Wirkung", "info", "; ".join(wirk) or "–")]
+                titel = "Liniengelenke"
+            else:
+                f = fl[name]
+                felder = [F("flaeche", "Fläche", "info", name),
+                          F("linien", "Gelenklinien", "info", ", ".join(f.gelenklinien)),
+                          F("wirkung", "Wirkung", "info", f.gelenkwirkung or "–")]
+                titel = f"Liniengelenk an {name}"
         elif art in ("gelenke", "gelenk"):
             if not eintrag:
                 felder = [F("anzahl", "Anzahl", "info", str(len(m.hinges))),

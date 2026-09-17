@@ -888,12 +888,29 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                  f"{name}: kn = {x.kn:g} N/m je m², kt = {x.kt:g}")
                                 for name, x in gs.items()], "grenzschicht", "grenzschichten")
 
-        if model.hinges:
-            gk = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke")
-            self._liste(gk, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d % 6]
-                                              for d in h.released()) or "starr",
-                              name, f"{name}: freigegeben {h.released()}")
-                             for name, h in model.hinges.items()], "gelenk", "gelenke")
+        # Der Zweig steht immer (16.09.2026, „im Modellbaum muessen auch Gelenke
+        # sein"): ohne Gelenke bietet er das Anlegen an, wie die Kontakte.
+        gk = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke",
+                         hinweis="Stabendgelenke: je Freiheitsgrad biegesteif, gelenkig oder Feder; "
+                                 "gesetzt an Stabelementen (Register Struktur → Gelenke setzen).")
+        self._liste(gk, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d % 6]
+                                          for d in h.released()) or "starr",
+                          name, f"{name}: freigegeben {h.released()}")
+                         for name, h in model.hinges.items()], "gelenk", "gelenke")
+        self._zweig(gk, "+ Gelenk anlegen", "", "gelenk_neu", farbe=FARBEN["akzent"],
+                    hinweis="Ein neues Stabendgelenk: rechts die Maske mit den sechs Freiheitsgraden.")
+        # Liniengelenke (RFEM: LineHinge) stehen an der Flaeche - der Zweig
+        # zeigt jede Flaeche mit ihren Gelenklinien und der Wirkung
+        lg_fl = [(n, f) for n, f in model.flaechen.items() if getattr(f, "gelenklinien", None)]
+        if lg_fl:
+            lz = self._zweig(wurzel, "Liniengelenke", len(lg_fl), "liniengelenke",
+                             hinweis="Liniengelenke (RFEM: LineHinge) an den Randlinien von Flächen: "
+                                     "was die Fläche dort an die Nachbarschaft weitergibt. Am Drehlager "
+                                     "die Ränder der starren Kreisscheiben.")
+            self._liste(lz, [(n, f"{len(f.gelenklinien)} Linien", n,
+                              f"{n}: {', '.join(f.gelenklinien[:6])}{' …' if len(f.gelenklinien) > 6 else ''}"
+                              + (f"\n{f.gelenkwirkung}" if f.gelenkwirkung else ""))
+                             for n, f in lg_fl], "liniengelenk", "liniengelenke")
         # Kontaktbedingungen: die Flaechenkontakte (in RFEM heissen sie
         # "Flaechenfreigaben") und die knotenweisen Bedingungen stehen unter
         # einem Zweig - es ist dieselbe Sache auf zwei Ebenen.

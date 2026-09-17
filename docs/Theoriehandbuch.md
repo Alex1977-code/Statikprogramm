@@ -248,7 +248,15 @@ und Threadzahl gesondert. Vorher stand dort nur die Zahl des Prozesspools,
 und die las sich, als rechne auch der Löser so. Nach dem Lösen wird das Residuum
 |K u − F| / |F| geprüft; numerisch singuläre Systeme (fehlende Lagerung,
 freie Bauteile) werden als Fehler gemeldet statt unbemerkt falsche Ergebnisse
-zu liefern.
+zu liefern. Bevor ein Residuum über 1e-6 als singulär gilt, wird
+**nachiteriert** (16.09.2026): x += K⁻¹(F − K·x) mit der vorhandenen
+Faktorisierung, bis zu dreimal, solange das Residuum fällt. Straffedern
+(1e4-fach die größte Hauptdiagonale, für starre Kopplungen und Kontakt)
+kosten die Faktorisierung Stellen; am Drehlager brach LF1 mit Residuum
+1,3e-6 ab, obwohl derselbe Aufbau kurz zuvor konvergiert war. Ein wirklich
+singuläres System bleibt über der Schranke (`tests/test_nachiteration.py`:
+ein Löser mit 3e-6 Fehler je Schritt kommt nach einer Nachiteration unter
+1e-6, einer mit 50 % Fehler nicht).
 
 ### 1.4 Querschnittswerte freier Profile
 
