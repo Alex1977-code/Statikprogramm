@@ -307,6 +307,31 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
 
+#### Passung für viele Fugen auf einmal
+
+*Lager / Kontakt → Passung* setzt Spiel, Lochleibungsgrenze und
+Randabminderung für **alle Kontaktfugen der gewählten Volumen** auf einmal
+(17.09.2026, „alle betroffenen Volumen selektieren und einmal im rechten
+Menü für alle diese Einstellung vornehmen“): Auswahlart *Volumen*, die
+Passstifte oder Bolzen in der Ansicht wählen (mehrere mit Strg oder dem
+Auswahlfenster), dann *Passung* - die Maske nennt die Volumen und die
+betroffenen Fugen (jede, an der eines der Volumen Kontakt- oder Gegenseite
+ist), die Werte eintragen, **Auf die Kontaktfugen anwenden**. Ohne Auswahl
+gelten die Werte für alle Fugen. Am vorhandenen Netz werden die Fugen gleich
+neu ausgeführt; das Protokoll nennt je Fuge die Passung („Spiel 0,020 mm je
+Knoten, Lochleibungsgrenze 355 N/mm², 24 Randknoten (1 Reihen) haften
+nicht“). RFEM kennt diese Angaben nicht - sie werden hier nach dem Import
+gesetzt und mit dem Modell gespeichert.
+
+Warum: Passstift und Bohrung haben am Drehlager beide r = 12,500 mm
+(Nullspiel). Rechnerisch liegt der Stift am ganzen Umfang an, haftet dort und
+wird am Bohrungsaustritt von der Kante gequetscht - Spannungsspitzen, die
+es real nicht gibt: ein Passstift hat Spiel, trägt auf der belasteten Seite,
+und Fase und Fließen begrenzen die Kante. Spiel und Lochleibungsgrenze
+bilden das ab; die Randabminderung nimmt die Singularität der haftenden
+Kante aus der Rechnung. Für den Nachweis zählt ohnehin die Lochleibung
+F/(d·t), nicht der Knotenwert.
+
 #### Kontakte entstehen von selbst
 
 Berühren sich zwei Volumen — über eine **gemeinsame** Fläche oder über je
@@ -406,6 +431,9 @@ Die Felder:
 | Feder c | Steifigkeit [kN/m je m²] für Richtungen mit „Feder“ |
 | Suchradius | wie weit die Gegenseite entfernt liegen darf, damit sie noch zur Fuge gehört (ANSYS: „Pinball“); ein Tausendstel davon gilt als Berührung. Das Protokoll nennt den verwendeten Wert (am Drehlager „Achse (Typ 3)“: 50 mm, das Netz der Bohrung). Von Hand nur, wenn Spiel größer als ein Element zur Fuge gehören soll. 0 = automatisch: die größere mittlere Kantenlänge der **beiden Seiten dieser Fuge** — dazu sucht das Programm zweimal, erst weit, um die Gegenseite zu finden, dann mit deren Netz. So bekommt eine feine Fuge nicht die Netzweite eines groben Modells. Damit findet eine fein vernetzte Achse (2 mm) ihre grob vernetzte Bohrung (15 mm) auch mit Spiel; was weiter weg liegt, gehört nicht zur Fuge. Ein eingetragener Wert gilt unverändert |
 | Anfangsspalt | *wie modelliert*: ein Spalt bleibt offen, bis die Last ihn schließt. Gemessen wird zur **wahren** Fläche, nicht zur Facette: an einer Bohrung zählt der Bogen, nicht die Sehne, eine passgenaue Achse liegt darum überall an, auch zwischen den Ecken der Bohrung und auch bei verschieden feinen Netzen (seit 13.09.2026); ein Spalt unter einem Tausendstel des Suchradius gilt als Berührung. *auf Berührung setzen*: jeder Knoten gilt in seiner Lage als anliegend - auch ein wirkliches Spiel verschwindet (ANSYS: „adjust to touch“) |
+| Spiel je Seite [mm] | **Passung** (17.09.2026): ein Anfangsspalt je Knoten zusätzlich zur Geometrie - bei einer Bohrung das radiale Spiel, also das halbe Durchmesserspiel (H7/h6 bei 25 mm bis 0,02 mm). Ein Passstift trägt dann nur auf der belasteten Seite statt am ganzen Umfang. Verliert ein Teil damit vorübergehend alle Bedingungen, hält die Rechnung es an den drei nächsten Punkten, bis das Spiel durchfahren ist (Abschnitt „Abbruch der Kontakt-Iteration“) |
+| Lochleibungsgrenze [N/mm²] | 0 = keine. Sonst ist die Normalkraft jedes Kontaktknotens auf Grenzpressung × Einflussfläche des Knotens begrenzt; darüber **fließt** er mit konstanter Kraft, und die Nachbarn tragen den Rest - wie das örtliche Fließen an der Bohrungskante, das die Spitze in Wirklichkeit begrenzt. Richtwert fy bis 1,5 fy. Das Kontaktergebnis zeigt „Fließen“ und die Grenzkraft je Bedingung |
+| Randabminderung [Knotenreihen] | 0 = keine. Sonst haften so viele Knotenreihen am Rand der Kontaktseite nicht, sondern gleiten reibungsfrei: die Kantensingularität der haftenden Fuge am Bohrungsaustritt bleibt aus. Eine Reihe reicht meist. Rand ist, wo eine Facettenkante nur zu einer gepaarten Facette gehört - der Rand der Kontaktseite oder der Rand des Bereichs mit Gegenseite |
 
 Die **Standardkontakte** heißen wie in ANSYS:
 
@@ -2894,6 +2922,20 @@ Nachweis mit seiner Verformung je Kombination.
   Nachbesserer nachladen“) — der Selbsttest des Baus rechnet das
   Rahmenbeispiel mit jedem mitgelieferten Löser und vergleicht. Geprüft in
   `tests/test_loeser.py` (jeder vorhandene Löser trifft N·L/(E·A)).
+* **Genauigkeit des Gleichungslösers** (*Berechnung → Einstellungen*,
+  17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
+  Lösung — streng 1e-8, normal 1e-6 (Vorgabe), 1e-5, locker 1e-4, sehr
+  locker 1e-3. Liegt das Residuum darüber, iteriert der Löser mit der
+  vorhandenen Faktorisierung nach (**Nachiterationen**: keine, bis 1, 2, 3
+  (Vorgabe), 5 oder 10; jede kostet eine Vorwärts-Rückwärts-Lösung, keine
+  neue Faktorisierung); bleibt es darüber, gilt das System als singulär und
+  die Rechnung bricht ab — die Meldung nennt Residuum und Schranke.
+  Straffedern (starre Kopplungen, Kontakt, je 1e4-fach die größte
+  Hauptdiagonale) kosten die Faktorisierung Stellen: am Drehlager brach LF1
+  mit 1,3e-6 ab, obwohl derselbe Aufbau konvergiert; eine Nachiteration
+  bringt solche Fälle auf 1e-12. Das Protokoll nennt Löser, Threads und
+  Genauigkeit („MUMPS, 31 Threads, Genauigkeit 1e-06 mit bis zu 3
+  Nachiterationen“). Beide Werte werden gespeichert.
 * **MUMPS** ist unter Windows ein eigener Bau (gfortran, OpenMP, OpenBLAS,
   METIS — `docs/MUMPS_Windows_Bauanleitung.md`), nachgeladen beim Start. Symmetrische
   Steifigkeitsmatrizen gehen als unteres Dreieck hinein (SYM=2): halber
@@ -3132,6 +3174,18 @@ rechnen will, kann es — aber nachdem er gelesen hat, dass es 17 % sind.
 
 ### Abbruch der Kontakt-Iteration: die letzte Verformung bleibt sichtbar
 
+**Vorher greift ein Halt** (17.09.2026): verliert ein Teil in einem Schritt
+der Kontakt-Iteration alle seine Bedingungen (ein Passstift, dessen Bohrung
+ihn in diesem Schritt nirgends drückt), wäre das Gleichungssystem singulär.
+Statt abzubrechen hält das Programm je Teil mindestens drei Bedingungen mit
+dem kleinsten Spalt geschlossen und löst den Schritt noch einmal; das
+Protokoll nennt jedes gehaltene Teil („Halt für Teile ohne geschlossene
+Bedingung: V100: 0 von 62 zu, 3 mit dem kleinsten Spalt (bis 0,012 mm)
+gehalten“). Erst wenn auch das nicht hält, bricht die Rechnung ab. Tragen
+die gehaltenen Punkte am Ende Zug, hebt das Teil wirklich ab: dann bricht
+die Rechnung mit der gehaltenen Lage als Teilergebnis ab, und der Zeiger
+sagt „hebt ab und hängt an n gehaltenen Punkten unter F kN Zug“.
+
 Findet die Kontakt-Iteration auch mit Hilfsfesselung kein Gleichgewicht
 („Gleichungssystem singulär“), bricht die Rechnung ab — aber nicht stumm
 (16.09.2026: „die Verformung der letzten Iteration anzeigen, damit der
@@ -3150,10 +3204,13 @@ sich in der letzten Iteration bewegt hat, der Kraft, die dabei ins Nichts
 geht, und den Fugen, an denen es hängt. Ebenso gezeigt wird ein Teil, bei
 dem die Mehrheit der Bedingungen offen war und das sich um mindestens das
 Fünffache dessen bewegt hat, was die übrigen Teile tun (gemessen am Mittel
-seiner Knotenverschiebungen gegen den Median der anderen): der Block, der
-auf einer Kante kippt, statt glatt abzuheben, hält an fünf von 25 Punkten
-noch Kontakt und wäre sonst nicht genannt worden. Der Text nennt in dem
-Fall „hielten nur noch 5 von 25 Kontaktbedingungen“ und die Bewegung in mm.
+seiner Knotenverschiebungen gegen das 90. Perzentil der anderen — eine
+Baugruppe, die sich gemeinsam um 0,9 mm bewegt, fällt gegen ihresgleichen
+nicht auf, 17.09.2026): der Block, der auf einer Kante kippt, statt glatt
+abzuheben, hält an fünf von 25 Punkten noch Kontakt und wäre sonst nicht
+genannt worden. Der Text sagt dann „verliert den Halt: hielten nur noch 5
+von 25 Kontaktbedingungen“ und nennt die Bewegung in mm; „hebt ab“ steht
+nur, wenn keine Bedingung mehr geschlossen war.
 Der erste Zeiger ist nach dem Abbruch schon eingestellt; die Auswahl steht
 auf dem Lastfall selbst, eine Umhüllende über ein Teilergebnis ohne
 Gleichgewicht gibt es nicht. Am Drehlager (16.09.2026) waren das die Deckel

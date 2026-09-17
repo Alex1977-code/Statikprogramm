@@ -74,8 +74,40 @@ def test_nachiteration():
           ls3.nachiterationen == 0 and np.linalg.norm(K @ x - b) / np.linalg.norm(b) < 1e-10)
 
 
+def test_einstellung():
+    """Die Schranke und die Zahl der Nachiterationen kommen aus den Einstellungen."""
+    from statik3d import parallel
+    K, b = _system()
+    alt = (parallel.settings().solver_residuum, parallel.settings().solver_nachiterationen)
+    try:
+        parallel.configure(solver_residuum=1e-4, solver_nachiterationen=0)
+        ls = _gestoert(solver.LinearSolver(K, backend="superlu"), 3e-6)
+        ls.solve(b)
+        check("lockere Schranke 1e-4 ohne Nachiteration: 3e-6 Fehler gehen durch, 0 Nachiterationen",
+              ls.nachiterationen == 0 and ls.residuum < 1e-4, f"Residuum {ls.residuum:.1e}")
+        check("die Beschreibung nennt die Genauigkeit", "Genauigkeit 0.0001" in ls.beschreibung()
+              and "Nachiterationen" not in ls.beschreibung(), ls.beschreibung())
+        parallel.configure(solver_residuum=1e-9, solver_nachiterationen=3)
+        ls2 = _gestoert(solver.LinearSolver(K, backend="superlu"), 3e-6)
+        ls2.solve(b)
+        check("strenge Schranke 1e-9: erst die Nachiteration bringt 3e-6 darunter",
+              ls2.nachiterationen >= 1 and ls2.residuum < 1e-9, f"Residuum {ls2.residuum:.1e}, {ls2.nachiterationen} Schritte")
+        parallel.configure(solver_residuum=1e-9, solver_nachiterationen=0)
+        ls3 = _gestoert(solver.LinearSolver(K, backend="superlu"), 3e-6)
+        try:
+            ls3.solve(b)
+            check("strenge Schranke ohne Nachiteration: 3e-6 Fehler sind singulaer", False)
+        except RuntimeError as ex:
+            check("strenge Schranke ohne Nachiteration: Abbruch, die Meldung nennt Schranke und Einstellung",
+                  "Schranke 1e-09" in str(ex) and "Einstellungen" in str(ex), str(ex)[:100])
+        gespeichert = parallel.GESPEICHERT
+        check("beide Werte werden gespeichert", "solver_residuum" in gespeichert and "solver_nachiterationen" in gespeichert)
+    finally:
+        parallel.configure(solver_residuum=alt[0], solver_nachiterationen=alt[1])
+
+
 def main():
-    for t in (test_nachiteration,):
+    for t in (test_nachiteration, test_einstellung):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

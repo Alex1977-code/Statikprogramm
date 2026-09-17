@@ -94,6 +94,7 @@ class Constraint:
     g: float = 0.0
     toggles: int = 0
     frozen: bool = False
+    gehalten: bool = False         # von solver._freie_teile_halten geschlossen gehalten (17.09.2026)
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -779,19 +780,46 @@ class ContactSystem:
         g0 = 0.0 if (cp.anliegend or cp.zug) else float(d) - cp.gap
         if abs(g0) <= band:
             g0 = 0.0
+        # Passung (17.09.2026): das Spiel kommt zum bereinigten Anfangsspalt
+        # dazu - bei einer Bohrung das radiale Spiel; ein Verbund kennt keins
+        spiel = float(getattr(cp, "spiel", 0.0) or 0.0)
+        if spiel > 0 and not cp.zug:
+            g0 += spiel
         dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
         cn = np.concatenate([n] + [-wi * n for wi in wj])
         kn = cp.stiffness if cp.stiffness > 0 else self._auto_k([s])
+        # Randabminderung: ein Knoten am Rand der Kontaktseite haftet nicht
+        # und reibt nicht - er gleitet, die Kantensingularitaet bleibt aus
+        am_rand = bool(getattr(cp, "rand_knoten", None)) and int(s) in self._rand_von(cp)
+        mu = 0.0 if am_rand else cp.mu
+        haften = False if am_rand else bool(cp.haften)
         ct = None
-        if cp.mu > 0 or cp.haften:
+        if mu > 0 or haften:
             t1, t2 = _tangent_basis(n)
             ct = np.vstack([np.concatenate([t1] + [-wi * t1 for wi in wj]),
                             np.concatenate([t2] + [-wi * t2 for wi in wj])])
+        # Lochleibungsgrenze: Grenzpressung mal Einflussflaeche des Knotens;
+        # darueber fliesst die Bedingung mit konstanter Kraft
+        grenze = float(getattr(cp, "grenzpressung", 0.0) or 0.0)
+        limit = 0.0
+        if grenze > 0:
+            a_s = float((getattr(cp, "knotenflaechen", None) or {}).get(int(s), 0.0) or 0.0)
+            limit = grenze * a_s
         normalen.append(n)
         self.cons.append(Constraint("surface", dofs, cn, ct, float(g0), kn,
-                                    TANGENT_FACTOR * kn, cp.mu, s, n, marke,
-                                    master=(list(tri), list(wj)),
-                                    zug=bool(cp.zug), haften=bool(cp.haften)))
+                                    TANGENT_FACTOR * kn, mu, s, n, marke,
+                                    master=(list(tri), list(wj)), limit=limit,
+                                    zug=bool(cp.zug), haften=haften))
+
+    def _rand_von(self, cp) -> set:
+        """Die Randknoten eines Kontaktpaars als Menge (einmal gebaut)."""
+        cache = getattr(self, "_rand_cache", None)
+        if cache is None:
+            cache = self._rand_cache = {}
+        key = id(cp)
+        if key not in cache:
+            cache[key] = {int(x) for x in (getattr(cp, "rand_knoten", None) or [])}
+        return cache[key]
 
     def _build_pair(self, cp):
         """Ein Kontaktpaar in Bedingungen umsetzen: jeder Slave-Knoten gegen

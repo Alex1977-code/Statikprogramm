@@ -41,7 +41,11 @@ def _hochgezogen():
 def test_abbruch():
     m = _hochgezogen()
     alt = solver.StaticSystem.hilfsfesselung
+    alt_halt = solver._freie_teile_halten
+    # Ohne Hilfsfesselung und ohne den Halt (17.09.2026) fuer Teile ohne
+    # geschlossene Bedingung - nur so entsteht der Abbruch, der hier geprueft wird
     solver.StaticSystem.hilfsfesselung = lambda self: False
+    solver._freie_teile_halten = lambda *a, **k: False
     try:
         ex = None
         try:
@@ -50,6 +54,7 @@ def test_abbruch():
             ex = e
     finally:
         solver.StaticSystem.hilfsfesselung = alt
+        solver._freie_teile_halten = alt_halt
     check("ohne Hilfsfesselung: KontaktAbbruch mit Nummer der letzten geloesten Iteration",
           isinstance(ex, solver.KontaktAbbruch) and ex.iteration >= 1, f"{type(ex).__name__} {getattr(ex, 'iteration', None)}")
     if not isinstance(ex, solver.KontaktAbbruch):
@@ -71,7 +76,8 @@ def test_abbruch():
     s = res.singular if res else []
     check("Zeiger: eine freie Bewegung 'hebt ab' fuer den Block, Richtung nach oben und in Lastrichtung, der Grossteil der 90 kN geht ins Nichts",
           len(s) >= 1 and s[0].art == "hebt ab" and float(s[0].t[2]) > 0.5 and float(s[0].t[0]) > 0 and s[0].kraft > 60000.0
-          and "Block/Platte" in s[0].fugen and len(s[0].knoten) > 0 and "hebt ab" in s[0].text,
+          and "Block/Platte" in s[0].fugen and len(s[0].knoten) > 0
+          and ("hebt ab" in s[0].text or "verliert den Halt" in s[0].text),
           str([(x.koerper, round(x.kraft), x.fugen) for x in s]))
     check("Zusammenfassung beginnt mit ABBRUCH und nennt die Iteration",
           res is not None and res.summary().startswith("ABBRUCH") and "letzten Kontakt-Iteration" in res.summary())

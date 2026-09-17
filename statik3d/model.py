@@ -2318,6 +2318,21 @@ class Kontaktbedingung:
     #: 15.09.2026). Der Name traegt dann die Wirkung und folgt ihr; wer den
     #: Kontakt loescht, bekommt ihn nicht wieder (Model.kontakt_ausnahmen).
     automatisch: bool = False
+    #: Passung (17.09.2026, "die Passstifte verursachen Spannungsspitzen am
+    #: Rand der Bohrungen"): ein Passstift mit Nullspiel liegt rechnerisch am
+    #: ganzen Umfang an und wird am Bohrungsaustritt gequetscht. Drei Angaben
+    #: je Fuge, die RFEM nicht kennt und die man hier nach dem Import setzt:
+    #: ``spiel`` [m] - Anfangsspalt je Knoten (bei einer Bohrung das radiale
+    #: Spiel, das halbe Durchmesserspiel); ``grenzpressung`` [N/m²] - die
+    #: Lochleibungsgrenze: die Normalkraft eines Kontaktknotens ist auf
+    #: Grenzpressung mal Einflussflaeche begrenzt, darueber fliesst er (die
+    #: Kraft bleibt, die Nachbarn nehmen den Rest); ``rand_frei`` - so viele
+    #: Knotenreihen am Rand der Kontaktseite haften nicht, sondern gleiten
+    #: reibungsfrei (Randabminderung der haftenden Fuge: die
+    #: Kantensingularitaet am Bohrungsaustritt bleibt aus).
+    spiel: float = 0.0
+    grenzpressung: float = 0.0
+    rand_frei: int = 0
 
     def standard_anwenden(self, name: str, mu: float = None) -> "Kontaktbedingung":
         """Die Wirkung je Freiheitsgrad aus einem Standardkontakt setzen.
@@ -2724,6 +2739,13 @@ class ContactPair:
     abdeckung: float = 0.0
     #: Namen der Gegenkoerper, die wirklich Facetten gestellt haben
     gegenkoerper: list = field(default_factory=list)
+    #: Passung (17.09.2026): Anfangsspiel je Knoten [m], Lochleibungsgrenze
+    #: [N/m²] (0 = keine), Einflussflaeche je Slave-Knoten {Knoten: m²} und
+    #: die Slave-Knoten am Rand der Kontaktseite, die nicht haften
+    spiel: float = 0.0
+    grenzpressung: float = 0.0
+    knotenflaechen: dict = field(default_factory=dict)
+    rand_knoten: list = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------

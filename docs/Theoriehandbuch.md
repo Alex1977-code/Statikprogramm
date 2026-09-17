@@ -258,6 +258,49 @@ singuläres System bleibt über der Schranke (`tests/test_nachiteration.py`:
 ein Löser mit 3e-6 Fehler je Schritt kommt nach einer Nachiteration unter
 1e-6, einer mit 50 % Fehler nicht).
 
+**Passung** (17.09.2026): drei Angaben je Kontaktbedingung, die in den
+Aufbau der Bedingungen eingehen (`contact.ContactSystem._bedingung`). Das
+**Spiel** s kommt zum bereinigten Anfangsspalt jeder Bedingung dazu
+(g₀ → g₀ + s; bei einem Verbund entfällt es) - bei einer Bohrung das radiale
+Spiel, so dass ein Stift erst nach s auf der belasteten Seite anliegt. Die
+**Lochleibungsgrenze** p_L wird über die Einflussfläche A_i des Slave-Knotens
+(Facettenfläche zu gleichen Teilen auf ihre Knoten, `fugen._passungsdaten`)
+zur Grenzkraft F_i = p_L·A_i der Bedingung: übersteigt die Druckkraft sie,
+fließt die Bedingung mit konstanter Kraft F_i (das vorhandene plastische
+Glied `limit`/`yielding`), die Nachbarn tragen den Rest; entlastet sie, wird
+sie wieder elastisch. Die **Randabminderung** nimmt den Knoten am Rand der
+gepaarten Kontaktseite (Kanten, die nur zu einer gepaarten Facette gehören;
+weitere Reihen über die Facettenkanten) das Haften und die Reibung: sie
+gleiten reibungsfrei, die Singularität am Ende einer haftenden Fuge fällt
+weg. Nachweis `tests/test_passung.py`: Spiel 0,5 mm setzt den Block 0,5 mm
+tiefer bei gleichem Gleichgewicht; eine Grenze bei 70 % der Spitzenkraft
+kappt jede Knotenkraft dort und lässt die Summe gleich der Last; mit einer
+Randreihe haften nur die neun inneren der 25 Knoten, der Schub geht über sie.
+
+**Halt für Teile ohne geschlossene Bedingung** (17.09.2026): verliert ein
+Teil in der Kontakt-Iteration alle Bedingungen, ist das Gleichungssystem
+des nächsten Schritts wirklich singulär - am Drehlager pendelte die Zahl der
+aktiven Bedingungen 18 Schritte lang um 13 000, bis in Schritt 27 Passstifte
+ohne Halt waren (Residuum 1,1e-3), obwohl Verformung und Spannungen des
+Schritts davor unauffällig waren. Ein Stift in einer Bohrung berührt sie
+immer irgendwo; dass alle seine Bedingungen offen sind, ist die
+Linearisierung des Schritts. Scheitert die Lösung, hält
+`solver._freie_teile_halten` je Teil mindestens drei Bedingungen (die mit
+dem kleinsten Spalt) geschlossen, zählt das als Zustandswechsel (nach acht
+Wechseln friert die Bedingung ohnehin geschlossen ein) und löst denselben
+Schritt noch einmal; das Protokoll nennt jedes gehaltene Teil mit Spalt. Eine
+Bedingung zählt dabei zum Teil ihres Slave-Knotens und zu dem ihrer
+Master-Knoten - ein Stift, auf den nur die Bohrung drückt, hätte sonst keine.
+Der Halt gilt dem Schritt, nicht dem Ergebnis: tragen die gehaltenen
+Bedingungen am Ende Zug (kn·g über einem Tausendstel der Lastgröße), hebt
+das Teil wirklich ab, und die Rechnung bricht ab - mit der gehaltenen Lage
+als Teilergebnis und dem Zeiger „hebt ab und hängt an n gehaltenen
+Kontaktpunkten unter F kN Zug“. Nachweis `tests/test_kontakthalt.py`: der
+nach oben gezogene Block, der ohne den Halt in Schritt 2 singulär abbricht,
+konvergiert mit 13 gehaltenen Punkten und wird dann als abhebend gemeldet
+(90 kN Zug an den gehaltenen Punkten); `tests/test_solver_ext.py` erwartet
+für das vollständige Abheben weiterhin die Fehlermeldung.
+
 ### 1.4 Querschnittswerte freier Profile
 
 Der freie Profileditor vereinigt Teile nach dem **Satz von Steiner**

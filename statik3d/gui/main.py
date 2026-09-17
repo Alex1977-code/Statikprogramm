@@ -3697,6 +3697,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
                 "Unterlegblech). Daraus entstehen Pressspannung und - über den "
                 "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
+        g.gross("Passung", "", self.maske_passung, "",
+                "Spiel, Lochleibungsgrenze und Randabminderung für alle Kontaktfugen der "
+                "gewählten Volumen auf einmal (Passstifte, Bolzen): Einstellungen, die "
+                "RFEM nicht kennt und die hier nach dem Import gesetzt werden", symbol="lasten")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
@@ -5877,6 +5881,23 @@ class MainWindow(QtWidgets.QMainWindow):
                      self.KONTAKT_SPALT,
                      hinweis="„auf Berührung setzen“: jeder Knoten gilt in seiner Lage als anliegend - "
                              "Spiel und Facettenfehler zwischen verschieden feinen Netzen verschwinden"),
+                   F("spiel", "Spiel je Seite [mm]", "zahl", float(getattr(kb, "spiel", 0.0) or 0.0) * 1e3,
+                     hinweis="Passung: Anfangsspalt je Knoten zusätzlich zur Geometrie - bei einer "
+                             "Bohrung das radiale Spiel (halbes Durchmesserspiel; H7/h6 bei 25 mm bis "
+                             "0,02 mm). Ein Passstift trägt dann nur auf der belasteten Seite. "
+                             "Verliert ein Teil damit alle Bedingungen, hält die Rechnung es an den "
+                             "drei nächsten Punkten, bis das Spiel durchfahren ist"),
+                   F("grenzpressung", "Lochleibungsgrenze [N/mm²]", "zahl",
+                     float(getattr(kb, "grenzpressung", 0.0) or 0.0) / 1e6,
+                     hinweis="0 = keine. Sonst ist die Normalkraft jedes Kontaktknotens auf "
+                             "Grenzpressung × Einflussfläche begrenzt; darüber fließt er mit "
+                             "konstanter Kraft, die Nachbarn tragen den Rest - wie das Fließen "
+                             "an der Bohrungskante. Richtwert fy bis 1,5 fy"),
+                   F("rand_frei", "Randabminderung [Knotenreihen]", "zahl",
+                     int(getattr(kb, "rand_frei", 0) or 0),
+                     hinweis="0 = keine. Sonst haften so viele Knotenreihen am Rand der Kontaktseite "
+                             "nicht (sie gleiten reibungsfrei): die Kantensingularität am "
+                             "Bohrungsaustritt bleibt aus. 1 Reihe reicht meist"),
                    F("wirkung", "Wirkung je FHG", "info", kb.describe()),
                    F("ausgefuehrt", "Trennung", "info",
                      (("⚠ " if kb.zu_steif(m) else "") + kb.zustand(m))
@@ -7184,6 +7205,9 @@ class MainWindow(QtWidgets.QMainWindow):
                            and self._kontakt_ist_standard(standard, zug, sx, sy, dreh, mu) else "")
             kb.suchweite = max(float(zahl("suchweite", 0.0) or 0.0), 0.0) / 1e3
             kb.spalt_schliessen = str(w.get("spalt", "")) == self.KONTAKT_SPALT[1]
+            kb.spiel = max(float(zahl("spiel", 0.0) or 0.0), 0.0) / 1e3
+            kb.grenzpressung = max(float(zahl("grenzpressung", 0.0) or 0.0), 0.0) * 1e6
+            kb.rand_frei = int(max(float(zahl("rand_frei", 0.0) or 0.0), 0.0))
             kb.beschreibung = str(w.get("beschreibung", "") or "").strip()
             if getattr(kb, "automatisch", False):
                 from .. import kontakte
@@ -11400,6 +11424,28 @@ class MainWindow(QtWidgets.QMainWindow):
                                    "die Statuszeile nennt nach der Rechnung die wirklich benutzte Zahl. "
                                    "Wird gespeichert.")
         gl.addWidget(row("Threads des Gleichungslösers", self.cb_threads))
+        # Genauigkeit des Gleichungsloesers (17.09.2026): die Residuum-
+        # Schranke und die Nachiterationen davor - beides wird gespeichert
+        self.cb_genau = QtWidgets.QComboBox()
+        for wert, text in ((1e-8, "streng (1e-8)"), (1e-6, "normal (1e-6, Vorgabe)"), (1e-5, "1e-5"),
+                           (1e-4, "locker (1e-4)"), (1e-3, "sehr locker (1e-3)")):
+            self.cb_genau.addItem(text, float(wert))
+        self._genau_waehlen(float(parallel.settings().solver_residuum or 1e-6))
+        self.cb_genau.setToolTip("Bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine Lösung. Liegt "
+                                 "es darüber, iteriert der Löser mit der vorhandenen Faktorisierung nach; "
+                                 "bleibt es darüber, gilt das System als singulär (Abbruch). Straffedern "
+                                 "(starre Kopplungen, Kontakt) kosten Stellen - am Drehlager brach LF1 mit "
+                                 "1,3e-6 ab, obwohl der Aufbau konvergiert. Wird gespeichert.")
+        gl.addWidget(row("Genauigkeit des Gleichungslösers", self.cb_genau))
+        self.cb_nachit = QtWidgets.QComboBox()
+        for n_ in (0, 1, 2, 3, 5, 10):
+            self.cb_nachit.addItem("keine" if n_ == 0 else f"bis {n_}", int(n_))
+        i = self.cb_nachit.findData(int(parallel.settings().solver_nachiterationen))
+        self.cb_nachit.setCurrentIndex(i if i >= 0 else 3)
+        self.cb_nachit.setToolTip("Nachiterationen x += K⁻¹(b − K·u), solange das Residuum über der Schranke "
+                                  "liegt und fällt; jede kostet eine Vorwärts-Rückwärts-Lösung, keine neue "
+                                  "Faktorisierung. Vorgabe bis 3. Wird gespeichert.")
+        gl.addWidget(row("Nachiterationen", self.cb_nachit))
         lbl_teilung = QtWidgets.QLabel(
             "Zweierlei: die Prozesse vernetzen und stellen die Matrizen auf, die Threads lösen "
             "damit das Gleichungssystem. Beide Zahlen dürfen gleich sein, doppelt gezählt wird "
@@ -13972,6 +14018,81 @@ class MainWindow(QtWidgets.QMainWindow):
                 aus.append(name)
         return sorted(aus, key=dsg.natuerlich)
 
+    def _passung_kontakte(self, koerper: list) -> list:
+        """Die Kontaktbedingungen, an denen einer der Koerper beteiligt ist
+        (Kontaktseite oder Gegenseite) - leer bei leerer Auswahl heisst alle."""
+        m = self.model
+        if not koerper:
+            return sorted(m.kontaktbedingungen, key=dsg.natuerlich)
+        ks = set(koerper)
+        return sorted((n for n, kb in m.kontaktbedingungen.items()
+                       if ks & set(kb.koerpernamen or []) or ks & set(getattr(kb, "gegenkoerper", None) or [])),
+                      key=dsg.natuerlich)
+
+    def maske_passung(self):
+        """Passung fuer die Kontaktfugen der gewaehlten Volumen auf einmal
+        (17.09.2026, "alle betroffenen Volumen selektieren und einmal im
+        rechten Menue fuer alle diese Einstellung vornehmen")."""
+        m = self.model
+        if not m.kontaktbedingungen:
+            return self.error("Das Modell hat keine Kontaktbedingung - erst eine anlegen "
+                              "(Register Lager / Kontakt)")
+        koerper = [k for k in (self.sel_koerper or []) if k in m.koerper]
+        kontakte = self._passung_kontakte(koerper)
+        vor = m.kontaktbedingungen[kontakte[0]] if kontakte else None
+        felder = [msk.Feld("koerper", "Volumen", "info",
+                           ", ".join(koerper[:8]) + (" …" if len(koerper) > 8 else "")
+                           if koerper else "keine gewählt - es gelten alle Kontaktfugen"),
+                  msk.Feld("kontakte", "Kontaktfugen", "info",
+                           f"{len(kontakte)}: " + ", ".join(kontakte[:6]) + (" …" if len(kontakte) > 6 else "")
+                           if kontakte else "keine"),
+                  msk.Feld("spiel", "Spiel je Seite [mm]", "zahl",
+                           float(getattr(vor, "spiel", 0.0) or 0.0) * 1e3 if vor else 0.0,
+                           hinweis="radiales Spiel einer Bohrung (halbes Durchmesserspiel); "
+                                   "H7/h6 bei 25 mm bis 0,02 mm"),
+                  msk.Feld("grenzpressung", "Lochleibungsgrenze [N/mm²]", "zahl",
+                           float(getattr(vor, "grenzpressung", 0.0) or 0.0) / 1e6 if vor else 0.0,
+                           hinweis="0 = keine; Richtwert fy bis 1,5 fy - darüber fließt der Knoten"),
+                  msk.Feld("rand_frei", "Randabminderung [Knotenreihen]", "zahl",
+                           int(getattr(vor, "rand_frei", 0) or 0) if vor else 0,
+                           hinweis="0 = keine; 1: die Randreihe der Kontaktseite haftet nicht")]
+        maske = msk.Maske("Passung", felder, knopf="Auf die Kontaktfugen anwenden",
+                          hinweis="Volumen in der Ansicht wählen (Auswahlart „Volumen“, mehrere mit "
+                                  "Strg oder dem Auswahlfenster), dann die Werte eintragen und anwenden: "
+                                  "sie gelten für jede Kontaktfuge, an der eines der Volumen beteiligt "
+                                  "ist - Kontaktseite oder Gegenseite. Ohne Auswahl für alle Fugen. "
+                                  "Die Fugen werden am vorhandenen Netz gleich neu ausgeführt.")
+        maske.angewendet.connect(self._passung_anwenden)
+        return self.maske_erzeugen(maske)
+
+    def _passung_anwenden(self, w: dict):
+        m = self.model
+        koerper = [k for k in (self.sel_koerper or []) if k in m.koerper]
+        kontakte = self._passung_kontakte(koerper)
+        if not kontakte:
+            return self.error("Keine Kontaktfuge zu den gewählten Volumen")
+
+        def zahl(key):
+            try:
+                return float(str(w.get(key, 0) or 0).replace(",", "."))
+            except ValueError:
+                return 0.0
+        spiel = max(zahl("spiel"), 0.0) / 1e3
+        grenze = max(zahl("grenzpressung"), 0.0) * 1e6
+        reihen = int(max(zahl("rand_frei"), 0.0))
+        self.merken(f"Passung an {len(kontakte)} Kontaktfugen")
+        for n in kontakte:
+            kb = m.kontaktbedingungen[n]
+            kb.spiel, kb.grenzpressung, kb.rand_frei = spiel, grenze, reihen
+            self._kontakt_ausfuehren_wenn_netz(kb)
+        self.log.appendPlainText(
+            f"Passung gesetzt an {len(kontakte)} Kontaktfugen ({', '.join(kontakte[:8])}"
+            + (" …" if len(kontakte) > 8 else "") + f"): Spiel {spiel * 1e3:.3f} mm, "
+            f"Lochleibungsgrenze {grenze / 1e6:.0f} N/mm², Randabminderung {reihen} Reihen"
+            + (f" - für die Volumen {', '.join(koerper[:6])}" if koerper else " - für alle Fugen"))
+        self.refresh_all()
+        self.info(f"Passung an {len(kontakte)} Kontaktfugen gesetzt")
+
     def maske_uebermass(self):
         """Uebermass (Presspassung) einer Kontaktfuge als Last.
 
@@ -15823,10 +15944,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "cb_threads", None) is not None:
             self.cb_threads.setItemText(0, self._threads_automatisch_text())
 
+    def _genau_waehlen(self, wert: float) -> None:
+        """Den Eintrag der Genauigkeitsliste zum Wert setzen (den naechsten, wenn
+        der Wert nicht in der Liste steht)."""
+        cb = self.cb_genau
+        beste = min(range(cb.count()), key=lambda i: abs(math.log10(float(cb.itemData(i))) - math.log10(max(wert, 1e-30))))
+        cb.setCurrentIndex(beste)
+
     def _apply_parallel_settings(self):
+        nachit = self.cb_nachit.currentData()
         parallel.configure(workers=self.sp_workers.value(),
                            solver_backend=str(self.cb_loeser.currentData() or "auto"),
                            solver_threads=int(self.cb_threads.currentData() or 0),
+                           solver_residuum=float(self.cb_genau.currentData() or 1e-6),
+                           solver_nachiterationen=int(3 if nachit is None else nachit),
                            backend="farm" if self.cb_backend.currentIndex() == 1 else "local",
                            farm_host=self.ed_farm_host.text().strip() or "127.0.0.1",
                            farm_port=int(self.ed_farm_port.text() or 5555),

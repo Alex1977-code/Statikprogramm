@@ -1028,6 +1028,39 @@ def _nach_normale(model: Model, nd: list, n: np.ndarray) -> list:
     return nd
 
 
+def _passungsdaten(seite_b: list, paare: dict, flaechen_b, reihen: int) -> tuple:
+    """(Einflussflaeche je Slave-Knoten, Randknoten) der gepaarten Kontaktseite.
+
+    Die Einflussflaeche ist die Facettenflaeche zu gleichen Teilen auf ihre
+    Knoten verteilt - mit ihr wird aus der Lochleibungsgrenze [N/m²] die
+    Grenzkraft des Knotens. Randknoten sind die Enden der Kanten, die nur zu
+    **einer** gepaarten Facette gehoeren (der Rand der Kontaktseite oder der
+    Rand des Bereichs, der eine Gegenseite hat); ``reihen`` > 1 nimmt die
+    Nachbarn ueber die Facettenkanten dazu."""
+    knotenflaechen: dict = {}
+    kanten: dict = {}
+    for i in paare:
+        nd = [int(x) for x in seite_b[i][1]]
+        a_i = float(flaechen_b[i]) / max(len(nd), 1)
+        for k in nd:
+            knotenflaechen[k] = knotenflaechen.get(k, 0.0) + a_i
+        for a, b in zip(nd, nd[1:] + nd[:1]):
+            key = (min(a, b), max(a, b))
+            kanten[key] = kanten.get(key, 0) + 1
+    if reihen <= 0:
+        return knotenflaechen, set()
+    rand = {k for (a, b), z in kanten.items() if z == 1 for k in (a, b)}
+    nachbarn: dict = {}
+    for a, b in kanten:
+        nachbarn.setdefault(a, set()).add(b)
+        nachbarn.setdefault(b, set()).add(a)
+    front, alle = set(rand), set(rand)
+    for _ in range(int(reihen) - 1):
+        front = {n for k in front for n in nachbarn.get(k, ()) if n not in alle}
+        alle |= front
+    return knotenflaechen, alle
+
+
 def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
                             bericht: dict, log: list = None, cache: dict = None) -> dict:
     """Zwei getrennte, aufeinanderliegende Netze ueber ein Kontaktpaar verbinden.
@@ -1128,12 +1161,30 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
     # Beispielmodell waren das an einer Fuge 213 von 290 gepaarten Knoten mit
     # mehr als 5 mm Spalt, der groesste 121 mm - Lastpfade, die es in der
     # Konstruktion nicht gibt. Wer zwei Buecher fuehrt, hat eines zu viel.
+    # Passung (17.09.2026): Einflussflaeche je Slave-Knoten (fuer die
+    # Lochleibungsgrenze) und die Knoten am Rand der gepaarten Kontaktseite
+    # (fuer die Randabminderung), ``rand_frei`` Reihen tief
+    knotenflaechen, rand_knoten = _passungsdaten(seite_b, paare, flaechen_b,
+                                                 int(getattr(kb, "rand_frei", 0) or 0))
     model.contact_pairs.append(ContactPair(
         name=kb.name, slave_nodes=slave,
         master_faces=[list(v) for v in master.values()], mu=mu,
         stiffness=steif, search_radius=weite,
         zug=zug, haften=haften, anliegend=bool(getattr(kb, "spalt_schliessen", False)),
-        abdeckung=A_zu / A_alle, gegenkoerper=sorted(gegen_koerper)))
+        abdeckung=A_zu / A_alle, gegenkoerper=sorted(gegen_koerper),
+        spiel=float(getattr(kb, "spiel", 0.0) or 0.0),
+        grenzpressung=float(getattr(kb, "grenzpressung", 0.0) or 0.0),
+        knotenflaechen=knotenflaechen, rand_knoten=sorted(rand_knoten)))
+    if log is not None:
+        passung = []
+        if getattr(kb, "spiel", 0.0):
+            passung.append(f"Spiel {float(kb.spiel) * 1e3:.3f} mm je Knoten")
+        if getattr(kb, "grenzpressung", 0.0):
+            passung.append(f"Lochleibungsgrenze {float(kb.grenzpressung) / 1e6:.0f} N/mm²")
+        if rand_knoten:
+            passung.append(f"{len(rand_knoten)} Randknoten ({int(kb.rand_frei)} Reihen) haften nicht")
+        if passung:
+            C.say(log, f"  {kb.name}: Passung - " + ", ".join(passung))
     kb.ausgefuehrt = True
     bericht["kontaktpaar"] = 1
     bericht["slave"] = len(slave)
