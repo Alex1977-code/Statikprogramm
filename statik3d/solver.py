@@ -1781,8 +1781,9 @@ class KontaktAbbruch(RuntimeError):
     Abbruch lag - und Zeiger auf die Teile, die ihn verursacht haben").
     ``teilergebnis`` haengt _solve_loads an: das Results-Objekt dazu."""
 
-    def __init__(self, text: str, u=None, iteration: int = 0, kontakt=None, abgehoben=None):
+    def __init__(self, text: str, u=None, iteration: int = 0, kontakt=None, abgehoben=None, log=None):
         super().__init__(text)
+        self.log = list(log or [])
         self.u = u
         self.iteration = int(iteration)
         self.kontakt = list(kontakt or [])
@@ -1886,6 +1887,7 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
         nimm = offen[:soll - len(aktiv)]
         for c in nimm:
             c.active = True
+            c.gehalten = True
             c.toggles += 1
             c.Fn = 0.0
             if c.toggles > 8:
@@ -1901,13 +1903,35 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
     return bool(gehalten)
 
 
-def _kontakt_abbruch(it: int, ex, cs, model, u) -> KontaktAbbruch:
+def _gehaltene_unter_zug(model, cs) -> list:
+    """Teile, deren gehaltene Bedingungen am Ende Zug tragen: [(Name,
+    Knotenmenge, Zahl der gehaltenen Bedingungen, Zugkraft [N], Bedingungen)].
+
+    Der Halt ist fuer den Schritt gedacht, nicht fuer das Ergebnis: haengt ein
+    Teil zum Schluss an gehaltenen Punkten und zieht daran, hebt es wirklich
+    ab - ein Block, der nach oben gezogen wird, hat kein Gleichgewicht ohne
+    Zugfuge. Die Zugkraft ist kn * g je gehaltener, offen stehender Bedingung
+    (die Feder der Straffeder-Formulierung, nicht die auf null gekappte Fn);
+    gemeldet wird ab einem Tausendstel der Lastgroesse."""
+    out = []
+    grenze = 1e-3 * float(getattr(cs, "f_ref", 1.0) or 1.0)
+    for name, kn, cons in _teile_bedingungen(model, cs):
+        geh = [c for c in cons if getattr(c, "gehalten", False) and c.active]
+        if not geh:
+            continue
+        zug = sum(max(0.0, float(c.kn) * float(c.g)) for c in geh)
+        if zug > grenze:
+            out.append((name, kn, len(geh), zug, cons))
+    return out
+
+
+def _kontakt_abbruch(it: int, ex, cs, model, u, zug: list = None, log: list = None) -> KontaktAbbruch:
     """Die Ausnahme zum singulaeren Schritt ``it`` - mit der Loesung des
     Schritts davor und den Teilen, die in diesem Schritt keine geschlossene
     Bedingung mehr hatten."""
     text = _contact_singular(it, ex, cs, model)
     if u is None:
-        return KontaktAbbruch(text, iteration=0)
+        return KontaktAbbruch(text, iteration=0, log=log)
     abgehoben = []
     try:
         n6 = model.nn * NDOF
@@ -1933,13 +1957,24 @@ def _kontakt_abbruch(it: int, ex, cs, model, u) -> KontaktAbbruch:
             if los:
                 abgehoben.append({"name": name, "knoten": idx, "n": n, "aktiv": aktiv, "fugen": fugen,
                                   "u": mittel, "betrag": betrag, "mass": mass})
+        # Teile, die an gehaltenen Punkten ziehen: sie heben wirklich ab
+        genannt = {a["name"] for a in abgehoben}
+        for name, kn, n_geh, kraft, cons in (zug or []):
+            if name in genannt:
+                continue
+            idx = np.fromiter(kn, int, len(kn))
+            abgehoben.append({"name": name, "knoten": idx, "n": len(cons),
+                              "aktiv": sum(1 for c in cons if c.active),
+                              "fugen": sorted({(c.label or "").split(":")[0] for c in cons if c.label}),
+                              "u": U[idx].mean(axis=0), "betrag": float(np.linalg.norm(U[idx], axis=1).mean()),
+                              "mass": 0.0, "gehalten": int(n_geh), "zug": float(kraft)})
     except Exception:                 # noqa: BLE001 - die Diagnose darf den Abbruch nicht verschlucken
         abgehoben = []
     try:
         kontakt = cs.results()
     except Exception:                 # noqa: BLE001
         kontakt = []
-    return KontaktAbbruch(text, u=np.array(u, float), iteration=it - 1, kontakt=kontakt,
+    return KontaktAbbruch(text, u=np.array(u, float), iteration=it - 1, kontakt=kontakt, log=log,
                           abgehoben=abgehoben)
 
 
@@ -1962,6 +1997,7 @@ def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=No
         res.contact = list(getattr(ex, "kontakt", None) or [])
         res.info.update({"abbruch": str(ex).splitlines()[0], "abbruch_iteration": int(ex.iteration),
                          "contact_iterations": int(ex.iteration), "contact_converged": False,
+                         "contact_log": list(getattr(ex, "log", None) or []),
                          "ndof": model.ndof, "nfree": len(system.fi), "solver": system.backend})
         sing = list(_sg.auswerten(model, list(system.singular or []), F))
         n6 = model.nn * NDOF
@@ -1979,7 +2015,11 @@ def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=No
             wohin = (f" - Verschiebung längs ({richtung[0]:.2f}, {richtung[1]:.2f}, {richtung[2]:.2f})"
                      if nv > 0 else "")
             n_akt = int(teil.get("aktiv", 0))     # nicht "aktiv": das ist der Lastvektor fuer postprocess
-            if n_akt == 0:
+            if teil.get("zug"):
+                wort = "hebt ab"
+                lage = (f"hängt nach Kontakt-Iteration {ex.iteration} an {teil.get('gehalten', 0)} gehaltenen "
+                        f"Punkten unter {teil['zug'] / 1e3:.1f} kN Zug - ohne Zugfuge kein Gleichgewicht")
+            elif n_akt == 0:
                 wort = "hebt ab"
                 lage = (f"in Kontakt-Iteration {ex.iteration + 1} war keine seiner {teil['n']} "
                         f"Kontaktbedingungen mehr geschlossen")
@@ -2146,13 +2186,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 try:
                     u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
                 except RuntimeError as ex2:
-                    raise _kontakt_abbruch(it, ex2, cs, model, u) from None
+                    raise _kontakt_abbruch(it, ex2, cs, model, u, log=log) from None
                 cs.select_by_direction(u)
                 Kc, Fc = matrizen()
                 try:
                     u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
                 except RuntimeError as ex3:
-                    raise _kontakt_abbruch(it, ex3, cs, model, u) from None
+                    raise _kontakt_abbruch(it, ex3, cs, model, u, log=log) from None
             else:
                 # Ein Teil hat (fast) alle Bedingungen verloren - an den am
                 # wenigsten offenen gehalten und denselben Schritt noch einmal
@@ -2169,7 +2209,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                     except RuntimeError as ex4:
                         ex = ex4
                 if not geloest:
-                    raise _kontakt_abbruch(it, ex, cs, model, u) from None
+                    raise _kontakt_abbruch(it, ex, cs, model, u, log=log) from None
         changed = cs.update(u)
         if progress:
             # Anteil im Fenster des Lastfalls: 1 - 0,85^it waechst mit jedem
@@ -2184,6 +2224,17 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         if not changed:
             converged = True
             break
+    if converged and u is not None:
+        zug = _gehaltene_unter_zug(model, cs)
+        if zug:
+            # Der Halt hat den Schritt gerettet, nicht das Ergebnis: das Teil
+            # zieht an den gehaltenen Punkten - es hebt ab, kein Gleichgewicht
+            text = ("kein statisches Gleichgewicht - " + "; ".join(
+                f"{name} hebt ab und hängt an {n_geh} gehaltenen Kontaktpunkten unter {kraft / 1e3:.1f} kN Zug"
+                for name, _kn, n_geh, kraft, _c in zug[:6]) + (" …" if len(zug) > 6 else "")
+                + ". Abhilfe: Verbund oder Vorspannung an der Fuge, ein Lager, oder die Last in die Fuge drücken lassen.")
+            log.append(text)
+            raise _kontakt_abbruch(it, RuntimeError(text), cs, model, u, zug=zug, log=log) from None
     if warm and converged and u is not None:
         n_v = cs.warmstart_verstoesse(u)
         if n_v:

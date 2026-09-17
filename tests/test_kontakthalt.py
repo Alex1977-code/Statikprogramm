@@ -3,9 +3,11 @@
 Der nach oben gezogene Block des Beispiels "Block mit Reibung" verliert im
 zweiten Schritt (fast) alle Kontaktbedingungen; ohne Halt ist das System
 singulaer (tests/test_abbruch.py prueft diesen Abbruch mit abgeschaltetem
-Halt). Mit dem Halt bleiben die drei Bedingungen mit dem kleinsten Spalt
-geschlossen, der Schritt wird noch einmal geloest, die Iteration konvergiert,
-und das Protokoll nennt das gehaltene Teil.
+Halt). Mit dem Halt bleiben Bedingungen mit dem kleinsten Spalt geschlossen,
+der Schritt wird noch einmal geloest, die Iteration konvergiert - und weil
+der Block am Ende an den gehaltenen Punkten zieht, hebt er wirklich ab: der
+Abbruch kommt dann mit der gehaltenen Lage als Teilergebnis und dem Zeiger.
+Ein Stift, dessen gehaltene Punkte in Druck enden, laeuft durch.
 
 Aufruf:  python -m tests.test_kontakthalt
 """
@@ -37,29 +39,39 @@ def _hochgezogen():
 
 
 def test_halt():
+    """Der nach oben gezogene Block: der Halt rettet den Schritt (kein
+    singulaeres System mehr), aber am Ende zieht der Block an den gehaltenen
+    Punkten - er hebt wirklich ab. Dann kommt der Abbruch mit der gehaltenen
+    Lage als Teilergebnis und dem Zeiger, statt eines stillen Ergebnisses."""
     m = _hochgezogen()
     alt = solver.StaticSystem.hilfsfesselung
     solver.StaticSystem.hilfsfesselung = lambda self: False
+    ex = None
     try:
-        r = solver.solve_static(m)
-    except RuntimeError as ex:
-        check("mit Halt: kein Abbruch", False, str(ex)[:120])
-        return
+        solver.solve_static(m)
+    except RuntimeError as e:
+        ex = e
     finally:
         solver.StaticSystem.hilfsfesselung = alt
-    log = r.info.get("contact_log") or []
+    check("Block nach oben gezogen: Abbruch, weil die gehaltenen Punkte Zug tragen (er hebt wirklich ab)",
+          isinstance(ex, solver.KontaktAbbruch) and "gehaltenen Kontaktpunkten" in str(ex) and "Gleichgewicht" in str(ex),
+          str(ex)[:140])
+    if not isinstance(ex, solver.KontaktAbbruch):
+        return
+    r = ex.teilergebnis
+    log = (r.info.get("contact_log") if r is not None else None) or []
     halt = [z for z in log if "Halt für Teile" in z]
-    check("mit Halt: kein Abbruch, die Iteration konvergiert",
-          r.info.get("contact_converged") and not r.info.get("abbruch"), str(r.info.get("contact_iterations")))
     check("das Protokoll nennt das gehaltene Teil mit Bedingungen und Spalt",
           halt and "Teil 1" in halt[0] and "mit dem kleinsten Spalt" in halt[0] and "mm" in halt[0], str(halt[:1])[:160])
-    n_zu = sum(1 for c in r.contact if c["status"] != "offen")
-    check("am Ende halten mindestens drei Bedingungen (der Block haengt an drei Punkten)", n_zu >= 3, f"{n_zu} zu")
-    Fz = sum(l.F[2] for l in m.case().nodal_loads)
-    check("die Auflager tragen die Zuglast ueber die gehaltenen Punkte (Gleichgewicht)",
-          abs(float(r.reactions[:, 2].sum()) + Fz) < 1e-6 * abs(Fz), f"{float(r.reactions[:, 2].sum()):.1f} N gegen {-Fz:.1f} N")
-    check("die Verschiebung des Blocks ist endlich und klein (kein freies Teil)",
-          np.isfinite(r.u).all() and float(np.abs(r.u[:, :3]).max()) < 1e-2, f"{float(np.abs(r.u[:, :3]).max()) * 1e3:.3f} mm")
+    check("das Teilergebnis ist die gehaltene Lage: endliche, kleine Verschiebung, Kontaktzustand mit gehaltenen Punkten",
+          r is not None and np.isfinite(r.u).all() and float(np.abs(r.u[:, :3]).max()) < 1e-2
+          and sum(1 for c in r.contact if c["status"] != "offen") >= 3,
+          f"{float(np.abs(r.u[:, :3]).max()) * 1e3:.3f} mm" if r is not None else "")
+    s = (r.singular if r is not None else None) or []
+    check("Zeiger: der Block hebt ab und haengt an gehaltenen Punkten unter rund 90 kN Zug",
+          s and s[0].art == "hebt ab" and "gehaltenen Punkten" in s[0].text and "kN Zug" in s[0].text
+          and s[0].koerper == ["Teil 1"], str([x.text[:100] for x in s[:1]]))
+    check("die Nummer der letzten geloesten Iteration ist die konvergierte, nicht 0", ex.iteration >= 2, str(ex.iteration))
 
 
 def test_teile_bedingungen():

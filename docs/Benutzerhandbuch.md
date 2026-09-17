@@ -3153,7 +3153,10 @@ Statt abzubrechen hält das Programm je Teil mindestens drei Bedingungen mit
 dem kleinsten Spalt geschlossen und löst den Schritt noch einmal; das
 Protokoll nennt jedes gehaltene Teil („Halt für Teile ohne geschlossene
 Bedingung: V100: 0 von 62 zu, 3 mit dem kleinsten Spalt (bis 0,012 mm)
-gehalten“). Erst wenn auch das nicht hält, bricht die Rechnung ab.
+gehalten“). Erst wenn auch das nicht hält, bricht die Rechnung ab. Tragen
+die gehaltenen Punkte am Ende Zug, hebt das Teil wirklich ab: dann bricht
+die Rechnung mit der gehaltenen Lage als Teilergebnis ab, und der Zeiger
+sagt „hebt ab und hängt an n gehaltenen Punkten unter F kN Zug“.
 
 Findet die Kontakt-Iteration auch mit Hilfsfesselung kein Gleichgewicht
 („Gleichungssystem singulär“), bricht die Rechnung ab — aber nicht stumm

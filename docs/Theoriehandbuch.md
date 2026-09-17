@@ -272,8 +272,15 @@ Wechseln friert die Bedingung ohnehin geschlossen ein) und löst denselben
 Schritt noch einmal; das Protokoll nennt jedes gehaltene Teil mit Spalt. Eine
 Bedingung zählt dabei zum Teil ihres Slave-Knotens und zu dem ihrer
 Master-Knoten - ein Stift, auf den nur die Bohrung drückt, hätte sonst keine.
-Nachweis `tests/test_kontakthalt.py`: der nach oben gezogene Block, der ohne
-den Halt in Schritt 2 abbricht, hängt an drei Punkten und konvergiert.
+Der Halt gilt dem Schritt, nicht dem Ergebnis: tragen die gehaltenen
+Bedingungen am Ende Zug (kn·g über einem Tausendstel der Lastgröße), hebt
+das Teil wirklich ab, und die Rechnung bricht ab - mit der gehaltenen Lage
+als Teilergebnis und dem Zeiger „hebt ab und hängt an n gehaltenen
+Kontaktpunkten unter F kN Zug“. Nachweis `tests/test_kontakthalt.py`: der
+nach oben gezogene Block, der ohne den Halt in Schritt 2 singulär abbricht,
+konvergiert mit 13 gehaltenen Punkten und wird dann als abhebend gemeldet
+(90 kN Zug an den gehaltenen Punkten); `tests/test_solver_ext.py` erwartet
+für das vollständige Abheben weiterhin die Fehlermeldung.
 
 ### 1.4 Querschnittswerte freier Profile
 

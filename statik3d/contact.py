@@ -94,6 +94,7 @@ class Constraint:
     g: float = 0.0
     toggles: int = 0
     frozen: bool = False
+    gehalten: bool = False         # von solver._freie_teile_halten geschlossen gehalten (17.09.2026)
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
