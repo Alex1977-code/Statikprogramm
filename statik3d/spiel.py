@@ -118,8 +118,44 @@ def zylinder(model, name: str) -> dict:
         return {"ok": False, "grund": f"{name}: alle Kreise liegen in einer Ebene (eine Bohrung, kein Zylinder)"}
     boegen = list(dict.fromkeys(kr[0] for kr in kreise if abs(kr[2] - r) <= TOL_RADIUS * r + 1e-9))
     andere = sorted({round(kr[2], 9) for kr in kreise if abs(kr[2] - r) > TOL_RADIUS * r + 1e-9})
+    # Ein Zylinder hat keinen Punkt weiter von seiner Achse als seinen
+    # groessten Kreis - auch ein Bolzen mit Kopf nicht. Eine Rippe mit einer
+    # Ausrundung hat zwei gleiche Boegen auf einer Achse und bestand bis
+    # 17.09.2026 alle Pruefungen: V5 am Drehlager bekam Spiel, obwohl sechs
+    # seiner Knoten 297 mm von der Achse entfernt lagen (r war 30 mm).
+    r_max = float(radien.max())
+    weit = _weiteste(model, name, punkt, achse)
+    if weit > r_max * (1.0 + TOL_RADIUS) + 1e-9:
+        return {"ok": False, "grund": f"{name}: ein Punkt liegt {weit * 1e3:.1f} mm von der Achse "
+                                      f"entfernt, der groesste Kreis hat {r_max * 1e3:.1f} mm - "
+                                      f"kein Zylinder (Rippe, Blech, Winkel?)"}
     return {"ok": True, "grund": "", "punkt": punkt, "achse": achse, "radius": r,
             "boegen": boegen, "andere_radien": andere}
+
+
+def _weiteste(model, name: str, punkt, achse) -> float:
+    """Groesster Abstand eines Geometriepunktes des Koerpers von der Achse -
+    Knoten der Randlinien und die Stuetzpunkte der Boegen."""
+    k = model.koerper.get(name)
+    if k is None:
+        return 0.0
+    P = []
+    for fn in k.flaechen or []:
+        f = model.flaechen.get(fn)
+        if f is None:
+            continue
+        for ln in list(f.linien or []) + [x for loch in (f.oeffnungen or []) for x in loch]:
+            L = model.lines.get(ln)
+            if L is None:
+                continue
+            P += [model.nodes[int(n)] for n in L.nodes]
+            for q in ((L.geometrie or {}).get("punkte") or []):
+                P.append(_v(q))
+    if not P:
+        return 0.0
+    d = np.asarray(P, float) - _v(punkt)
+    quer = d - np.outer(d @ _v(achse), _v(achse))
+    return float(np.linalg.norm(quer, axis=1).max())
 
 
 def _flaechen_von(model, name: str) -> list:
