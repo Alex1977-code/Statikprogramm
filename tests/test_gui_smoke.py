@@ -4950,6 +4950,35 @@ def main():
         traceback.print_exc()
         check("Gelenke und Liniengelenke im Modellbaum", False, str(ex)[:70])
 
+    try:
+        # ---- Genauigkeit des Gleichungslösers (17.09.2026) ----
+        from statik3d import parallel as par_g
+        alt_g = (par_g.settings().solver_residuum, par_g.settings().solver_nachiterationen)
+        check("Berechnung → Einstellungen: Genauigkeit (5 Stufen, Vorgabe normal 1e-6) und Nachiterationen (bis 3)",
+              w.cb_genau.count() == 5 and w.cb_genau.currentData() == 1e-6 and "Vorgabe" in w.cb_genau.currentText()
+              and w.cb_nachit.currentData() == 3, f"{w.cb_genau.currentText()} / {w.cb_nachit.currentText()}")
+        w.cb_genau.setCurrentIndex(w.cb_genau.findData(1e-4))
+        w.cb_nachit.setCurrentIndex(w.cb_nachit.findData(5))
+        w._apply_parallel_settings()
+        import json as json_g
+        with open(par_g.einstellungsdatei(), encoding="utf-8") as fh_g:
+            d_g = json_g.load(fh_g)
+        check("Übernehmen setzt Schranke 1e-4 und 5 Nachiterationen und speichert beides",
+              par_g.settings().solver_residuum == 1e-4 and par_g.settings().solver_nachiterationen == 5
+              and d_g.get("solver_residuum") == 1e-4 and d_g.get("solver_nachiterationen") == 5, str(d_g))
+        from statik3d import solver as slv_g
+        check("der Löser nennt die eingestellte Genauigkeit", slv_g.LinearSolver.genauigkeit() == (1e-4, 5))
+        w._genau_waehlen(3e-7)
+        check("ein Wert außerhalb der Liste landet beim nächsten Eintrag (1e-6)", w.cb_genau.currentData() == 1e-6)
+        w.cb_genau.setCurrentIndex(w.cb_genau.findData(alt_g[0]))
+        w.cb_nachit.setCurrentIndex(w.cb_nachit.findData(alt_g[1]))
+        w._apply_parallel_settings()
+        check("zurückgestellt", par_g.settings().solver_residuum == alt_g[0])
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Genauigkeit des Gleichungslösers", False, str(ex)[:70])
+
     # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
     try:
         import pyvista as pvx

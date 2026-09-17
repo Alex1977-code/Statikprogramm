@@ -292,6 +292,7 @@ class LinearSolver:
         self._K = None
         self._ps = None
         self.nachiterationen = 0
+        self.residuum = 0.0
         if self.n == 0:
             self._solve = lambda b: np.zeros_like(b)
             return
@@ -448,9 +449,11 @@ class LinearSolver:
             pass
 
     def beschreibung(self) -> str:
-        """Wie in Protokoll und Statuszeile: Loeser und Threads."""
+        """Wie in Protokoll und Statuszeile: Loeser, Threads, Genauigkeit."""
+        grenze, n_max = self.genauigkeit()
         return NAMEN.get(self.backend, self.backend) + (
-            f", {self.threads} Threads" if self.threads > 1 else ", einkernig")
+            f", {self.threads} Threads" if self.threads > 1 else ", einkernig") + (
+            f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else ""))
 
     def solve(self, b: np.ndarray, check: bool = True) -> np.ndarray:
         if self._solve is None:
@@ -472,8 +475,9 @@ class LinearSolver:
                 # vorhandenen Faktorisierung holt die Stellen zurueck; ein
                 # wirklich singulaeres System bleibt darueber (Test
                 # tests/test_nachiteration.py).
+                grenze, n_max = self.genauigkeit()
                 schritte = 0
-                while r > 1e-6 and schritte < 3:
+                while r > grenze and schritte < n_max:
                     dx = self._solve(b - self._K @ x)
                     if not np.all(np.isfinite(dx)):
                         break
@@ -484,12 +488,29 @@ class LinearSolver:
                         break
                     x, r = x2, r2
                 self.nachiterationen = schritte
-                if r > 1e-6:
+                self.residuum = float(r)
+                if r > grenze:
                     raise RuntimeError(
-                        f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}"
-                        + (f" nach {schritte} Nachiterationen" if schritte else "") + ") - "
-                        "Lagerung, freie Bauteile oder Kontaktdefinition pruefen.")
+                        f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}, Schranke {grenze:g}"
+                        + (f", nach {schritte} Nachiterationen" if schritte else "") + ") - "
+                        "Lagerung, freie Bauteile oder Kontaktdefinition pruefen; die Schranke steht "
+                        "unter Berechnung → Einstellungen → Genauigkeit des Gleichungslösers.")
         return x
+
+    @staticmethod
+    def genauigkeit() -> tuple:
+        """(Residuum-Schranke, hoechstens so viele Nachiterationen) aus den
+        Einstellungen - Vorgabe 1e-6 und 3."""
+        s = parallel.settings()
+        try:
+            grenze = float(getattr(s, "solver_residuum", 1e-6) or 1e-6)
+        except (TypeError, ValueError):
+            grenze = 1e-6
+        try:
+            n_max = max(0, int(getattr(s, "solver_nachiterationen", 3)))
+        except (TypeError, ValueError):
+            n_max = 3
+        return grenze, n_max
 
 
 # ==========================================================================

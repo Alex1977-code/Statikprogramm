@@ -52,12 +52,20 @@ class Settings:
     solver_threads: int = 0
     #: MUMPS beim Programmstart nachladen, wenn es fehlt (statik3d.werkzeuge)
     mumps_nachladen: bool = True
+    #: Genauigkeit des Gleichungsloesers (17.09.2026, "Einstellmoeglichkeit zur
+    #: Genauigkeit"): bis zu diesem relativen Residuum |K u - b| / |b| gilt
+    #: eine Loesung; darueber wird mit der vorhandenen Faktorisierung
+    #: nachiteriert (hoechstens solver_nachiterationen Schritte), und erst
+    #: dann gilt das System als singulaer. Vorgabe 1e-6 und 3 Schritte.
+    solver_residuum: float = 1e-6
+    solver_nachiterationen: int = 3
 
 
 _settings = Settings()
 
 #: Was ueber den Programmstart hinaus gilt (Benutzerdaten/Statik3D/einstellungen.json)
-GESPEICHERT = ("solver_backend", "solver_threads", "mumps_nachladen")
+GESPEICHERT = ("solver_backend", "solver_threads", "mumps_nachladen",
+               "solver_residuum", "solver_nachiterationen")
 
 
 def einstellungsdatei() -> str:

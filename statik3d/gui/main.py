@@ -11400,6 +11400,28 @@ class MainWindow(QtWidgets.QMainWindow):
                                    "die Statuszeile nennt nach der Rechnung die wirklich benutzte Zahl. "
                                    "Wird gespeichert.")
         gl.addWidget(row("Threads des Gleichungslösers", self.cb_threads))
+        # Genauigkeit des Gleichungsloesers (17.09.2026): die Residuum-
+        # Schranke und die Nachiterationen davor - beides wird gespeichert
+        self.cb_genau = QtWidgets.QComboBox()
+        for wert, text in ((1e-8, "streng (1e-8)"), (1e-6, "normal (1e-6, Vorgabe)"), (1e-5, "1e-5"),
+                           (1e-4, "locker (1e-4)"), (1e-3, "sehr locker (1e-3)")):
+            self.cb_genau.addItem(text, float(wert))
+        self._genau_waehlen(float(parallel.settings().solver_residuum or 1e-6))
+        self.cb_genau.setToolTip("Bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine Lösung. Liegt "
+                                 "es darüber, iteriert der Löser mit der vorhandenen Faktorisierung nach; "
+                                 "bleibt es darüber, gilt das System als singulär (Abbruch). Straffedern "
+                                 "(starre Kopplungen, Kontakt) kosten Stellen - am Drehlager brach LF1 mit "
+                                 "1,3e-6 ab, obwohl der Aufbau konvergiert. Wird gespeichert.")
+        gl.addWidget(row("Genauigkeit des Gleichungslösers", self.cb_genau))
+        self.cb_nachit = QtWidgets.QComboBox()
+        for n_ in (0, 1, 2, 3, 5, 10):
+            self.cb_nachit.addItem("keine" if n_ == 0 else f"bis {n_}", int(n_))
+        i = self.cb_nachit.findData(int(parallel.settings().solver_nachiterationen))
+        self.cb_nachit.setCurrentIndex(i if i >= 0 else 3)
+        self.cb_nachit.setToolTip("Nachiterationen x += K⁻¹(b − K·u), solange das Residuum über der Schranke "
+                                  "liegt und fällt; jede kostet eine Vorwärts-Rückwärts-Lösung, keine neue "
+                                  "Faktorisierung. Vorgabe bis 3. Wird gespeichert.")
+        gl.addWidget(row("Nachiterationen", self.cb_nachit))
         lbl_teilung = QtWidgets.QLabel(
             "Zweierlei: die Prozesse vernetzen und stellen die Matrizen auf, die Threads lösen "
             "damit das Gleichungssystem. Beide Zahlen dürfen gleich sein, doppelt gezählt wird "
@@ -15823,10 +15845,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "cb_threads", None) is not None:
             self.cb_threads.setItemText(0, self._threads_automatisch_text())
 
+    def _genau_waehlen(self, wert: float) -> None:
+        """Den Eintrag der Genauigkeitsliste zum Wert setzen (den naechsten, wenn
+        der Wert nicht in der Liste steht)."""
+        cb = self.cb_genau
+        beste = min(range(cb.count()), key=lambda i: abs(math.log10(float(cb.itemData(i))) - math.log10(max(wert, 1e-30))))
+        cb.setCurrentIndex(beste)
+
     def _apply_parallel_settings(self):
+        nachit = self.cb_nachit.currentData()
         parallel.configure(workers=self.sp_workers.value(),
                            solver_backend=str(self.cb_loeser.currentData() or "auto"),
                            solver_threads=int(self.cb_threads.currentData() or 0),
+                           solver_residuum=float(self.cb_genau.currentData() or 1e-6),
+                           solver_nachiterationen=int(3 if nachit is None else nachit),
                            backend="farm" if self.cb_backend.currentIndex() == 1 else "local",
                            farm_host=self.ed_farm_host.text().strip() or "127.0.0.1",
                            farm_port=int(self.ed_farm_port.text() or 5555),

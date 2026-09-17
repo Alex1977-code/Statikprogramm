@@ -2894,6 +2894,20 @@ Nachweis mit seiner Verformung je Kombination.
   Nachbesserer nachladen“) — der Selbsttest des Baus rechnet das
   Rahmenbeispiel mit jedem mitgelieferten Löser und vergleicht. Geprüft in
   `tests/test_loeser.py` (jeder vorhandene Löser trifft N·L/(E·A)).
+* **Genauigkeit des Gleichungslösers** (*Berechnung → Einstellungen*,
+  17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
+  Lösung — streng 1e-8, normal 1e-6 (Vorgabe), 1e-5, locker 1e-4, sehr
+  locker 1e-3. Liegt das Residuum darüber, iteriert der Löser mit der
+  vorhandenen Faktorisierung nach (**Nachiterationen**: keine, bis 1, 2, 3
+  (Vorgabe), 5 oder 10; jede kostet eine Vorwärts-Rückwärts-Lösung, keine
+  neue Faktorisierung); bleibt es darüber, gilt das System als singulär und
+  die Rechnung bricht ab — die Meldung nennt Residuum und Schranke.
+  Straffedern (starre Kopplungen, Kontakt, je 1e4-fach die größte
+  Hauptdiagonale) kosten die Faktorisierung Stellen: am Drehlager brach LF1
+  mit 1,3e-6 ab, obwohl derselbe Aufbau konvergiert; eine Nachiteration
+  bringt solche Fälle auf 1e-12. Das Protokoll nennt Löser, Threads und
+  Genauigkeit („MUMPS, 31 Threads, Genauigkeit 1e-06 mit bis zu 3
+  Nachiterationen“). Beide Werte werden gespeichert.
 * **MUMPS** ist unter Windows ein eigener Bau (gfortran, OpenMP, OpenBLAS,
   METIS — `docs/MUMPS_Windows_Bauanleitung.md`), nachgeladen beim Start. Symmetrische
   Steifigkeitsmatrizen gehen als unteres Dreieck hinein (SYM=2): halber
