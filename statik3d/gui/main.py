@@ -8833,6 +8833,8 @@ class MainWindow(QtWidgets.QMainWindow):
         log = []
         n = 0
         prozesse = 1
+        zeiten: dict = {}          # Sekunden je Phase, fuer die Schlusszeile
+        t_phase = time.time()
         # Netzdichte: Teilung je Flaeche und Kantenlaenge je Volumen aus den
         # Netzeinstellungen und der Groesse des Objekts
         from .. import netzdichte as nd
@@ -8903,26 +8905,39 @@ class MainWindow(QtWidgets.QMainWindow):
                 prozesse = erg.get("prozesse", 1)
                 abgebrochen = abgebrochen or bool(erg.get("abgebrochen"))
             # Nach dem Balken kommt noch einiges - jeder Schritt sagt, was er tut,
-            # sonst sieht das Fenster bei 100 % wie eingefroren aus
+            # sonst sieht das Fenster bei 100 % wie eingefroren aus. Und jeder
+            # misst sich selbst: ohne die Aufteilung liess sich ein "dauert
+            # viel laenger" nicht zuordnen (17.09.2026).
+            zeiten["Netz erzeugen"] = time.time() - t_phase
+            t_phase = time.time()
             self._fortschritt(1000, "Netz fertig - Lasten auf das Netz verteilen …")
             QtWidgets.QApplication.processEvents()
             # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
             self.model.lasten_verteilen(log)
+            zeiten["Lasten verteilen"] = time.time() - t_phase
+            t_phase = time.time()
             self._fortschritt(1000, "Kontaktfugen trennen …")
             QtWidgets.QApplication.processEvents()
             # und die Kontaktfugen koennen jetzt getrennt werden - ohne sie rechnet
             # das Modell dort durchverbunden, also zu steif.
             fugen.kontaktfugen_ausfuehren(self.model, log)
+            zeiten["Kontaktfugen trennen"] = time.time() - t_phase
+            t_phase = time.time()
             # Starre Flaechen (Kreisscheiben der Zugstaebe) haengen ihre
             # Netzknoten an den Mittelknoten
             self._fortschritt(1000, "Starre Flächen koppeln …")
             fugen.starre_flaechen_koppeln(self.model, log)
+            zeiten["Starre Flächen koppeln"] = time.time() - t_phase
+            t_phase = time.time()
             # Stabenden auf oder in einem Koerper haengen an dessen Netz (die
             # Zugstaebe der Deckelschrauben am Drehlager, 16.09.2026)
             self._fortschritt(1000, "Stabenden an Volumen anschließen …")
             fugen.stabenden_koppeln(self.model, log)
+            zeiten["Stabenden anschließen"] = time.time() - t_phase
+            t_phase = time.time()
             self._fortschritt(1000, "Lager auf das Netz bringen …")
             supports.lager_auf_netz(self.model, log)
+            zeiten["Lager auf das Netz"] = time.time() - t_phase
         finally:
             self._fortschritt_ende()
             for f in flaechen:
@@ -8939,19 +8954,53 @@ class MainWindow(QtWidgets.QMainWindow):
                 + (f" auf {prozesse} Prozessen" if prozesse > 1 else "")
                 + (" - abgebrochen" if abgebrochen else ""))
         self.log.appendPlainText(text)
+        # Die Aufteilung: bei einem grossen Modell liegt die Zeit oft nicht im
+        # Netz, sondern im Nachlauf (Kontaktfugen, Stabenden)
+        lang = [(k, v) for k, v in zeiten.items() if v >= 0.05]
+        if lang:
+            self.log.appendPlainText(
+                "  davon " + ", ".join(f"{k} {v:.1f} s" for k, v in
+                                       sorted(lang, key=lambda x: -x[1])))
         self._vernetzt_text = text
         self.statusBar().showMessage(text, 8000)
         return n
 
     def geometrie_vernetzen(self):
-        """Die ausgewaehlten - sonst alle - Flaechen und Koerper vernetzen."""
+        """Die ausgewaehlten - sonst alle - Flaechen und Koerper vernetzen.
+
+        Ohne Auswahl und mit teilweise vorhandenem Netz wird gefragt, ob nur
+        die Objekte ohne Netz drankommen (17.09.2026, „vernetzen dauert viel
+        laenger"): nach einer Geometrieaenderung - etwa dem Spiel aus einem
+        Importhinweis - haben nur wenige Volumen ihr Netz verloren, das ganze
+        Modell neu zu vernetzen kostet am Drehlager Minuten statt Sekunden.
+        """
         m = self.model
+        gewaehlt = bool(self.sel_flaechen or self.sel_koerper)
         flaechen = [m.flaechen[x] for x in self.sel_flaechen if x in m.flaechen] \
             or list(m.flaechen.values())
         koerper = [m.koerper[x] for x in self.sel_koerper if x in m.koerper] \
             or list(m.koerper.values())
         if not flaechen and not koerper:
             return self.error("Es gibt keine Flächen oder Volumenkörper zum Vernetzen.")
+        if not gewaehlt:
+            ohne_k = [k for k in koerper if not (k.elemente or [])]
+            ohne_f = [f for f in flaechen if not (f.elemente or []) and (f.dicke or m.flaeche_traegt(f.name))]
+            mit = (len(koerper) - len(ohne_k)) + (len(flaechen) - len(ohne_f))
+            if (ohne_k or ohne_f) and mit:
+                n_ohne = len(ohne_k) + len(ohne_f)
+                teile = ", ".join(k.name for k in ohne_k[:8]) + (" …" if len(ohne_k) > 8 else "")
+                if self._fragen_knoepfe(
+                        "Vernetzen",
+                        f"{n_ohne} von {len(koerper) + len(flaechen)} Objekten haben kein Netz"
+                        + (f":\n{teile}\n\n" if teile else ".\n\n")
+                        + "Nur diese vernetzen geht schnell und lässt die übrigen Netze stehen. "
+                          "Alles neu zu vernetzen ist nötig, wenn sich die Netzdichte geändert hat - "
+                          "das dauert bei einem großen Modell Minuten.",
+                        ja=f"Nur die {n_ohne} ohne Netz", nein="Alles neu vernetzen"):
+                    flaechen, koerper = ohne_f, ohne_k
+                    self.log.appendPlainText(
+                        f"Vernetzen: nur die {n_ohne} Objekte ohne Netz"
+                        + (f" ({teile})" if teile else ""))
         if not self._netzaenderung_bestaetigen("Vernetzen"):
             return None
         self.merken("Geometrie vernetzt")

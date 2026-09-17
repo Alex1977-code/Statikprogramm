@@ -314,10 +314,8 @@ sagt, woran es lag.
 geometrisch mit dem Spiel versehen, ggf. auch Ebenen; dann bräuchte es keine
 Sonderbedingungen“). Zylindrische Volumen in der Ansicht wählen (Auswahlart
 *Volumen*: Passstifte, Bolzen, Schrauben) oder ebene Flächen (Auswahlart
-*Fläche*), dann *Spiel geben*: die Maske nennt, was sie als Zylinder erkennt
-(alle Kreisbögen des Volumens mit demselben Radius auf einer Achse, an
-mindestens zwei Stellen längs der Achse; ein Bolzen mit Kopf: der Schaft ist
-der häufigste Radius, der Kopf bleibt), das Spiel in mm eintragen — bei
+*Fläche*), dann *Spiel geben*: die Maske nennt, was sie als Zylinder erkennt,
+das Spiel in mm eintragen — bei
 Zylindern das Spiel am **Durchmesser**, bei Flächen der **Spalt** —, und
 anwenden. Was geschieht: Stift und Bohrung teilen sich in RFEM die
 Kreisknoten und oft die Bogenlinien; darum wird der Zylinder zuerst von
@@ -332,6 +330,27 @@ selbst entstandenen — mit Spiel „berühren“ sich die Teile im Sinn der
 Berührungssuche nicht mehr). Das Protokoll nennt je Volumen Radius, Achse,
 Spiel und die Zahl der Kopien. Danach trägt der Stift wie in Wirklichkeit auf
 der belasteten Seite; an der Fuge genügt „Reibungsbehaftet“.
+
+**Was als Zylinder gilt.** Alle Kreisbögen des Volumens haben denselben
+Radius und liegen auf einer Achse, an mindestens zwei Stellen längs dieser
+Achse; ein Bolzen mit Kopf hat zwei Radien, der Schaft ist der häufigste, der
+Kopf bleibt. Dazu — und das ist die entscheidende Prüfung — liegt **kein
+Punkt des Volumens weiter von der Achse entfernt als sein größter Kreis**.
+Ohne sie ging eine Rippe als Zylinder durch: ein Blech mit einer Ausrundung
+an Ober- und Unterkante hat zwei Kreisbögen gleichen Radius, deren
+Mittelpunkte auf einer Geraden längs der Blechdicke liegen. Am Drehlager
+bekam V5 auf diesem Weg 0,02 mm Spiel, obwohl seine Ecken bis 297 mm von
+dieser vermeintlichen Achse entfernt lagen (behoben 17.09.2026). Wird ein
+Volumen abgelehnt, nennt das Protokoll den Punkt und den Radius, an denen es
+scheitert.
+
+**Wenn ein Volumen versehentlich Spiel bekommen hat:** *Rückgängig* (Strg+Z)
+stellt den Stand vor dem Anwenden wieder her — das Anwenden der Importhinweise
+sichert das ganze Modell vorher, ein Sammellauf einmal für alle Hinweise. Das
+ist wichtiger als die 0,01 mm am Radius: Ein Volumen, das Spiel bekommt, wird
+zuvor von seinen Nachbarn **getrennt**, verliert also die gemeinsamen Knoten
+einer verschweißten Fläche. Bei einer Rippe, die an ihr Blech angeschlossen
+ist, wäre das ein Eingriff in den Lastpfad.
 
 #### Passung für viele Fugen auf einmal
 

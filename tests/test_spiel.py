@@ -57,6 +57,60 @@ def _radien(m, name):
     return np.linalg.norm(rad, axis=1), kn
 
 
+def _rippe(m, name="V5", R=0.03, T=0.02):
+    """Ein Blech mit **einer** Ausrundung an Ober- und Unterkante: zwei
+    Kreisboegen gleichen Radius auf einer Achse laengs der Blechdicke."""
+    def kontur(y):
+        return (m.add_node(0.0, y, 0.0), m.add_node(0.2, y, 0.0), m.add_node(0.2 + R, y, R),
+                m.add_node(0.2 + R, y, 0.25), m.add_node(0.0, y, 0.25))
+    u, o = kontur(0.0), kontur(T)
+    for tag, (p_, yy) in {"u": (u, 0.0), "o": (o, T)}.items():
+        m.add_line(f"{name}_{tag}1", [p_[0], p_[1]])
+        m.add_line(f"{name}_{tag}2", [p_[1], p_[2]], "arc",
+                   punkte=[(0.2, yy, 0.0), (0.2 + R * 0.7071, yy, R * (1 - 0.7071)), (0.2 + R, yy, R)])
+        m.add_line(f"{name}_{tag}3", [p_[2], p_[3]])
+        m.add_line(f"{name}_{tag}4", [p_[3], p_[4]])
+        m.add_line(f"{name}_{tag}5", [p_[4], p_[0]])
+    for i in range(5):
+        m.add_line(f"{name}_v{i}", [u[i], o[i]])
+    m.add_flaeche(f"{name}_S1", [f"{name}_u{i}" for i in range(1, 6)], material="S355")
+    m.add_flaeche(f"{name}_S2", [f"{name}_o{i}" for i in range(1, 6)], material="S355")
+    for i in range(1, 6):
+        m.add_flaeche(f"{name}_M{i}", [f"{name}_u{i}", f"{name}_v{i % 5}", f"{name}_o{i}",
+                                       f"{name}_v{i - 1}"], material="S355")
+    return m.add_koerper(name, [f"{name}_S1", f"{name}_S2"] + [f"{name}_M{i}" for i in range(1, 6)],
+                         material="S355")
+
+
+def test_rippe_ist_kein_zylinder():
+    """Eine Rippe mit einer Ausrundung hat zwei gleiche Bögen auf einer Achse
+    (die Blechdicke) - und galt damit als Zylinder. Am Drehlager bekam V5 auf
+    diesem Weg 0,02 mm Spiel und wurde von seinen Nachbarn getrennt, obwohl es
+    ein Blech ist (17.09.2026)."""
+    m = Model("Rippe")
+    m.add_material(Material("S355", E=210e9, nu=0.3, rho=7850))
+    _rippe(m)
+    z = spiel.zylinder(m, "V5")
+    check("eine Rippe mit Ausrundung ist kein Zylinder", not z["ok"], z.get("grund", "")[:110])
+    check("… und der Grund nennt den Punkt weit außerhalb der Achse",
+          "von der Achse" in z.get("grund", "") and "297" in z.get("grund", "").replace(",", "."),
+          z.get("grund", "")[:110])
+    erg = spiel.zylinder_spiel(m, "V5", 2e-5, [])
+    check("… und „Spiel geben“ weist sie ab, statt ihre Geometrie zu ändern",
+          not erg.get("ok"), str(erg.get("grund", ""))[:90])
+    # Der echte Stift bleibt einer
+    m2, _k = _stift_und_platte()
+    check("der Stift wird weiterhin als Zylinder erkannt", spiel.zylinder(m2, "V1")["ok"])
+    # und ein Bolzen mit Kopf (zwei Radien) auch: kein Punkt liegt weiter
+    # draussen als der Kopfkreis
+    from tests.test_fortschritt import _zylinder as _zyl
+    m3 = Model("Bolzen")
+    m3.add_material(Material("S355", E=210e9, nu=0.3, rho=7850))
+    _zyl(m3, "B1", r=0.02, hoehe=0.08)
+    check("ein Zylinder aus zwei Halbbögen je Kreis bleibt erkannt", spiel.zylinder(m3, "B1")["ok"],
+          spiel.zylinder(m3, "B1").get("grund", ""))
+
+
 def test_zylinder_spiel():
     m, k = _stift_und_platte()
     z = spiel.zylinder(m, "V1")
@@ -116,7 +170,7 @@ def test_flaechen_spiel():
 
 
 def main():
-    for t in (test_zylinder_spiel, test_flaechen_spiel):
+    for t in (test_rippe_ist_kein_zylinder, test_zylinder_spiel, test_flaechen_spiel):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
