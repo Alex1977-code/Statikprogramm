@@ -82,8 +82,59 @@ def test_erkennen_und_anwenden():
     check("zwei Blöcke ohne Zylinder: keine Hinweise", hinweise.erzeugen(m4) == [])
 
 
+def test_sammellauf():
+    """alle_anwenden macht die Aenderungen aller Hinweise in einem Lauf und
+    sammelt, was danach zu tun bleibt - vernetzt aber nichts: der Anwender
+    vernetzt selbst, und das Vernetzen fuehrt die offenen Fugen aus."""
+    m, kb = _modell()
+    m.importhinweise = hinweise.erzeugen(m)
+    gesehen: list = []
+    log: list = []
+    erg = hinweise.alle_anwenden(m, log=log, fortschritt=lambda i, n, t: gesehen.append((i, n, t)))
+    check("beide Hinweise angewendet, keiner offen",
+          len(erg["angewendet"]) == 2 and not erg["fehler"] and not hinweise.offen(m), str(erg["angewendet"])[:90])
+    check("die Fuge ist umgestellt und der Stift verkleinert",
+          kb.standard == "Reibungsbehaftet" and abs(spiel.zylinder(m, "V1")["radius"] - 0.01999) < 1e-9)
+    check("gesammelt: Körper V1 und Kontakt Stift, jeder einmal",
+          erg["koerper"] == ["V1"] and erg["kontakte"] == ["Stift"], f"{erg['koerper']} / {erg['kontakte']}")
+    check("der Fortschritt meldet jeden Hinweis mit Nummer, Anzahl und Kurztext",
+          [g[:2] for g in gesehen] == [(0, 2), (1, 2)] and "μ = 0.2" in gesehen[0][2], str(gesehen)[:120])
+    check("nichts wurde vernetzt: der Körper wartet auf das Netz des Anwenders",
+          not (m.koerper["V1"].elemente or []) and kb.wartet_auf_netz(m))
+    # Abbrechen: der erste ist angewendet, der zweite bleibt offen
+    m2, _kb2 = _modell()
+    m2.importhinweise = hinweise.erzeugen(m2)
+    erg2 = hinweise.alle_anwenden(m2, fortschritt=lambda i, n, t: i < 1)
+    check("Abbrechen nach dem ersten: einer angewendet, einer offen, als abgebrochen gemeldet",
+          len(erg2["angewendet"]) == 1 and len(hinweise.offen(m2)) == 1 and erg2["abgebrochen"], str(erg2)[:100])
+
+
+def test_reibung_an_ausgefuehrter_fuge():
+    """Eine schon ausgefuehrte Fuge auf Reibung umstellen: ihr Kontaktpaar
+    traegt den alten Reibbeiwert, und kontaktfuge_ausfuehren ruehrt eine
+    ausgefuehrte Fuge nicht mehr an (Grund „schon ausgefuehrt"). Der Hinweis
+    muss sie also zuruecknehmen, sonst bleibt die Umstellung wirkungslos."""
+    from statik3d import fugen
+    from statik3d.model import ContactPair
+    m, kb = _modell()
+    kb.ausgefuehrt = True
+    m.contact_pairs.append(ContactPair(name="Stift", slave_nodes=[0], master_faces=[[0, 1, 2]],
+                                       mu=0.0, haften=True))
+    h = hinweise.erzeugen(m)
+    reib = next(x for x in h if x["art"] == "reibung")
+    erg = hinweise.anwenden(m, reib, [])
+    check("die Fuge ist zurückgenommen: kein altes Kontaktpaar mit μ = 0, nicht mehr ausgeführt",
+          erg["ok"] and not kb.ausgefuehrt and not [c for c in m.contact_pairs if c.name == "Stift"],
+          f"ausgefuehrt={kb.ausgefuehrt} Paare={len(m.contact_pairs)}")
+    check("… und der Text sagt, dass sie beim nächsten Vernetzen neu entsteht",
+          "neu ausgeführt" in erg["text"], erg["text"][:90])
+    b = fugen.kontaktfuge_ausfuehren(m, kb, [])
+    check("… ohne das Zurücknehmen wäre hier Schluss gewesen („schon ausgeführt“)",
+          b.get("grund") != "schon ausgeführt", str(b.get("grund"))[:60])
+
+
 def main():
-    for t in (test_erkennen_und_anwenden,):
+    for t in (test_erkennen_und_anwenden, test_sammellauf, test_reibung_an_ausgefuehrter_fuge):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

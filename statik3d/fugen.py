@@ -581,6 +581,24 @@ def verschweisste_gruppe(model: Model, start, flaechen_der_fuge=()) -> set:
     return gruppe
 
 
+def kontaktfuge_zuruecknehmen(model: Model, kb) -> int:
+    """Was aus dieser Kontaktbedingung im Netz entstanden ist - Spaltelemente,
+    Kopplungen, Kontaktpaar - zuruecknehmen und sie wieder als nicht
+    ausgefuehrt fuehren. Rueckgabe: Zahl der entfernten Stuecke.
+
+    Noetig, sobald sich die **Einstellung** aendert: kontaktfuge_ausfuehren
+    steigt bei einer ausgefuehrten Fuge mit „schon ausgefuehrt" aus, das
+    Kontaktpaar traegt aber Reibbeiwert, Haften und Zug von damals. Ohne das
+    Zuruecknehmen bliebe eine Umstellung wirkungslos (17.09.2026).
+    """
+    vorher = len(model.gap_elements) + len(model.kopplungen) + len(model.contact_pairs)
+    model.gap_elements = [g for g in model.gap_elements if str(getattr(g, "group", "")) != kb.name]
+    model.kopplungen = [k for k in model.kopplungen if str(getattr(k, "gruppe", "")) != kb.name]
+    model.contact_pairs = [c for c in model.contact_pairs if c.name != kb.name]
+    kb.ausgefuehrt = False
+    return vorher - (len(model.gap_elements) + len(model.kopplungen) + len(model.contact_pairs))
+
+
 def gruppen_je_knoten(model: Model) -> dict:
     """{Knoten: Menge der Bauteile, deren Elemente ihn benutzen}.
 
