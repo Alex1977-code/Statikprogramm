@@ -157,8 +157,15 @@ def anwenden(model, h: dict, log: list = None) -> dict:
         kb.standard_anwenden(str(v.get("standard", "Reibungsbehaftet")), float(v.get("mu", MU_VORSCHLAG)))
         kb.standard = str(v.get("standard", "Reibungsbehaftet"))
         kb.automatisch = False
+        # War die Fuge schon ausgefuehrt, traegt ihr Kontaktpaar den alten
+        # Reibbeiwert - und kontaktfuge_ausfuehren ruehrt eine ausgefuehrte
+        # Fuge nicht mehr an. Also zuruecknehmen; beim naechsten Vernetzen
+        # entsteht sie mit dem neuen Wert (17.09.2026).
+        from . import fugen as _fu
+        zurueck = _fu.kontaktfuge_zuruecknehmen(model, kb) if kb.ausgefuehrt else 0
         aus.update({"ok": True, "kontakte": [kb.name],
-                    "text": f"{kb.name}: {kb.standard} mit μ = {float(v.get('mu', MU_VORSCHLAG)):g} gesetzt"})
+                    "text": f"{kb.name}: {kb.standard} mit μ = {float(v.get('mu', MU_VORSCHLAG)):g} gesetzt"
+                            + (" - die Fuge wird beim nächsten Vernetzen neu ausgeführt" if zurueck else "")})
     elif h.get("art") == "spiel":
         from . import spiel as sp
         name = str(v.get("spiel", ""))
@@ -179,6 +186,42 @@ def anwenden(model, h: dict, log: list = None) -> dict:
     h["erledigt"] = "angewendet"
     if log is not None:
         log.append("Importhinweis angewendet - " + aus["text"])
+    return aus
+
+
+def alle_anwenden(model, liste: list = None, log: list = None, fortschritt=None) -> dict:
+    """Mehrere Hinweise in **einem** Lauf - nur die Aenderungen am Modell.
+
+    Vernetzt wird hier nicht: die Geometrie wird angepasst, das Netz der
+    betroffenen Koerper faellt weg, ihre Fugen warten danach auf Netz. Der
+    Anwender vernetzt, wann er will; das Vernetzen fuehrt die offenen Fugen
+    ohnehin aus. Je Hinweis einzeln nachzuziehen kostete am Drehlager jedes
+    Mal eine Modellkopie fuer „Rueckgaengig", ein eigenes Vernetzen, 2,5 s
+    fuer die Knotenkarte und 22 s fuer den Neuaufbau der Ansicht - mal Zahl
+    der Hinweise, ohne eine einzige Meldung (17.09.2026).
+
+    ``fortschritt(i, n, text)`` wird vor jedem Hinweis gerufen; gibt es False
+    zurueck, wird angehalten (die schon angewendeten bleiben angewendet).
+    Rueckgabe {"koerper", "kontakte", "angewendet", "fehler", "abgebrochen"}.
+    """
+    offen_ = list(liste if liste is not None else offen(model))
+    aus = {"koerper": [], "kontakte": [], "angewendet": [], "fehler": [], "abgebrochen": False}
+    n = len(offen_)
+    for i, h in enumerate(offen_):
+        if fortschritt is not None and fortschritt(i, n, kurz(h)) is False:
+            aus["abgebrochen"] = True
+            break
+        erg = anwenden(model, h, log)
+        if not erg.get("ok"):
+            aus["fehler"].append(erg.get("text", ""))
+            continue
+        aus["angewendet"].append(erg.get("text", ""))
+        for k in erg.get("koerper") or []:
+            if k not in aus["koerper"]:
+                aus["koerper"].append(k)
+        for k in erg.get("kontakte") or []:
+            if k not in aus["kontakte"]:
+                aus["kontakte"].append(k)
     return aus
 
 

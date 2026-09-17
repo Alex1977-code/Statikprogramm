@@ -5030,6 +5030,14 @@ def main():
         check("Anwenden setzt die Passung an jeder Fuge der gewählten Volumen und protokolliert es",
               abs(kb_p.spiel - 5e-5) < 1e-12 and abs(kb_p.grenzpressung - 300e6) < 1 and kb_p.rand_frei == 2
               and "Passung gesetzt an" in w.log.toPlainText(), str((kb_p.spiel, kb_p.grenzpressung, kb_p.rand_frei)))
+        # Gerechnet wird mit dem Kontaktpaar, nicht mit der Bedingung: eine
+        # ausgefuehrte Fuge muss dafuer zurueckgenommen und neu ausgefuehrt
+        # werden, sonst behaelt sie die Werte von vorher (17.09.2026)
+        cp_p = next((c for c in w.model.contact_pairs if c.name == "Fuge P"), None)
+        check("… und die Werte stehen im Kontaktpaar, mit dem gerechnet wird (Fuge neu ausgeführt)",
+              cp_p is not None and abs(cp_p.spiel - 5e-5) < 1e-12
+              and abs(cp_p.grenzpressung - 300e6) < 1 and len(cp_p.rand_knoten) >= 4,
+              str((getattr(cp_p, "spiel", None), getattr(cp_p, "grenzpressung", None))))
         check("Ribbon: der Befehl „Passung“ steht neben „Übermaß“", any(a.text() == "Passung" for a in w.findChildren(QtGui.QAction)))
         w.maskenrand.schliessen()
     except Exception as ex:      # noqa: BLE001
@@ -5119,13 +5127,41 @@ def main():
         # spaetere Block "Unterlagen" blieb im echten Dialog stehen (17.09.2026)
         alt_fk_h = w.__dict__.get("_fragen_knoepfe")
         w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": True
-        w._importhinweise_fragen()
-        app.processEvents()
+        # Der Sammellauf sichert einmal und baut einmal die Ansicht auf - und
+        # vernetzt nicht (17.09.2026, "der user vernetzt wie bisher manuell
+        # danach"): je Hinweis einzeln kostete das am Drehlager eine
+        # Modellkopie, ein Vernetzen, 2,5 s Knotenkarte und 22 s Ansicht
+        zaehler_h = {"merken": 0, "refresh": 0, "vernetzen": 0}
+        alt_merken_h, alt_refresh_h, alt_netz_h = w.merken, w.refresh_all, w._vernetzen
+        w.merken = lambda was: (zaehler_h.__setitem__("merken", zaehler_h["merken"] + 1), alt_merken_h(was))[1]
+        w.refresh_all = lambda: (zaehler_h.__setitem__("refresh", zaehler_h["refresh"] + 1), alt_refresh_h())[1]
+        w._vernetzen = lambda f, k: (zaehler_h.__setitem__("vernetzen", zaehler_h["vernetzen"] + 1),
+                                     alt_netz_h(f, k))[1]
+        balken_h = []
+        alt_fs_h = w._fortschritt
+        w._fortschritt = lambda wert, text, sofort=False: (balken_h.append(text), alt_fs_h(wert, text, sofort))[1]
+        try:
+            w._importhinweise_fragen()
+            app.processEvents()
+        finally:
+            w.merken, w.refresh_all, w._vernetzen, w._fortschritt = (alt_merken_h, alt_refresh_h,
+                                                                     alt_netz_h, alt_fs_h)
         m_ = w.model
         from statik3d import spiel as sp_h
-        check("Rückfrage „Alle anwenden“: das Spiel ist gegeben (r = 19,99 mm), der Stift neu vernetzt, kein Hinweis offen",
-              abs(sp_h.zylinder(m_, "V1")["radius"] - 0.01999) < 1e-9 and len(m_.koerper["V1"].elemente) > 0
-              and not hw_.offen(m_), str(sp_h.zylinder(m_, "V1").get("radius")))
+        check("Rückfrage „Alle anwenden“: das Spiel ist gegeben (r = 19,99 mm), kein Hinweis mehr offen",
+              abs(sp_h.zylinder(m_, "V1")["radius"] - 0.01999) < 1e-9 and not hw_.offen(m_),
+              str(sp_h.zylinder(m_, "V1").get("radius")))
+        check("der Sammellauf sichert einmal und baut die Ansicht einmal auf - und vernetzt nicht",
+              zaehler_h == {"merken": 1, "refresh": 1, "vernetzen": 0}, str(zaehler_h))
+        # Hier ist nur noch einer offen - der erste wurde oben einzeln angewendet
+        check("der Balken nennt Sicherung, jeden Hinweis mit Nummer und Anzahl und den Ansichtsaufbau",
+              any("sichern" in t for t in balken_h)
+              and any("Importhinweis 1 von 1: V1: Spiel 0.02 mm" in t for t in balken_h)
+              and any("Ansicht, Tabellen und Modellbaum" in t for t in balken_h), str(balken_h)[:150])
+        check("das Volumen wartet auf das Netz des Anwenders, das Protokoll sagt es",
+              not (m_.koerper["V1"].elemente or [])
+              and "Noch zu vernetzen: V1" in w.log.toPlainText(),
+              str(len(m_.koerper["V1"].elemente or [])))
         if alt_fk_h is not None:
             w._fragen_knoepfe = alt_fk_h
         else:

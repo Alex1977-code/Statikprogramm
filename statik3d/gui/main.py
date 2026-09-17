@@ -6177,13 +6177,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _kontakt_zuruecknehmen(self, kb) -> int:
         """Was aus dieser Kontaktbedingung im Netz entstanden ist - Spaltelemente,
         Kopplungen, Kontaktpaar - zuruecknehmen: es gehoert zur alten Einstellung."""
-        m = self.model
-        vorher = len(m.gap_elements) + len(m.kopplungen) + len(m.contact_pairs)
-        m.gap_elements = [g for g in m.gap_elements if str(getattr(g, "group", "")) != kb.name]
-        m.kopplungen = [k for k in m.kopplungen if str(getattr(k, "gruppe", "")) != kb.name]
-        m.contact_pairs = [c for c in m.contact_pairs if c.name != kb.name]
-        kb.ausgefuehrt = False
-        return vorher - (len(m.gap_elements) + len(m.kopplungen) + len(m.contact_pairs))
+        from .. import fugen
+        return fugen.kontaktfuge_zuruecknehmen(self.model, kb)
 
     def _kontakt_ausfuehren_wenn_netz(self, kb, knotengruppen: dict = None) -> None:
         """Steht schon ein Netz, wird die Fuge gleich getrennt - sonst beim Vernetzen.
@@ -14197,8 +14192,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"Spiel {spiel * 1e3:g} mm gegeben: {', '.join(dict.fromkeys(betroffen))}")
 
     # ---- Importhinweise (17.09.2026) -----------------------------------------
+    def _hinweise_abschliessen(self, koerper: list, kontakte: list, kopf: str) -> None:
+        """Nach dem Anwenden von Hinweisen: einmal die Ansicht aufbauen und
+        sagen, was noch zu tun ist.
+
+        **Nicht** vernetzen (17.09.2026, Anwender: „kann nicht erst die
+        Geometrie angepasst werden und der User vernetzt wie bisher manuell
+        danach"): das Netz der geaenderten Volumen ist weg, ihre Fugen warten
+        auf Netz, und das Vernetzen fuehrt die offenen Fugen ohnehin aus. So
+        dauert das Anwenden Sekunden statt Minuten, und der Anwender
+        entscheidet, wann die Minuten anfallen.
+        """
+        m = self.model
+        offen_netz = [k for k in koerper if k in m.koerper and not (m.koerper[k].elemente or [])]
+        self._fortschritt_beginnen(1, f"{kopf}: Ansicht, Tabellen und Modellbaum aufbauen …",
+                                   abbrechbar=False)
+        try:
+            self._fortschritt(0, f"{kopf}: Ansicht, Tabellen und Modellbaum aufbauen …", sofort=True)
+            self.refresh_all()
+        finally:
+            self._fortschritt_ende()
+        if offen_netz:
+            self.log.appendPlainText(
+                f"Noch zu vernetzen: {', '.join(offen_netz)} - beim Vernetzen "
+                f"(Netz → Vernetzen) werden die Fugen dieser Volumen neu ausgeführt")
+        wartend = [n for n in kontakte if n in m.kontaktbedingungen
+                   and not m.kontaktbedingungen[n].ausgefuehrt]
+        if wartend and not offen_netz:
+            self.log.appendPlainText(
+                f"Neu auszuführende Kontaktfugen: {', '.join(wartend)} - "
+                f"Lager / Kontakt → Kontaktfugen ausführen, oder beim nächsten Vernetzen")
+
     def _hinweis_anwenden(self, i: int):
-        from .. import hinweise, fugen
+        from .. import hinweise
         m = self.model
         hw = getattr(m, "importhinweise", None) or []
         if not 0 <= i < len(hw):
@@ -14206,7 +14232,13 @@ class MainWindow(QtWidgets.QMainWindow):
         h = hw[i]
         if h.get("erledigt"):
             return self.info("Der Hinweis ist schon erledigt")
-        self.merken(f"Importhinweis {i + 1}")
+        self._fortschritt_beginnen(1, f"Importhinweis {i + 1}: Stand für „Rückgängig“ sichern …",
+                                   abbrechbar=False)
+        try:
+            self._fortschritt(0, f"Importhinweis {i + 1}: Stand für „Rückgängig“ sichern …", sofort=True)
+            self.merken(f"Importhinweis {i + 1}")
+        finally:
+            self._fortschritt_ende()
         log: list = []
         erg = hinweise.anwenden(m, h, log)
         for z in log:
@@ -14214,14 +14246,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not erg.get("ok"):
             self.refresh_all()
             return self.error(f"Hinweis nicht angewendet: {erg.get('text')}")
-        if erg.get("koerper"):
-            self._vernetzen([], [m.koerper[k] for k in erg["koerper"] if k in m.koerper])
-        gruppen = fugen.gruppen_je_knoten(m) if (m.elements and erg.get("kontakte")) else None
-        for n in erg.get("kontakte") or []:
-            kb = m.kontaktbedingungen.get(n)
-            if kb is not None:
-                self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
-        self.refresh_all()
+        self._hinweise_abschliessen(erg.get("koerper") or [], erg.get("kontakte") or [],
+                                    f"Importhinweis {i + 1}")
         self.info("Importhinweis angewendet: " + str(erg.get("text", "")))
 
     def _hinweis_verwerfen(self, i: int):
@@ -14233,12 +14259,42 @@ class MainWindow(QtWidgets.QMainWindow):
             self.refresh_all()
 
     def _hinweise_alle_anwenden(self):
+        """Alle offenen Hinweise in einem Lauf: eine Sicherung, alle
+        Aenderungen am Modell, eine Ansicht - mit Balken und Abbrechen.
+
+        Vorher lief je Hinweis ein eigener Nachlauf; am Drehlager kostete das
+        jedes Mal eine Modellkopie, ein Vernetzen, 2,5 s Knotenkarte und 22 s
+        Ansichtsaufbau, und das Fenster meldete nichts (17.09.2026).
+        """
         from .. import hinweise
-        offen = [i for i, h in enumerate(getattr(self.model, "importhinweise", None) or []) if not h.get("erledigt")]
+        offen = hinweise.offen(self.model)
         if not offen:
             return self.info("Kein offener Importhinweis")
-        for i in offen:
-            self._hinweis_anwenden(i)
+        n = len(offen)
+        self._fortschritt_beginnen(n + 1, f"{n} Importhinweise: Stand für „Rückgängig“ sichern …")
+        log: list = []
+        try:
+            self._fortschritt(0, f"{n} Importhinweise: Stand für „Rückgängig“ sichern …", sofort=True)
+            self.merken(f"{n} Importhinweise")
+
+            def schritt(i, ges, text):
+                return self._fortschritt(i + 1, f"Importhinweis {i + 1} von {ges}: {text}", sofort=True)
+
+            erg = hinweise.alle_anwenden(self.model, offen, log, fortschritt=schritt)
+        finally:
+            self._fortschritt_ende()
+        for z in log:
+            self.log.appendPlainText(z)
+        for z in erg.get("fehler") or []:
+            self.log.appendPlainText("Importhinweis nicht angewendet: " + str(z))
+        if not erg.get("angewendet"):
+            self.refresh_all()
+            return self.error("Kein Importhinweis angewendet - siehe Protokoll")
+        self._hinweise_abschliessen(erg.get("koerper") or [], erg.get("kontakte") or [],
+                                    f"{len(erg['angewendet'])} Importhinweise")
+        self.info(f"{len(erg['angewendet'])} Importhinweise angewendet"
+                  + (f", {len(erg['fehler'])} nicht (siehe Protokoll)" if erg.get("fehler") else "")
+                  + (" - angehalten, der Rest bleibt offen" if erg.get("abgebrochen") else ""))
 
     def _importhinweise_fragen(self) -> None:
         """Nach dem Import: die Vorschlaege nennen und fragen, ob sie umgesetzt
@@ -14319,10 +14375,29 @@ class MainWindow(QtWidgets.QMainWindow):
         grenze = max(zahl("grenzpressung"), 0.0) * 1e6
         reihen = int(max(zahl("rand_frei"), 0.0))
         self.merken(f"Passung an {len(kontakte)} Kontaktfugen")
-        for n in kontakte:
-            kb = m.kontaktbedingungen[n]
-            kb.spiel, kb.grenzpressung, kb.rand_frei = spiel, grenze, reihen
-            self._kontakt_ausfuehren_wenn_netz(kb)
+        # Eine ausgefuehrte Fuge muss zurueckgenommen werden, sonst behaelt ihr
+        # Kontaktpaar die alten Werte: kontaktfuge_ausfuehren steigt bei
+        # ausgefuehrten Fugen mit "schon ausgefuehrt" aus, und gerechnet wird
+        # mit dem Paar, nicht mit der Bedingung (17.09.2026). Die Knotenkarte
+        # einmal fuer alle - am Drehlager kostet sie je Aufruf 2,5 s.
+        from .. import fugen
+        self._fortschritt_beginnen(len(kontakte) + 1,
+                                   f"Passung an {len(kontakte)} Kontaktfugen …", abbrechbar=False)
+        try:
+            gruppen = None
+            if m.elements:
+                self._fortschritt(0, "Passung: Knoten den Bauteilen zuordnen …", sofort=True)
+                gruppen = fugen.gruppen_je_knoten(m)
+            for j, n in enumerate(kontakte):
+                kb = m.kontaktbedingungen[n]
+                kb.spiel, kb.grenzpressung, kb.rand_frei = spiel, grenze, reihen
+                self._fortschritt(j + 1, f"Passung: Kontaktfuge {n} neu ausführen "
+                                         f"({j + 1} von {len(kontakte)}) …", sofort=True)
+                if kb.ausgefuehrt and m.elements:
+                    self._kontakt_zuruecknehmen(kb)
+                self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
+        finally:
+            self._fortschritt_ende()
         self.log.appendPlainText(
             f"Passung gesetzt an {len(kontakte)} Kontaktfugen ({', '.join(kontakte[:8])}"
             + (" …" if len(kontakte) > 8 else "") + f"): Spiel {spiel * 1e3:.3f} mm, "

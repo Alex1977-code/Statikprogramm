@@ -126,7 +126,7 @@ Die Arbeitsfläche in drei Spalten:
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026) |
-  | Importhinweise | Vorschläge zur Modellierung, die das Programm nach dem Import erkennt (17.09.2026): haftende Fuge an einem Zylinder → Reibung, Zylinder ohne Spiel in seiner Bohrung → Spiel geben. Nichts davon ist von selbst umgestellt; ein Klick lässt die betroffenen Teile leuchten, die Maske hat „So einstellen“ und „Verwerfen“, die Übersicht „Alle offenen anwenden“. Erledigte Einträge tragen ✓ oder ✗. Der Zweig erscheint, sobald es Hinweise gibt |
+  | Importhinweise | Vorschläge zur Modellierung, die das Programm nach dem Import erkennt (17.09.2026): haftende Fuge an einem Zylinder → Reibung, Zylinder ohne Spiel in seiner Bohrung → Spiel geben. Nichts davon ist von selbst umgestellt, und angewendet wird nur am Modell — vernetzt wird nicht, das Protokoll nennt die Volumen, die dann neu zu vernetzen sind; ein Klick lässt die betroffenen Teile leuchten, die Maske hat „So einstellen“ und „Verwerfen“, die Übersicht „Alle offenen anwenden“. Erledigte Einträge tragen ✓ oder ✗. Der Zweig erscheint, sobald es Hinweise gibt |
   | Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
   | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
@@ -2423,10 +2423,31 @@ Programm, ob es alle Vorschläge anwenden soll („Alle anwenden“ / „Erst
 ansehen“). So oder so steht die Liste im Modellbaum unter **Importhinweise**:
 ein Klick auf einen Eintrag lässt die betroffenen Volumen und Fugen in der
 Ansicht leuchten, rein zur Kontrolle; die Maske rechts nennt Befund und
-Vorschlag und hat **So einstellen** (Reibung: die Fuge wird umgestellt und
-am Netz neu ausgeführt; Spiel: der Zylinder wird verkleinert, neu vernetzt,
-seine Fugen ausgeführt) und **Verwerfen**. Die Liste wird mit dem Modell
-gespeichert; das Importprotokoll nennt die Vorschläge in einer Zeile.
+Vorschlag und hat **So einstellen** und **Verwerfen**. Die Liste wird mit dem
+Modell gespeichert; das Importprotokoll nennt die Vorschläge in einer Zeile.
+
+Angewendet wird **nur am Modell**, vernetzt wird nicht (17.09.2026, auf
+Wunsch: „kann nicht erst die Geometrie angepasst werden und der User
+vernetzt wie bisher manuell danach“). Beim Spiel wird der Zylinder
+verkleinert und das Netz dieses Volumens fällt weg; bei der Reibung wird die
+Fuge umgestellt und, falls sie schon ausgeführt war, zurückgenommen — sonst
+trüge ihr Kontaktpaar weiter den alten Reibbeiwert. Das Protokoll nennt
+danach die Volumen, die neu zu vernetzen sind; beim nächsten Vernetzen
+(*Netz → Vernetzen*) werden ihre Fugen automatisch ausgeführt. So dauert das
+Anwenden Sekunden statt Minuten, und der Anwender entscheidet, wann die
+Minuten anfallen. **Alle offenen anwenden** läuft als ein Vorgang: einmal
+für „Rückgängig“ sichern, alle Änderungen, einmal die Ansicht aufbauen. Der
+Balken nennt dabei jeden Hinweis mit Nummer und Anzahl („Importhinweis 3 von
+16: V76: Spiel 0,02 mm“), **Anhalten** lässt den Rest offen. Vorher lief je
+Hinweis ein eigener Nachlauf mit Modellkopie, Vernetzen, Knotenkarte (am
+Drehlager 2,5 s) und Ansichtsaufbau (22 s) — mal Zahl der Hinweise, ohne
+eine einzige Meldung.
+
+Die Sammelmaske **Passung** nimmt die betroffenen Fugen zurück und führt sie
+neu aus, bevor sie die Werte übernimmt: gerechnet wird mit dem Kontaktpaar,
+und eine schon ausgeführte Fuge nimmt neue Werte sonst nicht an (behoben
+17.09.2026 — vorher standen Spiel und Lochleibungsgrenze in der Bedingung,
+die Rechnung benutzte weiter die alten). Der Balken nennt dabei jede Fuge.
 
 **Integrierte Knoten und Linien, Stabenden auf Volumen.** RFEM integriert
 einen Knoten, der auf einer Fläche liegt, in deren Netz: ein Zugstab, der in
