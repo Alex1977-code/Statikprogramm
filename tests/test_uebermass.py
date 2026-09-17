@@ -239,6 +239,55 @@ def test_passung_aus_abmassen():
           f"{mind * 1e6:g} µm")
 
 
+def test_passungsarten():
+    """Die drei Arten, die es in Wirklichkeit gibt (Anwender 17.09.2026):
+    Spielpassung (Stift von Hand einschiebbar, dreht sich, fällt nicht
+    heraus), Übergangspassung (Fügekraft hält ihn), Presspassung (die
+    Pressung ist eine zusätzliche Spannung im System)."""
+    from statik3d import passungen as pss
+    # Welle unter Null (Spielsitz), Bohrung H: die größte Welle bleibt unter
+    # der kleinsten Bohrung - immer Spiel
+    a = pss.art(-20e-6, -33e-6, 21e-6, 0.0)
+    check("größte Welle unter kleinster Bohrung → Spielpassung", a == "spiel", a)
+    s_max, s_mit, s_min = pss.spiele(-20e-6, -33e-6, 21e-6, 0.0)
+    close("… Höchstspiel ES − ei", s_max * 1e6, 54.0, 1e-9, " µm")
+    close("… Mindestspiel EI − es", s_min * 1e6, 20.0, 1e-9, " µm")
+    # Ø25 m6/H8 (Welle +21/+8, Bohrung +33/0): die Welle liegt über Null, die
+    # Bohrung beginnt bei Null - also nicht immer Spiel, sondern Übergang.
+    # Merke: „H8 = Spielpassung“ gilt für eine Welle unter Null (h, f, g),
+    # nicht für m6.
+    check("m6/H8: die Welle liegt über Null → rechnerisch Übergangspassung",
+          pss.art(21e-6, 8e-6, 33e-6, 0.0) == "uebergang", pss.art(21e-6, 8e-6, 33e-6, 0.0))
+    # Ø25 m6/H7: Welle +21/+8, Bohrung +21/0 - mal Spiel, mal Übermaß
+    a = pss.art(21e-6, 8e-6, 21e-6, 0.0)
+    check("m6/H7: Spanne überlappt → Übergangspassung", a == "uebergang", a)
+    # Ø25 m6/P7: Welle +21/+8, Bohrung -14/-35 - immer Übermaß
+    a = pss.art(21e-6, 8e-6, -14e-6, -35e-6)
+    check("m6/P7: kleinste Welle über größter Bohrung → Presspassung", a == "press", a)
+    w = pss.wirkung(21e-6, 8e-6, -14e-6, -35e-6, "hoechst")
+    close("… Höchstübermaß es − EI wird als Übermaß gerechnet", w["uebermass"] * 1e6, 56.0, 1e-9, " µm")
+    check("… und kein Spiel", w["spiel"] == 0.0 and "Presspassung" in w["text"], w["text"][:80])
+    w = pss.wirkung(-20e-6, -33e-6, 21e-6, 0.0, "mittel")
+    check("Spielpassung: das Spiel wird als Spiel gerechnet, nicht als Übermaß",
+          w["spiel"] > 0 and w["uebermass"] == 0.0 and "Spielpassung" in w["text"], w["text"][:80])
+    check("die Bedeutung nennt die Drehung um die Achse und dass der Stift nicht herausfällt",
+          "drehen" in pss.ARTEN["spiel"][1] and "fällt nicht heraus" in pss.ARTEN["spiel"][1])
+    check("Presspassung: die Pressung ist eine zusätzliche Spannung im System",
+          "vor der Last unter" in pss.ARTEN["press"][1] and "Spannung" in pss.ARTEN["press"][1])
+    # Pruefung gegen den Einsatzzweck
+    check("Abmaße einer Spielpassung unter „leichte Demontage“: keine Beanstandung",
+          pss.pruefen(-20e-6, -33e-6, 21e-6, 0.0, "spiel") == "")
+    t = pss.pruefen(21e-6, 8e-6, -14e-6, -35e-6, "spiel")
+    check("P7-Abmaße unter „leichte Demontage“: das Programm widerspricht",
+          "Presspassung" in t and "Spielpassung" in t, t[:100])
+    check("die Paarungen für Passstifte nennen Art, Kurzzeichen und Zweck",
+          pss.STIFTPASSUNGEN["fester Sitz (H7)"][0] == "uebergang"
+          and pss.STIFTPASSUNGEN["sehr fester Sitz (N7)"][0] == "press"
+          and pss.STIFTPASSUNGEN["leichte Demontage (H8)"][0] == "spiel"
+          and all(v[1].startswith("m6/") for v in pss.STIFTPASSUNGEN.values()),
+          str(list(pss.STIFTPASSUNGEN)))
+
+
 def test_datenmodell():
     m = zwei_wuerfel(ueber=UEBER)
     u = m.case("LF1").uebermasse[0]
@@ -270,7 +319,7 @@ def test_datenmodell():
 def main():
     for f in (test_ebene_fuge, test_kombination_skaliert, test_zylindrische_fuge,
               test_schub_ueber_die_reibung, test_passung_aus_abmassen,
-              test_datenmodell):
+              test_passungsarten, test_datenmodell):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

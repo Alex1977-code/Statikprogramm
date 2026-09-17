@@ -24,6 +24,7 @@ from pyvistaqt import QtInteractor
 from ..model import (Model, Material, Section, ShellProp, DOF_NAMES, Member, GRUNDSTELLUNG, GESAMTSYSTEM,
                      FLAECHENARTEN)
 from .. import solver, mesher, parallel, supports, __version__
+from .. import passungen as pss
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
                       CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
                       DesignSettingsDialog, ContactPairDialog, ImportDialog, ReportDialog,
@@ -14085,6 +14086,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     #: Ansatz, mit dem aus den Abmassen einer Passung das Uebermass wird
+    #: In der Sammelmaske Passung: keine Paarung gewaehlt
+    PASSUNG_KEINE = "(keine - nur die Werte oben)"
     UEBERMASS_ANSATZ = ["mittleres Übermaß", "Höchstübermaß (größte Pressung)",
                         "Mindestübermaß (kleinste Haltekraft)"]
 
@@ -14349,7 +14352,33 @@ class MainWindow(QtWidgets.QMainWindow):
                            hinweis="0 = keine; Richtwert fy bis 1,5 fy - darüber fließt der Knoten"),
                   msk.Feld("rand_frei", "Randabminderung [Knotenreihen]", "zahl",
                            int(getattr(vor, "rand_frei", 0) or 0) if vor else 0,
-                           hinweis="0 = keine; 1: die Randreihe der Kontaktseite haftet nicht")]
+                           hinweis="0 = keine; 1: die Randreihe der Kontaktseite haftet nicht"),
+                  # Reibbeiwert fuer viele Fugen auf einmal (17.09.2026): leer
+                  # laesst ihn, wie er ist - eine 0 aus Versehen machte die
+                  # Fuge reibungsfrei und das Bauteil beweglich
+                  msk.Feld("mu", "Reibbeiwert μ", "text",
+                           f"{vor.reibbeiwert():g}" if vor and vor.reibbeiwert() else "",
+                           breite=80,
+                           hinweis="leer: unverändert. Ein Wert stellt die Fugenebene auf Gleiten mit "
+                                   "diesem μ - ohne das wirkt er nicht, weil eine haftende Fuge starr "
+                                   "ist. Reibung trägt nur unter Anpressung"),
+                  msk.Feld("passung", "Passung (Stift m6)", "wahl", self.PASSUNG_KEINE,
+                           [self.PASSUNG_KEINE] + list(pss.STIFTPASSUNGEN),
+                           hinweis="nur Beleg und Prüfung: gerechnet wird mit den Abmaßen darunter"),
+                  msk.Feld("pinfo", "", "info",
+                           "Aus den vier Abmaßen der Zeichnung erkennt das Programm die Art: "
+                           "Spielpassung → Spiel, Presspassung → Übermaß als Last im aktiven "
+                           "Lastfall, Übergangspassung → je nach Ansatz. Eine eigene Tabelle "
+                           "bringt es nicht mit (ein Zahlendreher würde still zu einer falschen "
+                           "Pressspannung führen)."),
+                  msk.Feld("es", "Welle oberes Abmaß es [µm]", "zahl", 0.0),
+                  msk.Feld("ei", "Welle unteres Abmaß ei [µm]", "zahl", 0.0),
+                  msk.Feld("ES", "Bohrung oberes Abmaß ES [µm]", "zahl", 0.0),
+                  msk.Feld("EI", "Bohrung unteres Abmaß EI [µm]", "zahl", 0.0),
+                  msk.Feld("ansatz", "Ansatz", "wahl", self.UEBERMASS_ANSATZ[0],
+                           list(self.UEBERMASS_ANSATZ),
+                           hinweis="bei der Übergangspassung: „Höchstübermaß“ ist ungünstig für die "
+                                   "Spannung, „Mindestübermaß“ (= Höchstspiel) für die Tragfähigkeit")]
         maske = msk.Maske("Passung", felder, knopf="Auf die Kontaktfugen anwenden",
                           hinweis="Volumen in der Ansicht wählen (Auswahlart „Volumen“, mehrere mit "
                                   "Strg oder dem Auswahlfenster), dann die Werte eintragen und anwenden: "
@@ -14374,6 +14403,35 @@ class MainWindow(QtWidgets.QMainWindow):
         spiel = max(zahl("spiel"), 0.0) / 1e3
         grenze = max(zahl("grenzpressung"), 0.0) * 1e6
         reihen = int(max(zahl("rand_frei"), 0.0))
+        # Reibbeiwert: leeres Feld laesst ihn, wie er ist
+        mu_text = str(w.get("mu", "") or "").strip()
+        mu = None
+        if mu_text:
+            try:
+                mu = max(0.0, float(mu_text.replace(",", ".")))
+            except ValueError:
+                return self.error(f"Reibbeiwert μ: „{mu_text}“ ist keine Zahl (leer lassen heißt unverändert)")
+        # Passung aus den Abmassen: Spiel (Fugeneigenschaft) oder Uebermass (Last)
+        abmasse = [zahl(k) * 1e-6 for k in ("es", "ei", "ES", "EI")]
+        uebermass = 0.0
+        pass_text = ""
+        wahl = str(w.get("passung", "") or "")
+        if any(abmasse):
+            ansatz = {self.UEBERMASS_ANSATZ[1]: "hoechst",
+                      self.UEBERMASS_ANSATZ[2]: "mindest"}.get(str(w.get("ansatz", "")), "mittel")
+            wirkung = pss.wirkung(*abmasse, ansatz=ansatz)
+            pass_text = wirkung["text"]
+            if wirkung["spiel"]:
+                spiel = wirkung["spiel"] / 2.0        # Feld ist das Spiel je Seite
+            uebermass = wirkung["uebermass"]
+            if wahl and wahl != self.PASSUNG_KEINE:
+                erwartet = pss.STIFTPASSUNGEN[wahl][0]
+                warnung = pss.pruefen(*abmasse, erwartet=erwartet)
+                if warnung:
+                    self.log.appendPlainText("Passung: " + warnung)
+        elif wahl and wahl != self.PASSUNG_KEINE:
+            return self.error("Passung gewählt, aber keine Abmaße eingetragen - das Programm bringt "
+                              "keine Abmaßtabelle mit, die vier Werte stehen auf der Zeichnung")
         self.merken(f"Passung an {len(kontakte)} Kontaktfugen")
         # Eine ausgefuehrte Fuge muss zurueckgenommen werden, sonst behaelt ihr
         # Kontaktpaar die alten Werte: kontaktfuge_ausfuehren steigt bei
@@ -14391,6 +14449,14 @@ class MainWindow(QtWidgets.QMainWindow):
             for j, n in enumerate(kontakte):
                 kb = m.kontaktbedingungen[n]
                 kb.spiel, kb.grenzpressung, kb.rand_frei = spiel, grenze, reihen
+                if mu is not None:
+                    # Die Fugenebene auf Gleiten mit diesem mu - eine starre
+                    # (haftende) Richtung nimmt keinen Reibbeiwert an, sie ist
+                    # ja unverschieblich (17.09.2026)
+                    from ..model import DofBehaviour as _DB
+                    for d in (0, 1):
+                        kb.behaviour[d] = _DB("free", mu=mu) if mu > 0 else _DB("free")
+                    kb.standard = ""
                 self._fortschritt(j + 1, f"Passung: Kontaktfuge {n} neu ausführen "
                                          f"({j + 1} von {len(kontakte)}) …", sofort=True)
                 if kb.ausgefuehrt and m.elements:
@@ -14398,13 +14464,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
         finally:
             self._fortschritt_ende()
+        if uebermass:
+            # Presspassung: das Uebermass ist eine Last im aktiven Lastfall
+            for n in kontakte:
+                try:
+                    m.add_uebermass(n, uebermass, passmass=(wahl if wahl != self.PASSUNG_KEINE else ""))
+                except KeyError as ex:
+                    self.log.appendPlainText(f"Übermaß nicht gesetzt: {ex}")
+            self.log.appendPlainText(
+                f"Übermaß {uebermass * 1e6:.0f} µm auf {len(kontakte)} Fugen im Lastfall "
+                f"{m.active_case} - die Fuge steht damit schon vor der Last unter Druck")
         self.log.appendPlainText(
             f"Passung gesetzt an {len(kontakte)} Kontaktfugen ({', '.join(kontakte[:8])}"
             + (" …" if len(kontakte) > 8 else "") + f"): Spiel {spiel * 1e3:.3f} mm, "
             f"Lochleibungsgrenze {grenze / 1e6:.0f} N/mm², Randabminderung {reihen} Reihen"
+            + (f", Reibbeiwert μ = {mu:g}" if mu is not None else "")
             + (f" - für die Volumen {', '.join(koerper[:6])}" if koerper else " - für alle Fugen"))
+        if pass_text:
+            self.log.appendPlainText("Passung: " + pass_text)
+            self.log.appendPlainText("Passung: " + pss.ARTEN[pss.art(*abmasse)][1])
         self.refresh_all()
-        self.info(f"Passung an {len(kontakte)} Kontaktfugen gesetzt")
+        self.info(f"Passung an {len(kontakte)} Kontaktfugen gesetzt"
+                  + (f": {pass_text.split(':')[0]}" if pass_text else ""))
 
     def maske_uebermass(self):
         """Uebermass (Presspassung) einer Kontaktfuge als Last.

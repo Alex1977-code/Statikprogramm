@@ -2128,6 +2128,49 @@ Volumen gibt es nicht. Kein Plastizieren, kein Kriechen und nicht der
 Sprödbruchnachweis nach EN 1993-1-10 selbst. Die Ermüdung der Volumen aus der
 Hauptspannung im Element steht in 5.5-3.
 
+## 5d-2 Passungen: Spiel, Übergang, Presspassung (17.09.2026)
+
+**Warum das hierher gehört.** Ob ein Passstift hält, entscheidet nicht die
+Kontakteinstellung, sondern die Passung auf der Zeichnung. Der Anwender:
+„Je nach gewähltem Spalt/Passung ergibt sich eine Fügekraft, z. B. aus einer
+Übergangspassung heraus, die den Passstift statisch hält; oder der Spalt ist
+als Spielpassung ausgeführt, dann könnte sich der Passstift drehen, aber das
+System würde dennoch funktionieren, da der Passstift nicht seine Lage ändert
+und herausfällt; oder es könnte eine Presspassung sein, die daraus
+entstehende Kraft wäre eine zusätzliche Spannung im System und der Passstift
+wäre gehalten.“
+
+**Die Rechnung.** Aus den vier Abmaßen folgt die Überdeckung (DIN ISO 286):
+
+    Höchstübermaß  Ü_max = es − EI      Mindestspiel  S_min = −Ü_max
+    Mindestübermaß Ü_min = ei − ES      Höchstspiel   S_max = −Ü_min
+
+und daraus die Art: Ü_max ≤ 0 heißt **immer Spiel**, Ü_min ≥ 0 heißt **immer
+Übermaß**, dazwischen hängt es am Istmaß (**Übergang**). Entschieden wird an
+den Grenzfällen, nicht am Mittelwert — sonst hieße eine Paarung, die im
+ungünstigen Fall klemmt, „Spielpassung“.
+
+**Was daraus im Modell wird.** Spiel ist eine Eigenschaft der Fuge (der
+Kontakt schließt erst, wenn das Spiel durchfahren ist), Übermaß eine Last
+(die Fuge steht vor der äußeren Last unter Druck). Beides gibt es im
+Programm schon; neu ist, dass die Abmaße entscheiden, welches von beidem
+gesetzt wird. Eine eingebaute Abmaßtabelle gibt es bewusst nicht (Begründung
+in `statik3d/passungen.py`): beim Abgleich zweier Quellen wich m6 für
+18–30 mm um 8 µm ab. Stattdessen prüft das Programm die eingetragenen Abmaße
+gegen den gewählten Einsatzzweck und widerspricht bei Abweichung.
+
+**Halt in der Achsrichtung.** Ein Stift in einer Bohrung ist quer
+formschlüssig gehalten, längs seiner Achse aber nur durch Reibung — und
+Reibung braucht Anpressung. Gemessen an einem Stift Ø40 in einem außen
+gehaltenen Auge, quer mit 20 kN belastet: reibungsfrei mit 0,02 mm Spiel
+meldet das Programm die axiale Verschiebung als freie Bewegung
+(Abschnitt 7b) und rechnet mit Hilfsfesselung weiter; mit μ = 0,2 ist sie
+fort, und 5 kN Zug in Achsrichtung werden abgetragen (Auflagersumme
+5,00 kN). Bei Presspassung liefert das Übermaß die Anpressung und damit die
+Haftreibung. Die Kontakt-Iteration kostet mit Reibung mehr Schritte: 51
+statt 6, weil Knotenzustände zwischen Haften und Gleiten pendeln und der
+Oszillationsschutz sie festhält.
+
 ## 5e Plastizität der Volumenkörper (17.09.2026)
 
 **Anlass.** Spannungsspitzen an Passstiften und Bohrungsrändern (V34:
