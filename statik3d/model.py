@@ -2971,6 +2971,10 @@ class Model:
         #: Koerperpaare [A, B], zwischen denen kein Kontakt mehr von selbst
         #: entsteht - der Anwender hat den automatischen geloescht
         self.kontakt_ausnahmen: list = []
+        #: Importhinweise (17.09.2026, statik3d.hinweise): was das Programm an
+        #: der Modellierung erkennt und vorschlaegt - Woerterbuecher mit art,
+        #: text, objekte, vorschlag, erledigt; nichts davon wirkt von selbst
+        self.importhinweise: list = []
         # Subsysteme, Situationen und Stellungen (Stellung: bridges.positions)
         self.subsysteme: dict[str, Subsystem] = {}
         self.situationen: dict[str, Situation] = {}
@@ -4952,6 +4956,7 @@ class Model:
             "getrennte_knoten": {k: [[int(a), int(b)] for a, b in v]
                                  for k, v in (self.getrennte_knoten or {}).items()},
             "kontakt_ausnahmen": [[str(a), str(b)] for a, b in (getattr(self, "kontakt_ausnahmen", None) or [])],
+            "importhinweise": [dict(h) for h in (getattr(self, "importhinweise", None) or [])],
             "punktmassen": [asdict(x) for x in self.punktmassen],
             "daempfer": [asdict(x) for x in self.daempfer],
             "federn": [asdict(x) for x in self.federn.values()],
@@ -5075,6 +5080,7 @@ class Model:
         m.getrennte_knoten = {str(k): [[int(a), int(b)] for a, b in v]
                               for k, v in (d.get("getrennte_knoten") or {}).items()}
         m.kontakt_ausnahmen = [[str(a), str(b)] for a, b in (d.get("kontakt_ausnahmen") or [])]
+        m.importhinweise = [dict(h) for h in (d.get("importhinweise") or []) if isinstance(h, dict)]
         m.punktmassen = [_dc(Punktmasse, x) for x in d.get("punktmassen", [])]
         m.daempfer = [_dc(Daempfer, x) for x in d.get("daempfer", [])]
         m.federn = {x["name"]: _dc(FederProp, x) for x in d.get("federn", [])}

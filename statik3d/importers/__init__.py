@@ -351,6 +351,20 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     model.meta["quelle"] = path
     if not model.meta.get("bauteil"):
         model.meta["bauteil"] = stem
+    if fresh:
+        # Importhinweise (17.09.2026): was am Modell auffaellt, als Vorschlag -
+        # nichts wird von selbst umgestellt; die Liste steht im Modellbaum
+        try:
+            from .. import hinweise
+            model.importhinweise = hinweise.erzeugen(model)
+        except Exception as ex:               # noqa: BLE001 - ein Hinweis darf den Import nie kippen
+            model.importhinweise = []
+            C.say(log, f"Importhinweise nicht geprueft: {ex}")
+        if model.importhinweise:
+            C.say(log, f"{len(model.importhinweise)} Importhinweise (Modellbaum → Importhinweise, nichts "
+                       "davon ist umgestellt): "
+                       + "; ".join(hinweise.kurz(h) for h in model.importhinweise[:6])
+                       + (" …" if len(model.importhinweise) > 6 else ""))
     n_new = len(model.elements) - n_elems0
     C.say(log, f"Import abgeschlossen: {n_new} neue Elemente, {model.nn} Knoten gesamt, "
                f"{len(model.supports)} Lager, {len(model.load_cases)} Lastfaelle")

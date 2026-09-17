@@ -4385,6 +4385,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "querschnitt": "Querschnitte", "werkstoff": "Werkstoffe",
                     "gelenke": "Gelenke", "gelenk": "Gelenke", "berichtseintrag": "Bericht",
                     "liniengelenke": "Flächen", "liniengelenk": "Flächen",
+                    "importhinweise": "Kontaktbedingungen", "importhinweis": "Kontaktbedingungen",
                     "kontaktbedingung": "Kontaktbedingungen",
                     "lager": "Lager", "lager_einzeln": "Lager", "linienlager": "Lager",
                     "linienlager_einzeln": "Lager", "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
@@ -4423,7 +4424,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "lastfaelle", "lastfall", "kombinationen", "kombination",
                     "werkstoffe", "werkstoff", "dicken", "dicke",
                     "querschnitt", "gelenke", "gelenk", "berichtseintrag",
-                    "liniengelenke", "liniengelenk",
+                    "liniengelenke", "liniengelenk", "importhinweise", "importhinweis",
                     "kontaktbedingung", "stellungen", "stellung",
                     "lager", "lager_einzeln", "linienlager", "linienlager_einzeln",
                     "flaechenlager", "flaechenlager_einzeln",
@@ -4659,6 +4660,26 @@ class MainWindow(QtWidgets.QMainWindow):
                              if 0 <= int(e) < len(m.elements)] if h is not None else []
             if h is not None:
                 self.lbl_sel.setText(f"Gelenk {name}: an {len(self.leuchtet)} Elementen (Modellbaum)")
+        elif art in ("importhinweise", "importhinweis"):
+            # Die betroffenen Teile leuchten: Volumen, und die Fugen ihrer Kontaktbedingungen
+            hw = getattr(m, "importhinweise", None) or []
+            liste = ([hw[int(name)]] if eintrag and name.isdigit() and int(name) < len(hw) else hw)
+            self.auswahlart_setzen("Volumen")
+            self.selection = np.array([], dtype=int)
+            self.sel_linien, self.sel_staebe = [], []
+            koerper, flaechen = [], []
+            for h in liste:
+                for art_o, n_o in (h.get("objekte") or []):
+                    if art_o == "geokoerper_einzeln" and n_o in m.koerper:
+                        koerper.append(n_o)
+                    elif art_o == "kontaktbedingung" and n_o in m.kontaktbedingungen:
+                        kb_ = m.kontaktbedingungen[n_o]
+                        flaechen += [x for x in (kb_.flaechennamen or []) + (kb_.gegenflaechen or []) if x in m.flaechen]
+                        koerper += [x for x in (kb_.koerpernamen or []) + (getattr(kb_, "gegenkoerper", None) or []) if x in m.koerper]
+            self.sel_koerper = list(dict.fromkeys(koerper))
+            self.sel_flaechen = list(dict.fromkeys(flaechen))
+            self.lbl_sel.setText(f"Importhinweis{'e' if len(liste) != 1 else ''}: {len(self.sel_koerper)} Volumen, "
+                                 f"{len(self.sel_flaechen)} Flächen (Modellbaum)")
         elif art in ("liniengelenke", "liniengelenk"):
             # Die Gelenklinien leuchten, die Flaechen dazu blass mit
             self.auswahlart_setzen("Linie")
@@ -4764,6 +4785,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return name in m.sections
         if art == "liniengelenk":
             return name in m.flaechen and bool(getattr(m.flaechen[name], "gelenklinien", None))
+        if art == "importhinweis":
+            return name.isdigit() and int(name) < len(getattr(m, "importhinweise", None) or [])
         if art == "gelenk":
             return name in m.hinges
         if art == "berichtseintrag":
@@ -5205,6 +5228,33 @@ class MainWindow(QtWidgets.QMainWindow):
             hinweis = ("Kennwerte in cm und mm - Umbenennen zieht die Elemente nach. "
                        "„Neu aus Profil“ legt einen weiteren Querschnitt aus der Datenbank an.")
             zusatz = [("Neu aus Profil …", self.querschnitt_neu)]
+        elif art in ("importhinweise", "importhinweis"):
+            from ..hinweise import kurz as _hkurz, offen as _hoffen
+            hw = getattr(m, "importhinweise", None) or []
+            knopf = ""
+            if not eintrag or not name.isdigit() or int(name) >= len(hw):
+                felder = [F("anzahl", "Hinweise", "info", f"{len(hw)}, davon {len(_hoffen(m))} offen"),
+                          F("liste", "Vorschläge", "info", "\n".join(
+                              ("✓ " if h.get("erledigt") == "angewendet" else "✗ " if h.get("erledigt") else "• ") + _hkurz(h)
+                              for h in hw[:12]) + ("\n…" if len(hw) > 12 else ""))]
+                titel = "Importhinweise"
+                hinweis = ("Vorschläge zur Modellierung, nach dem Import erkannt - nichts davon ist von selbst "
+                           "umgestellt. Ein Eintrag im Modellbaum lässt die betroffenen Teile leuchten; seine "
+                           "Maske hat „So einstellen“ und „Verwerfen“.")
+                zusatz = [("Alle offenen anwenden", self._hinweise_alle_anwenden)]
+            else:
+                i = int(name)
+                h = hw[i]
+                felder = [F("text", "Befund und Vorschlag", "info", str(h.get("text", ""))),
+                          F("objekte", "Betroffen", "info", ", ".join(f"{n_o}" for _a, n_o in (h.get("objekte") or []))),
+                          F("status", "Stand", "info", {"": "offen", "angewendet": "angewendet",
+                                                         "verworfen": "verworfen"}.get(str(h.get("erledigt", "")), "offen"))]
+                titel = f"Importhinweis {i + 1}"
+                hinweis = ("„So einstellen“ übernimmt den Vorschlag (Reibung: die Fuge wird umgestellt und am "
+                           "Netz neu ausgeführt; Spiel: der Zylinder wird verkleinert, neu vernetzt, seine "
+                           "Fugen ausgeführt). „Verwerfen“ lässt alles, wie es ist.")
+                zusatz = [("So einstellen", lambda i_=i: self._hinweis_anwenden(i_)),
+                          ("Verwerfen", lambda i_=i: self._hinweis_verwerfen(i_))]
         elif art in ("liniengelenke", "liniengelenk"):
             fl = {n: f for n, f in m.flaechen.items() if getattr(f, "gelenklinien", None)}
             hinweis = ("Liniengelenke kommen aus der Quelldatei (RFEM: LineHinge) und stehen an der "
@@ -13589,6 +13639,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.zoom_alles()
             self.info(f"Import: {m.nn} Knoten, {len(m.elements)} Elemente, "
                       f"{len(m.load_cases)} Lastfälle, {len(m.members)} Stäbe")
+            self._fortschritt_ende()
+            QtWidgets.QApplication.restoreOverrideCursor()
+            self._importhinweise_fragen()
         except Exception as ex:
             self._fortschritt_ende()               # kein Balken hinter der Meldung
             self.log.appendPlainText(traceback.format_exc())
@@ -14107,6 +14160,66 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
         self.refresh_all()
         self.info(f"Spiel {spiel * 1e3:g} mm gegeben: {', '.join(dict.fromkeys(betroffen))}")
+
+    # ---- Importhinweise (17.09.2026) -----------------------------------------
+    def _hinweis_anwenden(self, i: int):
+        from .. import hinweise, fugen
+        m = self.model
+        hw = getattr(m, "importhinweise", None) or []
+        if not 0 <= i < len(hw):
+            return self.error("Diesen Hinweis gibt es nicht mehr")
+        h = hw[i]
+        if h.get("erledigt"):
+            return self.info("Der Hinweis ist schon erledigt")
+        self.merken(f"Importhinweis {i + 1}")
+        log: list = []
+        erg = hinweise.anwenden(m, h, log)
+        for z in log:
+            self.log.appendPlainText(z)
+        if not erg.get("ok"):
+            self.refresh_all()
+            return self.error(f"Hinweis nicht angewendet: {erg.get('text')}")
+        if erg.get("koerper"):
+            self._vernetzen([], [m.koerper[k] for k in erg["koerper"] if k in m.koerper])
+        gruppen = fugen.gruppen_je_knoten(m) if (m.elements and erg.get("kontakte")) else None
+        for n in erg.get("kontakte") or []:
+            kb = m.kontaktbedingungen.get(n)
+            if kb is not None:
+                self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
+        self.refresh_all()
+        self.info("Importhinweis angewendet: " + str(erg.get("text", "")))
+
+    def _hinweis_verwerfen(self, i: int):
+        from .. import hinweise
+        hw = getattr(self.model, "importhinweise", None) or []
+        if 0 <= i < len(hw):
+            hinweise.verwerfen(hw[i])
+            self.log.appendPlainText(f"Importhinweis {i + 1} verworfen: {hinweise.kurz(hw[i])}")
+            self.refresh_all()
+
+    def _hinweise_alle_anwenden(self):
+        from .. import hinweise
+        offen = [i for i, h in enumerate(getattr(self.model, "importhinweise", None) or []) if not h.get("erledigt")]
+        if not offen:
+            return self.info("Kein offener Importhinweis")
+        for i in offen:
+            self._hinweis_anwenden(i)
+
+    def _importhinweise_fragen(self) -> None:
+        """Nach dem Import: die Vorschlaege nennen und fragen, ob sie umgesetzt
+        werden sollen - „nicht automatisch, den User fragen"."""
+        from .. import hinweise
+        offen = hinweise.offen(self.model)
+        if not offen:
+            return
+        text = (f"{len(offen)} Vorschläge zur Modellierung:\n\n"
+                + "\n".join("• " + hinweise.kurz(h) for h in offen[:10]) + ("\n…" if len(offen) > 10 else "")
+                + "\n\nAlle jetzt anwenden? Die Liste bleibt im Modellbaum unter „Importhinweise“ - jeder "
+                  "Eintrag lässt die betroffenen Teile leuchten und lässt sich einzeln anwenden oder verwerfen.")
+        if self._fragen_knoepfe("Importhinweise", text, "Alle anwenden", "Erst ansehen"):
+            self._hinweise_alle_anwenden()
+        else:
+            self.statusBar().showMessage(f"{len(offen)} Importhinweise - Modellbaum → Importhinweise", 0)
 
     def _passung_kontakte(self, koerper: list) -> list:
         """Die Kontaktbedingungen, an denen einer der Koerper beteiligt ist
