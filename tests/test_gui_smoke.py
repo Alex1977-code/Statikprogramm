@@ -8642,7 +8642,9 @@ def main():
             l_.F[2] = abs(l_.F[2])                 # der Block wird nach oben gezogen
         w.model = m_; w.analysis = None; w.results = None; w.refresh_all(); app.processEvents()
         alt_hf = solver.StaticSystem.hilfsfesselung
+        alt_halt = solver._freie_teile_halten
         solver.StaticSystem.hilfsfesselung = lambda self: False
+        solver._freie_teile_halten = lambda *a, **k: False      # sonst haelt der Block an drei Punkten
         try:
             ex_ = None
             try:
@@ -8651,6 +8653,7 @@ def main():
                 ex_ = e_
         finally:
             solver.StaticSystem.hilfsfesselung = alt_hf
+            solver._freie_teile_halten = alt_halt
         check("Abbruch: die Ausnahme trägt das Teilergebnis der letzten Iteration",
               ex_ is not None and getattr(ex_, "teilergebnis", None) is not None
               and getattr(ex_, "iteration", 0) >= 1, str(ex_)[:80])

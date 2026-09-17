@@ -3146,6 +3146,15 @@ rechnen will, kann es — aber nachdem er gelesen hat, dass es 17 % sind.
 
 ### Abbruch der Kontakt-Iteration: die letzte Verformung bleibt sichtbar
 
+**Vorher greift ein Halt** (17.09.2026): verliert ein Teil in einem Schritt
+der Kontakt-Iteration alle seine Bedingungen (ein Passstift, dessen Bohrung
+ihn in diesem Schritt nirgends drückt), wäre das Gleichungssystem singulär.
+Statt abzubrechen hält das Programm je Teil mindestens drei Bedingungen mit
+dem kleinsten Spalt geschlossen und löst den Schritt noch einmal; das
+Protokoll nennt jedes gehaltene Teil („Halt für Teile ohne geschlossene
+Bedingung: V100: 0 von 62 zu, 3 mit dem kleinsten Spalt (bis 0,012 mm)
+gehalten“). Erst wenn auch das nicht hält, bricht die Rechnung ab.
+
 Findet die Kontakt-Iteration auch mit Hilfsfesselung kein Gleichgewicht
 („Gleichungssystem singulär“), bricht die Rechnung ab — aber nicht stumm
 (16.09.2026: „die Verformung der letzten Iteration anzeigen, damit der
@@ -3164,10 +3173,13 @@ sich in der letzten Iteration bewegt hat, der Kraft, die dabei ins Nichts
 geht, und den Fugen, an denen es hängt. Ebenso gezeigt wird ein Teil, bei
 dem die Mehrheit der Bedingungen offen war und das sich um mindestens das
 Fünffache dessen bewegt hat, was die übrigen Teile tun (gemessen am Mittel
-seiner Knotenverschiebungen gegen den Median der anderen): der Block, der
-auf einer Kante kippt, statt glatt abzuheben, hält an fünf von 25 Punkten
-noch Kontakt und wäre sonst nicht genannt worden. Der Text nennt in dem
-Fall „hielten nur noch 5 von 25 Kontaktbedingungen“ und die Bewegung in mm.
+seiner Knotenverschiebungen gegen das 90. Perzentil der anderen — eine
+Baugruppe, die sich gemeinsam um 0,9 mm bewegt, fällt gegen ihresgleichen
+nicht auf, 17.09.2026): der Block, der auf einer Kante kippt, statt glatt
+abzuheben, hält an fünf von 25 Punkten noch Kontakt und wäre sonst nicht
+genannt worden. Der Text sagt dann „verliert den Halt: hielten nur noch 5
+von 25 Kontaktbedingungen“ und nennt die Bewegung in mm; „hebt ab“ steht
+nur, wenn keine Bedingung mehr geschlossen war.
 Der erste Zeiger ist nach dem Abbruch schon eingestellt; die Auswahl steht
 auf dem Lastfall selbst, eine Umhüllende über ein Teilergebnis ohne
 Gleichgewicht gibt es nicht. Am Drehlager (16.09.2026) waren das die Deckel

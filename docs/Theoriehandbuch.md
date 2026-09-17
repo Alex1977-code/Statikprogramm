@@ -258,6 +258,23 @@ singuläres System bleibt über der Schranke (`tests/test_nachiteration.py`:
 ein Löser mit 3e-6 Fehler je Schritt kommt nach einer Nachiteration unter
 1e-6, einer mit 50 % Fehler nicht).
 
+**Halt für Teile ohne geschlossene Bedingung** (17.09.2026): verliert ein
+Teil in der Kontakt-Iteration alle Bedingungen, ist das Gleichungssystem
+des nächsten Schritts wirklich singulär - am Drehlager pendelte die Zahl der
+aktiven Bedingungen 18 Schritte lang um 13 000, bis in Schritt 27 Passstifte
+ohne Halt waren (Residuum 1,1e-3), obwohl Verformung und Spannungen des
+Schritts davor unauffällig waren. Ein Stift in einer Bohrung berührt sie
+immer irgendwo; dass alle seine Bedingungen offen sind, ist die
+Linearisierung des Schritts. Scheitert die Lösung, hält
+`solver._freie_teile_halten` je Teil mindestens drei Bedingungen (die mit
+dem kleinsten Spalt) geschlossen, zählt das als Zustandswechsel (nach acht
+Wechseln friert die Bedingung ohnehin geschlossen ein) und löst denselben
+Schritt noch einmal; das Protokoll nennt jedes gehaltene Teil mit Spalt. Eine
+Bedingung zählt dabei zum Teil ihres Slave-Knotens und zu dem ihrer
+Master-Knoten - ein Stift, auf den nur die Bohrung drückt, hätte sonst keine.
+Nachweis `tests/test_kontakthalt.py`: der nach oben gezogene Block, der ohne
+den Halt in Schritt 2 abbricht, hängt an drei Punkten und konvergiert.
+
 ### 1.4 Querschnittswerte freier Profile
 
 Der freie Profileditor vereinigt Teile nach dem **Satz von Steiner**
