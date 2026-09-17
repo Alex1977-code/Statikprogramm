@@ -5037,6 +5037,108 @@ def main():
         traceback.print_exc()
         check("Passung", False, str(ex)[:70])
 
+    try:
+        # ---- Spiel geben: Zylinder verkleinern, neu vernetzen, Fuge ausführen (17.09.2026) ----
+        from tests.test_spiel import _stift_und_platte as _sp_modell
+        from statik3d import spiel as sp_
+        m_, k_sp = _sp_modell()
+        w.model = m_
+        w.analysis = None
+        w.results = None
+        w.refresh_all()
+        app.processEvents()
+        m_ = w.model
+        w.auswahlart_setzen("Volumen")
+        w.sel_koerper = ["V1"]
+        w.maske_spiel()
+        app.processEvents()
+        ms = w.maskenrand.maske
+        check("Maske „Spiel geben“ erkennt den Stift als Zylinder und nennt ihn",
+              ms is not None and "V1" in str(ms.werte().get("zylinder")), str(ms.werte().get("zylinder") if ms else None))
+        ms.setzen("spiel", "0,1")
+        ms.angewendet.emit(ms.werte())
+        app.processEvents()
+        m_ = w.model
+        z_ = sp_.zylinder(m_, "V1")
+        check("Anwenden: der Stift hat r = 19,95 mm, ist neu vernetzt und das Loch der Platte behält 20 mm",
+              z_["ok"] and abs(z_["radius"] - 0.01995) < 1e-9 and len(m_.koerper["V1"].elemente) > 0
+              and all(abs(sp_.kreis_aus_punkten(m_.lines[ln].geometrie["punkte"])[1] - 0.02) < 1e-12
+                      for ln in m_.flaechen["P_oben"].oeffnungen[0]),
+              f"r {z_.get('radius')}, {len(m_.koerper['V1'].elemente)} Elemente")
+        check("das Protokoll nennt Trennung und Spiel",
+              "von den Nachbarn getrennt" in w.log.toPlainText() and "Spiel 0.100 mm am Durchmesser" in w.log.toPlainText())
+        check("Ribbon: der Befehl „Spiel geben“ steht neben „Passung“",
+              any(a.text() == "Spiel geben" for a in w.findChildren(QtGui.QAction)))
+        w.maskenrand.schliessen()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Spiel geben", False, str(ex)[:70])
+
+    try:
+        # ---- Importhinweise: Zweig, Klick leuchtet, So einstellen, Rückfrage (17.09.2026) ----
+        from tests.test_hinweise import _modell as _hw_modell
+        from statik3d import hinweise as hw_
+        m_, kb_h = _hw_modell()
+        m_.importhinweise = hw_.erzeugen(m_)
+        w.model = m_
+        w.analysis = None
+        w.results = None
+        w.refresh_all()
+        app.processEvents()
+        m_ = w.model
+
+        def zweige_h(baum):
+            out_ = []
+
+            def lauf_(it):
+                out_.append(it.text(0))
+                for i_ in range(it.childCount()):
+                    lauf_(it.child(i_))
+            for i_ in range(baum.topLevelItemCount()):
+                lauf_(baum.topLevelItem(i_))
+            return out_
+        namen = zweige_h(w.baum)
+        check("Modellbaum: Zweig „Importhinweise“ mit zwei Einträgen (Reibung, Spiel)",
+              "Importhinweise" in namen and any("Reibung" in n for n in namen) and any("Spiel 0.02 mm" in n for n in namen),
+              str([n for n in namen if "Reibung" in n or "Spiel" in n]))
+        w._baum_geklickt("importhinweis", "0")
+        app.processEvents()
+        check("Klick auf den Hinweis: Stift und Platte leuchten, die Maske nennt Befund und Vorschlag",
+              "V1" in w.sel_koerper and "Platte" in w.sel_koerper and w.eingaben_dock.windowTitle() == "Importhinweis 1",
+              f"{w.sel_koerper} / {w.eingaben_dock.windowTitle()}")
+        check("nichts ist von selbst umgestellt: die Fuge haftet noch", m_.kontaktbedingungen["Stift"].standard == "Rau")
+        w._hinweis_anwenden(0)
+        app.processEvents()
+        m_ = w.model
+        check("„So einstellen“: die Fuge ist Reibungsbehaftet mit μ = 0,2, der Hinweis trägt ✓",
+              m_.kontaktbedingungen["Stift"].standard == "Reibungsbehaftet" and m_.importhinweise[0]["erledigt"] == "angewendet"
+              and any(n.startswith("✓") for n in zweige_h(w.baum)), str(m_.kontaktbedingungen["Stift"].standard))
+        # Die testweite Umlenkung der Rueckfragen (oben, True) bleibt: hier nur
+        # merken und nachher zurueckstellen - ein "del" loeschte sie und der
+        # spaetere Block "Unterlagen" blieb im echten Dialog stehen (17.09.2026)
+        alt_fk_h = w.__dict__.get("_fragen_knoepfe")
+        w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": True
+        w._importhinweise_fragen()
+        app.processEvents()
+        m_ = w.model
+        from statik3d import spiel as sp_h
+        check("Rückfrage „Alle anwenden“: das Spiel ist gegeben (r = 19,99 mm), der Stift neu vernetzt, kein Hinweis offen",
+              abs(sp_h.zylinder(m_, "V1")["radius"] - 0.01999) < 1e-9 and len(m_.koerper["V1"].elemente) > 0
+              and not hw_.offen(m_), str(sp_h.zylinder(m_, "V1").get("radius")))
+        if alt_fk_h is not None:
+            w._fragen_knoepfe = alt_fk_h
+        else:
+            del w._fragen_knoepfe
+        w._baum_geklickt("importhinweise", "Importhinweise")
+        app.processEvents()
+        check("Übersicht der Hinweise: 2, 0 offen", w.eingaben_dock.windowTitle() == "Importhinweise")
+        w.maskenrand.schliessen()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Importhinweise", False, str(ex)[:70])
+
     # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
     try:
         import pyvista as pvx

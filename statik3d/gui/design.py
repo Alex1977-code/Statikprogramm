@@ -1076,6 +1076,20 @@ class Modellbaum(QtWidgets.QTreeWidget):
                          for name, x in unt.items()], "unterlage", "unterlagen")
         self._zweig(uz, "+ Skizze anlegen", "", "unterlage_neu", farbe=FARBEN["akzent"])
 
+        # ---- Importhinweise (17.09.2026): Vorschlaege zur Modellierung, zur Kontrolle ----
+        hw = getattr(model, "importhinweise", None) or []
+        if hw:
+            from ..hinweise import kurz as _hkurz
+            hw_offen = [h for h in hw if not h.get("erledigt")]      # nicht "offen": das ist der Klappzustand
+            hz = self._zweig(wurzel, "Importhinweise", f"{len(hw_offen)} offen" if hw_offen else len(hw), "importhinweise",
+                             fett=bool(hw_offen), farbe=FARBEN["warn"] if hw_offen else None,
+                             hinweis="Was das Programm nach dem Import an der Modellierung erkannt hat - als "
+                                     "Vorschlag, nichts ist von selbst umgestellt. Klick: die betroffenen "
+                                     "Teile leuchten, rechts die Maske mit „So einstellen“ und „Verwerfen“.")
+            self._liste(hz, [(("✓ " if h.get("erledigt") == "angewendet" else "✗ " if h.get("erledigt") else "")
+                              + _hkurz(h), "", str(i), str(h.get("text", "")))
+                             for i, h in enumerate(hw)], "importhinweis", "importhinweise", sortieren=False)
+
         # ---- Subsysteme, Stellungen, Situationen ---------------------------
         # Das Gesamtsystem und die Grundstellung sind immer da; alles weitere
         # legt der Anwender an (Rechtsklick: Neu, oder der Eintrag "+ …").

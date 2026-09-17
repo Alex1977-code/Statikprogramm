@@ -126,6 +126,7 @@ Die Arbeitsfläche in drei Spalten:
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026) |
+  | Importhinweise | Vorschläge zur Modellierung, die das Programm nach dem Import erkennt (17.09.2026): haftende Fuge an einem Zylinder → Reibung, Zylinder ohne Spiel in seiner Bohrung → Spiel geben. Nichts davon ist von selbst umgestellt; ein Klick lässt die betroffenen Teile leuchten, die Maske hat „So einstellen“ und „Verwerfen“, die Übersicht „Alle offenen anwenden“. Erledigte Einträge tragen ✓ oder ✗. Der Zweig erscheint, sobald es Hinweise gibt |
   | Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
   | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
@@ -306,6 +307,31 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 („ja (68 Spaltelemente)", „ja (Kontaktpaar)"); steht dort „nein", rechnet das
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
+
+#### Spiel geometrisch geben
+
+*Lager / Kontakt → Spiel geben* (17.09.2026, „zylinderförmige Bauteile
+geometrisch mit dem Spiel versehen, ggf. auch Ebenen; dann bräuchte es keine
+Sonderbedingungen“). Zylindrische Volumen in der Ansicht wählen (Auswahlart
+*Volumen*: Passstifte, Bolzen, Schrauben) oder ebene Flächen (Auswahlart
+*Fläche*), dann *Spiel geben*: die Maske nennt, was sie als Zylinder erkennt
+(alle Kreisbögen des Volumens mit demselben Radius auf einer Achse, an
+mindestens zwei Stellen längs der Achse; ein Bolzen mit Kopf: der Schaft ist
+der häufigste Radius, der Kopf bleibt), das Spiel in mm eintragen — bei
+Zylindern das Spiel am **Durchmesser**, bei Flächen der **Spalt** —, und
+anwenden. Was geschieht: Stift und Bohrung teilen sich in RFEM die
+Kreisknoten und oft die Bogenlinien; darum wird der Zylinder zuerst von
+seinen Nachbarn **getrennt** (geteilte Linien und Knoten bekommen Kopien, die
+ihm gehören, die Bohrung behält ihr Maß), dann rücken seine Bögen und Knoten
+auf dem Schaftradius um das halbe Spiel zur Achse. Eine gemeinsame
+Trennfläche zweier Volumen bekommt für das gewählte Volumen eine eigene
+Kopie, die um den Spalt nach innen rückt. Das Netz der veränderten Volumen
+wird gelöscht und, wenn der Haken steht, gleich neu erzeugt; ihre
+Kontaktfugen werden wieder ausgeführt und bleiben erhalten (auch die von
+selbst entstandenen — mit Spiel „berühren“ sich die Teile im Sinn der
+Berührungssuche nicht mehr). Das Protokoll nennt je Volumen Radius, Achse,
+Spiel und die Zahl der Kopien. Danach trägt der Stift wie in Wirklichkeit auf
+der belasteten Seite; an der Fuge genügt „Reibungsbehaftet“.
 
 #### Passung für viele Fugen auf einmal
 
@@ -2383,6 +2409,24 @@ zerfällt zunächst in Teile. Unter **Start → Modell prüfen**
 schließt „Freie Stabenden anschließen" (Suchradius 60 mm) jedes freie Ende an die
 Achse des nächsten Stabes an und teilt diesen dort; der Versatz steht im
 Protokoll, die Ausmitte des Anschlusses wird nicht abgebildet.
+
+**Importhinweise.** Nach dem Import prüft das Programm die Modellierung und
+**schlägt vor**, statt umzustellen („nicht automatisch beim Import setzen,
+da du nicht wissen kannst, ob das vom User gewünscht ist“, 17.09.2026):
+eine Kontaktfuge, die in der Ebene haftet (RFEM „schubstarr“) und an einem
+zylindrischen Bauteil sitzt, bekommt den Vorschlag *Reibungsbehaftet mit
+μ = 0,2* — ein Passstift trägt über Formschluss, nicht über eine schubstarre
+Fuge; ein Zylinder, der ohne Spiel in seiner Bohrung sitzt (gleicher Radius
+auf derselben Achse, am Drehlager r = 12,500 mm beidseits), bekommt den
+Vorschlag *Spiel geben, 0,02 mm am Durchmesser*. Nach dem Import fragt das
+Programm, ob es alle Vorschläge anwenden soll („Alle anwenden“ / „Erst
+ansehen“). So oder so steht die Liste im Modellbaum unter **Importhinweise**:
+ein Klick auf einen Eintrag lässt die betroffenen Volumen und Fugen in der
+Ansicht leuchten, rein zur Kontrolle; die Maske rechts nennt Befund und
+Vorschlag und hat **So einstellen** (Reibung: die Fuge wird umgestellt und
+am Netz neu ausgeführt; Spiel: der Zylinder wird verkleinert, neu vernetzt,
+seine Fugen ausgeführt) und **Verwerfen**. Die Liste wird mit dem Modell
+gespeichert; das Importprotokoll nennt die Vorschläge in einer Zeile.
 
 **Integrierte Knoten und Linien, Stabenden auf Volumen.** RFEM integriert
 einen Knoten, der auf einer Fläche liegt, in deren Netz: ein Zugstab, der in
