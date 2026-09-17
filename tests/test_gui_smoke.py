@@ -5037,6 +5037,44 @@ def main():
         traceback.print_exc()
         check("Passung", False, str(ex)[:70])
 
+    try:
+        # ---- Spiel geben: Zylinder verkleinern, neu vernetzen, Fuge ausführen (17.09.2026) ----
+        from tests.test_spiel import _stift_und_platte as _sp_modell
+        from statik3d import spiel as sp_
+        m_, k_sp = _sp_modell()
+        w.model = m_
+        w.analysis = None
+        w.results = None
+        w.refresh_all()
+        app.processEvents()
+        m_ = w.model
+        w.auswahlart_setzen("Volumen")
+        w.sel_koerper = ["V1"]
+        w.maske_spiel()
+        app.processEvents()
+        ms = w.maskenrand.maske
+        check("Maske „Spiel geben“ erkennt den Stift als Zylinder und nennt ihn",
+              ms is not None and "V1" in str(ms.werte().get("zylinder")), str(ms.werte().get("zylinder") if ms else None))
+        ms.setzen("spiel", "0,1")
+        ms.angewendet.emit(ms.werte())
+        app.processEvents()
+        m_ = w.model
+        z_ = sp_.zylinder(m_, "V1")
+        check("Anwenden: der Stift hat r = 19,95 mm, ist neu vernetzt und das Loch der Platte behält 20 mm",
+              z_["ok"] and abs(z_["radius"] - 0.01995) < 1e-9 and len(m_.koerper["V1"].elemente) > 0
+              and all(abs(sp_.kreis_aus_punkten(m_.lines[ln].geometrie["punkte"])[1] - 0.02) < 1e-12
+                      for ln in m_.flaechen["P_oben"].oeffnungen[0]),
+              f"r {z_.get('radius')}, {len(m_.koerper['V1'].elemente)} Elemente")
+        check("das Protokoll nennt Trennung und Spiel",
+              "von den Nachbarn getrennt" in w.log.toPlainText() and "Spiel 0.100 mm am Durchmesser" in w.log.toPlainText())
+        check("Ribbon: der Befehl „Spiel geben“ steht neben „Passung“",
+              any(a.text() == "Spiel geben" for a in w.findChildren(QtGui.QAction)))
+        w.maskenrand.schliessen()
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Spiel geben", False, str(ex)[:70])
+
     # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
     try:
         import pyvista as pvx

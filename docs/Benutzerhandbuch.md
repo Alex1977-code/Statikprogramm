@@ -307,6 +307,31 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
 
+#### Spiel geometrisch geben
+
+*Lager / Kontakt → Spiel geben* (17.09.2026, „zylinderförmige Bauteile
+geometrisch mit dem Spiel versehen, ggf. auch Ebenen; dann bräuchte es keine
+Sonderbedingungen“). Zylindrische Volumen in der Ansicht wählen (Auswahlart
+*Volumen*: Passstifte, Bolzen, Schrauben) oder ebene Flächen (Auswahlart
+*Fläche*), dann *Spiel geben*: die Maske nennt, was sie als Zylinder erkennt
+(alle Kreisbögen des Volumens mit demselben Radius auf einer Achse, an
+mindestens zwei Stellen längs der Achse; ein Bolzen mit Kopf: der Schaft ist
+der häufigste Radius, der Kopf bleibt), das Spiel in mm eintragen — bei
+Zylindern das Spiel am **Durchmesser**, bei Flächen der **Spalt** —, und
+anwenden. Was geschieht: Stift und Bohrung teilen sich in RFEM die
+Kreisknoten und oft die Bogenlinien; darum wird der Zylinder zuerst von
+seinen Nachbarn **getrennt** (geteilte Linien und Knoten bekommen Kopien, die
+ihm gehören, die Bohrung behält ihr Maß), dann rücken seine Bögen und Knoten
+auf dem Schaftradius um das halbe Spiel zur Achse. Eine gemeinsame
+Trennfläche zweier Volumen bekommt für das gewählte Volumen eine eigene
+Kopie, die um den Spalt nach innen rückt. Das Netz der veränderten Volumen
+wird gelöscht und, wenn der Haken steht, gleich neu erzeugt; ihre
+Kontaktfugen werden wieder ausgeführt und bleiben erhalten (auch die von
+selbst entstandenen — mit Spiel „berühren“ sich die Teile im Sinn der
+Berührungssuche nicht mehr). Das Protokoll nennt je Volumen Radius, Achse,
+Spiel und die Zahl der Kopien. Danach trägt der Stift wie in Wirklichkeit auf
+der belasteten Seite; an der Fuge genügt „Reibungsbehaftet“.
+
 #### Passung für viele Fugen auf einmal
 
 *Lager / Kontakt → Passung* setzt Spiel, Lochleibungsgrenze und

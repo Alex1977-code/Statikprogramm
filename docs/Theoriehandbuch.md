@@ -258,6 +258,21 @@ singuläres System bleibt über der Schranke (`tests/test_nachiteration.py`:
 ein Löser mit 3e-6 Fehler je Schritt kommt nach einer Nachiteration unter
 1e-6, einer mit 50 % Fehler nicht).
 
+**Spiel geometrisch** (17.09.2026, `statik3d/spiel.py`): ein Zylinder wird
+aus den Kreisbögen seiner Flächen erkannt (Kreis durch die drei Punkte jedes
+Bogens; gleicher Radius auf 1e-6, Mittelpunkte auf einer Achse, an mindestens
+zwei Achslagen). Weil RFEM Stift und Bohrung über dieselben Knoten und Linien
+führt, werden geteilte Flächen, Linien und Knoten zuerst für das gewählte
+Volumen kopiert (`spiel.trennen`); dann rücken die Knoten auf dem
+Schaftradius und die Punkte der Bögen radial um s/2 zur Achse
+(`spiel.zylinder_spiel`), ebene Flächen um s längs ihrer Innennormalen
+(`spiel.flaechen_spiel`). Das Netz des Volumens wird gelöscht; die
+Oberfläche vernetzt neu und führt die Fugen wieder aus. Nachweis
+`tests/test_spiel.py`: Stift r = 20 mm in einer Platte, deren Loch seine
+Bögen benutzt — nach 0,1 mm Spiel liegen Knoten, Bögen und das neue Netz auf
+r = 19,95 mm, das Loch behält 20 mm und seine Linien; die gemeinsame
+Trennfläche zweier Blöcke bekommt eine Kopie 0,5 mm höher.
+
 **Passung** (17.09.2026): drei Angaben je Kontaktbedingung, die in den
 Aufbau der Bedingungen eingehen (`contact.ContactSystem._bedingung`). Das
 **Spiel** s kommt zum bereinigten Anfangsspalt jeder Bedingung dazu

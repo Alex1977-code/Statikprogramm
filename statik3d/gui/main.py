@@ -3697,6 +3697,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
                 "Unterlegblech). Daraus entstehen Pressspannung und - über den "
                 "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
+        g.gross("Spiel geben", "", self.maske_spiel, "",
+                "Gewählte zylindrische Volumen (Passstifte, Bolzen) geometrisch um das "
+                "Durchmesserspiel verkleinern oder gewählte ebene Flächen um einen Spalt nach "
+                "innen versetzen - erst von den Nachbarn getrennt, dann neu vernetzt: das Spiel "
+                "steht im Modell, ohne Sonderbedingung an der Fuge", symbol="lasten")
         g.gross("Passung", "", self.maske_passung, "",
                 "Spiel, Lochleibungsgrenze und Randabminderung für alle Kontaktfugen der "
                 "gewählten Volumen auf einmal (Passstifte, Bolzen): Einstellungen, die "
@@ -14017,6 +14022,91 @@ class MainWindow(QtWidgets.QMainWindow):
             if gewaehlt & dazu:
                 aus.append(name)
         return sorted(aus, key=dsg.natuerlich)
+
+    def maske_spiel(self):
+        """Spiel geometrisch geben (17.09.2026, „zylinderförmige Bauteile
+        geometrisch mit dem Spiel versehen, ggf. auch Ebenen"): gewaehlte
+        Zylinder um das Durchmesserspiel verkleinern, gewaehlte ebene
+        Flaechen um einen Spalt nach innen versetzen."""
+        from .. import spiel as sp
+        m = self.model
+        koerper = [k for k in (self.sel_koerper or []) if k in m.koerper]
+        flaechen = [f for f in (self.sel_flaechen or []) if f in m.flaechen]
+        zyl = [k for k in koerper if sp.zylinder(m, k).get("ok")]
+        keine = [k for k in koerper if k not in zyl]
+        if not koerper and not flaechen:
+            return self.error("Erst Volumen (Zylinder) oder Flächen in der Ansicht wählen - "
+                              "Auswahlart „Volumen“ oder „Fläche“, mehrere mit Strg oder dem Auswahlfenster")
+        eigner = {}
+        for f in flaechen:
+            eigner[f] = next((kn for kn, kk in m.koerper.items() if f in (kk.flaechen or [])), "")
+        felder = [msk.Feld("zylinder", "Zylinder (Auswahl)", "info",
+                           (", ".join(zyl[:8]) + (" …" if len(zyl) > 8 else "")) if zyl else "keine"
+                           + ((" - kein Zylinder: " + ", ".join(keine[:5])) if keine else "")),
+                  msk.Feld("flaechen", "Ebene Flächen (Auswahl)", "info",
+                           (", ".join(f"{f} ({eigner[f]})" for f in flaechen[:6]) + (" …" if len(flaechen) > 6 else ""))
+                           if flaechen else "keine"),
+                  msk.Feld("spiel", "Spiel [mm]", "zahl", 0.02,
+                           hinweis="Zylinder: Spiel am Durchmesser (der Radius wird um die Hälfte kleiner; "
+                                   "H7/h6 bei 25 mm: 0,02 bis 0,04 mm). Flächen: der Spalt, um den die "
+                                   "Fläche nach innen rückt"),
+                  msk.Feld("vernetzen", "danach neu vernetzen", "haken", True,
+                           hinweis="die veränderten Volumen sofort neu vernetzen und ihre Kontaktfugen "
+                                   "wieder ausführen")]
+        maske = msk.Maske("Spiel geben", felder, knopf="Spiel geben",
+                          hinweis="Stift und Bohrung teilen sich in RFEM Knoten und Bogenlinien. Das Programm "
+                                  "trennt den Zylinder erst von den Nachbarn (Kopien der geteilten Linien und "
+                                  "Knoten), dann setzt es seine Bögen und Knoten um das halbe Spiel zur Achse; "
+                                  "die Bohrung behält ihr Maß. Ebene Flächen rücken um den Spalt in ihr Volumen "
+                                  "hinein. Das Netz der Volumen wird gelöscht und neu erzeugt.")
+        maske.angewendet.connect(lambda w, z=zyl, fl=flaechen, eg=eigner: self._spiel_anwenden(w, z, fl, eg))
+        return self.maske_erzeugen(maske)
+
+    def _spiel_anwenden(self, w: dict, zyl: list, flaechen: list, eigner: dict):
+        from .. import spiel as sp
+        m = self.model
+        try:
+            spiel = float(str(w.get("spiel", 0) or 0).replace(",", ".")) / 1e3
+        except ValueError:
+            spiel = 0.0
+        if spiel <= 0:
+            return self.error("Spiel größer als null eintragen")
+        if not zyl and not flaechen:
+            return self.error("Keine Zylinder und keine Flächen in der Auswahl")
+        self.merken(f"Spiel {spiel * 1e3:g} mm")
+        log: list = []
+        betroffen: list = []
+        for k in zyl:
+            erg = sp.zylinder_spiel(m, k, spiel, log)
+            if erg.get("ok"):
+                betroffen.append(k)
+        je_koerper: dict = {}
+        for f in flaechen:
+            if eigner.get(f):
+                je_koerper.setdefault(eigner[f], []).append(f)
+        for k, fl in je_koerper.items():
+            erg = sp.flaechen_spiel(m, k, fl, spiel, log)
+            if erg.get("ok"):
+                betroffen.append(k)
+        for z in log:
+            self.log.appendPlainText(z)
+        if not betroffen:
+            self.refresh_all()
+            return self.error("Nichts verändert - siehe Protokoll")
+        # Eine Fuge mit Spiel beruehrt sich nicht mehr im Sinn der Beruehrungssuche:
+        # ihre Kontakte bleiben, auch wenn sie von selbst entstanden waren
+        for kb in m.kontaktbedingungen.values():
+            if set(betroffen) & (set(kb.koerpernamen or []) | set(getattr(kb, "gegenkoerper", None) or [])):
+                kb.automatisch = False
+        if bool(w.get("vernetzen", True)):
+            self._vernetzen([], [m.koerper[k] for k in dict.fromkeys(betroffen)])
+            from .. import fugen
+            gruppen = fugen.gruppen_je_knoten(m) if m.elements else None
+            for kb in m.kontaktbedingungen.values():
+                if set(betroffen) & (set(kb.koerpernamen or []) | set(getattr(kb, "gegenkoerper", None) or [])):
+                    self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
+        self.refresh_all()
+        self.info(f"Spiel {spiel * 1e3:g} mm gegeben: {', '.join(dict.fromkeys(betroffen))}")
 
     def _passung_kontakte(self, koerper: list) -> list:
         """Die Kontaktbedingungen, an denen einer der Koerper beteiligt ist
