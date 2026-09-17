@@ -2128,6 +2128,73 @@ Volumen gibt es nicht. Kein Plastizieren, kein Kriechen und nicht der
 Sprödbruchnachweis nach EN 1993-1-10 selbst. Die Ermüdung der Volumen aus der
 Hauptspannung im Element steht in 5.5-3.
 
+## 5e Plastizität der Volumenkörper (17.09.2026)
+
+**Anlass.** Spannungsspitzen an Passstiften und Bohrungsrändern (V34:
+4930 N/mm² am Stift, ein Vielfaches der Streckgrenze) sind elastische
+Rechenwerte, die es in der Wirklichkeit nicht gibt: dort fließt der Stahl,
+die Spannung bleibt bei der Streckgrenze, die Kraft verteilt sich um und
+die Verformung wächst. Der Anwender: „bei zu hohen Spannungen Streckgrenze
+und Fließgrenze berücksichtigen und Verschiebung ggf. zulassen“.
+
+**Werkstoffgesetz.** Von Mises mit isotroper linearer Verfestigung. Die
+Vergleichsspannung q = √(3/2 s:s) des Spannungsdeviators s bleibt unter
+fy + H·ε_p,eq; der Verfestigungsmodul H folgt aus der eingestellten
+Tangente E_t = r·E nach dem Fließen: H = E·r/(1 − r) (uniaxial gilt
+σ = fy + H·ε_p und ε = σ/E + ε_p, also dσ/dε = E·H/(E + H) = E_t).
+Rückführung (radial return) je Element, an der Elementmitte:
+
+    σ_trial = D (ε − ε_p,alt),  s = dev σ_trial,  q = √(3/2 s:s),  f = q − (fy + H ε_p,eq)
+    f > 0:  Δγ = f / (3G + H),  n = 3/2 s/q,  σ = σ_trial − 2G Δγ n,  Δε_p = Δγ n,  Δε_p,eq = Δγ
+
+(Voigt-Reihenfolge wie im Element, plastische Gleitungen als
+Ingenieurgleitungen, also doppelte Schubanteile). Werkstoffe ohne
+Streckgrenze („Starr“, Beton ohne fy) bleiben elastisch; das Protokoll
+nennt sie.
+
+**Verfahren: Anfangsdehnungs-Iteration.** Der Löser dieses Programms ist
+linear-elastisch plus Kontakt (Aktivmengen-Iteration mit fester
+Faktorisierung). Das Fließen sitzt darauf, ohne die
+Steifigkeitsmatrix anzufassen: die plastische Dehnung ε_p ist eine
+Anfangsdehnung wie eine Temperaturdehnung, ihre äquivalenten Knotenlasten
+F_p = Σ ∫ Bᵀ D ε_p dV kommen zur äußeren Last, die Spannung ist
+σ = D(ε − ε_p). Iteriert wird
+
+    u_k = K⁻¹ (F + F_p(ε_p,k−1)),   ε_p,k = Rückführung(D ε(u_k) − D ε_p,k−1)
+
+— das Anfangssteifigkeitsverfahren. Jeder Schritt ist eine lineare Lösung
+mit der vorhandenen Faktorisierung; mit Kontakt eine Kontakt-Iteration,
+warm gestartet vom Zustand des vorigen Schritts. Die Last wird in
+Laststufen aufgebracht (Vorgabe 3), damit die Rückführung auf dem
+Belastungspfad bleibt. Konvergenzmaß ist die Änderung der plastischen
+Knotenlasten gegen die Last, |F_p,k − F_p,k−1| / |F| ≤ Toleranz (Vorgabe
+1e-3).
+
+**Beschleunigung (Aitken).** Das Anfangssteifigkeitsverfahren zieht sich
+mit dem Faktor E_t/E zusammen: bei 2 % Verfestigung 0,98 je Schritt —
+gemessen am Zugversuch (ein Hexaeder, 1,1 fy) brachten 60 Schritte 65 %
+des Wegs. Die Fixpunktfolge F_p wird deshalb mit Aitken-Δ² relaxiert:
+aus zwei Residuen r_k = F_p,neu − F_p folgt ω = −ω·(r_k−1·Δr)/|Δr|², auf
+0,5 … 200 begrenzt und je Laststufe neu begonnen. Der Zugversuch trifft
+damit ε = σ/E + (σ − fy)/H auf 1e-6 in **4 Schritten in 2 Laststufen**
+(`tests/test_plastizitaet.py`); der reibungsgelagerte Block mit fy auf
+60 % seiner elastischen Vergleichsspannung (50 fließende Elemente,
+Kontakt-Iteration mit 19 Schritten) konvergiert in 27 Schritten bei
+Toleranz 1e-4, mit Gleichgewicht der Auflager (Auflager = Last, nicht
+Last + F_p: die Reaktion ist K·u − F_p − F, die innere Kraft ∫Bᵀσ dV).
+
+**Folgen für die Rechnung.** Mit Fließen gilt keine Superposition:
+Kombinationen werden direkt gerechnet wie bei Kontakt (`_nichtlinear`),
+die Grundlast wirkt mit. Der Spannungsnachlauf zieht D·ε_p ab
+(`temp["sigma0"]`, derselbe Weg wie die Vorspannung), die Ergebnisse
+zeigen also die wahren Spannungen, nicht E·ε. Die Plastizität ist je
+Lastfall monoton: kein Entlasten, keine Übertragung von ε_p zwischen
+Lastfällen oder Ermüdungszuständen. Ein Punkt je Element (die Mitte)
+genügt für linear-tetraedrische und trilinear-hexaedrische Netze; feiner
+aufgelöstes Fließen braucht ein feineres Netz, nicht mehr
+Auswertepunkte. Große Verformungen (Theorie II. Ordnung der Volumen)
+bleiben außen vor.
+
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
 Ein Anschluss sitzt an einem Stabende. Die Beanspruchung sind die

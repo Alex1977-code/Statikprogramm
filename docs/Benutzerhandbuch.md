@@ -2980,6 +2980,26 @@ Nachweis mit seiner Verformung je Kombination.
   bringt solche Fälle auf 1e-12. Das Protokoll nennt Löser, Threads und
   Genauigkeit („MUMPS, 31 Threads, Genauigkeit 1e-06 mit bis zu 3
   Nachiterationen“). Beide Werte werden gespeichert.
+* **Plastizität der Volumen** (*Berechnung → Einstellungen*, 17.09.2026;
+  eine Einstellung **am Modell**, sie reist mit der Datei): mit dem Haken
+  fließen Volumenelemente, deren Vergleichsspannung (von Mises) die
+  Streckgrenze fy ihres Werkstoffs übersteigt — die Spannung bleibt bei
+  fy + H·ε_p, die Kraft verteilt sich um, die Verformung wächst. Werkstoffe
+  ohne fy (etwa „Starr“) bleiben elastisch, das Protokoll nennt sie.
+  **Verfestigung E_t/E** ist die Tangente nach dem Fließen (0 %
+  ideal-plastisch, Vorgabe 1 %), **Laststufen** (Vorgabe 3) bringen die
+  Last stufenweise auf, **Schritte je Stufe** (Vorgabe 25) und die
+  **Toleranz** (Änderung der plastischen Knotenlasten gegen die Last,
+  Vorgabe 1e-3) begrenzen die Iteration. Jeder Schritt ist eine lineare
+  Lösung mit der vorhandenen Faktorisierung, mit Kontakt eine
+  Kontakt-Iteration (warm gestartet); Kombinationen werden dann direkt
+  gerechnet, nicht überlagert. Die Spannungen im Ergebnis sind die wahren
+  (σ = D(ε − ε_p)), die Auflagerkräfte tragen die Last. Das Protokoll nennt
+  je Laststufe und Schritt die fließenden Elemente und die Änderung, die
+  Zusammenfassung „Plastizität: n Elemente fließen, ε_p,eq max …, Schritte
+  in Laststufen“. Der Zugversuch am Hexaeder trifft σ/E + (σ − fy)/H auf
+  1e-6, mit Kontakt bleibt das Gleichgewicht (`tests/test_plastizitaet.py`;
+  Verfahren in `docs/Theoriehandbuch.md`, Abschnitt 5e).
 * **MUMPS** ist unter Windows ein eigener Bau (gfortran, OpenMP, OpenBLAS,
   METIS — `docs/MUMPS_Windows_Bauanleitung.md`), nachgeladen beim Start. Symmetrische
   Steifigkeitsmatrizen gehen als unteres Dreieck hinein (SYM=2): halber
