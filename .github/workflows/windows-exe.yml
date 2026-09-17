@@ -85,3 +85,36 @@ jobs:
           files: dist/Statik3D.exe
           prerelease: false
           make_latest: true
+
+      # Zweiter Versuch, wenn das Hochladen scheitert (17.09.2026): die Aktion
+      # raeumt die alte Datei weg, bevor sie die neue hochlaedt - bricht sie
+      # dazwischen ab, steht das Release ohne Statik3D.exe da und niemand kann
+      # mehr laden (Lauf zu 454e3b9: exe gebaut, Selbsttest bestanden, nur der
+      # Schritt "Release veroeffentlichen" fehlgeschlagen).
+      - name: Release "latest" veroeffentlichen - zweiter Versuch
+        if: failure() && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Statik3D - neueste Version
+          body: |
+            Automatisch gebaut aus `main` (zweiter Versuch).
+
+            build: ${{ github.sha }}
+            Datum: ${{ github.event.head_commit.timestamp }}
+            Commit: ${{ github.event.head_commit.message }}
+
+            Download: Statik3D.exe (Windows 10/11, 64 Bit). Beim ersten Start meldet
+            Windows SmartScreen ein unbekanntes Programm: "Weitere Informationen" -> "Trotzdem ausführen".
+          files: dist/Statik3D.exe
+          prerelease: false
+          make_latest: true
+
+      - name: Pruefen, dass das Release die exe traegt
+        if: always() && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $r = Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/latest" -Headers @{ "User-Agent" = "statik3d" }
+          $a = @($r.assets | Where-Object { $_.name -eq "Statik3D.exe" })
+          if ($a.Count -eq 0) { throw "Das Release latest hat keine Statik3D.exe - niemand kann laden" }
+          "Release latest: Statik3D.exe, $($a[0].size) Bytes, $($a[0].updated_at)"
