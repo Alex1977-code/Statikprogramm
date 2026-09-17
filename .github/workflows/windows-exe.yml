@@ -69,52 +69,53 @@ jobs:
 
       - name: Release "latest" veroeffentlichen
         if: github.ref == 'refs/heads/main'
-        # Zeitlimit je Versuch (17.09.2026): der Upload der 374-MB-Datei lief
-        # sonst in Sekunden, hing am 17.09. ab 15:50 aber 14,8 min (Abbruch)
-        # und beim naechsten Lauf 38,5 min bis ins Job-Zeitlimit - dann kam
-        # der zweite Versuch gar nicht mehr dran und das Release blieb leer.
-        timeout-minutes: 12
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: Statik3D - neueste Version
-          body: |
-            Automatisch gebaut aus `main`.
-
-            build: ${{ github.sha }}
-            Datum: ${{ github.event.head_commit.timestamp }}
-            Commit: ${{ github.event.head_commit.message }}
-
-            Download: Statik3D.exe (Windows 10/11, 64 Bit). Beim ersten Start meldet
-            Windows SmartScreen ein unbekanntes Programm: "Weitere Informationen" -> "Trotzdem ausführen".
-          files: dist/Statik3D.exe
-          prerelease: false
-          make_latest: true
-
-      # Zweiter Versuch, wenn das Hochladen scheitert (17.09.2026): die Aktion
-      # raeumt die alte Datei weg, bevor sie die neue hochlaedt - bricht sie
-      # dazwischen ab, steht das Release ohne Statik3D.exe da und niemand kann
-      # mehr laden (Lauf zu 454e3b9: exe gebaut, Selbsttest bestanden, nur der
-      # Schritt "Release veroeffentlichen" fehlgeschlagen).
-      - name: Release "latest" veroeffentlichen - zweiter Versuch
-        if: failure() && github.ref == 'refs/heads/main'
-        timeout-minutes: 20
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: Statik3D - neueste Version
-          body: |
-            Automatisch gebaut aus `main` (zweiter Versuch).
-
-            build: ${{ github.sha }}
-            Datum: ${{ github.event.head_commit.timestamp }}
-            Commit: ${{ github.event.head_commit.message }}
-
-            Download: Statik3D.exe (Windows 10/11, 64 Bit). Beim ersten Start meldet
-            Windows SmartScreen ein unbekanntes Programm: "Weitere Informationen" -> "Trotzdem ausführen".
-          files: dist/Statik3D.exe
-          prerelease: false
-          make_latest: true
+        # Mit dem GitHub-Werkzeug statt mit einer Aktion (17.09.2026): das
+        # Veroeffentlichen scheiterte dreimal - erst hing der Upload (14,8 und
+        # 38,5 min), dann brach er nach 30 s ab -, und jedes Mal blieb das
+        # Release ohne Statik3D.exe. "gh release upload --clobber" ersetzt die
+        # Datei gezielt, versucht es dreimal und schreibt jede Meldung ins
+        # Protokoll dieses Schrittes.
+        timeout-minutes: 30
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $repo = "${{ github.repository }}"
+          # Die Release-Notizen ueber eine Datei: ein PowerShell-Here-String
+          # braeuchte sein "@ in Spalte 0, und in YAML ist alles eingerueckt.
+          $zeilen = @(
+            "Automatisch gebaut aus main.",
+            "",
+            "build: ${{ github.sha }}",
+            "Datum: ${{ github.event.head_commit.timestamp }}",
+            "",
+            "Download: Statik3D.exe (Windows 10/11, 64 Bit). Beim ersten Start meldet",
+            "Windows SmartScreen ein unbekanntes Programm: Weitere Informationen, dann Trotzdem ausfuehren."
+          )
+          Set-Content -Path release_notizen.md -Value $zeilen -Encoding utf8
+          gh release view latest --repo $repo *> $null
+          if ($LASTEXITCODE -ne 0) {
+            "Release latest gibt es noch nicht - wird angelegt"
+            gh release create latest --repo $repo --title "Statik3D - neueste Version" --notes-file release_notizen.md --latest
+            if ($LASTEXITCODE -ne 0) { throw "gh release create fehlgeschlagen ($LASTEXITCODE)" }
+          } else {
+            gh release edit latest --repo $repo --title "Statik3D - neueste Version" --notes-file release_notizen.md --latest
+            if ($LASTEXITCODE -ne 0) { "Hinweis: gh release edit meldete $LASTEXITCODE - weiter mit dem Upload" }
+          }
+          $datei = "dist/Statik3D.exe"
+          $mb = [math]::Round((Get-Item $datei).Length / 1MB, 1)
+          $ok = $false
+          foreach ($versuch in 1..3) {
+            "Versuch $versuch - $datei ($mb MB) hochladen"
+            $t0 = Get-Date
+            gh release upload latest $datei --repo $repo --clobber
+            $code = $LASTEXITCODE
+            $dauer = [math]::Round(((Get-Date) - $t0).TotalSeconds, 0)
+            if ($code -eq 0) { "  hochgeladen in $dauer s"; $ok = $true; break }
+            "  fehlgeschlagen nach $dauer s (Exit-Code $code)"
+            Start-Sleep -Seconds 20
+          }
+          if (-not $ok) { throw "Statik3D.exe liess sich in drei Versuchen nicht hochladen" }
 
       - name: Pruefen, dass das Release die exe traegt
         if: always() && github.ref == 'refs/heads/main'
