@@ -82,6 +82,7 @@ dieselbe Aufteilung, mit der auch eine Flaechenlast auf die Knoten kommt.
 """
 from __future__ import annotations
 
+import time
 import numpy as np
 
 from .model import Model, GapElement, Kopplung
@@ -1254,8 +1255,16 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
         return gesamt
     knotengruppen = gruppen_je_knoten(model)
     cache: dict = {}
+    # Zeit je Fuge: am Drehlager kostete dieser Schritt 203,6 s von 411,3 s
+    # des ganzen Vernetzens (18.09.2026) - ohne die Aufteilung liess sich
+    # nicht sagen, welche Fuge daran haengt.
+    zeiten: list = []
     for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
+        t0 = time.time()
         b = kontaktfuge_ausfuehren(model, kb, log, knotengruppen, cache)
+        dt = time.time() - t0
+        if dt >= 1.0:
+            zeiten.append((dt, kb.name, int(b.get("knoten", 0) or 0)))
         if kb.ausgefuehrt and not b["grund"]:
             gesamt["fugen"] += 1
             for x in ("knoten", "spalt", "kopplung", "kontaktpaar"):
@@ -1264,6 +1273,11 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
             gesamt["offen"] += 1
             if b["grund"] and b["grund"] != "schon ausgeführt":
                 gruende[b["grund"]] = gruende.get(b["grund"], 0) + 1
+    if log is not None and zeiten:
+        zeiten.sort(reverse=True)
+        C.say(log, "Kontaktfugen - die zeitaufwendigsten: "
+                   + ", ".join(f"{n} {t:.1f} s ({k} Fugenknoten)" for t, n, k in zeiten[:6])
+                   + (f" … zusammen {sum(t for t, _n, _k in zeiten):.1f} s" if len(zeiten) > 6 else ""))
     if log is not None:
         if gesamt["fugen"]:
             C.say(log, f"{gesamt['fugen']} Kontaktfugen ausgeführt: "

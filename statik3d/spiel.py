@@ -258,10 +258,22 @@ def trennen(model, koerper: str, flaechen: list = None, log: list = None) -> dic
     for fn in flaechen:
         f = model.flaechen[fn]
         f.ecken = [kopie.get(int(n), int(n)) for n in (f.ecken or [])]
+    # Kopien, die am Ende keine Flaeche benutzt, wieder wegnehmen: am
+    # Drehlager blieben drei solche Linien liegen, und ihre 71 Netzknoten
+    # hingen danach an keinem Element ("Knoten ohne Element", 18.09.2026).
+    n_weg = 0
+    if umbenannt:
+        benutzt = {ln for f in model.flaechen.values() for ln in _linien_der_flaeche(f)}
+        for alt_ln, neu_ln in umbenannt.items():
+            if neu_ln not in benutzt and neu_ln in model.lines:
+                del model.lines[neu_ln]
+                n_weg += 1
     if log is not None and (n_l or n_k or n_fl):
-        log.append(f"{koerper}: von den Nachbarn getrennt - {n_fl} Flächen, {n_l} Linien und {n_k} Knoten "
-                   "bekamen eigene Kopien")
-    return {"linien": n_l, "knoten": n_k, "flaechen": n_fl, "knotenkopie": kopie, "flaechen_neu": flaechen_neu}
+        log.append(f"{koerper}: von den Nachbarn getrennt - {n_fl} Flächen, {n_l - n_weg} Linien und {n_k} Knoten "
+                   "bekamen eigene Kopien"
+                   + (f" ({n_weg} Linienkopien blieben ohne Fläche und wurden verworfen)" if n_weg else ""))
+    return {"linien": n_l - n_weg, "knoten": n_k, "flaechen": n_fl, "knotenkopie": kopie,
+            "flaechen_neu": flaechen_neu, "linien_verworfen": n_weg}
 
 
 def _netz_weg(model, koerper: str, flaechen: list) -> int:

@@ -349,6 +349,26 @@ def test_abnahme():
     m3.contact_pairs[-1].gegenkoerper = ["Unten"]
     check("hat er Facetten gestellt, ist es keiner",
           not [x for x in dg.abnahme(m3) if x.pruefung == "Gegenkörper ohne Facette"], "")
+    # Er trägt auch, wenn er die **Knotenseite** stellt statt der Facetten: an
+    # einer gemeinsamen Fläche steht in koerpernamen/gegenkoerper nicht
+    # zwingend dieselbe Rolle wie in den Flächenlisten. Am Drehlager nannte
+    # V29–V34 die Flächen von V34 als Kontaktseite, die Facetten kamen von
+    # V29 - die Fuge deckte 100 % ab und trug, die Abnahme meldete trotzdem
+    # einen Mangel (18.09.2026)
+    m5 = _wuerfelpaar()
+    m5.add_kontaktbedingung("Fuge", flaechennamen=[], koerpernamen=["Oben"],
+                            gegenkoerper=["Unten"])
+    slave = [int(n) for n in m5.elements[0].nodes[:2]]
+    m5.contact_pairs.append(ContactPair("Fuge", slave_nodes=slave, master_faces=[[4, 5, 6, 7]],
+                                        abdeckung=1.0, gegenkoerper=["Oben"]))
+    gruppe = str(getattr(m5.elements[0], "group", "") or "")
+    m5.kontaktbedingungen["Fuge"].gegenkoerper = [gruppe]
+    check("der genannte Gegenkörper stellt die Knoten statt der Facetten: kein Mangel",
+          not [x for x in dg.abnahme(m5) if x.pruefung == "Gegenkörper ohne Facette"],
+          f"Knoten aus {gruppe}")
+    m5.kontaktbedingungen["Fuge"].gegenkoerper = ["gibt es nicht"]
+    check("ein Bauteil, das weder Facette noch Knoten stellt, bleibt ein Mangel",
+          len([x for x in dg.abnahme(m5) if x.pruefung == "Gegenkörper ohne Facette"]) == 1)
 
     # 4) Knoten ohne Element und Randtreue
     m4 = _wuerfelpaar()

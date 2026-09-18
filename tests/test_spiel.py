@@ -239,6 +239,12 @@ def test_bohrung_aufweiten():
           any("Blech1" in z_ and "Blech2" in z_ for z_ in log), str(log)[:120])
     erg2 = spiel.bohrung_spiel(m, z["punkt"], z["achse"], 0.05, 2e-5, ausser="V1", log=[])
     check("eine Bohrung, die es nicht gibt, wird abgewiesen", not erg2["ok"], erg2.get("grund", "")[:70])
+    # Keine Linienkopie ohne Fläche: am Drehlager blieben drei solche liegen,
+    # und ihre 71 Netzknoten hingen danach an keinem Element (18.09.2026)
+    benutzt = {ln for f in m.flaechen.values() for ln in spiel._linien_der_flaeche(f)}
+    waisen = [ln for ln in m.lines if ln not in benutzt]
+    check("keine Linie bleibt ohne Fläche zurück (sonst hängen ihre Netzknoten an nichts)",
+          not waisen, str(waisen[:6]))
 
 
 def main():

@@ -9009,13 +9009,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if not gewaehlt:
             ohne_k = [k for k in koerper if not (k.elemente or [])]
             ohne_f = [f for f in flaechen if not (f.elemente or []) and (f.dicke or m.flaeche_traegt(f.name))]
-            mit = (len(koerper) - len(ohne_k)) + (len(flaechen) - len(ohne_f))
+            # Gezaehlt wird, was **wirklich** ein Netz hat. Die Randflaechen
+            # eines Volumens bekommen nie ein eigenes (die Tetraeder tragen),
+            # fallen also nicht unter "ohne Netz" - als "mit Netz" gezaehlt
+            # ergaben sie am frisch eingelesenen Drehlager die falsche Meldung
+            # "108 von 1493 Objekten haben kein Netz", obwohl nichts vernetzt
+            # war (18.09.2026).
+            mit = sum(1 for k in koerper if k.elemente) + sum(1 for f in flaechen if f.elemente)
             if (ohne_k or ohne_f) and mit:
                 n_ohne = len(ohne_k) + len(ohne_f)
                 teile = ", ".join(k.name for k in ohne_k[:8]) + (" …" if len(ohne_k) > 8 else "")
                 if self._fragen_knoepfe(
                         "Vernetzen",
-                        f"{n_ohne} von {len(koerper) + len(flaechen)} Objekten haben kein Netz"
+                        f"{n_ohne} Objekte haben kein Netz, {mit} haben eins"
                         + (f":\n{teile}\n\n" if teile else ".\n\n")
                         + "Nur diese vernetzen geht schnell und lässt die übrigen Netze stehen. "
                           "Alles neu zu vernetzen ist nötig, wenn sich die Netzdichte geändert hat - "
