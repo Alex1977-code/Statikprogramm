@@ -349,10 +349,14 @@ class LinearSolver:
             # Eigener Kern (Paket ama, Rust): multifrontale LDL^T mit Superknoten; das
             # untere Dreieck geht hinein, K muss symmetrisch sein (wie MUMPS SYM=2)
             try:
+                # ama.genauigkeit hier mit: ein aelteres Wheel hat nur ama.kern, und dann soll
+                # dieselbe Meldung kommen statt eines nackten ImportError weiter unten
+                from ama import genauigkeit as ama_gen
                 from ama import kern as ama_kern
             except ImportError as ex:
-                raise RuntimeError("ama ist nicht installiert - pip install <ama-Wheel> in diese "
-                                   "Python-Umgebung (Gleichungsloeser-Projekt, maturin build)") from ex
+                raise RuntimeError("ama ist nicht installiert oder zu alt - pip install <ama-Wheel> "
+                                   "in diese Python-Umgebung (Gleichungsloeser-Projekt, "
+                                   "maturin build)") from ex
             Kc = K.tocsr()
             skala = float(abs(Kc).max()) if Kc.nnz else 1.0
             if float(abs(Kc - Kc.T).max()) > 1e-12 * skala:
@@ -362,11 +366,18 @@ class LinearSolver:
             # statt abzubrechen, die Nachiteration unten holt die Genauigkeit zurueck.
             # Ohne sie brach ama an Modellen ab, die PARDISO rechnet (Kontaktfedern,
             # rangdefekte Steifigkeit: cbg.json 6 Pivots, gemessen 18.09.2026)
-            faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"), stoerung_rel=1e-13)
+            # Dieselbe Einstellung, die solve() unten prueft, geht als Vorgabe in ama: der
+            # Kern iteriert bis zu dieser Schranke nach und legt in faktor.nachweis ab, was
+            # er erreicht hat. Sonst haette dieselbe Sache zwei Bedienelemente.
+            grenze, n_max = self.genauigkeit()
+            vorgabe = ama_gen.aufloesen(residuum=grenze, nachiterationen=n_max)
+            faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"), stoerung_rel=1e-13,
+                                           vorgabe=vorgabe)
             self._solve = faktor.loese
             self.backend = "ama"
             self.threads = int(faktor.threads)
             self.gestoert = int(faktor.gestoert)
+            self._faktor = faktor
         if self._solve is None and be == "pyamg":
             self._solve = self._pyamg(K)
             self.backend = "pyamg"
@@ -484,11 +495,15 @@ class LinearSolver:
         Kontakt-Iterationen wurde daraus ein anderer Endzustand (18.09.2026)."""
         grenze, n_max = self.genauigkeit()
         frei = getattr(self, "gestoert", 0)
+        # Was ama zuletzt erreicht hat - gemessen, nicht zugesagt. Vor dem ersten Loesen und
+        # bei allen anderen Loesern gibt es keinen Nachweis, dann bleibt der Zusatz leer.
+        nach = getattr(getattr(self, "_faktor", None), "nachweis", None)
+        zusatz = "" if nach is None else f"; erreicht {nach.erreicht:.1e} (Ziel {nach.ziel:.0e})"
         return NAMEN.get(self.backend, self.backend) + (
             f", {self.threads} Threads" if self.threads > 1 else ", einkernig") + (
             f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else "")) + (
             f"; {frei} Freiheitsgrade ohne Halt (Ergebnis dort nicht eindeutig - Lagerung pruefen)"
-            if frei else "")
+            if frei else "") + zusatz
 
     def solve(self, b: np.ndarray, check: bool = True) -> np.ndarray:
         if self._solve is None:

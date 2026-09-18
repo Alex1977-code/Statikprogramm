@@ -463,6 +463,35 @@ def test_ama_faktorisiert_symmetrisch_und_nennt_threads():
               "symmetrisch" in str(ex) and "PARDISO" in str(ex), str(ex)[:80])
 
 
+def test_ama_nimmt_die_genauigkeitseinstellung():
+    """Die Einstellung 'Genauigkeit des Gleichungsloesers' muss bei ama ankommen: der Faktor
+    iteriert bis zu dieser Schranke nach und nennt sie in der Beschreibung.
+
+    Geprueft wird das am Nachweis von ama ("Ziel ... erreicht ..."), nicht an der Schranke
+    allein: die stand schon vorher in der Beschreibung, aus der Einstellung gelesen. Erst der
+    Nachweis belegt, dass ama die Vorgabe wirklich bekommen und gemessen hat.
+    """
+    try:
+        import ama.kern  # noqa: F401
+    except ImportError:
+        print("    ama: nicht installiert, uebersprungen")
+        return
+    n = 300
+    K = sparse.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                     [-1, 0, 1]).tocsc()
+    alt = parallel.settings().solver_residuum if hasattr(parallel.settings(), "solver_residuum") else 1e-6
+    parallel.configure(solver_residuum=1e-4)
+    try:
+        ls = LinearSolver(K, backend="ama")
+        x = ls.solve(np.ones(n))
+        close("ama loest mit gelockerter Schranke", float(np.linalg.norm(K @ x - 1.0)), 0.0, 1e-4 * n)
+        check("die Beschreibung nennt die Stufe, die ama gemessen hat",
+              "Ziel 1e-04" in ls.beschreibung() or "Ziel 0.0001" in ls.beschreibung(),
+              ls.beschreibung())
+    finally:
+        parallel.configure(solver_residuum=alt)
+
+
 def main():
     for f in (test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
@@ -471,7 +500,8 @@ def main():
               test_superlu_ordnet_symmetrisch, test_pardiso_gibt_speicher_frei,
               test_mumps_sagt_was_es_tut_und_gibt_speicher_frei,
               test_threadzahl_aus_den_einstellungen,
-              test_ama_faktorisiert_symmetrisch_und_nennt_threads):
+              test_ama_faktorisiert_symmetrisch_und_nennt_threads,
+              test_ama_nimmt_die_genauigkeitseinstellung):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
