@@ -3016,10 +3016,13 @@ Nachweis mit seiner Verformung je Kombination.
   Rechner mit 16 Kernen / 32 Threads),
   **CHOLMOD** (direkt, Cholesky, mehrkernig über BLAS), **UMFPACK** (direkt,
   LU), **MUMPS** (direkt, mehrkernig), **ama** (eigener Kern in Rust, direkt,
-  mehrkernig: multifrontale LDLᵀ mit Superknoten; Projekt `Gleichungsloeser`,
-  Installation als Wheel `pip install ama-…-win_amd64.whl` in die Python-Umgebung
-  von Statik3D, kein Fremdlizenztext nötig; nur für symmetrische Matrizen, sonst
-  bricht die Rechnung mit Hinweis auf PARDISO/MUMPS ab), **PyAMG** (iterativ:
+  mehrkernig: multifrontale LDLᵀ mit Superknoten, symmetrische Jacobi-Skalierung und
+  statischer Pivotisierung wie PARDISO; Projekt `Gleichungsloeser`, Installation als
+  Wheel `pip install ama-…-win_amd64.whl` in die Python-Umgebung von Statik3D, kein
+  Fremdlizenztext nötig; nur für symmetrische Matrizen, sonst bricht die Rechnung mit
+  Hinweis auf PARDISO/MUMPS ab. Gemessen 18.09.2026 gegen PARDISO: `cbg.json` 0,45 s
+  statt 0,57 s, `modellimport_rf6.json` 0,17 s statt 0,28 s, Verschiebungen gleich auf
+  4e-10 relativ), **PyAMG** (iterativ:
   algebraisches Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu
   iterieren und einkernig) und **SuperLU** (direkt, einkernig, Rückfall). Was
   nicht installiert ist, steht grau in der Liste. **In der exe stecken** MKL

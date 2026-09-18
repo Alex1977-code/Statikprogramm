@@ -358,10 +358,15 @@ class LinearSolver:
             if float(abs(Kc - Kc.T).max()) > 1e-12 * skala:
                 raise RuntimeError("ama braucht eine symmetrische Matrix - fuer unsymmetrische "
                                    "Systeme MKL PARDISO, MUMPS oder SuperLU waehlen")
-            faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"))
+            # statische Pivotisierung wie MKL PARDISO: ein zu kleines Pivot wird gehoben
+            # statt abzubrechen, die Nachiteration unten holt die Genauigkeit zurueck.
+            # Ohne sie brach ama an Modellen ab, die PARDISO rechnet (Kontaktfedern,
+            # rangdefekte Steifigkeit: cbg.json 6 Pivots, gemessen 18.09.2026)
+            faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"), stoerung_rel=1e-13)
             self._solve = faktor.loese
             self.backend = "ama"
             self.threads = int(faktor.threads)
+            self.gestoert = int(faktor.gestoert)
         if self._solve is None and be == "pyamg":
             self._solve = self._pyamg(K)
             self.backend = "pyamg"
