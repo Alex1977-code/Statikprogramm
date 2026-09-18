@@ -3076,10 +3076,14 @@ Nachweis mit seiner Verformung je Kombination.
   bis auf einen, MKL selbst kappt auf die physischen Kerne: 16 auf einem
   Rechner mit 16 Kernen / 32 Threads),
   **CHOLMOD** (direkt, Cholesky, mehrkernig über BLAS), **UMFPACK** (direkt,
-  LU), **MUMPS** (direkt, mehrkernig), **PyAMG** (iterativ: algebraisches
-  Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu iterieren und
-  einkernig) und **SuperLU** (direkt, einkernig, Rückfall). Was nicht
-  installiert ist, steht grau in der Liste. **In der exe stecken** MKL
+  LU), **MUMPS** (direkt, mehrkernig), **ama** (eigener Kern in Rust, direkt,
+  mehrkernig: multifrontale LDLᵀ mit Superknoten; Projekt `Gleichungsloeser`,
+  Installation als Wheel `pip install ama-…-win_amd64.whl` in die Python-Umgebung
+  von Statik3D, kein Fremdlizenztext nötig; nur für symmetrische Matrizen, sonst
+  bricht die Rechnung mit Hinweis auf PARDISO/MUMPS ab), **PyAMG** (iterativ:
+  algebraisches Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu
+  iterieren und einkernig) und **SuperLU** (direkt, einkernig, Rückfall). Was
+  nicht installiert ist, steht grau in der Liste. **In der exe stecken** MKL
   PARDISO, PyAMG und SuperLU (PyAMG ist MIT-lizenziert); **MUMPS**
   (CeCILL-C) lädt das Programm beim Start nach (Kästchen im Dialog
   *Vernetzer, Nachbesserer und Gleichungslöser*, Abschnitt „Vernetzer und

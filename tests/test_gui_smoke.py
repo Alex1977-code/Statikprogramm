@@ -4548,11 +4548,14 @@ def main():
         from statik3d import parallel as parallel_
         eintraege = [w.cb_loeser.itemText(i) for i in range(w.cb_loeser.count())]
         liste_ = {k: da for k, _n, da, *_r in slv_.loeser_liste()}
-        check("Gleichungslöser: automatisch + sechs Löser, nicht installierte grau",
-              len(eintraege) == 7 and eintraege[0].startswith("automatisch")
+        # An solver.LOESER gebunden, nicht an eine feste Zahl: als der Löser
+        # „ama“ dazukam, zählte diese Prüfung noch sechs (18.09.2026)
+        schluessel_ = list(slv_.LOESER)
+        check("Gleichungslöser: automatisch + jeder bekannte Löser, nicht installierte grau",
+              len(eintraege) == len(schluessel_) + 1 and eintraege[0].startswith("automatisch")
               and all(w.cb_loeser.model().item(i + 1).isEnabled() == liste_[k]
-                      for i, k in enumerate(("pardiso", "cholmod", "umfpack", "mumps", "pyamg", "superlu"))),
-              str(eintraege))
+                      for i, k in enumerate(schluessel_)),
+              f"{len(eintraege)} Einträge für {len(schluessel_)} Löser: {eintraege}")
         w.cb_loeser.setCurrentIndex(w.cb_loeser.findData("superlu"))
         w._apply_parallel_settings()
         check("die Auswahl kommt in den Einstellungen an", parallel_.settings().solver_backend == "superlu")
@@ -5327,6 +5330,29 @@ def main():
               "Noch zu vernetzen" in w.log.toPlainText() and "Blech1" in w.log.toPlainText())
         check("Ribbon: der Befehl „Spalt / Toleranz“ steht in der Geometrie",
               any(a.text() == "Spalt / Toleranz" for a in w.findChildren(QtGui.QAction)))
+        # Vernetzen fragt nur, wenn wirklich etwas ein Netz hat: am frisch
+        # eingelesenen Modell ist nichts vernetzt, die Randflächen der Volumen
+        # bekommen nie ein eigenes Netz und zählten fälschlich als „hat Netz“
+        # (18.09.2026: „108 von 1493 Objekten haben kein Netz“, obwohl noch
+        # gar nichts vernetzt war)
+        gefragt_t = []
+        alt_fk_t = w.__dict__.get("_fragen_knoepfe")
+        alt_netz_t = w._vernetzen
+        w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": (
+            gefragt_t.append((titel, text)), False)[1]
+        w._vernetzen = lambda f, k: (len(f), len(k)) and 0
+        try:
+            w.sel_koerper, w.sel_flaechen = [], []
+            w.geometrie_vernetzen()
+            app.processEvents()
+        finally:
+            w._vernetzen = alt_netz_t
+            if alt_fk_t is not None:
+                w._fragen_knoepfe = alt_fk_t
+            else:
+                del w._fragen_knoepfe
+        check("nichts vernetzt: keine Rückfrage „nur die ohne Netz“, es wird alles vernetzt",
+              not any(t == "Vernetzen" for t, _x in gefragt_t), str([t for t, _x in gefragt_t]))
         w.maskenrand.schliessen()
         w.sel_koerper = []
         w._modell_setzen(alt_m_t)

@@ -598,14 +598,43 @@ def _abnahme_kontaktpaare(model) -> list:
         kb = kbs.get(str(cp.name))
         genannt = {str(x) for x in (getattr(kb, "gegenkoerper", None) or [])} if kb else set()
         gestellt = {str(x) for x in (getattr(cp, "gegenkoerper", None) or [])}
+        # Ein Bauteil traegt die Fuge auch dann, wenn es die **Knotenseite**
+        # stellt statt der Facetten. An einer gemeinsamen Flaeche steht in
+        # koerpernamen/gegenkoerper nicht zwingend dieselbe Rolle wie in den
+        # Flaechenlisten: am Drehlager nannte V29-V34 die Flaechen von V34 als
+        # Kontaktseite, die Facetten kamen von V29 - die Fuge deckte 100 % ab
+        # und trug, die Pruefung meldete trotzdem einen Mangel (18.09.2026).
+        if genannt - gestellt:
+            traeger = set()
+            for i in (getattr(cp, "slave_nodes", None) or []):
+                for kn in _koerper_des_knotens(model, int(i)):
+                    traeger.add(str(kn))
+            gestellt |= traeger
         for name in sorted(genannt - gestellt):
             aus.append(Befund(
                 pruefung="Gegenkörper ohne Facette", objekt=str(cp.name),
                 wert=0.0, grenze=1.0,
                 text=f"Kontaktbedingung {cp.name} nennt {name} als Gegenseite, "
-                     "aber von diesem Bauteil ist keine einzige Facette in der "
-                     "Fuge gelandet - die Fuge trägt dorthin nichts ab."))
+                     "aber von diesem Bauteil ist weder eine Facette noch ein "
+                     "Knoten in der Fuge gelandet - die Fuge trägt dorthin nichts ab."))
     return aus
+
+
+def _koerper_des_knotens(model, knoten: int) -> set:
+    """Die Bauteile, deren Elemente diesen Knoten benutzen - einmal je Modell
+    aufgebaut und am Modell gemerkt (die Abnahme fragt viele Knoten ab)."""
+    karte = getattr(model, "_abnahme_knotenkoerper", None)
+    if karte is None or getattr(model, "_abnahme_knotenkoerper_n", -1) != len(model.elements):
+        karte = {}
+        for el in model.elements:
+            grp = str(getattr(el, "group", "") or "")
+            if not grp:
+                continue
+            for n in el.nodes:
+                karte.setdefault(int(n), set()).add(grp)
+        model._abnahme_knotenkoerper = karte
+        model._abnahme_knotenkoerper_n = len(model.elements)
+    return karte.get(int(knoten), set())
 
 
 def _abnahme_halteguete(model, guete: list = None) -> list:
