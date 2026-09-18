@@ -358,10 +358,15 @@ class LinearSolver:
             if float(abs(Kc - Kc.T).max()) > 1e-12 * skala:
                 raise RuntimeError("ama braucht eine symmetrische Matrix - fuer unsymmetrische "
                                    "Systeme MKL PARDISO, MUMPS oder SuperLU waehlen")
-            faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"))
+            # statische Pivotisierung wie MKL PARDISO: ein zu kleines Pivot wird gehoben
+            # statt abzubrechen, die Nachiteration unten holt die Genauigkeit zurueck.
+            # Ohne sie brach ama an Modellen ab, die PARDISO rechnet (Kontaktfedern,
+            # rangdefekte Steifigkeit: cbg.json 6 Pivots, gemessen 18.09.2026)
+            faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"), stoerung_rel=1e-13)
             self._solve = faktor.loese
             self.backend = "ama"
             self.threads = int(faktor.threads)
+            self.gestoert = int(faktor.gestoert)
         if self._solve is None and be == "pyamg":
             self._solve = self._pyamg(K)
             self.backend = "pyamg"
@@ -469,11 +474,21 @@ class LinearSolver:
             pass
 
     def beschreibung(self) -> str:
-        """Wie in Protokoll und Statuszeile: Loeser, Threads, Genauigkeit."""
+        """Wie in Protokoll und Statuszeile: Loeser, Threads, Genauigkeit.
+
+        Nennt auch Freiheitsgrade ohne Halt, wenn der Loeser sie meldet: dort ist die Loesung
+        nicht eindeutig (ein unbelastetes, ungelagertes Teil kann sich frei bewegen), und
+        verschiedene Loeser liefern verschiedene, gleich richtige Antworten. Am Modell
+        modell.json waren es 14 Pivots und 759 Freiheitsgrade; die Verformung unterschied sich
+        dort um 7 % von max|u|, die Energie des Unterschieds aber nur um 1e-22 - und ueber 30
+        Kontakt-Iterationen wurde daraus ein anderer Endzustand (18.09.2026)."""
         grenze, n_max = self.genauigkeit()
+        frei = getattr(self, "gestoert", 0)
         return NAMEN.get(self.backend, self.backend) + (
             f", {self.threads} Threads" if self.threads > 1 else ", einkernig") + (
-            f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else ""))
+            f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else "")) + (
+            f"; {frei} Freiheitsgrade ohne Halt (Ergebnis dort nicht eindeutig - Lagerung pruefen)"
+            if frei else "")
 
     def solve(self, b: np.ndarray, check: bool = True) -> np.ndarray:
         if self._solve is None:

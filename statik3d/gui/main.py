@@ -4391,7 +4391,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     "querschnitt": "Querschnitte", "werkstoff": "Werkstoffe",
                     "gelenke": "Gelenke", "gelenk": "Gelenke", "berichtseintrag": "Bericht",
                     "liniengelenke": "Flächen", "liniengelenk": "Flächen",
-                    "importhinweise": "Kontaktbedingungen", "importhinweis": "Kontaktbedingungen",
                     "kontaktbedingung": "Kontaktbedingungen",
                     "lager": "Lager", "lager_einzeln": "Lager", "linienlager": "Lager",
                     "linienlager_einzeln": "Lager", "flaechenlager": "Lager", "flaechenlager_einzeln": "Lager",
@@ -4430,7 +4429,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "lastfaelle", "lastfall", "kombinationen", "kombination",
                     "werkstoffe", "werkstoff", "dicken", "dicke",
                     "querschnitt", "gelenke", "gelenk", "berichtseintrag",
-                    "liniengelenke", "liniengelenk", "importhinweise", "importhinweis",
+                    "liniengelenke", "liniengelenk",
                     "kontaktbedingung", "stellungen", "stellung",
                     "lager", "lager_einzeln", "linienlager", "linienlager_einzeln",
                     "flaechenlager", "flaechenlager_einzeln",
@@ -4666,26 +4665,6 @@ class MainWindow(QtWidgets.QMainWindow):
                              if 0 <= int(e) < len(m.elements)] if h is not None else []
             if h is not None:
                 self.lbl_sel.setText(f"Gelenk {name}: an {len(self.leuchtet)} Elementen (Modellbaum)")
-        elif art in ("importhinweise", "importhinweis"):
-            # Die betroffenen Teile leuchten: Volumen, und die Fugen ihrer Kontaktbedingungen
-            hw = getattr(m, "importhinweise", None) or []
-            liste = ([hw[int(name)]] if eintrag and name.isdigit() and int(name) < len(hw) else hw)
-            self.auswahlart_setzen("Volumen")
-            self.selection = np.array([], dtype=int)
-            self.sel_linien, self.sel_staebe = [], []
-            koerper, flaechen = [], []
-            for h in liste:
-                for art_o, n_o in (h.get("objekte") or []):
-                    if art_o == "geokoerper_einzeln" and n_o in m.koerper:
-                        koerper.append(n_o)
-                    elif art_o == "kontaktbedingung" and n_o in m.kontaktbedingungen:
-                        kb_ = m.kontaktbedingungen[n_o]
-                        flaechen += [x for x in (kb_.flaechennamen or []) + (kb_.gegenflaechen or []) if x in m.flaechen]
-                        koerper += [x for x in (kb_.koerpernamen or []) + (getattr(kb_, "gegenkoerper", None) or []) if x in m.koerper]
-            self.sel_koerper = list(dict.fromkeys(koerper))
-            self.sel_flaechen = list(dict.fromkeys(flaechen))
-            self.lbl_sel.setText(f"Importhinweis{'e' if len(liste) != 1 else ''}: {len(self.sel_koerper)} Volumen, "
-                                 f"{len(self.sel_flaechen)} Flächen (Modellbaum)")
         elif art in ("liniengelenke", "liniengelenk"):
             # Die Gelenklinien leuchten, die Flaechen dazu blass mit
             self.auswahlart_setzen("Linie")
@@ -4791,8 +4770,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return name in m.sections
         if art == "liniengelenk":
             return name in m.flaechen and bool(getattr(m.flaechen[name], "gelenklinien", None))
-        if art == "importhinweis":
-            return name.isdigit() and int(name) < len(getattr(m, "importhinweise", None) or [])
         if art == "gelenk":
             return name in m.hinges
         if art == "berichtseintrag":
@@ -5234,52 +5211,6 @@ class MainWindow(QtWidgets.QMainWindow):
             hinweis = ("Kennwerte in cm und mm - Umbenennen zieht die Elemente nach. "
                        "„Neu aus Profil“ legt einen weiteren Querschnitt aus der Datenbank an.")
             zusatz = [("Neu aus Profil …", self.querschnitt_neu)]
-        elif art in ("importhinweise", "importhinweis"):
-            from ..hinweise import kurz as _hkurz, offen as _hoffen
-            hw = getattr(m, "importhinweise", None) or []
-            knopf = ""
-            if not eintrag or not name.isdigit() or int(name) >= len(hw):
-                felder = [F("anzahl", "Hinweise", "info", f"{len(hw)}, davon {len(_hoffen(m))} offen"),
-                          F("liste", "Vorschläge", "info", "\n".join(
-                              ("✓ " if h.get("erledigt") == "angewendet" else "✗ " if h.get("erledigt") else "• ") + _hkurz(h)
-                              for h in hw[:12]) + ("\n…" if len(hw) > 12 else ""))]
-                titel = "Importhinweise"
-                hinweis = ("Vorschläge zur Modellierung, nach dem Import erkannt - nichts davon ist von selbst "
-                           "umgestellt. Ein Eintrag im Modellbaum lässt die betroffenen Teile leuchten; seine "
-                           "Maske hat „So einstellen“ und „Verwerfen“.")
-                zusatz = [("Alle offenen anwenden", self._hinweise_alle_anwenden)]
-            else:
-                i = int(name)
-                h = hw[i]
-                v_h = h.get("vorschlag") or {}
-                # In "Betroffen" steht zuerst das Teil, das geaendert wird,
-                # dahinter die Bauteile, durch deren Bohrung es geht - die
-                # bleiben, wie sie sind. Das war missverstaendlich
-                # (17.09.2026: "bei den Importhinweisen zum Spalt stehen
-                # mehrere Volumen, warum?").
-                obj = [n_o for _a, n_o in (h.get("objekte") or [])]
-                if h.get("art") == "spiel" and obj:
-                    betroffen_text = (f"{obj[0]} (wird verkleinert)"
-                                      + (f"; Bohrung in {', '.join(obj[1:])} (bleibt)" if len(obj) > 1 else ""))
-                else:
-                    betroffen_text = ", ".join(obj)
-                felder = [F("text", "Befund und Vorschlag", "info", str(h.get("text", ""))),
-                          F("objekte", "Betroffen", "info", betroffen_text),
-                          F("status", "Stand", "info", {"": "offen", "angewendet": "angewendet",
-                                                         "verworfen": "verworfen"}.get(str(h.get("erledigt", "")), "offen"))]
-                if h.get("art") == "spiel" and not h.get("erledigt"):
-                    felder.insert(2, F("mm", "Spalt am Durchmesser [mm]", "zahl",
-                                       float(v_h.get("mm", 0.02) or 0.02),
-                                       hinweis="vom Nullmaß aus; „So einstellen“ nimmt diesen Wert. Wer ihn "
-                                               "an der Bohrung statt am Zylinder abtragen will: "
-                                               "Geometrie → Spalt / Toleranz"))
-                titel = f"Importhinweis {i + 1}"
-                hinweis = ("„So einstellen“ übernimmt den Vorschlag (Reibung: die Fuge wird umgestellt; Spiel: "
-                           "der Zylinder wird verkleinert). Vernetzt wird nicht - das Protokoll nennt die "
-                           "Volumen, die dann neu zu vernetzen sind. „Verwerfen“ lässt alles, wie es ist. "
-                           "Für Welle und Bohrung zusammen: Geometrie → Spalt / Toleranz.")
-                zusatz = [("So einstellen", lambda i_=i: self._hinweis_anwenden(i_, self._maskenzahl("mm"))),
-                          ("Verwerfen", lambda i_=i: self._hinweis_verwerfen(i_))]
         elif art in ("liniengelenke", "liniengelenk"):
             fl = {n: f for n, f in m.flaechen.items() if getattr(f, "gelenklinien", None)}
             hinweis = ("Liniengelenke kommen aus der Quelldatei (RFEM: LineHinge) und stehen an der "
@@ -5978,6 +5909,22 @@ class MainWindow(QtWidgets.QMainWindow):
                      hinweis="0 = keine. Sonst haften so viele Knotenreihen am Rand der Kontaktseite "
                              "nicht (sie gleiten reibungsfrei): die Kantensingularität am "
                              "Bohrungsaustritt bleibt aus. 1 Reihe reicht meist"),
+                   F("spalt", "Geometrischer Spalt [mm am Ø]", "zahl",
+                     float(getattr(kb, "spalt", 0.0) or 0.0) * 1e3,
+                     hinweis="Die Lücke, die Welle und Bohrung dieser Fuge wirklich bekommen sollen. "
+                             "Das Eintragen ändert nichts am Modell - erst das Vernetzen arbeitet den "
+                             "Spalt in die Geometrie ein, und nur, was noch offen ist. „Spalt-Vorschau“ "
+                             "zeigt vorher, was sich ändern würde"),
+                   F("spalt_wohin", "Spalt abtragen", "wahl",
+                     self.SPALT_WOHIN_TEXT.get(str(getattr(kb, "spalt_wohin", "beide") or "beide"),
+                                               list(self.SPALT_WOHIN_TEXT.values())[0]),
+                     list(self.SPALT_WOHIN_TEXT.values()),
+                     hinweis="Die Bohrung wird über ihre ganze Länge angepasst, in jedem Bauteil, durch "
+                             "das sie geht"),
+                   F("spalt_stand", "Davon eingearbeitet", "info",
+                     f"{float(getattr(kb, 'spalt_eingearbeitet', 0.0) or 0.0) * 1e3:.3f} mm"
+                     + (f", offen {kb.spalt_offen() * 1e3:.3f} mm" if hasattr(kb, "spalt_offen")
+                        and kb.spalt_offen() > 0 else "")),
                    F("wirkung", "Wirkung je FHG", "info", kb.describe()),
                    F("ausgefuehrt", "Trennung", "info",
                      (("⚠ " if kb.zu_steif(m) else "") + kb.zustand(m))
@@ -5999,7 +5946,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Keine Klickknoepfe mehr: der Klick ins Feld schaltet die Auswahl per
         # Maus (FELDKLICK, 15.09.2026). „Kontaktfugen ausfuehren" bleibt unten
         # bei OK - er wirkt auf das ganze Modell, nicht auf die Felder.
-        zusatz = [("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
+        zusatz = [("Spalt-Vorschau", lambda n=kb.name: self.spalt_vorschau(n)),
+                  ("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren)]
         return felder, hinweis, zusatz
 
     def _kontaktmaske_verbinden(self, maske):
@@ -6198,6 +6146,75 @@ class MainWindow(QtWidgets.QMainWindow):
             w.setCurrentText(self.KONTAKT_FREI)
             w.blockSignals(False)
             maske.lbl_hinweis.setText("Benutzerdefiniert: die Richtungen sind von Hand gesetzt.")
+
+    def spalt_vorschau(self, name: str = ""):
+        """Zeigen, was der eingetragene Spalt an der Geometrie tun würde -
+        ohne ihn zu tun (18.09.2026, „es soll einen Vorschauknopf geben, wo
+        man sich die Änderung grafisch anzeigen lassen kann“).
+
+        Welle und Bohrung leuchten in der Ansicht, die Meldung nennt die
+        Radien vorher und nachher und die Volumen, die dann neu zu vernetzen
+        sind.
+        """
+        from .. import spiel as sp
+        m = self.model
+        kb = m.kontaktbedingungen.get(str(name)) if name else None
+        if kb is None:
+            maske = getattr(getattr(self, "maskenrand", None), "maske", None)
+            n_ = str((maske.werte() or {}).get("name", "") or "") if maske is not None else ""
+            kb = m.kontaktbedingungen.get(n_)
+        if kb is None:
+            return self.error("Erst eine Kontaktbedingung im Modellbaum wählen")
+        erg = sp.fugen_zylinder(m, kb)
+        if not erg.get("ok"):
+            return self.error(f"Kontaktbedingung {kb.name}: {erg.get('grund', '')} - "
+                              "ein Spalt lässt sich nur zwischen Welle und Bohrung geben")
+        # Der Wert aus der offenen Maske gilt, sonst der gespeicherte
+        mm = self._maskenzahl("spalt")
+        spalt = (mm / 1e3) if mm is not None else float(getattr(kb, "spalt", 0.0) or 0.0)
+        offen = spalt - float(getattr(kb, "spalt_eingearbeitet", 0.0) or 0.0)
+        welle, z = erg["welle"], erg["zylinder"]
+        wohin = str(getattr(kb, "spalt_wohin", "beide") or "beide")
+        if self._maskenwahl("spalt_wohin"):
+            wohin = {v: k for k, v in self.SPALT_WOHIN_TEXT.items()}.get(
+                self._maskenwahl("spalt_wohin"), wohin)
+        an_welle = offen if wohin == "welle" else (0.0 if wohin == "bohrung" else offen / 2)
+        an_bohrung = offen - an_welle
+        r = z["radius"]
+        # Leuchten lassen: Welle und die Bauteile der Bohrung
+        self.auswahlart_setzen("Volumen")
+        self.sel_koerper = [welle] + [k for k in erg["bohrung"] if k in m.koerper]
+        self.sel_flaechen = []
+        self.selection = np.array([], dtype=int)
+        self.leuchtet = [i for i, e in enumerate(m.elements)
+                         if str(getattr(e, "group", "")) in set(self.sel_koerper)]
+        self.redraw()
+        text = (f"Kontaktbedingung {kb.name}\n\n"
+                f"Welle {welle}: r = {r * 1e3:.3f} mm"
+                + (f"  →  {(r - an_welle / 2) * 1e3:.3f} mm" if an_welle > 0 else "  (bleibt)") + "\n"
+                f"Bohrung in {', '.join(erg['bohrung']) or '–'}: r = {r * 1e3:.3f} mm"
+                + (f"  →  {(r + an_bohrung / 2) * 1e3:.3f} mm" if an_bohrung > 0 else "  (bleibt)") + "\n\n"
+                + (f"Spalt am Durchmesser: {offen * 1e3:.3f} mm noch offen"
+                   if offen > 0 else "Kein offener Spalt - eingetragen ist alles schon eingearbeitet")
+                + (f"\nSchon eingearbeitet: {float(getattr(kb, 'spalt_eingearbeitet', 0.0) or 0.0) * 1e3:.3f} mm"
+                   if getattr(kb, "spalt_eingearbeitet", 0.0) else "")
+                + "\n\nDie Geometrie ist unverändert; eingearbeitet wird beim nächsten Vernetzen. "
+                  "In der Ansicht leuchten die betroffenen Volumen.")
+        QtWidgets.QMessageBox.information(self, "Spalt-Vorschau", text)
+        self.log.appendPlainText(
+            f"Spalt-Vorschau {kb.name}: Welle {welle} r = {r * 1e3:.3f} mm, Bohrung in "
+            f"{', '.join(erg['bohrung']) or '–'}, offen {offen * 1e3:.3f} mm am Durchmesser "
+            f"({self.SPALT_WOHIN_TEXT.get(wohin, wohin)})")
+
+    def _maskenwahl(self, feld: str) -> str:
+        """Den Text eines Wahlfeldes der offenen Maske - leer, wenn es fehlt."""
+        maske = getattr(getattr(self, "maskenrand", None), "maske", None)
+        if maske is None:
+            return ""
+        try:
+            return str((maske.werte() or {}).get(feld, "") or "")
+        except AttributeError:
+            return ""
 
     def _kontakt_zuruecknehmen(self, kb) -> int:
         """Was aus dieser Kontaktbedingung im Netz entstanden ist - Spaltelemente,
@@ -7283,6 +7300,11 @@ class MainWindow(QtWidgets.QMainWindow):
             kb.spiel = max(float(zahl("spiel", 0.0) or 0.0), 0.0) / 1e3
             kb.grenzpressung = max(float(zahl("grenzpressung", 0.0) or 0.0), 0.0) * 1e6
             kb.rand_frei = int(max(float(zahl("rand_frei", 0.0) or 0.0), 0.0))
+            # Der geometrische Spalt aendert beim Eintragen nichts am Modell
+            # (18.09.2026) - das Vernetzen arbeitet ihn ein
+            kb.spalt = max(float(zahl("spalt", 0.0) or 0.0), 0.0) / 1e3
+            kb.spalt_wohin = {v: k for k, v in self.SPALT_WOHIN_TEXT.items()}.get(
+                str(w.get("spalt_wohin", "") or ""), "beide")
             kb.beschreibung = str(w.get("beschreibung", "") or "").strip()
             if getattr(kb, "automatisch", False):
                 from .. import kontakte
@@ -8859,6 +8881,27 @@ class MainWindow(QtWidgets.QMainWindow):
         prozesse = 1
         zeiten: dict = {}          # Sekunden je Phase, fuer die Schlusszeile
         t_phase = time.time()
+        # Spalte der Kontaktbedingungen in die Geometrie bringen, bevor das
+        # Netz entsteht (18.09.2026: "erst beim vernetzen sollen die spalte/
+        # passungen/toleranzen im modell beruecksichtigt werden vor dem
+        # eigentlichen vernetzungsvorgang"). Wer seinen Spalt schon hat, wird
+        # nicht noch einmal angefasst.
+        from .. import spiel as _sp
+        if any(float(getattr(kb, "spalt_offen", lambda: 0.0)()) > 0
+               for kb in (self.model.kontaktbedingungen or {}).values()):
+            self._fortschritt(0, "Spalte der Kontaktfugen in die Geometrie einarbeiten …", sofort=True)
+            erg_sp = _sp.spalte_einarbeiten(self.model, log)
+            for z in erg_sp.get("fehler") or []:
+                log.append("Spalt nicht eingearbeitet - " + str(z))
+            if erg_sp.get("koerper"):
+                # Die veraenderten Volumen brauchen ein neues Netz, auch wenn
+                # sie nicht gewaehlt waren
+                for kn in erg_sp["koerper"]:
+                    kk = self.model.koerper.get(kn)
+                    if kk is not None and kk not in koerper:
+                        koerper.append(kk)
+            zeiten["Spalte einarbeiten"] = time.time() - t_phase
+            t_phase = time.time()
         # Netzdichte: Teilung je Flaeche und Kantenlaenge je Volumen aus den
         # Netzeinstellungen und der Groesse des Objekts
         from .. import netzdichte as nd
@@ -13751,7 +13794,6 @@ class MainWindow(QtWidgets.QMainWindow):
                       f"{len(m.load_cases)} Lastfälle, {len(m.members)} Stäbe")
             self._fortschritt_ende()
             QtWidgets.QApplication.restoreOverrideCursor()
-            self._importhinweise_fragen()
         except Exception as ex:
             self._fortschritt_ende()               # kein Balken hinter der Meldung
             self.log.appendPlainText(traceback.format_exc())
@@ -14165,6 +14207,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     #: Ansatz, mit dem aus den Abmassen einer Passung das Uebermass wird
+    #: Wo der geometrische Spalt einer Fuge abgetragen wird (Kontaktmaske)
+    SPALT_WOHIN_TEXT = {"beide": "auf beide verteilen (je die Hälfte)",
+                        "welle": "nur an der Welle (Zylinder kleiner)",
+                        "bohrung": "nur an der Bohrung (Loch größer)"}
+
     #: In der Sammelmaske Passung: keine Paarung gewaehlt
     PASSUNG_KEINE = "(keine - nur die Werte oben)"
     UEBERMASS_ANSATZ = ["mittleres Übermaß", "Höchstübermaß (größte Pressung)",
@@ -14385,37 +14432,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"Spiel {spiel * 1e3:g} mm gegeben: {', '.join(dict.fromkeys(betroffen))}")
 
     # ---- Importhinweise (17.09.2026) -----------------------------------------
-    def _hinweise_abschliessen(self, koerper: list, kontakte: list, kopf: str) -> None:
-        """Nach dem Anwenden von Hinweisen: einmal die Ansicht aufbauen und
-        sagen, was noch zu tun ist.
-
-        **Nicht** vernetzen (17.09.2026, Anwender: „kann nicht erst die
-        Geometrie angepasst werden und der User vernetzt wie bisher manuell
-        danach"): das Netz der geaenderten Volumen ist weg, ihre Fugen warten
-        auf Netz, und das Vernetzen fuehrt die offenen Fugen ohnehin aus. So
-        dauert das Anwenden Sekunden statt Minuten, und der Anwender
-        entscheidet, wann die Minuten anfallen.
-        """
-        m = self.model
-        offen_netz = [k for k in koerper if k in m.koerper and not (m.koerper[k].elemente or [])]
-        self._fortschritt_beginnen(1, f"{kopf}: Ansicht, Tabellen und Modellbaum aufbauen …",
-                                   abbrechbar=False)
-        try:
-            self._fortschritt(0, f"{kopf}: Ansicht, Tabellen und Modellbaum aufbauen …", sofort=True)
-            self.refresh_all()
-        finally:
-            self._fortschritt_ende()
-        if offen_netz:
-            self.log.appendPlainText(
-                f"Noch zu vernetzen: {', '.join(offen_netz)} - beim Vernetzen "
-                f"(Netz → Vernetzen) werden die Fugen dieser Volumen neu ausgeführt")
-        wartend = [n for n in kontakte if n in m.kontaktbedingungen
-                   and not m.kontaktbedingungen[n].ausgefuehrt]
-        if wartend and not offen_netz:
-            self.log.appendPlainText(
-                f"Neu auszuführende Kontaktfugen: {', '.join(wartend)} - "
-                f"Lager / Kontakt → Kontaktfugen ausführen, oder beim nächsten Vernetzen")
-
     def _maskenzahl(self, feld: str):
         """Eine Zahl aus der offenen Maske - None, wenn es sie nicht gibt."""
         maske = getattr(getattr(self, "maskenrand", None), "maske", None)
@@ -14426,99 +14442,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return None if wert in (None, "") else float(str(wert).replace(",", "."))
         except (ValueError, AttributeError):
             return None
-
-    def _hinweis_anwenden(self, i: int, mm: float = None):
-        from .. import hinweise
-        m = self.model
-        hw = getattr(m, "importhinweise", None) or []
-        if not 0 <= i < len(hw):
-            return self.error("Diesen Hinweis gibt es nicht mehr")
-        h = hw[i]
-        if h.get("erledigt"):
-            return self.info("Der Hinweis ist schon erledigt")
-        if mm is not None and h.get("art") == "spiel" and mm > 0:
-            # Der Wert aus der Maske gilt: "der gewuenschte Spalt ausgehend vom
-            # Nullmass eingestellt werden koennen" (17.09.2026)
-            h.setdefault("vorschlag", {})["mm"] = float(mm)
-        self._fortschritt_beginnen(1, f"Importhinweis {i + 1}: Stand für „Rückgängig“ sichern …",
-                                   abbrechbar=False)
-        try:
-            self._fortschritt(0, f"Importhinweis {i + 1}: Stand für „Rückgängig“ sichern …", sofort=True)
-            self.merken(f"Importhinweis {i + 1}")
-        finally:
-            self._fortschritt_ende()
-        log: list = []
-        erg = hinweise.anwenden(m, h, log)
-        for z in log:
-            self.log.appendPlainText(z)
-        if not erg.get("ok"):
-            self.refresh_all()
-            return self.error(f"Hinweis nicht angewendet: {erg.get('text')}")
-        self._hinweise_abschliessen(erg.get("koerper") or [], erg.get("kontakte") or [],
-                                    f"Importhinweis {i + 1}")
-        self.info("Importhinweis angewendet: " + str(erg.get("text", "")))
-
-    def _hinweis_verwerfen(self, i: int):
-        from .. import hinweise
-        hw = getattr(self.model, "importhinweise", None) or []
-        if 0 <= i < len(hw):
-            hinweise.verwerfen(hw[i])
-            self.log.appendPlainText(f"Importhinweis {i + 1} verworfen: {hinweise.kurz(hw[i])}")
-            self.refresh_all()
-
-    def _hinweise_alle_anwenden(self):
-        """Alle offenen Hinweise in einem Lauf: eine Sicherung, alle
-        Aenderungen am Modell, eine Ansicht - mit Balken und Abbrechen.
-
-        Vorher lief je Hinweis ein eigener Nachlauf; am Drehlager kostete das
-        jedes Mal eine Modellkopie, ein Vernetzen, 2,5 s Knotenkarte und 22 s
-        Ansichtsaufbau, und das Fenster meldete nichts (17.09.2026).
-        """
-        from .. import hinweise
-        offen = hinweise.offen(self.model)
-        if not offen:
-            return self.info("Kein offener Importhinweis")
-        n = len(offen)
-        self._fortschritt_beginnen(n + 1, f"{n} Importhinweise: Stand für „Rückgängig“ sichern …")
-        log: list = []
-        try:
-            self._fortschritt(0, f"{n} Importhinweise: Stand für „Rückgängig“ sichern …", sofort=True)
-            self.merken(f"{n} Importhinweise")
-
-            def schritt(i, ges, text):
-                return self._fortschritt(i + 1, f"Importhinweis {i + 1} von {ges}: {text}", sofort=True)
-
-            erg = hinweise.alle_anwenden(self.model, offen, log, fortschritt=schritt)
-        finally:
-            self._fortschritt_ende()
-        for z in log:
-            self.log.appendPlainText(z)
-        for z in erg.get("fehler") or []:
-            self.log.appendPlainText("Importhinweis nicht angewendet: " + str(z))
-        if not erg.get("angewendet"):
-            self.refresh_all()
-            return self.error("Kein Importhinweis angewendet - siehe Protokoll")
-        self._hinweise_abschliessen(erg.get("koerper") or [], erg.get("kontakte") or [],
-                                    f"{len(erg['angewendet'])} Importhinweise")
-        self.info(f"{len(erg['angewendet'])} Importhinweise angewendet"
-                  + (f", {len(erg['fehler'])} nicht (siehe Protokoll)" if erg.get("fehler") else "")
-                  + (" - angehalten, der Rest bleibt offen" if erg.get("abgebrochen") else ""))
-
-    def _importhinweise_fragen(self) -> None:
-        """Nach dem Import: die Vorschlaege nennen und fragen, ob sie umgesetzt
-        werden sollen - „nicht automatisch, den User fragen"."""
-        from .. import hinweise
-        offen = hinweise.offen(self.model)
-        if not offen:
-            return
-        text = (f"{len(offen)} Vorschläge zur Modellierung:\n\n"
-                + "\n".join("• " + hinweise.kurz(h) for h in offen[:10]) + ("\n…" if len(offen) > 10 else "")
-                + "\n\nAlle jetzt anwenden? Die Liste bleibt im Modellbaum unter „Importhinweise“ - jeder "
-                  "Eintrag lässt die betroffenen Teile leuchten und lässt sich einzeln anwenden oder verwerfen.")
-        if self._fragen_knoepfe("Importhinweise", text, "Alle anwenden", "Erst ansehen"):
-            self._hinweise_alle_anwenden()
-        else:
-            self.statusBar().showMessage(f"{len(offen)} Importhinweise - Modellbaum → Importhinweise", 0)
 
     def _passung_kontakte(self, koerper: list) -> list:
         """Die Kontaktbedingungen, an denen einer der Koerper beteiligt ist
