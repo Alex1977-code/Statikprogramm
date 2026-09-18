@@ -380,6 +380,13 @@ class LinearSolver:
             # kostete so 2 Faktorisierungen statt 1 (gemessen 18.09.2026); am Drehlager
             # (1 028 724 FHG) sind das je 7 GB, stumm und mehrfach. Wer eine zu grosse
             # Abweichung meldet, ist und bleibt die Pruefung in solve() darunter.
+            #
+            # Eine billige Verschachtelung bleibt: jeder Korrekturschritt von solve() ruft
+            # wieder loese und damit die ganze Nachiterationsschleife des Kerns auf, also
+            # bis zu n_max * (n_max + 1) = 12 innere Loesungen statt n_max = 3 (bei der
+            # Vorgabe 3). Das sind Vorwaerts-/Rueckwaertseinsetzen auf dem vorhandenen
+            # Faktor - Bruchteile einer Faktorisierung, und nur wenn die Schranke ueberhaupt
+            # verfehlt wird. Darum bleibt es so; teuer war allein das zweite Faktorisieren.
             grenze, n_max = self.genauigkeit()
             vorgabe = ama_gen.aufloesen(residuum=grenze, nachiterationen=n_max,
                                         rueckfall="lockern")
@@ -575,11 +582,19 @@ class LinearSolver:
                     # bewertet wird gegen die Vorgabe, mit der ama faktorisiert hat (die kann
                     # aelter sein als `grenze`, wenn die Einstellung sich seither geaendert
                     # hat - dann sagt die Beschreibung beide Zahlen).
+                    #
+                    # Der Rueckfall gehoert zum ersten Loesen: ama vermerkt ihn, wenn es die
+                    # Schranke verfehlt. Holt die Schleife hier die Loesung doch darunter,
+                    # ist er ueberholt und faellt weg - sonst meldete der Nachweis zugleich
+                    # "gehalten" und einen gezogenen Rueckfall, und zwar jedes Mal, wenn die
+                    # Schleife einen Schritt tut und damit Erfolg hat.
                     from ama import genauigkeit as ama_gen
+                    rueck = (None if float(r) <= self._vorgabe.residuum
+                             else self._nachweis.rueckfall)
                     self._nachweis = ama_gen.bewerte(
                         self._vorgabe, residuum=float(r), rechenart=self._nachweis.rechenart,
                         nachiterationen=self._nachweis.nachiterationen + schritte,
-                        rueckfall=self._nachweis.rueckfall)
+                        rueckfall=rueck)
                 if r > grenze:
                     raise RuntimeError(
                         f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}, Schranke {grenze:g}"

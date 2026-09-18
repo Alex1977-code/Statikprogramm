@@ -512,6 +512,14 @@ def test_ama_faktorisiert_kein_zweites_mal_im_stillen():
                      [-1, 0, 1]).tocsc()
     alt = parallel.settings().solver_residuum
     zaehler = [0]
+    # Gezaehlt wird, indem `Symbolik.faktorisiere` ersetzt wird - also ueber die Paketgrenze
+    # hinweg in amas Interna. Von aussen ist nicht zu sehen, wie oft faktorisiert wurde: der
+    # Faktor meldet Threads und gestoerte Pivots, aber nicht, dass er sich selbst noch einmal
+    # aufgebaut hat. Der Test haengt damit an zwei Dingen, die ama aendern kann: am Namen
+    # `Symbolik.faktorisiere` und daran, dass jede Faktorisierung durch ihn laeuft (die
+    # Modulfunktion `ama.kern.faktorisiere` und der Rueckfall tun das heute beide). Wenn ama
+    # umgebaut wird und dieser Test still durchlaeuft, ist zuerst hier nachzusehen - und
+    # besser waere ein Zaehler, den ama selbst fuehrt.
     echt = ama_kern.Symbolik.faktorisiere
 
     def zaehlend(self, *args, **kw):
@@ -583,6 +591,69 @@ def test_die_beschreibung_nennt_die_loesung_nicht_die_korrektur():
         parallel.configure(solver_residuum=alt)
 
 
+def test_kein_rueckfall_im_nachweis_wenn_die_schranke_gehalten_wird():
+    """Der Nachweis darf nicht zugleich „gehalten" und einen gezogenen Rueckfall melden.
+
+    Das passiert, sobald ama die Schranke verfehlt (und darum „lockern" vermerkt) und
+    Statik3Ds eigene Nachiteration die Loesung danach doch darunter holt: ``erreicht`` und
+    ``gehalten`` stammen dann vom Endergebnis, ``rueckfall`` noch vom ersten Loesen. Das ist
+    kein Sonderfall — es tritt ein, sooft die Schleife in ``solve`` einen Schritt macht und
+    damit Erfolg hat.
+
+    Der Aufbau: ein Sattelpunktsystem (Nullblock auf der Diagonale, wie bei Kontakt mit
+    Lagrange-Multiplikatoren) ist nach dem ersten Loesen messbar ungenauer als nach einer
+    Nachiteration. Die Schranke wird zwischen die beiden gemessenen Residuen gelegt, nicht
+    geraten: ihr Abstand haengt an der Rechnerei und faellt von Maschine zu Maschine anders
+    aus. Ohne Abstand gibt es den Fall hier nicht, dann wird uebersprungen.
+    """
+    try:
+        import ama.kern  # noqa: F401
+    except ImportError:
+        print("    ama: nicht installiert, uebersprungen")
+        return
+    n, m = 200, 20
+    A = sparse.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                     [-1, 0, 1]).tocsr()
+    B = sparse.random(m, n, density=0.3, random_state=5, format="csr")
+    K = sparse.bmat([[A, B.T], [B, sparse.csr_matrix((m, m))]], format="csc")
+    b = np.ones(n + m)
+    s = parallel.settings()
+    alt = (s.solver_residuum, s.solver_nachiterationen)
+
+    def residuum_mit(schritte):
+        """Das Residuum, das mit so vielen Nachiterationen erreicht wird."""
+        parallel.configure(solver_residuum=1e-30, solver_nachiterationen=schritte)
+        ls = LinearSolver(K, backend="ama")
+        try:
+            ls.solve(b)                        # 1e-30 ist unerreichbar: Meldung erwartet
+        except RuntimeError:
+            pass
+        return ls.residuum
+
+    try:
+        roh, fein = residuum_mit(0), residuum_mit(4)
+        if not fein < roh:
+            print(f"    kein Abstand zwischen roher ({roh:.1e}) und nachiterierter ({fein:.1e}) "
+                  "Loesung - uebersprungen")
+            return
+        schranke = (roh * fein) ** 0.5
+        # ama bekommt die Schranke ohne Nachiterationen und verfehlt sie; erst danach darf
+        # solve() nachiterieren. Die Vorgabe ist im Faktor eingefroren, solve() liest neu.
+        parallel.configure(solver_residuum=schranke, solver_nachiterationen=0)
+        ls = LinearSolver(K, backend="ama")
+        parallel.configure(solver_residuum=schranke, solver_nachiterationen=4)
+        ls.solve(b)
+        nach = ls._nachweis
+        check("der Aufbau trifft den strittigen Fall: die Schleife rettet die Loesung",
+              nach.gehalten and ls.nachiterationen >= 1,
+              f"{ls.nachiterationen} Schritte, gehalten={nach.gehalten}")
+        check("gehaltene Schranke und gezogener Rueckfall schliessen sich aus",
+              not (nach.gehalten and nach.rueckfall),
+              f"gehalten={nach.gehalten}, rueckfall={nach.rueckfall}")
+    finally:
+        parallel.configure(solver_residuum=alt[0], solver_nachiterationen=alt[1])
+
+
 def main():
     for f in (test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
@@ -594,7 +665,8 @@ def main():
               test_ama_faktorisiert_symmetrisch_und_nennt_threads,
               test_ama_nimmt_die_genauigkeitseinstellung,
               test_ama_faktorisiert_kein_zweites_mal_im_stillen,
-              test_die_beschreibung_nennt_die_loesung_nicht_die_korrektur):
+              test_die_beschreibung_nennt_die_loesung_nicht_die_korrektur,
+              test_kein_rueckfall_im_nachweis_wenn_die_schranke_gehalten_wird):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
