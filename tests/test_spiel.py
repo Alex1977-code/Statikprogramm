@@ -169,8 +169,81 @@ def test_flaechen_spiel():
           not m.koerper["Oben"].elemente and len(m.koerper["Unten"].elemente) > 0)
 
 
+def _stift_durch_zwei_bleche():
+    """Ein Stift r = 20 mm durch **zwei** Bleche: die Bohrung hat Kreise in
+    beiden. Wird nur einer aufgeweitet, laeuft sie kegelig zu."""
+    m = Model("Zwei Bleche")
+    m.add_material(Material("S355", E=210e9, nu=0.3, rho=7850))
+    k = _zylinder(m, "V1", r=0.02, hoehe=0.08)        # z = 0 … 0,08
+    for nr, (z0, z1) in enumerate(((0.0, 0.02), (0.05, 0.08)), start=1):
+        # Zwei Bleche um den Stift; ihr Loch sind die Stiftbögen der jeweiligen Höhe
+        e = [m.add_node(x, y, z) for z in (z0, z1) for x, y in ((-0.1, -0.1), (0.1, -0.1), (0.1, 0.1), (-0.1, 0.1))]
+        for i in range(4):
+            m.add_line(f"B{nr}U{i}", [e[i], e[(i + 1) % 4]])
+            m.add_line(f"B{nr}O{i}", [e[4 + i], e[4 + (i + 1) % 4]])
+            m.add_line(f"B{nr}V{i}", [e[i], e[4 + i]])
+        # Kreise des Lochs in beiden Deckflächen dieses Blechs
+        for tag, zz in (("u", z0), ("o", z1)):
+            a_ = m.add_node(-0.02, 0, zz)
+            b_ = m.add_node(0.02, 0, zz)
+            m.add_line(f"B{nr}K{tag}1", [a_, b_], "arc", punkte=[(-0.02, 0, zz), (0, 0.02, zz), (0.02, 0, zz)])
+            m.add_line(f"B{nr}K{tag}2", [b_, a_], "arc", punkte=[(0.02, 0, zz), (0, -0.02, zz), (-0.02, 0, zz)])
+        m.add_flaeche(f"B{nr}_unten", [f"B{nr}U{i}" for i in range(4)], material="S355")
+        m.flaechen[f"B{nr}_unten"].oeffnungen = [[f"B{nr}Ku1", f"B{nr}Ku2"]]
+        m.add_flaeche(f"B{nr}_oben", [f"B{nr}O{i}" for i in range(4)], material="S355")
+        m.flaechen[f"B{nr}_oben"].oeffnungen = [[f"B{nr}Ko1", f"B{nr}Ko2"]]
+        for i in range(4):
+            m.add_flaeche(f"B{nr}_M{i}", [f"B{nr}U{i}", f"B{nr}V{(i + 1) % 4}", f"B{nr}O{i}", f"B{nr}V{i}"],
+                          material="S355")
+        m.add_koerper(f"Blech{nr}", [f"B{nr}_unten", f"B{nr}_oben"] + [f"B{nr}_M{i}" for i in range(4)],
+                      material="S355")
+    return m, k
+
+
+def test_bohrung_aufweiten():
+    """Die Bohrung aufweiten statt den Stift zu verkleinern - über ihre ganze
+    Länge, also in jedem Bauteil, durch das sie geht (17.09.2026, „damit das
+    Modell sauber bleibt sollte die Bohrung über ihre gesamte Länge angepasst
+    werden, sonst ergeben sich leichte Kegel im Volumen“)."""
+    m, _k = _stift_durch_zwei_bleche()
+    z = spiel.zylinder(m, "V1")
+    check("der Stift wird erkannt: r = 20 mm", z["ok"] and abs(z["radius"] - 0.02) < 1e-12,
+          f"{z.get('radius')} / {z.get('grund')}")
+    tr = spiel.bohrungen_zur_achse(m, z["punkt"], z["achse"], z["radius"], ausser="V1")
+    check("die Bohrung wird in beiden Blechen gefunden, je vier Bögen",
+          sorted(tr) == ["Blech1", "Blech2"] and all(len(v) == 4 for v in tr.values()),
+          str({k_: len(v) for k_, v in tr.items()}))
+    log = []
+    erg = spiel.bohrung_spiel(m, z["punkt"], z["achse"], z["radius"], 2e-5, ausser="V1", log=log)
+    check("aufgeweitet: r = 20,010 mm in beiden Blechen",
+          erg["ok"] and abs(erg["radius_neu"] - 0.02001) < 1e-9 and sorted(erg["koerper"]) == ["Blech1", "Blech2"],
+          str({k_: erg[k_] for k_ in ("radius_neu", "koerper")}))
+    # kein Kegel: alle Bohrungskreise haben denselben Radius
+    radien = set()
+    for kname in ("Blech1", "Blech2"):
+        for fn in m.koerper[kname].flaechen:
+            for ln in spiel._linien_der_flaeche(m.flaechen[fn]):
+                L = m.lines.get(ln)
+                try:
+                    kr = spiel._bogen_kreis(L, m)
+                except ValueError:
+                    kr = None
+                if kr is not None:
+                    radien.add(round(kr[1], 9))
+    check("kein Kegel: jeder Bohrungskreis hat r = 20,010 mm",
+          radien == {round(0.02001, 9)}, str(sorted(round(x * 1e3, 4) for x in radien)))
+    check("der Stift bleibt bei r = 20,000 mm",
+          abs(spiel.zylinder(m, "V1")["radius"] - 0.02) < 1e-9,
+          f"{spiel.zylinder(m, 'V1')['radius'] * 1e3:.4f} mm")
+    check("das Netz der Bleche ist gelöscht (neu vernetzen), das Protokoll nennt beide",
+          any("Blech1" in z_ and "Blech2" in z_ for z_ in log), str(log)[:120])
+    erg2 = spiel.bohrung_spiel(m, z["punkt"], z["achse"], 0.05, 2e-5, ausser="V1", log=[])
+    check("eine Bohrung, die es nicht gibt, wird abgewiesen", not erg2["ok"], erg2.get("grund", "")[:70])
+
+
 def main():
-    for t in (test_rippe_ist_kein_zylinder, test_zylinder_spiel, test_flaechen_spiel):
+    for t in (test_rippe_ist_kein_zylinder, test_zylinder_spiel, test_bohrung_aufweiten,
+              test_flaechen_spiel):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

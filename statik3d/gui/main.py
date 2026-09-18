@@ -3522,6 +3522,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Von den gewählten Knoten das Lot fällen: auf die Arbeitsebene, die Ebene einer Fläche, "
                 "den nächsten Punkt einer Fläche oder Linie - als neuer Knoten (mit Lotlinie) oder "
                 "die Knoten dorthin verschieben (projizieren)")
+        g.gross("Spalt / Toleranz", "◎", self.maske_spalt, "",
+                "Welle und Bohrung auf ein Spiel bringen: das Programm misst das Nullmaß beider, "
+                "und der Spalt lässt sich am Zylinder abziehen, an der Bohrung zugeben oder auf "
+                "beide verteilen. Die Bohrung wird über ihre ganze Länge angepasst, in jedem "
+                "Bauteil, durch das sie geht - sonst bliebe ein Kegel stehen")
         g = r.gruppe("Auswahl in der Ansicht")
         self.cb_auswahlart = QtWidgets.QComboBox()
         self.cb_auswahlart.addItems(self.AUSWAHLARTEN)
@@ -5246,15 +5251,34 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 i = int(name)
                 h = hw[i]
+                v_h = h.get("vorschlag") or {}
+                # In "Betroffen" steht zuerst das Teil, das geaendert wird,
+                # dahinter die Bauteile, durch deren Bohrung es geht - die
+                # bleiben, wie sie sind. Das war missverstaendlich
+                # (17.09.2026: "bei den Importhinweisen zum Spalt stehen
+                # mehrere Volumen, warum?").
+                obj = [n_o for _a, n_o in (h.get("objekte") or [])]
+                if h.get("art") == "spiel" and obj:
+                    betroffen_text = (f"{obj[0]} (wird verkleinert)"
+                                      + (f"; Bohrung in {', '.join(obj[1:])} (bleibt)" if len(obj) > 1 else ""))
+                else:
+                    betroffen_text = ", ".join(obj)
                 felder = [F("text", "Befund und Vorschlag", "info", str(h.get("text", ""))),
-                          F("objekte", "Betroffen", "info", ", ".join(f"{n_o}" for _a, n_o in (h.get("objekte") or []))),
+                          F("objekte", "Betroffen", "info", betroffen_text),
                           F("status", "Stand", "info", {"": "offen", "angewendet": "angewendet",
                                                          "verworfen": "verworfen"}.get(str(h.get("erledigt", "")), "offen"))]
+                if h.get("art") == "spiel" and not h.get("erledigt"):
+                    felder.insert(2, F("mm", "Spalt am Durchmesser [mm]", "zahl",
+                                       float(v_h.get("mm", 0.02) or 0.02),
+                                       hinweis="vom Nullmaß aus; „So einstellen“ nimmt diesen Wert. Wer ihn "
+                                               "an der Bohrung statt am Zylinder abtragen will: "
+                                               "Geometrie → Spalt / Toleranz"))
                 titel = f"Importhinweis {i + 1}"
-                hinweis = ("„So einstellen“ übernimmt den Vorschlag (Reibung: die Fuge wird umgestellt und am "
-                           "Netz neu ausgeführt; Spiel: der Zylinder wird verkleinert, neu vernetzt, seine "
-                           "Fugen ausgeführt). „Verwerfen“ lässt alles, wie es ist.")
-                zusatz = [("So einstellen", lambda i_=i: self._hinweis_anwenden(i_)),
+                hinweis = ("„So einstellen“ übernimmt den Vorschlag (Reibung: die Fuge wird umgestellt; Spiel: "
+                           "der Zylinder wird verkleinert). Vernetzt wird nicht - das Protokoll nennt die "
+                           "Volumen, die dann neu zu vernetzen sind. „Verwerfen“ lässt alles, wie es ist. "
+                           "Für Welle und Bohrung zusammen: Geometrie → Spalt / Toleranz.")
+                zusatz = [("So einstellen", lambda i_=i: self._hinweis_anwenden(i_, self._maskenzahl("mm"))),
                           ("Verwerfen", lambda i_=i: self._hinweis_verwerfen(i_))]
         elif art in ("liniengelenke", "liniengelenk"):
             fl = {n: f for n, f in m.flaechen.items() if getattr(f, "gelenklinien", None)}
@@ -14158,6 +14182,117 @@ class MainWindow(QtWidgets.QMainWindow):
                 aus.append(name)
         return sorted(aus, key=dsg.natuerlich)
 
+    #: Wo der Spalt abgezogen wird (Maske „Spalt / Toleranz")
+    SPALT_WOHIN = ["auf beide verteilen (je die Hälfte)",
+                   "nur am Zylinder abziehen",
+                   "nur an der Bohrung zugeben"]
+
+    def maske_spalt(self):
+        """Welle und Bohrung auf ein Spiel bringen (17.09.2026).
+
+        Gewaehlt wird der Zylinder; das Programm sucht seine Bohrung selbst -
+        alle Kreise gleichen Radius auf derselben Achse, in jedem Bauteil,
+        durch das sie geht. Angezeigt wird das **Nullmass** (der gemessene
+        Radius), eingetragen der gewuenschte Spalt am Durchmesser.
+        """
+        from .. import spiel as sp
+        m = self.model
+        gewaehlt = [k for k in (self.sel_koerper or []) if k in m.koerper]
+        zyl = [k for k in gewaehlt if sp.zylinder(m, k).get("ok")]
+        if not zyl:
+            zyl = sp.zylinder_im_modell(m)
+            if not zyl:
+                return self.error("Das Modell hat kein zylindrisches Volumen - ein Zylinder hat "
+                                  "Kreisbögen gleichen Radius auf einer Achse, und keinen Punkt "
+                                  "weiter außen als sein größter Kreis")
+        vor = zyl[0]
+        z = sp.zylinder(m, vor)
+        bohrung = sp.bohrungen_zur_achse(m, z["punkt"], z["achse"], z["radius"], ausser=vor) if z.get("ok") else {}
+        felder = [msk.Feld("zylinder", "Zylinder (Welle)", "wahl", vor, list(zyl),
+                           hinweis="in der Ansicht gewählte Volumen stehen vorn; sonst alle erkannten"),
+                  msk.Feld("nullmass", "Nullmaß (gemessen)", "info",
+                           f"r = {z['radius'] * 1e3:.3f} mm, Ø {z['radius'] * 2e3:.3f} mm"
+                           if z.get("ok") else "kein Zylinder"),
+                  msk.Feld("bohrung", "Bohrung in", "info",
+                           ", ".join(f"{k_} ({len(v)} Bögen)" for k_, v in bohrung.items()) if bohrung
+                           else "keine gefunden - dann wirkt nur der Zylinder"),
+                  msk.Feld("spalt", "Spalt am Durchmesser [mm]", "zahl", 0.02,
+                           hinweis="das gewünschte Spiel zwischen Welle und Bohrung, vom Nullmaß aus"),
+                  msk.Feld("wohin", "Wo abtragen", "wahl", self.SPALT_WOHIN[0], list(self.SPALT_WOHIN),
+                           hinweis="Die Bohrung wird über ihre ganze Länge angepasst - in jedem Bauteil, "
+                                   "durch das sie geht; sonst bliebe hinter dem ersten ein Kegel stehen"),
+                  msk.Feld("vernetzen", "danach neu vernetzen", "haken", False,
+                           hinweis="die veränderten Volumen sofort neu vernetzen und ihre Kontaktfugen "
+                                   "wieder ausführen; sonst vernetzen Sie selbst, wann es passt")]
+        maske = msk.Maske("Spalt / Toleranz", felder, knopf="Spalt geben",
+                          hinweis="Stift und Bohrung teilen sich in RFEM Knoten und Bogenlinien; das "
+                                  "Programm trennt sie erst voneinander (eigene Kopien) und rückt dann "
+                                  "die Bögen. Das Nullmaß oben ist der gemessene Istzustand - der Spalt "
+                                  "kommt darauf. Für Passungen nach Zeichnung: Lager / Kontakt → Passung.")
+        maske.angewendet.connect(self._spalt_anwenden)
+        return self.maske_erzeugen(maske)
+
+    def _spalt_anwenden(self, w: dict):
+        from .. import spiel as sp
+        m = self.model
+        name = str(w.get("zylinder", "") or "")
+        if name not in m.koerper:
+            return self.error(f"Volumen {name} gibt es nicht")
+        try:
+            spalt = float(str(w.get("spalt", 0) or 0).replace(",", ".")) / 1e3
+        except ValueError:
+            spalt = 0.0
+        if spalt <= 0:
+            return self.error("Spalt größer als null eintragen")
+        z = sp.zylinder(m, name)
+        if not z.get("ok"):
+            return self.error(f"{name} ist kein Zylinder: {z.get('grund', '')}")
+        wohin = str(w.get("wohin", "") or self.SPALT_WOHIN[0])
+        am_zylinder = spalt if wohin == self.SPALT_WOHIN[1] else (0.0 if wohin == self.SPALT_WOHIN[2] else spalt / 2)
+        an_bohrung = spalt - am_zylinder
+        self.merken(f"Spalt {spalt * 1e3:g} mm an {name}")
+        log: list = []
+        betroffen: list = []
+        # Erst die Bohrung (sie braucht die Achse und den Radius von vorher),
+        # dann den Zylinder - sonst suchte die Bohrungssuche den neuen Radius
+        if an_bohrung > 0:
+            erg_b = sp.bohrung_spiel(m, z["punkt"], z["achse"], z["radius"], an_bohrung, ausser=name, log=log)
+            if erg_b.get("ok"):
+                betroffen += list(erg_b.get("koerper") or [])
+            else:
+                self.log.appendPlainText("Bohrung nicht angepasst: " + str(erg_b.get("grund", "")))
+        if am_zylinder > 0:
+            erg_z = sp.zylinder_spiel(m, name, am_zylinder, log)
+            if erg_z.get("ok"):
+                betroffen.append(name)
+            else:
+                self.log.appendPlainText("Zylinder nicht angepasst: " + str(erg_z.get("grund", "")))
+        for z_ in log:
+            self.log.appendPlainText(z_)
+        if not betroffen:
+            self.refresh_all()
+            return self.error("Nichts verändert - siehe Protokoll")
+        betroffen = list(dict.fromkeys(betroffen))
+        # Eine Fuge mit Spiel beruehrt sich nicht mehr im Sinn der Beruehrungssuche
+        for kb in m.kontaktbedingungen.values():
+            if set(betroffen) & (set(kb.koerpernamen or []) | set(getattr(kb, "gegenkoerper", None) or [])):
+                kb.automatisch = False
+        if bool(w.get("vernetzen", False)):
+            self._vernetzen([], [m.koerper[k] for k in betroffen if k in m.koerper])
+            from .. import fugen
+            gruppen = fugen.gruppen_je_knoten(m) if m.elements else None
+            for kb in m.kontaktbedingungen.values():
+                if set(betroffen) & (set(kb.koerpernamen or []) | set(getattr(kb, "gegenkoerper", None) or [])):
+                    self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
+        else:
+            self.log.appendPlainText(
+                f"Noch zu vernetzen: {', '.join(betroffen)} - beim Vernetzen (Netz → Vernetzen) "
+                f"werden die Fugen dieser Volumen neu ausgeführt")
+        self.refresh_all()
+        self.info(f"Spalt {spalt * 1e3:g} mm: {name} und seine Bohrung in "
+                  f"{', '.join(k for k in betroffen if k != name) or '-'} "
+                  f"({'je zur Hälfte' if am_zylinder and an_bohrung else ('am Zylinder' if am_zylinder else 'an der Bohrung')})")
+
     def maske_spiel(self):
         """Spiel geometrisch geben (17.09.2026, „zylinderförmige Bauteile
         geometrisch mit dem Spiel versehen, ggf. auch Ebenen"): gewaehlte
@@ -14275,7 +14410,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"Neu auszuführende Kontaktfugen: {', '.join(wartend)} - "
                 f"Lager / Kontakt → Kontaktfugen ausführen, oder beim nächsten Vernetzen")
 
-    def _hinweis_anwenden(self, i: int):
+    def _maskenzahl(self, feld: str):
+        """Eine Zahl aus der offenen Maske - None, wenn es sie nicht gibt."""
+        maske = getattr(getattr(self, "maskenrand", None), "maske", None)
+        if maske is None:
+            return None
+        try:
+            wert = (maske.werte() or {}).get(feld)
+            return None if wert in (None, "") else float(str(wert).replace(",", "."))
+        except (ValueError, AttributeError):
+            return None
+
+    def _hinweis_anwenden(self, i: int, mm: float = None):
         from .. import hinweise
         m = self.model
         hw = getattr(m, "importhinweise", None) or []
@@ -14284,6 +14430,10 @@ class MainWindow(QtWidgets.QMainWindow):
         h = hw[i]
         if h.get("erledigt"):
             return self.info("Der Hinweis ist schon erledigt")
+        if mm is not None and h.get("art") == "spiel" and mm > 0:
+            # Der Wert aus der Maske gilt: "der gewuenschte Spalt ausgehend vom
+            # Nullmass eingestellt werden koennen" (17.09.2026)
+            h.setdefault("vorschlag", {})["mm"] = float(mm)
         self._fortschritt_beginnen(1, f"Importhinweis {i + 1}: Stand für „Rückgängig“ sichern …",
                                    abbrechbar=False)
         try:

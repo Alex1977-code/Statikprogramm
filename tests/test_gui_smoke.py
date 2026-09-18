@@ -5175,6 +5175,19 @@ def main():
               "V1" in w.sel_koerper and "Platte" in w.sel_koerper and w.eingaben_dock.windowTitle() == "Importhinweis 1",
               f"{w.sel_koerper} / {w.eingaben_dock.windowTitle()}")
         check("nichts ist von selbst umgestellt: die Fuge haftet noch", m_.kontaktbedingungen["Stift"].standard == "Rau")
+        # Der Spalt-Hinweis nennt das Teil, das sich ändert, und die Bohrung
+        # getrennt - und lässt den Wert einstellen (17.09.2026)
+        i_sp = next(i for i, h in enumerate(m_.importhinweise) if h["art"] == "spiel")
+        w._baum_geklickt("importhinweis", str(i_sp))
+        app.processEvents()
+        w_sp = w.maskenrand.maske.werte()
+        check("Spalt-Hinweis: „Betroffen“ trennt das Teil, das kleiner wird, von der Bohrung",
+              "wird verkleinert" in str(w_sp.get("objekte")) and "bleibt" in str(w_sp.get("objekte")),
+              str(w_sp.get("objekte"))[:90])
+        check("… und der Spalt ist einstellbar, Vorgabe 0,02 mm",
+              abs(float(str(w_sp.get("mm")).replace(",", ".")) - 0.02) < 1e-12, str(w_sp.get("mm")))
+        w._baum_geklickt("importhinweis", "0")
+        app.processEvents()
         w._hinweis_anwenden(0)
         app.processEvents()
         m_ = w.model
@@ -5267,6 +5280,60 @@ def main():
         import traceback
         traceback.print_exc()
         check("Plastizität in der Maske Berechnung", False, str(ex)[:70])
+
+    try:
+        # ---- Spalt / Toleranz: Nullmaß, Bohrung über die ganze Länge (17.09.2026) ----
+        from tests.test_spiel import _stift_durch_zwei_bleche as _sdb
+        from statik3d import spiel as sp_t
+        alt_m_t = w.model
+        m_t, _k_t = _sdb()
+        w._modell_setzen(m_t)
+        app.processEvents()
+        w.auswahlart_setzen("Volumen")
+        w.sel_koerper = ["V1"]
+        w.maske_spalt()
+        app.processEvents()
+        mt = w.maskenrand.maske
+        wt = mt.werte()
+        check("Maske „Spalt / Toleranz“: Zylinder, Nullmaß, Bohrung, Spalt, wo abtragen",
+              all(k in wt for k in ("zylinder", "nullmass", "bohrung", "spalt", "wohin")),
+              str(sorted(wt))[:110])
+        check("das Nullmaß ist der gemessene Radius (r = 20,000 mm, Ø 40,000 mm)",
+              "20.000" in str(wt.get("nullmass")) and "40.000" in str(wt.get("nullmass")), str(wt.get("nullmass")))
+        check("die Bohrung wird in beiden Blechen genannt",
+              "Blech1" in str(wt.get("bohrung")) and "Blech2" in str(wt.get("bohrung")), str(wt.get("bohrung")))
+        mt.setzen("spalt", "0,02")
+        mt.setzen("wohin", w.SPALT_WOHIN[0])          # auf beide verteilen
+        mt.angewendet.emit(mt.werte())
+        app.processEvents()
+        m_t = w.model
+        r_z = sp_t.zylinder(m_t, "V1")["radius"]
+        radien_b = set()
+        for kname in ("Blech1", "Blech2"):
+            for fn in m_t.koerper[kname].flaechen:
+                for ln in sp_t._linien_der_flaeche(m_t.flaechen[fn]):
+                    L_ = m_t.lines.get(ln)
+                    try:
+                        kr_ = sp_t._bogen_kreis(L_, m_t)
+                    except ValueError:
+                        kr_ = None
+                    if kr_ is not None:
+                        radien_b.add(round(kr_[1], 9))
+        check("je zur Hälfte: Zylinder 19,995 mm, Bohrung 20,005 mm - Spalt 0,02 mm am Durchmesser",
+              abs(r_z - 0.019995) < 1e-9 and radien_b == {round(0.020005, 9)},
+              f"Zylinder {r_z * 1e3:.4f} mm, Bohrung {sorted(round(x * 1e3, 4) for x in radien_b)}")
+        check("kein Kegel: alle Bohrungskreise gleich, in beiden Blechen", len(radien_b) == 1, str(len(radien_b)))
+        check("das Protokoll nennt die Volumen, die neu zu vernetzen sind",
+              "Noch zu vernetzen" in w.log.toPlainText() and "Blech1" in w.log.toPlainText())
+        check("Ribbon: der Befehl „Spalt / Toleranz“ steht in der Geometrie",
+              any(a.text() == "Spalt / Toleranz" for a in w.findChildren(QtGui.QAction)))
+        w.maskenrand.schliessen()
+        w.sel_koerper = []
+        w._modell_setzen(alt_m_t)
+    except Exception as ex:      # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        check("Spalt / Toleranz", False, str(ex)[:70])
 
     # ---- Neue Oberflaeche: Fang je Art, Wuerfel, Glasleiste, Ribbon, Sicht, Texte ----
     try:
