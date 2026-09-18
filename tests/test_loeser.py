@@ -66,7 +66,7 @@ def test_loeser_treffen_die_geschlossene_loesung():
     soll = 1.0e5 * L / (E_STAHL * A)
     print(f"    Sollwert u = N·L/(E·A) = {soll * 1e3:.6f} mm")
     gerechnet = 0
-    for backend in ("superlu", "pardiso", "cholmod", "umfpack", "mumps", "pyamg"):
+    for backend in ("superlu", "pardiso", "cholmod", "umfpack", "mumps", "ama", "pyamg"):
         try:
             r = solve_static(m, backend=backend)
         except TypeError:
@@ -94,7 +94,7 @@ def test_loeser_liste():
     und SuperLU (BSD) duerfen in die exe, GPL-Loeser nicht."""
     liste = solver.loeser_liste()
     keys = [k for k, *_ in liste]
-    check("alle sechs Loeser in der Liste", keys == ["pardiso", "cholmod", "umfpack", "mumps", "pyamg", "superlu"],
+    check("alle sieben Loeser in der Liste", keys == ["pardiso", "cholmod", "umfpack", "mumps", "ama", "pyamg", "superlu"],
           str(keys))
     check("SuperLU ist immer da", dict((k, da) for k, _n, da, *_r in liste)["superlu"])
     lizenz = {k: liz for k, _n, _da, liz, _a in liste}
@@ -435,6 +435,34 @@ def test_threadzahl_aus_den_einstellungen():
         parallel.configure(solver_threads=alt)
 
 
+def test_ama_faktorisiert_symmetrisch_und_nennt_threads():
+    """ama (eigener Kern): loest das Testsystem exakt, meldet seine Threads und lehnt
+    unsymmetrische Matrizen mit einer Meldung ab, die die Alternativen nennt."""
+    try:
+        import ama.kern  # noqa: F401
+    except ImportError:
+        print("    ama: nicht installiert, uebersprungen")
+        return
+    n = 400
+    K = sparse.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                     [-1, 0, 1]).tocsc()
+    ls = LinearSolver(K, backend="ama")
+    check("ama meldet sich als ama", ls.backend == "ama", ls.beschreibung())
+    check("ama meldet mindestens einen Thread", ls.threads >= 1, str(ls.threads))
+    x = ls.solve(np.ones(n))
+    close("ama loest das Testsystem", float(np.linalg.norm(K @ x - 1.0)), 0.0, 1e-12)
+    X = ls.solve(np.ones((n, 3)))
+    close("ama loest mehrere rechte Seiten", float(np.abs(K @ X - 1.0).max()), 0.0, 1e-12)
+    Ku = K.tolil()
+    Ku[0, 1] = -0.5                                        # unsymmetrisch
+    try:
+        LinearSolver(Ku.tocsc(), backend="ama")
+        check("ama weist unsymmetrische Matrizen ab", False)
+    except RuntimeError as ex:
+        check("ama weist unsymmetrische Matrizen ab und nennt Alternativen",
+              "symmetrisch" in str(ex) and "PARDISO" in str(ex), str(ex)[:80])
+
+
 def main():
     for f in (test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
@@ -442,7 +470,8 @@ def main():
               test_meldung_trennt_pool_und_loeser, test_kopfzeile_nennt_den_eingestellten_loeser,
               test_superlu_ordnet_symmetrisch, test_pardiso_gibt_speicher_frei,
               test_mumps_sagt_was_es_tut_und_gibt_speicher_frei,
-              test_threadzahl_aus_den_einstellungen):
+              test_threadzahl_aus_den_einstellungen,
+              test_ama_faktorisiert_symmetrisch_und_nennt_threads):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

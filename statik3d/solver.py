@@ -114,6 +114,8 @@ def threads_automatisch(backend: str) -> int:
     if backend == "pardiso":
         lib = _mkl_lib()
         return _mkl_threads_setzen(lib, mkl_threads()) if lib is not None else mkl_threads()
+    if backend == "ama":
+        return max(1, parallel.cpu_count() - 1)        # wie PARDISO: ein Kern bleibt der Oberflaeche
     return 1
 
 
@@ -195,18 +197,19 @@ LOESER = {
     "cholmod": ("CHOLMOD", "scikit-sparse", "LGPL / Supernodal GPL - nicht in der exe", "direkt (Cholesky)"),
     "umfpack": ("UMFPACK", "scikit-umfpack", "GPL - nicht in der exe", "direkt (LU)"),
     "mumps": ("MUMPS", "mumps", "CeCILL-C (Lizenztext liegt bei)", "direkt, mehrkernig"),
+    "ama": ("ama", "ama", "eigener Kern (Rust, keine Fremdlizenz)", "direkt, mehrkernig (LDL^T, Superknoten)"),
     "pyamg": ("PyAMG", "pyamg", "MIT", "iterativ (algebraisches Mehrgitter + CG)"),
     "superlu": ("SuperLU", "scipy", "BSD", "direkt, einkernig"),
 }
 NAMEN = {"pardiso": "MKL PARDISO", "cholmod": "CHOLMOD", "superlu": "SuperLU",
-         "umfpack": "UMFPACK", "mumps": "MUMPS", "pyamg": "PyAMG", "none": "-"}
+         "umfpack": "UMFPACK", "mumps": "MUMPS", "ama": "ama", "pyamg": "PyAMG", "none": "-"}
 #: Welches Python-Modul ein Loeser braucht - an einer Stelle, damit Auswahl,
 #: Meldung und Rechnung dasselbe pruefen
 LOESER_MODUL = {"pardiso": "pypardiso", "cholmod": "sksparse.cholmod",
-                "umfpack": "scikits.umfpack", "mumps": "mumps", "pyamg": "pyamg",
+                "umfpack": "scikits.umfpack", "mumps": "mumps", "ama": "ama.kern", "pyamg": "pyamg",
                 "superlu": "scipy.sparse.linalg"}
 #: Loeser, die mehrere Threads nutzen (die uebrigen rechnen einkernig)
-MEHRKERNIG = ("pardiso", "mumps")
+MEHRKERNIG = ("pardiso", "mumps", "ama")
 
 
 def loeser_da(key: str) -> bool:
@@ -342,6 +345,23 @@ class LinearSolver:
             self._solve = self._mumps(K)
             self.backend = "mumps"
             self.threads = mumps.threads()
+        if self._solve is None and be == "ama":
+            # Eigener Kern (Paket ama, Rust): multifrontale LDL^T mit Superknoten; das
+            # untere Dreieck geht hinein, K muss symmetrisch sein (wie MUMPS SYM=2)
+            try:
+                from ama import kern as ama_kern
+            except ImportError as ex:
+                raise RuntimeError("ama ist nicht installiert - pip install <ama-Wheel> in diese "
+                                   "Python-Umgebung (Gleichungsloeser-Projekt, maturin build)") from ex
+            Kc = K.tocsr()
+            skala = float(abs(Kc).max()) if Kc.nnz else 1.0
+            if float(abs(Kc - Kc.T).max()) > 1e-12 * skala:
+                raise RuntimeError("ama braucht eine symmetrische Matrix - fuer unsymmetrische "
+                                   "Systeme MKL PARDISO, MUMPS oder SuperLU waehlen")
+            faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"))
+            self._solve = faktor.loese
+            self.backend = "ama"
+            self.threads = int(faktor.threads)
         if self._solve is None and be == "pyamg":
             self._solve = self._pyamg(K)
             self.backend = "pyamg"
