@@ -492,6 +492,97 @@ def test_ama_nimmt_die_genauigkeitseinstellung():
         parallel.configure(solver_residuum=alt)
 
 
+def test_ama_faktorisiert_kein_zweites_mal_im_stillen():
+    """Erreicht ama die Schranke nicht, darf es nicht von sich aus neu faktorisieren.
+
+    Der Rueckfall „genauer" des Kerns faktorisiert die ganze Matrix ein zweites Mal. Da
+    ``LinearSolver._solve`` das ``loese`` des Faktors ist, geschieht das bei jedem
+    Nachiterationsschritt von ``solve`` erneut — am Drehlager (1 028 724 FHG) sieben Gigabyte
+    je Faktorisierung, stumm und mehrfach. Gemessen wurden 2 Faktorisierungen fuer einen
+    einzigen ``solve``-Aufruf (18.09.2026). Wer meldet, dass das Residuum zu gross ist, ist
+    und bleibt Statik3Ds eigene Pruefung in ``solve``.
+    """
+    try:
+        from ama import kern as ama_kern
+    except ImportError:
+        print("    ama: nicht installiert, uebersprungen")
+        return
+    n = 300
+    K = sparse.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                     [-1, 0, 1]).tocsc()
+    alt = parallel.settings().solver_residuum
+    zaehler = [0]
+    echt = ama_kern.Symbolik.faktorisiere
+
+    def zaehlend(self, *args, **kw):
+        zaehler[0] += 1
+        return echt(self, *args, **kw)
+
+    parallel.configure(solver_residuum=1e-20)          # unerreichbar, auch mit Nachiteration
+    ama_kern.Symbolik.faktorisiere = zaehlend
+    try:
+        ls = LinearSolver(K, backend="ama")
+        check("der Aufbau faktorisiert genau einmal", zaehler[0] == 1, f"{zaehler[0]}x")
+        zaehler[0] = 0
+        try:
+            ls.solve(np.ones(n))
+            check("die unerreichbare Schranke wird gemeldet", False, "kein Fehler")
+        except RuntimeError as ex:
+            check("die unerreichbare Schranke wird gemeldet, nicht heimlich verfolgt",
+                  "Residuum" in str(ex) and "Schranke" in str(ex), str(ex)[:70])
+        check("Loesen faktorisiert kein zweites Mal", zaehler[0] == 0,
+              f"{zaehler[0]} zusaetzliche Faktorisierungen")
+    finally:
+        ama_kern.Symbolik.faktorisiere = echt
+        parallel.configure(solver_residuum=alt)
+
+
+def test_die_beschreibung_nennt_die_loesung_nicht_die_korrektur():
+    """Nach mehreren Loesungen muss die Beschreibung die Zahl nennen, die ``solve`` gemessen hat.
+
+    ``LinearSolver._solve`` ist das ``loese`` des ama-Faktors, und jeder Aufruf ueberschreibt
+    dessen ``nachweis``. Die Nachiteration in ``solve`` ruft es fuer die Korrektur ``b - K x``
+    auf, deren Residuum sich auf eine ganz andere Bezugsgroesse bezieht. Danach beschrieb die
+    Beschreibung die Korrektur statt der Loesung und widersprach der eigenen Fehlermeldung
+    (gemessen 18.09.2026: Meldung 1,1e-16, Beschreibung 1,3e-16).
+
+    Die Einstellung wird hier erst nach dem Faktorisieren verschaerft — so laeuft die
+    Nachiteration von ``solve`` sicher an, ohne dass der Test auf eine numerische Randlage
+    angewiesen waere. Im Programm tritt genau das auf, wenn die Genauigkeit sich aendert,
+    waehrend eine Faktorisierung behalten wird (``StaticSystem._kontakt_loeser``).
+    """
+    try:
+        import ama.kern  # noqa: F401
+    except ImportError:
+        print("    ama: nicht installiert, uebersprungen")
+        return
+    n = 300
+    K = sparse.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                     [-1, 0, 1]).tocsc()
+    alt = parallel.settings().solver_residuum
+    try:
+        ls = LinearSolver(K, backend="ama")
+        ls.solve(np.ones(n))
+        check("die Beschreibung nennt das Residuum der ersten Loesung",
+              f"erreicht {ls.residuum:.1e}" in ls.beschreibung(),
+              f"{ls.residuum:.1e} / {ls.beschreibung()}")
+        parallel.configure(solver_residuum=1e-20)      # Nachiteration von solve laeuft an
+        try:
+            ls.solve(np.arange(1.0, n + 1.0))
+        except RuntimeError:
+            pass                                       # erwartet: Schranke unerreichbar
+        check("die Beschreibung nennt die Loesung, nicht die letzte Korrektur",
+              f"erreicht {ls.residuum:.1e}" in ls.beschreibung(),
+              f"{ls.residuum:.1e} / {ls.beschreibung()}")
+        gemeldet = ls.beschreibung()
+        ls.freigeben()
+        check("freigeben() gibt den ama-Faktor zurueck", ls._faktor is None, repr(ls._faktor))
+        check("der Nachweis ueberlebt das Freigeben", ls.beschreibung() == gemeldet,
+              ls.beschreibung())
+    finally:
+        parallel.configure(solver_residuum=alt)
+
+
 def main():
     for f in (test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
@@ -501,7 +592,9 @@ def main():
               test_mumps_sagt_was_es_tut_und_gibt_speicher_frei,
               test_threadzahl_aus_den_einstellungen,
               test_ama_faktorisiert_symmetrisch_und_nennt_threads,
-              test_ama_nimmt_die_genauigkeitseinstellung):
+              test_ama_nimmt_die_genauigkeitseinstellung,
+              test_ama_faktorisiert_kein_zweites_mal_im_stillen,
+              test_die_beschreibung_nennt_die_loesung_nicht_die_korrektur):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

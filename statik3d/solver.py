@@ -294,6 +294,9 @@ class LinearSolver:
         self._solve = None
         self._K = None
         self._ps = None
+        self._faktor = None          # nur ama: haelt die Faktorisierung (freigeben() loest ihn)
+        self._nachweis = None        # nur ama: was die letzte Loesung erreicht hat
+        self._vorgabe = None         # nur ama: wonach faktorisiert wurde (fuer den Nachweis)
         self.nachiterationen = 0
         self.residuum = 0.0
         if self.n == 0:
@@ -369,8 +372,17 @@ class LinearSolver:
             # Dieselbe Einstellung, die solve() unten prueft, geht als Vorgabe in ama: der
             # Kern iteriert bis zu dieser Schranke nach und legt in faktor.nachweis ab, was
             # er erreicht hat. Sonst haette dieselbe Sache zwei Bedienelemente.
+            #
+            # rueckfall="lockern": der Kern meldet die verfehlte Schranke, statt sie selbst
+            # zu verfolgen. Sein Rueckfall "genauer" faktorisiert die ganze Matrix ein
+            # zweites Mal - und weil self._solve das loese dieses Faktors ist, taete er das
+            # bei jedem Nachiterationsschritt von solve() erneut. Ein einziger solve()-Aufruf
+            # kostete so 2 Faktorisierungen statt 1 (gemessen 18.09.2026); am Drehlager
+            # (1 028 724 FHG) sind das je 7 GB, stumm und mehrfach. Wer eine zu grosse
+            # Abweichung meldet, ist und bleibt die Pruefung in solve() darunter.
             grenze, n_max = self.genauigkeit()
-            vorgabe = ama_gen.aufloesen(residuum=grenze, nachiterationen=n_max)
+            vorgabe = ama_gen.aufloesen(residuum=grenze, nachiterationen=n_max,
+                                        rueckfall="lockern")
             faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"), stoerung_rel=1e-13,
                                            vorgabe=vorgabe)
             self._solve = faktor.loese
@@ -378,6 +390,7 @@ class LinearSolver:
             self.threads = int(faktor.threads)
             self.gestoert = int(faktor.gestoert)
             self._faktor = faktor
+            self._vorgabe = vorgabe
         if self._solve is None and be == "pyamg":
             self._solve = self._pyamg(K)
             self.backend = "pyamg"
@@ -464,6 +477,10 @@ class LinearSolver:
         """
         ps, self._ps = self._ps, None
         loesen, self._solve = self._solve, None
+        # ama haelt die Faktorisierung auf der Rust-Seite; self._faktor wuerde sie ueber das
+        # Freigeben hinaus am Leben halten. self._nachweis bleibt - er ist eine Handvoll
+        # Zahlen, und beschreibung() soll auch danach noch sagen koennen, was erreicht wurde.
+        self._faktor = None
         if ps is not None:
             try:
                 ps.free_memory(everything=True)
@@ -495,9 +512,11 @@ class LinearSolver:
         Kontakt-Iterationen wurde daraus ein anderer Endzustand (18.09.2026)."""
         grenze, n_max = self.genauigkeit()
         frei = getattr(self, "gestoert", 0)
-        # Was ama zuletzt erreicht hat - gemessen, nicht zugesagt. Vor dem ersten Loesen und
-        # bei allen anderen Loesern gibt es keinen Nachweis, dann bleibt der Zusatz leer.
-        nach = getattr(getattr(self, "_faktor", None), "nachweis", None)
+        # Was ama bei der letzten Loesung erreicht hat - gemessen, nicht zugesagt. Vor dem
+        # ersten Loesen und bei allen anderen Loesern gibt es keinen Nachweis, dann bleibt
+        # der Zusatz leer. Der Wert kommt aus solve() und nicht aus dem Faktor: dort wird er
+        # festgehalten, ehe die Nachiteration ihn ueberschreiben kann (siehe solve()).
+        nach = self._nachweis
         zusatz = "" if nach is None else f"; erreicht {nach.erreicht:.1e} (Ziel {nach.ziel:.0e})"
         return NAMEN.get(self.backend, self.backend) + (
             f", {self.threads} Threads" if self.threads > 1 else ", einkernig") + (
@@ -510,6 +529,16 @@ class LinearSolver:
             raise RuntimeError("Loeser ist freigegeben - erneut faktorisieren")
         b = np.asarray(b, float)
         x = self._solve(b)
+        # Der Nachweis von ama gehoert zu genau dieser Loesung. Die Nachiteration unten ruft
+        # self._solve fuer die Korrektur b - K x auf, und deren Residuum bezieht sich auf
+        # ||b - K x|| statt auf ||b||; der Nachweis im Faktor beschreibt danach die Korrektur
+        # und widerspricht dem Residuum, das solve() meldet (gemessen 18.09.2026: Meldung
+        # 1,1e-16, Beschreibung 1,3e-16). Darum hier festhalten, ehe das geschehen kann.
+        # Je Aufruf erneuert, nicht nur beim ersten: beschreibung() und self.residuum sollen
+        # dieselbe, zuletzt gerechnete Loesung beschreiben - sonst nennt die Statuszeile nach
+        # einer Reihe von Lastfaellen die Zahlen des ersten.
+        if self._faktor is not None:
+            self._nachweis = self._faktor.nachweis
         if not np.all(np.isfinite(x)):
             raise RuntimeError("Singulaeres System - Lagerung oder Vernetzung pruefen "
                                "(kinematische Kette / freie Knoten).")
@@ -539,6 +568,18 @@ class LinearSolver:
                     x, r = x2, r2
                 self.nachiterationen = schritte
                 self.residuum = float(r)
+                if self._nachweis is not None and self._vorgabe is not None:
+                    # Jetzt ist das Residuum der fertigen Loesung bekannt - es gilt, nicht
+                    # das des ersten Loesens. Sonst nennt beschreibung() eine andere Zahl als
+                    # die Meldung darunter. Die Schritte beider Stellen zaehlen zusammen;
+                    # bewertet wird gegen die Vorgabe, mit der ama faktorisiert hat (die kann
+                    # aelter sein als `grenze`, wenn die Einstellung sich seither geaendert
+                    # hat - dann sagt die Beschreibung beide Zahlen).
+                    from ama import genauigkeit as ama_gen
+                    self._nachweis = ama_gen.bewerte(
+                        self._vorgabe, residuum=float(r), rechenart=self._nachweis.rechenart,
+                        nachiterationen=self._nachweis.nachiterationen + schritte,
+                        rueckfall=self._nachweis.rueckfall)
                 if r > grenze:
                     raise RuntimeError(
                         f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}, Schranke {grenze:g}"
