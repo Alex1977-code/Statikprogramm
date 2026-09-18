@@ -215,26 +215,29 @@ def trennen(model, koerper: str, flaechen: list = None, log: list = None) -> dic
     # Linien
     umbenannt: dict = {}
     n_l = 0
+    def _eigene(ln: str) -> str:
+        """Eine fremd genutzte Linie durch eine eigene Kopie ersetzen."""
+        nonlocal n_l
+        if ln not in fremde_linien or ln not in model.lines:
+            return ln
+        if ln not in umbenannt:
+            L = model.lines[ln]
+            neu = model.naechster_name("L", model.lines)
+            L2 = copy.deepcopy(L)
+            L2.name = neu
+            model.lines[neu] = L2
+            umbenannt[ln] = neu
+            n_l += 1
+        return umbenannt[ln]
+
     for fn in flaechen:
         f = model.flaechen[fn]
-        for attr in ("linien",):
-            neu_liste = []
-            for ln in (getattr(f, attr) or []):
-                if ln in fremde_linien and ln in model.lines:
-                    if ln not in umbenannt:
-                        L = model.lines[ln]
-                        neu = model.naechster_name("L", model.lines)
-                        L2 = copy.deepcopy(L)
-                        L2.name = neu
-                        model.lines[neu] = L2
-                        umbenannt[ln] = neu
-                        n_l += 1
-                    neu_liste.append(umbenannt[ln])
-                else:
-                    neu_liste.append(ln)
-            setattr(f, attr, neu_liste)
-        f.oeffnungen = [[umbenannt.get(ln, ln) if ln in fremde_linien else ln for ln in loch]
-                        for loch in (f.oeffnungen or [])]
+        f.linien = [_eigene(ln) for ln in (f.linien or [])]
+        # Auch die Linien der Oeffnungen: die Kreise einer Bohrung stehen nur
+        # dort, nicht im Umriss. Ohne sie blieb die Bohrung mit dem Stift
+        # verbunden, den sie aufnimmt - beim Aufweiten wanderte er mit
+        # (gemessen 17.09.2026: beide danach r = 20,01 mm statt 20,00/20,01).
+        f.oeffnungen = [[_eigene(ln) for ln in loch] for loch in (f.oeffnungen or [])]
     # Knoten: die der eigenen Linien (nach dem Kopieren) und der Ecken
     eigene_linien = {ln for fn in flaechen for ln in _linien_der_flaeche(model.flaechen[fn])}
     kopie: dict = {}
@@ -394,6 +397,144 @@ def flaechen_spiel(model, koerper: str, flaechen: list, spalt: float, log: list 
         log.append(f"{koerper}: Flächen {', '.join(flaechen[:6])} um {spalt * 1e3:.3f} mm nach innen versetzt "
                    f"({n_k} Knoten)" + (f", {weg} Elemente gelöscht (neu vernetzen)" if weg else ""))
     return {"ok": True, "grund": "", "knoten": n_k, "flaechen": flaechen, "getrennt": tr, "netz_geloescht": weg}
+
+
+def bohrungen_zur_achse(model, punkt, achse, radius: float, ausser: str = "") -> dict:
+    """{Koerper: [Linien]} aller Kreise mit diesem Radius auf dieser Achse.
+
+    Das ist die Bohrung, in der ein Zylinder steckt - ueber ihre **ganze
+    Laenge**: ein Passstift durch zwei Bleche hat seine Bohrung in beiden, und
+    beide gehoeren angepasst. Ohne das liefe sie hinter dem ersten Blech
+    kegelig zu (17.09.2026).
+    """
+    p0, a = _v(punkt), _v(achse)
+    a = a / (float(np.linalg.norm(a)) or 1.0)
+    aus: dict = {}
+    for name, k in (getattr(model, "koerper", None) or {}).items():
+        if name == ausser:
+            continue
+        for fn in k.flaechen or []:
+            f = model.flaechen.get(fn)
+            if f is None:
+                continue
+            for ln in _linien_der_flaeche(f):
+                L = model.lines.get(ln)
+                if L is None or ln in aus.get(name, []):
+                    continue
+                try:
+                    kr = _bogen_kreis(L, model)
+                except ValueError:
+                    continue
+                if kr is None or abs(kr[1] - radius) > TOL_RADIUS * radius + 1e-9:
+                    continue
+                d = _v(kr[0]) - p0
+                quer = d - (d @ a) * a
+                if float(np.linalg.norm(quer)) > TOL_RADIUS * radius + 1e-9:
+                    continue          # anderer Ort - eine andere Bohrung
+                if abs(abs(_v(kr[2]) @ a) - 1.0) > 1e-6:
+                    continue          # andere Richtung
+                aus.setdefault(name, []).append(ln)
+    return aus
+
+
+def bohrung_spiel(model, punkt, achse, radius: float, aufweitung: float,
+                  ausser: str = "", log: list = None) -> dict:
+    """Die Bohrung um ``aufweitung`` [m] am Durchmesser aufweiten - in jedem
+    Bauteil, durch das sie geht, und ueber ihre ganze Laenge.
+
+    ``ausser`` ist der Zylinder, der darin steckt: er bleibt, wie er ist.
+    """
+    if aufweitung <= 0:
+        return {"ok": False, "grund": "Die Aufweitung muss groesser als null sein"}
+    treffer = bohrungen_zur_achse(model, punkt, achse, radius, ausser)
+    if not treffer:
+        return {"ok": False, "grund": f"keine Bohrung mit r = {radius * 1e3:.3f} mm auf dieser Achse gefunden"}
+    p0, a = _v(punkt), _v(achse)
+    a = a / (float(np.linalg.norm(a)) or 1.0)
+    dr = 0.5 * float(aufweitung)
+
+    def weiter(P):
+        """Einen Punkt auf dem Bohrungsradius um dr nach aussen setzen."""
+        P = _v(P)
+        d = P - p0
+        ax = (d @ a) * a
+        rad = d - ax
+        rr = float(np.linalg.norm(rad))
+        if abs(rr - radius) > TOL_RADIUS * radius + 1e-9 or rr <= 0:
+            return P, False
+        return p0 + ax + rad * ((radius + dr) / rr), True
+
+    n_k, n_b, koerper_neu = 0, 0, []
+    knoten_fertig: set = set()
+    tr_ges = {"linien": 0, "knoten": 0, "flaechen": 0}
+    for kname, linien in list(treffer.items()):
+        koerper_neu.append(kname)
+        # Erst trennen: Stift und Bohrung teilen sich in RFEM die Kreisknoten
+        # und oft die Bogenlinien - ohne das wanderte der Stift mit der
+        # Bohrung nach aussen (gemessen 17.09.2026: beide danach r = 20,01 mm).
+        # Getrennt wird nur an den Flaechen, auf denen diese Kreise liegen.
+        betroffen = [fn for fn in _flaechen_von(model, kname)
+                     if set(linien) & set(_linien_der_flaeche(model.flaechen[fn]))]
+        if betroffen:
+            tr = trennen(model, kname, betroffen, log)
+            for x in ("linien", "knoten", "flaechen"):
+                tr_ges[x] += int(tr.get(x, 0) or 0)
+            # Das Trennen kann Linien umbenannt haben - die Kreise neu suchen
+            neu_linien = []
+            for fn in _flaechen_von(model, kname):
+                for ln2 in _linien_der_flaeche(model.flaechen[fn]):
+                    L2 = model.lines.get(ln2)
+                    if L2 is None:
+                        continue
+                    try:
+                        kr2 = _bogen_kreis(L2, model)
+                    except ValueError:
+                        continue
+                    if kr2 is None or abs(kr2[1] - radius) > TOL_RADIUS * radius + 1e-9:
+                        continue
+                    d2 = _v(kr2[0]) - p0
+                    if float(np.linalg.norm(d2 - (d2 @ a) * a)) > TOL_RADIUS * radius + 1e-9:
+                        continue
+                    if abs(abs(_v(kr2[2]) @ a) - 1.0) > 1e-6:
+                        continue
+                    neu_linien.append(ln2)
+            linien = list(dict.fromkeys(neu_linien)) or linien
+        for ln in linien:
+            L = model.lines.get(ln)
+            if L is None:
+                continue
+            for i in L.nodes:
+                if int(i) in knoten_fertig:
+                    continue
+                Q, ok = weiter(model.nodes[int(i)])
+                if ok:
+                    model.nodes[int(i)] = Q
+                    n_k += 1
+                knoten_fertig.add(int(i))
+            g = L.geometrie or {}
+            if g.get("punkte") is not None:
+                neu, getroffen = [], False
+                for P in g["punkte"]:
+                    Q, ok = weiter(P)
+                    getroffen |= ok
+                    neu.append([float(x) for x in Q])
+                g["punkte"] = neu
+                n_b += int(getroffen and L.typ in ("arc", "circle"))
+            if "radius" in g and abs(float(g["radius"]) - radius) <= TOL_RADIUS * radius + 1e-9:
+                g["radius"] = float(g["radius"]) + dr
+                n_b += 1
+            L.geometrie = g
+    weg = 0
+    for kname in koerper_neu:
+        weg += _netz_weg(model, kname, _flaechen_von(model, kname))
+    if log is not None:
+        log.append(f"Bohrung r = {radius * 1e3:.3f} mm in {', '.join(koerper_neu)} um "
+                   f"{aufweitung * 1e3:.3f} mm am Durchmesser aufgeweitet: r = "
+                   f"{(radius + dr) * 1e3:.3f} mm, {n_k} Knoten und {n_b} Bögen gesetzt"
+                   + (f", {weg} Elemente gelöscht (neu vernetzen)" if weg else ""))
+    return {"ok": True, "grund": "", "radius": radius, "radius_neu": radius + dr,
+            "knoten": n_k, "boegen": n_b, "koerper": koerper_neu, "netz_geloescht": weg,
+            "getrennt": tr_ges}
 
 
 def zylinder_im_modell(model) -> list:

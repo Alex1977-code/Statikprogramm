@@ -308,6 +308,34 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
 
+#### Spalt / Toleranz: Welle und Bohrung auf ein Spiel bringen
+
+*Geometrie → Spalt / Toleranz* (17.09.2026, „der innere Zylinder sollte als
+solcher erkannt werden und der gewünschte Spalt ausgehend vom Nullmaß
+eingestellt werden können, gleiches gilt für das Auge/die Bohrung“). Die
+Maske nennt oben den gewählten **Zylinder** und darunter das **Nullmaß**, das
+das Programm an ihm misst (Radius und Durchmesser), sowie die **Bohrung**:
+alle Kreise desselben Radius auf derselben Achse, mit dem Bauteil, zu dem sie
+gehören. Ein Passstift durch zwei Bleche hat seine Bohrung in beiden, und
+beide stehen da.
+
+Eingetragen wird der **Spalt am Durchmesser**, vom Nullmaß aus. Wo er
+abgetragen wird, ist wählbar: auf beide verteilen (je die Hälfte), nur am
+Zylinder abziehen, oder nur an der Bohrung zugeben. Die Bohrung wird dabei
+**über ihre ganze Länge** angepasst, in jedem Bauteil, durch das sie geht —
+sonst bliebe hinter dem ersten Blech ein Kegel stehen.
+
+Was das Programm tut: Stift und Bohrung teilen sich in RFEM Knoten und
+Bogenlinien, auch die Kreise in den Öffnungen der Deckflächen. Beide werden
+erst voneinander getrennt (eigene Kopien der geteilten Linien und Knoten),
+dann rücken die Bögen — der Zylinder nach innen, die Bohrung nach außen. Das
+Netz der veränderten Volumen fällt weg; ob gleich neu vernetzt wird,
+entscheidet der Haken. Ohne ihn nennt das Protokoll die Volumen, die dran
+sind, und das nächste Vernetzen führt ihre Kontaktfugen aus.
+
+Die Funktion ist nicht auf importierte Modelle beschränkt; sie arbeitet an
+jeder Geometrie mit Kreisbögen, also auch an selbst erstellten Modellen.
+
 #### Spiel geometrisch geben
 
 *Lager / Kontakt → Spiel geben* (17.09.2026, „zylinderförmige Bauteile
@@ -343,6 +371,13 @@ bekam V5 auf diesem Weg 0,02 mm Spiel, obwohl seine Ecken bis 297 mm von
 dieser vermeintlichen Achse entfernt lagen (behoben 17.09.2026). Wird ein
 Volumen abgelehnt, nennt das Protokoll den Punkt und den Radius, an denen es
 scheitert.
+
+**Warum im Importhinweis mehrere Volumen stehen.** Der Eintrag *Betroffen*
+nennt zuerst das Teil, das verkleinert wird, und dahinter die Bauteile, durch
+deren Bohrung es geht — diese bleiben, wie sie sind. Bei einem Passstift
+durch zwei Bleche stehen dort also drei Namen, verändert wird nur der erste.
+Der Spalt lässt sich im Hinweis vor dem Anwenden ändern; wer ihn statt am
+Zylinder an der Bohrung abtragen will, nimmt *Geometrie → Spalt / Toleranz*.
 
 **Wenn ein Volumen versehentlich Spiel bekommen hat:** *Rückgängig* (Strg+Z)
 stellt den Stand vor dem Anwenden wieder her — das Anwenden der Importhinweise
