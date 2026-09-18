@@ -383,7 +383,7 @@ class LinearSolver:
             #
             # Eine billige Verschachtelung bleibt: jeder Korrekturschritt von solve() ruft
             # wieder loese und damit die ganze Nachiterationsschleife des Kerns auf, also
-            # bis zu n_max * (n_max + 1) = 12 innere Loesungen statt n_max = 3 (bei der
+            # bis zu (n_max + 1)^2 = 16 innere Loesungen statt n_max = 3 (bei der
             # Vorgabe 3). Das sind Vorwaerts-/Rueckwaertseinsetzen auf dem vorhandenen
             # Faktor - Bruchteile einer Faktorisierung, und nur wenn die Schranke ueberhaupt
             # verfehlt wird. Darum bleibt es so; teuer war allein das zweite Faktorisieren.
