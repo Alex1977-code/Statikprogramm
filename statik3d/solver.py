@@ -474,11 +474,21 @@ class LinearSolver:
             pass
 
     def beschreibung(self) -> str:
-        """Wie in Protokoll und Statuszeile: Loeser, Threads, Genauigkeit."""
+        """Wie in Protokoll und Statuszeile: Loeser, Threads, Genauigkeit.
+
+        Nennt auch Freiheitsgrade ohne Halt, wenn der Loeser sie meldet: dort ist die Loesung
+        nicht eindeutig (ein unbelastetes, ungelagertes Teil kann sich frei bewegen), und
+        verschiedene Loeser liefern verschiedene, gleich richtige Antworten. Am Modell
+        modell.json waren es 14 Pivots und 759 Freiheitsgrade; die Verformung unterschied sich
+        dort um 7 % von max|u|, die Energie des Unterschieds aber nur um 1e-22 - und ueber 30
+        Kontakt-Iterationen wurde daraus ein anderer Endzustand (18.09.2026)."""
         grenze, n_max = self.genauigkeit()
+        frei = getattr(self, "gestoert", 0)
         return NAMEN.get(self.backend, self.backend) + (
             f", {self.threads} Threads" if self.threads > 1 else ", einkernig") + (
-            f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else ""))
+            f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else "")) + (
+            f"; {frei} Freiheitsgrade ohne Halt (Ergebnis dort nicht eindeutig - Lagerung pruefen)"
+            if frei else "")
 
     def solve(self, b: np.ndarray, check: bool = True) -> np.ndarray:
         if self._solve is None:
