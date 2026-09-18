@@ -2334,6 +2334,22 @@ class Kontaktbedingung:
     spiel: float = 0.0
     grenzpressung: float = 0.0
     rand_frei: int = 0
+    #: Geometrischer Spalt (18.09.2026): ``spalt`` [m] am **Durchmesser** -
+    #: das Mass, um das Welle und Bohrung dieser Fuge auseinanderruecken
+    #: sollen; ``spalt_wohin`` sagt, wo es abgetragen wird ("beide", "welle",
+    #: "bohrung"). Eingetragen aendert es **nichts** am Modell: erst das
+    #: Vernetzen arbeitet es in die Geometrie ein und setzt
+    #: ``spalt_eingearbeitet`` auf das eingearbeitete Mass, damit es sich
+    #: nicht bei jedem Vernetzen wiederholt. Der Unterschied zu ``spiel``:
+    #: jenes ist ein rechnerischer Anfangsspalt im Kontakt, dieses eine
+    #: wirkliche Luecke im Netz.
+    spalt: float = 0.0
+    spalt_wohin: str = "beide"
+    spalt_eingearbeitet: float = 0.0
+
+    def spalt_offen(self) -> float:
+        """Das Mass [m], das noch in die Geometrie einzuarbeiten ist."""
+        return float(self.spalt or 0.0) - float(self.spalt_eingearbeitet or 0.0)
 
     def standard_anwenden(self, name: str, mu: float = None) -> "Kontaktbedingung":
         """Die Wirkung je Freiheitsgrad aus einem Standardkontakt setzen.

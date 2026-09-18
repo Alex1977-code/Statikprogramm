@@ -549,6 +549,90 @@ def bohrung_spiel(model, punkt, achse, radius: float, aufweitung: float,
             "getrennt": tr_ges}
 
 
+#: Wo der Spalt einer Kontaktbedingung abgetragen wird
+SPALT_WOHIN = ("beide", "welle", "bohrung")
+
+
+def fugen_zylinder(model, kb) -> dict:
+    """Welle und Bohrung einer Kontaktbedingung: {"ok", "grund", "welle",
+    "zylinder", "bohrung"}.
+
+    Die Welle ist der beteiligte Koerper, den :func:`zylinder` erkennt; die
+    Bohrung sind die Kreise gleichen Radius auf derselben Achse in den
+    uebrigen beteiligten Koerpern.
+    """
+    namen = [str(x) for x in (getattr(kb, "koerpernamen", None) or [])]
+    namen += [str(x) for x in (getattr(kb, "gegenkoerper", None) or [])]
+    namen = [x for x in dict.fromkeys(namen) if x in (getattr(model, "koerper", None) or {})]
+    if not namen:
+        return {"ok": False, "grund": "die Fuge nennt keine Volumen"}
+    for n in namen:
+        z = zylinder(model, n)
+        if not z.get("ok"):
+            continue
+        bohrung = bohrungen_zur_achse(model, z["punkt"], z["achse"], z["radius"], ausser=n)
+        bohrung = {k: v for k, v in bohrung.items() if k in namen} or bohrung
+        return {"ok": True, "grund": "", "welle": n, "zylinder": z, "bohrung": bohrung}
+    return {"ok": False, "grund": f"keiner der Körper ({', '.join(namen[:4])}) ist ein Zylinder"}
+
+
+def spalt_einarbeiten(model, kb, log: list = None) -> dict:
+    """Den an der Kontaktbedingung eingetragenen Spalt in die Geometrie
+    bringen - so viel davon, wie noch offen ist.
+
+    Rueckgabe {"ok", "grund", "koerper": [neu zu vernetzen], "mass"}.
+    """
+    offen = float(getattr(kb, "spalt_offen", lambda: 0.0)())
+    if offen <= 0:
+        return {"ok": False, "grund": "kein offener Spalt", "koerper": [], "mass": 0.0}
+    erg = fugen_zylinder(model, kb)
+    if not erg.get("ok"):
+        return {"ok": False, "grund": erg.get("grund", ""), "koerper": [], "mass": 0.0}
+    welle, z = erg["welle"], erg["zylinder"]
+    wohin = str(getattr(kb, "spalt_wohin", "beide") or "beide")
+    an_welle = offen if wohin == "welle" else (0.0 if wohin == "bohrung" else offen / 2)
+    an_bohrung = offen - an_welle
+    koerper: list = []
+    if an_bohrung > 0:
+        b = bohrung_spiel(model, z["punkt"], z["achse"], z["radius"], an_bohrung, ausser=welle, log=log)
+        if b.get("ok"):
+            koerper += list(b.get("koerper") or [])
+        elif log is not None:
+            log.append(f"Kontaktbedingung {kb.name}: Bohrung nicht angepasst - {b.get('grund', '')}")
+    if an_welle > 0:
+        w = zylinder_spiel(model, welle, an_welle, log)
+        if w.get("ok"):
+            koerper.append(welle)
+        elif log is not None:
+            log.append(f"Kontaktbedingung {kb.name}: Welle nicht angepasst - {w.get('grund', '')}")
+    if not koerper:
+        return {"ok": False, "grund": "nichts verändert", "koerper": [], "mass": 0.0}
+    kb.spalt_eingearbeitet = float(getattr(kb, "spalt_eingearbeitet", 0.0) or 0.0) + offen
+    kb.automatisch = False
+    if log is not None:
+        log.append(f"Kontaktbedingung {kb.name}: Spalt {offen * 1e3:.3f} mm am Durchmesser eingearbeitet "
+                   f"({'je zur Hälfte' if an_welle and an_bohrung else ('an der Welle' if an_welle else 'an der Bohrung')})"
+                   f" - {', '.join(dict.fromkeys(koerper))} neu zu vernetzen")
+    return {"ok": True, "grund": "", "koerper": list(dict.fromkeys(koerper)), "mass": offen}
+
+
+def spalte_einarbeiten(model, log: list = None) -> dict:
+    """Alle offenen Spalte der Kontaktbedingungen einarbeiten - das tut das
+    Vernetzen, bevor es das Netz erzeugt."""
+    aus = {"fugen": 0, "koerper": [], "fehler": []}
+    for kb in list((getattr(model, "kontaktbedingungen", None) or {}).values()):
+        if float(getattr(kb, "spalt_offen", lambda: 0.0)()) <= 0:
+            continue
+        erg = spalt_einarbeiten(model, kb, log)
+        if erg.get("ok"):
+            aus["fugen"] += 1
+            aus["koerper"] += erg["koerper"]
+        else:
+            aus["fehler"].append(f"{kb.name}: {erg.get('grund', '')}")
+    aus["koerper"] = list(dict.fromkeys(aus["koerper"]))
+    return aus
+
+
 def zylinder_im_modell(model) -> list:
     """Namen aller Koerper, die :func:`zylinder` als Zylinder erkennt."""
     return [n for n in model.koerper if zylinder(model, n).get("ok")]

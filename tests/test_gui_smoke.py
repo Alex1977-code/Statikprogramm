@@ -5011,6 +5011,13 @@ def main():
         app.processEvents()
         kb_p = w.model.kontaktbedingungen["Fuge P"]
         cp_p = next((c for c in w.model.contact_pairs if c.name == "Fuge P"), None)
+        # Geometrischer Spalt an der Fuge: eintragen ändert nichts, Vorschau
+        # zeigt nur (18.09.2026, „an der Geometrie soll sich dennoch nichts
+        # ändern … es soll einen Vorschauknopf geben“)
+        check("Kontaktmaske: Felder für den geometrischen Spalt und seine Aufteilung",
+              "spalt" in wv and "spalt_wohin" in wv and "spalt_stand" in wv, str(sorted(wv))[:130])
+        check("Ribbon/Maske: Knopf „Spalt-Vorschau“ neben „Kontaktfugen ausführen“",
+              hasattr(w, "spalt_vorschau"))
         check("Übernehmen speichert die Passung (m, N/m², Reihen) und führt die Fuge am Netz neu aus",
               abs(kb_p.spiel - 2e-5) < 1e-12 and abs(kb_p.grenzpressung - 355e6) < 1 and kb_p.rand_frei == 1
               and cp_p is not None and cp_p.spiel == kb_p.spiel and cp_p.grenzpressung == kb_p.grenzpressung
@@ -5145,110 +5152,6 @@ def main():
         traceback.print_exc()
         check("Spiel geben", False, str(ex)[:70])
 
-    try:
-        # ---- Importhinweise: Zweig, Klick leuchtet, So einstellen, Rückfrage (17.09.2026) ----
-        from tests.test_hinweise import _modell as _hw_modell
-        from statik3d import hinweise as hw_
-        m_, kb_h = _hw_modell()
-        m_.importhinweise = hw_.erzeugen(m_)
-        w.model = m_
-        w.analysis = None
-        w.results = None
-        w.refresh_all()
-        app.processEvents()
-        m_ = w.model
-
-        def zweige_h(baum):
-            out_ = []
-
-            def lauf_(it):
-                out_.append(it.text(0))
-                for i_ in range(it.childCount()):
-                    lauf_(it.child(i_))
-            for i_ in range(baum.topLevelItemCount()):
-                lauf_(baum.topLevelItem(i_))
-            return out_
-        namen = zweige_h(w.baum)
-        check("Modellbaum: Zweig „Importhinweise“ mit zwei Einträgen (Reibung, Spiel)",
-              "Importhinweise" in namen and any("Reibung" in n for n in namen) and any("Spiel 0.02 mm" in n for n in namen),
-              str([n for n in namen if "Reibung" in n or "Spiel" in n]))
-        w._baum_geklickt("importhinweis", "0")
-        app.processEvents()
-        check("Klick auf den Hinweis: Stift und Platte leuchten, die Maske nennt Befund und Vorschlag",
-              "V1" in w.sel_koerper and "Platte" in w.sel_koerper and w.eingaben_dock.windowTitle() == "Importhinweis 1",
-              f"{w.sel_koerper} / {w.eingaben_dock.windowTitle()}")
-        check("nichts ist von selbst umgestellt: die Fuge haftet noch", m_.kontaktbedingungen["Stift"].standard == "Rau")
-        # Der Spalt-Hinweis nennt das Teil, das sich ändert, und die Bohrung
-        # getrennt - und lässt den Wert einstellen (17.09.2026)
-        i_sp = next(i for i, h in enumerate(m_.importhinweise) if h["art"] == "spiel")
-        w._baum_geklickt("importhinweis", str(i_sp))
-        app.processEvents()
-        w_sp = w.maskenrand.maske.werte()
-        check("Spalt-Hinweis: „Betroffen“ trennt das Teil, das kleiner wird, von der Bohrung",
-              "wird verkleinert" in str(w_sp.get("objekte")) and "bleibt" in str(w_sp.get("objekte")),
-              str(w_sp.get("objekte"))[:90])
-        check("… und der Spalt ist einstellbar, Vorgabe 0,02 mm",
-              abs(float(str(w_sp.get("mm")).replace(",", ".")) - 0.02) < 1e-12, str(w_sp.get("mm")))
-        w._baum_geklickt("importhinweis", "0")
-        app.processEvents()
-        w._hinweis_anwenden(0)
-        app.processEvents()
-        m_ = w.model
-        check("„So einstellen“: die Fuge ist Reibungsbehaftet mit μ = 0,2, der Hinweis trägt ✓",
-              m_.kontaktbedingungen["Stift"].standard == "Reibungsbehaftet" and m_.importhinweise[0]["erledigt"] == "angewendet"
-              and any(n.startswith("✓") for n in zweige_h(w.baum)), str(m_.kontaktbedingungen["Stift"].standard))
-        # Die testweite Umlenkung der Rueckfragen (oben, True) bleibt: hier nur
-        # merken und nachher zurueckstellen - ein "del" loeschte sie und der
-        # spaetere Block "Unterlagen" blieb im echten Dialog stehen (17.09.2026)
-        alt_fk_h = w.__dict__.get("_fragen_knoepfe")
-        w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": True
-        # Der Sammellauf sichert einmal und baut einmal die Ansicht auf - und
-        # vernetzt nicht (17.09.2026, "der user vernetzt wie bisher manuell
-        # danach"): je Hinweis einzeln kostete das am Drehlager eine
-        # Modellkopie, ein Vernetzen, 2,5 s Knotenkarte und 22 s Ansicht
-        zaehler_h = {"merken": 0, "refresh": 0, "vernetzen": 0}
-        alt_merken_h, alt_refresh_h, alt_netz_h = w.merken, w.refresh_all, w._vernetzen
-        w.merken = lambda was: (zaehler_h.__setitem__("merken", zaehler_h["merken"] + 1), alt_merken_h(was))[1]
-        w.refresh_all = lambda: (zaehler_h.__setitem__("refresh", zaehler_h["refresh"] + 1), alt_refresh_h())[1]
-        w._vernetzen = lambda f, k: (zaehler_h.__setitem__("vernetzen", zaehler_h["vernetzen"] + 1),
-                                     alt_netz_h(f, k))[1]
-        balken_h = []
-        alt_fs_h = w._fortschritt
-        w._fortschritt = lambda wert, text, sofort=False: (balken_h.append(text), alt_fs_h(wert, text, sofort))[1]
-        try:
-            w._importhinweise_fragen()
-            app.processEvents()
-        finally:
-            w.merken, w.refresh_all, w._vernetzen, w._fortschritt = (alt_merken_h, alt_refresh_h,
-                                                                     alt_netz_h, alt_fs_h)
-        m_ = w.model
-        from statik3d import spiel as sp_h
-        check("Rückfrage „Alle anwenden“: das Spiel ist gegeben (r = 19,99 mm), kein Hinweis mehr offen",
-              abs(sp_h.zylinder(m_, "V1")["radius"] - 0.01999) < 1e-9 and not hw_.offen(m_),
-              str(sp_h.zylinder(m_, "V1").get("radius")))
-        check("der Sammellauf sichert einmal und baut die Ansicht einmal auf - und vernetzt nicht",
-              zaehler_h == {"merken": 1, "refresh": 1, "vernetzen": 0}, str(zaehler_h))
-        # Hier ist nur noch einer offen - der erste wurde oben einzeln angewendet
-        check("der Balken nennt Sicherung, jeden Hinweis mit Nummer und Anzahl und den Ansichtsaufbau",
-              any("sichern" in t for t in balken_h)
-              and any("Importhinweis 1 von 1: V1: Spiel 0.02 mm" in t for t in balken_h)
-              and any("Ansicht, Tabellen und Modellbaum" in t for t in balken_h), str(balken_h)[:150])
-        check("das Volumen wartet auf das Netz des Anwenders, das Protokoll sagt es",
-              not (m_.koerper["V1"].elemente or [])
-              and "Noch zu vernetzen: V1" in w.log.toPlainText(),
-              str(len(m_.koerper["V1"].elemente or [])))
-        if alt_fk_h is not None:
-            w._fragen_knoepfe = alt_fk_h
-        else:
-            del w._fragen_knoepfe
-        w._baum_geklickt("importhinweise", "Importhinweise")
-        app.processEvents()
-        check("Übersicht der Hinweise: 2, 0 offen", w.eingaben_dock.windowTitle() == "Importhinweise")
-        w.maskenrand.schliessen()
-    except Exception as ex:      # noqa: BLE001
-        import traceback
-        traceback.print_exc()
-        check("Importhinweise", False, str(ex)[:70])
 
     try:
         # ---- Plastizität der Volumen (17.09.2026): Einstellung am Modell ----

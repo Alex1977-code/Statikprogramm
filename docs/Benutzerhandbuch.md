@@ -126,7 +126,6 @@ Die Arbeitsfläche in drei Spalten:
   | Eigenschaften | Querschnitte, Werkstoffe, Dicken |
   | Lager | Knoten-, Linien- und Flächenlager, einzeln mit Name und Wirkung |
   | Gelenke | Stabendgelenke mit den freigegebenen Freiheitsgraden; der Zweig steht immer und bietet „+ Gelenk anlegen“ (16.09.2026) |
-  | Importhinweise | Vorschläge zur Modellierung, die das Programm nach dem Import erkennt (17.09.2026): haftende Fuge an einem Zylinder → Reibung, Zylinder ohne Spiel in seiner Bohrung → Spiel geben. Nichts davon ist von selbst umgestellt, und angewendet wird nur am Modell — vernetzt wird nicht, das Protokoll nennt die Volumen, die dann neu zu vernetzen sind; ein Klick lässt die betroffenen Teile leuchten, die Maske hat „So einstellen“ und „Verwerfen“, die Übersicht „Alle offenen anwenden“. Erledigte Einträge tragen ✓ oder ✗. Der Zweig erscheint, sobald es Hinweise gibt |
   | Liniengelenke | aus der Quelldatei (RFEM: LineHinge): jede Fläche mit ihren Gelenklinien und der Wirkung („ux=starr, …, phix=frei“); ein Klick lässt die Linien leuchten, die Maske nennt Fläche, Linien und Wirkung. Der Zweig erscheint, sobald es Liniengelenke gibt (16.09.2026) |
   | Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
@@ -308,6 +307,30 @@ Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
 sagt, woran es lag.
 
+#### Geometrischer Spalt an der Fuge
+
+In der Maske einer Kontaktbedingung stehen **Geometrischer Spalt [mm am Ø]**
+und **Spalt abtragen** (auf beide verteilen, nur an der Welle, nur an der
+Bohrung). Das Eintragen ändert **nichts** am Modell — es ist eine Angabe an
+der Fuge, umkehrbar und mit dem Modell gespeichert. Darunter steht, wie viel
+davon schon eingearbeitet ist.
+
+**Spalt-Vorschau** zeigt, was geschehen würde: Welle und die Bauteile der
+Bohrung leuchten in der Ansicht, die Meldung nennt beide Radien vorher und
+nachher und das offene Maß. Die Geometrie bleibt dabei unberührt.
+
+**Eingearbeitet wird beim Vernetzen**, vor dem eigentlichen Vernetzen: das
+Programm rückt die Bögen der Welle nach innen und die der Bohrung nach außen,
+die Bohrung über ihre ganze Länge in jedem Bauteil, durch das sie geht. Was
+eingearbeitet ist, merkt sich die Fuge, damit es sich beim nächsten Vernetzen
+nicht wiederholt. Im Protokoll steht eine Zeile je Fuge mit Maß, Aufteilung
+und den Volumen, die dadurch ein neues Netz brauchen. In der Rechnung wirkt
+der Spalt dann von selbst, weil er im Netz steht.
+
+Der Unterschied zum Feld **Spiel je Seite** darüber: jenes ist ein
+rechnerischer Anfangsspalt im Kontakt (die Fuge schließt erst nach diesem
+Weg, die Geometrie bleibt), dieses eine wirkliche Lücke im Netz.
+
 #### Spalt / Toleranz: Welle und Bohrung auf ein Spiel bringen
 
 *Geometrie → Spalt / Toleranz* (17.09.2026, „der innere Zylinder sollte als
@@ -372,20 +395,12 @@ dieser vermeintlichen Achse entfernt lagen (behoben 17.09.2026). Wird ein
 Volumen abgelehnt, nennt das Protokoll den Punkt und den Radius, an denen es
 scheitert.
 
-**Warum im Importhinweis mehrere Volumen stehen.** Der Eintrag *Betroffen*
-nennt zuerst das Teil, das verkleinert wird, und dahinter die Bauteile, durch
-deren Bohrung es geht — diese bleiben, wie sie sind. Bei einem Passstift
-durch zwei Bleche stehen dort also drei Namen, verändert wird nur der erste.
-Der Spalt lässt sich im Hinweis vor dem Anwenden ändern; wer ihn statt am
-Zylinder an der Bohrung abtragen will, nimmt *Geometrie → Spalt / Toleranz*.
-
 **Wenn ein Volumen versehentlich Spiel bekommen hat:** *Rückgängig* (Strg+Z)
-stellt den Stand vor dem Anwenden wieder her — das Anwenden der Importhinweise
-sichert das ganze Modell vorher, ein Sammellauf einmal für alle Hinweise. Das
-ist wichtiger als die 0,01 mm am Radius: Ein Volumen, das Spiel bekommt, wird
-zuvor von seinen Nachbarn **getrennt**, verliert also die gemeinsamen Knoten
-einer verschweißten Fläche. Bei einer Rippe, die an ihr Blech angeschlossen
-ist, wäre das ein Eingriff in den Lastpfad.
+stellt den Stand davor wieder her. Das ist wichtiger als die Hundertstel am
+Radius: Ein Volumen, das Spiel bekommt, wird zuvor von seinen Nachbarn
+**getrennt**, verliert also die gemeinsamen Knoten einer verschweißten
+Fläche. Bei einer Rippe, die an ihr Blech angeschlossen ist, wäre das ein
+Eingriff in den Lastpfad.
 
 #### Passung für viele Fugen auf einmal
 
@@ -2464,89 +2479,13 @@ schließt „Freie Stabenden anschließen" (Suchradius 60 mm) jedes freie Ende a
 Achse des nächsten Stabes an und teilt diesen dort; der Versatz steht im
 Protokoll, die Ausmitte des Anschlusses wird nicht abgebildet.
 
-**Importhinweise.** Nach dem Import prüft das Programm die Modellierung und
-**schlägt vor**, statt umzustellen („nicht automatisch beim Import setzen,
-da du nicht wissen kannst, ob das vom User gewünscht ist“, 17.09.2026):
-eine Kontaktfuge, die in der Ebene haftet (RFEM „schubstarr“) und an einem
-zylindrischen Bauteil sitzt, bekommt den Vorschlag *Reibungsbehaftet mit
-μ = 0,2* — ein Passstift trägt über Formschluss, nicht über eine schubstarre
-Fuge; ein Zylinder, der ohne Spiel in seiner Bohrung sitzt (gleicher Radius
-auf derselben Achse, am Drehlager r = 12,500 mm beidseits), bekommt den
-Vorschlag *Spiel geben, 0,02 mm am Durchmesser*. Nach dem Import fragt das
-Programm, ob es alle Vorschläge anwenden soll („Alle anwenden“ / „Erst
-ansehen“). So oder so steht die Liste im Modellbaum unter **Importhinweise**:
-ein Klick auf einen Eintrag lässt die betroffenen Volumen und Fugen in der
-Ansicht leuchten, rein zur Kontrolle; die Maske rechts nennt Befund und
-Vorschlag und hat **So einstellen** und **Verwerfen**. Die Liste wird mit dem
-Modell gespeichert; das Importprotokoll nennt die Vorschläge in einer Zeile.
-
-Angewendet wird **nur am Modell**, vernetzt wird nicht (17.09.2026, auf
-Wunsch: „kann nicht erst die Geometrie angepasst werden und der User
-vernetzt wie bisher manuell danach“). Beim Spiel wird der Zylinder
-verkleinert und das Netz dieses Volumens fällt weg; bei der Reibung wird die
-Fuge umgestellt und, falls sie schon ausgeführt war, zurückgenommen — sonst
-trüge ihr Kontaktpaar weiter den alten Reibbeiwert. Das Protokoll nennt
-danach die Volumen, die neu zu vernetzen sind; beim nächsten Vernetzen
-(*Netz → Vernetzen*) werden ihre Fugen automatisch ausgeführt. So dauert das
-Anwenden Sekunden statt Minuten, und der Anwender entscheidet, wann die
-Minuten anfallen. **Alle offenen anwenden** läuft als ein Vorgang: einmal
-für „Rückgängig“ sichern, alle Änderungen, einmal die Ansicht aufbauen. Der
-Balken nennt dabei jeden Hinweis mit Nummer und Anzahl („Importhinweis 3 von
-16: V76: Spiel 0,02 mm“), **Anhalten** lässt den Rest offen. Vorher lief je
-Hinweis ein eigener Nachlauf mit Modellkopie, Vernetzen, Knotenkarte (am
-Drehlager 2,5 s) und Ansichtsaufbau (22 s) — mal Zahl der Hinweise, ohne
-eine einzige Meldung.
-
-Die Sammelmaske **Passung** nimmt die betroffenen Fugen zurück und führt sie
-neu aus, bevor sie die Werte übernimmt: gerechnet wird mit dem Kontaktpaar,
-und eine schon ausgeführte Fuge nimmt neue Werte sonst nicht an (behoben
-17.09.2026 — vorher standen Spiel und Lochleibungsgrenze in der Bedingung,
-die Rechnung benutzte weiter die alten). Der Balken nennt dabei jede Fuge.
-
-**Reibbeiwert für viele Fugen.** Dieselbe Maske setzt **μ** für alle Fugen
-der gewählten Volumen (17.09.2026, auf Wunsch: „ist der Reibwert an diesen
-neuen Spalten einstellbar, das sollte er sein“). Ein leeres Feld lässt ihn,
-wie er ist — eine versehentliche 0 machte die Fuge reibungsfrei und das
-Bauteil beweglich. Ein eingetragener Wert stellt die Fugenebene zugleich auf
-**Gleiten**, denn eine haftende Richtung ist starr und nimmt keinen
-Reibbeiwert an. Je einzelne Fuge stehen μ und das Schubverhalten weiterhin in
-der Kontaktmaske.
-
-**Die drei Passungsarten.** In Wirklichkeit entscheidet die Passung, wie der
-Stift gehalten ist, und die Maske bildet alle drei Fälle ab. Eingetragen
-werden die vier Abmaße der Zeichnung (Welle es/ei, Bohrung ES/EI); daraus
-erkennt das Programm die Art und rechnet:
-
-| Art | woran erkennbar | was das Programm setzt | was das statisch heißt |
-|---|---|---|---|
-| Spielpassung | größte Welle unter kleinster Bohrung | **Spiel** an der Fuge | Der Stift liegt erst nach Durchfahren des Spiels an. Quer hält ihn die Form der Bohrung, längs seiner Achse nur Reibung, und die braucht Anpressung. Er kann sich um seine Achse drehen; seine Lage ändert das nicht, und er fällt nicht heraus. |
-| Übergangspassung | die Spannen überlappen | je nach Ansatz Spiel oder Übermaß | Je nach Istmaß hält ihn die Fügekraft, oder es gilt der Spielfall. Für die Spannung ist das Höchstübermaß der ungünstige Ansatz, für die Tragfähigkeit das Höchstspiel — beide Rechnungen sind sinnvoll. |
-| Presspassung | kleinste Welle über größter Bohrung | **Übermaß** als Last im aktiven Lastfall | Die Fuge steht schon vor der Last unter Druck. Diese Pressung ist eine zusätzliche Spannung im System, und über sie hält Reibung den Stift auch längs seiner Achse. |
-
-Die Wahl **Passung (Stift m6)** nennt die gängigen Paarungen nach ihrem
-Einsatzzweck — fester Sitz H7 (Übergangspassung, Standard im Maschinenbau,
-mit Presse montiert), sehr fester Sitz N7 oder P7 (Übermaßpassung, Demontage
-durch Auspressen), leichte Demontage H8 oder F7 (von Hand einschiebbar). Sie
-ist Beleg und **Prüfung**: ergeben die eingetragenen Abmaße eine andere Art,
-sagt das Protokoll es. Eine eigene Abmaßtabelle bringt das Programm nicht
-mit; beim Abgleich zweier Quellen wich ein Wert um 8 µm ab, und ein
-Zahlendreher würde still zu einer falschen Pressspannung führen. Die Zahlen
-stehen auf der Zeichnung. Zu beachten: mit einer Welle über Null (m6) ist
-H8 rechnerisch noch eine Übergangspassung — „H8 heißt Spielpassung“ gilt für
-Wellen unter Null (h, g, f).
-
-Gemessen an einem Stift Ø40 in einer Bohrung, quer mit 20 kN belastet
-(Auge außen gehalten): ohne Spiel und haftend 12 Kontakt-Iterationen und
-0,0054 mm Verschiebung; mit 0,02 mm Spiel und reibungsfrei 6 Iterationen und
-0,0114 mm — dabei meldet das Programm den Stift als längs seiner Achse frei
-beweglich und rechnet mit Hilfsfesselung weiter; mit μ = 0,2 verschwindet die
-Meldung (51 Iterationen, 0,0089 mm), und 5 kN Zug in Achsrichtung werden über
-die Reibung abgetragen (57 Iterationen). **Merke:** Quer ist ein Stift in
-einer Bohrung immer gehalten, dafür braucht es keine Reibung; frei ist er
-längs seiner Achse, und dort hält nur Reibung unter Anpressung — also
-Reibung einstellen oder, bei Presspassung, das Übermaß aufbringen. Mit
-Reibung steigt die Zahl der Kontakt-Iterationen deutlich, weil Knoten
-zwischen Haften und Gleiten pendeln.
+**Der Import ändert die Struktur nicht** (18.09.2026). Das RFEM-Modell kommt
+so herein, wie es ist: keine Vorschläge, keine Umstellungen, kein Fenster mit
+Änderungen. Der Grund steht in der Sache: Eine Schraube braucht den
+Nullspalt, weil sie ihre Zugkraft über Schub und Mantelreibung überträgt, ein
+Passstift braucht Spiel — am Modell sind die beiden nicht zu unterscheiden.
+Wer eine Fuge anders haben will, stellt sie an ihrer **Kontaktbedingung** ein
+(siehe *Geometrischer Spalt an der Fuge*).
 
 **Integrierte Knoten und Linien, Stabenden auf Volumen.** RFEM integriert
 einen Knoten, der auf einer Fläche liegt, in deren Netz: ein Zugstab, der in

@@ -247,9 +247,94 @@ def test_bohrung_aufweiten():
           not waisen, str(waisen[:6]))
 
 
+def _stift_und_auge():
+    """Ein Stift in einem Auge, beide teilen sich die Mantelflächen (RFEM),
+    mit einer Kontaktbedingung dazwischen."""
+    from tests.test_fortschritt import _zylinder as _zyl
+    m = Model("Stift im Auge")
+    m.add_material(Material("S355", E=210e9, nu=0.3, rho=7850))
+    _zyl(m, "V1", r=0.02, hoehe=0.08)
+    A = 0.1
+    e = [m.add_node(x, y, z) for z in (0.0, 0.08) for x, y in ((-A, -A), (A, -A), (A, A), (-A, A))]
+    for i in range(4):
+        m.add_line(f"AU{i}", [e[i], e[(i + 1) % 4]])
+        m.add_line(f"AO{i}", [e[4 + i], e[4 + (i + 1) % 4]])
+        m.add_line(f"AV{i}", [e[i], e[4 + i]])
+    m.add_flaeche("A_unten", [f"AU{i}" for i in range(4)], material="S355")
+    m.flaechen["A_unten"].oeffnungen = [["V1_u1", "V1_u2"]]
+    m.add_flaeche("A_oben", [f"AO{i}" for i in range(4)], material="S355")
+    m.flaechen["A_oben"].oeffnungen = [["V1_o1", "V1_o2"]]
+    for i in range(4):
+        m.add_flaeche(f"A_M{i}", [f"AU{i}", f"AV{(i + 1) % 4}", f"AO{i}", f"AV{i}"], material="S355")
+    m.add_koerper("Auge", ["A_unten", "A_oben"] + [f"A_M{i}" for i in range(4)]
+                  + ["V1_M1", "V1_M2"], material="S355")
+    kb = m.add_kontaktbedingung("Stift").standard_anwenden("Rau")
+    kb.koerpernamen, kb.gegenkoerper = ["V1"], ["Auge"]
+    kb.flaechennamen = ["V1_M1", "V1_M2"]
+    return m, kb
+
+
+def test_spalt_an_der_kontaktbedingung():
+    """Der Spalt steht an der Fuge und ändert beim Eintragen **nichts** am
+    Modell (18.09.2026, „den Spalt und die Toleranzen bauen wir in unsere
+    Kontaktbedingungen ein … an der Geometrie soll sich dennoch nichts
+    ändern“). Eingearbeitet wird er erst beim Vernetzen."""
+    m, kb = _stift_und_auge()
+    erg = spiel.fugen_zylinder(m, kb)
+    check("die Fuge kennt ihre Welle und ihre Bohrung",
+          erg["ok"] and erg["welle"] == "V1" and list(erg["bohrung"]) == ["Auge"],
+          f"{erg.get('welle')} / {list(erg.get('bohrung', {}))}")
+    r0 = spiel.zylinder(m, "V1")["radius"]
+    kb.spalt = 2e-5
+    check("eingetragen ändert sich nichts an der Geometrie",
+          abs(spiel.zylinder(m, "V1")["radius"] - r0) < 1e-15 and abs(kb.spalt_offen() - 2e-5) < 1e-15,
+          f"r = {spiel.zylinder(m, 'V1')['radius'] * 1e3:.4f} mm, offen {kb.spalt_offen() * 1e3:.3f} mm")
+    log = []
+    aus = spiel.spalte_einarbeiten(m, log)
+    check("beim Einarbeiten bekommen Welle und Bohrung je die Hälfte",
+          aus["fugen"] == 1 and abs(spiel.zylinder(m, "V1")["radius"] - 0.019995) < 1e-9,
+          f"{spiel.zylinder(m, 'V1')['radius'] * 1e3:.4f} mm")
+    radien = set()
+    for fn in m.koerper["Auge"].flaechen:
+        for ln in spiel._linien_der_flaeche(m.flaechen[fn]):
+            L = m.lines.get(ln)
+            try:
+                kr = spiel._bogen_kreis(L, m)
+            except ValueError:
+                kr = None
+            if kr is not None:
+                radien.add(round(kr[1], 9))
+    check("die Bohrung ist um dieselbe Hälfte größer (20,005 mm)",
+          radien == {round(0.020005, 9)}, str(sorted(round(x * 1e3, 4) for x in radien)))
+    check("der Stand steht an der Fuge: nichts mehr offen",
+          abs(kb.spalt_eingearbeitet - 2e-5) < 1e-15 and kb.spalt_offen() <= 0,
+          f"eingearbeitet {kb.spalt_eingearbeitet * 1e3:.3f} mm")
+    check("ein zweites Vernetzen arbeitet ihn nicht noch einmal ein",
+          spiel.spalte_einarbeiten(m, [])["fugen"] == 0)
+    check("das Protokoll nennt Fuge, Maß und die Volumen",
+          any("Spalt 0.020 mm" in z and "Stift" in z for z in log), str(log[-1:])[:140])
+    # nur an der Bohrung
+    m2, kb2 = _stift_und_auge()
+    kb2.spalt, kb2.spalt_wohin = 2e-5, "bohrung"
+    spiel.spalte_einarbeiten(m2, [])
+    check("„nur an der Bohrung“ lässt die Welle unverändert",
+          abs(spiel.zylinder(m2, "V1")["radius"] - 0.02) < 1e-12,
+          f"{spiel.zylinder(m2, 'V1')['radius'] * 1e3:.4f} mm")
+    # und die Einstellung reist mit dem Modell
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        pf = os.path.join(tmp, "s.json")
+        m2.save(pf)
+        m3 = Model.load(pf)
+        kb3 = m3.kontaktbedingungen["Stift"]
+        check("Spalt, Aufteilung und Stand überstehen Speichern und Laden",
+              abs(kb3.spalt - 2e-5) < 1e-15 and kb3.spalt_wohin == "bohrung"
+              and abs(kb3.spalt_eingearbeitet - 2e-5) < 1e-15, str((kb3.spalt, kb3.spalt_wohin)))
+
+
 def main():
     for t in (test_rippe_ist_kein_zylinder, test_zylinder_spiel, test_bohrung_aufweiten,
-              test_flaechen_spiel):
+              test_spalt_an_der_kontaktbedingung, test_flaechen_spiel):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
