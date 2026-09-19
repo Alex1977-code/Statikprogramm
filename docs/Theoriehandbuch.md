@@ -2274,6 +2274,64 @@ Kontakt-Iteration mit 19 Schritten) konvergiert in 27 Schritten bei
 Toleranz 1e-4, mit Gleichgewicht der Auflager (Auflager = Last, nicht
 Last + F_p: die Reaktion ist K·u − F_p − F, die innere Kraft ∫Bᵀσ dV).
 
+**Rechenzeit: blockweise statt Element für Element (19.09.2026).** Die
+Plastizität macht an einem großen Modell den Löwenanteil der Rechenzeit — am
+Drehlager (646 706 Tetraeder, 2 974 344 Freiheitsgrade) entfielen auf einen
+warmen Lastfall 24 % auf den Gleichungslöser und **76 % auf die
+Plastizität**. Die Ursache war nicht die Physik: ein Schritt kostete
+dieselben 51 Sekunden, ob null oder viele Elemente flossen. Es war der
+Aufrufaufwand einer Python-Schleife über alle Elemente, rund 80 µs je Stück.
+
+Drei Befunde und was sie brachten (gemessen am Drehlager, u = 0, ein
+Schritt):
+
+| Stand | Zeit je Schritt |
+|---|---|
+| Schleife, wie zuvor | 51,5 s |
+| `stress_tet4` holt B direkt statt über `k_tet4` | 38,5 s |
+| dazu D-Matrix je Werkstoff statt je Element, Mittelwert ohne `numpy.mean` | 24,7 s |
+| dazu blockweise über den ganzen Stapel | **0,54 s** |
+
+Zum ersten Punkt: die Spannung im Schwerpunkt ist σ = D·B·u_e, dafür braucht
+es B, nicht die 12×12-Steifigkeitsmatrix V·BᵀDB. Diese wurde gebaut und
+sofort weggeworfen — 24,9 s von 39,4 s eines Schritts (cProfile). Zum
+zweiten: die Werkstoffmatrix hängt nur an E und ν, wurde aber 1 940 118 mal
+je Schritt erzeugt.
+
+Blockweise heißt: die Formfunktionsableitungen am Auswertepunkt sind für
+jeden Elementtyp **eine feste Matrix**, also wird die Jacobi-Matrix als ein
+`solve` über ein (n, 3, 3)-Feld behandelt; Dehnungen und Spannungen mit
+`einsum`, die Rückführung einschließlich der Fallunterscheidung „fließt /
+fließt nicht“ als Maske, die plastischen Knotenlasten als ein Streuzugriff.
+Die Geometriedaten des Stapels (Ableitungen, Integrationsgewichte,
+Freiheitsgrade, Werkstoffwerte) hängen nicht an der Verschiebung und werden
+über die Schritte einer Rechnung wiederverwendet; darum kostet der erste
+Schritt 3,3 s und jeder weitere 0,54 s.
+
+**Das gilt für jeden Volumenelementtyp**, nicht nur für Tetraeder: Die
+Plastizität wertet je Element genau einen Punkt aus (die Mitte), und dort ist
+die Ableitungsmatrix des Typs fest. Nur die plastischen Knotenlasten
+integrieren über alle Gaußpunkte — bei hex8 acht statt einem —, und das ist
+eine kurze Schleife über die Punkte, jede Runde über den ganzen Stapel. Ein
+gemischtes Netz wird Typ für Typ gerechnet und zusammengelegt.
+
+Die Schleife bleibt als `_schritt_schleife` erhalten: sie ist die Referenz
+des Vergleichstests und rechnet Elementtypen, die `elements.solid` nicht
+kennt. Beide Wege liefern dasselbe — an 20 000 fließenden Elementen des
+Drehlagers wich F_p relativ um 9,2·10⁻¹⁵ ab, die plastischen Dehnungen um
+3,3·10⁻¹⁶; über alle sieben Typen (tet4, tet10, hex8, hex20, pent6, pent15,
+pyr5, je acht verzerrte Elemente) bleibt die Abweichung unter 1,6·10⁻¹⁵, also
+Maschinengenauigkeit. Ein Unterschied fiel dabei auf und wurde angeglichen:
+die größte Vergleichsspannung zählt nur Werkstoffe mit Streckgrenze, weil die
+Schleife die übrigen ganz überspringt.
+
+Für 422 Lastfälle hochgerechnet: ein warmer Lastfall braucht 19
+Plastizitätsschritte, vorher rund 980 s, jetzt rund 13 s. Mit den 263 s der
+Kontakt-Iteration sinkt er von etwa 1 082 s auf etwa 276 s — aus 5,2 Tagen
+werden 1,35. Damit kehrt sich das Verhältnis um: die Plastizität macht noch
+5 % der Zeit eines Lastfalls, der Gleichungslöser und die Kontakt-Iteration
+die übrigen 95 %.
+
 **Folgen für die Rechnung.** Mit Fließen gilt keine Superposition:
 Kombinationen werden direkt gerechnet wie bei Kontakt (`_nichtlinear`),
 die Grundlast wirkt mit. Der Spannungsnachlauf zieht D·ε_p ab
