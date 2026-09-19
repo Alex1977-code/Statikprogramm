@@ -1003,11 +1003,42 @@ und genau das geschieht. Eine laufende Faktorisierung lässt sich nicht
 unterbrechen, sie läuft zu Ende (am Drehlager mit 1 028 724 Freiheitsgraden
 bis 13 s); die nächste Meldung des Rechenkerns (Lastfall, Kontakt-Iteration,
 Kombination) ist dann der Ausstieg. Danach steht in Statuszeile und Protokoll
-„Berechnung abgebrochen (nach x s) - Ergebnis und Netz unverändert“ - keine
-FEHLER-Zeile, denn es ist keiner. Das zuvor vorhandene Ergebnis bleibt
-gültig, das Netz auch; Berechnen und Update sind sofort wieder frei. Beim
-Vernetzen bleibt das bisher Erzeugte, bei Wind und Wasserdruck ist das Modell
-wie vorher.
+„Berechnung abgebrochen (nach x s)“ - keine FEHLER-Zeile, denn es ist keiner.
+Das Netz bleibt unverändert, Berechnen und Update sind sofort wieder frei.
+Beim Vernetzen bleibt das bisher Erzeugte, bei Wind und Wasserdruck ist das
+Modell wie vorher.
+
+**Was gerechnet war, bleibt** (19.09.2026). Wer „Alle Lastfälle und
+Kombinationen“ startet und nach dem ersten Lastfall abbricht, hat diesen
+Lastfall gerechnet - bis dahin war er trotzdem weg, denn der Abbruch räumte
+den ganzen Lauf ab („ich hatte aus Versehen alle Lastfälle und Kombinationen
+zur Berechnung gestartet … es wäre gut wenn gerechnete Ergebnisse erhalten
+blieben“). Jetzt stehen die fertigen Lastfälle und Kombinationen nach dem
+Abbruch in der Ergebnisauswahl und im Modellbaum wie nach einem ganzen Lauf.
+Die Statuszeile sagt, was blieb und was offen ist: „Berechnung abgebrochen
+(nach 94 s) - 1 Lastfälle bleiben erhalten, 4 Lastfälle und 72 Kombinationen
+offen“. Zwei Dinge fehlen ausdrücklich, und das Protokoll sagt es:
+
+* **Keine Umhüllenden.** Eine Umhüllende über zwei von fünf Lastfällen sieht
+  aus wie eine über alle fünf und wäre schlicht falsch.
+* **Keine Nachweise.** Sie stützen sich auf die Umhüllenden.
+
+Ein neuer Lauf rechnet alles noch einmal - das Teilergebnis ist zum Ansehen
+da, nicht als Zwischenstand, auf dem weitergerechnet wird. Bricht es ab,
+bevor der erste Lastfall fertig ist, bleibt es beim alten Verhalten: es gibt
+nichts zu zeigen, und das vorherige Ergebnis bleibt stehen.
+
+Das Teilergebnis tritt an die Stelle des bisherigen. War das größer, sagt das
+Protokoll es ausdrücklich: „Das bisherige Ergebnis (5 Lastfälle, 72
+Kombinationen) ist damit ersetzt - es lässt sich nur durch einen neuen Lauf
+zurückholen.“ So tauscht ein versehentlich gestarteter und abgebrochener Lauf
+keine ganze Rechnung still gegen einen Lastfall.
+
+Damit ein Abbruch in den Kombinationen überhaupt greifen kann, meldet seit
+demselben Stand auch der lineare Weg jede Kombination einzeln
+(„Kombination GZT-12 (37/422)“). Vorher stand der Balken dort still, bis alle
+fertig waren - bei 422 Kombinationen minutenlang - und ein Klick auf
+Abbrechen fand keinen Haltepunkt.
 
 ### Ergebnisse und Bericht
 
@@ -3024,14 +3055,35 @@ Nachweis mit seiner Verformung je Kombination.
   statt 0,57 s, `modellimport_rf6.json` 0,17 s statt 0,28 s, Verschiebungen gleich auf
   4e-10 relativ), **PyAMG** (iterativ:
   algebraisches Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu
-  iterieren und einkernig) und **SuperLU** (direkt, einkernig, Rückfall). Was
-  nicht installiert ist, steht grau in der Liste. **In der exe stecken** MKL
-  PARDISO, PyAMG und SuperLU (PyAMG ist MIT-lizenziert); **MUMPS**
+  iterieren und einkernig) und **SuperLU** (direkt, einkernig, Rückfall).
+  **In der exe stecken** MKL PARDISO, ama, PyAMG und SuperLU (PyAMG ist
+  MIT-lizenziert, ama ist eigener Kern ohne Fremdlizenz); **MUMPS**
   (CeCILL-C) lädt das Programm beim Start nach (Kästchen im Dialog
   *Vernetzer, Nachbesserer und Gleichungslöser*, Abschnitt „Vernetzer und
   Nachbesserer nachladen“) — der Selbsttest des Baus rechnet das
   Rahmenbeispiel mit jedem mitgelieferten Löser und vergleicht. Geprüft in
   `tests/test_loeser.py` (jeder vorhandene Löser trifft N·L/(E·A)).
+* **Was nicht da ist, sagt warum** (19.09.2026). Ein fehlender Löser stand
+  bis dahin nur grau als „(nicht installiert)“ in der Liste; warum und was zu
+  tun wäre, stand nirgends — der Anwender sah „Gleichungslöser, die mir
+  angezeigt werden, die ich aber nicht wählen kann und auch nicht
+  installieren“. Jetzt steht der Grund im Eintrag und der ganze Weg im
+  Hinweis darunter, und es sind drei verschiedene Gründe:
+
+  | Löser | Eintrag sagt | dahinter steckt |
+  |---|---|---|
+  | MUMPS | *Extras → Vernetzer installieren…* | nachladbar — danach steht er sofort in der Liste, ohne Neustart |
+  | CHOLMOD, UMFPACK | *GPL — nur mit eigenem Python* | die Lizenz verbietet das Mitliefern; wer aus dem Quelltext startet: `pip install scikit-sparse` bzw. `scikit-umfpack` |
+  | MKL PARDISO, ama, PyAMG | `pip install …` bzw. *gehört in die exe — bitte melden* | mitgeliefert; fehlt so einer in der exe, ist der Bau fehlerhaft |
+  | SuperLU | *scipy fehlt* | kann gar nicht fehlen — dann ist die Installation beschädigt |
+
+  **ama fehlte tatsächlich in der exe.** Er stand weder in der Bauvorschrift
+  `packaging/Statik3D.spec` noch im Bauablauf, und er kommt von keinem
+  Paketserver: das Rad liegt seit dem 19.09.2026 als
+  `packaging/ama-0.1.0-cp311-cp311-win_amd64.whl` im Baum und wird beim Bau
+  eingespielt — genau wie das MUMPS-Rad. Geprüft in `tests/test_loeser.py`
+  (jeder Löser hat eine Herkunftsangabe; Bauvorschrift und Bauablauf nennen
+  das Rad, das wirklich dort liegt).
 * **Genauigkeit des Gleichungslösers** (*Berechnung → Einstellungen*,
   17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
   Lösung — streng 1e-8, normal 1e-6 (Vorgabe), 1e-5, locker 1e-4, sehr
@@ -3198,8 +3250,10 @@ Nachweis mit seiner Verformung je Kombination.
   faktorisieren, Lastfälle, Kombinationen, Umhüllende, Nachweise. Jede
   Zeile steht auch im Protokoll. **Abbrechen** (Knopf neben dem Balken oder
   Esc) hält beim nächsten Rechenschritt an - eine laufende Faktorisierung
-  läuft zu Ende -, meldet „Berechnung abgebrochen (nach x s)“ und lässt
-  Ergebnis und Netz, wie sie waren (Kapitel 2, „Statuszeile“).
+  läuft zu Ende -, meldet „Berechnung abgebrochen (nach x s)“ und lässt das
+  Netz, wie es war. Die bis dahin fertigen Lastfälle und Kombinationen
+  bleiben als Ergebnis stehen, ohne Umhüllende und ohne Nachweise
+  (Kapitel 2, „Statuszeile“).
 * **Das Protokoll überlebt einen Absturz.** Jede Zeile geht sofort in eine
   Mitschrift unter `%LOCALAPPDATA%\Statik3D\Protokolle` (unter Linux
   `~/.local/share/Statik3D/Protokolle`), eine Datei je Programmstart. Stürzt

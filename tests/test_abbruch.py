@@ -19,7 +19,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from statik3d import solver                                   # noqa: E402
-from statik3d.examples_lib import block_friction_example      # noqa: E402
+from statik3d.examples_lib import block_friction_example, hall_frame_example   # noqa: E402
 
 RESULTS = []
 
@@ -100,8 +100,114 @@ def test_mit_hilfsfesselung_und_normal():
           r2.info.get("contact_converged") and not r2.info.get("abbruch"))
 
 
+class _Halt(Exception):
+    """Steht fuer gui.worker.Abgebrochen: die Ausnahme, die der
+    Fortschrittsaufruf wirft, sobald der Anwender anhaelt."""
+
+
+def _bei_meldung(treffer: str, nach: int):
+    """Ein Fortschrittsaufruf, der beim ``nach``-ten Mal abbricht, wenn die
+    Meldung mit ``treffer`` beginnt - wie ein Klick auf Abbrechen."""
+    n = {"i": 0}
+
+    def melden(text, anteil=None):
+        if str(text).startswith(treffer):
+            n["i"] += 1
+            if n["i"] >= nach:
+                raise _Halt(str(text))
+    return melden
+
+
+def test_abbruch_behaelt_gerechnete_lastfaelle():
+    """Der Anwender startete am 19.09.2026 versehentlich alle Lastfaelle und
+    Kombinationen und brach nach dem ersten Lastfall ab - und stand ohne
+    Ergebnis da, obwohl dieser Lastfall fertig gerechnet war ("es waere gut
+    wenn gerechnete ergebnisse erhalten blieben"). Was fertig ist, haengt
+    jetzt an der Ausnahme und bleibt."""
+    m = hall_frame_example()
+    n_lf, n_ek = len(m.load_cases), len(m.combinations)
+    check(f"Probe: {n_lf} Lastfaelle, {n_ek} Kombinationen", n_lf >= 3 and n_ek >= 3,
+          f"{n_lf} / {n_ek}")
+    try:
+        solver.solve_all(m, progress=_bei_meldung("Lastfall ", 2))
+        check("der Lauf bricht ab", False, "er lief durch")
+        return
+    except _Halt as ex:
+        an = getattr(ex, "teilanalyse", None)
+    check("die Ausnahme traegt die halbe Analyse", an is not None)
+    if an is None:
+        return
+    check("die zwei fertigen Lastfaelle bleiben erhalten", len(an.cases) == 2,
+          f"{len(an.cases)}: {list(an.cases)}")
+    check("und sie sind vollstaendig gerechnet, kein halbes Ergebnis",
+          all(r.u is not None and np.isfinite(r.u).all() for r in an.cases.values()),
+          str([r.name for r in an.cases.values()]))
+    check("die Analyse sagt, dass sie abgebrochen ist", an.info.get("abgebrochen") is True,
+          str(an.info.get("abgebrochen")))
+    check("sie sagt auch, wie viel offen blieb",
+          an.info.get("offen", {}).get("lastfaelle") == n_lf - 2
+          and an.info.get("offen", {}).get("kombinationen") == n_ek,
+          str(an.info.get("offen")))
+    # Keine Umhuellende ueber zwei von fuenf Lastfaellen: sie saehe aus wie
+    # eine ueber alle und waere schlicht falsch
+    check("keine Umhuellenden und keine Nachweise ueber einen halben Satz",
+          not an.envelopes and an.design is None and an.fatigue is None, str(list(an.envelopes)))
+    # Die Zusammenfassung traegt die Anzeige in der Oberflaeche
+    check("die Zusammenfassung laesst sich bilden", "Lastfaelle: 2" in an.summary(),
+          an.summary().splitlines()[0] if an.summary() else "")
+    # Gegenprobe: derselbe Lauf ohne Abbruch rechnet alles
+    ganz = solver.solve_all(m)
+    check("ohne Abbruch kommt der ganze Satz - der Abbruch aendert nichts am Verfahren",
+          len(ganz.cases) == n_lf and not ganz.info.get("abgebrochen") and bool(ganz.envelopes),
+          f"{len(ganz.cases)} Lastfaelle, {len(ganz.envelopes)} Umhuellende")
+    # Und die geretteten Verschiebungen sind dieselben wie im ganzen Lauf
+    d = max(float(np.abs(an.cases[k].u - ganz.cases[k].u).max()) for k in an.cases)
+    bez = max(float(np.abs(ganz.cases[list(an.cases)[0]].u).max()), 1e-30)
+    check("die geretteten Lastfaelle stimmen mit dem ganzen Lauf ueberein",
+          d <= 1e-12 * bez, f"{d:.2e} m von {bez:.2e} m")
+
+
+def test_abbruch_in_den_kombinationen_behaelt_lastfaelle_und_kombinationen():
+    """Bricht es erst in den Kombinationen ab, bleiben alle Lastfaelle und die
+    fertigen Kombinationen."""
+    m = hall_frame_example()
+    n_lf, n_ek = len(m.load_cases), len(m.combinations)
+    try:
+        solver.solve_all(m, progress=_bei_meldung("Kombination ", 3))
+        check("der Lauf bricht in den Kombinationen ab", False, "er lief durch")
+        return
+    except _Halt as ex:
+        an = getattr(ex, "teilanalyse", None)
+    check("auch hier haengt die halbe Analyse an der Ausnahme", an is not None)
+    if an is None:
+        return
+    check("alle Lastfaelle sind fertig", len(an.cases) == n_lf, f"{len(an.cases)} / {n_lf}")
+    check("und die fertigen Kombinationen bleiben",
+          0 < len(an.combinations) < n_ek, f"{len(an.combinations)} / {n_ek}")
+    check("offen gemeldet wird der Rest der Kombinationen",
+          an.info.get("offen", {}).get("kombinationen") == n_ek - len(an.combinations),
+          str(an.info.get("offen")))
+
+
+def test_ohne_ein_fertiges_ergebnis_wird_nichts_vorgetaeuscht():
+    """Bricht es ab, bevor der erste Lastfall fertig ist, gibt es nichts zu
+    retten - dann darf auch keine leere Analyse erscheinen."""
+    m = hall_frame_example()
+    try:
+        solver.solve_all(m, progress=_bei_meldung("", 1))    # gleich die erste Meldung
+        check("der Lauf bricht sofort ab", False, "er lief durch")
+        return
+    except _Halt as ex:
+        an = getattr(ex, "teilanalyse", None)
+    check("ohne ein fertiges Ergebnis bleibt es beim Abbruch ohne Analyse", an is None,
+          str(an))
+
+
 def main():
-    for t in (test_abbruch, test_mit_hilfsfesselung_und_normal):
+    for t in (test_abbruch, test_mit_hilfsfesselung_und_normal,
+              test_abbruch_behaelt_gerechnete_lastfaelle,
+              test_abbruch_in_den_kombinationen_behaelt_lastfaelle_und_kombinationen,
+              test_ohne_ein_fertiges_ergebnis_wird_nichts_vorgetaeuscht):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

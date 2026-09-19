@@ -32,6 +32,10 @@ jobs:
           # pypardiso und mkl stehen in requirements.txt: ohne sie faellt der
           # Loeser auf SuperLU zurueck, und das rechnet auf genau einem Kern.
           pip install -r requirements.txt pyinstaller pillow reportlab svglib qrcode
+          # ama, der eigene Rechenkern, steht auf keinem Paketserver: das Rad
+          # liegt im Baum (wie das MUMPS-Rad). Ohne diese Zeile fehlte er in
+          # der exe, und die Loeserauswahl zeigte ihn grau (19.09.2026).
+          pip install packaging/ama-0.1.0-cp311-cp311-win_amd64.whl
 
       - name: Build-Stempel schreiben
         run: python packaging/write_build.py ${{ github.sha }}

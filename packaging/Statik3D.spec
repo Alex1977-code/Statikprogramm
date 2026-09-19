@@ -25,7 +25,7 @@ hiddenimports += collect_submodules("statik3d")
 # das Programm selbst sonst nicht importiert
 hiddenimports += ["platform", "signal", "struct", "ctypes.util", "importlib.metadata", "hashlib"]
 hiddenimports += collect_submodules("vtkmodules")
-for optional in ("pypardiso", "pyamg", "reportlab", "svglib", "qrcode"):
+for optional in ("pypardiso", "pyamg", "ama", "reportlab", "svglib", "qrcode"):
     try:
         __import__(optional)
         hiddenimports.append(optional)
@@ -37,6 +37,20 @@ for optional in ("pypardiso", "pyamg", "reportlab", "svglib", "qrcode"):
 try:
     __import__("pyamg")
     hiddenimports += collect_submodules("pyamg")
+except ImportError:
+    pass
+# ama (eigener Rechenkern, Rust, keine Fremdlizenz) gehoert genauso in die exe,
+# stand aber nicht in dieser Datei: in der exe erschien er als "nicht
+# installiert", und der Anwender konnte ihn weder waehlen noch beschaffen
+# (19.09.2026). collect_submodules findet auch die Erweiterung ama.ama_kern
+# (ama_kern.cp311-win_amd64.pyd); collect_dynamic_libs("ama") liefert dagegen
+# [] - gemessen: die .pyd ist ein Modul, keine lose DLL. Das Rad kommt aus
+# einem eigenen Bau (packaging/ama-0.1.0-cp311-cp311-win_amd64.whl, Quelle
+# Desktop/Gleichungsloeser) - nach einem Neubau die Datei dort ersetzen und
+# den Namen in .github/workflows/windows-exe.yml nachziehen.
+try:
+    __import__("ama")
+    hiddenimports += collect_submodules("ama")
 except ImportError:
     pass
 # MUMPS (CeCILL-C) kommt **nicht** mit: das Programm laedt das Rad aus
