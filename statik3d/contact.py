@@ -1148,6 +1148,21 @@ class ContactSystem:
             c.stabilised = False
             c.active = float(c.cn @ u[c.dofs]) < -1e-14
 
+    def schub_halt_loesen(self) -> int:
+        """Den Schubhalt aller Gruppen loesen, die wieder eine geschlossene
+        Bedingung haben. Rueckgabe: Zahl der geloesten Bedingungen.
+
+        Der Halt ist fuer den Schritt gedacht, nicht fuer das Ergebnis: sobald
+        der Stift wieder irgendwo anliegt, traegt die gewoehnliche Haftbindung,
+        und der Halt darf keinen Schub mehr erfinden."""
+        traegt = {_group(c) for c in self.cons if c.active}
+        geloest = 0
+        for c in self.cons:
+            if c.schub_halt and _group(c) in traegt:
+                c.schub_halt = False
+                geloest += 1
+        return geloest
+
     def matrices(self, ndof: int):
         """Kontaktsteifigkeit Kc (csr) und Kontaktlastvektor Fc."""
         rows, cols, vals = [], [], []

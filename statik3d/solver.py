@@ -2633,6 +2633,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 if not geloest:
                     raise _kontakt_abbruch(it, ex, cs, model, u, log=log) from None
         changed = cs.update(u)
+        if cs.schub_halt_loesen():
+            # Der Schubhalt hat den Schritt getragen; jetzt liegt das Teil
+            # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der
+            # naechste Schritt rechnet ohne ihn.
+            changed = True
         if progress:
             # Anteil im Fenster des Lastfalls: 1 - 0,85^it waechst mit jedem
             # Schritt und naehert sich der Fensterkante - ein wachsender Balken

@@ -312,10 +312,29 @@ def test_halt_waehlt_den_schub():
           f"{sum(1 for c in ohne if c.active)} geschlossen")
 
 
+def test_schub_halt_faellt_weg():
+    """Der Schubhalt ist fuer den Schritt, nicht fuer das Ergebnis: sobald das
+    Teil wieder geschlossene Bedingungen hat, wird er geloest. Sonst traegt er
+    bis zum Schluss Schub, den es nicht gibt."""
+    from statik3d.contact import ContactSystem
+    cons, _lage = _stift_bedingungen()
+    for c in cons:
+        c.active, c.schub_halt = False, True
+    cs = object.__new__(ContactSystem)
+    cs.cons = cons
+    check("offen: der Schubhalt bleibt",
+          cs.schub_halt_loesen() == 0 and all(c.schub_halt for c in cons), "")
+    cons[0].active = True
+    geloest = cs.schub_halt_loesen()
+    check("eine geschlossene Bedingung loest den Schubhalt des Teils",
+          geloest == len(cons) and not any(c.schub_halt for c in cons),
+          f"{geloest} geloest")
+
+
 def main():
     for t in (test_halt, test_teile_bedingungen, test_zug_am_teil_gemessen,
               test_schub_haelt_den_stift, test_schub_traegt_misst_die_fuge,
-              test_halt_waehlt_den_schub):
+              test_halt_waehlt_den_schub, test_schub_halt_faellt_weg):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
