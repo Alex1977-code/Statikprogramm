@@ -122,6 +122,71 @@ def test_loeser_liste():
               "unbekannt" in str(ex) and "pyamg" in str(ex), str(ex)[:80])
 
 
+def test_jeder_loeser_sagt_woher_er_kommt():
+    """Ein grauer Eintrag ohne Grund ist eine Sackgasse: der Anwender sah am
+    19.09.2026 Loeser, die er „nicht waehlen kann und auch nicht
+    installieren“. Jeder Loeser muss darum sagen, warum er fehlt und was zu
+    tun ist — und die drei Faelle muessen unterscheidbar bleiben:
+    nachladbar (MUMPS), aus Lizenzgruenden ausgeschlossen (CHOLMOD, UMFPACK),
+    mitgeliefert (dann ist der Bau schuld)."""
+    from statik3d import solver
+    keys = list(solver.LOESER)
+    fehlt = [k for k in keys if k not in solver.LOESER_WOHER]
+    check("jeder bekannte Loeser hat eine Herkunftsangabe", not fehlt, str(fehlt))
+    zuviel = [k for k in solver.LOESER_WOHER if k not in solver.LOESER]
+    check("und keine Angabe zeigt auf einen Loeser, den es nicht gibt", not zuviel, str(zuviel))
+    for k in keys:
+        kurz, weg = solver.loeser_woher(k)
+        check(f"{k}: kurzer Grund passt in einen Listeneintrag",
+              0 < len(kurz) <= 40, f"{len(kurz)} Zeichen: {kurz}")
+        # SuperLU ist der einzige, der keinen Weg braucht: er kommt mit scipy
+        # und kann gar nicht fehlen - dann muss der Hinweis genau das sagen
+        check(f"{k}: der Hinweis nennt einen Weg oder sagt, warum es keinen gibt",
+              len(weg) >= 60 and ("pip install" in weg or "Vernetzer installieren" in weg
+                                  or "kann nicht fehlen" in weg), weg[:90])
+    # Die Lizenzloeser duerfen nicht als nachladbar erscheinen - sie sind es
+    # nicht, und ein Verweis auf den Werkzeugdialog ginge ins Leere
+    for k in ("cholmod", "umfpack"):
+        kurz, weg = solver.loeser_woher(k)
+        check(f"{k}: sagt, dass die Lizenz im Weg steht, und verweist nicht auf das Nachladen",
+              "GPL" in kurz and "Vernetzer installieren" not in weg, f"{kurz} / {weg[:60]}")
+    kurz_m, weg_m = solver.loeser_woher("mumps")
+    check("MUMPS: nennt den Weg zum Nachladen, den es wirklich gibt",
+          "Vernetzer installieren" in kurz_m and "Vernetzer installieren" in weg_m,
+          f"{kurz_m} / {weg_m[:80]}")
+    from statik3d import werkzeuge as wz
+    check("und dieser Weg fuehrt zu einem Werkzeug, das das Programm kennt",
+          "mumps" in wz.WERKZEUGE, str(list(wz.WERKZEUGE)))
+    # Unbekannter Schluessel: kein Absturz, sondern der alte Text
+    check("ein unbekannter Loeser faellt auf „nicht installiert“ zurueck",
+          solver.loeser_woher("gibtsnicht") == ("nicht installiert", ""),
+          str(solver.loeser_woher("gibtsnicht")))
+
+
+def test_ama_liegt_der_exe_bei():
+    """ama ist der eigene Rechenkern und gehoert in die exe - er stand aber
+    weder in der Bauvorschrift noch im Arbeitsablauf, und darum zeigte die
+    Auswahl ihn dort grau (19.09.2026). Er kommt von keinem Paketserver: das
+    Rad liegt im Baum, wie das von MUMPS."""
+    import io
+    wurzel = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = io.open(os.path.join(wurzel, "packaging", "Statik3D.spec"), encoding="utf-8").read()
+    check("die Bauvorschrift sammelt ama samt Rechenkern",
+          'collect_submodules("ama")' in spec, "collect_submodules(\"ama\") fehlt")
+    check("und nennt ihn bei den Zusatzpaketen", '"ama"' in spec.split("for optional in")[1][:120],
+          spec.split("for optional in")[1][:120])
+    raeder = [d for d in os.listdir(os.path.join(wurzel, "packaging")) if d.startswith("ama-")]
+    check("das Rad liegt im Baum (kein Paketserver kennt ama)", len(raeder) == 1, str(raeder))
+    ablauf = io.open(os.path.join(wurzel, ".github", "workflows", "windows-exe.yml"),
+                     encoding="utf-8").read()
+    check("und der Bau spielt genau dieses Rad ein",
+          f"pip install packaging/{raeder[0]}" in ablauf,
+          f"pip install packaging/{raeder[0]}")
+    # Die exe wuerde ama sonst schweigend auslassen: MUMPS steht in excludes,
+    # ama stand nirgends - beides sieht im Bauprotokoll gleich aus
+    check("MUMPS bleibt dagegen bewusst draussen", "mumps" in spec and "excludes" in spec)
+
+
 def test_superlu_nennt_sich_einkernig():
     """SuperLU kann keine Threads — es muss das auch sagen."""
     n = 400
@@ -725,6 +790,7 @@ def test_symmetriepruefung():
 
 def main():
     for f in (test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
+              test_jeder_loeser_sagt_woher_er_kommt, test_ama_liegt_der_exe_bei,
               test_superlu_nennt_sich_einkernig,
               test_pardiso_nimmt_alle_kerne_bis_auf_einen,
               test_meldung_trennt_pool_und_loeser, test_kopfzeile_nennt_den_eingestellten_loeser,

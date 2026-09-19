@@ -12,6 +12,12 @@ mkl
 # Zweiter Loeser in der exe: PyAMG (MIT, algebraisches Mehrgitter + CG) -
 # iterativ und speicherarm; "Gleichungsloeser mitinstallieren" (13.09.2026).
 pyamg>=5
+# Dritter Loeser in der exe: ama, der eigene Rechenkern (Rust, keine
+# Fremdlizenz, LDL^T mit Superknoten). Er steht auf keinem Paketserver -
+# das Rad liegt im Baum und wird beim Bau von Hand eingespielt:
+#   pip install packaging/ama-0.1.0-cp311-cp311-win_amd64.whl
+# (Quelle: Desktop/Gleichungsloeser; nach einem Neubau Datei und Name in
+#  .github/workflows/windows-exe.yml nachziehen.)
 
 # optional (keines davon in der exe - Lizenzen siehe Benutzerhandbuch, Kap. 9;
 # gmsh, netgen-mesher und MMG3D laedt das Programm auf Wunsch selbst nach:

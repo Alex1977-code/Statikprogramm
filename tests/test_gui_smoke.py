@@ -4509,7 +4509,13 @@ def main():
             slv_w.loeser_liste = lambda: [(k, n, (False if k == "mumps" else da), li, a) for k, n, da, li, a in liste_alt()]
             w._loeserliste_neu()
             i_m = w.cb_loeser.findData("mumps")
-            aus_ = not w.cb_loeser.model().item(i_m).isEnabled() and "nicht installiert" in w.cb_loeser.itemText(i_m)
+            # Der Eintrag sagt nicht nur "nicht installiert", sondern auch den
+            # Weg dorthin - sonst steht der Anwender vor einer Sackgasse
+            # (19.09.2026)
+            t_m = w.cb_loeser.itemText(i_m)
+            aus_ = (not w.cb_loeser.model().item(i_m).isEnabled()
+                    and "nicht installiert" in t_m and "Vernetzer installieren" in t_m
+                    and "Vernetzer installieren" in w.cb_loeser.itemData(i_m, QtCore.Qt.ToolTipRole))
             slv_w.loeser_liste = liste_alt
             w.cb_loeser.setCurrentIndex(w.cb_loeser.findData("superlu"))
             w._werkzeuge_geaendert("mumps")

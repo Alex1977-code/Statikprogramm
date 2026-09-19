@@ -16456,10 +16456,16 @@ class MainWindow(QtWidgets.QMainWindow):
         cb.clear()
         cb.addItem("automatisch (MKL PARDISO, sonst CHOLMOD, sonst SuperLU)", "auto")
         for key, name, da, lizenz, art in solver.loeser_liste():
-            cb.addItem(f"{name} - {art}" + ("" if da else " (nicht installiert)"), key)
+            # Fehlt einer, steht der Grund gleich im Eintrag und der ganze Weg
+            # im Hinweis - "nicht installiert" allein liess den Anwender vor
+            # einem grauen Eintrag stehen, den er weder waehlen noch
+            # installieren konnte (19.09.2026)
+            kurz, weg = solver.loeser_woher(key)
+            cb.addItem(f"{name} - {art}" + ("" if da else f" (nicht installiert: {kurz})"), key)
             if not da:
                 cb.model().item(cb.count() - 1).setEnabled(False)
-            cb.setItemData(cb.count() - 1, f"Lizenz: {lizenz}", QtCore.Qt.ToolTipRole)
+            cb.setItemData(cb.count() - 1, f"Lizenz: {lizenz}" + ("" if da else f"\n\n{weg}"),
+                           QtCore.Qt.ToolTipRole)
         i = cb.findData(gewaehlt)
         cb.setCurrentIndex(max(i, 0))
         cb.blockSignals(False)

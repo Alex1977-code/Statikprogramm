@@ -3024,14 +3024,35 @@ Nachweis mit seiner Verformung je Kombination.
   statt 0,57 s, `modellimport_rf6.json` 0,17 s statt 0,28 s, Verschiebungen gleich auf
   4e-10 relativ), **PyAMG** (iterativ:
   algebraisches Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu
-  iterieren und einkernig) und **SuperLU** (direkt, einkernig, Rückfall). Was
-  nicht installiert ist, steht grau in der Liste. **In der exe stecken** MKL
-  PARDISO, PyAMG und SuperLU (PyAMG ist MIT-lizenziert); **MUMPS**
+  iterieren und einkernig) und **SuperLU** (direkt, einkernig, Rückfall).
+  **In der exe stecken** MKL PARDISO, ama, PyAMG und SuperLU (PyAMG ist
+  MIT-lizenziert, ama ist eigener Kern ohne Fremdlizenz); **MUMPS**
   (CeCILL-C) lädt das Programm beim Start nach (Kästchen im Dialog
   *Vernetzer, Nachbesserer und Gleichungslöser*, Abschnitt „Vernetzer und
   Nachbesserer nachladen“) — der Selbsttest des Baus rechnet das
   Rahmenbeispiel mit jedem mitgelieferten Löser und vergleicht. Geprüft in
   `tests/test_loeser.py` (jeder vorhandene Löser trifft N·L/(E·A)).
+* **Was nicht da ist, sagt warum** (19.09.2026). Ein fehlender Löser stand
+  bis dahin nur grau als „(nicht installiert)“ in der Liste; warum und was zu
+  tun wäre, stand nirgends — der Anwender sah „Gleichungslöser, die mir
+  angezeigt werden, die ich aber nicht wählen kann und auch nicht
+  installieren“. Jetzt steht der Grund im Eintrag und der ganze Weg im
+  Hinweis darunter, und es sind drei verschiedene Gründe:
+
+  | Löser | Eintrag sagt | dahinter steckt |
+  |---|---|---|
+  | MUMPS | *Extras → Vernetzer installieren…* | nachladbar — danach steht er sofort in der Liste, ohne Neustart |
+  | CHOLMOD, UMFPACK | *GPL — nur mit eigenem Python* | die Lizenz verbietet das Mitliefern; wer aus dem Quelltext startet: `pip install scikit-sparse` bzw. `scikit-umfpack` |
+  | MKL PARDISO, ama, PyAMG | `pip install …` bzw. *gehört in die exe — bitte melden* | mitgeliefert; fehlt so einer in der exe, ist der Bau fehlerhaft |
+  | SuperLU | *scipy fehlt* | kann gar nicht fehlen — dann ist die Installation beschädigt |
+
+  **ama fehlte tatsächlich in der exe.** Er stand weder in der Bauvorschrift
+  `packaging/Statik3D.spec` noch im Bauablauf, und er kommt von keinem
+  Paketserver: das Rad liegt seit dem 19.09.2026 als
+  `packaging/ama-0.1.0-cp311-cp311-win_amd64.whl` im Baum und wird beim Bau
+  eingespielt — genau wie das MUMPS-Rad. Geprüft in `tests/test_loeser.py`
+  (jeder Löser hat eine Herkunftsangabe; Bauvorschrift und Bauablauf nennen
+  das Rad, das wirklich dort liegt).
 * **Genauigkeit des Gleichungslösers** (*Berechnung → Einstellungen*,
   17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
   Lösung — streng 1e-8, normal 1e-6 (Vorgabe), 1e-5, locker 1e-4, sehr

@@ -230,6 +230,48 @@ def loeser_da(key: str) -> bool:
         return False
 
 
+#: Woher ein fehlender Loeser kommt: (kurz fuer die Auswahlliste, ganzer Weg
+#: fuer den Hinweistext). Die Liste schrieb bis dahin nur "nicht installiert";
+#: warum und was zu tun waere, stand nirgends (19.09.2026, Anwender: "es gibt
+#: gleichungsloeser die mir angezeigt werden, die ich aber nicht waehlen kann
+#: und auch nicht installieren"). Drei Faelle stecken dahinter: nachladbar
+#: (MUMPS), aus Lizenzgruenden ausgeschlossen (CHOLMOD, UMFPACK) und
+#: mitgeliefert - fehlt so einer, ist der Bau schuld.
+LOESER_WOHER = {
+    "pardiso": ("pip install pypardiso mkl",
+                "MKL PARDISO liegt der exe bei. Meldet es sich hier nicht, fehlen die "
+                "MKL-Bibliotheken. Eigene Python-Umgebung: pip install pypardiso mkl"),
+    "cholmod": ("GPL - nur mit eigenem Python",
+                "CHOLMOD steht unter LGPL, sein schneller Supernodal-Teil unter GPL, und "
+                "darf darum nicht mitgeliefert werden - auch nicht zum Nachladen. Wer das "
+                "Programm aus dem Quelltext startet: pip install scikit-sparse (braucht "
+                "SuiteSparse)"),
+    "umfpack": ("GPL - nur mit eigenem Python",
+                "UMFPACK steht unter GPL und darf darum nicht mitgeliefert werden - auch "
+                "nicht zum Nachladen. Wer das Programm aus dem Quelltext startet: "
+                "pip install scikit-umfpack (braucht SuiteSparse)"),
+    "mumps": ("Extras → Vernetzer installieren…",
+              "MUMPS (CeCILL-C) kommt nicht mit der exe, laesst sich aber nachladen: "
+              "Extras → Programm → „Vernetzer installieren…“ → MUMPS. Danach steht es "
+              "sofort in dieser Liste, ohne Neustart"),
+    "ama": ("gehoert in die exe - bitte melden",
+            "ama ist der eigene Rechenkern (Rust, keine Fremdlizenz) und liegt der exe "
+            "bei. Fehlt er hier, ist der Bau fehlerhaft - bitte melden. Aus dem "
+            "Quelltext: pip install packaging/ama-0.1.0-cp311-cp311-win_amd64.whl"),
+    "pyamg": ("pip install pyamg",
+              "PyAMG (MIT) liegt der exe bei. Eigene Python-Umgebung: pip install pyamg"),
+    "superlu": ("scipy fehlt",
+                "SuperLU kommt mit scipy und kann nicht fehlen - ohne scipy laeuft das "
+                "Programm gar nicht. Meldet es sich hier nicht, ist die Installation "
+                "beschaedigt"),
+}
+
+
+def loeser_woher(key: str) -> tuple:
+    """(kurzer Grund, ganzer Weg), warum dieser Loeser fehlt."""
+    return LOESER_WOHER.get(str(key), ("nicht installiert", ""))
+
+
 def loeser_liste() -> list:
     """[(Schluessel, Name, verfuegbar, Lizenz, Art)] fuer die Auswahl - ohne
     zu faktorisieren; ``verfuegbar`` heisst: das Paket laesst sich laden."""
