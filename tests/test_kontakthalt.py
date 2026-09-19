@@ -143,8 +143,78 @@ def test_zug_am_teil_gemessen():
         slv._teile_bedingungen = alt_tb
 
 
+def _stift_bedingungen(n_um=8, r=0.05, h=0.08, kn=1e9, kt=1e9):
+    """Bedingungen eines Stiftes in einer Bohrung: n_um Knoten je Ring, zwei
+    Ringe im Abstand h, Normale radial nach aussen (der Stift schliesst den
+    Spalt, wenn er nach aussen geht: cn = -radial). Tangenten sind Umfangs-
+    und Achsrichtung. Rueckgabe (Bedingungen, Knotenlage)."""
+    from statik3d.contact import Constraint
+    cons, lage = [], {}
+    for ring, z in enumerate((0.0, h)):
+        for k in range(n_um):
+            a = 2.0 * np.pi * k / n_um
+            radial = np.array([np.cos(a), np.sin(a), 0.0])
+            umfang = np.array([-np.sin(a), np.cos(a), 0.0])
+            achse = np.array([0.0, 0.0, 1.0])
+            knoten = ring * n_um + k
+            lage[knoten] = np.array([r * np.cos(a), r * np.sin(a), z])
+            dofs = np.array([knoten * 6, knoten * 6 + 1, knoten * 6 + 2])
+            cons.append(Constraint(
+                kind="surface", dofs=dofs, cn=-radial,
+                ct=np.vstack([umfang, achse]), g0=1e-4, kn=kn, kt=kt, mu=0.0,
+                node=knoten, normal=radial, label="Stift:Bohrung", haften=True))
+    return cons, lage
+
+
+def _starrmoden(lage, ndof_ges):
+    """Feld (ndof_ges, 6): die sechs Starrkoerperbewegungen der Knoten in lage,
+    um deren Schwerpunkt, Drehungen mit der groessten Ausladung skaliert."""
+    o = np.mean(list(lage.values()), axis=0)
+    L = max(float(np.linalg.norm(x - o)) for x in lage.values()) or 1.0
+    P = np.zeros((ndof_ges, 6))
+    for knoten, x in lage.items():
+        r = x - o
+        for k in range(3):
+            e = np.zeros(3)
+            e[k] = 1.0
+            P[knoten * 6 + k, k] = 1.0
+            P[knoten * 6:knoten * 6 + 3, 3 + k] = np.cross(e, r) / L
+    return P
+
+
+def _kc_auf_moden(cons, lage, schub_halt):
+    """Kleinster Eigenwert von P^T Kc P: wie fest die Kontaktsteifigkeit die
+    sechs Starrkoerperbewegungen des Stiftes haelt, wenn alle Bedingungen
+    offen sind."""
+    from statik3d.contact import ContactSystem
+    cs = object.__new__(ContactSystem)
+    cs.cons, cs.stabilising, cs.phase = cons, False, 1
+    for c in cons:
+        c.active = False
+        c.schub_halt = schub_halt
+    ndof = (max(int(c.node) for c in cons) + 1) * 6
+    Kc, _Fc = cs.matrices(ndof)
+    P = _starrmoden(lage, ndof)
+    return float(np.linalg.eigvalsh(P.T @ (Kc @ P)).min())
+
+
+def test_schub_haelt_den_stift():
+    """Ein Stift, dessen Normalbedingungen alle offen stehen, wird von seiner
+    Schubbindung gehalten - ohne sie ist die Kontaktsteifigkeit auf allen sechs
+    Starrkoerperbewegungen null. Am Drehlager gemessen (19.09.2026): normal
+    allein 2,2e-13 bis 3,6e-13, mit dem Schub aller Bedingungen 0,54 bis 0,71."""
+    cons, lage = _stift_bedingungen()
+    ohne = _kc_auf_moden(cons, lage, schub_halt=False)
+    mit = _kc_auf_moden(cons, lage, schub_halt=True)
+    check("offene Bedingungen ohne Schubhalt halten den Stift nicht",
+          abs(ohne) < 1e-6, f"kleinster Eigenwert {ohne:.3e}")
+    check("mit Schubhalt halten sie ihn in allen sechs Starrkoerperbewegungen",
+          mit > 1e-3 * 1e9, f"kleinster Eigenwert {mit:.3e}")
+
+
 def main():
-    for t in (test_halt, test_teile_bedingungen, test_zug_am_teil_gemessen):
+    for t in (test_halt, test_teile_bedingungen, test_zug_am_teil_gemessen,
+              test_schub_haelt_den_stift):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

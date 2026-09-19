@@ -95,6 +95,9 @@ class Constraint:
     toggles: int = 0
     frozen: bool = False
     gehalten: bool = False         # von solver._freie_teile_halten geschlossen gehalten (17.09.2026)
+    schub_halt: bool = False       # von solver._freie_teile_halten tangential gehalten
+                                   # (19.09.2026): die Schubbindung des Stiftes wirkt,
+                                   # die Normalbedingung bleibt offen
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -1152,6 +1155,21 @@ class ContactSystem:
         full_slip = self._full_slip_groups()
         for c in self.cons:
             if not c.active:
+                if not (c.schub_halt and c.ct is not None):
+                    continue
+                # Schubhalt: der Stift steckt in der Bohrung und traegt dort
+                # Schub, auch wenn in diesem Schritt alle seine
+                # Normalbedingungen offen stehen. Nur die Tangentialsteifigkeit,
+                # keine Normalfeder und kein Lastanteil aus dem Spaltmass - die
+                # Komplementaritaet in Normalrichtung bleibt unberuehrt. Am
+                # Drehlager haelt der Schub aller Bedingungen die sechs
+                # Starrkoerperbewegungen mit 0,54 bis 0,71, drei Bedingungen
+                # dagegen mit 2e-18, also gar nicht (19.09.2026).
+                kmat = c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
+                r, cc = np.meshgrid(c.dofs, c.dofs, indexing="ij")
+                rows.append(r.ravel())
+                cols.append(cc.ravel())
+                vals.append(kmat.ravel())
                 continue
             r, cc = np.meshgrid(c.dofs, c.dofs, indexing="ij")
             if c.yielding:
