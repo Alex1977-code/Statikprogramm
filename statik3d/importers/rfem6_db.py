@@ -2488,6 +2488,7 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
     # Programm eine eigene Vorspannlast braeuchte - das steht auch im
     # Protokoll, damit niemand eine Temperaturlast fuer ein Versehen haelt.
     n_vs = n_vs_ohne = 0
+    vs_kraft = 0.0
     if db.has("MemberLoad"):
         case_of = _load_case_of(db, "MemberLoad")
         el_of_member: dict[int, list] = {}
@@ -2515,9 +2516,15 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                     dT = -N0 / (mat.E * sec.A * mat.alpha)
                     m.load_temp(e, dT, case=lc)
                     n_vs += 1
+                    vs_kraft += abs(N0)
     if n_vs:
+        # Die Kraft dazusagen: in der Datei steht nur die Temperatur, und
+        # danach sieht es wie ein Versehen aus (19.09.2026: "was denn fuer
+        # temperaturlasten? das sollte vorspannung sein")
         C.say(log, f"  {n_vs} Stabvorspannungen als gleichwertige "
-                   "Temperaturlast uebernommen (dT = -N_0/(E*A*alpha))")
+                   f"Temperaturlast uebernommen (dT = -N_0/(E*A*alpha)) - "
+                   f"zusammen {vs_kraft / 1e3:.0f} kN, im Mittel "
+                   f"{vs_kraft / max(1, n_vs) / 1e3:.0f} kN je Stab")
     if n_vs_ohne:
         C.say(log, f"  {n_vs_ohne} Vorspannlasten ohne Ziel, ohne Betrag oder "
                    "ohne Waermedehnzahl - nicht uebernommen")

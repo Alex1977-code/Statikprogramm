@@ -101,8 +101,50 @@ def test_teile_bedingungen():
     check("ist genug zu, wird nichts gehalten", not solver._freie_teile_halten(m, cs, []))
 
 
+def test_zug_am_teil_gemessen():
+    """Ein Teil, das viel Druck abträgt, hebt nicht ab, weil an ein paar
+    gehaltenen Punkten wenig zieht. Am Drehlager brach die Rechnung deswegen
+    ab: 0,7 bis 20 kN Zug gegen 15 232 kN Schraubenvorspannung und 217,6 kN
+    größte Kontaktkraft (19.09.2026, „kann es sein dass die abbruchschranke
+    das problem ist“)."""
+    from statik3d import solver as slv
+    from statik3d.contact import Constraint
+
+    class _CS:
+        f_ref = 1.0e6                       # größte Knotenlast 1000 kN
+
+    def _con(fn=0.0, g=0.0, kn=0.0, gehalten=False):
+        c = Constraint(kind="surface", dofs=np.zeros(0, int), cn=np.zeros(0), ct=None,
+                       g0=0.0, kn=kn, kt=0.0, mu=0.0, node=0, normal=np.array([0.0, 0.0, 1.0]))
+        c.active, c.gehalten, c.Fn, c.g = True, gehalten, fn, g
+        return c
+
+    # Ein Teil mit 2000 kN Druck und 20 kN Zug an gehaltenen Punkten
+    cons = [_con(fn=2.0e6)] + [_con(kn=1.0e6, g=0.02, gehalten=True)]
+    alt_tb = slv._teile_bedingungen
+    slv._teile_bedingungen = lambda model, cs: [("V30", {1}, cons)]
+    try:
+        zug = slv._gehaltene_unter_zug(None, _CS())
+        check("20 kN Zug gegen 2000 kN Druck desselben Teils: kein Abheben", not zug,
+              f"{[(n, round(k / 1e3, 1)) for n, _kn, _g, k, _c in zug]} kN")
+        # Dasselbe Teil ohne Druck: der Zug hängt an nichts mehr
+        cons2 = [_con(kn=1.0e6, g=0.02, gehalten=True)]
+        slv._teile_bedingungen = lambda model, cs: [("V30", {1}, cons2)]
+        zug2 = slv._gehaltene_unter_zug(None, _CS())
+        check("ohne Druck bleibt es ein Abheben (der hochgezogene Block)",
+              len(zug2) == 1 and abs(zug2[0][3] - 2.0e4) < 1.0, f"{zug2[0][3] / 1e3:.1f} kN" if zug2 else "nichts")
+        # Und viel Zug gegen wenig Druck ebenfalls
+        cons3 = [_con(fn=1.0e5)] + [_con(kn=1.0e6, g=0.02, gehalten=True)]
+        slv._teile_bedingungen = lambda model, cs: [("V30", {1}, cons3)]
+        check("20 kN Zug gegen 100 kN Druck (20 %): das ist ein Abheben",
+              len(slv._gehaltene_unter_zug(None, _CS())) == 1)
+        check("die Schwelle steht als Anteil im Modul", 0.0 < slv.ZUG_ANTEIL < 0.5, str(slv.ZUG_ANTEIL))
+    finally:
+        slv._teile_bedingungen = alt_tb
+
+
 def main():
-    for t in (test_halt, test_teile_bedingungen):
+    for t in (test_halt, test_teile_bedingungen, test_zug_am_teil_gemessen):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
