@@ -123,9 +123,40 @@ jobs:
 
       - name: Pruefen, dass das Release die exe traegt
         if: always() && github.ref == 'refs/heads/main'
+        # Angemeldet ueber "gh api" statt nackter Invoke-RestMethod
+        # (19.09.2026): der Bau von 8d7b7b5 legte die exe ins Release
+        # (374 999 353 Bytes, 17:58:54 UTC, Zustand "uploaded") und meldete
+        # trotzdem Fehlschlag, weil diese Kontrolle danach nichts sah. Ohne
+        # Anmeldung laesst die Schnittstelle 60 Abfragen je Stunde und IP zu,
+        # und die teilen sich alle Bau-Rechner; Invoke-RestMethod wirft dann.
+        # Mit GH_TOKEN sind es 5000. Dazu drei Versuche - ein eben
+        # hochgeladenes Anhaengsel steht der Schnittstelle nicht immer sofort
+        # zur Verfuegung - und zwei schaerfere Fragen als vorher: Zustand
+        # "uploaded" (ein angefangener Upload zaehlte sonst als vorhanden) und
+        # dieselbe Groesse wie die gebaute Datei (sonst waere auch die exe des
+        # vorigen Laufes eine gueltige Antwort).
+        timeout-minutes: 5
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $r = Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/latest" -Headers @{ "User-Agent" = "statik3d" }
-          $a = @($r.assets | Where-Object { $_.name -eq "Statik3D.exe" })
-          if ($a.Count -eq 0) { throw "Das Release latest hat keine Statik3D.exe - niemand kann laden" }
-          "Release latest: Statik3D.exe, $($a[0].size) Bytes, $($a[0].updated_at)"
+          $repo = "${{ github.repository }}"
+          $soll = if (Test-Path dist/Statik3D.exe) { (Get-Item dist/Statik3D.exe).Length } else { 0 }
+          $a = $null
+          foreach ($versuch in 1..3) {
+            $roh = gh api "repos/$repo/releases/tags/latest"
+            if ($LASTEXITCODE -eq 0) {
+              $gefunden = @(($roh | ConvertFrom-Json).assets | Where-Object {
+                $_.name -eq "Statik3D.exe" -and $_.state -eq "uploaded" })
+              if ($gefunden.Count -gt 0) { $a = $gefunden[0]; break }
+              "Versuch ${versuch}: Release latest hat noch keine fertige Statik3D.exe"
+            } else {
+              "Versuch ${versuch}: gh api meldete Exit-Code $LASTEXITCODE"
+            }
+            Start-Sleep -Seconds 15
+          }
+          if (-not $a) { throw "Das Release latest hat keine ladbare Statik3D.exe - niemand kann laden" }
+          "Release latest: Statik3D.exe, $($a.size) Bytes, $($a.updated_at), Zustand $($a.state)"
+          if ($soll -gt 0 -and $a.size -ne $soll) {
+            throw "Das Release traegt $($a.size) Bytes, gebaut wurden $soll - der Upload ist unvollstaendig oder stammt aus einem anderen Lauf"
+          }

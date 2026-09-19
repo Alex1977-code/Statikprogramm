@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np  # noqa: E402
 
-from statik3d import solver, examples_lib  # noqa: E402
+from statik3d import contact, solver, examples_lib  # noqa: E402
 from statik3d.contact import ContactSystem  # noqa: E402
 
 RESULTS = []
@@ -294,9 +294,54 @@ def test_einfrieren():
           an.info.get("kontakt_eingefroren") == {"H2": "H1"} and an.fatigue is not None)
 
 
+
+def _haftende_ueber_kegel(n=10, mu=0.3, kn=1.0e9, kt=1.0e9):
+    """n haftende Reibknoten, alle ueber dem Coulomb-Kegel, mit verschieden
+    starkem Verstoss. Rueckgabe (ContactSystem-Stumpf, u)."""
+    from statik3d.contact import ContactSystem, Constraint
+    cons = []
+    u = np.zeros(3 * n)
+    for i in range(n):
+        dofs = np.array([3 * i, 3 * i + 1, 3 * i + 2])
+        c = Constraint(kind="surface", dofs=dofs, cn=np.array([0.0, 0.0, 1.0]),
+                       ct=np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+                       g0=0.0, kn=kn, kt=kt, mu=mu, node=i,
+                       normal=np.array([0.0, 0.0, 1.0]), label="Fuge:%d" % i)
+        c.active, c.slip, c.Fn = True, False, 0.0
+        cons.append(c)
+        u[3 * i + 2] = -1.0e-6                       # Druck: Fn = kn*1e-6 = 1000 N
+        # Schub ueber mu*Fn = 300 N, mit steigendem Verstoss je Knoten
+        u[3 * i] = (1.0 + 0.1 * i) * 4.0e-7
+    cs = object.__new__(ContactSystem)
+    cs.cons, cs.phase, cs.log = cons, 2, []
+    cs.f_tol, cs.tol, cs.dF_slip = 1.0, 1e-12, 0.0
+    return cs, u
+
+
+def test_phase2_loest_mehrere_haftende_auf_einmal():
+    """Phase 2 liess je Runde nur den staerksten Verstoss ins Gleiten. Am
+    Drehlager sind das bis zu 40 Runden je Lastfall, jede mit einer
+    Faktorisierung von 476.214 Zeilen zu 4,23 s - 56 Kontaktschritte und 276 s
+    je warmem Lastfall, davon 86 % Faktorisierung (19.09.2026).
+
+    ama loest das seit Stufe 3 anders und geprueft: je Schritt geht hoechstens
+    der Anteil `anteil` der haftenden Knoten ins Gleiten, staerkster Verstoss
+    zuerst (ama.dicht.newton_reibung). Dieselbe Regel hier."""
+    cs, u = _haftende_ueber_kegel(n=40)
+    cs._update_states(u)
+    gleiten = sum(1 for c in cs.cons if c.slip)
+    check("ein Anteil der haftenden Knoten geht je Runde ins Gleiten",
+          gleiten == 4, f"{gleiten} von 40, erwartet 4 (Anteil {contact.GLEIT_ANTEIL:g})")
+    check("nicht alle auf einmal - die Monotonie bleibt", gleiten < 40, f"{gleiten} von 40")
+    # der staerkste Verstoss muss dabei sein
+    check("der staerkste Verstoss gleitet", cs.cons[-1].slip, "Knoten 39 (groesster Schub)")
+    check("der schwaechste bleibt haften", not cs.cons[0].slip, "Knoten 0")
+
+
 def main():
     for t in (test_sicherung, test_warmstart, test_warmstart_ohne_halt, test_fortschritt_kontakt,
-              test_grundlast, test_einfrieren):
+              test_grundlast, test_einfrieren,
+              test_phase2_loest_mehrere_haftende_auf_einmal):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

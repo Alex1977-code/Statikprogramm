@@ -33,7 +33,13 @@ ZUG_ANTEIL = 0.05
 SLIP_STIFFNESS = 1.0e-3      # Reststeifigkeit beim Gleiten (Regularisierung, Anteil von k_t)
 SLIP_STIFFNESS_FINE = 1.0e-8  # Phase 2: haftende Nachbarn halten das Bauteil, Feder nur noch formal
 SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
-MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel (je Runde einer)
+MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel-Runden
+#: Phase 2: so viel von den haftenden Knoten geht je Runde ins Gleiten,
+#: staerkster Verstoss zuerst. Vorher war es genau einer - am Drehlager
+#: also bis zu 40 Runden je Lastfall, jede mit einer Faktorisierung von
+#: 476.214 Zeilen zu 4,23 s (19.09.2026). Derselbe Anteil wie in ama's
+#: Zustands-Newton (ama.dicht.newton_reibung, dort `anteil`).
+GLEIT_ANTEIL = 0.1
 #: Ein Slave-Knoten gilt als deckungsgleich mit einem Master-Knoten, wenn er
 #: naeher als dieser Anteil der Modellgroesse liegt (Rundungsrauschen des
 #: Vernetzers, nicht ein Spalt).
@@ -1300,7 +1306,7 @@ class ContactSystem:
 
     def _update_states(self, u: np.ndarray) -> bool:
         changed = False
-        worst = None            # Phase 2: (Verhaeltnis, Bedingung, dt) des staerksten Verstosses
+        verstoesse = []         # Phase 2: (Verhaeltnis, Bedingung, dt) je Verstoss
         self.dF_slip = 0.0
         for c in self.cons:
             ue = u[c.dofs]
@@ -1360,8 +1366,7 @@ class ContactSystem:
                             changed = True
                         else:
                             ratio = np.linalg.norm(Ft_el) / limit if limit > 0 else np.inf
-                            if worst is None or ratio > worst[0]:
-                                worst = (ratio, c, dt)
+                            verstoesse.append((ratio, c, dt))
                 elif self.phase == 1:
                     if nrm > 0 and (dt @ c.slip_dir) < 0:
                         # Bewegung entgegen Gleitrichtung -> wieder Haften
@@ -1386,15 +1391,24 @@ class ContactSystem:
                     c.Ft = limit * c.slip_dir      # Phase 2: Gleiten bleibt, Richtung fest
             elif not c.active:
                 c.Ft = np.zeros(2)
-        # Phase 2: je Runde nur der staerkste Verstoss Haften -> Gleiten (monoton)
-        if worst is not None:
-            ratio, c, dt = worst
-            nrm = np.linalg.norm(dt)
-            c.slip = True
-            c.slip_dir = dt / nrm if nrm > 0 else np.array([1.0, 0.0])
-            c.dir_updates = 0
-            c.Ft = c.mu * c.Fn * c.slip_dir
-            changed = True
+        # Phase 2: je Runde ein Anteil der haftenden Knoten Haften -> Gleiten,
+        # staerkster Verstoss zuerst. Einer je Runde war monoton, aber teuer:
+        # jede Runde kostet eine Faktorisierung, am Drehlager 4,23 s bei 476.214
+        # Zeilen. Der Anteil haelt die Reihenfolge (staerkster zuerst) und damit
+        # das Wesentliche der Monotonie, braucht aber ein Vielfaches weniger
+        # Runden (19.09.2026; dieselbe Regel wie ama.dicht.newton_reibung).
+        if verstoesse:
+            haftend = sum(1 for k in self.cons
+                          if k.active and k.ct is not None and k.mu > 0 and not k.slip)
+            wieviele = max(1, int(GLEIT_ANTEIL * haftend))
+            verstoesse.sort(key=lambda e: -e[0])
+            for _ratio, c, dt in verstoesse[:wieviele]:
+                nrm = np.linalg.norm(dt)
+                c.slip = True
+                c.slip_dir = dt / nrm if nrm > 0 else np.array([1.0, 0.0])
+                c.dir_updates = 0
+                c.Ft = c.mu * c.Fn * c.slip_dir
+                changed = True
         return changed
 
     # ---- Ergebnisse --------------------------------------------------------

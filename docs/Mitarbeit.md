@@ -36,6 +36,18 @@ veröffentlicht sie als Release `latest` – und **jede laufende Installation ho
 sich diese Datei beim nächsten Start**. Was auf `main` liegt, ist also nicht
 „der Stand der Arbeit", sondern das, was beim Kollegen und beim Kunden startet.
 
+Der letzte Schritt des Bauablaufs sieht nach, ob das Release die Datei
+wirklich trägt – denn genau sie holt sich jede Installation. Er fragt
+GitHub **angemeldet** (`gh api` mit `GH_TOKEN`) und versucht es dreimal:
+ohne Anmeldung sind nur 60 Abfragen je Stunde und IP erlaubt, und die teilen
+sich alle Bau-Rechner. Am 19.09.2026 legte der Bau 8d7b7b5 die exe ordnungs-
+gemäß ab (374 999 353 Bytes, 17:58:54 UTC, Zustand `uploaded`) und meldete
+trotzdem Fehlschlag, weil die Kontrolle danach nichts mehr sah. Sie fragt
+seitdem auch schärfer: der Anhang muss den Zustand `uploaded` haben (ein
+angefangener Upload zählte vorher als vorhanden) und dieselbe Größe wie die
+eben gebaute Datei (sonst wäre auch die exe des vorigen Laufes eine gültige
+Antwort). Geprüft in `tests/test_update.py`.
+
 Ein zweiter Workflow, `.github/workflows/werkzeuge.yml`, baut MMG3D aus
 dem Quelltext von MmgTools/mmg (MSVC) und legt `mmg3d_O3-windows-x64.zip`
 im Release `werkzeuge` ab; von dort lädt das Programm den Nachbesserer auf
