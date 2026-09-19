@@ -8146,7 +8146,79 @@ def main():
         else:
             print("     Fenster nicht aktiv - Esc-Tastendruck im Modellbaum nicht prüfbar")
 
-        # 3) ohne Abbruch kommt das Ergebnis wie bisher an
+        # 3) Abbruch mit Teilergebnis: was gerechnet war, bleibt stehen
+        # (19.09.2026: "es waere gut wenn gerechnete ergebnisse erhalten
+        # blieben" - der Anwender hatte alle Lastfaelle gestartet und nach dem
+        # ersten abgebrochen). Die Ausnahme wird hier echt erzeugt: derselbe
+        # Weg, den gui.worker.Abgebrochen nimmt.
+        class _HaltT(Exception):
+            pass
+
+        def _halt_bei_lastfall(text, anteil=None):
+            if str(text).startswith("Lastfall "):
+                raise _HaltT(str(text))
+
+        ex_teil_ = None
+        try:
+            solver.solve_all(w.model, progress=_halt_bei_lastfall)
+        except _HaltT as ex:
+            ex_teil_ = ex
+        an_teil_ = getattr(ex_teil_, "teilanalyse", None)
+        check("Vorbereitung: der abgebrochene Lauf traegt den fertigen Lastfall",
+              an_teil_ is not None and len(an_teil_.cases) >= 1,
+              str(list(an_teil_.cases)) if an_teil_ is not None else "keine Teilanalyse")
+        w_worker_alt_ = getattr(w, "worker", None)
+        zeilen_vorher_ = w.log.blockCount()
+        w.worker = type("_ProbeWorker", (), {"ausnahme": ex_teil_,
+                                             "abbruch_angefordert": True})()
+        w._rechnung_name = "Probe-Teillauf"
+        w._rechnung_t0 = time.time()
+        w._rechnet_gerade = True
+        w._bg_abgebrochen(7.0)
+        app.processEvents()
+        neu_ = w.log.toPlainText().splitlines()[zeilen_vorher_:]
+        check("Abbruch mit Teilergebnis: die gerechneten Lastfälle stehen als Ergebnis bereit",
+              w.analysis is an_teil_ and w.cb_result.count() >= len(an_teil_.cases),
+              f"{w.cb_result.count()} Einträge für {len(an_teil_.cases)} Lastfälle")
+        check("… die Statuszeile sagt, was erhalten blieb",
+              "abgebrochen (nach" in w.statusBar().currentMessage()
+              and "bleiben erhalten" in w.statusBar().currentMessage(),
+              w.statusBar().currentMessage()[:90])
+        check("… das Protokoll sagt auch, was fehlt (keine Umhüllenden, keine Nachweise)",
+              any("ABBRUCH" in z and "bleiben erhalten" in z for z in neu_)
+              and any("Umhüllende und Nachweise" in z for z in neu_),
+              str([z for z in neu_ if "ABBRUCH" in z][:1]))
+        # Das Probemodell hat nur einen Lastfall - das Teilergebnis ist also
+        # nicht kleiner als das bisherige, und es gibt nichts zu melden
+        check("… und kein Hinweis auf ein ersetztes Ergebnis, wenn nichts Größeres dastand",
+              not any("bisherige Ergebnis" in z for z in neu_),
+              str([z for z in neu_ if "bisherige Ergebnis" in z][:1]))
+        # Gegenprobe: stand ein größeres Ergebnis da, muss der Anwender lesen,
+        # dass es ersetzt ist - sonst tauscht ein versehentlich gestarteter
+        # und abgebrochener Lauf eine ganze Rechnung still gegen einen
+        # Lastfall (19.09.2026)
+        zeilen_vorher_ = w.log.blockCount()
+        w.analysis = solver.Analysis(w.model, cases=dict(an_teil_.cases),
+                                     combinations={"Probe-EK": next(iter(an_teil_.cases.values()))})
+        w._abbruch_teil_zeigen(an_teil_, 7.0)
+        app.processEvents()
+        neu2_ = w.log.toPlainText().splitlines()[zeilen_vorher_:]
+        check("… stand ein größeres Ergebnis da, sagt das Protokoll, dass es ersetzt ist",
+              any("bisherige Ergebnis" in z and "ersetzt" in z for z in neu2_),
+              str([z for z in neu2_ if "bisherige Ergebnis" in z][:1]))
+        check("… und keine Umhüllende über einen halben Satz",
+              not an_teil_.envelopes and not any(
+                  (w.cb_result.itemData(i) or ("", ""))[0] == "env"
+                  for i in range(w.cb_result.count())),
+              str(list(an_teil_.envelopes)))
+        check("… Knöpfe frei, Balken weg, kein FEHLER im Protokoll",
+              w.btn_solve.isEnabled() and not w.progress_bar.isVisible()
+              and not w._rechnet_gerade and not any(z.startswith("FEHLER") for z in neu_),
+              str([z for z in neu_ if z.startswith("FEHLER")][:1]))
+        w.worker = w_worker_alt_
+        w._solve_done("all", an_vorher_); app.processEvents()
+
+        # 4) ohne Abbruch kommt das Ergebnis wie bisher an
         ergebnisse_ = []
         w._run_background(lambda p: (p("halb", 0.5), "ok")[1],
                           lambda r: ergebnisse_.append(r), "Probe kurz")
@@ -8155,7 +8227,7 @@ def main():
               ergebnisse_ == ["ok"] and not w.btn_abbrechen.isVisible()
               and not w.progress_bar.isVisible())
 
-        # 4) Import mit Balken und Phasen
+        # 5) Import mit Balken und Phasen
         tmp2_ = _tf2.mkdtemp()
         rf6_ = _make_rf6(os.path.join(tmp2_, "probe.rf6"),
                          nodes=[(0, 0, 0), (2, 0, 0), (4, 0, 0)], lines=[[1, 2, 3]],

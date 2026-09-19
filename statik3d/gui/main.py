@@ -16805,9 +16805,64 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rechnet_gerade = False
         self.btn_solve.setEnabled(True)
         name = getattr(self, "_rechnung_name", "Berechnung")
+        teil = getattr(getattr(self, "worker", None), "ausnahme", None)
+        teil = getattr(teil, "teilanalyse", None)
+        if teil is not None and (teil.cases or teil.combinations):
+            return self._abbruch_teil_zeigen(teil, dauer)
         text = f"{name} abgebrochen (nach {float(dauer):.0f} s) - Ergebnis und Netz unverändert"
         self._rechnung_ende(text, dauer=0)
         self.log.appendPlainText(text)
+
+    def _abbruch_teil_zeigen(self, an, dauer: float) -> None:
+        """Nach dem Abbruch eines Sammellaufs: die fertigen Lastfaelle und
+        Kombinationen stehen zur Verfuegung wie sonst auch.
+
+        Der Anwender hatte am 19.09.2026 versehentlich alle Lastfaelle und
+        Kombinationen gestartet und nach dem ersten Lastfall abgebrochen -
+        und stand ohne Ergebnis da, obwohl dieser Lastfall fertig war. Was
+        fehlt, steht ausdruecklich dabei: keine Umhuellenden, keine Nachweise,
+        und wie viele Rechnungen offen sind.
+        """
+        g = an.info.get("gerechnet", {})
+        o = an.info.get("offen", {})
+        teile = []
+        if g.get("lastfaelle"):
+            teile.append(f"{g['lastfaelle']} Lastfälle")
+        if g.get("kombinationen"):
+            teile.append(f"{g['kombinationen']} Kombinationen")
+        fertig = " und ".join(teile) or "nichts"
+        rest = []
+        if o.get("lastfaelle"):
+            rest.append(f"{o['lastfaelle']} Lastfälle")
+        if o.get("kombinationen"):
+            rest.append(f"{o['kombinationen']} Kombinationen")
+        offen = " und ".join(rest)
+        name = getattr(self, "_rechnung_name", "Berechnung")
+        kurz = (f"{name} abgebrochen (nach {float(dauer):.0f} s) - {fertig} bleiben erhalten"
+                + (f", {offen} offen" if offen else ""))
+        # Das Teilergebnis tritt an die Stelle des bisherigen. War das
+        # groesser, muss der Anwender das lesen koennen - sonst tauscht ein
+        # versehentlich gestarteter und abgebrochener Lauf eine ganze
+        # Rechnung still gegen einen Lastfall (19.09.2026)
+        alt = getattr(self, "analysis", None)
+        n_alt = (len(alt.cases) + len(alt.combinations)) if alt is not None else 0
+        ersetzt = (f"\n    Das bisherige Ergebnis ({len(alt.cases)} Lastfälle, "
+                   f"{len(alt.combinations)} Kombinationen) ist damit ersetzt - es lässt "
+                   "sich nur durch einen neuen Lauf zurückholen."
+                   if alt is not None and n_alt > len(an.cases) + len(an.combinations) else "")
+        self._rechnung_ende(kurz, dauer=0)
+        try:
+            self._solve_done("all", an)
+        except Exception as ex:            # noqa: BLE001 - die Anzeige darf den Abbruch nicht ueberdecken
+            self.log.appendPlainText(f"Teilergebnis nicht anzeigbar: {ex}")
+            self.log.appendPlainText(kurz)
+            return
+        self.log.appendPlainText(
+            f"ABBRUCH: {kurz}.\n"
+            "    Die gerechneten Ergebnisse stehen in der Auswahl und im Modellbaum wie sonst.\n"
+            "    Nicht gebildet wurden Umhüllende und Nachweise - beide brauchen den ganzen Satz.\n"
+            "    Ein neuer Lauf rechnet alles noch einmal."
+            + (f"\n    Offen: {offen}." if offen else "") + ersetzt)
 
     def _fragen(self, titel: str, text: str) -> bool:
         """Ja/Nein-Rueckfrage - die Tests ueberschreiben sie.

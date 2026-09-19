@@ -1962,39 +1962,44 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
         return None, None
     # Warmstart: jeder Lastfall beginnt beim Kontaktzustand des vorigen
     # Lastfalls desselben Systems (Situation)
-    if system is not None:
-        start = None
-        for k, name in enumerate(names):
-            ref, einf = _einfrieren(name)
-            n_ = max(1, len(names))
-            out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers,
-                                     progress=progress, start=start, einfrieren=einf,
-                                     fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
-            if einf is not None:
-                out[name].info["contact_frozen_from"] = ref
-            start = out[name].kontaktzustand or start
-            _melde(progress, f"Lastfall {name} ({k + 1}/{len(names)})",
-                   0.35 + 0.25 * (k + 1) / n_)
-        return out
-    systeme = systeme_je_situation(model, names, workers, progress, systeme)
-    k = 0
-    for sit, sit_names in model.lastfaelle_je_situation(names).items():
-        m_s, sys_s = systeme[sit]
-        start = getattr(sys_s, "kontaktzustand", None)
-        for name in _mit_referenzen_zuerst(list(sit_names), referenzen):
-            ref, einf = _einfrieren(name)
-            n_ = max(1, len(names))
-            out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers,
-                                     progress=progress, start=start, einfrieren=einf,
-                                     fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
-            if einf is not None:
-                out[name].info["contact_frozen_from"] = ref
-            start = out[name].kontaktzustand or start
-            sys_s.kontaktzustand = start
-            k += 1
-            _melde(progress, f"Lastfall {name} ({k}/{len(names)})"
-                   + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
-                   0.35 + 0.25 * k / max(1, len(names)))
+    # Jeder fertige Lastfall bleibt bestehen, auch wenn der naechste abbricht:
+    # ``out`` haengt an der Ausnahme (siehe _teil_merken)
+    try:
+        if system is not None:
+            start = None
+            for k, name in enumerate(names):
+                ref, einf = _einfrieren(name)
+                n_ = max(1, len(names))
+                out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers,
+                                         progress=progress, start=start, einfrieren=einf,
+                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
+                if einf is not None:
+                    out[name].info["contact_frozen_from"] = ref
+                start = out[name].kontaktzustand or start
+                _melde(progress, f"Lastfall {name} ({k + 1}/{len(names)})",
+                       0.35 + 0.25 * (k + 1) / n_)
+            return out
+        systeme = systeme_je_situation(model, names, workers, progress, systeme)
+        k = 0
+        for sit, sit_names in model.lastfaelle_je_situation(names).items():
+            m_s, sys_s = systeme[sit]
+            start = getattr(sys_s, "kontaktzustand", None)
+            for name in _mit_referenzen_zuerst(list(sit_names), referenzen):
+                ref, einf = _einfrieren(name)
+                n_ = max(1, len(names))
+                out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers,
+                                         progress=progress, start=start, einfrieren=einf,
+                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
+                if einf is not None:
+                    out[name].info["contact_frozen_from"] = ref
+                start = out[name].kontaktzustand or start
+                sys_s.kontaktzustand = start
+                k += 1
+                _melde(progress, f"Lastfall {name} ({k}/{len(names)})"
+                       + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
+                       0.35 + 0.25 * k / max(1, len(names)))
+    except BaseException as ex:
+        raise _teil_merken(ex, "teil_cases", out)
     return out
 
 
@@ -2081,6 +2086,25 @@ def umhuellende_der_kombination(model: Model, combo: Combination, case_results: 
     return env, geloest
 
 
+def _teil_merken(ex, name: str, wert: dict):
+    """Das bisher Gerechnete an die Ausnahme haengen, die gerade nach oben
+    laeuft - das erste Ergebnis gewinnt.
+
+    Ein Abbruch faellt als Ausnahme aus dem Fortschrittsaufruf heraus
+    (gui.worker.Abgebrochen) und raeumt dabei jeden Aufrufrahmen ab. Ohne
+    diesen Anhang waere alles verloren, was bis dahin gerechnet war: der
+    Anwender startete am 19.09.2026 versehentlich alle Lastfaelle und
+    Kombinationen, brach nach dem ersten Lastfall ab - und stand wieder ohne
+    Ergebnis da, obwohl der Lastfall fertig gerechnet war.
+    """
+    try:
+        if getattr(ex, name, None) is None and wert:
+            setattr(ex, name, dict(wert))
+    except Exception:              # noqa: BLE001 - das Retten darf nie selbst scheitern
+        pass
+    return ex
+
+
 def solve_combinations(model: Model, combos: list = None, case_results: dict = None,
                        system: StaticSystem = None, workers: int = None,
                        progress=None, use_jobs: bool = None, systeme: dict = None) -> dict:
@@ -2097,9 +2121,18 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
         if case_results is None:
             case_results = solve_cases(model, workers=workers, progress=progress,
                                        system=system, systeme=systeme)
-        for n in names:
-            out[n] = solve_combination(model, model.combinations[n], case_results,
-                                       systeme=systeme)
+        try:
+            for k, n in enumerate(names):
+                out[n] = solve_combination(model, model.combinations[n], case_results,
+                                           systeme=systeme)
+                # Auch der lineare Weg meldet sich: er ueberlagert nur, aber
+                # bei 422 Kombinationen stand der Balken sonst minutenlang
+                # still, und ein Abbruch hatte hier keinen Haltepunkt
+                # (19.09.2026)
+                _melde(progress, f"Kombination {n} ({k + 1}/{len(names)})",
+                       0.60 + 0.30 * (k + 1) / max(1, len(names)))
+        except BaseException as ex:
+            raise _teil_merken(ex, "teil_combinations", out)
         return out
     # nichtlinear: Auftraege
     st = parallel.settings()
@@ -2119,12 +2152,15 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
             res.model = model
             out[n] = res
         return out
-    for k, n in enumerate(names):
-        out[n] = solve_combination(model, model.combinations[n], None, system, workers,
-                                   systeme=systeme)
-        if progress:
-            _melde(progress, f"Kombination {n} ({k + 1}/{len(names)})",
-                   0.60 + 0.30 * (k + 1) / max(1, len(names)))
+    try:
+        for k, n in enumerate(names):
+            out[n] = solve_combination(model, model.combinations[n], None, system, workers,
+                                       systeme=systeme)
+            if progress:
+                _melde(progress, f"Kombination {n} ({k + 1}/{len(names)})",
+                       0.60 + 0.30 * (k + 1) / max(1, len(names)))
+    except BaseException as ex:
+        raise _teil_merken(ex, "teil_combinations", out)
     return out
 
 
@@ -3108,11 +3144,63 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         return _solve_all_innen(model, workers, progress, combinations, envelopes, design, fatigue)
 
 
+def _teilanalyse(ex, an: Analysis, model: Model, systeme: dict, t0: float) -> None:
+    """Nach einem Abbruch: was gerechnet ist, an die Ausnahme haengen.
+
+    Die Oberflaeche zeigt es als ganz gewoehnliches Ergebnis - nur mit dem
+    Vermerk, dass der Lauf nicht vollstaendig ist (``info["abgebrochen"]``).
+    Keine Umhuellenden und keine Nachweise: beide gaeben ueber einen halben
+    Satz Lastfaelle ein falsches Bild, und eine Umhuellende ueber drei von
+    422 Kombinationen sieht aus wie eine ueber alle.
+    """
+    if getattr(ex, "teilanalyse", None) is not None:
+        return
+    if not an.cases:
+        an.cases = dict(getattr(ex, "teil_cases", None) or {})
+    if not an.combinations:
+        an.combinations = dict(getattr(ex, "teil_combinations", None) or {})
+    if not an.cases and not an.combinations:
+        return                      # nichts fertig - nichts zu retten
+    if not an.systeme and systeme:
+        an.systeme = {k: v[1] for k, v in systeme.items()}
+        an.modelle = {k: v[0] for k, v in systeme.items()}
+    an.envelopes = {}
+    an.info["abgebrochen"] = True
+    an.info["gerechnet"] = {"lastfaelle": len(an.cases), "kombinationen": len(an.combinations)}
+    an.info["offen"] = {"lastfaelle": max(0, len(model.load_cases) - len(an.cases)),
+                        "kombinationen": max(0, len(model.combinations) - len(an.combinations))}
+    an.info.setdefault("time", time.time() - t0)
+    an.info.setdefault("parallel", parallel.describe())
+    an.info.setdefault("ndof", model.ndof)
+    try:
+        ex.teilanalyse = an
+    except Exception:                # noqa: BLE001 - das Retten darf nie selbst scheitern
+        pass
+
+
 def _solve_all_innen(model: Model, workers: int = None, progress=None, combinations: bool = True,
                      envelopes: bool = True, design: bool = False, fatigue: bool = False) -> Analysis:
-    """Alle Lastfaelle, alle Kombinationen, Umhuellende, optional Nachweise."""
+    """Alle Lastfaelle, alle Kombinationen, Umhuellende, optional Nachweise.
+
+    Bricht der Anwender mitten im Lauf ab, bleibt das Gerechnete erhalten:
+    die Ausnahme traegt es als ``teilanalyse`` nach oben (19.09.2026, "es
+    waere gut wenn gerechnete ergebnisse erhalten blieben").
+    """
     t0 = time.time()
     an = Analysis(model)
+    systeme: dict = {}
+    try:
+        return _solve_all_rumpf(model, an, systeme, workers, progress, combinations,
+                                envelopes, design, fatigue, t0)
+    except BaseException as ex:
+        _teilanalyse(ex, an, model, systeme, t0)
+        raise
+
+
+def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progress, combinations,
+                     envelopes, design, fatigue, t0) -> Analysis:
+    """Der eigentliche Lauf - ``an`` und ``systeme`` fuellen sich unterwegs,
+    damit ein Abbruch sie nicht mitnimmt (:func:`_teilanalyse`)."""
     if model.joints:
         # Das Momenten-Rotations-Verhalten der Anschluesse gehoert in die
         # Rechnung, nicht erst in den Nachweis: nachgiebige Anschluesse sitzen
@@ -3121,7 +3209,6 @@ def _solve_all_innen(model: Model, workers: int = None, progress=None, combinati
         an.info["anschlussfedern"] = federn_setzen(model)
     # Je Situation ein System: die Grundstellung (unbewegt, alles aktiv) und
     # jede Situation, in der ein Lastfall steht
-    systeme: dict = {}
     referenzen = ermuedungsreferenzen(model)
     if referenzen:
         an.info["kontakt_eingefroren"] = dict(referenzen)

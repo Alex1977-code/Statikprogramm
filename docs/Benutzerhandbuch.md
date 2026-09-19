@@ -1003,11 +1003,42 @@ und genau das geschieht. Eine laufende Faktorisierung lässt sich nicht
 unterbrechen, sie läuft zu Ende (am Drehlager mit 1 028 724 Freiheitsgraden
 bis 13 s); die nächste Meldung des Rechenkerns (Lastfall, Kontakt-Iteration,
 Kombination) ist dann der Ausstieg. Danach steht in Statuszeile und Protokoll
-„Berechnung abgebrochen (nach x s) - Ergebnis und Netz unverändert“ - keine
-FEHLER-Zeile, denn es ist keiner. Das zuvor vorhandene Ergebnis bleibt
-gültig, das Netz auch; Berechnen und Update sind sofort wieder frei. Beim
-Vernetzen bleibt das bisher Erzeugte, bei Wind und Wasserdruck ist das Modell
-wie vorher.
+„Berechnung abgebrochen (nach x s)“ - keine FEHLER-Zeile, denn es ist keiner.
+Das Netz bleibt unverändert, Berechnen und Update sind sofort wieder frei.
+Beim Vernetzen bleibt das bisher Erzeugte, bei Wind und Wasserdruck ist das
+Modell wie vorher.
+
+**Was gerechnet war, bleibt** (19.09.2026). Wer „Alle Lastfälle und
+Kombinationen“ startet und nach dem ersten Lastfall abbricht, hat diesen
+Lastfall gerechnet - bis dahin war er trotzdem weg, denn der Abbruch räumte
+den ganzen Lauf ab („ich hatte aus Versehen alle Lastfälle und Kombinationen
+zur Berechnung gestartet … es wäre gut wenn gerechnete Ergebnisse erhalten
+blieben“). Jetzt stehen die fertigen Lastfälle und Kombinationen nach dem
+Abbruch in der Ergebnisauswahl und im Modellbaum wie nach einem ganzen Lauf.
+Die Statuszeile sagt, was blieb und was offen ist: „Berechnung abgebrochen
+(nach 94 s) - 1 Lastfälle bleiben erhalten, 4 Lastfälle und 72 Kombinationen
+offen“. Zwei Dinge fehlen ausdrücklich, und das Protokoll sagt es:
+
+* **Keine Umhüllenden.** Eine Umhüllende über zwei von fünf Lastfällen sieht
+  aus wie eine über alle fünf und wäre schlicht falsch.
+* **Keine Nachweise.** Sie stützen sich auf die Umhüllenden.
+
+Ein neuer Lauf rechnet alles noch einmal - das Teilergebnis ist zum Ansehen
+da, nicht als Zwischenstand, auf dem weitergerechnet wird. Bricht es ab,
+bevor der erste Lastfall fertig ist, bleibt es beim alten Verhalten: es gibt
+nichts zu zeigen, und das vorherige Ergebnis bleibt stehen.
+
+Das Teilergebnis tritt an die Stelle des bisherigen. War das größer, sagt das
+Protokoll es ausdrücklich: „Das bisherige Ergebnis (5 Lastfälle, 72
+Kombinationen) ist damit ersetzt - es lässt sich nur durch einen neuen Lauf
+zurückholen.“ So tauscht ein versehentlich gestarteter und abgebrochener Lauf
+keine ganze Rechnung still gegen einen Lastfall.
+
+Damit ein Abbruch in den Kombinationen überhaupt greifen kann, meldet seit
+demselben Stand auch der lineare Weg jede Kombination einzeln
+(„Kombination GZT-12 (37/422)“). Vorher stand der Balken dort still, bis alle
+fertig waren - bei 422 Kombinationen minutenlang - und ein Klick auf
+Abbrechen fand keinen Haltepunkt.
 
 ### Ergebnisse und Bericht
 
@@ -3219,8 +3250,10 @@ Nachweis mit seiner Verformung je Kombination.
   faktorisieren, Lastfälle, Kombinationen, Umhüllende, Nachweise. Jede
   Zeile steht auch im Protokoll. **Abbrechen** (Knopf neben dem Balken oder
   Esc) hält beim nächsten Rechenschritt an - eine laufende Faktorisierung
-  läuft zu Ende -, meldet „Berechnung abgebrochen (nach x s)“ und lässt
-  Ergebnis und Netz, wie sie waren (Kapitel 2, „Statuszeile“).
+  läuft zu Ende -, meldet „Berechnung abgebrochen (nach x s)“ und lässt das
+  Netz, wie es war. Die bis dahin fertigen Lastfälle und Kombinationen
+  bleiben als Ergebnis stehen, ohne Umhüllende und ohne Nachweise
+  (Kapitel 2, „Statuszeile“).
 * **Das Protokoll überlebt einen Absturz.** Jede Zeile geht sofort in eine
   Mitschrift unter `%LOCALAPPDATA%\Statik3D\Protokolle` (unter Linux
   `~/.local/share/Statik3D/Protokolle`), eine Datei je Programmstart. Stürzt

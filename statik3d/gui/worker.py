@@ -65,7 +65,11 @@ class SolveWorker(QtCore.QThread):
 
         try:
             result = self._func(melden)
-        except Abgebrochen:
+        except Abgebrochen as ex:
+            # Die Ausnahme traegt, was der Rechenkern schon fertig hatte
+            # (solver._teilanalyse) - die Oberflaeche liest es aus
+            # ``ausnahme.teilanalyse`` und zeigt es an (19.09.2026)
+            self.ausnahme = ex
             self.abgebrochen.emit(time.time() - self._t0)
             return
         except Exception as ex:   # Fehler an die GUI melden
@@ -73,6 +77,7 @@ class SolveWorker(QtCore.QThread):
                 # Der Kern hat die Abbruch-Ausnahme verpackt (RuntimeError
                 # aus einem Pool, ValueError aus einer Nachbearbeitung) -
                 # gewollt war trotzdem der Abbruch, kein Fehler.
+                self.ausnahme = ex
                 self.abgebrochen.emit(time.time() - self._t0)
                 return
             self.ausnahme = ex
