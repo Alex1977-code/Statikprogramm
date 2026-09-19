@@ -654,8 +654,77 @@ def test_kein_rueckfall_im_nachweis_wenn_die_schranke_gehalten_wird():
         parallel.configure(solver_residuum=alt[0], solver_nachiterationen=alt[1])
 
 
+def test_speicherfehler_nennt_zahlen():
+    """Ein Speicherfehler sagt, wie groß das System ist und was der Rechner
+    hat - ohne das ließ sich nicht sagen, woran es lag (19.09.2026: 669 MiB
+    scheiterten an einem Rechner mit 128 GB)."""
+    import scipy.sparse as sparse
+    from statik3d import solver as slv
+    lage = slv.speichertext("jetzt")
+    check("die Speicherlage nennt freien und gesamten Speicher",
+          "GB frei" in lage and "jetzt" in lage, lage[:90])
+    m = slv.speicherlage()
+    check("… als Zahlen, in GiB wie im Taskmanager",
+          m["gesamt"] is None or 0.5 < m["gesamt"] < 10000,
+          str({k: (round(v, 1) if isinstance(v, float) else v) for k, v in m.items()}))
+    # Der Weg durch die Fehlerbehandlung: ein erzwungener MemoryError wird
+    # zu einer Meldung mit Größe und Lage
+    echt = slv.LinearSolver._aufbauen
+
+    def kippt(self, K, backend=None):
+        self.n = K.shape[0]
+        raise MemoryError("Unable to allocate 669. MiB")
+
+    slv.LinearSolver._aufbauen = kippt
+    try:
+        slv.LinearSolver(sparse.eye(7, format="csr"))
+        check("ein Speicherfehler wird erklärt", False, "keine Ausnahme")
+    except RuntimeError as ex:
+        t = str(ex)
+        check("ein Speicherfehler wird erklärt: Freiheitsgrade, Einträge, Speicherlage, Rat",
+              "7 Freiheitsgraden" in t and "Mio. Einträgen" in t and "Auslagerungsdatei" in t, t[:130])
+    except MemoryError:
+        check("ein Speicherfehler wird erklärt", False, "nackter MemoryError")
+    finally:
+        slv.LinearSolver._aufbauen = echt
+
+
+def test_symmetriepruefung():
+    """Die Prüfung, ob eine Matrix symmetrisch ist (MUMPS SYM=2, ama), läuft
+    blockweise: ``K - K.T`` legt in scipy erst ein Ergebnis in der Größe
+    beider Strukturen an. Am Drehlager (43,8 Mio Einträge) waren das 87,7 Mio
+    und 669 MiB, die nicht mehr passten (18.09.2026)."""
+    import numpy as np
+    import scipy.sparse as sparse
+    from statik3d.solver import ist_symmetrisch
+    n = 400
+    rng = np.random.default_rng(3)
+    z = np.repeat(np.arange(n), 8)
+    sp = np.clip(z + rng.integers(-5, 5, z.size), 0, n - 1)
+    A = sparse.coo_matrix((rng.random(z.size), (z, sp)), shape=(n, n)).tocsr()
+    K = (A + A.T).tocsr()
+    check("eine symmetrische Matrix wird erkannt", ist_symmetrisch(K))
+    K2 = K.tolil()
+    K2[3, 7] = float(K2[3, 7]) + 1.0          # eine einzige Stelle verstimmen
+    check("eine unsymmetrische Matrix auch (eine Stelle genügt)", not ist_symmetrisch(K2.tocsr()))
+    K3 = K.tolil()
+    K3[n - 1, 0] = 1e-30                       # weit außerhalb der Bandbreite, winzig
+    check("ein Wert unter der Schranke gilt noch als symmetrisch",
+          ist_symmetrisch(K3.tocsr(), 1e-12 * float(abs(K).max())))
+    check("eine nicht quadratische Matrix ist nicht symmetrisch",
+          not ist_symmetrisch(sparse.csr_matrix((3, 4))))
+    # dasselbe Ergebnis wie der frühere Weg, an einer Stichprobe
+    for i in range(5):
+        r = np.random.default_rng(10 + i)
+        B = sparse.random(120, 120, density=0.05, random_state=r).tocsr()
+        M = (B + B.T).tocsr() if i % 2 else B
+        alt_ = float(abs(M - M.T).max()) <= 1e-12 * (float(abs(M).max()) or 1.0) if M.nnz else True
+        check(f"Stichprobe {i + 1}: gleiches Ergebnis wie K − K.T",
+              ist_symmetrisch(M, 1e-12 * (float(abs(M).max()) or 1.0)) == alt_)
+
+
 def main():
-    for f in (test_loeser_treffen_die_geschlossene_loesung,
+    for f in (test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
               test_pardiso_nimmt_alle_kerne_bis_auf_einen,
               test_meldung_trennt_pool_und_loeser, test_kopfzeile_nennt_den_eingestellten_loeser,
