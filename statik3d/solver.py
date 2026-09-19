@@ -15,6 +15,7 @@ aus den Rohgroessen berechnet.
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -277,6 +278,124 @@ def loeser_verfuegbar(backend: str = "") -> str:
     return "SuperLU, einkernig (automatisch, kein MKL/CHOLMOD im Programm)"
 
 
+#: Ein GiB - der Taskmanager rechnet so, und die Zahlen sollen zu dem
+#: passen, was der Anwender dort sieht
+_GIB = 1024 ** 3
+
+
+def speicherlage() -> dict:
+    """Was der eigene Prozess haelt und was der Rechner frei hat, in **GiB**.
+
+    Ueber psutil, sonst ueber die Windows-API; was nicht zu ermitteln ist,
+    bleibt None. Gebraucht, um einen Speicherfehler einzuordnen: 669 MiB
+    scheiterten an einem Rechner mit 128 GB (19.09.2026), und ohne Zahlen
+    liess sich nicht sagen, woran.
+    """
+    aus = {"prozess": None, "belegt": None, "frei": None, "gesamt": None, "commit_frei": None}
+    try:
+        import psutil                                   # noqa: PLC0415
+        mi = psutil.Process().memory_info()
+        aus["prozess"] = mi.rss / _GIB
+        aus["belegt"] = getattr(mi, "vms", 0) / _GIB or None
+        vm = psutil.virtual_memory()
+        aus["frei"], aus["gesamt"] = vm.available / _GIB, vm.total / _GIB
+        return aus
+    except Exception:                                   # noqa: BLE001
+        pass
+    if os.name == "nt":
+        try:
+            import ctypes                               # noqa: PLC0415
+
+            class _MEM(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            st = _MEM()
+            st.dwLength = ctypes.sizeof(_MEM)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                aus["frei"] = st.ullAvailPhys / _GIB
+                aus["gesamt"] = st.ullTotalPhys / _GIB
+                aus["commit_frei"] = st.ullAvailPageFile / _GIB
+
+            class _PMC(ctypes.Structure):
+                _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong),
+                            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                            ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+            pmc = _PMC()
+            pmc.cb = ctypes.sizeof(_PMC)
+            # Seit Windows 7 liegt die Funktion in kernel32 (K32…); psapi.dll
+            # gibt es weiter, ist aber nicht in jeder Umgebung geladen
+            # Der Prozess-Handle ist ein Zeiger: ohne restype schneidet ctypes
+            # ihn auf 32 Bit, und die Abfrage schlaegt still fehl
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentProcess.restype = ctypes.c_void_p
+            griff = k32.GetCurrentProcess()
+            for hol in (getattr(k32, "K32GetProcessMemoryInfo", None),
+                        getattr(ctypes.WinDLL("psapi.dll"), "GetProcessMemoryInfo", None)):
+                if hol is None:
+                    continue
+                hol.argtypes = [ctypes.c_void_p, ctypes.POINTER(_PMC), ctypes.c_ulong]
+                hol.restype = ctypes.c_int
+                if hol(griff, ctypes.byref(pmc), pmc.cb):
+                    aus["prozess"] = pmc.WorkingSetSize / _GIB
+                    # Der belegte (committete) Speicher zaehlt fuer einen
+                    # Speicherfehler, nicht der Arbeitssatz: numpy reserviert
+                    # beim Anlegen, eingelagert wird erst beim Schreiben
+                    aus["belegt"] = pmc.PagefileUsage / _GIB
+                    break
+        except Exception:                               # noqa: BLE001
+            pass
+    return aus
+
+
+def speichertext(was: str = "") -> str:
+    """Eine Zeile zur Speicherlage - fuer Protokoll und Fehlermeldung."""
+    m = speicherlage()
+    teile = []
+    if m["prozess"] is not None:
+        teile.append(f"Statik3D hält {m['prozess']:.1f} GB"
+                     + (f" (belegt {m['belegt']:.1f} GB)" if m.get("belegt") else ""))
+    if m["frei"] is not None and m["gesamt"] is not None:
+        teile.append(f"{m['frei']:.1f} von {m['gesamt']:.1f} GB frei")
+    if m["commit_frei"] is not None:
+        teile.append(f"Auslagerung frei {m['commit_frei']:.1f} GB")
+    return ((was + ": ") if was and teile else "") + ", ".join(teile)
+
+
+def ist_symmetrisch(K, tol: float = None) -> bool:
+    """Ist die Matrix symmetrisch? Blockweise geprueft, ohne die Differenz.
+
+    ``K - K.T`` sieht harmlos aus, aber scipy legt dafuer erst ein Ergebnis
+    in der Groesse **beider** Strukturen an und kuerzt danach: am Drehlager
+    (948 000 Freiheitsgrade, 43,8 Mio Eintraege) waren das 87,7 Mio Eintraege
+    und 669 MiB, die nicht mehr passten - die Rechnung brach mit einem
+    Speicherfehler ab (18.09.2026). Zeilenweise in Bloecken gemessen an einer
+    Matrix mit 19,3 Mio Eintraegen: 63 MB statt 697 MB Spitze, 0,56 s statt
+    0,13 s. Die Zeit faellt neben der Faktorisierung nicht ins Gewicht.
+    """
+    Kc = K.tocsr()
+    if tol is None:
+        tol = 1e-12 * (float(abs(Kc).max()) if Kc.nnz else 1.0)
+    if Kc.shape[0] != Kc.shape[1]:
+        return False
+    n = Kc.shape[0]
+    # So viele Zeilen, dass ein Block rund 1 Mio Eintraege hat
+    je_zeile = max(1.0, Kc.nnz / max(1, n))
+    zeilen = int(max(1000, min(n, 1_000_000 // je_zeile)))
+    for a in range(0, n, zeilen):
+        b = min(n, a + zeilen)
+        d = Kc[a:b, :] - Kc[:, a:b].T.tocsr()
+        if d.nnz and float(abs(d).max()) > tol:
+            return False
+    return True
+
+
 class LinearSolver:
     """Faktorisiert K einmal; solve() fuer beliebig viele rechte Seiten.
     Backends: pypardiso (MKL, mehrere Threads), scikit-sparse CHOLMOD, SuperLU.
@@ -287,6 +406,25 @@ class LinearSolver:
     """
 
     def __init__(self, K: sparse.spmatrix, backend: str = None):
+        try:
+            self._aufbauen(K, backend)
+        except MemoryError as ex:
+            # Ein nackter Speicherfehler sagt nur, was nicht ging. Die Meldung
+            # nennt jetzt, was der Prozess haelt und was der Rechner frei hat -
+            # ohne diese Zahlen liess sich nicht sagen, woran es lag
+            # (19.09.2026: 669 MiB scheiterten an einem Rechner mit 128 GB)
+            lage = speichertext()
+            nnz = int(getattr(K, "nnz", 0) or 0)
+            raise RuntimeError(
+                f"Der Speicher reichte für die Faktorisierung nicht: {ex}. "
+                f"System mit {self.n if hasattr(self, 'n') else K.shape[0]} Freiheitsgraden, "
+                f"{nnz / 1e6:.1f} Mio. Einträgen"
+                + (f". {lage}" if lage else "")
+                + ". Ein größeres Modell braucht mehr Arbeitsspeicher oder eine größere "
+                  "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen) "
+                  "kann sparsamer sein.") from ex
+
+    def _aufbauen(self, K: sparse.spmatrix, backend: str = None):
         self.n = K.shape[0]
         self.backend = "none"
         self.threads = 1
@@ -294,6 +432,9 @@ class LinearSolver:
         self._solve = None
         self._K = None
         self._ps = None
+        self._faktor = None          # nur ama: haelt die Faktorisierung (freigeben() loest ihn)
+        self._nachweis = None        # nur ama: was die letzte Loesung erreicht hat
+        self._vorgabe = None         # nur ama: wonach faktorisiert wurde (fuer den Nachweis)
         self.nachiterationen = 0
         self.residuum = 0.0
         if self.n == 0:
@@ -349,24 +490,52 @@ class LinearSolver:
             # Eigener Kern (Paket ama, Rust): multifrontale LDL^T mit Superknoten; das
             # untere Dreieck geht hinein, K muss symmetrisch sein (wie MUMPS SYM=2)
             try:
+                # ama.genauigkeit hier mit: ein aelteres Wheel hat nur ama.kern, und dann soll
+                # dieselbe Meldung kommen statt eines nackten ImportError weiter unten
+                from ama import genauigkeit as ama_gen
                 from ama import kern as ama_kern
             except ImportError as ex:
-                raise RuntimeError("ama ist nicht installiert - pip install <ama-Wheel> in diese "
-                                   "Python-Umgebung (Gleichungsloeser-Projekt, maturin build)") from ex
+                raise RuntimeError("ama ist nicht installiert oder zu alt - pip install <ama-Wheel> "
+                                   "in diese Python-Umgebung (Gleichungsloeser-Projekt, "
+                                   "maturin build)") from ex
             Kc = K.tocsr()
             skala = float(abs(Kc).max()) if Kc.nnz else 1.0
-            if float(abs(Kc - Kc.T).max()) > 1e-12 * skala:
+            if not ist_symmetrisch(Kc, 1e-12 * skala):
                 raise RuntimeError("ama braucht eine symmetrische Matrix - fuer unsymmetrische "
                                    "Systeme MKL PARDISO, MUMPS oder SuperLU waehlen")
             # statische Pivotisierung wie MKL PARDISO: ein zu kleines Pivot wird gehoben
             # statt abzubrechen, die Nachiteration unten holt die Genauigkeit zurueck.
             # Ohne sie brach ama an Modellen ab, die PARDISO rechnet (Kontaktfedern,
             # rangdefekte Steifigkeit: cbg.json 6 Pivots, gemessen 18.09.2026)
-            faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"), stoerung_rel=1e-13)
+            # Dieselbe Einstellung, die solve() unten prueft, geht als Vorgabe in ama: der
+            # Kern iteriert bis zu dieser Schranke nach und legt in faktor.nachweis ab, was
+            # er erreicht hat. Sonst haette dieselbe Sache zwei Bedienelemente.
+            #
+            # rueckfall="lockern": der Kern meldet die verfehlte Schranke, statt sie selbst
+            # zu verfolgen. Sein Rueckfall "genauer" faktorisiert die ganze Matrix ein
+            # zweites Mal - und weil self._solve das loese dieses Faktors ist, taete er das
+            # bei jedem Nachiterationsschritt von solve() erneut. Ein einziger solve()-Aufruf
+            # kostete so 2 Faktorisierungen statt 1 (gemessen 18.09.2026); am Drehlager
+            # (1 028 724 FHG) sind das je 7 GB, stumm und mehrfach. Wer eine zu grosse
+            # Abweichung meldet, ist und bleibt die Pruefung in solve() darunter.
+            #
+            # Eine billige Verschachtelung bleibt: jeder Korrekturschritt von solve() ruft
+            # wieder loese und damit die ganze Nachiterationsschleife des Kerns auf, also
+            # bis zu (n_max + 1)^2 = 16 innere Loesungen statt n_max = 3 (bei der
+            # Vorgabe 3). Das sind Vorwaerts-/Rueckwaertseinsetzen auf dem vorhandenen
+            # Faktor - Bruchteile einer Faktorisierung, und nur wenn die Schranke ueberhaupt
+            # verfehlt wird. Darum bleibt es so; teuer war allein das zweite Faktorisieren.
+            grenze, n_max = self.genauigkeit()
+            vorgabe = ama_gen.aufloesen(residuum=grenze, nachiterationen=n_max,
+                                        rueckfall="lockern")
+            faktor = ama_kern.faktorisiere(Kc, threads=threads_vorgabe("ama"), stoerung_rel=1e-13,
+                                           vorgabe=vorgabe)
             self._solve = faktor.loese
             self.backend = "ama"
             self.threads = int(faktor.threads)
             self.gestoert = int(faktor.gestoert)
+            self._faktor = faktor
+            self._vorgabe = vorgabe
         if self._solve is None and be == "pyamg":
             self._solve = self._pyamg(K)
             self.backend = "pyamg"
@@ -399,7 +568,7 @@ class LinearSolver:
         from mumps import DMumpsContext, MUMPSError
         Kc = K.tocsr()
         skala = float(abs(Kc).max()) if Kc.nnz else 1.0
-        sym = 2 if float(abs(Kc - Kc.T).max()) <= 1e-12 * skala else 0
+        sym = 2 if ist_symmetrisch(Kc, 1e-12 * skala) else 0
         coo = sparse.tril(Kc, format="coo") if sym else Kc.tocoo()
         ctx = DMumpsContext(sym=sym, par=1)
         ctx.set_silent()
@@ -415,6 +584,17 @@ class LinearSolver:
             except MUMPSError as ex:
                 if ex.infog1 not in (-8, -9) or zuschlag == zuschlaege[-1]:
                     raise
+        # Was die Faktorisierung wirklich braucht: INFOG(16) je Prozess,
+        # INFOG(17) insgesamt (MB), INFOG(29) Eintraege in den Faktoren. Ohne
+        # diese Zahlen liess sich ein Speicherfehler nicht einordnen
+        # (19.09.2026: "wieso sind 1,6gb ein problem, hier ist doch genug
+        # speicher vorhanden" - der Rechner hat 128 GB)
+        try:
+            LinearSolver.mumps_speicher = {
+                "je_prozess_mb": int(ctx.id.infog[15]), "gesamt_mb": int(ctx.id.infog[16]),
+                "faktor_eintraege": int(ctx.id.infog[28]), "sym": int(sym)}
+        except Exception:                               # noqa: BLE001
+            LinearSolver.mumps_speicher = {}
 
         def loesen(b):
             # MUMPS loest in place und erwartet mehrere rechte Seiten
@@ -453,6 +633,10 @@ class LinearSolver:
         """
         ps, self._ps = self._ps, None
         loesen, self._solve = self._solve, None
+        # ama haelt die Faktorisierung auf der Rust-Seite; self._faktor wuerde sie ueber das
+        # Freigeben hinaus am Leben halten. self._nachweis bleibt - er ist eine Handvoll
+        # Zahlen, und beschreibung() soll auch danach noch sagen koennen, was erreicht wurde.
+        self._faktor = None
         if ps is not None:
             try:
                 ps.free_memory(everything=True)
@@ -484,17 +668,33 @@ class LinearSolver:
         Kontakt-Iterationen wurde daraus ein anderer Endzustand (18.09.2026)."""
         grenze, n_max = self.genauigkeit()
         frei = getattr(self, "gestoert", 0)
+        # Was ama bei der letzten Loesung erreicht hat - gemessen, nicht zugesagt. Vor dem
+        # ersten Loesen und bei allen anderen Loesern gibt es keinen Nachweis, dann bleibt
+        # der Zusatz leer. Der Wert kommt aus solve() und nicht aus dem Faktor: dort wird er
+        # festgehalten, ehe die Nachiteration ihn ueberschreiben kann (siehe solve()).
+        nach = self._nachweis
+        zusatz = "" if nach is None else f"; erreicht {nach.erreicht:.1e} (Ziel {nach.ziel:.0e})"
         return NAMEN.get(self.backend, self.backend) + (
             f", {self.threads} Threads" if self.threads > 1 else ", einkernig") + (
             f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else "")) + (
             f"; {frei} Freiheitsgrade ohne Halt (Ergebnis dort nicht eindeutig - Lagerung pruefen)"
-            if frei else "")
+            if frei else "") + zusatz
 
     def solve(self, b: np.ndarray, check: bool = True) -> np.ndarray:
         if self._solve is None:
             raise RuntimeError("Loeser ist freigegeben - erneut faktorisieren")
         b = np.asarray(b, float)
         x = self._solve(b)
+        # Der Nachweis von ama gehoert zu genau dieser Loesung. Die Nachiteration unten ruft
+        # self._solve fuer die Korrektur b - K x auf, und deren Residuum bezieht sich auf
+        # ||b - K x|| statt auf ||b||; der Nachweis im Faktor beschreibt danach die Korrektur
+        # und widerspricht dem Residuum, das solve() meldet (gemessen 18.09.2026: Meldung
+        # 1,1e-16, Beschreibung 1,3e-16). Darum hier festhalten, ehe das geschehen kann.
+        # Je Aufruf erneuert, nicht nur beim ersten: beschreibung() und self.residuum sollen
+        # dieselbe, zuletzt gerechnete Loesung beschreiben - sonst nennt die Statuszeile nach
+        # einer Reihe von Lastfaellen die Zahlen des ersten.
+        if self._faktor is not None:
+            self._nachweis = self._faktor.nachweis
         if not np.all(np.isfinite(x)):
             raise RuntimeError("Singulaeres System - Lagerung oder Vernetzung pruefen "
                                "(kinematische Kette / freie Knoten).")
@@ -524,6 +724,26 @@ class LinearSolver:
                     x, r = x2, r2
                 self.nachiterationen = schritte
                 self.residuum = float(r)
+                if self._nachweis is not None and self._vorgabe is not None:
+                    # Jetzt ist das Residuum der fertigen Loesung bekannt - es gilt, nicht
+                    # das des ersten Loesens. Sonst nennt beschreibung() eine andere Zahl als
+                    # die Meldung darunter. Die Schritte beider Stellen zaehlen zusammen;
+                    # bewertet wird gegen die Vorgabe, mit der ama faktorisiert hat (die kann
+                    # aelter sein als `grenze`, wenn die Einstellung sich seither geaendert
+                    # hat - dann sagt die Beschreibung beide Zahlen).
+                    #
+                    # Der Rueckfall gehoert zum ersten Loesen: ama vermerkt ihn, wenn es die
+                    # Schranke verfehlt. Holt die Schleife hier die Loesung doch darunter,
+                    # ist er ueberholt und faellt weg - sonst meldete der Nachweis zugleich
+                    # "gehalten" und einen gezogenen Rueckfall, und zwar jedes Mal, wenn die
+                    # Schleife einen Schritt tut und damit Erfolg hat.
+                    from ama import genauigkeit as ama_gen
+                    rueck = (None if float(r) <= self._vorgabe.residuum
+                             else self._nachweis.rueckfall)
+                    self._nachweis = ama_gen.bewerte(
+                        self._vorgabe, residuum=float(r), rechenart=self._nachweis.rechenart,
+                        nachiterationen=self._nachweis.nachiterationen + schritte,
+                        rueckfall=rueck)
                 if r > grenze:
                     raise RuntimeError(
                         f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}, Schranke {grenze:g}"

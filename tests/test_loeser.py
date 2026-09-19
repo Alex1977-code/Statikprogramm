@@ -463,15 +463,279 @@ def test_ama_faktorisiert_symmetrisch_und_nennt_threads():
               "symmetrisch" in str(ex) and "PARDISO" in str(ex), str(ex)[:80])
 
 
+def test_ama_nimmt_die_genauigkeitseinstellung():
+    """Die Einstellung 'Genauigkeit des Gleichungsloesers' muss bei ama ankommen: der Faktor
+    iteriert bis zu dieser Schranke nach und nennt sie in der Beschreibung.
+
+    Geprueft wird das am Nachweis von ama ("Ziel ... erreicht ..."), nicht an der Schranke
+    allein: die stand schon vorher in der Beschreibung, aus der Einstellung gelesen. Erst der
+    Nachweis belegt, dass ama die Vorgabe wirklich bekommen und gemessen hat.
+    """
+    try:
+        import ama.kern  # noqa: F401
+    except ImportError:
+        print("    ama: nicht installiert, uebersprungen")
+        return
+    n = 300
+    K = sparse.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                     [-1, 0, 1]).tocsc()
+    alt = parallel.settings().solver_residuum if hasattr(parallel.settings(), "solver_residuum") else 1e-6
+    parallel.configure(solver_residuum=1e-4)
+    try:
+        ls = LinearSolver(K, backend="ama")
+        x = ls.solve(np.ones(n))
+        close("ama loest mit gelockerter Schranke", float(np.linalg.norm(K @ x - 1.0)), 0.0, 1e-4 * n)
+        check("die Beschreibung nennt die Stufe, die ama gemessen hat",
+              "Ziel 1e-04" in ls.beschreibung() or "Ziel 0.0001" in ls.beschreibung(),
+              ls.beschreibung())
+    finally:
+        parallel.configure(solver_residuum=alt)
+
+
+def test_ama_faktorisiert_kein_zweites_mal_im_stillen():
+    """Erreicht ama die Schranke nicht, darf es nicht von sich aus neu faktorisieren.
+
+    Der Rueckfall „genauer" des Kerns faktorisiert die ganze Matrix ein zweites Mal. Da
+    ``LinearSolver._solve`` das ``loese`` des Faktors ist, geschieht das bei jedem
+    Nachiterationsschritt von ``solve`` erneut — am Drehlager (1 028 724 FHG) sieben Gigabyte
+    je Faktorisierung, stumm und mehrfach. Gemessen wurden 2 Faktorisierungen fuer einen
+    einzigen ``solve``-Aufruf (18.09.2026). Wer meldet, dass das Residuum zu gross ist, ist
+    und bleibt Statik3Ds eigene Pruefung in ``solve``.
+    """
+    try:
+        from ama import kern as ama_kern
+    except ImportError:
+        print("    ama: nicht installiert, uebersprungen")
+        return
+    n = 300
+    K = sparse.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                     [-1, 0, 1]).tocsc()
+    alt = parallel.settings().solver_residuum
+    zaehler = [0]
+    # Gezaehlt wird, indem `Symbolik.faktorisiere` ersetzt wird - also ueber die Paketgrenze
+    # hinweg in amas Interna. Von aussen ist nicht zu sehen, wie oft faktorisiert wurde: der
+    # Faktor meldet Threads und gestoerte Pivots, aber nicht, dass er sich selbst noch einmal
+    # aufgebaut hat. Der Test haengt damit an zwei Dingen, die ama aendern kann: am Namen
+    # `Symbolik.faktorisiere` und daran, dass jede Faktorisierung durch ihn laeuft (die
+    # Modulfunktion `ama.kern.faktorisiere` und der Rueckfall tun das heute beide). Wenn ama
+    # umgebaut wird und dieser Test still durchlaeuft, ist zuerst hier nachzusehen - und
+    # besser waere ein Zaehler, den ama selbst fuehrt.
+    echt = ama_kern.Symbolik.faktorisiere
+
+    def zaehlend(self, *args, **kw):
+        zaehler[0] += 1
+        return echt(self, *args, **kw)
+
+    parallel.configure(solver_residuum=1e-20)          # unerreichbar, auch mit Nachiteration
+    ama_kern.Symbolik.faktorisiere = zaehlend
+    try:
+        ls = LinearSolver(K, backend="ama")
+        check("der Aufbau faktorisiert genau einmal", zaehler[0] == 1, f"{zaehler[0]}x")
+        zaehler[0] = 0
+        try:
+            ls.solve(np.ones(n))
+            check("die unerreichbare Schranke wird gemeldet", False, "kein Fehler")
+        except RuntimeError as ex:
+            check("die unerreichbare Schranke wird gemeldet, nicht heimlich verfolgt",
+                  "Residuum" in str(ex) and "Schranke" in str(ex), str(ex)[:70])
+        check("Loesen faktorisiert kein zweites Mal", zaehler[0] == 0,
+              f"{zaehler[0]} zusaetzliche Faktorisierungen")
+    finally:
+        ama_kern.Symbolik.faktorisiere = echt
+        parallel.configure(solver_residuum=alt)
+
+
+def test_die_beschreibung_nennt_die_loesung_nicht_die_korrektur():
+    """Nach mehreren Loesungen muss die Beschreibung die Zahl nennen, die ``solve`` gemessen hat.
+
+    ``LinearSolver._solve`` ist das ``loese`` des ama-Faktors, und jeder Aufruf ueberschreibt
+    dessen ``nachweis``. Die Nachiteration in ``solve`` ruft es fuer die Korrektur ``b - K x``
+    auf, deren Residuum sich auf eine ganz andere Bezugsgroesse bezieht. Danach beschrieb die
+    Beschreibung die Korrektur statt der Loesung und widersprach der eigenen Fehlermeldung
+    (gemessen 18.09.2026: Meldung 1,1e-16, Beschreibung 1,3e-16).
+
+    Die Einstellung wird hier erst nach dem Faktorisieren verschaerft — so laeuft die
+    Nachiteration von ``solve`` sicher an, ohne dass der Test auf eine numerische Randlage
+    angewiesen waere. Im Programm tritt genau das auf, wenn die Genauigkeit sich aendert,
+    waehrend eine Faktorisierung behalten wird (``StaticSystem._kontakt_loeser``).
+    """
+    try:
+        import ama.kern  # noqa: F401
+    except ImportError:
+        print("    ama: nicht installiert, uebersprungen")
+        return
+    n = 300
+    K = sparse.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                     [-1, 0, 1]).tocsc()
+    alt = parallel.settings().solver_residuum
+    try:
+        ls = LinearSolver(K, backend="ama")
+        ls.solve(np.ones(n))
+        check("die Beschreibung nennt das Residuum der ersten Loesung",
+              f"erreicht {ls.residuum:.1e}" in ls.beschreibung(),
+              f"{ls.residuum:.1e} / {ls.beschreibung()}")
+        parallel.configure(solver_residuum=1e-20)      # Nachiteration von solve laeuft an
+        try:
+            ls.solve(np.arange(1.0, n + 1.0))
+        except RuntimeError:
+            pass                                       # erwartet: Schranke unerreichbar
+        check("die Beschreibung nennt die Loesung, nicht die letzte Korrektur",
+              f"erreicht {ls.residuum:.1e}" in ls.beschreibung(),
+              f"{ls.residuum:.1e} / {ls.beschreibung()}")
+        gemeldet = ls.beschreibung()
+        ls.freigeben()
+        check("freigeben() gibt den ama-Faktor zurueck", ls._faktor is None, repr(ls._faktor))
+        check("der Nachweis ueberlebt das Freigeben", ls.beschreibung() == gemeldet,
+              ls.beschreibung())
+    finally:
+        parallel.configure(solver_residuum=alt)
+
+
+def test_kein_rueckfall_im_nachweis_wenn_die_schranke_gehalten_wird():
+    """Der Nachweis darf nicht zugleich „gehalten" und einen gezogenen Rueckfall melden.
+
+    Das passiert, sobald ama die Schranke verfehlt (und darum „lockern" vermerkt) und
+    Statik3Ds eigene Nachiteration die Loesung danach doch darunter holt: ``erreicht`` und
+    ``gehalten`` stammen dann vom Endergebnis, ``rueckfall`` noch vom ersten Loesen. Das ist
+    kein Sonderfall — es tritt ein, sooft die Schleife in ``solve`` einen Schritt macht und
+    damit Erfolg hat.
+
+    Der Aufbau: ein Sattelpunktsystem (Nullblock auf der Diagonale, wie bei Kontakt mit
+    Lagrange-Multiplikatoren) ist nach dem ersten Loesen messbar ungenauer als nach einer
+    Nachiteration. Die Schranke wird zwischen die beiden gemessenen Residuen gelegt, nicht
+    geraten: ihr Abstand haengt an der Rechnerei und faellt von Maschine zu Maschine anders
+    aus. Ohne Abstand gibt es den Fall hier nicht, dann wird uebersprungen.
+    """
+    try:
+        import ama.kern  # noqa: F401
+    except ImportError:
+        print("    ama: nicht installiert, uebersprungen")
+        return
+    n, m = 200, 20
+    A = sparse.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                     [-1, 0, 1]).tocsr()
+    B = sparse.random(m, n, density=0.3, random_state=5, format="csr")
+    K = sparse.bmat([[A, B.T], [B, sparse.csr_matrix((m, m))]], format="csc")
+    b = np.ones(n + m)
+    s = parallel.settings()
+    alt = (s.solver_residuum, s.solver_nachiterationen)
+
+    def residuum_mit(schritte):
+        """Das Residuum, das mit so vielen Nachiterationen erreicht wird."""
+        parallel.configure(solver_residuum=1e-30, solver_nachiterationen=schritte)
+        ls = LinearSolver(K, backend="ama")
+        try:
+            ls.solve(b)                        # 1e-30 ist unerreichbar: Meldung erwartet
+        except RuntimeError:
+            pass
+        return ls.residuum
+
+    try:
+        roh, fein = residuum_mit(0), residuum_mit(4)
+        if not fein < roh:
+            print(f"    kein Abstand zwischen roher ({roh:.1e}) und nachiterierter ({fein:.1e}) "
+                  "Loesung - uebersprungen")
+            return
+        schranke = (roh * fein) ** 0.5
+        # ama bekommt die Schranke ohne Nachiterationen und verfehlt sie; erst danach darf
+        # solve() nachiterieren. Die Vorgabe ist im Faktor eingefroren, solve() liest neu.
+        parallel.configure(solver_residuum=schranke, solver_nachiterationen=0)
+        ls = LinearSolver(K, backend="ama")
+        parallel.configure(solver_residuum=schranke, solver_nachiterationen=4)
+        ls.solve(b)
+        nach = ls._nachweis
+        check("der Aufbau trifft den strittigen Fall: die Schleife rettet die Loesung",
+              nach.gehalten and ls.nachiterationen >= 1,
+              f"{ls.nachiterationen} Schritte, gehalten={nach.gehalten}")
+        check("gehaltene Schranke und gezogener Rueckfall schliessen sich aus",
+              not (nach.gehalten and nach.rueckfall),
+              f"gehalten={nach.gehalten}, rueckfall={nach.rueckfall}")
+    finally:
+        parallel.configure(solver_residuum=alt[0], solver_nachiterationen=alt[1])
+
+
+def test_speicherfehler_nennt_zahlen():
+    """Ein Speicherfehler sagt, wie groß das System ist und was der Rechner
+    hat - ohne das ließ sich nicht sagen, woran es lag (19.09.2026: 669 MiB
+    scheiterten an einem Rechner mit 128 GB)."""
+    import scipy.sparse as sparse
+    from statik3d import solver as slv
+    lage = slv.speichertext("jetzt")
+    check("die Speicherlage nennt freien und gesamten Speicher",
+          "GB frei" in lage and "jetzt" in lage, lage[:90])
+    m = slv.speicherlage()
+    check("… als Zahlen, in GiB wie im Taskmanager",
+          m["gesamt"] is None or 0.5 < m["gesamt"] < 10000,
+          str({k: (round(v, 1) if isinstance(v, float) else v) for k, v in m.items()}))
+    # Der Weg durch die Fehlerbehandlung: ein erzwungener MemoryError wird
+    # zu einer Meldung mit Größe und Lage
+    echt = slv.LinearSolver._aufbauen
+
+    def kippt(self, K, backend=None):
+        self.n = K.shape[0]
+        raise MemoryError("Unable to allocate 669. MiB")
+
+    slv.LinearSolver._aufbauen = kippt
+    try:
+        slv.LinearSolver(sparse.eye(7, format="csr"))
+        check("ein Speicherfehler wird erklärt", False, "keine Ausnahme")
+    except RuntimeError as ex:
+        t = str(ex)
+        check("ein Speicherfehler wird erklärt: Freiheitsgrade, Einträge, Speicherlage, Rat",
+              "7 Freiheitsgraden" in t and "Mio. Einträgen" in t and "Auslagerungsdatei" in t, t[:130])
+    except MemoryError:
+        check("ein Speicherfehler wird erklärt", False, "nackter MemoryError")
+    finally:
+        slv.LinearSolver._aufbauen = echt
+
+
+def test_symmetriepruefung():
+    """Die Prüfung, ob eine Matrix symmetrisch ist (MUMPS SYM=2, ama), läuft
+    blockweise: ``K - K.T`` legt in scipy erst ein Ergebnis in der Größe
+    beider Strukturen an. Am Drehlager (43,8 Mio Einträge) waren das 87,7 Mio
+    und 669 MiB, die nicht mehr passten (18.09.2026)."""
+    import numpy as np
+    import scipy.sparse as sparse
+    from statik3d.solver import ist_symmetrisch
+    n = 400
+    rng = np.random.default_rng(3)
+    z = np.repeat(np.arange(n), 8)
+    sp = np.clip(z + rng.integers(-5, 5, z.size), 0, n - 1)
+    A = sparse.coo_matrix((rng.random(z.size), (z, sp)), shape=(n, n)).tocsr()
+    K = (A + A.T).tocsr()
+    check("eine symmetrische Matrix wird erkannt", ist_symmetrisch(K))
+    K2 = K.tolil()
+    K2[3, 7] = float(K2[3, 7]) + 1.0          # eine einzige Stelle verstimmen
+    check("eine unsymmetrische Matrix auch (eine Stelle genügt)", not ist_symmetrisch(K2.tocsr()))
+    K3 = K.tolil()
+    K3[n - 1, 0] = 1e-30                       # weit außerhalb der Bandbreite, winzig
+    check("ein Wert unter der Schranke gilt noch als symmetrisch",
+          ist_symmetrisch(K3.tocsr(), 1e-12 * float(abs(K).max())))
+    check("eine nicht quadratische Matrix ist nicht symmetrisch",
+          not ist_symmetrisch(sparse.csr_matrix((3, 4))))
+    # dasselbe Ergebnis wie der frühere Weg, an einer Stichprobe
+    for i in range(5):
+        r = np.random.default_rng(10 + i)
+        B = sparse.random(120, 120, density=0.05, random_state=r).tocsr()
+        M = (B + B.T).tocsr() if i % 2 else B
+        alt_ = float(abs(M - M.T).max()) <= 1e-12 * (float(abs(M).max()) or 1.0) if M.nnz else True
+        check(f"Stichprobe {i + 1}: gleiches Ergebnis wie K − K.T",
+              ist_symmetrisch(M, 1e-12 * (float(abs(M).max()) or 1.0)) == alt_)
+
+
 def main():
-    for f in (test_loeser_treffen_die_geschlossene_loesung,
+    for f in (test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
               test_superlu_nennt_sich_einkernig,
               test_pardiso_nimmt_alle_kerne_bis_auf_einen,
               test_meldung_trennt_pool_und_loeser, test_kopfzeile_nennt_den_eingestellten_loeser,
               test_superlu_ordnet_symmetrisch, test_pardiso_gibt_speicher_frei,
               test_mumps_sagt_was_es_tut_und_gibt_speicher_frei,
               test_threadzahl_aus_den_einstellungen,
-              test_ama_faktorisiert_symmetrisch_und_nennt_threads):
+              test_ama_faktorisiert_symmetrisch_und_nennt_threads,
+              test_ama_nimmt_die_genauigkeitseinstellung,
+              test_ama_faktorisiert_kein_zweites_mal_im_stillen,
+              test_die_beschreibung_nennt_die_loesung_nicht_die_korrektur,
+              test_kein_rueckfall_im_nachweis_wenn_die_schranke_gehalten_wird):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
