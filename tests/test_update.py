@@ -305,6 +305,55 @@ def test_befund_und_bat():
         _sh.rmtree(d, ignore_errors=True)
 
 
+def _bauablauf():
+    """Der Schritt "Pruefen, dass das Release die exe traegt" als Text."""
+    wurzel = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    text = io.open(os.path.join(wurzel, ".github", "workflows", "windows-exe.yml"),
+                   encoding="utf-8").read()
+    schritte = text.split("      - name: ")
+    passend = [x for x in schritte if x.startswith("Pruefen, dass das Release die exe traegt")]
+    return passend[0] if passend else ""
+
+
+def _bauablauf_befehle():
+    """Nur die Befehle des Schritts - ohne die Kommentare darueber, die den
+    alten Weg beim Namen nennen duerfen."""
+    schritt = _bauablauf()
+    return schritt.split("run: |", 1)[1] if "run: |" in schritt else ""
+
+
+def test_bauablauf_prueft_das_release_ernsthaft():
+    """Der Aktualisierer holt die exe aus dem Release ``latest``; die
+    Nachkontrolle des Baus ist das Einzige, was zwischen einem stillen
+    Fehlschlag und einem Release ohne ladbare Datei steht. Sie muss also
+    zuverlaessig sein - und war es nicht: der Bau 8d7b7b5 vom 19.09.2026 legte
+    die exe ins Release (374 999 353 Bytes, 17:58:54 UTC, Zustand "uploaded")
+    und meldete trotzdem Fehlschlag, weil die Kontrolle die Schnittstelle
+    **ohne Anmeldung** fragte (60 Abfragen je Stunde und IP, geteilt von allen
+    Bau-Rechnern)."""
+    schritt = _bauablauf()
+    check("der Bauablauf hat den Schritt 'Pruefen, dass das Release die exe traegt'",
+          bool(schritt), schritt[:40])
+    if not schritt:
+        return
+    befehle = _bauablauf_befehle()
+    check("er fragt angemeldet (GH_TOKEN und gh api), nicht nackt ueber api.github.com",
+          "GH_TOKEN" in schritt and "gh api" in befehle
+          and "Invoke-RestMethod" not in befehle,
+          "Invoke-RestMethod" if "Invoke-RestMethod" in befehle else str("gh api" in befehle))
+    check("er versucht es mehrfach - ein eben hochgeladenes Anhaengsel ist nicht sofort sichtbar",
+          "1..3" in befehle and "Start-Sleep" in befehle, str("1..3" in befehle))
+    check("er verlangt den Zustand 'uploaded', nicht nur den Namen",
+          '$_.state -eq "uploaded"' in befehle, str('state' in befehle))
+    check("er vergleicht die Groesse mit der gebauten Datei",
+          "dist/Statik3D.exe" in befehle and "$a.size -ne $soll" in befehle,
+          str("$soll" in befehle))
+    check("und er sucht genau den Namen, den der Aktualisierer laedt",
+          f'$_.name -eq "{upd.EXE_NAME}"' in befehle, upd.EXE_NAME)
+    check("er haengt nicht ewig, wenn die Schnittstelle schweigt",
+          "timeout-minutes" in schritt, schritt[schritt.find("timeout-minutes"):][:20])
+
+
 def main():
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -374,6 +423,7 @@ def main():
         srv.shutdown()
         srv.server_close()
         shutil.rmtree(tmp, ignore_errors=True)
+    test_bauablauf_prueft_das_release_ernsthaft()
     n_ok = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{n_ok}/{len(RESULTS)} Pruefungen bestanden")
     failed = [n for n, ok in RESULTS if not ok]
