@@ -1424,6 +1424,54 @@ Rotationsfreiheitsgrade werden genauso behandelt (ohne Reibung); ihre Kräfte
 erscheinen als Momente in den Auflagerreaktionen, nicht in den
 Knotenkontaktkräften.
 
+### 4.1a Halt für Teile ohne geschlossene Bedingung (19.09.2026)
+
+Die Kontakt-Iteration öffnet und schließt Bedingungen, bis nichts mehr wechselt.
+In einem Zwischenschritt kann dabei ein Bauteil *alle* seine Bedingungen
+verlieren — dann ist es frei und das Gleichungssystem singulär. Das ist die
+Linearisierung des Schritts, nicht die Physik: ein Stift in einer Bohrung
+berührt sie immer irgendwo. Statik3D hält solche Teile deshalb künstlich fest,
+und **wie** es sie hält, entscheidet die Form der Fuge.
+
+Gemessen wird das, nicht vermutet (`solver._schub_traegt`): für die sechs
+Starrkörperbewegungen des Teils wird aufgestellt, wie sehr sie die
+Tangentialzeilen seiner Haft- und Reibbedingungen dehnen, und aus dem
+Verhältnis von kleinstem zu größtem Singulärwert abgelesen, ob die Schubbindung
+allein trägt.
+
+* **Eine Bohrung fasst den Stift rundum.** Sie trägt ihn allein über den Schub.
+  Am Drehlager (19.09.2026, 2.974.344 Freiheitsgrade, 31.134 Bedingungen, 102
+  Teile mit Kontakt) halten die Normalrichtungen der zehn betroffenen Stifte
+  für sich genommen 2,2·10⁻¹³ bis 3,6·10⁻¹³ — also nichts —, der Schub aller
+  ihrer Bedingungen dagegen 0,536 bis 0,707.
+* **Eine ebene Fuge hält quer zu ihrer Ebene nichts**, mit Reibung so wenig wie
+  ohne: dort ist das Verhältnis exakt 0. Zwischen beiden Fällen liegen
+  Größenordnungen; die Schwelle `SCHUB_GRENZE` = 10⁻³ liegt weit von beiden
+  Seiten entfernt.
+
+Trägt der Schub, so bleibt die Tangentialsteifigkeit **aller** bindenden
+Bedingungen des Teils wirksam, obwohl sie offen sind — ohne Normalfeder und
+ohne den Lastanteil aus dem Spaltmaß. Die Komplementarität in Normalrichtung
+bleibt damit unberührt, und es entsteht keine Kraft, die das Teil an die Fuge
+zöge. Dass es *alle* sein müssen, ist gemessen: der Schub aus nur drei
+Bedingungen — so viele hielt die frühere Fassung fest — kommt an zwei der zehn
+Stifte auf 2,3·10⁻¹⁸ und hält sie damit ebenfalls nicht.
+
+Trägt der Schub nicht, bleiben wie bisher `HALT_MINDESTENS` Bedingungen mit dem
+kleinsten Spalt geschlossen.
+
+Beide Halte sind für den Schritt gedacht, nicht für das Ergebnis. Sobald das
+Teil wieder anliegt, wird der Schubhalt gelöst. Trägt er am Ende der Iteration
+noch Kraft, während alle Bedingungen des Teils offen stehen, stützt sich das
+Ergebnis auf eine Bindung, die es nicht gibt: dann bricht die Rechnung ab und
+nennt die Fuge, die Zahl der Bedingungen und den getragenen Schub — dieselbe
+Regel und dieselbe Schwelle wie für Zug an normal gehaltenen Punkten.
+
+Vorher brach das Drehlager nach 33 Kontakt-Iterationen mit zehn angeblich
+abhebenden Bauteilen ab. Die Ursache war der Halt selbst: er schloss
+Normalbedingungen, deren Lastanteil −kₙ·g₀·cₙ das Teil an die Fuge zieht, und
+am Ende fand die Prüfung genau dort Zug.
+
 ### 4.2 Federgelenke
 
 Ein Stabendgelenk mit Federsteifigkeit k wird exakt als Reihenschaltung
