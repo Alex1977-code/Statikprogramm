@@ -212,9 +212,110 @@ def test_schub_haelt_den_stift():
           mit > 1e-3 * 1e9, f"kleinster Eigenwert {mit:.3e}")
 
 
+class _FalscheBedingungsliste:
+    """Nur so viel ContactSystem, wie _freie_teile_halten anfasst."""
+
+    def __init__(self, cons):
+        self.cons = cons
+
+
+def _blech_bedingungen(n=16, a=0.10, kn=1e9, kt=1e9):
+    """Bedingungen einer **ebenen** Fuge mit Reibung: Normale ueberall +z,
+    Tangenten x und y. Gegenstueck zum Stift - hier haelt der Schub quer zur
+    Ebene nichts."""
+    from statik3d.contact import Constraint
+    cons, lage = [], {}
+    seite = int(np.sqrt(n))
+    for k in range(seite * seite):
+        x, y = a * (k % seite), a * (k // seite)
+        lage[k] = np.array([x, y, 0.0])
+        dofs = np.array([k * 6, k * 6 + 1, k * 6 + 2])
+        cons.append(Constraint(
+            kind="surface", dofs=dofs, cn=np.array([0.0, 0.0, 1.0]),
+            ct=np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            g0=1e-4, kn=kn, kt=kt, mu=0.3, node=k,
+            normal=np.array([0.0, 0.0, 1.0]), label="Blech:Fuge"))
+    return cons, lage
+
+
+def _modell_der_lage(lage):
+    """Ein Objekt, das _schub_traegt genuegt: die Knotenkoordinaten."""
+    X = [[0.0, 0.0, 0.0] for _ in range(max(lage) + 1)]
+    for k, x in lage.items():
+        X[k] = [float(v) for v in x]
+    return type("Modell", (), {"nodes": X})()
+
+
+def test_schub_traegt_misst_die_fuge():
+    """Ob der Schub ein Teil haelt, entscheidet die Form der Fuge, nicht die
+    Art der Bedingung: eine Bohrung fasst den Stift rundum, eine ebene Fuge
+    haelt quer zu ihrer Ebene nichts - auch mit Reibung. Am Drehlager gemessen
+    (19.09.2026): Stifte 0,536 bis 0,707."""
+    stift, lage_s = _stift_bedingungen()
+    blech, lage_b = _blech_bedingungen()
+    v_stift = solver._schub_traegt(_modell_der_lage(lage_s), set(lage_s), stift)
+    v_blech = solver._schub_traegt(_modell_der_lage(lage_b), set(lage_b), blech)
+    check("die Bohrung haelt den Stift ueber den Schub", v_stift > solver.SCHUB_GRENZE,
+          f"{v_stift:.3f} gegen Schwelle {solver.SCHUB_GRENZE:g}")
+    check("die ebene Fuge haelt quer zu ihrer Ebene nichts",
+          v_blech < solver.SCHUB_GRENZE, f"{v_blech:.3e}")
+    check("zwischen beiden liegen Groessenordnungen",
+          v_stift > 1e3 * max(v_blech, 1e-18), f"{v_stift:.3f} gegen {v_blech:.3e}")
+
+
+def _mit_einem_teil(name, fn):
+    """fn() ausfuehren, waehrend _teile_bedingungen genau ein Teil mit den
+    Bedingungen des uebergebenen Systems meldet. So prueft der Test die Auswahl
+    des Halts, ohne ein Modell zu bauen - die Zuordnung Bedingung zu Teil hat
+    ihren eigenen Test (test_teile_bedingungen)."""
+    alt = solver._teile_bedingungen
+    solver._teile_bedingungen = lambda model, cs: [
+        (name, {int(c.node) for c in cs.cons}, list(cs.cons))]
+    try:
+        return fn()
+    finally:
+        solver._teile_bedingungen = alt
+
+
+def test_halt_waehlt_den_schub():
+    """Ein Teil mit Haftbindungen wird tangential gehalten - alle bindenden
+    Bedingungen, nicht drei: am Drehlager halten drei mit 2e-18 gar nicht
+    (19.09.2026). Ein Teil ohne Haften oder Reibung bekommt wie bisher den
+    Normalhalt."""
+    cons, _lage = _stift_bedingungen()
+    for c in cons:
+        c.active, c.schub_halt = False, False
+    cs = _FalscheBedingungsliste(cons)
+    log = []
+    m = _modell_der_lage(_lage)
+    gehalten = _mit_einem_teil("Stift", lambda: solver._freie_teile_halten(m, cs, log))
+    check("der Halt greift", gehalten, str(log[:1])[:120])
+    check("alle bindenden Bedingungen tragen den Schub, nicht drei",
+          sum(1 for c in cons if c.schub_halt) == len(cons),
+          f"{sum(1 for c in cons if c.schub_halt)} von {len(cons)}")
+    check("keine Bedingung wurde dafuer geschlossen (kein Zug erfunden)",
+          not any(c.active for c in cons),
+          f"{sum(1 for c in cons if c.active)} geschlossen")
+    check("das Protokoll nennt den Schubhalt",
+          any("Schub" in z for z in log), str(log[:1])[:140])
+
+    ohne, lage_o = _blech_bedingungen()
+    for c in ohne:
+        c.haften, c.mu, c.schub_halt, c.active, c.g = False, 0.0, False, False, 1e-4
+    log2 = []
+    cs2 = _FalscheBedingungsliste(ohne)
+    m2 = _modell_der_lage(lage_o)
+    _mit_einem_teil("Blech", lambda: solver._freie_teile_halten(m2, cs2, log2))
+    check("ohne bindende Bedingungen bleibt es beim Normalhalt",
+          sum(1 for c in ohne if c.active) == solver.HALT_MINDESTENS
+          and not any(c.schub_halt for c in ohne),
+          f"{sum(1 for c in ohne if c.active)} geschlossen")
+
+
 def main():
     for t in (test_halt, test_teile_bedingungen, test_zug_am_teil_gemessen,
-              test_schub_haelt_den_stift):
+              test_schub_haelt_den_stift, test_schub_traegt_misst_die_fuge,
+              test_halt_waehlt_den_schub):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
