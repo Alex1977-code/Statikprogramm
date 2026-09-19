@@ -2652,6 +2652,19 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             converged = True
             break
     if converged and u is not None:
+        schub = cs.schub_unter_last(u)
+        if schub:
+            # Der Schubhalt hat den Schritt getragen, nicht das Ergebnis: das
+            # Teil haengt am Schluss an einer Bindung, deren Bedingungen alle
+            # offen sind - dann gibt es dort kein Gleichgewicht.
+            text = ("kein belastbares Ergebnis - " + "; ".join(
+                f"{fuge} hängt am Schubhalt ({n} Bedingungen, {k / 1e3:.1f} kN Schub), "
+                "obwohl dort keine Bedingung geschlossen ist" for fuge, n, k in schub[:6])
+                + (" …" if len(schub) > 6 else "")
+                + ". Abhilfe: Verbund oder Vorspannung an der Fuge, ein Lager, oder die "
+                  "Last in die Fuge drücken lassen.")
+            log.append(text)
+            raise _kontakt_abbruch(it, RuntimeError(text), cs, model, u, log=log) from None
         zug = _gehaltene_unter_zug(model, cs)
         if zug:
             # Der Halt hat den Schritt gerettet, nicht das Ergebnis: das Teil

@@ -331,10 +331,31 @@ def test_schub_halt_faellt_weg():
           f"{geloest} geloest")
 
 
+def test_schub_am_ende_wird_gemeldet():
+    """Haengt ein Teil am Schluss noch am Schubhalt und traegt dort Kraft, ist
+    das Ergebnis nicht belastbar - dann sagt es der Loeser, so wie er heute
+    Zug an gehaltenen Punkten sagt."""
+    from statik3d.contact import ContactSystem
+    cons, lage = _stift_bedingungen()
+    for c in cons:
+        c.active, c.schub_halt = False, True
+    cs = object.__new__(ContactSystem)
+    cs.cons, cs.f_ref = cons, 1.0e4
+    ndof = (max(int(c.node) for c in cons) + 1) * 6
+    u = np.zeros(ndof)
+    check("ohne Verschiebung traegt der Schubhalt nichts", not cs.schub_unter_last(u), "")
+    for knoten in lage:
+        u[knoten * 6] = 1.0e-4              # der Stift wandert in x
+    traegt = cs.schub_unter_last(u)
+    check("wandert das Teil, traegt der Schubhalt und wird genannt",
+          traegt and "Stift" in traegt[0][0], str(traegt[:1])[:140])
+
+
 def main():
     for t in (test_halt, test_teile_bedingungen, test_zug_am_teil_gemessen,
               test_schub_haelt_den_stift, test_schub_traegt_misst_die_fuge,
-              test_halt_waehlt_den_schub, test_schub_halt_faellt_weg):
+              test_halt_waehlt_den_schub, test_schub_halt_faellt_weg,
+              test_schub_am_ende_wird_gemeldet):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

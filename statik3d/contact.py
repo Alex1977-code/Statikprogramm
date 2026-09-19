@@ -27,6 +27,9 @@ from .model import Model, NDOF, DOF_NAMES
 
 PENALTY_FACTOR = 1.0e4       # automatische Kontaktsteifigkeit = Faktor * Diagonalsteifigkeit
 TANGENT_FACTOR = 1.0         # k_t = TANGENT_FACTOR * k_n
+#: Anteil der Bezugskraft, ab dem ein Schubhalt am Ende als tragend gilt -
+#: dieselbe Schwelle wie fuer Zug an gehaltenen Punkten (solver.ZUG_ANTEIL).
+ZUG_ANTEIL = 0.05
 SLIP_STIFFNESS = 1.0e-3      # Reststeifigkeit beim Gleiten (Regularisierung, Anteil von k_t)
 SLIP_STIFFNESS_FINE = 1.0e-8  # Phase 2: haftende Nachbarn halten das Bauteil, Feder nur noch formal
 SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
@@ -1162,6 +1165,26 @@ class ContactSystem:
                 c.schub_halt = False
                 geloest += 1
         return geloest
+
+    def schub_unter_last(self, u: np.ndarray) -> list:
+        """[(Fuge, Zahl der Bedingungen, Schubkraft [N])] je Gruppe, die am
+        Ende noch am Schubhalt haengt und dort merklich Kraft traegt.
+
+        Der Schubhalt haelt einen Stift, dessen Normalbedingungen in einem
+        Zwischenschritt alle offen stehen. Steht er am Schluss immer noch offen
+        und traegt Schub, dann stuetzt sich das Ergebnis auf eine Bindung, die
+        es nicht gibt - und das gehoert gesagt, nicht verschwiegen. Die
+        Schwelle ist dieselbe wie fuer Zug an gehaltenen Punkten."""
+        je_gruppe: dict = {}
+        for c in self.cons:
+            if not (c.schub_halt and c.ct is not None):
+                continue
+            ue = u[c.dofs]
+            ft = c.kt * np.array([float(c.ct[0] @ ue), float(c.ct[1] @ ue)])
+            n, kraft = je_gruppe.get(_group(c), (0, 0.0))
+            je_gruppe[_group(c)] = (n + 1, kraft + float(np.linalg.norm(ft)))
+        grenze = ZUG_ANTEIL * float(getattr(self, "f_ref", 1.0))
+        return [(g, n, k) for g, (n, k) in sorted(je_gruppe.items()) if k > grenze]
 
     def matrices(self, ndof: int):
         """Kontaktsteifigkeit Kc (csr) und Kontaktlastvektor Fc."""
