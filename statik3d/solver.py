@@ -2220,6 +2220,13 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
     return bool(gehalten)
 
 
+#: Ab welchem Anteil seiner eigenen Druckkraft ein Teil, das an gehaltenen
+#: Punkten zieht, als abhebend gilt (19.09.2026). Darunter ist der Zug der
+#: Rest der Aktivmengen-Iteration: am Drehlager 20 kN gegen 15 232 kN
+#: Vorspannung, also 0,13 %.
+ZUG_ANTEIL = 0.05
+
+
 def _gehaltene_unter_zug(model, cs) -> list:
     """Teile, deren gehaltene Bedingungen am Ende Zug tragen: [(Name,
     Knotenmenge, Zahl der gehaltenen Bedingungen, Zugkraft [N], Bedingungen)].
@@ -2228,8 +2235,19 @@ def _gehaltene_unter_zug(model, cs) -> list:
     Teil zum Schluss an gehaltenen Punkten und zieht daran, hebt es wirklich
     ab - ein Block, der nach oben gezogen wird, hat kein Gleichgewicht ohne
     Zugfuge. Die Zugkraft ist kn * g je gehaltener, offen stehender Bedingung
-    (die Feder der Straffeder-Formulierung, nicht die auf null gekappte Fn);
-    gemeldet wird ab einem Tausendstel der Lastgroesse."""
+    (die Feder der Straffeder-Formulierung, nicht die auf null gekappte Fn).
+
+    **Gemessen wird am Teil selbst**, nicht an der groessten Knotenlast: ein
+    Bauteil, das ueber seine Fugen Meganewton an Druck abtraegt, hebt nicht
+    ab, weil an ein paar gehaltenen Punkten einige Kilonewton ziehen - das
+    ist der Rest der Aktivmengen-Iteration. Am Drehlager (19.09.2026) brach
+    die Rechnung deswegen ab: gemeldet waren 0,7 bis 20 kN Zug, waehrend
+    allein die Schraubenvorspannung 15 232 kN betrug (16 Zugstaebe mit je
+    952 kN aus dT = -445,6 K) und die groesste Kontaktkraft bei 217,6 kN lag.
+    Die alte Schranke - ein Tausendstel der groessten Knotenlast - traf damit
+    schon bei 1 kN zu. Jetzt gilt ein Teil als abhebend, wenn der Zug
+    ``ZUG_ANTEIL`` seiner eigenen Druckkraft ueberschreitet; ein Teil ohne
+    Druck (der hochgezogene Block) faellt weiter darunter."""
     out = []
     grenze = 1e-3 * float(getattr(cs, "f_ref", 1.0) or 1.0)
     for name, kn, cons in _teile_bedingungen(model, cs):
@@ -2237,7 +2255,11 @@ def _gehaltene_unter_zug(model, cs) -> list:
         if not geh:
             continue
         zug = sum(max(0.0, float(c.kn) * float(c.g)) for c in geh)
-        if zug > grenze:
+        # Was dasselbe Teil an Druck abtraegt (Fn ist die Normalkraft nach der
+        # letzten Iteration, Druck positiv)
+        druck = sum(max(0.0, float(getattr(c, "Fn", 0.0) or 0.0))
+                    for c in cons if c.active and not getattr(c, "gehalten", False))
+        if zug > max(grenze, ZUG_ANTEIL * druck):
             out.append((name, kn, len(geh), zug, cons))
     return out
 

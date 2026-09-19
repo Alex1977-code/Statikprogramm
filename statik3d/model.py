@@ -1161,6 +1161,41 @@ class TempLoad:
     dT: float = 0.0
     dT_z: float = 0.0
 
+    def vorspannkraft(self, model) -> float:
+        """Die Kraft [N], die diese Temperaturlast in einem Zugstab erzeugt:
+        N = E A alpha (-dT). Fuer andere Elemente 0.
+
+        RFEM modelliert die Vorspannung einer Schraube als Abkuehlung des
+        Zugstabs - der Stab verkuerzt sich und zieht. Die Datei nennt nur die
+        Temperatur; was der Anwender meint und sehen will, ist die Kraft
+        (19.09.2026: "was denn fuer temperaturlasten? das sollte vorspannung
+        sein" - am Drehlager 16 Staebe mit dT = -445,6 K, je 952 kN).
+        """
+        if not (0 <= int(self.elem) < len(model.elements)) or not self.dT:
+            return 0.0
+        e = model.elements[int(self.elem)]
+        if getattr(e, "typ", "") not in ("truss", "cable"):
+            return 0.0
+        mat = model.materials.get(getattr(e, "mat", ""))
+        sec = model.sections.get(getattr(e, "sec", ""))
+        if mat is None or sec is None:
+            return 0.0
+        A = float(getattr(sec, "A", 0.0) or 0.0)
+        alpha = float(getattr(mat, "alpha", 1.2e-5) or 1.2e-5)
+        return float(mat.E) * A * alpha * (-float(self.dT))
+
+    def bezug(self, model=None) -> str:
+        """Eine Zeile fuer Tabelle und Protokoll - bei einem vorgespannten
+        Zugstab mit der Kraft, nicht nur mit der Temperatur."""
+        text = f"Element {self.elem}: ΔT = {self.dT:+.1f} K"
+        if self.dT_z:
+            text += f", ΔT über die Höhe {self.dT_z:+.1f} K"
+        if model is not None:
+            N = self.vorspannkraft(model)
+            if abs(N) > 1.0:
+                text += f" → Vorspannung {N / 1e3:.0f} kN (Zugstab)"
+        return text
+
 
 #: Die Lastarten eines Lastfalls - in der Reihenfolge, in der sie im
 #: Modellbaum unter dem Lastfall und in seiner Maske stehen
