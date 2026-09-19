@@ -12,13 +12,28 @@ import numpy as np
 
 
 # --------------------------------------------------------------------------
+#: Werkstoffmatrizen, einmal je (E, nu) gebaut. Sie haengt an nichts
+#: anderem, wurde aber je Element neu erzeugt: am Drehlager 1 940 118 Aufrufe
+#: und 3,55 s je Plastizitaetsschritt (cProfile 19.09.2026). Die Matrizen
+#: liegen schreibgeschuetzt, damit ein versehentliches D[i, j] = ... auffaellt
+#: statt still alle Elemente desselben Werkstoffs zu verderben.
+_D_CACHE: dict = {}
+
+
 def D_matrix(E: float, nu: float) -> np.ndarray:
+    schluessel = (float(E), float(nu))
+    D = _D_CACHE.get(schluessel)
+    if D is not None:
+        return D
     lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
     mu = E / (2.0 * (1.0 + nu))
     D = np.zeros((6, 6))
     D[:3, :3] = lam
     D[0, 0] = D[1, 1] = D[2, 2] = lam + 2 * mu
     D[3, 3] = D[4, 4] = D[5, 5] = mu
+    D.flags.writeable = False
+    if len(_D_CACHE) < 256:            # ein Modell hat eine Handvoll Werkstoffe
+        _D_CACHE[schluessel] = D
     return D
 
 
@@ -77,8 +92,16 @@ def k_tet4(X, E, nu):
 
 
 def stress_tet4(X, E, nu, ue):
-    _, B, _ = k_tet4(X, E, nu)
-    return D_matrix(E, nu) @ (B @ ue)
+    """Spannung im Tetraeder: sigma = D B u_e.
+
+    Dafuer braucht es **B**, nicht die Steifigkeitsmatrix. Bis zum 19.09.2026
+    holte diese Funktion B aus k_tet4 und warf dessen 12x12-Produkt
+    V*(B^T D B) weg - gemessen am Drehlager (646 706 Tetraeder) kostete das
+    24,9 s von 39,4 s je Plastizitaetsschritt (cProfile, Uebergabe der
+    Loeser-Sitzung).
+    """
+    dN, _V = tet4_shape_grad(np.asarray(X, float))
+    return D_matrix(E, nu) @ (_B_from_grad(dN) @ ue)
 
 
 # --------------------------------------------------------------------------

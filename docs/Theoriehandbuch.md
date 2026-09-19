@@ -1424,6 +1424,54 @@ Rotationsfreiheitsgrade werden genauso behandelt (ohne Reibung); ihre Kräfte
 erscheinen als Momente in den Auflagerreaktionen, nicht in den
 Knotenkontaktkräften.
 
+### 4.1a Halt für Teile ohne geschlossene Bedingung (19.09.2026)
+
+Die Kontakt-Iteration öffnet und schließt Bedingungen, bis nichts mehr wechselt.
+In einem Zwischenschritt kann dabei ein Bauteil *alle* seine Bedingungen
+verlieren — dann ist es frei und das Gleichungssystem singulär. Das ist die
+Linearisierung des Schritts, nicht die Physik: ein Stift in einer Bohrung
+berührt sie immer irgendwo. Statik3D hält solche Teile deshalb künstlich fest,
+und **wie** es sie hält, entscheidet die Form der Fuge.
+
+Gemessen wird das, nicht vermutet (`solver._schub_traegt`): für die sechs
+Starrkörperbewegungen des Teils wird aufgestellt, wie sehr sie die
+Tangentialzeilen seiner Haft- und Reibbedingungen dehnen, und aus dem
+Verhältnis von kleinstem zu größtem Singulärwert abgelesen, ob die Schubbindung
+allein trägt.
+
+* **Eine Bohrung fasst den Stift rundum.** Sie trägt ihn allein über den Schub.
+  Am Drehlager (19.09.2026, 2.974.344 Freiheitsgrade, 31.134 Bedingungen, 102
+  Teile mit Kontakt) halten die Normalrichtungen der zehn betroffenen Stifte
+  für sich genommen 2,2·10⁻¹³ bis 3,6·10⁻¹³ — also nichts —, der Schub aller
+  ihrer Bedingungen dagegen 0,536 bis 0,707.
+* **Eine ebene Fuge hält quer zu ihrer Ebene nichts**, mit Reibung so wenig wie
+  ohne: dort ist das Verhältnis exakt 0. Zwischen beiden Fällen liegen
+  Größenordnungen; die Schwelle `SCHUB_GRENZE` = 10⁻³ liegt weit von beiden
+  Seiten entfernt.
+
+Trägt der Schub, so bleibt die Tangentialsteifigkeit **aller** bindenden
+Bedingungen des Teils wirksam, obwohl sie offen sind — ohne Normalfeder und
+ohne den Lastanteil aus dem Spaltmaß. Die Komplementarität in Normalrichtung
+bleibt damit unberührt, und es entsteht keine Kraft, die das Teil an die Fuge
+zöge. Dass es *alle* sein müssen, ist gemessen: der Schub aus nur drei
+Bedingungen — so viele hielt die frühere Fassung fest — kommt an zwei der zehn
+Stifte auf 2,3·10⁻¹⁸ und hält sie damit ebenfalls nicht.
+
+Trägt der Schub nicht, bleiben wie bisher `HALT_MINDESTENS` Bedingungen mit dem
+kleinsten Spalt geschlossen.
+
+Beide Halte sind für den Schritt gedacht, nicht für das Ergebnis. Sobald das
+Teil wieder anliegt, wird der Schubhalt gelöst. Trägt er am Ende der Iteration
+noch Kraft, während alle Bedingungen des Teils offen stehen, stützt sich das
+Ergebnis auf eine Bindung, die es nicht gibt: dann bricht die Rechnung ab und
+nennt die Fuge, die Zahl der Bedingungen und den getragenen Schub — dieselbe
+Regel und dieselbe Schwelle wie für Zug an normal gehaltenen Punkten.
+
+Vorher brach das Drehlager nach 33 Kontakt-Iterationen mit zehn angeblich
+abhebenden Bauteilen ab. Die Ursache war der Halt selbst: er schloss
+Normalbedingungen, deren Lastanteil −kₙ·g₀·cₙ das Teil an die Fuge zieht, und
+am Ende fand die Prüfung genau dort Zug.
+
 ### 4.2 Federgelenke
 
 Ein Stabendgelenk mit Federsteifigkeit k wird exakt als Reihenschaltung
@@ -2225,6 +2273,64 @@ damit ε = σ/E + (σ − fy)/H auf 1e-6 in **4 Schritten in 2 Laststufen**
 Kontakt-Iteration mit 19 Schritten) konvergiert in 27 Schritten bei
 Toleranz 1e-4, mit Gleichgewicht der Auflager (Auflager = Last, nicht
 Last + F_p: die Reaktion ist K·u − F_p − F, die innere Kraft ∫Bᵀσ dV).
+
+**Rechenzeit: blockweise statt Element für Element (19.09.2026).** Die
+Plastizität macht an einem großen Modell den Löwenanteil der Rechenzeit — am
+Drehlager (646 706 Tetraeder, 2 974 344 Freiheitsgrade) entfielen auf einen
+warmen Lastfall 24 % auf den Gleichungslöser und **76 % auf die
+Plastizität**. Die Ursache war nicht die Physik: ein Schritt kostete
+dieselben 51 Sekunden, ob null oder viele Elemente flossen. Es war der
+Aufrufaufwand einer Python-Schleife über alle Elemente, rund 80 µs je Stück.
+
+Drei Befunde und was sie brachten (gemessen am Drehlager, u = 0, ein
+Schritt):
+
+| Stand | Zeit je Schritt |
+|---|---|
+| Schleife, wie zuvor | 51,5 s |
+| `stress_tet4` holt B direkt statt über `k_tet4` | 38,5 s |
+| dazu D-Matrix je Werkstoff statt je Element, Mittelwert ohne `numpy.mean` | 24,7 s |
+| dazu blockweise über den ganzen Stapel | **0,54 s** |
+
+Zum ersten Punkt: die Spannung im Schwerpunkt ist σ = D·B·u_e, dafür braucht
+es B, nicht die 12×12-Steifigkeitsmatrix V·BᵀDB. Diese wurde gebaut und
+sofort weggeworfen — 24,9 s von 39,4 s eines Schritts (cProfile). Zum
+zweiten: die Werkstoffmatrix hängt nur an E und ν, wurde aber 1 940 118 mal
+je Schritt erzeugt.
+
+Blockweise heißt: die Formfunktionsableitungen am Auswertepunkt sind für
+jeden Elementtyp **eine feste Matrix**, also wird die Jacobi-Matrix als ein
+`solve` über ein (n, 3, 3)-Feld behandelt; Dehnungen und Spannungen mit
+`einsum`, die Rückführung einschließlich der Fallunterscheidung „fließt /
+fließt nicht“ als Maske, die plastischen Knotenlasten als ein Streuzugriff.
+Die Geometriedaten des Stapels (Ableitungen, Integrationsgewichte,
+Freiheitsgrade, Werkstoffwerte) hängen nicht an der Verschiebung und werden
+über die Schritte einer Rechnung wiederverwendet; darum kostet der erste
+Schritt 3,3 s und jeder weitere 0,54 s.
+
+**Das gilt für jeden Volumenelementtyp**, nicht nur für Tetraeder: Die
+Plastizität wertet je Element genau einen Punkt aus (die Mitte), und dort ist
+die Ableitungsmatrix des Typs fest. Nur die plastischen Knotenlasten
+integrieren über alle Gaußpunkte — bei hex8 acht statt einem —, und das ist
+eine kurze Schleife über die Punkte, jede Runde über den ganzen Stapel. Ein
+gemischtes Netz wird Typ für Typ gerechnet und zusammengelegt.
+
+Die Schleife bleibt als `_schritt_schleife` erhalten: sie ist die Referenz
+des Vergleichstests und rechnet Elementtypen, die `elements.solid` nicht
+kennt. Beide Wege liefern dasselbe — an 20 000 fließenden Elementen des
+Drehlagers wich F_p relativ um 9,2·10⁻¹⁵ ab, die plastischen Dehnungen um
+3,3·10⁻¹⁶; über alle sieben Typen (tet4, tet10, hex8, hex20, pent6, pent15,
+pyr5, je acht verzerrte Elemente) bleibt die Abweichung unter 1,6·10⁻¹⁵, also
+Maschinengenauigkeit. Ein Unterschied fiel dabei auf und wurde angeglichen:
+die größte Vergleichsspannung zählt nur Werkstoffe mit Streckgrenze, weil die
+Schleife die übrigen ganz überspringt.
+
+Für 422 Lastfälle hochgerechnet: ein warmer Lastfall braucht 19
+Plastizitätsschritte, vorher rund 980 s, jetzt rund 13 s. Mit den 263 s der
+Kontakt-Iteration sinkt er von etwa 1 082 s auf etwa 276 s — aus 5,2 Tagen
+werden 1,35. Damit kehrt sich das Verhältnis um: die Plastizität macht noch
+5 % der Zeit eines Lastfalls, der Gleichungslöser und die Kontakt-Iteration
+die übrigen 95 %.
 
 **Folgen für die Rechnung.** Mit Fließen gilt keine Superposition:
 Kombinationen werden direkt gerechnet wie bei Kontakt (`_nichtlinear`),

@@ -205,8 +205,157 @@ def test_kontakt():
               e3 is not None and e3.an and abs(e3.verfestigung - 0.05) < 1e-12 and e3.laststufen == 2, str(e3))
 
 
+def _tet4_netz(n=6):
+    """Ein Quader aus n Wuerfeln zu je sechs Tetraedern - genug Elemente,
+    Knoten und Nachbarschaften, um die blockweise Rechnung zu pruefen."""
+    m = Model("Tet4")
+    m.add_material(Material("S355", E=E, nu=NU, rho=7850, fy=FY))
+    m.add_material(Material("Ohne fy", E=E, nu=NU, rho=7850))
+    knoten = {}
+    for i in range(n + 1):
+        for j in range(2):
+            for k in range(2):
+                knoten[(i, j, k)] = m.add_node(i * 0.1, j * 0.1, k * 0.1)
+    # Die sechs Tetraeder eines Wuerfels (Kuhn-Zerlegung)
+    muster = [(0, 1, 3, 7), (0, 1, 7, 5), (0, 5, 7, 4), (0, 3, 2, 7), (0, 6, 4, 7), (0, 2, 6, 7)]
+    for i in range(n):
+        ecke = [knoten[(i + (b & 1), (b >> 1) & 1, (b >> 2) & 1)] for b in range(8)]
+        for t, vier in enumerate(muster):
+            mat = "S355" if (i + t) % 5 else "Ohne fy"    # ein Werkstoff ohne Streckgrenze dazwischen
+            m.add_element("tet4", [ecke[v] for v in vier], mat, "")
+    return m
+
+
+def test_blockweise_wie_die_schleife():
+    """Die blockweise Rechnung muss dasselbe liefern wie die Schleife - sie
+    ist nur schneller (19.09.2026: am Drehlager 51,5 s → 1,39 s je Schritt
+    bei 646 706 Tetraedern, gemessen mit u = 0; die Zeit lag im Aufrufaufwand
+    je Element, nicht in der Physik)."""
+    m = _tet4_netz()
+    el = pl._solid_elemente(m, None)
+    check(f"Netz aus {len(el)} Tetraedern, zwei Werkstoffe (einer ohne fy)",
+          len(el) >= 30 and len({m.elements[i].mat for i in el}) == 2, str(len(el)))
+    einst = pl.Plastizitaet(an=True, verfestigung=0.02)
+    rng = np.random.default_rng(5)
+    for lauf, faktor in enumerate((0.0, 2e-4, 2e-3), start=1):
+        u = rng.normal(0.0, faktor, m.ndof) if faktor else np.zeros(m.ndof)
+        Fb, zb, ib = pl._schritt_block(m, u, pl.Zustand(), einst, el, "tet4", [])
+        Fs, zs, is_ = pl._schritt_schleife(m, u, pl.Zustand(), einst, el, [])
+        bez = max(float(np.abs(Fs).max()), 1e-30)
+        check(f"Lauf {lauf} (u ~ {faktor:g}): gleich viele fließende Elemente "
+              f"({is_['fliessend']})", ib["fliessend"] == is_["fliessend"],
+              f"{ib['fliessend']} / {is_['fliessend']}")
+        check(f"Lauf {lauf}: F_p stimmt bis auf Rundung",
+              float(np.abs(Fb - Fs).max()) <= 1e-9 * bez,
+              f"{float(np.abs(Fb - Fs).max()):.3e} N von {bez:.3e} N")
+        check(f"Lauf {lauf}: dieselben Elemente mit plastischer Dehnung",
+              set(zb.eps_p) == set(zs.eps_p), f"{len(zb.eps_p)} / {len(zs.eps_p)}")
+        if zb.eps_p:
+            dp = max(float(np.abs(np.asarray(zb.eps_p[i]) - np.asarray(zs.eps_p[i])).max())
+                     for i in zb.eps_p)
+            dq = max(abs(zb.eps_p_eq[i] - zs.eps_p_eq[i]) for i in zb.eps_p_eq)
+            check(f"Lauf {lauf}: eps_p und eps_p,eq stimmen bis auf Rundung",
+                  dp < 1e-12 and dq < 1e-12, f"{dp:.2e} / {dq:.2e}")
+        nahe(f"Lauf {lauf}: dieselbe größte Vergleichsspannung", ib["q_max"], is_["q_max"], 1e-12, "Pa")
+    # Der Werkstoff ohne Streckgrenze fließt in keinem der beiden Wege
+    u = rng.normal(0.0, 5e-3, m.ndof)
+    _F, zb, _i = pl._schritt_block(m, u, pl.Zustand(), einst, el, "tet4", [])
+    ohne = [i for i in zb.eps_p if m.elements[i].mat == "Ohne fy" and zb.eps_p_eq[i] > 0]
+    check("ein Werkstoff ohne Streckgrenze bleibt elastisch", not ohne, str(ohne[:4]))
+    # Und der Stapel wird nur einmal gebaut
+    d1 = pl._stapel(m, el, "tet4")
+    d2 = pl._stapel(m, el, "tet4")
+    check("die Geometriedaten des Stapels werden wiederverwendet", d1 is d2)
+
+
+#: Eckpunkte je Elementtyp (Einheitsform) und die Kanten fuer die Mitten der
+#: quadratischen Typen - fuer den Vergleich blockweise gegen Schleife
+_ECKEN = {
+    "tet4": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)],
+    "hex8": [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+             (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)],
+    "pent6": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (0, 1, 1)],
+    "pyr5": [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0.5, 0.5, 1)],
+}
+_KANTEN = {
+    "tet10": ("tet4", [(0, 1), (1, 2), (0, 2), (0, 3), (1, 3), (2, 3)]),
+    "hex20": ("hex8", [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+                       (0, 4), (1, 5), (2, 6), (3, 7)]),
+    "pent15": ("pent6", [(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3), (0, 3), (1, 4), (2, 5)]),
+}
+
+
+def _stapel_modell(typ, n=8):
+    """n Elemente eines Typs, leicht verzerrt - eine gerade Jacobi-Matrix
+    würde einen Fehler in der blockweisen Rechnung verdecken."""
+    from statik3d.elements import solid as sl
+    m = Model(typ)
+    m.add_material(Material("S355", E=E, nu=NU, rho=7850, fy=FY))
+    m.add_material(Material("Ohne fy", E=E, nu=NU, rho=7850))
+    grundtyp, kanten = _KANTEN.get(typ, (typ, []))
+    basis = np.asarray(_ECKEN[grundtyp], float)
+    if kanten:
+        basis = np.vstack([basis] + [(basis[a] + basis[b]) / 2 for a, b in kanten])
+    rng = np.random.default_rng(11)
+    for e in range(n):
+        P = basis + np.array([e * 1.3, 0.0, 0.0]) + rng.normal(0.0, 0.02, basis.shape)
+        ids = [m.add_node(*p) for p in P[:sl._KNOTENZAHL[typ]]]
+        m.add_element(typ, ids, "S355" if e % 4 else "Ohne fy", "")
+    return m
+
+
+def test_blockweise_fuer_jeden_elementtyp():
+    """Der blockweise Weg gilt für **jeden** Volumenelementtyp: die
+    Plastizität wertet je Element einen Punkt aus (die Mitte), und die
+    Formfunktionsableitungen dort sind eine feste Matrix des Typs. Nur die
+    plastischen Knotenlasten brauchen alle Gaußpunkte - bei hex8 acht statt
+    einem (19.09.2026, „dann mach das für die anderen Elementtypen auch“)."""
+    from statik3d.elements import solid as sl
+    rng = np.random.default_rng(3)
+    for typ in ("tet4", "hex8", "tet10", "hex20", "pent6", "pent15", "pyr5"):
+        m = _stapel_modell(typ)
+        el = pl._solid_elemente(m, None)
+        u = rng.normal(0.0, 1.5e-3, m.ndof)
+        einst = pl.Plastizitaet(an=True, verfestigung=0.02)
+        Fb, zb, ib = pl._schritt_block(m, u, pl.Zustand(), einst, el, typ, [])
+        Fs, zs, is_ = pl._schritt_schleife(m, u, pl.Zustand(), einst, el, [])
+        bez = max(float(np.abs(Fs).max()), 1e-30)
+        gleich = set(zb.eps_p) == set(zs.eps_p)
+        dp = (max(float(np.abs(np.asarray(zb.eps_p[i]) - np.asarray(zs.eps_p[i])).max())
+                  for i in zb.eps_p) if gleich and zb.eps_p else 0.0)
+        check(f"{typ}: gleich viele fließende Elemente ({is_['fliessend']} von {len(el)})",
+              ib["fliessend"] == is_["fliessend"], f"{ib['fliessend']} / {is_['fliessend']}")
+        check(f"{typ}: F_p stimmt bis auf Rundung",
+              float(np.abs(Fb - Fs).max()) <= 1e-9 * bez,
+              f"{float(np.abs(Fb - Fs).max()) / bez:.2e} relativ")
+        check(f"{typ}: dieselben Elemente mit plastischer Dehnung, gleiche Werte",
+              gleich and dp < 1e-12, f"{len(zb.eps_p)} / {len(zs.eps_p)}, Δ {dp:.2e}")
+        check(f"{typ}: dieselbe größte Vergleichsspannung",
+              abs(ib["q_max"] - is_["q_max"]) <= 1e-9 * max(is_["q_max"], 1e-30),
+              f"{ib['q_max']:.6e} / {is_['q_max']:.6e}")
+    # Ein gemischtes Netz geht Typ für Typ und legt die Ergebnisse zusammen
+    m = Model("gemischt")
+    m.add_material(Material("S355", E=E, nu=NU, rho=7850, fy=FY))
+    for typ in ("tet4", "hex8"):
+        basis = np.asarray(_ECKEN[typ], float)
+        for e in range(3):
+            P = basis + np.array([e * 1.3 + (0 if typ == "tet4" else 10.0), 0.0, 0.0])
+            m.add_element(typ, [m.add_node(*p) for p in P], "S355", "")
+    el = pl._solid_elemente(m, None)
+    u = rng.normal(0.0, 1.5e-3, m.ndof)
+    einst = pl.Plastizitaet(an=True, verfestigung=0.02)
+    Fb, zb, ib = pl.schritt(m, u, pl.Zustand(), einst, el, [])
+    Fs, zs, is_ = pl._schritt_schleife(m, u, pl.Zustand(), einst, el, [])
+    check("gemischtes Netz (tet4 und hex8): gleiches Ergebnis wie die Schleife",
+          ib["fliessend"] == is_["fliessend"] and set(zb.eps_p) == set(zs.eps_p)
+          and float(np.abs(Fb - Fs).max()) <= 1e-9 * max(float(np.abs(Fs).max()), 1e-30),
+          f"{ib['fliessend']} / {is_['fliessend']} fließend")
+
+
 def main():
-    for t in (test_rueckfuehrung, test_zugversuch, test_loeser, test_kombination, test_kontakt):
+    for t in (test_rueckfuehrung, test_blockweise_wie_die_schleife,
+              test_blockweise_fuer_jeden_elementtyp, test_zugversuch,
+              test_loeser, test_kombination, test_kontakt):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

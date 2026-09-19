@@ -27,6 +27,9 @@ from .model import Model, NDOF, DOF_NAMES
 
 PENALTY_FACTOR = 1.0e4       # automatische Kontaktsteifigkeit = Faktor * Diagonalsteifigkeit
 TANGENT_FACTOR = 1.0         # k_t = TANGENT_FACTOR * k_n
+#: Anteil der Bezugskraft, ab dem ein Schubhalt am Ende als tragend gilt -
+#: dieselbe Schwelle wie fuer Zug an gehaltenen Punkten (solver.ZUG_ANTEIL).
+ZUG_ANTEIL = 0.05
 SLIP_STIFFNESS = 1.0e-3      # Reststeifigkeit beim Gleiten (Regularisierung, Anteil von k_t)
 SLIP_STIFFNESS_FINE = 1.0e-8  # Phase 2: haftende Nachbarn halten das Bauteil, Feder nur noch formal
 SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
@@ -95,6 +98,9 @@ class Constraint:
     toggles: int = 0
     frozen: bool = False
     gehalten: bool = False         # von solver._freie_teile_halten geschlossen gehalten (17.09.2026)
+    schub_halt: bool = False       # von solver._freie_teile_halten tangential gehalten
+                                   # (19.09.2026): die Schubbindung des Stiftes wirkt,
+                                   # die Normalbedingung bleibt offen
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -1145,6 +1151,41 @@ class ContactSystem:
             c.stabilised = False
             c.active = float(c.cn @ u[c.dofs]) < -1e-14
 
+    def schub_halt_loesen(self) -> int:
+        """Den Schubhalt aller Gruppen loesen, die wieder eine geschlossene
+        Bedingung haben. Rueckgabe: Zahl der geloesten Bedingungen.
+
+        Der Halt ist fuer den Schritt gedacht, nicht fuer das Ergebnis: sobald
+        der Stift wieder irgendwo anliegt, traegt die gewoehnliche Haftbindung,
+        und der Halt darf keinen Schub mehr erfinden."""
+        traegt = {_group(c) for c in self.cons if c.active}
+        geloest = 0
+        for c in self.cons:
+            if c.schub_halt and _group(c) in traegt:
+                c.schub_halt = False
+                geloest += 1
+        return geloest
+
+    def schub_unter_last(self, u: np.ndarray) -> list:
+        """[(Fuge, Zahl der Bedingungen, Schubkraft [N])] je Gruppe, die am
+        Ende noch am Schubhalt haengt und dort merklich Kraft traegt.
+
+        Der Schubhalt haelt einen Stift, dessen Normalbedingungen in einem
+        Zwischenschritt alle offen stehen. Steht er am Schluss immer noch offen
+        und traegt Schub, dann stuetzt sich das Ergebnis auf eine Bindung, die
+        es nicht gibt - und das gehoert gesagt, nicht verschwiegen. Die
+        Schwelle ist dieselbe wie fuer Zug an gehaltenen Punkten."""
+        je_gruppe: dict = {}
+        for c in self.cons:
+            if not (c.schub_halt and c.ct is not None):
+                continue
+            ue = u[c.dofs]
+            ft = c.kt * np.array([float(c.ct[0] @ ue), float(c.ct[1] @ ue)])
+            n, kraft = je_gruppe.get(_group(c), (0, 0.0))
+            je_gruppe[_group(c)] = (n + 1, kraft + float(np.linalg.norm(ft)))
+        grenze = ZUG_ANTEIL * float(getattr(self, "f_ref", 1.0))
+        return [(g, n, k) for g, (n, k) in sorted(je_gruppe.items()) if k > grenze]
+
     def matrices(self, ndof: int):
         """Kontaktsteifigkeit Kc (csr) und Kontaktlastvektor Fc."""
         rows, cols, vals = [], [], []
@@ -1152,6 +1193,21 @@ class ContactSystem:
         full_slip = self._full_slip_groups()
         for c in self.cons:
             if not c.active:
+                if not (c.schub_halt and c.ct is not None):
+                    continue
+                # Schubhalt: der Stift steckt in der Bohrung und traegt dort
+                # Schub, auch wenn in diesem Schritt alle seine
+                # Normalbedingungen offen stehen. Nur die Tangentialsteifigkeit,
+                # keine Normalfeder und kein Lastanteil aus dem Spaltmass - die
+                # Komplementaritaet in Normalrichtung bleibt unberuehrt. Am
+                # Drehlager haelt der Schub aller Bedingungen die sechs
+                # Starrkoerperbewegungen mit 0,54 bis 0,71, drei Bedingungen
+                # dagegen mit 2e-18, also gar nicht (19.09.2026).
+                kmat = c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
+                r, cc = np.meshgrid(c.dofs, c.dofs, indexing="ij")
+                rows.append(r.ravel())
+                cols.append(cc.ravel())
+                vals.append(kmat.ravel())
                 continue
             r, cc = np.meshgrid(c.dofs, c.dofs, indexing="ij")
             if c.yielding:

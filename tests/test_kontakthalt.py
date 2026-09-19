@@ -143,8 +143,219 @@ def test_zug_am_teil_gemessen():
         slv._teile_bedingungen = alt_tb
 
 
+def _stift_bedingungen(n_um=8, r=0.05, h=0.08, kn=1e9, kt=1e9):
+    """Bedingungen eines Stiftes in einer Bohrung: n_um Knoten je Ring, zwei
+    Ringe im Abstand h, Normale radial nach aussen (der Stift schliesst den
+    Spalt, wenn er nach aussen geht: cn = -radial). Tangenten sind Umfangs-
+    und Achsrichtung. Rueckgabe (Bedingungen, Knotenlage)."""
+    from statik3d.contact import Constraint
+    cons, lage = [], {}
+    for ring, z in enumerate((0.0, h)):
+        for k in range(n_um):
+            a = 2.0 * np.pi * k / n_um
+            radial = np.array([np.cos(a), np.sin(a), 0.0])
+            umfang = np.array([-np.sin(a), np.cos(a), 0.0])
+            achse = np.array([0.0, 0.0, 1.0])
+            knoten = ring * n_um + k
+            lage[knoten] = np.array([r * np.cos(a), r * np.sin(a), z])
+            dofs = np.array([knoten * 6, knoten * 6 + 1, knoten * 6 + 2])
+            cons.append(Constraint(
+                kind="surface", dofs=dofs, cn=-radial,
+                ct=np.vstack([umfang, achse]), g0=1e-4, kn=kn, kt=kt, mu=0.0,
+                node=knoten, normal=radial, label="Stift:Bohrung", haften=True))
+    return cons, lage
+
+
+def _starrmoden(lage, ndof_ges):
+    """Feld (ndof_ges, 6): die sechs Starrkoerperbewegungen der Knoten in lage,
+    um deren Schwerpunkt, Drehungen mit der groessten Ausladung skaliert."""
+    o = np.mean(list(lage.values()), axis=0)
+    L = max(float(np.linalg.norm(x - o)) for x in lage.values()) or 1.0
+    P = np.zeros((ndof_ges, 6))
+    for knoten, x in lage.items():
+        r = x - o
+        for k in range(3):
+            e = np.zeros(3)
+            e[k] = 1.0
+            P[knoten * 6 + k, k] = 1.0
+            P[knoten * 6:knoten * 6 + 3, 3 + k] = np.cross(e, r) / L
+    return P
+
+
+def _kc_auf_moden(cons, lage, schub_halt):
+    """Kleinster Eigenwert von P^T Kc P: wie fest die Kontaktsteifigkeit die
+    sechs Starrkoerperbewegungen des Stiftes haelt, wenn alle Bedingungen
+    offen sind."""
+    from statik3d.contact import ContactSystem
+    cs = object.__new__(ContactSystem)
+    cs.cons, cs.stabilising, cs.phase = cons, False, 1
+    for c in cons:
+        c.active = False
+        c.schub_halt = schub_halt
+    ndof = (max(int(c.node) for c in cons) + 1) * 6
+    Kc, _Fc = cs.matrices(ndof)
+    P = _starrmoden(lage, ndof)
+    return float(np.linalg.eigvalsh(P.T @ (Kc @ P)).min())
+
+
+def test_schub_haelt_den_stift():
+    """Ein Stift, dessen Normalbedingungen alle offen stehen, wird von seiner
+    Schubbindung gehalten - ohne sie ist die Kontaktsteifigkeit auf allen sechs
+    Starrkoerperbewegungen null. Am Drehlager gemessen (19.09.2026): normal
+    allein 2,2e-13 bis 3,6e-13, mit dem Schub aller Bedingungen 0,54 bis 0,71."""
+    cons, lage = _stift_bedingungen()
+    ohne = _kc_auf_moden(cons, lage, schub_halt=False)
+    mit = _kc_auf_moden(cons, lage, schub_halt=True)
+    check("offene Bedingungen ohne Schubhalt halten den Stift nicht",
+          abs(ohne) < 1e-6, f"kleinster Eigenwert {ohne:.3e}")
+    check("mit Schubhalt halten sie ihn in allen sechs Starrkoerperbewegungen",
+          mit > 1e-3 * 1e9, f"kleinster Eigenwert {mit:.3e}")
+
+
+class _FalscheBedingungsliste:
+    """Nur so viel ContactSystem, wie _freie_teile_halten anfasst."""
+
+    def __init__(self, cons):
+        self.cons = cons
+
+
+def _blech_bedingungen(n=16, a=0.10, kn=1e9, kt=1e9):
+    """Bedingungen einer **ebenen** Fuge mit Reibung: Normale ueberall +z,
+    Tangenten x und y. Gegenstueck zum Stift - hier haelt der Schub quer zur
+    Ebene nichts."""
+    from statik3d.contact import Constraint
+    cons, lage = [], {}
+    seite = int(np.sqrt(n))
+    for k in range(seite * seite):
+        x, y = a * (k % seite), a * (k // seite)
+        lage[k] = np.array([x, y, 0.0])
+        dofs = np.array([k * 6, k * 6 + 1, k * 6 + 2])
+        cons.append(Constraint(
+            kind="surface", dofs=dofs, cn=np.array([0.0, 0.0, 1.0]),
+            ct=np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            g0=1e-4, kn=kn, kt=kt, mu=0.3, node=k,
+            normal=np.array([0.0, 0.0, 1.0]), label="Blech:Fuge"))
+    return cons, lage
+
+
+def _modell_der_lage(lage):
+    """Ein Objekt, das _schub_traegt genuegt: die Knotenkoordinaten."""
+    X = [[0.0, 0.0, 0.0] for _ in range(max(lage) + 1)]
+    for k, x in lage.items():
+        X[k] = [float(v) for v in x]
+    return type("Modell", (), {"nodes": X})()
+
+
+def test_schub_traegt_misst_die_fuge():
+    """Ob der Schub ein Teil haelt, entscheidet die Form der Fuge, nicht die
+    Art der Bedingung: eine Bohrung fasst den Stift rundum, eine ebene Fuge
+    haelt quer zu ihrer Ebene nichts - auch mit Reibung. Am Drehlager gemessen
+    (19.09.2026): Stifte 0,536 bis 0,707."""
+    stift, lage_s = _stift_bedingungen()
+    blech, lage_b = _blech_bedingungen()
+    v_stift = solver._schub_traegt(_modell_der_lage(lage_s), set(lage_s), stift)
+    v_blech = solver._schub_traegt(_modell_der_lage(lage_b), set(lage_b), blech)
+    check("die Bohrung haelt den Stift ueber den Schub", v_stift > solver.SCHUB_GRENZE,
+          f"{v_stift:.3f} gegen Schwelle {solver.SCHUB_GRENZE:g}")
+    check("die ebene Fuge haelt quer zu ihrer Ebene nichts",
+          v_blech < solver.SCHUB_GRENZE, f"{v_blech:.3e}")
+    check("zwischen beiden liegen Groessenordnungen",
+          v_stift > 1e3 * max(v_blech, 1e-18), f"{v_stift:.3f} gegen {v_blech:.3e}")
+
+
+def _mit_einem_teil(name, fn):
+    """fn() ausfuehren, waehrend _teile_bedingungen genau ein Teil mit den
+    Bedingungen des uebergebenen Systems meldet. So prueft der Test die Auswahl
+    des Halts, ohne ein Modell zu bauen - die Zuordnung Bedingung zu Teil hat
+    ihren eigenen Test (test_teile_bedingungen)."""
+    alt = solver._teile_bedingungen
+    solver._teile_bedingungen = lambda model, cs: [
+        (name, {int(c.node) for c in cs.cons}, list(cs.cons))]
+    try:
+        return fn()
+    finally:
+        solver._teile_bedingungen = alt
+
+
+def test_halt_waehlt_den_schub():
+    """Ein Teil mit Haftbindungen wird tangential gehalten - alle bindenden
+    Bedingungen, nicht drei: am Drehlager halten drei mit 2e-18 gar nicht
+    (19.09.2026). Ein Teil ohne Haften oder Reibung bekommt wie bisher den
+    Normalhalt."""
+    cons, _lage = _stift_bedingungen()
+    for c in cons:
+        c.active, c.schub_halt = False, False
+    cs = _FalscheBedingungsliste(cons)
+    log = []
+    m = _modell_der_lage(_lage)
+    gehalten = _mit_einem_teil("Stift", lambda: solver._freie_teile_halten(m, cs, log))
+    check("der Halt greift", gehalten, str(log[:1])[:120])
+    check("alle bindenden Bedingungen tragen den Schub, nicht drei",
+          sum(1 for c in cons if c.schub_halt) == len(cons),
+          f"{sum(1 for c in cons if c.schub_halt)} von {len(cons)}")
+    check("keine Bedingung wurde dafuer geschlossen (kein Zug erfunden)",
+          not any(c.active for c in cons),
+          f"{sum(1 for c in cons if c.active)} geschlossen")
+    check("das Protokoll nennt den Schubhalt",
+          any("Schub" in z for z in log), str(log[:1])[:140])
+
+    ohne, lage_o = _blech_bedingungen()
+    for c in ohne:
+        c.haften, c.mu, c.schub_halt, c.active, c.g = False, 0.0, False, False, 1e-4
+    log2 = []
+    cs2 = _FalscheBedingungsliste(ohne)
+    m2 = _modell_der_lage(lage_o)
+    _mit_einem_teil("Blech", lambda: solver._freie_teile_halten(m2, cs2, log2))
+    check("ohne bindende Bedingungen bleibt es beim Normalhalt",
+          sum(1 for c in ohne if c.active) == solver.HALT_MINDESTENS
+          and not any(c.schub_halt for c in ohne),
+          f"{sum(1 for c in ohne if c.active)} geschlossen")
+
+
+def test_schub_halt_faellt_weg():
+    """Der Schubhalt ist fuer den Schritt, nicht fuer das Ergebnis: sobald das
+    Teil wieder geschlossene Bedingungen hat, wird er geloest. Sonst traegt er
+    bis zum Schluss Schub, den es nicht gibt."""
+    from statik3d.contact import ContactSystem
+    cons, _lage = _stift_bedingungen()
+    for c in cons:
+        c.active, c.schub_halt = False, True
+    cs = object.__new__(ContactSystem)
+    cs.cons = cons
+    check("offen: der Schubhalt bleibt",
+          cs.schub_halt_loesen() == 0 and all(c.schub_halt for c in cons), "")
+    cons[0].active = True
+    geloest = cs.schub_halt_loesen()
+    check("eine geschlossene Bedingung loest den Schubhalt des Teils",
+          geloest == len(cons) and not any(c.schub_halt for c in cons),
+          f"{geloest} geloest")
+
+
+def test_schub_am_ende_wird_gemeldet():
+    """Haengt ein Teil am Schluss noch am Schubhalt und traegt dort Kraft, ist
+    das Ergebnis nicht belastbar - dann sagt es der Loeser, so wie er heute
+    Zug an gehaltenen Punkten sagt."""
+    from statik3d.contact import ContactSystem
+    cons, lage = _stift_bedingungen()
+    for c in cons:
+        c.active, c.schub_halt = False, True
+    cs = object.__new__(ContactSystem)
+    cs.cons, cs.f_ref = cons, 1.0e4
+    ndof = (max(int(c.node) for c in cons) + 1) * 6
+    u = np.zeros(ndof)
+    check("ohne Verschiebung traegt der Schubhalt nichts", not cs.schub_unter_last(u), "")
+    for knoten in lage:
+        u[knoten * 6] = 1.0e-4              # der Stift wandert in x
+    traegt = cs.schub_unter_last(u)
+    check("wandert das Teil, traegt der Schubhalt und wird genannt",
+          traegt and "Stift" in traegt[0][0], str(traegt[:1])[:140])
+
+
 def main():
-    for t in (test_halt, test_teile_bedingungen, test_zug_am_teil_gemessen):
+    for t in (test_halt, test_teile_bedingungen, test_zug_am_teil_gemessen,
+              test_schub_haelt_den_stift, test_schub_traegt_misst_die_fuge,
+              test_halt_waehlt_den_schub, test_schub_halt_faellt_weg,
+              test_schub_am_ende_wird_gemeldet):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

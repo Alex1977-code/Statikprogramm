@@ -2168,6 +2168,55 @@ def _teile_mit_kontakt(model, cs) -> list:
 #: Reibung ein Halt in allen sechs Freiheitsgraden)
 HALT_MINDESTENS = 3
 
+#: Ab welchem Verhaeltnis (kleinster zu groesstem Singulaerwert der
+#: Tangentialzeilen auf den sechs Starrkoerperbewegungen) der Schub ein Teil
+#: traegt. Gemessen am Drehlager (19.09.2026): die Stifte in ihren Bohrungen
+#: liegen bei 0,536 bis 0,707, eine ebene Fuge bei 0 - dazwischen liegen
+#: Groessenordnungen, die Schwelle liegt weit von beiden Seiten entfernt.
+SCHUB_GRENZE = 1e-3
+
+
+def _schub_traegt(model, knoten, bindend) -> float:
+    """Wie fest die Schubbindung allein die sechs Starrkoerperbewegungen des
+    Teils haelt: Verhaeltnis kleinster zu groesstem Singulaerwert der
+    Tangentialzeilen. 0 heisst, sie haelt es nicht.
+
+    Die Frage laesst sich nicht an der Art der Bedingung entscheiden, sondern
+    nur an der Geometrie der Fuge: eine ebene Fuge mit Reibung haelt quer zu
+    ihrer Ebene nichts (der hochgezogene Block, tests/test_kontakthalt), eine
+    Bohrung fasst den Stift dagegen rundum. Gerechnet wird darum, nicht
+    geraten."""
+    X = np.asarray(getattr(model, "nodes", ()), float)
+    kn = np.array(sorted(int(n) for n in knoten if int(n) < len(X)), dtype=np.int64)
+    if len(kn) == 0 or not bindend:
+        return 0.0
+    o = X[kn].mean(axis=0)
+    L = float(np.abs(X[kn] - o).max()) or 1.0
+    idx = {int(n): i for i, n in enumerate(kn)}
+    P = np.zeros((len(kn), NDOF, 6))
+    r = X[kn] - o
+    for k in range(3):
+        e = np.zeros(3)
+        e[k] = 1.0
+        P[:, k, k] = 1.0
+        P[:, 0:3, 3 + k] = np.cross(np.tile(e, (len(r), 1)), r) / L
+        if NDOF > 3:
+            P[:, 3 + k, 3 + k] = 1.0 / L
+    A = np.zeros((2 * len(bindend), 6))
+    for i, c in enumerate(bindend):
+        ct = np.asarray(c.ct, float).reshape(2, -1)
+        for j, dd in enumerate(np.asarray(c.dofs, dtype=np.int64)):
+            z = idx.get(int(dd) // NDOF)
+            if z is None:
+                continue
+            p = P[z, int(dd) % NDOF]
+            A[2 * i] += ct[0, j] * p
+            A[2 * i + 1] += ct[1, j] * p
+    s = np.linalg.svd(A, compute_uv=False)
+    s6 = np.zeros(6)
+    s6[:len(s)] = s
+    return float(s6.min() / s6.max()) if s6.max() > 0.0 else 0.0
+
 
 def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MINDESTENS,
                         stufe: int = 1) -> bool:
@@ -2180,10 +2229,23 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
     wirklich singulaer (Residuum 1,1e-3), die Verformung des Schritts davor
     dagegen unauffaellig. Ein Stift in einer Bohrung beruehrt sie immer
     irgendwo - dass alle seine Bedingungen offen sind, ist die Linearisierung
-    des Schritts, nicht die Physik. Darum bleiben je Teil ``mindestens``
-    Bedingungen geschlossen, und zwar die mit dem kleinsten Spalt; sie
-    zaehlen als Wechsel (nach acht Wechseln friert die Bedingung ohnehin
-    geschlossen ein), und das Protokoll nennt jedes gehaltene Teil.
+    des Schritts, nicht die Physik.
+
+    **Wie gehalten wird, entscheidet die Form der Fuge** (19.09.2026). Traegt
+    die Schubbindung das Teil allein - :func:`_schub_traegt` ueber
+    ``SCHUB_GRENZE`` -, dann wird tangential gehalten: ``schub_halt`` auf
+    *allen* bindenden Bedingungen, keine davon geschlossen. So entsteht keine
+    Normalkraft und damit kein Zug. Am Drehlager halten die Normalrichtungen
+    der zehn gemeldeten Stifte allein 2,2e-13 bis 3,6e-13 ihrer
+    Starrkoerperbewegungen - also nichts -, der Schub aller Bedingungen
+    dagegen 0,536 bis 0,707; der Schub aus nur drei Bedingungen kommt auf
+    2,3e-18, hielte sie also ebenfalls nicht. Darum alle.
+
+    Traegt der Schub nicht - eine ebene Fuge haelt quer zu ihrer Ebene nichts,
+    auch mit Reibung -, bleiben je Teil ``mindestens`` Bedingungen
+    geschlossen, und zwar die mit dem kleinsten Spalt; sie zaehlen als Wechsel
+    (nach acht Wechseln friert die Bedingung ohnehin geschlossen ein), und das
+    Protokoll nennt jedes gehaltene Teil.
 
     Reicht das nicht (der nach oben gezogene Block haelt mit fuenf Punkten
     auf einer Kante und kippt trotzdem), nimmt ``stufe`` 2 jedes Teil mit
@@ -2194,11 +2256,26 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
     Rueckgabe True, wenn etwas gehalten wurde - der Aufrufer loest dann
     denselben Schritt noch einmal.
     """
-    gehalten = []
+    gehalten, geschoben = [], []
     for name, _kn, cons in _teile_bedingungen(model, cs):
         soll = min(int(mindestens), len(cons)) if stufe == 1 else (len(cons) + 1) // 2
         aktiv = [c for c in cons if c.active]
         if len(aktiv) >= soll:
+            continue
+        bindend = [c for c in cons if c.ct is not None and (c.haften or float(c.mu) > 0.0)]
+        if bindend and _schub_traegt(model, _kn, bindend) > SCHUB_GRENZE:
+            # Der Halt eines Stiftes ist seine Schubbindung, nicht der Druck:
+            # am Drehlager halten die Normalrichtungen allein 2,2e-13 bis
+            # 3,6e-13 der Starrkoerperbewegungen, der Schub *aller* Bedingungen
+            # 0,536 bis 0,707 - der Schub aus dreien dagegen 2,3e-18, also gar
+            # nichts (19.09.2026, V70 und V96). Darum alle, und darum
+            # tangential: eine geschlossene Normalbedingung braechte den
+            # Lastanteil -kn*g0*cn mit, und der zieht.
+            neu = [c for c in bindend if not c.schub_halt]
+            for c in neu:
+                c.schub_halt = True
+            if neu:
+                geschoben.append((name, len(cons), len(bindend)))
             continue
         offen = sorted((c for c in cons if not c.active), key=lambda c: float(c.g))
         nimm = offen[:soll - len(aktiv)]
@@ -2211,13 +2288,19 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
                 c.frozen = True
         if nimm:
             gehalten.append((name, len(cons), len(aktiv), len(nimm), max(float(c.g) for c in nimm)))
-    if gehalten and log is not None:
-        log.append(("Halt für Teile ohne geschlossene Bedingung: " if stufe == 1
-                    else "Halt für Teile mit mehrheitlich offenen Bedingungen: ")
-                   + "; ".join(f"{n}: {a} von {z} zu, {h} mit dem kleinsten Spalt (bis {g * 1e3:.3f} mm) "
-                               "gehalten" for n, z, a, h, g in gehalten[:8])
-                   + (" …" if len(gehalten) > 8 else ""))
-    return bool(gehalten)
+    if log is not None:
+        if geschoben:
+            log.append("Schubhalt für Teile ohne geschlossene Bedingung: "
+                       + "; ".join(f"{n}: {b} von {z} Bedingungen tragen Schub"
+                                   for n, z, b in geschoben[:8])
+                       + (" …" if len(geschoben) > 8 else ""))
+        if gehalten:
+            log.append(("Halt für Teile ohne geschlossene Bedingung: " if stufe == 1
+                        else "Halt für Teile mit mehrheitlich offenen Bedingungen: ")
+                       + "; ".join(f"{n}: {a} von {z} zu, {h} mit dem kleinsten Spalt (bis {g * 1e3:.3f} mm) "
+                                   "gehalten" for n, z, a, h, g in gehalten[:8])
+                       + (" …" if len(gehalten) > 8 else ""))
+    return bool(gehalten or geschoben)
 
 
 #: Ab welchem Anteil seiner eigenen Druckkraft ein Teil, das an gehaltenen
@@ -2550,6 +2633,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 if not geloest:
                     raise _kontakt_abbruch(it, ex, cs, model, u, log=log) from None
         changed = cs.update(u)
+        if cs.schub_halt_loesen():
+            # Der Schubhalt hat den Schritt getragen; jetzt liegt das Teil
+            # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der
+            # naechste Schritt rechnet ohne ihn.
+            changed = True
         if progress:
             # Anteil im Fenster des Lastfalls: 1 - 0,85^it waechst mit jedem
             # Schritt und naehert sich der Fensterkante - ein wachsender Balken
@@ -2564,6 +2652,19 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             converged = True
             break
     if converged and u is not None:
+        schub = cs.schub_unter_last(u)
+        if schub:
+            # Der Schubhalt hat den Schritt getragen, nicht das Ergebnis: das
+            # Teil haengt am Schluss an einer Bindung, deren Bedingungen alle
+            # offen sind - dann gibt es dort kein Gleichgewicht.
+            text = ("kein belastbares Ergebnis - " + "; ".join(
+                f"{fuge} hängt am Schubhalt ({n} Bedingungen, {k / 1e3:.1f} kN Schub), "
+                "obwohl dort keine Bedingung geschlossen ist" for fuge, n, k in schub[:6])
+                + (" …" if len(schub) > 6 else "")
+                + ". Abhilfe: Verbund oder Vorspannung an der Fuge, ein Lager, oder die "
+                  "Last in die Fuge drücken lassen.")
+            log.append(text)
+            raise _kontakt_abbruch(it, RuntimeError(text), cs, model, u, log=log) from None
         zug = _gehaltene_unter_zug(model, cs)
         if zug:
             # Der Halt hat den Schritt gerettet, nicht das Ergebnis: das Teil
