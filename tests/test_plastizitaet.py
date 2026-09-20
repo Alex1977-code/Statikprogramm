@@ -417,11 +417,117 @@ def test_kennzahlen_zaehlen_alle_laeufe_des_lastfalls():
           z[0] if z else "keine Zeile")
 
 
+def _fliessendes_kontaktmodell():
+    """Block mit Reibung, Streckgrenze auf 60 % der elastischen
+    Vergleichsspannung: Kontakt **und** Fließen, also viele Läufe desselben
+    Lastfalls."""
+    m0 = block_friction_example()
+    r0 = solver.solve_static(m0)
+    q0 = max(pl.vergleichsspannung(np.asarray(v, float)) for i, v in r0.solid_res.items()
+             if m0.elements[i].mat == "S235")
+    m = block_friction_example()
+    m.materials["S235"].fy = 0.6 * q0
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.05, laststufen=2,
+                                     iterationen=40, toleranz=1e-4)
+    return m
+
+
+def test_kontaktsystem_wird_wiederverwendet():
+    """Der geometrische Teil des Kontakts - welcher Slave-Knoten auf welche
+    Master-Facette fällt, Normalen, Flächenquadriken, Suchbäume - hängt weder
+    an der Last noch am Verformungszustand. Gebaut wurde er trotzdem bei jedem
+    Aufruf neu, mit Plastizität also einmal je Schritt: am Drehlager 276
+    Aufrufe von _build_pair für 12 Fugen, 172 s von 542 s (cProfile,
+    20.09.2026). Jetzt hängt er am StaticSystem.
+
+    Geprüft wird beides: dass er wirklich seltener gebaut wird **und** dass
+    dieselbe Lösung herauskommt wie beim Bauen in jedem Schritt."""
+    from statik3d import contact as ct
+    n = {"bau": 0}
+    alt_init = ct.ContactSystem.__init__
+
+    def zaehlend(self, *a, **kw):
+        n["bau"] += 1
+        alt_init(self, *a, **kw)
+
+    ct.ContactSystem.__init__ = zaehlend
+    try:
+        m = _fliessendes_kontaktmodell()
+        n["bau"] = 0
+        r = solver.solve_static(m)
+        gebaut = n["bau"]
+        laeufe = int(r.info.get("contact_laeufe", 0))
+        check(f"viele Läufe desselben Lastfalls ({laeufe}), aber nur {gebaut} Kontaktsysteme",
+              laeufe >= 10 and gebaut <= 2, f"{gebaut} Aufbauten bei {laeufe} Läufen")
+        # Gegenprobe: bei jedem Aufruf neu bauen - dasselbe Ergebnis
+        alt_ks = solver._kontaktsystem
+
+        def immer_neu(system, model, uebermass, log):
+            cs = ct.ContactSystem(model, system.K, log, uebermass)
+            return cs
+
+        solver._kontaktsystem = immer_neu
+        try:
+            m2 = _fliessendes_kontaktmodell()
+            n["bau"] = 0
+            r2 = solver.solve_static(m2)
+            gebaut2 = n["bau"]
+        finally:
+            solver._kontaktsystem = alt_ks
+        check(f"ohne Wiederverwendung wird je Lauf gebaut ({gebaut2})",
+              gebaut2 >= laeufe, f"{gebaut2} Aufbauten bei {laeufe} Läufen")
+        du = float(np.abs(r.u - r2.u).max())
+        bez = max(float(np.abs(r2.u).max()), 1e-30)
+        check("dieselbe Verschiebung wie beim Bauen in jedem Schritt",
+              du <= 1e-12 * bez, f"{du / bez:.2e} relativ")
+        check("dieselbe Zahl Kontaktrunden und Faktorisierungen",
+              r.info["contact_iterations"] == r2.info["contact_iterations"]
+              and r.info["contact_factorisations"] == r2.info["contact_factorisations"],
+              f"{r.info['contact_iterations']}/{r.info['contact_factorisations']} zu "
+              f"{r2.info['contact_iterations']}/{r2.info['contact_factorisations']}")
+        pz, pz2 = r.info.get("plastizitaet") or {}, r2.info.get("plastizitaet") or {}
+        check("dasselbe Fließen", pz.get("fliessend") == pz2.get("fliessend")
+              and abs(pz.get("eps_p_max", 0) - pz2.get("eps_p_max", 0)) <= 1e-15,
+              f"{pz.get('fliessend')} zu {pz2.get('fliessend')} Elemente")
+    finally:
+        ct.ContactSystem.__init__ = alt_init
+
+
+def test_initialize_setzt_den_ganzen_zustand_zurueck():
+    """Ein wiederverwendetes Kontaktsystem muss vor jeder Rechnung so
+    dastehen wie ein frisch gebautes - sonst begönne der nächste Lastfall in
+    Phase 2 mit den eingefrorenen Bedingungen des vorigen."""
+    from statik3d import contact as ct
+    m = block_friction_example()
+    sys_ = solver.StaticSystem(m)
+    cs = ct.ContactSystem(m, sys_.K, [], None)
+    frisch = {k: getattr(cs, k) for k in
+              ("phase", "cycles", "settle", "stabilising", "warm", "dF_slip",
+               "gleit_anteil", "gleit_guete")}
+    # Zustand verbiegen, wie ihn eine Rechnung hinterlässt
+    cs.phase, cs.cycles, cs.settle = 2, 7, 3
+    cs.stabilising, cs.warm, cs.dF_slip = True, True, 1.5
+    cs.gleit_anteil, cs.gleit_guete = 0.5, 0.02
+    for c in cs.cons[:5]:
+        c.slip, c.frozen, c.yielding, c.toggles = True, True, True, 9
+        c.gehalten = c.schub_halt = True
+        c.Fn, c.g_yield = 1e5, 0.3
+    cs.initialize()
+    anders = [k for k, v in frisch.items() if getattr(cs, k) != v]
+    check("initialize() stellt Phase, Zähler und Gleitanteil wieder her", not anders, str(anders))
+    schlecht = [c.label for c in cs.cons[:5]
+                if c.slip or c.frozen or c.yielding or c.toggles or c.gehalten
+                or c.schub_halt or c.Fn or c.g_yield]
+    check("und den Zustand jeder Bedingung", not schlecht, str(schlecht[:2]))
+
+
 def main():
     for t in (test_rueckfuehrung, test_blockweise_wie_die_schleife,
               test_blockweise_fuer_jeden_elementtyp, test_zugversuch,
               test_protokoll_sagt_was_die_runde_bewegt_und_kostet,
               test_kennzahlen_zaehlen_alle_laeufe_des_lastfalls,
+              test_kontaktsystem_wird_wiederverwendet,
+              test_initialize_setzt_den_ganzen_zustand_zurueck,
               test_loeser, test_kombination, test_kontakt):
         try:
             t()

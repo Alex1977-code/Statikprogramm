@@ -2612,6 +2612,43 @@ def _contact_singular(it: int, ex, cs, model=None) -> str:
     return text
 
 
+def _kontaktsystem(system: StaticSystem, model: Model, uebermass, log: list):
+    """Das Kontaktsystem des Modells - einmal gebaut, dann wiederverwendet.
+
+    Der geometrische Teil haengt weder an der Last noch am Verformungszustand:
+    welcher Slave-Knoten auf welche Master-Facette faellt, die Normalen, die
+    Flaechenquadriken, die Suchbaeume. Gebaut wurde er trotzdem bei jedem
+    Aufruf neu - mit Plastizitaet also einmal je Schritt.
+
+    Gemessen am Drehlager (LF3 warm, 12 Kontaktfugen, 18 Plastizitaets-
+    schritte, cProfile 20.09.2026): **276 Aufrufe** von contact._build_pair,
+    172 s von 542 s - ein Drittel des Lastfalls fuer 23-mal dasselbe
+    Ergebnis. 276 / 12 Fugen = 23 Aufbauten. Darin allein 2,5 Mio. Aufrufe
+    von numpy.cross zu 96 s.
+
+    Gehalten wird es am ``StaticSystem``: das gehoert zur Situation und lebt
+    genau so lange wie das Netz, aus dem es aufgebaut ist. Der Schluessel ist
+    das Uebermass, denn das geht in ``g0`` jeder Bedingung ein (Vorspannung
+    je Fuge, kann sich von Lastfall zu Lastfall aendern). Den Zustand setzt
+    ``initialize()`` bei jedem Aufruf zurueck; die Meldungen des Aufbaus
+    werden wiederholt, damit im Protokoll jedes Lastfalls dasselbe steht wie
+    zuvor.
+    """
+    from .contact import ContactSystem
+    schluessel = tuple(sorted((str(k), float(v)) for k, v in (uebermass or {}).items() if v))
+    cs = getattr(system, "_kontaktsystem", None)
+    if cs is not None and getattr(system, "_kontaktsystem_schluessel", None) == schluessel \
+            and cs.model is model:
+        cs.log = log
+        log.extend(getattr(cs, "_baulog", ()))
+        return cs
+    cs = ContactSystem(model, system.K, log, uebermass)
+    cs._baulog = list(log)
+    system._kontaktsystem = cs
+    system._kontaktsystem_schluessel = schluessel
+    return cs
+
+
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
@@ -2636,9 +2673,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     Kontaktrechnung die Pressspannung und ueber den Reibbeiwert die
     Schubtragfaehigkeit macht.
     """
-    from .contact import ContactSystem
     log: list[str] = []
-    cs = ContactSystem(model, system.K, log, uebermass)
+    cs = _kontaktsystem(system, model, uebermass, log)
     cs.set_force_scale(float(np.abs(F).max()) if F.size else 1.0)
     cs.initialize()
     f0 = getattr(system, "faktorisierungen", 0)

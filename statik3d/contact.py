@@ -1028,7 +1028,23 @@ class ContactSystem:
 
     # ---- Zustand ---------------------------------------------------------
     def initialize(self):
-        """Anfangszustand: beruehrende oder durchdringende Bedingungen aktiv."""
+        """Anfangszustand: beruehrende oder durchdringende Bedingungen aktiv.
+
+        Zurueckgesetzt wird **alles**, was eine Rechnung unterwegs veraendert -
+        auch Phase, Rundenzaehler und Gleitanteil. Frueher genuegte der
+        Zustand je Bedingung, weil das Kontaktsystem ohnehin fuer jede
+        Rechnung neu gebaut wurde; seit es wiederverwendet wird
+        (solver._kontaktsystem), muss initialize() es in denselben Zustand
+        versetzen wie ein frisch gebautes (20.09.2026).
+        """
+        self.phase = 1
+        self.cycles = 0
+        self.settle = 0
+        self.stabilising = False
+        self.warm = False
+        self.dF_slip = 0.0
+        self.gleit_anteil = GLEIT_ANTEIL
+        self.gleit_guete = float("inf")
         for c in self.cons:
             c.active = True if c.zug else c.g0 <= self.tol
             c.slip = False
@@ -1036,6 +1052,13 @@ class ContactSystem:
             c.dir_updates = 0
             c.toggles = 0
             c.frozen = False
+            c.yielding = False
+            c.g_yield = 0.0
+            c.gehalten = False
+            c.schub_halt = False
+            c.Fn = 0.0
+            c.Ft = np.zeros(2)
+            c.g = 0.0
 
     @property
     def n_active(self) -> int:

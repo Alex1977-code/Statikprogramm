@@ -3203,6 +3203,28 @@ Nachweis mit seiner Verformung je Kombination.
   danach zurückgegeben. Am Drehlager (1 028 724 Freiheitsgrade, 7 GB je
   Faktorisierung) wuchs der Prozess vorher je Schritt um 7 GB, bis der Löser
   nach 33 Schritten bei 113 GB aufgab (11.09.2026).
+* **Das Kontaktsystem wird einmal gebaut, nicht je Rechenschritt**
+  (20.09.2026). Welcher Slave-Knoten auf welche Master-Facette fällt, die
+  Normalen, die Flächenquadriken, die Suchbäume — das hängt weder an der Last
+  noch am Verformungszustand. Gebaut wurde es trotzdem bei jedem Aufruf neu,
+  mit Plastizität also **einmal je Schritt**. Am Drehlager (LF3 warm, 12
+  Kontaktfugen, 18 Plastizitätsschritte) waren das 23 Aufbauten: im Profiler
+  276 Aufrufe von `contact._build_pair` und 172 s von 542 s — ein Drittel des
+  Lastfalls für 23-mal dasselbe Ergebnis. Jetzt hängt das Kontaktsystem am
+  `StaticSystem`, dort, wo auch Steifigkeitsmatrix und Faktorisierung liegen;
+  der Schlüssel ist das Übermass, denn das geht in den Anfangsspalt jeder
+  Bedingung ein. Gemessen am Drehlager, gleiche Sonde vorher und nachher:
+
+  | | vorher | nachher |
+  |---|---|---|
+  | LF1 (kalt) | 735,2 s | **647,3 s** |
+  | LF3 (warm) | 409,2 s | **270,5 s** |
+  | max \|u\| | 0,2680 mm | 0,2680 mm |
+
+  Das Ergebnis ändert sich nicht — es wird nur nicht mehr 23-mal dasselbe
+  gebaut. Hochgerechnet auf 422 Lastfälle (1 kalt, 421 warm): 48,1 → 31,8
+  Stunden. Geprüft in `tests/test_plastizitaet.py` (zwei Aufbauten statt 54
+  bei 28 Läufen, und dieselbe Lösung wie beim Bauen in jedem Schritt).
 * **Warmstart und behaltene Faktorisierung.** Lastfälle derselben Situation
   beginnen die Kontakt-Iteration im Kontaktzustand des vorigen Lastfalls;
   solange sich die Kontaktsteifigkeit nicht ändert, bleibt die Faktorisierung
