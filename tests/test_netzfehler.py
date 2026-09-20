@@ -42,6 +42,9 @@ def _kleine_platte(h):
     m.netz.ziellaenge = h
     m.netz.dichte = "eigene"
     m.netz.max_elemente = 1_000_000
+    # Der Fehlerschaetzer liest Tetraeder (netzfehler.ORDNUNG); die Platte ist
+    # sweepbar und bekaeme sonst Hexaeder und Keile (statik3d.sweep, 20.09.2026)
+    m.netz.sweep = False
     return m, k
 
 

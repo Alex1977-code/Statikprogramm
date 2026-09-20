@@ -83,6 +83,7 @@ nach `main` erfolgt **nur auf ausdrückliche Freigabe** und stößt
 | `statik3d/mesher3d.py` | freier Vernetzer: Randhülle, Flächennetz, Tetraeder, Güte |
 | `statik3d/mesher.py` | Netzsteuerung, modellweite Kantenlängenkarten, Parallelbetrieb, Vernetzungsfolge ohne Oberfläche (`modell_vernetzen`) |
 | `statik3d/netzfeld.py` | Größenfeld: Kantenlänge je Ort aus Netzverfeinerungen und Feldpunkten; Bedeutung der Flächen (Nebenflächen grob) |
+| `statik3d/sweep.py` | Sweep: Grundfläche mal Weg → Hexaeder und Keile; Erkennung, Paarung der Dreiecke zu Vierecken, Lagen, vorgegebene Flächennetze für Nachbarn |
 | `statik3d/netzfehler.py`, `adaptiv.py` | Fehlerschätzer (Spannungssprung, Zienkiewicz/Zhu) und die adaptive Schleife rechnen → schätzen → Feld → neu vernetzen |
 | `statik3d/diagnose.py` | Abnahme des Netzes vor dem Rechnen, Meldungen im Klartext |
 | `statik3d/solver.py`, `assemble.py`, `contact.py` | Rechnung |

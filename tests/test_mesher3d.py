@@ -707,6 +707,7 @@ def _zwei_koerper():
     """Zwei sechseckige Prismen uebereinander mit gemeinsamer Trennflaeche -
     keine Sechsflaechner, also Arbeit fuer den freien Vernetzer."""
     m = neues_modell()
+    m.netz.sweep = False                     # sonst sweepbar (statik3d.sweep, 20.09.2026)
     n = 6
     w = np.arange(n) * 2 * np.pi / n
     ring = np.column_stack([np.cos(w), np.sin(w)])

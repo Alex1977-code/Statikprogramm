@@ -3363,6 +3363,76 @@ oben und unten) bliebe sonst als Hohlraum zurück — und dessen Knoten alle in 
 Tetraedern stehen. Das ist der Weg zu einem Netz ohne Splitter; das Protokoll nennt
 Zahl und Rauminhalt.
 
+**Sweep: Grundfläche mal Weg (`sweep.py`, 20.09.2026).** Der lineare Tetraeder ist
+zum Teil aus Abzählung schlecht: am Drehlager stehen 645 934 Tetraeder auf 158 586
+Knoten, 4,07 Elemente je Knoten; Volumentreue ist eine Bedingung je Element, also
+4,07 Bedingungen auf 3 Verschiebungen je Knoten — das Netz versteift sich selbst, und
+beim Fließen (volumentreu) erst recht. Ein Hexaedernetz hat rund ein Element je Knoten,
+ein Keilnetz rund zwei; keines von beiden sperrt so. Darum wird ein Körper, der sich
+als **Grundfläche mal Weg** beschreiben lässt, gesweept statt frei vernetzt — Platte,
+Ring, Flansch, Rippe, Lasche mit Bohrungen: fast alles, was aus einer Skizze
+extrudiert wurde.
+
+Erkannt wird das an der Randdarstellung: zwei ebene Flächen, von denen die eine die
+um einen Vektor t verschobene Kopie der anderen ist (Außenrand und Öffnungen, Punkt für
+Punkt), und jede weitere Fläche eine Wand aus vier Linien — eine Linie des Grundes, ihre
+Kopie im Deckel, zwei gerade Mantellinien längs t (der Bohrungsmantel aus RFEM ist aus
+zwei solchen Vierseitflächen gebaut). Das Netz der Grundfläche kommt aus dem
+vorhandenen Flächenvernetzer (Dreiecke); benachbarte Dreiecke werden **zu Vierecken
+gepaart**, gierig nach der Güte des Vierecks (skalierte Jacobi-Determinante, mindestens
+0,3), der Rest bleibt Dreieck. Dann wird in Lagen durchgezogen: Viereck → `hex8`,
+Dreieck → `pent6`. Die Zahl der Lagen folgt aus Weg und Kantenlänge (mindestens zwei,
+`sweep.LAGEN_MIN`) — **nicht** aus der Kartenteilung der Mantellinien: die Regel „eine
+Linie neben einer feineren" teilt die Mantellinie neben einer feinen Bohrungssehne für
+den Tetraeder fein (Platte mit Bohrungen: 10 Lagen statt 4, Kragplatte 4 473 statt
+1 491 Knoten); für Hexaeder und Keile ist die Teilung je Richtung frei, das ist gerade
+ihr Vorzug. Gehört eine Mantellinie einem zweiten Körper, gilt dessen Teilung für alle
+Lagen, verschiedene Teilungen sperren den Sweep. Randseiten werden nicht gesucht,
+sondern gesetzt: Grund, Deckel und je Wand die Elementseiten längs der Randkanten. Der
+Rauminhalt ist Grundfläche mal Höhe und wird gegen die Elemente geprüft.
+
+Gemessen (20.09.2026, h = 50 mm, ein Prozess):
+
+| Platte 1 × 0,6 × 0,2 m | Elemente | Knoten | je Knoten | Güte min | Netz | \|u\| max | σ_v max |
+|---|---|---|---|---|---|---|---|
+| Bohrungen r = 100 und 20 mm, tet4 | 20 608 | 3 925 | 5,25 | 0,101 | 0,9 s | 0,560 mm | 340 N/mm² |
+| dieselbe, Sweep (4 Lagen) | 1 380 hex8 + 264 pent6 | 2 145 | **0,77** | 0,233 | 0,3 s | 0,568 mm | 237 N/mm² |
+| fünf Bohrungen, tet4 | 40 364 | 7 641 | 5,28 | 0,101 | 2,7 s | 0,566 mm | 490 N/mm² |
+| dieselbe, Sweep (4 Lagen, 87,6 % Hexaeder) | 2 876 hex8 + 408 pent6 | 4 240 | 0,77 | 0,194 | 0,4 s | 0,574 mm | 239 N/mm² |
+
+Kein umgestülptes Element, Rauminhalt exakt, Abnahme ohne Befund. Die Verschiebungen
+stimmen auf 1 % überein; die größte Vergleichsspannung am Bohrungsrand liegt beim
+Tetraedernetz um die Hälfte bis das Doppelte höher — welcher Wert der Wahrheit näher
+ist, sagt erst ein konvergiertes Netz; hier steht nur, dass die Netze dort verschieden
+antworten.
+
+Die Probe, um die es dem Auftrag geht, ist die **Kragplatte** 1 × 0,2 × 0,05 m mit
+10 kN Endlast (kleine Bohrung am freien Ende, damit sie kein Quader ist), h = 25 mm,
+gegen Bernoulli mit Schubanteil (7,634 mm):
+
+| | Elemente | Knoten | Endverschiebung |
+|---|---|---|---|
+| tet4, 2 Lagen | 15 720 | 3 128 | 5,218 mm = **68,4 %** |
+| Sweep, 2 Lagen | 848 hex8 + 60 pent6 | 1 491 | 7,448 mm = **97,6 %** |
+
+Der Hexaeder mit inkompatiblen Moden trägt die Biegung mit zwei Lagen; der lineare
+Tetraeder bleibt bei zwei Lagen um fast ein Drittel zu steif — mit weniger als der
+Hälfte der Knoten.
+
+**Nachbarn.** Ein Tetraeder-Körper an einer Wand des gesweepten Körpers muss dessen
+Lagenpunkte treffen; ein freies Dreiecksnetz der Wand täte das nicht. Darum legt der
+Sweep seine Flächennetze (Grund, Deckel, Wände: Vierecke über die kürzere Diagonale
+geteilt, mit Kennung der Linienpunkte) als **vorgegebene Flächennetze** ab
+(`model.flaechennetze`); `flaechennetz` gibt sie jedem Körper zurück, der die Fläche
+berandet, und die Knoten werden über dieselben Schlüssel geteilt wie bisher (Kennung
+für Linienpunkte, Fläche und Koordinate für Flächenpunkte). Gesweepte Körper laufen
+darum im Hauptprozess **vor** den freien, die in den Arbeitsprozessen das Modell mit den
+Netzen lesen. An der Grenze steht eine Hexaederseite zwei Tetraederseiten gegenüber:
+knotenkonform, mit einer anderen Interpolation auf der Vierecksdiagonale. Pyramiden als
+Übergang (`pyr5`) und das Zerlegen nicht sweepbarer Körper in sweepbare Blöcke sind die
+nächsten Schritte. Reine Quader (sechs Vierecke, acht Knoten) bleiben beim abgebildeten
+Hexaedernetz mit ihrer Teilung; `netz.sweep = False` schaltet den Sweep ab.
+
 ## 6b Netzqualität (`netzguete.py`)
 
 Die Formgüte misst, wie nah ein Element an seiner regelmäßigen Gestalt ist;

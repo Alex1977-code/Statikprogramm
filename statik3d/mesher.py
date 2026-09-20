@@ -660,6 +660,21 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
         koerper.elemente = els
         C.say(log, f"Volumen {koerper.name}: ein Tetraeder")
         return els
+    # Sweep: Grundflaeche mal Weg -> Hexaeder und Keile (statik3d.sweep).
+    # Vor dem freien Vernetzer, denn er liefert das bessere Netz: rund ein
+    # Element je Knoten statt vier (Auftrag Sechsflaechner, 20.09.2026).
+    if bool(getattr(getattr(model, "netz", None), "sweep", True)):
+        from . import sweep as SW
+        try:
+            erk = SW.erkennen(model, koerper)
+        except Exception as ex:               # noqa: BLE001 - dann der freie Vernetzer
+            erk = None
+            C.say(log, f"Volumen {koerper.name}: Sweep-Erkennung gescheitert ({str(ex)[:80]}) - "
+                       "der freie Vernetzer übernimmt.")
+        if erk is not None:
+            els = SW.vernetzen(model, koerper, erk, h, log, cache, karten)
+            if els:
+                return els
     if frei:
         from .mesher3d import mesh_koerper_frei
         return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
@@ -685,7 +700,14 @@ def abgebildet(model: Model, koerper) -> bool:
     knoten = {n for r in ringe for n in r}
     if len(flaechen) == 6 and len(knoten) == 8 and all(len(r) == 4 for r in ringe):
         return True
-    return len(flaechen) == 4 and len(knoten) == 4
+    if len(flaechen) == 4 and len(knoten) == 4:
+        return True
+    # Sweepbare Koerper sind billig (strukturiert) und muessen **vor** den
+    # freien Koerpern laufen: ihre Flaechennetze bekommen die Nachbarn
+    # vorgegeben (model.flaechennetze), die Arbeitsprozesse lesen das Modell
+    # erst danach.
+    from . import sweep as SW
+    return SW.sweepbar(model, koerper)
 
 
 # --------------------------------------------------------------------------
@@ -814,6 +836,14 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     def fertig_melden():
         if fortschritt is not None and not aus["abgebrochen"]:
             fortschritt(1.0, f"{aus['fertig']} von {len(koerper)} Volumen vernetzt")
+        # Das Erfolgsmass des Auftrags Sechsflaechner: der Hexaederanteil
+        from . import sweep as SW
+        z = SW.hexaederanteil(model, koerper)
+        if z["elemente"]:
+            C.say(log, f"Volumen gesamt: {z['elemente']} Elemente auf {z['knoten']} Knoten "
+                       f"({z['elemente_je_knoten']:.2f} je Knoten) - Hexaeder {z['hexaeder']} "
+                       f"({z['anteil_hexaeder'] * 100:.1f} %), Keile {z['keile']}, "
+                       f"Pyramiden {z['pyramiden']}, Tetraeder {z['tetraeder']}")
 
     frei = [k for k in koerper if not abgebildet(model, k)]
     # 1) Abgebildete Koerper gleich hier - das kostet nichts
@@ -823,6 +853,9 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     # Arbeitsprozesse (netzfeld.aufbauen).
     from . import netzfeld
     model.groessenfeld = netzfeld.aufbauen(model, log=log)
+    # Vorgegebene Flaechennetze (Sweep) - je Lauf neu; die abgebildeten und
+    # gesweepten Koerper fuellen sie, die freien Koerper lesen sie.
+    model.flaechennetze = {}
     # Die modellweiten Netzkarten einmal je Lauf - fuer alle Pfade. Je Koerper
     # gebildet kosteten sie am Drehlager 48 x 1,5 s in der seriellen Phase.
     karten = netzkarten(model)

@@ -1296,6 +1296,13 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     setzt :func:`randschale` die Huelle zusammen, ohne auf Koordinaten zu
     vertrauen.
     """
+    # Ein Netz, das ein gesweepter Koerper fuer diese Flaeche schon gelegt hat
+    # (statik3d.sweep, model.flaechennetze), gilt fuer alle: nur so treffen
+    # die Tetraeder des Nachbarn die Lagenpunkte der Wand.
+    vorgabe = (getattr(model, "flaechennetze", None) or {}).get(flaeche.name)
+    if vorgabe is not None:
+        Pv, Tv, kv = vorgabe
+        return np.asarray(Pv, float), np.asarray(Tv, int), "", [], list(kv)
     zug = _linienzug(teilung, model, flaeche.linien or [])
     if zug is None:
         return np.zeros((0, 3)), np.zeros((0, 3), int), "Rand schliesst nicht", [], []

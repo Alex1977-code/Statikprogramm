@@ -369,6 +369,8 @@ def test_koerper_mit_kugel_durch_die_abnahme():
     m.netz.ziellaenge = 0.05
     m.netz.dichte = "eigene"
     m.netz.max_elemente = 1_000_000
+    # Geprueft wird der freie Vernetzer (Tetraeder); die Platte ist sweepbar
+    m.netz.sweep = False
     m.netz.verfeinerungen = [{"art": "kugel", "mitte": [0.6, 0.3, 0.1], "radius": 0.03, "h": 0.006}]
     log = []
     erg = mesher.modell_vernetzen(m, log, workers=1)
@@ -391,6 +393,7 @@ def test_netzknoten_und_wiederholtes_vernetzen():
     zug_und_lager(m)
     m.netz.ziellaenge = 0.1
     m.netz.dichte = "eigene"
+    m.netz.sweep = False                     # der Tetraederweg ist der Gegenstand
     n_geo = m.nn
     log = []
     mesher.modell_vernetzen(m, log, workers=1)
@@ -429,6 +432,7 @@ def test_netzknoten_und_wiederholtes_vernetzen():
     zug_und_lager(m2)
     m2.netz.ziellaenge = 0.1
     m2.netz.dichte = "eigene"
+    m2.netz.sweep = False
     mesher.modell_vernetzen(m2, [], workers=1)
     log = []
     mesher.modell_vernetzen(m2, log, workers=1)

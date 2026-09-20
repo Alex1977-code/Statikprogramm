@@ -1803,6 +1803,10 @@ class Netzeinstellungen:
     verfeinerungen: list = field(default_factory=list)
     feldpunkte: list = field(default_factory=list)
     koerper_h: dict = field(default_factory=dict)
+    #: Sweepbare Koerper (Grundflaeche mal Weg) als Hexaeder und Keile
+    #: vernetzen statt als Tetraeder (statik3d.sweep, 20.09.2026). Aus nur
+    #: zum Vergleich - der Tetraeder ist das schlechtere Element.
+    sweep: bool = True
     #: Linien an **Nebenflaechen** (ohne Last, Lager, Kontakt, Nachbar -
     #: netzfeld.bedeutung) mit dem groben Bogenwinkel teilen (45 statt 18
     #: Grad, acht statt zwanzig Abschnitte je Vollkreis). Aus als Vorgabe:
