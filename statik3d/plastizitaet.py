@@ -1,5 +1,9 @@
 """Plastizitaet der Volumenelemente (17.09.2026): von Mises mit isotroper
-linearer Verfestigung, gerechnet als **Anfangsdehnungs-Iteration**.
+linearer Verfestigung. Zwei Wege - die **Anfangsdehnungs-Iteration** bei
+fester Steifigkeit (unten) und, seit dem 20.09.2026 als Vorgabe, **Newton
+mit der konsistenten elastoplastischen Tangente** (ganz unten).
+
+Der alte Weg zuerst, denn der zweite setzt darauf auf.
 
 Warum so: der Loeser dieses Programms ist linear-elastisch plus Kontakt
 (Aktivmengen-Iteration mit fester Faktorisierung). Ein Fliessen laesst sich
@@ -28,6 +32,28 @@ Tangente E_t = E H / (E + H). Die Verfestigung wird als E_t/E angegeben.
 
 Voigt-Reihenfolge wie in elements.solid: xx, yy, zz, xy, yz, xz; Dehnungen
 mit Ingenieurgleitungen.
+
+**Zweiter Weg - konsistente Tangente (20.09.2026):** die Anfangsdehnungs-
+Iteration zieht sich mit dem Faktor 1 − E_t/E zusammen. Bei 1 % Verfestigung
+sind das 0,99 je Schritt (rund 700 Schritte fuer 1e-3); die Aitken-
+Beschleunigung ueberschiesst dort und bleibt bei einer Aenderung von 1e-1
+stehen - der Zugversuch lag bei 1,5 fy um 28,5 % daneben. Darum wird die
+Steifigkeit nun voreingestellt je Schritt neu aufgestellt und faktorisiert,
+mit der zur Rueckfuehrung **konsistenten** elastoplastischen Tangente (Simo
+& Hughes, Box 3.2), nicht mit der kontinuierlichen:
+
+    D_ep = K δ⊗δ + 2G θ (I − δ⊗δ/3) − 2G θ̄ N⊗N
+    θ = 1 − 3G Δγ / q_trial,  θ̄ = 1/(1 + H/3G) − (1 − θ),  N = s_trial/‖s_trial‖
+
+Das ist die Ableitung der Rueckfuehrung nach der Gesamtdehnung. Die Folge
+ist damit ein Newton-Verfahren und haengt nicht mehr an der Verfestigung:
+der Zugversuch braucht bei 1 % zwei bis vier Schritte je Laststufe statt
+"nicht konvergiert". Bezahlt wird es mit **einer Faktorisierung je Schritt**
+statt einer je Rechnung - siehe :func:`iteration`.
+
+Ganz exakt ist ΔK nur dort, wo der Auswertepunkt der einzige Gausspunkt ist
+(tet4, pyr5); bei hex8/pent6 weicht es rund 1 %, bei tet10/hex20/pent15 bis
+53 % ab (:func:`_dk_block`). Dort bleibt es ein Quasi-Newton.
 """
 from __future__ import annotations
 
@@ -39,17 +65,42 @@ import numpy as np
 _EINS = np.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
 _SCHUB = np.array([1.0, 1.0, 1.0, 2.0, 2.0, 2.0])
 
+#: Deviatorischer Projektor I − δ⊗δ/3 als Voigt-Matrix. In dieser Schreibweise
+#: ist D_AB = C_ijkl ohne Zusatzfaktoren, weil der Faktor 2 aus der Symmetrie
+#: des zweiten Indexpaares in der Ingenieurgleitung steckt - darum 1/2 auf den
+#: Schubplaetzen (Probe: mit θ = 1 und θ̄ = 0 kommt genau lam*P + diag(2G,2G,2G,G,G,G)
+#: heraus, also die Matrix von :func:`_spannung`).
+_P_DEV = np.array([
+    [2.0 / 3.0, -1.0 / 3.0, -1.0 / 3.0, 0.0, 0.0, 0.0],
+    [-1.0 / 3.0, 2.0 / 3.0, -1.0 / 3.0, 0.0, 0.0, 0.0],
+    [-1.0 / 3.0, -1.0 / 3.0, 2.0 / 3.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.5, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 0.5, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.5],
+])
+
+#: Die beiden Wege durch die Plastizitaet - siehe :func:`iteration`
+WEGE = ("tangente", "anfangsdehnung")
+
 
 @dataclass
 class Plastizitaet:
     """Einstellungen (am Modell): Fliessen rechnen, Verfestigung E_t/E,
     Laststufen, Iterationen je Stufe, Toleranz (Aenderung der plastischen
-    Knotenlasten gegen die aeussere Last)."""
+    Knotenlasten gegen die aeussere Last).
+
+    ``verfahren`` waehlt den Weg: ``"tangente"`` ist das Newton-Verfahren mit
+    der konsistenten elastoplastischen Tangente (eine Faktorisierung je
+    Schritt, dafuer wenige Schritte, unabhaengig von der Verfestigung),
+    ``"anfangsdehnung"`` die Anfangsdehnungs-Iteration bei fester Steifigkeit
+    (eine Faktorisierung je Rechnung, dafuer linear mit dem Faktor 1 − E_t/E).
+    """
     an: bool = False
     verfestigung: float = 0.01
     laststufen: int = 3
     iterationen: int = 25
     toleranz: float = 1e-3
+    verfahren: str = "tangente"
 
     def H(self, E: float) -> float:
         """Verfestigungsmodul H aus der Tangente E_t = r E: H = E r / (1 - r)."""
@@ -81,6 +132,107 @@ def rueckfuehrung(sig_trial, fy: float, H: float, G: float, eps_p_eq: float = 0.
     sig_neu = sig - 2.0 * float(G) * dgamma * n
     d_eps_p = dgamma * n * _SCHUB                     # Ingenieurgleitungen
     return sig_neu, d_eps_p, float(dgamma)
+
+
+def tangenten_differenz(dev, q, dgamma, G, H):
+    """ΔD = D_ep − D_el (n,6,6) fuer fliessende Elemente, konsistent zur
+    Rueckfuehrung in :func:`rueckfuehrung`.
+
+    ``dev`` ist der Deviator der **Versuchsspannung** (Tensorkomponenten in
+    Voigt-Reihenfolge), ``q`` ihre Vergleichsspannung, ``dgamma`` das Δγ der
+    Rueckfuehrung. Mit θ = 1 − 3G Δγ/q und θ̄ = 1/(1 + H/3G) − (1 − θ):
+
+        D_ep − D_el = 2G (θ − 1) (I − δ⊗δ/3) − 2G θ̄ N⊗N
+
+    Der Kugelanteil faellt heraus - Fliessen ist volumentreu, D_ep und D_el
+    unterscheiden sich nur deviatorisch. Darum traegt ΔK nur dort Eintraege,
+    wo Elemente fliessen, und es bleibt duenn.
+
+    Fuer H > 0 bleibt D_ep positiv definit: der Eigenwert in Richtung N ist
+    2G(θ − θ̄) = 2G (H/3G)/(1 + H/3G) > 0, quer dazu 2Gθ = 2G (fy + H ε_p)/q > 0.
+    """
+    G = np.asarray(G, float)
+    H = np.asarray(H, float)
+    q = np.asarray(q, float)
+    theta_1 = -3.0 * G * np.asarray(dgamma, float) / q          # θ − 1
+    quer = 1.0 / (1.0 + H / (3.0 * G)) + theta_1                # θ̄
+    N = np.asarray(dev, float) * (np.sqrt(1.5) / q)[:, None]    # s/‖s‖, ‖s‖ = q/√1,5
+    dD = (2.0 * G * theta_1)[:, None, None] * _P_DEV[None, :, :]
+    dD -= (2.0 * G * quer)[:, None, None] * (N[:, :, None] * N[:, None, :])
+    return dD
+
+
+def _B_stapel(g):
+    """Verzerrungsmatrix B (m,6,3k) aus den Ableitungen g (m,k,3) - dieselbe
+    Belegung wie elements.solid._B_from_grad, nur ueber einen Stapel."""
+    m, k = g.shape[0], g.shape[1]
+    B = np.zeros((m, 6, 3 * k))
+    B[:, 0, 0::3] = g[:, :, 0]
+    B[:, 1, 1::3] = g[:, :, 1]
+    B[:, 2, 2::3] = g[:, :, 2]
+    B[:, 3, 0::3] = g[:, :, 1]
+    B[:, 3, 1::3] = g[:, :, 0]
+    B[:, 4, 1::3] = g[:, :, 2]
+    B[:, 4, 2::3] = g[:, :, 1]
+    B[:, 5, 0::3] = g[:, :, 2]
+    B[:, 5, 2::3] = g[:, :, 0]
+    return B
+
+
+def _dk_block(d, stellen, dev, q, dgamma, G, H, ndof):
+    """ΔK = Σ_e V_e B_mᵀ ΔD B_m der fliessenden Elemente eines Stapels (duenn).
+
+    ``B_m`` ist die Verzerrungsmatrix am **Auswertepunkt** (der Mitte), V_e das
+    Elementvolumen. Nicht ∫ Bᵀ ΔD B dV ueber die Gausspunkte - und das ist
+    keine Schlamperei, sondern die Ableitung dieser Formulierung: eps_p haengt
+    allein an der Dehnung in der Mitte (dort wird die Spannung ausgewertet,
+    :func:`_stapel`), also ist
+
+        ∂F_p/∂u = [Σ_gp w Bᵀ_gp] D (∂eps_p/∂ε_m) B_m = −L ΔD B_m.
+
+    Bei tet4 und pyr5 ist L = V Bᵀ und das exakt (gemessen gegen die zentrale
+    Differenz von F_p: 8e-10); bei hex8 und pent6 weicht es an verzerrten
+    Elementen rund 1 % ab, bei tet10, hex20 und pent15 bis 53 % - dort ist das
+    Mittel von dN ueber das Element nicht der Wert in der Mitte, und es bleibt
+    ein Quasi-Newton.
+    Die Gausspunktfassung ∫ Bᵀ ΔD B dV ist dagegen **zu weich** in den
+    Biegemoden, auf die F_p gar nicht reagiert: am Reibblock (hex8, Aufgabe
+    tests.test_plastizitaet.test_kontakt) lief sie in Stufe 2 mit dem Faktor
+    ~100 je Schritt davon (Aenderung 1,7e0 → 1,0e36 in 19 Schritten),
+    waehrend diese Fassung in 4 Schritten konvergiert (20.09.2026).
+    Die symmetrische Mittelpunktfassung bleibt ausserdem negativ semidefinit
+    (ΔD ⪯ 0), K + ΔK also positiv definit - CHOLMOD im Loeser vertraegt
+    keine unsymmetrische Matrix.
+
+    Gerechnet wird in Bloecken von rund 16 MB je Zwischenfeld (ke, Zeilen,
+    Spalten sind alle (m, 3k, 3k)): am Drehlager waeren 646.706 Tetraeder auf
+    einmal 745 MB allein fuer die Zeilennummern, bei hex20 (60x60 je Element)
+    das Fuenfundzwanzigfache. Auch ΔD entsteht erst je Block.
+    """
+    from scipy import sparse
+    stellen = np.asarray(stellen, dtype=np.int64)
+    nz = 3 * d["k"]
+    if stellen.size == 0:
+        return sparse.csr_matrix((ndof, ndof))
+    V = d.get("volumen")
+    if V is None:
+        V = d["volumen"] = sum(gew for _dNg, gew in d["lasten"])
+    gr = max(1, 2_000_000 // (nz * nz))
+    zeilen, spalten, werte = [], [], []
+    for a0 in range(0, stellen.size, gr):
+        teil = stellen[a0:a0 + gr]
+        s = slice(a0, a0 + gr)
+        dd = d["dofs"][teil]
+        B = _B_stapel(d["dN"][teil])
+        dD = tangenten_differenz(dev[s], q[s], dgamma[s], G[s], H[s])
+        ke = V[teil][:, None, None] * np.einsum("nji,njk->nik", B,
+                                                np.einsum("nij,njk->nik", dD, B))
+        zeilen.append(np.repeat(dd, nz, axis=1).ravel())
+        spalten.append(np.tile(dd, (1, nz)).ravel())
+        werte.append(ke.reshape(-1))
+    return sparse.coo_matrix((np.concatenate(werte),
+                              (np.concatenate(zeilen), np.concatenate(spalten))),
+                             shape=(ndof, ndof)).tocsr()
 
 
 class Zustand:
@@ -205,9 +357,13 @@ def _spannung(lam, mu2, eps):
 
 
 def _schritt_block(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list,
-                   typ: str, log: list = None) -> tuple:
+                   typ: str, log: list = None, tangente: bool = False) -> tuple:
     """Ein Schritt fuer einen Stapel gleichen Typs - dieselbe Rechnung wie
-    :func:`_schritt_schleife`, nur als Feldoperationen."""
+    :func:`_schritt_schleife`, nur als Feldoperationen.
+
+    ``tangente=True`` gibt in info["dK"] zusaetzlich ΔK = Σ ∫ Bᵀ (D_ep − D_el) B dV
+    der fliessenden Elemente zurueck - die Steifigkeitsaenderung des
+    Newton-Verfahrens."""
     d = _stapel(model, elemente, typ)
     idx, dN, dofs, k = d["idx"], d["dN"], d["dofs"], d["k"]
     lam, mu2 = d["lam"], d["mu"]
@@ -278,13 +434,22 @@ def _schritt_block(model, u, zustand: Zustand, einst: Plastizitaet, elemente: li
     # q_max zaehlt nur Werkstoffe mit Streckgrenze: die Schleife ueberspringt
     # die uebrigen ganz (19.09.2026, vom Vergleichstest gefunden)
     q_max = float(q_neu[d["hat_fy"]].max()) if (n and d["hat_fy"].any()) else 0.0
-    return F_p, neu, {"fliessend": int(fliesst.sum()), "q_max": q_max}
+    info = {"fliessend": int(fliesst.sum()), "q_max": q_max}
+    if tangente:
+        ja = np.flatnonzero(fliesst)
+        H_el = np.broadcast_to(np.asarray(H, float), (n,))
+        info["dK"] = _dk_block(d, ja, dev[ja], q[ja], dgamma[ja], G[ja], H_el[ja],
+                               model.ndof)
+    return F_p, neu, info
 
 
-def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log: list = None) -> tuple:
+def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log: list = None,
+            tangente: bool = False) -> tuple:
     """Ein Schritt der Anfangsdehnungs-Iteration: aus u die Versuchsspannung
     D(ε − eps_p) je Element, Rueckfuehrung, neue eps_p, plastische
-    Knotenlasten F_p = Σ ∫ Bᵀ D eps_p dV. Rueckgabe (F_p, Zustand, info)."""
+    Knotenlasten F_p = Σ ∫ Bᵀ D eps_p dV. Rueckgabe (F_p, Zustand, info).
+
+    ``tangente=True`` legt ΔK der konsistenten Tangente in info["dK"] dazu."""
     from . import assemble as asm
     from .elements import solid as sl
     # Blockweise: die Schleife kostet am Drehlager 80 µs je Element, und das
@@ -292,22 +457,30 @@ def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log
     # (19.09.2026). Gerechnet wird je Elementtyp ein Stapel; die Schleife
     # bleibt fuer unbekannte Typen und als Referenz des Vergleichstests.
     if not elemente:
-        return np.zeros(model.ndof), zustand.kopie(), {"fliessend": 0, "q_max": 0.0}
+        from scipy import sparse
+        leer = {"fliessend": 0, "q_max": 0.0}
+        if tangente:
+            leer["dK"] = sparse.csr_matrix((model.ndof, model.ndof))
+        return np.zeros(model.ndof), zustand.kopie(), leer
     from .elements import solid as sl
     je_typ: dict = {}
     for i in elemente:
         je_typ.setdefault(model.elements[i].typ, []).append(i)
     if any(t not in sl._ISO for t in je_typ):
+        if tangente:
+            raise NotImplementedError("konsistente Tangente nur fuer die bekannten "
+                                      "Volumenelementtypen")
         return _schritt_schleife(model, u, zustand, einst, elemente, log)
     if len(je_typ) == 1:
         typ, liste = next(iter(je_typ.items()))
-        return _schritt_block(model, u, zustand, einst, liste, typ, log)
+        return _schritt_block(model, u, zustand, einst, liste, typ, log, tangente)
     # Gemischtes Netz: je Typ ein Stapel, die Ergebnisse zusammenlegen
     F_p = np.zeros(model.ndof)
     neu = zustand.kopie()
     n_fliesst, q_max = 0, 0.0
+    dK = None
     for typ, liste in je_typ.items():
-        Fb, zb, ib = _schritt_block(model, u, zustand, einst, liste, typ, log)
+        Fb, zb, ib = _schritt_block(model, u, zustand, einst, liste, typ, log, tangente)
         F_p += Fb
         for i in liste:
             if i in zb.eps_p:
@@ -315,7 +488,12 @@ def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log
                 neu.eps_p_eq[i] = zb.eps_p_eq[i]
         n_fliesst += ib["fliessend"]
         q_max = max(q_max, ib["q_max"])
-    return F_p, neu, {"fliessend": n_fliesst, "q_max": q_max}
+        if tangente:
+            dK = ib["dK"] if dK is None else (dK + ib["dK"])
+    info = {"fliessend": n_fliesst, "q_max": q_max}
+    if tangente:
+        info["dK"] = dK
+    return F_p, neu, info
 
 
 def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list,
@@ -362,10 +540,95 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
     return F_p, neu, {"fliessend": n_fliesst, "q_max": q_max}
 
 
-def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = None, progress=None) -> tuple:
-    """Laststufen und Anfangsdehnungs-Iteration. ``loesen(F_ges)`` liefert u
-    fuer die Gesamtlast (mit Kontakt: eine Kontakt-Iteration). Rueckgabe
-    (u, Zustand, F_p, info) fuer die volle Last."""
+def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: list,
+            norm_F: float, info: dict, log: list = None, progress=None) -> tuple:
+    """Newton mit der konsistenten Tangente - siehe :func:`iteration`.
+
+    Die Rueckfuehrung geht in jedem Schritt vom Zustand am **Anfang der
+    Laststufe** aus (``basis``), nicht vom letzten Schritt: nur dann ist
+    F_p eine Funktion von u allein und D_ep wirklich ihre Ableitung. Die
+    Anfangsdehnungs-Iteration schreibt eps_p dagegen von Schritt zu Schritt
+    fort - dasselbe im Grenzwert, aber nicht differenzierbar.
+    """
+    info["verfahren"] = "tangente"
+    stufen = int(max(1, einst.laststufen))
+    basis = Zustand()
+    F_p = np.zeros(model.ndof)
+    u = None
+    diff = 0.0
+    for k in range(1, stufen + 1):
+        F_k = (k / stufen) * F
+        # Startwert der Laststufe: elastische Loesung mit dem bisherigen F_p -
+        # ein Rueckwaertseinsetzen auf der schon vorhandenen Faktorisierung
+        u = loesen(F_k + F_p)
+        F_p_stufe, zustand_stufe = F_p, basis
+        for it in range(1, int(max(1, einst.iterationen)) + 1):
+            F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log,
+                                                   tangente=True)
+            diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / norm_F
+            F_p_stufe, zustand_stufe = F_p_neu, zustand_neu
+            info["iterationen"] += 1
+            info["verlauf"].append((k, it, diff, s_info["fliessend"]))
+            if progress is not None:
+                progress(f"Plastizität: Laststufe {k}/{stufen}, Newton-Schritt {it}: "
+                         f"{s_info['fliessend']} Elemente fließen, Änderung {diff:.2e}")
+            if diff <= float(einst.toleranz):
+                break
+            dK = s_info["dK"]
+            if dK.nnz == 0:
+                # Nichts fliesst gerade (etwa beim Entlasten): die Tangente ist
+                # die elastische, und dafuer gibt es die Faktorisierung schon
+                u = loesen(F_k + F_p_neu)
+            else:
+                u = loesen_tangente(F_k + F_p_neu + dK @ u, dK)
+                info["faktorisierungen"] += 1
+        else:
+            info["konvergiert"] = False
+            if log is not None:
+                log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} Newton-Schritten "
+                           f"nicht konvergiert (Änderung {diff:.2e} > {einst.toleranz:g})")
+        basis, F_p = zustand_stufe, F_p_stufe
+    # Die letzte Loesung gehoert zum letzten Zustand: im Gleichgewicht ist
+    # K u = F + F_p, also genau diese elastische Loesung
+    u = loesen(F + F_p)
+    info["fliessend"] = len(basis.fliessend())
+    info["eps_p_max"] = float(max(basis.eps_p_eq.values())) if basis.eps_p_eq else 0.0
+    if log is not None:
+        log.append(f"Plastizität: {info['fliessend']} Elemente fließen, ε_p,eq max "
+                   f"{info['eps_p_max'] * 100:.3f} %, {info['iterationen']} Newton-Schritte in "
+                   f"{stufen} Laststufen ({info['faktorisierungen']} Faktorisierungen, "
+                   f"konsistente Tangente)"
+                   + ("" if info["konvergiert"] else " - nicht konvergiert"))
+    return u, basis, F_p, info
+
+
+def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = None,
+              progress=None, loesen_tangente=None) -> tuple:
+    """Laststufen und Fliess-Iteration. ``loesen(F_ges)`` liefert u fuer die
+    Gesamtlast bei der **elastischen** Steifigkeit (mit Kontakt: eine
+    Kontakt-Iteration, die Faktorisierung bleibt). Rueckgabe
+    (u, Zustand, F_p, info) fuer die volle Last.
+
+    Zwei Wege, ``einst.verfahren`` waehlt:
+
+    * ``"tangente"`` (Vorgabe) - Newton mit der konsistenten elastoplastischen
+      Tangente. Braucht ``loesen_tangente(F_ges, dK)``: loest mit der
+      Steifigkeit K + dK, also **je Schritt eine neue Faktorisierung**. Die
+      Fortschreibung in Gesamtform ist
+
+          (K + ΔK) u_{k+1} = F_k + F_p(u_k) + ΔK u_k,
+
+      identisch zu ΔK-Newton auf dem Residuum F_k + F_p − K u (die
+      Randbedingungen und der Kontakt bleiben dem Loeser ueberlassen). Die
+      Rueckfuehrung geht in jedem Schritt vom Zustand am **Anfang der
+      Laststufe** aus - nur so ist die Tangente wirklich die Ableitung.
+    * ``"anfangsdehnung"`` - die alte Fixpunktfolge bei fester Steifigkeit
+      mit Aitken-Relaxation. Eine Faktorisierung je Rechnung, aber linear mit
+      dem Faktor 1 − E_t/E: bei 1 % Verfestigung 0,99 je Schritt.
+
+    Ohne ``loesen_tangente`` (etwa aus einem Test, der nur ``system.solve``
+    hergibt) faellt "tangente" auf "anfangsdehnung" zurueck.
+    """
     elemente = _solid_elemente(model, aktiv)
     zustand = Zustand()
     F = np.asarray(F, float)
@@ -373,10 +636,20 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     F_p = np.zeros(model.ndof)
     u = None
     info = {"laststufen": int(max(1, einst.laststufen)), "iterationen": 0, "konvergiert": True,
-            "fliessend": 0, "eps_p_max": 0.0, "verlauf": []}
+            "fliessend": 0, "eps_p_max": 0.0, "verlauf": [], "faktorisierungen": 0,
+            "verfahren": "anfangsdehnung"}
     if not elemente:
         u = loesen(F)
         return u, zustand, F_p, info
+    from .elements import solid as sl
+    # Ohne Verfestigung ist D_ep in Fliessrichtung singulaer (Eigenwert
+    # 2G(θ − θ̄) = 2G (H/3G)/(1 + H/3G) = 0) - dann bleibt nur die
+    # Anfangsdehnungs-Iteration. Ebenso bei einem Elementtyp ohne Stapel.
+    kann_tangente = (loesen_tangente is not None and einst.H(1.0) > 0.0
+                     and all(model.elements[i].typ in sl._ISO for i in elemente))
+    if str(getattr(einst, "verfahren", "tangente")) == "tangente" and kann_tangente:
+        return _newton(model, F, loesen, loesen_tangente, einst, elemente, norm_F, info,
+                       log, progress)
     stufen = int(max(1, einst.laststufen))
     for k in range(1, stufen + 1):
         lam = k / stufen

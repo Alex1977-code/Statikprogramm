@@ -11705,12 +11705,48 @@ class MainWindow(QtWidgets.QMainWindow):
         # keine Programmeinstellung - sie reist mit der Datei
         gp = QtWidgets.QGroupBox("Plastizität der Volumen (Einstellung am Modell)")
         gpl = QtWidgets.QVBoxLayout(gp)
-        self.cb_plast = QtWidgets.QCheckBox("Fließen rechnen: von Mises mit Verfestigung, Anfangsdehnungs-Iteration")
+        # Knotengemittelte Dilatation (20.09.2026): der lineare Tetraeder
+        # versteift volumetrisch, und im Fliessbereich am staerksten - von
+        # Mises ist volumentreu, die Querdehnzahl geht praktisch gegen 0,5.
+        # Darum steht der Schalter hier, bei der Plastizitaet.
+        self.cb_dilat = QtWidgets.QCheckBox(
+            "Tetraeder ohne volumetrische Versteifung (knotengemittelte Dilatation)")
+        self.cb_dilat.setToolTip(
+            "Der lineare Tetraeder (tet4) versteift: er hat konstante Dehnung und kann die "
+            "Volumenänderung nicht getrennt abbilden. Mit diesem Haken wird der volumetrische "
+            "Anteil der Steifigkeit über den Elementverband jedes Knotens gemittelt statt je "
+            "Element genommen; der deviatorische bleibt elementweise.\n\n"
+            "Gemessen am Kragträger 0,2 × 0,2 × 2,0 m mit 480 Tetraedern, gegen die "
+            "Balkenlösung: bei ν = 0,3 steigt die Endverschiebung von 51,0 auf 67,2 % der "
+            "Balkenlösung, bei ν = 0,49 von 10,6 auf 58,5 %, bei ν = 0,499 von 2,1 auf "
+            "51,1 %. Je näher die Querdehnzahl an 0,5, desto größer der Unterschied - und "
+            "genau dorthin läuft der Werkstoff beim Fließen.\n\n"
+            "Der Preis: die Knoten eines Verbands werden gekoppelt, die Matrix bekommt mehr "
+            "Einträge je Zeile (am Kragträger 38,3 statt 14,8) und die Faktorisierung wird "
+            "teurer. Die Schubversteifung des Tetraeders bleibt bestehen - dagegen hilft nur "
+            "ein feineres Netz oder tet10. Betrifft nur tet4; alle anderen Elementtypen "
+            "rechnen unverändert.")
+        gpl.addWidget(self.cb_dilat)
+        self.cb_plast = QtWidgets.QCheckBox("Fließen rechnen: von Mises mit Verfestigung")
         self.cb_plast.setToolTip(
             "Volumenelemente, deren Vergleichsspannung die Streckgrenze fy ihres Werkstoffs übersteigt, "
             "fließen: die Spannung bleibt bei fy + H·ε_p, die Verformung wächst. Werkstoffe ohne fy bleiben "
-            "elastisch. Jeder Schritt ist eine lineare Lösung mit der Zusatzlast der plastischen Dehnung, "
-            "mit Kontakt eine Kontakt-Iteration; Kombinationen werden dann direkt gerechnet.")
+            "elastisch. Mit Kontakt ist jeder Schritt eine Kontakt-Iteration; Kombinationen werden dann "
+            "direkt gerechnet.")
+        self.cb_plast_weg = QtWidgets.QComboBox()
+        for t_, v_ in (("konsistente Tangente (Vorgabe)", "tangente"),
+                       ("Anfangsdehnung", "anfangsdehnung")):
+            self.cb_plast_weg.addItem(t_, v_)
+        self.cb_plast_weg.setToolTip(
+            "Konsistente Tangente: Newton, die Steifigkeit wird je Schritt neu aufgestellt und "
+            "faktorisiert. Konvergiert quadratisch und unabhängig von der Verfestigung - bei 1 % "
+            "Verfestigung braucht der Zugversuch 7 bis 12 Schritte und trifft auf 0,2 %.\n\n"
+            "Anfangsdehnung: feste Steifigkeit, eine Faktorisierung je Rechnung, dafür lineare "
+            "Konvergenz mit dem Faktor 1 − E_t/E (bei 1 % also 0,99 je Schritt - derselbe Zugversuch "
+            "konvergiert nicht und liegt 9 % daneben). Lohnt bei örtlichem Fließen und Verfestigung "
+            "ab 10 %, wo acht bis zehn Rückwärtseinsetzungen genügen.\n\n"
+            "Ohne Verfestigung (ideal-plastisch) wird immer mit Anfangsdehnung gerechnet: die "
+            "Tangente wäre dort singulär.")
         self.sp_plast_verf = QtWidgets.QDoubleSpinBox()
         self.sp_plast_verf.setRange(0.0, 50.0)
         self.sp_plast_verf.setDecimals(2)
@@ -11731,6 +11767,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_plast_tol.setCurrentIndex(1)
         self.cb_plast_tol.setToolTip("Änderung der plastischen Knotenlasten gegen die Last, bis zu der es konvergiert gilt")
         gpl.addWidget(self.cb_plast)
+        gpl.addWidget(row("Verfahren", self.cb_plast_weg))
         gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen,
                           "   Schritte je Stufe", self.sp_plast_it, "   Toleranz", self.cb_plast_tol))
         lay.addWidget(gp)
@@ -16519,11 +16556,15 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..plastizitaet import Plastizitaet
             pz = self.model.plastizitaet = Plastizitaet()
         self.cb_plast.setChecked(bool(pz.an))
+        if hasattr(self, "cb_dilat"):
+            self.cb_dilat.setChecked(bool(getattr(self.model, "knotendilatation", False)))
         self.sp_plast_verf.setValue(float(pz.verfestigung) * 100.0)
         self.sp_plast_stufen.setValue(int(pz.laststufen))
         self.sp_plast_it.setValue(int(pz.iterationen))
         k = self.cb_plast_tol.findData(float(pz.toleranz))
         self.cb_plast_tol.setCurrentIndex(k if k >= 0 else 1)
+        w = self.cb_plast_weg.findData(str(getattr(pz, "verfahren", "tangente")))
+        self.cb_plast_weg.setCurrentIndex(w if w >= 0 else 0)
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -16535,10 +16576,13 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..plastizitaet import Plastizitaet
             pz = self.model.plastizitaet = Plastizitaet()
         pz.an = bool(self.cb_plast.isChecked())
+        if hasattr(self, "cb_dilat"):
+            self.model.knotendilatation = bool(self.cb_dilat.isChecked())
         pz.verfestigung = float(self.sp_plast_verf.value()) / 100.0
         pz.laststufen = int(self.sp_plast_stufen.value())
         pz.iterationen = int(self.sp_plast_it.value())
         pz.toleranz = float(self.cb_plast_tol.currentData() or 1e-3)
+        pz.verfahren = str(self.cb_plast_weg.currentData() or "tangente")
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()
@@ -16618,7 +16662,11 @@ class MainWindow(QtWidgets.QMainWindow):
         f.raise_()
         return f
 
-    def _run_background(self, func, on_done, label):
+    def _run_background(self, func, on_done, label, posten=None):
+        """`posten`: [(Name, Art)] der Lastfaelle und Kombinationen dieser
+        Rechnung. Ist die Liste da, oeffnet sich das Fenster mit einer Zeile
+        je Posten (gui.rechenliste) - bei 422 Lastfaellen sagen Balken und
+        Protokoll allein zu wenig. Ohne Liste bleibt alles wie bisher."""
         if self.worker is not None and self.worker.isRunning():
             return self.error("Es läuft bereits eine Berechnung")
         self.btn_solve.setEnabled(False)
@@ -16652,7 +16700,45 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.finished_ok.connect(lambda r: self._bg_done(on_done, r))
         self.worker.failed.connect(self._bg_failed)
         self.worker.abgebrochen.connect(self._bg_abgebrochen)
+        self._rechenliste_oeffnen(posten)
         self.worker.start()
+
+    def _rechenliste_oeffnen(self, posten) -> None:
+        """Das Fenster mit einer Zeile je Posten zeigen und an den Worker haengen.
+
+        Nicht modal: die Liste laesst sich waehrend der Rechnung scrollen, und
+        das uebrige Programm bleibt bedienbar. Der Abbruchknopf ruft denselben
+        Weg wie der in der Statuszeile.
+        """
+        alt = getattr(self, "rechenliste", None)
+        if alt is not None:
+            alt.close()                       # das Fenster des vorigen Laufs
+            alt.deleteLater()
+        self.rechenliste = None
+        if not posten:
+            return
+        try:
+            from .rechenliste import Rechenliste
+        except Exception:                                  # noqa: BLE001
+            return
+        try:
+            fenster = Rechenliste(self)
+            from .. import solver as _slv
+            fenster.rechner_setzen("Prozesspool: %s   ·   Gleichungslöser: %s"
+                                   % (parallel.describe(), _slv.loeser_verfuegbar()))
+            fenster.posten_setzen(posten)
+            fenster.btn_abbrechen.clicked.connect(self._fortschritt_abbrechen)
+            self.worker.progress.connect(fenster.melden)
+            self.worker.finished_ok.connect(lambda _r: fenster.beenden("fertig"))
+            self.worker.failed.connect(lambda _m, _t: fenster.beenden("Fehler"))
+            self.worker.abgebrochen.connect(lambda _d: fenster.beenden("abgebrochen"))
+        except Exception as ex:                # noqa: BLE001
+            # Das Fenster ist Beiwerk. Scheitert es, laeuft die Rechnung
+            # trotzdem - mit Balken und Protokoll wie zuvor.
+            self.log.appendPlainText(f"    Rechenliste nicht geöffnet: {ex}")
+            return
+        self.rechenliste = fenster
+        fenster.show()
 
     def _rechnung_zeile(self, text: str) -> None:
         """Textmeldung des Rechenkerns: immer ins Protokoll, in die Statuszeile
@@ -17093,7 +17179,13 @@ class MainWindow(QtWidgets.QMainWindow):
             func = lambda p: solver.solve_modal(model, nmodes, p, kontakt=kontakt)
         else:
             func = lambda p: solver.solve_buckling(model, nmodes, p)
-        self._run_background(func, lambda r: self._solve_done(kind, r), "Berechnung")
+        try:
+            from .rechenliste import posten_aus_modell
+            posten = posten_aus_modell(model, kind)
+        except Exception:                      # noqa: BLE001
+            posten = []                        # die Liste ist Beiwerk - ohne sie wird gerechnet
+        self._run_background(func, lambda r: self._solve_done(kind, r), "Berechnung",
+                             posten=posten)
 
     def _kontaktzustand_zuletzt(self):
         """Der Kontaktzustand der gerade gezeigten statischen Loesung - die

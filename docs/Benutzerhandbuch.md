@@ -1040,6 +1040,54 @@ demselben Stand auch der lineare Weg jede Kombination einzeln
 fertig waren - bei 422 Kombinationen minutenlang - und ein Klick auf
 Abbrechen fand keinen Haltepunkt.
 
+### Die Rechenliste: jeder Lastfall mit Zeit, Schritten und Konvergenz
+
+Beim Start von **Berechnen** öffnet sich neben dem Hauptfenster die
+**Rechenliste** - eine Zeile je Posten, den dieser Lauf abarbeitet. Bei
+„Alle Lastfälle und Kombinationen“ stehen dort erst alle Lastfälle, dann alle
+Kombinationen, in der Reihenfolge, in der gerechnet wird; bei „Lastfall“ nur
+der aktive. Für Eigenschwingungen und Knicken bleibt sie zu - das ist ein
+einziger Lauf, und der Balken in der Statuszeile sagt darüber alles.
+
+Der Anlass: bei 422 Lastfällen sagt ein Balken wenig. Ein warmer Lastfall des
+Drehlagers braucht 343 s, 46 Kontakt- und 19 Plastizitätsschritte (gemessen
+20.09.2026) - wer wissen will, ob es vorangeht, will die Zahlen sehen, nicht
+einen Streifen.
+
+| Spalte | Was darin steht |
+|---|---|
+| Posten | Name des Lastfalls oder der Kombination |
+| Art | Lastfall oder Kombination |
+| Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“ bzw. „läuft (nicht konvergiert)“ |
+| Schritte | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Iterationen |
+| Konvergenz | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
+| Zeit | Laufzeit des Postens, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
+| Meldung | die letzte Zeile des Rechenkerns im Klartext |
+
+Über der Liste steht, **womit** gerechnet wird: der Prozesspool (Element-
+schleifen und Vernetzen) und der Gleichungslöser. Ist die **Rechnerfarm**
+eingeschaltet (Kapitel 9 und `docs/Rechnerfarm.md`), kommt ihr Stand alle
+zwei Sekunden dazu: „3 von 4 Rechnern aktiv, 18 Aufträge wartend, 141
+erledigt“. Nur Rechner, die sich in den letzten 30 s gemeldet haben, zählen
+als aktiv - so fällt ein ausgefallener Rechner auf. Bricht die Verbindung zur
+Farm ab, sagt die Zeile das; die Rechnung selbst läuft weiter.
+
+Die Liste **folgt** dem gerade rechnenden Posten. Scrollt man selbst, bleibt
+sie stehen - sonst ruckt sie beim Lesen unter dem Finger weg. Der Knopf **Dem
+Laufenden folgen** springt zurück und schaltet das Folgen wieder ein. Das
+Fenster ist nicht modal: das übrige Programm bleibt bedienbar, während
+gerechnet wird.
+
+**Abbrechen** in der Rechenliste ist derselbe Weg wie der Knopf in der
+Statuszeile: die Rechnung hält beim nächsten Rechenschritt an, eine laufende
+Faktorisierung läuft zu Ende, und was gerechnet war, bleibt (siehe oben). Der
+Posten, der dabei lief, steht danach auf „abgebrochen“.
+
+Hinter dem letzten Posten läuft noch der Nachlauf - Umhüllende und Nachweise.
+Solange steht er in der Fußzeile des Fensters („Kombination 54 von 54 -
+Umhüllende GZT-12: 3/7“), damit die Liste dabei nicht wie eingefroren
+aussieht.
+
 ### Ergebnisse und Bericht
 
 Was gerechnet wurde, steht im **Modellbaum unter „Ergebnisse"**: Umhüllende,
@@ -3098,6 +3146,33 @@ Nachweis mit seiner Verformung je Kombination.
   bringt solche Fälle auf 1e-12. Das Protokoll nennt Löser, Threads und
   Genauigkeit („MUMPS, 31 Threads, Genauigkeit 1e-06 mit bis zu 3
   Nachiterationen“). Beide Werte werden gespeichert.
+* **Tetraeder ohne volumetrische Versteifung** (*Berechnung → Einstellungen*,
+  bei der Plastizität, 20.09.2026). Der lineare Tetraeder `tet4` hat konstante
+  Dehnung und kann die Volumenänderung nicht getrennt von der Gestaltänderung
+  darstellen — er **versteift**. Mit diesem Haken wird der volumetrische Anteil
+  der Steifigkeit über den Elementverband jedes Knotens gemittelt statt je
+  Element genommen; der deviatorische bleibt elementweise. Gemessen am
+  Kragträger 0,2 × 0,2 × 2,0 m mit 480 Tetraedern, gegen die Balkenlösung:
+
+  | ν | ohne Haken | mit Haken |
+  |---|---|---|
+  | 0,300 | 51,0 % | 67,2 % |
+  | 0,450 | 30,2 % | 62,4 % |
+  | 0,499 | **2,1 %** | **51,1 %** |
+
+  Je näher die Querdehnzahl an 0,5, desto größer der Unterschied — und **genau
+  dorthin läuft der Werkstoff beim Fließen**, denn von-Mises-Fließen ist
+  volumentreu. Wer mit Plastizität rechnet und lineare Tetraeder im Netz hat,
+  sollte den Haken setzen; ohne ihn ist die plastische Zone zu steif.
+
+  Zwei Dinge gehören dazu: Die **Schubversteifung bleibt** — deshalb 67 % statt
+  der 99 %, die ein quadratischer Tetraeder erreicht; dagegen hilft nur ein
+  feineres Netz oder *Netzeinstellungen → Ordnung: quadratisch*. Und der Preis
+  steht in der Matrix: die Knoten eines Verbands werden gekoppelt, am
+  Kragträger 38,3 statt 14,8 Einträge je Zeile, die Faktorisierung wird
+  teurer. Betrifft nur `tet4`; alle anderen Elementtypen rechnen unverändert.
+  Die Einstellung hängt am **Modell** und wird mitgespeichert. Herleitung und
+  Nachweise im Theoriehandbuch, Abschnitt 6a.
 * **Plastizität der Volumen** (*Berechnung → Einstellungen*, 17.09.2026;
   eine Einstellung **am Modell**, sie reist mit der Datei): mit dem Haken
   fließen Volumenelemente, deren Vergleichsspannung (von Mises) die
@@ -3108,8 +3183,7 @@ Nachweis mit seiner Verformung je Kombination.
   ideal-plastisch, Vorgabe 1 %), **Laststufen** (Vorgabe 3) bringen die
   Last stufenweise auf, **Schritte je Stufe** (Vorgabe 25) und die
   **Toleranz** (Änderung der plastischen Knotenlasten gegen die Last,
-  Vorgabe 1e-3) begrenzen die Iteration. Jeder Schritt ist eine lineare
-  Lösung mit der vorhandenen Faktorisierung, mit Kontakt eine
+  Vorgabe 1e-3) begrenzen die Iteration. Mit Kontakt ist jeder Schritt eine
   Kontakt-Iteration (warm gestartet); Kombinationen werden dann direkt
   gerechnet, nicht überlagert. Die Spannungen im Ergebnis sind die wahren
   (σ = D(ε − ε_p)), die Auflagerkräfte tragen die Last. Das Protokoll nennt
@@ -3118,6 +3192,21 @@ Nachweis mit seiner Verformung je Kombination.
   in Laststufen“. Der Zugversuch am Hexaeder trifft σ/E + (σ − fy)/H auf
   1e-6, mit Kontakt bleibt das Gleichgewicht (`tests/test_plastizitaet.py`;
   Verfahren in `docs/Theoriehandbuch.md`, Abschnitt 5e).
+* **Verfahren der Plastizität** (20.09.2026): Vorgabe ist die **konsistente
+  Tangente** — ein Newton-Verfahren, das die Steifigkeit je Schritt neu
+  aufstellt und faktorisiert. Es konvergiert quadratisch und **unabhängig
+  von der Verfestigung**: der einachsige Zugversuch bei 1 % Verfestigung
+  braucht 7 bis 12 Schritte und trifft die geschlossene Lösung auf 0,2 %.
+  Der alte Weg (**Anfangsdehnung**, feste Steifigkeit, eine Faktorisierung
+  je Rechnung) zieht sich mit 1 − E_t/E zusammen — bei 1 % Verfestigung
+  0,99 je Schritt. Er konvergierte im selben Versuch nicht und lag bei
+  1,5 fy um 28,5 % in der Spannung und 9,5 % in der Dehnung daneben.
+  Bezahlt wird das mit einer Faktorisierung je Schritt (am Drehlager 3,2 s
+  gegen 0,31 s für ein Rückwärtseinsetzen). **Wann zurückschalten:** wenn
+  nur örtlich fließt und die Verfestigung bei 10 % oder darüber liegt —
+  dort kommt die Anfangsdehnung mit acht bis zehn Rückwärtseinsetzungen
+  aus und ist billiger. Bei 0 % Verfestigung (ideal-plastisch) schaltet
+  das Programm von selbst zurück, weil die Tangente dann singulär wäre.
 * **MUMPS** ist unter Windows ein eigener Bau (gfortran, OpenMP, OpenBLAS,
   METIS — `docs/MUMPS_Windows_Bauanleitung.md`), nachgeladen beim Start. Symmetrische
   Steifigkeitsmatrizen gehen als unteres Dreieck hinein (SYM=2): halber

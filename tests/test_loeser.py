@@ -522,9 +522,19 @@ def test_threadzahl_aus_den_einstellungen():
               f"pardiso {n_p}, mumps {threads_automatisch('mumps')}")
         try:
             import mumps as _mu
-            check("PARDISO automatisch = min(Kerne - 1, physische Kerne) - so kappt MKL (16 auf 16/32)",
-                  n_p == min(max(1, os.cpu_count() - 1), _mu.physische_kerne()) or not da.get("pardiso"),
-                  f"{n_p} bei {_mu.physische_kerne()} physischen Kernen")
+            # Geprueft wird die **Schranke**, nicht der Wert. Wie stark MKL
+            # kappt, ist seine Sache und haengt vom Rechner ab: hier auf die
+            # 16 physischen Kerne von 32, auf einem anderen Rechner auf 8 bei
+            # 24 physischen (Vernetzersitzung, 20.09.2026). Die fruehere
+            # Gleichheit n_p == min(Kerne-1, physische) war darum eine
+            # Behauptung ueber MKL, die nur auf einer Maschine stimmte - und
+            # sie riss den Gesamtlauf auf der anderen. Was das Programm
+            # zusichert, ist: nie mehr als angefordert, nie mehr als
+            # physisch da, und gemeldet wird, was MKL wirklich nimmt.
+            check("PARDISO automatisch: hoechstens Kerne - 1 und hoechstens die physischen Kerne",
+                  (1 <= n_p <= min(max(1, os.cpu_count() - 1), _mu.physische_kerne()))
+                  or not da.get("pardiso"),
+                  f"{n_p} Threads bei {os.cpu_count()} Kernen, davon {_mu.physische_kerne()} physisch")
         except ImportError:
             pass
         parallel.configure(solver_threads=2)

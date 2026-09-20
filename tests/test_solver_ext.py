@@ -495,6 +495,87 @@ def test_ketten_greifen_nicht_wo_sie_nicht_duerfen():
         parallel.configure(ketten=alt_k)
 
 
+def test_probelauf_und_kennzahlen():
+    """Probelauf: ein Kontaktschritt, keine Plastizitaet - und die Kennzahlen
+    der Faktorisierung in Results.info.
+
+    Beides hat die Vernetzersitzung angefordert (20.09.2026, Abschnitt 2.1 und
+    2.2 ihrer Anforderungen): die adaptive Schleife rechnet je Durchgang einen
+    Lastfall, braucht davon aber nur den Spannungssprung zwischen
+    Nachbarelementen als Netzmass. Ein voller Lastfall am Drehlager kostet
+    235 s mit 48 Kontaktschritten; der Probelauf rechnet einen.
+    """
+    from statik3d import plastizitaet as pl
+
+    def aufbau():
+        m = Model()
+        m.add_material(Material("S", fy=235e6))
+        m.add_material(Material("Starr", E=210e12))
+        m.add_shell_prop(ShellProp("t", 0.05))
+        pl_ = mesher.grid_plate(m, "Starr", "t", 2.0, 2.0, 2, 2, origin=(-1, -1, 0))
+        for n in pl_.ravel():
+            m.fix(int(n), "all")
+        platte = list(range(len(m.elements)))
+        box = mesher.grid_box(m, "S", 0.4, 0.4, 0.4, 2, 2, 2, origin=(-0.2, -0.2, 0.0))
+        unten = [int(n) for n in box[:, :, 0].ravel()]
+        oben = [int(n) for n in box[:, :, -1].ravel()]
+        m.add_contact_pair("Block/Platte", unten, platte, mu=0.3)
+        # Auflast weit ueber der Streckgrenze (0,4 x 0,4 m, 235 MPa waeren
+        # 37,6 MN) und eine Querkraft, damit die Aktivmenge sich bewegt
+        N, H = 60e6, 9e6
+        for n in oben:
+            m.load_node(n, Fz=-N / len(oben), Fx=H / len(oben))
+        return m
+
+    m = aufbau()
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=2,
+                                     iterationen=40, toleranz=1e-4)
+    voll = solver.solve_static(m)
+
+    m2 = aufbau()
+    m2.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=2,
+                                      iterationen=40, toleranz=1e-4)
+    probe = solver.solve_static(m2, probelauf=True)
+
+    pruefe("Probelauf: Results.info sagt es", probe.info.get("probelauf") is True)
+    pruefe("voller Lauf sagt es nicht", "probelauf" not in voll.info)
+    pruefe("Probelauf: genau ein Kontaktschritt",
+           probe.info["contact_iterations"] == 1,
+           f"{probe.info['contact_iterations']} statt {voll.info['contact_iterations']} voll")
+    pruefe("voller Lauf braucht mehr als einen",
+           voll.info["contact_iterations"] > 1, f"{voll.info['contact_iterations']}")
+    pruefe("Probelauf: keine Plastizitaet gerechnet",
+           "plastizitaet" not in probe.info and "plastisch" not in probe.info)
+    pruefe("voller Lauf: Plastizitaet gerechnet und Elemente fliessen",
+           bool(voll.info.get("plastisch")),
+           f"{len(voll.info.get('plastisch', {}))} von {len(m.elements)} Elementen")
+    pruefe("Probelauf ist schneller", probe.info["time"] < voll.info["time"],
+           f"{probe.info['time']:.2f} s statt {voll.info['time']:.2f} s")
+    # Verformung: derselbe erste Schritt, also dieselbe Groessenordnung -
+    # der Probelauf darf kein anderes Modell rechnen
+    du_p = float(np.abs(probe.u).max())
+    du_v = float(np.abs(voll.u).max())
+    pruefe("Probelauf verformt in derselben Groessenordnung",
+           0.0 < du_p <= du_v * 1.5, f"{du_p*1e3:.3f} mm gegen {du_v*1e3:.3f} mm")
+
+    # ------------------------------------------------ Kennzahlen (2.2)
+    for name, r in (("voller Lauf", voll), ("Probelauf", probe)):
+        pruefe(f"{name}: Nichtnullen der Matrix gemeldet", r.info["nnz_matrix"] > 0,
+               f"{r.info['nnz_matrix']}")
+        pruefe(f"{name}: Faktorisierungszeit gemeldet, kleiner als die Gesamtzeit",
+               0.0 < r.info["zeit_faktorisierung"] <= r.info["time"],
+               f"{r.info['zeit_faktorisierung']:.3f} s von {r.info['time']:.3f} s")
+    # Die Nichtnullen der Faktoren meldet nur PARDISO (iparm(18)); mit einem
+    # anderen Loeser steht 0 da, und das ist kein Fehler.
+    if voll.info.get("solver") == "pardiso":
+        pruefe("PARDISO: Nichtnullen der Faktorisierung, mindestens die der Matrix",
+               voll.info["nnz_faktor"] >= voll.info["nnz_matrix"],
+               f"{voll.info['nnz_faktor']} gegen {voll.info['nnz_matrix']}")
+    else:
+        pruefe("ohne PARDISO bleiben die Nichtnullen der Faktorisierung 0",
+               voll.info["nnz_faktor"] == 0, voll.info.get("solver", "?"))
+
+
 def main():
     print("=" * 96)
     print("STATIK3D - Verifikation Erweiterungen (Gelenke, Lasten, Kombinationen, Kontakt, Parallel)")
@@ -511,6 +592,7 @@ def main():
     test_ketten_rechnen_dasselbe()
     test_ketten_teilen_und_zaehlen()
     test_ketten_greifen_nicht_wo_sie_nicht_duerfen()
+    test_probelauf_und_kennzahlen()
     test_farm()
     nok = sum(1 for r in RESULTS if r[4])
     print("=" * 96)

@@ -3013,6 +3013,13 @@ class Model:
         self.design = DesignSettings()
         #: Fliessen der Volumen (17.09.2026) - eine Einstellung am Modell
         self.plastizitaet = Plastizitaet()
+        #: Knotengemittelte Dilatation fuer lineare Tetraeder (tet4): der
+        #: volumetrische Anteil der Steifigkeit wird ueber den Elementverband
+        #: jedes Knotens gemittelt statt je Element genommen. Hebt die
+        #: volumetrische Versteifung auf, die den tet4 steif macht - und die
+        #: im Fliessbereich am staerksten wirkt, weil von-Mises-Fliessen
+        #: volumentreu ist. Kostet einen breiteren Stern in der Matrix.
+        self.knotendilatation = False
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
         self.gap_elements: list[GapElement] = []
@@ -5004,6 +5011,7 @@ class Model:
             "netz": asdict(self.netz),
             "design": asdict(self.design),
             "plastizitaet": asdict(self.plastizitaet),
+            "knotendilatation": bool(self.knotendilatation),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "kopplungen": [asdict(k) for k in self.kopplungen],
@@ -5130,6 +5138,7 @@ class Model:
             m.design = _dc(DesignSettings, d["design"])
         if "plastizitaet" in d:
             m.plastizitaet = _dc(Plastizitaet, d["plastizitaet"])
+        m.knotendilatation = bool(d.get("knotendilatation", False))
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]

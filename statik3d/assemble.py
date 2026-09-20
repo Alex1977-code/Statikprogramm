@@ -252,6 +252,14 @@ def element_matrix(model: Model, e):
         return shell_rm.k_schale(e.typ, X, mat.E, mat.nu, prop.t, laminat=laminat_von(model, prop))
 
     if e.typ in SOLID_TYPES:
+        if e.typ == "tet4" and getattr(model, "knotendilatation", False) \
+                and not dilatation_moeglich(model, mat):
+            # Der volumetrische Anteil kommt knotengemittelt dazu
+            # (assemble.knotendilatation), hier bleibt der deviatorische.
+            # Wo die Mittelung nicht geht (nu >= 0,5), rechnet das Element
+            # gewoehnlich weiter - sonst fehlte ihm der volumetrische Anteil
+            # ganz (gemessen 20.09.2026: 109 % Unterschied, still).
+            return sl.k_tet4_deviatorisch(X, mat.E, mat.nu)[0]
         return getattr(sl, "k_" + e.typ)(X, mat.E, mat.nu)[0]
 
     if e.typ in PLANE_TYPES:
@@ -420,10 +428,139 @@ def _assemble_triplets(model: Model, chunk_func, workers=None, idx=None) -> spar
         shape=(n, n)).tocsr()
 
 
+def dilatation_moeglich(model: Model, mat) -> str:
+    """Warum dieser Werkstoff nicht knotengemittelt werden kann - leer, wenn es geht.
+
+    Der Kompressionsmodul E/(3(1-2nu)) muss endlich und positiv sein. Bei
+    nu >= 0,5 ist er es nicht. Ohne diese Pruefung waere das Element in
+    _matrix_chunk schon auf seinen deviatorischen Anteil reduziert, bekaeme
+    hier aber keinen volumetrischen zurueck: die Steifigkeit aenderte sich
+    still um 109 % ihres groessten Eintrags (gemessen 20.09.2026 an einem
+    tet4 mit nu = 0,6).
+    """
+    nu = float(getattr(mat, "nu", 0.0))
+    if not (0.0 <= nu < 0.5):
+        return (f"Werkstoff '{getattr(mat, 'name', '?')}': Querdehnzahl {nu:g} - die "
+                "knotengemittelte Dilatation braucht 0 <= nu < 0,5. Dieses Bauteil "
+                "rechnet mit dem gewoehnlichen Tetraeder weiter.")
+    return ""
+
+
+def _dilatationsdaten(model: Model, aktiv=None):
+    """(N, Gewichte, Elementindizes, m^T B, g, Zeilennummern) der
+    knotengemittelten Dilatation - ``None``, wenn nichts zu tun ist.
+
+    **Je Knoten und Werkstoff eine Zeile.** Ueber eine Werkstoffgrenze hinweg
+    zu mitteln waere falsch: die Volumendehnung springt dort, und eine
+    gemeinsame gemittelte Dehnung erzwaenge eine Stetigkeit, die es nicht
+    gibt. Gemessen an einem Zugstab aus Stahl und Elastomer (E = 5 MPa,
+    nu = 0,499, 384 tet4 mit geteilten Knoten, 20.09.2026): ueber die Grenze
+    gemittelt lag sigma_xx im Stahl zwischen -24,3 und +18,8 mal F/A, mit
+    falschem Vorzeichen; je Werkstoff getrennt zwischen 0,65 und 4,78.
+
+    Blockweise gerechnet: die Schleife je Element kostete 35 bis 39 µs, am
+    Drehlager also 25 s je Aufstellen der Steifigkeit.
+    """
+    idx_alle = [i for i in aktive_indizes(model, aktiv) if model.elements[i].typ == "tet4"]
+    if not idx_alle:
+        return None
+    gemeldet: set = set()
+    behalten, mats = [], []
+    for i in idx_alle:
+        e = model.elements[i]
+        fehler = dilatation_moeglich(model, model.materials[e.mat])
+        if fehler:
+            if fehler not in gemeldet:
+                gemeldet.add(fehler)
+                import warnings
+                warnings.warn(fehler, RuntimeWarning, stacklevel=3)
+            continue
+        behalten.append(i)
+        mats.append(e.mat)
+    if not behalten:
+        return None
+    idx = np.array(behalten, dtype=int)
+    kn = np.array([model.elements[i].nodes for i in idx], dtype=int)       # (n,4)
+    dN, V = sl.tet4_grad_stapel(model.nodes[kn])
+    b = dN.reshape(len(idx), 12)                                           # m^T B je Element
+    kappa = np.array([sl.kompressionsmodul(model.materials[m].E, model.materials[m].nu)
+                      for m in mats])
+    g = kappa * np.abs(V) / 4.0
+    gut = g > 0.0
+    if not gut.any():
+        return None
+    idx, kn, b, g = idx[gut], kn[gut], b[gut], g[gut]
+    mats = [m for m, k in zip(mats, gut) if k]
+    dofs = (kn[:, :, None] * NDOF + np.arange(3)[None, None, :]).reshape(len(idx), 12)
+    nr = {m: k for k, m in enumerate(sorted(set(mats)))}
+    mnum = np.array([nr[m] for m in mats], dtype=np.int64)
+    schluessel = kn.astype(np.int64) * len(nr) + mnum[:, None]             # (n,4)
+    _einmalig, zeile = np.unique(schluessel.ravel(), return_inverse=True)
+    zeile = zeile.reshape(kn.shape)
+    n_zeilen = int(zeile.max()) + 1
+    gewicht = np.zeros(n_zeilen)
+    np.add.at(gewicht, zeile.ravel(), np.repeat(g, 4))
+    N = sparse.coo_matrix(
+        (np.tile(g[:, None] * b, (1, 4)).ravel(),
+         (np.repeat(zeile.ravel(), 12), np.tile(dofs, (1, 4)).ravel())),
+        shape=(n_zeilen, model.ndof)).tocsr()
+    return N, gewicht, idx, b, g, zeile
+
+
+def knotendilatation(model: Model, aktiv=None) -> sparse.spmatrix:
+    """Der volumetrische Anteil der tet4, ueber den Elementverband jedes
+    Knotens gemittelt - ``None``, wenn nichts zu tun ist.
+
+    Der lineare Tetraeder hat **konstante** Dehnung; sein volumetrischer
+    Anteil ist damit schon konstant, und elementlokales B-bar bringt nichts.
+    Gemittelt werden muss ueber den Verband:
+
+        n_I   = sum_e (K_e V_e / 4) * (m^T B_e)
+        w_I   = sum_e (K_e V_e / 4)
+        K_vol = sum_I (1 / w_I) n_I^T n_I
+
+    Gehoert zu einer Zeile nur **ein** Element, faellt das genau auf
+    ``K_e V_e (m^T B_e)^T (m^T B_e)`` zurueck - also auf den gewoehnlichen
+    Tetraeder. Die Aufspaltung ist exakt; erst die Mittelung ueber mehrere
+    Elemente hebt die Versteifung auf. Der Preis ist ein breiterer Stern.
+    """
+    d = _dilatationsdaten(model, aktiv)
+    if d is None:
+        return None
+    N, gewicht, _idx, _b, _g, _zeile = d
+    return (N.T @ sparse.diags(1.0 / gewicht) @ N).tocsr()
+
+
+def knotendilatation_je_element(model: Model, u: np.ndarray, aktiv=None) -> dict:
+    """{Element: gemittelte Volumendehnung} der tet4 - fuer die Spannung.
+
+    Die Steifigkeit rechnet mit der ueber den Knotenverband gemittelten
+    Volumendehnung; die Spannung muss mit derselben rechnen, sonst passen
+    Kraefte und Spannungen nicht zusammen. Je Element ist es das Mittel
+    seiner vier Zeilenwerte.
+    """
+    d = _dilatationsdaten(model, aktiv)
+    if d is None:
+        return {}
+    _N, gewicht, idx, b, g, zeile = d
+    u = np.asarray(u, float).ravel()
+    kn = np.array([model.elements[i].nodes for i in idx], dtype=int)
+    dofs = (kn[:, :, None] * NDOF + np.arange(3)[None, None, :]).reshape(len(idx), 12)
+    ev_e = np.einsum("ij,ij->i", b, u[dofs])
+    zaehler = np.zeros(len(gewicht))
+    np.add.at(zaehler, zeile.ravel(), np.repeat(g * ev_e, 4))
+    ev_zeile = zaehler / gewicht
+    return {int(i): float(v) for i, v in zip(idx, ev_zeile[zeile].mean(axis=1))}
+
+
 def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
     """Gesamtsteifigkeit; ``aktiv`` (Maske je Element) laesst abgeschaltete
     Elemente einer Situation weg."""
     K = _assemble_triplets(model, _matrix_chunk, workers, aktive_indizes(model, aktiv))
+    if getattr(model, "knotendilatation", False):
+        Kv = knotendilatation(model, aktiv)
+        if Kv is not None:
+            K = (K + Kv).tocsr()
     # Federlager
     from . import supports as sup
     lin, _ = sup.split(sup.expand(model))

@@ -316,6 +316,34 @@ konvergiert mit 13 gehaltenen Punkten und wird dann als abhebend gemeldet
 (90 kN Zug an den gehaltenen Punkten); `tests/test_solver_ext.py` erwartet
 für das vollständige Abheben weiterhin die Fehlermeldung.
 
+**Was eine Faktorisierung gekostet hat.** `Results.info` trägt neben `ndof`
+und `nfree` drei Zahlen, die die adaptive Vernetzung braucht, um zu sagen, was
+eine Netzrunde an **Löserzeit** gespart hat (Anforderung der Vernetzersitzung,
+20.09.2026):
+
+| Feld | Bedeutung |
+|---|---|
+| `nnz_matrix` | Nichtnullen der zuletzt faktorisierten Matrix |
+| `nnz_faktor` | Nichtnullen der Faktorisierung (PARDISO `iparm(18)`; 0 bei anderen Lösern) |
+| `zeit_faktorisierung` | Summe der Faktorisierungszeiten dieses Rechensystems [s] |
+
+Die Elementzahl allein sagt es nicht, weil die Faktorisierung **überlinear**
+wächst: am Drehlager mit N^1,45 über den Freiheitsgraden. `nnz_faktor` ist das
+Maß dafür, wie viel Auffüllung die Knotennummerierung erzeugt hat — es ist die
+Größe, die Speicher und Rechenzeit der Faktorisierung bestimmt, nicht `nnz_matrix`.
+Gemessen an einer Tridiagonalmatrix (20.09.2026): n = 200 gibt 964, n = 400 gibt
+1960, also linear — für ein Band muss es das sein. Die Zeit wird mit
+`perf_counter` gestoppt, nicht mit `time`: dessen Uhr steht unter Windows in
+Stufen von 15,6 ms, und eine einzelne Faktorisierung am kleinen System dauert
+Millisekunden (ein Probelauf meldete damit 0,000 s für eine Faktorisierung, die
+es wirklich gab).
+
+`zeit_faktorisierung` summiert über das **Rechensystem**, nicht über den
+Lastfall. Für die adaptive Schleife ist das genau richtig, weil sie je Runde
+ein frisches System aufbaut; in einer Rechenkette, die mehrere Lastfälle auf
+demselben System rechnet, wächst der Wert von Lastfall zu Lastfall weiter.
+
+
 ### 1.4 Querschnittswerte freier Profile
 
 Der freie Profileditor vereinigt Teile nach dem **Satz von Steiner**
@@ -1487,6 +1515,47 @@ M = qL²/8 / (1 + 3EI/(kL)); die Rechnung trifft diesen Wert; die verbleibende
 Abweichung von 0,7 % ist die Schubverformung des Timoshenko-Balkens, die in der
 Handformel fehlt.
 
+### 4.3 Probelauf: ein Kontaktschritt für die Netzsteuerung (20.09.2026)
+
+Die adaptive Vernetzung (`adaptiv.adaptiv_vernetzen`) rechnet je Durchgang
+einen Lastfall, braucht davon aber nur **eines**: den Sprung der Spannung
+zwischen Nachbarelementen, aus dem der Zienkiewicz/Zhu-Indikator die neue
+Kantenlänge bildet. Das ist ein Netzmaß, kein Nachweis. Ein voller Lastfall am
+Drehlager kostet 235 s, davon 48 Kontaktschritte (gemessen 19.09.2026) — für
+die Netzsteuerung ist das Geld zum Fenster hinaus.
+
+`solver.solve_static(model, probelauf=True)` rechnet deshalb
+
+* **einen** Kontaktschritt (`solve_with_contact` mit `max_iter = 1`),
+* aus dem **Anfangszustand** der Fugen — ein Warmstart aus einem Nachbarlastfall
+  wird bewusst nicht genommen, damit jede Netzrunde dieselbe Lage misst,
+* **ohne Plastizität** (`_plastizitaet_rechnen` wird übersprungen): jeder
+  Fließschritt kostet eine volle Kontaktiteration, und für den Sprung zwischen
+  Nachbarelementen genügt die elastische Spannung,
+* und bei Ausfallstäben ebenso nur eine Aktivmengen-Runde.
+
+Das Ergebnis ist ausdrücklich **kein Nachweis**. `Results.info["probelauf"]`
+steht auf wahr, `contact_converged` auf falsch, und das Kontaktprotokoll sagt
+„Probelauf: ein Kontaktschritt gerechnet, nicht auskonvergiert — das Ergebnis
+ist ein Netzmaß, kein Nachweis“ statt der gewohnten Meldung über eine nicht
+konvergierte Iteration.
+
+**Gemessen** (`tests/test_solver_ext.py`, Block aus 8 `hex8` auf starrer
+Platte, 60 MN Auflast und 9 MN Querkraft, Fließen an, 20.09.2026):
+
+| | Kontaktschritte | Zeit | fließende Elemente |
+|---|---|---|---|
+| voller Lauf | 80 | 0,58 s | 8 von 12 |
+| Probelauf | **1** | **0,05 s** | — |
+
+Also Faktor 12 an diesem Beispiel; am Drehlager ist der Faktor die
+Iterationszahl selbst. Die größte Verschiebung des Probelaufs liegt mit
+1,44 mm unter den 6,86 mm des vollen Laufs — der erste Schritt hat die
+Aktivmenge noch nicht gefunden und das Fließen gar nicht. Für die Verteilung
+des Spannungssprungs über das Netz reicht er, für eine Aussage über das
+Bauteil nicht.
+
+
 ## 5 Nachweise nach DIN EN 1993-1-1
 
 ### 5.1 Nachweisstellen und Staebe
@@ -2296,6 +2365,120 @@ Kontakt-Iteration mit 19 Schritten) konvergiert in 27 Schritten bei
 Toleranz 1e-4, mit Gleichgewicht der Auflager (Auflager = Last, nicht
 Last + F_p: die Reaktion ist K·u − F_p − F, die innere Kraft ∫Bᵀσ dV).
 
+**Wo Aitken nicht mehr reicht (20.09.2026).** Bei **kleiner Verfestigung**
+trägt die Beschleunigung nicht. Gemessen am einachsigen Zugversuch (Quader
+an drei Symmetrieebenen gehalten, am anderen Ende gezogen, tet4, S355, 1 %
+Verfestigung, drei Laststufen zu höchstens 25 Schritten, Toleranz 1e-3):
+
+| Last | Schritte | konvergiert | größte σ_v gegen σ |
+|---|---|---|---|
+| 1,05 fy | 27 | nein | +0,53 % |
+| 1,20 fy | 27 | nein | +1,89 % |
+| 1,50 fy | 36 | nein | **+28,49 %** |
+
+Der reine Fixpunkt zieht sich mit 1 − E_t/E zusammen, bei 1 % also 0,99 je
+Schritt — rund 700 Schritte für 1e-3. Aitken schätzt den Faktor aus zwei
+Residuen, überschießt dort (ω ist bis 200 erlaubt) und bleibt danach bei
+einer Änderung von 1e-1 stehen. Die Folge war kein langsames, sondern ein
+**falsches** Ergebnis: bei 1,5 fy lag die größte Vergleichsspannung 28,5 %
+daneben, die Dehnung am gezogenen Ende 9,5 %. Mehr Schritte helfen nicht —
+mit Toleranz 1e-8 wurden es 51 und die Abweichung stieg auf 32,2 %.
+
+**Verfahren: konsistente elastoplastische Tangente (20.09.2026, Vorgabe).**
+Statt die Steifigkeit festzuhalten, wird sie je Schritt neu aufgestellt und
+faktorisiert — mit der zur Rückführung **konsistenten** Tangente (Simo &
+Hughes, Box 3.2), nicht mit der kontinuierlichen:
+
+    D_ep = K δ⊗δ + 2G θ (I − δ⊗δ/3) − 2G θ̄ N⊗N
+    θ = 1 − 3G Δγ / q_trial,   θ̄ = 1/(1 + H/3G) − (1 − θ),   N = s_trial/‖s_trial‖
+
+Das ist die Ableitung der Rückführung nach der Gesamtdehnung; geprüft wird
+sie gegen die zentrale Differenz über 31 Dehnungszustände (einachsig, Schub,
+mehrachsig, mit und ohne vorhandenes ε_p) und 0,1 % bis 50 % Verfestigung —
+größte Abweichung 1,4·10⁻⁹. Einachsig kommt aus D_ep exakt E_t heraus.
+
+Gelöst wird in **Gesamtform**, damit Randbedingungen, Kopplungen und
+Kontakt beim Löser bleiben:
+
+    (K + ΔK) u_{k+1} = F_k + F_p(u_k) + ΔK u_k,   ΔK = Σ_e V_e Bᵀ (D_ep − D_el) B
+
+Das ist zeilenweise identisch mit dem Newton-Schritt (K + ΔK)Δu = F_k +
+F_p − K u auf dem Residuum, nur ohne Inkrementvektor. ΔK geht als
+`K_zusatz` denselben Weg wie die abgezogene Steifigkeit ausgefallener
+Zugstäbe. Der Kugelanteil fällt heraus (Fließen ist volumentreu), ΔK trägt
+also nur dort Einträge, wo Elemente fließen. Für H > 0 ist D_ep
+positiv definit — der Eigenwert in Fließrichtung ist 2G(θ − θ̄) =
+2G·(H/3G)/(1 + H/3G) > 0 —, also bleibt K + ΔK positiv definit; ohne
+Verfestigung wird er null, und dann fällt das Verfahren von selbst auf die
+Anfangsdehnungs-Iteration zurück.
+
+Zwei Feinheiten, an denen es hängt:
+
+* Die Rückführung geht in jedem Schritt vom Zustand am **Anfang der
+  Laststufe** aus, nicht vom vorigen Schritt. Nur dann ist F_p eine Funktion
+  von u allein und D_ep wirklich ihre Ableitung. Die Anfangsdehnungs-
+  Iteration schreibt ε_p dagegen von Schritt zu Schritt fort — im Grenzwert
+  dasselbe, aber nicht differenzierbar.
+* ΔK wird mit **B am Auswertepunkt** und dem Elementvolumen gebildet, nicht
+  als ∫BᵀΔD B dV über die Gaußpunkte. Denn ε_p hängt allein an der Dehnung
+  in der Mitte — dort wird die Spannung ausgewertet —, also ist
+  ∂F_p/∂u = [Σ_gp w Bᵀ_gp]·D·(∂ε_p/∂ε_m)·B_m. Bei tet4 sind beide Formen
+  gleich; bei hex8 ist die Gaußpunktfassung in den Biegemoden **zu weich**,
+  auf die F_p gar nicht reagiert: am Reibblock lief sie mit rund Faktor 100
+  je Schritt davon (Änderung 1,7 → 1,0·10³⁶ in 19 Schritten), während die
+  Mittelpunktfassung in 4 Schritten konvergiert. Die Mittelpunktfassung ist
+  außerdem symmetrisch — CHOLMOD in der Löserkette verträgt nichts anderes.
+
+Wie genau ΔK damit die Ableitung trifft, hängt am Elementtyp: bei **tet4 und
+pyr5** ist der Auswertepunkt zugleich der einzige Gaußpunkt, dort ist
+ΔK = −∂F_p/∂u exakt (gemessen 8·10⁻¹⁰). Bei **hex8 und pent6** weicht es an
+verzerrten Elementen um rund 1 % ab, bei den quadratischen Typen **tet10,
+hex20, pent15** um bis zu 53 % — dort ist das Mittel von B über das Element
+nicht der Wert in der Mitte. Dort bleibt es ein Quasi-Newton: die Richtung
+stimmt, ΔK ist symmetrisch und negativ semidefinit (geprüft für alle sieben
+Typen), aber es ist nicht mehr die Ableitung. Gemessen ist der Weg bisher an
+tet4 (Zugversuch) und hex8 (Reibblock mit Kontakt); für die quadratischen
+Typen steht die Messung noch aus. Wirklich exakt würde es erst, wenn die
+Plastizität an allen Gaußpunkten ausgewertet würde — das ist eine andere
+Baustelle (ein Punkt je Element ist die bewusste Festlegung dieses
+Programms, siehe unten).
+
+**Gemessen** am selben Zugversuch (1 % Verfestigung, drei Laststufen,
+Toleranz 1e-3; „Abweichung“ ist die mittlere Dehnung am gezogenen Ende
+gegen ε = σ/E + (σ − fy)/H):
+
+| Last | Weg | Schritte | Faktorisierungen | Abweichung |
+|---|---|---|---|---|
+| 1,20 fy | Anfangsdehnung | 27, nicht konvergiert | 0 | −7,4 % |
+| 1,20 fy | Tangente | 7 | 4 | +0,17 % |
+| 1,50 fy | Anfangsdehnung | 36, nicht konvergiert | 0 | +9,5 % |
+| 1,50 fy | Tangente | 12 | 9 | +0,10 % |
+
+Die größte Vergleichsspannung der Elementmitten (das Maß des Probelaufs)
+geht von 28,49 % auf 1,26 % zurück; der Rest ist Netz, nicht Iteration — er
+bleibt bei Toleranz 1e-8 und bei doppelter Netzdichte stehen. Und die
+Schrittzahl hängt **nicht mehr an der Verfestigung** (1,2 fy, 6000
+Tetraeder):
+
+| E_t/E | Anfangsdehnung | Tangente |
+|---|---|---|
+| 1 % | 27, nicht konvergiert | 6 Schritte, 3 Faktorisierungen |
+| 2 % | 27, nicht konvergiert | 6, 3 |
+| 5 % | 15 | 6, 3 |
+| 10 % | 10 | 6, 3 |
+| 20 % | 8 | 6, 3 |
+
+**Was es kostet.** Eine Faktorisierung je Newton-Schritt statt einer je
+Rechnung — genau `Schritte − Laststufen`, denn der letzte Schritt jeder
+Laststufe stellt nur noch fest, dass es passt. Am Drehlager kostet eine
+Faktorisierung 3,2 s gegen 0,31 s je Rückwärtseinsetzen (476 214 Zeilen),
+das Aufstellen von ΔK rund 7,5 µs je fließendem Element (gemessen: 24 576
+fließende Tetraeder in 0,184 s). Wo die Anfangsdehnungs-Iteration heute
+schon in acht bis zehn Schritten konvergiert (Verfestigung ab 10 %, örtliches
+Fließen), ist sie damit die billigere: `Plastizität → Verfahren →
+Anfangsdehnung` schaltet zurück. Bei kleiner Verfestigung gibt es diese
+Wahl nicht — dort konvergiert sie gar nicht.
+
 **Rechenzeit: blockweise statt Element für Element (19.09.2026).** Die
 Plastizität macht an einem großen Modell den Löwenanteil der Rechenzeit — am
 Drehlager (646 706 Tetraeder, 2 974 344 Freiheitsgrade) entfielen auf einen
@@ -2911,6 +3094,97 @@ ein Kragträger 0,2 × 0,2 × 2,0 m mit derselben Kantenlänge von 100 mm:
 Der lineare Tetraeder versteift (*locking*); erst bei 50 mm kommt er auf 91 %.
 Beide bestehen dagegen den Patchtest exakt: unter einem linearen
 Verschiebungsfeld bleibt die Restkraft an jedem inneren Knoten unter 1e-8 N.
+
+**Knotengemittelte Dilatation** (`Model.knotendilatation`, 20.09.2026). Die
+Versteifung des `tet4` hat zwei Ursachen, und eine davon lässt sich beheben.
+Die **volumetrische** entsteht, weil das Element konstante Dehnung hat: es kann
+die Volumenänderung nicht unabhängig von der Gestaltänderung darstellen. Je
+näher die Querdehnzahl an 0,5 kommt, desto stärker sperrt es — und genau
+dorthin läuft der Werkstoff beim Fließen, denn von-Mises-Fließen ist
+volumentreu.
+
+Der Ausweg ist **nicht** elementlokales B-bar: der volumetrische Anteil eines
+linearen Tetraeders ist schon konstant, da gibt es nichts zu mitteln. Gemittelt
+werden muss über den Verband der Elemente an einem Knoten. Mit
+mᵀ = (1, 1, 1, 0, 0, 0), dem Kompressionsmodul K = E/(3(1−2ν)) und der
+Volumendehnungszeile mᵀBₑ jedes Elements:
+
+    n_I   = Σ_e (K_e V_e / 4) · mᵀBₑ          (Zeile über die FHG des Verbands)
+    w_I   = Σ_e (K_e V_e / 4)
+    K_vol = Σ_I (1 / w_I) n_Iᵀ n_I
+
+dazu der deviatorische Anteil je Element, K_dev,e = Vₑ Bₑᵀ D_dev Bₑ mit
+D_dev = D − K m mᵀ. Die Aufspaltung D = D_dev + K m mᵀ ist exakt (geprüft auf
+0,0 bei ν = 0; 0,2; 0,3; 0,45; 0,499); gehört zu einem Knoten nur **ein**
+Element, fällt K_vol genau auf Kₑ Vₑ (mᵀBₑ)ᵀ(mᵀBₑ) zurück, also auf den
+gewöhnlichen Tetraeder (gemessen: 1,1e−16 relativ). Die Spannung rechnet mit
+derselben gemittelten Volumendehnung, σ = D_dev εₑ + K ε̄ᵥ m — Kräfte und
+Spannungen kommen so aus derselben Energie.
+
+Gemessen am Kragträger 0,2 × 0,2 × 2,0 m mit 480 Tetraedern, gegen die
+Balkenlösung:
+
+| ν | gewöhnlich | knotengemittelt | |
+|---|---|---|---|
+| 0,300 | 51,0 % | 67,2 % | 1,3× |
+| 0,450 | 30,2 % | 62,4 % | 2,1× |
+| 0,490 | 10,6 % | 58,5 % | 5,5× |
+| 0,499 | **2,1 %** | **51,1 %** | **23,9×** |
+
+Bei ν = 0,499 ist der gewöhnliche Tetraeder praktisch starr. Zwei Dinge gehören
+dazu gesagt:
+
+* **Die Schubversteifung bleibt.** Deshalb 67 % statt der 99 % des `tet10` bei
+  ν = 0,3. Ein Element mit konstanter Dehnung kann Biegung nicht abbilden;
+  dagegen hilft nur ein feineres Netz oder ein quadratisches Element.
+* **Der Preis steht in der Matrix**, und er wächst mit dem Modell. Der Verband
+  koppelt Knoten, die vorher nichts miteinander zu tun hatten — Einträge je
+  Zeile, gemessen an Würfeln aus Kuhn-Zellen:
+
+  | Elemente | ohne | mit | |
+  |---|---|---|---|
+  | 1 296 | 17,7 | 57,9 | 3,3× |
+  | 6 000 | 19,4 | 69,9 | 3,6× |
+  | 16 464 | 20,2 | 75,5 | **3,7×** |
+
+  Am dünnen Kragträger sind es nur 2,6× — dort hat jeder Knoten weniger
+  Nachbarn. Die Füllung der Faktorisierung wächst überproportional mit der
+  Bandbreite, der Aufwand also stärker als der Faktor 3,7. Ob sich das lohnt,
+  entscheidet der Einzelfall — ein gröberes Netz, das dieselbe Genauigkeit
+  liefert, macht den breiteren Stern mehr als wett. Der Aufbau von K_vol selbst
+  ist blockweise gerechnet und kostet 5,2 µs je Element (646 706 tet4 also
+  3,4 s je Aufstellen der Steifigkeit).
+* **Die Versteifung ist gemindert, nicht behoben.** Auch volumetrisch bleibt
+  ein Rest: die Formulierung ist ein unstabilisiertes P1/P1-Paar und erfüllt
+  die LBB-Bedingung nicht. Sichtbar in der eigenen Tabelle — 67,2 % bei
+  ν = 0,3 gegen 51,1 % bei ν = 0,499.
+* **Der Knotenverband endet an der Werkstoffgrenze.** Je Knoten **und
+  Werkstoff** eine Zeile: die Volumendehnung springt dort, und eine gemeinsame
+  gemittelte Dehnung erzwänge eine Stetigkeit, die es nicht gibt. Gemessen an
+  einem Zugstab aus Stahl und Elastomer (E = 5 MPa, ν = 0,499, 384 tet4 mit
+  geteilten Knoten): über die Grenze gemittelt lag σ_xx im Stahl zwischen
+  −24,3 und +18,8 mal F/A — mit falschem Vorzeichen; je Werkstoff getrennt
+  zwischen 0,78 und 1,18.
+* **ν ≥ 0,5 wird abgewiesen, nicht stillschweigend übergangen.** Der
+  Kompressionsmodul E/(3(1−2ν)) ist dort nicht endlich und positiv. Ohne
+  Prüfung hätte das Element seinen deviatorischen Anteil bekommen und keinen
+  volumetrischen zurück — die Steifigkeit hätte sich um 109 % ihres größten
+  Eintrags geändert, ohne eine Meldung. Solche Bauteile rechnen mit dem
+  gewöhnlichen Tetraeder weiter, und das Protokoll sagt es.
+* **Temperatur- und Anfangsspannungslasten bleiben elementlokal.** Bei
+  gleichmäßiger Erwärmung ist das exakt (gemessen 0,00 MPa, ν = 0,3 und
+  0,499); bei veränderlichem Feld ist die äquivalente Last nicht das
+  variationelle Gegenstück zur gemittelten Steifigkeit.
+* **Die Elementmatrizen anderer Typen bleiben unverändert** — aber in einem
+  **gemischten** Netz ändert sich ihre Lösung mit, weil sie Knoten mit
+  Tetraedern teilen. Der Satz „nur tet4 ist betroffen“ gilt für die
+  Elementmatrix, nicht für das Ergebnis.
+
+Der Patchtest bleibt exakt (gestörtes Netz, 8 innere Knoten: Restkraft
+3,4e−15 relativ bei ν = 0,3 und 1,0e−15 bei ν = 0,499), das Gleichgewicht steht
+(300 000,0 N gegen 300 000,0 N), und die mittlere Spannung trifft F/A exakt.
+Betroffen ist allein `tet4`; alle anderen Elementtypen rechnen unverändert
+(geprüft an einem `hex8`-Netz: 0,0). Geprüft in `tests/test_dilatation.py`.
 
 **Grenzen.** Ist eine Zielkantenlänge für ein Bauteil zu grob (weniger als vier
 Elemente über seine größte Ausdehnung), wird sie für dieses Bauteil verkleinert

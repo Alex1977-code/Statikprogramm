@@ -1,6 +1,12 @@
-"""Plastizitaet (17.09.2026): von Mises mit linearer Verfestigung als
-Anfangsdehnungs-Iteration - gegen die geschlossene Loesung des einachsigen
-Zugversuchs (ein Hexaeder) und die Rueckfuehrung im Schub.
+"""Plastizitaet (17.09.2026): von Mises mit linearer Verfestigung - gegen die
+geschlossene Loesung des einachsigen Zugversuchs (ein Hexaeder) und die
+Rueckfuehrung im Schub.
+
+Dazu (20.09.2026) der zweite Weg: Newton mit der konsistenten
+elastoplastischen Tangente. Geprueft wird, dass D_ep wirklich die Ableitung
+der Rueckfuehrung ist, dass der Zugversuch bei 1 % Verfestigung damit
+konvergiert (die Anfangsdehnungs-Iteration tut es nicht) und dass die
+Faktorisierungen gezaehlt werden.
 
 Aufruf:  python -m tests.test_plastizitaet
 """
@@ -352,6 +358,257 @@ def test_blockweise_fuer_jeden_elementtyp():
           f"{ib['fliessend']} / {is_['fliessend']} fließend")
 
 
+def test_tangente_ist_die_ableitung_der_rueckfuehrung():
+    """D_ep muss die Ableitung der Rueckfuehrung nach der Gesamtdehnung sein -
+    sonst ist es kein Newton-Verfahren, sondern Glueckssache. Geprueft gegen
+    die zentrale Differenz, ueber die Verfestigung von 0,1 % bis 50 % und ueber
+    zufaellige Dehnungszustaende mit und ohne vorhandene plastische Dehnung
+    (auch reiner Schub und mehrachsig, nicht nur einachsig)."""
+    G = E / (2 * (1 + NU))
+    lam = E * NU / ((1 + NU) * (1 - 2 * NU))
+    D_el = np.zeros((6, 6))
+    for a in range(6):
+        e = np.zeros(6)
+        e[a] = 1.0
+        D_el[:, a] = pl._spannung(np.array([lam]), np.array([G]), e[None, :])[0]
+
+    def sigma(eps, H, eps_p_alt, eps_p_eq):
+        tr = pl._spannung(np.array([lam]), np.array([G]), (eps - eps_p_alt)[None, :])[0]
+        return pl.rueckfuehrung(tr, FY, H, G, eps_p_eq)[0]
+
+    rng = np.random.default_rng(7)
+    schlecht, geprueft, groesste = [], 0, 0.0
+    for r in (0.001, 0.01, 0.1, 0.5):
+        H = E * r / (1 - r)
+        for lauf in range(8):
+            eps = rng.normal(0, 3e-3, 6)
+            if lauf == 0:                       # reiner Schub
+                eps = np.array([0.0, 0.0, 0.0, 6e-3, 0.0, 0.0])
+            eps_p_alt = rng.normal(0, 5e-4, 6) if lauf % 2 else np.zeros(6)
+            eps_p_alt = eps_p_alt - eps_p_alt[:3].mean() * np.array([1.0, 1.0, 1.0, 0, 0, 0])
+            eps_p_eq = float(abs(rng.normal(0, 1e-3))) if lauf % 2 else 0.0
+            tr = pl._spannung(np.array([lam]), np.array([G]), (eps - eps_p_alt)[None, :])[0]
+            q = pl.vergleichsspannung(tr)
+            if q <= FY + H * eps_p_eq:
+                continue
+            dev = tr - ((tr[0] + tr[1] + tr[2]) / 3.0) * pl._EINS
+            dg = pl.rueckfuehrung(tr, FY, H, G, eps_p_eq)[2]
+            D_ep = D_el + pl.tangenten_differenz(dev[None, :], np.array([q]), np.array([dg]),
+                                                 np.array([G]), np.array([H]))[0]
+            num = np.zeros((6, 6))
+            h = 1e-9
+            for a in range(6):
+                ep, em = eps.copy(), eps.copy()
+                ep[a] += h
+                em[a] -= h
+                num[:, a] = (sigma(ep, H, eps_p_alt, eps_p_eq)
+                             - sigma(em, H, eps_p_alt, eps_p_eq)) / (2 * h)
+            abw = float(np.abs(D_ep - num).max() / np.abs(num).max())
+            sym = float(np.abs(D_ep - D_ep.T).max() / np.abs(D_ep).max())
+            geprueft += 1
+            groesste = max(groesste, abw)
+            if abw > 1e-5 or sym > 1e-12:
+                schlecht.append((r, lauf, abw, sym))
+    check(f"D_ep ist die Ableitung der Rückführung ({geprueft} Zustände, 0,1 % bis 50 % "
+          f"Verfestigung)", geprueft >= 20 and not schlecht,
+          f"größte Abweichung {groesste:.1e}" + (f", schlecht: {schlecht[:2]}" if schlecht else ""))
+    # Einachsig: die Tangente muss unter sigma_yy = sigma_zz = 0 genau E_t geben
+    for r in (0.01, 0.1):
+        H = E * r / (1 - r)
+        eps = np.array([2.0 * FY / E, 0.0, 0.0, 0.0, 0.0, 0.0])
+        eps[1] = eps[2] = -0.5 * eps[0]          # volumentreu: einachsig weit im Fliessen
+        tr = pl._spannung(np.array([lam]), np.array([G]), eps[None, :])[0]
+        q = pl.vergleichsspannung(tr)
+        dg = pl.rueckfuehrung(tr, FY, H, G, 0.0)[2]
+        dev = tr - ((tr[0] + tr[1] + tr[2]) / 3.0) * pl._EINS
+        D_ep = D_el + pl.tangenten_differenz(dev[None, :], np.array([q]), np.array([dg]),
+                                             np.array([G]), np.array([H]))[0]
+        # E_t = 1 / (S_ep)_11 mit S_ep = D_ep^-1 - das ist die einachsige Tangente
+        E_t = 1.0 / np.linalg.inv(D_ep)[0, 0]
+        nahe(f"einachsige Tangente aus D_ep bei E_t/E = {r:.0%}", E_t, r * E, 1e-9, "Pa")
+
+
+def test_dk_symmetrisch_weich_und_bei_tet4_exakt():
+    """ΔK muss dreierlei sein: **symmetrisch** (CHOLMOD in der Löserkette
+    verträgt nichts anderes), **negativ semidefinit** (Fließen macht weicher,
+    nie steifer - sonst könnte K + ΔK indefinit werden) und bei tet4 die
+    **exakte** Ableitung −∂F_p/∂u.
+
+    Bei den quadratischen Typen ist sie es nicht: ε_p hängt an der Dehnung in
+    der Elementmitte, F_p integriert aber über alle Gaußpunkte, und für
+    tet10/hex20/pent15 ist das Mittel von B über das Element nicht der Wert in
+    der Mitte. Gemessen an verzerrten Elementen weicht ΔK dort bis zu 53 % von
+    −∂F_p/∂u ab (hex8 und pent6: rund 1 %). Es bleibt ein Quasi-Newton: die
+    Richtung stimmt, die Konvergenz ist superlinear statt quadratisch."""
+    einst = pl.Plastizitaet(an=True, verfestigung=0.02)
+    rng = np.random.default_rng(3)
+    for typ in ("tet4", "hex8", "tet10", "hex20", "pent6", "pent15", "pyr5"):
+        m = _stapel_modell(typ, n=2)
+        el = pl._solid_elemente(m, None)
+        u = rng.normal(0.0, 1.5e-3, m.ndof)
+        F_p, _z, info = pl._schritt_block(m, u, pl.Zustand(), einst, el, typ, [], tangente=True)
+        dK = info["dK"].toarray()
+        gr = max(float(np.abs(dK).max()), 1e-30)
+        ew = np.linalg.eigvalsh(0.5 * (dK + dK.T))
+        check(f"{typ}: ΔK ist symmetrisch", float(np.abs(dK - dK.T).max()) / gr < 1e-12,
+              f"{float(np.abs(dK - dK.T).max()) / gr:.2e}")
+        check(f"{typ}: ΔK ist negativ semidefinit (Fließen macht weicher)",
+              float(ew.max()) <= 1e-9 * float(np.abs(ew).max()),
+              f"größter Eigenwert {float(ew.max()) / max(float(np.abs(ew).max()), 1e-30):+.2e}")
+        if typ in ("tet4", "pyr5"):
+            num = np.zeros((m.ndof, m.ndof))
+            h = 1e-9
+            for a in range(m.ndof):
+                up, um = u.copy(), u.copy()
+                up[a] += h
+                um[a] -= h
+                num[:, a] = -(pl._schritt_block(m, up, pl.Zustand(), einst, el, typ, [])[0]
+                              - pl._schritt_block(m, um, pl.Zustand(), einst, el, typ, [])[0]) / (2 * h)
+            abw = float(np.abs(dK - num).max()) / max(float(np.abs(num).max()), 1e-30)
+            check(f"{typ}: ΔK ist genau −∂F_p/∂u (ein Auswertepunkt = ein Gaußpunkt)",
+                  abw < 1e-6, f"{abw:.2e}")
+
+
+def _zugstab(sigma, n=2, L=0.3, b=0.1):
+    """Quader an drei Symmetrieebenen gehalten, am anderen Ende gezogen -
+    einachsig, ohne Singularität, mit tet4 vernetzt. Für den Vergleich der
+    beiden Wege mit der geschlossenen Lösung σ = fy + H ε_p."""
+    kuhn = [(0, 1, 3, 7), (0, 1, 7, 5), (0, 5, 7, 4), (0, 3, 2, 7), (0, 6, 4, 7), (0, 2, 6, 7)]
+    m = Model("Zugstab")
+    m.add_material(Material("S355", E=E, nu=NU, rho=0.0, fy=FY))
+    ids = {}
+    for i in range(n + 1):
+        for j in range(n + 1):
+            for k in range(n + 1):
+                ids[(i, j, k)] = m.add_node(i * L / n, j * b / n, k * b / n)
+    for i in range(n):
+        for j in range(n):
+            for k in range(n):
+                ec = [ids[(i + (x & 1), j + ((x >> 1) & 1), k + ((x >> 2) & 1))] for x in range(8)]
+                for v in kuhn:
+                    m.add_element("tet4", [ec[x] for x in v], "S355", "")
+    for j in range(n + 1):
+        for k in range(n + 1):
+            m.fix(ids[(0, j, k)], [0])
+    for i in range(n + 1):
+        for k in range(n + 1):
+            m.fix(ids[(i, 0, k)], [1])
+        for j in range(n + 1):
+            m.fix(ids[(i, j, 0)], [2])
+    gew = {ids[(n, j, k)]: (0.5 if j in (0, n) else 1.0) * (0.5 if k in (0, n) else 1.0)
+           for j in range(n + 1) for k in range(n + 1)}
+    s = sum(gew.values())
+    for nd, w in gew.items():
+        m.load_node(nd, Fx=sigma * b * b * w / s)
+    return m, [ids[(n, j, k)] for j in range(n + 1) for k in range(n + 1)], L
+
+
+def test_newton_bei_kleiner_verfestigung():
+    """Der Kern der Sache (20.09.2026): bei 1 % Verfestigung zieht sich die
+    Anfangsdehnungs-Iteration mit 1 − E_t/E = 0,99 je Schritt zusammen - rund
+    700 Schritte für 1e-3. Sie konvergiert in 25 Schritten je Laststufe nicht,
+    und bei 1,5 fy lag die Dehnung am Ende um 9 % daneben. Newton mit der
+    konsistenten Tangente braucht 7 bis 12 Schritte und bleibt unter 0,5 %.
+
+    Gemessen wird die **mittlere Dehnung am gezogenen Ende** gegen
+    ε = σ/E + (σ − fy)/H; die größte Vergleichsspannung der Elementmitten
+    streut auf diesem groben Netz von sich aus um rund 1 %.
+    """
+    r = 0.01
+    H = E * r / (1 - r)
+    for faktor, hoechstens in ((1.20, 0.01), (1.50, 0.01)):
+        sig = faktor * FY
+        soll = sig / E + (sig - FY) / H
+        ergebnis = {}
+        for weg in ("tangente", "anfangsdehnung"):
+            m, ende, L = _zugstab(sig)
+            m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=r, laststufen=3,
+                                             iterationen=25, toleranz=1e-3, verfahren=weg)
+            res = solver.solve_static(m)
+            info = res.info.get("plastizitaet") or {}
+            ergebnis[weg] = (info, float(res.u[ende, 0].mean()) / L)
+        (it, eps_t), (ia, eps_a) = ergebnis["tangente"], ergebnis["anfangsdehnung"]
+        check(f"Zugversuch {faktor:.2f} fy, Verfestigung 1 %: Newton konvergiert in "
+              f"{it.get('iterationen')} Schritten", it.get("konvergiert"),
+              f"{it.get('iterationen')} Schritte, {it.get('faktorisierungen')} Faktorisierungen")
+        check("… die Anfangsdehnungs-Iteration nicht (25 Schritte je Laststufe)",
+              not ia.get("konvergiert"), f"{ia.get('iterationen')} Schritte, "
+              f"Dehnung {100 * abs(eps_a - soll) / soll:.2f} % daneben")
+        nahe("… und die Dehnung am Ende stimmt (ε = σ/E + (σ − fy)/H)", eps_t, soll, hoechstens)
+        check("… deutlich besser als der alte Weg",
+              abs(eps_t - soll) < 0.25 * abs(eps_a - soll),
+              f"{100 * abs(eps_t - soll) / soll:.2f} % gegen {100 * abs(eps_a - soll) / soll:.2f} %")
+    # Die Zahl der Faktorisierungen ist genau die Zahl der Newton-Schritte, in
+    # denen noch korrigiert wurde: je Laststufe einer weniger als Schritte.
+    m, ende, L = _zugstab(1.2 * FY)
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=r, laststufen=3, iterationen=25,
+                                     toleranz=1e-3, verfahren="tangente")
+    info = (solver.solve_static(m).info.get("plastizitaet") or {})
+    check("je Plastizitätsschritt eine Faktorisierung - bis auf den letzten je Laststufe",
+          info.get("faktorisierungen") == info.get("iterationen") - info.get("laststufen")
+          and info.get("verfahren") == "tangente",
+          f"{info.get('faktorisierungen')} Faktorisierungen, {info.get('iterationen')} Schritte, "
+          f"{info.get('laststufen')} Laststufen")
+    m2, _e2, _L2 = _zugstab(1.2 * FY)
+    m2.plastizitaet = pl.Plastizitaet(an=True, verfestigung=r, laststufen=3, iterationen=25,
+                                      toleranz=1e-3, verfahren="anfangsdehnung")
+    i2 = (solver.solve_static(m2).info.get("plastizitaet") or {})
+    check("der alte Weg faktorisiert gar nicht neu", i2.get("faktorisierungen") == 0
+          and i2.get("verfahren") == "anfangsdehnung", str(i2.get("faktorisierungen")))
+    # Ohne Verfestigung ist D_ep in Fließrichtung singulär - dann bleibt nur
+    # der alte Weg, und zwar von selbst
+    m3, _e3, _L3 = _zugstab(1.05 * FY)
+    m3.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.0, laststufen=2, iterationen=10,
+                                      toleranz=1e-2, verfahren="tangente")
+    i3 = (solver.solve_static(m3).info.get("plastizitaet") or {})
+    check("ideal-plastisch (keine Verfestigung): fällt auf die Anfangsdehnungs-Iteration zurück",
+          i3.get("verfahren") == "anfangsdehnung" and i3.get("faktorisierungen") == 0, str(i3)[:90])
+
+
+def test_zusatzsteifigkeit_gehoert_in_den_schluessel_der_faktorisierung():
+    """``StaticSystem.solve`` behält die Faktorisierung, solange die Signatur
+    des Kontakts gleich bleibt. Die kennt K_zusatz nicht - und K_zusatz ändert
+    sich in **jedem** Newton-Schritt (die konsistente Tangente) und in jedem
+    Ausfallschritt (die abgezogene Steifigkeit). Ohne den Inhalt von K_zusatz
+    im Schlüssel löste der zweite Aufruf mit der alten Matrix weiter
+    (20.09.2026)."""
+    from scipy import sparse
+    m = block_friction_example()
+
+    def zusatz(system, f):
+        """Diagonale Zusatzsteifigkeit auf den freien FHG - groß genug, um die
+        Lösung zu verschieben, klein genug, dass die Aktivmenge gleich bleibt
+        (und damit die Kontaktsignatur, worauf es hier ankommt)."""
+        fi = system.fi
+        k = f * float(abs(system.K.diagonal()[fi]).mean())
+        return sparse.coo_matrix((np.full(len(fi), k), (fi, fi)), shape=system.K.shape).tocsr()
+
+    F = solver.case_loads(m, {list(m.load_cases)[0]: 1.0})[0]
+    # Ein eingefrorener Kontaktzustand: derselbe Zustand, also **dieselbe**
+    # Kontaktsignatur bei jedem Aufruf - genau die Lage, in der die Newton-
+    # Schritte der Plastizität landen, sobald sich die Aktivmenge nicht mehr
+    # rührt. Nur K_zusatz ist verschieden.
+    s0 = solver.StaticSystem(m)
+    zustand = solver.solve_with_contact(m, s0, F)[4]["contact_state"]
+    check("ein Kontaktzustand zum Einfrieren liegt vor", zustand is not None)
+    sa = solver.StaticSystem(m)
+    ua = solver.solve_with_contact(m, sa, F, K_zusatz=zusatz(sa, 0.05), einfrieren=zustand)[0]
+    sb = solver.StaticSystem(m)
+    ub = solver.solve_with_contact(m, sb, F, K_zusatz=zusatz(sb, 0.20), einfrieren=zustand)[0]
+    bez = max(float(np.abs(ua).max()), 1e-30)
+    check("zwei verschiedene Zusatzsteifigkeiten geben zwei verschiedene Lösungen",
+          float(np.abs(ua - ub).max()) / bez > 1e-3,
+          f"{float(np.abs(ua - ub).max()) / bez:.3e}")
+    # Und nun beide nacheinander auf **einem** System
+    s = solver.StaticSystem(m)
+    u1 = solver.solve_with_contact(m, s, F, K_zusatz=zusatz(s, 0.05), einfrieren=zustand)[0]
+    u2 = solver.solve_with_contact(m, s, F, K_zusatz=zusatz(s, 0.20), einfrieren=zustand)[0]
+    check("erst 5 %: dieselbe Lösung wie auf dem frischen System",
+          float(np.abs(u1 - ua).max()) / bez < 1e-9, f"{float(np.abs(u1 - ua).max()) / bez:.3e}")
+    check("dann 20 %: auch - die Faktorisierung der 5 % bleibt nicht kleben",
+          float(np.abs(u2 - ub).max()) / bez < 1e-9, f"{float(np.abs(u2 - ub).max()) / bez:.3e}")
+
+
 def test_protokoll_sagt_was_die_runde_bewegt_und_kostet():
     """Die Zahl „N aktiv“ beantwortet nicht, ob eine Runde noch etwas
     ausrichtet: sie zählt offen gegen geschlossen und bleibt beim Wechsel
@@ -457,8 +714,11 @@ def test_kontaktsystem_wird_wiederverwendet():
         r = solver.solve_static(m)
         gebaut = n["bau"]
         laeufe = int(r.info.get("contact_laeufe", 0))
+        # Die Schwelle war 10 Läufe - mit der konsistenten Tangente konvergiert
+        # dasselbe Modell in 9 statt 28 Läufen (20.09.2026). Geprüft wird die
+        # Wiederverwendung, nicht die Zahl der Läufe.
         check(f"viele Läufe desselben Lastfalls ({laeufe}), aber nur {gebaut} Kontaktsysteme",
-              laeufe >= 10 and gebaut <= 2, f"{gebaut} Aufbauten bei {laeufe} Läufen")
+              laeufe >= 4 and gebaut <= 2, f"{gebaut} Aufbauten bei {laeufe} Läufen")
         # Gegenprobe: bei jedem Aufruf neu bauen - dasselbe Ergebnis
         alt_ks = solver._kontaktsystem
 
@@ -522,8 +782,12 @@ def test_initialize_setzt_den_ganzen_zustand_zurueck():
 
 
 def main():
-    for t in (test_rueckfuehrung, test_blockweise_wie_die_schleife,
+    for t in (test_rueckfuehrung, test_tangente_ist_die_ableitung_der_rueckfuehrung,
+              test_blockweise_wie_die_schleife,
               test_blockweise_fuer_jeden_elementtyp, test_zugversuch,
+              test_dk_symmetrisch_weich_und_bei_tet4_exakt,
+              test_newton_bei_kleiner_verfestigung,
+              test_zusatzsteifigkeit_gehoert_in_den_schluessel_der_faktorisierung,
               test_protokoll_sagt_was_die_runde_bewegt_und_kostet,
               test_kennzahlen_zaehlen_alle_laeufe_des_lastfalls,
               test_kontaktsystem_wird_wiederverwendet,
