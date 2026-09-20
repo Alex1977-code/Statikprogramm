@@ -59,13 +59,26 @@ class Settings:
     #: dann gilt das System als singulaer. Vorgabe 1e-6 und 3 Schritte.
     solver_residuum: float = 1e-6
     solver_nachiterationen: int = 3
+    #: Rechenketten: so viele Lastfaelle laufen gleichzeitig, jede Kette in
+    #: einem eigenen Prozess und in sich warm gestartet (1 = nacheinander wie
+    #: bisher, 0 = automatisch nach freiem Speicher). Gemessen am Drehlager
+    #: (20.09.2026): eine Kette mit vollem Pool braucht 36 GB, davon 32,7 GB
+    #: die 31 Arbeiter (1,05 GB je Arbeiter, jeder haelt das Modell) und nur
+    #: 3,2 GB Matrix und Faktorisierung. Der Pool ist also die Grenze, nicht
+    #: der Loeser - darum bekommt jede Kette einen kleinen eigenen Pool.
+    ketten: int = 1
+    #: Arbeiter je Kette (0 = workers // ketten, mindestens 2). Die
+    #: Elementschleifen sind nur noch ein kleiner Teil der Zeit (Nachlauf
+    #: 2-3 s, Plastizitaet 8 s von 235 s je warmem Lastfall), grosse Pools je
+    #: Kette lohnen darum nicht.
+    ketten_arbeiter: int = 0
 
 
 _settings = Settings()
 
 #: Was ueber den Programmstart hinaus gilt (Benutzerdaten/Statik3D/einstellungen.json)
 GESPEICHERT = ("solver_backend", "solver_threads", "mumps_nachladen",
-               "solver_residuum", "solver_nachiterationen")
+               "solver_residuum", "solver_nachiterationen", "ketten", "ketten_arbeiter")
 
 
 def einstellungsdatei() -> str:

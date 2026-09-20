@@ -187,6 +187,53 @@ def test_ama_liegt_der_exe_bei():
     check("MUMPS bleibt dagegen bewusst draussen", "mumps" in spec and "excludes" in spec)
 
 
+def test_pardiso_grenze_der_32_bit_indizes():
+    """Der Prozess ist durchgehend 64-bittig - die Schnittstelle zu MKL
+    PARDISO aber nicht: pypardiso reicht die Matrix ueber die LP64-Fassung
+    weiter (``ia = A.indptr.astype(np.int32) + 1``), und ``astype`` prueft
+    nicht. Ueber 2^31-1 liefe die Umwandlung still ueber und PARDISO bekaeme
+    vertauschte Indizes - falsche Zahlen statt einer Fehlermeldung
+    (20.09.2026). Darum wird vorher geprueft."""
+    import warnings
+    from statik3d import solver as slv
+    check("die Grenze ist 2^31 - 1", slv.INT32_MAX == 2 ** 31 - 1, str(slv.INT32_MAX))
+
+    class Zugross:
+        nnz = 2 ** 31
+
+    def probe(n, nnz, verlangt):
+        ls = slv.LinearSolver.__new__(slv.LinearSolver)
+        ls.n = n
+        Z = type("K", (), {"nnz": nnz})
+        return ls._passt_in_int32(Z(), verlangt)
+
+    check("ein gewoehnliches System passt", probe(476214, 17_800_000, True))
+    slv._GEMELDET.clear()
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        passt = probe(2 ** 31, 3, False)
+        gemeldet = [str(x.message) for x in w]
+    check("zu viele Zeilen werden erkannt", passt is False)
+    check("und gemeldet, mit Zahl, Grenze und den 64-Bit-Alternativen",
+          gemeldet and "PARDISO" in gemeldet[0] and "MUMPS" in gemeldet[0]
+          and str(slv.INT32_MAX) in gemeldet[0], (gemeldet or [""])[0][:90])
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        probe(2 ** 31, 3, False)
+        check("derselbe Hinweis kommt nur einmal je Programmlauf - eine "
+              "Faktorisierung laeuft Dutzende Male", not w, str(len(w)))
+    check("zu viele Eintraege werden ebenso erkannt", probe(10, 2 ** 31, False) is False)
+    try:
+        probe(2 ** 31, 3, True)
+        check("bei ausdruecklich gewaehltem PARDISO wird nicht still ausgewichen", False)
+    except RuntimeError as ex:
+        check("bei ausdruecklich gewaehltem PARDISO gibt es eine Ausnahme statt eines "
+              "stillen Ausweichens", "PARDISO" in str(ex), str(ex)[:70])
+    # Die Grenze steht nicht im Weg: das Drehlager ist Faktor 120 davon entfernt
+    check("das groesste gerechnete Modell hat reichlich Luft",
+          17_800_000 * 120 < slv.INT32_MAX, f"{slv.INT32_MAX / 17.8e6:.0f}-fach")
+
+
 def test_superlu_nennt_sich_einkernig():
     """SuperLU kann keine Threads — es muss das auch sagen."""
     n = 400
@@ -791,6 +838,7 @@ def test_symmetriepruefung():
 def main():
     for f in (test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
               test_jeder_loeser_sagt_woher_er_kommt, test_ama_liegt_der_exe_bei,
+              test_pardiso_grenze_der_32_bit_indizes,
               test_superlu_nennt_sich_einkernig,
               test_pardiso_nimmt_alle_kerne_bis_auf_einen,
               test_meldung_trennt_pool_und_loeser, test_kopfzeile_nennt_den_eingestellten_loeser,

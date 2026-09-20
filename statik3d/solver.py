@@ -438,6 +438,37 @@ def ist_symmetrisch(K, tol: float = None) -> bool:
     return True
 
 
+#: Schon gemeldete Hinweise - eine Faktorisierung laeuft in der
+#: Kontakt-Iteration Dutzende Male, die Meldung soll einmal kommen.
+_GEMELDET: set = set()
+
+
+def _log_einmal(text: str) -> None:
+    """Denselben Hinweis nur einmal je Programmlauf schreiben."""
+    if text in _GEMELDET:
+        return
+    _GEMELDET.add(text)
+    import warnings
+    warnings.warn(text, RuntimeWarning, stacklevel=2)
+
+
+#: Groesste Zeilenzahl und groesste Zahl von Eintraegen, die die
+#: 32-Bit-Schnittstelle von MKL PARDISO fassen kann. Der Prozess selbst ist
+#: durchgehend 64-bittig (Zeiger 64 Bit, numpy.intp 64 Bit, gemessen
+#: 20.09.2026); pypardiso reicht die Matrix aber ueber die LP64-Fassung
+#: weiter und wandelt dabei um:
+#:
+#:     ia = A.indptr.astype(np.int32) + 1
+#:     ja = A.indices.astype(np.int32) + 1
+#:
+#: ``astype`` prueft nicht. Ueber der Grenze liefe die Umwandlung still ueber,
+#: und PARDISO bekaeme vertauschte Indizes - **falsche Zahlen statt einer
+#: Fehlermeldung**. Zum Vergleich: das Drehlager hat 476.214 Zeilen und 17,8
+#: Mio. Eintraege, also Faktor 120 Luft; die Grenze greift erst bei rund 30
+#: Mio. Freiheitsgraden.
+INT32_MAX = 2 ** 31 - 1
+
+
 class LinearSolver:
     """Faktorisiert K einmal; solve() fuer beliebig viele rechte Seiten.
     Backends: pypardiso (MKL, mehrere Threads), scikit-sparse CHOLMOD, SuperLU.
@@ -466,6 +497,26 @@ class LinearSolver:
                   "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen) "
                   "kann sparsamer sein.") from ex
 
+    def _passt_in_int32(self, K: sparse.spmatrix, verlangt: bool) -> bool:
+        """Passt die Matrix in die 32-Bit-Schnittstelle von PARDISO?
+
+        ``verlangt`` heisst: der Anwender hat PARDISO ausdruecklich gewaehlt -
+        dann ist ein stilles Ausweichen falsch, er bekommt eine Meldung.
+        Bei "automatisch" wird auf den naechsten Loeser ausgewichen; MUMPS,
+        ama und SuperLU indizieren mit 64 Bit.
+        """
+        nnz = int(getattr(K, "nnz", 0) or 0)
+        if self.n <= INT32_MAX and nnz <= INT32_MAX:
+            return True
+        text = (f"Das Gleichungssystem ist zu groß für MKL PARDISO: {self.n} Zeilen und "
+                f"{nnz / 1e6:.0f} Mio. Einträge; die Schnittstelle fasst {INT32_MAX} "
+                f"(32-Bit-Indizes). MUMPS, ama und SuperLU rechnen mit 64 Bit - "
+                f"Berechnung \u2192 Einstellungen \u2192 Gleichungslöser.")
+        if verlangt:
+            raise RuntimeError(text)
+        _log_einmal(text + " Es wird auf einen anderen Löser ausgewichen.")
+        return False
+
     def _aufbauen(self, K: sparse.spmatrix, backend: str = None):
         self.n = K.shape[0]
         self.backend = "none"
@@ -484,7 +535,7 @@ class LinearSolver:
             return
         K = K.tocsc()
         self._K = K.tocsr()
-        if be in ("auto", "pardiso"):
+        if be in ("auto", "pardiso") and self._passt_in_int32(K, be == "pardiso"):
             try:
                 _find_mkl()
                 import pypardiso
@@ -1993,6 +2044,15 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
         return None, None
     # Warmstart: jeder Lastfall beginnt beim Kontaktzustand des vorigen
     # Lastfalls desselben Systems (Situation)
+    # Mehrere Lastfaelle gleichzeitig? Nur ohne uebergebenes System (dann gilt
+    # es fuer alle genannten Faelle) und ohne eingefrorene Zustaende (die
+    # brauchen ihren Referenzzustand aus demselben Lauf).
+    if system is None and not referenzen and len(names) > 1:
+        k = ketten_zahl(len(names))
+        if k > 1:
+            fertig = _cases_in_ketten(model, names, k, progress)
+            if fertig:
+                return fertig
     # Jeder fertige Lastfall bleibt bestehen, auch wenn der naechste abbricht:
     # ``out`` haengt an der Ausnahme (siehe _teil_merken)
     try:
@@ -2032,6 +2092,87 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
     except BaseException as ex:
         raise _teil_merken(ex, "teil_cases", out)
     return out
+
+
+def ketten_zahl(n_faelle: int) -> int:
+    """Wie viele Lastfaelle gleichzeitig laufen sollen.
+
+    0 heisst "automatisch": so viele, wie der freie Speicher traegt, hoechstens
+    aber so viele, wie Kerne da sind. Gemessen am Drehlager (20.09.2026)
+    braucht eine Kette mit sechs Arbeitern rund 9,5 GB; davon bleibt ein
+    Viertel als Reserve.
+    """
+    st = parallel.settings()
+    k = getattr(st, "ketten", 1)
+    k = 1 if k is None else int(k)     # 0 heisst automatisch, nicht "eine Kette"
+    if k > 0:
+        return max(1, min(k, n_faelle))
+    frei = float(speicherlage().get("frei", 0.0) or 0.0)
+    je_kette = 9.5                      # GB, gemessen: 6 Arbeiter + Matrix + Faktorisierung
+    nach_speicher = int(max(1.0, 0.75 * frei / je_kette))
+    return max(1, min(nach_speicher, st.workers, n_faelle))
+
+
+def _ketten_teilen(model: Model, names: list, k: int) -> list:
+    """Die Lastfaelle auf k Ketten verteilen - Situation fuer Situation
+    zusammenhaengend, damit der Warmstart innerhalb der Kette greift (jede
+    Situation hat ihr eigenes System)."""
+    folge = [n for sit_names in model.lastfaelle_je_situation(names).values()
+             for n in sit_names]
+    k = max(1, min(int(k), len(folge)))
+    gr = (len(folge) + k - 1) // k
+    return [folge[i:i + gr] for i in range(0, len(folge), gr) if folge[i:i + gr]]
+
+
+def _cases_in_ketten(model: Model, names: list, k: int, progress=None) -> dict:
+    """Mehrere Lastfaelle gleichzeitig: je Kette ein Prozess, in sich warm.
+
+    Gemessen am Drehlager (20.09.2026): ein warmer Lastfall braucht 235 s,
+    davon 87 s Faktorisierung; der Rechner hatte dabei im Mittel 12 von 32
+    Kernen belegt. Der Speicher ist die Grenze, nicht die Kernzahl - eine
+    Kette mit vollem Pool belegt 36 GB, davon 32,7 GB die Arbeiter.
+    """
+    import pickle
+    import tempfile
+    from .parallel import Job, run_jobs
+    bloecke = _ketten_teilen(model, names, k)
+    if len(bloecke) <= 1:
+        return {}
+    st = parallel.settings()
+    je = int(getattr(st, "ketten_arbeiter", 0) or 0) or max(2, st.workers // len(bloecke))
+    threads = st.solver_threads or max(1, (parallel.cpu_count() - 1) // len(bloecke))
+    _melde(progress, f"{len(names)} Lastfälle in {len(bloecke)} Ketten "
+                     f"({je} Arbeiter und {threads} Löser-Threads je Kette)")
+    pfad = None
+    if st.backend != "farm":
+        fd, pfad = tempfile.mkstemp(prefix="statik3d_kette_", suffix=".pkl")
+        os.close(fd)
+        with open(pfad, "wb") as f:
+            pickle.dump(model, f, protocol=pickle.HIGHEST_PROTOCOL)
+    try:
+        d = model.to_dict() if pfad is None else None
+        jobs = [Job("solve_kette",
+                    {"pfad": pfad or "", "model": d, "cases": b,
+                     "arbeiter": je, "loeser_threads": threads},
+                    label=f"{b[0]}…{b[-1]}")
+                for b in bloecke]
+        fertig = run_jobs(jobs, workers=len(bloecke),
+                          progress=(lambda a, b_: _melde(progress, f"Kette {a}/{b_} fertig"))
+                          if progress else None)
+    finally:
+        if pfad:
+            try:
+                os.remove(pfad)
+            except OSError:
+                pass
+    out: dict = {}
+    for job, r in zip(jobs, fertig):
+        if not r.ok:
+            raise RuntimeError(f"Kette {job.label}: {r.error}")
+        for n, res in (r.result or {}).items():
+            res.model = model
+            out[n] = res
+    return {n: out[n] for n in names if n in out}
 
 
 def _kombination_pruefen(model: Model, combo: Combination) -> str:

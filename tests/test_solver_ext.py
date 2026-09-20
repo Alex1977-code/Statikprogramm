@@ -387,6 +387,114 @@ def test_farm():
         stop.set()
 
 
+def pruefe(name, ok, detail=""):
+    """Ja/Nein-Pruefung mit der Zahlenhilfe dieser Datei (check erwartet
+    Messwert und Sollwert) - dieselbe Ausgabe, damit main() weiterzaehlt."""
+    check(f"{name}" + (f"  [{detail}]" if detail else ""), 1.0 if ok else 0.0, 1.0, 0.0)
+    return bool(ok)
+
+
+def test_ketten_rechnen_dasselbe():
+    """Rechenketten: mehrere Lastfälle gleichzeitig, jede Kette in einem
+    eigenen Prozess und in sich warm gestartet.
+
+    Der Warmstart ist der größte Einzelgewinn je Lastfall (Drehlager
+    20.09.2026: kalt 112 Kontaktrunden, warm 41 bis 48). Wer alle Lastfälle
+    als einzelne Aufträge verteilt, macht jeden kalt und verliert mehr, als
+    die Parallelität bringt - darum kommt eine ganze Folge in einen Auftrag.
+    Geprüft wird, dass dabei dasselbe herauskommt."""
+    from statik3d import parallel
+    from statik3d.examples_lib import hall_frame_example
+    m = hall_frame_example()
+    namen = list(m.load_cases)
+    pruefe(f"Probe mit {len(namen)} Lastfällen", len(namen) >= 4, str(namen))
+    alt_k = parallel.settings().ketten
+    try:
+        parallel.configure(ketten=1)
+        a = solver.solve_cases(m, cases=namen)
+        parallel.configure(ketten=3)
+        b = solver.solve_cases(m, cases=namen)
+    finally:
+        parallel.configure(ketten=alt_k)
+    pruefe("die Ketten liefern dieselben Lastfälle in derselben Reihenfolge",
+          list(a) == list(b) == namen, str(list(b)))
+    d = max(float(np.abs(a[n].u - b[n].u).max()) for n in namen)
+    bez = max(max(float(np.abs(a[n].u).max()) for n in namen), 1e-30)
+    pruefe("und dieselben Verschiebungen", d <= 1e-12 * bez, f"{d / bez:.2e} relativ")
+    dr = max(float(np.abs(a[n].reactions - b[n].reactions).max()) for n in namen)
+    pruefe("und dieselben Auflagerkräfte", dr <= 1e-9 * max(
+        max(float(np.abs(a[n].reactions).max()) for n in namen), 1e-30), f"{dr:.2e} N")
+    pruefe("das Modell hängt wieder an jedem Ergebnis (es wird nicht zurückgesendet)",
+          all(b[n].model is m for n in namen))
+
+
+def test_ketten_teilen_und_zaehlen():
+    """Die Aufteilung hält jede Situation zusammen - sonst liefe der
+    Warmstart ins Leere, denn jede Situation hat ihr eigenes System. Und die
+    Zahl der Ketten folgt der Einstellung, 0 heißt automatisch."""
+    from statik3d import parallel
+    from statik3d.examples_lib import hall_frame_example
+    m = hall_frame_example()
+    namen = list(m.load_cases)
+    bloecke = solver._ketten_teilen(m, namen, 3)
+    pruefe("drei Ketten aus fünf Lastfällen", len(bloecke) == 3, str(bloecke))
+    pruefe("jeder Lastfall genau einmal",
+          sorted(x for b in bloecke for x in b) == sorted(namen),
+          str(sorted(x for b in bloecke for x in b)))
+    # Situationen bleiben zusammenhängend: die Folge der Blöcke ist die
+    # Folge der Situationen
+    folge = [n for b in bloecke for n in b]
+    je_sit = m.lastfaelle_je_situation(namen)
+    soll = [n for v in je_sit.values() for n in v]
+    pruefe("die Reihenfolge folgt den Situationen", folge == soll, str(folge))
+    pruefe("mehr Ketten als Lastfälle gibt es nicht",
+          len(solver._ketten_teilen(m, namen[:2], 9)) <= 2,
+          str(solver._ketten_teilen(m, namen[:2], 9)))
+    alt_k = parallel.settings().ketten
+    try:
+        parallel.configure(ketten=1)
+        pruefe("Vorgabe 1: nacheinander wie bisher", solver.ketten_zahl(50) == 1)
+        parallel.configure(ketten=4)
+        pruefe("vier Ketten, aber nie mehr als Lastfälle",
+              solver.ketten_zahl(50) == 4 and solver.ketten_zahl(2) == 2)
+        parallel.configure(ketten=0)
+        n = solver.ketten_zahl(50)
+        pruefe(f"0 heißt automatisch nach freiem Speicher ({n} Ketten)",
+              1 <= n <= parallel.settings().workers, str(n))
+    finally:
+        parallel.configure(ketten=alt_k)
+
+
+def test_ketten_greifen_nicht_wo_sie_nicht_duerfen():
+    """Mit übergebenem System gilt dieses für alle genannten Lastfälle, und
+    eingefrorene Ermüdungszustände brauchen ihren Referenzzustand aus
+    demselben Lauf. In beiden Fällen wird nicht geteilt."""
+    from statik3d import parallel
+    from statik3d.examples_lib import hall_frame_example
+    m = hall_frame_example()
+    namen = list(m.load_cases)
+    gerufen = {"n": 0}
+    alt_fn = solver._cases_in_ketten
+
+    def merken(*a, **kw):
+        gerufen["n"] += 1
+        return alt_fn(*a, **kw)
+
+    alt_k = parallel.settings().ketten
+    solver._cases_in_ketten = merken
+    try:
+        parallel.configure(ketten=3)
+        sys_ = solver.StaticSystem(m)
+        solver.solve_cases(m, cases=namen, system=sys_)
+        pruefe("mit übergebenem System wird nicht in Ketten geteilt", gerufen["n"] == 0,
+              str(gerufen["n"]))
+        solver.solve_cases(m, cases=namen)
+        pruefe("ohne System dagegen schon", gerufen["n"] == 1, str(gerufen["n"]))
+    finally:
+        solver._cases_in_ketten = alt_fn
+        parallel.configure(ketten=alt_k)
+
+
 def main():
     print("=" * 96)
     print("STATIK3D - Verifikation Erweiterungen (Gelenke, Lasten, Kombinationen, Kontakt, Parallel)")
@@ -400,6 +508,9 @@ def main():
     test_surface_contact_friction()
     test_parallel_assembly()
     test_stehender_pool()
+    test_ketten_rechnen_dasselbe()
+    test_ketten_teilen_und_zaehlen()
+    test_ketten_greifen_nicht_wo_sie_nicht_duerfen()
     test_farm()
     nok = sum(1 for r in RESULTS if r[4])
     print("=" * 96)

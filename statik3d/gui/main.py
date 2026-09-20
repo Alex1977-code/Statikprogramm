@@ -11619,6 +11619,37 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "liegt und fällt; jede kostet eine Vorwärts-Rückwärts-Lösung, keine neue "
                                   "Faktorisierung. Vorgabe bis 3. Wird gespeichert.")
         gl.addWidget(row("Nachiterationen", self.cb_nachit))
+        # Rechenketten (20.09.2026): mehrere Lastfaelle gleichzeitig, jede in
+        # einem eigenen Prozess und in sich warm gestartet
+        self.cb_ketten = QtWidgets.QComboBox()
+        self.cb_ketten.addItem("nacheinander (Vorgabe)", 1)
+        self.cb_ketten.addItem("automatisch (nach freiem Speicher)", 0)
+        for n_ in (2, 3, 4, 6, 8, 12):
+            self.cb_ketten.addItem(f"{n_} gleichzeitig", int(n_))
+        i = self.cb_ketten.findData(int(parallel.settings().ketten))
+        self.cb_ketten.setCurrentIndex(i if i >= 0 else 0)
+        self.cb_ketten.setToolTip(
+            "Mehrere Lastfälle gleichzeitig rechnen - jede Kette in einem eigenen Prozess, "
+            "in sich nacheinander und warm gestartet. Der Warmstart ist der größte Einzelgewinn "
+            "je Lastfall (Drehlager 20.09.2026: kalt 112 Kontaktrunden, warm 41 bis 48); darum "
+            "wird eine ganze Folge einer Kette gegeben und nicht jeder Lastfall einzeln verteilt. "
+            "Grenze ist der Speicher, nicht die Kernzahl: eine Kette braucht dort rund 9,5 GB, "
+            "davon das meiste die Arbeitsprozesse. „automatisch“ nimmt so viele, wie drei Viertel "
+            "des freien Speichers tragen. Lohnt sich erst bei mehreren großen Lastfällen; ein "
+            "kleines Modell wird davon langsamer. Wird gespeichert.")
+        gl.addWidget(row("Lastfälle gleichzeitig (Ketten)", self.cb_ketten))
+        self.cb_kettenarb = QtWidgets.QComboBox()
+        self.cb_kettenarb.addItem("automatisch (Prozesse ÷ Ketten)", 0)
+        for n_ in (2, 4, 6, 8, 12, 16):
+            self.cb_kettenarb.addItem(str(n_), int(n_))
+        i = self.cb_kettenarb.findData(int(parallel.settings().ketten_arbeiter))
+        self.cb_kettenarb.setCurrentIndex(i if i >= 0 else 0)
+        self.cb_kettenarb.setToolTip(
+            "Arbeitsprozesse je Kette. Jeder hält das ganze Modell - am Drehlager 1,05 GB je "
+            "Prozess, ein voller Pool von 31 also 32,7 GB. Die Elementschleifen sind nur noch "
+            "ein kleiner Teil der Rechenzeit (Nachlauf 2 bis 3 s, Plastizität 8 s von 235 s je "
+            "warmem Lastfall), große Pools je Kette lohnen darum nicht. Wird gespeichert.")
+        gl.addWidget(row("Arbeitsprozesse je Kette", self.cb_kettenarb))
         lbl_teilung = QtWidgets.QLabel(
             "Zweierlei: die Prozesse vernetzen und stellen die Matrizen auf, die Threads lösen "
             "damit das Gleichungssystem. Beide Zahlen dürfen gleich sein, doppelt gezählt wird "
@@ -16517,6 +16548,8 @@ class MainWindow(QtWidgets.QMainWindow):
                            solver_threads=int(self.cb_threads.currentData() or 0),
                            solver_residuum=float(self.cb_genau.currentData() or 1e-6),
                            solver_nachiterationen=int(3 if nachit is None else nachit),
+                           ketten=int(self.cb_ketten.currentData() or 0),
+                           ketten_arbeiter=int(self.cb_kettenarb.currentData() or 0),
                            backend="farm" if self.cb_backend.currentIndex() == 1 else "local",
                            farm_host=self.ed_farm_host.text().strip() or "127.0.0.1",
                            farm_port=int(self.ed_farm_port.text() or 5555),

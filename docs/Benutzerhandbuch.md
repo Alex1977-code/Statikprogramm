@@ -3222,9 +3222,49 @@ Nachweis mit seiner Verformung je Kombination.
   | max \|u\| | 0,2680 mm | 0,2680 mm |
 
   Das Ergebnis ändert sich nicht — es wird nur nicht mehr 23-mal dasselbe
-  gebaut. Hochgerechnet auf 422 Lastfälle (1 kalt, 421 warm): 48,1 → 31,8
-  Stunden. Geprüft in `tests/test_plastizitaet.py` (zwei Aufbauten statt 54
-  bei 28 Läufen, und dieselbe Lösung wie beim Bauen in jedem Schritt).
+  gebaut. Die gemessenen Zeiten enthalten je Lastfall rund 35 s Anlauf des
+  Prozesspools, weil die Sonde jeden Lastfall einzeln startete; eine echte
+  Rechnung umschließt alle Lastfälle mit **einem** Block und zahlt ihn
+  einmal. Ohne diesen Anteil: 374 → 235 s je warmem Lastfall, hochgerechnet
+  auf 422 Lastfälle (1 kalt, 421 warm) **43,9 → 27,7 Stunden**. Geprüft in
+  `tests/test_plastizitaet.py` (zwei Aufbauten statt 54 bei 28 Läufen, und
+  dieselbe Lösung wie beim Bauen in jedem Schritt).
+* **Rechenketten: mehrere Lastfälle gleichzeitig** (*Berechnung →
+  Einstellungen*, 20.09.2026). „Lastfälle gleichzeitig (Ketten)“ gibt jeder
+  Kette einen eigenen Prozess; **innerhalb** einer Kette laufen die Lastfälle
+  nacheinander und warm gestartet. Das ist der Kern der Sache: der Warmstart
+  ist der größte Einzelgewinn je Lastfall (Drehlager: kalt 112
+  Kontaktrunden, warm 41 bis 48). Wer alle Lastfälle einzeln verteilt, macht
+  jeden kalt und verliert mehr, als die Parallelität bringt — darum bekommt
+  jede Kette eine ganze Folge, und die Aufteilung hält jede Situation
+  zusammen (jede Situation hat ihr eigenes System).
+
+  **Die Grenze ist der Speicher, nicht die Kernzahl.** Gemessen am Drehlager
+  (20.09.2026): eine Kette mit vollem Pool belegt 36 GB — davon 32,7 GB die
+  31 Arbeitsprozesse, die jeder das ganze Modell halten (1,05 GB je Prozess),
+  und nur 3,2 GB Steifigkeitsmatrix und Faktorisierung. Darum gibt es
+  „Arbeitsprozesse je Kette“: die Elementschleifen sind nur noch ein kleiner
+  Teil der Zeit (Element-Nachlauf 2 bis 3 s, Plastizität 8 s von 235 s je
+  warmem Lastfall), sechs Prozesse je Kette genügen also, und dann passen bei
+  108 GB freiem Speicher etwa elf Ketten statt drei. „automatisch“ nimmt so
+  viele, wie drei Viertel des freien Speichers tragen.
+
+  Vorgabe ist **nacheinander**. Bei einem kleinen Modell kostet der
+  Prozessanlauf mehr, als die Parallelität bringt (Hallenrahmen: 0,19 s
+  nacheinander, 1,02 s in drei Ketten). Nicht geteilt wird, wo es nicht geht:
+  wenn ein System für alle genannten Lastfälle vorgegeben ist, und bei den
+  eingefrorenen Zuständen einer Ermüdungslast — die brauchen ihren
+  Referenzzustand aus demselben Lauf. Geprüft in `tests/test_solver_ext.py`
+  (dieselben Lastfälle, dieselben Verschiebungen und Auflagerkräfte wie
+  nacheinander).
+* **Der Prozesspool läuft einmal an, nicht je Lastfall** (20.09.2026). Beim
+  ersten Auftrag lesen alle 31 Arbeiter das Modell aus einer Datei; am
+  Drehlager dauert das rund 35 s. Gemessen am selben Modell, 645 170
+  Elemente: der erste Element-Nachlauf im stehenden Pool kostet 40,7 s, jeder
+  weitere 2,1 bis 3,6 s — und ganz **ohne** stehenden Pool, wenn ein Aufruf
+  sich seinen eigenen baut, 96 s. Darum umschließt `parallel.arbeiter` eine
+  ganze Rechnung und nicht einen Aufruf. Wer die Zeiten eines einzelnen
+  Lastfalls misst, misst diesen Anlauf mit.
 * **Warmstart und behaltene Faktorisierung.** Lastfälle derselben Situation
   beginnen die Kontakt-Iteration im Kontaktzustand des vorigen Lastfalls;
   solange sich die Kontaktsteifigkeit nicht ändert, bleibt die Faktorisierung
