@@ -2219,6 +2219,28 @@ Haftreibung. Die Kontakt-Iteration kostet mit Reibung mehr Schritte: 51
 statt 6, weil Knotenzustände zwischen Haften und Gleiten pendeln und der
 Oszillationsschutz sie festhält.
 
+
+**Die Spannung kommt aus dem Ergebnis, nicht aus einer zweiten Rechnung**
+(20.09.2026). Der Nachweis bildete σ = D·B·u aus der Verschiebung neu. Das
+lässt weg, was der Löser berücksichtigt: die plastische Vorspannung D·ε_p.
+Gemessen am Stauchwürfel (384 `tet4`, S355, Fließen an, 370 von 384 Elementen
+fließen): σ_v,max **1 566 MPa im Ergebnis gegen 31 934 MPa neu gerechnet** —
+Faktor 20,4, und der Nachweis war damit um ebenso viel zu ungünstig, ohne
+dass es jemand gesehen hätte.
+
+Die Mehrpunktauswertung bleibt trotzdem; sie ist ja der Grund für die
+Nachrechnung. Berichtigt wird um den **elementkonstanten** Versatz zwischen
+der Spannung des Lösers und der Nachrechnung in der Elementmitte:
+
+    Δ = σ_Ergebnis − σ_Nachrechnung(Mitte)
+    σ(Punkt) ← σ(Punkt) + Δ
+
+Das ist exakt, weil alles, was der Nachrechnung fehlt, je Element konstant
+ist: die plastische Vorspannung D·ε_p ebenso wie eine gemittelte
+Volumendehnung. Der Verlauf über das Element bleibt erhalten, die Höhe
+stimmt. Geprüft in `tests/test_volumen.py` (Nachweis gegen Löser 1,0000; ohne
+die Berichtigung Faktor 20,4).
+
 ## 5e Plastizität der Volumenkörper (17.09.2026)
 
 **Anlass.** Spannungsspitzen an Passstiften und Bohrungsrändern (V34:

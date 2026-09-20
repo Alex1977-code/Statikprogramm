@@ -344,11 +344,77 @@ def test_bericht():
           "Volumenbereich" not in h2)
 
 
+def test_nachweis_nimmt_die_spannung_des_loesers():
+    """Der Nachweis darf die Spannung nicht neu aus der Verschiebung rechnen.
+
+    sigma = D B u laesst weg, was der Loeser beruecksichtigt: die plastische
+    Vorspannung D eps_p (und, mit Model.knotendilatation, den gemittelten
+    volumetrischen Anteil). Gemessen am Stauchwuerfel (384 tet4, S355,
+    Fliessen an, 20.09.2026): sigma_v,max 381,2 MPa im Ergebnis gegen
+    3300,7 MPa neu gerechnet - Ausnutzung 1,07 gegen 9,3. Der Nachweis war
+    damit um Faktor 8,7 zu ungunstig, ohne dass es jemand gesehen haette.
+
+    Die Mehrpunktauswertung bleibt trotzdem: beim Hexaeder unter Biegung
+    liegt der Rand deutlich ueber der Mitte. Berichtigt wird um den
+    **elementkonstanten** Versatz zwischen Ergebnis und Nachrechnung.
+    """
+    from statik3d import plastizitaet as pl
+    kuhn = [(0, 1, 3, 7), (0, 1, 7, 5), (0, 5, 7, 4), (0, 3, 2, 7), (0, 6, 4, 7), (0, 2, 6, 7)]
+    n, L, fy = 4, 0.1, 355e6
+    m = Model("Stauchwuerfel")
+    m.add_material(Material("S355", E=210e9, nu=0.3, rho=0.0, fy=fy))
+    ids = {}
+    for i in range(n + 1):
+        for j in range(n + 1):
+            for k in range(n + 1):
+                ids[(i, j, k)] = m.add_node(i * L / n, j * L / n, k * L / n)
+    for i in range(n):
+        for j in range(n):
+            for k in range(n):
+                ec = [ids[(i + (x & 1), j + ((x >> 1) & 1), k + ((x >> 2) & 1))] for x in range(8)]
+                for v in kuhn:
+                    m.add_element("tet4", [ec[x] for x in v], "S355", "")
+    for i in range(n + 1):
+        for j in range(n + 1):
+            m.fix(ids[(i, j, 0)], [0, 1, 2])
+    F = -1.2 * fy * L * L
+    oben = [ids[(i, j, n)] for i in range(n + 1) for j in range(n + 1)]
+    for nd in oben:
+        m.load_node(nd, Fz=F / len(oben))
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.01, laststufen=3,
+                                     iterationen=25, toleranz=1e-3)
+    r = solver.solve_static(m)
+    info = r.info.get("plastizitaet") or {}
+    check(f"Probe: {info.get('fliessend', 0)} von {len(m.elements)} Elementen fliessen",
+          info.get("fliessend", 0) > 50, str(info.get("fliessend")))
+    loeser = max(pl.vergleichsspannung(np.asarray(v, float)) for v in r.solid_res.values())
+    sp = V._elementspannungen(m, r, list(range(len(m.elements))))
+    nachweis = max(V.vergleichsspannung(q) for _i, q, _n in sp)
+    check("der Nachweis nimmt dieselbe Spannung wie der Loeser",
+          abs(nachweis - loeser) <= 1e-6 * loeser,
+          f"{nachweis / 1e6:.1f} gegen {loeser / 1e6:.1f} MPa "
+          f"(Verhaeltnis {nachweis / loeser:.4f})")
+    # Gegenprobe: ohne die Berichtigung waere es um ein Vielfaches daneben
+    from statik3d.elements import solid as sl
+    roh = []
+    for i in range(len(m.elements)):
+        e = m.elements[i]
+        mat = m.materials[e.mat]
+        X = np.asarray(m.nodes[e.nodes], float)
+        ue = np.concatenate([r.u.ravel()[int(x) * 6:int(x) * 6 + 3] for x in e.nodes])
+        roh.append(max(V.vergleichsspannung(q)
+                       for q in sl.stress_points(e.typ, X, mat.E, mat.nu, ue)))
+    check("ohne Berichtigung laege der Nachweis um ein Vielfaches darueber",
+          max(roh) > 1.5 * loeser, f"{max(roh) / 1e6:.1f} gegen {loeser / 1e6:.1f} MPa "
+          f"(Faktor {max(roh) / loeser:.1f})")
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Volumennachweise (DIN EN 1993-1-1, 6.2.1(5))")
     print("=" * 92)
     for t in (test_spannungsformeln, test_zugkoerper, test_randspannung,
+              test_nachweis_nimmt_die_spannung_des_loesers,
               test_fehlerfaelle, test_bericht):
         print()
         t()
