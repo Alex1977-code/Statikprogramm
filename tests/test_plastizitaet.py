@@ -19,7 +19,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from statik3d import plastizitaet as pl, solver                  # noqa: E402
+from statik3d import mesher, plastizitaet as pl, solver          # noqa: E402
 from statik3d.examples_lib import block_friction_example          # noqa: E402
 from statik3d.model import Material, Model, NodalLoad             # noqa: E402
 
@@ -197,8 +197,18 @@ def test_kontakt():
     check("mit Fließen ist die größte Verschiebung größer als elastisch", u1 > u0 * 1.001, f"{u1 * 1e3:.4f} mm zu {u0 * 1e3:.4f} mm")
     q1 = max(pl.vergleichsspannung(np.asarray(v, float)) for i, v in r.solid_res.items() if m.elements[i].mat == "S235")
     fy = m.materials["S235"].fy
-    check("die Vergleichsspannung der Elementmitten bleibt nahe fy (Verfestigung 5 %)",
-          q1 < fy * 1.5, f"max {q1 / 1e6:.1f} MPa, fy {fy / 1e6:.1f} MPa")
+    # Die Fliessbedingung gilt an den **Gausspunkten** (dort rechnet die
+    # Plastizitaet seit dem 20.09.2026), nicht in der Elementmitte - die ist
+    # ein Auswertepunkt dazwischen. Die Mitte muss darum unter der
+    # verfestigten Fliessgrenze des am staerksten gedehnten Punktes bleiben;
+    # vorher stand hier die Faustgrenze 1,5 fy, die nur galt, solange die
+    # Plastizitaet selbst in der Mitte sass.
+    ep_max = max(r.info.get("plastisch", {}).values(), default=0.0)
+    grenze = fy + m.plastizitaet.H(m.materials["S235"].E) * ep_max
+    check("die Vergleichsspannung bleibt unter der verfestigten Fließgrenze fy + H·ε_p",
+          q1 <= grenze * 1.02,
+          f"max {q1 / 1e6:.2f} MPa, Grenze {grenze / 1e6:.2f} MPa "
+          f"(fy {fy / 1e6:.2f} + H·ε_p {(grenze - fy) / 1e6:.2f})")
     check("die starre Platte (ohne fy) fließt nicht",
           all(m.elements[i].mat != "Starr" for i in r.info.get("plastisch", {})))
     # speichern und laden der Einstellung
@@ -259,14 +269,19 @@ def test_blockweise_wie_die_schleife():
         if zb.eps_p:
             dp = max(float(np.abs(np.asarray(zb.eps_p[i]) - np.asarray(zs.eps_p[i])).max())
                      for i in zb.eps_p)
-            dq = max(abs(zb.eps_p_eq[i] - zs.eps_p_eq[i]) for i in zb.eps_p_eq)
+            # eps_p_eq steht seit dem 20.09.2026 je Gausspunkt (ein Feld),
+            # nicht mehr als eine Zahl je Element.
+            dq = max(float(np.max(np.abs(np.asarray(zb.eps_p_eq[i], float)
+                                         - np.asarray(zs.eps_p_eq[i], float))))
+                     for i in zb.eps_p_eq)
             check(f"Lauf {lauf}: eps_p und eps_p,eq stimmen bis auf Rundung",
                   dp < 1e-12 and dq < 1e-12, f"{dp:.2e} / {dq:.2e}")
         nahe(f"Lauf {lauf}: dieselbe größte Vergleichsspannung", ib["q_max"], is_["q_max"], 1e-12, "Pa")
     # Der Werkstoff ohne Streckgrenze fließt in keinem der beiden Wege
     u = rng.normal(0.0, 5e-3, m.ndof)
     _F, zb, _i = pl._schritt_block(m, u, pl.Zustand(), einst, el, "tet4", [])
-    ohne = [i for i in zb.eps_p if m.elements[i].mat == "Ohne fy" and zb.eps_p_eq[i] > 0]
+    ohne = [i for i in zb.eps_p if m.elements[i].mat == "Ohne fy"
+            and float(np.max(zb.eps_p_eq[i])) > 0]
     check("ein Werkstoff ohne Streckgrenze bleibt elastisch", not ohne, str(ohne[:4]))
     # Und der Stapel wird nur einmal gebaut
     d1 = pl._stapel(m, el, "tet4")
@@ -781,6 +796,109 @@ def test_initialize_setzt_den_ganzen_zustand_zurueck():
     check("und den Zustand jeder Bedingung", not schlecht, str(schlecht[:2]))
 
 
+def test_sechsflaechner_fliesst_unter_biegung():
+    """Der hex8 muss unter reiner Biegung fliessen - und an der richtigen Stelle.
+
+    Kragtraeger 200 x 200 mm, Endmoment als Kraeftepaar, M = 1,20 M_el. Die
+    Randfaser traegt elastisch 282 N/mm2 gegen fy = 235, sie **muss** also
+    fliessen; die plastische Zone reicht rechnerisch bis
+    z/(h/2) = sqrt(3 - 2*1,20) = 0,775.
+
+    Bis zum 20.09.2026 wertete die Plastizitaet in der **Elementmitte** aus.
+    Dort ist die Spannung bei reiner Biegung null, und der Gradient der
+    inkompatiblen Moden diag(-2r,-2s,-2t) verschwindet ebenfalls - die Mitte
+    ist genau der eine Punkt, an dem der hex8 seine Biegung nicht zeigt.
+    Gemessen: mit vier Lagen ueber die Hoehe meldete das Programm **0 von 20**
+    fliessenden Elementen unter einem Moment, das den Querschnitt
+    plastifiziert. Ohne den Umbau faellt diese Pruefung durch.
+    """
+    fy, E, nu = 235e6, 210e9, 0.3
+    b = h = 0.2
+    L = 1.0
+    M_el = fy * b * h ** 2 / 6.0
+
+    def rechnen(nz, weg):
+        m = Model()
+        m.add_material(Material("S", E=E, nu=nu, fy=fy))
+        g = mesher.grid_box(m, "S", L, b, h, 5, 1, nz, typ="hex8")
+        for k in g[0, :, :].ravel():
+            m.fix(int(k), "all")
+        ob = [int(k) for k in g[-1, :, -1].ravel()]
+        un = [int(k) for k in g[-1, :, 0].ravel()]
+        Pk = 1.2 * M_el / h
+        for k in ob:
+            m.load_node(k, Fx=+Pk / len(ob))
+        for k in un:
+            m.load_node(k, Fx=-Pk / len(un))
+        m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=3,
+                                         iterationen=60, toleranz=1e-6, verfahren=weg)
+        return m, solver.solve_static(m)
+
+    m4, r4 = rechnen(4, "tangente")
+    fl4 = r4.info.get("plastisch", {})
+    check("hex8 unter 1,20 M_el, vier Lagen: es fließt (vor dem 20.09.2026: 0 von 20)",
+          len(fl4) > 0, f"{len(fl4)} von {len(m4.elements)}")
+    check("… und die Newton-Iteration konvergiert",
+          (r4.info.get("plastizitaet") or {}).get("konvergiert"),
+          f"{(r4.info.get('plastizitaet') or {}).get('iterationen')} Schritte")
+    # Nur die aeusseren Lagen duerfen fliessen: die plastische Zone reicht bis
+    # 77,5 % der halben Hoehe, der aeusserste Gausspunkt der vierten Lage
+    # liegt bei 89,4 %, der der dritten bei 60,6 %.
+    innen = [i for i in fl4 if abs(float(m4.nodes[list(m4.elements[i].nodes)][:, 2].mean())
+                                   - h / 2.0) < 0.5 * h / 2.0]
+    check("… und nur außen, nicht in der Nähe der Nulllinie", not innen,
+          f"{len(innen)} Elemente innerhalb der halben Höhe")
+    ep4 = max(fl4.values()) if fl4 else 0.0
+    # Die Randfaser waere voll plastisch bei (282-235)/H = 1,097 %; die
+    # Gausspunkte liegen darunter, also muss eps_p deutlich kleiner sein.
+    check("… und die plastische Dehnung bleibt in der Größenordnung des Randfaserwerts",
+          0.0 < ep4 < 1.097e-2, f"ε_p,eq max {ep4 * 100:.4f} % (Randfaser 1,097 %)")
+
+    # Zweiter Weg, dieselbe Antwort: die Anfangsdehnungs-Iteration rechnet
+    # ohne Tangente. Stimmen beide ueberein, ist es keine gemeinsame
+    # Verwechslung der Tangente.
+    m4b, r4b = rechnen(4, "anfangsdehnung")
+    fl4b = r4b.info.get("plastisch", {})
+    check("beide Verfahren finden dieselben fließenden Elemente",
+          set(fl4) == set(fl4b), f"{len(fl4)} gegen {len(fl4b)}")
+    nahe("… und dieselbe größte plastische Dehnung",
+         max(fl4b.values()) if fl4b else 0.0, ep4, 0.05)
+
+    # Feiner: acht Lagen fassen die Zone mit zwei Lagen, es fliesst mehr
+    m8, r8 = rechnen(8, "tangente")
+    fl8 = r8.info.get("plastisch", {})
+    check("acht Lagen fassen die plastische Zone besser als vier",
+          len(fl8) / len(m8.elements) > 0.0 and max(fl8.values()) > ep4,
+          f"{len(fl8)}/{len(m8.elements)}, ε_p max {max(fl8.values()) * 100:.4f} % "
+          f"gegen {ep4 * 100:.4f} % bei vier Lagen")
+
+    # Eine Lage kann es nicht sehen - und das ist richtig, kein Mangel: der
+    # aeusserste Gausspunkt liegt bei 57,7 % der halben Hoehe und traegt
+    # 0,577 * 282 = 163 N/mm2, also unter fy.
+    m1, r1 = rechnen(1, "tangente")
+    check("eine Lage fließt nicht - der äußerste Gaußpunkt liegt bei 57,7 % der halben Höhe",
+          not r1.info.get("plastisch", {}),
+          "0,577 · 282 = 163 N/mm² < fy = 235 N/mm²")
+
+
+def test_tet4_wertet_in_seinem_gausspunkt_aus():
+    """Beim tet4 ist der Auswertepunkt **der** Gausspunkt - der Umbau auf
+    Gausspunkte darf am Tetraeder nichts aendern (das Drehlager rechnet mit
+    645.934 davon)."""
+    import numpy as _np
+    from statik3d.elements import solid as _sl
+    _fn, GP, W = _sl._ISO["tet4"]
+    check("tet4 hat genau einen Gaußpunkt", len(GP) == 1, f"{len(GP)}")
+    check("… und er ist der Auswertepunkt der Spannung",
+          _np.allclose(_np.asarray(GP[0], float),
+                       _np.asarray(_sl.AUSWERTEPUNKTE["tet4"][0], float)),
+          f"{tuple(GP[0])} gegen {_sl.AUSWERTEPUNKTE['tet4'][0]}")
+    check("hex8 dagegen hat acht Gaußpunkte, und keiner ist die Mitte",
+          len(_sl._ISO["hex8"][1]) == 8
+          and not any(_np.allclose(p, 0.0) for p in _sl._ISO["hex8"][1]),
+          f"{len(_sl._ISO['hex8'][1])} Punkte, Auswertepunkt {_sl.AUSWERTEPUNKTE['hex8'][0]}")
+
+
 def main():
     for t in (test_rueckfuehrung, test_tangente_ist_die_ableitung_der_rueckfuehrung,
               test_blockweise_wie_die_schleife,
@@ -792,6 +910,8 @@ def main():
               test_kennzahlen_zaehlen_alle_laeufe_des_lastfalls,
               test_kontaktsystem_wird_wiederverwendet,
               test_initialize_setzt_den_ganzen_zustand_zurueck,
+              test_sechsflaechner_fliesst_unter_biegung,
+              test_tet4_wertet_in_seinem_gausspunkt_aus,
               test_loeser, test_kombination, test_kontakt):
         try:
             t()

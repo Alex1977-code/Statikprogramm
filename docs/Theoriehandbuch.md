@@ -2297,18 +2297,35 @@ fließen): σ_v,max **1 566 MPa im Ergebnis gegen 31 934 MPa neu gerechnet** —
 Faktor 20,4, und der Nachweis war damit um ebenso viel zu ungünstig, ohne
 dass es jemand gesehen hätte.
 
-Die Mehrpunktauswertung bleibt trotzdem; sie ist ja der Grund für die
-Nachrechnung. Berichtigt wird um den **elementkonstanten** Versatz zwischen
-der Spannung des Lösers und der Nachrechnung in der Elementmitte:
+**Seit dem 20.09.2026 steht die Mehrpunktauswertung im Nachlauf selbst**
+(`solver._post_chunk`), nicht mehr im Nachweis. `res.solid_res` trägt den
+**maßgebenden** Auswertepunkt — den mit der größten Vergleichsspannung —,
+gerechnet mit allem, was der Löser berücksichtigt: plastische Vorspannung und,
+mit `Model.knotendilatation`, die gemittelte Volumendehnung. Beim `tet4` ist
+das derselbe eine Punkt wie zuvor, das Drehlager rechnet unverändert.
 
-    Δ = σ_Ergebnis − σ_Nachrechnung(Mitte)
-    σ(Punkt) ← σ(Punkt) + Δ
+**Mit einer Ausnahme: fließende Elemente melden weiter die Elementmitte.** Die
+Plastizität wird an den **Gaußpunkten** erzwungen; die Auswertepunkte (Ecken)
+liegen außerhalb, und die abgezogene Vorspannung D·ε_p ist das Mittel über die
+Gaußpunkte (§ 5e.1). An einer Ecke wächst ε über dieses Mittel hinaus, ε_p
+bleibt zurück — die gemeldete Spannung schießt über die Fließfläche hinaus.
+Gemessen am Reibblock (20.09.2026): Eckwert **2,93 N/mm² gegen die verfestigte
+Fließgrenze 1,42**, und damit über dem **elastischen** Spitzenwert von 2,30 —
+was es nicht geben kann, denn Fließen baut Spannung ab. In der Elementmitte ist
+das Elementmittel dagegen die richtige Berichtigung. Der Preis: in einer
+Fließzone zeigt ein Sechsflächner unter Biegung wieder den Mittelwert, nicht
+den Randwert. Wer dort den Randwert braucht, braucht mehr Elemente über die
+Dicke — dieselbe Regel wie für das Fließen selbst.
 
-Das ist exakt, weil alles, was der Nachrechnung fehlt, je Element konstant
-ist: die plastische Vorspannung D·ε_p ebenso wie eine gemittelte
-Volumendehnung. Der Verlauf über das Element bleibt erhalten, die Höhe
-stimmt. Geprüft in `tests/test_volumen.py` (Nachweis gegen Löser 1,0000; ohne
-die Berichtigung Faktor 20,4).
+Damit haben Anzeige und Nachweis dieselbe Zahl. Vorher stand in `solid_res`
+die Elementmitte, und der Nachweis rechnete sich den Randwert selbst zurück,
+indem er den elementkonstanten Versatz Δ = σ_Ergebnis − σ_Nachrechnung(Mitte)
+auf alle Punkte addierte. Das war richtig, solange der Versatz wirklich
+elementkonstant war — mit der Plastizität je Gaußpunkt (§ 5e.1) ist er es
+nicht mehr. Der Nachweis nimmt jetzt den Wert aus dem Ergebnis und benutzt
+seine eigene Nachrechnung nur noch, um die Stelle zu **benennen** („Mitte",
+„Eckpunkt 3"). Geprüft in `tests/test_volumen.py` (Nachweis gegen Löser
+1,0000; `solid_res` trägt den Randwert, nicht die Mitte).
 
 ## 5e Plastizität der Volumenkörper (17.09.2026)
 
@@ -2548,6 +2565,94 @@ genügt für linear-tetraedrische und trilinear-hexaedrische Netze; feiner
 aufgelöstes Fließen braucht ein feineres Netz, nicht mehr
 Auswertepunkte. Große Verformungen (Theorie II. Ordnung der Volumen)
 bleiben außen vor.
+
+### 5e.1 Plastizität am Gaußpunkt, und die Moden des Sechsflächners (20.09.2026)
+
+Bis zum 20.09.2026 wertete die Plastizität **in der Elementmitte** aus — ein
+plastischer Zustand je Element. Beim `tet4` ist das exakt: er hat einen
+Gaußpunkt, seine Dehnung ist konstant, und der Auswertepunkt (0,25/0,25/0,25)
+*ist* dieser Gaußpunkt. Beim Sechsflächner war es falsch, und zwar doppelt:
+
+* Bei reiner Biegung ist die Spannung in der Elementmitte **null**.
+* Der Gradient der inkompatiblen Moden ist `diag(−2r, −2s, −2t)` und
+  verschwindet bei r = s = t = 0 ebenfalls. Die Mitte ist genau der eine
+  Punkt, an dem der `hex8` seine Biegung nicht zeigt.
+
+**Gemessen** (Kragträger 200 × 200 mm, Endmoment 1,20 · M_el, fy = 235 N/mm²,
+die Randfaser trägt elastisch 282 N/mm² und *muss* fließen):
+
+| Lagen über die Höhe | 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| fließende Elemente, Stand bis 20.09. | 0 | 0 | **0** | 8 von 40 |
+| fließende Elemente, heute | 0 | 0 | **8 von 20** | 16 von 40 |
+
+Mit vier Lagen meldete das Programm **kein** fließendes Element unter einem
+Moment, das den Querschnitt plastifiziert. Die Durchbiegung stimmte dabei: das
+Element *trug* richtig, es berichtete nur nicht.
+
+**Der plastische Zustand steht deshalb jetzt je Gaußpunkt** (`Zustand.eps_p`
+ist ein Feld (P, 6), `eps_p_eq` eines (P,)). Am `tet4` ändert das nichts — ein
+Punkt, derselbe Ort —, und das Drehlager mit seinen 645 934 Tetraedern rechnet
+unverändert.
+
+**Die inkompatiblen Moden mussten mit.** Der `hex8` trägt seine Biegung über
+drei Wilson-Moden, die in der Elementmatrix kondensiert werden. Rechnet die
+Plastizität ohne sie, passen plastische Lasten und Steifigkeit nicht zusammen:
+die Lasten regen Biegemoden an, in denen die kondensierte Steifigkeit viel
+weicher ist. Gemessen an demselben Kragträger mit acht Lagen: **ε_p,eq 25,1 %
+statt 0,42 %**, und am Reibblock lief die Iteration auf 10¹⁵ % davon. Die
+Formulierung lautet darum
+
+    ε(Gaußpunkt) = B u + B_α α
+    K_αα α       = h_p − K_uαᵀ u,     h_p = Σ w |J| B_αᵀ D ε_p
+    F_p          = Σ w |J| Bᵀ D ε_p − K_uα K_αα⁻¹ h_p
+
+— dieselbe Kondensation, die `elements.solid.hex8_matrices` für die
+Steifigkeit macht, jetzt auch für die plastische Last. **α und ε_p hängen
+voneinander ab und werden im Element gemeinsam gelöst** (Newton über
+R(α) = Σ w B_αᵀ σ = 0, drei bis vier Runden; `EAS_RUNDEN = 8` ist die
+Sicherung). Gestaffelt — α aus dem vorigen ε_p — lief der Reibblock davon.
+
+**Die Tangente wird ebenso kondensiert:**
+
+    ΔK = (K_uu + ΔK_uu) − (K_uα + ΔK_uα)(K_αα + ΔK_αα)⁻¹(K_uα + ΔK_uα)ᵀ
+         − [K_uu − K_uα K_αα⁻¹ K_uαᵀ]
+
+Ohne den kondensierten Anteil lief der Newton auf 10⁵⁰ davon. Achtung bei
+`tangenten_differenz`: sie ist bei Δγ = 0 **nicht** null (der Term θ̄ bleibt
+stehen), die nicht fließenden Punkte müssen ausdrücklich gelöscht werden.
+
+**Ergebnis** (derselbe Kragträger, beide Verfahren):
+
+| | Newton-Schritte | fließend | ε_p,eq max |
+|---|---|---|---|
+| 4 Lagen, konsistente Tangente | 8 | 8 von 20 | 0,180 % |
+| 4 Lagen, Anfangsdehnung | 21 | 8 von 20 | 0,175 % |
+| 8 Lagen, konsistente Tangente | 13 | 16 von 40 | 0,420 % |
+| 8 Lagen, Anfangsdehnung | 40 | 16 von 40 | 0,390 % |
+
+Zwei voneinander unabhängige Verfahren finden dieselben Elemente und
+dieselbe Dehnung. Die plastische Zone reicht rechnerisch bis
+z/(h/2) = √(3 − 2·1,20) = 0,775; der äußerste Gaußpunkt der vierten Lage liegt
+bei 89,4 %, der der dritten bei 60,6 % — es fließt genau die äußere Lage.
+
+**Eine Lage über die Höhe kann es nicht sehen, und das ist kein Mangel:** der
+äußerste Gaußpunkt liegt bei 57,7 % der halben Höhe und trägt
+0,577 · 282 = 163 N/mm², also unter fy. Wer Fließen rechnen will, braucht
+mehrere Elemente über die Dicke — beim Sechsflächner ebenso wie beim
+Tetraeder, nur mit viel weniger Elementen.
+
+Nachweis `tests/test_plastizitaet.py::test_sechsflaechner_fliesst_unter_biegung`
+und `::test_tet4_wertet_in_seinem_gausspunkt_aus`.
+
+**Was `res.solid_res` zeigt, ist der maßgebende Auswertepunkt** (§ 5d). Die
+Anfangsspannung D·ε_p wird dafür über die Gaußpunkte gemittelt — beim `tet4`
+derselbe Wert wie zuvor, weil er nur einen hat. Zu beachten: die
+Fließbedingung gilt an den **Gaußpunkten**, die Auswertepunkte sind andere
+(Mitte und Ecken). Die angezeigte Vergleichsspannung darf darum über fy
+liegen, ohne dass etwas falsch ist — sie muss unter der verfestigten
+Fließgrenze fy + H·ε_p des am stärksten gedehnten Punktes bleiben. Am
+Reibblock: 1,00 gegen die Grenze 1,36 N/mm² bei fy = 0,60.
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 

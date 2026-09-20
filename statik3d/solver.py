@@ -1632,26 +1632,56 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 acc[:3] -= Dm @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 0.0]))
             out.append((i, "shell", acc))
         elif e.typ in asm.SOLID_TYPES:
-            mitte = sl.AUSWERTEPUNKTE[e.typ][0]
-            s_ = sl.stress_points(e.typ, X, mat.E, mat.nu, ue, punkte=[mitte])[0]
-            s_ = np.asarray(s_, float)
             ev = extra.get("ev_dilatation") if isinstance(extra, dict) else None
             if ev and i in ev:
-                # Die Steifigkeit rechnet mit der knotengemittelten
-                # Volumendehnung - die Spannung muss dieselbe nehmen, sonst
+                # tet4 mit knotengemittelter Dilatation: die Steifigkeit
+                # rechnet mit der ueber den Knotenverband gemittelten
+                # Volumendehnung, die Spannung muss dieselbe nehmen, sonst
                 # passen Kraefte und Spannungen nicht zusammen. Der
                 # deviatorische Anteil bleibt elementlokal, der volumetrische
-                # wird ersetzt: sigma = D_dev eps + K ev_gemittelt m
+                # wird ersetzt: sigma = D_dev eps + K ev_gemittelt m. Der
+                # tet4 hat konstante Spannung - ein Punkt genuegt.
                 kap = sl.kompressionsmodul(mat.E, mat.nu)
                 dN_, _V_ = sl.tet4_shape_grad(X)
                 eps_ = sl._B_from_grad(dN_) @ ue
-                s_ = sl.D_deviatorisch(mat.E, mat.nu) @ eps_ + kap * float(ev[i]) * sl.VOIGT_M
+                werte = [sl.D_deviatorisch(mat.E, mat.nu) @ eps_
+                         + kap * float(ev[i]) * sl.VOIGT_M]
+            else:
+                # **Alle** Auswertepunkte, nicht nur die Mitte. Beim tet4 ist
+                # das derselbe eine Punkt; beim Sechsflaechner ist die Mitte
+                # unter Biegung der schlechteste Ort, den man waehlen kann -
+                # gemessen am Kragtraeger 20.09.2026: Mitte 11,15 N/mm2,
+                # Eckpunkt 15,51, Balken M/W 15,0. Die Mitte zeigte damit
+                # 71,9 % des Randwerts, und der Anwender sah zu wenig.
+                werte = [np.asarray(x, float) for x in
+                         sl.stress_points(e.typ, X, mat.E, mat.nu, ue)]
+            abzug = None
             if i in temp:
-                s_ = s_ - sl.D_matrix(mat.E, mat.nu) @ (
+                abzug = sl.D_matrix(mat.E, mat.nu) @ (
                     mat.alpha * temp[i] * np.array([1.0, 1.0, 1.0, 0, 0, 0]))
             sig0 = temp.get("sigma0") if isinstance(temp, dict) else None
             if sig0 and i in sig0:
-                s_ = s_ - np.asarray(sig0[i], float)      # Vorspannung: sigma = D eps - sigma0
+                # Vorspannung: sigma = D eps - sigma0. sigma0 ist das Mittel
+                # ueber die Gausspunkte (plastizitaet.sigma0_je_element) und
+                # damit je Element konstant - es verschiebt alle
+                # Auswertepunkte um denselben Betrag.
+                s0 = np.asarray(sig0[i], float)
+                abzug = s0 if abzug is None else abzug + s0
+            if abzug is not None:
+                werte = [w - abzug for w in werte]
+            if sig0 and i in sig0 and len(werte) > 1:
+                # Fliessende Elemente: nur die Mitte. Die Plastizitaet wird an
+                # den **Gausspunkten** erzwungen, die Auswertepunkte (Ecken)
+                # liegen ausserhalb, und die abgezogene Vorspannung D eps_p
+                # ist das Mittel ueber die Gausspunkte. An einer Ecke waechst
+                # eps ueber dieses Mittel hinaus, eps_p bleibt zurueck - die
+                # gemeldete Spannung schiesst ueber die Fliessflaeche hinaus.
+                # Gemessen am Reibblock (20.09.2026): Eckwert 2,93 MPa gegen
+                # die verfestigte Fliessgrenze 1,42 - und damit ueber dem
+                # elastischen Spitzenwert 2,30, was es nicht geben kann.
+                # In der Mitte ist das Elementmittel die richtige Berichtigung.
+                werte = werte[:1]
+            s_ = werte[0] if len(werte) == 1 else max(werte, key=sl.von_mises)
             out.append((i, "solid", s_))
         elif e.typ in asm.PLANE_TYPES:
             from .elements import ebene
@@ -1801,7 +1831,10 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
         _melde(progress, z)
     res.info["plastizitaet"] = {k: v for k, v in info.items() if k != "verlauf"}
     res.info["plastizitaet"]["log"] = list(log)
-    res.info["plastisch"] = {int(i): float(v) for i, v in zustand.eps_p_eq.items() if v > 0}
+    # eps_p_eq steht je Gausspunkt; gemeldet wird der groesste Wert des
+    # Elements - ein Element gilt als fliessend, sobald ein Punkt fliesst.
+    res.info["plastisch"] = {int(i): float(np.max(v)) for i, v in zustand.eps_p_eq.items()
+                             if float(np.max(v)) > 0}
     return u, halter["R"], halter["aktiv"], temp
 
 

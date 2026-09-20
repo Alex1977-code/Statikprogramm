@@ -239,6 +239,39 @@ def test_randspannung():
           f"und M/W {s_soll / 1e6:.1f} N/mm²")
     check("der Nachweis nimmt den Randwert", c.werte["sigma_v"] >= rand_max,
           f"σ_v = {c.werte['sigma_v'] / 1e6:.1f} ≥ {rand_max / 1e6:.1f} N/mm²")
+    # Was in res.solid_res steht, ist das, was die **Anzeige** zeigt - und was
+    # der Fehlerschaetzer des Vernetzers liest. Bis zum 20.09.2026 stand dort
+    # die Elementmitte; beim Sechsflaechner unter Biegung ist das der
+    # schlechteste Ort, den man waehlen kann (gemessen am Kragtraeger: 71,9 %
+    # des Randwerts). Ohne die Aenderung faellt diese Pruefung durch.
+    sr_max = 0.0
+    for i in els:
+        X = np.asarray(m.nodes[m.elements[i].nodes], float)
+        if not 0.2 * 1.0 < float(X[:, 0].mean()) < 0.3 * 1.0:
+            continue
+        sr_max = max(sr_max, V.vergleichsspannung(np.asarray(res.solid_res[i], float)))
+    check("res.solid_res trägt den maßgebenden Punkt, nicht die Mitte",
+          sr_max >= 0.98 * rand_max,
+          f"{sr_max / 1e6:.1f} gegen Rand {rand_max / 1e6:.1f} und Mitte "
+          f"{mitte_max / 1e6:.1f} N/mm²")
+    # Beim tet4 darf sich nichts aendern: ein Auswertepunkt, konstante
+    # Spannung - das Drehlager rechnet mit 645.934 davon.
+    m3, els3, _soll3 = zugkoerper()
+    res3 = solver.solve_static(m3)
+    u3 = np.asarray(res3.u).ravel()
+    mat3 = m3.materials[m3.elements[els3[0]].mat]
+    schlimmst = 0.0
+    for i in els3[:40]:
+        e3 = m3.elements[i]
+        if e3.typ != "tet4":
+            continue
+        X3 = np.asarray(m3.nodes[e3.nodes], float)
+        ue3 = np.concatenate([u3[int(nn) * 6:int(nn) * 6 + 3] for nn in e3.nodes])
+        einzeln = np.asarray(sl.stress_points("tet4", X3, mat3.E, mat3.nu, ue3)[0], float)
+        schlimmst = max(schlimmst, float(np.abs(
+            einzeln - np.asarray(res3.solid_res[i], float)).max()))
+    check("tet4: res.solid_res ist unverändert der eine Auswertepunkt",
+          schlimmst <= 1e-6 * max(1.0, abs(_soll3)), f"größte Abweichung {schlimmst:.3e} Pa")
 
     # Auswertepunkte je Elementtyp
     check("Hexaeder wird an 9 Punkten ausgewertet",

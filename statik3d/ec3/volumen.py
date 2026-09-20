@@ -219,21 +219,20 @@ def _elementspannungen(model, res, elemente) -> list:
                 continue
             out.append((i, np.asarray(roh, float), "Mitte"))
             continue
+        k = int(np.argmax([vergleichsspannung(x) for x in sp]))
+        name = "Mitte" if k == 0 else f"Eckpunkt {k}"
         if roh is not None:
-            # Die Mehrpunktauswertung bleibt - beim Hexaeder unter Biegung
-            # liegt der Rand deutlich ueber der Mitte (47,0 gegen 34,9
-            # N/mm²). Aber sigma = D B u laesst zwei Dinge weg, die der
-            # Loeser beruecksichtigt: die plastische Vorspannung D eps_p und
-            # - mit Model.knotendilatation - den gemittelten volumetrischen
-            # Anteil. Beide sind **je Element konstant**, also verschiebt
-            # ihre Differenz alle Auswertepunkte um denselben Betrag.
+            # ``res.solid_res`` traegt seit dem 20.09.2026 schon den
+            # **massgebenden** Auswertepunkt (solver._post_chunk), und zwar
+            # mit allem, was sigma = D B u hier weglassen wuerde: der
+            # plastischen Vorspannung D eps_p und - mit
+            # Model.knotendilatation - dem gemittelten volumetrischen Anteil.
             # Gemessen am Stauchwuerfel (384 tet4, S355, p = 420 MPa,
             # Fliessen an, 20.09.2026): sigma_v,max 381,2 MPa im Ergebnis
             # gegen 3300,7 MPa neu gerechnet - Ausnutzung 1,07 gegen 9,3.
-            versatz = np.asarray(roh, float) - np.asarray(sp[0], float)
-            sp = [np.asarray(q, float) + versatz for q in sp]
-        k = int(np.argmax([vergleichsspannung(x) for x in sp]))
-        name = "Mitte" if k == 0 else f"Eckpunkt {k}"
+            # Die Nachrechnung hier benennt nur noch die **Stelle**.
+            out.append((i, np.asarray(roh, float), name))
+            continue
         out.append((i, np.asarray(sp[k], float), name))
     return out
 
