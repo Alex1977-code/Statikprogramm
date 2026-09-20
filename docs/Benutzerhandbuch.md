@@ -3212,6 +3212,46 @@ Nachweis mit seiner Verformung je Kombination.
   verworfen“ und rechnet von der Geometrie; am Drehlager war das zwischen
   LF401 und LF404 der Fall. Für die Zustände einer Ermüdungslast greift
   stattdessen das Einfrieren des Kontaktzustands (Kapitel 8).
+* **Was eine Runde bewegt und was sie kostet** (19.09.2026). Die
+  Protokollzeile lautete `Kontakt-Iteration 37: 13300 aktiv` — und diese Zahl
+  beantwortet die nächstliegende Frage nicht: „ist das wirklich relevant,
+  obwohl sich die Anzahl so gering ändert?“ Sie zählt **offen gegen
+  geschlossen**. Der Wechsel *haften → gleiten* lässt den Knoten geschlossen,
+  rührt die Zahl also gar nicht — und genau das ist die Arbeit von Phase 2.
+  Abgebrochen wird ohnehin nicht nach der Zahl, sondern nach der Menge: es
+  wird weitergerechnet, solange **irgendein** Zustand wechselt,
+  Gleitrichtungen eingeschlossen. Die Zeile nennt darum zwei weitere Angaben:
+
+  ```
+  Kontakt-Iteration 37: 13300 aktiv, Δu 4.9e-04, Matrix bleibt
+  ```
+
+  * **Δu** ist die größte Verschiebungsänderung gegenüber der vorigen Runde,
+    bezogen auf die größte Verschiebung. Daran sieht man, ob noch etwas
+    geschieht.
+  * **Matrix neu / Matrix bleibt** sagt, ob neu faktorisiert wurde. Neu wird
+    nur bei geänderter Signatur — Aktivmenge, Haften/Gleiten, Fließen;
+    Gleitrichtungen und Reibkräfte stehen allein im Lastvektor. Daran liegt
+    es, dass die späten Runden rasen: eine Faktorisierung kostet am Drehlager
+    4,23 s bei 476 214 Zeilen, das Rückwärtseinsetzen einen Bruchteil davon.
+
+  Am Block mit Reibung: 21 Runden, davon 7 mit neuer Faktorisierung — und
+  „20 aktiv“ steht über allen 21, teuren wie billigen. Die Zahl allein sagt
+  also wirklich nichts.
+* **Die Zusammenfassung zählt alle Läufe eines Lastfalls.** Mit Plastizität
+  löst derselbe Lastfall viele Male — am Drehlager 18 Schritte in drei
+  Laststufen. Gezählt wurde davon nur der **letzte**: die Zusammenfassung
+  meldete „Kontakt-Iterationen: 2“ für eine Rechnung von 2 289 s, und die
+  Kontaktmeldungen der früheren Schritte fielen ganz weg. Jetzt steht dort
+
+  ```
+  Kontakt-Iterationen     : 546 in 28 Läufen, davon 309 mit neuer Faktorisierung
+  ```
+
+  Die Zahl der Faktorisierungen trägt die Rechenzeit, nicht die Zahl der
+  Runden. „Nicht konvergiert“ klebt: ein einziger gekappter Lauf genügt, und
+  die Meldungen aller Läufe bleiben im Protokoll. Geprüft in
+  `tests/test_plastizitaet.py`.
 * **Prozesspool und Gleichungslöser sind zweierlei.** Der Pool oben verteilt
   Elementschleifen und die Vernetzung auf Prozesse. Das Lösen des
   Gleichungssystems macht ein einzelner Prozess mit eigenen Threads. Das

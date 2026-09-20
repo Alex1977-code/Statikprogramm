@@ -40,6 +40,14 @@ MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel-Run
 #: 476.214 Zeilen zu 4,23 s (19.09.2026). Derselbe Anteil wie in ama's
 #: Zustands-Newton (ama.dicht.newton_reibung, dort `anteil`).
 GLEIT_ANTEIL = 0.1
+#: Schranken und Schrittweite der Liniensuche: faellt das Guetemass
+#: (Summe der Kegelverstoesse, bezogen auf die Kraftskala) merklich,
+#: darf die naechste Runde mehr Knoten umstellen; steigt es, weniger.
+#: Ein fester Anteil waere geraten - ama's qp_kegel sucht dieselbe
+#: Schrittweite mit einer Liniensuche auf |Phi|^2 + |r|^2.
+GLEIT_ANTEIL_MIN = 0.02
+GLEIT_ANTEIL_MAX = 0.5
+GLEIT_WACHSTUM = 1.5
 #: Ein Slave-Knoten gilt als deckungsgleich mit einem Master-Knoten, wenn er
 #: naeher als dieser Anteil der Modellgroesse liegt (Rundungsrauschen des
 #: Vernetzers, nicht ein Spalt).
@@ -594,7 +602,11 @@ class ContactSystem:
         self.log = log if log is not None else []
         #: {Name der Fuge: Gesamtueberdeckung [m]} des gerechneten Lastfalls
         self.uebermass = {str(k): float(v) for k, v in (uebermass or {}).items() if v}
-        self.phase = 1          # 1: Aktivmenge und Gleitrichtungen, 2: monotone Nachpruefung
+        self.phase = 1
+        #: Anteil der haftenden Knoten, die je Runde ins Gleiten gehen
+        #: (Liniensuche, siehe GLEIT_ANTEIL); Guetemass der vorigen Runde
+        self.gleit_anteil = GLEIT_ANTEIL
+        self.gleit_guete = float("inf")          # 1: Aktivmenge und Gleitrichtungen, 2: monotone Nachpruefung
         self.stabilising = False   # Hilfsschritt ohne Spaltkraft (siehe stabilise)
         self.cycles = 0
         self.settle = 0
@@ -1307,6 +1319,7 @@ class ContactSystem:
     def _update_states(self, u: np.ndarray) -> bool:
         changed = False
         verstoesse = []         # Phase 2: (Verhaeltnis, Bedingung, dt) je Verstoss
+        guete = 0.0             # Summe der Kegelverstoesse haftender Knoten
         self.dF_slip = 0.0
         for c in self.cons:
             ue = u[c.dofs]
@@ -1357,6 +1370,7 @@ class ContactSystem:
                 nrm = np.linalg.norm(dt)
                 if not c.slip:
                     c.Ft = Ft_el
+                    guete += max(0.0, float(np.linalg.norm(Ft_el)) - limit)
                     if np.linalg.norm(Ft_el) > limit * (1 + 1e-6) and limit >= 0:
                         if self.phase == 1:
                             c.slip = True
@@ -1397,10 +1411,19 @@ class ContactSystem:
         # Zeilen. Der Anteil haelt die Reihenfolge (staerkster zuerst) und damit
         # das Wesentliche der Monotonie, braucht aber ein Vielfaches weniger
         # Runden (19.09.2026; dieselbe Regel wie ama.dicht.newton_reibung).
+        # Liniensuche: das Guetemass der vorigen Runde entscheidet ueber die
+        # Schrittweite dieser. In der ersten Runde gibt es keinen Vergleich.
+        guete = guete / max(float(getattr(self, "f_ref", 1.0)), 1e-300)
+        if np.isfinite(self.gleit_guete):
+            if guete < 0.9 * self.gleit_guete:
+                self.gleit_anteil = min(GLEIT_ANTEIL_MAX, self.gleit_anteil * GLEIT_WACHSTUM)
+            elif guete > self.gleit_guete:
+                self.gleit_anteil = max(GLEIT_ANTEIL_MIN, self.gleit_anteil / GLEIT_WACHSTUM)
+        self.gleit_guete = guete
         if verstoesse:
             haftend = sum(1 for k in self.cons
                           if k.active and k.ct is not None and k.mu > 0 and not k.slip)
-            wieviele = max(1, int(GLEIT_ANTEIL * haftend))
+            wieviele = max(1, int(self.gleit_anteil * haftend))
             verstoesse.sort(key=lambda e: -e[0])
             for _ratio, c, dt in verstoesse[:wieviele]:
                 nrm = np.linalg.norm(dt)

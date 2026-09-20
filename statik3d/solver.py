@@ -982,7 +982,15 @@ class Results:
             from . import contact as ct
             s.append(ct.summary(self.contact))
             if self.info.get("contact_iterations"):
+                # Wie viele der Runden teuer waren, steht nicht in der Zahl der
+                # Runden: neu faktorisiert wird nur bei geaenderter Signatur
+                # (19.09.2026). Und mit Plastizitaet sind es viele Laeufe.
+                n_l = int(self.info.get("contact_laeufe", 1) or 1)
+                n_f = self.info.get("contact_factorisations")
                 s.append(f"Kontakt-Iterationen     : {self.info['contact_iterations']}"
+                         + (f" in {n_l} Läufen" if n_l > 1 else "")
+                         + (f", davon {int(n_f)} mit neuer Faktorisierung"
+                            if n_f is not None else "")
                          + ("" if self.info.get("contact_converged", True)
                             else "  (NICHT konvergiert)"))
         if self.freqs is not None:
@@ -1625,6 +1633,29 @@ def _nichtlinear(model) -> bool:
     return bool(model.has_contact or _plastisch(model))
 
 
+def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
+    """Die Kennzahlen des Kontakts aufaddieren statt ueberschreiben.
+
+    Mit Plastizitaet loest derselbe Lastfall viele Male - am Drehlager 18
+    Schritte in drei Laststufen. ``res.info.update(cinfo)`` liess davon nur
+    die Zahlen des **letzten** Laufes stehen: die Zusammenfassung meldete
+    "Kontakt-Iterationen: 2" fuer eine Rechnung von 2289 s, und die
+    Kontaktmeldungen der frueheren Schritte (etwa "Nachpruefung der Reibung
+    nach 40 Zustandswechseln abgebrochen") fielen ganz weg (19.09.2026).
+    "Nicht konvergiert" klebt: ein einziger gekappter Lauf zaehlt.
+    """
+    for k in ("contact_iterations", "contact_factorisations"):
+        if k in cinfo:
+            cinfo[k] = int(res.info.get(k, 0) or 0) + int(cinfo[k] or 0)
+    cinfo["contact_laeufe"] = int(res.info.get("contact_laeufe", 0) or 0) + 1
+    cinfo["contact_converged"] = bool(res.info.get("contact_converged", True)) \
+        and bool(cinfo.get("contact_converged", True))
+    alt_log = list(res.info.get("contact_log", []) or [])
+    neu_log = [z for z in (cinfo.get("contact_log") or []) if z not in alt_log]
+    cinfo["contact_log"] = alt_log + neu_log
+    return cinfo
+
+
 def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
     """Fliessen der Volumen (plastizitaet.iteration) um den linearen
     Loesungsweg eines Lastfalls: jede Loesung ist derselbe Lastfall mit der
@@ -1691,14 +1722,14 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             res.info["ausfall_log"] = alog
             if kontakt is not None:
                 res.contact, res.contact_forces, cinfo = kontakt
-                res.info.update(cinfo)
+                res.info.update(_kontakt_info_sammeln(res, cinfo))
             return u_, R_, aktiv_
         if model.has_contact:
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
                 model, system, Fg, progress=progress, us=us, uebermass=ueber, start=st,
                 einfrieren=einfrieren, fenster=fenster)
             res.kontaktzustand = cinfo.pop("contact_state", None)
-            res.info.update(cinfo)
+            res.info.update(_kontakt_info_sammeln(res, cinfo))
             return u_, R_, aktiv
         u_ = system.solve(Fg, us=us)
         return u_, system.reactions(u_, Fg), aktiv
@@ -2655,6 +2686,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     forced = False
     for it in range(1, max_iter + 1):
         Kc, Fc = matrizen()
+        u_vor = u                  # fuer die Protokollzeile: was bewegt die Runde?
+        f_vor = getattr(system, "faktorisierungen", 0)
         try:
             u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
         except RuntimeError as ex:
@@ -2725,7 +2758,27 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             if fenster is not None:
                 von, bis = float(fenster[0]), float(fenster[1])
                 anteil = von + (bis - von) * (1.0 - 0.85 ** it)
-            _melde(progress, f"Kontakt-Iteration {it}: {cs.n_active} aktiv", anteil)
+            # Die blosse Zahl "aktiv" beantwortet die Frage nicht, ob eine
+            # Runde noch etwas ausrichtet: sie zaehlt offen gegen geschlossen
+            # und bleibt beim Wechsel haften -> gleiten unveraendert - und das
+            # ist genau die Arbeit von Phase 2 (19.09.2026, Anwender: "ist das
+            # wirklich relevant obwohl sich die anzahl so gering aendert").
+            # Darum dazu, wie weit sich u noch bewegt und ob die Matrix neu
+            # faktorisiert wurde: neu wird sie nur bei geaenderter Signatur
+            # (Aktivmenge, Haften/Gleiten, Fliessen) - Gleitrichtungen und
+            # Reibkraefte stehen allein in Fc. Am Drehlager kostet eine
+            # Faktorisierung 4,23 s bei 476 214 Zeilen, das Rueckwaerts-
+            # einsetzen einen Bruchteil davon; daran liegt es, dass die
+            # Runden gegen Ende rasen ("die iterationen werden immer
+            # schneller").
+            zusatz = ""
+            if u_vor is not None and u is not None:
+                bez = float(np.abs(u).max())
+                d = float(np.abs(u - u_vor).max())
+                zusatz = (f", Δu {d / bez:.1e}" if bez > 0 else f", Δu {d:.1e} m")
+            zusatz += (", Matrix neu" if getattr(system, "faktorisierungen", 0) > f_vor
+                       else ", Matrix bleibt")
+            _melde(progress, f"Kontakt-Iteration {it}: {cs.n_active} aktiv{zusatz}", anteil)
         if not changed:
             converged = True
             break

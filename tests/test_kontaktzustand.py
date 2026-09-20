@@ -315,6 +315,8 @@ def _haftende_ueber_kegel(n=10, mu=0.3, kn=1.0e9, kt=1.0e9):
     cs = object.__new__(ContactSystem)
     cs.cons, cs.phase, cs.log = cons, 2, []
     cs.f_tol, cs.tol, cs.dF_slip = 1.0, 1e-12, 0.0
+    cs.f_ref = 1.0e4
+    cs.gleit_anteil, cs.gleit_guete = contact.GLEIT_ANTEIL, float("inf")
     return cs, u
 
 
@@ -338,10 +340,48 @@ def test_phase2_loest_mehrere_haftende_auf_einmal():
     check("der schwaechste bleibt haften", not cs.cons[0].slip, "Knoten 0")
 
 
+
+def test_gleitanteil_passt_sich_dem_guetemass_an():
+    """Der feste Anteil von 10 % ist geraten. Ein semiglatter Newton misst nach
+    jedem Schritt, ob das Guetemass faellt, und passt an - `qp_kegel` in ama
+    macht genau das mit einer Liniensuche auf |Phi|^2 + |r|^2.
+
+    Hier ist das Guetemass, wie weit die haftenden Knoten ueber dem Coulomb-
+    Kegel liegen (Summe, bezogen auf die Kraftskala). Faellt es, darf die
+    naechste Runde mehr Knoten umstellen; faellt es nicht, weniger."""
+    cs, u = _haftende_ueber_kegel(n=40)
+    a0 = cs.gleit_anteil
+    cs._update_states(u)                       # erste Runde: Guetemass wird gesetzt
+    g1 = cs.gleit_guete
+    check("das Guetemass wird gemessen", g1 > 0.0, f"{g1:.3e}")
+
+    # zweite Runde mit kleinerem Verstoss: es faellt -> der Anteil waechst
+    u2 = u.copy()
+    for i in range(40):
+        u2[3 * i] *= 0.5
+    cs._update_states(u2)
+    check("faellt das Guetemass, waechst der Anteil", cs.gleit_anteil > a0,
+          f"{a0:g} -> {cs.gleit_anteil:g}")
+    check("aber nicht ueber die Schranke", cs.gleit_anteil <= contact.GLEIT_ANTEIL_MAX,
+          f"{cs.gleit_anteil:g} <= {contact.GLEIT_ANTEIL_MAX:g}")
+
+    # dritte Runde mit groesserem Verstoss: es steigt -> der Anteil faellt
+    a2 = cs.gleit_anteil
+    u3 = u.copy()
+    for i in range(40):
+        u3[3 * i] *= 4.0
+    cs._update_states(u3)
+    check("steigt das Guetemass, faellt der Anteil", cs.gleit_anteil < a2,
+          f"{a2:g} -> {cs.gleit_anteil:g}")
+    check("aber nicht unter die Schranke", cs.gleit_anteil >= contact.GLEIT_ANTEIL_MIN,
+          f"{cs.gleit_anteil:g} >= {contact.GLEIT_ANTEIL_MIN:g}")
+
+
 def main():
     for t in (test_sicherung, test_warmstart, test_warmstart_ohne_halt, test_fortschritt_kontakt,
               test_grundlast, test_einfrieren,
-              test_phase2_loest_mehrere_haftende_auf_einmal):
+              test_phase2_loest_mehrere_haftende_auf_einmal,
+              test_gleitanteil_passt_sich_dem_guetemass_an):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

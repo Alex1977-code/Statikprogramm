@@ -352,9 +352,76 @@ def test_blockweise_fuer_jeden_elementtyp():
           f"{ib['fliessend']} / {is_['fliessend']} fließend")
 
 
+def test_protokoll_sagt_was_die_runde_bewegt_und_kostet():
+    """Die Zahl „N aktiv“ beantwortet nicht, ob eine Runde noch etwas
+    ausrichtet: sie zählt offen gegen geschlossen und bleibt beim Wechsel
+    haften → gleiten unverändert - und genau das ist die Arbeit von Phase 2
+    (19.09.2026, Anwender vor einem Drehlager-Protokoll: „ist das wirklich
+    relevant obwohl sich die anzahl so gering ändert“, und „interessant ist
+    dass die iterationen immer schneller werden“). Die Zeile sagt jetzt dazu,
+    wie weit sich u noch bewegt und ob die Matrix neu faktorisiert wurde -
+    neu wird sie nur bei geänderter Signatur, und genau daran liegt es, dass
+    die späten Runden rasen."""
+    zeilen = []
+    m = block_friction_example()
+    solver.solve_static(m, progress=lambda t, a=None: zeilen.append(str(t)))
+    kz = [z for z in zeilen if z.startswith("Kontakt-Iteration ")]
+    check(f"die Kontakt-Iteration meldet jede Runde ({len(kz)})", len(kz) >= 5, str(kz[:1]))
+    check("jede Runde sagt, ob die Matrix neu faktorisiert wurde",
+          all(("Matrix neu" in z) or ("Matrix bleibt" in z) for z in kz),
+          str([z for z in kz if "Matrix" not in z][:1]))
+    check("ab der zweiten Runde steht die Verschiebungsänderung dabei",
+          all("Δu" in z for z in kz[1:]), str([z for z in kz[1:] if "Δu" not in z][:1]))
+    teuer = [z for z in kz if "Matrix neu" in z]
+    billig = [z for z in kz if "Matrix bleibt" in z]
+    check(f"beide Sorten kommen vor: {len(teuer)} mit neuer Matrix, {len(billig)} ohne",
+          teuer and billig, f"{len(teuer)} / {len(billig)}")
+    # Der Kern der Sache: gleiche Zahl „aktiv“, trotzdem unterschiedlich teuer
+    def aktiv(z):
+        return z.split(": ", 1)[1].split(" aktiv", 1)[0]
+    gleich = {aktiv(z) for z in teuer} & {aktiv(z) for z in billig}
+    check("dieselbe Zahl „aktiv“ kommt teuer und billig vor - die Zahl allein sagt nichts",
+          bool(gleich), str(sorted(gleich)[:3]))
+
+
+def test_kennzahlen_zaehlen_alle_laeufe_des_lastfalls():
+    """Mit Plastizität löst derselbe Lastfall viele Male. ``res.info.update``
+    liess davon nur die Zahlen des letzten Laufes stehen: am Drehlager meldete
+    die Zusammenfassung „Kontakt-Iterationen: 2“ für eine Rechnung von 2289 s
+    (19.09.2026). Jetzt wird aufaddiert - und die Zahl der Faktorisierungen
+    steht dabei, denn sie trägt die Rechenzeit, nicht die Zahl der Runden."""
+    m0 = block_friction_example()
+    r0 = solver.solve_static(m0)
+    q0 = max(pl.vergleichsspannung(np.asarray(v, float)) for i, v in r0.solid_res.items()
+             if m0.elements[i].mat == "S235")
+    check("ohne Plastizität ist es ein Lauf, und die Faktorisierungen stehen dabei",
+          int(r0.info.get("contact_laeufe", 0)) == 1
+          and 1 <= int(r0.info.get("contact_factorisations", 0)) <= int(r0.info["contact_iterations"]),
+          f"{r0.info.get('contact_laeufe')} Läufe, {r0.info.get('contact_factorisations')} von "
+          f"{r0.info.get('contact_iterations')} Runden")
+    m = block_friction_example()
+    m.materials["S235"].fy = 0.6 * q0
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.05, laststufen=2,
+                                     iterationen=40, toleranz=1e-4)
+    r = solver.solve_static(m)
+    n_l = int(r.info.get("contact_laeufe", 0))
+    n_it = int(r.info.get("contact_iterations", 0))
+    n_f = int(r.info.get("contact_factorisations", 0))
+    check(f"mit Plastizität sind es viele Läufe ({n_l}), nicht einer", n_l > 1, str(n_l))
+    check(f"die Runden werden über alle Läufe gezählt ({n_it})", n_it >= n_l, f"{n_it} zu {n_l}")
+    check(f"und die Faktorisierungen auch ({n_f}) - höchstens eine je Runde",
+          1 <= n_f <= n_it, f"{n_f} von {n_it}")
+    z = [x for x in r.summary().splitlines() if x.startswith("Kontakt-Iterationen")]
+    check("die Zusammenfassung nennt Runden, Läufe und Faktorisierungen",
+          z and f"in {n_l} Läufen" in z[0] and "mit neuer Faktorisierung" in z[0],
+          z[0] if z else "keine Zeile")
+
+
 def main():
     for t in (test_rueckfuehrung, test_blockweise_wie_die_schleife,
               test_blockweise_fuer_jeden_elementtyp, test_zugversuch,
+              test_protokoll_sagt_was_die_runde_bewegt_und_kostet,
+              test_kennzahlen_zaehlen_alle_laeufe_des_lastfalls,
               test_loeser, test_kombination, test_kontakt):
         try:
             t()
