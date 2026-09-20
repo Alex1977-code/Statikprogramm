@@ -817,6 +817,12 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
 
     frei = [k for k in koerper if not abgebildet(model, k)]
     # 1) Abgebildete Koerper gleich hier - das kostet nichts
+    # Das Groessenfeld einmal je Lauf und **vor** den Karten: die
+    # Linienteilung liest es schon beim Kartieren (Bogenwinkel an
+    # Nebenflaechen). Es haengt am Modell und geht mit ihm in die
+    # Arbeitsprozesse (netzfeld.aufbauen).
+    from . import netzfeld
+    model.groessenfeld = netzfeld.aufbauen(model, log=log)
     # Die modellweiten Netzkarten einmal je Lauf - fuer alle Pfade. Je Koerper
     # gebildet kosteten sie am Drehlager 48 x 1,5 s in der seriellen Phase.
     karten = netzkarten(model)
@@ -991,3 +997,104 @@ def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,
                 else:
                     els.append(model.add_element("hex8", c, mat, group=gruppe))
     return els
+
+
+# --------------------------------------------------------------------------
+# Das ganze Modell vernetzen - ohne Oberflaeche
+# --------------------------------------------------------------------------
+def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: int = None,
+                     flaechen: list = None, koerper: list = None, hs: dict = None) -> dict:
+    """Flaechen und Volumen vernetzen und den Nachlauf ausfuehren - in
+    derselben Folge wie die Oberflaeche (``gui.main._vernetzen``), aber
+    ohne Qt: Netzdichte, Kontaktfugen zuruecksetzen, Flaechen, Volumen
+    (parallel), Lasten verteilen, Kontaktfugen ausfuehren, starre Flaechen
+    koppeln, Stabenden anschliessen, Lager auf das Netz.
+
+    Das braucht, wer ohne Oberflaeche vernetzt: die Befehlszeile
+    (``statik3d --vernetzen``), die adaptive Vernetzung
+    (:mod:`statik3d.adaptiv`), die Pruefungen. ``hs`` ueberschreibt die
+    Kantenlaenge je Volumen (Name -> m), sonst kommt sie aus der Netzdichte.
+
+    Jeder Schritt misst sich selbst, wie in der Oberflaeche - am Drehlager
+    lag die Zeit nicht im Netz (119,9 s), sondern im Nachlauf: Kontaktfugen
+    203,6 s, Lasten verteilen 86,2 s (Protokoll vom 18.09.2026). Rueckgabe
+    {"elemente", "zeiten": {Schritt: s}, "abgebrochen", "prozesse"}.
+    """
+    import time
+    from . import fugen, netzdichte as nd, supports
+    from .importers import _common as C
+    log = [] if log is None else log
+    netz = model.netz
+    flaechen = list(model.flaechen.values()) if flaechen is None else list(flaechen)
+    koerper = list(model.koerper.values()) if koerper is None else list(koerper)
+    zeiten: dict = {}
+    t0 = time.time()
+    gewicht: dict = {}
+    try:
+        for name, _art, _h, n_, _grund, _teil in nd.vorschau(model, netz, flaechen, koerper)["zeilen"]:
+            gewicht[name] = max(1.0, float(n_ or 0.0))
+    except Exception:                       # noqa: BLE001 - dann zaehlt jedes Objekt gleich
+        gewicht = {}
+    # Die eigene Teilung jeder Flaeche bleibt erhalten (wie in der Oberflaeche)
+    eigene_teilung = {f.name: list(f.teilung or []) for f in flaechen}
+    hs_alle = nd.anwenden(model, netz, flaechen, koerper, log)
+    if hs:
+        hs_alle.update({k: float(v) for k, v in hs.items() if v})
+    C.say(log, f"Netzeinstellungen: {netz.beschreibung()}")
+    aus = {"elemente": 0, "abgebrochen": False, "prozesse": 1}
+    try:
+        fugen.kontaktfugen_zuruecksetzen(model, log)
+        # Alte Netze in **einem** Zug entfernen: elemente_loeschen nummeriert
+        # alles um, und je Objekt gerufen waere das am Drehlager 1483 Durchgaenge
+        # ueber 640 000 Elemente.
+        alt = [e for f in flaechen for e in (f.elemente or [])] + \
+              [e for k in koerper for e in (k.elemente or [])]
+        if alt:
+            model.elemente_loeschen(alt)
+            # Die Knoten des alten Netzes gleich mit: sonst stehen sie als
+            # „Knoten ohne Element" in der Abnahme und als Freiheitsgrade
+            # ohne Steifigkeit im Gleichungssystem (Platte mit Bohrung nach
+            # einer adaptiven Runde: 10 143 verwaiste Knoten, 20.09.2026).
+            weg = model.netzknoten_loeschen()
+            if weg:
+                C.say(log, f"{weg} Knoten des alten Netzes entfernt")
+        for f in flaechen:
+            f.elemente = []
+        for k in koerper:
+            k.elemente = []
+        kanten: dict = {}
+        for f in flaechen:
+            aus["elemente"] += len(mesh_flaeche(model, f, log, kanten=kanten))
+        if koerper:
+            erg = koerper_vernetzen(model, koerper, hs=hs_alle, log=log, cache={},
+                                    workers=workers, fortschritt=fortschritt, gewicht=gewicht)
+            aus["elemente"] += erg["elemente"]
+            aus["prozesse"] = erg.get("prozesse", 1)
+            aus["abgebrochen"] = bool(erg.get("abgebrochen"))
+        zeiten["Netz erzeugen"] = time.time() - t0
+        t0 = time.time()
+        model.lasten_verteilen(log)
+        zeiten["Lasten verteilen"] = time.time() - t0
+        t0 = time.time()
+        fugen.kontaktfugen_ausfuehren(model, log)
+        zeiten["Kontaktfugen trennen"] = time.time() - t0
+        t0 = time.time()
+        fugen.starre_flaechen_koppeln(model, log)
+        zeiten["Starre Flächen koppeln"] = time.time() - t0
+        t0 = time.time()
+        fugen.stabenden_koppeln(model, log)
+        zeiten["Stabenden anschließen"] = time.time() - t0
+        t0 = time.time()
+        supports.lager_auf_netz(model, log)
+        zeiten["Lager auf das Netz"] = time.time() - t0
+    finally:
+        for f in flaechen:
+            if eigene_teilung.get(f.name):
+                f.teilung = eigene_teilung[f.name]
+    aus["zeiten"] = zeiten
+    lang = sorted(((k, v) for k, v in zeiten.items() if v >= 0.05), key=lambda x: -x[1])
+    C.say(log, f"Vernetzt: {aus['elemente']} Elemente in {sum(zeiten.values()):.1f} s"
+               + (f" auf {aus['prozesse']} Prozessen" if aus["prozesse"] > 1 else "")
+               + (" - abgebrochen" if aus["abgebrochen"] else "")
+               + ("; davon " + ", ".join(f"{k} {v:.1f} s" for k, v in lang) if lang else ""))
+    return aus

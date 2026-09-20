@@ -41,6 +41,14 @@ def main(argv=None) -> int:
     ap.add_argument("--ermuedung", action="store_true", help="Ermuedungsnachweis (EN 1993-1-9)")
     ap.add_argument("--staebe", action="store_true", help="Staebe automatisch erkennen")
     ap.add_argument("--moden", type=int, default=6)
+    ap.add_argument("--vernetzen", action="store_true",
+                    help="Flaechen und Volumen vor der Rechnung neu vernetzen (mit Nachlauf: "
+                         "Lasten, Kontaktfugen, Lager) - ohne Oberflaeche")
+    ap.add_argument("--adaptiv", type=int, default=None, metavar="RUNDEN",
+                    help="adaptiv vernetzen: so viele Verfeinerungsrunden (rechnen, Fehler "
+                         "schaetzen, nur dort feiner, im Feld groeber); Lastfall aus --lastfall")
+    ap.add_argument("--fehlerziel", type=float, default=None,
+                    help="Ziel des bezogenen Fehlers fuer --adaptiv (Vorgabe 0.05)")
     ap.add_argument("--kerne", type=int, default=None, help="Anzahl lokaler Prozesse")
     ap.add_argument("--farm", help="Rechnerfarm host:port")
     ap.add_argument("--schluessel", default="statik3d", help="Farm-Schluessel")
@@ -95,6 +103,20 @@ def main(argv=None) -> int:
         from .combinations import generate_combinations
         n = len(generate_combinations(m))
         log(f"{n} Kombinationen erzeugt")
+    if a.adaptiv is not None:
+        from . import adaptiv as _ad, netzfehler as _nf
+        zeilen: list[str] = []
+        _ad.adaptiv_vernetzen(m, [a.lastfall] if a.lastfall else None, runden=int(a.adaptiv),
+                              ziel=a.fehlerziel if a.fehlerziel else _nf.ZIEL,
+                              log=zeilen, workers=a.kerne)
+        for s in zeilen:
+            log("  " + s)
+    elif a.vernetzen:
+        from . import mesher as _mesher
+        zeilen = []
+        _mesher.modell_vernetzen(m, zeilen, workers=a.kerne)
+        for s in zeilen:
+            log("  " + s)
     if a.speichern:
         m.save(a.speichern)
         log(f"Modell gespeichert: {a.speichern}")

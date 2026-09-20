@@ -176,6 +176,15 @@ def elementlaenge(model, netz, obj) -> dict:
     else:
         h = ziel
         grund.append(f"Ziellänge {ziel * 1e3:.0f} mm")
+    # Eine eigene Kantenlaenge je Volumen (netz.koerper_h) geht vor Dichte
+    # und Ziellaenge: so setzt die adaptive Vernetzung (statik3d.adaptiv) je
+    # Koerper, was das Ergebnis dort braucht - und so kann der Anwender einen
+    # Koerper groeber lassen als den Rest. Die Deckel darunter gelten weiter.
+    if not ist_flaeche:
+        eigen = float((getattr(netz, "koerper_h", None) or {}).get(getattr(obj, "name", ""), 0.0) or 0.0)
+        if eigen > 0:
+            h = eigen
+            grund.append(f"eigene Kantenlänge {eigen * 1e3:.1f} mm")
     h_dichte = h
     kante = kleinste_kante(model, obj)
     if getattr(netz, "intelligent", True):

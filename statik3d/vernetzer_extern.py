@@ -112,14 +112,69 @@ def _threads() -> int:
 # --------------------------------------------------------------------------
 # gmsh
 # --------------------------------------------------------------------------
+#: Gradation fuer die Anpassung mit MMG3D: kein Nachbarelement mehr als so
+#: viel groesser als seines. 1 + mesher3d.WACHSTUM - dieselbe Steigung, mit
+#: der das Groessenfeld selbst waechst; eine andere widerspraeche ihm.
+HGRAD = 1.35
+
+
+def _rueckruf_mit_huelle(P: np.ndarray, T: np.ndarray, h: float, feld):
+    """Der Groessen-Rueckruf fuer gmsh: dieselbe Sollgroesse wie im eigenen
+    Vernetzer (mesher3d.tetraedern) -
+
+        min( h, Randkantenlaenge am naechsten Huellpunkt + WACHSTUM * Abstand, Feld )
+
+    - denn ohne „Groesse vom Rand fortsetzen" (siehe gmsh_tetraedern) kennt
+    gmsh die Huelle nicht mehr als Groessenquelle."""
+    from scipy.spatial import cKDTree
+    from .mesher3d import WACHSTUM, randkantenlaenge
+    kante = randkantenlaenge(np.asarray(P, float), np.asarray(T, int))
+    baum = cKDTree(np.asarray(P, float))
+    # Das Feld **vor** dem ersten Aufruf abschliessen: HXT ruft aus mehreren
+    # Threads zugleich, und ein Feld, das seine Quellwolke erst im Rueckruf
+    # zusammenfuehrt, tut das dann in zwei Threads gleichzeitig (Platte,
+    # Kugel 10 mm: 38,5 mm statt 14,5 mm im Zielbereich, 20.09.2026).
+    if hasattr(feld, "_fertig"):
+        feld._fertig()
+
+    def rueckruf(dim, tag, x, y, z, lc):
+        X = np.array([[x, y, z]])
+        d, i = baum.query(X[0])
+        wert = min(float(h), float(kante[i]) + WACHSTUM * float(d), float(feld(X)[0]))
+        if lc is not None and lc > 0:
+            wert = min(wert, float(lc))
+        return wert
+    return rueckruf
+
+
 def gmsh_tetraedern(P: np.ndarray, T: np.ndarray, h: float, h_min: float = 0.0,
-                    threads: int = 0) -> tuple:
+                    threads: int = 0, feld=None) -> tuple:
     """Die Huelle (P, T) mit gmsh tetraedern. Rueckgabe (Pn, TET): die ersten
-    ``len(P)`` Punkte von Pn sind die Huellpunkte in ihrer Reihenfolge."""
+    ``len(P)`` Punkte von Pn sind die Huellpunkte in ihrer Reihenfolge.
+
+    ``feld`` (netzfeld.Groessenfeld) geht als **Groessen-Rueckruf** an gmsh
+    (``setSizeCallback``): gmsh fragt je Punkt, und die Antwort ist das
+    Minimum aus seiner eigenen Groesse (Huelle, Optionen) und dem Feld. Das
+    ist der Weg, der am Quader 1 x 0,6 x 0,2 m mit 5-mm-Kugel das Feld traf
+    (8,1 mm im Zielbereich, 11 837 Aufrufe fuer 6 152 Tetraeder, 0,1 s,
+    20.09.2026); ein Hintergrundnetz als PostView traf 25 mm, weil es auf
+    seinem groben Netz interpoliert.
+    """
     import gmsh
     P = np.asarray(P, float)
     T = np.asarray(T, int)
     n = len(P)
+    mit_feld = feld is not None and not getattr(feld, "leer", True)
+    # Den Rueckruf **vor** gmsh.initialize() bauen (und damit das Feld
+    # abschliessen). Gemessen an der Platte 1 x 0,6 x 0,2 m, Huelle 100 mm,
+    # Kugel 10 mm (20.09.2026, ein Thread, deterministisch): Feld vor
+    # initialize abgeschlossen 2 320 Tetraeder und 14,5 mm im Zielbereich,
+    # danach abgeschlossen 1 373 und 38,5 mm - bei bis zur 579. Anfrage
+    # identischen Fragen und identischen Antworten. Die Abweichung entsteht
+    # in gmsh/HXT, nicht im Rueckruf; die Ursache ist nicht gefunden. Darum
+    # gilt: der Rueckruf ist eine Hilfe, verlaesslich setzt MMG3D das Feld
+    # ueber die Metrik um (mmg3d_nachbessern).
+    rueckruf = _rueckruf_mit_huelle(P, T, float(h), feld) if mit_feld else None
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
@@ -133,11 +188,21 @@ def gmsh_tetraedern(P: np.ndarray, T: np.ndarray, h: float, h_min: float = 0.0,
         gmsh.model.geo.addVolume([loop])
         gmsh.model.geo.synchronize()
         gmsh.option.setNumber("Mesh.MeshSizeMax", float(h))
-        gmsh.option.setNumber("Mesh.MeshSizeMin", float(h_min) if h_min > 0 else float(h) / 4.0)
-        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)
+        h_unten = float(h_min) if h_min > 0 else float(h) / 4.0
+        if mit_feld and len(getattr(feld, "h", ())):
+            # Die Untergrenze darf das Feld nicht abschneiden
+            h_unten = min(h_unten, 0.5 * float(np.min(feld.h)))
+        gmsh.option.setNumber("Mesh.MeshSizeMin", h_unten)
+        # Mit Feld darf gmsh die Groesse **nicht** vom Rand fortsetzen: in
+        # diesem Modus liest HXT den Rueckruf kaum (Platte, Kugel 10 mm:
+        # 38,5 mm statt 10 im Zielbereich, 20.09.2026). Die Regel „Randkante
+        # plus Wachstum" steckt dann im Rueckruf selbst (_rueckruf_mit_huelle).
+        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0 if mit_feld else 1)
         gmsh.option.setNumber("Mesh.Algorithm3D", 10)      # HXT: mehrkernig
         gmsh.option.setNumber("Mesh.Optimize", 1)
         gmsh.option.setNumber("Mesh.OptimizeNetgen", 0)
+        if rueckruf is not None:
+            gmsh.model.mesh.setSizeCallback(rueckruf)
         gmsh.model.mesh.generate(3)
         tags, coords, _ = gmsh.model.mesh.getNodes()
         X = np.asarray(coords, float).reshape(-1, 3)
@@ -254,10 +319,21 @@ def mesh_lesen(pfad: str) -> tuple:
 
 
 def mmg3d_nachbessern(Pn: np.ndarray, TET: np.ndarray, T: np.ndarray, h: float,
-                      programm: str = "", h_min: float = 0.0, log: list = None) -> tuple:
+                      programm: str = "", h_min: float = 0.0, log: list = None,
+                      feld=None) -> tuple:
     """Das Tetraedernetz mit MMG3D optimieren, die Huelle (Dreiecke T ueber
     die ersten len(T)-Punkte) bleibt unveraendert (-nosurf). Rueckgabe
     (Pn, TET) mit derselben Huellnummerierung.
+
+    Mit ``feld`` (netzfeld.Groessenfeld) wird nicht optimiert, sondern
+    **angepasst**: je Knoten geht die Kantenlaenge des Feldes als skalare
+    Metrik (``.sol``) mit, MMG3D setzt das Innere darauf um - feiner, wo das
+    Feld fein ist, groeber bis h, wo es grob ist - und laesst die Huelle, wo
+    sie ist. Genau dafuer ist MMG gebaut. Gemessen am Quader 1 x 0,6 x 0,2 m
+    (Huelle 50 mm, Feld 5 mm um einen Innenpunkt, 80 mm sonst, 20.09.2026):
+    12,8 mm im Zielbereich, 75,8 mm im Feld, Guete min 0,507, Volumen und
+    Huelle exakt, 0,4 s. ``-optim`` und eine Metrik schliessen sich bei MMG
+    aus („MISMATCH OPTIONS“), darum entfaellt es in diesem Fall.
 
     Aufruf als getrennter Prozess ueber Dateien - so bleibt MMG (LGPL) ein
     eigenes Programm und kein Teil der exe. Gestartet wird er **ohne
@@ -274,8 +350,19 @@ def mmg3d_nachbessern(Pn: np.ndarray, TET: np.ndarray, T: np.ndarray, h: float,
     aus = os.path.join(ordner, "netz.o.mesh")
     try:
         mesh_schreiben(ein, Pn, TET, T)
-        befehl = [exe, "-in", ein, "-out", aus, "-nosurf", "-optim", "-v", "0",
+        befehl = [exe, "-in", ein, "-out", aus, "-nosurf", "-v", "0",
                   "-hmax", f"{float(h):.9g}"]
+        metrik = feld is not None and not getattr(feld, "leer", True)
+        if metrik:
+            sol = os.path.join(ordner, "netz.sol")
+            werte = feld.sol_schreiben(sol, Pn, float(h))
+            befehl += ["-sol", sol, "-hgrad", f"{HGRAD:.4g}"]
+            if h_min <= 0:
+                # Ohne Angabe nimmt MMG ein Zehntel der feinsten Metrik als
+                # Untergrenze - das liesse es unter das Feld verfeinern.
+                h_min = 0.5 * float(np.min(werte)) if len(werte) else 0.0
+        else:
+            befehl += ["-optim"]
         if h_min > 0:
             befehl += ["-hmin", f"{float(h_min):.9g}"]
         lauf = subprocess.run(befehl, capture_output=True, text=True, timeout=3600,
@@ -287,7 +374,8 @@ def mmg3d_nachbessern(Pn: np.ndarray, TET: np.ndarray, T: np.ndarray, h: float,
     finally:
         shutil.rmtree(ordner, ignore_errors=True)
     if log is not None:
-        log.append(f"  MMG3D: {len(TET):,} -> {len(TET2):,} Tetraeder, {len(Pn):,} -> {len(X):,} Punkte")
+        log.append(f"  MMG3D: {len(TET):,} -> {len(TET2):,} Tetraeder, {len(Pn):,} -> {len(X):,} Punkte"
+                   + (" (an das Größenfeld angepasst)" if metrik else ""))
     # Huellpunkte muessen an Ort und Nummer bleiben (-nosurf)
     P = np.asarray(Pn, float)[:n_rand]
     return _huelle_voran(P, X, TET2)

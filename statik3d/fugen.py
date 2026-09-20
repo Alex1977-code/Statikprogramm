@@ -1602,6 +1602,11 @@ def kontaktfugen_zuruecksetzen(model: Model, log: list = None) -> int:
          + vorher[2] - len(model.contact_pairs))
     for kb in (getattr(model, "kontaktbedingungen", {}) or {}).values():
         kb.ausgefuehrt = False
+    # Die Paare der verdoppelten Knoten gehoeren ebenfalls zum alten Netz:
+    # blieben sie stehen, hielte model.netzknoten_loeschen ihre Knoten fest,
+    # und die Abnahme zaehlte sie als „Knoten ohne Element" (20.09.2026).
+    if getattr(model, "getrennte_knoten", None):
+        model.getrennte_knoten = {}
     if n and log is not None:
         C.say(log, f"{n} Verbindungen aus Kontaktbedingungen zurückgenommen "
                    "(sie gehörten zum alten Netz)")

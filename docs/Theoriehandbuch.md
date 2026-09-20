@@ -3295,6 +3295,74 @@ Betroffen ist allein `tet4`; alle anderen Elementtypen rechnen unverändert
 Elemente über seine größte Ausdehnung), wird sie für dieses Bauteil verkleinert
 und das gemeldet.
 
+**Größenfeld (`netzfeld.py`, 20.09.2026).** Bis hierher ist die Feinheit eine
+Funktion der Hülle: `h_lokal = min(h, Randkante + WACHSTUM · Abstand)`. Es gab keinen
+Kanal, über den eine benannte Stelle oder ein Rechenergebnis die Feinheit setzen
+konnte. Das **Größenfeld** ist dieser Kanal — eine Wolke von Quellen (Ort x_k,
+Kantenlänge h_k, Reichweite r_k), ausgewertet als
+
+    h(x) = min( h_max, min_k [ h_k + WACHSTUM · max(0, |x − x_k| − r_k) ] ).
+
+Weil jede Quelle mit derselben Steigung 0,35 kegelförmig wirkt, ist das Feld von sich
+aus gradiert. Die Auswertung geht über die zwölf nächsten Quellen und ist trotzdem
+**exakt**: die Lipschitz-Schranke R = (v₁ − h_min)/g + r_max sagt, bis wohin eine
+fernere Quelle noch unter den gefundenen Wert v₁ käme; reicht die Suche nicht bis R,
+werden alle Quellen bis R geholt. Gemessen an 600 000 Zufallsquellen mit h von 3 bis
+70 mm: Abweichung zur Auswertung über alle Quellen 0,00 %, 300 000 Auswertungen 1,0 s
+(mit zwölf Nachbarn ohne Schranke wären es bis 18 % gewesen). Überdeckte Quellen
+werden vorab entfernt — eine Quelle, deren Kegel überall höchstens 5 % über dem
+einer anderen liegt, ändert am Netz nichts; das hält das Feld nach oben um höchstens
+diese 5 % (gemessen 0,15 %) und braucht für 200 000 Quellen 0,6 s.
+
+Die Quellen kommen aus den Netzeinstellungen: **Netzverfeinerungen** (Kugel um einen
+Punkt, benannte Fläche, Linie oder Körper mit Kantenlänge) und **Feldpunkte**, die der
+Fehlerschätzer schreibt (§ 6c). Das Feld hängt am Modell (`model.groessenfeld`), wird
+einmal je Lauf gebildet und geht mit dem Modell in die Arbeitsprozesse; gespeichert
+werden nur seine Quellen. Es wirkt an allen vier Stellen, an denen die Feinheit
+entsteht — denn die Hülle ist der Hebel (3,4 Tetraeder je Randdreieck am Drehlager):
+
+| Stelle | Weg |
+|---|---|
+| Linien | Zahl der Abschnitte aus ∫ ds / h(s) längs der Linie, die Punkte an gleichen Bruchteilen dieses Integrals — dicht, wo das Feld fein ist (Linie 1 m, h = 50 mm, Kugel 10 mm in der Mitte: 33 statt 20 Abschnitte, 9,9 mm an der Kugel, 49,4 mm am Ende). Beide Körper einer gemeinsamen Linie lesen dasselbe Feld und bekommen dieselben Punkte |
+| Flächen | das gleichmäßige Dreiecksgitter wird wie in einem Quadtree verdichtet, wo das Feld unter 70 % der Zellweite fällt (vier Kinder halber Weite, bis acht Stufen), dann auf die Feldweite ausgedünnt und **geglättet**: jeder Innenpunkt wandert um den halben Schritt zum Schwerpunkt seiner Nachbarn, behalten wird nur, was die schlechteste Güte seiner Dreiecke bessert (Quadrat 1 × 1 m, h = 100 mm, geteilter Rand, 20-mm-Stelle: Güte min 0,65 → 0,79 in der Mitte, 0,24 → 0,52 an der Ecke, Stufenfeld 0,22 → 0,35) |
+| Tetraeder | dritte Schranke der Sollgröße neben h und der Randkantenregel; die Verfeinerung selbst bleibt (Platte, Kugel 15 mm bei h = 100 mm: 11,9 mm in der Kugel, 79 mm im Feld, Güte min 0,114) |
+| gmsh / MMG3D | gmsh bekommt einen Größen-Rückruf mit derselben Sollgröße; MMG3D die Kantenlänge je Knoten als Metrik (`.sol`) und passt das Innere bei fester Hülle an (Quader, Hülle 50 mm, Kugel 5 mm: 12,8 mm im Ziel, Güte min 0,507, 0,4 s). **Der gmsh-Rückruf ist keine Zusage:** an der Platte mit 100-mm-Hülle traf HXT die 10-mm-Kugel je Prozesszustand mit 14,5 oder 38,5 mm — bei identischen Fragen und Antworten bis zur 579. Anfrage; die Abweichung entsteht in gmsh, die Ursache ist nicht gefunden. Verlässlich ist die Metrik von MMG3D; ohne sie warnt das Protokoll |
+
+**Bedeutung der Flächen — Nebenflächen grob.** Am Drehlager stammen 85 % der Elemente
+aus acht Körpern, alle mit derselben Ziellänge 50 mm; ihre Elementzahl kommt aus der
+Hülle, und die Hülle aus Bohrungen und Ausrundungen mit 18° je Bogenabschnitt — ob die
+Bohrung etwas trägt oder nicht. `netzfeld.bedeutung` unterscheidet: **bedeutend** ist
+eine Fläche mit Last, Lager, Kontaktbedingung, integriertem Knoten, Netzverfeinerung
+oder einem zweiten Körper (gemeinsame Fläche); alles andere ist **Nebenfläche**. Mit
+`netz.nebenflaechen_grob` bekommen die Linien der Nebenflächen 45° je Bogenabschnitt
+(acht statt zwanzig je Vollkreis). Gemessen an der Platte 1 × 0,6 × 0,2 m mit einer
+Bohrung r = 100 mm und vier Durchgangsbohrungen r = 20 mm, h = 50 mm: Randdreiecke
+5 384 → 2 260, Tetraeder 40 364 → 17 969, Knoten 7 641 → 3 412, geschätzter Fehler
+11,9 → 12,8 %. Der Preis steht daneben: die größte Vergleichsspannung fiel von 490 auf
+343 N/mm², weil die große Bohrung hier weder Last noch Kontakt hat und damit
+Nebenfläche ist. Darum ist die Vorgabe **aus** — eingeschaltet wird sie von der
+adaptiven Vernetzung (§ 6c), die zurückholt, was doch trägt, und vom Anwender, der
+weiß, wo er den Nachweis führt.
+
+**Kappen.** Ein Splitter, dessen vier Ecken alle auf der Hülle liegen — zwei
+Nachbardreiecke einer gewölbten Wand, zu einem fast flachen Tetraeder verbunden —, ist
+für die Verfeinerung unsichtbar (der Umkugelmittelpunkt liegt im Nirgendwo und wird
+verworfen, alle Kanten sind ähnlich lang) und für die Glättung unerreichbar
+(Hüllknoten stehen fest). An der Bohrungswand einer Platte blieben so Tetraeder mit
+Güte 0,005 bis 0,011 durch drei Anläufe der Nachvernetzung stehen (20.09.2026). Zwei
+Schritte: erst ein Punkt im Schwerpunkt, um die halbe Kante nach innen geschoben — er
+liegt in der riesigen Umkugel und zerlegt die Kappe (Platte, adaptive Runde: 60
+Kappen). Wo das nicht greift — auf einer Wand, die vom Körper aus **hohl** ist, ragt die
+Umkugel nur um den Sehnenpfeil in den Körper (bei 24-mm-Sehnen auf r = 40 mm knapp
+1 mm) —, wird die Kappe **entfernt**: das ist der Diagonalwechsel des Hüllvierecks, die
+Knoten bleiben, die Oberfläche ist um den Sehnenpfeil gedellt, dem Netz fehlt der
+Rauminhalt der Kappe (Platte 2 × 2 × 0,4 m mit Bohrung: zwei Kappen, 5,8·10⁻⁶ von
+1,40 m³). Entfernt wird nur, was mindestens zwei freie Seiten hat — ein Splitter
+**zwischen** anderen Tetraedern (in einer dünnen Platte hat fast jeder Tetraeder Knoten
+oben und unten) bliebe sonst als Hohlraum zurück — und dessen Knoten alle in anderen
+Tetraedern stehen. Das ist der Weg zu einem Netz ohne Splitter; das Protokoll nennt
+Zahl und Rauminhalt.
+
 ## 6b Netzqualität (`netzguete.py`)
 
 Die Formgüte misst, wie nah ein Element an seiner regelmäßigen Gestalt ist;
@@ -3335,6 +3403,94 @@ unbewertet.
 Als zweites Maß steht das **Seitenverhältnis** (kürzeste durch längste Kante)
 zur Verfügung, als drittes die längste Kante als Elementgröße. Alles ist je
 Elementart vektorisiert: 380 000 Tetraeder brauchen rund 1,5 s.
+
+## 6c Fehlerschätzer und adaptive Vernetzung (`netzfehler.py`, `adaptiv.py`)
+
+„Fein genug" ist ohne Maß nicht entscheidbar. Das Maß ist der **Spannungssprung**
+(Zienkiewicz/Zhu 1987): der lineare Tetraeder trägt eine konstante Spannung je
+Element, die wahre Spannung ist stetig. Die volumengewichtet auf die Knoten gemittelte
+Spannung σ* ist der wahren näher als die Elementspannung σ_e; der Unterschied ist der
+Fehlerindikator in der Energienorm, mit C = D⁻¹:
+
+    η_e² = ∫ (σ* − σ_e)ᵀ C (σ* − σ_e) dV = V/20 · [ (Σ_i e_i)ᵀ C (Σ_i e_i) + Σ_i e_iᵀ C e_i ],
+
+e_i = σ*_i − σ_e an den vier Ecken (∫ N_i N_j dV = V/20 für i ≠ j, V/10 für i = j; gegen
+eine Zufallsquadratur mit 200 000 Punkten auf 0,17 % genau). Ein gleichförmiger
+Spannungszustand hat den Fehler null (gemessen 2·10⁻¹⁶ bei U = 18). Der bezogene
+Gesamtfehler
+
+    η_rel = √(Σ η_e²) / √(U² + Σ η_e²),   U² = Σ V_e σ_eᵀ C σ_e,
+
+ist die Zahl, an der entschieden wird (Ziel 5 %). Über mehrere Lastfälle zählt je
+Element der größte Fehler. Der Indikator ist eine Schätzung: er sieht den Fehler der
+Spannung im Element, nicht den der Verschiebung, und an einer Singularität
+(eingespannter Rand, Kontaktrand) bleibt er endlich, wo der wahre Fehler es nicht ist.
+
+**Neue Kantenlänge.** Der zulässige Fehler wird gleich auf die N Elemente verteilt,
+e_zul = ziel · √(U² + Σ η²) / √N, und jedes Element bekommt
+
+    h_neu = h · (e_zul / η_e)^(1/p),   p = 1 (tet4), 2 (tet10),
+
+begrenzt auf das Drittel bis Doppelte je Runde. Dazu drei Regeln, jede aus einer
+Messung:
+
+* **Budget.** Die Gleichverteilung unterstellt, dass N gleich bleibt; mit dem Drittel als
+  kleinstem Schritt gibt ein Element bis zu 27 Kinder. Ohne Schranke lief die Platte mit
+  Bohrung von 52 801 auf 1 300 025 Tetraeder in **einer** Runde. Die geschätzte neue
+  Elementzahl, 5 · Σ (h/h_neu)³, darf höchstens das Dreifache von N sein; liegt sie
+  darüber, werden alle neuen Kantenlängen um denselben Faktor angehoben. Die 5 ist
+  gemessen: der Vernetzer legt um jede Quelle einen Kegel, die Hülle folgt mit, die
+  Kanten werden etwa 0,8 h — Schätzung 3,0-fach, Netz 14,4- und 15,0-fach an der Platte
+  mit fünf Bohrungen. Und die Schleife misst nach: liegt das neue Netz mehr als 15 %
+  über dem Budget, vergröbert sie Körperkantenlängen und Feldpunkte um die Kubikwurzel
+  des Überschusses und vernetzt einmal neu.
+* **Spannungsschutz.** Die Energienorm mittelt über das ganze Bauteil; eine schon
+  aufgelöste Kerbe hat dort einen kleinen Fehler und würde wieder vergröbert (Platte:
+  σ_v max 497 → 391 N/mm² von einer Runde zur nächsten). Elemente mit mindestens der
+  halben größten Vergleichsspannung werden nicht gröber — aber nur, wo es eine
+  Konzentration gibt (größte Spannung über dem Doppelten des Mittels); bei
+  gleichförmiger Spannung ist jedes Element „hoch", und nichts spricht gegen ein
+  gröberes Netz.
+* **Körper und Feld.** Je Körper wird das 90. Perzentil seiner neuen Kantenlängen
+  seine eigene Kantenlänge (`netz.koerper_h`, vor Dichte und Ziellänge in
+  `netzdichte.elementlaenge`) — neun Zehntel der Elemente dürfen so grob sein. Das
+  letzte Zehntel hält das Größenfeld fein: Elemente unter 90 % der Körperkantenlänge
+  werden Feldpunkte (Schwerpunkt, h_neu, Reichweite halbe alte Kante), vorab über Zellen
+  je Größenstufe ausgedünnt, damit die Ausdünnung des Feldes nicht Hunderttausende
+  Quellen sieht.
+
+**Die Schleife** (`adaptiv.adaptiv_vernetzen`): vernetzen (`mesher.modell_vernetzen`,
+die Folge der Oberfläche ohne Qt: Netzdichte, Fugen zurücksetzen, alte Netzknoten
+löschen, Flächen, Volumen, Lasten, Fugen, starre Flächen, Stabenden, Lager) → rechnen
+(`solver.solve_static`, die genannten Lastfälle) → schätzen → Körperkantenlängen und
+Feldpunkte setzen → von vorn, bis das Ziel erreicht oder die Rundenzahl erschöpft ist.
+Für die Dauer der Schleife ist `nebenflaechen_grob` an: der erste Durchgang ist grob,
+der Schätzer holt zurück, was trägt. Alles, was die Schleife setzt, steht danach in den
+Netzeinstellungen und wird mit dem Modell gespeichert; aus der Datei entsteht dasselbe
+Feld wieder. Befehlszeile: `statik3d modell.json --adaptiv 2 --lastfall LF1 --speichern …`
+(`--vernetzen` allein vernetzt ohne Schleife).
+
+Gemessen an der Platte 1 × 0,6 × 0,2 m mit einer Bohrung r = 100 mm und vier
+Durchgangsbohrungen r = 20 mm, Zug 100 N/mm², Einspannung als Flächenlager, ein Prozess
+(20.09.2026):
+
+| | Elemente | Knoten | η_rel | σ_v max |
+|---|---|---|---|---|
+| h = 50 mm, wie bisher | 40 364 | 7 641 | 11,9 % | 490 N/mm² |
+| h = 50 mm, Nebenflächen grob | 17 969 | 3 412 | 12,8 % | 343 N/mm² |
+| h = 25 mm überall | 116 100 | 21 026 | 8,4 % | 412 N/mm² |
+| adaptiv, zwei Runden, Start 50 mm grob, vor Kalibrierung und Spannungsschutz | 17 969 → 69 768 → 256 277 | 3 412 → 11 901 → 42 173 | 12,8 → 9,6 → 6,6 % | 343 → 498 → 392 N/mm² |
+| adaptiv, zwei Runden, Start 50 mm grob, **mit** Kalibrierung und Spannungsschutz | 17 969 → 61 758 → 192 235 | 3 412 → 10 615 → 31 799 | 12,8 → 10,0 → 7,2 % | 343 → 351 → 422 N/mm² |
+
+Mit Kalibrierung hält jede Runde das Budget ohne Zwischenlauf (3,4- und 3,1-fach, die
+ganze Schleife 77 s statt 302 s), und die Spannung an der Bohrung steigt von Runde zu
+Runde statt zu fallen. Auf diesem Beispiel ist das gleichmäßige Netz mit 25 mm
+(116 100 Elemente, 8,4 %) dem adaptiven (192 235, 7,2 %) ebenbürtig:
+die Einspannung ist eine Liniensingularität, an der sich der Indikator sammelt — ein
+gleichmäßig feineres Netz ist an diesem Beispiel deshalb konkurrenzfähig; `netz.h_min`
+begrenzt, wie fein die Schleife dort wird. Am Drehlager tun Kontaktränder dasselbe.
+Was am Drehlager selbst herauskommt, ist **nicht gemessen** — das Modell lag der
+Vernetzer-Sitzung nicht vor.
 
 ## 7 Parallelisierung
 
