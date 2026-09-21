@@ -652,13 +652,23 @@ def test_geometrielast():
     # und sie ueberlebt Speichern und Laden
     from statik3d.model import Model as _M
     m2 = _M.from_dict(m.to_dict())
+    # Bis zum 21.09.2026 stand hier ``face_loads == 0``: die Elementlasten
+    # kommen nicht in die Datei (richtig), und die naechste Zeile verteilte
+    # von Hand. Der Name der Pruefung sagte aber "ueberlebt Speichern und
+    # Laden", und das tat sie nicht - niemand verteilte von selbst, und der
+    # Anwender rechnete ohne seine Flaechenlast (Theoriehandbuch 7.3).
+    # ``Model.from_dict`` verteilt jetzt beim Laden; die Datei selbst ist
+    # unveraendert und traegt die abgeleiteten Lasten weiterhin nicht.
     check("die Geometrielast überlebt Speichern und Laden",
           len(m2.case("LF1").geometrielasten) == 1
-          and len(m2.case("LF1").face_loads) == 0,
+          and len(m2.case("LF1").face_loads) == n
+          and len(m.to_dict()["load_cases"][0]["face_loads"]) == 0,
           f"{len(m2.case('LF1').geometrielasten)} Geometrielasten, "
-          f"{len(m2.case('LF1').face_loads)} Elementlasten")
-    check("und wird nach dem Laden wieder verteilt",
-          m2.lasten_verteilen() == n, f"{n} Elementlasten")
+          f"{len(m2.case('LF1').face_loads)} Elementlasten, "
+          f"in der Datei {len(m.to_dict()['load_cases'][0]['face_loads'])}")
+    check("und ein weiteres Verteilen verdoppelt sie nicht",
+          m2.lasten_verteilen() == n and len(m2.case("LF1").face_loads) == n,
+          f"{n} Elementlasten")
 
 
 # --------------------------------------------------------------------------

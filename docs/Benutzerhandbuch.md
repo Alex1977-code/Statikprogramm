@@ -2247,6 +2247,24 @@ Kontaktbeispiele.
 
 ## 4 Lastfälle und Kombinationen
 
+### Lasten an der Geometrie überleben Speichern und Laden (seit 21.09.2026)
+
+Eine Last, die an einer **Fläche** oder **Linie** hängt, wird auf die Elemente
+verteilt, sobald es dort ein Netz gibt. Diese verteilten Lasten stehen
+absichtlich nicht in der Datei — sie entstehen beim nächsten Verteilen neu,
+sonst lägen sie doppelt.
+
+**Bis zum 21.09.2026 entstanden sie beim Laden aber nicht neu.** Wer eine
+Datei öffnete und rechnete, ohne vorher neu zu vernetzen, rechnete ohne seine
+Flächen- und Linienlasten. Knotenlasten, Stablasten und das Eigengewicht waren
+nicht betroffen; sie hängen nicht an der Geometrie.
+
+Das ist behoben: beim Laden wird einmal verteilt. **Wer vor diesem Stand eine
+gespeicherte Datei geöffnet und gerechnet hat, sollte die Rechnung
+wiederholen.** Ob eine alte Rechnung betroffen war, zeigt die
+Auflagersumme im Bericht: trägt sie deutlich weniger als die aufgebrachte
+Last, hat die Rechnung ohne die Geometrielasten stattgefunden.
+
 ### Lastarten
 
 Register **Lasten**, alles mit Symbol. Jede Maske arbeitet auf der

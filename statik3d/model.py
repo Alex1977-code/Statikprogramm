@@ -5345,6 +5345,22 @@ class Model:
                 s.verschiebung = tuple(getattr(s, "verschiebung", None) or (0.0, 0.0, 0.0))
                 if s.antrieb is not None:
                     s.antrieb = (int(s.antrieb[0]), tuple(s.antrieb[1]))
+        # Die aus Objektlasten verteilten Elementlasten stehen absichtlich
+        # nicht in der Datei (``LoadCase.to_dict`` schreibt nur ``eigene``),
+        # damit sie nach dem Laden nicht doppelt liegen. Erzeugt hat sie bis
+        # zum 21.09.2026 aber **niemand** wieder: ``lasten_verteilen`` haengt
+        # am Vernetzen, und ein geladenes Modell hat schon ein Netz - die
+        # Oberflaeche vernetzt vor der Rechnung nur, was keines hat. Der
+        # Anwender oeffnete seine Datei, drueckte Berechnen und rechnete ohne
+        # seine Bemessungslast. Am Drehlager waren das 9,26 MN senkrecht und
+        # 3,97 MN waagerecht, die auf exakt null fielen; am Quader der
+        # Pruefung 1 MN auf 0 N. Das Verteilen ist wiederholbar (es raeumt
+        # die ``_geo``-Lasten vorher weg), und ohne Netz oder ohne
+        # Objektlasten kostet es nichts - darum steht es hier und nicht im
+        # Loeser: wer ein Modell laedt, hat seine Lasten.
+        if m.elements and any(lc.geometrielasten or lc.linienlasten
+                              for lc in m.load_cases.values()):
+            m.lasten_verteilen()
         _melde(fortschritt, 1.0, "Modell gelesen")
         return m
 

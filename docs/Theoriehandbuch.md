@@ -4229,21 +4229,84 @@ Stelle, **ohne dass eine Spannung falsch geworden wäre** — genau das Bild ein
 Starrkörperbewegung. Ohne die Behebung wandern in der Prüfung 16 von 16
 Facetten nicht mit.
 
-**Der Faktor 4,7 ist damit nicht erklärt.** Beim Neuvernetzen werden die
-Kontaktpaare ohnehin aus der Geometrie neu gebaut (`kontaktfugen_zuruecksetzen`
-und `kontaktfugen_ausfuehren` in `modell_vernetzen`), die veralteten Facetten
-spielen dort also keine Rolle; und die Löser-Sitzung hat gemessen, dass der
-Sprung auch mit abgeschaltetem `netzknoten_loeschen` bleibt. Der behobene
-Fehler trifft das **Löschen von Knoten von Hand**, nicht das Neuvernetzen. Die
-Ursache des Sprungs ist offen und wird nicht geraten.
+**Der Faktor 4,7 ist erklärt — und er hatte mit dem Vernetzen nichts zu
+tun.** Die Auflösung steht in § 7.3: das **gespeicherte** Modell hatte seine
+Bemessungslast verloren. 1,2717 mm ist der belastete Zustand, 0,2716 mm der
+nahezu unbelastete; die gerechnete Auflagersumme des geladenen Modells war
+2717 N gegen rund 10 MN Sollast. Auch die Kontaktschritte (167 gegen 95)
+folgen daraus: unter Last braucht die Aktivmenge länger.
 
-Eine Möglichkeit, die dabei mitzuprüfen ist: das Drehlager meldet beim Import
-„48 Teiltragwerke ohne Lager". Hält ein Bauteil nur über den Kontakt, dann
-hängt es vom Netz ab, **ob** es hält — und ein Netz, das es nicht hält, gibt
-genau eine Starrkörperbewegung bei richtiger Spannung. Ob einer der beiden
-Läufe eine freie Bewegung oder eine Hilfsfesselung gemeldet hat
-(`Results.info["singularitaeten"]`, § 7b), steht in den Protokollen und ist
-noch nicht ausgewertet.
+Der Weg dahin ist es wert, festgehalten zu werden, weil auf ihm **vier**
+Vermutungen gefallen sind, die alle plausibel klangen:
+
+1. *Der Sprung kommt vom Netz.* Gefallen: derselbe Netzstand rechnet im
+   Prozess anders als nach Speichern und Laden — ein Prozess, ein Netz.
+2. *`to_dict` verliert einen Modellzustand.* Verengt statt gefallen: 63 Felder
+   des Modellobjekts unterscheiden sich **nicht**. Genau ein Feld tat es,
+   und es war `load_cases['LF1'].face_loads` — 2750 gegen 0.
+3. *Das Tragwerk wandert als Ganzes.* **Gefallen**, obwohl der Mittelvektor
+   der Verschiebung (−0,685; −0,057; −0,242 mm, Betrag 0,7287 mm) genau zum
+   Mittel der Beträge (0,7425 mm) passte und damit eine reine Verschiebung
+   nahelegte. Eine Ausgleichsrechnung u ≈ t + ω × x über alle Knoten hat es
+   widerlegt: nach Abzug von t und ω blieben die **Reste** beider Läufe um
+   803 % verschieden. Die Läufe tragen wirklich anders ab — weil der eine
+   belastet war und der andere nicht.
+4. *Ein Bauteil hält nur über den Kontakt und rutscht.* Unnötig geworden.
+
+Die Lehre daran ist nicht „mehr messen", sondern **was** man misst: die
+Verschiebung war drei Sitzungen lang das Maß, und sie zeigt nur die Wirkung.
+Die Ursache stand in der **Last**, und die hat vorher niemand nachgezählt —
+eine Zeile `solver.case_loads(m, {"LF1": 1.0}, None)` hätte es an jedem Tag
+davor gezeigt.
+
+### 7.3 Ein geladenes Modell muss dieselbe Last tragen (21.09.2026)
+
+Lasten, die an der **Geometrie** hängen — eine Flächenlast auf einer Fläche,
+eine Linienlast auf einer Linie —, können erst wirken, wenn es dort Elemente
+gibt. `Model.lasten_verteilen` legt sie auf die Elementseiten und kennzeichnet
+die entstandenen Elementlasten mit `_geo`. Gespeichert werden sie
+**absichtlich nicht** (`LoadCase.to_dict` schreibt nur `eigene(...)`): sonst
+lägen sie nach dem nächsten Verteilen doppelt auf dem Netz.
+
+Erzeugt hat sie beim Laden aber **niemand wieder.** `lasten_verteilen` hing am
+Vernetzen, und ein geladenes Modell hat schon ein Netz — die Oberfläche
+vernetzt vor der Rechnung nur, was keines hat (`_vor_rechnung_vernetzen`
+kehrt bei vollständigem Netz sofort zurück). Der Anwender öffnete seine Datei,
+drückte Berechnen und rechnete **ohne seine Bemessungslast**.
+
+| Drehlager, LF1 „Bemessungslast im GZT" | Σ F_x | Σ F_z | `face_loads` |
+|---|---|---|---|
+| gespeichertes Modell, wie geladen | 0,0 N | 0,0 N | 0 |
+| dasselbe Modell nach dem Vernetzen | −3 968 599 N | −9 259 435 N | 2 750 |
+| nach Speichern und Laden | 0,0 N | 0,0 N | 0 |
+
+Die **Norm** des Lastvektors täuschte dabei (5,385·10⁶ gegen 5,424·10⁶ N) —
+sie steckt fast ganz in sechzehn Temperaturlasten, die sich selbst ausgleichen.
+Erst die **Resultierende** zeigt es: 9,26 MN senkrecht fielen auf exakt null.
+
+**Behoben** in `Model.from_dict`: hat das geladene Modell Elemente und
+Objektlasten, wird einmal verteilt. Das Verteilen ist wiederholbar (es räumt
+die `_geo`-Lasten vorher weg), und es kostet **7,9 µs je verteilter Last** —
+an einem Balken mit 4 000 Elementen und 400 Flächenlasten 3,2 ms, also 28 %
+einer Ladezeit von 11,2 ms. Ohne Netz oder ohne Objektlasten kostet es nichts.
+
+**Warum die Prüfungen es nicht fanden**, obwohl es zwei gab, die genau
+hinsahen — das ist der lehrreiche Teil:
+
+* `test_lasten.test_speichern_linienlast_zwang` prüfte
+  `len(lc.beam_loads) == 0` und rief danach `m2.lasten_verteilen()` **von
+  Hand** auf. Sie hielt damit die *Speicherregel* fest und schrieb den Fehler
+  fest: dass niemand von selbst verteilt, hat sie nie geprüft.
+* `test_lasten.test_temperatur_objektlast` trug den Namen „Speichern ohne die
+  abgeleiteten Lasten, **Laden verteilt neu**" — und prüfte
+  `len(lc.temp_loads) == 0`. Name und Zusicherung widersprachen sich seit dem
+  Tag, an dem sie geschrieben wurde. Der Name hatte recht.
+
+Die neue Prüfung `test_geladenes_modell_traegt_dieselbe_last` sieht darum
+nicht auf die **Zahl** der Lastobjekte, sondern auf den **Lastvektor** selbst
+(`solver.case_loads`): gespeichert und geladen muss dieselbe Resultierende
+herauskommen, in allen drei Richtungen, und zweimaliges Laden darf sie nicht
+verdoppeln.
 
 ## 7a Entartete Elemente
 

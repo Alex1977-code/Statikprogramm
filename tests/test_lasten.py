@@ -248,8 +248,15 @@ def test_temperatur_objektlast():
     d = m.to_dict()
     m2 = Model.from_dict(d)
     lc = m2.case()
+    # Der Name dieser Pruefung sagte seit jeher "Laden verteilt neu" - die
+    # Zusicherung prueft seit dem 21.09.2026, dass es auch geschieht. Vorher
+    # stand hier ``len(lc.temp_loads) == 0`` und dahinter ein Verteilen von
+    # Hand: Name und Inhalt widersprachen sich, und der Name hatte recht.
     check("Speichern ohne die abgeleiteten Lasten, Laden verteilt neu",
-          len(lc.temp_loads) == 0 and len(lc.geometrielasten) == 1 and m2.lasten_verteilen() == 96)
+          len(lc.temp_loads) == 96 and len(lc.geometrielasten) == 1
+          and all(getattr(t, "_geo", False) and t.dT == 30.0 for t in lc.temp_loads)
+          and m2.lasten_verteilen() == 96 and len(m2.case().temp_loads) == 96,
+          f"{len(lc.temp_loads)} Temperaturlasten nach dem Laden")
     # freie Dehnung eines Stabes bleibt wie gehabt: alpha dT L
     mb, els = balken(L=2.0, n=2)
     mb.fix(0, "all")
@@ -277,10 +284,97 @@ def test_speichern_linienlast_zwang():
           and ll.system == "local" and ll.q2 == [0, 0, -2e3])
     check("Zwangsverformung vollstaendig", zv.node == 0 and zv.dofs == [2, 4]
           and zv.u[2] == -0.01 and zv.u[4] == 0.002)
-    check("abgeleitete Stablasten nicht gespeichert", len(lc.beam_loads) == 0
-          and m2.lasten_verteilen() == 4)
+    # Bis zum 21.09.2026 stand hier ``len(lc.beam_loads) == 0`` - die Pruefung
+    # hielt die Speicherregel fest ("abgeleitete Lasten kommen nicht in die
+    # Datei") und hat damit den Fehler **festgeschrieben**: dass niemand sie
+    # wieder erzeugt, hat sie nie geprueft. Geprueft gehoert das Ergebnis,
+    # nicht die Regel.
+    check("abgeleitete Stablasten stehen nicht in der Datei, sind nach dem "
+          "Laden aber wieder da", len(lc.beam_loads) == 4
+          and all(getattr(f, "_geo", False) for f in lc.beam_loads)
+          and len([f for f in lc.beam_loads if not getattr(f, "_geo", False)]) == 0,
+          f"{len(lc.beam_loads)} Stablasten, alle aus der Objektlast")
+    check("und ein zweites Verteilen verdoppelt sie nicht",
+          m2.lasten_verteilen() == 4 and len(m2.case().beam_loads) == 4,
+          f"{len(m2.case().beam_loads)} Stablasten")
     check("bezug() liest sich", "Traeger" in ll.bezug() and "von 1 m bis 5 m" in ll.bezug()
           and "-10 mm" in zv.bezug(), ll.bezug() + " | " + zv.bezug())
+
+
+def test_geladenes_modell_traegt_dieselbe_last():
+    """Ein geladenes Modell muss dieselbe Last tragen wie das gespeicherte.
+
+    Das ist die Pruefung, die der ganzen Kette gefehlt hat. Die verteilten
+    Elementlasten stehen absichtlich nicht in der Datei; erzeugt hat sie
+    beim Laden aber niemand wieder, und ``lasten_verteilen`` haengt am
+    Vernetzen - ein geladenes Modell hat schon ein Netz. Der Anwender
+    oeffnete seine Datei, drueckte Berechnen und rechnete ohne seine
+    Bemessungslast: am Drehlager fielen 9,26 MN senkrecht und 3,97 MN
+    waagerecht auf **exakt null** (Lasterrechnung der Loesersitzung,
+    21.09.2026), hier 1 MN auf 0 N.
+
+    Geprueft wird der Lastvektor selbst (``solver.case_loads``), nicht die
+    Zahl der Lastobjekte - die Zahl war ja gerade das, was die alte Pruefung
+    ansah, und sie stand auf null, ohne dass es auffiel.
+    """
+    print("--- Ein geladenes Modell traegt dieselbe Last ---")
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    P = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]])
+    m.add_nodes(P)
+    z = {"i": 0}
+
+    def linie(a, b):
+        z["i"] += 1
+        m.add_line(f"L{z['i']}", [int(a), int(b)])
+        return f"L{z['i']}"
+
+    R = [[linie(o + i, o + (i + 1) % 4) for i in range(4)] for o in (0, 4)]
+    V = [linie(i, i + 4) for i in range(4)]
+    m.add_flaeche("Boden", R[0], material="S235")
+    m.add_flaeche("Dach", R[1], material="S235")
+    seiten = []
+    for i in range(4):
+        m.add_flaeche(f"M{i}", [R[0][i], V[(i + 1) % 4], R[1][i], V[i]], material="S235")
+        seiten.append(f"M{i}")
+    m.add_koerper("K", ["Boden", "Dach"] + seiten, material="S235")
+    m.add_load_case("LF1", "Q", "Bemessungslast")
+    m.add_geometrielast("Dach", 1.0e6, art="flaeche", case="LF1")
+    for k in range(4):
+        m.fix(k, "all")
+    mesher.modell_vernetzen(m, log=[])
+
+    def summe(mm):
+        F = np.asarray(solver.case_loads(mm, {"LF1": 1.0}, None)[0], float)
+        return F.reshape(-1, 3).sum(axis=0)
+
+    vorher = summe(m)
+    check("vernetzt traegt der Koerper seine Flaechenlast",
+          np.isclose(vorher[2], -1.0e6, rtol=1e-9), f"Fz {vorher[2] / 1e3:.1f} kN")
+
+    m2 = Model.from_dict(m.to_dict())
+    nachher = summe(m2)
+    check("nach Speichern und Laden traegt er dieselbe Last",
+          np.isclose(nachher[2], vorher[2], rtol=1e-9),
+          f"Fz {nachher[2] / 1e3:.1f} kN gegen {vorher[2] / 1e3:.1f} kN")
+    check("und zwar ueber alle drei Richtungen",
+          np.allclose(nachher, vorher, rtol=1e-9, atol=1e-6),
+          f"{nachher[0]:.1f} / {nachher[1]:.1f} / {nachher[2]:.1f} N")
+
+    # Zweimal laden darf sie nicht verdoppeln - lasten_verteilen raeumt die
+    # abgeleiteten Lasten vorher weg, aber das gehoert festgehalten.
+    m3 = Model.from_dict(m2.to_dict())
+    check("zweimal geladen verdoppelt sie nicht",
+          np.allclose(summe(m3), vorher, rtol=1e-9, atol=1e-6),
+          f"Fz {summe(m3)[2] / 1e3:.1f} kN")
+
+    # Ohne Netz ist nichts zu verteilen - und es darf auch nichts knallen.
+    leer = Model()
+    leer.add_material(Material.steel("S235"))
+    leer.add_load_case("LF1", "Q")
+    check("ein Modell ohne Netz laedt trotzdem",
+          len(Model.from_dict(leer.to_dict()).load_cases) == 1)
 
 
 def test_vorspannung():
@@ -381,7 +475,8 @@ def test_vorspannung():
 def main():
     for t in (test_volleinspannkraefte, test_teillast_einfeldtraeger, test_zwangsverformung,
               test_flaechenlast_linear, test_linienlast_auf_linie, test_temperatur_objektlast,
-              test_speichern_linienlast_zwang, test_vorspannung):
+              test_speichern_linienlast_zwang, test_geladenes_modell_traegt_dieselbe_last,
+              test_vorspannung):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
