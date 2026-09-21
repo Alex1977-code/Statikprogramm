@@ -56,9 +56,16 @@ def pruefkoerper(h: float = 0.4) -> Model:
     """
     m = Model()
     m.add_material(Material.steel("S235"))
+    # Die Knoten 12 und 13 teilen je eine Kante. Ohne sie haette jeder
+    # Koerper **sechs Vierseitflaechen und acht Eckknoten** - und liefe damit
+    # ueber den abgebildeten Quaderpfad (mesher.mesh_koerper) mit fester
+    # Teilung [4,4,4]. Der freie Vernetzer, um den es hier geht, kaeme nie an
+    # die Reihe, und die Ziellaenge waere wirkungslos (gemessen 21.09.2026:
+    # 128 hex8, bei jeder Ziellaenge dieselben).
     P = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
                   [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
-                  [0, 0, 2], [1, 0, 2], [1, 1, 2], [0, 1, 2.]])
+                  [0, 0, 2], [1, 0, 2], [1, 1, 2], [0, 1, 2.],
+                  [0.5, 0, 0], [0.5, 0, 2.]])
     m.add_nodes(P)
     zaehler = {"i": 0}
 
@@ -70,16 +77,21 @@ def pruefkoerper(h: float = 0.4) -> Model:
     R = [[linie(o + i, o + (i + 1) % 4) for i in range(4)] for o in (0, 4, 8)]
     V01 = [linie(i, i + 4) for i in range(4)]
     V12 = [linie(i + 4, i + 8) for i in range(4)]
-    m.add_flaeche("Boden", R[0], material="S235")
-    m.add_flaeche("Dach", R[2], material="S235")
+    # Die geteilten Kanten ersetzen R[0][0] (unten) und R[2][0] (oben)
+    u0, u1 = linie(0, 12), linie(12, 1)
+    o0, o1 = linie(8, 13), linie(13, 9)
+    m.add_flaeche("Boden", [u0, u1] + R[0][1:], material="S235")
+    m.add_flaeche("Dach", [o0, o1] + R[2][1:], material="S235")
     # **Eigene** Trennflaechen ueber denselben Linien - so kommt es aus RFEM,
     # und nur so entsteht ein echtes Kontaktpaar statt gemeinsamer Knoten.
     m.add_flaeche("FugeU", R[1], material="S235")
     m.add_flaeche("FugeO", R[1], material="S235")
     unten, oben = [], []
     for i in range(4):
-        m.add_flaeche(f"MU{i}", [R[0][i], V01[(i + 1) % 4], R[1][i], V01[i]], material="S235")
-        m.add_flaeche(f"MO{i}", [R[1][i], V12[(i + 1) % 4], R[2][i], V12[i]], material="S235")
+        ru = [u0, u1] if i == 0 else [R[0][i]]
+        ro = [o0, o1] if i == 0 else [R[2][i]]
+        m.add_flaeche(f"MU{i}", ru + [V01[(i + 1) % 4], R[1][i], V01[i]], material="S235")
+        m.add_flaeche(f"MO{i}", [R[1][i], V12[(i + 1) % 4]] + ro + [V12[i]], material="S235")
         unten.append(f"MU{i}")
         oben.append(f"MO{i}")
     m.add_koerper("Unten", ["Boden", "FugeU"] + unten, material="S235")
