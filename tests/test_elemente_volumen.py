@@ -742,6 +742,35 @@ def t_hex8_stapel():
         ok, text = "Jacobi" in str(ex), str(ex)[:60]
     check("hex8: negative Jacobi-Determinante faellt auch im Stapel auf", ok, text)
 
+    # Die Spannungsauswertung ebenso. Sie war der teuerste Posten: 1375,5 µs
+    # je Element einzeln gegen 58,1 µs im Stapel (Faktor 23,7), weil sie fuer
+    # jedes Element die acht Gausspunkte der inneren Freiheitsgrade neu
+    # aufbaute. Am Drehlagernetz waeren das 42,8 s -> 1,81 s je Nachlauf.
+    U = rng.normal(0.0, 1e-4, (len(X), 24))
+    Se = np.array([sl.stress_points("hex8", x, E_ST, NU_ST, ue) for x, ue in zip(X, U)])
+    Ss = sl.spannungen_hex8_stapel(X, E_ST, NU_ST, U)
+    check("hex8: Stapel gibt dieselben Spannungen an allen neun Auswertepunkten",
+          np.abs(Se - Ss).max() <= 1e-10 * np.abs(Ss).max(),
+          f"groesste Abweichung {np.abs(Se - Ss).max() / np.abs(Ss).max():.1e}")
+    # Und die inneren Freiheitsgrade selbst
+    al = sl.hex8_alpha_stapel(X, E_ST, NU_ST, U)
+    ae = []
+    for x, ue in zip(X, U):
+        _K, Kua, Kaa, _V = sl.hex8_matrices(x, E_ST, NU_ST, True, ohne_kuu=True)
+        ae.append(-np.linalg.solve(Kaa, Kua.T @ ue))
+    ae = np.array(ae)
+    check("hex8: Stapel gibt dieselben inneren Freiheitsgrade alpha",
+          np.abs(ae - al).max() <= 1e-10 * np.abs(al).max(),
+          f"groesste Abweichung {np.abs(ae - al).max() / np.abs(al).max():.1e}")
+    # ohne_kuu darf an Kua und Kaa nichts aendern
+    K1 = sl.hex8_matrices(X[0], E_ST, NU_ST, True)
+    K2 = sl.hex8_matrices(X[0], E_ST, NU_ST, True, ohne_kuu=True)
+    check("hex8: ohne_kuu laesst Kua, Kaa und das Volumen unberuehrt",
+          K2[0] is None and np.abs(K1[1] - K2[1]).max() <= 1e-12 * np.abs(K1[1]).max()
+          and np.abs(K1[2] - K2[2]).max() <= 1e-12 * np.abs(K1[2]).max()
+          and abs(K1[3] - K2[3]) <= 1e-12 * abs(K1[3]),
+          "Kuu ist None, der Rest gleich")
+
 
 # --------------------------------------------------------------------------
 def main():

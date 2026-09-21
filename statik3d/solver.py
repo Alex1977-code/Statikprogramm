@@ -1552,6 +1552,31 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     feq = extra["feq"]
     temp = extra["temp"]
     out = []
+    # Sechsflaechner stapelweise: einzeln kostet stress_points 1375,5 µs je
+    # Element - einundsiebzigmal so viel wie eine tet4-Spannung mit 18,2 µs
+    # (21.09.2026). Zwei Drittel davon sind die acht Gausspunkte fuer die
+    # inneren Freiheitsgrade, der Rest die neun Auswertepunkte; im Stapel
+    # sind es 58,1 µs, Ergebnis identisch bis 2,5e-16. Am Drehlagernetz der
+    # Vernetzersitzung waeren das 42,8 s -> 1,81 s je Nachlauf.
+    hex_vor: dict = {}
+    je_werkstoff: dict = {}
+    for i in idx:
+        e = model.elements[i]
+        if e.typ == "hex8":
+            je_werkstoff.setdefault(e.mat, []).append(i)
+    for mat_name, liste in je_werkstoff.items():
+        if len(liste) < 8:            # unter acht lohnt der Umweg nicht
+            continue
+        mat = model.materials[mat_name]
+        for a0 in range(0, len(liste), asm.HEX8_STAPEL):
+            teil = liste[a0:a0 + asm.HEX8_STAPEL]
+            try:
+                Xs = np.asarray([model.nodes[model.elements[j].nodes[:8]] for j in teil], float)
+                Us = np.asarray([u[asm.element_dofs(model.elements[j], model)] for j in teil], float)
+                for j, sp in zip(teil, sl.spannungen_hex8_stapel(Xs, mat.E, mat.nu, Us)):
+                    hex_vor[j] = sp
+            except Exception:         # noqa: BLE001 - dann rechnet die Schleife einzeln
+                hex_vor = {k: v for k, v in hex_vor.items() if k not in teil}
     for i in idx:
         e = model.elements[i]
         mat = model.materials[e.mat]
@@ -1646,6 +1671,8 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 eps_ = sl._B_from_grad(dN_) @ ue
                 werte = [sl.D_deviatorisch(mat.E, mat.nu) @ eps_
                          + kap * float(ev[i]) * sl.VOIGT_M]
+            elif i in hex_vor:
+                werte = [np.asarray(x, float) for x in hex_vor[i]]
             else:
                 # **Alle** Auswertepunkte, nicht nur die Mitte. Beim tet4 ist
                 # das derselbe eine Punkt; beim Sechsflaechner ist die Mitte

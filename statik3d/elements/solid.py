@@ -341,7 +341,7 @@ def _b_stapel(g):
     return B
 
 
-def hex8_matrizen_stapel(X, E, nu, incompatible=True):
+def hex8_matrizen_stapel(X, E, nu, incompatible=True, ohne_kuu=False):
     """(Kuu, Kua, Kaa, V) eines **Stapels** Sechsflaechner gleichen Werkstoffs.
 
     X ist (n,8,3). Dieselbe Rechnung wie :func:`hex8_matrices`, nur ueber
@@ -356,7 +356,7 @@ def hex8_matrizen_stapel(X, E, nu, incompatible=True):
     X = np.asarray(X, float)
     n = X.shape[0]
     D = D_matrix(E, nu)
-    Kuu = np.zeros((n, 24, 24))
+    Kuu = None if ohne_kuu else np.zeros((n, 24, 24))
     Kua = np.zeros((n, 24, 9)) if incompatible else None
     Kaa = np.zeros((n, 9, 9)) if incompatible else None
     V = np.zeros(n)
@@ -379,8 +379,8 @@ def hex8_matrizen_stapel(X, E, nu, incompatible=True):
         # Gemessen 21.09.2026 an 2000 verzerrten Wuerfeln: 258,8 µs je Element
         # mit einsum, 85,4 µs mit matmul.
         Bt = B.transpose(0, 2, 1)
-        DB = D @ B
-        Kuu += wd * (Bt @ DB)
+        if not ohne_kuu:
+            Kuu += wd * (Bt @ (D @ B))
         V += float(w) * detJ
         if incompatible:
             dM = np.array([[-2.0 * r, 0.0, 0.0], [0.0, -2.0 * s_, 0.0], [0.0, 0.0, -2.0 * t]])
@@ -391,6 +391,56 @@ def hex8_matrizen_stapel(X, E, nu, incompatible=True):
             Kua += wd * (Bt @ DBa)
             Kaa += wd * (Ba.transpose(0, 2, 1) @ DBa)
     return Kuu, Kua, Kaa, V
+
+
+def hex8_alpha_stapel(X, E, nu, ue):
+    """Die inneren Freiheitsgrade alpha (n,9) eines **Stapels** Sechsflaechner.
+
+    alpha = -Kaa^-1 Kua^T u. Die Spannungsauswertung braucht sie je Element,
+    und sie einzeln zu holen kostete 1040 µs - achtundfuenfzigmal so viel wie
+    eine tet4-Spannung mit 18,2 µs (21.09.2026). Das Kuu wird dabei gar nicht
+    erst gebaut (``ohne_kuu``); den Rest macht der Stapel.
+    """
+    _Kuu, Kua, Kaa, _V = hex8_matrizen_stapel(X, E, nu, True, ohne_kuu=True)
+    ue = np.asarray(ue, float).reshape(len(Kaa), 24)
+    rechts = -np.einsum("nji,nj->ni", Kua, ue)
+    return np.linalg.solve(Kaa, rechts[..., None])[..., 0]
+
+
+def spannungen_hex8_stapel(X, E, nu, U, punkte=None):
+    """Spannungen (n, p, 6) an p Punkten fuer einen **Stapel** Sechsflaechner.
+
+    X ist (n,8,3), U ist (n,24). Ohne ``punkte`` sind es die neun
+    :data:`AUSWERTEPUNKTE` (Mitte und acht Ecken).
+
+    Einzeln kostete ``stress_points`` am hex8 1120,6 µs je Element -
+    einundsechzigmal so viel wie eine tet4-Spannung mit 18,2 µs
+    (21.09.2026). Zwei Drittel davon waren die acht Gausspunkte fuer die
+    inneren Freiheitsgrade, der Rest die neun Auswertepunkte; beides laeuft
+    hier ueber den Stapel.
+    """
+    X = np.asarray(X, float)
+    U = np.asarray(U, float).reshape(len(X), 24)
+    pts = list(AUSWERTEPUNKTE["hex8"] if punkte is None else punkte)
+    n = X.shape[0]
+    D = D_matrix(E, nu)
+    alpha = hex8_alpha_stapel(X, E, nu, U)
+    _N0, dN0 = hex8_N_dN(0.0, 0.0, 0.0)
+    J0 = np.einsum("ki,nkj->nij", dN0, X)
+    detJ0 = np.linalg.det(J0)
+    aus = np.empty((n, len(pts), 6))
+    for k, (r, s_, t) in enumerate(pts):
+        _N, dNr = hex8_N_dN(r, s_, t)
+        J = np.einsum("ki,nkj->nij", dNr, X)
+        detJ = np.linalg.det(J)
+        dN = np.linalg.solve(J, np.broadcast_to(dNr.T, (n, 3, 8))).transpose(0, 2, 1)
+        eps = (_b_stapel(dN) @ U[:, :, None])[:, :, 0]
+        dM = np.array([[-2.0 * r, 0.0, 0.0], [0.0, -2.0 * s_, 0.0], [0.0, 0.0, -2.0 * t]])
+        g = (detJ0 / detJ)[:, None, None] * np.linalg.solve(
+            J0, np.broadcast_to(dM.T, (n, 3, 3))).transpose(0, 2, 1)
+        eps = eps + (_b_stapel(g) @ alpha[:, :, None])[:, :, 0]
+        aus[:, k, :] = eps @ D.T
+    return aus
 
 
 def k_hex8_stapel(X, E, nu, incompatible=True):
@@ -909,7 +959,7 @@ AUSWERTEPUNKTE = {
 }
 
 
-def stress_points(typ, X, E, nu, ue, punkte=None) -> list:
+def stress_points(typ, X, E, nu, ue, punkte=None, alpha=None) -> list:
     """
     Spannungen an mehreren Punkten eines Volumenelements.
 
@@ -932,10 +982,13 @@ def stress_points(typ, X, E, nu, ue, punkte=None) -> list:
         return [_stress_iso(fn, X, E, nu, ue, *p) for p in pts]
     if typ != "hex8":
         return []
-    # Hex8: die inkompatiblen Moden einmal loesen, dann alle Punkte auswerten
+    # Hex8: die inkompatiblen Moden einmal loesen, dann alle Punkte auswerten.
+    # ``alpha`` kann von aussen kommen (hex8_alpha_stapel) - dann faellt der
+    # teuerste Teil weg, die acht Gausspunkte je Element.
     D = D_matrix(E, nu)
-    _K, Kua, Kaa, _ = hex8_matrices(X, E, nu, True, ohne_kuu=True)
-    alpha = -np.linalg.solve(Kaa, Kua.T @ ue)
+    if alpha is None:
+        _K, Kua, Kaa, _ = hex8_matrices(X, E, nu, True, ohne_kuu=True)
+        alpha = -np.linalg.solve(Kaa, Kua.T @ ue)
     _, dN0 = hex8_N_dN(0.0, 0.0, 0.0)
     J0 = dN0.T @ X
     detJ0 = np.linalg.det(J0)

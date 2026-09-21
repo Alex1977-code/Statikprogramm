@@ -1732,12 +1732,32 @@ fest, samt der Probe, dass ein umgestülptes Element auch im Stapel auffällt.
 nicht der Brocken, und ein Stapelweg brächte nichts — er läuft weiter
 Element für Element durch `element_matrix`.
 
-**Die Spannungsauswertung** baute bis zum 21.09.2026 für jedes Element die
-volle Elementsteifigkeit neu auf, nur um die inneren Freiheitsgrade
-α = −K_αα⁻¹ K_uα<sup>T</sup> u zu bekommen — das K_uu darin liest niemand.
-`hex8_matrices(..., ohne_kuu=True)` lässt es weg: 1 332 → 1 040 µs je
-Element. Der Rest ist die Summe über die acht Gaußpunkte und wartet auf
-dieselbe Stapelbehandlung wie die Steifigkeit.
+**Die Spannungsauswertung** war danach der teuerste Posten und ging
+denselben Weg. Sie baute für jedes Element die volle Elementsteifigkeit neu
+auf, nur um die inneren Freiheitsgrade α = −K_αα⁻¹ K_uα<sup>T</sup> u zu
+bekommen — das K_uu darin liest niemand.
+
+| | µs je Element |
+|---|---|
+| `stress_points("hex8", …)`, wie es war | **1 375,5** |
+| ohne das ungelesene K_uu (`ohne_kuu=True`) | 1 040 |
+| **`spannungen_hex8_stapel`** | **58,1** |
+
+Das ist **Faktor 23,7**, und er kommt aus derselben Quelle wie bei der
+Steifigkeit: ein Stapel, `matmul` statt `einsum`, und die neun Auswertepunkte
+als eine kurze Schleife über den ganzen Stapel statt einer Schleife über die
+Elemente. Am Drehlagernetz sind das **42,8 s → 1,81 s je Nachlauf**. Bei
+kleinen Modellen, wo der Nachlauf neben dem Lösen mitzählt, schlägt das auf
+die ganze Rechnung durch: ein Kragarm aus 864 Sechsflächnern braucht 0,32
+statt 1,01 s, also ein Drittel.
+
+`solver._post_chunk` sammelt die Sechsflächner eines Blocks vorweg nach
+Werkstoff ein und fällt bei jedem Fehler auf den Einzelweg zurück — der
+bleibt die Wahrheit, gegen die geprüft wird. Die Spannungen stimmen bis auf
+3,0·10⁻¹⁶ (Element gegen Stapel) und die gerechnete Verschiebung auf
+4,9·10⁻²¹ m überein; `tests/test_elemente_volumen.py::t_hex8_stapel` hält
+beides fest, samt α und der Probe, dass `ohne_kuu` an K_uα, K_αα und dem
+Volumen nichts ändert.
 
 ## 5 Nachweise nach DIN EN 1993-1-1
 
