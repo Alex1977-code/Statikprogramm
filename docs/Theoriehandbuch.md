@@ -1529,31 +1529,64 @@ die Netzsteuerung ist das Geld zum Fenster hinaus.
 * **einen** Kontaktschritt (`solve_with_contact` mit `max_iter = 1`),
 * aus dem **Anfangszustand** der Fugen — ein Warmstart aus einem Nachbarlastfall
   wird bewusst nicht genommen, damit jede Netzrunde dieselbe Lage misst,
-* **ohne Plastizität** (`_plastizitaet_rechnen` wird übersprungen): jeder
-  Fließschritt kostet eine volle Kontaktiteration, und für den Sprung zwischen
-  Nachbarelementen genügt die elastische Spannung,
+* **mit Plastizität** — nur der Kontakt bleibt bei einem Schritt,
 * und bei Ausfallstäben ebenso nur eine Aktivmengen-Runde.
 
-Das Ergebnis ist ausdrücklich **kein Nachweis**. `Results.info["probelauf"]`
+**Die erste Fassung ließ das Fließen aus, und das war falsch** (berichtigt am
+21.09.2026). Die Begründung lautete: für den Sprung zwischen Nachbarelementen
+genüge die elastische Spannung. Am Drehlager gemessen stimmt das nicht —
+elastisch trifft der Probelauf nur **54 von 100** Spitzenelementen (L2-Abweichung
+52,2 %), plastisch **100 von 100** (2,3 %). Er verfeinerte an den falschen
+Stellen. Der Preis ist klein: **199 statt 124 s gegen 633 s** für den vollen
+Lauf — bei 645 934 Elementen ist das Aufstellen der Matrix der Brocken, nicht
+die Zahl der Schritte. Der Faktor gegenüber dem vollen Lauf ist damit rund 3,
+nicht 48.
+
+**Das Ergebnis ist ein Netzmaß, kein Rechenergebnis — und das ist schärfer
+gemeint, als es klingt.** `res.contact_forces` liegt um **Faktor 834** daneben
+(9,276·10⁸ N gegen 1,112·10⁶ N, Drehlager LF1, 21.09.2026), damit auch
+Fugenkräfte, Pressungen, Bolzennachweise und die Auflagerkräfte einseitiger
+Lager. Verschiebung (0,04 %) und Spannung (2,3 %) stimmen dagegen — warum die
+Kontaktkräfte es nicht tun, ist **nicht geklärt**. Wer aus einem Probelauf
+etwas anderes als ein Netzmaß liest, liest falsch.
+
+`Results.info["probelauf"]`
 steht auf wahr, `contact_converged` auf falsch, und das Kontaktprotokoll sagt
 „Probelauf: ein Kontaktschritt gerechnet, nicht auskonvergiert — das Ergebnis
 ist ein Netzmaß, kein Nachweis“ statt der gewohnten Meldung über eine nicht
 konvergierte Iteration.
 
-**Gemessen** (`tests/test_solver_ext.py`, Block aus 8 `hex8` auf starrer
-Platte, 60 MN Auflast und 9 MN Querkraft, Fließen an, 20.09.2026):
+**Gemessen am Drehlager, LF1 kalt** (Löser-Sitzung, 21.09.2026):
+Vergleichsspannung je Element aus `res.solid_res` gegen den vollen Lauf.
 
-| | Kontaktschritte | Zeit | fließende Elemente |
+| | Zeit | L2-Abweichung | dieselben Spitzenelemente |
 |---|---|---|---|
-| voller Lauf | 80 | 0,58 s | 8 von 12 |
-| Probelauf | **1** | **0,05 s** | — |
+| ein Kontaktschritt, **elastisch** (so war es gebaut) | 123,8 s | 52,2 % | **54 von 100** |
+| ein Kontaktschritt, **plastisch** (so ist es jetzt) | 198,8 s | **2,3 %** | **100 von 100** |
+| voller Lauf | 633,4 s | — | — |
 
-Also Faktor 12 an diesem Beispiel; am Drehlager ist der Faktor die
-Iterationszahl selbst. Die größte Verschiebung des Probelaufs liegt mit
-1,44 mm unter den 6,86 mm des vollen Laufs — der erste Schritt hat die
-Aktivmenge noch nicht gefunden und das Fließen gar nicht. Für die Verteilung
-des Spannungssprungs über das Netz reicht er, für eine Aussage über das
-Bauteil nicht.
+**Der Gewinn ist Faktor 3, nicht Faktor 48.** Ein *einziger* Kontaktschritt
+kostet am Drehlager schon 123,8 s, weil bei 645 934 Elementen das Aufstellen
+der Matrix der Brocken ist und nicht die Zahl der Schritte. Die 75 s, die das
+Fließen kostet, bringen dafür die ganze Genauigkeit.
+
+**An einem kleinen Modell spart der Probelauf gar keine Zeit** (Block aus
+8 `hex8`, 21.09.2026: 0,57 gegen 0,35 s). Die Plastizität braucht ihre
+Schritte so oder so; die Kontaktiteration ist bei zwölf Elementen nicht der
+Brocken. Was der Probelauf *immer* spart, sind Kontaktschritte je Fließschritt
+— 1,14 statt 8,44 an diesem Block. Danach prüft
+`tests/test_solver_ext.py::test_probelauf_und_kennzahlen`, nicht nach der Zeit:
+eine Zeitprüfung an einem kleinen Modell hielte etwas fest, das keine
+Eigenschaft des Verfahrens ist.
+
+**Dass es wirklich eine Eigenschaft des Verfahrens ist, steht unabhängig
+gemessen daneben** (Löser-Sitzung am Drehlager, 21.09.2026): dort 12
+Kontaktschritte auf 10 Fließschritte im Probelauf gegen 98 auf 10 im vollen
+Lauf — **1,2 gegen 9,8**. Zwei Modelle, die drei Größenordnungen auseinander
+liegen (12 Elemente gegen 645 934), geben dasselbe Verhältnis. Und die Zeit
+erklärt sich damit von selbst: am Drehlager fallen 86 Kontaktschritte zu je
+rund 6 s weg, an einem Block aus acht Elementen ist ein Kontaktschritt
+kostenlos — übrig bleibt dort nur der Aufbau, und der läuft in beiden Fällen.
 
 
 ## 5 Nachweise nach DIN EN 1993-1-1

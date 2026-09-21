@@ -539,18 +539,44 @@ def test_probelauf_und_kennzahlen():
 
     pruefe("Probelauf: Results.info sagt es", probe.info.get("probelauf") is True)
     pruefe("voller Lauf sagt es nicht", "probelauf" not in voll.info)
-    pruefe("Probelauf: genau ein Kontaktschritt",
-           probe.info["contact_iterations"] == 1,
-           f"{probe.info['contact_iterations']} statt {voll.info['contact_iterations']} voll")
-    pruefe("voller Lauf braucht mehr als einen",
-           voll.info["contact_iterations"] > 1, f"{voll.info['contact_iterations']}")
-    pruefe("Probelauf: keine Plastizitaet gerechnet",
-           "plastizitaet" not in probe.info and "plastisch" not in probe.info)
+    # Der Probelauf begrenzt den **Kontakt** auf einen Schritt, nicht die
+    # Plastizitaet; contact_iterations summiert ueber alle Fliessschritte
+    # (_kontakt_info_sammeln). Das Mass ist darum das Verhaeltnis.
+    def je_schritt(r):
+        it_p = (r.info.get("plastizitaet") or {}).get("iterationen", 0)
+        return r.info["contact_iterations"] / max(1, it_p)
+
+    pruefe("Probelauf: ein Kontaktschritt je Fließschritt",
+           je_schritt(probe) <= 1.5,
+           f"{probe.info['contact_iterations']} Kontakt- auf "
+           f"{(probe.info.get('plastizitaet') or {}).get('iterationen')} Fließschritte "
+           f"= {je_schritt(probe):.2f}")
+    pruefe("voller Lauf iteriert den Kontakt aus",
+           je_schritt(voll) > 2.0,
+           f"{voll.info['contact_iterations']} Kontakt- auf "
+           f"{(voll.info.get('plastizitaet') or {}).get('iterationen')} Fließschritte "
+           f"= {je_schritt(voll):.2f}")
+    # Das Fliessen gehoert dazu: die erste Fassung (357d61d) liess es aus, und
+    # am Drehlager traf der Probelauf damit nur 54 von 100 Spitzenelementen
+    # (Loeser-Sitzung, 21.09.2026). Er verfeinerte an den falschen Stellen.
+    pruefe("Probelauf: das Fliessen wird mitgerechnet",
+           bool(probe.info.get("plastisch")),
+           f"{len(probe.info.get('plastisch', {}))} von {len(m2.elements)} Elementen")
+    pruefe("… und der Vernetzer erkennt es an den zwei Schluesseln",
+           probe.info.get("probelauf") is True and "plastizitaet" in probe.info)
     pruefe("voller Lauf: Plastizitaet gerechnet und Elemente fliessen",
            bool(voll.info.get("plastisch")),
            f"{len(voll.info.get('plastisch', {}))} von {len(m.elements)} Elementen")
-    pruefe("Probelauf ist schneller", probe.info["time"] < voll.info["time"],
-           f"{probe.info['time']:.2f} s statt {voll.info['time']:.2f} s")
+    # **Keine Zeitpruefung hier.** An diesem Block ist der Probelauf nicht
+    # schneller (gemessen 21.09.2026: 0,57 gegen 0,35 s) - die Plastizitaet
+    # braucht ihre Schritte so oder so, und der Kontakt ist bei zwoelf
+    # Elementen nicht der Brocken. Die Ersparnis entsteht erst, wo die
+    # Kontaktiteration dominiert: am Drehlager 199 statt 633 s
+    # (Loeser-Sitzung, 21.09.2026). Eine Zeitpruefung an diesem Modell wuerde
+    # etwas festhalten, das keine Eigenschaft der Aenderung ist.
+    pruefe("Probelauf spart Kontaktschritte",
+           probe.info["contact_iterations"] < voll.info["contact_iterations"],
+           f"{probe.info['contact_iterations']} statt {voll.info['contact_iterations']}")
     # Verformung: derselbe erste Schritt, also dieselbe Groessenordnung -
     # der Probelauf darf kein anderes Modell rechnen
     du_p = float(np.abs(probe.u).max())

@@ -1910,10 +1910,17 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv)
             raise
         hilfs = True
-    if _plastisch(model) and not probelauf:
-        # Der Probelauf laesst die Plastizitaet aus: sie kostet je Schritt eine
-        # volle Kontaktiteration, und der Fehlerschaetzer misst den Sprung der
-        # Spannung zwischen Nachbarelementen - dafuer genuegt die elastische.
+    if _plastisch(model):
+        # Der Probelauf rechnet das Fliessen **mit** - nur der Kontakt bleibt
+        # bei einem Schritt. Die erste Fassung (357d61d) liess die Plastizitaet
+        # aus, weil fuer den Spannungssprung die elastische Spannung zu genuegen
+        # schien. Am Drehlager gemessen (Loeser-Sitzung, 21.09.2026) ist das
+        # falsch: elastisch trifft der Probelauf nur 54 von 100
+        # Spitzenelementen (L2-Abweichung 52,2 %), plastisch 100 von 100
+        # (2,3 %). Er verfeinerte also an den falschen Stellen. Der Preis ist
+        # klein - 199 statt 124 s gegen 633 s fuer den vollen Lauf: bei 645.934
+        # Elementen ist das Aufstellen der Matrix der Brocken, nicht die Zahl
+        # der Schritte.
         try:
             u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp, progress, start)
         except RuntimeError as ex3:
@@ -2100,14 +2107,32 @@ def solve_static(model: Model, progress=None, case: str = None,
     """Ein Lastfall (der aktive oder ``case``) - im stehenden Prozesspool
     (parallel.arbeiter); Einzelheiten in _solve_static_innen.
 
-    ``probelauf=True`` rechnet **einen** Kontaktschritt aus dem Anfangszustand
-    der Fugen und laesst die Plastizitaet aus. Das ist der Lauf fuer die
-    adaptive Vernetzung (``adaptiv.adaptiv_vernetzen``): sie braucht den
-    Spannungssprung zwischen Nachbarelementen als Netzmass, und der ist schon
-    im ersten Schritt da. Ein voller Lastfall am Drehlager kostet 235 s mit 48
-    Kontaktschritten (gemessen 19.09.2026); der Probelauf spart den Faktor der
-    Iterationszahl. Das Ergebnis ist **kein Nachweis**: ``Results.info`` traegt
-    ``probelauf: True``, und ``contact_converged`` steht auf falsch.
+    ``probelauf=True`` begrenzt den **Kontakt** auf einen Schritt aus dem
+    Anfangszustand der Fugen; das Fliessen wird mitgerechnet. Das ist der Lauf
+    fuer die adaptive Vernetzung (``adaptiv.adaptiv_vernetzen``): sie braucht
+    den Spannungssprung zwischen Nachbarelementen als Netzmass.
+
+    **Der Gewinn ist Faktor 3, nicht Faktor 48.** Am Drehlager LF1 kalt
+    gemessen (Loeser-Sitzung, 21.09.2026): voller Lauf 633,4 s, Probelauf
+    198,8 s. Ein **einziger** Kontaktschritt kostet dort schon 123,8 s, weil
+    bei 645.934 Elementen das Aufstellen der Matrix der Brocken ist und nicht
+    die Zahl der Schritte.
+
+    **Warum das Fliessen mit muss**: ohne es (so war es in 357d61d gebaut)
+    verfeinert die Schleife an den falschen Stellen - elastisch stimmen nur
+    54 von 100 Spitzenelementen mit dem vollen Lauf ueberein, die
+    L2-Abweichung der Vergleichsspannung liegt bei 52,2 %; mit Fliessen sind
+    es 100 von 100 und 2,3 %. Die 75 s Unterschied bringen die ganze
+    Genauigkeit.
+
+    **Das Ergebnis ist ein Netzmass, kein Rechenergebnis.** ``Results.info``
+    traegt ``probelauf: True``, ``contact_converged`` steht auf falsch - und
+    vor allem: ``res.contact_forces`` liegt um **Faktor 834** daneben
+    (9,276e8 N gegen 1,112e6 N am Drehlager, 21.09.2026), damit auch
+    Fugenkraefte, Pressungen, Bolzennachweise und die Auflagerkraefte
+    einseitiger Lager. Verschiebung (0,04 %) und Spannung (2,3 %) stimmen;
+    warum die Kontaktkraefte es nicht tun, ist nicht geklaert. Wer aus einem
+    Probelauf etwas anderes als ein Netzmass liest, liest falsch.
     """
     with parallel.arbeiter(model, workers):
         return _solve_static_innen(model, progress, case, workers, system, probelauf)
