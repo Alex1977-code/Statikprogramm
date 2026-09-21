@@ -377,6 +377,109 @@ def test_geladenes_modell_traegt_dieselbe_last():
           len(Model.from_dict(leer.to_dict()).load_cases) == 1)
 
 
+def test_projiziert_bereich_verlauf_zusammen():
+    """Projektion, Bereich und Verlauf an **einer** Last - und von Hand
+    nachgerechnet.
+
+    ``_geometrielast_legen.nimm`` prueft seit dem 21.09.2026 den
+    Windschatten zuerst und berechnet die Seitenmitte nur, wenn Bereich oder
+    Verlauf sie lesen (Theoriehandbuch 7.3: 70 s -> 12,5 s am Drehlager).
+    Das ist eine Umstellung der Reihenfolge, und Reihenfolgen verrutschen.
+    Diese Pruefung haelt alle drei Merkmale gleichzeitig fest - keine
+    bestehende Pruefung tat das - und vergleicht gegen die Handrechnung,
+    nicht gegen einen frueheren Lauf.
+    """
+    print("--- Projektion, Bereich und Verlauf zusammen ---")
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    P = np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]])
+    m.add_nodes(P)
+    z = {"i": 0}
+
+    def linie(a, b):
+        z["i"] += 1
+        m.add_line(f"L{z['i']}", [int(a), int(b)])
+        return f"L{z['i']}"
+
+    R = [[linie(o + i, o + (i + 1) % 4) for i in range(4)] for o in (0, 4)]
+    V = [linie(i, i + 4) for i in range(4)]
+    m.add_flaeche("Boden", R[0], material="S235")
+    m.add_flaeche("Dach", R[1], material="S235")
+    for i in range(4):
+        m.add_flaeche(f"M{i}", [R[0][i], V[(i + 1) % 4], R[1][i], V[i]], material="S235")
+    k = m.add_koerper("K", ["Boden", "Dach"] + [f"M{i}" for i in range(4)],
+                      material="S235")
+    k.teilung = [4, 2, 2]
+    m.add_load_case("LF1", "Q")
+    # Schraeg von oben, also trifft sie Dach und eine Seitenwand verschieden
+    richtung = [0.0, 0.0, -1.0]
+    # Bereich: nur die vordere Haelfte in x (0 bis 1 von 2)
+    bereich = {"art": "rechteck", "ursprung": [0, 0, 0], "u": [1, 0, 0],
+               "v": [0, 1, 0], "von": [0.0, -1.0], "bis": [1.0, 2.0]}
+    # Verlauf: linear von 1,0 MN/m2 bei x = 0 auf 2,0 MN/m2 bei x = 2
+    verlauf = {"art": "linear",
+               "punkte": [[0.0, 0.0, 0.0, 1.0e6], [2.0, 0.0, 0.0, 2.0e6]]}
+    m.add_geometrielast("K", 1.0e6, art="koerper", case="LF1",
+                        richtung=richtung, projiziert=True, bereich=bereich,
+                        verlauf=verlauf)
+    mesher.modell_vernetzen(m, log=[])
+    lasten = m.case("LF1").face_loads
+    check("es entstehen ueberhaupt Lasten", len(lasten) > 0, f"{len(lasten)} Seiten")
+
+    d = np.asarray(richtung, float)
+    d = d / np.linalg.norm(d)
+    gl = m.case("LF1").geometrielasten[0]
+    falsch_schatten = falsch_bereich = falsch_wert = 0
+    for fl in lasten:
+        n = m._seitennormale(fl.elem, fl.face)
+        c = float(n @ d)
+        if c >= 0:
+            falsch_schatten += 1                    # im Windschatten, darf nicht da sein
+        if not gl.trifft(m._seitenmitte(fl.elem, fl.face)):
+            falsch_bereich += 1                     # ausserhalb des Bereichs
+        mitte = m._seitenmitte(fl.elem, fl.face)
+        soll = gl.wert(mitte, normale=n) * (-c)     # Verlauf mal Projektion
+        if not np.isclose(fl.p, soll, rtol=1e-12):
+            falsch_wert += 1
+    check("keine Seite im Windschatten traegt Last", falsch_schatten == 0,
+          f"{falsch_schatten} von {len(lasten)}")
+    check("keine Seite ausserhalb des Bereichs traegt Last", falsch_bereich == 0,
+          f"{falsch_bereich} von {len(lasten)}")
+    check("der Wert ist der Verlauf an der Seitenmitte mal dem Kosinus",
+          falsch_wert == 0, f"{falsch_wert} von {len(lasten)}")
+    check("und er ist nicht ueberall gleich - der Verlauf wirkt",
+          len({round(float(fl.p), 3) for fl in lasten}) > 1,
+          f"{len({round(float(fl.p), 3) for fl in lasten})} verschiedene Werte")
+
+    # Und die Gegenprobe: jede Seite, die beide Bedingungen erfuellt, MUSS
+    # eine Last haben - sonst wirft die neue Reihenfolge welche weg.
+    hat = {(int(fl.elem), int(fl.face)) for fl in lasten}
+    fehlt = 0
+    for fn in k.flaechen:
+        f = m.flaechen[fn]
+        for e, seite in list((f.randseiten or [])) + [(e, 0) for e in (f.elemente or [])]:
+            n = m._seitennormale(e, seite)
+            if n is None:
+                continue
+            if float(n @ d) < 0 and gl.trifft(m._seitenmitte(e, seite)):
+                fehlt += (int(e), int(seite)) not in hat
+    check("und keine belastbare Seite fehlt", fehlt == 0, f"{fehlt} fehlen")
+
+    # Die Summe von Hand: der Bereich ist 0 <= x <= 1, das Dach ist 1 m
+    # breit, und der Verlauf steigt von 1,0 auf 2,0 MN/m2 ueber x = 0 bis 2.
+    # Also integral p(x) dx ueber 0..1 mal 1 m Breite = (1,0 + 1,25)/2 MN.
+    # Die Teilung 4 in x gibt Seiten von 0,5 m; ihre Mitten liegen bei
+    # x = 0,25 und 0,75, der Verlauf wird dort abgegriffen - das trifft das
+    # Integral der Geraden exakt (Mittelpunktsregel).
+    soll = -(1.125e6 + 1.375e6) / 2 * 1.0 * 1.0
+    S = np.asarray(solver.case_loads(m, {"LF1": 1.0}, None)[0],
+                   float).reshape(-1, 3).sum(axis=0)
+    check("Summe = Integral des Verlaufs ueber die projizierte Flaeche",
+          np.isclose(S[2], soll, rtol=1e-9),
+          f"Fz {S[2] / 1e3:.1f} kN gegen {soll / 1e3:.1f} kN")
+
+
 def test_vorspannung():
     """Vorspannung als Anfangsdehnung, geschlossen geprueft:
     * beidseitig gehaltener Stab: keine Verschiebung, die Lager tragen F_v
@@ -476,7 +579,7 @@ def main():
     for t in (test_volleinspannkraefte, test_teillast_einfeldtraeger, test_zwangsverformung,
               test_flaechenlast_linear, test_linienlast_auf_linie, test_temperatur_objektlast,
               test_speichern_linienlast_zwang, test_geladenes_modell_traegt_dieselbe_last,
-              test_vorspannung):
+              test_projiziert_bereich_verlauf_zusammen, test_vorspannung):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

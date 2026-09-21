@@ -4475,7 +4475,7 @@ class Model:
 
     def _seitenmitte(self, elem: int, seite: int):
         """Schwerpunkt einer Elementseite - fuer die Bereichsprobe."""
-        from .assemble import SOLID_FACES
+        from .assemble import SOLID_FACES     # zyklischer Import, darum hier
         e = self.elements[int(elem)]
         seiten = SOLID_FACES.get(e.typ)
         if not seiten:
@@ -4509,18 +4509,30 @@ class Model:
         nd = [int(e.nodes[j]) for j in seiten[int(seite) % len(seiten)]]
         if len(nd) < 3:
             return None
-        X = self.nodes[nd[:3]]
-        n = np.cross(X[1] - X[0], X[2] - X[0])
-        L = float(np.linalg.norm(n))
+        # Das Kreuzprodukt steht hier ausgeschrieben statt als np.cross.
+        # Nicht aus Geschmack: np.cross geht fuer jeden Aufruf ueber
+        # moveaxis und normalize_axis_tuple, und das sind bei einem
+        # Dreivektor mehr Zeilen Python als die Rechnung selbst. Im Profil
+        # des Lastverteilens waren 0,150 s von 0,312 s allein np.cross -
+        # bei 4000 Seiten. Die Rechnung ist dieselbe.
+        P = self.nodes
+        p0, p1, p2 = P[nd[0]], P[nd[1]], P[nd[2]]
+        ax, ay, az = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
+        bx, by, bz = p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]
+        nx, ny, nz = ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx
+        L = (nx * nx + ny * ny + nz * nz) ** 0.5
         if L <= 0:
             return None
-        n = n / L
-        rest = [k for k in e.nodes if int(k) not in nd]
+        nx, ny, nz = nx / L, ny / L, nz / L
+        rest = [int(k) for k in e.nodes if int(k) not in nd]
         if rest:
-            innen = self.nodes[[int(x) for x in rest]].mean(axis=0) - X.mean(axis=0)
-            if float(n @ innen) > 0:
-                n = -n
-        return n
+            R = P[rest].mean(axis=0)
+            ix = R[0] - (p0[0] + p1[0] + p2[0]) / 3.0
+            iy = R[1] - (p0[1] + p1[1] + p2[1]) / 3.0
+            iz = R[2] - (p0[2] + p1[2] + p2[2]) / 3.0
+            if nx * ix + ny * iy + nz * iz > 0:
+                nx, ny, nz = -nx, -ny, -nz
+        return np.array([nx, ny, nz])
 
     def _geometrielast_legen(self, gl: "Geometrielast") -> list:
         """Die Elementlasten einer Geometrielast - oder [], wenn kein Netz da ist."""
@@ -4548,16 +4560,18 @@ class Model:
         def nimm(e: int, seite: int):
             if not 0 <= int(e) < len(self.elements):
                 return
-            mitte = self._seitenmitte(e, seite)
-            if gl.bereich and not gl.trifft(mitte):
-                return
-            if gl.verlauf:
-                p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
-                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
-            else:
-                p = gl.p
-            if gl.verlauf and p == 0.0:
-                return              # ausserhalb des Verlaufs (ueber dem Wasserspiegel)
+            # Reihenfolge nach Kosten, nicht nach Lesbarkeit - und das ist
+            # hier ausnahmsweise begruendet. Bis zum 21.09.2026 stand die
+            # Seitenmitte oben und wurde fuer **jede** Seite berechnet:
+            # auch bei Lasten ohne Bereich und ohne Verlauf, die sie nie
+            # lesen, und auch bei Seiten, die gleich darauf am Windschatten
+            # scheitern. Am Drehlager sind 840 von 2262 Geometrielasten
+            # projiziert und keine einzige hat Bereich oder Verlauf - dort
+            # war es reine Verschwendung.
+            #
+            # Zuerst also der Windschatten: er braucht nur die Normale und
+            # wirft die Haelfte der Seiten weg.
+            c = None
             if d is not None:
                 n = self._seitennormale(e, seite)
                 if n is None:
@@ -4565,6 +4579,20 @@ class Model:
                 c = float(n @ d)
                 if c >= 0:
                     return          # diese Seite liegt im Windschatten der Last
+            # Dann die Seitenmitte - aber nur, wenn jemand sie liest.
+            mitte = None
+            if gl.bereich or gl.verlauf:
+                mitte = self._seitenmitte(e, seite)
+                if gl.bereich and not gl.trifft(mitte):
+                    return
+            if gl.verlauf:
+                p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
+                if p == 0.0:
+                    return          # ausserhalb des Verlaufs (ueber dem Wasserspiegel)
+            else:
+                p = gl.p
+            if c is not None:
                 p = p * (-c)        # Last je Quadratmeter der Projektion
             out.append(FaceLoad(int(e), p, int(seite), richtung))
 

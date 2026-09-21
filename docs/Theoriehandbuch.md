@@ -4286,9 +4286,38 @@ Erst die **Resultierende** zeigt es: 9,26 MN senkrecht fielen auf exakt null.
 
 **Behoben** in `Model.from_dict`: hat das geladene Modell Elemente und
 Objektlasten, wird einmal verteilt. Das Verteilen ist wiederholbar (es räumt
-die `_geo`-Lasten vorher weg), und es kostet **7,9 µs je verteilter Last** —
-an einem Balken mit 4 000 Elementen und 400 Flächenlasten 3,2 ms, also 28 %
-einer Ladezeit von 11,2 ms. Ohne Netz oder ohne Objektlasten kostet es nichts.
+die `_geo`-Lasten vorher weg), und ohne Netz oder ohne Objektlasten kostet es
+nichts.
+
+**Was es kostet, und was das kostete.** Die erste Fassung machte das Laden des
+Drehlagers von 6,6 auf **77,8 s** — 1 013 100 verteilte Lasten über 422
+Lastfälle. Gemessen an einem Balken mit einem Lastfall waren es 7,9 µs je
+Last, am Drehlager aber 69 µs. Der Unterschied lag nicht an der Modellgröße
+(von 250 auf 128 000 Elemente ändert sich nichts) und nicht an der Müllabfuhr
+(abgeschaltet dieselbe Zeit) — **840 der 2262 Geometrielasten sind
+projiziert**, und keine einzige hat Bereich oder Verlauf. Zwei Dinge waren
+daran teuer:
+
+* `_geometrielast_legen.nimm` berechnete die **Seitenmitte für jede Seite** —
+  auch für Lasten, die sie ohne Bereich und Verlauf nie lesen, und auch für
+  die Hälfte der Seiten, die unmittelbar danach am Windschatten scheitert.
+  Jetzt steht die Windschattenprobe zuerst, und die Mitte wird nur berechnet,
+  wenn jemand sie liest.
+* `_seitennormale` rief `np.cross` auf. Für einen Dreivektor geht das über
+  `moveaxis` und `normalize_axis_tuple` und kostete im Profil **0,150 von
+  0,312 s**. Ausgeschrieben ist es dieselbe Rechnung.
+
+| Drehlager laden | |
+|---|---|
+| JSON lesen | 3,0 s |
+| `from_dict` ohne Verteilen | 2,89 s |
+| Verteilen, erste Fassung | rund 70 s |
+| **Verteilen, jetzt** | **12,48 s** (12,3 µs je Last) |
+| `from_dict` mit Verteilen | **14,94 s** |
+
+Faktor 5,6, und die Resultierende bleibt auf die Stelle dieselbe
+(−3 968 598,9 / −0,0 / −9 259 435,0 N). Die verbleibenden 12,3 µs sind die
+Arbeit selbst: Normale je Seite, Ablehnung im Windschatten, ein `FaceLoad`.
 
 **Warum die Prüfungen es nicht fanden**, obwohl es zwei gab, die genau
 hinsahen — das ist der lehrreiche Teil:
