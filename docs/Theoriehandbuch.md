@@ -3376,6 +3376,56 @@ Elementart vektorisiert: 380 000 Tetraeder brauchen rund 1,5 s.
   `sys.stderr`, wenn es einen gibt: die gepackte Windows-Fassung läuft ohne
   Konsole.
 
+### 7.1 Ein Auftrag trägt kein Modell (21.09.2026)
+
+Die Stabnachweise werden ab 24 Stäben auf Aufträge verteilt
+(`ec3.design.check_members`). Bis zum 21.09.2026 stand in **jedem** Auftrag ein
+eigenes `model.to_dict()`. Das ist harmlos bei einem Rahmen und fatal bei einem
+Modell, das fast nur aus Netz besteht.
+
+Am Drehlager des Anwenders — 162 166 Knoten, 662 889 Elemente, 239 MB als
+Datei — waren das rund **228 MB je Auftrag bei 64 Aufträgen, etwa 14,6 GB**
+durch die Prozess-Pipes. Der Lauf stand nach **698 Minuten bei 94 %** und kam
+nicht weiter; ein Arbeitsprozess war vorher gestorben mit
+
+    AssertionError   multiprocessing/connection.py, _get_more_data
+
+— die Pipe brach beim Lesen des Auftrags. Die Rechnung selbst war zu diesem
+Zeitpunkt fertig (das Protokoll endet mit „Umhüllende gebildet"); es hingen
+allein die 64 Nachweise von 64 Rundstäben, die seriell Sekunden gebraucht
+hätten.
+
+Modell und Ergebnisse gehen jetzt **einmal** in eine Datei
+(`ec3.design._paket_schreiben`), der Auftrag trägt nur ihren Pfad, und jeder
+Arbeitsprozess liest sie **einmal** und behält sie (`jobs._NACHWEIS_PAKET`).
+Das ist dieselbe Lösung wie im stehenden Pool
+(`parallel._init_worker_datei`). Gemessen an Prüfkörpern, ein Auftrag:
+
+| Modell | alt | neu | Faktor |
+|---|---|---|---|
+| 17 Knoten, 16 Elemente | 0,058 MB | 76 Byte | 757 |
+| 360 Knoten, 1 096 Elemente | 0,478 MB | 76 Byte | 6 286 |
+| 2 214 Knoten, 8 656 Elemente | 2,996 MB | 76 Byte | 39 416 |
+
+Die alte Last wächst linear mit dem Netz, die neue nicht. Nachweis
+`tests/test_ec3.py::test_nachweisauftrag_traegt_kein_modell`. Der alte Weg
+(`model`/`results` im Auftrag) bleibt bestehen — die Farm schickt Aufträge
+über das Netz, wo kein gemeinsamer Dateipfad gilt.
+
+**Dazu gehört ein zweiter Punkt, der den Fehler unlesbar machte.** Die gepackte
+Oberfläche läuft ohne Konsole; PyInstaller setzt `sys.stdout` und `sys.stderr`
+dann auf `None`. Fällt in einem Arbeitsprozess eine Ausnahme an, schreibt
+**CPython selbst** den Traceback nach `sys.stderr`
+(`multiprocessing/process.py`, `_bootstrap`) — und stirbt dabei an
+
+    AttributeError: 'NoneType' object has no attribute 'write'
+
+Der Anwender sieht dann einen Dialog „Unhandled exception in script" mit
+diesem nichtssagenden Fehler, während der eigentliche Grund verdeckt bleibt.
+`run_gui._stroeme_sichern` legt vor `freeze_support()` einen stillen
+Ersatzstrom unter, den die Arbeitsprozesse erben. `parallel._melden` tat das
+schon für die eigenen Meldungen; die Bibliothek erreichte es nicht.
+
 ## 7a Entartete Elemente
 
 Ein Element ohne Ausdehnung hat keine Steifigkeit; seine Jacobi-Matrix ist

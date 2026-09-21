@@ -188,7 +188,29 @@ def _start():
     main(app=app, splash=splash)
 
 
+def _stroeme_sichern():
+    """sys.stdout und sys.stderr duerfen in der exe nicht None sein.
+
+    Die gepackte Oberflaeche laeuft ohne Konsole; PyInstaller setzt beide
+    Stroeme dann auf None. Faellt in einem Arbeitsprozess eine Ausnahme an,
+    schreibt **CPython selbst** den Traceback nach sys.stderr
+    (multiprocessing/process.py, _bootstrap) - und stirbt dabei an
+    "AttributeError: 'NoneType' object has no attribute 'write'". Der Anwender
+    sieht dann einen Dialog "Unhandled exception in script" mit diesem
+    nichtssagenden Fehler, waehrend der eigentliche Grund verdeckt bleibt
+    (21.09.2026, Drehlager: die Ursache war eine gebrochene Pipe in den
+    Stabnachweisen). Ein stiller Ersatzstrom haelt das auf.
+    """
+    import io as _io
+    import sys as _sys
+    for name in ("stdout", "stderr"):
+        if getattr(_sys, name, None) is None:
+            setattr(_sys, name, _io.TextIOWrapper(_io.BytesIO(), encoding="utf-8",
+                                                  errors="replace", write_through=True))
+
+
 if __name__ == "__main__":       # wichtig fuer multiprocessing (Windows: spawn / exe)
     import multiprocessing
+    _stroeme_sichern()           # **vor** freeze_support: der Arbeiter erbt es
     multiprocessing.freeze_support()
     _start()

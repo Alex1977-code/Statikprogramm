@@ -68,12 +68,34 @@ def _job_solve_all(model: dict, design: bool = False, fatigue: bool = False):
     return an.summary()
 
 
+#: Zuletzt gelesenes Nachweispaket je Arbeitsprozess: (Pfad, Modell, Ergebnisse).
+#: Ohne diesen Halt baut jeder Auftrag das Modell neu auf - am Drehlager
+#: 239 MB, und bei 64 Auftraegen viermal je Arbeiter (21.09.2026).
+_NACHWEIS_PAKET = (None, None, None)
+
+
 @register_job("design_members")
-def _job_design_members(model: dict, members: list, results: dict):
-    """Nachweise fuer eine Gruppe von Staeben (results: name -> Results ohne Modell)."""
+def _job_design_members(members: list, paket: str = None, model: dict = None,
+                        results: dict = None):
+    """Nachweise fuer eine Gruppe von Staeben.
+
+    ``paket`` ist der Pfad der Datei mit Modell und Ergebnissen
+    (ec3.design._paket_schreiben); sie wird je Arbeitsprozess **einmal**
+    gelesen. ``model``/``results`` sind der alte Weg - die Farm und aeltere
+    Auftraege schicken sie noch im Auftrag mit.
+    """
+    global _NACHWEIS_PAKET
     from .model import Model
     from .ec3.design import check_member_set
-    m = Model.from_dict(model)
+    if paket is not None:
+        if _NACHWEIS_PAKET[0] != paket:
+            import pickle
+            with open(paket, "rb") as f:
+                d = pickle.load(f)
+            _NACHWEIS_PAKET = (paket, Model.from_dict(d["model"]), d["results"])
+        _pfad, m, results = _NACHWEIS_PAKET
+    else:
+        m = Model.from_dict(model)
     for r in results.values():
         r.model = m
     return check_member_set(m, members, results)
