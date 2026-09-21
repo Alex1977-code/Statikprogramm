@@ -3716,6 +3716,29 @@ schaltet ihn ein (`test_pyramiden_als_uebergang`).
 | Nebenflächen (`bedeutung`) | 913 von 1 375 = 66,4 %; Nebenlinien 1 197 von 2 807 = 42,6 % |
 | Flächen mit Last | **2**; bedeutend sind fast nur Kontaktflächen (37 Bedingungen) und aus RFEM integrierte Objekte |
 
+**Der Lauf mit dem fertigen Stand** (Löser-Sitzung, 21.09.2026, 16 Arbeitsprozesse,
+Vorgaben unverändert: `sweep` an, `pyramiden` aus, `nebenflaechen_grob` aus,
+`plastizitaet.an`):
+
+| | altes Netz | mit Größenfeld, Sweep, Lagenvorgabe, Zylindern und Kappen-Gruppen |
+|---|---|---|
+| Volumenelemente | 645 934 tet4 | **495 593** = 31 108 hex8 + 9 368 pent6 + 455 117 tet4 (**−23,3 %**) |
+| Knoten | 158 728 | 159 465 (+0,5 %) |
+| Elemente je Knoten | 4,10 | **3,14** |
+| gesweepte Körper | 0 | **68 von 108** |
+| V33 | 80 600 tet4 | 12 372 hex8 + 3 720 pent6 = 16 092 (**−80,0 %**) |
+| V35 | 79 105 tet4 | 12 208 hex8 + 3 552 pent6 = 15 760 (**−80,1 %**) |
+
+Die 48 Körper mit vier Flächen sind als **Zylinder** erkannt, V33 und V35 über eine
+**Kappe aus vier koplanaren Flächen**. Was das für die Rechnung heißt, ist nüchtern zu
+sagen: die Knotenzahl bleibt gleich, also wird die **Faktorisierung nicht billiger** —
+billiger werden das Aufstellen (23 % weniger Elementschleifen, und am Drehlager ist das
+Aufstellen der Brocken: 124 s je Kontaktschritt gegen 4,23 s Faktorisierung) und der
+Speicher. Der Gewinn ist die **Genauigkeit**: in V33 und V35, zusammen einem Viertel der
+alten Elemente, steht jetzt der hex8 statt des tet4 (97,6 gegen 68,4 % der Balkenlösung).
+Das **Zerlegen an Fußabdrücken hat an keinem der 108 Körper angesetzt**; seit demselben Tag
+sagt jeder Körper im Protokoll, warum (`sweep.zerlegen_warum_nicht`).
+
 Der Sweep, wie er am Morgen des 21.09.2026 stand, erreichte das Drehlager also nicht:
 sein Erfolgsmaß (Kragplatte 97,6 % gegen 68,4 %, ein Achtel der Elemente) kam dort bei
 0,4 % der Elemente an. Seit dem Abend gelten vier Flächen (die 48 Körper mit vier Flächen
@@ -3724,10 +3747,76 @@ sind, wenn es Zylinder sind, sweepbar), Kappen-Gruppen und das Zerlegen an Fußa
 Modell und ist **nicht gemessen**. Und `nebenflaechen_grob` spart am Drehlager **0,2 %** der Elemente (646 712 →
 645 570; an der Platte waren es 55 %): die Bohrungen, die das Netz fein machen, sind dort
 fast alle Bohrungen *mit* Bolzen, Stift oder Achse — Kontaktflächen, und die bleiben fein.
-Was nach der Nachvernetzung an Splittern bleibt (Güte unter 0,10): 30 von 53 258, 74 von
-38 564, 29 von 115 734, 35 von 79 572, 32 von 80 752 Tetraedern in fünf Körpern, die
-schlechteste bei 0,025 — rund 200; die Kappen der Prüfkörper sind weg, diese sind noch
-nicht untersucht.
+**Die 189 Splitter am Drehlager: keine Kappe, sondern die Hülle.** Am gespeicherten Netz
+eingeordnet (Löser-Sitzung, 21.09.2026): von 189 Splittern (Güte < 0,10) in fünf Körpern
+haben **0 vier Hüllknoten** (also keine Kappe), **182 drei** und 7 zwei. Bei **allen 189**
+ist die kürzeste Kante eine **Hüllkante** von 0,13 bis 1,36 mm — bei `ziellaenge` = 50 mm
+also zwischen h/37 und h/385. Das Volumennetz hat sie nicht erzeugt, es hat sie **geerbt**:
+die Hüllknoten stehen fest, der Tetraeder muss sie nehmen. Die gebaute Kappen-Kur greift
+an keinem einzigen.
+
+Die naheliegende Gegenmaßnahme — eine **Mindestweite** in der Linien- und Flächenteilung,
+damit die Krümmungsregel (20 Abschnitte je Vollkreis, gleich wie klein er ist) keine
+Sub-Millimeter-Kanten mehr legt — ist gebaut, gemessen und **wieder verworfen worden**.
+Sie senkt die Zahl der engen Hüllkanten deutlich (Platte 1 × 0,6 × 0,2 m mit einer Bohrung
+r = 1 mm bei h = 50 mm: 1 280 → 586) und die Elementzahl um 6 bis 8 %, macht das Netz aber
+**schlechter**, weil die grobe Bohrungssehne dann nicht mehr zum Kranz daneben passt
+(deterministisch wiederholt):
+
+| Prüfkörper | Güte min ohne | mit Mindestweite | Splitter ohne | mit |
+|---|---|---|---|---|
+| Platte, eine Bohrung r = 2 mm | 0,090 | **0,065** | 10 | **15** |
+| Platte, fünf Bohrungen (zwei winzige) | 0,071 | **0,039** | 15 | **25** |
+
+0,039 liegt unter der Abnahmegrenze 0,05 — die Kur war schlimmer als das Übel. Geblieben
+ist die **Diagnose** (`mesher3d._enge_huellkanten`): je Körper eine Warnung mit Zahl,
+kürzester Kante und **Herkunft** der beiden Knoten — auf derselben Linie
+(Krümmungsteilung), zwischen zwei Linien (das ist dann die Geometrie: zwei Kanten laufen
+eng zusammen) oder am Innennetz einer Fläche. Erst diese Unterscheidung sagt, welche Kur
+überhaupt greifen kann; ohne sie ist jede weitere geraten.
+
+**Das Innennetz folgt dem örtlich feinen Rand (`RANDFELD`, 21.09.2026).** Eine Randlinie
+darf nicht neben einer viel feineren stehenbleiben — die Regel oben teilt darum die
+Nachbarlinien eines feinen Merkmals mit. Das Flächeninnere folgte dem **nicht**: es blieb
+bei h. Damit stand ein **Band** feiner Randstrecken gegen ein grobes Inneres, und jedes
+Dreieck dazwischen war ein Splitter; der Sweep zog jedes davon über alle Lagen zum Keil
+aus. Am Drehlager waren das **992 von 9 368 Keilen unter der Güte 0,10 (10,6 %) bei 0 von
+31 108 Hexaedern** (Statik3D-Sitzung, 21.09.2026).
+
+Jetzt gilt in der Fläche dieselbe Regel wie im Tetraedernetz: `h_lokal = min(h, Randkante
++ 0,25 · d)`, wobei `Randkante` die Länge der nächsten Randstrecke ist. Eingeschaltet wird
+sie erst, wenn eine Randstrecke höchstens halb so lang ist wie h (`RANDFELD_SCHWELLE`) —
+bis zum Verhältnis 2 trägt die gleichmäßige Teilung noch. Nachgestellt an einer gesweepten
+Platte 200 × 100 × 35 mm, deren Umriss eine Stufe von 0,45 mm hat (h = 50 mm — derselbe
+Fall wie Element 11313 in V35 mit seiner 0,456-mm-Kante):
+
+| | Elemente | Güte min | unter 0,10 |
+|---|---|---|---|
+| Sweep, ohne Randfeld | 116 | 0,054 | **34** |
+| **Sweep, mit Randfeld** | 168 | **0,122** | **0** |
+| tet4, ohne Randfeld | 1 646 | 0,052 | 13 |
+| **tet4, mit Randfeld** | 2 701 | **0,131** | **0** |
+
+Drei Dinge sind daran wichtig. **Erstens**: die Ursache ist nicht die Paarung. Die
+Vermutung, die Paarung lasse die Splitterdreiecke als Keile übrig, ist nachgemessen und
+trägt nicht — an einer Platte mit drei Bohrungen sind die 68 übrigen Dreiecke im Mittel
+0,774 gut, die 68 schlechtesten hätten 0,664. **Zweitens**: der Tetraederweg war nie die
+bessere Wahl. Er kommt am selben Körper auf dieselbe schlechteste Güte (0,052 gegen 0,054)
+mit dem **Vierzehnfachen** an Elementen; „lieber ganz Tetraeder" hätte nichts geheilt.
+**Drittens**: wo der Rand nicht örtlich fein ist, kostet die Regel nichts (Platte mit
+Bohrung: 1 064 Elemente und Güte 0,316 in beiden Fällen).
+
+**MMG3D: Rückfall auf `-optim`.** Schlägt der Lauf **mit** Metrik fehl, wird er ohne sie
+wiederholt (`-optim`, der Weg vor dem Größenfeld), bevor der Körper aufgegeben wird. Am
+Drehlager war genau das der Unterschied zwischen einem brauchbaren und einem teuren Netz:
+V34 scheiterte im Metrik-Lauf, behielt seinen Tetraeder der Güte 0,000, und die
+Gütekontrolle erzwang eine Vernetzung mit 33,3 statt 50 mm — **69 589 statt 49 274
+Tetraeder**, also teurer als vorher. Dazu wird der **Grund** aus MMGs Ausgabe gelesen und
+nicht nur ihr Ende: MMG sucht neben der Eingabedatei von sich aus eine gleichnamige `.sol`
+und schreibt, wenn keine da ist, „`** … netz.sol NOT FOUND. USE DEFAULT METRIC.`" — eine
+Warnung, die am Schluss steht. Wer die letzten Zeichen meldet, nennt genau sie; so stand
+im Drehlager-Protokoll „netz.sol NOT FOUND", obwohl die Metrik geschrieben war
+(`vernetzer_extern._mmg_grund`).
 
 ## 6b Netzqualität (`netzguete.py`)
 
@@ -3863,6 +3952,18 @@ zwei Runden, Budget 3× (21.09.2026):
 | 1 (h = 30 mm) | 441 hex8/pent6 | 3 à 26,7 mm | 13,7 % |
 | 2 | 1 456 | 7–8 à 10–11 mm | 13,4 % |
 | 3 | 4 972 | 11–12 à 7 mm | **9,2 %** |
+
+**Woher die Elementspannung kommt — ein Vorbehalt.** `res.solid_res` trägt für ein
+**elastisches** Element mit mehreren Auswertepunkten den Punkt mit der **höchsten**
+Vergleichsspannung, für ein **fließendes** dagegen nur die **Mitte** (Löser-Sitzung,
+21.09.2026; der Grund dort ist ein Nachweis-Argument: an einer Ecke schießt die gemeldete
+Spannung sonst über die verfestigte Fließgrenze). In einem Netz mit fließenden und
+elastischen Elementen nebeneinander vergleicht der Sprung also **Maximum gegen Mitte** —
+genau an der Fließgrenze, und ein Teil des gemessenen Sprungs ist dann der Regelwechsel
+und nicht das Netz. Für tet4 ist das gleichgültig (ein Punkt), für hex8/pent6/pyr5 nicht.
+Führt der Löser ein einheitliches **Mittel über die Gaußpunkte** als eigenes Feld
+(`netzfehler.MITTELFELD`, heute `solid_mittel`), liest der Schätzer es bevorzugt — ohne
+weitere Änderung.
 
 **Der Probelauf.** Die Schleife rechnet je Durchgang mit `solve_static(…, probelauf=True)`
 — einem Kontaktschritt aus dem Anfangszustand der Fugen; sein Ergebnis ist ein Netzmaß,
@@ -4002,6 +4103,50 @@ diesem nichtssagenden Fehler, während der eigentliche Grund verdeckt bleibt.
 `run_gui._stroeme_sichern` legt vor `freeze_support()` einen stillen
 Ersatzstrom unter, den die Arbeitsprozesse erben. `parallel._melden` tat das
 schon für die eigenen Meldungen; die Bibliothek erreichte es nicht.
+
+### 7.2 Ein neu vernetztes Modell muss dasselbe rechnen (21.09.2026)
+
+Diese Prüfung fehlte, und ihr Fehlen hat einen Tag gekostet. Am Drehlager
+sprang die größte Verschiebung beim Neuvernetzen von **0,2716 auf 1,2718 mm** —
+Faktor 4,7, rein elastisch, beide Läufe kontaktkonvergiert. Die Spannung blieb
+dabei richtig (388,0 gegen 387,4 N/mm²): das Tragwerk **wandert als Ganzes**
+(Mittelvektor −0,685; −0,057; −0,242 mm, Körpermaxima alle um 1,15 mm), es
+verformt sich nicht anders. Durch Messung ausgeschlossen wurden der Sweep, die
+entarteten Keile, die Plastizität, `Model.netzknoten_loeschen` und der
+Messweg; der Fehler tritt auch auf dem Stand **vor** dem neuen Vernetzer auf.
+
+`tests/test_neuvernetzen.py` ist die Prüfung, die das hätte finden müssen:
+zwei Körper mit **eigenen** Trennflächen (so kommt es aus RFEM, die Netze
+passen nicht Knoten für Knoten), eine Kontaktbedingung dazwischen, ein
+**geometriegebundenes** Flächenlager und Eigengewicht — vernetzen, rechnen,
+noch einmal vernetzen, wieder rechnen, vergleichen. Geometriegebunden ist der
+Kern: Lager und Lasten müssen das Neuvernetzen überleben, ohne dass jemand sie
+nachsetzt, und genau das tut `mesher.modell_vernetzen` im letzten Schritt.
+
+**Ein Fehler ist damit gefunden und behoben.**
+`Model._knotenverweise_abbilden` zog `ContactPair.slave_nodes` nach, aber
+**nicht `master_faces`** — und das sind Knotenlisten (drei oder vier Knoten je
+Facette, `contact.py` liest sie als Knotennummern). Nach dem Löschen eines
+Knotens zeigten die Facetten auf fremde Knoten: die Fuge trug an der falschen
+Stelle, **ohne dass eine Spannung falsch geworden wäre** — genau das Bild einer
+Starrkörperbewegung. Ohne die Behebung wandern in der Prüfung 16 von 16
+Facetten nicht mit.
+
+**Der Faktor 4,7 ist damit nicht erklärt.** Beim Neuvernetzen werden die
+Kontaktpaare ohnehin aus der Geometrie neu gebaut (`kontaktfugen_zuruecksetzen`
+und `kontaktfugen_ausfuehren` in `modell_vernetzen`), die veralteten Facetten
+spielen dort also keine Rolle; und die Löser-Sitzung hat gemessen, dass der
+Sprung auch mit abgeschaltetem `netzknoten_loeschen` bleibt. Der behobene
+Fehler trifft das **Löschen von Knoten von Hand**, nicht das Neuvernetzen. Die
+Ursache des Sprungs ist offen und wird nicht geraten.
+
+Eine Möglichkeit, die dabei mitzuprüfen ist: das Drehlager meldet beim Import
+„48 Teiltragwerke ohne Lager". Hält ein Bauteil nur über den Kontakt, dann
+hängt es vom Netz ab, **ob** es hält — und ein Netz, das es nicht hält, gibt
+genau eine Starrkörperbewegung bei richtiger Spannung. Ob einer der beiden
+Läufe eine freie Bewegung oder eine Hilfsfesselung gemeldet hat
+(`Results.info["singularitaeten"]`, § 7b), steht in den Protokollen und ist
+noch nicht ausgewertet.
 
 ## 7a Entartete Elemente
 

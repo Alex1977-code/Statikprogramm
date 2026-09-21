@@ -930,9 +930,18 @@ def test_groessenfeld_an_der_bohrung():
     finally:
         M3._kraenze = echt
     n0, v0, _vm0, q0, s0 = messen(P0, T0)
-    check("ohne Kränze läge kein Knoten im Kranz - der Test greift",
-          n0 == 0 and v0 > 5.0 and s0 > 0.5,
-          f"{n0} Knoten, Kantenverhältnis {v0:.1f}, {s0 * 100:.0f} % unter 0,3, Güte {q0:.3f}")
+    # Gegenprobe ohne Kraenze. Bis zum **Randfeld** (mesher3d.RANDFELD,
+    # 21.09.2026) lag dann **kein einziger** Knoten im Kranz r … 2r, das
+    # Kantenverhaeltnis war 17 und die Haelfte der Dreiecke unter der Guete
+    # 0,3. Seither setzt das Innennetz auch ohne Kraenze Punkte dorthin (37
+    # statt 72, Verhaeltnis 1,3, keins unter 0,3) - die Form allein tragen
+    # also inzwischen beide. Die Kraenze bleiben fuer die **Aufloesung** am
+    # Loch: zwei Knotenringe in r … 2r, die der Kerbspannung, nicht der Guete
+    # wegen da sind (oben geprueft).
+    check("ohne Kränze ist der Kranz merklich dünner besetzt - der Test greift",
+          n0 < 0.75 * n_kranz,
+          f"{n0} statt {n_kranz} Knoten, Kantenverhältnis {v0:.1f} statt {v_med:.1f}, "
+          f"{s0 * 100:.0f} statt {q_schlecht * 100:.0f} % unter 0,3, Güte {q0:.3f}")
     check("und der Preis dafür sind weniger als doppelt so viele Punkte",
           len(P) < 2.0 * len(P0), f"{len(P0)} -> {len(P)} Punkte")
 
@@ -1141,6 +1150,9 @@ def test_groessenfeld_an_der_festgelegten_linie():
         check(f"Verhältnis {f}: das Größenfeld ändert nichts",
               mass[(f, "ohne")] == mass[(f, "mit")],
               f"{mass[(f, 'ohne')][1]} Dreiecke, Güte {mass[(f, 'ohne')][0]:.3f}")
+    # Hier greift das **Randfeld** (mesher3d.RANDFELD) nicht: die Randstrecken
+    # sind h oder groeber, und es schaltet sich erst unter RANDFELD_SCHWELLE
+    # ein. Die festgelegte grobe Strecke bleibt also allein zustaendig.
     for f in (3, 8):
         a, b = mass[(f, "ohne")], mass[(f, "mit")]
         check(f"Verhältnis {f}: die schlechteste Güte steigt deutlich",
@@ -1344,6 +1356,57 @@ def test_gitterindex_zelle():
           np.array_equal(fein, alt), f"{int(fein.sum())} / {int(alt.sum())} Punkte innen")
 
 
+def test_enge_huellkanten_werden_benannt():
+    """Die Diagnose der engen Hüllkanten: sie sind die Quelle der Splitter, die
+    kein Volumenschritt mehr los wird (Drehlager, 21.09.2026: bei allen 189
+    Splittern war die kürzeste Kante eine Hüllkante von 0,13 bis 1,36 mm bei
+    h = 50 mm). Geprüft wird, dass sie gezählt und **nach Herkunft** benannt
+    werden - Linie, zwei Linien oder Innennetz."""
+    from statik3d.mesher3d import _enge_huellkanten, MINDESTWEITE_TEILER
+    h = 0.05
+    weite = h / MINDESTWEITE_TEILER
+    # Vier Punkte: zwei davon 0,4 mm auseinander (auf derselben Linie L1),
+    # einer auf L2, einer ohne Kennung (Innennetz)
+    P = np.array([[0.0, 0.0, 0.0], [0.0004, 0.0, 0.0], [0.05, 0.0, 0.0], [0.02, 0.03, 0.0]])
+    T = np.array([[0, 1, 3], [1, 2, 3]], int)
+    kenn = [("L", "L1", 1), ("L", "L1", 2), ("L", "L2", 1), None]
+    aus = _enge_huellkanten(P, T, kenn, ["F1", "F1"], h)
+    check("die enge Kante wird gefunden", aus["anzahl"] == 1, str(aus["anzahl"]))
+    check("mit ihrer Länge und der Mindestweite",
+          abs(aus["kuerzeste"] - 0.0004) < 1e-12 and abs(aus["weite"] - weite) < 1e-12,
+          f"{aus['kuerzeste'] * 1e3:.3f} mm, Weite {aus['weite'] * 1e3:.2f} mm")
+    check("und nach Herkunft benannt: dieselbe Linie",
+          aus["je_art"] == {"auf der Linie L1": 1}, str(aus["je_art"]))
+    # Dieselben Punkte, aber der zweite gehört einer anderen Linie
+    kenn2 = [("L", "L1", 1), ("L", "L3", 0), ("L", "L2", 1), None]
+    aus2 = _enge_huellkanten(P, T, kenn2, ["F1", "F1"], h)
+    check("zwei eng zusammenlaufende Linien werden als solche genannt",
+          list(aus2["je_art"]) == ["zwischen den Linien L1 und L3"], str(aus2["je_art"]))
+    # Ein Innennetzpunkt nah am Rand
+    P3 = np.array([[0.0, 0.0, 0.0], [0.05, 0.0, 0.0], [0.02, 0.03, 0.0], [0.0003, 0.0, 0.0]])
+    T3 = np.array([[0, 1, 2], [0, 2, 3]], int)
+    aus3 = _enge_huellkanten(P3, T3, [("L", "L1", 1), ("L", "L1", 2), None, None], ["F1", "F1"], h)
+    check("ein Punkt des Innennetzes am Rand wird als solcher genannt",
+          aus3["anzahl"] == 1 and "Innennetz" in list(aus3["je_art"])[0], str(aus3["je_art"]))
+    check("ohne enge Kante meldet die Diagnose nichts",
+          _enge_huellkanten(np.array([[0.0, 0, 0], [0.05, 0, 0], [0.02, 0.03, 0]]),
+                            np.array([[0, 1, 2]], int), [None] * 3, ["F1"], h)["anzahl"] == 0)
+    # Am Prüfkörper: eine Bohrung r = 2 mm bei h = 50 mm erzeugt sie, und das
+    # Protokoll nennt sie mit Zahl, Mindestweite und Herkunft
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from test_netzfeld import platte_mit_bohrungen
+    from statik3d import mesher
+    m, k = platte_mit_bohrungen(0.4, 0.3, 0.1, bohrungen=((0.2, 0.15, 0.002),))
+    m.netz.ziellaenge = 0.05
+    m.netz.dichte = "eigene"
+    m.netz.sweep = False
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    zeile = [z for z in log if "Mindestweite" in z]
+    check("das Protokoll warnt vor den engen Hüllkanten der winzigen Bohrung",
+          zeile and "Hüllkanten unter der Mindestweite" in zeile[0], str(zeile[:1])[:150])
+
+
 def test_abnahme_warnstufe_splitter():
     """Die zweite Stufe der Abnahme: Splitter (Formguete unter 0,10) werden je
     Koerper als WARNUNG mit Zahl und Elementnummern genannt, ohne die
@@ -1393,7 +1456,7 @@ def test_abnahme_warnstufe_splitter():
 
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_huelle_ohne_rundungsgitter,
-              test_abnahme_warnstufe_splitter,
+              test_abnahme_warnstufe_splitter, test_enge_huellkanten_werden_benannt,
               test_randstrecke_wird_nicht_verdraengt,
               test_groessenfeld_an_der_festgelegten_linie,
               test_randstrecken_sind_keine_glueckssache,

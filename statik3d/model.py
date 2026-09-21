@@ -3587,6 +3587,14 @@ class Model:
             g.node_a, g.node_b = f(g.node_a), f(g.node_b)
         for cp in getattr(self, "contact_pairs", None) or []:
             cp.slave_nodes = [f(n) for n in (cp.slave_nodes or [])]
+            # master_faces sind **Knotenlisten** (drei oder vier Knoten je
+            # Facette, siehe ContactPair) - contact.py liest sie als
+            # Knotennummern. Ohne diese Zeile zeigten sie nach dem Loeschen
+            # eines Knotens auf fremde Knoten: die Fuge trug dann an der
+            # falschen Stelle, ohne dass eine Spannung falsch geworden waere
+            # (gefunden von der Loeser-Sitzung, 21.09.2026).
+            cp.master_faces = [[f(n) for n in (face or [])]
+                               for face in (cp.master_faces or [])]
         for x in (getattr(self, "lasteinleitungen", None) or {}).values():
             x.knoten = f(x.knoten)
         for x in (getattr(self, "verformungsgrenzen", None) or {}).values():
