@@ -344,6 +344,55 @@ def test_zusatzmatrix_kennt_ihre_belegung():
     check("ohne Zusatzmatrix keine Kennung", _s.zusatz_kenn(None) is None)
 
 
+def test_der_deckel_gilt_nicht_als_konvergenz():
+    """Gibt die Nachpruefung der Reibung auf, darf niemand "konvergiert" melden.
+
+    ``ContactSystem.update`` gibt ``False`` in **zwei** Faellen zurueck: wenn
+    es fertig ist, und wenn es nach ``MAX_CYCLES`` Zustandswechseln aufgibt.
+    ``solve_with_contact`` las bis zum 21.09.2026 beides als Konvergenz und
+    setzte ``contact_converged`` auf wahr; die Warnung stand allein im
+    ``contact_log``, das kaum jemand liest.
+
+    Das ist keine Geschwindigkeitsfrage: **jede** Vergleichszahl, gegen die
+    wir "aendert das Ergebnis nicht" pruefen, kann aus einem gedeckelten Lauf
+    stammen, ohne dass es jemand sieht. Gefunden von der Loesersitzung am
+    Quelltext.
+
+    Geprueft mit einem kuenstlich niedrigen Deckel am Beispiel "Block mit
+    Reibung" - der braucht mehrere Zustandswechsel, also greift er.
+    """
+    print("")
+    print("--- Der Deckel der Reibungsnachpruefung ---")
+    from statik3d import contact as _ct
+    from statik3d.examples_lib import block_friction_example
+
+    alt_max = _ct.MAX_CYCLES
+    m = block_friction_example()
+    r_frei = solver.solve_static(m)
+    check("ohne Deckel konvergiert das Beispiel",
+          bool(r_frei.info.get("contact_converged")),
+          f"{r_frei.info.get('contact_iterations')} Schritte")
+
+    _ct.MAX_CYCLES = 1
+    try:
+        r = solver.solve_static(block_friction_example())
+    finally:
+        _ct.MAX_CYCLES = alt_max
+    log = " | ".join(r.info.get("contact_log") or [])
+    gedeckelt = "abgebrochen" in log
+    check("mit Deckel 1 bricht die Nachpruefung wirklich ab", gedeckelt,
+          "Protokoll nennt den Abbruch" if gedeckelt else f"Protokoll: {log[:90]}")
+    if gedeckelt:
+        check("und dann meldet contact_converged NICHT konvergiert",
+              r.info.get("contact_converged") is False,
+              f"contact_converged = {r.info.get('contact_converged')}"
+              + ("" if r.info.get("contact_converged") is False
+                 else "  <- der alte Stand meldete wahr"))
+        check("die Meldung nennt den Grund, nicht die Schrittzahl",
+              any("Nachprüfung der Reibung" in t for t in (r.info.get("contact_log") or [])),
+              "der Text unterscheidet Deckel und Schrittgrenze")
+
+
 def _mit_einem_teil(name, fn):
     """fn() ausfuehren, waehrend _teile_bedingungen genau ein Teil mit den
     Bedingungen des uebergebenen Systems meldet. So prueft der Test die Auswahl
@@ -438,7 +487,8 @@ def main():
               test_halt_waehlt_den_schub, test_schub_halt_faellt_weg,
               test_schub_am_ende_wird_gemeldet,
               test_schub_halt_steht_im_schluessel,
-              test_zusatzmatrix_kennt_ihre_belegung):
+              test_zusatzmatrix_kennt_ihre_belegung,
+              test_der_deckel_gilt_nicht_als_konvergenz):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

@@ -1271,6 +1271,21 @@ Faktorisierung, solange die Signatur der Kontaktsteifigkeit (Phase,
 Aktivmenge, Gleiten, Fließen, **Schubhalt**, rutschende Gruppen;
 `ContactSystem.signatur`) gleich bleibt — dann wird nur rückwärts eingesetzt.
 
+**Ein Deckel, der wie Konvergenz aussah (21.09.2026).** Die Nachprüfung der
+Reibung in Phase 2 bricht nach `MAX_CYCLES = 40` Zustandswechseln ab
+(`ContactSystem.update`). Sie gibt dabei `False` zurück — **denselben Wert wie
+bei echter Konvergenz**. `solve_with_contact` las beides als „fertig" und
+setzte `contact_converged` auf wahr; die Warnung stand allein im
+`contact_log`.
+
+Das ist keine Geschwindigkeitsfrage. Jede Zahl, gegen die geprüft wird, ob
+eine Änderung „das Ergebnis nicht ändert", kann aus einem gedeckelten Lauf
+stammen — und sah bis dahin aus wie eine auskonvergierte. Der Löser
+unterscheidet die beiden Fälle jetzt an `cs.cycles` und nennt im Protokoll den
+Grund statt der Schrittzahl. `tests/test_kontakthalt.py` setzt den Deckel
+künstlich auf 1 und prüft, dass `contact_converged` dann **falsch** meldet;
+mit dem alten Stand meldet dieselbe Prüfung wahr.
+
 **Zwei Posten daneben, die nichts mit dem Schlüssel zu tun haben, aber mit
 derselben Messung gefunden wurden** (21.09.2026, an einer Matrix von
 Drehlagergröße: 475 935 Zeilen, 17,6 Mio. Nichtnullen):

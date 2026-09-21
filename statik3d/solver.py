@@ -3099,6 +3099,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     if warm:
         log.append("Warmstart aus dem Kontaktzustand des vorigen Lastfalls")
     converged = False
+    deckel = False          # die Reibungsnachpruefung hat aufgegeben
+    from .contact import MAX_CYCLES as _MAX_CYCLES
     it = 0
     Kc = Fc = None
 
@@ -3214,7 +3216,16 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        else ", Matrix bleibt")
             _melde(progress, f"Kontakt-Iteration {it}: {cs.n_active} aktiv{zusatz}", anteil)
         if not changed:
-            converged = True
+            # ContactSystem.update() gibt False zurueck, wenn es fertig ist -
+            # **und** wenn es aufgibt: nach MAX_CYCLES Zustandswechseln bricht
+            # die Nachpruefung der Reibung ab (contact.py) und meldet das nur
+            # ins contact_log. Der Loeser las beides als Konvergenz und setzte
+            # contact_converged auf wahr. Eine Zahl aus einem gedeckelten Lauf
+            # sah damit aus wie eine auskonvergierte - und genau gegen solche
+            # Zahlen pruefen wir 'aendert das Ergebnis nicht'. Gefunden von der
+            # Loesersitzung am Quelltext (21.09.2026).
+            deckel = cs.phase == 2 and cs.cycles >= _MAX_CYCLES
+            converged = not deckel
             break
     if converged and u is not None:
         schub = cs.schub_unter_last(u)
@@ -3281,7 +3292,10 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         text = ("Probelauf: ein Kontaktschritt gerechnet, nicht auskonvergiert - "
                 "das Ergebnis ist ein Netzmaß, kein Nachweis"
                 if probelauf else
-                f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert")
+                (f"Kontakt: Nachprüfung der Reibung nach {_MAX_CYCLES} Zustandswechseln "
+                 "abgebrochen - das Ergebnis ist nicht auskonvergiert"
+                 if deckel else
+                 f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert"))
         log.append(text)
         _melde(progress, text)
     log.extend(cs.warnings())
