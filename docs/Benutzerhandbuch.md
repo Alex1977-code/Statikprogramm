@@ -718,7 +718,49 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 Konsolenfenster**: vorher öffnete sich je Volumen eine Eingabeaufforderung, weil
 Windows einem Konsolenprogramm, das ein Fensterprogramm startet, eine eigene
 Konsole gibt (behoben 14.09.2026). Wo es liegt, weiß Statik3D selbst (nachgeladen im Werkzeugordner, sonst der Suchpfad) — ein Pfadfeld gibt es seit 13.09.2026 nicht mehr; ein in einer älteren Datei gespeicherter Pfad gilt weiter. Gemessen an der Platte mit Bohrung (13.09.2026, MMG 5.8.0): h = 50 mm Güte min 0,103 → 0,453 (19 614 → 18 815 Tetraeder, 6,1 s), h = 30 mm 0,120 → 0,474 (60 610 → 57 817, 1,7 s); Hülle und Volumen unverändert (Randtreue 100 %). Das Protokoll nennt Güte min vorher/nachher |
-| Abgebildetes Netz | wird **nicht eingestellt**: abgebildet wird immer, wo die Form es hergibt — eine Fläche mit vier Randabschnitten als Vierecknetz, ein Körper aus **sechs Vierecken mit acht Eckknoten** als regelmäßiges **Hexaedernetz** (x × y × z, hex8 bzw. hex20), ein Körper aus vier Dreiecken als ein Tetraeder; alles andere geht an den freien Vernetzer. Der Haken „Abgebildetes Netz bevorzugen“ stand bis 13.09.2026 in der Maske, ohne dass ihn etwas las; der Wert kommt aus der RFEM-Datei („mapped mesh preferred“) und wird nur mitgeführt |
+| Abgebildetes Netz | wird **nicht eingestellt**: abgebildet wird immer, wo die Form es hergibt — eine Fläche mit vier Randabschnitten als Vierecknetz, ein Körper aus **sechs Vierecken mit acht Eckknoten** als regelmäßiges **Hexaedernetz** (x × y × z, hex8 bzw. hex20), ein Körper aus vier Dreiecken als ein Tetraeder; alles andere geht an den freien Vernetzer. Seit 21.09.2026 trägt der Quader Randseiten (eine Flächenlast darauf kam vorher **nicht** an: 0 kN), teilt seine Knoten mit Nachbarn und folgt an gemeinsamen Kanten deren Teilung. Der Haken „Abgebildetes Netz bevorzugen“ stand bis 13.09.2026 in der Maske, ohne dass ihn etwas las; der Wert kommt aus der RFEM-Datei („mapped mesh preferred”) und wird nur mitgeführt |
+| Nebenflächen grob (`nebenflaechen_grob`, seit 20.09.2026) | Bögen an **Nebenflächen** — Flächen ohne Last, Lager, Kontaktbedingung, integrierten Knoten, Netzverfeinerung und ohne zweiten Körper — werden mit 45° statt 18° je Abschnitt geteilt: acht statt zwanzig Abschnitte je Vollkreis. Eine Durchgangsbohrung ohne Bolzen, eine Ausrundung tragen nichts; ihre Form muss stimmen, nicht ihre Kerbspannung. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit fünf Bohrungen: 40 364 → 17 969 Tetraeder. **Vorgabe aus**, weil es die Spannung an unbelasteten Bohrungen ändert (dort 490 → 343 N/mm²); die adaptive Vernetzung schaltet es für ihre Dauer ein und holt zurück, was trägt. Heute nur in der Datei (`netz.nebenflaechen_grob`), kein Feld in der Maske |
+| Netzverfeinerungen (`verfeinerungen`) | Wo das Netz fein sein soll, unabhängig von der Geometrie: eine **Kugel** um einen Punkt (`{“art”: “kugel”, “mitte”: [x, y, z], “radius”: r, “h”: h}`), eine **Fläche**, **Linie** oder ein **Körper** mit Namen (`{“art”: “flaeche”, “name”: “F12”, “h”: 0.005}`). Die Kantenlänge wächst von dort mit 0,35 je Meter ins Umfeld. Gemessen (Kugel 5 mm, r = 30 mm am Bohrungsrand): 4,2 mm Kanten in der Kugel, 24 mm im Feld, Abnahme ohne Befund. Heute nur in der Datei |
+| Eigene Kantenlänge je Körper (`koerper_h`) | `{Körpername: Kantenlänge in m}` — geht vor Dichte und Ziellänge; die Deckel (kleinste Kante, Dickenmaß, Höchstzahl) gelten weiter. So lässt sich ein Körper gröber lassen als der Rest. Die adaptive Vernetzung schreibt hier ihre Werte hinein |
+| Sweep (`sweep`, seit 20.09.2026) | **an** (Vorgabe): ein Körper, der Grundfläche mal Weg ist — Platte, Ring, Flansch, Rippe, Lasche mit Bohrungen — wird in Lagen durchgezogen und besteht aus Hexaedern (hex8) und Keilen (pent6) statt Tetraedern (Theoriehandbuch § 6a, Sweep). Das Protokoll nennt Lagen, Hexaederanteil und Rauminhalt („3 450 Hexaeder (hex8) + 660 Keile (pent6) gesweept — Grundfläche Boden → Deckel, 10 Lagen à 20,0 mm … Hexaederanteil 83,9 %“) und am Ende die Bilanz aller Volumen („0,87 je Knoten — Hexaeder …, Tetraeder …“). Warum: der lineare Tetraeder sperrt, weil vier Elemente je Knoten je eine Volumenbedingung stellen; ein Hexaedernetz hat eines. Die Lagen: aus Weg und Kantenlänge, mindestens zwei — **mit Fließen mindestens vier** (mit einer und zwei Lagen fließt kein Element, Messung 21.09.2026), sechs bis acht über die Kantenlänge. Mantellinien, die Nachbarn gehören, bekommen ihre Teilung vorab und modellweit („Sweep: Lagen für 2 Körper vorab festgelegt …"), damit der Sweep nicht an verschieden geteilten Nachbarn scheitert. Seit 21.09.2026 abends: **Zylinder** (vier Flächen: Bolzen, Stifte, Achsen) werden gesweept; der Grund darf aus **mehreren ebenen Flächen** bestehen (Platte mit Fußabdruck einer Nabe); ein Körper, der nicht als Ganzes Grundfläche mal Weg ist, wird an **Fußabdrücken zerlegt** („Volumen V1: nicht als Ganzes sweepbar — an 1 Fußabdruck(en) in 2 Blöcke zerlegt (2 davon sweepbar)"), gesweepte Blöcke wo es geht, Tetraeder für den Rest, knotengenau an der Schnittfläche. Gemessen: Platte mit Nabe 441 hex8 + 108 pent6 statt 7 595 tet4; abgesetzte Welle 446 hex8 + 28 pent6 statt 2 415 gemischt. Aus nur zum Vergleich. Heute nur in der Datei |
+| Pyramiden am Übergang (`pyramiden`, seit 21.09.2026) | **Aus** (Vorgabe). Ein Tetraeder-Körper, der an die Vierecke eines gesweepten oder abgebildeten Nachbarn stößt, teilt heute jedes Viereck in zwei Dreiecke — knotengleich, aber mit anderer Interpolation auf der Diagonale. Eingeschaltet bekommt jedes Viereck eine **Pyramide** (pyr5) mit Spitze im Inneren, die Tetraeder folgen dahinter. Gemessen an der Platte mit Pyramidenkörper: 12 Pyramiden statt 33 Tetraeder, Rauminhalt gleich, Verschiebung 0,3588 → 0,3589 mm, Formgüte min 0,185 → 0,154. Aus, weil die Rechnung nichts gewinnt und die Formgüte sinkt; ein für den Kontakt sauberer Übergang ist der Grund, ihn einzuschalten. Heute nur in der Datei |
+| Feldpunkte (`feldpunkte`) | `[x, y, z, h]` oder `[x, y, z, h, r]` je Punkt — das, was der Fehlerschätzer aus einem Ergebnis ableitet (Theoriehandbuch § 6c). Werden mit dem Modell gespeichert; beim nächsten Vernetzen entsteht daraus dasselbe Größenfeld |
+
+**Adaptiv vernetzen** (seit 20.09.2026, Theoriehandbuch § 6c): *Netz → Adaptiv vernetzen…*
+fragt nach den Verfeinerungsrunden (Vorgabe 2) und dem Ziel des bezogenen Fehlers (Vorgabe
+5 %), vernetzt, rechnet den aktiven Lastfall, schätzt je Element den Fehler
+(Spannungssprung), macht das Netz dort feiner und im Feld gröber und wiederholt das; der
+Verlauf steht im Protokoll und in der Meldung („Adaptiv vernetzt: 3 Durchgänge, 441 Elemente
+(13,7 %) → 1 456 (13,4 %) → 4 972 (9,2 %)"). Die Rechnungen dazwischen sind Netzmaß, kein
+Ergebnis — die Ergebnisliste wird geleert. Dasselbe über die Befehlszeile: `statik3d
+modell.json --adaptiv 2 --lastfall LF1 --speichern modell_adaptiv.json`; `--fehlerziel 0.03`
+setzt das Ziel. Die Elementzahl wächst je Runde höchstens auf das Dreifache — die Schleife
+misst nach. Seit 21.09.2026 verfeinert sie auch gesweepte Körper (Hexaeder und Keile): die
+Lagen folgen der feinsten Kantenlänge, die das Feld am Körper verlangt.
+Gerechnet wird je Runde ein **Probelauf** des Lösers (ein Kontaktschritt), solange er das
+Fließen mitrechnet; lässt er es aus, rechnet die Schleife das fließende Modell voll und
+schreibt es ins Protokoll — ein elastischer Probelauf verfeinerte am Drehlager an den
+falschen Stellen (54 von 100 Spitzenelementen, 21.09.2026). `--probelauf ja` erzwingt den
+Probelauf, `--probelauf nein` den vollen Lauf.
+`--vernetzen` allein vernetzt ohne Oberfläche, in derselben Folge wie *Netz →
+Vernetzen*. Was die Schleife setzt (Kantenlänge je Körper, Feldpunkte), steht danach in
+den Netzeinstellungen des gespeicherten Modells. Ein Befehl in der Oberfläche ist mit
+der Programm-Sitzung abzustimmen.
+
+**Splitter in der Abnahme** (seit 21.09.2026): die Abnahme vor dem Rechnen nennt je Körper die
+Elemente mit Formgüte unter 0,10 als **WARNUNG** — Zahl, Körper, die drei schlechtesten mit
+Elementnummer („WARNUNG: [Splitter] Volumen V30: 29 von 115 734 Elementen mit Formgüte unter
+0.10 — schlechteste: Element 4711 (0.025) …"). Sie hält die Rechnung nicht an; unter 0,05 bleibt
+es ein FEHLER mit Rückfrage. Das Vernetzungsprotokoll ordnet die Splitter eines Körpers
+außerdem nach ihren Hüllknoten ein („davon mit vier Hüllknoten (Kappen) 12, mit drei 5, mit
+zwei (Nadeln) 3, im Inneren 0") — jede Sorte hat eine andere Kur.
+
+**Keine Splitter.** Der freie Vernetzer löst **Kappen** auf — Splitter aus vier
+Hüllknoten an gewölbten Wänden, die weder Verfeinerung noch Glättung erreichen (mit
+einem Punkt knapp innerhalb der Hülle; wo das nicht greift, wird die Kappe entfernt,
+und das Hüllviereck ist über die andere Diagonale geteilt). Das Protokoll nennt Zahl
+und Rauminhalt („2 Kappen entfernt … Rauminhalt 5,8e-06 m³”). Was danach noch unter
+der Güte 0,1 liegt, steht mit Elementnummer im Protokoll.
 
 **Netz → Netzknoten** zeigt die Knoten des FE-Netzes als kleine graue
 Punkte — nur, solange das FE-Netz dargestellt ist (*Ansicht → FE-Netz*,

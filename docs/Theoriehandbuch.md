@@ -3295,6 +3295,288 @@ Betroffen ist allein `tet4`; alle anderen Elementtypen rechnen unverändert
 Elemente über seine größte Ausdehnung), wird sie für dieses Bauteil verkleinert
 und das gemeldet.
 
+**Größenfeld (`netzfeld.py`, 20.09.2026).** Bis hierher ist die Feinheit eine
+Funktion der Hülle: `h_lokal = min(h, Randkante + WACHSTUM · Abstand)`. Es gab keinen
+Kanal, über den eine benannte Stelle oder ein Rechenergebnis die Feinheit setzen
+konnte. Das **Größenfeld** ist dieser Kanal — eine Wolke von Quellen (Ort x_k,
+Kantenlänge h_k, Reichweite r_k), ausgewertet als
+
+    h(x) = min( h_max, min_k [ h_k + WACHSTUM · max(0, |x − x_k| − r_k) ] ).
+
+Weil jede Quelle mit derselben Steigung 0,35 kegelförmig wirkt, ist das Feld von sich
+aus gradiert. Die Auswertung geht über die zwölf nächsten Quellen und ist trotzdem
+**exakt**: die Lipschitz-Schranke R = (v₁ − h_min)/g + r_max sagt, bis wohin eine
+fernere Quelle noch unter den gefundenen Wert v₁ käme; reicht die Suche nicht bis R,
+werden alle Quellen bis R geholt. Gemessen an 600 000 Zufallsquellen mit h von 3 bis
+70 mm: Abweichung zur Auswertung über alle Quellen 0,00 %, 300 000 Auswertungen 1,0 s
+(mit zwölf Nachbarn ohne Schranke wären es bis 18 % gewesen). Überdeckte Quellen
+werden vorab entfernt — eine Quelle, deren Kegel überall höchstens 5 % über dem
+einer anderen liegt, ändert am Netz nichts; das hält das Feld nach oben um höchstens
+diese 5 % (gemessen 0,15 %) und braucht für 200 000 Quellen 0,6 s.
+
+Die Quellen kommen aus den Netzeinstellungen: **Netzverfeinerungen** (Kugel um einen
+Punkt, benannte Fläche, Linie oder Körper mit Kantenlänge) und **Feldpunkte**, die der
+Fehlerschätzer schreibt (§ 6c). Das Feld hängt am Modell (`model.groessenfeld`), wird
+einmal je Lauf gebildet und geht mit dem Modell in die Arbeitsprozesse; gespeichert
+werden nur seine Quellen. Es wirkt an allen vier Stellen, an denen die Feinheit
+entsteht — denn die Hülle ist der Hebel (3,4 Tetraeder je Randdreieck am Drehlager):
+
+| Stelle | Weg |
+|---|---|
+| Linien | Zahl der Abschnitte aus ∫ ds / h(s) längs der Linie, die Punkte an gleichen Bruchteilen dieses Integrals — dicht, wo das Feld fein ist (Linie 1 m, h = 50 mm, Kugel 10 mm in der Mitte: 33 statt 20 Abschnitte, 9,9 mm an der Kugel, 49,4 mm am Ende). Beide Körper einer gemeinsamen Linie lesen dasselbe Feld und bekommen dieselben Punkte |
+| Flächen | das gleichmäßige Dreiecksgitter wird wie in einem Quadtree verdichtet, wo das Feld unter 70 % der Zellweite fällt (vier Kinder halber Weite, bis acht Stufen), dann auf die Feldweite ausgedünnt und **geglättet**: jeder Innenpunkt wandert um den halben Schritt zum Schwerpunkt seiner Nachbarn, behalten wird nur, was die schlechteste Güte seiner Dreiecke bessert (Quadrat 1 × 1 m, h = 100 mm, geteilter Rand, 20-mm-Stelle: Güte min 0,65 → 0,79 in der Mitte, 0,24 → 0,52 an der Ecke, Stufenfeld 0,22 → 0,35) |
+| Tetraeder | dritte Schranke der Sollgröße neben h und der Randkantenregel; die Verfeinerung selbst bleibt (Platte, Kugel 15 mm bei h = 100 mm: 11,9 mm in der Kugel, 79 mm im Feld, Güte min 0,114) |
+| gmsh / MMG3D | gmsh bekommt einen Größen-Rückruf mit derselben Sollgröße; MMG3D die Kantenlänge je Knoten als Metrik (`.sol`) und passt das Innere bei fester Hülle an (Quader, Hülle 50 mm, Kugel 5 mm: 12,8 mm im Ziel, Güte min 0,507, 0,4 s). **Der gmsh-Rückruf ist keine Zusage:** an der Platte mit 100-mm-Hülle traf HXT die 10-mm-Kugel je Prozesszustand mit 14,5 oder 38,5 mm — bei identischen Fragen und Antworten bis zur 579. Anfrage; die Abweichung entsteht in gmsh, die Ursache ist nicht gefunden. Verlässlich ist die Metrik von MMG3D; ohne sie warnt das Protokoll |
+
+**Bedeutung der Flächen — Nebenflächen grob.** Am Drehlager stammen 85 % der Elemente
+aus acht Körpern, alle mit derselben Ziellänge 50 mm; ihre Elementzahl kommt aus der
+Hülle, und die Hülle aus Bohrungen und Ausrundungen mit 18° je Bogenabschnitt — ob die
+Bohrung etwas trägt oder nicht. `netzfeld.bedeutung` unterscheidet: **bedeutend** ist
+eine Fläche mit Last, Lager, Kontaktbedingung, integriertem Knoten, Netzverfeinerung
+oder einem zweiten Körper (gemeinsame Fläche); alles andere ist **Nebenfläche**. Mit
+`netz.nebenflaechen_grob` bekommen die Linien der Nebenflächen 45° je Bogenabschnitt
+(acht statt zwanzig je Vollkreis). Gemessen an der Platte 1 × 0,6 × 0,2 m mit einer
+Bohrung r = 100 mm und vier Durchgangsbohrungen r = 20 mm, h = 50 mm: Randdreiecke
+5 384 → 2 260, Tetraeder 40 364 → 17 969, Knoten 7 641 → 3 412, geschätzter Fehler
+11,9 → 12,8 %. Der Preis steht daneben: die größte Vergleichsspannung fiel von 490 auf
+343 N/mm², weil die große Bohrung hier weder Last noch Kontakt hat und damit
+Nebenfläche ist. Darum ist die Vorgabe **aus** — eingeschaltet wird sie von der
+adaptiven Vernetzung (§ 6c), die zurückholt, was doch trägt, und vom Anwender, der
+weiß, wo er den Nachweis führt.
+
+**Kappen.** Ein Splitter, dessen vier Ecken alle auf der Hülle liegen — zwei
+Nachbardreiecke einer gewölbten Wand, zu einem fast flachen Tetraeder verbunden —, ist
+für die Verfeinerung unsichtbar (der Umkugelmittelpunkt liegt im Nirgendwo und wird
+verworfen, alle Kanten sind ähnlich lang) und für die Glättung unerreichbar
+(Hüllknoten stehen fest). An der Bohrungswand einer Platte blieben so Tetraeder mit
+Güte 0,005 bis 0,011 durch drei Anläufe der Nachvernetzung stehen (20.09.2026). Zwei
+Schritte: erst ein Punkt im Schwerpunkt, um die halbe Kante nach innen geschoben — er
+liegt in der riesigen Umkugel und zerlegt die Kappe (Platte, adaptive Runde: 60
+Kappen). Wo das nicht greift — auf einer Wand, die vom Körper aus **hohl** ist, ragt die
+Umkugel nur um den Sehnenpfeil in den Körper (bei 24-mm-Sehnen auf r = 40 mm knapp
+1 mm) —, wird die Kappe **entfernt**: das ist der Diagonalwechsel des Hüllvierecks, die
+Knoten bleiben, die Oberfläche ist um den Sehnenpfeil gedellt, dem Netz fehlt der
+Rauminhalt der Kappe (Platte 2 × 2 × 0,4 m mit Bohrung: zwei Kappen, 5,8·10⁻⁶ von
+1,40 m³). Entfernt wird nur, was mindestens zwei freie Seiten hat — ein Splitter
+**zwischen** anderen Tetraedern (in einer dünnen Platte hat fast jeder Tetraeder Knoten
+oben und unten) bliebe sonst als Hohlraum zurück — und dessen Knoten alle in anderen
+Tetraedern stehen. Das ist der Weg zu einem Netz ohne Splitter; das Protokoll nennt
+Zahl und Rauminhalt.
+
+**Sweep: Grundfläche mal Weg (`sweep.py`, 20.09.2026).** Der lineare Tetraeder ist
+zum Teil aus Abzählung schlecht: am Drehlager stehen 645 934 Tetraeder auf 158 586
+Knoten, 4,07 Elemente je Knoten; Volumentreue ist eine Bedingung je Element, also
+4,07 Bedingungen auf 3 Verschiebungen je Knoten — das Netz versteift sich selbst, und
+beim Fließen (volumentreu) erst recht. Ein Hexaedernetz hat rund ein Element je Knoten,
+ein Keilnetz rund zwei; keines von beiden sperrt so. Darum wird ein Körper, der sich
+als **Grundfläche mal Weg** beschreiben lässt, gesweept statt frei vernetzt — Platte,
+Ring, Flansch, Rippe, Lasche mit Bohrungen: fast alles, was aus einer Skizze
+extrudiert wurde.
+
+Erkannt wird das an der Randdarstellung: zwei ebene Flächen, von denen die eine die
+um einen Vektor t verschobene Kopie der anderen ist (Außenrand und Öffnungen, Punkt für
+Punkt), und jede weitere Fläche eine Wand aus vier Linien — eine Linie des Grundes, ihre
+Kopie im Deckel, zwei gerade Mantellinien längs t (der Bohrungsmantel aus RFEM ist aus
+zwei solchen Vierseitflächen gebaut). Das Netz der Grundfläche kommt aus dem
+vorhandenen Flächenvernetzer (Dreiecke); benachbarte Dreiecke werden **zu Vierecken
+gepaart**, gierig nach der Güte des Vierecks (skalierte Jacobi-Determinante, mindestens
+0,3), der Rest bleibt Dreieck. Dann wird in Lagen durchgezogen: Viereck → `hex8`,
+Dreieck → `pent6`. Die Zahl der Lagen folgt aus Weg und Kantenlänge (mindestens zwei,
+`sweep.LAGEN_MIN`; wird Fließen gerechnet, mindestens vier, `LAGEN_MIN_PLASTISCH`, Messung
+unten) — **nicht** aus der Kartenteilung der Mantellinien: die Regel „eine
+Linie neben einer feineren" teilt die Mantellinie neben einer feinen Bohrungssehne für
+den Tetraeder fein (Platte mit Bohrungen: 10 Lagen statt 4, Kragplatte 4 473 statt
+1 491 Knoten); für Hexaeder und Keile ist die Teilung je Richtung frei, das ist gerade
+ihr Vorzug. Gehört eine Mantellinie einem zweiten Körper, gilt dessen Teilung für alle
+Lagen — und weil die Teilung einer Linie im Modell nur eine ist, werden die Lagen aller
+sweepbaren Körper **vorab und modellweit** festgelegt (`sweep.lagenvorgabe`, abgelegt als
+`model.linienvorgabe`, gelesen von jeder Linienteilung, auch der der Nachbarn): das
+Größte aus Weg/h, der Mindestlagenzahl und der Kartenteilung der *gemeinsamen*
+Mantellinien; die eigenen teilt der Sweep frei. Ohne das fiel der Sweep dort aus, wo er
+am Drehlager überhaupt greift: `erkennen` fand V18 und V11 (je sieben Wände, Weg 40 mm,
+h = 50 mm, zusammen 2 864 Elemente), `vernetzen` lieferte für beide **null** Elemente —
+„die Mantellinien gehören zweiten Körpern mit verschiedener Teilung" (Zählung der
+Löser-Sitzung, 21.09.2026). Nachgestellt an einer Platte, deren Wand einer Pyramide
+gehört und an deren einer Mantellinie eine Kugel des Größenfelds sitzt: ohne Vorgabe
+Tetraeder, mit Vorgabe fünf Lagen (so fein teilt die Kugel AV1), Abnahme ohne Befund, alle 48 Wandknoten der Pyramide
+sind Knoten der Platte (`test_nachbar_mit_verschiedener_teilung`). Eine Linie mit
+Vorgabe zählt wie eine gemeinsame: kein Körper teilt sie allein feiner. Randseiten
+werden nicht gesucht, sondern gesetzt: Grund, Deckel und je Wand die Elementseiten längs
+der Randkanten. Der Rauminhalt ist Grundfläche mal Höhe und wird gegen die Elemente
+geprüft.
+
+Gemessen (20.09.2026, h = 50 mm, ein Prozess):
+
+| Platte 1 × 0,6 × 0,2 m | Elemente | Knoten | je Knoten | Güte min | Netz | \|u\| max | σ_v max |
+|---|---|---|---|---|---|---|---|
+| Bohrungen r = 100 und 20 mm, tet4 | 20 608 | 3 925 | 5,25 | 0,101 | 0,9 s | 0,560 mm | 340 N/mm² |
+| dieselbe, Sweep (4 Lagen) | 1 380 hex8 + 264 pent6 | 2 145 | **0,77** | 0,233 | 0,3 s | 0,568 mm | 237 N/mm² |
+| fünf Bohrungen, tet4 | 40 364 | 7 641 | 5,28 | 0,101 | 2,7 s | 0,566 mm | 490 N/mm² |
+| dieselbe, Sweep (4 Lagen, 87,6 % Hexaeder) | 2 876 hex8 + 408 pent6 | 4 240 | 0,77 | 0,194 | 0,4 s | 0,574 mm | 239 N/mm² |
+
+Kein umgestülptes Element, Rauminhalt exakt, Abnahme ohne Befund. Die Verschiebungen
+stimmen auf 1 % überein; die größte Vergleichsspannung am Bohrungsrand liegt beim
+Tetraedernetz um die Hälfte bis das Doppelte höher — welcher Wert der Wahrheit näher
+ist, sagt erst ein konvergiertes Netz; hier steht nur, dass die Netze dort verschieden
+antworten.
+
+Die Probe, um die es dem Auftrag geht, ist die **Kragplatte** 1 × 0,2 × 0,05 m mit
+10 kN Endlast (kleine Bohrung am freien Ende, damit sie kein Quader ist), h = 25 mm,
+gegen Bernoulli mit Schubanteil (7,634 mm):
+
+| | Elemente | Knoten | Endverschiebung |
+|---|---|---|---|
+| tet4, 2 Lagen | 15 720 | 3 128 | 5,218 mm = **68,4 %** |
+| Sweep, 2 Lagen | 848 hex8 + 60 pent6 | 1 491 | 7,448 mm = **97,6 %** |
+
+Der Hexaeder mit inkompatiblen Moden trägt die Biegung mit zwei Lagen; der lineare
+Tetraeder bleibt bei zwei Lagen um fast ein Drittel zu steif — mit weniger als der
+Hälfte der Knoten.
+
+**Lagen bei Fließen.** Das gilt **elastisch**. Die Löser-Sitzung hat am Zweigstand
+a4a7d91 (21.09.2026) den Kragträger 200 × 200 mm, 1,0 m, unter dem Endmoment 1,20 · M_el
+gerechnet (fy = 235 N/mm², Verfestigung 2 %; die Randfaser trägt elastisch 282 N/mm² und
+muss fließen, die plastische Zone reicht bis z/(h/2) = √(3 − 2 · 1,20) = 0,775):
+
+| Typ | Lagen | Elemente | σ_v max | fließend | ε_p max | u_x max |
+|---|---|---|---|---|---|---|
+| hex8 | 1 | 5 | 285,3 N/mm² | **0 von 5** | 0 | 1,3327 mm |
+| hex8 | 2 | 10 | 300,7 N/mm² | **0 von 10** | 0 | 1,3242 mm |
+| hex8 | 3 | 15 | 203,1 N/mm² | 10 von 15 | 0,0963 % | 1,5894 mm |
+| hex8 | 4 | 20 | 240,8 N/mm² | 8 von 20 | 0,1799 % | 1,7102 mm |
+| hex8 | 6 | 30 | 266,8 N/mm² | 12 von 30 | 0,3469 % | 1,8876 mm |
+| hex8 | 8 | 40 | 262,3 N/mm² | 16 von 40 | 0,4196 % | 1,9490 mm |
+| tet4 | 4 | 100 | 235,7 N/mm² | 2 von 100 | 0,0164 % | 0,7361 mm |
+| tet4 | 8 | 200 | 243,3 N/mm² | 2 von 200 | 0,1943 % | 0,8243 mm |
+
+Mit einer und mit zwei Lagen fließt **nichts**, obwohl der Querschnitt plastifiziert:
+die Plastizität wertet an den Gaußpunkten aus, und deren äußerster liegt bei einer Lage
+auf 57,7 %, bei zwei Lagen auf 78,9 % der halben Höhe. Ab drei Lagen (85,9 %) wird
+gefunden, was da ist. Die Verformung ist mit zwei Lagen ebenfalls falsch: u_x wächst von
+1,333 mm (eine Lage) auf 1,949 mm (acht Lagen), 32 %. Darum gilt, sobald
+`model.plastizitaet.an` gesetzt ist, `LAGEN_MIN_PLASTISCH = 4` als Untergrenze; sechs bis
+acht Lagen sind das Richtige und kommen über die Kantenlänge. Elastische Bauteile zahlen
+den Preis nicht mit (`test_lagen_bei_fliessen`). Nebenbefund derselben Messung: der
+tet4 findet mit vier Unterteilungen 2 von 100 fließenden Elementen und 0,736 mm gegen
+1,710 mm des hex8 mit vier Lagen — die volumetrische Sperre, der Grund für den Sweep.
+
+**Nachbarn.** Ein Tetraeder-Körper an einer Wand des gesweepten Körpers muss dessen
+Lagenpunkte treffen; ein freies Dreiecksnetz der Wand täte das nicht. Darum legt der
+Sweep seine Flächennetze (Grund, Deckel, Wände: Vierecke über die kürzere Diagonale
+geteilt, mit Kennung der Linienpunkte) als **vorgegebene Flächennetze** ab
+(`model.flaechennetze`); `flaechennetz` gibt sie jedem Körper zurück, der die Fläche
+berandet, und die Knoten werden über dieselben Schlüssel geteilt wie bisher (Kennung
+für Linienpunkte, Fläche und Koordinate für Flächenpunkte). Gesweepte Körper laufen
+darum im Hauptprozess **vor** den freien, die in den Arbeitsprozessen das Modell mit den
+Netzen lesen. An der Grenze steht eine Hexaederseite zwei Tetraederseiten gegenüber:
+knotenkonform, mit einer anderen Interpolation auf der Vierecksdiagonale. Pyramiden als
+Übergang (`pyr5`) und das Zerlegen nicht sweepbarer Körper in sweepbare Blöcke sind die
+nächsten Schritte. Reine Quader (sechs Vierecke, acht Knoten) bleiben beim abgebildeten
+Hexaedernetz mit ihrer Teilung; `netz.sweep = False` schaltet den Sweep ab.
+
+**Kappen aus mehreren Flächen, Zylinder, Zerlegen an Fußabdrücken (21.09.2026).** Drei
+Erweiterungen, damit der Sweep über Platten hinauskommt:
+
+1. **Vier Flächen genügen.** Ein Zylinder ist in RFEM zwei Kreise (je zwei Halbbögen) und
+   zwei Halbmantel-Flächen — vier Flächen. Die Erkennung verlangte fünf, und jeder Bolzen,
+   Stift, jede Achse fiel an die Tetraeder; am Drehlager haben 48 von 108 Körpern vier
+   Flächen. Jetzt `KAPPEN_MIN_FLAECHEN = 4` (`test_zylinder_wird_gesweept`: Bolzen
+   r = 50 mm, l = 300 mm, h = 30 mm → 120 hex8 + 20 pent6, Abnahme ohne Befund, Deckellast
+   7,73 kN kommt an). Dabei fiel auf, dass die Singulärwertzerlegung der Ausgleichsebene
+   die Händigkeit zufällig liefert: an den Platten stimmte sie, am Kreis nicht, und alle
+   140 Elemente standen auf dem Kopf — der Rahmen wird jetzt rechtshändig erzwungen
+   (`sweep._rahmen`). Und zwei Halbbögen eines Kreises teilen sich beide Endknoten: die
+   Paarung Grundlinie ↔ Deckellinie vergleicht darum die abgetasteten Kurven, nicht nur
+   die Enden.
+2. **Der Grund darf eine Gruppe koplanarer Flächen sein** — der Deckel einer Platte mit
+   dem Fußabdruck einer Nabe als Öffnung *plus* der Fußabdruck selbst, die Schulter einer
+   abgesetzten Welle *plus* die Stirnfläche des dünnen Teils. Rand der Gruppe sind die
+   Linien, die nur eine ihrer Flächen benutzt; die inneren Linien fallen heraus. Jede
+   Fläche der Gruppe wird für sich vernetzt und **für sich zu Vierecken gepaart** (nie über
+   eine Flächengrenze), die Punkte auf den inneren Linien fallen über ihre Kennung
+   zusammen. Der Deckel bleibt eine einzelne Fläche: das Netz der Gruppe achtet die
+   inneren Linien, verschoben passt es auf die eine Deckelfläche — umgekehrt nicht.
+3. **Zerlegen an Fußabdrücken** (`sweep.zerlegen`): ist ein Körper nicht als Ganzes
+   Grundfläche mal Weg, wird jede ebene Fläche mit Öffnungen darauf geprüft, ob ein Teil
+   des Körpers nur über eine Öffnung mit dem Rest verbunden ist — eine Nabe auf der
+   Platte, der dünne Absatz an der Schulter, eine Rippe, die nicht durchläuft. Dann wird
+   der Fußabdruck als ebene **Schnittfläche** eingezogen (Hilfsgeometrie nur für diesen
+   Lauf, danach wieder aus dem Modell), und beide Teile werden für sich erkannt, bis zu
+   zwei Schnitte tief (`ZERLEGEN_TIEFE`). Sweepbare Blöcke laufen zuerst und legen das
+   Netz der Schnittfläche samt Vierecken vor (`model.flaechennetze` trägt jetzt fünf
+   Glieder: Punkte, Dreiecke, Kennung, Vierecke, Rest-Dreiecke); ein Block, der nicht
+   sweepbar bleibt, wird frei mit Tetraedern vernetzt und trifft die Schnittfläche
+   knotengenau. Alle Elemente gehören dem Körper; Lasten, Kontakt und Ergebnisse je Körper
+   ändern sich nicht. Was nicht geht: eine Bohrung, die durch Aufsatz *und* Träger läuft
+   — ihre Mantelfläche müsste geteilt werden, und Linien dafür gibt es nicht; dann bleibt
+   der Körper ganz und geht an die Tetraeder.
+
+Gemessen (21.09.2026, ein Prozess, `tests/test_sweep.py`):
+
+| Prüfkörper | ohne Zerlegen | mit Zerlegen | Abnahme | Last → Lager |
+|---|---|---|---|---|
+| Platte 0,4 × 0,3 × 0,1 m mit Nabe r = 60 mm, h = 80 mm, Kantenlänge 30 mm | 7 595 tet4 | **441 hex8 + 108 pent6**, ein Schnitt, 174 Knoten in der Schnittebene, keiner doppelt | ohne Befund | 11,12 kN = 11,12 kN |
+| abgesetzte Welle r = 50/30 mm, l = 200/150 mm, Kantenlänge 25 mm | 2 349 tet4 (+ 66 des dünnen Teils) | **446 hex8 + 28 pent6**, ein Schnitt, 61 Knoten in der Schulterebene, keiner doppelt | ohne Befund | 2,78 kN = 2,78 kN |
+
+Der **abgebildete Quader** (`mesher._hex_netz`, sechs Vierecke, acht Ecken) setzt seit
+21.09.2026 ebenfalls Randseiten, teilt seine Knoten mit Nachbarn über dieselben Schlüssel
+wie Sweep und freier Vernetzer und legt seine sechs Flächennetze vor; seine Kantenteilung
+folgt an Kanten, die ein Nachbar mitbenutzt, der Linienvorgabe (Quader 2 × 1 × 1 m mit
+Pyramide an der Wand und Feldkugel an einer Kante: 4 × 5 × 10 Hexaeder, 66 Wandknoten
+geteilt, Deckellast 2 000,0 kN kommt an — vorher 0 kN, `test_quader_randseiten_und_nachbar`).
+
+**Pyramiden als Übergang (`netz.pyramiden`, 21.09.2026).** An der Grenze zwischen einem
+gesweepten (oder abgebildeten) Körper und einem frei vernetzten Nachbarn steht eine
+Hexaederseite zwei Tetraederseiten gegenüber: knotenkonform, aber mit anderer Interpolation
+auf der Diagonale des Vierecks. Mit dem Schalter bekommt jedes Viereck der vorgegebenen
+Nachbarfläche stattdessen eine **Pyramide** (`pyr5`): die Spitze sitzt im Inneren des
+Nachbarn, um `PYRAMIDEN_HOEHE = 0,5` mal die mittlere Kantenlänge entlang der Hüllnormale
+nach innen; die zwei Hülldreiecke des Vierecks werden durch die vier Seitendreiecke der
+Pyramide ersetzt, und der Tetraedervernetzer schließt daran an. Kommt die Spitze einem
+anderen Hüllpunkt näher als die halbe Höhe (dünne Bauteile), wird sie zurückgenommen, und
+unter `PYRAMIDEN_HOEHE_MIN = 0,15` bleibt das Viereck geteilt — eine flache Pyramide wäre
+selbst ein schlechtes Element. Knoten und Randseiten werden mit den **ursprünglichen**
+Dreiecken gebildet, damit die gemeinsamen Flächen so geteilt werden wie bisher; das
+Grundviereck jeder Pyramide wird als Randseite 0 an die Nachbarfläche gehängt.
+
+Gemessen an der Platte mit Pyramidenkörper an der Wand M2 (h = 50 mm, 21.09.2026):
+
+| | Elemente | Formgüte min | Verschiebung max | Auflagerkraft |
+|---|---|---|---|---|
+| ohne (Vierecke geteilt) | 280 hex8 + 24 pent6 + 386 tet4 | 0,185 | 0,3588 mm | 117,22 kN |
+| **mit Pyramiden** | 280 hex8 + 24 pent6 + **12 pyr5** + 353 tet4 | 0,154 | 0,3589 mm | 117,22 kN |
+
+Der Rauminhalt ist auf 10⁻⁹ derselbe, die Verschiebung ändert sich um 0,03 %, die Abnahme
+hat nichts zu beanstanden. Darum ist der Schalter **aus** als Vorgabe: er kostet Elemente
+und senkt die kleinste Formgüte, und die Rechnung gewinnt an diesem Beispiel nichts. Wer
+den Übergang formgleich haben will — etwa weil eine Kontaktfuge genau dort liegt —,
+schaltet ihn ein (`test_pyramiden_als_uebergang`).
+
+**Am Drehlager** (Zählung der Löser-Sitzung mit `sweep.erkennen` und `netzfeld.bedeutung`,
+21.09.2026; 108 Körper, 1 375 Flächen, 2 807 Linien, 645 934 Volumenelemente):
+
+| | |
+|---|---|
+| sweepbare Körper | **2 von 108** (V18, V11), 2 864 Elemente = **0,4 %** |
+| Körper mit 4 Flächen | 48 — unter fünf, `erkennen` steigt aus |
+| Körper mit 6 / 9 Flächen | 23 / 18 |
+| die acht größten Körper (48 bis 144 Flächen) | 542 391 Elemente = **84,0 %** |
+| Nebenflächen (`bedeutung`) | 913 von 1 375 = 66,4 %; Nebenlinien 1 197 von 2 807 = 42,6 % |
+| Flächen mit Last | **2**; bedeutend sind fast nur Kontaktflächen (37 Bedingungen) und aus RFEM integrierte Objekte |
+
+Der Sweep, wie er am Morgen des 21.09.2026 stand, erreichte das Drehlager also nicht:
+sein Erfolgsmaß (Kragplatte 97,6 % gegen 68,4 %, ein Achtel der Elemente) kam dort bei
+0,4 % der Elemente an. Seit dem Abend gelten vier Flächen (die 48 Körper mit vier Flächen
+sind, wenn es Zylinder sind, sweepbar), Kappen-Gruppen und das Zerlegen an Fußabdrücken
+— was davon an den acht großen Körpern (48 bis 144 Flächen) greift, entscheidet das
+Modell und ist **nicht gemessen**. Und `nebenflaechen_grob` spart am Drehlager **0,2 %** der Elemente (646 712 →
+645 570; an der Platte waren es 55 %): die Bohrungen, die das Netz fein machen, sind dort
+fast alle Bohrungen *mit* Bolzen, Stift oder Achse — Kontaktflächen, und die bleiben fein.
+Was nach der Nachvernetzung an Splittern bleibt (Güte unter 0,10): 30 von 53 258, 74 von
+38 564, 29 von 115 734, 35 von 79 572, 32 von 80 752 Tetraedern in fünf Körpern, die
+schlechteste bei 0,025 — rund 200; die Kappen der Prüfkörper sind weg, diese sind noch
+nicht untersucht.
+
 ## 6b Netzqualität (`netzguete.py`)
 
 Die Formgüte misst, wie nah ein Element an seiner regelmäßigen Gestalt ist;
@@ -3335,6 +3617,149 @@ unbewertet.
 Als zweites Maß steht das **Seitenverhältnis** (kürzeste durch längste Kante)
 zur Verfügung, als drittes die längste Kante als Elementgröße. Alles ist je
 Elementart vektorisiert: 380 000 Tetraeder brauchen rund 1,5 s.
+
+## 6c Fehlerschätzer und adaptive Vernetzung (`netzfehler.py`, `adaptiv.py`)
+
+„Fein genug" ist ohne Maß nicht entscheidbar. Das Maß ist der **Spannungssprung**
+(Zienkiewicz/Zhu 1987): der lineare Tetraeder trägt eine konstante Spannung je
+Element, die wahre Spannung ist stetig. Die volumengewichtet auf die Knoten gemittelte
+Spannung σ* ist der wahren näher als die Elementspannung σ_e; der Unterschied ist der
+Fehlerindikator in der Energienorm, mit C = D⁻¹:
+
+    η_e² = ∫ (σ* − σ_e)ᵀ C (σ* − σ_e) dV = V/20 · [ (Σ_i e_i)ᵀ C (Σ_i e_i) + Σ_i e_iᵀ C e_i ],
+
+e_i = σ*_i − σ_e an den vier Ecken (∫ N_i N_j dV = V/20 für i ≠ j, V/10 für i = j; gegen
+eine Zufallsquadratur mit 200 000 Punkten auf 0,17 % genau). Ein gleichförmiger
+Spannungszustand hat den Fehler null (gemessen 2·10⁻¹⁶ bei U = 18). Der bezogene
+Gesamtfehler
+
+    η_rel = √(Σ η_e²) / √(U² + Σ η_e²),   U² = Σ V_e σ_eᵀ C σ_e,
+
+ist die Zahl, an der entschieden wird (Ziel 5 %). Über mehrere Lastfälle zählt je
+Element der größte Fehler. Der Indikator ist eine Schätzung: er sieht den Fehler der
+Spannung im Element, nicht den der Verschiebung, und an einer Singularität
+(eingespannter Rand, Kontaktrand) bleibt er endlich, wo der wahre Fehler es nicht ist.
+
+**Neue Kantenlänge.** Der zulässige Fehler wird gleich auf die N Elemente verteilt,
+e_zul = ziel · √(U² + Σ η²) / √N, und jedes Element bekommt
+
+    h_neu = h · (e_zul / η_e)^(1/p),   p = 1 (tet4), 2 (tet10),
+
+begrenzt auf das Drittel bis Doppelte je Runde. Dazu drei Regeln, jede aus einer
+Messung:
+
+* **Budget.** Die Gleichverteilung unterstellt, dass N gleich bleibt; mit dem Drittel als
+  kleinstem Schritt gibt ein Element bis zu 27 Kinder. Ohne Schranke lief die Platte mit
+  Bohrung von 52 801 auf 1 300 025 Tetraeder in **einer** Runde. Die geschätzte neue
+  Elementzahl, 5 · Σ (h/h_neu)³, darf höchstens das Dreifache von N sein; liegt sie
+  darüber, werden alle neuen Kantenlängen um denselben Faktor angehoben. Die 5 ist
+  gemessen: der Vernetzer legt um jede Quelle einen Kegel, die Hülle folgt mit, die
+  Kanten werden etwa 0,8 h — Schätzung 3,0-fach, Netz 14,4- und 15,0-fach an der Platte
+  mit fünf Bohrungen. Und die Schleife misst nach: liegt das neue Netz mehr als 15 %
+  über dem Budget, vergröbert sie Körperkantenlängen und Feldpunkte um die Kubikwurzel
+  des Überschusses und vernetzt einmal neu.
+* **Spannungsschutz.** Die Energienorm mittelt über das ganze Bauteil; eine schon
+  aufgelöste Kerbe hat dort einen kleinen Fehler und würde wieder vergröbert (Platte:
+  σ_v max 497 → 391 N/mm² von einer Runde zur nächsten). Elemente mit mindestens der
+  halben größten Vergleichsspannung werden nicht gröber — aber nur, wo es eine
+  Konzentration gibt (größte Spannung über dem Doppelten des Mittels); bei
+  gleichförmiger Spannung ist jedes Element „hoch", und nichts spricht gegen ein
+  gröberes Netz.
+* **Körper und Feld.** Je Körper wird das 90. Perzentil seiner neuen Kantenlängen
+  seine eigene Kantenlänge (`netz.koerper_h`, vor Dichte und Ziellänge in
+  `netzdichte.elementlaenge`) — neun Zehntel der Elemente dürfen so grob sein. Das
+  letzte Zehntel hält das Größenfeld fein: Elemente unter 90 % der Körperkantenlänge
+  werden Feldpunkte (Schwerpunkt, h_neu, Reichweite halbe alte Kante), vorab über Zellen
+  je Größenstufe ausgedünnt, damit die Ausdünnung des Feldes nicht Hunderttausende
+  Quellen sieht.
+
+**Die Schleife** (`adaptiv.adaptiv_vernetzen`): vernetzen (`mesher.modell_vernetzen`,
+die Folge der Oberfläche ohne Qt: Netzdichte, Fugen zurücksetzen, alte Netzknoten
+löschen, Flächen, Volumen, Lasten, Fugen, starre Flächen, Stabenden, Lager) → rechnen
+(`solver.solve_static`, die genannten Lastfälle) → schätzen → Körperkantenlängen und
+Feldpunkte setzen → von vorn, bis das Ziel erreicht oder die Rundenzahl erschöpft ist.
+Für die Dauer der Schleife ist `nebenflaechen_grob` an: der erste Durchgang ist grob,
+der Schätzer holt zurück, was trägt. Alles, was die Schleife setzt, steht danach in den
+Netzeinstellungen und wird mit dem Modell gespeichert; aus der Datei entsteht dasselbe
+Feld wieder. Befehlszeile: `statik3d modell.json --adaptiv 2 --lastfall LF1 --speichern …`
+(`--vernetzen` allein vernetzt ohne Schleife).
+
+**Hexaeder, Keile, Pyramiden (21.09.2026).** Der Schätzer las nur Tetraeder; gesweepte und
+zerlegte Körper blieben außen vor. Jetzt liest er alle Typen aus `ORDNUNG` (tet4/tet10,
+hex8/hex20, pent6/pent15, pyr5): das Knotenmittel ist volumengewichtet über **alle**
+Elemente am Knoten, das Integral der Energienorm des linear interpolierten Eckfehlers läuft
+für Hexaeder, Keile und Pyramiden über die Gauß-Quadratur des linearen Typs
+(`elements.solid._ISO`; das Produkt zweier trilinearer Felder ist je Richtung vom Grad 2,
+zwei Punkte je Richtung integrieren es genau), für den Tetraeder weiter geschlossen. Ein
+Sechsflächner mit einer Elementspannung wird dabei wie der Tetraeder stückweise konstant
+gelesen — das ist konservativ. Prüfung an der gesweepten Platte 0,4 × 0,24 × 0,08 m mit
+Bohrung: gleichförmige Spannung → Fehler null, U² = V·sᵀD⁻¹s, Quadraturvolumen = Elementvolumen
+auf 10⁻⁹; unter Zug sammelt sich der Fehler an der Bohrung (`test_hexaeder_und_keile_im_schaetzer`).
+
+Zwei Dinge musste die Schleife dafür dazulernen. Erstens **die Lagen des Sweeps folgen dem
+Größenfeld** (`sweep._lagen_aus_weg`): die Lagen sind über den ganzen Körper gleich dick, und
+wo das Feld die Grundfläche fein teilt, müssen sie mithalten — sonst entstehen flache
+Hexaeder, und die Verfeinerung kommt quer zur Platte nicht an. Ohne die Regel fielen die Lagen
+in der ersten adaptiven Runde von 3 auf 2 (441 → 482 Elemente, Fehler 13,7 → 12,8 %). Zweitens
+**die Kalibrierung hängt am Elementgemisch** (`netzfehler.kalibrierung_fuer`): der Sweep legt
+1,46-fach so viele Elemente wie Σ(h/h_neu)³ sagt (1 928 statt 1 323; zweite Runde 1,41-fach),
+der Tetraedervernetzer 5-fach — darum `KALIBRIERUNG_HEX = 1,5`, dazwischen anteilig. Gemessen,
+zwei Runden, Budget 3× (21.09.2026):
+
+| Durchgang | Elemente | Lagen | η_rel |
+|---|---|---|---|
+| 1 (h = 30 mm) | 441 hex8/pent6 | 3 à 26,7 mm | 13,7 % |
+| 2 | 1 456 | 7–8 à 10–11 mm | 13,4 % |
+| 3 | 4 972 | 11–12 à 7 mm | **9,2 %** |
+
+**Der Probelauf.** Die Schleife rechnet je Durchgang mit `solve_static(…, probelauf=True)`
+— einem Kontaktschritt aus dem Anfangszustand der Fugen; sein Ergebnis ist ein Netzmaß,
+kein Rechenergebnis (Kontaktkräfte um Größenordnungen daneben) und geht nur an den
+Schätzer. Der Probelauf, wie ihn die Element-Sitzung gebaut hat (357d61d), lässt aber
+das **Fließen** aus. Die Löser-Sitzung hat das am Drehlager gegen den vollen Lauf
+gemessen (LF1 kalt, Vergleichsspannung je Element, 20./21.09.2026):
+
+| | Zeit | L2 über alle Elemente | L2 über die 100 höchsten | dieselben 100 Spitzenelemente |
+|---|---|---|---|---|
+| ein Schritt, elastisch (wie gebaut) | 123,8 s | 52,2 % | 126,0 % | **54 von 100** |
+| ein Schritt, plastisch | 198,8 s | **2,3 %** | **0,0 %** | **100 von 100** |
+| voller Lauf | 633,4 s | – | – | – |
+
+Elastisch liegt die Spitze bei 1 041 statt 387 N/mm² — Faktor 2,7, und zwar dort, wo
+der Schätzer hinsieht. Ein elastischer Probelauf verfeinert also an den falschen
+Stellen. Darum prüft die Schleife das Ergebnis: trägt es `probelauf` ohne
+`plastizitaet`, obwohl das Modell fließt, rechnet sie diesen und die weiteren Lastfälle
+**voll** und sagt es im Protokoll (`adaptiv.probelauf_elastisch`; `--probelauf ja`
+erzwingt den Probelauf mit Warnung, `--probelauf nein` den vollen Lauf,
+`test_probelauf_nur_mit_fliessen`). Sobald der Probelauf das Fließen behält — Bitte an
+die Statik3D-Sitzung: Plastizität an, `max_iter = 1` —, ist er die billige Variante:
+Faktor 3, nicht 48, denn bei 645 934 Elementen ist das Aufstellen der Matrix der
+Brocken (124 s je Schritt), nicht das Lösen. Das Protokoll nennt je Durchgang die
+Löserzahlen aus `Results.info` (`ndof`, `nfree`, `nnz_matrix`, `nnz_faktor`,
+`zeit_faktorisierung`, `solver`, Kontaktschritte) und bei fließenden Modellen, ob das
+Fließen mitgerechnet wurde.
+
+Gemessen an der Platte 1 × 0,6 × 0,2 m mit einer Bohrung r = 100 mm und vier
+Durchgangsbohrungen r = 20 mm, Zug 100 N/mm², Einspannung als Flächenlager, ein Prozess
+(20.09.2026):
+
+| | Elemente | Knoten | η_rel | σ_v max |
+|---|---|---|---|---|
+| h = 50 mm, wie bisher | 40 364 | 7 641 | 11,9 % | 490 N/mm² |
+| h = 50 mm, Nebenflächen grob | 17 969 | 3 412 | 12,8 % | 343 N/mm² |
+| h = 25 mm überall | 116 100 | 21 026 | 8,4 % | 412 N/mm² |
+| adaptiv, zwei Runden, Start 50 mm grob, vor Kalibrierung und Spannungsschutz | 17 969 → 69 768 → 256 277 | 3 412 → 11 901 → 42 173 | 12,8 → 9,6 → 6,6 % | 343 → 498 → 392 N/mm² |
+| adaptiv, zwei Runden, Start 50 mm grob, **mit** Kalibrierung und Spannungsschutz | 17 969 → 61 758 → 192 235 | 3 412 → 10 615 → 31 799 | 12,8 → 10,0 → 7,2 % | 343 → 351 → 422 N/mm² |
+
+Mit Kalibrierung hält jede Runde das Budget ohne Zwischenlauf (3,4- und 3,1-fach, die
+ganze Schleife 77 s statt 302 s), und die Spannung an der Bohrung steigt von Runde zu
+Runde statt zu fallen. Auf diesem Beispiel ist das gleichmäßige Netz mit 25 mm
+(116 100 Elemente, 8,4 %) dem adaptiven (192 235, 7,2 %) ebenbürtig:
+die Einspannung ist eine Liniensingularität, an der sich der Indikator sammelt — ein
+gleichmäßig feineres Netz ist an diesem Beispiel deshalb konkurrenzfähig; `netz.h_min`
+begrenzt, wie fein die Schleife dort wird. Am Drehlager tun Kontaktränder dasselbe.
+Was am Drehlager selbst herauskommt, ist **nicht gemessen** — das Modell lag der
+Vernetzer-Sitzung nicht vor.
 
 ## 7 Parallelisierung
 

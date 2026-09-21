@@ -1791,6 +1791,39 @@ class Netzeinstellungen:
     dickenmass: bool = False
     #: Teilung je Flaeche aus der Netzdichte ableiten (sonst bleibt die eigene)
     teilung_uebersteuern: bool = True
+    #: **Groessenfeld** (statik3d.netzfeld, 20.09.2026) - die Quellen, aus
+    #: denen es je Lauf entsteht; das Feld selbst wird nicht gespeichert.
+    #: verfeinerungen: was der Anwender fein haben will, je Eintrag ein
+    #: Woerterbuch {"art": "kugel", "mitte": [x, y, z], "radius": r, "h": h}
+    #: oder {"art": "flaeche" | "linie" | "koerper", "name": ..., "h": h}.
+    #: feldpunkte: was das Ergebnis fein braucht - [x, y, z, h] oder
+    #: [x, y, z, h, r] je Punkt, vom Fehlerschaetzer (statik3d.netzfehler)
+    #: geschrieben. koerper_h: eigene Kantenlaenge je Volumen (Name -> m),
+    #: geht vor Dichte und Ziellaenge (netzdichte.elementlaenge).
+    verfeinerungen: list = field(default_factory=list)
+    feldpunkte: list = field(default_factory=list)
+    koerper_h: dict = field(default_factory=dict)
+    #: Sweepbare Koerper (Grundflaeche mal Weg) als Hexaeder und Keile
+    #: vernetzen statt als Tetraeder (statik3d.sweep, 20.09.2026). Aus nur
+    #: zum Vergleich - der Tetraeder ist das schlechtere Element.
+    sweep: bool = True
+    #: **Pyramiden** (pyr5) als Uebergang: wo ein frei vernetzter Koerper an
+    #: die Vierecke eines gesweepten oder abgebildeten Nachbarn stoesst,
+    #: bekommt jedes Viereck eine Pyramide mit Spitze im Inneren, die
+    #: Tetraeder folgen dahinter (mesher3d._pyramiden_einziehen, 21.09.2026).
+    #: Ohne Pyramiden teilt der Tetraeder-Nachbar jedes Viereck in zwei
+    #: Dreiecke - knotenkonform, aber mit anderer Interpolation auf der
+    #: Diagonale. Aus als Vorgabe: gemessen an Platte mit Pyramide (Zahlen im
+    #: Theoriehandbuch 6a) aendert der Uebergang die Verschiebung um weniger
+    #: als ein Prozent, kostet aber Elemente und Huellpunkte; wer den
+    #: Uebergang formgleich will, schaltet ihn ein.
+    pyramiden: bool = False
+    #: Linien an **Nebenflaechen** (ohne Last, Lager, Kontakt, Nachbar -
+    #: netzfeld.bedeutung) mit dem groben Bogenwinkel teilen (45 statt 18
+    #: Grad, acht statt zwanzig Abschnitte je Vollkreis). Aus als Vorgabe:
+    #: es aendert die Kerbspannung an unbelasteten Bohrungen; die adaptive
+    #: Vernetzung schaltet es fuer ihren ersten, groben Durchgang ein.
+    nebenflaechen_grob: bool = False
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""
@@ -3561,6 +3594,19 @@ class Model:
         for sk in getattr(self, "starrkoerper", None) or []:
             sk.master = f(sk.master)
             sk.slaves = [f(n) for n in (sk.slaves or [])]
+        # Kopplungen, Eckknoten und integrierte Knoten der Flaechen und die
+        # getrennten Fugenknoten sind ebenfalls Knotennummern (20.09.2026):
+        # ohne sie zeigten sie nach einem Loeschen auf fremde Knoten - die
+        # Randhuelle liest die Eckknoten aus RFEM (Flaeche.ecken) zuerst.
+        for kp in getattr(self, "kopplungen", None) or []:
+            kp.node_a, kp.node_b = f(kp.node_a), f(kp.node_b)
+        for fl in self.flaechen.values():
+            if fl.ecken:
+                fl.ecken = [f(n) for n in fl.ecken]
+            if getattr(fl, "integrierte_knoten", None):
+                fl.integrierte_knoten = [f(n) for n in fl.integrierte_knoten]
+        for name, paare in list((getattr(self, "getrennte_knoten", None) or {}).items()):
+            self.getrennte_knoten[name] = [[f(a), f(b)] for a, b in paare]
         self._woelb_version = getattr(self, "_woelb_version", 0) + 1
 
     def knoten_tauschen(self, a: int, b: int) -> None:
@@ -3621,6 +3667,97 @@ class Model:
         self.nodes = np.delete(np.asarray(self.nodes, float), i, axis=0)
         self._knotenverweise_abbilden({n: n - 1 for n in range(i + 1, self.nn + 1)})
         return ""
+
+    def netzknoten_loeschen(self) -> int:
+        """Alle Knoten entfernen, an denen **nichts mehr haengt** - in einem Zug.
+
+        Das sind die Knoten eines geloeschten Netzes: :meth:`elemente_loeschen`
+        nimmt die Elemente, die Knoten blieben. Nach einem Neuvernetzen
+        standen sie als „Knoten ohne Element" in der Abnahme (an der Platte
+        mit Bohrung nach einer adaptiven Runde 10 143 Stueck, 20.09.2026), und
+        als Freiheitsgrade ohne Steifigkeit im Gleichungssystem.
+
+        Geschuetzt ist jeder Knoten, den ein Element, eine Linie, ein Lager,
+        eine Knotenlast oder Zwangsverformung, ein Kontaktlager, ein
+        Spaltelement, ein Kontaktpaar, eine Kopplung, ein starrer Koerper, eine
+        Punktmasse, ein Daempfer, eine Lasteinleitung, eine Verformungsgrenze,
+        ein Subsystem oder eine Flaeche (Ecken, integrierte Knoten) nennt.
+        Eine Sache je Knoten zu loeschen (:meth:`knoten_loeschen`) kostete je
+        Knoten einen Durchgang durch alle Verweise - bei zehntausend Knoten
+        das Quadrat davon. Rueckgabe: Zahl der entfernten Knoten.
+        """
+        nn = int(self.nn)
+        if nn == 0:
+            return 0
+        benutzt = np.zeros(nn, bool)
+
+        def merke(folge):
+            for n in folge:
+                try:
+                    k = int(n)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= k < nn:
+                    benutzt[k] = True
+        for e in self.elements:
+            merke(e.nodes)
+        for ln in self.lines.values():
+            merke(ln.nodes)
+        merke(sp.node for sp in self.supports)
+        # Linien- und Flaechenlager, die an der Geometrie haengen, bekommen
+        # ihre Knoten nach dem Vernetzen neu (supports.lager_auf_netz); ihre
+        # alten Netzknoten schuetzen nichts. Nur ein Lager, das allein ueber
+        # Knoten gegeben ist, haelt sie.
+        for x in self.line_supports:
+            if not (getattr(x, "linien", None) or []):
+                merke(x.nodes or [])
+        for x in self.surface_supports:
+            if not (getattr(x, "flaechen", None) or []):
+                merke(x.nodes or [])
+        for lc in self.load_cases.values():
+            merke(l.node for l in lc.nodal_loads)
+            merke(z.node for z in lc.zwangsverformungen)
+        merke(c.node for c in (getattr(self, "contact_supports", None) or []))
+        for g in (getattr(self, "gap_elements", None) or []):
+            merke((g.node_a, g.node_b))
+        for cp in (getattr(self, "contact_pairs", None) or []):
+            merke(cp.slave_nodes or [])
+            merke(getattr(cp, "master_nodes", None) or [])
+        for kp in (getattr(self, "kopplungen", None) or []):
+            merke((kp.node_a, kp.node_b))
+        for kb in (getattr(self, "kontaktbedingungen", None) or {}).values():
+            for paar in (getattr(self, "getrennte_knoten", None) or {}).get(kb.name, []) or []:
+                merke(paar)
+        merke(x.knoten for x in (getattr(self, "lasteinleitungen", None) or {}).values())
+        for x in (getattr(self, "verformungsgrenzen", None) or {}).values():
+            merke(x.knoten or [])
+        for sub in (getattr(self, "subsysteme", None) or {}).values():
+            merke(sub.knoten or [])
+        merke(pm.node for pm in (getattr(self, "punktmassen", None) or []))
+        for dp in (getattr(self, "daempfer", None) or []):
+            merke((dp.node_a, dp.node_b))
+        for sk in (getattr(self, "starrkoerper", None) or []):
+            merke([sk.master] + list(sk.slaves or []))
+        for f in self.flaechen.values():
+            merke(f.ecken or [])
+            merke(getattr(f, "integrierte_knoten", None) or [])
+        weg = np.flatnonzero(~benutzt)
+        if not len(weg):
+            return 0
+        bleibt = np.flatnonzero(benutzt)
+        neu = {int(alt): k for k, alt in enumerate(bleibt)}
+        for L in (getattr(self, "layer", None) or {}).values():
+            L.knoten = [n for n in (L.knoten or []) if int(n) in neu]
+        for x in list(self.line_supports) + list(self.surface_supports):
+            alt_kn = list(x.nodes or [])
+            halten = [int(n) in neu for n in alt_kn]
+            x.nodes = [n for n, ok in zip(alt_kn, halten) if ok]
+            areas = getattr(x, "areas", None)
+            if areas is not None and len(areas) == len(alt_kn):
+                x.areas = [a for a, ok in zip(areas, halten) if ok]
+        self.nodes = np.asarray(self.nodes, float)[bleibt]
+        self._knotenverweise_abbilden(neu)
+        return int(len(weg))
 
     # ---------------- Layer ----------------
     def layer_anlegen(self, name: str, knoten=(), elemente=(), staebe=(), linien=(),

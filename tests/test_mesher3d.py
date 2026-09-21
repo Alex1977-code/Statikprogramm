@@ -251,7 +251,12 @@ def test_platte_mit_bohrung():
     # A = 48/2 * r^2 * sin(2 pi / 48)
     A_loch = 24 * r * r * np.sin(2 * np.pi / 48)
     soll = (4.0 - A_loch) * t
-    close("Platte mit Bohrung: Netzvolumen", netzvolumen(m, els), soll, 1e-6, " m^3")
+    # Schranke 1e-5 des Rauminhalts statt 1e-6 m^3: Kappen an der Bohrungswand
+    # (Splitter aus vier Huellknoten) werden entfernt, das Huellviereck ist
+    # danach ueber die andere Diagonale geteilt und dem Netz fehlt der
+    # Rauminhalt der Kappen - hier 2 Kappen, 5,8e-6 von 1,40 m^3 (20.09.2026,
+    # mesher3d._kappen_entfernen). Das ist der Preis fuer ein Netz ohne Splitter.
+    close("Platte mit Bohrung: Netzvolumen", netzvolumen(m, els), soll, 1e-5 * soll, " m^3")
     schwer = np.array([m.nodes[[int(x) for x in m.elements[i].nodes]].mean(axis=0)
                        for i in els])
     im_loch = int(np.count_nonzero(
@@ -587,12 +592,20 @@ def test_splitter_glaetten():
     check("mit Glättung ist die schlechteste Güte deutlich besser",
           mit[0] > 5 * ohne[0], f"{ohne[0]:.4f} -> {mit[0]:.4f}")
     check("und kein Splitter bleibt übrig", mit[1] == 0, f"{mit[1]} Elemente")
-    check("die Elementzahl wächst genau um die reparierten flachen Tetraeder",
-          mit[3] - ohne[3] == flache[0.0] - flache[0.1] and flache[0.0] > 0,
+    # Seit 20.09.2026 tut der Splitterweg mehr als glaetten: Kappen (Splitter
+    # aus vier Huellknoten) bekommen einen Punkt knapp innerhalb der Huelle
+    # (mesher3d._kappenpunkte) - das gibt zusaetzliche Tetraeder -, und was
+    # davon auf einer gewoelbten Wand stehenbleibt, wird entfernt
+    # (_kappen_entfernen) - das nimmt dem Netz den Rauminhalt der Kappen.
+    # Die Elementzahl waechst darum um mindestens die reparierten flachen
+    # Tetraeder, und der Rauminhalt aendert sich hoechstens um das, was den
+    # flachen fehlte, plus den Kappen (gemessen: 5,8e-6 von 1,40 m^3).
+    check("die Elementzahl wächst mindestens um die reparierten flachen Tetraeder",
+          mit[3] - ohne[3] >= flache[0.0] - flache[0.1] and flache[0.0] > 0,
           f"{ohne[3]} -> {mit[3]}; flach aussortiert {flache[0.0]} -> {flache[0.1]}")
-    schranke = (flache[0.0] + flache[0.1]) * M3.FLACH * 0.15 ** 3
-    check("und das Volumen nur um das, was ihnen vorher fehlte",
-          -1e-12 <= mit[2] - ohne[2] <= schranke,
+    schranke = (flache[0.0] + flache[0.1]) * M3.FLACH * 0.15 ** 3 + 1e-5 * ohne[2]
+    check("und das Volumen nur um das, was den flachen fehlte, und um die entfernten Kappen",
+          abs(mit[2] - ohne[2]) <= schranke,
           f"{mit[2] - ohne[2]:.3e} m^3, Schranke {schranke:.3e} m^3")
 
 
@@ -694,6 +707,7 @@ def _zwei_koerper():
     """Zwei sechseckige Prismen uebereinander mit gemeinsamer Trennflaeche -
     keine Sechsflaechner, also Arbeit fuer den freien Vernetzer."""
     m = neues_modell()
+    m.netz.sweep = False                     # sonst sweepbar (statik3d.sweep, 20.09.2026)
     n = 6
     w = np.arange(n) * 2 * np.pi / n
     ring = np.column_stack([np.cos(w), np.sin(w)])
@@ -1330,8 +1344,56 @@ def test_gitterindex_zelle():
           np.array_equal(fein, alt), f"{int(fein.sum())} / {int(alt.sum())} Punkte innen")
 
 
+def test_abnahme_warnstufe_splitter():
+    """Die zweite Stufe der Abnahme: Splitter (Formguete unter 0,10) werden je
+    Koerper als WARNUNG mit Zahl und Elementnummern genannt, ohne die
+    Rechnung anzuhalten; unter 0,05 bleibt es ein FEHLER (Anforderungen 3.4,
+    21.09.2026)."""
+    from statik3d import diagnose
+    from statik3d.netzguete import guete as _guete
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    # Ein guter Tetraeder und ein flacher (vierter Knoten nahe der Grundebene)
+    n0 = m.add_node(0.0, 0.0, 0.0)
+    n1 = m.add_node(1.0, 0.0, 0.0)
+    n2 = m.add_node(0.0, 1.0, 0.0)
+    n3 = m.add_node(0.0, 0.0, 1.0)
+    n4 = m.add_node(1.0, 1.0, 0.0)
+    n5 = m.add_node(0.7, 0.7, 0.013)     # q = 12 (z/2)^(2/3) / 5,34 = 0,079
+    e_gut = m.add_element("tet4", [n0, n1, n2, n3], "S235", group="V1")
+    e_flach = m.add_element("tet4", [n1, n4, n2, n5], "S235", group="V1")
+    m.add_line("L1", [n0, n1]); m.add_line("L2", [n1, n2]); m.add_line("L3", [n2, n0])
+    m.add_flaeche("F1", ["L1", "L2", "L3"], material="S235")
+    m.add_flaeche("F2", ["L1", "L2", "L3"], material="S235")
+    m.add_flaeche("F3", ["L1", "L2", "L3"], material="S235")
+    m.add_flaeche("F4", ["L1", "L2", "L3"], material="S235")
+    k = m.add_koerper("V1", ["F1", "F2", "F3", "F4"], material="S235")
+    k.elemente = [e_gut, e_flach]
+    k.randtreue = 1.0
+    q = _guete(m)
+    check("der flache Tetraeder liegt zwischen 0,05 und 0,10", 0.05 <= float(q[e_flach]) < 0.10, f"{q[e_flach]:.3f}")
+    fehler = [b for b in diagnose.abnahme(m) if b.pruefung in ("Elementgüte", "Splitter")]
+    check("ohne warnungen=True kein Befund zur Guete (kein Element unter 0,05)", not fehler, str([b.pruefung for b in fehler]))
+    alle = diagnose.abnahme(m, warnungen=True)
+    warn = [b for b in alle if b.stufe == "WARNUNG"]
+    check("mit warnungen=True eine WARNUNG 'Splitter' mit Zahl, Koerper und Elementnummer",
+          len(warn) == 1 and warn[0].pruefung == "Splitter" and warn[0].objekt == "V1"
+          and warn[0].element == e_flach and "1 von 2 Elementen" in warn[0].text, str([b.text for b in warn])[:160])
+    check("die Warnung haelt nichts an: kein FEHLER darunter", not any(b.stufe == "FEHLER" and b.pruefung == "Splitter" for b in alle))
+    # Unter 0,05 bleibt es ein FEHLER - und die Warnung nennt ihn mit
+    m.nodes[n5] = [0.7, 0.7, 0.0045]   # q = 0,039
+    q = _guete(m)
+    check("noch flacher: unter 0,05", float(q[e_flach]) < 0.05, f"{q[e_flach]:.3f}")
+    alle = diagnose.abnahme(m, warnungen=True)
+    check("FEHLER Elementgüte und WARNUNG Splitter nebeneinander",
+          any(b.stufe == "FEHLER" and b.pruefung == "Elementgüte" for b in alle)
+          and any(b.stufe == "WARNUNG" and b.pruefung == "Splitter" for b in alle),
+          str([(b.stufe, b.pruefung) for b in alle]))
+
+
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_huelle_ohne_rundungsgitter,
+              test_abnahme_warnstufe_splitter,
               test_randstrecke_wird_nicht_verdraengt,
               test_groessenfeld_an_der_festgelegten_linie,
               test_randstrecken_sind_keine_glueckssache,

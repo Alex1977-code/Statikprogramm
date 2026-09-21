@@ -413,7 +413,7 @@ def _linienlaenge(model: Model, name: str) -> float:
         return float(np.linalg.norm(np.diff(model.nodes[idx], axis=0), axis=1).sum())
 
 
-def _linienpunkte(model: Model, name: str, n: int) -> np.ndarray:
+def _linienpunkte(model: Model, name: str, n: int, anteile: np.ndarray = None) -> np.ndarray:
     """n+1 Punkte auf der wahren Kurve einer Linie, gleiche Bogenlaengen.
 
     Beim Bogen und beim Kreis laeuft der innere Kurvenparameter schon mit
@@ -421,6 +421,12 @@ def _linienpunkte(model: Model, name: str, n: int) -> np.ndarray:
     genommen und liegen genau auf ihr. Nur wenn das nicht so ist (Spline,
     Ellipse), wird ueber eine feine Naeherung umparametrisiert - und dann fein
     genug, dass der Sehnenfehler unter einem Millionstel bleibt.
+
+    ``anteile`` (n+1 aufsteigende Werte von 0 bis 1) legt die Punkte an
+    diesen Bruchteilen der Bogenlaenge ab statt gleichmaessig - so folgt eine
+    Linie dem Groessenfeld (:meth:`Linienteilung.punkte`): dicht, wo das Feld
+    fein ist, weit, wo es grob ist. Auch dann liegen die Punkte auf der fein
+    abgetasteten Kurve (16 n, mindestens 512 Stuetzstellen).
     """
     ln = model.lines.get(name)
     if ln is None:
@@ -430,10 +436,11 @@ def _linienpunkte(model: Model, name: str, n: int) -> np.ndarray:
     if (ln.typ or "polyline") != "polyline":
         try:
             kurve = ln.kurve(model)
-            genau = np.asarray(kurve.punkte(max(int(n), 1)), float)
-            L = np.linalg.norm(np.diff(genau, axis=0), axis=1)
-            if len(L) and L.max() > 0 and (L.max() - L.min()) <= 1e-12 * L.max():
-                return _enden_setzen(model, idx, genau)
+            if anteile is None:
+                genau = np.asarray(kurve.punkte(max(int(n), 1)), float)
+                L = np.linalg.norm(np.diff(genau, axis=0), axis=1)
+                if len(L) and L.max() > 0 and (L.max() - L.min()) <= 1e-12 * L.max():
+                    return _enden_setzen(model, idx, genau)
             roh = np.asarray(kurve.punkte(max(16 * n, 512)), float)
         except Exception:                   # noqa: BLE001
             roh = None
@@ -444,7 +451,11 @@ def _linienpunkte(model: Model, name: str, n: int) -> np.ndarray:
     lang = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(roh, axis=0), axis=1))])
     if lang[-1] <= 0:
         return roh[:1]
-    ziel = np.linspace(0.0, lang[-1], n + 1)
+    if anteile is not None and len(anteile) == n + 1:
+        ziel = np.clip(np.asarray(anteile, float), 0.0, 1.0) * lang[-1]
+        ziel[0], ziel[-1] = 0.0, lang[-1]
+    else:
+        ziel = np.linspace(0.0, lang[-1], n + 1)
     k = np.clip(np.searchsorted(lang, ziel, side="right") - 1, 0, len(roh) - 2)
     t = ((ziel - lang[k]) / (lang[k + 1] - lang[k]))[:, None]
     return _enden_setzen(model, idx, roh[k] + t * (roh[k + 1] - roh[k]))
@@ -462,13 +473,15 @@ def _enden_setzen(model: Model, idx: list, P: np.ndarray) -> np.ndarray:
     return P
 
 
-def _bogenabschnitte(model: Model, name: str) -> int:
+def _bogenabschnitte(model: Model, name: str, winkel_max: float = None) -> int:
     """Mindestzahl der Abschnitte einer krummen Linie aus ihrer Kruemmung.
 
     Der gesamte Richtungswechsel entlang der Kurve wird durch den groessten
-    zugelassenen Wechsel je Abschnitt geteilt. Fuer den Halbkreis sind das
-    180/30 = 6 Abschnitte, fuer den Vollkreis 12 - unabhaengig davon, wie
-    gross er ist.
+    zugelassenen Wechsel je Abschnitt geteilt (``winkel_max``, Vorgabe
+    :data:`BOGENWINKEL`). Fuer den Halbkreis sind das bei 18 Grad 10
+    Abschnitte, fuer den Vollkreis 20 - unabhaengig davon, wie gross er ist.
+    Fuer eine Linie an einer **Nebenflaeche** nennt das Groessenfeld einen
+    groberen Winkel (:func:`_bogenwinkel`).
     """
     ln = model.lines.get(name)
     if ln is None or (ln.typ or "polyline") == "polyline":
@@ -485,7 +498,59 @@ def _bogenabschnitte(model: Model, name: str) -> int:
         return 2
     cos = np.clip(np.einsum("ij,ij->i", d[:-1], d[1:]), -1.0, 1.0)
     winkel = float(np.degrees(np.arccos(cos)).sum())
-    return max(2, int(np.ceil(winkel / BOGENWINKEL)))
+    grenze = float(winkel_max) if winkel_max and winkel_max > 0 else BOGENWINKEL
+    return max(2, int(np.ceil(winkel / grenze)))
+
+
+def _bogenwinkel(model: Model, name: str, feld=None) -> float:
+    """Der Bogenwinkel je Abschnitt fuer diese Linie: BOGENWINKEL, an einer
+    Nebenflaeche der grobe Winkel des Groessenfelds (netzfeld.bedeutung)."""
+    if feld is None:
+        feld = getattr(model, "groessenfeld", None)
+    if feld is None:
+        return BOGENWINKEL
+    return float(feld.bogenwinkel(name, BOGENWINKEL))
+
+
+def _feldteilung(model: Model, name: str, h: float, feld, mindestens: int = 1) -> tuple:
+    """Wie viele Abschnitte eine Linie nach dem Groessenfeld braucht - und wo.
+
+    Laengs der Linie wird die Kantenlaenge ``min(h, Feld)`` abgetastet und
+    ``Integral ds / h(s)`` gebildet: das ist die Zahl der Abschnitte, die das
+    Feld verlangt. Die Punkte kommen an gleiche Bruchteile dieses Integrals
+    zu liegen - dicht, wo das Feld fein ist. Rueckgabe (Abschnitte, Bruchteile
+    der Bogenlaenge fuer genau diese Zahl) oder (0, None), wenn das Feld an
+    der Linie nicht unter h liegt.
+    """
+    if feld is None:
+        return 0, None
+    L = _linienlaenge(model, name)
+    if L <= 0:
+        return 0, None
+    n_probe = int(min(400, max(16, 4 * np.ceil(L / max(h, 1e-12)))))
+    P = _linienpunkte(model, name, n_probe)
+    if len(P) < 2:
+        return 0, None
+    hw = np.minimum(h, np.asarray(feld(P), float))
+    if not (hw < h * (1.0 - 1e-9)).any():
+        return 0, None
+    seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
+    dichte = seg / np.maximum(0.5 * (hw[1:] + hw[:-1]), 1e-12)
+    F = np.concatenate([[0.0], np.cumsum(dichte)])
+    k = max(int(mindestens), int(np.ceil(F[-1] - 1e-9)))
+    return k, F
+
+
+def _feldanteile(model: Model, name: str, h: float, feld, n: int) -> np.ndarray:
+    """Die Bruchteile der Bogenlaenge fuer n Abschnitte nach dem Feld
+    (siehe :func:`_feldteilung`), None wenn gleichmaessig zu teilen ist."""
+    k, F = _feldteilung(model, name, h, feld)
+    if F is None or n < 2:
+        return None
+    n_probe = len(F) - 1
+    s = np.linspace(0.0, 1.0, n_probe + 1)          # Bogenlaengenanteil je Stuetzstelle
+    ziel = np.linspace(0.0, F[-1], n + 1)
+    return np.interp(ziel, F, s)
 
 
 class Linienteilung:
@@ -502,14 +567,30 @@ class Linienteilung:
     """
 
     def __init__(self, model: Model, flaechen: list, h: float, h_linien: dict = None,
-                 h_flaechen: dict = None, gemeinsam: tuple = None):
+                 h_flaechen: dict = None, gemeinsam: tuple = None, feld=None):
         self.model, self.h = model, max(float(h), 1e-9)
+        #: Das Groessenfeld (netzfeld.Groessenfeld) - am Modell, wenn keines
+        #: uebergeben ist. Es ist modellweit dasselbe, darum teilen zwei
+        #: Koerper eine gemeinsame Linie auch mit ihm gleich: dieselbe Zahl
+        #: der Abschnitte und dieselben Bruchteile der Bogenlaenge.
+        self.feld = feld if feld is not None else getattr(model, "groessenfeld", None)
         #: Flaechen und Linien, die mehr als einem Koerper gehoeren. Fuer sie
         #: ist die Karte **bindend**: kein Koerper darf sie allein feiner
         #: machen, auch nicht ueber die Nachvernetzung. Fuer alles andere ist
         #: die Karte nur eine Obergrenze - eine eigene Flaeche darf ein
         #: Koerper so fein vernetzen, wie er will.
         self.gem_flaechen, self.gem_linien = (gemeinsam or (frozenset(), frozenset()))
+        #: Vorgegebene Teilung je Linie (sweep.lagenvorgabe, modellweit): die
+        #: Mantellinien eines gesweepten Koerpers muessen in **jedem** Koerper,
+        #: der eine von ihnen berandet, gleich geteilt sein - sonst passt die
+        #: Wand des Nachbarn nicht auf die Lagen. Aus den Karten allein kamen
+        #: sie verschieden (Drehlager V18/V11: erkannt, aber null Elemente,
+        #: 21.09.2026). Solche Linien zaehlen wie gemeinsame: kein Koerper
+        #: teilt sie allein feiner.
+        self.vorgabe = {str(k): int(v) for k, v in (getattr(model, "linienvorgabe", None) or {}).items()
+                        if int(v) > 0}
+        if self.vorgabe:
+            self.gem_linien = frozenset(self.gem_linien) | frozenset(self.vorgabe)
         #: Kantenlaenge je Linie, wenn eine andere gilt als die des Koerpers.
         #: Eine Linie, an der zwei Koerper haengen, muss in beiden gleich
         #: geteilt werden - sonst vernetzen sie ihre gemeinsame Flaeche
@@ -554,13 +635,23 @@ class Linienteilung:
             k = 1
             for x in mitglieder:
                 hx = self._h_linie(x)
+                # Laenge, Kruemmung (an einer Nebenflaeche mit dem groben
+                # Winkel) und das Groessenfeld laengs der Linie - das
+                # groesste von allen gilt, fuer die ganze Klasse.
                 k = max(k, int(round(_linienlaenge(model, x) / hx)),
-                        _bogenabschnitte(model, x))
+                        _bogenabschnitte(model, x, _bogenwinkel(model, x, self.feld)),
+                        _feldteilung(model, x, hx, self.feld)[0])
             if k > grenze:
                 self.gekappt.append((mitglieder[0], k, grenze))
                 k = grenze
             for x in mitglieder:
                 self.n[x] = k
+        # Die Vorgabe zuletzt und fuer die ganze Klasse der Linie, damit
+        # abgebildete Flaechen gleich geteilte Gegenseiten behalten.
+        for x, n in self.vorgabe.items():
+            if x in self.n:
+                for y in self.gruppe.get(self._wurzel(x), [x]):
+                    self.n[y] = n
 
     def verfeinern(self, namen) -> int:
         """Die genannten Linien feiner teilen - **mitsamt ihrer Klasse**.
@@ -573,8 +664,8 @@ class Linienteilung:
         geaendert = 0
         for wurzel in wurzeln:
             mitglieder = self.gruppe.get(wurzel, [])
-            if not mitglieder:
-                continue
+            if not mitglieder or any(x in self.vorgabe for x in mitglieder):
+                continue                      # eine Vorgabe (Sweep-Lagen) bleibt, was sie ist
             k = self.n.get(mitglieder[0], 1)
             neu = k + max(1, k // 2)
             for x in mitglieder:
@@ -620,7 +711,13 @@ class Linienteilung:
         return max(min(float(hf), self.h), 1e-9)
 
     def punkte(self, name: str) -> np.ndarray:
-        return _linienpunkte(self.model, name, self.n.get(name, 1))
+        """Die Punkte dieser Linie - gleichmaessig, oder nach dem Groessenfeld
+        verteilt, wo es laengs der Linie unter die Kantenlaenge faellt."""
+        n = self.n.get(name, 1)
+        anteile = None
+        if self.feld is not None and n >= 2:
+            anteile = _feldanteile(self.model, name, self._h_linie(name), self.feld, n)
+        return _linienpunkte(self.model, name, n, anteile)
 
 
 def seiten_im_umlauf(model: Model, linien: list) -> list | None:
@@ -927,7 +1024,108 @@ def _kraenze(ringe: list, h: float, wachstum: float = WACHSTUM_FLAECHE) -> np.nd
     return np.vstack(aus)
 
 
-def _dreiecke_2d(ringe: list, h: float, fest: list = None) -> tuple:
+def _verdichten_2d(K: np.ndarray, h: float, feld, ringe: list, stufen: int = 8) -> np.ndarray:
+    """Kandidaten dort vervierfachen, wo das Groessenfeld feiner ist als die Zelle.
+
+    Ein gleichmaessiges Gitter mit der feinsten Weite des Feldes ueber die
+    ganze Flaeche zu legen und dann auszuduennen, waere bei einer 1-m-Platte
+    mit einer 2-mm-Stelle eine Viertelmillion Kandidaten fuer ein paar
+    hundert Punkte. Darum wird wie in einem Quadtree verfeinert: jede Zelle,
+    deren Feldwert unter 70 % ihrer Weite liegt, bekommt vier Kinder mit der
+    halben Weite, hoechstens ``stufen`` Mal (Faktor 256). Die Kandidaten aller
+    Stufen zusammen duennt :func:`_ausduennen_2d` danach auf die Sollweite aus.
+    """
+    aus = [K]
+    zellen, weite = K, float(h)
+    for _ in range(stufen):
+        soll = np.asarray(feld(zellen), float)
+        fein = soll < 0.7 * weite
+        if not fein.any():
+            break
+        weite *= 0.5
+        Z = zellen[fein]
+        off = np.array([[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) * weite
+        kinder = (Z[:, None, :] + off[None, :, :]).reshape(-1, 2)
+        kinder = kinder[_in_polygon_2d(kinder, ringe)]
+        if not len(kinder):
+            break
+        aus.append(kinder)
+        zellen = kinder
+    return np.vstack(aus)
+
+
+#: Durchgaenge der Glaettung eines gradierten Flaechennetzes
+GLAETTEN_2D_RUNDEN = 6
+
+
+def _dreiecksguete_2d(P: np.ndarray, T: np.ndarray) -> np.ndarray:
+    """q = 4 sqrt(3) A / Summe l^2 je Dreieck (1 = gleichseitig)."""
+    a, b, c = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    A = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1]))
+    L2 = np.sum((b - a) ** 2, axis=1) + np.sum((c - b) ** 2, axis=1) + np.sum((a - c) ** 2, axis=1)
+    return np.where(L2 > 0, 4.0 * np.sqrt(3.0) * A / np.maximum(L2, 1e-300), 0.0)
+
+
+def _glaetten_2d(P2: np.ndarray, n_fest: int, ringe: list, runden: int = GLAETTEN_2D_RUNDEN) -> np.ndarray:
+    """Die Innenpunkte eines gradierten Flaechennetzes glaetten - nur, wo es hilft.
+
+    Die Kandidaten aus :func:`_verdichten_2d` liegen auf Quadratgittern
+    verschiedener Weite; wo fein und grob aneinanderstossen, stehen Punkte
+    fast in einer Reihe, und die Zerlegung macht daraus Splitter. Gemessen am
+    Quadrat 1 x 1 m mit h = 100 mm und einer 20-mm-Stelle in der Mitte:
+    schlechteste Dreiecksguete 0,059 (20.09.2026). Auf der Huelle wuerden
+    daraus die flachen Tetraeder, an denen die Abnahme scheitert.
+
+    Jeder Innenpunkt wandert versuchsweise in den Schwerpunkt seiner
+    Nachbarn (halber Schritt). Behalten wird der Schritt nur, wenn die
+    **schlechteste** Guete seiner Dreiecke danach besser ist - alle Punkte
+    zugleich (Jacobi), dann eine neue Zerlegung; feste Punkte (Rand und
+    Kraenze) bleiben, und kein Punkt verlaesst das Gebiet. Das ist die ebene
+    Fassung von :func:`glaetten`.
+    """
+    from scipy.spatial import Delaunay
+    P = np.array(P2, float, copy=True)
+    n = len(P)
+    if n <= n_fest + 2:
+        return P
+    for _ in range(max(1, runden)):
+        try:
+            T = np.asarray(Delaunay(P, qhull_options="Qbb Qc Qz Q12").simplices, int)
+        except Exception:                   # noqa: BLE001
+            break
+        if not len(T):
+            break
+        T = T[_in_polygon_2d(P[T].mean(axis=1), ringe)]
+        if not len(T):
+            break
+        E = np.vstack([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]])
+        acc = np.zeros_like(P)
+        cnt = np.zeros(n)
+        np.add.at(acc, E[:, 0], P[E[:, 1]])
+        np.add.at(cnt, E[:, 0], 1.0)
+        np.add.at(acc, E[:, 1], P[E[:, 0]])
+        np.add.at(cnt, E[:, 1], 1.0)
+        ziel = np.where(cnt[:, None] > 0, acc / np.maximum(cnt, 1.0)[:, None], P)
+        neu = P.copy()
+        neu[n_fest:] = P[n_fest:] + 0.5 * (ziel[n_fest:] - P[n_fest:])
+        drin = _in_polygon_2d(neu[n_fest:], ringe)
+        neu[n_fest:][~drin] = P[n_fest:][~drin]
+        q_alt = _dreiecksguete_2d(P, T)
+        q_neu = _dreiecksguete_2d(neu, T)
+        min_alt = np.full(n, np.inf)
+        min_neu = np.full(n, np.inf)
+        for k in range(3):
+            np.minimum.at(min_alt, T[:, k], q_alt)
+            np.minimum.at(min_neu, T[:, k], q_neu)
+        besser = min_neu > min_alt + 1e-12
+        besser[:n_fest] = False
+        if not besser.any():
+            break
+        P[besser] = neu[besser]
+    return P
+
+
+def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None) -> tuple:
     """Ebenes Vieleck mit Loechern in Dreiecke teilen.
 
     Randpunkte sind vorgegeben (sie sind mit den Nachbarflaechen gemeinsam).
@@ -941,6 +1139,10 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None) -> tuple:
     nicht allein nachgeteilt werden darf. Neben so einer Strecke richtet sich
     die Weite des Netzes nach ihr und nicht nach h (:func:`_sollweite`); ohne
     die Angabe bleibt es bei h ueberall.
+
+    ``feld`` ist das Groessenfeld **in der Ebene** (Punkte (n, 2) -> Weite),
+    wenn es auf dieser Flaeche unter h faellt: das Gitter wird dort
+    verdichtet (:func:`_verdichten_2d`) und auf die Feldweite ausgeduennt.
     """
     from scipy.spatial import Delaunay, cKDTree
     rand = np.vstack([np.asarray(R, float) for R in ringe])
@@ -982,6 +1184,8 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None) -> tuple:
         if kandidaten:
             K = np.asarray(kandidaten, float)
             K = K[_in_polygon_2d(K, ringe)]
+            if len(K) and feld is not None:
+                K = _verdichten_2d(K, h, feld, ringe)
             if len(K):
                 # Nicht zu nah an den Rand: sonst entstehen dort Splitter -
                 # und liegt ein Punkt **auf** einer Randstrecke, verdraengt er
@@ -1003,12 +1207,21 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None) -> tuple:
                 # die Sollweite ueberall h, und beides ist ein Nullschritt.
                 soll = (_sollweite(K, ringe, fest, h) if fest is not None
                         else np.full(len(K), h))
+                if feld is not None:
+                    # Das Feld kann nur feiner machen; groeber neben einer
+                    # festgelegten Strecke bleibt, was _sollweite sagt.
+                    fw = np.asarray(feld(K), float)
+                    soll = np.where(fw < h, np.minimum(fw, soll), soll)
                 bleibt = np.minimum(nah, ds) > RANDABSTAND * soll
                 K, soll = K[bleibt], soll[bleibt]
-                if len(K) and float(soll.max()) > h:
+                if len(K) and (float(soll.max()) > h or feld is not None):
                     K = K[_ausduennen_2d(K, soll)]
                 innenpunkte = K
     P2 = np.vstack([gesetzt] + ([innenpunkte] if len(innenpunkte) else []))
+    if feld is not None and len(innenpunkte):
+        # Gradierte Punkte brauchen die Glaettung; das gleichmaessige Gitter
+        # ohne Feld nicht (Guete 0,837 am Rechteck) - und bleibt unveraendert.
+        P2 = _glaetten_2d(P2, len(gesetzt), ringe)
     n_rand = len(rand)
     if len(P2) < 3:
         return P2, np.zeros((0, 3), int), _randstrecken(ringe)
@@ -1091,6 +1304,77 @@ def _fehlende_randstrecken(ringe: list, T: np.ndarray) -> list:
             if (min(a, b), max(a, b)) not in kanten]
 
 
+def _vorgabe_passt(model: Model, flaeche, vorgabe) -> bool:
+    """Liegt ein vorgegebenes Flaechennetz noch auf der heutigen Geometrie?
+
+    Geprueft ueber die Kennungen seiner Randpunkte: ein Eckpunkt ("K",
+    Knoten) muss auf dem Knoten liegen, ein Linienpunkt ("L", Linie, k) auf
+    dem k-ten von n Teilpunkten der Linie (n aus der groessten Kennung). Ein
+    Netz, das vor einer Geometrieaenderung entstand, faellt so heraus, statt
+    stillschweigend die alte Lage zu vererben.
+    """
+    try:
+        Pv = np.asarray(vorgabe[0], float)
+        kv = list(vorgabe[2])
+    except Exception:                     # noqa: BLE001
+        return False
+    if not len(Pv):
+        return False
+    gross = float(np.linalg.norm(Pv.max(axis=0) - Pv.min(axis=0))) if len(Pv) > 1 else 1.0
+    tol = 1e-7 * max(gross, 1e-9)
+    # Die Kennungen muessen auf die **heutigen** Linien und Ecken der Flaeche
+    # zeigen: nach dem Spiel am Stift hiess die Kreislinie des Bodens L1 statt
+    # V1_u1, und die alte V1_u1 (r = 20 mm) gab es noch - als Bohrung der Platte.
+    linien_heute = set(flaeche.linien or [])
+    for loch in (flaeche.oeffnungen or []):
+        linien_heute.update(loch)
+    ecken_heute = set()
+    for name in linien_heute:
+        ln = model.lines.get(name)
+        if ln is not None and len(ln.nodes) >= 2:
+            ecken_heute.update((int(ln.nodes[0]), int(ln.nodes[-1])))
+    je_linie: dict = {}
+    for i, kenn in enumerate(kv[:len(Pv)]):
+        if kenn is None:
+            continue
+        if kenn[0] == "K":
+            k = int(kenn[1])
+            if k not in ecken_heute or np.linalg.norm(model.nodes[k] - Pv[i]) > tol:
+                return False
+        elif kenn[0] == "L":
+            if kenn[1] not in linien_heute:
+                return False
+            je_linie.setdefault(kenn[1], []).append((int(kenn[2]), i))
+    for name, eintraege in je_linie.items():
+        ln = model.lines.get(name)
+        if ln is None:
+            return False
+        # Die Punkte muessen auf der **Kurve** liegen - nicht an bestimmten
+        # Bruchteilen: wirkt ein Groessenfeld, verteilt die Linienteilung sie
+        # ungleichmaessig (mesher3d._feldanteile), und ein Vergleich mit
+        # gleichmaessigen Punkten verwarf gute Netze (21.09.2026,
+        # test_nachbar_mit_verschiedener_teilung). Geprueft wird der Abstand
+        # zum dicht abgetasteten Linienzug; die Reihenfolge stimmt ohnehin,
+        # weil die Kennung sie traegt.
+        n = max(k for k, _i in eintraege) + 1
+        try:
+            kurve = np.asarray(ln.punkte(model, max(64, 8 * n)), float)
+        except Exception:                 # noqa: BLE001
+            return False
+        if len(kurve) < 2:
+            return False
+        a = kurve[:-1]
+        d = kurve[1:] - a
+        ll = np.einsum("ij,ij->i", d, d)
+        ll[ll <= 0] = 1e-30
+        for _k, i in eintraege:
+            w = Pv[i] - a
+            t_ = np.clip(np.einsum("ij,ij->i", w, d) / ll, 0.0, 1.0)
+            if float(np.min(np.linalg.norm(w - t_[:, None] * d, axis=1))) > tol:
+                return False
+    return True
+
+
 def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     """Dreiecksnetz einer Randflaeche.
 
@@ -1100,6 +1384,18 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     setzt :func:`randschale` die Huelle zusammen, ohne auf Koordinaten zu
     vertrauen.
     """
+    # Ein Netz, das ein gesweepter Koerper fuer diese Flaeche schon gelegt hat
+    # (statik3d.sweep, model.flaechennetze), gilt fuer alle: nur so treffen
+    # die Tetraeder des Nachbarn die Lagenpunkte der Wand.
+    vorgabe = (getattr(model, "flaechennetze", None) or {}).get(flaeche.name)
+    if vorgabe is not None and _vorgabe_passt(model, flaeche, vorgabe):
+        Pv, Tv, kv = vorgabe[:3]              # weitere Glieder (Vierecke) liest der Sweep
+        return np.asarray(Pv, float), np.asarray(Tv, int), "", [], list(kv)
+    if vorgabe is not None:
+        # Veraltet - die Geometrie hat sich seither geaendert (z. B. Spiel am
+        # Stift: die Knoten wanderten von r = 20 auf 19,95 mm, das alte Netz
+        # des Sweeps lag noch auf 20 mm; test_spiel, 21.09.2026)
+        (getattr(model, "flaechennetze", None) or {}).pop(flaeche.name, None)
     zug = _linienzug(teilung, model, flaeche.linien or [])
     if zug is None:
         return np.zeros((0, 3)), np.zeros((0, 3), int), "Rand schliesst nicht", [], []
@@ -1123,7 +1419,8 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
                 return P, T, "", [], kenn
         achse = zylinderpassung(model, flaeche, alle)
         if achse is not None:
-            P, T, fehlt = _zylindernetz(flaeche, ringe3, hf, achse)
+            P, T, fehlt = _zylindernetz(flaeche, ringe3, hf, achse,
+                                        feld=getattr(teilung, "feld", None))
             if len(T):
                 return P, T, "", _linien_zu(fehlt, ringe3, quellen), kennungen
     ringe = [np.stack([(R - c) @ e1, (R - c) @ e2], axis=1) for R in ringe3]
@@ -1132,7 +1429,9 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     # nachgeteilt werden, also bestimmt ihre Streckenlaenge, wie fein
     # nebenan vernetzt werden kann (:func:`_sollweite`).
     fest = [np.array([q in teilung.gem_linien for q in qs], bool) for qs in quellen]
-    P2, T, fehlt = _dreiecke_2d(ringe, hf, fest)
+    feld2 = _feld_in_ebene(getattr(teilung, "feld", None),
+                           lambda K: c + K[:, 0:1] * e1 + K[:, 1:2] * e2, ringe, hf)
+    P2, T, fehlt = _dreiecke_2d(ringe, hf, fest, feld2)
     if not len(T):
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
                 "Netz in der Ebene misslungen", _linien_zu(fehlt, ringe3, quellen), [])
@@ -1207,12 +1506,45 @@ def zylinderpassung(model: Model, flaeche, punkte: np.ndarray,
     return None
 
 
-def _zylindernetz(flaeche, ringe3: list, h: float, achse: tuple) -> tuple:
+def _feld_in_ebene(feld3, heben, ringe: list, h: float):
+    """Das raeumliche Groessenfeld als Funktion in der Ebene der Flaeche -
+    oder None, wenn es dort nirgends unter h faellt (dann bleibt der Weg
+    ohne Feld, der ist der schnellere).
+
+    ``heben`` bildet ebene Punkte (n, 2) in den Raum ab. Geprueft wird am
+    Rand **und** auf einem Gitter ueber die Flaeche mit der halben Weite h:
+    eine Kugel mitten in einer grossen Flaeche beruehrt keinen Randpunkt.
+    """
+    if feld3 is None or getattr(feld3, "leer", True):
+        return None
+    rand = np.vstack([np.asarray(R, float) for R in ringe if len(R)])
+    if not len(rand):
+        return None
+    lo, hi = rand.min(axis=0), rand.max(axis=0)
+    probe = [rand]
+    if h > 0:
+        nx = int(np.clip(np.ceil((hi[0] - lo[0]) / (0.5 * h)), 1, 100))
+        ny = int(np.clip(np.ceil((hi[1] - lo[1]) / (0.5 * h)), 1, 100))
+        u = lo[0] + (np.arange(nx) + 0.5) * (hi[0] - lo[0]) / nx
+        v = lo[1] + (np.arange(ny) + 0.5) * (hi[1] - lo[1]) / ny
+        G = np.stack(np.meshgrid(u, v, indexing="ij"), -1).reshape(-1, 2)
+        G = G[_in_polygon_2d(G, ringe)]
+        if len(G):
+            probe.append(G)
+    Q = np.vstack(probe)
+    if not (np.asarray(feld3(heben(Q)), float) < h * (1.0 - 1e-9)).any():
+        return None
+    return lambda K: np.asarray(feld3(heben(np.atleast_2d(np.asarray(K, float)))), float)
+
+
+def _zylindernetz(flaeche, ringe3: list, h: float, achse: tuple, feld=None) -> tuple:
     """Krumme Flaeche auf einem Zylinder: in der Abwicklung vernetzen.
 
     Die Abwicklung ist (r * Winkel, Achskoordinate). Der Schnitt fuer den
     Winkel wird in die groesste winkelfreie Luecke gelegt, damit der Rand
-    nicht ueber den Sprung von +pi nach -pi laeuft.
+    nicht ueber den Sprung von +pi nach -pi laeuft. ``feld`` ist das
+    raeumliche Groessenfeld; es wird ueber die Rueckabbildung aus der
+    Abwicklung gelesen.
     """
     c, d, r = achse
     hilf = np.array([1.0, 0.0, 0.0]) if abs(d[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
@@ -1230,13 +1562,17 @@ def _zylindernetz(flaeche, ringe3: list, h: float, achse: tuple) -> tuple:
         rel = P3 - c
         wi = np.mod(np.arctan2(rel @ e2, rel @ e1) - schnitt, 2 * np.pi)
         return np.stack([r * wi, rel @ d], axis=1)
+
+    def heben(P2):
+        wi = P2[:, 0] / r + schnitt
+        return (c + np.outer(P2[:, 1], d)
+                + r * (np.outer(np.cos(wi), e1) + np.outer(np.sin(wi), e2)))
     ringe = [eben(R) for R in ringe3]
-    P2, T, fehlt = _dreiecke_2d(ringe, h)
+    feld2 = _feld_in_ebene(feld, heben, ringe, h)
+    P2, T, fehlt = _dreiecke_2d(ringe, h, None, feld2)
     if not len(T):
         return np.zeros((0, 3)), np.zeros((0, 3), int), fehlt
-    wi = P2[:, 0] / r + schnitt
-    P = (c + np.outer(P2[:, 1], d)
-         + r * (np.outer(np.cos(wi), e1) + np.outer(np.sin(wi), e2)))
+    P = heben(P2)
     # Die Randpunkte genau uebernehmen (Rundung im Winkel)
     P[:len(alle)] = alle
     return P, T, fehlt
@@ -1739,9 +2075,122 @@ class _Zerlegung:
                 pass
 
 
+#: Durchgaenge, in denen Kappen (Splitter aus vier Huellpunkten) aufgeloest werden
+KAPPEN_RUNDEN = 3
+
+
+def _kappenpunkte(punkte: np.ndarray, TET: np.ndarray, n_huelle: int, P: np.ndarray,
+                  T: np.ndarray, index: "Gitterindex", sollgroesse, splitter: float) -> np.ndarray:
+    """Je Kappe ein Punkt knapp innerhalb der Huelle, der sie aufloest.
+
+    Eine **Kappe** ist ein Splitter, dessen vier Ecken alle auf der Huelle
+    liegen - zwei Nachbardreiecke einer gewoelbten Wand, zu einem fast flachen
+    Tetraeder verbunden. Die Verfeinerung erreicht sie nicht: der
+    Umkugelmittelpunkt eines fast flachen Tetraeders liegt weit ausserhalb
+    und wird verworfen, und das Kugel-Kanten-Kriterium sieht nichts, weil alle
+    Kanten aehnlich lang sind. Die Glaettung erreicht sie auch nicht, weil
+    sie Huellknoten festhaelt. So blieben an der Bohrungswand einer Platte
+    Tetraeder mit Guete 0,005 bis 0,011 stehen, durch drei Anlaeufe der
+    Nachvernetzung hindurch (20.09.2026).
+
+    Der Punkt liegt im Schwerpunkt der Kappe, um die halbe Kantenlaenge nach
+    **innen** geschoben (entgegen der Aussennormale des naechsten
+    Huelldreiecks). Er liegt in der Umkugel der Kappe - die ist ja riesig -
+    und zerlegt sie darum in der Delaunay-Zerlegung in gut geformte
+    Tetraeder. Kappen, deren Schwerpunkt ausserhalb liegt (in einer Bohrung),
+    bleiben aussen vor: sie fallen mit :func:`_innere` ohnehin weg.
+    """
+    from scipy.spatial import cKDTree
+    leer = np.zeros((0, 3))
+    if not len(TET) or n_huelle <= 0:
+        return leer
+    huell = (TET < n_huelle).all(axis=1)
+    if not huell.any():
+        return leer
+    kand = TET[huell]
+    q = guete(punkte, kand)
+    kappen = kand[q < max(float(splitter), 1e-9)]
+    if not len(kappen):
+        return leer
+    c = punkte[kappen].mean(axis=1)
+    drin = innen(c, P, T, index)
+    kappen, c = kappen[drin], c[drin]
+    if not len(c):
+        return leer
+    X = punkte[kappen]
+    L = np.mean([np.linalg.norm(X[:, a] - X[:, b], axis=1)
+                 for a, b in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))], axis=0)
+    a, b, d = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    nrm = np.cross(b - a, d - a)
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=1), 1e-300)[:, None]
+    _, j = cKDTree(P[T].mean(axis=1)).query(c)
+    K = c - nrm[j] * (0.5 * L)[:, None]
+    K = K[innen(K, P, T, index)]
+    if not len(K):
+        return leer
+    d_alt, _ = cKDTree(punkte).query(K)
+    K = K[d_alt > 0.3 * sollgroesse(K)]
+    if not len(K):
+        return leer
+    return _ausduennen(K, 0.5 * sollgroesse(K))
+
+
+def _kappen_entfernen(punkte: np.ndarray, TET: np.ndarray, n_huelle: int, splitter: float) -> tuple:
+    """Kappen, die auch der eingefuegte Punkt nicht aufloest, aus dem Netz nehmen.
+
+    Auf einer gewoelbten Wand - der Bohrungswand - liegt die Umkugel einer
+    Kappe fast ganz **im Loch**: die vier Punkte liegen auf dem Zylinder, die
+    Kugel durch sie hat ihren Mittelpunkt nahe der Achse und ragt nur um den
+    Sehnenpfeil (bei 24-mm-Sehnen auf r = 40 mm knapp 1 mm) in den Koerper.
+    Ein Punkt im Koerper trifft sie nicht, die Kappe bleibt Delaunay
+    (Platte, 20.09.2026: dieselben fuenf Tetraeder mit Guete 0,011 vor und
+    nach dem Einfuegen von 60 Punkten).
+
+    Die Kappe wegzunehmen heisst, das Huellviereck ueber die **andere
+    Diagonale** zu teilen: dieselben vier Knoten, die Oberflaeche um den
+    Sehnenpfeil gedellt, der Rauminhalt um das Kappenvolumen kleiner (hier
+    1e-9 von 7e-3 m^3). Die Knoten bleiben - zwei Koerper an einer
+    gemeinsamen Flaeche teilen weiter dieselben Knoten -, Randseiten und
+    Randtreue werden danach am Netz gemessen, nicht an der Huelle. Entfernt
+    wird nur, was ein Splitter ist und dessen Knoten alle noch in anderen
+    Tetraedern stehen. Rueckgabe (Tetraeder, Zahl der entfernten).
+    """
+    if not len(TET) or n_huelle <= 0:
+        return TET, 0
+    huell = (TET < n_huelle).all(axis=1)
+    if not huell.any():
+        return TET, 0
+    q = guete(punkte, TET)
+    kappe = huell & (q < max(float(splitter), 1e-9))
+    if not kappe.any():
+        return TET, 0
+    # Nur echte Kappen: mindestens zwei Seiten liegen frei (die beiden
+    # Huelldreiecke). Ein Splitter mit vier Huellknoten **zwischen** anderen
+    # Tetraedern - in einer duennen Platte hat fast jeder Tetraeder Knoten
+    # oben und unten - hat keine freie Seite; ihn zu entfernen risse einen
+    # Hohlraum ins Innere (test_mesher3d, Platte mit Bohrung: 592 solcher
+    # Tetraeder, 20.09.2026). Der bleibt der Glaettung ueberlassen.
+    seiten = np.vstack([TET[:, [0, 2, 1]], TET[:, [0, 1, 3]], TET[:, [1, 2, 3]], TET[:, [0, 3, 2]]])
+    key = np.sort(seiten, axis=1)
+    _, inv, zahl = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+    frei_je_seite = (zahl[np.asarray(inv).ravel()] == 1).reshape(4, len(TET))
+    kappe &= frei_je_seite.sum(axis=0) >= 2
+    if not kappe.any():
+        return TET, 0
+    zaehl = np.bincount(TET.ravel(), minlength=len(punkte))
+    # Ein Knoten, der nur in Kappen steht, bliebe ohne Element - dann bleibt
+    # seine Kappe stehen (und die Nachvernetzung meldet es).
+    verlust = np.bincount(TET[kappe].ravel(), minlength=len(punkte))
+    haelt = (zaehl - verlust > 0)
+    weg = kappe & haelt[TET].all(axis=1)
+    if not weg.any():
+        return TET, 0
+    return TET[~weg], int(weg.sum())
+
+
 def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
                splitter: float = SPLITTER, fortschritt=None,
-               anteil: tuple = (0.15, 0.9)) -> tuple:
+               anteil: tuple = (0.15, 0.9), feld=None) -> tuple:
     """Aus der geschlossenen Huelle (P, T) ein Tetraedernetz machen.
 
     **Delaunay-Verfeinerung.** Begonnen wird mit den Randpunkten allein. Dann
@@ -1763,6 +2212,12 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
     dass die ganze Platte fein wird. Ein festes Gitter koennte das nicht: es
     haette entweder ueberall die feine oder ueberall die grobe Weite.
 
+    ``feld`` (netzfeld.Groessenfeld) ist die dritte Schranke der Sollgroesse:
+    was ein Fehlerschaetzer oder eine benannte Stelle fein haben will, ohne
+    dass die Huelle davon etwas weiss. Die Verfeinerung selbst bleibt
+    dieselbe - sie fuegt Umkugelmittelpunkte ein, wo ein Tetraeder groesser
+    ist als seine Sollgroesse, und die Sollgroesse liest jetzt drei Quellen.
+
     Rueckgabe (Punkte, Tetraeder, Bericht).
     """
     from scipy.spatial import Delaunay, cKDTree
@@ -1780,7 +2235,10 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
 
     def sollgroesse(X: np.ndarray) -> np.ndarray:
         d, i = baum_rand.query(X)
-        return np.minimum(h, kante[i] + WACHSTUM * d)
+        s = np.minimum(h, kante[i] + WACHSTUM * d)
+        if feld is not None:
+            s = np.minimum(s, np.asarray(feld(X), float))
+        return s
 
     a0, a1 = float(anteil[0]), float(anteil[1])
     spanne = max(a1 - a0, 1e-9)
@@ -1846,6 +2304,21 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
             # Wenn kaum noch Punkte dazukommen, ist nichts mehr zu holen
             if len(K) < 0.005 * len(punkte):
                 break
+        # Kappen aufloesen: Splitter aus vier Huellpunkten, die weder die
+        # Verfeinerung noch die Glaettung erreicht (siehe _kappenpunkte)
+        if splitter > 0:
+            for _kappe in range(KAPPEN_RUNDEN):
+                punkte = np.asarray(tri.points, float)
+                K = _kappenpunkte(punkte, np.asarray(tri.simplices, int), len(P), P, T, index,
+                                  sollgroesse, splitter)
+                if not len(K):
+                    break
+                try:
+                    tri.add_points(K)
+                except Exception as ex:     # noqa: BLE001 - dann bleibt es bei den Kappen
+                    bericht["hinweis"] = f"Kappen nicht aufgelöst: {ex}"
+                    break
+                bericht["kappen"] = bericht.get("kappen", 0) + len(K)
         punkte = np.asarray(tri.points, float)
         _melden(fortschritt, a0 + 0.6 * spanne, "Tetraeder außerhalb des Körpers aussortieren")
         TET, V = _innere(punkte, tri.simplices, P, T, index, h, fortschritt,
@@ -1875,6 +2348,13 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
         punkte, bewegt = glaetten(punkte, TET, fest, ziel=splitter, fortschritt=fortschritt,
                                   anteil=(a0 + 0.7 * spanne, a0 + 0.92 * spanne))
         bericht["geglaettet"] = bewegt
+        # Kappen, die weder Punkt noch Glaettung erreicht haben, kommen weg -
+        # der Diagonalwechsel des Huellvierecks (siehe _kappen_entfernen)
+        V_vorher = float(np.abs(tetraedervolumen(punkte, TET)).sum()) if len(TET) else 0.0
+        TET, weg = _kappen_entfernen(punkte, TET, len(P), splitter)
+        if weg:
+            bericht["kappen_entfernt"] = weg
+            bericht["kappen_volumen"] = V_vorher - float(np.abs(tetraedervolumen(punkte, TET)).sum())
     # Was jetzt noch flach ist, traegt nichts und verdirbt die Kondition:
     # es fliegt heraus - nach der Glaettung, nicht davor.
     if len(TET):
@@ -2096,7 +2576,7 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
                     runden: int = 3, quelle: list = None,
                     splitter: float = SPLITTER, fortschritt=None,
                     gemeinsam: set = None, kennung: list = None,
-                    gem_linien=None) -> tuple:
+                    gem_linien=None, feld=None) -> tuple:
     """Tetraedern und dabei den Rand nachfuehren, wo er nicht getroffen wurde.
 
     Eine einspringende Kante - der Innenwinkel eines L-Koerpers, die Kehle
@@ -2135,7 +2615,7 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
         else:
             a0 = 0.85 + 0.10 * (runde - 1) / max(1, runden - 1)
             a1 = a0 + 0.10 / max(1, runden - 1)
-        Pn, TET, bericht = tetraedern(P, T, h, splitter, fortschritt, (a0, a1))
+        Pn, TET, bericht = tetraedern(P, T, h, splitter, fortschritt, (a0, a1), feld=feld)
         bericht["runden"] = runde + 1
         bericht["huelldreiecke"] = len(T)
         soll = bericht["sollvolumen"]
@@ -2522,7 +3002,8 @@ def _linien_wachsen_lassen(model: Model, h_linien: dict,
         L = _linienlaenge(model, name)
         if L <= 0:
             continue
-        n = max(1, int(round(L / max(h_linien[name], 1e-12))), _bogenabschnitte(model, name))
+        n = max(1, int(round(L / max(h_linien[name], 1e-12))),
+                _bogenabschnitte(model, name, _bogenwinkel(model, name)))
         laenge[name] = L
         weite[name] = L / n
         for k in (int(ln.nodes[0]), int(ln.nodes[-1])):
@@ -2614,6 +3095,118 @@ def huelle_fuegen(P_teile: list, T_teile: list, kennungen: list) -> tuple:
     return P, T, kenn_neu
 
 
+#: Hoehe einer Uebergangspyramide, bezogen auf die mittlere Kantenlaenge
+#: ihres Vierecks: 0,5 gibt den Seitenflaechen etwa 45 Grad Neigung - die
+#: Form, die der Tetraedervernetzer dahinter gut fortsetzt.
+PYRAMIDEN_HOEHE = 0.5
+#: Unter dieser Hoehe (bezogen auf die Kantenlaenge) lohnt keine Pyramide:
+#: sie waere selbst ein flaches Element. Dann bleibt das Viereck geteilt.
+PYRAMIDEN_HOEHE_MIN = 0.15
+
+
+def _pyramiden_einziehen(model: Model, koerper, P: np.ndarray, T: np.ndarray, quelle: list,
+                         kennung: list, log: list = None) -> tuple:
+    """Die Vierecke der vorgegebenen Nachbarflaechen (model.flaechennetze,
+    fuenftes Glied) als **Pyramiden** in die Huelle einziehen.
+
+    Je Viereck kommt eine Spitze ins Innere (Hoehe PYRAMIDEN_HOEHE mal
+    Kantenlaenge, nach innen entlang der Huellnormale); die zwei Dreiecke des
+    Vierecks in der Huelle werden durch die vier Seitendreiecke der Pyramide
+    ersetzt. Der Tetraedervernetzer sieht danach die Pyramidenseiten als
+    Huelle - die Tetraeder schliessen sich knotengenau an. Die Spitze bleibt
+    auf Abstand zum Rest der Huelle: kommt sie einem anderen Huellpunkt
+    naeher als die halbe Hoehe, wird sie zurueckgenommen, und unter
+    PYRAMIDEN_HOEHE_MIN bleibt das Viereck geteilt (duenne Bauteile).
+
+    Rueckgabe (P, T, quelle, kennung, Pyramiden [(a, b, c, d, Spitze,
+    Flaechenname)], urspruengliche Dreiecke, ihre Quellen). Die
+    Seitendreiecke tragen keine Quelle - sie liegen auf keiner Randflaeche;
+    Knotenschluessel und Randseiten werden weiter mit den urspruenglichen
+    Dreiecken gebildet (koerper_einbauen).
+    """
+    from scipy.spatial import cKDTree
+    from .importers import _common as C
+    netze = getattr(model, "flaechennetze", None) or {}
+    P = np.asarray(P, float)
+    T = np.asarray(T, int)
+    quelle = list(quelle)
+    kennung = list(kennung) + [None] * (len(P) - len(kennung))
+    T_flaechen, quelle_flaechen = T.copy(), list(quelle)
+    baum = cKDTree(P)
+    gross = float(np.linalg.norm(P.max(axis=0) - P.min(axis=0))) if len(P) > 1 else 1.0
+    tol = max(1e-7 * gross, 1e-12)
+    # Welches Dreieck liegt in welchem Viereck: ueber die Eckenmenge
+    ecken_dreieck = {frozenset(int(x) for x in t): k for k, t in enumerate(T)}
+    weg: set = set()
+    neue_T: list = []
+    neue_P: list = []
+    pyr: list = []
+    zurueck = 0
+    for fname in (koerper.flaechen or []):
+        v = netze.get(fname)
+        if v is None or len(v) < 5 or v[3] is None or not len(v[3]):
+            continue
+        Pv = np.asarray(v[0], float)
+        Qv = np.asarray(v[3], int).reshape(-1, 4)
+        d, idx = baum.query(Pv)
+        if len(d) and d.max() > tol * 10:
+            continue                            # das vorgegebene Netz liegt nicht auf dieser Huelle
+        for q in Qv:
+            g = [int(idx[int(x)]) for x in q]
+            if len(set(g)) != 4:
+                continue
+            # die zwei Dreiecke des Vierecks in der Huelle
+            treffer = [ecken_dreieck.get(frozenset((g[0], g[1], g[2]))), ecken_dreieck.get(frozenset((g[0], g[2], g[3]))),
+                       ecken_dreieck.get(frozenset((g[0], g[1], g[3]))), ecken_dreieck.get(frozenset((g[1], g[2], g[3])))]
+            treffer = [k for k in treffer if k is not None and k not in weg]
+            if len(treffer) != 2:
+                continue
+            X = P[g]
+            mitte = X.mean(axis=0)
+            # Normale aus den beiden Huelldreiecken (nach aussen, ausrichten()),
+            # Spitze nach innen
+            n = np.zeros(3)
+            for k in treffer:
+                a_, b_, c_ = P[T[k, 0]], P[T[k, 1]], P[T[k, 2]]
+                n += np.cross(b_ - a_, c_ - a_)
+            ln = float(np.linalg.norm(n))
+            if ln <= 0:
+                continue
+            n /= ln
+            kante = float(np.mean([np.linalg.norm(X[(i + 1) % 4] - X[i]) for i in range(4)]))
+            hoehe = PYRAMIDEN_HOEHE * kante
+            spitze = mitte - hoehe * n
+            # Abstand zum Rest der Huelle (ohne die vier Ecken)
+            for _versuch in range(4):
+                nah = baum.query_ball_point(spitze, 0.5 * hoehe)
+                nah = [j for j in nah if j not in g]
+                if not nah:
+                    break
+                hoehe *= 0.6
+                spitze = mitte - hoehe * n
+                zurueck += 1
+            if hoehe < PYRAMIDEN_HOEHE_MIN * kante:
+                continue                        # zu flach fuer eine Pyramide - das Viereck bleibt geteilt
+            s_idx = len(P) + len(neue_P)
+            neue_P.append(spitze)
+            weg.update(treffer)
+            for i in range(4):
+                neue_T.append((g[i], g[(i + 1) % 4], s_idx))
+            pyr.append((g[0], g[1], g[2], g[3], s_idx, fname))
+    if not pyr:
+        return P, T, quelle, kennung, [], T_flaechen, quelle_flaechen
+    behalten = [k for k in range(len(T)) if k not in weg]
+    T_neu = np.vstack([T[behalten], np.asarray(neue_T, int).reshape(-1, 3)])
+    quelle_neu = [quelle[k] for k in behalten] + [""] * len(neue_T)
+    P_neu = np.vstack([P, np.asarray(neue_P, float)])
+    kennung_neu = kennung + [None] * len(neue_P)
+    flaechen = sorted({f for *_g, f in pyr})
+    C.say(log, f"  Volumen {koerper.name}: {len(pyr)} Pyramiden (pyr5) als Übergang zu den Vierecken "
+               f"der Nachbarflächen {', '.join(flaechen)}"
+               + (f", {zurueck} Spitzen zurückgenommen (Hülle nahe)" if zurueck else ""))
+    return P_neu, T_neu, quelle_neu, kennung_neu, pyr, T_flaechen, quelle_flaechen
+
+
 def randschale(model: Model, koerper, h: float, log: list = None,
                fortschritt=None, h_linien: dict = None,
                h_flaechen: dict = None, gemeinsam: tuple = None) -> tuple:
@@ -2686,6 +3279,20 @@ def randschale(model: Model, koerper, h: float, log: list = None,
         if not eigen or not teilung.verfeinern(eigen):
             break
         nachgeteilt.update(zu_grob)
+    # Pyramiden als Uebergang zu den Vierecken vorgegebener Nachbarflaechen
+    # (netz.pyramiden): nur auf einer dichten Huelle, sonst bleibt es bei den
+    # geteilten Vierecken.
+    bericht["pyramiden"] = []
+    if (bool(getattr(getattr(model, "netz", None), "pyramiden", False))
+            and not bericht.get("offen") and bericht.get("teile", 1) == 1):
+        P, T, quelle, kennung, pyr, T_flaechen, quelle_flaechen = _pyramiden_einziehen(
+            model, koerper, P, T, quelle, kennung, log)
+        if pyr:
+            T, bericht2 = ausrichten(P, T)
+            bericht.update(bericht2)
+            bericht["pyramiden"] = pyr
+            bericht["T_flaechen"] = T_flaechen
+            bericht["quelle_flaechen"] = quelle_flaechen
     bericht["gruende"] = gruende
     bericht["quelle"] = quelle
     bericht["kennung"] = kennung
@@ -3066,6 +3673,16 @@ def _netzbericht(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray) 
     return tb
 
 
+def _feld_von(model: Model):
+    """Das Groessenfeld des Modells, wenn es Quellen hat - sonst None. Ein
+    Feld, das nur grobe Linien kennt, aendert am Inneren nichts und braucht
+    dort nicht gelesen zu werden."""
+    feld = getattr(model, "groessenfeld", None)
+    if feld is None or getattr(feld, "leer", True):
+        return None
+    return feld
+
+
 def _extern_tetraedern(model: Model, koerper, P, T, h: float, h_min: float, zeilen: list,
                        fortschritt=None):
     """Der in den Netzeinstellungen gewaehlte fremde Vernetzer (gmsh, Netgen)
@@ -3086,7 +3703,7 @@ def _extern_tetraedern(model: Model, koerper, P, T, h: float, h_min: float, zeil
     t0 = time.time()
     try:
         if wahl == "gmsh":
-            Pn, TET = vx.gmsh_tetraedern(P, T, h, h_min)
+            Pn, TET = vx.gmsh_tetraedern(P, T, h, h_min, feld=_feld_von(model))
         else:
             Pn, TET = vx.netgen_tetraedern(P, T, h)
     except Exception as ex:                 # noqa: BLE001 - dann der eigene
@@ -3097,6 +3714,13 @@ def _extern_tetraedern(model: Model, koerper, P, T, h: float, h_min: float, zeil
     C.say(zeilen, f"  Volumen {koerper.name}: {da[wahl][0]}: {len(TET)} Tetraeder aus {len(T)} "
                   f"Randdreiecken in {time.time() - t0:.1f} s, Güte min {tb['guete']:.3f} / "
                   f"Mittel {tb['guete_mittel']:.3f}, Randtreue {tb['randtreue'] * 100:.2f} %")
+    feld = _feld_von(model)
+    if feld is not None and feld.wirkt(P, h) and str(getattr(netz, "nachbessern", "keine") or "keine") != "mmg3d":
+        # gmsh folgt dem Groessen-Rueckruf nur teilweise (Platte, Huelle
+        # 100 mm, Kugel 10 mm: 14,5 oder 38,5 mm je Prozesszustand,
+        # 20.09.2026); die Metrik von MMG3D setzt das Feld verlaesslich um.
+        C.warn(zeilen, f"  Volumen {koerper.name}: {da[wahl][0]} folgt dem Größenfeld nur teilweise - "
+                       "mit der Nachbesserung MMG3D (Netzeinstellungen) gilt es als Metrik verlässlich.")
     return Pn, TET, tb
 
 
@@ -3117,7 +3741,8 @@ def _nachbessern(model: Model, koerper, Pn, TET, T, P, h: float, h_min: float, t
     _melden(fortschritt, 0.9, f"MMG3D bessert {koerper.name} nach")
     t0 = time.time()
     try:
-        Pn2, TET2 = vx.mmg3d_nachbessern(Pn, TET, T, h, getattr(netz, "mmg_pfad", ""), h_min, zeilen)
+        Pn2, TET2 = vx.mmg3d_nachbessern(Pn, TET, T, h, getattr(netz, "mmg_pfad", ""), h_min, zeilen,
+                                         feld=_feld_von(model))
     except Exception as ex:                 # noqa: BLE001
         C.warn(zeilen, f"  Volumen {koerper.name}: MMG3D gescheitert ({str(ex)[:120]}) - "
                        "das Netz bleibt, wie es ist.")
@@ -3200,6 +3825,10 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                 aus["offene_kanten"] = offene
                 break
             quelle = bericht.get("quelle") or []
+            feld = _feld_von(model)
+            if feld is not None and anlauf == 1 and feld.wirkt(P, h):
+                C.say(zeilen, f"  Volumen {koerper.name}: das Größenfeld wirkt hier "
+                              f"({len(feld.X)} Quellen, feinste {float(feld.h.min()) * 1e3:.1f} mm)")
             extern = _extern_tetraedern(model, koerper, P, T, h, h_min, zeilen, fortschritt)
             if extern is not None:
                 Pn, TET, tb = extern
@@ -3208,7 +3837,7 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                     P, T, h, quelle=quelle, splitter=splitter, fortschritt=fortschritt,
                     gemeinsam=(gemeinsam or (frozenset(), frozenset()))[0],
                     kennung=bericht.get("kennung"),
-                    gem_linien=(gemeinsam or (frozenset(), frozenset()))[1])
+                    gem_linien=(gemeinsam or (frozenset(), frozenset()))[1], feld=feld)
             if tb.get("fehler"):
                 aus["fehler"] = str(tb["fehler"])
                 return aus
@@ -3305,9 +3934,16 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     soll = bericht["volumen"]
     ist = tb["volumen"]
     abw = abs(ist - soll) / soll if soll > 0 else 1.0
-    # Nur die wirklich benutzten Punkte ins Modell uebernehmen
+    # Nur die wirklich benutzten Punkte ins Modell uebernehmen - und die der
+    # Pyramiden (netz.pyramiden): ihre Ecken koennen Huellpunkte sein, die kein
+    # Tetraeder mehr beruehrt
+    pyramiden = list(bericht.get("pyramiden") or [])
+    T_schl = bericht.get("T_flaechen", T) if pyramiden else T
+    quelle_schl = bericht.get("quelle_flaechen", quelle) if pyramiden else quelle
     benutzt = np.unique(TET)
-    neu = _knoten_anlegen(model, koerper, Pn, benutzt, len(P), T, quelle, cache,
+    if pyramiden:
+        benutzt = np.unique(np.concatenate([benutzt, np.asarray([x for py in pyramiden for x in py[:5]], int)]))
+    neu = _knoten_anlegen(model, koerper, Pn, benutzt, len(P), np.asarray(T_schl, int), list(quelle_schl), cache,
                           kennung=bericht.get("kennung"))
     ecken = [[int(neu[i]) for i in t] for t in TET]
     ecken, entartet = _entartete_weglassen(model, ecken)
@@ -3328,10 +3964,31 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
                                  group=koerper.name) for e in ecken]
     else:
         els = [model.add_element("tet4", e, mat, group=koerper.name) for e in ecken]
+    _randseiten_merken(model, koerper, np.asarray(T_schl, int), list(quelle_schl), neu, els, ecken)
+    # Die Pyramiden: Grundviereck auf der Nachbarflaeche (Randseite 0), Spitze
+    # im Inneren; Knotenreihenfolge so, dass das Volumen positiv ist
+    els_pyr: list = []
+    if pyramiden:
+        from .elements.solid import solid_volume as _vol
+        for a_, b_, c_, d_, sp, fname in pyramiden:
+            kn = [int(neu[a_]), int(neu[b_]), int(neu[c_]), int(neu[d_]), int(neu[sp])]
+            if len(set(kn)) != 5:
+                continue
+            if _vol("pyr5", model.nodes[kn]) < 0:
+                kn = [kn[0], kn[3], kn[2], kn[1], kn[4]]
+            e = model.add_element("pyr5", kn, mat, group=koerper.name)
+            els_pyr.append(e)
+            f = model.flaechen.get(fname)
+            if f is not None:
+                f.randseiten.append([e, 0])
+        els = els + els_pyr
     koerper.elemente = els
-    _randseiten_merken(model, koerper, T, quelle, neu, els, ecken)
     art = "tet10" if ordnung >= 2 else "tet4"
-    koerper.kommentar = (f"{len(els)} Tetraeder ({art}), "
+    if els_pyr:
+        C.say(log, f"  Volumen {koerper.name}: {len(els_pyr)} Pyramiden (pyr5) eingebaut - Randseiten auf "
+                   f"{', '.join(sorted({py[5] for py in pyramiden}))}")
+    koerper.kommentar = ((f"{len(els_pyr)} Pyramiden + " if els_pyr else "")
+                         + f"{len(els) - len(els_pyr)} Tetraeder ({art}), "
                          f"Kantenlänge {h * 1e3:.0f} mm, "
                          f"Güte min {tb['guete']:.3f}")
     # Fuer die Abnahme vor dem Rechnen am Objekt festhalten, nicht nur im Text
@@ -3350,6 +4007,13 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
                f"(größter Abstand zur Hülle {tb.get('randabweichung', 0.0) * 1e3:.2f} mm)")
     if tb.get("hinweis"):
         C.say(log, f"  Volumen {koerper.name}: {tb['hinweis']}")
+    if tb.get("kappen"):
+        C.say(log, f"  {tb['kappen']} Kappen aufgelöst (Splitter aus vier Hüllknoten, je ein "
+                   "Punkt knapp innerhalb der Hülle)")
+    if tb.get("kappen_entfernt"):
+        C.say(log, f"  {tb['kappen_entfernt']} Kappen entfernt (Splitter aus vier Hüllknoten auf einer "
+                   "gewölbten Wand - das Hüllviereck ist jetzt über die andere Diagonale geteilt; "
+                   f"Rauminhalt {tb.get('kappen_volumen', 0.0):.3g} m³)")
     if tb.get("geglaettet"):
         C.say(log, f"  {tb['geglaettet']} Knoten geglättet, um Splitter zu "
                    "beseitigen (Randknoten bleiben, wo sie sind)")
@@ -3368,6 +4032,23 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
         C.say(log, f"  {tb['splitter']} Splitter (Güte unter 0.1) von "
                    f"{len(TET)} Tetraedern"
                    + (f", schlechteste: {namen}" if namen else ""))
+        # Einordnen nach der Zahl ihrer Huellknoten: vier = Kappe auf der
+        # Huelle (die Kur dafuer steht in _kappenpunkten/_kappen_entfernen),
+        # drei = auf einer Huellseite stehend, zwei = Nadel zwischen zwei
+        # Huellen, weniger = im Inneren. Am Drehlager blieben rund 200 in
+        # fuenf Koerpern (Loeser-Sitzung, 21.09.2026) - welche Sorte, sagt
+        # erst diese Zeile.
+        try:
+            q_loc = guete(Pn, np.asarray(TET, int))
+            schlecht_loc = np.nonzero(q_loc < 0.1)[0]
+            if len(schlecht_loc):
+                n_huelle = (np.asarray(TET, int)[schlecht_loc] < len(P)).sum(axis=1)
+                arten = {k: int(np.count_nonzero(n_huelle == k)) for k in (4, 3, 2)}
+                innen = int(np.count_nonzero(n_huelle <= 1))
+                C.say(log, f"  davon mit vier Hüllknoten (Kappen) {arten[4]}, mit drei {arten[3]}, "
+                           f"mit zwei (Nadeln) {arten[2]}, im Inneren {innen}")
+        except Exception:                 # noqa: BLE001 - eine Einordnung darf nie sperren
+            pass
     # Die vier Masse hat koerper_vorbereiten schon geprueft und, wo noetig,
     # feiner nachvernetzt. Hier steht nur noch, was danach uebrig blieb -
     # ohne die alte Aufforderung "mit kleinerer Kantenlänge nachvernetzen",
@@ -3408,6 +4089,11 @@ def mesh_koerper_frei(model: Model, koerper, h: float = 0.0,
     gemeinsam = None
     if karten:
         h_flaechen, h_linien, gemeinsam = karten
+    else:
+        # Ohne die modellweiten Karten entsteht auch das Groessenfeld hier -
+        # koerper_vernetzen bildet es einmal fuer alle Koerper, vor den Karten.
+        from . import netzfeld
+        model.groessenfeld = netzfeld.aufbauen(model, log=log)
     if h_linien is None or h_flaechen is None:
         h_flaechen, h_linien = kantenlaengen_karte(model, h=h)
     if gemeinsam is None:

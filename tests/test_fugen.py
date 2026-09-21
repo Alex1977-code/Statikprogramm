@@ -1779,6 +1779,9 @@ def _zwei_prismen(n=5, r=0.30, dick=0.30, klein=0.05):
     m = Model("Fuge")
     m.add_material(Material.steel("S235"))
     m.netz.ziellaenge = 0.10
+    # Der freie Weg ist der Gegenstand: ein Prisma waere sonst sweepbar
+    # (statik3d.sweep, 20.09.2026) und bekaeme Hexaeder und Keile
+    m.netz.sweep = False
     w = np.linspace(0, 2 * np.pi, n, endpoint=False)
     P = np.column_stack([r * np.cos(w), r * np.sin(w)])
     idx = []

@@ -7074,6 +7074,10 @@ def main():
         mg.add_koerper("V2", ["Fm", "F2"] + oben_, material=mat_)
         mg.netz.dichte = "eigene"
         mg.netz.ziellaenge = 0.3
+        # Gegenstand hier ist der freie Vernetzer (parallel, Balken, Abbrechen);
+        # die beiden Prismen wuerden seit 20.09.2026 gesweept (hex8/pent6, 96 und
+        # 93 Elemente statt der erwarteten Tetraeder - statik3d.sweep, 21.09.2026).
+        mg.netz.sweep = False
         w.refresh_all()
         app.processEvents()
         werte_ = []

@@ -637,11 +637,25 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             if v_hex < 0:
                 order = order[4:] + order[:4]
             nx, ny, nz = (list(koerper.teilung) + [4, 4, 4])[:3]
+            # Eine Linienvorgabe (sweep.lagenvorgabe: Kanten, die Nachbarn
+            # gehoeren) geht vor der eigenen Teilung - je Richtung dieselbe.
+            vorgabe = getattr(model, "linienvorgabe", None) or {}
+            richtungen = quader_richtungen(quader_kanten(model, koerper, order))
+            teil = [nx, ny, nz]
+            for d in range(3):
+                fest = [int(vorgabe[x]) for x in richtungen[d] if x in vorgabe]
+                if fest:
+                    teil[d] = max(fest)
+            nx, ny, nz = teil
             ord_ = netz_ordnung(model, ordnung)
             els = _hex_netz(model, order, max(1, nx), max(1, ny), max(1, nz), mat,
                             koerper.name, ord_, (cache or {}).setdefault("kanten", {})
-                            if cache is not None else None)
+                            if cache is not None else None, koerper=koerper, cache=cache)
             koerper.elemente = els
+            koerper.kommentar = f"{len(els)} Hexaeder (abgebildet, {nx} x {ny} x {nz})"
+            koerper.randtreue = 1.0
+            koerper.netzgrund = ""
+            koerper.netzkanten = []
             C.say(log, f"Volumen {koerper.name}: {len(els)} Hexaeder"
                        + (" (quadratisch, 20 Knoten)" if ord_ >= 2 else "")
                        + f" ({nx} x {ny} x {nz})")
@@ -660,6 +674,33 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
         koerper.elemente = els
         C.say(log, f"Volumen {koerper.name}: ein Tetraeder")
         return els
+    # Sweep: Grundflaeche mal Weg -> Hexaeder und Keile (statik3d.sweep).
+    # Vor dem freien Vernetzer, denn er liefert das bessere Netz: rund ein
+    # Element je Knoten statt vier (Auftrag Sechsflaechner, 20.09.2026).
+    if bool(getattr(getattr(model, "netz", None), "sweep", True)):
+        from . import sweep as SW
+        try:
+            erk = SW.erkennen(model, koerper)
+        except Exception as ex:               # noqa: BLE001 - dann der freie Vernetzer
+            erk = None
+            C.say(log, f"Volumen {koerper.name}: Sweep-Erkennung gescheitert ({str(ex)[:80]}) - "
+                       "der freie Vernetzer übernimmt.")
+        if erk is not None:
+            els = SW.vernetzen(model, koerper, erk, h, log, cache, karten)
+            if els:
+                return els
+        elif frei:
+            # Nicht als Ganzes Grundflaeche mal Weg: an Fussabdruecken in
+            # Bloecke zerlegen - gesweepte Bloecke, wo es geht, Tetraeder fuer
+            # den Rest, knotenkonform ueber die Schnittflaechen (statik3d.sweep).
+            try:
+                els = SW.zerlegt_vernetzen(model, koerper, h, log, cache, karten, ordnung, fortschritt)
+            except Exception as ex:           # noqa: BLE001 - dann der freie Vernetzer fuer das Ganze
+                els = []
+                C.warn(log, f"Volumen {koerper.name}: Zerlegen gescheitert ({str(ex)[:80]}) - "
+                            "der freie Vernetzer übernimmt den ganzen Körper.")
+            if els:
+                return els
     if frei:
         from .mesher3d import mesh_koerper_frei
         return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
@@ -685,7 +726,14 @@ def abgebildet(model: Model, koerper) -> bool:
     knoten = {n for r in ringe for n in r}
     if len(flaechen) == 6 and len(knoten) == 8 and all(len(r) == 4 for r in ringe):
         return True
-    return len(flaechen) == 4 and len(knoten) == 4
+    if len(flaechen) == 4 and len(knoten) == 4:
+        return True
+    # Sweepbare Koerper sind billig (strukturiert) und muessen **vor** den
+    # freien Koerpern laufen: ihre Flaechennetze bekommen die Nachbarn
+    # vorgegeben (model.flaechennetze), die Arbeitsprozesse lesen das Modell
+    # erst danach.
+    from . import sweep as SW
+    return SW.sweepbar(model, koerper)
 
 
 # --------------------------------------------------------------------------
@@ -814,12 +862,37 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     def fertig_melden():
         if fortschritt is not None and not aus["abgebrochen"]:
             fortschritt(1.0, f"{aus['fertig']} von {len(koerper)} Volumen vernetzt")
+        # Das Erfolgsmass des Auftrags Sechsflaechner: der Hexaederanteil
+        from . import sweep as SW
+        z = SW.hexaederanteil(model, koerper)
+        if z["elemente"]:
+            C.say(log, f"Volumen gesamt: {z['elemente']} Elemente auf {z['knoten']} Knoten "
+                       f"({z['elemente_je_knoten']:.2f} je Knoten) - Hexaeder {z['hexaeder']} "
+                       f"({z['anteil_hexaeder'] * 100:.1f} %), Keile {z['keile']}, "
+                       f"Pyramiden {z['pyramiden']}, Tetraeder {z['tetraeder']}")
 
     frei = [k for k in koerper if not abgebildet(model, k)]
     # 1) Abgebildete Koerper gleich hier - das kostet nichts
+    # Das Groessenfeld einmal je Lauf und **vor** den Karten: die
+    # Linienteilung liest es schon beim Kartieren (Bogenwinkel an
+    # Nebenflaechen). Es haengt am Modell und geht mit ihm in die
+    # Arbeitsprozesse (netzfeld.aufbauen).
+    from . import netzfeld
+    model.groessenfeld = netzfeld.aufbauen(model, log=log)
+    # Vorgegebene Flaechennetze (Sweep) - je Lauf neu; die abgebildeten und
+    # gesweepten Koerper fuellen sie, die freien Koerper lesen sie.
+    model.flaechennetze = {}
+    model.linienvorgabe = {}
     # Die modellweiten Netzkarten einmal je Lauf - fuer alle Pfade. Je Koerper
     # gebildet kosteten sie am Drehlager 48 x 1,5 s in der seriellen Phase.
     karten = netzkarten(model)
+    # Die Lagen der sweepbaren Koerper vorab und modellweit: ihre Mantellinien
+    # muessen in jedem Koerper gleich geteilt sein, auch in den Nachbarn
+    # (sweep.lagenvorgabe). Vor dem ersten Netz, denn jede Linienteilung
+    # liest es - im Hauptprozess wie in den Arbeitsprozessen (das Modell geht
+    # erst danach an sie).
+    from . import sweep as SW
+    model.linienvorgabe = SW.lagenvorgabe(model, koerper, hs, karten, log)
     for k in koerper:
         if k in frei:
             continue
@@ -956,27 +1029,133 @@ HEX_KANTEN = ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
               (0, 4), (1, 5), (2, 6), (3, 7))
 
 
+QUADER_SEITEN = {0: (0, 1, 2, 3), 1: (4, 5, 6, 7), 2: (0, 1, 5, 4),
+                 3: (1, 2, 6, 5), 4: (2, 3, 7, 6), 5: (3, 0, 4, 7)}
+#: Lokale Ecken (r, s, t) -> Nummer in der hex8-Reihenfolge
+QUADER_ECKNR = {(0, 0, 0): 0, (1, 0, 0): 1, (1, 1, 0): 2, (0, 1, 0): 3,
+                (0, 0, 1): 4, (1, 0, 1): 5, (1, 1, 1): 6, (0, 1, 1): 7}
+
+
+def quader_kanten(model: Model, koerper, ecken: list) -> dict:
+    """{(lokale Ecke a, lokale Ecke b): Linienname} fuer die zwoelf Kanten eines
+    Sechsflaechners mit den acht Eckknoten ``ecken`` (hex8-Reihenfolge)."""
+    lokal = {int(n): i for i, n in enumerate(ecken)}
+    aus = {}
+    for fname in (koerper.flaechen or []):
+        f = model.flaechen.get(fname)
+        for lname in (f.linien or []) if f is not None else []:
+            ln = model.lines.get(lname)
+            if ln is None or len(ln.nodes) < 2:
+                continue
+            e0, e1 = lokal.get(int(ln.nodes[0])), lokal.get(int(ln.nodes[-1]))
+            if e0 is None or e1 is None or e0 == e1:
+                continue
+            aus[(e0, e1)] = lname
+            aus[(e1, e0)] = lname
+    return aus
+
+
+def quader_richtungen(kanten: dict) -> list:
+    """Die Linien der drei Kantenrichtungen eines Sechsflaechners: [x-Kanten,
+    y-Kanten, z-Kanten] (je vier Namen, fehlende ausgelassen)."""
+    gruppen = [[(0, 1), (3, 2), (4, 5), (7, 6)], [(0, 3), (1, 2), (4, 7), (5, 6)],
+               [(0, 4), (1, 5), (2, 6), (3, 7)]]
+    return [[kanten[k] for k in g if k in kanten] for g in gruppen]
+
+
 def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,
-              mat: str, gruppe: str, ordnung: int = 1, kanten: dict = None) -> list[int]:
+              mat: str, gruppe: str, ordnung: int = 1, kanten: dict = None,
+              koerper=None, cache: dict = None) -> list[int]:
     """Abgebildetes Hexaedernetz in einem Sechsflaechner (trilineare Abbildung);
-    ``ordnung`` 2 gibt Hexaeder mit 20 Knoten (Kantenmitten dazu)."""
+    ``ordnung`` 2 gibt Hexaeder mit 20 Knoten (Kantenmitten dazu).
+
+    Mit ``koerper`` bekommt das Netz, was ihm bis zum 21.09.2026 fehlte
+    (gemessen an einem Quader 2 x 1 x 1 m mit Flaechenlast: Auflagerkraft
+    0 kN statt p·A; Abnahme an einem Quader mit Tetraeder-Nachbarn: 21 doppelte
+    Knoten):
+
+    * die **Randseiten** der sechs Flaechen (Boden Seite 0, Deckel 1, dann
+      s = 0, r = 1, s = 1, r = 0 als Seiten 2 bis 5) - Flaechenlast, Kontakt
+      und Flaechenlager brauchen sie;
+    * **gemeinsame Knoten** mit Nachbarn: Kanten- und Flaechenpunkte tragen
+      dieselben Schluessel wie beim freien Vernetzer und beim Sweep
+      (sweep._knoten_anlegen: Kennung ("L", Linie, k) in der Zaehlrichtung
+      der Linie, (Flaeche, Koordinate) fuer Flaechenpunkte);
+    * **vorgegebene Flaechennetze** (model.flaechennetze) fuer die sechs
+      Flaechen, damit ein freier Nachbar dieselben Punkte trifft.
+    """
+    from . import sweep as SW
     P = model.nodes[ecken]
-    ids = np.zeros((nx + 1, ny + 1, nz + 1), dtype=int)
-    ecknr = {(0, 0, 0): 0, (1, 0, 0): 1, (1, 1, 0): 2, (0, 1, 0): 3,
-             (0, 0, 1): 4, (1, 0, 1): 5, (1, 1, 1): 6, (0, 1, 1): 7}
+    ecknr = QUADER_ECKNR
+    linien = quader_kanten(model, koerper, ecken) if koerper is not None else {}
+    flaechen = {}
+    if koerper is not None:
+        for sname in (koerper.flaechen or []):
+            f = model.flaechen.get(sname)
+            if f is None:
+                continue
+            menge = {int(n) for n in f.randknoten(model)}
+            for seite, ek in QUADER_SEITEN.items():
+                if menge == {int(ecken[i]) for i in ek}:
+                    flaechen[seite] = f
+    n_rst = (nx, ny, nz)
+
+    def kennung(i, j, k):
+        """Kennung und Flaeche eines Gitterpunkts - Kante, Flaeche oder None."""
+        r, s_, t = i / nx, j / ny, k / nz
+        rand = [x in (0.0, 1.0) for x in (r, s_, t)]
+        if sum(rand) == 3:
+            return ("K", int(ecken[ecknr[(int(round(r)), int(round(s_)), int(round(t)))]])), None
+        if sum(rand) == 2:
+            achse = rand.index(False)
+            fest = [int(round(x)) for x in (r, s_, t)]
+            e0 = list(fest); e0[achse] = 0
+            e1 = list(fest); e1[achse] = 1
+            a_, b_ = ecknr[tuple(e0)], ecknr[tuple(e1)]
+            name = linien.get((a_, b_))
+            if name is None:
+                return None, None
+            lauf = (i, j, k)[achse]
+            ln = model.lines[name]
+            kk = lauf if int(ln.nodes[0]) == int(ecken[a_]) else n_rst[achse] - lauf
+            return ("L", name, int(kk)), None
+        if sum(rand) == 1:
+            if rand[2]:
+                seite = 0 if t == 0.0 else 1
+            elif rand[1]:
+                seite = 2 if s_ == 0.0 else 4
+            else:
+                seite = 5 if r == 0.0 else 3
+            f = flaechen.get(seite)
+            return None, (f.name if f is not None else None)
+        return None, None
+
+    X, kenn, fl, index = [], [], [], {}
     for i in range(nx + 1):
         for j in range(ny + 1):
             for k in range(nz + 1):
-                r, s, t = i / nx, j / ny, k / nz
-                schluessel = (int(round(r)), int(round(s)), int(round(t)))
-                if (r in (0.0, 1.0) and s in (0.0, 1.0) and t in (0.0, 1.0)):
-                    ids[i, j, k] = ecken[ecknr[schluessel]]
-                    continue
-                N = np.array([(1 - r) * (1 - s) * (1 - t), r * (1 - s) * (1 - t),
-                              r * s * (1 - t), (1 - r) * s * (1 - t),
-                              (1 - r) * (1 - s) * t, r * (1 - s) * t,
-                              r * s * t, (1 - r) * s * t])
-                ids[i, j, k] = model.add_node(*(N @ P))
+                r, s_, t = i / nx, j / ny, k / nz
+                N = np.array([(1 - r) * (1 - s_) * (1 - t), r * (1 - s_) * (1 - t),
+                              r * s_ * (1 - t), (1 - r) * s_ * (1 - t),
+                              (1 - r) * (1 - s_) * t, r * (1 - s_) * t,
+                              r * s_ * t, (1 - r) * s_ * t])
+                ke, fname = kennung(i, j, k)
+                index[(i, j, k)] = len(X)
+                X.append(N @ P)
+                kenn.append(ke)
+                fl.append(fname)
+    X = np.asarray(X, float)
+    if koerper is not None:
+        nr = SW._knoten_anlegen(model, koerper, X, kenn, fl, cache)
+    else:
+        nr = np.array([model.add_node(*x) for x in X], int)
+        for (i, j, k), idx in index.items():
+            r, s_, t = i / nx, j / ny, k / nz
+            if r in (0.0, 1.0) and s_ in (0.0, 1.0) and t in (0.0, 1.0):
+                nr[idx] = ecken[ecknr[(int(round(r)), int(round(s_)), int(round(t)))]]
+    ids = np.zeros((nx + 1, ny + 1, nz + 1), dtype=int)
+    for (i, j, k), idx in index.items():
+        ids[i, j, k] = int(nr[idx])
     els = []
     kanten = {} if kanten is None else kanten
     for i in range(nx):
@@ -990,4 +1169,158 @@ def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,
                     els.append(model.add_element("hex20", c, mat, group=gruppe))
                 else:
                     els.append(model.add_element("hex8", c, mat, group=gruppe))
+    if koerper is None:
+        return els
+    # ---- Randseiten der sechs Flaechen ------------------------------------
+    weg = set(int(e) for e in els)
+    for f in flaechen.values():
+        f.randseiten = [x for x in (f.randseiten or []) if int(x[0]) not in weg]
+    e_idx = 0
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                e = els[e_idx]
+                e_idx += 1
+                for seite, treffer in ((0, k == 0), (1, k == nz - 1), (2, j == 0),
+                                       (3, i == nx - 1), (4, j == ny - 1), (5, i == 0)):
+                    if treffer and seite in flaechen:
+                        flaechen[seite].randseiten.append([e, seite])
+    # ---- Vorgegebene Flaechennetze fuer freie Nachbarn --------------------
+    netze = getattr(model, "flaechennetze", None)
+    if netze is None:
+        netze = model.flaechennetze = {}
+    for seite, f in flaechen.items():
+        if seite in (0, 1):
+            k0 = 0 if seite == 0 else nz
+            gitter = [[(i, j, k0) for j in range(ny + 1)] for i in range(nx + 1)]
+        elif seite in (2, 4):
+            j0 = 0 if seite == 2 else ny
+            gitter = [[(i, j0, k) for k in range(nz + 1)] for i in range(nx + 1)]
+        else:
+            i0 = 0 if seite == 5 else nx
+            gitter = [[(i0, j, k) for k in range(nz + 1)] for j in range(ny + 1)]
+        idx = [[index[g] for g in zeile] for zeile in gitter]
+        FP = X[[q for zeile in idx for q in zeile]]
+        FK = [kenn[q] for zeile in idx for q in zeile]
+        n2 = len(idx[0])
+        T = []
+        for a_ in range(len(idx) - 1):
+            for b_ in range(n2 - 1):
+                p0, p1 = a_ * n2 + b_, a_ * n2 + b_ + 1
+                p2, p3 = (a_ + 1) * n2 + b_ + 1, (a_ + 1) * n2 + b_
+                if np.linalg.norm(FP[p0] - FP[p2]) <= np.linalg.norm(FP[p1] - FP[p3]):
+                    T += [(p0, p1, p2), (p0, p2, p3)]
+                else:
+                    T += [(p0, p1, p3), (p1, p2, p3)]
+        Q = [(a_ * n2 + b_, a_ * n2 + b_ + 1, (a_ + 1) * n2 + b_ + 1, (a_ + 1) * n2 + b_)
+             for a_ in range(len(idx) - 1) for b_ in range(n2 - 1)]
+        netze[f.name] = (FP.copy(), np.asarray(T, int).reshape(-1, 3), FK,
+                         np.asarray(Q, int).reshape(-1, 4), np.zeros((0, 3), int))
     return els
+
+
+# --------------------------------------------------------------------------
+# Das ganze Modell vernetzen - ohne Oberflaeche
+# --------------------------------------------------------------------------
+def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: int = None,
+                     flaechen: list = None, koerper: list = None, hs: dict = None) -> dict:
+    """Flaechen und Volumen vernetzen und den Nachlauf ausfuehren - in
+    derselben Folge wie die Oberflaeche (``gui.main._vernetzen``), aber
+    ohne Qt: Netzdichte, Kontaktfugen zuruecksetzen, Flaechen, Volumen
+    (parallel), Lasten verteilen, Kontaktfugen ausfuehren, starre Flaechen
+    koppeln, Stabenden anschliessen, Lager auf das Netz.
+
+    Das braucht, wer ohne Oberflaeche vernetzt: die Befehlszeile
+    (``statik3d --vernetzen``), die adaptive Vernetzung
+    (:mod:`statik3d.adaptiv`), die Pruefungen. ``hs`` ueberschreibt die
+    Kantenlaenge je Volumen (Name -> m), sonst kommt sie aus der Netzdichte.
+
+    Jeder Schritt misst sich selbst, wie in der Oberflaeche - am Drehlager
+    lag die Zeit nicht im Netz (119,9 s), sondern im Nachlauf: Kontaktfugen
+    203,6 s, Lasten verteilen 86,2 s (Protokoll vom 18.09.2026). Rueckgabe
+    {"elemente", "zeiten": {Schritt: s}, "abgebrochen", "prozesse"}.
+    """
+    import time
+    from . import fugen, netzdichte as nd, supports
+    from .importers import _common as C
+    log = [] if log is None else log
+    netz = model.netz
+    flaechen = list(model.flaechen.values()) if flaechen is None else list(flaechen)
+    koerper = list(model.koerper.values()) if koerper is None else list(koerper)
+    zeiten: dict = {}
+    t0 = time.time()
+    gewicht: dict = {}
+    try:
+        for name, _art, _h, n_, _grund, _teil in nd.vorschau(model, netz, flaechen, koerper)["zeilen"]:
+            gewicht[name] = max(1.0, float(n_ or 0.0))
+    except Exception:                       # noqa: BLE001 - dann zaehlt jedes Objekt gleich
+        gewicht = {}
+    # Die eigene Teilung jeder Flaeche bleibt erhalten (wie in der Oberflaeche)
+    eigene_teilung = {f.name: list(f.teilung or []) for f in flaechen}
+    hs_alle = nd.anwenden(model, netz, flaechen, koerper, log)
+    if hs:
+        hs_alle.update({k: float(v) for k, v in hs.items() if v})
+    C.say(log, f"Netzeinstellungen: {netz.beschreibung()}")
+    aus = {"elemente": 0, "abgebrochen": False, "prozesse": 1}
+    try:
+        fugen.kontaktfugen_zuruecksetzen(model, log)
+        # Alte Netze in **einem** Zug entfernen: elemente_loeschen nummeriert
+        # alles um, und je Objekt gerufen waere das am Drehlager 1483 Durchgaenge
+        # ueber 640 000 Elemente.
+        alt = [e for f in flaechen for e in (f.elemente or [])] + \
+              [e for k in koerper for e in (k.elemente or [])]
+        if alt:
+            model.elemente_loeschen(alt)
+            # Die Knoten des alten Netzes gleich mit: sonst stehen sie als
+            # „Knoten ohne Element" in der Abnahme und als Freiheitsgrade
+            # ohne Steifigkeit im Gleichungssystem (Platte mit Bohrung nach
+            # einer adaptiven Runde: 10 143 verwaiste Knoten, 20.09.2026).
+            # Ohne den Zusatz in model.py (Arbeitskopie einer anderen Sitzung)
+            # bleiben sie liegen - das Protokoll sagt es.
+            if hasattr(model, "netzknoten_loeschen"):
+                weg = model.netzknoten_loeschen()
+                if weg:
+                    C.say(log, f"{weg} Knoten des alten Netzes entfernt")
+            else:
+                C.warn(log, "Die Knoten des alten Netzes bleiben stehen (Model.netzknoten_loeschen "
+                            "fehlt in diesem Stand von model.py).")
+        for f in flaechen:
+            f.elemente = []
+        for k in koerper:
+            k.elemente = []
+        kanten: dict = {}
+        for f in flaechen:
+            aus["elemente"] += len(mesh_flaeche(model, f, log, kanten=kanten))
+        if koerper:
+            erg = koerper_vernetzen(model, koerper, hs=hs_alle, log=log, cache={},
+                                    workers=workers, fortschritt=fortschritt, gewicht=gewicht)
+            aus["elemente"] += erg["elemente"]
+            aus["prozesse"] = erg.get("prozesse", 1)
+            aus["abgebrochen"] = bool(erg.get("abgebrochen"))
+        zeiten["Netz erzeugen"] = time.time() - t0
+        t0 = time.time()
+        model.lasten_verteilen(log)
+        zeiten["Lasten verteilen"] = time.time() - t0
+        t0 = time.time()
+        fugen.kontaktfugen_ausfuehren(model, log)
+        zeiten["Kontaktfugen trennen"] = time.time() - t0
+        t0 = time.time()
+        fugen.starre_flaechen_koppeln(model, log)
+        zeiten["Starre Flächen koppeln"] = time.time() - t0
+        t0 = time.time()
+        fugen.stabenden_koppeln(model, log)
+        zeiten["Stabenden anschließen"] = time.time() - t0
+        t0 = time.time()
+        supports.lager_auf_netz(model, log)
+        zeiten["Lager auf das Netz"] = time.time() - t0
+    finally:
+        for f in flaechen:
+            if eigene_teilung.get(f.name):
+                f.teilung = eigene_teilung[f.name]
+    aus["zeiten"] = zeiten
+    lang = sorted(((k, v) for k, v in zeiten.items() if v >= 0.05), key=lambda x: -x[1])
+    C.say(log, f"Vernetzt: {aus['elemente']} Elemente in {sum(zeiten.values()):.1f} s"
+               + (f" auf {aus['prozesse']} Prozessen" if aus["prozesse"] > 1 else "")
+               + (" - abgebrochen" if aus["abgebrochen"] else "")
+               + ("; davon " + ", ".join(f"{k} {v:.1f} s" for k, v in lang) if lang else ""))
+    return aus

@@ -330,6 +330,14 @@ def diagnose(model) -> dict:
 #: nichts stillschweigend Uebergangenes.
 ABNAHME_ABDECKUNG = 0.95     #: Anteil der Kontaktseite mit Gegenflaeche
 ABNAHME_ELEMENTGUETE = 0.05  #: Formguete des schlechtesten Elements je Koerper
+#: Zweite, weichere Stufe (Anforderungen des Vernetzers, 3.4; der Anwender will
+#: keine Splitter): Elemente mit Formguete unter 0,10 werden je Koerper als
+#: WARNUNG genannt - Zahl, Koerper, die drei schlechtesten mit Nummer -, ohne
+#: die Rechnung anzuhalten. Am Drehlager bleiben nach der Nachvernetzung rund
+#: 200 in fuenf Koerpern (30 von 53 258 ... 74 von 38 564, schlechteste 0,025;
+#: Lauf der Loeser-Sitzung, 21.09.2026) - die Abnahme soll sie zeigen, nicht
+#: verschweigen.
+ABNAHME_SPLITTER = 0.10
 ABNAHME_RANDTREUE = 0.99     #: Netzhaut gegen Huelle je Koerper
 
 
@@ -348,9 +356,10 @@ class Befund:
     wert: float = 0.0
     grenze: float = 0.0
     text: str = ""
+    stufe: str = "FEHLER"                #: FEHLER haelt an, WARNUNG nennt nur
 
 
-def abnahme(model, guete: list = None) -> list:
+def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
     """Das Netz vor dem Rechnen abnehmen: je Verletzung ein :class:`Befund`.
 
     Ein ehrlicher Fehler vor dem Lauf ist mehr wert als ein unzuverlaessiges
@@ -373,6 +382,9 @@ def abnahme(model, guete: list = None) -> list:
     5. **Knoten ohne Element**, **Elementgueete** und **Randtreue je Koerper**.
 
     Rueckgabe die Liste der Befunde; leer heisst: das Netz ist abgenommen.
+    Mit ``warnungen=True`` stehen auch die Befunde der Stufe WARNUNG dabei
+    (Splitter unter :data:`ABNAHME_SPLITTER` je Koerper) - sie halten nichts
+    an, der Aufrufer trennt sie an ``Befund.stufe``.
     """
     aus: list = []
     aus += _abnahme_fugen(model)
@@ -381,6 +393,8 @@ def abnahme(model, guete: list = None) -> list:
     aus += _abnahme_kontaktpaare(model)
     aus += _abnahme_halteguete(model, guete)
     aus += _abnahme_netz(model)
+    if not warnungen:
+        aus = [b for b in aus if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
     return aus
 
 
@@ -687,6 +701,18 @@ def _abnahme_netz(model) -> list:
                     text=f"Volumen {name}: Element {i} hat die Formgüte "
                          f"{min(werte):.3f} (Grenze {ABNAHME_ELEMENTGUETE:.2f}) - "
                          "ein Splitter, der die Steifigkeitsmatrix verdirbt."))
+            # Zweite Stufe: Splitter unter 0,10 als WARNUNG mit Zahl und Nummern
+            qe = np.array([q[j] if np.isfinite(q[j]) else 1.0 for j in els], float)
+            splitter = np.nonzero(qe < ABNAHME_SPLITTER)[0]
+            if len(splitter):
+                reihe = splitter[np.argsort(qe[splitter])][:3]
+                namen = ", ".join(f"Element {els[int(j)]} ({qe[int(j)]:.3f})" for j in reihe)
+                aus.append(Befund(
+                    pruefung="Splitter", objekt=str(name), element=int(els[int(reihe[0])]),
+                    knoten=[int(x) for x in model.elements[int(els[int(reihe[0])])].nodes],
+                    wert=float(qe[int(reihe[0])]), grenze=ABNAHME_SPLITTER, stufe="WARNUNG",
+                    text=f"Volumen {name}: {len(splitter)} von {len(els)} Elementen mit Formgüte "
+                         f"unter {ABNAHME_SPLITTER:.2f} - schlechteste: {namen}."))
         rt = float(getattr(k, "randtreue", 0.0) or 0.0)
         if 0.0 < rt < ABNAHME_RANDTREUE:
             aus.append(Befund(
