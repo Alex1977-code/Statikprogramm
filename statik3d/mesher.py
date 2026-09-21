@@ -689,6 +689,18 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             els = SW.vernetzen(model, koerper, erk, h, log, cache, karten)
             if els:
                 return els
+        elif frei:
+            # Nicht als Ganzes Grundflaeche mal Weg: an Fussabdruecken in
+            # Bloecke zerlegen - gesweepte Bloecke, wo es geht, Tetraeder fuer
+            # den Rest, knotenkonform ueber die Schnittflaechen (statik3d.sweep).
+            try:
+                els = SW.zerlegt_vernetzen(model, koerper, h, log, cache, karten, ordnung, fortschritt)
+            except Exception as ex:           # noqa: BLE001 - dann der freie Vernetzer fuer das Ganze
+                els = []
+                C.warn(log, f"Volumen {koerper.name}: Zerlegen gescheitert ({str(ex)[:80]}) - "
+                            "der freie Vernetzer übernimmt den ganzen Körper.")
+            if els:
+                return els
     if frei:
         from .mesher3d import mesh_koerper_frei
         return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
@@ -1200,7 +1212,10 @@ def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,
                     T += [(p0, p1, p2), (p0, p2, p3)]
                 else:
                     T += [(p0, p1, p3), (p1, p2, p3)]
-        netze[f.name] = (FP.copy(), np.asarray(T, int).reshape(-1, 3), FK)
+        Q = [(a_ * n2 + b_, a_ * n2 + b_ + 1, (a_ + 1) * n2 + b_ + 1, (a_ + 1) * n2 + b_)
+             for a_ in range(len(idx) - 1) for b_ in range(n2 - 1)]
+        netze[f.name] = (FP.copy(), np.asarray(T, int).reshape(-1, 3), FK,
+                         np.asarray(Q, int).reshape(-1, 4), np.zeros((0, 3), int))
     return els
 
 

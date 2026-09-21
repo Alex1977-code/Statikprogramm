@@ -3474,6 +3474,57 @@ knotenkonform, mit einer anderen Interpolation auf der Vierecksdiagonale. Pyrami
 nächsten Schritte. Reine Quader (sechs Vierecke, acht Knoten) bleiben beim abgebildeten
 Hexaedernetz mit ihrer Teilung; `netz.sweep = False` schaltet den Sweep ab.
 
+**Kappen aus mehreren Flächen, Zylinder, Zerlegen an Fußabdrücken (21.09.2026).** Drei
+Erweiterungen, damit der Sweep über Platten hinauskommt:
+
+1. **Vier Flächen genügen.** Ein Zylinder ist in RFEM zwei Kreise (je zwei Halbbögen) und
+   zwei Halbmantel-Flächen — vier Flächen. Die Erkennung verlangte fünf, und jeder Bolzen,
+   Stift, jede Achse fiel an die Tetraeder; am Drehlager haben 48 von 108 Körpern vier
+   Flächen. Jetzt `KAPPEN_MIN_FLAECHEN = 4` (`test_zylinder_wird_gesweept`: Bolzen
+   r = 50 mm, l = 300 mm, h = 30 mm → 120 hex8 + 20 pent6, Abnahme ohne Befund, Deckellast
+   7,73 kN kommt an). Dabei fiel auf, dass die Singulärwertzerlegung der Ausgleichsebene
+   die Händigkeit zufällig liefert: an den Platten stimmte sie, am Kreis nicht, und alle
+   140 Elemente standen auf dem Kopf — der Rahmen wird jetzt rechtshändig erzwungen
+   (`sweep._rahmen`). Und zwei Halbbögen eines Kreises teilen sich beide Endknoten: die
+   Paarung Grundlinie ↔ Deckellinie vergleicht darum die abgetasteten Kurven, nicht nur
+   die Enden.
+2. **Der Grund darf eine Gruppe koplanarer Flächen sein** — der Deckel einer Platte mit
+   dem Fußabdruck einer Nabe als Öffnung *plus* der Fußabdruck selbst, die Schulter einer
+   abgesetzten Welle *plus* die Stirnfläche des dünnen Teils. Rand der Gruppe sind die
+   Linien, die nur eine ihrer Flächen benutzt; die inneren Linien fallen heraus. Jede
+   Fläche der Gruppe wird für sich vernetzt und **für sich zu Vierecken gepaart** (nie über
+   eine Flächengrenze), die Punkte auf den inneren Linien fallen über ihre Kennung
+   zusammen. Der Deckel bleibt eine einzelne Fläche: das Netz der Gruppe achtet die
+   inneren Linien, verschoben passt es auf die eine Deckelfläche — umgekehrt nicht.
+3. **Zerlegen an Fußabdrücken** (`sweep.zerlegen`): ist ein Körper nicht als Ganzes
+   Grundfläche mal Weg, wird jede ebene Fläche mit Öffnungen darauf geprüft, ob ein Teil
+   des Körpers nur über eine Öffnung mit dem Rest verbunden ist — eine Nabe auf der
+   Platte, der dünne Absatz an der Schulter, eine Rippe, die nicht durchläuft. Dann wird
+   der Fußabdruck als ebene **Schnittfläche** eingezogen (Hilfsgeometrie nur für diesen
+   Lauf, danach wieder aus dem Modell), und beide Teile werden für sich erkannt, bis zu
+   zwei Schnitte tief (`ZERLEGEN_TIEFE`). Sweepbare Blöcke laufen zuerst und legen das
+   Netz der Schnittfläche samt Vierecken vor (`model.flaechennetze` trägt jetzt fünf
+   Glieder: Punkte, Dreiecke, Kennung, Vierecke, Rest-Dreiecke); ein Block, der nicht
+   sweepbar bleibt, wird frei mit Tetraedern vernetzt und trifft die Schnittfläche
+   knotengenau. Alle Elemente gehören dem Körper; Lasten, Kontakt und Ergebnisse je Körper
+   ändern sich nicht. Was nicht geht: eine Bohrung, die durch Aufsatz *und* Träger läuft
+   — ihre Mantelfläche müsste geteilt werden, und Linien dafür gibt es nicht; dann bleibt
+   der Körper ganz und geht an die Tetraeder.
+
+Gemessen (21.09.2026, ein Prozess, `tests/test_sweep.py`):
+
+| Prüfkörper | ohne Zerlegen | mit Zerlegen | Abnahme | Last → Lager |
+|---|---|---|---|---|
+| Platte 0,4 × 0,3 × 0,1 m mit Nabe r = 60 mm, h = 80 mm, Kantenlänge 30 mm | 7 595 tet4 | **441 hex8 + 108 pent6**, ein Schnitt, 174 Knoten in der Schnittebene, keiner doppelt | ohne Befund | 11,12 kN = 11,12 kN |
+| abgesetzte Welle r = 50/30 mm, l = 200/150 mm, Kantenlänge 25 mm | 2 349 tet4 (+ 66 des dünnen Teils) | **446 hex8 + 28 pent6**, ein Schnitt, 61 Knoten in der Schulterebene, keiner doppelt | ohne Befund | 2,78 kN = 2,78 kN |
+
+Der **abgebildete Quader** (`mesher._hex_netz`, sechs Vierecke, acht Ecken) setzt seit
+21.09.2026 ebenfalls Randseiten, teilt seine Knoten mit Nachbarn über dieselben Schlüssel
+wie Sweep und freier Vernetzer und legt seine sechs Flächennetze vor; seine Kantenteilung
+folgt an Kanten, die ein Nachbar mitbenutzt, der Linienvorgabe (Quader 2 × 1 × 1 m mit
+Pyramide an der Wand und Feldkugel an einer Kante: 4 × 5 × 10 Hexaeder, 66 Wandknoten
+geteilt, Deckellast 2 000,0 kN kommt an — vorher 0 kN, `test_quader_randseiten_und_nachbar`).
+
 **Am Drehlager** (Zählung der Löser-Sitzung mit `sweep.erkennen` und `netzfeld.bedeutung`,
 21.09.2026; 108 Körper, 1 375 Flächen, 2 807 Linien, 645 934 Volumenelemente):
 
@@ -3486,11 +3537,12 @@ Hexaedernetz mit ihrer Teilung; `netz.sweep = False` schaltet den Sweep ab.
 | Nebenflächen (`bedeutung`) | 913 von 1 375 = 66,4 %; Nebenlinien 1 197 von 2 807 = 42,6 % |
 | Flächen mit Last | **2**; bedeutend sind fast nur Kontaktflächen (37 Bedingungen) und aus RFEM integrierte Objekte |
 
-Der Sweep, wie er heute steht, erreicht das Drehlager also nicht: sein Erfolgsmaß
-(Kragplatte 97,6 % gegen 68,4 %, ein Achtel der Elemente) kommt dort bei 0,4 % der
-Elemente an. Der Hebel ist das **Zerlegen** nicht sweepbarer Körper in sweepbare Blöcke —
-die 48 Körper mit vier und die 23 mit sechs Flächen sind die nahen, die acht großen
-brauchen es. Und `nebenflaechen_grob` spart am Drehlager **0,2 %** der Elemente (646 712 →
+Der Sweep, wie er am Morgen des 21.09.2026 stand, erreichte das Drehlager also nicht:
+sein Erfolgsmaß (Kragplatte 97,6 % gegen 68,4 %, ein Achtel der Elemente) kam dort bei
+0,4 % der Elemente an. Seit dem Abend gelten vier Flächen (die 48 Körper mit vier Flächen
+sind, wenn es Zylinder sind, sweepbar), Kappen-Gruppen und das Zerlegen an Fußabdrücken
+— was davon an den acht großen Körpern (48 bis 144 Flächen) greift, entscheidet das
+Modell und ist **nicht gemessen**. Und `nebenflaechen_grob` spart am Drehlager **0,2 %** der Elemente (646 712 →
 645 570; an der Platte waren es 55 %): die Bohrungen, die das Netz fein machen, sind dort
 fast alle Bohrungen *mit* Bolzen, Stift oder Achse — Kontaktflächen, und die bleiben fein.
 Was nach der Nachvernetzung an Splittern bleibt (Güte unter 0,10): 30 von 53 258, 74 von

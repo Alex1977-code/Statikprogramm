@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .model import Model
+from .model import Model, Flaeche, Volumenkoerper, _linienzug_punkte
 
 #: Wenigstens so viele Lagen ueber den Weg, wenn der Koerper elastisch bleibt
 #: und keine Mantellinie eine Vorgabe traegt. Der hex8 mit inkompatiblen Moden
@@ -86,6 +86,20 @@ TOL_REL = 1e-6
 # --------------------------------------------------------------------------
 # Erkennung
 # --------------------------------------------------------------------------
+#: Wenigstens so viele Randflaechen hat ein sweepbarer Koerper: zwei Kappen
+#: und zwei Waende. Bis zum 21.09.2026 waren es fuenf - damit fiel jeder
+#: **Zylinder** (zwei Kreise, zwei Halbmantel-Flaechen aus RFEM) an die
+#: Tetraeder; am Drehlager haben 48 von 108 Koerpern vier Flaechen (Zaehlung
+#: der Loeser-Sitzung), darunter die Bolzen, Stifte und Achsen.
+KAPPEN_MIN_FLAECHEN = 4
+
+#: Hoechstens so viele Schnitte hintereinander beim Zerlegen (zerlegen):
+#: ein Fussabdruck auf dem Ergebnis eines Fussabdrucks - Buchse auf Nabe auf
+#: Platte. Mehr Tiefe hat an den Pruefkoerpern nichts gebracht und kostet je
+#: Stufe einen Erkennungsdurchlauf ueber alle Flaechenpaare.
+ZERLEGEN_TIEFE = 2
+
+
 def _ringpunkte(model: Model, f, teilung: int = 24) -> list:
     """[Aussenrand, Oeffnung 1, ...] als Punktfolgen (abgetastet)."""
     aus = [np.asarray(f.randpunkte(model, teilung), float)]
@@ -93,13 +107,21 @@ def _ringpunkte(model: Model, f, teilung: int = 24) -> list:
     return aus
 
 
-def _passt(A: np.ndarray, B: np.ndarray, t: np.ndarray, tol: float) -> bool:
-    """Ist B die um t verschobene Punktmenge A (als Menge, nicht als Folge)?"""
+def _schleifenpunkte(model: Model, schleife: list, teilung: int = 24) -> np.ndarray:
+    """Ein geschlossener Linienzug als abgetastete Punktfolge."""
+    return np.asarray(_linienzug_punkte(model, list(schleife), teilung), float).reshape(-1, 3)
+
+
+def _deckungsgleich(A: np.ndarray, B: np.ndarray, t: np.ndarray, tol: float) -> bool:
+    """Liegt jeder Punkt von A + t auf B und jeder Punkt von B auf A + t?
+    Als Mengen, ohne gleiche Punktzahl - zwei Kappen duerfen ihren Rand in
+    verschieden viele Linien teilen, solange die Kurven dieselben sind."""
     from scipy.spatial import cKDTree
-    if len(A) != len(B) or not len(A):
+    if not len(A) or not len(B):
         return False
-    d, _ = cKDTree(B).query(A + t)
-    return bool(d.max() <= tol)
+    dA, _ = cKDTree(B).query(A + t)
+    dB, _ = cKDTree(A + t).query(B)
+    return bool(dA.max() <= tol and dB.max() <= tol)
 
 
 def _gerade(model: Model, name: str) -> "np.ndarray | None":
@@ -113,53 +135,6 @@ def _gerade(model: Model, name: str) -> "np.ndarray | None":
     return model.nodes[b] - model.nodes[a]
 
 
-def erkennen(model: Model, koerper) -> "dict | None":
-    """Grund, Deckel, Weg und Waende eines sweepbaren Koerpers - oder None.
-
-    Rueckgabe {"grund": Flaeche, "deckel": Flaeche, "t": Vektor,
-    "linien": {Linie des Grundes: Linie des Deckels},
-    "waende": {Linie des Grundes: Wandflaeche},
-    "mantel": {Knoten des Grundes: Mantellinie}, "tol": Toleranz}.
-    """
-    from .mesher3d import ist_eben
-    flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
-    if len(flaechen) < 5 or any(f is None for f in flaechen):
-        return None
-    ringe = {}
-    for f in flaechen:
-        try:
-            ringe[f.name] = _ringpunkte(model, f)
-        except Exception:                   # noqa: BLE001
-            return None
-        if len(ringe[f.name][0]) < 3:
-            return None
-    alle = np.vstack([R for rs in ringe.values() for R in rs])
-    gross = float(np.linalg.norm(alle.max(axis=0) - alle.min(axis=0)))
-    tol = max(TOL_REL * gross, 1e-12)
-    eben = {f.name: ist_eben(np.vstack(ringe[f.name])) for f in flaechen}
-    namen = {f.name: f for f in flaechen}
-    for i, fa in enumerate(flaechen):
-        if not eben[fa.name]:
-            continue
-        for fb in flaechen[i + 1:]:
-            if not eben[fb.name]:
-                continue
-            if len(fa.linien or []) != len(fb.linien or []) or len(fa.oeffnungen or []) != len(fb.oeffnungen or []):
-                continue
-            RA, RB = ringe[fa.name], ringe[fb.name]
-            if len(RA) != len(RB) or any(len(a) != len(b) for a, b in zip(RA, RB)):
-                continue
-            t = RB[0].mean(axis=0) - RA[0].mean(axis=0)
-            if float(np.linalg.norm(t)) <= tol:
-                continue
-            if not all(_passt(a, b, t, tol) for a, b in zip(RA, RB)):
-                continue
-            erg = _waende_pruefen(model, koerper, fa, fb, t, tol, namen)
-            if erg is not None:
-                return erg
-    return None
-
-
 def _linienenden(model: Model, name: str) -> "tuple | None":
     ln = model.lines.get(name)
     if ln is None or len(ln.nodes) < 2:
@@ -170,18 +145,200 @@ def _linienenden(model: Model, name: str) -> "tuple | None":
     return a, b
 
 
-def _waende_pruefen(model: Model, koerper, fa, fb, t: np.ndarray, tol: float, namen: dict) -> "dict | None":
+def _linien_von(f) -> set:
+    """Alle Linien einer Flaeche: Rand und Oeffnungen."""
+    aus = set(f.linien or [])
+    for loch in (f.oeffnungen or []):
+        aus.update(loch)
+    return aus
+
+
+def _schleifen(model: Model, linien) -> "list | None":
+    """Eine Linienmenge in geschlossene Zuege ordnen: [[Linie, ...], ...] im
+    Umlauf, der groesste Zug zuerst - None, wenn ein Zug nicht schliesst."""
+    from .mesher3d import seiten_im_umlauf
+    linien = list(dict.fromkeys(linien))
+    if not linien:
+        return []
+    vater: dict = {}
+
+    def wurzel(x):
+        while vater.get(x, x) != x:
+            vater[x] = vater.get(vater[x], vater[x])
+            x = vater[x]
+        return x
+    enden = {}
+    for name in linien:
+        e = _linienenden(model, name)
+        if e is None:
+            return None
+        enden[name] = e
+        vater.setdefault(e[0], e[0])
+        vater.setdefault(e[1], e[1])
+        ra, rb = wurzel(e[0]), wurzel(e[1])
+        if ra != rb:
+            vater[ra] = rb
+    gruppen: dict = {}
+    for name in linien:
+        gruppen.setdefault(wurzel(enden[name][0]), []).append(name)
+    aus = []
+    for teil in gruppen.values():
+        st = seiten_im_umlauf(model, teil)
+        if not st or len(st) != len(teil):
+            return None
+        aus.append([name for name, _k in st])
+
+    def ausdehnung(schleife):
+        P = _schleifenpunkte(model, schleife)
+        return float(np.linalg.norm(P.max(axis=0) - P.min(axis=0))) if len(P) else 0.0
+    aus.sort(key=ausdehnung, reverse=True)
+    return aus
+
+
+def _kappen_kandidaten(model: Model, flaechen: list, tol: float) -> list:
+    """Moegliche Kappen: jede ebene Flaeche fuer sich - und jede **Gruppe**
+    koplanarer, ueber Linien verbundener ebener Flaechen (eine Platte, deren
+    Deckel eine Nabe traegt: Deckelflaeche mit Fussabdruck als Oeffnung plus
+    der Fussabdruck selbst). Rueckgabe [(Flaechen, Schleifen, Punkte je
+    Schleife)]; die Schleifen einer Gruppe sind die Linien, die nur **eine**
+    ihrer Flaechen benutzt - die inneren Linien zwischen den Flaechen fallen
+    heraus."""
+    from .mesher3d import ist_eben, ausgleichsebene
+    daten: dict = {}
+    for f in flaechen:
+        schleifen = [list(f.linien or [])] + [list(loch) for loch in (f.oeffnungen or [])]
+        try:
+            pts = [_schleifenpunkte(model, sch) for sch in schleifen]
+        except Exception:                   # noqa: BLE001
+            continue
+        if any(len(p) < 3 for p in pts):
+            continue
+        alle = np.vstack(pts)
+        if not ist_eben(alle):
+            continue
+        c, _e1, _e2, n, _abw = ausgleichsebene(alle)
+        daten[f.name] = (f, schleifen, pts, np.asarray(n, float), float(n @ c))
+    kand = [([d[0]], d[1], d[2]) for d in daten.values()]
+    namen = list(daten)
+    vater = {x: x for x in namen}
+
+    def wurzel(x):
+        while vater[x] != x:
+            vater[x] = vater[vater[x]]
+            x = vater[x]
+        return x
+    for i, a_ in enumerate(namen):
+        fa, _s, _p, na, da = daten[a_]
+        La = _linien_von(fa)
+        for b_ in namen[i + 1:]:
+            fb, _s2, _p2, nb, db = daten[b_]
+            cosw = float(na @ nb)
+            if abs(abs(cosw) - 1.0) > 1e-6 or abs(cosw * db - da) > tol:
+                continue                    # nicht dieselbe Ebene
+            if not (La & _linien_von(fb)):
+                continue                    # nicht verbunden
+            ra, rb = wurzel(a_), wurzel(b_)
+            if ra != rb:
+                vater[ra] = rb
+    gruppen: dict = {}
+    for x in namen:
+        gruppen.setdefault(wurzel(x), []).append(x)
+    for mitglieder in gruppen.values():
+        if len(mitglieder) < 2:
+            continue
+        fl = [daten[x][0] for x in mitglieder]
+        zaehl: dict = {}
+        for f in fl:
+            for lname in _linien_von(f):
+                zaehl[lname] = zaehl.get(lname, 0) + 1
+        aussen = [lname for lname, k in zaehl.items() if k == 1]
+        schleifen = _schleifen(model, aussen)
+        if not schleifen:
+            continue
+        pts = [_schleifenpunkte(model, sch) for sch in schleifen]
+        if any(len(p) < 3 for p in pts):
+            continue
+        kand.append((fl, schleifen, pts))
+    return kand
+
+
+def erkennen(model: Model, koerper) -> "dict | None":
+    """Grund, Deckel, Weg und Waende eines sweepbaren Koerpers - oder None.
+
+    Rueckgabe {"grund": erste Grundflaeche, "grund_gruppe": [Grundflaechen],
+    "grund_ringe": [[Linien im Umlauf], ...] (Aussenrand zuerst), "deckel":
+    Flaeche, "t": Vektor, "linien": {Linie des Grundes: Linie des Deckels},
+    "waende": {Linie des Grundes: Wandflaeche}, "mantel": {Knoten des
+    Grundes: Mantellinie}, "tol": Toleranz}.
+
+    Der Grund darf eine **Gruppe** koplanarer Flaechen sein (Platte mit
+    Fussabdruck einer Nabe, Schulter einer abgesetzten Welle), der Deckel ist
+    immer eine einzelne Flaeche: das Netz der Gruppe achtet die inneren Linien,
+    verschoben passt es auf die eine Deckelflaeche - umgekehrt nicht.
+    """
+    flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
+    if len(flaechen) < KAPPEN_MIN_FLAECHEN or any(f is None for f in flaechen):
+        return None
+    try:
+        alle = np.vstack([_schleifenpunkte(model, list(f.linien or [])) for f in flaechen])
+    except Exception:                       # noqa: BLE001
+        return None
+    if not len(alle):
+        return None
+    gross = float(np.linalg.norm(alle.max(axis=0) - alle.min(axis=0)))
+    tol = max(TOL_REL * gross, 1e-12)
+    kand = _kappen_kandidaten(model, flaechen, tol)
+    einzeln = [k for k in kand if len(k[0]) == 1]
+    namen = {f.name: f for f in flaechen}
+    for grund in kand:
+        grund_namen = {f.name for f in grund[0]}
+        for deckel in einzeln:
+            if deckel[0][0].name in grund_namen:
+                continue
+            erg = _kappen_pruefen(model, grund, deckel, tol, namen)
+            if erg is not None:
+                return erg
+    return None
+
+
+def _kappen_pruefen(model: Model, grund: tuple, deckel: tuple, tol: float, namen: dict) -> "dict | None":
+    """Ist der Deckel die um t verschobene Kopie des Grundes, Schleife fuer
+    Schleife, und sind alle uebrigen Flaechen Waende?"""
+    fl_g, schleifen_g, pts_g = grund
+    fl_d, schleifen_d, pts_d = deckel
+    if len(schleifen_g) != len(schleifen_d):
+        return None
+    t = pts_d[0].mean(axis=0) - pts_g[0].mean(axis=0)
+    if float(np.linalg.norm(t)) <= tol:
+        return None
+    frei = list(range(len(schleifen_d)))
+    for P in pts_g:
+        treffer = None
+        for j in frei:
+            if _deckungsgleich(P, pts_d[j], t, tol):
+                treffer = j
+                break
+        if treffer is None:
+            return None
+        frei.remove(treffer)
+    la = [x for sch in schleifen_g for x in sch]
+    lb = [x for sch in schleifen_d for x in sch]
+    grund_namen = {f.name for f in fl_g}
+    rest = [f for f in namen.values() if f.name not in grund_namen and f.name != fl_d[0].name]
+    erg = _waende_pruefen(model, la, lb, t, tol, rest)
+    if erg is None:
+        return None
+    erg.update({"grund": fl_g[0], "grund_gruppe": list(fl_g),
+                "grund_ringe": [list(sch) for sch in schleifen_g],
+                "deckel": fl_d[0], "t": np.asarray(t, float), "tol": tol})
+    return erg
+
+
+def _waende_pruefen(model: Model, la: list, lb: list, t: np.ndarray, tol: float, rest: list) -> "dict | None":
     """Jede uebrige Randflaeche muss eine Wand zwischen einer Grundlinie und
     ihrer Deckellinie sein, mit zwei geraden Mantellinien laengs t."""
-    def linien(f):
-        out = list(f.linien or [])
-        for loch in (f.oeffnungen or []):
-            out += list(loch)
-        return out
-    la, lb = linien(fa), linien(fb)
     if len(la) != len(lb):
         return None
-    # Linienpaare ueber die verschobenen Endknoten
     enden_b = {}
     for name in lb:
         e = _linienenden(model, name)
@@ -189,28 +346,39 @@ def _waende_pruefen(model: Model, koerper, fa, fb, t: np.ndarray, tol: float, na
             return None
         enden_b[name] = e
     paare = {}
+
+    def abtasten(name):
+        try:
+            return np.asarray(model.lines[name].punkte(model, 8), float).reshape(-1, 3)
+        except Exception:                   # noqa: BLE001
+            return None
     for name in la:
         e = _linienenden(model, name)
         if e is None:
             return None
         pa, pb = model.nodes[e[0]] + t, model.nodes[e[1]] + t
         treffer = None
+        Pa = None
         for nb, (c, d) in enden_b.items():
             if nb in paare.values():
                 continue
             qc, qd = model.nodes[c], model.nodes[d]
             if ((np.linalg.norm(pa - qc) <= tol and np.linalg.norm(pb - qd) <= tol)
                     or (np.linalg.norm(pa - qd) <= tol and np.linalg.norm(pb - qc) <= tol)):
-                treffer = nb
-                break
+                # Gleiche Endknoten reichen nicht: die zwei Halbboegen eines
+                # Kreises teilen sich beide Enden. Erst die Kurve entscheidet.
+                if Pa is None:
+                    Pa = abtasten(name)
+                Pb = abtasten(nb)
+                if Pa is None or Pb is None or _deckungsgleich(Pa, Pb, t, tol):
+                    treffer = nb
+                    break
         if treffer is None:
             return None
         paare[name] = treffer
-    # Mantellinien: je Grundknoten genau eine gerade Linie mit Vektor +-t
     knoten_a = {k for name in la for k in _linienenden(model, name)}
     mantel = {}
     waende = {}
-    rest = [f for f in namen.values() if f.name not in (fa.name, fb.name)]
     if len(rest) != len(la):
         return None
     for w in rest:
@@ -222,32 +390,34 @@ def _waende_pruefen(model: Model, koerper, fa, fb, t: np.ndarray, tol: float, na
         senk = [x for x in wl if x not in paare and x not in paare.values()]
         if len(grund) != 1 or len(deckel) != 1 or len(senk) != 2 or paare[grund[0]] != deckel[0]:
             return None
-        for s in senk:
-            v = _gerade(model, s)
+        for s_ in senk:
+            v = _gerade(model, s_)
             if v is None:
                 return None
             if not (np.linalg.norm(v - t) <= tol or np.linalg.norm(v + t) <= tol):
                 return None
-            e = _linienenden(model, s)
+            e = _linienenden(model, s_)
             unten = e[0] if e[0] in knoten_a else e[1]
             if unten not in knoten_a:
                 return None
-            if mantel.get(unten, s) != s:
+            if mantel.get(unten, s_) != s_:
                 return None
-            mantel[unten] = s
+            mantel[unten] = s_
         waende[grund[0]] = w
     if len(waende) != len(la) or set(mantel) != knoten_a:
         return None
-    return {"grund": fa, "deckel": fb, "t": np.asarray(t, float), "linien": paare,
-            "waende": waende, "mantel": mantel, "tol": tol}
+    return {"linien": paare, "waende": waende, "mantel": mantel}
 
 
 def sweepbar(model: Model, koerper) -> bool:
-    """Laesst sich der Koerper sweepen (und ist das eingeschaltet)?"""
+    """Laesst sich der Koerper sweepen - unmittelbar oder nach dem Zerlegen an
+    Fussabdruecken - (und ist das eingeschaltet)?"""
     if not bool(getattr(getattr(model, "netz", None), "sweep", True)):
         return False
     try:
-        return erkennen(model, koerper) is not None
+        if erkennen(model, koerper) is not None:
+            return True
+        return zerlegbar(model, koerper)
     except Exception:                       # noqa: BLE001 - eine Erkennung darf nie sperren
         return False
 
@@ -452,20 +622,35 @@ def lagenvorgabe(model: Model, koerper, hs: dict = None, karten: tuple = None,
             erk = erkennen(model, k)
         except Exception:                        # noqa: BLE001 - dann kein Sweep, keine Vorgabe
             erk = None
+        bloecke, schnitte = [(list(k.flaechen or []), erk)], []
         if erk is None:
-            continue
-        flaechen = [model.flaechen[x] for x in k.flaechen]
+            try:
+                bl, schnitte = zerlegen(model, k)
+            except Exception:                    # noqa: BLE001
+                bl, schnitte = None, []
+            bloecke = bl or []
         h = M3._kantenlaenge(model, k, float(hs.get(k.name, 0.0) or 0.0))
-        teilung = M3.Linienteilung(model, flaechen, h, h_linien, h_flaechen, gemeinsam)
-        mantel = set(erk["mantel"].values())
-        # Nur die Mantellinien, die ein Nachbar mitbenutzt, bringen ihre
-        # Kartenteilung ein. Die eigenen nicht: ihre Karte traegt die Regel
-        # „Linie neben einer feineren" (_linien_wachsen_lassen), und die gab
-        # der Kragplatte 10 statt 2 Lagen, 4 473 statt 1 491 Knoten (21.09.2026,
-        # tests.test_sweep.test_kragplatte_tet4_gegen_hex8).
-        gem = [s for s in mantel if s in teilung.gem_linien]
-        L = max([_lagen_aus_weg(model, erk, h)] + [int(teilung.n.get(s, 1)) for s in gem])
-        wunsch.append((k.name, mantel, L))
+        for namen, erk_b in bloecke:
+            if erk_b is None:
+                continue
+            flaechen = [model.flaechen[x] for x in namen]
+            teilung = M3.Linienteilung(model, flaechen, h, h_linien, h_flaechen, gemeinsam)
+            mantel = set(erk_b["mantel"].values())
+            # Nur die Mantellinien, die ein Nachbar mitbenutzt, bringen ihre
+            # Kartenteilung ein. Die eigenen nicht: ihre Karte traegt die Regel
+            # „Linie neben einer feineren" (_linien_wachsen_lassen), und die gab
+            # der Kragplatte 10 statt 2 Lagen, 4 473 statt 1 491 Knoten (21.09.2026,
+            # tests.test_sweep.test_kragplatte_tet4_gegen_hex8).
+            gem = [s for s in mantel if s in teilung.gem_linien]
+            L = max([_lagen_aus_weg(model, erk_b, h)] + [int(teilung.n.get(s, 1)) for s in gem])
+            wunsch.append((k.name, mantel, L))
+            # Gepaarte Kappenlinien (Grund <-> Deckel) muessen gleich geteilt
+            # sein - modellweit, denn eine davon kann einem Nachbarn gehoeren.
+            for la_, lb_ in erk_b["linien"].items():
+                na_, nb_ = int(teilung.n.get(la_, 1)), int(teilung.n.get(lb_, 1))
+                if na_ != nb_ or la_ in teilung.gem_linien or lb_ in teilung.gem_linien:
+                    wunsch.append((k.name, {la_, lb_}, max(na_, nb_)))
+        schnitte_entfernen(model, schnitte)
     vorgabe: dict = {}
     geaendert = True
     while geaendert:                             # Ketten ueber gemeinsame Mantellinien
@@ -502,16 +687,111 @@ def _deckel_kennung(model: Model, erk: dict, kenn, teilung) -> tuple:
         return None
     if kenn[0] == "K":
         knoten = int(kenn[1])
+        if knoten not in erk["mantel"]:      # Ecke einer inneren Linie der Kappen-Gruppe
+            return None
         oben = _linienenden(model, erk["mantel"][knoten])
         return ("K", oben[0] if oben[1] == knoten else oben[1])
     _, name, k = kenn
-    name_b = erk["linien"][name]
+    name_b = erk["linien"].get(name)
+    if name_b is None:                       # innere Linie einer Kappen-Gruppe: im Deckel ein Flaechenpunkt
+        return None
     # Laufen beide Linien in derselben Richtung? (erster Punkt der Teilung)
     pa = teilung.punkte(name)
     pb = teilung.punkte(name_b)
     if len(pa) and len(pb) and np.linalg.norm(pb[0] - (pa[0] + erk["t"])) <= erk["tol"]:
         return ("L", name_b, k)
     return ("L", name_b, len(pa) - 1 - k)
+
+
+def _rahmen(P: np.ndarray, t: np.ndarray) -> tuple:
+    """(Mittelpunkt, e1, e2, n) einer ebenen Punktwolke - **rechtshaendig**
+    (e1 x e2 = n) und mit n laengs t. Die Singulaerwertzerlegung in
+    mesher3d.ausgleichsebene liefert die Haendigkeit zufaellig: an den
+    Platten stimmte sie, am Zylinder (Kreis aus zwei Boegen) nicht, und alle
+    140 Elemente standen auf dem Kopf (21.09.2026)."""
+    from . import mesher3d as M3
+    c, e1, e2, n, _abw = M3.ausgleichsebene(P)
+    if float(n @ t) < 0:
+        n = -n
+    if float(np.cross(e1, e2) @ n) < 0:
+        e2 = -e2
+    return c, e1, e2, n
+
+
+def _grundnetz(model: Model, koerper, gruppe: list, teilung, erk: dict, log: list) -> "dict | None":
+    """Das Netz der Grundflaeche(n) in einem gemeinsamen Index: Punkte,
+    Kennungen, je Flaeche ihre Vierecke und Dreiecke.
+
+    Jede Flaeche der Gruppe wird fuer sich vernetzt (mesher3d.flaechennetz -
+    das liefert auch ein vorgegebenes Netz samt Vierecken, wenn ein Nachbar
+    oder ein anderer Block diese Flaeche schon gelegt hat) und fuer sich zu
+    Vierecken gepaart; die Punkte auf den inneren Linien zwischen zwei
+    Flaechen fallen ueber ihre Kennung zusammen. Gepaart wird **je Flaeche**,
+    nie ueber eine Flaechengrenze: nur so legt ein zweiter Block, der dieselbe
+    Flaeche als Kappe hat, dieselben Vierecke darauf.
+    """
+    from . import mesher3d as M3
+    from .importers import _common as C
+    tol = 1e-9
+
+    def schluessel(p):
+        return (round(float(p[0]) / tol), round(float(p[1]) / tol), round(float(p[2]) / tol))
+    P: list = []
+    kenn: list = []
+    fl_punkt: list = []
+    index: dict = {}
+    je_flaeche: list = []
+    netze = getattr(model, "flaechennetze", None) or {}
+    for f in gruppe:
+        Pf, Tf, meldung, grob, kf = M3.flaechennetz(model, f, teilung)
+        if meldung or not len(Tf) or grob:
+            C.say(log, f"Volumen {koerper.name}: nicht gesweept - Grundfläche {f.name}: "
+                       f"{meldung or 'Randlinien zu grob geteilt'}.")
+            return None
+        Pf = np.asarray(Pf, float)
+        Tf = np.asarray(Tf, int).reshape(-1, 3)
+        kf = list(kf) + [None] * (len(Pf) - len(kf))
+        c, e1, e2, nf = _rahmen(Pf, erk["t"])
+        P2f = np.stack([(Pf - c) @ e1, (Pf - c) @ e2], axis=1)
+        a_, b_, d_ = P2f[Tf[:, 0]], P2f[Tf[:, 1]], P2f[Tf[:, 2]]
+        fl2 = (b_[:, 0] - a_[:, 0]) * (d_[:, 1] - a_[:, 1]) - (d_[:, 0] - a_[:, 0]) * (b_[:, 1] - a_[:, 1])
+        Tf = np.where((fl2 < 0)[:, None], Tf[:, [0, 2, 1]], Tf)
+        vorgabe = netze.get(f.name)
+        Qf = Df = None
+        if vorgabe is not None and len(vorgabe) >= 5 and vorgabe[3] is not None:
+            Qf = np.asarray(vorgabe[3], int).reshape(-1, 4)
+            Df = np.asarray(vorgabe[4], int).reshape(-1, 3)
+            if len(Qf):
+                # linkslaeufig wie die Dreiecke
+                q0, q1, q2, q3 = (P2f[Qf[:, i]] for i in range(4))
+                fq = ((q0[:, 0] * q1[:, 1] - q1[:, 0] * q0[:, 1]) + (q1[:, 0] * q2[:, 1] - q2[:, 0] * q1[:, 1])
+                      + (q2[:, 0] * q3[:, 1] - q3[:, 0] * q2[:, 1]) + (q3[:, 0] * q0[:, 1] - q0[:, 0] * q3[:, 1]))
+                Qf = np.where((fq < 0)[:, None], Qf[:, ::-1], Qf)
+            if len(Df):
+                a_, b_, d_ = P2f[Df[:, 0]], P2f[Df[:, 1]], P2f[Df[:, 2]]
+                fd = (b_[:, 0] - a_[:, 0]) * (d_[:, 1] - a_[:, 1]) - (d_[:, 0] - a_[:, 0]) * (b_[:, 1] - a_[:, 1])
+                Df = np.where((fd < 0)[:, None], Df[:, [0, 2, 1]], Df)
+        if Qf is None:
+            Qf, Df = paaren(P2f, Tf)
+        Qf = np.asarray(Qf, int).reshape(-1, 4)
+        Df = np.asarray(Df, int).reshape(-1, 3)
+        lokal = np.zeros(len(Pf), int)
+        for i in range(len(Pf)):
+            key = kf[i] if kf[i] is not None else ("P", f.name, schluessel(Pf[i]))
+            j = index.get(key)
+            if j is None:
+                j = len(P)
+                index[key] = j
+                P.append(Pf[i])
+                kenn.append(kf[i])
+                fl_punkt.append(f.name)
+            lokal[i] = j
+        je_flaeche.append({"flaeche": f, "vierecke": lokal[Qf] if len(Qf) else np.zeros((0, 4), int),
+                           "dreiecke": lokal[Df] if len(Df) else np.zeros((0, 3), int),
+                           "P": Pf, "T": Tf, "kenn": kf, "Q": Qf, "D": Df})
+    if not P:
+        return None
+    return {"P": np.asarray(P, float), "kenn": kenn, "flaeche_von_punkt": fl_punkt, "je_flaeche": je_flaeche}
 
 
 def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cache: dict = None,
@@ -522,8 +802,11 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     Protokoll, der Aufrufer nimmt den freien Vernetzer)."""
     from .importers import _common as C
     from . import mesher3d as M3
-    from .assemble import SOLID_FACES
+    from scipy.spatial import cKDTree
     grund, deckel, t = erk["grund"], erk["deckel"], erk["t"]
+    gruppe = list(erk.get("grund_gruppe") or [grund])
+    ringe = [list(r) for r in (erk.get("grund_ringe")
+                               or ([list(grund.linien or [])] + [list(loch) for loch in (grund.oeffnungen or [])]))]
     flaechen = [model.flaechen[x] for x in koerper.flaechen]
     if karten:
         h_flaechen, h_linien, gemeinsam = karten[:3]
@@ -536,49 +819,57 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     if not L:
         C.say(log, f"Volumen {koerper.name}: nicht gesweept - {grund_nein}.")
         return []
-    # ---- Grundflaeche -----------------------------------------------------
-    P, T, meldung, grob, kenn = M3.flaechennetz(model, grund, teilung)
-    if meldung or not len(T) or grob:
-        C.say(log, f"Volumen {koerper.name}: nicht gesweept - Grundfläche {grund.name}: "
-                   f"{meldung or 'Randlinien zu grob geteilt'}.")
+    # Gepaarte Kappenlinien gleich teilen: der Deckel bekommt die Punkte des
+    # Grundes verschoben, seine Linien muessen dieselbe Zahl Abschnitte tragen
+    for la_, lb_ in erk["linien"].items():
+        n_ = max(int(teilung.n.get(la_, 1)), int(teilung.n.get(lb_, 1)))
+        teilung.n[la_] = n_
+        teilung.n[lb_] = n_
+    # ---- Grundflaeche(n) -----------------------------------------------------
+    basis = _grundnetz(model, koerper, gruppe, teilung, erk, log)
+    if basis is None:
         return []
-    P = np.asarray(P, float)
-    T = np.asarray(T, int)
-    kenn = list(kenn) + [None] * (len(P) - len(kenn))
-    # Ebene der Grundflaeche, Normale in Richtung des Weges
-    c, e1, e2, n, _abw = M3.ausgleichsebene(P)
-    if float(n @ t) < 0:
-        n, e2 = -n, -e2
+    P, kenn, je_flaeche = basis["P"], basis["kenn"], basis["je_flaeche"]
+    c, e1, e2, n = _rahmen(P, t)
     P2 = np.stack([(P - c) @ e1, (P - c) @ e2], axis=1)
-    a, b, d = P2[T[:, 0]], P2[T[:, 1]], P2[T[:, 2]]
-    flaeche2 = (b[:, 0] - a[:, 0]) * (d[:, 1] - a[:, 1]) - (d[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])
-    T = np.where((flaeche2 < 0)[:, None], T[:, [0, 2, 1]], T)
-    vierecke, dreiecke = paaren(P2, T)
+    vierecke = np.vstack([jf["vierecke"] for jf in je_flaeche]) if je_flaeche else np.zeros((0, 4), int)
+    dreiecke = np.vstack([jf["dreiecke"] for jf in je_flaeche]) if je_flaeche else np.zeros((0, 3), int)
+    flaeche_je_viereck = [jf["flaeche"] for jf in je_flaeche for _q in range(len(jf["vierecke"]))]
+    flaeche_je_dreieck = [jf["flaeche"] for jf in je_flaeche for _d in range(len(jf["dreiecke"]))]
+    # Flaecheninhalt in der Ebene (fuer die Rauminhaltsprobe)
+    A_grund = 0.0
+    if len(vierecke):
+        q0, q1, q2, q3 = (P2[vierecke[:, i]] for i in range(4))
+        A_grund += 0.5 * float(np.abs((q0[:, 0] * q1[:, 1] - q1[:, 0] * q0[:, 1]) + (q1[:, 0] * q2[:, 1] - q2[:, 0] * q1[:, 1])
+                                       + (q2[:, 0] * q3[:, 1] - q3[:, 0] * q2[:, 1]) + (q3[:, 0] * q0[:, 1] - q0[:, 0] * q3[:, 1])).sum())
+    if len(dreiecke):
+        a_, b_, d_ = P2[dreiecke[:, 0]], P2[dreiecke[:, 1]], P2[dreiecke[:, 2]]
+        A_grund += 0.5 * float(np.abs((b_[:, 0] - a_[:, 0]) * (d_[:, 1] - a_[:, 1]) - (d_[:, 0] - a_[:, 0]) * (b_[:, 1] - a_[:, 1])).sum())
     # ---- Kanten des Randes -> Wandflaeche ----------------------------------
-    # Die Randpunkte stehen in P vorn, ring fuer ring in der Reihenfolge des
-    # Linienzugs (_dreiecke_2d haelt sie so); Herkunft je Strecke aus _linienzug.
-    ringe = [list(grund.linien or [])] + [list(loch) for loch in (grund.oeffnungen or [])]
+    # Die Randpunkte werden ueber die Koordinate im Netz gefunden (KD-Baum):
+    # bei einer Kappen-Gruppe stehen sie nicht mehr vorn im Punktfeld.
+    baum = cKDTree(P)
     kante_wand: dict = {}                    # gerichtete Randkante -> Grundlinie (beide Richtungen)
     wand_kanten: dict = {}                   # Grundlinie -> ihre Randkanten in Ringrichtung
-    basis = 0
+    rand_punkte: set = set()
     for lin in ringe:
         zug = _linienzug_herkunft(teilung, model, lin)
         if zug is None:
             C.say(log, f"Volumen {koerper.name}: nicht gesweept - Rand der Grundfläche schließt nicht.")
             return []
         pts, herkunft, _k = zug
-        m = len(pts)
-        if np.linalg.norm(pts - P[basis:basis + m], axis=1).max() > erk["tol"] * 10 + 1e-12:
+        d_, idx = baum.query(pts)
+        if len(pts) and d_.max() > erk["tol"] * 10 + 1e-12:
             C.say(log, f"Volumen {koerper.name}: nicht gesweept - Randpunkte der Grundfläche "
-                       "stehen nicht in der erwarteten Reihenfolge.")
+                       "fehlen im Flächennetz.")
             return []
+        m = len(pts)
         for i in range(m):
-            a_, b_ = basis + i, basis + (i + 1) % m
+            a_, b_ = int(idx[i]), int(idx[(i + 1) % m])
             kante_wand[(a_, b_)] = herkunft[i]
             kante_wand[(b_, a_)] = herkunft[i]
             wand_kanten.setdefault(herkunft[i], []).append((a_, b_))
-        basis += m
-    n_rand = basis
+            rand_punkte.add(a_)
     if set(wand_kanten) != set(erk["waende"]):
         C.say(log, f"Volumen {koerper.name}: nicht gesweept - Randlinien der Grundfläche und Wände "
                    "passen nicht zusammen.")
@@ -591,21 +882,20 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     for i in range(len(P)):
         zug_kenn[0][i] = kenn[i]
         zug_kenn[L][i] = _deckel_kennung(model, erk, kenn[i], teilung)
-        if kenn[i] is not None and kenn[i][0] == "K":
+        if kenn[i] is not None and kenn[i][0] == "K" and int(kenn[i][1]) in erk["mantel"]:
             for k in range(1, L):
                 zug_kenn[k][i] = _mantel_kennung(model, erk, int(kenn[i][1]), k, L)
-    # Flaeche je Punkt: Grund (Lage 0), Deckel (Lage L), Wand (Randpunkt dazwischen)
     wand_von_punkt = {}
     for (i, j), lin in kante_wand.items():
         wand_von_punkt.setdefault(i, erk["waende"][lin].name)
     for k in range(L + 1):
         X = P + k * schritt
         if k == 0:
-            fl = [grund.name] * len(P)
+            fl = list(basis["flaeche_von_punkt"])
         elif k == L:
             fl = [deckel.name] * len(P)
         else:
-            fl = [wand_von_punkt.get(i) if i < n_rand else None for i in range(len(P))]
+            fl = [wand_von_punkt.get(i) if i in rand_punkte else None for i in range(len(P))]
         knoten[k] = _knoten_anlegen(model, koerper, X, zug_kenn[k], fl, cache)
     # ---- Elemente ---------------------------------------------------------
     els_hex, els_keil = [], []
@@ -632,37 +922,41 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
         for qi, q in enumerate(vierecke):
             e = els_hex[k * n_q + qi]
             if k == 0:
-                grund.randseiten.append([e, 0])
+                flaeche_je_viereck[qi].randseiten.append([e, 0])
             if k == L - 1:
                 deckel.randseiten.append([e, 1])
-            for (a_, b_), s in seite_hex.items():
+            for (a_, b_), s_ in seite_hex.items():
                 lin = kante_wand.get((int(q[a_]), int(q[b_])))
                 if lin is not None:
-                    erk["waende"][lin].randseiten.append([e, s])
+                    erk["waende"][lin].randseiten.append([e, s_])
         for ti, tr in enumerate(dreiecke):
             e = els_keil[k * n_d + ti]
             if k == 0:
-                grund.randseiten.append([e, 0])
+                flaeche_je_dreieck[ti].randseiten.append([e, 0])
             if k == L - 1:
                 deckel.randseiten.append([e, 1])
-            for (a_, b_), s in seite_keil.items():
+            for (a_, b_), s_ in seite_keil.items():
                 lin = kante_wand.get((int(tr[a_]), int(tr[b_])))
                 if lin is not None:
-                    erk["waende"][lin].randseiten.append([e, s])
+                    erk["waende"][lin].randseiten.append([e, s_])
     # ---- Vorgegebene Flaechennetze fuer die Nachbarn -----------------------
+    # (Punkte, Dreiecke, Kennung, Vierecke, restliche Dreiecke): wer nur
+    # Dreiecke braucht, liest die ersten drei; ein zweiter gesweepter Koerper
+    # an derselben Flaeche nimmt die Vierecke und legt dieselben Hexaeder.
     netze = getattr(model, "flaechennetze", None)
     if netze is None:
         netze = model.flaechennetze = {}
+    for jf in je_flaeche:
+        netze[jf["flaeche"].name] = (np.asarray(jf["P"], float).copy(), np.asarray(jf["T"], int).copy(),
+                                     list(jf["kenn"]), np.asarray(jf["Q"], int).copy(), np.asarray(jf["D"], int).copy())
     T_voll = _dreiecke_aus(P2, vierecke, dreiecke)
-    netze[grund.name] = (P.copy(), T_voll.copy(), list(zug_kenn[0]))
-    netze[deckel.name] = (P + t, T_voll.copy(), list(zug_kenn[L]))
+    netze[deckel.name] = (P + t, T_voll.copy(), list(zug_kenn[L]), vierecke.copy(), dreiecke.copy())
     for lin, wand in erk["waende"].items():
         folge = _randfolge(wand_kanten[lin])
-        WP, WT, WK = _wandnetz(P, folge, schritt, L, zug_kenn)
-        netze[wand.name] = (WP, WT, WK)
+        WP, WT, WK, WQ = _wandnetz(P, folge, schritt, L, zug_kenn)
+        netze[wand.name] = (WP, WT, WK, WQ, np.zeros((0, 3), int))
     # ---- Rauminhalt: Grundflaeche mal Hoehe gegen die Elemente ---------------
     from .elements.solid import solid_volume
-    A_grund = 0.5 * float(np.abs(flaeche2).sum())
     V_soll = A_grund * abs(float(n @ t))
     V_ist = float(sum(solid_volume(model.elements[e].typ, model.nodes[model.elements[e].nodes]) for e in els))
     abw = abs(V_ist - V_soll) / V_soll if V_soll > 0 else 1.0
@@ -672,8 +966,9 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     koerper.netzgrund = ""
     koerper.netzkanten = []
     anteil = 100.0 * len(els_hex) / max(1, len(els))
+    grundname = grund.name if len(gruppe) == 1 else " + ".join(f.name for f in gruppe)
     C.say(log, f"Volumen {koerper.name}: {len(els_hex)} Hexaeder (hex8) + {len(els_keil)} Keile (pent6) "
-               f"gesweept - Grundfläche {grund.name} → {deckel.name}, {L} Lagen à "
+               f"gesweept - Grundfläche {grundname} → {deckel.name}, {L} Lagen à "
                f"{np.linalg.norm(schritt) * 1e3:.1f} mm, Kantenlänge {h * 1e3:.0f} mm, "
                f"{int(knoten.size)} Knoten, Hexaederanteil {anteil:.1f} %")
     C.say(log, f"  Volumen {V_ist:.6g} m^3 gegen {V_soll:.6g} m^3 aus Grundfläche mal Höhe "
@@ -705,20 +1000,22 @@ def _randfolge(kanten: list) -> list:
 
 def _wandnetz(P: np.ndarray, folge: list, schritt: np.ndarray, L: int, zug_kenn: list) -> tuple:
     """Das strukturierte Netz einer Wand: Randpunkte der Grundlinie x Lagen,
-    Vierecke in zwei Dreiecke (kuerzere Diagonale) - fuer den Nachbarn."""
+    Vierecke in zwei Dreiecke (kuerzere Diagonale) - fuer den Nachbarn; dazu
+    die Vierecke selbst fuer einen gesweepten Nachbarn."""
     m = len(folge)
     WP = np.vstack([P[folge] + k * schritt for k in range(L + 1)])
     WK = [zug_kenn[k][i] for k in range(L + 1) for i in folge]
-    T = []
+    T, Q = [], []
     for k in range(L):
         for s in range(m - 1):
             a, b = k * m + s, k * m + s + 1
             c, d = (k + 1) * m + s + 1, (k + 1) * m + s
+            Q.append((a, b, c, d))
             if np.linalg.norm(WP[a] - WP[c]) <= np.linalg.norm(WP[b] - WP[d]):
                 T += [(a, b, c), (a, c, d)]
             else:
                 T += [(a, b, d), (b, c, d)]
-    return WP, np.asarray(T, int).reshape(-1, 3), WK
+    return WP, np.asarray(T, int).reshape(-1, 3), WK, np.asarray(Q, int).reshape(-1, 4)
 
 
 def _dreiecke_aus(P2: np.ndarray, vierecke: np.ndarray, dreiecke: np.ndarray) -> np.ndarray:
@@ -776,6 +1073,180 @@ def _knoten_anlegen(model: Model, koerper, X: np.ndarray, kenn: list, flaechen: 
     if neue_punkte:
         model.add_nodes(np.asarray(neue_punkte, float))
     return neu
+
+
+# --------------------------------------------------------------------------
+# Zerlegen an Fussabdruecken
+# --------------------------------------------------------------------------
+def _fussabdruecke(model: Model, koerper, namen: list, F, nr: int):
+    """Die Aufsaetze auf der ebenen Flaeche F eines Koerpers: je Aufsatz die
+    Flaechen, die nur ueber Oeffnungen von F mit dem Rest verbunden sind, und
+    die **Schnittflaeche** (der Fussabdruck als ebene Flaeche in F). Eine
+    Nabe auf einer Platte, der duennere Teil einer abgesetzten Welle an der
+    Schulter, eine Rippe, die nicht durchlaeuft - alles, was RFEM als
+    Oeffnung in der Tragflaeche und eigene Flaechen darueber modelliert.
+
+    Ein Aufsatz, der auch den Aussenrand von F beruehrt, ist keiner (er
+    setzt die Wand fort); eine Bohrung, die durch Aufsatz **und** Traeger
+    laeuft, verbindet beide ueber ihre Mantelflaeche - dann gibt es keinen
+    Schnitt, denn die Mantelflaeche muesste geteilt werden, und Linien dafuer
+    gibt es nicht.
+    """
+    andere = [model.flaechen[x] for x in namen if x != F.name]
+    vater = {f.name: f.name for f in andere}
+
+    def wurzel(x):
+        while vater[x] != x:
+            vater[x] = vater[vater[x]]
+            x = vater[x]
+        return x
+    an_linie: dict = {}
+    for f in andere:
+        for lname in _linien_von(f):
+            an_linie.setdefault(lname, []).append(f.name)
+    for fs in an_linie.values():
+        for x in fs[1:]:
+            ra, rb = wurzel(fs[0]), wurzel(x)
+            if ra != rb:
+                vater[ra] = rb
+    komponenten: dict = {}
+    for f in andere:
+        komponenten.setdefault(wurzel(f.name), []).append(f.name)
+    ketten = [list(F.linien or [])] + [list(loch) for loch in (F.oeffnungen or [])]
+    for komp in komponenten.values():
+        Lk = set()
+        for x in komp:
+            Lk |= _linien_von(model.flaechen[x])
+        beruehrt = [j for j, kette in enumerate(ketten) if set(kette) & Lk]
+        if not beruehrt or 0 in beruehrt:
+            continue
+        pts = {j: _schleifenpunkte(model, ketten[j]) for j in beruehrt}
+        aussen = max(beruehrt, key=lambda j: float(np.linalg.norm(pts[j].max(axis=0) - pts[j].min(axis=0)))
+                     if len(pts[j]) else 0.0)
+        nr += 1
+        S = Flaeche(f"{koerper.name}§{nr}", list(ketten[aussen]),
+                    oeffnungen=[list(ketten[j]) for j in beruehrt if j != aussen],
+                    material=F.material or koerper.material)
+        yield list(komp), S
+
+
+def schnitte_entfernen(model: Model, schnitte: list) -> None:
+    """Die Schnittflaechen des Zerlegens wieder aus dem Modell nehmen - sie
+    sind Hilfsgeometrie fuer einen Vernetzungslauf, kein Teil des Modells."""
+    netze = getattr(model, "flaechennetze", None) or {}
+    for S in schnitte:
+        model.flaechen.pop(S.name, None)
+        netze.pop(S.name, None)
+
+
+def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
+    """Einen nicht sweepbaren Koerper an Fussabdruecken in Bloecke zerlegen.
+
+    Rueckgabe ([(Flaechennamen des Blocks, Erkennung oder None)],
+    Schnittflaechen) - die Schnittflaechen stehen danach in model.flaechen
+    und werden vom Aufrufer mit :func:`schnitte_entfernen` wieder entfernt;
+    (None, []) wenn kein Schnitt einen sweepbaren Block ergibt. Ein Block
+    ohne Erkennung wird frei (Tetraeder) vernetzt, mit dem Netz der
+    Schnittflaeche als Vorgabe - so passt er an die Hexaeder daneben.
+
+    Warum das der Hebel ist: am Drehlager tragen acht Koerper mit 48 bis 144
+    Flaechen 84,0 % der Elemente (Zaehlung der Loeser-Sitzung, 21.09.2026);
+    kein einziger ist als Ganzes Grundflaeche mal Weg. Was sich davon an
+    Fussabdruecken teilen laesst, entscheidet das Modell - hier ist an
+    Pruefkoerpern belegt: Platte mit Nabe und abgesetzte Welle werden zu je
+    zwei gesweepten Bloecken (tests.test_sweep).
+    """
+    schnitte: list = []
+
+    def block(namen):
+        return Volumenkoerper(koerper.name, list(namen), material=koerper.material,
+                              teilung=list(koerper.teilung or [4, 4, 4]))
+
+    def versuch(namen, tiefe):
+        try:
+            erk = erkennen(model, block(namen))
+        except Exception:                   # noqa: BLE001
+            erk = None
+        if erk is not None:
+            return [(list(namen), erk)]
+        if tiefe <= 0:
+            return [(list(namen), None)]
+        for F_name in list(namen):
+            F = model.flaechen.get(F_name)
+            if F is None or not (F.oeffnungen or []):
+                continue
+            for B_namen, S in _fussabdruecke(model, koerper, namen, F, len(schnitte)):
+                model.flaechen[S.name] = S
+                schnitte.append(S)
+                A_namen = [x for x in namen if x not in B_namen] + [S.name]
+                bl = versuch(A_namen, tiefe - 1) + versuch(list(B_namen) + [S.name], tiefe - 1)
+                if any(e is not None for _n, e in bl):
+                    return bl
+                # nichts gewonnen: Schnitt und alles, was darunter entstand, zuruecknehmen
+                for T_ in list(schnitte[schnitte.index(S):]):
+                    model.flaechen.pop(T_.name, None)
+                    schnitte.remove(T_)
+        return [(list(namen), None)]
+
+    bl = versuch(list(koerper.flaechen or []), tiefe)
+    if len(bl) <= 1 or not any(e is not None for _n, e in bl):
+        schnitte_entfernen(model, schnitte)
+        return None, []
+    return bl, schnitte
+
+
+def zerlegbar(model: Model, koerper) -> bool:
+    """Ergibt das Zerlegen wenigstens einen sweepbaren Block?"""
+    bl, schnitte = zerlegen(model, koerper)
+    schnitte_entfernen(model, schnitte)
+    return bool(bl)
+
+
+def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: dict = None,
+                      karten: tuple = None, ordnung: int = 0, fortschritt=None) -> list:
+    """Den Koerper zerlegen und Block fuer Block vernetzen: die sweepbaren
+    Bloecke zuerst (sie legen die Netze der Schnittflaechen vor), die
+    uebrigen frei mit Tetraedern. Alle Elemente gehoeren dem Koerper.
+    Rueckgabe die Elementnummern; leer, wenn nichts zu zerlegen war."""
+    from .importers import _common as C
+    from . import mesher3d as M3
+    bl, schnitte = zerlegen(model, koerper)
+    if not bl:
+        return []
+    try:
+        C.say(log, f"Volumen {koerper.name}: nicht als Ganzes sweepbar - an "
+                   f"{len(schnitte)} Fußabdruck(en) in {len(bl)} Blöcke zerlegt "
+                   f"({sum(1 for _n, e in bl if e is not None)} davon sweepbar)")
+        els: list = []
+        n_frei = 0
+        randtreue = 1.0
+        for namen, erk in sorted(bl, key=lambda x: x[1] is None):
+            pseudo = Volumenkoerper(koerper.name, list(namen), material=koerper.material,
+                                    teilung=list(koerper.teilung or [4, 4, 4]))
+            e = []
+            if erk is not None:
+                e = vernetzen(model, pseudo, erk, h, log, cache, karten)
+            if not e:
+                n_frei += 1
+                e = M3.mesh_koerper_frei(model, pseudo, h=h, log=log, cache=cache, ordnung=ordnung,
+                                         fortschritt=fortschritt, karten=karten)
+                randtreue = min(randtreue, float(getattr(pseudo, "randtreue", 0.0) or 0.0))
+            els += [int(x) for x in (e or [])]
+        koerper.elemente = els
+        z = {"hex8": 0, "pent6": 0, "tet4": 0}
+        for e in els:
+            typ = model.elements[e].typ
+            z[typ] = z.get(typ, 0) + 1
+        koerper.kommentar = (f"{z.get('hex8', 0)} Hexaeder + {z.get('pent6', 0)} Keile + "
+                             f"{z.get('tet4', 0) + z.get('tet10', 0)} Tetraeder (zerlegt in {len(bl)} Blöcke)")
+        koerper.randtreue = randtreue
+        koerper.netzgrund = ""
+        koerper.netzkanten = []
+        C.say(log, f"Volumen {koerper.name}: {len(els)} Elemente aus {len(bl)} Blöcken "
+                   f"({len(bl) - n_frei} gesweept, {n_frei} frei) - {koerper.kommentar}")
+        return els
+    finally:
+        schnitte_entfernen(model, schnitte)
 
 
 def hexaederanteil(model: Model, koerper=None) -> dict:

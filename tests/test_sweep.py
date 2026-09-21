@@ -385,6 +385,200 @@ def test_quader_randseiten_und_nachbar():
     check("das Netz ueberlebt Speichern und Laden", _typen(m2) == _typen(m))
 
 
+def _kreis(m, tag, cx, cy, z, r):
+    """Ein Kreis aus zwei Halbboegen zwischen zwei Knoten - wie aus RFEM.
+    Rueckgabe (Knoten p, Knoten q, Linie 1, Linie 2)."""
+    p = m.add_node(cx - r, cy, z)
+    q = m.add_node(cx + r, cy, z)
+    l1, l2 = f"{tag}1", f"{tag}2"
+    m.add_line(l1, [p, q], "arc", punkte=[(cx - r, cy, z), (cx, cy + r, z), (cx + r, cy, z)])
+    m.add_line(l2, [q, p], "arc", punkte=[(cx + r, cy, z), (cx, cy - r, z), (cx - r, cy, z)])
+    return p, q, l1, l2
+
+
+def _zylinder(m, tag, cx, cy, z0, z1, r, material="S235"):
+    """Mantel eines Zylinders (zwei Halbmantel-Flaechen) zwischen den Kreisen
+    bei z0 und z1. Rueckgabe (Kreis unten, Kreis oben, Mantelflaechen)."""
+    pu, qu, u1, u2 = _kreis(m, f"{tag}U", cx, cy, z0, r)
+    po, qo, o1, o2 = _kreis(m, f"{tag}O", cx, cy, z1, r)
+    m.add_line(f"{tag}V1", [pu, po])
+    m.add_line(f"{tag}V2", [qu, qo])
+    m.add_flaeche(f"{tag}Mantel1", [u1, f"{tag}V2", o1, f"{tag}V1"], material=material)
+    m.add_flaeche(f"{tag}Mantel2", [u2, f"{tag}V1", o2, f"{tag}V2"], material=material)
+    return (u1, u2), (o1, o2), [f"{tag}Mantel1", f"{tag}Mantel2"]
+
+
+def _lager_und_last(m, lager, last, p):
+    m.add_load_case("LF1")
+    m.case("LF1").gravity = [0.0, 0.0, 0.0]
+    m.add_geometrielast(last, p, "flaeche", case="LF1")
+    ss = m.add_surface_support(name="Einspannung")
+    ss.flaechen = [lager]
+    for d in (0, 1, 2):
+        ss.behaviour[d] = DofBehaviour("rigid")
+    m.active_case = "LF1"
+
+
+def _flaechenmass(m, name) -> float:
+    """Flaecheninhalt einer Randflaeche aus ihren Randseiten (Dreiecke, Vierecke)."""
+    from statik3d.assemble import SOLID_FACES
+    A = 0.0
+    for e, s in m.flaechen[name].randseiten:
+        el = m.elements[int(e)]
+        X = m.nodes[[int(el.nodes[i]) for i in SOLID_FACES[el.typ][int(s)]]]
+        A += 0.5 * float(np.linalg.norm(sum(np.cross(X[i] - X[0], X[i + 1] - X[0]) for i in range(1, len(X) - 1))))
+    return A
+
+
+def _doppelte_knoten(m, kn) -> int:
+    """Knoten unter den genannten, die an derselben Stelle liegen wie ein anderer."""
+    from scipy.spatial import cKDTree
+    kn = sorted(kn)
+    if len(kn) < 2:
+        return 0
+    X = m.nodes[kn]
+    paare = cKDTree(X).query_pairs(1e-9)
+    return len(paare)
+
+
+def test_zylinder_wird_gesweept():
+    """Ein Zylinder hat vier Flaechen (zwei Kreise, zwei Halbmantel) - bis zum
+    21.09.2026 verlangte die Erkennung fuenf, und jeder Bolzen fiel an die
+    Tetraeder (48 von 108 Drehlager-Koerpern haben vier Flaechen)."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    unten, oben, mantel = _zylinder(m, "Z", 0.0, 0.0, 0.0, 0.3, 0.05)
+    m.add_flaeche("ZBoden", list(unten), material="S235")
+    m.add_flaeche("ZDeckel", list(oben), material="S235")
+    k = m.add_koerper("Bolzen", ["ZBoden", "ZDeckel"] + mantel, material="S235")
+    _lager_und_last(m, "ZBoden", "ZDeckel", 1e6)
+    m.netz.ziellaenge = 0.03
+    m.netz.dichte = "eigene"
+    check("der Zylinder ist sweepbar (vier Flaechen)", sweep.sweepbar(m, k))
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    typen = _typen(m)
+    check("nur Hexaeder und Keile", set(typen) <= {"hex8", "pent6"} and typen, str(typen))
+    check("kein Element ist umgestuelpt", _negativ(m) == 0)
+    V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+    V_soll = np.pi * 0.05 ** 2 * 0.3
+    check("Rauminhalt: Kreis als Vieleck, innerhalb 2 % unter pi r^2 h", 0.98 * V_soll <= V <= V_soll,
+          f"{V:.6f} m^3 gegen {V_soll:.6f}")
+    bef = diagnose.abnahme(m)
+    check("Abnahme ohne Befund", not bef, str([b.pruefung for b in bef])[:100])
+    res = solver.solve_static(m, case="LF1", workers=1)
+    F = 1e6 * _flaechenmass(m, "ZDeckel")
+    check("die Deckellast kommt als Auflagerkraft an",
+          abs(abs(float(res.reactions[:, 2].sum())) - F) < 1e-3 * F,
+          f"{abs(res.reactions[:, 2].sum()) / 1e3:.2f} kN gegen {F / 1e3:.2f} kN")
+
+
+def _platte_mit_nabe(a=0.4, b=0.3, t=0.1, r=0.06, hoehe=0.08):
+    """Platte a x b x t, auf dem Deckel eine zylindrische Nabe (Radius r, Hoehe
+    hoehe): der Deckel traegt den Fussabdruck als Oeffnung, die Nabe besteht aus
+    zwei Mantelflaechen und einer Kreisscheibe. Nicht als Ganzes Grundflaeche
+    mal Weg - erst nach dem Schnitt am Fussabdruck."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    E = [(0, 0), (a, 0), (a, b), (0, b)]
+    ku = [m.add_node(x, y, 0.0) for x, y in E]
+    ko = [m.add_node(x, y, t) for x, y in E]
+    for i in range(4):
+        j = (i + 1) % 4
+        m.add_line(f"AU{i}", [ku[i], ku[j]])
+        m.add_line(f"AO{i}", [ko[i], ko[j]])
+        m.add_line(f"AV{i}", [ku[i], ko[i]])
+    namen = []
+    for i in range(4):
+        j = (i + 1) % 4
+        m.add_flaeche(f"M{i + 1}", [f"AU{i}", f"AV{j}", f"AO{i}", f"AV{i}"], material="S235")
+        namen.append(f"M{i + 1}")
+    unten, oben, mantel = _zylinder(m, "N", a / 2, b / 2, t, t + hoehe, r)
+    m.add_flaeche("Boden", [f"AU{i}" for i in range(4)], material="S235")
+    m.add_flaeche("Deckel", [f"AO{i}" for i in range(4)], material="S235", oeffnungen=[list(unten)])
+    m.add_flaeche("NDeckel", list(oben), material="S235")
+    k = m.add_koerper("V1", namen + ["Boden", "Deckel", "NDeckel"] + mantel, material="S235")
+    _lager_und_last(m, "Boden", "NDeckel", 1e6)
+    m.netz.ziellaenge = 0.03
+    m.netz.dichte = "eigene"
+    return m, k
+
+
+def test_platte_mit_nabe_zerlegt():
+    """Zerlegen an Fussabdruecken: Platte mit Nabe -> zwei gesweepte Bloecke,
+    knotenkonform an der Schnittflaeche, alles Hexaeder und Keile."""
+    m, k = _platte_mit_nabe()
+    check("als Ganzes nicht sweepbar", sweep.erkennen(m, k) is None)
+    bl, schnitte = sweep.zerlegen(m, k)
+    check("das Zerlegen findet zwei sweepbare Bloecke an einem Schnitt",
+          bl is not None and len(bl) == 2 and all(e is not None for _n, e in bl) and len(schnitte) == 1,
+          f"{None if bl is None else [(len(n), e is not None) for n, e in bl]}, {len(schnitte)} Schnitt(e)")
+    sweep.schnitte_entfernen(m, schnitte)
+    check("die Schnittflaeche ist danach wieder aus dem Modell", not any(x.startswith("V1§") for x in m.flaechen))
+    check("sweepbar() sagt ja - der Koerper laeuft im Hauptprozess vor den freien", sweep.sweepbar(m, k))
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    typen = _typen(m)
+    check("nur Hexaeder und Keile, kein Tetraeder", set(typen) <= {"hex8", "pent6"} and typen, str(typen))
+    check("das Protokoll nennt das Zerlegen", any("zerlegt" in z for z in log))
+    check("kein Element ist umgestuelpt", _negativ(m) == 0)
+    V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+    V_soll = 0.4 * 0.3 * 0.1 + np.pi * 0.06 ** 2 * 0.08
+    check("Rauminhalt Platte + Nabe (Kreis als Vieleck)", 0.995 * V_soll <= V <= V_soll,
+          f"{V:.6f} m^3 gegen {V_soll:.6f}")
+    # Knotenkonform an der Schnittflaeche: kein Knoten doppelt in der Ebene z = t
+    ebene = [n for n in range(m.nn) if abs(m.nodes[n][2] - 0.1) < 1e-9]
+    check("keine doppelten Knoten in der Schnittebene", _doppelte_knoten(m, ebene) == 0, f"{len(ebene)} Knoten")
+    check("keine Schnittflaeche bleibt im Modell", not any(x.startswith("V1§") for x in m.flaechen))
+    bef = diagnose.abnahme(m)
+    check("Abnahme ohne Befund", not bef, str([(b.pruefung, b.text[:50]) for b in bef])[:160])
+    res = solver.solve_static(m, case="LF1", workers=1)
+    F = 1e6 * _flaechenmass(m, "NDeckel")
+    check("die Last auf der Nabe geht durch die Schnittflaeche in die Platte und ins Lager",
+          abs(abs(float(res.reactions[:, 2].sum())) - F) < 1e-3 * F,
+          f"{abs(res.reactions[:, 2].sum()) / 1e3:.2f} kN gegen {F / 1e3:.2f} kN")
+    m2 = Model.from_dict(m.to_dict())
+    check("das Netz ueberlebt Speichern und Laden", _typen(m2) == typen)
+
+
+def test_abgesetzte_welle_zerlegt():
+    """Abgesetzte Welle: dicker Absatz r1 und duenner r2 hintereinander; die
+    Schulter (Kreisring) traegt den Fussabdruck des duennen Teils als Oeffnung."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    r1, r2, l1, l2 = 0.05, 0.03, 0.2, 0.15
+    unten1, oben1, mantel1 = _zylinder(m, "D", 0.0, 0.0, 0.0, l1, r1)
+    unten2, oben2, mantel2 = _zylinder(m, "K", 0.0, 0.0, l1, l1 + l2, r2)
+    m.add_flaeche("Ende1", list(unten1), material="S235")
+    m.add_flaeche("Schulter", list(oben1), material="S235", oeffnungen=[list(unten2)])
+    m.add_flaeche("Ende2", list(oben2), material="S235")
+    k = m.add_koerper("Welle", ["Ende1", "Schulter", "Ende2"] + mantel1 + mantel2, material="S235")
+    _lager_und_last(m, "Ende1", "Ende2", 1e6)
+    m.netz.ziellaenge = 0.025
+    m.netz.dichte = "eigene"
+    check("als Ganzes nicht sweepbar (sieben Flaechen, zwei Radien)", sweep.erkennen(m, k) is None)
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    typen = _typen(m)
+    check("nur Hexaeder und Keile", set(typen) <= {"hex8", "pent6"} and typen, str(typen))
+    check("das Protokoll nennt zwei gesweepte Bloecke",
+          any("2 gesweept, 0 frei" in z for z in log), str([z for z in log if "Blöcke" in z])[:200])
+    check("kein Element ist umgestuelpt", _negativ(m) == 0)
+    V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+    V_soll = np.pi * (r1 ** 2 * l1 + r2 ** 2 * l2)
+    check("Rauminhalt beider Absaetze (Kreise als Vielecke)", 0.98 * V_soll <= V <= V_soll,
+          f"{V:.6f} m^3 gegen {V_soll:.6f}")
+    ebene = [n for n in range(m.nn) if abs(m.nodes[n][2] - l1) < 1e-9]
+    check("keine doppelten Knoten in der Schulterebene", _doppelte_knoten(m, ebene) == 0, f"{len(ebene)} Knoten")
+    bef = diagnose.abnahme(m)
+    check("Abnahme ohne Befund", not bef, str([(b.pruefung, b.text[:50]) for b in bef])[:160])
+    res = solver.solve_static(m, case="LF1", workers=1)
+    F = 1e6 * _flaechenmass(m, "Ende2")
+    check("die Last am duennen Ende kommt durch die Schulter im Lager an",
+          abs(abs(float(res.reactions[:, 2].sum())) - F) < 1e-3 * F,
+          f"{abs(res.reactions[:, 2].sum()) / 1e3:.2f} kN gegen {F / 1e3:.2f} kN")
+
+
 def test_kragplatte_tet4_gegen_hex8():
     """Das Erfolgsmass des Auftrags an der Kragplatte 1 x 0,2 x 0,05 m mit
     Endlast 10 kN, gegen Bernoulli + Schub. Eine kleine Bohrung am freien
@@ -426,7 +620,9 @@ def test_kragplatte_tet4_gegen_hex8():
 def main():
     for t in (test_erkennung, test_netz_platte, test_quader_bleibt_abgebildet, test_nachbar_mit_tetraedern,
               test_nachbar_mit_verschiedener_teilung, test_lagen_bei_fliessen,
-              test_quader_randseiten_und_nachbar, test_kragplatte_tet4_gegen_hex8):
+              test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
+              test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,
+              test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
