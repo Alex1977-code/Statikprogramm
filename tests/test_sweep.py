@@ -579,6 +579,58 @@ def test_abgesetzte_welle_zerlegt():
           f"{abs(res.reactions[:, 2].sum()) / 1e3:.2f} kN gegen {F / 1e3:.2f} kN")
 
 
+def test_pyramiden_als_uebergang():
+    """netz.pyramiden: wo der Tetraeder-Nachbar an die Vierecke der gesweepten
+    Wand stoesst, bekommt jedes Viereck eine Pyramide (pyr5) mit Spitze im
+    Inneren; die Tetraeder folgen dahinter. Ohne den Schalter bleibt es beim
+    geteilten Viereck - beides knotenkonform."""
+    zahlen = {}
+    for pyr in (False, True):
+        m, k, k2 = _platte_mit_pyramide()
+        m.netz.pyramiden = pyr
+        log = []
+        mesher.modell_vernetzen(m, log, workers=1)
+        typen = _typen(m)
+        V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+        q = netzguete.guete(m)
+        bef = diagnose.abnahme(m)
+        res = solver.solve_static(m, case="LF1", workers=1)
+        zahlen[pyr] = {"typen": typen, "V": V, "q": float(np.nanmin(q)), "bef": bef,
+                       "R": abs(float(res.reactions[:, 2].sum())),
+                       "u": float(np.abs(res.u[:, :3]).max()), "log": log, "m": m, "k2": k2}
+    aus, an = zahlen[False], zahlen[True]
+    check("ohne Schalter keine Pyramide", not aus["typen"].get("pyr5"), str(aus["typen"]))
+    check("mit Schalter Pyramiden am Uebergang, Rest Tetraeder",
+          an["typen"].get("pyr5", 0) > 0 and an["typen"].get("tet4", 0) > 0
+          and an["typen"].get("tet4", 0) < aus["typen"].get("tet4", 0),
+          f"{aus['typen']} -> {an['typen']}")
+    check("das Protokoll nennt die Nachbarflaeche",
+          any("Pyramiden (pyr5) als Übergang" in z and "M2" in z for z in an["log"]))
+    check("die Bilanz zaehlt sie", any("Pyramiden 12" in z or "Pyramiden " in z and "Hexaeder" in z
+                                       for z in an["log"]))
+    check("der Rauminhalt bleibt derselbe", abs(an["V"] - aus["V"]) < 1e-9 * aus["V"],
+          f"{aus['V']:.6f} -> {an['V']:.6f} m^3")
+    check("die Verschiebung aendert sich um weniger als ein Prozent",
+          abs(an["u"] - aus["u"]) < 0.01 * aus["u"], f"{aus['u'] * 1e3:.4f} -> {an['u'] * 1e3:.4f} mm")
+    F = 1e6 * (0.4 * 0.3 - np.pi * 0.03 ** 2)
+    check("die Last kommt weiter an", abs(an["R"] - F) < 0.01 * F, f"{an['R'] / 1e3:.2f} kN gegen {F / 1e3:.2f} kN")
+    check("Abnahme ohne Befund, Formguete ueber 0,1", not an["bef"] and an["q"] > 0.1,
+          f"Güte min {an['q']:.3f}, {[b.pruefung for b in an['bef']]}")
+    # Knotenkonform: die Pyramidengrundflaechen liegen auf der Wand M2, ihre
+    # Knoten sind die der Platte
+    m2 = an["m"]
+    kn_platte = {int(x) for e in m2.koerper["V1"].elemente for x in m2.elements[e].nodes}
+    grund = [e for e in an["k2"].elemente if m2.elements[e].typ == "pyr5"]
+    check("jede Pyramide steht mit ihren vier Grundknoten auf der Platte",
+          grund and all(all(int(x) in kn_platte for x in m2.elements[e].nodes[:4]) for e in grund),
+          f"{len(grund)} Pyramiden")
+    check("und ihre Spitze gehoert nur dem Nachbarn",
+          all(int(m2.elements[e].nodes[4]) not in kn_platte for e in grund))
+    check("die Randseiten der Wand nennen die Pyramiden",
+          sum(1 for e, _s in m2.flaechen["M2"].randseiten if m2.elements[int(e)].typ == "pyr5") == len(grund),
+          f"{len(m2.flaechen['M2'].randseiten)} Randseiten")
+
+
 def test_kragplatte_tet4_gegen_hex8():
     """Das Erfolgsmass des Auftrags an der Kragplatte 1 x 0,2 x 0,05 m mit
     Endlast 10 kN, gegen Bernoulli + Schub. Eine kleine Bohrung am freien
@@ -622,7 +674,7 @@ def main():
               test_nachbar_mit_verschiedener_teilung, test_lagen_bei_fliessen,
               test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
               test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,
-              test_kragplatte_tet4_gegen_hex8):
+              test_pyramiden_als_uebergang, test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

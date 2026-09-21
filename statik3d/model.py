@@ -1807,6 +1807,17 @@ class Netzeinstellungen:
     #: vernetzen statt als Tetraeder (statik3d.sweep, 20.09.2026). Aus nur
     #: zum Vergleich - der Tetraeder ist das schlechtere Element.
     sweep: bool = True
+    #: **Pyramiden** (pyr5) als Uebergang: wo ein frei vernetzter Koerper an
+    #: die Vierecke eines gesweepten oder abgebildeten Nachbarn stoesst,
+    #: bekommt jedes Viereck eine Pyramide mit Spitze im Inneren, die
+    #: Tetraeder folgen dahinter (mesher3d._pyramiden_einziehen, 21.09.2026).
+    #: Ohne Pyramiden teilt der Tetraeder-Nachbar jedes Viereck in zwei
+    #: Dreiecke - knotenkonform, aber mit anderer Interpolation auf der
+    #: Diagonale. Aus als Vorgabe: gemessen an Platte mit Pyramide (Zahlen im
+    #: Theoriehandbuch 6a) aendert der Uebergang die Verschiebung um weniger
+    #: als ein Prozent, kostet aber Elemente und Huellpunkte; wer den
+    #: Uebergang formgleich will, schaltet ihn ein.
+    pyramiden: bool = False
     #: Linien an **Nebenflaechen** (ohne Last, Lager, Kontakt, Nachbar -
     #: netzfeld.bedeutung) mit dem groben Bogenwinkel teilen (45 statt 18
     #: Grad, acht statt zwanzig Abschnitte je Vollkreis). Aus als Vorgabe:

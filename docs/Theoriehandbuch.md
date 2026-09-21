@@ -3525,6 +3525,33 @@ folgt an Kanten, die ein Nachbar mitbenutzt, der Linienvorgabe (Quader 2 × 1 ×
 Pyramide an der Wand und Feldkugel an einer Kante: 4 × 5 × 10 Hexaeder, 66 Wandknoten
 geteilt, Deckellast 2 000,0 kN kommt an — vorher 0 kN, `test_quader_randseiten_und_nachbar`).
 
+**Pyramiden als Übergang (`netz.pyramiden`, 21.09.2026).** An der Grenze zwischen einem
+gesweepten (oder abgebildeten) Körper und einem frei vernetzten Nachbarn steht eine
+Hexaederseite zwei Tetraederseiten gegenüber: knotenkonform, aber mit anderer Interpolation
+auf der Diagonale des Vierecks. Mit dem Schalter bekommt jedes Viereck der vorgegebenen
+Nachbarfläche stattdessen eine **Pyramide** (`pyr5`): die Spitze sitzt im Inneren des
+Nachbarn, um `PYRAMIDEN_HOEHE = 0,5` mal die mittlere Kantenlänge entlang der Hüllnormale
+nach innen; die zwei Hülldreiecke des Vierecks werden durch die vier Seitendreiecke der
+Pyramide ersetzt, und der Tetraedervernetzer schließt daran an. Kommt die Spitze einem
+anderen Hüllpunkt näher als die halbe Höhe (dünne Bauteile), wird sie zurückgenommen, und
+unter `PYRAMIDEN_HOEHE_MIN = 0,15` bleibt das Viereck geteilt — eine flache Pyramide wäre
+selbst ein schlechtes Element. Knoten und Randseiten werden mit den **ursprünglichen**
+Dreiecken gebildet, damit die gemeinsamen Flächen so geteilt werden wie bisher; das
+Grundviereck jeder Pyramide wird als Randseite 0 an die Nachbarfläche gehängt.
+
+Gemessen an der Platte mit Pyramidenkörper an der Wand M2 (h = 50 mm, 21.09.2026):
+
+| | Elemente | Formgüte min | Verschiebung max | Auflagerkraft |
+|---|---|---|---|---|
+| ohne (Vierecke geteilt) | 280 hex8 + 24 pent6 + 386 tet4 | 0,185 | 0,3588 mm | 117,22 kN |
+| **mit Pyramiden** | 280 hex8 + 24 pent6 + **12 pyr5** + 353 tet4 | 0,154 | 0,3589 mm | 117,22 kN |
+
+Der Rauminhalt ist auf 10⁻⁹ derselbe, die Verschiebung ändert sich um 0,03 %, die Abnahme
+hat nichts zu beanstanden. Darum ist der Schalter **aus** als Vorgabe: er kostet Elemente
+und senkt die kleinste Formgüte, und die Rechnung gewinnt an diesem Beispiel nichts. Wer
+den Übergang formgleich haben will — etwa weil eine Kontaktfuge genau dort liegt —,
+schaltet ihn ein (`test_pyramiden_als_uebergang`).
+
 **Am Drehlager** (Zählung der Löser-Sitzung mit `sweep.erkennen` und `netzfeld.bedeutung`,
 21.09.2026; 108 Körper, 1 375 Flächen, 2 807 Linien, 645 934 Volumenelemente):
 

@@ -1349,15 +1349,28 @@ def _vorgabe_passt(model: Model, flaeche, vorgabe) -> bool:
         ln = model.lines.get(name)
         if ln is None:
             return False
+        # Die Punkte muessen auf der **Kurve** liegen - nicht an bestimmten
+        # Bruchteilen: wirkt ein Groessenfeld, verteilt die Linienteilung sie
+        # ungleichmaessig (mesher3d._feldanteile), und ein Vergleich mit
+        # gleichmaessigen Punkten verwarf gute Netze (21.09.2026,
+        # test_nachbar_mit_verschiedener_teilung). Geprueft wird der Abstand
+        # zum dicht abgetasteten Linienzug; die Reihenfolge stimmt ohnehin,
+        # weil die Kennung sie traegt.
         n = max(k for k, _i in eintraege) + 1
         try:
-            pts = np.asarray(ln.punkte(model, n), float)
+            kurve = np.asarray(ln.punkte(model, max(64, 8 * n)), float)
         except Exception:                 # noqa: BLE001
             return False
-        if len(pts) != n + 1:
+        if len(kurve) < 2:
             return False
-        for k, i in eintraege:
-            if np.linalg.norm(pts[k] - Pv[i]) > tol:
+        a = kurve[:-1]
+        d = kurve[1:] - a
+        ll = np.einsum("ij,ij->i", d, d)
+        ll[ll <= 0] = 1e-30
+        for _k, i in eintraege:
+            w = Pv[i] - a
+            t_ = np.clip(np.einsum("ij,ij->i", w, d) / ll, 0.0, 1.0)
+            if float(np.min(np.linalg.norm(w - t_[:, None] * d, axis=1))) > tol:
                 return False
     return True
 
@@ -3082,6 +3095,118 @@ def huelle_fuegen(P_teile: list, T_teile: list, kennungen: list) -> tuple:
     return P, T, kenn_neu
 
 
+#: Hoehe einer Uebergangspyramide, bezogen auf die mittlere Kantenlaenge
+#: ihres Vierecks: 0,5 gibt den Seitenflaechen etwa 45 Grad Neigung - die
+#: Form, die der Tetraedervernetzer dahinter gut fortsetzt.
+PYRAMIDEN_HOEHE = 0.5
+#: Unter dieser Hoehe (bezogen auf die Kantenlaenge) lohnt keine Pyramide:
+#: sie waere selbst ein flaches Element. Dann bleibt das Viereck geteilt.
+PYRAMIDEN_HOEHE_MIN = 0.15
+
+
+def _pyramiden_einziehen(model: Model, koerper, P: np.ndarray, T: np.ndarray, quelle: list,
+                         kennung: list, log: list = None) -> tuple:
+    """Die Vierecke der vorgegebenen Nachbarflaechen (model.flaechennetze,
+    fuenftes Glied) als **Pyramiden** in die Huelle einziehen.
+
+    Je Viereck kommt eine Spitze ins Innere (Hoehe PYRAMIDEN_HOEHE mal
+    Kantenlaenge, nach innen entlang der Huellnormale); die zwei Dreiecke des
+    Vierecks in der Huelle werden durch die vier Seitendreiecke der Pyramide
+    ersetzt. Der Tetraedervernetzer sieht danach die Pyramidenseiten als
+    Huelle - die Tetraeder schliessen sich knotengenau an. Die Spitze bleibt
+    auf Abstand zum Rest der Huelle: kommt sie einem anderen Huellpunkt
+    naeher als die halbe Hoehe, wird sie zurueckgenommen, und unter
+    PYRAMIDEN_HOEHE_MIN bleibt das Viereck geteilt (duenne Bauteile).
+
+    Rueckgabe (P, T, quelle, kennung, Pyramiden [(a, b, c, d, Spitze,
+    Flaechenname)], urspruengliche Dreiecke, ihre Quellen). Die
+    Seitendreiecke tragen keine Quelle - sie liegen auf keiner Randflaeche;
+    Knotenschluessel und Randseiten werden weiter mit den urspruenglichen
+    Dreiecken gebildet (koerper_einbauen).
+    """
+    from scipy.spatial import cKDTree
+    from .importers import _common as C
+    netze = getattr(model, "flaechennetze", None) or {}
+    P = np.asarray(P, float)
+    T = np.asarray(T, int)
+    quelle = list(quelle)
+    kennung = list(kennung) + [None] * (len(P) - len(kennung))
+    T_flaechen, quelle_flaechen = T.copy(), list(quelle)
+    baum = cKDTree(P)
+    gross = float(np.linalg.norm(P.max(axis=0) - P.min(axis=0))) if len(P) > 1 else 1.0
+    tol = max(1e-7 * gross, 1e-12)
+    # Welches Dreieck liegt in welchem Viereck: ueber die Eckenmenge
+    ecken_dreieck = {frozenset(int(x) for x in t): k for k, t in enumerate(T)}
+    weg: set = set()
+    neue_T: list = []
+    neue_P: list = []
+    pyr: list = []
+    zurueck = 0
+    for fname in (koerper.flaechen or []):
+        v = netze.get(fname)
+        if v is None or len(v) < 5 or v[3] is None or not len(v[3]):
+            continue
+        Pv = np.asarray(v[0], float)
+        Qv = np.asarray(v[3], int).reshape(-1, 4)
+        d, idx = baum.query(Pv)
+        if len(d) and d.max() > tol * 10:
+            continue                            # das vorgegebene Netz liegt nicht auf dieser Huelle
+        for q in Qv:
+            g = [int(idx[int(x)]) for x in q]
+            if len(set(g)) != 4:
+                continue
+            # die zwei Dreiecke des Vierecks in der Huelle
+            treffer = [ecken_dreieck.get(frozenset((g[0], g[1], g[2]))), ecken_dreieck.get(frozenset((g[0], g[2], g[3]))),
+                       ecken_dreieck.get(frozenset((g[0], g[1], g[3]))), ecken_dreieck.get(frozenset((g[1], g[2], g[3])))]
+            treffer = [k for k in treffer if k is not None and k not in weg]
+            if len(treffer) != 2:
+                continue
+            X = P[g]
+            mitte = X.mean(axis=0)
+            # Normale aus den beiden Huelldreiecken (nach aussen, ausrichten()),
+            # Spitze nach innen
+            n = np.zeros(3)
+            for k in treffer:
+                a_, b_, c_ = P[T[k, 0]], P[T[k, 1]], P[T[k, 2]]
+                n += np.cross(b_ - a_, c_ - a_)
+            ln = float(np.linalg.norm(n))
+            if ln <= 0:
+                continue
+            n /= ln
+            kante = float(np.mean([np.linalg.norm(X[(i + 1) % 4] - X[i]) for i in range(4)]))
+            hoehe = PYRAMIDEN_HOEHE * kante
+            spitze = mitte - hoehe * n
+            # Abstand zum Rest der Huelle (ohne die vier Ecken)
+            for _versuch in range(4):
+                nah = baum.query_ball_point(spitze, 0.5 * hoehe)
+                nah = [j for j in nah if j not in g]
+                if not nah:
+                    break
+                hoehe *= 0.6
+                spitze = mitte - hoehe * n
+                zurueck += 1
+            if hoehe < PYRAMIDEN_HOEHE_MIN * kante:
+                continue                        # zu flach fuer eine Pyramide - das Viereck bleibt geteilt
+            s_idx = len(P) + len(neue_P)
+            neue_P.append(spitze)
+            weg.update(treffer)
+            for i in range(4):
+                neue_T.append((g[i], g[(i + 1) % 4], s_idx))
+            pyr.append((g[0], g[1], g[2], g[3], s_idx, fname))
+    if not pyr:
+        return P, T, quelle, kennung, [], T_flaechen, quelle_flaechen
+    behalten = [k for k in range(len(T)) if k not in weg]
+    T_neu = np.vstack([T[behalten], np.asarray(neue_T, int).reshape(-1, 3)])
+    quelle_neu = [quelle[k] for k in behalten] + [""] * len(neue_T)
+    P_neu = np.vstack([P, np.asarray(neue_P, float)])
+    kennung_neu = kennung + [None] * len(neue_P)
+    flaechen = sorted({f for *_g, f in pyr})
+    C.say(log, f"  Volumen {koerper.name}: {len(pyr)} Pyramiden (pyr5) als Übergang zu den Vierecken "
+               f"der Nachbarflächen {', '.join(flaechen)}"
+               + (f", {zurueck} Spitzen zurückgenommen (Hülle nahe)" if zurueck else ""))
+    return P_neu, T_neu, quelle_neu, kennung_neu, pyr, T_flaechen, quelle_flaechen
+
+
 def randschale(model: Model, koerper, h: float, log: list = None,
                fortschritt=None, h_linien: dict = None,
                h_flaechen: dict = None, gemeinsam: tuple = None) -> tuple:
@@ -3154,6 +3279,20 @@ def randschale(model: Model, koerper, h: float, log: list = None,
         if not eigen or not teilung.verfeinern(eigen):
             break
         nachgeteilt.update(zu_grob)
+    # Pyramiden als Uebergang zu den Vierecken vorgegebener Nachbarflaechen
+    # (netz.pyramiden): nur auf einer dichten Huelle, sonst bleibt es bei den
+    # geteilten Vierecken.
+    bericht["pyramiden"] = []
+    if (bool(getattr(getattr(model, "netz", None), "pyramiden", False))
+            and not bericht.get("offen") and bericht.get("teile", 1) == 1):
+        P, T, quelle, kennung, pyr, T_flaechen, quelle_flaechen = _pyramiden_einziehen(
+            model, koerper, P, T, quelle, kennung, log)
+        if pyr:
+            T, bericht2 = ausrichten(P, T)
+            bericht.update(bericht2)
+            bericht["pyramiden"] = pyr
+            bericht["T_flaechen"] = T_flaechen
+            bericht["quelle_flaechen"] = quelle_flaechen
     bericht["gruende"] = gruende
     bericht["quelle"] = quelle
     bericht["kennung"] = kennung
@@ -3795,9 +3934,16 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     soll = bericht["volumen"]
     ist = tb["volumen"]
     abw = abs(ist - soll) / soll if soll > 0 else 1.0
-    # Nur die wirklich benutzten Punkte ins Modell uebernehmen
+    # Nur die wirklich benutzten Punkte ins Modell uebernehmen - und die der
+    # Pyramiden (netz.pyramiden): ihre Ecken koennen Huellpunkte sein, die kein
+    # Tetraeder mehr beruehrt
+    pyramiden = list(bericht.get("pyramiden") or [])
+    T_schl = bericht.get("T_flaechen", T) if pyramiden else T
+    quelle_schl = bericht.get("quelle_flaechen", quelle) if pyramiden else quelle
     benutzt = np.unique(TET)
-    neu = _knoten_anlegen(model, koerper, Pn, benutzt, len(P), T, quelle, cache,
+    if pyramiden:
+        benutzt = np.unique(np.concatenate([benutzt, np.asarray([x for py in pyramiden for x in py[:5]], int)]))
+    neu = _knoten_anlegen(model, koerper, Pn, benutzt, len(P), np.asarray(T_schl, int), list(quelle_schl), cache,
                           kennung=bericht.get("kennung"))
     ecken = [[int(neu[i]) for i in t] for t in TET]
     ecken, entartet = _entartete_weglassen(model, ecken)
@@ -3818,10 +3964,31 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
                                  group=koerper.name) for e in ecken]
     else:
         els = [model.add_element("tet4", e, mat, group=koerper.name) for e in ecken]
+    _randseiten_merken(model, koerper, np.asarray(T_schl, int), list(quelle_schl), neu, els, ecken)
+    # Die Pyramiden: Grundviereck auf der Nachbarflaeche (Randseite 0), Spitze
+    # im Inneren; Knotenreihenfolge so, dass das Volumen positiv ist
+    els_pyr: list = []
+    if pyramiden:
+        from .elements.solid import solid_volume as _vol
+        for a_, b_, c_, d_, sp, fname in pyramiden:
+            kn = [int(neu[a_]), int(neu[b_]), int(neu[c_]), int(neu[d_]), int(neu[sp])]
+            if len(set(kn)) != 5:
+                continue
+            if _vol("pyr5", model.nodes[kn]) < 0:
+                kn = [kn[0], kn[3], kn[2], kn[1], kn[4]]
+            e = model.add_element("pyr5", kn, mat, group=koerper.name)
+            els_pyr.append(e)
+            f = model.flaechen.get(fname)
+            if f is not None:
+                f.randseiten.append([e, 0])
+        els = els + els_pyr
     koerper.elemente = els
-    _randseiten_merken(model, koerper, T, quelle, neu, els, ecken)
     art = "tet10" if ordnung >= 2 else "tet4"
-    koerper.kommentar = (f"{len(els)} Tetraeder ({art}), "
+    if els_pyr:
+        C.say(log, f"  Volumen {koerper.name}: {len(els_pyr)} Pyramiden (pyr5) eingebaut - Randseiten auf "
+                   f"{', '.join(sorted({py[5] for py in pyramiden}))}")
+    koerper.kommentar = ((f"{len(els_pyr)} Pyramiden + " if els_pyr else "")
+                         + f"{len(els) - len(els_pyr)} Tetraeder ({art}), "
                          f"Kantenlänge {h * 1e3:.0f} mm, "
                          f"Güte min {tb['guete']:.3f}")
     # Fuer die Abnahme vor dem Rechnen am Objekt festhalten, nicht nur im Text
