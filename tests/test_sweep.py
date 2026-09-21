@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from statik3d.model import Model, DofBehaviour, Material             # noqa: E402
 from statik3d import mesher, sweep, diagnose, netzguete, solver       # noqa: E402
+from statik3d import mesher3d                                        # noqa: E402
 from statik3d.elements.solid import solid_volume, hex8_N_dN, pent6_N_dN  # noqa: E402
 from test_netzfeld import platte_mit_bohrungen, zug_und_lager          # noqa: E402
 
@@ -652,6 +653,104 @@ def test_zerlegen_sagt_warum_nicht():
           sweep.zerlegen_warum_nicht(*_platte_mit_nabe())[:120])
 
 
+def platte_mit_stufe(a=0.2, b=0.1, t=0.035, d=0.00045, h=0.05):
+    """Gesweepte Platte, deren Umriss eine **winzige Stufe** hat: zwei
+    Randknoten d auseinander bei der Kantenlänge h.
+
+    Das ist der Drehlager-Fall (V35, Element 11313, Güte 0,025): eine Kante
+    von 0,456 mm gegen 17,23 mm der übrigen. Nicht die Stufe selbst macht den
+    Schaden - sie ist **eine** Kante -, sondern die Regel „eine Linie darf
+    nicht neben einer viel feineren stehenbleiben"
+    (mesher3d._linien_wachsen_lassen): sie teilt die 50-mm-Nachbarlinien in
+    3,1-mm-Strecken, und gegen ein 50-mm-Inneres ist jedes Dreieck dazwischen
+    ein Splitter. Der Sweep zieht jeden davon über alle Lagen zum Keil aus.
+    """
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    E = [(0, 0), (a, 0), (a, b * 0.5), (a - d * 0.8, b * 0.5 + d * 0.6), (a, b), (0, b)]
+    ku = [m.add_node(x, y, 0.0) for x, y in E]
+    ko = [m.add_node(x, y, t) for x, y in E]
+    n = len(E)
+    for i in range(n):
+        j = (i + 1) % n
+        m.add_line(f"SU{i}", [ku[i], ku[j]])
+        m.add_line(f"SO{i}", [ko[i], ko[j]])
+        m.add_line(f"SV{i}", [ku[i], ko[i]])
+    namen = []
+    for i in range(n):
+        j = (i + 1) % n
+        m.add_flaeche(f"SM{i}", [f"SU{i}", f"SV{j}", f"SO{i}", f"SV{i}"], material="S235")
+        namen.append(f"SM{i}")
+    m.add_flaeche("SBoden", [f"SU{i}" for i in range(n)], material="S235")
+    m.add_flaeche("SDeckel", [f"SO{i}" for i in range(n)], material="S235")
+    k = m.add_koerper("V1", namen + ["SBoden", "SDeckel"], material="S235")
+    m.netz.ziellaenge = h
+    m.netz.dichte = "eigene"
+    return m, k
+
+
+def test_keile_am_feinen_rand():
+    """Der Auftrag „entartete Keile" (Statik3D-Sitzung, 21.09.2026): am
+    Drehlager waren 992 von 9 368 Keilen unter der Güte 0,10 (10,6 %) und
+    **kein einziger** von 31 108 Hexaedern.
+
+    Die Ursache ist nicht die Paarung, sondern ein Band feiner Randstrecken
+    gegen ein grobes Flächeninneres; der Sweep zieht jedes Splitterdreieck
+    über alle Lagen aus. Das Randfeld (mesher3d.RANDFELD) lässt das Innennetz
+    dem feinen Rand folgen - dieselbe Regel, die das Tetraedernetz längst hat.
+    """
+    zahlen = {}
+    for randfeld in (False, True):
+        alt = mesher3d.RANDFELD
+        mesher3d.RANDFELD = randfeld
+        try:
+            for sweep_an in (True, False):
+                m, k = platte_mit_stufe()
+                m.netz.sweep = sweep_an
+                mesher.modell_vernetzen(m, [], workers=1)
+                q = netzguete.guete(m)
+                q = q[np.isfinite(q)]
+                zahlen[(randfeld, sweep_an)] = (len(q), float(q.min()), int((q < 0.1).sum()),
+                                                dict(_typen(m)))
+        finally:
+            mesher3d.RANDFELD = alt
+    aus_s, an_s = zahlen[(False, True)], zahlen[(True, True)]
+    aus_t, an_t = zahlen[(False, False)], zahlen[(True, False)]
+    check("ohne Randfeld entarten die Keile (der Drehlager-Befund, nachgestellt)",
+          aus_s[2] > 20 and aus_s[1] < 0.1 and an_s[3].get("hex8", 0) > 0,
+          f"{aus_s[2]} Elemente unter 0,10, Güte min {aus_s[1]:.4f}, {aus_s[3]}")
+    check("mit Randfeld ist keiner mehr unter 0,10", an_s[2] == 0,
+          f"{aus_s[2]} → {an_s[2]} Elemente unter 0,10")
+    check("und die schlechteste Güte steigt deutlich", an_s[1] > 2.0 * aus_s[1],
+          f"{aus_s[1]:.4f} → {an_s[1]:.4f}")
+    check("der Preis sind weniger als doppelt so viele Elemente",
+          an_s[0] < 2.0 * aus_s[0], f"{aus_s[0]} → {an_s[0]} Elemente")
+    check("dasselbe im Tetraederweg - die Hülle erbt die Splitter sonst ebenso",
+          aus_t[2] > 0 and an_t[2] == 0 and an_t[1] > 2.0 * aus_t[1],
+          f"{aus_t[2]} → {an_t[2]} unter 0,10, Güte {aus_t[1]:.4f} → {an_t[1]:.4f}")
+    check("der Tetraederweg war nie die bessere Wahl: gleiche Güte, ein Vielfaches an Elementen",
+          abs(aus_t[1] - aus_s[1]) < 0.01 and aus_t[0] > 10 * aus_s[0],
+          f"tet4 {aus_t[0]} Elemente/Güte {aus_t[1]:.4f} gegen Sweep {aus_s[0]}/{aus_s[1]:.4f}")
+    # Wo kein feiner Rand ist, kostet die Regel fast nichts
+    ohne = {}
+    for randfeld in (False, True):
+        alt = mesher3d.RANDFELD
+        mesher3d.RANDFELD = randfeld
+        try:
+            m, k = platte_mit_bohrungen(1.0, 0.6, 0.2, bohrungen=((0.5, 0.3, 0.1),))
+            m.netz.ziellaenge = 0.05
+            m.netz.dichte = "eigene"
+            mesher.modell_vernetzen(m, [], workers=1)
+            q = netzguete.guete(m)
+            q = q[np.isfinite(q)]
+            ohne[randfeld] = (len(q), float(q.min()))
+        finally:
+            mesher3d.RANDFELD = alt
+    check("an einer gewöhnlichen Platte ändert sich fast nichts",
+          ohne[True][0] < 1.15 * ohne[False][0] and ohne[True][1] >= 0.9 * ohne[False][1],
+          f"{ohne[False][0]} → {ohne[True][0]} Elemente, Güte {ohne[False][1]:.3f} → {ohne[True][1]:.3f}")
+
+
 def test_kragplatte_tet4_gegen_hex8():
     """Das Erfolgsmass des Auftrags an der Kragplatte 1 x 0,2 x 0,05 m mit
     Endlast 10 kN, gegen Bernoulli + Schub. Eine kleine Bohrung am freien
@@ -696,7 +795,7 @@ def main():
               test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
               test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,
               test_pyramiden_als_uebergang, test_zerlegen_sagt_warum_nicht,
-              test_kragplatte_tet4_gegen_hex8):
+              test_keile_am_feinen_rand, test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

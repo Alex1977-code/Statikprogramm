@@ -3623,6 +3623,37 @@ kürzester Kante und **Herkunft** der beiden Knoten — auf derselben Linie
 eng zusammen) oder am Innennetz einer Fläche. Erst diese Unterscheidung sagt, welche Kur
 überhaupt greifen kann; ohne sie ist jede weitere geraten.
 
+**Das Innennetz folgt dem örtlich feinen Rand (`RANDFELD`, 21.09.2026).** Eine Randlinie
+darf nicht neben einer viel feineren stehenbleiben — die Regel oben teilt darum die
+Nachbarlinien eines feinen Merkmals mit. Das Flächeninnere folgte dem **nicht**: es blieb
+bei h. Damit stand ein **Band** feiner Randstrecken gegen ein grobes Inneres, und jedes
+Dreieck dazwischen war ein Splitter; der Sweep zog jedes davon über alle Lagen zum Keil
+aus. Am Drehlager waren das **992 von 9 368 Keilen unter der Güte 0,10 (10,6 %) bei 0 von
+31 108 Hexaedern** (Statik3D-Sitzung, 21.09.2026).
+
+Jetzt gilt in der Fläche dieselbe Regel wie im Tetraedernetz: `h_lokal = min(h, Randkante
++ 0,25 · d)`, wobei `Randkante` die Länge der nächsten Randstrecke ist. Eingeschaltet wird
+sie erst, wenn eine Randstrecke höchstens halb so lang ist wie h (`RANDFELD_SCHWELLE`) —
+bis zum Verhältnis 2 trägt die gleichmäßige Teilung noch. Nachgestellt an einer gesweepten
+Platte 200 × 100 × 35 mm, deren Umriss eine Stufe von 0,45 mm hat (h = 50 mm — derselbe
+Fall wie Element 11313 in V35 mit seiner 0,456-mm-Kante):
+
+| | Elemente | Güte min | unter 0,10 |
+|---|---|---|---|
+| Sweep, ohne Randfeld | 116 | 0,054 | **34** |
+| **Sweep, mit Randfeld** | 168 | **0,122** | **0** |
+| tet4, ohne Randfeld | 1 646 | 0,052 | 13 |
+| **tet4, mit Randfeld** | 2 701 | **0,131** | **0** |
+
+Drei Dinge sind daran wichtig. **Erstens**: die Ursache ist nicht die Paarung. Die
+Vermutung, die Paarung lasse die Splitterdreiecke als Keile übrig, ist nachgemessen und
+trägt nicht — an einer Platte mit drei Bohrungen sind die 68 übrigen Dreiecke im Mittel
+0,774 gut, die 68 schlechtesten hätten 0,664. **Zweitens**: der Tetraederweg war nie die
+bessere Wahl. Er kommt am selben Körper auf dieselbe schlechteste Güte (0,052 gegen 0,054)
+mit dem **Vierzehnfachen** an Elementen; „lieber ganz Tetraeder" hätte nichts geheilt.
+**Drittens**: wo der Rand nicht örtlich fein ist, kostet die Regel nichts (Platte mit
+Bohrung: 1 064 Elemente und Güte 0,316 in beiden Fällen).
+
 **MMG3D: Rückfall auf `-optim`.** Schlägt der Lauf **mit** Metrik fehl, wird er ohne sie
 wiederholt (`-optim`, der Weg vor dem Größenfeld), bevor der Körper aufgegeben wird. Am
 Drehlager war genau das der Unterschied zwischen einem brauchbaren und einem teuren Netz:

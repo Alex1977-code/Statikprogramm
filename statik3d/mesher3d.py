@@ -190,6 +190,43 @@ MAX_ABSCHNITTE = 400
 #: zusammenlaufenden Linien (Geometrie) oder aus dem Innennetz einer Flaeche
 #: stammen. Ohne diese Unterscheidung ist jede weitere Kur geraten.
 MINDESTWEITE_TEILER = 30.0
+#: Folgt das Innennetz einer Flaeche dem **lokal feinen Rand**? Dieselbe
+#: Regel, mit der das Tetraedernetz seit jeher arbeitet
+#: (``h_lokal = min(h, Randkante + WACHSTUM * d)``, siehe tetraedern) - in der
+#: Flaeche fehlte sie.
+#:
+#: Warum sie noetig ist: eine Randlinie darf nicht neben einer viel feineren
+#: stehenbleiben (:func:`_linien_wachsen_lassen`), und darum traegt der Rand
+#: neben einem winzigen Merkmal ein **Band** feiner Strecken. Blieb das Innere
+#: bei h, war jedes Dreieck dazwischen ein Splitter - und der Sweep zog jeden
+#: davon ueber alle Lagen zum Keil aus. Am Drehlager waren das **992 von 9 368
+#: Keilen unter der Guete 0,10 (10,6 %) bei 0 von 31 108 Hexaedern**
+#: (Statik3D-Sitzung, 21.09.2026). Nachgestellt an einer gesweepten Platte
+#: 200 x 100 x 35 mm, deren Umriss eine Stufe von 0,45 mm hat (h = 50 mm) -
+#: derselbe Fall wie Element 11313 in V35:
+#:
+#:     Sweep  ohne Randfeld  116 Elemente, Guete min 0,054, 34 unter 0,10
+#:     Sweep  mit  Randfeld  168 Elemente, Guete min 0,122,  0 unter 0,10
+#:     tet4   ohne Randfeld 1 646 Elemente, Guete min 0,052, 13 unter 0,10
+#:     tet4   mit  Randfeld 2 701 Elemente, Guete min 0,130,  0 unter 0,10
+#:
+#: Wo der Rand nicht oertlich fein ist, kostet die Regel fast nichts (Platte
+#: 1 x 0,6 x 0,2 m mit drei Bohrungen: 2 120 -> 2 192 Elemente, Guete
+#: unveraendert 0,233). Sie zahlt also genau dort, wo sie wirkt.
+RANDFELD = True
+#: Mit dieser Steigung waechst die Sollweite vom feinen Rand ins Feld zurueck -
+#: dasselbe Wachstum wie bei den Kraenzen und im Tetraedernetz.
+RANDFELD_WACHSTUM = WACHSTUM_FLAECHE
+#: Erst wenn eine Randstrecke **hoechstens so kurz** ist (Anteil von h), wird
+#: das Randfeld gebraucht. Bis zum Verhaeltnis 2 traegt die gleichmaessige
+#: Teilung noch (Messung in _sollweite: Guete 0,837 bei 1, 0,725 bei 2, 0,480
+#: bei 3) - darum die Haelfte.
+#:
+#: Die Schwelle ist nicht Kosmetik: ohne sie schaltete schon der Rundungsfehler
+#: einer 600-mm-Kante (0,6/6 = 0,09999999999999999 gegen h = 0,1) das Feld ein
+#: und damit den ganzen gradierten Pfad samt Glaettung - das Netz eines
+#: schlichten Quaders sah danach anders aus (test_netzfeld, 21.09.2026).
+RANDFELD_SCHWELLE = 0.5
 
 
 # --------------------------------------------------------------------------
@@ -1166,6 +1203,29 @@ def _glaetten_2d(P2: np.ndarray, n_fest: int, ringe: list, runden: int = GLAETTE
     return P
 
 
+def _randfeld_dazu(feld, rand: np.ndarray, randkante: np.ndarray, h: float):
+    """Das Groessenfeld der Flaeche um den **Rand** ergaenzen: neben einer
+    oertlich feinen Randstrecke gilt deren Laenge als Sollweite und waechst
+    mit :data:`RANDFELD_WACHSTUM` je Laengeneinheit auf ``h`` zurueck.
+
+    Gibt es schon ein Feld, gilt das Feinere von beiden - ein Groessenfeld
+    darf nur verfeinern.
+    """
+    from scipy.spatial import cKDTree
+    baum = cKDTree(np.asarray(rand, float))
+    kante = np.asarray(randkante, float)
+
+    def randfeld(K2):
+        d, i = baum.query(np.asarray(K2, float).reshape(-1, 2))
+        return np.minimum(h, kante[i] + RANDFELD_WACHSTUM * d)
+    if feld is None:
+        return randfeld
+
+    def beides(K2):
+        return np.minimum(np.asarray(feld(K2), float).ravel(), randfeld(K2))
+    return beides
+
+
 def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None) -> tuple:
     """Ebenes Vieleck mit Loechern in Dreiecke teilen.
 
@@ -1193,6 +1253,12 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None) -> tuple:
     # steht, faellt weg - naeher als RANDABSTAND mal der dort geltenden
     # Weite gaebe Splitter.
     randkante = _randkantenlaengen(ringe)
+    # Das Innennetz folgt dem **lokal feinen Rand** (siehe RANDFELD). Es
+    # genuegt nicht, Innenpunkte vom feinen Rand fernzuhalten - dort muessen
+    # welche **hin**, sonst klafft zwischen 3-mm-Randstrecken und 50-mm-Feld
+    # ein Band aus Splittern.
+    if RANDFELD and len(randkante) and float(np.min(randkante)) < RANDFELD_SCHWELLE * h:
+        feld = _randfeld_dazu(feld, rand, randkante, h)
     kranz = _kraenze(ringe, h)
     if len(kranz):
         kranz = kranz[_in_polygon_2d(kranz, ringe)]

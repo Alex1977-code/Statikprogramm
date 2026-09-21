@@ -747,6 +747,16 @@ Vernetzen*. Was die Schleife setzt (Kantenlänge je Körper, Feldpunkte), steht 
 den Netzeinstellungen des gespeicherten Modells. Ein Befehl in der Oberfläche ist mit
 der Programm-Sitzung abzustimmen.
 
+**Feiner Rand, feines Inneres** (seit 21.09.2026): wo eine Randstrecke einer Fläche
+weniger als halb so lang ist wie die Kantenlänge — etwa neben einem winzigen Absatz oder
+einer kleinen Bohrung —, folgt das Innennetz ihr und wächst von dort auf die Kantenlänge
+zurück. Ohne das stand ein Band feiner Randstrecken gegen ein grobes Inneres, und die
+Dreiecke dazwischen waren Splitter; beim Sweep wurde aus jedem ein entarteter Keil.
+Gemessen an einer Platte mit einem 0,45-mm-Absatz bei 50 mm Kantenlänge: 34 Elemente unter
+der Formgüte 0,10 werden zu **null**, die schlechteste Güte steigt von 0,054 auf 0,122; der
+Preis sind 45 % mehr Elemente **an dieser Stelle**. Wo der Rand gleichmäßig ist, ändert
+sich nichts.
+
 **Enge Hüllkanten** (seit 21.09.2026): das Vernetzungsprotokoll warnt je Körper, wenn die
 Randhülle Kanten unter einem Dreißigstel der Kantenlänge enthält — mit Zahl, kürzester
 Kante und Herkunft („`12 Hüllkanten unter der Mindestweite 1.67 mm (kürzeste 0.313 mm) —

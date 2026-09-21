@@ -930,9 +930,18 @@ def test_groessenfeld_an_der_bohrung():
     finally:
         M3._kraenze = echt
     n0, v0, _vm0, q0, s0 = messen(P0, T0)
-    check("ohne Kränze läge kein Knoten im Kranz - der Test greift",
-          n0 == 0 and v0 > 5.0 and s0 > 0.5,
-          f"{n0} Knoten, Kantenverhältnis {v0:.1f}, {s0 * 100:.0f} % unter 0,3, Güte {q0:.3f}")
+    # Gegenprobe ohne Kraenze. Bis zum **Randfeld** (mesher3d.RANDFELD,
+    # 21.09.2026) lag dann **kein einziger** Knoten im Kranz r … 2r, das
+    # Kantenverhaeltnis war 17 und die Haelfte der Dreiecke unter der Guete
+    # 0,3. Seither setzt das Innennetz auch ohne Kraenze Punkte dorthin (37
+    # statt 72, Verhaeltnis 1,3, keins unter 0,3) - die Form allein tragen
+    # also inzwischen beide. Die Kraenze bleiben fuer die **Aufloesung** am
+    # Loch: zwei Knotenringe in r … 2r, die der Kerbspannung, nicht der Guete
+    # wegen da sind (oben geprueft).
+    check("ohne Kränze ist der Kranz merklich dünner besetzt - der Test greift",
+          n0 < 0.75 * n_kranz,
+          f"{n0} statt {n_kranz} Knoten, Kantenverhältnis {v0:.1f} statt {v_med:.1f}, "
+          f"{s0 * 100:.0f} statt {q_schlecht * 100:.0f} % unter 0,3, Güte {q0:.3f}")
     check("und der Preis dafür sind weniger als doppelt so viele Punkte",
           len(P) < 2.0 * len(P0), f"{len(P0)} -> {len(P)} Punkte")
 
@@ -1141,6 +1150,9 @@ def test_groessenfeld_an_der_festgelegten_linie():
         check(f"Verhältnis {f}: das Größenfeld ändert nichts",
               mass[(f, "ohne")] == mass[(f, "mit")],
               f"{mass[(f, 'ohne')][1]} Dreiecke, Güte {mass[(f, 'ohne')][0]:.3f}")
+    # Hier greift das **Randfeld** (mesher3d.RANDFELD) nicht: die Randstrecken
+    # sind h oder groeber, und es schaltet sich erst unter RANDFELD_SCHWELLE
+    # ein. Die festgelegte grobe Strecke bleibt also allein zustaendig.
     for f in (3, 8):
         a, b = mass[(f, "ohne")], mass[(f, "mit")]
         check(f"Verhältnis {f}: die schlechteste Güte steigt deutlich",
