@@ -845,6 +845,106 @@ def test_symmetriepruefung():
               ist_symmetrisch(M, 1e-12 * (float(abs(M).max()) or 1.0)) == alt_)
 
 
+def test_die_matrix_wird_einmal_umgewandelt():
+    """Der LinearSolver wandelt die Matrix einmal nach CSR um, nicht zweimal.
+
+    ``__init__`` machte bis zum 21.09.2026 ``K = K.tocsc()``,
+    ``self._K = K.tocsr()`` und danach fuer PARDISO noch einmal
+    ``K.tocsr()`` auf derselben Matrix. Bei Drehlagergroesse (475.935
+    Zeilen, 17,6 Mio. Nichtnullen) kostet eine Umwandlung **0,280 s**;
+    bei 145 Faktorisierungen je Lastfall sind das 40,6 s, ueber 422
+    Lastfaelle 4,75 Stunden. Beide lesen nur, eine genuegt.
+
+    Gezaehlt wird die Umwandlung selbst - eine Zeitmessung waere hier das
+    falsche Mass: sie haengt an der Maschine, die Zahl der Aufrufe nicht.
+    """
+    from scipy import sparse as _sp
+    from statik3d.solver import LinearSolver
+
+    n = 200
+    rng = np.random.default_rng(11)
+    A = _sp.random(n, n, density=0.02, random_state=1, format="csr")
+    K = (A + A.T + _sp.eye(n) * (n * 1.0)).tocsr()          # symmetrisch, definit
+
+    echt = _sp.csc_matrix.tocsr
+    zahl = {"n": 0}
+
+    def zaehlend(self, *a, **k):
+        zahl["n"] += 1
+        return echt(self, *a, **k)
+
+    _sp.csc_matrix.tocsr = zaehlend
+    try:
+        ls = LinearSolver(K, backend="pardiso")
+    finally:
+        _sp.csc_matrix.tocsr = echt
+
+    check("die Matrix wird genau einmal nach CSR umgewandelt", zahl["n"] == 1,
+          f"{zahl['n']} Umwandlungen" + (" - zweimal ist der alte Stand"
+                                         if zahl["n"] > 1 else ""))
+    b = rng.normal(size=n)
+    x = ls.solve(b)
+    check("und sie loest damit richtig",
+          float(np.abs(K @ x - b).max()) < 1e-8 * float(np.abs(b).max()),
+          f"Restfehler {float(np.abs(K @ x - b).max()):.2e}")
+    ls.freigeben()
+
+
+def test_die_tangente_wird_nur_gebaut_wenn_sie_gelesen_wird():
+    """Bleibt die Faktorisierung stehen, wird Kt gar nicht erst gebaut.
+
+    ``StaticSystem.solve`` baute bis zum 21.09.2026 in **jedem** Schritt
+    ``Kt = self.K + K_extra`` und ``Ktff = Kt[fi][:, fi].tocsc()``. Ktff
+    wird aber nur unter ``if neu:`` gelesen, Kt sonst nur bei einer
+    Verformungsvorgabe. Bei Drehlagergroesse kosten Addition und Zuschnitt
+    zusammen 0,577 s; am Drehlager nutzen 5 von 150 Kontaktschritten die
+    Faktorisierung wieder, das sind 2,88 s je Lastfall und 0,34 Stunden
+    ueber 422 Lastfaelle.
+
+    Gezaehlt wird die Matrixaddition. Der zweite Aufruf mit **derselben**
+    Signatur muss ohne auskommen - er loest nur rueckwaerts ein.
+    """
+    from scipy import sparse as _sp
+    from statik3d import solver as _s
+
+    m, _L, _A = _zugstab()
+    system = _s.StaticSystem(m)
+    F = _s.case_loads(m, {m.case().name: 1.0}, None)[0]
+    # Eine kleine Zusatzsteifigkeit, wie sie der Kontakt beisteuert
+    Kc = _sp.csr_matrix((np.array([1.0e3]), (np.array([6]), np.array([6]))),
+                        shape=(m.ndof, m.ndof))
+
+    echt = _sp.csr_matrix.__add__
+    zahl = {"n": 0}
+
+    def zaehlend(self, other):
+        zahl["n"] += 1
+        return echt(self, other)
+
+    _sp.csr_matrix.__add__ = zaehlend
+    try:
+        sig = ("probe", 1)
+        u1 = system.solve(F, K_extra=Kc, signatur=sig)
+        erste = zahl["n"]
+        u2 = system.solve(F, K_extra=Kc, signatur=sig)
+        zweite = zahl["n"] - erste
+    finally:
+        _sp.csr_matrix.__add__ = echt
+        system.kontakt_loeser_freigeben()
+
+    check("der erste Schritt baut die Tangente", erste >= 1,
+          f"{erste} Additionen")
+    check("der zweite mit gleicher Signatur baut sie nicht noch einmal",
+          zweite == 0, f"{zweite} Additionen"
+          + (" - der alte Stand baute auch hier" if zweite else ""))
+    check("und er faktorisiert auch nicht neu",
+          getattr(system, "faktorisierungen", 0) == 1,
+          f"{getattr(system, 'faktorisierungen', 0)} Faktorisierungen")
+    check("beide Loesungen sind dieselbe",
+          float(np.abs(np.asarray(u1) - np.asarray(u2)).max()) == 0.0,
+          "bitgleich")
+
+
 def main():
     for f in (test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
               test_jeder_loeser_sagt_woher_er_kommt, test_ama_liegt_der_exe_bei,
@@ -859,7 +959,9 @@ def main():
               test_ama_nimmt_die_genauigkeitseinstellung,
               test_ama_faktorisiert_kein_zweites_mal_im_stillen,
               test_die_beschreibung_nennt_die_loesung_nicht_die_korrektur,
-              test_kein_rueckfall_im_nachweis_wenn_die_schranke_gehalten_wird):
+              test_kein_rueckfall_im_nachweis_wenn_die_schranke_gehalten_wird,
+              test_die_matrix_wird_einmal_umgewandelt,
+              test_die_tangente_wird_nur_gebaut_wenn_sie_gelesen_wird):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

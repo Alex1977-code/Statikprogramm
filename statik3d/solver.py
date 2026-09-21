@@ -567,7 +567,12 @@ class LinearSolver:
                 _find_mkl()
                 import pypardiso
                 ps = pypardiso.PyPardisoSolver()
-                Kcsr = K.tocsr()
+                # self._K ist bereits K.tocsr() (siehe oben). Ein zweites
+                # tocsr() auf derselben Matrix kostete bei Drehlagergroesse
+                # 0,280 s (475.935 Zeilen, 17,6 Mio. Nichtnullen, gemessen
+                # 21.09.2026) - bei 145 Faktorisierungen je Lastfall 40,6 s,
+                # ueber 422 Lastfaelle 4,75 Stunden. Beide lesen nur.
+                Kcsr = self._K
                 # Threadzahl aus den Einstellungen (0 = alle Kerne bis auf einen)
                 self.threads = _mkl_threads_setzen(ps, threads_vorgabe("pardiso"))
                 ps.factorize(Kcsr)
@@ -1407,16 +1412,25 @@ class StaticSystem:
                     rhs = rhs - self.Kfs @ u[self.si]
                 u[self.fi] = self._geloest(self.solver, rhs)
             else:
-                Kt = (self.K + K_extra)
-                Ktff = Kt[self.fi][:, self.fi].tocsc()
-                if vorgabe:
-                    Ktfs = Kt[self.fi][:, self.si]
-                    rhs = rhs - Ktfs @ u[self.si]
+                # Erst entscheiden, ob neu faktorisiert wird - dann bauen.
+                # Kt und Ktff wurden bis zum 21.09.2026 in **jedem** Schritt
+                # gebaut, obwohl Ktff nur unter `if neu:` gelesen wird und Kt
+                # sonst nur bei Vorgabe. Am Drehlager waren das bei 150
+                # Kontaktschritten je Lastfall 150 Matrixadditionen und 150
+                # Zuschnitte ueber 17,6 Mio. Nichtnullen umsonst. Weder
+                # `schluessel` noch `ls` noch `neu` haengen an Kt - die
+                # Reihenfolge laesst sich also umstellen, ohne dass sich
+                # sonst etwas aendert.
                 schluessel = None if signatur is None else (signatur, self._rand, id(self._Vf))
                 ls = getattr(self, "_kontakt_loeser", None)
                 neu = schluessel is None or ls is None \
                     or schluessel != getattr(self, "_kontakt_signatur", None)
+                Kt = (self.K + K_extra) if (neu or vorgabe) else None
+                if vorgabe:
+                    Ktfs = Kt[self.fi][:, self.si]
+                    rhs = rhs - Ktfs @ u[self.si]
                 if neu:
+                    Ktff = Kt[self.fi][:, self.fi].tocsc()
                     self.kontakt_loeser_freigeben()
                     ls = LinearSolver(self.gerandet(Ktff))
                     self._loeser_merken(ls)

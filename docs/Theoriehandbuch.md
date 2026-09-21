@@ -1271,6 +1271,30 @@ Faktorisierung, solange die Signatur der Kontaktsteifigkeit (Phase,
 Aktivmenge, Gleiten, Fließen, **Schubhalt**, rutschende Gruppen;
 `ContactSystem.signatur`) gleich bleibt — dann wird nur rückwärts eingesetzt.
 
+**Zwei Posten daneben, die nichts mit dem Schlüssel zu tun haben, aber mit
+derselben Messung gefunden wurden** (21.09.2026, an einer Matrix von
+Drehlagergröße: 475 935 Zeilen, 17,6 Mio. Nichtnullen):
+
+| | je Aufruf | je Lastfall | über 422 Lastfälle |
+|---|---|---|---|
+| doppeltes `tocsr()` im `LinearSolver` | 0,280 s | 40,6 s (145 Faktorisierungen) | **4,75 h** |
+| `Kt` und `Ktff` bedingungslos gebaut | 0,577 s | 2,88 s (5 von 150 Schritten) | 0,34 h |
+
+Der erste wandelte dieselbe Matrix zweimal nach CSR um — `self._K` steht
+bereits da. Der zweite baute die Tangente und ihren Zuschnitt in **jedem**
+Schritt, obwohl `Ktff` nur beim Neufaktorisieren gelesen wird und `Kt` sonst
+nur bei einer Verformungsvorgabe; weder der Schlüssel noch der
+zwischengespeicherte Löser hängen daran, die Reihenfolge ließ sich also
+umstellen. Dass der zweite Posten so klein ausfällt, ist selbst ein Befund:
+**145 von 150 Schritten faktorisieren neu**, also gibt es fast nichts
+einzusparen. Die Schätzung „1,4 bis 1,9 s je Schritt“ galt der Annahme, die
+Faktorisierung würde oft wiederverwendet — sie wird es nicht.
+
+Geprüft wird in beiden Fällen **gezählt, nicht gemessen** (`tests/test_loeser.py`):
+eine Umwandlung statt zwei, und null Matrixadditionen im zweiten Lösen mit
+gleicher Signatur. Eine Zeitmessung hinge an der Maschine, die Zahl der
+Aufrufe nicht.
+
 **Zwei Löcher in diesem Schlüssel, beide am 21.09.2026 geschlossen.** Ein
 Schlüssel, der eine Matrixänderung nicht sieht, ist schlimmer als keiner: er
 lässt mit der falschen Faktorisierung rechnen, und niemand merkt es.
