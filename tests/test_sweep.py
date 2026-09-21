@@ -27,7 +27,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from statik3d.model import Model, DofBehaviour                       # noqa: E402
+from statik3d.model import Model, DofBehaviour, Material             # noqa: E402
 from statik3d import mesher, sweep, diagnose, netzguete, solver       # noqa: E402
 from statik3d.elements.solid import solid_volume, hex8_N_dN, pent6_N_dN  # noqa: E402
 from test_netzfeld import platte_mit_bohrungen, zug_und_lager          # noqa: E402
@@ -285,6 +285,106 @@ def test_lagen_bei_fliessen():
           sweep.lagen_min(m_e) == sweep.LAGEN_MIN and sweep.lagen_min(m_p) == sweep.LAGEN_MIN_PLASTISCH)
 
 
+def quader(a=2.0, b=1.0, c=1.0, name="V1", material="S235", teilung=(4, 2, 2)):
+    """Ein Quader aus sechs Vierecken mit acht Eckknoten - der abgebildete
+    Pfad (mesher._hex_netz). Boden z = 0, Deckel z = c, Wand X1 bei x = a."""
+    m = Model()
+    m.add_material(Material.steel(material))
+    E = [(0, 0), (a, 0), (a, b), (0, b)]
+    ku = [m.add_node(x, y, 0.0) for x, y in E]
+    ko = [m.add_node(x, y, c) for x, y in E]
+    for i in range(4):
+        j = (i + 1) % 4
+        m.add_line(f"QU{i}", [ku[i], ku[j]])
+        m.add_line(f"QO{i}", [ko[i], ko[j]])
+        m.add_line(f"QV{i}", [ku[i], ko[i]])
+    m.add_flaeche("QBoden", [f"QU{i}" for i in range(4)], material=material)
+    m.add_flaeche("QDeckel", [f"QO{i}" for i in range(4)], material=material)
+    namen = ["Y0", "X1", "Y1", "X0"]
+    for i in range(4):
+        j = (i + 1) % 4
+        m.add_flaeche(namen[i], [f"QU{i}", f"QV{j}", f"QO{i}", f"QV{i}"], material=material)
+    k = m.add_koerper(name, ["QBoden", "QDeckel"] + namen, material=material, teilung=list(teilung))
+    return m, k
+
+
+def test_quader_randseiten_und_nachbar():
+    """Der abgebildete Quaderpfad setzte bis zum 21.09.2026 keine Randseiten
+    (Flaechenlast: Auflagerkraft 0 kN) und teilte keine Knoten mit Nachbarn
+    (Abnahme: doppelte Knoten). Jetzt: Randseiten wie beim Sweep, Knoten ueber
+    dieselben Schluessel, vorgegebene Flaechennetze - und die Linienvorgabe,
+    wenn ein Nachbar eine Kante feiner braucht."""
+    m, k = quader()
+    # Pyramide an der Wand X1 (x = 2): fuenf Flaechen, nicht sweepbar -> Tetraeder
+    ecken = [int(n) for n in m.flaechen["X1"].randknoten(m)]
+    spitze = m.add_node(2.0 + 0.8, 0.5, 0.5)
+    for i, e in enumerate(ecken):
+        m.add_line(f"SP{i}", [e, spitze])
+    lin = list(m.flaechen["X1"].linien)
+
+    def linie_zwischen(a, b):
+        for name in lin:
+            ln = m.lines[name]
+            if {int(ln.nodes[0]), int(ln.nodes[-1])} == {a, b}:
+                return name
+        raise KeyError((a, b))
+    fl = []
+    for i in range(4):
+        a, b = ecken[i], ecken[(i + 1) % 4]
+        m.add_flaeche(f"PY{i}", [linie_zwischen(a, b), f"SP{(i + 1) % 4}", f"SP{i}"], material="S235")
+        fl.append(f"PY{i}")
+    k2 = m.add_koerper("V2", fl + ["X1"], material="S235")
+    m.add_load_case("LF1")
+    m.case("LF1").gravity = [0.0, 0.0, 0.0]
+    m.add_geometrielast("QDeckel", 1e6, "flaeche", case="LF1")
+    ss = m.add_surface_support(name="Einspannung")
+    ss.flaechen = ["QBoden"]
+    for d in (0, 1, 2):
+        ss.behaviour[d] = DofBehaviour("rigid")
+    m.netz.ziellaenge = 0.25
+    m.netz.dichte = "eigene"
+    # Eine Kugel des Groessenfelds an der Kante QV1 (x = 2, y = 0): die Pyramide
+    # teilt sie feiner als der Quader mit teilung 2 - die Vorgabe muss folgen
+    m.netz.verfeinerungen = [{"art": "kugel", "mitte": [2.0, 0.0, 0.5], "radius": 0.3, "h": 0.1}]
+    m.active_case = "LF1"
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    t1 = {m.elements[e].typ for e in k.elemente}
+    t2 = {m.elements[e].typ for e in k2.elemente}
+    check("Quader aus hex8 (abgebildet), Pyramide aus tet4", t1 == {"hex8"} and t2 == {"tet4"}, f"{t1} / {t2}")
+    vorgabe = getattr(m, "linienvorgabe", None) or {}
+    check("die z-Kanten des Quaders tragen die Vorgabe der Kugel (mehr als teilung 2)",
+          all(f"QV{i}" in vorgabe for i in range(4)) and vorgabe.get("QV1", 0) > 2, str(vorgabe))
+    # Die Wand X1 gehoert der Pyramide: ihre y- und z-Kanten tragen deren Karte,
+    # die x-Kanten bleiben bei der eigenen Teilung 4
+    ny, nz = vorgabe.get("QU1", 2), vorgabe.get("QV1", 2)
+    check("die Elementzahl folgt der Vorgabe: 4 x ny x nz", len(k.elemente) == 4 * ny * nz,
+          f"{len(k.elemente)} Elemente, ny = {ny}, nz = {nz}")
+    hex_x1 = [x for x in m.flaechen["X1"].randseiten if m.elements[int(x[0])].typ == "hex8"]
+    check("Randseiten: Deckel und Boden 4 x ny Hexaederseiten, Wand X1 ny x nz (dazu die der Pyramide)",
+          len(m.flaechen["QDeckel"].randseiten) == 4 * ny and len(m.flaechen["QBoden"].randseiten) == 4 * ny
+          and len(hex_x1) == ny * nz,
+          f"{len(m.flaechen['QDeckel'].randseiten)} / {len(m.flaechen['QBoden'].randseiten)} / {len(hex_x1)}")
+    check("die sechs Flaechen stehen als vorgegebene Flaechennetze bereit",
+          all(x in (getattr(m, "flaechennetze", None) or {}) for x in ("QBoden", "QDeckel", "X1", "X0", "Y0", "Y1")))
+    bef = diagnose.abnahme(m)
+    check("Abnahme: gemeinsame Flaeche verbunden, keine doppelten Knoten, Guete, Randtreue",
+          not bef, str([(b.pruefung, b.text[:60]) for b in bef])[:160])
+    kn1 = {int(x) for e in k.elemente for x in m.elements[e].nodes}
+    kn2 = {int(x) for e in k2.elemente for x in m.elements[e].nodes}
+    auf_wand = [n for n in kn2 if abs(m.nodes[n][0] - 2.0) < 1e-9]
+    check("alle Wandknoten der Pyramide sind Knoten des Quaders",
+          auf_wand and all(n in kn1 for n in auf_wand), f"{len(auf_wand)} Wandknoten")
+    res = solver.solve_static(m, case="LF1", workers=1)
+    F = 1e6 * 2.0 * 1.0
+    check("die Deckellast kommt als Auflagerkraft an (vorher 0 kN)",
+          abs(abs(float(res.reactions[:, 2].sum())) - F) < 1e-3 * F,
+          f"{abs(res.reactions[:, 2].sum()) / 1e3:.1f} kN gegen {F / 1e3:.1f} kN")
+    # Speichern und Laden
+    m2 = Model.from_dict(m.to_dict())
+    check("das Netz ueberlebt Speichern und Laden", _typen(m2) == _typen(m))
+
+
 def test_kragplatte_tet4_gegen_hex8():
     """Das Erfolgsmass des Auftrags an der Kragplatte 1 x 0,2 x 0,05 m mit
     Endlast 10 kN, gegen Bernoulli + Schub. Eine kleine Bohrung am freien
@@ -326,7 +426,7 @@ def test_kragplatte_tet4_gegen_hex8():
 def main():
     for t in (test_erkennung, test_netz_platte, test_quader_bleibt_abgebildet, test_nachbar_mit_tetraedern,
               test_nachbar_mit_verschiedener_teilung, test_lagen_bei_fliessen,
-              test_kragplatte_tet4_gegen_hex8):
+              test_quader_randseiten_und_nachbar, test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

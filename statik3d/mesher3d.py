@@ -1318,7 +1318,7 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     # die Tetraeder des Nachbarn die Lagenpunkte der Wand.
     vorgabe = (getattr(model, "flaechennetze", None) or {}).get(flaeche.name)
     if vorgabe is not None:
-        Pv, Tv, kv = vorgabe
+        Pv, Tv, kv = vorgabe[:3]              # ein viertes Glied (Vierecke) liest der Sweep
         return np.asarray(Pv, float), np.asarray(Tv, int), "", [], list(kv)
     zug = _linienzug(teilung, model, flaeche.linien or [])
     if zug is None:

@@ -637,11 +637,25 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             if v_hex < 0:
                 order = order[4:] + order[:4]
             nx, ny, nz = (list(koerper.teilung) + [4, 4, 4])[:3]
+            # Eine Linienvorgabe (sweep.lagenvorgabe: Kanten, die Nachbarn
+            # gehoeren) geht vor der eigenen Teilung - je Richtung dieselbe.
+            vorgabe = getattr(model, "linienvorgabe", None) or {}
+            richtungen = quader_richtungen(quader_kanten(model, koerper, order))
+            teil = [nx, ny, nz]
+            for d in range(3):
+                fest = [int(vorgabe[x]) for x in richtungen[d] if x in vorgabe]
+                if fest:
+                    teil[d] = max(fest)
+            nx, ny, nz = teil
             ord_ = netz_ordnung(model, ordnung)
             els = _hex_netz(model, order, max(1, nx), max(1, ny), max(1, nz), mat,
                             koerper.name, ord_, (cache or {}).setdefault("kanten", {})
-                            if cache is not None else None)
+                            if cache is not None else None, koerper=koerper, cache=cache)
             koerper.elemente = els
+            koerper.kommentar = f"{len(els)} Hexaeder (abgebildet, {nx} x {ny} x {nz})"
+            koerper.randtreue = 1.0
+            koerper.netzgrund = ""
+            koerper.netzkanten = []
             C.say(log, f"Volumen {koerper.name}: {len(els)} Hexaeder"
                        + (" (quadratisch, 20 Knoten)" if ord_ >= 2 else "")
                        + f" ({nx} x {ny} x {nz})")
@@ -1003,27 +1017,133 @@ HEX_KANTEN = ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
               (0, 4), (1, 5), (2, 6), (3, 7))
 
 
+QUADER_SEITEN = {0: (0, 1, 2, 3), 1: (4, 5, 6, 7), 2: (0, 1, 5, 4),
+                 3: (1, 2, 6, 5), 4: (2, 3, 7, 6), 5: (3, 0, 4, 7)}
+#: Lokale Ecken (r, s, t) -> Nummer in der hex8-Reihenfolge
+QUADER_ECKNR = {(0, 0, 0): 0, (1, 0, 0): 1, (1, 1, 0): 2, (0, 1, 0): 3,
+                (0, 0, 1): 4, (1, 0, 1): 5, (1, 1, 1): 6, (0, 1, 1): 7}
+
+
+def quader_kanten(model: Model, koerper, ecken: list) -> dict:
+    """{(lokale Ecke a, lokale Ecke b): Linienname} fuer die zwoelf Kanten eines
+    Sechsflaechners mit den acht Eckknoten ``ecken`` (hex8-Reihenfolge)."""
+    lokal = {int(n): i for i, n in enumerate(ecken)}
+    aus = {}
+    for fname in (koerper.flaechen or []):
+        f = model.flaechen.get(fname)
+        for lname in (f.linien or []) if f is not None else []:
+            ln = model.lines.get(lname)
+            if ln is None or len(ln.nodes) < 2:
+                continue
+            e0, e1 = lokal.get(int(ln.nodes[0])), lokal.get(int(ln.nodes[-1]))
+            if e0 is None or e1 is None or e0 == e1:
+                continue
+            aus[(e0, e1)] = lname
+            aus[(e1, e0)] = lname
+    return aus
+
+
+def quader_richtungen(kanten: dict) -> list:
+    """Die Linien der drei Kantenrichtungen eines Sechsflaechners: [x-Kanten,
+    y-Kanten, z-Kanten] (je vier Namen, fehlende ausgelassen)."""
+    gruppen = [[(0, 1), (3, 2), (4, 5), (7, 6)], [(0, 3), (1, 2), (4, 7), (5, 6)],
+               [(0, 4), (1, 5), (2, 6), (3, 7)]]
+    return [[kanten[k] for k in g if k in kanten] for g in gruppen]
+
+
 def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,
-              mat: str, gruppe: str, ordnung: int = 1, kanten: dict = None) -> list[int]:
+              mat: str, gruppe: str, ordnung: int = 1, kanten: dict = None,
+              koerper=None, cache: dict = None) -> list[int]:
     """Abgebildetes Hexaedernetz in einem Sechsflaechner (trilineare Abbildung);
-    ``ordnung`` 2 gibt Hexaeder mit 20 Knoten (Kantenmitten dazu)."""
+    ``ordnung`` 2 gibt Hexaeder mit 20 Knoten (Kantenmitten dazu).
+
+    Mit ``koerper`` bekommt das Netz, was ihm bis zum 21.09.2026 fehlte
+    (gemessen an einem Quader 2 x 1 x 1 m mit Flaechenlast: Auflagerkraft
+    0 kN statt p·A; Abnahme an einem Quader mit Tetraeder-Nachbarn: 21 doppelte
+    Knoten):
+
+    * die **Randseiten** der sechs Flaechen (Boden Seite 0, Deckel 1, dann
+      s = 0, r = 1, s = 1, r = 0 als Seiten 2 bis 5) - Flaechenlast, Kontakt
+      und Flaechenlager brauchen sie;
+    * **gemeinsame Knoten** mit Nachbarn: Kanten- und Flaechenpunkte tragen
+      dieselben Schluessel wie beim freien Vernetzer und beim Sweep
+      (sweep._knoten_anlegen: Kennung ("L", Linie, k) in der Zaehlrichtung
+      der Linie, (Flaeche, Koordinate) fuer Flaechenpunkte);
+    * **vorgegebene Flaechennetze** (model.flaechennetze) fuer die sechs
+      Flaechen, damit ein freier Nachbar dieselben Punkte trifft.
+    """
+    from . import sweep as SW
     P = model.nodes[ecken]
-    ids = np.zeros((nx + 1, ny + 1, nz + 1), dtype=int)
-    ecknr = {(0, 0, 0): 0, (1, 0, 0): 1, (1, 1, 0): 2, (0, 1, 0): 3,
-             (0, 0, 1): 4, (1, 0, 1): 5, (1, 1, 1): 6, (0, 1, 1): 7}
+    ecknr = QUADER_ECKNR
+    linien = quader_kanten(model, koerper, ecken) if koerper is not None else {}
+    flaechen = {}
+    if koerper is not None:
+        for sname in (koerper.flaechen or []):
+            f = model.flaechen.get(sname)
+            if f is None:
+                continue
+            menge = {int(n) for n in f.randknoten(model)}
+            for seite, ek in QUADER_SEITEN.items():
+                if menge == {int(ecken[i]) for i in ek}:
+                    flaechen[seite] = f
+    n_rst = (nx, ny, nz)
+
+    def kennung(i, j, k):
+        """Kennung und Flaeche eines Gitterpunkts - Kante, Flaeche oder None."""
+        r, s_, t = i / nx, j / ny, k / nz
+        rand = [x in (0.0, 1.0) for x in (r, s_, t)]
+        if sum(rand) == 3:
+            return ("K", int(ecken[ecknr[(int(round(r)), int(round(s_)), int(round(t)))]])), None
+        if sum(rand) == 2:
+            achse = rand.index(False)
+            fest = [int(round(x)) for x in (r, s_, t)]
+            e0 = list(fest); e0[achse] = 0
+            e1 = list(fest); e1[achse] = 1
+            a_, b_ = ecknr[tuple(e0)], ecknr[tuple(e1)]
+            name = linien.get((a_, b_))
+            if name is None:
+                return None, None
+            lauf = (i, j, k)[achse]
+            ln = model.lines[name]
+            kk = lauf if int(ln.nodes[0]) == int(ecken[a_]) else n_rst[achse] - lauf
+            return ("L", name, int(kk)), None
+        if sum(rand) == 1:
+            if rand[2]:
+                seite = 0 if t == 0.0 else 1
+            elif rand[1]:
+                seite = 2 if s_ == 0.0 else 4
+            else:
+                seite = 5 if r == 0.0 else 3
+            f = flaechen.get(seite)
+            return None, (f.name if f is not None else None)
+        return None, None
+
+    X, kenn, fl, index = [], [], [], {}
     for i in range(nx + 1):
         for j in range(ny + 1):
             for k in range(nz + 1):
-                r, s, t = i / nx, j / ny, k / nz
-                schluessel = (int(round(r)), int(round(s)), int(round(t)))
-                if (r in (0.0, 1.0) and s in (0.0, 1.0) and t in (0.0, 1.0)):
-                    ids[i, j, k] = ecken[ecknr[schluessel]]
-                    continue
-                N = np.array([(1 - r) * (1 - s) * (1 - t), r * (1 - s) * (1 - t),
-                              r * s * (1 - t), (1 - r) * s * (1 - t),
-                              (1 - r) * (1 - s) * t, r * (1 - s) * t,
-                              r * s * t, (1 - r) * s * t])
-                ids[i, j, k] = model.add_node(*(N @ P))
+                r, s_, t = i / nx, j / ny, k / nz
+                N = np.array([(1 - r) * (1 - s_) * (1 - t), r * (1 - s_) * (1 - t),
+                              r * s_ * (1 - t), (1 - r) * s_ * (1 - t),
+                              (1 - r) * (1 - s_) * t, r * (1 - s_) * t,
+                              r * s_ * t, (1 - r) * s_ * t])
+                ke, fname = kennung(i, j, k)
+                index[(i, j, k)] = len(X)
+                X.append(N @ P)
+                kenn.append(ke)
+                fl.append(fname)
+    X = np.asarray(X, float)
+    if koerper is not None:
+        nr = SW._knoten_anlegen(model, koerper, X, kenn, fl, cache)
+    else:
+        nr = np.array([model.add_node(*x) for x in X], int)
+        for (i, j, k), idx in index.items():
+            r, s_, t = i / nx, j / ny, k / nz
+            if r in (0.0, 1.0) and s_ in (0.0, 1.0) and t in (0.0, 1.0):
+                nr[idx] = ecken[ecknr[(int(round(r)), int(round(s_)), int(round(t)))]]
+    ids = np.zeros((nx + 1, ny + 1, nz + 1), dtype=int)
+    for (i, j, k), idx in index.items():
+        ids[i, j, k] = int(nr[idx])
     els = []
     kanten = {} if kanten is None else kanten
     for i in range(nx):
@@ -1037,6 +1157,50 @@ def _hex_netz(model: Model, ecken: list[int], nx: int, ny: int, nz: int,
                     els.append(model.add_element("hex20", c, mat, group=gruppe))
                 else:
                     els.append(model.add_element("hex8", c, mat, group=gruppe))
+    if koerper is None:
+        return els
+    # ---- Randseiten der sechs Flaechen ------------------------------------
+    weg = set(int(e) for e in els)
+    for f in flaechen.values():
+        f.randseiten = [x for x in (f.randseiten or []) if int(x[0]) not in weg]
+    e_idx = 0
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                e = els[e_idx]
+                e_idx += 1
+                for seite, treffer in ((0, k == 0), (1, k == nz - 1), (2, j == 0),
+                                       (3, i == nx - 1), (4, j == ny - 1), (5, i == 0)):
+                    if treffer and seite in flaechen:
+                        flaechen[seite].randseiten.append([e, seite])
+    # ---- Vorgegebene Flaechennetze fuer freie Nachbarn --------------------
+    netze = getattr(model, "flaechennetze", None)
+    if netze is None:
+        netze = model.flaechennetze = {}
+    for seite, f in flaechen.items():
+        if seite in (0, 1):
+            k0 = 0 if seite == 0 else nz
+            gitter = [[(i, j, k0) for j in range(ny + 1)] for i in range(nx + 1)]
+        elif seite in (2, 4):
+            j0 = 0 if seite == 2 else ny
+            gitter = [[(i, j0, k) for k in range(nz + 1)] for i in range(nx + 1)]
+        else:
+            i0 = 0 if seite == 5 else nx
+            gitter = [[(i0, j, k) for k in range(nz + 1)] for j in range(ny + 1)]
+        idx = [[index[g] for g in zeile] for zeile in gitter]
+        FP = X[[q for zeile in idx for q in zeile]]
+        FK = [kenn[q] for zeile in idx for q in zeile]
+        n2 = len(idx[0])
+        T = []
+        for a_ in range(len(idx) - 1):
+            for b_ in range(n2 - 1):
+                p0, p1 = a_ * n2 + b_, a_ * n2 + b_ + 1
+                p2, p3 = (a_ + 1) * n2 + b_ + 1, (a_ + 1) * n2 + b_
+                if np.linalg.norm(FP[p0] - FP[p2]) <= np.linalg.norm(FP[p1] - FP[p3]):
+                    T += [(p0, p1, p2), (p0, p2, p3)]
+                else:
+                    T += [(p0, p1, p3), (p1, p2, p3)]
+        netze[f.name] = (FP.copy(), np.asarray(T, int).reshape(-1, 3), FK)
     return els
 
 

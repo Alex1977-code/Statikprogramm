@@ -375,6 +375,24 @@ def _lagen(model: Model, erk: dict, teilung, h: float) -> "tuple[int, str]":
     return int(L), ""
 
 
+def _quaderkanten(model: Model, koerper) -> "list | None":
+    """Die drei Kantenrichtungen eines abgebildet vernetzten Sechsflaechners
+    (sechs Vierecke, acht Eckknoten) als [x-Linien, y-Linien, z-Linien] in
+    der Zaehlung von mesher._hex_netz - sonst None."""
+    from .mesher import quader_kanten, quader_richtungen
+    from .importers.rfem6_db import _hex_order
+    flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
+    if len(flaechen) != 6 or any(f is None for f in flaechen):
+        return None
+    ringe = [f.randknoten(model) for f in flaechen]
+    if len({n for r in ringe for n in r}) != 8 or not all(len(r) == 4 for r in ringe):
+        return None
+    order = _hex_order(ringe)
+    if not order:
+        return None
+    return quader_richtungen(quader_kanten(model, koerper, order))
+
+
 def lagenvorgabe(model: Model, koerper, hs: dict = None, karten: tuple = None,
                  log: list = None) -> dict:
     """{Mantellinie: Zahl der Abschnitte} fuer alle sweepbaren Koerper -
@@ -413,6 +431,23 @@ def lagenvorgabe(model: Model, koerper, hs: dict = None, karten: tuple = None,
         gemeinsam = M3.gemeinsame_randflaechen(model)
     wunsch = []                                  # je sweepbarem Koerper: (Name, Mantellinien, L)
     for k in koerper:
+        # Abgebildete Sechsflaechner (mesher._hex_netz): jede Kantenrichtung
+        # bekommt eine Teilung - die eigene (koerper.teilung), an Kanten, die
+        # ein Nachbar mitbenutzt, wenigstens dessen Karte. Ohne Nachbarn an
+        # den Kanten bleibt die eigene Teilung, wie sie ist.
+        quader = _quaderkanten(model, k)
+        if quader is not None:
+            flaechen = [model.flaechen[x] for x in k.flaechen]
+            h = M3._kantenlaenge(model, k, float(hs.get(k.name, 0.0) or 0.0))
+            teilung = M3.Linienteilung(model, flaechen, h, h_linien, h_flaechen, gemeinsam)
+            teil = (list(getattr(k, "teilung", None) or []) + [4, 4, 4])[:3]
+            for d, linien_d in enumerate(quader):
+                gem = [x for x in linien_d if x in teilung.gem_linien]
+                if not gem:
+                    continue
+                n_d = max([max(1, int(teil[d]))] + [int(teilung.n.get(x, 1)) for x in gem])
+                wunsch.append((k.name, set(linien_d), n_d))
+            continue
         try:
             erk = erkennen(model, k)
         except Exception:                        # noqa: BLE001 - dann kein Sweep, keine Vorgabe
@@ -443,8 +478,8 @@ def lagenvorgabe(model: Model, koerper, hs: dict = None, karten: tuple = None,
                     geaendert = True
     if wunsch:
         lagen = sorted({max(vorgabe[s] for s in mantel) for _n, mantel, _L in wunsch})
-        C.say(log, f"Sweep: Lagen für {len(wunsch)} Körper vorab festgelegt "
-                   f"({len(vorgabe)} Mantellinien, "
+        C.say(log, f"Sweep: Lagen für {len({n for n, _m, _L in wunsch})} Körper vorab festgelegt "
+                   f"({len(vorgabe)} Linien, "
                    + (f"{lagen[0]} Lagen" if len(lagen) == 1 else f"{lagen[0]} … {lagen[-1]} Lagen")
                    + (f", mindestens {LAGEN_MIN_PLASTISCH} wegen Fließen"
                       if lagen_min(model) > LAGEN_MIN else "")
