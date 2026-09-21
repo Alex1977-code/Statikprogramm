@@ -3770,6 +3770,18 @@ zwei Runden, Budget 3× (21.09.2026):
 | 2 | 1 456 | 7–8 à 10–11 mm | 13,4 % |
 | 3 | 4 972 | 11–12 à 7 mm | **9,2 %** |
 
+**Woher die Elementspannung kommt — ein Vorbehalt.** `res.solid_res` trägt für ein
+**elastisches** Element mit mehreren Auswertepunkten den Punkt mit der **höchsten**
+Vergleichsspannung, für ein **fließendes** dagegen nur die **Mitte** (Löser-Sitzung,
+21.09.2026; der Grund dort ist ein Nachweis-Argument: an einer Ecke schießt die gemeldete
+Spannung sonst über die verfestigte Fließgrenze). In einem Netz mit fließenden und
+elastischen Elementen nebeneinander vergleicht der Sprung also **Maximum gegen Mitte** —
+genau an der Fließgrenze, und ein Teil des gemessenen Sprungs ist dann der Regelwechsel
+und nicht das Netz. Für tet4 ist das gleichgültig (ein Punkt), für hex8/pent6/pyr5 nicht.
+Führt der Löser ein einheitliches **Mittel über die Gaußpunkte** als eigenes Feld
+(`netzfehler.MITTELFELD`, heute `solid_mittel`), liest der Schätzer es bevorzugt — ohne
+weitere Änderung.
+
 **Der Probelauf.** Die Schleife rechnet je Durchgang mit `solve_static(…, probelauf=True)`
 — einem Kontaktschritt aus dem Anfangszustand der Fugen; sein Ergebnis ist ein Netzmaß,
 kein Rechenergebnis (Kontaktkräfte um Größenordnungen daneben) und geht nur an den

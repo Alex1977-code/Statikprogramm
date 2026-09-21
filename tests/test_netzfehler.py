@@ -243,6 +243,32 @@ def test_hexaeder_und_keile_im_schaetzer():
     check("das adaptive Hexaedernetz geht durch die Abnahme", not bef, str([b.pruefung for b in bef])[:120])
 
 
+def test_mittelfeld_wird_bevorzugt():
+    """`solid_res` traegt fuer ein elastisches Element den Punkt mit der
+    hoechsten Vergleichsspannung, fuer ein fliessendes die Mitte
+    (Loeser-Sitzung, 21.09.2026) - der Sprung waere dann zum Teil dieser
+    Regelwechsel. Fuehrt der Loeser ein einheitliches Gausspunktmittel
+    (netzfehler.MITTELFELD), nimmt der Schaetzer es."""
+    m, k = _kleine_platte(0.04)
+    mesher.modell_vernetzen(m, [], workers=1)
+    res = Results(name="Probe", model=m)
+    hoch = np.array([300e6, 0.0, 0.0, 0.0, 0.0, 0.0])
+    mittel = np.array([100e6, 0.0, 0.0, 0.0, 0.0, 0.0])
+    for i, e in enumerate(m.elements):
+        if e.typ == "tet4":
+            res.solid_res[i] = hoch.copy()
+    ind1 = netzfehler.indikator(m, res)
+    setattr(res, netzfehler.MITTELFELD, {i: mittel.copy() for i in res.solid_res})
+    ind2 = netzfehler.indikator(m, res)
+    check("ohne Mittelfeld zaehlt solid_res", abs(ind1["sv"].max() - 300e6) < 1e-6 * 300e6,
+          f"{ind1['sv'].max() / 1e6:.1f} N/mm^2")
+    check("mit Mittelfeld zaehlt dieses", abs(ind2["sv"].max() - 100e6) < 1e-6 * 100e6,
+          f"{ind2['sv'].max() / 1e6:.1f} N/mm^2")
+    check("dieselben Elemente, dieselbe Zahl", ind1["N"] == ind2["N"] and ind1["N"] > 0, str(ind2["N"]))
+    check("die Energienorm folgt mit (ein Drittel der Spannung, ein Drittel der Norm)",
+          abs(ind2["U"] - ind1["U"] / 3.0) < 1e-6 * ind1["U"], f"{ind2['U']:.4g} gegen {ind1['U'] / 3:.4g}")
+
+
 def test_probelauf_nur_mit_fliessen():
     """Der Probelauf des Loesers (357d61d) laesst das Fliessen aus; so
     verfeinerte er am Drehlager an den falschen Stellen (54 von 100
@@ -309,7 +335,8 @@ def test_probelauf_nur_mit_fliessen():
 def main():
     for t in (test_gleichfoermige_spannung_hat_fehler_null, test_integral_ueber_den_tetraeder,
               test_feiner_ist_besser, test_neue_kantenlaengen_und_budget, test_adaptive_runde,
-              test_hexaeder_und_keile_im_schaetzer, test_probelauf_nur_mit_fliessen):
+              test_hexaeder_und_keile_im_schaetzer, test_mittelfeld_wird_bevorzugt,
+              test_probelauf_nur_mit_fliessen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
