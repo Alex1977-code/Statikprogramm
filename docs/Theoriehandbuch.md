@@ -2410,6 +2410,52 @@ gerechnet mit allem, was der Löser berücksichtigt: plastische Vorspannung und,
 mit `Model.knotendilatation`, die gemittelte Volumendehnung. Beim `tet4` ist
 das derselbe eine Punkt wie zuvor, das Drehlager rechnet unverändert.
 
+**Warum die Ecken und nicht die Gaußpunkte** (gemessen 21.09.2026 am
+Kragträger aus `hex8`, elastisch, **reine Biegung ohne Kontakt** — ein glattes
+Problem ohne Singularität; σ_xx am eingespannten Element gegen M/W). Was die
+Tabelle deckt, ist genau dieser Fall; für ein Element an einer Kontaktkante
+neben einer Fließzone folgt aus ihr nichts:
+
+| Lagen über die Höhe | Balken M/W | Mitte | Gaußpunkte | Ecken |
+|---|---|---|---|---|
+| 1 | 14,62 N/mm² | 0,0 % | 61,3 % | **110,8 %** |
+| 2 | 14,62 N/mm² | 50,9 % | 80,9 % | **105,2 %** |
+| 4 | 14,62 N/mm² | 75,5 % | 91,9 % | **104,8 %** |
+
+Die Gaußpunkte wären der numerisch bravere Ort — dort ist die Spannung
+superkonvergent, und dort gilt die Fließbedingung. Aber sie liegen **innen**:
+der äußerste eines `hex8` sitzt bei 57,7 % der halben Elementhöhe, und unter
+Biegung fehlt genau der Rand. Sie unterschätzen um bis zu 39 %. Die Ecken
+laufen gegen 105 % und liegen damit leicht auf der sicheren Seite.
+
+**Der Preis steht daneben, und er ist hoch.** An einer Singularität —
+Kontaktrand, einspringende Ecke, steifer Einschluss — hat die Spannung keinen
+endlichen Wert; sie wächst mit jeder Verfeinerung, und ein Spitzenwert dort ist
+keine Größe, sondern eine Eigenschaft des Netzes.
+
+Ein Beispiel dazu, **das aber nichts belegt**: am Drehlager meldete auf dem
+gesweepten Netz ein `hex8`, der selbst nicht fließt, 3 006 N/mm² als Eckwert,
+während die fließenden Elemente brave Werte zeigten (`tet4` 360,4 mit
+ε_p,eq 0,255 %, `pent6` 461,8; Löser-Sitzung, 21.09.2026). Die Fließbedingung
+war nicht verletzt — an den Gaußpunkten dieses Elements lag die Spannung unter
+f_y. **Dieses Netz ist jedoch unabhängig davon fehlerhaft**: dieselbe Rechnung
+liegt rein elastisch bei der Verformung um Faktor 8 daneben (0,1675 gegen
+1,3498 mm gegen das alte Netz, beides kontaktkonvergiert), und 992 seiner
+9 368 Keile sind entartet. Welcher Teil der 3 006 aus der Kerbe kommt und
+welcher aus diesem Fehler, ist **nicht getrennt**. Das Beispiel taugt darum
+weder für die Eckwertregel noch gegen sie; die Kragträgertabelle oben trägt sie
+allein.
+
+**Daraus folgt für den Anwender:** ein Spitzenwert aus `solid_res` ist an einer
+Singularität keine Nachweisgröße. Das ist keine Eigenheit dieser Auswertung,
+sondern der Finite-Elemente-Methode; dieselbe Erfahrung steht in § 5d-2 zu den
+Passstiften des Drehlagers (4 930 N/mm² gegen einen Handnachweis um Faktor
+50 bis 80 darunter). Die Auswertungsregel wurde deshalb **nicht** geändert: an
+glatten Problemen ist sie die beste der drei (Tabelle oben), und an
+Singularitäten gibt keine der drei eine brauchbare Zahl. Was fehlt, ist nicht
+eine andere Regel, sondern eine Erkennung, **ob** ein Spitzenwert an einer
+Kerbe sitzt — das ist eine offene Baustelle und wird hier nicht geraten.
+
 **Mit einer Ausnahme: fließende Elemente melden weiter die Elementmitte.** Die
 Plastizität wird an den **Gaußpunkten** erzwungen; die Auswertepunkte (Ecken)
 liegen außerhalb, und die abgezogene Vorspannung D·ε_p ist das Mittel über die
