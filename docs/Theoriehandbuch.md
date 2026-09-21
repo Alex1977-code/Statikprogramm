@@ -3564,6 +3564,29 @@ schaltet ihn ein (`test_pyramiden_als_uebergang`).
 | Nebenflächen (`bedeutung`) | 913 von 1 375 = 66,4 %; Nebenlinien 1 197 von 2 807 = 42,6 % |
 | Flächen mit Last | **2**; bedeutend sind fast nur Kontaktflächen (37 Bedingungen) und aus RFEM integrierte Objekte |
 
+**Der Lauf mit dem fertigen Stand** (Löser-Sitzung, 21.09.2026, 16 Arbeitsprozesse,
+Vorgaben unverändert: `sweep` an, `pyramiden` aus, `nebenflaechen_grob` aus,
+`plastizitaet.an`):
+
+| | altes Netz | mit Größenfeld, Sweep, Lagenvorgabe, Zylindern und Kappen-Gruppen |
+|---|---|---|
+| Volumenelemente | 645 934 tet4 | **495 593** = 31 108 hex8 + 9 368 pent6 + 455 117 tet4 (**−23,3 %**) |
+| Knoten | 158 728 | 159 465 (+0,5 %) |
+| Elemente je Knoten | 4,10 | **3,14** |
+| gesweepte Körper | 0 | **68 von 108** |
+| V33 | 80 600 tet4 | 12 372 hex8 + 3 720 pent6 = 16 092 (**−80,0 %**) |
+| V35 | 79 105 tet4 | 12 208 hex8 + 3 552 pent6 = 15 760 (**−80,1 %**) |
+
+Die 48 Körper mit vier Flächen sind als **Zylinder** erkannt, V33 und V35 über eine
+**Kappe aus vier koplanaren Flächen**. Was das für die Rechnung heißt, ist nüchtern zu
+sagen: die Knotenzahl bleibt gleich, also wird die **Faktorisierung nicht billiger** —
+billiger werden das Aufstellen (23 % weniger Elementschleifen, und am Drehlager ist das
+Aufstellen der Brocken: 124 s je Kontaktschritt gegen 4,23 s Faktorisierung) und der
+Speicher. Der Gewinn ist die **Genauigkeit**: in V33 und V35, zusammen einem Viertel der
+alten Elemente, steht jetzt der hex8 statt des tet4 (97,6 gegen 68,4 % der Balkenlösung).
+Das **Zerlegen an Fußabdrücken hat an keinem der 108 Körper angesetzt**; seit demselben Tag
+sagt jeder Körper im Protokoll, warum (`sweep.zerlegen_warum_nicht`).
+
 Der Sweep, wie er am Morgen des 21.09.2026 stand, erreichte das Drehlager also nicht:
 sein Erfolgsmaß (Kragplatte 97,6 % gegen 68,4 %, ein Achtel der Elemente) kam dort bei
 0,4 % der Elemente an. Seit dem Abend gelten vier Flächen (die 48 Körper mit vier Flächen
@@ -3572,10 +3595,45 @@ sind, wenn es Zylinder sind, sweepbar), Kappen-Gruppen und das Zerlegen an Fußa
 Modell und ist **nicht gemessen**. Und `nebenflaechen_grob` spart am Drehlager **0,2 %** der Elemente (646 712 →
 645 570; an der Platte waren es 55 %): die Bohrungen, die das Netz fein machen, sind dort
 fast alle Bohrungen *mit* Bolzen, Stift oder Achse — Kontaktflächen, und die bleiben fein.
-Was nach der Nachvernetzung an Splittern bleibt (Güte unter 0,10): 30 von 53 258, 74 von
-38 564, 29 von 115 734, 35 von 79 572, 32 von 80 752 Tetraedern in fünf Körpern, die
-schlechteste bei 0,025 — rund 200; die Kappen der Prüfkörper sind weg, diese sind noch
-nicht untersucht.
+**Die 189 Splitter am Drehlager: keine Kappe, sondern die Hülle.** Am gespeicherten Netz
+eingeordnet (Löser-Sitzung, 21.09.2026): von 189 Splittern (Güte < 0,10) in fünf Körpern
+haben **0 vier Hüllknoten** (also keine Kappe), **182 drei** und 7 zwei. Bei **allen 189**
+ist die kürzeste Kante eine **Hüllkante** von 0,13 bis 1,36 mm — bei `ziellaenge` = 50 mm
+also zwischen h/37 und h/385. Das Volumennetz hat sie nicht erzeugt, es hat sie **geerbt**:
+die Hüllknoten stehen fest, der Tetraeder muss sie nehmen. Die gebaute Kappen-Kur greift
+an keinem einzigen.
+
+Die naheliegende Gegenmaßnahme — eine **Mindestweite** in der Linien- und Flächenteilung,
+damit die Krümmungsregel (20 Abschnitte je Vollkreis, gleich wie klein er ist) keine
+Sub-Millimeter-Kanten mehr legt — ist gebaut, gemessen und **wieder verworfen worden**.
+Sie senkt die Zahl der engen Hüllkanten deutlich (Platte 1 × 0,6 × 0,2 m mit einer Bohrung
+r = 1 mm bei h = 50 mm: 1 280 → 586) und die Elementzahl um 6 bis 8 %, macht das Netz aber
+**schlechter**, weil die grobe Bohrungssehne dann nicht mehr zum Kranz daneben passt
+(deterministisch wiederholt):
+
+| Prüfkörper | Güte min ohne | mit Mindestweite | Splitter ohne | mit |
+|---|---|---|---|---|
+| Platte, eine Bohrung r = 2 mm | 0,090 | **0,065** | 10 | **15** |
+| Platte, fünf Bohrungen (zwei winzige) | 0,071 | **0,039** | 15 | **25** |
+
+0,039 liegt unter der Abnahmegrenze 0,05 — die Kur war schlimmer als das Übel. Geblieben
+ist die **Diagnose** (`mesher3d._enge_huellkanten`): je Körper eine Warnung mit Zahl,
+kürzester Kante und **Herkunft** der beiden Knoten — auf derselben Linie
+(Krümmungsteilung), zwischen zwei Linien (das ist dann die Geometrie: zwei Kanten laufen
+eng zusammen) oder am Innennetz einer Fläche. Erst diese Unterscheidung sagt, welche Kur
+überhaupt greifen kann; ohne sie ist jede weitere geraten.
+
+**MMG3D: Rückfall auf `-optim`.** Schlägt der Lauf **mit** Metrik fehl, wird er ohne sie
+wiederholt (`-optim`, der Weg vor dem Größenfeld), bevor der Körper aufgegeben wird. Am
+Drehlager war genau das der Unterschied zwischen einem brauchbaren und einem teuren Netz:
+V34 scheiterte im Metrik-Lauf, behielt seinen Tetraeder der Güte 0,000, und die
+Gütekontrolle erzwang eine Vernetzung mit 33,3 statt 50 mm — **69 589 statt 49 274
+Tetraeder**, also teurer als vorher. Dazu wird der **Grund** aus MMGs Ausgabe gelesen und
+nicht nur ihr Ende: MMG sucht neben der Eingabedatei von sich aus eine gleichnamige `.sol`
+und schreibt, wenn keine da ist, „`** … netz.sol NOT FOUND. USE DEFAULT METRIC.`" — eine
+Warnung, die am Schluss steht. Wer die letzten Zeichen meldet, nennt genau sie; so stand
+im Drehlager-Protokoll „netz.sol NOT FOUND", obwohl die Metrik geschrieben war
+(`vernetzer_extern._mmg_grund`).
 
 ## 6b Netzqualität (`netzguete.py`)
 

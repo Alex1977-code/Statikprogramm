@@ -631,6 +631,27 @@ def test_pyramiden_als_uebergang():
           f"{len(m2.flaechen['M2'].randseiten)} Randseiten")
 
 
+def test_zerlegen_sagt_warum_nicht():
+    """Am Drehlager stand keine einzige Zeile über das Zerlegen im Protokoll
+    (Lauf der Löser-Sitzung, 21.09.2026) - damit ließ sich nicht sagen, woran
+    es lag. Jetzt sagt es der Körper selbst, einmal und mit Zahlen."""
+    m, k, k2 = _platte_mit_pyramide()
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    zeile = [z for z in log if "nicht zerlegt" in z]
+    check("der nicht sweepbare Nachbar sagt, warum kein Schnitt ansetzt",
+          zeile and "Öffnung" in zeile[0], str(zeile[:1])[:160])
+    check("und nennt dabei seine Randflächen", zeile and "5 Randflächen" in zeile[0], str(zeile[:1])[:160])
+    # Ein Körper mit Öffnung, aber ohne Aufsatz darauf: andere Begründung
+    m2, k3 = platte_mit_bohrungen(0.4, 0.3, 0.1, bohrungen=((0.2, 0.15, 0.03),))
+    grund = sweep.zerlegen_warum_nicht(m2, k3)
+    check("eine Platte mit Bohrung nennt die Öffnung ohne Aufsatz",
+          "kein Aufsatz" in grund, grund[:120])
+    check("die gesweepte Platte mit Nabe findet dagegen einen Fußabdruck",
+          "Fußabdruck" in sweep.zerlegen_warum_nicht(*_platte_mit_nabe()),
+          sweep.zerlegen_warum_nicht(*_platte_mit_nabe())[:120])
+
+
 def test_kragplatte_tet4_gegen_hex8():
     """Das Erfolgsmass des Auftrags an der Kragplatte 1 x 0,2 x 0,05 m mit
     Endlast 10 kN, gegen Bernoulli + Schub. Eine kleine Bohrung am freien
@@ -674,7 +695,8 @@ def main():
               test_nachbar_mit_verschiedener_teilung, test_lagen_bei_fliessen,
               test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
               test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,
-              test_pyramiden_als_uebergang, test_kragplatte_tet4_gegen_hex8):
+              test_pyramiden_als_uebergang, test_zerlegen_sagt_warum_nicht,
+              test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

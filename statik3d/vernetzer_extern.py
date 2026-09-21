@@ -318,6 +318,28 @@ def mesh_lesen(pfad: str) -> tuple:
             np.asarray(tris, int).reshape(-1, 3))
 
 
+def _mmg_grund(lauf) -> str:
+    """Der **Grund** aus MMG3Ds Ausgabe, nicht nur ihr Ende.
+
+    MMG sucht neben der Eingabedatei von sich aus eine gleichnamige ``.sol``
+    und schreibt, wenn keine da ist, „** … netz.sol NOT FOUND. USE DEFAULT
+    METRIC." - eine **Warnung**, die am Ende der Ausgabe steht. Wer nur die
+    letzten 300 Zeichen meldet, nennt genau sie und verdeckt den wirklichen
+    Fehler; am Drehlager stand darum „netz.sol NOT FOUND" im Protokoll,
+    obwohl die Metrik geschrieben war (21.09.2026). Darum werden hier die
+    Zeilen bevorzugt, die MMG als Fehler kennzeichnet.
+    """
+    text = ((lauf.stderr or "") + chr(10) + (lauf.stdout or "")).strip()
+    zeilen = [z.strip() for z in text.splitlines() if z.strip()]
+    schlecht = [z for z in zeilen
+                if any(w in z.upper() for w in ("## ERROR", "ERROR:", "## ABORT", "MISMATCH",
+                                                "UNABLE", "EXIT", "WRONG", "FAILED"))]
+    if schlecht:
+        return " | ".join(schlecht[-3:])[:300]
+    ohne_warnung = [z for z in zeilen if "NOT FOUND" not in z.upper()]
+    return (" | ".join(ohne_warnung[-3:]) or " | ".join(zeilen[-2:]))[:300]
+
+
 def mmg3d_nachbessern(Pn: np.ndarray, TET: np.ndarray, T: np.ndarray, h: float,
                       programm: str = "", h_min: float = 0.0, log: list = None,
                       feld=None) -> tuple:
@@ -367,9 +389,24 @@ def mmg3d_nachbessern(Pn: np.ndarray, TET: np.ndarray, T: np.ndarray, h: float,
             befehl += ["-hmin", f"{float(h_min):.9g}"]
         lauf = subprocess.run(befehl, capture_output=True, text=True, timeout=3600,
                               **werkzeuge.ohne_fenster())
+        if (lauf.returncode != 0 or not os.path.isfile(aus)) and metrik:
+            # Mit Metrik gescheitert - dann wenigstens optimieren. Genau das
+            # war am Drehlager der Unterschied zwischen einem brauchbaren und
+            # einem teuren Netz: V34 scheiterte hier, behielt seinen Tetraeder
+            # der Guete 0,000, und die Guetepruefung erzwang eine Vernetzung
+            # mit 33,3 statt 50 mm - 69 589 statt 49 274 Tetraeder
+            # (Lauf der Loeser-Sitzung, 21.09.2026). Der Rueckfall kostet
+            # einen zweiten MMG-Lauf und rettet den Koerper.
+            if log is not None:
+                log.append("  MMG3D mit Größenfeld gescheitert (" + _mmg_grund(lauf)
+                           + ") - noch einmal mit -optim")
+            befehl = [x for x in befehl if x not in ("-sol", sol, "-hgrad", f"{HGRAD:.4g}")]
+            befehl += ["-optim"]
+            metrik = False
+            lauf = subprocess.run(befehl, capture_output=True, text=True, timeout=3600,
+                                  **werkzeuge.ohne_fenster())
         if lauf.returncode != 0 or not os.path.isfile(aus):
-            raise RuntimeError(f"MMG3D gescheitert (Rückgabe {lauf.returncode}): "
-                               f"{(lauf.stderr or lauf.stdout)[-300:]}")
+            raise RuntimeError(f"MMG3D gescheitert (Rückgabe {lauf.returncode}): {_mmg_grund(lauf)}")
         X, TET2, _tris = mesh_lesen(aus)
     finally:
         shutil.rmtree(ordner, ignore_errors=True)

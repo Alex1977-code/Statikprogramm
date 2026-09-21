@@ -1225,6 +1225,34 @@ def zerlegbar(model: Model, koerper) -> bool:
     return bool(bl)
 
 
+def zerlegen_warum_nicht(model: Model, koerper) -> str:
+    """Warum am Koerper kein Schnitt ansetzt - in einem Satz, mit Zahlen.
+
+    Am Drehlager stand im ganzen Protokoll keine Zeile ueber das Zerlegen
+    (Lauf der Loeser-Sitzung, 21.09.2026): `zerlegen` hat an keinem der 108
+    Koerper angesetzt, und ohne diese Zeile laesst sich nicht sagen, ob es
+    keine ebene Flaeche mit Oeffnung gab, keinen Aufsatz darauf, oder ob der
+    Schnitt zwar entstand und nur keinen sweepbaren Block ergab. Genau das
+    sagt sie jetzt - je Koerper, einmal.
+    """
+    namen = list(koerper.flaechen or [])
+    mit_loch = [x for x in namen
+                if (model.flaechen.get(x) is not None and (model.flaechen[x].oeffnungen or []))]
+    if not mit_loch:
+        return f"keine der {len(namen)} Randflächen hat eine Öffnung"
+    n_abdruck = 0
+    for x in mit_loch:
+        try:
+            n_abdruck += sum(1 for _b, _S in _fussabdruecke(model, koerper, namen, model.flaechen[x], 0))
+        except Exception:                   # noqa: BLE001
+            pass
+    if not n_abdruck:
+        return (f"{len(mit_loch)} Randfläche(n) mit Öffnung, aber kein Aufsatz hängt nur über "
+                "eine ihrer Öffnungen am Rest")
+    return (f"{n_abdruck} Fußabdruck/-abdrücke an {len(mit_loch)} Fläche(n) - aber kein Schnitt "
+            "ergab einen sweepbaren Block")
+
+
 def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: dict = None,
                       karten: tuple = None, ordnung: int = 0, fortschritt=None) -> list:
     """Den Koerper zerlegen und Block fuer Block vernetzen: die sweepbaren
@@ -1235,6 +1263,8 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
     from . import mesher3d as M3
     bl, schnitte = zerlegen(model, koerper)
     if not bl:
+        from .importers import _common as C
+        C.say(log, f"Volumen {koerper.name}: nicht zerlegt - {zerlegen_warum_nicht(model, koerper)}.")
         return []
     try:
         C.say(log, f"Volumen {koerper.name}: nicht als Ganzes sweepbar - an "

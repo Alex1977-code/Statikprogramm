@@ -163,6 +163,33 @@ VERFEINERN_ANLAEUFE = 3
 DICKE_TEILUNG = 5
 #: Hoechste Zahl von Abschnitten auf einer einzelnen Randlinie
 MAX_ABSCHNITTE = 400
+#: Massstab der Splitter-Diagnose (:func:`_enge_huellkanten`): eine
+#: Huellkante unter ``h / MINDESTWEITE_TEILER`` gilt als zu eng.
+#:
+#: Woher die Zahl kommt: am Drehlager standen 189 Splitter in fuenf Koerpern,
+#: und bei **allen 189** war die kuerzeste Kante eine **Huellkante** von 0,13
+#: bis 1,36 mm bei ziellaenge = 50 mm - also zwischen h/37 und h/385 (Messung
+#: der Loeser-Sitzung am gespeicherten Netz, 21.09.2026). Keiner davon war
+#: eine Kappe; die Kur dafuer greift an keinem. 1/30 deckt den ganzen
+#: gemessenen Bereich ab.
+#:
+#: **Die naheliegende Kur ist gebaut, gemessen und wieder verworfen.** Die
+#: Kruemmungsteilung so zu kappen, dass kein Abschnitt unter die Mindestweite
+#: faellt (und ebenso die Kraenze und Randabstaende), senkt zwar die Zahl der
+#: engen Huellkanten (Platte 1 x 0,6 x 0,2 m mit einer Bohrung r = 1 mm bei
+#: h = 50 mm: 1 280 -> 586) und die Elementzahl um 6 bis 8 %, macht das Netz
+#: aber **schlechter** - die grobe Bohrungssehne passt dann nicht mehr zum
+#: Kranz daneben (21.09.2026, deterministisch wiederholt):
+#:
+#:     Platte, eine Bohrung r = 2 mm    Guete min 0,090 -> 0,065, Splitter 10 -> 15
+#:     Platte, fuenf Bohrungen          Guete min 0,071 -> 0,039, Splitter 15 -> 25
+#:
+#: 0,039 liegt unter der Abnahmegrenze 0,05: die Kur war schlimmer als das
+#: Uebel. Geblieben ist darum die **Diagnose** - sie sagt je Koerper, ob die
+#: engen Kanten von der Kruemmungsteilung einer Linie, von zwei eng
+#: zusammenlaufenden Linien (Geometrie) oder aus dem Innennetz einer Flaeche
+#: stammen. Ohne diese Unterscheidung ist jede weitere Kur geraten.
+MINDESTWEITE_TEILER = 30.0
 
 
 # --------------------------------------------------------------------------
@@ -966,6 +993,20 @@ def _ausduennen_2d(K: np.ndarray, weite: np.ndarray,
             if j != i and not behalten[j]:
                 weg[j] = True
     return behalten
+
+
+def mindestweite(h: float, model=None) -> float:
+    """Der kuerzeste Abstand, den der Vernetzer von sich aus erzeugen darf:
+    ``h / MINDESTWEITE_TEILER`` - oder ``netz.h_min``, wenn der Anwender eine
+    kleinere Elementgroesse ausdruecklich verlangt hat.
+
+    Alles darunter wird zum Splitter, den kein Volumenschritt mehr los wird
+    (Drehlager, 21.09.2026: 189 Splitter, bei allen war die kuerzeste Kante
+    eine Huellkante von 0,13 bis 1,36 mm bei h = 50 mm).
+    """
+    weite = max(float(h), 0.0) / MINDESTWEITE_TEILER
+    h_min = float(getattr(getattr(model, "netz", None), "h_min", 0.0) or 0.0)
+    return min(weite, h_min) if h_min > 0 else weite
 
 
 def _kraenze(ringe: list, h: float, wachstum: float = WACHSTUM_FLAECHE) -> np.ndarray:
@@ -3207,6 +3248,60 @@ def _pyramiden_einziehen(model: Model, koerper, P: np.ndarray, T: np.ndarray, qu
     return P_neu, T_neu, quelle_neu, kennung_neu, pyr, T_flaechen, quelle_flaechen
 
 
+def _enge_huellkanten(P: np.ndarray, T: np.ndarray, kennung: list, quelle: list,
+                      h: float) -> dict:
+    """Huellkanten unter der Mindestweite - mit **Herkunft**.
+
+    Sie sind die Quelle der Splitter, die kein Volumenschritt mehr los wird:
+    die Huellknoten stehen fest, und der Tetraeder muss die kurze Kante
+    nehmen (Messung der Loeser-Sitzung am Drehlager, 21.09.2026: bei allen
+    189 Splittern war die kuerzeste Kante eine Huellkante). Gezaehlt wird
+    nach Herkunft der beiden Knoten, damit das Protokoll sagt, **wo** sie
+    entstehen: auf derselben Linie (Kruemmungsteilung), zwischen zwei Linien
+    (Geometrie: zwei Kanten laufen eng zusammen) oder am Innennetz einer
+    Flaeche.
+
+    Rueckgabe {"anzahl", "kuerzeste", "weite", "je_art": {Art: Zahl},
+    "beispiele": [(Laenge, Text)]}.
+    """
+    P = np.asarray(P, float)
+    T = np.asarray(T, int).reshape(-1, 3)
+    weite = float(h) / MINDESTWEITE_TEILER
+    aus = {"anzahl": 0, "kuerzeste": 0.0, "weite": weite, "je_art": {}, "beispiele": []}
+    if not len(T) or weite <= 0:
+        return aus
+    kanten = np.vstack([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]])
+    kanten = np.unique(np.sort(kanten, axis=1), axis=0)
+    laenge = np.linalg.norm(P[kanten[:, 0]] - P[kanten[:, 1]], axis=1)
+    eng = np.nonzero(laenge < weite)[0]
+    if not len(eng):
+        return aus
+    kennung = list(kennung or ())
+
+    def herkunft(i):
+        k = kennung[i] if i < len(kennung) else None
+        if k is None:
+            return ("Fläche", "")
+        return ("Linie", str(k[1])) if k[0] == "L" else ("Ecke", str(k[1]))
+    je_art: dict = {}
+    beispiele = []
+    for j in eng[np.argsort(laenge[eng])]:
+        a, b = int(kanten[j, 0]), int(kanten[j, 1])
+        ha, hb = herkunft(a), herkunft(b)
+        if ha[0] == "Linie" and hb[0] == "Linie":
+            art = f"auf der Linie {ha[1]}" if ha[1] == hb[1] else f"zwischen den Linien {ha[1]} und {hb[1]}"
+        elif "Fläche" in (ha[0], hb[0]):
+            art = "am Innennetz einer Fläche"
+        else:
+            art = f"an einer Ecke ({ha[1] or hb[1]})"
+        je_art[art] = je_art.get(art, 0) + 1
+        if len(beispiele) < 3:
+            beispiele.append((float(laenge[j]), art))
+    aus.update({"anzahl": int(len(eng)), "kuerzeste": float(laenge[eng].min()),
+                "je_art": je_art, "beispiele": beispiele})
+    return aus
+
+
 def randschale(model: Model, koerper, h: float, log: list = None,
                fortschritt=None, h_linien: dict = None,
                h_flaechen: dict = None, gemeinsam: tuple = None) -> tuple:
@@ -3293,6 +3388,7 @@ def randschale(model: Model, koerper, h: float, log: list = None,
             bericht["pyramiden"] = pyr
             bericht["T_flaechen"] = T_flaechen
             bericht["quelle_flaechen"] = quelle_flaechen
+    bericht["enge_kanten"] = _enge_huellkanten(P, T, kennung, quelle, h)
     bericht["gruende"] = gruende
     bericht["quelle"] = quelle
     bericht["kennung"] = kennung
@@ -4020,6 +4116,15 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     if tb.get("flache"):
         C.say(log, f"  {tb['flache']} flache Tetraeder aussortiert (Volumen unter "
                    f"{FLACH:g}·h³ - sie trügen nichts und verdürben die Kondition)")
+    eng = bericht.get("enge_kanten") or {}
+    if eng.get("anzahl"):
+        # Ohne diese Zeile sucht man die Ursache im Volumenschritt, und dort
+        # ist sie nicht: die Huelle bringt die kurze Kante mit.
+        arten = sorted(eng["je_art"].items(), key=lambda x: -x[1])[:3]
+        C.warn(log, f"  Volumen {koerper.name}: {eng['anzahl']} Hüllkanten unter der Mindestweite "
+                    f"{eng['weite'] * 1e3:.2f} mm (kürzeste {eng['kuerzeste'] * 1e3:.3f} mm) - "
+                    + ", ".join(f"{n}x {a}" for a, n in arten)
+                    + " - aus ihnen werden Splitter, die der Volumenschritt nicht mehr los wird")
     if tb.get("splitter"):
         # Mit Nummer, nicht nur mit Zahl: zu jedem Befund gehoert das Element,
         # sonst kann der Anwender es weder anzeigen noch nachrechnen. Gerechnet
