@@ -945,6 +945,93 @@ def test_die_tangente_wird_nur_gebaut_wenn_sie_gelesen_wird():
           "bitgleich")
 
 
+def test_die_symmetriesonde_hat_keine_luecke():
+    """Ein Muster, das eine ungestimmte Sonde sicher verschluckt.
+
+    ``ist_symmetrisch`` sondiert seit dem 22.09.2026 mit ``K r`` gegen
+    ``K^T r`` statt die Struktur zu durchlaufen (5,206 -> 0,419 s bei
+    Drehlagergroesse; am Drehlager 162,9 s je Lastfall, 19 Stunden ueber
+    422 Lastfaelle). ``r`` darf dafuer **nicht** aus plus/minus eins
+    bestehen.
+
+    ``D = K - K^T`` ist antisymmetrisch. Vier Stellen loeschen sich in
+    **allen** betroffenen Zeilen zugleich aus:
+
+        D[k,i] = a    D[k,j] = -a    D[i,l] = a    D[j,l] = -a
+
+        (D r)_k = a (r_i - r_j)      (D r)_i = a (r_l - r_k)
+        (D r)_j = a (r_k - r_l)      (D r)_l = a (r_j - r_i)
+
+    Alle vier sind null, sobald r_i = r_j und r_k = r_l. Weil die Sonden
+    fest gesaet sind, lassen sich solche Paare **suchen** - genau das tut
+    diese Pruefung. Mit plus/minus eins meldet ``ist_symmetrisch`` dann
+    "symmetrisch", obwohl die Abweichung sechs Zehnerpotenzen ueber der
+    Schranke liegt; verstimmt faellt sie auf.
+
+    Zwei einfachere Pruefkoerper treffen die Luecke **nicht**, und das ist
+    der Grund, warum sie hier so umstaendlich gebaut ist: zwei
+    Unsymmetrien in einer Zeile werden von den Gegeneintraegen in den
+    Partnerzeilen verraten, und ein zufaelliges Vierermuster braucht
+    r_i = r_j und r_k = r_l in allen vier Sonden - das traf in 300
+    Versuchen kein einziges Mal.
+    """
+    print("")
+    print("--- Die Symmetriesonde und ihre Luecke ---")
+    from scipy import sparse as _sp
+    from statik3d.solver import ist_symmetrisch
+
+    n, proben, saat = 40, 4, 20260922      # wie in ist_symmetrisch
+    rng = np.random.default_rng(saat)
+    R = [rng.choice((-1.0, 1.0), size=n) for _ in range(proben)]
+
+    def gleichpaar(ausser=()):
+        for p in range(n):
+            for q in range(p + 1, n):
+                if p in ausser or q in ausser:
+                    continue
+                if all(r[p] == r[q] for r in R):
+                    return p, q
+        return None
+
+    ij = gleichpaar()
+    kl = gleichpaar(ausser=set(ij or ()))
+    check("Indexpaare mit gleichem Vorzeichen in allen Sonden gefunden",
+          ij is not None and kl is not None, f"{ij} und {kl}")
+    if not ij or not kl:
+        return
+    i, j = ij
+    k, l = kl
+
+    A = _sp.random(n, n, density=0.3, random_state=7, format="csr")
+    K = (A + A.T).tocsr()
+    gross = float(abs(K).max())
+    check("der Prüfkörper ist symmetrisch", ist_symmetrisch(K), f"max |K| {gross:.3e}")
+
+    a = 1.0e-6 * gross
+    M = K.tolil()
+    for p, q, v in ((k, i, a), (k, j, -a), (i, l, a), (j, l, -a)):
+        M[p, q] = M[p, q] + v
+        M[q, p] = M[q, p] - v
+    M = M.tocsr()
+    d = float(abs(M - M.T).max())
+    schranke = 1e-12 * gross
+    check("das Muster macht die Matrix wirklich unsymmetrisch",
+          d > 1e5 * schranke, f"{d:.3e} gegen Schranke {schranke:.3e}")
+    check("und die verstimmte Sonde merkt es", not ist_symmetrisch(M),
+          "erkannt" if not ist_symmetrisch(M)
+          else "VERSCHLUCKT - die Sonde ist ungestimmt")
+
+    # Die Empfindlichkeit darf unter der Verstimmung nicht gelitten haben
+    M2 = K.tolil()
+    M2[1, 2] = M2[1, 2] + 1.0e-11 * gross
+    check("eine einzelne Stoerung von 1e-11 faellt weiter auf",
+          not ist_symmetrisch(M2.tocsr()), "erkannt")
+    M3 = K.tolil()
+    M3[1, 2] = M3[1, 2] + 1.0e-14 * gross
+    check("eine unter der Schranke gilt weiter als symmetrisch",
+          ist_symmetrisch(M3.tocsr()), "nicht angeschlagen")
+
+
 def main():
     for f in (test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
               test_jeder_loeser_sagt_woher_er_kommt, test_ama_liegt_der_exe_bei,
@@ -961,7 +1048,8 @@ def main():
               test_die_beschreibung_nennt_die_loesung_nicht_die_korrektur,
               test_kein_rueckfall_im_nachweis_wenn_die_schranke_gehalten_wird,
               test_die_matrix_wird_einmal_umgewandelt,
-              test_die_tangente_wird_nur_gebaut_wenn_sie_gelesen_wird):
+              test_die_tangente_wird_nur_gebaut_wenn_sie_gelesen_wird,
+              test_die_symmetriesonde_hat_keine_luecke):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

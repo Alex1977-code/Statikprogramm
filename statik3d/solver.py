@@ -410,30 +410,92 @@ def speichertext(was: str = "") -> str:
     return ((was + ": ") if was and teile else "") + ", ".join(teile)
 
 
-def ist_symmetrisch(K, tol: float = None) -> bool:
-    """Ist die Matrix symmetrisch? Blockweise geprueft, ohne die Differenz.
+def ist_symmetrisch(K, tol: float = None, proben: int = 4) -> bool:
+    """Ist die Matrix symmetrisch? Sondiert, nicht durchlaufen.
 
-    ``K - K.T`` sieht harmlos aus, aber scipy legt dafuer erst ein Ergebnis
-    in der Groesse **beider** Strukturen an und kuerzt danach: am Drehlager
-    (948 000 Freiheitsgrade, 43,8 Mio Eintraege) waren das 87,7 Mio Eintraege
-    und 669 MiB, die nicht mehr passten - die Rechnung brach mit einem
-    Speicherfehler ab (18.09.2026). Zeilenweise in Bloecken gemessen an einer
-    Matrix mit 19,3 Mio Eintraegen: 63 MB statt 697 MB Spitze, 0,56 s statt
-    0,13 s. Die Zeit faellt neben der Faktorisierung nicht ins Gewicht.
+    Ist K symmetrisch, dann ist ``K r = K^T r`` fuer **jedes** r. Mit r aus
+    plus/minus eins zeigt sich eine Unsymmetrie der Groesse eps an einer
+    Stelle als genau eps in ``(K - K^T) r`` - die Sonde ist damit so
+    empfindlich wie ein Durchlauf, der dieselbe Schranke je Eintrag anlegt,
+    und ``K.T`` ist bei CSR eine CSC-Ansicht derselben Felder, kostet also
+    nichts.
+
+    **Warum das nicht immer so war.** Bis zum 22.09.2026 lief hier ein
+    blockweiser Durchlauf ueber ``K[a:b, :] - K[:, a:b].T``, und der
+    Docstring behauptete, die Zeit falle "neben der Faktorisierung nicht ins
+    Gewicht". Die Loesersitzung hat das am Drehlager widerlegt: **1,12 s je
+    Aufruf, 162,9 s je Lastfall, ueber 422 Lastfaelle 19 Stunden** - bei
+    145 Faktorisierungen je Lastfall, deren Symmetrie sich zwischen zwei
+    Kontaktschritten nicht aendert. Gemessen an einer Matrix von
+    Drehlagergroesse (475.935 Zeilen, 35,2 Mio. Eintraege):
+
+        Durchlauf   5,206 s
+        Sonde       0,419 s        Faktor 12,4
+
+    ``K - K.T`` als Ganzes bleibt verboten: scipy legt dafuer erst ein
+    Ergebnis in der Groesse **beider** Strukturen an und kuerzt danach - am
+    Drehlager waren das 87,7 Mio Eintraege und 669 MiB, die nicht mehr
+    passten (18.09.2026).
+
+    Zwei Fallen, beide beim Bauen hineingetappt und darum benannt:
+
+    * Die Schranke ist **genau** ``tol``, ohne Zuschlag. Mit ``sqrt(n)``
+      skaliert lag sie bei 3,7e-9 und verschluckte eine Stoerung von 5,4e-11,
+      die der Durchlauf fand. Eine zu grosszuegige Sonde ist schlimmer als
+      keine.
+    * ``K.T.tocsr()`` baut die Transponierte wirklich auf: 1,33 s statt
+      0,42 s. Die CSC-Ansicht ``K.T`` genuegt.
+
+    Der Rauschabstand traegt auch bei Drehlagerskala: bei max |K| = 1,9e17
+    (die Strafsteifigkeit ist 1e4 mal die Diagonale) stehen die beiden
+    Produkte bitgleich, waehrend die Schranke bei 1,9e5 liegt; eine Stoerung
+    von zehnfacher Schranke faellt auf.
+
+    **Die dritte Falle, und die gefaehrlichste: r darf nicht aus plus/minus
+    eins bestehen.** ``D = K - K^T`` ist antisymmetrisch, und vier Stellen
+    loeschen sich in **allen** betroffenen Zeilen zugleich aus:
+
+        D[k,i] = a    D[k,j] = -a    D[i,l] = a    D[j,l] = -a
+
+        (D r)_k = a (r_i - r_j)      (D r)_i = a (r_l - r_k)
+        (D r)_j = a (r_k - r_l)      (D r)_l = a (r_j - r_i)
+
+    Alle vier sind null, sobald r_i = r_j und r_k = r_l - bei plus/minus
+    eins eine gewoehnliche Bedingung. Weil die Sonden fest gesaet sind,
+    lassen sich solche Indexpaare sogar **suchen**; genau das tut
+    ``tests/test_loeser.py::test_die_symmetriesonde_hat_keine_luecke``.
+    Ungestimmt meldet die Sonde dort "symmetrisch", obwohl die Abweichung
+    3,84e-06 betraegt und die Schranke bei 1,92e-12 liegt - sechs
+    Zehnerpotenzen daneben. Verstimmt faellt sie auf.
+
+    Die Kur ist, r paarweise verschieden zu **verstimmen**: eine
+    Ausloeschung verlangte dann d_i = d_j, und die d sind paarweise
+    verschieden. Die Empfindlichkeit bleibt, weil |r| zwischen 1,000016 und
+    1,001 liegt: eine Stoerung von 5,40e-11 zeigt sich als 5,40e-11.
+
+    **Wie haeufig die Luecke ohne Absicht auftritt, ist dabei offen.** Die
+    Loesersitzung hat 50,4 / 25,0 / 12,7 / 5,9 % (bei ein bis vier Sonden)
+    gemessen, aber an einer **einzelnen Zeile**; in einer wirklichen Matrix
+    verraten die antisymmetrischen Gegeneintraege die Abweichung meist in
+    den Partnerzeilen. An 300 zufaelligen Vierermustern fiel mit plus/minus
+    eins kein einziges durch. Die Verstimmung bleibt trotzdem drin: sie
+    kostet ein ``arange`` und schliesst eine Klasse, die sich sonst nur
+    durch Glueck nicht zeigt.
     """
     Kc = K.tocsr()
-    if tol is None:
-        tol = 1e-12 * (float(abs(Kc).max()) if Kc.nnz else 1.0)
     if Kc.shape[0] != Kc.shape[1]:
         return False
+    if tol is None:
+        tol = 1e-12 * (float(abs(Kc).max()) if Kc.nnz else 1.0)
     n = Kc.shape[0]
-    # So viele Zeilen, dass ein Block rund 1 Mio Eintraege hat
-    je_zeile = max(1.0, Kc.nnz / max(1, n))
-    zeilen = int(max(1000, min(n, 1_000_000 // je_zeile)))
-    for a in range(0, n, zeilen):
-        b = min(n, a + zeilen)
-        d = Kc[a:b, :] - Kc[:, a:b].T.tocsr()
-        if d.nnz and float(abs(d).max()) > tol:
+    if n == 0 or Kc.nnz == 0:
+        return True
+    KT = Kc.T                      # CSC-Ansicht derselben Felder
+    rng = np.random.default_rng(20260922)   # fest: dieselbe Matrix, dasselbe Urteil
+    stimmung = 1.0 + 1.0e-3 * np.arange(1, n + 1, dtype=float) / n
+    for _ in range(max(1, int(proben))):
+        r = rng.choice((-1.0, 1.0), size=n) * stimmung
+        if float(np.abs(Kc @ r - KT @ r).max()) > tol:
             return False
     return True
 

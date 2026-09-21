@@ -2558,6 +2558,24 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
 
 ## 6 Kontakt
 
+> **Wann ein Kontaktergebnis nicht auskonvergiert ist (seit 22.09.2026).**
+> Bei Reibung prüft das Programm die Haft- und Gleitzustände nach jedem
+> Schritt nach. Wechseln sie immer weiter, bricht es die Nachprüfung nach 40
+> Runden ab und rechnet mit dem zuletzt erreichten Zustand weiter.
+>
+> Bis zum 21.09.2026 meldete der Bericht in diesem Fall trotzdem
+> **„konvergiert"**; der Hinweis stand allein im Kontaktprotokoll. Jetzt
+> steht im Protokoll **und** im Fortschrittsbalken „Nachprüfung der Reibung
+> nach 40 Zustandswechseln abgebrochen", und der Lastfall gilt als **nicht
+> konvergiert**.
+>
+> Was das heißt: die Verformung und die Spannungen sind der Zustand, bei dem
+> die Nachprüfung aufgegeben hat. Sie sind **wiederholbar** — derselbe Lauf
+> gibt dasselbe Ergebnis —, aber sie sind kein Nachweis. Was dann hilft:
+> weniger Reibbeiwert, ein feineres Netz in der Fuge, oder eine kleinere
+> automatische Kontaktsteifigkeit. Am Drehlagerbeispiel zieht dieser Abbruch
+> im ersten Lastfall.
+
 * **Einseitiges Lager**: Knoten auswählen, Stützrichtung (z. B. 0 0 1 =
   stützt nach oben), optional Spalt, Federsteifigkeit (elastische Bettung,
   nur Druck) und Reibbeiwert μ.

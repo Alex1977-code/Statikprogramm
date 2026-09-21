@@ -1286,6 +1286,29 @@ Grund statt der Schrittzahl. `tests/test_kontakthalt.py` setzt den Deckel
 künstlich auf 1 und prüft, dass `contact_converged` dann **falsch** meldet;
 mit dem alten Stand meldet dieselbe Prüfung wahr.
 
+> **Und am Drehlager zieht der Deckel.** Im `contact_log` von LF1 steht in
+> zwei unabhängigen Läufen wörtlich „Kontakt: Nachprüfung der Reibung nach 40
+> Zustandswechseln abgebrochen" — und daneben, mit der alten Meldung,
+> „konvergiert True". **LF1 am Drehlager konvergiert im Reibzustand nicht.**
+> Die dort genannten 388,0 N/mm² und 1,2713 mm sind der Wert, bei dem die
+> Nachprüfung aufgegeben hat, nicht der auskonvergierte. Jede Zusage „ändert
+> das Ergebnis nicht", die gegen diese Zahlen geprüft wurde, ist damit eine
+> Aussage über **Reproduzierbarkeit**, nicht über Richtigkeit — auch die
+> Gleichheit der symmetrischen Faktorisierung (0,0004 N/mm² größte
+> Abweichung) und die des Sechsflächner-Stapels. Sie bleiben gültig als das,
+> was sie sind: dieselbe Rechnung gibt dasselbe Ergebnis.
+>
+> Woran es liegt, ist offen. Ein Verdacht mit einer Zahl dahinter: die
+> automatische Kontaktsteifigkeit ist `PENALTY_FACTOR = 1e4` mal die örtliche
+> Diagonalsteifigkeit (§ 4.1). Am Drehlager steht die Matrix damit bei
+> max |K| ≈ 1,05·10¹⁷ gegen 1,9·10¹³ ohne Kontakt — eine Kondition, bei der
+> doppelte Genauigkeit keine gesicherte Stelle mehr hat. Dass zwei
+> rechnerisch gleichwertige Faktorisierungen derselben abgelegten Matrix
+> Lösungen liefern, die um 269 % auseinanderliegen, während beide Residuen
+> bei 10⁻¹⁵ stehen, passt dazu. Am kleinen Modell kostet eine
+> tausendfach weichere Strafe 2,8 % Verschiebung, 0,05 % Spannung und das
+> Doppelte an Kontaktschritten; am Drehlager ist es **ungemessen**.
+
 **Zwei Posten daneben, die nichts mit dem Schlüssel zu tun haben, aber mit
 derselben Messung gefunden wurden** (21.09.2026, an einer Matrix von
 Drehlagergröße: 475 935 Zeilen, 17,6 Mio. Nichtnullen):
