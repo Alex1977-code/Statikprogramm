@@ -10,6 +10,9 @@ Geprueft wird
   * die Randseiten: Lasten auf Grund, Deckel und Wand kommen als Auflagerkraft an;
   * die Vertraeglichkeit mit einem Tetraeder-Nachbarn an einer Wand: der Nachbar
     bekommt das Wandnetz vorgegeben, beide teilen die Knoten;
+  * die Lagenvorgabe: Mantellinien, die Nachbarn mit verschiedener Teilung
+    gehoeren, sperren den Sweep nicht mehr (Drehlager V18/V11, 21.09.2026);
+  * die Lagenzahl bei Fliessen (LAGEN_MIN_PLASTISCH, Messung der Loeser-Sitzung);
   * Speichern und Laden;
   * die Probe, um die es geht: Kragplatte unter Endlast, tet4 gegen gesweepte
     hex8, gegen die Balkenloesung.
@@ -114,8 +117,10 @@ def test_netz_platte():
           float(np.nanmin(q)) > 0.15, f"min {np.nanmin(q):.3f}, Mittel {np.nanmean(q):.3f}")
     bef = diagnose.abnahme(m)
     check("die Abnahme hat nichts zu bemaengeln", not bef, str([b.pruefung for b in bef])[:100])
-    check("Lagen: mehr als eine, Mantellinien gleich geteilt", any("Lagen" in z for z in log)
-          and int([z for z in log if "Lagen" in z][0].split(" Lagen")[0].split(", ")[-1]) >= 2)
+    # Die Zeile des Koerpers, nicht die modellweite Vorgabe („Sweep: Lagen für …")
+    zeile = [z for z in log if "gesweept - Grundfläche" in z]
+    check("Lagen: mehr als eine, Mantellinien gleich geteilt", bool(zeile)
+          and int(zeile[0].split(" Lagen")[0].split(", ")[-1]) >= 2)
     # Randseiten: Zug an M2 (Wand) kommt als Auflagerkraft an der Einspannung an
     res = solver.solve_static(m, case="LF1", workers=1)
     F = 100e6 * 0.6 * 0.2
@@ -209,6 +214,77 @@ def test_nachbar_mit_tetraedern():
           f"{abs(res.reactions[:, 2].sum()) / 1e3:.2f} kN gegen {F / 1e3:.2f} kN")
 
 
+def test_nachbar_mit_verschiedener_teilung():
+    """Drehlager V18/V11 (Zaehlung der Loeser-Sitzung, 21.09.2026): erkannt,
+    aber null Elemente - „die Mantellinien gehören zweiten Körpern mit
+    verschiedener Teilung". Nachgestellt: die Wand M2 der Platte gehoert einer
+    Pyramide; an der Mantellinie AV1 (Ecke x = 0,4, y = 0) sitzt eine Kugel des
+    Groessenfelds, die sie feiner teilt als AV2. Ohne die modellweite
+    Lagenvorgabe (sweep.lagenvorgabe) fiel die Platte an die Tetraeder."""
+    m, k, k2 = _platte_mit_pyramide()
+    m.netz.verfeinerungen = [{"art": "kugel", "mitte": [0.4, 0.0, 0.05], "radius": 0.03, "h": 0.02}]
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    vorgabe = getattr(m, "linienvorgabe", None) or {}
+    mantel = ("AV0", "AV1", "AV2", "AV3")
+    check("die Lagen sind fuer alle vier Mantellinien vorab festgelegt, und zwar gleich",
+          all(s in vorgabe for s in mantel) and len({vorgabe[s] for s in mantel if s in vorgabe}) == 1,
+          str(vorgabe))
+    check("die Kugel an AV1 gibt die Lagen vor: mehr als die zwei aus Weg und Kantenlaenge",
+          vorgabe.get("AV1", 0) >= 3, f"{vorgabe.get('AV1')} Lagen")
+    check("das Protokoll nennt die Vorgabe", any(z.startswith("Sweep: Lagen für") for z in log))
+    check("kein Sweep faellt an 'verschiedener Teilung'", not any("verschiedener Teilung" in z for z in log))
+    t1 = {m.elements[e].typ for e in k.elemente}
+    t2 = {m.elements[e].typ for e in k2.elemente}
+    check("die Platte ist gesweept (hex8/pent6), die Pyramide aus tet4",
+          k.elemente and t1 <= {"hex8", "pent6"} and t2 == {"tet4"}, f"{t1} / {t2}")
+    zeile = [z for z in log if "gesweept - Grundfläche" in z]
+    L = int(zeile[0].split(" Lagen")[0].split(", ")[-1]) if zeile else 0
+    check("die Lagen des Netzes sind die der Vorgabe", L == vorgabe.get("AV1", -1), f"{L} Lagen")
+    check("kein Element ist umgestuelpt", _negativ(m) == 0)
+    bef = diagnose.abnahme(m)
+    check("Abnahme: gemeinsame Flaeche verbunden, keine losen Knoten, Guete, Randtreue",
+          not bef, str([(b.pruefung, b.text[:60]) for b in bef])[:160])
+    kn1 = {int(x) for e in k.elemente for x in m.elements[e].nodes}
+    kn2 = {int(x) for e in k2.elemente for x in m.elements[e].nodes}
+    auf_wand = [n for n in kn2 if abs(m.nodes[n][0] - 0.4) < 1e-9]
+    check("alle Wandknoten der Pyramide gehoeren auch der Platte",
+          auf_wand and all(n in kn1 for n in auf_wand), f"{len(auf_wand)} Wandknoten")
+    res = solver.solve_static(m, case="LF1", workers=1)
+    F = 1e6 * (0.4 * 0.3 - np.pi * 0.03 ** 2)
+    check("die Last geht durch beide Koerper in die Einspannung",
+          abs(abs(float(res.reactions[:, 2].sum())) - F) < 0.01 * F,
+          f"{abs(res.reactions[:, 2].sum()) / 1e3:.2f} kN gegen {F / 1e3:.2f} kN")
+
+
+def test_lagen_bei_fliessen():
+    """LAGEN_MIN_PLASTISCH: mit Fliessen wenigstens vier Lagen. Messung der
+    Loeser-Sitzung (21.09.2026, Kragtraeger unter 1,20 M_el): mit einer und
+    zwei Lagen fliesst kein Element, ab drei wird gefunden, was da ist;
+    elastisch bleibt es bei LAGEN_MIN."""
+    def netz(fliessen):
+        m, k = platte_mit_bohrungen(0.4, 0.3, 0.05, bohrungen=((0.2, 0.15, 0.03),))
+        m.netz.ziellaenge = 0.05
+        m.netz.dichte = "eigene"
+        m.plastizitaet.an = fliessen
+        log = []
+        mesher.modell_vernetzen(m, log, workers=1)
+        zeile = [z for z in log if "gesweept - Grundfläche" in z]
+        L = int(zeile[0].split(" Lagen")[0].split(", ")[-1]) if zeile else 0
+        return m, k, L, log
+    m_e, k_e, L_e, log_e = netz(False)
+    m_p, k_p, L_p, log_p = netz(True)
+    check("elastisch: LAGEN_MIN Lagen (Weg 50 mm bei h = 50 mm)", L_e == sweep.LAGEN_MIN, f"{L_e} Lagen")
+    check("mit Fliessen: LAGEN_MIN_PLASTISCH Lagen", L_p == sweep.LAGEN_MIN_PLASTISCH, f"{L_p} Lagen")
+    check("das Grundflaechennetz bleibt, nur die Lagen werden mehr",
+          L_e and L_p and len(k_p.elemente) * L_e == len(k_e.elemente) * L_p,
+          f"{len(k_e.elemente)} -> {len(k_p.elemente)} Elemente")
+    check("das Protokoll nennt den Grund",
+          any("wegen Fließen" in z for z in log_p) and not any("wegen Fließen" in z for z in log_e))
+    check("lagen_min(model) folgt dem Schalter",
+          sweep.lagen_min(m_e) == sweep.LAGEN_MIN and sweep.lagen_min(m_p) == sweep.LAGEN_MIN_PLASTISCH)
+
+
 def test_kragplatte_tet4_gegen_hex8():
     """Das Erfolgsmass des Auftrags an der Kragplatte 1 x 0,2 x 0,05 m mit
     Endlast 10 kN, gegen Bernoulli + Schub. Eine kleine Bohrung am freien
@@ -249,6 +325,7 @@ def test_kragplatte_tet4_gegen_hex8():
 
 def main():
     for t in (test_erkennung, test_netz_platte, test_quader_bleibt_abgebildet, test_nachbar_mit_tetraedern,
+              test_nachbar_mit_verschiedener_teilung, test_lagen_bei_fliessen,
               test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:

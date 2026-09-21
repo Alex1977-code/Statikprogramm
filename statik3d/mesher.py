@@ -856,9 +856,17 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     # Vorgegebene Flaechennetze (Sweep) - je Lauf neu; die abgebildeten und
     # gesweepten Koerper fuellen sie, die freien Koerper lesen sie.
     model.flaechennetze = {}
+    model.linienvorgabe = {}
     # Die modellweiten Netzkarten einmal je Lauf - fuer alle Pfade. Je Koerper
     # gebildet kosteten sie am Drehlager 48 x 1,5 s in der seriellen Phase.
     karten = netzkarten(model)
+    # Die Lagen der sweepbaren Koerper vorab und modellweit: ihre Mantellinien
+    # muessen in jedem Koerper gleich geteilt sein, auch in den Nachbarn
+    # (sweep.lagenvorgabe). Vor dem ersten Netz, denn jede Linienteilung
+    # liest es - im Hauptprozess wie in den Arbeitsprozessen (das Modell geht
+    # erst danach an sie).
+    from . import sweep as SW
+    model.linienvorgabe = SW.lagenvorgabe(model, koerper, hs, karten, log)
     for k in koerper:
         if k in frei:
             continue

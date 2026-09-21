@@ -580,6 +580,17 @@ class Linienteilung:
         #: die Karte nur eine Obergrenze - eine eigene Flaeche darf ein
         #: Koerper so fein vernetzen, wie er will.
         self.gem_flaechen, self.gem_linien = (gemeinsam or (frozenset(), frozenset()))
+        #: Vorgegebene Teilung je Linie (sweep.lagenvorgabe, modellweit): die
+        #: Mantellinien eines gesweepten Koerpers muessen in **jedem** Koerper,
+        #: der eine von ihnen berandet, gleich geteilt sein - sonst passt die
+        #: Wand des Nachbarn nicht auf die Lagen. Aus den Karten allein kamen
+        #: sie verschieden (Drehlager V18/V11: erkannt, aber null Elemente,
+        #: 21.09.2026). Solche Linien zaehlen wie gemeinsame: kein Koerper
+        #: teilt sie allein feiner.
+        self.vorgabe = {str(k): int(v) for k, v in (getattr(model, "linienvorgabe", None) or {}).items()
+                        if int(v) > 0}
+        if self.vorgabe:
+            self.gem_linien = frozenset(self.gem_linien) | frozenset(self.vorgabe)
         #: Kantenlaenge je Linie, wenn eine andere gilt als die des Koerpers.
         #: Eine Linie, an der zwei Koerper haengen, muss in beiden gleich
         #: geteilt werden - sonst vernetzen sie ihre gemeinsame Flaeche
@@ -635,6 +646,12 @@ class Linienteilung:
                 k = grenze
             for x in mitglieder:
                 self.n[x] = k
+        # Die Vorgabe zuletzt und fuer die ganze Klasse der Linie, damit
+        # abgebildete Flaechen gleich geteilte Gegenseiten behalten.
+        for x, n in self.vorgabe.items():
+            if x in self.n:
+                for y in self.gruppe.get(self._wurzel(x), [x]):
+                    self.n[y] = n
 
     def verfeinern(self, namen) -> int:
         """Die genannten Linien feiner teilen - **mitsamt ihrer Klasse**.
@@ -647,8 +664,8 @@ class Linienteilung:
         geaendert = 0
         for wurzel in wurzeln:
             mitglieder = self.gruppe.get(wurzel, [])
-            if not mitglieder:
-                continue
+            if not mitglieder or any(x in self.vorgabe for x in mitglieder):
+                continue                      # eine Vorgabe (Sweep-Lagen) bleibt, was sie ist
             k = self.n.get(mitglieder[0], 1)
             neu = k + max(1, k // 2)
             for x in mitglieder:

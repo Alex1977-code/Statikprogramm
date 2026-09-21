@@ -3382,14 +3382,28 @@ vorhandenen Flächenvernetzer (Dreiecke); benachbarte Dreiecke werden **zu Viere
 gepaart**, gierig nach der Güte des Vierecks (skalierte Jacobi-Determinante, mindestens
 0,3), der Rest bleibt Dreieck. Dann wird in Lagen durchgezogen: Viereck → `hex8`,
 Dreieck → `pent6`. Die Zahl der Lagen folgt aus Weg und Kantenlänge (mindestens zwei,
-`sweep.LAGEN_MIN`) — **nicht** aus der Kartenteilung der Mantellinien: die Regel „eine
+`sweep.LAGEN_MIN`; wird Fließen gerechnet, mindestens vier, `LAGEN_MIN_PLASTISCH`, Messung
+unten) — **nicht** aus der Kartenteilung der Mantellinien: die Regel „eine
 Linie neben einer feineren" teilt die Mantellinie neben einer feinen Bohrungssehne für
 den Tetraeder fein (Platte mit Bohrungen: 10 Lagen statt 4, Kragplatte 4 473 statt
 1 491 Knoten); für Hexaeder und Keile ist die Teilung je Richtung frei, das ist gerade
 ihr Vorzug. Gehört eine Mantellinie einem zweiten Körper, gilt dessen Teilung für alle
-Lagen, verschiedene Teilungen sperren den Sweep. Randseiten werden nicht gesucht,
-sondern gesetzt: Grund, Deckel und je Wand die Elementseiten längs der Randkanten. Der
-Rauminhalt ist Grundfläche mal Höhe und wird gegen die Elemente geprüft.
+Lagen — und weil die Teilung einer Linie im Modell nur eine ist, werden die Lagen aller
+sweepbaren Körper **vorab und modellweit** festgelegt (`sweep.lagenvorgabe`, abgelegt als
+`model.linienvorgabe`, gelesen von jeder Linienteilung, auch der der Nachbarn): das
+Größte aus Weg/h, der Mindestlagenzahl und der Kartenteilung der *gemeinsamen*
+Mantellinien; die eigenen teilt der Sweep frei. Ohne das fiel der Sweep dort aus, wo er
+am Drehlager überhaupt greift: `erkennen` fand V18 und V11 (je sieben Wände, Weg 40 mm,
+h = 50 mm, zusammen 2 864 Elemente), `vernetzen` lieferte für beide **null** Elemente —
+„die Mantellinien gehören zweiten Körpern mit verschiedener Teilung" (Zählung der
+Löser-Sitzung, 21.09.2026). Nachgestellt an einer Platte, deren Wand einer Pyramide
+gehört und an deren einer Mantellinie eine Kugel des Größenfelds sitzt: ohne Vorgabe
+Tetraeder, mit Vorgabe fünf Lagen (so fein teilt die Kugel AV1), Abnahme ohne Befund, alle 48 Wandknoten der Pyramide
+sind Knoten der Platte (`test_nachbar_mit_verschiedener_teilung`). Eine Linie mit
+Vorgabe zählt wie eine gemeinsame: kein Körper teilt sie allein feiner. Randseiten
+werden nicht gesucht, sondern gesetzt: Grund, Deckel und je Wand die Elementseiten längs
+der Randkanten. Der Rauminhalt ist Grundfläche mal Höhe und wird gegen die Elemente
+geprüft.
 
 Gemessen (20.09.2026, h = 50 mm, ein Prozess):
 
@@ -3419,6 +3433,33 @@ Der Hexaeder mit inkompatiblen Moden trägt die Biegung mit zwei Lagen; der line
 Tetraeder bleibt bei zwei Lagen um fast ein Drittel zu steif — mit weniger als der
 Hälfte der Knoten.
 
+**Lagen bei Fließen.** Das gilt **elastisch**. Die Löser-Sitzung hat am Zweigstand
+a4a7d91 (21.09.2026) den Kragträger 200 × 200 mm, 1,0 m, unter dem Endmoment 1,20 · M_el
+gerechnet (fy = 235 N/mm², Verfestigung 2 %; die Randfaser trägt elastisch 282 N/mm² und
+muss fließen, die plastische Zone reicht bis z/(h/2) = √(3 − 2 · 1,20) = 0,775):
+
+| Typ | Lagen | Elemente | σ_v max | fließend | ε_p max | u_x max |
+|---|---|---|---|---|---|---|
+| hex8 | 1 | 5 | 285,3 N/mm² | **0 von 5** | 0 | 1,3327 mm |
+| hex8 | 2 | 10 | 300,7 N/mm² | **0 von 10** | 0 | 1,3242 mm |
+| hex8 | 3 | 15 | 203,1 N/mm² | 10 von 15 | 0,0963 % | 1,5894 mm |
+| hex8 | 4 | 20 | 240,8 N/mm² | 8 von 20 | 0,1799 % | 1,7102 mm |
+| hex8 | 6 | 30 | 266,8 N/mm² | 12 von 30 | 0,3469 % | 1,8876 mm |
+| hex8 | 8 | 40 | 262,3 N/mm² | 16 von 40 | 0,4196 % | 1,9490 mm |
+| tet4 | 4 | 100 | 235,7 N/mm² | 2 von 100 | 0,0164 % | 0,7361 mm |
+| tet4 | 8 | 200 | 243,3 N/mm² | 2 von 200 | 0,1943 % | 0,8243 mm |
+
+Mit einer und mit zwei Lagen fließt **nichts**, obwohl der Querschnitt plastifiziert:
+die Plastizität wertet an den Gaußpunkten aus, und deren äußerster liegt bei einer Lage
+auf 57,7 %, bei zwei Lagen auf 78,9 % der halben Höhe. Ab drei Lagen (85,9 %) wird
+gefunden, was da ist. Die Verformung ist mit zwei Lagen ebenfalls falsch: u_x wächst von
+1,333 mm (eine Lage) auf 1,949 mm (acht Lagen), 32 %. Darum gilt, sobald
+`model.plastizitaet.an` gesetzt ist, `LAGEN_MIN_PLASTISCH = 4` als Untergrenze; sechs bis
+acht Lagen sind das Richtige und kommen über die Kantenlänge. Elastische Bauteile zahlen
+den Preis nicht mit (`test_lagen_bei_fliessen`). Nebenbefund derselben Messung: der
+tet4 findet mit vier Unterteilungen 2 von 100 fließenden Elementen und 0,736 mm gegen
+1,710 mm des hex8 mit vier Lagen — die volumetrische Sperre, der Grund für den Sweep.
+
 **Nachbarn.** Ein Tetraeder-Körper an einer Wand des gesweepten Körpers muss dessen
 Lagenpunkte treffen; ein freies Dreiecksnetz der Wand täte das nicht. Darum legt der
 Sweep seine Flächennetze (Grund, Deckel, Wände: Vierecke über die kürzere Diagonale
@@ -3432,6 +3473,30 @@ knotenkonform, mit einer anderen Interpolation auf der Vierecksdiagonale. Pyrami
 Übergang (`pyr5`) und das Zerlegen nicht sweepbarer Körper in sweepbare Blöcke sind die
 nächsten Schritte. Reine Quader (sechs Vierecke, acht Knoten) bleiben beim abgebildeten
 Hexaedernetz mit ihrer Teilung; `netz.sweep = False` schaltet den Sweep ab.
+
+**Am Drehlager** (Zählung der Löser-Sitzung mit `sweep.erkennen` und `netzfeld.bedeutung`,
+21.09.2026; 108 Körper, 1 375 Flächen, 2 807 Linien, 645 934 Volumenelemente):
+
+| | |
+|---|---|
+| sweepbare Körper | **2 von 108** (V18, V11), 2 864 Elemente = **0,4 %** |
+| Körper mit 4 Flächen | 48 — unter fünf, `erkennen` steigt aus |
+| Körper mit 6 / 9 Flächen | 23 / 18 |
+| die acht größten Körper (48 bis 144 Flächen) | 542 391 Elemente = **84,0 %** |
+| Nebenflächen (`bedeutung`) | 913 von 1 375 = 66,4 %; Nebenlinien 1 197 von 2 807 = 42,6 % |
+| Flächen mit Last | **2**; bedeutend sind fast nur Kontaktflächen (37 Bedingungen) und aus RFEM integrierte Objekte |
+
+Der Sweep, wie er heute steht, erreicht das Drehlager also nicht: sein Erfolgsmaß
+(Kragplatte 97,6 % gegen 68,4 %, ein Achtel der Elemente) kommt dort bei 0,4 % der
+Elemente an. Der Hebel ist das **Zerlegen** nicht sweepbarer Körper in sweepbare Blöcke —
+die 48 Körper mit vier und die 23 mit sechs Flächen sind die nahen, die acht großen
+brauchen es. Und `nebenflaechen_grob` spart am Drehlager **0,2 %** der Elemente (646 712 →
+645 570; an der Platte waren es 55 %): die Bohrungen, die das Netz fein machen, sind dort
+fast alle Bohrungen *mit* Bolzen, Stift oder Achse — Kontaktflächen, und die bleiben fein.
+Was nach der Nachvernetzung an Splittern bleibt (Güte unter 0,10): 30 von 53 258, 74 von
+38 564, 29 von 115 734, 35 von 79 572, 32 von 80 752 Tetraedern in fünf Körpern, die
+schlechteste bei 0,025 — rund 200; die Kappen der Prüfkörper sind weg, diese sind noch
+nicht untersucht.
 
 ## 6b Netzqualität (`netzguete.py`)
 
@@ -3539,6 +3604,33 @@ der Schätzer holt zurück, was trägt. Alles, was die Schleife setzt, steht dan
 Netzeinstellungen und wird mit dem Modell gespeichert; aus der Datei entsteht dasselbe
 Feld wieder. Befehlszeile: `statik3d modell.json --adaptiv 2 --lastfall LF1 --speichern …`
 (`--vernetzen` allein vernetzt ohne Schleife).
+
+**Der Probelauf.** Die Schleife rechnet je Durchgang mit `solve_static(…, probelauf=True)`
+— einem Kontaktschritt aus dem Anfangszustand der Fugen; sein Ergebnis ist ein Netzmaß,
+kein Rechenergebnis (Kontaktkräfte um Größenordnungen daneben) und geht nur an den
+Schätzer. Der Probelauf, wie ihn die Element-Sitzung gebaut hat (357d61d), lässt aber
+das **Fließen** aus. Die Löser-Sitzung hat das am Drehlager gegen den vollen Lauf
+gemessen (LF1 kalt, Vergleichsspannung je Element, 20./21.09.2026):
+
+| | Zeit | L2 über alle Elemente | L2 über die 100 höchsten | dieselben 100 Spitzenelemente |
+|---|---|---|---|---|
+| ein Schritt, elastisch (wie gebaut) | 123,8 s | 52,2 % | 126,0 % | **54 von 100** |
+| ein Schritt, plastisch | 198,8 s | **2,3 %** | **0,0 %** | **100 von 100** |
+| voller Lauf | 633,4 s | – | – | – |
+
+Elastisch liegt die Spitze bei 1 041 statt 387 N/mm² — Faktor 2,7, und zwar dort, wo
+der Schätzer hinsieht. Ein elastischer Probelauf verfeinert also an den falschen
+Stellen. Darum prüft die Schleife das Ergebnis: trägt es `probelauf` ohne
+`plastizitaet`, obwohl das Modell fließt, rechnet sie diesen und die weiteren Lastfälle
+**voll** und sagt es im Protokoll (`adaptiv.probelauf_elastisch`; `--probelauf ja`
+erzwingt den Probelauf mit Warnung, `--probelauf nein` den vollen Lauf,
+`test_probelauf_nur_mit_fliessen`). Sobald der Probelauf das Fließen behält — Bitte an
+die Statik3D-Sitzung: Plastizität an, `max_iter = 1` —, ist er die billige Variante:
+Faktor 3, nicht 48, denn bei 645 934 Elementen ist das Aufstellen der Matrix der
+Brocken (124 s je Schritt), nicht das Lösen. Das Protokoll nennt je Durchgang die
+Löserzahlen aus `Results.info` (`ndof`, `nfree`, `nnz_matrix`, `nnz_faktor`,
+`zeit_faktorisierung`, `solver`, Kontaktschritte) und bei fließenden Modellen, ob das
+Fließen mitgerechnet wurde.
 
 Gemessen an der Platte 1 × 0,6 × 0,2 m mit einer Bohrung r = 100 mm und vier
 Durchgangsbohrungen r = 20 mm, Zug 100 N/mm², Einspannung als Flächenlager, ein Prozess

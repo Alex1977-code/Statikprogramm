@@ -49,6 +49,10 @@ def main(argv=None) -> int:
                          "schaetzen, nur dort feiner, im Feld groeber); Lastfall aus --lastfall")
     ap.add_argument("--fehlerziel", type=float, default=None,
                     help="Ziel des bezogenen Fehlers fuer --adaptiv (Vorgabe 0.05)")
+    ap.add_argument("--probelauf", choices=("auto", "ja", "nein"), default="auto",
+                    help="Rechnung je Runde von --adaptiv: auto = Probelauf des Loesers, solange er "
+                         "das Fliessen mitrechnet, sonst voller Lauf; ja = immer Probelauf; "
+                         "nein = immer voller Lauf")
     ap.add_argument("--kerne", type=int, default=None, help="Anzahl lokaler Prozesse")
     ap.add_argument("--farm", help="Rechnerfarm host:port")
     ap.add_argument("--schluessel", default="statik3d", help="Farm-Schluessel")
@@ -108,7 +112,8 @@ def main(argv=None) -> int:
         zeilen: list[str] = []
         _ad.adaptiv_vernetzen(m, [a.lastfall] if a.lastfall else None, runden=int(a.adaptiv),
                               ziel=a.fehlerziel if a.fehlerziel else _nf.ZIEL,
-                              log=zeilen, workers=a.kerne)
+                              log=zeilen, workers=a.kerne,
+                              probelauf={"auto": None, "ja": True, "nein": False}[a.probelauf])
         for s in zeilen:
             log("  " + s)
     elif a.vernetzen:

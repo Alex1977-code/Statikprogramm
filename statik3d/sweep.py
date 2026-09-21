@@ -45,12 +45,33 @@ import numpy as np
 
 from .model import Model
 
-#: Wenigstens so viele Lagen ueber die Dicke, wenn keine Mantellinie einem
-#: zweiten Koerper gehoert. Vorlaeufig: der hex8 mit inkompatiblen Moden
-#: (elements/solid.py) traegt Biegung mit einer Lage; fuer das Fliessen ueber
-#: die Dicke braucht es mehr. Die Element-Sitzung soll das messen - siehe
-#: Vernetzer/ANFORDERUNGEN-AN-ELEMENT-LOESER-PROGRAMM.md.
+#: Wenigstens so viele Lagen ueber den Weg, wenn der Koerper elastisch bleibt
+#: und keine Mantellinie eine Vorgabe traegt. Der hex8 mit inkompatiblen Moden
+#: (elements/solid.py) traegt Biegung **elastisch** mit einer Lage (Kragplatte
+#: 1 x 0,2 x 0,05 m, zwei Lagen: 97,6 % der Balkenloesung, 20.09.2026).
 LAGEN_MIN = 2
+
+#: Wenigstens so viele Lagen, wenn Fliessen gerechnet wird
+#: (``model.plastizitaet.an``). Gemessen von der Loeser-Sitzung am 21.09.2026
+#: (Zweig a4a7d91; Kragtraeger 200 x 200 mm, 1,0 m, Endmoment 1,20 M_el,
+#: fy = 235 N/mm2, Verfestigung 2 %; die Randfaser traegt elastisch 282 N/mm2
+#: und muss fliessen, die plastische Zone reicht bis 77,5 % der halben Hoehe):
+#:
+#:     hex8, 1 Lage    0 von  5 Elementen fliessen   u_x 1,333 mm
+#:     hex8, 2 Lagen   0 von 10                      u_x 1,324 mm
+#:     hex8, 3 Lagen  10 von 15                      u_x 1,589 mm
+#:     hex8, 4 Lagen   8 von 20                      u_x 1,710 mm
+#:     hex8, 6 Lagen  12 von 30                      u_x 1,888 mm
+#:     hex8, 8 Lagen  16 von 40                      u_x 1,949 mm
+#:
+#: Mit einer und mit zwei Lagen fliesst **nichts**, obwohl der Querschnitt
+#: plastifiziert - die Plastizitaet wertet an den Gausspunkten aus, und deren
+#: aeusserster liegt bei einer Lage auf 57,7 %, bei zwei auf 78,9 % der halben
+#: Hoehe. Die Verformung liegt mit einer Lage um 32 % unter der mit acht. Vier
+#: Lagen sind die Untergrenze, sechs bis acht das Richtige - das stellt der
+#: Anwender ueber die Kantenlaenge ein. Elastische Bauteile zahlen den Preis
+#: nicht mit: die Zahl greift nur, wenn Fliessen eingeschaltet ist.
+LAGEN_MIN_PLASTISCH = 4
 
 #: Kleinste Formguete (skalierte Jacobi-Determinante) eines Vierecks aus zwei
 #: Dreiecken, damit es gepaart wird. Gemessen an der Platte 1 x 0,6 x 0,2 m
@@ -308,32 +329,127 @@ def _linienzug_herkunft(teilung, model: Model, linien: list) -> "tuple | None":
     return _linienzug(teilung, model, linien)
 
 
+def lagen_min(model: Model) -> int:
+    """Die kleinste Lagenzahl fuer dieses Modell: LAGEN_MIN_PLASTISCH, wenn
+    Fliessen gerechnet wird (``model.plastizitaet.an``), sonst LAGEN_MIN."""
+    pz = getattr(model, "plastizitaet", None)
+    return LAGEN_MIN_PLASTISCH if bool(pz is not None and getattr(pz, "an", False)) else LAGEN_MIN
+
+
+def _lagen_aus_weg(model: Model, erk: dict, h: float) -> int:
+    """Lagen aus Weg und Kantenlaenge, mindestens :func:`lagen_min`."""
+    weg = float(np.linalg.norm(erk["t"]))
+    return max(int(round(weg / max(float(h), 1e-12))), lagen_min(model), 1)
+
+
 def _lagen(model: Model, erk: dict, teilung, h: float) -> "tuple[int, str]":
     """Zahl der Lagen ueber den Weg.
 
-    Aus Weg und Kantenlaenge, mindestens LAGEN_MIN - **nicht** aus der
+    Aus Weg und Kantenlaenge, mindestens :func:`lagen_min` - **nicht** aus der
     Kartenteilung der Mantellinien: die Regel „eine Linie neben einer
     feineren" (mesher3d._linien_wachsen_lassen) teilt die Mantellinie neben
     einer feinen Bohrungssehne fuer den Tetraeder fein (Platte 1 x 0,6 x
     0,2 m: 10 Lagen statt 4, Kragplatte 1 x 0,2 x 0,05 m: 4 473 statt 1 300
     Knoten, 20.09.2026); fuer Hexaeder und Keile ist die Teilung je Richtung
-    frei waehlbar, das ist gerade ihr Vorzug. Gehoert eine Mantellinie einem
-    zweiten Koerper, gilt **dessen** Teilung fuer alle Lagen (verschiedene
-    sperren den Sweep); die eigenen Mantellinien werden darauf gesetzt.
+    frei waehlbar, das ist gerade ihr Vorzug.
+
+    Traegt eine Mantellinie eine **Vorgabe** (:func:`lagenvorgabe`, modellweit
+    vor dem ersten Netz) oder gehoert sie einem zweiten Koerper, gilt diese
+    Teilung fuer alle Lagen; die eigenen Mantellinien werden darauf gesetzt.
+    Verschiedene Teilungen sperren den Sweep - mit der Vorgabe kommt das nur
+    noch vor, wenn ein Koerper ohne den modellweiten Lauf
+    (mesher.koerper_vernetzen) vernetzt wird.
     """
     mantel = set(erk["mantel"].values())
-    gem = [s for s in mantel if s in teilung.gem_linien]
-    if gem:
-        n_gem = {teilung.n.get(s, 1) for s in gem}
-        if len(n_gem) != 1:
+    vorgabe = getattr(model, "linienvorgabe", None) or {}
+    fest = [s for s in mantel if s in teilung.gem_linien or s in vorgabe]
+    if fest:
+        n_fest = {int(teilung.n.get(s, 1)) for s in fest}
+        if len(n_fest) != 1:
             return 0, "die Mantellinien gehören zweiten Körpern mit verschiedener Teilung"
-        L = int(n_gem.pop())
+        L = n_fest.pop()
     else:
-        weg = float(np.linalg.norm(erk["t"]))
-        L = max(int(round(weg / max(float(h), 1e-12))), LAGEN_MIN, 1)
+        L = _lagen_aus_weg(model, erk, h)
     for s in mantel:
         teilung.n[s] = L
     return int(L), ""
+
+
+def lagenvorgabe(model: Model, koerper, hs: dict = None, karten: tuple = None,
+                 log: list = None) -> dict:
+    """{Mantellinie: Zahl der Abschnitte} fuer alle sweepbaren Koerper -
+    **modellweit**, vor dem ersten Netz (mesher.koerper_vernetzen legt das
+    Ergebnis als ``model.linienvorgabe`` ab; jede Linienteilung liest es).
+
+    Warum: die Teilung einer Linie ist im Modell eine (mesher3d.Linienteilung),
+    und jeder Koerper bildet sie fuer sich aus den Karten. Die Mantellinien
+    eines gesweepten Koerpers muessen aber **alle gleich** geteilt sein - der
+    Weg wird in Lagen durchgezogen. Gehoeren sie Nachbarn mit verschiedener
+    Kantenlaenge, teilen die Karten sie verschieden, und der Sweep faellt aus.
+    Am Drehlager (Zaehlung der Loeser-Sitzung, 21.09.2026) erkannte
+    :func:`erkennen` zwei von 108 Koerpern, V18 und V11 (je sieben Waende,
+    Weg 40 mm, h = 50 mm, 2 864 Elemente); :func:`vernetzen` lieferte fuer
+    beide **null** Elemente: „die Mantellinien gehören zweiten Körpern mit
+    verschiedener Teilung". Darum wird die Lagenzahl hier vorab festgelegt
+    und ueber ``model.linienvorgabe`` an **jede** Linienteilung gegeben, auch
+    an die der Nachbarn: L ist das Groesste aus Weg/h, :func:`lagen_min` und
+    der Kartenteilung der **gemeinsamen** Mantellinien - kein Nachbar wird
+    groeber, als seine Karte will; die eigenen Mantellinien teilt der Sweep
+    frei. Teilen zwei sweepbare Koerper eine Mantellinie,
+    bekommen beide dasselbe L (das groessere), und das laeuft ueber Ketten
+    weiter, bis nichts mehr waechst. Geprueft an einer Platte, deren Wand
+    einer Pyramide gehoert und an deren einer Mantellinie eine Kugel des
+    Groessenfelds sitzt (tests.test_sweep.test_nachbar_mit_verschiedener_teilung).
+    """
+    from .importers import _common as C
+    from . import mesher3d as M3
+    if not bool(getattr(getattr(model, "netz", None), "sweep", True)):
+        return {}
+    hs = hs or {}
+    if karten:
+        h_flaechen, h_linien, gemeinsam = karten[:3]
+    else:
+        h_flaechen, h_linien = M3.kantenlaengen_karte(model)
+        gemeinsam = M3.gemeinsame_randflaechen(model)
+    wunsch = []                                  # je sweepbarem Koerper: (Name, Mantellinien, L)
+    for k in koerper:
+        try:
+            erk = erkennen(model, k)
+        except Exception:                        # noqa: BLE001 - dann kein Sweep, keine Vorgabe
+            erk = None
+        if erk is None:
+            continue
+        flaechen = [model.flaechen[x] for x in k.flaechen]
+        h = M3._kantenlaenge(model, k, float(hs.get(k.name, 0.0) or 0.0))
+        teilung = M3.Linienteilung(model, flaechen, h, h_linien, h_flaechen, gemeinsam)
+        mantel = set(erk["mantel"].values())
+        # Nur die Mantellinien, die ein Nachbar mitbenutzt, bringen ihre
+        # Kartenteilung ein. Die eigenen nicht: ihre Karte traegt die Regel
+        # „Linie neben einer feineren" (_linien_wachsen_lassen), und die gab
+        # der Kragplatte 10 statt 2 Lagen, 4 473 statt 1 491 Knoten (21.09.2026,
+        # tests.test_sweep.test_kragplatte_tet4_gegen_hex8).
+        gem = [s for s in mantel if s in teilung.gem_linien]
+        L = max([_lagen_aus_weg(model, erk, h)] + [int(teilung.n.get(s, 1)) for s in gem])
+        wunsch.append((k.name, mantel, L))
+    vorgabe: dict = {}
+    geaendert = True
+    while geaendert:                             # Ketten ueber gemeinsame Mantellinien
+        geaendert = False
+        for _name, mantel, L in wunsch:
+            L_neu = max([L] + [vorgabe.get(s, 0) for s in mantel])
+            for s in mantel:
+                if vorgabe.get(s, 0) != L_neu:
+                    vorgabe[s] = L_neu
+                    geaendert = True
+    if wunsch:
+        lagen = sorted({max(vorgabe[s] for s in mantel) for _n, mantel, _L in wunsch})
+        C.say(log, f"Sweep: Lagen für {len(wunsch)} Körper vorab festgelegt "
+                   f"({len(vorgabe)} Mantellinien, "
+                   + (f"{lagen[0]} Lagen" if len(lagen) == 1 else f"{lagen[0]} … {lagen[-1]} Lagen")
+                   + (f", mindestens {LAGEN_MIN_PLASTISCH} wegen Fließen"
+                      if lagen_min(model) > LAGEN_MIN else "")
+                   + ")")
+    return vorgabe
 
 
 def _mantel_kennung(model: Model, erk: dict, knoten_unten: int, k: int, L: int) -> tuple:

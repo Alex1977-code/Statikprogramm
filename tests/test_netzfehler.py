@@ -183,9 +183,73 @@ def test_adaptive_runde():
                                                       - netzfeld.aufbauen(m)(np.array([[0.2, 0.16, 0.04]]))[0]) < 1e-12)
 
 
+def test_probelauf_nur_mit_fliessen():
+    """Der Probelauf des Loesers (357d61d) laesst das Fliessen aus; so
+    verfeinerte er am Drehlager an den falschen Stellen (54 von 100
+    Spitzenelementen, Loeser-Sitzung 20.09.2026). Die Schleife erkennt das am
+    Ergebnis und rechnet ein fliessendes Modell voll; elastische Modelle
+    behalten den Probelauf. Der Loeser ist hier ein Stellvertreter, der nur
+    protokolliert, wie er gerufen wurde."""
+    aufrufe = []
+
+    class Erg:
+        def __init__(self, info):
+            self.info = info
+
+    def unecht(m, case=None, workers=None, probelauf=False, **kw):
+        aufrufe.append(bool(probelauf))
+        if probelauf:
+            return Erg({"probelauf": True, "ndof": 12, "nfree": 9, "solver": "pardiso"})
+        return Erg({"plastizitaet": {"schritte": 1}, "ndof": 12, "nfree": 9, "solver": "pardiso"})
+
+    echt = solver.solve_static
+    solver.solve_static = unecht
+    try:
+        m = Model()
+        m.plastizitaet.an = True
+        log = []
+        rechnen = adaptiv._rechnen_standard(1, None, log)
+        r1 = rechnen(m, "LF1")
+        check("fliessendes Modell, Vorgabe: Probelauf gefragt, elastisch erkannt, voller Lauf gerechnet",
+              aufrufe == [True, False] and "plastizitaet" in r1.info, str(aufrufe))
+        check("das Protokoll sagt es", any("lässt das Fließen aus" in z for z in log))
+        rechnen(m, "LF2")
+        check("danach nur noch volle Laeufe, ohne neue Anfrage", aufrufe == [True, False, False], str(aufrufe))
+        zahlen = adaptiv._loeserzahlen([r1], m)
+        check("die Loeserzahlen nennen die Schluessel der Element-Sitzung und das Fliessen",
+              "ndof 12" in zahlen and "nfree 9" in zahlen and "solver pardiso" in zahlen
+              and "Fließen mitgerechnet" in zahlen, zahlen)
+        aufrufe.clear()
+        log.clear()
+        m.plastizitaet.an = False
+        r2 = adaptiv._rechnen_standard(1, None, log)(m, "LF1")
+        check("elastisches Modell: der Probelauf bleibt, keine Warnung",
+              aufrufe == [True] and r2.info.get("probelauf") is True and not log, str(aufrufe))
+        aufrufe.clear()
+        log.clear()
+        m.plastizitaet.an = True
+        r3 = adaptiv._rechnen_standard(1, True, log)(m, "LF1")
+        check("probelauf=True: der Probelauf trotz Fliessen, mit Warnung",
+              aufrufe == [True] and r3.info.get("probelauf") is True and any("Fließen aus" in z for z in log),
+              str(aufrufe))
+        check("die Loeserzahlen sagen dann 'nicht gerechnet'",
+              "Fließen nicht gerechnet" in adaptiv._loeserzahlen([r3], m))
+        aufrufe.clear()
+        log.clear()
+        adaptiv._rechnen_standard(1, False, log)(m, "LF1")
+        check("probelauf=False: voller Lauf ohne Anfrage", aufrufe == [False] and not log, str(aufrufe))
+        check("probelauf_elastisch erkennt genau den Fall",
+              adaptiv.probelauf_elastisch(m, Erg({"probelauf": True}))
+              and not adaptiv.probelauf_elastisch(m, Erg({"probelauf": True, "plastizitaet": {}}))
+              and not adaptiv.probelauf_elastisch(m, Erg({})))
+    finally:
+        solver.solve_static = echt
+
+
 def main():
     for t in (test_gleichfoermige_spannung_hat_fehler_null, test_integral_ueber_den_tetraeder,
-              test_feiner_ist_besser, test_neue_kantenlaengen_und_budget, test_adaptive_runde):
+              test_feiner_ist_besser, test_neue_kantenlaengen_und_budget, test_adaptive_runde,
+              test_probelauf_nur_mit_fliessen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
