@@ -1880,7 +1880,21 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         if model.has_contact:
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
                 model, system, Fg, progress=progress, us=us, uebermass=ueber,
-                start=None if probelauf else st, einfrieren=einfrieren,
+                # Der Probelauf verwirft den Warmstart des **vorigen
+                # Lastfalls** (start), damit jede Netzrunde dieselbe Lage
+                # misst. Der Zustand **innerhalb** desselben Lastfalls
+                # (start_, den die Plastizitaetsschleife je Fliessschritt
+                # durchreicht) muss bleiben - sonst faengt jeder Fliessschritt
+                # den Kontakt wieder bei der Geometrie an. Bis zum 21.09.2026
+                # warf diese Zeile beides weg; gemessen am Drehlager
+                # (Loeser-Sitzung): 8,97 % andere Vergleichsspannung und ein um
+                # 2,1 % steiferes Ergebnis (0,2657 statt 0,2715 mm) - Kontakte,
+                # die sich nicht setzen konnten, machen steifer. Die Rangfolge
+                # blieb dieselbe (100 von 100 Spitzenelementen), das Netzmass
+                # war also brauchbar, aber der Lauf war nicht der, der er sein
+                # sollte.
+                start=None if (probelauf and start_ is None) else st,
+                einfrieren=einfrieren,
                 fenster=fenster, K_zusatz=K_zusatz, probelauf=probelauf)
             res.kontaktzustand = cinfo.pop("contact_state", None)
             res.info.update(_kontakt_info_sammeln(res, cinfo))

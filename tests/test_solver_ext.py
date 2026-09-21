@@ -574,6 +574,35 @@ def test_probelauf_und_kennzahlen():
     # Kontaktiteration dominiert: am Drehlager 199 statt 633 s
     # (Loeser-Sitzung, 21.09.2026). Eine Zeitpruefung an diesem Modell wuerde
     # etwas festhalten, das keine Eigenschaft der Aenderung ist.
+    # Der Warmstart **innerhalb** des Lastfalls muss bleiben. Der Probelauf
+    # verwirft den des vorigen Lastfalls (damit jede Netzrunde dieselbe Lage
+    # misst); bis zum 21.09.2026 warf dieselbe Zeile auch den Zustand weg, den
+    # die Plastizitaetsschleife je Fliessschritt durchreicht - jeder Schritt
+    # fing den Kontakt wieder bei der Geometrie an. Am Drehlager gemessen
+    # (Loeser-Sitzung): 8,97 % andere Vergleichsspannung, 2,1 % steifer
+    # (0,2657 statt 0,2715 mm). Ohne die Behebung faellt diese Pruefung durch.
+    mitgegeben = []
+    _echt = solver.solve_with_contact
+
+    def _fangen(model_, system_, F_, *a_, **kw_):
+        mitgegeben.append(kw_.get("start"))
+        return _echt(model_, system_, F_, *a_, **kw_)
+
+    m3 = aufbau()
+    m3.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=2,
+                                      iterationen=40, toleranz=1e-4)
+    solver.solve_with_contact = _fangen
+    try:
+        solver.solve_static(m3, probelauf=True)
+    finally:
+        solver.solve_with_contact = _echt
+    pruefe("Probelauf: der erste Kontaktschritt startet bei der Geometrie",
+           bool(mitgegeben) and mitgegeben[0] is None,
+           f"{len(mitgegeben)} Kontaktaufrufe")
+    pruefe("… die weiteren Fließschritte übernehmen den Kontaktzustand",
+           sum(1 for x in mitgegeben if x is not None) > 0,
+           f"{sum(1 for x in mitgegeben if x is not None)} von {len(mitgegeben)} mit Warmstart")
+
     pruefe("Probelauf spart Kontaktschritte",
            probe.info["contact_iterations"] < voll.info["contact_iterations"],
            f"{probe.info['contact_iterations']} statt {voll.info['contact_iterations']}")

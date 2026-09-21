@@ -338,6 +338,34 @@ Stufen von 15,6 ms, und eine einzelne Faktorisierung am kleinen System dauert
 Millisekunden (ein Probelauf meldete damit 0,000 s für eine Faktorisierung, die
 es wirklich gab).
 
+**Weniger Elemente können mehr Matrix bedeuten — die Ersparnis eines
+Hexaedernetzes darf nicht aus der Elementzahl gerechnet werden.** Gemessen am
+Drehlager, LF1, altes Tetraedernetz gegen das gesweepte (Löser-Sitzung,
+21.09.2026):
+
+| | altes Netz | neues Netz | |
+|---|---|---|---|
+| Volumenelemente | 645 934 | 493 432 | −23,6 % |
+| Knoten | 158 728 | 159 130 | +0,3 % |
+| aktive Freiheitsgrade `nfree` | 475 935 | 475 214 | **−0,2 %** |
+| `nnz_matrix` | 17 686 439 | 21 878 201 | **+23,7 %** |
+| `nnz_faktor` | 245 394 449 | 272 011 788 | +10,8 % |
+| Faktorisierung | 343,1 s | 663,99 s | **+93,5 %** |
+
+Ein Viertel weniger Elemente, und die Faktorisierung wird fast doppelt so
+teuer. Der Grund steht in den Zeilen darüber: die **Zeilenzahl** hängt an den
+Knoten, und die bleiben gleich — ein Hexaedernetz spart Elemente, keine
+Unbekannten. Was wächst, ist die **Kopplung je Zeile**: der `hex8` verbindet
+acht Knoten je Element statt vier, und das bei nur 3,14 Elementen je Knoten
+statt 4,10. Die Matrix wird **dichter, nicht größer** — und die Faktorisierung
+zahlt für Dichte, nicht für Elementzahl.
+
+Der Gewinn eines Hexaedernetzes liegt also nicht im Löser, sondern in den
+Elementschleifen (Aufstellen, Kontaktaufbau, Plastizität, Nachlauf), im
+Speicher — und vor allem in der **Genauigkeit** (§ 6a: Kragplatte 68,4 %
+gegen 97,6 % der Balkenlösung). Wer ihn aus der Faktorisierung rechnet,
+rechnet ihn falsch herum.
+
 `zeit_faktorisierung` summiert über das **Rechensystem**, nicht über den
 Lastfall. Für die adaptive Schleife ist das genau richtig, weil sie je Runde
 ein frisches System aufbaut; in einer Rechenkette, die mehrere Lastfälle auf
@@ -1532,6 +1560,18 @@ die Netzsteuerung ist das Geld zum Fenster hinaus.
 * **mit Plastizität** — nur der Kontakt bleibt bei einem Schritt,
 * und bei Ausfallstäben ebenso nur eine Aktivmengen-Runde.
 
+**Der Warmstart *innerhalb* des Lastfalls bleibt** (berichtigt am 21.09.2026).
+Verworfen wird nur der des **vorigen Lastfalls**, damit jede Netzrunde dieselbe
+Lage misst. Bis dahin warf dieselbe Zeile auch den Zustand weg, den die
+Plastizitätsschleife je Fließschritt durchreicht — jeder Fließschritt fing den
+Kontakt wieder bei der Geometrie an. Am Drehlager gemessen (Löser-Sitzung):
+**8,97 %** andere Vergleichsspannung und ein um **2,1 %** steiferes Ergebnis
+(0,2657 statt 0,2715 mm) — Kontakte, die sich nicht setzen konnten, machen
+steifer. Die Rangfolge blieb dabei dieselbe (100 von 100 Spitzenelementen), das
+Netzmaß war also brauchbar; der Lauf war nur nicht der, den das Handbuch
+beschrieb. Die Zahlen oben (2,3 %, 198,8 s) gelten für den Lauf **mit**
+Warmstart, und seit der Berichtigung tut der Schalter genau das.
+
 **Die erste Fassung ließ das Fließen aus, und das war falsch** (berichtigt am
 21.09.2026). Die Begründung lautete: für den Sprung zwischen Nachbarelementen
 genüge die elastische Spannung. Am Drehlager gemessen stimmt das nicht —
@@ -1578,6 +1618,39 @@ Brocken. Was der Probelauf *immer* spart, sind Kontaktschritte je Fließschritt
 `tests/test_solver_ext.py::test_probelauf_und_kennzahlen`, nicht nach der Zeit:
 eine Zeitprüfung an einem kleinen Modell hielte etwas fest, das keine
 Eigenschaft des Verfahrens ist.
+
+**Der Probelauf ist nicht an jedem Modell billiger — an manchen ist er teurer
+als die Wahrheit.** Gemessen am Block aus 8 `hex8` gegen den Drehlager-Lauf
+(21.09.2026):
+
+| | Fließschritte | Kontaktschritte | L2 gegen den vollen Lauf |
+|---|---|---|---|
+| Block, Probelauf | **53** | 58 | 15,83 % |
+| Block, voller Lauf | **16** | 135 | — |
+| Drehlager, Probelauf | 10 | 12 | 2,3 % |
+| Drehlager, voller Lauf | 10 | 98 | — |
+
+Am Drehlager kostet der Probelauf dieselben zehn Fließschritte wie der volle
+Lauf und spart die 86 Kontaktschritte — das ist der Fall, für den er gebaut
+ist. Am Block braucht er **mehr als dreimal so viele Fließschritte wie der
+volle Lauf**; die gesparten Kontaktschritte holen das nicht herein.
+
+**Die Erklärung ist eine Vermutung, keine Messung** (Löser-Sitzung,
+21.09.2026): nicht der Warmstart ist der Mechanismus, sondern `max_iter = 1`.
+Mit einem einzigen Kontaktschritt je Fließschritt setzt sich der Kontakt nie;
+das Ziel der Plastizität wandert mit jedem Schritt weiter, und die Toleranz
+wird spät erreicht. Wo der Kontakt sich ohnehin setzt — am Drehlager 12
+Kontaktschritte auf 10 Fließschritte, also fast einer je Schritt, und dann
+steht er —, passiert nichts. Wo er wandert, weil das Bauteil kippt und
+gleitet, jagt die Plastizität hinterher.
+
+**Was das für den Aufrufer heißt:** wer den Probelauf als Sparweg nimmt, muss
+nachsehen, ob er einer war. `res.info["plastizitaet"]["iterationen"]` steht
+dafür bereit; liegt die Zahl deutlich über der eines vollen Laufs an einem
+vergleichbaren Modell, war der Probelauf die teurere Wahl. Die adaptive
+Schleife des Vernetzers prüft das Ergebnis ohnehin schon auf die Schlüssel
+`probelauf` und `plastizitaet` — die Schrittzahl daneben zu halten, ist eine
+Zeile mehr.
 
 **Dass es wirklich eine Eigenschaft des Verfahrens ist, steht unabhängig
 gemessen daneben** (Löser-Sitzung am Drehlager, 21.09.2026): dort 12

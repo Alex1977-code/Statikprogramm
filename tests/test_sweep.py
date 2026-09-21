@@ -30,7 +30,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from statik3d.model import Model, DofBehaviour, Material             # noqa: E402
 from statik3d import mesher, sweep, diagnose, netzguete, solver       # noqa: E402
 from statik3d.elements.solid import solid_volume, hex8_N_dN, pent6_N_dN  # noqa: E402
-from test_netzfeld import platte_mit_bohrungen, zug_und_lager          # noqa: E402
+from test_netzfeld import platte_mit_bohrungen as _platte_roh, zug_und_lager  # noqa: E402
+
+
+def platte_mit_bohrungen(*a, **kw):
+    """Wie in test_netzfeld, aber mit eingeschaltetem Sweep.
+
+    Die Vorgabe `Netzeinstellungen.sweep` ist seit dem 21.09.2026 **aus** -
+    am Drehlager entstanden 992 entartete Keile und LF1 rechnete um Faktor
+    4,5 daneben. Diese Suite hat den Sweep zum Gegenstand und schaltet ihn
+    darum selbst ein; wer den Tetraederweg prueft, laesst ihn aus.
+    """
+    m, koerper = _platte_roh(*a, **kw)
+    m.netz.sweep = True
+    return m, koerper
 
 RESULTS = []
 
@@ -79,6 +92,7 @@ def test_erkennung():
     check("netz.sweep = False schaltet ab", not sweep.sweepbar(m, k))
     # Pyramide: fuenf Flaechen, keine zwei deckungsgleichen
     p = Model()
+    p.netz.sweep = True          # Vorgabe seit 21.09.2026 aus - hier ist der Sweep der Gegenstand
     from statik3d.model import Material
     p.add_material(Material.steel("S235"))
     kn = [p.add_node(*x) for x in ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0.5, 0.5, 1))]
@@ -289,6 +303,7 @@ def quader(a=2.0, b=1.0, c=1.0, name="V1", material="S235", teilung=(4, 2, 2)):
     """Ein Quader aus sechs Vierecken mit acht Eckknoten - der abgebildete
     Pfad (mesher._hex_netz). Boden z = 0, Deckel z = c, Wand X1 bei x = a."""
     m = Model()
+    m.netz.sweep = True          # Vorgabe seit 21.09.2026 aus - hier ist der Sweep der Gegenstand
     m.add_material(Material.steel(material))
     E = [(0, 0), (a, 0), (a, b), (0, b)]
     ku = [m.add_node(x, y, 0.0) for x, y in E]
@@ -446,6 +461,7 @@ def test_zylinder_wird_gesweept():
     21.09.2026 verlangte die Erkennung fuenf, und jeder Bolzen fiel an die
     Tetraeder (48 von 108 Drehlager-Koerpern haben vier Flaechen)."""
     m = Model()
+    m.netz.sweep = True          # Vorgabe seit 21.09.2026 aus - hier ist der Sweep der Gegenstand
     m.add_material(Material.steel("S235"))
     unten, oben, mantel = _zylinder(m, "Z", 0.0, 0.0, 0.0, 0.3, 0.05)
     m.add_flaeche("ZBoden", list(unten), material="S235")
@@ -479,6 +495,7 @@ def _platte_mit_nabe(a=0.4, b=0.3, t=0.1, r=0.06, hoehe=0.08):
     zwei Mantelflaechen und einer Kreisscheibe. Nicht als Ganzes Grundflaeche
     mal Weg - erst nach dem Schnitt am Fussabdruck."""
     m = Model()
+    m.netz.sweep = True          # Vorgabe seit 21.09.2026 aus - hier ist der Sweep der Gegenstand
     m.add_material(Material.steel("S235"))
     E = [(0, 0), (a, 0), (a, b), (0, b)]
     ku = [m.add_node(x, y, 0.0) for x, y in E]
@@ -545,6 +562,7 @@ def test_abgesetzte_welle_zerlegt():
     """Abgesetzte Welle: dicker Absatz r1 und duenner r2 hintereinander; die
     Schulter (Kreisring) traegt den Fussabdruck des duennen Teils als Oeffnung."""
     m = Model()
+    m.netz.sweep = True          # Vorgabe seit 21.09.2026 aus - hier ist der Sweep der Gegenstand
     m.add_material(Material.steel("S235"))
     r1, r2, l1, l2 = 0.05, 0.03, 0.2, 0.15
     unten1, oben1, mantel1 = _zylinder(m, "D", 0.0, 0.0, 0.0, l1, r1)
@@ -669,8 +687,45 @@ def test_kragplatte_tet4_gegen_hex8():
     check("und braucht dafuer weniger Knoten", nn_hex < nn_tet, f"{nn_hex} gegen {nn_tet}")
 
 
+def test_vorgabe_aus():
+    """Die Vorgabe `Netzeinstellungen.sweep` ist **aus** (21.09.2026).
+
+    Der Sweep liefert das bessere Element - an der Kragplatte 97,6 % der
+    Balkenloesung gegen 68,4 % beim Tetraeder (test_kragplatte_tet4_gegen_hex8).
+    Am Drehlager erzeugte er aber 992 entartete Keile (10,6 % aller pent6,
+    schlechteste Formguete 0,025; von 31.108 Hexaedern keiner unter 0,10), und
+    LF1 rechnete darauf max |u| 1,2335 statt 0,2716 mm - Faktor 4,5. Die Keile
+    erben die Splitterdreiecke der Flaechenvernetzung: die Paarung zu Vierecken
+    verlangt Guete >= 0,3, ein Splitterdreieck erfuellt das nie und bleibt als
+    Keil uebrig.
+
+    Darum wird von Hand eingeschaltet (Netz -> Netzeinstellungen), bis die
+    Flaechenteilung eine Mindestweite kennt. Geprueft wird nicht nur das Feld,
+    sondern das Verhalten: derselbe Koerper einmal ohne und einmal mit Haken.
+    """
+    from statik3d.model import Netzeinstellungen
+    check("die Vorgabe ist aus", Netzeinstellungen().sweep is False,
+          "sweep = %r" % Netzeinstellungen().sweep)
+
+    def netz(an):
+        # Mit Bohrung: ein Quader ohne Bohrung ginge den abgebildeten Pfad
+        # (mesher._hex_netz, sechs Vierecke und acht Eckknoten) und gaebe auch
+        # ohne Sweep Hexaeder - er wuerde die Frage nicht beantworten.
+        m, k = _platte_roh(0.4, 0.2, 0.2, bohrungen=((0.2, 0.1, 0.03),))
+        m.netz.sweep = bool(an)
+        m.netz.ziellaenge = 0.1
+        m.netz.dichte = "eigene"
+        mesher.modell_vernetzen(m, [], workers=1)
+        return _typen(m)
+
+    aus, an = netz(False), netz(True)
+    check("ohne Haken: nur Tetraeder", set(aus) == {"tet4"}, str(aus))
+    check("mit Haken: Hexaeder und Keile", set(an) <= {"hex8", "pent6"} and "hex8" in an,
+          str(an))
+
+
 def main():
-    for t in (test_erkennung, test_netz_platte, test_quader_bleibt_abgebildet, test_nachbar_mit_tetraedern,
+    for t in (test_vorgabe_aus, test_erkennung, test_netz_platte, test_quader_bleibt_abgebildet, test_nachbar_mit_tetraedern,
               test_nachbar_mit_verschiedener_teilung, test_lagen_bei_fliessen,
               test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
               test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,

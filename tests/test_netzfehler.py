@@ -190,6 +190,9 @@ def test_hexaeder_und_keile_im_schaetzer():
     Dann eine adaptive Runde auf dem gesweepten Netz: die Schleife verfeinert
     auch Hexaeder-Koerper, und der Fehler faellt."""
     m, k = platte_mit_bohrungen(0.4, 0.24, 0.08, bohrungen=((0.2, 0.12, 0.04),))
+    # Die Vorgabe `netz.sweep` ist seit dem 21.09.2026 aus (992 entartete
+    # Keile am Drehlager); dieser Fall hat das gesweepte Netz zum Gegenstand.
+    m.netz.sweep = True
     zug_und_lager(m)
     m.netz.ziellaenge = 0.03
     m.netz.dichte = "eigene"
