@@ -36,6 +36,47 @@ import time
 from . import netzfehler
 
 
+#: Schluessel in Results.info, die die Schleife je Durchgang protokolliert, wenn
+#: der Loeser sie fuehrt (Antwort der Loeser-Sitzung vom 20.09.2026: ndof_frei,
+#: nnz, nnz_faktor, t_faktorisierung, backend, threads kommen dazu). Sie sagen,
+#: was eine Runde an **Loeserzeit** gekostet und gespart hat - die Groesse,
+#: um die es geht.
+LOESER_ZAHLEN = ("ndof_frei", "nnz", "nnz_faktor", "t_faktorisierung", "contact_factorisations",
+                 "contact_iterations", "contact_converged", "backend", "threads", "probelauf", "time")
+
+
+def _rechnen_standard(workers):
+    """Der Loeseraufruf der Schleife: ein **Probelauf**, wenn der Loeser ihn
+    kennt (``solve_static(..., probelauf=True)``: ein Kontaktschritt je
+    Fliessschritt, Plastizitaet an - am Drehlager 199 s statt 633 s bei
+    denselben 100 Spitzenelementen, gemessen von der Loeser-Sitzung am
+    20.09.2026), sonst der gewoehnliche Lauf. Ein Probelauf ist ein Netzmass
+    und kein Rechenergebnis: seine Kontaktkraefte stimmen nicht, und die
+    Schleife gibt ihn nur an den Fehlerschaetzer, nie ans Modell."""
+    from . import solver
+
+    def rechnen(m, lf):
+        try:
+            return solver.solve_static(m, case=lf, workers=workers, probelauf=True)
+        except TypeError:
+            return solver.solve_static(m, case=lf, workers=workers)
+    return rechnen
+
+
+def _loeserzahlen(ergebnisse) -> str:
+    """Die Loeserzahlen des ersten Ergebnisses als Protokolltext (leer, wenn
+    der Loeser keine fuehrt)."""
+    if not ergebnisse:
+        return ""
+    info = getattr(ergebnisse[0], "info", None) or {}
+    teile = []
+    for k in LOESER_ZAHLEN:
+        if k in info:
+            v = info[k]
+            teile.append(f"{k} {v:.3g}" if isinstance(v, float) else f"{k} {v}")
+    return ", ".join(teile)
+
+
 def adaptiv_vernetzen(model, lastfaelle=None, runden: int = 2, ziel: float = netzfehler.ZIEL,
                       log: list = None, workers: int = None, fortschritt=None,
                       grob_beginnen: bool = True, rechnen=None,
@@ -62,6 +103,9 @@ def adaptiv_vernetzen(model, lastfaelle=None, runden: int = 2, ziel: float = net
 
     Rueckgabe {"verlauf": [je Durchgang ein Woerterbuch], "ergebnisse":
     die Ergebnisse des letzten Durchgangs, "indikator": sein Indikator}.
+    Die Ergebnisse sind die eines **Probelaufs**, wenn der Loeser ihn kennt
+    (:func:`_rechnen_standard`) - ein Netzmass, kein Rechenergebnis: nicht
+    in Auflagerkraefte, Nachweise oder einen Bericht uebernehmen.
     """
     from . import mesher
     from .importers import _common as C
@@ -72,10 +116,7 @@ def adaptiv_vernetzen(model, lastfaelle=None, runden: int = 2, ziel: float = net
         lastfaelle = [aktiv] if aktiv in model.load_cases else list(model.load_cases)[:1]
     lastfaelle = list(lastfaelle)
     if rechnen is None:
-        from . import solver
-
-        def rechnen(m, lf):
-            return solver.solve_static(m, case=lf, workers=workers)
+        rechnen = _rechnen_standard(workers)
     alt_grob = bool(getattr(netz, "nebenflaechen_grob", False))
     if grob_beginnen:
         netz.nebenflaechen_grob = True
@@ -120,6 +161,9 @@ def adaptiv_vernetzen(model, lastfaelle=None, runden: int = 2, ziel: float = net
                        f"Netz {t_netz:.1f} s, Rechnung {t_rechnen:.1f} s")
             for z in netzfehler.bericht(ind)[1:]:
                 C.say(log, z)
+            zahlen = _loeserzahlen(ergebnisse)
+            if zahlen:
+                C.say(log, f"  Löser: {zahlen}")
             if runde >= runden or not ind["N"] or ind["eta_rel"] <= ziel:
                 break
             h_neu = netzfehler.neue_kantenlaengen(ind, ziel, h_min=float(netz.h_min or 0.0),

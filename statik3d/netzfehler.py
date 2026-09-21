@@ -48,6 +48,25 @@ Spannung im Element, nicht den der Verschiebung, und an einer Singularitaet
 (einspringende Ecke, Lastrand) bleibt er endlich, wo der wahre Fehler es
 nicht ist. Fuer die Frage „wo ist zu grob" ist er das uebliche und
 ausreichende Mass.
+
+**Knotendilatation** (``model.knotendilatation``, Element-Sitzung): dann ist
+der volumetrische Anteil der Elementspannung schon knotengemittelt, und der
+Sprung misst nur noch den deviatorischen Anteil - der Indikator wird
+blinder, nicht blind (Hinweis der Loeser-Sitzung, 20.09.2026). Gemessen an
+der Platte 0,4 x 0,24 x 0,08 m mit Bohrung unter Zug, 5 233 Tetraeder, mit
+und ohne Schalter auf **demselben** Netz (21.09.2026):
+
+    nu      eta_rel ohne  eta_rel mit  Rangkorrelation  oberstes Zehntel gleich
+    0,300      12,1 %        11,4 %         0,973            430 von 523
+    0,450      15,5 %        12,7 %         0,875            315 von 523
+    0,499      27,3 %        14,1 %         0,433            157 von 523
+
+Bei nu -> 0,5 ist nicht der Schalter das Problem, sondern sein Fehlen: ohne
+ihn sperrt der tet4 (sigma_v max 151 statt 314 N/mm^2, |u| 0,177 statt
+0,214 mm), und der Indikator misst dann die Sperre statt den Fehler. Mit
+dem Schalter liegt der Schaetzer bei nu = 0,499 dort, wo er bei nu = 0,3
+liegt. Fuer nahezu inkompressibles Verhalten (Fliessen) gehoert der Schalter
+also an, und der Indikator liest die Spannung, die auch die Nachweise lesen.
 """
 from __future__ import annotations
 

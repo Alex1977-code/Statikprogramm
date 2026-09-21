@@ -1088,9 +1088,15 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
             # „Knoten ohne Element" in der Abnahme und als Freiheitsgrade
             # ohne Steifigkeit im Gleichungssystem (Platte mit Bohrung nach
             # einer adaptiven Runde: 10 143 verwaiste Knoten, 20.09.2026).
-            weg = model.netzknoten_loeschen()
-            if weg:
-                C.say(log, f"{weg} Knoten des alten Netzes entfernt")
+            # Ohne den Zusatz in model.py (Arbeitskopie einer anderen Sitzung)
+            # bleiben sie liegen - das Protokoll sagt es.
+            if hasattr(model, "netzknoten_loeschen"):
+                weg = model.netzknoten_loeschen()
+                if weg:
+                    C.say(log, f"{weg} Knoten des alten Netzes entfernt")
+            else:
+                C.warn(log, "Die Knoten des alten Netzes bleiben stehen (Model.netzknoten_loeschen "
+                            "fehlt in diesem Stand von model.py).")
         for f in flaechen:
             f.elemente = []
         for k in koerper:
