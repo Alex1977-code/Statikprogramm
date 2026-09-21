@@ -2571,10 +2571,15 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
 >
 > Was das heißt: die Verformung und die Spannungen sind der Zustand, bei dem
 > die Nachprüfung aufgegeben hat. Sie sind **wiederholbar** — derselbe Lauf
-> gibt dasselbe Ergebnis —, aber sie sind kein Nachweis. Was dann hilft:
-> weniger Reibbeiwert, ein feineres Netz in der Fuge, oder eine kleinere
-> automatische Kontaktsteifigkeit. Am Drehlagerbeispiel zieht dieser Abbruch
-> im ersten Lastfall.
+> gibt dasselbe Ergebnis —, aber sie sind kein Nachweis. Am
+> Drehlagerbeispiel zieht dieser Abbruch im ersten Lastfall.
+>
+> Was hilft, ist offen. Was **nicht** hilft, ist gemessen: eine zehnfach
+> kleinere automatische Kontaktsteifigkeit ändert daran nichts. Am
+> Drehlager zieht der Abbruch mit ihr genauso, bei 8,6 % mehr Rechenzeit und
+> 0,13 N/mm² Unterschied in der Spannung (22.09.2026). Dieser Rat stand hier
+> bis dahin und ist damit zurückgenommen. Zu versuchen bleiben ein kleinerer
+> Reibbeiwert und ein feineres Netz in der Fuge — beides ungemessen.
 
 * **Einseitiges Lager**: Knoten auswählen, Stützrichtung (z. B. 0 0 1 =
   stützt nach oben), optional Spalt, Federsteifigkeit (elastische Bettung,
@@ -3179,6 +3184,28 @@ maßgebender Kombination und Stelle; Kapitel 8 des Berichts führt jeden
 Nachweis mit seiner Verformung je Kombination.
 
 ## 9 Berechnung und Parallelisierung
+
+> **Zwei Läufe desselben Modells können sich unterscheiden — und das ist kein
+> Fehler (gemessen 22.09.2026).** Der Gleichungslöser summiert die
+> Faktorisierung auf mehrere Kerne auf. Wie die Arbeit dabei auf die Kerne
+> fällt, hängt am Zeitverhalten des Rechners, und damit die letzten Stellen:
+> mit **einem** Kern kommen dreimal bitgleiche Ergebnisse heraus, mit
+> sechzehn nicht (Abweichung rund 5·10⁻¹⁶ vom Betrag).
+>
+> Normalerweise sieht man davon nichts — fünf Stellen hinter der sechzehnten
+> ändern keine Spannung. Sichtbar wird es dort, wo eine Iteration an einer
+> Schwelle steht: bei Reibung kann derselbe Lauf dann 150 oder 162
+> Kontaktschritte brauchen und in der vierten Stelle der Verformung
+> abweichen. Wer zweimal rechnet und zwei Zahlen bekommt, hat also keinen
+> Fehler gefunden, sondern eine Iteration, die nicht zur Ruhe kommt — im
+> Bericht steht das seit dem 22.09.2026 als **nicht konvergiert** (§ 6).
+>
+> **Wenn zwei Läufe streng vergleichbar sein müssen** — etwa um zu belegen,
+> dass eine Änderung am Modell nichts am Ergebnis ändert —, setzen Sie vor
+> dem Start die Umgebungsvariable `MKL_CBWR=AUTO`. Dann rechnet der Löser
+> bitgleich, auf **dieser** Maschine, und kostet dafür rund 13 % mehr Zeit.
+> In der Auslieferung steht sie nicht, weil man 13 % nicht dauernd zahlen
+> will.
 
 * **Alle Lastfälle + Kombinationen**: Standard. Eine Faktorisierung, alle
   Lastfälle, Superposition, Umhüllende, optional Nachweise.

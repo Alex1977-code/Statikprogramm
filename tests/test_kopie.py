@@ -88,11 +88,24 @@ def test_kopie_in_sekunden():
     for i in range(n):
         b = (i % 300) * 4
         m.add_element("tet4", [b, b + 1, b + 2, b + 3], "S235")
-    t = time.time()
+    t = time.perf_counter()
     k = m.copy()
-    dauer = time.time() - t
+    dauer = time.perf_counter() - t
     check("300 000 Tetraeder kopiert", len(k.elements) == n and k.elements[5].nodes == m.elements[5].nodes)
-    check("in Sekunden, nicht Minuten (JSON-Umweg: rund 9 s)", dauer < 5.0, f"{dauer:.2f} s")
+
+    # Verglichen wird gegen den JSON-Umweg **im selben Lauf**, nicht gegen
+    # eine feste Sekundenzahl. Bis zum 22.09.2026 stand hier `dauer < 5.0`:
+    # das misst die Maschine mit. Der Lauf fiel durch, sobald nebenan
+    # gerechnet wurde - und eine Pruefung, die von der Nachbarlast abhaengt,
+    # fuehrt irgendwann jemanden in die Irre, der nicht weiss, dass nebenan
+    # gerechnet wurde. Das Verhaeltnis ist lastunabhaengig: beide Messungen
+    # leiden gleich.
+    t = time.perf_counter()
+    _j = Model.from_dict(m.to_dict())
+    umweg = time.perf_counter() - t
+    check("die Kopie geht um ein Vielfaches schneller als der JSON-Umweg",
+          umweg > 2.0 * dauer,
+          f"{dauer:.2f} s gegen {umweg:.2f} s, Faktor {umweg / max(dauer, 1e-9):.1f}")
 
 
 def main():

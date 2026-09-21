@@ -1298,16 +1298,37 @@ mit dem alten Stand meldet dieselbe Prüfung wahr.
 > Abweichung) und die des Sechsflächner-Stapels. Sie bleiben gültig als das,
 > was sie sind: dieselbe Rechnung gibt dasselbe Ergebnis.
 >
-> Woran es liegt, ist offen. Ein Verdacht mit einer Zahl dahinter: die
-> automatische Kontaktsteifigkeit ist `PENALTY_FACTOR = 1e4` mal die örtliche
-> Diagonalsteifigkeit (§ 4.1). Am Drehlager steht die Matrix damit bei
-> max |K| ≈ 1,05·10¹⁷ gegen 1,9·10¹³ ohne Kontakt — eine Kondition, bei der
-> doppelte Genauigkeit keine gesicherte Stelle mehr hat. Dass zwei
-> rechnerisch gleichwertige Faktorisierungen derselben abgelegten Matrix
-> Lösungen liefern, die um 269 % auseinanderliegen, während beide Residuen
-> bei 10⁻¹⁵ stehen, passt dazu. Am kleinen Modell kostet eine
-> tausendfach weichere Strafe 2,8 % Verschiebung, 0,05 % Spannung und das
-> Doppelte an Kontaktschritten; am Drehlager ist es **ungemessen**.
+> **Woran es liegt, ist offen — und ein naheliegender Verdacht ist
+> gefallen.** Die automatische Kontaktsteifigkeit ist `PENALTY_FACTOR = 1e4`
+> mal die örtliche Diagonalsteifigkeit; am Drehlager steht die Matrix damit
+> bei max |K| ≈ 1,05·10¹⁷ gegen 1,9·10¹³ ohne Kontakt. Dass zwei rechnerisch
+> gleichwertige Faktorisierungen derselben abgelegten Matrix Lösungen
+> liefern, die um 269 % auseinanderliegen, während beide Residuen bei 10⁻¹⁵
+> stehen, sah nach genau dieser Kondition aus.
+>
+> Gemessen am echten Modell (LF1, sonst unverändert, 22.09.2026):
+>
+> | `PENALTY_FACTOR` | Zeit | Kontaktschritte | max \|u\| | σ_v | Deckel |
+> |---|---|---|---|---|---|
+> | 10⁴ | 875,2 s | 150 | 1,2713 mm | 388,0 | gezogen |
+> | 10³ | 950,4 s | 155 | 1,2713 mm | 388,0 | **gezogen** |
+>
+> Feldweise über alle 645 934 Elemente: größte Abweichung der
+> Vergleichsspannung **0,1324 N/mm²**, vier Elemente über 0,1, keines über
+> 1,0; größte Knotenabweichung 0,00002 mm.
+>
+> Daraus folgen zwei Dinge. **Die Strafsteifigkeit ist nicht die Ursache der
+> nicht konvergierenden Reibung** — der Abbruch kommt mit einem Zehntel
+> genauso. Und die Kondition schlägt nicht so durch, wie ihre größte Zahl
+> vermuten lässt: 10¹⁷ gegen eine Maschinengenauigkeit von 2,2·10⁻¹⁶ heißt
+> als Schranke „keine gesicherte Stelle", tatsächlich sind es 0,13 N/mm²
+> auf 388. Vermutlich, weil die Straffedern nur wenige Zeilen betreffen und
+> der tragende Teil davon unberührt bleibt — das ist ungemessen und steht
+> hier als Vermutung, nicht als Grund.
+>
+> `PENALTY_FACTOR` bleibt darum bei 10⁴: 8,6 % mehr Zeit für 0,13 N/mm² bei
+> einer Zusage von 1 N/mm² ist kein guter Handel, und die Konvergenz kauft
+> man sich damit nicht. Die Konstante hat jetzt Zahlen hinter sich.
 
 **Zwei Posten daneben, die nichts mit dem Schlüssel zu tun haben, aber mit
 derselben Messung gefunden wurden** (21.09.2026, an einer Matrix von
