@@ -84,6 +84,69 @@ def tet4_shape_grad(X: np.ndarray):
     return dN, abs(V)
 
 
+#: Voigt-Vektor der Einheitsdehnung: m^T eps = eps_xx + eps_yy + eps_zz
+VOIGT_M = np.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+
+
+def kompressionsmodul(E: float, nu: float) -> float:
+    """K = E / (3 (1 - 2 nu)) - der volumetrische Anteil von D."""
+    return float(E) / (3.0 * (1.0 - 2.0 * float(nu)))
+
+
+def D_deviatorisch(E: float, nu: float) -> np.ndarray:
+    """D ohne seinen volumetrischen Anteil: D - K m m^T.
+
+    Zusammen mit K m m^T ergibt das wieder genau D - die Aufspaltung ist
+    exakt und macht fuer sich genommen keinen Unterschied. Erst wenn der
+    volumetrische Anteil ueber einen Elementverband gemittelt wird
+    (assemble.knotendilatation), aendert sich etwas.
+    """
+    return D_matrix(E, nu) - kompressionsmodul(E, nu) * np.outer(VOIGT_M, VOIGT_M)
+
+
+def tet4_grad_stapel(X):
+    """Formfunktionsableitungen und Volumen eines **Stapels** Tetraeder.
+
+    X: (n,4,3). Rueckgabe dN (n,4,3) und V (n,). Dieselbe Rechnung wie
+    tet4_shape_grad, nur ueber alle Elemente auf einmal: eine Schleife mit
+    35 bis 39 µs je Element kostete am Drehlager 25 s je Aufstellen der
+    Steifigkeit (646.706 tet4, gemessen 20.09.2026) - und das in jeder
+    Kontakt- und Plastizitaetsrunde.
+    """
+    X = np.asarray(X, float)
+    M = np.ones((X.shape[0], 4, 4))
+    M[:, :, 1:] = X
+    V = np.linalg.det(M) / 6.0
+    inv = np.linalg.inv(M)              # dN = letzte drei Spalten von M^-1
+    return np.ascontiguousarray(inv[:, 1:, :].transpose(0, 2, 1)), V
+
+
+def b_tet4(X):
+    """Die Zeile m^T B des Tetraeders (12,) und sein Volumen.
+
+    m^T B u = Spur der Dehnung = Volumendehnung. Beim linearen Tetraeder ist
+    sie ueber das Element konstant, darum ist sie **eine** Zeile und nicht
+    ein Feld ueber Gausspunkte - und darum bringt elementlokales B-bar hier
+    auch nichts: es gibt nichts zu mitteln.
+    """
+    dN, V = tet4_shape_grad(np.asarray(X, float))
+    return dN.ravel(), V
+
+
+def k_tet4_deviatorisch(X, E, nu):
+    """Der Tetraeder **ohne** seinen volumetrischen Anteil.
+
+    Der volumetrische kommt in assemble.knotendilatation dazu, dort ueber den
+    Elementverband jedes Knotens gemittelt. Der lineare Tetraeder versteift
+    sonst (Theoriehandbuch 6a: Kragtraeger 69,5 % der Balkenloesung), und im
+    Fliessbereich ist es am schlimmsten, weil von-Mises-Fliessen volumentreu
+    ist - nu geht praktisch gegen 0,5.
+    """
+    dN, V = tet4_shape_grad(np.asarray(X, float))
+    B = _B_from_grad(dN)
+    return V * (B.T @ D_deviatorisch(E, nu) @ B), B, V
+
+
 def k_tet4(X, E, nu):
     dN, V = tet4_shape_grad(np.asarray(X, float))
     B = _B_from_grad(dN)

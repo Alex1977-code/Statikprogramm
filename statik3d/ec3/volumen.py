@@ -213,14 +213,26 @@ def _elementspannungen(model, res, elemente) -> list:
             sp = sl.stress_points(e.typ, X, mat.E, mat.nu, ue)
         except Exception:
             sp = []
+        roh = getattr(res, "solid_res", {}).get(i)
         if not sp:
-            roh = getattr(res, "solid_res", {}).get(i)
             if roh is None:
                 continue
             out.append((i, np.asarray(roh, float), "Mitte"))
             continue
         k = int(np.argmax([vergleichsspannung(x) for x in sp]))
         name = "Mitte" if k == 0 else f"Eckpunkt {k}"
+        if roh is not None:
+            # ``res.solid_res`` traegt seit dem 20.09.2026 schon den
+            # **massgebenden** Auswertepunkt (solver._post_chunk), und zwar
+            # mit allem, was sigma = D B u hier weglassen wuerde: der
+            # plastischen Vorspannung D eps_p und - mit
+            # Model.knotendilatation - dem gemittelten volumetrischen Anteil.
+            # Gemessen am Stauchwuerfel (384 tet4, S355, p = 420 MPa,
+            # Fliessen an, 20.09.2026): sigma_v,max 381,2 MPa im Ergebnis
+            # gegen 3300,7 MPa neu gerechnet - Ausnutzung 1,07 gegen 9,3.
+            # Die Nachrechnung hier benennt nur noch die **Stelle**.
+            out.append((i, np.asarray(roh, float), name))
+            continue
         out.append((i, np.asarray(sp[k], float), name))
     return out
 

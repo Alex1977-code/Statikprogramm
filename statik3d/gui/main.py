@@ -3739,6 +3739,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Netzeinstellungen…", self.maske_netzeinstellungen,
                 hinweis="Netzdichte (grob, mittel, fein, eigene Ziellänge), Elementform, intelligente "
                         "Anpassung an kleine Kanten, kleinste/größte Elementgröße, Höchstzahl je Objekt")
+        g.klein("Adaptiv vernetzen…", self.geometrie_adaptiv_vernetzen,
+                hinweis="Vernetzen, den aktiven Lastfall rechnen, den Fehler je Element schätzen "
+                        "(Spannungssprung), nur dort feiner und im Feld gröber - so viele Runden wie "
+                        "gewünscht; Kantenlänge je Körper und Feldpunkte bleiben in den Netzeinstellungen")
         g.klein("Netzqualität…", self.maske_netzguete,
                 hinweis="Die Form der Elemente bewerten und einfärben: Formgüte (1 = beste Form), "
                         "Seitenverhältnis, Kantenlänge; Kennwerte und die schlechtesten Elemente "
@@ -9088,6 +9092,60 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(self._vernetzt_text, 15000)
         self._info_zeigen()
 
+    def geometrie_adaptiv_vernetzen(self):
+        """Adaptiv vernetzen: vernetzen -> rechnen -> Fehler schaetzen -> dort
+        feiner, im Feld groeber (statik3d.adaptiv), so viele Runden wie
+        gewuenscht, am aktiven Lastfall. Dieselbe Schleife wie
+        ``statik3d modell.json --adaptiv N``; die Rechnungen dazwischen sind
+        Netzmass und kein Ergebnis - die Ergebnisliste wird geleert."""
+        from .. import adaptiv as _ad, netzfehler as _nf
+        m = self.model
+        if not m.koerper:
+            return self.error("Das Modell hat keine Volumenkörper - adaptiv vernetzt wird nur ein Volumennetz.")
+        if not m.load_cases:
+            return self.error("Das Modell hat keinen Lastfall - die Schleife braucht eine Rechnung.")
+        runden, ok = QtWidgets.QInputDialog.getInt(
+            self, "Adaptiv vernetzen", "Verfeinerungsrunden (Vernetzungen = Runden + 1):", 2, 1, 6)
+        if not ok:
+            return None
+        ziel, ok = QtWidgets.QInputDialog.getDouble(
+            self, "Adaptiv vernetzen", "Ziel des bezogenen Fehlers in % (Energienorm):",
+            _nf.ZIEL * 100.0, 0.5, 50.0, 1)
+        if not ok:
+            return None
+        if not self._netzaenderung_bestaetigen("Adaptiv vernetzen"):
+            return None
+        self.merken("Adaptiv vernetzt")
+        self.netzguete_feld = None
+        self.analysis = None
+        self.results = None
+        lastfall = m.active_case if m.active_case in m.load_cases else next(iter(m.load_cases))
+        log: list = []
+        self._fortschritt_beginnen(1000, f"Adaptiv vernetzen: {runden} Runden, Lastfall {lastfall} …")
+
+        def fortschritt(anteil, text):
+            return self._fortschritt(int(1000 * float(anteil or 0.0)), text or "Adaptiv vernetzen …")
+        try:
+            erg = _ad.adaptiv_vernetzen(m, [lastfall], runden=int(runden), ziel=float(ziel) / 100.0,
+                                        log=log, fortschritt=fortschritt)
+        except Exception as ex:            # noqa: BLE001 - der Grund gehoert ins Protokoll, nicht in einen Absturz
+            log.append(f"Adaptive Vernetzung abgebrochen: {ex}")
+            erg = {"verlauf": []}
+        finally:
+            self._fortschritt_ende()
+        for z in log:
+            self.log.appendPlainText(z)
+        self.statusBar().showMessage("Modellbaum, Tabellen und Ansicht aufbauen …")
+        QtWidgets.QApplication.processEvents()
+        self.refresh_all()
+        v = erg.get("verlauf") or []
+        if v:
+            self.info(f"Adaptiv vernetzt: {len(v)} Durchgänge, "
+                      + " → ".join(f"{x['elemente']} Elemente ({x['eta_rel'] * 100:.1f} %)" for x in v))
+        else:
+            self.info("Nichts vernetzt - das Protokoll sagt, warum")
+        self._info_zeigen()
+
     def kontaktfugen_ausfuehren(self):
         """Die Netze an den Kontaktbedingungen trennen."""
         from .. import fugen
@@ -11619,6 +11677,37 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "liegt und fällt; jede kostet eine Vorwärts-Rückwärts-Lösung, keine neue "
                                   "Faktorisierung. Vorgabe bis 3. Wird gespeichert.")
         gl.addWidget(row("Nachiterationen", self.cb_nachit))
+        # Rechenketten (20.09.2026): mehrere Lastfaelle gleichzeitig, jede in
+        # einem eigenen Prozess und in sich warm gestartet
+        self.cb_ketten = QtWidgets.QComboBox()
+        self.cb_ketten.addItem("nacheinander (Vorgabe)", 1)
+        self.cb_ketten.addItem("automatisch (nach freiem Speicher)", 0)
+        for n_ in (2, 3, 4, 6, 8, 12):
+            self.cb_ketten.addItem(f"{n_} gleichzeitig", int(n_))
+        i = self.cb_ketten.findData(int(parallel.settings().ketten))
+        self.cb_ketten.setCurrentIndex(i if i >= 0 else 0)
+        self.cb_ketten.setToolTip(
+            "Mehrere Lastfälle gleichzeitig rechnen - jede Kette in einem eigenen Prozess, "
+            "in sich nacheinander und warm gestartet. Der Warmstart ist der größte Einzelgewinn "
+            "je Lastfall (Drehlager 20.09.2026: kalt 112 Kontaktrunden, warm 41 bis 48); darum "
+            "wird eine ganze Folge einer Kette gegeben und nicht jeder Lastfall einzeln verteilt. "
+            "Grenze ist der Speicher, nicht die Kernzahl: eine Kette braucht dort rund 9,5 GB, "
+            "davon das meiste die Arbeitsprozesse. „automatisch“ nimmt so viele, wie drei Viertel "
+            "des freien Speichers tragen. Lohnt sich erst bei mehreren großen Lastfällen; ein "
+            "kleines Modell wird davon langsamer. Wird gespeichert.")
+        gl.addWidget(row("Lastfälle gleichzeitig (Ketten)", self.cb_ketten))
+        self.cb_kettenarb = QtWidgets.QComboBox()
+        self.cb_kettenarb.addItem("automatisch (Prozesse ÷ Ketten)", 0)
+        for n_ in (2, 4, 6, 8, 12, 16):
+            self.cb_kettenarb.addItem(str(n_), int(n_))
+        i = self.cb_kettenarb.findData(int(parallel.settings().ketten_arbeiter))
+        self.cb_kettenarb.setCurrentIndex(i if i >= 0 else 0)
+        self.cb_kettenarb.setToolTip(
+            "Arbeitsprozesse je Kette. Jeder hält das ganze Modell - am Drehlager 1,05 GB je "
+            "Prozess, ein voller Pool von 31 also 32,7 GB. Die Elementschleifen sind nur noch "
+            "ein kleiner Teil der Rechenzeit (Nachlauf 2 bis 3 s, Plastizität 8 s von 235 s je "
+            "warmem Lastfall), große Pools je Kette lohnen darum nicht. Wird gespeichert.")
+        gl.addWidget(row("Arbeitsprozesse je Kette", self.cb_kettenarb))
         lbl_teilung = QtWidgets.QLabel(
             "Zweierlei: die Prozesse vernetzen und stellen die Matrizen auf, die Threads lösen "
             "damit das Gleichungssystem. Beide Zahlen dürfen gleich sein, doppelt gezählt wird "
@@ -11674,12 +11763,48 @@ class MainWindow(QtWidgets.QMainWindow):
         # keine Programmeinstellung - sie reist mit der Datei
         gp = QtWidgets.QGroupBox("Plastizität der Volumen (Einstellung am Modell)")
         gpl = QtWidgets.QVBoxLayout(gp)
-        self.cb_plast = QtWidgets.QCheckBox("Fließen rechnen: von Mises mit Verfestigung, Anfangsdehnungs-Iteration")
+        # Knotengemittelte Dilatation (20.09.2026): der lineare Tetraeder
+        # versteift volumetrisch, und im Fliessbereich am staerksten - von
+        # Mises ist volumentreu, die Querdehnzahl geht praktisch gegen 0,5.
+        # Darum steht der Schalter hier, bei der Plastizitaet.
+        self.cb_dilat = QtWidgets.QCheckBox(
+            "Tetraeder ohne volumetrische Versteifung (knotengemittelte Dilatation)")
+        self.cb_dilat.setToolTip(
+            "Der lineare Tetraeder (tet4) versteift: er hat konstante Dehnung und kann die "
+            "Volumenänderung nicht getrennt abbilden. Mit diesem Haken wird der volumetrische "
+            "Anteil der Steifigkeit über den Elementverband jedes Knotens gemittelt statt je "
+            "Element genommen; der deviatorische bleibt elementweise.\n\n"
+            "Gemessen am Kragträger 0,2 × 0,2 × 2,0 m mit 480 Tetraedern, gegen die "
+            "Balkenlösung: bei ν = 0,3 steigt die Endverschiebung von 51,0 auf 67,2 % der "
+            "Balkenlösung, bei ν = 0,49 von 10,6 auf 58,5 %, bei ν = 0,499 von 2,1 auf "
+            "51,1 %. Je näher die Querdehnzahl an 0,5, desto größer der Unterschied - und "
+            "genau dorthin läuft der Werkstoff beim Fließen.\n\n"
+            "Der Preis: die Knoten eines Verbands werden gekoppelt, die Matrix bekommt mehr "
+            "Einträge je Zeile (am Kragträger 38,3 statt 14,8) und die Faktorisierung wird "
+            "teurer. Die Schubversteifung des Tetraeders bleibt bestehen - dagegen hilft nur "
+            "ein feineres Netz oder tet10. Betrifft nur tet4; alle anderen Elementtypen "
+            "rechnen unverändert.")
+        gpl.addWidget(self.cb_dilat)
+        self.cb_plast = QtWidgets.QCheckBox("Fließen rechnen: von Mises mit Verfestigung")
         self.cb_plast.setToolTip(
             "Volumenelemente, deren Vergleichsspannung die Streckgrenze fy ihres Werkstoffs übersteigt, "
             "fließen: die Spannung bleibt bei fy + H·ε_p, die Verformung wächst. Werkstoffe ohne fy bleiben "
-            "elastisch. Jeder Schritt ist eine lineare Lösung mit der Zusatzlast der plastischen Dehnung, "
-            "mit Kontakt eine Kontakt-Iteration; Kombinationen werden dann direkt gerechnet.")
+            "elastisch. Mit Kontakt ist jeder Schritt eine Kontakt-Iteration; Kombinationen werden dann "
+            "direkt gerechnet.")
+        self.cb_plast_weg = QtWidgets.QComboBox()
+        for t_, v_ in (("konsistente Tangente (Vorgabe)", "tangente"),
+                       ("Anfangsdehnung", "anfangsdehnung")):
+            self.cb_plast_weg.addItem(t_, v_)
+        self.cb_plast_weg.setToolTip(
+            "Konsistente Tangente: Newton, die Steifigkeit wird je Schritt neu aufgestellt und "
+            "faktorisiert. Konvergiert quadratisch und unabhängig von der Verfestigung - bei 1 % "
+            "Verfestigung braucht der Zugversuch 7 bis 12 Schritte und trifft auf 0,2 %.\n\n"
+            "Anfangsdehnung: feste Steifigkeit, eine Faktorisierung je Rechnung, dafür lineare "
+            "Konvergenz mit dem Faktor 1 − E_t/E (bei 1 % also 0,99 je Schritt - derselbe Zugversuch "
+            "konvergiert nicht und liegt 9 % daneben). Lohnt bei örtlichem Fließen und Verfestigung "
+            "ab 10 %, wo acht bis zehn Rückwärtseinsetzungen genügen.\n\n"
+            "Ohne Verfestigung (ideal-plastisch) wird immer mit Anfangsdehnung gerechnet: die "
+            "Tangente wäre dort singulär.")
         self.sp_plast_verf = QtWidgets.QDoubleSpinBox()
         self.sp_plast_verf.setRange(0.0, 50.0)
         self.sp_plast_verf.setDecimals(2)
@@ -11700,6 +11825,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_plast_tol.setCurrentIndex(1)
         self.cb_plast_tol.setToolTip("Änderung der plastischen Knotenlasten gegen die Last, bis zu der es konvergiert gilt")
         gpl.addWidget(self.cb_plast)
+        gpl.addWidget(row("Verfahren", self.cb_plast_weg))
         gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen,
                           "   Schritte je Stufe", self.sp_plast_it, "   Toleranz", self.cb_plast_tol))
         lay.addWidget(gp)
@@ -16488,11 +16614,15 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..plastizitaet import Plastizitaet
             pz = self.model.plastizitaet = Plastizitaet()
         self.cb_plast.setChecked(bool(pz.an))
+        if hasattr(self, "cb_dilat"):
+            self.cb_dilat.setChecked(bool(getattr(self.model, "knotendilatation", False)))
         self.sp_plast_verf.setValue(float(pz.verfestigung) * 100.0)
         self.sp_plast_stufen.setValue(int(pz.laststufen))
         self.sp_plast_it.setValue(int(pz.iterationen))
         k = self.cb_plast_tol.findData(float(pz.toleranz))
         self.cb_plast_tol.setCurrentIndex(k if k >= 0 else 1)
+        w = self.cb_plast_weg.findData(str(getattr(pz, "verfahren", "tangente")))
+        self.cb_plast_weg.setCurrentIndex(w if w >= 0 else 0)
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -16504,10 +16634,13 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..plastizitaet import Plastizitaet
             pz = self.model.plastizitaet = Plastizitaet()
         pz.an = bool(self.cb_plast.isChecked())
+        if hasattr(self, "cb_dilat"):
+            self.model.knotendilatation = bool(self.cb_dilat.isChecked())
         pz.verfestigung = float(self.sp_plast_verf.value()) / 100.0
         pz.laststufen = int(self.sp_plast_stufen.value())
         pz.iterationen = int(self.sp_plast_it.value())
         pz.toleranz = float(self.cb_plast_tol.currentData() or 1e-3)
+        pz.verfahren = str(self.cb_plast_weg.currentData() or "tangente")
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()
@@ -16517,6 +16650,8 @@ class MainWindow(QtWidgets.QMainWindow):
                            solver_threads=int(self.cb_threads.currentData() or 0),
                            solver_residuum=float(self.cb_genau.currentData() or 1e-6),
                            solver_nachiterationen=int(3 if nachit is None else nachit),
+                           ketten=int(self.cb_ketten.currentData() or 0),
+                           ketten_arbeiter=int(self.cb_kettenarb.currentData() or 0),
                            backend="farm" if self.cb_backend.currentIndex() == 1 else "local",
                            farm_host=self.ed_farm_host.text().strip() or "127.0.0.1",
                            farm_port=int(self.ed_farm_port.text() or 5555),
@@ -16585,7 +16720,11 @@ class MainWindow(QtWidgets.QMainWindow):
         f.raise_()
         return f
 
-    def _run_background(self, func, on_done, label):
+    def _run_background(self, func, on_done, label, posten=None):
+        """`posten`: [(Name, Art)] der Lastfaelle und Kombinationen dieser
+        Rechnung. Ist die Liste da, oeffnet sich das Fenster mit einer Zeile
+        je Posten (gui.rechenliste) - bei 422 Lastfaellen sagen Balken und
+        Protokoll allein zu wenig. Ohne Liste bleibt alles wie bisher."""
         if self.worker is not None and self.worker.isRunning():
             return self.error("Es läuft bereits eine Berechnung")
         self.btn_solve.setEnabled(False)
@@ -16619,7 +16758,45 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.finished_ok.connect(lambda r: self._bg_done(on_done, r))
         self.worker.failed.connect(self._bg_failed)
         self.worker.abgebrochen.connect(self._bg_abgebrochen)
+        self._rechenliste_oeffnen(posten)
         self.worker.start()
+
+    def _rechenliste_oeffnen(self, posten) -> None:
+        """Das Fenster mit einer Zeile je Posten zeigen und an den Worker haengen.
+
+        Nicht modal: die Liste laesst sich waehrend der Rechnung scrollen, und
+        das uebrige Programm bleibt bedienbar. Der Abbruchknopf ruft denselben
+        Weg wie der in der Statuszeile.
+        """
+        alt = getattr(self, "rechenliste", None)
+        if alt is not None:
+            alt.close()                       # das Fenster des vorigen Laufs
+            alt.deleteLater()
+        self.rechenliste = None
+        if not posten:
+            return
+        try:
+            from .rechenliste import Rechenliste
+        except Exception:                                  # noqa: BLE001
+            return
+        try:
+            fenster = Rechenliste(self)
+            from .. import solver as _slv
+            fenster.rechner_setzen("Prozesspool: %s   ·   Gleichungslöser: %s"
+                                   % (parallel.describe(), _slv.loeser_verfuegbar()))
+            fenster.posten_setzen(posten)
+            fenster.btn_abbrechen.clicked.connect(self._fortschritt_abbrechen)
+            self.worker.progress.connect(fenster.melden)
+            self.worker.finished_ok.connect(lambda _r: fenster.beenden("fertig"))
+            self.worker.failed.connect(lambda _m, _t: fenster.beenden("Fehler"))
+            self.worker.abgebrochen.connect(lambda _d: fenster.beenden("abgebrochen"))
+        except Exception as ex:                # noqa: BLE001
+            # Das Fenster ist Beiwerk. Scheitert es, laeuft die Rechnung
+            # trotzdem - mit Balken und Protokoll wie zuvor.
+            self.log.appendPlainText(f"    Rechenliste nicht geöffnet: {ex}")
+            return
+        self.rechenliste = fenster
+        fenster.show()
 
     def _rechnung_zeile(self, text: str) -> None:
         """Textmeldung des Rechenkerns: immer ins Protokoll, in die Statuszeile
@@ -17060,7 +17237,13 @@ class MainWindow(QtWidgets.QMainWindow):
             func = lambda p: solver.solve_modal(model, nmodes, p, kontakt=kontakt)
         else:
             func = lambda p: solver.solve_buckling(model, nmodes, p)
-        self._run_background(func, lambda r: self._solve_done(kind, r), "Berechnung")
+        try:
+            from .rechenliste import posten_aus_modell
+            posten = posten_aus_modell(model, kind)
+        except Exception:                      # noqa: BLE001
+            posten = []                        # die Liste ist Beiwerk - ohne sie wird gerechnet
+        self._run_background(func, lambda r: self._solve_done(kind, r), "Berechnung",
+                             posten=posten)
 
     def _kontaktzustand_zuletzt(self):
         """Der Kontaktzustand der gerade gezeigten statischen Loesung - die
@@ -17090,15 +17273,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Netz abnehmen …")
         QtWidgets.QApplication.processEvents()
         try:
-            befunde = dg.abnahme(self.model)
+            alle = dg.abnahme(self.model, warnungen=True)
         except Exception as ex:            # noqa: BLE001 - eine Abnahme darf nie sperren
             self.log.appendPlainText(f"Abnahme nicht möglich: {ex}")
             return True
         finally:
             self.statusBar().clearMessage()
+        # Warnungen (Splitter je Koerper) stehen im Protokoll, halten aber
+        # nichts an - die Entscheidung bleibt beim Anwender, der sie liest.
+        warnungen = [b for b in alle if getattr(b, "stufe", "FEHLER") == "WARNUNG"]
+        befunde = [b for b in alle if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
+        for b in warnungen:
+            self.log.appendPlainText(f"WARNUNG: [{b.pruefung}] {b.text}")
         self._abnahme_befunde = befunde
         if not befunde:
-            self.log.appendPlainText("--- Abnahme des Netzes: bestanden ---")
+            self.log.appendPlainText("--- Abnahme des Netzes: bestanden ---"
+                                     + (f" ({len(warnungen)} Warnungen)" if warnungen else ""))
             return True
         self.log.appendPlainText(f"--- Abnahme des Netzes: {len(befunde)} Verletzungen ---")
         for b in befunde:

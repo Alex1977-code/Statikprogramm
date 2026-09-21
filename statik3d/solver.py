@@ -438,6 +438,51 @@ def ist_symmetrisch(K, tol: float = None) -> bool:
     return True
 
 
+#: Schon gemeldete Hinweise - eine Faktorisierung laeuft in der
+#: Kontakt-Iteration Dutzende Male, die Meldung soll einmal kommen.
+_GEMELDET: set = set()
+
+
+def _log_einmal(text: str) -> None:
+    """Denselben Hinweis nur einmal je Programmlauf schreiben."""
+    if text in _GEMELDET:
+        return
+    _GEMELDET.add(text)
+    import warnings
+    warnings.warn(text, RuntimeWarning, stacklevel=2)
+
+
+#: Groesste Zeilenzahl und groesste Zahl von Eintraegen, die die
+#: 32-Bit-Schnittstelle von MKL PARDISO fassen kann. Der Prozess selbst ist
+#: durchgehend 64-bittig (Zeiger 64 Bit, numpy.intp 64 Bit, gemessen
+#: 20.09.2026); pypardiso reicht die Matrix aber ueber die LP64-Fassung
+#: weiter und wandelt dabei um:
+#:
+#:     ia = A.indptr.astype(np.int32) + 1
+#:     ja = A.indices.astype(np.int32) + 1
+#:
+#: ``astype`` prueft nicht. Ueber der Grenze liefe die Umwandlung still ueber,
+#: und PARDISO bekaeme vertauschte Indizes - **falsche Zahlen statt einer
+#: Fehlermeldung**. Zum Vergleich: das Drehlager hat 476.214 Zeilen und 17,8
+#: Mio. Eintraege, also Faktor 120 Luft; die Grenze greift erst bei rund 30
+#: Mio. Freiheitsgraden.
+INT32_MAX = 2 ** 31 - 1
+
+
+def _pardiso_nnz_faktor(ps) -> int:
+    """Nichtnullen der Faktorisierung aus iparm(18) - 0, wenn nichts gemeldet wird.
+
+    Gemessen 20.09.2026 an einer Tridiagonalmatrix: n = 200 gibt 964, n = 400
+    gibt 1960 - linear, wie es fuer ein Band sein muss. ``get_iparms()`` zaehlt
+    von 1; iparm(17) steht direkt daneben und meint den Speicher in KB (28 bei
+    n = 400), nicht die Eintraege. Die beiden sind leicht zu verwechseln.
+    """
+    try:
+        return int(ps.get_iparms()[18])
+    except Exception:
+        return 0
+
+
 class LinearSolver:
     """Faktorisiert K einmal; solve() fuer beliebig viele rechte Seiten.
     Backends: pypardiso (MKL, mehrere Threads), scikit-sparse CHOLMOD, SuperLU.
@@ -448,6 +493,18 @@ class LinearSolver:
     """
 
     def __init__(self, K: sparse.spmatrix, backend: str = None):
+        # Kennzahlen der Faktorisierung. Die adaptive Vernetzung fragt danach,
+        # um zu sagen, was eine Netzrunde an Loeserzeit gespart hat
+        # (Anforderung der Vernetzersitzung 2.2, 20.09.2026): die Elementzahl
+        # allein sagt es nicht, weil die Faktorisierung ueberlinear waechst.
+        self.zeit_faktorisierung = 0.0
+        self.nnz_matrix = int(getattr(K, "nnz", 0) or 0)
+        self.nnz_faktor = 0
+        # perf_counter, nicht time(): eine Faktorisierung dauert am kleinen
+        # System Millisekunden, und die Uhr von time.time() steht unter Windows
+        # in Stufen von 15,6 ms - gemessen 20.09.2026: ein Probelauf meldete
+        # damit 0,000 s fuer eine Faktorisierung, die es wirklich gab.
+        t_fak = time.perf_counter()
         try:
             self._aufbauen(K, backend)
         except MemoryError as ex:
@@ -465,6 +522,27 @@ class LinearSolver:
                 + ". Ein größeres Modell braucht mehr Arbeitsspeicher oder eine größere "
                   "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen) "
                   "kann sparsamer sein.") from ex
+        self.zeit_faktorisierung = time.perf_counter() - t_fak
+
+    def _passt_in_int32(self, K: sparse.spmatrix, verlangt: bool) -> bool:
+        """Passt die Matrix in die 32-Bit-Schnittstelle von PARDISO?
+
+        ``verlangt`` heisst: der Anwender hat PARDISO ausdruecklich gewaehlt -
+        dann ist ein stilles Ausweichen falsch, er bekommt eine Meldung.
+        Bei "automatisch" wird auf den naechsten Loeser ausgewichen; MUMPS,
+        ama und SuperLU indizieren mit 64 Bit.
+        """
+        nnz = int(getattr(K, "nnz", 0) or 0)
+        if self.n <= INT32_MAX and nnz <= INT32_MAX:
+            return True
+        text = (f"Das Gleichungssystem ist zu groß für MKL PARDISO: {self.n} Zeilen und "
+                f"{nnz / 1e6:.0f} Mio. Einträge; die Schnittstelle fasst {INT32_MAX} "
+                f"(32-Bit-Indizes). MUMPS, ama und SuperLU rechnen mit 64 Bit - "
+                f"Berechnung \u2192 Einstellungen \u2192 Gleichungslöser.")
+        if verlangt:
+            raise RuntimeError(text)
+        _log_einmal(text + " Es wird auf einen anderen Löser ausgewichen.")
+        return False
 
     def _aufbauen(self, K: sparse.spmatrix, backend: str = None):
         self.n = K.shape[0]
@@ -484,7 +562,7 @@ class LinearSolver:
             return
         K = K.tocsc()
         self._K = K.tocsr()
-        if be in ("auto", "pardiso"):
+        if be in ("auto", "pardiso") and self._passt_in_int32(K, be == "pardiso"):
             try:
                 _find_mkl()
                 import pypardiso
@@ -493,6 +571,7 @@ class LinearSolver:
                 # Threadzahl aus den Einstellungen (0 = alle Kerne bis auf einen)
                 self.threads = _mkl_threads_setzen(ps, threads_vorgabe("pardiso"))
                 ps.factorize(Kcsr)
+                self.nnz_faktor = _pardiso_nnz_faktor(ps)
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
@@ -1010,6 +1089,11 @@ class Results:
             s.append(f"Plastizität             : {pz.get('fliessend', 0)} Elemente fließen, "
                      f"ε_p,eq max {float(pz.get('eps_p_max', 0.0)) * 100:.3f} %, "
                      f"{pz.get('iterationen', 0)} Schritte in {pz.get('laststufen', 1)} Laststufen"
+                     # Was die Zeit traegt, ist nicht die Zahl der Schritte, sondern
+                     # die der Faktorisierungen: am Drehlager 3,2 s gegen 0,31 s je
+                     # Rueckwaertseinsetzen (20.09.2026)
+                     + (f", davon {pz['faktorisierungen']} mit neuer Faktorisierung "
+                        "(konsistente Tangente)" if pz.get("faktorisierungen") else "")
                      + ("" if pz.get("konvergiert", True) else " - NICHT KONVERGIERT"))
         if self.buckling_factors is not None:
             s.append("Knicklastfaktoren       : "
@@ -1143,6 +1227,11 @@ class StaticSystem:
         self._Vf = None
         self._V = None
         self._progress = progress
+        #: Summe der Faktorisierungszeiten aller Loeser dieses Systems, und
+        #: die Groessen der zuletzt faktorisierten Matrix - fuer Results.info.
+        self.zeit_faktorisierung = 0.0
+        self.nnz_matrix = 0
+        self.nnz_faktor = 0
         self.t_assemble = time.time() - t0
         if not model.has_contact:
             _ = self.solver          # sofort faktorisieren (bei Kontakt erst mit Kc)
@@ -1154,6 +1243,7 @@ class StaticSystem:
             t0 = time.time()
             try:
                 self._solver = LinearSolver(self.gerandet(self.Kff))
+                self._loeser_merken(self._solver)
             except (RuntimeError, ValueError) as ex:
                 # "Factor is exactly singular" sagt niemandem, was fehlt
                 from .diagnose import singulaer_text
@@ -1165,6 +1255,17 @@ class StaticSystem:
                        f"Faktorisiert ({self._solver.beschreibung()}, "
                        f"{time.time() - t0:.2f} s)", 0.32)
         return self._solver
+
+    def _loeser_merken(self, ls: LinearSolver):
+        """Zeit und Groessen einer Faktorisierung mitschreiben.
+
+        Die Zeit wird summiert (ein Lastfall am Drehlager faktorisiert 28 mal,
+        gemessen 19.09.2026), die Nichtnullen sind die der letzten Matrix -
+        sie aendern sich zwischen den Kontaktschritten nur um die Fugenzeilen.
+        """
+        self.zeit_faktorisierung += getattr(ls, "zeit_faktorisierung", 0.0)
+        self.nnz_matrix = getattr(ls, "nnz_matrix", 0) or self.nnz_matrix
+        self.nnz_faktor = getattr(ls, "nnz_faktor", 0) or self.nnz_faktor
 
     def gerandet(self, Kff):
         """Kff mit dem Lagrange-Rand der Hilfsfesselung.
@@ -1318,6 +1419,7 @@ class StaticSystem:
                 if neu:
                     self.kontakt_loeser_freigeben()
                     ls = LinearSolver(self.gerandet(Ktff))
+                    self._loeser_merken(ls)
                     self.faktorisierungen = getattr(self, "faktorisierungen", 0) + 1
                 self.backend = ls.backend
                 try:
@@ -1530,15 +1632,56 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 acc[:3] -= Dm @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 0.0]))
             out.append((i, "shell", acc))
         elif e.typ in asm.SOLID_TYPES:
-            mitte = sl.AUSWERTEPUNKTE[e.typ][0]
-            s_ = sl.stress_points(e.typ, X, mat.E, mat.nu, ue, punkte=[mitte])[0]
-            s_ = np.asarray(s_, float)
+            ev = extra.get("ev_dilatation") if isinstance(extra, dict) else None
+            if ev and i in ev:
+                # tet4 mit knotengemittelter Dilatation: die Steifigkeit
+                # rechnet mit der ueber den Knotenverband gemittelten
+                # Volumendehnung, die Spannung muss dieselbe nehmen, sonst
+                # passen Kraefte und Spannungen nicht zusammen. Der
+                # deviatorische Anteil bleibt elementlokal, der volumetrische
+                # wird ersetzt: sigma = D_dev eps + K ev_gemittelt m. Der
+                # tet4 hat konstante Spannung - ein Punkt genuegt.
+                kap = sl.kompressionsmodul(mat.E, mat.nu)
+                dN_, _V_ = sl.tet4_shape_grad(X)
+                eps_ = sl._B_from_grad(dN_) @ ue
+                werte = [sl.D_deviatorisch(mat.E, mat.nu) @ eps_
+                         + kap * float(ev[i]) * sl.VOIGT_M]
+            else:
+                # **Alle** Auswertepunkte, nicht nur die Mitte. Beim tet4 ist
+                # das derselbe eine Punkt; beim Sechsflaechner ist die Mitte
+                # unter Biegung der schlechteste Ort, den man waehlen kann -
+                # gemessen am Kragtraeger 20.09.2026: Mitte 11,15 N/mm2,
+                # Eckpunkt 15,51, Balken M/W 15,0. Die Mitte zeigte damit
+                # 71,9 % des Randwerts, und der Anwender sah zu wenig.
+                werte = [np.asarray(x, float) for x in
+                         sl.stress_points(e.typ, X, mat.E, mat.nu, ue)]
+            abzug = None
             if i in temp:
-                s_ = s_ - sl.D_matrix(mat.E, mat.nu) @ (
+                abzug = sl.D_matrix(mat.E, mat.nu) @ (
                     mat.alpha * temp[i] * np.array([1.0, 1.0, 1.0, 0, 0, 0]))
             sig0 = temp.get("sigma0") if isinstance(temp, dict) else None
             if sig0 and i in sig0:
-                s_ = s_ - np.asarray(sig0[i], float)      # Vorspannung: sigma = D eps - sigma0
+                # Vorspannung: sigma = D eps - sigma0. sigma0 ist das Mittel
+                # ueber die Gausspunkte (plastizitaet.sigma0_je_element) und
+                # damit je Element konstant - es verschiebt alle
+                # Auswertepunkte um denselben Betrag.
+                s0 = np.asarray(sig0[i], float)
+                abzug = s0 if abzug is None else abzug + s0
+            if abzug is not None:
+                werte = [w - abzug for w in werte]
+            if sig0 and i in sig0 and len(werte) > 1:
+                # Fliessende Elemente: nur die Mitte. Die Plastizitaet wird an
+                # den **Gausspunkten** erzwungen, die Auswertepunkte (Ecken)
+                # liegen ausserhalb, und die abgezogene Vorspannung D eps_p
+                # ist das Mittel ueber die Gausspunkte. An einer Ecke waechst
+                # eps ueber dieses Mittel hinaus, eps_p bleibt zurueck - die
+                # gemeldete Spannung schiesst ueber die Fliessflaeche hinaus.
+                # Gemessen am Reibblock (20.09.2026): Eckwert 2,93 MPa gegen
+                # die verfestigte Fliessgrenze 1,42 - und damit ueber dem
+                # elastischen Spitzenwert 2,30, was es nicht geben kann.
+                # In der Mitte ist das Elementmittel die richtige Berichtigung.
+                werte = werte[:1]
+            s_ = werte[0] if len(werte) == 1 else max(werte, key=sl.von_mises)
             out.append((i, "solid", s_))
         elif e.typ in asm.PLANE_TYPES:
             from .elements import ebene
@@ -1577,8 +1720,11 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
     q = q if q is not None else {}
     temp = temp if temp is not None else {}
     idx = asm.aktive_indizes(model, aktiv)
+    ev = (asm.knotendilatation_je_element(model, u, aktiv)
+          if getattr(model, "knotendilatation", False) else None)
     items = parallel.map_elements(_post_chunk, model, idx, workers=workers,
-                                  extra={"u": u, "feq": feq, "temp": temp})
+                                  extra={"u": u, "feq": feq, "temp": temp,
+                                         "ev_dilatation": ev})
     if aktiv is not None:
         inaktiv = [i for i in range(len(model.elements)) if not aktiv[i]]
         res.info["inaktiv"] = inaktiv
@@ -1665,8 +1811,8 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
     from . import plastizitaet as pl
     halter = {"start": start, "R": None, "aktiv": aktiv}
 
-    def loesen(Fg):
-        u_, R_, a_ = rechnen(Fg, halter["start"])
+    def loesen(Fg, dK=None):
+        u_, R_, a_ = rechnen(Fg, halter["start"], dK)
         halter["R"], halter["aktiv"] = R_, a_
         if getattr(res, "kontaktzustand", None) is not None:
             halter["start"] = res.kontaktzustand
@@ -1674,7 +1820,8 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
 
     log: list = []
     u, zustand, F_p, info = pl.iteration(model, F, loesen, model.plastizitaet, aktiv, log=log,
-                                         progress=lambda t: _melde(progress, t))
+                                         progress=lambda t: _melde(progress, t),
+                                         loesen_tangente=loesen)
     if not isinstance(temp, dict):
         temp = {}
     sig0 = temp.setdefault("sigma0", {})
@@ -1684,13 +1831,16 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
         _melde(progress, z)
     res.info["plastizitaet"] = {k: v for k, v in info.items() if k != "verlauf"}
     res.info["plastizitaet"]["log"] = list(log)
-    res.info["plastisch"] = {int(i): float(v) for i, v in zustand.eps_p_eq.items() if v > 0}
+    # eps_p_eq steht je Gausspunkt; gemeldet wird der groesste Wert des
+    # Elements - ein Element gilt als fliessend, sobald ein Punkt fliesst.
+    res.info["plastisch"] = {int(i): float(np.max(v)) for i, v in zustand.eps_p_eq.items()
+                             if float(np.max(v)) > 0}
     return u, halter["R"], halter["aktiv"], temp
 
 
 def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  kind: str, workers=None, progress=None, start=None,
-                 einfrieren=None, fenster=None) -> Results:
+                 einfrieren=None, fenster=None, probelauf: bool = False) -> Results:
     t0 = time.time()
     aktiv = getattr(system, "aktiv", None)
     # Grundlasten (LoadCase.grundlast) wirken in jeder direkt geloesten
@@ -1710,14 +1860,17 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         res.info["situation"] = system.situation
     if grund:
         res.info["grundlast"] = list(grund)
-    def _rechnen(F_ges=None, start_=None):
+    def _rechnen(F_ges=None, start_=None, K_zusatz=None):
         """Der Loesungsweg des Lastfalls - wiederholbar. F_ges ersetzt die
-        Last (Plastizitaet: F + F_p), start_ den Warmstart des Kontakts."""
+        Last (Plastizitaet: F + F_p), start_ den Warmstart des Kontakts,
+        K_zusatz die Steifigkeitsaenderung der konsistenten Tangente
+        (plastizitaet._newton) - damit wird neu faktorisiert."""
         Fg = F if F_ges is None else F_ges
         st = start if start_ is None else start_
         if model.hat_ausfallstaebe():
             u_, R_, aktiv_, ausfall, alog, kontakt = solve_with_ausfall(
-                model, system, Fg, us=us, progress=progress, uebermass=ueber)
+                model, system, Fg, us=us, progress=progress, uebermass=ueber,
+                K_zusatz=K_zusatz, probelauf=probelauf)
             res.info["ausfall"] = ausfall
             res.info["ausfall_log"] = alog
             if kontakt is not None:
@@ -1726,13 +1879,14 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             return u_, R_, aktiv_
         if model.has_contact:
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
-                model, system, Fg, progress=progress, us=us, uebermass=ueber, start=st,
-                einfrieren=einfrieren, fenster=fenster)
+                model, system, Fg, progress=progress, us=us, uebermass=ueber,
+                start=None if probelauf else st, einfrieren=einfrieren,
+                fenster=fenster, K_zusatz=K_zusatz, probelauf=probelauf)
             res.kontaktzustand = cinfo.pop("contact_state", None)
             res.info.update(_kontakt_info_sammeln(res, cinfo))
             return u_, R_, aktiv
-        u_ = system.solve(Fg, us=us)
-        return u_, system.reactions(u_, Fg), aktiv
+        u_ = system.solve(Fg, K_extra=K_zusatz, us=us)
+        return u_, system.reactions(u_, Fg, K_zusatz), aktiv
 
     hilfs = False
     try:
@@ -1757,6 +1911,16 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             raise
         hilfs = True
     if _plastisch(model):
+        # Der Probelauf rechnet das Fliessen **mit** - nur der Kontakt bleibt
+        # bei einem Schritt. Die erste Fassung (357d61d) liess die Plastizitaet
+        # aus, weil fuer den Spannungssprung die elastische Spannung zu genuegen
+        # schien. Am Drehlager gemessen (Loeser-Sitzung, 21.09.2026) ist das
+        # falsch: elastisch trifft der Probelauf nur 54 von 100
+        # Spitzenelementen (L2-Abweichung 52,2 %), plastisch 100 von 100
+        # (2,3 %). Er verfeinerte also an den falschen Stellen. Der Preis ist
+        # klein - 199 statt 124 s gegen 633 s fuer den vollen Lauf: bei 645.934
+        # Elementen ist das Aufstellen der Matrix der Brocken, nicht die Zahl
+        # der Schritte.
         try:
             u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp, progress, start)
         except RuntimeError as ex3:
@@ -1776,7 +1940,12 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                                        for x in _sg.wichtigste(res.singular)]
     verschiebungen_eintragen(model, res, u, R)
     res.info.update({"ndof": model.ndof, "nfree": len(system.fi),
-                     "solver": system.backend, "factors": dict(factors)})
+                     "solver": system.backend, "factors": dict(factors),
+                     "nnz_matrix": int(getattr(system, "nnz_matrix", 0)),
+                     "nnz_faktor": int(getattr(system, "nnz_faktor", 0)),
+                     "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0))})
+    if probelauf:
+        res.info["probelauf"] = True
     postprocess(model, u, res, feq, q, temp, workers, aktiv_eff)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
@@ -1823,7 +1992,8 @@ def _normalkraft(model: Model, e, u: np.ndarray) -> float:
 
 
 def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=None,
-                       progress=None, max_iter: int = 50, uebermass: dict = None):
+                       progress=None, max_iter: int = 50, uebermass: dict = None,
+                       K_zusatz: sparse.spmatrix = None, probelauf: bool = False):
     """Aktivmengen-Iteration fuer Staebe, die nur Zug oder nur Druck aufnehmen
     (Fachwerkstab/Feder mit ``nur``, Seile).
 
@@ -1834,9 +2004,14 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     wieder hinein, wenn sie im naechsten Schritt die richtige Kraft
     truegen. Kontakt laeuft innen weiter mit.
 
+    ``K_zusatz`` kommt in jedem Schritt dazu (die konsistente Tangente der
+    Plastizitaet, plastizitaet._newton).
+
     Rueckgabe (u, R, aktiv, ausgefallen, log, kontakt) - kontakt = None oder
     (contact, contact_forces, info) aus der Kontaktiteration.
     """
+    if probelauf:
+        max_iter = 1            # siehe solve_with_contact: ein Schritt genuegt
     ne = len(model.elements)
     kand = [i for i, e in enumerate(model.elements)
             if (getattr(e, "nur", "") or e.typ == "seil")
@@ -1851,7 +2026,7 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     u = R = None
     kontakt = None
     for it in range(1, max_iter + 1):
-        K_aus = None
+        K_aus = K_zusatz
         if aus:
             rows, cols, vals = [], [], []
             for i in aus:
@@ -1863,10 +2038,13 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
             K_aus = sparse.coo_matrix(
                 (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
                 shape=(n, n)).tocsr()
+            if K_zusatz is not None:
+                K_aus = (K_aus + K_zusatz).tocsr()
         if model.has_contact:
             u, R, cons, cf, cinfo = solve_with_contact(model, system, F, progress=progress,
                                                        uebermass=uebermass,
-                                                       us=us, K_zusatz=K_aus)
+                                                       us=us, K_zusatz=K_aus,
+                                                       probelauf=probelauf)
             kontakt = (cons, cf, cinfo)
         else:
             u = system.solve(F, K_extra=K_aus, us=us)
@@ -1924,15 +2102,45 @@ def systeme_je_situation(model: Model, namen=None, workers: int = None, progress
 
 
 def solve_static(model: Model, progress=None, case: str = None,
-                 workers: int = None, system: StaticSystem = None) -> Results:
+                 workers: int = None, system: StaticSystem = None,
+                 probelauf: bool = False) -> Results:
     """Ein Lastfall (der aktive oder ``case``) - im stehenden Prozesspool
-    (parallel.arbeiter); Einzelheiten in _solve_static_innen."""
+    (parallel.arbeiter); Einzelheiten in _solve_static_innen.
+
+    ``probelauf=True`` begrenzt den **Kontakt** auf einen Schritt aus dem
+    Anfangszustand der Fugen; das Fliessen wird mitgerechnet. Das ist der Lauf
+    fuer die adaptive Vernetzung (``adaptiv.adaptiv_vernetzen``): sie braucht
+    den Spannungssprung zwischen Nachbarelementen als Netzmass.
+
+    **Der Gewinn ist Faktor 3, nicht Faktor 48.** Am Drehlager LF1 kalt
+    gemessen (Loeser-Sitzung, 21.09.2026): voller Lauf 633,4 s, Probelauf
+    198,8 s. Ein **einziger** Kontaktschritt kostet dort schon 123,8 s, weil
+    bei 645.934 Elementen das Aufstellen der Matrix der Brocken ist und nicht
+    die Zahl der Schritte.
+
+    **Warum das Fliessen mit muss**: ohne es (so war es in 357d61d gebaut)
+    verfeinert die Schleife an den falschen Stellen - elastisch stimmen nur
+    54 von 100 Spitzenelementen mit dem vollen Lauf ueberein, die
+    L2-Abweichung der Vergleichsspannung liegt bei 52,2 %; mit Fliessen sind
+    es 100 von 100 und 2,3 %. Die 75 s Unterschied bringen die ganze
+    Genauigkeit.
+
+    **Das Ergebnis ist ein Netzmass, kein Rechenergebnis.** ``Results.info``
+    traegt ``probelauf: True``, ``contact_converged`` steht auf falsch - und
+    vor allem: ``res.contact_forces`` liegt um **Faktor 834** daneben
+    (9,276e8 N gegen 1,112e6 N am Drehlager, 21.09.2026), damit auch
+    Fugenkraefte, Pressungen, Bolzennachweise und die Auflagerkraefte
+    einseitiger Lager. Verschiebung (0,04 %) und Spannung (2,3 %) stimmen;
+    warum die Kontaktkraefte es nicht tun, ist nicht geklaert. Wer aus einem
+    Probelauf etwas anderes als ein Netzmass liest, liest falsch.
+    """
     with parallel.arbeiter(model, workers):
-        return _solve_static_innen(model, progress, case, workers, system)
+        return _solve_static_innen(model, progress, case, workers, system, probelauf)
 
 
 def _solve_static_innen(model: Model, progress=None, case: str = None,
-                        workers: int = None, system: StaticSystem = None) -> Results:
+                        workers: int = None, system: StaticSystem = None,
+                        probelauf: bool = False) -> Results:
     """Ein Lastfall (default: aktiver Lastfall; case='all': alle Lastfaelle mit
     Faktor 1 ueberlagert)."""
     system = system or StaticSystem(model, workers, progress)
@@ -1943,7 +2151,8 @@ def _solve_static_innen(model: Model, progress=None, case: str = None,
         lc = model.case(case)
         factors = {lc.name: 1.0}
         name = lc.name
-    res = _solve_loads(model, system, factors, name, "case", workers, progress)
+    res = _solve_loads(model, system, factors, name, "case", workers, progress,
+                       probelauf=probelauf)
     _melde(progress, "System gelöst", 1.0)
     return res
 
@@ -1993,6 +2202,15 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
         return None, None
     # Warmstart: jeder Lastfall beginnt beim Kontaktzustand des vorigen
     # Lastfalls desselben Systems (Situation)
+    # Mehrere Lastfaelle gleichzeitig? Nur ohne uebergebenes System (dann gilt
+    # es fuer alle genannten Faelle) und ohne eingefrorene Zustaende (die
+    # brauchen ihren Referenzzustand aus demselben Lauf).
+    if system is None and not referenzen and len(names) > 1:
+        k = ketten_zahl(len(names))
+        if k > 1:
+            fertig = _cases_in_ketten(model, names, k, progress)
+            if fertig:
+                return fertig
     # Jeder fertige Lastfall bleibt bestehen, auch wenn der naechste abbricht:
     # ``out`` haengt an der Ausnahme (siehe _teil_merken)
     try:
@@ -2032,6 +2250,87 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
     except BaseException as ex:
         raise _teil_merken(ex, "teil_cases", out)
     return out
+
+
+def ketten_zahl(n_faelle: int) -> int:
+    """Wie viele Lastfaelle gleichzeitig laufen sollen.
+
+    0 heisst "automatisch": so viele, wie der freie Speicher traegt, hoechstens
+    aber so viele, wie Kerne da sind. Gemessen am Drehlager (20.09.2026)
+    braucht eine Kette mit sechs Arbeitern rund 9,5 GB; davon bleibt ein
+    Viertel als Reserve.
+    """
+    st = parallel.settings()
+    k = getattr(st, "ketten", 1)
+    k = 1 if k is None else int(k)     # 0 heisst automatisch, nicht "eine Kette"
+    if k > 0:
+        return max(1, min(k, n_faelle))
+    frei = float(speicherlage().get("frei", 0.0) or 0.0)
+    je_kette = 9.5                      # GB, gemessen: 6 Arbeiter + Matrix + Faktorisierung
+    nach_speicher = int(max(1.0, 0.75 * frei / je_kette))
+    return max(1, min(nach_speicher, st.workers, n_faelle))
+
+
+def _ketten_teilen(model: Model, names: list, k: int) -> list:
+    """Die Lastfaelle auf k Ketten verteilen - Situation fuer Situation
+    zusammenhaengend, damit der Warmstart innerhalb der Kette greift (jede
+    Situation hat ihr eigenes System)."""
+    folge = [n for sit_names in model.lastfaelle_je_situation(names).values()
+             for n in sit_names]
+    k = max(1, min(int(k), len(folge)))
+    gr = (len(folge) + k - 1) // k
+    return [folge[i:i + gr] for i in range(0, len(folge), gr) if folge[i:i + gr]]
+
+
+def _cases_in_ketten(model: Model, names: list, k: int, progress=None) -> dict:
+    """Mehrere Lastfaelle gleichzeitig: je Kette ein Prozess, in sich warm.
+
+    Gemessen am Drehlager (20.09.2026): ein warmer Lastfall braucht 235 s,
+    davon 87 s Faktorisierung; der Rechner hatte dabei im Mittel 12 von 32
+    Kernen belegt. Der Speicher ist die Grenze, nicht die Kernzahl - eine
+    Kette mit vollem Pool belegt 36 GB, davon 32,7 GB die Arbeiter.
+    """
+    import pickle
+    import tempfile
+    from .parallel import Job, run_jobs
+    bloecke = _ketten_teilen(model, names, k)
+    if len(bloecke) <= 1:
+        return {}
+    st = parallel.settings()
+    je = int(getattr(st, "ketten_arbeiter", 0) or 0) or max(2, st.workers // len(bloecke))
+    threads = st.solver_threads or max(1, (parallel.cpu_count() - 1) // len(bloecke))
+    _melde(progress, f"{len(names)} Lastfälle in {len(bloecke)} Ketten "
+                     f"({je} Arbeiter und {threads} Löser-Threads je Kette)")
+    pfad = None
+    if st.backend != "farm":
+        fd, pfad = tempfile.mkstemp(prefix="statik3d_kette_", suffix=".pkl")
+        os.close(fd)
+        with open(pfad, "wb") as f:
+            pickle.dump(model, f, protocol=pickle.HIGHEST_PROTOCOL)
+    try:
+        d = model.to_dict() if pfad is None else None
+        jobs = [Job("solve_kette",
+                    {"pfad": pfad or "", "model": d, "cases": b,
+                     "arbeiter": je, "loeser_threads": threads},
+                    label=f"{b[0]}…{b[-1]}")
+                for b in bloecke]
+        fertig = run_jobs(jobs, workers=len(bloecke),
+                          progress=(lambda a, b_: _melde(progress, f"Kette {a}/{b_} fertig"))
+                          if progress else None)
+    finally:
+        if pfad:
+            try:
+                os.remove(pfad)
+            except OSError:
+                pass
+    out: dict = {}
+    for job, r in zip(jobs, fertig):
+        if not r.ok:
+            raise RuntimeError(f"Kette {job.label}: {r.error}")
+        for n, res in (r.result or {}).items():
+            res.model = model
+            out[n] = res
+    return {n: out[n] for n in names if n in out}
 
 
 def _kombination_pruefen(model: Model, combo: Combination) -> str:
@@ -2612,10 +2911,48 @@ def _contact_singular(it: int, ex, cs, model=None) -> str:
     return text
 
 
+def _kontaktsystem(system: StaticSystem, model: Model, uebermass, log: list):
+    """Das Kontaktsystem des Modells - einmal gebaut, dann wiederverwendet.
+
+    Der geometrische Teil haengt weder an der Last noch am Verformungszustand:
+    welcher Slave-Knoten auf welche Master-Facette faellt, die Normalen, die
+    Flaechenquadriken, die Suchbaeume. Gebaut wurde er trotzdem bei jedem
+    Aufruf neu - mit Plastizitaet also einmal je Schritt.
+
+    Gemessen am Drehlager (LF3 warm, 12 Kontaktfugen, 18 Plastizitaets-
+    schritte, cProfile 20.09.2026): **276 Aufrufe** von contact._build_pair,
+    172 s von 542 s - ein Drittel des Lastfalls fuer 23-mal dasselbe
+    Ergebnis. 276 / 12 Fugen = 23 Aufbauten. Darin allein 2,5 Mio. Aufrufe
+    von numpy.cross zu 96 s.
+
+    Gehalten wird es am ``StaticSystem``: das gehoert zur Situation und lebt
+    genau so lange wie das Netz, aus dem es aufgebaut ist. Der Schluessel ist
+    das Uebermass, denn das geht in ``g0`` jeder Bedingung ein (Vorspannung
+    je Fuge, kann sich von Lastfall zu Lastfall aendern). Den Zustand setzt
+    ``initialize()`` bei jedem Aufruf zurueck; die Meldungen des Aufbaus
+    werden wiederholt, damit im Protokoll jedes Lastfalls dasselbe steht wie
+    zuvor.
+    """
+    from .contact import ContactSystem
+    schluessel = tuple(sorted((str(k), float(v)) for k, v in (uebermass or {}).items() if v))
+    cs = getattr(system, "_kontaktsystem", None)
+    if cs is not None and getattr(system, "_kontaktsystem_schluessel", None) == schluessel \
+            and cs.model is model:
+        cs.log = log
+        log.extend(getattr(cs, "_baulog", ()))
+        return cs
+    cs = ContactSystem(model, system.K, log, uebermass)
+    cs._baulog = list(log)
+    system._kontaktsystem = cs
+    system._kontaktsystem_schluessel = schluessel
+    return cs
+
+
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
-                       start=None, versuch: int = 0, einfrieren=None, fenster=None):
+                       start=None, versuch: int = 0, einfrieren=None, fenster=None,
+                       probelauf: bool = False):
     """Kontakt-Iteration; ``K_zusatz`` (z. B. die abgezogene Steifigkeit
     ausgefallener Zugstaebe) kommt in jedem Schritt zur Kontaktsteifigkeit.
 
@@ -2636,17 +2973,36 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     Kontaktrechnung die Pressspannung und ueber den Reibbeiwert die
     Schubtragfaehigkeit macht.
     """
-    from .contact import ContactSystem
+    if probelauf:
+        # Ein Schritt, Fugen im Anfangszustand. Fuer die Netzsteuerung ist der
+        # Spannungssprung ein Netzmass, kein Nachweis - die 48 Kontaktschritte
+        # eines warmen Lastfalls am Drehlager (235 s, gemessen 19.09.2026) sind
+        # dafuer verschwendet.
+        max_iter = 1
     log: list[str] = []
-    cs = ContactSystem(model, system.K, log, uebermass)
+    cs = _kontaktsystem(system, model, uebermass, log)
     cs.set_force_scale(float(np.abs(F).max()) if F.size else 1.0)
     cs.initialize()
+    # ContactSystem.signatur() kennt nur den Kontakt. Mit einem K_zusatz, das
+    # sich zwischen zwei Aufrufen aendert - die konsistente Tangente der
+    # Plastizitaet tut das in jedem Newton-Schritt, die abgezogene Steifigkeit
+    # ausgefallener Zugstaebe in jedem Ausfallschritt - bliebe bei gleicher
+    # Aktivmenge die **alte** Faktorisierung stehen und loeste mit der falschen
+    # Matrix. Darum der Inhalt von K_zusatz im Schluessel (20.09.2026).
+    kz_kenn = None if K_zusatz is None else (
+        tuple(K_zusatz.shape), int(K_zusatz.nnz),
+        hash(np.ascontiguousarray(K_zusatz.tocsr().data).tobytes()))
+
+    def signatur():
+        s = cs.signatur()
+        return s if kz_kenn is None else s + (kz_kenn,)
+
     f0 = getattr(system, "faktorisierungen", 0)
     if einfrieren is not None and cs.cons and cs.zustand_setzen(einfrieren):
         Kc, Fc = cs.matrices(model.ndof)
         if K_zusatz is not None:
             Kc = Kc + K_zusatz
-        u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
+        u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
         cs._update_states(u)                 # nur zur Auswertung: g, Fn, Ft je Bedingung
         R = system.reactions(u, F + Fc, Kc)
         Rsup = cs.support_reactions(model.nn)
@@ -2689,7 +3045,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         u_vor = u                  # fuer die Protokollzeile: was bewegt die Runde?
         f_vor = getattr(system, "faktorisierungen", 0)
         try:
-            u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
+            u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
         except RuntimeError as ex:
             if it == 1 and warm and versuch < 3:
                 # Warmstart: eine im vorigen Lastfall offene Bedingung (Lager
@@ -2701,7 +3057,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                            "Neustart von der Geometrie")
                 u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                     model, system, F, max_iter, progress, us, K_zusatz, uebermass,
-                    start=None, versuch=versuch + 1, fenster=fenster)
+                    start=None, versuch=versuch + 1, fenster=fenster,
+                    probelauf=probelauf)
                 cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
                 cinfo2["contact_warm"] = False
                 cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
@@ -2717,13 +3074,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                            "Schritt keine Kontaktbedingung haelt")
                 Kc, Fc = matrizen()
                 try:
-                    u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
+                    u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
                 except RuntimeError as ex2:
                     raise _kontakt_abbruch(it, ex2, cs, model, u, log=log) from None
                 cs.select_by_direction(u)
                 Kc, Fc = matrizen()
                 try:
-                    u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
+                    u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
                 except RuntimeError as ex3:
                     raise _kontakt_abbruch(it, ex3, cs, model, u, log=log) from None
             else:
@@ -2736,7 +3093,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                         continue
                     Kc, Fc = matrizen()
                     try:
-                        u = system.solve(F, Kc, Fc, us=us, signatur=cs.signatur())
+                        u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
                         geloest = True
                         break
                     except RuntimeError as ex4:
@@ -2825,7 +3182,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 neu_start = None
             u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                 model, system, F, max_iter, progress, us, K_zusatz, uebermass,
-                start=neu_start, versuch=versuch + 1, fenster=fenster)
+                start=neu_start, versuch=versuch + 1, fenster=fenster,
+                probelauf=probelauf)
             cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
             cinfo2["contact_warm"] = bool(neu_start) and cinfo2.get("contact_warm", False)
             cinfo2["contact_iterations"] = it + cinfo2.get("contact_iterations", 0)
@@ -2839,7 +3197,16 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     Rk[:, :3] += Rsup
     R[:n6] = Rk.ravel()
     if not converged:
-        log.append(f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert")
+        # Auch in den Fortschrittsstrom: das Protokoll und die Rechenliste
+        # zeigen es damit waehrend des Laufs. Bisher stand es allein in
+        # res.info["contact_log"] - also erst hinterher im Bericht, und bei
+        # 422 Lastfaellen merkt man dort erst am Ende, dass einer haengt.
+        text = ("Probelauf: ein Kontaktschritt gerechnet, nicht auskonvergiert - "
+                "das Ergebnis ist ein Netzmaß, kein Nachweis"
+                if probelauf else
+                f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert")
+        log.append(text)
+        _melde(progress, text)
     log.extend(cs.warnings())
     return u, R, cs.results(), cs.nodal_forces(model.nn), {
         "contact_iterations": it, "contact_converged": converged, "contact_log": log,

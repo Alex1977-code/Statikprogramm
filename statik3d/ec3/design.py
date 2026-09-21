@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import os
+
 import numpy as np
 
 from ..model import Model, Member
@@ -269,17 +271,31 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         nchunk = max(1, min(len(names), 4 * max(st.workers, 1)))
         size = int(np.ceil(len(names) / nchunk))
         chunks = [names[i:i + size] for i in range(0, len(names), size)]
-        jobs = [Job("design_members", {"model": model.to_dict(), "members": c,
-                                       "results": stripped}) for c in chunks]
-        _melde(progress, f"Nachweise: {len(names)} Staebe in {len(jobs)} Auftraegen",
-               _anteil(anteil, 0.0))
-        for r in run_jobs(jobs, workers=workers,
-                          progress=(lambda a, b: _melde(progress, f"Nachweise {a}/{b}",
-                                                        _anteil(anteil, a / max(1, b))))
-                          if progress else None):
-            if not r.ok:
-                raise RuntimeError(f"Nachweis fehlgeschlagen: {r.error}")
-            out.members.update(r.result)
+        # Modell und Ergebnisse **einmal** in eine Datei, die Auftraege tragen
+        # nur den Pfad. Vorher stand in jedem Auftrag ein eigenes
+        # model.to_dict() - am Drehlager 239 MB je Auftrag, bei 64 Auftraegen
+        # rund 15 GB durch die Prozess-Pipes. Der Lauf des Anwenders stand
+        # nach 698 Minuten bei 94 % und kam nicht weiter; ein Arbeiter starb
+        # vorher mit AssertionError in multiprocessing/connection.py
+        # (_get_more_data, die Pipe brach) - 21.09.2026.
+        paket = _paket_schreiben(model, stripped)
+        try:
+            jobs = [Job("design_members", {"paket": paket, "members": c})
+                    for c in chunks]
+            _melde(progress, f"Nachweise: {len(names)} Staebe in {len(jobs)} Auftraegen",
+                   _anteil(anteil, 0.0))
+            for r in run_jobs(jobs, workers=workers,
+                              progress=(lambda a, b: _melde(progress, f"Nachweise {a}/{b}",
+                                                            _anteil(anteil, a / max(1, b))))
+                              if progress else None):
+                if not r.ok:
+                    raise RuntimeError(f"Nachweis fehlgeschlagen: {r.error}")
+                out.members.update(r.result)
+        finally:
+            try:
+                os.unlink(paket)
+            except OSError:
+                pass
         return out
     for k, nm in enumerate(names):
         out.members[nm] = check_member(model, model.members[nm], results)
@@ -287,6 +303,31 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
             _melde(progress, f"Nachweis {nm} ({k+1}/{len(names)})",
                    _anteil(anteil, (k + 1) / len(names)))
     return out
+
+
+def _paket_schreiben(model, results: dict) -> str:
+    """Modell und Ergebnisse einmal in eine Datei; der Pfad geht an die
+    Auftraege.
+
+    Dieselbe Loesung wie im stehenden Pool (parallel._init_worker_datei): der
+    Arbeitsprozess liest das Modell **einmal**, statt es je Auftrag durch die
+    Pipe zu bekommen und neu aufzubauen. Beim Drehlager sind das 239 MB je
+    Auftrag; die Datei wird am Ende wieder geloescht.
+    """
+    import pickle
+    import tempfile
+    fd, pfad = tempfile.mkstemp(prefix="statik3d_nachweis_", suffix=".pkl")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            pickle.dump({"model": model.to_dict(), "results": results}, f,
+                        protocol=pickle.HIGHEST_PROTOCOL)
+    except BaseException:
+        try:
+            os.unlink(pfad)
+        except OSError:
+            pass
+        raise
+    return pfad
 
 
 def _strip(r):

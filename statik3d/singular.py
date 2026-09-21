@@ -845,7 +845,19 @@ def _weichstes_element(model, voll: np.ndarray, knoten) -> tuple:
         d = np.asarray(element_dofs(e, model), int)
         if d.max() < voll.size:
             ue = voll[d]
-            Ke = np.asarray(element_matrix(model, e), float)
+            # Die **volle** Elementmatrix, auch mit Model.knotendilatation:
+            # dort liefert element_matrix nur den deviatorischen Anteil, der
+            # volumetrische steht global in assemble.knotendilatation. Mit
+            # ihm allein haette der Tetraeder einen Nullraum von 7 statt 6,
+            # und eine voll gehaltene Aufweitung erschiene als "Bewegung ohne
+            # Energie" (gemessen 20.09.2026: Energie 6,2e7 J -> -7,1e-12 J bei
+            # nu = 0,499, mittlere |diag| um Faktor 151 kleiner).
+            dil = getattr(model, "knotendilatation", False)
+            try:
+                model.knotendilatation = False
+                Ke = np.asarray(element_matrix(model, e), float)
+            finally:
+                model.knotendilatation = dil
             # K_e ist positiv semidefinit; ein negatives Ergebnis ist
             # Ausloeschung um die Null herum - und genau die ist der Befund:
             # die Bewegung ist eine Starrkoerperbewegung dieses Elements und

@@ -368,6 +368,64 @@ def test_frame_parallel_design():
     check("Rahmen: Ausnutzung plausibel (0 < u < 5)", float(0 < d1.util_max < 5), 1.0, 0)
 
 
+def test_nachweisauftrag_traegt_kein_modell():
+    """Ein Nachweis-Auftrag darf das Modell nicht mitschleppen.
+
+    Bis zum 21.09.2026 stand in **jedem** Auftrag ein eigenes
+    ``model.to_dict()``. Am Drehlager des Anwenders (162 166 Knoten, 662 889
+    Elemente, 239 MB als Datei) waren das rund 228 MB je Auftrag bei 64
+    Auftraegen - etwa 14,6 GB durch die Prozess-Pipes. Der Lauf stand nach
+    698 Minuten bei 94 % und kam nicht weiter; ein Arbeiter starb vorher mit
+    AssertionError in multiprocessing/connection.py (_get_more_data, die
+    Pipe brach).
+
+    Gemessen an Pruefkoerpern (21.09.2026), ein Auftrag alt gegen neu:
+    17 Knoten 0,058 MB gegen 76 Byte, 360 Knoten 0,478 MB, 2 214 Knoten
+    2,996 MB - die Last waechst linear mit dem Netz, der neue Auftrag nicht.
+    """
+    import pickle
+    from statik3d import parallel as _par
+    from statik3d.examples_lib import frame_example
+    m = frame_example()
+    m.sections.clear(); m.add_section(make_section("HEA 200", "HEA 200"))
+    for e in m.elements:
+        e.sec = "HEA 200"
+    m.materials["S355"] = Material.steel("S355")
+    m.auto_members()
+    generate_combinations(m)
+    # Ein Volumennetz danebenlegen - wie am Drehlager, wo das Modell fast
+    # nur aus Netz besteht
+    mesher.grid_box(m, "S355", 1.0, 1.0, 1.0, 8, 8, 8, origin=(10, 10, 0), typ="tet4")
+    an = solver.solve_all(m)
+
+    gefangen = []
+    echt = _par.run_jobs
+
+    def fangen(jobs, **kw):
+        gefangen.extend(jobs)
+        return echt(jobs, **kw)
+
+    _par.run_jobs = fangen
+    try:
+        import statik3d.ec3.design as _d
+        _d.run_jobs = fangen if hasattr(_d, "run_jobs") else None
+        check_members(m, an, use_jobs=True, workers=2)
+    finally:
+        _par.run_jobs = echt
+    check("Nachweisauftraege wurden gebildet", float(bool(gefangen)), 1.0, 0)
+    if not gefangen:
+        return
+    groesse = max(len(pickle.dumps(j.payload, protocol=pickle.HIGHEST_PROTOCOL))
+                  for j in gefangen)
+    ohne_modell = all("model" not in j.payload or j.payload.get("model") is None
+                      for j in gefangen)
+    check("kein Auftrag traegt das Modell", float(ohne_modell), 1.0, 0)
+    # Ohne die Aenderung liegt ein Auftrag dieses Modells bei rund 1 MB.
+    check("ein Auftrag bleibt unter 10 kB", float(groesse < 10_000), 1.0, 0)
+    check("… und nennt stattdessen eine Paketdatei",
+          float(all(j.payload.get("paket") for j in gefangen)), 1.0, 0)
+
+
 def main():
     print("=" * 100)
     print("STATIK3D - Verifikation EC3 (Klassifizierung, Querschnitt, Stabilitaet, Ermuedung)")
@@ -383,6 +441,7 @@ def main():
     test_schadensakkumulation()
     test_design_driver()
     test_frame_parallel_design()
+    test_nachweisauftrag_traegt_kein_modell()
     nok = sum(1 for r in RESULTS if r[4])
     print("=" * 100)
     print(f"Ergebnis: {nok}/{len(RESULTS)} Tests bestanden")
