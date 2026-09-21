@@ -3739,6 +3739,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Netzeinstellungen…", self.maske_netzeinstellungen,
                 hinweis="Netzdichte (grob, mittel, fein, eigene Ziellänge), Elementform, intelligente "
                         "Anpassung an kleine Kanten, kleinste/größte Elementgröße, Höchstzahl je Objekt")
+        g.klein("Adaptiv vernetzen…", self.geometrie_adaptiv_vernetzen,
+                hinweis="Vernetzen, den aktiven Lastfall rechnen, den Fehler je Element schätzen "
+                        "(Spannungssprung), nur dort feiner und im Feld gröber - so viele Runden wie "
+                        "gewünscht; Kantenlänge je Körper und Feldpunkte bleiben in den Netzeinstellungen")
         g.klein("Netzqualität…", self.maske_netzguete,
                 hinweis="Die Form der Elemente bewerten und einfärben: Formgüte (1 = beste Form), "
                         "Seitenverhältnis, Kantenlänge; Kennwerte und die schlechtesten Elemente "
@@ -9086,6 +9090,60 @@ class MainWindow(QtWidgets.QMainWindow):
                   "Nichts vernetzt - das Protokoll sagt, warum")
         if n and getattr(self, "_vernetzt_text", ""):
             self.statusBar().showMessage(self._vernetzt_text, 15000)
+        self._info_zeigen()
+
+    def geometrie_adaptiv_vernetzen(self):
+        """Adaptiv vernetzen: vernetzen -> rechnen -> Fehler schaetzen -> dort
+        feiner, im Feld groeber (statik3d.adaptiv), so viele Runden wie
+        gewuenscht, am aktiven Lastfall. Dieselbe Schleife wie
+        ``statik3d modell.json --adaptiv N``; die Rechnungen dazwischen sind
+        Netzmass und kein Ergebnis - die Ergebnisliste wird geleert."""
+        from .. import adaptiv as _ad, netzfehler as _nf
+        m = self.model
+        if not m.koerper:
+            return self.error("Das Modell hat keine Volumenkörper - adaptiv vernetzt wird nur ein Volumennetz.")
+        if not m.load_cases:
+            return self.error("Das Modell hat keinen Lastfall - die Schleife braucht eine Rechnung.")
+        runden, ok = QtWidgets.QInputDialog.getInt(
+            self, "Adaptiv vernetzen", "Verfeinerungsrunden (Vernetzungen = Runden + 1):", 2, 1, 6)
+        if not ok:
+            return None
+        ziel, ok = QtWidgets.QInputDialog.getDouble(
+            self, "Adaptiv vernetzen", "Ziel des bezogenen Fehlers in % (Energienorm):",
+            _nf.ZIEL * 100.0, 0.5, 50.0, 1)
+        if not ok:
+            return None
+        if not self._netzaenderung_bestaetigen("Adaptiv vernetzen"):
+            return None
+        self.merken("Adaptiv vernetzt")
+        self.netzguete_feld = None
+        self.analysis = None
+        self.results = None
+        lastfall = m.active_case if m.active_case in m.load_cases else next(iter(m.load_cases))
+        log: list = []
+        self._fortschritt_beginnen(1000, f"Adaptiv vernetzen: {runden} Runden, Lastfall {lastfall} …")
+
+        def fortschritt(anteil, text):
+            return self._fortschritt(int(1000 * float(anteil or 0.0)), text or "Adaptiv vernetzen …")
+        try:
+            erg = _ad.adaptiv_vernetzen(m, [lastfall], runden=int(runden), ziel=float(ziel) / 100.0,
+                                        log=log, fortschritt=fortschritt)
+        except Exception as ex:            # noqa: BLE001 - der Grund gehoert ins Protokoll, nicht in einen Absturz
+            log.append(f"Adaptive Vernetzung abgebrochen: {ex}")
+            erg = {"verlauf": []}
+        finally:
+            self._fortschritt_ende()
+        for z in log:
+            self.log.appendPlainText(z)
+        self.statusBar().showMessage("Modellbaum, Tabellen und Ansicht aufbauen …")
+        QtWidgets.QApplication.processEvents()
+        self.refresh_all()
+        v = erg.get("verlauf") or []
+        if v:
+            self.info(f"Adaptiv vernetzt: {len(v)} Durchgänge, "
+                      + " → ".join(f"{x['elemente']} Elemente ({x['eta_rel'] * 100:.1f} %)" for x in v))
+        else:
+            self.info("Nichts vernetzt - das Protokoll sagt, warum")
         self._info_zeigen()
 
     def kontaktfugen_ausfuehren(self):
@@ -17215,15 +17273,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Netz abnehmen …")
         QtWidgets.QApplication.processEvents()
         try:
-            befunde = dg.abnahme(self.model)
+            alle = dg.abnahme(self.model, warnungen=True)
         except Exception as ex:            # noqa: BLE001 - eine Abnahme darf nie sperren
             self.log.appendPlainText(f"Abnahme nicht möglich: {ex}")
             return True
         finally:
             self.statusBar().clearMessage()
+        # Warnungen (Splitter je Koerper) stehen im Protokoll, halten aber
+        # nichts an - die Entscheidung bleibt beim Anwender, der sie liest.
+        warnungen = [b for b in alle if getattr(b, "stufe", "FEHLER") == "WARNUNG"]
+        befunde = [b for b in alle if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
+        for b in warnungen:
+            self.log.appendPlainText(f"WARNUNG: [{b.pruefung}] {b.text}")
         self._abnahme_befunde = befunde
         if not befunde:
-            self.log.appendPlainText("--- Abnahme des Netzes: bestanden ---")
+            self.log.appendPlainText("--- Abnahme des Netzes: bestanden ---"
+                                     + (f" ({len(warnungen)} Warnungen)" if warnungen else ""))
             return True
         self.log.appendPlainText(f"--- Abnahme des Netzes: {len(befunde)} Verletzungen ---")
         for b in befunde:

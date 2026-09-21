@@ -1304,6 +1304,64 @@ def _fehlende_randstrecken(ringe: list, T: np.ndarray) -> list:
             if (min(a, b), max(a, b)) not in kanten]
 
 
+def _vorgabe_passt(model: Model, flaeche, vorgabe) -> bool:
+    """Liegt ein vorgegebenes Flaechennetz noch auf der heutigen Geometrie?
+
+    Geprueft ueber die Kennungen seiner Randpunkte: ein Eckpunkt ("K",
+    Knoten) muss auf dem Knoten liegen, ein Linienpunkt ("L", Linie, k) auf
+    dem k-ten von n Teilpunkten der Linie (n aus der groessten Kennung). Ein
+    Netz, das vor einer Geometrieaenderung entstand, faellt so heraus, statt
+    stillschweigend die alte Lage zu vererben.
+    """
+    try:
+        Pv = np.asarray(vorgabe[0], float)
+        kv = list(vorgabe[2])
+    except Exception:                     # noqa: BLE001
+        return False
+    if not len(Pv):
+        return False
+    gross = float(np.linalg.norm(Pv.max(axis=0) - Pv.min(axis=0))) if len(Pv) > 1 else 1.0
+    tol = 1e-7 * max(gross, 1e-9)
+    # Die Kennungen muessen auf die **heutigen** Linien und Ecken der Flaeche
+    # zeigen: nach dem Spiel am Stift hiess die Kreislinie des Bodens L1 statt
+    # V1_u1, und die alte V1_u1 (r = 20 mm) gab es noch - als Bohrung der Platte.
+    linien_heute = set(flaeche.linien or [])
+    for loch in (flaeche.oeffnungen or []):
+        linien_heute.update(loch)
+    ecken_heute = set()
+    for name in linien_heute:
+        ln = model.lines.get(name)
+        if ln is not None and len(ln.nodes) >= 2:
+            ecken_heute.update((int(ln.nodes[0]), int(ln.nodes[-1])))
+    je_linie: dict = {}
+    for i, kenn in enumerate(kv[:len(Pv)]):
+        if kenn is None:
+            continue
+        if kenn[0] == "K":
+            k = int(kenn[1])
+            if k not in ecken_heute or np.linalg.norm(model.nodes[k] - Pv[i]) > tol:
+                return False
+        elif kenn[0] == "L":
+            if kenn[1] not in linien_heute:
+                return False
+            je_linie.setdefault(kenn[1], []).append((int(kenn[2]), i))
+    for name, eintraege in je_linie.items():
+        ln = model.lines.get(name)
+        if ln is None:
+            return False
+        n = max(k for k, _i in eintraege) + 1
+        try:
+            pts = np.asarray(ln.punkte(model, n), float)
+        except Exception:                 # noqa: BLE001
+            return False
+        if len(pts) != n + 1:
+            return False
+        for k, i in eintraege:
+            if np.linalg.norm(pts[k] - Pv[i]) > tol:
+                return False
+    return True
+
+
 def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     """Dreiecksnetz einer Randflaeche.
 
@@ -1317,9 +1375,14 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     # (statik3d.sweep, model.flaechennetze), gilt fuer alle: nur so treffen
     # die Tetraeder des Nachbarn die Lagenpunkte der Wand.
     vorgabe = (getattr(model, "flaechennetze", None) or {}).get(flaeche.name)
-    if vorgabe is not None:
-        Pv, Tv, kv = vorgabe[:3]              # ein viertes Glied (Vierecke) liest der Sweep
+    if vorgabe is not None and _vorgabe_passt(model, flaeche, vorgabe):
+        Pv, Tv, kv = vorgabe[:3]              # weitere Glieder (Vierecke) liest der Sweep
         return np.asarray(Pv, float), np.asarray(Tv, int), "", [], list(kv)
+    if vorgabe is not None:
+        # Veraltet - die Geometrie hat sich seither geaendert (z. B. Spiel am
+        # Stift: die Knoten wanderten von r = 20 auf 19,95 mm, das alte Netz
+        # des Sweeps lag noch auf 20 mm; test_spiel, 21.09.2026)
+        (getattr(model, "flaechennetze", None) or {}).pop(flaeche.name, None)
     zug = _linienzug(teilung, model, flaeche.linien or [])
     if zug is None:
         return np.zeros((0, 3)), np.zeros((0, 3), int), "Rand schliesst nicht", [], []
@@ -3802,6 +3865,23 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
         C.say(log, f"  {tb['splitter']} Splitter (Güte unter 0.1) von "
                    f"{len(TET)} Tetraedern"
                    + (f", schlechteste: {namen}" if namen else ""))
+        # Einordnen nach der Zahl ihrer Huellknoten: vier = Kappe auf der
+        # Huelle (die Kur dafuer steht in _kappenpunkten/_kappen_entfernen),
+        # drei = auf einer Huellseite stehend, zwei = Nadel zwischen zwei
+        # Huellen, weniger = im Inneren. Am Drehlager blieben rund 200 in
+        # fuenf Koerpern (Loeser-Sitzung, 21.09.2026) - welche Sorte, sagt
+        # erst diese Zeile.
+        try:
+            q_loc = guete(Pn, np.asarray(TET, int))
+            schlecht_loc = np.nonzero(q_loc < 0.1)[0]
+            if len(schlecht_loc):
+                n_huelle = (np.asarray(TET, int)[schlecht_loc] < len(P)).sum(axis=1)
+                arten = {k: int(np.count_nonzero(n_huelle == k)) for k in (4, 3, 2)}
+                innen = int(np.count_nonzero(n_huelle <= 1))
+                C.say(log, f"  davon mit vier Hüllknoten (Kappen) {arten[4]}, mit drei {arten[3]}, "
+                           f"mit zwei (Nadeln) {arten[2]}, im Inneren {innen}")
+        except Exception:                 # noqa: BLE001 - eine Einordnung darf nie sperren
+            pass
     # Die vier Masse hat koerper_vorbereiten schon geprueft und, wo noetig,
     # feiner nachvernetzt. Hier steht nur noch, was danach uebrig blieb -
     # ohne die alte Aufforderung "mit kleinerer Kantenlänge nachvernetzen",

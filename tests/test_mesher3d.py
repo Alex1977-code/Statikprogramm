@@ -1344,8 +1344,56 @@ def test_gitterindex_zelle():
           np.array_equal(fein, alt), f"{int(fein.sum())} / {int(alt.sum())} Punkte innen")
 
 
+def test_abnahme_warnstufe_splitter():
+    """Die zweite Stufe der Abnahme: Splitter (Formguete unter 0,10) werden je
+    Koerper als WARNUNG mit Zahl und Elementnummern genannt, ohne die
+    Rechnung anzuhalten; unter 0,05 bleibt es ein FEHLER (Anforderungen 3.4,
+    21.09.2026)."""
+    from statik3d import diagnose
+    from statik3d.netzguete import guete as _guete
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    # Ein guter Tetraeder und ein flacher (vierter Knoten nahe der Grundebene)
+    n0 = m.add_node(0.0, 0.0, 0.0)
+    n1 = m.add_node(1.0, 0.0, 0.0)
+    n2 = m.add_node(0.0, 1.0, 0.0)
+    n3 = m.add_node(0.0, 0.0, 1.0)
+    n4 = m.add_node(1.0, 1.0, 0.0)
+    n5 = m.add_node(0.7, 0.7, 0.013)     # q = 12 (z/2)^(2/3) / 5,34 = 0,079
+    e_gut = m.add_element("tet4", [n0, n1, n2, n3], "S235", group="V1")
+    e_flach = m.add_element("tet4", [n1, n4, n2, n5], "S235", group="V1")
+    m.add_line("L1", [n0, n1]); m.add_line("L2", [n1, n2]); m.add_line("L3", [n2, n0])
+    m.add_flaeche("F1", ["L1", "L2", "L3"], material="S235")
+    m.add_flaeche("F2", ["L1", "L2", "L3"], material="S235")
+    m.add_flaeche("F3", ["L1", "L2", "L3"], material="S235")
+    m.add_flaeche("F4", ["L1", "L2", "L3"], material="S235")
+    k = m.add_koerper("V1", ["F1", "F2", "F3", "F4"], material="S235")
+    k.elemente = [e_gut, e_flach]
+    k.randtreue = 1.0
+    q = _guete(m)
+    check("der flache Tetraeder liegt zwischen 0,05 und 0,10", 0.05 <= float(q[e_flach]) < 0.10, f"{q[e_flach]:.3f}")
+    fehler = [b for b in diagnose.abnahme(m) if b.pruefung in ("Elementgüte", "Splitter")]
+    check("ohne warnungen=True kein Befund zur Guete (kein Element unter 0,05)", not fehler, str([b.pruefung for b in fehler]))
+    alle = diagnose.abnahme(m, warnungen=True)
+    warn = [b for b in alle if b.stufe == "WARNUNG"]
+    check("mit warnungen=True eine WARNUNG 'Splitter' mit Zahl, Koerper und Elementnummer",
+          len(warn) == 1 and warn[0].pruefung == "Splitter" and warn[0].objekt == "V1"
+          and warn[0].element == e_flach and "1 von 2 Elementen" in warn[0].text, str([b.text for b in warn])[:160])
+    check("die Warnung haelt nichts an: kein FEHLER darunter", not any(b.stufe == "FEHLER" and b.pruefung == "Splitter" for b in alle))
+    # Unter 0,05 bleibt es ein FEHLER - und die Warnung nennt ihn mit
+    m.nodes[n5] = [0.7, 0.7, 0.0045]   # q = 0,039
+    q = _guete(m)
+    check("noch flacher: unter 0,05", float(q[e_flach]) < 0.05, f"{q[e_flach]:.3f}")
+    alle = diagnose.abnahme(m, warnungen=True)
+    check("FEHLER Elementgüte und WARNUNG Splitter nebeneinander",
+          any(b.stufe == "FEHLER" and b.pruefung == "Elementgüte" for b in alle)
+          and any(b.stufe == "WARNUNG" and b.pruefung == "Splitter" for b in alle),
+          str([(b.stufe, b.pruefung) for b in alle]))
+
+
 def main():
     for t in (test_punkt_im_koerper, test_quader, test_huelle_ohne_rundungsgitter,
+              test_abnahme_warnstufe_splitter,
               test_randstrecke_wird_nicht_verdraengt,
               test_groessenfeld_an_der_festgelegten_linie,
               test_randstrecken_sind_keine_glueckssache,

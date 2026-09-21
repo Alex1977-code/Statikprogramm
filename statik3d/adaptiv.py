@@ -139,7 +139,8 @@ def _loeserzahlen(ergebnisse, model=None) -> str:
 def adaptiv_vernetzen(model, lastfaelle=None, runden: int = 2, ziel: float = netzfehler.ZIEL,
                       log: list = None, workers: int = None, fortschritt=None,
                       grob_beginnen: bool = True, rechnen=None,
-                      wachstum_max: float = netzfehler.WACHSTUM_MAX, probelauf=None) -> dict:
+                      wachstum_max: float = netzfehler.WACHSTUM_MAX, probelauf=None,
+                      kalibrierung: float = None) -> dict:
     """Die adaptive Schleife: ``runden`` Verfeinerungsschritte, also
     ``runden + 1`` Vernetzungen und Rechnungen; Abbruch, sobald der bezogene
     Fehler unter ``ziel`` liegt.
@@ -229,9 +230,10 @@ def adaptiv_vernetzen(model, lastfaelle=None, runden: int = 2, ziel: float = net
                 C.say(log, f"  Löser: {zahlen}")
             if runde >= runden or not ind["N"] or ind["eta_rel"] <= ziel:
                 break
+            kal = kalibrierung if kalibrierung is not None else netzfehler.kalibrierung_fuer(model, ind)
             h_neu = netzfehler.neue_kantenlaengen(ind, ziel, h_min=float(netz.h_min or 0.0),
                                                   h_max=float(netz.h_max or 0.0),
-                                                  wachstum_max=wachstum_max)
+                                                  wachstum_max=wachstum_max, kalibrierung=kal)
             koerper_h = netzfehler.koerper_kantenlaengen(model, ind, h_neu,
                                                          h_min=float(netz.h_min or 0.0),
                                                          h_max=float(netz.h_max or 0.0))

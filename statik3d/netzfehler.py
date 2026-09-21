@@ -111,7 +111,20 @@ KALIBRIERUNG = 5.0
 SPANNUNGSSCHUTZ = 0.5
 KONZENTRATION = 2.0
 #: Elementansatz -> Konvergenzordnung p der Spannung
-ORDNUNG = {"tet4": 1, "tet10": 2}
+ORDNUNG = {"tet4": 1, "tet10": 2, "hex8": 1, "hex20": 2, "pent6": 1, "pent15": 2, "pyr5": 1}
+#: Eckknoten je Typ - das Knotenmittel wird linear ueber die Ecken
+#: interpoliert, auch bei den quadratischen Typen (tet10 ueber seine vier
+#: Ecken, wie bisher).
+ECKEN = {"tet4": 4, "tet10": 4, "hex8": 8, "hex20": 8, "pent6": 6, "pent15": 6, "pyr5": 5}
+#: Kanten je Typ (Eckknoten) fuer die mittlere Kantenlaenge
+KANTEN = {4: [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)],
+          8: [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)],
+          6: [(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3), (0, 3), (1, 4), (2, 5)],
+          5: [(0, 1), (1, 2), (2, 3), (3, 0), (0, 4), (1, 4), (2, 4), (3, 4)]}
+#: Der lineare Typ mit denselben Ecken - seine Formfunktionen und Gausspunkte
+#: rechnen das Integral der Energienorm ueber das Element
+_LINEAR = {"tet4": "tet4", "tet10": "tet4", "hex8": "hex8", "hex20": "hex8",
+           "pent6": "pent6", "pent15": "pent6", "pyr5": "pyr5"}
 #: Hoechstzahl der Feldpunkte, die der Schaetzer schreibt; darueber werden
 #: die Zellen der Vorausduennung verdoppelt (siehe feldpunkte)
 FELDPUNKTE_MAX = 200_000
@@ -136,27 +149,72 @@ def _nachgiebigkeit(model, ids: np.ndarray) -> np.ndarray:
     return C
 
 
-def _tetraeder(model, res) -> tuple:
-    """(Elementnummern, Eckknoten (n, 4), Spannungen (n, 6)) der Tetraeder
-    mit Ergebnis - tet10 ueber seine vier Ecken."""
-    ids, K, S = [], [], []
-    for i, s in res.solid_res.items():
+def _elemente(model, res) -> list:
+    """Die Volumenelemente mit Ergebnis, nach Typ: [(typ, Elementnummern,
+    Eckknoten (n, k), Spannungen (n, 6))] - tet10 ueber seine vier Ecken,
+    hex20 ueber acht, pent15 ueber sechs."""
+    gruppen: dict = {}
+    for i, s_ in res.solid_res.items():
         e = model.elements[int(i)]
         if e.typ not in ORDNUNG:
             continue
-        s = np.asarray(s, float).ravel()
-        if s.size < 6:
+        s_ = np.asarray(s_, float).ravel()
+        if s_.size < 6:
             continue
-        ids.append(int(i))
-        K.append([int(x) for x in e.nodes[:4]])
-        S.append(s[:6])
-    if not ids:
-        return np.zeros(0, int), np.zeros((0, 4), int), np.zeros((0, 6))
-    return np.asarray(ids, int), np.asarray(K, int), np.asarray(S, float)
+        k = ECKEN[e.typ]
+        g = gruppen.setdefault(e.typ, ([], [], []))
+        g[0].append(int(i))
+        g[1].append([int(x) for x in e.nodes[:k]])
+        g[2].append(s_[:6])
+    aus = []
+    for typ in sorted(gruppen):
+        ids, K, S = gruppen[typ]
+        aus.append((typ, np.asarray(ids, int), np.asarray(K, int), np.asarray(S, float)))
+    return aus
+
+
+def _tetraeder(model, res) -> tuple:
+    """(Elementnummern, Eckknoten (n, 4), Spannungen (n, 6)) der Tetraeder
+    mit Ergebnis - tet10 ueber seine vier Ecken. (Bleibt fuer Pruefungen; der
+    Indikator liest alle Typen ueber _elemente.)"""
+    for typ, ids, K, S in _elemente(model, res):
+        if typ in ("tet4", "tet10"):
+            return ids, K, S
+    return np.zeros(0, int), np.zeros((0, 4), int), np.zeros((0, 6))
+
+
+def _energienorm_quadrat(typ: str, X: np.ndarray, E: np.ndarray, C: np.ndarray) -> tuple:
+    """(Integral der Energienorm des linear interpolierten Eckfehlers E (n, k,
+    6) je Element, Volumen je Element) - fuer Tetraeder geschlossen, fuer
+    Hexaeder, Keile und Pyramiden ueber die Gauss-Quadratur des linearen
+    Typs (elements.solid._ISO): das Produkt zweier trilinearer Felder ist je
+    Richtung vom Grad 2, zwei Punkte je Richtung integrieren es genau."""
+    from .elements.solid import _ISO
+    n = len(X)
+    if typ == "tet4":
+        V = np.abs(np.einsum("ij,ij->i", X[:, 1] - X[:, 0],
+                             np.cross(X[:, 2] - X[:, 0], X[:, 3] - X[:, 0]))) / 6.0
+        summe = E.sum(axis=1)
+        q_summe = np.einsum("ni,nij,nj->n", summe, C, summe)
+        q_ecken = np.einsum("nki,nij,nkj->n", E, C, E)
+        return V / 20.0 * (q_summe + q_ecken), V
+    N_dN, GP, W = _ISO[typ]
+    eta2 = np.zeros(n)
+    V = np.zeros(n)
+    for g, w in zip(np.asarray(GP, float).reshape(-1, 3), np.asarray(W, float).ravel()):
+        N, dN = N_dN(*g)
+        N = np.asarray(N, float).ravel()
+        dN = np.asarray(dN, float).reshape(len(N), 3)
+        J = np.einsum("ki,nkj->nij", dN, X)                     # (n, 3, 3)
+        detJ = np.abs(np.linalg.det(J))
+        Eg = np.einsum("k,nkj->nj", N, E)                       # (n, 6) Fehler am Gausspunkt
+        eta2 += w * detJ * np.einsum("ni,nij,nj->n", Eg, C, Eg)
+        V += w * detJ
+    return eta2, V
 
 
 def indikator(model, ergebnisse) -> dict:
-    """Der Fehlerindikator je Tetraeder ueber ein oder mehrere Ergebnisse.
+    """Der Fehlerindikator je Volumenelement ueber ein oder mehrere Ergebnisse.
 
     ``ergebnisse``: ein :class:`solver.Results` oder eine Liste davon (die
     Lastfaelle, an denen sich das Netz ausrichten soll); je Element zaehlt
@@ -165,7 +223,15 @@ def indikator(model, ergebnisse) -> dict:
     ``h`` (mittlere Kantenlaenge), ``V`` (Volumen), ``sv`` (groesste
     Vergleichsspannung), ``zentren`` (n, 3) und den Zahlen ``eta_rel``
     (bezogener Gesamtfehler), ``U`` (Energienorm der Loesung), ``N``.
-    Ohne Tetraeder mit Ergebnis ist ``N`` 0 und ``eta_rel`` 0.
+    Ohne Volumenelement mit Ergebnis ist ``N`` 0 und ``eta_rel`` 0.
+
+    Gelesen werden alle Typen aus ORDNUNG - seit 21.09.2026 auch hex8,
+    pent6 und pyr5 (gesweepte und zerlegte Koerper): das Knotenmittel ist
+    volumengewichtet ueber **alle** Elemente am Knoten, das Integral der
+    Energienorm laeuft fuer Hexaeder, Keile und Pyramiden ueber die
+    Gauss-Quadratur (:func:`_energienorm_quadrat`). Ein Sechsflaechner mit
+    einer Elementspannung wird dabei wie der Tetraeder als stueckweise
+    konstant gelesen; das ist konservativ.
     """
     from . import spannungen as spn
     liste = list(ergebnisse) if isinstance(ergebnisse, (list, tuple)) else [ergebnisse]
@@ -175,47 +241,92 @@ def indikator(model, ergebnisse) -> dict:
             "N": 0, "p": np.zeros(0, int)}
     if not liste:
         return leer
-    ids, K, _S = _tetraeder(model, liste[0])
-    if not len(ids):
+    gruppen = _elemente(model, liste[0])
+    if not gruppen:
         return leer
-    X = model.nodes[K]                                          # (n, 4, 3)
-    V = np.abs(np.einsum("ij,ij->i", X[:, 1] - X[:, 0],
-                         np.cross(X[:, 2] - X[:, 0], X[:, 3] - X[:, 0]))) / 6.0
-    kanten = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
-    h = np.mean([np.linalg.norm(X[:, a] - X[:, b], axis=1) for a, b in kanten], axis=0)
-    C = _nachgiebigkeit(model, ids)
+    ids_alle = np.concatenate([g[1] for g in gruppen])
+    reihenfolge = {int(i): k for k, i in enumerate(ids_alle)}
+    n_alle = len(ids_alle)
     nn = int(model.nn)
-    eta2 = np.zeros(len(ids))
+    # Volumen, Kantenlaenge, Schwerpunkt je Element - typweise
+    V_alle = np.zeros(n_alle)
+    h_alle = np.zeros(n_alle)
+    zentren = np.zeros((n_alle, 3))
+    lage = {}
+    for typ, ids, K, _S in gruppen:
+        idx = np.array([reihenfolge[int(i)] for i in ids], int)
+        lage[typ] = idx
+        X = model.nodes[K]
+        _eta0, V = _energienorm_quadrat(_LINEAR[typ], X, np.zeros((len(ids), K.shape[1], 6)),
+                                        np.zeros((len(ids), 6, 6)))
+        V_alle[idx] = V
+        kanten = KANTEN[K.shape[1]]
+        h_alle[idx] = np.mean([np.linalg.norm(X[:, a_] - X[:, b_], axis=1) for a_, b_ in kanten], axis=0)
+        zentren[idx] = X.mean(axis=1)
+    C_alle = _nachgiebigkeit(model, ids_alle)
+    eta2 = np.zeros(n_alle)
     U2 = 0.0
-    sv = np.zeros(len(ids))
+    sv = np.zeros(n_alle)
     for res in liste:
-        ids_r, K_r, S = _tetraeder(model, res)
-        if len(ids_r) != len(ids) or not np.array_equal(ids_r, ids):
+        gr = _elemente(model, res)
+        ids_r = np.concatenate([g[1] for g in gr]) if gr else np.zeros(0, int)
+        if len(ids_r) != n_alle or not np.array_equal(np.sort(ids_r), np.sort(ids_alle)):
             # Ein anderes Ergebnis mit anderen Elementen (anderes Netz) -
             # das gehoert nicht in dieselbe Schaetzung
             continue
-        # Knotenmittel, volumengewichtet: ein grosses Element neben einem
-        # kleinen soll den Knotenwert nicht nur nach Stueckzahl bestimmen
+        # Knotenmittel, volumengewichtet ueber alle Typen: ein grosses Element
+        # neben einem kleinen soll den Knotenwert nicht nur nach Stueckzahl
+        # bestimmen
         acc = np.zeros((nn, 6))
         gew = np.zeros(nn)
-        np.add.at(acc, K.ravel(), np.repeat(S * V[:, None], 4, axis=0))
-        np.add.at(gew, K.ravel(), np.repeat(V, 4))
+        S_alle = np.zeros((n_alle, 6))
+        for typ, ids, K, S in gr:
+            idx = np.array([reihenfolge[int(i)] for i in ids], int)
+            S_alle[idx] = S
+            V = V_alle[idx]
+            k = K.shape[1]
+            np.add.at(acc, K.ravel(), np.repeat(S * V[:, None], k, axis=0))
+            np.add.at(gew, K.ravel(), np.repeat(V, k))
         mit = gew > 0
         stern = np.zeros((nn, 6))
         stern[mit] = acc[mit] / gew[mit][:, None]
-        E4 = stern[K] - S[:, None, :]                           # (n, 4, 6) Fehler je Ecke
-        summe = E4.sum(axis=1)                                  # (n, 6)
-        q_summe = np.einsum("ni,nij,nj->n", summe, C, summe)
-        q_ecken = np.einsum("nki,nij,nkj->n", E4, C, E4)
-        eta2 = np.maximum(eta2, V / 20.0 * (q_summe + q_ecken))
-        U2 = max(U2, float(np.sum(V * np.einsum("ni,nij,nj->n", S, C, S))))
-        sv = np.maximum(sv, spn.volumen_werte(S, "sv"))
+        eta2_r = np.zeros(n_alle)
+        for typ, ids, K, S in gr:
+            idx = np.array([reihenfolge[int(i)] for i in ids], int)
+            E = stern[K] - S[:, None, :]                        # (n, k, 6) Fehler je Ecke
+            q, _V = _energienorm_quadrat(_LINEAR[typ], model.nodes[K], E, C_alle[idx])
+            eta2_r[idx] = q
+        eta2 = np.maximum(eta2, eta2_r)
+        U2 = max(U2, float(np.sum(V_alle * np.einsum("ni,nij,nj->n", S_alle, C_alle, S_alle))))
+        sv = np.maximum(sv, spn.volumen_werte(S_alle, "sv"))
     summe_eta2 = float(eta2.sum())
     eta_rel = np.sqrt(summe_eta2 / (U2 + summe_eta2)) if (U2 + summe_eta2) > 0 else 0.0
-    p = np.array([ORDNUNG.get(model.elements[int(i)].typ, 1) for i in ids], int)
-    return {"ids": ids, "eta": np.sqrt(eta2), "h": h, "V": V, "sv": sv,
-            "zentren": X.mean(axis=1), "eta_rel": float(eta_rel), "U": float(np.sqrt(U2)),
-            "N": int(len(ids)), "p": p}
+    p = np.array([ORDNUNG.get(model.elements[int(i)].typ, 1) for i in ids_alle], int)
+    return {"ids": ids_alle, "eta": np.sqrt(eta2), "h": h_alle, "V": V_alle, "sv": sv,
+            "zentren": zentren, "eta_rel": float(eta_rel), "U": float(np.sqrt(U2)),
+            "N": int(n_alle), "p": p}
+
+
+#: Kalibrierung fuer Netze aus Hexaedern und Keilen (Sweep). Gemessen an der
+#: gesweepten Platte 0,4 x 0,24 x 0,08 m mit Bohrung unter Zug, zwei adaptive
+#: Runden mit Budget 3x und Kalibrierung 1 (21.09.2026): der Sweep legte
+#: 1 928 statt der geschaetzten 1 323 Elemente (1,46-fach) und 6 156 statt
+#: 4 368 (1,41-fach) - die Lagen folgen der feinsten Feldgroesse ueber die
+#: ganze Dicke, das sieht die Summe (h/h_neu)^3 nicht. Darum 1,5; die
+#: Nachmessung der Schleife faengt den Rest. Fuer Tetraeder bleibt es bei 5.
+KALIBRIERUNG_HEX = 1.5
+
+
+def kalibrierung_fuer(model, ind: dict) -> float:
+    """Die Kalibrierung der Elementzahl-Schaetzung nach dem Elementgemisch
+    des Indikators: Tetraeder KALIBRIERUNG, Hexaeder/Keile KALIBRIERUNG_HEX,
+    dazwischen anteilig nach der Elementzahl."""
+    ids = ind.get("ids")
+    if ids is None or not len(ids):
+        return KALIBRIERUNG
+    n_tet = sum(1 for i in ids if model.elements[int(i)].typ in ("tet4", "tet10"))
+    f = n_tet / float(len(ids))
+    return float(KALIBRIERUNG * f + KALIBRIERUNG_HEX * (1.0 - f))
 
 
 def neue_kantenlaengen(ind: dict, ziel: float = ZIEL, faktor_min: float = FAKTOR_MIN,

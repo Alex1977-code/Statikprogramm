@@ -399,12 +399,16 @@ def test_zylinder_ist_kein_tetraeder():
     log = []
     els = mesher.mesh_koerper(m, k, log=log, h=0.01)
     check("der Zylinder wird vernetzt", len(els) > 100, f"{len(els)} Elemente")
-    check("und zwar vom freien Vernetzer",
-          all(m.elements[i].typ == "tet4" for i in els))
+    # Seit 21.09.2026 wird ein Zylinder gesweept (statik3d.sweep: vier Flaechen
+    # genuegen) - Hexaeder und Keile; vorher kam er vom freien Vernetzer (tet4).
+    # Beides ist richtig, nur der eine flache Tetraeder waere falsch.
+    typen = {m.elements[i].typ for i in els}
+    check("und zwar gesweept (hex8/pent6) oder frei (tet4) - nicht als ein Tetraeder",
+          typen <= {"hex8", "pent6", "tet4"} and len(els) > 1, str(typen))
     check("er gilt danach als tragend", m.koerper_traegt("V51") and bool(k.elemente))
 
     from statik3d.elements import solid as _so
-    ist = sum(abs(float(_so.solid_volume("tet4", m.nodes[[int(x) for x in m.elements[i].nodes]])))
+    ist = sum(abs(float(_so.solid_volume(m.elements[i].typ, m.nodes[[int(x) for x in m.elements[i].nodes]])))
               for i in els)
     soll = np.pi * 0.02 ** 2 * 0.08
     check("das Volumen trifft den Zylinder (Sehnenfehler des Polygonzugs)",

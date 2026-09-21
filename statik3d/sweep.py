@@ -507,9 +507,32 @@ def lagen_min(model: Model) -> int:
 
 
 def _lagen_aus_weg(model: Model, erk: dict, h: float) -> int:
-    """Lagen aus Weg und Kantenlaenge, mindestens :func:`lagen_min`."""
+    """Lagen aus Weg und Kantenlaenge, mindestens :func:`lagen_min`.
+
+    Wirkt ein **Groessenfeld** am Koerper (Netzverfeinerungen, Feldpunkte der
+    adaptiven Schleife), zaehlt die kleinste Kantenlaenge, die es laengs der
+    Randzuege des Grundes und in der Mitte des Weges verlangt: die Lagen
+    sind fuer den ganzen Koerper gleich dick, und wo das Feld die
+    Grundflaeche fein teilt, muessen die Lagen mithalten - sonst entstehen
+    flache Hexaeder, und die Verfeinerung der Schleife kommt quer zur Platte
+    nicht an. Gemessen an der gesweepten Platte 0,4 x 0,24 x 0,08 m mit
+    Bohrung unter Zug (21.09.2026): ohne diese Regel fielen die Lagen in der
+    adaptiven Runde von 3 auf 2 (441 -> 482 Elemente, Fehler 13,7 -> 12,8 %),
+    mit ihr siehe KALIBRIERUNG_HEX in netzfehler.
+    """
     weg = float(np.linalg.norm(erk["t"]))
-    return max(int(round(weg / max(float(h), 1e-12))), lagen_min(model), 1)
+    h_eff = max(float(h), 1e-12)
+    feld = getattr(model, "groessenfeld", None)
+    if feld is not None and erk.get("grund_ringe") is not None:
+        try:
+            P = np.vstack([_schleifenpunkte(model, sch, 12) for sch in erk["grund_ringe"]])
+            P = np.vstack([P, P + 0.5 * erk["t"], P + erk["t"]])
+            h_feld = float(np.min(np.asarray(feld(P), float)))
+            if h_feld > 0:
+                h_eff = min(h_eff, h_feld)
+        except Exception:                   # noqa: BLE001 - ohne Feld wie bisher
+            pass
+    return max(int(round(weg / h_eff)), lagen_min(model), 1)
 
 
 def _lagen(model: Model, erk: dict, teilung, h: float) -> "tuple[int, str]":

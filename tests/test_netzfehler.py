@@ -183,6 +183,66 @@ def test_adaptive_runde():
                                                       - netzfeld.aufbauen(m)(np.array([[0.2, 0.16, 0.04]]))[0]) < 1e-12)
 
 
+def test_hexaeder_und_keile_im_schaetzer():
+    """Der Schaetzer liest seit 21.09.2026 auch hex8, pent6 und pyr5: an einer
+    gesweepten Platte ist der Fehler bei gleichfoermiger Spannung null, die
+    Energienorm stimmt, und unter Zug sammelt sich der Fehler an der Bohrung.
+    Dann eine adaptive Runde auf dem gesweepten Netz: die Schleife verfeinert
+    auch Hexaeder-Koerper, und der Fehler faellt."""
+    m, k = platte_mit_bohrungen(0.4, 0.24, 0.08, bohrungen=((0.2, 0.12, 0.04),))
+    zug_und_lager(m)
+    m.netz.ziellaenge = 0.03
+    m.netz.dichte = "eigene"
+    m.netz.max_elemente = 1_000_000
+    mesher.modell_vernetzen(m, [], workers=1)
+    typen = {e.typ for e in m.elements}
+    check("die Platte ist gesweept (hex8 und pent6)", typen <= {"hex8", "pent6"} and "hex8" in typen, str(typen))
+    res = Results(name="Probe", model=m)
+    s_ = np.array([100e6, 20e6, -5e6, 3e6, 0.0, 1e6])
+    for i, e in enumerate(m.elements):
+        res.solid_res[i] = s_.copy()
+    ind = netzfehler.indikator(m, res)
+    check("alle Elemente bewertet, Hexaeder wie Keile", ind["N"] == len(m.elements), f"{ind['N']} von {len(m.elements)}")
+    check("gleichfoermige Spannung: Fehler je Element null", float(np.abs(ind["eta"]).max()) < 1e-9 * ind["U"],
+          f"max eta {np.abs(ind['eta']).max():.3e}, U {ind['U']:.3e}")
+    from statik3d.elements.solid import D_matrix, solid_volume
+    C = np.linalg.inv(D_matrix(210e9, 0.3))
+    V = float(ind["V"].sum())
+    V_el = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+    check("die Volumen der Quadratur sind die der Elemente", abs(V - V_el) < 1e-9 * V_el, f"{V:.6e} gegen {V_el:.6e}")
+    check("U^2 = V * s^T D^-1 s", abs(ind["U"] ** 2 - V * (s_ @ C @ s_)) < 1e-6 * ind["U"] ** 2)
+    # Mit Rechnung: der Fehler sammelt sich an der Bohrung
+    res = solver.solve_static(m, case="LF1", workers=1)
+    ind = netzfehler.indikator(m, res)
+    check("bezogener Fehler zwischen 0 und 1", 0.0 < ind["eta_rel"] < 1.0, f"{ind['eta_rel'] * 100:.1f} %")
+    d = np.linalg.norm(ind["zentren"] - [0.2, 0.12, 0.04], axis=1)
+    nah, fern = ind["eta"][d < 0.07], ind["eta"][d > 0.12]
+    check("Fehler je Element an der Bohrung groesser als im Feld", nah.mean() > 1.5 * fern.mean(),
+          f"{nah.mean():.3e} an der Bohrung, {fern.mean():.3e} im Feld")
+    # Zwei adaptive Runden auf dem gesweepten Netz: die Lagen folgen dem Feld
+    # (sweep._lagen_aus_weg), die Kalibrierung dem Elementgemisch
+    log = []
+    erg = adaptiv.adaptiv_vernetzen(m, ["LF1"], runden=2, log=log, workers=1, grob_beginnen=False)
+    v = erg["verlauf"]
+    check("drei Durchgaenge auf Hexaedern und Keilen", len(v) == 3 and {e.typ for e in m.elements} <= {"hex8", "pent6"},
+          f"{len(v)} Durchgaenge, {sorted({e.typ for e in m.elements})}")
+    if len(v) == 3:
+        check("der geschaetzte Fehler faellt ueber die Runden (gemessen 13,7 -> 9,2 %)",
+              v[2]["eta_rel"] < v[0]["eta_rel"],
+              " -> ".join(f"{x['eta_rel'] * 100:.1f} %" for x in v))
+        check("die Elementzahl waechst je Runde, im Budget (das Dreifache plus 15 %)",
+              all(v[i]["elemente"] < v[i + 1]["elemente"] <= 1.15 * netzfehler.WACHSTUM_MAX * v[i]["elemente"]
+                  for i in range(2)), " -> ".join(str(x["elemente"]) for x in v))
+        lagen = [z.split(", ")[1] for z in log if "gesweept - Grundfläche" in z]
+        check("die Lagen werden mit dem Feld feiner (3 Lagen zu Beginn)", lagen and lagen[0].startswith("3 Lagen")
+              and int(lagen[-1].split(" ")[0]) > 3, str(lagen))
+    check("die Kalibrierung folgt dem Gemisch: Hexaedernetz 1,5, Tetraedernetz 5",
+          abs(netzfehler.kalibrierung_fuer(m, erg["indikator"]) - netzfehler.KALIBRIERUNG_HEX) < 1e-12)
+    check("die Netzeinstellungen tragen die Koerperkantenlaenge", "V1" in m.netz.koerper_h, str(m.netz.koerper_h))
+    bef = diagnose.abnahme(m)
+    check("das adaptive Hexaedernetz geht durch die Abnahme", not bef, str([b.pruefung for b in bef])[:120])
+
+
 def test_probelauf_nur_mit_fliessen():
     """Der Probelauf des Loesers (357d61d) laesst das Fliessen aus; so
     verfeinerte er am Drehlager an den falschen Stellen (54 von 100
@@ -249,7 +309,7 @@ def test_probelauf_nur_mit_fliessen():
 def main():
     for t in (test_gleichfoermige_spannung_hat_fehler_null, test_integral_ueber_den_tetraeder,
               test_feiner_ist_besser, test_neue_kantenlaengen_und_budget, test_adaptive_runde,
-              test_probelauf_nur_mit_fliessen):
+              test_hexaeder_und_keile_im_schaetzer, test_probelauf_nur_mit_fliessen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

@@ -725,12 +725,17 @@ Konsole gibt (behoben 14.09.2026). Wo es liegt, weiß Statik3D selbst (nachgelad
 | Sweep (`sweep`, seit 20.09.2026) | **an** (Vorgabe): ein Körper, der Grundfläche mal Weg ist — Platte, Ring, Flansch, Rippe, Lasche mit Bohrungen — wird in Lagen durchgezogen und besteht aus Hexaedern (hex8) und Keilen (pent6) statt Tetraedern (Theoriehandbuch § 6a, Sweep). Das Protokoll nennt Lagen, Hexaederanteil und Rauminhalt („3 450 Hexaeder (hex8) + 660 Keile (pent6) gesweept — Grundfläche Boden → Deckel, 10 Lagen à 20,0 mm … Hexaederanteil 83,9 %“) und am Ende die Bilanz aller Volumen („0,87 je Knoten — Hexaeder …, Tetraeder …“). Warum: der lineare Tetraeder sperrt, weil vier Elemente je Knoten je eine Volumenbedingung stellen; ein Hexaedernetz hat eines. Die Lagen: aus Weg und Kantenlänge, mindestens zwei — **mit Fließen mindestens vier** (mit einer und zwei Lagen fließt kein Element, Messung 21.09.2026), sechs bis acht über die Kantenlänge. Mantellinien, die Nachbarn gehören, bekommen ihre Teilung vorab und modellweit („Sweep: Lagen für 2 Körper vorab festgelegt …"), damit der Sweep nicht an verschieden geteilten Nachbarn scheitert. Seit 21.09.2026 abends: **Zylinder** (vier Flächen: Bolzen, Stifte, Achsen) werden gesweept; der Grund darf aus **mehreren ebenen Flächen** bestehen (Platte mit Fußabdruck einer Nabe); ein Körper, der nicht als Ganzes Grundfläche mal Weg ist, wird an **Fußabdrücken zerlegt** („Volumen V1: nicht als Ganzes sweepbar — an 1 Fußabdruck(en) in 2 Blöcke zerlegt (2 davon sweepbar)"), gesweepte Blöcke wo es geht, Tetraeder für den Rest, knotengenau an der Schnittfläche. Gemessen: Platte mit Nabe 441 hex8 + 108 pent6 statt 7 595 tet4; abgesetzte Welle 446 hex8 + 28 pent6 statt 2 415 gemischt. Aus nur zum Vergleich. Heute nur in der Datei |
 | Feldpunkte (`feldpunkte`) | `[x, y, z, h]` oder `[x, y, z, h, r]` je Punkt — das, was der Fehlerschätzer aus einem Ergebnis ableitet (Theoriehandbuch § 6c). Werden mit dem Modell gespeichert; beim nächsten Vernetzen entsteht daraus dasselbe Größenfeld |
 
-**Adaptiv vernetzen** (seit 20.09.2026, Theoriehandbuch § 6c) gibt es bislang über die
-Befehlszeile: `statik3d modell.json --adaptiv 2 --lastfall LF1 --speichern
-modell_adaptiv.json` vernetzt, rechnet den Lastfall, schätzt je Element den Fehler
-(Spannungssprung), macht das Netz dort feiner und im Feld gröber, und wiederholt das
-zweimal; `--fehlerziel 0.03` setzt das Ziel des bezogenen Fehlers (Vorgabe 5 %). Die
-Elementzahl wächst je Runde höchstens auf das Dreifache — die Schleife misst nach.
+**Adaptiv vernetzen** (seit 20.09.2026, Theoriehandbuch § 6c): *Netz → Adaptiv vernetzen…*
+fragt nach den Verfeinerungsrunden (Vorgabe 2) und dem Ziel des bezogenen Fehlers (Vorgabe
+5 %), vernetzt, rechnet den aktiven Lastfall, schätzt je Element den Fehler
+(Spannungssprung), macht das Netz dort feiner und im Feld gröber und wiederholt das; der
+Verlauf steht im Protokoll und in der Meldung („Adaptiv vernetzt: 3 Durchgänge, 441 Elemente
+(13,7 %) → 1 456 (13,4 %) → 4 972 (9,2 %)"). Die Rechnungen dazwischen sind Netzmaß, kein
+Ergebnis — die Ergebnisliste wird geleert. Dasselbe über die Befehlszeile: `statik3d
+modell.json --adaptiv 2 --lastfall LF1 --speichern modell_adaptiv.json`; `--fehlerziel 0.03`
+setzt das Ziel. Die Elementzahl wächst je Runde höchstens auf das Dreifache — die Schleife
+misst nach. Seit 21.09.2026 verfeinert sie auch gesweepte Körper (Hexaeder und Keile): die
+Lagen folgen der feinsten Kantenlänge, die das Feld am Körper verlangt.
 Gerechnet wird je Runde ein **Probelauf** des Lösers (ein Kontaktschritt), solange er das
 Fließen mitrechnet; lässt er es aus, rechnet die Schleife das fließende Modell voll und
 schreibt es ins Protokoll — ein elastischer Probelauf verfeinerte am Drehlager an den
@@ -740,6 +745,14 @@ Probelauf, `--probelauf nein` den vollen Lauf.
 Vernetzen*. Was die Schleife setzt (Kantenlänge je Körper, Feldpunkte), steht danach in
 den Netzeinstellungen des gespeicherten Modells. Ein Befehl in der Oberfläche ist mit
 der Programm-Sitzung abzustimmen.
+
+**Splitter in der Abnahme** (seit 21.09.2026): die Abnahme vor dem Rechnen nennt je Körper die
+Elemente mit Formgüte unter 0,10 als **WARNUNG** — Zahl, Körper, die drei schlechtesten mit
+Elementnummer („WARNUNG: [Splitter] Volumen V30: 29 von 115 734 Elementen mit Formgüte unter
+0.10 — schlechteste: Element 4711 (0.025) …"). Sie hält die Rechnung nicht an; unter 0,05 bleibt
+es ein FEHLER mit Rückfrage. Das Vernetzungsprotokoll ordnet die Splitter eines Körpers
+außerdem nach ihren Hüllknoten ein („davon mit vier Hüllknoten (Kappen) 12, mit drei 5, mit
+zwei (Nadeln) 3, im Inneren 0") — jede Sorte hat eine andere Kur.
 
 **Keine Splitter.** Der freie Vernetzer löst **Kappen** auf — Splitter aus vier
 Hüllknoten an gewölbten Wänden, die weder Verfeinerung noch Glättung erreichen (mit

@@ -3657,6 +3657,34 @@ Netzeinstellungen und wird mit dem Modell gespeichert; aus der Datei entsteht da
 Feld wieder. Befehlszeile: `statik3d modell.json --adaptiv 2 --lastfall LF1 --speichern …`
 (`--vernetzen` allein vernetzt ohne Schleife).
 
+**Hexaeder, Keile, Pyramiden (21.09.2026).** Der Schätzer las nur Tetraeder; gesweepte und
+zerlegte Körper blieben außen vor. Jetzt liest er alle Typen aus `ORDNUNG` (tet4/tet10,
+hex8/hex20, pent6/pent15, pyr5): das Knotenmittel ist volumengewichtet über **alle**
+Elemente am Knoten, das Integral der Energienorm des linear interpolierten Eckfehlers läuft
+für Hexaeder, Keile und Pyramiden über die Gauß-Quadratur des linearen Typs
+(`elements.solid._ISO`; das Produkt zweier trilinearer Felder ist je Richtung vom Grad 2,
+zwei Punkte je Richtung integrieren es genau), für den Tetraeder weiter geschlossen. Ein
+Sechsflächner mit einer Elementspannung wird dabei wie der Tetraeder stückweise konstant
+gelesen — das ist konservativ. Prüfung an der gesweepten Platte 0,4 × 0,24 × 0,08 m mit
+Bohrung: gleichförmige Spannung → Fehler null, U² = V·sᵀD⁻¹s, Quadraturvolumen = Elementvolumen
+auf 10⁻⁹; unter Zug sammelt sich der Fehler an der Bohrung (`test_hexaeder_und_keile_im_schaetzer`).
+
+Zwei Dinge musste die Schleife dafür dazulernen. Erstens **die Lagen des Sweeps folgen dem
+Größenfeld** (`sweep._lagen_aus_weg`): die Lagen sind über den ganzen Körper gleich dick, und
+wo das Feld die Grundfläche fein teilt, müssen sie mithalten — sonst entstehen flache
+Hexaeder, und die Verfeinerung kommt quer zur Platte nicht an. Ohne die Regel fielen die Lagen
+in der ersten adaptiven Runde von 3 auf 2 (441 → 482 Elemente, Fehler 13,7 → 12,8 %). Zweitens
+**die Kalibrierung hängt am Elementgemisch** (`netzfehler.kalibrierung_fuer`): der Sweep legt
+1,46-fach so viele Elemente wie Σ(h/h_neu)³ sagt (1 928 statt 1 323; zweite Runde 1,41-fach),
+der Tetraedervernetzer 5-fach — darum `KALIBRIERUNG_HEX = 1,5`, dazwischen anteilig. Gemessen,
+zwei Runden, Budget 3× (21.09.2026):
+
+| Durchgang | Elemente | Lagen | η_rel |
+|---|---|---|---|
+| 1 (h = 30 mm) | 441 hex8/pent6 | 3 à 26,7 mm | 13,7 % |
+| 2 | 1 456 | 7–8 à 10–11 mm | 13,4 % |
+| 3 | 4 972 | 11–12 à 7 mm | **9,2 %** |
+
 **Der Probelauf.** Die Schleife rechnet je Durchgang mit `solve_static(…, probelauf=True)`
 — einem Kontaktschritt aus dem Anfangszustand der Fugen; sein Ergebnis ist ein Netzmaß,
 kein Rechenergebnis (Kontaktkräfte um Größenordnungen daneben) und geht nur an den
