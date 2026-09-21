@@ -1662,6 +1662,83 @@ rund 6 s weg, an einem Block aus acht Elementen ist ein Kontaktschritt
 kostenlos — übrig bleibt dort nur der Aufbau, und der läuft in beiden Fällen.
 
 
+### 4.4 Der Sechsflächner: was ihn trägt, und was er kostet (21.09.2026)
+
+`hex8` ist der Sechsflächner — acht Knoten, sechs Vierseitflächen. Er trägt
+Biegung über drei **inkompatible Wilson-Moden**, deren neun innere
+Freiheitsgrade in der Elementmatrix kondensiert werden
+(`elements.solid.hex8_matrices`, `k_hex8`). Die Taylor-Korrektur `detJ0/detJ`
+hält dabei den Patch-Test aufrecht.
+
+**Was das bringt** (Kragarm 2,0 × 0,1 × 0,2 m gegen Bernoulli mit Schubanteil):
+
+| Netz | w/w_Balken |
+|---|---|
+| 4 × 1 × 1 — **ein** Element über Höhe und Breite | **96,2 %** |
+| 8 × 2 × 2 | 97,2 % |
+| 16 × 4 × 4 | 98,5 % |
+| dasselbe 4 × 1 × 1 **ohne** die inkompatiblen Moden | **28,0 %** |
+
+Faktor **3,43** am selben Netz — die Moden sind der ganze Unterschied, nicht
+die Verfeinerung. Zum Vergleich brauchen `pent6` und `pyr5` in derselben
+Prüfung 10 bzw. 6 Elemente in der Länge für ihre gröbste Stufe.
+
+**Nahezu inkompressibel** sperrt er nicht: bei ν = 0,45 bleiben 95,0 % und bei
+**ν = 0,499 noch 80,3 %** der Lösung bei ν = 0,3. Der lineare Tetraeder fällt
+dort auf 2,1 % (§ 6a) — die Wilson-Moden enthalten genau die Volumenänderung,
+die dem trilinearen Ansatz fehlt. Deshalb braucht der `hex8` die
+knotengemittelte Dilatation nicht, die für den `tet4` gebaut wurde
+(`assemble._dilatationsdaten` filtert ausdrücklich auf `tet4`).
+
+**Geprüft ist er seit dem 21.09.2026 wie die übrigen Volumenelemente**
+(`tests/test_elemente_volumen.py`): sechs Starrkörpermoden am **verzerrten**
+Element, Patch-Test am verzerrten Verband (Verschiebung 8,1·10⁻¹⁷, Spannung
+an allen 72 Auswertepunkten 9,7·10⁻¹⁶), monotone Konvergenzreihe. Diese
+Prüfungen waren nach Elementtyp parametrisiert vorhanden, wurden für den
+`hex8` aber nie aufgerufen — er stand nicht in der Liste der „neuen" Typen,
+für die die Suite geschrieben worden war.
+
+**Was er kostet, und was dagegen getan wurde.** Gemessen an verzerrten
+Würfeln (21.09.2026):
+
+| | µs je Element |
+|---|---|
+| `k_tet4` | 24,2 |
+| `k_hex8`, einzeln | **571,7** |
+| **`k_hex8_stapel`** | **57,5** |
+
+Einzeln ist der Sechsflächner **dreißigmal** so teuer wie ein Tetraeder. Am
+Drehlagernetz der Vernetzersitzung trugen damit **sieben Prozent der Elemente
+einundsiebzig Prozent der Aufstellzeit** (31 108 `hex8` mit 17,8 s gegen
+453 331 `tet4` mit 9,5 s). Der Grund war nicht die Physik, sondern der Aufruf:
+acht Gaußpunkte mit kleinen Matrizen, einmal je Element durch Python.
+
+`elements.solid.k_hex8_stapel` rechnet einen ganzen Stapel auf einmal
+(`assemble._matrix_chunk` gruppiert die Sechsflächner eines Blocks nach
+Werkstoff). Die acht Gaußpunkte bleiben eine Schleife — es sind acht. Zwei
+Dinge machten den Faktor 9,9:
+
+* **Stapel statt Einzelaufruf** brachte zunächst nur Faktor 2,7.
+* **`matmul` statt `einsum`** brachte den Rest: 258,8 → 57,5 µs. Die
+  Stapel-Matrixmultiplikation von numpy geht über BLAS, `einsum` rechnet sie
+  bei diesen kleinen Matrizen selbst aus.
+
+Am Drehlager sind das **17,8 s → 1,79 s je Aufstellen**, und das Aufstellen
+läuft in jedem Kontakt- und Plastizitätsschritt. Das Ergebnis ist bis auf
+6,9·10⁻¹⁶ dasselbe; `tests/test_elemente_volumen.py::t_hex8_stapel` hält es
+fest, samt der Probe, dass ein umgestülptes Element auch im Stapel auffällt.
+
+**Der `tet4` bleibt unangetastet.** Er kostet 24,2 µs, dort ist der Aufruf
+nicht der Brocken, und ein Stapelweg brächte nichts — er läuft weiter
+Element für Element durch `element_matrix`.
+
+**Die Spannungsauswertung** baute bis zum 21.09.2026 für jedes Element die
+volle Elementsteifigkeit neu auf, nur um die inneren Freiheitsgrade
+α = −K_αα⁻¹ K_uα<sup>T</sup> u zu bekommen — das K_uu darin liest niemand.
+`hex8_matrices(..., ohne_kuu=True)` lässt es weg: 1 332 → 1 040 µs je
+Element. Der Rest ist die Summe über die acht Gaußpunkte und wartet auf
+dieselbe Stapelbehandlung wie die Steifigkeit.
+
 ## 5 Nachweise nach DIN EN 1993-1-1
 
 ### 5.1 Nachweisstellen und Staebe

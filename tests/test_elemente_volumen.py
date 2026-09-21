@@ -361,7 +361,7 @@ def patch_netz(typ, rng):
     """Kleiner Verband mit inneren Knoten.  Rueckgabe nodes, elems, innere Knoten."""
     m = Netz()
     quad = typ in ("hex20", "pent15")
-    if typ == "hex20":
+    if typ in ("hex8", "hex20"):
         # 2x2x2 Block, Ecken zufaellig verschoben, innere Kantenmitten gekruemmt
         def kn(i, j, k):
             return m.knoten((i, j, k), np.array([i, j, k]) * 0.5 + rng.uniform(-0.06, 0.06, 3))
@@ -370,12 +370,16 @@ def patch_netz(typ, rng):
                 for i in range(2):
                     m.hex([kn(i, j, k), kn(i + 1, j, k), kn(i + 1, j + 1, k), kn(i, j + 1, k),
                            kn(i, j, k + 1), kn(i + 1, j, k + 1), kn(i + 1, j + 1, k + 1),
-                           kn(i, j + 1, k + 1)], True)
+                           kn(i, j + 1, k + 1)], quad)
         c = m.key[(1, 1, 1)]
-        innen = [c] + [m.mid[(min(c, m.key[k]), max(c, m.key[k]))]
-                       for k in [(0, 1, 1), (2, 1, 1), (1, 0, 1), (1, 2, 1), (1, 1, 0), (1, 1, 2)]]
-        for i in innen[1:]:
-            m.X[i] += rng.uniform(-0.03, 0.03, 3)         # gekruemmte innere Kanten
+        innen = [c]
+        if quad:
+            # Nur der quadratische Hexaeder hat innere Kantenmitten, die man
+            # kruemmen kann; beim hex8 ist der Mittelknoten der einzige innere.
+            innen += [m.mid[(min(c, m.key[k]), max(c, m.key[k]))]
+                      for k in [(0, 1, 1), (2, 1, 1), (1, 0, 1), (1, 2, 1), (1, 1, 0), (1, 1, 2)]]
+            for i in innen[1:]:
+                m.X[i] += rng.uniform(-0.03, 0.03, 3)     # gekruemmte innere Kanten
     elif typ.startswith("pent"):
         # Quadrat in 4 Dreiecke um einen inneren Punkt, zwei Schichten in z
         xy = [(0, 0), (1, 0), (1, 1), (0, 1), (0.45, 0.55)]
@@ -641,25 +645,136 @@ def t_massen():
 
 
 # --------------------------------------------------------------------------
+# Der Sechsflaechner: was ihn traegt und wo er an seine Grenze kommt
+# --------------------------------------------------------------------------
+def t_inkompatible_moden():
+    """Die drei Wilson-Moden sind es, die den hex8 Biegung koennen lassen.
+
+    Ohne sie ist er ein voll integrierter Trilinearer und schubsperrt: seine
+    Verschiebung unter Biegung faellt ein, obwohl Knoten und Elemente
+    dieselben bleiben. Diese Pruefung haelt den Unterschied fest - der
+    Schalter ``incompatible=False`` wurde bis zum 21.09.2026 von keiner
+    Pruefung benutzt, und damit war der ganze Kunstgriff unbelegt.
+    """
+    ana = balken_analytisch()
+    echt = sl.k_hex8
+    try:
+        sl.k_hex8 = lambda X, E, nu, incompatible=True: echt(X, E, nu, False)
+        w_aus, _ = kragarm("hex8", 4, 1, 1)
+    finally:
+        sl.k_hex8 = echt
+    w_an, _ = kragarm("hex8", 4, 1, 1)
+    check("hex8: mit inkompatiblen Moden trifft schon 4x1x1 die Balkenloesung",
+          w_an / ana > 0.90, f"{w_an / ana * 100:.1f} % der Balkenloesung")
+    check("hex8: ohne sie sperrt er (deutlich steifer)",
+          w_aus / ana < 0.80, f"{w_aus / ana * 100:.1f} % der Balkenloesung")
+    check("hex8: die Moden bringen den Faktor, nicht das Netz",
+          w_an / w_aus > 1.25, f"Faktor {w_an / w_aus:.2f} bei gleichem Netz")
+
+
+def t_hex8_nahezu_inkompressibel():
+    """Bei nu -> 0,5 darf der Sechsflaechner nicht volumetrisch sperren.
+
+    Der lineare Tetraeder tut es (Theoriehandbuch 6a: 51,0 % bei nu = 0,3
+    gegen 2,1 % bei nu = 0,499). Beim hex8 muessen die inkompatiblen Moden
+    das auffangen - sie enthalten genau die Volumenaenderung, die dem
+    trilinearen Ansatz fehlt. Geprueft wird, dass die Biegung bei nu = 0,499
+    nicht einbricht; der Vergleich ist die Loesung bei nu = 0,3 am selben
+    Netz.
+    """
+    global NU_ST
+    ana = balken_analytisch()
+    alt = NU_ST
+    werte = {}
+    try:
+        for nu in (0.3, 0.45, 0.499):
+            NU_ST = nu
+            w, _ = kragarm("hex8", 8, 2, 2)
+            werte[nu] = w / ana
+            print(f"     hex8 nu = {nu}: w/w_ana = {werte[nu]:.4f}")
+    finally:
+        NU_ST = alt
+    # Die Balkenloesung selbst haengt ueber den Schubanteil schwach an nu;
+    # der Vergleich ist darum das Verhaeltnis zur Loesung bei nu = 0,3.
+    check("hex8: bei nu = 0,45 bricht die Biegung nicht ein",
+          werte[0.45] / werte[0.3] > 0.85,
+          f"{werte[0.45] / werte[0.3] * 100:.1f} % der Loesung bei nu = 0,3")
+    check("hex8: auch bei nu = 0,499 nicht (kein volumetrisches Sperren)",
+          werte[0.499] / werte[0.3] > 0.80,
+          f"{werte[0.499] / werte[0.3] * 100:.1f} % der Loesung bei nu = 0,3")
+
+
+def t_hex8_stapel():
+    """Der Stapel muss Element fuer Element dasselbe rechnen wie die Einzelfassung.
+
+    Der Sechsflaechner kostete einzeln 571,7 µs je Element und im Stapel
+    57,5 µs - Faktor 9,9 (gemessen 21.09.2026 an 4000 verzerrten Wuerfeln).
+    Am Drehlagernetz der Vernetzersitzung sind das 17,8 s gegen 1,79 s je
+    Aufstellen. Der Gewinn ist nur etwas wert, wenn dieselbe Matrix
+    herauskommt - darum diese Pruefung.
+    """
+    rng = np.random.default_rng(7)
+    W = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], float)
+    X = np.stack([W + rng.uniform(-0.08, 0.08, (8, 3)) for _ in range(40)])
+    Ke = np.array([sl.k_hex8(x, E_ST, NU_ST)[0] for x in X])
+    Ve = np.array([sl.k_hex8(x, E_ST, NU_ST)[1] for x in X])
+    Ks, Vs = sl.k_hex8_stapel(X, E_ST, NU_ST)
+    check("hex8: Stapel gibt dieselbe Steifigkeit wie die Einzelfassung",
+          np.abs(Ke - Ks).max() <= 1e-12 * np.abs(Ks).max(),
+          f"groesste Abweichung {np.abs(Ke - Ks).max() / np.abs(Ks).max():.1e}")
+    check("hex8: Stapel gibt dasselbe Volumen",
+          np.abs(Ve - Vs).max() <= 1e-12 * np.abs(Vs).max(),
+          f"groesste Abweichung {np.abs(Ve - Vs).max() / np.abs(Vs).max():.1e}")
+    # Ohne inkompatible Moden ebenso - der Schalter muss durchgereicht werden
+    Ke0 = np.array([sl.k_hex8(x, E_ST, NU_ST, False)[0] for x in X])
+    Ks0, _ = sl.k_hex8_stapel(X, E_ST, NU_ST, False)
+    check("hex8: dasselbe auch ohne inkompatible Moden",
+          np.abs(Ke0 - Ks0).max() <= 1e-12 * np.abs(Ks0).max(),
+          f"groesste Abweichung {np.abs(Ke0 - Ks0).max() / np.abs(Ks0).max():.1e}")
+    # Ein auf den Kopf gestelltes Element muss auch im Stapel auffallen
+    schlecht = X.copy()
+    schlecht[3] = schlecht[3][[4, 5, 6, 7, 0, 1, 2, 3]]      # Deckel und Boden vertauscht
+    try:
+        sl.k_hex8_stapel(schlecht, E_ST, NU_ST)
+        ok, text = False, "kein Fehler"
+    except ValueError as ex:
+        ok, text = "Jacobi" in str(ex), str(ex)[:60]
+    check("hex8: negative Jacobi-Determinante faellt auch im Stapel auf", ok, text)
+
+
+# --------------------------------------------------------------------------
 def main():
     print("=" * 100)
-    print("STATIK3D - Volumenelemente Hex20, Pent6, Pent15, Pyr5")
+    print("STATIK3D - Volumenelemente Hex8, Hex20, Pent6, Pent15, Pyr5")
     print("=" * 100)
     print("\n-- Formfunktionen und Gauss-Regeln ----------------------------------------------")
     t_formfunktionen()
     print("\n-- Starrkoerpermoden ---------------------------------------------------------------")
-    for typ in NEU:
+    # Der hex8 ist hier bis zum 21.09.2026 nicht gelaufen - er stand nicht in
+    # NEU, weil diese Suite fuer die vier neuen Typen geschrieben wurde. Die
+    # Pruefungen selbst sind nach Typ parametrisiert und gelten fuer ihn
+    # genauso; sie waren nur nie aufgerufen.
+    for typ in ("hex8",) + NEU:
         t_starrkoerper(typ)
     print("\n-- Volumen ---------------------------------------------------------------------------")
     t_volumen()
     print("\n-- Patch-Test ------------------------------------------------------------------------")
-    for typ in NEU:
+    for typ in ("hex8",) + NEU:
         t_patch(typ)
     print("\n-- Kragarm-Biegung -------------------------------------------------------------------")
     t_kragarm_quadratisch("hex20", 0.05, 0.02)
     t_kragarm_quadratisch("pent15", 0.05, 0.03)
     t_kragarm_konvergenz("pent6", [(10, 1, 1), (20, 2, 2), (40, 4, 4)])
     t_kragarm_konvergenz("pyr5", [(6, 1, 1), (12, 2, 2), (24, 4, 4)])
+    # Der Sechsflaechner trifft schon mit **einem** Element ueber Hoehe und
+    # Breite 96,2 % - pent6 und pyr5 brauchen dafuer 10 bzw. 6 Elemente in
+    # der Laenge (21.09.2026).
+    t_kragarm_konvergenz("hex8", [(4, 1, 1), (8, 2, 2), (16, 4, 4)])
+    print("\n-- Sechsflaechner: inkompatible Moden und Inkompressibilitaet -------------------------")
+    t_inkompatible_moden()
+    t_hex8_nahezu_inkompressibel()
+    t_hex8_stapel()
     print("\n-- Flaechenlasten --------------------------------------------------------------------")
     t_flaechenlast()
     print("\n-- Anfangsspannungen -----------------------------------------------------------------")
