@@ -1468,6 +1468,30 @@ class StaticSystem:
 # ==========================================================================
 # Lasten eines Lastfalls / einer Kombination
 # ==========================================================================
+def zusatz_kenn(K_zusatz):
+    """Kennung einer Zusatzmatrix fuer den Faktorisierungsschluessel.
+
+    Sie muss **alles** erfassen, was die Matrix ausmacht: Form, Zahl der
+    Nichtnullen, Werte **und Belegung**. Bis zum 21.09.2026 fehlte die
+    Belegung - zwei Matrizen mit gleicher Form, gleicher Nichtnullzahl und
+    bitgleichen Werten an **anderen** Stellen waren ununterscheidbar, und die
+    alte Faktorisierung blieb stehen. Greifbar wird das bei baugleichen
+    Staeben in ``solve_with_ausfall``: dieselben 144 Eintraege, andere Indizes.
+    Am Drehlager nicht zu erwarten (die plastische Tangente aendert in jedem
+    Newton-Schritt die Werte), an einem Fachwerk aus nur-Zug-Staeben sehr wohl.
+    Gefunden von der Loesersitzung am Quelltext.
+
+    Kosten: ein Hash ueber zwei weitere Felder je Aufruf.
+    """
+    if K_zusatz is None:
+        return None
+    K = K_zusatz.tocsr()
+    return (tuple(K.shape), int(K.nnz),
+            hash(np.ascontiguousarray(K.data).tobytes()),
+            hash(np.ascontiguousarray(K.indices).tobytes()),
+            hash(np.ascontiguousarray(K.indptr).tobytes()))
+
+
 def case_loads(model: Model, factors: dict, aktiv=None) -> tuple:
     """(F, feq, q, temp) fuer eine Linearkombination von Lastfaellen.
     feq: elem -> lokale aequivalente Knotenlasten (unkondensiert),
@@ -3030,9 +3054,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     # ausgefallener Zugstaebe in jedem Ausfallschritt - bliebe bei gleicher
     # Aktivmenge die **alte** Faktorisierung stehen und loeste mit der falschen
     # Matrix. Darum der Inhalt von K_zusatz im Schluessel (20.09.2026).
-    kz_kenn = None if K_zusatz is None else (
-        tuple(K_zusatz.shape), int(K_zusatz.nnz),
-        hash(np.ascontiguousarray(K_zusatz.tocsr().data).tobytes()))
+    kz_kenn = zusatz_kenn(K_zusatz)
 
     def signatur():
         s = cs.signatur()

@@ -1268,8 +1268,39 @@ Situation beginnt die Iteration in diesem Zustand statt bei der Geometrie,
 in Phase 2 mit festen Gleitrichtungen. Die erste Matrix ist dieselbe wie die
 letzte des vorigen Lastfalls, und `StaticSystem.solve` behält die
 Faktorisierung, solange die Signatur der Kontaktsteifigkeit (Phase,
-Aktivmenge, Gleiten, Fließen, rutschende Gruppen; `ContactSystem.signatur`)
-gleich bleibt — dann wird nur rückwärts eingesetzt. Nach der Konvergenz
+Aktivmenge, Gleiten, Fließen, **Schubhalt**, rutschende Gruppen;
+`ContactSystem.signatur`) gleich bleibt — dann wird nur rückwärts eingesetzt.
+
+**Zwei Löcher in diesem Schlüssel, beide am 21.09.2026 geschlossen.** Ein
+Schlüssel, der eine Matrixänderung nicht sieht, ist schlimmer als keiner: er
+lässt mit der falschen Faktorisierung rechnen, und niemand merkt es.
+
+* Der **Schubhalt** fehlte. `ContactSystem.matrices` legt für eine *inaktive*
+  Bedingung mit `schub_halt` einen k_t-Block in K_c — am Prüfstift 144
+  Einträge gegen null. `schub_halt_loesen` räumt die Marke ab, sobald die
+  Gruppe wieder trägt; fällt das in eine Runde ohne Wechsel von Aktivmenge,
+  Gleiten oder Fließen, blieb die Signatur gleich und die Matrix nicht.
+  Schärfer noch: der Schubhalt entsteht **nach** einem gescheiterten Lösen,
+  und scheitert dieses erst in der Residuumsprüfung, ist die Faktorisierung
+  bereits im Zwischenspeicher — dann wird mit genau der Zerlegung gelöst, die
+  eben gescheitert ist, und der Schubblock erreicht den Löser nie. Die
+  Nachprüfung fängt es nicht, sie misst gegen die alte Matrix.
+* Die **Zusatzmatrix** (`solver.zusatz_kenn`) hashte Form, Nichtnullzahl und
+  Werte, aber nicht die **Belegung**. Zwei Matrizen mit bitgleichen Werten an
+  anderen Stellen waren ununterscheidbar. Greifbar bei baugleichen Stäben in
+  `solve_with_ausfall`: derselbe Ausfall liefert dieselben 144 Einträge an
+  anderen Indizes.
+
+Beides kostet einen Hash je Aufruf und spart **keine** Faktorisierung ein;
+zusätzliche gibt es nur dort, wo die Matrix wirklich eine andere ist.
+`tests/test_kontakthalt.py` hält beides fest — mit der Probe, dass die Matrix
+sich wirklich ändert, und mit dem Nachweis, dass die alte Signatur die beiden
+Zustände für gleich hielt.
+
+Gefunden hat beides die Löser-Sitzung, **am Quelltext, nicht an einer Zahl**:
+fünf Leser mit je einem Gegenprüfer, deren Auftrag das Widerlegen war. Das ist
+die Lehre daneben — ein Fehler, der nur einen seltenen Pfad trifft, zeigt sich
+in keiner Messung, weil die Messung ihn nicht durchläuft. Nach der Konvergenz
 prüft `warmstart_verstoesse`, ob gleitende Knoten sich gegen ihre
 festgehaltene Richtung bewegen: wenige werden auf Haften zurückgesetzt und
 die Iteration läuft weiter, viele verwerfen den Warmstart (Neustart von der
