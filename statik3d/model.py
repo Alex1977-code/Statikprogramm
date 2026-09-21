@@ -1804,9 +1804,19 @@ class Netzeinstellungen:
     feldpunkte: list = field(default_factory=list)
     koerper_h: dict = field(default_factory=dict)
     #: Sweepbare Koerper (Grundflaeche mal Weg) als Hexaeder und Keile
-    #: vernetzen statt als Tetraeder (statik3d.sweep, 20.09.2026). Aus nur
-    #: zum Vergleich - der Tetraeder ist das schlechtere Element.
-    sweep: bool = True
+    #: vernetzen statt als Tetraeder (statik3d.sweep, 20.09.2026). Der
+    #: Hexaeder ist das bessere Element - an der Kragplatte 97,6 % der
+    #: Balkenloesung gegen 68,4 % beim Tetraeder.
+    #:
+    #: **Vorgabe seit 21.09.2026 trotzdem aus.** Am Drehlager erzeugte der
+    #: Sweep 992 entartete Keile (10,6 % aller pent6, schlechteste Formguete
+    #: 0,025; von 31.108 Hexaedern keiner unter 0,10), und LF1 rechnete darauf
+    #: max |u| 1,2335 statt 0,2716 mm - Faktor 4,5. Die Keile erben die
+    #: Splitterdreiecke der Flaechenvernetzung: die Paarung zu Vierecken
+    #: verlangt Guete >= 0,3, ein Splitterdreieck erfuellt das nie und bleibt
+    #: als Keil uebrig. Bis die Flaechenteilung eine Mindestweite kennt, wird
+    #: der Sweep von Hand eingeschaltet (Netz -> Netzeinstellungen).
+    sweep: bool = False
     #: **Pyramiden** (pyr5) als Uebergang: wo ein frei vernetzter Koerper an
     #: die Vierecke eines gesweepten oder abgebildeten Nachbarn stoesst,
     #: bekommt jedes Viereck eine Pyramide mit Spitze im Inneren, die

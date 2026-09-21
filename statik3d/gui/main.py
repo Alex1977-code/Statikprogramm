@@ -13548,6 +13548,15 @@ class MainWindow(QtWidgets.QMainWindow):
                   # Eckknoten); alles andere geht an den freien Vernetzer (13.09.2026).
                   F("uebersteuern", "Teilung je Fläche aus der Netzdichte", "haken", bool(n.teilung_uebersteuern),
                     hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt"),
+                  F("sweep", "Sechsflächner sweepen (Hexaeder statt Tetraeder)", "haken",
+                    bool(getattr(n, "sweep", False)),
+                    hinweis="Körper, die Grundfläche mal Weg sind (Bolzen, Scheiben, Platten), werden "
+                            "in Lagen aus hex8 und pent6 vernetzt statt in Tetraeder - an der "
+                            "Kragplatte 97,6 % der Balkenlösung gegen 68,4 %, bei weniger als der "
+                            "halben Knotenzahl. Vorgabe aus: am Drehlager entstanden dabei 992 "
+                            "entartete Keile (Formgüte bis 0,025), und die Verformung lag um "
+                            "Faktor 4,5 daneben (21.09.2026). Die Abnahme meldet solche Netze vor "
+                            "dem Rechnen; wer einschaltet, sollte sie lesen."),
                   F("vernetzer", "Vernetzer (Volumen)", "wahl", vernetzer_text(n.vernetzer), vernetzer_liste,
                     hinweis="eigener Vernetzer, gmsh (GPL) oder Netgen (LGPL) - beide tetraedern dieselbe "
                             "Hülle, die Randknoten bleiben; keiner wird mit der exe ausgeliefert, "
@@ -13695,6 +13704,7 @@ class MainWindow(QtWidgets.QMainWindow):
                        form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
                        ordnung=self.NETZORDNUNG.get(str(w.get("ordnung", "")), n.ordnung),
                        abgebildet=bool(w.get("abgebildet", n.abgebildet)),
+                       sweep=bool(w.get("sweep", getattr(n, "sweep", False))),
                        teilung_uebersteuern=bool(w.get("uebersteuern", True)))
 
     def werkzeuge_dialog(self):
