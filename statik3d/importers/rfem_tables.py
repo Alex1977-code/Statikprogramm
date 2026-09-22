@@ -270,14 +270,20 @@ class Table:
             return None
         return C.parse_number(row[j])
 
-    def data(self):
-        """(Zeile, Blocktitel) - Blocktitel z.B. 'LF1' aus Zwischenzeilen."""
+    def data(self, bloecke: bool = True):
+        """(Zeile, Blocktitel) - Blocktitel z.B. 'LF1' aus Zwischenzeilen.
+
+        ``bloecke=False`` fuer Tabellen ohne Bloecke (Lastkombinationen): dort
+        ist eine Zeile mit der Nummer „CO5“ und der Formel „LF1 + LF2“ eine
+        Kombination und kein Titel. Als Titel gelesen fiel sie bis zum
+        22.09.2026 wortlos weg (Befund SV10).
+        """
         for r in self.rows[self.start:]:
             cells = [C.clean_text(c) for c in r]
             if not any(cells):
                 continue
             first = next(c for c in cells if c)
-            m = _BLOCK_TITLE.match(first)
+            m = _BLOCK_TITLE.match(first) if bloecke else None
             if m and sum(1 for c in cells if c) <= 3 and \
                     all(C.parse_number(c) is None or c == first for c in cells if c):
                 yield None, m.group(0).upper().replace(" ", "")
@@ -356,10 +362,14 @@ def _load_direction(text: str) -> tuple[Optional[int], str, bool]:
     return axis, ("local" if local else "global"), projected
 
 
-def _parse_formula(text: str) -> tuple[dict[str, float], list[str]]:
-    """'1.35*LF1 + 1.5*LF2' -> ({'LF1': 1.35, 'LF2': 1.5}, [nicht aufloesbare Teile])."""
+def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str, int]]]:
+    """'1.35*LF1 + 2*CO3' -> ({'LF1': 1.35}, [(2.0, 'CO', 3)]).
+
+    Die Verweise behalten ihren Vorfaktor: ein Verweis auf eine andere
+    Lastkombination wird mit ihm aufgeloest (siehe Kombinationsschleife).
+    """
     factors: dict[str, float] = {}
-    others = []
+    verweise: list[tuple[float, str, int]] = []
     for m in re.finditer(r"([+-]?\s*\d+(?:[.,]\d+)?)?\s*\*?\s*(LF|LC|CO|LK|EK)\s*(\d+)",
                          text, re.IGNORECASE):
         f = m.group(1)
@@ -371,8 +381,49 @@ def _parse_formula(text: str) -> tuple[dict[str, float], list[str]]:
             key = f"LF{int(m.group(3))}"
             factors[key] = factors.get(key, 0.0) + f
         else:
-            others.append(f"{kind}{m.group(3)}")
-    return factors, others
+            verweise.append((f, kind, int(m.group(3))))
+    return factors, verweise
+
+
+def _kombinationen_aufloesen(zeilen: list) -> list:
+    """Verweise auf andere Lastkombinationen derselben Tabelle aufloesen.
+
+    ``zeilen`` [(Nummer oder None, LF-Faktoren, Verweise)] -> je Zeile
+    (Faktoren, nicht aufgeloeste Verweise). „CO n“ und „LK n“ sind die
+    Lastkombination Nummer n dieser Tabelle; sie geht mit ihren Faktoren mal
+    dem Vorfaktor ein - auch wenn sie weiter unten steht. „EK n“ ist eine
+    Ergebniskombination, also eine Umhuellende und keine Summe - sie laesst
+    sich nicht als Summand schreiben und bleibt offen, ebenso ein Kreis
+    (CO1 verweist auf CO2, CO2 auf CO1) und eine Nummer, die es nicht gibt.
+    Offen bleibt auch, was ueber eine offene Kombination hereinkaeme.
+    """
+    nach_nummer: dict[int, int] = {}
+    for i, (no, _f, _v) in enumerate(zeilen):
+        if no is not None:
+            nach_nummer.setdefault(int(no), i)
+    fertig: dict[int, tuple] = {}
+
+    def aufloesen(i: int, pfad: frozenset) -> tuple:
+        if i in fertig:
+            return fertig[i]
+        _no, faktoren, verweise = zeilen[i]
+        f = dict(faktoren)
+        offen: list[str] = []
+        for vf, art, nr in verweise:
+            j = nach_nummer.get(nr) if art in ("CO", "LK") else None
+            if j is None or j == i or j in pfad:
+                offen.append(f"{art}{nr}")
+                continue
+            fj, offen_j = aufloesen(j, pfad | {i})
+            if offen_j or not fj:
+                offen.append(f"{art}{nr}")
+                continue
+            for k, v in fj.items():
+                f[k] = f.get(k, 0.0) + vf * v
+        fertig[i] = (f, offen)
+        return fertig[i]
+
+    return [aufloesen(i, frozenset()) for i in range(len(zeilen))]
 
 
 # --------------------------------------------------------------------------
@@ -837,15 +888,59 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
     # ---- Kombinationen ------------------------------------------------------------------
     t = found.get("combinations")
     if t is not None:
-        n_co = 0
-        for row, _ in t.data():
+        # Jede Zeile mit Inhalt bekommt einen gezaehlten Ausgang (Befund SV10):
+        # bis zum 22.09.2026 fiel eine Zeile ohne LF-Faktor mit
+        # ``if not factors: continue`` **vor** der Warnung weg. Gemessen an
+        # vier Zeilen ('1.35*LF1 + 1.5*LF2', 'CO1 + CO3', '1.0*EK1',
+        # 'LF1 + CO1'): Protokoll "2 Lastkombinationen", eine Warnung nur fuer
+        # LK4, LK2 und LK3 ohne jede Zeile. Darum erst alle Zeilen lesen, dann
+        # die Verweise aufloesen, dann anlegen oder mit Grund nennen.
+        roh = []
+        for row, _ in t.data(bloecke=False):
             if row is None:
                 continue
             formula = t.text(row, "formula")
-            factors, others = _parse_formula(formula)
-            if not factors:
-                continue
+            factors, verweise = _formel_zerlegen(formula)
             no = t.num(row, "no")
+            if no is None:
+                # Die Nummer steht auch als Text da ("CO5", "LK 5").
+                mn = re.match(r"^\s*(?:CO|LK)?\s*(\d+)\s*$", t.text(row, "no"),
+                              re.IGNORECASE)
+                no = int(mn.group(1)) if mn else None
+            roh.append((row, formula, no, factors, verweise))
+        aufgeloest = _kombinationen_aufloesen([(no, f, v) for _r, _t, no, f, v in roh])
+        n_co = 0
+        for k, ((row, formula, no, _f0, verweise), (factors, offen)) in \
+                enumerate(zip(roh, aufgeloest), 1):
+            wer = f"LK{int(no)}" if no is not None else f"in Tabellenzeile {k}"
+            if offen:
+                # Eine Kombination ohne einen ihrer Anteile waere zu klein und
+                # saehe im Nachweis wie eine vollstaendige aus - darum nicht
+                # halb anlegen, sondern nennen.
+                gruende = []
+                if any(x.startswith("EK") for x in offen):
+                    gruende.append("EK ist eine Ergebniskombination (Umhuellende), "
+                                   "als Summand nicht darstellbar")
+                if any(not x.startswith("EK") for x in offen):
+                    gruende.append("CO/LK: die Tabelle fuehrt diese Kombination "
+                                   "nicht oder nicht vollstaendig")
+                alle = [f"{a}{n}" for _v, a, n in verweise]
+                C.warn(log, f"Kombination {wer} („{formula}“): Verweise {offen} "
+                            "nicht aufloesbar - nicht uebernommen ("
+                            + "; ".join(gruende) + ")."
+                            + (f" Die Zeile besteht nur aus Verweisen {alle}." if not _f0
+                               else "")
+                            + " Bitte in RFEM nachsehen und die Kombination von "
+                              "Hand anlegen.")
+                continue
+            if not factors:
+                C.warn(log, f"Kombination {wer}: Formel „{formula}“ ohne erkennbaren "
+                            "Lastfall - nicht uebernommen.")
+                continue
+            if verweise:
+                C.say(log, f"Kombination {wer}: Verweise "
+                           f"{[f'{a}{n}' for _v, a, n in verweise]} auf die Faktoren "
+                           "der Kombinationen aufgeloest")
             no = int(no) if no is not None else n_co + 1
             for key in factors:
                 if key not in model.load_cases:
@@ -861,10 +956,8 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
             name = f"LK{no}"
             model.add_combination(C.unique_name(model.combinations, name), factors, typ,
                                   t.text(row, "name") or formula)
-            if others:
-                C.warn(log, f"Kombination {name}: Verweise {others} nicht aufgeloest")
             n_co += 1
-        C.say(log, f"{n_co} Lastkombinationen")
+        C.say(log, f"{n_co} von {len(roh)} Lastkombinationen")
 
     # ---- Knotenlasten -----------------------------------------------------------------
     t = found.get("nodal_loads")

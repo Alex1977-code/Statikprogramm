@@ -1441,7 +1441,17 @@ def _diagnose(m: Model, log: list) -> None:
                     "sie muessen dafuer vernetzt werden.")
 
 
-#: Einwirkungskategorien RFEM (actionCategoryId) -> Kategorie in Statik3D
+#: Einwirkungskategorien RFEM (actionCategoryId) -> Kategorie in Statik3D.
+#:
+#: **Eine Annahme, an keiner Datei belegt** (eingefuehrt ohne Quelle; die
+#: Tabellen Action und ActionImpl sind in beiden vorliegenden Dateien leer).
+#: Gemessen am 22.09.2026: am CBG-Trolley tragen 8 Lastfaelle die Kennzahl
+#: 11, 7 davon heissen "G - ..." (Steel Structure, Bucket Wheel ...) und
+#: werden nur ueber den Namen zu G; am Drehlager tragen alle 422 Lastfaelle
+#: die Kennzahl 11 und heissen "Bemessungslast im GZT ...". Dieselbe Kennzahl
+#: steht also je Datei fuer anderes. Darum nennt das Protokoll je Kennzahl die
+#: angenommene Kategorie und warnt, psi und gamma nachzusehen - wie
+#: LOAD_DIRECTION seine abgeleiteten Richtungen 11 bis 13 nennt.
 ACTION_CATEGORY = {1: "G", 2: "G", 3: "Q", 11: "Q", 12: "Q", 13: "Q"}
 
 
@@ -1462,6 +1472,10 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     mit_mod: dict[str, int] = {}
     je_kat: dict[str, int] = {}
     unbek_kat: dict[int, int] = {}
+    je_kennzahl: dict[int, int] = {}
+    # {Kennzahl: {Kategorie aus dem Namen: [Lastfall, ...]}} - was der Name
+    # gegenueber der Kennzahl umgestellt hat, je Lastfall (Befund FM9)
+    umgestellt: dict[int, dict[str, list]] = {}
     ohne_mod = 0
     cases = db.impls("LoadCase")
     if cases:
@@ -1475,8 +1489,10 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
         name = (impl.get("name") or "").strip() or f"LF{h.get('userID') or h['id']}"
         akid = int(impl.get("actionCategoryId") or 0)
         cat = ACTION_CATEGORY.get(akid, "Q")
+        je_kennzahl[akid] = je_kennzahl.get(akid, 0) + 1
         if akid not in ACTION_CATEGORY:
             unbek_kat[akid] = unbek_kat.get(akid, 0) + 1
+        aus_kennzahl = cat
         if cat == "Q":
             # Nur **innerhalb** der veraenderlichen Einwirkungen verfeinern.
             # Ein "G" aus der Kennzahl darf der Freitext nicht umstossen: ein
@@ -1487,6 +1503,8 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
             cat = C.category_from_text(name, "Q")
         je_kat[cat] = je_kat.get(cat, 0) + 1
         nm = C.unique_name(m.load_cases, f"LF{h.get('userID') or h['id']}")
+        if cat != aus_kennzahl:
+            umgestellt.setdefault(akid, {}).setdefault(cat, []).append(nm)
         lc = m.add_load_case(nm, cat, description=name, activate=False)
         lc_name[h["id"]] = nm
         gz = impl.get("selfWeightFactors_z")
@@ -1503,11 +1521,29 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
                 ohne_mod += 1
         n += 1
     if n:
-        C.say(log, f"{n} Lastfaelle uebernommen (Namen, Einwirkungskategorie, "
-                   "Eigengewichtsfaktor)")
+        # Nicht mehr "Einwirkungskategorie uebernommen": uebernommen ist nur
+        # die Kennzahl, die Kategorie ist daraus angenommen (Befund FM9).
+        C.say(log, f"{n} Lastfaelle uebernommen (Namen, Eigengewichtsfaktor; "
+                   "Einwirkungskategorie aus der Kennzahl angenommen)")
     if je_kat:
         C.say(log, "  Einwirkungskategorie: " + ", ".join(
             f"{k}x {c}" for c, k in sorted(je_kat.items())))
+    for akid, k in sorted(je_kennzahl.items()):
+        herkunft = ("Annahme, an keiner Datei belegt" if akid in ACTION_CATEGORY
+                    else "unbekannte Kennzahl, Rueckfall")
+        zeile = (f"    Kennzahl {akid} -> {ACTION_CATEGORY.get(akid, 'Q')} "
+                 f"({herkunft}): {k}x")
+        if akid in umgestellt:
+            zeile += "; davon ueber den Namen umgestellt: " + "; ".join(
+                f"zu {c}: {', '.join(lfs)}" for c, lfs in sorted(umgestellt[akid].items()))
+        C.say(log, zeile)
+    bekannt = sorted(a for a in je_kennzahl if a in ACTION_CATEGORY)
+    if bekannt:
+        C.warn(log, "  Einwirkungskategorie aus der Kennzahl angenommen ("
+                    + ", ".join(f"{a} -> {ACTION_CATEGORY[a]}" for a in bekannt)
+                    + "): die Zuordnung ist an keiner RFEM-Datei belegt, und "
+                      "dieselbe Kennzahl steht je Datei fuer anderes. psi und "
+                      "gamma bitte in der Lastfallmaske nachsehen.")
     if unbek_kat:
         C.warn(log, "  Einwirkungskategorien mit unbekannter Kennzahl: "
                     + ", ".join(f"{c} ({k}x)" for c, k in sorted(unbek_kat.items()))
@@ -1973,35 +2009,65 @@ def _hex_order(faces: list[list[int]]) -> list[int] | None:
     Gesucht sind Boden und Deckel (die beiden Flaechen ohne gemeinsamen
     Knoten); die vier Seitenflaechen ordnen dann jedem Bodenknoten seinen
     Deckelknoten zu.  ``None``, wenn die Topologie das nicht hergibt.
+
+    **Alles aus den Knotenmengen der Flaechen, nicht aus ihrer
+    Aufzaehlungsfolge** (Nachtrag B, 22.09.2026). Bis dahin nahm die
+    Zuordnung den Deckelknoten, der in der Seitenflaeche *neben* dem
+    Bodenknoten steht, und verliess sich damit auf einen Umlauf. War eine
+    Seite abwechselnd aufgezaehlt (oben, unten, oben, unten), kam eine falsche
+    Liste heraus statt None: gemessen ueber 81 Schreibweisen 57 falsche - 45
+    mit doppeltem Knoten, 12 mit acht Knoten, aber anderen Seiten; die dritte
+    Seite als [6,3,7,2] ergab [0,1,2,3,4,5,7,7], und das Element rechnete ohne
+    Meldung mit 75 % seines Volumens. Jetzt:
+
+    * Deckelknoten zu u = der eine Deckelknoten, den **beide** Seitenflaechen
+      an u enthalten (sie teilen genau die senkrechte Kante u-o);
+    * Umlauf des Bodens = Nachbarschaft in den Seitenflaechen (zwei
+      Bodenknoten in einer Seitenflaeche sind Nachbarn); die Aufzaehlung des
+      Bodens geht vor, wo sie ein Umlauf ist;
+    * zum Schluss muss die Liste acht verschiedene Knoten haben und ihre
+      sechs Seiten muessen genau die gegebenen Flaechen sein - sonst None,
+      und der Koerper geht an den freien Vernetzer.
     """
-    quads = [f for f in faces if len(set(f)) == 4]
+    from ..elements.solid import FLAECHEN
+    quads = [list(f) for f in faces if len(set(f)) == 4]
     if len(quads) != 6:
         return None
-    for i, a in enumerate(quads):
+    soll = {frozenset(f) for f in quads}
+    for a in quads:
         sa = set(a)
         gegen = [b for b in quads if not (sa & set(b))]
         if len(gegen) != 1:
             continue
-        top = gegen[0]
+        st = set(gegen[0])
+        seiten = [set(f) for f in quads if set(f) != sa and set(f) != st]
+        if len(seiten) != 4 or any(len(f & sa) != 2 or len(f & st) != 2
+                                   for f in seiten):
+            return None
         paar: dict[int, int] = {}
-        for f in quads:
-            sf = set(f)
-            if sf == sa or sf == set(top):
-                continue
-            unten = [n for n in f if n in sa]
-            oben = [n for n in f if n in set(top)]
-            if len(unten) != 2 or len(oben) != 2:
-                return None
-            # In der Seitenflaeche folgen die Knoten dem Umlauf: die beiden
-            # unteren liegen benachbart, ebenso die beiden oberen.
-            for u in unten:
-                iu = f.index(u)
-                for o in (f[(iu - 1) % 4], f[(iu + 1) % 4]):
-                    if o in oben:
-                        paar[u] = o
-                        break
-        if len(paar) == 4 and all(n in paar for n in a):
-            return list(a) + [paar[n] for n in a]
+        nachbarn: dict[int, list] = {}
+        for u in a:
+            an_u = [f for f in seiten if u in f]
+            if len(an_u) != 2:
+                break
+            oben = an_u[0] & an_u[1] & st
+            if len(oben) != 1:
+                break
+            paar[u] = next(iter(oben))
+            nachbarn[u] = [v for f in an_u for v in (f & sa) if v != u]
+        if len(paar) != 4:
+            continue
+        ring = [a[0]]
+        while len(ring) < 4:
+            kand = [v for v in nachbarn[ring[-1]] if v not in ring]
+            if not kand:
+                break
+            folgt = a[(a.index(ring[-1]) + 1) % 4]
+            ring.append(folgt if folgt in kand else kand[0])
+        order = ring + [paar[n] for n in ring]
+        if len(order) == 8 and len(set(order)) == 8 and \
+                {frozenset(order[i] for i in f) for f in FLAECHEN["hex8"]} == soll:
+            return order
     return None
 
 
@@ -2577,7 +2643,15 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
     # die Rechnung richtig um. So kommt die Vorspannung an, ohne dass das
     # Programm eine eigene Vorspannlast braeuchte - das steht auch im
     # Protokoll, damit niemand eine Temperaturlast fuer ein Versehen haelt.
-    n_vs = n_vs_ohne = 0
+    #
+    # Gezaehlt wird **je Lastzeile** der Tabelle MemberLoad, nicht je
+    # Stabelement: _stablasten gleicht die Summe aller Ausgaenge gegen die
+    # Zahl der Rohzeilen ab (Befund SV8). Bis zum 22.09.2026 zaehlte n_vs je
+    # Element - eine Vorspannung auf drei Staeben stand als "3" da, und eine
+    # verlorene Zeile fiel in der Summe nicht auf.
+    n_vs = n_vs_ohne = 0            # Lastzeilen: uebernommen / nicht
+    n_vs_staebe = 0                 # Staebe, auf denen eine Vorspannung liegt
+    n_vs_el_ohne = 0                # Stabelemente ohne A oder alpha
     vs_kraft = 0.0
     if db.has("MemberLoad"):
         case_of = _load_case_of(db, "MemberLoad")
@@ -2587,40 +2661,55 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
         for h, impl in db.impls("MemberLoad"):
             lc = lc_name.get(case_of.get(h["id"]))
             tbl = h.get("impl_table") or ""
-            if not lc or "Prestress" not in tbl:
+            if "Prestress" not in tbl:
                 continue
+            if not lc:
+                continue            # gezaehlt in _stablasten ("ohne Lastfall")
             N0 = float(impl.get("magnitude") or 0.0)
             ziele = db.container(tbl + "_assignedTo").get(impl["id"], [])
             if not N0 or not ziele:
                 n_vs_ohne += 1
                 continue
+            gelegt = False
             for mid in ziele:
                 nm = member_name.get(mid)
+                am_stab = False
                 for e in el_of_member.get(nm, []):
                     el = m.elements[e]
                     sec = m.sections.get(el.sec)
                     mat = m.materials.get(el.mat)
                     if sec is None or mat is None or not mat.alpha or sec.A <= 0:
-                        n_vs_ohne += 1
+                        n_vs_el_ohne += 1
                         continue
                     dT = -N0 / (mat.E * sec.A * mat.alpha)
                     m.load_temp(e, dT, case=lc)
-                    n_vs += 1
+                    am_stab = True
+                if am_stab:
+                    n_vs_staebe += 1
                     vs_kraft += abs(N0)
+                    gelegt = True
+            if gelegt:
+                n_vs += 1
+            else:
+                n_vs_ohne += 1
     if n_vs:
         # Die Kraft dazusagen: in der Datei steht nur die Temperatur, und
         # danach sieht es wie ein Versehen aus (19.09.2026: "was denn fuer
         # temperaturlasten? das sollte vorspannung sein")
         C.say(log, f"  {n_vs} Stabvorspannungen als gleichwertige "
                    f"Temperaturlast uebernommen (dT = -N_0/(E*A*alpha)) - "
-                   f"zusammen {vs_kraft / 1e3:.0f} kN, im Mittel "
-                   f"{vs_kraft / max(1, n_vs) / 1e3:.0f} kN je Stab")
+                   f"auf {n_vs_staebe} Staebe, zusammen {vs_kraft / 1e3:.0f} kN, "
+                   f"im Mittel {vs_kraft / max(1, n_vs_staebe) / 1e3:.0f} kN je Stab")
     if n_vs_ohne:
         C.say(log, f"  {n_vs_ohne} Vorspannlasten ohne Ziel, ohne Betrag oder "
                    "ohne Waermedehnzahl - nicht uebernommen")
+    if n_vs_el_ohne:
+        C.say(log, f"    dabei {n_vs_el_ohne} Stabelemente ohne Querschnittsflaeche "
+                   "oder Waermedehnzahl - dort keine Vorspannung")
 
     _freie_rechtecklasten(db, m, lc_name, surf_name, log)
-    _stablasten(db, m, lc_name, member_name or {}, log)
+    _stablasten(db, m, lc_name, member_name or {}, log,
+                n_vorspannung=n_vs + n_vs_ohne)
     _linienlasten(db, m, lc_name, line_name or {}, log)
     _zwangsverformungen(db, m, lc_name, node_of, log)
     _volumenlasten(db, m, lc_name, solid_name or {}, log)
@@ -2708,7 +2797,8 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         C.say(log, f"  {n_art} Linienlasten anderer Art (Moment, Masse) - nicht uebernommen")
 
 
-def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list) -> None:
+def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
+                n_vorspannung: int = 0) -> None:
     """RFEM ``MemberLoad`` der Art Kraft als Linienlast am Stab.
 
     **Bis zum 22.09.2026 fiel hier alles weg, was nicht "Prestress" hiess** -
@@ -2732,21 +2822,34 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list) -
     Der Betrag steht nicht in der Umsetzungszeile, sondern in
     ``<Tabelle>_magnitudes`` - das ist der Grund, warum ``_zahl(impl,
     "magnitude", ...)`` im Linienlastzweig daneben nichts findet.
+
+    **Jede Zeile von MemberLoad hat genau einen gezaehlten Ausgang**, und die
+    Summe wird gegen die Zahl der Rohzeilen abgeglichen (Befund SV8, wie bei
+    den Flaechenlasten). ``n_vorspannung`` sind die Vorspannzeilen mit
+    Lastfall, die ``_loads`` je Zeile gezaehlt hat. Bis zum 22.09.2026 fielen
+    zwei Wege ohne Zeile weg - eine Last, deren Umsetzungstabelle die Datei
+    nicht fuehrt (``db.impls`` laesst sie wortlos aus), und eine ohne
+    aufloesbaren Lastfall; gemessen an vier Zeilen waren 3 von 4 genannt.
     """
     if not db.has("MemberLoad"):
         return
     case_of = _load_case_of(db, "MemberLoad")
-    n_ok = n_ohne = n_art = 0
+    n_roh = db.count("MemberLoad")
+    n_ok = n_ohne = n_art = n_ohne_lf = 0
+    n_zuordnungen = 0
     andere_verteilung: dict = {}
     andere_richtung: dict = {}
     gedeutet: set = set()
     for h, impl in db.impls("MemberLoad"):
         tbl = h.get("impl_table") or ""
-        if "Prestress" in tbl:
-            continue                      # eigener Weg, siehe oben
         lc = lc_name.get(case_of.get(h["id"]))
         if not lc:
+            # Auch eine Vorspannung ohne Lastfall landet hier: _loads laesst
+            # sie aus, damit sie nur einmal gezaehlt wird.
+            n_ohne_lf += 1
             continue
+        if "Prestress" in tbl:
+            continue                      # eigener Weg in _loads, dort gezaehlt
         if "Force" not in tbl:
             n_art += 1
             continue
@@ -2773,25 +2876,45 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list) -
         q2 = [p2 * c for c in richtung] if (p2 and p2 != p1) else None
         for name in ziele:
             m.add_linienlast(name, q1, art="stab", q2=q2, case=lc)
-            n_ok += 1
+        # Je Lastzeile zaehlen, nicht je Stab - sonst geht die Summe unten
+        # nicht gegen die Rohzeilen auf.
+        n_ok += 1
+        n_zuordnungen += len(ziele)
     if n_ok:
-        C.say(log, f"  {n_ok} Stablasten (Gleichlast) an ihre Staebe gehaengt")
+        C.say(log, f"  {n_ok} Stablasten (Gleichlast) an ihre Staebe gehaengt"
+                   + (f" ({n_zuordnungen} Stabzuordnungen)" if n_zuordnungen != n_ok else ""))
     if gedeutet:
         C.say(log, "    Lastrichtung " + ", ".join(
             f"{r} = {LOAD_DIRECTION[r][1]}" for r in sorted(gedeutet))
             + " - bitte an einem bekannten Lastfall nachpruefen")
+    n_vert = sum(andere_verteilung.values())
+    n_richt = sum(andere_richtung.values())
     if andere_verteilung:
-        C.say(log, "  nicht uebernommen, weil das Programm fuer den Stab nur die "
-                   "Gleichlast kennt: " + ", ".join(
+        C.say(log, f"  {n_vert} Stablasten nicht uebernommen, weil das Programm fuer "
+                   "den Stab nur die Gleichlast kennt: " + ", ".join(
                        f"{n}x Verteilung {k}" for k, n in sorted(andere_verteilung.items())))
     if andere_richtung:
-        C.say(log, "  nicht uebernommen, Lastrichtung unbekannt: " + ", ".join(
-            f"{n}x Kennzahl {k}" for k, n in sorted(andere_richtung.items())))
+        C.say(log, f"  {n_richt} Stablasten nicht uebernommen, Lastrichtung unbekannt: "
+              + ", ".join(f"{n}x Kennzahl {k}" for k, n in sorted(andere_richtung.items())))
     if n_ohne:
         C.say(log, f"  {n_ohne} Stablasten ohne Ziel oder ohne Betrag - nicht uebernommen")
     if n_art:
         C.say(log, f"  {n_art} Stablasten anderer Art (Temperatur, Verformung) - "
                    "nicht uebernommen")
+    if n_ohne_lf:
+        C.warn(log, f"  {n_ohne_lf} Stablasten ohne aufloesbaren Lastfall - nicht "
+                    "uebernommen: der Lastfall, an dem sie haengen, fehlt in der "
+                    "Datei oder ist keiner, den der Import liest. Bitte die "
+                    "Lastfaelle in RFEM nachsehen.")
+    # Die Abzaehlung muss aufgehen: was keine Zeile oben nennt, ist auf dem Weg
+    # verlorengegangen - db.impls() laesst eine Last ohne ihre Umsetzung
+    # wortlos aus.
+    fehlt = n_roh - (n_ok + n_ohne + n_art + n_vert + n_richt + n_ohne_lf
+                     + int(n_vorspannung))
+    if fehlt > 0:
+        C.warn(log, f"  {fehlt} von {n_roh} Stablasten waren nicht zu lesen: die "
+                    "Datei fuehrt ihre Umsetzung nicht (Tabelle oder Zeile fehlt). "
+                    "Sie sind nicht uebernommen.")
 
 
 def _magnituden(db: Db, tbl: str, vid) -> tuple:

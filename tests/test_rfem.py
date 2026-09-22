@@ -194,9 +194,62 @@ def test_tabellen_erweitert():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_kombinationen_abgezaehlt():
+    """Jede Zeile der Tabelle „2.5 Lastkombinationen“ steht im Protokoll.
+
+    Bis zum 22.09.2026 verwarf die Schleife eine Zeile ohne LF-Faktor
+    (``if not factors: continue``) **vor** der Warnung über nicht aufgelöste
+    Verweise (Befund SV10). Gemessen an den ersten vier Zeilen unten:
+    Protokoll „2 Lastkombinationen“, Modell LK1 und LK4, eine Warnung nur für
+    LK4 - LK2 und LK3 verschwanden ohne eine Zeile. Dazu wurde eine Zeile,
+    deren Nummer als Text „CO5“ dasteht und deren Formel nicht mit einer Zahl
+    beginnt, als Blocktitel gelesen und ebenfalls wortlos verworfen.
+    """
+    d = tempfile.mkdtemp(prefix="s3d_ko_")
+    try:
+        def w(n, t):
+            with open(os.path.join(d, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        w("1.1 Knoten.csv", "Knoten Nr.;X [m];Y [m];Z [m]\n1;0;0;0\n2;2;0;0\n")
+        w("2.1 Lastfaelle.csv", "Lastfall Nr.;Bezeichnung\n1;Eigengewicht\n2;Nutzlast\n")
+        w("2.5 Lastkombinationen.csv",
+          "Lastkombination Nr.;Bemessungssituation;Belastung\n"
+          "1;GZT;1.35*LF1 + 1.5*LF2\n"
+          "2;GZT;CO1 + CO3\n"
+          "3;GZT;1.0*EK1\n"
+          "4;GZT;LF1 + CO1\n"
+          "CO5;;LF1 + LF2\n")
+        log = []
+        m = import_rfem_tables(d, Model("Ko"), log)
+        txt = "\n".join(log)
+        ko = [z for z in log if "ombination" in z]
+        for nr in (2, 3):
+            check(f"die Zeile LK{nr} steht im Protokoll",
+                  any(f"LK{nr}" in z for z in ko), str(ko))
+        check("die Verweise der verworfenen Zeilen werden genannt",
+              "CO3" in txt and "EK1" in txt, str(ko))
+        check("die Schlusszeile nennt Übernommene von allen Zeilen",
+              "3 von 5 Lastkombinationen" in txt,
+              next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+        # Der Verweis auf eine schon gelesene Kombination wird aufgeloest:
+        # LF1 + CO1 = LF1 + 1,35 LF1 + 1,5 LF2
+        lk4 = m.combinations.get("LK4")
+        f4 = dict(lk4.factors) if lk4 is not None else {}
+        check("LF1 + CO1 wird zu 2,35 LF1 + 1,5 LF2 aufgelöst",
+              abs(f4.get("LF1", 0.0) - 2.35) < 1e-12 and abs(f4.get("LF2", 0.0) - 1.5) < 1e-12,
+              str(f4))
+        check("die Zeile „CO5“ wird nicht als Blocktitel verworfen",
+              "LK5" in m.combinations, str(sorted(m.combinations)))
+        check("LK2 und LK3 sind nicht still im Modell",
+              "LK2" not in m.combinations and "LK3" not in m.combinations,
+              str(sorted(m.combinations)))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
-              test_tabellen_erweitert):
+              test_tabellen_erweitert, test_kombinationen_abgezaehlt):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

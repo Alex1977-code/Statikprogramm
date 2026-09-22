@@ -2669,6 +2669,26 @@ werden untersucht und, soweit ihr Behälter zugänglich ist, ausgelesen –
 andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder
 Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 
+**Das Importprotokoll zählt ab, was in der Datei steht** (seit 22.09.2026).
+Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im
+Protokoll — übernommen oder mit Grund nicht übernommen —, gezählt je
+Lastzeile und nicht je Stab („62 Stablasten (Gleichlast) an ihre Staebe
+gehaengt (944 Stabzuordnungen)“ am CBG-Trolley); was die Datei nicht lesbar
+führt, meldet eine Warnung „k von n Stablasten waren nicht zu lesen“. Beim
+Tabellenimport nennt die Schlusszeile „n von m Lastkombinationen“; eine
+Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
+Faktoren aufgelöst, und eine, die sich nicht vollständig auflösen lässt
+(Verweis auf eine Ergebniskombination „EK1“), wird **nicht** angelegt,
+sondern mit Formel und Grund gewarnt — legen Sie sie dann in der
+Kombinationsmaske von Hand an. Die **Einwirkungskategorie** eines
+RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
+belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
+die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
+in der Lastfallmaske. Ein Volumenkörper aus sechs Vierecken wird als
+Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
+die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im
+Schnittstellenhandbuch).
+
 Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
 Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
 zerfällt zunächst in Teile. Unter **Start → Modell prüfen**
