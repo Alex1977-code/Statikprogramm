@@ -1782,6 +1782,60 @@ Eintrag (er zählt auch nicht in `contact_laeufe`). `contact_iterations` nach
 einem Abbruch ist wie bisher nur die Schrittzahl des abgebrochenen Laufs,
 nicht die Summe.
 
+#### 4.0b-1 Gegenprüfung: Bericht, Ketten und Aufträge (22.09.2026)
+
+**Die Rundenbilanz zerlegte die Bündelung im Bericht.** Der Bericht zeigt
+für die Ergebnisse ohne eigene Kontakttabelle jede Kontaktmeldung **einmal**,
+mit der Zahl der Ergebnisse, die sie tragen (`report/html.py`, Warnungsliste
+wächst um höchstens die Zahl der verschiedenen Texte). Gebündelt wird nach
+dem Text. Die Deckelzeile des Kontaktsystems war bis zum Laufbuch ein fester
+Text; mit der Rundenbilanz („ - in 40 Runden: 31 mit …") hat sie je Lauf und
+Lastfall andere Zahlen, und jeder gedeckelte Lauf hätte eine eigene
+Warnzeile bekommen — am Drehlager bis zu 422 × 12. Die Bündelung schneidet
+die Bilanz deshalb ab wie die Laufnummer „(Kontaktlauf n)"; die Zahlen stehen
+je Lauf im Laufbuch. Dabei fiel ein zweiter Fehler auf, der schon mit der
+Laufnummer bestand: ein Ergebnis mit mehreren gedeckelten Läufen trägt
+dieselbe Art mehrmals und wurde **mehrmals** gezählt („12 weitere Ergebnisse"
+für eines). Gezählt werden jetzt Ergebnisse, nicht Zeilen.
+`tests/test_report.py::test_deckelzeilen_mit_rundenbilanz_werden_gebuendelt`:
+drei Ergebnisse mit je zwei gedeckelten Läufen verschiedener Bilanz ergeben
+eine Warnzeile „(3 weitere Ergebnisse …)"; ohne die Änderung waren es sechs
+Zeilen zu je „1 weitere Ergebnisse". Im `contact_log` **eines** Ergebnisses
+steht die Deckelzeile dagegen je gedeckeltem Lauf einmal — wörtlich gleich
+sind zwei Bilanzen selten, und dort gehört die Zahl hin.
+
+**Kette.** Auf dem Kettenweg (`_cases_in_ketten`) trägt jedes Ergebnis
+`res.info["kette"]` = (Nummer der Kette, Zahl der Ketten). Der erste Lastfall
+jeder Kette startet kalt; ohne diese Angabe stünde mitten in der Reihe ein
+`start_angeboten_von = None`, das sich von einem Fehler nicht unterscheiden
+lässt (Vorschlag 5 des Entwurfs, von der Gegenprobe bestätigt).
+
+**Auftrag.** Eine nichtlineare Kombination, die als eigener Auftrag rechnet
+(`use_jobs`, `jobs._job_solve_combination`), baut ihr System neu und beginnt
+kalt; seriell beginnt dieselbe Kombination warm vom Zustand des letzten
+Lastfalls. Bei Reibung hängt der Endzustand vom Weg ab (hergeleitet; wie
+stark sich das zeigt, ist nicht gemessen). Der Auftrag vermerkt es als
+`start_vermerk = "Auftrag ohne Warmstart"`; der Vermerk des Ausfallwegs hat
+Vorrang, weil der auch seriell nie einen Start weiterreicht.
+`tests/test_kontaktzustand.py::test_kette_und_auftrag_stehen_im_ergebnis`
+(ohne Prozesse: `run_jobs` ersetzt, der Auftrag im selben Prozess).
+
+**Bitgleich, unabhängig nachgemessen.** Stand 54b6f9a gegen das Laufbuch
+(72698df), je ein frischer Prozess, `workers = 1`, `solver_threads = 1`:
+Block mit Reibung, derselbe mit `MAX_CYCLES = 1`, Fließen (Newton) mit und
+ohne Deckel 1, Anfangsdehnung, drei Lastfälle warm hintereinander. sha256
+über u, Reaktionen, `solid_res` und Kontaktkräfte sowie sechs
+Kontakt-Kennzahlen: **80 von 80 gleich**. Fließen ohne Deckel: 53 Schritte in
+7 Läufen, mit Deckel 1 sechs Läufe nicht konvergiert und der letzte
+konvergiert — wie oben beschrieben.
+
+**Nicht gebaut** (offen für die nächste Stufe): `res.info["nachweis"]` aus
+Punkt 6 des Entwurfs (mit `vorlauf_ohne_zustandsuebergabe` und den
+gedeckelten Läufen, wie die Gegenprobe es vorschlägt) — die Angaben sind aus
+dem Laufbuch ableitbar, die Zusammenfassung gehört aber zur Kennzeichnung
+(Vorschlag 2) und wird dort entschieden. Ebenso die Einträge der inneren
+Kontaktläufe des Ausfallwegs (siehe „Grenzen").
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf

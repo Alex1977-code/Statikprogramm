@@ -614,6 +614,50 @@ def test_start_beim_einfrieren_und_im_ausfallweg():
           f"{ia.get('start_angeboten_von')} / {ia.get('start_vermerk')}")
 
 
+def test_kette_und_auftrag_stehen_im_ergebnis():
+    """Zwei Wege, auf denen ein Lastfall oder eine Kombination **kalt**
+    beginnt, obwohl seriell ein Warmstart angeboten wuerde (Gegenpruefung
+    22.09.2026, Vorschlag 5 des Entwurfs mit der Gegenprobe): der erste
+    Lastfall jeder Kette, und jede Kombination, die als eigener Auftrag
+    rechnet. Ohne Angabe stuende dort nur "start_angeboten_von: None" -
+    nicht zu unterscheiden von einem Fehler.
+
+    Die Ketten laufen hier nicht in Prozessen: run_jobs wird wie in
+    test_solver_ext ersetzt, geprueft wird das Einsammeln."""
+    from statik3d import jobs
+    import statik3d.parallel as _p
+    m, lf1 = _modell()
+    namen = [lf1, "LF2", "LF3"]
+
+    class _Erg:
+        def __init__(self, result):
+            self.ok, self.result, self.error = True, result, ""
+
+    def run_jobs_stub(jobs_, workers=None, progress=None):
+        return [_Erg({n: solver.Results(name=n, kind="case", model=None)
+                      for n in (j.payload.get("cases") or [])}) for j in jobs_]
+
+    alt_p = _p.run_jobs
+    _p.run_jobs = run_jobs_stub
+    try:
+        out = solver._cases_in_ketten(m, namen, 2, None, None)
+    finally:
+        _p.run_jobs = alt_p
+    ketten = {n: out[n].info.get("kette") for n in namen if n in out}
+    check("jeder Lastfall traegt (Kette, Zahl der Ketten)",
+          len(ketten) == 3 and all(isinstance(k, tuple) and k[1] == 2 for k in ketten.values())
+          and {k[0] for k in ketten.values()} == {1, 2}, str(ketten))
+
+    m.add_combination("K", {lf1: 1.0, "LF2": 0.5}, typ="ULS")
+    ij = jobs._job_solve_combination(m.to_dict(), "K").info
+    check("Kombination als Auftrag: nichts angeboten, mit Vermerk",
+          ij.get("start_angeboten_von") is None and ij.get("start_genutzt") is False
+          and ij.get("start_vermerk") == "Auftrag ohne Warmstart",
+          f"{ij.get('start_angeboten_von')} / {ij.get('start_vermerk')}")
+    check("dieselbe Kombination seriell hat keinen solchen Vermerk",
+          "start_vermerk" not in solver.solve_combination(m, m.combinations["K"]).info)
+
+
 def main():
     for t in (test_sicherung, test_warmstart, test_warmstart_ohne_halt, test_fortschritt_kontakt,
               test_grundlast, test_einfrieren,
@@ -622,7 +666,8 @@ def main():
               test_runden_zaehlen_die_wechselarten,
               test_endzustand_kennung_ist_prozessfest,
               test_start_angeboten_und_genutzt,
-              test_start_beim_einfrieren_und_im_ausfallweg):
+              test_start_beim_einfrieren_und_im_ausfallweg,
+              test_kette_und_auftrag_stehen_im_ergebnis):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

@@ -2349,7 +2349,20 @@ class Report:
                             # Ergebnis, nicht zur Art der Meldung - sonst
                             # zerfiele eine Meldung in bis zu zwoelf Zeilen.
                             art = re.sub(r" \(Kontaktlauf \d+\)$", "", s)
-                            weitere.setdefault(art, []).append(_name)
+                            # Ebenso die Rundenbilanz der Deckelzeile
+                            # (ContactSystem.runden_text, " - in 40 Runden:
+                            # 31 mit ...", seit 22.09.2026): ihre Zahlen sind
+                            # je Lauf und Lastfall andere, und ohne diesen
+                            # Schnitt wuerde aus der einen gebuendelten Zeile
+                            # eine je gedeckeltem Lauf - am Drehlager bis zu
+                            # 422 x 12. Die Zahlen stehen je Lauf im Laufbuch.
+                            art = re.sub(r" - in \d+ Runden?: .*$", "", art)
+                            namen_art = weitere.setdefault(art, [])
+                            # Ein Ergebnis mit mehreren gedeckelten Laeufen
+                            # traegt dieselbe Art mehrmals - gezaehlt werden
+                            # Ergebnisse, nicht Zeilen
+                            if not namen_art or namen_art[-1] != _name:
+                                namen_art.append(_name)
                 nicht_konv = [_name for _name, _res, _kk in rest
                               if _res.info.get("contact_converged") is False]
                 for s, namen in weitere.items():

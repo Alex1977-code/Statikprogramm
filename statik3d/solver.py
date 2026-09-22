@@ -2903,12 +2903,19 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
                 pass
     out: dict = {}
     fehler = []
-    for job, r in zip(jobs, fertig):
+    for i_kette, (job, r) in enumerate(zip(jobs, fertig)):
         if not r.ok:
             fehler.append(f"Kette {job.label}: {r.error}")
             continue
         for n, res in (r.result or {}).items():
             res.model = model
+            # Laufbuch: in welcher Kette (Nummer, Zahl der Ketten) der
+            # Lastfall lief. Der erste jeder Kette startet kalt - ohne diese
+            # Angabe liesse sich ein "start_angeboten_von: None" mitten in der
+            # Reihe nicht von einem Fehler unterscheiden. Reine Buchfuehrung.
+            info = getattr(res, "info", None)
+            if isinstance(info, dict):
+                info["kette"] = (i_kette + 1, len(bloecke))
             out[n] = res
     gerettet = {n: out[n] for n in names if n in out}
     # **Was hier bewusst NICHT steht.** Eine erste Fassung zog die

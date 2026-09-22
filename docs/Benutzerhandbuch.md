@@ -2680,6 +2680,29 @@ Warmstart".
 Oberfläche, Rechenliste und Bericht zeigen das Laufbuch noch nicht; es steht
 im Ergebnis und in der Ergebnisdatei.
 
+#### Deckelzeilen im Bericht, Ketten und Aufträge (Gegenprüfung 22.09.2026)
+
+**Im Bericht bleibt es eine Warnung.** Für die Ergebnisse ohne eigene
+Kontakttabelle fasst der Bericht gleiche Kontaktmeldungen zu einer Zeile
+zusammen, etwa „Kontakt (37 weitere Ergebnisse, z. B. LF12): Kontakt:
+Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen". Die
+Rundenbilanz hinter der Deckelzeile („ - in 40 Runden: …") steht dort nicht —
+ihre Zahlen sind je Lauf verschieden und hätten aus der einen Zeile Hunderte
+gemacht; sie stehen im Laufbuch des Ergebnisses. Die Zahl nennt die
+**Ergebnisse**: ein Lastfall mit mehreren gedeckelten Läufen zählt einmal.
+
+**Kette.** Rechnen die Lastfälle in mehreren Ketten gleichzeitig, steht in
+`res.info["kette"]`, in welcher (etwa `(2, 3)`: zweite von drei). Der erste
+Lastfall jeder Kette beginnt ohne Warmstart — deshalb steht dort
+`start_angeboten_von` leer.
+
+**Kombination als eigener Auftrag.** Wird eine nichtlineare Kombination als
+eigener Auftrag gerechnet (mehrere Arbeiter oder Rechnerfarm), beginnt sie
+ohne Warmstart; seriell beginnt dieselbe Kombination beim Kontaktzustand des
+letzten Lastfalls. Bei Reibung hängt der Endzustand vom Weg ab; wie stark
+sich das im Ergebnis zeigt, ist nicht gemessen. Im Ergebnis steht dann
+`start_vermerk` „Auftrag ohne Warmstart".
+
 ## 7 Import
 
 **Z-Achse nach unten (RFEM).** RFEM legt seine Modelle mit der Z-Achse nach
