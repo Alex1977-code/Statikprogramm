@@ -5148,7 +5148,16 @@ class Model:
             # unteren Zustand an, und die Rechnung setzte still sigma_min = 0
             # (Befunde FE2/FE13); seit efcf3d6 meldet es erst der Nachweis,
             # nach der Rechnung. Hier steht es vorher.
-            for k in dict.fromkeys([f.case_max, f.case_min, *(getattr(f, "folge", None) or [])]):
+            # Geprueft werden nur die Zustaende, die der Nachweis liest: bei
+            # einem Verlauf die Glieder, sonst case_max/case_min. Ein Verlauf
+            # behaelt ein case_max aus der alten Maske (sie uebergab es auch
+            # im Modus Verlauf); die erste Fassung dieser Pruefung meldete
+            # dafuer einen FEHLER, obwohl ec3.fatigue es nie liest - gemessen
+            # am Zugstab-Volumen D = 0,38334 mit und ohne dieses case_max, und
+            # der FEHLER haette CLI und Web-Rechenstart abgewiesen (Mangel 2
+            # der Gegenpruefung, 23.09.2026).
+            zustaende = list(f.folge) if getattr(f, "folge", None) else [f.case_max, f.case_min]
+            for k in dict.fromkeys(zustaende):
                 c = self.combinations.get(k) if k else None
                 if c is not None and k not in self.load_cases and c.ist_umhuellende:
                     msgs.append(

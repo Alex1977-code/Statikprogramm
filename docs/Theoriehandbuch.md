@@ -5076,7 +5076,12 @@ Rechenstelle war behoben, drei Dinge nicht:
   steht in `model.combinations`, der Löser legt aber nur ihre Umhüllende ab
   (`an.envelopes`), nie ein Einzelergebnis. `Model.ermuedungszustaende()`
   nimmt sie aus der Auswahl, `Model.check()` meldet sie als FEHLER, auch als
-  Glied eines Verlaufs.
+  Glied eines Verlaufs. Geprüft werden dabei nur die Zustände, die der
+  Nachweis liest: bei einem Verlauf dessen Glieder, sonst `case_max` und
+  `case_min`. Die erste Fassung prüfte bei einem Verlauf auch ein
+  mitgeführtes `case_max`, das `ec3.fatigue` nie liest (gemessen: D = 0,38334
+  mit und ohne), und ihr FEHLER hätte die CLI (Exit 2) und den Rechenstart
+  über die Web-Schnittstelle abgewiesen.
 * *Der Bericht las den Status aus D allein.* Ein nicht gerechneter Eintrag
   (D = 0) hieß „Nachweis erfüllt“. `FatigueMember`/`FatigueVolumen.status()`
   unterscheidet jetzt vier Fälle: nicht geführt (`fehler`), NICHT erfüllt
@@ -5088,7 +5093,18 @@ Rechenstelle war behoben, drei Dinge nicht:
   und Reservoir ist es nicht gezeigt. Eine unwirksame Last (0 Lastspiele bzw.
   Wiederholungen) fehlt nie in D, auch wenn ihr Ergebnis fehlt — die erste
   Fassung der Kur machte daraus „unvollständig“, eine Gegenprobe im Test hat
-  es gezeigt.
+  es gezeigt. Ist sie die einzige Last eines Stabs oder Volumens, steht er
+  trotzdem als „nicht geführt“ da, mit ihrem fehlenden Ergebnis als Grund
+  (ohne fehlendes Ergebnis: kein Eintrag, „ohne wirksame Ermüdungslast“).
+* *Und die erste Fassung dieser Kur prüfte nur einen Teil der Wege.* Ihre
+  Tests auf „unvollständig“ hielten allein den Volumenkörper mit fehlendem
+  Mindestzustand. Sechs Stellen ließen sich auf die alte bloße Warnung bzw.
+  den alten Stand zurücksetzen, ohne dass eine Prüfung fiel, nämlich die
+  ursprüngliche Fehlerstelle im Stabzweig, das Gesamturteil für Stäbe, beide
+  Verläufe mit fehlendem Glied, die Reihenfolge in `_status` und die Maske
+  (Mutationsproben der Gegenprüfung, von uns wiederholt; dazu zwei eigene für
+  den fehlenden Höchstzustand). `test_unvollstaendig_je_weg` rechnet jetzt
+  jeden der vier Wege an Stab und Volumen neben einer gerechneten Last.
 
 **Die übrigen 31 Befunde sind nicht behoben**, aber aufgeschrieben (mit Datei,
 Zeile und der Gegenprüfung, die sie nicht widerlegen konnte). Darunter: die

@@ -457,8 +457,9 @@ def test_mindestzustand_volumen_und_oder_ek():
     efcf3d6 wurde daraus still sigma_min = 0.
 
     Hier gehalten: der Volumenzweig (fatigue.py, ``case_min`` benannt und
-    nicht gerechnet), die Modellpruefung **vor** der Rechnung und die
-    Auswahl der Zustaende fuer die Maske.
+    nicht gerechnet), die Modellpruefung **vor** der Rechnung - bei einem
+    Verlauf nur fuer dessen Glieder - und die Auswahl der Zustaende samt der
+    Maske selbst.
     """
     # (1) Volumen, Mindestzustand unbekannt
     m = _zugstab_volumen(1000e3, -400e3)
@@ -510,13 +511,55 @@ def test_mindestzustand_volumen_und_oder_ek():
           and "EK_oder" in fm.fehler and fm.util == 0.0,
           repr(getattr(fm, "fehler", None)))
 
-    # (4) Die Maske bietet nur Zustaende mit Einzelergebnis an
+    # (4) Die Maske bietet nur Zustaende mit Einzelergebnis an - geprueft an
+    # der Maske selbst (offscreen, ohne exec). Die erste Fassung pruefte nur
+    # Model.ermuedungszustaende(); die Maske mit ihrer alten Zeile (alle
+    # Lastfaelle + alle Kombinationen) blieb dabei gruen (Mangel 4 der
+    # Gegenpruefung, 23.09.2026, Mutationsprobe M1).
     zust = getattr(m, "ermuedungszustaende", None)
     m.add_combination("EK_summe", {"LF1": 1.0, "LF2": 1.0}, "FAT")
     namen = list(zust()) if callable(zust) else None
     check("Auswahl der Zustaende: Lastfaelle und gewoehnliche Kombinationen, keine oder-EK",
           namen is not None and "EK_oder" not in namen
           and {"LF1", "LF2", "EK_summe"} <= set(namen), str(namen))
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+    from statik3d.gui.dialogs import FatigueLoadDialog
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    maske = FatigueLoadDialog(None, m)
+    oben = [maske.cmax.itemText(i) for i in range(maske.cmax.count())]
+    unten = [maske.cmin.itemText(i) for i in range(maske.cmin.count())]
+    maske.deleteLater()
+    app.processEvents()
+    check("Maske: oberer Zustand ohne oder-EK, mit Lastfaellen und EK_summe",
+          "EK_oder" not in oben and {"LF1", "LF2", "EK_summe"} <= set(oben), str(oben))
+    check("Maske: unterer Zustand ohne oder-EK, Nullzustand zuerst",
+          "EK_oder" not in unten and unten[:1] == ["(Nullzustand)"]
+          and {"LF1", "LF2", "EK_summe"} <= set(unten), str(unten))
+
+    # (5) Ein Verlauf liest nur seine Glieder (fatigue.py: "if folge: ...
+    # continue"). Ein case_max, das eine Verlaufs-Last aus der alten Maske
+    # mitbringt, darf die Pruefung darum nicht melden - ihr FEHLER liess die
+    # CLI mit Exit 2 abbrechen und wies den Web-Rechenstart ab, obwohl die
+    # Rechnung dasselbe D liefert (Mangel 2 der Gegenpruefung, 23.09.2026).
+    m = _zugstab_volumen(1000e3, -400e3)
+    _oder_ek(m)
+    m.fatigue_loads["V"] = FatigueLoad("V", case_max="EK_oder", case_min="EK_oder",
+                                       folge=["LF1", "LF2"], wiederholungen=1e5)
+    zeilen = [z for z in m.check() if "EK_oder" in z]
+    check("Verlauf, oder-EK nur im ungenutzten case_max/case_min: keine Zeile",
+          not zeilen, "; ".join(zeilen)[:90])
+    fv = solver.solve_all(m, design=False, fatigue=True).fatigue.volumen["V1"]
+    m.fatigue_loads["V"].case_max, m.fatigue_loads["V"].case_min = "", None
+    fo = solver.solve_all(m, design=False, fatigue=True).fatigue.volumen["V1"]
+    check("... und die Rechnung liest es nicht: D wie ohne case_max, erfüllt",
+          fv.D == fo.D and fv.D > 0 and fv.status() == "erfüllt" and not fv.warnings,
+          f"D = {fv.D:.5f} / {fo.D:.5f}, {fv.status()}")
+    m.fatigue_loads["V"].folge = ["LF1", "EK_oder", "LF2"]
+    zeilen = [z for z in m.check() if "EK_oder" in z]
+    check("oder-EK als Glied des Verlaufs: FEHLER",
+          any(z.startswith("FEHLER") and "'V'" in z for z in zeilen),
+          "; ".join(zeilen)[:90] or "(keine Zeile)")
 
 
 def test_volumen_ohne_beitrag_und_unvollstaendig():
@@ -565,6 +608,20 @@ def test_volumen_ohne_beitrag_und_unvollstaendig():
     check("Zusammenfassung nennt V1 ohne wirksame Last statt 'keine ... mit Kerbfall'",
           "keine Staebe oder Volumen mit Kerbfall" not in s
           and "keine Stäbe oder Volumen mit Kerbfall" not in s and "V1" in s, s)
+    # Fehlt der einzigen, unwirksamen Last dagegen ein Ergebnis, gibt es einen
+    # Eintrag "nicht geführt" mit diesem Grund (fatigue.py: "if fv.warnings:
+    # fv.fehler = ..."), aber keine fehlende Last. So beschreibt es jetzt das
+    # Benutzerhandbuch; dessen erste Fassung sagte "kein Eintrag" (Mangel 3
+    # der Gegenpruefung, 23.09.2026).
+    m.fatigue_loads.clear()
+    m.fatigue_loads["S"] = FatigueLoad("S", folge=["LF1", "FEHLT", "LF2"], wiederholungen=0.0)
+    an = solver.solve_all(m, design=False, fatigue=True)
+    fv = an.fatigue.volumen.get("V1")
+    check("einzige Last unwirksam und ihr fehlt ein Ergebnis: Eintrag nicht geführt",
+          fv is not None and fv.status() == "nicht geführt" and "FEHLT" in fv.fehler
+          and not fv.fehlende_lasten and not an.fatigue.ohne_wirksame_last,
+          f"{fv.status() if fv else None} {getattr(fv, 'fehler', None)!r} "
+          f"{an.fatigue.ohne_wirksame_last}")
     # (4) zwei Lasten, eine ohne Mindestzustand (oder-EK): gerechnet wird die
     # andere, der Eintrag ist aber unvollstaendig
     m = _zugstab_volumen(1000e3, -400e3)
@@ -608,12 +665,91 @@ def test_volumen_ohne_beitrag_und_unvollstaendig():
           f"{fm.status()} {fm.fehlende_lasten} D = {fm.util:.4f}")
 
 
+def test_unvollstaendig_je_weg():
+    """Befund FE5 an jedem Weg, auf dem eine Last aus D faellt - am Stab und
+    am Volumen (Mangel 1 der Gegenpruefung, 23.09.2026).
+
+    Die ersten Pruefungen auf "unvollständig" hielten nur den Volumenzweig
+    mit zwei Zustaenden und fehlendem Mindestzustand. Die urspruengliche
+    Fehlerstelle des Befunds liegt aber im Stabzweig, und weder dorthin noch
+    zum Verlauf mit Luecke noch zum fehlenden Hoechstzustand fuehrte eine
+    Pruefung: jede dieser Stellen liess sich auf die alte blosse Warnung
+    zuruecksetzen, und beide Suiten blieben bei 77/77 und 120/120
+    (Mutationsproben M5, M7, M10, M12, M13). Der Stab stand dann mit
+    "erfüllt" und ohne fehlende Last da - genau der Befund FE5.
+
+    Hier traegt je eine Last "Gut" bei, und eine zweite, "Schlecht", faellt
+    auf einem von vier Wegen aus. Erwartet: kein fehler, fehlende_lasten
+    ["Schlecht"], Status "unvollständig", D allein aus dem Gerechneten. Ein
+    Verlauf mit Luecke rechnet seine uebrigen Glieder: dort [oben, unten],
+    also dieselbe Spanne wie "Gut" und D = D_gut * (1 + n_schlecht / n_gut).
+    """
+    def stab():
+        m = _stab_oben_unten()
+        m.add_fatigue_load("Gut", "OBEN", "UNTEN", cycles=5e4)        # D = 0,704 < 1
+        return m
+
+    def volumen():
+        m = _zugstab_volumen(1000e3, -400e3)
+        m.add_fatigue_load("Gut", "LF1", "LF2", 1e5)                  # D = 0,383 < 1
+        return m
+
+    faelle = (("Stab", stab, "OBEN", "UNTEN", 5e4, lambda an: an.fatigue.members.get("M1")),
+              ("Volumen", volumen, "LF1", "LF2", 1e5, lambda an: an.fatigue.volumen.get("V1")))
+    for art, bau, oben, unten, n_gut, eintrag in faelle:
+        gut = eintrag(solver.solve_all(bau(), fatigue=True))
+        D_gut = gut.util
+        check(f"{art}: Gegenprobe, 'Gut' allein ist erfüllt",
+              gut.status() == "erfüllt" and 0 < D_gut < 1 and not gut.fehlende_lasten,
+              f"{gut.status()} D = {D_gut:.5f}")
+        n_verlauf = 0.2 * n_gut                                     # D_teil = 1,2 D_gut < 1
+
+        def ek(m):
+            e = m.add_combination("EK_oder", {}, "FAT")
+            e.alternativen = [{oben: 1.0}, {unten: 1.0}]
+
+        wege = (
+            ("Hoechstzustand fehlt", lambda m: m.add_fatigue_load("Schlecht", "FEHLT", unten, n_gut), 1.0),
+            ("Mindestzustand fehlt", lambda m: m.add_fatigue_load("Schlecht", oben, "FEHLT", n_gut), 1.0),
+            ("Mindestzustand oder-EK", lambda m: (ek(m), m.add_fatigue_load("Schlecht", oben, "EK_oder",
+                                                                           n_gut)), 1.0),
+            ("Verlauf mit Luecke", lambda m: m.fatigue_loads.__setitem__(
+                "Schlecht", FatigueLoad("Schlecht", folge=[oben, "FEHLT", unten],
+                                        wiederholungen=n_verlauf)), 1.0 + n_verlauf / n_gut),
+        )
+        for weg, dazu, faktor in wege:
+            m = bau()
+            dazu(m)
+            x = eintrag(solver.solve_all(m, fatigue=True))
+            ok = (x is not None and not x.fehler and x.fehlende_lasten == ["Schlecht"]
+                  and x.status() == "unvollständig"
+                  and abs(x.util - faktor * D_gut) < 1e-9 * D_gut)
+            check(f"{art}, {weg}: unvollständig, fehlt 'Schlecht', D aus dem Gerechneten", ok,
+                  "kein Eintrag" if x is None else
+                  f"{x.status()} {x.fehlende_lasten} {x.fehler!r} D = {x.util:.5f} "
+                  f"(soll {faktor * D_gut:.5f})")
+
+        # Reihenfolge in _status: D > 1 schon aus dem Gerechneten ist "NICHT
+        # erfüllt", auch wenn eine Last fehlt - ihr Summand nach Miner ist
+        # >= 0, sie kann das Urteil nicht umkehren (Mangel 4, Mutation M6:
+        # "unvollständig" vor "NICHT erfüllt" blieb unbemerkt).
+        m = bau()
+        m.fatigue_loads["Gut"].cycles = 20.0 * n_gut                  # D = 20 D_gut > 1
+        m.add_fatigue_load("Schlecht", oben, "FEHLT", n_gut)
+        x = eintrag(solver.solve_all(m, fatigue=True))
+        check(f"{art}: D > 1 und eine Last fehlt -> NICHT erfüllt, nicht unvollständig",
+              x is not None and x.util > 1 and x.fehlende_lasten == ["Schlecht"]
+              and x.status() == "NICHT erfüllt",
+              "kein Eintrag" if x is None else f"{x.status()} D = {x.util:.3f} {x.fehlende_lasten}")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
               test_fehlender_mindestzustand_wird_gemeldet,
               test_mindestzustand_volumen_und_oder_ek,
-              test_volumen_ohne_beitrag_und_unvollstaendig):
+              test_volumen_ohne_beitrag_und_unvollstaendig,
+              test_unvollstaendig_je_weg):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

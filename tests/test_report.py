@@ -703,6 +703,31 @@ def test_ermuedung_nicht_gefuehrt_im_bericht():
           "Die Modellprüfung ergab keine Beanstandungen" not in html
           and re.search(r"FEHLER: Ermüdungslast 'Schlecht'[^<]*EK_oder",
                         _html_text.unescape(html)) is not None, "")
+
+    # (4) Dasselbe am Stab - der ursprünglichen Fehlerstelle des Befunds FE5.
+    # (3) hielt nur den Volumenkörper: das Gesamturteil ohne den Stabteil
+    # („if teil_e“ → „if False“) und der Stabzweig mit der alten bloßen
+    # Warnung blieben bei 120/120 (Mangel 1 der Gegenprüfung, 23.09.2026,
+    # Mutationen M10 und M11). Gegenprobe zuerst: „Gut“ allein ist erfüllt,
+    # sonst sagte das Gesamturteil hier nichts über die fehlende Last.
+    ms = _stab_oben_unten()
+    ms.add_fatigue_load("Gut", "OBEN", "UNTEN", cycles=5e4)
+    html = Report(ms, solver.solve_all(ms, fatigue=True)).html()
+    check("Stab, Gegenprobe: „Gut“ allein → „Alle Nachweise erfüllt.“",
+          "Alle Nachweise erfüllt." in html
+          and _kv_status(html, "Ermüdung Stab M1") == "Nachweis erfüllt",
+          repr(_kv_status(html, "Ermüdung Stab M1")))
+    ek = ms.add_combination("EK_oder", {}, "FAT")
+    ek.alternativen = [{"OBEN": 1.0}, {"UNTEN": 1.0}]
+    ms.add_fatigue_load("Schlecht", "OBEN", "EK_oder", cycles=5e4)
+    html = Report(ms, solver.solve_all(ms, fatigue=True)).html()
+    check("Stab, eine von zwei Lasten fällt aus: nicht „Alle Nachweise erfüllt.“, "
+          "sondern „nicht vollständig geführt“",
+          "Alle Nachweise erfüllt." not in html
+          and "nicht vollständig geführt wurden: 1 Stäbe (Ermüdung)" in html, "")
+    st = _kv_status(html, "Ermüdung Stab M1")
+    check("der Stabeintrag heißt „unvollständig“ und nennt die Last",
+          st is not None and "unvollständig" in st and "Schlecht" in st, repr(st))
     _assert_since(n0)
     return len(RESULTS) - n0
 
