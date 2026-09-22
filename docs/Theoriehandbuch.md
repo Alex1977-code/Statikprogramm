@@ -1927,6 +1927,31 @@ Faktor **3,43** am selben Netz — die Moden sind der ganze Unterschied, nicht
 die Verfeinerung. Zum Vergleich brauchen `pent6` und `pyr5` in derselben
 Prüfung 10 bzw. 6 Elemente in der Länge für ihre gröbste Stufe.
 
+**Der Keil hat seit dem 22.09.2026 ebenfalls innere Moden** (`solid.PENT6_MODEN`):
+die drei Kantenblasen L_a·L_b des Dreiecks — sie geben ihm den quadratischen Anteil
+in der Ebene, die Querverschiebung einer Biegung wächst mit x² — und (1 − t²) für die
+Querdehnung über die Dicke, je für drei Verschiebungen, zusammen zwölf, im Element
+kondensiert wie beim `hex8`. Ihr Gradient wird um den Mittelwert über das Element
+vermindert und mit det J₀/det J · J₀⁻¹ abgebildet; dann ist das Integral der
+Modendehnung null, und der Patch-Test hält für jede Form (1,7·10⁻¹⁶). In Sweep-Netzen
+sind rund 23 % der Elemente Keile. Gemessen am Kragarm-Prüfkörper, jede Zelle in zwei
+Keile geteilt, σ_v an der Nachweisstelle (Soll 355 N/mm²):
+
+| FHG | pent6 ohne Moden | pent6 mit Moden | hex8 am selben Gitter |
+|---|---|---|---|
+| 90 | −150,2 | −50,0 | −9,6 |
+| 405 | −56,6 | −15,2 | +0,8 |
+| 2 295 | −18,1 | −4,1 | +0,2 |
+
+Das Soll des Auftrags — der Keil erreicht 1 N/mm² mit höchstens so vielen
+Freiheitsgraden wie der `hex8` — ist damit **nicht erreicht**; der Keil bleibt rund
+eine Verfeinerungsstufe hinter dem Sechsflächner zurück. Versucht und verworfen: nur
+(1 − t²) (drei Moden) macht σ_xx eher schlechter (−129 / −44 / −12), nur die Blasen
+(neun) endet in σ_xx bei +2,4 statt gegen null; die Projektion der Volumendehnung
+wie beim `hex8` ändert am rechtwinkligen Keil nichts (seine Volumendehnung liegt
+schon im linearen Raum). Mit Fließen rechnet der Keil wie der `hex8` Lobatto-Punkte
+über die Dicke (`solid.pent6_regel_fuer`).
+
 **Nahezu inkompressibel: die Volumendehnung ist linear projiziert (22.09.2026).**
 Bis dahin rechnete der `hex8` die Volumendehnung punktweise an seinen 2 × 2 × 2
 Gaußpunkten. Bei ν = 0,499 blieben so am Kragarm 8 × 2 × 2 noch 80,3 % der Lösung
@@ -1976,6 +2001,40 @@ N/mm² daneben gegen 9,6 bei ν = 0,3; ab 8 × 2 × 4 sind beide unter 2 N/mm²,
 Der lineare Tetraeder fällt bei ν = 0,499 auf 2,1 % (§ 6a). Die knotengemittelte
 Dilatation, die für den `tet4` gebaut wurde, braucht der `hex8` nicht
 (`assemble._dilatationsdaten` filtert ausdrücklich auf `tet4`).
+
+**Verzerrt sperrt er (gemessen 22.09.2026, Auftrag A3).** Nach MacNeal (1987)
+sperrt jedes Viereck mit vier Knoten, das den Patch-Test besteht, unter Biegung,
+sobald es trapezförmig ist — und der `hex8` ist in jeder Ebene ein solches
+Viereck. Am geraden Kragträger von MacNeal/Harder (1985; 6,0 × 0,2 × 0,1,
+E = 10⁷, ν = 0,3, 6 × 1 × 1 Elemente, Endlast 1,0; `tests/messung_macneal.py`),
+Verschiebung gegen den Sollwert:
+
+| | Streckung | Querkraft in der Ebene | aus der Ebene |
+|---|---|---|---|
+| hex8 regelmäßig | 0,988 | 0,983 | 0,976 |
+| hex8 Trapez (45°) | 0,994 | **0,047** | **0,030** |
+| hex8 Parallelogramm (45°) | 0,994 | 0,625 | 0,531 |
+| tet10 regelmäßig / Trapez / Parallelogramm | 0,993 | 0,962 / 0,940 / 0,930 | 0,957 / 0,938 / 0,933 |
+| pent6 regelmäßig (mit Moden) | 0,984 | 0,031 | 0,099 |
+
+Am Kragarm-Prüfkörper (1,0 × 0,1 × 0,2 m, Innenebenen in der Biegeebene um den
+Faktor 0,4 der Zellänge gekippt, die Ebene durch die Nachweisstelle gerade;
+σ_v dort gegen 355 N/mm²):
+
+| FHG | hex8 regelmäßig | hex8 Trapez | hex8 Parallelogramm | tet10 Trapez (FHG) |
+|---|---|---|---|---|
+| 90 / 405 | −9,5 | −169,1 | −169,1 | +1,6 (405) |
+| 405 / 2 295 | +0,8 | −32,8 | −34,8 | +0,6 (2 295) |
+| 2 295 / 15 147 | +0,2 | −12,9 | −11,9 | −0,3 (15 147) |
+
+Der verzerrte `hex8` konvergiert an der Nachweisstelle nur noch mit der
+Elementlänge; die projizierte Volumendehnung (oben) ändert daran nichts (gleiche
+Zahlen auf 0,4 N/mm²). Unsymmetrische (Petrov-Galerkin-)Elemente, die MacNeals Satz
+umgehen, scheiden aus: `ama` rechnet nur symmetrisch. **Folgerung:** der `hex8` ist
+das billigste Element für 1 N/mm² nur, wo der Sweep gute Sechsflächner liefert; an
+verzerrten Stellen ist der `tet10` der robuste Weg (die Löser-Sitzung nimmt eine
+Netzgüte-Schwelle in die Anweisung an den Vernetzer). Der Keil bleibt auch mit
+Moden (oben) unter Biegung schwach, am meisten bei gestreckten Zellen.
 
 **Geprüft ist er seit dem 21.09.2026 wie die übrigen Volumenelemente**
 (`tests/test_elemente_volumen.py`): sechs Starrkörpermoden am **verzerrten**
@@ -4526,6 +4585,61 @@ unbewertet.
 Als zweites Maß steht das **Seitenverhältnis** (kürzeste durch längste Kante)
 zur Verfügung, als drittes die längste Kante als Elementgröße. Alles ist je
 Elementart vektorisiert: 380 000 Tetraeder brauchen rund 1,5 s.
+
+### 6b-2 Elementwahl je Körper: tet10 an den Nachweisstellen (22.09.2026)
+
+**Wo es schwer wird: die Lamé-Hohlkugel.** Der Kragarm ist ein freundlicher Fall — der
+Spannungsverlauf über die Höhe ist linear, und an einem Knoten der Oberkante mitteln
+sich die Fehler der Elemente links und rechts heraus. An der Hohlkugel unter Innendruck
+(a = 0,1 m, b = 0,2 m, Achtel mit Symmetrie; σ_v ∝ 1/r³, auf 355 N/mm² an der
+Innenfläche skaliert; `tests/messung_hohlkugel.py`) steht der steile Verlauf senkrecht
+zur Nachweisfläche, und das Knotenmittel ist dort einseitig. Geglättete Knotenspannung
+an der Innenfläche, Mittel über ihre Eckknoten, Abweichung in N/mm² (22.09.2026):
+
+| | gleichmäßig | radial gestuft r = a + (b − a)(k/n)³ |
+|---|---|---|
+| hex8 171 / 915 / 5 859 FHG | −100 / −51 / −25 | 5 859: −4,2; 11 067: −2,3 |
+| tet4 171 / 915 / 5 859 FHG | −166 / −101 / −55 | |
+| tet10 (Mitten auf der Kugel) 915 / 5 859 / 41 667 FHG | −16 / −7,3 / −2,5 | 5 859 bei Stufung 2: +8,5; bei 3: Elemente umgestülpt (det J < 0, gemeldet) |
+
+Hier konvergiert auch der `hex8` nur mit der Elementlänge, und der `tet10` braucht über
+40 000 Unbekannte für −2,5 N/mm². Eine Flickenanpassung der Spannung (SPR) half an der
+Kugel nicht (schlechter als das Knotenmittel), am Kragarm dagegen beim `tet10` deutlich
+(2 295 FHG: −0,17 statt +4,0 N/mm²). **Folgerung:** an Nachweisstellen mit steilem
+Gradienten senkrecht zur Oberfläche entscheidet die örtliche Verfeinerung (Größenfeld,
+adaptive Schleife § 6c) mehr als die Elementordnung; die Elementwahl unten ist dafür
+eine Hilfe, keine Garantie für 1 N/mm².
+
+Der Wunsch des Anwenders vom 20.09.2026 war ein Element, das erkennt, ob Biegung
+gebraucht wird, und die Rechnung danach richtet. Entschieden ist (22.09.2026):
+**tet10 an den Nachweisstellen, tet4 sonst.** Der Grund steht in den Zahlen des
+Kragarm-Prüfkörpers (σ_v an der Nachweisstelle gegen 355 N/mm², § 5d): der tet4
+liegt bei 90 / 405 / 2 295 Freiheitsgraden um −266 / −166 / −70 N/mm² daneben und
+konvergiert nur mit der Elementlänge, der tet10 um +14 / +4 / +1 bei 405 / 2 295 /
+15 147 und quadratisch. Überall tet10 macht die Matrix aber in jedem Körper größer
+und dichter.
+
+`elementwahl.vorschlag(model, vorlauf)` schlägt je Körper (`Element.group`) die
+Ordnung vor, aus einem Vorlauf mit dem vorhandenen Netz. tet10 bekommt ein Körper,
+wenn (a) an ihm ein Volumennachweis geführt wird und (b) der Vorlauf es verlangt:
+**Biegung** — die Normalspannung in der Hauptrichtung wechselt über den Körper das
+Vorzeichen mit vergleichbarem Betrag, Biegeanteil β = min(σ_max, −σ_min)/max|σ| ≥ 0,3
+(reiner Zug 0, reine Biegung 1; am Kragarm im tet4-Vorlauf 0,85) — **oder** ein
+bezogener Fehler des Zienkiewicz/Zhu-Schätzers ≥ 5 %. Ohne Nachweis bleibt es beim
+tet4: dort zählt die Steifigkeit fürs Ganze, nicht die Spannung auf 1 N/mm². Eine
+Vorgabe am Körper (`Volumenkoerper.ordnung` = 1 oder 2) gewinnt. Das Protokoll nennt
+je Körper Ordnung und Grund („Elementwahl Balken: tet10 - Nachweis und Biegung
+(Biegeanteil 0.85)“).
+
+Geprüft an drei getrennten Körpern in einem Modell (`tests/test_elementwahl.py`):
+Kragarm mit Nachweis → tet10, gezogener Stab mit Nachweis → tet4, Kragarm ohne
+Nachweis → tet4. An den Nachweisstellen liegt die Wahl höchstens 0,14 N/mm² neben
+„überall tet10“, mit 2 835 statt 5 265 Unbekannten. Am Bauteil setzt der Vernetzer die
+Seitenmitten auf die wahre Geometrie; `elementwahl.tet4_zu_tet10` macht es für
+Prüfkörper mit geraden Kanten. An der Grenze zu einem tet4-Körper bindet die
+Assemblierung die Seitenmitten (§ 1.2, Übergang linear/quadratisch). Ob sich das am
+Drehlager in Rechenzeit auszahlt, ist offen — gemessen wird es erst in M1 (Muster
+und Faktor) und M3 (Zeit bis 1 N/mm²).
 
 ## 6c Fehlerschätzer und adaptive Vernetzung (`netzfehler.py`, `adaptiv.py`)
 

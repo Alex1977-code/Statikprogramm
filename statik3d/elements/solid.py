@@ -629,9 +629,96 @@ def pent15_N_dN(r, s, t):
     return N, dN
 
 
-def k_pent6(X, E, nu):
-    """Steifigkeit (18x18) und Volumen des Pent6 (3 Dreieckspunkte x 2 Gauss)."""
-    return _k_iso(pent6_N_dN, _PENT6_GP, _PENT6_W, X, E, nu, "Pent6")
+#: Innere Moden des Keils (Auftrag A6, 22.09.2026): die drei Kantenblasen
+#: L_a L_b des Dreiecks und (1 - t^2), je fuer drei Verschiebungen - zwoelf
+#: innere Freiheitsgrade, im Element kondensiert wie beim hex8. Ohne sie
+#: rechnete der Keil rein isoparametrisch (_k_iso) und war im Kragarm
+#: 56,4 % gegen 95,9 % des hex8 am selben Gitter.
+#:
+#: Die Blasen geben dem Dreieck den quadratischen Anteil in der Ebene (die
+#: Querverschiebung einer Biegung waechst mit x^2), (1 - t^2) die Querdehnung
+#: ueber die Dicke. Ihr Gradient wird um den Mittelwert ueber das Element
+#: vermindert und mit det J0 / det J J0^-1 abgebildet (wie Taylor beim hex8):
+#: dann ist das Integral der Modendehnung null, und der Patch-Test haelt fuer
+#: jede Form. Gemessen 22.09.2026: 6 Nullmoden (regelmaessig und verzerrt,
+#: nu 0,3 und 0,499), Patch-Test 1e-15; Kragarm-Nachweisstelle (Soll 355
+#: N/mm2, sigma_v) 90 / 405 / 2295 FHG: -50,0 / -15,2 / -4,1 statt -150 /
+#: -57 / -18; der hex8 am selben Gitter +0,8 bei 405 FHG. Die Soll-Vorgabe
+#: "hoechstens so viele FHG wie der hex8" erreicht der Keil damit **nicht**.
+#: Auch nur (1 - t^2) (drei Moden) wurde gemessen und schadet eher (sigma_xx -129 /
+#: -44 / -12); nur die Blasen (neun) enden in sigma_xx bei +2,4 statt gegen null.
+PENT6_MODEN = True
+#: Mittelwert der natuerlichen Modengradienten ueber den Keil: die Gradienten
+#: sind in r, s linear und in t linear (die Blasen haengen nicht an t), der
+#: Mittelwert ist also ihr Wert im Schwerpunkt (1/3, 1/3, 0).
+
+
+def _pent6_moden_grad(r, s, t):
+    """Natuerliche Gradienten (4,3) der vier skalaren Keilmoden."""
+    L = (1.0 - r - s, r, s)
+    dL = ((-1.0, -1.0), (1.0, 0.0), (0.0, 1.0))
+    aus = []
+    for a, b in ((0, 1), (1, 2), (2, 0)):
+        aus.append([L[a] * dL[b][0] + L[b] * dL[a][0], L[a] * dL[b][1] + L[b] * dL[a][1], 0.0])
+    aus.append([0.0, 0.0, -2.0 * t])
+    return np.array(aus, float)
+
+
+_PENT6_DM_MITTEL = _pent6_moden_grad(1.0 / 3.0, 1.0 / 3.0, 0.0)
+
+
+def pent6_regel(n_t=2, art="gauss"):
+    """(GP, W) des Keils: drei Dreieckspunkte, ``n_t`` Punkte in t (Gauss oder
+    Gauss-Lobatto, wie hex8_regel)."""
+    if art == "lobatto":
+        tt, wt = _LOBATTO[int(n_t)]
+    else:
+        tt, wt = np.polynomial.legendre.leggauss(int(n_t))
+    GP = np.array([[a, b, c] for a, b in _TRI3_GP for c in tt])
+    W = np.array([w * wc for w in _TRI3_W for wc in wt])
+    return GP, W
+
+
+def _pent6_operator(X, punkte=None, idx=None, knoten=None, moden=None, regel=None):
+    """Der Dehnungsoperator eines Stapels pent6 (X (n,6,3)) - mit den inneren
+    Moden (PENT6_MODEN), an den Integrationspunkten (Vorgabe 3 x 2) oder an
+    ``punkte``."""
+    X = np.asarray(X, float)
+    n = X.shape[0]
+    moden = PENT6_MODEN if moden is None else moden
+    GP, W = (_PENT6_GP, _PENT6_W) if regel is None else regel
+    kn = np.arange(6)[None, :].repeat(n, 0) if knoten is None else np.asarray(knoten)
+    ix = np.arange(n) if idx is None else np.asarray(idx, dtype=np.int64)
+    if punkte is None:
+        pts = np.asarray(GP, float)
+        g, det, _Ba = _iso_an_punkten("pent6", X, pts, idx)
+        w = np.asarray(W, float)[:, None] * det
+    else:
+        pts = np.asarray(punkte, float).reshape(-1, 3)
+        g, det, _Ba = _iso_an_punkten("pent6", X, pts, idx, pruefen=False)
+        w = np.zeros_like(det)
+    Ba = None
+    if moden:
+        _N0, dN0 = pent6_N_dN(1.0 / 3.0, 1.0 / 3.0, 0.0)
+        J0 = np.einsum("ki,nkj->nij", dN0, X)
+        detJ0 = np.linalg.det(J0)
+        Ba = np.empty((len(pts), n, 6, 12))
+        for q, (r, s_, t) in enumerate(pts):
+            _N, dNr = pent6_N_dN(r, s_, t)
+            J = np.einsum("ki,nkj->nij", dNr, X)
+            detJ = np.linalg.det(J)
+            dM = _pent6_moden_grad(r, s_, t) - _PENT6_DM_MITTEL
+            gm = (detJ0 / detJ)[:, None, None] * np.linalg.solve(
+                J0, np.broadcast_to(dM.T, (n, 3, 4))).transpose(0, 2, 1)
+            Ba[q] = _b_stapel(gm)
+    return Dehnungsoperator("pent6", ix, kn, w, g=g, Ba=Ba, xi=pts)
+
+
+def k_pent6(X, E, nu, regel=None):
+    """Steifigkeit (18x18) und Volumen des Pent6 - ueber den Dehnungsoperator,
+    mit den inneren Moden (PENT6_MODEN)."""
+    op = _pent6_operator(np.asarray(X, float)[None], regel=regel)
+    return steifigkeit_aus_operator(op, D_matrix(E, nu))[0], float(op.w.sum())
 
 
 def k_pent15(X, E, nu):
@@ -640,7 +727,7 @@ def k_pent15(X, E, nu):
 
 
 def stress_pent6(X, E, nu, ue, r=1.0 / 3.0, s=1.0 / 3.0, t=0.0):
-    return _stress_iso(pent6_N_dN, X, E, nu, ue, r, s, t)
+    return stress_points("pent6", X, E, nu, ue, punkte=[(r, s, t)])[0]
 
 
 def stress_pent15(X, E, nu, ue, r=1.0 / 3.0, s=1.0 / 3.0, t=0.0):
@@ -1183,7 +1270,15 @@ def stress_points(typ, X, E, nu, ue, punkte=None, alpha=None) -> list:
         return [stress_tet4(X, E, nu, ue)]
     if typ == "tet10":
         return [stress_tet10(X, E, nu, ue, *p) for p in pts]
-    if typ in ("hex20", "pent6", "pent15", "pyr5"):
+    if typ == "pent6":
+        X3 = X[None]
+        ue3 = np.asarray(ue, float).reshape(1, 18)
+        D = D_matrix(E, nu)
+        op = _pent6_operator(X3)
+        al = moden_aus_operator(op, D, ue3) if op.Ba is not None else None
+        aw = _pent6_operator(X3, punkte=pts)
+        return [(dehnung_mit_moden(aw, q, ue3, al) @ D.T)[0] for q in range(aw.P)]
+    if typ in ("hex20", "pent15", "pyr5"):
         fn = _ISO[typ][0]
         return [_stress_iso(fn, X, E, nu, ue, *p) for p in pts]
     if typ != "hex8":
@@ -1433,6 +1528,30 @@ def hex8_regel_fuer(model):
     return hex8_regel(min(n, max(_LOBATTO)), "lobatto")
 
 
+def pent6_regel_fuer(model):
+    """Wie hex8_regel_fuer: mit Fliessen Lobatto in t (die Sweep-Richtung)."""
+    r = hex8_regel_fuer(model)
+    if r is None:
+        return None
+    n = int(getattr(model.plastizitaet, "dicke_punkte", 2) or 2)
+    return pent6_regel(min(n, max(_LOBATTO)), "lobatto")
+
+
+def _operator_pent6(model, typ, idx, aktiv=None) -> list:
+    idx = np.asarray(idx, dtype=np.int64)
+    kn = _elementknoten(model, "pent6", idx)
+    return [_pent6_operator(np.asarray(model.nodes, float)[kn], idx=idx, knoten=kn,
+                            regel=pent6_regel_fuer(model))]
+
+
+def _auswertung_pent6(model, typ, idx, punkte) -> list:
+    idx = np.asarray(idx, dtype=np.int64)
+    kn = _elementknoten(model, "pent6", idx)
+    op = _pent6_operator(np.asarray(model.nodes, float)[kn], punkte=punkte, idx=idx, knoten=kn,
+                         regel=pent6_regel_fuer(model))
+    return [op]
+
+
 def _operator_hex8(model, typ, idx, aktiv=None) -> list:
     idx = np.asarray(idx, dtype=np.int64)
     kn = _elementknoten(model, "hex8", idx)
@@ -1452,9 +1571,11 @@ def _auswertung_hex8(model, typ, idx, punkte) -> list:
 #: Die Auswertung (AUSWERTER) muss dieselbe Gruppierung liefern.
 OPERATOREN: dict = {typ: _operator_iso for typ in _ISO}
 OPERATOREN["hex8"] = _operator_hex8
+OPERATOREN["pent6"] = _operator_pent6
 #: Bauer der Auswertung an beliebigen Punkten: f(model, typ, idx, punkte) -> list
 AUSWERTER: dict = {typ: _auswertung_iso for typ in _ISO}
 AUSWERTER["hex8"] = _auswertung_hex8
+AUSWERTER["pent6"] = _auswertung_pent6
 
 
 #: Je Typ optional f(model, idx, aktiv) -> hashbar: was den Operator ausser

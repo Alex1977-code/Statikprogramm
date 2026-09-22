@@ -236,6 +236,109 @@ class Kragarm:
 
 
 # --------------------------------------------------------------------------
+# Hohlkugel unter Innendruck (Lame, exakt)
+# --------------------------------------------------------------------------
+class Hohlkugel:
+    """Achtel einer Hohlkugel a <= r <= b unter Innendruck p, Symmetrie an
+    x = 0, y = 0, z = 0. Geschlossene Loesung (Lame):
+
+        sigma_rr = p a^3/(b^3 - a^3) (1 - b^3/r^3)
+        sigma_tt = p a^3/(b^3 - a^3) (1 + b^3/(2 r^3))
+        sigma_v  = 3/2 p a^3 b^3 / ((b^3 - a^3) r^3)
+
+    Nachweisstelle ist die Innenflaeche (dort ist sigma_v am groessten, und
+    sie ist glatt). p wird so gewaehlt, dass dort SIGMA_BEZUG steht.
+
+    Netz: die Kugelflaeche des Achtels in drei Vierecksfelder geteilt (je
+    eine Koordinate ist die groesste, "gewuerfelte Kugel"), winkeltreu
+    geteilt, n_t Teile je Feldkante, n_r Lagen radial. Sechsflaechner oder
+    Kuhn-Tetraeder; beim tet10 liegen die Kantenmitten der Kugelflaechen
+    **auf** der Kugel (gekruemmte Elemente).
+    """
+
+    def __init__(self, a=0.1, b=0.2, sigma=SIGMA_BEZUG):
+        self.a, self.b = a, b
+        self.c = a ** 3 / (b ** 3 - a ** 3)
+        self.p = sigma / (1.5 * self.c * b ** 3 / a ** 3)
+        self.sigma = sigma
+
+    def sv(self, r):
+        return 1.5 * self.p * self.c * self.b ** 3 / r ** 3
+
+    def modell(self, typ, n_t, n_r, E=E_ST, nu=NU_ST, stufung=1.0):
+        a, b = self.a, self.b
+        m = Model(f"Hohlkugel_{typ}_{n_t}x{n_r}")
+        m.add_material(Material("S", E=E, nu=nu, rho=0.0))
+        knoten: dict = {}
+
+        def knoten_bei(p):
+            key = tuple(np.round(p, 10))
+            if key not in knoten:
+                knoten[key] = m.add_node(*p)
+            return knoten[key]
+
+        def richtung(feld, i, j):
+            u = np.tan(0.25 * np.pi * i / n_t)
+            v = np.tan(0.25 * np.pi * j / n_t)
+            d = {0: (1.0, u, v), 1: (v, 1.0, u), 2: (u, v, 1.0)}[feld]
+            d = np.array(d)
+            return d / np.linalg.norm(d)
+        mitten = {}
+
+        def mitte(p, q):
+            key = (min(p, q), max(p, q))
+            if key not in mitten:
+                X = 0.5 * (m.nodes[p] + m.nodes[q])
+                ra, rb = np.linalg.norm(m.nodes[p]), np.linalg.norm(m.nodes[q])
+                # Kante auf einer Kugelflaeche: Mitte auf die Kugel
+                if abs(ra - rb) < 1e-12 * b:
+                    X = X / np.linalg.norm(X) * ra
+                mitten[key] = m.add_node(*X)
+            return mitten[key]
+
+        for feld in range(3):
+            for k in range(n_r):
+                for j in range(n_t):
+                    for i in range(n_t):
+                        z = []
+                        for x in range(8):
+                            ii, jj, kk = i + (x & 1), j + ((x >> 1) & 1), k + ((x >> 2) & 1)
+                            r = a + (b - a) * (kk / n_r) ** stufung
+                            z.append(knoten_bei(r * richtung(feld, ii, jj)))
+                        if typ == "hex8":
+                            kn = [z[x] for x in HEX_AUS_ZELLE]
+                            from statik3d.elements import solid as _sl
+                            if _sl.jacobi_volumen("hex8", m.nodes[kn])["V"] < 0:
+                                kn = kn[4:] + kn[:4]
+                            m.add_element("hex8", kn, "S")
+                            continue
+                        for tet in KUHN:
+                            kn = [z[x] for x in tet]
+                            if _tet_volumen(m.nodes[kn]) < 0:
+                                kn[1], kn[2] = kn[2], kn[1]
+                            if typ == "tet10":
+                                kn = kn + [mitte(kn[p], kn[q]) for p, q in TET10_KANTEN]
+                            m.add_element(typ, kn, "S")
+        X = np.asarray(m.nodes, float)
+        tol = 1e-9 * b
+        for n in range(m.nn):
+            dofs = [d for d in range(3) if abs(X[n, d]) < tol]
+            if dofs:
+                m.fix(int(n), dofs)
+        innen = randseiten(m, lambda P: bool(np.all(np.abs(np.linalg.norm(P, axis=1) - a) < 1e-9 * b)))
+        spannung_auf_seiten(m, innen, lambda x: self.p * x / np.linalg.norm(x))
+        return m
+
+    def nachweisknoten(self, m):
+        """Knoten der Innenflaeche (r = a) - Eckknoten der Elemente."""
+        X = np.asarray(m.nodes, float)
+        r = np.linalg.norm(X, axis=1)
+        from statik3d.elements import solid as _sl
+        ecken = {int(n) for e in m.elements for n in e.nodes[:len(_sl.ECKEN_NATUERLICH[e.typ])]}
+        return [n for n in range(m.nn) if abs(r[n] - self.a) < 1e-9 * self.b and n in ecken]
+
+
+# --------------------------------------------------------------------------
 # Loesen und Auswerten
 # --------------------------------------------------------------------------
 def loese(model):

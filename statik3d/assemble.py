@@ -265,6 +265,8 @@ def element_matrix(model: Model, e):
             # die Dicke, solid.hex8_regel_fuer) - sonst rechnete eine
             # Werkstoffgruppe unter acht Elementen mit einer anderen
             return sl.k_hex8(X, mat.E, mat.nu, regel=sl.hex8_regel_fuer(model))[0]
+        if e.typ == "pent6":
+            return sl.k_pent6(X, mat.E, mat.nu, regel=sl.pent6_regel_fuer(model))[0]
         return getattr(sl, "k_" + e.typ)(X, mat.E, mat.nu)[0]
 
     if e.typ in PLANE_TYPES:

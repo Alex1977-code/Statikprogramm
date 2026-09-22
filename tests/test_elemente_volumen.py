@@ -762,6 +762,36 @@ def t_hex8_volumensperre():
     check("hex8 mit projizierter Volumendehnung: genau 6 Nullmoden (nu 0,3 und 0,499, verzerrt)", ok)
 
 
+def t_keil_moden():
+    """A6 (22.09.2026): der Keil traegt zwoelf innere Moden (drei Kantenblasen
+    des Dreiecks und 1 - t^2). Kragarm-Pruefkoerper, jede Zelle in zwei Keile
+    geteilt, sigma_v an der Nachweisstelle (Soll 355 N/mm2): ohne Moden -57,
+    mit -15 N/mm2 bei 405 FHG. Den hex8 (+0,8) erreicht er nicht."""
+    from tests import pruefkoerper as pk
+    kr = pk.Kragarm()
+    werte = {}
+    alt = sl.PENT6_MODEN
+    try:
+        for mod in (False, True):
+            sl.PENT6_MODEN = mod
+            m, _ids = kr.modell("pent6", 8, 2, 4)
+            res, _t = pk.loese(m)
+            werte[mod] = (pk.punktspannung(m, res, kr.punkt())["sv_mittel"] - kr.sigma) / 1e6
+    finally:
+        sl.PENT6_MODEN = alt
+    check("pent6 mit Moden: Nachweisstelle 8x2x4 auf 20 N/mm2 (ohne Moden ueber 40 daneben)",
+          abs(werte[True]) < 20 and abs(werte[False]) > 40,
+          f"mit {werte[True]:+.1f}, ohne {werte[False]:+.1f} N/mm2")
+    rng = np.random.default_rng(41)
+    ok = True
+    for nu in (0.3, 0.499):
+        for _ in range(3):
+            K, _V = sl.k_pent6(verzerrt("pent6", rng, amp=0.12), E_ST, nu)
+            lam = np.linalg.eigvalsh(K)
+            ok = ok and int(np.sum(np.abs(lam) < 1e-9 * lam.max())) == 6
+    check("pent6 mit Moden: genau 6 Nullmoden (verzerrt, nu 0,3 und 0,499)", ok)
+
+
 def t_hex8_stapel():
     """Der Stapel muss Element fuer Element dasselbe rechnen wie die Einzelfassung.
 
@@ -1159,6 +1189,7 @@ def main():
     t_inkompatible_moden()
     t_hex8_nahezu_inkompressibel()
     t_hex8_volumensperre()
+    t_keil_moden()
     t_hex8_stapel()
     print("\n-- Dehnungsoperator -------------------------------------------------------------------")
     t_operator()
