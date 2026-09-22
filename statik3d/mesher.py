@@ -694,6 +694,11 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             # Bloecke zerlegen - gesweepte Bloecke, wo es geht, Tetraeder fuer
             # den Rest, knotenkonform ueber die Schnittflaechen (statik3d.sweep).
             try:
+                # Warum die Erkennung nicht griff - einmal je Koerper, mit
+                # Zahlen. Ohne diese Zeile laesst sich nicht entscheiden,
+                # welche Erweiterung sich lohnt (Nachtrag der Statik3D-Sitzung
+                # vom 22.09.2026, Stufe 2).
+                C.say(log, f"Volumen {koerper.name}: nicht gesweept - {SW.erkennen_warum_nicht(model, koerper)}.")
                 els = SW.zerlegt_vernetzen(model, koerper, h, log, cache, karten, ordnung, fortschritt)
             except Exception as ex:           # noqa: BLE001 - dann der freie Vernetzer fuer das Ganze
                 els = []

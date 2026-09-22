@@ -3507,6 +3507,32 @@ knotenkonform, mit einer anderen Interpolation auf der Vierecksdiagonale. Pyrami
 nächsten Schritte. Reine Quader (sechs Vierecke, acht Knoten) bleiben beim abgebildeten
 Hexaedernetz mit ihrer Teilung; `netz.sweep = False` schaltet den Sweep ab.
 
+**Verjüngter Zug (22.09.2026).** Die Erkennung verlangte, dass der Deckel die um einen
+Vektor **verschobene** Kopie des Grundes ist. Ein Kegelstumpf, eine konische Rippe, eine
+Nabe mit Anzug fielen darum an die Tetraeder. Jetzt genügt eine **Ähnlichkeit**: der
+Deckel ist die um k skalierte, um t verschobene Kopie (`sweep._abbildung_finden`,
+`_abbilden`); die reine Verschiebung ist der Sonderfall k = 1 und läuft Zeichen für
+Zeichen wie bisher. Die Lage k liegt bei s = k/L auf dem Maßstab 1 + (k−1)·s, die
+Mantellinien laufen entsprechend zusammen — die Wandprüfung verlangt darum nicht mehr
+„Vektor parallel zu t", sondern „die Mantellinie verbindet einen Grundknoten mit **seinem
+Bild**". Der Rauminhalt wird als Pyramidenstumpf geprüft, h/3·(A₁ + A₂ + √(A₁A₂)).
+Gemessen (Kegelstumpf l = 200 mm, h = 30 mm):
+
+| r₁ → r₂ | Elemente | Güte min | Rauminhalt |
+|---|---|---|---|
+| 50 → 30 mm | 91 hex8 | 0,307 | 98,4 % des Kegelstumpfs (Kreise als Vielecke) |
+| 50 → 50 mm (Zylinder) | 91 hex8 | 0,309 | 98,4 % |
+| 30 → 60 mm | 91 hex8 + 14 pent6 | 0,306 | 98,4 % |
+
+**Woran die Erkennung sonst scheitert, sagt sie jetzt selbst** (`erkennen_warum_nicht`,
+eine Zeile je Körper im Protokoll): zu wenige Randflächen, keine zwei ebenen Kappen,
+Kappen ohne gemeinsamen Weg, „decken sich weder verschoben (x mm daneben) noch skaliert
+(y mm, Maßstab k)", Wandzahl, Wände nicht aus vier Linien, Mantellinien nicht gerade. Am
+Drehlager sind 68 von 108 Körpern sweepbar, aber sie tragen nur 8,2 % der Elemente — die
+40 übrigen tragen 91,8 %. Welche Erweiterung sich lohnt, entscheidet diese Zeile und nicht
+die Vermutung; dasselbe Vorgehen hat beim Zerlegen und bei den Splittern den Ausschlag
+gegeben.
+
 **Kappen aus mehreren Flächen, Zylinder, Zerlegen an Fußabdrücken (21.09.2026).** Drei
 Erweiterungen, damit der Sweep über Platten hinauskommt:
 

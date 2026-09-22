@@ -751,6 +751,64 @@ def test_keile_am_feinen_rand():
           f"{ohne[False][0]} → {ohne[True][0]} Elemente, Güte {ohne[False][1]:.3f} → {ohne[True][1]:.3f}")
 
 
+def _kegelstumpf(r1=0.05, r2=0.03, l=0.2, h=0.03):
+    """Kegelstumpf aus zwei Kreisen und zwei Halbmantelflächen - ein
+    **verjüngter Zug**: der Deckel ist die skalierte Kopie des Grundes."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    u = _kreis(m, "CU", 0.0, 0.0, 0.0, r1)
+    o = _kreis(m, "CO", 0.0, 0.0, l, r2)
+    m.add_line("CV1", [u[0], o[0]])
+    m.add_line("CV2", [u[1], o[1]])
+    m.add_flaeche("CM1", [u[2], "CV2", o[2], "CV1"], material="S235")
+    m.add_flaeche("CM2", [u[3], "CV1", o[3], "CV2"], material="S235")
+    m.add_flaeche("CBoden", [u[2], u[3]], material="S235")
+    m.add_flaeche("CDeckel", [o[2], o[3]], material="S235")
+    k = m.add_koerper("Kegel", ["CBoden", "CDeckel", "CM1", "CM2"], material="S235")
+    m.netz.ziellaenge = h
+    m.netz.dichte = "eigene"
+    return m, k
+
+
+def test_verjuengter_zug():
+    """Stufe 2 des Nachtrags vom 22.09.2026: die Erkennung verlangte eine
+    **reine Verschiebung**; ein Kegelstumpf, eine konische Rippe, eine Nabe mit
+    Anzug fielen darum an die Tetraeder. Jetzt genügt eine Ähnlichkeit - der
+    Deckel ist die skalierte, verschobene Kopie des Grundes, und die Lagen
+    führen den Maßstab linear mit."""
+    for r1, r2, name in ((0.05, 0.03, "verjüngt"), (0.05, 0.05, "zylindrisch"),
+                         (0.03, 0.06, "geweitet")):
+        m, k = _kegelstumpf(r1, r2)
+        check(f"{name} (r {r1 * 1e3:.0f} → {r2 * 1e3:.0f} mm): sweepbar", sweep.sweepbar(m, k))
+        log = []
+        mesher.modell_vernetzen(m, log, workers=1)
+        typen = _typen(m)
+        check(f"{name}: nur Hexaeder und Keile", set(typen) <= {"hex8", "pent6"} and typen, str(typen))
+        check(f"{name}: kein Element ist umgestülpt", _negativ(m) == 0)
+        V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+        V_soll = np.pi * 0.2 / 3.0 * (r1 ** 2 + r2 ** 2 + r1 * r2)
+        check(f"{name}: Rauminhalt ist der des Kegelstumpfs (Kreise als Vielecke)",
+              0.97 * V_soll <= V <= V_soll, f"{V * 1e6:.0f} von {V_soll * 1e6:.0f} cm³ ({V / V_soll * 100:.1f} %)")
+        bef = diagnose.abnahme(m)
+        check(f"{name}: Abnahme ohne Befund", not bef, str([b.pruefung for b in bef])[:100])
+    # Die Abbildung selbst: Verschiebung ist der Sonderfall k = 1
+    m, k = _kegelstumpf(0.05, 0.03)
+    erk = sweep.erkennen(m, k)
+    c, k_ab, t = sweep.abbildung_von(erk)
+    check("die Abbildung nennt den Maßstab", abs(k_ab - 0.6) < 0.02, f"k = {k_ab:.4f} (Soll 0,600)")
+    check("und die Verschiebung längs der Achse", abs(float(t[2]) - 0.2) < 1e-9 and
+          abs(float(np.linalg.norm(t[:2]))) < 1e-9, f"t = {np.round(t, 4)}")
+    P = np.array([[0.05, 0.0, 0.0], [0.0, 0.05, 0.0]])
+    check("die halbe Lage liegt auf halbem Maßstab",
+          np.allclose(sweep._abbilden(P, (c, k_ab, t), 0.5),
+                      c + (P - c) * (1 + (k_ab - 1) * 0.5) + t * 0.5),
+          "linear in s")
+    m2, k2 = platte_mit_bohrungen(0.4, 0.3, 0.1, bohrungen=((0.2, 0.15, 0.03),))
+    erk2 = sweep.erkennen(m2, k2)
+    check("eine Platte bleibt eine reine Verschiebung (k = 1)",
+          abs(sweep.abbildung_von(erk2)[1] - 1.0) < 1e-9, f"k = {sweep.abbildung_von(erk2)[1]:.6f}")
+
+
 def test_umpaaren_spart_keile():
     """Ein Keil ist kein halber Sechsflächner: der hex8 trägt Biegung über
     inkompatible Moden, der pent6 nicht (Statik3D-Sitzung, 22.09.2026: am
@@ -905,7 +963,7 @@ def main():
               test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
               test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,
               test_pyramiden_als_uebergang, test_zerlegen_sagt_warum_nicht,
-              test_keile_am_feinen_rand, test_umpaaren_spart_keile,
+              test_keile_am_feinen_rand, test_verjuengter_zug, test_umpaaren_spart_keile,
               test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:
