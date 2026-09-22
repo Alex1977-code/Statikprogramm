@@ -678,9 +678,39 @@ class ContactSystem:
                                         ge.mu, ge.node_b, n,
                                         f"Spaltelement {ge.node_a}-{ge.node_b}",
                                         master=([ge.node_a], [1.0])))
+        # Die Namen aller Paare vorab: _fugen_uebermass nennt einen fremden
+        # Eintrag nur dann "zu einer anderen Fuge gehoerig", wenn es diese
+        # Fuge auch gibt.
+        self._paarnamen = {str(cp.name or "") for cp in m.contact_pairs}
         for cp in m.contact_pairs:
             self._build_pair(cp)
+        self._uebermass_ohne_fuge()
         self._build_dof_supports()
+
+    def _uebermass_ohne_fuge(self):
+        """Uebermass-Eintraege, deren Namen kein Kontaktpaar traegt, benennen.
+
+        Sie wirken nirgends. Seit dem 22.09.2026 gilt ein Uebermass nur an der
+        Fuge mit genau seinem Namen; wurde die Fuge umbenannt oder aufgeteilt
+        (RFEM-Import: "<Name> (Typ 3)", "<Name> (Typ 4)"), nannte die Zeile je
+        Teilfuge den Eintrag "zu einer anderen Fuge gehoerig" - eine solche gab
+        es nicht -, und ein Eintrag ohne jede Namensverwandtschaft fiel ganz ohne
+        Zeile weg (Gegenpruefung des Strangs, tests/test_uebermass). Das Wort
+        "zugeordnet" steht mit Absicht nicht darin: der Bericht laesst solche
+        Zeilen aus seinen Warnungen (report/html.py)."""
+        paare = getattr(self, "_paarnamen", set())
+        for k in sorted(self.uebermass):
+            if k in paare:
+                continue
+            teil = sorted(p for p in paare if p.startswith(k))
+            text = (f"Übermaß „{k}“: kein Kontaktpaar trägt genau diesen Namen - "
+                    "das Übermaß wirkt nirgends")
+            if teil:
+                text += (", auch nicht an " + ", ".join(f"„{p}“" for p in teil[:6])
+                         + (" …" if len(teil) > 6 else "")
+                         + " (deren Namen beginnen nur so; eine aufgeteilte Fuge "
+                           "braucht das Übermaß je Teilfuge)")
+            self.log.append(text + ".")
 
     def _build_dof_supports(self):
         """Nichtlineare Lager-FHG (Ausfall bei Zug/Druck, Schlupf, Reibung, Grenzkraft)
@@ -785,7 +815,11 @@ class ContactSystem:
             # nie das gemeinte Paar, sondern ein fremdes - "Deckel" schluege
             # auf "Deckel_2 (Typ 1)" durch, und bei zwei Treffern entschiede
             # die Eingabereihenfolge (gemessen: Faktor 5).
-            fremd = [k for k in self.uebermass if name.startswith(k)]
+            # Nur Eintraege, die eine andere Fuge wirklich traegt; einen, zu
+            # dem es kein Paar gibt, nennt _uebermass_ohne_fuge.
+            paare = getattr(self, "_paarnamen", None)
+            fremd = [k for k in self.uebermass if name.startswith(k)
+                     and (paare is None or k in paare)]
             if fremd:
                 self.log.append(
                     f"Kontaktpaar '{name}': kein eigenes Übermaß eingetragen - die "

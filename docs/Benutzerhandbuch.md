@@ -1187,6 +1187,10 @@ Rechnung mit Fließen, der das Ergebnis nachweislich nicht beeinflusst
 Zwischenlauf als Nachweis taugt, entscheidet der Anwender. **Noch nicht
 angeschlossen**: Zusammenfassung und Bericht zeigen weiter
 `contact_converged`, das über alle Läufe klebt, den Vorlauf eingeschlossen.
+Ebenso die Rechenliste während des Laufs: sie liest die Meldungen, und die
+Deckelmeldung des Vorlaufs ist eine davon. Ist allein der Vorlauf gedeckelt,
+steht dort „nicht konvergiert“, während `zustand_aus_info` „konvergiert“
+sagt - die Abweichung geht zur vorsichtigen Seite.
 
 ### Ergebnisse und Bericht
 
@@ -2433,7 +2437,31 @@ damit die Warnungen des Berichts) sagt es:
 Wer an einer aufgeteilten Fuge Übermaß will, trägt es für jede Teilfuge ein -
 die Maske bietet genau diese Namen an. Ein Modell, das ein Übermaß noch auf
 den Namen vor der Aufteilung führt, rechnet diese Teilfugen jetzt ohne
-Übermaß; die Protokollzeile nennt sie (`tests/test_uebermass.py`).
+Übermaß; die Zeile im nächsten Abschnitt nennt sie (`tests/test_uebermass.py`).
+
+#### Übermaß ohne Fuge dieses Namens (22.09.2026)
+
+Ein Übermaß, dessen Name **keine** Fuge im Netz trägt, wirkt nirgends. Das
+geschieht, wenn die Fuge nach dem Eintragen umbenannt, gelöscht oder
+aufgeteilt wurde. Umbenannt wird auch von selbst: eine automatisch angelegte
+Kontaktbedingung trägt ihre Wirkung im Namen, und wer die Wirkung ändert,
+ändert den Namen mit - das Übermaß behält den alten. Und der RFEM-Import
+macht aus einer Freigabe mit mehreren Freigabetypen „⟨Name⟩ (Typ 3)“,
+„⟨Name⟩ (Typ 4)“; eine Fuge „⟨Name⟩“ gibt es dann nicht mehr. Bis zum 22.09.2026 fiel ein solcher Eintrag ohne
+jede Zeile weg; stand eine Teilfuge mit diesem Namensanfang daneben, nannte
+ihre Zeile den Eintrag „zu einer anderen Fuge gehörig“ - eine solche Fuge
+gab es aber nicht. Jetzt steht im Protokoll (und in den Warnungen des
+Berichts) eine Zeile je Eintrag:
+
+    Übermaß „Achse“: kein Kontaktpaar trägt genau diesen Namen - das Übermaß
+    wirkt nirgends, auch nicht an „Achse (Typ 3)“, „Achse (Typ 4)“ (deren
+    Namen beginnen nur so; eine aufgeteilte Fuge braucht das Übermaß je
+    Teilfuge).
+
+Abhilfe: das Übermaß unter dem heutigen Namen jeder Fuge neu eintragen. Die
+Zeile steht nur, wenn das Modell überhaupt Kontakt rechnet; ein Modell ganz
+ohne Kontaktfuge hat kein Kontaktsystem, das sie schreiben könnte
+(`tests/test_uebermass.py`, `test_uebermass_ohne_fuge_wird_benannt`).
 
 ### Lastgenerierer Wasserdruck (Stahlwasserbau)
 
@@ -2715,6 +2743,22 @@ ohne Wechsel, ist der Lauf konvergiert. Im Protokoll steht dann neben der
 Zeile „Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen“ auch
 „nach dem Deckel der Reibungsnachprüfung wurde ein Schubhalt gelöst - die
 Iteration läuft weiter“ - die Abbruchzeile war dann nicht das Ende des Laufs.
+
+#### Was aus dem Sonderfall folgt: die Schlussprüfungen laufen (22.09.2026)
+
+Ein solcher Lauf gilt nicht nur als konvergiert, er wird auch so behandelt.
+Nach jedem konvergierten Lauf prüft das Programm, ob ein Teil am Ende noch am
+Schubhalt hängt oder an gehaltenen Punkten unter Zug steht - dann bricht es
+mit „kein belastbares Ergebnis“ bzw. „kein statisches Gleichgewicht“ ab -,
+und nach einem Warmstart, ob gleitende Knoten gegen ihre Richtung laufen -
+dann setzt es wenige davon auf Haften zurück und rechnet weiter, bei vielen
+beginnt es von der Geometrie neu. Ein gedeckelter Lauf übersprang diese
+Prüfungen. Im Sonderfall oben kann deshalb seit dem 22.09.2026 ein Abbruch
+oder eine weitere Rechnung stehen, wo vorher ein Ergebnis mit „nicht
+auskonvergiert“ stand; die weitere Rechnung ändert dann auch die Zahlen. (Am
+Block mit Reibung im Test, kalt gestartet, bricht keine der Prüfungen ab:
+21 Schritte, dieselbe Verschiebung wie ohne Deckel,
+`tests/test_kontakthalt.py`.)
 
 ## 7 Import
 

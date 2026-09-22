@@ -497,6 +497,40 @@ def test_deckel_am_tatsaechlichen_austritt():
           next((z for z in log if "Schubhalt" in z), "keine Zeile")[:110])
 
 
+def test_ohne_merker_gilt_die_vorsichtige_probe():
+    """Fehlt ``am_deckel`` - ein Kontaktsystem, dessen ``update()`` ihn nicht
+    setzt -, darf der Loeser das nicht als "nicht am Deckel", also als
+    konvergiert lesen. Die erste Fassung las ``getattr(cs, "am_deckel",
+    False)`` und meldete so einen gedeckelten Lauf als konvergiert
+    (Gegenpruefung des Strangs, 22.09.2026). Jetzt gilt ohne Merker die alte
+    Probe ``phase == 2 and cycles >= MAX_CYCLES``. Block mit Reibung, Deckel
+    1, der Merker nach jedem ``update()`` entfernt."""
+    print("")
+    print("--- Ohne Deckelmerker: die vorsichtige Probe ---")
+    from statik3d import contact as _ct
+    from statik3d.contact import ContactSystem
+    from statik3d.examples_lib import block_friction_example
+
+    alt = (_ct.MAX_CYCLES, ContactSystem.update)
+
+    def update_ohne_merker(self, u):
+        weiter = alt[1](self, u)
+        self.__dict__.pop("am_deckel", None)
+        return weiter
+
+    _ct.MAX_CYCLES = 1
+    ContactSystem.update = update_ohne_merker
+    try:
+        r = solver.solve_static(block_friction_example())
+    finally:
+        _ct.MAX_CYCLES, ContactSystem.update = alt
+    log = r.info.get("contact_log") or []
+    check("der Deckel greift", any("abgebrochen" in z for z in log))
+    check("ohne Merker meldet der Loeser NICHT konvergiert",
+          r.info.get("contact_converged") is False,
+          f"contact_converged = {r.info.get('contact_converged')}")
+
+
 def _mit_einem_teil(name, fn):
     """fn() ausfuehren, waehrend _teile_bedingungen genau ein Teil mit den
     Bedingungen des uebergebenen Systems meldet. So prueft der Test die Auswahl
@@ -594,7 +628,8 @@ def main():
               test_zusatzmatrix_kennt_ihre_belegung,
               test_der_deckel_gilt_nicht_als_konvergenz,
               test_deckel_merker_gilt_fuer_die_letzte_runde,
-              test_deckel_am_tatsaechlichen_austritt):
+              test_deckel_am_tatsaechlichen_austritt,
+              test_ohne_merker_gilt_die_vorsichtige_probe):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

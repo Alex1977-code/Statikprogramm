@@ -413,11 +413,52 @@ def test_mehrdeutiger_praefix_haengt_nicht_an_der_reihenfolge():
           "; ".join(z for z in log if "'Deckel_2'" in z)[:120])
 
 
+def test_uebermass_ohne_fuge_wird_benannt():
+    """Ein Übermaß, dessen Name **keine** Fuge trägt, wirkte nirgends und
+    niemand sagte es.
+
+    Das geschieht, wenn die Fuge nach dem Eintragen umbenannt oder
+    aufgeteilt wurde - der RFEM-Import macht aus einer Freigabe mit zwei
+    Freigabetypen „⟨Name⟩ (Typ 3)“ und „⟨Name⟩ (Typ 4)“. Bis zum 22.09.2026
+    griff dort der Präfixzweig; seit er fehlt, nannte die Zeile je Teilfuge
+    den Eintrag „Achse“ einen, der „zu einer anderen Fuge gehört“ - eine
+    solche Fuge gibt es aber nicht. Und ein Eintrag ohne jede Namens-
+    verwandtschaft („Weg“) fiel ganz ohne Zeile weg (Gegenprüfung des
+    Strangs, 22.09.2026). Jetzt nennt eine Zeile je solchem Eintrag, dass
+    er nirgends wirkt, und die Teilfugen, deren Namen nur so beginnen."""
+    r = solver.solve_static(wuerfelpaare(["Achse (Typ 3)", "Achse (Typ 4)"],
+                                         [("Achse", UEBER), ("Weg", UEBER)]),
+                            case="LF1")
+    soll = UEBER * E_STAHL / (2 * L_WUERFEL) * A_FUGE
+    for i in (0, 1):
+        check(f"Teilfuge {i + 1} ohne eigenes Übermaß bleibt kraftlos",
+              abs(_pressung(r, i)) < 1e-6 * soll, f"{_pressung(r, i):.1f} N")
+    log = r.info.get("contact_log", [])
+    achse = [z for z in log if "„Achse“" in z and "wirkt nirgends" in z]
+    check("das Protokoll nennt „Achse“ als wirkungslos, samt beiden Teilfugen",
+          bool(achse) and "„Achse (Typ 3)“" in achse[0] and "„Achse (Typ 4)“" in achse[0],
+          (achse[0] if achse else "keine Zeile")[:120])
+    weg = [z for z in log if "„Weg“" in z and "wirkt nirgends" in z]
+    check("auch ein Eintrag ohne jede Namensverwandtschaft wird genannt", bool(weg),
+          (weg[0] if weg else "keine Zeile")[:120])
+    falsch = [z for z in log if "„Achse“" in z and "anderen Fuge" in z]
+    check("keine Zeile behauptet eine andere Fuge „Achse“", not falsch,
+          (falsch[0] if falsch else "")[:120])
+    # Der Bericht nimmt contact_log in die Warnungen, ausser Zeilen mit
+    # "zugeordnet" (report/html.py) - die neue Zeile muss durchkommen
+    check("die Zeile kommt in die Warnungen des Berichts",
+          bool(achse) and bool(weg) and not any("zugeordnet" in z for z in achse + weg))
+    r0 = solver.solve_static(wuerfelpaare(["Fuge"], [("Fuge", UEBER)]), case="LF1")
+    check("Gegenprobe: ein genauer Treffer meldet nichts dergleichen",
+          not any("wirkt nirgends" in z for z in r0.info.get("contact_log", [])))
+
+
 def main():
     for f in (test_ebene_fuge, test_kombination_skaliert, test_zylindrische_fuge,
               test_schub_ueber_die_reibung, test_passung_aus_abmassen,
               test_passungsarten, test_datenmodell, test_praefix_ist_keine_zuordnung,
-              test_mehrdeutiger_praefix_haengt_nicht_an_der_reihenfolge):
+              test_mehrdeutiger_praefix_haengt_nicht_an_der_reihenfolge,
+              test_uebermass_ohne_fuge_wird_benannt):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

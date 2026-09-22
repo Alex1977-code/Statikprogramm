@@ -3618,7 +3618,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # endet (cs.am_deckel), nicht an cs.cycles: der Zaehler bleibt
             # nach dem Deckel stehen, und eine spaetere Runde ohne Wechsel
             # meldete sonst ebenfalls den Deckel (22.09.2026).
-            deckel = bool(getattr(cs, "am_deckel", False))
+            # Fehlt der Merker (ein Kontaktsystem, dessen update() ihn nicht
+            # setzt), gilt die alte, vorsichtige Probe: ein fehlender Merker
+            # darf nicht "konvergiert" heissen (Gegenpruefung, 22.09.2026).
+            deckel = bool(getattr(cs, "am_deckel",
+                                  cs.phase == 2 and cs.cycles >= _MAX_CYCLES))
             converged = not deckel
             break
     if converged and u is not None:
