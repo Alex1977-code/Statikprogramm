@@ -3524,6 +3524,36 @@ Gemessen (Kegelstumpf l = 200 mm, h = 30 mm):
 | 50 → 50 mm (Zylinder) | 91 hex8 | 0,309 | 98,4 % |
 | 30 → 60 mm | 91 hex8 + 14 pent6 | 0,306 | 98,4 % |
 
+**Drehkörper (22.09.2026).** Rohrbogen, Ringsegment, Kegelrad-Ausschnitt: ein ebenes
+Profil, um eine Achse gedreht. Grund und Deckel sind eben, aber **nicht parallel** — sie
+stehen um denselben Winkel gegeneinander wie der Körper selbst, und **beide Kappenebenen
+enthalten die Achse**. Daraus folgt sie geschlossen: die Achsrichtung steht auf beiden
+Kappennormalen senkrecht (d = n_A × n_B), der Achspunkt liegt in beiden Ebenen (zwei
+Gleichungen, die dritte ist der Lotpunkt zum Schwerpunktmittel), der Winkel ist der
+zwischen den Normalen im Vorzeichen von d (`sweep._abbildung_drehung`). Die Lage k wird um
+den Anteil k/L des Winkels gedreht und liegt damit **auf dem Bogen**, nicht auf der Sehne.
+
+Die Mantellinien sind hier **Bögen**. Die Wandprüfung verlangt darum nicht mehr „gerade",
+sondern: jeder Punkt der Mantellinie hat denselben Abstand zur Achse und dieselbe Höhe
+längs ihr wie der Grundknoten — das ist der Kreisbogen um sie, ohne Annahme über die
+Abtastung (`sweep._mantel_auf_bahn`). Der Rauminhalt wird nach **Guldin** geprüft:
+Grundfläche mal Weg ihres Schwerpunkts, A · φ · r_s. Gemessen am Ringsegment
+r = 100 … 150 mm, Höhe 50 mm, h = 20 mm:
+
+| Winkel | Elemente | Güte min | Rauminhalt |
+|---|---|---|---|
+| 90° | 36 hex8 + 36 pent6 | 0,641 | 99,5 % des Ringsegments |
+| 45° | 20 hex8 + 20 pent6 | 0,641 | 99,6 % |
+
+**Und ein Fehler, den erst dieser Prüfkörper zeigte.** Ein Ringsegment hat sechs
+Vierseitflächen und acht Eckknoten — dieselbe Zählung wie ein Quader. Der abgebildete
+Quaderpfad (`mesher._hex_netz`) griff ihn deshalb ab und bildete **trilinear zwischen den
+acht Ecken** ab: der 90°-Bogen kam so auf **63,7 %** seines Rauminhalts, ohne eine einzige
+Meldung — Hülle, Randtreue und Formgüte sahen tadellos aus. Genau die Art stillen Fehlers,
+vor der die Statik3D-Sitzung in ihrem Vertrag gewarnt hat. Der Quaderpfad verlangt jetzt
+zusätzlich, dass **alle zwölf Kanten gerade** sind (`mesher._gerade_kanten`); krumme gehen
+an den Sweep, und das Protokoll sagt es.
+
 **Woran die Erkennung sonst scheitert, sagt sie jetzt selbst** (`erkennen_warum_nicht`,
 eine Zeile je Körper im Protokoll): zu wenige Randflächen, keine zwei ebenen Kappen,
 Kappen ohne gemeinsamen Weg, „decken sich weder verschoben (x mm daneben) noch skaliert

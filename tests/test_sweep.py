@@ -794,19 +794,129 @@ def test_verjuengter_zug():
     # Die Abbildung selbst: Verschiebung ist der Sonderfall k = 1
     m, k = _kegelstumpf(0.05, 0.03)
     erk = sweep.erkennen(m, k)
-    c, k_ab, t = sweep.abbildung_von(erk)
-    check("die Abbildung nennt den Maßstab", abs(k_ab - 0.6) < 0.02, f"k = {k_ab:.4f} (Soll 0,600)")
+    art, c, k_ab, t = sweep.abbildung_von(erk)
+    check("die Abbildung ist eine Ähnlichkeit und nennt den Maßstab",
+          art == "v" and abs(k_ab - 0.6) < 0.02, f"{art}, k = {k_ab:.4f} (Soll 0,600)")
     check("und die Verschiebung längs der Achse", abs(float(t[2]) - 0.2) < 1e-9 and
           abs(float(np.linalg.norm(t[:2]))) < 1e-9, f"t = {np.round(t, 4)}")
     P = np.array([[0.05, 0.0, 0.0], [0.0, 0.05, 0.0]])
     check("die halbe Lage liegt auf halbem Maßstab",
-          np.allclose(sweep._abbilden(P, (c, k_ab, t), 0.5),
+          np.allclose(sweep._abbilden(P, ("v", c, k_ab, t), 0.5),
                       c + (P - c) * (1 + (k_ab - 1) * 0.5) + t * 0.5),
           "linear in s")
     m2, k2 = platte_mit_bohrungen(0.4, 0.3, 0.1, bohrungen=((0.2, 0.15, 0.03),))
     erk2 = sweep.erkennen(m2, k2)
     check("eine Platte bleibt eine reine Verschiebung (k = 1)",
-          abs(sweep.abbildung_von(erk2)[1] - 1.0) < 1e-9, f"k = {sweep.abbildung_von(erk2)[1]:.6f}")
+          abs(sweep.massstab_von(sweep.abbildung_von(erk2)) - 1.0) < 1e-9,
+          f"k = {sweep.massstab_von(sweep.abbildung_von(erk2)):.6f}")
+
+
+def _ringsegment(r1=0.10, r2=0.15, hoehe=0.05, winkel=np.pi / 2, h=0.02):
+    """Ringsegment: ein Rechteckprofil, um die z-Achse gedreht - ein
+    **Drehkörper** (Rohrbogen, Ringsegment). Die Mantellinien sind Bögen."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+
+    def dreh(p, w):
+        return (p[0] * np.cos(w) - p[1] * np.sin(w), p[0] * np.sin(w) + p[1] * np.cos(w), p[2])
+    prof = [(r1, 0.0, 0.0), (r2, 0.0, 0.0), (r2, 0.0, hoehe), (r1, 0.0, hoehe)]
+    A = [m.add_node(*p) for p in prof]
+    B = [m.add_node(*dreh(p, winkel)) for p in prof]
+    for i in range(4):
+        j = (i + 1) % 4
+        m.add_line(f"GA{i}", [A[i], A[j]])
+        m.add_line(f"GB{i}", [B[i], B[j]])
+        m.add_line(f"MA{i}", [A[i], B[i]], "arc",
+                   punkte=[prof[i], dreh(prof[i], winkel / 2.0), dreh(prof[i], winkel)])
+    m.add_flaeche("KA", [f"GA{i}" for i in range(4)], material="S235")
+    m.add_flaeche("KB", [f"GB{i}" for i in range(4)], material="S235")
+    namen = []
+    for i in range(4):
+        m.add_flaeche(f"W{i}", [f"GA{i}", f"MA{(i + 1) % 4}", f"GB{i}", f"MA{i}"], material="S235")
+        namen.append(f"W{i}")
+    k = m.add_koerper("Bogen", ["KA", "KB"] + namen, material="S235")
+    m.netz.ziellaenge = h
+    m.netz.dichte = "eigene"
+    return m, k
+
+
+def test_drehkoerper():
+    """Stufe 2 des Nachtrags vom 22.09.2026, zweiter Fall: der **Drehkörper**.
+    Grund und Deckel sind eben, aber nicht parallel - sie stehen um denselben
+    Winkel gegeneinander wie der Körper. Beide Kappenebenen enthalten die
+    Achse, daraus folgt sie; die Lagen werden um den Anteil des Winkels
+    gedreht und liegen damit auf dem Bogen, nicht auf der Sehne."""
+    for grad in (90, 45):
+        m, k = _ringsegment(winkel=np.radians(grad))
+        erk = sweep.erkennen(m, k)
+        check(f"{grad}°: als Drehkörper erkannt", erk is not None and sweep.abbildung_von(erk)[0] == "d",
+              "-" if erk is None else str(sweep.abbildung_von(erk)[0]))
+        if erk is None:
+            continue
+        _tag, a, d, phi = sweep.abbildung_von(erk)
+        check(f"{grad}°: die Achse ist die z-Achse", abs(abs(float(d[2])) - 1.0) < 1e-9
+              and float(np.linalg.norm(a[:2])) < 1e-9, f"d = {np.round(d, 3)}, a = {np.round(a, 4)}")
+        check(f"{grad}°: der Winkel stimmt", abs(abs(np.degrees(phi)) - grad) < 0.5,
+              f"{np.degrees(phi):.2f}°")
+        log = []
+        mesher.modell_vernetzen(m, log, workers=1)
+        typen = _typen(m)
+        check(f"{grad}°: nur Hexaeder und Keile", set(typen) <= {"hex8", "pent6"} and typen, str(typen))
+        check(f"{grad}°: kein Element ist umgestülpt", _negativ(m) == 0)
+        V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+        V_soll = np.radians(grad) / 2.0 * (0.15 ** 2 - 0.10 ** 2) * 0.05
+        check(f"{grad}°: Rauminhalt nach Guldin (Grundfläche mal Weg des Schwerpunkts)",
+              0.98 * V_soll <= V <= V_soll, f"{V * 1e6:.1f} von {V_soll * 1e6:.1f} cm³ ({V / V_soll * 100:.1f} %)")
+        q = netzguete.guete(m)
+        q = q[np.isfinite(q)]
+        check(f"{grad}°: Formgüte über 0,3", float(q.min()) > 0.3, f"min {q.min():.3f}")
+        bef = diagnose.abnahme(m)
+        check(f"{grad}°: Abnahme ohne Befund", not bef, str([b.pruefung for b in bef])[:100])
+    # Die Lagen liegen auf dem Bogen, nicht auf der Sehne
+    m, k = _ringsegment(winkel=np.pi / 2)
+    abb = sweep.abbildung_von(sweep.erkennen(m, k))
+    P = np.array([[0.125, 0.0, 0.0]])
+    halb = sweep._abbilden(P, abb, 0.5)[0]
+    check("die halbe Lage liegt auf dem Bogen (r bleibt 125 mm)",
+          abs(float(np.linalg.norm(halb[:2])) - 0.125) < 1e-9,
+          f"r = {np.linalg.norm(halb[:2]) * 1e3:.4f} mm, Punkt {np.round(halb, 4)}")
+    check("und auf halbem Winkel", abs(np.degrees(np.arctan2(halb[1], halb[0])) - 45.0) < 1e-9,
+          f"{np.degrees(np.arctan2(halb[1], halb[0])):.4f}°")
+
+
+def test_krummer_quader_nicht_abgebildet():
+    """Ein Sechsflächner mit acht Ecken, aber **krummen** Kanten darf nicht in
+    den abgebildeten Quaderpfad: die trilineare Abbildung schneidet jede
+    Rundung ab. Der 90°-Rohrbogen kam so auf 63,7 % seines Rauminhalts - ohne
+    eine Meldung, weil Hülle und Güte tadellos aussehen (22.09.2026)."""
+    m, k = _ringsegment(winkel=np.pi / 2)
+    ringe = [m.flaechen[x].randknoten(m) for x in k.flaechen]
+    knoten = {n for r in ringe for n in r}
+    check("er sieht aus wie ein Quader: sechs Vierecke, acht Ecken",
+          len(k.flaechen) == 6 and len(knoten) == 8 and all(len(r) == 4 for r in ringe),
+          f"{len(k.flaechen)} Flächen, {len(knoten)} Ecken")
+    from statik3d.importers.rfem6_db import _hex_order
+    order = _hex_order(ringe)
+    check("und die Quader-Knotenfolge ließe sich sogar bilden", bool(order))
+    check("aber seine Kanten sind krumm - der Quaderpfad greift nicht",
+          not mesher._gerade_kanten(m, k, order))
+    log = []
+    els = mesher.mesh_koerper(m, k, log=log, h=0.02)
+    typen = {m.elements[e].typ for e in els}
+    check("darum wird er gesweept statt abgebildet", typen <= {"hex8", "pent6"} and typen,
+          str(sorted(typen)))
+    check("und das Protokoll sagt, warum", any("krumme Kanten" in z for z in log),
+          str([z[:110] for z in log if "krumme" in z])[:140])
+    V = sum(solid_volume(m.elements[e].typ, m.nodes[m.elements[e].nodes]) for e in els)
+    V_soll = np.pi / 4.0 * (0.15 ** 2 - 0.10 ** 2) * 0.05
+    check("der Rauminhalt stimmt jetzt (vorher 63,7 %)", V / V_soll > 0.98,
+          f"{V * 1e6:.1f} von {V_soll * 1e6:.1f} cm³ ({V / V_soll * 100:.1f} %)")
+    # Ein gerader Quader bleibt abgebildet
+    m2, k2 = quader()
+    ringe2 = [m2.flaechen[x].randknoten(m2) for x in k2.flaechen]
+    order2 = _hex_order(ringe2)
+    check("ein gerader Quader behält den abgebildeten Pfad",
+          bool(order2) and mesher._gerade_kanten(m2, k2, order2))
 
 
 def test_umpaaren_spart_keile():
@@ -963,7 +1073,8 @@ def main():
               test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
               test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,
               test_pyramiden_als_uebergang, test_zerlegen_sagt_warum_nicht,
-              test_keile_am_feinen_rand, test_verjuengter_zug, test_umpaaren_spart_keile,
+              test_keile_am_feinen_rand, test_verjuengter_zug, test_drehkoerper,
+              test_krummer_quader_nicht_abgebildet, test_umpaaren_spart_keile,
               test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:

@@ -113,18 +113,17 @@ def _schleifenpunkte(model: Model, schleife: list, teilung: int = 24) -> np.ndar
 
 
 def _abbildung_finden(A: np.ndarray, B: np.ndarray, tol: float) -> "tuple | None":
-    """Die Abbildung, die den Aussenrand des Grundes auf den des Deckels legt:
-    ``(Mittelpunkt c, Massstab k, Verschiebung t)`` mit ``B = c + (A - c)*k + t``.
+    """Die Aehnlichkeit, die den Aussenrand des Grundes auf den des Deckels
+    legt: ``("v", Mittelpunkt c, Massstab k, Verschiebung t)`` mit
+    ``B = c + (A - c)*k + t``.
 
     Reine Verschiebung ist der Fall k = 1 - der haeufige, und er wird zuerst
     geprueft. Ein **verjuengter Zug** (Kegelstumpf, konische Rippe, Nabe mit
     Anzug) hat k != 1: der Deckel ist dieselbe Figur, nur kleiner oder
-    groesser. Der Massstab folgt aus den mittleren Abstaenden zum Schwerpunkt,
-    und weil beide Kappen eben und parallel sind, genuegt das - eine Drehung
-    um die Wegachse bliebe unentdeckt, sie kommt aber ohne Drehkoerper nicht
-    vor (dort waeren auch die Waende gewoelbt, und die faengt die Wandpruefung).
-
-    None, wenn keine Aehnlichkeit passt.
+    groesser. Der Massstab folgt aus den mittleren Abstaenden zum Schwerpunkt;
+    weil beide Kappen eben und **parallel** sind, genuegt das. Stehen sie
+    schief zueinander, ist es ein Drehkoerper - siehe
+    :func:`_abbildung_drehung`.
     """
     if len(A) < 3 or len(B) < 3:
         return None
@@ -133,8 +132,84 @@ def _abbildung_finden(A: np.ndarray, B: np.ndarray, tol: float) -> "tuple | None
     rB = float(np.linalg.norm(B - cB, axis=1).mean())
     if rA <= tol:
         return None
-    k = rB / rA
-    return cA, k, cB - cA
+    return ("v", cA, rB / rA, cB - cA)
+
+
+def _abbildung_drehung(A: np.ndarray, B: np.ndarray, nA: np.ndarray, nB: np.ndarray,
+                       tol: float) -> "tuple | None":
+    """Die Drehung, die den Grund auf den Deckel legt:
+    ``("d", Achspunkt a, Achsrichtung d, Winkel phi)``.
+
+    Ein **Drehkoerper** (Revolve) entsteht, indem ein ebenes Profil um eine
+    Achse gedreht wird: Rohrbogen, Ringsegment, Kegelrad-Ausschnitt. Seine
+    beiden Kappen sind eben - aber nicht parallel, sondern um denselben
+    Winkel gegeneinander verdreht wie der Koerper selbst. Beide Kappenebenen
+    **enthalten die Achse**; daraus folgt sie:
+
+    * die Achsrichtung steht auf beiden Kappennormalen senkrecht, also
+      ``d = nA x nB``,
+    * der Achspunkt liegt in beiden Kappenebenen - zwei Gleichungen, die
+      dritte ist die Wahl des Lotpunktes zum Schwerpunktmittel,
+    * der Winkel ist der zwischen den Normalen, im Vorzeichen von d.
+
+    Ist ``nA`` parallel zu ``nB``, gibt es keine Drehung (dann ist es eine
+    Verschiebung oder ein verjuengter Zug). None, wenn keine Drehung passt.
+    """
+    nA = np.asarray(nA, float) / max(float(np.linalg.norm(nA)), 1e-300)
+    nB = np.asarray(nB, float) / max(float(np.linalg.norm(nB)), 1e-300)
+    d = np.cross(nA, nB)
+    ld = float(np.linalg.norm(d))
+    if ld < 1e-9:                            # Kappen parallel - keine Drehung
+        return None
+    d = d / ld
+    cA, cB = A.mean(axis=0), B.mean(axis=0)
+    # Achspunkt: in beiden Kappenebenen, senkrecht unter dem Schwerpunktmittel
+    M = np.vstack([nA, nB, d])
+    rechts = np.array([float(nA @ cA), float(nB @ cB), float(d @ (0.5 * (cA + cB)))])
+    try:
+        a = np.linalg.solve(M, rechts)
+    except np.linalg.LinAlgError:
+        return None
+    # Winkel: die Normalen gegeneinander, im Vorzeichen der Achse
+    phi = float(np.arctan2(ld, float(nA @ nB)))
+    for vorz in (1.0, -1.0):
+        abb = ("d", a, d, vorz * phi)
+        if float(np.linalg.norm(_abbilden(A[:1], abb)[0] - _naechster(B, _abbilden(A[:1], abb)[0]))) <= tol:
+            return abb
+    return ("d", a, d, phi)
+
+
+def _naechster(B: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """Der Punkt aus B, der p am naechsten liegt."""
+    i = int(np.argmin(np.linalg.norm(np.asarray(B, float) - np.asarray(p, float), axis=1)))
+    return np.asarray(B, float)[i]
+
+
+def _drehmatrix(d: np.ndarray, w: float) -> np.ndarray:
+    """Drehmatrix um die Einheitsachse ``d`` mit dem Winkel ``w`` (Rodrigues)."""
+    d = np.asarray(d, float)
+    K = np.array([[0.0, -d[2], d[1]], [d[2], 0.0, -d[0]], [-d[1], d[0], 0.0]])
+    return np.eye(3) + np.sin(w) * K + (1.0 - np.cos(w)) * (K @ K)
+
+
+def _abbilden(P: np.ndarray, abb: tuple, s: float = 1.0) -> np.ndarray:
+    """Die Punkte ``P`` unter der Abbildung, zum Anteil ``s`` des Weges
+    (s = 0 der Grund, s = 1 der Deckel).
+
+    ``("v", c, k, t)``: Massstab und Verschiebung gehen linear mit.
+    ``("d", a, d, phi)``: gedreht wird um den Anteil des Winkels - so liegen
+    die Zwischenlagen auf dem Bogen und nicht auf der Sehne.
+    """
+    P = np.asarray(P, float).reshape(-1, 3)
+    if abb[0] == "d":
+        _tag, a, d, phi = abb
+        R = _drehmatrix(d, float(phi) * float(s))
+        a = np.asarray(a, float)
+        return (P - a) @ R.T + a
+    _tag, c, k, t = abb
+    c = np.asarray(c, float)
+    ks = 1.0 + (float(k) - 1.0) * float(s)
+    return c + (P - c) * ks + np.asarray(t, float) * float(s)
 
 
 def abbildung_von(erk: dict) -> tuple:
@@ -143,16 +218,24 @@ def abbildung_von(erk: dict) -> tuple:
     abb = erk.get("abb")
     if abb is not None:
         return abb
-    t = np.asarray(erk["t"], float)
-    return (np.zeros(3), 1.0, t)
+    return ("v", np.zeros(3), 1.0, np.asarray(erk["t"], float))
 
 
-def _abbilden(P: np.ndarray, abb: tuple, s: float = 1.0) -> np.ndarray:
-    """Die Punkte ``P`` unter der Abbildung, zum Anteil ``s`` des Weges
-    (s = 0 der Grund, s = 1 der Deckel). Der Massstab geht linear mit."""
-    c, k, t = abb
-    ks = 1.0 + (k - 1.0) * float(s)
-    return np.asarray(c, float) + (np.asarray(P, float) - np.asarray(c, float)) * ks + np.asarray(t, float) * float(s)
+def massstab_von(abb: tuple) -> float:
+    """Der Massstab der Abbildung (1 bei Verschiebung und Drehung)."""
+    return float(abb[2]) if abb[0] == "v" else 1.0
+
+
+def richtung_von(P: np.ndarray, abb: tuple) -> np.ndarray:
+    """Die Richtung, in die der Sweep an der Grundflaeche losgeht - der
+    Anfangsvektor der Abbildung. Bei einer Drehung ist das die Tangente, nicht
+    die Sehne: fuer einen Halbkreis waere die Sehne null."""
+    P = np.asarray(P, float).reshape(-1, 3)
+    v = (_abbilden(P, abb, 1e-4) - P).mean(axis=0)
+    ln = float(np.linalg.norm(v))
+    if ln > 0:
+        return v / ln
+    return np.array([0.0, 0.0, 1.0])
 
 
 def _deckungsgleich_abb(A: np.ndarray, B: np.ndarray, abb: tuple, tol: float) -> bool:
@@ -405,10 +488,12 @@ def erkennen_warum_nicht(model: Model, koerper) -> str:
             t = pts_d[0].mean(axis=0) - pts_g[0].mean(axis=0)
             if float(np.linalg.norm(t)) <= tol:
                 continue
-            abb = (pts_g[0].mean(axis=0), 1.0, t)
+            abb = ("v", pts_g[0].mean(axis=0), 1.0, t)
             if not _deckungsgleich_abb(pts_g[0], pts_d[0], abb, tol):
-                abb2 = _abbildung_finden(pts_g[0], pts_d[0], tol)
-                abb = abb2 if abb2 is not None else abb
+                for versuch in _abbildungen(pts_g, pts_d, tol):
+                    abb = versuch
+                    if _deckungsgleich_abb(pts_g[0], pts_d[0], versuch, tol):
+                        break
             frei = list(range(len(schleifen_d)))
             passt = _deckungsgleich_abb(pts_g[0], pts_d[0], abb, tol)
             if passt:
@@ -430,11 +515,11 @@ def erkennen_warum_nicht(model: Model, koerper) -> str:
                     from scipy.spatial import cKDTree
                     d_t = float(cKDTree(pts_d[0]).query(pts_g[0] + t)[0].max())
                     d_a = float(cKDTree(pts_d[0]).query(_abbilden(pts_g[0], abb))[0].max())
+                    art = ("gedreht" if abb[0] == "d" else f"skaliert (Maßstab {abb[2]:.3f})")
                     stufe, text = 2, (f"Kappen {fl_g[0].name} → {fl_d[0].name} decken sich weder "
-                                      f"verschoben ({d_t * 1e3:.1f} mm daneben) noch skaliert "
-                                      f"({d_a * 1e3:.1f} mm, Maßstab {abb[1]:.3f}) bei "
-                                      f"{np.linalg.norm(t) * 1e3:.1f} mm Weg - Drehkörper, verdreht "
-                                      "oder keine Kappen")
+                                      f"verschoben ({d_t * 1e3:.1f} mm daneben) noch {art} "
+                                      f"({d_a * 1e3:.1f} mm) bei {np.linalg.norm(t) * 1e3:.1f} mm "
+                                      "Weg - verdreht, gewölbte Kappe oder keine Kappen")
                 continue
             la = [x for sch in schleifen_g for x in sch]
             lb = [x for sch in schleifen_d for x in sch]
@@ -460,6 +545,29 @@ def erkennen_warum_nicht(model: Model, koerper) -> str:
     return text or "kein Kappenpaar mit einem Weg dazwischen"
 
 
+def _abbildungen(pts_g: list, pts_d: list, tol: float) -> list:
+    """Die Abbildungen, die zwischen Grund und Deckel in Frage kommen -
+    Aehnlichkeit (verjuengter Zug) und Drehung (Drehkoerper), in dieser
+    Reihenfolge."""
+    from .mesher3d import ausgleichsebene
+    aus = []
+    ab = _abbildung_finden(pts_g[0], pts_d[0], tol)
+    if ab is not None:
+        aus.append(ab)
+    try:
+        _c1, _e1, _e2, nA, _a1 = ausgleichsebene(pts_g[0])
+        _c2, _e3, _e4, nB, _a2 = ausgleichsebene(pts_d[0])
+    except Exception:                       # noqa: BLE001
+        return aus
+    dreh = _abbildung_drehung(pts_g[0], pts_d[0], nA, nB, tol)
+    if dreh is not None:
+        aus.append(dreh)
+        aus.append(("d", dreh[1], dreh[2], -float(dreh[3])))
+        aus.append(("d", dreh[1], dreh[2], float(dreh[3]) - 2.0 * np.pi))
+        aus.append(("d", dreh[1], dreh[2], 2.0 * np.pi - float(dreh[3])))
+    return aus
+
+
 def _kappen_pruefen(model: Model, grund: tuple, deckel: tuple, tol: float, namen: dict) -> "dict | None":
     """Ist der Deckel die um t verschobene Kopie des Grundes, Schleife fuer
     Schleife, und sind alle uebrigen Flaechen Waende?"""
@@ -473,10 +581,13 @@ def _kappen_pruefen(model: Model, grund: tuple, deckel: tuple, tol: float, namen
     # Erst die reine Verschiebung (der haeufige Fall), dann die Aehnlichkeit
     # (verjuengter Zug). Beides ueber dieselbe Abbildung, k = 1 ist die
     # Verschiebung - so bleibt der alte Weg Zeichen fuer Zeichen derselbe.
-    abb = (pts_g[0].mean(axis=0), 1.0, t)
+    abb = ("v", pts_g[0].mean(axis=0), 1.0, t)
     if not _deckungsgleich_abb(pts_g[0], pts_d[0], abb, tol):
-        abb = _abbildung_finden(pts_g[0], pts_d[0], tol)
-        if abb is None or not _deckungsgleich_abb(pts_g[0], pts_d[0], abb, tol):
+        for versuch in _abbildungen(pts_g, pts_d, tol):
+            if _deckungsgleich_abb(pts_g[0], pts_d[0], versuch, tol):
+                abb = versuch
+                break
+        else:
             return None
     frei = list(range(len(schleifen_d)))
     for P in pts_g:
@@ -501,12 +612,35 @@ def _kappen_pruefen(model: Model, grund: tuple, deckel: tuple, tol: float, namen
     return erg
 
 
+def _mantel_auf_bahn(model: Model, name: str, unten: int, abb: tuple, tol: float) -> bool:
+    """Laeuft die Mantellinie auf der Bahn der Drehung? Geprueft wird, dass
+    jeder ihrer Punkte denselben Abstand zur Achse und dieselbe Hoehe laengs
+    der Achse hat wie der Grundknoten - das ist der Kreisbogen um sie, ohne
+    Annahme ueber die Abtastung der Linie."""
+    _tag, a, d, _phi = abb
+    a = np.asarray(a, float)
+    d = np.asarray(d, float)
+    try:
+        P = np.asarray(model.lines[name].punkte(model, 12), float).reshape(-1, 3)
+    except Exception:                       # noqa: BLE001
+        return False
+    if len(P) < 3:
+        return False
+    def zylinder(X):
+        rel = np.asarray(X, float).reshape(-1, 3) - a
+        hoehe = rel @ d
+        radius = np.linalg.norm(rel - np.outer(hoehe, d), axis=1)
+        return radius, hoehe
+    r0, h0 = zylinder(model.nodes[[unten]])
+    r, h = zylinder(P)
+    return bool(np.max(np.abs(r - r0[0])) <= tol and np.max(np.abs(h - h0[0])) <= tol)
+
+
 def _waende_pruefen(model: Model, la: list, lb: list, abb: tuple, tol: float, rest: list) -> "dict | None":
     """Jede uebrige Randflaeche muss eine Wand zwischen einer Grundlinie und
     ihrer Deckellinie sein, mit zwei geraden Mantellinien laengs t."""
     if len(la) != len(lb):
         return None
-    t = np.asarray(abb[2], float)
     enden_b = {}
     for name in lb:
         e = _linienenden(model, name)
@@ -559,18 +693,24 @@ def _waende_pruefen(model: Model, la: list, lb: list, abb: tuple, tol: float, re
         if len(grund) != 1 or len(deckel) != 1 or len(senk) != 2 or paare[grund[0]] != deckel[0]:
             return None
         for s_ in senk:
-            # Die Mantellinie ist gerade und verbindet einen Grundknoten mit
-            # **seinem Bild**. Bei reiner Verschiebung ist das der Vektor t;
-            # bei einem verjuengten Zug laufen die Mantellinien zusammen, und
-            # nur das Bild sagt, welcher Knoten zu welchem gehoert.
-            if _gerade(model, s_) is None:
-                return None
+            # Die Mantellinie verbindet einen Grundknoten mit **seinem Bild**.
+            # Bei Verschiebung und verjuengtem Zug ist sie gerade; beim
+            # Drehkoerper ist sie ein **Bogen**, und dann muss ihr ganzer
+            # Verlauf auf der Bahn der Drehung liegen - sonst waere die Wand
+            # nicht die gedrehte Kante.
             e = _linienenden(model, s_)
+            if e is None:
+                return None
             unten = e[0] if e[0] in knoten_a else e[1]
             oben = e[1] if unten == e[0] else e[0]
             if unten not in knoten_a:
                 return None
             if float(np.linalg.norm(_abbilden(model.nodes[[unten]], abb)[0] - model.nodes[oben])) > tol:
+                return None
+            if abb[0] == "d":
+                if not _mantel_auf_bahn(model, s_, unten, abb, tol):
+                    return None
+            elif _gerade(model, s_) is None:
                 return None
             if mantel.get(unten, s_) != s_:
                 return None
@@ -1008,7 +1148,7 @@ def _grundnetz(model: Model, koerper, gruppe: list, teilung, erk: dict, log: lis
         Pf = np.asarray(Pf, float)
         Tf = np.asarray(Tf, int).reshape(-1, 3)
         kf = list(kf) + [None] * (len(Pf) - len(kf))
-        c, e1, e2, nf = _rahmen(Pf, erk["t"])
+        c, e1, e2, nf = _rahmen(Pf, richtung_von(Pf, abbildung_von(erk)))
         P2f = np.stack([(Pf - c) @ e1, (Pf - c) @ e2], axis=1)
         a_, b_, d_ = P2f[Tf[:, 0]], P2f[Tf[:, 1]], P2f[Tf[:, 2]]
         fl2 = (b_[:, 0] - a_[:, 0]) * (d_[:, 1] - a_[:, 1]) - (d_[:, 0] - a_[:, 0]) * (b_[:, 1] - a_[:, 1])
@@ -1061,6 +1201,7 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     from . import mesher3d as M3
     from scipy.spatial import cKDTree
     grund, deckel, t = erk["grund"], erk["deckel"], erk["t"]
+    abb = abbildung_von(erk)
     gruppe = list(erk.get("grund_gruppe") or [grund])
     ringe = [list(r) for r in (erk.get("grund_ringe")
                                or ([list(grund.linien or [])] + [list(loch) for loch in (grund.oeffnungen or [])]))]
@@ -1087,7 +1228,7 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     if basis is None:
         return []
     P, kenn, je_flaeche = basis["P"], basis["kenn"], basis["je_flaeche"]
-    c, e1, e2, n = _rahmen(P, t)
+    c, e1, e2, n = _rahmen(P, richtung_von(P, abb))
     P2 = np.stack([(P - c) @ e1, (P - c) @ e2], axis=1)
     vierecke = np.vstack([jf["vierecke"] for jf in je_flaeche]) if je_flaeche else np.zeros((0, 4), int)
     dreiecke = np.vstack([jf["dreiecke"] for jf in je_flaeche]) if je_flaeche else np.zeros((0, 3), int)
@@ -1133,7 +1274,6 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
         return []
     # ---- Knoten je Lage ---------------------------------------------------
     mat = koerper.material or C.ensure_material(model, log=log)
-    abb = abbildung_von(erk)
     schritt = t / float(L)                   # nur noch fuer die Wandnetze der reinen Verschiebung
     knoten = np.zeros((L + 1, len(P)), int)
     zug_kenn = [[None] * len(P) for _ in range(L + 1)]
@@ -1218,10 +1358,18 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     from .elements.solid import solid_volume
     # Rauminhalt: Grundflaeche mal Hoehe - beim verjuengten Zug der
     # Pyramidenstumpf h/3 * (A1 + A2 + sqrt(A1*A2)) mit A2 = k^2 * A1.
-    k_ab = float(abb[1])
-    hoehe = abs(float(n @ t))
-    V_soll = (A_grund * hoehe if abs(k_ab - 1.0) < 1e-9
-              else hoehe / 3.0 * A_grund * (1.0 + k_ab ** 2 + k_ab))
+    if abb[0] == "d":
+        # Drehkoerper: die Guldinsche Regel - Grundflaeche mal Weg ihres
+        # Schwerpunkts, also A * phi * r_s mit r_s dem Achsabstand.
+        _tag, achse_p, achse_d, phi = abb
+        rel = P.mean(axis=0) - np.asarray(achse_p, float)
+        r_s = float(np.linalg.norm(rel - float(rel @ np.asarray(achse_d, float)) * np.asarray(achse_d, float)))
+        V_soll = A_grund * abs(float(phi)) * r_s
+    else:
+        k_ab = massstab_von(abb)
+        hoehe = abs(float(n @ t))
+        V_soll = (A_grund * hoehe if abs(k_ab - 1.0) < 1e-9
+                  else hoehe / 3.0 * A_grund * (1.0 + k_ab ** 2 + k_ab))
     V_ist = float(sum(solid_volume(model.elements[e].typ, model.nodes[model.elements[e].nodes]) for e in els))
     abw = abs(V_ist - V_soll) / V_soll if V_soll > 0 else 1.0
     # ---- Protokoll --------------------------------------------------------

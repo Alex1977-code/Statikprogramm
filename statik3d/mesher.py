@@ -590,6 +590,19 @@ def _entartet(model, koerper, log, frei, h, cache, ordnung, fortschritt,
     return []
 
 
+def _gerade_kanten(model: Model, koerper, order: list) -> bool:
+    """Sind alle zwoelf Kanten des Sechsflaechners **gerade**? Nur dann bildet
+    die trilineare Abbildung (:func:`_hex_netz`) den Koerper wirklich ab."""
+    kanten = quader_kanten(model, koerper, order)
+    if len(kanten) < 24:                      # je Kante zwei Richtungen
+        return False
+    for name in set(kanten.values()):
+        ln = model.lines.get(name)
+        if ln is None or (ln.typ or "polyline") != "polyline" or len(ln.nodes) != 2:
+            return False
+    return True
+
+
 def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                  h: float = 0.0, cache: dict = None, ordnung: int = 0,
                  fortschritt=None, karten: tuple = None) -> list[int]:
@@ -625,6 +638,17 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     if len(flaechen) == 6 and len(knoten) == 8 and all(len(r) == 4 for r in ringe):
         from .importers.rfem6_db import _hex_order, _hex_volumen
         order = _hex_order(ringe)
+        if order and not _gerade_kanten(model, koerper, order):
+            # Sechs Vierecke mit acht Ecken - aber mit **krummen** Kanten. Der
+            # abgebildete Pfad bildet trilinear zwischen den acht Ecken ab, und
+            # das schneidet jede Rundung ab: ein Rohrbogen von 90 Grad
+            # (Rechteckprofil, um die z-Achse gedreht) kam so auf **63,7 %**
+            # seines Rauminhalts - ohne eine einzige Meldung, weil Huelle und
+            # Guete tadellos aussehen (22.09.2026). Solche Koerper gehoeren dem
+            # Sweep: er dreht die Lagen mit.
+            C.say(log, f"Volumen {koerper.name}: sechs Vierecke mit acht Ecken, aber krumme Kanten - "
+                       "nicht abgebildet (der trilineare Quader schnitte die Rundung ab).")
+            order = None
         if order:
             X_hex = model.nodes[order]
             v_hex = float(_hex_volumen(X_hex))
