@@ -291,10 +291,11 @@ weg. Nachweis `tests/test_passung.py`: Spiel 0,5 mm setzt den Block 0,5 mm
 tiefer bei gleichem Gleichgewicht; eine Grenze bei 70 % der Spitzenkraft
 kappt jede Knotenkraft dort und lässt die Summe gleich der Last; mit einer
 Randreihe haften nur die neun inneren der 25 Knoten, der Schub geht über sie.
-Die zweite Reihe wird an einem Netz aus 3 × 3 Knoten (8 Dreiecke) geprüft:
-eine Reihe sind die acht Randknoten, zwei Reihen nehmen den inneren Knoten
-dazu. Das frühere Prüfnetz aus drei Dreiecken hatte keinen inneren Knoten,
-eine und zwei Reihen ergaben dort dieselben fünf Knoten.
+Die zweite Reihe wird an einem Netz aus 5 × 5 Knoten (32 Dreiecke) geprüft:
+eine Reihe sind die 16 Randknoten, zwei Reihen nehmen den Ring der acht
+Nachbarn dazu, der Mittelknoten bleibt frei. An einem kleineren Netz ließe
+sich die zweite Reihe nicht von „alle Knoten“ unterscheiden: bei 3 × 3 und
+4 × 4 Knoten ist sie schon das ganze Innere.
 
 **Halt für Teile ohne geschlossene Bedingung** (17.09.2026): verliert ein
 Teil in der Kontakt-Iteration alle Bedingungen, ist das Gleichungssystem

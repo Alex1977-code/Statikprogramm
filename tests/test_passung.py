@@ -144,32 +144,50 @@ def test_fuge_passungsdaten():
 
 
 def test_passungsdaten_reihen():
-    """Zwei Reihen Randabminderung nehmen den inneren Knoten dazu.
+    """Zwei Reihen Randabminderung nehmen den Ring der Nachbarn dazu, nicht mehr.
 
-    Das Pruefnetz braucht einen Knoten, der NICHT am Rand liegt. Am frueheren
-    Netz aus drei Dreiecken [0,1,2], [1,3,2], [2,3,4] war jeder Knoten
-    Randknoten: eine und zwei Reihen ergaben beide [0, 1, 2, 3, 4], und die
-    Zusicherung hielt auch, wenn _passungsdaten reihen gar nicht weiterreichte
-    (Befund SV1, 22.09.2026). Hier 3 x 3 Knoten, 8 Dreiecke, Knoten 4 innen:
+    Das Pruefnetz braucht Knoten, die auch die zweite Reihe NICHT erreicht.
+    Am frueheren Netz aus drei Dreiecken [0,1,2], [1,3,2], [2,3,4] war jeder
+    Knoten Randknoten: eine und zwei Reihen ergaben beide [0, 1, 2, 3, 4]
+    (Befund SV1, 22.09.2026). Am danach gewaehlten Netz aus 3 x 3 Knoten war
+    die zweite Reihe schon das ganze Innere (nur Knoten 4, gemessen 9 von 9
+    Knoten; bei 4 x 4 ebenso 16 von 16): eine Attrappe, die bei zwei Reihen
+    alle Knoten liefert, bestand beide Pruefungen (Gegenpruefung
+    22.09.2026, gemessen). Eine solche Fuge glitte ganz
+    reibungsfrei, weil jeder Randknoten mu = 0 bekommt (contact.py,
+    Randabminderung). Hier 5 x 5 Knoten, 32 Dreiecke: eine Reihe = 16
+    Randknoten, zwei Reihen = dazu der Ring der acht Nachbarn (24), der
+    Mittelknoten 12 bleibt frei:
 
-        6 - 7 - 8
-        3 - 4 - 5
-        0 - 1 - 2
+        20 - 21 - 22 - 23 - 24
+        15 - 16 - 17 - 18 - 19
+        10 - 11 - 12 - 13 - 14
+         5 -  6 -  7 -  8 -  9
+         0 -  1 -  2 -  3 -  4
+
+    Die Diagonalen laufen von links unten nach rechts oben; Knoten 12 ist
+    ueber keine Kante mit dem Rand verbunden.
     """
     from statik3d.fugen import _passungsdaten
+    n = 5                                     # Knoten je Seite
     seite = []
-    for i0 in (0, 1, 3, 4):                   # linke untere Ecke je Viereck
-        a, b, c, d = i0, i0 + 1, i0 + 4, i0 + 3
-        seite += [(0, [a, b, c], None), (0, [a, c, d], None)]
+    for z in range(n - 1):
+        for s in range(n - 1):
+            a = z * n + s                     # linke untere Ecke des Vierecks
+            b, c, d = a + 1, a + n + 1, a + n
+            seite += [(0, [a, b, c], None), (0, [a, c, d], None)]
     paare = {i: 0 for i in range(len(seite))}
     fl = np.full(len(seite), 0.5)
     _kf, r1 = _passungsdaten(seite, paare, fl, 1)
     _kf, r2 = _passungsdaten(seite, paare, fl, 2)
-    rand = {0, 1, 2, 3, 5, 6, 7, 8}
-    check("_passungsdaten: eine Reihe = die acht Randknoten, der innere Knoten 4 fehlt",
-          r1 == rand, str(sorted(r1)))
-    check("_passungsdaten: zwei Reihen nehmen den inneren Knoten 4 dazu",
-          r2 == rand | {4} and r2 != r1, f"eine Reihe {sorted(r1)} / zwei Reihen {sorted(r2)}")
+    rand = {z * n + s for z in range(n) for s in range(n) if z in (0, n - 1) or s in (0, n - 1)}
+    ring = {6, 7, 8, 11, 13, 16, 17, 18}
+    check("_passungsdaten: eine Reihe = die 16 Randknoten, der Ring und die Mitte fehlen",
+          len(seite) == 32 and r1 == rand and len(r1) == 16, f"{len(r1)} Knoten {sorted(r1)}")
+    check("_passungsdaten: zwei Reihen nehmen den Ring der acht Nachbarn dazu, die Mitte 12 nicht",
+          r2 == rand | ring and 12 not in r2,
+          f"eine Reihe {len(r1)}, zwei Reihen {len(r2)} Knoten: dazu {sorted(r2 - r1)}, "
+          f"ohne {sorted(set(range(n * n)) - r2)}")
 
 
 def main():
