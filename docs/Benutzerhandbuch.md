@@ -2759,6 +2759,97 @@ auskonvergiert“ stand; die weitere Rechnung ändert dann auch die Zahlen. (Am
 Block mit Reibung im Test, kalt gestartet, bricht keine der Prüfungen ab:
 21 Schritte, dieselbe Verschiebung wie ohne Deckel,
 `tests/test_kontakthalt.py`.)
+### Laufbuch: jeder Kontaktlauf einzeln (seit 22.09.2026)
+
+Mit Fließen rechnet ein Lastfall viele Kontaktläufe — einen Vorlauf, je
+Laststufe einen, je Newton-Schritt einen und einen Abschluss (am Drehlager
+zwölf). Bisher standen im Ergebnis nur Summen. Jetzt hat jeder Lauf einen
+eigenen Eintrag in `res.info["laeufe"]`, in der Reihenfolge der Rechnung und
+nie zusammengefasst. An der Rechnung ändert das nichts: gemessen an 13
+Rechnungen mit Reibung sind Verschiebungen, Auflagerkräfte, Spannungen und
+Kontaktkräfte vorher und nachher bitgleich.
+
+Was ein Eintrag sagt:
+
+* **Art und Nummer**: `nr`, `art` (`Lastfall`, `Vorlauf`, `Laststufe`,
+  `Newton`, `Fliessschritt`, `Abschluss`), bei Fließen dazu `stufe` und
+  `schritt`.
+* **Ob er konvergiert ist, und wenn nicht, warum**: `konvergiert` und
+  `grund` — leer, oder `deckel` (die Nachprüfung der Reibung hat nach 40
+  Runden aufgegeben), `max_iter` (Schrittgrenze), `probelauf`, `abbruch`
+  (kein Gleichgewicht). `eingefroren` heißt: kein eigener Lauf, sondern der
+  eingefrorene Kontaktzustand der Referenz — gemeldet wird er wie bisher als
+  konvergiert.
+* **Womit er begann**: `warm` (aus einem gesicherten Kontaktzustand),
+  `neustart` (Warmstart verworfen oder korrigiert), `start_von_lauf` (der Lauf,
+  dessen Zustand der Start war; 0 = der Start, den der Lastfall mitbekam;
+  leer = von der Geometrie).
+* **Was er kostete**: `schritte`, `faktorisierungen`.
+* **Wo er endete**: `phase`, `n_aktiv`, `n_gleitet`, `u_max` (größte
+  Knotenverschiebung in m) und `endzustand_kennung` — 16 Zeichen, die für
+  denselben Kontaktzustand in jeder Rechnung gleich sind. Zwei Läufe mit
+  verschiedener Kennung endeten in verschiedenen Zuständen (Aktivmenge,
+  Haften/Gleiten, Fließen). Gleiche Kennung heißt **nicht** gleiche Kräfte:
+  Normalkräfte und Gleitrichtungen stehen nicht darin.
+* **Was in jeder Runde wechselte**: `runden`, je Kontaktschritt eine Zeile
+  mit den Zahlen der Wechsel — Öffnen und Schließen (getrennt nach
+  Reibstelle und reibungsfreier Fuge), neues Gleiten, Gleiten eines gerade
+  wieder geschlossenen Knotens, Fließwechsel, Einfrieren — und dazu Anteil,
+  Gütemaß und Zahl der haftenden Knoten. Die Spaltennamen stehen in
+  `statik3d.contact.RUNDEN_FELDER`.
+
+Die bekannten Angaben „Kontakt-Iterationen … in n Läufen" und „letzter Lauf
+konvergiert" werden jetzt aus dem Laufbuch abgeleitet.
+
+**Die Deckelzeile nennt die Wechselarten.** Gibt die Nachprüfung der Reibung
+auf, steht im Kontaktprotokoll jetzt auch, was die gezählten Runden gefüllt
+hat, etwa:
+
+```
+Kontakt: Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen - in 40 Runden:
+31 mit Öffnen/Schließen reibungsfreier Bedingungen (212 Wechsel), 12 mit neuem Gleiten (340 Knoten)
+```
+
+(eine Zeile; die Zahlen zeigen die Form, am Drehlager sind sie noch nicht
+gemessen). Überwiegen Öffnen und Schließen in Fugen, liegt es nicht an der
+Reibung; überwiegt neues Gleiten, an ihr.
+
+**Woher der Warmstart kam.** `res.info["start_angeboten_von"]` nennt, welcher
+Kontaktzustand dem Lastfall als Start angeboten wurde („Lastfall LF1",
+„Kombination K1", „System ‹Situation›", leer = keiner), und
+`res.info["start_genutzt"]`, ob er ihn wirklich übernommen hat. Beides steht
+getrennt, weil ein angebotener Start verworfen werden kann (umgekehrte Last)
+und ein eingefrorener Zustand ihn gar nicht braucht. Nach einem eingefrorenen
+Zustand startet der nächste Lastfall vom Zustand **davor** — das steht dann
+auch so da. Modelle mit Zug- oder Druckstäben (Ausfall) und Kontakt rechnen
+jeden Lastfall von der Geometrie; dort steht `start_vermerk` „Ausfallweg ohne
+Warmstart".
+
+Oberfläche, Rechenliste und Bericht zeigen das Laufbuch noch nicht; es steht
+im Ergebnis und in der Ergebnisdatei.
+
+#### Deckelzeilen im Bericht, Ketten und Aufträge (Gegenprüfung 22.09.2026)
+
+**Im Bericht bleibt es eine Warnung.** Für die Ergebnisse ohne eigene
+Kontakttabelle fasst der Bericht gleiche Kontaktmeldungen zu einer Zeile
+zusammen, etwa „Kontakt (37 weitere Ergebnisse, z. B. LF12): Kontakt:
+Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen". Die
+Rundenbilanz hinter der Deckelzeile („ - in 40 Runden: …") steht dort nicht —
+ihre Zahlen sind je Lauf verschieden und hätten aus der einen Zeile Hunderte
+gemacht; sie stehen im Laufbuch des Ergebnisses. Die Zahl nennt die
+**Ergebnisse**: ein Lastfall mit mehreren gedeckelten Läufen zählt einmal.
+
+**Kette.** Rechnen die Lastfälle in mehreren Ketten gleichzeitig, steht in
+`res.info["kette"]`, in welcher (etwa `(2, 3)`: zweite von drei). Der erste
+Lastfall jeder Kette beginnt ohne Warmstart — deshalb steht dort
+`start_angeboten_von` leer.
+
+**Kombination als eigener Auftrag.** Wird eine nichtlineare Kombination als
+eigener Auftrag gerechnet (mehrere Arbeiter oder Rechnerfarm), beginnt sie
+ohne Warmstart; seriell beginnt dieselbe Kombination beim Kontaktzustand des
+letzten Lastfalls. Bei Reibung hängt der Endzustand vom Weg ab; wie stark
+sich das im Ergebnis zeigt, ist nicht gemessen. Im Ergebnis steht dann
+`start_vermerk` „Auftrag ohne Warmstart".
 
 ## 7 Import
 

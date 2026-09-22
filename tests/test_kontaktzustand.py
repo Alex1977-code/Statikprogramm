@@ -377,11 +377,297 @@ def test_gleitanteil_passt_sich_dem_guetemass_an():
           f"{cs.gleit_anteil:g} >= {contact.GLEIT_ANTEIL_MIN:g}")
 
 
+def _runde(cs, u):
+    """Eine Runde am Stumpf: (changed, Eintrag als dict nach RUNDEN_FELDER)."""
+    changed = cs._update_states(u)
+    return changed, dict(zip(contact.RUNDEN_FELDER, cs.runden[-1]))
+
+
+def test_runden_zaehlen_die_wechselarten():
+    """Je Runde ein Zahlentupel mit den Wechselarten (Buchfuehrung, 22.09.2026).
+
+    Der Deckel MAX_CYCLES zaehlt jede Runde mit irgendeinem Wechsel. Welche
+    Art die 40 Runden am Drehlager fuellt - Oeffnen/Schliessen in Fugen, neues
+    Gleiten, Fliessen -, stand nirgends. Gezaehlt werden **Ereignisse**: ein
+    wieder geschlossener Reibknoten traegt Fn = 0 aus der offenen Runde und
+    geht in derselben Runde ins Gleiten - das ist ein Schliessen **und** ein
+    Gleiten nach Wiederschliessen, kein echter Kegelverstoss. Ein
+    Oeffnungsversuch einer einfrierenden Bedingung aendert active nicht - er
+    ist nur ein Einfrieren. Der Stumpf kennt kein __init__ (object.__new__):
+    die Ablage muss trotzdem entstehen, sonst brechen die Stumpftests."""
+    from statik3d.contact import Constraint
+    cs, u = _haftende_ueber_kegel(n=40)
+    check("der Stumpf hat keine Rundenablage (wie aus object.__new__)",
+          not hasattr(cs, "runden"))
+    changed, r = _runde(cs, u)
+    check("erste Runde: Ablage angelegt, ein Eintrag", len(cs.runden) == 1, str(len(cs.runden)))
+    check("40 Verstoesse bei 40 haftenden, Anteil 0,1: 4 echte neue Gleiter",
+          r["verstoesse"] == 40 and r["H"] == 40 and r["gleiten_neu"] == 4
+          and abs(r["a"] - contact.GLEIT_ANTEIL) < 1e-15 and r["bedingungen"] == 4,
+          f"Verstoesse {r['verstoesse']}, H {r['H']}, neu {r['gleiten_neu']}, a {r['a']:g}")
+    check("sonst kein Ereignis, Phase 2, und die Runde meldet einen Wechsel",
+          changed and sum(r[k] for k in contact.RUNDEN_EREIGNISSE) == 4 and r["phase"] == 2,
+          str({k: r[k] for k in contact.RUNDEN_EREIGNISSE if r[k]}))
+
+    # Zweite Runde, von Hand gestellt: Bedingung 0 war offen und schliesst
+    # (Fn = 0 -> Grenze 0 -> Verhaeltnis unendlich, ganz vorn), Bedingung 1
+    # oeffnet, Bedingung 2 hat schon achtmal gewechselt und friert beim
+    # Oeffnungsversuch ein, dazu eine reibungsfreie Bedingung, die schliesst.
+    frei = Constraint(kind="surface", dofs=np.array([120, 121, 122]), cn=np.array([0.0, 0.0, 1.0]),
+                      ct=None, g0=0.0, kn=1.0e9, kt=1.0e9, mu=0.0, node=40,
+                      normal=np.array([0.0, 0.0, 1.0]), label="Glatt:40")
+    cs.cons.append(frei)
+    u2 = np.concatenate([u.copy(), [0.0, 0.0, -1.0e-6]])
+    c0, c1, c2 = cs.cons[0], cs.cons[1], cs.cons[2]
+    c0.active, c0.slip = False, False
+    c2.toggles = 8
+    u2[3 * 1 + 2] = +1.0e-6            # Bedingung 1 hebt ab: Zug 1000 N > f_tol
+    u2[3 * 2 + 2] = +1.0e-6            # Bedingung 2 wollte auch abheben
+    changed, r = _runde(cs, u2)
+    check("Schliessen an der Reibstelle und reibungsfrei getrennt",
+          r["schliessen_reib"] == 1 and r["schliessen_frei"] == 1,
+          f"reib {r['schliessen_reib']}, frei {r['schliessen_frei']}")
+    check("Oeffnen: nur Bedingung 1 - Bedingung 2 friert ein und bleibt zu",
+          r["oeffnen_reib"] == 1 and r["oeffnen_frei"] == 0 and r["eingefroren_neu"] == 1
+          and c2.active and c2.frozen and not c1.active,
+          f"oeffnen {r['oeffnen_reib']}, eingefroren {r['eingefroren_neu']}")
+    check("der wieder geschlossene Reibknoten gleitet - als Gleiten nach Wiederschliessen, "
+          "nicht als Kegelverstoss",
+          c0.slip and r["gleiten_nach_schliessen"] == 1,
+          f"nach Schliessen {r['gleiten_nach_schliessen']}, neu {r['gleiten_neu']}")
+    n_ereignisse = sum(r[k] for k in contact.RUNDEN_EREIGNISSE)
+    check("Ereignisse und verschiedene Bedingungen werden getrennt gezaehlt",
+          n_ereignisse > r["bedingungen"] >= 1,
+          f"{n_ereignisse} Ereignisse an {r['bedingungen']} Bedingungen")
+    check("eine Runde mit Ereignis ist genau eine, die einen Wechsel meldet",
+          changed and n_ereignisse > 0)
+    # Dritte Runde ohne Aenderung: kein Ereignis, kein Wechsel
+    for c in cs.cons:
+        c.frozen = True                 # nichts darf mehr oeffnen oder schliessen
+        if c.ct is not None:
+            c.slip = True               # und nichts mehr ins Gleiten gehen
+            c.slip_dir = np.array([1.0, 0.0])
+    changed, r = _runde(cs, u2)
+    check("eine Runde ohne Wechsel hat kein Ereignis",
+          not changed and sum(r[k] for k in contact.RUNDEN_EREIGNISSE) == 0,
+          str({k: r[k] for k in contact.RUNDEN_EREIGNISSE if r[k]}))
+    check("je Aufruf genau ein Eintrag", len(cs.runden) == 3, str(len(cs.runden)))
+
+    # Ein gebautes System beginnt leer; initialize und zustand_setzen fangen neu an
+    m, _lf1 = _modell()
+    system = solver.StaticSystem(m)
+    echt = ContactSystem(m, system.K, [])
+    check("ein gebautes System beginnt mit leerer Ablage", echt.runden == [])
+    echt.initialize()
+    z = echt.zustand()
+    leer = (2,) + (0,) * (len(contact.RUNDEN_FELDER) - 1)
+    echt.runden.append(leer)
+    echt.initialize()
+    check("initialize() leert die Ablage", echt.runden == [])
+    echt.runden.append(leer)
+    check("zustand_setzen() leert sie ebenso", echt.zustand_setzen(z) and echt.runden == [])
+
+
+def _handzustand():
+    """Fuenf Bedingungen, Bits von Hand gesetzt - fuer die Kennung."""
+    cs, _u = _haftende_ueber_kegel(n=5)
+    for c, (a, s, y, h) in zip(cs.cons, ((1, 0, 0, 0), (1, 1, 0, 0), (0, 0, 0, 1),
+                                         (1, 0, 1, 0), (1, 1, 0, 0))):
+        c.active, c.slip, c.yielding, c.schub_halt = bool(a), bool(s), bool(y), bool(h)
+    cs.phase = 2
+    return cs
+
+
+#: Die Kennung von _handzustand, einmal gerechnet (22.09.2026). Sie haengt an
+#: hashlib, nicht am je Prozess gesaeten hash() - jeder Testlauf ist ein neuer
+#: Prozess, und sie muss trotzdem stimmen.
+HANDZUSTAND_KENNUNG = "acf4eadff1c4a21d"
+
+
+def test_endzustand_kennung_ist_prozessfest():
+    """Die Kennung des Endzustands eines Kontaktlaufs muss sich zwischen zwei
+    Rechnungen, Prozessen und Tagen vergleichen lassen. ``signatur()`` kann das
+    nicht: sie hasht mit dem eingebauten hash(), und der ist je Prozess anders
+    gesaet (PYTHONHASHSEED). Gegenprobe im selben Test: ein gekipptes Bit
+    aendert die Kennung, eine andere Normalkraft nicht (Fn und Gleitrichtung
+    stehen nur im Lastvektor Fc)."""
+    cs = _handzustand()
+    k = cs.endzustand_kennung()
+    check("fester Wert fuer den handgesetzten Zustand (prozessfest)",
+          k == HANDZUSTAND_KENNUNG, f"{k} gegen {HANDZUSTAND_KENNUNG}")
+    check("16 Hexziffern", len(k) == 16 and all(ch in "0123456789abcdef" for ch in k), k)
+    for name, feld in (("aktiv", "active"), ("gleitet", "slip"), ("fliesst", "yielding"),
+                       ("Schubhalt", "schub_halt")):
+        cs2 = _handzustand()
+        setattr(cs2.cons[0], feld, not getattr(cs2.cons[0], feld))
+        check(f"ein gekipptes Bit '{name}' aendert die Kennung", cs2.endzustand_kennung() != k)
+    cs3 = _handzustand()
+    cs3.phase = 1
+    check("eine andere Phase aendert die Kennung", cs3.endzustand_kennung() != k)
+    cs4 = _handzustand()
+    cs4.cons[1].Fn = 12345.0
+    cs4.cons[1].slip_dir = np.array([0.0, 1.0])
+    check("Normalkraft und Gleitrichtung stehen nicht darin", cs4.endzustand_kennung() == k)
+    # Ueber Prozesse: dieselbe Kennung unter zwei verschiedenen Hash-Saatwerten
+    import subprocess
+    wurzel = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    code = ("import sys; sys.path.insert(0, %r); import tests.test_kontaktzustand as t; "
+            "print(t._handzustand().endzustand_kennung())" % wurzel)
+    kennungen = set()
+    for saat in ("1", "4711"):
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                             env=dict(os.environ, PYTHONHASHSEED=saat), timeout=300)
+        zeilen = out.stdout.strip().splitlines()
+        kennungen.add(zeilen[-1] if zeilen else "Fehler: " + out.stderr[-160:])
+    check("zwei Prozesse mit verschiedenem Hash-Saatwert: dieselbe Kennung",
+          kennungen == {k}, str(kennungen))
+
+
+def test_start_angeboten_und_genutzt():
+    """Woher der Warmstart eines Lastfalls kam - angeboten und genutzt
+    getrennt (22.09.2026). Angeboten ist nicht genutzt: der Warmstart kann
+    verworfen werden (umgekehrte Last)."""
+    m, lf1 = _modell()
+    reihe = solver.solve_cases(m, [lf1, "LF2", "LF3"])
+    i1, i2, i3 = reihe[lf1].info, reihe["LF2"].info, reihe["LF3"].info
+    check("der erste Lastfall: nichts angeboten, nichts genutzt",
+          i1.get("start_angeboten_von") is None and i1.get("start_genutzt") is False,
+          f"{i1.get('start_angeboten_von')} / {i1.get('start_genutzt')}")
+    check("LF2 vom Zustand von LF1, genutzt",
+          i2.get("start_angeboten_von") == f"Lastfall {lf1}" and i2.get("start_genutzt") is True,
+          f"{i2.get('start_angeboten_von')} / {i2.get('start_genutzt')}")
+    check("LF3 vom Zustand von LF2, genutzt",
+          i3.get("start_angeboten_von") == "Lastfall LF2" and i3.get("start_genutzt") is True,
+          f"{i3.get('start_angeboten_von')} / {i3.get('start_genutzt')}")
+    check("im Laufbuch: der angebotene Start heisst Quelle 0, kalt heisst None",
+          i2["laeufe"][0]["start_von_lauf"] == 0 and i2["laeufe"][0]["warm"]
+          and i1["laeufe"][0]["start_von_lauf"] is None,
+          f"{i2['laeufe'][0]['start_von_lauf']} / {i1['laeufe'][0]['start_von_lauf']}")
+    # Umgekehrte Last: angeboten, aber verworfen
+    m.add_load_case("LF4", "Q")
+    for nl in m.load_cases[lf1].nodal_loads:
+        m.load_node(nl.node, Fx=-nl.F[0], Fy=nl.F[1], Fz=nl.F[2])
+    i4 = solver.solve_cases(m, [lf1, "LF4"])["LF4"].info
+    check("umgekehrte Last: angeboten von LF1, aber nicht genutzt (verworfen, Neustart)",
+          i4.get("start_angeboten_von") == f"Lastfall {lf1}" and i4.get("start_genutzt") is False
+          and i4["laeufe"][0]["neustart"] and not i4["laeufe"][0]["warm"],
+          f"{i4.get('start_angeboten_von')} / {i4.get('start_genutzt')} / "
+          f"Neustart {i4['laeufe'][0]['neustart']}")
+    # Kombination: vom Zustand, den das System vom letzten Lastfall haelt
+    m.add_combination("K", {lf1: 1.0, "LF2": 0.0}, typ="ULS")
+    systeme = {}
+    solver.solve_cases(m, [lf1], systeme=systeme)
+    ik = solver.solve_combinations(m, ["K"], use_jobs=False, systeme=systeme)["K"].info
+    check("Kombination: angeboten vom Lastfall, dessen Zustand das System haelt",
+          ik.get("start_angeboten_von") == f"Lastfall {lf1}" and ik.get("start_genutzt") is True,
+          f"{ik.get('start_angeboten_von')} / {ik.get('start_genutzt')}")
+
+
+def test_start_beim_einfrieren_und_im_ausfallweg():
+    """Eingefroren: der Start wird angeboten, aber nicht genutzt, und der
+    Lauf heisst im Laufbuch 'eingefroren'. Der naechste Lastfall startet vom
+    Zustand **vor** dem eingefrorenen - der hinterlaesst keinen. Im
+    Ausfallweg (Zugstab mit Kontakt) wird nie ein Start weitergereicht, das
+    steht als Vermerk da."""
+    from statik3d.model import FatigueLoad, Section
+    m = examples_lib.build_example("friction")
+    lf1 = list(m.load_cases)[0]
+    lasten = [(nl.node, list(nl.F)) for nl in m.load_cases[lf1].nodal_loads]
+    m.load_cases[lf1].nodal_loads.clear()
+    for n, F in lasten:
+        m.load_node(n, Fz=F[2])
+    m.load_cases[lf1].grundlast = True
+    for name, f in (("H1", 1.0), ("H2", 1.1)):
+        m.add_load_case(name, "Q")
+        for n, F in lasten:
+            m.load_node(n, Fx=F[0] * f)
+    m.fatigue_loads["E"] = FatigueLoad("E", folge=["H1", "H2"], wiederholungen=1e5)
+    an = solver.solve_all(m, combinations=False, envelopes=False, fatigue=True)
+    h2, g = an.cases["H2"].info, an.cases[lf1].info
+    check("H2 eingefroren: angeboten von H1, nicht genutzt, im Laufbuch 'eingefroren'",
+          h2.get("contact_frozen") and h2.get("start_angeboten_von") == "Lastfall H1"
+          and h2.get("start_genutzt") is False and h2["laeufe"][0]["grund"] == "eingefroren",
+          f"{h2.get('start_angeboten_von')} / {h2.get('start_genutzt')} / {h2['laeufe'][0]['grund']}")
+    check("der Lastfall nach dem eingefrorenen startet vom Zustand davor (H1)",
+          g.get("start_angeboten_von") == "Lastfall H1", str(g.get("start_angeboten_von")))
+
+    m2 = examples_lib.build_example("friction")
+    lf = list(m2.load_cases)[0]
+    m2.add_load_case("LF2", "Q")
+    for nl in m2.load_cases[lf].nodal_loads:
+        m2.load_node(nl.node, Fx=nl.F[0] * 1.1, Fy=nl.F[1], Fz=nl.F[2])
+    ecke = max(range(m2.nn), key=lambda k: tuple(m2.nodes[k][[2, 0, 1]]))
+    oben = m2.add_node(float(m2.nodes[ecke][0]), float(m2.nodes[ecke][1]),
+                       float(m2.nodes[ecke][2]) + 1.0)
+    m2.fix(oben, "all")
+    m2.add_section(Section.rectangle("Z", 0.01, 0.01))
+    e = m2.add_element("truss", [ecke, oben], "S235", "Z")
+    m2.elements[e].nur = "zug"
+    check("Pruefmodell: Kontakt und ein Zugstab (Ausfallweg)",
+          m2.has_contact and m2.hat_ausfallstaebe())
+    ia = solver.solve_cases(m2, [lf, "LF2"])["LF2"].info
+    check("Ausfallweg: nichts angeboten, mit Vermerk, und der Lauf ist kalt",
+          ia.get("start_angeboten_von") is None and ia.get("start_genutzt") is False
+          and ia.get("start_vermerk") == "Ausfallweg ohne Warmstart"
+          and bool(ia.get("laeufe")) and not ia["laeufe"][0]["warm"]
+          and ia["laeufe"][0]["start_von_lauf"] is None,
+          f"{ia.get('start_angeboten_von')} / {ia.get('start_vermerk')}")
+
+
+def test_kette_und_auftrag_stehen_im_ergebnis():
+    """Zwei Wege, auf denen ein Lastfall oder eine Kombination **kalt**
+    beginnt, obwohl seriell ein Warmstart angeboten wuerde (Gegenpruefung
+    22.09.2026, Vorschlag 5 des Entwurfs mit der Gegenprobe): der erste
+    Lastfall jeder Kette, und jede Kombination, die als eigener Auftrag
+    rechnet. Ohne Angabe stuende dort nur "start_angeboten_von: None" -
+    nicht zu unterscheiden von einem Fehler.
+
+    Die Ketten laufen hier nicht in Prozessen: run_jobs wird wie in
+    test_solver_ext ersetzt, geprueft wird das Einsammeln."""
+    from statik3d import jobs
+    import statik3d.parallel as _p
+    m, lf1 = _modell()
+    namen = [lf1, "LF2", "LF3"]
+
+    class _Erg:
+        def __init__(self, result):
+            self.ok, self.result, self.error = True, result, ""
+
+    def run_jobs_stub(jobs_, workers=None, progress=None):
+        return [_Erg({n: solver.Results(name=n, kind="case", model=None)
+                      for n in (j.payload.get("cases") or [])}) for j in jobs_]
+
+    alt_p = _p.run_jobs
+    _p.run_jobs = run_jobs_stub
+    try:
+        out = solver._cases_in_ketten(m, namen, 2, None, None)
+    finally:
+        _p.run_jobs = alt_p
+    ketten = {n: out[n].info.get("kette") for n in namen if n in out}
+    check("jeder Lastfall traegt (Kette, Zahl der Ketten)",
+          len(ketten) == 3 and all(isinstance(k, tuple) and k[1] == 2 for k in ketten.values())
+          and {k[0] for k in ketten.values()} == {1, 2}, str(ketten))
+
+    m.add_combination("K", {lf1: 1.0, "LF2": 0.5}, typ="ULS")
+    ij = jobs._job_solve_combination(m.to_dict(), "K").info
+    check("Kombination als Auftrag: nichts angeboten, mit Vermerk",
+          ij.get("start_angeboten_von") is None and ij.get("start_genutzt") is False
+          and ij.get("start_vermerk") == "Auftrag ohne Warmstart",
+          f"{ij.get('start_angeboten_von')} / {ij.get('start_vermerk')}")
+    check("dieselbe Kombination seriell hat keinen solchen Vermerk",
+          "start_vermerk" not in solver.solve_combination(m, m.combinations["K"]).info)
+
+
 def main():
     for t in (test_sicherung, test_warmstart, test_warmstart_ohne_halt, test_fortschritt_kontakt,
               test_grundlast, test_einfrieren,
               test_phase2_loest_mehrere_haftende_auf_einmal,
-              test_gleitanteil_passt_sich_dem_guetemass_an):
+              test_gleitanteil_passt_sich_dem_guetemass_an,
+              test_runden_zaehlen_die_wechselarten,
+              test_endzustand_kennung_ist_prozessfest,
+              test_start_angeboten_und_genutzt,
+              test_start_beim_einfrieren_und_im_ausfallweg,
+              test_kette_und_auftrag_stehen_im_ergebnis):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
