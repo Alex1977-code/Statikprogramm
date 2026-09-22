@@ -2189,6 +2189,18 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv)
             raise
         hilfs = True
+    if _plastisch(model) and "contact_laeufe" in res.info:
+        # Die Kontaktlaeufe bis hier sind der elastische Vorlauf. Sein Zustand
+        # geht nicht weiter - der erste plastische Lauf startet bei ``start``,
+        # nicht bei res.kontaktzustand (_plastizitaet_rechnen) -, und sein u
+        # wird ueberschrieben. Ein gedeckelter Vorlauf aendert das Ergebnis
+        # darum nicht: am Block mit Reibung max |du| = 0 gegen den Lauf ohne
+        # Deckel (tests/test_rechenliste, 22.09.2026). Damit die Kennzeichnung
+        # (rechenliste.zustand_aus_info) ihn herausrechnen kann, stehen seine
+        # Zahlen hier eigens; contact_converged klebt weiter ueber alle Laeufe.
+        res.info["contact_vorlauf_laeufe"] = int(res.info.get("contact_laeufe", 0) or 0)
+        res.info["contact_vorlauf_nicht_konvergiert"] = int(
+            res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0)
     if _plastisch(model):
         # Der Probelauf rechnet das Fliessen **mit** - nur der Kontakt bleibt
         # bei einem Schritt. Die erste Fassung (357d61d) liess die Plastizitaet

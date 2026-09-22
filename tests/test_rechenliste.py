@@ -132,6 +132,191 @@ def test_zustand_aus_meldung():
           == "nicht konvergiert")
 
 
+def test_deckelmeldung_ist_nicht_konvergiert():
+    """Die Deckelmeldung des Loesers las die Liste als „konvergiert“.
+
+    Sie lautet „... abgebrochen - das Ergebnis ist nicht auskonvergiert“
+    (solver.solve_with_contact). Geprueft wurde erst „nicht konvergiert“ -
+    das steht nicht darin - und dann „konvergiert“ - das steht in
+    „auskonvergiert“. Eine andere Meldung mit „konvergiert“ ohne Verneinung
+    gibt es im Fortschrittsstrom nicht: die Liste zeigte „konvergiert“ also
+    genau bei dem Lastfall, dessen Reibungsnachpruefung aufgegeben hatte
+    (Nachpruefung der Loesersitzung, 22.09.2026)."""
+    deckel = ("Kontakt: Nachprüfung der Reibung nach 40 Zustandswechseln abgebrochen - "
+              "das Ergebnis ist nicht auskonvergiert")
+    z = rl.zustand_aus_meldung(deckel, "")
+    check("die Deckelmeldung des Loesers heisst nicht konvergiert",
+          z == "nicht konvergiert", repr(z))
+    z = rl.zustand_aus_meldung("Kontakt: Nachpruefung der Reibung nach 40 "
+                               "Zustandswechseln abgebrochen", "")
+    check("ebenso die Zeile des Kontaktsystems (ohne das Wort konvergiert)",
+          z == "nicht konvergiert", repr(z))
+    z = rl.zustand_aus_meldung("Kontakt-Iteration nach 120 Schritten nicht konvergiert", "")
+    check("die Schrittgrenze der Kontakt-Iteration", z == "nicht konvergiert", repr(z))
+    z = rl.zustand_aus_meldung("Plastizität: 3 Elemente fließen - NICHT KONVERGIERT", "")
+    check("Grossschrift aendert nichts", z == "nicht konvergiert", repr(z))
+    probe = ("Probelauf: ein Kontaktschritt gerechnet, nicht auskonvergiert - "
+             "das Ergebnis ist ein Netzmaß, kein Nachweis")
+    z = rl.zustand_aus_meldung(probe, "")
+    check("der Probelauf heisst Probelauf - weder konvergiert noch gescheitert",
+          z == "Probelauf", repr(z))
+    z = rl.zustand_aus_meldung("Plastizität: Laststufe 1 nach 40 Schritten nicht konvergiert",
+                               "Probelauf")
+    check("und bleibt es: sein Ergebnis ist ein Netzmass, kein Nachweis",
+          z == "Probelauf", repr(z))
+    z = rl.zustand_aus_meldung("Vernetzen abgebrochen: 3 Volumen bleiben ohne Netz", "")
+    check("ein Abbruch, der nicht die Reibung betrifft, sagt nichts ueber Konvergenz",
+          z == "", repr(z))
+
+
+def _mit_deckel(max_cycles, fn):
+    """fn() mit einem kuenstlich niedrigen Deckel der Reibungsnachpruefung."""
+    from statik3d import contact as _ct
+    alt = _ct.MAX_CYCLES
+    _ct.MAX_CYCLES = max_cycles
+    try:
+        return fn()
+    finally:
+        _ct.MAX_CYCLES = alt
+
+
+def test_deckel_im_fortschrittsstrom():
+    """Am echten Strom des Rechenkerns: der Block mit Reibung, Deckel 1 (so
+    greift er nachweislich, test_kontakthalt). Was die Liste aus den
+    Meldungen liest und was ``zustand_aus_info`` aus res.info liest, muss
+    beides „nicht konvergiert“ sein."""
+    from statik3d import solver
+    from statik3d.examples_lib import block_friction_example
+    meldungen = []
+    r = _mit_deckel(1, lambda: solver.solve_static(block_friction_example(),
+                                                   progress=meldungen.append))
+    z = ""
+    for t in meldungen:
+        if isinstance(t, str):
+            z = rl.zustand_aus_meldung(t, z)
+    deckel = [t for t in meldungen if isinstance(t, str) and "abgebrochen" in t]
+    check("der Deckel greift und steht im Fortschrittsstrom", bool(deckel),
+          (deckel[0] if deckel else "keine Zeile")[:90])
+    check("die Liste liest daraus nicht konvergiert", z == "nicht konvergiert", repr(z))
+    zi = rl.zustand_aus_info(r.info)
+    check("und aus res.info ebenso", zi.startswith("NICHT konvergiert"), zi)
+    r0 = solver.solve_static(block_friction_example())
+    zi = rl.zustand_aus_info(r0.info)
+    check("ohne Deckel: konvergiert", zi == "konvergiert", zi)
+
+
+def test_zustand_aus_info():
+    """Die Kennzeichnung eines fertigen Postens aus res.info - aus den Zahlen,
+    die der Loeser je Kontaktlauf fuehrt, nicht aus dem Text.
+
+    Regel: jeder gedeckelte Lauf zaehlt, **ausser dem elastischen Vorlauf**
+    einer Rechnung mit Fliessen - dessen Kontaktzustand geht nicht weiter,
+    und sein u wird ueberschrieben (gemessen in test_vorlauf_mit_deckel).
+    Eine Stufe „eingeschraenkt“ gibt es nicht: ob ein Lastfall mit
+    gedeckeltem Zwischenlauf als Nachweis gilt, entscheidet der Anwender."""
+    Z = rl.zustand_aus_info
+    check("ohne Kontakt und ohne Fliessen: konvergiert", Z({}) == "konvergiert", Z({}))
+    check("None stuerzt nicht ab", Z(None) == "konvergiert")
+    ok = {"contact_laeufe": 1, "contact_laeufe_nicht_konvergiert": 0,
+          "contact_letzter_lauf_konvergiert": True, "contact_converged": True}
+    check("ein konvergierter Kontaktlauf", Z(ok) == "konvergiert", Z(ok))
+    gedeckelt = {"contact_laeufe": 1, "contact_laeufe_nicht_konvergiert": 1,
+                 "contact_letzter_lauf_konvergiert": False, "contact_converged": False}
+    z = Z(gedeckelt)
+    check("ein gedeckelter Kontaktlauf: NICHT konvergiert mit Grund",
+          z.startswith("NICHT konvergiert: ") and "Kontakt" in z, z)
+    zwischen = {"contact_laeufe": 12, "contact_laeufe_nicht_konvergiert": 3,
+                "contact_letzter_lauf_konvergiert": True, "contact_converged": False,
+                "contact_vorlauf_laeufe": 1, "contact_vorlauf_nicht_konvergiert": 0,
+                "plastizitaet": {"konvergiert": True}}
+    z = Z(zwischen)
+    check("gedeckelte Zwischenlaeufe zaehlen, auch wenn der letzte konvergiert",
+          z.startswith("NICHT konvergiert") and "3 von 11" in z, z)
+    letzter = dict(zwischen, contact_laeufe_nicht_konvergiert=1,
+                   contact_letzter_lauf_konvergiert=False)
+    z = Z(letzter)
+    check("der letzte Lauf wird eigens genannt", "letzte" in z, z)
+    vorlauf = dict(zwischen, contact_laeufe_nicht_konvergiert=1,
+                   contact_vorlauf_nicht_konvergiert=1)
+    z = Z(vorlauf)
+    check("allein der Vorlauf gedeckelt: konvergiert", z == "konvergiert", z)
+    ohne_vorlaufzahl = dict(vorlauf)
+    del ohne_vorlaufzahl["contact_vorlauf_nicht_konvergiert"]
+    z = Z(ohne_vorlaufzahl)
+    check("ohne die Vorlaufzahl wird nichts herausgerechnet",
+          z.startswith("NICHT konvergiert"), z)
+    z = Z({"plastizitaet": {"konvergiert": False}})
+    check("Plastizitaet nicht konvergiert", z.startswith("NICHT konvergiert")
+          and "Plastizität" in z, z)
+    z = Z({"contact_converged": False, "contact_iterations": 40})
+    check("aeltere Ergebnisse ohne Laufzaehlung: die klebende Kennzahl gilt",
+          z.startswith("NICHT konvergiert"), z)
+    z = Z({"ausfall_log": ["Ausfall-Iteration nach 50 Schritten nicht konvergiert"]})
+    check("Ausfall-Iteration nicht konvergiert", z.startswith("NICHT konvergiert")
+          and "Ausfall" in z, z)
+    z = Z(dict(gedeckelt, abbruch="kein statisches Gleichgewicht - Teil 1 hebt ab"))
+    check("ein Abbruch ist nicht konvergiert und sagt es", z.startswith("NICHT konvergiert")
+          and "abgebrochen" in z, z)
+    z = Z(dict(gedeckelt, probelauf=True))
+    check("Probelauf", z == "Probelauf", z)
+
+
+def test_vorlauf_mit_deckel():
+    """Gemessen statt behauptet: ein gedeckelter elastischer Vorlauf aendert
+    das Ergebnis einer Rechnung mit Fliessen nicht. Block mit Reibung,
+    Streckgrenze auf 60 % der elastischen Vergleichsspannung (wie
+    test_plastizitaet), der Deckel 1 nur waehrend des Vorlaufs."""
+    import numpy as np
+    from statik3d import contact as _ct
+    from statik3d import plastizitaet as pl
+    from statik3d import solver
+    from statik3d.examples_lib import block_friction_example
+
+    def modell():
+        m0 = block_friction_example()
+        r0 = solver.solve_static(m0)
+        q0 = max(pl.vergleichsspannung(np.asarray(v, float)) for i, v in r0.solid_res.items()
+                 if m0.elements[i].mat == "S235")
+        m = block_friction_example()
+        m.materials["S235"].fy = 0.6 * q0
+        m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.05, laststufen=2,
+                                         iterationen=40, toleranz=1e-4)
+        return m
+
+    m_frei, m_vor = modell(), modell()
+    r = solver.solve_static(m_frei)
+    check("mit Fliessen: ein Vorlauf, konvergiert, und zustand_aus_info sagt konvergiert",
+          r.info.get("contact_vorlauf_laeufe") == 1
+          and r.info.get("contact_vorlauf_nicht_konvergiert") == 0
+          and rl.zustand_aus_info(r.info) == "konvergiert",
+          f"{r.info.get('contact_vorlauf_laeufe')} / "
+          f"{r.info.get('contact_vorlauf_nicht_konvergiert')}")
+
+    alt_max, alt_pr = _ct.MAX_CYCLES, solver._plastizitaet_rechnen
+
+    def plastisch_ohne_deckel(*a, **k):
+        _ct.MAX_CYCLES = alt_max
+        return alt_pr(*a, **k)
+
+    _ct.MAX_CYCLES = 1
+    solver._plastizitaet_rechnen = plastisch_ohne_deckel
+    try:
+        r1 = solver.solve_static(m_vor)
+    finally:
+        _ct.MAX_CYCLES = alt_max
+        solver._plastizitaet_rechnen = alt_pr
+    check("der Vorlauf ist wirklich gedeckelt",
+          r1.info.get("contact_vorlauf_nicht_konvergiert") == 1,
+          str(r1.info.get("contact_vorlauf_nicht_konvergiert")))
+    check("die klebende Kennzahl contact_converged meldet das",
+          r1.info.get("contact_converged") is False, str(r1.info.get("contact_converged")))
+    du = float(np.abs(r1.u - r.u).max())
+    check("das Ergebnis ist dasselbe wie ohne Deckel (max |du| = 0)", du == 0.0,
+          f"max |du| = {du:.3e} m bei max |u| = {float(np.abs(r.u).max()):.3e} m")
+    z = rl.zustand_aus_info(r1.info)
+    check("darum zaehlt der Vorlauf nicht: konvergiert", z == "konvergiert", z)
+
+
 def test_farm_text():
     """Der Stand der Rechnerfarm aus farm._State.status - nur die lebenden
     Worker zaehlen als aktiv (`alive`: seit unter 30 s gesehen)."""
@@ -205,8 +390,10 @@ def test_dauer_text():
 
 def main():
     for t in (test_posten_aus_modell, test_marke_lesen, test_fortschritt_aus_meldung,
-              test_schritte_text, test_zustand_aus_meldung, test_farm_text, test_dauer_text,
-              test_fenster):
+              test_schritte_text, test_zustand_aus_meldung,
+              test_deckelmeldung_ist_nicht_konvergiert, test_zustand_aus_info,
+              test_deckel_im_fortschrittsstrom, test_vorlauf_mit_deckel,
+              test_farm_text, test_dauer_text, test_fenster):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

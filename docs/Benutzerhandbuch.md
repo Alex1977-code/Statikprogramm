@@ -1118,7 +1118,7 @@ einen Streifen.
 |---|---|
 | Posten | Name des Lastfalls oder der Kombination |
 | Art | Lastfall oder Kombination |
-| Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“ bzw. „läuft (nicht konvergiert)“ |
+| Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“, „läuft (nicht konvergiert)“ bzw. „läuft (Probelauf)“; nach dem Abschluss steht dieser Stand statt „fertig“ da (siehe unten) |
 | Schritte | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Iterationen |
 | Konvergenz | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
 | Zeit | Laufzeit des Postens, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
@@ -1147,6 +1147,46 @@ Hinter dem letzten Posten läuft noch der Nachlauf - Umhüllende und Nachweise.
 Solange steht er in der Fußzeile des Fensters („Kombination 54 von 54 -
 Umhüllende GZT-12: 3/7“), damit die Liste dabei nicht wie eingefroren
 aussieht.
+
+#### Rechenliste: ein gedeckelter Lastfall heißt „nicht konvergiert“ (22.09.2026)
+
+Bis zum 22.09.2026 zeigte die Rechenliste bei einem Lastfall, dessen
+Nachprüfung der Reibung nach 40 Zustandswechseln aufgegeben hatte,
+**„konvergiert“**. Die Meldung des Rechenkerns lautet „Kontakt: Nachprüfung
+der Reibung nach 40 Zustandswechseln abgebrochen - das Ergebnis ist nicht
+auskonvergiert“; die Liste suchte nur „nicht konvergiert“ - das steht darin
+nicht - und fand dann „konvergiert“ in „aus**konvergiert**“. Eine andere
+Meldung, die „konvergiert“ ohne Verneinung sagt, gibt es im Fortschrittsstrom
+nicht: „konvergiert“ stand also genau bei den gedeckelten Lastfällen. Am
+Block mit Reibung mit künstlich niedrigem Deckel nachgestellt: der echte
+Strom des Rechenkerns ergab „konvergiert“, jetzt ergibt er „nicht
+konvergiert“ (`tests/test_rechenliste.py`).
+
+Jetzt heißt es dort **„nicht konvergiert“** - bei „nicht konvergiert“ und
+„nicht auskonvergiert“ in jeder Schreibung (auch „NICHT KONVERGIERT“) und bei
+der Zeile „Nachprüfung der Reibung … abgebrochen“, die das Wort
+„konvergiert“ gar nicht enthält. Ein „abgebrochen“, das nicht die Reibung
+betrifft (etwa „Vernetzen abgebrochen“), ändert den Zustand nicht. Die
+Verneinung klebt wie bisher: ein einziger gedeckelter Lauf zählt für den
+ganzen Posten.
+
+Ein **Probelauf** (die Rechnung der adaptiven Vernetzung mit einem einzigen
+Kontaktschritt) steht als **„Probelauf“** da - nicht als „konvergiert“, denn
+er ist es mit Absicht nicht, und nicht als „nicht konvergiert“, denn das wäre
+keine Nachricht. Sein Ergebnis ist ein Netzmaß, kein Nachweis.
+
+Für die Kennzeichnung eines **fertigen** Lastfalls aus seinen Zahlen statt aus
+dem Meldungstext gibt es `rechenliste.zustand_aus_info(res.info)`. Sie gibt
+„konvergiert“, „Probelauf“ oder „NICHT konvergiert: …“ mit den Gründen
+zurück, etwa „NICHT konvergiert: 3 von 11 Kontaktläufen nicht konvergiert“
+oder „…, darunter der letzte“. Jeder gedeckelte Kontaktlauf zählt, auch wenn
+der letzte konvergiert ist - mit einer Ausnahme: dem elastischen Vorlauf einer
+Rechnung mit Fließen, der das Ergebnis nachweislich nicht beeinflusst
+(Theoriehandbuch § 4.0, „Welcher gedeckelte Lauf zählt“). Eine Zwischenstufe
+„eingeschränkt“ gibt es nicht; ob ein Lastfall mit einem gedeckelten
+Zwischenlauf als Nachweis taugt, entscheidet der Anwender. **Noch nicht
+angeschlossen**: Zusammenfassung und Bericht zeigen weiter
+`contact_converged`, das über alle Läufe klebt, den Vorlauf eingeschlossen.
 
 ### Ergebnisse und Bericht
 

@@ -1408,6 +1408,35 @@ mit dem alten Stand meldet dieselbe Prüfung wahr.
 > gibt schlicht keinen belegten Grund zu wechseln. (Eine frühere Fassung
 > sagte, die Konstante habe „jetzt Zahlen hinter sich"; Nachprüfung der Lösersitzung vom 22.09.2026.)
 
+#### Welcher gedeckelte Lauf zählt: der Vorlauf nicht (22.09.2026)
+
+Mit Fließen rechnet ein Lastfall viele Kontaktläufe: zuerst einen
+**elastischen Vorlauf** (`_solve_loads`, der erste `_rechnen()`), danach je
+Laststufe und Newton-Schritt einen (`_plastizitaet_rechnen`). Der Vorlauf
+gibt nichts weiter. Der erste plastische Lauf startet beim Start des
+Lastfalls (`halter = {"start": start, …}`), nicht beim Kontaktzustand des
+Vorlaufs, und das u des Vorlaufs wird überschrieben. Gemessen am Block mit
+Reibung (Streckgrenze 60 % der elastischen Vergleichsspannung, zwei
+Laststufen), Deckel 1 nur während des Vorlaufs: der Vorlauf ist gedeckelt,
+`contact_converged` meldet falsch, und die Verschiebungen sind **bitgleich**
+mit dem Lauf ohne Deckel - max |Δu| = 0 bei max |u| = 2,883·10⁻⁶ m
+(`tests/test_rechenliste.test_vorlauf_mit_deckel`).
+
+Jeder **plastische** Lauf dagegen reicht seinen Kontaktzustand an den
+nächsten weiter (`halter["start"] = res.kontaktzustand`), und dieser Zustand
+bestimmt die plastische Dehnung mit. Darum gilt: jeder gedeckelte Lauf außer
+dem Vorlauf macht den Lastfall „NICHT konvergiert“, auch wenn der letzte Lauf
+konvergiert ist. Der Löser führt die Zahlen des Vorlaufs eigens in `res.info`
+(`contact_vorlauf_laeufe`, `contact_vorlauf_nicht_konvergiert`), damit
+`rechenliste.zustand_aus_info` sie herausrechnen kann. `contact_converged`
+bleibt, wie es war, und klebt über alle Läufe, den Vorlauf eingeschlossen.
+
+Eine Zwischenstufe „eingeschränkt“ (letzter Lauf konvergiert, ein
+Zwischenlauf gedeckelt) gibt es mit Absicht nicht. Ob ein solcher Lastfall
+als Nachweis taugt, ist eine Entscheidung des Anwenders; bis sie getroffen
+ist, heißt er „NICHT konvergiert“. Die Rechenliste las die Deckelmeldung bis
+zum 22.09.2026 sogar als „konvergiert“ (Benutzerhandbuch, Rechenliste).
+
 **Zwei Posten daneben, die nichts mit dem Schlüssel zu tun haben, aber mit
 derselben Messung gefunden wurden** (21.09.2026, an einer Matrix von
 Drehlagergröße: 475 935 Zeilen, 17,6 Mio. Nichtnullen):
