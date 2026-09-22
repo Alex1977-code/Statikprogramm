@@ -1448,8 +1448,11 @@ def _diagnose(m: Model, log: list) -> None:
 #: Gemessen am 22.09.2026: am CBG-Trolley tragen 8 Lastfaelle die Kennzahl
 #: 11, 7 davon heissen "G - ..." (Steel Structure, Bucket Wheel ...) und
 #: werden nur ueber den Namen zu G; am Drehlager tragen alle 422 Lastfaelle
-#: die Kennzahl 11 und heissen "Bemessungslast im GZT ...". Dieselbe Kennzahl
-#: steht also je Datei fuer anderes. Darum nennt das Protokoll je Kennzahl die
+#: die Kennzahl 11, nachgezaehlt am 23.09.2026: 128 "Bemessungslast im GZT
+#: ...", 164 "Ermuedungslast - Drehlager ...", 104 "char.Last - Drehlager
+#: ...", 24 "char.Last - Verkehrslage ..." und 2 "Vorspannung der Zuganker
+#: ...". Dieselbe Kennzahl steht also je Datei und sogar innerhalb einer
+#: Datei fuer anderes. Darum nennt das Protokoll je Kennzahl die
 #: angenommene Kategorie und warnt, psi und gamma nachzusehen - wie
 #: LOAD_DIRECTION seine abgeleiteten Richtungen 11 bis 13 nennt.
 ACTION_CATEGORY = {1: "G", 2: "G", 3: "Q", 11: "Q", 12: "Q", 13: "Q"}

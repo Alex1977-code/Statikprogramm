@@ -211,6 +211,18 @@ Parser eine Zeile mit der Nummer „CO5“ und der Formel „LF1 + LF2“ als
 Blocktitel und verwarf sie; die Kombinationstabelle kennt keine Blocktitel
 mehr, die Nummer wird auch aus „CO5“ gelesen.
 
+**Ein Minus ohne Zahl zieht ab** (seit 23.09.2026). Das Vorzeichen wird
+getrennt von der Zahl gelesen: „LF1 - LF2“ ergibt LF1 − LF2, „LF2 - CO1“ mit
+CO1 = 1,35·LF1 ergibt LF2 − 1,35·LF1, und die Protokollzeile der Auflösung
+nennt das Ergebnis samt Vorzeichen („… aufgeloest: 1*LF2 - 1.35*LF1“).
+Vorher stand das Vorzeichen in derselben Gruppe wie die Ziffern und fiel ohne
+Zahl weg: „LF1 - LF2“ ergab LF1 + LF2, und „LF2 - CO1“ wurde mit der
+Auflösung der Verweise vom 22.09.2026 still zu LF2 + 1,35·LF1 — vorher war
+dieselbe Zeile noch mit einer Warnung ohne den Verweis angelegt worden. Ein
+ausgeschriebener Faktor („1.0*LF2 - 1.0*CO1“) rechnete schon richtig. Ob RFEM
+ein Minus ohne Zahl in die Tabelle schreibt, ist an keiner echten Datei
+gemessen.
+
 ## IFC-Statikmodell – Details
 
 * Einheiten aus `IfcUnitAssignment` (Längen-, Kraft-, abgeleitete Einheiten).
@@ -722,8 +734,11 @@ ist an keiner RFEM-Datei belegt, und die Tabellen `Action` und `ActionImpl`
 sind in beiden vorliegenden Dateien leer. Gemessen: am CBG-Trolley tragen 8
 Lastfälle die Kennzahl 11, 7 davon heißen „G - …“ (Steel Structure, Bucket
 Wheel …) und werden nur über den Namen zu G; am Drehlager tragen alle 422
-Lastfälle die Kennzahl 11 und heißen „Bemessungslast im GZT …“ — dieselbe
-Kennzahl steht je Datei für anderes. Das Protokoll nennt darum je Kennzahl
+Lastfälle die Kennzahl 11, darunter 128 „Bemessungslast im GZT …“,
+164 „Ermüdungslast - Drehlager …“, 104 „char.Last - Drehlager …“,
+24 „char.Last - Verkehrslage …“ und 2 „Vorspannung der Zuganker …“
+(nachgezählt am 23.09.2026) — dieselbe Kennzahl steht je Datei und sogar
+innerhalb einer Datei für anderes. Das Protokoll nennt darum je Kennzahl
 die angenommene Kategorie und die Lastfälle, die der Name umgestellt hat,
 
     Kennzahl 11 -> Q (Annahme, an keiner Datei belegt): 8x; davon ueber den

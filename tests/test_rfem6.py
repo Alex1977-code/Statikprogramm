@@ -1859,8 +1859,10 @@ def test_einwirkungskategorie_wird_genannt():
     **Auch die gefuehrten Kennzahlen sind eine Annahme** (Befund FM9): keine
     ist an einer echten Datei belegt. Gemessen am CBG-Trolley tragen 8
     Lastfaelle die Kennzahl 11, 7 davon heissen „G - ...“ und werden nur ueber
-    den Namen zu G; am Drehlager tragen alle 422 Lastfaelle die Kennzahl 11
-    und heissen „Bemessungslast im GZT ...“. Bis zum 22.09.2026 stand fuer
+    den Namen zu G; am Drehlager tragen alle 422 Lastfaelle die Kennzahl 11,
+    darunter 128 „Bemessungslast im GZT ...“, 164 „Ermuedungslast ...“,
+    128 „char.Last ...“ und 2 „Vorspannung der Zuganker ...“ (nachgezaehlt
+    am 23.09.2026). Bis zum 22.09.2026 stand fuer
     eine gefuehrte Kennzahl nur die Verteilung im Protokoll, ohne Warnung.
     LF5 (neutraler Name, Kennzahl 11) und LF6 („G - Stahlbau“, Kennzahl 11)
     pruefen das.

@@ -247,9 +247,63 @@ def test_kombinationen_abgezaehlt():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_kombination_minus_vor_verweis():
+    """Ein Minus ohne Zahl zieht ab, auch vor einem Verweis auf eine Kombination.
+
+    Der Ausdruck in ``_formel_zerlegen`` fing das Vorzeichen nur zusammen mit
+    einer Ziffer. „LF2 - CO1“ ging darum als LF2 + CO1 ein; seit Verweise
+    aufgeloest werden (Befund SV10), ergab das mit CO1 = 1,35·LF1 still
+    LK2 = LF2 + 1,35·LF1 statt LF2 - 1,35·LF1, nur mit einer Infozeile
+    (Gegenpruefung vom 23.09.2026). Vorher war LK2 = LF2 mit einer Warnung.
+    Dieselbe Ursache: „LF1 - LF2“ ergab LF1 + LF2. Die Zeile mit
+    ausgeschriebenem Faktor „1.0*LF2 - 1.0*CO1“ rechnete schon richtig und
+    ist die Gegenprobe. Ob RFEM ein Minus ohne Zahl schreibt, ist an keiner
+    echten Datei gemessen.
+    """
+    d = tempfile.mkdtemp(prefix="s3d_km_")
+    try:
+        def w(n, t):
+            with open(os.path.join(d, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        w("1.1 Knoten.csv", "Knoten Nr.;X [m];Y [m];Z [m]\n1;0;0;0\n2;2;0;0\n")
+        w("2.1 Lastfaelle.csv", "Lastfall Nr.;Bezeichnung\n1;Eigengewicht\n2;Nutzlast\n")
+        w("2.5 Lastkombinationen.csv",
+          "Lastkombination Nr.;Bemessungssituation;Belastung\n"
+          "1;GZT;1.35*LF1\n"
+          "2;GZT;LF2 - CO1\n"
+          "3;GZT;1.0*LF2 - 1.0*CO1\n"
+          "4;GZT;LF1 - LF2\n")
+        log = []
+        m = import_rfem_tables(d, Model("Km"), log)
+
+        def faktoren(name):
+            k = m.combinations.get(name)
+            return dict(k.factors) if k is not None else {}
+
+        def gleich(ist, soll):
+            return set(ist) == set(soll) and all(abs(ist[k] - v) < 1e-12
+                                                 for k, v in soll.items())
+
+        check("„LF2 - CO1“ ergibt LF2 - 1,35·LF1",
+              gleich(faktoren("LK2"), {"LF2": 1.0, "LF1": -1.35}), str(faktoren("LK2")))
+        check("„1.0*LF2 - 1.0*CO1“ ergibt dasselbe (Gegenprobe)",
+              gleich(faktoren("LK3"), {"LF2": 1.0, "LF1": -1.35}), str(faktoren("LK3")))
+        check("„LF1 - LF2“ ergibt LF1 - LF2",
+              gleich(faktoren("LK4"), {"LF1": 1.0, "LF2": -1.0}), str(faktoren("LK4")))
+        z2 = next((z for z in log if "LK2" in z), "keine Zeile")
+        check("das Protokoll nennt das Ergebnis der Aufloesung samt Vorzeichen",
+              "1*LF2 - 1.35*LF1" in z2, z2)
+        check("alle vier Zeilen angelegt", "4 von 4 Lastkombinationen" in "\n".join(log),
+              next((z for z in log if z.strip().endswith("Lastkombinationen")),
+                   "keine Zeile"))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
-              test_tabellen_erweitert, test_kombinationen_abgezaehlt):
+              test_tabellen_erweitert, test_kombinationen_abgezaehlt,
+              test_kombination_minus_vor_verweis):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

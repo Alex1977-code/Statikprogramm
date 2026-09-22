@@ -367,22 +367,42 @@ def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str
 
     Die Verweise behalten ihren Vorfaktor: ein Verweis auf eine andere
     Lastkombination wird mit ihm aufgeloest (siehe Kombinationsschleife).
+
+    Das Vorzeichen wird **getrennt** von der Zahl gefangen: bis zum 23.09.2026
+    stand es in derselben Gruppe wie die Ziffern, ein Minus ohne Zahl fiel
+    darum weg. Gemessen: „LF1 - LF2“ ergab LF1 + LF2, und „LF2 - CO1“ mit
+    CO1 = 1,35·LF1 wurde seit der Aufloesung der Verweise still zu
+    LF2 + 1,35·LF1 statt LF2 - 1,35·LF1 (Gegenpruefung zu Befund SV10).
     """
     factors: dict[str, float] = {}
     verweise: list[tuple[float, str, int]] = []
-    for m in re.finditer(r"([+-]?\s*\d+(?:[.,]\d+)?)?\s*\*?\s*(LF|LC|CO|LK|EK)\s*(\d+)",
+    for m in re.finditer(r"([+-])?\s*(\d+(?:[.,]\d+)?)?\s*\*?\s*(LF|LC|CO|LK|EK)\s*(\d+)",
                          text, re.IGNORECASE):
-        f = m.group(1)
-        f = C.parse_number(f.replace(" ", "")) if f else 1.0
+        f = C.parse_number(m.group(2)) if m.group(2) else 1.0
         if f is None:
             f = 1.0
-        kind = m.group(2).upper()
+        if m.group(1) == "-":
+            f = -f
+        kind = m.group(3).upper()
         if kind in ("LF", "LC"):
-            key = f"LF{int(m.group(3))}"
+            key = f"LF{int(m.group(4))}"
             factors[key] = factors.get(key, 0.0) + f
         else:
-            verweise.append((f, kind, int(m.group(3))))
+            verweise.append((f, kind, int(m.group(4))))
     return factors, verweise
+
+
+def _faktoren_text(faktoren: dict) -> str:
+    """{'LF2': 1.0, 'LF1': -1.35} -> '1*LF2 - 1.35*LF1' fuers Protokoll.
+
+    Nie wissenschaftlich (2.39e+03), darum feste vier Stellen, Nullen weg.
+    """
+    teile = []
+    for k, v in faktoren.items():
+        zahl = f"{abs(v):.4f}".rstrip("0").rstrip(".")
+        teile.append(("- " if v < 0 else "+ ") + f"{zahl}*{k}")
+    s = " ".join(teile)
+    return s[2:] if s.startswith("+ ") else s
 
 
 def _kombinationen_aufloesen(zeilen: list) -> list:
@@ -938,9 +958,12 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                             "Lastfall - nicht uebernommen.")
                 continue
             if verweise:
+                # Das Ergebnis samt Vorzeichen nennen: ein falsch gelesenes
+                # Vorzeichen stand vorher nur als "aufgeloest" da und fiel
+                # nicht auf (Gegenpruefung vom 23.09.2026, „LF2 - CO1“).
                 C.say(log, f"Kombination {wer}: Verweise "
                            f"{[f'{a}{n}' for _v, a, n in verweise]} auf die Faktoren "
-                           "der Kombinationen aufgeloest")
+                           f"der Kombinationen aufgeloest: {_faktoren_text(factors)}")
             no = int(no) if no is not None else n_co + 1
             for key in factors:
                 if key not in model.load_cases:
