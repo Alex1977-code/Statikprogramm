@@ -370,6 +370,102 @@ rechnet ihn falsch herum.
 Lastfall. Für die adaptive Schleife ist das genau richtig, weil sie je Runde
 ein frisches System aufbaut; in einer Rechenkette, die mehrere Lastfälle auf
 demselben System rechnet, wächst der Wert von Lastfall zu Lastfall weiter.
+Die Zeit **eines** Lastfalls steht im Löser-Nachweis (nächster Abschnitt).
+
+#### 1.3-1 Löser-Nachweis je Lastfall (`loeser_nachweis`)
+
+*Neu am 22.09.2026 (Zweig `loeser/loeser-nachweis`). Nur Lesen und
+Mitschreiben — das Ergebnis bleibt bitgleich (Nachweis am Ende des
+Abschnitts).*
+
+**Warum.** Welcher Löser einen Lastfall wirklich gerechnet hat, mit wie vielen
+Threads, wie genau und in welcher Zeit, ließ sich hinterher nicht sagen.
+`zeit_faktorisierung` ist die Summe des Systems (siehe oben); die Nachprüfung
+der Lösersitzung musste die Faktorisierungszeit je Lastfall aus Differenzen
+rechnen (1190,1 − 734,8 = 455,3 s für LF3 am Drehlager). Ein Ausweichen bei
+den Faktorisierungen der Kontaktschritte stand nur als Fortschrittszeile im
+Protokoll, einmal je System — im Ergebnis stand es nicht.
+
+**Wo gezählt wird.** `_solve_loads` beginnt für jeden Lastfall und jede
+direkt gerechnete Kombination ein eigenes Buch (`StaticSystem.nachweis_beginnen`)
+und legt es am Ende als `Results.info["loeser_nachweis"]` ab. Gezählt wird
+**beim Lösen** (`StaticSystem._geloest`), nicht nur beim Faktorisieren: ein
+Lastfall kann eine Faktorisierung benutzen, die vor ihm entstand. Ein lineares
+Modell faktorisiert beim Aufstellen des Systems, also vor jedem Lastfall, und
+die behaltene Kontaktfaktorisierung (`_kontakt_loeser`) überlebt den Wechsel
+des Lastfalls — eingefrorene Zustände sind darauf gebaut. Ein Nachweis, der
+nur Faktorisierungen zählte, bliebe dort leer. Die Faktorisierungen des
+Lastfalls zählen getrennt (`StaticSystem._loeser_merken`).
+
+| Schlüssel | Bedeutung |
+|---|---|
+| `loesungen` | Löser → Zahl der Lösungen dieses Lastfalls, z. B. `{"pardiso": 22}` |
+| `loesungen_gescheitert` | Lösungen, die mit einer Ausnahme endeten |
+| `ausweichgruende` | Grund (`LinearSolver.ausweichgrund`) → Zahl der Lösungen, die damit gerechnet wurden |
+| `threads` | wirksame Threadzahl → Zahl der Lösungen (bei PARDISO, was MKL nach dem Setzen meldet) |
+| `mtype` | PARDISO-Matrixtyp → Zahl der Lösungen; heute immer `11` (reell, unsymmetrisch) |
+| `faktorisierungen` | Faktorisierungen **dieses** Lastfalls; 0 bei linearen Modellen |
+| `zeit_faktorisierung_lastfall` | Faktorisierungszeit dieses Lastfalls [s], als Differenz der Systemsumme |
+| `gestoerte_pivots_summe` | angehobene Pivots über die Faktorisierungen dieses Lastfalls; `None`, wenn kein Löser eine Zahl meldet |
+| `gestoerte_pivots_max` | höchster Wert unter allen Faktorisierungen, die der Lastfall gemacht **oder benutzt** hat |
+| `faktorisierungen_mit_gestoerten_pivots` | wie viele davon mindestens einen angehobenen Pivot hatten |
+| `residuum_linear_max` | größtes relatives Residuum ‖K x − b‖/‖b‖ der Lösungen; `None`, wenn keine Lösung geprüft wurde |
+| `residuum_gemessen` | Zahl der Lösungen mit gemessenem Residuum |
+| `pardiso_eingabe` | iparm-Eingabefelder 1, 2, 8, 10, 11, 13, 21, 24, 25 der zuletzt benutzten PARDISO-Faktorisierung, so wie MKL sie zurückgibt |
+| `mkl_cbwr` | `{umgebung, code, zweig}`: `MKL_CBWR` beim ersten Laden von MKL und was MKL selbst meldet; `None`, solange MKL nicht geladen ist |
+
+`solver` und `zeit_faktorisierung` bleiben, wie oben dokumentiert. Ein
+abgebrochener Lastfall (Teilergebnis) trägt den Nachweis noch nicht.
+
+**Gestörte Pivots sind iparm(14).** MKL PARDISO hebt einen zu kleinen Pivot
+an (Vorgabe iparm(10) = 13, also auf rund 10⁻¹³ der Matrixnorm), statt
+abzubrechen, und zählt das in iparm(14). Das steht in der MKL-Dokumentation;
+geprüft ist es an einer kleinen Matrix (`tests/test_loeser.py`,
+`test_pardiso_zaehlt_gestoerte_pivots`, gemessen 22.09.2026 mit dem
+`mkl_rt.3.dll` der Programmumgebung): Dirichlet-Laplace 6×6 gibt 0; mit einem
+entkoppelten Block [[1, 1], [1, 1]], dessen Pivot nach einem
+Eliminationsschritt exakt 0 ist, gibt es 1; mit drei solchen Blöcken 3.
+Gelesen wird direkt nach `ps.factorize`, vor jedem Lösen — das schreibt iparm
+neu. `LinearSolver` führt dazu `mtype`, `gestoerte_pivots` und
+`pardiso_kennzahlen` (`_pardiso_kennzahlen`: iparm(14), iparm(18) als `nnz`,
+iparm(15)–(17) als Speicher in KB **laut Doku, nicht nachgemessen**, und die
+Eingabefelder). Die anderen Löser melden keine Zahl: dort steht `None`, nicht
+0 — 0 hieße „keiner angehoben“.
+
+**MKL_CBWR wird beim ersten Laden festgehalten.** MKL liest die Variable nur
+beim Laden. Gemessen 22.09.2026: mit `MKL_CBWR=AUTO` gestartet, danach im
+Prozess auf `COMPATIBLE` gesetzt, meldet `MKL_CBWR_Get` weiter 2 (AUTO). Der
+Wert beim Faktorisieren wäre also nicht der wirksame. Festgehalten werden die
+Umgebung beim ersten Laden durch Statik3D und der Code, den MKL selbst meldet
+(`MKL_CBWR_Get(MKL_CBWR_BRANCH = 1)`) — aber nur, wenn das geladene `mkl_rt`
+die Funktion hat, sonst „unbekannt“. Die Namen der Codes stammen aus
+`mkl_cbwr.h` (der Header liegt der Programmumgebung nicht bei; gelesen in der
+Kopie in Intels Repository `intel/mklnn`, `src/mkl_cat.h`). Gemessen passt
+das: ohne Variable 1 (BRANCH_OFF), `AUTO` 2, `COMPATIBLE` 3.
+
+**Das Residuum gehört zur Lösung.** `LinearSolver.solve` setzt `residuum` bei
+jedem Aufruf auf nan und erst nach der Prüfung auf den gemessenen Wert. Ohne
+Prüfung (keine verlangt, mehrere rechte Seiten, b = 0) bliebe sonst die Zahl
+der vorigen Lösung stehen und würde diesem Lastfall zugeschrieben. `residuum`
+liest nur der Nachweis (und Tests); am Rechenweg hängt es nicht.
+
+**Am Block mit Reibung gemessen** (`test_loeser_nachweis_je_lastfall`, zwei
+Lastfälle auf einem System, ein Thread, 22.09.2026): LF1 21 Lösungen und 7
+Faktorisierungen, LF2 22 Lösungen und 16 Faktorisierungen — je Kontaktschritt
+genau eine Lösung, und die Faktorisierungen gleich `contact_factorisations`.
+Die Faktorisierungszeit von LF2 ist genau `zeit_faktorisierung(LF2) −
+zeit_faktorisierung(LF1)`. Das größte Residuum lag bei 3,3·10⁻¹⁵ (LF1) und
+2,9·10⁻¹³ (LF2), gestörte Pivots 0.
+
+**Bitgleich.** Gerechnet mit Stand 54b6f9a und mit dem neuen Stand, je ein
+Thread (`OMP_NUM_THREADS=MKL_NUM_THREADS=1`), an vier Modellen: Block mit
+Reibung in zwei Lastfällen mit Warmstart, Zugstab linear, freier Würfel mit
+Netto-Last (Hilfsfesselung, also der Lagrange-Rand in `_geloest`) und der
+fließende Block mit Kontakt (7 Kontaktläufe, 53 Kontaktschritte). Alle 318
+verglichenen Felder — Verschiebungen, Auflager- und Kontaktkräfte, Spannungen,
+Kontaktzustand und die Zählwerte in `info` — sind gleich
+(`numpy.array_equal`, 22.09.2026). Mit mehreren Threads ist PARDISO schon für
+sich nicht bitgleich (§ 9 des Benutzerhandbuchs); dort wurde nicht verglichen.
 
 
 ### 1.4 Querschnittswerte freier Profile

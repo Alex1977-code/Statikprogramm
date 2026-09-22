@@ -3679,6 +3679,48 @@ Nachweis mit seiner Verformung je Kombination.
   dann, welcher Anlauf stehen blieb und warum nicht feiner. Ohne Netz bleibt
   ein Körper nur, wenn schon der erste Anlauf scheitert.
 
+### Löser-Nachweis je Lastfall
+
+*Seit 22.09.2026.* Die Zusammenfassung eines Lastfalls (Textfeld der
+Ergebnisse; nach „Nur aktiver Lastfall“ auch im Protokoll) sagt, womit
+**dieser** Lastfall gelöst wurde — nicht das Rechensystem, das viele Lastfälle
+nacheinander rechnet. Am Block mit Reibung, zweiter Lastfall, ein Thread
+(ausgegeben 22.09.2026; die Zeit schwankt von Lauf zu Lauf):
+
+```
+Lösungen                : 22× MKL PARDISO (einkernig, mtype 11); 16 Faktorisierungen in 0.052 s; Residuum höchstens 2.9e-13
+```
+
+* **Lösungen**: welcher Gleichungslöser wie oft gelöst hat, mit wie vielen
+  Threads (was MKL wirklich nimmt, nicht was eingestellt ist), die
+  Faktorisierungen **dieses** Lastfalls und ihre Zeit, dazu das größte
+  Residuum ‖K x − b‖/‖b‖ aller Lösungen. Es muss unter der eingestellten
+  Genauigkeit liegen (Vorgabe 10⁻⁶), sonst hätte die Rechnung abgebrochen.
+  Ein lineares Modell zeigt hier **0 Faktorisierungen**: es faktorisiert
+  einmal beim Aufstellen, für alle Lastfälle zusammen.
+* **Ausgewichen** (nur wenn es geschah): der Grund, warum der gewählte Löser
+  nicht rechnete, und wie viele Lösungen der Ersatz gerechnet hat — auch bei
+  den Faktorisierungen der Kontaktschritte, deren Ausweichen bisher nur als
+  Zeile im Protokoll stand, einmal je System.
+* **Gestörte Pivots** (nur wenn es welche gab): wie viele Pivots MKL PARDISO
+  angehoben hat, statt abzubrechen, und in wie vielen Faktorisierungen. Das
+  geschieht, wenn die Matrix dort (fast) singulär ist — ein Bauteil ohne Halt
+  in einer Richtung, eine offene Fuge. Das Ergebnis ist dann an dieser Stelle
+  nicht eindeutig; das Residuum zeigt, ob die Lösung trotzdem das
+  Gleichungssystem erfüllt.
+
+Die Zeile „Gleichungsloeser“ darüber bleibt, wie sie war. Im Ergebnis
+(`Results.info["loeser_nachweis"]`) stehen zusätzlich die Einstellung
+`MKL_CBWR`, wie sie galt, als das Programm MKL zum ersten Mal lud — später
+gesetzt wirkt sie nicht mehr —, und was MKL dazu meldet (Reproduzierbarkeit,
+siehe oben), und die Eingabewerte von PARDISO. Weil der
+Nachweis im Ergebnis steht, kommt er auch aus Rechenketten mit zurück — das
+ist aus dem Quelltext hergeleitet (die Kette gibt die Ergebnisse samt dieser
+Angaben zurück), an einer Kette gemessen ist es nicht. Ein abgebrochener
+Lastfall trägt den Nachweis noch nicht. Die Rechnung selbst ändert sich
+dadurch nicht: verglichen an vier Modellen mit einem Thread, alle Werte
+bitgleich (Theoriehandbuch § 1.3-1).
+
 ### Abnahme des Netzes vor dem Rechnen
 
 Vor jedem Lauf nimmt das Programm das Netz ab. Ein Bauteil ist vollständig
