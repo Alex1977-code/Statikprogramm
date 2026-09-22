@@ -68,6 +68,8 @@ def _mkl_lib():
             _find_mkl()
             import pypardiso
             _MKL_LIB = pypardiso.PyPardisoSolver().libmkl or False
+            if _MKL_LIB:
+                _mkl_cbwr_festhalten(_MKL_LIB)
         except Exception:                                  # noqa: BLE001
             _MKL_LIB = False
     return _MKL_LIB or None
@@ -100,6 +102,58 @@ def _mkl_threads_setzen(lib, n: int) -> int:
         return int(lesen())
     except (AttributeError, OSError):
         return int(n)
+
+
+#: MKL_CBWR, wie es galt, als Statik3D MKL zum ersten Mal geladen hat - None,
+#: solange das nicht geschehen ist (siehe _mkl_cbwr_festhalten).
+_MKL_CBWR = None
+
+#: Argument von MKL_CBWR_Get fuer den eingestellten Zweig und die Namen der
+#: Zweige, aus mkl_cbwr.h. Der Header liegt der Programmumgebung nicht bei;
+#: gelesen aus der Kopie in Intels Repository intel/mklnn (src/mkl_cat.h,
+#: Abschnitt "MKL CBWR stuff"), die Signatur ``int mkl_cbwr_get(int option)``
+#: aus IntelPython/mkl-service (mkl/_mkl_service.pxd). Gemessen 22.09.2026 am
+#: mkl_rt.3.dll der Programmumgebung: ohne Variable 1, mit MKL_CBWR=AUTO 2,
+#: mit MKL_CBWR=COMPATIBLE 3 - wie die Tabelle.
+MKL_CBWR_BRANCH = 1
+MKL_CBWR_ZWEIGE = {0: "OFF", 1: "BRANCH_OFF", 2: "AUTO", 3: "COMPATIBLE", 4: "SSE2",
+                   5: "SSE3", 6: "SSSE3", 7: "SSE4_1", 8: "SSE4_2", 9: "AVX", 10: "AVX2",
+                   11: "AVX512_MIC", 12: "AVX512"}
+
+
+def _mkl_cbwr_festhalten(lib) -> None:
+    """MKL_CBWR festhalten, einmal je Prozess, beim ersten Laden von MKL.
+
+    MKL liest die Variable nur beim Laden; wer sie danach setzt, aendert
+    nichts mehr (gemessen 22.09.2026: gesetzt nach dem Laden, meldet MKL
+    weiter den alten Zweig). Darum zaehlt der Wert von diesem Zeitpunkt und
+    nicht der beim Faktorisieren. Daneben steht, was MKL selbst meldet
+    (MKL_CBWR_Get) - aber nur, wenn das geladene mkl_rt die Funktion hat;
+    sonst "unbekannt", nicht geraten.
+
+    Ein eigener Prototyp statt ``lib.MKL_CBWR_Get``: argtypes am geteilten
+    CDLL-Objekt gelten fuer alle, die es benutzen.
+    """
+    global _MKL_CBWR
+    if _MKL_CBWR is not None:
+        return
+    import ctypes
+    code, zweig = "unbekannt", "unbekannt"
+    lib = getattr(lib, "libmkl", lib)
+    if lib is not None:
+        try:
+            lesen = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int)(("MKL_CBWR_Get", lib))
+            code = int(lesen(MKL_CBWR_BRANCH))
+            zweig = MKL_CBWR_ZWEIGE.get(code, f"unbekannt ({code})")
+        except Exception:                                  # noqa: BLE001
+            code, zweig = "unbekannt", "unbekannt"
+    _MKL_CBWR = {"umgebung": os.environ.get("MKL_CBWR"), "code": code, "zweig": zweig}
+
+
+def mkl_cbwr() -> Optional[dict]:
+    """{umgebung, code, zweig} vom ersten Laden von MKL - None, solange
+    Statik3D MKL nicht geladen hat. ``umgebung`` ist None ohne Variable."""
+    return None if _MKL_CBWR is None else dict(_MKL_CBWR)
 
 
 def threads_automatisch(backend: str) -> int:
@@ -577,18 +631,49 @@ def _log_einmal(text: str) -> None:
 INT32_MAX = 2 ** 31 - 1
 
 
-def _pardiso_nnz_faktor(ps) -> int:
-    """Nichtnullen der Faktorisierung aus iparm(18) - 0, wenn nichts gemeldet wird.
+#: Die iparm-Eingabefelder, die nach der Faktorisierung mitgeschrieben werden,
+#: so wie MKL sie zurueckgibt. pypardiso uebergibt ein Nullfeld (iparm(1) = 0,
+#: MKL nimmt seine Vorgaben); danach steht darin, womit gerechnet wurde.
+#: Gemessen 22.09.2026 am Dirichlet-Laplace mit 36 Zeilen, ein Thread:
+#: 1: 1, 2: 3, 8: 2, 10: 13, 11: 1, 13: 1, 21: 0, 24: 0, 25: 0. Die
+#: Ausgabefelder (7, 14-20, 22, 23, 30) gehoeren nicht dazu.
+PARDISO_EINGABEFELDER = (1, 2, 8, 10, 11, 13, 21, 24, 25)
 
-    Gemessen 20.09.2026 an einer Tridiagonalmatrix: n = 200 gibt 964, n = 400
-    gibt 1960 - linear, wie es fuer ein Band sein muss. ``get_iparms()`` zaehlt
-    von 1; iparm(17) steht direkt daneben und meint den Speicher in KB (28 bei
-    n = 400), nicht die Eintraege. Die beiden sind leicht zu verwechseln.
+
+def _pardiso_kennzahlen(ps) -> dict:
+    """Was MKL PARDISO bei der Faktorisierung getan hat, aus iparm - direkt
+    nach ``ps.factorize`` zu lesen, vor jedem solve (der schreibt iparm neu).
+
+    * ``gestoert`` = iparm(14): Zahl der angehobenen Pivots. Gemessen
+      22.09.2026: Dirichlet-Laplace 0; mit einem entkoppelten Block
+      [[1, 1], [1, 1]] (Pivot nach einem Eliminationsschritt exakt 0) 1; mit
+      drei solchen Bloecken 3 (tests/test_loeser.py).
+    * ``nnz`` = iparm(18): Nichtnullen des Faktors. Gemessen 20.09.2026 an
+      einer Tridiagonalmatrix: n = 200 gibt 964, n = 400 gibt 1960 - linear,
+      wie es fuer ein Band sein muss.
+    * ``speicher_kb`` = iparm(15), (16), (17): Spitze der Analyse, dauerhaft
+      aus der Analyse, Zahlenphase - in KB **laut MKL-Dokumentation**, nicht
+      nachgemessen. iparm(17) steht direkt neben iparm(18) und ist leicht mit
+      den Eintraegen zu verwechseln (28 bei der Tridiagonalmatrix n = 400).
+    * ``eingabe``: die Felder PARDISO_EINGABEFELDER.
+
+    ``get_iparms()`` zaehlt von 1. Leer, wenn iparm nicht lesbar ist.
     """
     try:
-        return int(ps.get_iparms()[18])
-    except Exception:
-        return 0
+        ip = ps.get_iparms()
+    except Exception:                                      # noqa: BLE001
+        return {}
+
+    def feld(i):
+        try:
+            return int(ip[i])
+        except Exception:                                  # noqa: BLE001
+            return None
+
+    return {"gestoert": feld(14), "nnz": feld(18),
+            "speicher_kb": {str(i): feld(i) for i in (15, 16, 17)},
+            "speicher_einheit": "KB laut MKL-Dokumentation, nicht nachgemessen",
+            "eingabe": {str(i): feld(i) for i in PARDISO_EINGABEFELDER}}
 
 
 class LinearSolver:
@@ -665,6 +750,13 @@ class LinearSolver:
         self._vorgabe = None         # nur ama: wonach faktorisiert wurde (fuer den Nachweis)
         self.nachiterationen = 0
         self.residuum = 0.0
+        #: Nur PARDISO: Matrixtyp (pypardiso rechnet mit 11, reell unsymmetrisch),
+        #: angehobene Pivots (iparm(14)) und alle Kennzahlen aus
+        #: _pardiso_kennzahlen. None bei den anderen Loesern - sie melden keine
+        #: Zahl, und 0 hiesse "keiner angehoben".
+        self.mtype = None
+        self.gestoerte_pivots = None
+        self.pardiso_kennzahlen = {}
         #: Warum der gewaehlte Loeser nicht rechnete, wenn auf einen anderen
         #: ausgewichen wurde - leer, wenn nicht. Steht in beschreibung() und
         #: damit im Fortschrittsstrom und im Protokoll.
@@ -686,6 +778,7 @@ class LinearSolver:
                 _find_mkl()
                 import pypardiso
                 ps = pypardiso.PyPardisoSolver()
+                _mkl_cbwr_festhalten(ps)         # nur beim ersten Mal
                 # self._K ist bereits K.tocsr() (siehe oben). Ein zweites
                 # tocsr() auf derselben Matrix kostete bei Drehlagergroesse
                 # 0,280 s (475.935 Zeilen, 17,6 Mio. Nichtnullen, gemessen
@@ -695,13 +788,34 @@ class LinearSolver:
                 # Threadzahl aus den Einstellungen (0 = alle Kerne bis auf einen)
                 self.threads = _mkl_threads_setzen(ps, threads_vorgabe("pardiso"))
                 ps.factorize(Kcsr)
-                self.nnz_faktor = _pardiso_nnz_faktor(ps)
+                # Direkt nach der Faktorisierung: solve schreibt iparm neu
+                kz = _pardiso_kennzahlen(ps)
+                self.pardiso_kennzahlen = kz
+                self.nnz_faktor = int(kz.get("nnz") or 0)
+                self.gestoerte_pivots = kz.get("gestoert")
+                # pypardiso 0.4.7 fuehrt den Typ als ps.mtype. Fehlte das Feld,
+                # liefe ein AttributeError in das except unten, und nur das
+                # Mitschreiben liesse den Loeser ausweichen.
+                mt = getattr(ps, "mtype", None)
+                self.mtype = None if mt is None else int(mt)
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
             except Exception as ex:
                 if be == "pardiso":
                     raise
+                # Was PARDISO vor dem Scheitern eingetragen hat, gehoert nicht
+                # dem Ersatz. Die Threadzahl setzt _mkl_threads_setzen schon vor
+                # ps.factorize; ohne diese Zeilen nannten beschreibung() und der
+                # Loeser-Nachweis SuperLU mit den Threads von PARDISO (gemessen
+                # 22.09.2026 mit solver_threads = 2 und werfendem factorize:
+                # Nachweis threads {"2": 1}, Zeile "1x SuperLU (2 Threads)").
+                # SuperLU rechnet einkernig (test_superlu_nennt_sich_einkernig).
+                self.threads = 1
+                self.mtype = None
+                self.gestoerte_pivots = None
+                self.pardiso_kennzahlen = {}
+                self.nnz_faktor = 0
                 # **Nicht still verwerfen.** Bis zum 22.09.2026 fiel hier jede
                 # PARDISO-Ausnahme ohne eine Zeile weg, und es ging ueber
                 # CHOLMOD (meist nicht installiert) nach SuperLU. Am Drehlager
@@ -965,6 +1079,12 @@ class LinearSolver:
         if self._solve is None:
             raise RuntimeError("Loeser ist freigegeben - erneut faktorisieren")
         b = np.asarray(b, float)
+        # Das Residuum gehoert zu **dieser** Loesung. Ohne Pruefung (check=False,
+        # mehrere rechte Seiten, b = 0) gibt es keins - dann nan statt der Zahl
+        # der vorigen Loesung, die StaticSystem sonst diesem Lastfall
+        # zuschriebe. Gelesen wird es nur vom Loeser-Nachweis (_LoeserBuch) und
+        # von Tests; am Rechenweg haengt es nicht.
+        self.residuum = float("nan")
         x = self._solve(b)
         # Der Nachweis von ama gehoert zu genau dieser Loesung. Die Nachiteration unten ruft
         # self._solve fuer die Korrektur b - K x auf, und deren Residuum bezieht sich auf
@@ -1205,6 +1325,8 @@ class Results:
               f"Rechenzeit              : {self.info.get('time', 0):.3f} s"]
         if self.info.get("solver"):
             s.append(f"Gleichungsloeser        : {self.info['solver']}")
+        if self.info.get("loeser_nachweis"):
+            s.extend(loeser_nachweis_zeilen(self.info["loeser_nachweis"]))
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
@@ -1352,6 +1474,120 @@ def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
 # ==========================================================================
 # Statisches System
 # ==========================================================================
+class _LoeserBuch:
+    """Was die Loesungen **eines Lastfalls** benutzt haben - der Loeser-Nachweis.
+
+    Gezaehlt wird dort, wo geloest wird (StaticSystem._geloest), nicht nur
+    beim Faktorisieren: ein Lastfall kann eine Faktorisierung benutzen, die
+    vor ihm entstand. Ein lineares Modell faktorisiert beim Aufstellen des
+    Systems, und die behaltene Kontaktfaktorisierung
+    (StaticSystem._kontakt_loeser) ueberlebt den Wechsel des Lastfalls -
+    eingefrorene Zustaende sind darauf gebaut. Ein Nachweis, der nur
+    Faktorisierungen zaehlte, bliebe dort leer (Einwand der Gegenprobe zum
+    Entwurf, 22.09.2026). Die Faktorisierungen des Lastfalls zaehlen getrennt.
+
+    Nur Zaehlen und Lesen: kein Wert hier geht in eine Rechnung zurueck.
+    """
+
+    def __init__(self, zeit_vorher: float):
+        self.zeit_vorher = float(zeit_vorher)
+        self.loesungen: dict = {}            # Loeser -> Zahl der Loesungen
+        self.threads: dict = {}              # wirksame Threads -> Zahl der Loesungen
+        self.mtype: dict = {}                # PARDISO-Matrixtyp -> Zahl der Loesungen
+        self.ausweichgruende: dict = {}      # Grund -> Zahl der Loesungen
+        self.gescheitert = 0
+        self.faktorisierungen = 0
+        self.faktorisierungen_gestoert = 0
+        self.gestoert_summe = None           # None: keine Faktorisierung meldete eine Zahl
+        self.gestoert_max = None
+        self.residuum_max = None
+        self.residuum_gemessen = 0
+        self.pardiso_eingabe = None
+
+    @staticmethod
+    def _zaehlen(d: dict, schluessel: str) -> None:
+        d[schluessel] = d.get(schluessel, 0) + 1
+
+    def _gestoert(self, ls):
+        g = getattr(ls, "gestoerte_pivots", None)
+        if g is not None:
+            self.gestoert_max = max(int(g), self.gestoert_max or 0)
+        return g
+
+    def faktorisierung(self, ls) -> None:
+        self.faktorisierungen += 1
+        g = self._gestoert(ls)
+        if g is not None:
+            self.gestoert_summe = (self.gestoert_summe or 0) + int(g)
+            self.faktorisierungen_gestoert += 1 if int(g) > 0 else 0
+
+    def loesung(self, ls) -> None:
+        self._zaehlen(self.loesungen, str(getattr(ls, "backend", "?")))
+        self._zaehlen(self.threads, str(int(getattr(ls, "threads", 1) or 1)))
+        mt = getattr(ls, "mtype", None)
+        if mt is not None:
+            self._zaehlen(self.mtype, str(int(mt)))
+        grund = getattr(ls, "ausweichgrund", "")
+        if grund:
+            self._zaehlen(self.ausweichgruende, str(grund))
+        self._gestoert(ls)
+        r = getattr(ls, "residuum", None)
+        if r is not None and np.isfinite(r):
+            self.residuum_gemessen += 1
+            self.residuum_max = float(r) if self.residuum_max is None else max(self.residuum_max, float(r))
+        kz = getattr(ls, "pardiso_kennzahlen", None)
+        if kz:
+            self.pardiso_eingabe = dict(kz.get("eingabe") or {})
+
+    def als_dict(self, zeit_jetzt: float) -> dict:
+        return {"loesungen": dict(self.loesungen), "loesungen_gescheitert": self.gescheitert,
+                "ausweichgruende": dict(self.ausweichgruende),
+                "threads": dict(self.threads), "mtype": dict(self.mtype),
+                "faktorisierungen": self.faktorisierungen,
+                "faktorisierungen_mit_gestoerten_pivots": self.faktorisierungen_gestoert,
+                "gestoerte_pivots_summe": self.gestoert_summe,
+                "gestoerte_pivots_max": self.gestoert_max,
+                # Differenz der Systemsumme: das System rechnet viele Lastfaelle
+                "zeit_faktorisierung_lastfall": float(zeit_jetzt) - self.zeit_vorher,
+                "residuum_linear_max": self.residuum_max,
+                "residuum_gemessen": self.residuum_gemessen,
+                "pardiso_eingabe": self.pardiso_eingabe,
+                "mkl_cbwr": mkl_cbwr()}
+
+
+def loeser_nachweis_zeilen(nw: dict) -> list:
+    """Die Zeilen der Zusammenfassung zum Loeser-Nachweis eines Lastfalls:
+    wer wie oft geloest hat, Ausweichen mit Grund, gestoerte Pivots - die
+    beiden letzten nur, wenn es sie gab."""
+    z = []
+    loes = nw.get("loesungen") or {}
+    if loes:
+        thr = sorted(int(t) for t in (nw.get("threads") or {}))
+        wie = ("einkernig" if thr == [1] else "/".join(str(t) for t in thr) + " Threads") if thr else ""
+        mt = sorted(nw.get("mtype") or {})
+        if mt:
+            wie += (", " if wie else "") + "mtype " + "/".join(mt)
+        text = ", ".join(f"{n}× {NAMEN.get(b, b)}" for b, n in loes.items())
+        text += f" ({wie})" if wie else ""
+        text += (f"; {int(nw.get('faktorisierungen', 0) or 0)} Faktorisierungen in "
+                 f"{float(nw.get('zeit_faktorisierung_lastfall', 0.0) or 0.0):.3f} s")
+        r = nw.get("residuum_linear_max")
+        if r is not None:
+            text += f"; Residuum höchstens {float(r):.1e}"
+        z.append(f"Lösungen                : {text}")
+    if nw.get("loesungen_gescheitert"):
+        z.append(f"Gescheiterte Lösungen   : {int(nw['loesungen_gescheitert'])}")
+    for grund, n in (nw.get("ausweichgruende") or {}).items():
+        z.append(f"Ausgewichen             : {grund} ({n} Lösung{'' if n == 1 else 'en'})")
+    summe, hoechst = nw.get("gestoerte_pivots_summe"), nw.get("gestoerte_pivots_max")
+    if summe or hoechst:
+        z.append(f"Gestörte Pivots         : {int(summe or 0)} in "
+                 f"{int(nw.get('faktorisierungen_mit_gestoerten_pivots', 0) or 0)} von "
+                 f"{int(nw.get('faktorisierungen', 0) or 0)} Faktorisierungen dieses Lastfalls, "
+                 f"höchstens {int(hoechst or 0)} je benutzter Faktorisierung")
+    return z
+
+
 class StaticSystem:
     """Assemblierte und faktorisierte Steifigkeit fuer beliebig viele Lastfaelle."""
 
@@ -1392,6 +1628,9 @@ class StaticSystem:
         self.zeit_faktorisierung = 0.0
         self.nnz_matrix = 0
         self.nnz_faktor = 0
+        #: Loeser-Nachweis des laufenden Lastfalls (nachweis_beginnen) - None
+        #: ausserhalb eines Lastfalls
+        self._nachweis_buch = None
         self.t_assemble = time.time() - t0
         if not model.has_contact:
             _ = self.solver          # sofort faktorisieren (bei Kontakt erst mit Kc)
@@ -1436,6 +1675,22 @@ class StaticSystem:
             fortschritt = getattr(self, "_progress", None)
             if fortschritt:
                 _melde(fortschritt, f"Gleichungslöser ausgewichen - {grund}")
+        buch = getattr(self, "_nachweis_buch", None)
+        if buch is not None:
+            buch.faktorisierung(ls)
+
+    def nachweis_beginnen(self) -> None:
+        """Den Loeser-Nachweis eines Lastfalls neu beginnen (_solve_loads).
+
+        Ein Buch, das ein abgebrochener Lastfall offen liess, wird ersetzt -
+        seine Zahlen gehoeren nicht zum naechsten."""
+        self._nachweis_buch = _LoeserBuch(self.zeit_faktorisierung)
+
+    def nachweis_abschliessen(self) -> Optional[dict]:
+        """Den Loeser-Nachweis des Lastfalls als Woerterbuch; None, wenn keiner
+        begonnen wurde. Danach zaehlt nichts mehr hinein."""
+        buch, self._nachweis_buch = getattr(self, "_nachweis_buch", None), None
+        return None if buch is None else buch.als_dict(self.zeit_faktorisierung)
 
     def gerandet(self, Kff):
         """Kff mit dem Lagrange-Rand der Hilfsfesselung.
@@ -1624,12 +1879,25 @@ class StaticSystem:
         Die Randzeilen fordern ``V u = 0``; ihre rechte Seite ist null. Die
         Multiplikatoren am Ende der Loesung sind die Haltekraefte und gehen
         den Aufrufer nichts an.
+
+        Hier zaehlt auch der Loeser-Nachweis des Lastfalls (_LoeserBuch): jede
+        Loesung mit dem Loeser, der sie gerechnet hat.
         """
         m = self._rand
-        if not m:
-            return ls.solve(rhs)
-        x = ls.solve(np.concatenate([rhs, np.zeros(m)]))
-        return np.asarray(x, float).ravel()[:len(rhs)]
+        buch = getattr(self, "_nachweis_buch", None)
+        try:
+            if not m:
+                x = ls.solve(rhs)
+            else:
+                x = ls.solve(np.concatenate([rhs, np.zeros(m)]))
+                x = np.asarray(x, float).ravel()[:len(rhs)]
+        except BaseException:
+            if buch is not None:
+                buch.gescheitert += 1
+            raise
+        if buch is not None:
+            buch.loesung(ls)
+        return x
 
     def reactions(self, u: np.ndarray, F: np.ndarray, K_extra=None) -> np.ndarray:
         K = self.K if K_extra is None else (self.K + K_extra)
@@ -2240,6 +2508,10 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     ``res.info['start_angeboten_von']`` im Ergebnis und aendert nichts an
     der Rechnung."""
     t0 = time.time()
+    # Loeser-Nachweis je Lastfall: das System wird ueber Lastfaelle und
+    # Kombinationen geteilt, seine Summen (zeit_faktorisierung) wachsen mit.
+    if hasattr(system, "nachweis_beginnen"):
+        system.nachweis_beginnen()
     aktiv = getattr(system, "aktiv", None)
     # Grundlasten (LoadCase.grundlast) wirken in jeder direkt geloesten
     # Rechnung mit - dort gibt es keine Ueberlagerung, in die man sie spaeter
@@ -2398,6 +2670,9 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                      "nnz_matrix": int(getattr(system, "nnz_matrix", 0)),
                      "nnz_faktor": int(getattr(system, "nnz_faktor", 0)),
                      "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0))})
+    nachweis = system.nachweis_abschliessen() if hasattr(system, "nachweis_abschliessen") else None
+    if nachweis is not None:
+        res.info["loeser_nachweis"] = nachweis
     if probelauf:
         res.info["probelauf"] = True
     postprocess(model, u, res, feq, q, temp, workers, aktiv_eff)
