@@ -7243,14 +7243,18 @@ Mindestregel gerechnet.
 Elementverzeichnis mit vier Knoten. `Model.ndof` zählt die Zusatz-FHG mit;
 `res.u` bleibt (Knoten, 6). Steifigkeit, Spannung und Plastizität lesen den
 gemeinsamen Dehnungsoperator, der die Zusatz-FHG über `Dehnungsoperator.fhg`
-adressiert. Seitendruck, Eigengewicht (konsistent, ∫ N ρ g dV) und
-Temperatur und die Vorspannung eines Körpers sind angebunden, ebenso die
-Masse (konsistent, denn eine Zeilensummenmasse gäbe den hierarchischen
-Funktionen keine). Je Lastart geben `tetp2`, `tetp3`, `tetp4` und der tet10
+adressiert. Seitendruck, Eigengewicht (konsistent, ∫ N ρ g dV), Temperatur
+und die Vorspannung eines Körpers sind angebunden, ebenso die Masse
+(konsistent, denn eine Zeilensummenmasse gäbe den hierarchischen Funktionen
+keine). Je Lastart geben `tetp2`, `tetp3`, `tetp4` und der tet10
 am Würfel dieselben Zahlen wie die geschlossene Lösung (gemessen 23.09.2026:
 Eigengewicht ρ g V, Seitendruck normal und schräg, Temperatur allseitig
 behindert −E α ΔT/(1 − 2ν) = −189,000 MPa, Vorspannung 1 MN auf 1 m²
-behindert +1,0000 MPa, frei 0).
+behindert +1,0000 MPa, frei 0). Durch den Löser gemessen
+(tests/test_tetp_rechnung.py): Kragarm 10 × 2 × 2 Kuhn-Zellen, Knotenmittel an
+der Nachweisstelle tet4 127,2 N/mm², `tetp2` 361,1 N/mm², `tetp3`
+355,0002 N/mm² (Soll 355). Lastsummen und Patch-Test (auch mit tet4 und
+`tetp3` gemischt) stimmen auf Rundung.
 
 **Lager.** Bei einem starren Lager sind an einer gelagerten Randseite oder
 Randkante die Zusatz-FHG in der gelagerten Richtung null. An einer
@@ -7283,16 +7287,33 @@ wo die Singularität sitzt. Die aus der lokalen Korrektur folgende
 311 N/mm² geschätzt, wirklich änderte sich σ_v beim Übergang auf p = 3 um 2,5
 bis 18 N/mm². Der Indikator liefert darum nur die Energie zum Ordnen. Ob eine
 Nachweisstelle auf 1 N/mm² steht, zeigt der Vergleich der Lösungen mit p und
-p + 1 an der Stelle selbst. Durch den Löser gemessen (tests/test_tetp_rechnung.py):
-Kragarm 10 × 2 × 2 Kuhn-Zellen, Knotenmittel an der Nachweisstelle tet4
-127,2 N/mm², `tetp2` 361,1 N/mm², `tetp3` 355,0002 N/mm² (Soll 355).
-Lastsummen und Patch-Test (auch mit tet4 und `tetp3` gemischt) stimmen auf
-Rundung.
+p + 1 an der Stelle selbst.
 
-**Offen.** Kantenmitten auf der wahren Geometrie vom Vernetzer (heute ist
-das Element gerade, siehe Bedingung 1), die Wahl der Ordnung je Element in der
+**Plastizität.** Sie läuft über den gemeinsamen Dehnungsoperator an den
+Integrationspunkten der Steifigkeit (4, 14 bzw. 24 Punkte je Element),
+Zustand je Punkt wie beim hex8 und tet10. Gemessen 23.09.2026
+(tests/test_tetp_rechnung.py): die plastische Tangente ist für `tetp2`,
+`tetp3` und `tetp4` die Ableitung der Rückführung (gegen zentrale Differenzen
+bis 1·10⁻⁹); der plastische Zugstab bei 1,3 f_y trifft σ und die Verlängerung
+exakt; der Newton konvergiert am Kragträger unter 1,20 M_el quadratisch
+(2,7·10⁻² → 1,4·10⁻² → 3,6·10⁻⁵ → 2,8·10⁻⁹ → 1,3·10⁻¹³).
+
+**Gekrümmte Geometrie aus einem tet10-Netz** (`tetp.aus_tet10`). Der
+Vernetzer setzt beim tet10 die Mittenknoten auf die wahre Fläche (Anweisung
+V2). Der Umwandler macht aus solchen tet10 `tetpN`-Elemente: Die Ecken bleiben
+Knoten, ein Mittenknoten neben der Sehnenmitte wird zur Kantenmitte der
+Geometrie (`model.tetp_kantenmitten`), die Mittenknoten selbst tragen danach
+nichts. Hängt an einem Mittenknoten noch eine Knotenlast, oder ein Lager, das
+die Ecken der Kante nicht ebenso tragen, bricht er ab; die Last ginge sonst
+mit dem Knoten verloren. Beim `tetp` gehört eine Last als Flächenlast auf die
+Seite. Gemessen 23.09.2026 an der Hohlkugel der ersten Element-Sitzung
+(tet10 mit Kantenmitten auf der Kugel, 2 × 2, p = 3): 144 Elemente, 126
+gekrümmte Kanten, dieselbe Abweichung (−4,09 bis +8,17 N/mm²) wie der direkte
+Aufbau.
+
+**Offen.** Kantenmitten auf der wahren Geometrie an Bauteilen liefert erst der
+Vernetzer (V2); aus dessen tet10 macht `aus_tet10` gekrümmte `tetp`, die Wahl der Ordnung je Element in der
 Oberfläche und automatisch, ein Fehlerschätzer für höhere Ordnung
-(`netzfehler` behandelt das Element vorerst wie einen tet4), die Plastizität
-am Prüfkörper und die Messung der Rechenzeit am Drehlager. Der Anwender hat
-festgelegt, dass die Rechnung dort nicht länger werden darf als heute. Ob das
+(`netzfehler` behandelt das Element vorerst wie einen tet4) und die Messung
+der Rechenzeit am Drehlager. Der Anwender hat festgelegt, dass die Rechnung dort nicht länger werden darf als heute. Ob das
 Element das schafft, zeigt erst die Messung M3.

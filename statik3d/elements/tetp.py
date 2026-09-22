@@ -1303,6 +1303,93 @@ def jacobi_pruefung(model, idx) -> list:
     return [(idx[a], model.elements[idx[a]].typ, float(m[a])) for a in np.flatnonzero(m <= 0.0)]
 
 
+# --------------------------------------------------------------------------
+# Aus einem tet10-Netz: die Mittenknoten werden Geometrie
+# --------------------------------------------------------------------------
+def aus_tet10(model, elemente=None, ordnung: int = 3, toleranz: float = 1e-9) -> dict:
+    """tet10-Elemente (alle oder ``elemente``) in tetpN umwandeln.
+
+    Die Ecken bleiben die Knoten des Elements. Ein Mittenknoten, der nicht auf
+    der Sehnenmitte liegt (der Vernetzer setzt ihn auf die wahre Flaeche,
+    Anweisung V2), wird zur Kantenmitte der Geometrie
+    (``model.tetp_kantenmitten``); liegt er auf der Sehne, bleibt die Kante
+    gerade. Die Mittenknoten selbst tragen danach nichts mehr (ihre FHG haben
+    keine Steifigkeit und werden gesperrt).
+
+    Laut statt still: Eine Knotenlast oder ein Lager an einem Mittenknoten,
+    das die Ecken der Kante nicht ebenso tragen, bricht ab - die Last ginge
+    sonst mit dem Knoten verloren. Lasten gehoeren beim tetp als Flaechenlast
+    auf die Seite (sie wirkt dort konsistent auch auf die Zusatz-FHG).
+
+    Rueckgabe {"elemente": Zahl, "gekruemmt": Zahl gekruemmter Kanten,
+    "mittenknoten": Menge der frei gewordenen Knoten}.
+    """
+    if ordnung not in (2, 3, 4):
+        raise ValueError(f"Ordnung {ordnung} (2, 3 oder 4)")
+    X = np.asarray(model.nodes, float)
+    idx = [i for i, e in enumerate(model.elements) if e.typ == "tet10"] if elemente is None \
+        else [int(i) for i in elemente]
+    mitte_von = {}
+    for i in idx:
+        e = model.elements[i]
+        if e.typ != "tet10":
+            raise ValueError(f"Element {i + 1} ist {e.typ}, nicht tet10")
+        kn = [int(n) for n in e.nodes]
+        for m_, (a, b) in enumerate(TET10_KANTEN):
+            mitte_von[kn[4 + m_]] = (min(kn[a], kn[b]), max(kn[a], kn[b]))
+    # Lasten und Lager an den Mittenknoten pruefen
+    for lc in getattr(model, "load_cases", {}).values() if isinstance(getattr(model, "load_cases", None), dict) \
+            else (getattr(model, "load_cases", None) or []):
+        for nl in getattr(lc, "nodal_loads", None) or []:
+            if int(nl.node) in mitte_von and any(float(x) for x in nl.F):
+                raise ValueError(f"Knotenlast am Mittenknoten {int(nl.node) + 1} (Lastfall "
+                                 f"'{getattr(lc, 'name', '?')}'): beim Tetraeder mit Ordnung p "
+                                 "traegt der Mittenknoten nichts - die Last als Flaechenlast "
+                                 "auf die Seite geben")
+    lager: dict = {}
+    for sp in getattr(model, "supports", None) or []:
+        lager.setdefault(int(sp.node), []).append(sp)
+    def gesperrt(n):
+        """Starr gesperrte Richtungen 0..2 eines Knotens (alle seine Lager)."""
+        return {int(d) for sq in lager.get(n, []) if sq.stiffness is None and not sq.behaviour
+                for d in sq.dofs if int(d) < 3}
+
+    for m_, (a, b) in mitte_von.items():
+        for sp in lager.get(m_, []):
+            dofs = {int(d) for d in sp.dofs if int(d) < 3}
+            starr = sp.stiffness is None and not sp.behaviour
+            # die Richtungen des Mittenknotens muessen an beiden Ecken ebenso
+            # starr gehalten sein (eine Ecke auf zwei Symmetrieebenen haelt mehr)
+            ok = starr and dofs <= gesperrt(a) and dofs <= gesperrt(b)
+            if dofs and not ok:
+                raise ValueError(f"Lager am Mittenknoten {m_ + 1}, das die Ecken {a + 1} und "
+                                 f"{b + 1} nicht ebenso tragen: beim Tetraeder mit Ordnung p "
+                                 "gilt ein Lager ueber die Ecken der Seite")
+    km = dict(getattr(model, "tetp_kantenmitten", None) or {})
+    gekruemmt = 0
+    for i in idx:
+        e = model.elements[i]
+        kn = [int(n) for n in e.nodes]
+        for m_, (a, b) in enumerate(TET10_KANTEN):
+            pa, pb, pm = X[kn[a]], X[kn[b]], X[kn[4 + m_]]
+            lang = float(np.linalg.norm(pb - pa))
+            if np.linalg.norm(pm - 0.5 * (pa + pb)) > toleranz * max(lang, 1e-300):
+                schl = (min(kn[a], kn[b]), max(kn[a], kn[b]))
+                if schl not in km:
+                    gekruemmt += 1
+                km[schl] = pm.copy()
+        e.nodes = kn[:4]
+        e.typ = f"tetp{ordnung}"
+    model.tetp_kantenmitten = km
+    model._tetp_version = getattr(model, "_tetp_version", 0) + 1
+    # Lager an den Mittenknoten sind jetzt ohne Wirkung - weg damit, damit
+    # kein Lager an einem Knoten ohne Element steht
+    frei = set(mitte_von)
+    if frei and getattr(model, "supports", None):
+        model.supports = [sp for sp in model.supports if int(sp.node) not in frei]
+    return {"elemente": len(idx), "gekruemmt": gekruemmt, "mittenknoten": frei}
+
+
 def _anmelden():
     """Am Ende des eigenen Imports: bei solid anmelden (idempotent). Ist solid
     selbst noch im Laden, meldet es tetp am Ende seines Imports an."""

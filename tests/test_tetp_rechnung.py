@@ -8,6 +8,10 @@ Der Tetraeder mit Ordnung p in der Rechnung von Statik3D (solver.solve_static).
   * Eigengewicht: Auflagerkraft = rho g V
   * Uebergang tet4/tetp3 und Symmetrieebene: Patch-Test ueber die Rechnung
   * Temperatur: freie Dehnung ohne Spannung
+  * je Lastart tetp2/3/4 gegen geschlossene Loesung und tet10; Linienlager
+  * Fehlerschaetzer (Zeile "wie tet4"), Indikator der naechsten Ordnung
+  * Plastizitaet: Tangente, Zugstab, Newton quadratisch
+  * aus_tet10: gekruemmte Kantenmitten aus einem tet10-Netz
 
 Aufruf:  python -m tests.test_tetp_rechnung
 """
@@ -375,6 +379,150 @@ def test_indikator_ordnet():
           len(eta2) == len(m.elements) and max(xs) < 0.1, f"x der fuenf groessten: {np.round(xs, 3).tolist()}")
 
 
+# --------------------------------------------------------------------------
+# Plastizitaet ueber den gemeinsamen Dehnungsoperator
+# --------------------------------------------------------------------------
+def test_plastisch_tangente():
+    """dK = -dF_p/du fuer tetp2/3/4 gegen zentrale Differenzen, wie die erste
+    Element-Sitzung es fuer die anderen Typen prueft
+    (test_plastizitaet.test_tangente_exakt_fuer_jeden_typ)."""
+    from statik3d import plastizitaet as pl
+    einst = pl.Plastizitaet(an=True, verfestigung=0.02)
+    rng = np.random.default_rng(5)
+    for typ in ("tetp2", "tetp3", "tetp4"):
+        m = quader(1, 1, 1, 1.0, 1.0, 1.0, lambda c, typ=typ: typ)
+        m.materials["S"].fy = 355e6
+        el = pl._solid_elemente(m, None)
+        u = rng.normal(0.0, 2.5e-3, m.ndof)
+        _F, _z, info = pl._schritt_block(m, u, pl.Zustand(), einst, el, typ, [], tangente=True)
+        dK = info["dK"].toarray()
+        spalten = np.flatnonzero(np.abs(dK).sum(axis=0) > 0)[:40]
+        num = np.zeros((m.ndof, len(spalten)))
+        h = 1e-9
+        for j, a in enumerate(spalten):
+            up, um = u.copy(), u.copy()
+            up[a] += h
+            um[a] -= h
+            num[:, j] = -(pl._schritt_block(m, up, pl.Zustand(), einst, el, typ, [])[0]
+                          - pl._schritt_block(m, um, pl.Zustand(), einst, el, typ, [])[0]) / (2 * h)
+        abw = float(np.abs(dK[:, spalten] - num).max()) / max(float(np.abs(num).max()), 1e-30)
+        check(f"{typ}: plastische Tangente = -dF_p/du ({info['fliessend']} fliessende Elemente)",
+              info["fliessend"] > 0 and abw < 1e-6, f"{abw:.2e} an {len(spalten)} Spalten")
+
+
+def test_plastisch_zugstab():
+    """Einachsiger Zug ueber die Fliessgrenze, drei Symmetrieebenen: exakt
+    sigma = fy + H eps_p, fuer jede Ordnung (homogenes Feld)."""
+    from statik3d import plastizitaet as pl
+    fy, r = 355e6, 0.02
+    sigma = 1.3 * fy
+    for typ in ("tetp2", "tetp3"):
+        m = quader(2, 1, 1, 0.3, 0.1, 0.1, lambda c, typ=typ: typ, rho=0.0)
+        m.materials["S"].fy = fy
+        X = np.asarray(m.nodes, float)
+        for n in range(m.nn):
+            d = [c for c in range(3) if abs(X[n, c]) < 1e-9]
+            if d:
+                m.fix(n, d)
+        lc = m.add_load_case("Z")
+        lc.gravity = [0.0, 0.0, 0.0]
+        for i, s in seiten_auf(m, lambda x: abs(x[0] - 0.3) < 1e-9):
+            m.load_face(i, sigma, s, case="Z", direction=(1.0, 0.0, 0.0))
+        m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=r, laststufen=2, iterationen=40,
+                                         toleranz=1e-10)
+        res = solver.solve_static(m, case="Z")
+        s = np.array([np.asarray(v, float) for v in res.solid_res.values()])
+        h_soll = pl.Plastizitaet(an=True, verfestigung=r).H(E_ST)
+        eps_p = (sigma - fy) / h_soll
+        u_x = float(np.max(np.asarray(res.u, float)[:, 0]))
+        soll_u = (sigma / E_ST + eps_p) * 0.3
+        check(f"{typ}: plastischer Zugstab sigma = {sigma / 1e6:.1f} N/mm2, u = (s/E + eps_p) L",
+              np.abs(s[:, 0] - sigma).max() < 1e-6 * sigma and abs(u_x - soll_u) < 1e-6 * soll_u,
+              f"sigma_xx {s[:, 0].min() / 1e6:.3f}..{s[:, 0].max() / 1e6:.3f}, u {u_x * 1e3:.5f} mm "
+              f"(Soll {soll_u * 1e3:.5f})")
+
+
+def test_plastisch_newton():
+    """Kragtraeger 200 x 200 mm unter 1,20 M_el (Endmoment als lineare
+    Normalspannung), eine Laststufe, tetp3: Newton quadratisch wie beim hex8
+    und tet10 (test_plastizitaet.test_newton_konvergiert_quadratisch)."""
+    import re
+    from statik3d import plastizitaet as pl
+    fy, b, h, L = 235e6, 0.2, 0.2, 1.0
+    M = 1.2 * fy * b * h ** 2 / 6.0
+    I = b * h ** 3 / 12.0
+    m = quader(5, 1, 2, L, b, h, lambda c: "tetp3", rho=0.0)
+    m.materials["S"].fy = fy
+    for n in range(m.nn):
+        if abs(m.nodes[n][0]) < 1e-9:
+            m.fix(n, [0, 1, 2])
+    lc = m.add_load_case("M")
+    lc.gravity = [0.0, 0.0, 0.0]
+    # Endmoment: Normalspannung linear ueber die Hoehe; je Seite der Mittelwert
+    # ist zu grob - drei Streifen z der Seite bekommen je ihre Spannung
+    X = np.asarray(m.nodes, float)
+    for i, s in seiten_auf(m, lambda x: abs(x[0] - L) < 1e-9):
+        z = X[[m.elements[i].nodes[a] for a in tp.SEITEN[s]], 2].mean()
+        m.load_face(i, -M * (z - h / 2) / I, s, case="M")
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=1, iterationen=12,
+                                     toleranz=1e-10)
+    meld = []
+    r = solver.solve_static(m, case="M", progress=lambda s_, *a, **k: meld.append(str(s_)))
+    e = [float(z[-1]) for s_ in meld if "Newton-Schritt" in s_
+         for z in [re.findall(r"nderung ([0-9.]+e[+-][0-9]+)", s_)] if z]
+    info = r.info.get("plastizitaet") or {}
+    ueber = [x for x in e if x > 1e-10]
+    quad = len(ueber) >= 3 and all(ueber[k + 1] <= 10.0 * ueber[k] ** 2
+                                   for k in range(len(ueber) - 3, len(ueber) - 1))
+    check("tetp3: Newton quadratisch unter 1,20 M_el", quad and info.get("konvergiert") and len(e) <= 8,
+          " -> ".join(f"{x:.1e}" for x in e))
+
+
+def test_aus_tet10():
+    """tetp.aus_tet10 an der Hohlkugel der ersten Element-Sitzung (tet10 mit
+    Kantenmitten auf der Kugel): mit Knotenlasten an Mittenknoten bricht der
+    Umwandler laut ab; ohne sie werden die gekruemmten Kantenmitten zu
+    Geometrie, und die Rechnung gibt dieselben Zahlen wie der direkte Aufbau
+    in tests/messung_tetp_hohlkugel.py (p = 3, 2 x 2: gemessen 23.09.2026
+    kleinste -4,09, groesste +8,17 N/mm2 Abweichung)."""
+    from statik3d.elements import solid as sl
+    from tests import messung_tetp_hohlkugel as mh
+    from tests import pruefkoerper as pk
+    hk = pk.Hohlkugel()
+    m = hk.modell("tet10", 2, 2)
+    try:
+        tp.aus_tet10(m, ordnung=3)
+        check("aus_tet10: Knotenlast am Mittenknoten bricht laut ab", False, "kein Fehler")
+    except ValueError as ex:
+        check("aus_tet10: Knotenlast am Mittenknoten bricht laut ab", "Mittenknoten" in str(ex),
+              str(ex)[:60])
+    m = hk.modell("tet10", 2, 2)
+    m.case().nodal_loads.clear()
+    info = tp.aus_tet10(m, ordnung=3)
+    X = np.asarray(m.nodes, float)
+    r = np.linalg.norm(X, axis=1)
+    innen = np.abs(r - hk.a) < 1e-9 * hk.b
+    for i, e in enumerate(m.elements):
+        for s, ecken in enumerate(tp.SEITEN):
+            if innen[[e.nodes[a] for a in ecken]].all():
+                m.load_face(i, hk.p, s)
+    res = next(iter(solver.solve_all(m).cases.values()))
+    sk = res.solid_knoten
+    pos = {int(k): j for j, k in enumerate(np.asarray(sk["knoten"]))}
+    S = np.asarray(sk["spannung"])
+    f = np.array([sl.von_mises(S[pos[n]]) for n in hk.nachweisknoten(m)]) / 1e6 - 355.0
+    m2 = mh.modell(hk, 2, 2, "p3")
+    res2 = next(iter(solver.solve_all(m2).cases.values()))
+    sk2 = res2.solid_knoten
+    pos2 = {int(k): j for j, k in enumerate(np.asarray(sk2["knoten"]))}
+    S2 = np.asarray(sk2["spannung"])
+    f2 = np.array([sl.von_mises(S2[pos2[n]]) for n in hk.nachweisknoten(m2)]) / 1e6 - 355.0
+    check("aus_tet10: gekruemmte tetp3-Hohlkugel = direkter Aufbau",
+          info["gekruemmt"] > 0 and abs(f.min() - f2.min()) < 1e-6 and abs(f.max() - f2.max()) < 1e-6,
+          f"{info['elemente']} Elemente, {info['gekruemmt']} gekruemmte Kanten; "
+          f"Abweichung {f.min():+.2f}..{f.max():+.2f} gegen {f2.min():+.2f}..{f2.max():+.2f} N/mm2")
+
+
 class _ZaehlListe(list):
     """Liste, die mitzaehlt, wie oft ueber sie gelaufen wird."""
     laeufe = 0
@@ -430,6 +578,10 @@ def main():
     test_linienlager_an_kante()
     test_schaetzer_zeile()
     test_indikator_ordnet()
+    test_plastisch_tangente()
+    test_plastisch_zugstab()
+    test_plastisch_newton()
+    test_aus_tet10()
     n_fail = sum(1 for _n, ok in RESULTS if not ok)
     print(f"\n{len(RESULTS) - n_fail}/{len(RESULTS)} bestanden")
     return 1 if n_fail else 0
