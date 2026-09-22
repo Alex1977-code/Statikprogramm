@@ -108,9 +108,57 @@ def test_kopie_in_sekunden():
           f"{dauer:.2f} s gegen {umweg:.2f} s, Faktor {umweg / max(dauer, 1e-9):.1f}")
 
 
+def test_ganzzahlige_schluessel_ueberleben_den_umlauf():
+    """Wörterbücher mit Knotennummern als Schlüssel dürfen beim Speichern
+    nicht zu Zeichenketten werden.
+
+    JSON kennt nur Zeichenketten als Schlüssel. `ContactPair.knotenflaechen`
+    ist {Knotennummer: Einflussfläche}, mit **ganzzahligen** Schlüsseln gebaut
+    (`fugen._passungsdaten`) und mit ganzzahligen gelesen (`contact.py`,
+    Lochleibungsgrenze). Ohne Rückwandlung fand die Abfrage nach dem Öffnen
+    nichts und gab 0,0 zurück - und **0,0 heißt dort „keine Grenze"**: die
+    Passung trug unbegrenzt, statt bei der Grenzpressung zu fließen.
+
+    Gemessen am 22.09.2026: 2,100 kN vor dem Umlauf, **0,000 kN danach** -
+    still, ohne Meldung, in jedem gespeicherten Modell mit Passung. Dasselbe
+    Muster ist beim Lagerverhalten (`behaviour`) längst behoben; hier war es
+    vergessen.
+
+    Geprüft wird die **Wirkung** (die Grenzkraft), nicht der Schlüsseltyp -
+    ein Typ ist leicht zu prüfen und sagt nichts darüber, ob jemand ihn liest.
+    """
+    from statik3d.model import ContactPair
+    m = Model("passung")
+    cp = ContactPair(name="Fuge")
+    cp.knotenflaechen = {12: 4.2e-6, 13: 5.1e-6}
+    cp.grenzpressung = 500e6
+    m.contact_pairs.append(cp)
+
+    def grenze(modell, knoten=12):
+        c = modell.contact_pairs[0]
+        a = float((getattr(c, "knotenflaechen", None) or {}).get(int(knoten), 0.0) or 0.0)
+        return float(getattr(c, "grenzpressung", 0.0) or 0.0) * a
+
+    vorher = grenze(m)
+    check("der Prüfkörper hat eine Lochleibungsgrenze", vorher > 0,
+          f"{vorher / 1e3:.3f} kN")
+    m2 = Model.from_dict(json.loads(json.dumps(m.to_dict())))
+    nachher = grenze(m2)
+    check("sie überlebt Speichern und Laden",
+          abs(nachher - vorher) <= 1e-9 * vorher,
+          f"{nachher / 1e3:.3f} kN gegen {vorher / 1e3:.3f} kN")
+    check("und die Schlüssel sind wieder ganzzahlig",
+          all(isinstance(k, int) for k in m2.contact_pairs[0].knotenflaechen),
+          str({k: type(k).__name__ for k in m2.contact_pairs[0].knotenflaechen}))
+    # Auch über Model.copy, der denselben Weg geht
+    check("dasselbe über Model.copy", abs(grenze(m.copy()) - vorher) <= 1e-9 * vorher,
+          f"{grenze(m.copy()) / 1e3:.3f} kN")
+
+
 def main():
     for t in (test_kopie_gleicht_json_umweg, test_kopie_ist_unabhaengig, test_element_kopie,
-              test_kopie_in_sekunden):
+              test_kopie_in_sekunden,
+              test_ganzzahlige_schluessel_ueberleben_den_umlauf):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

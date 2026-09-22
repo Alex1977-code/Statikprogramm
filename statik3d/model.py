@@ -5326,6 +5326,22 @@ class Model:
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]
         m.contact_pairs = [_dc(ContactPair, c) for c in d.get("contact_pairs", [])]
+        for _cp in m.contact_pairs:
+            # JSON kennt nur Zeichenketten als Schluessel. ``knotenflaechen``
+            # ist {Knotennummer: Einflussflaeche}, mit **ganzzahligen**
+            # Schluesseln gebaut (fugen._passungsdaten) und mit ganzzahligen
+            # gelesen (contact.py, Lochleibungsgrenze). Ohne diese Zeile fand
+            # die Abfrage nach dem Oeffnen nichts und gab 0,0 zurueck - und
+            # 0,0 heisst dort **keine Grenze**: die Passung trug unbegrenzt,
+            # statt bei der Grenzpressung zu fliessen. Gemessen am
+            # 22.09.2026: 2,100 kN vor dem Umlauf, 0,000 kN danach. Still,
+            # ohne Meldung, in jedem gespeicherten Modell mit Passung.
+            #
+            # Dasselbe Muster ist bei ``behaviour`` der Lager laengst behoben
+            # (siehe _lager_aus_dict weiter unten) - hier war es vergessen.
+            kf = getattr(_cp, "knotenflaechen", None)
+            if kf:
+                _cp.knotenflaechen = {int(k): float(v) for k, v in kf.items()}
         m.getrennte_knoten = {str(k): [[int(a), int(b)] for a, b in v]
                               for k, v in (d.get("getrennte_knoten") or {}).items()}
         m.kontakt_ausnahmen = [[str(a), str(b)] for a, b in (d.get("kontakt_ausnahmen") or [])]
