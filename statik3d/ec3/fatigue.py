@@ -264,6 +264,12 @@ class FatigueMember:
     governing: str = ""
     x_governing: float = 0.0
     warnings: list = field(default_factory=list)
+    #: Warum dieser Nachweis **nicht gefuehrt** wurde - leer, wenn er lief.
+    #: Ohne dieses Feld fiel ein Stab, zu dem keine Ermuedungslast beitrug,
+    #: samt seinen Warnungen ganz aus ``out.members`` heraus
+    #: (``if not sammlung: continue``): der Bericht zeigte ihn nicht, und
+    #: niemand erfuhr, dass sein Nachweis fehlte (22.09.2026).
+    fehler: str = ""
     #: Kollektiv am massgebenden Ort: [(Delta_sigma, n)], absteigend
     kollektiv: list = field(default_factory=list)
     kollektiv_shear: list = field(default_factory=list)
@@ -302,6 +308,10 @@ class FatigueVolumen:
     util: float = 0.0
     element: int = -1
     n_elemente: int = 0
+    #: Warum dieser Nachweis **nicht gefuehrt** wurde - leer, wenn er lief.
+    #: Siehe FatigueMember.fehler; der Volumenzweig verlor seinen Koerper an
+    #: derselben Stelle (``if not beitrag: continue``).
+    fehler: str = ""
     ranges: list = field(default_factory=list)       # (Delta_sigma, n, Name, Element)
     #: Kollektiv am massgebenden Element: [(Delta_sigma, n)], absteigend
     kollektiv: list = field(default_factory=list)
@@ -655,8 +665,15 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             spiele = _spiele(fl, ds)
             if spiele <= 0:
                 continue
+            if fl.case_min and fl.case_min not in all_res:
+                # Siehe den Stabzweig: angegeben und nicht gerechnet ist nicht
+                # null, sondern ein nicht gefuehrter Nachweis.
+                fv.warnings.append(
+                    f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_min}' des "
+                    f"Mindestzustands fehlt - Nachweis nicht gefuehrt")
+                continue
             a = signal(fl.case_max)
-            b = signal(fl.case_min) if fl.case_min and fl.case_min in all_res else 0.0
+            b = signal(fl.case_min) if fl.case_min else 0.0
             d = np.abs(a - b) * faktor
             D += spiele / _n_vektor(d, cat, gMf)
             dsig = np.maximum(dsig, d)
@@ -665,6 +682,12 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             fv.ranges.append((float(d[j]), spiele, fl.name, idx[j]))
             beitrag = True
         if not beitrag:
+            # Siehe den Stabzweig: ein Koerper mit Kerbfall, zu dem keine
+            # Ermuedungslast beitraegt, gehoert als "nicht gefuehrt" in den
+            # Bericht und nicht aus ihm heraus.
+            if fv.warnings:
+                fv.fehler = fv.warnings[0]
+                out.volumen[k.name] = fv
             continue
         j = int(np.argmax(D))
         fv.D = float(D[j])
@@ -774,9 +797,25 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
                 continue
             x, s_max, t_max = _stress_points(model, all_res[fl.case_max], member, n)
             xs = x
-            if fl.case_min and fl.case_min in all_res:
+            if fl.case_min and fl.case_min not in all_res:
+                # **Angegeben, aber nicht gerechnet ist nicht null.** Bis zum
+                # 22.09.2026 fiel dieser Fall in denselben Zweig wie "kein
+                # Mindestzustand angegeben" und setzte s_min = 0. Bei
+                # wechselnder Beanspruchung - dem Regelfall - ist das die
+                # halbe Schwingbreite: aus -80/+100 N/mm2 wurden 100 statt
+                # 180. Da D mit der dritten bis fuenften Potenz eingeht, faellt
+                # die Schaedigung um den Faktor 6 bis 25 zu klein aus, und
+                # zwar auf der unsicheren Seite. Der fehlende HOECHSTzustand
+                # wurde die ganze Zeit gemeldet - der Mindestzustand nicht.
+                fm.warnings.append(
+                    f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_min}' des "
+                    f"Mindestzustands fehlt - Nachweis nicht gefuehrt")
+                continue
+            if fl.case_min:
                 _, s_min, t_min = _stress_points(model, all_res[fl.case_min], member, n)
             else:
+                # Kein Mindestzustand angegeben: der Zustand schwingt gegen
+                # null, und das ist hier richtig.
                 s_min = np.zeros_like(s_max)
                 t_min = np.zeros_like(t_max)
             dsig = np.abs(s_max - s_min) * faktor          # (4, nstat)
@@ -791,6 +830,13 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
             k = int(np.argmax(dtau))
             fm.ranges_shear.append((float(dtau[k]), spiele, fl.name, float(x[k])))
         if not sammlung:
+            # Der Stab bleibt im Nachweis stehen - als **nicht gefuehrt**.
+            # Vorher verschwand er hier samt seinen Warnungen, und der
+            # Bericht zeigte ihn gar nicht: ein fehlender Nachweis sah aus
+            # wie ein Stab ohne Ermuedungsbeanspruchung.
+            if fm.warnings:
+                fm.fehler = fm.warnings[0]
+                out.members[mname] = fm
             continue
         # Massgebend ist der Ort mit der groessten Schaedigung - nicht die
         # groesste Schwingbreite irgendwo und die naechste woanders.

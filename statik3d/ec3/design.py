@@ -35,8 +35,19 @@ class MemberCheck:
     #: Woelbkrafttorsion je Kombination: {"combo", "B_max", "sigma_w_max",
     #: "x_max", "anteil_woelb", "lamL", "rand", "hinweis"}
     woelb: list = field(default_factory=list)
+    #: Warum dieser Nachweis **nicht gefuehrt** wurde - leer, wenn er lief.
+    #: Ohne dieses Feld gab ``status()`` fuer einen uebersprungenen Stab
+    #: "erfuellt" mit Ausnutzung 0,000 zurueck: ein Stab aus einem
+    #: importierten Werkstoff ohne Streckgrenze ging so als bestandener
+    #: Nachweis in das Statikdokument ein und senkte zugleich nichts, weil
+    #: seine Null die groesste Ausnutzung nicht beruehrt (22.09.2026). Der
+    #: Nachbarnachweis Volumen (ec3.volumen.VolumenCheck) unterscheidet an
+    #: derselben Stelle seit jeher drei Faelle; hier waren es zwei.
+    fehler: str = ""
 
     def status(self) -> str:
+        if self.fehler:
+            return "nicht geführt"
         return "erfüllt" if self.util <= 1.0 else "NICHT erfüllt"
 
 
@@ -91,6 +102,7 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
     mc = MemberCheck(member.name, sec.name, mat.name, L, elements=list(member.elements))
     fy = mat.yield_strength(sec.t_max)
     if not fy:
+        mc.fehler = f"Werkstoff {mat.name} ohne Streckgrenze"
         mc.warnings.append(f"Material {mat.name} ohne Streckgrenze - kein Nachweis")
         return mc
     Lcr_y = member.Lcr_y if member.Lcr_y else member.beta_y * L

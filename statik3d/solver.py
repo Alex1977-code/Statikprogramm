@@ -3810,7 +3810,42 @@ def _lastfaelle_hoeherer_ordnung(model: Model, an, systeme: dict, progress=None)
                     an.theorie3 = Th3Results(settings={"schritte": int(getattr(ds, "th3_schritte", 10) or 10)})
                 an.theorie3.kombinationen[name] = info
         except ValueError as ex:
+            # **Nicht nur nach an.info["warnungen"]**: dieser Schluessel wird im
+            # ganzen Programm einmal geschrieben und nirgends gelesen - weder
+            # von Analysis.summary noch vom Bericht noch von der Oberflaeche.
+            # Der Lastfall behielt damit still sein LINEARES Ergebnis unter
+            # demselben Namen, waehrend die Lastfalltabelle des Berichts
+            # weiterhin "II" bzw. "III" ausweist (report/html.py druckt
+            # model.theorie_von, also die Einstellung, nicht das Gerechnete).
+            # Zusatzmomente aus der Verformung und die Vorkruemmungen fehlten
+            # vollstaendig, und alle darauf aufbauenden Nachweise rechneten mit
+            # zu kleinen Momenten - unkonservativ und ohne jeden Hinweis
+            # (gefunden 22.09.2026).
+            #
+            # Der Kombinationszweig macht es seit jeher richtig
+            # (theorie3.py: Th3Info(name=n, fehler=str(ex))); hier fehlte es.
+            # Mit einem Eintrag in kombinationen steht der Fehler in der
+            # Spalte "Hinweis" des Theoriekapitels, und res.info["theorie"]
+            # sagt, was wirklich gerechnet wurde.
             an.info.setdefault("warnungen", []).append(f"Lastfall {name}: {ex}")
+            if th == "II":
+                from .theorie2 import Th2Info
+                if an.theorie2 is None:
+                    an.theorie2 = Th2Results(settings={"modus": "je Lastfall/Kombination"})
+                an.theorie2.kombinationen[name] = Th2Info(kombination=name, fehler=str(ex))
+            else:
+                from .theorie3 import Th3Info
+                if an.theorie3 is None:
+                    an.theorie3 = Th3Results(
+                        settings={"schritte": int(getattr(ds, "th3_schritte", 10) or 10)})
+                an.theorie3.kombinationen[name] = Th3Info(name=name, fehler=str(ex))
+            alt_res = an.cases.get(name)
+            if alt_res is not None:
+                # Das Ergebnis bleibt stehen - es ist ja gerechnet -, sagt aber
+                # ab jetzt selbst, nach welcher Theorie.
+                alt_res.info["theorie"] = "I"
+                alt_res.info["theorie_gewuenscht"] = th
+                alt_res.info["theorie_fehler"] = str(ex)
             continue
         if not info.fehler:
             res.kind = "case"
