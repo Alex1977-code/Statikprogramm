@@ -1738,6 +1738,37 @@ Rotationsfreiheitsgrade werden genauso behandelt (ohne Reibung); ihre Kräfte
 erscheinen als Momente in den Auflagerreaktionen, nicht in den
 Knotenkontaktkräften.
 
+#### Einseitiges Lager mit dem Nullvektor als Richtung (22.09.2026)
+
+`ContactSystem._build` normierte die Richtung eines einseitigen Lagers mit
+`n /= norm(n) or 1.0`. Aus dem Nullvektor wurde so wieder der Nullvektor: die
+Bedingung g = g₀ + nᵀu hatte die Zeile null, trug keinen Freiheitsgrad und
+stand mit F_n = 0 und Status „Kontakt“ in der Ergebnisliste. Nur
+`_tangent_basis` teilte 0 durch 0 (numpy: „invalid value encountered in
+divide“, auf stderr, in keinem Protokoll). Das Spaltelement zehn Zeilen tiefer
+fing denselben Fall schon ab. Gemessen am Träger 8 m (links eingespannt,
+rechts in z gelagert, 10 kN/m, Lager in Feldmitte):
+
+| Richtung | Zeilen in der Kontakttabelle | u_z Feldmitte | F_n |
+|---|---|---|---|
+| (0, 0, 1) | 1 | −3,62·10⁻¹⁰ m | 45 668,24 N |
+| (0, 0, 0), vorher | 1 („Kontakt“) | −4,562031 mm | −0,0 N |
+| (0, 0, 0), jetzt | 0 | −4,562031 mm | - |
+| ohne Lager | 0 | −4,562031 mm | - |
+
+Mit μ = 0,3 ging die NaN-Tangentenbasis als c_t in die Bedingung, und der Lauf
+brach mit „Kontakt-Iteration 1: Gleichungssystem singulär“ ab, ohne das Lager
+zu nennen (am Stand vor der Änderung gemessen). Jetzt wird die Bedingung wie
+beim Spaltelement weggelassen und ins Protokoll geschrieben („Einseitiges
+Lager Knoten 4: Richtung unbestimmt (Nullvektor) - bitte 'direction'
+angeben“), mit und ohne Reibung. Der Lauf mit (0, 0, 0) ist seither
+**bitgleich** mit dem ohne Lager (vorher wich u_z in der 15. geltenden
+Ziffer ab, −0,004562030661418937 m gegen −0,004562030661418983 m, weil er
+über die Kontaktiteration lief); die Gegenprobe mit (0, 0, 1) ist bitgleich mit
+dem Stand davor (Prüfsumme der Verschiebungen unverändert).
+`Model.check()` meldet den Fall schon vor dem Rechnen
+(`tests/test_supports.py`, `test_einseitiges_lager_ohne_richtung`).
+
 ### 4.1a Halt für Teile ohne geschlossene Bedingung (19.09.2026)
 
 Die Kontakt-Iteration öffnet und schließt Bedingungen, bis nichts mehr wechselt.

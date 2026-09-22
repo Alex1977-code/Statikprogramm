@@ -2676,6 +2676,32 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
   Marker im Viewport). Hebt ein Bauteil vollständig ab oder rutscht es ohne
   Halt, wird das als Fehler gemeldet – dann Lagerung oder Lasten prüfen.
 
+#### Einseitiges Lager ohne Richtung (22.09.2026)
+
+Ein einseitiges Lager, dessen Stützrichtung der Nullvektor (0 0 0) ist, kann
+nie tragen. Bis zum 22.09.2026 rechnete das Programm es trotzdem mit, still:
+die Bedingung stand mit F_n = 0 und Status „Kontakt“ in der Kontakttabelle,
+und das Ergebnis war das eines Systems ohne dieses Lager. Gemessen an einem
+Träger von 8 m (links eingespannt, rechts in z gelagert, 10 kN/m, Lager in
+Feldmitte): mit Richtung 0 0 1 trägt das Lager 45 668 N und u_z in
+Feldmitte ist praktisch null; mit 0 0 0 sind es −4,562 mm wie ganz ohne
+Lager. Nur eine numpy-Warnung auf der Konsole („invalid value encountered in
+divide“) deutete darauf hin - in keinem Protokoll, in der exe unsichtbar.
+Mit Reibbeiwert μ > 0 brach die Rechnung stattdessen mit „Gleichungssystem
+singulär“ ab, ohne das Lager zu nennen.
+
+Jetzt fällt ein solches Lager aus der Rechnung heraus, und das Protokoll (und
+damit die Warnungen des Berichts) nennt es:
+
+    Einseitiges Lager Knoten 4: Richtung unbestimmt (Nullvektor) - bitte
+    'direction' angeben
+
+Die Rechnung läuft - mit und ohne Reibung - als die ohne dieses Lager, und
+die Kontakttabelle führt keine Scheinzeile mehr. Schon vor dem Rechnen meldet
+die Modellprüfung „Einseitiges Lager Knoten 4: Richtung ist der Nullvektor -
+das Lager kann nie tragen“; die Protokollzeile fängt den Fall auch dort, wo
+die Prüfung nicht gelaufen ist (`tests/test_supports.py`).
+
 ## 7 Import
 
 **Z-Achse nach unten (RFEM).** RFEM legt seine Modelle mit der Z-Achse nach

@@ -632,8 +632,19 @@ class ContactSystem:
     def _build(self):
         m = self.model
         for cs in m.contact_supports:
+            # Ohne Richtung kann das Lager nie tragen. Frueher wurde aus dem
+            # Nullvektor beim Normieren wieder der Nullvektor: die Bedingung
+            # stand mit Fn = 0 und Status "Kontakt" in der Ergebnisliste, das
+            # Ergebnis war das ohne Lager, und nur numpy sagte auf stderr
+            # "invalid value" (gemessen 22.09.2026). Wie beim Spaltelement
+            # unten: benennen und weglassen.
             n = np.asarray(cs.direction, float)
-            n /= np.linalg.norm(n) or 1.0
+            ln = float(np.linalg.norm(n))
+            if ln <= 0:
+                self.log.append(f"Einseitiges Lager Knoten {cs.node}: Richtung "
+                                "unbestimmt (Nullvektor) - bitte 'direction' angeben")
+                continue
+            n = n / ln
             dofs = np.array(_trans_dofs(cs.node))
             kn = cs.stiffness if cs.stiffness > 0 else self._auto_k([cs.node])
             t1, t2 = _tangent_basis(n)
