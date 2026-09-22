@@ -141,18 +141,40 @@ def test_fuge_passungsdaten():
     check("das Protokoll nennt die Passung der Fuge",
           any("Passung" in z and "Spiel 0.100 mm" in z and "200 N/mm²" in z and "Randknoten" in z for z in log),
           str([z for z in log if "Passung" in z][:1])[:160])
-    # zwei Reihen sind mehr als eine
+
+
+def test_passungsdaten_reihen():
+    """Zwei Reihen Randabminderung nehmen den inneren Knoten dazu.
+
+    Das Pruefnetz braucht einen Knoten, der NICHT am Rand liegt. Am frueheren
+    Netz aus drei Dreiecken [0,1,2], [1,3,2], [2,3,4] war jeder Knoten
+    Randknoten: eine und zwei Reihen ergaben beide [0, 1, 2, 3, 4], und die
+    Zusicherung hielt auch, wenn _passungsdaten reihen gar nicht weiterreichte
+    (Befund SV1, 22.09.2026). Hier 3 x 3 Knoten, 8 Dreiecke, Knoten 4 innen:
+
+        6 - 7 - 8
+        3 - 4 - 5
+        0 - 1 - 2
+    """
     from statik3d.fugen import _passungsdaten
-    seite = [(0, [0, 1, 2], None), (0, [1, 3, 2], None), (0, [2, 3, 4], None)]
-    fl = np.array([1.0, 1.0, 1.0])
-    _kf, r1 = _passungsdaten(seite, {0: 0, 1: 0, 2: 0}, fl, 1)
-    _kf, r2 = _passungsdaten(seite, {0: 0, 1: 0, 2: 0}, fl, 2)
-    check("_passungsdaten: eine Reihe = die Randknoten, zwei Reihen nehmen die Nachbarn dazu",
-          r1 == {0, 1, 2, 3, 4} - set() and len(r2) >= len(r1), f"{sorted(r1)} / {sorted(r2)}")
+    seite = []
+    for i0 in (0, 1, 3, 4):                   # linke untere Ecke je Viereck
+        a, b, c, d = i0, i0 + 1, i0 + 4, i0 + 3
+        seite += [(0, [a, b, c], None), (0, [a, c, d], None)]
+    paare = {i: 0 for i in range(len(seite))}
+    fl = np.full(len(seite), 0.5)
+    _kf, r1 = _passungsdaten(seite, paare, fl, 1)
+    _kf, r2 = _passungsdaten(seite, paare, fl, 2)
+    rand = {0, 1, 2, 3, 5, 6, 7, 8}
+    check("_passungsdaten: eine Reihe = die acht Randknoten, der innere Knoten 4 fehlt",
+          r1 == rand, str(sorted(r1)))
+    check("_passungsdaten: zwei Reihen nehmen den inneren Knoten 4 dazu",
+          r2 == rand | {4} and r2 != r1, f"eine Reihe {sorted(r1)} / zwei Reihen {sorted(r2)}")
 
 
 def main():
-    for t in (test_spiel, test_grenzpressung, test_randabminderung, test_fuge_passungsdaten):
+    for t in (test_spiel, test_grenzpressung, test_randabminderung, test_fuge_passungsdaten,
+              test_passungsdaten_reihen):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

@@ -291,6 +291,10 @@ weg. Nachweis `tests/test_passung.py`: Spiel 0,5 mm setzt den Block 0,5 mm
 tiefer bei gleichem Gleichgewicht; eine Grenze bei 70 % der Spitzenkraft
 kappt jede Knotenkraft dort und lässt die Summe gleich der Last; mit einer
 Randreihe haften nur die neun inneren der 25 Knoten, der Schub geht über sie.
+Die zweite Reihe wird an einem Netz aus 3 × 3 Knoten (8 Dreiecke) geprüft:
+eine Reihe sind die acht Randknoten, zwei Reihen nehmen den inneren Knoten
+dazu. Das frühere Prüfnetz aus drei Dreiecken hatte keinen inneren Knoten,
+eine und zwei Reihen ergaben dort dieselben fünf Knoten.
 
 **Halt für Teile ohne geschlossene Bedingung** (17.09.2026): verliert ein
 Teil in der Kontakt-Iteration alle Bedingungen, ist das Gleichungssystem
@@ -687,7 +691,11 @@ DIN 19704-1 (Schwingungen); Westergaard (1933).
 `tests/test_schwingung.py` prüft die Westergaard-Summe auf dem Netz, die
 exakte Frequenzabminderung bei gleichmäßiger Zusatzmasse, die
 Rayleigh-Schranke der nassen Grundfrequenz, Strouhal, V_r, V(r = 1) = 1/(2ζ),
-die Resonanzerkennung und die Ermüdungskette.
+die Resonanzerkennung und die Ermüdungskette. Dazu prüft sie, dass der
+Nachweis in der gespeicherten Modelldatei steht und beim Laden
+zurückkommt. Ins Modell eingetragen wird er von der Oberfläche
+(*Nachweise → Schwingung → Verschluss*); die Rechnung `schwingung.nachweis`
+selbst ändert das Modell nicht.
 
 ## 3 Lastfälle, Kombinationen, Umhüllende
 
