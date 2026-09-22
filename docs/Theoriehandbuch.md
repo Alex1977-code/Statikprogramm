@@ -118,6 +118,16 @@ Element mit det J ≤ 0 mit Nummer; die Netzabnahme ruft sie vor dem Rechnen
 (`t_jacobi_pruefung`). Die Assemblierung selbst bricht bei det J ≤ 0 an einem
 Integrationspunkt mit Elementnummer ab, auch im Stapel.
 
+Den Patch-Test besteht ein gekrümmter tet10 nur **schwach** (gemessen 23.09.2026,
+`t_tet10_patch`): Ein lineares Feld stellt die isoparametrische Abbildung zwar exakt
+dar, aber das Gleichgewicht der Innenknoten braucht ∫ ∂N/∂x dV exakt. Der Integrand
+∂N/∂ξ · Kofaktor(J) hat beim tet10 den Grad 3, die 4-Punkt-Regel ist nur bis Grad 2
+exakt. Mit inneren Kanten, die um 8 % der Kantenlänge gekrümmt sind, liegt u 1,7·10⁻⁴
+und die Spannung 1,7·10⁻³ daneben; mit einer Regel vom Grad 3 ist das Ergebnis exakt
+(5·10⁻¹⁶). Die 4-Punkt-Regel bleibt, weil sie an der Lamé-Hohlkugel mit Mitten auf der
+Kugel das Mittel der Randspannung nur um höchstens 0,06 N/mm² verschiebt (−16,29 gegen
+−16,23 bei 915 FHG, −7,28 gegen −7,26 bei 5 859 FHG).
+
 **Ebene Elemente** (3 Verschiebungsfreiheitsgrade je Knoten, Steifigkeit nur in
 der Elementebene) als ebene3, ebene4, ebene6, ebene8 mit dem Zustand
 **Scheibe** (ebener Spannungszustand, Dicke t), **ebener Dehnungszustand**
@@ -3014,15 +3024,18 @@ Anfangsdehnung wie eine Temperaturdehnung, ihre äquivalenten Knotenlasten
 F_p = Σ ∫ Bᵀ D ε_p dV kommen zur äußeren Last, die Spannung ist
 σ = D(ε − ε_p). Iteriert wird
 
-    u_k = K⁻¹ (F + F_p(ε_p,k−1)),   ε_p,k = Rückführung(D ε(u_k) − D ε_p,k−1)
+    u_k = K⁻¹ (F + F_p,k−1),   ε_p,k = Rückführung(D ε(u_k) − D ε_p,0)
 
-— das Anfangssteifigkeitsverfahren. Jeder Schritt ist eine lineare Lösung
-mit der vorhandenen Faktorisierung; mit Kontakt eine Kontakt-Iteration,
-warm gestartet vom Zustand des vorigen Schritts. Die Last wird in
-Laststufen aufgebracht (Vorgabe 3), damit die Rückführung auf dem
-Belastungspfad bleibt. Konvergenzmaß ist die Änderung der plastischen
-Knotenlasten gegen die Last, |F_p,k − F_p,k−1| / |F| ≤ Toleranz (Vorgabe
-1e-3).
+— das Anfangssteifigkeitsverfahren; ε_p,0 ist der Zustand am **Anfang der
+Laststufe** (seit dem 23.09.2026, § 5e.2 — vorher ε_p,k−1). Jeder Schritt
+ist eine lineare Lösung mit der vorhandenen Faktorisierung; mit Kontakt
+eine Kontakt-Iteration, warm gestartet vom Zustand des vorigen Schritts.
+Die Last wird in Laststufen aufgebracht (Vorgabe 3), damit die Rückführung
+auf dem Belastungspfad bleibt. Konvergenzmaß ist seit dem 23.09.2026 der
+**geschätzte Fehler** der plastischen Knotenlasten gegen die Last,
+|F_p,k − F_p,k−1| / |F| · max(1, ρ/(1 − ρ)) ≤ Toleranz (Vorgabe 1e-3), mit
+der Rate ρ aus dem Verlauf der Änderungen (§ 5e.2); vorher die Änderung
+allein.
 
 **Beschleunigung (Aitken).** Das Anfangssteifigkeitsverfahren zieht sich
 mit dem Faktor E_t/E zusammen: bei 2 % Verfestigung 0,98 je Schritt —
@@ -3082,7 +3095,13 @@ also nur dort Einträge, wo Elemente fließen. Für H > 0 ist D_ep
 positiv definit — der Eigenwert in Fließrichtung ist 2G(θ − θ̄) =
 2G·(H/3G)/(1 + H/3G) > 0 —, also bleibt K + ΔK positiv definit; ohne
 Verfestigung wird er null, und dann fällt das Verfahren von selbst auf die
-Anfangsdehnungs-Iteration zurück.
+Anfangsdehnungs-Iteration zurück. Bei sehr kleiner Verfestigung rechnet ΔK
+seit dem 23.09.2026 mit einem Boden H ≥ 10⁻⁴·3G (`plastizitaet.H_TANGENTE`;
+die Rückführung behält das wahre H): mit E_t/E = 10⁻¹² brach der Löser über
+der Grenzlast mit „Gleichungssystem singulär“ ab und nannte ein Element als
+Splitter, mit dem Boden heißt es „nicht konvergiert“. Ab E_t/E = 1,2·10⁻⁴
+greift der Boden nicht, bei jeder üblichen Verfestigung rechnet der Newton
+bitgleich wie vorher (`tests/test_plastizitaet.py`).
 
 Zwei Feinheiten, an denen es hängt:
 
@@ -3349,6 +3368,91 @@ Fließbedingung gilt an den **Gaußpunkten**, die Auswertepunkte sind andere
 liegen, ohne dass etwas falsch ist — sie muss unter der verfestigten
 Fließgrenze fy + H·ε_p des am stärksten gedehnten Punktes bleiben. Am
 Reibblock: 1,00 gegen die Grenze 1,36 N/mm² bei fy = 0,60.
+
+### 5e.2 Grenzlast mit exaktem Sollwert: das Rohr nach Hill (23.09.2026)
+
+Abnahme 4.3 des Auftrags an die Element-Sitzung: dickwandiges Rohr a = 0,1 m,
+b = 0,2 m unter Innendruck, ebene Dehnung, ideal plastisch (von Mises,
+fy = 355 N/mm², keine Verfestigung), ν = 0,4999. Für inkompressiblen Werkstoff
+ist Hills Lösung exakt (k = fy/√3, plastische Zone a ≤ r ≤ c):
+
+    p(c) = k (2 ln(c/a) + 1 − c²/b²),   Grenzlast p_L = 2 k ln(b/a) = 284,13 N/mm²
+    u_r = k c²/(2G r) überall;  plastisch σ_m = −p + 2k ln(r/a) + k,
+    ε_p,eq = fy/(3G)·(c²/r² − 1);  elastisch σ_v = fy c²/r²
+
+Gerechnet bei c/a = 1,5 (p = 255,88 N/mm², σ_v an der Außenfläche 199,69 N/mm²).
+Gemeldet u_r und σ_v an der Außenfläche (geglättete Knotenspannung), und am
+Integrationspunkt, der der Innenfläche am nächsten liegt, σ_m und ε_p,eq gegen
+den Sollwert **an seinem Radius** (das misst das Element, nicht die
+Extrapolation). `tests/messung_rohr_plastisch.py`, gemessen 23.09.2026, Ablage
+`messungen/rohr_hill_2026-09-23.log`:
+
+| Netz | FHG | u_r(b) | σ_v(b) N/mm² | σ_m am Punkt N/mm² | ε_p,eq am Punkt |
+|---|---|---|---|---|---|
+| hex8 8 × 4 | 270 | 0,9846 | −6,03 | +31,0 | −2,7 % |
+| hex8 16 × 8 | 918 | 0,9962 | −1,63 | +15,2 | −0,6 % |
+| hex8 32 × 16 | 3 366 | 0,9991 | −0,42 | +7,5 | −0,1 % |
+| tet10 8 × 4 | 1 377 | 0,9967 | +0,56 | −19,6 | +14,6 % |
+| tet10 16 × 8 | 5 049 | 0,9992 | −0,14 | −4,7 | +9,8 % |
+| tet4 8 × 4 | 270 | 1,1726 | +46,6 | +306 | +154 % |
+| tet4 16 × 8 | 918 | 1,1995 | +46,8 | +367 | +434 % |
+
+σ_v am Punkt ist bei allen Typen fy (die Rückführung), darum steht er nicht in
+der Tabelle. Die **Grenzlast** (mit dem Newton bestimmt, siehe unten): hex8 und
+tet10 8 × 4 tragen 0,995 p_L und 1,005 p_L nicht — auf 0,5 % getroffen; tet4
+8 × 4 trägt noch 1,005 p_L, 1,03 nicht.
+
+* hex8 und tet10 treffen σ_v an der elastischen Außenfläche auf 1 N/mm² (hex8 ab
+  3 366, tet10 ab 1 377 FHG). σ_m konvergiert beim hex8 mit h (die Volumendehnung
+  ist linear projiziert, § 4.4), beim tet10 schneller; ε_p,eq am innersten Punkt
+  liegt beim tet10 10 bis 15 % zu hoch — die schwache Volumensperre aus § 6b-2.
+* **tet4 bei ν → 0,5 fließt falsch:** in der plastischen Zone fließen nur 144 von
+  384 Elementen (16 × 8), dafür 48 außerhalb; u_r liegt 20 % zu hoch und wird
+  mit dem Netz nicht besser. Bei ν = 0,3 fließen 372 von 384, und u_r konvergiert
+  von unten (1,905 → 1,966 → 1,992 gegen 2,002 · 10⁻⁴ m des hex8 32 × 16).
+  Gemessen und benannt, nicht behoben: der tet4 steht nicht an den
+  Nachweisstellen (§ 6b-2).
+
+**Zwei stille Fehler der Anfangsdehnungs-Iteration, am Rohr gefunden.** Ohne
+Verfestigung rechnet das Programm die Anfangsdehnung (§ 5e). Sie meldete
+„konvergiert“ und lag daneben:
+
+1. Der Zustand wurde von Schritt zu Schritt fortgeschrieben. Mit der
+   Aitken-Überrelaxation (bis ω = 200) sammelte sich plastische Dehnung entlang
+   des Iterationswegs an, und der Fixpunkt war nicht die Lösung: tet10 8 × 4 bei
+   c/a = 1,5 u_r(b) 0,99933 bei Toleranz 10⁻⁶ statt 0,99863 wie der Newton. Seit
+   dem 23.09.2026 geht jede Rückführung vom Zustand am Anfang der Laststufe aus;
+   beide Wege liegen jetzt 2·10⁻⁶ auseinander.
+2. Abgebrochen wurde an der Änderung. Nahe der Grenzlast zieht sich die Folge
+   mit ρ → 1 zusammen, und der Fehler ist ρ/(1 − ρ) mal die Änderung. Seitdem
+   bricht sie am geschätzten Fehler ab; ρ ist der größere Wert aus dem größten
+   Verhältnis aufeinanderfolgender Änderungen der letzten drei Schritte und der
+   mittleren Rate über bis zu acht Schritte (Aitken-Sprünge machen kurze steile
+   Abfälle, unter denen die Folge mit rund 0,93 je Schritt weiterkriecht). Das
+   Aitken-ω selbst taugt als Schätzer nicht: nach einem Sprung ergab es
+   λ = 0,04 in einer Folge, die sichtlich stand.
+
+Größte Abweichung von σ_v an den Knoten gegen den Newton in N/mm², Toleranz 10⁻³,
+vorher → jetzt (Schritte):
+
+| | c/a = 1,5 | 0,97 p_L |
+|---|---|---|
+| hex8 8 × 4 | 0,002 → 0,002 (9 → 9) | 0,39 → 0,00 (15 → 18) |
+| tet10 8 × 4 | 0,35 → 0,09 (14 → 19) | 3,86 → 0,44 (26 → 55) |
+| hex8 32 × 16 | 0,25 → 0,09 (11 → 13) | 0,67 → 0,00 (22 → 24) |
+| tet10 16 × 8 | 0,25 → 0,02 (16 → 26) | 1,97 → 0,03 (26 → 67; nur mit den drei Verhältnissen 0,68) |
+
+Der Preis sind mehr Schritte, weil die Folge jetzt am richtigen Punkt anhält.
+Nahe der Grenzlast vergrößert die fast singuläre Tangente jeden Rest in F_p —
+dort braucht der Newton 9 bis 13 Schritte. Ob er auch ohne Verfestigung der
+schnellere Weg ist, entscheidet am Drehlager die Zeit, nicht die Schrittzahl
+(hergeleitet mit den Zahlen der Löser-Sitzung — Zerlegung 3,41 s,
+Rücksubstitution 0,32 s, `schritt()` 0,98 s —: beim tet10 spräche es für den
+Newton, beim hex8 für die Anfangsdehnung); mit Kontakt ist jeder
+Anfangsdehnungsschritt eine volle Kontakt-Iteration. Entschieden wird das mit
+dem Umbau der verschachtelten Iteration Plastizität × Kontakt, nicht hier.
+Nachweis `tests/test_plastizitaet.py::test_rohr_ideal_plastisch_nach_hill` und
+`::test_anfangsdehnung_trifft_den_newton`.
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
@@ -4610,6 +4714,36 @@ Gradienten senkrecht zur Oberfläche entscheidet die örtliche Verfeinerung (Gr�
 adaptive Schleife § 6c) mehr als die Elementordnung; die Elementwahl unten ist dafür
 eine Hilfe, keine Garantie für 1 N/mm².
 
+**Volumensperre, gemessen und benannt: das Rohr bis ν = 0,4999.** Viertel eines
+dickwandigen Rohres a = 0,1 m, b = 0,2 m unter 100 N/mm² Innendruck, ebene Dehnung
+(`pruefkoerper.Hohlzylinder`, der Prüfkörper von MacNeal/Harder; beim tet10 liegen die
+Kantenmitten auf dem Kreis, beim hex8 ist die Innenfläche ein Vieleck).
+`tests/messung_zylinder.py`, gemessen 23.09.2026, 00:46–00:49, Einkern. Gemeldet u_r an
+der Innenfläche gegen Lamé (1 = exakt) und die Abweichung von σ_v dort (geglättete
+Knotenspannung, Mittel über die Eckknoten) in N/mm²:
+
+| Netz (Teile über 90° × radial) | ν = 0,3: u / σ_v | ν = 0,49 | ν = 0,499 | ν = 0,4999 |
+|---|---|---|---|---|
+| hex8 8 × 4 (270 FHG) | 0,9935 / −17,6 | 0,9894 / −6,8 | 0,9891 / −6,0 | 0,9891 / −5,9 |
+| hex8 16 × 8 (918) | 0,9983 / −8,5 | | | 0,9972 / −1,6 |
+| hex8 32 × 16 (3 366) | 0,9996 / −4,1 | | | 0,9993 / −0,4 |
+| tet4 8 × 4 (270) | 0,9668 / −40,5 | 0,8367 / −53,0 | 0,7463 / −59,1 | 0,7270 / −59,9 |
+| pent6 8 × 4 (270) | 0,9656 / −43,1 | 0,8256 / −55,7 | 0,7406 / −59,5 | 0,7262 / −59,8 |
+| tet10 8 × 4 (1 377) | 1,0002 / −2,4 | 0,9993 / −2,9 | 0,9984 / −3,7 | 0,9980 / −4,0 |
+| tet10 16 × 8 (5 049) | 1,0000 / −0,75 | | | 0,9994 / −2,3 |
+
+* **hex8 sperrt nicht** (Volumendehnung linear projiziert, § 4.4): die Verschiebung ist
+  bei ν = 0,4999 so gut wie bei 0,3. Sein σ_v-Fehler bei 0,3 kommt aus dem Vieleck der
+  Innenfläche und halbiert sich mit jeder Teilung.
+* **tet4 und Keil sperren:** die Verschiebung fällt auf 73 % der wahren, σ_v liegt
+  60 N/mm² daneben.
+* **tet10 sperrt schwach:** bei ν = 0,4999 fehlen 0,2 % (1 377 FHG) bzw. 0,06 % (5 049) der
+  Verschiebung, und σ_v konvergiert langsamer — bei 5 049 FHG −2,3 statt −0,75 N/mm². Bei
+  ν = 0,3 (Stahl elastisch) ist das ohne Belang. In voll plastischen Zonen fließt der
+  Werkstoff volumentreu (J2), dort wirkt der Stahl wie ν → 0,5. Gemessen am Rohr nach
+  Hill (§ 5e.2): die Grenzlast trifft der tet10 8 × 4 trotzdem auf 0,5 %, ε_p,eq am
+  innersten Punkt liegt 10 bis 15 % zu hoch.
+
 Der Wunsch des Anwenders vom 20.09.2026 war ein Element, das erkennt, ob Biegung
 gebraucht wird, und die Rechnung danach richtet. Entschieden ist (22.09.2026):
 **tet10 an den Nachweisstellen, tet4 sonst.** Der Grund steht in den Zahlen des
@@ -4637,9 +4771,29 @@ Nachweis → tet4. An den Nachweisstellen liegt die Wahl höchstens 0,14 N/mm² 
 „überall tet10“, mit 2 835 statt 5 265 Unbekannten. Am Bauteil setzt der Vernetzer die
 Seitenmitten auf die wahre Geometrie; `elementwahl.tet4_zu_tet10` macht es für
 Prüfkörper mit geraden Kanten. An der Grenze zu einem tet4-Körper bindet die
-Assemblierung die Seitenmitten (§ 1.2, Übergang linear/quadratisch). Ob sich das am
-Drehlager in Rechenzeit auszahlt, ist offen — gemessen wird es erst in M1 (Muster
-und Faktor) und M3 (Zeit bis 1 N/mm²).
+Assemblierung die Seitenmitten (§ 1.2, Übergang linear/quadratisch).
+
+**Was tet10 am Drehlager kostet (M1, gemessen 23.09.2026, 00:42).** Ohne zu rechnen:
+das Muster der Grundsteifigkeit (freie Translationen ohne Lager, ohne Kontakt und
+Lagrange-Rand), PARDISO mtype 11, symbolische Analyse (iparm 18/19) und eine
+numerische Faktorisierung mit 16 Threads; Maschine sauber (Fremdlast 0,16 Kerne);
+`tests/messung_m1.py`:
+
+| | Unbekannte | nnz(K) | nnz im Faktor | MFlops | Faktorisierung |
+|---|---|---|---|---|---|
+| heute (tet4) | 475 599 | 17,6 Mio. | 171 Mio. | 79 230 | 0,80 s |
+| tet10 überall | 3 170 844 | 242,6 Mio. | 3 112 Mio. | 5 148 139 | 48,45 s |
+| Verhältnis | 6,7 | 13,8 | 18,2 | 65 | 61 |
+
+Die Absolutwerte gelten für das Muster, nicht für die Matrix des Lösers (dort mit
+Kontakt 243 Mio. im Faktor und 3,41 s, gemessen von der Löser-Sitzung); aussagekräftig
+sind die Verhältnisse. **tet10 überall auf dem heutigen Netz kostet rund das
+Sechzigfache je Faktorisierung** und verfehlt das Zeitziel. Er lohnt sich nur auf
+wenigen Körpern und nur, wenn er dort ein deutlich gröberes Netz trägt als heute;
+beides muss M3 zeigen. Das Drehlager trägt heute keinen Volumenbereich mit Nachweis;
+nach Angabe des Anwenders (23.09.2026) liegen die Nachweisstellen am Bauteil überall.
+Die Teilvariante „tet10 nur in den Nachweiskörpern“ entfällt damit und ist nicht
+gemessen.
 
 ## 6c Fehlerschätzer und adaptive Vernetzung (`netzfehler.py`, `adaptiv.py`)
 

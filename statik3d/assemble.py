@@ -262,8 +262,8 @@ def element_matrix(model: Model, e):
             return sl.k_tet4_deviatorisch(X, mat.E, mat.nu)[0]
         if e.typ == "hex8":
             # dieselbe Punktregel wie der Stapel (mit Fliessen Lobatto ueber
-            # die Dicke, solid.hex8_regel_fuer) - sonst rechnete eine
-            # Werkstoffgruppe unter acht Elementen mit einer anderen
+            # die Dicke, solid.hex8_regel_fuer) - hier rechnen nur noch der
+            # Rueckfall (ein Element nennen) und die Diagnose
             return sl.k_hex8(X, mat.E, mat.nu, regel=sl.hex8_regel_fuer(model))[0]
         if e.typ == "pent6":
             return sl.k_pent6(X, mat.E, mat.nu, regel=sl.pent6_regel_fuer(model))[0]
@@ -389,19 +389,21 @@ STAPEL_TYPEN = ("hex8", "tet10", "hex20", "pent6", "pent15", "pyr5")
 
 def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
     out: list = [None] * len(idx)
-    # Sechsflaechner stapelweise: einzeln kostet k_hex8 571,7 µs je Element,
+    # Sechsflaechner stapelweise: einzeln kostete k_hex8 571,7 µs je Element,
     # im Stapel 57,5 µs - Faktor 9,9 (gemessen 21.09.2026 an 4000 verzerrten
     # Wuerfeln, Ergebnis identisch bis 6e-16). Am Drehlagernetz der
-    # Vernetzersitzung sind das 17,8 s gegen 1,79 s je Aufstellen fuer 31.108
-    # Sechsflaechner. Der tet4 braucht das nicht: er kostet 24,2 µs, und der
-    # Aufruf ist dort nicht der Brocken.
+    # Vernetzersitzung waren das 17,8 s gegen 1,79 s je Aufstellen fuer 31.108
+    # Sechsflaechner. Der tet4 braucht das nicht: er kostet 18,0 µs, und der
+    # Aufruf ist dort nicht der Brocken. Nachgemessen 23.09.2026
+    # (tests/messung_elementzeiten.py, ruhige Maschine, Einkern): hex8 einzeln
+    # 880 µs, im Stapel 58,3 µs; tet10 einzeln 199 µs, im Stapel 21,3 µs.
     #
     # Seit dem 22.09.2026 geht jeder Typ mit Dehnungsoperator diesen Weg,
     # nicht nur der hex8 (Pflicht 5 des Auftrags an die Element-Sitzung: der
     # tet10 an den Nachweisstellen braucht ihn genauso). Die Steifigkeit kommt
     # dabei aus **demselben** Operator wie Spannung und Plastizitaet
     # (elements.solid.steifigkeit_aus_operator). Der tet4 bleibt beim
-    # Einzelweg: er kostet 24,2 µs, und mit Knotendilatation rechnet er
+    # Einzelweg: er kostet 18,0 µs, und mit Knotendilatation rechnet er
     # seinen deviatorischen Anteil ueber element_matrix.
     je_werkstoff: dict = {}
     for pos, i in enumerate(idx):

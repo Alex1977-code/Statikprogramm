@@ -391,7 +391,11 @@ def hex8_matrizen_stapel(X, E, nu, incompatible=True, ohne_kuu=False, regel=None
     (:func:`_hex8_operator`) - derselben Kinematik, die Spannung und
     Plastizitaet lesen. Der Stapel war der Grund fuer den Umbau vom
     21.09.2026: einzeln kostete die Schleife 720,5 µs je Element (verzerrter
-    Wuerfel), dreissigmal so viel wie ein ``tet4`` mit 24,2 µs.
+    Wuerfel), dreissigmal so viel wie ein ``tet4`` mit 24,2 µs. Nachgemessen
+    23.09.2026 (tests/messung_elementzeiten.py, ruhige Maschine, Einkern):
+    einzeln 880 µs - ``k_hex8`` ist seit dem Umbau ein Stapel der Laenge 1 und
+    traegt dessen Aufwand, rechnet aber nur noch im Rueckfall (Fehlermeldung,
+    Diagnose) -, im Stapel 58,3 µs, ``tet4`` 18,0 µs.
     """
     op = _hex8_operator(X, incompatible=incompatible, regel=regel)
     Kuu, Kua, Kaa = matrizen_aus_operator(op, D_matrix(E, nu), ohne_kuu=ohne_kuu)
@@ -437,7 +441,9 @@ def spannungen_hex8_stapel(X, E, nu, U, punkte=None):
     X ist (n,8,3), U ist (n,24). Ohne ``punkte`` sind es die neun
     :data:`AUSWERTEPUNKTE` (Mitte und acht Ecken). Einzeln kostete das am
     21.09.2026 1120,6 µs je Element, einundsechzigmal so viel wie eine
-    tet4-Spannung; der Stapel ist der Grund, warum es ihn gibt.
+    tet4-Spannung; der Stapel ist der Grund, warum es ihn gibt. Nachgemessen
+    23.09.2026: ``stress_points`` einzeln 2 296 µs (seit dem Umbau ueber den
+    Operator, nur noch Rueckfall), dieser Stapel 71,8 µs.
     """
     X = np.asarray(X, float)
     U = np.asarray(U, float).reshape(len(X), 24)
@@ -1669,7 +1675,8 @@ def matrizen_aus_operator(op: Dehnungsoperator, D, ohne_kuu=False) -> tuple:
         B = op.b(p)
         wd = op.w[p][:, None, None]
         # matmul statt einsum: die Stapel-Matrixmultiplikation geht ueber
-        # BLAS (gemessen 21.09.2026: 258,8 -> 85,4 µs je hex8)
+        # BLAS (gemessen 21.09.2026: 258,8 -> 85,4 µs je hex8; am 23.09.2026
+        # kostet k_hex8_stapel samt Operator 58,3 µs, der tet10-Stapel 21,3)
         Bt = B.transpose(0, 2, 1)
         if not ohne_kuu:
             Kuu += wd * (Bt @ (D @ B))

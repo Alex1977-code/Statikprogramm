@@ -338,6 +338,63 @@ class Hohlkugel:
         return [n for n in range(m.nn) if abs(r[n] - self.a) < 1e-9 * self.b and n in ecken]
 
 
+class Hohlzylinder:
+    """Viertel eines dickwandigen Rohres a <= r <= b unter Innendruck p,
+    ebener Dehnungszustand (u_z = 0 an beiden Stirnen), Symmetrie an x = 0
+    und y = 0 - der Pruefkoerper von MacNeal/Harder (1985) fuer nahezu
+    inkompressiblen Werkstoff. Geschlossene Loesung (Lame, ebene Dehnung):
+
+        u_r      = (1 + nu)/E ((1 - 2 nu) A r + B / r)
+        sigma_rr = A - B/r^2,  sigma_tt = A + B/r^2,  sigma_zz = 2 nu A
+        A = p a^2/(b^2 - a^2),  B = p a^2 b^2/(b^2 - a^2)
+
+    Netz: polar, n_t Teile ueber 90 Grad, n_r radial, eine Lage der Hoehe h."""
+
+    def __init__(self, a=0.1, b=0.2, h=0.02, p=100e6):
+        self.a, self.b, self.h, self.p = a, b, h, p
+        self.A = p * a * a / (b * b - a * a)
+        self.B = p * a * a * b * b / (b * b - a * a)
+
+    def u_r(self, r, E=E_ST, nu=NU_ST):
+        return (1 + nu) / E * ((1 - 2 * nu) * self.A * r + self.B / r)
+
+    def sv_innen(self, nu=NU_ST):
+        a = self.a
+        s = np.array([self.A - self.B / a ** 2, self.A + self.B / a ** 2, 2 * nu * self.A])
+        return float(np.sqrt(0.5 * ((s[0] - s[1]) ** 2 + (s[1] - s[2]) ** 2 + (s[2] - s[0]) ** 2)))
+
+    def modell(self, typ, n_t, n_r, E=E_ST, nu=NU_ST, fy=None):
+        a, b, h = self.a, self.b, self.h
+
+        def form(i, j, k, p):
+            r = a + (b - a) * i / n_r
+            t = 0.5 * np.pi * j / n_t
+            return np.array([r * np.cos(t), r * np.sin(t), h * k])
+        m, ids = quader(typ, n_r, n_t, 1, 1.0, 1.0, h, E=E, nu=nu, fy=fy, form=form)
+        if typ == "tet10":
+            # Kantenmitten auf den Kreisbogen (die Knoten der Mitte lagen auf der Sehne)
+            for e in m.elements:
+                for (p_, q_), mm in zip(TET10_KANTEN, e.nodes[4:]):
+                    P, Q = m.nodes[e.nodes[p_]], m.nodes[e.nodes[q_]]
+                    rp, rq = np.hypot(P[0], P[1]), np.hypot(Q[0], Q[1])
+                    if abs(rp - rq) < 1e-12 * b:
+                        M = 0.5 * (P + Q)
+                        f = rp / np.hypot(M[0], M[1])
+                        m.nodes[mm] = np.array([M[0] * f, M[1] * f, M[2]])
+        X = np.asarray(m.nodes, float)
+        tol = 1e-9 * b
+        for n in range(m.nn):
+            dofs = [d for d in (0, 1) if abs(X[n, d]) < tol]
+            if abs(X[n, 2]) < tol or abs(X[n, 2] - h) < tol:
+                dofs.append(2)
+            if dofs:
+                m.fix(int(n), dofs)
+        innen = randseiten(m, lambda P: bool(np.all(np.abs(np.hypot(P[:, 0], P[:, 1]) - a) < 1e-9 * b)))
+        spannung_auf_seiten(m, innen, lambda x: self.p * np.array([x[0], x[1], 0.0])
+                            / np.hypot(x[0], x[1]))
+        return m
+
+
 # --------------------------------------------------------------------------
 # Loesen und Auswerten
 # --------------------------------------------------------------------------

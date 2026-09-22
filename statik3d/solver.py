@@ -1819,7 +1819,10 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     # (21.09.2026). Zwei Drittel davon sind die acht Gausspunkte fuer die
     # inneren Freiheitsgrade, der Rest die neun Auswertepunkte; im Stapel
     # sind es 58,1 µs, Ergebnis identisch bis 2,5e-16. Am Drehlagernetz der
-    # Vernetzersitzung waeren das 42,8 s -> 1,81 s je Nachlauf.
+    # Vernetzersitzung waeren das 42,8 s -> 1,81 s je Nachlauf. Nachgemessen
+    # 23.09.2026 (tests/messung_elementzeiten.py): einzeln 2 296 µs, im Stapel
+    # 71,8 µs - beides seit dem 22.09.2026 mit Elementmittel und ueber den
+    # Dehnungsoperator; der Einzelweg rechnet nur noch im Rueckfall.
     #
     # Seit dem 22.09.2026 fuer jeden Typ mit Dehnungsoperator (asm.STAPEL_TYPEN)
     # und aus **demselben** Operator wie Steifigkeit und Plastizitaet

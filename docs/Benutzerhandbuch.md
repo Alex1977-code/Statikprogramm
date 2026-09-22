@@ -3360,8 +3360,9 @@ Nachweis mit seiner Verformung je Kombination.
   **Verfestigung E_t/E** ist die Tangente nach dem Fließen (0 %
   ideal-plastisch, Vorgabe 1 %), **Laststufen** (Vorgabe 3) bringen die
   Last stufenweise auf, **Schritte je Stufe** (Vorgabe 25) und die
-  **Toleranz** (Änderung der plastischen Knotenlasten gegen die Last,
-  Vorgabe 1e-3) begrenzen die Iteration. Mit Kontakt ist jeder Schritt eine
+  **Toleranz** (geschätzter Fehler der plastischen Knotenlasten gegen die
+  Last, Vorgabe 1e-3; bis zum 23.09.2026 die Änderung je Schritt, die nahe
+  der Grenzlast zu früh „konvergiert“ meldete) begrenzen die Iteration. Mit Kontakt ist jeder Schritt eine
   Kontakt-Iteration (warm gestartet); Kombinationen werden dann direkt
   gerechnet, nicht überlagert. Die Spannungen im Ergebnis sind die wahren
   (σ = D(ε − ε_p)), die Auflagerkräfte tragen die Last. Das Protokoll nennt
@@ -3385,6 +3386,10 @@ Nachweis mit seiner Verformung je Kombination.
   dort kommt die Anfangsdehnung mit acht bis zehn Rückwärtseinsetzungen
   aus und ist billiger. Bei 0 % Verfestigung (ideal-plastisch) schaltet
   das Programm von selbst zurück, weil die Tangente dann singulär wäre.
+  Seit dem 23.09.2026 kommt die Anfangsdehnung dabei auf dieselbe Lösung wie
+  der Newton; vorher konnte sie „konvergiert“ melden und nahe der Grenzlast
+  bis 3,9 N/mm² daneben liegen (Theoriehandbuch § 5e.2, Rohr nach Hill). Dafür
+  braucht sie dort mehr Schritte (tet10 bei 0,97 der Grenzlast 55 statt 26).
   Die Tangente ist seit dem 20.09.2026 für **jeden** Volumentyp die exakte
   Ableitung (nachgemessen am 22.09.2026, auch tet10 und hex8); frühere
   Hinweise, beim tet10 sei sie nur genähert, gelten nicht mehr.

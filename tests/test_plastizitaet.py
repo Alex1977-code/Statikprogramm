@@ -583,6 +583,13 @@ def test_newton_bei_kleiner_verfestigung():
     und bei 1,5 fy lag die Dehnung am Ende um 9 % daneben. Newton mit der
     konsistenten Tangente braucht 7 bis 12 Schritte und bleibt unter 0,5 %.
 
+    Nachgemessen 23.09.2026, nachdem die Anfangsdehnung nicht mehr den
+    Zustand über die Schritte fortschreibt und am geschätzten Fehler abbricht
+    (test_anfangsdehnung_trifft_den_newton): sie liegt bei 1,2 fy 18,3 % und
+    bei 1,5 fy 0,32 % daneben (vorher 7,9 und 9,1 %) - beide Male nicht
+    konvergiert, der Wert ist dann der letzte Schritt und kein Gütemaß. Geprüft wird darum nur noch, dass der Newton
+    mindestens so nah liegt und der alte Weg „nicht konvergiert“ meldet.
+
     Gemessen wird die **mittlere Dehnung am gezogenen Ende** gegen
     ε = σ/E + (σ − fy)/H; die größte Vergleichsspannung der Elementmitten
     streut auf diesem groben Netz von sich aus um rund 1 %.
@@ -608,8 +615,8 @@ def test_newton_bei_kleiner_verfestigung():
               not ia.get("konvergiert"), f"{ia.get('iterationen')} Schritte, "
               f"Dehnung {100 * abs(eps_a - soll) / soll:.2f} % daneben")
         nahe("… und die Dehnung am Ende stimmt (ε = σ/E + (σ − fy)/H)", eps_t, soll, hoechstens)
-        check("… deutlich besser als der alte Weg",
-              abs(eps_t - soll) < 0.25 * abs(eps_a - soll),
+        check("… mindestens so nah wie der alte Weg",
+              abs(eps_t - soll) <= abs(eps_a - soll),
               f"{100 * abs(eps_t - soll) / soll:.2f} % gegen {100 * abs(eps_a - soll) / soll:.2f} %")
     # Die Zahl der Faktorisierungen ist genau die Zahl der Newton-Schritte, in
     # denen noch korrigiert wurde: je Laststufe einer weniger als Schritte.
@@ -636,6 +643,94 @@ def test_newton_bei_kleiner_verfestigung():
     i3 = (solver.solve_static(m3).info.get("plastizitaet") or {})
     check("ideal-plastisch (keine Verfestigung): fällt auf die Anfangsdehnungs-Iteration zurück",
           i3.get("verfahren") == "anfangsdehnung" and i3.get("faktorisierungen") == 0, str(i3)[:90])
+
+
+def test_rohr_ideal_plastisch_nach_hill():
+    """Abnahme (Auftrag 4.3, 23.09.2026): plastische Grenzlast mit exaktem
+    Sollwert. Dickwandiges Rohr a = 0,1 / b = 0,2 m, ebene Dehnung, ideal
+    plastisch (fy = 355 N/mm², keine Verfestigung), nu = 0,4999 - dafür ist
+    Hills Lösung exakt (tests/messung_rohr_plastisch.py). Bei c/a = 1,5
+    (p = 255,88 N/mm²) ist σ_v an der Außenfläche fy c²/b² = 199,69 N/mm²,
+    u_r(b) = k c²/(2G b); die Grenzlast p_L = 2 k ln(b/a) = 284,13 N/mm².
+
+    Gemessen 23.09.2026: tet10 8 x 4 (1 377 FHG) σ_v(b) +0,56 N/mm², u_r(b)
+    0,9967; hex8 32 x 16 (3 366 FHG) -0,42 / 0,9991. Die Grenzlast (mit dem
+    Newton bestimmt): beide Netze tragen 0,995 p_L und 1,005 p_L nicht."""
+    from tests import messung_rohr_plastisch as mr
+    for typ, n_t, n_r in (("tet10", 8, 4), ("hex8", 32, 16)):
+        z = mr.lauf(typ, n_t, n_r)
+        check(f"Rohr nach Hill, {typ} {n_t} x {n_r}: ideal plastisch konvergiert", z["ok"].endswith(" konv."),
+              z["ok"])
+        check(f"… σ_v an der Außenfläche auf 1 N/mm² ({z['fhg']} FHG)", abs(z["sv_b"]) < 1.0,
+              f"{z['sv_b']:+.2f} N/mm²")
+        check("… u_r an der Außenfläche auf 0,5 %", abs(z["u"] - 1.0) < 5e-3, f"{z['u']:.4f}")
+    for faktor, soll in ((0.995, True), (1.005, False)):
+        check(f"tet10 8 x 4 {'trägt' if soll else 'trägt nicht'} {faktor:.3f} p_L "
+              f"(Grenzlast nach Hill auf 0,5 %)", mr.traegt("tet10", 8, 4, faktor) == soll)
+
+
+def test_anfangsdehnung_trifft_den_newton():
+    """Beide Wege lösen dieselben Gleichungen und müssen auf denselben Punkt
+    kommen. Bis zum 23.09.2026 schrieb die Anfangsdehnungs-Iteration den
+    Zustand von Schritt zu Schritt fort; mit der Aitken-Überrelaxation sammelte
+    sich plastische Dehnung entlang des Iterationswegs an, und sie meldete
+    „konvergiert“ an einem anderen Punkt: am Rohr nach Hill (tet10 8 x 4,
+    ideal plastisch, Toleranz 1e-6) u_r(b) 7e-4 neben dem Newton. Seitdem geht
+    jede Rückführung vom Zustand am Anfang der Laststufe aus.
+
+    Dazu der Abbruch am geschätzten Fehler statt an der Änderung (siehe
+    plastizitaet.iteration) und die Zusage an die Löser-Sitzung: der Boden der
+    Tangente (pl.H_TANGENTE) ändert bei üblicher Verfestigung kein Bit."""
+    from tests import messung_rohr_plastisch as mr
+    h = mr.Hill()
+    u = {}
+    for weg, ver in (("anfangsdehnung", 0.0), ("tangente", 1e-300)):
+        m = mr.modell("tet10", 8, 4, h.p(0.15), verfestigung=ver)
+        res = solver.solve_static(m)
+        info = res.info["plastizitaet"]
+        check(f"Rohr nach Hill, ideal plastisch: {weg} konvergiert", info.get("konvergiert")
+              and info.get("verfahren") == weg, f"{info.get('verfahren')}, "
+              f"{info.get('iterationen')} Schritte")
+        u[weg] = np.asarray(res.u, float)
+    abw = float(np.abs(u["anfangsdehnung"] - u["tangente"]).max() / np.abs(u["tangente"]).max())
+    check("… Anfangsdehnung und Newton auf demselben Punkt (1e-5)", abw < 1e-5, f"{abw:.1e}")
+    # Abbruch am geschaetzten Fehler (23.09.2026): nahe der Grenzlast zieht
+    # sich die Folge mit ρ → 1 zusammen, und die Aenderung allein meldete zu
+    # frueh "konvergiert" - bei der Vorgabe-Toleranz 1e-3 lag σ_v an den
+    # Knoten bis 0,39 (hex8) bzw. 3,86 N/mm2 (tet10) neben dem Newton
+    from statik3d.elements import solid as sl
+    for typ, grenze_sv, grenze_u in (("hex8", 0.05e6, 1e-5), ("tet10", 1.0e6, None)):
+        sv, uu, n = {}, {}, {}
+        for weg, ver in (("anfangsdehnung", 0.0), ("tangente", 1e-300)):
+            m = mr.modell(typ, 8, 4, 0.97 * h.p_grenz(), laststufen=4, verfestigung=ver,
+                          iterationen=300)
+            m.plastizitaet.toleranz = 1e-3
+            res = solver.solve_static(m)
+            sv[weg] = np.array([sl.von_mises(x) for x in np.asarray(res.solid_knoten["spannung"])])
+            uu[weg] = np.asarray(res.u, float)
+            n[weg] = res.info["plastizitaet"]
+        d_sv = float(np.abs(sv["anfangsdehnung"] - sv["tangente"]).max())
+        d_u = float(np.abs(uu["anfangsdehnung"] - uu["tangente"]).max() / np.abs(uu["tangente"]).max())
+        check(f"{typ} 8 x 4 bei 0,97 p_L, Toleranz 1e-3: die Anfangsdehnung meldet „konvergiert“ "
+              f"erst am Newton (σ_v auf {grenze_sv / 1e6:g} N/mm²"
+              + (f", u auf {grenze_u:g})" if grenze_u else ")"),
+              n["anfangsdehnung"].get("konvergiert") and d_sv < grenze_sv
+              and (grenze_u is None or d_u < grenze_u),
+              f"σ_v {d_sv / 1e6:.3f} N/mm², u {d_u:.1e}, "
+              f"{n['anfangsdehnung'].get('iterationen')} Schritte")
+    # Bitgleich bei ueblicher Verfestigung: mit und ohne Boden
+    erg = []
+    for boden in (pl.H_TANGENTE, 0.0):
+        alt, pl.H_TANGENTE = pl.H_TANGENTE, boden
+        try:
+            m, _e, _L = _zugstab(1.2 * FY)
+            m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.01, laststufen=3,
+                                             iterationen=25, toleranz=1e-6)
+            erg.append(np.asarray(solver.solve_static(m).u, float))
+        finally:
+            pl.H_TANGENTE = alt
+    check("Boden der Tangente bei 1 % Verfestigung: Ergebnis bitgleich",
+          np.array_equal(erg[0], erg[1]))
 
 
 def test_zusatzsteifigkeit_gehoert_in_den_schluessel_der_faktorisierung():
@@ -1039,7 +1134,8 @@ def main():
               test_blockweise_fuer_jeden_elementtyp, test_zugversuch,
               test_dk_symmetrisch_weich_und_bei_tet4_exakt,
               test_tangente_exakt_fuer_jeden_typ, test_newton_konvergiert_quadratisch,
-              test_newton_bei_kleiner_verfestigung,
+              test_newton_bei_kleiner_verfestigung, test_rohr_ideal_plastisch_nach_hill,
+              test_anfangsdehnung_trifft_den_newton,
               test_zusatzsteifigkeit_gehoert_in_den_schluessel_der_faktorisierung,
               test_protokoll_sagt_was_die_runde_bewegt_und_kostet,
               test_kennzahlen_zaehlen_alle_laeufe_des_lastfalls,

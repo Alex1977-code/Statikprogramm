@@ -440,6 +440,114 @@ def t_patch(typ):
           and sl.AUSWERTEPUNKTE[typ][0] not in [tuple(x) for x in KNOTEN_NAT[typ]])
 
 
+def _tet_regel_kollabiert(n):
+    """Gauss-Produktregel auf dem kollabierten Wuerfel, n Punkte je Richtung:
+    x = a, y = b (1-a), z = c (1-a)(1-b), |J| = (1-a)^2 (1-b). Exakt fuer
+    Polynome vom Grad <= 2n - 3 (der Faktor (1-a)^2 frisst zwei Grade)."""
+    x, w = np.polynomial.legendre.leggauss(n)
+    x, w = 0.5 * (x + 1), 0.5 * w
+    P, W = [], []
+    for a, wa in zip(x, w):
+        for b, wb in zip(x, w):
+            for c, wc in zip(x, w):
+                P.append([a, b * (1 - a), c * (1 - a) * (1 - b)])
+                W.append(wa * wb * wc * (1 - a) ** 2 * (1 - b))
+    return np.array(P), np.array(W)
+
+
+def t_tet10_patch():
+    """Patch-Test des tet10 (Abnahme 4.3 des Auftrags vom 22.09.2026): Wuerfel
+    aus 2x2x2 Kuhn-Zellen, Innenknoten verschoben, mit geraden und mit
+    **gekruemmten** inneren Kanten (die Mittelknoten der inneren Kanten aus der
+    Mitte geschoben).
+
+    Gerade Kanten: exakt. Gekruemmt ist die isoparametrische Abbildung zwar
+    vollstaendig (das lineare Feld ist im Element exakt darstellbar), aber das
+    Gleichgewicht der Innenknoten braucht ∫ ∂N/∂x dV exakt, und der Integrand
+    ∂N/∂ξ · Kofaktor(J) hat beim tet10 den Grad 3 - die 4-Punkt-Regel ist bis
+    Grad 2 exakt. Gemessen 23.09.2026: mit ihr u 1,7e-4 und Spannung 1,7e-3 bei
+    einer Kruemmung von 8 % der Kantenlaenge (schwacher Patch-Test), mit einer
+    Regel vom Grad 3 exakt (5e-16). An der Lame-Hohlkugel (Mitten auf der
+    Kugel) aendert die Regel das Mittel der Randspannung um hoechstens 0,06
+    N/mm2 (-16,29 -> -16,23 bei 915 FHG, -7,28 -> -7,26 bei 5 859) - darum
+    bleibt die 4-Punkt-Regel."""
+    from statik3d import assemble as asm
+    from statik3d.model import Material, Model
+    fn, GP, W = sl._ISO["tet10"]
+    P3, W3 = _tet_regel_kollabiert(3)
+    for kruemmung, regel in ((0.0, "4 Punkte"), (0.04, "4 Punkte"), (0.04, "Grad 3")):
+        if regel == "Grad 3":
+            sl._ISO["tet10"] = (fn, P3, W3)
+        try:
+            _tet10_patch_lauf(kruemmung, regel, asm, Material, Model)
+        finally:
+            sl._ISO["tet10"] = (fn, GP, W)
+
+
+def _tet10_patch_lauf(kruemmung, regel, asm, Material, Model):
+    rng = np.random.default_rng(29)
+    m = Model("tet10-Patch")
+    m.add_material(Material("S", E=E_ST, nu=NU_ST, rho=0.0))
+    ids = {}
+    for k in range(3):
+        for j in range(3):
+            for i in range(3):
+                p = np.array([i, j, k], float) * 0.5
+                if (i, j, k) == (1, 1, 1):
+                    p = p + rng.uniform(-0.06, 0.06, 3)
+                ids[(i, j, k)] = m.add_node(*p)
+    mitten = {}
+
+    def mitte(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in mitten:
+            mitten[key] = m.add_node(*(0.5 * (m.nodes[a] + m.nodes[b])))
+        return mitten[key]
+    kuhn = [(0, 1, 3, 7), (0, 1, 7, 5), (0, 5, 7, 4), (0, 3, 2, 7), (0, 6, 4, 7), (0, 2, 6, 7)]
+    for k in range(2):
+        for j in range(2):
+            for i in range(2):
+                z = [ids[(i + (x & 1), j + ((x >> 1) & 1), k + ((x >> 2) & 1))] for x in range(8)]
+                for tet in kuhn:
+                    kn = [z[x] for x in tet]
+                    X = m.nodes[kn]
+                    if np.linalg.det(np.array([X[1] - X[0], X[2] - X[0], X[3] - X[0]])) < 0:
+                        kn[1], kn[2] = kn[2], kn[1]
+                    m.add_element("tet10", kn + [mitte(kn[a], kn[b]) for a, b in _TET_KANTEN], "S")
+    X = np.asarray(m.nodes, float)
+    innen = [n for n in range(m.nn) if np.all(X[n] > 1e-9) and np.all(X[n] < 1 - 1e-9)]
+    mitte_innen = [mm for mm in mitten.values() if mm in innen]
+    for mm in mitte_innen:
+        m.nodes[mm] = m.nodes[mm] + rng.uniform(-1, 1, 3) * kruemmung
+    K = asm.stiffness(m).toarray()
+    d_alle = np.array([6 * n + r for n in range(m.nn) for r in range(3)])
+    frei = np.array([6 * n + r for n in innen for r in range(3)])
+    fest = np.setdiff1d(d_alle, frei)
+    uex = np.zeros(m.ndof)
+    for n in range(m.nn):
+        uex[6 * n:6 * n + 3] = _feld(m.nodes[n])
+    u = uex.copy()
+    u[frei] = np.linalg.solve(K[np.ix_(frei, frei)], -K[np.ix_(frei, fest)] @ uex[fest])
+    e_u = np.abs(u - uex)[frei].max() / np.abs(uex).max()
+    g = _GRAD + _GRAD.T
+    s_ex = sl.D_matrix(E_ST, NU_ST) @ np.array([g[0, 0] / 2, g[1, 1] / 2, g[2, 2] / 2,
+                                                g[0, 1], g[1, 2], g[0, 2]])
+    worst = 0.0
+    for e in m.elements:
+        ue = np.concatenate([u[6 * n:6 * n + 3] for n in e.nodes])
+        for sig in sl.stress_points("tet10", m.nodes[e.nodes], E_ST, NU_ST, ue):
+            worst = max(worst, np.abs(sig - s_ex).max() / np.abs(s_ex).max())
+    art = "gekruemmte" if kruemmung else "gerade"
+    if kruemmung and regel == "4 Punkte":
+        # schwacher Patch-Test: Schranke um den gemessenen Wert 1,7e-4 / 1,7e-3
+        check(f"tet10: Patch-Test, {art} innere Kanten, {regel}: nur schwach "
+              f"(Integrationsfehler)", e_u < 1e-3 and worst < 1e-2,
+              f"u {e_u:.1e}, Spannung {worst:.1e}")
+        return
+    check(f"tet10: Patch-Test, {art} innere Kanten, {regel} ({len(innen)} innere Knoten)",
+          e_u < 1e-9 and worst < 1e-8, f"u {e_u:.1e}, Spannung {worst:.1e}")
+
+
 # --------------------------------------------------------------------------
 # Kragarm-Biegung
 # --------------------------------------------------------------------------
@@ -1169,13 +1277,15 @@ def main():
     # NEU, weil diese Suite fuer die vier neuen Typen geschrieben wurde. Die
     # Pruefungen selbst sind nach Typ parametrisiert und gelten fuer ihn
     # genauso; sie waren nur nie aufgerufen.
-    for typ in ("hex8",) + NEU:
+    # tet4 und tet10 seit dem 22.09.2026 dazu (Abnahme tet10, Auftrag 4.1)
+    for typ in ("tet4", "tet10", "hex8") + NEU:
         t_starrkoerper(typ)
     print("\n-- Volumen ---------------------------------------------------------------------------")
     t_volumen()
     print("\n-- Patch-Test ------------------------------------------------------------------------")
     for typ in ("hex8",) + NEU:
         t_patch(typ)
+    t_tet10_patch()
     print("\n-- Kragarm-Biegung -------------------------------------------------------------------")
     t_kragarm_quadratisch("hex20", 0.05, 0.02)
     t_kragarm_quadratisch("pent15", 0.05, 0.03)

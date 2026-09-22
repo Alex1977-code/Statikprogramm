@@ -71,29 +71,51 @@ def muster(model):
     return K[frei][:, frei].tocsr(), len(frei)
 
 
-def symbolisch(A):
-    """(nnz im Faktor, MFlops, Sekunden) der PARDISO-Analyse (Phase 11, mtype 11)."""
+#: Obergrenze des Faktorspeichers fuer die numerische Faktorisierung (Bytes);
+#: darueber wird nur die Analyse gemeldet
+FAKTOR_GRENZE = 60e9
+
+
+def symbolisch(A, numerisch=True):
+    """(nnz im Faktor, MFlops, Sekunden Analyse, Sekunden Faktorisierung) -
+    PARDISO Phase 11 (mtype 11 wie im Programm), dann Phase 22 mit den Threads
+    aus MKL_NUM_THREADS. Die Matrix traegt Einsen auf dem Muster und 10 auf
+    der Diagonale: die Zeit der Faktorisierung haengt am Muster, nicht an den
+    Werten."""
     import pypardiso
     s = pypardiso.PyPardisoSolver(mtype=11)
     s.set_iparm(18, -1)
     s.set_phase(11)
-    A = sparse.csr_matrix(A) + sparse.diags(np.full(A.shape[0], 10.0))
+    A = (sparse.csr_matrix(A) + sparse.diags(np.full(A.shape[0], 10.0))).tocsr()
+    b = np.zeros((A.shape[0], 1))
     t0 = time.perf_counter()
-    s._call_pardiso(A.tocsr(), np.zeros((A.shape[0], 1)))
+    s._call_pardiso(A, b)
     t = time.perf_counter() - t0
+    # iparm ist 32 Bit breit: ab 2^31 kommt die Zahl negativ zurueck (gemessen
+    # 23.09.2026 am Drehlager, tet10 ueberall: -1.183.324.240). Bis 2^32 ist
+    # sie eindeutig und wird zurueckgerechnet.
     nnz_l, mflops = int(s.get_iparm(18)), int(s.get_iparm(19))
+    nnz_l = nnz_l + 2 ** 32 if nnz_l < 0 else nnz_l
+    mflops = mflops + 2 ** 32 if mflops < 0 else mflops
+    t_f = float("nan")
+    if numerisch and nnz_l * 8 * 1.5 < FAKTOR_GRENZE:
+        s.set_phase(22)
+        t0 = time.perf_counter()
+        s._call_pardiso(A, b)
+        t_f = time.perf_counter() - t0
     s.free_memory(everything=True)
-    return nnz_l, mflops, t
+    return nnz_l, mflops, t, t_f
 
 
 def zeile(name, model):
     t0 = time.perf_counter()
     A, n = muster(model)
     t_m = time.perf_counter() - t0
-    nnz_l, mflops, t_s = symbolisch(A)
+    nnz_l, mflops, t_s, t_f = symbolisch(A)
     print(f"{name:34s} FHG {n:9d}  nnz(K) {A.nnz:12d}  nnz(L) {nnz_l:13d}  MFlops {mflops:13d}  "
-          f"(Muster {t_m:.1f} s, Analyse {t_s:.1f} s)", flush=True)
-    return {"name": name, "fhg": n, "nnz_K": int(A.nnz), "nnz_L": nnz_l, "mflops": mflops}
+          f"Faktorisierung {t_f:7.2f} s  (Muster {t_m:.1f} s, Analyse {t_s:.1f} s)", flush=True)
+    return {"name": name, "fhg": n, "nnz_K": int(A.nnz), "nnz_L": nnz_l, "mflops": mflops,
+            "t_faktor": t_f}
 
 
 def main(argv=None):

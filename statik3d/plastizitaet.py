@@ -89,6 +89,19 @@ _P_DEV = np.array([
 #: Die beiden Wege durch die Plastizitaet - siehe :func:`iteration`
 WEGE = ("tangente", "anfangsdehnung")
 
+#: Kleinster Verfestigungsmodul **der Tangente**, bezogen auf 3G. Bei sehr
+#: kleiner Verfestigung ist D_ep in Fliessrichtung fast singulaer (Eigenwert
+#: 2G (H/3G)/(1 + H/3G)), und oberhalb der Grenzlast wird es K + ΔK auch: am
+#: Rohr nach Hill (tests.messung_rohr_plastisch, E_t/E = 1e-12, 23.09.2026)
+#: brach der Loeser dort mit "Gleichungssystem singulaer" ab und nannte ein
+#: Element als Splitter. Mit dem Boden meldet der Newton "nicht konvergiert".
+#: Nur ΔK sieht den Boden; die Rueckfuehrung rechnet mit dem wahren H, das
+#: Ergebnis im Gleichgewicht ist davon frei. 1e-6 war zu klein (ueber der
+#: Grenzlast wieder singulaer), 1e-3 kostete 13 statt 9 Schritte bei 0,97 p_L.
+#: Ab E_t/E = 1,2e-4 (nu = 0,3) greift der Boden nicht - dort, also bei jeder
+#: ueblichen Verfestigung, rechnet der Newton bitgleich wie vorher.
+H_TANGENTE = 1e-4
+
 
 @dataclass
 class Plastizitaet:
@@ -227,6 +240,9 @@ def _dk_block(d, fliesst, dev, q, dgamma, G, H, ndof):
     das Fuenfundzwanzigfache.
     """
     from scipy import sparse
+    # Ohne (oder mit sehr kleiner) Verfestigung haelt ein Boden die Tangente
+    # regulaer - siehe H_TANGENTE; die Rueckfuehrung bleibt beim wahren H
+    H = np.maximum(H, H_TANGENTE * 3.0 * G)
     nz = 3 * d["k"]
     zeilen, spalten, werte = [], [], []
     gr = max(1, 2_000_000 // (nz * nz))
@@ -460,7 +476,12 @@ def _eas_daten(op, E, nu) -> dict:
     Steifigkeit viel weicher ist. Gemessen am Kragtraeger unter 1,20 M_el
     (20.09.2026, acht hex8-Lagen ueber die Hoehe): ohne die Moden in der
     Plastizitaet meldete das Programm 40 von 40 Elementen fliessend mit
-    eps_p,eq 25,1 %, richtig sind 2 von 40 mit 0,025 %.
+    eps_p,eq 25,1 % (Stand 20.09.2026; der Weg ohne Moden ist nicht mehr da
+    und nicht nachgemessen). Mit ihnen sind es 16 von 40 mit eps_p,eq 0,42 %
+    (nachgemessen 22.09.2026 mit 2x2x2 Gausspunkten, tests/test_plastizitaet.py,
+    test_sechsflaechner_fliesst_unter_biegung). Hier stand bis dahin "richtig
+    sind 2 von 40 mit 0,025 %" - das widersprach dem Handbuch (0,42 %) und
+    der Pruefung.
 
     Kua = Σ w |J| Bᵀ D Ba, Kaa = Σ w |J| Baᵀ D Ba - aus demselben Operator
     wie die Steifigkeit (elements.solid.matrizen_aus_operator).
@@ -1005,8 +1026,13 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
         return u, zustand, F_p, info
     from .elements import solid as sl
     # Ohne Verfestigung ist D_ep in Fliessrichtung singulaer (Eigenwert
-    # 2G(θ − θ̄) = 2G (H/3G)/(1 + H/3G) = 0) - dann bleibt nur die
+    # 2G(θ − θ̄) = 2G (H/3G)/(1 + H/3G) = 0) - dann rechnet die
     # Anfangsdehnungs-Iteration. Ebenso bei einem Elementtyp ohne Stapel.
+    # Newton mit dem Boden H_TANGENTE ginge auch (am Rohr nach Hill bei
+    # c/a = 1,5 5 bis 7 statt 11 bis 37 Schritte, bei 0,97 p_L 12 bis 16 statt
+    # 22 bis 132; gemessen 23.09.2026); ob er schneller ist,
+    # entscheidet am Drehlager die Zeit (Zerlegung 3,41 s gegen 0,32 s je
+    # Rueckwaertseinsetzen), nicht die Schrittzahl - noch nicht gemessen.
     kann_tangente = (loesen_tangente is not None and einst.H(1.0) > 0.0
                      and all(model.elements[i].typ in sl.OPERATOREN for i in elemente))
     if str(getattr(einst, "verfahren", "tangente")) == "tangente" and kann_tangente:
@@ -1023,9 +1049,21 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
         # Fixpunkt (Zugversuch: 6 statt > 60 Schritte); zwischen 0,5 und 200
         # begrenzt, je Laststufe neu begonnen.
         omega, r_alt = 1.0, None
+        # Jede Rueckfuehrung geht vom Zustand am Anfang der Laststufe aus, wie
+        # beim Newton: dann ist F_p eine Funktion von u allein, und der
+        # Fixpunkt ist die Loesung. Bis zum 23.09.2026 wurde der Zustand von
+        # Schritt zu Schritt fortgeschrieben - mit der Aitken-Ueberrelaxation
+        # (bis 200) sammelte sich plastische Dehnung entlang des
+        # Iterationswegs an, und die Folge "konvergierte" auf einen anderen
+        # Punkt: am Rohr nach Hill (tet10 8 x 4, ideal plastisch) u 0,99901 bei
+        # Toleranz 1e-3 und 0,99933 bei 1e-6 statt 0,99863 wie der Newton;
+        # seitdem 0,99863 wie er (tests/test_plastizitaet.py,
+        # test_anfangsdehnung_trifft_den_newton).
+        basis = zustand
+        aenderungen: list = []
         for it in range(1, int(max(1, einst.iterationen)) + 1):
             u = loesen(F_k + F_p)
-            F_p_neu, zustand_neu, s_info = schritt(model, u, zustand, einst, elemente, log)
+            F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log)
             r = F_p_neu - F_p
             diff = float(np.linalg.norm(r)) / norm_F
             info["iterationen"] += 1
@@ -1033,7 +1071,41 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
             if progress is not None:
                 progress(f"Plastizität: Laststufe {k}/{stufen}, Schritt {it}: {s_info['fliessend']} Elemente "
                          f"fließen, Änderung {diff:.2e}")
-            if diff <= float(einst.toleranz):
+            # Abbruch am **geschaetzten Fehler**, nicht an der Aenderung allein:
+            # die Folge zieht sich mit ρ zusammen, und der Fehler des
+            # angenommenen F_p ist rund ρ/(1 − ρ) mal die Aenderung - bei
+            # ρ → 1 (ideal plastisch nahe der Grenzlast) viel mehr. ρ ist der
+            # groessere von zwei Werten: das groesste Verhaeltnis
+            # aufeinanderfolgender Aenderungen der letzten drei Schritte (faengt
+            # Wachstum) und die mittlere Rate ueber bis zu acht Schritte (Aitken-
+            # Spruenge machen kurze steile Abfaelle, unter denen die Folge mit
+            # rund 0,93 je Schritt weiterkriecht). Das Aitken-ω selbst
+            # (1/(1 − λ) im skalaren Modell) taugt nicht: nach einem Sprung
+            # schaetzte es λ = 0,04 in einer Folge, die sichtlich stand. Nie
+            # lockerer als die Aenderung selbst; im ersten Schritt einer Stufe
+            # ist ρ noch unbekannt.
+            # Gemessen 23.09.2026 am Rohr nach Hill, Toleranz 1e-3, groesste
+            # Abweichung von σ_v an den Knoten gegen den Newton, vorher -> jetzt
+            # (Schritte): bei 0,97 p_L tet10 8 x 4 3,86 -> 0,44 N/mm2 (26 -> 55),
+            # tet10 16 x 8 1,97 -> 0,03 (26 -> 67; ohne die mittlere Rate 0,68),
+            # hex8 32 x 16 0,67 -> 0,00 (22 -> 24); bei c/a = 1,5 hoechstens
+            # 0,35 -> 0,09. Nahe der Grenzlast vergroessert die fast singulaere
+            # Tangente jeden Rest in F_p - dort waere der Newton der richtige
+            # Weg (siehe kann_tangente oben).
+            # tests/test_plastizitaet.py, test_anfangsdehnung_trifft_den_newton.
+            aenderungen.append(diff)
+            if diff == 0.0:
+                fehler = 0.0
+            elif len(aenderungen) < 2:
+                fehler = np.inf
+            else:
+                a3 = aenderungen[-4:]
+                rho = max(y / x if x > 0.0 else np.inf for x, y in zip(a3[:-1], a3[1:]))
+                a8 = aenderungen[-9:]
+                if a8[0] > 0.0:
+                    rho = max(rho, (a8[-1] / a8[0]) ** (1.0 / (len(a8) - 1)))
+                fehler = diff * max(1.0, rho / (1.0 - rho)) if rho < 1.0 else np.inf
+            if fehler <= float(einst.toleranz):
                 F_p, zustand = F_p_neu, zustand_neu
                 break
             if r_alt is not None:
@@ -1048,7 +1120,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
             info["konvergiert"] = False
             if log is not None:
                 log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} Schritten nicht konvergiert "
-                           f"(Änderung {diff:.2e} > {einst.toleranz:g})")
+                           f"(Änderung {diff:.2e}, geschätzter Fehler {fehler:.2e} > {einst.toleranz:g})")
     # Die letzte Loesung gehoert zum letzten Zustand
     u = loesen(F + F_p)
     info["fliessend"] = len(zustand.fliessend())
