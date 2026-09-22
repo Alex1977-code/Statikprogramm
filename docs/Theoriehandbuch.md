@@ -1258,6 +1258,16 @@ Dreieck derselbe eine Term wie vorher, für ein ebenes Viereck exakt, für ein
 leicht windschiefes die Summe seiner beiden Dreiecke (Test
 `test_viereckfuge_zaehlt_ganz`).
 
+Die Prüfung dazu geht den Weg des Programms, nicht den der Formel: zwei hex8
+übereinander mit gemeinsamer Fugenfläche 2,0 × 1,0 m, Federfuge
+c_n = 1 · 10⁹ N/m³ normal und c_t = 1 · 10⁸ N/m³ in beiden Tangenten,
+ausgeführt durch `fugen.kontaktfuge_ausfuehren`. Gemessen:
+Σ k_n = 2,000 · 10⁹ N/m = c_n · A und Σ k_t = 4,000 · 10⁸ N/m = 2 · c_t · A
+(Verhältnis je 1,0000). Mit dem alten Stand (nur die ersten drei Knoten)
+kommt an derselben Fuge Σ k_n = 1,000 · 10⁹ N/m heraus, Verhältnis 0,5000 –
+die Prüfung fällt dann. Ihre erste Fassung rechnete die Formel im Test nach
+und rief die Fugenroutine nie auf; sie bestand auch mit dem alten Stand.
+
 **Zum Vorzeichen des Ausfalls.** RFEM schreibt den Ausfall als „bei negativer"
 oder „bei positiver" Kraft – bezogen auf die lokale z-Achse der freigegebenen
 Fläche, die in der Datei nicht mitgeliefert wird. Dieselbe Fuge steht darum je
@@ -4998,6 +5008,29 @@ Ausnutzung noch die Liste der nicht erfüllten. Der Nachbarnachweis Volumen
 hier waren es zwei. Jetzt gibt es `MemberCheck.fehler` und den Zustand „nicht
 geführt".
 
+Zwei Stellen hatte diese erste Kur nicht erreicht (nachgemessen am selben Tag,
+Einfeldträger IPE 300 S235 mit Ausnutzung 0,633 und daneben ein Stab aus einem
+Werkstoff ohne f_y):
+
+* `DesignResults.summary()` zählte weiter nur Ausnutzung > 1 und schrieb
+  „… max. Ausnutzung 0.633 … – alle erfuellt". Diese Zeile steht in der
+  Oberfläche nach *Nachweise EC3*, im Etikett unter der Nachweistabelle und in
+  der Zusammenfassung der Berechnung. Jetzt zählen nicht geführte Stäbe weder
+  für „alle erfuellt" noch für die größte Ausnutzung; die Zeile endet mit
+  „– 1 nicht geführt: *Stab* (Werkstoff … ohne Streckgrenze)", höchstens zehn
+  Namen. Ist kein Stab geführt, nennt sie keine Ausnutzung.
+* Der Grund stand nur in `mc.warnings`, und die kamen allein über den
+  Detailblock je Stab in die Hinweisliste des Berichts. Den gibt es im Umfang
+  „kurz" (der Vorgabe) nicht, in „mittel" nur für die 20 am höchsten
+  ausgenutzten Stäbe — ein Stab mit 0,000 fällt zuerst heraus. Gemessen:
+  „kurz" mit 2 Stäben und „mittel" mit 22 Stäben ergaben **0 Hinweise**, und
+  unter der Statuszeile, die auf „die Hinweise unten" verweist, stand „Es
+  liegen keine offenen Hinweise oder Warnungen vor." Jetzt legt das
+  Nachweiskapitel für jeden nicht geführten Stab einen Hinweis an, unabhängig
+  vom Umfang, mit demselben Text wie der Detailblock (er steht darum nur
+  einmal in der Liste) und mit dem, was zu tun ist: Streckgrenze am Werkstoff
+  eintragen oder am Stab „Nachweis nach EC3" ausschalten.
+
 **„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
 `self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in
 der Liste der geführten Nachweise. Ein Modell, das nur aus Volumen besteht — am
@@ -5005,6 +5038,15 @@ Drehlager der Regelfall —, bekam entweder „Es wurden keine Nachweise geführ
 oder „Alle Nachweise erfüllt", während der geführte Nachweis riss. Die eine
 Zeile, die ein Prüfer als Gesamturteil liest, sagt jetzt:
 *„Alle **geführten** Nachweise erfüllt – nicht geführt wurden: …"*
+
+Geprüft wird das am reinen Volumenmodell selbst, nicht nur am Balken mit Stab:
+dort fällt ein fehlender Eintrag „Volumen" in der Liste der geführten
+Nachweise nicht auf, weil der Stab den Nachweis schon als geführt zählt.
+Zugkörper 100 × 100 mm aus S355 ohne Stäbe: bei N = 4000 kN ist die
+Ausnutzung 1,194 und die Statuszeile „Nachweise NICHT erfüllt", bei
+N = 2500 kN 0,746 und „Alle Nachweise erfüllt.". Mit dem alten Stand stand in
+beiden Fällen „Es wurden keine Nachweise geführt; …" mit grüner Kennung
+(`test_gesamturteil_reines_volumenmodell`).
 
 **Theorie II./III. Ordnung scheiterte still.** Der `ValueError` landete in
 `an.info["warnungen"]` — einem Schlüssel, der im ganzen Programm **einmal

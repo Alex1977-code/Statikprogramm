@@ -637,6 +637,77 @@ def test_nicht_gefuehrt_ist_nicht_erfuellt():
     return len(RESULTS) - n0
 
 
+def _hinweisliste(html: str) -> list:
+    """Die Punkte der Liste "Offene Hinweise und Warnungen" der Zusammenfassung."""
+    i = html.find("Offene Hinweise und Warnungen:")
+    if i < 0:
+        return []
+    j = html.find("<ul>", i)
+    k = html.find("</ul>", j)
+    if j < 0 or k < 0:
+        return []
+    return re.findall(r"<li>(.*?)</li>", html[j:k], re.S)
+
+
+def test_stab_ohne_streckgrenze_in_den_hinweisen():
+    """Ein nicht geführter Stab gehört in jedem Umfang in die Hinweise.
+
+    Der Grund (Werkstoff ohne Streckgrenze) lag nur in ``mc.warnings``, und
+    die kamen allein über ``_member_design_blocks`` in die Hinweisliste.
+    Dieser Block läuft im Umfang „kurz" - der Vorgabe des Berichtsrahmens -
+    gar nicht, in „mittel" nur für die 20 am höchsten ausgenutzten Stäbe; ein
+    Stab mit Ausnutzung 0,000 fällt dort zuerst heraus. Gemessen 22.09.2026
+    im Umfang „kurz": 'ohne Streckgrenze' 0-mal im Bericht, die Statuszeile
+    verweist auf „die Hinweise unten", und direkt darunter steht „Es liegen
+    keine offenen Hinweise oder Warnungen vor."
+    """
+    n0 = len(RESULTS)
+    m = build_beam_model()
+    m.add_material(Material("Frei", 210e9, 0.3, 7850.0))       # fy = None
+    ids = mesher.line_of_beams(m, "Frei", "IPE 300", (0, 2, 0), (6, 2, 0), 6)
+    m.fix(ids[0], [0, 1, 2, 3])
+    m.fix(ids[-1], [1, 2, 3])
+    els = [i for i, e in enumerate(m.elements) if e.mat == "Frei"]
+    for e in els:
+        m.load_beam(e, qz=-10000.0)
+    m.add_member("Ohne_fy", els)
+    an = solver.solve_all(m, design=True)
+    for umfang in ("kurz", "lang"):
+        html = Report(m, an, options={"umfang": umfang}).html()
+        hin = _hinweisliste(html)
+        treffer = [h for h in hin if "Ohne_fy" in h and "ohne Streckgrenze" in h]
+        check(f"Umfang {umfang}: die Hinweise nennen den Stab ohne Streckgrenze",
+              len(treffer) == 1, f"{len(treffer)} Treffer in {len(hin)} Hinweisen")
+        check(f"Umfang {umfang}: … und sagen, was zu tun ist",
+              bool(treffer) and "Nachweis nicht geführt" in treffer[0]
+              and "am Werkstoff" in treffer[0], treffer[0] if treffer else "–")
+        check(f"Umfang {umfang}: nicht 'keine offenen Hinweise'",
+              "keine offenen Hinweise" not in html, "")
+
+    # Umfang "mittel" mit mehr als 20 Staeben: die Details werden nach
+    # Ausnutzung auf 20 gekuerzt, der Stab ohne f_y (0,000) steht am Ende
+    y = 4.0
+    for i in range(20):
+        ids = mesher.line_of_beams(m, "S235", "IPE 300", (0, y, 0), (6, y, 0), 2)
+        m.fix(ids[0], [0, 1, 2, 3])
+        m.fix(ids[-1], [1, 2, 3])
+        neu = [len(m.elements) - 2, len(m.elements) - 1]
+        for e in neu:
+            m.load_beam(e, qz=-10000.0)
+        m.add_member(f"Zusatz{i + 1}", neu)
+        y += 2.0
+    an2 = solver.solve_all(m, design=True)
+    html = Report(m, an2, options={"umfang": "mittel"}).html()
+    check("Umfang mittel: 22 Stäbe, die Details sind gekürzt",
+          len(an2.design.members) == 22 and "am höchsten ausgenutzten" in html,
+          f"{len(an2.design.members)} Stäbe")
+    hin = _hinweisliste(html)
+    check("Umfang mittel, gekürzt: die Hinweise nennen den Stab ohne Streckgrenze",
+          any("Ohne_fy" in h and "ohne Streckgrenze" in h for h in hin),
+          f"{len(hin)} Hinweise")
+    _assert_since(n0)
+
+
 def main():
     print("=" * 96)
     print("STATIK3D - Test statischer Bericht (HTML / Markdown / PDF / SVG)")
@@ -645,7 +716,8 @@ def main():
              test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
              test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt,
              test_gliederung_und_rahmen, test_grosses_netz,
-             test_nicht_gefuehrt_ist_nicht_erfuellt]
+             test_nicht_gefuehrt_ist_nicht_erfuellt,
+             test_stab_ohne_streckgrenze_in_den_hinweisen]
     for t in tests:
         try:
             t()

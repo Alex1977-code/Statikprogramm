@@ -2643,6 +2643,20 @@ class Report:
         else:
             b.append(("note", "Kurzform: die Nachweise stehen in der Übersicht; Zwischenwerte je "
                               "Stab liefert der Bericht im Umfang „mittel“ oder „lang“."))
+        # Warum ein Stab **nicht gefuehrt** ist, gehoert in jedem Umfang in die
+        # Hinweise. Bis zum 22.09.2026 kam mc.warnings nur ueber
+        # _member_design_blocks dorthin - im Umfang "kurz" (Vorgabe) laeuft der
+        # nie, in "mittel" nur fuer die 20 am hoechsten ausgenutzten Staebe, und
+        # ein nicht gefuehrter steht mit 0,000 am Ende. Gemessen: "kurz" mit
+        # 2 Staeben und "mittel" mit 22 Staeben - 0 Hinweise, darunter "Es
+        # liegen keine offenen Hinweise oder Warnungen vor", waehrend die
+        # Statuszeile auf "die Hinweise unten" verweist. Derselbe Text wie im
+        # Detailblock, damit die Zusammenfassung (dict.fromkeys) ihn nur
+        # einmal fuehrt.
+        for mc in d.members.values():
+            if mc.fehler:
+                self._warnings.extend(f"Stab {mc.member}: {w}"
+                                      for w in (mc.warnings or [mc.fehler]))
         nf = [mc.member for mc in d.members.values() if mc.util > 1.0]
         if nf:
             self._warnings.append("Nachweise NICHT erfüllt für: " + ", ".join(nf))

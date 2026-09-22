@@ -391,6 +391,49 @@ def test_bericht():
           "Volumenbereich" not in h2)
 
 
+def test_gesamturteil_reines_volumenmodell():
+    """Das Gesamturteil des Berichts an einem Modell **nur aus Volumen**.
+
+    Bis zum 22.09.2026 fehlte der Volumennachweis in der Zusammenfassung des
+    Berichts doppelt: in der Statuspruefung und in der Liste der gefuehrten
+    Nachweise. Ein Modell ohne Staebe - am Drehlager der Regelfall - bekam
+    darum "Es wurden keine Nachweise gefuehrt ..." mit gruener Klasse, auch
+    wenn der Volumennachweis riss. test_report prueft den Status nur am
+    Balkenmodell mit Stab; dort faellt der fehlende Eintrag in "gefuehrt"
+    nicht auf (gemessen 22.09.2026: Volumen aus "gefuehrt" gestrichen, jene
+    Pruefung besteht weiter 7/7).
+
+    Zugkoerper 100 x 100 mm, S355, gemessen: N = 4000 kN -> Ausnutzung
+    1,194; N = 2500 kN -> 0,746.
+    """
+    import re
+    from statik3d.report import Report
+
+    def status(N):
+        m, els, _soll = zugkoerper(N=N)
+        m.add_volumenbereich("Schaft", els)
+        an = solver.solve_all(m, design=True)
+        zeilen = re.findall(r'<div class="status (ok|nok)">(.*?)</div>',
+                            Report(m, an).html(), re.S)
+        return m, an.volumen.bereiche["Schaft"].util, zeilen
+
+    m, util, zeilen = status(4000e3)
+    check("reines Volumenmodell: keine Staebe, Volumennachweis reisst",
+          not m.members and util > 1.0, f"{len(m.members)} Staebe, Ausnutzung {util:.3f}")
+    check("genau eine Statuszeile im Bericht", len(zeilen) == 1, str(zeilen))
+    klasse, text = zeilen[0] if zeilen else ("", "")
+    check("reissender Volumennachweis: Statuszeile 'NICHT erfüllt', Klasse nok",
+          klasse == "nok" and "NICHT erfüllt" in text, f"{klasse}: {text}")
+    check("... und nicht 'keine Nachweise geführt'",
+          "keine Nachweise geführt" not in text, text)
+
+    _m2, util2, zeilen2 = status(2500e3)
+    klasse2, text2 = zeilen2[0] if zeilen2 else ("", "")
+    check("Gegenprobe erfuellter Volumennachweis: 'Alle Nachweise erfüllt.', Klasse ok",
+          util2 <= 1.0 and klasse2 == "ok" and text2.strip() == "Alle Nachweise erfüllt.",
+          f"Ausnutzung {util2:.3f}, {klasse2}: {text2}")
+
+
 def test_nachweis_nimmt_die_spannung_des_loesers():
     """Der Nachweis darf die Spannung nicht neu aus der Verschiebung rechnen.
 
@@ -580,7 +623,7 @@ def main():
     for t in (test_erzeugnisdicke_mindert_die_streckgrenze,
               test_erzeugnisdicke_ist_angebbar, test_spannungsformeln, test_zugkoerper, test_randspannung,
               test_nachweis_nimmt_die_spannung_des_loesers,
-              test_fehlerfaelle, test_bericht):
+              test_fehlerfaelle, test_bericht, test_gesamturteil_reines_volumenmodell):
         print()
         t()
     ok = sum(1 for _n, o in RESULTS if o)
