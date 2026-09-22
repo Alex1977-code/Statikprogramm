@@ -5063,6 +5063,33 @@ zeigen, die auch ohne Absicht entsteht:
   Test gefunden hätte**, weil der Zweig nicht durchlaufen wird. Gefunden durch
   Lesen.
 
+**Nachtrag: die Reste der Ermüdung (Befunde FE2, FE5, FE13, SV5).** Die
+Rechenstelle war behoben, drei Dinge nicht:
+
+* *Der Volumenzweig war ungeprüft.* Jetzt hält ihn ein Test am Zugstab-Volumen
+  (σ = 100 gegen −40 N/mm²). Mit der alten Zeile
+  `b = signal(case_min) if case_min in all_res else 0.0` weist er für den
+  fehlenden Mindestzustand D = 0,1397 statt 0 aus, mit zwei Lasten
+  0,52304 statt 0,38334 (gemessen durch Zurücknehmen).
+* *Die Ursache lag vor der Rechnung.* Die Maske bot eine oder-verknüpfte
+  Ergebniskombination als Zustand an, die Modellprüfung ließ sie durch — sie
+  steht in `model.combinations`, der Löser legt aber nur ihre Umhüllende ab
+  (`an.envelopes`), nie ein Einzelergebnis. `Model.ermuedungszustaende()`
+  nimmt sie aus der Auswahl, `Model.check()` meldet sie als FEHLER, auch als
+  Glied eines Verlaufs.
+* *Der Bericht las den Status aus D allein.* Ein nicht gerechneter Eintrag
+  (D = 0) hieß „Nachweis erfüllt“. `FatigueMember`/`FatigueVolumen.status()`
+  unterscheidet jetzt vier Fälle: nicht geführt (`fehler`), NICHT erfüllt
+  (D > 1), unvollständig (`fehlende_lasten`), erfüllt. Die Reihenfolge folgt
+  aus Miner: eine ganz fehlende Last trägt an jedem Ort einen Summanden ≥ 0
+  bei, D > 1 bleibt also auch mit ihr überschritten, D ≤ 1 sagt ohne sie
+  nichts. Für einen Verlauf, dem nur ein Zustand fehlt, gilt das bei der
+  Spanne ebenso (die Spanne einer Teilmenge ist nicht größer); für Rainflow
+  und Reservoir ist es nicht gezeigt. Eine unwirksame Last (0 Lastspiele bzw.
+  Wiederholungen) fehlt nie in D, auch wenn ihr Ergebnis fehlt — die erste
+  Fassung der Kur machte daraus „unvollständig“, eine Gegenprobe im Test hat
+  es gezeigt.
+
 **Die übrigen 31 Befunde sind nicht behoben**, aber aufgeschrieben (mit Datei,
 Zeile und der Gegenprüfung, die sie nicht widerlegen konnte). Darunter: die
 Netzabnahme meldet „bestanden", obwohl Prüfungen ausgefallen sind; der

@@ -637,6 +637,76 @@ def test_nicht_gefuehrt_ist_nicht_erfuellt():
     return len(RESULTS) - n0
 
 
+def _kv_status(html: str, titel: str):
+    """Die Zeile „Status“ des Schlüssel-Wert-Blocks mit der Überschrift *titel*
+    im erzeugten HTML - oder None, wenn es den Block oder die Zeile nicht gibt."""
+    blk = re.search(r'<div class="caption">' + re.escape(titel)
+                    + r'</div><table class="kv"><tbody>(.*?)</tbody>', html, re.S)
+    if not blk:
+        return None
+    zeile = re.search(r"<tr><th>Status</th><td>(.*?)</td></tr>", blk.group(1), re.S)
+    return re.sub(r"<[^>]+>", "", zeile.group(1)) if zeile else None
+
+
+def test_ermuedung_nicht_gefuehrt_im_bericht():
+    """Befunde FE2, FE5, FE13, SV5 (22.09.2026): der Ermüdungseintrag, dessen
+    Nachweis nicht oder nicht vollständig geführt wurde, im Bericht.
+
+    Gemessen vor der Kur: ein Volumen, dessen einzige Ermüdungslast ihren
+    Mindestzustand verliert, stand mit „Status: Nachweis erfüllt“, D 0.000
+    und „Element -1 von 40“ im Bericht; beim Stab ebenso. Verlor von zwei
+    Lasten eine ihren Mindestzustand (oder-EK), lautete das Gesamturteil
+    „Alle Nachweise erfüllt.“ - der Hinweis stand nur darunter, und der
+    Anhang schrieb „Die Modellprüfung ergab keine Beanstandungen“.
+
+    Geprüft wird die **Zeile im Bericht**, wie im Test darüber.
+    """
+    n0 = len(RESULTS)
+    import html as _html_text
+    from tests.test_ermuedung_verlauf import _zugstab_volumen, _stab_oben_unten, _oder_ek
+
+    # (1) Volumen: die einzige Last verliert ihren Mindestzustand
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.add_fatigue_load("Zwei", "LF1", "FEHLT", 1e5)
+    an = solver.solve_all(m, design=False, fatigue=True)
+    html = Report(m, an).html()
+    st = _kv_status(html, "Ermüdung Volumen V1")
+    check("Ermüdung Volumen ohne Mindestzustand: Status „nicht geführt“",
+          st is not None and "nicht geführt" in st and "erfüllt" not in st, repr(st))
+    check("die Übersicht zeigt kein „Element -1“", "Element -1" not in html,
+          "Element -1 gefunden" if "Element -1" in html else "")
+
+    # (2) Stab: die einzige Last verliert ihren Mindestzustand
+    ms = _stab_oben_unten()
+    ms.add_fatigue_load("EL", "OBEN", "FEHLT", cycles=1e6)
+    an = solver.solve_all(ms, fatigue=True)
+    html = Report(ms, an).html()
+    st = _kv_status(html, "Ermüdung Stab M1")
+    check("Ermüdung Stab ohne Mindestzustand: Status „nicht geführt“",
+          st is not None and "nicht geführt" in st and "erfüllt" not in st, repr(st))
+
+    # (3) Zwei Lasten, eine mit oder-EK als Mindestzustand
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.add_fatigue_load("Gut", "LF1", "LF2", 1e5)
+    _oder_ek(m)
+    m.add_fatigue_load("Schlecht", "LF1", "EK_oder", 1e5)
+    an = solver.solve_all(m, design=False, fatigue=True)
+    html = Report(m, an).html()
+    check("Gesamturteil sagt nicht „Alle Nachweise erfüllt.“",
+          "Alle Nachweise erfüllt." not in html, "")
+    check("sondern nennt den Ermüdungsnachweis nicht vollständig geführt",
+          "nicht vollständig geführt" in html, "")
+    st = _kv_status(html, "Ermüdung Volumen V1")
+    check("der Eintrag selbst heißt „unvollständig“ und nennt die Last",
+          st is not None and "unvollständig" in st and "Schlecht" in st, repr(st))
+    check("die Modellprüfung im Bericht meldet die oder-EK",
+          "Die Modellprüfung ergab keine Beanstandungen" not in html
+          and re.search(r"FEHLER: Ermüdungslast 'Schlecht'[^<]*EK_oder",
+                        _html_text.unescape(html)) is not None, "")
+    _assert_since(n0)
+    return len(RESULTS) - n0
+
+
 def main():
     print("=" * 96)
     print("STATIK3D - Test statischer Bericht (HTML / Markdown / PDF / SVG)")
@@ -645,7 +715,8 @@ def main():
              test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
              test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt,
              test_gliederung_und_rahmen, test_grosses_netz,
-             test_nicht_gefuehrt_ist_nicht_erfuellt]
+             test_nicht_gefuehrt_ist_nicht_erfuellt,
+             test_ermuedung_nicht_gefuehrt_im_bericht]
     for t in tests:
         try:
             t()

@@ -225,6 +225,29 @@ def _pretty(s: str) -> str:
             .replace("lambda_LT", "λ̄_LT").replace("chi_LT", "χ_LT"))
 
 
+def _ermuedung_statustext(x) -> str:
+    """Statuszeile eines Ermuedungsnachweises (Stab oder Volumen).
+
+    Bis zum 22.09.2026 hing sie allein an ``util <= 1``: ein nicht gefuehrter
+    Eintrag (D = 0) hiess "Nachweis erfüllt", ebenso einer, dem von zwei
+    Lasten eine fehlte (Befunde FE2/FE5/SV5, gemessen). Der Status kommt
+    jetzt aus FatigueMember/FatigueVolumen.status().
+    """
+    st = x.status()
+    if st == "nicht geführt":
+        return "Nachweis nicht geführt"
+    if st == "unvollständig":
+        return ("Nachweis unvollständig – nicht gerechnet: "
+                + ", ".join(getattr(x, "fehlende_lasten", None) or []))
+    return {"erfüllt": "Nachweis erfüllt", "NICHT erfüllt": "Nachweis NICHT erfüllt"}.get(st, st)
+
+
+def _ermuedung_unvollstaendig(x) -> str:
+    """Zusatz fuer die Uebersichtstabelle: welche Lasten in D fehlen."""
+    fehlend = getattr(x, "fehlende_lasten", None)
+    return f" – unvollständig, nicht gerechnet: {', '.join(fehlend)}" if fehlend else ""
+
+
 def _dof_text(dofs) -> str:
     return " ".join(DOF_NAMES[d] for d in sorted(set(int(d) for d in dofs)) if 0 <= d < 6)
 
@@ -3266,6 +3289,16 @@ class Report:
             elif not m.fatigue_loads:
                 b.append(("p", "Kein Ermüdungsnachweis erforderlich (keine Ermüdungslasten "
                                "definiert)."))
+            elif f is not None and getattr(f, "ohne_wirksame_last", None):
+                # Es gibt Staebe/Volumen mit Kerbfall - nur traegt keine Last
+                # bei (Befund SV5). "keine Stäbe mit Kerbfall" waere falsch.
+                ohne = list(f.ohne_wirksame_last)
+                b.append(("p", "Es wurden keine Ermüdungsnachweise geführt: zu "
+                               + ", ".join(ohne[:10])
+                               + (f" und {len(ohne) - 10} weiteren" if len(ohne) > 10 else "")
+                               + " (Kerbfall zugewiesen) trägt keine Ermüdungslast bei – "
+                                 "Lastspiele bzw. Wiederholungen 0 oder ein Verlauf mit "
+                                 "weniger als zwei Zuständen."))
             else:
                 b.append(("p", "Es wurden keine Ermüdungsnachweise geführt (keine Stäbe mit "
                                "Kerbfall oder keine Ergebnisse)."))
@@ -3304,13 +3337,19 @@ class Report:
                  "D_σ (Miner)", "D_τ", "Ausnutzung"]
                 + (["Lebensdauer [a]"] if jahre else []) + ["maßgebender Ort"]]
         for fm in f.members.values():
+            if getattr(fm, "fehler", ""):
+                # nicht gefuehrt: keine Nullen, die wie ein Ergebnis aussehen
+                rows.append([fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
+                             "–", "–", "–", "–", "nicht geführt"]
+                            + (["–"] if jahre else []) + [_pretty(fm.fehler)])
+                continue
             zeile = [fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
                      fmt(fm.dsig_max / 1e6, 1), fmt(fm.dsig_E2 / 1e6, 1), fmt(fm.D, 3),
                      fmt(fm.D_shear, 3), Util(fm.util)]
             if jahre:
                 j = getattr(fm, "jahre", float("inf"))
                 zeile.append(fmt(j, 0) if np.isfinite(j) else "∞")
-            rows.append(zeile + [_pretty(fm.governing)])
+            rows.append(zeile + [_pretty(fm.governing) + _ermuedung_unvollstaendig(fm)])
         rows, note = self._truncate(rows, 400)
         b.append(("table", rows, "Ermüdungsnachweis je Stab", None, ""))
         if note:
@@ -3329,6 +3368,17 @@ class Report:
                             else "sicheres Leben") + " / "
                            + ("gering" if mem.consequence == "low" else "hoch")
                            + f" → γ_Mf = {fmt(GAMMA_MF.get((mem.assessment, mem.consequence), fm.gamma_Mf), 2)}"))
+            if getattr(fm, "fehler", ""):
+                # Bis zum 22.09.2026 stand hier "Nachweis erfüllt" mit
+                # D = 0,0000 - fuer einen Stab, zu dem keine Last gerechnet
+                # wurde (Befund FE2, gemessen).
+                kv.append(("Status", _ermuedung_statustext(fm)))
+                b.append(("kv", kv, f"Ermüdung Stab {fm.member}"))
+                b.append(("p", f"Der Nachweis konnte nicht geführt werden: {_pretty(fm.fehler)}"))
+                if fm.warnings:
+                    b.append(("list", [f"Hinweis: {w}" for w in fm.warnings]))
+                    self._warnings.extend(f"Ermüdung {fm.member}: {w}" for w in fm.warnings)
+                continue
             kv += [("Dauerfestigkeit Δσ_D (5·10⁶)", f"{0.737 * fm.category / fm.gamma_Mf / 1e6:.1f} MPa"),
                    ("Schwellenwert Δσ_L (10⁸)",
                     f"{0.549 * 0.737 * fm.category / fm.gamma_Mf / 1e6:.1f} MPa"),
@@ -3339,7 +3389,7 @@ class Report:
             if np.isfinite(getattr(fm, "jahre", np.inf)) and getattr(fm, "bezugsjahre", 0) > 0:
                 kv.append(("Rechnerische Lebensdauer",
                            f"{fmt(fm.bezugsjahre, 0)} a / D = {fmt(fm.jahre, 0)} a"))
-            kv += [("Status", "Nachweis erfüllt" if fm.util <= 1.0 else "Nachweis NICHT erfüllt")]
+            kv += [("Status", _ermuedung_statustext(fm))]
             b.append(("kv", kv, f"Ermüdung Stab {fm.member}"))
             if getattr(fm, "kollektiv", None):
                 rows = [["Stufe", "Δσ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
@@ -3421,13 +3471,19 @@ class Report:
         for fv in f.volumen.values():
             kf = fmt(fv.category_grund / 1e6, 0) + (f" / Naht {fmt(fv.category_naht / 1e6, 0)}"
                                                     if fv.n_naht and fv.category_naht else "")
+            if getattr(fv, "fehler", ""):
+                # statt D 0.000 und "Element -1 von 40" (Befund SV5, gemessen)
+                rows.append([fv.name, kf, fv.konzept or "–", fmt(fv.gamma_Mf, 2),
+                             "–", "–", "–", "nicht geführt"]
+                            + (["–"] if jahre else []) + [_pretty(fv.fehler)])
+                continue
             zeile = [fv.name, kf, fv.konzept or "–", fmt(fv.gamma_Mf, 2),
                      fmt(fv.dsig_max / 1e6, 1), fmt(fv.dsig_E2 / 1e6, 1), fmt(fv.D, 3), Util(fv.util)]
             if jahre:
                 j = getattr(fv, "jahre", float("inf"))
                 zeile.append(fmt(j, 0) if np.isfinite(j) else "∞")
             rows.append(zeile + [f"Element {fv.element}" + (" an der Naht" if fv.naht else "")
-                                 + f" von {fv.n_elemente}"])
+                                 + f" von {fv.n_elemente}" + _ermuedung_unvollstaendig(fv)])
         b.append(("table", rows, "Ermüdungsnachweis je Volumenkörper", None, ""))
         for fv in f.volumen.values():
             b.append(self._h(3, f"Volumen {fv.name}"))
@@ -3436,6 +3492,18 @@ class Report:
             if fv.n_naht and fv.category_naht:
                 kv.append(("Kerbfall an verschweißten Berührungsstellen",
                            f"{fv.category_naht / 1e6:.0f} MPa an {fv.n_naht} Elementen"))
+            if getattr(fv, "fehler", ""):
+                # Bis zum 22.09.2026: "Nachweis erfüllt", D 0,0000 am
+                # "Element -1" (Befunde FE2/SV5, gemessen).
+                kv += [("γ_Mf", fmt(fv.gamma_Mf, 2)),
+                       ("Elemente im Nachweis", str(fv.n_elemente)),
+                       ("Status", _ermuedung_statustext(fv))]
+                b.append(("kv", kv, f"Ermüdung Volumen {fv.name}"))
+                b.append(("p", f"Der Nachweis konnte nicht geführt werden: {_pretty(fv.fehler)}"))
+                if fv.warnings:
+                    b.append(("list", [f"Hinweis: {w}" for w in fv.warnings]))
+                    self._warnings.extend(f"Ermüdung Volumen {fv.name}: {w}" for w in fv.warnings)
+                continue
             kv += [("Kerbfall am maßgebenden Element", f"{fv.category / 1e6:.0f} MPa"
                     + (" (Naht)" if fv.naht else "")),
                    ("γ_Mf", fmt(fv.gamma_Mf, 2)),
@@ -3448,7 +3516,7 @@ class Report:
             if np.isfinite(getattr(fv, "jahre", np.inf)) and getattr(fv, "bezugsjahre", 0) > 0:
                 kv.append(("Rechnerische Lebensdauer",
                            f"{fmt(fv.bezugsjahre, 0)} a / D = {fmt(fv.jahre, 0)} a"))
-            kv.append(("Status", "Nachweis erfüllt" if fv.util <= 1.0 else "Nachweis NICHT erfüllt"))
+            kv.append(("Status", _ermuedung_statustext(fv)))
             b.append(("kv", kv, f"Ermüdung Volumen {fv.name}"))
             if fv.kollektiv:
                 rows = [["Stufe", "Δσ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
@@ -3816,20 +3884,35 @@ class Report:
             if ohne:
                 nicht_gefuehrt.append(f"{len(ohne)} Stäbe (EC3)")
         f = self.fatigue
+        # Ermuedung: ein Eintrag, dem von mehreren Lasten eine fehlt, ist weder
+        # erfuellt noch nicht gefuehrt, sondern unvollstaendig. Bis zum
+        # 22.09.2026 stand dann "Alle Nachweise erfüllt." hier, und der
+        # Hinweis nur darunter (Befund FE5, gemessen).
+        unvollstaendig: list = []
         if f is not None and getattr(f, "members", None):
-            worst = max(f.members.values(), key=lambda fm: fm.util)
-            kv.append(("max. Schädigung Ermüdung", Util(worst.util)))
-            kv.append(("maßgebend (Ermüdung)", f"Stab {worst.member}, Kerbfall "
-                                               f"{worst.category / 1e6:.0f}: {_pretty(worst.governing)}"))
+            gefuehrte_e = [fm for fm in f.members.values() if not getattr(fm, "fehler", "")]
+            if gefuehrte_e:
+                # ein nicht gefuehrter Stab (D = 0) ist kein "maßgebend"
+                worst = max(gefuehrte_e, key=lambda fm: fm.util)
+                kv.append(("max. Schädigung Ermüdung", Util(worst.util)))
+                kv.append(("maßgebend (Ermüdung)", f"Stab {worst.member}, Kerbfall "
+                                                   f"{worst.category / 1e6:.0f}: {_pretty(worst.governing)}"))
             if any(fm.util > 1.0 for fm in f.members.values()):
                 status_ok = False
             ohne_e = [fm.member for fm in f.members.values() if getattr(fm, "fehler", "")]
             if ohne_e:
-                nicht_gefuehrt.append(f"{len(ohne_e)} Staebe (Ermuedung)")
+                nicht_gefuehrt.append(f"{len(ohne_e)} Stäbe (Ermüdung)")
+            teil_e = [fm.member for fm in gefuehrte_e if getattr(fm, "fehlende_lasten", None)]
+            if teil_e:
+                unvollstaendig.append(f"{len(teil_e)} Stäbe (Ermüdung)")
         if f is not None and getattr(f, "volumen", None):
             ohne_v = [fv.name for fv in f.volumen.values() if getattr(fv, "fehler", "")]
             if ohne_v:
-                nicht_gefuehrt.append(f"{len(ohne_v)} Volumenkoerper (Ermuedung)")
+                nicht_gefuehrt.append(f"{len(ohne_v)} Volumenkörper (Ermüdung)")
+            teil_v = [fv.name for fv in f.volumen.values()
+                      if not getattr(fv, "fehler", "") and getattr(fv, "fehlende_lasten", None)]
+            if teil_v:
+                unvollstaendig.append(f"{len(teil_v)} Volumenkörper (Ermüdung)")
         bl = self.beulen
         if bl is not None and getattr(bl, "felder", None):
             worst = max(bl.felder.values(), key=lambda c: c.util)
@@ -3899,12 +3982,18 @@ class Report:
             if not status_ok:
                 b.append(("status", "Nachweise NICHT erfüllt – siehe die Nachweiskapitel.",
                           False))
-            elif nicht_gefuehrt:
+            elif nicht_gefuehrt or unvollstaendig:
                 # Weder "erfuellt" noch "nicht erfuellt" - und genau das muss
                 # dastehen. Die eine Zeile, die ein Pruefer als Gesamturteil
                 # liest, darf einen uebersprungenen Nachweis nicht verschlucken.
-                b.append(("status", "Alle **geführten** Nachweise erfüllt – nicht geführt "
-                                    "wurden: " + ", ".join(nicht_gefuehrt)
+                teile = []
+                if nicht_gefuehrt:
+                    teile.append("nicht geführt wurden: " + ", ".join(nicht_gefuehrt))
+                if unvollstaendig:
+                    teile.append("nicht vollständig geführt wurden: "
+                                 + ", ".join(unvollstaendig))
+                b.append(("status", "Alle **geführten** Nachweise erfüllt – "
+                                    + "; ".join(teile)
                                     + " (siehe die Hinweise unten).", False))
             else:
                 b.append(("status", "Alle Nachweise erfüllt.", True))
