@@ -2966,12 +2966,18 @@ Nachweise erfüllt sind; jeder Wert lässt sich danach ändern. Die Vorschläge
 folgen den Regeln der EN 1993-1-8 (Rand- und Lochabstände Tab. 3.3, Nahtdicken
 4.5.1, Blechdicke so, dass der T-Stummel nicht im Modus 1 versagt). Der
 Vorschlag ist **kein Nachweis** — maßgebend ist immer die Rechnung.
-Ein größeres Moment ergibt einen stärkeren Vorschlag. Gemessen an einer
-Kopfplatte am IPE 400 (S355, V_z = 90 kN): für M_y = 180 kNm und
-N = −100 kN werden 13 mm Blech und M20 in 4 Reihen vorgeschlagen. Dieser
-Anschluss trägt M_y = 320 kNm bei N = 0 nicht (η = 1,461, maßgebend der
-T-Stummel der Zugzone). Der Vorschlag für 320 kNm mit 16 mm und M24 erfüllt
-die Nachweise mit η = 0,986.
+Bei der Kopfplatte wächst der Vorschlag stufenweise mit dem Moment: Die
+Schraube ist zunächst die kleinste der Leiter M12 bis M36, von der vier
+Schrauben die Zugkraft im Flansch tragen, und das Blech wird in
+2-mm-Schritten dicker, solange T-Stummel oder Durchstanzen maßgebend sind.
+Über Bereiche des Moments bleibt der Vorschlag gleich, und beim Sprung auf
+die nächste Schraube wird das Blech wieder dünner. Gemessen am IPE 400
+(S355, V_z = 90 kN, N = 0): bei M_y = 170 kNm 15 mm mit M16, von 180 bis
+210 kNm 13 mm mit M20; bei 270 kNm 19 mm mit M20, von 280 bis 320 kNm 16 mm
+mit M24. Mit N = −100 kN ergeben sich bis 320 kNm
+dieselben Abmessungen. Der Vorschlag für 180 kNm (13 mm, M20, 4 Reihen) trägt
+320 kNm bei N = 0 nicht (η = 1,461, maßgebend der T-Stummel der Zugzone); der
+Vorschlag für 320 kNm mit 16 mm und M24 erfüllt die Nachweise mit η = 0,986.
 
 **Schnittgrößen**: standardmäßig aus der Berechnung. Der Anschluss wird über
 **alle GZT-Kombinationen** geführt; die ungünstigste ist maßgebend, und die
