@@ -48,6 +48,42 @@ GLEIT_ANTEIL = 0.1
 GLEIT_ANTEIL_MIN = 0.02
 GLEIT_ANTEIL_MAX = 0.5
 GLEIT_WACHSTUM = 1.5
+#: Felder eines Eintrags in ``ContactSystem.runden`` - je Aufruf von
+#: ``_update_states`` (also je Kontaktschritt) ein Zahlentupel in dieser
+#: Reihenfolge. Gezaehlt werden **Ereignisse**, nicht Bedingungen: ein wieder
+#: geschlossener Reibknoten, der in derselben Runde ins Gleiten geht, zaehlt
+#: einmal unter "schliessen_reib" und einmal unter "gleiten_nach_schliessen";
+#: "bedingungen" nennt dazu, wie viele verschiedene Bedingungen betroffen
+#: waren. Reine Buchfuehrung: nichts davon geht in Zustand, Matrix oder
+#: Abbruch zurueck (22.09.2026). Warum: der Deckel MAX_CYCLES zaehlt jede
+#: Runde mit irgendeinem Wechsel, und welche Art Wechsel die 40 Runden am
+#: Drehlager fuellt, war nirgends festgehalten - Oeffnen und Schliessen in
+#: Fugen, neues Gleiten oder Fliessen verlangen verschiedene Abhilfen.
+RUNDEN_FELDER = (
+    "phase",                    # Phase, in der die Runde lief (1 oder 2)
+    "schliessen_reib",          # offen -> geschlossen, Reibstelle (mu > 0 oder Haften)
+    "schliessen_frei",          # offen -> geschlossen, reibungsfrei
+    "oeffnen_reib",             # geschlossen -> offen, Reibstelle
+    "oeffnen_frei",             # geschlossen -> offen, reibungsfrei
+    "fliessen_an",              # Grenzkraft erreicht
+    "fliessen_aus",             # Entlastung einer fliessenden Bedingung
+    "gleiten_neu",              # Haften -> Gleiten mit echtem Kegelverstoss (mu*Fn > 0)
+    "gleiten_nach_schliessen",  # Haften -> Gleiten bei mu*Fn = 0, in derselben Runde geschlossen
+    "gleiten_ohne_fn",          # Haften -> Gleiten bei mu*Fn = 0, schon vorher geschlossen
+    "haften_zurueck",           # Phase 1: Gleiten -> Haften (Bewegung gegen die Richtung)
+    "richtung",                 # Phase 1: Gleitrichtung nachgefuehrt
+    "eingefroren_neu",          # nach 8 Wechseln festgehalten (auch beim Oeffnungsversuch)
+    "bedingungen",              # verschiedene Bedingungen mit mindestens einem Ereignis
+    "verstoesse",               # Phase 2: haftende Knoten ueber dem Coulomb-Kegel
+    "H",                        # haftende Reibknoten vor der Umstellung dieser Runde
+    "a",                        # Gleitanteil dieser Runde (Liniensuche)
+    "guete",                    # Summe der Kegelverstoesse haftender Knoten / f_ref
+    "dF_slip",                  # groesste Aenderung von mu*Fn an gleitenden Knoten / f_ref
+    "ganz_rutschend",           # Gruppen, deren aktive Reibknoten alle gleiten (nach der Runde)
+)
+#: Die Ereignisfelder (Stellen 1 bis 12 in RUNDEN_FELDER): eine Runde mit
+#: mindestens einem Ereignis ist genau eine, die ``changed`` meldet.
+RUNDEN_EREIGNISSE = RUNDEN_FELDER[1:13]
 #: Ein Slave-Knoten gilt als deckungsgleich mit einem Master-Knoten, wenn er
 #: naeher als dieser Anteil der Modellgroesse liegt (Rundungsrauschen des
 #: Vernetzers, nicht ein Spalt).
@@ -181,6 +217,19 @@ def contact_dofs(model, K=None) -> set:
 
 def _group(c: "Constraint") -> str:
     return c.label.split(":")[0]
+
+
+def _gleitart(grenze: float, eben_geschlossen: bool) -> str:
+    """Das Feld in RUNDEN_FELDER fuer einen Uebergang Haften -> Gleiten.
+
+    Mit einer Reibgrenze mu*Fn > 0 ist es ein echter Kegelverstoss. Bei
+    mu*Fn = 0 ist es keiner: ein in dieser Runde wieder geschlossener
+    Reibknoten traegt Fn = 0 aus der offenen Runde, jede Schubverschiebung
+    liegt dann "ueber" der Grenze, und in Phase 2 steht er mit dem
+    Verhaeltnis unendlich ganz vorn in der Reihe."""
+    if grenze > 0:
+        return "gleiten_neu"
+    return "gleiten_nach_schliessen" if eben_geschlossen else "gleiten_ohne_fn"
 
 
 def _tangent_basis(n: np.ndarray):
@@ -610,6 +659,8 @@ class ContactSystem:
         self.stabilising = False   # Hilfsschritt ohne Spaltkraft (siehe stabilise)
         self.cycles = 0
         self.settle = 0
+        #: je Runde ein Zahlentupel nach RUNDEN_FELDER (Buchfuehrung, siehe dort)
+        self.runden: list = []
         self.warm = False       # nach zustand_setzen: Phase 2 mit gesichertem Zustand
         self.dF_slip = 0.0      # groesste Aenderung von mu*Fn an gleitenden Knoten je Runde
         self.f_ref = 1.0
@@ -1040,6 +1091,7 @@ class ContactSystem:
         self.phase = 1
         self.cycles = 0
         self.settle = 0
+        self.runden = []
         self.stabilising = False
         self.warm = False
         self.dF_slip = 0.0
@@ -1125,6 +1177,7 @@ class ContactSystem:
         self.warm = True
         self.cycles = 0
         self.settle = 0
+        self.runden = []
         return True
 
     def warmstart_verstoesse(self, u: np.ndarray, zuruecksetzen: bool = False) -> int:
@@ -1179,6 +1232,68 @@ class ContactSystem:
         return (self.phase, hash(a.tobytes()), hash(s.tobytes()), hash(y.tobytes()),
                 hash(h.tobytes()),
                 tuple(sorted(self._full_slip_groups().items())))
+
+    def endzustand_kennung(self) -> str:
+        """Kennung des Kontaktzustands, **prozessfest**: 16 Hexziffern aus
+        hashlib.blake2b ueber Phase, Zahl der Bedingungen, die Bitfelder
+        aktiv/gleitet/fliesst/Schubhalt und die ganz rutschenden Gruppen -
+        dieselben Stuecke wie in :meth:`signatur`.
+
+        ``signatur`` taugt dafuer nicht: sie hasht mit dem eingebauten
+        ``hash()``, und der ist je Prozess anders gesaet. Sie ist der
+        Faktorisierungsschluessel innerhalb eines Laufs und bleibt das. Diese
+        Kennung dagegen laesst sich zwischen zwei Rechnungen, zwei Prozessen
+        oder zwei Tagen vergleichen: zwei Laeufe mit verschiedener Kennung
+        endeten in verschiedenen Zustaenden.
+
+        Was **nicht** darin steht: Normalkraefte und Gleitrichtungen. Sie
+        leben nur im Lastvektor Fc (``matrices``). Gleiche Kennung heisst also
+        gleiche Aktivmenge, gleiches Haften/Gleiten und Fliessen - nicht
+        gleiche Kraefte. Reine Buchfuehrung (22.09.2026)."""
+        import hashlib
+        a = np.array([c.active for c in self.cons], bool)
+        s = np.array([c.slip for c in self.cons], bool)
+        y = np.array([c.yielding for c in self.cons], bool)
+        h = np.array([bool(getattr(c, "schub_halt", False)) for c in self.cons], bool)
+        b = hashlib.blake2b(digest_size=8)
+        b.update(bytes([int(self.phase) & 0xFF]))
+        b.update(len(self.cons).to_bytes(8, "little"))
+        for feld in (a, s, y, h):
+            b.update(np.packbits(feld).tobytes())
+        b.update(repr(sorted(self._full_slip_groups().items())).encode("utf-8"))
+        return b.hexdigest()
+
+    def runden_text(self, n: int = None) -> str:
+        """Die Phase-2-Runden mit Wechsel als Satz, etwa
+        " - in 40 Runden: 31 mit Öffnen/Schließen reibungsfreier Bedingungen
+        (212 Wechsel), 12 mit neuem Gleiten (340 Knoten)". ``n``: nur die
+        letzten n solcher Runden - das sind beim Deckel genau die gezaehlten,
+        denn ``cycles`` beginnt beim Wechsel 1->2 und in zustand_setzen bei
+        null, und dort beginnt auch ``runden`` (Setzrunden haben kein
+        Ereignis und zaehlen nicht)."""
+        runden = [r for r in (getattr(self, "runden", None) or [])
+                  if r[0] == 2 and any(r[1:1 + len(RUNDEN_EREIGNISSE)])]
+        if n:
+            runden = runden[-int(n):]
+        if not runden:
+            return ""
+        stelle = {f: i for i, f in enumerate(RUNDEN_FELDER)}
+        teile = []
+        for text, felder, wort in (
+                ("mit Öffnen/Schließen reibungsfreier Bedingungen",
+                 ("schliessen_frei", "oeffnen_frei"), "Wechsel"),
+                ("mit Öffnen/Schließen an Reibstellen", ("schliessen_reib", "oeffnen_reib"), "Wechsel"),
+                ("mit neuem Gleiten", ("gleiten_neu",), "Knoten"),
+                ("mit Gleiten nach Wiederschließen", ("gleiten_nach_schliessen",), "Knoten"),
+                ("mit Gleiten bei Normalkraft null", ("gleiten_ohne_fn",), "Knoten"),
+                ("mit Fließwechsel", ("fliessen_an", "fliessen_aus"), "Wechsel"),
+                ("mit Einfrieren", ("eingefroren_neu",), "Bedingungen")):
+            k = sum(1 for r in runden if any(r[stelle[f]] for f in felder))
+            if k:
+                n_e = sum(int(r[stelle[f]]) for r in runden for f in felder)
+                teile.append(f"{k} {text} ({n_e} {wort})")
+        return (f" - in {len(runden)} Runde{'' if len(runden) == 1 else 'n'}: "
+                + ", ".join(teile))
 
     def stabilise(self) -> bool:
         """Hilfsschritt, wenn im ersten Schritt kein Halt besteht.
@@ -1351,8 +1466,12 @@ class ContactSystem:
             return False
         self.cycles += 1
         if self.cycles >= MAX_CYCLES:
+            # Welche Wechsel die gezaehlten Runden gefuellt haben, gehoert in
+            # dieselbe Zeile - Oeffnen/Schliessen in Fugen und neues Gleiten
+            # verlangen verschiedene Abhilfen (22.09.2026)
             self.log.append("Kontakt: Nachpruefung der Reibung nach "
-                            f"{MAX_CYCLES} Zustandswechseln abgebrochen")
+                            f"{MAX_CYCLES} Zustandswechseln abgebrochen"
+                            + self.runden_text(self.cycles))
             return False
         return True
 
@@ -1361,6 +1480,12 @@ class ContactSystem:
         verstoesse = []         # Phase 2: (Verhaeltnis, Bedingung, dt) je Verstoss
         guete = 0.0             # Summe der Kegelverstoesse haftender Knoten
         self.dF_slip = 0.0
+        # Buchfuehrung je Runde (RUNDEN_FELDER): nur gezaehlt, nichts davon
+        # geht in Zustand, Matrix oder Abbruch zurueck
+        z = dict.fromkeys(RUNDEN_EREIGNISSE, 0)
+        betroffen = set()       # id() der Bedingungen mit einem Ereignis
+        zu_in_runde = set()     # id() der in dieser Runde geschlossenen
+        n_haftend = 0
         for c in self.cons:
             ue = u[c.dofs]
             g = c.g0 + c.cn @ ue
@@ -1378,22 +1503,38 @@ class ContactSystem:
                         c.yielding = True       # Grenzkraft erreicht -> plastisch
                         c.g_yield = g
                         changed = True
+                        z["fliessen_an"] += 1
+                        betroffen.add(id(c))
                     elif c.yielding and g > c.g_yield + self.tol:
                         c.yielding = False      # Entlastung -> wieder elastisch
                         changed = True
+                        z["fliessen_aus"] += 1
+                        betroffen.add(id(c))
             else:
                 c.Fn = 0.0
                 new_active = g < -self.tol
             if c.frozen or c.zug:
                 new_active = c.active
             if new_active != c.active:
+                war_aktiv = c.active
                 c.toggles += 1
                 if c.toggles > 8:
                     c.frozen = True
                     new_active = True
                     self.log.append(f"{c.label}: Zustand oszilliert, wird als aktiv gehalten")
+                    z["eingefroren_neu"] += 1
                 c.active = new_active
                 changed = True
+                betroffen.add(id(c))
+                if c.active != war_aktiv:
+                    # Beim Oeffnungsversuch einer einfrierenden Bedingung
+                    # aendert sich active nicht - das ist dann nur Einfrieren
+                    reib = c.ct is not None and (c.mu > 0 or c.haften)
+                    if c.active:
+                        z["schliessen_reib" if reib else "schliessen_frei"] += 1
+                        zu_in_runde.add(id(c))
+                    else:
+                        z["oeffnen_reib" if reib else "oeffnen_frei"] += 1
                 if not c.active:
                     c.slip = False
                     c.slip_dir = None
@@ -1418,6 +1559,8 @@ class ContactSystem:
                             c.dir_updates = 0
                             c.Ft = limit * c.slip_dir
                             changed = True
+                            z[_gleitart(limit, id(c) in zu_in_runde)] += 1
+                            betroffen.add(id(c))
                         else:
                             ratio = np.linalg.norm(Ft_el) / limit if limit > 0 else np.inf
                             verstoesse.append((ratio, c, dt))
@@ -1428,6 +1571,8 @@ class ContactSystem:
                         c.slip_dir = None
                         c.Ft = np.zeros(2)
                         changed = True
+                        z["haften_zurueck"] += 1
+                        betroffen.add(id(c))
                     else:
                         if nrm > 0 and c.dir_updates < 12:
                             # Gleitrichtung unterrelaxiert nachfuehren (Fixpunkt-Iteration);
@@ -1440,11 +1585,18 @@ class ContactSystem:
                                 c.slip_dir = blend
                                 c.dir_updates += 1
                                 changed = True
+                                z["richtung"] += 1
+                                betroffen.add(id(c))
                         c.Ft = limit * c.slip_dir
                 else:
                     c.Ft = limit * c.slip_dir      # Phase 2: Gleiten bleibt, Richtung fest
             elif not c.active:
                 c.Ft = np.zeros(2)
+            # Dieselbe Zaehlung wie `haftend` unten: jede Bedingung aendert
+            # in der Schleife nur sich selbst, der Stand nach ihrem Durchgang
+            # ist also der nach der Schleife
+            if c.active and c.ct is not None and c.mu > 0 and not c.slip:
+                n_haftend += 1
         # Phase 2: je Runde ein Anteil der haftenden Knoten Haften -> Gleiten,
         # staerkster Verstoss zuerst. Einer je Runde war monoton, aber teuer:
         # jede Runde kostet eine Faktorisierung, am Drehlager 4,23 s bei 476.214
@@ -1472,6 +1624,17 @@ class ContactSystem:
                 c.dir_updates = 0
                 c.Ft = c.mu * c.Fn * c.slip_dir
                 changed = True
+                z[_gleitart(c.mu * max(c.Fn, 0.0), id(c) in zu_in_runde)] += 1
+                betroffen.add(id(c))
+        runden = getattr(self, "runden", None)
+        if runden is None:
+            # Stuempfe aus object.__new__ (tests) kennen kein __init__
+            runden = self.runden = []
+        f_ref = max(float(getattr(self, "f_ref", 1.0)), 1e-300)
+        runden.append((int(self.phase),) + tuple(z[k] for k in RUNDEN_EREIGNISSE)
+                      + (len(betroffen), len(verstoesse), n_haftend, float(self.gleit_anteil),
+                         float(guete), float(self.dF_slip) / f_ref,
+                         sum(1 for v in self._full_slip_groups().values() if v)))
         return changed
 
     # ---- Ergebnisse --------------------------------------------------------
