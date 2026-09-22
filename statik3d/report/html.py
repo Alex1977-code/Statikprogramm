@@ -236,6 +236,20 @@ def _ids_text(ids, limit: int = 12) -> str:
     return f"{_ranges(ids[:limit])} … ({len(ids)} Stück)"
 
 
+def _theorie_kurz(text) -> str:
+    """Roemische Zahl der Theorie: "II. Ordnung" -> "II", "III" -> "III".
+
+    Die Theorie steht im Programm in zwei Schreibweisen: als Einstellung
+    ("I"/"II"/"III", model.theorie_von) und im Ergebnis ("II. Ordnung",
+    theorie2.py/theorie3.py). Verglichen werden darf nur die roemische Zahl.
+    Ein unbekannter Text bleibt, wie er ist - er faellt dann im Vergleich auf,
+    statt still als gleich zu gelten.
+    """
+    s = str(text or "").strip()
+    treffer = re.match(r"(III|II|I)\b", s.upper())
+    return treffer.group(1) if treffer else s
+
+
 # ==========================================================================
 # Bericht
 # ==========================================================================
@@ -3931,16 +3945,25 @@ class Report:
         wies trotzdem "II" bzw. "III" aus. Der Loeser schreibt seither
         ``res.info["theorie"]``; steht dort etwas anderes als eingestellt,
         sagt die Spalte es.
+
+        Verglichen werden die **roemischen Zahlen**: theorie2.py/theorie3.py
+        schreiben "II. Ordnung"/"III. Ordnung", der Loeser bei einem
+        gescheiterten Lastfall "I", die Einstellung heisst "II"/"III". Der
+        erste Vergleich stellte die Texte unmittelbar gegeneinander - damit
+        stand jeder GELUNGENE Lastfall als "II. Ordnung (statt II: nicht
+        gerechnet)" im Bericht (gemessen 22.09.2026, tests/test_theorie3.py).
         """
         m = self.model
-        gewuenscht = m.theorie_von(lc) if hasattr(m, "theorie_von") else "I"
+        gewuenscht = _theorie_kurz(m.theorie_von(lc) if hasattr(m, "theorie_von") else "I")
         res = (self.results or {}).get(lc.name) if isinstance(self.results, dict) else None
         if res is None:
             an = getattr(self, "analysis", None)
             res = (getattr(an, "cases", None) or {}).get(lc.name) if an is not None else None
         gerechnet = (getattr(res, "info", None) or {}).get("theorie") if res is not None else None
-        if gerechnet and str(gerechnet) != str(gewuenscht):
-            return f"{gerechnet} (statt {gewuenscht}: nicht gerechnet)"
+        if gerechnet:
+            gerechnet = _theorie_kurz(gerechnet)
+            if gerechnet != gewuenscht:
+                return f"{gerechnet} (statt {gewuenscht}: nicht gerechnet)"
         return gewuenscht
 
     # ============================================================ Anhang

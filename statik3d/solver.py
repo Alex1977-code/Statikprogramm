@@ -4009,19 +4009,36 @@ def _lastfaelle_hoeherer_ordnung(model: Model, an, systeme: dict, progress=None)
                     an.theorie3 = Th3Results(
                         settings={"schritte": int(getattr(ds, "th3_schritte", 10) or 10)})
                 an.theorie3.kombinationen[name] = Th3Info(name=name, fehler=str(ex))
-            alt_res = an.cases.get(name)
-            if alt_res is not None:
-                # Das Ergebnis bleibt stehen - es ist ja gerechnet -, sagt aber
-                # ab jetzt selbst, nach welcher Theorie.
-                alt_res.info["theorie"] = "I"
-                alt_res.info["theorie_gewuenscht"] = th
-                alt_res.info["theorie_fehler"] = str(ex)
+            _lineares_ergebnis_markieren(an, name, th, str(ex))
             continue
         if not info.fehler:
             res.kind = "case"
             if lc.situation:
                 res.info["situation"] = lc.situation
             an.cases[name] = res
+        else:
+            # Singulaeres System (theorie2.py) oder keine Konvergenz
+            # (theorie3.py): das nichtlineare Ergebnis wird zu Recht NICHT
+            # uebernommen, der Fehler steht ueber kombinationen[name] schon im
+            # Theoriekapitel. Das stehenbleibende lineare Ergebnis blieb aber
+            # unmarkiert, und die Lastfalltabelle wies weiter "II"/"III" aus,
+            # obwohl nach Theorie I. Ordnung gerechnet war (gemessen 22.09.2026
+            # mit erzwungenem info.fehler, tests/test_theorie3.py). Darum
+            # dieselbe Markierung wie im ValueError-Zweig.
+            an.info.setdefault("warnungen", []).append(f"Lastfall {name}: {info.fehler}")
+            _lineares_ergebnis_markieren(an, name, th, str(info.fehler))
+
+
+def _lineares_ergebnis_markieren(an, name: str, th: str, grund: str) -> None:
+    """Ein Lastfall, dessen Rechnung nach Theorie ``th`` scheiterte, behaelt
+    sein lineares Ergebnis - es ist ja gerechnet -, sagt aber ab jetzt selbst,
+    nach welcher Theorie (report/html.py, ``_theorie_spalte``)."""
+    alt_res = an.cases.get(name)
+    if alt_res is None:
+        return
+    alt_res.info["theorie"] = "I"
+    alt_res.info["theorie_gewuenscht"] = th
+    alt_res.info["theorie_fehler"] = grund
 
 
 def ermuedungsreferenzen(model: Model) -> dict:

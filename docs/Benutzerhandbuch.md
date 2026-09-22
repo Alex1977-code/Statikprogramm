@@ -3182,6 +3182,21 @@ Lastfall und Kombination die Theorie und für III. Ordnung Laststufen,
 Iterationen, Residuum, u_max nach I. und III. Ordnung und die größte
 Drehung auf.
 
+Die Spalte **Theorie** der Lastfalltabelle im Bericht nennt die
+**gerechnete** Theorie. Ist ein Lastfall nach II. oder III. Ordnung gelungen,
+steht dort schlicht „II" bzw. „III". Scheitert die Rechnung — bei beiden,
+weil das Gleichungssystem singulär ist, bei III. Ordnung außerdem, weil eine
+Laststufe nicht konvergiert oder das Modell Kontakt, Flächen- oder
+Volumenelemente, eine Zwangsverformung oder eine vorgegebene
+Lagerverschiebung enthält —, bleibt das lineare Ergebnis stehen, und die
+Spalte zeigt zum Beispiel „I (statt III: nicht gerechnet)". Den Grund nennt
+bei III. Ordnung die Spalte „Hinweis" im Kapitel zur Theorie III. Ordnung,
+bei II. Ordnung die Hinweisliste am Ende des Kapitels zur Theorie II. Ordnung
+und die offenen Warnungen der Zusammenfassung. Was tun: die Ursache beheben
+(etwa mehr Laststufen wählen oder den Kontakt entfernen) oder den Lastfall
+bewusst auf I. Ordnung stellen — die Nachweise dieses Lastfalls rechnen sonst
+ohne die Zusatzmomente aus der Verformung.
+
 ### Verformungsnachweise (GZG)
 
 Die Kombinationen des Grenzzustands der Gebrauchstauglichkeit rechnet Statik3D
