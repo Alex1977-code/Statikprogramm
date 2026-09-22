@@ -610,6 +610,7 @@ class ContactSystem:
         self.stabilising = False   # Hilfsschritt ohne Spaltkraft (siehe stabilise)
         self.cycles = 0
         self.settle = 0
+        self.am_deckel = False  # hat der letzte update()-Aufruf am Deckel aufgegeben?
         self.warm = False       # nach zustand_setzen: Phase 2 mit gesichertem Zustand
         self.dF_slip = 0.0      # groesste Aenderung von mu*Fn an gleitenden Knoten je Runde
         self.f_ref = 1.0
@@ -632,8 +633,19 @@ class ContactSystem:
     def _build(self):
         m = self.model
         for cs in m.contact_supports:
+            # Ohne Richtung kann das Lager nie tragen. Frueher wurde aus dem
+            # Nullvektor beim Normieren wieder der Nullvektor: die Bedingung
+            # stand mit Fn = 0 und Status "Kontakt" in der Ergebnisliste, das
+            # Ergebnis war das ohne Lager, und nur numpy sagte auf stderr
+            # "invalid value" (gemessen 22.09.2026). Wie beim Spaltelement
+            # unten: benennen und weglassen.
             n = np.asarray(cs.direction, float)
-            n /= np.linalg.norm(n) or 1.0
+            ln = float(np.linalg.norm(n))
+            if ln <= 0:
+                self.log.append(f"Einseitiges Lager Knoten {cs.node}: Richtung "
+                                "unbestimmt (Nullvektor) - bitte 'direction' angeben")
+                continue
+            n = n / ln
             dofs = np.array(_trans_dofs(cs.node))
             kn = cs.stiffness if cs.stiffness > 0 else self._auto_k([cs.node])
             t1, t2 = _tangent_basis(n)
@@ -666,9 +678,39 @@ class ContactSystem:
                                         ge.mu, ge.node_b, n,
                                         f"Spaltelement {ge.node_a}-{ge.node_b}",
                                         master=([ge.node_a], [1.0])))
+        # Die Namen aller Paare vorab: _fugen_uebermass nennt einen fremden
+        # Eintrag nur dann "zu einer anderen Fuge gehoerig", wenn es diese
+        # Fuge auch gibt.
+        self._paarnamen = {str(cp.name or "") for cp in m.contact_pairs}
         for cp in m.contact_pairs:
             self._build_pair(cp)
+        self._uebermass_ohne_fuge()
         self._build_dof_supports()
+
+    def _uebermass_ohne_fuge(self):
+        """Uebermass-Eintraege, deren Namen kein Kontaktpaar traegt, benennen.
+
+        Sie wirken nirgends. Seit dem 22.09.2026 gilt ein Uebermass nur an der
+        Fuge mit genau seinem Namen; wurde die Fuge umbenannt oder aufgeteilt
+        (RFEM-Import: "<Name> (Typ 3)", "<Name> (Typ 4)"), nannte die Zeile je
+        Teilfuge den Eintrag "zu einer anderen Fuge gehoerig" - eine solche gab
+        es nicht -, und ein Eintrag ohne jede Namensverwandtschaft fiel ganz ohne
+        Zeile weg (Gegenpruefung des Strangs, tests/test_uebermass). Das Wort
+        "zugeordnet" steht mit Absicht nicht darin: der Bericht laesst solche
+        Zeilen aus seinen Warnungen (report/html.py)."""
+        paare = getattr(self, "_paarnamen", set())
+        for k in sorted(self.uebermass):
+            if k in paare:
+                continue
+            teil = sorted(p for p in paare if p.startswith(k))
+            text = (f"Übermaß „{k}“: kein Kontaktpaar trägt genau diesen Namen - "
+                    "das Übermaß wirkt nirgends")
+            if teil:
+                text += (", auch nicht an " + ", ".join(f"„{p}“" for p in teil[:6])
+                         + (" …" if len(teil) > 6 else "")
+                         + " (deren Namen beginnen nur so; eine aufgeteilte Fuge "
+                           "braucht das Übermaß je Teilfuge)")
+            self.log.append(text + ".")
 
     def _build_dof_supports(self):
         """Nichtlineare Lager-FHG (Ausfall bei Zug/Druck, Schlupf, Reibung, Grenzkraft)
@@ -767,9 +809,23 @@ class ContactSystem:
         name = str(cp.name or "")
         u = self.uebermass.get(name)
         if u is None:
-            # Eine Fuge kann in mehrere Kontaktpaare aufgeteilt sein (ein Paar
-            # je Freigabetyp); die tragen den Namen der Fuge als Vorsatz.
-            u = next((v for k, v in self.uebermass.items() if name.startswith(k)), 0.0)
+            # Ein Kontaktpaar traegt immer genau den Namen seiner Bedingung
+            # (fugen.py: ContactPair(name=kb.name, ...)), und die Maske bietet
+            # genau diese Namen an. Ein blosser Praefixtreffer waere deshalb
+            # nie das gemeinte Paar, sondern ein fremdes - "Deckel" schluege
+            # auf "Deckel_2 (Typ 1)" durch, und bei zwei Treffern entschiede
+            # die Eingabereihenfolge (gemessen: Faktor 5).
+            # Nur Eintraege, die eine andere Fuge wirklich traegt; einen, zu
+            # dem es kein Paar gibt, nennt _uebermass_ohne_fuge.
+            paare = getattr(self, "_paarnamen", None)
+            fremd = [k for k in self.uebermass if name.startswith(k)
+                     and (paare is None or k in paare)]
+            if fremd:
+                self.log.append(
+                    f"Kontaktpaar '{name}': kein eigenes Übermaß eingetragen - die "
+                    "Einträge " + ", ".join(f"„{k}“" for k in fremd)
+                    + " gehören zu einer anderen Fuge und wirken hier NICHT.")
+            u = 0.0
         u = float(u or 0.0)
         if not u:
             return 0.0
@@ -1040,6 +1096,7 @@ class ContactSystem:
         self.phase = 1
         self.cycles = 0
         self.settle = 0
+        self.am_deckel = False
         self.stabilising = False
         self.warm = False
         self.dF_slip = 0.0
@@ -1125,6 +1182,7 @@ class ContactSystem:
         self.warm = True
         self.cycles = 0
         self.settle = 0
+        self.am_deckel = False
         return True
 
     def warmstart_verstoesse(self, u: np.ndarray, zuruecksetzen: bool = False) -> int:
@@ -1331,7 +1389,15 @@ class ContactSystem:
         Phase 2 (Reststeifigkeit vernachlaessigbar): Gleitrichtungen bleiben fest; je
         Runde geht hoechstens der am staerksten ueber der Reibgrenze liegende haftende
         Knoten ins Gleiten ueber (monoton, kann nicht flattern). Ergebnis: Gleichgewicht
-        exakt, |Ft| <= mu*Fn an jedem Knoten, Ft = mu*Fn an gleitenden Knoten."""
+        exakt, |Ft| <= mu*Fn an jedem Knoten, Ft = mu*Fn an gleitenden Knoten.
+
+        ``False`` heisst fertig **oder** aufgegeben; welches, sagt ``am_deckel``
+        - und zwar fuer **diesen** Aufruf. Der Loeser las den Deckel frueher an
+        ``cycles >= MAX_CYCLES`` ab. Der Zaehler bleibt nach dem Deckel aber
+        stehen: lief die Schleife weiter (Schubhalt geloest) und endete eine
+        spaetere Runde echt ohne Wechsel, meldete sie trotzdem den Deckel
+        (gefunden von der Loesersitzung, 22.09.2026)."""
+        self.am_deckel = False
         changed = self._update_states(u)
         if self.phase == 1:
             if changed:
@@ -1353,6 +1419,7 @@ class ContactSystem:
         if self.cycles >= MAX_CYCLES:
             self.log.append("Kontakt: Nachpruefung der Reibung nach "
                             f"{MAX_CYCLES} Zustandswechseln abgebrochen")
+            self.am_deckel = True
             return False
         return True
 

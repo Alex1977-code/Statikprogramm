@@ -2189,6 +2189,18 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv)
             raise
         hilfs = True
+    if _plastisch(model) and "contact_laeufe" in res.info:
+        # Die Kontaktlaeufe bis hier sind der elastische Vorlauf. Sein Zustand
+        # geht nicht weiter - der erste plastische Lauf startet bei ``start``,
+        # nicht bei res.kontaktzustand (_plastizitaet_rechnen) -, und sein u
+        # wird ueberschrieben. Ein gedeckelter Vorlauf aendert das Ergebnis
+        # darum nicht: am Block mit Reibung max |du| = 0 gegen den Lauf ohne
+        # Deckel (tests/test_rechenliste, 22.09.2026). Damit die Kennzeichnung
+        # (rechenliste.zustand_aus_info) ihn herausrechnen kann, stehen seine
+        # Zahlen hier eigens; contact_converged klebt weiter ueber alle Laeufe.
+        res.info["contact_vorlauf_laeufe"] = int(res.info.get("contact_laeufe", 0) or 0)
+        res.info["contact_vorlauf_nicht_konvergiert"] = int(
+            res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0)
     if _plastisch(model):
         # Der Probelauf rechnet das Fliessen **mit** - nur der Kontakt bleibt
         # bei einem Schritt. Die erste Fassung (357d61d) liess die Plastizitaet
@@ -3556,6 +3568,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der
             # naechste Schritt rechnet ohne ihn.
             changed = True
+            weiter = ("Kontakt: nach dem Deckel der Reibungsnachprüfung wurde ein "
+                      "Schubhalt gelöst - die Iteration läuft weiter")
+            if getattr(cs, "am_deckel", False) and weiter not in log:
+                # Die Abbruchzeile des Kontaktsystems steht schon im
+                # Protokoll; ohne diese Zeile laese man dort "abgebrochen"
+                # neben einem Lauf, der danach noch zu Ende kommen kann.
+                log.append(weiter)
         if progress:
             # Anteil im Fenster des Lastfalls: 1 - 0,85^it waechst mit jedem
             # Schritt und naehert sich der Fensterkante - ein wachsender Balken
@@ -3595,7 +3614,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # sah damit aus wie eine auskonvergierte - und genau gegen solche
             # Zahlen pruefen wir 'aendert das Ergebnis nicht'. Gefunden von der
             # Loesersitzung am Quelltext (21.09.2026).
-            deckel = cs.phase == 2 and cs.cycles >= _MAX_CYCLES
+            # Entschieden wird an der Runde, in der die Schleife wirklich
+            # endet (cs.am_deckel), nicht an cs.cycles: der Zaehler bleibt
+            # nach dem Deckel stehen, und eine spaetere Runde ohne Wechsel
+            # meldete sonst ebenfalls den Deckel (22.09.2026).
+            # Fehlt der Merker (ein Kontaktsystem, dessen update() ihn nicht
+            # setzt), gilt die alte, vorsichtige Probe: ein fehlender Merker
+            # darf nicht "konvergiert" heissen (Gegenpruefung, 22.09.2026).
+            deckel = bool(getattr(cs, "am_deckel",
+                                  cs.phase == 2 and cs.cycles >= _MAX_CYCLES))
             converged = not deckel
             break
     if converged and u is not None:

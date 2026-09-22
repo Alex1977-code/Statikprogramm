@@ -1118,7 +1118,7 @@ einen Streifen.
 |---|---|
 | Posten | Name des Lastfalls oder der Kombination |
 | Art | Lastfall oder Kombination |
-| Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“ bzw. „läuft (nicht konvergiert)“ |
+| Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“, „läuft (nicht konvergiert)“ bzw. „läuft (Probelauf)“; nach dem Abschluss steht dieser Stand statt „fertig“ da (siehe unten) |
 | Schritte | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Iterationen |
 | Konvergenz | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
 | Zeit | Laufzeit des Postens, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
@@ -1147,6 +1147,50 @@ Hinter dem letzten Posten läuft noch der Nachlauf - Umhüllende und Nachweise.
 Solange steht er in der Fußzeile des Fensters („Kombination 54 von 54 -
 Umhüllende GZT-12: 3/7“), damit die Liste dabei nicht wie eingefroren
 aussieht.
+
+#### Rechenliste: ein gedeckelter Lastfall heißt „nicht konvergiert“ (22.09.2026)
+
+Bis zum 22.09.2026 zeigte die Rechenliste bei einem Lastfall, dessen
+Nachprüfung der Reibung nach 40 Zustandswechseln aufgegeben hatte,
+**„konvergiert“**. Die Meldung des Rechenkerns lautet „Kontakt: Nachprüfung
+der Reibung nach 40 Zustandswechseln abgebrochen - das Ergebnis ist nicht
+auskonvergiert“; die Liste suchte nur „nicht konvergiert“ - das steht darin
+nicht - und fand dann „konvergiert“ in „aus**konvergiert**“. Eine andere
+Meldung, die „konvergiert“ ohne Verneinung sagt, gibt es im Fortschrittsstrom
+nicht: „konvergiert“ stand also genau bei den gedeckelten Lastfällen. Am
+Block mit Reibung mit künstlich niedrigem Deckel nachgestellt: der echte
+Strom des Rechenkerns ergab „konvergiert“, jetzt ergibt er „nicht
+konvergiert“ (`tests/test_rechenliste.py`).
+
+Jetzt heißt es dort **„nicht konvergiert“** - bei „nicht konvergiert“ und
+„nicht auskonvergiert“ in jeder Schreibung (auch „NICHT KONVERGIERT“) und bei
+der Zeile „Nachprüfung der Reibung … abgebrochen“, die das Wort
+„konvergiert“ gar nicht enthält. Ein „abgebrochen“, das nicht die Reibung
+betrifft (etwa „Vernetzen abgebrochen“), ändert den Zustand nicht. Die
+Verneinung klebt wie bisher: ein einziger gedeckelter Lauf zählt für den
+ganzen Posten.
+
+Ein **Probelauf** (die Rechnung der adaptiven Vernetzung mit einem einzigen
+Kontaktschritt) steht als **„Probelauf“** da - nicht als „konvergiert“, denn
+er ist es mit Absicht nicht, und nicht als „nicht konvergiert“, denn das wäre
+keine Nachricht. Sein Ergebnis ist ein Netzmaß, kein Nachweis.
+
+Für die Kennzeichnung eines **fertigen** Lastfalls aus seinen Zahlen statt aus
+dem Meldungstext gibt es `rechenliste.zustand_aus_info(res.info)`. Sie gibt
+„konvergiert“, „Probelauf“ oder „NICHT konvergiert: …“ mit den Gründen
+zurück, etwa „NICHT konvergiert: 3 von 11 Kontaktläufen nicht konvergiert“
+oder „…, darunter der letzte“. Jeder gedeckelte Kontaktlauf zählt, auch wenn
+der letzte konvergiert ist - mit einer Ausnahme: dem elastischen Vorlauf einer
+Rechnung mit Fließen, der das Ergebnis nachweislich nicht beeinflusst
+(Theoriehandbuch § 4.0, „Welcher gedeckelte Lauf zählt“). Eine Zwischenstufe
+„eingeschränkt“ gibt es nicht; ob ein Lastfall mit einem gedeckelten
+Zwischenlauf als Nachweis taugt, entscheidet der Anwender. **Noch nicht
+angeschlossen**: Zusammenfassung und Bericht zeigen weiter
+`contact_converged`, das über alle Läufe klebt, den Vorlauf eingeschlossen.
+Ebenso die Rechenliste während des Laufs: sie liest die Meldungen, und die
+Deckelmeldung des Vorlaufs ist eine davon. Ist allein der Vorlauf gedeckelt,
+steht dort „nicht konvergiert“, während `zustand_aus_info` „konvergiert“
+sagt - die Abweichung geht zur vorsichtigen Seite.
 
 ### Ergebnisse und Bericht
 
@@ -2370,6 +2414,55 @@ dabei ins Nichts geht.
 dem Beiwert seines Lastfalls ein. Wer das nicht will, legt es in einen
 ständigen Lastfall mit γ = 1,0.
 
+#### Übermaß wirkt nur an der Fuge mit genau diesem Namen (22.09.2026)
+
+Ein Übermaß gehört genau der Fuge, deren Namen es trägt. Bis zum 22.09.2026
+galt es auch an jeder Fuge, deren Name mit diesem Namen **beginnt** - ohne
+Meldung. Das Programm vergibt solche Namen selbst: die zweite Fuge zwischen
+denselben Körpern heißt „Fuge (2)“, eine Kopie „Deckel_2“, der RFEM-Import
+teilt eine Freigabe in „⟨Name⟩ (Typ 1)“, „⟨Name⟩ (Typ 2)“ auf, und
+„Kontaktbedingung 1“ ist der Anfang von „Kontaktbedingung 10“. Gemessen an
+zwei getrennten Würfelpaaren mit 100 µm Übermaß nur auf „Fuge“: die Fuge
+„Fuge (2)“ ohne jedes Übermaß stand unter derselben Pressung von
+10 499 371 N wie „Fuge“. Passten zwei Einträge („Deckel“ 100 µm, „Deckel_2“
+20 µm an der Fuge „Deckel_2 (Typ 1)“), entschied die Reihenfolge der
+Eingabe - 10 499 371 N oder 2 099 874 N, Faktor 5.
+
+Jetzt wirkt an einer solchen Fuge **kein** Übermaß, und das Protokoll (und
+damit die Warnungen des Berichts) sagt es:
+
+    Kontaktpaar 'Fuge (2)': kein eigenes Übermaß eingetragen - die Einträge
+    „Fuge“ gehören zu einer anderen Fuge und wirken hier NICHT.
+
+Wer an einer aufgeteilten Fuge Übermaß will, trägt es für jede Teilfuge ein -
+die Maske bietet genau diese Namen an. Ein Modell, das ein Übermaß noch auf
+den Namen vor der Aufteilung führt, rechnet diese Teilfugen jetzt ohne
+Übermaß; die Zeile im nächsten Abschnitt nennt sie (`tests/test_uebermass.py`).
+
+#### Übermaß ohne Fuge dieses Namens (22.09.2026)
+
+Ein Übermaß, dessen Name **keine** Fuge im Netz trägt, wirkt nirgends. Das
+geschieht, wenn die Fuge nach dem Eintragen umbenannt, gelöscht oder
+aufgeteilt wurde. Umbenannt wird auch von selbst: eine automatisch angelegte
+Kontaktbedingung trägt ihre Wirkung im Namen, und wer die Wirkung ändert,
+ändert den Namen mit - das Übermaß behält den alten. Und der RFEM-Import
+macht aus einer Freigabe mit mehreren Freigabetypen „⟨Name⟩ (Typ 3)“,
+„⟨Name⟩ (Typ 4)“; eine Fuge „⟨Name⟩“ gibt es dann nicht mehr. Bis zum 22.09.2026 fiel ein solcher Eintrag ohne
+jede Zeile weg; stand eine Teilfuge mit diesem Namensanfang daneben, nannte
+ihre Zeile den Eintrag „zu einer anderen Fuge gehörig“ - eine solche Fuge
+gab es aber nicht. Jetzt steht im Protokoll (und in den Warnungen des
+Berichts) eine Zeile je Eintrag:
+
+    Übermaß „Achse“: kein Kontaktpaar trägt genau diesen Namen - das Übermaß
+    wirkt nirgends, auch nicht an „Achse (Typ 3)“, „Achse (Typ 4)“ (deren
+    Namen beginnen nur so; eine aufgeteilte Fuge braucht das Übermaß je
+    Teilfuge).
+
+Abhilfe: das Übermaß unter dem heutigen Namen jeder Fuge neu eintragen. Die
+Zeile steht nur, wenn das Modell überhaupt Kontakt rechnet; ein Modell ganz
+ohne Kontaktfuge hat kein Kontaktsystem, das sie schreiben könnte
+(`tests/test_uebermass.py`, `test_uebermass_ohne_fuge_wird_benannt`).
+
 ### Lastgenerierer Wasserdruck (Stahlwasserbau)
 
 *Lasten → Generierer → Wasserdruck* (oder Modellbaum → Einwirkungen →
@@ -2610,6 +2703,62 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
   Kontakt, Haften, Gleiten), Kontaktkräfte (Tabelle „Kontakt“, farbige
   Marker im Viewport). Hebt ein Bauteil vollständig ab oder rutscht es ohne
   Halt, wird das als Fehler gemeldet – dann Lagerung oder Lasten prüfen.
+
+#### Einseitiges Lager ohne Richtung (22.09.2026)
+
+Ein einseitiges Lager, dessen Stützrichtung der Nullvektor (0 0 0) ist, kann
+nie tragen. Bis zum 22.09.2026 rechnete das Programm es trotzdem mit, still:
+die Bedingung stand mit F_n = 0 und Status „Kontakt“ in der Kontakttabelle,
+und das Ergebnis war das eines Systems ohne dieses Lager. Gemessen an einem
+Träger von 8 m (links eingespannt, rechts in z gelagert, 10 kN/m, Lager in
+Feldmitte): mit Richtung 0 0 1 trägt das Lager 45 668 N und u_z in
+Feldmitte ist praktisch null; mit 0 0 0 sind es −4,562 mm wie ganz ohne
+Lager. Nur eine numpy-Warnung auf der Konsole („invalid value encountered in
+divide“) deutete darauf hin - in keinem Protokoll, in der exe unsichtbar.
+Mit Reibbeiwert μ > 0 brach die Rechnung stattdessen mit „Gleichungssystem
+singulär“ ab, ohne das Lager zu nennen.
+
+Jetzt fällt ein solches Lager aus der Rechnung heraus, und das Protokoll (und
+damit die Warnungen des Berichts) nennt es:
+
+    Einseitiges Lager Knoten 4: Richtung unbestimmt (Nullvektor) - bitte
+    'direction' angeben
+
+Die Rechnung läuft - mit und ohne Reibung - als die ohne dieses Lager, und
+die Kontakttabelle führt keine Scheinzeile mehr. Schon vor dem Rechnen meldet
+die Modellprüfung „Einseitiges Lager Knoten 4: Richtung ist der Nullvektor -
+das Lager kann nie tragen“; die Protokollzeile fängt den Fall auch dort, wo
+die Prüfung nicht gelaufen ist (`tests/test_supports.py`).
+
+#### Deckel mitten im Lauf, danach doch konvergiert (22.09.2026)
+
+Gibt die Nachprüfung der Reibung nach 40 Zustandswechseln auf, rechnet das
+Programm in einem Sonderfall trotzdem weiter: wenn in derselben Runde ein
+**Schubhalt** gelöst wurde (ein Teil, das zwischendurch am Schubhalt hing,
+liegt wieder an). Kam der Lauf danach echt zur Ruhe - kein Zustand wechselt
+mehr -, meldete das Programm bis zum 22.09.2026 trotzdem „nicht
+auskonvergiert“. Jetzt zählt die Runde, in der die Iteration wirklich endet:
+endet sie am Deckel, heißt es „nicht auskonvergiert“ wie bisher; endet sie
+ohne Wechsel, ist der Lauf konvergiert. Im Protokoll steht dann neben der
+Zeile „Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen“ auch
+„nach dem Deckel der Reibungsnachprüfung wurde ein Schubhalt gelöst - die
+Iteration läuft weiter“ - die Abbruchzeile war dann nicht das Ende des Laufs.
+
+#### Was aus dem Sonderfall folgt: die Schlussprüfungen laufen (22.09.2026)
+
+Ein solcher Lauf gilt nicht nur als konvergiert, er wird auch so behandelt.
+Nach jedem konvergierten Lauf prüft das Programm, ob ein Teil am Ende noch am
+Schubhalt hängt oder an gehaltenen Punkten unter Zug steht - dann bricht es
+mit „kein belastbares Ergebnis“ bzw. „kein statisches Gleichgewicht“ ab -,
+und nach einem Warmstart, ob gleitende Knoten gegen ihre Richtung laufen -
+dann setzt es wenige davon auf Haften zurück und rechnet weiter, bei vielen
+beginnt es von der Geometrie neu. Ein gedeckelter Lauf übersprang diese
+Prüfungen. Im Sonderfall oben kann deshalb seit dem 22.09.2026 ein Abbruch
+oder eine weitere Rechnung stehen, wo vorher ein Ergebnis mit „nicht
+auskonvergiert“ stand; die weitere Rechnung ändert dann auch die Zahlen. (Am
+Block mit Reibung im Test, kalt gestartet, bricht keine der Prüfungen ab:
+21 Schritte, dieselbe Verschiebung wie ohne Deckel,
+`tests/test_kontakthalt.py`.)
 
 ## 7 Import
 

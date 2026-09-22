@@ -1328,7 +1328,9 @@ setzte `contact_converged` auf wahr; die Warnung stand allein im
 Das ist keine Geschwindigkeitsfrage. Jede Zahl, gegen die geprüft wird, ob
 eine Änderung „das Ergebnis nicht ändert", kann aus einem gedeckelten Lauf
 stammen — und sah bis dahin aus wie eine auskonvergierte. Der Löser
-unterscheidet die beiden Fälle jetzt an `cs.cycles` und nennt im Protokoll den
+unterscheidet die beiden Fälle jetzt am Merker `cs.am_deckel` der letzten
+Runde (bis zum 22.09.2026 an `cs.cycles`, siehe „Der Deckel gilt für die
+Runde, in der die Schleife endet“) und nennt im Protokoll den
 Grund statt der Schrittzahl. `tests/test_kontakthalt.py` setzt den Deckel
 künstlich auf 1 und prüft, dass `contact_converged` dann **falsch** meldet;
 mit dem alten Stand meldet dieselbe Prüfung wahr.
@@ -1538,6 +1540,87 @@ der Fugenkante gehörten allen dreien; ohne Mitnahme meldete die Abnahme
 doppelte“, mit Mitnahme bleibt die Rippe am Würfel und kein Knoten gehört
 Fundament und Würfel zugleich.
 
+#### Welcher gedeckelte Lauf zählt: der Vorlauf nicht (22.09.2026)
+
+Mit Fließen rechnet ein Lastfall viele Kontaktläufe: zuerst einen
+**elastischen Vorlauf** (`_solve_loads`, der erste `_rechnen()`), danach je
+Laststufe und Newton-Schritt einen (`_plastizitaet_rechnen`). Der Vorlauf
+gibt nichts weiter. Der erste plastische Lauf startet beim Start des
+Lastfalls (`halter = {"start": start, …}`), nicht beim Kontaktzustand des
+Vorlaufs, und das u des Vorlaufs wird überschrieben. Gemessen am Block mit
+Reibung (Streckgrenze 60 % der elastischen Vergleichsspannung, zwei
+Laststufen), Deckel 1 nur während des Vorlaufs: der Vorlauf ist gedeckelt,
+`contact_converged` meldet falsch, und die Verschiebungen sind **bitgleich**
+mit dem Lauf ohne Deckel - max |Δu| = 0 bei max |u| = 2,883·10⁻⁶ m
+(`tests/test_rechenliste.test_vorlauf_mit_deckel`).
+
+Jeder **plastische** Lauf dagegen reicht seinen Kontaktzustand an den
+nächsten weiter (`halter["start"] = res.kontaktzustand`), und dieser Zustand
+bestimmt die plastische Dehnung mit. Darum gilt: jeder gedeckelte Lauf außer
+dem Vorlauf macht den Lastfall „NICHT konvergiert“, auch wenn der letzte Lauf
+konvergiert ist. Der Löser führt die Zahlen des Vorlaufs eigens in `res.info`
+(`contact_vorlauf_laeufe`, `contact_vorlauf_nicht_konvergiert`), damit
+`rechenliste.zustand_aus_info` sie herausrechnen kann. `contact_converged`
+bleibt, wie es war, und klebt über alle Läufe, den Vorlauf eingeschlossen.
+
+Eine Zwischenstufe „eingeschränkt“ (letzter Lauf konvergiert, ein
+Zwischenlauf gedeckelt) gibt es mit Absicht nicht. Ob ein solcher Lastfall
+als Nachweis taugt, ist eine Entscheidung des Anwenders; bis sie getroffen
+ist, heißt er „NICHT konvergiert“. Die Rechenliste las die Deckelmeldung bis
+zum 22.09.2026 sogar als „konvergiert“ (Benutzerhandbuch, Rechenliste).
+
+#### Der Deckel gilt für die Runde, in der die Schleife endet (22.09.2026)
+
+`ContactSystem.update` gibt in Phase 2 `False` zurück, wenn nichts mehr
+wechselt, und wenn die Nachprüfung am Deckel aufgibt. Bis zum 22.09.2026
+entschied `solve_with_contact` den Abbruchgrund an
+`cs.phase == 2 and cs.cycles >= MAX_CYCLES`. Der Zähler bleibt nach dem
+Deckel aber stehen. Löst `schub_halt_loesen()` in der Deckelrunde einen
+Schubhalt, setzt der Löser `changed = True`, und die Schleife läuft weiter;
+endet eine spätere Runde **echt** ohne Wechsel, stand der Zähler immer noch
+auf dem Deckel, und der Lauf hieß „nicht auskonvergiert“.
+
+Jetzt setzt `update()` bei jedem Aufruf den Merker `am_deckel` neu: wahr
+genau dann, wenn **dieser** Aufruf am Deckel aufgegeben hat. Der Löser liest
+den Grund an der Runde ab, in der die Schleife wirklich endet. Läuft sie nach
+einem Deckel weiter, steht das im Protokoll („nach dem Deckel der
+Reibungsnachprüfung wurde ein Schubhalt gelöst - die Iteration läuft
+weiter“), damit die Abbruchzeile des Kontaktsystems daneben nicht wie das
+Ende des Laufs aussieht. Endet die Schleife danach an der Schrittgrenze, heißt
+der Grund wie bisher „nach 120 Schritten nicht konvergiert“.
+
+Nachgestellt am Block mit Reibung mit Deckel 1, wobei `schub_halt_loesen` in
+jeder Deckelrunde einen gelösten Schubhalt meldet (4 Deckelrunden): die
+Schleife geht damit genau den Weg des Laufs ohne Deckel - 21 Schritte,
+max |Δu| = 0 - und endet echt ohne Wechsel. Vorher: `contact_converged`
+falsch und „nicht auskonvergiert“ im Protokoll; jetzt konvergiert
+(`tests/test_kontakthalt.py`, `test_deckel_merker_gilt_fuer_die_letzte_runde`,
+`test_deckel_am_tatsaechlichen_austritt`). Ein Lauf, der am Deckel **endet**,
+heißt weiter „nicht auskonvergiert“ (`test_der_deckel_gilt_nicht_als_konvergenz`).
+
+#### Folgen des Merkers: Schlussprüfungen und vorsichtiger Rückfall (22.09.2026)
+
+`converged = not deckel` entscheidet mehr als die Kennzahl. Nur ein
+konvergierter Lauf durchläuft die Schlussprüfungen von `solve_with_contact`:
+`schub_unter_last` und `_gehaltene_unter_zug` (beide brechen mit
+`KontaktAbbruch` ab) und nach einem Warmstart `warmstart_verstoesse` (wenige
+Verstöße: auf Haften zurück und rekursiv weiter vom Zustand; viele: neu von
+der Geometrie). Im Randfall oben liefen sie bis zum 22.09.2026 nicht; jetzt
+laufen sie. Dort kann also ein Abbruch oder eine weitere Rechnung stehen, wo
+vorher ein gedeckeltes Ergebnis stand - eine Ergebnisänderung genau in
+diesem Randfall, in keinem anderen. Am Block des Tests greift keine der
+Prüfungen (kalter Start, 21 Schritte, max |Δu| = 0).
+
+Fehlt der Merker - ein Kontaktsystem, dessen `update()` ihn nicht setzt -,
+gilt die alte Probe `phase == 2 and cycles >= MAX_CYCLES`. Die erste Fassung
+las `getattr(cs, "am_deckel", False)`: ein fehlender Merker hieß „nicht am
+Deckel“, also konvergiert. Am Block mit Reibung, Deckel 1 und nach jedem
+`update()` entferntem Merker meldete sie `contact_converged` wahr, jetzt
+falsch (`tests/test_kontakthalt.py`,
+`test_ohne_merker_gilt_die_vorsichtige_probe`). `ContactSystem.update`
+setzt den Merker in jedem Aufruf; der Rückfall betrifft keine Rechnung des
+Programms, er verhindert nur, dass ein fehlender Wert als Erfolg gelesen wird.
+
 ### 4.0a Übermaß: die Presspassung als Last
 
 `model.Uebermass`, `contact.ContactSystem._fugen_uebermass`, `passungen.py`
@@ -1617,6 +1700,62 @@ Modell mit 40 µm Übermaß trifft auf die Stelle genau, die 20 µm
 Spaltschluss ergeben, und 40 µm Spaltschluss geben das Doppelte
 (`tests/test_uebermass.py`).
 
+#### Zuordnung nur über den genauen Namen (22.09.2026)
+
+`_fugen_uebermass` sucht das Übermaß eines Kontaktpaars unter seinem Namen.
+Bis zum 22.09.2026 folgte bei einem Fehltreffer ein Präfixzweig: es galt der
+**erste** Eintrag, mit dem der Name des Paars beginnt - begründet damit, dass
+eine Fuge in mehrere Paare aufgeteilt sein könne, die den Fugennamen als
+Vorsatz tragen. Das trifft nicht zu. Ein Kontaktpaar trägt immer genau den
+Namen seiner Bedingung (`fugen.py`: `ContactPair(name=kb.name, …)`; die
+einzige andere Stelle, `Model.add_contact_pair`, nimmt den Namen, wie er
+kommt), und beim Neuvernetzen werden alte Paare über **Namensgleichheit**
+abgeräumt. Der Präfixtreffer war darum nie das gemeinte Paar, sondern ein
+fremdes, und bei zwei Treffern entschied die Reihenfolge, in der die
+Einträge im Lastfall stehen.
+
+Gemessen an getrennten Würfelpaaren (je 1 m² Fuge, 100 µm, Sollwert der
+Presskraft δ·E/(2·L)·A = 10 500 000 N):
+
+| Fall | vorher | jetzt |
+|---|---|---|
+| „Fuge (2)“, Übermaß nur auf „Fuge“ | 10 499 371 N | 0 N |
+| „Deckel_2 (Typ 1)“, Einträge „Deckel“ 100 µm, „Deckel_2“ 20 µm | 10 499 371 N | 0 N |
+| dasselbe, Einträge in umgekehrter Reihenfolge | 2 099 874 N | 0 N |
+
+Die Fugen mit genauem Treffer („Fuge“, „Deckel“, „Deckel_2“) rechnen
+unverändert (10 499 371 N bzw. 2 099 874 N). Findet sich kein genauer
+Eintrag, aber ein Präfix, gilt 0, und das Protokoll nennt die fremden
+Einträge („… gehören zu einer anderen Fuge und wirken hier NICHT“); die
+Zeile geht über `contact_log` in die Warnungen des Berichts
+(`tests/test_uebermass.py`, `test_praefix_ist_keine_zuordnung`,
+`test_mehrdeutiger_praefix_haengt_nicht_an_der_reihenfolge`).
+
+#### Übermaß ohne Kontaktpaar dieses Namens (22.09.2026)
+
+Ein Eintrag, dessen Namen **kein** Kontaktpaar trägt, wirkt nirgends - etwa
+nach dem Umbenennen oder Aufteilen einer Fuge (RFEM-Import: aus „Achse“
+werden „Achse (Typ 3)“ und „Achse (Typ 4)“). Mit dem Präfixzweig galt er
+dort noch; ohne ihn nannte die Zeile je Teilfuge ihn „zu einer anderen Fuge
+gehörig“, obwohl es keine Fuge „Achse“ gab, und ein Eintrag ohne jede
+Namensverwandtschaft fiel ohne Zeile weg. Jetzt:
+
+* `ContactSystem._build` hält die Namen aller Paare (`_paarnamen`), und
+  `_fugen_uebermass` nennt als „fremd“ nur Einträge, die eine andere Fuge
+  wirklich trägt;
+* `_uebermass_ohne_fuge` schreibt nach dem Aufbau aller Paare je Eintrag
+  ohne Paar eine Zeile „Übermaß „Achse“: kein Kontaktpaar trägt genau diesen
+  Namen - das Übermaß wirkt nirgends, auch nicht an „Achse (Typ 3)“, …“. Das
+  Wort „zugeordnet“ steht mit Absicht nicht darin: `report/html.py` lässt
+  Zeilen mit diesem Wort aus den Warnungen des Berichts.
+
+Gerechnet wird wie zuvor ohne diesen Eintrag (beide Teilfugen 0 N). Die
+Zeile steht im Aufbauprotokoll (`_baulog`) und damit in jedem Lastfall, der
+das Kontaktsystem wiederverwendet. Ohne jede Kontaktfuge gibt es kein
+Kontaktsystem und keine Zeile - dort müsste `Model.check()` den Eintrag
+nennen, das tut es noch nicht (`tests/test_uebermass.py`,
+`test_uebermass_ohne_fuge_wird_benannt`).
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
@@ -1677,6 +1816,37 @@ Kontaktbedingung mit dem Spalt g = g₀ + c·u:
 Rotationsfreiheitsgrade werden genauso behandelt (ohne Reibung); ihre Kräfte
 erscheinen als Momente in den Auflagerreaktionen, nicht in den
 Knotenkontaktkräften.
+
+#### Einseitiges Lager mit dem Nullvektor als Richtung (22.09.2026)
+
+`ContactSystem._build` normierte die Richtung eines einseitigen Lagers mit
+`n /= norm(n) or 1.0`. Aus dem Nullvektor wurde so wieder der Nullvektor: die
+Bedingung g = g₀ + nᵀu hatte die Zeile null, trug keinen Freiheitsgrad und
+stand mit F_n = 0 und Status „Kontakt“ in der Ergebnisliste. Nur
+`_tangent_basis` teilte 0 durch 0 (numpy: „invalid value encountered in
+divide“, auf stderr, in keinem Protokoll). Das Spaltelement zehn Zeilen tiefer
+fing denselben Fall schon ab. Gemessen am Träger 8 m (links eingespannt,
+rechts in z gelagert, 10 kN/m, Lager in Feldmitte):
+
+| Richtung | Zeilen in der Kontakttabelle | u_z Feldmitte | F_n |
+|---|---|---|---|
+| (0, 0, 1) | 1 | −3,62·10⁻¹⁰ m | 45 668,24 N |
+| (0, 0, 0), vorher | 1 („Kontakt“) | −4,562031 mm | −0,0 N |
+| (0, 0, 0), jetzt | 0 | −4,562031 mm | - |
+| ohne Lager | 0 | −4,562031 mm | - |
+
+Mit μ = 0,3 ging die NaN-Tangentenbasis als c_t in die Bedingung, und der Lauf
+brach mit „Kontakt-Iteration 1: Gleichungssystem singulär“ ab, ohne das Lager
+zu nennen (am Stand vor der Änderung gemessen). Jetzt wird die Bedingung wie
+beim Spaltelement weggelassen und ins Protokoll geschrieben („Einseitiges
+Lager Knoten 4: Richtung unbestimmt (Nullvektor) - bitte 'direction'
+angeben“), mit und ohne Reibung. Der Lauf mit (0, 0, 0) ist seither
+**bitgleich** mit dem ohne Lager (vorher wich u_z in der 15. geltenden
+Ziffer ab, −0,004562030661418937 m gegen −0,004562030661418983 m, weil er
+über die Kontaktiteration lief); die Gegenprobe mit (0, 0, 1) ist bitgleich mit
+dem Stand davor (Prüfsumme der Verschiebungen unverändert).
+`Model.check()` meldet den Fall schon vor dem Rechnen
+(`tests/test_supports.py`, `test_einseitiges_lager_ohne_richtung`).
 
 ### 4.1a Halt für Teile ohne geschlossene Bedingung (19.09.2026)
 
