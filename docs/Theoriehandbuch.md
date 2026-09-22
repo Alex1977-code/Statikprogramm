@@ -467,6 +467,26 @@ Kontaktzustand und die Zählwerte in `info` — sind gleich
 (`numpy.array_equal`, 22.09.2026). Mit mehreren Threads ist PARDISO schon für
 sich nicht bitgleich (§ 9 des Benutzerhandbuchs); dort wurde nicht verglichen.
 
+##### Gegenprüfung 22.09.2026: Threads nach dem Ausweichen
+
+`LinearSolver._aufbauen` setzt die Threadzahl für PARDISO
+(`_mkl_threads_setzen`) **vor** `ps.factorize`. Scheiterte die Zerlegung,
+blieb `threads` auf diesem Wert, und SuperLU erschien in `beschreibung()`
+und im Nachweis mit den Threads von PARDISO — gemessen mit
+`solver_threads = 2` und werfendem `factorize`: `threads = {"2": 1}`, Zeile
+„1× SuperLU (2 Threads)“. Der Klassenkommentar sagt dagegen: SuperLU meldet
+immer 1. Jetzt setzt der Ausweichzweig `threads = 1` und löscht, was PARDISO
+vor dem Scheitern eingetragen hat (`mtype`, `gestoerte_pivots`,
+`pardiso_kennzahlen`, `nnz_faktor`). `mtype` wird mit `getattr` gelesen: ein
+fehlendes Feld in pypardiso darf nicht über das `except` den Löser wechseln
+lassen, nur weil mitgeschrieben wird. Die Rechnung berührt das nicht; es sind
+nur Angaben (`test_loeser_nachweis_nennt_das_ausweichen`).
+
+Das Zurücksetzen von `residuum` auf nan (oben) hat seither einen eigenen Test,
+`test_residuum_gehoert_zur_loesung`: ohne die nan-Zeile meldet `residuum` nach
+`solve(b, check=False)` die Zahl der vorigen Lösung, 7,9·10⁻¹⁶, und das Buch
+zählte sie als gemessen (3 von 4 Prüfungen rot, gemessen 22.09.2026).
+
 
 ### 1.4 Querschnittswerte freier Profile
 

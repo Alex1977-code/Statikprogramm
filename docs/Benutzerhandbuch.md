@@ -3721,6 +3721,18 @@ Lastfall trägt den Nachweis noch nicht. Die Rechnung selbst ändert sich
 dadurch nicht: verglichen an vier Modellen mit einem Thread, alle Werte
 bitgleich (Theoriehandbuch § 1.3-1).
 
+#### Threads nach dem Ausweichen (Gegenprüfung 22.09.2026)
+
+Weicht PARDISO aus, nennen die Zeile „Faktorisiert (…)“ und die Zeile
+„Lösungen“ den Ersatz jetzt mit **seiner** Threadzahl: SuperLU „einkernig“.
+Vorher blieb die Zahl stehen, die PARDISO vor seinem Scheitern eingestellt
+hatte. Gemessen 22.09.2026 mit zwei eingestellten Threads und einem PARDISO,
+das die Zerlegung verweigert: „1× SuperLU (2 Threads)“, obwohl SuperLU
+immer einkernig rechnet. Ebenso fallen Matrixtyp und gestörte Pivots von
+PARDISO weg; sie gehörten nicht zur Lösung des Ersatzes. Am Ergebnis ändert
+das nichts, es ist nur die Angabe (Test
+`test_loeser_nachweis_nennt_das_ausweichen` in `tests/test_loeser.py`).
+
 ### Abnahme des Netzes vor dem Rechnen
 
 Vor jedem Lauf nimmt das Programm das Netz ab. Ein Bauteil ist vollständig

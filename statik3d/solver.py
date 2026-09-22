@@ -793,13 +793,29 @@ class LinearSolver:
                 self.pardiso_kennzahlen = kz
                 self.nnz_faktor = int(kz.get("nnz") or 0)
                 self.gestoerte_pivots = kz.get("gestoert")
-                self.mtype = int(ps.mtype)
+                # pypardiso 0.4.7 fuehrt den Typ als ps.mtype. Fehlte das Feld,
+                # liefe ein AttributeError in das except unten, und nur das
+                # Mitschreiben liesse den Loeser ausweichen.
+                mt = getattr(ps, "mtype", None)
+                self.mtype = None if mt is None else int(mt)
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
             except Exception as ex:
                 if be == "pardiso":
                     raise
+                # Was PARDISO vor dem Scheitern eingetragen hat, gehoert nicht
+                # dem Ersatz. Die Threadzahl setzt _mkl_threads_setzen schon vor
+                # ps.factorize; ohne diese Zeilen nannten beschreibung() und der
+                # Loeser-Nachweis SuperLU mit den Threads von PARDISO (gemessen
+                # 22.09.2026 mit solver_threads = 2 und werfendem factorize:
+                # Nachweis threads {"2": 1}, Zeile "1x SuperLU (2 Threads)").
+                # SuperLU rechnet einkernig (test_superlu_nennt_sich_einkernig).
+                self.threads = 1
+                self.mtype = None
+                self.gestoerte_pivots = None
+                self.pardiso_kennzahlen = {}
+                self.nnz_faktor = 0
                 # **Nicht still verwerfen.** Bis zum 22.09.2026 fiel hier jede
                 # PARDISO-Ausnahme ohne eine Zeile weg, und es ging ueber
                 # CHOLMOD (meist nicht installiert) nach SuperLU. Am Drehlager

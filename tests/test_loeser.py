@@ -1358,6 +1358,34 @@ def test_pardiso_zaehlt_gestoerte_pivots():
           and lu.mtype is None, f"{lu.gestoerte_pivots!r} / {lu.mtype!r}")
 
 
+def test_residuum_gehoert_zur_loesung():
+    """``LinearSolver.residuum`` beschreibt die Loesung, die solve() gerade
+    gerechnet hat. Ohne Pruefung (check=False) gibt es keins: nan, nicht die
+    Zahl der vorigen Loesung - die schriebe der Loeser-Nachweis sonst dem
+    Lastfall zu. Das Buch zaehlt nan nicht als gemessen (Gegenpruefung
+    22.09.2026: die Aenderung stand ohne Test da)."""
+    from statik3d.solver import _LoeserBuch
+    L = _laplace_2d(6)
+    b = np.arange(1.0, L.shape[0] + 1.0)
+    ls = LinearSolver(L, backend="superlu")
+    ls.solve(b)
+    r1 = ls.residuum
+    check("mit Pruefung: ein gemessenes Residuum", np.isfinite(r1) and r1 < 1e-10, repr(r1))
+    ls.solve(b, check=False)
+    check("ohne Pruefung: nan, nicht das der vorigen Loesung", np.isnan(ls.residuum),
+          repr(ls.residuum))
+    buch = _LoeserBuch(0.0)
+    buch.loesung(ls)
+    check("das Buch zaehlt eine Loesung ohne Residuum nicht als gemessen",
+          buch.residuum_gemessen == 0 and buch.residuum_max is None,
+          f"{buch.residuum_gemessen} / {buch.residuum_max!r}")
+    ls.solve(b)
+    buch.loesung(ls)
+    check("wohl aber die naechste gepruefte",
+          buch.residuum_gemessen == 1 and buch.residuum_max == ls.residuum,
+          f"{buch.residuum_gemessen} / {buch.residuum_max!r}")
+
+
 def _block_zwei_lastfaelle():
     """Der Block mit Reibung und ein zweiter Lastfall mit umgekehrter
     Horizontallast - beide rechnen Kontakt und faktorisieren."""
@@ -1436,6 +1464,11 @@ def test_loeser_nachweis_nennt_das_ausweichen():
     faktorisiert beim Aufstellen des Systems, also **vor** dem Lastfall. Ein
     Nachweis, der nur Faktorisierungen zaehlte, bliebe hier leer (Einwand der
     Gegenprobe zum Entwurf, 22.09.2026).
+
+    Zwei Threads fuer PARDISO sind eingestellt, damit die Threadzahl des
+    Ersatzes etwas zeigt: PARDISO setzt sie vor ps.factorize, und bis zur
+    Gegenpruefung (22.09.2026) blieb sie nach dem Ausweichen stehen - der
+    Nachweis nannte "1x SuperLU (2 Threads)".
     """
     import pypardiso
     from statik3d.solver import solve_static
@@ -1447,15 +1480,19 @@ def test_loeser_nachweis_nennt_das_ausweichen():
 
     pypardiso.PyPardisoSolver.factorize = wirft
     alt = parallel.settings().solver_backend
+    alt_t = parallel.settings().solver_threads
     try:
-        parallel.configure(solver_backend="auto")
+        parallel.configure(solver_backend="auto", solver_threads=2)
         res = solve_static(m)
     finally:
         pypardiso.PyPardisoSolver.factorize = echt
-        parallel.configure(solver_backend=alt)
+        parallel.configure(solver_backend=alt, solver_threads=alt_t)
     n = res.info.get("loeser_nachweis") or {}
     check("SuperLU hat geloest, einmal", n.get("loesungen") == {"superlu": 1},
           str(n.get("loesungen")))
+    check("mit einem Thread, nicht mit den zwei von PARDISO",
+          n.get("threads") == {"1": 1}, str(n.get("threads")))
+    check("und ohne PARDISO-Matrixtyp", n.get("mtype") == {}, str(n.get("mtype")))
     gruende = n.get("ausweichgruende") or {}
     check("der Grund steht im Nachweis, mit der Zahl der Loesungen",
           any("PARDISO" in g and "verweigert" in g for g in gruende)
@@ -1469,6 +1506,9 @@ def test_loeser_nachweis_nennt_das_ausweichen():
     check("die Zusammenfassung nennt das Ausweichen",
           "Ausgewichen" in z and "verweigert" in z,
           next((x for x in z.splitlines() if "Ausgewichen" in x), "keine Zeile")[:100])
+    zeile = next((x for x in z.splitlines() if x.startswith("Lösungen")), "keine Zeile")
+    check("die Zeile Lösungen sagt: SuperLU einkernig", "1× SuperLU (einkernig)" in zeile,
+          zeile[:100])
 
 
 def test_zusammenfassung_nennt_gestoerte_pivots():
@@ -1485,11 +1525,16 @@ def test_zusammenfassung_nennt_gestoerte_pivots():
     r = Results(name="LF1")
     r.info = {"loeser_nachweis": nachweis}
     z = r.summary()
+    # Die Zeilen selbst pruefen, nicht die ganze Zusammenfassung: "3" oder
+    # "12" stehen dort auch ohne diese Zeilen (etwa in "3.1e-13").
+    loes = next((x for x in z.splitlines() if x.startswith("Lösungen")), "keine Zeile")
+    piv = next((x for x in z.splitlines() if x.startswith("Gestörte Pivots")), "keine Zeile")
     check("die Zusammenfassung nennt Loeser, Loesungen und Faktorisierungen",
-          "MKL PARDISO" in z and "12" in z and "11 Faktorisierungen" in z,
-          next((x for x in z.splitlines() if "Lösungen" in x), "keine Zeile")[:110])
-    check("und die gestoerten Pivots", "Gestörte Pivots" in z and "3" in z,
-          next((x for x in z.splitlines() if "Pivots" in x), "keine Zeile")[:110])
+          "12× MKL PARDISO (16 Threads, mtype 11)" in loes
+          and "11 Faktorisierungen in 1.250 s" in loes and "höchstens 3.1e-13" in loes,
+          loes[:110])
+    check("und die gestoerten Pivots: Summe, Faktorisierungen, Hoechstwert",
+          "3 in 2 von 11 Faktorisierungen" in piv and "höchstens 2 " in piv, piv[:110])
     ohne = dict(nachweis, gestoerte_pivots_summe=0, gestoerte_pivots_max=0,
                 faktorisierungen_mit_gestoerten_pivots=0)
     r.info = {"loeser_nachweis": ohne}
@@ -1549,7 +1594,8 @@ def test_loeser_nachweis_haelt_mkl_cbwr_fest():
 
 def main():
     for f in (test_pardiso_faellt_nicht_still_aus, test_ketten_teilen_sich_die_threads,
-              test_pardiso_zaehlt_gestoerte_pivots, test_loeser_nachweis_je_lastfall,
+              test_pardiso_zaehlt_gestoerte_pivots, test_residuum_gehoert_zur_loesung,
+              test_loeser_nachweis_je_lastfall,
               test_loeser_nachweis_nennt_das_ausweichen,
               test_zusammenfassung_nennt_gestoerte_pivots,
               test_loeser_nachweis_haelt_mkl_cbwr_fest,
