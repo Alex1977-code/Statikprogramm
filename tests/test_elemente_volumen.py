@@ -699,9 +699,67 @@ def t_hex8_nahezu_inkompressibel():
     check("hex8: bei nu = 0,45 bricht die Biegung nicht ein",
           werte[0.45] / werte[0.3] > 0.85,
           f"{werte[0.45] / werte[0.3] * 100:.1f} % der Loesung bei nu = 0,3")
+    # Bis zum 22.09.2026 (punktweise Volumendehnung) waren es 80,3 %, und die
+    # Pruefung verlangte > 0,80 - sie bestand mit 0,3 Punkten Abstand. Mit der
+    # linear projizierten Volumendehnung (A1) sind es 93,0 %; der Rest ist
+    # zum Teil die 3D-Loesung selbst (die Einspannung behindert bei nu -> 0,5
+    # die Querdehnung staerker), die Spannung an der Nachweisstelle liegt
+    # dort auf 1,6 N/mm2 (t_hex8_volumensperre).
     check("hex8: auch bei nu = 0,499 nicht (kein volumetrisches Sperren)",
-          werte[0.499] / werte[0.3] > 0.80,
+          werte[0.499] / werte[0.3] > 0.90,
           f"{werte[0.499] / werte[0.3] * 100:.1f} % der Loesung bei nu = 0,3")
+
+
+def t_hex8_volumensperre():
+    """A1 (22.09.2026): die Volumendehnung des hex8 ist linear projiziert.
+
+    Gemessen wird am Kragarm der Pruefkoerper (tests/pruefkoerper.py): die
+    Spannung an der Nachweisstelle (Oberkante, x = L/2) gegen Saint-Venant,
+    355 N/mm2. sigma_xx zeigt den Druck (sigma_v blendet ihn aus); beim
+    punktweisen hex8 lag er bei nu = 0,499 am Netz 8x2x4 um 51 N/mm2 daneben.
+    Bei nu = 0,3 darf sich die Biegung nicht aendern.
+    """
+    from tests import pruefkoerper as pk
+    kr = pk.Kragarm()
+    alt = sl.HEX8_VOLUMEN
+    werte = {}
+    try:
+        for vol in ("voll", "p1"):
+            sl.HEX8_VOLUMEN = vol
+            for nu in (0.3, 0.499):
+                for netz in ((8, 2, 4), (16, 4, 8)):
+                    m, _ids = kr.modell("hex8", *netz, nu=nu)
+                    res, _t = pk.loese(m)
+                    ps = pk.punktspannung(m, res, kr.punkt())
+                    werte[(vol, nu, netz)] = ((ps["mittel"][0] - kr.sigma) / 1e6,
+                                             (ps["sv_mittel"] - kr.sigma) / 1e6)
+    finally:
+        sl.HEX8_VOLUMEN = alt
+    for nu in (0.3, 0.499):
+        print("     hex8 nu = %.3f: " % nu + "  ".join(
+            f"{vol} {n[0]}x{n[1]}x{n[2]}: sxx {werte[(vol, nu, n)][0]:+.2f} sv {werte[(vol, nu, n)][1]:+.2f}"
+            for vol in ("voll", "p1") for n in ((8, 2, 4), (16, 4, 8))))
+    grob, fein = (8, 2, 4), (16, 4, 8)
+    check("hex8 nu = 0,499: sigma_xx an der Nachweisstelle auf 2 N/mm2 (8x2x4), 0,5 (16x4x8)",
+          abs(werte[("p1", 0.499, grob)][0]) < 2.0 and abs(werte[("p1", 0.499, fein)][0]) < 0.5,
+          f"{werte[('p1', 0.499, grob)][0]:+.2f} / {werte[('p1', 0.499, fein)][0]:+.2f} N/mm2 "
+          f"(punktweise: {werte[('voll', 0.499, grob)][0]:+.2f} / {werte[('voll', 0.499, fein)][0]:+.2f})")
+    check("hex8 nu = 0,499: sigma_v ebenso",
+          abs(werte[("p1", 0.499, grob)][1]) < 2.0 and abs(werte[("p1", 0.499, fein)][1]) < 0.5)
+    check("... und der punktweise hex8 lag dort deutlich daneben (sonst prueft dies nichts)",
+          abs(werte[("voll", 0.499, grob)][0]) > 20.0)
+    check("hex8 nu = 0,3: Biegung unveraendert (Abweichung zum punktweisen hex8 < 0,1 N/mm2)",
+          all(abs(werte[("p1", 0.3, n)][k] - werte[("voll", 0.3, n)][k]) < 0.1
+              for n in (grob, fein) for k in (0, 1)))
+    # Stabil: genau sechs Nullmoden auch bei nu = 0,499 und am verzerrten Element
+    rng = np.random.default_rng(31)
+    ok = True
+    for nu in (0.3, 0.499):
+        for _ in range(3):
+            K, _V = sl.k_hex8(verzerrt("hex8", rng, amp=0.15), E_ST, nu)
+            lam = np.linalg.eigvalsh(K)
+            ok = ok and int(np.sum(np.abs(lam) < 1e-9 * lam.max())) == 6
+    check("hex8 mit projizierter Volumendehnung: genau 6 Nullmoden (nu 0,3 und 0,499, verzerrt)", ok)
 
 
 def t_hex8_stapel():
@@ -773,6 +831,303 @@ def t_hex8_stapel():
 
 
 # --------------------------------------------------------------------------
+# Der Dehnungsoperator: ein Weg fuer Steifigkeit, Spannung und Plastizitaet
+# --------------------------------------------------------------------------
+def _modell_aus(typ, Xs):
+    """Ein Modell mit je einem Element je Knotensatz in Xs (n,k,3), ohne
+    gemeinsame Knoten - fuer Vergleiche Element gegen Stapel."""
+    from statik3d.model import Material, Model
+    m = Model("stapel")
+    m.add_material(Material("S", E=E_ST, nu=NU_ST, rho=7850.0))
+    for X in Xs:
+        ids = m.add_nodes(X)
+        m.add_element(typ, [int(i) for i in ids], "S")
+    return m
+
+
+def t_operator():
+    """Steifigkeit aus dem Operator = Einzelfassung k_<typ>, fuer jeden Typ;
+    der Stapel in assemble._matrix_chunk = element_matrix je Element; ein
+    umgestuelptes Element nennt seine Nummer auch im Stapel."""
+    from statik3d import assemble as asm
+    rng = np.random.default_rng(23)
+    for typ in ALLE:
+        Xs = np.stack([verzerrt(typ, rng) for _ in range(12)])
+        m = _modell_aus(typ, Xs)
+        ops = sl.dehnungsoperator(m, typ, range(len(m.elements)))
+        D = sl.D_matrix(E_ST, NU_ST)
+        Ks = np.concatenate([sl.steifigkeit_aus_operator(op, D) for op in ops])
+        Ke = np.array([k_elem(typ, X)[0] for X in Xs])
+        abw = np.abs(Ks - Ke).max() / np.abs(Ke).max()
+        V = sum(op.w.sum(axis=0) for op in ops)
+        Ve = np.array([sl.solid_volume(typ, X) for X in Xs])
+        check(f"{typ}: Steifigkeit aus dem Dehnungsoperator = Einzelfassung",
+              abw <= 1e-13 and np.abs(V - Ve).max() <= 1e-13 * Ve.max(), f"{abw:.1e}")
+        if typ in asm.STAPEL_TYPEN:
+            paare = asm._matrix_chunk(m, list(range(len(m.elements))))
+            abw = max(np.abs(ke - asm.element_matrix(m, m.elements[i])).max()
+                      for i, (_d, ke) in enumerate(paare)) / np.abs(Ke).max()
+            check(f"{typ}: gestapelte Assemblierung = element_matrix je Element",
+                  abw <= 1e-13, f"{abw:.1e}")
+    # Umgestuelpt: die Meldung nennt das Element (Nummer ab 1), auch im Stapel
+    Xs = np.stack([verzerrt("hex8", rng) for _ in range(10)])
+    Xs[6] = Xs[6][[4, 5, 6, 7, 0, 1, 2, 3]]
+    m = _modell_aus("hex8", Xs)
+    try:
+        asm._matrix_chunk(m, list(range(10)))
+        ok, text = False, "kein Fehler"
+    except ValueError as ex:
+        ok, text = "Element 7 " in str(ex) and "Jacobi" in str(ex), str(ex)[:90]
+    check("hex8: umgestuelptes Element im Stapel - Meldung mit Elementnummer", ok, text)
+    # Der Zwischenspeicher: derselbe Operator bei gleichem Netz, ein neuer,
+    # sobald ein Knoten wandert
+    m = _modell_aus("tet10", np.stack([verzerrt("tet10", rng) for _ in range(3)]))
+    a = sl.dehnungsoperator(m, "tet10", [0, 1, 2], merken=True)
+    b = sl.dehnungsoperator(m, "tet10", [0, 1, 2], merken=True)
+    m.nodes[4, 0] += 1e-3
+    c = sl.dehnungsoperator(m, "tet10", [0, 1, 2], merken=True)
+    check("Dehnungsoperator: gemerkt bei gleichem Netz, neu bei verschobenem Knoten",
+          a is b and c is not a)
+
+
+# --------------------------------------------------------------------------
+# Uebergang linear/quadratisch (B5) und gekruemmte Elemente (B7)
+# --------------------------------------------------------------------------
+def _uebergangswuerfel(stoerung=0.08, keim=19):
+    """Wuerfel aus 2x2x2 Kuhn-Zellen, die Haelfte x < 0,5 als tet10, der Rest
+    als tet4 - dieselben Eckknoten an der Grenze x = 0,5, innere Knoten
+    gestoert. Rueckgabe (Modell, innere Knoten)."""
+    from statik3d.model import Material, Model
+    m = Model("Uebergang")
+    m.add_material(Material("S", E=E_ST, nu=NU_ST, rho=0.0))
+    rng = np.random.default_rng(keim)
+    ids = {}
+    for k in range(3):
+        for j in range(3):
+            for i in range(3):
+                p = np.array([i, j, k], float) * 0.5
+                if (i, j, k) == (1, 1, 1):
+                    p = p + rng.uniform(-1, 1, 3) * stoerung
+                ids[(i, j, k)] = m.add_node(*p)
+    kuhn = [(0, 1, 3, 7), (0, 1, 7, 5), (0, 5, 7, 4), (0, 3, 2, 7), (0, 6, 4, 7), (0, 2, 6, 7)]
+    mitten = {}
+
+    def mitte(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in mitten:
+            mitten[key] = m.add_node(*(0.5 * (m.nodes[a] + m.nodes[b])))
+        return mitten[key]
+    for k in range(2):
+        for j in range(2):
+            for i in range(2):
+                z = [ids[(i + (x & 1), j + ((x >> 1) & 1), k + ((x >> 2) & 1))] for x in range(8)]
+                for tet in kuhn:
+                    kn = [z[x] for x in tet]
+                    X = m.nodes[kn]
+                    if np.linalg.det(np.array([X[1] - X[0], X[2] - X[0], X[3] - X[0]])) < 0:
+                        kn[1], kn[2] = kn[2], kn[1]
+                    if i == 0:
+                        kn = kn + [mitte(kn[a], kn[b]) for a, b in _TET_KANTEN]
+                        m.add_element("tet10", kn, "S")
+                    else:
+                        m.add_element("tet4", kn, "S")
+    X = np.asarray(m.nodes, float)
+    innen = [n for n in range(m.nn) if np.all(X[n] > 1e-9) and np.all(X[n] < 1 - 1e-9)]
+    return m, innen
+
+
+def t_uebergang_linear_quadratisch():
+    """B5: tet10 an tet4, verbunden (keine Fuge). Die Seitenmitten der
+    Grenzseiten sind an ihre Kante gebunden, u_m = (u_a + u_b)/2 - exakt, ueber
+    den Dehnungsoperator (kein Strafverfahren). Dann ist der Patch-Test ueber
+    die Grenze exakt; ohne Bindung haengen die Mittelknoten der Grenzseiten
+    frei am tet10, und das lineare Feld ist kein Gleichgewicht mehr."""
+    from statik3d import assemble as asm
+    m, innen = _uebergangswuerfel()
+    bind = asm.mittelknoten_bindungen(m)
+    kn4 = {int(n) for e in m.elements if e.typ == "tet4" for n in e.nodes}
+    kn10 = {int(n) for e in m.elements if e.typ == "tet10" for n in e.nodes[:4]}
+    grenze = kn4 & kn10
+    check("Uebergang tet10/tet4: gebunden sind genau Kantenmitten zwischen Grenzknoten",
+          len(bind) > 0 and all(a in grenze and b in grenze and mm not in kn4 for mm, a, b in bind),
+          f"{len(bind)} Mittelknoten an {len(grenze)} Grenzknoten")
+
+    def patch(mit):
+        echt = asm.mittelknoten_bindungen
+        try:
+            if not mit:
+                asm.mittelknoten_bindungen = lambda model: []
+            K = asm.stiffness(m).toarray()
+            gebunden = {mm for mm, _a, _b in asm.mittelknoten_bindungen(m)}
+        finally:
+            asm.mittelknoten_bindungen = echt
+        benutzt = sorted({int(n) for e in m.elements for n in e.nodes})
+        d_alle = np.array([6 * n + r for n in benutzt for r in range(3)])
+        frei = np.array([6 * n + r for n in innen if n not in gebunden for r in range(3)])
+        fest = np.setdiff1d(d_alle, np.concatenate([frei, [6 * n + r for n in gebunden
+                                                          for r in range(3)]]).astype(int))
+        uex = np.zeros(m.ndof)
+        for n in benutzt:
+            uex[6 * n:6 * n + 3] = _feld(m.nodes[n])
+        u = uex.copy()
+        for n in gebunden:
+            u[6 * n:6 * n + 3] = 0.0
+        u[frei] = np.linalg.solve(K[np.ix_(frei, frei)], -K[np.ix_(frei, fest)] @ uex[fest])
+        if mit:
+            u = asm.mittelknoten_nachfuehren(m, u)
+        pruef = np.array([6 * n + r for n in innen for r in range(3)])
+        return np.abs(u - uex)[pruef].max() / np.abs(uex).max()
+    e_mit, e_ohne = patch(True), patch(False)
+    check("Uebergang tet10/tet4: Patch-Test ueber die Grenze exakt (mit Bindung)", e_mit < 1e-12,
+          f"{e_mit:.1e}")
+    check("... und ohne Bindung faellt er (sonst prueft dies nichts)", e_ohne > 1e-4,
+          f"{e_ohne:.1e}")
+    # Spannungen in beiden Koerpern exakt - auch im Nachlauf des Loesers
+    from statik3d import solver
+    m3, innen3 = _uebergangswuerfel()
+    for n in range(m3.nn):
+        if n in innen3 or n in {mm for mm, _a, _b in asm.mittelknoten_bindungen(m3)}:
+            continue
+        if any(n in e.nodes for e in m3.elements):
+            m3.fix(int(n), [0, 1, 2], values=list(_feld(m3.nodes[n])))
+    res = solver.solve_static(m3)
+    g = _GRAD + _GRAD.T
+    s_ex = sl.D_matrix(E_ST, NU_ST) @ np.array([g[0, 0] / 2, g[1, 1] / 2, g[2, 2] / 2,
+                                                g[0, 1], g[1, 2], g[0, 2]])
+    abw = max(float(np.abs(np.asarray(v) - s_ex).max()) for v in res.solid_res.values())         / float(np.abs(s_ex).max())
+    u3 = np.asarray(res.u).reshape(-1, 6)[:, :3]
+    abw_u = max(float(np.abs(u3[n] - _feld(m3.nodes[n])).max()) for n in range(m3.nn)
+                if any(n in e.nodes for e in m3.elements)) / float(np.abs(_GRAD).max())
+    check("Uebergang tet10/tet4 im Loeser: Spannung ueberall exakt, auch u der gebundenen Mitten",
+          abw < 1e-9 and abw_u < 1e-9, f"Spannung {abw:.1e}, Verschiebung {abw_u:.1e}")
+    # Getrennte Knoten an der Grenze (Fuge): nichts wird gebunden
+    m2, _ = _uebergangswuerfel()
+    for e in m2.elements:
+        if e.typ == "tet4":
+            e.nodes = [int(m2.add_node(*m2.nodes[n])) for n in e.nodes]
+    check("an einer Fuge (eigene Knoten je Seite) wird nichts gebunden",
+          asm.mittelknoten_bindungen(m2) == [])
+
+
+def t_jacobi_pruefung():
+    """B7: ein tet10, dessen Kantenmitte ueber die Gegenecke hinaus gezogen
+    ist, hat an einer Kante negatives det J - die Pruefung nennt es mit Nummer,
+    auch wenn es an den Gausspunkten noch positiv waere."""
+    from statik3d.model import Material, Model
+    m = Model("B7")
+    m.add_material(Material("S", E=E_ST, nu=NU_ST, rho=0.0))
+    X = KNOTEN_NAT["tet10"].copy()
+    for _ in range(3):
+        ids = m.add_nodes(X)
+        m.add_element("tet10", [int(i) for i in ids], "S")
+    # Element 2: Kantenmitte 0-1 weit nach innen gezogen (gekruemmte Kante)
+    n01 = m.elements[1].nodes[4]
+    m.nodes[n01] = m.nodes[n01] + np.array([0.0, 0.35, 0.35])
+    schlecht = sl.jacobi_pruefung(m)
+    check("B7: gekruemmter tet10 mit negativem det J wird mit Nummer gemeldet",
+          [s_[0] for s_ in schlecht] == [1], f"{schlecht}")
+
+
+# --------------------------------------------------------------------------
+# Jacobi-Volumen mit Vorzeichen, Seiten als Flaechen
+# --------------------------------------------------------------------------
+def t_jacobi_volumen():
+    """Vorzeichenbehaftetes Volumen und det J - und was das Element nicht sieht.
+
+    Ein hex8 mit verdrehtem Deckel (4,5,6,7 -> 5,6,7,4) ist fuer sich ein
+    gueltiges Element: det J ueberall positiv, aber nur 2/3 des Volumens
+    (gemessen 22.09.2026 von der Statik3D-Sitzung). Diese Pruefung haelt
+    fest, dass die Elementpruefung ihn **nicht** faengt - das kann nur die
+    Bilanz am Koerper (diagnose).
+    """
+    W = 0.5 * (np.array(_HEX_ECKEN, float) + 1.0)          # Einheitswuerfel
+    d = sl.jacobi_volumen("hex8", W)
+    check("hex8: Einheitswuerfel V = 1, det J = 1/8 ueberall",
+          abs(d["V"] - 1.0) < 1e-14 and abs(d["det_min"] - 0.125) < 1e-14
+          and abs(d["det_max"] - 0.125) < 1e-14, f"{d}")
+    verdreht = W[[0, 1, 2, 3, 5, 6, 7, 4]]
+    d = sl.jacobi_volumen("hex8", verdreht)
+    check("hex8: verdrehter Deckel - det J positiv, Volumen 2/3 (elementseitig unauffaellig)",
+          d["det_min"] > 0 and abs(d["V"] - 2.0 / 3.0) < 1e-12,
+          f"V = {d['V']:.6f}, det J {d['det_min']:.4f} .. {d['det_max']:.4f}")
+    gestuelpt = W[[4, 5, 6, 7, 0, 1, 2, 3]]
+    d = sl.jacobi_volumen("hex8", gestuelpt)
+    check("hex8: umgestuelptes Element - V = -1, det J ueberall negativ",
+          abs(d["V"] + 1.0) < 1e-14 and d["det_max"] < 0, f"{d}")
+    rng = np.random.default_rng(17)
+    ok = True
+    for typ in ALLE:
+        X = np.stack([verzerrt(typ, rng) for _ in range(5)])
+        s = sl.jacobi_volumen_stapel(typ, X)
+        for a in range(len(X)):
+            e = sl.jacobi_volumen(typ, X[a])
+            ok = ok and abs(e["V"] - s["V"][a]) <= 1e-14 * abs(e["V"]) \
+                and abs(e["V"] - sl.solid_volume(typ, X[a])) <= 1e-12 * abs(e["V"]) \
+                and s["det_min"][a] > 0
+    check("alle Typen: Stapel = Einzeln, V = solid_volume bei gesunden verzerrten Elementen", ok)
+
+
+def t_seiten_integration():
+    """Integrationsdaten der Seiten (Schnittstelle fuer den Kontakt auf
+    quadratischen Seiten, Teil B4 des Auftrags vom 22.09.2026)."""
+    P3 = np.array([[0, 0, 0], [2, 0, 0], [0.5, 1.5, 0]], float)
+    P4 = np.array([[0, 0, 0], [2, 0, 0], [2.2, 1.6, 0], [-0.3, 1.4, 0]], float)
+    P6 = _mit_mitten(P3, [(0, 1), (1, 2), (2, 0)])
+    P8 = _mit_mitten(P4, [(0, 1), (1, 2), (2, 3), (3, 0)])
+    A3 = 0.5 * np.cross(P3[1] - P3[0], P3[2] - P3[0])[2]
+    A4 = 0.5 * (np.cross(P4[1] - P4[0], P4[2] - P4[0])[2] + np.cross(P4[2] - P4[0], P4[3] - P4[0])[2])
+    innen = np.array([[0.5, 0.5, -1.0]])
+    for name, P, A, soll in (("tri3", P3, A3, [1 / 3] * 3),
+                             ("tri6", P6, A3, [0] * 3 + [1 / 3] * 3),
+                             ("quad4", P4, A4, None),
+                             ("quad8", P8, A4, None)):
+        d = sl.seiten_integration_stapel(P[None], innen=innen)
+        kf = d["knotenflaechen"][0]
+        ok = abs(kf.sum() - A) < 1e-13 * A and abs(d["dA"].sum() - A) < 1e-13 * A
+        if soll is not None:
+            ok = ok and np.allclose(kf / A, soll, atol=1e-14)
+        ok = ok and np.allclose(d["normale"][0], [0, 0, 1], atol=1e-14)
+        ok = ok and np.allclose(d["N"].sum(axis=1), 1.0, atol=1e-14)
+        check(f"{name}: Flaeche, Knotenanteile, Normale von innen weg", ok,
+              "Anteile " + np.array2string(kf / A, precision=4))
+    # tri6 fuer den Kontakt: Ecken bekommen von einem gleichmaessigen Druck
+    # **nichts**, jede Kantenmitte ein Drittel - das Lehrbuchwissen aus B4,
+    # hier am Stapel gezeigt (und identisch zu flaechenlast_knoten)
+    f = sl.flaechenlast_knoten(P6, 1.0)[:, 2]
+    kf = sl.seiten_integration_stapel(P6[None])["knotenflaechen"][0]
+    check("tri6: Knotenanteile = flaechenlast_knoten (Ecken 0, Mitten A/3)",
+          np.allclose(kf, f, atol=1e-14 * A3), np.array2string(kf / A3, precision=4))
+    # Gekruemmte Seite: Mittelknoten aus der Ebene gehoben. Flaeche gegen
+    # eine feine Unterteilung, Normale am Punkt gegen punkt_und_normale
+    Pk = P6.copy()
+    Pk[3:, 2] += np.array([0.10, -0.05, 0.08])
+    d = sl.seiten_integration_stapel(Pk[None], innen=np.array([[0.7, 0.4, -1.0]]))
+    # Unterteilung des Bezugsdreiecks in nf^2 Teildreiecke (aufrecht und
+    # gekippt), auf jedem die 7-Punkt-Regel
+    fein = 0.0
+    nf = 60
+
+    def dA(a0, b0):
+        _N, dN = sl.seite_N_dN(6, a0, b0)
+        return np.linalg.norm(np.cross(dN[:, 0] @ Pk, dN[:, 1] @ Pk))
+    for i in range(nf):
+        for j in range(nf - i):
+            for (a, b), w in zip(sl._TRI7_GP, sl._TRI7_W):
+                fein += w / nf ** 2 * dA((i + a) / nf, (j + b) / nf)
+                if i + j < nf - 1:
+                    fein += w / nf ** 2 * dA((i + 1 - a) / nf, (j + 1 - b) / nf)
+    A_k = d["dA"].sum()
+    check("tri6 gekruemmt: Flaeche der 7-Punkt-Regel gegen feine Unterteilung",
+          abs(A_k - fein) < 1e-4 * fein, f"{A_k:.8f} gegen {fein:.8f}")
+    ok = True
+    for q, (a, b) in enumerate(d["xi"]):
+        x, nv = sl.punkt_und_normale(Pk, a, b, innen=[0.7, 0.4, -1.0])
+        ok = ok and np.allclose(x, d["punkte"][0, q], atol=1e-14) \
+            and np.allclose(nv, d["normale"][0, q], atol=1e-14) and nv[2] > 0
+    check("tri6 gekruemmt: punkt_und_normale = Stapel, Normalen einheitlich nach aussen", ok)
+
+
+# --------------------------------------------------------------------------
 def main():
     print("=" * 100)
     print("STATIK3D - Volumenelemente Hex8, Hex20, Pent6, Pent15, Pyr5")
@@ -803,7 +1158,16 @@ def main():
     print("\n-- Sechsflaechner: inkompatible Moden und Inkompressibilitaet -------------------------")
     t_inkompatible_moden()
     t_hex8_nahezu_inkompressibel()
+    t_hex8_volumensperre()
     t_hex8_stapel()
+    print("\n-- Dehnungsoperator -------------------------------------------------------------------")
+    t_operator()
+    print("\n-- Uebergang linear/quadratisch, gekruemmte Elemente -----------------------------------")
+    t_uebergang_linear_quadratisch()
+    t_jacobi_pruefung()
+    print("\n-- Jacobi-Volumen und Seitenintegration ----------------------------------------------")
+    t_jacobi_volumen()
+    t_seiten_integration()
     print("\n-- Flaechenlasten --------------------------------------------------------------------")
     t_flaechenlast()
     print("\n-- Anfangsspannungen -----------------------------------------------------------------")

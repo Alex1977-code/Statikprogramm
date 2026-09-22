@@ -1062,6 +1062,13 @@ class Results:
     beam_q: dict = field(default_factory=dict)      # elem -> Abschnittslasten (n,8): a, b, q1, q2
     shell_res: dict = field(default_factory=dict)   # elem -> [nx ny nxy mx my mxy]
     solid_res: dict = field(default_factory=dict)   # elem -> Spannungen (6,)
+    #: elem -> Elementmittel Integral sigma dV / V (6,) - linear in u, daher in
+    #: Kombinationen exakt ueberlagerbar; das liest der Fehlerschaetzer
+    #: (netzfehler.MITTELFELD). Seit 22.09.2026.
+    solid_mittel: dict = field(default_factory=dict)
+    #: Geglaettete Eckspannung je Knoten, Koerper und Werkstoff (siehe
+    #: randspannung_knoten) - daraus liest der Nachweis (solid_rand). Seit 22.09.2026.
+    solid_knoten: dict = field(default_factory=dict)
     feder_res: dict = field(default_factory=dict)   # elem -> lokale Federkraefte (6,)
     grenzschicht_res: dict = field(default_factory=dict)  # elem -> (sn, st1, st2)
     bimomente: dict = field(default_factory=dict)   # elem -> (B Anfang, B Ende) [Nm^2]
@@ -1107,6 +1114,41 @@ class Results:
                 i: {"s": s, "vM": sl.von_mises(s), "principal": sl.principal(s)}
                 for i, s in self.solid_res.items()}
         return self._cache["solid_stress"]
+
+    @property
+    def solid_rand(self) -> dict:
+        """{Element: (Spannung (6,), Eckknoten)} - die geglaettete Spannung an der
+        massgebenden Ecke des Elements (groesstes sigma_v unter seinen Eckknoten,
+        gemittelt je Knoten, Koerper und Werkstoff; siehe randspannung_knoten).
+        Leer, wenn der Loeser keine Knotenwerte gefuehrt hat."""
+        if "solid_rand" not in self._cache:
+            sk = self.solid_knoten or {}
+            aus = {}
+            if sk and "spannung" in sk:
+                m = self.model
+                ng = max(1, len(sk["gruppen"]))
+                pos = {int(k): j for j, k in enumerate(np.asarray(sk["knoten"]) * ng
+                                                        + np.asarray(sk["gruppe"]))}
+                grp = {g: j for j, g in enumerate(sk["gruppen"])}
+                S = np.asarray(sk["spannung"], float)
+                from . import spannungen as spn
+                sv = spn.volumen_werte(S, "sv") if len(S) else np.zeros(0)
+                for i in self.solid_res:
+                    e = m.elements[i]
+                    if e.typ not in sl.ECKEN_NATUERLICH:
+                        continue
+                    g = grp.get((str(getattr(e, "group", "")), str(e.mat)))
+                    if g is None:
+                        continue
+                    nk = len(sl.ECKEN_NATUERLICH[e.typ])
+                    js = [pos.get(int(n) * ng + g) for n in e.nodes[:nk]]
+                    js = [j for j in js if j is not None]
+                    if not js:
+                        continue
+                    j = max(js, key=lambda jj: sv[jj])
+                    aus[i] = (S[j], int(sk["knoten"][j]))
+            self._cache["solid_rand"] = aus
+        return self._cache["solid_rand"]
 
     @property
     def node_vm(self) -> np.ndarray:
@@ -1184,6 +1226,23 @@ class Results:
                 out.shell_res[i] = out.shell_res.get(i, 0.0) + f * v
             for i, v in r.solid_res.items():
                 out.solid_res[i] = out.solid_res.get(i, 0.0) + f * v
+            for i, v in (getattr(r, "solid_mittel", None) or {}).items():
+                out.solid_mittel[i] = out.solid_mittel.get(i, 0.0) + f * v
+            sk = getattr(r, "solid_knoten", None) or {}
+            if sk:
+                if not out.solid_knoten:
+                    out.solid_knoten = {"knoten": sk["knoten"], "gruppe": sk["gruppe"],
+                                        "gruppen": list(sk["gruppen"]),
+                                        "spannung": f * np.asarray(sk["spannung"], float)}
+                elif (len(sk["knoten"]) == len(out.solid_knoten["knoten"])
+                      and np.array_equal(sk["knoten"], out.solid_knoten["knoten"])
+                      and np.array_equal(sk["gruppe"], out.solid_knoten["gruppe"])):
+                    out.solid_knoten["spannung"] = (out.solid_knoten["spannung"]
+                                                    + f * np.asarray(sk["spannung"], float))
+                else:
+                    # verschiedene Schluessel (andere Situation): nicht
+                    # ueberlagerbar - lieber keine Randspannung als eine falsche
+                    out.solid_knoten = {"verworfen": True}
         out.info = {"ndof": model.ndof, "superposition": True,
                     "factors": {r.name: f for r, f in parts}}
         return out
@@ -1761,25 +1820,33 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     # inneren Freiheitsgrade, der Rest die neun Auswertepunkte; im Stapel
     # sind es 58,1 µs, Ergebnis identisch bis 2,5e-16. Am Drehlagernetz der
     # Vernetzersitzung waeren das 42,8 s -> 1,81 s je Nachlauf.
+    #
+    # Seit dem 22.09.2026 fuer jeden Typ mit Dehnungsoperator (asm.STAPEL_TYPEN)
+    # und aus **demselben** Operator wie Steifigkeit und Plastizitaet
+    # (sl.spannungen_stapel). Dabei faellt das Elementmittel Integral
+    # sigma dV / V mit ab: ``solid_mittel``, das der Fehlerschaetzer liest
+    # (netzfehler.MITTELFELD) - bis dahin fuehrte der Loeser es nicht, und der
+    # Schaetzer bekam fuer den elastischen hex8 das Eckmaximum.
     hex_vor: dict = {}
+    mittel_vor: dict = {}
     je_werkstoff: dict = {}
     for i in idx:
         e = model.elements[i]
-        if e.typ == "hex8":
-            je_werkstoff.setdefault(e.mat, []).append(i)
-    for mat_name, liste in je_werkstoff.items():
-        if len(liste) < 8:            # unter acht lohnt der Umweg nicht
-            continue
+        if e.typ in asm.STAPEL_TYPEN:
+            je_werkstoff.setdefault((e.typ, e.mat), []).append(i)
+    for (typ, mat_name), liste in je_werkstoff.items():
         mat = model.materials[mat_name]
         for a0 in range(0, len(liste), asm.HEX8_STAPEL):
             teil = liste[a0:a0 + asm.HEX8_STAPEL]
             try:
-                Xs = np.asarray([model.nodes[model.elements[j].nodes[:8]] for j in teil], float)
                 Us = np.asarray([u[asm.element_dofs(model.elements[j], model)] for j in teil], float)
-                for j, sp in zip(teil, sl.spannungen_hex8_stapel(Xs, mat.E, mat.nu, Us)):
+                S, M = sl.spannungen_stapel(model, typ, teil, mat.E, mat.nu, Us)
+                for j, sp, mm in zip(teil, S, M):
                     hex_vor[j] = sp
+                    mittel_vor[j] = mm
             except Exception:         # noqa: BLE001 - dann rechnet die Schleife einzeln
                 hex_vor = {k: v for k, v in hex_vor.items() if k not in teil}
+                mittel_vor = {k: v for k, v in mittel_vor.items() if k not in teil}
     for i in idx:
         e = model.elements[i]
         mat = model.materials[e.mat]
@@ -1899,20 +1966,57 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 abzug = s0 if abzug is None else abzug + s0
             if abzug is not None:
                 werte = [w - abzug for w in werte]
-            if sig0 and i in sig0 and len(werte) > 1:
-                # Fliessende Elemente: nur die Mitte. Die Plastizitaet wird an
-                # den **Gausspunkten** erzwungen, die Auswertepunkte (Ecken)
-                # liegen ausserhalb, und die abgezogene Vorspannung D eps_p
-                # ist das Mittel ueber die Gausspunkte. An einer Ecke waechst
-                # eps ueber dieses Mittel hinaus, eps_p bleibt zurueck - die
-                # gemeldete Spannung schiesst ueber die Fliessflaeche hinaus.
-                # Gemessen am Reibblock (20.09.2026): Eckwert 2,93 MPa gegen
-                # die verfestigte Fliessgrenze 1,42 - und damit ueber dem
-                # elastischen Spitzenwert 2,30, was es nicht geben kann.
-                # In der Mitte ist das Elementmittel die richtige Berichtigung.
-                werte = werte[:1]
-            s_ = werte[0] if len(werte) == 1 else max(werte, key=sl.von_mises)
+            punkte = temp.get("plast_punkte") if isinstance(temp, dict) else None
+            ecken_nr = sl.ecken_der_auswertepunkte(e.typ) if e.typ in sl.ECKEN_NATUERLICH else None
+            if punkte and i in punkte:
+                # Fliessende Elemente: die Spannung an den **Integrations-
+                # punkten** (plastizitaet.punktspannungen), nicht an Mitte und
+                # Ecken. Nur dort ist eps_p bekannt; an einer Ecke waechst eps
+                # ueber die Punkte hinaus, eps_p bleibt zurueck, und die
+                # gemeldete Spannung schoss ueber die Fliessflaeche (gemessen
+                # 20.09.2026 am Reibblock: 2,93 MPa gegen die verfestigte
+                # Grenze 1,42). Bis zum 22.09.2026 stand hier deshalb die
+                # Mitte mit dem Mittel von D eps_p - beim Sechsflaechner unter
+                # Biegung der schlechteste Ort (dort ist die Spannung null).
+                # Jeder Punktwert liegt auf oder in der Fliessflaeche; massgebend
+                # ist der groesste, und die Ecke nimmt den naechsten Punkt.
+                xi_p, sig_p = punkte[i]
+                rest = None
+                if i in temp:
+                    rest = sl.D_matrix(mat.E, mat.nu) @ (
+                        mat.alpha * temp[i] * np.array([1.0, 1.0, 1.0, 0, 0, 0]))
+                vor = (temp.get("sigma0_ohne_plastisch") or {}).get(i)
+                if vor is not None:
+                    rest = np.asarray(vor, float) if rest is None else rest + np.asarray(vor, float)
+                werte_p = [np.asarray(x, float) - (0.0 if rest is None else rest) for x in sig_p]
+                s_ = max(werte_p, key=sl.von_mises)
+                if ecken_nr is not None and xi_p is not None:
+                    en = np.asarray(sl.ECKEN_NATUERLICH[e.typ], float)
+                    naechst = np.argmin(np.linalg.norm(en[:, None, :] - np.asarray(xi_p)[None], axis=2),
+                                        axis=1)
+                    ecken = np.array([werte_p[k] for k in naechst])
+                else:
+                    ecken = None
+            else:
+                if sig0 and i in sig0 and len(werte) > 1:
+                    # Plastischer Zustand ohne Punktspannungen (etwa ein Typ ohne
+                    # Dehnungsoperator): die Mitte, wie bis zum 22.09.2026
+                    werte = werte[:1]
+                s_ = werte[0] if len(werte) == 1 else max(werte, key=sl.von_mises)
+                ecken = None
+                if ecken_nr is not None:
+                    ecken = np.array([werte[k] if k < len(werte) else werte[0] for k in ecken_nr])
             out.append((i, "solid", s_))
+            if ecken is not None:
+                out.append((i, "solid_ecken", ecken))
+            # Elementmittel: beim Typ mit einem Punkt (tet4) ist es dieser
+            # Punkt, sonst das Gewichtsmittel ueber die Integrationspunkte aus
+            # dem Stapel - mit demselben Abzug (Temperatur, D eps_p).
+            if i in mittel_vor:
+                mm = np.asarray(mittel_vor[i], float)
+                out.append((i, "solid_mittel", mm - abzug if abzug is not None else mm))
+            elif len(werte) == 1 and e.typ not in asm.STAPEL_TYPEN:
+                out.append((i, "solid_mittel", s_))
         elif e.typ in asm.PLANE_TYPES:
             from .elements import ebene
             t = model.shells[e.sec].t if e.sec and e.sec in model.shells else 1.0
@@ -1942,6 +2046,54 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     return out
 
 
+def randspannung_knoten(model: Model, ecken: dict) -> dict:
+    """Die geglaettete Spannung an den Eckknoten der Volumenelemente: je
+    Knoten, Koerper (Element.group) und Werkstoff das Mittel der Elementwerte
+    an diesem Knoten.
+
+    ``ecken`` ist {Element: (Ecken, 6)} in Knotenreihenfolge (solver.
+    _post_chunk: elastisch das Elementfeld an der Ecke, fliessend der
+    naechste Integrationspunkt). Rueckgabe {"knoten": (m,), "gruppe": (m,),
+    "spannung": (m,6), "gruppen": [(Koerper, Werkstoff), ...]} - leer, wenn
+    es keine Volumen gibt. Linear in u, also in Kombinationen exakt
+    ueberlagerbar.
+
+    Warum gemittelt wird, und warum je Koerper und Werkstoff (Auftrag A4/B6
+    an die Element-Sitzung, 22.09.2026): Ein Element mit linearem Ansatz
+    zeigt an seinen Ecken den Momentenverlauf versetzt - die Ecke zur
+    Einspannung zu hoch, die andere zu niedrig. Am Kragarm-Pruefkoerper
+    (Oberkante bei L/2, Soll 355 N/mm2) lag das bisherige Elementmaximum beim
+    hex8 um +173 / +65 / +31 N/mm2 daneben (90 / 405 / 2295 FHG), beim tet10
+    um +157 / +85 / +43; der Knotenmittelwert um -9,6 / +0,8 / +0,2 bzw.
+    +14,2 / +4,0 (405 / 2295 FHG). Ueber eine Koerper- oder Werkstoffgrenze
+    hinweg waere das Mittel falsch: die Spannung springt dort wirklich.
+    """
+    if not ecken:
+        return {}
+    knoten_l, gruppe_l, werte_l = [], [], []
+    gruppen: dict = {}
+    for i, S in ecken.items():
+        e = model.elements[i]
+        k = sl.knotenzahl(e.typ) if e.typ in sl.ECKEN_NATUERLICH else len(S)
+        nk = len(sl.ECKEN_NATUERLICH.get(e.typ, S))
+        g = gruppen.setdefault((str(getattr(e, "group", "")), str(e.mat)), len(gruppen))
+        knoten_l.append(np.asarray(e.nodes[:nk], np.int64))
+        gruppe_l.append(np.full(nk, g, np.int64))
+        werte_l.append(np.asarray(S, float).reshape(nk, 6))
+        del k
+    kn = np.concatenate(knoten_l)
+    gr = np.concatenate(gruppe_l)
+    W = np.concatenate(werte_l)
+    schluessel = kn * max(1, len(gruppen)) + gr
+    einmalig, inv = np.unique(schluessel, return_inverse=True)
+    summe = np.zeros((len(einmalig), 6))
+    np.add.at(summe, inv, W)
+    zahl = np.bincount(inv, minlength=len(einmalig)).astype(float)
+    return {"knoten": einmalig // max(1, len(gruppen)), "gruppe": einmalig % max(1, len(gruppen)),
+            "spannung": summe / zahl[:, None],
+            "gruppen": [k for k, _v in sorted(gruppen.items(), key=lambda kv: kv[1])]}
+
+
 def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 q: dict = None, temp: dict = None, workers: int = None, aktiv=None):
     """Rohgroessen je Element aus dem Verschiebungsvektor u (ndof,).
@@ -1952,6 +2104,7 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
     idx = asm.aktive_indizes(model, aktiv)
     ev = (asm.knotendilatation_je_element(model, u, aktiv)
           if getattr(model, "knotendilatation", False) else None)
+    ecken: dict = {}
     items = parallel.map_elements(_post_chunk, model, idx, workers=workers,
                                   extra={"u": u, "feq": feq, "temp": temp,
                                          "ev_dilatation": ev})
@@ -1970,6 +2123,7 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 res.grenzschicht_res[i] = np.zeros(3)
             else:
                 res.solid_res[i] = np.zeros(6)
+                res.solid_mittel[i] = np.zeros(6)
     for i, kind, val in items:
         if kind == "beam":
             res.beam_end[i] = val
@@ -1983,8 +2137,13 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
             res.feder_res[i] = val
         elif kind == "grenzschicht":
             res.grenzschicht_res[i] = val
+        elif kind == "solid_mittel":
+            res.solid_mittel[i] = val
+        elif kind == "solid_ecken":
+            ecken[i] = val
         else:
             res.solid_res[i] = val
+    res.solid_knoten = randspannung_knoten(model, ecken)
     res._cache.clear()
 
 
@@ -2090,8 +2249,13 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
     if not isinstance(temp, dict):
         temp = {}
     sig0 = temp.setdefault("sigma0", {})
+    # Was vor dem Fliessen in sigma0 stand, ist Vorspannung - die Spannungen
+    # an den Integrationspunkten (unten) rechnen eps_p selbst ab und brauchen
+    # nur diesen Rest
+    temp["sigma0_ohne_plastisch"] = {i: np.array(v, float, copy=True) for i, v in sig0.items()}
     for i, s0 in pl.sigma0_je_element(model, zustand).items():
         sig0[i] = np.asarray(sig0.get(i, 0.0), float) + s0
+    temp["plast_punkte"] = pl.punktspannungen(model, u, zustand)
     for z in log:
         _melde(progress, z)
     res.info["plastizitaet"] = {k: v for k, v in info.items() if k != "verlauf"}
@@ -2247,6 +2411,9 @@ def verschiebungen_eintragen(model: Model, res: Results, u: np.ndarray, R: np.nd
     """u und R (ndof,) in die Ergebnisfelder (nn, 6) schreiben; die Woelb-FHG
     hinter den Knotenfreiheitsgraden landen in res.woelb."""
     n6 = model.nn * NDOF
+    # gebundene Mittelknoten (Uebergang linear/quadratisch) haben keine
+    # eigene Steifigkeit; ihre Verschiebung folgt aus der Kante
+    u = asm.mittelknoten_nachfuehren(model, u)
     res.u = np.asarray(u[:n6], float).reshape(-1, NDOF)
     res.reactions = np.asarray(R[:n6], float).reshape(-1, NDOF)
     if len(u) > n6:

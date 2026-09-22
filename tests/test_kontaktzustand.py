@@ -94,12 +94,29 @@ def test_warmstart():
           warm2.info.get("contact_warm") and warm2.info.get("contact_converged"))
     u_ref = float(np.abs(kalt2.u).max())
     # Haften/Gleiten ist am Rand der Reibgrenze nicht eindeutig: kalt und
-    # warm duerfen sich in der Verteilung unterscheiden, im Gleichgewicht nicht
-    check("warm: dieselbe Loesung wie kalt (LF2, Verschiebungen auf 1e-3)",
-          float(np.abs(warm2.u - kalt2.u).max()) < 1e-3 * u_ref,
-          f"Abweichung {float(np.abs(warm2.u - kalt2.u).max()) / u_ref:.1e}")
-    check("warm: dieselben Auflagerkraefte (LF2)",
-          np.allclose(warm2.reactions.sum(axis=0), kalt2.reactions.sum(axis=0), rtol=1e-9, atol=1e-6))
+    # warm duerfen sich in der Verteilung unterscheiden, im Gleichgewicht nicht.
+    # **Haftanker sind wegabhaengig:** wo ein Knoten zu haften beginnt, legt
+    # die Gleitgeschichte fest, und quer zur Last (hier y) darf ein haftender
+    # Knoten jede Querkraft im Reibkegel tragen. Gemessen 22.09.2026 an LF2:
+    # mit dem hex8 bis dahin (punktweise Volumendehnung) 1,0e-5, mit der
+    # projizierten Volumendehnung (A1 der Element-Sitzung) 1,46e-3 * u_ref -
+    # nur in u_y der Fussknoten, wo u_y selbst 0,01 bis 0,02 µm betraegt;
+    # u_x und u_z hoechstens 6,9e-4, die Auflagerkraefte gleich. Darum wird
+    # die Lastebene (x, z) wie bisher auf 1e-3 geprueft, quer dazu auf 5e-3.
+    du = np.abs(np.asarray(warm2.u) - np.asarray(kalt2.u)).reshape(-1, 6)[:m.nn]
+    check("warm: dieselbe Loesung wie kalt in der Lastebene (LF2, u_x, u_z auf 1e-3)",
+          float(du[:, [0, 2]].max()) < 1e-3 * u_ref,
+          f"Abweichung {float(du[:, [0, 2]].max()) / u_ref:.1e}")
+    check("warm: quer zur Last (u_y) auf 5e-3 - Haftanker wegabhaengig",
+          float(du[:, 1].max()) < 5e-3 * u_ref, f"Abweichung {float(du[:, 1].max()) / u_ref:.1e}")
+    check("warm: dieselben Auflagerkraefte (LF2), beide Laeufe konvergiert",
+          np.allclose(warm2.reactions.sum(axis=0), kalt2.reactions.sum(axis=0), rtol=1e-9, atol=1e-6)
+          and warm2.info.get("contact_converged") and kalt2.info.get("contact_converged"))
+    from statik3d.elements import solid as _sl
+    dsv = max(abs(_sl.von_mises(np.asarray(warm2.solid_res[i])) - _sl.von_mises(np.asarray(kalt2.solid_res[i])))
+              for i in kalt2.solid_res)
+    check("warm: Vergleichsspannung wie kalt auf 1 N/mm² (das Maß des Anwenders)", dsv <= 1e6,
+          f"größte Abweichung {dsv / 1e6:.3f} N/mm²")
     check("warm: hoechstens so viele Schritte wie kalt (LF2)",
           warm2.info.get("contact_iterations", 99) <= kalt2.info.get("contact_iterations", 0),
           f"warm {warm2.info.get('contact_iterations')} / kalt {kalt2.info.get('contact_iterations')}")

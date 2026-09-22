@@ -51,9 +51,16 @@ der Zugversuch braucht bei 1 % zwei bis vier Schritte je Laststufe statt
 "nicht konvergiert". Bezahlt wird es mit **einer Faktorisierung je Schritt**
 statt einer je Rechnung - siehe :func:`iteration`.
 
-Ganz exakt ist ΔK nur dort, wo der Auswertepunkt der einzige Gausspunkt ist
-(tet4, pyr5); bei hex8/pent6 weicht es rund 1 %, bei tet10/hex20/pent15 bis
-53 % ab (:func:`_dk_block`). Dort bleibt es ein Quasi-Newton.
+ΔK ist seit dem Zustand je Gausspunkt (20.09.2026) fuer **jeden**
+Volumentyp die exakte Ableitung −∂F_p/∂u: gemessen am 22.09.2026 gegen
+zentrale Differenzen auf 0,8e-9 bis 1,7e-9 (tet4, hex8 mit Moden, tet10,
+hex20, pent6, pent15, pyr5 - die Groesse des Differenzenfehlers), und der
+Newton konvergiert quadratisch (Kragtraeger unter 1,20 M_el: hex8 1,8e-3 ->
+2,5e-6 -> 2,3e-12, tet10 2,1e-3 -> 2,4e-6 -> 8,5e-12). Die fruehere Angabe
+"bei tet10 bis 53 %, bei hex8 rund 1 % Abweichung" stammte aus der Zeit, als
+eps_p an der Elementmitte hing, und galt seitdem nicht mehr
+(tests/test_plastizitaet.py, test_tangente_exakt_fuer_jeden_typ und
+test_newton_konvergiert_quadratisch).
 """
 from __future__ import annotations
 
@@ -101,6 +108,20 @@ class Plastizitaet:
     iterationen: int = 25
     toleranz: float = 1e-3
     verfahren: str = "tangente"
+    #: Punkte ueber die Dicke des hex8 (Richtung t, im Sweep die Lagen), wenn
+    #: Fliessen gerechnet wird: n >= 3 legt n Gauss-Lobatto-Punkte in t (die
+    #: aeussersten auf der Oberflaeche), 2 laesst die 2x2x2-Gaussregel. Warum
+    #: (Auftrag A2, gemessen 22.09.2026, Kragtraeger 200 x 200 mm unter
+    #: 1,20 M_el, Randfaser nach der Momenten-Kruemmungs-Beziehung 236,35
+    #: N/mm2 und eps_p 0,0315 %): mit 2x2x2 fliesst eine Lage **nicht** (der
+    #: aeusserste Punkt bei 57,7 % der halben Hoehe zeigt 162 N/mm2), zwei
+    #: Lagen auch nicht (219); mit fuenf Lobatto-Punkten trifft schon eine
+    #: Lage die Randfaser auf -0,20 N/mm2, zwei auf -0,20, vier auf -0,07
+    #: (eps_p -15 / -15 / -5 %). Drei Punkte reichen bei einer Lage nicht
+    #: (+45 N/mm2: die Regel kennt nur Rand und Mitte und legt das ganze
+    #: plastische Moment auf die Randfaser). Fuer Parallelepipede ist die
+    #: elastische Steifigkeit mit jeder Regel >= 2 Punkten dieselbe.
+    dicke_punkte: int = 5
 
     def H(self, E: float) -> float:
         """Verfestigungsmodul H aus der Tangente E_t = r E: H = E r / (1 - r)."""
@@ -227,7 +248,7 @@ def _dk_block(d, fliesst, dev, q, dgamma, G, H, ndof):
             dKuu = np.zeros((mm, nz, nz))
             dKua = np.zeros((mm, nz, na))
             dKaa = np.zeros((mm, na, na))
-            for gp, (dNg, gew) in enumerate(d["lasten"]):
+            for gp, (_dNg, gew) in enumerate(d["lasten"]):
                 maske = fliesst[gp][teil]
                 if not maske.any():
                     continue
@@ -238,7 +259,7 @@ def _dk_block(d, fliesst, dev, q, dgamma, G, H, ndof):
                 dD = tangenten_differenz(dev[gp][teil], np.where(qg > 0.0, qg, 1.0),
                                          dgamma[gp][teil], G[gp][teil], H[gp][teil])
                 dD[~maske] = 0.0
-                B = _B_stapel(dNg[teil])
+                B = _b_punkt(d, gp, teil)
                 Ba = eas["Ba"][gp][teil]
                 w = gew[teil][:, None, None]
                 dDB = np.einsum("nij,njk->nik", dD, B)
@@ -262,14 +283,14 @@ def _dk_block(d, fliesst, dev, q, dgamma, G, H, ndof):
         return sparse.coo_matrix((np.concatenate(werte),
                                   (np.concatenate(zeilen), np.concatenate(spalten))),
                                  shape=(ndof, ndof)).tocsr()
-    for gp, (dNg, gew) in enumerate(d["lasten"]):
+    for gp, (_dNg, gew) in enumerate(d["lasten"]):
         stellen = np.flatnonzero(fliesst[gp])
         if stellen.size == 0:
             continue
         for a0 in range(0, stellen.size, gr):
             teil = stellen[a0:a0 + gr]
             dd = d["dofs"][teil]
-            B = _B_stapel(dNg[teil])
+            B = _b_punkt(d, gp, teil)
             dD = tangenten_differenz(dev[gp][teil], q[gp][teil], dgamma[gp][teil],
                                      G[gp][teil], H[gp][teil])
             ke = gew[teil][:, None, None] * np.einsum(
@@ -349,75 +370,75 @@ def _solid_elemente(model, aktiv=None) -> list:
     return [i for i in idx if model.elements[i].typ in asm.SOLID_TYPES]
 
 
-def _stapel(model, elemente: list, typ: str) -> dict:
-    """Geometrie- und Werkstoffdaten eines Stapels gleichen Elementtyps.
+def _stapel(model, elemente: list, typ: str) -> list:
+    """Geometrie- und Werkstoffdaten der Elemente eines Typs - je Gruppe des
+    Dehnungsoperators ein Eintrag (bei den isoparametrischen Typen genau einer).
+
+    Die Kinematik kommt aus **dem** Operator des Elements
+    (elements.solid.dehnungsoperator), den auch Steifigkeit und
+    Spannungsrueckrechnung lesen. Bis zum 22.09.2026 stellte die Plastizitaet
+    ihre Gradienten hier selbst aus _ISO auf - dieselben Zahlen, aber ein
+    zweiter Weg: haette ein Element eine andere Kinematik bekommen (B-bar,
+    mehr Punkte ueber die Dicke), haetten Steifigkeit und Fliessen still mit
+    zwei verschiedenen gerechnet.
 
     Haengt nur am Netz und an den Werkstoffen, nicht an der Verschiebung -
     darum wird es am Modell gemerkt und ueber die Schritte einer Rechnung
     wiederverwendet (am Drehlager kostet der Aufbau rund 5,7 s, jeder weitere
-    Schritt danach 1,4 s statt 51,5 s).
+    Schritt danach 1,4 s statt 51,5 s). Der Schluessel ist der Operator
+    selbst (sein Fingerabdruck umfasst Elemente und Koordinaten) und die
+    Werkstoffwerte - bis zum 22.09.2026 waren es Typ, Zahl, erstes und letztes
+    Element, und ein geaenderter E-Modul blieb unbemerkt.
 
-    ``dN`` sind die Ableitungen am **Auswertepunkt** (der Mitte) - dort misst
-    die Plastizitaet die Spannung. ``lasten`` traegt je Gausspunkt die
-    Ableitungen und das Integrationsgewicht w*|det J|; daraus entstehen die
-    plastischen Knotenlasten f = ∫ Bᵀ σ0 dV. Bei tet4 ist das ein Punkt und
-    das Gewicht gleich dem Volumen, bei hex8 sind es acht.
+    ``lasten`` traegt je Integrationspunkt die Gradienten (oder None bei einem
+    allgemeinen B) und das Gewicht w*|det J|; daraus entstehen die plastischen
+    Knotenlasten f = ∫ Bᵀ σ0 dV. Bei tet4 ist das ein Punkt und das Gewicht
+    gleich dem Volumen, bei hex8 sind es acht.
     """
-    from . import assemble as asm
     from .elements import solid as sl
     idx = np.asarray(elemente, dtype=np.int64)
-    schluessel = (typ, len(model.elements), len(idx), int(idx[0]), int(idx[-1]))
+    ops = sl.dehnungsoperator(model, typ, idx, merken=True)
+    namen = tuple(model.elements[int(i)].mat for i in idx)
+    wkey = (hash(namen), tuple(sorted(
+        (nm, float(model.materials[nm].E), float(model.materials[nm].nu),
+         getattr(model.materials[nm], "fy", None)) for nm in set(namen))))
     cache = getattr(model, "_plast_stapel", None)
     if cache is None:
         cache = model._plast_stapel = {}
     alt = cache.get(typ)
-    if alt is not None and alt.get("schluessel") == schluessel:
-        return alt
-    k = sl._KNOTENZAHL[typ]
-    knoten = np.asarray([model.elements[i].nodes[:k] for i in idx], dtype=np.int64)   # (n,k)
-    X = np.asarray(model.nodes, float)[knoten]                                        # (n,k,3)
-    fn, GP, W = sl._ISO[typ]
+    if alt is not None and alt[0] is ops and alt[1] == wkey:
+        return alt[2]
+    daten_liste = []
+    for op in ops:
+        daten_liste.append(_stapel_teil(model, op))
+    cache[typ] = (ops, wkey, daten_liste)
+    return daten_liste
 
-    def gradienten(r, s_, t):
-        """dN (n,k,3) und |det J| (n,) an einem lokalen Punkt, ueber den Stapel."""
-        _N, dNr = fn(r, s_, t)                       # (k,3), fuer alle Elemente gleich
-        J = np.einsum("ki,nkj->nij", dNr, X)         # (n,3,3)
-        det = np.abs(np.linalg.det(J))
-        # dN = (J^-1 dNr^T)^T, blockweise geloest statt invertiert
-        rechte = np.broadcast_to(dNr.T, (len(idx), 3, k))
-        return np.linalg.solve(J, rechte).transpose(0, 2, 1), det
 
-    r0, s0, t0 = sl.AUSWERTEPUNKTE[typ][0]
-    dN, _det0 = gradienten(r0, s0, t0)
-    lasten = []
-    for (r, s_, t), w in zip(GP, W):
-        dNg, detg = gradienten(r, s_, t)
-        lasten.append((dNg, float(w) * detg))
-    # Werkstoffwerte je Element als Felder
-    n = len(idx)
+def _stapel_teil(model, op) -> dict:
+    """Die Daten eines Operators: Werkstoffe je Element, FHG, Lasten, Moden."""
+    from .elements import solid as sl
+    idx = op.idx
+    n = op.n
     E = np.empty(n); nu = np.empty(n)
     fy = np.zeros(n); hat_fy = np.zeros(n, bool)
     ohne: set = set()
     for a, i in enumerate(idx):
-        mat = model.materials[model.elements[i].mat]
+        mat = model.materials[model.elements[int(i)].mat]
         E[a], nu[a] = float(mat.E), float(mat.nu)
         f = getattr(mat, "fy", None)
         if f:
             fy[a], hat_fy[a] = float(f), True
         else:
-            ohne.add(model.elements[i].mat)
-    dofs = np.empty((n, 3 * k), dtype=np.int64)
-    for a in range(k):
-        for rr in range(3):
-            dofs[:, 3 * a + rr] = asm.NDOF * knoten[:, a] + rr
+            ohne.add(model.elements[int(i)].mat)
     lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
     mu = E / (2.0 * (1.0 + nu))
-    daten = {"schluessel": schluessel, "typ": typ, "idx": idx, "k": k, "dN": dN,
-             "lasten": lasten, "dofs": dofs, "E": E, "nu": nu, "fy": fy,
+    lasten = [(op.g[p] if op.nur_gradienten else None, op.w[p]) for p in range(op.P)]
+    daten = {"typ": op.typ, "idx": idx, "k": op.k, "op": op,
+             "lasten": lasten, "dofs": op.dofs(), "E": E, "nu": nu, "fy": fy,
              "hat_fy": hat_fy, "ohne_fy": ohne, "lam": lam, "mu": mu}
-    if typ == "hex8":
-        daten["eas"] = _eas_daten(sl, X, lam, mu, GP, W, k)
-    cache[typ] = daten
+    if op.Ba is not None:
+        daten["eas"] = _eas_daten(op, E, nu)
     return daten
 
 
@@ -428,52 +449,43 @@ EAS_RUNDEN = 8
 EAS_TOLERANZ = 1e-10
 
 
-def _eas_daten(sl, X, lam, mu, GP, W, k) -> dict:
-    """Die inkompatiblen Moden des hex8 als Stapel: Ba je Gausspunkt, Kua, Kaa.
+def _eas_daten(op, E, nu) -> dict:
+    """Die inneren Moden eines Operators (hex8: Wilson-Moden) als Stapel:
+    Ba je Integrationspunkt, Kua, Kaa, D.
 
     Der hex8 traegt seine Biegung ueber drei Wilson-Moden (1-r^2, 1-s^2,
-    1-t^2), die in der Elementmatrix kondensiert werden
-    (elements.solid.hex8_matrices). Rechnet die Plastizitaet ohne sie, passen
-    plastische Lasten und Steifigkeit nicht zusammen: die Lasten regen
-    Biegemoden an, in denen die kondensierte Steifigkeit viel weicher ist.
-    Gemessen am Kragtraeger unter 1,20 M_el (20.09.2026, acht hex8-Lagen ueber
-    die Hoehe): ohne die Moden in der Plastizitaet meldete das Programm 40 von
-    40 Elementen fliessend mit eps_p,eq 25,1 %, richtig sind 2 von 40 mit
-    0,025 %.
+    1-t^2), die in der Elementmatrix kondensiert werden. Rechnet die
+    Plastizitaet ohne sie, passen plastische Lasten und Steifigkeit nicht
+    zusammen: die Lasten regen Biegemoden an, in denen die kondensierte
+    Steifigkeit viel weicher ist. Gemessen am Kragtraeger unter 1,20 M_el
+    (20.09.2026, acht hex8-Lagen ueber die Hoehe): ohne die Moden in der
+    Plastizitaet meldete das Programm 40 von 40 Elementen fliessend mit
+    eps_p,eq 25,1 %, richtig sind 2 von 40 mit 0,025 %.
 
-    Die Groessen sind dieselben wie in hex8_matrices, nur ueber den Stapel:
-        Kua = Σ w |J| Bᵀ D Ba      (n, 3k, 9)
-        Kaa = Σ w |J| Baᵀ D Ba     (n, 9, 9)
+    Kua = Σ w |J| Bᵀ D Ba, Kaa = Σ w |J| Baᵀ D Ba - aus demselben Operator
+    wie die Steifigkeit (elements.solid.matrizen_aus_operator).
     """
-    n = X.shape[0]
-    D = np.zeros((n, 6, 6))
-    for a in range(3):
-        for b in range(3):
-            D[:, a, b] = lam
-        D[:, a, a] = lam + 2.0 * mu
-        D[:, 3 + a, 3 + a] = mu
-    _N0, dN0 = sl.hex8_N_dN(0.0, 0.0, 0.0)
-    J0 = np.einsum("ki,nkj->nij", dN0, X)
-    detJ0 = np.linalg.det(J0)
-    Ba_je_punkt = []
-    Kua = np.zeros((n, 3 * k, 9))
-    Kaa = np.zeros((n, 9, 9))
-    for (r, s_, t), w in zip(GP, W):
-        _N, dNr = sl.hex8_N_dN(r, s_, t)
-        J = np.einsum("ki,nkj->nij", dNr, X)
-        detJ = np.linalg.det(J)
-        dN = np.linalg.solve(J, np.broadcast_to(dNr.T, (n, 3, k))).transpose(0, 2, 1)
-        B = _B_stapel(dN)
-        dM = np.array([[-2.0 * r, 0.0, 0.0], [0.0, -2.0 * s_, 0.0], [0.0, 0.0, -2.0 * t]])
-        g = (detJ0 / detJ)[:, None, None] * np.linalg.solve(
-            J0, np.broadcast_to(dM.T, (n, 3, 3))).transpose(0, 2, 1)
-        Ba = _B_stapel(g)                                    # (n,6,9)
-        wdet = (float(w) * detJ)[:, None, None]
-        DBa = np.einsum("nij,njk->nik", D, Ba)
-        Kua += wdet * np.einsum("nji,njk->nik", B, DBa)
-        Kaa += wdet * np.einsum("nji,njk->nik", Ba, DBa)
-        Ba_je_punkt.append(Ba)
-    return {"Ba": np.stack(Ba_je_punkt), "Kua": Kua, "Kaa": Kaa, "D": D}
+    from .elements import solid as sl
+    D = sl.D_stapel(E, nu, op.n)
+    _Kuu, Kua, Kaa = sl.matrizen_aus_operator(op, D, ohne_kuu=True)
+    return {"Ba": op.Ba, "Kua": Kua, "Kaa": Kaa, "D": D}
+
+
+def _b_punkt(d, p, stellen=None) -> np.ndarray:
+    """B (m,6,3k) am Integrationspunkt p fuer die Elemente ``stellen``."""
+    dNg = d["lasten"][p][0]
+    if dNg is not None:
+        return _B_stapel(dNg if stellen is None else dNg[stellen])
+    B = d["op"].b(p)
+    return B if stellen is None else B[stellen]
+
+
+def _dehnung_punkt(d, p, ue_flach) -> np.ndarray:
+    """Voigt-Dehnung (n,6) am Integrationspunkt p (ohne innere Moden)."""
+    dNg = d["lasten"][p][0]
+    if dNg is not None:
+        return _dehnung(dNg, ue_flach.reshape(len(ue_flach), d["k"], 3))
+    return (d["op"].b(p) @ ue_flach[:, :, None])[:, :, 0]
 
 
 def _eas_alpha(eas, lam, mu2, eps_p, lasten, ue_flach) -> np.ndarray:
@@ -541,15 +553,43 @@ def _schritt_block(model, u, zustand: Zustand, einst: Plastizitaet, elemente: li
 
     ``tangente=True`` gibt in info["dK"] zusaetzlich
     ΔK = Σ_gp ∫ Bᵀ (D_ep − D_el) B dV der fliessenden Punkte zurueck.
+
+    Liefert der Dehnungsoperator mehrere Gruppen (verschiedene Punkt- oder
+    Knotenzahl), rechnet jede fuer sich; die Ergebnisse werden addiert.
     """
-    d = _stapel(model, elemente, typ)
+    teile = _stapel(model, elemente, typ)
+    if len(teile) == 1:
+        return _schritt_teil(model, u, zustand, einst, teile[0], log, tangente)
+    F_p = np.zeros(model.ndof)
+    neu = zustand.kopie()
+    n_fl, q_max, dK = 0, 0.0, None
+    for d in teile:
+        Fb, zb, ib = _schritt_teil(model, u, zustand, einst, d, log, tangente)
+        F_p += Fb
+        for i in d["idx"]:
+            i = int(i)
+            if i in zb.eps_p:
+                neu.eps_p[i] = zb.eps_p[i]
+                neu.eps_p_eq[i] = zb.eps_p_eq[i]
+        n_fl += ib["fliessend"]
+        q_max = max(q_max, ib["q_max"])
+        if tangente:
+            dK = ib["dK"] if dK is None else (dK + ib["dK"])
+    info = {"fliessend": n_fl, "q_max": q_max}
+    if tangente:
+        info["dK"] = dK
+    return F_p, neu, info
+
+
+def _schritt_teil(model, u, zustand: Zustand, einst: Plastizitaet, d: dict,
+                  log: list = None, tangente: bool = False) -> tuple:
+    """:func:`_schritt_block` fuer eine Gruppe des Dehnungsoperators."""
     idx, dofs, k = d["idx"], d["dofs"], d["k"]
     lam, mu2 = d["lam"], d["mu"]
     lasten = d["lasten"]
     P = len(lasten)
     n = len(idx)
     ue_flach = np.asarray(u, float)[dofs]
-    ue = ue_flach.reshape(n, k, 3)
     eps_p = np.zeros((P, n, 6))
     eps_p_eq = np.zeros((P, n))
     hatte = np.zeros(n, bool)
@@ -572,7 +612,7 @@ def _schritt_block(model, u, zustand: Zustand, einst: Plastizitaet, elemente: li
     r = max(0.0, min(float(einst.verfestigung), 0.999))
     H = EF * r / (1.0 - r)
     G = EF / (2.0 * (1.0 + nuF))
-    eps_B = np.stack([_dehnung(dNg, ue) for dNg, _w in lasten])      # (P,n,6)
+    eps_B = np.stack([_dehnung_punkt(d, p, ue_flach) for p in range(P)])      # (P,n,6)
 
     def rueckfuehren(alpha):
         """Versuchsspannung, Rueckfuehrung und neuer Zustand zu einem alpha."""
@@ -650,17 +690,22 @@ def _schritt_block(model, u, zustand: Zustand, einst: Plastizitaet, elemente: li
         # reagierte F_p auf keine Biegemode, und die Gausspunktfassung der
         # Tangente lief deshalb davon (siehe _dk_block).
         fe = np.zeros((len(stellen), k, 3))
+        fe_B = np.zeros((len(stellen), 3 * k))
         for q_, (dNg, gew) in enumerate(lasten):
-            g = dNg[stellen]                                    # (m,k,3)
             w = gew[stellen][:, None]                           # (m,1)
             s0 = _spannung(lam[stellen], mu2[stellen], eps_p_neu[q_][stellen])
+            if dNg is None:
+                # allgemeines B des Operators (etwa mit B-bar): f = Bᵀ s0
+                fe_B += w * np.einsum("nji,nj->ni", d["op"].b(q_)[stellen], s0)
+                continue
+            g = dNg[stellen]                                    # (m,k,3)
             fe[:, :, 0] += w * (g[:, :, 0] * s0[:, 0, None] + g[:, :, 1] * s0[:, 3, None]
                                 + g[:, :, 2] * s0[:, 5, None])
             fe[:, :, 1] += w * (g[:, :, 1] * s0[:, 1, None] + g[:, :, 0] * s0[:, 3, None]
                                 + g[:, :, 2] * s0[:, 4, None])
             fe[:, :, 2] += w * (g[:, :, 2] * s0[:, 2, None] + g[:, :, 1] * s0[:, 4, None]
                                 + g[:, :, 0] * s0[:, 5, None])
-        fe = fe.reshape(len(stellen), 3 * k)
+        fe = fe.reshape(len(stellen), 3 * k) + fe_B
         if eas is not None:
             # Kondensiert: F_p = Σ Bᵀ D eps_p dV − Kua Kaa^-1 h_p. Ohne den
             # zweiten Term traegt die Last Biegeanteile, die die kondensierte
@@ -707,7 +752,7 @@ def schritt(model, u, zustand: Zustand, einst: Plastizitaet, elemente: list, log
     je_typ: dict = {}
     for i in elemente:
         je_typ.setdefault(model.elements[i].typ, []).append(i)
-    if any(t not in sl._ISO for t in je_typ):
+    if any(t not in sl.OPERATOREN for t in je_typ):
         if tangente:
             raise NotImplementedError("konsistente Tangente nur fuer die bekannten "
                                       "Volumenelementtypen")
@@ -775,29 +820,29 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
         eq_alt = _punktfeld(zustand.eps_p_eq.get(i, 0.0), P, 0)
         eps_p_neu = np.array(eps_p_alt, float, copy=True)
         eq_neu = np.array(eq_alt, float, copy=True)
-        # B-Matrix und Gewicht je Gausspunkt - sie haengen nicht an alpha
-        Bs, gew_p = [], []
-        for (rr, ss, tt), w in zip(GP, W):
-            _N, dNr = fn(rr, ss, tt)
-            Jg = dNr.T @ X
-            Bs.append(sl._B_from_grad(np.linalg.solve(Jg, dNr.T).T))
-            gew_p.append(float(w) * abs(float(np.linalg.det(Jg))))
-        # Beim hex8 gehoeren die inkompatiblen Moden dazu (siehe _eas_daten);
-        # alpha und eps_p werden im Element gemeinsam geloest. Hier bewusst
-        # ueber elements.solid.hex8_matrices gerechnet, nicht ueber den
-        # Stapel - damit die beiden Wege sich nicht gemeinsam irren.
+        # B-Matrix und Gewicht je Integrationspunkt aus dem Dehnungsoperator
+        # **dieses einen** Elements - dieselbe Kinematik wie Steifigkeit und
+        # Stapel (bei hex8 mit projizierter Volumendehnung, sonst stimmten
+        # Steifigkeit und Fliessen nicht ueberein). Unabhaengig bleibt hier
+        # die Rechnung: Element fuer Element, Punkt fuer Punkt, mit
+        # rueckfuehrung() statt der Feldoperationen des Stapels.
+        op1 = sl.dehnungsoperator(model, e.typ, [i])[0]
+        if op1.P != P:
+            GP = [None] * op1.P
+            P = op1.P
+            eps_p_alt = _punktfeld(zustand.eps_p.get(i, np.zeros((P, 6))), P, 6)
+            eq_alt = _punktfeld(zustand.eps_p_eq.get(i, 0.0), P, 0)
+            eps_p_neu = np.array(eps_p_alt, float, copy=True)
+            eq_neu = np.array(eq_alt, float, copy=True)
+        Bs = [op1.b(p_)[0] for p_ in range(P)]
+        gew_p = [float(op1.w[p_][0]) for p_ in range(P)]
+        # Mit inneren Moden (hex8) werden alpha und eps_p im Element gemeinsam
+        # geloest (siehe _eas_daten); Kua, Kaa und Ba aus dem Einzeloperator.
         Ba_p, Kua, Kaa, alpha = None, None, None, None
-        if e.typ == "hex8":
-            _Kuu, Kua, Kaa, _V = sl.hex8_matrices(X, E, nu, True)
-            _N0, dN0 = sl.hex8_N_dN(0.0, 0.0, 0.0)
-            J0 = dN0.T @ X
-            detJ0 = float(np.linalg.det(J0))
-            Ba_p = []
-            for (rr, ss, tt), w in zip(GP, W):
-                _N, dNr = fn(rr, ss, tt)
-                Jg = dNr.T @ X
-                Ba_p.append(sl._B_from_grad(sl._hex8_incompatible_grad(
-                    rr, ss, tt, J0, detJ0, Jg, float(np.linalg.det(Jg)))))
+        if op1.Ba is not None:
+            _Kuu, Kua, Kaa = sl.matrizen_aus_operator(op1, D, ohne_kuu=True)
+            Kua, Kaa = Kua[0], Kaa[0]
+            Ba_p = [op1.Ba[p_][0] for p_ in range(P)]
             h_alt = sum(gew_p[gp] * (Ba_p[gp].T @ (D @ eps_p_alt[gp])) for gp in range(P))
             alpha = np.linalg.solve(Kaa, h_alt - Kua.T @ ue)
 
@@ -963,7 +1008,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     # 2G(θ − θ̄) = 2G (H/3G)/(1 + H/3G) = 0) - dann bleibt nur die
     # Anfangsdehnungs-Iteration. Ebenso bei einem Elementtyp ohne Stapel.
     kann_tangente = (loesen_tangente is not None and einst.H(1.0) > 0.0
-                     and all(model.elements[i].typ in sl._ISO for i in elemente))
+                     and all(model.elements[i].typ in sl.OPERATOREN for i in elemente))
     if str(getattr(einst, "verfahren", "tangente")) == "tangente" and kann_tangente:
         return _newton(model, F, loesen, loesen_tangente, einst, elemente, norm_F, info,
                        log, progress)
@@ -1019,17 +1064,75 @@ def sigma0_je_element(model, zustand: Zustand) -> dict:
     """{Element: D eps_p} - die Anfangsspannung fuer den Spannungsnachlauf
     (σ = D ε − D eps_p), im Schluessel "sigma0" von temp.
 
-    Der Zustand haelt eps_p je Gausspunkt; hier wird ueber sie gemittelt,
-    weil der Nachlauf die Spannung in der Elementmitte auswertet."""
+    Der Zustand haelt eps_p je Integrationspunkt; hier wird ueber sie
+    gemittelt - **gewichtet** mit den Gewichten des Dehnungsoperators (seit
+    22.09.2026; vorher ungewichtet, was bei einer Lobatto-Regel ueber die
+    Dicke die Randpunkte mit 1/10 statt 9/90 bzw. die Mitte mit 1/5 statt
+    32/45 zaehlte). Beim tet4 (ein Punkt) ist es derselbe Wert wie frueher,
+    bei 2x2x2 an einem Parallelepiped ebenso (gleiche Gewichte)."""
     from .elements import solid as sl
     aus = {}
-    for i, eps_p in zustand.eps_p.items():
-        e = model.elements[i]
-        mat = model.materials[e.mat]
-        # Ueber die Gausspunkte gemittelt: der Nachlauf wertet die Spannung
-        # in der Elementmitte aus, und das Mittel einer symmetrischen
-        # Gaussregel ist deren Wert bis auf die zweite Ordnung. Beim tet4
-        # (ein Punkt) ist es derselbe Wert wie frueher.
-        mittel = np.asarray(eps_p, float).reshape(-1, 6).mean(axis=0)
-        aus[i] = sl.D_matrix(float(mat.E), float(mat.nu)) @ mittel
+    je_typ: dict = {}
+    for i in zustand.eps_p:
+        je_typ.setdefault(model.elements[i].typ, []).append(int(i))
+    for typ, liste in je_typ.items():
+        gew = {}
+        if typ in sl.OPERATOREN:
+            for op in sl.dehnungsoperator(model, typ, liste):
+                for a, i in enumerate(op.idx):
+                    gew[int(i)] = op.w[:, a] / op.w[:, a].sum()
+        for i in liste:
+            e = model.elements[i]
+            mat = model.materials[e.mat]
+            ep = np.asarray(zustand.eps_p[i], float).reshape(-1, 6)
+            w = gew.get(i)
+            mittel = ep.mean(axis=0) if w is None or len(w) != len(ep) else w @ ep
+            aus[i] = sl.D_matrix(float(mat.E), float(mat.nu)) @ mittel
+    return aus
+
+
+def punktspannungen(model, u, zustand: Zustand) -> dict:
+    """{Element: (xi (P,3), sigma (P,6))} der Elemente mit plastischem Zustand -
+    die Spannung an **jedem Integrationspunkt**, sigma = D (B u + B_a alpha - eps_p).
+
+    Dort und nur dort ist der plastische Zustand bekannt; jeder dieser Werte
+    liegt auf oder in der verfestigten Fliessflaeche. Die Auswertepunkte
+    (Mitte, Ecken) liegen woanders - an einer Ecke waechst die Dehnung ueber
+    die der Punkte hinaus, eps_p bleibt zurueck, und die gemeldete Spannung
+    schoss ueber die Fliessflaeche (gemessen 20.09.2026 am Reibblock: 2,93
+    gegen die Grenze 1,42 MPa). Darum nimmt der Nachlauf fuer fliessende
+    Elemente diese Punkte (solver._post_chunk).
+
+    Die inneren Moden (hex8) folgen aus der Stationaritaet bei festem eps_p:
+    Kaa alpha = h_p - Kua^T u (siehe _eas_alpha) - im Gleichgewicht ist das
+    dasselbe alpha, das der Element-Newton des letzten Schritts fand.
+    """
+    from .elements import solid as sl
+    if not zustand.eps_p:
+        return {}
+    je_typ: dict = {}
+    for i in zustand.eps_p:
+        typ = model.elements[int(i)].typ
+        if typ in sl.OPERATOREN:
+            je_typ.setdefault(typ, []).append(int(i))
+    u = np.asarray(u, float).ravel()
+    aus = {}
+    for typ, liste in je_typ.items():
+        for op in sl.dehnungsoperator(model, typ, sorted(liste)):
+            d = _stapel_teil(model, op)
+            n, P = op.n, op.P
+            ue_flach = u[d["dofs"]]
+            eps_p = np.zeros((P, n, 6))
+            for a, i in enumerate(op.idx):
+                eps_p[:, a, :] = _punktfeld(zustand.eps_p[int(i)], P, 6)
+            alpha = None
+            if d.get("eas") is not None:
+                alpha = _eas_alpha(d["eas"], d["lam"], d["mu"], eps_p, d["lasten"], ue_flach)
+            sig = np.empty((n, P, 6))
+            for p in range(P):
+                eps = sl.dehnung_mit_moden(op, p, ue_flach, alpha)
+                sig[:, p, :] = _spannung(d["lam"], d["mu"], eps - eps_p[p])
+            xi = None if op.xi is None else np.asarray(op.xi, float)
+            for a, i in enumerate(op.idx):
+                aus[int(i)] = (xi, sig[a])
     return aus

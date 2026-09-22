@@ -189,12 +189,22 @@ class VolumenResults:
 # --------------------------------------------------------------------------
 def _elementspannungen(model, res, elemente) -> list:
     """
-    Groesste Spannung je Element, ausgewertet an Mitte **und** Eckpunkten.
+    Massgebende Spannung je Element. Rueckgabe je Element ein Tripel
+    (Elementnummer, Spannungsvektor, Auswertepunkt).
 
-    Die Elementmitte allein reicht nicht: bei Biegung durch den Koerper liegt
-    die Randspannung deutlich hoeher (am Kragarm aus Hexaedern 43,3 gegen
-    60,3 N/mm^2, die Balkenloesung M/W ist 60,0). Rueckgabe je Element ein
-    Tripel (Elementnummer, Spannungsvektor, Auswertepunkt).
+    **Seit dem 22.09.2026 die geglaettete Eckspannung** (res.solid_rand): an
+    jedem Eckknoten das Mittel der Elementwerte gleichen Koerpers und
+    Werkstoffs, und davon die groesste Ecke des Elements. Bis dahin nahm der
+    Nachweis das Maximum ueber Mitte und Ecken **eines** Elements - bei
+    linearem Ansatz zeigt die eine Ecke den Momentenverlauf zu hoch, die
+    andere zu niedrig. Gemessen am Kragarm-Pruefkoerper (Oberkante bei L/2,
+    Soll 355 N/mm2, tests/pruefkoerper.py): hex8 +173 / +65 / +31 N/mm2 bei
+    90 / 405 / 2295 FHG, geglaettet -9,6 / +0,8 / +0,2. Fliessende Elemente
+    tragen die Spannung ihres naechsten Integrationspunkts bei (dort ist der
+    plastische Zustand bekannt, der Wert liegt auf der Fliessflaeche).
+
+    Ohne Knotenwerte (aeltere Ergebnisdatei, Kombination verschiedener
+    Situationen) bleibt es beim Elementwert aus res.solid_res.
     """
     from ..elements import solid as sl
     u = np.asarray(getattr(res, "u", None))
@@ -202,7 +212,16 @@ def _elementspannungen(model, res, elemente) -> list:
         return []
     u = u.ravel()
     out = []
+    rand = {}
+    try:
+        rand = getattr(res, "solid_rand", {}) or {}
+    except Exception:          # noqa: BLE001 - dann der Elementwert, wie bisher
+        rand = {}
     for i in elemente:
+        if i in rand:
+            S, knoten = rand[i]
+            out.append((i, np.asarray(S, float), f"Knoten {int(knoten) + 1} (geglättet)"))
+            continue
         e = model.elements[i]
         mat = model.materials.get(e.mat)
         if mat is None:

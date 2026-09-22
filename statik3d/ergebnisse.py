@@ -27,7 +27,7 @@ DATEIENDUNG = ".ergebnisse"
 VERSION = 1
 _MODELLMARKE = "STATIK3D_MODELL"
 #: Woerterbuecher je Element, die als (Nummern, Matrix) gepackt werden
-_JE_ELEMENT = ("beam_end", "beam_q", "shell_res", "solid_res", "feder_res",
+_JE_ELEMENT = ("beam_end", "beam_q", "shell_res", "solid_res", "solid_mittel", "feder_res",
                "grenzschicht_res", "bimomente")
 
 

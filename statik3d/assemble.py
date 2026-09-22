@@ -260,6 +260,11 @@ def element_matrix(model: Model, e):
             # gewoehnlich weiter - sonst fehlte ihm der volumetrische Anteil
             # ganz (gemessen 20.09.2026: 109 % Unterschied, still).
             return sl.k_tet4_deviatorisch(X, mat.E, mat.nu)[0]
+        if e.typ == "hex8":
+            # dieselbe Punktregel wie der Stapel (mit Fliessen Lobatto ueber
+            # die Dicke, solid.hex8_regel_fuer) - sonst rechnete eine
+            # Werkstoffgruppe unter acht Elementen mit einer anderen
+            return sl.k_hex8(X, mat.E, mat.nu, regel=sl.hex8_regel_fuer(model))[0]
         return getattr(sl, "k_" + e.typ)(X, mat.E, mat.nu)[0]
 
     if e.typ in PLANE_TYPES:
@@ -373,6 +378,11 @@ def elementfehler(model: Model, i: int, ex: Exception) -> ValueError:
 #: Hoechstzahl Sechsflaechner je Stapel. 4096 mal 24x24 in double sind 19 MB
 #: je Zwischenfeld, und davon entstehen in hex8_matrizen_stapel drei.
 HEX8_STAPEL = 4096
+#: Typen, deren Steifigkeit gestapelt ueber den Dehnungsoperator entsteht
+#: (Pflicht 5). Die Reihenfolge der Elemente je Stapel ist die des Blocks;
+#: je Element rechnet der Stapel dieselben Zahlen wie der Einzelweg
+#: (tests/test_elemente_volumen.py haelt das auf 1e-12 fest).
+STAPEL_TYPEN = ("hex8", "tet10", "hex20", "pent6", "pent15", "pyr5")
 
 
 def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
@@ -383,21 +393,31 @@ def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
     # Vernetzersitzung sind das 17,8 s gegen 1,79 s je Aufstellen fuer 31.108
     # Sechsflaechner. Der tet4 braucht das nicht: er kostet 24,2 µs, und der
     # Aufruf ist dort nicht der Brocken.
+    #
+    # Seit dem 22.09.2026 geht jeder Typ mit Dehnungsoperator diesen Weg,
+    # nicht nur der hex8 (Pflicht 5 des Auftrags an die Element-Sitzung: der
+    # tet10 an den Nachweisstellen braucht ihn genauso). Die Steifigkeit kommt
+    # dabei aus **demselben** Operator wie Spannung und Plastizitaet
+    # (elements.solid.steifigkeit_aus_operator). Der tet4 bleibt beim
+    # Einzelweg: er kostet 24,2 µs, und mit Knotendilatation rechnet er
+    # seinen deviatorischen Anteil ueber element_matrix.
     je_werkstoff: dict = {}
     for pos, i in enumerate(idx):
         e = model.elements[i]
-        if e.typ == "hex8" and not getattr(e, "sec", None):
-            je_werkstoff.setdefault(e.mat, []).append((pos, i))
+        if e.typ in STAPEL_TYPEN and not getattr(e, "sec", None):
+            je_werkstoff.setdefault((e.typ, e.mat), []).append((pos, i))
     gestapelt = set()
-    for mat_name, stellen in je_werkstoff.items():
-        if len(stellen) < 8:            # unter acht lohnt der Umweg nicht
-            continue
+    for (typ, mat_name), stellen in je_werkstoff.items():
+        # Keine Mindestzahl mehr (bis 22.09.2026: acht): der Einzelweg
+        # element_matrix kennt die Mittelknotenbindung des Operators nicht
         mat = model.materials[mat_name]
+        D = sl.D_matrix(float(mat.E), float(mat.nu))
         for a0 in range(0, len(stellen), HEX8_STAPEL):
             teil = stellen[a0:a0 + HEX8_STAPEL]
-            X = np.asarray([model.nodes[model.elements[i].nodes[:8]] for _p, i in teil], float)
             try:
-                Ks, _V = sl.k_hex8_stapel(X, float(mat.E), float(mat.nu))
+                Ks = []
+                for op in sl.dehnungsoperator(model, typ, [i for _p, i in teil]):
+                    Ks.extend(sl.steifigkeit_aus_operator(op, D))
             except Exception as ex:     # noqa: BLE001 - einzeln nachfahren, um das Element zu nennen
                 for _p, i in teil:
                     try:
@@ -614,6 +634,92 @@ def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
     return (K + Ks).tocsr() if Ks is not None else K
 
 
+def mittelknoten_bindungen(model: Model) -> list:
+    """[(Mittelknoten, Ecke a, Ecke b)] der Seitenmitten quadratischer
+    Volumenelemente, deren Seite ein **lineares** Volumenelement mit denselben
+    Ecken teilt - der Uebergang tet4/tet10 (hex8/hex20, pent6/pent15) an einer
+    verbundenen Grenze (Auftrag B5 an die Element-Sitzung, 22.09.2026).
+
+    Das lineare Element kennt dort keinen Mittelknoten. Laeuft die
+    Verschiebung des quadratischen Elements an der Seite frei, klafft die
+    Grenze, und das lineare Feld ist kein Gleichgewicht mehr (gemessen
+    22.09.2026: Patch-Test um 2,5e-1 daneben, tests/test_elemente_volumen.py,
+    t_uebergang_linear_quadratisch). Gebunden wird u_m = (u_a + u_b)/2 -
+    **exakt**, nicht im Strafverfahren (mit der Strafe 1e4 lag der
+    Patch-Test bei 6e-6): der Dehnungsoperator der quadratischen Elemente
+    schlaegt den Gradienten von m je zur Haelfte auf a und b
+    (solid._binde_mittelknoten), Lasten und Massen an m gehen ebenso auf a
+    und b (load_vector, mass), und die Verschiebung von m wird nach dem Loesen
+    aus a und b eingetragen (mittelknoten_nachfuehren).
+
+    Rein topologisch (unabhaengig von einer Situation): die Bindung haengt
+    nur daran, dass die Seite geteilt ist. An einer **Kontaktfuge** wird
+    nichts gebunden - dort haben beide Seiten eigene Knoten (fugen.py), die
+    Ecken stimmen nicht ueberein.
+    """
+    import itertools
+    typen = {e.typ for e in model.elements}
+    if not (typen & set(SOLID_TYPES)) or not any(EL.ist_quadratisch(t) for t in typen & set(SOLID_TYPES)) \
+            or all(EL.ist_quadratisch(t) for t in typen & set(SOLID_TYPES)):
+        return []
+    kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), np.int64)
+    schluessel = (len(model.elements), model.nn, hash(kn.tobytes()),
+                  hash(tuple(e.typ for e in model.elements)))
+    alt = getattr(model, "_mittelknoten", None)
+    if alt is not None and alt[0] == schluessel:
+        return alt[1]
+    lineare: set = set()
+    for e in model.elements:
+        if e.typ in SOLID_TYPES and not EL.ist_quadratisch(e.typ):
+            for fe in sl.FLAECHEN_ECKEN[e.typ]:
+                lineare.add(frozenset(int(e.nodes[a]) for a in fe))
+    bindung: dict = {}
+    for e in model.elements:
+        if e.typ not in SOLID_TYPES or not EL.ist_quadratisch(e.typ):
+            continue
+        for f, fe in zip(sl.FLAECHEN[e.typ], sl.FLAECHEN_ECKEN[e.typ]):
+            if frozenset(int(e.nodes[a]) for a in fe) not in lineare:
+                continue
+            ne = len(fe)
+            for k in range(ne, len(f)):             # Kantenmitten in Kantenreihenfolge
+                a, b = fe[k - ne], fe[(k - ne + 1) % ne]
+                bindung[int(e.nodes[f[k]])] = (int(e.nodes[a]), int(e.nodes[b]))
+    aus = [(m, a, b) for m, (a, b) in sorted(bindung.items())]
+    try:
+        model._mittelknoten = (schluessel, aus)
+    except AttributeError:
+        pass
+    return aus
+
+
+def mittelknoten_umlenken(model: Model, F: np.ndarray, bind=None) -> np.ndarray:
+    """F an gebundenen Mittelknoten je zur Haelfte auf die Ecken a und b
+    (F' = T^T F fuer u_m = (u_a + u_b)/2); F selbst wird geaendert."""
+    bind = mittelknoten_bindungen(model) if bind is None else bind
+    for m, a, b in bind:
+        for r in range(3):
+            f = F[NDOF * m + r]
+            if f:
+                F[NDOF * a + r] += 0.5 * f
+                F[NDOF * b + r] += 0.5 * f
+                F[NDOF * m + r] = 0.0
+    return F
+
+
+def mittelknoten_nachfuehren(model: Model, u: np.ndarray) -> np.ndarray:
+    """u_m = (u_a + u_b)/2 fuer die gebundenen Mittelknoten eintragen (eine
+    Kopie). Kein Element liest u_m - ihr Operator traegt dort keinen
+    Gradienten -, aber die Anzeige und die Ergebnisdatei tun es."""
+    bind = mittelknoten_bindungen(model)
+    if not bind:
+        return u
+    u = np.array(u, float, copy=True)
+    for m, a, b in bind:
+        for r in range(3):
+            u[NDOF * m + r] = 0.5 * (u[NDOF * a + r] + u[NDOF * b + r])
+    return u
+
+
 def starrkoerper(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
     """Steifigkeit der starren Koerper (RBE2) und Verteilkopplungen (RBE3)
     im Strafverfahren: K += k Gᵀ G mit den Zwangsbedingungszeilen G aus
@@ -707,6 +813,13 @@ def mass(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
     """Gesamtmasse (konzentriert) samt Punktmassen; ``aktiv`` laesst
     abgeschaltete Elemente weg."""
     M = _assemble_triplets(model, _mass_chunk, workers, aktive_indizes(model, aktiv))
+    bind = mittelknoten_bindungen(model)
+    if bind:
+        # konzentrierte Masse gebundener Mittelknoten je zur Haelfte auf die
+        # Ecken (Zeilensumme von T^T M T; die Summe der Masse bleibt)
+        d = np.asarray(M.diagonal()).ravel().copy()
+        mittelknoten_umlenken(model, d, bind)
+        M = (M - sparse.diags(np.asarray(M.diagonal()).ravel()) + sparse.diags(d)).tocsr()
     Mp = punktmassen(model)
     return (M + Mp).tocsr() if Mp is not None else M
 
@@ -1170,6 +1283,9 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
             n = int(p.node)
             if 0 <= n < model.nn and (kn_aktiv is None or kn_aktiv[n]):
                 F[NDOF * n: NDOF * n + 3] += float(p.masse) * g
+    # Gebundene Mittelknoten (Uebergang linear/quadratisch): ihre Last traegt
+    # die Kante - je zur Haelfte die Ecken (siehe mittelknoten_bindungen)
+    mittelknoten_umlenken(model, F)
     return F
 
 

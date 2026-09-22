@@ -3122,9 +3122,18 @@ brauchbaren und einem wertlosen Nachweis ausmachen:
   Bericht es als Hinweis. Bis zum 22.09.2026 rechnete der Volumennachweis
   immer mit der dünnsten Stufe — η fiel bei dicken Bauteilen 6 % zu klein aus.
 
-Ausgewertet wird je Element an der Mitte **und** an den Eckpunkten; maßgebend
-ist der größte Wert. Die Elementmitte allein würde die Randspannung bei
-Biegung um rund ein Viertel unterschätzen.
+Ausgewertet wird an den **Eckknoten**, mit der **geglätteten** Spannung (seit
+22.09.2026): an jedem Knoten das Mittel der Elemente desselben Körpers und
+Werkstoffs, maßgebend ist der größte Knoten des Bereichs. Der Bericht nennt ihn
+(„Knoten 812 (geglättet)“). Bis dahin nahm der Nachweis je Element das Maximum
+über Mitte und Ecken — bei linearen Elementen zeigt die eine Ecke den
+Momentenverlauf zu hoch, die andere zu niedrig: am Prüfkörper (Soll 355 N/mm²)
+lag der hex8 so um +65 N/mm² daneben, geglättet um +0,8 N/mm² bei denselben
+405 Freiheitsgraden. Die Elementmitte allein hätte die Randspannung bei Biegung
+um rund ein Viertel unterschätzt. Fließende Elemente tragen den Wert ihres
+nächsten Integrationspunkts bei — dort liegt er auf der Fließfläche. Über eine
+Körper- oder Werkstoffgrenze wird nicht gemittelt. Eine Ergebnisdatei von vor
+dem 22.09.2026 hat keine Knotenwerte; dann gilt die alte Regel.
 
 Der Bericht führt je Bereich den vollen Spannungstensor, die Hauptspannungen,
 τ_max, die hydrostatische Spannung, die Mehrachsigkeit h = σ_m/σ_v, σ_v und
@@ -3376,6 +3385,17 @@ Nachweis mit seiner Verformung je Kombination.
   dort kommt die Anfangsdehnung mit acht bis zehn Rückwärtseinsetzungen
   aus und ist billiger. Bei 0 % Verfestigung (ideal-plastisch) schaltet
   das Programm von selbst zurück, weil die Tangente dann singulär wäre.
+  Die Tangente ist seit dem 20.09.2026 für **jeden** Volumentyp die exakte
+  Ableitung (nachgemessen am 22.09.2026, auch tet10 und hex8); frühere
+  Hinweise, beim tet10 sei sie nur genähert, gelten nicht mehr.
+* **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
+  am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
+  `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die
+  äußersten liegen auf der Oberfläche. Damit fließt schon **eine** Lage unter
+  Biegung an der Randfaser (vorher erst ab drei bis vier Lagen), und die
+  Randspannung trifft die Momenten-Krümmungs-Lösung auf 0,2 N/mm². Der Preis sind
+  20 statt 8 Punkte je Element in jedem Fließschritt. 2 stellt die alte Regel
+  wieder her. Ohne Fließen ändert sich nichts.
 * **MUMPS** ist unter Windows ein eigener Bau (gfortran, OpenMP, OpenBLAS,
   METIS — `docs/MUMPS_Windows_Bauanleitung.md`), nachgeladen beim Start. Symmetrische
   Steifigkeitsmatrizen gehen als unteres Dreieck hinein (SYM=2): halber

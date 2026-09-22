@@ -283,45 +283,129 @@ def _hex8_incompatible_grad(r, s, t, J0, detJ0, J, detJ):
     return g                                       # (3,3) nach x,y,z
 
 
-def hex8_matrices(X, E, nu, incompatible=True, ohne_kuu=False):
-    """Rueckgabe (Kuu, Kua, Kaa, V). Bei incompatible=False ist Kua/Kaa None.
+#: Volumetrischer Anteil des hex8 (Auftrag A1 an die Element-Sitzung, 22.09.2026):
+#: "p1" projiziert die Volumendehnung je Element auf {1, xi, eta, zeta} (B-bar
+#: mit linearem Druckansatz, im Rahmen von Simo/Rifai 1990), "voll" ist der
+#: Wilson-Taylor-hex8, wie er bis dahin rechnete (punktweise an 2x2x2).
+#:
+#: Warum nicht die **mittlere** Dilatation (ein Wert je Element): zusammen mit
+#: den Wilson-Moden ist sie instabil. Das Feld u = k (xz, yz, (z^2-x^2-y^2)/2)
+#: hat die Dehnung k z I - rein volumetrisch, Deviator null - und mit dem
+#: Elementmittel null auch keine Volumenenergie; es ist darstellbar (die
+#: Quadrate x^2, y^2, z^2 liefern die Moden) und setzt sich als Schachbrett
+#: ueber das Netz fort. Gemessen 22.09.2026: 9 statt 6 Nullmoden am
+#: regelmaessigen Element, der Kragarm 4x1x1 biegt sich 44-fach durch. Der
+#: lineare Ansatz behaelt genau diesen linearen Anteil: 6 Nullmoden am
+#: regelmaessigen und am verzerrten Element, Patch-Test auf 1e-15.
+#:
+#: Was er bringt (Kragarm 1,0 x 0,1 x 0,2 m, sigma_v an Oberkante x = L/2 auf
+#: 355 N/mm2 skaliert, 22.09.2026, gemittelter Tensor der Elemente am Punkt):
+#:
+#:     Netz        nu = 0,3 voll / p1     nu = 0,499 voll / p1
+#:     4x1x2        -7,7  /  -9,6          -51,1  / -25,7   N/mm2
+#:     8x2x4        +0,73 /  +0,77          -4,2  /  -1,6
+#:     16x4x8       +0,23 /  +0,22          +0,07 /  +0,07
+#:
+#: und in sigma_xx allein (dort sieht man den Druck, den sigma_v ausblendet)
+#: bei nu = 0,499: voll -509 / -51 / -2,6, p1 +4,1 / +1,6 / +0,2 N/mm2 - der
+#: punktweise hex8 zeigte am groebsten Netz das falsche Vorzeichen. Bei
+#: nu = 0,3 aendert sich die Biegung ab 8x2x4 um hoechstens 0,04 N/mm2.
+HEX8_VOLUMEN = "p1"
 
-    ``ohne_kuu=True`` laesst Kuu weg und gibt None zurueck. Wer nur die
-    inneren Freiheitsgrade braucht - die Spannungsauswertung loest
-    alpha = -Kaa^-1 Kua^T u -, zahlt sonst die 24x24-Summe ueber acht
-    Gausspunkte umsonst: gemessen 21.09.2026 kostete stress_points am hex8
-    1332 µs je Element gegen 18 µs beim tet4, und der groesste Posten darin
-    war das Kuu, das niemand liest."""
+
+#: Punktregeln ueber t (die dritte Richtung des hex8, im Sweep die Lagen-
+#: richtung): Gauss-Legendre oder Gauss-Lobatto mit n Punkten. Lobatto legt
+#: die aeussersten Punkte **auf** die Oberflaeche.
+_LOBATTO = {
+    3: (np.array([-1.0, 0.0, 1.0]), np.array([1.0, 4.0, 1.0]) / 3.0),
+    4: (np.array([-1.0, -1.0 / np.sqrt(5.0), 1.0 / np.sqrt(5.0), 1.0]),
+        np.array([1.0, 5.0, 5.0, 1.0]) / 6.0),
+    5: (np.array([-1.0, -np.sqrt(3.0 / 7.0), 0.0, np.sqrt(3.0 / 7.0), 1.0]),
+        np.array([9.0, 49.0, 64.0, 49.0, 9.0]) / 90.0),
+}
+
+
+def hex8_regel(n_t=2, art="gauss"):
+    """(GP (P,3), W (P,)) des hex8: 2x2 Gauss in r und s, ``n_t`` Punkte in t
+    (``art`` "gauss" oder "lobatto"). n_t = 2 Gauss ist die Vorgaberegel."""
+    if art == "lobatto":
+        tt, wt = _LOBATTO[int(n_t)]
+    else:
+        tt, wt = np.polynomial.legendre.leggauss(int(n_t))
+    GP = np.array([[a, b, c] for a in (-_G, _G) for b in (-_G, _G) for c in tt])
+    W = np.array([wc for _a in (-_G, _G) for _b in (-_G, _G) for wc in wt])
+    return GP, W
+
+
+def _hex8_operator(X, punkte=None, idx=None, knoten=None, incompatible=True, volumen=None,
+                   regel=None):
+    """Der Dehnungsoperator eines Stapels hex8 (X (n,8,3)).
+
+    Ohne ``punkte`` an den Integrationspunkten (Vorgabe 2x2x2 Gauss, sonst
+    ``regel`` = (GP, W) aus :func:`hex8_regel`; w = W |det J|), mit
+    ``punkte`` an den natuerlichen Punkten (Q,3) - mit den inneren Moden und
+    der Projektion der Volumendehnung **desselben** Elements (die kommen
+    immer aus den Integrationspunkten). ``volumen``: "p1" oder "voll"
+    (Vorgabe HEX8_VOLUMEN)."""
     X = np.asarray(X, float)
-    D = D_matrix(E, nu)
-    Kuu = np.zeros((24, 24))
-    Kua = np.zeros((24, 9))
-    Kaa = np.zeros((9, 9))
-    V = 0.0
-    _, dN0 = hex8_N_dN(0.0, 0.0, 0.0)
-    J0 = dN0.T @ X
-    detJ0 = np.linalg.det(J0)
-    for (r, s, t), w in zip(_HEX_GP, _HEX_W):
-        _, dNr = hex8_N_dN(r, s, t)
-        J = dNr.T @ X
-        detJ = np.linalg.det(J)
-        if detJ <= 0:
-            raise ValueError("Hex8 mit negativer Jacobi-Determinante")
-        dN = np.linalg.solve(J, dNr.T).T
-        B = _B_from_grad(dN)
-        if not ohne_kuu:
-            Kuu += w * detJ * (B.T @ D @ B)
-        V += w * detJ
-        if incompatible:
-            g = _hex8_incompatible_grad(r, s, t, J0, detJ0, J, detJ)
-            Ba = _B_from_grad(g)
-            Kua += w * detJ * (B.T @ D @ Ba)
-            Kaa += w * detJ * (Ba.T @ D @ Ba)
-    if ohne_kuu:
-        Kuu = None
-    if not incompatible:
-        return Kuu, None, None, V
-    return Kuu, Kua, Kaa, V
+    n = X.shape[0]
+    volumen = HEX8_VOLUMEN if volumen is None else volumen
+    GP, W = (_HEX_GP, _HEX_W) if regel is None else regel
+    kn = np.arange(8)[None, :].repeat(n, 0) if knoten is None else np.asarray(knoten)
+    ix = np.arange(n) if idx is None else np.asarray(idx, dtype=np.int64)
+    g, det, Ba = _iso_an_punkten("hex8", X, GP, idx, moden=incompatible)
+    w = np.asarray(W, float)[:, None] * det
+    vol_q = vol_c = vol_ca = None
+    if volumen == "p1":
+        vol_q = np.column_stack([np.ones(len(GP)), GP])                      # (P,4)
+        Mq = np.einsum("pn,pa,pb->nab", w, vol_q, vol_q)                     # (n,4,4)
+        mB = g.reshape(len(GP), n, 24)                                       # m^T B = g flach
+        vol_c = np.linalg.solve(Mq, np.einsum("pn,pa,pnj->naj", w, vol_q, mB))
+        if Ba is not None:
+            mBa = Ba[:, :, :3, :].sum(axis=2)                                # (P,n,9)
+            vol_ca = np.linalg.solve(Mq, np.einsum("pn,pa,pnj->naj", w, vol_q, mBa))
+    elif volumen != "voll":
+        raise ValueError(f"hex8: unbekannter Volumenansatz '{volumen}'")
+    if punkte is not None:
+        pts = np.asarray(punkte, float).reshape(-1, 3)
+        g, det, Ba = _iso_an_punkten("hex8", X, pts, idx, pruefen=False, moden=incompatible)
+        w = np.zeros_like(det)
+        xi = pts
+        if vol_q is not None:
+            vol_q = np.column_stack([np.ones(len(pts)), pts])
+    else:
+        xi = np.asarray(GP, float)
+    if Ba is not None and vol_ca is not None:
+        # Moden mit derselben Projektion: Deviator punktweise, Volumen linear
+        mBa = Ba[:, :, :3, :].sum(axis=2)
+        proj = np.einsum("pa,naj->pnj", vol_q, vol_ca)
+        Ba = Ba.copy()
+        Ba[:, :, :3, :] += ((proj - mBa) / 3.0)[:, :, None, :]
+    return Dehnungsoperator("hex8", ix, kn, w, g=g, Ba=Ba, xi=xi, vol_q=vol_q, vol_c=vol_c)
+
+
+def hex8_matrizen_stapel(X, E, nu, incompatible=True, ohne_kuu=False, regel=None):
+    """(Kuu, Kua, Kaa, V) eines **Stapels** Sechsflaechner gleichen Werkstoffs.
+
+    X ist (n,8,3). Seit dem 22.09.2026 aus dem Dehnungsoperator
+    (:func:`_hex8_operator`) - derselben Kinematik, die Spannung und
+    Plastizitaet lesen. Der Stapel war der Grund fuer den Umbau vom
+    21.09.2026: einzeln kostete die Schleife 720,5 µs je Element (verzerrter
+    Wuerfel), dreissigmal so viel wie ein ``tet4`` mit 24,2 µs.
+    """
+    op = _hex8_operator(X, incompatible=incompatible, regel=regel)
+    Kuu, Kua, Kaa = matrizen_aus_operator(op, D_matrix(E, nu), ohne_kuu=ohne_kuu)
+    return Kuu, Kua, Kaa, op.w.sum(axis=0)
+
+
+def hex8_matrices(X, E, nu, incompatible=True, ohne_kuu=False):
+    """Rueckgabe (Kuu, Kua, Kaa, V) eines Elements; bei incompatible=False
+    sind Kua/Kaa None, bei ``ohne_kuu`` ist Kuu None. Derselbe Operator wie
+    :func:`hex8_matrizen_stapel`, mit einem Element."""
+    Kuu, Kua, Kaa, V = hex8_matrizen_stapel(np.asarray(X, float)[None], E, nu,
+                                            incompatible, ohne_kuu)
+    return (None if Kuu is None else Kuu[0], None if Kua is None else Kua[0],
+            None if Kaa is None else Kaa[0], float(V[0]))
 
 
 def _b_stapel(g):
@@ -341,145 +425,50 @@ def _b_stapel(g):
     return B
 
 
-def hex8_matrizen_stapel(X, E, nu, incompatible=True, ohne_kuu=False):
-    """(Kuu, Kua, Kaa, V) eines **Stapels** Sechsflaechner gleichen Werkstoffs.
-
-    X ist (n,8,3). Dieselbe Rechnung wie :func:`hex8_matrices`, nur ueber
-    alle Elemente auf einmal: die Schleife je Element kostete gemessen
-    720,5 µs (21.09.2026, verzerrter Wuerfel) - dreissigmal so viel wie ein
-    ``tet4`` mit 24,2 µs. Am Drehlagernetz der Vernetzersitzung waren das
-    23,5 s je Aufstellen fuer 31.108 Sechsflaechner gegen 9,5 s fuer 453.331
-    Tetraeder: **sieben Prozent der Elemente trugen einundsiebzig Prozent der
-    Zeit.** Die acht Gausspunkte bleiben eine Schleife - es sind acht; was
-    kostete, war der Aufruf je Element.
-    """
-    X = np.asarray(X, float)
-    n = X.shape[0]
-    D = D_matrix(E, nu)
-    Kuu = None if ohne_kuu else np.zeros((n, 24, 24))
-    Kua = np.zeros((n, 24, 9)) if incompatible else None
-    Kaa = np.zeros((n, 9, 9)) if incompatible else None
-    V = np.zeros(n)
-    _N0, dN0 = hex8_N_dN(0.0, 0.0, 0.0)
-    J0 = np.einsum("ki,nkj->nij", dN0, X)
-    detJ0 = np.linalg.det(J0)
-    for (r, s_, t), w in zip(_HEX_GP, _HEX_W):
-        _N, dNr = hex8_N_dN(r, s_, t)
-        J = np.einsum("ki,nkj->nij", dNr, X)
-        detJ = np.linalg.det(J)
-        if np.any(detJ <= 0):
-            i = int(np.argmin(detJ))
-            raise ValueError(f"Hex8 mit negativer Jacobi-Determinante "
-                             f"(Element {i} im Stapel, det = {detJ[i]:.3e})")
-        dN = np.linalg.solve(J, np.broadcast_to(dNr.T, (n, 3, 8))).transpose(0, 2, 1)
-        B = _b_stapel(dN)
-        wd = (float(w) * detJ)[:, None, None]
-        # matmul statt einsum: die Stapel-Matrixmultiplikation von numpy geht
-        # ueber BLAS, einsum rechnet sie bei diesen kleinen Matrizen selbst.
-        # Gemessen 21.09.2026 an 2000 verzerrten Wuerfeln: 258,8 µs je Element
-        # mit einsum, 85,4 µs mit matmul.
-        Bt = B.transpose(0, 2, 1)
-        if not ohne_kuu:
-            Kuu += wd * (Bt @ (D @ B))
-        V += float(w) * detJ
-        if incompatible:
-            dM = np.array([[-2.0 * r, 0.0, 0.0], [0.0, -2.0 * s_, 0.0], [0.0, 0.0, -2.0 * t]])
-            g = (detJ0 / detJ)[:, None, None] * np.linalg.solve(
-                J0, np.broadcast_to(dM.T, (n, 3, 3))).transpose(0, 2, 1)
-            Ba = _b_stapel(g)
-            DBa = D @ Ba
-            Kua += wd * (Bt @ DBa)
-            Kaa += wd * (Ba.transpose(0, 2, 1) @ DBa)
-    return Kuu, Kua, Kaa, V
-
-
 def hex8_alpha_stapel(X, E, nu, ue):
-    """Die inneren Freiheitsgrade alpha (n,9) eines **Stapels** Sechsflaechner.
-
-    alpha = -Kaa^-1 Kua^T u. Die Spannungsauswertung braucht sie je Element,
-    und sie einzeln zu holen kostete 1040 µs - achtundfuenfzigmal so viel wie
-    eine tet4-Spannung mit 18,2 µs (21.09.2026). Das Kuu wird dabei gar nicht
-    erst gebaut (``ohne_kuu``); den Rest macht der Stapel.
-    """
-    _Kuu, Kua, Kaa, _V = hex8_matrizen_stapel(X, E, nu, True, ohne_kuu=True)
-    ue = np.asarray(ue, float).reshape(len(Kaa), 24)
-    rechts = -np.einsum("nji,nj->ni", Kua, ue)
-    return np.linalg.solve(Kaa, rechts[..., None])[..., 0]
+    """Die inneren Freiheitsgrade alpha (n,9) eines **Stapels** Sechsflaechner:
+    alpha = -Kaa^-1 Kua^T u, aus dem Dehnungsoperator."""
+    return moden_aus_operator(_hex8_operator(X), D_matrix(E, nu), ue)
 
 
 def spannungen_hex8_stapel(X, E, nu, U, punkte=None):
     """Spannungen (n, p, 6) an p Punkten fuer einen **Stapel** Sechsflaechner.
 
     X ist (n,8,3), U ist (n,24). Ohne ``punkte`` sind es die neun
-    :data:`AUSWERTEPUNKTE` (Mitte und acht Ecken).
-
-    Einzeln kostete ``stress_points`` am hex8 1120,6 µs je Element -
-    einundsechzigmal so viel wie eine tet4-Spannung mit 18,2 µs
-    (21.09.2026). Zwei Drittel davon waren die acht Gausspunkte fuer die
-    inneren Freiheitsgrade, der Rest die neun Auswertepunkte; beides laeuft
-    hier ueber den Stapel.
+    :data:`AUSWERTEPUNKTE` (Mitte und acht Ecken). Einzeln kostete das am
+    21.09.2026 1120,6 µs je Element, einundsechzigmal so viel wie eine
+    tet4-Spannung; der Stapel ist der Grund, warum es ihn gibt.
     """
     X = np.asarray(X, float)
     U = np.asarray(U, float).reshape(len(X), 24)
-    pts = list(AUSWERTEPUNKTE["hex8"] if punkte is None else punkte)
-    n = X.shape[0]
+    pts = AUSWERTEPUNKTE["hex8"] if punkte is None else punkte
     D = D_matrix(E, nu)
     alpha = hex8_alpha_stapel(X, E, nu, U)
-    _N0, dN0 = hex8_N_dN(0.0, 0.0, 0.0)
-    J0 = np.einsum("ki,nkj->nij", dN0, X)
-    detJ0 = np.linalg.det(J0)
-    aus = np.empty((n, len(pts), 6))
-    for k, (r, s_, t) in enumerate(pts):
-        _N, dNr = hex8_N_dN(r, s_, t)
-        J = np.einsum("ki,nkj->nij", dNr, X)
-        detJ = np.linalg.det(J)
-        dN = np.linalg.solve(J, np.broadcast_to(dNr.T, (n, 3, 8))).transpose(0, 2, 1)
-        eps = (_b_stapel(dN) @ U[:, :, None])[:, :, 0]
-        dM = np.array([[-2.0 * r, 0.0, 0.0], [0.0, -2.0 * s_, 0.0], [0.0, 0.0, -2.0 * t]])
-        g = (detJ0 / detJ)[:, None, None] * np.linalg.solve(
-            J0, np.broadcast_to(dM.T, (n, 3, 3))).transpose(0, 2, 1)
-        eps = eps + (_b_stapel(g) @ alpha[:, :, None])[:, :, 0]
-        aus[:, k, :] = eps @ D.T
+    aw = _hex8_operator(X, punkte=pts)
+    aus = np.empty((len(X), aw.P, 6))
+    for q in range(aw.P):
+        aus[:, q, :] = dehnung_mit_moden(aw, q, U, alpha) @ D.T
     return aus
 
 
-def k_hex8_stapel(X, E, nu, incompatible=True):
-    """Kondensierte Steifigkeiten (n,24,24) und Volumen (n) eines Stapels.
-
-    Identisch zu :func:`k_hex8` je Element - die Pruefung
-    ``tests/test_elemente_volumen.py`` haelt das auf 1e-12 fest.
-    """
-    Kuu, Kua, Kaa, V = hex8_matrizen_stapel(X, E, nu, incompatible)
-    if Kua is None:
-        return Kuu, V
-    K = Kuu - Kua @ np.linalg.solve(Kaa, Kua.transpose(0, 2, 1))
-    return K, V
+def k_hex8_stapel(X, E, nu, incompatible=True, regel=None):
+    """Kondensierte Steifigkeiten (n,24,24) und Volumen (n) eines Stapels."""
+    op = _hex8_operator(X, incompatible=incompatible, regel=regel)
+    return steifigkeit_aus_operator(op, D_matrix(E, nu)), op.w.sum(axis=0)
 
 
-def k_hex8(X, E, nu, incompatible=True):
-    Kuu, Kua, Kaa, V = hex8_matrices(X, E, nu, incompatible)
-    if Kua is None:
-        return Kuu, V
-    K = Kuu - Kua @ np.linalg.solve(Kaa, Kua.T)
-    return K, V
+def k_hex8(X, E, nu, incompatible=True, regel=None):
+    K, V = k_hex8_stapel(np.asarray(X, float)[None], E, nu, incompatible, regel)
+    return K[0], float(V[0])
 
 
 def stress_hex8(X, E, nu, ue, r=0.0, s=0.0, t=0.0, incompatible=True):
-    X = np.asarray(X, float)
-    _, dNr = hex8_N_dN(r, s, t)
-    J = dNr.T @ X
-    detJ = np.linalg.det(J)
-    dN = np.linalg.solve(J, dNr.T).T
-    B = _B_from_grad(dN)
-    eps = B @ ue
-    if incompatible:
-        _, Kua, Kaa, _ = hex8_matrices(X, E, nu, True, ohne_kuu=True)
-        alpha = -np.linalg.solve(Kaa, Kua.T @ ue)
-        _, dN0 = hex8_N_dN(0.0, 0.0, 0.0)
-        J0 = dN0.T @ X
-        g = _hex8_incompatible_grad(r, s, t, J0, np.linalg.det(J0), J, detJ)
-        eps = eps + _B_from_grad(g) @ alpha
-    return D_matrix(E, nu) @ eps
+    X = np.asarray(X, float)[None]
+    ue = np.asarray(ue, float).reshape(1, 24)
+    D = D_matrix(E, nu)
+    alpha = moden_aus_operator(_hex8_operator(X), D, ue) if incompatible else None
+    aw = _hex8_operator(X, punkte=[(r, s, t)], incompatible=incompatible)
+    return (dehnung_mit_moden(aw, 0, ue, alpha) @ D.T)[0]
 
 
 # --------------------------------------------------------------------------
@@ -883,6 +872,111 @@ def flaechenlast_knoten(P, p, richtung=None) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
+# Seiten als Flaechen fuer Kontakt und Lasten (auch gekruemmt, tri6/quad8)
+# --------------------------------------------------------------------------
+_R7A, _R7B = (6.0 - np.sqrt(15.0)) / 21.0, (6.0 + np.sqrt(15.0)) / 21.0
+_R7WA, _R7WB = (155.0 - np.sqrt(15.0)) / 1200.0, (155.0 + np.sqrt(15.0)) / 1200.0
+#: Dreiecksregel nach Radon, 7 Punkte, exakt bis Grad 5 (Gewichte auf Flaeche 1/2)
+_TRI7_GP = np.array([[1.0 / 3.0, 1.0 / 3.0],
+                     [_R7A, _R7A], [1.0 - 2.0 * _R7A, _R7A], [_R7A, 1.0 - 2.0 * _R7A],
+                     [_R7B, _R7B], [1.0 - 2.0 * _R7B, _R7B], [_R7B, 1.0 - 2.0 * _R7B]])
+_TRI7_W = 0.5 * np.array([9.0 / 40.0] + [_R7WA] * 3 + [_R7WB] * 3)
+#: Viereck 4x4 Gauss, exakt bis Grad 7 je Richtung
+_G4P, _G4W = np.polynomial.legendre.leggauss(4)
+_QUAD16_GP = np.array([[a, b] for a in _G4P for b in _G4P])
+_QUAD16_W = np.array([wa * wb for wa in _G4W for wb in _G4W])
+#: Knotenzahl der Seite -> Regel fuer die Flaechenintegration
+_SEITEN_REGEL = {3: (_TRI7_GP, _TRI7_W), 6: (_TRI7_GP, _TRI7_W),
+                 4: (_QUAD16_GP, _QUAD16_W), 8: (_QUAD16_GP, _QUAD16_W)}
+
+
+def seiten_integration_stapel(P, innen=None, regel=None) -> dict:
+    """Integrationsdaten eines **Stapels** Seiten gleicher Knotenzahl.
+
+    P ist (n,k,3) mit k = 3, 4, 6 oder 8 (Ecken zuerst, dann Kantenmitten wie
+    in FLAECHEN), ``innen`` (n,3) ein Punkt im Element hinter der Seite
+    (der gegenueberliegende Knoten, wie Model._seitennormale ihn nimmt). Die
+    Normalen zeigen dann von ihm weg - nach aussen. Ohne ``innen`` folgen sie
+    der Rechtsschraube der Ecken.
+
+    Rueckgabe:
+        "punkte"   (n,m,3) Integrationspunkte im globalen System
+        "dA"       (n,m)   Gewichte mal Flaechen-Jacobideterminante
+        "normale"  (n,m,3) Einheitsnormalen an den Punkten
+        "N"        (m,k)   Ansatzwerte (fuer alle Seiten gleich)
+        "xi"       (m,2)   Seitenkoordinaten der Punkte
+        "knotenflaechen" (n,k)  Integral N_i dA - die konsistenten Knoten-
+                   anteile eines gleichmaessigen Drucks. Beim ebenen tri6 sind
+                   sie an den Ecken **null** und an jeder Kantenmitte A/3
+                   (Integral L(2L-1) = 0, Integral 4 L_i L_j = A/3), beim tri3
+                   A/3 je Ecke.
+
+    Die Regel (Vorgabe: Dreieck 7 Punkte Grad 5, Viereck 4x4) integriert
+    N_i dA auf ebenen Seiten exakt; auf gekruemmten ist dA keine Polynom-
+    funktion mehr und die Regel eine Naeherung.
+    """
+    P = np.asarray(P, float)
+    if P.ndim == 2:
+        P = P[None]
+    n, k = P.shape[0], P.shape[1]
+    GP, W = regel if regel is not None else _SEITEN_REGEL[k]
+    m = len(GP)
+    N = np.empty((m, k))
+    dN = np.empty((m, k, 2))
+    for q, (a, b) in enumerate(GP):
+        N[q], dN[q] = seite_N_dN(k, a, b)
+    punkte = np.einsum("mk,nkj->nmj", N, P)
+    t1 = np.einsum("mk,nkj->nmj", dN[:, :, 0], P)
+    t2 = np.einsum("mk,nkj->nmj", dN[:, :, 1], P)
+    nA = np.cross(t1, t2)                                  # Normale mal dA/(da db)
+    betrag = np.linalg.norm(nA, axis=2)
+    if np.any(betrag <= 0.0):
+        s, q = np.argwhere(betrag <= 0.0)[0]
+        raise ValueError(f"Seite {int(s)} im Stapel ist an Punkt {int(q)} entartet "
+                         "(Flaechen-Jacobideterminante null)")
+    normale = nA / betrag[:, :, None]
+    if innen is not None:
+        innen = np.asarray(innen, float).reshape(n, 3)
+        ecken = 4 if k in (4, 8) else 3
+        mitte = P[:, :ecken, :].mean(axis=1)
+        # Je Seite **ein** Vorzeichen, am Punkt, der der Seitenmitte am
+        # naechsten liegt - eine gekruemmte Seite soll kein Normalenfeld
+        # bekommen, das auf ihr die Richtung wechselt.
+        q0 = int(np.argmin(np.linalg.norm(np.asarray(GP) - np.asarray(GP).mean(axis=0), axis=1)))
+        vz = np.sign(np.einsum("nj,nj->n", normale[:, q0, :], mitte - innen))
+        vz[vz == 0.0] = 1.0
+        normale = normale * vz[:, None, None]
+    dA = betrag * np.asarray(W)[None, :]
+    return {"punkte": punkte, "dA": dA, "normale": normale, "N": N,
+            "xi": np.asarray(GP, float).copy(),
+            "knotenflaechen": np.einsum("nm,mk->nk", dA, N)}
+
+
+def punkt_und_normale(P, a, b, innen=None):
+    """Punkt und Einheitsnormale einer Seite (k,3) an den Seitenkoordinaten
+    (a, b) - fuer die Projektion eines Gegenknotens auf eine gekruemmte
+    Seite. Mit ``innen`` wie bei :func:`seiten_integration_stapel` nach aussen
+    gerichtet; die Richtung wird an der Seitenmitte bestimmt, nicht am
+    Punkt, damit sie auf der ganzen Seite dieselbe ist."""
+    P = np.asarray(P, float)
+    k = P.shape[0]
+    N, dN = seite_N_dN(k, a, b)
+    x = N @ P
+    nv = np.cross(dN[:, 0] @ P, dN[:, 1] @ P)
+    betrag = float(np.linalg.norm(nv))
+    if betrag <= 0.0:
+        raise ValueError("Seite ist an diesem Punkt entartet")
+    nv = nv / betrag
+    if innen is not None:
+        a0, b0 = (1.0 / 3.0, 1.0 / 3.0) if k in (3, 6) else (0.0, 0.0)
+        N0, dN0 = seite_N_dN(k, a0, b0)
+        n0 = np.cross(dN0[:, 0] @ P, dN0[:, 1] @ P)
+        if float(n0 @ (N0 @ P - np.asarray(innen, float))) < 0.0:
+            nv = -nv
+    return x, nv
+
+
+# --------------------------------------------------------------------------
 def solid_volume(typ, X) -> float:
     X = np.asarray(X, float)
     if typ == "tet4":
@@ -907,6 +1001,88 @@ def solid_volume(typ, X) -> float:
             V += w * abs(np.linalg.det(dNr.T @ X))
         return V
     raise ValueError(typ)
+
+
+#: Eckpunkte in natuerlichen Koordinaten, an denen det J zusaetzlich zu den
+#: Gausspunkten geprueft wird. Bei der Pyramide nur die Grundflaeche: an der
+#: Spitze ist die Abbildung kollabiert und det J dort immer null.
+_JACOBI_ECKEN = {
+    "tet4": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)],
+    # beim gekruemmten tet10 (Mittelknoten auf der wahren Geometrie, B7)
+    # faellt det J zuerst an den Kanten - darum auch die Kantenmitten
+    "tet10": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+              (0.5, 0, 0), (0.5, 0.5, 0), (0, 0.5, 0), (0, 0, 0.5), (0.5, 0, 0.5), (0, 0.5, 0.5)],
+    "hex8": [tuple(p) for p in _HEX_SIGNS],
+    "hex20": [tuple(p) for p in _HEX_SIGNS],
+    "pent6": [(0, 0, -1), (1, 0, -1), (0, 1, -1), (0, 0, 1), (1, 0, 1), (0, 1, 1)],
+    "pent15": [(0, 0, -1), (1, 0, -1), (0, 1, -1), (0, 0, 1), (1, 0, 1), (0, 1, 1)],
+    "pyr5": [tuple(p) + (-1.0,) for p in _PYR_SIGNS],
+}
+
+
+def jacobi_volumen_stapel(typ, X) -> dict:
+    """Vorzeichenbehaftetes Volumen und det J eines **Stapels** Elemente.
+
+    X ist (n,k,3). Rueckgabe {"V": (n,), "det_min": (n,), "det_max": (n,)}:
+    V = Summe w det J ueber die Gausspunkte **mit** Vorzeichen (solid_volume
+    nimmt den Betrag), det_min/det_max ueber Gausspunkte und Ecken
+    (_JACOBI_ECKEN). Ein umgestuelptes Element hat det_min < 0.
+
+    Was diese Pruefung **nicht** faengt (gemessen 22.09.2026 von der
+    Statik3D-Sitzung, festgehalten in tests/test_elemente_volumen.py): ein
+    hex8 mit verdrehtem Deckel (4,5,6,7 -> 5,6,7,4) ist fuer sich ein
+    gueltiges Element - det J ueberall positiv, Volumen 2/3 statt 1. Ihn
+    faengt nur die Bilanz am Koerper (Summe der Elementvolumina gegen das
+    Randvolumen), nicht das Element.
+    """
+    fn, GP, W = _ISO[typ]
+    X = np.asarray(X, float)
+    n = X.shape[0]
+    V = np.zeros(n)
+    det_min = np.full(n, np.inf)
+    det_max = np.full(n, -np.inf)
+    for (r, s, t), w in zip(GP, W):
+        _N, dNr = fn(r, s, t)
+        det = np.linalg.det(np.einsum("ki,nkj->nij", dNr, X))
+        V += float(w) * det
+        det_min = np.minimum(det_min, det)
+        det_max = np.maximum(det_max, det)
+    for (r, s, t) in _JACOBI_ECKEN[typ]:
+        _N, dNr = fn(float(r), float(s), float(t))
+        det = np.linalg.det(np.einsum("ki,nkj->nij", dNr, X))
+        det_min = np.minimum(det_min, det)
+        det_max = np.maximum(det_max, det)
+    return {"V": V, "det_min": det_min, "det_max": det_max}
+
+
+def jacobi_pruefung(model, elemente=None) -> list:
+    """[(Element, Typ, kleinstes det J)] aller Volumenelemente, deren Jacobi-
+    Determinante an einem Integrationspunkt, einer Ecke oder (tet10) einer
+    Kantenmitte nicht positiv ist - fuer die Netzabnahme (B7: gekruemmte
+    Elemente muessen **laut** auffallen, mit Nummer, bevor gerechnet wird).
+    Stapelweise je Typ (jacobi_volumen_stapel)."""
+    idx = range(len(model.elements)) if elemente is None else elemente
+    je_typ: dict = {}
+    for i in idx:
+        typ = model.elements[int(i)].typ
+        if typ in _ISO:
+            je_typ.setdefault(typ, []).append(int(i))
+    schlecht = []
+    for typ, liste in je_typ.items():
+        k = _KNOTENZAHL[typ]
+        for a0 in range(0, len(liste), 50_000):
+            teil = liste[a0:a0 + 50_000]
+            X = np.asarray(model.nodes, float)[np.asarray([model.elements[i].nodes[:k] for i in teil])]
+            d = jacobi_volumen_stapel(typ, X)
+            for a in np.flatnonzero(d["det_min"] <= 0.0):
+                schlecht.append((teil[int(a)], typ, float(d["det_min"][a])))
+    return schlecht
+
+
+def jacobi_volumen(typ, X) -> dict:
+    """:func:`jacobi_volumen_stapel` fuer ein Element: {"V", "det_min", "det_max"}."""
+    d = jacobi_volumen_stapel(typ, np.asarray(X, float)[None, :, :])
+    return {k: float(v[0]) for k, v in d.items()}
 
 
 def _hrz_gewichte(typ, X) -> np.ndarray:
@@ -958,6 +1134,36 @@ AUSWERTEPUNKTE = {
              (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0), (0.0, 0.0, 1.0)],
 }
 
+#: Natuerliche Koordinaten der Eckknoten je Typ, in Knotenreihenfolge
+ECKEN_NATUERLICH = {
+    "tet4": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)],
+    "tet10": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)],
+    "hex8": [tuple(p) for p in _HEX_SIGNS],
+    "hex20": [tuple(p) for p in _HEX_SIGNS],
+    "pent6": [(0.0, 0.0, -1.0), (1.0, 0.0, -1.0), (0.0, 1.0, -1.0),
+              (0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0)],
+    "pent15": [(0.0, 0.0, -1.0), (1.0, 0.0, -1.0), (0.0, 1.0, -1.0),
+               (0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0)],
+    "pyr5": [(-1.0, -1.0, -1.0), (1.0, -1.0, -1.0), (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0),
+             (0.0, 0.0, 1.0)],
+}
+
+
+def ecken_der_auswertepunkte(typ) -> list:
+    """Fuer jeden Eckknoten des Typs (Knotenreihenfolge) die Nummer des
+    Auswertepunkts in AUSWERTEPUNKTE[typ], der auf ihm liegt - oder 0 (die
+    Mitte), wenn keiner es tut (tet4: ein Punkt fuer alle vier Ecken).
+
+    Die Reihenfolge der Auswertepunkte ist **nicht** immer die der Knoten:
+    beim hex8 laufen sie r-s-t geschachtelt (-1,-1,-1), (-1,-1,+1), ..., die
+    Knoten gegen den Uhrzeiger unten, dann oben."""
+    pts = [tuple(float(x) for x in p) for p in AUSWERTEPUNKTE[typ]]
+    aus = []
+    for e in ECKEN_NATUERLICH[typ]:
+        e = tuple(float(x) for x in e)
+        aus.append(pts.index(e) if e in pts else 0)
+    return aus
+
 
 def stress_points(typ, X, E, nu, ue, punkte=None, alpha=None) -> list:
     """
@@ -982,24 +1188,432 @@ def stress_points(typ, X, E, nu, ue, punkte=None, alpha=None) -> list:
         return [_stress_iso(fn, X, E, nu, ue, *p) for p in pts]
     if typ != "hex8":
         return []
-    # Hex8: die inkompatiblen Moden einmal loesen, dann alle Punkte auswerten.
-    # ``alpha`` kann von aussen kommen (hex8_alpha_stapel) - dann faellt der
-    # teuerste Teil weg, die acht Gausspunkte je Element.
+    # Hex8: ueber den Dehnungsoperator (dieselbe Kinematik wie die
+    # Steifigkeit). ``alpha`` kann von aussen kommen - dann faellt die
+    # Kondensation weg.
+    X3 = X[None]
+    ue3 = np.asarray(ue, float).reshape(1, 24)
     D = D_matrix(E, nu)
     if alpha is None:
-        _K, Kua, Kaa, _ = hex8_matrices(X, E, nu, True, ohne_kuu=True)
-        alpha = -np.linalg.solve(Kaa, Kua.T @ ue)
-    _, dN0 = hex8_N_dN(0.0, 0.0, 0.0)
-    J0 = dN0.T @ X
-    detJ0 = np.linalg.det(J0)
-    out = []
-    for r, s, t in pts:
-        _, dNr = hex8_N_dN(r, s, t)
-        J = dNr.T @ X
-        detJ = np.linalg.det(J)
-        dN = np.linalg.solve(J, dNr.T).T
-        eps = _B_from_grad(dN) @ ue
-        g = _hex8_incompatible_grad(r, s, t, J0, detJ0, J, detJ)
-        eps = eps + _B_from_grad(g) @ alpha
-        out.append(D @ eps)
-    return out
+        alpha3 = moden_aus_operator(_hex8_operator(X3), D, ue3)
+    else:
+        alpha3 = np.asarray(alpha, float).reshape(1, 9)
+    aw = _hex8_operator(X3, punkte=pts)
+    return [(dehnung_mit_moden(aw, q, ue3, alpha3) @ D.T)[0] for q in range(aw.P)]
+
+
+# --------------------------------------------------------------------------
+# Dehnungsoperator: eine Kinematik fuer Steifigkeit, Spannung, Plastizitaet
+# --------------------------------------------------------------------------
+# Bis zum 22.09.2026 stellte jeder Leser seine Verzerrungsmatrix selbst auf:
+# die Steifigkeit in k_<typ> bzw. k_hex8_stapel, die Spannung in
+# stress_points, die Plastizitaet in plastizitaet._stapel und
+# _schritt_schleife (aus _ISO, je Gausspunkt). Solange alle dasselbe
+# isoparametrische B rechnen, ist das nur doppelt; sobald ein Element eine
+# andere Kinematik hat (B-bar, geglaettete Dehnung, mehr Punkte ueber die
+# Dicke), rechnen Steifigkeit und Fliessen still mit zwei verschiedenen.
+# Darum liefert das Element **einen** Operator je Integrationspunkt, und alle
+# lesen ihn (Auftrag an die Element-Sitzung, 22.09.2026, Pflicht 1).
+from dataclasses import dataclass as _dataclass                    # noqa: E402
+
+#: Globale Freiheitsgrade je Knoten (res.u ist (nn, 6), auch bei Volumen)
+_NDOF_GLOBAL = 6
+
+
+@_dataclass
+class Dehnungsoperator:
+    """Verzerrungen eines Stapels gleichartiger Elemente an P Punkten.
+
+    ``knoten`` (n,k): die Knoten, an denen die Punkte haengen. k darf groesser
+    sein als die Knotenzahl des Elements (ein geglaetteter Punkt haengt auch
+    an Nachbarknoten); leere Plaetze tragen einen Elementknoten mit
+    Nullgradient. ``w`` (P,n): Gewicht je Punkt (w |det J| bzw.
+    Volumenanteil), die Summe ueber P ist das Elementvolumen - bei einem
+    reinen Auswerteoperator (auswerteoperator) ohne Bedeutung.
+
+    Genau eines von ``g`` (P,n,k,3) - Gradienten, B = B_from_grad(g) - und
+    ``B`` (P,n,6,3k) - allgemeines B, etwa mit B-bar - ist gesetzt. ``Ba``
+    (P,n,6,na): innere Moden, im Element kondensiert (hex8), sonst None.
+    ``xi`` (P,3): natuerliche Koordinaten der Punkte, None bei Punkten ohne
+    solche (geglaettete Gebiete).
+    """
+    typ: str
+    idx: np.ndarray
+    knoten: np.ndarray
+    w: np.ndarray
+    g: np.ndarray = None
+    B: np.ndarray = None
+    Ba: np.ndarray = None
+    xi: np.ndarray = None
+    #: Projektion der Volumendehnung (hex8 "p1"): theta = vol_q[p] . (vol_c u)
+    #: mit vol_q (P,4) = (1, xi, eta, zeta) am Punkt und vol_c (n,4,3k) je
+    #: Element. Der Deviator bleibt punktweise. None: keine Projektion.
+    vol_q: np.ndarray = None
+    vol_c: np.ndarray = None
+    #: Globale FHG je Element und Ansatzfunktion (n, 3k), Spalte 3a + c fuer
+    #: Funktion a, Komponente c. Gesetzt fuer Ansaetze, deren Freiheitsgrade
+    #: nicht an Knoten haengen (hierarchische Kanten-/Flaechen-/Innenfunktionen,
+    #: die wie die Woelb-FHG hinter den Knoten-FHG liegen); dann darf
+    #: ``knoten`` None sein. None: 6 * knoten + 0..2.
+    fhg: np.ndarray = None
+
+    @property
+    def n(self) -> int:
+        return int(self.w.shape[1])
+
+    @property
+    def k(self) -> int:
+        if self.knoten is not None:
+            return int(self.knoten.shape[1])
+        return int(self.fhg.shape[1]) // 3
+
+    @property
+    def P(self) -> int:
+        return int(self.w.shape[0])
+
+    @property
+    def na(self) -> int:
+        return 0 if self.Ba is None else int(self.Ba.shape[3])
+
+    def dofs(self) -> np.ndarray:
+        """Globale FHG (n, 3k): ``fhg``, wenn gesetzt, sonst drei
+        Verschiebungen je Knoten."""
+        if self.fhg is not None:
+            return np.asarray(self.fhg, dtype=np.int64)
+        return (_NDOF_GLOBAL * self.knoten[:, :, None]
+                + np.arange(3)[None, None, :]).reshape(self.n, 3 * self.k)
+
+    def b(self, p: int) -> np.ndarray:
+        """Verzerrungsmatrix (n, 6, 3k) am Punkt p."""
+        B = self.B[p] if self.B is not None else _b_stapel(self.g[p])
+        if self.vol_c is None:
+            return B
+        # B-bar: die Volumenzeile m^T B durch ihre Projektion ersetzen
+        mB = B[:, :3, :].sum(axis=1)                                   # (n,3k)
+        proj = np.einsum("a,naj->nj", self.vol_q[p], self.vol_c)
+        B = B.copy()
+        B[:, :3, :] += ((proj - mB) / 3.0)[:, None, :]
+        return B
+
+    @property
+    def nur_gradienten(self) -> bool:
+        """True, wenn B = B_from_grad(g) gilt (kein allgemeines B, keine Projektion)."""
+        return self.B is None and self.vol_c is None
+
+    def dehnung(self, p: int, ue) -> np.ndarray:
+        """Voigt-Dehnung (n,6) am Punkt p zu den Elementverschiebungen ue (n,3k)
+        - ohne die inneren Moden (die addiert :func:`dehnung_mit_moden`)."""
+        ue = np.asarray(ue, float).reshape(self.n, 3 * self.k)
+        return (self.b(p) @ ue[:, :, None])[:, :, 0]
+
+    def teil(self, auswahl) -> "Dehnungsoperator":
+        """Derselbe Operator fuer eine Teilmenge der Elemente (Maske oder Positionen)."""
+        a = np.asarray(auswahl)
+        return Dehnungsoperator(
+            self.typ, self.idx[a], None if self.knoten is None else self.knoten[a],
+            self.w[:, a],
+            None if self.g is None else self.g[:, a],
+            None if self.B is None else self.B[:, a],
+            None if self.Ba is None else self.Ba[:, a], self.xi,
+            self.vol_q, None if self.vol_c is None else self.vol_c[a],
+            None if self.fhg is None else self.fhg[a])
+
+
+def _iso_an_punkten(typ, X, punkte, idx=None, pruefen=True, moden=True):
+    """Gradienten g (Q,n,k,3), det J (Q,n) und - beim hex8 - die Modenmatrix
+    Ba (Q,n,6,9) eines Stapels X (n,k,3) an den natuerlichen Punkten (Q,3).
+
+    ``pruefen``: det J <= 0 wirft ValueError mit der Elementnummer (idx)."""
+    fn = _ISO[typ][0]
+    X = np.asarray(X, float)
+    n, k = X.shape[0], X.shape[1]
+    Q = len(punkte)
+    g = np.empty((Q, n, k, 3))
+    det = np.empty((Q, n))
+    Ba = None
+    if typ == "hex8" and moden:
+        Ba = np.empty((Q, n, 6, 9))
+        _N0, dN0 = hex8_N_dN(0.0, 0.0, 0.0)
+        J0 = np.einsum("ki,nkj->nij", dN0, X)
+        detJ0 = np.linalg.det(J0)
+    for q, (r, s_, t) in enumerate(punkte):
+        _N, dNr = fn(float(r), float(s_), float(t))
+        J = np.einsum("ki,nkj->nij", dNr, X)
+        d = np.linalg.det(J)
+        if pruefen and np.any(d <= 0.0):
+            a = int(np.argmin(d))
+            nr = int(idx[a]) + 1 if idx is not None else a
+            raise ValueError(f"Element {nr} ({typ}): negative Jacobi-Determinante am Punkt "
+                             f"{q} (det J = {d[a]:.3e}) - das Element ist umgestuelpt "
+                             "oder entartet")
+        g[q] = np.linalg.solve(J, np.broadcast_to(dNr.T, (n, 3, k))).transpose(0, 2, 1)
+        det[q] = d
+        if Ba is not None:
+            dM = np.array([[-2.0 * r, 0.0, 0.0], [0.0, -2.0 * s_, 0.0], [0.0, 0.0, -2.0 * t]])
+            gm = (detJ0 / d)[:, None, None] * np.linalg.solve(
+                J0, np.broadcast_to(dM.T, (n, 3, 3))).transpose(0, 2, 1)
+            Ba[q] = _b_stapel(gm)
+    return g, det, Ba
+
+
+def _elementknoten(model, typ, idx):
+    k = _KNOTENZAHL[typ]
+    kn = np.asarray([model.elements[int(i)].nodes[:k] for i in idx], dtype=np.int64)
+    return kn.reshape(len(idx), k)
+
+
+def _binde_mittelknoten(model, typ, kn, g):
+    """Gebundene Mittelknoten (Uebergang an ein lineares Element, B5): ihr
+    Gradient geht je zur Haelfte auf die beiden Ecken ihrer Kante, und sie
+    selbst tragen nichts mehr - das ist u_m = (u_a + u_b)/2, exakt, in jeder
+    Rechnung, die den Operator liest (Steifigkeit, Spannung, Plastizitaet).
+    g (P,n,k,3) wird geaendert."""
+    from .. import assemble as asm
+    bind = {m: (a, b) for m, a, b in asm.mittelknoten_bindungen(model)}
+    if not bind:
+        return g
+    for e_pos in range(kn.shape[0]):
+        zeile = [int(x) for x in kn[e_pos]]
+        for l, knoten in enumerate(zeile):
+            ab = bind.get(knoten)
+            if ab is None or ab[0] not in zeile or ab[1] not in zeile:
+                continue
+            la, lb = zeile.index(ab[0]), zeile.index(ab[1])
+            g[:, e_pos, la, :] += 0.5 * g[:, e_pos, l, :]
+            g[:, e_pos, lb, :] += 0.5 * g[:, e_pos, l, :]
+            g[:, e_pos, l, :] = 0.0
+    return g
+
+
+def _mittelknoten_zusatz(model, idx, aktiv=None):
+    """Zusatzschluessel des Zwischenspeichers: die Bindungen haengen an den
+    Nachbarn (ein linearer Nachbar genuegt), nicht an den eigenen Knoten."""
+    from .. import assemble as asm
+    return hash(tuple(asm.mittelknoten_bindungen(model)))
+
+
+def _operator_iso(model, typ, idx, aktiv=None) -> list:
+    """Bauer der isoparametrischen Typen: die Gaussregel aus _ISO."""
+    idx = np.asarray(idx, dtype=np.int64)
+    kn = _elementknoten(model, typ, idx)
+    _fn, GP, W = _ISO[typ]
+    g, det, Ba = _iso_an_punkten(typ, np.asarray(model.nodes, float)[kn], GP, idx)
+    if typ in _QUADRATISCH:
+        g = _binde_mittelknoten(model, typ, kn, g)
+    w = np.asarray(W, float)[:, None] * det
+    return [Dehnungsoperator(typ, idx, kn, w, g=g, Ba=Ba, xi=np.asarray(GP, float))]
+
+
+def _auswertung_iso(model, typ, idx, punkte) -> list:
+    idx = np.asarray(idx, dtype=np.int64)
+    kn = _elementknoten(model, typ, idx)
+    g, det, Ba = _iso_an_punkten(typ, np.asarray(model.nodes, float)[kn], punkte, idx,
+                                 pruefen=False)
+    if typ in _QUADRATISCH:
+        g = _binde_mittelknoten(model, typ, kn, g)
+    return [Dehnungsoperator(typ, idx, kn, np.zeros_like(det), g=g, Ba=Ba,
+                             xi=np.asarray(punkte, float))]
+
+
+#: Typen mit Kantenmitten - die, deren Mittelknoten an ein lineares Element gebunden werden
+_QUADRATISCH = ("tet10", "hex20", "pent15")
+
+
+def hex8_regel_fuer(model):
+    """Die Punktregel des hex8 in diesem Modell: mit Fliessen und
+    ``plastizitaet.dicke_punkte`` >= 3 Gauss-Lobatto in t (A2, siehe
+    plastizitaet.Plastizitaet), sonst None (2x2x2 Gauss). Eine Stelle, damit
+    Steifigkeit, Spannung und Plastizitaet dieselbe Regel nehmen."""
+    pz = getattr(model, "plastizitaet", None)
+    if pz is None or not getattr(pz, "an", False):
+        return None
+    n = int(getattr(pz, "dicke_punkte", 2) or 2)
+    if n < 3:
+        return None
+    return hex8_regel(min(n, max(_LOBATTO)), "lobatto")
+
+
+def _operator_hex8(model, typ, idx, aktiv=None) -> list:
+    idx = np.asarray(idx, dtype=np.int64)
+    kn = _elementknoten(model, "hex8", idx)
+    return [_hex8_operator(np.asarray(model.nodes, float)[kn], idx=idx, knoten=kn,
+                           regel=hex8_regel_fuer(model))]
+
+
+def _auswertung_hex8(model, typ, idx, punkte) -> list:
+    idx = np.asarray(idx, dtype=np.int64)
+    kn = _elementknoten(model, "hex8", idx)
+    return [_hex8_operator(np.asarray(model.nodes, float)[kn], punkte=punkte, idx=idx, knoten=kn,
+                           regel=hex8_regel_fuer(model))]
+
+
+#: Bauer je Typ: f(model, typ, idx, aktiv) -> list[Dehnungsoperator]. Ein Typ
+#: mit eigener Kinematik traegt sich hier ein (auch aus einer anderen Datei).
+#: Die Auswertung (AUSWERTER) muss dieselbe Gruppierung liefern.
+OPERATOREN: dict = {typ: _operator_iso for typ in _ISO}
+OPERATOREN["hex8"] = _operator_hex8
+#: Bauer der Auswertung an beliebigen Punkten: f(model, typ, idx, punkte) -> list
+AUSWERTER: dict = {typ: _auswertung_iso for typ in _ISO}
+AUSWERTER["hex8"] = _auswertung_hex8
+
+
+#: Je Typ optional f(model, idx, aktiv) -> hashbar: was den Operator ausser
+#: Elementen, Knoten, Koordinaten und Maske bestimmt (etwa die Zuordnung von
+#: FHG ohne Knoten, die an Nachbarn oder Kontaktflaechen haengt). Geht in den
+#: Schluessel des Zwischenspeichers.
+ZUSATZSCHLUESSEL: dict = {}
+
+
+def _fingerabdruck(model, typ, idx, aktiv) -> tuple:
+    """Schluessel des Zwischenspeichers: Typ, Elemente, Maske und die
+    Koordinaten der beteiligten Knoten. Bis zum 22.09.2026 hing der Speicher
+    der Plastizitaet an (Typ, Zahl, erstes und letztes Element) - ein
+    verschobener Knoten oder eine andere Elementfolge gleicher Laenge haette
+    den alten Stapel still weiterbenutzt."""
+    import itertools
+    idx = np.ascontiguousarray(np.asarray(idx, dtype=np.int64))
+    kn = np.fromiter(itertools.chain.from_iterable(model.elements[int(i)].nodes for i in idx),
+                     dtype=np.int64)
+    X = np.ascontiguousarray(np.asarray(model.nodes, float)[np.unique(kn)])
+    m = None if aktiv is None else np.ascontiguousarray(np.asarray(aktiv, bool))
+    zusatz = ZUSATZSCHLUESSEL.get(typ)
+    return (typ, len(idx), hash(idx.tobytes()), hash(kn.tobytes()), hash(X.tobytes()),
+            None if m is None else hash(m.tobytes()),
+            None if zusatz is None else zusatz(model, idx, aktiv))
+
+
+def dehnungsoperator(model, typ, idx, aktiv=None, merken=False) -> list:
+    """Der Dehnungsoperator eines Elementtyps fuer die Elemente ``idx`` -
+    eine Liste, je Gruppe gleicher Punkt- und Knotenzahl ein Eintrag.
+
+    ``merken=True`` legt ihn am Modell ab (je Typ einer) und gibt ihn beim
+    naechsten Aufruf mit demselben Fingerabdruck wieder her - die Plastizitaet
+    fragt je Schritt, das Netz aendert sich dabei nicht."""
+    bauer = OPERATOREN.get(typ)
+    if bauer is None:
+        raise ValueError(f"Fuer den Elementtyp '{typ}' gibt es keinen Dehnungsoperator")
+    if not merken:
+        return bauer(model, typ, idx, aktiv)
+    schluessel = _fingerabdruck(model, typ, idx, aktiv)
+    speicher = getattr(model, "_dehnungsoperatoren", None)
+    if speicher is None:
+        speicher = {}
+        try:
+            model._dehnungsoperatoren = speicher
+        except AttributeError:          # Modell ohne freie Attribute: nicht merken
+            return bauer(model, typ, idx, aktiv)
+    alt = speicher.get(typ)
+    if alt is not None and alt[0] == schluessel:
+        return alt[1]
+    ops = bauer(model, typ, idx, aktiv)
+    speicher[typ] = (schluessel, ops)
+    return ops
+
+
+def auswerteoperator(model, typ, idx, punkte=None) -> list:
+    """Dieselbe Kinematik an anderen Punkten (natuerliche Koordinaten (Q,3));
+    ohne ``punkte`` an den AUSWERTEPUNKTEN des Typs. Die Gewichte sind hier
+    ohne Bedeutung (null)."""
+    bauer = AUSWERTER.get(typ)
+    if bauer is None:
+        raise ValueError(f"Fuer den Elementtyp '{typ}' gibt es keine Auswertung an Punkten")
+    pts = AUSWERTEPUNKTE[typ] if punkte is None else punkte
+    return bauer(model, typ, idx, np.asarray(pts, float).reshape(-1, 3))
+
+
+def D_stapel(E, nu, n) -> np.ndarray:
+    """Werkstoffmatrix je Element (n,6,6) aus Skalaren oder Feldern (n,) -
+    dieselben Zahlen wie :func:`D_matrix`."""
+    E = np.broadcast_to(np.asarray(E, float), (n,))
+    nu = np.broadcast_to(np.asarray(nu, float), (n,))
+    lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    mu = E / (2.0 * (1.0 + nu))
+    D = np.zeros((n, 6, 6))
+    D[:, :3, :3] = lam[:, None, None]
+    for a in range(3):
+        D[:, a, a] = lam + 2 * mu
+        D[:, 3 + a, 3 + a] = mu
+    return D
+
+
+def matrizen_aus_operator(op: Dehnungsoperator, D, ohne_kuu=False) -> tuple:
+    """(Kuu, Kua, Kaa) eines Operators; D ist (6,6) oder (n,6,6).
+    Kua/Kaa sind None ohne innere Moden, Kuu None bei ``ohne_kuu``."""
+    D = np.asarray(D, float)
+    n, nz, na = op.n, 3 * op.k, op.na
+    Kuu = None if ohne_kuu else np.zeros((n, nz, nz))
+    Kua = np.zeros((n, nz, na)) if na else None
+    Kaa = np.zeros((n, na, na)) if na else None
+    for p in range(op.P):
+        B = op.b(p)
+        wd = op.w[p][:, None, None]
+        # matmul statt einsum: die Stapel-Matrixmultiplikation geht ueber
+        # BLAS (gemessen 21.09.2026: 258,8 -> 85,4 µs je hex8)
+        Bt = B.transpose(0, 2, 1)
+        if not ohne_kuu:
+            Kuu += wd * (Bt @ (D @ B))
+        if na:
+            DBa = D @ op.Ba[p]
+            Kua += wd * (Bt @ DBa)
+            Kaa += wd * (op.Ba[p].transpose(0, 2, 1) @ DBa)
+    return Kuu, Kua, Kaa
+
+
+def steifigkeit_aus_operator(op: Dehnungsoperator, D) -> np.ndarray:
+    """Elementsteifigkeiten (n,3k,3k), die inneren Moden kondensiert."""
+    Kuu, Kua, Kaa = matrizen_aus_operator(op, D)
+    if Kua is None:
+        return Kuu
+    return Kuu - Kua @ np.linalg.solve(Kaa, Kua.transpose(0, 2, 1))
+
+
+def moden_aus_operator(op: Dehnungsoperator, D, ue) -> np.ndarray:
+    """Innere Freiheitsgrade alpha (n,na) = -Kaa^-1 Kua^T u (elastisch)."""
+    _Kuu, Kua, Kaa = matrizen_aus_operator(op, D, ohne_kuu=True)
+    ue = np.asarray(ue, float).reshape(op.n, 3 * op.k)
+    rechts = -np.einsum("nji,nj->ni", Kua, ue)
+    return np.linalg.solve(Kaa, rechts[..., None])[..., 0]
+
+
+def spannungen_stapel(model, typ, idx, E, nu, U, punkte=None) -> tuple:
+    """Elastische Spannungen eines Stapels gleichen Typs und Werkstoffs.
+
+    U (n,3k) sind die Elementverschiebungen in der Knotenfolge des Operators.
+    Rueckgabe (S, M): S (n,Q,6) an den Auswertepunkten (ohne ``punkte`` die
+    AUSWERTEPUNKTE des Typs), M (n,6) das Gewichtsmittel ueber die
+    Integrationspunkte - das Elementmittel Integral sigma dV / V, das der
+    Fehlerschaetzer liest (netzfehler.MITTELFELD). Beide aus **einem**
+    Operator: dieselben inneren Moden, dieselbe Kinematik wie die Steifigkeit.
+    """
+    idx = list(idx)
+    D = D_matrix(E, nu)
+    U = np.asarray(U, float).reshape(len(idx), -1)
+    S_alle, M_alle = [], []
+    pos = 0
+    ausw = auswerteoperator(model, typ, idx, punkte)
+    for op, aw in zip(dehnungsoperator(model, typ, idx), ausw):
+        Ue = U[pos:pos + op.n]
+        pos += op.n
+        alpha = moden_aus_operator(op, D, Ue) if op.Ba is not None else None
+        S = np.empty((op.n, aw.P, 6))
+        for q in range(aw.P):
+            S[:, q, :] = dehnung_mit_moden(aw, q, Ue, alpha) @ D.T
+        M = np.zeros((op.n, 6))
+        for p in range(op.P):
+            M += op.w[p][:, None] * (dehnung_mit_moden(op, p, Ue, alpha) @ D.T)
+        M /= op.w.sum(axis=0)[:, None]
+        S_alle.append(S)
+        M_alle.append(M)
+    return np.concatenate(S_alle), np.concatenate(M_alle)
+
+
+def dehnung_mit_moden(op: Dehnungsoperator, p: int, ue, alpha=None) -> np.ndarray:
+    """Voigt-Dehnung (n,6) am Punkt p, mit den inneren Moden, wenn es welche gibt."""
+    eps = op.dehnung(p, ue)
+    if op.Ba is not None and alpha is not None:
+        eps = eps + (op.Ba[p] @ np.asarray(alpha, float)[:, :, None])[:, :, 0]
+    return eps
+
+
+for _t in _QUADRATISCH:
+    ZUSATZSCHLUESSEL[_t] = _mittelknoten_zusatz

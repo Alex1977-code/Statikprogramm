@@ -72,6 +72,52 @@ Keil und Pyramide sind die Übergangselemente zwischen Hexaeder- und
 Tetraedernetzen: eine Hexaederschicht endet über eine Pyramidenlage im
 Tetraedernetz, ohne dass Knoten hängen.
 
+**Ein Dehnungsoperator für Steifigkeit, Spannung und Plastizität (22.09.2026).**
+Jeder Volumentyp liefert seine Kinematik an **einer** Stelle:
+`elements.solid.dehnungsoperator(model, typ, elemente)` gibt je Integrationspunkt die
+Verzerrungsmatrix B (bzw. die Formfunktionsableitungen), das Gewicht w·|det J| und —
+beim `hex8` — die inneren Moden; `auswerteoperator` dasselbe an beliebigen Punkten
+(den Auswertepunkten). Daraus rechnen die Steifigkeit (`steifigkeit_aus_operator`,
+gestapelt für hex8, tet10, hex20, pent6, pent15, pyr5), die Spannungsrückrechnung
+(`spannungen_stapel`, samt Elementmittel `solid_mittel`) und die Plastizität
+(`plastizitaet._stapel`). Bis dahin stellte jeder Leser sein B selbst auf — dieselben
+Zahlen, aber drei Wege; sobald ein Element eine andere Kinematik bekommt (etwa die
+projizierte Volumendehnung des hex8, § 4.4), hätten Steifigkeit und Fließen still mit
+zwei verschiedenen gerechnet. Geprüft: Steifigkeit aus dem Operator gegen die
+Einzelfassung jedes Typs auf ≤ 6,3·10⁻¹⁶, gestapelte Assemblierung gegen
+`element_matrix` ebenso, ein umgestülptes Element nennt auch im Stapel seine Nummer
+(`tests/test_elemente_volumen.py`, `t_operator`). Der `tet4` bleibt beim Einzelweg
+(24,2 µs je Element; mit Knotendilatation rechnet er seinen deviatorischen Anteil
+über `element_matrix`).
+
+**Übergang linear/quadratisch (22.09.2026).** Teilt ein quadratisches Element
+(tet10, hex20, pent15) eine Seite mit einem linearen (tet4, hex8, pent6) — dieselben
+Eckknoten, verbunden, keine Fuge —, kennt das lineare Element dort keinen
+Mittelknoten. Läuft die Verschiebung des quadratischen Elements an der Seite frei,
+klafft die Grenze, und ein lineares Verschiebungsfeld ist kein Gleichgewicht mehr:
+der Mittelknoten trägt aus der konstanten Spannung die Kraft A/3·t (die Ecken des
+6-Knoten-Dreiecks nichts), und niemand hält dagegen. Gemessen am Würfel aus tet10
+und tet4 mit gestörtem Innenknoten: Patch-Test um 2,5·10⁻¹ daneben (relativ zur größten
+Verschiebung). Die Seitenmitten
+solcher Seiten werden darum an ihre Kante gebunden, u_m = (u_a + u_b)/2
+(`assemble.mittelknoten_bindungen`) — **exakt**, nicht im Strafverfahren (mit der
+Strafe 10⁴ blieben 6·10⁻⁶): der Dehnungsoperator schlägt den Gradienten des
+Mittelknotens je zur Hälfte auf die beiden Ecken, sodass Steifigkeit, Spannung und
+Plastizität dieselbe gebundene Kinematik sehen; Lasten und Massen am Mittelknoten
+gehen ebenso auf die Ecken, und seine Verschiebung wird nach dem Lösen aus der
+Kante eingetragen. Patch-Test über die Grenze: 2,5·10⁻¹⁶, im Löser Spannung
+3,5·10⁻¹⁵ (`tests/test_elemente_volumen.py`, `t_uebergang_linear_quadratisch`).
+An einer **Kontaktfuge** wird nichts gebunden — dort hat jede Seite eigene Knoten.
+
+**Gekrümmte Elemente (22.09.2026).** Liegen die Seitenmitten eines tet10 auf der
+wahren Geometrie (Bohrung, Ausrundung), kann die Jacobi-Determinante innerhalb des
+Elements das Vorzeichen wechseln, zuerst an Ecken und Kanten — an den Gaußpunkten
+kann sie dabei noch positiv sein. `elements.solid.jacobi_pruefung(model)` prüft
+Integrationspunkte, Ecken und (tet10) Kantenmitten stapelweise und nennt jedes
+Element mit det J ≤ 0 mit Nummer; die Netzabnahme ruft sie vor dem Rechnen
+(`t_jacobi_pruefung`). Die Assemblierung selbst bricht bei det J ≤ 0 an einem
+Integrationspunkt mit Elementnummer ab, auch im Stapel.
+
 **Ebene Elemente** (3 Verschiebungsfreiheitsgrade je Knoten, Steifigkeit nur in
 der Elementebene) als ebene3, ebene4, ebene6, ebene8 mit dem Zustand
 **Scheibe** (ebener Spannungszustand, Dicke t), **ebener Dehnungszustand**
@@ -1881,11 +1927,54 @@ Faktor **3,43** am selben Netz — die Moden sind der ganze Unterschied, nicht
 die Verfeinerung. Zum Vergleich brauchen `pent6` und `pyr5` in derselben
 Prüfung 10 bzw. 6 Elemente in der Länge für ihre gröbste Stufe.
 
-**Nahezu inkompressibel** sperrt er nicht: bei ν = 0,45 bleiben 95,0 % und bei
-**ν = 0,499 noch 80,3 %** der Lösung bei ν = 0,3. Der lineare Tetraeder fällt
-dort auf 2,1 % (§ 6a) — die Wilson-Moden enthalten genau die Volumenänderung,
-die dem trilinearen Ansatz fehlt. Deshalb braucht der `hex8` die
-knotengemittelte Dilatation nicht, die für den `tet4` gebaut wurde
+**Nahezu inkompressibel: die Volumendehnung ist linear projiziert (22.09.2026).**
+Bis dahin rechnete der `hex8` die Volumendehnung punktweise an seinen 2 × 2 × 2
+Gaußpunkten. Bei ν = 0,499 blieben so am Kragarm 8 × 2 × 2 noch 80,3 % der Lösung
+bei ν = 0,3 — das sah nach „sperrt kaum“ aus, doch die **Spannung** zeigte es: an der
+Nachweisstelle des Prüfkörpers (Kragarm 1,0 × 0,1 × 0,2 m, Oberkante bei L/2, nach
+Saint-Venant exakt 355 N/mm²) lag σ_xx am Netz 8 × 2 × 4 um −51 N/mm², am Netz
+4 × 1 × 2 um −509 N/mm² daneben — mit falschem Vorzeichen. Das ist der Druck: σ_v
+blendet ihn aus, σ_xx nicht, und bei Fließen (volumentreu) trifft es auch die
+Vergleichsspannung.
+
+Heute wird die Volumendehnung θ = mᵀε je Element auf die Funktionen {1, ξ, η, ζ}
+projiziert (B-bar mit linearem Druckansatz, im Rahmen von Simo/Rifai 1990), der
+Deviator bleibt punktweise:
+
+    θ̄(ξ) = q(ξ)ᵀ M⁻¹ Σ_gp w_gp q_gp θ_gp,   q = (1, ξ, η, ζ),   M = Σ_gp w_gp q_gp q_gpᵀ
+
+Für die inneren Moden gilt dieselbe Projektion. `HEX8_VOLUMEN = "voll"` stellt den
+alten Weg wieder her (für Vergleiche).
+
+**Warum nicht die mittlere Dilatation** (ein Wert je Element, der übliche Weg für den
+trilinearen Hexaeder): Zusammen mit den Wilson-Moden ist sie instabil. Das Feld
+u = κ (xz, yz, (z² − x² − y²)/2) hat die Dehnung κ z · I — rein volumetrisch, Deviator
+null —, ist mit den Moden darstellbar und hat, um die Elementmitte gemittelt, keine
+Volumendehnung: keine Energie. Es setzt sich als Schachbrett über das Netz fort.
+Gemessen: 9 statt 6 Nullmoden am regelmäßigen Element, der Kragarm 4 × 1 × 1 biegt
+sich 44-fach durch. Der lineare Ansatz behält genau diesen linearen Anteil — 6
+Nullmoden am regelmäßigen und am verzerrten Element, bei ν = 0,3 und 0,499.
+
+Gemessen am Prüfkörper (σ_v bzw. σ_xx an der Nachweisstelle, Abweichung in N/mm²,
+gemittelter Tensor der Elemente am Punkt, `tests/test_elemente_volumen.py`,
+`t_hex8_volumensperre`):
+
+| Netz | ν = 0,3 punktweise / linear | ν = 0,499 σ_v punktweise / linear | ν = 0,499 σ_xx punktweise / linear |
+|---|---|---|---|
+| 4 × 1 × 2 | −7,7 / −9,6 | −51,1 / −25,7 | −509 / +4,1 |
+| 8 × 2 × 4 | +0,73 / +0,77 | −4,2 / −1,6 | −50,7 / +1,6 |
+| 16 × 4 × 8 | +0,23 / +0,22 | +0,07 / +0,07 | −2,6 / +0,2 |
+
+Die Biegung bei ν = 0,3 ändert sich ab 8 × 2 × 4 um höchstens 0,04 N/mm². Die
+Verschiebung am Kragarm 8 × 2 × 2 bei ν = 0,499 liegt jetzt bei 93,0 % der Lösung
+bei ν = 0,3 (vorher 80,3 %); der Rest ist zum Teil die 3D-Lösung selbst, denn die
+Einspannung behindert die Querdehnung bei ν → 0,5 stärker. **Nicht erreicht** ist
+„kein Unterschied“: am gröbsten Netz 4 × 1 × 2 liegt σ_v bei ν = 0,499 um 25,7
+N/mm² daneben gegen 9,6 bei ν = 0,3; ab 8 × 2 × 4 sind beide unter 2 N/mm², ab
+16 × 4 × 8 gleich.
+
+Der lineare Tetraeder fällt bei ν = 0,499 auf 2,1 % (§ 6a). Die knotengemittelte
+Dilatation, die für den `tet4` gebaut wurde, braucht der `hex8` nicht
 (`assemble._dilatationsdaten` filtert ausdrücklich auf `tet4`).
 
 **Geprüft ist er seit dem 21.09.2026 wie die übrigen Volumenelemente**
@@ -2598,17 +2687,49 @@ nach von Mises:
       σ_v = √(½[(σ_1−σ_2)² + (σ_2−σ_3)² + (σ_3−σ_1)²]) ≤ f_y/γ_M0
 
 mit den Hauptspannungen σ_1 ≥ σ_2 ≥ σ_3 als Eigenwerten des Spannungstensors.
-**Wo wird ausgewertet?** Je Element an der Mitte **und** an den Eckpunkten
-(Hexaeder 9 Punkte, Tet10 5, Tet4 einer — dort ist die Spannung konstant).
-Die Elementmitte allein genügt nicht: bei Biegung durch den Körper liegt die
-Randspannung deutlich höher. Am Kragarm aus Hexaedern mit vier Elementen über
-die Höhe gibt die Mitte 43,3 N/mm², der Eckpunkt 60,3 N/mm² — die
-Balkenlösung M/W ist 60,0 N/mm². Ein Nachweis aus Mittelpunktspannungen läge
-also um rund 28 % auf der unsicheren Seite. Maßgebend ist der größte Wert
-über alle Elemente, Punkte und GZT-Kombinationen.
+**Wo wird ausgewertet? — die Auswerteregel (22.09.2026).** Nachgewiesen wird an
+den **Eckknoten**, mit der **geglätteten** Spannung: an jedem Eckknoten das Mittel
+der Elementwerte, getrennt nach Körper (`Element.group`) und Werkstoff; je Element
+zählt seine größte Ecke (`res.solid_rand`, aus `res.solid_knoten`). Der Elementwert
+an der Ecke ist elastisch das Spannungsfeld des Elements dort (beim Hexaeder mit den
+inneren Moden, beim tet4 sein einer Wert), bei einem **fließenden** Element der
+Wert am nächsten Integrationspunkt.
 
-Für den Hexaeder werden die inkompatiblen Moden dabei einmal je Element
-gelöst und danach alle Punkte damit ausgewertet.
+Warum so, gemessen am Kragarm-Prüfkörper (1,0 × 0,1 × 0,2 m, Oberkante bei L/2,
+nach Saint-Venant exakt 355 N/mm², `tests/pruefkoerper.py`), Abweichung in N/mm²:
+
+| FHG | hex8 Element-Maximum (bis 22.09.) | hex8 geglättet | tet10 Element-Maximum | tet10 geglättet |
+|---|---|---|---|---|
+| 90 / 405 | +173,2 | −9,6 | +156,6 (405) | +14,2 (405) |
+| 405 / 2 295 | +64,7 | **+0,8** | +85,2 (2 295) | +4,0 (2 295) |
+| 2 295 / 15 147 | +31,1 | +0,2 | +43,4 (15 147) | +1,0 (15 147) |
+
+Ein Element mit linearem Ansatz zeigt an seinen Ecken den Momentenverlauf
+versetzt: die Ecke zur Einspannung zu hoch, die andere zu niedrig. Das Maximum
+eines Elements konvergiert darum nur mit der Elementlänge (am feinsten hex8-Netz
+noch +31 N/mm²), der Mittelwert der Nachbarn an einem Knoten dagegen quadratisch:
+der hex8 trifft die 1 N/mm² mit 405 Freiheitsgraden. Über eine Körper- oder
+Werkstoffgrenze wird nicht gemittelt — die Spannung springt dort wirklich.
+
+Die **Elementmitte** allein genügte schon früher nicht: am Kragarm aus Hexaedern
+mit vier Elementen über die Höhe zeigte sie 43,3 N/mm² gegen M/W = 60,0 N/mm².
+Maßgebend ist der größte Wert über alle Knoten des Bereichs und alle
+GZT-Kombinationen; der Bericht nennt den Knoten („Knoten 812 (geglättet)“).
+
+**Fließende Elemente** tragen den Wert ihres nächsten Integrationspunkts bei
+(`plastizitaet.punktspannungen`): nur dort ist der plastische Zustand bekannt, und
+jeder dieser Werte liegt auf oder in der verfestigten Fließfläche — ein Mittel
+solcher Werte ebenso (die Fließfläche ist konvex). Bis zum 22.09.2026 stand für
+fließende Elemente die Elementmitte im Ergebnis; beim Sechsflächner unter Biegung
+ist das der Ort, an dem die Spannung null ist. Mit fünf Lobatto-Punkten über die
+Dicke (§ 5e.1) trifft die geglättete Randspannung einer einzigen hex8-Lage unter
+1,20 M_el die Momenten-Krümmungs-Lösung auf 1 N/mm²
+(`tests/test_volumen.py`, `test_randspannung_fliessend`).
+
+`res.solid_res` bleibt je Element der maßgebende eigene Punkt (Anzeige, ältere
+Ergebnisse); der Fehlerschätzer liest das Elementmittel `res.solid_mittel` (§ 6c).
+Ohne Knotenwerte — eine ältere Ergebnisdatei, eine Überlagerung verschiedener
+Situationen — nimmt der Nachweis wie bisher `solid_res`.
 
 Zusätzlich ausgewiesen:
 
@@ -2921,19 +3042,28 @@ Zwei Feinheiten, an denen es hängt:
   Mittelpunktfassung in 4 Schritten konvergiert. Die Mittelpunktfassung ist
   außerdem symmetrisch — CHOLMOD in der Löserkette verträgt nichts anderes.
 
-Wie genau ΔK damit die Ableitung trifft, hängt am Elementtyp: bei **tet4 und
-pyr5** ist der Auswertepunkt zugleich der einzige Gaußpunkt, dort ist
-ΔK = −∂F_p/∂u exakt (gemessen 8·10⁻¹⁰). Bei **hex8 und pent6** weicht es an
-verzerrten Elementen um rund 1 % ab, bei den quadratischen Typen **tet10,
-hex20, pent15** um bis zu 53 % — dort ist das Mittel von B über das Element
-nicht der Wert in der Mitte. Dort bleibt es ein Quasi-Newton: die Richtung
-stimmt, ΔK ist symmetrisch und negativ semidefinit (geprüft für alle sieben
-Typen), aber es ist nicht mehr die Ableitung. Gemessen ist der Weg bisher an
-tet4 (Zugversuch) und hex8 (Reibblock mit Kontakt); für die quadratischen
-Typen steht die Messung noch aus. Wirklich exakt würde es erst, wenn die
-Plastizität an allen Gaußpunkten ausgewertet würde — das ist eine andere
-Baustelle (ein Punkt je Element ist die bewusste Festlegung dieses
-Programms, siehe unten).
+*(Der vorige Absatz beschreibt den Stand vor dem 20.09.2026, als ε_p an der
+Elementmitte hing. Seitdem lebt der plastische Zustand an jedem Gaußpunkt —
+§ 5e.1 —, und die Gaußpunktfassung ist die richtige.)*
+
+**ΔK ist für jeden Volumentyp die exakte Ableitung** (gemessen 22.09.2026,
+`tests/test_plastizitaet.py`, `test_tangente_exakt_fuer_jeden_typ`): gegen
+zentrale Differenzen −∂F_p/∂u weicht ΔK bei tet4, hex8 (mit inneren Moden),
+tet10, hex20, pent6, pent15 und pyr5 um 0,6·10⁻⁹ bis 3,2·10⁻⁹ ab — das ist der
+Fehler der Differenzen selbst. Newton konvergiert damit quadratisch
+(`test_newton_konvergiert_quadratisch`, Kragträger 200 × 200 mm unter
+1,20 M_el, eine Laststufe, Änderung je Schritt):
+
+| | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| hex8 (5 × 1 × 4) | 2,2·10⁻¹ | 3,6·10⁻¹ | 1,9·10⁻³ | 2,5·10⁻⁶ | 2,9·10⁻¹² |
+| tet10 (5 × 1 × 2) | 9,6·10⁻² | 1,5·10⁻¹ | 2,1·10⁻³ | 2,4·10⁻⁶ | 7,9·10⁻¹² |
+
+Bis zum 22.09.2026 stand hier, ΔK weiche bei hex8 und pent6 um rund 1 %, bei
+tet10, hex20 und pent15 um bis zu 53 % ab und bleibe ein Quasi-Newton. Das galt
+für die Mittelpunktfassung vor dem 20.09.2026 und ist seitdem falsch; es war im
+Quelltext (`plastizitaet.py`) und hier stehen geblieben, ohne neu gemessen zu
+werden.
 
 **Gemessen** am selben Zugversuch (1 % Verfestigung, drei Laststufen,
 Toleranz 1e-3; „Abweichung“ ist die mittlere Dehnung am gezogenen Ende
@@ -3111,14 +3241,46 @@ dieselbe Dehnung. Die plastische Zone reicht rechnerisch bis
 z/(h/2) = √(3 − 2·1,20) = 0,775; der äußerste Gaußpunkt der vierten Lage liegt
 bei 89,4 %, der der dritten bei 60,6 % — es fließt genau die äußere Lage.
 
-**Eine Lage über die Höhe kann es nicht sehen, und das ist kein Mangel:** der
+**Eine Lage über die Höhe sah es mit 2 × 2 × 2 Gaußpunkten nicht:** der
 äußerste Gaußpunkt liegt bei 57,7 % der halben Höhe und trägt
-0,577 · 282 = 163 N/mm², also unter fy. Wer Fließen rechnen will, braucht
-mehrere Elemente über die Dicke — beim Sechsflächner ebenso wie beim
-Tetraeder, nur mit viel weniger Elementen.
+0,577 · 282 = 163 N/mm², also unter fy. Bis zum 22.09.2026 hieß das: mehrere
+Elemente über die Dicke, im Sweep mindestens vier Lagen (`LAGEN_MIN_PLASTISCH`).
 
-Nachweis `tests/test_plastizitaet.py::test_sechsflaechner_fliesst_unter_biegung`
-und `::test_tet4_wertet_in_seinem_gausspunkt_aus`.
+**Seit dem 22.09.2026 rechnet der `hex8` mit Fließen Gauss-Lobatto-Punkte über
+die Dicke** (Richtung t, im Sweep die Lagenrichtung; `Plastizitaet.dicke_punkte`,
+Vorgabe 5, 2 = alte Regel). Lobatto legt die äußersten Punkte **auf** die
+Oberfläche — dort, wo die Randfaser fließt und wo der Nachweis sie braucht. In
+r und s bleiben es zwei Gaußpunkte. Für ein Parallelepiped ist die elastische
+Steifigkeit mit jeder Regel ab zwei Punkten dieselbe (die Integranden sind in t
+höchstens quadratisch); Steifigkeit, Spannung und Plastizität nehmen dieselbe
+Regel aus dem Dehnungsoperator (`solid.hex8_regel_fuer`), auch der Einzelweg in
+`assemble.element_matrix`.
+
+Gemessen gegen die Momenten-Krümmungs-Beziehung des Rechteckquerschnitts
+(bilinear, E_t/E = 2 %; Randfaser 236,35 N/mm², ε_p = 0,0315 %), am
+Integrationspunkt der obersten Lage bei x ≈ L/2, Abweichung σ_v in N/mm² und
+ε_p,eq in Prozent des Sollwerts:
+
+| Lagen | 2 × 2 × 2 Gauß | 2 × 2 × 4 Gauß | Lobatto 3 | Lobatto 4 | **Lobatto 5** |
+|---|---|---|---|---|---|
+| 1 | −74,2 (fließt nicht) | −0,79 (−59 %)¹ | +45,1 (+3342 %) | +0,25 (+18 %) | **−0,20 (−15 %)** |
+| 2 | −17,2 (fließt nicht) | −0,49 (−37 %)¹ | +0,29 (+21 %) | −0,27 (−20 %) | **−0,20 (−15 %)** |
+| 4 | −0,57 (−42 %)¹ | −0,21 (−15 %)¹ | −0,16 (−12 %) | +0,03 (+2 %) | **−0,07 (−5 %)** |
+
+¹ unter der Oberfläche (86 bzw. 93 % der halben Höhe), nicht an der Faser.
+
+Drei Lobatto-Punkte reichen bei einer Lage nicht: die Regel kennt nur Rand und
+Mitte, die Mitte trägt kein Moment, und das ganze plastische Moment landet auf der
+Randfaser (+45 N/mm², ε_p 35-fach). Mit fünf trifft schon **eine** Lage die
+Randfaser auf 1 N/mm². ε_p,eq liegt dann um 15 % zu niedrig — der Knick zwischen
+elastischem Kern und Fließzone fällt zwischen zwei Punkte; mit vier Lagen sind es
+5 %. Der Preis: 20 statt 8 Punkte je Element in jedem Fließschritt; gespart werden
+dafür Lagen (vier auf eine bis zwei). Ob `LAGEN_MIN_PLASTISCH` im Sweep dafür sinken
+kann, entscheidet der Vernetzer mit einer eigenen Messung.
+
+Nachweis `tests/test_plastizitaet.py::test_sechsflaechner_fliesst_unter_biegung`,
+`::test_plastische_randfaser_mit_wenigen_lagen` und
+`::test_tet4_wertet_in_seinem_gausspunkt_aus`.
 
 **Was `res.solid_res` zeigt, ist der maßgebende Auswertepunkt** (§ 5d). Die
 Anfangsspannung D·ε_p wird dafür über die Gaußpunkte gemittelt — beim `tet4`
@@ -4469,7 +4631,12 @@ genau an der Fließgrenze, und ein Teil des gemessenen Sprungs ist dann der Rege
 und nicht das Netz. Für tet4 ist das gleichgültig (ein Punkt), für hex8/pent6/pyr5 nicht.
 Führt der Löser ein einheitliches **Mittel über die Gaußpunkte** als eigenes Feld
 (`netzfehler.MITTELFELD`, heute `solid_mittel`), liest der Schätzer es bevorzugt — ohne
-weitere Änderung.
+weitere Änderung. **Seit dem 22.09.2026 führt er es:** `res.solid_mittel` ist für jedes
+Volumenelement das Elementmittel ∫σ dV / V, gewichtet über die Integrationspunkte desselben
+Dehnungsoperators, aus dem Steifigkeit und Plastizität rechnen (für den tet4 sein einer Wert),
+mit denselben Abzügen wie `solid_res` (Temperatur, D ε_p). Weil es linear in u ist, wird es
+in Kombinationen exakt überlagert — anders als `solid_res`, dessen maßgebender Punkt je
+Lastfall ein anderer sein kann (`tests/test_volumen.py`, `test_elementmittel`).
 
 **Der Probelauf.** Die Schleife rechnet je Durchgang mit `solve_static(…, probelauf=True)`
 — einem Kontaktschritt aus dem Anfangszustand der Fugen; sein Ergebnis ist ein Netzmaß,
