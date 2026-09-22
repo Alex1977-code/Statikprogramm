@@ -507,6 +507,36 @@ Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaf
     senkrecht zur Fläche, höbe sie sich über den Zylinder auf und der
     Lastfall wäre kräftefrei.
 * Eigengewicht je Lastfall (Erdbeschleunigungsvektor).
+
+**Eine Last, die nicht wirken kann, sagt es.** Bis zum 22.09.2026 gab es drei
+Eingaben, die eine Last **zu 100 %** ausfallen ließen, ohne dass irgendetwas
+gemeldet wurde — und in allen drei Fällen stand die Last weiter mit ihrem
+vollen Betrag im Bericht und wurde in der Ansicht an einer Fläche gezeichnet:
+
+* eine **Seitennummer außerhalb des Bereichs** (`solid_face_pressure` gab
+  einen Nullvektor zurück). Erreichbar von außen über ein Abaqus-`*DLOAD P5`
+  am Tetraeder, der nur vier Seiten hat: gemessen 1000 kN → 0 kN;
+* der **Nullvektor als Richtung**. Alle drei Zweige normieren mit
+  `d/(‖d‖ or 1)`, aus dem Nullvektor wird dabei wieder der Nullvektor;
+  erreichbar über eine Nastran-`PLOAD4` mit ausgeschriebenem `0., 0., 0.`;
+* ein **einseitiges Lager ohne Richtung**. Die Normale wird zu (0,0,0), die
+  Bedingung trägt keinen Freiheitsgrad, und das Ergebnis ist Zeichen für
+  Zeichen das eines Systems ohne dieses Lager — während die Ergebniszeile
+  „Kontakt" behauptet.
+
+Die ersten beiden brechen jetzt beim Aufstellen mit einer Ausnahme ab, so wie
+das ebene Element es seit jeher tut (`ebene.py`: „Kante gibt es nicht",
+„richtung darf nicht der Nullvektor sein"). Alle drei stehen zusätzlich in
+`Model.check()`, also **vor** dem Rechnen und mit dem Lastfall dabei. Und der
+Grund, den eine leer gebliebene Objektlast nennt, ist berichtigt: „liegt ganz
+im Windschatten der Last" schickte den Anwender auf die Suche nach einer
+verdeckten Fläche, wo in Wahrheit die Richtung fehlte.
+
+**Nicht** geändert wurde der Fall der *entarteten* Seite (Fläche null): er ist
+nicht still — das Element wird von `Model.check()` von sich aus als „entartet
+ohne Ausdehnung" gemeldet, und ein zur Geraden entartetes Element bricht den
+Lauf ohnehin ab. Eine Ausnahme dort stünde außerdem gegen die Festlegung, dass
+ein entartetes Element die Rechnung nicht stoppen darf.
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
   Anfangsdehnung wird bei der Spannungsrückrechnung abgezogen.

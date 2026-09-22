@@ -4476,6 +4476,8 @@ class Model:
         if gl.lastart == "temperatur":
             return ("Randflaeche eines Koerpers traegt keine Elemente - die Temperatur "
                     "gehoert auf den Koerper" if gl.art == "flaeche" else "keine Elemente")
+        if gl.richtung is not None and not any(float(x) for x in gl.richtung):
+            return "FEHLER: die Richtung ist der Nullvektor - die Last kann nicht wirken"
         if gl.projiziert and gl.richtung:
             return "liegt ganz im Windschatten der Last"
         if gl.bereich:
@@ -5134,6 +5136,9 @@ class Model:
         n_loads = sum(lc.n_loads for lc in self.load_cases.values())
         if n_loads == 0:
             msgs.append("WARNUNG: keine Lasten definiert")
+        # einmal, nicht je Flaechenlast: auf Modulebene steht der Import in
+        # model.py nirgends (Ringschluss mit elements.solid)
+        from .elements import solid as _sl
         for lc in self.load_cases.values():
             for l in lc.nodal_loads:
                 if l.node >= self.nn:
@@ -5141,6 +5146,34 @@ class Model:
             for l in lc.beam_loads:
                 if l.elem >= len(self.elements):
                     msgs.append(f"FEHLER: Lastfall '{lc.name}': Element {l.elem} existiert nicht")
+            # Flaechenlasten: eine Seitennummer ausserhalb des Bereichs und der
+            # Nullvektor als Richtung liessen die Last frueher still mit 0 N
+            # wirken. Beides bricht jetzt beim Aufstellen ab - hier steht es
+            # schon **vor** dem Rechnen und mit dem Lastfall dabei.
+            for l in lc.face_loads:
+                if not 0 <= int(l.elem) < len(self.elements):
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                                f"Element {l.elem} - das Element gibt es nicht")
+                    continue
+                el = self.elements[int(l.elem)]
+                if el.typ in _EL.VOLUMEN_TYPEN:
+                    n_s = len(_sl.FLAECHEN[el.typ])
+                    if not 0 <= int(l.face) < n_s:
+                        msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                                    f"Element {l.elem} ({el.typ}): Seite {l.face} gibt "
+                                    f"es nicht (0..{n_s - 1}) - die Last wirkt nicht")
+                if l.direction is not None and not any(float(x) for x in l.direction):
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                                f"Element {l.elem}: Richtung ist der Nullvektor - "
+                                "die Last wirkt mit 0 N")
+        for cs in self.contact_supports:
+            # Ein einseitiges Lager ohne Richtung kann nie tragen: die Normale
+            # wird zu (0,0,0), die Bedingung traegt keinen Freiheitsgrad, und
+            # das Ergebnis ist Zeichen fuer Zeichen das eines Systems ohne
+            # dieses Lager - waehrend die Ergebniszeile "Kontakt" behauptet.
+            if not any(float(x) for x in cs.direction):
+                msgs.append(f"FEHLER: Einseitiges Lager Knoten {cs.node}: Richtung "
+                            "ist der Nullvektor - das Lager kann nie tragen")
         for cp in self.contact_pairs:
             if not cp.master_elements and not cp.master_faces:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Flaeche")

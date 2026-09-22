@@ -575,8 +575,154 @@ def test_vorspannung():
           f"{float(sp2[0][2]) / 1e6 if sp2 else float('nan'):.3f} MPa gegen {Fv / (a * b) / 1e6:.3f}")
 
 
+def test_lasten_verschwinden_nicht_mehr_still():
+    """Drei Wege, auf denen eine Last zu 100 % ausfiel, ohne dass etwas
+    gemeldet wurde.
+
+    Alle drei schreiben eine **plausible Zahl**: die Last steht weiter im
+    Bericht mit ihrem vollen Betrag und wird in der Ansicht gezeichnet, nur
+    wirkt sie nicht. Genau das macht sie gefährlich.
+
+    * **Eine Seitennummer, die es nicht gibt.** `solid_face_pressure` gab
+      einen Nullvektor zurück, wenn `face` außerhalb des Bereichs lag -
+      erreichbar von außen über ein Abaqus-`*DLOAD P5` am Tetraeder, der nur
+      vier Seiten hat. Gemessen: 1000 kN → 0 kN. Das ebene Element macht es
+      drei Zeilen weiter richtig und wirft eine Ausnahme.
+    * **Der Nullvektor als Richtung.** Alle drei Zweige normieren mit
+      `d / (norm(d) or 1.0)`; aus dem Nullvektor wird dabei wieder der
+      Nullvektor. Erreichbar über eine Nastran-`PLOAD4` mit ausgeschriebenem
+      Normalenvektor `0., 0., 0.`.
+    * **Ein einseitiges Lager ohne Richtung** kann nie tragen; das Ergebnis
+      ist Zeichen für Zeichen das eines Systems ohne dieses Lager, während
+      die Ergebniszeile „Kontakt" behauptet.
+
+    Geprüft wird auf zwei Lagen: die Ausnahme beim Aufstellen **und** die
+    Zeile in `Model.check()`, die den Fall schon vor dem Rechnen zeigt.
+    """
+    from statik3d import assemble
+    from statik3d.model import Material, Model
+
+    def wuerfel(typ="hex8"):
+        m = Model("last")
+        m.add_material(Material.steel("S235"))
+        if typ == "hex8":
+            for p in ([0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                      [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]):
+                m.add_node(*p)
+            m.add_element("hex8", list(range(8)), "S235")
+        else:
+            for p in ([0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1.]):
+                m.add_node(*p)
+            m.add_element("tet4", [0, 1, 2, 3], "S235")
+        return m
+
+    # ---- (a) Seitennummer ausserhalb des Bereichs
+    m = wuerfel("tet4")
+    m.load_face(0, -1000e3, face=4)          # tet4 hat die Seiten 0..3
+    try:
+        assemble.load_vector(m, m.case())
+        check("eine Seitennummer, die es nicht gibt, bricht ab", False,
+              "sie lief durch und gab 0 N")
+    except ValueError as ex:
+        check("eine Seitennummer, die es nicht gibt, bricht ab",
+              "Seite 4" in str(ex) and "0..3" in str(ex), str(ex)[:70])
+    check("und Model.check() zeigt sie schon vor dem Rechnen",
+          any("Seite 4 gibt es nicht" in z for z in m.check()),
+          next((z for z in m.check() if "Seite 4" in z), "keine Zeile")[:90])
+
+    # Gegenprobe: eine gueltige Seite traegt unveraendert
+    m2 = wuerfel("tet4")
+    m2.load_face(0, -1000e3, face=3)
+    F = assemble.load_vector(m2, m2.case())
+    summe = float(np.abs(np.asarray(F, float)).sum())
+    check("eine gültige Seitennummer trägt unverändert", summe > 1.0,
+          f"Summe |F| = {summe:.4g} N")
+    check("und check() beanstandet sie nicht",
+          not any("Seite" in z for z in m2.check()), str(m2.check())[:70])
+
+    # ---- (b) Nullvektor als Richtung
+    m3 = wuerfel("hex8")
+    m3.load_face(0, -1000e3, face=1, direction=[0.0, 0.0, 0.0])
+    try:
+        assemble.load_vector(m3, m3.case())
+        check("der Nullvektor als Richtung bricht ab", False,
+              "er lief durch und gab 0 N")
+    except ValueError as ex:
+        check("der Nullvektor als Richtung bricht ab",
+              "Nullvektor" in str(ex), str(ex)[:70])
+    check("und check() zeigt ihn vor dem Rechnen",
+          any("Nullvektor" in z and "0 N" in z for z in m3.check()),
+          next((z for z in m3.check() if "Nullvektor" in z), "keine Zeile")[:90])
+
+    m4 = wuerfel("hex8")
+    m4.load_face(0, -1000e3, face=1, direction=[0.0, 0.0, -1.0])
+    F4 = np.asarray(assemble.load_vector(m4, m4.case()), float)
+    check("eine echte Richtung trägt unverändert", float(np.abs(F4).sum()) > 1.0,
+          f"Summe |F| = {float(np.abs(F4).sum()):.4g} N")
+
+    # ---- (c) einseitiges Lager ohne Richtung
+    m5 = wuerfel("hex8")
+    m5.add_contact_support(0, direction=(0.0, 0.0, 0.0))
+    check("ein einseitiges Lager ohne Richtung wird benannt",
+          any("Einseitiges Lager" in z and "Nullvektor" in z for z in m5.check()),
+          next((z for z in m5.check() if "Einseitiges Lager" in z),
+               "keine Zeile")[:90])
+    m6 = wuerfel("hex8")
+    m6.add_contact_support(0, direction=(0.0, 0.0, 1.0))
+    check("ein Lager mit Richtung wird nicht beanstandet",
+          not any("Einseitiges Lager" in z for z in m6.check()),
+          str([z for z in m6.check() if "Lager" in z])[:70])
+
+
+def test_objektlast_nennt_den_nullvektor_als_grund():
+    """Eine Objektlast ohne Richtung hieß „liegt ganz im Windschatten".
+
+    `_warum_leer` gibt den Grund an, warum eine Geometrielast keine
+    Elementlast erzeugt hat. Steht dort der Nullvektor als Richtung, ist
+    **das** der Grund - „Windschatten" schickt den Anwender auf die falsche
+    Fährte, denn er sucht dann nach einer verdeckten Fläche.
+
+    Die Reihenfolge der Prüfungen ist dabei wesentlich und darum mitgeprüft:
+    ein noch nicht vernetztes Ziel muss weiterhin „Ziel noch nicht vernetzt"
+    melden und nicht den Nullvektor - sonst verdeckt die neue Zeile die
+    ältere und wichtigere.
+    """
+    from statik3d import mesher
+    from statik3d.model import Geometrielast, Material, Model, Volumenkoerper
+
+    m = Model("objekt")
+    m.add_material(Material.steel("S235"))
+    mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, 1, 1, 1, typ="hex8")
+    # add_koerper verlangt vier Randflaechen; hier zaehlt nur die
+    # Elementliste, darum unmittelbar angelegt.
+    k = Volumenkoerper("K1", [])
+    m.koerper["K1"] = k
+    k.elemente = list(range(len(m.elements)))
+    gl = Geometrielast("K1", "volumen", 1000.0, [0.0, 0.0, 0.0], projiziert=True)
+    grund = m._warum_leer(gl)
+    check("der Nullvektor wird als Grund genannt",
+          "Nullvektor" in (grund or ""), str(grund))
+    check("die Probe ist scharf: vorher hiess es Windschatten",
+          "Windschatten" not in (grund or ""), str(grund))
+
+    # Gegenprobe (1): ein unvernetztes Ziel meldet weiter das Netz
+    k.elemente = []
+    grund2 = m._warum_leer(gl)
+    check("ein unvernetztes Ziel meldet weiter das Netz, nicht den Vektor",
+          "vernetzt" in (grund2 or ""), str(grund2))
+
+    # Gegenprobe (2): mit echter Richtung bleibt es der Windschatten
+    k.elemente = list(range(len(m.elements)))
+    gl2 = Geometrielast("K1", "volumen", 1000.0, [0.0, 0.0, -1.0], projiziert=True)
+    grund3 = m._warum_leer(gl2)
+    check("mit echter Richtung bleibt der Windschatten der Grund",
+          "Windschatten" in (grund3 or ""), str(grund3))
+
+
 def main():
-    for t in (test_volleinspannkraefte, test_teillast_einfeldtraeger, test_zwangsverformung,
+    for t in (test_lasten_verschwinden_nicht_mehr_still,
+              test_objektlast_nennt_den_nullvektor_als_grund,
+              test_volleinspannkraefte, test_teillast_einfeldtraeger, test_zwangsverformung,
               test_flaechenlast_linear, test_linienlast_auf_linie, test_temperatur_objektlast,
               test_speichern_linienlast_zwang, test_geladenes_modell_traegt_dieselbe_last,
               test_projiziert_bereich_verlauf_zusammen, test_vorspannung):

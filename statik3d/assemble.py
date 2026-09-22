@@ -1116,6 +1116,16 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
             continue
         e = model.elements[l.elem]
         X = model.nodes[e.nodes]
+        # **Der Nullvektor ist keine Richtung.** Alle drei Zweige normieren mit
+        # ``d / (norm(d) or 1.0)``; aus dem Nullvektor wird dabei wieder der
+        # Nullvektor, und die Last wirkt mit 0 N statt mit ihrem vollen Betrag
+        # (gemessen 1000 kN -> 0 kN). Im Bericht steht sie weiter mit vollem p,
+        # in der Spalte Richtung nur "(0, 0, 0)". Erreichbar von aussen: eine
+        # Nastran-PLOAD4 mit ausgeschriebenem Nullvektor liest sich genau so
+        # ein. Das ebene Element weist ihn seit jeher ab (ebene.py).
+        if l.direction is not None and not any(float(x) for x in l.direction):
+            raise ValueError(f"Flaechenlast auf Element {l.elem}: richtung darf "
+                             "nicht der Nullvektor sein")
         if e.typ in SHELL_TYPES:
             F[element_dofs(e)] += shell_face_load(model, e, l.p, l.direction)
         elif e.typ in SOLID_TYPES:
@@ -1218,7 +1228,15 @@ def solid_face_pressure(model: Model, e, p: float, face: int, direction=None) ->
     faces = sl.FLAECHEN[e.typ]
     f = np.zeros(3 * len(e.nodes))
     if face < 0 or face >= len(faces):
-        return f
+        # **Nicht stillschweigend null zurueckgeben.** Eine Seitennummer
+        # ausserhalb des Bereichs kommt aus einer Eingabe (Abaqus *DLOAD P5 am
+        # Tetraeder, eine von Hand gesetzte Last), und die Last fehlt dann zu
+        # 100 % in der Rechnung - gemessen 1000 kN -> 0 kN -, waehrend sie im
+        # Bericht mit vollem p steht und in der Ansicht an einer Flaeche
+        # gezeichnet wird. Das ebene Element macht es drei Zeilen weiter
+        # richtig (ebene.py: "Kante gibt es nicht").
+        raise ValueError(f"{e.typ}: Seite {face} gibt es nicht "
+                         f"(0..{len(faces) - 1})")
     fn = list(faces[face])
     P = X[fn]
     ecken = P[:4] if len(fn) in (4, 8) else P[:3]
