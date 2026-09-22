@@ -4451,6 +4451,201 @@ nicht auf die **Zahl** der Lastobjekte, sondern auf den **Lastvektor** selbst
 herauskommen, in allen drei Richtungen, und zweimaliges Laden darf sie nicht
 verdoppeln.
 
+### 7.3a Der Lastverlust hatte Geschwister (22.09.2026)
+
+Die Frage des Anwenders nach § 7.3 lautete: *„oder ist das wieder ein
+Zählfehler? ggf auch ein Speicher- und Öffnen-Fehler im Format"*. Beides war
+zu beantworten, und die Antwort ist zweigeteilt.
+
+**Ein Zählfehler war es nicht.** Gemessen wurde die Wirkung — der Lastvektor
+selbst über `solver.case_loads`, ohne zu rechnen. Zählfehler waren die drei
+*Prüfungen*, die es nie fanden: sie zählten `len(face_loads)` statt die
+Resultierende zu messen.
+
+**Ein Formatfehler war es sehr wohl — und nicht der einzige.** Eine
+systematische Durchsicht des Speicher- und Ladewegs (sieben Bereiche, jeder
+Befund von einem Gegenprüfer zu widerlegen versucht) fand **sechs weitere
+Stellen** desselben Musters. Die schwerste ändert die Physik:
+
+> **Die Lochleibungsgrenze verschwand beim Speichern.**
+> `ContactPair.knotenflaechen` ist {Knotennummer: Einflussfläche}, mit
+> **ganzzahligen** Schlüsseln gebaut (`fugen._passungsdaten`) und mit
+> ganzzahligen gelesen (`contact.py`, Lochleibungsgrenze). JSON kennt nur
+> Zeichenketten als Schlüssel; nach dem Öffnen fand die Abfrage nichts und
+> gab 0,0 zurück — und **0,0 heißt dort „keine Grenze"**. Gemessen:
+> **2,100 kN vor dem Umlauf, 0,000 kN danach.** Die Passung trug damit
+> unbegrenzt, statt bei der Grenzpressung zu fließen. Still, ohne Meldung, in
+> jedem gespeicherten Modell mit Passung.
+>
+> Dasselbe Muster ist beim Lagerverhalten (`behaviour`) seit jeher behoben
+> (`model.py`, `_lager_aus_dict`: `{int(k): ...}`) — hier war es vergessen.
+> Behoben in `Model.from_dict`;
+> `tests/test_kopie.py::test_ganzzahlige_schluessel_ueberleben_den_umlauf`
+> prüft die **Wirkung** (die Grenzkraft), nicht den Schlüsseltyp: ein Typ ist
+> leicht zu prüfen und sagt nichts darüber, ob jemand ihn liest.
+
+Die übrigen fünf, alle belegt, keiner widerlegt — sie sind aufgeschrieben,
+damit sie nicht verlorengehen:
+
+| | Stelle | Folge |
+|---|---|---|
+| Ein im Browser **kopierter Lastfall** verliert seine Geometrielasten | `web/server.py` `_op_copy_case` | derselbe Ausfall wie § 7.3, nur beim Kopieren statt beim Öffnen; der Desktop macht es mit `copy.deepcopy` richtig |
+| Die Weboberfläche **zählt abgeleitete Lasten als eingegebene** | `web/server.py` `_loads_of` (`asdict` kennt `_geo` nicht) | „Last entfernen" trifft über den Index eine abgeleitete Last: der Klick sieht erfolgreich aus, ist folgenlos und verschiebt den Index der echten Last |
+| **Eigenfrequenzen, Eigenformen, Knicklastfaktoren** werden nicht gespeichert | `ergebnisse.py` packt nur Lastfälle und Kombinationen | nach dem Öffnen fehlen die Berichtskapitel ersatzlos; die Rechnung sieht vollständig aus |
+| Die gerechnete **Stellungsreihe** fehlt nach dem Öffnen | `gui/main.py` schreibt nur `self.analysis` | die ZTV-ING-Prüfliste meldet „keine Stellungsreihe angelegt", obwohl die Stellungen in der Datei stehen |
+| **Knicklängen** werden geschrieben, aber nicht zurückgelesen | `ergebnisse.py` | der Bericht druckt sie, die Oberfläche sagt, es gebe sie nicht — zwei Aussagen über dieselbe Rechnung |
+
+**Was diese sieben gemeinsam haben, ist die Lehre.** Keiner stürzt ab, keiner
+meldet etwas, jeder gibt eine plausible Zahl zurück. Ein Format, das
+abgeleitete Daten bewusst weglässt, ist richtig — aber jede weggelassene
+Größe braucht eine Stelle, die sie beim Laden **wieder erzeugt**, und eine
+Prüfung, die die **Wirkung** misst statt die Anwesenheit.
+
+### 7.4 Rechenketten trotz eingefrorener Zustände (22.09.2026)
+
+Am Drehlager liefen **alle 422 Lastfälle hintereinander in einem Prozess**.
+Nicht, weil die Rechnung es verlangte, sondern wegen einer Zeile:
+
+```python
+if system is None and not referenzen and len(names) > 1:
+```
+
+`referenzen` sind die eingefrorenen Zustände der Ermüdungslasten
+(`ermuedungsreferenzen`): der erste Zustand jeder Ermüdungslast wird
+nichtlinear gerechnet, die weiteren mit seinem eingefrorenen Kontaktzustand
+linear. Am Drehlager sind das **117 von 164 Zuständen** — `referenzen` war
+also nie leer, und die Sperre griff immer.
+
+**Der Grund für die Sperre war echt.** `_einfrieren` findet den eingefrorenen
+Zustand nur, wenn seine Referenz **in demselben Lauf** schon gerechnet wurde;
+liegt sie in einer anderen Kette, gibt es still `(None, None)` und der Zustand
+rechnet voll nichtlinear. Kein falsches Ergebnis — aber der ganze Gewinn ist
+weg, und **niemand sieht es**. Ein stiller Rückfall ist schlimmer als ein
+lauter Fehler.
+
+**Die Kur ist nicht, die Sperre zu lösen, sondern anders zu schneiden.**
+`_referenzgruppen` fasst eine Referenz und alle Zustände, die sie einfrieren,
+zu einer **unteilbaren Gruppe** zusammen — über Zusammenhangskomponenten, weil
+ein Zustand grundsätzlich selbst Referenz eines dritten sein könnte.
+`_ketten_teilen` schneidet nur an Gruppengrenzen. Eine Gruppe, die größer ist
+als die Zielgröße, bekommt ihre eigene Kette; die Ketten werden dadurch
+ungleich lang. Das ist die richtige Seite zum Irren: **ungleiche Ketten kosten
+Wartezeit, eine verlorene Referenz kostet einen vollen nichtlinearen
+Lastfall.**
+
+Der zweite Teil der Sperre saß im Auftrag: `jobs._job_solve_kette` gab
+`referenzen` nicht weiter. Ohne das hätte die neue Aufteilung nichts genützt —
+in der Kette wäre jeder Zustand voll gerechnet worden, und zwar still.
+
+**Wo der Hebel wirklich sitzt.** Die Zustände **einer** Ermüdungslast hängen
+alle an derselben Referenz und bilden damit eine einzige Gruppe — da gibt es
+nichts zu teilen. Der Gewinn entsteht **zwischen** den Lasten. Am Drehlager
+sind es 50 Ermüdungslasten mit 2 bis 82 Zuständen; die Aufteilung ist also
+grob und ungleich, aber sie ist möglich.
+
+**Und sie ändert die Zahlen.** Das ist der Punkt, der dazugehört:
+
+| | eine Kette | zwei Ketten |
+|---|---|---|
+| eingefrorene Zustände | 8 | **8, dieselben** |
+| erste Kette, max \|Δu\| | — | **0,000 (bitgleich)** |
+| zweite Kette, max \|Δu\| | — | 4,70·10⁻⁹ m (**1,2·10⁻³** relativ) |
+| Kontaktschritte des zweiten Kopfes | 5 (warm) | **21 (kalt)** |
+
+Die erste Kette sieht dieselbe Folge wie der Einzellauf und rechnet bitgleich.
+Die zweite beginnt mit einem **kalten Kopf**: ihr erster Lastfall startet aus
+der Geometrie statt aus dem Kontaktzustand des Vorgängers, braucht 21 statt 5
+Schritte — und landet in einem geringfügig anderen Zustand, den die
+eingefrorenen Zustände dahinter erben.
+
+Der Warmstart ist also nicht nur eine Beschleunigung; er bestimmt mit, **wo**
+die Kontaktiteration zur Ruhe kommt. Dass der kalte Kopf dabei der
+unabhängigere und damit eher vertrauenswürdigere Wert ist, macht die Sache
+nicht kleiner: **wer die Zahl der Ketten ändert, ändert die Ergebnisse in der
+dritten Stelle.** Wer zwei Läufe streng vergleichen will, lässt die Kettenzahl
+gleich — und setzt zusätzlich `MKL_CBWR=AUTO` (§ 7.5).
+
+`tests/test_solver_ext.py::test_ketten_mit_eingefrorenen_zustaenden` hält alles
+davon fest: keine Gruppe wird zerschnitten (k = 1, 2, 3, 4, 9), jeder Lastfall
+kommt genau einmal vor, es entstehen nie mehr Ketten als angefordert, dieselben
+Zustände sind eingefroren wie ohne Ketten, die erste Kette ist bitgleich, die
+zweite weicht ab — aber nur in der dritten Stelle.
+
+**Ein Fehler, der beim Bauen auffiel und hier steht, weil er wiederkommen
+wird:** die erste Fassung schnitt jede Gruppe ab, die die Zielgröße sprengte,
+und erzeugte damit **mehr Ketten als angefordert** — aus k = 3 wurden vier. Da
+`_cases_in_ketten` so viele Prozesse startet, wie es Blöcke gibt, und eine
+Kette am Drehlager 9,5 GB belegt, wären das 38 statt 28,5 GB gewesen. Eine
+Aufteilung, die mehr Teile macht als bestellt, ist kein Randfall — sie ist ein
+Speicherfehler mit Anlauf.
+
+**Und was zwei Gegenlesungen daran gefunden haben.** Der Umbau wurde nach dem
+Bauen zweimal angegriffen — einmal er selbst, einmal die Kuren, die aus der
+ersten Runde folgten; jeder Vorwurf ging an einen Gegenprüfer, dessen Auftrag
+das Widerlegen war. Von 33 Vorwürfen der ersten Runde hielten 7, von 26 der
+zweiten 8. **Drei davon waren neue Fehler, die der Umbau selbst eingeführt
+hatte:**
+
+| | |
+|---|---|
+| Der Kettenaufruf lag **vor** dem `try`, das jeden fertigen Lastfall rettet (`_teil_merken`, § 19.09.2026). Brach eine Kette, waren die Ergebnisse **aller anderen** weg — auf genau dem Weg, der für das Drehlager gebaut wurde. |
+| Der neue Auftragsschlüssel `referenzen` brachte eine Rechenhilfe älteren Stands mit `TypeError` zu Fall. Er wird jetzt nur mitgegeben, wenn es welche gibt. |
+| Die Referenzordnung galt über **alle** Lastfälle und zerriss damit die Ordnung nach Situationen, die derselbe Docstring zusichert. Drei unabhängige Blickrichtungen fanden das getrennt. |
+
+Die zweite Runde traf eine dieser Kuren selbst: eine Fassung zog die
+Lastfallmarken nach, damit die Rechenliste ihre Posten abschließt. Sie ist
+**zurückgenommen** — die Schleife stand vor der Rettung und in keinem `try`,
+also hätte ein Abbruch genau das mitgenommen, was die Rettung sichern sollte;
+der gemeldete Anteil sprengte das Fenster der Lastfälle (Balken auf 100 %, dann
+zurück auf 60 %); und die Marken kommen ohnehin erst, wenn alle Ketten zurück
+sind, sodass ein Lastfall 4:12:00 behauptet hätte und 421 je 0:00.
+
+**Was davon als Einschränkung bleibt, steht hier statt in einer Anzeige:** auf
+dem Kettenweg schließen die Zeilen der Rechenliste erst am Ende des Laufs, und
+der Abbruch greift zwischen den Ketten, nicht zwischen den Lastfällen. Eine
+falsche Anzeige wäre schlechter als eine ausbleibende.
+
+### 7.5 Zwei Läufe sind nicht bitgleich (22.09.2026)
+
+Der Gleichungslöser ist **mit mehreren Kernen nicht wiederholbar**. Gemessen an
+einem 50×50×50-Laplace (125 000 Zeilen, 860 000 Nichtnullen), dreimal dieselbe
+Matrix und dieselbe rechte Seite, Threadzahl über `_mkl_threads_setzen`; die
+Zeiten an einem 60³-Gitter (216 000 Zeilen, 16 Threads):
+
+| `MKL_CBWR` | 1 Thread | 16 Threads | Zeit |
+|---|---|---|---|
+| nicht gesetzt | bitgleich | **nicht bitgleich** (2,22·10⁻¹⁵, 4,9·10⁻¹⁶ relativ) | 3,707 s |
+| `AUTO` | bitgleich | bitgleich | 4,186 s (+13 %) |
+| `AVX2` | bitgleich | bitgleich | 4,123 s (+11 %) |
+| `COMPATIBLE` | bitgleich | bitgleich | 5,078 s (+37 %) |
+
+MKL summiert die Zahlenphase der Faktorisierung parallel; wie die Arbeit auf
+die Threads fällt, hängt am Zeitverhalten. Das ist Intels *conditional
+numerical reproducibility* — und `AUTO` ist der richtige Schalter, wenn zwei
+Läufe **auf derselben Maschine** vergleichbar sein müssen: er bindet an deren
+Befehlssatzbranche, statt wie `COMPATIBLE` auf SSE2 zurückzufallen.
+
+**Das Aufstellen ist davon nicht betroffen** — bei gleicher Prozesszahl.
+`parallel.Arbeiter.map` benutzt `pool.map` (reihenfolgetreu), und
+`_assemble_triplets` hängt die Tripel in Elementreihenfolge aneinander; die
+Summation von `coo` nach `csr` ist damit festgelegt. Bei **verschiedener**
+Prozesszahl nicht: die Blockgröße ist `max(chunk_elements, n // (4·w) + 1)`,
+andere Blöcke heißen andere Summationsreihenfolge. Zwei Läufe mit 16 und 31
+Prozessen sind also in der Zeit vergleichbar und in den letzten Stellen nicht.
+
+**Warum das mehr ist als eine Fußnote.** 4,9·10⁻¹⁶ ändern keine Spannung —
+solange nichts an einer Schwelle steht. Steht etwas dort, genügen sie: am
+Drehlager brauchte derselbe Lauf einmal 150 und einmal 162 Kontaktschritte und
+wich in der vierten Stelle der Verformung ab. Ein Lauf, der als „ergebnisgleich"
+abgenommen wird, ohne dass diese Streuung ausgeschlossen wurde, sagt damit
+nichts über die Änderung aus, die er belegen sollte — sondern nur, dass zwei
+Läufe zufällig denselben Weg genommen haben.
+
+Für die Praxis heißt das: **jede Gleichheitszusage an einem Kontaktmodell
+gehört mit `MKL_CBWR=AUTO` gemessen**, und wenn sie es nicht wurde, gehört das
+dazugesagt. In der Auslieferung steht der Schalter nicht — 13 % zahlt man nicht
+dauernd für eine Eigenschaft, die man nur beim Vergleichen braucht.
+
 ## 7a Entartete Elemente
 
 Ein Element ohne Ausdehnung hat keine Steifigkeit; seine Jacobi-Matrix ist

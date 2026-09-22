@@ -2313,6 +2313,53 @@ def _mit_referenzen_zuerst(names: list, referenzen: dict) -> list:
     return folge
 
 
+def _referenzgruppen(folge: list, referenzen: dict) -> list:
+    """Die Lastfaelle in **unteilbare** Gruppen: eine Referenz und alle
+    Zustaende, die ihren Kontaktzustand einfrieren, gehoeren zusammen.
+
+    Warum unteilbar: :func:`_solve_cases_innen` findet den eingefrorenen
+    Zustand nur, wenn seine Referenz **in demselben Lauf** schon gerechnet
+    wurde (``_einfrieren`` dort). Liegt sie in einer anderen Kette, gibt es
+    still ``(None, None)`` und der Zustand rechnet voll nichtlinear - kein
+    falsches Ergebnis, aber der ganze Gewinn ist weg, und niemand sieht es.
+    Darum wird an Gruppengrenzen geschnitten und nicht an festen Bloecken.
+
+    Zusammengefasst wird ueber Zusammenhangskomponenten und nicht ueber ein
+    einfaches "Referenz plus ihre Zustaende": waere ein Zustand selbst
+    Referenz eines dritten, zerfiele die Kette sonst.
+    :func:`ermuedungsreferenzen` baut solche Ketten heute nicht (ein Zustand,
+    der selbst Referenz ist, bleibt nichtlinear), aber die Gruppenbildung darf
+    davon nicht abhaengen.
+
+    Die Reihenfolge bleibt erhalten: innerhalb einer Gruppe die von ``folge``,
+    die Gruppen in der Reihenfolge ihres ersten Auftretens. So bleiben
+    Situationen zusammenhaengend und der Warmstart greift weiter.
+    """
+    eltern = {n: n for n in folge}
+
+    def wurzel(a):
+        while eltern[a] != a:
+            eltern[a] = eltern[eltern[a]]
+            a = eltern[a]
+        return a
+
+    for zustand, ref in (referenzen or {}).items():
+        if zustand in eltern and ref in eltern:
+            ra, rb = wurzel(zustand), wurzel(ref)
+            if ra != rb:
+                eltern[ra] = rb
+    gruppen: dict = {}
+    for n in folge:
+        gruppen.setdefault(wurzel(n), []).append(n)
+    gesehen, aus = set(), []
+    for n in folge:
+        w = wurzel(n)
+        if w not in gesehen:
+            gesehen.add(w)
+            aus.append(gruppen[w])
+    return aus
+
+
 def solve_cases(model: Model, *args, **kwargs):
     """Mehrere Lastfaelle - im stehenden Prozesspool (parallel.arbeiter);
     Einzelheiten in _solve_cases_innen."""
@@ -2343,13 +2390,21 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
         return None, None
     # Warmstart: jeder Lastfall beginnt beim Kontaktzustand des vorigen
     # Lastfalls desselben Systems (Situation)
-    # Mehrere Lastfaelle gleichzeitig? Nur ohne uebergebenes System (dann gilt
-    # es fuer alle genannten Faelle) und ohne eingefrorene Zustaende (die
-    # brauchen ihren Referenzzustand aus demselben Lauf).
-    if system is None and not referenzen and len(names) > 1:
+    # Mehrere Lastfaelle gleichzeitig? Nur ohne uebergebenes System - das gilt
+    # fuer alle genannten Faelle und laesst sich nicht auf Prozesse verteilen.
+    #
+    # Eingefrorene Zustaende sperrten die Ketten bis zum 22.09.2026 ganz, weil
+    # sie ihren Referenzzustand aus demselben Lauf brauchen. Am Drehlager
+    # liefen damit **alle 422 Lastfaelle hintereinander in einem Prozess**:
+    # ermuedungsreferenzen liefert dort 117 eingefrorene Zustaende, also war
+    # referenzen nie leer, und die Sperre griff immer. Sie war keine
+    # Eigenschaft der Rechnung, sondern die Folge davon, dass
+    # _ketten_teilen an festen Bloecken schnitt. Jetzt schneidet es an
+    # Gruppengrenzen, und Referenz und Zustand landen in derselben Kette.
+    if system is None and len(names) > 1:
         k = ketten_zahl(len(names))
         if k > 1:
-            fertig = _cases_in_ketten(model, names, k, progress)
+            fertig = _cases_in_ketten(model, names, k, progress, referenzen)
             if fertig:
                 return fertig
     # Jeder fertige Lastfall bleibt bestehen, auch wenn der naechste abbricht:
@@ -2412,18 +2467,52 @@ def ketten_zahl(n_faelle: int) -> int:
     return max(1, min(nach_speicher, st.workers, n_faelle))
 
 
-def _ketten_teilen(model: Model, names: list, k: int) -> list:
+def _ketten_teilen(model: Model, names: list, k: int, referenzen: dict = None) -> list:
     """Die Lastfaelle auf k Ketten verteilen - Situation fuer Situation
     zusammenhaengend, damit der Warmstart innerhalb der Kette greift (jede
-    Situation hat ihr eigenes System)."""
-    folge = [n for sit_names in model.lastfaelle_je_situation(names).values()
-             for n in sit_names]
+    Situation hat ihr eigenes System), und **nie zwischen einer Referenz und
+    ihren eingefrorenen Zustaenden** (siehe :func:`_referenzgruppen`).
+
+    Geschnitten wird darum an Gruppengrenzen statt an festen Bloecken. Eine
+    Gruppe, die groesser ist als die Zielgroesse, bekommt ihre eigene Kette;
+    die Ketten werden dadurch ungleich lang. Das ist die richtige Seite zum
+    Irren: ungleiche Ketten kosten Wartezeit, eine verlorene Referenz kostet
+    einen vollen nichtlinearen Lastfall - und zwar still.
+    """
+    # Die Referenzordnung gilt **je Situation**, nicht ueber alle Lastfaelle:
+    # sonst zieht sie Faelle aus einer Situation vor und zerreisst damit die
+    # Ordnung, die der Docstring zusichert. Jede Situation, die eine Kette
+    # beruehrt, kostet dort ein eigenes System und eine eigene Faktorisierung
+    # (87 s von 235 s je Lastfall am Drehlager) - und ketten_zahl rechnet mit
+    # 9,5 GB je Kette fuer **eine** Matrix.
+    folge = []
+    for sit_names in model.lastfaelle_je_situation(names).values():
+        teil = list(sit_names)
+        if referenzen:
+            teil = _mit_referenzen_zuerst(teil, referenzen)
+        folge.extend(teil)
     k = max(1, min(int(k), len(folge)))
     gr = (len(folge) + k - 1) // k
-    return [folge[i:i + gr] for i in range(0, len(folge), gr) if folge[i:i + gr]]
+    gruppen = _referenzgruppen(folge, referenzen) if referenzen else [[n] for n in folge]
+    ketten, aktuell = [], []
+    for g in gruppen:
+        # Eine neue Kette nur, solange danach noch eine uebrigbleibt: sonst
+        # entstuenden **mehr** Ketten als angefordert. _cases_in_ketten
+        # startet so viele Prozesse, wie es Bloecke gibt, und eine Kette am
+        # Drehlager belegt 9,5 GB - aus k=3 wuerden sonst 4 Prozesse und
+        # 38 GB. Gemessen an vier Ermuedungslasten zu je drei Zustaenden:
+        # k=3 gab vier Ketten (22.09.2026).
+        if aktuell and len(aktuell) + len(g) > gr and len(ketten) < k - 1:
+            ketten.append(aktuell)
+            aktuell = []
+        aktuell.extend(g)
+    if aktuell:
+        ketten.append(aktuell)
+    return ketten
 
 
-def _cases_in_ketten(model: Model, names: list, k: int, progress=None) -> dict:
+def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
+                     referenzen: dict = None) -> dict:
     """Mehrere Lastfaelle gleichzeitig: je Kette ein Prozess, in sich warm.
 
     Gemessen am Drehlager (20.09.2026): ein warmer Lastfall braucht 235 s,
@@ -2434,7 +2523,7 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None) -> dict:
     import pickle
     import tempfile
     from .parallel import Job, run_jobs
-    bloecke = _ketten_teilen(model, names, k)
+    bloecke = _ketten_teilen(model, names, k, referenzen)
     if len(bloecke) <= 1:
         return {}
     st = parallel.settings()
@@ -2450,10 +2539,28 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None) -> dict:
             pickle.dump(model, f, protocol=pickle.HIGHEST_PROTOCOL)
     try:
         d = model.to_dict() if pfad is None else None
-        jobs = [Job("solve_kette",
-                    {"pfad": pfad or "", "model": d, "cases": b,
-                     "arbeiter": je, "loeser_threads": threads},
-                    label=f"{b[0]}…{b[-1]}")
+        # Je Kette nur die Referenzen, deren **beide** Enden in ihr liegen. Eine
+        # Referenz, die anderswo liegt, waere im Auftrag wertlos und
+        # verdeckte, dass der Zustand voll gerechnet hat.
+        def _teilreferenzen(b):
+            drin = set(b)
+            return {z: r for z, r in (referenzen or {}).items()
+                    if z in drin and r in drin}
+
+        def _auftrag(b):
+            a = {"pfad": pfad or "", "model": d, "cases": b,
+                 "arbeiter": je, "loeser_threads": threads}
+            # ``referenzen`` nur mitgeben, wenn es welche gibt: ein Arbeiter
+            # aelteren Stands (Rechnerfarm, danebenliegende Statik3D.exe)
+            # kennt den Schluessel nicht und faellt mit TypeError aus. Ohne
+            # Ermuedungsreferenzen - also in fast jedem Modell - aendert sich
+            # damit nichts an seinem Auftrag.
+            tr = _teilreferenzen(b)
+            if tr:
+                a["referenzen"] = tr
+            return a
+
+        jobs = [Job("solve_kette", _auftrag(b), label=f"{b[0]}…{b[-1]}")
                 for b in bloecke]
         fertig = run_jobs(jobs, workers=len(bloecke),
                           progress=(lambda a, b_: _melde(progress, f"Kette {a}/{b_} fertig"))
@@ -2465,13 +2572,46 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None) -> dict:
             except OSError:
                 pass
     out: dict = {}
+    fehler = []
     for job, r in zip(jobs, fertig):
         if not r.ok:
-            raise RuntimeError(f"Kette {job.label}: {r.error}")
+            fehler.append(f"Kette {job.label}: {r.error}")
+            continue
         for n, res in (r.result or {}).items():
             res.model = model
             out[n] = res
-    return {n: out[n] for n in names if n in out}
+    gerettet = {n: out[n] for n in names if n in out}
+    # **Was hier bewusst NICHT steht.** Eine erste Fassung zog die
+    # Lastfallmarken nach ("Lastfall X (k/n)"), damit die Rechenliste ihre
+    # Posten abschliesst - in der Kette laeuft solve_cases ohne progress, also
+    # entsteht dort keine solche Zeile, und alle Zeilen bleiben bis zum Ende
+    # des Laufs offen. Eine Gegenlesung hat die Fassung am 22.09.2026 in drei
+    # Punkten widerlegt, und alle drei waren schlimmer als das Uebel:
+    #
+    #   * Die Schleife stand **vor** der Rettung und in keinem try. Ein
+    #     Abbruch faellt als Ausnahme aus dem Fortschrittsaufruf heraus
+    #     (gui.worker.Abgebrochen) - und nahm damit genau das mit, was die
+    #     Rettung gerade sichern sollte. Vor der Aenderung war diese Lage
+    #     harmlos, weil nach run_jobs gar kein Fortschritt mehr gemeldet wurde.
+    #   * Der Anteil i/n sprengte das Fenster der Lastfaelle (0,35 bis 0,60,
+    #     siehe die Aufrufe weiter oben): der Balken sprang auf 100 % und fiel
+    #     mit der ersten Kombination auf 60 % zurueck.
+    #   * Die Marken kommen ohnehin erst, wenn **alle** Ketten zurueck sind
+    #     (run_jobs wartet). Die Rechenliste misst die Dauer von Marke zu
+    #     Marke - ein Lastfall haette 4:12:00 behauptet und 421 je 0:00.
+    #
+    # Was bleibt, ist die Einschraenkung: auf dem Kettenweg schliessen die
+    # Zeilen der Rechenliste erst am Ende, und der Abbruch greift zwischen
+    # den Ketten. Das ist der Preis der Ketten und steht so im
+    # Theoriehandbuch - eine falsche Anzeige waere schlechter als eine
+    # ausbleibende.
+    if fehler:
+        # Was fertig ist, bleibt - genau wie im seriellen Weg. Ohne diesen
+        # Anhang kostete ein einziger Fehlschlag (divergierender Lastfall,
+        # Speicher, abgestuerzter Arbeiter) die Rechenzeit **aller** fertigen
+        # Ketten; am Drehlager sind das viele Stunden.
+        raise _teil_merken(RuntimeError("; ".join(fehler)), "teil_cases", gerettet)
+    return gerettet
 
 
 def _kombination_pruefen(model: Model, combo: Combination) -> str:
