@@ -3659,6 +3659,27 @@ nichts stillschweigend Übergangenes:
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | Randtreue je Körper | ≥ 99 % |
 
+**„Bestanden" heißt nicht „nicht geprüft".** Zwei der Teilprüfungen fingen
+eine Ausnahme stumm ab und gaben eine leere Liste zurück — und leer heißt in
+der Abnahme ausdrücklich „das Netz ist abgenommen". Ein Modell, dessen
+Lagerung in einer Richtung fast nicht hält, wurde damit mit „Abnahme des
+Netzes: bestanden" quittiert. Fällt eine Prüfung heute aus, steht sie als
+eigene Zeile im Protokoll (`Haltegüte nicht geprüft`, `Elementgüte nicht
+geprüft`) und die Überschrift lautet **„bestanden, soweit geprüft (N
+Prüfungen fielen aus)"**. Als Warnung und nicht als Fehler: eine ausgefallene
+Messung ist keine Verletzung des Modells, sie hält den Lauf also nicht an.
+
+Zwei Einzelheiten dazu, beide gemessen:
+
+* Die Haltegüte wird je Teiltragwerk fortlaufend ermittelt. Brach die Messung
+  beim 40. von 60 ab, gingen bis dahin **auch die 39 schon gemessenen Werte**
+  verloren. Sie bleiben jetzt stehen — ein gefundener Mangel überlebt den
+  Ausfall.
+* Ließ sich die Formgüte eines Elements nicht ermitteln, ging sie als 1,000
+  in die Splitterprüfung ein — ein nicht messbares Element galt damit als das
+  **formbeste überhaupt** (gemessen 1,000 statt 0,039, Faktor 26 zu gut).
+  Solche Elemente zählen jetzt nicht mit und werden mit ihrer Anzahl genannt.
+
 Die wichtigste Zeile ist die erste: beim Ausführen einer Fuge werden die
 gemeinsamen Randknoten verdoppelt; bliebe danach ein Element mit einem Fuß auf
 der alten und einem auf der neuen Seite, überbrückte es genau die Trennung und

@@ -381,6 +381,11 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
        hier ermittelt.
     5. **Knoten ohne Element**, **Elementgueete** und **Randtreue je Koerper**.
 
+    Faellt eine der Teilpruefungen aus (die Halteguete oder die Formguete
+    lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
+    WARNUNG mit dem Zusatz „nicht geprueft" im Namen - eine leere Liste hiesse
+    sonst „abgenommen", obwohl gar nicht gemessen wurde.
+
     Rueckgabe die Liste der Befunde; leer heisst: das Netz ist abgenommen.
     Mit ``warnungen=True`` stehen auch die Befunde der Stufe WARNUNG dabei
     (Splitter unter :data:`ABNAHME_SPLITTER` je Koerper) - sie halten nichts
@@ -654,13 +659,31 @@ def _koerper_des_knotens(model, knoten: int) -> set:
 def _abnahme_halteguete(model, guete: list = None) -> list:
     """Teiltragwerke, die zwar gehalten sind, aber in einer Richtung fast nicht."""
     from .singular import HALTEGUETE_MIN, restfreiheiten
+    aus = []
     if guete is None:
         guete = []
         try:
             restfreiheiten(model, guete=guete)
-        except Exception:                 # noqa: BLE001 - eine Abnahme darf nie sperren
-            return []
-    aus = []
+        except Exception as ex:           # noqa: BLE001 - eine Abnahme darf nie sperren
+            # **„Ausgefallen" ist nicht „nichts gefunden".** Eine leere Liste
+            # heisst in abnahme() ausdruecklich „das Netz ist abgenommen" -
+            # eine von sechs Teilpruefungen fiel damit aus, ohne dass es
+            # jemand erfuhr. Was schon gemessen wurde, bleibt ausserdem
+            # stehen: restfreiheiten fuellt guete je Teiltragwerk
+            # fortlaufend, und ein Fehler beim 40. von 60 warf bisher auch
+            # die 39 gemessenen Werte weg.
+            #
+            # Stufe WARNUNG und nicht FEHLER: eine ausgefallene Messung ist
+            # keine Verletzung des Modells. Als FEHLER stuende vor jedem Lauf
+            # die Rueckfrage „Trotzdem rechnen?", und die Ueberschrift
+            # „bestanden, soweit geprueft" waere toter Code.
+            aus.append(Befund(
+                pruefung="Haltegüte nicht geprüft", wert=0.0, grenze=0.0,
+                stufe="WARNUNG",
+                text="Die Haltegüte der Teiltragwerke konnte nicht ermittelt "
+                     f"werden ({type(ex).__name__}: {str(ex)[:100]}) - ob ein "
+                     "Bauteil in einer Richtung fast ohne Steifigkeit gehalten "
+                     "ist, ist hier nicht geprüft."))
     for g in sorted((x for x in (guete or []) if 0.0 < x.wert < HALTEGUETE_MIN),
                     key=lambda x: x.wert):
         aus.append(Befund(
@@ -686,12 +709,28 @@ def _abnahme_netz(model) -> list:
     try:
         from .netzguete import guete as _formguete
         q = _formguete(model)
-    except Exception:                     # noqa: BLE001
+    except Exception as ex:               # noqa: BLE001
         q = None
+        # Ohne Formguete entfallen Elementguete UND Splitter fuer **jeden**
+        # Koerper zugleich. Auch das ist nicht „nichts gefunden".
+        aus.append(Befund(
+            pruefung="Elementgüte nicht geprüft", wert=0.0, grenze=0.0,
+            stufe="WARNUNG",
+            text="Die Formgüte der Elemente konnte nicht ermittelt werden "
+                 f"({type(ex).__name__}: {str(ex)[:100]}) - Elementgüte und "
+                 "Splitter sind für kein Volumen geprüft."))
     for name, k in (getattr(model, "koerper", None) or {}).items():
         els = [int(x) for x in (k.elemente or []) if 0 <= int(x) < len(model.elements)]
         if els and q is not None:
             werte = [float(q[i]) for i in els if np.isfinite(q[i])]
+            offen = len(els) - len(werte)
+            if offen:
+                aus.append(Befund(
+                    pruefung="Elementgüte nicht geprüft", objekt=str(name),
+                    wert=float(offen), grenze=0.0, stufe="WARNUNG",
+                    text=f"Volumen {name}: von {len(els)} Elementen ließ sich bei "
+                         f"{offen} die Formgüte nicht ermitteln - sie sind weder "
+                         "auf Elementgüte noch auf Splitter geprüft."))
             if werte and min(werte) < ABNAHME_ELEMENTGUETE:
                 i = els[int(np.argmin([q[j] for j in els]))]
                 aus.append(Befund(
@@ -701,18 +740,30 @@ def _abnahme_netz(model) -> list:
                     text=f"Volumen {name}: Element {i} hat die Formgüte "
                          f"{min(werte):.3f} (Grenze {ABNAHME_ELEMENTGUETE:.2f}) - "
                          "ein Splitter, der die Steifigkeitsmatrix verdirbt."))
-            # Zweite Stufe: Splitter unter 0,10 als WARNUNG mit Zahl und Nummern
-            qe = np.array([q[j] if np.isfinite(q[j]) else 1.0 for j in els], float)
-            splitter = np.nonzero(qe < ABNAHME_SPLITTER)[0]
+            # Zweite Stufe: Splitter unter 0,10 als WARNUNG mit Zahl und Nummern.
+            # **Nicht messbar ist nicht „beste Form".** Bis zum 22.09.2026 ging
+            # ein nan hier als 1,000 ein - ein Element, dessen Form sich nicht
+            # ermitteln liess, galt damit als das formbeste ueberhaupt
+            # (gemessen 1,000 statt 0,039, Faktor 26 zu gut). Solche Elemente
+            # zaehlen jetzt gar nicht mit; sie stehen oben als „Elementgüte
+            # nicht geprüft".
+            gemessen = [i for i in els if np.isfinite(q[i])]
+            qe = np.array([q[i] for i in gemessen], float)
+            splitter = (np.nonzero(qe < ABNAHME_SPLITTER)[0] if len(qe)
+                        else np.zeros(0, int))
             if len(splitter):
                 reihe = splitter[np.argsort(qe[splitter])][:3]
-                namen = ", ".join(f"Element {els[int(j)]} ({qe[int(j)]:.3f})" for j in reihe)
+                namen = ", ".join(f"Element {gemessen[int(j)]} ({qe[int(j)]:.3f})"
+                                  for j in reihe)
                 aus.append(Befund(
-                    pruefung="Splitter", objekt=str(name), element=int(els[int(reihe[0])]),
-                    knoten=[int(x) for x in model.elements[int(els[int(reihe[0])])].nodes],
+                    pruefung="Splitter", objekt=str(name),
+                    element=int(gemessen[int(reihe[0])]),
+                    knoten=[int(x) for x in
+                            model.elements[int(gemessen[int(reihe[0])])].nodes],
                     wert=float(qe[int(reihe[0])]), grenze=ABNAHME_SPLITTER, stufe="WARNUNG",
-                    text=f"Volumen {name}: {len(splitter)} von {len(els)} Elementen mit Formgüte "
-                         f"unter {ABNAHME_SPLITTER:.2f} - schlechteste: {namen}."))
+                    text=f"Volumen {name}: {len(splitter)} von {len(gemessen)} Elementen "
+                         f"mit Formgüte unter {ABNAHME_SPLITTER:.2f} - "
+                         f"schlechteste: {namen}."))
         rt = float(getattr(k, "randtreue", 0.0) or 0.0)
         if 0.0 < rt < ABNAHME_RANDTREUE:
             aus.append(Befund(

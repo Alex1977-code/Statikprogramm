@@ -17297,8 +17297,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(f"WARNUNG: [{b.pruefung}] {b.text}")
         self._abnahme_befunde = befunde
         if not befunde:
-            self.log.appendPlainText("--- Abnahme des Netzes: bestanden ---"
-                                     + (f" ({len(warnungen)} Warnungen)" if warnungen else ""))
+            # „bestanden" darf nicht heissen „nicht geprueft": faellt eine der
+            # Teilpruefungen aus, steht das in der Ueberschrift.
+            ausgefallen = [b for b in alle
+                           if str(b.pruefung).endswith("nicht geprüft")]
+            self.log.appendPlainText(
+                (f"--- Abnahme des Netzes: bestanden, soweit geprüft "
+                 f"({len(ausgefallen)} Prüfungen fielen aus) ---" if ausgefallen
+                 else "--- Abnahme des Netzes: bestanden ---")
+                + (f" ({len(warnungen)} Warnungen)" if warnungen else ""))
             return True
         self.log.appendPlainText(f"--- Abnahme des Netzes: {len(befunde)} Verletzungen ---")
         for b in befunde:
