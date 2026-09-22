@@ -3433,6 +3433,39 @@ Der Hexaeder mit inkompatiblen Moden trägt die Biegung mit zwei Lagen; der line
 Tetraeder bleibt bei zwei Lagen um fast ein Drittel zu steif — mit weniger als der
 Hälfte der Knoten.
 
+**Ein Keil ist kein halber Sechsflächner.** Der `hex8` trägt Biegung über inkompatible
+Moden (Taylor/Beresford/Wilson), der `pent6` hat sie nicht — er läuft über die reine
+isoparametrische Formulierung. Am **identischen Knotengitter** gemessen (Statik3D-Sitzung,
+22.09.2026, Kragarm 1,0 × 0,1 × 0,2 m gegen die Balkenlösung mit Schub; jeder Würfel
+wahlweise als ein `hex8` oder als zwei `pent6`):
+
+| Gitter | Knoten | `hex8` | `pent6` | der Keil ist steifer um |
+|---|---|---|---|---|
+| 4 × 1 × 1 | 20 | 95,9 % | **56,4 %** | Faktor 1,70 |
+| 8 × 1 × 2 | 54 | 96,8 % | **81,8 %** | Faktor 1,18 |
+| 16 × 2 × 4 | 255 | 98,2 % | **93,5 %** | Faktor 1,05 |
+
+Damit ist die Paarung der Dreiecke keine Kosmetik, sondern tragend: jedes Dreieck ohne
+Partner wird ein Keil und kostet am groben Netz zweistellig. Die gierige Auswahl allein
+lässt aber Dreiecke stehen, deren Nachbarn schon vergeben sind — und zwar **nicht** wegen
+der Gütegrenze (sie von 0,3 auf 10⁻⁶ zu senken änderte an der Kragplatte keine einzige
+Zahl). Darum wird nach dem gierigen Durchgang **umgepaart**: für jedes übrige Dreieck u
+wird ein Nachbar v gesucht, dessen Partner w seinerseits ein anderes übriges Dreieck x
+hat; dann wird (v, w) gelöst und (u, v) sowie (w, x) genommen — ein erweiternder Weg der
+Länge drei, wiederholt, solange es trägt. Gemessen an der Kragplatte 1 × 0,2 × 0,05 m mit
+Endlast (22.09.2026, gleiche Knotenzahl in beiden Zeilen):
+
+| | Elemente | Keilanteil | Endverschiebung |
+|---|---|---|---|
+| h = 50 mm, nur gierig | 406 hex8 + 96 pent6 | 19,1 % | 93,8 % |
+| h = 50 mm, **umgepaart** | 424 hex8 + 60 pent6 | **12,4 %** | **95,8 %** |
+| h = 25 mm, nur gierig | 818 hex8 + 128 pent6 | 13,5 % | 97,1 % |
+| h = 25 mm, **umgepaart** | 850 hex8 + 64 pent6 | **7,0 %** | **97,7 %** |
+
+Zwei Prozentpunkte Genauigkeit am groben Netz, ohne einen einzigen Knoten mehr. Der
+**Keilanteil je gesweeptem Körper** ist damit ein Abnahmemaß für sich; er steht im
+Protokoll jedes Körpers („n Hexaeder + m Keile (gesweept, L Lagen)").
+
 **Lagen bei Fließen.** Das gilt **elastisch**. Die Löser-Sitzung hat am Zweigstand
 a4a7d91 (21.09.2026) den Kragträger 200 × 200 mm, 1,0 m, unter dem Endmoment 1,20 · M_el
 gerechnet (fy = 235 N/mm², Verfestigung 2 %; die Randfaser trägt elastisch 282 N/mm² und

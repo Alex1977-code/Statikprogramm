@@ -442,13 +442,35 @@ def _viereckguete(Q: np.ndarray) -> np.ndarray:
 
 
 def paaren(P2: np.ndarray, T: np.ndarray, guete_min: float = VIERECK_GUETE_MIN) -> tuple:
-    """Dreiecke zu Vierecken paaren - gierig nach der Guete des Vierecks.
+    """Dreiecke zu Vierecken paaren - gierig nach der Guete des Vierecks, dann
+    **umgepaart**, bis kein Dreieck mehr uebrig ist, das noch koennte.
 
     ``T`` sind Dreiecke mit gleichem Umlauf (gegen den Uhrzeiger in ``P2``).
     Zwei Dreiecke, die eine Kante teilen, geben das Viereck ueber die andere
     Diagonale; es wird genommen, wenn seine Guete mindestens ``guete_min``
     ist und beide Dreiecke noch frei sind. Rueckgabe (Vierecke (q, 4),
     uebrige Dreiecke (r, 3)), beide gegen den Uhrzeiger.
+
+    Warum das Umpaaren sein muss: **ein Keil ist kein halber Sechsflaechner.**
+    Der hex8 traegt Biegung ueber inkompatible Moden, der pent6 nicht - am
+    identischen Knotengitter gemessen (Statik3D-Sitzung, 22.09.2026,
+    Kragarm 1,0 x 0,1 x 0,2 m gegen die Balkenloesung mit Schub):
+
+        Gitter    hex8     pent6    der Keil ist steifer um
+        4x1x1     95,9 %   56,4 %   Faktor 1,70
+        8x1x2     96,8 %   81,8 %   Faktor 1,18
+        16x2x4    98,2 %   93,5 %   Faktor 1,05
+
+    Jedes Dreieck, das keinen Partner findet, kostet also am groben Netz
+    richtig. Und es liegt **nicht** an der Guetegrenze: sie von 0,3 auf 10^-6
+    zu senken aenderte an der Kragplatte keine einzige Zahl (96 Keile bei
+    h = 50 mm, 128 bei 25 mm, 22.09.2026). Es liegt an der gierigen Auswahl -
+    sie laesst Dreiecke stehen, deren Nachbarn schon vergeben sind, obwohl
+    ein Tausch beide unterbraechte. Genau das holt der zweite Schritt: fuer
+    jedes uebrige Dreieck u wird ein Nachbar v gesucht, dessen Partner w
+    seinerseits ein **anderes** uebriges Dreieck x hat; dann werden (v, w)
+    geloest und (u, v) und (w, x) genommen - ein erweiternder Weg der Laenge
+    drei. Das wiederholt sich, solange es traegt.
     """
     T = np.asarray(T, int)
     if not len(T):
@@ -467,7 +489,6 @@ def paaren(P2: np.ndarray, T: np.ndarray, guete_min: float = VIERECK_GUETE_MIN) 
         # (gegenueber der Kante) ueber die Kante zur Spitze des zweiten
         s1 = [v for v in t1 if v not in (x, y)][0]
         s2 = [v for v in t2 if v not in (x, y)][0]
-        # Reihenfolge der Kante im ersten Dreieck: i -> j
         i1 = t1.index(s1)
         i, j = t1[(i1 + 1) % 3], t1[(i1 + 2) % 3]      # Kante in Umlaufrichtung von t1
         viereck = (s1, i, s2, j)
@@ -475,19 +496,51 @@ def paaren(P2: np.ndarray, T: np.ndarray, guete_min: float = VIERECK_GUETE_MIN) 
     if not kandidaten:
         return np.zeros((0, 4), int), T
     Q = np.array([v for _, _, v in kandidaten], int)
-    q = _viereckguete(P2[Q])
+    q = _viereckguete(Q if Q.ndim == 3 else P2[Q])
+    # ---- 1) gierig, das Beste zuerst --------------------------------------
     reihenfolge = np.argsort(-q, kind="stable")
-    benutzt = np.zeros(len(T), bool)
-    vierecke = []
+    partner = np.full(len(T), -1, int)              # Dreieck -> Dreieck
+    paar_von = {}                                   # Dreieck -> Kandidatennummer
     for r in reihenfolge:
         if q[r] < guete_min:
             break
-        k1, k2, v = kandidaten[r]
-        if benutzt[k1] or benutzt[k2]:
+        k1, k2, _v = kandidaten[r]
+        if partner[k1] >= 0 or partner[k2] >= 0:
             continue
-        benutzt[k1] = benutzt[k2] = True
-        vierecke.append(v)
-    rest = T[~benutzt]
+        partner[k1], partner[k2] = k2, k1
+        paar_von[k1] = paar_von[k2] = int(r)
+    # ---- 2) umpaaren: erweiternde Wege der Laenge drei ---------------------
+    moeglich: dict = {}                             # Dreieck -> [(Nachbar, Kandidatennummer)]
+    for r, (k1, k2, _v) in enumerate(kandidaten):
+        if q[r] < guete_min:
+            continue
+        moeglich.setdefault(k1, []).append((k2, r))
+        moeglich.setdefault(k2, []).append((k1, r))
+    geaendert = True
+    while geaendert:
+        geaendert = False
+        for u in np.nonzero(partner < 0)[0]:
+            if partner[u] >= 0:
+                continue
+            for v, r_uv in moeglich.get(int(u), ()):
+                w = partner[v]
+                if w < 0:                           # haette die Gier schon genommen
+                    continue
+                for x, r_wx in moeglich.get(int(w), ()):
+                    if x == v or partner[x] >= 0:
+                        continue
+                    # (v, w) loesen, (u, v) und (w, x) nehmen
+                    partner[u], partner[v] = v, u
+                    partner[w], partner[x] = x, w
+                    paar_von[u] = paar_von[v] = int(r_uv)
+                    paar_von[w] = paar_von[x] = int(r_wx)
+                    geaendert = True
+                    break
+                if partner[u] >= 0:
+                    break
+    vierecke = [kandidaten[paar_von[k]][2] for k in range(len(T))
+                if partner[k] > k]
+    rest = T[partner < 0]
     return (np.asarray(vierecke, int).reshape(-1, 4), rest)
 
 

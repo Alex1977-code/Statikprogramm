@@ -751,6 +751,116 @@ def test_keile_am_feinen_rand():
           f"{ohne[False][0]} → {ohne[True][0]} Elemente, Güte {ohne[False][1]:.3f} → {ohne[True][1]:.3f}")
 
 
+def test_umpaaren_spart_keile():
+    """Ein Keil ist kein halber Sechsflächner: der hex8 trägt Biegung über
+    inkompatible Moden, der pent6 nicht (Statik3D-Sitzung, 22.09.2026: am
+    identischen Gitter 95,9 % gegen 56,4 % der Balkenlösung). Jedes Dreieck
+    ohne Partner kostet also.
+
+    Die gierige Paarung lässt Dreiecke stehen, deren Nachbarn schon vergeben
+    sind - und zwar **nicht** wegen der Gütegrenze: sie von 0,3 auf 10⁻⁶ zu
+    senken ändert keine einzige Zahl. Erst das Umpaaren (erweiternder Weg der
+    Länge drei) holt sie."""
+    from statik3d.sweep import _viereckguete
+
+    def nur_gierig(P2, T, guete_min=sweep.VIERECK_GUETE_MIN):
+        """Die Paarung ohne den zweiten Schritt - der Stand vor dem 22.09.2026."""
+        T = np.asarray(T, int)
+        kante = {}
+        for k, (a, b, c) in enumerate(T):
+            for x, y in ((a, b), (b, c), (c, a)):
+                kante.setdefault((min(x, y), max(x, y)), []).append(k)
+        kand = []
+        for (x, y), ks in kante.items():
+            if len(ks) != 2:
+                continue
+            k1, k2 = ks
+            t1 = [int(v) for v in T[k1]]
+            t2 = [int(v) for v in T[k2]]
+            s1 = [v for v in t1 if v not in (x, y)][0]
+            s2 = [v for v in t2 if v not in (x, y)][0]
+            i1 = t1.index(s1)
+            i, j = t1[(i1 + 1) % 3], t1[(i1 + 2) % 3]
+            kand.append((k1, k2, (s1, i, s2, j)))
+        if not kand:
+            return 0, len(T)
+        q = _viereckguete(P2[np.array([v for _, _, v in kand], int)])
+        benutzt = np.zeros(len(T), bool)
+        n = 0
+        for r in np.argsort(-q, kind="stable"):
+            if q[r] < guete_min:
+                break
+            k1, k2, _v = kand[r]
+            if benutzt[k1] or benutzt[k2]:
+                continue
+            benutzt[k1] = benutzt[k2] = True
+            n += 1
+        return n, int((~benutzt).sum())
+
+    # Das Grundflächennetz der Kragplatte, wie der Sweep es sieht
+    m, k = platte_mit_bohrungen(1.0, 0.2, 0.05, bohrungen=((0.95, 0.1, 0.01),))
+    m.netz.ziellaenge = 0.025
+    m.netz.dichte = "eigene"
+    erk = sweep.erkennen(m, k)
+    h = mesher3d._kantenlaenge(m, k, 0.025)
+    hf, hl = mesher3d.kantenlaengen_karte(m, h=h)
+    gem = mesher3d.gemeinsame_randflaechen(m)
+    teilung = mesher3d.Linienteilung(m, [m.flaechen[x] for x in k.flaechen], h, hl, hf, gem)
+    P, T, meldung, grob, _kenn = mesher3d.flaechennetz(m, erk["grund"], teilung)
+    P = np.asarray(P, float)
+    T = np.asarray(T, int)
+    c, e1, e2, n, _abw = mesher3d.ausgleichsebene(P)
+    P2 = np.stack([(P - c) @ e1, (P - c) @ e2], axis=1)
+    a_, b_, d_ = P2[T[:, 0]], P2[T[:, 1]], P2[T[:, 2]]
+    fl = (b_[:, 0] - a_[:, 0]) * (d_[:, 1] - a_[:, 1]) - (d_[:, 0] - a_[:, 0]) * (b_[:, 1] - a_[:, 1])
+    T = np.where((fl < 0)[:, None], T[:, [0, 2, 1]], T)
+    n_gierig, rest_gierig = nur_gierig(P2, T)
+    V, D = sweep.paaren(P2, T)
+    check("das Umpaaren lässt weniger Dreiecke übrig als die reine Gier",
+          len(D) < rest_gierig, f"{rest_gierig} → {len(D)} Dreiecke von {len(T)}")
+    check("und es entstehen entsprechend mehr Vierecke",
+          len(V) > n_gierig and 2 * len(V) + len(D) == len(T),
+          f"{n_gierig} → {len(V)} Vierecke, Buchführung {2 * len(V) + len(D)} = {len(T)}")
+    check("kein Viereck ist umgestülpt", len(V) == 0 or float(_viereckguete(P2[V]).min()) > 0,
+          f"kleinste Vierecksgüte {float(_viereckguete(P2[V]).min()):.3f}" if len(V) else "-")
+    # Die Guetegrenze ist nicht der Engpass: sie von 0,3 auf 10^-6 zu senken
+    # holt auf 882 Dreiecken noch vier Paare und aendert am fertigen Netz
+    # keine Zahl (Keilanteil und Verschiebung unten sind fuer beide gleich,
+    # 22.09.2026). Darum bleibt sie, wo sie ist - ein schlechtes Viereck waere
+    # ein schlechter Sechsflaechner.
+    ohne_grenze = len(sweep.paaren(P2, T, 1e-6)[1])
+    check("die Gütegrenze ist nicht der Engpass - ohne sie bleibt es fast gleich",
+          abs(ohne_grenze - len(D)) <= 0.2 * len(D),
+          f"{len(D)} mit Grenze 0,3 gegen {ohne_grenze} ohne")
+    # Und am fertigen Netz: weniger Keile, bessere Verschiebung
+    zahlen = {}
+    for h_ in (0.05, 0.025):
+        m2, k2 = platte_mit_bohrungen(1.0, 0.2, 0.05, bohrungen=((0.95, 0.1, 0.01),))
+        m2.add_load_case("LF1")
+        m2.case("LF1").gravity = [0.0, 0.0, 0.0]
+        m2.add_geometrielast("M2", 10e3 / (0.2 * 0.05), "flaeche", richtung=[0.0, 0.0, -1.0], case="LF1")
+        ss = m2.add_surface_support(name="Einspannung")
+        ss.flaechen = ["M4"]
+        for d in (0, 1, 2):
+            ss.behaviour[d] = DofBehaviour("rigid")
+        m2.netz.ziellaenge = h_
+        m2.netz.dichte = "eigene"
+        m2.active_case = "LF1"
+        mesher.modell_vernetzen(m2, [], workers=1)
+        res = solver.solve_static(m2, case="LF1", workers=1)
+        typ = _typen(m2)
+        zahlen[h_] = (typ.get("pent6", 0) / max(1, sum(typ.values())),
+                      float(np.abs(res.u[:, 2]).max()), typ)
+    w_balken = 10e3 * 1.0 ** 3 / (3 * 210e9 * 0.2 * 0.05 ** 3 / 12)         + 10e3 * 1.0 / (5.0 / 6.0 * 210e9 / 2.6 * 0.2 * 0.05)
+    check("Keilanteil bei h = 25 mm unter 10 % (vor dem Umpaaren 13,5 %)",
+          zahlen[0.025][0] < 0.10, f"{zahlen[0.025][0] * 100:.1f} % {zahlen[0.025][2]}")
+    check("und die Endverschiebung über 97 % der Balkenlösung (vorher 97,1 %)",
+          zahlen[0.025][1] / w_balken > 0.97, f"{zahlen[0.025][1] / w_balken * 100:.1f} %")
+    check("auch am groben Netz: Keilanteil unter 15 %, über 95 % (vorher 19,1 % und 93,8 %)",
+          zahlen[0.05][0] < 0.15 and zahlen[0.05][1] / w_balken > 0.95,
+          f"{zahlen[0.05][0] * 100:.1f} %, {zahlen[0.05][1] / w_balken * 100:.1f} %")
+
+
 def test_kragplatte_tet4_gegen_hex8():
     """Das Erfolgsmass des Auftrags an der Kragplatte 1 x 0,2 x 0,05 m mit
     Endlast 10 kN, gegen Bernoulli + Schub. Eine kleine Bohrung am freien
@@ -795,7 +905,8 @@ def main():
               test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
               test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,
               test_pyramiden_als_uebergang, test_zerlegen_sagt_warum_nicht,
-              test_keile_am_feinen_rand, test_kragplatte_tet4_gegen_hex8):
+              test_keile_am_feinen_rand, test_umpaaren_spart_keile,
+              test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
