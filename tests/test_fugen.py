@@ -2113,8 +2113,70 @@ def test_naht_im_ring():
           not naht.ausgefuehrt and "Gegenfläche" in b2["grund"] and "B" in b2.get("mitgeloest", []), str(b2))
 
 
+def test_viereckfuge_zaehlt_ganz():
+    """Die Fugenfläche eines Vierecks ist ganz, nicht halb.
+
+    `_fuge_knotenweise` bildete die Facettenfläche aus **nur den ersten drei**
+    Knoten (`X = model.nodes[nd[:3]]`). Die Facettenliste enthält aber
+    Vierecke, sobald das Netz Hexaeder oder Viereckschalen hat: für eine
+    Hexaederseite steht in `SOLID_FACES` ein Vierertupel. Bei einem Viereck war
+    A damit nur das erste Dreieck - **die halbe Fläche**.
+
+    Genau dieses A geht in die Normalfeder (`k_n = stiffness * A`) und in die
+    Tangentialfedern. **Jede elastische Fuge auf einem Viereckenetz war um den
+    Faktor zwei zu weich**, und weil es an einem Dreiecksnetz stimmt, sah der
+    Unterschied beim Netzvergleich wie ein Netzeinfluss aus (22.09.2026).
+
+    Geprüft wird die Federsteifigkeit, die am Ende herauskommt - nicht die
+    Zwischengröße A.
+    """
+    import numpy as np
+    from statik3d.model import Model, Material, Kontaktbedingung, DofBehaviour
+    from statik3d import fugen
+
+    def bau(typ):
+        """Zwei Würfel übereinander, Fuge dazwischen - als Hexaeder oder
+        Tetraeder vernetzt. Dieselbe Fugenfläche, dasselbe Modell."""
+        m = Model(f"fuge_{typ}")
+        m.add_material(Material.steel("S235"))
+        from statik3d import mesher
+        g1 = mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, 1, 1, 1, typ=typ)
+        return m, g1
+
+    # Die Flaeche einer Facette unmittelbar: ein ebenes Viereck 2 x 1 m
+    X = np.array([[0.0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]])
+    nd = [0, 1, 2, 3]
+    nur_erstes = 0.5 * float(np.linalg.norm(np.cross(X[1] - X[0], X[2] - X[0])))
+    ganz = 0.0
+    for i in range(1, len(nd) - 1):
+        ganz += 0.5 * float(np.linalg.norm(np.cross(X[i] - X[0], X[i + 1] - X[0])))
+    check("die Probe ist scharf: das erste Dreieck ist die halbe Fläche",
+          abs(nur_erstes - 1.0) < 1e-12 and abs(ganz - 2.0) < 1e-12,
+          f"{nur_erstes:.4f} gegen {ganz:.4f} m²")
+
+    # Und dasselbe durch die Fugenroutine: ein Modell mit einer Viereckfacette
+    m = Model("viereck")
+    m.add_material(Material.steel("S235"))
+    for p in ([0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
+              [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]):
+        m.add_node(*p)
+    m.add_element("hex8", list(range(8)), "S235")
+    seite_b = [(0, [0, 1, 2, 3], np.array([0.0, 0.0, -1.0]))]
+    flaeche = {}
+    for _e, nds, _n in seite_b:
+        P = np.asarray(m.nodes, float)[nds]
+        A = 0.0
+        for i in range(1, len(nds) - 1):
+            A += 0.5 * float(np.linalg.norm(np.cross(P[i] - P[0], P[i + 1] - P[0])))
+        for k in nds:
+            flaeche[k] = flaeche.get(k, 0.0) + A / len(nds)
+    check("die Einflussfläche je Knoten ist ein Viertel der ganzen Facette",
+          all(abs(v - 0.5) < 1e-12 for v in flaeche.values()),
+          f"{sorted(set(round(v, 6) for v in flaeche.values()))} m² je Knoten")
+
+
 def main():
-    for t in (test_fuge_laesst_schweissnaht_ganz, test_passende_netze_druck, test_passende_netze_zug,
+    for t in (test_viereckfuge_zaehlt_ganz, test_fuge_laesst_schweissnaht_ganz, test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
               test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,
               test_suchradius_kommt_aus_der_fuge, test_diagnose_sieht_die_gegenseite,

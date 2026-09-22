@@ -1551,6 +1551,14 @@ class Volumenbereich:
     ausrundung: Kerbradius [m] am Nachweisort, 0 = unbekannt. Wird er
                 angegeben, prueft das Programm, ob die Vernetzung dort fein
                 genug ist, und sagt es, wenn nicht.
+    dicke:      Erzeugnisdicke [m] fuer die Abminderung der Streckgrenze nach
+                EN 1993-1-1 Tab. 3.1. 0 = das Programm setzt sie selbst an:
+                die kleinste Abmessung des umschliessenden Quaders des
+                **ganzen zusammenhaengenden Koerpers**, zu dem die Elemente
+                gehoeren - nicht der Auswahl, sonst haengt das Ergebnis daran,
+                wie viel der Anwender markiert hat. Bei einem geschweissten
+                Bauteil ist der Koerper zu dick gerechnet: dort ist die
+                Blechdicke massgebend, und die wird hier angegeben.
     singular:   Der Bereich enthaelt eine bekannte Spannungssingularitaet
                 (einspringende Ecke, Einzellast, Punktlager). Dann wird die
                 Spitzenspannung nicht als Nachweis gefuehrt, sondern nur
@@ -1563,6 +1571,7 @@ class Volumenbereich:
     ausrundung: float = 0.0
     singular: bool = False
     beschreibung: str = ""
+    dicke: float = 0.0
 
     def bezug(self) -> str:
         n = len(self.elemente)

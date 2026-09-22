@@ -1206,10 +1206,27 @@ Verdrehungen wirken nur bei Schalen; zwischen Volumen bleiben sie ohne Wirkung
 
 Die Verbindung je Freiheitsgrad folgt der Freigabe: *starr* → Kopplung mit
 Straffeder, *Feder c* [N/m je m²] → Kopplung mit c · A (A = Einflussfläche des
-Knotens, ein Drittel der anliegenden Dreiecke – dieselbe Aufteilung wie bei
-einer Flächenlast), *frei mit Ausfall* → Spaltelement. Ein Reibbeiwert geht als
+Knotens: jede anliegende Facette gibt ihren Inhalt gleichmäßig an ihre Knoten,
+Dreieck A/3, Viereck A/4 – dieselbe Aufteilung wie bei einer Flächenlast),
+*frei mit Ausfall* → Spaltelement. Ein Reibbeiwert geht als
 Coulomb-Reibung in das Spaltelement; die Reibkraft hängt damit an der
 wirklichen Kontaktkraft.
+
+**Der Inhalt einer Facette ist der ganze, nicht der ihres ersten Dreiecks.**
+Bis zum 22.09.2026 bildete `_fuge_knotenweise` die Facettenfläche aus den
+**ersten drei** Knoten. Für ein Dreieck stimmt das; die Facettenliste enthält
+aber Vierecke, sobald das Netz Hexaeder oder Viereckschalen hat (für eine
+Hexaederseite steht in `SOLID_FACES` ein Vierertupel). Bei einem Viereck war A
+damit das erste Dreieck — **die halbe Fläche**. Genau dieses A geht in die
+Normalfeder (k_n = c · A) und in die Tangentialfedern: jede elastische Fuge auf
+einem Sechsflächner- oder Viereckschalennetz war um den **Faktor zwei zu
+weich**. Gemessen am ebenen Viereck 2,0 × 1,0 m: 1,0000 m² alt gegen 2,0000 m²
+neu, am Dreieck 2,0 × 1,0 m unverändert 1,0000 m². Weil es am Dreiecksnetz
+stimmte, sah der Unterschied beim Netzvergleich wie ein Netzeinfluss aus.
+Gerechnet wird jetzt als Fächertriangulierung um den ersten Knoten: für ein
+Dreieck derselbe eine Term wie vorher, für ein ebenes Viereck exakt, für ein
+leicht windschiefes die Summe seiner beiden Dreiecke (Test
+`test_viereckfuge_zaehlt_ganz`).
 
 **Zum Vorzeichen des Ausfalls.** RFEM schreibt den Ausfall als „bei negativer"
 oder „bei positiver" Kraft – bezogen auf die lokale z-Achse der freigegebenen
@@ -2551,6 +2568,34 @@ gegen f_y ist dort ohne Aussage. Zwei Vorkehrungen:
 * Unabhängig davon vergleicht das Programm die Spitzenspannung mit dem
   Mittelwert des Bereichs. Liegt sie um mehr als den Faktor 5 darüber, weist
   es auf eine mögliche Singularität hin.
+
+**Die Erzeugnisdicke.** EN 1993-1-1 Tab. 3.1 mindert die Streckgrenze mit der
+Erzeugnisdicke ab (S355: 355 N/mm² bis 40 mm, darüber 335; ein aus RFEM 6
+übernommener Werkstoff bringt seine eigene Dickentabelle mit). Bis zum
+22.09.2026 rechnete der Volumennachweis mit `yield_strength(0.0)`, also
+**immer mit der dünnsten Stufe**: ein Lagerblock von 80 mm wies sich mit 355
+statt 335 N/mm² nach, η fiel 6,0 % zu klein aus — auf der unsicheren Seite.
+Der Stabnachweis macht es seit jeher richtig (`mat.yield_strength(sec.t_max)`).
+
+Ein Volumen hat keine Dicke im Sinne eines Querschnitts. Angesetzt wird darum
+die **kleinste Abmessung des umschließenden Quaders des ganzen
+zusammenhängenden Körpers**, zu dem die Elemente des Bereichs gehören: bei
+einer Platte ihre Dicke, bei einem Rundstahl sein Durchmesser, bei einem Block
+seine kürzeste Kante. Der Körper und nicht die Auswahl, weil die Auswahl dem
+Anwender gehört: an einem Block 300 × 300 × 200 mm, vernetzt mit 6 × 6 × 8
+Elementen, misst der Körper 200 mm (f_y = 335), eine einzelne Elementlage aber
+25 mm (f_y = 355) — dieselbe Stelle, 6,0 % auf der unsicheren Seite, nur weil
+weniger markiert war. Die Körper werden als Zusammenhangskomponenten des
+Graphen Element/Knoten bestimmt (`scipy.sparse.csgraph`), zwei getrennte
+Körper im selben Modell bleiben getrennt.
+
+Bei einem **aus Blechen geschweißten** Bauteil ist der Körper umgekehrt zu
+dick — dort ist die Blechdicke maßgebend. Die Erzeugnisdicke ist deshalb am
+Volumenbereich angebbar und hat dann Vorrang. Die angesetzte Dicke steht in der
+Übersicht des Berichts (Spalte t, mit `*` wenn selbst angegeben); mindert sie
+f_y ab, sagt der Bericht es zusätzlich als Hinweis, damit ein Prüfer die
+Festlegung beurteilen kann (Tests `test_erzeugnisdicke_mindert_die_streckgrenze`
+und `test_erzeugnisdicke_ist_angebbar`).
 
 Wird ein **Kerbradius** angegeben, prüft das Programm zusätzlich, ob die
 mittlere Elementgröße h ≤ r/3 ist — sonst liegen weniger als drei Elemente

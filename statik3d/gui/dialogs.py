@@ -1803,6 +1803,14 @@ class VolumenbereichDialog(QtWidgets.QDialog):
             "Kerbradius am Nachweisort. Wird er angegeben, prüft das Programm,\n"
             "ob mindestens drei Elemente über den Radius liegen.")
         form.addRow("Kerbradius [mm] (0 = unbekannt)", self.ed_r)
+        self.ed_t = NumEdit((v.dicke * 1e3) if v else 0.0, 90)
+        self.ed_t.setToolTip(
+            "Erzeugnisdicke für die Abminderung der Streckgrenze nach\n"
+            "EN 1993-1-1 Tab. 3.1 (S355: über 40 mm 335 statt 355 N/mm²).\n"
+            "0 = das Programm nimmt die kleinste Abmessung des Körpers.\n"
+            "Bei einem aus Blechen geschweißten Bauteil ist das zu viel -\n"
+            "dort die Blechdicke eintragen.")
+        form.addRow("Erzeugnisdicke [mm] (0 = aus dem Körper)", self.ed_t)
         self.ed_text = QtWidgets.QLineEdit(v.beschreibung if v else "")
         form.addRow("Beschreibung", self.ed_text)
         lay.addLayout(form)
@@ -1823,6 +1831,7 @@ class VolumenbereichDialog(QtWidgets.QDialog):
             "design": self.cb_design.isChecked(),
             "singular": self.cb_sing.isChecked(),
             "ausrundung": self.ed_r.value() * 1e-3,
+            "dicke": self.ed_t.value() * 1e-3,
             "beschreibung": self.ed_text.text().strip()}
 
 

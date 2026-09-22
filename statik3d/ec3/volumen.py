@@ -237,8 +237,101 @@ def _elementspannungen(model, res, elemente) -> list:
     return out
 
 
-def _material(model, elemente):
-    """(Materialname, f_y) des Bereichs; f_y der schwaechste im Bereich."""
+def _koerper(model):
+    """Zuordnung Volumenelement -> zusammenhaengender Koerper.
+
+    Zwei Volumenelemente gehoeren zum selben Koerper, wenn sie einen Knoten
+    teilen - ueber Nachbarn auch mittelbar. Gerechnet wird das als
+    Zusammenhangskomponente des zweiteiligen Graphen Element/Knoten
+    (``scipy.sparse.csgraph``) und nicht mit einer eigenen Schleife: bei den
+    288 Elementen einer Pruefung ist die Art der Rechnung gleich, bei den
+    645 934 Volumenelementen des Drehlagers nicht.
+
+    Rueckgabe: ``(marke, gruppen)`` - Element -> Koerpernummer und
+    Koerpernummer -> Elementliste.
+    """
+    import numpy as _np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from ..elemente import VOLUMEN_TYPEN
+    idx, zeilen, spalten = [], [], []
+    for i, e in enumerate(model.elements):
+        if e.typ not in VOLUMEN_TYPEN:
+            continue
+        r = len(idx)
+        idx.append(i)
+        for k in e.nodes:
+            zeilen.append(r)
+            spalten.append(int(k))
+    m = len(idx)
+    if not m:
+        return {}, {}
+    n = m + int(model.nn)
+    G = coo_matrix((_np.ones(len(zeilen)),
+                    (_np.asarray(zeilen, int), m + _np.asarray(spalten, int))),
+                   shape=(n, n))
+    _anz, lab = connected_components(G, directed=False)
+    marke, gruppen = {}, {}
+    for r, i in enumerate(idx):
+        g = int(lab[r])
+        marke[i] = g
+        gruppen.setdefault(g, []).append(i)
+    return marke, gruppen
+
+
+def _erzeugnisdicke(model, elemente, koerper=None) -> float:
+    """Die Erzeugnisdicke eines Volumenbereichs [m] - die **kleinste**
+    Abmessung des umschliessenden Quaders des **ganzen Koerpers**, zu dem
+    seine Elemente gehoeren.
+
+    EN 1993-1-1 Tab. 3.1 mindert die Streckgrenze mit der Erzeugnisdicke ab
+    (S355: 355 N/mm2 bis 40 mm, darueber 335). Ein Volumenbereich hat keine
+    Dicke im Sinne eines Querschnitts; er ist aus einem Erzeugnis gefertigt,
+    und dessen Dicke ist die kleinste Abmessung: bei einer Platte ihre Dicke,
+    bei einem Rundstahl sein Durchmesser, bei einem Block seine kuerzeste
+    Kante.
+
+    **Warum der ganze Koerper und nicht die Auswahl?** Weil die Auswahl dem
+    Anwender gehoert. An einem Block 300 x 300 x 200 mm, vernetzt mit
+    6 x 6 x 8 Elementen, misst der ganze Koerper 200 mm (f_y = 335), eine
+    einzelne Elementlage aber 25 mm (f_y = 355): dieselbe Stelle, 6,0 % auf
+    der **unsicheren** Seite, nur weil weniger markiert war. Der Koerper ist
+    dagegen unabhaengig davon, was der Anwender gerade ausgewaehlt hat.
+
+    Bei einem **geschweissten** Bauteil ist der Koerper umgekehrt zu dick -
+    massgebend ist dort die Blechdicke. Darum ist die Dicke am Volumenbereich
+    angebbar (``Volumenbereich.dicke``), die selbst gesetzte steht im Nachweis
+    (``werte["dicke"]``), und wenn sie die Streckgrenze abmindert, sagt es der
+    Bericht als Hinweis.
+
+    Bis zum 22.09.2026 wurde mit ``yield_strength(0.0)`` gerechnet, also
+    **immer mit der duennsten Stufe**: ein Lagerblock von 80 mm wies sich mit
+    355 statt 335 N/mm2 nach, eta fiel rund 6 % zu klein aus - auf der
+    unsicheren Seite. Der Stabnachweis macht es seit jeher richtig
+    (``design.py``: ``mat.yield_strength(sec.t_max)``).
+    """
+    import numpy as _np
+    marke, gruppen = koerper if koerper is not None else _koerper(model)
+    kn = set()
+    for i in elemente:
+        i = int(i)
+        if not 0 <= i < len(model.elements):
+            continue
+        for j in gruppen.get(marke.get(i, -1), (i,)):
+            kn.update(int(x) for x in model.elements[j].nodes)
+    if not kn:
+        return 0.0
+    X = _np.asarray(model.nodes, float)[sorted(kn)]
+    d = X.max(axis=0) - X.min(axis=0)
+    return float(d.min())
+
+
+def _material(model, elemente, dicke: float = 0.0):
+    """(Materialname, f_y) des Bereichs; f_y der schwaechste im Bereich.
+
+    ``dicke`` ist die Erzeugnisdicke [m] fuer die Abminderung nach
+    EN 1993-1-1 Tab. 3.1 - siehe :func:`_erzeugnisdicke`.
+    """
     namen, fy = [], []
     for i in elemente:
         e = model.elements[i]
@@ -247,7 +340,7 @@ def _material(model, elemente):
             continue
         if e.mat not in namen:
             namen.append(e.mat)
-        f = mat.yield_strength(0.0) or 0.0
+        f = mat.yield_strength(dicke) or 0.0
         if f > 0:
             fy.append(f)
     return "/".join(namen), (min(fy) if fy else 0.0)
@@ -261,6 +354,7 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
     out = VolumenResults(kombinationen=list(ergebnisse), settings={
         "gamma_M0": ds.gamma_M0,
         "Norm": "DIN EN 1993-1-1, 6.2.1(5) (Vergleichsspannung nach von Mises)"})
+    koerper = _koerper(model)
     for i, (name, vb) in enumerate(model.volumenbereiche.items()):
         c = VolumenCheck(name, beschreibung=vb.beschreibung,
                          n_elemente=len(vb.elemente), singular=bool(vb.singular))
@@ -268,7 +362,17 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
             c.fehler = "Nachweis für diesen Bereich ausgeschaltet"
             out.bereiche[name] = c
             continue
-        c.material, c.fy = _material(model, vb.elemente)
+        # Die Erzeugnisdicke: entweder am Bereich angegeben oder aus dem
+        # zusammenhaengenden Koerper bestimmt (siehe _erzeugnisdicke). Sie
+        # geht in die Abminderung nach EN 1993-1-1 Tab. 3.1 und steht weiter
+        # unten im Nachweis - **nicht hier**: c.werte wird in der Schleife
+        # ueber die Kombinationen durch das Ergebnis der massgebenden
+        # Kombination ersetzt, was hier hineingeschrieben wird, ist weg.
+        gesetzt = float(getattr(vb, "dicke", 0.0) or 0.0) > 0
+        t_erz = (float(vb.dicke) if gesetzt
+                 else _erzeugnisdicke(model, vb.elemente, koerper))
+        c.material, c.fy = _material(model, vb.elemente, t_erz)
+        _mat0, fy_duenn = _material(model, vb.elemente, 0.0)
         if c.fy <= 0:
             c.fehler = ("kein Material mit Streckgrenze im Bereich - "
                         "der Nachweis braucht f_y")
@@ -297,6 +401,18 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
             out.bereiche[name] = c
             continue
         w = c.werte
+        w["dicke"] = t_erz
+        w["dicke_gesetzt"] = gesetzt
+        if not gesetzt and c.fy < fy_duenn:
+            c.hinweise.append(
+                f"Erzeugnisdicke {t_erz * 1e3:.0f} mm angesetzt - die kleinste "
+                "Abmessung des Körpers, zu dem die Elemente gehören. Die "
+                f"Streckgrenze ist damit nach EN 1993-1-1 Tab. 3.1 auf "
+                f"{c.fy / 1e6:.0f} N/mm² abgemindert (dünnste Stufe: "
+                f"{fy_duenn / 1e6:.0f}). Ist das Bauteil aus Blechen "
+                "geschweißt, ist die Blechdicke maßgebend und nicht die "
+                "Abmessung des Körpers - dann die Erzeugnisdicke am "
+                "Volumenbereich angeben.")
         if w.get("dreiachsiger_zug"):
             c.hinweise.append(
                 f"Dreiachsiger Zug (σ_3 = {w['s3'] / 1e6:.1f} N/mm² > 0) bei einer "

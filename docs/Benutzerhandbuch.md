@@ -3095,6 +3095,15 @@ brauchbaren und einem wertlosen Nachweis ausmachen:
 * **Kerbradius**: Wird er angegeben, prüft das Programm, ob mindestens drei
   Elemente über den Radius liegen. Sonst sagt es, dass das Netz dort zu grob
   ist und die Kerbspannung unterschätzt wird.
+* **Erzeugnisdicke**: Die Streckgrenze hängt nach EN 1993-1-1 Tab. 3.1 von der
+  Erzeugnisdicke ab (S355: über 40 mm 335 statt 355 N/mm²). Bleibt das Feld
+  auf 0, nimmt Statik3D die kleinste Abmessung des ganzen Körpers, zu dem die
+  Elemente gehören — bei einem massiven Bauteil ist das richtig. Ist das
+  Bauteil aus Blechen **geschweißt**, ist es zu viel: dann die Blechdicke
+  eintragen. Die angesetzte Dicke steht im Bericht in der Spalte *t* (mit `*`,
+  wenn sie selbst angegeben wurde), und wenn sie f_y abmindert, sagt der
+  Bericht es als Hinweis. Bis zum 22.09.2026 rechnete der Volumennachweis
+  immer mit der dünnsten Stufe — η fiel bei dicken Bauteilen 6 % zu klein aus.
 
 Ausgewertet wird je Element an der Mitte **und** an den Eckpunkten; maßgebend
 ist der größte Wert. Die Elementmitte allein würde die Randspannung bei

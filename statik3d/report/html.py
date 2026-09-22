@@ -1517,18 +1517,25 @@ class Report:
         ]))
 
         b.append(self._h(2, "Übersicht"))
-        rows = [["Bereich", "Elemente", "Material", "f_y [MPa]", "σ_v [MPa]",
+        rows = [["Bereich", "Elemente", "Material", "t [mm]", "f_y [MPa]", "σ_v [MPa]",
                  "σ_1 [MPa]", "σ_3 [MPa]", "h", "η", "Komb.", "Status"]]
         for c in v.bereiche.values():
             w = c.werte or {}
-            rows.append([c.name, str(c.n_elemente), c.material,
+            # Die Erzeugnisdicke gehoert in die Uebersicht: an ihr haengt
+            # die Abminderung von f_y, und ein Pruefer muss sie sehen koennen.
+            # Eine selbst angegebene wird mit * gekennzeichnet.
+            t_mm = (fmt(w.get("dicke", 0.0) * 1e3, 0)
+                    + ("*" if w.get("dicke_gesetzt") else "")) if w.get("dicke") else "–"
+            rows.append([c.name, str(c.n_elemente), c.material, t_mm,
                          fmt(c.fy / 1e6, 0), fmt(w.get("sigma_v", 0) / 1e6, 1),
                          fmt(w.get("s1", 0) / 1e6, 1), fmt(w.get("s3", 0) / 1e6, 1),
                          fmt(w.get("h", 0.0), 2),
                          ("–" if c.singular else Util(c.util)),
                          c.kombination, c.status()])
         b.append(("table", rows, "Volumenbereiche: Spannungen und Ausnutzung",
-                  None, ""))
+                  None, "t ist die Erzeugnisdicke für die Abminderung von f_y "
+                  "nach EN 1993-1-1 Tab. 3.1; ohne * die kleinste Abmessung "
+                  "des Körpers, mit * am Bereich angegeben."))
         if self.opt("figures"):
             liste = [c for c in v.bereiche.values() if not c.fehler and not c.singular][:60]
             if liste:
