@@ -3250,10 +3250,19 @@ Nachweis mit seiner Verformung je Kombination.
   aber scheiterndes CHOLMOD. **Der Grund steht außerdem am Ergebnis** — auch
   bei Lastfällen aus Rechenketten, dem Prozesspool oder der Farm, die ohne
   Protokollzeilen rechnen: die Zusammenfassung eines Ergebnisses zeigt die Zeile
-  „Löser ausgewichen : …“, die Zusammenfassung nach „Alle Lastfälle“ und der
-  Bericht (Zusammenfassung → „Offene Hinweise und Warnungen“) je Grund **eine**
-  Zeile „Gleichungslöser ausgewichen bei *n* Ergebnissen (…)“ mit dem Löser, der
-  stattdessen gerechnet hat; der Anhang „Rechenlauf“ verweist darauf.
+  „Löser ausgewichen : … – stattdessen rechnete …“, die Zusammenfassung nach
+  „Alle Lastfälle“ und der Bericht (Zusammenfassung → „Offene Hinweise und
+  Warnungen“) je Grund **eine** Zeile „Gleichungslöser ausgewichen bei *n*
+  Ergebnissen (…)“ mit dem Löser, auf den ausgewichen wurde; der Anhang
+  „Rechenlauf“ nennt ihn ebenfalls und verweist auf die Hinweise. Zahlen im
+  Grund (Zeilen, Einträge) machen keinen eigenen Grund: die Matrix eines
+  Kontaktmodells ändert sich von Schritt zu Schritt, der Grund bleibt derselbe.
+  Die Angabe „Gleichungslöser“ eines Ergebnisses und im Anhang ist dagegen der
+  Löser der **letzten** Faktorisierung: scheitert PARDISO nur in einem Teil der
+  Kontaktschritte, steht dort „pardiso“, und die Hinweiszeile nennt den Löser,
+  der in den Schritten rechnete, an denen PARDISO scheiterte (geprüft am Block
+  mit Reibung, PARDISO beim ersten von sieben Versuchen zum Scheitern gebracht:
+  „pardiso“ im Ergebnis, „stattdessen rechnete SuperLU“ in der Hinweiszeile).
   Überlagerte Kombinationen tragen den Grund ihrer Lastfälle, Ergebnisse nach
   Theorie II. Ordnung ihren eigenen. Die Eigenschwingungen melden ein Ausweichen
   ebenso im Protokoll und in ihrer Zusammenfassung. Ein Ergebnis trägt den Grund

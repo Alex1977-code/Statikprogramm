@@ -1295,6 +1295,100 @@ def test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse():
           "ausgewichen" not in Report(m0, an0).html())
 
 
+def test_ausweichloeser_und_buendelung_je_art():
+    """Die Hinweiszeile nennt den Loeser, auf den ausgewichen wurde, und
+    buendelt Gruende derselben Art auch innerhalb eines Ergebnisses.
+
+    Gegenpruefung von 4a8c464 (23.09.2026):
+    1. "gerechnet mit ..." kam aus info["solver"], dem Loeser der **letzten**
+       Faktorisierung. Scheiterte PARDISO nur beim ersten von sieben
+       Versuchen, hiess es "gerechnet mit MKL PARDISO" - neben einem Grund,
+       der sagt, dass PARDISO nicht rechnete.
+    2. Ein Kontaktlastfall, dessen Nichtnullen sich zwischen den Schritten
+       aendern, trug zwei 32-Bit-Gruende mit "; " verbunden; die Buendelung
+       machte daraus eine eigene Zeile neben der seiner Nachbarn.
+    """
+    import re
+    import warnings
+    import pypardiso
+    from statik3d import solver as S
+    from statik3d.examples_lib import block_friction_example
+    from statik3d.report.html import Report
+    alt_backend = parallel.settings().solver_backend
+    alt_grenze = S.INT32_MAX
+    parallel.configure(solver_backend="auto")
+    echt = pypardiso.PyPardisoSolver.factorize
+    versuche = {"n": 0}
+
+    def einmal_aus(self, A):
+        versuche["n"] += 1
+        if versuche["n"] == 1:
+            raise RuntimeError("Probe: PARDISO nur beim ersten Mal aus")
+        return echt(self, A)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            # 1. PARDISO faellt nur in der ersten Faktorisierung aus
+            m = block_friction_example()
+            pypardiso.PyPardisoSolver.factorize = einmal_aus
+            try:
+                an = S.solve_all(m, combinations=False)
+            finally:
+                pypardiso.PyPardisoSolver.factorize = echt
+            r = an.all_results()["LF1"]
+            check("Vorbedingung: nur teilweise ausgefallen, zuletzt rechnete PARDISO",
+                  versuche["n"] > 1 and r.info.get("solver") == "pardiso",
+                  f"{versuche['n']} Versuche, solver={r.info.get('solver')!r}")
+            check("das Ergebnis nennt SuperLU als Ausweichloeser",
+                  [lo for _g, lo in (r.info.get("ausweichen") or [])] == ["superlu"],
+                  repr(r.info.get("ausweichen"))[:120])
+            zeilen = [z for z in an.summary().splitlines() if "ausgewichen" in z]
+            check("die Zusammenfassung nennt SuperLU, nicht PARDISO als den Loeser, der rechnete",
+                  len(zeilen) == 1 and "stattdessen rechnete SuperLU" in zeilen[0]
+                  and "MKL PARDISO" not in zeilen[0],
+                  (zeilen[0] if zeilen else "keine Zeile")[60:200])
+            zr = [z for z in r.summary().splitlines() if "ausgewichen" in z]
+            check("ebenso die Zusammenfassung des Ergebnisses",
+                  len(zr) == 1 and "SuperLU" in zr[0], (zr[0] if zr else "keine Zeile")[:160])
+            html = Report(m, an).html()
+            li = [p for p in re.findall(r"<li>(.*?)</li>", html, re.S) if "ausgewichen" in p]
+            check("der Bericht nennt SuperLU, nicht PARDISO",
+                  len(li) == 1 and "stattdessen rechnete SuperLU" in li[0]
+                  and "MKL PARDISO" not in li[0], (li[0] if li else "keine Zeile")[60:200])
+            i = html.find("Gleichungslöser</")
+            anhang = re.sub(r"<[^>]+>", " ", html[i:i + 400]) if i >= 0 else ""
+            check("der Anhang nennt den Ausweichloeser",
+                  "ausgewichen auf SuperLU" in anhang, " ".join(anhang.split())[:140])
+
+            # 2. Ausweichen ueber die 32-Bit-Grenze (auf 50 gesenkt) an einem
+            #    kippenden Block: die Kante hebt ab, die Nichtnullen aendern sich
+            S.INT32_MAX = 50
+            m2 = block_friction_example()
+            top = [k for k in range(len(m2.nodes)) if abs(m2.nodes[k][2] - 0.4) < 1e-9]
+            m2.add_load_case("LF2", "Q", "Kippen")
+            for n in top:
+                m2.load_node(n, Fz=-20000.0 / len(top), Fx=15000.0 / len(top), case="LF2")
+            m2.add_combination("K1", {"LF1": 1.0, "LF2": 1.0}, "ULS")
+            an2 = S.solve_all(m2)
+            erg = an2.all_results()
+            texte = {n: str(x.info.get("ausweichgrund") or "") for n, x in erg.items()}
+            check("Vorbedingung: die Gruende tragen verschiedene Eintragszahlen",
+                  len(set(texte.values())) > 1 and all(texte.values()),
+                  str({n: re.findall(r"\d+ Einträge", t) for n, t in texte.items()}))
+            check("jedes Ergebnis traegt je Art einen Grund, nicht einen je Eintragszahl",
+                  all(t.count("PARDISO:") == 1 for t in texte.values()),
+                  str({n: t.count("PARDISO:") for n, t in texte.items()}))
+            zs = S.ausweichen_gebuendelt(erg.items())
+            check("eine Zeile fuer alle drei Ergebnisse",
+                  len(zs) == 1 and "3 Ergebnissen" in zs[0],
+                  f"{len(zs)} Zeilen: " + " | ".join(z[:70] for z in zs))
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+        S.INT32_MAX = alt_grenze
+        parallel.configure(solver_backend=alt_backend)
+
+
 def test_ketten_rechnen_mit_den_einstellungen_des_hauptprozesses():
     """Unter spawn beginnt jeder Kettenprozess mit den Vorgaben.
 
@@ -1412,6 +1506,7 @@ def main():
               test_abbruchmeldung_nennt_ihren_lauf,
               test_ausweichen_erreicht_den_fortschritt_auch_im_kontakt,
               test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse,
+              test_ausweichloeser_und_buendelung_je_art,
               test_ketten_rechnen_mit_den_einstellungen_des_hauptprozesses,
               test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
               test_jeder_loeser_sagt_woher_er_kommt, test_ama_liegt_der_exe_bei,

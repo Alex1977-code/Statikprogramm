@@ -3971,11 +3971,16 @@ class Report:
         if info.get("solver"):
             # Der Grund selbst steht einmal in den Hinweisen der
             # Zusammenfassung; hier nur, dass nicht der gewaehlte Loeser rechnete
-            from ..solver import ausweichen_gebuendelt
-            ausgewichen = bool(ausweichen_gebuendelt(self.all_results()))
+            # und auf welchen ausgewichen wurde. info["solver"] ist der Loeser
+            # der letzten Faktorisierung - scheitert PARDISO nur in einem Teil
+            # der Kontaktschritte, steht dort wieder "pardiso" (23.09.2026).
+            from ..solver import ausweich_arten, ausweichloeser_text
+            arten = ausweich_arten(self.all_results())
+            mit = ausweichloeser_text(dict.fromkeys(lo for e in arten for lo in e["loeser"]))
             kv.append(("Gleichungslöser", str(info["solver"])
-                       + (" – ausgewichen, Grund unter den Hinweisen der Zusammenfassung"
-                          if ausgewichen else "")))
+                       + ((" – ausgewichen" + (f" auf {mit}" if mit else "")
+                           + ", Grund unter den Hinweisen der Zusammenfassung")
+                          if arten else "")))
         if info.get("ndof") is not None:
             kv.append(("Freiheitsgrade gesamt / aktiv",
                        f"{info.get('ndof')} / {info.get('nfree', '–')}"))

@@ -569,26 +569,106 @@ def _log_einmal(text: str) -> None:
 
 
 def ausweichgruende_zaehlen(system) -> dict:
-    """Stand der Loesungen mit ausgewichenem Loeser: Grund -> Zahl.
+    """Stand der Loesungen mit ausgewichenem Loeser:
+    (Grund, Ausweichloeser) -> Zahl.
 
     Vor einer Rechnung genommen, sagt :func:`ausweich_info` danach, welche
     Gruende genau diese Rechnung betrafen (StaticSystem._geloest zaehlt)."""
     return dict(getattr(system, "_ausweich_genutzt", None) or {})
 
 
+def _ausweich_art(grund: str) -> str:
+    """Art eines Ausweichgrunds: der Text ohne seine Zahlen.
+
+    Der 32-Bit-Grund nennt Zeilen und Eintraege, und die aendern sich bei
+    Kontakt von Schritt zu Schritt (inaktive Fugenbedingungen fallen heraus):
+    am kippenden Block mit Reibung trug ein Lastfall "375 Zeilen, 19153
+    Eintraege" und "376 Zeilen, 19903 Eintraege" (gemessen 23.09.2026 mit auf
+    50 gesenkter Grenze). Das ist ein Grund, nicht zwei."""
+    import re
+    return re.sub(r"\d+", "#", grund)
+
+
+def _ausweich_eintraege(paare) -> dict:
+    """``res.info``-Eintraege aus (Grund, Ausweichloeser)-Paaren - je Art und
+    Ausweichloeser ein Paar, der erste Text bleibt.
+
+    ``ausweichen`` haelt die Paare fuer Zusammenfassung und Bericht,
+    ``ausweichgrund`` den lesbaren Text, je Art einmal. Leer ohne Paare."""
+    vereint: dict = {}
+    for g, lo in paare:
+        if g:
+            vereint.setdefault((_ausweich_art(g), lo or ""), (g, lo or ""))
+    if not vereint:
+        return {}
+    texte: dict = {}
+    for g, _lo in vereint.values():
+        texte.setdefault(_ausweich_art(g), g)
+    return {"ausweichgrund": "; ".join(texte.values()), "ausweichen": list(vereint.values())}
+
+
+def ausweich_paare(info: dict) -> list:
+    """(Grund, Ausweichloeser)-Paare eines Ergebnisses; der Loeser ist leer,
+    wenn nur der Text ``ausweichgrund`` vorliegt."""
+    info = info or {}
+    paare = info.get("ausweichen")
+    if paare:
+        return [(str(g), str(lo or "")) for g, lo in paare]
+    grund = str(info.get("ausweichgrund") or "")
+    return [(grund, "")] if grund else []
+
+
 def ausweich_info(system, vorher: dict) -> dict:
-    """``{"ausweichgrund": ...}`` fuer ``Results.info`` - leer, wenn seit
-    ``vorher`` keine Loesung mit einem ausgewichenen Loeser lief.
+    """``{"ausweichgrund": ..., "ausweichen": [...]}`` fuer ``Results.info`` -
+    leer, wenn seit ``vorher`` keine Loesung mit einem ausgewichenen Loeser
+    lief.
 
     Gezaehlt wird je **Loesung**, nicht je System. Die Grundfaktorisierung
     eines linearen Systems dient allen Lastfaellen - jeder, der mit ihr
     rechnet, traegt den Grund. Ein Kontaktmodell faktorisiert dagegen in jedem
     Schritt neu (am Drehlager 145-mal je Lastfall): scheitert PARDISO erst im
     dritten Lastfall, betrifft das die beiden davor nicht, und eine Marke am
-    System hinge sie ihnen trotzdem an."""
+    System hinge sie ihnen trotzdem an.
+
+    Der Ausweichloeser kommt aus der Loesung selbst, nicht aus
+    ``system.backend``: das ist der Loeser der **letzten** Faktorisierung.
+    Scheitert PARDISO nur beim ersten von sieben Faktorisierungsversuchen
+    eines Lastfalls, steht dort wieder "pardiso" (gemessen 23.09.2026 am Block
+    mit Reibung, Probe des Gegenpruefers am Stand 4a8c464), und die
+    Hinweiszeile nannte bis dahin PARDISO als den Loeser, der stattdessen
+    rechnete."""
     jetzt = getattr(system, "_ausweich_genutzt", None) or {}
-    gruende = [g for g, n in jetzt.items() if n > (vorher or {}).get(g, 0)]
-    return {"ausweichgrund": "; ".join(gruende)} if gruende else {}
+    vorher = vorher or {}
+    return _ausweich_eintraege([k for k, n in jetzt.items() if n > vorher.get(k, 0)])
+
+
+def ausweich_arten(ergebnisse) -> list:
+    """Ausweichen ueber alle Ergebnisse, je Art des Grunds ein Eintrag
+    ``{"grund", "namen", "loeser"}`` - Grundlage fuer
+    :func:`ausweichen_gebuendelt` und den Anhang des Berichts.
+
+    ``ergebnisse``: (Name, Results)-Paare. ``loeser`` sind die Loeser, auf die
+    ausgewichen wurde. Zahlen im Grund zaehlen nicht zur Art
+    (:func:`_ausweich_art`) - auch nicht, wenn ein Ergebnis mehrere Faelle
+    derselben Art traegt."""
+    arten: dict = {}
+    for name, r in ergebnisse:
+        info = getattr(r, "info", None) or {}
+        for g, lo in ausweich_paare(info):
+            e = arten.setdefault(_ausweich_art(g), {"grund": g, "namen": [], "loeser": []})
+            # Die Paare eines Ergebnisses folgen aufeinander - derselbe Name
+            # kaeme nur doppelt, wenn eine Art mit zwei Loesern auftrat
+            if not e["namen"] or e["namen"][-1] != str(name):
+                e["namen"].append(str(name))
+            if lo and lo not in e["loeser"]:
+                e["loeser"].append(lo)
+    return list(arten.values())
+
+
+def ausweichloeser_text(loeser) -> str:
+    """Lesbare Namen der Loeser, auf die ausgewichen wurde."""
+    return ", ".join(NAMEN.get(k, k) + (f" ({LOESER[k][3]})" if k in LOESER else "")
+                     for k in loeser)
 
 
 def ausweichen_gebuendelt(ergebnisse) -> list:
@@ -596,33 +676,18 @@ def ausweichen_gebuendelt(ergebnisse) -> list:
     die Hinweise des Berichts und die Zusammenfassung der Oberflaeche.
 
     ``ergebnisse``: (Name, Results)-Paare. Ohne Buendelung stuende derselbe
-    Grund einmal je Ergebnis da, am Drehlager 422-mal. Zahlen im Grund (Zeilen,
-    Eintraege) zaehlen nicht zur Art: die Nichtnullen eines Kontaktmodells
-    aendern sich je Schritt um die Fugenzeilen, und die 32-Bit-Meldung zerfiele
-    sonst doch wieder in eine Zeile je Ergebnis.
+    Grund einmal je Ergebnis da, am Drehlager 422-mal. Die Zeile nennt den
+    Loeser, auf den ausgewichen wurde (aus ``ausweichen``), nicht den der
+    letzten Faktorisierung.
     """
-    import re
-    arten: dict = {}
-    for name, r in ergebnisse:
-        info = getattr(r, "info", None) or {}
-        grund = str(info.get("ausweichgrund") or "")
-        if not grund:
-            continue
-        e = arten.setdefault(re.sub(r"\d+", "#", grund),
-                             {"grund": grund, "namen": [], "loeser": []})
-        e["namen"].append(str(name))
-        lo = info.get("solver") or info.get("loeser")
-        if lo and lo not in e["loeser"]:
-            e["loeser"].append(lo)
     zeilen = []
-    for e in arten.values():
+    for e in ausweich_arten(ergebnisse):
         n = len(e["namen"])
-        mit = ", ".join(NAMEN.get(k, k) + (f" ({LOESER[k][3]})" if k in LOESER else "")
-                        for k in e["loeser"])
+        mit = ausweichloeser_text(e["loeser"])
         zeilen.append(
             f"Gleichungslöser ausgewichen bei {n} Ergebnis{'' if n == 1 else 'sen'} "
             f"({', '.join(e['namen'][:3])}{' …' if n > 3 else ''}): {e['grund']}"
-            + (f" – gerechnet mit {mit}" if mit else "")
+            + (f" – stattdessen rechnete {mit}" if mit else "")
             + ". Den Grund beheben oder unter Berechnung → Einstellungen → "
               "Gleichungslöser einen Löser wählen; ein ausdrücklich gewählter Löser "
               "bricht ab, statt auszuweichen.")
@@ -1258,10 +1323,8 @@ class Results:
         # Eine Ueberlagerung besteht aus Loesungen - ist dort ausgewichen
         # worden, gilt das auch fuer sie (sonst nennte die Zusammenfassung
         # einer Kombination es nicht, obwohl jeder ihrer Lastfaelle es traegt).
-        gruende = [str((r.info or {}).get("ausweichgrund") or "") for r, f in parts if f]
-        gruende = list(dict.fromkeys(g for g in gruende if g))
-        if gruende:
-            out.info["ausweichgrund"] = "; ".join(gruende)
+        out.info.update(_ausweich_eintraege(
+            [p for r, f in parts if f for p in ausweich_paare(r.info or {})]))
         return out
 
     def scaled(self, f: float, name: str = "") -> "Results":
@@ -1281,8 +1344,11 @@ class Results:
               f"Rechenzeit              : {self.info.get('time', 0):.3f} s"]
         if self.info.get("solver"):
             s.append(f"Gleichungsloeser        : {self.info['solver']}")
-        if self.info.get("ausweichgrund"):
-            s.append(f"Löser ausgewichen       : {self.info['ausweichgrund']}")
+        # "Gleichungsloeser" darueber ist der Loeser der letzten
+        # Faktorisierung - der Ausweichloeser steht darum hier dabei
+        for g, lo in ausweich_paare(self.info):
+            s.append(f"Löser ausgewichen       : {g}"
+                     + (f" – stattdessen rechnete {ausweichloeser_text([lo])}" if lo else ""))
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
@@ -1470,8 +1536,8 @@ class StaticSystem:
         self.zeit_faktorisierung = 0.0
         self.nnz_matrix = 0
         self.nnz_faktor = 0
-        #: Loesungen mit ausgewichenem Loeser, Grund -> Zahl (_geloest zaehlt,
-        #: ausweich_info liest je Ergebnis)
+        #: Loesungen mit ausgewichenem Loeser, (Grund, Ausweichloeser) -> Zahl
+        #: (_geloest zaehlt, ausweich_info liest je Ergebnis)
         self._ausweich_genutzt: dict = {}
         self.t_assemble = time.time() - t0
         if not model.has_contact:
@@ -1709,10 +1775,12 @@ class StaticSystem:
         # Jede Loesung mit einem ausgewichenen Loeser zaehlen - daraus liest
         # _solve_loads, ob **dieses** Ergebnis betroffen ist (ausweich_info).
         # Vor dem Loesen: auch ein Abbruch danach rechnete mit dem Ausweichloeser.
+        # Mit dem Loeser dieser Loesung: self.backend ist nur der der letzten.
         grund = getattr(ls, "ausweichgrund", "")
         if grund:
             genutzt = self.__dict__.setdefault("_ausweich_genutzt", {})
-            genutzt[grund] = genutzt.get(grund, 0) + 1
+            schluessel = (grund, str(getattr(ls, "backend", "") or ""))
+            genutzt[schluessel] = genutzt.get(schluessel, 0) + 1
         m = self._rand
         if not m:
             return ls.solve(rhs)
@@ -4437,8 +4505,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
                 "starrkoerper": int(np.sum(freqs < STARR_HZ)),
                 "kontakt": kontakt_text, "kontakt_aktiv": n_kontakt,
                 "loeser": loeser.backend}
-    if loeser.ausweichgrund:
-        res.info["ausweichgrund"] = loeser.ausweichgrund
+    res.info.update(_ausweich_eintraege([(loeser.ausweichgrund, loeser.backend)]))
     return res
 
 
