@@ -1194,6 +1194,107 @@ def test_ausweichen_erreicht_den_fortschritt_auch_im_kontakt():
           str(sum(1 for z in zeilen if "Gleichungslöser ausgewichen" in z)))
 
 
+def _k2_modell():
+    """Kragarm aus sechs Staeben, zwei Lastfaelle und eine ueberlagerte
+    Kombination - klein genug, dass jeder Loeser ihn in Millisekunden rechnet."""
+    from statik3d import mesher
+    m = Model("k2")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = mesher.line_of_beams(m, "S235", "R", (0, 0, 0), (2.0, 0, 0), 6)
+    m.fix(ids[0], "all")
+    m.add_load_case("LF1", "G")
+    m.add_load_case("LF2", "Q")
+    m.load_node(ids[-1], Fz=-1.0e4, case="LF1")
+    m.load_node(ids[-1], Fy=2.0e3, case="LF2")
+    m.add_combination("K1", {"LF1": 1.35, "LF2": 1.5}, "ULS")
+    return m
+
+
+def test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse():
+    """Der Ausweichgrund gehoert ans Ergebnis, nicht nur in den Fortschritt.
+
+    Befund K2 (22.09.2026): ``_log_einmal`` meldet ueber warnings.warn - das
+    erreicht weder das Protokollfenster noch die exe. Die Fortschrittszeile
+    aus 54b6f9a gibt es nur, wenn ein Fortschritt mitlaeuft. Rechenketten,
+    Pool und Farm rechnen ohne (jobs._job_solve_kette ruft solve_cases ohne
+    progress): gemessen mit PARDISO im Prozess zum Scheitern gebracht stand in
+    ``res.info`` nur "superlu", der Bericht nannte das Ausweichen nicht, und
+    solve_modal meldete es weder im Fortschritt noch am Ergebnis.
+    """
+    import re
+    import pypardiso
+    from statik3d import solver as S
+    from statik3d.report.html import Report
+    alt_backend = parallel.settings().solver_backend
+    parallel.configure(solver_backend="auto")
+    echt = pypardiso.PyPardisoSolver.factorize
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    pypardiso.PyPardisoSolver.factorize = wirft
+    try:
+        # 1. Ohne Fortschritt - so rechnen Ketten, Pool und Farm
+        r = S.solve_static(_k2_modell(), case="LF1")
+        grund = str(r.info.get("ausweichgrund", ""))
+        check("ohne Fortschritt traegt das Ergebnis den Grund",
+              "PARDISO" in grund and "verweigert" in grund, repr(grund)[:90])
+        check("und die Zusammenfassung des Ergebnisses nennt ihn",
+              "ausgewichen" in r.summary() and "verweigert" in r.summary(),
+              next((z for z in r.summary().splitlines() if "ausgewichen" in z),
+                   "keine Zeile")[:90])
+
+        # 2. Alles mit Bericht: gleiche Gruende werden zu einer Zeile
+        m = _k2_modell()
+        an = S.solve_all(m)
+        traeger = sorted(n for n, x in an.all_results().items()
+                         if "verweigert" in str(x.info.get("ausweichgrund", "")))
+        check("jedes Ergebnis traegt ihn, auch die ueberlagerte Kombination",
+              traeger == ["K1", "LF1", "LF2"], str(traeger))
+        html = Report(m, an).html()
+        punkte = [p for p in re.findall(r"<li>(.*?)</li>", html, re.S) if "ausgewichen" in p]
+        check("der Bericht nennt ihn unter den Hinweisen - eine Zeile fuer drei Ergebnisse",
+              len(punkte) == 1 and "verweigert" in punkte[0] and "3 Ergebnis" in punkte[0],
+              f"{len(punkte)} Zeilen: " + (punkte[0][:90] if punkte else ""))
+        check("der Grund steht einmal im Bericht, nicht je Ergebnis",
+              html.count("Probe: PARDISO verweigert") == 1,
+              f"{html.count('Probe: PARDISO verweigert')} mal")
+        zf = an.summary()
+        check("die Zusammenfassung der Oberflaeche nennt ihn einmal",
+              zf.count("verweigert") == 1, f"{zf.count('verweigert')} mal")
+
+        # 3. Modalanalyse: Fortschritt und Ergebnis
+        zeilen = []
+        rm = S.solve_modal(_k2_modell(), nmodes=3,
+                           progress=lambda *a: zeilen.append(" ".join(str(x) for x in a)))
+        n_z = sum(1 for z in zeilen if "ausgewichen" in z)
+        check("die Modalanalyse meldet ihn im Fortschritt, einmal", n_z == 1, f"{n_z} Zeilen")
+        check("und traegt ihn am Ergebnis",
+              "verweigert" in str(rm.info.get("ausweichgrund", "")),
+              repr(rm.info.get("ausweichgrund"))[:90])
+
+        # 4. Theorie II. Ordnung ersetzt die lineare Kombination - ihr
+        #    Ergebnis muss den Grund selbst tragen
+        from statik3d.theorie2 import solve_theorie2
+        r2, _i2 = solve_theorie2(_k2_modell(), {"LF1": 1.35, "LF2": 1.5}, "K1")
+        check("das Ergebnis nach Theorie II. Ordnung traegt ihn",
+              "verweigert" in str(r2.info.get("ausweichgrund", "")),
+              repr(r2.info.get("ausweichgrund"))[:90])
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+        parallel.configure(solver_backend=alt_backend)
+
+    # Gegenprobe: ohne Ausfall steht nichts da
+    m0 = _k2_modell()
+    an0 = S.solve_all(m0)
+    check("ohne Ausfall traegt kein Ergebnis einen Grund",
+          not any("ausweichgrund" in x.info for x in an0.all_results().values()),
+          str([n for n, x in an0.all_results().items() if "ausweichgrund" in x.info]))
+    check("und der Bericht nennt kein Ausweichen",
+          "ausgewichen" not in Report(m0, an0).html())
+
+
 def test_ketten_rechnen_mit_den_einstellungen_des_hauptprozesses():
     """Unter spawn beginnt jeder Kettenprozess mit den Vorgaben.
 
@@ -1310,6 +1411,7 @@ def main():
     for f in (test_pardiso_faellt_nicht_still_aus, test_ketten_teilen_sich_die_threads,
               test_abbruchmeldung_nennt_ihren_lauf,
               test_ausweichen_erreicht_den_fortschritt_auch_im_kontakt,
+              test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse,
               test_ketten_rechnen_mit_den_einstellungen_des_hauptprozesses,
               test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
               test_jeder_loeser_sagt_woher_er_kommt, test_ama_liegt_der_exe_bei,

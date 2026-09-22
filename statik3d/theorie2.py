@@ -429,9 +429,13 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
 
     Rueckgabe (Results, Th2Info).
     """
-    from .solver import StaticSystem, case_loads, case_prescribed, postprocess, Results
+    from .solver import (StaticSystem, case_loads, case_prescribed, postprocess, Results,
+                         ausweich_info, ausweichgruende_zaehlen)
     t0 = time.time()
     system = system or StaticSystem(model)
+    # Das Ergebnis ersetzt die lineare Kombination - ein Ausweichen des
+    # Gleichungsloesers muss es darum selbst tragen (Befund K2, 22.09.2026)
+    ausweich_vorher = ausweichgruende_zaehlen(system)
     aktiv = getattr(system, "aktiv", None)          # Situation: abgeschaltete Elemente
     F, feq, q, temp = case_loads(model, factors, aktiv)
     us = case_prescribed(model, factors)
@@ -491,7 +495,8 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
                      "theorie": "II. Ordnung", "alpha_cr": info.alpha_cr,
                      "iterationen": info.iterationen, "time": time.time() - t0,
                      "factors": dict(factors), "solver": system.backend,
-                     "ndof": model.ndof, "nfree": len(system.fi)})
+                     "ndof": model.ndof, "nfree": len(system.fi),
+                     **ausweich_info(system, ausweich_vorher)})
     if progress:
         progress(f"{name}: Theorie II. Ordnung, {info.iterationen} Iterationen")
     return res, info

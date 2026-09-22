@@ -3247,9 +3247,21 @@ Nachweis mit seiner Verformung je Kombination.
   Faktorisierungen der Kontaktschritte als eigene Zeile „Gleichungslöser
   ausgewichen - …“, einmal je Lastfall. Ein Grund ist dabei jeder Weg vorbei an
   PARDISO: eine Ausnahme, die 32-Bit-Grenze der Schnittstelle, ein installiertes,
-  aber scheiterndes CHOLMOD. **Noch nicht** zurück kommt die Meldung aus
-  Lastfällen, die in Rechenketten laufen; die rechnen seit dem 22.09.2026 aber
-  mit denselben Einstellungen wie der Hauptprozess (vorher begann jede Kette mit
+  aber scheiterndes CHOLMOD. **Der Grund steht außerdem am Ergebnis** — auch
+  bei Lastfällen aus Rechenketten, dem Prozesspool oder der Farm, die ohne
+  Protokollzeilen rechnen: die Zusammenfassung eines Ergebnisses zeigt die Zeile
+  „Löser ausgewichen : …“, die Zusammenfassung nach „Alle Lastfälle“ und der
+  Bericht (Zusammenfassung → „Offene Hinweise und Warnungen“) je Grund **eine**
+  Zeile „Gleichungslöser ausgewichen bei *n* Ergebnissen (…)“ mit dem Löser, der
+  stattdessen gerechnet hat; der Anhang „Rechenlauf“ verweist darauf.
+  Überlagerte Kombinationen tragen den Grund ihrer Lastfälle, Ergebnisse nach
+  Theorie II. Ordnung ihren eigenen. Die Eigenschwingungen melden ein Ausweichen
+  ebenso im Protokoll und in ihrer Zusammenfassung. Ein Ergebnis trägt den Grund
+  nur, wenn es selbst mit dem Ausweichlöser gelöst wurde: fällt PARDISO bei einem
+  Kontaktmodell erst in einem späteren Lastfall aus, bleiben die davor gerechneten
+  ohne Vermerk (geprüft am Block mit Reibung, drei Läufe auf demselben System:
+  vor dem Ausfall ohne, beim Ausfall mit, danach wieder ohne Vermerk).
+  Rechenketten rechnen seit dem 22.09.2026 mit denselben Einstellungen wie der Hauptprozess (vorher begann jede Kette mit
   „automatisch“, auch wenn „MKL PARDISO“ eingestellt war, und wich still aus,
   wo die Rechnung sonst abgebrochen hätte). Bis zum 22.09.2026 wurde ein
   Fehler von PARDISO bei „automatisch“ ohne eine Zeile verworfen; am Drehlager
