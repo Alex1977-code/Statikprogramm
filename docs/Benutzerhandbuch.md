@@ -2713,6 +2713,57 @@ nachgeholt (Protokoll unten). Die integrierten Linien stehen an der Fläche
 ist das ohne Folge, ihre Kopplung nimmt die Netzknoten innerhalb des
 Kreises.
 
+**Ein Statik3D-Modell (`.json`) an ein vorhandenes anhängen** (Haken „an
+vorhandenes Modell anhängen“ im Importdialog). Übertragen wird das ganze
+Modell: Knoten, Elemente mit allen Angaben (nur Zug/Druck, Exzentrizität,
+Gelenkfedern), Knoten-, Linien- und Flächenlager samt Nichtlinearität,
+Linien, Flächen, Volumenkörper, Stäbe mit ihren Nachweisangaben, Gelenke,
+Kombinationen, Ermüdungslasten, Kontaktbedingungen, Kontaktpaare,
+Spaltelemente, Kopplungen, Punktmassen, Federn, Starrkörper, Situationen,
+Anschlüsse, Beul- und Volumenbereiche, Layer, Unterlagen, die Wasserdruck-
+und Windgeneratoren und je Lastfall alle Lastarten einschließlich Flächen-
+und Linienlasten an Objekten, Zwangsverformungen, Vorspannung und Übermaß.
+Bis zum 22.09.2026 kamen nur Knoten, Elemente, Knotenlager, vier Lastarten
+und die Stäbe an – am Hallenrahmen fielen 72 Kombinationen, ein Linienlager,
+ein Flächenlager, zwei Ermüdungslasten und eine Linienlast ohne Meldung weg;
+jetzt kommen alle an. Was das Protokoll dabei sagt:
+
+* **„Aus der Quelle übertragen:“** – die Anzahl je Objektart.
+* **„Umbenannt …“** – ein Name, den es im Ziel schon gibt, bekommt eine
+  Nummer (`S1` → `S1_2`, `F1` → `F1_2`), und alles in der Quelle, was ihn
+  nennt – Lasten, Kontaktbedingungen, Kombinationen, Layer –, zeigt auf das
+  umbenannte Objekt. Werkstoffe, Querschnitte, Dicken, Kombinationen und
+  Ermüdungslasten mit gleichem Namen **und** gleichem Inhalt werden nicht
+  doppelt angelegt; bei gleichem Namen und anderem Inhalt behält das
+  angehängte Teil seinen eigenen (am Hallenrahmen: `S355` der Halle mit
+  Sorte und f_u, `S355` des Rahmens ohne – die Halle rechnet mit `S355_2`).
+* **Lastfall gibt es im Ziel schon** – die Lasten kommen in denselben
+  Lastfall; es gelten dessen Eigenschaften (Einwirkung, ψ, γ, Grundlast,
+  Situation, Theorie). Weichen die der Quelle ab, nennt die Warnung jede
+  Abweichung mit beiden Werten – dann im Lastfall prüfen. Ein neuer Lastfall
+  bringt alle seine Eigenschaften mit.
+* **Eigengewicht** gilt je Lastfall für alle Elemente. Hatten Ziel und Quelle
+  in einem Lastfall verschiedenes, warnt das Protokoll: es erfasst jetzt auch
+  die Elemente des anderen Teils oder fehlt ihnen.
+* **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
+  (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine Stellung
+  bewegt das ganze System, also auch das Ziel). Einstellungen – Netz,
+  Nachweise, Plastizität, Einheiten, Bericht – bleiben die des Ziels; weichen
+  die der Quelle ab, steht es im Protokoll.
+* Knoten der Quelle, die auf Knoten des Ziels liegen, werden zusammengeführt
+  („1 Knoten der Quelle lagen auf Knoten des Ziels …“); jeder Verweis darauf –
+  auch Ecken und integrierte Knoten von Flächen, Punktmassen, Starrkörper,
+  Zwangsverformungen – folgt. Das Zusammenführen erfasst das ganze Modell,
+  also auch Knoten, die im Ziel oder in der Quelle schon vorher
+  aufeinanderlagen, etwa die beiden Seiten einer getrennten Kontaktfuge
+  (gemessen: ein Spaltelement zwischen den Knoten 1 und 2 verbindet danach
+  Knoten 1 mit sich selbst). Das meldet eine eigene Warnung mit der Anzahl je
+  Modell – dann die Fugen dort prüfen.
+
+Gegenprobe: Rahmen mit angehängtem Hallenrahmen, alter gegen neuen Weg – in
+allen fünf Lastfällen dieselben Verschiebungen (Abweichung 0), dazu jetzt
+die 72 Kombinationen.
+
 ## 8 Nachweise nach EC3
 
 Stäbe (Kette von Stabelementen) werden beim Erzeugen von Stabzügen und beim

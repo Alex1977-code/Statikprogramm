@@ -10,13 +10,15 @@ Gemeinsame Hilfsfunktionen der Importer.
 """
 from __future__ import annotations
 
+import copy
 import math
 import re
+from dataclasses import MISSING, fields
 from typing import Optional
 
 import numpy as np
 
-from ..model import Model, Material, Section, ShellProp, ACTION_CATEGORIES
+from ..model import Model, Material, Section, ShellProp, LoadCase, ACTION_CATEGORIES
 from .. import profiles
 
 DEFAULT_TOL = 1e-6          # Knotentoleranz [m]
@@ -191,7 +193,105 @@ def merge_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
                 areas.append(a)
         ss.nodes = nodes
         ss.areas = areas if any(areas) else []
+    _weitere_knotenverweise_umhaengen(model, new_index)
     return n_removed
+
+
+def _zusammenfassen(knoten, flaechen) -> tuple[list, list]:
+    """Knoten, die beim Zusammenfuehren gleich wurden, einmal fuehren; ihre
+    Einflussflaechen addieren sich (wie bei ``SurfaceSupport.nodes``)."""
+    out_k, out_a, pos = [], [], {}
+    for i, n in enumerate(knoten):
+        a = float(flaechen[i]) if i < len(flaechen) else 0.0
+        if n in pos:
+            out_a[pos[n]] += a
+        else:
+            pos[n] = len(out_k)
+            out_k.append(n)
+            out_a.append(a)
+    return out_k, out_a
+
+
+def _weitere_knotenverweise_umhaengen(model: Model, new_index) -> None:
+    """Die Knotenverweise, die ``merge_duplicate_nodes`` bis zum 22.09.2026
+    nicht umhaengte: sie zeigten nach dem Zusammenfuehren auf die alte
+    Nummer, also auf einen anderen Knoten - oder hinter das Ende der Liste.
+
+    Anlass ist das Anhaengen eines JSON-Modells (Befund SV11): es bringt
+    Punktmassen, Starrkoerper, Zwangsverformungen, Kopplungen, die Ecken der
+    Flaechen und die Einflussflaechen der Kontaktpaare mit, und das
+    Zusammenfuehren danach nummeriert jeden Knoten hinter einem entfernten
+    Doppel um. Gemessen am Pruefmodell (tests.test_importers,
+    test_json_anhaengen_vollstaendig, ein Anschlussknoten bei (0, 0, 0)):
+    ohne diese Zeilen lag jeder dieser Verweise einen Knoten daneben - die
+    Zwangsverformung auf (2, 0, 0) statt (0, 0, 0), die Punktmasse auf
+    (3, 0, 0) statt (0, 1, 0), die vier Flaechenecken um eine Ecke verrutscht
+    und die letzte auf dem Quader nebenan. Dieselbe Funktion ruft auch der
+    RFEM-6-Leser (``merge_nodes=True``); dort gilt dasselbe.
+    """
+    def k(n) -> int:
+        return int(new_index[int(n)])
+
+    def ks(liste) -> list:
+        return [k(n) for n in (liste or [])]
+
+    def ks_einmal(liste) -> list:
+        out = []
+        for n in (liste or []):
+            m = k(n)
+            if m not in out:
+                out.append(m)
+        return out
+
+    for ss in model.surface_supports:
+        gruppen = []
+        for g in (getattr(ss, "gruppen", None) or []):
+            kn, fl = _zusammenfassen(ks(g[2]), list(g[3]) if len(g) > 3 else [])
+            gruppen.append([g[0], g[1], kn, fl] + list(g[4:]))
+        ss.gruppen = gruppen
+    for lc in model.load_cases.values():
+        for zv in (lc.zwangsverformungen or []):
+            zv.node = k(zv.node)
+    for cp in model.contact_pairs:
+        kf = getattr(cp, "knotenflaechen", None) or {}
+        neu: dict = {}
+        for n, a in kf.items():
+            neu[k(n)] = neu.get(k(n), 0.0) + float(a)
+        cp.knotenflaechen = neu
+        cp.rand_knoten = ks_einmal(getattr(cp, "rand_knoten", None))
+    for kp in (getattr(model, "kopplungen", None) or []):
+        kp.node_a, kp.node_b = k(kp.node_a), k(kp.node_b)
+    model.getrennte_knoten = {name: [[k(a), k(b)] for a, b in paare]
+                              for name, paare in (getattr(model, "getrennte_knoten", None)
+                                                  or {}).items()}
+    for pm in (getattr(model, "punktmassen", None) or []):
+        pm.node = k(pm.node)
+    for d in (getattr(model, "daempfer", None) or []):
+        d.node_a = k(d.node_a)
+        if int(d.node_b) >= 0:              # -1 = gegen den Boden
+            d.node_b = k(d.node_b)
+    for sk in (getattr(model, "starrkoerper", None) or []):
+        # Keine Doppel entfernen: ``gewichte`` laeuft parallel zu ``slaves``
+        sk.master, sk.slaves = k(sk.master), ks(sk.slaves)
+    for f in (getattr(model, "flaechen", None) or {}).values():
+        f.ecken = ks(f.ecken)
+        f.integrierte_knoten = ks_einmal(f.integrierte_knoten)
+    for le in (getattr(model, "lasteinleitungen", None) or {}).values():
+        le.knoten = k(le.knoten)
+    for v in (getattr(model, "verformungsgrenzen", None) or {}).values():
+        v.knoten = ks(v.knoten)
+    for s in (getattr(model, "subsysteme", None) or {}).values():
+        s.knoten = ks_einmal(s.knoten)
+    for ly in (getattr(model, "layer", None) or {}).values():
+        ly.knoten = ks_einmal(ly.knoten)
+    for st in (getattr(model, "stellungen", None) or []):
+        an = st.get("antrieb") if isinstance(st, dict) else getattr(st, "antrieb", None)
+        if an is not None:
+            an = (k(an[0]), an[1])
+            if isinstance(st, dict):
+                st["antrieb"] = an
+            else:
+                st.antrieb = an
 
 
 # --------------------------------------------------------------------------
@@ -549,11 +649,35 @@ def subdivide_line(nodes: NodeIndex, p1, p2, n: int) -> list[int]:
 # --------------------------------------------------------------------------
 # Lastfaelle
 # --------------------------------------------------------------------------
+#: Die Eigenschaften eines Lastfalls: alle Felder ausser dem Namen und den
+#: Lastlisten (die Felder mit ``default_factory``, dazu das Eigengewicht).
+#: Aus dem Datenmodell abgeleitet und nicht aufgezaehlt - bis zum 22.09.2026
+#: legte das Anhaengen eines JSON-Modells neue Lastfaelle nur mit Name,
+#: Kategorie und Beschreibung an; psi, gamma, Grundlast, Situation, Theorie,
+#: Nummer und Exklusivgruppe fielen auf die Vorgabe (Befund SV11: Grundlast
+#: True kam als False an). Ein kuenftig ergaenztes Feld kommt so von selbst mit.
+LASTFALL_EIGENSCHAFTEN = tuple(f.name for f in fields(LoadCase)
+                               if f.name != "name" and f.default_factory is MISSING)
+
+
 def get_or_add_case(model: Model, name: str, category: str = "Q",
-                    description: str = "", **kw):
-    """Lastfall holen oder anlegen (ohne den aktiven Lastfall zu wechseln)."""
+                    description: str = "", vorlage: LoadCase = None, **kw):
+    """Lastfall holen oder anlegen (ohne den aktiven Lastfall zu wechseln).
+
+    vorlage: ein Lastfall, dessen Eigenschaften (:data:`LASTFALL_EIGENSCHAFTEN`)
+             ein **neu angelegter** uebernimmt - auch Kategorie und
+             Beschreibung; ``kw`` geht vor (etwa eine umbenannte Situation).
+             Ein vorhandener Lastfall bleibt, wie er ist: ob seine
+             Eigenschaften zur Vorlage passen, prueft der Aufrufer.
+    """
     if name in model.load_cases:
         return model.load_cases[name]
+    if vorlage is not None:
+        eig = {f: copy.deepcopy(getattr(vorlage, f)) for f in LASTFALL_EIGENSCHAFTEN}
+        eig.update(kw)
+        category = eig.pop("category", category)
+        description = eig.pop("description", description)
+        kw = eig
     if category not in ACTION_CATEGORIES:
         category = "Q"
     return model.add_load_case(name, category, description, activate=False, **kw)

@@ -898,10 +898,543 @@ def test_dicke_wird_nicht_still_geerbt():
            next((z for z in log2), "keine Zeile"))
 
 
+# --------------------------------------------------------------------------
+# JSON-Modell an ein vorhandenes anhaengen (Befund SV11, 22.09.2026)
+# --------------------------------------------------------------------------
+#: Schluessel von Model.to_dict(), die keine Objektliste sind: Einstellungen
+#: und Kopfangaben. Sie gehoeren dem Ziel und werden nicht gezaehlt.
+_KEINE_OBJEKTLISTE = {"format", "name", "meta", "active_case", "netz", "design",
+                      "plastizitaet", "knotendilatation", "bemassung_einstellung",
+                      "werteskala", "bericht_rahmen", "einheiten", "nodes", "elements"}
+
+#: Die Lastlisten eines Lastfalls (LoadCase.to_dict ohne Eigenschaften)
+_LASTLISTEN = ("nodal_loads", "beam_loads", "face_loads", "temp_loads", "geometrielasten",
+               "linienlasten", "zwangsverformungen", "vorspannungen", "uebermasse")
+
+
+def _anhaengen_ziel() -> Model:
+    """Ein Ziel mit eigenen Objekten, deren Namen die Quelle wieder benutzt:
+    Linien L1-L4, Flaeche F1, Stab S1, Fuge KB1, Situation Montage,
+    Kombination CO1, Ermuedungslast E1 und ein Werkstoff S235 mit anderen
+    Werten. Der Knoten (0, 0, 0) liegt in beiden Modellen - dort schliesst
+    das angehaengte Teil an."""
+    from statik3d.model import Material, Section, ShellProp, Situation
+    z = Model("Ziel")
+    z.add_material(Material("S235"))
+    z.add_section(Section.rectangle("R", 0.1, 0.2))
+    z.add_shell_prop(ShellProp("t8", 0.008))
+    for p in [(0, 0, 0), (-1, 0, 0), (-1, -1, 0), (0, -1, 0)]:
+        z.add_node(*p)
+    eb = z.add_element("beam", [0, 1], "S235", "R")
+    es = z.add_element("shell4", [0, 1, 2, 3], "S235", "t8")
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)], start=1):
+        z.add_line(f"L{i}", [a, b])
+    z.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke="t8", material="S235", elemente=[es])
+    z.add_member("S1", [eb])
+    z.fix(1, "all")
+    z.add_kontaktbedingung("KB1", flaechennamen=["F1"])
+    z.situationen["Montage"] = Situation("Montage", deaktiviert=[eb])
+    z.load_node(1, Fz=-1.0, case="LF1")
+    z.load_cases["LF1"].gravity = [0.0, 0.0, -9.81]
+    z.add_combination("CO1", {"LF1": 1.0})
+    z.add_fatigue_load("E1", "LF1")
+    return z
+
+
+def _anhaengen_quelle() -> Model:
+    """Je ein Objekt jeder Art, die Model.to_dict() kennt."""
+    from statik3d.model import (Material, Section, ShellProp, Volumenkoerper, Berichtseintrag,
+                                Kopplung, Subsystem, Layer, Unterlage, Situation)
+    from statik3d.bridges.positions import Stellung
+    from statik3d.wasserdruck import Wasserdruck
+    from statik3d.wind import Wind
+    from statik3d.schwingung import Schwingungsnachweis
+    from statik3d.schweissnaehte import Schweissnaht
+    from statik3d.bemassung import Bemassung
+    m = Model("Quelle")
+    m.add_material(Material("S235", E=200e9))          # Name wie im Ziel, andere Werte
+    m.add_material(Material("S355", fy=355e6))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))    # genau wie im Ziel
+    m.add_shell_prop(ShellProp("t12", 0.012))
+    m.add_feder_prop("FE1", k=[1e6, 1e6, 1e6])
+    m.add_grenzschicht_prop("GS1")
+    for p in [(0, 0, 0), (2, 0, 0), (2, 1, 0), (0, 1, 0),
+              (3, 0, 0), (4, 0, 0), (4, 1, 0), (3, 1, 0),
+              (3, 0, 1), (4, 0, 1), (4, 1, 1), (3, 1, 1),
+              (5, 0, 0), (6, 0, 0)]:
+        m.add_node(*p)
+    eb = m.add_element("beam", [0, 1], "S355", "R")
+    es = m.add_element("shell4", [0, 1, 2, 3], "S355", "t12")
+    eh = m.add_element("hex8", list(range(4, 12)), "S235")
+    m.add_element("feder", [12, 13], "S355", "FE1")
+    et = m.add_element("truss", [1, 4], "S355", "R", nur="zug")
+    m.support(0, "pinned", name="A1", uz=dict(failure="zug"))
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)], start=1):
+        m.add_line(f"L{i}", [a, b])
+    m.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke="t12", material="S355",
+                  elemente=[es], ecken=[0, 1, 2, 3], integrierte_knoten=[2],
+                  integrierte_linien=["L3"], gelenklinien=["L4"], randseiten=[[eh, 0]])
+    m.koerper["K1"] = Volumenkoerper("K1", flaechen=["F1"], material="S235", elemente=[eh])
+    ls = m.add_line_support([0, 1], name="LL1", uz=dict(typ="rigid"))
+    ls.line, ls.linien = "L1", ["L1"]
+    ss = m.add_surface_support(elements=[es], name="FL1", nodes=[0, 1, 2, 3],
+                               areas=[0.5] * 4, uz=dict(typ="spring", stiffness=1e7))
+    ss.flaechen, ss.lokal = ["F1"], True
+    ss.gruppen = [[2, 1, [0, 1, 2, 3], [0.5] * 4]]
+    m.add_hinge("G1", end=1, phiy="free")
+    m.apply_hinge(eb, "G1")
+    m.add_member("S1", [eb], beta_y=0.7)
+    m.situationen["Montage"] = Situation("Montage", deaktiviert=[et])
+    m.add_kontaktbedingung("KB1", flaechennamen=["F1"], koerpernamen=["K1"],
+                           gegenflaechen=["F1"], gegenkoerper=["K1"])
+    # Lastfall LF1 gibt es auch im Ziel, LF-Q nur hier - mit allen Eigenschaften
+    m.load_node(1, Fz=-1e3, case="LF1")
+    m.load_beam(eb, qz=-1e3, case="LF1", a=0.2, b=0.8)
+    m.load_face(es, 1e3, case="LF1")
+    m.load_temp(eb, 10.0, case="LF1")
+    m.add_geometrielast("F1", 2e3, case="LF1")
+    m.add_linienlast("S1", [0.0, 0.0, -2e3], case="LF1")
+    m.add_linienlast("L1", [0.0, 0.0, -1e3], art="linie", case="LF1")
+    m.add_zwangsverformung(0, [2], [-0.001], case="LF1")
+    m.add_vorspannung("S1", 1e4, case="LF1")
+    m.add_uebermass("KB1", 1e-5, case="LF1")
+    m.load_cases["LF1"].gravity = [0.0, 0.0, -9.81]
+    m.add_load_case("LF-Q", "Q", "Nutzlast", activate=False, psi=[0.7, 0.5, 0.3],
+                    exclusive_group="A", situation="Montage", theorie="II", nummer=7,
+                    grundlast=True, gamma_sup=1.4, gamma_inf=0.0)
+    m.load_node(2, Fx=500.0, case="LF-Q")
+    m.add_combination("CO1", {"LF1": 1.35, "LF-Q": 1.5}).situation = "Montage"
+    m.add_fatigue_load("E1", "LF-Q")
+    m.add_joint("J1", "kopfplatte", eb, ermuedung=["E1"])
+    m.add_verformungsgrenze("VG1", "stab", stab="S1")
+    m.add_verformungsgrenze("VG2", "knoten", knoten=[1])
+    m.add_beulfeld("BF1", [es])
+    m.add_volumenbereich("VB1", [eh])
+    m.add_lasteinleitung("LE1", 1, stab="S1")
+    m.bericht.append(Berichtseintrag(name="B1", art="text", text="Notiz"))
+    m.add_contact_support(4)
+    m.add_gap_element(5, 9, group="KB1")
+    m.kopplungen.append(Kopplung(6, 10, [[1.0, 0.0, 0.0]], [1e9], gruppe="KB1"))
+    cp = m.add_contact_pair("KB1", [8, 9], master_elements=[eh])
+    cp.knotenflaechen, cp.rand_knoten, cp.gegenkoerper = {8: 0.1}, [9], ["K1"]
+    m.getrennte_knoten = {"KB1": [[8, 9]]}
+    m.kontakt_ausnahmen = [["K1", "K1"]]
+    m.importhinweise = [{"art": "hinweis", "text": "Probe", "objekte": ["K1"]}]
+    m.add_punktmasse(3, 100.0)
+    m.add_daempfer(12, -1, c=[10.0])
+    m.add_starrkoerper(4, [5, 6])
+    m.subsysteme["SU1"] = Subsystem("SU1", elemente=[eb], beruehrung=[es], knoten=[1],
+                                    linien=["L1"], staebe=["S1"], flaechen=["F1"],
+                                    koerper=["K1"], lager=[0], linienlager=[0],
+                                    flaechenlager=[0], kontakte=["KB1"])
+    m.layer["LY1"] = Layer("LY1", knoten=[1], elemente=[eb], staebe=["S1"], linien=["L1"],
+                           flaechen=["F1"], koerper=["K1"])
+    m.unterlagen["U1"] = Unterlage("U1", art="skizze")
+    m.stellungen = [Stellung("ST1")]
+    m.wasserdruecke["WD1"] = Wasserdruck("WD1", situation="Montage", lastfall="LF-Q",
+                                         flaechen=["F1"], koerper=["K1"], dichtung=["L1"],
+                                         ow_flaeche="F1")
+    m.winde["W1"] = Wind("W1", situation="Montage", lastfall="LF-Q", flaechen=["F1"],
+                         staebe=["S1"])
+    m.schwingungen["SW1"] = Schwingungsnachweis("SW1", wasserdruck="WD1")
+    m.schweissnaehte["N1"] = Schweissnaht("N1", staebe=["S1"], linien=["L1"], flaechen=["F1"])
+    m.bemassungen["M1"] = Bemassung("M1", punkte=[[0, 0, 0], [2, 0, 0]])
+    m.netz.verfeinerungen = [{"art": "flaeche", "name": "F1", "h": 0.05}]
+    m.netz.koerper_h = {"K1": 0.1}
+    m.netz.feldpunkte = [[0.0, 0.0, 0.0, 0.05]]
+    return m
+
+
+def _offene_verweise(m: Model) -> list:
+    """Namensverweise, die im Modell ins Leere zeigen - je einer eine Zeile."""
+    out = []
+
+    def pruefe(wo, namen, vorrat):
+        for n in namen or []:
+            if n and n not in vorrat:
+                out.append(f"{wo} -> {n}")
+
+    fugen = set(m.kontaktbedingungen) | {c.name for c in m.contact_pairs}
+    for f in m.flaechen.values():
+        pruefe(f"Flaeche {f.name}", list(f.linien) + list(f.gelenklinien)
+               + list(f.integrierte_linien) + [x for o in f.oeffnungen for x in o], m.lines)
+        pruefe(f"Flaeche {f.name} Dicke", [f.dicke], m.shells)
+        pruefe(f"Flaeche {f.name} Werkstoff", [f.material], m.materials)
+    for k in m.koerper.values():
+        pruefe(f"Koerper {k.name}", k.flaechen, m.flaechen)
+        pruefe(f"Koerper {k.name} Werkstoff", [k.material], m.materials)
+    for ls in m.line_supports:
+        pruefe(f"Linienlager {ls.name}", [ls.line] + list(ls.linien), m.lines)
+    for ss in m.surface_supports:
+        pruefe(f"Flaechenlager {ss.name}", ss.flaechen, m.flaechen)
+    for kb in m.kontaktbedingungen.values():
+        pruefe(f"Fuge {kb.name}", list(kb.flaechennamen) + list(kb.gegenflaechen), m.flaechen)
+        pruefe(f"Fuge {kb.name}", list(kb.koerpernamen) + list(kb.gegenkoerper), m.koerper)
+    for lc in m.load_cases.values():
+        pruefe(f"Lastfall {lc.name} Situation", [lc.situation], m.situationen)
+        for g in lc.geometrielasten:
+            pruefe(f"{lc.name} Geometrielast", [g.ziel],
+                   m.flaechen if g.art == "flaeche" else m.koerper)
+        for ll in lc.linienlasten:
+            pruefe(f"{lc.name} Linienlast", [ll.ziel], m.members if ll.art == "stab" else m.lines)
+        for v in lc.vorspannungen:
+            pruefe(f"{lc.name} Vorspannung", [v.ziel], m.members if v.art == "stab" else m.koerper)
+        pruefe(f"{lc.name} Uebermass", [u.ziel for u in lc.uebermasse], fugen)
+    for c in m.combinations.values():
+        pruefe(f"Kombination {c.name}", list(c.factors), m.load_cases)
+        pruefe(f"Kombination {c.name} Situation", [c.situation], m.situationen)
+    for f in m.fatigue_loads.values():
+        pruefe(f"Ermuedung {f.name}", [f.case_max, f.case_min] + list(f.folge), m.load_cases)
+    for j in m.joints.values():
+        pruefe(f"Anschluss {j.name}", j.ermuedung, m.fatigue_loads)
+    for v in m.verformungsgrenzen.values():
+        pruefe(f"Verformungsgrenze {v.name}", [v.stab], m.members)
+    for le in m.lasteinleitungen.values():
+        pruefe(f"Lasteinleitung {le.name}", [le.stab], m.members)
+    for cp in m.contact_pairs:
+        pruefe(f"Kontaktpaar {cp.name}", cp.gegenkoerper, m.koerper)
+    for g in m.gap_elements:
+        if g.group != "default":
+            pruefe("Spaltelement", [g.group], fugen)
+    for k in m.kopplungen:
+        pruefe("Kopplung", [k.gruppe], fugen)
+    pruefe("getrennte Knoten", list(m.getrennte_knoten), fugen)
+    pruefe("Kontaktausnahme", [x for p in m.kontakt_ausnahmen for x in p], m.koerper)
+    for s in m.subsysteme.values():
+        pruefe(f"Subsystem {s.name}", s.linien, m.lines)
+        pruefe(f"Subsystem {s.name}", s.staebe, m.members)
+        pruefe(f"Subsystem {s.name}", s.flaechen, m.flaechen)
+        pruefe(f"Subsystem {s.name}", s.koerper, m.koerper)
+        pruefe(f"Subsystem {s.name}", s.kontakte, fugen)
+    for ly in m.layer.values():
+        pruefe(f"Layer {ly.name}", ly.linien, m.lines)
+        pruefe(f"Layer {ly.name}", ly.staebe, m.members)
+        pruefe(f"Layer {ly.name}", ly.flaechen, m.flaechen)
+        pruefe(f"Layer {ly.name}", ly.koerper, m.koerper)
+    for w in m.wasserdruecke.values():
+        pruefe(f"Wasserdruck {w.name}", list(w.flaechen) + [w.ow_flaeche, w.uw_flaeche],
+               m.flaechen)
+        pruefe(f"Wasserdruck {w.name}", w.koerper, m.koerper)
+        pruefe(f"Wasserdruck {w.name}", w.dichtung, m.lines)
+        pruefe(f"Wasserdruck {w.name}", [w.situation], m.situationen)
+    for w in m.winde.values():
+        pruefe(f"Wind {w.name}", list(w.flaechen) + list(w.freie_waende) + list(w.schilder),
+               m.flaechen)
+        pruefe(f"Wind {w.name}", w.staebe, m.members)
+        pruefe(f"Wind {w.name}", [w.situation], m.situationen)
+    for s in m.schwingungen.values():
+        pruefe(f"Schwingung {s.name}", [s.wasserdruck], m.wasserdruecke)
+    for n in m.schweissnaehte.values():
+        pruefe(f"Naht {n.name}", n.staebe, m.members)
+        pruefe(f"Naht {n.name}", n.linien, m.lines)
+        pruefe(f"Naht {n.name}", n.flaechen, m.flaechen)
+    for v in m.netz.verfeinerungen:
+        art = v.get("art")
+        if art in ("flaeche", "linie", "koerper"):
+            pruefe("Netzverfeinerung", [v.get("name")],
+                   {"flaeche": m.flaechen, "linie": m.lines, "koerper": m.koerper}[art])
+    pruefe("Kantenlaenge je Koerper", list(m.netz.koerper_h), m.koerper)
+    return out
+
+
+def _anzahl(m: Model, key: str) -> int:
+    v = getattr(m, key)
+    return len(v) if v is not None else 0
+
+
+def test_json_anhaengen_vollstaendig():
+    """Ein angehaengtes JSON-Modell kommt ganz an.
+
+    Bis zum 22.09.2026 uebertrug ``_append_model`` nur Werkstoffe,
+    Querschnitte, Dicken, Knoten, Elemente, Knotenlager, vier Lastarten, das
+    Eigengewicht und die Staebe. Alles andere blieb liegen - Linien- und
+    Flaechenlager, Kombinationen, Ermuedungslasten, Flaechen, Koerper,
+    Kontakte, die Objektlasten und die Eigenschaften neuer Lastfaelle -, und
+    das Protokoll meldete nur Knoten- und Elementzahl (Befund SV11).
+
+    Geprueft wird je Liste: nachher = vorher + Quelle. Dazu zeigt kein
+    Namensverweis ins Leere, und die umbenannten Objekte der Quelle tragen
+    ihre eigenen Knoten und Elemente, nicht die gleichnamigen des Ziels.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "quelle.json")
+        _anhaengen_quelle().save(p)
+        quelle = Model.load(p)                 # so, wie sie beim Anhaengen gelesen wird
+        ziel = _anhaengen_ziel()
+        vorher = {k: _anzahl(ziel, k) for k in quelle.to_dict()
+                  if k not in _KEINE_OBJEKTLISTE}
+        lasten_vorher = {(n, k): len(getattr(lc, k)) for n, lc in ziel.load_cases.items()
+                         for k in _LASTLISTEN}
+        ne0, nn0 = len(ziel.elements), ziel.nn
+        log = []
+        ziel = import_file(p, model=ziel, log=log)
+
+    # -- Anzahl je Liste ---------------------------------------------------
+    # Ausnahmen mit Grund: der Querschnitt R ist in beiden gleich und wird
+    # wiederverwendet; Lastfaelle gleichen Namens werden zusammengelegt;
+    # Stellungen und Berichtseintraege werden nicht uebertragen, sondern
+    # gemeldet (Pruefung weiter unten).
+    erwartet = {k: vorher[k] + _anzahl(quelle, k) for k in vorher}
+    erwartet["sections"] = vorher["sections"]
+    erwartet["load_cases"] = len(set(quelle.load_cases) | {"LF1"})
+    erwartet["stellungen"] = vorher["stellungen"]
+    erwartet["bericht"] = vorher["bericht"]
+    fehlt = [f"{k}: {_anzahl(ziel, k)} statt {erwartet[k]}" for k in sorted(erwartet)
+             if _anzahl(ziel, k) != erwartet[k]]
+    expect("Anhaengen: jede Liste der Quelle kommt an (nachher = vorher + Quelle)",
+           not fehlt, "; ".join(fehlt) or f"{len(erwartet)} Listen")
+    fehlt = []
+    for n, lc in quelle.load_cases.items():
+        for k in _LASTLISTEN:
+            soll = lasten_vorher.get((n, k), 0) + len(getattr(lc, k))
+            ist = len(getattr(ziel.load_cases[n], k))
+            if ist != soll:
+                fehlt.append(f"{n}.{k}: {ist} statt {soll}")
+    expect("Anhaengen: jede Lastart jedes Lastfalls kommt an", not fehlt,
+           "; ".join(fehlt) or "alle Lastarten")
+    expect("Anhaengen: Elemente vollstaendig, Anschlussknoten (0,0,0) zusammengefuehrt",
+           len(ziel.elements) == ne0 + len(quelle.elements) and ziel.nn == nn0 + quelle.nn - 1,
+           f"{len(ziel.elements)} Elemente, {ziel.nn} Knoten")
+
+    # -- Eigenschaften des neuen Lastfalls ---------------------------------
+    lq = ziel.load_cases["LF-Q"]
+    ist = (lq.category, lq.psi, lq.exclusive_group, lq.theorie, lq.nummer, lq.grundlast,
+           lq.gamma_sup, lq.gamma_inf)
+    soll = ("Q", [0.7, 0.5, 0.3], "A", "II", 7, True, 1.4, 0.0)
+    expect("Anhaengen: neuer Lastfall behaelt psi, Gruppe, Theorie, Nummer, Grundlast, gamma",
+           ist == soll, f"{ist}")
+    expect("Anhaengen: Situation des Lastfalls folgt der umbenannten Situation",
+           lq.situation == "Montage_2" and ziel.situationen["Montage_2"].deaktiviert
+           == [ne0 + 4], f"{lq.situation}")
+
+    # -- Verweise ----------------------------------------------------------
+    offen = _offene_verweise(ziel)
+    expect("Anhaengen: kein Namensverweis zeigt ins Leere", not offen, "; ".join(offen[:8]))
+
+    def koord(knoten):
+        return [tuple(float(x) for x in np.round(ziel.nodes[int(n)], 9)) for n in knoten]
+
+    def el_koord(e):
+        return koord(ziel.elements[int(e)].nodes)
+
+    stab = ziel.members.get("S1_2")
+    ll = [x for x in ziel.load_cases["LF1"].linienlasten if x.art == "stab"]
+    expect("Anhaengen: Stab S1 der Quelle heisst S1_2 und liegt auf dem Quellstab",
+           stab is not None and el_koord(stab.elements[0]) == [(0, 0, 0), (2, 0, 0)]
+           and stab.beta_y == 0.7 and [x.ziel for x in ll] == ["S1_2"],
+           f"{None if stab is None else el_koord(stab.elements[0])}, Linienlast auf "
+           f"{[x.ziel for x in ll]}")
+    f1 = ziel.flaechen.get("F1_2")
+    expect("Anhaengen: Flaeche F1 der Quelle heisst F1_2, Rand, Ecken und Elemente folgen",
+           f1 is not None and f1.linien == ["L1_2", "L2_2", "L3_2", "L4_2"]
+           and koord(f1.ecken) == [(0, 0, 0), (2, 0, 0), (2, 1, 0), (0, 1, 0)]
+           and koord(f1.integrierte_knoten) == [(2, 1, 0)]
+           and f1.elemente == [ne0 + 1] and f1.randseiten == [[ne0 + 2, 0]]
+           and f1.dicke == "t12",
+           f"{None if f1 is None else (f1.linien, f1.elemente, f1.randseiten)}")
+    kb = ziel.kontaktbedingungen.get("KB1_2")
+    lf1 = ziel.load_cases["LF1"]
+    expect("Anhaengen: Fuge KB1 der Quelle heisst KB1_2, Uebermass und Kontaktpaar folgen",
+           kb is not None and kb.flaechennamen == ["F1_2"] and kb.koerpernamen == ["K1"]
+           and [u.ziel for u in lf1.uebermasse] == ["KB1_2"]
+           and [c.name for c in ziel.contact_pairs] == ["KB1_2"]
+           and list(ziel.getrennte_knoten) == ["KB1_2"],
+           f"{[u.ziel for u in lf1.uebermasse]}, {[c.name for c in ziel.contact_pairs]}")
+    if ziel.contact_pairs:
+        cp = ziel.contact_pairs[0]
+        expect("Anhaengen: Kontaktpaar traegt seine Knoten, Flaechen und Randknoten",
+               koord(cp.slave_nodes) == [(3, 0, 1), (4, 0, 1)]
+               and koord(cp.knotenflaechen) == [(3, 0, 1)]
+               and koord(cp.rand_knoten) == [(4, 0, 1)] and cp.master_elements == [ne0 + 2],
+               f"{cp.slave_nodes}, {cp.knotenflaechen}, {cp.rand_knoten}")
+    co = ziel.combinations.get("CO1_2")
+    expect("Anhaengen: Kombination CO1 der Quelle heisst CO1_2, Faktoren und Situation bleiben",
+           co is not None and co.factors == {"LF1": 1.35, "LF-Q": 1.5}
+           and co.situation == "Montage_2" and ziel.combinations["CO1"].factors == {"LF1": 1.0},
+           f"{None if co is None else (co.factors, co.situation)}")
+    j1 = ziel.joints.get("J1")
+    expect("Anhaengen: Anschluss nennt die umbenannte Ermuedungslast E1_2",
+           j1 is not None and j1.ermuedung == ["E1_2"] and j1.elem == ne0
+           and ziel.fatigue_loads["E1_2"].case_max == "LF-Q",
+           f"{None if j1 is None else (j1.ermuedung, j1.elem)}")
+
+    # -- Felder, die der alte Weg unterwegs verlor ------------------------
+    e = ziel.elements
+    bl = [b for b in lf1.beam_loads if not getattr(b, "_geo", False)]
+    expect("Anhaengen: Elementfelder bleiben (nur Zug, Gelenk, Feder, Werkstoff der Quelle)",
+           e[ne0 + 4].nur == "zug" and e[ne0].hinges and e[ne0 + 3].sec == "FE1"
+           and e[ne0 + 2].mat == "S235_2" and "S235_2" in ziel.materials
+           and ziel.materials["S235_2"].E == 200e9 and ziel.materials["S235"].E == 210e9,
+           f"nur={e[ne0 + 4].nur!r}, Gelenke={e[ne0].hinges}, mat={e[ne0 + 2].mat}")
+    s_q = [s for s in ziel.supports if s.name == "A1"]
+    expect("Anhaengen: Knotenlager behaelt Ausfall bei Zug; Teilstrecke der Stablast bleibt",
+           s_q and s_q[0].dof_behaviour(2).failure == "zug"
+           and [(b.a, b.b) for b in bl] == [(0.2, 0.8)],
+           f"{[(b.a, b.b) for b in bl]}, Lager A1: {len(s_q)}")
+    if ziel.line_supports and ziel.surface_supports:
+        ls = ziel.line_supports[0]
+        ss = ziel.surface_supports[0]
+        expect("Anhaengen: Linien- und Flaechenlager auf den Knoten der Quelle",
+               koord(ls.nodes) == [(0, 0, 0), (2, 0, 0)] and ls.linien == ["L1_2"]
+               and ss.elements == [ne0 + 1] and ss.flaechen == ["F1_2"]
+               and koord(ss.gruppen[0][2]) == [(0, 0, 0), (2, 0, 0), (2, 1, 0), (0, 1, 0)],
+               f"{koord(ls.nodes)}, {ss.elements}, {ss.flaechen}")
+    if ziel.punktmassen and ziel.starrkoerper and lf1.zwangsverformungen:
+        pm, sk = ziel.punktmassen[0], ziel.starrkoerper[0]
+        zv = lf1.zwangsverformungen[0]
+        expect("Anhaengen: Punktmasse, Starrkoerper und Zwangsverformung an den Quellknoten",
+               koord([pm.node]) == [(0, 1, 0)] and koord([sk.master]) == [(3, 0, 0)]
+               and koord(sk.slaves) == [(4, 0, 0), (4, 1, 0)] and zv.node == 0,
+               f"{koord([pm.node])}, {koord([sk.master])}, Zwang an {zv.node}")
+    su = ziel.subsysteme.get("SU1")
+    expect("Anhaengen: Subsystem zaehlt seine Lager ab den Lagern des Ziels",
+           su is not None and su.lager == [1] and su.linienlager == [0]
+           and su.flaechenlager == [0] and su.elemente == [ne0] and su.staebe == ["S1_2"]
+           and su.kontakte == ["KB1_2"],
+           f"{None if su is None else (su.lager, su.elemente, su.staebe)}")
+
+    # -- Protokoll ---------------------------------------------------------
+    text = "\n".join(log)
+    expect("Anhaengen: Protokoll nennt die nicht uebertragenen Stellungen und Berichtseintraege",
+           any("Stellungen" in z and "1" in z for z in log)
+           and any("Bericht" in z and "1" in z for z in log), text[-600:])
+    expect("Anhaengen: Protokoll nennt die Umbenennungen",
+           "S1_2" in text and "F1_2" in text and "S235_2" in text, text[-600:])
+
+
+def test_json_anhaengen_hallenrahmen():
+    """Die Probe aus der Stand-Pruefung: der Hallenrahmen, ergaenzt um ein
+    Linienlager, ein Flaechenlager, eine Linienlast und eine Ermuedungslast,
+    an den Rahmen gehaengt. Gemessen am 22.09.2026 kamen 0 von 72
+    Kombinationen, 0 von 1 Linienlager, 0 von 1 Flaechenlager und 0 von 2
+    Ermuedungslasten an."""
+    from statik3d import examples_lib
+    src = examples_lib.build_example("hall")
+    lf = next(iter(src.load_cases))
+    src.add_line_support([0, 1], name="LL-Probe", uz=dict(typ="rigid"))
+    src.add_surface_support(elements=[0], name="FL-Probe")
+    src.add_linienlast(next(iter(src.members)), [0.0, 0.0, -5e3], case=lf)
+    src.add_fatigue_load("Erm-Probe", lf)
+    src.load_cases[lf].grundlast = True
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "quelle.json")
+        src.save(p)
+        ziel = examples_lib.build_example("frame")
+        vorher = (len(ziel.combinations), len(ziel.line_supports), len(ziel.surface_supports),
+                  len(ziel.fatigue_loads), len(ziel.load_cases[lf].linienlasten))
+        log = []
+        ziel = import_file(p, model=ziel, log=log)
+    ist = (len(ziel.combinations) - vorher[0], len(ziel.line_supports) - vorher[1],
+           len(ziel.surface_supports) - vorher[2], len(ziel.fatigue_loads) - vorher[3],
+           len(ziel.load_cases[lf].linienlasten) - vorher[4])
+    soll = (len(src.combinations), 1, 1, len(src.fatigue_loads), 1)
+    expect("Hallenrahmen angehaengt: Kombinationen, Linien-/Flaechenlager, Ermuedung, Linienlast",
+           ist == soll, f"angekommen {ist}, in der Quelle {soll}")
+    # LF1 gibt es im Rahmen schon: seine Eigenschaften bleiben die des Ziels,
+    # die abweichende Grundlast der Quelle steht im Protokoll
+    expect("Hallenrahmen: abweichende Grundlast des gleichnamigen Lastfalls wird gemeldet",
+           any(lf in z and "grundlast" in z.lower() for z in log), "\n".join(log[-6:]))
+
+
+def test_json_anhaengen_eigengewicht_und_gleiches():
+    """Das Eigengewicht gilt je Lastfall fuer alle Elemente. Haben Ziel und
+    Quelle es in einem Lastfall verschieden, erfasst es nach dem Anhaengen
+    auch die Elemente des anderen Teils (oder fehlt ihnen) - das steht im
+    Protokoll. Und gleichnamige Werkstoffe mit gleichem Inhalt werden nicht
+    doppelt angelegt, auch wenn einer 7850 und der andere 7850.0 fuehrt."""
+    from statik3d.model import Material, Section
+    z = Model("Ziel")
+    z.add_material(Material("S235", rho=7850))           # ganze Zahl im Speicher
+    z.add_section(Section.rectangle("R", 0.1, 0.2))
+    z.add_node(0, 0, 0); z.add_node(1, 0, 0)
+    z.add_element("beam", [0, 1], "S235", "R")
+    z.load_cases["LF1"].gravity = [0.0, 0.0, -9.81]
+    q = Model("Quelle")
+    q.add_material(Material("S235", rho=7850.0))
+    q.add_section(Section.rectangle("R", 0.1, 0.2))
+    q.add_node(5, 0, 0); q.add_node(6, 0, 0)
+    q.add_element("beam", [0, 1], "S235", "R")
+    q.add_load_case("LF2", "G", activate=False).gravity = [0.0, 0.0, -9.81]
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "q.json")
+        q.save(p)
+        log = []
+        z = import_file(p, model=z, log=log)
+    lf1 = [x for x in log if "'LF1'" in x and "Eigengewicht" in x]
+    lf2 = [x for x in log if "'LF2'" in x and "Eigengewicht" in x]
+    expect("Anhaengen: verschiedenes Eigengewicht je Lastfall steht im Protokoll",
+           len(lf1) == 1 and len(lf2) == 1, "\n".join(lf1 + lf2) or "\n".join(log))
+    expect("Anhaengen: gleicher Werkstoff (7850 gegen 7850.0) wird nicht umbenannt",
+           list(z.materials) == ["S235"] and z.elements[1].mat == "S235",
+           f"{list(z.materials)}")
+
+
+def test_json_anhaengen_doppelknoten_gemeldet():
+    """Das Zusammenfuehren nach dem Anhaengen laeuft ueber das ganze Modell
+    und erfasst auch Knoten, die im Ziel absichtlich aufeinanderliegen - die
+    beiden Seiten einer getrennten Fuge (gemessen: Spaltelement (1, 2) wird
+    (1, 1)). Das Protokoll sagt, dass es Knoten des Ziels waren, und
+    behauptet nicht, die Quelle habe dort angeschlossen."""
+    from statik3d.model import Material, Section
+    z = Model("Ziel")
+    z.add_material(Material("S235"))
+    z.add_section(Section.rectangle("R", 0.1, 0.2))
+    for p in [(0, 0, 0), (1, 0, 0), (1, 0, 0), (2, 0, 0)]:
+        z.add_node(*p)
+    z.add_element("beam", [0, 1], "S235", "R")
+    z.add_element("beam", [2, 3], "S235", "R")
+    z.add_gap_element(1, 2, direction=[1, 0, 0])
+    q = Model("Quelle")
+    q.add_material(Material("S235"))
+    q.add_section(Section.rectangle("R", 0.1, 0.2))
+    q.add_node(5, 0, 0); q.add_node(6, 0, 0)
+    q.add_element("beam", [0, 1], "S235", "R")
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "q.json")
+        q.save(p)
+        log = []
+        import_file(p, model=z, log=log)
+    ziel_zeilen = [x for x in log if x.startswith("WARNUNG") and "1 Knoten des Ziels" in x]
+    falsch = [x for x in log if "der Quelle lagen auf Knoten des Ziels" in x]
+    expect("Anhaengen: zusammengefuehrte Doppelknoten des Ziels stehen als Warnung im "
+           "Protokoll, nicht als Anschluss der Quelle",
+           len(ziel_zeilen) == 1 and not falsch, "\n".join(log))
+
+
+def test_json_anhaengen_schluessel():
+    """Jeder Schluessel von Model.to_dict() und LoadCase.to_dict() ist beim
+    Anhaengen eingeordnet: uebertragen, als Einstellung des Ziels behalten
+    oder mit Grund als nicht uebertragbar gemeldet. Ein kuenftig ergaenztes
+    Modellfeld faellt so nicht wieder still weg - diese Pruefung schlaegt an,
+    bis es eingeordnet ist."""
+    from statik3d.model import LoadCase
+    try:
+        from statik3d.importers import anhaengen as A
+    except ImportError as ex:
+        expect("Anhaengen: Einordnung der Modellschluessel vorhanden", False, repr(ex))
+        return
+    eingeordnet = set(A.UEBERTRAGEN) | set(A.ZIEL_BEHAELT) | set(A.NICHT_UEBERTRAGEN)
+    fehlt = sorted(set(Model("x").to_dict()) - eingeordnet)
+    expect("Anhaengen: jeder Schluessel von Model.to_dict() ist eingeordnet", not fehlt,
+           ", ".join(fehlt) or f"{len(eingeordnet)} Schluessel")
+    doppelt = sorted((set(A.UEBERTRAGEN) & set(A.NICHT_UEBERTRAGEN))
+                     | (set(A.UEBERTRAGEN) & set(A.ZIEL_BEHAELT))
+                     | (set(A.ZIEL_BEHAELT) & set(A.NICHT_UEBERTRAGEN)))
+    expect("Anhaengen: kein Schluessel ist doppelt eingeordnet", not doppelt, ", ".join(doppelt))
+    lc_fehlt = sorted(set(LoadCase("x").to_dict()) - set(A.LASTFALL_EINGEORDNET))
+    expect("Anhaengen: jeder Schluessel von LoadCase.to_dict() ist eingeordnet", not lc_fehlt,
+           ", ".join(lc_fehlt) or "alle")
+    ohne_grund = [k for k, v in A.NICHT_UEBERTRAGEN.items() if not str(v).strip()]
+    expect("Anhaengen: jeder nicht uebertragene Schluessel hat einen Grund fuer das Protokoll",
+           not ohne_grund, ", ".join(ohne_grund))
+
+
 TESTS = [
     test_dicke_wird_nicht_still_geerbt, test_xlsx_roundtrip, test_dxf, test_abaqus_inp, test_nastran_bdf, test_ifc_parser,
          test_ifc, test_ifc2x3, test_ifc_physical_fallback, test_saf, test_rfem_xlsx,
-         test_rfem_csv_folder, test_dispatcher]
+         test_rfem_csv_folder, test_dispatcher, test_json_anhaengen_vollstaendig,
+         test_json_anhaengen_hallenrahmen, test_json_anhaengen_eigengewicht_und_gleiches,
+         test_json_anhaengen_doppelknoten_gemeldet, test_json_anhaengen_schluessel]
 
 
 def main() -> int:
