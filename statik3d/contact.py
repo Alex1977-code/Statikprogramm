@@ -666,6 +666,15 @@ class ContactSystem:
                                         ge.mu, ge.node_b, n,
                                         f"Spaltelement {ge.node_a}-{ge.node_b}",
                                         master=([ge.node_a], [1.0])))
+        if m.contact_pairs:
+            # Slave-Knoten und Master-Facetten kennen nur Ecken; an quadratischen
+            # Elementen blieben die Seitenmitten ohne Kontakt (fugen.QuadratischeSeiten).
+            from .fugen import quadratische_knoten, quadratische_seiten_sperren
+            q = quadratische_knoten(m)
+            for cp in (m.contact_pairs if q else []):
+                knoten = {int(n) for n in cp.slave_nodes}
+                knoten |= {int(n) for f in master_facets(m, cp) for n in f}
+                quadratische_seiten_sperren(m, knoten, f"Kontaktpaar {cp.name}", q)
         for cp in m.contact_pairs:
             self._build_pair(cp)
         self._build_dof_supports()

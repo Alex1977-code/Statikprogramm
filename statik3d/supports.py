@@ -472,12 +472,21 @@ def expand(model: Model, log: list = None) -> list[NodalDof]:
                            ls.name or "Linienlager", "line")
                 if e is not None:
                     out.append(e)
+    # Flaechenlager sehen von einer Volumenseite nur die Ecken; an quadratischen
+    # Elementen blieben die Seitenmitten ungelagert (fugen.QuadratischeSeiten).
+    from .fugen import quadratische_knoten, quadratische_seiten_sperren
+    q = quadratische_knoten(model) if model.surface_supports else {}
     for ss in model.surface_supports:
         if getattr(ss, "lokal", False) and getattr(ss, "gruppen", None):
+            if q:
+                quadratische_seiten_sperren(model, {int(n) for g in ss.gruppen for n in g[2]},
+                                            f"Flächenlager {ss.name}", q)
             out.extend(_flaechenachsen(ss))
             continue
         trib = dict(zip([int(n) for n in ss.nodes], [float(a) for a in ss.areas])) \
             if ss.nodes and len(ss.nodes) == len(ss.areas) else tributary_areas(model, ss.elements, ss.face)
+        if q:
+            quadratische_seiten_sperren(model, trib, f"Flächenlager {ss.name}", q)
         if not trib and log is not None:
             log.append(f"Flaechenlager '{ss.name}': keine Flaeche gefunden")
         for n, A in trib.items():
@@ -568,7 +577,11 @@ def split(entries: list[NodalDof]):
 
 
 def summary(model: Model) -> str:
-    entries = expand(model)
+    from .fugen import QuadratischeSeiten
+    try:
+        entries = expand(model)
+    except QuadratischeSeiten as ex:     # die Anzeige nennt die Sperre, statt abzubrechen
+        return f"Lager: gesperrt - {ex}"
     lin, nlin = split(entries)
     n_fix = sum(1 for e in lin if e.typ == "rigid")
     n_spring = sum(1 for e in lin if e.typ == "spring")
