@@ -142,6 +142,9 @@ class VolumenResults:
     bereiche: dict = field(default_factory=dict)
     kombinationen: list = field(default_factory=list)
     settings: dict = field(default_factory=dict)
+    #: Kombinationen ohne Ergebnis ("nicht nachgewiesen"), siehe
+    #: design._uls_results
+    warnungen: list = field(default_factory=list)
 
     @property
     def util_max(self) -> float:
@@ -149,6 +152,10 @@ class VolumenResults:
                     if not c.singular), default=0.0)
 
     def summary(self) -> str:
+        from .design import warnzeilen
+        return self._summary() + warnzeilen(self)
+
+    def _summary(self) -> str:
         if not self.bereiche:
             return "Volumennachweise: keine Bereiche festgelegt"
         gefuehrt = [c for c in self.bereiche.values() if not c.singular and not c.fehler]
@@ -349,11 +356,13 @@ def _material(model, elemente, dicke: float = 0.0):
 def check_volumen(model, analysis, combos: list = None, progress=None) -> VolumenResults:
     """Alle Volumenbereiche des Modells ueber alle GZT-Kombinationen nachweisen."""
     from .design import _uls_results
-    ergebnisse = _uls_results(model, analysis, combos)
+    warnungen: list = []
+    ergebnisse = _uls_results(model, analysis, combos, warnungen=warnungen)
     ds = model.design
     out = VolumenResults(kombinationen=list(ergebnisse), settings={
         "gamma_M0": ds.gamma_M0,
-        "Norm": "DIN EN 1993-1-1, 6.2.1(5) (Vergleichsspannung nach von Mises)"})
+        "Norm": "DIN EN 1993-1-1, 6.2.1(5) (Vergleichsspannung nach von Mises)"},
+        warnungen=warnungen)
     koerper = _koerper(model)
     for i, (name, vb) in enumerate(model.volumenbereiche.items()):
         c = VolumenCheck(name, beschreibung=vb.beschreibung,
@@ -397,7 +406,8 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
                     d["eta"], kname, el, d)
         if not c.je_kombination:
             c.fehler = ("keine Volumenspannungen in den Ergebnissen - "
-                        "wurde mit Volumenelementen gerechnet?")
+                        "wurde mit Volumenelementen gerechnet?" if ergebnisse else
+                        "kein Ergebnis einer GZT-Kombination - siehe Warnung")
             out.bereiche[name] = c
             continue
         w = c.werte

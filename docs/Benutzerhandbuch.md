@@ -3164,6 +3164,17 @@ Kombination wird einzeln gerechnet — das dauert länger als eine lineare
 Überlagerung. Die Ergebnisse der einzelnen **Lastfälle** bleiben Ergebnisse
 nach Theorie I. Ordnung und dürfen nicht mehr von Hand überlagert werden.
 
+Eine **Ergebniskombination** („A oder B oder …", aus RFEM) wird nicht als
+Ganzes gerechnet, sondern jede ihrer Alternativen: in der Tabelle des
+Theoriekapitels steht je Alternative eine Zeile „EK1 [1]", „EK1 [2]" …, die
+Ergebniskombination selbst nicht. Ihre Umhüllende und die Nachweise nehmen
+diese Ergebnisse. Bis zum 22.09.2026 stand dort eine Zeile „EK1" mit
+u_I = u_II = 0,00 mm, als „am verformten System gerechnet" gezählt, und die
+Umhüllende blieb linear – am Druckkragarm 3,321 statt 9,705 mm. Dasselbe gilt
+für eine Ergebniskombination mit Theorie III. Ordnung. Viele Alternativen
+kosten entsprechend Rechenzeit; nach II. Ordnung werden gleiche Alternativen
+mehrerer Ergebniskombinationen nur einmal gerechnet.
+
 ### Theorie je Lastfall und Kombination: I., II., III. Ordnung
 
 Im Lastfall- und im Kombinationsdialog steht das Feld **Theorie**:
@@ -3985,6 +3996,18 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   Kombinationsdialog zeigt sie ihre Alternativen; die Faktorfelder sind dort
   gesperrt, denn die Alternativen kommen aus der Quelldatei. Ein umbenannter
   oder gelöschter Lastfall zieht durch alle Alternativen.
+  **Nachgewiesen** wird nicht die Umhüllende, sondern jede Alternative für
+  sich: in den Nachweistabellen (Stäbe, Volumen, Beulen, Lasteinleitung,
+  Anschlüsse, Verformungen) steht in der Spalte *Kombination* zum Beispiel
+  „EK1 [2]" – die zweite Alternative der Ergebniskombination EK1. Bis zum
+  22.09.2026 übergingen die Nachweise Ergebniskombinationen; hatte ein Modell
+  nur solche, wurden still die Lastfälle mit Faktor 1 nachgewiesen (am
+  Kragarm Ausnutzung 0,170 statt 0,370). Die Lastfälle selbst werden jetzt nur
+  noch nachgewiesen, wenn das Modell **gar keine** Kombination hat. Fehlt das
+  Ergebnis einer Kombination (etwa weil nur die Lastfälle gerechnet wurden),
+  steht in Protokoll, Nachweiszeile und Bericht „WARNUNG: Kombination …
+  nicht nachgewiesen" und das Gesamturteil sagt „nicht nachgewiesen" – dann
+  „Alle Lastfälle + Kombinationen" rechnen.
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
   der betragsmäßig größere Extremwert), auswählbar im Modellbaum unter
   „Ergebnisse → Schnittgrößen".

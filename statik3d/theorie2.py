@@ -557,8 +557,18 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
         "auto"  je Kombination alpha_cr bestimmen und nur rechnen, wenn
                 alpha_cr unter der Grenze nach 5.2.1(3) liegt
         "ein"   immer am verformten System rechnen
+
+    Eine **Ergebniskombination** (Alternativen, ``factors`` leer) wird nicht
+    selbst gerechnet, sondern jede ihrer Alternativen als eigene Zeile
+    "EK [k]"; die Ergebnisse gehen nach ``analysis.alternativen``, nicht nach
+    ``analysis.combinations``, und solve_all faltet daraus die Umhuellende
+    der EK. Vorher rechnete diese Funktion die EK mit ``factors = {}``: ein
+    Nullergebnis, das als "am verformten System gerechnet" gezaehlt und in
+    ``analysis.combinations`` abgelegt wurde (Befund FE12, 22.09.2026).
+    Identische Alternativen mehrerer EK werden einmal gerechnet.
     """
-    from .solver import StaticSystem
+    from dataclasses import replace
+    from .solver import StaticSystem, alternativen_der_kombination
     ds = model.design
     modus = getattr(ds, "theorie2", "aus")
     out = Th2Results(settings={
@@ -583,40 +593,90 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
     system = system or StaticSystem(model, progress=progress)
     grenze = out.settings["grenze"]
     basis = model
-    for k, n in enumerate(names):
-        combo = model.combinations[n]
+    # (Zeile, Kombination, Faktoren, ist Alternative einer Ergebniskombination)
+    auftraege = []
+    for n in names:
+        c = basis.combinations[n]
+        if c.ist_umhuellende:
+            auftraege += [(name, n, teile, True) for name, teile in alternativen_der_kombination(c)]
+        else:
+            auftraege.append((n, n, dict(c.factors), False))
+    gemerkt: dict = {}
+    for k, (zeile, n, faktoren, alternative) in enumerate(auftraege):
+        combo = basis.combinations[n]
         # Die Kombination rechnet in ihrer Situation (eigenes Modell und System)
         sit = getattr(combo, "situation", "") or "Grundstellung"
         if systeme and sit in systeme:
             model, system = systeme[sit]
         else:
             model = basis
+        if not any(f for f in faktoren.values()):
+            # Nichts belastet: ein Nullergebnis waere kein Ergebnis nach II.
+            # Ordnung, sondern gar keins - es bleibt beim linearen.
+            info = Th2Info(kombination=zeile, grenze=grenze)
+            info.hinweise.append("keine Lastfälle mit Faktor ≠ 0 – nichts am verformten "
+                                 "System zu rechnen")
+            out.kombinationen[zeile] = info
+            continue
+        schluessel = ((sit, n in erzwungen, tuple(sorted(faktoren.items())))
+                      if alternative else None)
+        if schluessel is not None and schluessel in gemerkt:
+            res, info = gemerkt[schluessel]
+            out.kombinationen[zeile] = replace(info, kombination=zeile,
+                                               hinweise=list(info.hinweise))
+            if res is not None and analysis is not None:
+                _alternative_ablegen(analysis, zeile, res)
+            continue
         if modus == "auto" and n not in (erzwungen or ()):
             # Grundzustand und alpha_cr zuerst
             from .solver import case_loads, case_prescribed
-            F, _feq, _q, _temp = case_loads(model, combo.factors, getattr(system, "aktiv", None))
-            u1 = system.solve(F, us=case_prescribed(model, combo.factors))
+            F, _feq, _q, _temp = case_loads(model, faktoren, getattr(system, "aktiv", None))
+            u1 = system.solve(F, us=case_prescribed(model, faktoren))
             ac = alpha_cr(model, system, u1)
-            info = Th2Info(kombination=n, alpha_cr=ac["alpha_cr"], grenze=grenze,
+            info = Th2Info(kombination=zeile, alpha_cr=ac["alpha_cr"], grenze=grenze,
                            u_max_I=float(np.abs(u1).max()))
             if ac.get("fehler"):
                 info.hinweise.append(ac["fehler"])
             if ac["alpha_cr"] >= grenze:
-                out.kombinationen[n] = info
+                out.kombinationen[zeile] = info
+                if schluessel is not None:
+                    gemerkt[schluessel] = (None, info)
                 if progress:
-                    progress(f"{n}: α_cr = {ac['alpha_cr']:.1f} ≥ {grenze:.0f} "
-                             f"({k + 1}/{len(names)})")
+                    progress(f"{zeile}: α_cr = {ac['alpha_cr']:.1f} ≥ {grenze:.0f} "
+                             f"({k + 1}/{len(auftraege)})")
                 continue
         res, info = solve_theorie2(
-            model, combo.factors, n, system,
+            model, faktoren, zeile, system,
             imperfektionen=out.settings["imperfektionen"],
             elastisch=not out.settings["plastisch"],
             richtung=out.settings["richtung"],
             alle_vorkruemmungen=out.settings["alle_vorkruemmungen"])
         info.grenze = grenze
-        out.kombinationen[n] = info
+        out.kombinationen[zeile] = info
+        if alternative:
+            res.info["typ"] = combo.typ
+            if sit != "Grundstellung":
+                res.info["situation"] = sit
         if not info.fehler and analysis is not None:
-            analysis.combinations[n] = res
+            if alternative:
+                _alternative_ablegen(analysis, zeile, res)
+            else:
+                analysis.combinations[n] = res
+        if schluessel is not None:
+            gemerkt[schluessel] = (None if info.fehler else res, info)
         if progress:
-            progress(f"{n}: Theorie II. Ordnung ({k + 1}/{len(names)})")
+            progress(f"{zeile}: Theorie II. Ordnung ({k + 1}/{len(auftraege)})")
     return out
+
+
+def _alternative_ablegen(analysis, name: str, res) -> None:
+    """Das Ergebnis einer Alternative "EK [k]" in ``analysis.alternativen``
+    ablegen - dort sucht es die Umhuellende der EK und jeder Nachweis."""
+    ablage = getattr(analysis, "alternativen", None)
+    if ablage is None:
+        ablage = {}
+        try:
+            analysis.alternativen = ablage
+        except AttributeError:
+            return
+    ablage[name] = res

@@ -405,6 +405,11 @@ class Stellungsreihe:
                                         + (g.get("name") or g.get("text") or "-"))
                 self.log.append(f"  {st.name}: u_max = {e.u_max * 1e3:.3f} mm"
                                 + (f", eta = {e.eta:.3f}" if nachweise else ""))
+                # Kombinationen ohne Ergebnis (etwa mit kombinationen=False)
+                # werden nicht mehr still durch die Lastfaelle ersetzt - dann
+                # muss das Protokoll es sagen, sonst stuende eta = 0 da
+                for w in (getattr(e.nachweise, "warnungen", None) or []):
+                    self.log.append(f"  {st.name}: WARNUNG {w}")
             except Exception as ex:      # noqa: BLE001
                 e.fehler = f"{type(ex).__name__}: {ex}" if str(ex).strip() else type(ex).__name__
                 self.log.append(f"  {st.name}: FEHLER {e.fehler}")

@@ -56,6 +56,9 @@ class DesignResults:
     members: dict = field(default_factory=dict)
     combinations: list = field(default_factory=list)
     settings: dict = field(default_factory=dict)
+    #: Kombinationen, die nicht nachgewiesen werden konnten (kein Ergebnis),
+    #: im Klartext - siehe _uls_results
+    warnungen: list = field(default_factory=list)
 
     @property
     def util_max(self) -> float:
@@ -70,14 +73,15 @@ class DesignResults:
 
     def summary(self) -> str:
         if not self.members:
-            return "Nachweise EC3: keine Staebe"
+            return "Nachweise EC3: keine Staebe" + warnzeilen(self)
         worst = max(self.members.values(), key=lambda m: m.util)
         nf = sum(1 for m in self.members.values() if m.util > 1.0)
         g = worst.governing
         return (f"Nachweise EC3: {len(self.members)} Staebe, {len(self.combinations)} Kombinationen, "
                 f"max. Ausnutzung {worst.util:.3f} ({worst.member}: {g.get('name', '')}, "
                 f"{g.get('combo', '')}, x = {g.get('x', 0):.2f} m)"
-                + (f" - {nf} Staebe NICHT erfuellt" if nf else " - alle erfuellt"))
+                + (f" - {nf} Staebe NICHT erfuellt" if nf else " - alle erfuellt")
+                + warnzeilen(self))
 
     def table(self) -> list[list]:
         rows = [["Stab", "Querschnitt", "Material", "L [m]", "Klasse", "Ausnutzung",
@@ -88,6 +92,14 @@ class DesignResults:
                          f"{m.util:.3f}", g.get("name", ""), g.get("combo", ""),
                          f"{g.get('x', 0):.2f}", m.status()])
         return rows
+
+
+def warnzeilen(ergebnis) -> str:
+    """Die Warnungen eines Nachweisergebnisses als eigene Zeilen "WARNUNG: ..."
+    - leer ohne Warnung. getattr: aeltere Ergebnisdateien kennen das Feld
+    ``warnungen`` noch nicht."""
+    w = getattr(ergebnis, "warnungen", None) or []
+    return "".join(f"\nWARNUNG: {x}" for x in w)
 
 
 # --------------------------------------------------------------------------
@@ -212,16 +224,60 @@ def check_member_set(model: Model, names: list, results: dict, n: int = None) ->
     return {nm: check_member(model, model.members[nm], results, n) for nm in names}
 
 
-def _uls_results(model: Model, analysis, combos=None) -> dict:
+def _uls_results(model: Model, analysis, combos=None, warnungen: list = None) -> dict:
+    """Die Ergebnisse, gegen die die GZT-Nachweise gefuehrt werden: {Name: Results}.
+
+    Jede GZT-Kombination des Modells mit ihrem Ergebnis; eine
+    Ergebniskombination ("A oder B oder ...") mit **jeder Alternative** als
+    eigenem Eintrag "EK [k]" (solver.ergebnisse_der_alternativen). Auf die
+    Lastfaelle wird nur zurueckgegriffen, wenn das Modell **gar keine**
+    Kombination hat. Fehlt das Ergebnis einer Kombination, steht sie in
+    ``warnungen`` als "nicht nachgewiesen" - sie wird nicht still ersetzt.
+
+    Bis zum 22.09.2026 fiel die Funktion auf die Lastfaelle zurueck, sobald
+    ``analysis.combinations`` leer war, und uebersah Ergebniskombinationen
+    ganz: ein Modell nur mit "1,35·LF1 oder 1,35·LF1 + 1,5·LF2" wurde gegen
+    LF1 und LF2 mit Faktor 1 nachgewiesen - Ausnutzung 0,170 statt 0,370
+    (Befund FE11).
+    """
+    from ..solver import ergebnisse_der_alternativen
+    warn = warnungen if warnungen is not None else []
+    kombis = getattr(model, "combinations", None) or {}
     if combos is not None:
         src = analysis.all_results() if hasattr(analysis, "all_results") else analysis
-        return {k: src[k] for k in combos}
-    if hasattr(analysis, "combinations") and analysis.combinations:
-        return {k: r for k, r in analysis.combinations.items()
-                if model.combinations[k].is_uls}
-    if hasattr(analysis, "cases"):
+        out = {}
+        for k in combos:
+            c = kombis.get(k)
+            if c is not None and c.ist_umhuellende and hasattr(analysis, "cases"):
+                alt, w = ergebnisse_der_alternativen(model, analysis, c)
+                out.update(alt)
+                warn.extend(w)
+            else:
+                out[k] = src[k]
+        return out
+    if not hasattr(analysis, "cases"):
+        return dict(analysis)
+    if not kombis:
+        # gar keine Kombinationen im Modell: dann gelten die Lastfaelle selbst
         return dict(analysis.cases)
-    return dict(analysis)
+    ergebnisse = getattr(analysis, "combinations", None) or {}
+    out = {}
+    for n, c in kombis.items():
+        if not c.is_uls:
+            continue
+        if c.ist_umhuellende:
+            alt, w = ergebnisse_der_alternativen(model, analysis, c)
+            out.update(alt)
+            warn.extend(w)
+        elif n in ergebnisse:
+            out[n] = ergebnisse[n]
+        else:
+            warn.append(f"Kombination {n} nicht nachgewiesen: kein Ergebnis in der "
+                        "Berechnung – „Alle Lastfälle + Kombinationen“ rechnen")
+    if not out and not warn:
+        warn.append("Das Modell hat Kombinationen, aber keine des Grenzzustands der "
+                    "Tragfähigkeit – die GZT-Nachweise wurden nicht geführt")
+    return out
 
 
 def _melde(progress, text: str, anteil: float = None) -> None:
@@ -262,14 +318,16 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     hinter der Rechnung, und ein Anteil von hier wuerfe den Balken zurueck.
     """
     from .. import parallel
-    results = _uls_results(model, analysis, combos)
+    warnungen: list = []
+    results = _uls_results(model, analysis, combos, warnungen=warnungen)
     names = members if members is not None else [k for k, m in model.members.items() if m.design]
     out = DesignResults(combinations=list(results), settings={
         "gamma_M0": model.design.gamma_M0, "gamma_M1": model.design.gamma_M1,
         "Methode": f"Anhang {model.design.interaction_method}",
-        "BDK": model.design.lt_method})
+        "BDK": model.design.lt_method}, warnungen=warnungen)
     if not names or not results:
-        _melde(progress, "Nachweise EC3: keine Staebe mit Nachweis", _anteil(anteil, 1.0))
+        _melde(progress, "Nachweise EC3: keine Staebe mit Nachweis" if not names else
+               "Nachweise EC3: keine Ergebnisse einer GZT-Kombination", _anteil(anteil, 1.0))
         return out
     st = parallel.settings()
     if use_jobs is None:

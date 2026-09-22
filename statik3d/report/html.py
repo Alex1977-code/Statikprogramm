@@ -1487,6 +1487,7 @@ class Report:
             return []
         st = v.settings or {}
         b = [self._h(1, "Spannungsnachweise der Volumenbereiche")]
+        b += self._nachweis_warnungen(v, "Volumennachweise")
         b.append(self._h(2, "Grundlagen"))
         b.append(("list", [
             "Ein Volumen hat keinen Querschnitt: Klassifizierung, plastische "
@@ -1922,6 +1923,15 @@ class Report:
                 "Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind Ergebnisse nach "
                 "Theorie I. Ordnung und dürfen nicht mehr überlagert werden; die "
                 "Kombinationen und die Umhüllenden sind es nicht.")
+        ek = [n for n, c in self.model.combinations.items()
+              if c.ist_umhuellende and self.model.theorie_von(c) == "II"]
+        if ek:
+            items.append(
+                "Ergebniskombinationen („A oder B oder …“: " + ", ".join(ek[:10])
+                + (" …" if len(ek) > 10 else "") + ") werden nicht als Ganzes "
+                "gerechnet: jede Alternative steht als eigene Zeile „EK [k]“ und wird "
+                "wie eine Kombination behandelt; die Umhüllende der Ergebniskombination "
+                "und die Nachweise nehmen diese Ergebnisse.")
         b.append(("list", items))
 
         b.append(self._h(2, "Übersicht"))
@@ -2570,10 +2580,24 @@ class Report:
         return b
 
     # ============================================================ Kapitel 5
+    def _nachweis_warnungen(self, ergebnis, titel: str) -> list:
+        """Kombinationen, die ein Nachweis mangels Ergebnis nicht führen
+        konnte - hervorgehoben im Kapitel und in der Liste der Zusammenfassung.
+        Bis zum 22.09.2026 wurden sie still übergangen oder durch die
+        Lastfälle ersetzt (Befund FE11)."""
+        w = list(getattr(ergebnis, "warnungen", None) or []) if ergebnis is not None else []
+        if not w:
+            return []
+        self._warnings.extend(f"{titel}: {x}" for x in w)
+        return [("status", f"{titel}: nicht alles nachgewiesen – {len(w)} "
+                           f"Warnung{'en' if len(w) > 1 else ''}, siehe die Liste.", False),
+                ("list", w)]
+
     def chapter_design(self) -> list:
         m = self.model
         b = [self._h(1, "Nachweise nach DIN EN 1993-1-1")]
         d = self.design if self.opt("design") else None
+        b += self._nachweis_warnungen(d, "Nachweise EC3")
         if d is None or not getattr(d, "members", None):
             if not self.opt("design"):
                 b.append(("p", "Die Ausgabe der Nachweise ist deaktiviert."))
@@ -2917,6 +2941,7 @@ class Report:
                                      for c in (getattr(bl, "felder", None) or {}).values()))
         b = [self._h(1, "Beulnachweise nach DIN EN 1993-1-5"
                         + (" und DIN EN 1993-1-6" if hat_schale else ""))]
+        b += self._nachweis_warnungen(bl, "Beulnachweise")
         if bl is None or not getattr(bl, "felder", None):
             if not self.opt("beulen"):
                 b.append(("p", "Die Ausgabe der Beulnachweise ist deaktiviert."))
@@ -3182,6 +3207,7 @@ class Report:
         if le is None or not getattr(le, "stellen", None):
             return []
         b = [self._h(2, "Lasteinleitung (Abschnitt 6)")]
+        b += self._nachweis_warnungen(le, "Lasteinleitung")
         b.append(("list", [
             "Beulnachweis des Stegs unter einer örtlich eingeleiteten Querkraft: "
             "F_cr = 0,9 k_F E t_w³/h_w mit k_F nach Bild 6.1, wirksame Lastlänge "
@@ -3477,6 +3503,7 @@ class Report:
         m = self.model
         b = [self._h(1, "Anschlüsse nach DIN EN 1993-1-8")]
         j = self.joints if self.opt("joints") else None
+        b += self._nachweis_warnungen(j, "Anschlüsse")
         if j is None or not getattr(j, "joints", None):
             if not self.opt("joints"):
                 b.append(("p", "Die Ausgabe der Anschlussnachweise ist deaktiviert."))
@@ -3675,6 +3702,7 @@ class Report:
         m = self.model
         b = [self._h(1, "Verformungsnachweise (Grenzzustand der Gebrauchstauglichkeit)")]
         g = self.gzg if self.opt("gzg") else None
+        b += self._nachweis_warnungen(g, "Verformungsnachweise")
         if g is None or not getattr(g, "checks", None):
             if not self.opt("gzg"):
                 b.append(("p", "Die Ausgabe der Verformungsnachweise ist deaktiviert."))
@@ -3886,6 +3914,13 @@ class Report:
         if f is not None and getattr(f, "volumen", None):
             if any(getattr(fv, "util", 0.0) > 1.0 for fv in f.volumen.values()):
                 status_ok = False
+        # Kombinationen ohne Ergebnis (Befund FE11): nicht nachgewiesen ist
+        # nicht erfuellt - das Gesamturteil muss es nennen
+        for titel, erg in (("EC3", d), ("Beulen", bl), ("Lasteinleitung", li),
+                           ("Verformung", gz), ("Anschlüsse", aj), ("Volumen", vo)):
+            n_w = len(getattr(erg, "warnungen", None) or []) if erg is not None else 0
+            if n_w:
+                nicht_gefuehrt.append(f"{titel} ({n_w} Warnung{'en' if n_w > 1 else ''})")
         b.append(("kv", kv, "Wesentliche Ergebnisse"))
         gefuehrt = ((d is not None and getattr(d, "members", None))
                     or (f is not None and getattr(f, "members", None))
@@ -3908,6 +3943,10 @@ class Report:
                                     + " (siehe die Hinweise unten).", False))
             else:
                 b.append(("status", "Alle Nachweise erfüllt.", True))
+        elif nicht_gefuehrt:
+            b.append(("status", "Es wurden keine Nachweise geführt – nicht nachgewiesen: "
+                                + ", ".join(nicht_gefuehrt) + " (siehe die Hinweise unten).",
+                      False))
         else:
             b.append(("status", "Es wurden keine Nachweise geführt; die Ergebnisse dienen der "
                                 "Schnittgrößen- und Verformungsermittlung.", True))
