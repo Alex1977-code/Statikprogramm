@@ -1007,6 +1007,25 @@ def test_rippe_am_rand_ueber_ebene_zerlegt():
           any("an einer Ebene" in z for z in log), str([z[:90] for z in log if "Ebene" in z])[:120])
     bef = diagnose.abnahme(m)
     check("Abnahme ohne Befund", not bef, str([(b.pruefung, b.text[:40]) for b in bef])[:160])
+    # Die Last muss durch beide Bloecke ins Lager: die Stirnflaeche XA ist
+    # geschnitten (Rippe oben, Platte unten, deren Wand noch dreigeteilt), der
+    # Boden ist durch das Angleichen ersetzt, der Deckel liegt in der Ebene.
+    for flaeche, A in (("XA", 0.1 * 0.02 + 0.02 * 0.06), ("Boden", 0.2 * 0.1),
+                       ("Deckel", 0.2 * 0.1 - 0.15 * 0.02)):
+        mm, _kk = _platte_mit_randrippe()
+        mm.add_load_case("LF1")
+        mm.case("LF1").gravity = [0.0, 0.0, 0.0]
+        mm.add_geometrielast(flaeche, 1e6, "flaeche", richtung=[0.0, 0.0, -1.0], case="LF1")
+        ss = mm.add_surface_support(name="E")
+        ss.flaechen = ["X0"]
+        for d in (0, 1, 2):
+            ss.behaviour[d] = DofBehaviour("rigid")
+        mm.active_case = "LF1"
+        mesher.modell_vernetzen(mm, [], workers=1)
+        r = solver.solve_static(mm, case="LF1", workers=1)
+        R = abs(float(r.reactions[:, 2].sum()))
+        check(f"die Last auf {flaeche} kommt ganz im Lager an",
+              abs(R - 1e6 * A) < 1e-6 * 1e6 * A, f"{R / 1e3:.3f} kN gegen {1e6 * A / 1e3:.3f} kN")
     # Das Erfolgsmass: dieselbe Last, weniger Knoten, groessere Verschiebung
     def rechnen(sweep_an, hh):
         mm, _kk = _platte_mit_randrippe(h=hh)

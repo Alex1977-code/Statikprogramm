@@ -246,24 +246,27 @@ def _umringmitte(P: np.ndarray) -> np.ndarray:
     aendert. Genau das passiert nach einem Schnitt - der Deckel einer Platte
     traegt dann die zwei Ecken der Schnittlinie, der Grund nicht, und die
     Kappen galten nicht mehr als deckungsgleich (22.09.2026).
+
+    Gerechnet als Faecher um den Eckenmittelwert mit vorzeichenbehafteten
+    Dreiecksflaechen laengs der Newell-Normalen - ohne Ausgleichsebene, denn
+    das hier laeuft in :func:`erkennen` ueber jedes Flaechenpaar.
     """
     P = np.asarray(P, float).reshape(-1, 3)
     if len(P) < 3:
         return P.mean(axis=0) if len(P) else np.zeros(3)
-    from .mesher3d import ausgleichsebene
-    try:
-        c, e1, e2, _n, _abw = ausgleichsebene(P)
-    except Exception:                       # noqa: BLE001
-        return P.mean(axis=0)
-    u, v = (P - c) @ e1, (P - c) @ e2
-    u2, v2 = np.roll(u, -1), np.roll(v, -1)
-    kreuz = u * v2 - u2 * v
-    A2 = float(kreuz.sum())
+    m = P.mean(axis=0)
+    Q = P - m
+    R = np.roll(Q, -1, axis=0)
+    kreuz = np.cross(Q, R)
+    N = kreuz.sum(axis=0)
+    laenge = float(np.linalg.norm(N))
+    if laenge <= 1e-30:
+        return m
+    a2 = kreuz @ (N / laenge)               # zweifache signierte Dreiecksflaechen
+    A2 = float(a2.sum())
     if abs(A2) <= 1e-30:
-        return P.mean(axis=0)
-    cu = float(((u + u2) * kreuz).sum()) / (3.0 * A2)
-    cv = float(((v + v2) * kreuz).sum()) / (3.0 * A2)
-    return np.asarray(c, float) + cu * np.asarray(e1, float) + cv * np.asarray(e2, float)
+        return m
+    return m + ((Q + R) * a2[:, None]).sum(axis=0) / (3.0 * A2)
 
 
 def _abstand_zum_zug(P: np.ndarray, Q: np.ndarray, geschlossen: bool) -> np.ndarray:
@@ -295,17 +298,35 @@ def _deckungsgleich_abb(A: np.ndarray, B: np.ndarray, abb: tuple, tol: float,
     als Anspruch, war aber nicht eingeloest - gegen die Stuetzpunkte gemessen
     faellt jede zusaetzliche Ecke durch (22.09.2026). Die Pruefung wird dadurch
     nur **grosszuegiger**; was bisher durchging, geht weiter durch.
+
+    Drei Stufen, weil das hier ueber jedes Flaechenpaar eines Koerpers laeuft
+    (bis 144 x 144 am Drehlager): erst Stuetzpunkt auf Stuetzpunkt (KD-Baum,
+    der haeufige Fall und so schnell wie zuvor), dann der umschriebene Kasten
+    als notwendige Bedingung (schliesst fast jedes fremde Paar aus), und nur
+    fuer die Punkte, die keinen Stuetzpunkt treffen, der Abstand zur Kurve.
+    Dicht gerechnet kostete die Kurve bei 500 Randpunkten 23 ms statt 0,4 ms
+    je Paar - gemessen am 22.09.2026, bevor die Stufen kamen.
     """
+    from scipy.spatial import cKDTree
     if not len(A) or not len(B):
         return False
     Am = _abbilden(A, abb)
+    dA, _ = cKDTree(B).query(Am)
+    dB, _ = cKDTree(Am).query(B)
+    if dA.max() <= tol and dB.max() <= tol:
+        return True
     if len(Am) < 2 or len(B) < 2:
-        from scipy.spatial import cKDTree
-        dA, _ = cKDTree(B).query(Am)
-        dB, _ = cKDTree(Am).query(B)
-        return bool(dA.max() <= tol and dB.max() <= tol)
-    return bool(_abstand_zum_zug(Am, B, geschlossen).max() <= tol
-                and _abstand_zum_zug(B, Am, geschlossen).max() <= tol)
+        return False
+    if ((np.abs(Am.min(axis=0) - B.min(axis=0)) > tol).any()
+            or (np.abs(Am.max(axis=0) - B.max(axis=0)) > tol).any()):
+        return False                        # verschiedene Kaesten: nie dieselbe Kurve
+    fern_a = Am[dA > tol]
+    if len(fern_a) and float(_abstand_zum_zug(fern_a, B, geschlossen).max()) > tol:
+        return False
+    fern_b = B[dB > tol]
+    if len(fern_b) and float(_abstand_zum_zug(fern_b, Am, geschlossen).max()) > tol:
+        return False
+    return True
 
 
 def _umkehr(abb: tuple) -> "tuple | None":
@@ -2215,11 +2236,16 @@ def _ebene_versuch(model: Model, koerper, flaechen: list, ebene: tuple,
                     vorhandene_linien[frozenset((int(ln.nodes[0]), int(ln.nodes[1])))] = name
 
     def knoten(p):
-        key = tuple(np.round(np.asarray(p, float) / max(tol, 1e-12)).astype(np.int64))
-        k = knoten_cache.get(key)
-        if k is None:
-            k = int(model.add_node(*[float(x) for x in p]))
-            knoten_cache[key] = k
+        # Derselbe Kreuzungspunkt wird von beiden Flaechen an der Kante
+        # berechnet, in Gleitkommazahlen um Bits verschieden. Gesucht wird
+        # darum mit Toleranz, nicht ueber ein Rundungsgitter - auf dessen
+        # Kante laegen sonst zwei Knoten, und die Huelle schloesse nicht.
+        p = np.asarray(p, float)
+        for k, q in knoten_cache.items():
+            if float(np.linalg.norm(q - p)) <= tol:
+                return k
+        k = int(model.add_node(*[float(x) for x in p]))
+        knoten_cache[k] = p
         return k
 
     def linie(a, b):
@@ -2356,11 +2382,14 @@ def _ebene_versuch(model: Model, koerper, flaechen: list, ebene: tuple,
         if erk is None:
             # Der Schnitt hat die eine Kappe feiner geteilt als die andere.
             # Angleichen - und nur behalten, wenn es traegt.
+            # Fremd ist dabei auch die **Schnittflaeche**: sie gehoert beiden
+            # Bloecken, und der andere kennt die Stuecke nicht.
             stand = werk.stand()
             neu = kappenlinien_angleichen(model, namen, werk, tol,
-                                          set(seiten[-vorz]) | fremd)
+                                          set(seiten[-vorz]) | {schnitt} | fremd)
             try:
-                erk2 = None if neu is None else erkennen(model, bau(neu))
+                erk2 = (None if neu is None or not _geschlossene_schale(model, neu)
+                        else erkennen(model, bau(neu)))
             except Exception:               # noqa: BLE001
                 erk2 = None
             if erk2 is not None:
@@ -2447,7 +2476,7 @@ def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
     namen = list(koerper.flaechen or [])
     neu_namen = kappenlinien_angleichen(model, namen, werk, tol,
                                         _fremde_flaechen(model, koerper))
-    if neu_namen:
+    if neu_namen and _geschlossene_schale(model, neu_namen):
         pseudo = Volumenkoerper(koerper.name, list(neu_namen), material=koerper.material,
                                 teilung=list(koerper.teilung or [4, 4, 4]))
         try:

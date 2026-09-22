@@ -3649,7 +3649,14 @@ Erweiterungen, damit der Sweep über Platten hinauskommt:
      Deckungsprobe misst den Abstand zur **Kurve** statt zu den Stützpunkten
      (`sweep._abstand_zum_zug`). Damit ist eingelöst, was `_deckungsgleich` seit jeher
      behauptet: zwei Kappen dürfen ihren Rand verschieden in Linien teilen. Die Prüfung
-     wird dadurch nur großzügiger — was vorher durchging, geht weiter durch.
+     wird dadurch nur großzügiger — was vorher durchging, geht weiter durch. Und sie
+     bleibt so schnell wie zuvor, denn sie läuft in `erkennen` über jedes Flächenpaar
+     eines Körpers (bis 144 × 144 am Drehlager): erst Stützpunkt auf Stützpunkt
+     (KD-Baum, der häufige Fall), dann der umschriebene Kasten als notwendige
+     Bedingung, und nur für die Punkte, die keinen Stützpunkt treffen, der Abstand zur
+     Kurve. Dicht gerechnet kostete die Kurve bei 500 Randpunkten 23 ms statt 0,4 ms je
+     Paar, bei 1 500 Punkten 196 ms statt 1,1 ms — gemessen am 22.09.2026, bevor die
+     Stufen kamen; mit ihnen 0,28 und 0,87 ms.
    * Danach werden die Linien angeglichen: die fehlende Ecke wird auf die andere Schleife
      abgebildet, deren Linie dort geteilt, und die **Wand** dazwischen zerfällt mit — eine
      Wand je Linienpaar, mit neuer Mantellinie dazwischen. Erst dadurch bleibt die
@@ -3686,7 +3693,11 @@ bis an den Rand, eingespannt bei x = 0, 10 kN auf die Stirnfläche, Kantenlänge
 
 Das grobe gesweepte Netz steht über dem Tetraedernetz mit **einunddreißigmal so vielen
 Knoten**. Rauminhalt 100,0 %, Formgüte 0,352, 54 Knoten in der Schnittebene und keiner
-doppelt, Abnahme ohne Befund. Das ist die schärfste Messung dieser Arbeit für den Satz,
+doppelt, Abnahme ohne Befund. Und die Last kommt durch beide Blöcke ins Lager: 1 MN/m² auf
+die geschnittene Stirnfläche (3,200 kN), auf den durch das Angleichen ersetzten Boden
+(20,000 kN) und auf die koplanare Deckfläche (17,000 kN) ergeben je genau diese
+Auflagerkraft — die Randseiten der Teilflächen liegen auf den Ausgangsflächen, über zwei
+Stufen (Schnitt, dann Angleichen) hinweg. Das ist die schärfste Messung dieser Arbeit für den Satz,
 mit dem sie angefangen hat: der lineare Tetraeder sperrt, und kein Verfeinern holt das
 auf.
 
