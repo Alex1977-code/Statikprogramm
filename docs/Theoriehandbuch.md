@@ -532,11 +532,20 @@ Grund, den eine leer gebliebene Objektlast nennt, ist berichtigt: „liegt ganz
 im Windschatten der Last" schickte den Anwender auf die Suche nach einer
 verdeckten Fläche, wo in Wahrheit die Richtung fehlte.
 
-**Nicht** geändert wurde der Fall der *entarteten* Seite (Fläche null): er ist
-nicht still — das Element wird von `Model.check()` von sich aus als „entartet
-ohne Ausdehnung" gemeldet, und ein zur Geraden entartetes Element bricht den
-Lauf ohnehin ab. Eine Ausnahme dort stünde außerdem gegen die Festlegung, dass
-ein entartetes Element die Rechnung nicht stoppen darf.
+Die *entartete* Seite (Fläche null) bricht dagegen **nicht** ab: für eine
+Fläche ohne Inhalt ist 0 N das richtige Ergebnis, und eine Ausnahme dort stünde
+gegen die Festlegung, dass ein entartetes Element die Rechnung nicht stoppen
+darf. Die frühere Annahme, `Model.check()` melde das Element dann ohnehin als
+„entartet ohne Ausdehnung", hielt aber nicht für jeden Fall: ein Sechsflächner,
+dessen Deckel mit **eigenen** Knotennummern zu einer Linie zusammengelegt ist,
+behält ein Volumen (die Entartungsprüfung misst die Streumatrix aller acht
+Ecken), seine Steifigkeit lässt sich aufstellen, und die Last auf dem Deckel
+ergab gemessen 0 N ohne eine Zeile in der Prüfung. Seit dem 22.09.2026 nennt
+`Model.check()` jede solche Last als WARNUNG mit Lastfall, Element und Seite.
+Die Fläche wird wie in `solid_face_pressure` aus den Ecken gebildet (Viereck:
+beide Dreiecke); die Grenze ist A ≤ 10⁻⁷ · d² mit d der Diagonale der Hüllbox
+des Elements (`diagnose.ENTARTET_REL`). Gerechnet wird je (Elementart, Seite)
+im Block: 64 000 Seitenlasten 0,43–0,48 s (zweimal gemessen).
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
   Anfangsdehnung wird bei der Spannungsrückrechnung abgezogen.
@@ -5196,6 +5205,73 @@ nach neun Minuten. `diagnose.abnahme(model)` prüft:
 | Knoten im Rechennetz ohne Element | 0 | die Elementliste |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 (`ABNAHME_ELEMENTGUETE`) | `netzguete.guete` |
 | Randtreue je Körper | ≥ 99 % (`ABNAHME_RANDTREUE`) | `Volumenkoerper.randtreue` |
+| Volumenbilanz je Körper | ≤ 0,5 % (`ABNAHME_VOLUMENBILANZ`) | `elementvolumina` gegen `_polyederhuelle` |
+| Seiten im Inneren (FEHLER) / Riss im Netz, Netzrand neben der Hülle (WARNUNG) | 0 | freie Elementseiten gegen die Randflächen, Abstand ≤ 1 % der Seitengröße (`ABNAHME_HUELLABSTAND`) |
+
+**Volumenbilanz und freie Seiten gegen die Randflächen** (22.09.2026). Ein
+Sechsflächner, dessen Deckel um eine Ecke verdreht ist (4, 5, 6, 7 → 5, 6, 7,
+4), ist ein gültiger Körper, nur ein anderer als der gemeinte: det J an allen
+acht Gaußpunkten positiv, skalierte Jacobi-Determinante 0,707, Volumen 0,6667
+statt 1,0. Elementseitig ist er nicht zu finden. Gefunden wird er am Vergleich
+des Netzes mit den **Randflächen** des Körpers:
+
+* **Netzvolumen** V_N = Σ_e Σ_g w_g |det J_e(ξ_g)| — dieselbe Summe wie
+  `solid.solid_volume`, aber gestapelt je Elementart: je Gaußpunkt ein Produkt
+  dN_gᵀ X über alle Elemente und eine ausgeschriebene 3 × 3-Determinante
+  (größte Abweichung zu `solid_volume` 2,2 · 10⁻¹⁶ an je drei verzerrten
+  Elementen aller sieben Volumentypen).
+* **Hüllvolumen** V_H = ⅓ Σ_f c_f · A_f aus den Randflächen: jeder Rand als
+  Fächer um den Schwerpunkt seiner Ecken, Öffnungen gegenläufig zum
+  Außenrand, die Flächen über gemeinsame Randkanten gegeneinander gerichtet,
+  dann `mesher3d.huellvolumen`. Für eine ebene Fläche ist der Fächer exakt;
+  für ein nicht ebenes Viereck mit geraden Kanten ist ⅓ c·A (A = ½ d₁ × d₂)
+  genau der Beitrag der bilinearen Fläche — so bildet der Sechsflächner sie
+  ab, und so vernetzt sie der freie Vernetzer (Coons-Fläche). Ein 4 × 4 × 4
+  abgebildetes Netz mit windschiefem Deckel (Ecke 0,2 angehoben) besteht
+  darum ohne Befund. Körper mit krummen Randlinien (Bogen, Kreis, Spline)
+  werden nicht geprüft: ihre Sehnenteilung hängt an der Netzweite, die
+  Abweichung läge in derselben Größe wie das Gesuchte.
+* **Nicht** als Bezug taugt das Randvolumen der freien Elementseiten desselben
+  Netzes: bilinear gerechnet ist es mit V_N identisch (gemessen 1,6667 gegen
+  1,6667 am verdrehten Würfelpaar), gefächert hängt es an der Diagonale
+  (1,3333 oder 2,0000).
+
+Am Würfelpaar 2 × 1 × 1 mit verdrehtem zweitem Würfel: V_N = 1,6667 gegen
+V_H = 2,0 (16,7 %). Zweites Merkmal sind die **freien Seiten, die auf keiner
+Randfläche liegen** (Schwerpunkt der Ecken weiter als 1 % der Seitengröße von
+jeder Randfläche; eben: Abstand zur Ebene und Punkt im Vieleck, bilinear:
+Abstand zu einem 16 × 16-Raster der Fläche): dort 5 von 12. Sie finden auch
+**ein** verdrehtes Element im Inneren, bei dem die Bilanz nur um ein Drittel
+seines Volumens verschöbe (4 × 4 × 4-Netz: 8 Seiten, das Element mit Nummer).
+Ob der Körper hinter einer solchen Seite weitergeht, sagt die Windungszahl der
+Hülle an einem Punkt knapp vor ihr (1 % der Seitengröße, auf der vom eigenen
+Element abgewandten Seite — die Tupel in `solid.FLAECHEN` sind gemischt
+orientiert, gerichtet wird deshalb am Elementschwerpunkt): geht er weiter, ist
+es ein FEHLER („Seiten im Inneren", über sie geht keine Kraft); steht die Seite
+über die Hülle hinaus, eine WARNUNG („Netzrand neben der Hülle"). So schnitt der
+freie Vernetzer an einem Prisma mit eckigem Loch eine einspringende Ecke ab:
+3 von 1024 Seiten, Netzvolumen 0,012 % über dem Hüllvolumen (zweimal
+gemessen). Eine Seite im Inneren ist dagegen nur ein **Riss ohne Weite**
+(WARNUNG, „Riss im Netz", `_risse_ohne_weite`), wenn sie eben ist und an fünf
+Punkten (Schwerpunkt und je halbwegs zu den Ecken) von freien Seiten bedeckt
+wird, die einen Knoten mit ihr teilen, in ihrer Ebene liegen und in die
+Gegenrichtung zeigen: dieselben Knoten, nur anders in Dreiecke geteilt. Ein
+Punkt allein genügt nicht — der Schwerpunkt der ebenen Seite x = 1 im
+Würfelpaar liegt auch auf der verwundenen Seite des verdrehten Nachbarn.
+Gemeinsame Knoten sind Bedingung, damit doppelte Knoten ein FEHLER bleiben.
+Solche Risse entstehen, wenn der freie Vernetzer flache Tetraeder aussortiert
+(„54 flache Tetraeder aussortiert"): an der Pyramide neben der gesweepten
+Platte (Kugel an AV1, test_sweep) blieben zwei ebene Vierecke, beiderseits
+verschieden geteilt, 8 Seiten, Netzvolumen gleich Hüllvolumen auf 3 · 10⁻¹⁶.
+Freie Seiten werden über die sortierten Eckennummern gefunden, in
+zwei int64 gepackt und mit `np.lexsort` sortiert.
+
+Laufzeit an einem Körper aus 64 000 hex8 (zwei Threads, viermal gemessen auf
+der geteilten Maschine): die ganze Prüfung 0,16–0,24 s (vor dem Packen der
+Schlüssel und dem gemeinsamen Knotenfeld 0,97–1,10 s). Für 1 Mio Elemente
+**nicht gemessen**; linear hochgerechnet 2,5–4 s. Ein Körper mit krummen
+Randlinien wird an der ersten krummen Linie verlassen, bevor ein Element
+angefasst wird.
 
 **Elemente, die eine Fuge überspannen.** Beim Ausführen einer Fuge werden die
 gemeinsamen Randknoten verdoppelt und die Elemente der gelösten Seite auf die

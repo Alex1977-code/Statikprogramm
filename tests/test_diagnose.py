@@ -595,8 +595,180 @@ def test_nicht_messbare_formguete_gilt_nicht_als_beste():
           texte.get("Splitter", "-")[:90])
 
 
+def _quaderkoerper(m, ecken, name="K1"):
+    """Volumenkoerper aus sechs Randflaechen ueber acht vorhandenen Eckknoten
+    (Reihenfolge wie hex8: Boden 0-3, Deckel 4-7), Kanten gerade."""
+    kanten = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+              (0, 4), (1, 5), (2, 6), (3, 7)]
+    for i, (a, b) in enumerate(kanten):
+        m.add_line(f"{name}L{i}", [int(ecken[a]), int(ecken[b])])
+    seiten = {"Boden": [0, 1, 2, 3], "Deckel": [4, 5, 6, 7], "S1": [0, 9, 4, 8],
+              "S2": [1, 10, 5, 9], "S3": [2, 11, 6, 10], "S4": [3, 8, 7, 11]}
+    for s, ls in seiten.items():
+        m.add_flaeche(f"{name}{s}", [f"{name}L{i}" for i in ls], material="S235")
+    return m.add_koerper(name, [f"{name}{s}" for s in seiten], material="S235")
+
+
+def test_abnahme_findet_verdrehten_sechsflaechner():
+    """Ein verdrehter Sechsflächner ging durch jede Prüfung der Abnahme.
+
+    Nachtrag A vom 22.09.2026: die acht Knoten stimmen, aber die Zuordnung
+    Grundknoten -> Deckelknoten ist um eins verdreht (4,5,6,7 -> 5,6,7,4).
+    Die Jacobi-Determinante ist überall positiv, die Formgüte 0,707 liegt
+    weit über jeder Schranke - und das Element rechnet mit 0,6667 statt 1,0.
+    Gemessen vor der Kur: ``abnahme(warnungen=True)`` gab ``[]`` zurück.
+
+    Zwei Merkmale, beide gegen die **Randflächen** des Körpers gemessen und
+    nicht gegen das Netz selbst: das Randvolumen der freien Elementseiten
+    ist in bilinearer Darstellung mit der Jacobi-Summe identisch (gemessen
+    1,6667 gegen 1,6667) und taugt darum nicht als Bezug.
+
+    * **Volumenbilanz**: Summe der Elementvolumina 1,6667 gegen das Volumen
+      der Hülle 2,0.
+    * **Seiten im Inneren**: die verdrehte Zelle passt nicht mehr zu ihrer
+      Nachbarin; deren Seite bei x = 1 und die vier verwundenen Seitenwände
+      der verdrehten Zelle liegen im Inneren, nicht auf einer Randfläche.
+      Steht eine freie Seite dagegen über die Randfläche hinaus, ist das eine
+      Warnung („Netzrand neben der Hülle") und kein Fehler.
+    """
+    from statik3d import mesher
+
+    def paar(verdreht):
+        m = Model("na")
+        m.add_material(Material.steel("S235"))
+        ids = mesher.grid_box(m, "S235", 2.0, 1.0, 1.0, 2, 1, 1, typ="hex8")
+        ecken = [ids[0, 0, 0], ids[2, 0, 0], ids[2, 1, 0], ids[0, 1, 0],
+                 ids[0, 0, 1], ids[2, 0, 1], ids[2, 1, 1], ids[0, 1, 1]]
+        k = _quaderkoerper(m, ecken)
+        k.elemente = [0, 1]
+        for kn in ids[0].ravel():
+            m.fix(int(kn), "all")
+        if verdreht:
+            n = list(m.elements[1].nodes)
+            m.elements[1].nodes = n[:4] + [n[5], n[6], n[7], n[4]]
+        return m
+
+    NEU = ("Volumenbilanz", "Seiten im Inneren", "Netzrand neben der Hülle")
+    m = paar(True)
+    bef = dg.abnahme(m)
+    vb = [b for b in bef if b.pruefung == "Volumenbilanz"]
+    check("verdrehter Sechsflächner: die Volumenbilanz reißt",
+          len(vb) == 1 and vb[0].objekt == "K1" and abs(vb[0].wert - 1.0 / 6.0) < 1e-6
+          and vb[0].stufe == "FEHLER",
+          (vb[0].text[:110] if vb else "kein Befund"))
+    sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+    check("und die Seiten im Inneren werden gefunden, am verdrehten Element",
+          len(sn) == 1 and sn[0].element == 1 and abs(sn[0].wert - 5.0) < 1e-12,
+          (f"{sn[0].wert:.0f} Seiten, Element {sn[0].element}: {sn[0].text[:80]}"
+           if sn else "kein Befund"))
+
+    # Gegenprobe: das richtige Paar besteht die Abnahme ohne einen Befund
+    m2 = paar(False)
+    alle2 = dg.abnahme(m2, warnungen=True)
+    check("das richtige Würfelpaar besteht ohne Befund", not alle2,
+          str([(b.pruefung, b.text[:50]) for b in alle2]))
+
+    # Gegenprobe: ein abgebildetes 4x4x4-Netz mit windschiefem Deckel (eine
+    # Deckelecke 0,2 hoeher) - die Huelle ist dort bilinear, und genau so
+    # bildet der Sechsflaechner sie ab. Kein Befund.
+    m3 = Model("windschief")
+    m3.add_material(Material.steel("S235"))
+    E = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1.2], [0, 1, 1]]
+    ecken3 = [int(m3.add_node(*p)) for p in E]
+    k3 = _quaderkoerper(m3, ecken3)
+    els3 = mesher.mesh_koerper(m3, k3, log=[], frei=False)
+    for i in range(4):
+        m3.fix(ecken3[i], "all")
+    neu3 = [b for b in dg.abnahme(m3, warnungen=True) if b.pruefung in NEU]
+    check("windschiefer Deckel, abgebildet vernetzt: kein Befund",
+          len(els3) == 64 and not neu3,
+          f"{len(els3)} Elemente; " + "; ".join(b.text[:60] for b in neu3))
+
+    # Ein einzelnes verdrehtes Element im Innern desselben Netzes: die
+    # Bilanz verschiebt sich nur um ein Drittel eines von 64 Elementen, die
+    # Seiten im Inneren zeigen es trotzdem - mit seiner Nummer.
+    # Ein Element des inneren 2x2x2-Kerns: keine seiner Seiten ist frei
+    innen = next(i for i in els3
+                 if all(0.25 < c < 0.75 for c in
+                        m3.nodes[[int(x) for x in m3.elements[i].nodes]].mean(axis=0)))
+    n = list(m3.elements[innen].nodes)
+    m3.elements[innen].nodes = n[:4] + [n[5], n[6], n[7], n[4]]
+    sn3 = [b for b in dg.abnahme(m3) if b.pruefung == "Seiten im Inneren"]
+    check("ein verdrehtes Element im Innern wird über die Seiten gefunden",
+          len(sn3) == 1 and sn3[0].element == innen,
+          (f"Element {sn3[0].element} (soll {innen}), {sn3[0].wert:.0f} Seiten"
+           if sn3 else "kein Befund"))
+
+    # Ein Knoten mitten im Deckel eines abgebildeten 4x4x4-Wuerfels, 0,05
+    # nach aussen gedrueckt: die vier Seiten um ihn stehen ueber die Huelle
+    # hinaus. Das ist eine WARNUNG, kein Fehler - der Koerper geht hinter
+    # ihnen nicht weiter, es fehlt kein Nachbar.
+    m4 = Model("beule")
+    m4.add_material(Material.steel("S235"))
+    W = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+    ecken4 = [int(m4.add_node(*p)) for p in W]
+    els4 = mesher.mesh_koerper(m4, _quaderkoerper(m4, ecken4), log=[], frei=False)
+    for i in range(4):
+        m4.fix(ecken4[i], "all")
+    mitte = int(np.argmin(np.linalg.norm(m4.nodes - [0.5, 0.5, 1.0], axis=1)))
+    m4.nodes[mitte, 2] += 0.05
+    alle4 = dg.abnahme(m4, warnungen=True)
+    nr = [b for b in alle4 if b.pruefung == "Netzrand neben der Hülle"]
+    check("ein nach außen gedrückter Randknoten ist eine Warnung, kein Fehler",
+          len(els4) == 64 and len(nr) == 1 and abs(nr[0].wert - 4.0) < 1e-12
+          and nr[0].stufe == "WARNUNG"
+          and not [b for b in alle4 if b.stufe != "WARNUNG"],
+          "; ".join(f"{b.pruefung} ({b.stufe}, {b.wert:.0f})" for b in alle4) or "kein Befund")
+
+    # Ein Riss ohne Weite: zwei Wuerfel aus je fuenf Tetraedern, beide gleich
+    # zerlegt (nicht gespiegelt) - die gemeinsame Seite x = 1 ist links ueber
+    # die eine, rechts ueber die andere Diagonale geteilt. Der Koerper stimmt
+    # (Volumen 2,0), nur die Teilung nicht: eine WARNUNG, kein FEHLER.
+    m6 = Model("riss")
+    m6.add_material(Material.steel("S235"))
+    ids6 = mesher.grid_box(m6, "S235", 2.0, 1.0, 1.0, 2, 1, 1, typ="hex8")
+    m6.elements.clear()
+    for i in range(2):
+        c = [ids6[i, 0, 0], ids6[i + 1, 0, 0], ids6[i + 1, 1, 0], ids6[i, 1, 0],
+             ids6[i, 0, 1], ids6[i + 1, 0, 1], ids6[i + 1, 1, 1], ids6[i, 1, 1]]
+        for tet in [(0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6), (1, 4, 5, 6), (3, 4, 6, 7)]:
+            m6.add_element("tet4", [int(c[x]) for x in tet], "S235")
+    k6 = _quaderkoerper(m6, [ids6[0, 0, 0], ids6[2, 0, 0], ids6[2, 1, 0], ids6[0, 1, 0],
+                             ids6[0, 0, 1], ids6[2, 0, 1], ids6[2, 1, 1], ids6[0, 1, 1]])
+    k6.elemente = list(range(len(m6.elements)))
+    for kn in ids6[0].ravel():
+        m6.fix(int(kn), "all")
+    alle6 = dg.abnahme(m6, warnungen=True)
+    ri = [b for b in alle6 if b.pruefung == "Riss im Netz"]
+    check("ein Riss ohne Weite ist eine Warnung mit vier Seiten, kein Fehler",
+          len(ri) == 1 and abs(ri[0].wert - 4.0) < 1e-12 and ri[0].stufe == "WARNUNG"
+          and not dg.abnahme(m6),
+          "; ".join(f"{b.pruefung} ({b.stufe}, {b.wert:.0f})" for b in alle6) or "kein Befund")
+
+    # Faellt die neue Pruefung aus, steht das da - und die uebrigen laufen
+    # weiter (eine Ausnahme aus abnahme() hiesse in der Oberflaeche „Abnahme
+    # nicht möglich" fuer alle Pruefungen zugleich)
+    echt = dg._polyederhuelle
+
+    def wirft(*a, **kw):
+        raise RuntimeError("Hülle nicht lesbar")
+
+    dg._polyederhuelle = wirft
+    try:
+        m5 = paar(True)
+        m5.add_node(9.0, 9.0, 9.0)                   # ein loser Knoten
+        alle5 = dg.abnahme(m5, warnungen=True)
+    finally:
+        dg._polyederhuelle = echt
+    namen5 = [b.pruefung for b in alle5]
+    check("ein Ausfall der Volumenbilanz wird benannt, der Rest läuft weiter",
+          "Volumenbilanz nicht geprüft" in namen5 and "Knoten ohne Element" in namen5,
+          str(namen5))
+
+
 def main():
-    for f in (test_abnahme_meldet_ausgefallene_pruefungen,
+    for f in (test_abnahme_findet_verdrehten_sechsflaechner,
+              test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,
               test_teiltragwerke, test_unvernetzt, test_koerper_ohne_netz_haelt_an,
               test_meldung_nennt_ursache_und_kanten,

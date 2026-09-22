@@ -2295,6 +2295,18 @@ erzeugt hat. Eine Flächenlast auf einer noch nicht vernetzten Fläche wird
 trotzdem **gezeichnet** — so sieht man die Lasten eines eben eingelesenen
 RFEM-Modells.
 
+**Flächenlast auf einer Elementseite ohne Fläche.** Liegen die Ecken einer
+Volumenseite auf einer Linie oder in einem Punkt (zusammengelegte Knoten mit
+eigenen Nummern), oder heben sich die beiden Dreiecke eines Vierecks auf
+(vertauschte Knoten), hat die Seite keine Fläche, und eine Last darauf wirkt
+mit 0 N. Das ist richtig und bleibt so; seit 22.09.2026 steht es aber in der
+Modellprüfung: „WARNUNG: Lastfall 'LF1': Flächenlast auf Element 0 (hex8):
+Seite 1 hat keine Fläche … - die Last wirkt mit 0 N, steht aber mit p = …
+kN/m² im Bericht“. Vorher stand die Last mit vollem p im Bericht, und die
+Prüfung schwieg (gemessen an einem Sechsflächner mit zur Linie
+zusammengelegtem Deckel: 0 N, keine Zeile). Abhilfe: die Knoten der Seite
+prüfen oder die Last auf eine Seite mit Fläche legen.
+
 **Im Bild**: Kräfte und Streckenlasten rot (Pfeile), Temperatur als Punkte
 (orange warm, blau kalt), Zwangsverformungen grün, das Fenster einer freien
 Rechtecklast als Rahmen. Der Schalter „Lasten“ (Glasleiste, Register
@@ -3695,6 +3707,41 @@ nichts stillschweigend Übergangenes:
 | Knoten im Rechennetz ohne Element | 0 |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | Randtreue je Körper | ≥ 99 % |
+| **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % |
+| **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht | 0 |
+| Netzrand neben der Hülle (Warnung): freie Seiten, die über die Randflächen hinausstehen | 0 |
+| Riss im Netz (Warnung): Riss ohne Weite, beiderseits dieselben Knoten, verschieden geteilt | 0 |
+
+**Der verdrehte Sechsflächner** (seit 22.09.2026). Stimmen die acht Knoten
+eines Sechsflächners, ist aber der Deckel um eine Ecke verdreht (4, 5, 6, 7 →
+5, 6, 7, 4), bleibt die Jacobi-Determinante überall positiv, die Formgüte liegt
+bei 0,707 — und das Element rechnet mit 0,6667 statt 1,0 seines Volumens.
+Keine Prüfung am Element findet das; die Abnahme gab dafür bisher kein Wort.
+Jetzt vergleicht sie je Körper das Netz mit seinen **Randflächen**: die Summe
+der Elementvolumina gegen das Volumen, das die Randflächen einschließen
+(„FEHLER: [Volumenbilanz] Volumen K1: die Elemente haben zusammen 1666667 cm³,
+die Randflächen schließen 2000000 cm³ ein (Abweichung 16.7 %, Grenze 0.5 %) …“
+am Würfelpaar 2 × 1 × 1 m mit verdrehtem zweitem Würfel), und jede freie
+Elementseite gegen die Randflächen. Liegt eine im Inneren des Körpers, schließt
+dort kein Nachbar an, und über diese Seite geht keine Kraft („FEHLER: [Seiten
+im Inneren] … 5 von 12 freien Elementseiten liegen im Inneren des Körpers …
+(z. B. Element 1 mit 4 Seiten, Element 0 mit 1 Seite)“). Das findet auch
+**ein** verdrehtes Element im Inneren eines Netzes: an einem 4 × 4 × 4-Würfel
+nennt die Prüfung das Element mit seiner Nummer, obwohl die Bilanz sich nur
+um ein Drittel eines von 64 Elementen verschiebt. Steht eine freie Seite
+dagegen über die Randfläche **hinaus**, ist es eine Warnung („Netzrand neben
+der Hülle“): so schnitt der freie Vernetzer an einem Prisma mit eckigem Loch
+eine einspringende Ecke ab (3 von 1024 Seiten, 0,012 % mehr Volumen).
+Ebenfalls eine Warnung ist der **Riss ohne Weite** („Riss im Netz“): auf beiden
+Seiten einer ebenen Fläche im Inneren liegen dieselben Knoten, aber verschieden
+in Dreiecke geteilt. Der Körper stimmt, die Verschiebungen passen dort aber nur
+an Knoten und Kanten zusammen. So bleibt es zurück, wenn der freie Vernetzer
+flache Tetraeder aussortiert — gemessen an einer Pyramide neben einer
+gesweepten Platte: 8 Seiten, das Volumen auf 3 · 10⁻¹⁶ genau.
+Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
+sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
+Vernetzer schon beim Vernetzen selbst (Volumen gegen Hülle, Randtreue). Was
+tun: den Körper neu vernetzen (Netz → Vernetzen).
 
 **„Bestanden" heißt nicht „nicht geprüft".** Zwei der Teilprüfungen fingen
 eine Ausnahme stumm ab und gaben eine leere Liste zurück — und leer heißt in
