@@ -3568,6 +3568,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der
             # naechste Schritt rechnet ohne ihn.
             changed = True
+            weiter = ("Kontakt: nach dem Deckel der Reibungsnachprüfung wurde ein "
+                      "Schubhalt gelöst - die Iteration läuft weiter")
+            if getattr(cs, "am_deckel", False) and weiter not in log:
+                # Die Abbruchzeile des Kontaktsystems steht schon im
+                # Protokoll; ohne diese Zeile laese man dort "abgebrochen"
+                # neben einem Lauf, der danach noch zu Ende kommen kann.
+                log.append(weiter)
         if progress:
             # Anteil im Fenster des Lastfalls: 1 - 0,85^it waechst mit jedem
             # Schritt und naehert sich der Fensterkante - ein wachsender Balken
@@ -3607,7 +3614,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # sah damit aus wie eine auskonvergierte - und genau gegen solche
             # Zahlen pruefen wir 'aendert das Ergebnis nicht'. Gefunden von der
             # Loesersitzung am Quelltext (21.09.2026).
-            deckel = cs.phase == 2 and cs.cycles >= _MAX_CYCLES
+            # Entschieden wird an der Runde, in der die Schleife wirklich
+            # endet (cs.am_deckel), nicht an cs.cycles: der Zaehler bleibt
+            # nach dem Deckel stehen, und eine spaetere Runde ohne Wechsel
+            # meldete sonst ebenfalls den Deckel (22.09.2026).
+            deckel = bool(getattr(cs, "am_deckel", False))
             converged = not deckel
             break
     if converged and u is not None:

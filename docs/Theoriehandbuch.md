@@ -1328,7 +1328,9 @@ setzte `contact_converged` auf wahr; die Warnung stand allein im
 Das ist keine Geschwindigkeitsfrage. Jede Zahl, gegen die geprüft wird, ob
 eine Änderung „das Ergebnis nicht ändert", kann aus einem gedeckelten Lauf
 stammen — und sah bis dahin aus wie eine auskonvergierte. Der Löser
-unterscheidet die beiden Fälle jetzt an `cs.cycles` und nennt im Protokoll den
+unterscheidet die beiden Fälle jetzt am Merker `cs.am_deckel` der letzten
+Runde (bis zum 22.09.2026 an `cs.cycles`, siehe „Der Deckel gilt für die
+Runde, in der die Schleife endet“) und nennt im Protokoll den
 Grund statt der Schrittzahl. `tests/test_kontakthalt.py` setzt den Deckel
 künstlich auf 1 und prüft, dass `contact_converged` dann **falsch** meldet;
 mit dem alten Stand meldet dieselbe Prüfung wahr.
@@ -1436,6 +1438,35 @@ Zwischenlauf gedeckelt) gibt es mit Absicht nicht. Ob ein solcher Lastfall
 als Nachweis taugt, ist eine Entscheidung des Anwenders; bis sie getroffen
 ist, heißt er „NICHT konvergiert“. Die Rechenliste las die Deckelmeldung bis
 zum 22.09.2026 sogar als „konvergiert“ (Benutzerhandbuch, Rechenliste).
+
+#### Der Deckel gilt für die Runde, in der die Schleife endet (22.09.2026)
+
+`ContactSystem.update` gibt in Phase 2 `False` zurück, wenn nichts mehr
+wechselt, und wenn die Nachprüfung am Deckel aufgibt. Bis zum 22.09.2026
+entschied `solve_with_contact` den Abbruchgrund an
+`cs.phase == 2 and cs.cycles >= MAX_CYCLES`. Der Zähler bleibt nach dem
+Deckel aber stehen. Löst `schub_halt_loesen()` in der Deckelrunde einen
+Schubhalt, setzt der Löser `changed = True`, und die Schleife läuft weiter;
+endet eine spätere Runde **echt** ohne Wechsel, stand der Zähler immer noch
+auf dem Deckel, und der Lauf hieß „nicht auskonvergiert“.
+
+Jetzt setzt `update()` bei jedem Aufruf den Merker `am_deckel` neu: wahr
+genau dann, wenn **dieser** Aufruf am Deckel aufgegeben hat. Der Löser liest
+den Grund an der Runde ab, in der die Schleife wirklich endet. Läuft sie nach
+einem Deckel weiter, steht das im Protokoll („nach dem Deckel der
+Reibungsnachprüfung wurde ein Schubhalt gelöst - die Iteration läuft
+weiter“), damit die Abbruchzeile des Kontaktsystems daneben nicht wie das
+Ende des Laufs aussieht. Endet die Schleife danach an der Schrittgrenze, heißt
+der Grund wie bisher „nach 120 Schritten nicht konvergiert“.
+
+Nachgestellt am Block mit Reibung mit Deckel 1, wobei `schub_halt_loesen` in
+jeder Deckelrunde einen gelösten Schubhalt meldet (4 Deckelrunden): die
+Schleife geht damit genau den Weg des Laufs ohne Deckel - 21 Schritte,
+max |Δu| = 0 - und endet echt ohne Wechsel. Vorher: `contact_converged`
+falsch und „nicht auskonvergiert“ im Protokoll; jetzt konvergiert
+(`tests/test_kontakthalt.py`, `test_deckel_merker_gilt_fuer_die_letzte_runde`,
+`test_deckel_am_tatsaechlichen_austritt`). Ein Lauf, der am Deckel **endet**,
+heißt weiter „nicht auskonvergiert“ (`test_der_deckel_gilt_nicht_als_konvergenz`).
 
 **Zwei Posten daneben, die nichts mit dem Schlüssel zu tun haben, aber mit
 derselben Messung gefunden wurden** (21.09.2026, an einer Matrix von

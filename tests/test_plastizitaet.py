@@ -778,11 +778,12 @@ def test_initialize_setzt_den_ganzen_zustand_zurueck():
     cs = ct.ContactSystem(m, sys_.K, [], None)
     frisch = {k: getattr(cs, k) for k in
               ("phase", "cycles", "settle", "stabilising", "warm", "dF_slip",
-               "gleit_anteil", "gleit_guete")}
+               "gleit_anteil", "gleit_guete", "am_deckel")}
     # Zustand verbiegen, wie ihn eine Rechnung hinterlässt
     cs.phase, cs.cycles, cs.settle = 2, 7, 3
     cs.stabilising, cs.warm, cs.dF_slip = True, True, 1.5
     cs.gleit_anteil, cs.gleit_guete = 0.5, 0.02
+    cs.am_deckel = True
     for c in cs.cons[:5]:
         c.slip, c.frozen, c.yielding, c.toggles = True, True, True, 9
         c.gehalten = c.schub_halt = True

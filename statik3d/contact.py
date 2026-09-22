@@ -610,6 +610,7 @@ class ContactSystem:
         self.stabilising = False   # Hilfsschritt ohne Spaltkraft (siehe stabilise)
         self.cycles = 0
         self.settle = 0
+        self.am_deckel = False  # hat der letzte update()-Aufruf am Deckel aufgegeben?
         self.warm = False       # nach zustand_setzen: Phase 2 mit gesichertem Zustand
         self.dF_slip = 0.0      # groesste Aenderung von mu*Fn an gleitenden Knoten je Runde
         self.f_ref = 1.0
@@ -1061,6 +1062,7 @@ class ContactSystem:
         self.phase = 1
         self.cycles = 0
         self.settle = 0
+        self.am_deckel = False
         self.stabilising = False
         self.warm = False
         self.dF_slip = 0.0
@@ -1146,6 +1148,7 @@ class ContactSystem:
         self.warm = True
         self.cycles = 0
         self.settle = 0
+        self.am_deckel = False
         return True
 
     def warmstart_verstoesse(self, u: np.ndarray, zuruecksetzen: bool = False) -> int:
@@ -1352,7 +1355,15 @@ class ContactSystem:
         Phase 2 (Reststeifigkeit vernachlaessigbar): Gleitrichtungen bleiben fest; je
         Runde geht hoechstens der am staerksten ueber der Reibgrenze liegende haftende
         Knoten ins Gleiten ueber (monoton, kann nicht flattern). Ergebnis: Gleichgewicht
-        exakt, |Ft| <= mu*Fn an jedem Knoten, Ft = mu*Fn an gleitenden Knoten."""
+        exakt, |Ft| <= mu*Fn an jedem Knoten, Ft = mu*Fn an gleitenden Knoten.
+
+        ``False`` heisst fertig **oder** aufgegeben; welches, sagt ``am_deckel``
+        - und zwar fuer **diesen** Aufruf. Der Loeser las den Deckel frueher an
+        ``cycles >= MAX_CYCLES`` ab. Der Zaehler bleibt nach dem Deckel aber
+        stehen: lief die Schleife weiter (Schubhalt geloest) und endete eine
+        spaetere Runde echt ohne Wechsel, meldete sie trotzdem den Deckel
+        (gefunden von der Loesersitzung, 22.09.2026)."""
+        self.am_deckel = False
         changed = self._update_states(u)
         if self.phase == 1:
             if changed:
@@ -1374,6 +1385,7 @@ class ContactSystem:
         if self.cycles >= MAX_CYCLES:
             self.log.append("Kontakt: Nachpruefung der Reibung nach "
                             f"{MAX_CYCLES} Zustandswechseln abgebrochen")
+            self.am_deckel = True
             return False
         return True
 

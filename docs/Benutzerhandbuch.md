@@ -2702,6 +2702,20 @@ die Modellprüfung „Einseitiges Lager Knoten 4: Richtung ist der Nullvektor -
 das Lager kann nie tragen“; die Protokollzeile fängt den Fall auch dort, wo
 die Prüfung nicht gelaufen ist (`tests/test_supports.py`).
 
+#### Deckel mitten im Lauf, danach doch konvergiert (22.09.2026)
+
+Gibt die Nachprüfung der Reibung nach 40 Zustandswechseln auf, rechnet das
+Programm in einem Sonderfall trotzdem weiter: wenn in derselben Runde ein
+**Schubhalt** gelöst wurde (ein Teil, das zwischendurch am Schubhalt hing,
+liegt wieder an). Kam der Lauf danach echt zur Ruhe - kein Zustand wechselt
+mehr -, meldete das Programm bis zum 22.09.2026 trotzdem „nicht
+auskonvergiert“. Jetzt zählt die Runde, in der die Iteration wirklich endet:
+endet sie am Deckel, heißt es „nicht auskonvergiert“ wie bisher; endet sie
+ohne Wechsel, ist der Lauf konvergiert. Im Protokoll steht dann neben der
+Zeile „Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen“ auch
+„nach dem Deckel der Reibungsnachprüfung wurde ein Schubhalt gelöst - die
+Iteration läuft weiter“ - die Abbruchzeile war dann nicht das Ende des Laufs.
+
 ## 7 Import
 
 **Z-Achse nach unten (RFEM).** RFEM legt seine Modelle mit der Z-Achse nach
