@@ -7184,11 +7184,32 @@ von PARDISO, iparm(18) und iparm(19)):
   | p = 2 überall (tet10-Raum), h = 0,018 m | 103.732 | 191.028 | 5,06 N/mm² |
   | p = 2 überall, h = 0,013 m | 260.421 | 1.352.107 | 2,71 N/mm² |
   | p = 4 überall, h = 0,05 m | 48.129 | 38.053 | 0,40 N/mm² |
-  | p = 4 in einer Lage am Innenrand, sonst p = 2, h = 0,05 m | 22.131 | 6.855 | 0,94 N/mm² |
+  | p = 4 in einer Lage am Innenrand, sonst p = 2, h = 0,05 m | 19.067 | 4.598 | 1,05 N/mm² |
+  | p = 4 in zwei Lagen am Innenrand, sonst p = 2, h = 0,05 m | 35.121 | 19.878 | 0,36 N/mm² |
   | p = 4 in einer Lage, sonst p = 1 | 15.096 | 2.259 | 15,0 N/mm² |
 
-  Hohe Ordnung an der Nachweisstelle genügt also, der Rest braucht aber
-  mindestens p = 2: Ein tet4-Rest verdirbt die Spannung dort.
+  Die Mischungen sind mit der Mindestregel gerechnet (siehe unten). Mit der
+  zuvor benutzten Höchstregel lag eine Lage p = 4 bei 0,94 N/mm² und
+  22.131 FHG; mit der Mindestregel reicht eine Lage hier knapp nicht, zwei
+  reichen sicher. Hohe Ordnung an der Nachweisstelle genügt also, der Rest
+  braucht aber mindestens p = 2: Ein tet4-Rest verdirbt die Spannung dort.
+* **Lamé-Hohlkugel** (Prüfkörper der ersten Element-Sitzung,
+  `tests/pruefkoerper.Hohlkugel`, gleiches Netz, Kantenmitten auf der Kugel;
+  Auswertung wie dort: geglättete Knotenspannung des Lösers an allen
+  Eckknoten der Innenfläche, größte Abweichung; `tests/messung_tetp_hohlkugel.py`,
+  gemessen 23.09.2026):
+
+  | Ordnung, Netz | FHG | größte Abweichung |
+  |---|---|---|
+  | p = 2 (tet10-Raum), 2×2 / 4×4 / 8×8 | 915 / 5.859 / 41.667 | 27,9 / 10,1 / 3,2 N/mm² |
+  | p = 3, 4×4 / 8×8 | 18.291 / 135.075 | 1,20 / 0,16 N/mm² |
+  | p = 4, 4×4 | 41.667 | 0,37 N/mm² |
+  | p = 4 innen (Elemente mit einer Ecke auf der Innenfläche), sonst p = 2, 4×4 | 14.361 | 0,66 N/mm² |
+
+  p = 2 gibt die Mittelwerte des tet10 der ersten Element-Sitzung wieder
+  (−16,3 / −7,3 / −2,5 gegen −16 / −7,3 / −2,5 N/mm²); das ist die Probe,
+  dass der Raum derselbe ist. Der tet10 erreicht 1 N/mm² dort bis 41.667 FHG
+  nicht, das eigene Element mit p = 4 an der Innenfläche mit 14.361.
 
 **Drei Bedingungen, gemessen:**
 
@@ -7215,8 +7236,8 @@ Element höchstens seine eigene Ordnung, und alle Elemente eines Typs `tetpN`
 haben gleich viele Ansatzfunktionen. Die gestapelten Leser (Steifigkeit,
 Spannung, Plastizität) schneiden ihre Felder je Typ gleich breit; mit der
 Höchstregel hätte ein `tetp2` neben einem `tetp4` 35 statt 10 Funktionen
-gehabt, und der Stapel wäre zerfallen. Die Mischmessung am Hohlzylinder oben
-lief noch mit der Höchstregel und wird wiederholt.
+gehabt, und der Stapel wäre zerfallen. Die Mischungen oben sind mit der
+Mindestregel gerechnet.
 
 **Anbindung (23.09.2026).** Die Typen `tetp2`, `tetp3` und `tetp4` stehen im
 Elementverzeichnis mit vier Knoten. `Model.ndof` zählt die Zusatz-FHG mit;
@@ -7251,8 +7272,18 @@ bricht ab, wenn das vergessen wurde.
 
 **Fehlerschätzer.** `netzfehler` behandelt `tetp` vorerst **wie einen tet4**
 (Eckfehler linear über die vier Ecken); die Ordnung ist darin nicht
-berücksichtigt. Ein Schätzer für die nächste Ordnung ist im Bau
-(`tetp.naechste_ordnung`). Durch den Löser gemessen (tests/test_tetp_rechnung.py):
+berücksichtigt; der Bericht des Schätzers sagt das in einer eigenen Zeile.
+
+**Indikator der nächsten Ordnung** (`tetp.naechste_ordnung`). Die Funktionen
+der Ordnung p + 1 kommen je Element dazu, die Nachbarn halten still, und die
+Energie der lokalen Korrektur ordnet die Elemente. Gemessen am Kragarm
+(10 × 2 × 2 Zellen, p = 2): die fünf größten Werte liegen an der Einspannung,
+wo die Singularität sitzt. Die aus der lokalen Korrektur folgende
+**Spannungsänderung** taugt dagegen nicht: an der Nachweisstelle 80 bis
+311 N/mm² geschätzt, wirklich änderte sich σ_v beim Übergang auf p = 3 um 2,5
+bis 18 N/mm². Der Indikator liefert darum nur die Energie zum Ordnen. Ob eine
+Nachweisstelle auf 1 N/mm² steht, zeigt der Vergleich der Lösungen mit p und
+p + 1 an der Stelle selbst. Durch den Löser gemessen (tests/test_tetp_rechnung.py):
 Kragarm 10 × 2 × 2 Kuhn-Zellen, Knotenmittel an der Nachweisstelle tet4
 127,2 N/mm², `tetp2` 361,1 N/mm², `tetp3` 355,0002 N/mm² (Soll 355).
 Lastsummen und Patch-Test (auch mit tet4 und `tetp3` gemischt) stimmen auf

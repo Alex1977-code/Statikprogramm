@@ -1218,36 +1218,35 @@ def zusatzschluessel(model, idx, aktiv=None):
 # --------------------------------------------------------------------------
 # Fehlerindikator: was bringt die naechste Ordnung? (fuer die Ordnungswahl)
 # --------------------------------------------------------------------------
-def naechste_ordnung(model, u, idx=None, punkte=None) -> dict:
-    """Schaetzung je p-Element, was die naechste Ordnung aendern wuerde.
+def naechste_ordnung(model, u, idx=None) -> dict:
+    """Energie der naechsten Ordnung je p-Element - zum **Ordnen**, nicht als
+    Spannungsfehler.
 
-    Hierarchischer Indikator (Zienkiewicz/Gago/Kelly 1983; Bank 1996): Die
-    Funktionen der Ordnung P+1 kommen zum Element dazu, die bisherigen bleiben
-    auf ihrer Loesung u stehen. Das lokale Problem
+    Hierarchischer Indikator (Zienkiewicz/Gago/Kelly 1983): Die Funktionen
+    der Ordnung P+1 kommen zum Element dazu, die bisherigen bleiben auf ihrer
+    Loesung u stehen, die Nachbarn halten still:
 
-        K_nn a = -K_no u_o
+        K_nn a = -K_no u_o,      eta^2 = a^T K_nn a.
 
-    liefert die Amplituden a der neuen Funktionen im Element allein (die
-    Nachbarn halten still, darum ist es eine Schaetzung, keine Loesung).
-    Daraus: eta^2 = a^T K_nn a (Energie der Korrektur) und die Korrektur der
-    Spannung D B_n a an den Punkten ``punkte`` (Vorgabe: die vier Ecken) -
-    in N/m^2, also unmittelbar am Mass des Anwenders (1 N/mm2).
+    Gemessen 23.09.2026 am Kragarm (10 x 2 x 2 Kuhn-Zellen, p = 2): Die
+    groessten eta liegen an der Einspannung (x = 0,025 ... 0,075 m), wo die
+    Singularitaet sitzt - als Rangfolge brauchbar. Die aus a folgende
+    **Spannungsaenderung** an den Ecken lag an der Nachweisstelle aber bei
+    80 bis 311 N/mm2, wirklich aenderte sich sigma_v beim Uebergang auf p = 3
+    um 2,5 bis 18 N/mm2. Das lokale Problem ohne Nachbarn uebertreibt
+    punktweise um Faktoren; darum liefert die Funktion **keine** Spannung.
+    Ob eine Nachweisstelle auf 1 N/mm2 steht, zeigt der Vergleich zweier
+    Loesungen (p und p+1) an der Stelle selbst.
 
     Seiten, die linear bleiben muessen (Kontakt, Fugen, Nachbarn ohne
     Anreicherung), bekommen auch hier keine neuen Funktionen. Elemente mit
-    P = P_MAX werden uebersprungen.
-
-    Rueckgabe {Element: {"eta2": float, "dsv": (q,) Betrag der Aenderung von
-    sigma_v an den Punkten, "dsigma": (q,6)}}.
+    P = P_MAX werden uebersprungen. Rueckgabe {Element: eta^2 [J]}.
     """
     an = anreicherung(model)
     if an is None:
         return {}
     u = np.asarray(u, float).ravel()
     idx = list(an.idx) if idx is None else [int(i) for i in idx]
-    pk = AUSWERTEPUNKTE[1:] if punkte is None else punkte
-    pk = np.asarray(pk, float).reshape(-1, 3)
-    Lp = np.column_stack([1.0 - pk.sum(axis=1), pk])
     aus = {}
     for P, els, fhg, maske in _laeufe(model, idx):
         if P >= P_MAX:
@@ -1256,65 +1255,37 @@ def naechste_ordnung(model, u, idx=None, punkte=None) -> dict:
         fu_P, fu_Q = funktionen(P), funktionen(Q)
         pos = {f: c for c, f in enumerate(fu_Q)}
         alt = np.array([pos[f] for f in fu_P])
-        # neue Funktionen: Grad Q, nur auf Entitaeten, die nicht linear bleiben muessen
         neu_je_el = []
-        for e_pos, i in enumerate(els):
-            s = an.stelle[int(i)]
+        for i in els:
+            s_ = an.stelle[int(i)]
             n = []
-            for c, (art, ent, q, r) in enumerate(fu_Q):
+            for c, (art, ent, q, _r) in enumerate(fu_Q):
                 if q != Q:
                     continue
-                if art == "k" and (an.kanten_pflicht[an.el_kante[s, ent]]):
+                if art == "k" and an.kanten_pflicht[an.el_kante[s_, ent]]:
                     continue
-                if art == "f" and (an.flaechen_pflicht[an.el_flaeche[s, ent]]):
+                if art == "f" and an.flaechen_pflicht[an.el_flaeche[s_, ent]]:
                     continue
                 n.append(c)
             neu_je_el.append(np.array(n, dtype=np.int64))
         G = geometrie_modell(model, els)
         g = np.array([model.elements[i].nodes[:4] for i in els], dtype=np.int64)
         for mat in {model.elements[i].mat for i in els}:
-            sel = [a for a, i in enumerate(els) if model.elements[i].mat == mat]
+            sel = [a_ for a_, i in enumerate(els) if model.elements[i].mat == mat]
             m = model.materials[mat]
             K, _V = steifigkeit_stapel(G[sel], g[sel], Q, float(m.E), float(m.nu),
                                        krumm=_ist_krumm(model, els[sel]))
-            _F, dF = basis_ref(Lp, Q)
-            Gx, _dV = gradienten(G[sel], dF, Lp, els[sel])
-            Gx = _global(Gx, orientierung(g[sel], Q), None)               # (n,q,nfQ,3)
-            D = D_matrix(float(m.E), float(m.nu))
-            for b, a in enumerate(sel):
-                n = neu_je_el[a]
+            d_alt = (3 * alt[:, None] + np.arange(3)).ravel()
+            for b_, a_ in enumerate(sel):
+                n = neu_je_el[a_]
                 if len(n) == 0:
                     continue
-                d_alt = (3 * alt[:, None] + np.arange(3)).ravel()
                 d_neu = (3 * n[:, None] + np.arange(3)).ravel()
-                uo = u[fhg[a]] * np.repeat(maske[a], 3)
-                Knn = K[b][np.ix_(d_neu, d_neu)]
-                Kno = K[b][np.ix_(d_neu, d_alt)]
-                an_ = np.linalg.solve(Knn, -Kno @ uo)
-                eta2 = float(an_ @ Knn @ an_)
-                A = an_.reshape(-1, 3)
-                H = np.einsum("qfa,fi->qia", Gx[b][:, n, :], A)            # d(du_i)/dx_a
-                eps = np.stack([H[:, 0, 0], H[:, 1, 1], H[:, 2, 2], H[:, 0, 1] + H[:, 1, 0],
-                                H[:, 1, 2] + H[:, 2, 1], H[:, 0, 2] + H[:, 2, 0]], axis=1)
-                ds = eps @ D.T
-                s_alt = _spannung_punkte(Gx[b][:, alt, :], uo.reshape(-1, 3), D)
-                S_alt, S_neu = _sv_stapel(s_alt), _sv_stapel(s_alt + ds)
-                aus[int(els[a])] = {"eta2": eta2, "dsv": np.abs(S_neu - S_alt), "dsigma": ds}
+                uo = u[fhg[a_]] * np.repeat(maske[a_], 3)
+                Knn = K[b_][np.ix_(d_neu, d_neu)]
+                an_ = np.linalg.solve(Knn, -K[b_][np.ix_(d_neu, d_alt)] @ uo)
+                aus[int(els[a_])] = float(an_ @ Knn @ an_)
     return aus
-
-
-def _spannung_punkte(Gx, U, D):
-    """Gx (q,nf,3), U (nf,3) -> Spannung (q,6)."""
-    H = np.einsum("qfa,fi->qia", Gx, U)
-    eps = np.stack([H[:, 0, 0], H[:, 1, 1], H[:, 2, 2], H[:, 0, 1] + H[:, 1, 0],
-                    H[:, 1, 2] + H[:, 2, 1], H[:, 0, 2] + H[:, 2, 0]], axis=1)
-    return eps @ D.T
-
-
-def _sv_stapel(S):
-    S = np.asarray(S, float)
-    return np.sqrt(0.5 * ((S[..., 0] - S[..., 1]) ** 2 + (S[..., 1] - S[..., 2]) ** 2
-                          + (S[..., 2] - S[..., 0]) ** 2) + 3 * (S[..., 3] ** 2 + S[..., 4] ** 2 + S[..., 5] ** 2))
 
 
 def jacobi_pruefung(model, idx) -> list:

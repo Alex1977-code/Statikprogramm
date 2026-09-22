@@ -321,6 +321,60 @@ def test_linienlager_an_kante():
           all(an2.p_kante[k] == 1 for k in ks2) and ks2, f"{len(ks2)} Kanten")
 
 
+def test_schaetzer_zeile():
+    """Der Fehlerschaetzer liest tetp wie tet4 (netzfehler._LINEAR) und sagt es
+    in einer eigenen Zeile - nur, wenn tetp im Indikator steckt. Bis zum
+    23.09.2026 fehlte tetp in _LINEAR: der Indikator brach am Modell mit tetp
+    mit KeyError ab."""
+    from statik3d import netzfehler
+    zeilen = {}
+    for typ in ("tetp3", "tet4"):
+        m = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c, typ=typ: typ, rho=0.0)
+        lc = m.add_load_case("L")
+        lc.gravity = [0.0, 0.0, 0.0]
+        for n in range(m.nn):
+            if abs(m.nodes[n][2]) < 1e-9:
+                m.fix(n, [0, 1, 2])
+        for i, s in seiten_auf(m, lambda x: abs(x[2] - 1.0) < 1e-9):
+            m.load_face(i, 1e6, s, case="L", direction=(1.0, 0.0, 0.0))
+        res = solver.solve_static(m, case="L")
+        zeilen[typ] = netzfehler.bericht(netzfehler.indikator(m, res))
+    mit = [z for z in zeilen["tetp3"] if "Ordnung p" in z]
+    ohne = [z for z in zeilen["tet4"] if "Ordnung p" in z]
+    check("Fehlerschaetzer mit tetp: laeuft, Zeile 'wie tet4' vorhanden; ohne tetp keine",
+          len(mit) == 1 and not ohne, mit[0].strip() if mit else str(zeilen["tetp3"])[:80])
+
+
+def test_indikator_ordnet():
+    """tetp.naechste_ordnung am Kragarm (p = 2): die fuenf Elemente mit der
+    groessten Energie der naechsten Ordnung liegen an der Einspannung
+    (x < 0,1 m) - dort sitzt die Singularitaet. Gemessen 23.09.2026; die
+    Funktion liefert bewusst keine Spannung (punktweise um Faktoren daneben)."""
+    from scipy.sparse.linalg import spsolve
+    from statik3d import assemble as asm
+    L, B, H = 1.0, 0.1, 0.2
+    m = quader(10, 2, 2, L, B, H, lambda c: "tetp2", rho=0.0)
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0.0, 0.0, 0.0]
+    for i, s in seiten_auf(m, lambda x: abs(x[0] - L) < 1e-9):
+        m.load_face(i, 1e6, s, case="LF1", direction=(0.0, 0.0, -1.0))
+    for n in range(m.nn):
+        if abs(m.nodes[n][0]) < 1e-9:
+            m.fix(n, [0, 1, 2])
+    K = asm.stiffness(m)
+    F = asm.load_vector(m, "LF1")
+    fest, werte = asm.constrained_dofs(m, K)
+    u = np.zeros(m.ndof)
+    frei = np.nonzero(~fest)[0]
+    u[frei] = spsolve(K[frei][:, frei].tocsc(), F[frei])
+    eta2 = tp.naechste_ordnung(m, u)
+    X = np.asarray(m.nodes, float)
+    oben = sorted(eta2, key=eta2.get)[-5:]
+    xs = [float(X[m.elements[i].nodes].mean(axis=0)[0]) for i in oben]
+    check("Indikator der naechsten Ordnung: die groessten Werte an der Einspannung",
+          len(eta2) == len(m.elements) and max(xs) < 0.1, f"x der fuenf groessten: {np.round(xs, 3).tolist()}")
+
+
 class _ZaehlListe(list):
     """Liste, die mitzaehlt, wie oft ueber sie gelaufen wird."""
     laeufe = 0
@@ -374,6 +428,8 @@ def main():
     test_temperatur()
     test_lastarten()
     test_linienlager_an_kante()
+    test_schaetzer_zeile()
+    test_indikator_ordnet()
     n_fail = sum(1 for _n, ok in RESULTS if not ok)
     print(f"\n{len(RESULTS) - n_fail}/{len(RESULTS)} bestanden")
     return 1 if n_fail else 0

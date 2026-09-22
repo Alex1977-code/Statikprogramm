@@ -126,7 +126,11 @@ KANTEN = {4: [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)],
 #: Der lineare Typ mit denselben Ecken - seine Formfunktionen und Gausspunkte
 #: rechnen das Integral der Energienorm ueber das Element
 _LINEAR = {"tet4": "tet4", "tet10": "tet4", "hex8": "hex8", "hex20": "hex8",
-           "pent6": "pent6", "pent15": "pent6", "pyr5": "pyr5"}
+           "pent6": "pent6", "pent15": "pent6", "pyr5": "pyr5",
+           # Tetraeder mit Ordnung p: vorerst wie tet4 gelesen (Eckfehler linear
+           # ueber die vier Ecken); die hoehere Ordnung ist nicht beruecksichtigt
+           # - bericht() sagt es in einer eigenen Zeile
+           "tetp2": "tet4", "tetp3": "tet4", "tetp4": "tet4"}
 #: Hoechstzahl der Feldpunkte, die der Schaetzer schreibt; darueber werden
 #: die Zellen der Vorausduennung verdoppelt (siehe feldpunkte)
 FELDPUNKTE_MAX = 200_000
@@ -214,10 +218,7 @@ def _energienorm_quadrat(typ: str, X: np.ndarray, E: np.ndarray, C: np.ndarray) 
     Richtung vom Grad 2, zwei Punkte je Richtung integrieren es genau."""
     from .elements.solid import _ISO
     n = len(X)
-    if typ in ("tet4", "tetp2", "tetp3", "tetp4"):
-        # Tetraeder mit Ordnung p: der Eckfehler linear ueber die vier Ecken
-        # wie beim tet4 - ein Schaetzer fuer hoehere Ordnung (der naechste
-        # hierarchische Ansatz) ist noch nicht gebaut
+    if typ == "tet4":
         V = np.abs(np.einsum("ij,ij->i", X[:, 1] - X[:, 0],
                              np.cross(X[:, 2] - X[:, 0], X[:, 3] - X[:, 0]))) / 6.0
         summe = E.sum(axis=1)
@@ -328,9 +329,10 @@ def indikator(model, ergebnisse) -> dict:
     summe_eta2 = float(eta2.sum())
     eta_rel = np.sqrt(summe_eta2 / (U2 + summe_eta2)) if (U2 + summe_eta2) > 0 else 0.0
     p = np.array([ORDNUNG.get(model.elements[int(i)].typ, 1) for i in ids_alle], int)
+    tetp = int(sum(1 for i in ids_alle if model.elements[int(i)].typ in ("tetp2", "tetp3", "tetp4")))
     return {"ids": ids_alle, "eta": np.sqrt(eta2), "h": h_alle, "V": V_alle, "sv": sv,
             "zentren": zentren, "eta_rel": float(eta_rel), "U": float(np.sqrt(U2)),
-            "N": int(n_alle), "p": p}
+            "N": int(n_alle), "p": p, "tetp": tetp}
 
 
 #: Kalibrierung fuer Netze aus Hexaedern und Keilen (Sweep). Gemessen an der
@@ -512,4 +514,7 @@ def bericht(ind: dict) -> list:
         anteil = float(np.sum(np.sort(eta ** 2)[::-1][:max(1, len(eta) // 10)]) / max(np.sum(eta ** 2), 1e-300))
         z.append(f"  das Zehntel der Elemente mit dem größten Fehler trägt {anteil * 100:.0f} % des "
                  f"Gesamtfehlers; Kantenlängen {np.min(ind['h']) * 1e3:.1f} … {np.max(ind['h']) * 1e3:.1f} mm")
+    if ind.get("tetp"):
+        z.append(f"  Tetraeder mit Ordnung p ({ind['tetp']}): der Schätzer behandelt sie vorerst "
+                 "wie tet4 – die höhere Ordnung ist nicht berücksichtigt.")
     return z
