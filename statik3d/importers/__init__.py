@@ -37,6 +37,7 @@ SUPPORTED: dict[str, str] = {
     ".ifc": "IFC 2x3 / IFC4 - Statikmodell (Structural Analysis View) oder Bauteilachsen",
     ".xlsx": "SAF (Structural Analysis Format) oder RFEM/RSTAB-Tabellenexport (Excel)",
     ".csv": "RFEM/RSTAB-Tabellenexport (CSV, eine Tabelle je Datei bzw. Ordner)",
+    ".txt": "InfoCAD/InfoGraph - Textausgabe von /ExportTxt (BEGIN/END-Bloecke)",
     ".inp": "Abaqus / CalculiX Eingabedatei",
     ".bdf": "Nastran Bulk Data",
     ".nas": "Nastran Bulk Data",
@@ -85,11 +86,17 @@ PROPRIETARY: dict[str, str] = {
                "exportieren: Datei → Exportieren → IFC (Statikmodell / Structural Analysis "
                "View), SAF (.xlsx) oder Tabellen nach Excel/CSV."),
     ".fem": ("InfoCAD-Projektdatei (.fem) ist ein proprietaeres Format und kann nicht direkt "
-             "gelesen werden. Bitte in InfoCAD exportieren: IFC-Statikmodell "
+             "gelesen werden. Zwei Wege: (1) die Textausgabe anfordern - "
+             "InfoCADw64.exe modell.fem /ExportTxt:befehle.txt /Out:modell_export.txt, "
+             "wobei befehle.txt je Zeile einen Tabellennamen traegt (mindestens KNOTEN "
+             "und ELEMENTE, dazu MAT und QUERSW); die entstandene .txt liest Statik3D. "
+             "Achtung: unbekannte Tabellennamen ueberspringt InfoCAD ohne Meldung, und "
+             "der Exitcode ist immer 13 - ob der Lauf geglueckt ist, sagt allein die "
+             "Datei. (2) In InfoCAD exportieren: IFC-Statikmodell "
              "(Datei → Export → IFC, Statikmodell) oder DXF (Datei → Export → DXF)."),
     ".ifm": ("InfoCAD-Modelldatei (.ifm) ist ein proprietaeres Format und kann nicht direkt "
-             "gelesen werden. Bitte in InfoCAD exportieren: IFC-Statikmodell "
-             "(Datei → Export → IFC, Statikmodell) oder DXF (Datei → Export → DXF)."),
+             "gelesen werden. Wege wie bei .fem: die Textausgabe ueber "
+             "/ExportTxt anfordern oder IFC-Statikmodell bzw. DXF exportieren."),
 }
 
 
@@ -127,6 +134,7 @@ def file_filter() -> str:
              "IFC-Modell (*.ifc)",
              "SAF / RFEM-Tabellen Excel (*.xlsx)",
              "RFEM-Tabellen CSV (*.csv)",
+             "InfoCAD-Textausgabe /ExportTxt (*.txt)",
              "Abaqus / CalculiX (*.inp)",
              "Nastran Bulk Data (*.bdf *.nas *.dat)",
              "RFEM / RSTAB Projektdatei (*.rf5 *.rf6 *.rs5 *.rs6 *.rs8 *.rs9 *.rfem *.rstab)",
@@ -168,6 +176,8 @@ def _detect(path: str) -> str:
         return "xlsx"
     if ext == ".csv":
         return "rfem"
+    if ext == ".txt":
+        return _detect_txt(path)
     if ext in _NATIVE:
         return "native"
     if ext == ".inp":
@@ -177,6 +187,24 @@ def _detect(path: str) -> str:
     if ext in _CAD:
         return "cad"
     raise ImportError(explain_format(path))
+
+
+def _detect_txt(path: str) -> str:
+    """Eine .txt ist alles moegliche - erkannt wird am Inhalt.
+
+    Die Textausgabe von InfoCADs /ExportTxt beginnt mit einem Blockkopf
+    ``BEGIN <NAME> ...``. Die Kodierung wechselt zwischen den Laeufen, darum
+    wird binaer angelesen und nur auf das Wort geprueft.
+    """
+    with open(path, "rb") as f:
+        kopf = f.read(4096)
+    probe = kopf.replace(b"\x00", b"").lstrip()
+    if probe[:6] == b"BEGIN ":
+        return "infocad_txt"
+    raise ImportError(
+        f"{os.path.basename(path)}: eine Textdatei wird nur als Ausgabe von "
+        "InfoCADs /ExportTxt gelesen; die beginnt mit 'BEGIN <TABELLE> N=...'. "
+        f"Hier stehen am Anfang: {probe[:40]!r}")
 
 
 def _detect_zip(path: str) -> str:
@@ -313,6 +341,9 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
                            fortschritt=(None if fortschritt is None else
                                         lambda a, t: _melde(fortschritt, 0.02 + 0.83 * a, t)),
                            **options)
+    elif kind == "infocad_txt":
+        from .infocad_txt import import_infocad_txt
+        import_infocad_txt(path, model, log, **options)
     elif kind == "sdnf":
         from .sdnf import import_sdnf
         import_sdnf(path, model, log, **options)

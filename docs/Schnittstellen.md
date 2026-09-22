@@ -21,6 +21,7 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 
 | Endung | Format | Typische Herkunft | Übernommen wird |
 |---|---|---|---|
+| `.txt` | InfoCAD/InfoGraph | – | Textausgabe von `/ExportTxt` (BEGIN/END-Bloecke): Knoten, Schalen- und Stabelemente, Werkstoffe, Schalendicken, Layer. Lager, Lasten und Ergebnisse nicht – siehe „InfoCAD“ unten |
 | `.json` | Statik3D | – | vollständiges Modell (Format 1 bis 5; Format 3 brachte Linien und Gelenke, Format 4 die **Anschlüsse**, die **Verformungsgrenzen**, die **Beulfelder** (mit Steifen) und die **Lasteinleitungsstellen**, Format 5 die **Volumenbereiche** und die Einstellungen zur **Theorie II. Ordnung**, Format 6 die **Flächen** und **Volumenkörper** der Geometriekette, die **Kontaktbedingungen** (früher „Flächenfreigaben“, der alte Schlüssel wird weiter gelesen) und die in den **Bericht übernommenen Ergebnisbilder**. Ältere Dateien werden gelesen) |
 | `.dxf` | AutoCAD DXF (ASCII, R12–2018) | InfoCAD, RFEM, CAD | LINE, LWPOLYLINE, POLYLINE (2D/3D, Polyface), 3DFACE |
 | `.ifc` | IFC 2x3 / IFC 4 STEP-Datei | InfoCAD, RFEM, Allplan, Revit, Tekla | Statikmodell (Structural Analysis View) oder Bauteilachsen |
@@ -35,16 +36,90 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 | `.sza`, `.kra`, `.fga`, `.fig` | HiCAD-Archiv (`!HFA##`, zstd) | HiCAD | Teileliste, Profile mit Katalogwerten, Blechdicken, Werkstoffe, Verbindungsmittel |
 | `.rf5`, `.rfem`, `.rstab`, `.fem`, `.ifm` | proprietär (binär) | RFEM 5, RSTAB, InfoCAD | Behälter wird untersucht; sonst Meldung mit Exportweg |
 
-## InfoCAD
+## InfoCAD / InfoGraph
 
-InfoCAD-Projektdateien sind binär. Exportwege:
+InfoCAD-Projektdateien sind binär. Drei Wege hinein, in dieser Reihenfolge zu
+versuchen:
 
-* **IFC-Statikmodell** (Datei → Export → IFC, Statikmodell / Structural
-  Analysis View): Knoten, Stäbe mit Profil, Flächen mit Dicke, Lager,
-  Lasten und Lastfälle werden übernommen. Empfohlen.
-* **DXF**: Systemlinien und Flächen als Geometrie; Querschnitte werden
-  über Layer zugewiesen (`layer_sections={"Stuetzen": "HEB 200"}`) oder
-  aus dem Standardquerschnitt.
+1. **Textausgabe von `/ExportTxt`** (unten beschrieben): das Netz mit
+   Werkstoffen und Dicken, ohne Lager und Lasten.
+2. **IFC-Statikmodell** (Datei → Export → IFC, Statikmodell / Structural
+   Analysis View): Knoten, Stäbe mit Profil, Flächen mit Dicke, Lager,
+   Lasten und Lastfälle werden übernommen.
+3. **DXF**: Systemlinien und Flächen als Geometrie; Querschnitte werden
+   über Layer zugewiesen (`layer_sections={"Stuetzen": "HEB 200"}`) oder
+   aus dem Standardquerschnitt.
+
+
+Die Projektdatei `.fem` ist ein proprietäres Binärformat (ein Strom benannter
+Datensätze) und wird **nicht** gelesen. InfoCAD schreibt aber auf Anforderung
+eine Textfassung seiner Tabellen:
+
+```
+InfoCADw64.exe modell.fem /ExportTxt:befehle.txt /Out:modell_export.txt
+```
+
+`befehle.txt` trägt je Zeile **einen Tabellennamen** (ASCII, CRLF). Für ein
+Modell genügen `KNOTEN`, `ELEMENTE`, `MAT` und `QUERSW`. Die entstandene
+`.txt` liest Statik3D unmittelbar (`Datei → Öffnen` oder
+`importers.import_file`); erkannt wird sie am Inhalt, nicht an der Endung —
+eine `.txt` ohne `BEGIN <TABELLE> N=…` wird mit Begründung abgewiesen.
+
+**Was ankommt**
+
+| Tabelle | Inhalt | wird |
+|---|---|---|
+| `KNOTEN` | `Nr x y z` in Metern | Knoten |
+| `ELEMENTE` | 13 Spalten, auch bei Dreiecken | Elemente; Typ 11 = Viereckschale, 8 = Dreieckschale, 2 = Stab |
+| `MAT` / `MAT2` | `Nr Typ E G nu alpha_t gamma` | Werkstoffe |
+| `QUERSW` | `Nr Typ Wert …`, **Typ 2 = Schale**, Wert = Dicke [m] | Schalendicken |
+
+Die **Layernummer** steckt gepackt in der letzten Spalte von `ELEMENTE`
+(`Layer<<16 | FarbID<<8 | 1`, also 1377025 = Layer 21, rot) und wird die
+Elementgruppe — in InfoCAD ist der Layer die Auswertungseinheit.
+
+**Was nicht ankommt**, und warum: Lager (`FESTH`) und Lasten, weil ihr
+Spaltenaufbau nicht belegt ist; Ergebnisse (`REAK`, `QUER`, `SREAK`, `AUFLR`,
+`DEFORM`, `EXTREMA`), weil Statik3D selbst rechnet. Beides wird beim Import
+**benannt** — mit Tabellenname und Zeilenzahl.
+
+**Vier Eigenheiten, auf die der Leser eingerichtet ist**
+
+* **Der Exitcode taugt nicht.** InfoCAD beendet den Export immer mit 13, auch
+  wenn er geglückt ist. Ob die Ausgabe vollständig ist, entscheidet allein ihr
+  Inhalt: jeder Block muss mit `END <NAME>` schließen, und `N=` im Blockkopf
+  muss zur Zahl der Datenzeilen passen. Beides wird geprüft; eine abgebrochene
+  Datei wird als abgebrochen gemeldet und nicht als kleineres Modell gelesen.
+* **Unbekannte Tabellennamen überspringt InfoCAD ohne Meldung.** Ein
+  Tippfehler in der Befehlsdatei kostet eine ganze Tabelle. Statik3D macht es
+  umgekehrt: es zählt auf, was es gelesen hat, und benennt jede Tabelle, die
+  es gefunden und nicht verwertet hat.
+* **Derselbe Typcode bedeutet in zwei Tabellen Verschiedenes.** In `ELEMENTE`
+  ist 2 der Stab, in `QUERSW` die Schale. Ein Filter „Typ == 2“ liefert je
+  nach Tabelle die Stäbe oder alle Schalen — beides ergibt eine gefüllte,
+  plausible Liste.
+* **Dezimalkomma, Tabulator, wechselnde Kodierung** (UTF‑16, UTF‑8, cp1252).
+
+**Die Z-Achse.** InfoCAD-Modelle sind oft mit Z **nach unten** aufgebaut. In
+welcher Lage ein Modell aufgebaut wurde, steht in der Exportdatei nicht; der
+Import dreht darum nur auf Angabe (`z_nach_unten=True`), und zwar um 180° um
+die X-Achse (y → −y, z → −z). Eine Spiegelung von z allein wäre linkshändig
+und kehrte jede Flächennormale um — ein Fehler, den keine Kräftebilanz sieht.
+
+**Export nach InfoCAD** ist noch nicht gebaut. Der Weg dorthin ist die
+**ICX**, eine STEP-artige Textdatei, die InfoCAD als Argument entgegennimmt.
+Der Katalog `Icx-03.exp` führt **190 Entitäten**; aus der vorliegenden
+Übergabe sind 25 davon namentlich bekannt und die Argumentliste von **genau
+einer** (`ICXRS`) abgedruckt. Ein Schreiber wäre also zu drei Vierteln
+geraten. Was fehlt, ist klein und liegt beim Anwender: die Datei `Icx-03.exp`
+aus der InfoCAD-Installation und ein von InfoCAD selbst geschriebenes
+ICX-Paar (`<name>_modell.icx` und `<name>.icx`) als Muster. Zwei Dinge sind
+dabei schon belegt und gelten für jeden künftigen Schreiber: Flächenmodell
+und Netz können **nicht** in einer ICX stehen (das Netz gewinnt, die Flächen
+fallen kommentarlos weg — es sind immer zwei Dateien), und ein Layername über
+**27 Zeichen** zerstört stillschweigend die Nachbarzelle der FEM-Layertabelle.
+
+Geprüft in `tests/test_infocad.py`.
 
 ## RFEM / RSTAB (Dlubal)
 
