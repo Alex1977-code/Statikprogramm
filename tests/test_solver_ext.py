@@ -466,9 +466,18 @@ def test_ketten_teilen_und_zaehlen():
 
 
 def test_ketten_greifen_nicht_wo_sie_nicht_duerfen():
-    """Mit übergebenem System gilt dieses für alle genannten Lastfälle, und
-    eingefrorene Ermüdungszustände brauchen ihren Referenzzustand aus
-    demselben Lauf. In beiden Fällen wird nicht geteilt."""
+    """Mit übergebenem System gilt dieses für alle genannten Lastfälle - dann
+    wird nicht geteilt.
+
+    Bis zum 22.09.2026 stand hier auch, eingefrorene Ermüdungszustände
+    verhinderten das Teilen. Das stimmte, war aber die Sperre selbst und
+    nicht ihre Begründung: sie brauchen ihren Referenzzustand aus demselben
+    Lauf, und das ist eine Frage des **Schnitts**, nicht des Teilens. Seit
+    `_ketten_teilen` an Gruppengrenzen schneidet, dürfen sie mit
+    (test_ketten_mit_eingefrorenen_zustaenden). Die Zusicherungen dieser
+    Prüfung haben den Referenzfall ohnehin nie angesehen - nur den Docstring
+    hat es geglaubt.
+    """
     from statik3d import parallel
     from statik3d.examples_lib import hall_frame_example
     m = hall_frame_example()
@@ -493,6 +502,347 @@ def test_ketten_greifen_nicht_wo_sie_nicht_duerfen():
     finally:
         solver._cases_in_ketten = alt_fn
         parallel.configure(ketten=alt_k)
+
+
+def _ermuedungsmodell(n_lasten=4, je=3):
+    """Block mit Reibung, dazu n_lasten Ermüdungslasten mit je Zuständen.
+
+    **Mehrere** Lasten, nicht eine: die Zustände EINER Ermüdungslast hängen
+    alle an derselben Referenz und bilden eine einzige unteilbare Gruppe - da
+    gibt es nichts zu teilen. Der Hebel entsteht erst zwischen den Lasten. Am
+    Drehlager sind es 50 Ermüdungslasten mit 164 Zuständen.
+    """
+    import copy
+    from statik3d.examples_lib import block_friction_example
+    m = block_friction_example()
+    grund = m.case()
+    namen, gruppen = [], []
+    for e in range(n_lasten):
+        zust = []
+        for i in range(je):
+            name = f"E{e + 1}Z{i + 1}"
+            lc = copy.deepcopy(grund)
+            lc.name = name
+            lc.description = f"Ermüdungslast {e + 1}, Zustand {i + 1}"
+            f = 1.0 + 0.05 * (e * je + i)       # Zustände nicht identisch
+            for nl in lc.nodal_loads:
+                nl.F = [v * f for v in nl.F]
+            m.load_cases[name] = lc
+            zust.append(name)
+        namen.extend(zust)
+        gruppen.append(zust)
+    for k in list(m.load_cases):
+        if k not in namen:
+            del m.load_cases[k]
+    for e, zust in enumerate(gruppen):
+        fl = m.add_fatigue_load(f"EL{e + 1}", zust[0], zust[-1])
+        fl.folge = list(zust)
+    return m, namen, gruppen
+
+
+def test_ketten_mit_eingefrorenen_zustaenden():
+    """Rechenketten trotz Ermüdungsreferenzen - aber nie durch eine Gruppe.
+
+    Am Drehlager liefen bis zum 22.09.2026 **alle 422 Lastfälle
+    hintereinander in einem Prozess**, weil `_solve_cases_innen` die Ketten
+    sperrte, sobald es eingefrorene Zustände gab. `ermuedungsreferenzen`
+    liefert dort 117 davon - die Sperre griff also immer. Sie war keine
+    Eigenschaft der Rechnung, sondern die Folge davon, dass `_ketten_teilen`
+    an festen Blöcken schnitt: liegt eine Referenz in einer anderen Kette,
+    gibt `_einfrieren` still `(None, None)` zurück und der Zustand rechnet
+    voll nichtlinear - **kein falsches Ergebnis, aber der Gewinn ist weg, und
+    niemand sieht es.**
+
+    Geprüft wird darum genau das, was dabei schiefgehen kann.
+    """
+    from statik3d import parallel, solver
+    m, namen, gruppen = _ermuedungsmodell()
+    ref = solver.ermuedungsreferenzen(m)
+    pruefe("das Prüfmodell hat eingefrorene Zustände",
+           len(ref) == len(gruppen) * 2 and len(set(ref.values())) == len(gruppen),
+           f"{len(ref)} Zustände, {len(set(ref.values()))} Referenzen")
+
+    for k in (1, 2, 3, 4, 9):
+        b = solver._ketten_teilen(m, namen, k, ref)
+        heil = all(any(set(g) <= set(kette) for kette in b) for g in gruppen)
+        einmal = sorted(x for kette in b for x in kette) == sorted(namen)
+        pruefe(f"k={k}: keine Gruppe wird zerschnitten", heil, str(b))
+        pruefe(f"k={k}: jeder Lastfall genau einmal", einmal)
+        pruefe(f"k={k}: nie mehr Ketten als angefordert", len(b) <= max(1, k),
+               f"{len(b)} Ketten bei k={k}")
+
+    # Ohne Referenzen muss sich nichts geändert haben
+    ohne = solver._ketten_teilen(m, namen, 3)
+    pruefe("ohne Referenzen bleibt die alte Aufteilung",
+           len(ohne) == 3 and sorted(x for b_ in ohne for x in b_) == sorted(namen),
+           str([len(b_) for b_ in ohne]))
+
+    alt_k = parallel.settings().ketten
+    gerufen = {"n": 0}
+    echt = solver._cases_in_ketten
+
+    def merken(*a, **kw):
+        gerufen["n"] += 1
+        return echt(*a, **kw)
+
+    solver._cases_in_ketten = merken
+    try:
+        parallel.configure(ketten=2)
+        erg2 = solver.solve_cases(m, cases=list(namen), referenzen=ref)
+        pruefe("mit eingefrorenen Zuständen wird jetzt geteilt", gerufen["n"] == 1,
+               f"{gerufen['n']}x gerufen")
+        parallel.configure(ketten=1)
+        erg1 = solver.solve_cases(m, cases=list(namen), referenzen=ref)
+    finally:
+        solver._cases_in_ketten = echt
+        parallel.configure(ketten=alt_k)
+
+    frozen1 = sorted(n for n in namen if erg1[n].info.get("contact_frozen"))
+    frozen2 = sorted(n for n in namen if erg2[n].info.get("contact_frozen"))
+    pruefe("dieselben Zustände sind eingefroren wie ohne Ketten",
+           frozen1 == frozen2 and len(frozen1) == len(ref),
+           f"{len(frozen1)} gegen {len(frozen2)}, erwartet {len(ref)}")
+
+    # Die erste Kette sieht dieselbe Folge wie der Einzellauf und muss darum
+    # bitgleich sein. Die zweite beginnt mit einem **kalten** Kopf - dort
+    # weicht sie ab, und das ist der Preis der Ketten, nicht ein Fehler.
+    bloecke = solver._ketten_teilen(m, namen, 2, ref)
+    erste = set(bloecke[0])
+    d_erste = max(float(np.abs(np.asarray(erg1[n].u, float)
+                               - np.asarray(erg2[n].u, float)).max()) for n in erste)
+    pruefe("die erste Kette rechnet bitgleich wie der Einzellauf", d_erste == 0.0,
+           f"{d_erste:.3e} m")
+    rest = [n for n in namen if n not in erste]
+    d_rest = max(float(np.abs(np.asarray(erg1[n].u, float)
+                              - np.asarray(erg2[n].u, float)).max()) for n in rest)
+    gross = max(float(np.abs(np.asarray(erg1[n].u, float)).max()) for n in rest)
+    pruefe("die zweite weicht ab - ihr Kopf startet kalt", d_rest > 0.0,
+           f"{d_rest:.3e} m ({d_rest / gross:.1e} relativ)")
+    pruefe("aber nur in der dritten Stelle", d_rest < 1e-2 * gross,
+           f"{d_rest / gross:.1e} relativ")
+
+
+class _SitModell:
+    """Ein Modellstummel, der nur sagt, welche Lastfälle zu welcher Situation
+    gehören - mehr braucht `_ketten_teilen` nicht."""
+
+    def __init__(self, je_situation):
+        self._je = dict(je_situation)
+
+    def lastfaelle_je_situation(self, namen=None):
+        if namen is None:
+            return dict(self._je)
+        drin = set(namen)
+        return {k: [n for n in v if n in drin] for k, v in self._je.items()
+                if any(n in drin for n in v)}
+
+
+def test_ketten_zerreissen_die_situationen_nicht():
+    """Die Referenzordnung gilt je Situation, nicht über alle Lastfälle.
+
+    `_mit_referenzen_zuerst` zieht jeden Referenzzustand vor die Zustände, die
+    ihn einfrieren. Über **alle** Lastfälle angewandt zieht es damit Fälle aus
+    einer Situation vor und zerreißt die Ordnung, die derselbe Docstring
+    zusichert. Jede Situation, die eine Kette berührt, kostet dort ein eigenes
+    System und eine eigene Faktorisierung (87 s von 235 s je Lastfall am
+    Drehlager), während `ketten_zahl` mit 9,5 GB je Kette für **eine** Matrix
+    rechnet.
+
+    Gefunden von drei unabhängigen Blickrichtungen einer Gegenlesung am
+    22.09.2026 - und zwar an einer Fassung, die ich zwei Stunden vorher
+    gebaut hatte.
+    """
+    m = _SitModell({"Grund": ["A1", "A2", "A3"], "Stellung2": ["B1", "B2", "B3"]})
+    namen = ["A1", "A2", "A3", "B1", "B2", "B3"]
+    # A3 friert A1 ein, B3 friert B1 ein - die Referenzen stehen NICHT vorn
+    ref = {"A3": "A1", "B3": "B1"}
+    folge = [n for kette in solver._ketten_teilen(m, namen, 1, ref) for n in kette]
+    a = [i for i, n in enumerate(folge) if n.startswith("A")]
+    b = [i for i, n in enumerate(folge) if n.startswith("B")]
+    pruefe("jede Situation bleibt zusammenhängend",
+           max(a) < min(b) or max(b) < min(a), str(folge))
+    pruefe("und innerhalb der Situation steht die Referenz vor ihrem Zustand",
+           folge.index("A1") < folge.index("A3")
+           and folge.index("B1") < folge.index("B3"), str(folge))
+
+
+def test_kettenabbruch_behaelt_die_fertigen_ketten():
+    """Bricht eine Kette, bleiben die Ergebnisse der anderen erhalten.
+
+    Der Abbruchschutz vom 19.09.2026 (`_teil_merken`) rettet jeden fertigen
+    Lastfall an die Ausnahme. Der Kettenweg lag bis zum 22.09.2026 **vor**
+    diesem Schutz: `_cases_in_ketten` warf beim ersten nicht-ok sofort, und
+    die fertigen Ergebnisse aller übrigen Ketten waren weg. Am Drehlager
+    hätte ein einziger divergierender Lastfall die Rechenzeit von Stunden
+    gekostet - und das ausgerechnet auf dem Weg, der für dieses Modell
+    gebaut wurde.
+    """
+    from statik3d import parallel
+    from statik3d.examples_lib import hall_frame_example
+    m = hall_frame_example()
+    namen = list(m.load_cases)
+
+    class _Erg:
+        def __init__(self, ok, result=None, error=""):
+            self.ok, self.result, self.error = ok, result, error
+
+    echt = solver.run_jobs if hasattr(solver, "run_jobs") else None
+
+    def run_jobs_stub(jobs, workers=None, progress=None):
+        # Die erste Kette gelingt, die zweite faellt aus
+        aus = []
+        for i, j in enumerate(jobs):
+            faelle = list(j.payload.get("cases") or [])
+            if i == 0:
+                aus.append(_Erg(True, {n: _Ergebnis_stub(n) for n in faelle}))
+            else:
+                aus.append(_Erg(False, None, "Arbeiter abgestürzt"))
+        return aus
+
+    class _Ergebnis_stub:
+        def __init__(self, name):
+            self.name = name
+            self.model = None
+            self.info = {}
+
+    import statik3d.solver as _s
+    alt_rj = _s.run_jobs if hasattr(_s, "run_jobs") else None
+    import statik3d.parallel as _p
+    alt_p = _p.run_jobs
+    alt_k = parallel.settings().ketten
+    _p.run_jobs = run_jobs_stub
+    try:
+        parallel.configure(ketten=2)
+        fehler = None
+        try:
+            solver._cases_in_ketten(m, namen, 2, None, None)
+        except RuntimeError as ex:
+            fehler = ex
+        pruefe("der Ausfall einer Kette wird gemeldet", fehler is not None,
+               str(fehler)[:60])
+        gerettet = getattr(fehler, "teil_cases", None) if fehler else None
+        pruefe("die fertige Kette hängt an der Ausnahme", bool(gerettet),
+               f"{len(gerettet or {})} Lastfälle gerettet")
+        pruefe("und es sind genau die der gelungenen Kette",
+               gerettet is not None
+               and set(gerettet) <= set(namen) and len(gerettet) < len(namen),
+               f"{sorted(gerettet or {})}")
+    finally:
+        _p.run_jobs = alt_p
+        parallel.configure(ketten=alt_k)
+
+
+def test_der_kettenauftrag_traegt_referenzen_nur_wenn_es_welche_gibt():
+    """Ohne Ermüdungsreferenzen bleibt der Auftrag, wie er war.
+
+    Der neue Schlüssel `referenzen` bringt einen Arbeiter älteren Stands zu
+    Fall (Rechnerfarm, danebenliegende `Statik3D.exe`): er kennt das Argument
+    nicht und fällt mit TypeError aus, und zusammen mit dem Kettenabbruch
+    stünde der Anwender ohne jedes Ergebnis da. In fast jedem Modell gibt es
+    gar keine Referenzen - dann darf der Auftrag sich auch nicht ändern.
+    """
+    from statik3d import parallel
+    from statik3d.examples_lib import hall_frame_example
+    import statik3d.parallel as _p
+    m = hall_frame_example()
+    namen = list(m.load_cases)
+    gesehen = {"jobs": None}
+
+    class _Erg:
+        ok, result, error = True, {}, ""
+
+    def run_jobs_stub(jobs, workers=None, progress=None):
+        gesehen["jobs"] = list(jobs)
+        return [_Erg() for _ in jobs]
+
+    alt_p = _p.run_jobs
+    alt_k = parallel.settings().ketten
+    _p.run_jobs = run_jobs_stub
+    try:
+        parallel.configure(ketten=2)
+        solver._cases_in_ketten(m, namen, 2, None, None)
+        ohne = gesehen["jobs"]
+        pruefe("ohne Referenzen steht der Schlüssel nicht im Auftrag",
+               all("referenzen" not in (j.payload or {}) for j in ohne),
+               str([sorted(j.payload) for j in ohne])[:120])
+        ref = {namen[1]: namen[0]} if len(namen) > 1 else {}
+        solver._cases_in_ketten(m, namen, 2, None, ref)
+        mit = gesehen["jobs"]
+        pruefe("mit Referenzen steht er drin, wo beide Enden in der Kette liegen",
+               any("referenzen" in (j.payload or {}) for j in mit),
+               str([sorted(j.payload) for j in mit])[:120])
+    finally:
+        _p.run_jobs = alt_p
+        parallel.configure(ketten=alt_k)
+
+
+def test_ausfallstaebe_duerfen_nicht_ueberlagert_werden():
+    """Ein Zugstab, der in einem Lastfall ausfällt, verbietet die Überlagerung.
+
+    `_nichtlinear()` kannte bis zum 22.09.2026 nur Kontakt und Fließen -
+    **nicht** Ausfallstäbe und Seile, obwohl das Modell sie seit jeher kennt
+    (`Model.hat_ausfallstaebe`) und der Löser sie an zwei anderen Stellen
+    abfragt. Jeder Lastfall wurde mit einer **anderen** Menge tragender Stäbe
+    gerechnet; die Summe solcher Ergebnisse steht in keinem Gleichgewicht
+    eines wirklichen Zustands.
+
+    Der Prüfkörper ist ein Balken an zwei nur-Zug-Hängern: Lastfall A drückt
+    nach unten (die Hänger ziehen), Lastfall B hebt an (sie fallen aus). Die
+    Überlagerung mischt damit zwei unvereinbare Zustände.
+    """
+    import numpy as np
+    from statik3d.model import Model, Material, Section
+
+    m = Model("seilzug")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    m.add_section(Section.rectangle("Z", 0.02, 0.02))
+    k = [m.add_node(x, 0.0, 0.0) for x in (0.0, 1.0, 2.0, 3.0, 4.0)]
+    oben = [m.add_node(1.0, 0.0, 2.0), m.add_node(3.0, 0.0, 2.0)]
+    for i in range(4):
+        m.add_element("beam", [k[i], k[i + 1]], "S235", "R")
+    for a, b in ((k[1], oben[0]), (k[3], oben[1])):
+        e = m.add_element("truss", [a, b], "S235", "Z")
+        m.elements[e].nur = "zug"
+    m.fix(k[0], [0, 1, 2, 3, 4, 5])
+    m.fix(k[4], [1, 2, 3])
+    for o in oben:
+        m.fix(o, "all")
+    m.add_load_case("A", "Q")
+    for kk in (k[1], k[2], k[3]):
+        m.load_node(kk, Fz=-2.0e4, case="A")
+    m.add_load_case("B", "Q")
+    for kk in (k[1], k[2], k[3]):
+        m.load_node(kk, Fz=+3.0e4, case="B")
+    m.add_combination("K1", {"A": 1.0, "B": 1.0})
+
+    pruefe("das Modell hat Ausfallstäbe", m.hat_ausfallstaebe())
+    pruefe("und gilt darum als nichtlinear", solver._nichtlinear(m),
+           "sonst würde überlagert")
+
+    faelle = solver.solve_cases(m, cases=["A", "B"])
+    aus_a = list(faelle["A"].info.get("ausfall") or [])
+    aus_b = list(faelle["B"].info.get("ausfall") or [])
+    pruefe("die beiden Lastfälle haben verschiedene Aktivmengen",
+           aus_a != aus_b, f"A: {aus_a}, B: {aus_b}")
+
+    direkt = solver.solve_combination(m, m.combinations["K1"], None)
+    ueberlagert = solver.Results.combine(
+        m, [(faelle["A"], 1.0), (faelle["B"], 1.0)], "K1")
+    ud = float(np.abs(np.asarray(direkt.u, float)).max())
+    uu = float(np.abs(np.asarray(ueberlagert.u, float)).max())
+    pruefe("die Überlagerung liegt deutlich daneben - sie ist kein "
+           "Gleichgewichtszustand", abs(uu - ud) > 0.2 * max(ud, 1e-30),
+           f"direkt {ud*1e3:.4f} mm, überlagert {uu*1e3:.4f} mm "
+           f"({abs(uu-ud)/max(ud,1e-30)*100:.1f} %)")
+
+    # Und der Weg, den das Programm wirklich nimmt: solve_combinations darf
+    # hier nicht überlagern.
+    out = solver.solve_combinations(m, ["K1"], case_results=faelle)
+    ur = float(np.abs(np.asarray(out["K1"].u, float)).max())
+    pruefe("solve_combinations rechnet die Kombination direkt",
+           abs(ur - ud) <= 1e-9 * max(ud, 1e-30),
+           f"{ur*1e3:.4f} mm gegen {ud*1e3:.4f} mm direkt")
 
 
 def test_probelauf_und_kennzahlen():
@@ -647,6 +997,11 @@ def main():
     test_ketten_rechnen_dasselbe()
     test_ketten_teilen_und_zaehlen()
     test_ketten_greifen_nicht_wo_sie_nicht_duerfen()
+    test_ketten_mit_eingefrorenen_zustaenden()
+    test_ketten_zerreissen_die_situationen_nicht()
+    test_kettenabbruch_behaelt_die_fertigen_ketten()
+    test_der_kettenauftrag_traegt_referenzen_nur_wenn_es_welche_gibt()
+    test_ausfallstaebe_duerfen_nicht_ueberlagert_werden()
     test_probelauf_und_kennzahlen()
     test_farm()
     nok = sum(1 for r in RESULTS if r[4])

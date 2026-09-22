@@ -507,6 +507,36 @@ Lagerkräfte F_v, Verkürzung F_v·L/(E·A), σ_z = F_v/A im eingespannten Schaf
     senkrecht zur Fläche, höbe sie sich über den Zylinder auf und der
     Lastfall wäre kräftefrei.
 * Eigengewicht je Lastfall (Erdbeschleunigungsvektor).
+
+**Eine Last, die nicht wirken kann, sagt es.** Bis zum 22.09.2026 gab es drei
+Eingaben, die eine Last **zu 100 %** ausfallen ließen, ohne dass irgendetwas
+gemeldet wurde — und in allen drei Fällen stand die Last weiter mit ihrem
+vollen Betrag im Bericht und wurde in der Ansicht an einer Fläche gezeichnet:
+
+* eine **Seitennummer außerhalb des Bereichs** (`solid_face_pressure` gab
+  einen Nullvektor zurück). Erreichbar von außen über ein Abaqus-`*DLOAD P5`
+  am Tetraeder, der nur vier Seiten hat: gemessen 1000 kN → 0 kN;
+* der **Nullvektor als Richtung**. Alle drei Zweige normieren mit
+  `d/(‖d‖ or 1)`, aus dem Nullvektor wird dabei wieder der Nullvektor;
+  erreichbar über eine Nastran-`PLOAD4` mit ausgeschriebenem `0., 0., 0.`;
+* ein **einseitiges Lager ohne Richtung**. Die Normale wird zu (0,0,0), die
+  Bedingung trägt keinen Freiheitsgrad, und das Ergebnis ist Zeichen für
+  Zeichen das eines Systems ohne dieses Lager — während die Ergebniszeile
+  „Kontakt" behauptet.
+
+Die ersten beiden brechen jetzt beim Aufstellen mit einer Ausnahme ab, so wie
+das ebene Element es seit jeher tut (`ebene.py`: „Kante gibt es nicht",
+„richtung darf nicht der Nullvektor sein"). Alle drei stehen zusätzlich in
+`Model.check()`, also **vor** dem Rechnen und mit dem Lastfall dabei. Und der
+Grund, den eine leer gebliebene Objektlast nennt, ist berichtigt: „liegt ganz
+im Windschatten der Last" schickte den Anwender auf die Suche nach einer
+verdeckten Fläche, wo in Wahrheit die Richtung fehlte.
+
+**Nicht** geändert wurde der Fall der *entarteten* Seite (Fläche null): er ist
+nicht still — das Element wird von `Model.check()` von sich aus als „entartet
+ohne Ausdehnung" gemeldet, und ein zur Geraden entartetes Element bricht den
+Lauf ohnehin ab. Eine Ausnahme dort stünde außerdem gegen die Festlegung, dass
+ein entartetes Element die Rechnung nicht stoppen darf.
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
   Anfangsdehnung wird bei der Spannungsrückrechnung abgezogen.
@@ -1206,10 +1236,27 @@ Verdrehungen wirken nur bei Schalen; zwischen Volumen bleiben sie ohne Wirkung
 
 Die Verbindung je Freiheitsgrad folgt der Freigabe: *starr* → Kopplung mit
 Straffeder, *Feder c* [N/m je m²] → Kopplung mit c · A (A = Einflussfläche des
-Knotens, ein Drittel der anliegenden Dreiecke – dieselbe Aufteilung wie bei
-einer Flächenlast), *frei mit Ausfall* → Spaltelement. Ein Reibbeiwert geht als
+Knotens: jede anliegende Facette gibt ihren Inhalt gleichmäßig an ihre Knoten,
+Dreieck A/3, Viereck A/4 – dieselbe Aufteilung wie bei einer Flächenlast),
+*frei mit Ausfall* → Spaltelement. Ein Reibbeiwert geht als
 Coulomb-Reibung in das Spaltelement; die Reibkraft hängt damit an der
 wirklichen Kontaktkraft.
+
+**Der Inhalt einer Facette ist der ganze, nicht der ihres ersten Dreiecks.**
+Bis zum 22.09.2026 bildete `_fuge_knotenweise` die Facettenfläche aus den
+**ersten drei** Knoten. Für ein Dreieck stimmt das; die Facettenliste enthält
+aber Vierecke, sobald das Netz Hexaeder oder Viereckschalen hat (für eine
+Hexaederseite steht in `SOLID_FACES` ein Vierertupel). Bei einem Viereck war A
+damit das erste Dreieck — **die halbe Fläche**. Genau dieses A geht in die
+Normalfeder (k_n = c · A) und in die Tangentialfedern: jede elastische Fuge auf
+einem Sechsflächner- oder Viereckschalennetz war um den **Faktor zwei zu
+weich**. Gemessen am ebenen Viereck 2,0 × 1,0 m: 1,0000 m² alt gegen 2,0000 m²
+neu, am Dreieck 2,0 × 1,0 m unverändert 1,0000 m². Weil es am Dreiecksnetz
+stimmte, sah der Unterschied beim Netzvergleich wie ein Netzeinfluss aus.
+Gerechnet wird jetzt als Fächertriangulierung um den ersten Knoten: für ein
+Dreieck derselbe eine Term wie vorher, für ein ebenes Viereck exakt, für ein
+leicht windschiefes die Summe seiner beiden Dreiecke (Test
+`test_viereckfuge_zaehlt_ganz`).
 
 **Zum Vorzeichen des Ausfalls.** RFEM schreibt den Ausfall als „bei negativer"
 oder „bei positiver" Kraft – bezogen auf die lokale z-Achse der freigegebenen
@@ -1268,8 +1315,159 @@ Situation beginnt die Iteration in diesem Zustand statt bei der Geometrie,
 in Phase 2 mit festen Gleitrichtungen. Die erste Matrix ist dieselbe wie die
 letzte des vorigen Lastfalls, und `StaticSystem.solve` behält die
 Faktorisierung, solange die Signatur der Kontaktsteifigkeit (Phase,
-Aktivmenge, Gleiten, Fließen, rutschende Gruppen; `ContactSystem.signatur`)
-gleich bleibt — dann wird nur rückwärts eingesetzt. Nach der Konvergenz
+Aktivmenge, Gleiten, Fließen, **Schubhalt**, rutschende Gruppen;
+`ContactSystem.signatur`) gleich bleibt — dann wird nur rückwärts eingesetzt.
+
+**Ein Deckel, der wie Konvergenz aussah (21.09.2026).** Die Nachprüfung der
+Reibung in Phase 2 bricht nach `MAX_CYCLES = 40` Zustandswechseln ab
+(`ContactSystem.update`). Sie gibt dabei `False` zurück — **denselben Wert wie
+bei echter Konvergenz**. `solve_with_contact` las beides als „fertig" und
+setzte `contact_converged` auf wahr; die Warnung stand allein im
+`contact_log`.
+
+Das ist keine Geschwindigkeitsfrage. Jede Zahl, gegen die geprüft wird, ob
+eine Änderung „das Ergebnis nicht ändert", kann aus einem gedeckelten Lauf
+stammen — und sah bis dahin aus wie eine auskonvergierte. Der Löser
+unterscheidet die beiden Fälle jetzt an `cs.cycles` und nennt im Protokoll den
+Grund statt der Schrittzahl. `tests/test_kontakthalt.py` setzt den Deckel
+künstlich auf 1 und prüft, dass `contact_converged` dann **falsch** meldet;
+mit dem alten Stand meldet dieselbe Prüfung wahr.
+
+> **Und am Drehlager zieht der Deckel — in mindestens einem Lauf.** Im
+> gesammelten `contact_log` von LF1 steht in zwei Läufen wörtlich „Kontakt:
+> Nachprüfung der Reibung nach 40 Zustandswechseln abgebrochen" — und daneben,
+> mit der alten Meldung, „konvergiert True". LF1 besteht mit Fließen aber aus
+> **zwölf** Kontaktläufen, und gleichlautende Zeilen wurden über alle zwölf
+> zu einer zusammengefasst. Belegt ist darum nur: **in mindestens einem der
+> zwölf Kontaktläufe hat die Nachprüfung der Reibung nach 40
+> Zustandswechseln aufgegeben.** Ob der letzte betroffen ist — aus ihm
+> stammen u und σ, die 1,2713 mm und 388,0 N/mm² —, ist nicht belegt. Die
+> einzige Reibstelle ist das Flächenlager „Starr" mit μ = 0,1; alle zwölf
+> Kontaktpaare haben μ = 0. Seit dem 22.09.2026 trägt die Abbruchzeile ihren
+> Kontaktlauf und wird nicht mehr zusammengefasst, und `res.info` führt
+> `contact_letzter_lauf_konvergiert` und `contact_laeufe_nicht_konvergiert` —
+> die Frage lässt sich beim nächsten Lauf ablesen, statt sie zu vermuten.
+> (Eine frühere Fassung sagte „LF1 am Drehlager konvergiert im Reibzustand
+> nicht"; das war zu scharf. Nachprüfung der Lösersitzung vom 22.09.2026.)
+>
+> **Wiederholbar — auf demselben Weg.** Das ausgelieferte Programm (unsymmetrische Zerlegung) hat am Drehlager in **drei** Läufen von LF1 denselben Kontaktweg genommen — 150 Schritte, 145 Faktorisierungen —, und die Spannungen lagen höchstens **0,0004 N/mm²** auseinander (Verschiebungen relativ 4,3·10⁻⁷): nicht bitgleich, aber derselbe Weg.
+> Die frühere Fassung schloss hier „dieselbe Rechnung gibt dasselbe
+> Ergebnis" — bitgleich ist das nicht, aber im Weg traf es zu. Auseinander
+> lief nur das Paar B/C einer **Versuchsfassung mit symmetrischer Zerlegung**
+> (`mtype -2`; pypardiso nullt dabei `iparm`, laut MKL-Dokumentation gelten
+> dann andere Vorgaben: Pivotstörung 10⁻⁸ statt 10⁻¹³, keine Skalierung,
+> kein Matching). Zwei ihrer Läufe (C nur mit einem Merker für das
+> Symmetrieurteil) wichen in der Vergleichsspannung um bis zu
+> **273,08 N/mm²** voneinander ab (Element 623 980: 79,15 gegen
+> 352,23 N/mm²), 23 390 Elemente um mehr als 1 N/mm²; C lief zu rund 70 %
+> neben einem Gesamttestlauf der Statik3D-Sitzung. Der Verdacht fällt auf die
+> ungesetzten Vorgaben der symmetrischen Zerlegung — bewiesen ist er nicht.
+> **Diese Fassung ist nicht eingebaut**; die Lösersitzung misst sie mit
+> gesetzten `iparm`-Werten und einer Wegeprüfung nach, bevor sie es wird. Die
+> 0,0004 N/mm² zwischen A (unsymmetrisch) und B (symmetrisch) zeigen nur,
+> dass diese beiden denselben Weg nahmen — über die Wirkung der symmetrischen
+> Zerlegung sagen sie nichts.
+>
+> **Woran es liegt, ist offen.** Die automatische Kontaktsteifigkeit ist
+> `PENALTY_FACTOR = 1e4` mal die örtliche Diagonalsteifigkeit; am Drehlager
+> steht der **größte Eintrag** der Matrix damit bei 1,05·10¹⁷ gegen 1,9·10¹³
+> ohne Kontakt. Das ist nicht die Konditionszahl — die ist in keinem Lauf
+> gemessen; für die abgelegte Testmatrix vom 19.09. folgt aus den
+> Protokollzahlen nur κ₂ ≥ 1,1·10¹⁵. Dass zwei rechnerisch gleichwertige
+> Faktorisierungen dieser Matrix Lösungen liefern, die um 269 %
+> auseinanderliegen, während beide Residuen bei 10⁻¹⁵ stehen, heißt: sie ist
+> für eine künstliche rechte Seite, die alle Richtungen anregt, numerisch
+> fast singulär. Dass die Strafsteifigkeit das verursacht, ist nicht gezeigt.
+>
+> Gemessen am echten Modell (LF1, sonst unverändert, **je ein Lauf**,
+> 22.09.2026):
+>
+> | `PENALTY_FACTOR` | Zeit | Kontaktschritte | max \|u\| | σ_v | Deckel |
+> |---|---|---|---|---|---|
+> | 10⁴ | 875,2 s | 150 | 1,2713 mm | 388,0 | gezogen |
+> | 10³ | 950,4 s | 155 | 1,2713 mm | 388,0 | **gezogen** |
+>
+> Feldweise über alle 645 934 Elemente: größte Abweichung der
+> Vergleichsspannung **0,1324 N/mm²**, vier Elemente über 0,1, keines über
+> 1,0; größte Knotenabweichung 0,00002 mm.
+>
+> Daraus folgt weniger, als hier früher stand. **Belegt** ist: auch mit
+> einem Zehntel der Strafsteifigkeit steht die Abbruchmeldung im Protokoll.
+> **Nicht belegt** ist, dass die Strafsteifigkeit nicht die Ursache sei —
+> die Kondition wurde in keinem Lauf gemessen, und 10³ verändert zugleich
+> das Modell (zehnfache Eindringung), nicht nur die Kondition. Die
+> 0,13 N/mm² sind der Unterschied zweier **Modelle** mit verschiedenem
+> Kontaktweg (155 gegen 150 Schritte) — kein Maß für Rundungsfehler und
+> keine Schranke: dass eine Versuchsfassung mit symmetrischer Zerlegung um
+> 273 N/mm² streuen konnte, zeigt der Lauf C oben. Aus max |K| folgt auch keine Schranke; dafür bräuchte es
+> die Konditionszahl, bei PARDISO mit Skalierung die der skalierten Matrix.
+>
+> `PENALTY_FACTOR` bleibt bei 10⁴ — nicht, weil 10³ nachweislich schlechter
+> wäre: die 8,6 % mehr Zeit des einen Laufs liegen in der Streuung dieses
+> Abends (gleichwertige Läufe 3 bis 17 %), und er lief unter Fremdlast. Es
+> gibt schlicht keinen belegten Grund zu wechseln. (Eine frühere Fassung
+> sagte, die Konstante habe „jetzt Zahlen hinter sich"; Nachprüfung der Lösersitzung vom 22.09.2026.)
+
+**Zwei Posten daneben, die nichts mit dem Schlüssel zu tun haben, aber mit
+derselben Messung gefunden wurden** (21.09.2026, an einer Matrix von
+Drehlagergröße: 475 935 Zeilen, 17,6 Mio. Nichtnullen):
+
+| | je Aufruf | je Lastfall | über 422 Lastfälle |
+|---|---|---|---|
+| doppeltes `tocsr()` im `LinearSolver` | 0,280 s | 40,6 s (145 Faktorisierungen) | **rund 3,0 h** |
+| `Kt` und `Ktff` bedingungslos gebaut | 0,577 s | 2,88 s (5 von 150 Schritten) | 0,34 h |
+
+Der erste wandelte dieselbe Matrix zweimal nach CSR um — `self._K` steht
+bereits da. (Die 0,280 s sind an einer **Ersatzmatrix** gemessen, am
+Drehlager selbst nicht. Eine frühere Fassung der Tabelle schrieb 4,75 h; sie
+setzte für alle 422 Lastfälle die 145 Faktorisierungen des kalten LF1 an.
+Mit den gemessenen Zahlen — 145 im kalten, im Mittel 91 in den warmen
+Lastfällen — sind es 145 + 421 × 91 = 38 456 Umwandlungen, rund 3,0 h;
+Nachprüfung der Lösersitzung vom 22.09.2026. Seit demselben Tag wandeln auch die Wege MUMPS und ama nicht mehr
+ein zweites Mal um.) Der zweite baute die Tangente und ihren Zuschnitt in **jedem**
+Schritt, obwohl `Ktff` nur beim Neufaktorisieren gelesen wird und `Kt` sonst
+nur bei einer Verformungsvorgabe; weder der Schlüssel noch der
+zwischengespeicherte Löser hängen daran, die Reihenfolge ließ sich also
+umstellen. Dass der zweite Posten so klein ausfällt, ist selbst ein Befund:
+**145 von 150 Schritten faktorisieren neu**, also gibt es fast nichts
+einzusparen. Die Schätzung „1,4 bis 1,9 s je Schritt“ galt der Annahme, die
+Faktorisierung würde oft wiederverwendet — sie wird es nicht.
+
+Geprüft wird in beiden Fällen **gezählt, nicht gemessen** (`tests/test_loeser.py`):
+eine Umwandlung statt zwei, und null Matrixadditionen im zweiten Lösen mit
+gleicher Signatur. Eine Zeitmessung hinge an der Maschine, die Zahl der
+Aufrufe nicht.
+
+**Zwei Löcher in diesem Schlüssel, beide am 21.09.2026 geschlossen.** Ein
+Schlüssel, der eine Matrixänderung nicht sieht, ist schlimmer als keiner: er
+lässt mit der falschen Faktorisierung rechnen, und niemand merkt es.
+
+* Der **Schubhalt** fehlte. `ContactSystem.matrices` legt für eine *inaktive*
+  Bedingung mit `schub_halt` einen k_t-Block in K_c — am Prüfstift 144
+  Einträge gegen null. `schub_halt_loesen` räumt die Marke ab, sobald die
+  Gruppe wieder trägt; fällt das in eine Runde ohne Wechsel von Aktivmenge,
+  Gleiten oder Fließen, blieb die Signatur gleich und die Matrix nicht.
+  Schärfer noch: der Schubhalt entsteht **nach** einem gescheiterten Lösen,
+  und scheitert dieses erst in der Residuumsprüfung, ist die Faktorisierung
+  bereits im Zwischenspeicher — dann wird mit genau der Zerlegung gelöst, die
+  eben gescheitert ist, und der Schubblock erreicht den Löser nie. Die
+  Nachprüfung fängt es nicht, sie misst gegen die alte Matrix.
+* Die **Zusatzmatrix** (`solver.zusatz_kenn`) hashte Form, Nichtnullzahl und
+  Werte, aber nicht die **Belegung**. Zwei Matrizen mit bitgleichen Werten an
+  anderen Stellen waren ununterscheidbar. Greifbar bei baugleichen Stäben in
+  `solve_with_ausfall`: derselbe Ausfall liefert dieselben 144 Einträge an
+  anderen Indizes.
+
+Beides kostet einen Hash je Aufruf und spart **keine** Faktorisierung ein;
+zusätzliche gibt es nur dort, wo die Matrix wirklich eine andere ist.
+`tests/test_kontakthalt.py` hält beides fest — mit der Probe, dass die Matrix
+sich wirklich ändert, und mit dem Nachweis, dass die alte Signatur die beiden
+Zustände für gleich hielt.
+
+Gefunden hat beides die Löser-Sitzung, **am Quelltext, nicht an einer Zahl**:
+fünf Leser mit je einem Gegenprüfer, deren Auftrag das Widerlegen war. Das ist
+die Lehre daneben — ein Fehler, der nur einen seltenen Pfad trifft, zeigt sich
+in keiner Messung, weil die Messung ihn nicht durchläuft. Nach der Konvergenz
 prüft `warmstart_verstoesse`, ob gleitende Knoten sich gegen ihre
 festgehaltene Richtung bewegen: wenige werden auf Haften zurückgesetzt und
 die Iteration läuft weiter, viele verwerfen den Warmstart (Neustart von der
@@ -1661,6 +1859,103 @@ erklärt sich damit von selbst: am Drehlager fallen 86 Kontaktschritte zu je
 rund 6 s weg, an einem Block aus acht Elementen ist ein Kontaktschritt
 kostenlos — übrig bleibt dort nur der Aufbau, und der läuft in beiden Fällen.
 
+
+### 4.4 Der Sechsflächner: was ihn trägt, und was er kostet (21.09.2026)
+
+`hex8` ist der Sechsflächner — acht Knoten, sechs Vierseitflächen. Er trägt
+Biegung über drei **inkompatible Wilson-Moden**, deren neun innere
+Freiheitsgrade in der Elementmatrix kondensiert werden
+(`elements.solid.hex8_matrices`, `k_hex8`). Die Taylor-Korrektur `detJ0/detJ`
+hält dabei den Patch-Test aufrecht.
+
+**Was das bringt** (Kragarm 2,0 × 0,1 × 0,2 m gegen Bernoulli mit Schubanteil):
+
+| Netz | w/w_Balken |
+|---|---|
+| 4 × 1 × 1 — **ein** Element über Höhe und Breite | **96,2 %** |
+| 8 × 2 × 2 | 97,2 % |
+| 16 × 4 × 4 | 98,5 % |
+| dasselbe 4 × 1 × 1 **ohne** die inkompatiblen Moden | **28,0 %** |
+
+Faktor **3,43** am selben Netz — die Moden sind der ganze Unterschied, nicht
+die Verfeinerung. Zum Vergleich brauchen `pent6` und `pyr5` in derselben
+Prüfung 10 bzw. 6 Elemente in der Länge für ihre gröbste Stufe.
+
+**Nahezu inkompressibel** sperrt er nicht: bei ν = 0,45 bleiben 95,0 % und bei
+**ν = 0,499 noch 80,3 %** der Lösung bei ν = 0,3. Der lineare Tetraeder fällt
+dort auf 2,1 % (§ 6a) — die Wilson-Moden enthalten genau die Volumenänderung,
+die dem trilinearen Ansatz fehlt. Deshalb braucht der `hex8` die
+knotengemittelte Dilatation nicht, die für den `tet4` gebaut wurde
+(`assemble._dilatationsdaten` filtert ausdrücklich auf `tet4`).
+
+**Geprüft ist er seit dem 21.09.2026 wie die übrigen Volumenelemente**
+(`tests/test_elemente_volumen.py`): sechs Starrkörpermoden am **verzerrten**
+Element, Patch-Test am verzerrten Verband (Verschiebung 8,1·10⁻¹⁷, Spannung
+an allen 72 Auswertepunkten 9,7·10⁻¹⁶), monotone Konvergenzreihe. Diese
+Prüfungen waren nach Elementtyp parametrisiert vorhanden, wurden für den
+`hex8` aber nie aufgerufen — er stand nicht in der Liste der „neuen" Typen,
+für die die Suite geschrieben worden war.
+
+**Was er kostet, und was dagegen getan wurde.** Gemessen an verzerrten
+Würfeln (21.09.2026):
+
+| | µs je Element |
+|---|---|
+| `k_tet4` | 24,2 |
+| `k_hex8`, einzeln | **571,7** |
+| **`k_hex8_stapel`** | **57,5** |
+
+Einzeln ist der Sechsflächner **dreißigmal** so teuer wie ein Tetraeder. Am
+Drehlagernetz der Vernetzersitzung trugen damit **sieben Prozent der Elemente
+einundsiebzig Prozent der Aufstellzeit** (31 108 `hex8` mit 17,8 s gegen
+453 331 `tet4` mit 9,5 s). Der Grund war nicht die Physik, sondern der Aufruf:
+acht Gaußpunkte mit kleinen Matrizen, einmal je Element durch Python.
+
+`elements.solid.k_hex8_stapel` rechnet einen ganzen Stapel auf einmal
+(`assemble._matrix_chunk` gruppiert die Sechsflächner eines Blocks nach
+Werkstoff). Die acht Gaußpunkte bleiben eine Schleife — es sind acht. Zwei
+Dinge machten den Faktor 9,9:
+
+* **Stapel statt Einzelaufruf** brachte zunächst nur Faktor 2,7.
+* **`matmul` statt `einsum`** brachte den Rest: 258,8 → 57,5 µs. Die
+  Stapel-Matrixmultiplikation von numpy geht über BLAS, `einsum` rechnet sie
+  bei diesen kleinen Matrizen selbst aus.
+
+Am Drehlager sind das **17,8 s → 1,79 s je Aufstellen**, und das Aufstellen
+läuft in jedem Kontakt- und Plastizitätsschritt. Das Ergebnis ist bis auf
+6,9·10⁻¹⁶ dasselbe; `tests/test_elemente_volumen.py::t_hex8_stapel` hält es
+fest, samt der Probe, dass ein umgestülptes Element auch im Stapel auffällt.
+
+**Der `tet4` bleibt unangetastet.** Er kostet 24,2 µs, dort ist der Aufruf
+nicht der Brocken, und ein Stapelweg brächte nichts — er läuft weiter
+Element für Element durch `element_matrix`.
+
+**Die Spannungsauswertung** war danach der teuerste Posten und ging
+denselben Weg. Sie baute für jedes Element die volle Elementsteifigkeit neu
+auf, nur um die inneren Freiheitsgrade α = −K_αα⁻¹ K_uα<sup>T</sup> u zu
+bekommen — das K_uu darin liest niemand.
+
+| | µs je Element |
+|---|---|
+| `stress_points("hex8", …)`, wie es war | **1 375,5** |
+| ohne das ungelesene K_uu (`ohne_kuu=True`) | 1 040 |
+| **`spannungen_hex8_stapel`** | **58,1** |
+
+Das ist **Faktor 23,7**, und er kommt aus derselben Quelle wie bei der
+Steifigkeit: ein Stapel, `matmul` statt `einsum`, und die neun Auswertepunkte
+als eine kurze Schleife über den ganzen Stapel statt einer Schleife über die
+Elemente. Am Drehlagernetz sind das **42,8 s → 1,81 s je Nachlauf**. Bei
+kleinen Modellen, wo der Nachlauf neben dem Lösen mitzählt, schlägt das auf
+die ganze Rechnung durch: ein Kragarm aus 864 Sechsflächnern braucht 0,32
+statt 1,01 s, also ein Drittel.
+
+`solver._post_chunk` sammelt die Sechsflächner eines Blocks vorweg nach
+Werkstoff ein und fällt bei jedem Fehler auf den Einzelweg zurück — der
+bleibt die Wahrheit, gegen die geprüft wird. Die Spannungen stimmen bis auf
+3,0·10⁻¹⁶ (Element gegen Stapel) und die gerechnete Verschiebung auf
+4,9·10⁻²¹ m überein; `tests/test_elemente_volumen.py::t_hex8_stapel` hält
+beides fest, samt α und der Probe, dass `ohne_kuu` an K_uα, K_αα und dem
+Volumen nichts ändert.
 
 ## 5 Nachweise nach DIN EN 1993-1-1
 
@@ -2341,6 +2636,34 @@ gegen f_y ist dort ohne Aussage. Zwei Vorkehrungen:
   Mittelwert des Bereichs. Liegt sie um mehr als den Faktor 5 darüber, weist
   es auf eine mögliche Singularität hin.
 
+**Die Erzeugnisdicke.** EN 1993-1-1 Tab. 3.1 mindert die Streckgrenze mit der
+Erzeugnisdicke ab (S355: 355 N/mm² bis 40 mm, darüber 335; ein aus RFEM 6
+übernommener Werkstoff bringt seine eigene Dickentabelle mit). Bis zum
+22.09.2026 rechnete der Volumennachweis mit `yield_strength(0.0)`, also
+**immer mit der dünnsten Stufe**: ein Lagerblock von 80 mm wies sich mit 355
+statt 335 N/mm² nach, η fiel 6,0 % zu klein aus — auf der unsicheren Seite.
+Der Stabnachweis macht es seit jeher richtig (`mat.yield_strength(sec.t_max)`).
+
+Ein Volumen hat keine Dicke im Sinne eines Querschnitts. Angesetzt wird darum
+die **kleinste Abmessung des umschließenden Quaders des ganzen
+zusammenhängenden Körpers**, zu dem die Elemente des Bereichs gehören: bei
+einer Platte ihre Dicke, bei einem Rundstahl sein Durchmesser, bei einem Block
+seine kürzeste Kante. Der Körper und nicht die Auswahl, weil die Auswahl dem
+Anwender gehört: an einem Block 300 × 300 × 200 mm, vernetzt mit 6 × 6 × 8
+Elementen, misst der Körper 200 mm (f_y = 335), eine einzelne Elementlage aber
+25 mm (f_y = 355) — dieselbe Stelle, 6,0 % auf der unsicheren Seite, nur weil
+weniger markiert war. Die Körper werden als Zusammenhangskomponenten des
+Graphen Element/Knoten bestimmt (`scipy.sparse.csgraph`), zwei getrennte
+Körper im selben Modell bleiben getrennt.
+
+Bei einem **aus Blechen geschweißten** Bauteil ist der Körper umgekehrt zu
+dick — dort ist die Blechdicke maßgebend. Die Erzeugnisdicke ist deshalb am
+Volumenbereich angebbar und hat dann Vorrang. Die angesetzte Dicke steht in der
+Übersicht des Berichts (Spalte t, mit `*` wenn selbst angegeben); mindert sie
+f_y ab, sagt der Bericht es zusätzlich als Hinweis, damit ein Prüfer die
+Festlegung beurteilen kann (Tests `test_erzeugnisdicke_mindert_die_streckgrenze`
+und `test_erzeugnisdicke_ist_angebbar`).
+
 Wird ein **Kerbradius** angegeben, prüft das Programm zusätzlich, ob die
 mittlere Elementgröße h ≤ r/3 ist — sonst liegen weniger als drei Elemente
 über den Radius und die Kerbspannung wird unterschätzt.
@@ -2409,6 +2732,52 @@ dass es jemand gesehen hätte.
 gerechnet mit allem, was der Löser berücksichtigt: plastische Vorspannung und,
 mit `Model.knotendilatation`, die gemittelte Volumendehnung. Beim `tet4` ist
 das derselbe eine Punkt wie zuvor, das Drehlager rechnet unverändert.
+
+**Warum die Ecken und nicht die Gaußpunkte** (gemessen 21.09.2026 am
+Kragträger aus `hex8`, elastisch, **reine Biegung ohne Kontakt** — ein glattes
+Problem ohne Singularität; σ_xx am eingespannten Element gegen M/W). Was die
+Tabelle deckt, ist genau dieser Fall; für ein Element an einer Kontaktkante
+neben einer Fließzone folgt aus ihr nichts:
+
+| Lagen über die Höhe | Balken M/W | Mitte | Gaußpunkte | Ecken |
+|---|---|---|---|---|
+| 1 | 14,62 N/mm² | 0,0 % | 61,3 % | **110,8 %** |
+| 2 | 14,62 N/mm² | 50,9 % | 80,9 % | **105,2 %** |
+| 4 | 14,62 N/mm² | 75,5 % | 91,9 % | **104,8 %** |
+
+Die Gaußpunkte wären der numerisch bravere Ort — dort ist die Spannung
+superkonvergent, und dort gilt die Fließbedingung. Aber sie liegen **innen**:
+der äußerste eines `hex8` sitzt bei 57,7 % der halben Elementhöhe, und unter
+Biegung fehlt genau der Rand. Sie unterschätzen um bis zu 39 %. Die Ecken
+laufen gegen 105 % und liegen damit leicht auf der sicheren Seite.
+
+**Der Preis steht daneben, und er ist hoch.** An einer Singularität —
+Kontaktrand, einspringende Ecke, steifer Einschluss — hat die Spannung keinen
+endlichen Wert; sie wächst mit jeder Verfeinerung, und ein Spitzenwert dort ist
+keine Größe, sondern eine Eigenschaft des Netzes.
+
+Ein Beispiel dazu, **das aber nichts belegt**: am Drehlager meldete auf dem
+gesweepten Netz ein `hex8`, der selbst nicht fließt, 3 006 N/mm² als Eckwert,
+während die fließenden Elemente brave Werte zeigten (`tet4` 360,4 mit
+ε_p,eq 0,255 %, `pent6` 461,8; Löser-Sitzung, 21.09.2026). Die Fließbedingung
+war nicht verletzt — an den Gaußpunkten dieses Elements lag die Spannung unter
+f_y. **Dieses Netz ist jedoch unabhängig davon fehlerhaft**: dieselbe Rechnung
+liegt rein elastisch bei der Verformung um Faktor 8 daneben (0,1675 gegen
+1,3498 mm gegen das alte Netz, beides kontaktkonvergiert), und 992 seiner
+9 368 Keile sind entartet. Welcher Teil der 3 006 aus der Kerbe kommt und
+welcher aus diesem Fehler, ist **nicht getrennt**. Das Beispiel taugt darum
+weder für die Eckwertregel noch gegen sie; die Kragträgertabelle oben trägt sie
+allein.
+
+**Daraus folgt für den Anwender:** ein Spitzenwert aus `solid_res` ist an einer
+Singularität keine Nachweisgröße. Das ist keine Eigenheit dieser Auswertung,
+sondern der Finite-Elemente-Methode; dieselbe Erfahrung steht in § 5d-2 zu den
+Passstiften des Drehlagers (4 930 N/mm² gegen einen Handnachweis um Faktor
+50 bis 80 darunter). Die Auswertungsregel wurde deshalb **nicht** geändert: an
+glatten Problemen ist sie die beste der drei (Tabelle oben), und an
+Singularitäten gibt keine der drei eine brauchbare Zahl. Was fehlt, ist nicht
+eine andere Regel, sondern eine Erkennung, **ob** ein Spitzenwert an einer
+Kerbe sitzt — das ist eine offene Baustelle und wird hier nicht geraten.
 
 **Mit einer Ausnahme: fließende Elemente melden weiter die Elementmitte.** Die
 Plastizität wird an den **Gaußpunkten** erzwungen; die Auswertepunkte (Ecken)
@@ -3539,6 +3908,39 @@ Der Hexaeder mit inkompatiblen Moden trägt die Biegung mit zwei Lagen; der line
 Tetraeder bleibt bei zwei Lagen um fast ein Drittel zu steif — mit weniger als der
 Hälfte der Knoten.
 
+**Ein Keil ist kein halber Sechsflächner.** Der `hex8` trägt Biegung über inkompatible
+Moden (Taylor/Beresford/Wilson), der `pent6` hat sie nicht — er läuft über die reine
+isoparametrische Formulierung. Am **identischen Knotengitter** gemessen (Statik3D-Sitzung,
+22.09.2026, Kragarm 1,0 × 0,1 × 0,2 m gegen die Balkenlösung mit Schub; jeder Würfel
+wahlweise als ein `hex8` oder als zwei `pent6`):
+
+| Gitter | Knoten | `hex8` | `pent6` | der Keil ist steifer um |
+|---|---|---|---|---|
+| 4 × 1 × 1 | 20 | 95,9 % | **56,4 %** | Faktor 1,70 |
+| 8 × 1 × 2 | 54 | 96,8 % | **81,8 %** | Faktor 1,18 |
+| 16 × 2 × 4 | 255 | 98,2 % | **93,5 %** | Faktor 1,05 |
+
+Damit ist die Paarung der Dreiecke keine Kosmetik, sondern tragend: jedes Dreieck ohne
+Partner wird ein Keil und kostet am groben Netz zweistellig. Die gierige Auswahl allein
+lässt aber Dreiecke stehen, deren Nachbarn schon vergeben sind — und zwar **nicht** wegen
+der Gütegrenze (sie von 0,3 auf 10⁻⁶ zu senken änderte an der Kragplatte keine einzige
+Zahl). Darum wird nach dem gierigen Durchgang **umgepaart**: für jedes übrige Dreieck u
+wird ein Nachbar v gesucht, dessen Partner w seinerseits ein anderes übriges Dreieck x
+hat; dann wird (v, w) gelöst und (u, v) sowie (w, x) genommen — ein erweiternder Weg der
+Länge drei, wiederholt, solange es trägt. Gemessen an der Kragplatte 1 × 0,2 × 0,05 m mit
+Endlast (22.09.2026, gleiche Knotenzahl in beiden Zeilen):
+
+| | Elemente | Keilanteil | Endverschiebung |
+|---|---|---|---|
+| h = 50 mm, nur gierig | 406 hex8 + 96 pent6 | 19,1 % | 93,8 % |
+| h = 50 mm, **umgepaart** | 424 hex8 + 60 pent6 | **12,4 %** | **95,8 %** |
+| h = 25 mm, nur gierig | 818 hex8 + 128 pent6 | 13,5 % | 97,1 % |
+| h = 25 mm, **umgepaart** | 850 hex8 + 64 pent6 | **7,0 %** | **97,7 %** |
+
+Zwei Prozentpunkte Genauigkeit am groben Netz, ohne einen einzigen Knoten mehr. Der
+**Keilanteil je gesweeptem Körper** ist damit ein Abnahmemaß für sich; er steht im
+Protokoll jedes Körpers („n Hexaeder + m Keile (gesweept, L Lagen)").
+
 **Lagen bei Fließen.** Das gilt **elastisch**. Die Löser-Sitzung hat am Zweigstand
 a4a7d91 (21.09.2026) den Kragträger 200 × 200 mm, 1,0 m, unter dem Endmoment 1,20 · M_el
 gerechnet (fy = 235 N/mm², Verfestigung 2 %; die Randfaser trägt elastisch 282 N/mm² und
@@ -3580,6 +3982,62 @@ knotenkonform, mit einer anderen Interpolation auf der Vierecksdiagonale. Pyrami
 nächsten Schritte. Reine Quader (sechs Vierecke, acht Knoten) bleiben beim abgebildeten
 Hexaedernetz mit ihrer Teilung; `netz.sweep = False` schaltet den Sweep ab.
 
+**Verjüngter Zug (22.09.2026).** Die Erkennung verlangte, dass der Deckel die um einen
+Vektor **verschobene** Kopie des Grundes ist. Ein Kegelstumpf, eine konische Rippe, eine
+Nabe mit Anzug fielen darum an die Tetraeder. Jetzt genügt eine **Ähnlichkeit**: der
+Deckel ist die um k skalierte, um t verschobene Kopie (`sweep._abbildung_finden`,
+`_abbilden`); die reine Verschiebung ist der Sonderfall k = 1 und läuft Zeichen für
+Zeichen wie bisher. Die Lage k liegt bei s = k/L auf dem Maßstab 1 + (k−1)·s, die
+Mantellinien laufen entsprechend zusammen — die Wandprüfung verlangt darum nicht mehr
+„Vektor parallel zu t", sondern „die Mantellinie verbindet einen Grundknoten mit **seinem
+Bild**". Der Rauminhalt wird als Pyramidenstumpf geprüft, h/3·(A₁ + A₂ + √(A₁A₂)).
+Gemessen (Kegelstumpf l = 200 mm, h = 30 mm):
+
+| r₁ → r₂ | Elemente | Güte min | Rauminhalt |
+|---|---|---|---|
+| 50 → 30 mm | 91 hex8 | 0,307 | 98,4 % des Kegelstumpfs (Kreise als Vielecke) |
+| 50 → 50 mm (Zylinder) | 91 hex8 | 0,309 | 98,4 % |
+| 30 → 60 mm | 91 hex8 + 14 pent6 | 0,306 | 98,4 % |
+
+**Drehkörper (22.09.2026).** Rohrbogen, Ringsegment, Kegelrad-Ausschnitt: ein ebenes
+Profil, um eine Achse gedreht. Grund und Deckel sind eben, aber **nicht parallel** — sie
+stehen um denselben Winkel gegeneinander wie der Körper selbst, und **beide Kappenebenen
+enthalten die Achse**. Daraus folgt sie geschlossen: die Achsrichtung steht auf beiden
+Kappennormalen senkrecht (d = n_A × n_B), der Achspunkt liegt in beiden Ebenen (zwei
+Gleichungen, die dritte ist der Lotpunkt zum Schwerpunktmittel), der Winkel ist der
+zwischen den Normalen im Vorzeichen von d (`sweep._abbildung_drehung`). Die Lage k wird um
+den Anteil k/L des Winkels gedreht und liegt damit **auf dem Bogen**, nicht auf der Sehne.
+
+Die Mantellinien sind hier **Bögen**. Die Wandprüfung verlangt darum nicht mehr „gerade",
+sondern: jeder Punkt der Mantellinie hat denselben Abstand zur Achse und dieselbe Höhe
+längs ihr wie der Grundknoten — das ist der Kreisbogen um sie, ohne Annahme über die
+Abtastung (`sweep._mantel_auf_bahn`). Der Rauminhalt wird nach **Guldin** geprüft:
+Grundfläche mal Weg ihres Schwerpunkts, A · φ · r_s. Gemessen am Ringsegment
+r = 100 … 150 mm, Höhe 50 mm, h = 20 mm:
+
+| Winkel | Elemente | Güte min | Rauminhalt |
+|---|---|---|---|
+| 90° | 36 hex8 + 36 pent6 | 0,641 | 99,5 % des Ringsegments |
+| 45° | 20 hex8 + 20 pent6 | 0,641 | 99,6 % |
+
+**Und ein Fehler, den erst dieser Prüfkörper zeigte.** Ein Ringsegment hat sechs
+Vierseitflächen und acht Eckknoten — dieselbe Zählung wie ein Quader. Der abgebildete
+Quaderpfad (`mesher._hex_netz`) griff ihn deshalb ab und bildete **trilinear zwischen den
+acht Ecken** ab: der 90°-Bogen kam so auf **63,7 %** seines Rauminhalts, ohne eine einzige
+Meldung — Hülle, Randtreue und Formgüte sahen tadellos aus. Genau die Art stillen Fehlers,
+vor der die Statik3D-Sitzung in ihrem Vertrag gewarnt hat. Der Quaderpfad verlangt jetzt
+zusätzlich, dass **alle zwölf Kanten gerade** sind (`mesher._gerade_kanten`); krumme gehen
+an den Sweep, und das Protokoll sagt es.
+
+**Woran die Erkennung sonst scheitert, sagt sie jetzt selbst** (`erkennen_warum_nicht`,
+eine Zeile je Körper im Protokoll): zu wenige Randflächen, keine zwei ebenen Kappen,
+Kappen ohne gemeinsamen Weg, „decken sich weder verschoben (x mm daneben) noch skaliert
+(y mm, Maßstab k)", Wandzahl, Wände nicht aus vier Linien, Mantellinien nicht gerade. Am
+Drehlager sind 68 von 108 Körpern sweepbar, aber sie tragen nur 8,2 % der Elemente — die
+40 übrigen tragen 91,8 %. Welche Erweiterung sich lohnt, entscheidet diese Zeile und nicht
+die Vermutung; dasselbe Vorgehen hat beim Zerlegen und bei den Splittern den Ausschlag
+gegeben.
+
 **Kappen aus mehreren Flächen, Zylinder, Zerlegen an Fußabdrücken (21.09.2026).** Drei
 Erweiterungen, damit der Sweep über Platten hinauskommt:
 
@@ -3616,6 +4074,78 @@ Erweiterungen, damit der Sweep über Platten hinauskommt:
    ändern sich nicht. Was nicht geht: eine Bohrung, die durch Aufsatz *und* Träger läuft
    — ihre Mantelfläche müsste geteilt werden, und Linien dafür gibt es nicht; dann bleibt
    der Körper ganz und geht an die Tetraeder.
+4. **Zerlegen an einer Ebene** (`sweep.zerlegen_ebene`, 22.09.2026): greift kein
+   Fußabdruck, wird an der **Ebene einer Randfläche** geschnitten. Warum gerade dort: an
+   einer einspringenden Kante liegt die Trennung zwischen zwei Blöcken immer in der Ebene
+   einer der beiden anliegenden Flächen — eine Rippe wird an der Ebene der Plattendecke
+   abgeschnitten, ein Absatz an der Ebene seiner Schulter. Andere Ebenen muss man nicht
+   raten. Kandidat ist jede ebene Randfläche, deren Ebene den Körper wirklich **trennt**
+   (Punkte auf beiden Seiten). Der Fall, den das löst und der Fußabdruck nicht: eine
+   Rippe, die bis an den **Rand** der Platte läuft. Sie hängt nicht über einer Öffnung —
+   ihr Fußabdruck berührt den Außenrand der Deckfläche, und genau das schließt
+   `_fussabdruecke` aus, sonst wäre der Schnitt keine geschlossene Fläche.
+
+   Drei Dinge daran sind nicht offensichtlich:
+
+   * **Eine Kante, die in der Schnittebene liegt, gehört nicht der Seite, von der man sie
+     anläuft.** An der T-förmigen Stirnfläche einer Rippe liegen zwei Kanten in der Ebene,
+     und *beide* gehören zur Platte darunter, obwohl die eine von unten, die andere von
+     oben erreicht wird. Nach den Vorzeichen der Ecken geteilt schlägt man eine davon der
+     Rippe zu und bekommt zwei Teile, die nicht aneinanderpassen. Entschieden wird darum
+     je **Kante** und geometrisch: einen kleinen Schritt von der Kantenmitte ins Innere
+     der Fläche, und die Seite dieses Punktes zählt (`sweep._kantenseiten`).
+   * **Eine Randfläche, die ganz in der Ebene liegt, gehört zu genau einem Block — und
+     welchem, sieht man ihr nicht an.** Die Deckfläche einer Platte mit Rippe liegt in der
+     Schnittebene und gehört zur Platte; ihre Nachbarn zeigen in beide Richtungen (die
+     Plattenseiten nach unten, die Rippenwände nach oben), und die Materialseite folgt aus
+     keiner lokalen Regel. Darum werden die Zuordnungen **durchprobiert** (bis drei solcher
+     Flächen, also acht Versuche), und es entscheidet die **geschlossene Hülle**: jede
+     Linie eines Blocks genau zweimal (`sweep._geschlossene_schale`). Diese Probe ist
+     scharf und fängt jede falsche Zuordnung ab, bevor daraus ein gültiger, aber
+     **anderer** Körper wird als der gemeinte.
+   * **Der Rand der Schnittfläche kommt aus zwei Quellen:** den Schnittstrecken der
+     geteilten Flächen *und* den Kanten der koplanaren Flächen, hinter denen die andere
+     Seite liegt. Am Prüfkörper sind das die drei Kanten des Rippenfußes in der
+     Deckfläche; ihr Außenrand gehört nicht dazu. Die Kanten werden zu einem Zug
+     verkettet; verzweigt er oder zerfällt er in mehrere Ringe, unterbleibt der Schnitt.
+
+   Nicht geschnitten werden Flächen mit Öffnungen, Flächen mit Bögen oder Polylinien und
+   Flächen, die einem **zweiten Körper** gehören — der Schnitt risse sonst die Fuge zum
+   Nachbarn auf.
+5. **Kappenlinien angleichen** (`sweep.kappenlinien_angleichen`, 22.09.2026): ein Schnitt
+   setzt zwei neue Ecken in die eine Kappenschleife; die andere hat sie nicht. Die Kappen
+   decken sich weiterhin, aber die Wandprüfung sucht zu **jeder** Grundlinie genau eine
+   Deckellinie und findet drei. Am Prüfkörper blieb der Plattenblock darum tetraedrisch,
+   obwohl er ein Quader ist. Zwei Schritte heilen das:
+
+   * Die Kappenerkennung misst jetzt die **Figur**, nicht die Ecken: die Verschiebung kommt
+     aus dem **Flächenschwerpunkt** des Umrings (`sweep._umringmitte`; der Mittelwert der
+     Ecken wandert, wenn eine Ecke mitten auf einer geraden Kante dazukommt), und die
+     Deckungsprobe misst den Abstand zur **Kurve** statt zu den Stützpunkten
+     (`sweep._abstand_zum_zug`). Damit ist eingelöst, was `_deckungsgleich` seit jeher
+     behauptet: zwei Kappen dürfen ihren Rand verschieden in Linien teilen. Die Prüfung
+     wird dadurch nur großzügiger — was vorher durchging, geht weiter durch. Und sie
+     bleibt so schnell wie zuvor, denn sie läuft in `erkennen` über jedes Flächenpaar
+     eines Körpers (bis 144 × 144 am Drehlager): erst Stützpunkt auf Stützpunkt
+     (KD-Baum, der häufige Fall), dann der umschriebene Kasten als notwendige
+     Bedingung, und nur für die Punkte, die keinen Stützpunkt treffen, der Abstand zur
+     Kurve. Dicht gerechnet kostete die Kurve bei 500 Randpunkten 23 ms statt 0,4 ms je
+     Paar, bei 1 500 Punkten 196 ms statt 1,1 ms — gemessen am 22.09.2026, bevor die
+     Stufen kamen; mit ihnen 0,28 und 0,87 ms.
+   * Danach werden die Linien angeglichen: die fehlende Ecke wird auf die andere Schleife
+     abgebildet, deren Linie dort geteilt, und die **Wand** dazwischen zerfällt mit — eine
+     Wand je Linienpaar, mit neuer Mantellinie dazwischen. Erst dadurch bleibt die
+     Wandprüfung so streng, wie sie ist: jede Wand aus genau vier Linien. Angefasst werden
+     nur Linien, die allein diesem Block gehören: was einem **zweiten Körper** gehört,
+     bleibt unangetastet (`sweep._fremde_flaechen`) — sein Netz kennt die Stücke nicht, und
+     die Fuge risse auf. Der Weg wird dann quer dazu gesucht, und wenn es keinen gibt,
+     bleibt der Körper bei den Tetraedern (`test_angleichen_schont_den_nachbarn`: derselbe
+     Quader gleicht allein über seine Grundfläche an, mit Nachbar darunter über die
+     Seitenflächen — 144 hex8, Fuge knotenkonform).
+
+   Das hilft auch ohne Schnitt: ein von Hand gebauter Körper, dessen Deckel eine Kante in
+   zwei Linien führt (weil dort ein Nachbar anstößt), war bisher nicht sweepbar. Er ist es
+   jetzt (`test_kappen_verschieden_geteilt`: 44 hex8 + 4 pent6 statt Tetraedern).
 
 Gemessen (21.09.2026, ein Prozess, `tests/test_sweep.py`):
 
@@ -3623,6 +4153,28 @@ Gemessen (21.09.2026, ein Prozess, `tests/test_sweep.py`):
 |---|---|---|---|---|
 | Platte 0,4 × 0,3 × 0,1 m mit Nabe r = 60 mm, h = 80 mm, Kantenlänge 30 mm | 7 595 tet4 | **441 hex8 + 108 pent6**, ein Schnitt, 174 Knoten in der Schnittebene, keiner doppelt | ohne Befund | 11,12 kN = 11,12 kN |
 | abgesetzte Welle r = 50/30 mm, l = 200/150 mm, Kantenlänge 25 mm | 2 349 tet4 (+ 66 des dünnen Teils) | **446 hex8 + 28 pent6**, ein Schnitt, 61 Knoten in der Schulterebene, keiner doppelt | ohne Befund | 2,78 kN = 2,78 kN |
+
+Und am Ebenenschnitt (22.09.2026, Platte 0,2 × 0,1 × 0,02 m mit einer Rippe 150 × 20 × 60 mm
+bis an den Rand, eingespannt bei x = 0, 10 kN auf die Stirnfläche, Kantenlänge 25 mm):
+
+| Netz | Elemente | Knoten | größte Verschiebung |
+|---|---|---|---|
+| tet4, Kantenlänge 25 mm | 685 | 219 | 0,5811 mm |
+| tet4, 12,5 mm | 5 403 | 1 129 | 1,3437 mm |
+| tet4, 8 mm | 18 510 | 3 549 | 1,7955 mm |
+| tet4, 6 mm | 39 891 | 7 459 | 1,9674 mm |
+| **zerlegt und gesweept, 25 mm** | **124** (96 hex8 + 28 pent6) | **239** | **2,0161 mm** |
+| zerlegt und gesweept, 12,5 mm | 340 | 599 | 2,1138 mm |
+
+Das grobe gesweepte Netz steht über dem Tetraedernetz mit **einunddreißigmal so vielen
+Knoten**. Rauminhalt 100,0 %, Formgüte 0,352, 54 Knoten in der Schnittebene und keiner
+doppelt, Abnahme ohne Befund. Und die Last kommt durch beide Blöcke ins Lager: 1 MN/m² auf
+die geschnittene Stirnfläche (3,200 kN), auf den durch das Angleichen ersetzten Boden
+(20,000 kN) und auf die koplanare Deckfläche (17,000 kN) ergeben je genau diese
+Auflagerkraft — die Randseiten der Teilflächen liegen auf den Ausgangsflächen, über zwei
+Stufen (Schnitt, dann Angleichen) hinweg. Das ist die schärfste Messung dieser Arbeit für den Satz,
+mit dem sie angefangen hat: der lineare Tetraeder sperrt, und kein Verfeinern holt das
+auf.
 
 Der **abgebildete Quader** (`mesher._hex_netz`, sechs Vierecke, acht Ecken) setzt seit
 21.09.2026 ebenfalls Randseiten, teilt seine Knoten mit Nachbarn über dieselben Schlüssel
@@ -3670,6 +4222,29 @@ schaltet ihn ein (`test_pyramiden_als_uebergang`).
 | Nebenflächen (`bedeutung`) | 913 von 1 375 = 66,4 %; Nebenlinien 1 197 von 2 807 = 42,6 % |
 | Flächen mit Last | **2**; bedeutend sind fast nur Kontaktflächen (37 Bedingungen) und aus RFEM integrierte Objekte |
 
+**Der Lauf mit dem fertigen Stand** (Löser-Sitzung, 21.09.2026, 16 Arbeitsprozesse,
+Vorgaben unverändert: `sweep` an, `pyramiden` aus, `nebenflaechen_grob` aus,
+`plastizitaet.an`):
+
+| | altes Netz | mit Größenfeld, Sweep, Lagenvorgabe, Zylindern und Kappen-Gruppen |
+|---|---|---|
+| Volumenelemente | 645 934 tet4 | **495 593** = 31 108 hex8 + 9 368 pent6 + 455 117 tet4 (**−23,3 %**) |
+| Knoten | 158 728 | 159 465 (+0,5 %) |
+| Elemente je Knoten | 4,10 | **3,14** |
+| gesweepte Körper | 0 | **68 von 108** |
+| V33 | 80 600 tet4 | 12 372 hex8 + 3 720 pent6 = 16 092 (**−80,0 %**) |
+| V35 | 79 105 tet4 | 12 208 hex8 + 3 552 pent6 = 15 760 (**−80,1 %**) |
+
+Die 48 Körper mit vier Flächen sind als **Zylinder** erkannt, V33 und V35 über eine
+**Kappe aus vier koplanaren Flächen**. Was das für die Rechnung heißt, ist nüchtern zu
+sagen: die Knotenzahl bleibt gleich, also wird die **Faktorisierung nicht billiger** —
+billiger werden das Aufstellen (23 % weniger Elementschleifen, und am Drehlager ist das
+Aufstellen der Brocken: 124 s je Kontaktschritt gegen 4,23 s Faktorisierung) und der
+Speicher. Der Gewinn ist die **Genauigkeit**: in V33 und V35, zusammen einem Viertel der
+alten Elemente, steht jetzt der hex8 statt des tet4 (97,6 gegen 68,4 % der Balkenlösung).
+Das **Zerlegen an Fußabdrücken hat an keinem der 108 Körper angesetzt**; seit demselben Tag
+sagt jeder Körper im Protokoll, warum (`sweep.zerlegen_warum_nicht`).
+
 Der Sweep, wie er am Morgen des 21.09.2026 stand, erreichte das Drehlager also nicht:
 sein Erfolgsmaß (Kragplatte 97,6 % gegen 68,4 %, ein Achtel der Elemente) kam dort bei
 0,4 % der Elemente an. Seit dem Abend gelten vier Flächen (die 48 Körper mit vier Flächen
@@ -3678,10 +4253,76 @@ sind, wenn es Zylinder sind, sweepbar), Kappen-Gruppen und das Zerlegen an Fußa
 Modell und ist **nicht gemessen**. Und `nebenflaechen_grob` spart am Drehlager **0,2 %** der Elemente (646 712 →
 645 570; an der Platte waren es 55 %): die Bohrungen, die das Netz fein machen, sind dort
 fast alle Bohrungen *mit* Bolzen, Stift oder Achse — Kontaktflächen, und die bleiben fein.
-Was nach der Nachvernetzung an Splittern bleibt (Güte unter 0,10): 30 von 53 258, 74 von
-38 564, 29 von 115 734, 35 von 79 572, 32 von 80 752 Tetraedern in fünf Körpern, die
-schlechteste bei 0,025 — rund 200; die Kappen der Prüfkörper sind weg, diese sind noch
-nicht untersucht.
+**Die 189 Splitter am Drehlager: keine Kappe, sondern die Hülle.** Am gespeicherten Netz
+eingeordnet (Löser-Sitzung, 21.09.2026): von 189 Splittern (Güte < 0,10) in fünf Körpern
+haben **0 vier Hüllknoten** (also keine Kappe), **182 drei** und 7 zwei. Bei **allen 189**
+ist die kürzeste Kante eine **Hüllkante** von 0,13 bis 1,36 mm — bei `ziellaenge` = 50 mm
+also zwischen h/37 und h/385. Das Volumennetz hat sie nicht erzeugt, es hat sie **geerbt**:
+die Hüllknoten stehen fest, der Tetraeder muss sie nehmen. Die gebaute Kappen-Kur greift
+an keinem einzigen.
+
+Die naheliegende Gegenmaßnahme — eine **Mindestweite** in der Linien- und Flächenteilung,
+damit die Krümmungsregel (20 Abschnitte je Vollkreis, gleich wie klein er ist) keine
+Sub-Millimeter-Kanten mehr legt — ist gebaut, gemessen und **wieder verworfen worden**.
+Sie senkt die Zahl der engen Hüllkanten deutlich (Platte 1 × 0,6 × 0,2 m mit einer Bohrung
+r = 1 mm bei h = 50 mm: 1 280 → 586) und die Elementzahl um 6 bis 8 %, macht das Netz aber
+**schlechter**, weil die grobe Bohrungssehne dann nicht mehr zum Kranz daneben passt
+(deterministisch wiederholt):
+
+| Prüfkörper | Güte min ohne | mit Mindestweite | Splitter ohne | mit |
+|---|---|---|---|---|
+| Platte, eine Bohrung r = 2 mm | 0,090 | **0,065** | 10 | **15** |
+| Platte, fünf Bohrungen (zwei winzige) | 0,071 | **0,039** | 15 | **25** |
+
+0,039 liegt unter der Abnahmegrenze 0,05 — die Kur war schlimmer als das Übel. Geblieben
+ist die **Diagnose** (`mesher3d._enge_huellkanten`): je Körper eine Warnung mit Zahl,
+kürzester Kante und **Herkunft** der beiden Knoten — auf derselben Linie
+(Krümmungsteilung), zwischen zwei Linien (das ist dann die Geometrie: zwei Kanten laufen
+eng zusammen) oder am Innennetz einer Fläche. Erst diese Unterscheidung sagt, welche Kur
+überhaupt greifen kann; ohne sie ist jede weitere geraten.
+
+**Das Innennetz folgt dem örtlich feinen Rand (`RANDFELD`, 21.09.2026).** Eine Randlinie
+darf nicht neben einer viel feineren stehenbleiben — die Regel oben teilt darum die
+Nachbarlinien eines feinen Merkmals mit. Das Flächeninnere folgte dem **nicht**: es blieb
+bei h. Damit stand ein **Band** feiner Randstrecken gegen ein grobes Inneres, und jedes
+Dreieck dazwischen war ein Splitter; der Sweep zog jedes davon über alle Lagen zum Keil
+aus. Am Drehlager waren das **992 von 9 368 Keilen unter der Güte 0,10 (10,6 %) bei 0 von
+31 108 Hexaedern** (Statik3D-Sitzung, 21.09.2026).
+
+Jetzt gilt in der Fläche dieselbe Regel wie im Tetraedernetz: `h_lokal = min(h, Randkante
++ 0,25 · d)`, wobei `Randkante` die Länge der nächsten Randstrecke ist. Eingeschaltet wird
+sie erst, wenn eine Randstrecke höchstens halb so lang ist wie h (`RANDFELD_SCHWELLE`) —
+bis zum Verhältnis 2 trägt die gleichmäßige Teilung noch. Nachgestellt an einer gesweepten
+Platte 200 × 100 × 35 mm, deren Umriss eine Stufe von 0,45 mm hat (h = 50 mm — derselbe
+Fall wie Element 11313 in V35 mit seiner 0,456-mm-Kante):
+
+| | Elemente | Güte min | unter 0,10 |
+|---|---|---|---|
+| Sweep, ohne Randfeld | 116 | 0,054 | **34** |
+| **Sweep, mit Randfeld** | 168 | **0,122** | **0** |
+| tet4, ohne Randfeld | 1 646 | 0,052 | 13 |
+| **tet4, mit Randfeld** | 2 701 | **0,131** | **0** |
+
+Drei Dinge sind daran wichtig. **Erstens**: die Ursache ist nicht die Paarung. Die
+Vermutung, die Paarung lasse die Splitterdreiecke als Keile übrig, ist nachgemessen und
+trägt nicht — an einer Platte mit drei Bohrungen sind die 68 übrigen Dreiecke im Mittel
+0,774 gut, die 68 schlechtesten hätten 0,664. **Zweitens**: der Tetraederweg war nie die
+bessere Wahl. Er kommt am selben Körper auf dieselbe schlechteste Güte (0,052 gegen 0,054)
+mit dem **Vierzehnfachen** an Elementen; „lieber ganz Tetraeder" hätte nichts geheilt.
+**Drittens**: wo der Rand nicht örtlich fein ist, kostet die Regel nichts (Platte mit
+Bohrung: 1 064 Elemente und Güte 0,316 in beiden Fällen).
+
+**MMG3D: Rückfall auf `-optim`.** Schlägt der Lauf **mit** Metrik fehl, wird er ohne sie
+wiederholt (`-optim`, der Weg vor dem Größenfeld), bevor der Körper aufgegeben wird. Am
+Drehlager war genau das der Unterschied zwischen einem brauchbaren und einem teuren Netz:
+V34 scheiterte im Metrik-Lauf, behielt seinen Tetraeder der Güte 0,000, und die
+Gütekontrolle erzwang eine Vernetzung mit 33,3 statt 50 mm — **69 589 statt 49 274
+Tetraeder**, also teurer als vorher. Dazu wird der **Grund** aus MMGs Ausgabe gelesen und
+nicht nur ihr Ende: MMG sucht neben der Eingabedatei von sich aus eine gleichnamige `.sol`
+und schreibt, wenn keine da ist, „`** … netz.sol NOT FOUND. USE DEFAULT METRIC.`" — eine
+Warnung, die am Schluss steht. Wer die letzten Zeichen meldet, nennt genau sie; so stand
+im Drehlager-Protokoll „netz.sol NOT FOUND", obwohl die Metrik geschrieben war
+(`vernetzer_extern._mmg_grund`).
 
 ## 6b Netzqualität (`netzguete.py`)
 
@@ -3817,6 +4458,18 @@ zwei Runden, Budget 3× (21.09.2026):
 | 1 (h = 30 mm) | 441 hex8/pent6 | 3 à 26,7 mm | 13,7 % |
 | 2 | 1 456 | 7–8 à 10–11 mm | 13,4 % |
 | 3 | 4 972 | 11–12 à 7 mm | **9,2 %** |
+
+**Woher die Elementspannung kommt — ein Vorbehalt.** `res.solid_res` trägt für ein
+**elastisches** Element mit mehreren Auswertepunkten den Punkt mit der **höchsten**
+Vergleichsspannung, für ein **fließendes** dagegen nur die **Mitte** (Löser-Sitzung,
+21.09.2026; der Grund dort ist ein Nachweis-Argument: an einer Ecke schießt die gemeldete
+Spannung sonst über die verfestigte Fließgrenze). In einem Netz mit fließenden und
+elastischen Elementen nebeneinander vergleicht der Sprung also **Maximum gegen Mitte** —
+genau an der Fließgrenze, und ein Teil des gemessenen Sprungs ist dann der Regelwechsel
+und nicht das Netz. Für tet4 ist das gleichgültig (ein Punkt), für hex8/pent6/pyr5 nicht.
+Führt der Löser ein einheitliches **Mittel über die Gaußpunkte** als eigenes Feld
+(`netzfehler.MITTELFELD`, heute `solid_mittel`), liest der Schätzer es bevorzugt — ohne
+weitere Änderung.
 
 **Der Probelauf.** Die Schleife rechnet je Durchgang mit `solve_static(…, probelauf=True)`
 — einem Kontaktschritt aus dem Anfangszustand der Fugen; sein Ergebnis ist ein Netzmaß,
@@ -3956,6 +4609,466 @@ diesem nichtssagenden Fehler, während der eigentliche Grund verdeckt bleibt.
 `run_gui._stroeme_sichern` legt vor `freeze_support()` einen stillen
 Ersatzstrom unter, den die Arbeitsprozesse erben. `parallel._melden` tat das
 schon für die eigenen Meldungen; die Bibliothek erreichte es nicht.
+
+### 7.2 Ein neu vernetztes Modell muss dasselbe rechnen (21.09.2026)
+
+Diese Prüfung fehlte, und ihr Fehlen hat einen Tag gekostet. Am Drehlager
+sprang die größte Verschiebung beim Neuvernetzen von **0,2716 auf 1,2718 mm** —
+Faktor 4,7, rein elastisch, beide Läufe kontaktkonvergiert. Die Spannung blieb
+dabei richtig (388,0 gegen 387,4 N/mm²): das Tragwerk **wandert als Ganzes**
+(Mittelvektor −0,685; −0,057; −0,242 mm, Körpermaxima alle um 1,15 mm), es
+verformt sich nicht anders. Durch Messung ausgeschlossen wurden der Sweep, die
+entarteten Keile, die Plastizität, `Model.netzknoten_loeschen` und der
+Messweg; der Fehler tritt auch auf dem Stand **vor** dem neuen Vernetzer auf.
+
+`tests/test_neuvernetzen.py` ist die Prüfung, die das hätte finden müssen:
+zwei Körper mit **eigenen** Trennflächen (so kommt es aus RFEM, die Netze
+passen nicht Knoten für Knoten), eine Kontaktbedingung dazwischen, ein
+**geometriegebundenes** Flächenlager und Eigengewicht — vernetzen, rechnen,
+noch einmal vernetzen, wieder rechnen, vergleichen. Geometriegebunden ist der
+Kern: Lager und Lasten müssen das Neuvernetzen überleben, ohne dass jemand sie
+nachsetzt, und genau das tut `mesher.modell_vernetzen` im letzten Schritt.
+
+**Ein Fehler ist damit gefunden und behoben.**
+`Model._knotenverweise_abbilden` zog `ContactPair.slave_nodes` nach, aber
+**nicht `master_faces`** — und das sind Knotenlisten (drei oder vier Knoten je
+Facette, `contact.py` liest sie als Knotennummern). Nach dem Löschen eines
+Knotens zeigten die Facetten auf fremde Knoten: die Fuge trug an der falschen
+Stelle, **ohne dass eine Spannung falsch geworden wäre** — genau das Bild einer
+Starrkörperbewegung. Ohne die Behebung wandern in der Prüfung 16 von 16
+Facetten nicht mit.
+
+**Der Faktor 4,7 ist erklärt — und er hatte mit dem Vernetzen nichts zu
+tun.** Die Auflösung steht in § 7.3: das **gespeicherte** Modell hatte seine
+Bemessungslast verloren. 1,2717 mm ist der belastete Zustand, 0,2716 mm der
+nahezu unbelastete; die gerechnete Auflagersumme des geladenen Modells war
+2717 N gegen rund 10 MN Sollast. Auch die Kontaktschritte (167 gegen 95)
+folgen daraus: unter Last braucht die Aktivmenge länger.
+
+Der Weg dahin ist es wert, festgehalten zu werden, weil auf ihm **vier**
+Vermutungen gefallen sind, die alle plausibel klangen:
+
+1. *Der Sprung kommt vom Netz.* Gefallen: derselbe Netzstand rechnet im
+   Prozess anders als nach Speichern und Laden — ein Prozess, ein Netz.
+2. *`to_dict` verliert einen Modellzustand.* Verengt statt gefallen: 63 Felder
+   des Modellobjekts unterscheiden sich **nicht**. Genau ein Feld tat es,
+   und es war `load_cases['LF1'].face_loads` — 2750 gegen 0.
+3. *Das Tragwerk wandert als Ganzes.* **Gefallen**, obwohl der Mittelvektor
+   der Verschiebung (−0,685; −0,057; −0,242 mm, Betrag 0,7287 mm) genau zum
+   Mittel der Beträge (0,7425 mm) passte und damit eine reine Verschiebung
+   nahelegte. Eine Ausgleichsrechnung u ≈ t + ω × x über alle Knoten hat es
+   widerlegt: nach Abzug von t und ω blieben die **Reste** beider Läufe um
+   803 % verschieden. Die Läufe tragen wirklich anders ab — weil der eine
+   belastet war und der andere nicht.
+4. *Ein Bauteil hält nur über den Kontakt und rutscht.* Unnötig geworden.
+
+Die Lehre daran ist nicht „mehr messen", sondern **was** man misst: die
+Verschiebung war drei Sitzungen lang das Maß, und sie zeigt nur die Wirkung.
+Die Ursache stand in der **Last**, und die hat vorher niemand nachgezählt —
+eine Zeile `solver.case_loads(m, {"LF1": 1.0}, None)` hätte es an jedem Tag
+davor gezeigt.
+
+### 7.3 Ein geladenes Modell muss dieselbe Last tragen (21.09.2026)
+
+Lasten, die an der **Geometrie** hängen — eine Flächenlast auf einer Fläche,
+eine Linienlast auf einer Linie —, können erst wirken, wenn es dort Elemente
+gibt. `Model.lasten_verteilen` legt sie auf die Elementseiten und kennzeichnet
+die entstandenen Elementlasten mit `_geo`. Gespeichert werden sie
+**absichtlich nicht** (`LoadCase.to_dict` schreibt nur `eigene(...)`): sonst
+lägen sie nach dem nächsten Verteilen doppelt auf dem Netz.
+
+Erzeugt hat sie beim Laden aber **niemand wieder.** `lasten_verteilen` hing am
+Vernetzen, und ein geladenes Modell hat schon ein Netz — die Oberfläche
+vernetzt vor der Rechnung nur, was keines hat (`_vor_rechnung_vernetzen`
+kehrt bei vollständigem Netz sofort zurück). Der Anwender öffnete seine Datei,
+drückte Berechnen und rechnete **ohne seine Bemessungslast**.
+
+| Drehlager, LF1 „Bemessungslast im GZT" | Σ F_x | Σ F_z | `face_loads` |
+|---|---|---|---|
+| gespeichertes Modell, wie geladen | 0,0 N | 0,0 N | 0 |
+| dasselbe Modell nach dem Vernetzen | −3 968 599 N | −9 259 435 N | 2 750 |
+| nach Speichern und Laden | 0,0 N | 0,0 N | 0 |
+
+Die **Norm** des Lastvektors täuschte dabei (5,385·10⁶ gegen 5,424·10⁶ N) —
+sie steckt fast ganz in sechzehn Temperaturlasten, die sich selbst ausgleichen.
+Erst die **Resultierende** zeigt es: 9,26 MN senkrecht fielen auf exakt null.
+
+**Behoben** in `Model.from_dict`: hat das geladene Modell Elemente und
+Objektlasten, wird einmal verteilt. Das Verteilen ist wiederholbar (es räumt
+die `_geo`-Lasten vorher weg), und ohne Netz oder ohne Objektlasten kostet es
+nichts.
+
+**Was es kostet, und was das kostete.** Die erste Fassung machte das Laden des
+Drehlagers von 6,6 auf **77,8 s** — 1 013 100 verteilte Lasten über 422
+Lastfälle. Gemessen an einem Balken mit einem Lastfall waren es 7,9 µs je
+Last, am Drehlager aber 69 µs. Der Unterschied lag nicht an der Modellgröße
+(von 250 auf 128 000 Elemente ändert sich nichts) und nicht an der Müllabfuhr
+(abgeschaltet dieselbe Zeit) — **840 der 2262 Geometrielasten sind
+projiziert**, und keine einzige hat Bereich oder Verlauf. Zwei Dinge waren
+daran teuer:
+
+* `_geometrielast_legen.nimm` berechnete die **Seitenmitte für jede Seite** —
+  auch für Lasten, die sie ohne Bereich und Verlauf nie lesen, und auch für
+  die Hälfte der Seiten, die unmittelbar danach am Windschatten scheitert.
+  Jetzt steht die Windschattenprobe zuerst, und die Mitte wird nur berechnet,
+  wenn jemand sie liest.
+* `_seitennormale` rief `np.cross` auf. Für einen Dreivektor geht das über
+  `moveaxis` und `normalize_axis_tuple` und kostete im Profil **0,150 von
+  0,312 s**. Ausgeschrieben ist es dieselbe Rechnung.
+
+| Drehlager laden | |
+|---|---|
+| JSON lesen | 3,0 s |
+| `from_dict` ohne Verteilen | 2,89 s |
+| Verteilen, erste Fassung | rund 70 s |
+| **Verteilen, jetzt** | **12,48 s** (12,3 µs je Last) |
+| `from_dict` mit Verteilen | **14,94 s** |
+
+Faktor 5,6, und die Resultierende bleibt auf die Stelle dieselbe
+(−3 968 598,9 / −0,0 / −9 259 435,0 N). Die verbleibenden 12,3 µs sind die
+Arbeit selbst: Normale je Seite, Ablehnung im Windschatten, ein `FaceLoad`.
+
+**Warum die Prüfungen es nicht fanden**, obwohl es zwei gab, die genau
+hinsahen — das ist der lehrreiche Teil:
+
+* `test_lasten.test_speichern_linienlast_zwang` prüfte
+  `len(lc.beam_loads) == 0` und rief danach `m2.lasten_verteilen()` **von
+  Hand** auf. Sie hielt damit die *Speicherregel* fest und schrieb den Fehler
+  fest: dass niemand von selbst verteilt, hat sie nie geprüft.
+* `test_lasten.test_temperatur_objektlast` trug den Namen „Speichern ohne die
+  abgeleiteten Lasten, **Laden verteilt neu**" — und prüfte
+  `len(lc.temp_loads) == 0`. Name und Zusicherung widersprachen sich seit dem
+  Tag, an dem sie geschrieben wurde. Der Name hatte recht.
+
+Die neue Prüfung `test_geladenes_modell_traegt_dieselbe_last` sieht darum
+nicht auf die **Zahl** der Lastobjekte, sondern auf den **Lastvektor** selbst
+(`solver.case_loads`): gespeichert und geladen muss dieselbe Resultierende
+herauskommen, in allen drei Richtungen, und zweimaliges Laden darf sie nicht
+verdoppeln.
+
+### 7.3a Der Lastverlust hatte Geschwister (22.09.2026)
+
+Die Frage des Anwenders nach § 7.3 lautete: *„oder ist das wieder ein
+Zählfehler? ggf auch ein Speicher- und Öffnen-Fehler im Format"*. Beides war
+zu beantworten, und die Antwort ist zweigeteilt.
+
+**Ein Zählfehler war es nicht.** Gemessen wurde die Wirkung — der Lastvektor
+selbst über `solver.case_loads`, ohne zu rechnen. Zählfehler waren die drei
+*Prüfungen*, die es nie fanden: sie zählten `len(face_loads)` statt die
+Resultierende zu messen.
+
+**Ein Formatfehler war es sehr wohl — und nicht der einzige.** Eine
+systematische Durchsicht des Speicher- und Ladewegs (sieben Bereiche, jeder
+Befund von einem Gegenprüfer zu widerlegen versucht) fand **sechs weitere
+Stellen** desselben Musters. Die schwerste ändert die Physik:
+
+> **Die Lochleibungsgrenze verschwand beim Speichern.**
+> `ContactPair.knotenflaechen` ist {Knotennummer: Einflussfläche}, mit
+> **ganzzahligen** Schlüsseln gebaut (`fugen._passungsdaten`) und mit
+> ganzzahligen gelesen (`contact.py`, Lochleibungsgrenze). JSON kennt nur
+> Zeichenketten als Schlüssel; nach dem Öffnen fand die Abfrage nichts und
+> gab 0,0 zurück — und **0,0 heißt dort „keine Grenze"**. Gemessen:
+> **2,100 kN vor dem Umlauf, 0,000 kN danach.** Die Passung trug damit
+> unbegrenzt, statt bei der Grenzpressung zu fließen. Still, ohne Meldung, in
+> jedem gespeicherten Modell mit Passung.
+>
+> Dasselbe Muster ist beim Lagerverhalten (`behaviour`) seit jeher behoben
+> (`model.py`, `_lager_aus_dict`: `{int(k): ...}`) — hier war es vergessen.
+> Behoben in `Model.from_dict`;
+> `tests/test_kopie.py::test_ganzzahlige_schluessel_ueberleben_den_umlauf`
+> prüft die **Wirkung** (die Grenzkraft), nicht den Schlüsseltyp: ein Typ ist
+> leicht zu prüfen und sagt nichts darüber, ob jemand ihn liest.
+
+Die übrigen fünf, alle belegt, keiner widerlegt — sie sind aufgeschrieben,
+damit sie nicht verlorengehen:
+
+| | Stelle | Folge |
+|---|---|---|
+| Ein im Browser **kopierter Lastfall** verliert seine Geometrielasten | `web/server.py` `_op_copy_case` | derselbe Ausfall wie § 7.3, nur beim Kopieren statt beim Öffnen; der Desktop macht es mit `copy.deepcopy` richtig |
+| Die Weboberfläche **zählt abgeleitete Lasten als eingegebene** | `web/server.py` `_loads_of` (`asdict` kennt `_geo` nicht) | „Last entfernen" trifft über den Index eine abgeleitete Last: der Klick sieht erfolgreich aus, ist folgenlos und verschiebt den Index der echten Last |
+| **Eigenfrequenzen, Eigenformen, Knicklastfaktoren** werden nicht gespeichert | `ergebnisse.py` packt nur Lastfälle und Kombinationen | nach dem Öffnen fehlen die Berichtskapitel ersatzlos; die Rechnung sieht vollständig aus |
+| Die gerechnete **Stellungsreihe** fehlt nach dem Öffnen | `gui/main.py` schreibt nur `self.analysis` | die ZTV-ING-Prüfliste meldet „keine Stellungsreihe angelegt", obwohl die Stellungen in der Datei stehen |
+| **Knicklängen** werden geschrieben, aber nicht zurückgelesen | `ergebnisse.py` | der Bericht druckt sie, die Oberfläche sagt, es gebe sie nicht — zwei Aussagen über dieselbe Rechnung |
+
+**Was diese sieben gemeinsam haben, ist die Lehre.** Keiner stürzt ab, keiner
+meldet etwas, jeder gibt eine plausible Zahl zurück. Ein Format, das
+abgeleitete Daten bewusst weglässt, ist richtig — aber jede weggelassene
+Größe braucht eine Stelle, die sie beim Laden **wieder erzeugt**, und eine
+Prüfung, die die **Wirkung** misst statt die Anwesenheit.
+
+### 7.4 Rechenketten trotz eingefrorener Zustände (22.09.2026)
+
+Am Drehlager liefen **alle 422 Lastfälle hintereinander in einem Prozess** —
+die Elementschleifen parallel im Pool, die Lastfälle nacheinander. Der erste
+Grund dafür ist die Vorgabe `ketten = 1` (`parallel.py`, „nacheinander");
+beim Anwender ist nichts anderes eingestellt. Wären die Ketten
+eingeschaltet gewesen, hätte eine zweite Zeile sie gesperrt (eine frühere
+Fassung nannte nur diese und sagte „nicht, weil die Rechnung es verlangte,
+sondern wegen einer Zeile"; Nachprüfung der Lösersitzung vom 22.09.2026):
+
+```python
+if system is None and not referenzen and len(names) > 1:
+```
+
+`referenzen` sind die eingefrorenen Zustände der Ermüdungslasten
+(`ermuedungsreferenzen`): der erste Zustand jeder Ermüdungslast wird
+nichtlinear gerechnet, die weiteren mit seinem eingefrorenen Kontaktzustand
+linear. Am Drehlager sind das **161 von 164 Zuständen** (Programmprotokoll
+vom 19.09.2026: „161 Zustände werden mit dem eingefrorenen Kontaktzustand
+des ersten Zustands ihrer Ermüdungslast linear gelöst"); 261 der 422
+Lastfälle rechnen nichtlinear. `referenzen` war also nie leer, und die
+Sperre hätte immer gegriffen. (Eine frühere Fassung schrieb 117 — ebenso der
+Kommentar im Löser und die Nachricht zu 7d03525; Nachprüfung der Lösersitzung vom 22.09.2026.)
+
+**Der Grund für die Sperre war echt.** `_einfrieren` findet den eingefrorenen
+Zustand nur, wenn seine Referenz **in demselben Lauf** schon gerechnet wurde;
+liegt sie in einer anderen Kette, gibt es still `(None, None)` und der Zustand
+rechnet voll nichtlinear. Kein falsches Ergebnis — aber der ganze Gewinn ist
+weg, und **niemand sieht es**. Ein stiller Rückfall ist schlimmer als ein
+lauter Fehler.
+
+**Die Kur ist nicht, die Sperre zu lösen, sondern anders zu schneiden.**
+`_referenzgruppen` fasst eine Referenz und alle Zustände, die sie einfrieren,
+zu einer **unteilbaren Gruppe** zusammen — über Zusammenhangskomponenten, weil
+ein Zustand grundsätzlich selbst Referenz eines dritten sein könnte.
+`_ketten_teilen` schneidet nur an Gruppengrenzen. Eine Gruppe, die größer ist
+als die Zielgröße, bekommt ihre eigene Kette; die Ketten werden dadurch
+ungleich lang. Das ist die richtige Seite zum Irren: **ungleiche Ketten kosten
+Wartezeit, eine verlorene Referenz kostet einen vollen nichtlinearen
+Lastfall.**
+
+Der zweite Teil der Sperre saß im Auftrag: `jobs._job_solve_kette` gab
+`referenzen` nicht weiter. Ohne das hätte die neue Aufteilung nichts genützt —
+in der Kette wäre jeder Zustand voll gerechnet worden, und zwar still.
+
+**Wo der Hebel wirklich sitzt — und wie klein er am Drehlager ist.** Die
+Zustände **einer** Ermüdungslast hängen alle an derselben Referenz und bilden
+damit eine einzige Gruppe — da gibt es nichts zu teilen. Der Gewinn entstünde
+**zwischen** den Lasten. Am Drehlager sind es zwar 50 Ermüdungslasten, sie
+fallen aber zu nur **drei** Referenzgruppen zusammen (LF401 mit 79, LF601 mit
+81 und LF402 mit 1 eingefrorenen Zustand), weil spätere Lasten den schon
+eingefrorenen ersten Zustand weiterreichen. Bei sechs Ketten ergibt
+`_ketten_teilen` — nur über die Namen nachgebildet, ohne Löser — Ketten mit
+80/2/82/71/71/116 Lastfällen, davon nichtlinear 1/1/1/71/71/116: drei Ketten
+haben kaum etwas zu tun, die längste trägt 116 der 261 nichtlinearen. Ein
+Gewinn durch Ketten ist am Drehlager **nicht gemessen**; nach der Kernlast
+auf 16 physischen Kernen ist er auf höchstens rund Faktor 1,4 geschätzt
+(eine frühere Nachricht nannte „Faktor 2,6, 81 h → 30 h" und rechnete dabei
+mit 32 statt 16 Kernen).
+
+**Die Threads der Ketten.** Bis zum 22.09.2026 bekam jede Kette die volle
+eingestellte Threadzahl: beim Anwender stehen 31 in `einstellungen.json`,
+sechs Ketten forderten damit je 31 Löser-Threads — MKL kappt nur innerhalb
+eines Prozesses auf die 16 physischen Kerne, also bis zu 96 Threads auf 16
+Kernen. Jetzt ist die Einstellung das Budget des Rechners und wird geteilt
+(`threads_je_kette`: 31 bei sechs Ketten → je 5), wie es ohne Einstellung
+schon immer war.
+
+**Und sie ändert die Zahlen.** Das ist der Punkt, der dazugehört:
+
+| | eine Kette | zwei Ketten |
+|---|---|---|
+| eingefrorene Zustände | 8 | **8, dieselben** |
+| erste Kette, max \|Δu\| | — | **0,000 (bitgleich)** |
+| zweite Kette, max \|Δu\| | — | 4,70·10⁻⁹ m (**1,2·10⁻³** relativ) |
+| Kontaktschritte des zweiten Kopfes | 5 (warm) | **21 (kalt)** |
+
+Die erste Kette sieht dieselbe Folge wie der Einzellauf und rechnet bitgleich.
+Die zweite beginnt mit einem **kalten Kopf**: ihr erster Lastfall startet aus
+der Geometrie statt aus dem Kontaktzustand des Vorgängers, braucht 21 statt 5
+Schritte — und landet in einem geringfügig anderen Zustand, den die
+eingefrorenen Zustände dahinter erben.
+
+Der Warmstart ist also nicht nur eine Beschleunigung; er bestimmt mit, **wo**
+die Kontaktiteration zur Ruhe kommt. Dass der kalte Kopf dabei der
+unabhängigere und damit eher vertrauenswürdigere Wert ist, macht die Sache
+nicht kleiner: **wer die Zahl der Ketten ändert, ändert die Ergebnisse in der
+dritten Stelle.** Wer zwei Läufe streng vergleichen will, lässt die Kettenzahl
+gleich — und setzt zusätzlich `MKL_CBWR=AUTO` (§ 7.5).
+
+`tests/test_solver_ext.py::test_ketten_mit_eingefrorenen_zustaenden` hält alles
+davon fest: keine Gruppe wird zerschnitten (k = 1, 2, 3, 4, 9), jeder Lastfall
+kommt genau einmal vor, es entstehen nie mehr Ketten als angefordert, dieselben
+Zustände sind eingefroren wie ohne Ketten, die erste Kette ist bitgleich, die
+zweite weicht ab — aber nur in der dritten Stelle.
+
+**Ein Fehler, der beim Bauen auffiel und hier steht, weil er wiederkommen
+wird:** die erste Fassung schnitt jede Gruppe ab, die die Zielgröße sprengte,
+und erzeugte damit **mehr Ketten als angefordert** — aus k = 3 wurden vier. Da
+`_cases_in_ketten` so viele Prozesse startet, wie es Blöcke gibt, und eine
+Kette am Drehlager 9,5 GB belegt, wären das 38 statt 28,5 GB gewesen. Eine
+Aufteilung, die mehr Teile macht als bestellt, ist kein Randfall — sie ist ein
+Speicherfehler mit Anlauf.
+
+**Und was zwei Gegenlesungen daran gefunden haben.** Der Umbau wurde nach dem
+Bauen zweimal angegriffen — einmal er selbst, einmal die Kuren, die aus der
+ersten Runde folgten; jeder Vorwurf ging an einen Gegenprüfer, dessen Auftrag
+das Widerlegen war. Von 33 Vorwürfen der ersten Runde hielten 7, von 26 der
+zweiten 8. **Drei davon waren neue Fehler, die der Umbau selbst eingeführt
+hatte:**
+
+| | |
+|---|---|
+| Der Kettenaufruf lag **vor** dem `try`, das jeden fertigen Lastfall rettet (`_teil_merken`, § 19.09.2026). Brach eine Kette, waren die Ergebnisse **aller anderen** weg — auf genau dem Weg, der für das Drehlager gebaut wurde. |
+| Der neue Auftragsschlüssel `referenzen` brachte eine Rechenhilfe älteren Stands mit `TypeError` zu Fall. Er wird jetzt nur mitgegeben, wenn es welche gibt. |
+| Die Referenzordnung galt über **alle** Lastfälle und zerriss damit die Ordnung nach Situationen, die derselbe Docstring zusichert. Drei unabhängige Blickrichtungen fanden das getrennt. |
+
+Die zweite Runde traf eine dieser Kuren selbst: eine Fassung zog die
+Lastfallmarken nach, damit die Rechenliste ihre Posten abschließt. Sie ist
+**zurückgenommen** — die Schleife stand vor der Rettung und in keinem `try`,
+also hätte ein Abbruch genau das mitgenommen, was die Rettung sichern sollte;
+der gemeldete Anteil sprengte das Fenster der Lastfälle (Balken auf 100 %, dann
+zurück auf 60 %); und die Marken kommen ohnehin erst, wenn alle Ketten zurück
+sind, sodass ein Lastfall 4:12:00 behauptet hätte und 421 je 0:00.
+
+**Was davon als Einschränkung bleibt, steht hier statt in einer Anzeige:** auf
+dem Kettenweg schließen die Zeilen der Rechenliste erst am Ende des Laufs, und
+der Abbruch greift zwischen den Ketten, nicht zwischen den Lastfällen. Eine
+falsche Anzeige wäre schlechter als eine ausbleibende.
+
+### 7.5 Zwei Läufe sind nicht bitgleich (22.09.2026)
+
+Der Gleichungslöser ist **mit mehreren Kernen nicht wiederholbar**. Gemessen an
+einem 50×50×50-Laplace (125 000 Zeilen, 860 000 Nichtnullen), dreimal dieselbe
+Matrix und dieselbe rechte Seite, Threadzahl über `_mkl_threads_setzen`; die
+Zeiten an einem 60³-Gitter (216 000 Zeilen, 16 Threads):
+
+| `MKL_CBWR` | 1 Thread | 16 Threads | Zeit |
+|---|---|---|---|
+| nicht gesetzt | bitgleich | **nicht bitgleich** (2,22·10⁻¹⁵, 4,9·10⁻¹⁶ relativ) | 3,707 s |
+| `AUTO` | bitgleich | bitgleich | 4,186 s (+13 %) |
+| `AVX2` | bitgleich | bitgleich | 4,123 s (+11 %) |
+| `COMPATIBLE` | bitgleich | bitgleich | 5,078 s (+37 %) |
+
+MKL summiert die Zahlenphase der Faktorisierung parallel; wie die Arbeit auf
+die Threads fällt, hängt am Zeitverhalten. Das ist Intels *conditional
+numerical reproducibility* — und `AUTO` ist der richtige Schalter, wenn zwei
+Läufe **auf derselben Maschine** vergleichbar sein müssen: er bindet an deren
+Befehlssatzbranche, statt wie `COMPATIBLE` auf SSE2 zurückzufallen.
+
+**Das Aufstellen ist davon nicht betroffen — auch nicht bei verschiedener
+Prozesszahl.** `parallel.Arbeiter.map` benutzt `pool.map` (reihenfolgetreu),
+jeder Block legt seine Elementmatrizen an ihrer **Position** ab
+(`_matrix_chunk`: `out[pos] = …`), und die Blöcke werden der Reihe nach
+aneinandergehängt. Die Tripel stehen damit bei jeder Blockgröße in derselben
+Elementreihenfolge, und die Summation von `coo` nach `csr` ist festgelegt.
+Abweichen kann nur, **ob ein Sechsflächner im Stapel oder einzeln**
+gerechnet wird: gestapelt wird ab acht Sechsflächnern gleichen Werkstoffs in
+einem Block, und das hängt an den Blockgrenzen; beide Wege unterscheiden sich
+um bis zu 6·10⁻¹⁶. (Eine frühere Fassung sagte, andere Blöcke hießen andere
+Summationsreihenfolge — das ist falsch; Nachprüfung der Lösersitzung vom 22.09.2026.)
+
+**Warum das mehr ist als eine Fußnote.** 4,9·10⁻¹⁶ ändern keine Spannung —
+solange nichts an einer Schwelle steht. Ob sie am Drehlager genügen, um den
+Kontaktweg zu verzweigen, ist **nicht belegt**. Gemessen ist: das
+ausgelieferte Programm nahm dort in drei Läufen denselben Weg (höchstens
+0,0004 N/mm² auseinander); zwei Läufe einer Versuchsfassung mit symmetrischer
+Zerlegung nahmen verschiedene Wege und lagen um bis zu 273 N/mm² auseinander
+(§ 3, Deckel). Eine frühere Fassung sprach hier von
+„derselbe Lauf, 150 und 162 Kontaktschritte, vierte Stelle der Verformung":
+die beiden Läufe stammten aus zwei verschiedenen Programmständen, einen
+wiederholten Lauf gab es nicht, und die Abweichung lag in den Spannungen weit
+über der vierten Stelle (Nachprüfung der Lösersitzung vom 22.09.2026). Ein Lauf, der als „ergebnisgleich"
+abgenommen wird, ohne dass diese Streuung ausgeschlossen wurde, sagt nichts
+über die Änderung aus, die er belegen sollte — sondern nur, dass zwei Läufe
+zufällig denselben Weg genommen haben. Ob `MKL_CBWR=AUTO` die Wege am
+Drehlager gleich macht, misst die Lösersitzung gerade.
+
+Für die Praxis heißt das: **jede Gleichheitszusage an einem Kontaktmodell
+gehört mit `MKL_CBWR=AUTO` gemessen**, und wenn sie es nicht wurde, gehört das
+dazugesagt. In der Auslieferung steht der Schalter nicht — 13 % zahlt man nicht
+dauernd für eine Eigenschaft, die man nur beim Vergleichen braucht.
+
+### 7.6 Ein nicht geführter Nachweis ist kein erfüllter (22.09.2026)
+
+Nach dem Lastverlust (§ 7.3) und seinen sechs Geschwistern (§ 7.3a) wurde das
+ganze Programm nach **derselben Art Fehler** durchgesehen: solchen, die still
+sind. Kein Absturz, keine Meldung, eine plausible Zahl. Zehn Blickrichtungen
+lasen den Quelltext, **jeder** Befund ging an einen Gegenprüfer, dessen Auftrag
+das Widerlegen war: **44 geprüft, 36 gehalten, 8 widerlegt.**
+
+Fünf davon sind hier behoben — die, bei denen ein Statikdokument etwas
+behauptet, das nicht stimmt.
+
+**Ein Stab ohne Streckgrenze stand als „erfüllt" im Bericht.**
+`MemberCheck.status()` kannte zwei Fälle. Ein übersprungener Stab bekam
+Ausnutzung 0,000 und damit „erfüllt"; seine Null berührte weder die größte
+Ausnutzung noch die Liste der nicht erfüllten. Der Nachbarnachweis Volumen
+(`VolumenCheck`) unterscheidet an derselben Stelle seit jeher **drei** Fälle —
+hier waren es zwei. Jetzt gibt es `MemberCheck.fehler` und den Zustand „nicht
+geführt".
+
+**„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
+`self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in
+der Liste der geführten Nachweise. Ein Modell, das nur aus Volumen besteht — am
+Drehlager der Regelfall —, bekam entweder „Es wurden keine Nachweise geführt"
+oder „Alle Nachweise erfüllt", während der geführte Nachweis riss. Die eine
+Zeile, die ein Prüfer als Gesamturteil liest, sagt jetzt:
+*„Alle **geführten** Nachweise erfüllt – nicht geführt wurden: …"*
+
+**Theorie II./III. Ordnung scheiterte still.** Der `ValueError` landete in
+`an.info["warnungen"]` — einem Schlüssel, der im ganzen Programm **einmal
+geschrieben und nirgends gelesen** wird. Das **lineare** Ergebnis blieb unter
+demselben Namen stehen, und die Lastfalltabelle druckte weiter die
+*eingestellte* Theorie. Zusatzmomente aus der Verformung und die
+Vorkrümmungen fehlten vollständig; alle darauf aufbauenden Nachweise rechneten
+mit zu kleinen Momenten. Der Kombinationszweig macht es seit jeher richtig
+(`Th3Info(fehler=…)`) — nur der Lastfallzweig nicht. Jetzt trägt das Ergebnis
+`info["theorie"]`, `info["theorie_gewuenscht"]` und `info["theorie_fehler"]`,
+das Theoriekapitel bekommt einen Eintrag, und die Tabellenspalte zeigt
+*„I (statt III: nicht gerechnet)"*.
+
+**Ermüdung: ein fehlender Mindestzustand wurde still zu null.** `case_min`
+angegeben, aber nicht gerechnet, fiel in denselben Zweig wie „kein
+Mindestzustand angegeben". Gemessen an einem Kragarm:
+
+| | Schädigung D |
+|---|---|
+| beide Zustände gerechnet | **14,0785** |
+| alter Stand (still genullt) | **2,4140** |
+
+**Faktor 5,8 zu klein, auf der unsicheren Seite** — und mit m = 5 wäre es mehr.
+Der fehlende **Höchst**zustand wurde immer gemeldet, der Mindestzustand nicht;
+diese Unsymmetrie war der Fehler.
+
+**Ausfallstäbe und Seile machen das System nichtlinear.** `_nichtlinear()`
+kannte nur Kontakt und Fließen, obwohl das Modell `hat_ausfallstaebe()` seit
+jeher hat und der Löser es an zwei anderen Stellen abfragt. Jeder Lastfall
+wurde mit einer **anderen** Menge tragender Stäbe gerechnet, und die Summe
+solcher Ergebnisse steht in keinem Gleichgewicht eines wirklichen Zustands. An
+einem Balken auf zwei Nur-Zug-Hängern gemessen:
+
+| | max \|u\| |
+|---|---|
+| direkt gerechnet | **0,9401 mm** |
+| überlagert | **2,0794 mm** |
+
+**121 % daneben.** In Lastfall A fällt kein Hänger aus, in B fallen beide aus —
+die Überlagerung mischt zwei unvereinbare Zustände. Die Abfrage läuft über alle
+Elemente (4,5 ms bei 67 500); bei Kontakt oder Fließen schließt `or` kurz, und
+im linearen Fall gibt `solve_combinations` die Antwort einmal mit, statt sie je
+Kombination neu zu suchen.
+
+**Drei eigene Fehler beim Beheben**, hier aufgeschrieben, weil sie die Art
+zeigen, die auch ohne Absicht entsteht:
+
+* Eine erste Prüfung rief eine Funktion auf, **die es nicht gibt** — der Zweig
+  lief leer durch und bestand vakuum. Genau die Art Prüfung, gegen die dieser
+  ganze Abschnitt geschrieben ist.
+* Eine erste Kur ließ den Stab samt Warnung **ganz aus dem Nachweis fallen**
+  (`if not sammlung: continue`) — ein stiller Fehler gegen einen anderen
+  getauscht. Jetzt bleibt er als „nicht geführt" stehen, im Stab- und im
+  Volumenzweig.
+* Im Volumenzweig stand `name` statt `k.name` — ein `NameError`, den **kein
+  Test gefunden hätte**, weil der Zweig nicht durchlaufen wird. Gefunden durch
+  Lesen.
+
+**Die übrigen 31 Befunde sind nicht behoben**, aber aufgeschrieben (mit Datei,
+Zeile und der Gegenprüfung, die sie nicht widerlegen konnte). Darunter: die
+Netzabnahme meldet „bestanden", obwohl Prüfungen ausgefallen sind; der
+RFEM-6-Import lässt Stablasten still weg und wirft die Lastrichtung von
+Flächenlasten weg; eine Viereckfuge wird nur zur Hälfte gezählt; der
+Volumennachweis rechnet ohne Dickenabminderung.
 
 ## 7a Entartete Elemente
 

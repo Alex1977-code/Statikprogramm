@@ -268,7 +268,23 @@ def ensure_shell_prop(model: Model, name: str = None, t: float = None,
         return name
     if t is None or t <= 0:
         if name is None and model.shells:
-            return next(iter(model.shells))
+            # **Das Erben bleibt, aber es wird genannt.** Eine Flaeche ohne
+            # eigene Dickenangabe bekam stumm die Dicke der zuerst gelesenen:
+            # gemessen 20 mm statt der 10 mm des Rueckfalls, also
+            # Biegesteifigkeit (20/10)^3 = 8fach und die Spannung aus Moment um
+            # den Faktor 4 zu klein - und welcher Wert es wird, haengt allein
+            # daran, welche Flaeche zuerst in der Datei stand.
+            #
+            # Genannt wird **einmal je Protokoll** und nicht je Aufruf: diese
+            # Funktion wird auch je Element gerufen (infocad_txt.py), eine
+            # Zeile je Aufruf waere eine Flut (gemessen 40 Zeilen statt 1).
+            erbe = next(iter(model.shells))
+            meldung = ("WARNUNG: Keine Dicke angegeben - Schalen ohne eigene "
+                       f"Dicke erben '{erbe}' "
+                       f"({model.shells[erbe].t * 1e3:g} mm)")
+            if log is not None and meldung not in log:
+                log.append(meldung)
+            return erbe
         t = 0.010
         warn(log, f"Keine Dicke fuer Schale '{name or 't10'}' - 10 mm angenommen")
     name = name or f"t{t * 1e3:g}"

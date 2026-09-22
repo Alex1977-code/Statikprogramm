@@ -21,6 +21,7 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 
 | Endung | Format | Typische Herkunft | Übernommen wird |
 |---|---|---|---|
+| `.txt` | InfoCAD/InfoGraph | – | Textausgabe von `/ExportTxt` (BEGIN/END-Bloecke): Knoten, Schalen- und Stabelemente, Werkstoffe, Schalendicken, Layer. Lager, Lasten und Ergebnisse nicht – siehe „InfoCAD“ unten |
 | `.json` | Statik3D | – | vollständiges Modell (Format 1 bis 5; Format 3 brachte Linien und Gelenke, Format 4 die **Anschlüsse**, die **Verformungsgrenzen**, die **Beulfelder** (mit Steifen) und die **Lasteinleitungsstellen**, Format 5 die **Volumenbereiche** und die Einstellungen zur **Theorie II. Ordnung**, Format 6 die **Flächen** und **Volumenkörper** der Geometriekette, die **Kontaktbedingungen** (früher „Flächenfreigaben“, der alte Schlüssel wird weiter gelesen) und die in den **Bericht übernommenen Ergebnisbilder**. Ältere Dateien werden gelesen) |
 | `.dxf` | AutoCAD DXF (ASCII, R12–2018) | InfoCAD, RFEM, CAD | LINE, LWPOLYLINE, POLYLINE (2D/3D, Polyface), 3DFACE |
 | `.ifc` | IFC 2x3 / IFC 4 STEP-Datei | InfoCAD, RFEM, Allplan, Revit, Tekla | Statikmodell (Structural Analysis View) oder Bauteilachsen |
@@ -35,16 +36,143 @@ Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
 | `.sza`, `.kra`, `.fga`, `.fig` | HiCAD-Archiv (`!HFA##`, zstd) | HiCAD | Teileliste, Profile mit Katalogwerten, Blechdicken, Werkstoffe, Verbindungsmittel |
 | `.rf5`, `.rfem`, `.rstab`, `.fem`, `.ifm` | proprietär (binär) | RFEM 5, RSTAB, InfoCAD | Behälter wird untersucht; sonst Meldung mit Exportweg |
 
-## InfoCAD
+## InfoCAD / InfoGraph
 
-InfoCAD-Projektdateien sind binär. Exportwege:
+InfoCAD-Projektdateien sind binär. Drei Wege hinein, in dieser Reihenfolge zu
+versuchen:
 
-* **IFC-Statikmodell** (Datei → Export → IFC, Statikmodell / Structural
-  Analysis View): Knoten, Stäbe mit Profil, Flächen mit Dicke, Lager,
-  Lasten und Lastfälle werden übernommen. Empfohlen.
-* **DXF**: Systemlinien und Flächen als Geometrie; Querschnitte werden
-  über Layer zugewiesen (`layer_sections={"Stuetzen": "HEB 200"}`) oder
-  aus dem Standardquerschnitt.
+1. **Textausgabe von `/ExportTxt`** (unten beschrieben): das Netz mit
+   Werkstoffen und Dicken, ohne Lager und Lasten.
+2. **IFC-Statikmodell** (Datei → Export → IFC, Statikmodell / Structural
+   Analysis View): Knoten, Stäbe mit Profil, Flächen mit Dicke, Lager,
+   Lasten und Lastfälle werden übernommen.
+3. **DXF**: Systemlinien und Flächen als Geometrie; Querschnitte werden
+   über Layer zugewiesen (`layer_sections={"Stuetzen": "HEB 200"}`) oder
+   aus dem Standardquerschnitt.
+
+
+Die Projektdatei `.fem` ist ein proprietäres Binärformat (ein Strom benannter
+Datensätze) und wird **nicht** gelesen. InfoCAD schreibt aber auf Anforderung
+eine Textfassung seiner Tabellen:
+
+```
+InfoCADw64.exe modell.fem /ExportTxt:befehle.txt /Out:modell_export.txt
+```
+
+`befehle.txt` trägt je Zeile **einen Tabellennamen** (ASCII, CRLF). Für ein
+Modell genügen `KNOTEN`, `ELEMENTE`, `MAT` und `QUERSW`. Die entstandene
+`.txt` liest Statik3D unmittelbar (`Datei → Öffnen` oder
+`importers.import_file`); erkannt wird sie am Inhalt, nicht an der Endung —
+eine `.txt` ohne `BEGIN <TABELLE> N=…` wird mit Begründung abgewiesen.
+
+**Was ankommt**
+
+| Tabelle | Inhalt | wird |
+|---|---|---|
+| `KNOTEN` | `Nr x y z` in Metern | Knoten |
+| `ELEMENTE` | 13 Spalten, auch bei Dreiecken | Elemente; Typ 11 = Viereckschale, 8 = Dreieckschale, 2 = Stab |
+| `MAT` / `MAT2` | `Nr Typ E G nu alpha_t gamma` | Werkstoffe |
+| `QUERSW` | `Nr Typ Wert …`, **Typ 2 = Schale**, Wert = Dicke [m] | Schalendicken |
+| `FESTH` | 9 Spalten: `NR`, zwei Hilfsknoten, `cu cv cw ur vr wr` | Lager — siehe die Falle unten |
+
+Die **Layernummer** steckt gepackt in der letzten Spalte von `ELEMENTE`
+(`Layer<<16 | FarbID<<8 | 1`, also 1377025 = Layer 21, rot) und wird die
+Elementgruppe — in InfoCAD ist der Layer die Auswertungseinheit.
+
+**⚠️ Die gefährlichste Falle der Schnittstelle: im Export bedeutet `-1`
+**frei** und `-2` **fest**.** In der ICX ist es umgekehrt — dort ist `0.0`
+frei und `-1.0` fest. Die Bedeutung kehrt sich zwischen Ein- und Ausgabe um.
+Wer den Export mit der ICX-Konvention liest, vertauscht frei und fest und
+bekommt ein Modell, das **rechnet und falsch ist**. Belegt an zwei
+unabhängigen Dateien: ICX-Punktwert `0.0` → Export `-1`; ICX `-1.0` →
+Export `-2`.
+
+Zwei Dinge aus `FESTH` werden ausdrücklich **nicht** übernommen, und beide
+werden beim Import gezählt und genannt:
+
+* **Lager in eigenen lokalen Achsen.** Die Spalten 2 und 3 nennen zwei
+  Hilfsknoten am Ende der Knotentabelle, die das lokale Dreibein aufspannen;
+  `0/0` heißt „lokal gleich global", und nur diese Zeilen werden gelesen.
+  Welche globale Achse ein lokales `u` sonst hält, ist **nicht aus dem Namen
+  zu schließen**: an einer senkrechten Lagerlinie hielt gemessen `cu` die
+  globale Z-Achse, `cv` die X- und `cw` die Y-Achse.
+* **Die Federsteifigkeit** eines elastischen Lagers. Ihre Einheit im Export
+  ist nicht belegt — und genau dort lag der Erzeuger des Anwenders um den
+  Faktor 1000 daneben. Eine geratene Einheit wäre schlimmer als keine: das
+  Lager wird gezählt und gemeldet, was daran fest ist, wird gesetzt.
+
+**Was nicht ankommt**, und warum: die **Lasten**, weil ihr Spaltenaufbau
+nicht belegt ist; Ergebnisse (`REAK`, `QUER`, `SREAK`, `AUFLR`, `DEFORM`,
+`EXTREMA`), weil Statik3D selbst rechnet. Beides wird beim Import **benannt**
+— mit Tabellenname und Zeilenzahl.
+
+Zwei Eigenheiten der Ergebnistabellen, die hier nur der Vollständigkeit halber
+stehen (gelesen werden sie nicht): Spalte 1 von `REAK` und `QUER` ist die
+**Element**nummer, nicht die Knotennummer — beide Tabellen führen mehrere
+Zeilen je Schlüsselwert, eine je Ecke. Und `AUFLR` trägt die Spaltennamen
+`RX RY RZ MX MY MZ`, liefert die Werte aber in den **lokalen** Lagerachsen:
+die Namen lügen.
+
+**Vier Eigenheiten, auf die der Leser eingerichtet ist**
+
+* **Der Exitcode taugt nicht.** InfoCAD beendet den Export immer mit 13, auch
+  wenn er geglückt ist. Ob die Ausgabe vollständig ist, entscheidet allein ihr
+  Inhalt: jeder Block muss mit `END <NAME>` schließen, und `N=` im Blockkopf
+  muss zur Zahl der Datenzeilen passen. Beides wird geprüft; eine abgebrochene
+  Datei wird als abgebrochen gemeldet und nicht als kleineres Modell gelesen.
+* **Unbekannte Tabellennamen überspringt InfoCAD ohne Meldung.** Ein
+  Tippfehler in der Befehlsdatei kostet eine ganze Tabelle. Statik3D macht es
+  umgekehrt: es zählt auf, was es gelesen hat, und benennt jede Tabelle, die
+  es gefunden und nicht verwertet hat.
+* **Derselbe Typcode bedeutet in zwei Tabellen Verschiedenes.** In `ELEMENTE`
+  ist 2 der Stab, in `QUERSW` die Schale. Ein Filter „Typ == 2“ liefert je
+  nach Tabelle die Stäbe oder alle Schalen — beides ergibt eine gefüllte,
+  plausible Liste.
+* **Dezimalkomma, Tabulator, wechselnde Kodierung** (UTF‑16, UTF‑8, cp1252).
+
+**Die Z-Achse.** InfoCAD-Modelle sind oft mit Z **nach unten** aufgebaut. In
+welcher Lage ein Modell aufgebaut wurde, steht in der Exportdatei nicht; der
+Import dreht darum nur auf Angabe (`z_nach_unten=True`), und zwar um 180° um
+die X-Achse (y → −y, z → −z). Eine Spiegelung von z allein wäre linkshändig
+und kehrte jede Flächennormale um — ein Fehler, den keine Kräftebilanz sieht.
+
+**Export nach InfoCAD** ist noch nicht gebaut. Der Weg dorthin ist die
+**ICX**, eine STEP-artige Textdatei, die InfoCAD als Argument entgegennimmt.
+Der Katalog `Icx-03.exp` (ein EXPRESS-Schema) führt **169 Entitäten** — dazu
+107 `TYPE`. Seine Argumentlisten sind vollständig, mit Typ, `OPTIONAL`,
+Feldgrenzen und Vererbung; die Reihenfolge ist damit ablesbar und nicht
+geraten: geerbte Attribute zuerst, von der Wurzel nach unten, dann die
+eigenen in Deklarationsreihenfolge. Auch die **Einheiten** stehen darin, an
+44 Stellen — `IcxForceMeasure` in kN, `IcxStiffnessMeasure` in **MN/m**,
+`IcxStiffnessPerLengthMeasure` in MN/m². Das ist kein Detail: genau dort lag
+der Generator des Anwenders um den Faktor 1000 daneben.
+
+Zwei Sätze, die in der Übergabe vom 21.09. standen und in einer früheren
+Fassung dieses Handbuchs, sind **berichtigt** (Antwort der InfoCAD-Sitzung
+vom 22.09.2026):
+
+* „Flächenmodell und Netz können nicht in einer ICX stehen" ist als Aussage
+  über das **Dateiformat falsch**: eine vorliegende Datei enthält 278
+  `ICXMODELFACE` **und** 10 739 `ICXSH46`, und das Schema kennt überhaupt
+  keine Konsistenzregel (`WHERE`, `UNIQUE`, `DERIVE`, `INVERSE` kommen in
+  `Icx-03.exp` je null mal vor). Gemeint sein kann nur das **Importverhalten**
+  von InfoCAD, und das hat niemand gemessen. Bis das geschehen ist, gilt der
+  Satz als unbelegt.
+* Die Grenze von **27 Zeichen** für einen Layernamen gilt **nicht im
+  ICX-Format** — dort erlaubt das Schema 36 (`TYPE IcxLayerName = STRING(36)`)
+  —, sondern erst nach dem Import in der FEM-Layertabelle. Und zerstört wird
+  nicht die Nachbarzelle, sondern **alles ab ihr**: der spaltenweise Leser
+  bricht dort ab. Ein Schreiber, der sich auf die Schemagrenze verlässt,
+  läuft genau in den Fehler.
+* Die Endung `_modell` ist die Konvention des Anwenders, **nicht die von
+  InfoCAD**: InfoCAD schreibt das Flächenmodell unter dem schlichten
+  Projektnamen. Wer nach `*_modell.icx` sucht, findet keine InfoCAD-Datei.
+
+Woran eine von InfoCAD selbst geschriebene ICX zu erkennen ist: an den
+**GlobalIds**. InfoCAD schreibt 22-stellige Base64-Kennungen
+(`2PqMarmomWCT9EOKeASO3K`), erzeugte Dateien oft nullgepolsterte Zähler.
+
+Geprüft in `tests/test_infocad.py`.
 
 ## RFEM / RSTAB (Dlubal)
 
@@ -274,6 +402,14 @@ zu tun hat. Übernommen werden:
 
 Fehlt die Datei, gilt die Programmvorgabe — und das Protokoll sagt es.
 
+**Fläche ohne Dickenangabe.** Trägt eine Fläche keine eigene Dicke, erbt sie
+die **zuerst gelesene** — und das geschah bis zum 22.09.2026 wortlos. Gemessen
+wurden 20 mm statt der 10 mm des Rückfalls: Biegesteifigkeit (20/10)³ = 8fach,
+die Spannung aus Moment um den Faktor 4 zu klein, und welcher Wert es wird,
+hängt allein daran, welche Fläche zuerst in der Datei stand. Geerbt wird
+weiterhin — aber es steht jetzt als Warnung im Protokoll, mit dem Namen und
+dem Wert, und zwar einmal je Protokoll statt einmal je Aufruf.
+
 ### Materialien: Streckgrenze und Zugfestigkeit nach Erzeugnisdicke
 
 RFEM 6 führt **f_y und f_u nicht als Zahl**, sondern als Dickenbereiche
@@ -487,6 +623,43 @@ Jeder Lastfall kommt mit Name (als Beschreibung), Einwirkungskategorie
 | **Freie Rechtecklast** (`FreeRectangularLoad`) | als Geometrielast mit Fenster und Richtung – siehe unten |
 | **Stabvorspannung** (`MemberTypeLoadImplInitialPrestress`) | als gleichwertige Temperaturlast (siehe unten) |
 | Linienlast, Volumenlast | gemeldet – sie brauchen das Linien- bzw. Volumennetz |
+
+**Die Lastrichtung einer Flächenlast wird angesetzt.** RFEM führt zu jeder
+Flächenlast eine `loadDirection`. Bis zum 22.09.2026 wurde sie gelesen, ins
+Protokoll geschrieben und dann **weggeworfen**: ohne Richtungsangabe setzt
+Statik3D einen Druck senkrecht zur Fläche an. Eine Last, die in der Datei
+global Z steht, zeigte damit in die Flächennormale. Am Drehlagermodell traf
+das **396 von 711** Flächenlasten; auf einem geschlossenen Körper hebt ein
+Normaldruck sich auf, und der Lastfall wäre kräftefrei. Der Fehler blieb nicht
+auf geneigte Flächen beschränkt: schon bei einer waagerechten hing das
+Vorzeichen am **Umlaufsinn des Randpolygons** (gemessen: Umlauf 1‑2‑3‑4 gab
+R_z = +8000 N, Umlauf 4‑3‑2‑1 gab −8000 N; mit Richtung in beiden Fällen
++8000 N). Umgerechnet wird mit derselben Tabelle wie bei Stab- und
+Linienlasten (`_richtung_aus_kennzahl`); Kennzahl 0 bleibt der Normaldruck,
+eine nicht geführte Kennzahl wird als Normaldruck angesetzt **und das steht
+im Protokoll**. Ob RFEM eine Flächenlast auf die wahre oder auf die
+projizierte Fläche bezieht, ist aus der Datei nicht lesbar — angesetzt wird
+die wahre Fläche, und auch das sagt das Protokoll.
+
+**Die Flächenlasten zählen sich ab.** Jede Zeile der Tabelle `SurfaceLoad`
+taucht im Protokoll auf — auch die, die nicht übernommen wird: Lasten anderer
+Art (Temperatur, Dehnung, Vorkrümmung, Masse), Lasten ohne lesbaren Betrag
+und solche, deren Umsetzungstabelle die Datei gar nicht führt. Die letzten
+verschwanden besonders leise, weil sie schon beim Auflösen der Umsetzung
+wegfielen, bevor die Leseschleife sie sah; gezählt wird deshalb gegen die
+Zahl der Rohzeilen. Vorher nannte das Protokoll bei Linien- und Volumenlasten
+je eine Zeile, bei den Flächen aber nichts — der Anwender durfte daraus
+schließen, dort sei nichts weggefallen.
+
+**Einwirkungskategorie.** `ACTION_CATEGORY` führt nur wenige Kennzahlen;
+alles Übrige wurde still zu „Q" (veränderlich, allgemein, ψ₀ = 0,80), und das
+Protokoll meldete nur „Einwirkungskategorie übernommen". Jetzt steht die
+Verteilung im Protokoll (`Einwirkungskategorie: 2x G, 1x S, 1x W`), jede
+nicht geführte Kennzahl wird mit ihrer Nummer genannt, und der **Name** des
+Lastfalls verbessert die Kategorie — aber nur dort, wo die Kennzahl nichts
+hergibt: ein „G" aus der Datei darf der Freitext nicht umstoßen, sonst würde
+ein Lastfall „Windverband Eigenlast" mit der Kennzahl 1 zu W und damit
+veränderlich.
 
 **Freie Rechtecklasten.** RFEM legt das Lastfenster in die uv-Ebene eines
 eigenen Koordinatensystems (`coordinateSystem_id` → `CoordinateSystem…

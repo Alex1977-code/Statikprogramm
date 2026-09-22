@@ -352,9 +352,74 @@ def test_kerbfall_vorschlaege():
           m.members["Anker"].detail_category == 63e6 and m.members["Kragarm"].detail_category == 160e6)
 
 
+def test_fehlender_mindestzustand_wird_gemeldet():
+    """Ein angegebener, aber nicht gerechneter Mindestzustand ist nicht null.
+
+    `_member_nachweisen` fiel bis zum 22.09.2026 für einen fehlenden
+    `case_min` in denselben Zweig wie „kein Mindestzustand angegeben" und
+    setzte σ_min = 0. Bei wechselnder Beanspruchung - dem Regelfall - ist das
+    die **halbe Schwingbreite**: aus −80/+100 N/mm² werden 100 statt 180. Da
+    die Schädigung mit der dritten bis fünften Potenz eingeht, fällt D um den
+    Faktor 6 bis 25 zu klein aus, und zwar **auf der unsicheren Seite**.
+
+    Der fehlende **Höchst**zustand wurde die ganze Zeit gemeldet - der
+    Mindestzustand nicht. Genau diese Unsymmetrie ist der Fehler.
+
+    Der Prüfkörper nennt als Mindestzustand einen Lastfall, den es nicht
+    gibt - das ist derselbe Zustand wie ein nicht gerechneter und ohne
+    Umweg herstellbar.
+    """
+    from statik3d.model import Model, Material, Section
+    from statik3d import solver
+
+    def bau(case_min):
+        m = Model("ermuedung")
+        m.add_material(Material.steel("S235"))
+        m.add_section(Section.rectangle("R", 0.1, 0.1))
+        k = [m.add_node(i * 1.0, 0.0, 0.0) for i in range(3)]
+        for i in range(2):
+            m.add_element("beam", [k[i], k[i + 1]], "S235", "R")
+        m.fix(k[0], "all")
+        m.add_member("M1", [0, 1], detail_category=71e6)
+        m.add_load_case("OBEN", "Q")
+        m.load_node(k[2], Fz=-1.0e4, case="OBEN")
+        m.add_load_case("UNTEN", "Q")
+        m.load_node(k[2], Fz=+0.8e4, case="UNTEN")
+        m.add_fatigue_load("EL", "OBEN", case_min, cycles=1e6)
+        return m
+
+    # (1) Beide Zustaende da: der Nachweis laeuft und liefert eine Schaedigung
+    an = solver.solve_all(bau("UNTEN"), fatigue=True)
+    fm = (getattr(an.fatigue, "members", None) or {}).get("M1")
+    voll = getattr(fm, "util", 0.0)
+    check("mit beiden Zuständen wird der Nachweis geführt",
+          fm is not None and voll > 0, f"D = {voll:.4f}")
+
+    # (2) Der Mindestzustand ist genannt, aber nicht gerechnet
+    an2 = solver.solve_all(bau("FEHLT_ABSICHTLICH"), fatigue=True)
+    fm2 = (getattr(an2.fatigue, "members", None) or {}).get("M1")
+    warn = list(getattr(fm2, "warnings", None) or [])
+    gemeldet = any("Mindestzustand" in w for w in warn)
+    check("das Fehlen des Mindestzustands wird gemeldet", gemeldet,
+          "; ".join(warn)[:90] or "(keine Warnung)")
+    halb = getattr(fm2, "util", 0.0)
+    check("und es wird keine halbierte Schwingbreite ausgewiesen",
+          halb == 0.0, f"D = {halb:.4f} gegen {voll:.4f} mit beiden Zuständen")
+    # Die Gegenprobe: ohne Mindestzustand (Feld leer) ist null richtig und
+    # es darf KEINE Warnung geben - sonst waere die Kur zu scharf.
+    an3 = solver.solve_all(bau(None), fatigue=True)
+    fm3 = (getattr(an3.fatigue, "members", None) or {}).get("M1")
+    warn3 = list(getattr(fm3, "warnings", None) or [])
+    check("ohne angegebenen Mindestzustand bleibt es beim Schwingen gegen null",
+          getattr(fm3, "util", 0.0) > 0
+          and not any("Mindestzustand" in w for w in warn3),
+          f"D = {getattr(fm3, 'util', 0.0):.4f}, keine Warnung")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
-              test_kerbfall_vorschlaege):
+              test_kerbfall_vorschlaege,
+              test_fehlender_mindestzustand_wird_gemeldet):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

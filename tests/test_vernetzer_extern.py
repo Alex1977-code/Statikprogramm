@@ -237,10 +237,35 @@ def test_nicht_installiert_faellt_zurueck():
           len(els) > 0 and any("nicht installiert" in z for z in log), str([z for z in log if "nicht" in z][:1]))
 
 
+def test_mmg_grund_nennt_den_fehler():
+    """MMG3D sucht neben der Eingabe von sich aus eine gleichnamige `.sol` und
+    warnt am **Ende** seiner Ausgabe, wenn keine da ist. Wer nur die letzten
+    Zeichen meldet, nennt genau diese Warnung und verdeckt den Fehler - am
+    Drehlager stand darum „netz.sol NOT FOUND" im Protokoll, obwohl die Metrik
+    geschrieben war (21.09.2026)."""
+    from statik3d.vernetzer_extern import _mmg_grund
+
+    class Lauf:
+        def __init__(self, out, err=""):
+            self.stdout, self.stderr = out, err
+    warnung = "** C:/tmp/statik3d_mmg_x/netz.sol  NOT FOUND. USE DEFAULT METRIC."
+    g = _mmg_grund(Lauf("MMG3D: laeuft\n## Error: wrong volume element 17\n" + warnung))
+    check("der Fehler wird genannt, nicht die Warnung am Ende",
+          "wrong volume" in g and "NOT FOUND" not in g, g[:90])
+    g2 = _mmg_grund(Lauf("MMG3D: laeuft\nMISMATCH OPTIONS: -optim und Metrik\n" + warnung))
+    check("auch MISMATCH OPTIONS wird erkannt", "MISMATCH" in g2, g2[:90])
+    g3 = _mmg_grund(Lauf("etwas ging schief\n" + warnung))
+    check("ohne erkennbaren Fehler bleibt die Warnung außen vor",
+          "NOT FOUND" not in g3 and "schief" in g3, g3[:90])
+    g4 = _mmg_grund(Lauf("", warnung))
+    check("steht nur die Warnung da, wird sie genannt - lieber das als nichts",
+          bool(g4.strip()), g4[:90])
+
+
 def main():
     for t in (test_verfuegbarkeit_und_lizenz, test_huelle_voran_und_orientierung, test_mesh_rundlauf,
               test_kein_konsolenfenster,
-              test_gmsh, test_netgen, test_nicht_installiert_faellt_zurueck):
+              test_gmsh, test_netgen, test_nicht_installiert_faellt_zurueck, test_mmg_grund_nennt_den_fehler):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

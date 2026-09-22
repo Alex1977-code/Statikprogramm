@@ -1551,6 +1551,14 @@ class Volumenbereich:
     ausrundung: Kerbradius [m] am Nachweisort, 0 = unbekannt. Wird er
                 angegeben, prueft das Programm, ob die Vernetzung dort fein
                 genug ist, und sagt es, wenn nicht.
+    dicke:      Erzeugnisdicke [m] fuer die Abminderung der Streckgrenze nach
+                EN 1993-1-1 Tab. 3.1. 0 = das Programm setzt sie selbst an:
+                die kleinste Abmessung des umschliessenden Quaders des
+                **ganzen zusammenhaengenden Koerpers**, zu dem die Elemente
+                gehoeren - nicht der Auswahl, sonst haengt das Ergebnis daran,
+                wie viel der Anwender markiert hat. Bei einem geschweissten
+                Bauteil ist der Koerper zu dick gerechnet: dort ist die
+                Blechdicke massgebend, und die wird hier angegeben.
     singular:   Der Bereich enthaelt eine bekannte Spannungssingularitaet
                 (einspringende Ecke, Einzellast, Punktlager). Dann wird die
                 Spitzenspannung nicht als Nachweis gefuehrt, sondern nur
@@ -1563,6 +1571,7 @@ class Volumenbereich:
     ausrundung: float = 0.0
     singular: bool = False
     beschreibung: str = ""
+    dicke: float = 0.0
 
     def bezug(self) -> str:
         n = len(self.elemente)
@@ -3587,6 +3596,14 @@ class Model:
             g.node_a, g.node_b = f(g.node_a), f(g.node_b)
         for cp in getattr(self, "contact_pairs", None) or []:
             cp.slave_nodes = [f(n) for n in (cp.slave_nodes or [])]
+            # master_faces sind **Knotenlisten** (drei oder vier Knoten je
+            # Facette, siehe ContactPair) - contact.py liest sie als
+            # Knotennummern. Ohne diese Zeile zeigten sie nach dem Loeschen
+            # eines Knotens auf fremde Knoten: die Fuge trug dann an der
+            # falschen Stelle, ohne dass eine Spannung falsch geworden waere
+            # (gefunden von der Loeser-Sitzung, 21.09.2026).
+            cp.master_faces = [[f(n) for n in (face or [])]
+                               for face in (cp.master_faces or [])]
         for x in (getattr(self, "lasteinleitungen", None) or {}).values():
             x.knoten = f(x.knoten)
         for x in (getattr(self, "verformungsgrenzen", None) or {}).values():
@@ -4459,6 +4476,8 @@ class Model:
         if gl.lastart == "temperatur":
             return ("Randflaeche eines Koerpers traegt keine Elemente - die Temperatur "
                     "gehoert auf den Koerper" if gl.art == "flaeche" else "keine Elemente")
+        if gl.richtung is not None and not any(float(x) for x in gl.richtung):
+            return "FEHLER: die Richtung ist der Nullvektor - die Last kann nicht wirken"
         if gl.projiziert and gl.richtung:
             return "liegt ganz im Windschatten der Last"
         if gl.bereich:
@@ -4467,7 +4486,7 @@ class Model:
 
     def _seitenmitte(self, elem: int, seite: int):
         """Schwerpunkt einer Elementseite - fuer die Bereichsprobe."""
-        from .assemble import SOLID_FACES
+        from .assemble import SOLID_FACES     # zyklischer Import, darum hier
         e = self.elements[int(elem)]
         seiten = SOLID_FACES.get(e.typ)
         if not seiten:
@@ -4501,18 +4520,30 @@ class Model:
         nd = [int(e.nodes[j]) for j in seiten[int(seite) % len(seiten)]]
         if len(nd) < 3:
             return None
-        X = self.nodes[nd[:3]]
-        n = np.cross(X[1] - X[0], X[2] - X[0])
-        L = float(np.linalg.norm(n))
+        # Das Kreuzprodukt steht hier ausgeschrieben statt als np.cross.
+        # Nicht aus Geschmack: np.cross geht fuer jeden Aufruf ueber
+        # moveaxis und normalize_axis_tuple, und das sind bei einem
+        # Dreivektor mehr Zeilen Python als die Rechnung selbst. Im Profil
+        # des Lastverteilens waren 0,150 s von 0,312 s allein np.cross -
+        # bei 4000 Seiten. Die Rechnung ist dieselbe.
+        P = self.nodes
+        p0, p1, p2 = P[nd[0]], P[nd[1]], P[nd[2]]
+        ax, ay, az = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
+        bx, by, bz = p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]
+        nx, ny, nz = ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx
+        L = (nx * nx + ny * ny + nz * nz) ** 0.5
         if L <= 0:
             return None
-        n = n / L
-        rest = [k for k in e.nodes if int(k) not in nd]
+        nx, ny, nz = nx / L, ny / L, nz / L
+        rest = [int(k) for k in e.nodes if int(k) not in nd]
         if rest:
-            innen = self.nodes[[int(x) for x in rest]].mean(axis=0) - X.mean(axis=0)
-            if float(n @ innen) > 0:
-                n = -n
-        return n
+            R = P[rest].mean(axis=0)
+            ix = R[0] - (p0[0] + p1[0] + p2[0]) / 3.0
+            iy = R[1] - (p0[1] + p1[1] + p2[1]) / 3.0
+            iz = R[2] - (p0[2] + p1[2] + p2[2]) / 3.0
+            if nx * ix + ny * iy + nz * iz > 0:
+                nx, ny, nz = -nx, -ny, -nz
+        return np.array([nx, ny, nz])
 
     def _geometrielast_legen(self, gl: "Geometrielast") -> list:
         """Die Elementlasten einer Geometrielast - oder [], wenn kein Netz da ist."""
@@ -4540,16 +4571,18 @@ class Model:
         def nimm(e: int, seite: int):
             if not 0 <= int(e) < len(self.elements):
                 return
-            mitte = self._seitenmitte(e, seite)
-            if gl.bereich and not gl.trifft(mitte):
-                return
-            if gl.verlauf:
-                p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
-                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
-            else:
-                p = gl.p
-            if gl.verlauf and p == 0.0:
-                return              # ausserhalb des Verlaufs (ueber dem Wasserspiegel)
+            # Reihenfolge nach Kosten, nicht nach Lesbarkeit - und das ist
+            # hier ausnahmsweise begruendet. Bis zum 21.09.2026 stand die
+            # Seitenmitte oben und wurde fuer **jede** Seite berechnet:
+            # auch bei Lasten ohne Bereich und ohne Verlauf, die sie nie
+            # lesen, und auch bei Seiten, die gleich darauf am Windschatten
+            # scheitern. Am Drehlager sind 840 von 2262 Geometrielasten
+            # projiziert und keine einzige hat Bereich oder Verlauf - dort
+            # war es reine Verschwendung.
+            #
+            # Zuerst also der Windschatten: er braucht nur die Normale und
+            # wirft die Haelfte der Seiten weg.
+            c = None
             if d is not None:
                 n = self._seitennormale(e, seite)
                 if n is None:
@@ -4557,6 +4590,20 @@ class Model:
                 c = float(n @ d)
                 if c >= 0:
                     return          # diese Seite liegt im Windschatten der Last
+            # Dann die Seitenmitte - aber nur, wenn jemand sie liest.
+            mitte = None
+            if gl.bereich or gl.verlauf:
+                mitte = self._seitenmitte(e, seite)
+                if gl.bereich and not gl.trifft(mitte):
+                    return
+            if gl.verlauf:
+                p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
+                if p == 0.0:
+                    return          # ausserhalb des Verlaufs (ueber dem Wasserspiegel)
+            else:
+                p = gl.p
+            if c is not None:
                 p = p * (-c)        # Last je Quadratmeter der Projektion
             out.append(FaceLoad(int(e), p, int(seite), richtung))
 
@@ -5089,6 +5136,9 @@ class Model:
         n_loads = sum(lc.n_loads for lc in self.load_cases.values())
         if n_loads == 0:
             msgs.append("WARNUNG: keine Lasten definiert")
+        # einmal, nicht je Flaechenlast: auf Modulebene steht der Import in
+        # model.py nirgends (Ringschluss mit elements.solid)
+        from .elements import solid as _sl
         for lc in self.load_cases.values():
             for l in lc.nodal_loads:
                 if l.node >= self.nn:
@@ -5096,6 +5146,34 @@ class Model:
             for l in lc.beam_loads:
                 if l.elem >= len(self.elements):
                     msgs.append(f"FEHLER: Lastfall '{lc.name}': Element {l.elem} existiert nicht")
+            # Flaechenlasten: eine Seitennummer ausserhalb des Bereichs und der
+            # Nullvektor als Richtung liessen die Last frueher still mit 0 N
+            # wirken. Beides bricht jetzt beim Aufstellen ab - hier steht es
+            # schon **vor** dem Rechnen und mit dem Lastfall dabei.
+            for l in lc.face_loads:
+                if not 0 <= int(l.elem) < len(self.elements):
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                                f"Element {l.elem} - das Element gibt es nicht")
+                    continue
+                el = self.elements[int(l.elem)]
+                if el.typ in _EL.VOLUMEN_TYPEN:
+                    n_s = len(_sl.FLAECHEN[el.typ])
+                    if not 0 <= int(l.face) < n_s:
+                        msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                                    f"Element {l.elem} ({el.typ}): Seite {l.face} gibt "
+                                    f"es nicht (0..{n_s - 1}) - die Last wirkt nicht")
+                if l.direction is not None and not any(float(x) for x in l.direction):
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                                f"Element {l.elem}: Richtung ist der Nullvektor - "
+                                "die Last wirkt mit 0 N")
+        for cs in self.contact_supports:
+            # Ein einseitiges Lager ohne Richtung kann nie tragen: die Normale
+            # wird zu (0,0,0), die Bedingung traegt keinen Freiheitsgrad, und
+            # das Ergebnis ist Zeichen fuer Zeichen das eines Systems ohne
+            # dieses Lager - waehrend die Ergebniszeile "Kontakt" behauptet.
+            if not any(float(x) for x in cs.direction):
+                msgs.append(f"FEHLER: Einseitiges Lager Knoten {cs.node}: Richtung "
+                            "ist der Nullvektor - das Lager kann nie tragen")
         for cp in self.contact_pairs:
             if not cp.master_elements and not cp.master_faces:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Flaeche")
@@ -5290,6 +5368,22 @@ class Model:
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]
         m.contact_pairs = [_dc(ContactPair, c) for c in d.get("contact_pairs", [])]
+        for _cp in m.contact_pairs:
+            # JSON kennt nur Zeichenketten als Schluessel. ``knotenflaechen``
+            # ist {Knotennummer: Einflussflaeche}, mit **ganzzahligen**
+            # Schluesseln gebaut (fugen._passungsdaten) und mit ganzzahligen
+            # gelesen (contact.py, Lochleibungsgrenze). Ohne diese Zeile fand
+            # die Abfrage nach dem Oeffnen nichts und gab 0,0 zurueck - und
+            # 0,0 heisst dort **keine Grenze**: die Passung trug unbegrenzt,
+            # statt bei der Grenzpressung zu fliessen. Gemessen am
+            # 22.09.2026: 2,100 kN vor dem Umlauf, 0,000 kN danach. Still,
+            # ohne Meldung, in jedem gespeicherten Modell mit Passung.
+            #
+            # Dasselbe Muster ist bei ``behaviour`` der Lager laengst behoben
+            # (siehe _lager_aus_dict weiter unten) - hier war es vergessen.
+            kf = getattr(_cp, "knotenflaechen", None)
+            if kf:
+                _cp.knotenflaechen = {int(k): float(v) for k, v in kf.items()}
         m.getrennte_knoten = {str(k): [[int(a), int(b)] for a, b in v]
                               for k, v in (d.get("getrennte_knoten") or {}).items()}
         m.kontakt_ausnahmen = [[str(a), str(b)] for a, b in (d.get("kontakt_ausnahmen") or [])]
@@ -5337,6 +5431,22 @@ class Model:
                 s.verschiebung = tuple(getattr(s, "verschiebung", None) or (0.0, 0.0, 0.0))
                 if s.antrieb is not None:
                     s.antrieb = (int(s.antrieb[0]), tuple(s.antrieb[1]))
+        # Die aus Objektlasten verteilten Elementlasten stehen absichtlich
+        # nicht in der Datei (``LoadCase.to_dict`` schreibt nur ``eigene``),
+        # damit sie nach dem Laden nicht doppelt liegen. Erzeugt hat sie bis
+        # zum 21.09.2026 aber **niemand** wieder: ``lasten_verteilen`` haengt
+        # am Vernetzen, und ein geladenes Modell hat schon ein Netz - die
+        # Oberflaeche vernetzt vor der Rechnung nur, was keines hat. Der
+        # Anwender oeffnete seine Datei, drueckte Berechnen und rechnete ohne
+        # seine Bemessungslast. Am Drehlager waren das 9,26 MN senkrecht und
+        # 3,97 MN waagerecht, die auf exakt null fielen; am Quader der
+        # Pruefung 1 MN auf 0 N. Das Verteilen ist wiederholbar (es raeumt
+        # die ``_geo``-Lasten vorher weg), und ohne Netz oder ohne
+        # Objektlasten kostet es nichts - darum steht es hier und nicht im
+        # Loeser: wer ein Modell laedt, hat seine Lasten.
+        if m.elements and any(lc.geometrielasten or lc.linienlasten
+                              for lc in m.load_cases.values()):
+            m.lasten_verteilen()
         _melde(fortschritt, 1.0, "Modell gelesen")
         return m
 

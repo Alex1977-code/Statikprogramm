@@ -224,9 +224,64 @@ def test_theoriewahl():
             check("Flaechen: Theorie III wird abgewiesen", "Stabtragwerke" in str(ex))
 
 
+def test_gescheiterte_theorie_meldet_sich():
+    """Scheitert Theorie III. Ordnung, darf der Lastfall nicht still linear
+    bleiben - und der Bericht darf nicht weiter "III" ausweisen.
+
+    ``_lastfaelle_hoeherer_ordnung`` fing den ValueError ab, hängte einen Text
+    an ``an.info["warnungen"]`` und sprang weiter. Dieser Schlüssel wird im
+    ganzen Programm **einmal geschrieben und nirgends gelesen** - weder von
+    ``Analysis.summary`` noch vom Bericht noch von der Oberfläche. Das
+    **lineare** Ergebnis blieb unter demselben Namen stehen, während die
+    Lastfalltabelle weiterhin die eingestellte Theorie druckte. Zusatzmomente
+    aus der Verformung und die Vorkrümmungen fehlten vollständig, und alle
+    darauf aufbauenden Nachweise rechneten mit zu kleinen Momenten -
+    unkonservativ und ohne jeden Hinweis (22.09.2026).
+
+    Der Kombinationszweig macht es seit jeher richtig (``Th3Info(fehler=...)``);
+    nur der Lastfallzweig nicht.
+    """
+    from statik3d.model import Model, Material, Section
+    from statik3d import solver
+    m = Model("scheitert")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.1))
+    k = [m.add_node(i * 1.0, 0.0, 0.0) for i in range(3)]
+    for i in range(2):
+        m.add_element("beam", [k[i], k[i + 1]], "S235", "R")
+    m.fix(k[0], "all")
+    # Eine Zwangsverformung: Theorie III. Ordnung lehnt sie ausdrücklich ab
+    m.add_zwangsverformung(k[2], [2], [0.0, 0.0, -0.001, 0.0, 0.0, 0.0])
+    lc = m.case()
+    lc.theorie = "III"
+    an = solver.solve_all(m)
+    res = an.cases.get(lc.name)
+    check("der Lastfall ist trotzdem gerechnet worden", res is not None)
+    if res is None:
+        return
+    check("er sagt selbst, dass er nach Theorie I. Ordnung gerechnet ist",
+          (res.info or {}).get("theorie") == "I", str((res.info or {}).get("theorie")))
+    check("und nennt die gewünschte Theorie dazu",
+          (res.info or {}).get("theorie_gewuenscht") == "III",
+          str((res.info or {}).get("theorie_gewuenscht")))
+    check("der Grund steht im Ergebnis", bool((res.info or {}).get("theorie_fehler")),
+          str((res.info or {}).get("theorie_fehler"))[:70])
+    info = (getattr(an.theorie3, "kombinationen", None) or {}).get(lc.name)
+    check("und im Theoriekapitel steht ein Eintrag mit Fehlertext",
+          info is not None and bool(getattr(info, "fehler", "")),
+          str(getattr(info, "fehler", "(kein Eintrag)"))[:70])
+
+    from statik3d.report.html import Report
+    html = Report(m, an).html()
+    check("die Lastfalltabelle weist nicht mehr schlicht III aus",
+          "statt III" in html or "nicht gerechnet" in html,
+          "die Spalte nennt die gerechnete Theorie")
+
+
 def main():
     for t in (test_drehungen, test_kreisbogen, test_elastica, test_seil,
-              test_druckstab_II_gegen_III, test_theoriewahl):
+              test_druckstab_II_gegen_III, test_theoriewahl,
+              test_gescheiterte_theorie_meldet_sich):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

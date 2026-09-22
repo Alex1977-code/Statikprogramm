@@ -69,6 +69,14 @@ def test_abbruch():
     check("Teilergebnis: info mit abbruch, Iteration, nicht konvergiert",
           res is not None and res.info.get("abbruch") and res.info.get("abbruch_iteration") == ex.iteration
           and res.info.get("contact_converged") is False, str({k: v for k, v in (res.info if res else {}).items() if k.startswith(("abbruch", "contact_c"))}))
+    # Die Laufzaehlung (22.09.2026) muss den Abbruch ebenso tragen: ein
+    # abgebrochener Lastfall darf nicht "letzter Lauf konvergiert" melden.
+    check("Teilergebnis: der letzte Kontaktlauf gilt als nicht konvergiert",
+          res is not None and res.info.get("contact_letzter_lauf_konvergiert") is False
+          and int(res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0) >= 1,
+          str({k: (res.info or {}).get(k) for k in ("contact_laeufe",
+               "contact_letzter_lauf_konvergiert", "contact_laeufe_nicht_konvergiert")}
+              if res else "-"))
     n_offen = sum(1 for c in (res.contact if res else []) if c["status"] == "offen")
     check("Teilergebnis: Kontaktzustand des singulaeren Schritts - die Mehrheit der Bedingungen offen",
           res is not None and res.contact and n_offen > len(res.contact) / 2,

@@ -88,16 +88,77 @@ def test_kopie_in_sekunden():
     for i in range(n):
         b = (i % 300) * 4
         m.add_element("tet4", [b, b + 1, b + 2, b + 3], "S235")
-    t = time.time()
+    t = time.perf_counter()
     k = m.copy()
-    dauer = time.time() - t
+    dauer = time.perf_counter() - t
     check("300 000 Tetraeder kopiert", len(k.elements) == n and k.elements[5].nodes == m.elements[5].nodes)
-    check("in Sekunden, nicht Minuten (JSON-Umweg: rund 9 s)", dauer < 5.0, f"{dauer:.2f} s")
+
+    # Verglichen wird gegen den JSON-Umweg **im selben Lauf**, nicht gegen
+    # eine feste Sekundenzahl. Bis zum 22.09.2026 stand hier `dauer < 5.0`:
+    # das misst die Maschine mit. Der Lauf fiel durch, sobald nebenan
+    # gerechnet wurde - und eine Pruefung, die von der Nachbarlast abhaengt,
+    # fuehrt irgendwann jemanden in die Irre, der nicht weiss, dass nebenan
+    # gerechnet wurde. Das Verhaeltnis ist lastunabhaengig: beide Messungen
+    # leiden gleich.
+    t = time.perf_counter()
+    _j = Model.from_dict(m.to_dict())
+    umweg = time.perf_counter() - t
+    check("die Kopie geht um ein Vielfaches schneller als der JSON-Umweg",
+          umweg > 2.0 * dauer,
+          f"{dauer:.2f} s gegen {umweg:.2f} s, Faktor {umweg / max(dauer, 1e-9):.1f}")
+
+
+def test_ganzzahlige_schluessel_ueberleben_den_umlauf():
+    """Wörterbücher mit Knotennummern als Schlüssel dürfen beim Speichern
+    nicht zu Zeichenketten werden.
+
+    JSON kennt nur Zeichenketten als Schlüssel. `ContactPair.knotenflaechen`
+    ist {Knotennummer: Einflussfläche}, mit **ganzzahligen** Schlüsseln gebaut
+    (`fugen._passungsdaten`) und mit ganzzahligen gelesen (`contact.py`,
+    Lochleibungsgrenze). Ohne Rückwandlung fand die Abfrage nach dem Öffnen
+    nichts und gab 0,0 zurück - und **0,0 heißt dort „keine Grenze"**: die
+    Passung trug unbegrenzt, statt bei der Grenzpressung zu fließen.
+
+    Gemessen am 22.09.2026: 2,100 kN vor dem Umlauf, **0,000 kN danach** -
+    still, ohne Meldung, in jedem gespeicherten Modell mit Passung. Dasselbe
+    Muster ist beim Lagerverhalten (`behaviour`) längst behoben; hier war es
+    vergessen.
+
+    Geprüft wird die **Wirkung** (die Grenzkraft), nicht der Schlüsseltyp -
+    ein Typ ist leicht zu prüfen und sagt nichts darüber, ob jemand ihn liest.
+    """
+    from statik3d.model import ContactPair
+    m = Model("passung")
+    cp = ContactPair(name="Fuge")
+    cp.knotenflaechen = {12: 4.2e-6, 13: 5.1e-6}
+    cp.grenzpressung = 500e6
+    m.contact_pairs.append(cp)
+
+    def grenze(modell, knoten=12):
+        c = modell.contact_pairs[0]
+        a = float((getattr(c, "knotenflaechen", None) or {}).get(int(knoten), 0.0) or 0.0)
+        return float(getattr(c, "grenzpressung", 0.0) or 0.0) * a
+
+    vorher = grenze(m)
+    check("der Prüfkörper hat eine Lochleibungsgrenze", vorher > 0,
+          f"{vorher / 1e3:.3f} kN")
+    m2 = Model.from_dict(json.loads(json.dumps(m.to_dict())))
+    nachher = grenze(m2)
+    check("sie überlebt Speichern und Laden",
+          abs(nachher - vorher) <= 1e-9 * vorher,
+          f"{nachher / 1e3:.3f} kN gegen {vorher / 1e3:.3f} kN")
+    check("und die Schlüssel sind wieder ganzzahlig",
+          all(isinstance(k, int) for k in m2.contact_pairs[0].knotenflaechen),
+          str({k: type(k).__name__ for k in m2.contact_pairs[0].knotenflaechen}))
+    # Auch über Model.copy, der denselben Weg geht
+    check("dasselbe über Model.copy", abs(grenze(m.copy()) - vorher) <= 1e-9 * vorher,
+          f"{grenze(m.copy()) / 1e3:.3f} kN")
 
 
 def main():
     for t in (test_kopie_gleicht_json_umweg, test_kopie_ist_unabhaengig, test_element_kopie,
-              test_kopie_in_sekunden):
+              test_kopie_in_sekunden,
+              test_ganzzahlige_schluessel_ueberleben_den_umlauf):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

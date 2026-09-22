@@ -410,30 +410,98 @@ def speichertext(was: str = "") -> str:
     return ((was + ": ") if was and teile else "") + ", ".join(teile)
 
 
-def ist_symmetrisch(K, tol: float = None) -> bool:
-    """Ist die Matrix symmetrisch? Blockweise geprueft, ohne die Differenz.
+def ist_symmetrisch(K, tol: float = None, proben: int = 4) -> bool:
+    """Ist die Matrix symmetrisch? Sondiert, nicht durchlaufen.
 
-    ``K - K.T`` sieht harmlos aus, aber scipy legt dafuer erst ein Ergebnis
-    in der Groesse **beider** Strukturen an und kuerzt danach: am Drehlager
-    (948 000 Freiheitsgrade, 43,8 Mio Eintraege) waren das 87,7 Mio Eintraege
-    und 669 MiB, die nicht mehr passten - die Rechnung brach mit einem
-    Speicherfehler ab (18.09.2026). Zeilenweise in Bloecken gemessen an einer
-    Matrix mit 19,3 Mio Eintraegen: 63 MB statt 697 MB Spitze, 0,56 s statt
-    0,13 s. Die Zeit faellt neben der Faktorisierung nicht ins Gewicht.
+    Ist K symmetrisch, dann ist ``K r = K^T r`` fuer **jedes** r. Mit r aus
+    plus/minus eins zeigt sich eine Unsymmetrie der Groesse eps an einer
+    Stelle als genau eps in ``(K - K^T) r`` - die Sonde ist damit so
+    empfindlich wie ein Durchlauf, der dieselbe Schranke je Eintrag anlegt,
+    und ``K.T`` ist bei CSR eine CSC-Ansicht derselben Felder, kostet also
+    nichts.
+
+    **Warum das nicht immer so war.** Bis zum 22.09.2026 lief hier ein
+    blockweiser Durchlauf ueber ``K[a:b, :] - K[:, a:b].T``, und der
+    Docstring behauptete, die Zeit falle "neben der Faktorisierung nicht ins
+    Gewicht". Die Loesersitzung hat am Drehlager ein Zeitfenster von **1,12 s
+    je Aufruf, 162,9 s im kalten LF1** gemessen - bei 145 Faktorisierungen,
+    deren Symmetrie sich zwischen zwei Kontaktschritten nicht aendert. Das
+    Fenster umfasste neben der Pruefung auch triu, sort_indices und die
+    Diagonalpruefung; welcher Teil auf die Pruefung entfaellt, ist nicht
+    gemessen. Ueber 422 Lastfaelle hochgerechnet mit den gemessenen
+    Faktorisierungszahlen (145 kalt, im Mittel 91 warm) sind es rund 12 h fuer
+    das ganze Fenster (eine fruehere Fassung schrieb 19 h fuer die Pruefung
+    allein; Nachpruefung der Loesersitzung vom 22.09.2026). Die Sonde unten
+    ist an einer Ersatzmatrix mit 475.935 Zeilen und 35,2 Mio. Eintraegen
+    gemessen - doppelt so vielen wie am Drehlager (17,68 Mio.):
+
+        Durchlauf   5,206 s
+        Sonde       0,419 s        Faktor 12,4
+
+    ``K - K.T`` als Ganzes bleibt verboten: scipy legt dafuer erst ein
+    Ergebnis in der Groesse **beider** Strukturen an und kuerzt danach - am
+    Drehlager waren das 87,7 Mio Eintraege und 669 MiB, die nicht mehr
+    passten (18.09.2026).
+
+    Zwei Fallen, beide beim Bauen hineingetappt und darum benannt:
+
+    * Die Schranke ist **genau** ``tol``, ohne Zuschlag. Mit ``sqrt(n)``
+      skaliert lag sie bei 3,7e-9 und verschluckte eine Stoerung von 5,4e-11,
+      die der Durchlauf fand. Eine zu grosszuegige Sonde ist schlimmer als
+      keine.
+    * ``K.T.tocsr()`` baut die Transponierte wirklich auf: 1,33 s statt
+      0,42 s. Die CSC-Ansicht ``K.T`` genuegt.
+
+    Der Rauschabstand traegt auch bei Drehlagerskala: bei max |K| = 1,9e17
+    (die Strafsteifigkeit ist 1e4 mal die Diagonale) stehen die beiden
+    Produkte bitgleich, waehrend die Schranke bei 1,9e5 liegt; eine Stoerung
+    von zehnfacher Schranke faellt auf.
+
+    **Die dritte Falle, und die gefaehrlichste: r darf nicht aus plus/minus
+    eins bestehen.** ``D = K - K^T`` ist antisymmetrisch, und vier Stellen
+    loeschen sich in **allen** betroffenen Zeilen zugleich aus:
+
+        D[k,i] = a    D[k,j] = -a    D[i,l] = a    D[j,l] = -a
+
+        (D r)_k = a (r_i - r_j)      (D r)_i = a (r_l - r_k)
+        (D r)_j = a (r_k - r_l)      (D r)_l = a (r_j - r_i)
+
+    Alle vier sind null, sobald r_i = r_j und r_k = r_l - bei plus/minus
+    eins eine gewoehnliche Bedingung. Weil die Sonden fest gesaet sind,
+    lassen sich solche Indexpaare sogar **suchen**; genau das tut
+    ``tests/test_loeser.py::test_die_symmetriesonde_hat_keine_luecke``.
+    Ungestimmt meldet die Sonde dort "symmetrisch", obwohl die Abweichung
+    3,84e-06 betraegt und die Schranke bei 1,92e-12 liegt - sechs
+    Zehnerpotenzen daneben. Verstimmt faellt sie auf.
+
+    Die Kur ist, r paarweise verschieden zu **verstimmen**: eine
+    Ausloeschung verlangte dann d_i = d_j, und die d sind paarweise
+    verschieden. Die Empfindlichkeit bleibt, weil |r| zwischen 1,000016 und
+    1,001 liegt: eine Stoerung von 5,40e-11 zeigt sich als 5,40e-11.
+
+    **Wie haeufig die Luecke ohne Absicht auftritt, ist dabei offen.** Die
+    Loesersitzung hat 50,4 / 25,0 / 12,7 / 5,9 % (bei ein bis vier Sonden)
+    gemessen, aber an einer **einzelnen Zeile**; in einer wirklichen Matrix
+    verraten die antisymmetrischen Gegeneintraege die Abweichung meist in
+    den Partnerzeilen. An 300 zufaelligen Vierermustern fiel mit plus/minus
+    eins kein einziges durch. Die Verstimmung bleibt trotzdem drin: sie
+    kostet ein ``arange`` und schliesst eine Klasse, die sich sonst nur
+    durch Glueck nicht zeigt.
     """
     Kc = K.tocsr()
-    if tol is None:
-        tol = 1e-12 * (float(abs(Kc).max()) if Kc.nnz else 1.0)
     if Kc.shape[0] != Kc.shape[1]:
         return False
+    if tol is None:
+        tol = 1e-12 * (float(abs(Kc).max()) if Kc.nnz else 1.0)
     n = Kc.shape[0]
-    # So viele Zeilen, dass ein Block rund 1 Mio Eintraege hat
-    je_zeile = max(1.0, Kc.nnz / max(1, n))
-    zeilen = int(max(1000, min(n, 1_000_000 // je_zeile)))
-    for a in range(0, n, zeilen):
-        b = min(n, a + zeilen)
-        d = Kc[a:b, :] - Kc[:, a:b].T.tocsr()
-        if d.nnz and float(abs(d).max()) > tol:
+    if n == 0 or Kc.nnz == 0:
+        return True
+    KT = Kc.T                      # CSC-Ansicht derselben Felder
+    rng = np.random.default_rng(20260922)   # fest: dieselbe Matrix, dasselbe Urteil
+    stimmung = 1.0 + 1.0e-3 * np.arange(1, n + 1, dtype=float) / n
+    for _ in range(max(1, int(proben))):
+        r = rng.choice((-1.0, 1.0), size=n) * stimmung
+        if float(np.abs(Kc @ r - KT @ r).max()) > tol:
             return False
     return True
 
@@ -441,6 +509,46 @@ def ist_symmetrisch(K, tol: float = None) -> bool:
 #: Schon gemeldete Hinweise - eine Faktorisierung laeuft in der
 #: Kontakt-Iteration Dutzende Male, die Meldung soll einmal kommen.
 _GEMELDET: set = set()
+
+
+class LoeserAusfall(Exception):
+    """Kein Gleichungsloeser konnte faktorisieren.
+
+    **Bewusst keine RuntimeError**: ein RuntimeError beim Aufbau wird vom
+    Aufrufer als singulaere Matrix gedeutet und mit „Lagerung pruefen"
+    beantwortet (StaticSystem, diagnose.singulaer_text). Scheitern PARDISO
+    und der Ausweichweg aus einem anderen Grund - Speicher, 32-Bit-Ueberlauf
+    in SuperLU -, waere das eine falsche Diagnose.
+    """
+
+
+#: Einstellungen, die das Ergebnis oder den Rechenweg einer Kette bestimmen
+#: und darum aus dem Hauptprozess mitgehen (siehe _cases_in_ketten).
+KETTEN_EINSTELLUNGEN = ("solver_backend", "solver_residuum", "solver_nachiterationen",
+                        "min_elements", "chunk_elements", "mumps_nachladen")
+
+
+def kettenauftrag_einstellungen(st) -> dict:
+    """Die Einstellungen, die eine Kette braucht - nur die, die von der
+    Vorgabe abweichen."""
+    vorgabe = parallel.Settings()
+    return {k: getattr(st, k) for k in KETTEN_EINSTELLUNGEN
+            if hasattr(st, k) and getattr(st, k) != getattr(vorgabe, k)}
+
+
+def threads_je_kette(eingestellt: int, ketten: int) -> int:
+    """Loeser-Threads je Rechenkette.
+
+    Die eingestellte Threadzahl (``solver_threads``, 0 = alle Kerne bis auf
+    einen) ist das **Budget des Rechners**, nicht das einer Kette. Bis zum
+    22.09.2026 bekam jede Kette die volle Einstellung: beim Anwender stehen
+    31 Threads in einstellungen.json, sechs Ketten forderten damit je 31 -
+    MKL kappt nur innerhalb eines Prozesses auf die 16 physischen Kerne, also
+    bis zu 96 Threads auf 16 Kernen (Nachpruefung der Loesersitzung). Ohne
+    Einstellung wurde schon immer geteilt; jetzt auch mit.
+    """
+    budget = int(eingestellt or 0) or (parallel.cpu_count() - 1)
+    return max(1, budget // max(1, int(ketten)))
 
 
 def _log_einmal(text: str) -> None:
@@ -557,17 +665,33 @@ class LinearSolver:
         self._vorgabe = None         # nur ama: wonach faktorisiert wurde (fuer den Nachweis)
         self.nachiterationen = 0
         self.residuum = 0.0
+        #: Warum der gewaehlte Loeser nicht rechnete, wenn auf einen anderen
+        #: ausgewichen wurde - leer, wenn nicht. Steht in beschreibung() und
+        #: damit im Fortschrittsstrom und im Protokoll.
+        self.ausweichgrund = ""
         if self.n == 0:
             self._solve = lambda b: np.zeros_like(b)
             return
         K = K.tocsc()
         self._K = K.tocsr()
-        if be in ("auto", "pardiso") and self._passt_in_int32(K, be == "pardiso"):
+        passt = be in ("auto", "pardiso") and self._passt_in_int32(K, be == "pardiso")
+        if be == "auto" and not passt:
+            # Die 32-Bit-Grenze ist ebenso ein Ausweichgrund wie eine Ausnahme -
+            # scheitert danach SuperLU, muss er in der Meldung stehen.
+            self.ausweichgrund = (f"PARDISO: Gleichungssystem zu groß für die "
+                                  f"32-Bit-Indizes ({self.n} Zeilen, "
+                                  f"{int(getattr(K, 'nnz', 0) or 0)} Einträge)")
+        if passt:
             try:
                 _find_mkl()
                 import pypardiso
                 ps = pypardiso.PyPardisoSolver()
-                Kcsr = K.tocsr()
+                # self._K ist bereits K.tocsr() (siehe oben). Ein zweites
+                # tocsr() auf derselben Matrix kostete bei Drehlagergroesse
+                # 0,280 s (475.935 Zeilen, 17,6 Mio. Nichtnullen, gemessen
+                # 21.09.2026) - bei 145 Faktorisierungen je Lastfall 40,6 s,
+                # ueber 422 Lastfaelle 4,75 Stunden. Beide lesen nur.
+                Kcsr = self._K
                 # Threadzahl aus den Einstellungen (0 = alle Kerne bis auf einen)
                 self.threads = _mkl_threads_setzen(ps, threads_vorgabe("pardiso"))
                 ps.factorize(Kcsr)
@@ -575,18 +699,33 @@ class LinearSolver:
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
-            except Exception:
+            except Exception as ex:
                 if be == "pardiso":
                     raise
+                # **Nicht still verwerfen.** Bis zum 22.09.2026 fiel hier jede
+                # PARDISO-Ausnahme ohne eine Zeile weg, und es ging ueber
+                # CHOLMOD (meist nicht installiert) nach SuperLU. Am Drehlager
+                # scheitert SuperLU dann selbst ("Can't expand MemType 0",
+                # SystemError, gemessen von der Loesersitzung) - und der
+                # eigentliche Grund, warum PARDISO nicht rechnete, war weg.
+                self.ausweichgrund = f"PARDISO: {type(ex).__name__}: {str(ex)[:160]}"
+                _log_einmal(f"PARDISO rechnete nicht ({self.ausweichgrund}) - "
+                            "es wird auf einen anderen Löser ausgewichen.")
         if self._solve is None and be in ("auto", "cholmod"):
             try:
                 from sksparse.cholmod import cholesky
                 f = cholesky(K)
                 self._solve = lambda b: f(b)
                 self.backend = "cholmod"
-            except Exception:
+            except ImportError:
+                # CHOLMOD nicht installiert - der Regelfall, kein Ausweichgrund
                 if be == "cholmod":
                     raise
+            except Exception as ex:
+                if be == "cholmod":
+                    raise
+                self.ausweichgrund = ((self.ausweichgrund + "; ") if self.ausweichgrund
+                                      else "") + f"CHOLMOD: {type(ex).__name__}: {str(ex)[:120]}"
         if self._solve is None and be == "umfpack":
             # GPL - nur aus der eigenen Python-Umgebung des Anwenders
             from scikits.umfpack import splu as _umf_splu
@@ -604,7 +743,10 @@ class LinearSolver:
                 raise RuntimeError("MUMPS ist nicht installiert - Extras → Vernetzer installieren… lädt es "
                                    "nach (oder beim Programmstart, Kästchen im selben Dialog)") from ex
             mumps.set_threads(threads_vorgabe("mumps"))
-            self._solve = self._mumps(K)
+            # self._K ist schon CSR; _mumps wandelte die CSC sonst ein zweites
+            # Mal um (bei Drehlagergroesse 0,280 s je Faktorisierung, gemessen
+            # 21.09.2026 an einer Ersatzmatrix). tocsr() auf CSR kostet nichts.
+            self._solve = self._mumps(self._K)
             self.backend = "mumps"
             self.threads = mumps.threads()
         if self._solve is None and be == "ama":
@@ -619,7 +761,7 @@ class LinearSolver:
                 raise RuntimeError("ama ist nicht installiert oder zu alt - pip install <ama-Wheel> "
                                    "in diese Python-Umgebung (Gleichungsloeser-Projekt, "
                                    "maturin build)") from ex
-            Kc = K.tocsr()
+            Kc = self._K             # schon CSR - keine zweite Umwandlung
             skala = float(abs(Kc).max()) if Kc.nnz else 1.0
             if not ist_symmetrisch(Kc, 1e-12 * skala):
                 raise RuntimeError("ama braucht eine symmetrische Matrix - fuer unsymmetrische "
@@ -664,7 +806,24 @@ class LinearSolver:
             if be not in ("auto", "superlu", "pardiso", "cholmod"):
                 raise RuntimeError(f"Gleichungslöser '{be}' unbekannt - möglich: "
                                    + ", ".join(LOESER))
-            lu = splu(K, permc_spec="MMD_AT_PLUS_A")
+            try:
+                lu = splu(K, permc_spec="MMD_AT_PLUS_A")
+            except (RuntimeError, ValueError) as ex:
+                # SuperLU meldet eine singulaere Matrix als RuntimeError - die
+                # Deutung "Lagerung pruefen" des Aufrufers bleibt richtig; der
+                # Grund des Ausweichens wird nur angehaengt.
+                if self.ausweichgrund:
+                    raise type(ex)(f"{ex} (vorher: {self.ausweichgrund})") from ex
+                raise
+            except Exception as ex:
+                if not self.ausweichgrund:
+                    raise
+                raise LoeserAusfall(
+                    f"Kein Gleichungslöser konnte die Matrix zerlegen: "
+                    f"{self.ausweichgrund}; danach SuperLU: {type(ex).__name__}: "
+                    f"{str(ex)[:160]}. SuperLU rechnet mit 32-Bit-Arbeitsfeldern "
+                    "und reicht für große Modelle nicht - Berechnung → "
+                    "Einstellungen → Gleichungslöser: MUMPS oder ama.") from ex
             self._solve = lu.solve
             self.backend = "superlu"
 
@@ -796,6 +955,7 @@ class LinearSolver:
         nach = self._nachweis
         zusatz = "" if nach is None else f"; erreicht {nach.erreicht:.1e} (Ziel {nach.ziel:.0e})"
         return NAMEN.get(self.backend, self.backend) + (
+            f" (ausgewichen - {self.ausweichgrund})" if self.ausweichgrund else "") + (
             f", {self.threads} Threads" if self.threads > 1 else ", einkernig") + (
             f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else "")) + (
             f"; {frei} Freiheitsgrade ohne Halt (Ergebnis dort nicht eindeutig - Lagerung pruefen)"
@@ -1266,6 +1426,16 @@ class StaticSystem:
         self.zeit_faktorisierung += getattr(ls, "zeit_faktorisierung", 0.0)
         self.nnz_matrix = getattr(ls, "nnz_matrix", 0) or self.nnz_matrix
         self.nnz_faktor = getattr(ls, "nnz_faktor", 0) or self.nnz_faktor
+        # Ist ein Loeser ausgewichen, gehoert das in den Fortschritt - und zwar
+        # auch bei den Faktorisierungen der Kontaktschritte, nicht nur bei der
+        # Grundfaktorisierung, deren Zeile "Faktorisiert (...)" ihn schon
+        # nennt. Einmal je System, nicht je Faktorisierung.
+        grund = getattr(ls, "ausweichgrund", "")
+        if grund and not getattr(self, "ausweichgrund", ""):
+            self.ausweichgrund = grund
+            fortschritt = getattr(self, "_progress", None)
+            if fortschritt:
+                _melde(fortschritt, f"Gleichungslöser ausgewichen - {grund}")
 
     def gerandet(self, Kff):
         """Kff mit dem Lagrange-Rand der Hilfsfesselung.
@@ -1407,16 +1577,25 @@ class StaticSystem:
                     rhs = rhs - self.Kfs @ u[self.si]
                 u[self.fi] = self._geloest(self.solver, rhs)
             else:
-                Kt = (self.K + K_extra)
-                Ktff = Kt[self.fi][:, self.fi].tocsc()
-                if vorgabe:
-                    Ktfs = Kt[self.fi][:, self.si]
-                    rhs = rhs - Ktfs @ u[self.si]
+                # Erst entscheiden, ob neu faktorisiert wird - dann bauen.
+                # Kt und Ktff wurden bis zum 21.09.2026 in **jedem** Schritt
+                # gebaut, obwohl Ktff nur unter `if neu:` gelesen wird und Kt
+                # sonst nur bei Vorgabe. Am Drehlager waren das bei 150
+                # Kontaktschritten je Lastfall 150 Matrixadditionen und 150
+                # Zuschnitte ueber 17,6 Mio. Nichtnullen umsonst. Weder
+                # `schluessel` noch `ls` noch `neu` haengen an Kt - die
+                # Reihenfolge laesst sich also umstellen, ohne dass sich
+                # sonst etwas aendert.
                 schluessel = None if signatur is None else (signatur, self._rand, id(self._Vf))
                 ls = getattr(self, "_kontakt_loeser", None)
                 neu = schluessel is None or ls is None \
                     or schluessel != getattr(self, "_kontakt_signatur", None)
+                Kt = (self.K + K_extra) if (neu or vorgabe) else None
+                if vorgabe:
+                    Ktfs = Kt[self.fi][:, self.si]
+                    rhs = rhs - Ktfs @ u[self.si]
                 if neu:
+                    Ktff = Kt[self.fi][:, self.fi].tocsc()
                     self.kontakt_loeser_freigeben()
                     ls = LinearSolver(self.gerandet(Ktff))
                     self._loeser_merken(ls)
@@ -1468,6 +1647,30 @@ class StaticSystem:
 # ==========================================================================
 # Lasten eines Lastfalls / einer Kombination
 # ==========================================================================
+def zusatz_kenn(K_zusatz):
+    """Kennung einer Zusatzmatrix fuer den Faktorisierungsschluessel.
+
+    Sie muss **alles** erfassen, was die Matrix ausmacht: Form, Zahl der
+    Nichtnullen, Werte **und Belegung**. Bis zum 21.09.2026 fehlte die
+    Belegung - zwei Matrizen mit gleicher Form, gleicher Nichtnullzahl und
+    bitgleichen Werten an **anderen** Stellen waren ununterscheidbar, und die
+    alte Faktorisierung blieb stehen. Greifbar wird das bei baugleichen
+    Staeben in ``solve_with_ausfall``: dieselben 144 Eintraege, andere Indizes.
+    Am Drehlager nicht zu erwarten (die plastische Tangente aendert in jedem
+    Newton-Schritt die Werte), an einem Fachwerk aus nur-Zug-Staeben sehr wohl.
+    Gefunden von der Loesersitzung am Quelltext.
+
+    Kosten: ein Hash ueber zwei weitere Felder je Aufruf.
+    """
+    if K_zusatz is None:
+        return None
+    K = K_zusatz.tocsr()
+    return (tuple(K.shape), int(K.nnz),
+            hash(np.ascontiguousarray(K.data).tobytes()),
+            hash(np.ascontiguousarray(K.indices).tobytes()),
+            hash(np.ascontiguousarray(K.indptr).tobytes()))
+
+
 def case_loads(model: Model, factors: dict, aktiv=None) -> tuple:
     """(F, feq, q, temp) fuer eine Linearkombination von Lastfaellen.
     feq: elem -> lokale aequivalente Knotenlasten (unkondensiert),
@@ -1552,6 +1755,31 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     feq = extra["feq"]
     temp = extra["temp"]
     out = []
+    # Sechsflaechner stapelweise: einzeln kostet stress_points 1375,5 µs je
+    # Element - einundsiebzigmal so viel wie eine tet4-Spannung mit 18,2 µs
+    # (21.09.2026). Zwei Drittel davon sind die acht Gausspunkte fuer die
+    # inneren Freiheitsgrade, der Rest die neun Auswertepunkte; im Stapel
+    # sind es 58,1 µs, Ergebnis identisch bis 2,5e-16. Am Drehlagernetz der
+    # Vernetzersitzung waeren das 42,8 s -> 1,81 s je Nachlauf.
+    hex_vor: dict = {}
+    je_werkstoff: dict = {}
+    for i in idx:
+        e = model.elements[i]
+        if e.typ == "hex8":
+            je_werkstoff.setdefault(e.mat, []).append(i)
+    for mat_name, liste in je_werkstoff.items():
+        if len(liste) < 8:            # unter acht lohnt der Umweg nicht
+            continue
+        mat = model.materials[mat_name]
+        for a0 in range(0, len(liste), asm.HEX8_STAPEL):
+            teil = liste[a0:a0 + asm.HEX8_STAPEL]
+            try:
+                Xs = np.asarray([model.nodes[model.elements[j].nodes[:8]] for j in teil], float)
+                Us = np.asarray([u[asm.element_dofs(model.elements[j], model)] for j in teil], float)
+                for j, sp in zip(teil, sl.spannungen_hex8_stapel(Xs, mat.E, mat.nu, Us)):
+                    hex_vor[j] = sp
+            except Exception:         # noqa: BLE001 - dann rechnet die Schleife einzeln
+                hex_vor = {k: v for k, v in hex_vor.items() if k not in teil}
     for i in idx:
         e = model.elements[i]
         mat = model.materials[e.mat]
@@ -1646,6 +1874,8 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 eps_ = sl._B_from_grad(dN_) @ ue
                 werte = [sl.D_deviatorisch(mat.E, mat.nu) @ eps_
                          + kap * float(ev[i]) * sl.VOIGT_M]
+            elif i in hex_vor:
+                werte = [np.asarray(x, float) for x in hex_vor[i]]
             else:
                 # **Alle** Auswertepunkte, nicht nur die Mitte. Beim tet4 ist
                 # das derselbe eine Punkt; beim Sechsflaechner ist die Mitte
@@ -1773,10 +2003,30 @@ def _plastisch(model) -> bool:
     return bool(pz is not None and getattr(pz, "an", False))
 
 
-def _nichtlinear(model) -> bool:
-    """Kombinationen direkt rechnen statt ueberlagern: bei Kontakt - und bei
-    Fliessen, denn plastische Dehnungen ueberlagern sich nicht (17.09.2026)."""
-    return bool(model.has_contact or _plastisch(model))
+def _nichtlinear(model, ausfall: bool = None) -> bool:
+    """Kombinationen direkt rechnen statt ueberlagern: bei Kontakt, bei
+    Fliessen (plastische Dehnungen ueberlagern sich nicht, 17.09.2026) - und
+    bei **Ausfallstaeben und Seilen**.
+
+    Der dritte Fall fehlte bis zum 22.09.2026, obwohl das Modell ihn seit
+    jeher kennt (``Model.hat_ausfallstaebe``) und der Loeser ihn an zwei
+    anderen Stellen abfragt. Ein Zug- oder Druckstab, ein Seil oder eine
+    ausfallende Feder aendert seine Aktivmenge mit der Last: jeder Lastfall
+    wurde mit einer **anderen** Menge tragender Staebe gerechnet, und die
+    Summe solcher Ergebnisse steht in keinem Gleichgewicht eines wirklichen
+    Zustands. Schnittgroessen, Verformungen und Auflagerkraefte jeder
+    Kombination waren damit falsch - ohne jede Meldung.
+
+    ``ausfall`` nimmt die Antwort entgegen, wenn sie schon bekannt ist:
+    ``hat_ausfallstaebe`` laeuft ueber alle Elemente (4,5 ms bei 67.500,
+    gemessen 22.09.2026), und diese Funktion wird je Kombination gerufen. Bei
+    Kontakt oder Fliessen faellt der Durchlauf ohnehin weg, weil ``or``
+    kurzschliesst - teuer waere nur das lineare Modell, und genau dort gibt
+    ``solve_combinations`` die Antwort einmal mit.
+    """
+    if model.has_contact or _plastisch(model):
+        return True
+    return bool(model.hat_ausfallstaebe() if ausfall is None else ausfall)
 
 
 def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
@@ -1793,11 +2043,26 @@ def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
     for k in ("contact_iterations", "contact_factorisations"):
         if k in cinfo:
             cinfo[k] = int(res.info.get(k, 0) or 0) + int(cinfo[k] or 0)
-    cinfo["contact_laeufe"] = int(res.info.get("contact_laeufe", 0) or 0) + 1
-    cinfo["contact_converged"] = bool(res.info.get("contact_converged", True)) \
-        and bool(cinfo.get("contact_converged", True))
+    lauf = int(res.info.get("contact_laeufe", 0) or 0) + 1
+    cinfo["contact_laeufe"] = lauf
+    dieser = bool(cinfo.get("contact_converged", True))
+    cinfo["contact_converged"] = bool(res.info.get("contact_converged", True)) and dieser
+    # **Welcher Lauf, und war es der letzte?** Die Meldung "Nachpruefung der
+    # Reibung ... abgebrochen" nannte keinen Lauf und wurde unten mit den
+    # gleichlautenden der anderen Laeufe zu EINER Zeile zusammengefasst. Eine
+    # Zeile konnte fuer 1 bis 12 gekappte Laeufe stehen, und ob der letzte
+    # dabei war - aus dem u und sigma stammen -, liess sich hinterher nicht
+    # mehr sagen (am Drehlager genau so geschehen; Nachpruefung der
+    # Loesersitzung vom 22.09.2026). Die Abbruchzeile traegt jetzt ihren
+    # Lauf und wird nicht zusammengefasst.
+    cinfo["contact_letzter_lauf_konvergiert"] = dieser
+    cinfo["contact_laeufe_nicht_konvergiert"] = (
+        int(res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0) + (0 if dieser else 1))
+    abbruch = cinfo.get("contact_abbruch")
+    eigene = [f"{z} (Kontaktlauf {lauf})" if abbruch and z == abbruch else z
+              for z in (cinfo.get("contact_log") or [])]
     alt_log = list(res.info.get("contact_log", []) or [])
-    neu_log = [z for z in (cinfo.get("contact_log") or []) if z not in alt_log]
+    neu_log = [z for z in eigene if z not in alt_log]
     cinfo["contact_log"] = alt_log + neu_log
     return cinfo
 
@@ -2186,6 +2451,53 @@ def _mit_referenzen_zuerst(names: list, referenzen: dict) -> list:
     return folge
 
 
+def _referenzgruppen(folge: list, referenzen: dict) -> list:
+    """Die Lastfaelle in **unteilbare** Gruppen: eine Referenz und alle
+    Zustaende, die ihren Kontaktzustand einfrieren, gehoeren zusammen.
+
+    Warum unteilbar: :func:`_solve_cases_innen` findet den eingefrorenen
+    Zustand nur, wenn seine Referenz **in demselben Lauf** schon gerechnet
+    wurde (``_einfrieren`` dort). Liegt sie in einer anderen Kette, gibt es
+    still ``(None, None)`` und der Zustand rechnet voll nichtlinear - kein
+    falsches Ergebnis, aber der ganze Gewinn ist weg, und niemand sieht es.
+    Darum wird an Gruppengrenzen geschnitten und nicht an festen Bloecken.
+
+    Zusammengefasst wird ueber Zusammenhangskomponenten und nicht ueber ein
+    einfaches "Referenz plus ihre Zustaende": waere ein Zustand selbst
+    Referenz eines dritten, zerfiele die Kette sonst.
+    :func:`ermuedungsreferenzen` baut solche Ketten heute nicht (ein Zustand,
+    der selbst Referenz ist, bleibt nichtlinear), aber die Gruppenbildung darf
+    davon nicht abhaengen.
+
+    Die Reihenfolge bleibt erhalten: innerhalb einer Gruppe die von ``folge``,
+    die Gruppen in der Reihenfolge ihres ersten Auftretens. So bleiben
+    Situationen zusammenhaengend und der Warmstart greift weiter.
+    """
+    eltern = {n: n for n in folge}
+
+    def wurzel(a):
+        while eltern[a] != a:
+            eltern[a] = eltern[eltern[a]]
+            a = eltern[a]
+        return a
+
+    for zustand, ref in (referenzen or {}).items():
+        if zustand in eltern and ref in eltern:
+            ra, rb = wurzel(zustand), wurzel(ref)
+            if ra != rb:
+                eltern[ra] = rb
+    gruppen: dict = {}
+    for n in folge:
+        gruppen.setdefault(wurzel(n), []).append(n)
+    gesehen, aus = set(), []
+    for n in folge:
+        w = wurzel(n)
+        if w not in gesehen:
+            gesehen.add(w)
+            aus.append(gruppen[w])
+    return aus
+
+
 def solve_cases(model: Model, *args, **kwargs):
     """Mehrere Lastfaelle - im stehenden Prozesspool (parallel.arbeiter);
     Einzelheiten in _solve_cases_innen."""
@@ -2216,13 +2528,22 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
         return None, None
     # Warmstart: jeder Lastfall beginnt beim Kontaktzustand des vorigen
     # Lastfalls desselben Systems (Situation)
-    # Mehrere Lastfaelle gleichzeitig? Nur ohne uebergebenes System (dann gilt
-    # es fuer alle genannten Faelle) und ohne eingefrorene Zustaende (die
-    # brauchen ihren Referenzzustand aus demselben Lauf).
-    if system is None and not referenzen and len(names) > 1:
+    # Mehrere Lastfaelle gleichzeitig? Nur ohne uebergebenes System - das gilt
+    # fuer alle genannten Faelle und laesst sich nicht auf Prozesse verteilen.
+    #
+    # Eingefrorene Zustaende sperrten die Ketten bis zum 22.09.2026 ganz, weil
+    # sie ihren Referenzzustand aus demselben Lauf brauchen. Am Drehlager
+    # liefert ermuedungsreferenzen 161 eingefrorene Zustaende (Protokoll vom
+    # 19.09.2026; eine fruehere Fassung dieses Kommentars schrieb 117), also
+    # war referenzen nie leer, und die Sperre haette immer gegriffen - sobald
+    # die Ketten ueberhaupt eingeschaltet sind; die Vorgabe ist ketten = 1.
+    # Jetzt schneidet _ketten_teilen an Gruppengrenzen, und Referenz und
+    # Zustand landen in derselben Kette. Am Drehlager sind es nur drei
+    # Gruppen (LF401: 79, LF601: 81, LF402: 1), die Aufteilung ist dort grob.
+    if system is None and len(names) > 1:
         k = ketten_zahl(len(names))
         if k > 1:
-            fertig = _cases_in_ketten(model, names, k, progress)
+            fertig = _cases_in_ketten(model, names, k, progress, referenzen)
             if fertig:
                 return fertig
     # Jeder fertige Lastfall bleibt bestehen, auch wenn der naechste abbricht:
@@ -2285,34 +2606,73 @@ def ketten_zahl(n_faelle: int) -> int:
     return max(1, min(nach_speicher, st.workers, n_faelle))
 
 
-def _ketten_teilen(model: Model, names: list, k: int) -> list:
+def _ketten_teilen(model: Model, names: list, k: int, referenzen: dict = None) -> list:
     """Die Lastfaelle auf k Ketten verteilen - Situation fuer Situation
     zusammenhaengend, damit der Warmstart innerhalb der Kette greift (jede
-    Situation hat ihr eigenes System)."""
-    folge = [n for sit_names in model.lastfaelle_je_situation(names).values()
-             for n in sit_names]
+    Situation hat ihr eigenes System), und **nie zwischen einer Referenz und
+    ihren eingefrorenen Zustaenden** (siehe :func:`_referenzgruppen`).
+
+    Geschnitten wird darum an Gruppengrenzen statt an festen Bloecken. Eine
+    Gruppe, die groesser ist als die Zielgroesse, bekommt ihre eigene Kette;
+    die Ketten werden dadurch ungleich lang. Das ist die richtige Seite zum
+    Irren: ungleiche Ketten kosten Wartezeit, eine verlorene Referenz kostet
+    einen vollen nichtlinearen Lastfall - und zwar still.
+    """
+    # Die Referenzordnung gilt **je Situation**, nicht ueber alle Lastfaelle:
+    # sonst zieht sie Faelle aus einer Situation vor und zerreisst damit die
+    # Ordnung, die der Docstring zusichert. Jede Situation, die eine Kette
+    # beruehrt, kostet dort ein eigenes System und eine eigene Faktorisierung
+    # (87 s von 235 s je Lastfall am Drehlager) - und ketten_zahl rechnet mit
+    # 9,5 GB je Kette fuer **eine** Matrix.
+    folge = []
+    for sit_names in model.lastfaelle_je_situation(names).values():
+        teil = list(sit_names)
+        if referenzen:
+            teil = _mit_referenzen_zuerst(teil, referenzen)
+        folge.extend(teil)
     k = max(1, min(int(k), len(folge)))
     gr = (len(folge) + k - 1) // k
-    return [folge[i:i + gr] for i in range(0, len(folge), gr) if folge[i:i + gr]]
+    gruppen = _referenzgruppen(folge, referenzen) if referenzen else [[n] for n in folge]
+    ketten, aktuell = [], []
+    for g in gruppen:
+        # Eine neue Kette nur, solange danach noch eine uebrigbleibt: sonst
+        # entstuenden **mehr** Ketten als angefordert. _cases_in_ketten
+        # startet so viele Prozesse, wie es Bloecke gibt, und eine Kette am
+        # Drehlager belegt 9,5 GB - aus k=3 wuerden sonst 4 Prozesse und
+        # 38 GB. Gemessen an vier Ermuedungslasten zu je drei Zustaenden:
+        # k=3 gab vier Ketten (22.09.2026).
+        if aktuell and len(aktuell) + len(g) > gr and len(ketten) < k - 1:
+            ketten.append(aktuell)
+            aktuell = []
+        aktuell.extend(g)
+    if aktuell:
+        ketten.append(aktuell)
+    return ketten
 
 
-def _cases_in_ketten(model: Model, names: list, k: int, progress=None) -> dict:
+def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
+                     referenzen: dict = None) -> dict:
     """Mehrere Lastfaelle gleichzeitig: je Kette ein Prozess, in sich warm.
 
     Gemessen am Drehlager (20.09.2026): ein warmer Lastfall braucht 235 s,
-    davon 87 s Faktorisierung; der Rechner hatte dabei im Mittel 12 von 32
-    Kernen belegt. Der Speicher ist die Grenze, nicht die Kernzahl - eine
-    Kette mit vollem Pool belegt 36 GB, davon 32,7 GB die Arbeiter.
+    davon 87 s Faktorisierung. Die Kernlast (Loesersitzung, 22.09.2026, 31
+    Prozesse): im Mittel rund 12,5 von 32 **logischen** Prozessoren belegt -
+    der Rechner hat aber nur 16 physische Kerne, und die Last kommt in
+    Schueben: etwa 60 % der Zeit sind alle physischen Kerne besetzt, etwa ein
+    Drittel der Zeit weniger als acht. Im Mittel stehen geschaetzt 4 bis 5
+    physische Kerne still, nicht 20; ein Gewinn durch Ketten ist am Drehlager
+    nicht gemessen. Der Speicher ist die Grenze - eine Kette mit vollem Pool
+    belegt 36 GB, davon 32,7 GB die Arbeiter.
     """
     import pickle
     import tempfile
     from .parallel import Job, run_jobs
-    bloecke = _ketten_teilen(model, names, k)
+    bloecke = _ketten_teilen(model, names, k, referenzen)
     if len(bloecke) <= 1:
         return {}
     st = parallel.settings()
     je = int(getattr(st, "ketten_arbeiter", 0) or 0) or max(2, st.workers // len(bloecke))
-    threads = st.solver_threads or max(1, (parallel.cpu_count() - 1) // len(bloecke))
+    threads = threads_je_kette(st.solver_threads, len(bloecke))
     _melde(progress, f"{len(names)} Lastfälle in {len(bloecke)} Ketten "
                      f"({je} Arbeiter und {threads} Löser-Threads je Kette)")
     pfad = None
@@ -2323,10 +2683,38 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None) -> dict:
             pickle.dump(model, f, protocol=pickle.HIGHEST_PROTOCOL)
     try:
         d = model.to_dict() if pfad is None else None
-        jobs = [Job("solve_kette",
-                    {"pfad": pfad or "", "model": d, "cases": b,
-                     "arbeiter": je, "loeser_threads": threads},
-                    label=f"{b[0]}…{b[-1]}")
+        # Je Kette nur die Referenzen, deren **beide** Enden in ihr liegen. Eine
+        # Referenz, die anderswo liegt, waere im Auftrag wertlos und
+        # verdeckte, dass der Zustand voll gerechnet hat.
+        def _teilreferenzen(b):
+            drin = set(b)
+            return {z: r for z, r in (referenzen or {}).items()
+                    if z in drin and r in drin}
+
+        def _auftrag(b):
+            a = {"pfad": pfad or "", "model": d, "cases": b,
+                 "arbeiter": je, "loeser_threads": threads}
+            # ``referenzen`` nur mitgeben, wenn es welche gibt: ein Arbeiter
+            # aelteren Stands (Rechnerfarm, danebenliegende Statik3D.exe)
+            # kennt den Schluessel nicht und faellt mit TypeError aus. Ohne
+            # Ermuedungsreferenzen - also in fast jedem Modell - aendert sich
+            # damit nichts an seinem Auftrag.
+            # Die Einstellungen des Loesers muessen mit: unter spawn beginnt
+            # jeder Kettenprozess mit den Vorgaben. Bis zum 22.09.2026 rechnete
+            # eine Kette darum mit solver_backend "auto" statt dem
+            # gespeicherten "pardiso" und mit der Vorgabegenauigkeit - und wich
+            # still aus, wo der Hauptprozess abgebrochen haette (gefunden von der
+            # Loesersitzung). Nur die, die von der Vorgabe abweichen: ein
+            # Arbeiter aelteren Stands kennt den Schluessel nicht.
+            ein = kettenauftrag_einstellungen(st)
+            if ein:
+                a["einstellungen"] = ein
+            tr = _teilreferenzen(b)
+            if tr:
+                a["referenzen"] = tr
+            return a
+
+        jobs = [Job("solve_kette", _auftrag(b), label=f"{b[0]}…{b[-1]}")
                 for b in bloecke]
         fertig = run_jobs(jobs, workers=len(bloecke),
                           progress=(lambda a, b_: _melde(progress, f"Kette {a}/{b_} fertig"))
@@ -2338,13 +2726,46 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None) -> dict:
             except OSError:
                 pass
     out: dict = {}
+    fehler = []
     for job, r in zip(jobs, fertig):
         if not r.ok:
-            raise RuntimeError(f"Kette {job.label}: {r.error}")
+            fehler.append(f"Kette {job.label}: {r.error}")
+            continue
         for n, res in (r.result or {}).items():
             res.model = model
             out[n] = res
-    return {n: out[n] for n in names if n in out}
+    gerettet = {n: out[n] for n in names if n in out}
+    # **Was hier bewusst NICHT steht.** Eine erste Fassung zog die
+    # Lastfallmarken nach ("Lastfall X (k/n)"), damit die Rechenliste ihre
+    # Posten abschliesst - in der Kette laeuft solve_cases ohne progress, also
+    # entsteht dort keine solche Zeile, und alle Zeilen bleiben bis zum Ende
+    # des Laufs offen. Eine Gegenlesung hat die Fassung am 22.09.2026 in drei
+    # Punkten widerlegt, und alle drei waren schlimmer als das Uebel:
+    #
+    #   * Die Schleife stand **vor** der Rettung und in keinem try. Ein
+    #     Abbruch faellt als Ausnahme aus dem Fortschrittsaufruf heraus
+    #     (gui.worker.Abgebrochen) - und nahm damit genau das mit, was die
+    #     Rettung gerade sichern sollte. Vor der Aenderung war diese Lage
+    #     harmlos, weil nach run_jobs gar kein Fortschritt mehr gemeldet wurde.
+    #   * Der Anteil i/n sprengte das Fenster der Lastfaelle (0,35 bis 0,60,
+    #     siehe die Aufrufe weiter oben): der Balken sprang auf 100 % und fiel
+    #     mit der ersten Kombination auf 60 % zurueck.
+    #   * Die Marken kommen ohnehin erst, wenn **alle** Ketten zurueck sind
+    #     (run_jobs wartet). Die Rechenliste misst die Dauer von Marke zu
+    #     Marke - ein Lastfall haette 4:12:00 behauptet und 421 je 0:00.
+    #
+    # Was bleibt, ist die Einschraenkung: auf dem Kettenweg schliessen die
+    # Zeilen der Rechenliste erst am Ende, und der Abbruch greift zwischen
+    # den Ketten. Das ist der Preis der Ketten und steht so im
+    # Theoriehandbuch - eine falsche Anzeige waere schlechter als eine
+    # ausbleibende.
+    if fehler:
+        # Was fertig ist, bleibt - genau wie im seriellen Weg. Ohne diesen
+        # Anhang kostete ein einziger Fehlschlag (divergierender Lastfall,
+        # Speicher, abgestuerzter Arbeiter) die Rechenzeit **aller** fertigen
+        # Ketten; am Drehlager sind das viele Stunden.
+        raise _teil_merken(RuntimeError("; ".join(fehler)), "teil_cases", gerettet)
+    return gerettet
 
 
 def _kombination_pruefen(model: Model, combo: Combination) -> str:
@@ -2360,11 +2781,16 @@ def _kombination_pruefen(model: Model, combo: Combination) -> str:
 
 def solve_combination(model: Model, combo: Combination, case_results: dict = None,
                       system: StaticSystem = None, workers: int = None,
-                      progress=None, systeme: dict = None, start=None) -> Results:
+                      progress=None, systeme: dict = None, start=None,
+                      nichtlinear: bool = None) -> Results:
     """Eine Kombination: Superposition (linear) oder direkte Loesung (Kontakt) -
-    in der Situation der Kombination."""
+    in der Situation der Kombination.
+
+    ``nichtlinear`` nimmt die Antwort von :func:`_nichtlinear` entgegen, wenn
+    der Aufrufer sie schon kennt - siehe dort, warum das lohnt."""
     sit = _kombination_pruefen(model, combo)
-    if not _nichtlinear(model) and case_results is not None \
+    nl = _nichtlinear(model) if nichtlinear is None else bool(nichtlinear)
+    if not nl and case_results is not None \
             and all(k in case_results for k, f in combo.factors.items() if f):
         teile = [(case_results[k], f) for k, f in combo.factors.items() if f]
         basis = next((r.model for r, _f in teile if getattr(r, "model", None) is not None), model)
@@ -2461,14 +2887,15 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
     out = {}
     if not names:
         return out
-    if not _nichtlinear(model):
+    nl = _nichtlinear(model)
+    if not nl:
         if case_results is None:
             case_results = solve_cases(model, workers=workers, progress=progress,
                                        system=system, systeme=systeme)
         try:
             for k, n in enumerate(names):
                 out[n] = solve_combination(model, model.combinations[n], case_results,
-                                           systeme=systeme)
+                                           systeme=systeme, nichtlinear=nl)
                 # Auch der lineare Weg meldet sich: er ueberlagert nur, aber
                 # bei 422 Kombinationen stand der Balken sonst minutenlang
                 # still, und ein Abbruch hatte hier keinen Haltepunkt
@@ -2839,7 +3266,16 @@ def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=No
         u = system.ohne_starrkoerper(np.asarray(u, float))
         verschiebungen_eintragen(model, res, u, np.zeros_like(u))
         res.contact = list(getattr(ex, "kontakt", None) or [])
+        # Auch die Laufzaehlung: ohne diese Zeilen blieben
+        # contact_letzter_lauf_konvergiert und contact_laeufe_nicht_konvergiert
+        # auf dem Stand des VORIGEN, konvergierten Laufs, und ein abgebrochener
+        # Lastfall meldete "letzter Lauf konvergiert" (gefunden von der
+        # Loesersitzung am Quelltext, 22.09.2026).
+        _laeufe = int(res.info.get("contact_laeufe", 0) or 0) + 1
+        _nicht = int(res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0) + 1
         res.info.update({"abbruch": str(ex).splitlines()[0], "abbruch_iteration": int(ex.iteration),
+                         "contact_laeufe": _laeufe, "contact_letzter_lauf_konvergiert": False,
+                         "contact_laeufe_nicht_konvergiert": _nicht,
                          "contact_iterations": int(ex.iteration), "contact_converged": False,
                          "contact_log": list(getattr(ex, "log", None) or []),
                          "ndof": model.ndof, "nfree": len(system.fi), "solver": system.backend})
@@ -3003,9 +3439,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     # ausgefallener Zugstaebe in jedem Ausfallschritt - bliebe bei gleicher
     # Aktivmenge die **alte** Faktorisierung stehen und loeste mit der falschen
     # Matrix. Darum der Inhalt von K_zusatz im Schluessel (20.09.2026).
-    kz_kenn = None if K_zusatz is None else (
-        tuple(K_zusatz.shape), int(K_zusatz.nnz),
-        hash(np.ascontiguousarray(K_zusatz.tocsr().data).tobytes()))
+    kz_kenn = zusatz_kenn(K_zusatz)
 
     def signatur():
         s = cs.signatur()
@@ -3036,6 +3470,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     if warm:
         log.append("Warmstart aus dem Kontaktzustand des vorigen Lastfalls")
     converged = False
+    deckel = False          # die Reibungsnachpruefung hat aufgegeben
+    from .contact import MAX_CYCLES as _MAX_CYCLES
     it = 0
     Kc = Fc = None
 
@@ -3151,7 +3587,16 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        else ", Matrix bleibt")
             _melde(progress, f"Kontakt-Iteration {it}: {cs.n_active} aktiv{zusatz}", anteil)
         if not changed:
-            converged = True
+            # ContactSystem.update() gibt False zurueck, wenn es fertig ist -
+            # **und** wenn es aufgibt: nach MAX_CYCLES Zustandswechseln bricht
+            # die Nachpruefung der Reibung ab (contact.py) und meldet das nur
+            # ins contact_log. Der Loeser las beides als Konvergenz und setzte
+            # contact_converged auf wahr. Eine Zahl aus einem gedeckelten Lauf
+            # sah damit aus wie eine auskonvergierte - und genau gegen solche
+            # Zahlen pruefen wir 'aendert das Ergebnis nicht'. Gefunden von der
+            # Loesersitzung am Quelltext (21.09.2026).
+            deckel = cs.phase == 2 and cs.cycles >= _MAX_CYCLES
+            converged = not deckel
             break
     if converged and u is not None:
         schub = cs.schub_unter_last(u)
@@ -3218,11 +3663,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         text = ("Probelauf: ein Kontaktschritt gerechnet, nicht auskonvergiert - "
                 "das Ergebnis ist ein Netzmaß, kein Nachweis"
                 if probelauf else
-                f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert")
+                (f"Kontakt: Nachprüfung der Reibung nach {_MAX_CYCLES} Zustandswechseln "
+                 "abgebrochen - das Ergebnis ist nicht auskonvergiert"
+                 if deckel else
+                 f"Kontakt-Iteration nach {max_iter} Schritten nicht konvergiert"))
         log.append(text)
         _melde(progress, text)
     log.extend(cs.warnings())
     return u, R, cs.results(), cs.nodal_forces(model.nn), {
+        "contact_abbruch": (text if not converged else ""),
         "contact_iterations": it, "contact_converged": converged, "contact_log": log,
         "contact_warm": warm,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
@@ -3531,7 +3980,42 @@ def _lastfaelle_hoeherer_ordnung(model: Model, an, systeme: dict, progress=None)
                     an.theorie3 = Th3Results(settings={"schritte": int(getattr(ds, "th3_schritte", 10) or 10)})
                 an.theorie3.kombinationen[name] = info
         except ValueError as ex:
+            # **Nicht nur nach an.info["warnungen"]**: dieser Schluessel wird im
+            # ganzen Programm einmal geschrieben und nirgends gelesen - weder
+            # von Analysis.summary noch vom Bericht noch von der Oberflaeche.
+            # Der Lastfall behielt damit still sein LINEARES Ergebnis unter
+            # demselben Namen, waehrend die Lastfalltabelle des Berichts
+            # weiterhin "II" bzw. "III" ausweist (report/html.py druckt
+            # model.theorie_von, also die Einstellung, nicht das Gerechnete).
+            # Zusatzmomente aus der Verformung und die Vorkruemmungen fehlten
+            # vollstaendig, und alle darauf aufbauenden Nachweise rechneten mit
+            # zu kleinen Momenten - unkonservativ und ohne jeden Hinweis
+            # (gefunden 22.09.2026).
+            #
+            # Der Kombinationszweig macht es seit jeher richtig
+            # (theorie3.py: Th3Info(name=n, fehler=str(ex))); hier fehlte es.
+            # Mit einem Eintrag in kombinationen steht der Fehler in der
+            # Spalte "Hinweis" des Theoriekapitels, und res.info["theorie"]
+            # sagt, was wirklich gerechnet wurde.
             an.info.setdefault("warnungen", []).append(f"Lastfall {name}: {ex}")
+            if th == "II":
+                from .theorie2 import Th2Info
+                if an.theorie2 is None:
+                    an.theorie2 = Th2Results(settings={"modus": "je Lastfall/Kombination"})
+                an.theorie2.kombinationen[name] = Th2Info(kombination=name, fehler=str(ex))
+            else:
+                from .theorie3 import Th3Info
+                if an.theorie3 is None:
+                    an.theorie3 = Th3Results(
+                        settings={"schritte": int(getattr(ds, "th3_schritte", 10) or 10)})
+                an.theorie3.kombinationen[name] = Th3Info(name=name, fehler=str(ex))
+            alt_res = an.cases.get(name)
+            if alt_res is not None:
+                # Das Ergebnis bleibt stehen - es ist ja gerechnet -, sagt aber
+                # ab jetzt selbst, nach welcher Theorie.
+                alt_res.info["theorie"] = "I"
+                alt_res.info["theorie_gewuenscht"] = th
+                alt_res.info["theorie_fehler"] = str(ex)
             continue
         if not info.fehler:
             res.kind = "case"
@@ -3547,9 +4031,12 @@ def ermuedungsreferenzen(model: Model) -> dict:
     Der erste Zustand jeder Ermuedungslast wird nichtlinear geloest, die
     weiteren mit seinem eingefrorenen Kontaktzustand linear. Ein Zustand, der
     schon eingefroren ist, gibt seine Referenz weiter; ein Zustand, der selbst
-    Referenz ist, bleibt nichtlinear. Am Drehlager: 50 Ermuedungslasten mit 2
-    bis 82 Zustaenden, 164 Zustaende - statt 164 x 18 min etwa 47 x 18 min
-    und 117 Rueckwaertseinsetzungen.
+    Referenz ist, bleibt nichtlinear. Am Drehlager: 50 Ermuedungslasten, 164
+    Zustaende; weil spaetere Lasten den schon eingefrorenen ersten Zustand
+    weiterreichen, bleiben drei Referenzen (LF401, LF601, LF402) nichtlinear
+    und 161 Zustaende werden linear geloest (Programmprotokoll vom
+    19.09.2026). Eine fruehere Fassung schrieb "47 x 18 min und 117
+    Rueckwaertseinsetzungen" - das war falsch.
     """
     if not model.has_contact or not getattr(model.design, "ermuedung_kontakt_einfrieren", True):
         return {}

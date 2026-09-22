@@ -459,8 +459,146 @@ def test_schliesstest_mit_oeffnungsringen():
           b2[0].text[:120] if b2 else "kein Befund")
 
 
+def test_abnahme_meldet_ausgefallene_pruefungen():
+    """Eine Prüfung, die gar nicht lief, darf nicht als „bestanden" gelten.
+
+    Die Abnahme führt sechs Teilprüfungen. Zwei davon fingen eine Ausnahme
+    stumm ab und gaben eine **leere Liste** zurück — und leer heißt in
+    `abnahme()` ausdrücklich „das Netz ist abgenommen". Ein Modell, dessen
+    Lagerung in einer Richtung fast nicht hält, wurde damit mit
+    „--- Abnahme des Netzes: bestanden ---" quittiert.
+
+    Schlimmer noch der Teilausfall: `restfreiheiten` füllt die Gütewerte je
+    Teiltragwerk fortlaufend. Warf es beim 40. von 60, gingen auch die 39
+    schon gemessenen Werte mit verloren.
+
+    Und im ausnahmefreien Fall: ein `nan` ging als Formgüte 1,000 ein — ein
+    Element, dessen Form sich nicht ermitteln ließ, galt als das formbeste
+    überhaupt.
+    """
+    from statik3d import diagnose as _dg
+    from statik3d import singular as _sg
+    from statik3d.singular import Halteguete
+
+    m, _n = _zwei_teile(lager_b=True)
+
+    # ---- (a) die Halteguete faellt ganz aus
+    echt = _sg.restfreiheiten
+
+    def wirft(*a, **kw):
+        raise RuntimeError("Eigenwertproblem nicht lösbar")
+
+    _sg.restfreiheiten = wirft
+    try:
+        alle = _dg.abnahme(m, warnungen=True)
+    finally:
+        _sg.restfreiheiten = echt
+    namen = [b.pruefung for b in alle]
+    check("ein Ausfall der Haltegüte wird benannt",
+          "Haltegüte nicht geprüft" in namen, str(namen))
+    check("und zwar als Warnung, nicht als Verletzung",
+          all(b.stufe == "WARNUNG" for b in alle
+              if b.pruefung == "Haltegüte nicht geprüft"),
+          str([(b.pruefung, b.stufe) for b in alle]))
+    # Der Zusatz ist eine WARNUNG und darum nur dem Aufrufer mit
+    # warnungen=True sichtbar - das wird gemessen, nicht behauptet.
+    _sg.restfreiheiten = wirft
+    try:
+        ohne = _dg.abnahme(m, warnungen=False)
+    finally:
+        _sg.restfreiheiten = echt
+    check("ohne warnungen=True hält der Zusatz die Rechnung nicht an",
+          not any(str(b.pruefung).endswith("nicht geprüft") for b in ohne),
+          str([b.pruefung for b in ohne]))
+
+    # ---- (b) Teilausfall: was schon gemessen war, bleibt stehen
+    def wirft_spaeter(model, guete=None, **kw):
+        if guete is not None:
+            guete.append(Halteguete(wert=8.5e-05, koerper=["Teil B"],
+                                    knoten=[2], text="Teil B hält in x kaum"))
+        raise RuntimeError("beim vierzigsten Teiltragwerk")
+
+    _sg.restfreiheiten = wirft_spaeter
+    try:
+        alle2 = _dg.abnahme(m, warnungen=True)
+    finally:
+        _sg.restfreiheiten = echt
+    namen2 = [b.pruefung for b in alle2]
+    check("der schon gemessene Mangel überlebt den Teilausfall",
+          "Haltegüte" in namen2 and "Haltegüte nicht geprüft" in namen2,
+          str(namen2))
+
+    # ---- (c) die Formguete faellt ganz aus
+    from statik3d import netzguete as _ng
+    echt_g = _ng.guete
+    _ng.guete = wirft
+    try:
+        alle3 = _dg.abnahme(m, warnungen=True)
+    finally:
+        _ng.guete = echt_g
+    check("ein Ausfall der Formgüte wird benannt",
+          "Elementgüte nicht geprüft" in [b.pruefung for b in alle3],
+          str([b.pruefung for b in alle3]))
+
+    # ---- (d) ohne Ausfall bleibt alles, wie es war
+    alle4 = _dg.abnahme(m, warnungen=True)
+    check('ohne Ausfall steht kein „nicht geprüft“ da',
+          not any(str(b.pruefung).endswith("nicht geprüft") for b in alle4),
+          str([b.pruefung for b in alle4]))
+
+
+def test_nicht_messbare_formguete_gilt_nicht_als_beste():
+    """Ein `nan` in der Formgüte darf nicht als 1,000 durchgehen.
+
+    Bis zum 22.09.2026 stand in der Splitterprüfung
+    `q[j] if np.isfinite(q[j]) else 1.0`: ein Element, dessen Formgüte sich
+    nicht ermitteln ließ, ging als das formbeste überhaupt ein. Jetzt zählt
+    es gar nicht mit und erscheint stattdessen als „Elementgüte nicht
+    geprüft" mit seiner Anzahl.
+    """
+    import numpy as _np
+    from statik3d import diagnose as _dg
+    from statik3d import netzguete as _ng
+    from statik3d import mesher
+    from statik3d.model import Material as _Mat, Model as _Mod, Volumenkoerper
+
+    m = _Mod("guete")
+    m.add_material(_Mat.steel("S235"))
+    mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, 2, 1, 1, typ="hex8")
+    k = Volumenkoerper("K1", [])
+    k.elemente = list(range(len(m.elements)))
+    m.koerper["K1"] = k
+
+    echt = _ng.guete
+
+    def mit_nan(model):
+        q = _np.ones(len(model.elements), float)
+        q[0] = _np.nan               # nicht messbar
+        q[1] = 0.04                  # echter Splitter
+        return q
+
+    _ng.guete = mit_nan
+    try:
+        alle = _dg.abnahme(m, warnungen=True)
+    finally:
+        _ng.guete = echt
+    texte = {b.pruefung: b.text for b in alle}
+    check("das nicht messbare Element wird gezählt und benannt",
+          "Elementgüte nicht geprüft" in texte
+          and "bei 1 die Formgüte" in texte["Elementgüte nicht geprüft"],
+          texte.get("Elementgüte nicht geprüft", "keine Zeile")[:90])
+    check("der echte Splitter wird gefunden",
+          "Splitter" in texte and "1 von 1 Elementen" in texte["Splitter"],
+          texte.get("Splitter", "keine Zeile")[:90])
+    check('die Probe ist scharf: vorher hätte „1 von 2“ dagestanden',
+          "1 von 2" not in texte.get("Splitter", ""),
+          texte.get("Splitter", "-")[:90])
+
+
 def main():
-    for f in (test_teiltragwerke, test_unvernetzt, test_koerper_ohne_netz_haelt_an,
+    for f in (test_abnahme_meldet_ausgefallene_pruefungen,
+              test_nicht_messbare_formguete_gilt_nicht_als_beste,
+              test_teiltragwerke, test_unvernetzt, test_koerper_ohne_netz_haelt_an,
               test_meldung_nennt_ursache_und_kanten,
               test_abnahme, test_abnahme_an_der_echten_fuge,
               test_schliesstest_mit_oeffnungsringen, test_solver_meldung):

@@ -1154,13 +1154,30 @@ class ContactSystem:
 
     def signatur(self) -> tuple:
         """Woran die Kontaktsteifigkeit Kc haengt: Phase, Aktivmenge, Gleiten,
-        Fliessen und die ganz rutschenden Gruppen. Normalkraefte und
-        Gleitrichtungen stehen nur im Lastvektor Fc. Gleiche Signatur heisst
-        gleiche Matrix - die Faktorisierung kann bleiben (StaticSystem.solve)."""
+        Fliessen, der Schubhalt und die ganz rutschenden Gruppen. Normalkraefte
+        und Gleitrichtungen stehen nur im Lastvektor Fc. Gleiche Signatur heisst
+        gleiche Matrix - die Faktorisierung kann bleiben (StaticSystem.solve).
+
+        Der **Schubhalt** gehoert seit dem 21.09.2026 dazu, und sein Fehlen war
+        ein Loch im Schluessel: ``matrices`` legt fuer eine **inaktive**
+        Bedingung mit ``schub_halt`` einen kt-Block in Kc (siehe dort). Das ist
+        eine andere Matrix bei unveraenderter Aktivmenge. ``schub_frei`` raeumt
+        die Marke ab, sobald die Gruppe wieder traegt; faellt das in eine Runde
+        ohne Wechsel von active, slip oder yielding, blieb die Signatur gleich
+        und die Faktorisierung stehen - geloest wurde dann mit einer Matrix, die
+        um den Schubblock danebenlag. Gefunden von der Loesersitzung am
+        Quelltext, nicht an einer Zahl; der Pfad ist selten, aber er ist genau
+        der, der das Drehlager ueberhaupt wieder rechnen liess (19.09.2026).
+
+        Es kostet einen Hash ueber ein Bitfeld und spart keine einzige
+        Faktorisierung ein - zusaetzliche gibt es nur dort, wo die Matrix
+        wirklich eine andere ist."""
         a = np.array([c.active for c in self.cons], bool)
         s = np.array([c.slip for c in self.cons], bool)
         y = np.array([c.yielding for c in self.cons], bool)
+        h = np.array([bool(getattr(c, "schub_halt", False)) for c in self.cons], bool)
         return (self.phase, hash(a.tobytes()), hash(s.tobytes()), hash(y.tobytes()),
+                hash(h.tobytes()),
                 tuple(sorted(self._full_slip_groups().items())))
 
     def stabilise(self) -> bool:

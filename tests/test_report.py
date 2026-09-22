@@ -291,6 +291,66 @@ def test_kontaktbedingungen_im_bericht():
     _assert_since(n0)
 
 
+def test_kontaktwarnungen_der_uebrigen_ergebnisse():
+    """Im Vorgabeumfang bekommt nur eine Handvoll Ergebnisse eine eigene
+    Kontakttabelle - ihre **Warnungen** dürfen deshalb nicht mit wegfallen.
+
+    `max_contact_results` begrenzt die Einzeltabellen; die Warnung und der
+    Grund der Nichtkonvergenz hingen bis zum 22.09.2026 an derselben
+    Schleife. Bei 1931 Kontaktergebnissen nannte der Bericht den Grund für
+    höchstens fünf (0,26 %) - 1911 standen ohne jedes Kennzeichen im
+    Statikdokument. Und die Auswahl ist nicht die gefährlichste, sondern
+    schlicht die erste: `je_ergebnis` folgt der Reihenfolge von
+    `all_results()` ohne jede Sortierung.
+
+    Gebündelt statt je Ergebnis: die Warnungsliste wächst um höchstens die
+    Zahl der verschiedenen Protokolltexte plus eins.
+    """
+    n0 = len(RESULTS)
+    from statik3d import examples_lib as _ex
+    m = _ex.build_example("friction")
+    an = solver.solve_all(m)
+    # Mehrere Kontaktergebnisse: dasselbe Ergebnis unter weiteren Namen, jedes
+    # mit eigenem info-Wörterbuch. Es geht um die Auswahl im Bericht, nicht um
+    # die Mechanik - darum genügt die Kopie.
+    import copy as _copy
+    grund = next(n for n, r in an.cases.items() if getattr(r, "contact", None))
+    for _k in (2, 3, 4):
+        kopie = _copy.copy(an.cases[grund])
+        kopie.info = dict(getattr(an.cases[grund], "info", {}) or {})
+        an.cases[f"{grund} ({_k})"] = kopie
+    ergebnisse = list(an.all_results().items())
+    check("die Probe braucht mehrere Kontaktergebnisse",
+          len(ergebnisse) >= 2 and any(getattr(r, "contact", None)
+                                       for _n, r in ergebnisse),
+          f"{len(ergebnisse)} Ergebnisse")
+    # Das zweite und jedes weitere Ergebnis bekommt eine Warnung und gilt als
+    # nicht konvergiert - genau die Ergebnisse, die keine eigene Tabelle mehr
+    # bekommen, wenn nur eines gezeigt wird.
+    for _i, (_name, r) in enumerate(ergebnisse):
+        if _i:
+            # mit Laufnummer, wie sie der Loeser seit dem 22.09.2026 anhaengt -
+            # die Buendelung muss sie uebergehen, sonst zerfiele die Meldung
+            r.info["contact_log"] = [f"Reibiteration am Deckel abgebrochen (Kontaktlauf {_i + 2})"]
+            r.info["contact_converged"] = False
+    rep = Report(m, an, options={"max_contact_results": 1})
+    html = rep.html()
+    warn = "\n".join(getattr(rep, "_warnings", []) or [])
+    check("die Warnung der übrigen Ergebnisse steht im Bericht",
+          "Reibiteration am Deckel abgebrochen" in warn, warn[:120] or "keine")
+    check("verschiedene Laufnummern ergeben EINE Warnzeile",
+          sum(1 for z in (getattr(rep, "_warnings", []) or [])
+              if "Reibiteration am Deckel" in z) == 1,
+          str([z[:60] for z in (getattr(rep, "_warnings", []) or [])
+               if "Reibiteration" in z]))
+    check("und die Zahl der nicht konvergierten wird genannt",
+          "nicht konvergiert" in warn, warn[:160] or "keine")
+    check("der Hinweis unter der Tabelle nennt sie ebenfalls",
+          "davon sind nicht konvergiert" in html,
+          "steht im Dokument" if "davon sind nicht" in html else "fehlt")
+    _assert_since(n0)
+
+
 def test_pdf():
     n0 = len(RESULTS)
     m = build_beam_model()
@@ -508,13 +568,84 @@ _PNG_1PX = bytes.fromhex(
     "6364f8cfc0000002030101c0d3c4e70000000049454e44ae426082")
 
 
+def test_nicht_gefuehrt_ist_nicht_erfuellt():
+    """Das Gesamturteil darf einen übersprungenen Nachweis nicht verschlucken.
+
+    Zwei Befunde der Durchsicht vom 22.09.2026, beide in der einen Zeile, die
+    ein Prüfer als Gesamturteil liest:
+
+    * Ein Stab ohne Streckgrenze wird übersprungen (`ec3/design.py`) und stand
+      mit Ausnutzung 0,000 als **erfüllt** in Tabelle und Statikdokument. Seine
+      Null berührt weder die größte Ausnutzung noch die Liste der nicht
+      erfüllten - er ging lautlos als bestanden durch.
+    * `self.volumen` fehlte in der Statusprüfung **und** in der Liste der
+      geführten Nachweise. Ein Modell, das nur aus Volumen besteht - am
+      Drehlager der Regelfall -, bekam darum entweder „Es wurden keine
+      Nachweise geführt" oder „Alle Nachweise erfüllt", während der geführte
+      Volumennachweis riss.
+
+    Geprüft wird die **Zeile im Bericht**, nicht der Rückgabewert einer
+    Funktion: die Zeile ist es, die jemand liest.
+    """
+    n0 = len(RESULTS)
+    from statik3d.ec3.design import MemberCheck
+    from statik3d.ec3.volumen import VolumenCheck
+
+    mc = MemberCheck("S1", "IPE 200", "S235", 1.0)
+    check("ein geführter Nachweis mit kleiner Ausnutzung ist erfüllt",
+          mc.status() == "erfüllt", mc.status())
+    mc.util = 1.5
+    check("mit großer Ausnutzung ist er es nicht", mc.status() == "NICHT erfüllt",
+          mc.status())
+    mc.util, mc.fehler = 0.0, "Werkstoff X ohne Streckgrenze"
+    check("ohne Streckgrenze gilt er als nicht geführt - nicht als erfüllt",
+          mc.status() == "nicht geführt", mc.status())
+
+    # Und im Bericht: ein reißender Volumennachweis darf nicht als erfüllt
+    # durchgehen. Gebaut wird ein Ergebnisobjekt von Hand - ein Modell zu
+    # rechnen, das den Volumennachweis reißen lässt, wäre für diese Frage
+    # der Umweg.
+    m = build_beam_model()
+    an = solver.solve_all(m, design=True)
+
+    class _Vol:
+        def __init__(self, bereiche):
+            self.bereiche = bereiche
+            self.kombinationen = []
+            self.settings = {}
+
+    riss = VolumenCheck(name="Lagerblock", n_elemente=10, material="S355",
+                        fy=355e6, util=1.42, kombination="GZT1", element=7)
+    an.volumen = _Vol({"Lagerblock": riss})
+    html = Report(m, an).html()
+    check("ein reißender Volumennachweis kippt das Gesamturteil",
+          "Alle Nachweise erfüllt" not in html and "NICHT erfüllt" in html,
+          "Gesamturteil sagt nicht mehr erfüllt")
+    check("und der Volumenbereich steht mit seiner Ausnutzung darin",
+          "Lagerblock" in html, "Bereich genannt")
+
+    # Ein nicht geführter Volumenbereich: weder erfüllt noch nicht erfüllt
+    offen = VolumenCheck(name="Achse", n_elemente=5, material="S355",
+                         fehler="kein Kerbfall zugewiesen")
+    an.volumen = _Vol({"Achse": offen})
+    html2 = Report(m, an).html()
+    check("ein nicht geführter Volumenbereich wird im Gesamturteil genannt",
+          "geführten" in html2 or "nicht geführt" in html2,
+          "Gesamturteil nennt die Lücke")
+    check("und behauptet nicht, alle Nachweise seien erfüllt",
+          "Alle Nachweise erfüllt." not in html2, "keine falsche Zusage")
+    return len(RESULTS) - n0
+
+
 def main():
     print("=" * 96)
     print("STATIK3D - Test statischer Bericht (HTML / Markdown / PDF / SVG)")
     print("=" * 96)
-    tests = [test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
+    tests = [test_kontaktwarnungen_der_uebrigen_ergebnisse,
+             test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
              test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt,
-             test_gliederung_und_rahmen, test_grosses_netz]
+             test_gliederung_und_rahmen, test_grosses_netz,
+             test_nicht_gefuehrt_ist_nicht_erfuellt]
     for t in tests:
         try:
             t()

@@ -248,8 +248,15 @@ def test_temperatur_objektlast():
     d = m.to_dict()
     m2 = Model.from_dict(d)
     lc = m2.case()
+    # Der Name dieser Pruefung sagte seit jeher "Laden verteilt neu" - die
+    # Zusicherung prueft seit dem 21.09.2026, dass es auch geschieht. Vorher
+    # stand hier ``len(lc.temp_loads) == 0`` und dahinter ein Verteilen von
+    # Hand: Name und Inhalt widersprachen sich, und der Name hatte recht.
     check("Speichern ohne die abgeleiteten Lasten, Laden verteilt neu",
-          len(lc.temp_loads) == 0 and len(lc.geometrielasten) == 1 and m2.lasten_verteilen() == 96)
+          len(lc.temp_loads) == 96 and len(lc.geometrielasten) == 1
+          and all(getattr(t, "_geo", False) and t.dT == 30.0 for t in lc.temp_loads)
+          and m2.lasten_verteilen() == 96 and len(m2.case().temp_loads) == 96,
+          f"{len(lc.temp_loads)} Temperaturlasten nach dem Laden")
     # freie Dehnung eines Stabes bleibt wie gehabt: alpha dT L
     mb, els = balken(L=2.0, n=2)
     mb.fix(0, "all")
@@ -277,10 +284,200 @@ def test_speichern_linienlast_zwang():
           and ll.system == "local" and ll.q2 == [0, 0, -2e3])
     check("Zwangsverformung vollstaendig", zv.node == 0 and zv.dofs == [2, 4]
           and zv.u[2] == -0.01 and zv.u[4] == 0.002)
-    check("abgeleitete Stablasten nicht gespeichert", len(lc.beam_loads) == 0
-          and m2.lasten_verteilen() == 4)
+    # Bis zum 21.09.2026 stand hier ``len(lc.beam_loads) == 0`` - die Pruefung
+    # hielt die Speicherregel fest ("abgeleitete Lasten kommen nicht in die
+    # Datei") und hat damit den Fehler **festgeschrieben**: dass niemand sie
+    # wieder erzeugt, hat sie nie geprueft. Geprueft gehoert das Ergebnis,
+    # nicht die Regel.
+    check("abgeleitete Stablasten stehen nicht in der Datei, sind nach dem "
+          "Laden aber wieder da", len(lc.beam_loads) == 4
+          and all(getattr(f, "_geo", False) for f in lc.beam_loads)
+          and len([f for f in lc.beam_loads if not getattr(f, "_geo", False)]) == 0,
+          f"{len(lc.beam_loads)} Stablasten, alle aus der Objektlast")
+    check("und ein zweites Verteilen verdoppelt sie nicht",
+          m2.lasten_verteilen() == 4 and len(m2.case().beam_loads) == 4,
+          f"{len(m2.case().beam_loads)} Stablasten")
     check("bezug() liest sich", "Traeger" in ll.bezug() and "von 1 m bis 5 m" in ll.bezug()
           and "-10 mm" in zv.bezug(), ll.bezug() + " | " + zv.bezug())
+
+
+def test_geladenes_modell_traegt_dieselbe_last():
+    """Ein geladenes Modell muss dieselbe Last tragen wie das gespeicherte.
+
+    Das ist die Pruefung, die der ganzen Kette gefehlt hat. Die verteilten
+    Elementlasten stehen absichtlich nicht in der Datei; erzeugt hat sie
+    beim Laden aber niemand wieder, und ``lasten_verteilen`` haengt am
+    Vernetzen - ein geladenes Modell hat schon ein Netz. Der Anwender
+    oeffnete seine Datei, drueckte Berechnen und rechnete ohne seine
+    Bemessungslast: am Drehlager fielen 9,26 MN senkrecht und 3,97 MN
+    waagerecht auf **exakt null** (Lasterrechnung der Loesersitzung,
+    21.09.2026), hier 1 MN auf 0 N.
+
+    Geprueft wird der Lastvektor selbst (``solver.case_loads``), nicht die
+    Zahl der Lastobjekte - die Zahl war ja gerade das, was die alte Pruefung
+    ansah, und sie stand auf null, ohne dass es auffiel.
+    """
+    print("--- Ein geladenes Modell traegt dieselbe Last ---")
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    P = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]])
+    m.add_nodes(P)
+    z = {"i": 0}
+
+    def linie(a, b):
+        z["i"] += 1
+        m.add_line(f"L{z['i']}", [int(a), int(b)])
+        return f"L{z['i']}"
+
+    R = [[linie(o + i, o + (i + 1) % 4) for i in range(4)] for o in (0, 4)]
+    V = [linie(i, i + 4) for i in range(4)]
+    m.add_flaeche("Boden", R[0], material="S235")
+    m.add_flaeche("Dach", R[1], material="S235")
+    seiten = []
+    for i in range(4):
+        m.add_flaeche(f"M{i}", [R[0][i], V[(i + 1) % 4], R[1][i], V[i]], material="S235")
+        seiten.append(f"M{i}")
+    m.add_koerper("K", ["Boden", "Dach"] + seiten, material="S235")
+    m.add_load_case("LF1", "Q", "Bemessungslast")
+    m.add_geometrielast("Dach", 1.0e6, art="flaeche", case="LF1")
+    for k in range(4):
+        m.fix(k, "all")
+    mesher.modell_vernetzen(m, log=[])
+
+    def summe(mm):
+        F = np.asarray(solver.case_loads(mm, {"LF1": 1.0}, None)[0], float)
+        return F.reshape(-1, 3).sum(axis=0)
+
+    vorher = summe(m)
+    check("vernetzt traegt der Koerper seine Flaechenlast",
+          np.isclose(vorher[2], -1.0e6, rtol=1e-9), f"Fz {vorher[2] / 1e3:.1f} kN")
+
+    m2 = Model.from_dict(m.to_dict())
+    nachher = summe(m2)
+    check("nach Speichern und Laden traegt er dieselbe Last",
+          np.isclose(nachher[2], vorher[2], rtol=1e-9),
+          f"Fz {nachher[2] / 1e3:.1f} kN gegen {vorher[2] / 1e3:.1f} kN")
+    check("und zwar ueber alle drei Richtungen",
+          np.allclose(nachher, vorher, rtol=1e-9, atol=1e-6),
+          f"{nachher[0]:.1f} / {nachher[1]:.1f} / {nachher[2]:.1f} N")
+
+    # Zweimal laden darf sie nicht verdoppeln - lasten_verteilen raeumt die
+    # abgeleiteten Lasten vorher weg, aber das gehoert festgehalten.
+    m3 = Model.from_dict(m2.to_dict())
+    check("zweimal geladen verdoppelt sie nicht",
+          np.allclose(summe(m3), vorher, rtol=1e-9, atol=1e-6),
+          f"Fz {summe(m3)[2] / 1e3:.1f} kN")
+
+    # Ohne Netz ist nichts zu verteilen - und es darf auch nichts knallen.
+    leer = Model()
+    leer.add_material(Material.steel("S235"))
+    leer.add_load_case("LF1", "Q")
+    check("ein Modell ohne Netz laedt trotzdem",
+          len(Model.from_dict(leer.to_dict()).load_cases) == 1)
+
+
+def test_projiziert_bereich_verlauf_zusammen():
+    """Projektion, Bereich und Verlauf an **einer** Last - und von Hand
+    nachgerechnet.
+
+    ``_geometrielast_legen.nimm`` prueft seit dem 21.09.2026 den
+    Windschatten zuerst und berechnet die Seitenmitte nur, wenn Bereich oder
+    Verlauf sie lesen (Theoriehandbuch 7.3: 70 s -> 12,5 s am Drehlager).
+    Das ist eine Umstellung der Reihenfolge, und Reihenfolgen verrutschen.
+    Diese Pruefung haelt alle drei Merkmale gleichzeitig fest - keine
+    bestehende Pruefung tat das - und vergleicht gegen die Handrechnung,
+    nicht gegen einen frueheren Lauf.
+    """
+    print("--- Projektion, Bereich und Verlauf zusammen ---")
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    P = np.array([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]])
+    m.add_nodes(P)
+    z = {"i": 0}
+
+    def linie(a, b):
+        z["i"] += 1
+        m.add_line(f"L{z['i']}", [int(a), int(b)])
+        return f"L{z['i']}"
+
+    R = [[linie(o + i, o + (i + 1) % 4) for i in range(4)] for o in (0, 4)]
+    V = [linie(i, i + 4) for i in range(4)]
+    m.add_flaeche("Boden", R[0], material="S235")
+    m.add_flaeche("Dach", R[1], material="S235")
+    for i in range(4):
+        m.add_flaeche(f"M{i}", [R[0][i], V[(i + 1) % 4], R[1][i], V[i]], material="S235")
+    k = m.add_koerper("K", ["Boden", "Dach"] + [f"M{i}" for i in range(4)],
+                      material="S235")
+    k.teilung = [4, 2, 2]
+    m.add_load_case("LF1", "Q")
+    # Schraeg von oben, also trifft sie Dach und eine Seitenwand verschieden
+    richtung = [0.0, 0.0, -1.0]
+    # Bereich: nur die vordere Haelfte in x (0 bis 1 von 2)
+    bereich = {"art": "rechteck", "ursprung": [0, 0, 0], "u": [1, 0, 0],
+               "v": [0, 1, 0], "von": [0.0, -1.0], "bis": [1.0, 2.0]}
+    # Verlauf: linear von 1,0 MN/m2 bei x = 0 auf 2,0 MN/m2 bei x = 2
+    verlauf = {"art": "linear",
+               "punkte": [[0.0, 0.0, 0.0, 1.0e6], [2.0, 0.0, 0.0, 2.0e6]]}
+    m.add_geometrielast("K", 1.0e6, art="koerper", case="LF1",
+                        richtung=richtung, projiziert=True, bereich=bereich,
+                        verlauf=verlauf)
+    mesher.modell_vernetzen(m, log=[])
+    lasten = m.case("LF1").face_loads
+    check("es entstehen ueberhaupt Lasten", len(lasten) > 0, f"{len(lasten)} Seiten")
+
+    d = np.asarray(richtung, float)
+    d = d / np.linalg.norm(d)
+    gl = m.case("LF1").geometrielasten[0]
+    falsch_schatten = falsch_bereich = falsch_wert = 0
+    for fl in lasten:
+        n = m._seitennormale(fl.elem, fl.face)
+        c = float(n @ d)
+        if c >= 0:
+            falsch_schatten += 1                    # im Windschatten, darf nicht da sein
+        if not gl.trifft(m._seitenmitte(fl.elem, fl.face)):
+            falsch_bereich += 1                     # ausserhalb des Bereichs
+        mitte = m._seitenmitte(fl.elem, fl.face)
+        soll = gl.wert(mitte, normale=n) * (-c)     # Verlauf mal Projektion
+        if not np.isclose(fl.p, soll, rtol=1e-12):
+            falsch_wert += 1
+    check("keine Seite im Windschatten traegt Last", falsch_schatten == 0,
+          f"{falsch_schatten} von {len(lasten)}")
+    check("keine Seite ausserhalb des Bereichs traegt Last", falsch_bereich == 0,
+          f"{falsch_bereich} von {len(lasten)}")
+    check("der Wert ist der Verlauf an der Seitenmitte mal dem Kosinus",
+          falsch_wert == 0, f"{falsch_wert} von {len(lasten)}")
+    check("und er ist nicht ueberall gleich - der Verlauf wirkt",
+          len({round(float(fl.p), 3) for fl in lasten}) > 1,
+          f"{len({round(float(fl.p), 3) for fl in lasten})} verschiedene Werte")
+
+    # Und die Gegenprobe: jede Seite, die beide Bedingungen erfuellt, MUSS
+    # eine Last haben - sonst wirft die neue Reihenfolge welche weg.
+    hat = {(int(fl.elem), int(fl.face)) for fl in lasten}
+    fehlt = 0
+    for fn in k.flaechen:
+        f = m.flaechen[fn]
+        for e, seite in list((f.randseiten or [])) + [(e, 0) for e in (f.elemente or [])]:
+            n = m._seitennormale(e, seite)
+            if n is None:
+                continue
+            if float(n @ d) < 0 and gl.trifft(m._seitenmitte(e, seite)):
+                fehlt += (int(e), int(seite)) not in hat
+    check("und keine belastbare Seite fehlt", fehlt == 0, f"{fehlt} fehlen")
+
+    # Die Summe von Hand: der Bereich ist 0 <= x <= 1, das Dach ist 1 m
+    # breit, und der Verlauf steigt von 1,0 auf 2,0 MN/m2 ueber x = 0 bis 2.
+    # Also integral p(x) dx ueber 0..1 mal 1 m Breite = (1,0 + 1,25)/2 MN.
+    # Die Teilung 4 in x gibt Seiten von 0,5 m; ihre Mitten liegen bei
+    # x = 0,25 und 0,75, der Verlauf wird dort abgegriffen - das trifft das
+    # Integral der Geraden exakt (Mittelpunktsregel).
+    soll = -(1.125e6 + 1.375e6) / 2 * 1.0 * 1.0
+    S = np.asarray(solver.case_loads(m, {"LF1": 1.0}, None)[0],
+                   float).reshape(-1, 3).sum(axis=0)
+    check("Summe = Integral des Verlaufs ueber die projizierte Flaeche",
+          np.isclose(S[2], soll, rtol=1e-9),
+          f"Fz {S[2] / 1e3:.1f} kN gegen {soll / 1e3:.1f} kN")
 
 
 def test_vorspannung():
@@ -378,10 +575,157 @@ def test_vorspannung():
           f"{float(sp2[0][2]) / 1e6 if sp2 else float('nan'):.3f} MPa gegen {Fv / (a * b) / 1e6:.3f}")
 
 
+def test_lasten_verschwinden_nicht_mehr_still():
+    """Drei Wege, auf denen eine Last zu 100 % ausfiel, ohne dass etwas
+    gemeldet wurde.
+
+    Alle drei schreiben eine **plausible Zahl**: die Last steht weiter im
+    Bericht mit ihrem vollen Betrag und wird in der Ansicht gezeichnet, nur
+    wirkt sie nicht. Genau das macht sie gefährlich.
+
+    * **Eine Seitennummer, die es nicht gibt.** `solid_face_pressure` gab
+      einen Nullvektor zurück, wenn `face` außerhalb des Bereichs lag -
+      erreichbar von außen über ein Abaqus-`*DLOAD P5` am Tetraeder, der nur
+      vier Seiten hat. Gemessen: 1000 kN → 0 kN. Das ebene Element macht es
+      drei Zeilen weiter richtig und wirft eine Ausnahme.
+    * **Der Nullvektor als Richtung.** Alle drei Zweige normieren mit
+      `d / (norm(d) or 1.0)`; aus dem Nullvektor wird dabei wieder der
+      Nullvektor. Erreichbar über eine Nastran-`PLOAD4` mit ausgeschriebenem
+      Normalenvektor `0., 0., 0.`.
+    * **Ein einseitiges Lager ohne Richtung** kann nie tragen; das Ergebnis
+      ist Zeichen für Zeichen das eines Systems ohne dieses Lager, während
+      die Ergebniszeile „Kontakt" behauptet.
+
+    Geprüft wird auf zwei Lagen: die Ausnahme beim Aufstellen **und** die
+    Zeile in `Model.check()`, die den Fall schon vor dem Rechnen zeigt.
+    """
+    from statik3d import assemble
+    from statik3d.model import Material, Model
+
+    def wuerfel(typ="hex8"):
+        m = Model("last")
+        m.add_material(Material.steel("S235"))
+        if typ == "hex8":
+            for p in ([0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                      [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]):
+                m.add_node(*p)
+            m.add_element("hex8", list(range(8)), "S235")
+        else:
+            for p in ([0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1.]):
+                m.add_node(*p)
+            m.add_element("tet4", [0, 1, 2, 3], "S235")
+        return m
+
+    # ---- (a) Seitennummer ausserhalb des Bereichs
+    m = wuerfel("tet4")
+    m.load_face(0, -1000e3, face=4)          # tet4 hat die Seiten 0..3
+    try:
+        assemble.load_vector(m, m.case())
+        check("eine Seitennummer, die es nicht gibt, bricht ab", False,
+              "sie lief durch und gab 0 N")
+    except ValueError as ex:
+        check("eine Seitennummer, die es nicht gibt, bricht ab",
+              "Seite 4" in str(ex) and "0..3" in str(ex), str(ex)[:70])
+    check("und Model.check() zeigt sie schon vor dem Rechnen",
+          any("Seite 4 gibt es nicht" in z for z in m.check()),
+          next((z for z in m.check() if "Seite 4" in z), "keine Zeile")[:90])
+
+    # Gegenprobe: eine gueltige Seite traegt unveraendert
+    m2 = wuerfel("tet4")
+    m2.load_face(0, -1000e3, face=3)
+    F = assemble.load_vector(m2, m2.case())
+    summe = float(np.abs(np.asarray(F, float)).sum())
+    check("eine gültige Seitennummer trägt unverändert", summe > 1.0,
+          f"Summe |F| = {summe:.4g} N")
+    check("und check() beanstandet sie nicht",
+          not any("Seite" in z for z in m2.check()), str(m2.check())[:70])
+
+    # ---- (b) Nullvektor als Richtung
+    m3 = wuerfel("hex8")
+    m3.load_face(0, -1000e3, face=1, direction=[0.0, 0.0, 0.0])
+    try:
+        assemble.load_vector(m3, m3.case())
+        check("der Nullvektor als Richtung bricht ab", False,
+              "er lief durch und gab 0 N")
+    except ValueError as ex:
+        check("der Nullvektor als Richtung bricht ab",
+              "Nullvektor" in str(ex), str(ex)[:70])
+    check("und check() zeigt ihn vor dem Rechnen",
+          any("Nullvektor" in z and "0 N" in z for z in m3.check()),
+          next((z for z in m3.check() if "Nullvektor" in z), "keine Zeile")[:90])
+
+    m4 = wuerfel("hex8")
+    m4.load_face(0, -1000e3, face=1, direction=[0.0, 0.0, -1.0])
+    F4 = np.asarray(assemble.load_vector(m4, m4.case()), float)
+    check("eine echte Richtung trägt unverändert", float(np.abs(F4).sum()) > 1.0,
+          f"Summe |F| = {float(np.abs(F4).sum()):.4g} N")
+
+    # ---- (c) einseitiges Lager ohne Richtung
+    m5 = wuerfel("hex8")
+    m5.add_contact_support(0, direction=(0.0, 0.0, 0.0))
+    check("ein einseitiges Lager ohne Richtung wird benannt",
+          any("Einseitiges Lager" in z and "Nullvektor" in z for z in m5.check()),
+          next((z for z in m5.check() if "Einseitiges Lager" in z),
+               "keine Zeile")[:90])
+    m6 = wuerfel("hex8")
+    m6.add_contact_support(0, direction=(0.0, 0.0, 1.0))
+    check("ein Lager mit Richtung wird nicht beanstandet",
+          not any("Einseitiges Lager" in z for z in m6.check()),
+          str([z for z in m6.check() if "Lager" in z])[:70])
+
+
+def test_objektlast_nennt_den_nullvektor_als_grund():
+    """Eine Objektlast ohne Richtung hieß „liegt ganz im Windschatten".
+
+    `_warum_leer` gibt den Grund an, warum eine Geometrielast keine
+    Elementlast erzeugt hat. Steht dort der Nullvektor als Richtung, ist
+    **das** der Grund - „Windschatten" schickt den Anwender auf die falsche
+    Fährte, denn er sucht dann nach einer verdeckten Fläche.
+
+    Die Reihenfolge der Prüfungen ist dabei wesentlich und darum mitgeprüft:
+    ein noch nicht vernetztes Ziel muss weiterhin „Ziel noch nicht vernetzt"
+    melden und nicht den Nullvektor - sonst verdeckt die neue Zeile die
+    ältere und wichtigere.
+    """
+    from statik3d import mesher
+    from statik3d.model import Geometrielast, Material, Model, Volumenkoerper
+
+    m = Model("objekt")
+    m.add_material(Material.steel("S235"))
+    mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, 1, 1, 1, typ="hex8")
+    # add_koerper verlangt vier Randflaechen; hier zaehlt nur die
+    # Elementliste, darum unmittelbar angelegt.
+    k = Volumenkoerper("K1", [])
+    m.koerper["K1"] = k
+    k.elemente = list(range(len(m.elements)))
+    gl = Geometrielast("K1", "volumen", 1000.0, [0.0, 0.0, 0.0], projiziert=True)
+    grund = m._warum_leer(gl)
+    check("der Nullvektor wird als Grund genannt",
+          "Nullvektor" in (grund or ""), str(grund))
+    check("die Probe ist scharf: vorher hiess es Windschatten",
+          "Windschatten" not in (grund or ""), str(grund))
+
+    # Gegenprobe (1): ein unvernetztes Ziel meldet weiter das Netz
+    k.elemente = []
+    grund2 = m._warum_leer(gl)
+    check("ein unvernetztes Ziel meldet weiter das Netz, nicht den Vektor",
+          "vernetzt" in (grund2 or ""), str(grund2))
+
+    # Gegenprobe (2): mit echter Richtung bleibt es der Windschatten
+    k.elemente = list(range(len(m.elements)))
+    gl2 = Geometrielast("K1", "volumen", 1000.0, [0.0, 0.0, -1.0], projiziert=True)
+    grund3 = m._warum_leer(gl2)
+    check("mit echter Richtung bleibt der Windschatten der Grund",
+          "Windschatten" in (grund3 or ""), str(grund3))
+
+
 def main():
-    for t in (test_volleinspannkraefte, test_teillast_einfeldtraeger, test_zwangsverformung,
+    for t in (test_lasten_verschwinden_nicht_mehr_still,
+              test_objektlast_nennt_den_nullvektor_als_grund,
+              test_volleinspannkraefte, test_teillast_einfeldtraeger, test_zwangsverformung,
               test_flaechenlast_linear, test_linienlast_auf_linie, test_temperatur_objektlast,
-              test_speichern_linienlast_zwang, test_vorspannung):
+              test_speichern_linienlast_zwang, test_geladenes_modell_traegt_dieselbe_last,
+              test_projiziert_bereich_verlauf_zusammen, test_vorspannung):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

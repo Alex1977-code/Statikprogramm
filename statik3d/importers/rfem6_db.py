@@ -1460,6 +1460,8 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     n = 0
     lc_name: dict[int, str] = {}
     mit_mod: dict[str, int] = {}
+    je_kat: dict[str, int] = {}
+    unbek_kat: dict[int, int] = {}
     ohne_mod = 0
     cases = db.impls("LoadCase")
     if cases:
@@ -1471,7 +1473,19 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
             m.active_case = ""
     for h, impl in cases:
         name = (impl.get("name") or "").strip() or f"LF{h.get('userID') or h['id']}"
-        cat = ACTION_CATEGORY.get(int(impl.get("actionCategoryId") or 0), "Q")
+        akid = int(impl.get("actionCategoryId") or 0)
+        cat = ACTION_CATEGORY.get(akid, "Q")
+        if akid not in ACTION_CATEGORY:
+            unbek_kat[akid] = unbek_kat.get(akid, 0) + 1
+        if cat == "Q":
+            # Nur **innerhalb** der veraenderlichen Einwirkungen verfeinern.
+            # Ein "G" aus der Kennzahl darf der Freitext nicht umstossen: ein
+            # Lastfall "Windverband Eigenlast" mit Kennzahl 1 wuerde sonst zu
+            # W und damit veraenderlich (gemessen). Umgekehrt ist jedes "Q"
+            # ohnehin nur die Rueckfallkategorie und durch den Namen hoechstens
+            # zu verbessern.
+            cat = C.category_from_text(name, "Q")
+        je_kat[cat] = je_kat.get(cat, 0) + 1
         nm = C.unique_name(m.load_cases, f"LF{h.get('userID') or h['id']}")
         lc = m.add_load_case(nm, cat, description=name, activate=False)
         lc_name[h["id"]] = nm
@@ -1491,6 +1505,14 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
     if n:
         C.say(log, f"{n} Lastfaelle uebernommen (Namen, Einwirkungskategorie, "
                    "Eigengewichtsfaktor)")
+    if je_kat:
+        C.say(log, "  Einwirkungskategorie: " + ", ".join(
+            f"{k}x {c}" for c, k in sorted(je_kat.items())))
+    if unbek_kat:
+        C.warn(log, "  Einwirkungskategorien mit unbekannter Kennzahl: "
+                    + ", ".join(f"{c} ({k}x)" for c, k in sorted(unbek_kat.items()))
+                    + " - als „Q“ gefuehrt (veraenderlich, allgemein); "
+                      "psi und gamma bitte in der Lastfallmaske nachsehen.")
     for sit, k in sorted(mit_mod.items()):
         C.say(log, f"  {k} davon in der Situation „{sit}“ (Strukturmodifikation)")
     if ohne_mod:
@@ -2362,6 +2384,20 @@ LOAD_DIRECTION = {
     1: ("Z", "global Z"),
     2: ("X", "global X"),
     3: ("Y", "global Y"),
+    # 11 bis 13 stehen in wirklichen RFEM-6-Dateien und fehlten hier. Sie sind
+    # **aus den Daten abgeleitet**, nicht aus einer Festlegung von RFEM
+    # belegt - darum nennt das Protokoll die Deutung, damit sie an einem
+    # bekannten Lastfall nachgeprueft werden kann (22.09.2026):
+    #
+    #   * Dieselbe Last "electrical equipment 200kg" steht im Modell
+    #     CBG_Trolley unter Richtung 11 und 12 mit **+2000 N**, unter 13 mit
+    #     **-2000 N**. Eine Masse, die unter 13 nach unten wirkt und unter
+    #     11/12 waagerecht, ist global Z bzw. global X/Y.
+    #   * "rake ... 4.908 kg on 25,3 m" ergibt 4908 kg / 25,3 m = 1903 N/m
+    #     gegen den Eintrag 1940 N/m - eine Gewichtslast, Richtung 13.
+    11: ("X", "global X (aus den Daten abgeleitet)"),
+    12: ("Y", "global Y (aus den Daten abgeleitet)"),
+    13: ("Z", "global Z (aus den Daten abgeleitet)"),
 }
 
 
@@ -2399,17 +2435,27 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             tbl = h.get("impl_table") or ""
             if not lc:
                 continue
-            ziele = [node_of[x] for x in db.container(tbl + "_assignedTo").get(
-                impl["id"], []) if x in node_of]
-            F = [float(impl.get(k) or 0.0) for k in
-                 ("forceMagnitude_x", "forceMagnitude_y", "forceMagnitude_z")]
-            M = [float(impl.get(k) or 0.0) for k in
-                 ("momentMagnitude_x", "momentMagnitude_y", "momentMagnitude_z")]
+            # Die Zuordnung heisst je nach Schemafassung <Tabelle>_assignedTo
+            # oder <Tabelle>_nodes. Am Modell CBG_Trolley steht sie in _nodes,
+            # und weil nur _assignedTo gesucht wurde, fielen **alle 184
+            # Knotenlasten** weg (22.09.2026) - gemeldet als "ohne Ziel",
+            # aber vollstaendig.
+            ziele = [node_of[x] for x in _zuordnung(db, tbl, impl["id"])
+                     if x in node_of]
+            # Zwei Schreibweisen derselben Sache: aeltere Dateien nennen die
+            # Spalten forceMagnitude_*, neuere force_* (NodalLoadImplComponents).
+            # Am Modell CBG_Trolley fielen darum **alle 184 Knotenlasten** weg -
+            # gemeldet zwar ("ohne Ziel oder ohne Betrag"), aber vollstaendig
+            # (22.09.2026).
+            F = [_zahl(impl, "forceMagnitude_" + a, "force_" + a) for a in "xyz"]
+            M = [_zahl(impl, "momentMagnitude_" + a, "moment_" + a) for a in "xyz"]
             if not any(F) and not any(M):
                 # Ein Betrag ohne Richtung: RFEM legt ihn in 'magnitude' ab und
                 # nennt die Richtung getrennt.
                 p = float(impl.get("magnitude") or 0.0)
-                rd = int(impl.get("loadDirection") or 1)
+                # NodalLoadImplForce nennt die Achse loadDirectionAxis.
+                rd = int(impl.get("loadDirection")
+                         or impl.get("loadDirectionAxis") or 1)
                 if p:
                     achse = {1: 2, 2: 0, 3: 1}.get(rd, 2)
                     F[achse] = -p if rd == 1 else p
@@ -2427,7 +2473,8 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                    "- nicht uebernommen")
 
     # ---- Flaechenlasten
-    n_ok = n_ohne = n_geo = 0
+    n_ok = n_ohne = n_geo = n_art = n_betrag = 0
+    n_roh = len(db.rows("SurfaceLoad"))
     summe = 0.0
     if db.has("SurfaceLoad"):
         case_of = _load_case_of(db, "SurfaceLoad")
@@ -2435,7 +2482,14 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
         for h, impl in db.impls("SurfaceLoad"):
             lc = lc_name.get(case_of.get(h["id"]))
             tbl = h.get("impl_table") or ""
-            if not lc or "Force" not in tbl:
+            if not lc:
+                continue
+            if "Force" not in tbl:
+                # Temperatur, Dehnung, Vorkruemmung, Masse: nicht uebernommen -
+                # aber gezaehlt. Bisher fielen sie ohne eine Zeile weg, waehrend
+                # Linien- und Volumenlasten ihre Zeile bekamen; der Anwender
+                # durfte daraus schliessen, bei den Flaechen sei nichts fort.
+                n_art += 1
                 continue
             ziele = db.container(tbl + "_assignedTo").get(impl["id"], [])
             par = db.container_rows(
@@ -2443,13 +2497,25 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                     impl.get("loadParameters_id"), [])
             p = float(par[0].get("magnitude") or 0.0) if par else 0.0
             if not p:
+                n_betrag += 1
                 continue
             rd = int(impl.get("loadDirection") or 0)
             richtungen[rd] = richtungen.get(rd, 0) + 1
+            # **Die Kennzahl wurde bisher nur gezaehlt.** Ohne ``direction``
+            # setzt load_face einen Druck senkrecht zur Flaeche an
+            # (model.py: load_face, assemble.py: shell_face_load) - eine Last,
+            # die in der Datei global Z steht, zeigte damit in die
+            # Flaechennormale. Am Drehlager traf das 396 von 711
+            # Flaechenlasten. Der Fehler ist nicht auf geneigte Flaechen
+            # beschraenkt: auch an einer waagerechten hing das Vorzeichen am
+            # Umlaufsinn des Randpolygons (gemessen 22.09.2026: Umlauf
+            # 1-2-3-4 gab Rz = +8000 N, Umlauf 4-3-2-1 gab -8000 N; mit
+            # Richtung in beiden Faellen +8000 N).
+            richtung = _richtung_aus_kennzahl(rd)
             gelegt = False
             for sid in ziele:
                 for e in surf_els.get(sid, []):
-                    m.load_face(e, p, case=lc)
+                    m.load_face(e, p, case=lc, direction=richtung)
                     gelegt = True
             if gelegt:
                 n_ok += 1
@@ -2462,7 +2528,8 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                             if sid in (surf_name or {})]
             if fuer_flaeche:
                 for name in fuer_flaeche:
-                    m.add_geometrielast(name, p, "flaeche", case=lc)
+                    m.add_geometrielast(name, p, "flaeche", case=lc,
+                                        richtung=richtung)
                 n_geo += 1
             else:
                 n_ohne += 1
@@ -2475,9 +2542,32 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             C.say(log, f"  {n_ohne} Flaechenlasten ohne vernetzte Zielflaeche - "
                        "nicht uebernommen (die Flaeche traegt keine eigene Dicke "
                        "oder liegt am Rand eines Volumenkoerpers).")
+        # Die Abzaehlung muss aufgehen: was die Zeilen oben nicht nennen,
+        # ist auf dem Weg verlorengegangen - db.impls() laesst eine Last ohne
+        # ihre Umsetzungstabelle wortlos aus, und genau das soll nicht mehr
+        # unbemerkt bleiben.
+        fehlt = n_roh - (n_ok + n_geo + n_ohne + n_art + n_betrag)
+        if n_art:
+            C.say(log, f"  {n_art} Flaechenlasten anderer Art (Temperatur, "
+                       "Dehnung, Vorkruemmung, Masse) - nicht uebernommen")
+        if fehlt > 0:
+            C.warn(log, f"  {fehlt} von {n_roh} Flaechenlasten waren nicht zu "
+                        "lesen: die Datei fuehrt ihre Umsetzungstabelle nicht. "
+                        "Sie sind nicht uebernommen.")
+        if n_betrag:
+            C.say(log, f"  {n_betrag} Flaechenlasten ohne lesbaren Betrag - "
+                       "nicht uebernommen")
         for rd, n in sorted(richtungen.items()):
             _k, text = LOAD_DIRECTION.get(rd, ("?", f"unbekannt (Kennzahl {rd})"))
-            C.say(log, f"    Lastrichtung {rd} = {text}: {n}x")
+            # Eine Kennzahl, die die Tabelle nicht fuehrt, wird zum Normaldruck
+            # - das ist eine Annahme und gehoert darum ins Protokoll.
+            wie = ("" if rd == 0 or _richtung_aus_kennzahl(rd) is not None
+                   else " - senkrecht zur Flaeche angesetzt")
+            C.say(log, f"    Lastrichtung {rd} = {text}: {n}x{wie}")
+        if any(rd and _richtung_aus_kennzahl(rd) for rd in richtungen):
+            C.say(log, "    Hinweis: ob RFEM eine Flaechenlast auf die wahre "
+                       "oder auf die projizierte Flaeche bezieht, steht in der "
+                       "Datei nicht lesbar - angesetzt wird die wahre Flaeche.")
 
     # ---- Vorspannung im Stab
     #
@@ -2530,9 +2620,23 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                    "ohne Waermedehnzahl - nicht uebernommen")
 
     _freie_rechtecklasten(db, m, lc_name, surf_name, log)
+    _stablasten(db, m, lc_name, member_name or {}, log)
     _linienlasten(db, m, lc_name, line_name or {}, log)
     _zwangsverformungen(db, m, lc_name, node_of, log)
     _volumenlasten(db, m, lc_name, solid_name or {}, log)
+
+
+def _zuordnung(db: Db, tbl: str, oid) -> list:
+    """Die Ziele einer Last - die Containertabelle heisst je nach
+    Schemafassung <Tabelle>_assignedTo, <Tabelle>_nodes,
+    _members, _lines oder _surfaces."""
+    for anhang in ("_assignedTo", "_nodes", "_members", "_lines", "_surfaces",
+                   "_solids"):
+        if db.has(tbl + anhang):
+            ziele = db.container(tbl + anhang).get(oid, [])
+            if ziele:
+                return ziele
+    return []
 
 
 def _richtung_aus_kennzahl(rd: int):
@@ -2602,6 +2706,123 @@ def _linienlasten(db: Db, m: Model, lc_name: dict, line_name: dict, log: list) -
         C.say(log, f"  {n_ohne} Linienlasten ohne Ziel oder ohne Betrag - nicht uebernommen")
     if n_art:
         C.say(log, f"  {n_art} Linienlasten anderer Art (Moment, Masse) - nicht uebernommen")
+
+
+def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list) -> None:
+    """RFEM ``MemberLoad`` der Art Kraft als Linienlast am Stab.
+
+    **Bis zum 22.09.2026 fiel hier alles weg, was nicht "Prestress" hiess** -
+    ohne Zaehler und ohne Meldung. Am Modell CBG_Trolley waren das **198 von
+    198 Stablasten**: keine einzige ist eine Vorspannung, alle sind
+    gewoehnliche Stabkraefte (``LineTypeLoadImplForce``). Die Lastfaelle kamen
+    leer oder halb gefuellt herueber, die Rechnung lieferte zu kleine
+    Schnittgroessen - genau das Muster des Flaechenlastverlusts (9,26 MN -> 0).
+
+    Uebernommen wird die **Gleichlast** (``loadDistribution = 0``) ueber die
+    ganze Stablaenge. Alles andere wird **gezaehlt und genannt**, nicht
+    stillschweigend weggelassen:
+
+    * ``loadDistribution = 2`` ist eine Einzellast auf dem Stab (belegt:
+      "electrical equipment 200kg" steht dort mit genau 2000 N, waehrend eine
+      Gleichlast in N/m stuende). Das Modell kennt fuer den Stab nur die
+      Linienlast; eine Einzellast als kurze Streckenlast zu erfinden hiesse,
+      ihre Lage zu raten.
+    * Andere Verteilungen und unbekannte Lastrichtungen ebenso.
+
+    Der Betrag steht nicht in der Umsetzungszeile, sondern in
+    ``<Tabelle>_magnitudes`` - das ist der Grund, warum ``_zahl(impl,
+    "magnitude", ...)`` im Linienlastzweig daneben nichts findet.
+    """
+    if not db.has("MemberLoad"):
+        return
+    case_of = _load_case_of(db, "MemberLoad")
+    n_ok = n_ohne = n_art = 0
+    andere_verteilung: dict = {}
+    andere_richtung: dict = {}
+    gedeutet: set = set()
+    for h, impl in db.impls("MemberLoad"):
+        tbl = h.get("impl_table") or ""
+        if "Prestress" in tbl:
+            continue                      # eigener Weg, siehe oben
+        lc = lc_name.get(case_of.get(h["id"]))
+        if not lc:
+            continue
+        if "Force" not in tbl:
+            n_art += 1
+            continue
+        verteilung = int(impl.get("loadDistribution") or 0)
+        if verteilung != 0:
+            andere_verteilung[verteilung] = andere_verteilung.get(verteilung, 0) + 1
+            continue
+        rd = int(impl.get("loadDirection") or 0)
+        richtung = _richtung_aus_kennzahl(rd)
+        if richtung is None:
+            andere_richtung[rd] = andere_richtung.get(rd, 0) + 1
+            continue
+        if rd in (11, 12, 13):
+            gedeutet.add(rd)
+        werte = _magnituden(db, tbl, impl.get("varyingLoadParameters_id"))
+        p1, p2 = werte
+        ziele = [member_name[x] for x in
+                 db.container(tbl + "_assignedTo").get(impl["id"], [])
+                 if x in member_name]
+        if not ziele or (not p1 and not p2):
+            n_ohne += 1
+            continue
+        q1 = [p1 * c for c in richtung]
+        q2 = [p2 * c for c in richtung] if (p2 and p2 != p1) else None
+        for name in ziele:
+            m.add_linienlast(name, q1, art="stab", q2=q2, case=lc)
+            n_ok += 1
+    if n_ok:
+        C.say(log, f"  {n_ok} Stablasten (Gleichlast) an ihre Staebe gehaengt")
+    if gedeutet:
+        C.say(log, "    Lastrichtung " + ", ".join(
+            f"{r} = {LOAD_DIRECTION[r][1]}" for r in sorted(gedeutet))
+            + " - bitte an einem bekannten Lastfall nachpruefen")
+    if andere_verteilung:
+        C.say(log, "  nicht uebernommen, weil das Programm fuer den Stab nur die "
+                   "Gleichlast kennt: " + ", ".join(
+                       f"{n}x Verteilung {k}" for k, n in sorted(andere_verteilung.items())))
+    if andere_richtung:
+        C.say(log, "  nicht uebernommen, Lastrichtung unbekannt: " + ", ".join(
+            f"{n}x Kennzahl {k}" for k, n in sorted(andere_richtung.items())))
+    if n_ohne:
+        C.say(log, f"  {n_ohne} Stablasten ohne Ziel oder ohne Betrag - nicht uebernommen")
+    if n_art:
+        C.say(log, f"  {n_art} Stablasten anderer Art (Temperatur, Verformung) - "
+                   "nicht uebernommen")
+
+
+def _magnituden(db: Db, tbl: str, vid) -> tuple:
+    """(erster, zweiter) Betrag einer Last aus ``<Tabelle>_magnitudes``.
+
+    RFEM legt die Betraege nicht in die Umsetzungszeile, sondern in eine
+    eigene Containertabelle; ``-inf`` heisst dort "nicht gesetzt".
+    """
+    if vid is None:
+        return 0.0, 0.0
+    key = "mag:" + tbl
+    if key not in db._cache:
+        d: dict = {}
+        for r in db.rows(tbl + "_magnitudes"):
+            if int(r.get("container_order") or 0) != 0:
+                continue
+            d[r.get("id")] = r
+        db._cache[key] = d
+    r = db._cache[key].get(vid)
+    if not r:
+        return 0.0, 0.0
+
+    def zahl(x):
+        try:
+            v = float(x)
+        except (TypeError, ValueError):
+            return 0.0
+        return 0.0 if v != v or abs(v) == float("inf") else v
+
+    return (zahl(r.get("temperaturesOrMagnitudeFirstMagnitude")),
+            zahl(r.get("temperaturesOrMagnitudeSecondMagnitude")))
 
 
 def _zwangsverformungen(db: Db, m: Model, lc_name: dict, node_of: dict, log: list) -> None:

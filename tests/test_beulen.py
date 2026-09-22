@@ -424,6 +424,35 @@ def test_lasteinleitung():
     close("Interaktion 7.2: η_2 + 0,8 η_1", i["wert"], 0.9 + 0.8 * 0.7, 1e-12)
     check("Grenze der Interaktion ist 1,4", i["grenze"] == 1.4 and not i["ok"])
 
+    # Auflagerkraft als Quelle - an jedem Knoten, nicht nur am Knoten 0.
+    # `le.knoten in R` fragte ein numpy-Feld nach einem KRAFTWERT, nicht nach
+    # einer Knotennummer: `in` prueft bei einem ndarray die Elemente, nicht die
+    # Zeilenindizes. Fuer jeden Knoten ausser 0 war das praktisch immer falsch,
+    # der Nachweis lief ueber 0 von n Kombinationen mit F_Ed = 0,0 kN, und
+    # Stegkruppeln unter dem Auflager blieb ungeprueft.
+    from statik3d import examples_lib as _ex
+    ma = _ex.build_example("hall")
+    # Ein Knoten, der die Last wirklich abtraegt (uz gehalten) und **nicht**
+    # der Knoten 0 ist - die uebrigen Halterungen des Beispiels tragen keine
+    # Kraft und taugen als Probe nicht.
+    gelagert = sorted({int(s.node) for s in ma.supports
+                       if 2 in [int(d) for d in s.dofs] and int(s.node) > 0})
+    hoch = gelagert[0] if gelagert else 0
+    check("die Probe ist scharf: der Auflagerknoten ist nicht der Knoten 0",
+          hoch > 0, f"Knoten {hoch} von {gelagert[:4]}")
+    stab_a = next((nm for nm, mb in ma.members.items()
+                   if hoch in {int(k) for e in mb.elements
+                               for k in ma.elements[e].nodes}), "")
+    ma.add_lasteinleitung("Auflager", hoch, stab=stab_a, typ="c",
+                          s_s=0.200, quelle="auflager")
+    ana = solver.solve_all(ma, design=True)
+    ca = ana.lasteinleitung.stellen["Auflager"]
+    check("die Auflagerkraft wird am Knoten gefunden", ca.F_Ed > 0.0,
+          f"F_Ed = {ca.F_Ed / 1e3:.1f} kN")
+    check("und der Nachweis laeuft ueber alle Kombinationen",
+          len(ca.je_kombination) == len(ana.lasteinleitung.kombinationen),
+          f"{len(ca.je_kombination)} von {len(ana.lasteinleitung.kombinationen)}")
+
     # im Modell
     from statik3d import examples_lib
     m = examples_lib.build_example("hall")

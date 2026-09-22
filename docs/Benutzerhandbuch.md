@@ -722,7 +722,7 @@ Konsole gibt (behoben 14.09.2026). Wo es liegt, weiß Statik3D selbst (nachgelad
 | Nebenflächen grob (`nebenflaechen_grob`, seit 20.09.2026) | Bögen an **Nebenflächen** — Flächen ohne Last, Lager, Kontaktbedingung, integrierten Knoten, Netzverfeinerung und ohne zweiten Körper — werden mit 45° statt 18° je Abschnitt geteilt: acht statt zwanzig Abschnitte je Vollkreis. Eine Durchgangsbohrung ohne Bolzen, eine Ausrundung tragen nichts; ihre Form muss stimmen, nicht ihre Kerbspannung. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit fünf Bohrungen: 40 364 → 17 969 Tetraeder. **Vorgabe aus**, weil es die Spannung an unbelasteten Bohrungen ändert (dort 490 → 343 N/mm²); die adaptive Vernetzung schaltet es für ihre Dauer ein und holt zurück, was trägt. Heute nur in der Datei (`netz.nebenflaechen_grob`), kein Feld in der Maske |
 | Netzverfeinerungen (`verfeinerungen`) | Wo das Netz fein sein soll, unabhängig von der Geometrie: eine **Kugel** um einen Punkt (`{“art”: “kugel”, “mitte”: [x, y, z], “radius”: r, “h”: h}`), eine **Fläche**, **Linie** oder ein **Körper** mit Namen (`{“art”: “flaeche”, “name”: “F12”, “h”: 0.005}`). Die Kantenlänge wächst von dort mit 0,35 je Meter ins Umfeld. Gemessen (Kugel 5 mm, r = 30 mm am Bohrungsrand): 4,2 mm Kanten in der Kugel, 24 mm im Feld, Abnahme ohne Befund. Heute nur in der Datei |
 | Eigene Kantenlänge je Körper (`koerper_h`) | `{Körpername: Kantenlänge in m}` — geht vor Dichte und Ziellänge; die Deckel (kleinste Kante, Dickenmaß, Höchstzahl) gelten weiter. So lässt sich ein Körper gröber lassen als der Rest. Die adaptive Vernetzung schreibt hier ihre Werte hinein |
-| Sweep (`sweep`, seit 20.09.2026) | **aus** (Vorgabe seit 21.09.2026), Haken „Sechsflächner sweepen (Hexaeder statt Tetraeder)“ in den Netzeinstellungen: ein Körper, der Grundfläche mal Weg ist — Platte, Ring, Flansch, Rippe, Lasche mit Bohrungen — wird in Lagen durchgezogen und besteht aus Hexaedern (hex8) und Keilen (pent6) statt Tetraedern (Theoriehandbuch § 6a, Sweep). Das Protokoll nennt Lagen, Hexaederanteil und Rauminhalt („3 450 Hexaeder (hex8) + 660 Keile (pent6) gesweept — Grundfläche Boden → Deckel, 10 Lagen à 20,0 mm … Hexaederanteil 83,9 %“) und am Ende die Bilanz aller Volumen („0,87 je Knoten — Hexaeder …, Tetraeder …“). Warum: der lineare Tetraeder sperrt, weil vier Elemente je Knoten je eine Volumenbedingung stellen; ein Hexaedernetz hat eines. Die Lagen: aus Weg und Kantenlänge, mindestens zwei — **mit Fließen mindestens vier** (mit einer und zwei Lagen fließt kein Element, Messung 21.09.2026), sechs bis acht über die Kantenlänge. Mantellinien, die Nachbarn gehören, bekommen ihre Teilung vorab und modellweit („Sweep: Lagen für 2 Körper vorab festgelegt …"), damit der Sweep nicht an verschieden geteilten Nachbarn scheitert. Seit 21.09.2026 abends: **Zylinder** (vier Flächen: Bolzen, Stifte, Achsen) werden gesweept; der Grund darf aus **mehreren ebenen Flächen** bestehen (Platte mit Fußabdruck einer Nabe); ein Körper, der nicht als Ganzes Grundfläche mal Weg ist, wird an **Fußabdrücken zerlegt** („Volumen V1: nicht als Ganzes sweepbar — an 1 Fußabdruck(en) in 2 Blöcke zerlegt (2 davon sweepbar)"), gesweepte Blöcke wo es geht, Tetraeder für den Rest, knotengenau an der Schnittfläche. Gemessen: Platte mit Nabe 441 hex8 + 108 pent6 statt 7 595 tet4; abgesetzte Welle 446 hex8 + 28 pent6 statt 2 415 gemischt. **Warum die Vorgabe seit dem 21.09.2026 aus ist:** am Drehlager erzeugte der Sweep **992 entartete Keile** (10,6 % aller pent6, schlechteste Formgüte 0,025 — von 31.108 Hexaedern lag keiner unter 0,10), und derselbe Lastfall rechnete darauf max |u| 1,2335 statt 0,2716 mm, also **Faktor 4,5** daneben. Die Keile erben die Splitterdreiecke der Flächenvernetzung: die Paarung zu Vierecken verlangt Güte ≥ 0,3, ein Splitterdreieck erfüllt das nie und bleibt als Keil übrig. Bis die Linien- und Flächenteilung eine Mindestweite kennt, wird von Hand eingeschaltet. Die Abnahme meldet solche Netze vor dem Rechnen — wer einschaltet, sollte sie lesen. |
+| Sweep (`sweep`, seit 20.09.2026) | **aus** (Vorgabe seit 21.09.2026), Haken „Sechsflächner sweepen (Hexaeder statt Tetraeder)“ in den Netzeinstellungen: ein Körper, der Grundfläche mal Weg ist — Platte, Ring, Flansch, Rippe, Lasche mit Bohrungen — wird in Lagen durchgezogen und besteht aus Hexaedern (hex8) und Keilen (pent6) statt Tetraedern (Theoriehandbuch § 6a, Sweep). Das Protokoll nennt Lagen, Hexaederanteil und Rauminhalt („3 450 Hexaeder (hex8) + 660 Keile (pent6) gesweept — Grundfläche Boden → Deckel, 10 Lagen à 20,0 mm … Hexaederanteil 83,9 %“) und am Ende die Bilanz aller Volumen („0,87 je Knoten — Hexaeder …, Tetraeder …“). Warum: der lineare Tetraeder sperrt, weil vier Elemente je Knoten je eine Volumenbedingung stellen; ein Hexaedernetz hat eines. Die Lagen: aus Weg und Kantenlänge, mindestens zwei — **mit Fließen mindestens vier** (mit einer und zwei Lagen fließt kein Element, Messung 21.09.2026), sechs bis acht über die Kantenlänge. Mantellinien, die Nachbarn gehören, bekommen ihre Teilung vorab und modellweit („Sweep: Lagen für 2 Körper vorab festgelegt …"), damit der Sweep nicht an verschieden geteilten Nachbarn scheitert. Seit 22.09.2026 auch **verjüngte Züge** (Kegelstumpf, konische Rippe, Nabe mit Anzug): der Deckel darf die skalierte Kopie des Grundes sein, die Lagen führen den Maßstab mit. Und **Drehkörper** (Rohrbogen, Ringsegment): Grund und Deckel stehen um den Drehwinkel gegeneinander, die Lagen liegen auf dem Bogen, der Rauminhalt wird nach Guldin geprüft (Ringsegment 90°: 99,5 %). Ein Körper mit sechs Vierecken und acht Ecken, aber **krummen** Kanten geht nicht mehr in den abgebildeten Quaderpfad — der schnitt die Rundung ab und verlor am 90°-Bogen 36 % des Rauminhalts, ohne eine Meldung. Woran ein Körper sonst scheitert, steht als eine Zeile je Körper im Protokoll („nicht gesweept — Kappen F1 → F2 decken sich weder verschoben (12,3 mm daneben) noch skaliert (0,4 mm, Maßstab 0,830) …"). Seit 21.09.2026 abends: **Zylinder** (vier Flächen: Bolzen, Stifte, Achsen) werden gesweept; der Grund darf aus **mehreren ebenen Flächen** bestehen (Platte mit Fußabdruck einer Nabe); ein Körper, der nicht als Ganzes Grundfläche mal Weg ist, wird an **Fußabdrücken zerlegt** („Volumen V1: nicht als Ganzes sweepbar — an 1 Fußabdruck(en) in 2 Blöcke zerlegt (2 davon sweepbar)"), gesweepte Blöcke wo es geht, Tetraeder für den Rest, knotengenau an der Schnittfläche. Seit 22.09.2026 auch an einer **Ebene**, wenn kein Fußabdruck greift — eine Rippe, die bis an den Rand der Platte läuft, hängt nicht über einer Öffnung; geschnitten wird an der Ebene der Deckfläche („an einer Ebene in 2 Blöcke zerlegt (2 davon sweepbar)“). Und Grund und Deckel dürfen ihren Rand **verschieden in Linien teilen**: die fehlenden Ecken werden übertragen und die Wand dazwischen mitgeteilt, sodass auch ein von Hand gebauter Körper sweepbar wird, dessen Deckel eine Kante in zwei Linien führt. Gemessen: Platte mit Nabe 441 hex8 + 108 pent6 statt 7 595 tet4; abgesetzte Welle 446 hex8 + 28 pent6 statt 2 415 gemischt. Platte mit Randrippe: **124 Elemente und 239 Knoten** statt 685 tet4 — und die Verschiebung 2,0161 mm gegen 0,5811 mm; ein Tetraedernetz braucht dafür 39 891 Elemente und 7 459 Knoten (1,9674 mm). **Warum die Vorgabe trotzdem aus ist:** am Drehlager erzeugte der Sweep am 21.09.2026 **992 entartete Keile** (10,6 % aller pent6, schlechteste Formgüte 0,025 — von 31.108 Hexaedern lag keiner unter 0,10), und derselbe Lastfall rechnete darauf max |u| 1,2335 statt 0,2716 mm, also **Faktor 4,5** daneben. Die Ursache war ein Band feiner Randstrecken gegen ein grobes Flächeninneres; seither folgt das Innennetz dem Rand (`mesher3d.RANDFELD`), und am Prüfkörper fielen die schlechten Keile von 34 auf **null**. **Am Drehlager selbst ist das noch nicht nachgemessen** — bis dahin wird von Hand eingeschaltet. Die Abnahme meldet solche Netze vor dem Rechnen; wer einschaltet, sollte sie lesen. |
 | Pyramiden am Übergang (`pyramiden`, seit 21.09.2026) | **Aus** (Vorgabe). Ein Tetraeder-Körper, der an die Vierecke eines gesweepten oder abgebildeten Nachbarn stößt, teilt heute jedes Viereck in zwei Dreiecke — knotengleich, aber mit anderer Interpolation auf der Diagonale. Eingeschaltet bekommt jedes Viereck eine **Pyramide** (pyr5) mit Spitze im Inneren, die Tetraeder folgen dahinter. Gemessen an der Platte mit Pyramidenkörper: 12 Pyramiden statt 33 Tetraeder, Rauminhalt gleich, Verschiebung 0,3588 → 0,3589 mm, Formgüte min 0,185 → 0,154. Aus, weil die Rechnung nichts gewinnt und die Formgüte sinkt; ein für den Kontakt sauberer Übergang ist der Grund, ihn einzuschalten. Heute nur in der Datei |
 | Feldpunkte (`feldpunkte`) | `[x, y, z, h]` oder `[x, y, z, h, r]` je Punkt — das, was der Fehlerschätzer aus einem Ergebnis ableitet (Theoriehandbuch § 6c). Werden mit dem Modell gespeichert; beim nächsten Vernetzen entsteht daraus dasselbe Größenfeld |
 
@@ -746,6 +746,24 @@ Probelauf, `--probelauf nein` den vollen Lauf.
 Vernetzen*. Was die Schleife setzt (Kantenlänge je Körper, Feldpunkte), steht danach in
 den Netzeinstellungen des gespeicherten Modells. Ein Befehl in der Oberfläche ist mit
 der Programm-Sitzung abzustimmen.
+
+**Feiner Rand, feines Inneres** (seit 21.09.2026): wo eine Randstrecke einer Fläche
+weniger als halb so lang ist wie die Kantenlänge — etwa neben einem winzigen Absatz oder
+einer kleinen Bohrung —, folgt das Innennetz ihr und wächst von dort auf die Kantenlänge
+zurück. Ohne das stand ein Band feiner Randstrecken gegen ein grobes Inneres, und die
+Dreiecke dazwischen waren Splitter; beim Sweep wurde aus jedem ein entarteter Keil.
+Gemessen an einer Platte mit einem 0,45-mm-Absatz bei 50 mm Kantenlänge: 34 Elemente unter
+der Formgüte 0,10 werden zu **null**, die schlechteste Güte steigt von 0,054 auf 0,122; der
+Preis sind 45 % mehr Elemente **an dieser Stelle**. Wo der Rand gleichmäßig ist, ändert
+sich nichts.
+
+**Enge Hüllkanten** (seit 21.09.2026): das Vernetzungsprotokoll warnt je Körper, wenn die
+Randhülle Kanten unter einem Dreißigstel der Kantenlänge enthält — mit Zahl, kürzester
+Kante und Herkunft („`12 Hüllkanten unter der Mindestweite 1.67 mm (kürzeste 0.313 mm) —
+8x auf der Linie B1U1, 4x am Innennetz einer Fläche`"). Aus solchen Kanten werden Splitter,
+die kein Volumenschritt mehr loswird: die Hüllknoten stehen fest. Die Warnung sagt, wo
+anzusetzen wäre — an einer winzigen Bohrung (Krümmungsteilung), an zwei eng
+zusammenlaufenden Linien (Geometrie) oder am Innennetz. Sie ändert nichts am Netz.
 
 **Splitter in der Abnahme** (seit 21.09.2026): die Abnahme vor dem Rechnen nennt je Körper die
 Elemente mit Formgüte unter 0,10 als **WARNUNG** — Zahl, Körper, die drei schlechtesten mit
@@ -2229,6 +2247,24 @@ Kontaktbeispiele.
 
 ## 4 Lastfälle und Kombinationen
 
+### Lasten an der Geometrie überleben Speichern und Laden (seit 21.09.2026)
+
+Eine Last, die an einer **Fläche** oder **Linie** hängt, wird auf die Elemente
+verteilt, sobald es dort ein Netz gibt. Diese verteilten Lasten stehen
+absichtlich nicht in der Datei — sie entstehen beim nächsten Verteilen neu,
+sonst lägen sie doppelt.
+
+**Bis zum 21.09.2026 entstanden sie beim Laden aber nicht neu.** Wer eine
+Datei öffnete und rechnete, ohne vorher neu zu vernetzen, rechnete ohne seine
+Flächen- und Linienlasten. Knotenlasten, Stablasten und das Eigengewicht waren
+nicht betroffen; sie hängen nicht an der Geometrie.
+
+Das ist behoben: beim Laden wird einmal verteilt. **Wer vor diesem Stand eine
+gespeicherte Datei geöffnet und gerechnet hat, sollte die Rechnung
+wiederholen.** Ob eine alte Rechnung betroffen war, zeigt die
+Auflagersumme im Bericht: trägt sie deutlich weniger als die aufgebrachte
+Last, hat die Rechnung ohne die Geometrielasten stattgefunden.
+
 ### Lastarten
 
 Register **Lasten**, alles mit Symbol. Jede Maske arbeitet auf der
@@ -2521,6 +2557,46 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
 (sonst ist die Kette Stab–Feder–freier Knoten wieder ein Gelenk).
 
 ## 6 Kontakt
+
+> **Wann ein Kontaktergebnis nicht auskonvergiert ist (seit 22.09.2026).**
+> Bei Reibung prüft das Programm die Haft- und Gleitzustände nach jedem
+> Schritt nach. Wechseln sie immer weiter, bricht es die Nachprüfung nach 40
+> Runden ab und rechnet mit dem zuletzt erreichten Zustand weiter.
+>
+> Bis zum 21.09.2026 meldete der Bericht in diesem Fall trotzdem
+> **„konvergiert"**; der Hinweis stand allein im Kontaktprotokoll. Jetzt
+> steht im Protokoll **und** im Fortschrittsbalken „Nachprüfung der Reibung
+> nach 40 Zustandswechseln abgebrochen", und der Lastfall gilt als **nicht
+> konvergiert**.
+>
+> Was das heißt: war es der **letzte** Kontaktlauf des Lastfalls, sind
+> Verformung und Spannungen der Zustand, bei dem die Nachprüfung aufgegeben
+> hat — kein Nachweis. Mit Fließen rechnet ein Lastfall viele Kontaktläufe
+> (am Drehlager zwölf); seit dem 22.09.2026 trägt die Meldung darum ihren
+> Lauf („… abgebrochen (Kontaktlauf 7)"), und das Ergebnis sagt, ob der
+> letzte Lauf konvergiert ist — auch nach einem Abbruch der Kontaktiteration.
+> Vorher wurden gleichlautende Meldungen zu einer zusammengefasst, und das
+> ließ sich nicht mehr entscheiden. In den Warnungen des Berichts werden sie
+> weiterhin gebündelt: die Laufnummer gehört zum Ergebnis, nicht zur Art der
+> Meldung.
+>
+> Am Drehlagerbeispiel hat die Nachprüfung der Reibung im ersten Lastfall in
+> **mindestens einem** der zwölf Kontaktläufe nach 40 Zustandswechseln
+> aufgegeben. Ob der letzte betroffen ist, aus dem Verformung und Spannung
+> stammen, ist nicht belegt. Die einzige Reibstelle dort ist das
+> Flächenlager „Starr" mit μ = 0,1; alle zwölf Kontaktpaare haben μ = 0.
+> (Eine frühere Fassung sagte hier „derselbe Lauf gibt dasselbe Ergebnis".
+> Bitgleich ist er nicht; am Drehlager nahm das ausgelieferte Programm aber in
+> drei Läufen denselben Weg, höchstens 0,0004 N/mm² auseinander — siehe „Zwei
+> Läufe desselben Modells" weiter unten; Nachprüfung der Lösersitzung vom 22.09.2026.)
+>
+> Was hilft, ist offen. Mit einer zehnfach kleineren automatischen
+> Kontaktsteifigkeit steht die Abbruchmeldung am Drehlager genauso im
+> Protokoll (ein Lauf, 22.09.2026). Ob sie Zeit kostet, ist nicht belegt:
+> der eine Lauf brauchte 8,6 % länger, lief aber unter Fremdlast, und
+> gleichwertige Läufe streuten an diesem Abend um 3 bis 17 %. Der Rat, die
+> Kontaktsteifigkeit zu senken, stand hier bis dahin und ist zurückgenommen. Zu versuchen bleiben ein kleinerer
+> Reibbeiwert und ein feineres Netz in der Fuge — beides ungemessen.
 
 * **Einseitiges Lager**: Knoten auswählen, Stützrichtung (z. B. 0 0 1 =
   stützt nach oben), optional Spalt, Federsteifigkeit (elastische Bettung,
@@ -3036,6 +3112,15 @@ brauchbaren und einem wertlosen Nachweis ausmachen:
 * **Kerbradius**: Wird er angegeben, prüft das Programm, ob mindestens drei
   Elemente über den Radius liegen. Sonst sagt es, dass das Netz dort zu grob
   ist und die Kerbspannung unterschätzt wird.
+* **Erzeugnisdicke**: Die Streckgrenze hängt nach EN 1993-1-1 Tab. 3.1 von der
+  Erzeugnisdicke ab (S355: über 40 mm 335 statt 355 N/mm²). Bleibt das Feld
+  auf 0, nimmt Statik3D die kleinste Abmessung des ganzen Körpers, zu dem die
+  Elemente gehören — bei einem massiven Bauteil ist das richtig. Ist das
+  Bauteil aus Blechen **geschweißt**, ist es zu viel: dann die Blechdicke
+  eintragen. Die angesetzte Dicke steht im Bericht in der Spalte *t* (mit `*`,
+  wenn sie selbst angegeben wurde), und wenn sie f_y abmindert, sagt der
+  Bericht es als Hinweis. Bis zum 22.09.2026 rechnete der Volumennachweis
+  immer mit der dünnsten Stufe — η fiel bei dicken Bauteilen 6 % zu klein aus.
 
 Ausgewertet wird je Element an der Mitte **und** an den Eckpunkten; maßgebend
 ist der größte Wert. Die Elementmitte allein würde die Randspannung bei
@@ -3126,12 +3211,54 @@ Nachweis mit seiner Verformung je Kombination.
 
 ## 9 Berechnung und Parallelisierung
 
+> **Zwei Läufe desselben Modells können sich unterscheiden — und das ist kein
+> Fehler (gemessen 22.09.2026).** Der Gleichungslöser summiert die
+> Faktorisierung auf mehrere Kerne auf. Wie die Arbeit dabei auf die Kerne
+> fällt, hängt am Zeitverhalten des Rechners, und damit die letzten Stellen:
+> mit **einem** Kern kommen dreimal bitgleiche Ergebnisse heraus, mit
+> sechzehn nicht (Abweichung rund 5·10⁻¹⁶ vom Betrag).
+>
+> **Am Drehlager, gemessen:** Das ausgelieferte Programm (unsymmetrische Zerlegung) hat am Drehlager in **drei** Läufen von LF1 denselben Kontaktweg genommen — 150 Schritte, 145 Faktorisierungen —, und die Spannungen lagen höchstens **0,0004 N/mm²** auseinander (Verschiebungen relativ 4,3·10⁻⁷): nicht bitgleich, aber derselbe Weg.
+> Auseinandergelaufen sind nur zwei Läufe einer **Versuchsfassung mit
+> symmetrischer Zerlegung**, die nicht ausgeliefert wird: sie nahmen
+> verschiedene Kontaktwege und wichen um bis zu 273 N/mm² voneinander ab. Der
+> Verdacht fällt auf die ungesetzten Vorgaben dieser Zerlegung (einer der
+> beiden lief außerdem unter starker Fremdlast) — bewiesen ist das mit zwei
+> Läufen nicht. (Eine frühere Fassung sprach hier von „derselbe Lauf, 150
+> oder 162 Kontaktschritte, vierte Stelle der Verformung"; die beiden Läufe
+> stammten aus zwei verschiedenen Programmständen. Nachprüfung der Lösersitzung vom 22.09.2026.)
+>
+> **Wenn zwei Läufe streng vergleichbar sein müssen** — etwa um zu belegen,
+> dass eine Änderung am Modell nichts am Ergebnis ändert —, setzen Sie vor
+> dem Start die Umgebungsvariable `MKL_CBWR=AUTO`. An einem Prüfgitter rechnet
+> der Löser damit bitgleich, auf **dieser** Maschine, und kostet rund 13 %
+> mehr Zeit. Ob das am Drehlager die Kontaktwege gleich macht, ist nicht
+> gemessen; die Lösersitzung misst es gerade. In der Auslieferung steht die
+> Variable nicht.
+
 * **Alle Lastfälle + Kombinationen**: Standard. Eine Faktorisierung, alle
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
 * **Nur aktiver Lastfall**, **Eigenschwingungen**, **Knicken** (Grundzustand
   = aktiver Lastfall).
 * **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen*): Vorgabe
-  **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. Zur Wahl
+  **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. **Weicht
+  „automatisch“ aus, steht der Grund im Protokoll** — bei der Grundfaktorisierung
+  in der Zeile „Faktorisiert (SuperLU (ausgewichen - PARDISO: …), …)“, bei den
+  Faktorisierungen der Kontaktschritte als eigene Zeile „Gleichungslöser
+  ausgewichen - …“, einmal je Lastfall. Ein Grund ist dabei jeder Weg vorbei an
+  PARDISO: eine Ausnahme, die 32-Bit-Grenze der Schnittstelle, ein installiertes,
+  aber scheiterndes CHOLMOD. **Noch nicht** zurück kommt die Meldung aus
+  Lastfällen, die in Rechenketten laufen; die rechnen seit dem 22.09.2026 aber
+  mit denselben Einstellungen wie der Hauptprozess (vorher begann jede Kette mit
+  „automatisch“, auch wenn „MKL PARDISO“ eingestellt war, und wich still aus,
+  wo die Rechnung sonst abgebrochen hätte). Bis zum 22.09.2026 wurde ein
+  Fehler von PARDISO bei „automatisch“ ohne eine Zeile verworfen; am Drehlager
+  scheiterte danach SuperLU selbst („Can't expand MemType 0“), und warum PARDISO
+  nicht gerechnet hatte, war nicht mehr festzustellen. Scheitern beide aus einem
+  anderen Grund als einer singulären Matrix, bricht die Rechnung mit **beiden**
+  Gründen ab und nennt MUMPS oder ama als Ausweg — SuperLU reicht für große
+  Modelle nicht. Eine singuläre Matrix wird weiter als solche gemeldet
+  („Lagerung prüfen“). Zur Wahl
   stehen **MKL PARDISO** (direkt, mehrkernig — angefordert werden alle Kerne
   bis auf einen, MKL selbst kappt auf die physischen Kerne: 16 auf einem
   Rechner mit 16 Kernen / 32 Threads),
@@ -3568,6 +3695,27 @@ nichts stillschweigend Übergangenes:
 | Knoten im Rechennetz ohne Element | 0 |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | Randtreue je Körper | ≥ 99 % |
+
+**„Bestanden" heißt nicht „nicht geprüft".** Zwei der Teilprüfungen fingen
+eine Ausnahme stumm ab und gaben eine leere Liste zurück — und leer heißt in
+der Abnahme ausdrücklich „das Netz ist abgenommen". Ein Modell, dessen
+Lagerung in einer Richtung fast nicht hält, wurde damit mit „Abnahme des
+Netzes: bestanden" quittiert. Fällt eine Prüfung heute aus, steht sie als
+eigene Zeile im Protokoll (`Haltegüte nicht geprüft`, `Elementgüte nicht
+geprüft`) und die Überschrift lautet **„bestanden, soweit geprüft (N
+Prüfungen fielen aus)"**. Als Warnung und nicht als Fehler: eine ausgefallene
+Messung ist keine Verletzung des Modells, sie hält den Lauf also nicht an.
+
+Zwei Einzelheiten dazu, beide gemessen:
+
+* Die Haltegüte wird je Teiltragwerk fortlaufend ermittelt. Brach die Messung
+  beim 40. von 60 ab, gingen bis dahin **auch die 39 schon gemessenen Werte**
+  verloren. Sie bleiben jetzt stehen — ein gefundener Mangel überlebt den
+  Ausfall.
+* Ließ sich die Formgüte eines Elements nicht ermitteln, ging sie als 1,000
+  in die Splitterprüfung ein — ein nicht messbares Element galt damit als das
+  **formbeste überhaupt** (gemessen 1,000 statt 0,039, Faktor 26 zu gut).
+  Solche Elemente zählen jetzt nicht mit und werden mit ihrer Anzahl genannt.
 
 Die wichtigste Zeile ist die erste: beim Ausführen einer Fuge werden die
 gemeinsamen Randknoten verdoppelt; bliebe danach ein Element mit einem Fuß auf

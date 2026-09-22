@@ -5891,7 +5891,14 @@ class MainWindow(QtWidgets.QMainWindow):
                              "gehört (ANSYS: Pinball); ein Tausendstel davon gilt als Berührung. "
                              "0 = automatisch: die größere mittlere Kantenlänge beider Seiten - das "
                              "Protokoll nennt den Wert. Von Hand nur für Spiel größer als ein Element"),
-                   F("spalt", "Anfangsspalt", "wahl",
+                   # Der Schluessel heisst "spalt_art" und nicht "spalt":
+                   # das Zahlenfeld darueber traegt denselben Namen, und im
+                   # Woerterbuch der Maske gewann es - die Wahl "auf Beruehrung
+                   # setzen" kam nie an und wurde bei JEDEM Uebernehmen wieder
+                   # auf False gesetzt, auch wenn sie aus Datei oder Import
+                   # True war. Der Zahlenschluessel bleibt "spalt", damit
+                   # _maskenzahl("spalt") unveraendert weiterarbeitet.
+                   F("spalt_art", "Anfangsspalt", "wahl",
                      self.KONTAKT_SPALT[1 if getattr(kb, "spalt_schliessen", False) else 0],
                      self.KONTAKT_SPALT,
                      hinweis="„auf Berührung setzen“: jeder Knoten gilt in seiner Lage als anliegend - "
@@ -7300,7 +7307,7 @@ class MainWindow(QtWidgets.QMainWindow):
             kb.standard = (standard if standard in STANDARDKONTAKTE
                            and self._kontakt_ist_standard(standard, zug, sx, sy, dreh, mu) else "")
             kb.suchweite = max(float(zahl("suchweite", 0.0) or 0.0), 0.0) / 1e3
-            kb.spalt_schliessen = str(w.get("spalt", "")) == self.KONTAKT_SPALT[1]
+            kb.spalt_schliessen = str(w.get("spalt_art", "")) == self.KONTAKT_SPALT[1]
             kb.spiel = max(float(zahl("spiel", 0.0) or 0.0), 0.0) / 1e3
             kb.grenzpressung = max(float(zahl("grenzpressung", 0.0) or 0.0), 0.0) * 1e6
             kb.rand_frei = int(max(float(zahl("rand_frei", 0.0) or 0.0), 0.0))
@@ -10870,8 +10877,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_gzg = tab.Datentabelle([
             Spalte("Nachweis"), Spalte("Bezug"), Spalte("Größe"),
             Spalte("Situation"),
+            # Zwei Zahlenspalten statt einer: eine Verdrehung steht in mrad
+            # und hat unter einem Kopf "mm" nichts zu suchen. Wer den Wert
+            # gegen eine mm-Grenze haelt (Dichtung, Fuehrung, Anschlag nach
+            # DIN 19704), vergleicht sonst Winkel mit Weg - und bei der
+            # Einheitenwahl "cm" wurde die Zahl zusaetzlich mit 0,1
+            # malgenommen (12,97 -> 1,30) und als cm beschriftet. "mrad" steht
+            # nicht in einheiten.GRUND, die Verdrehung wird von der
+            # Einheitenwahl also nicht mehr angefasst.
             Spalte("Wert", "mm", "zahl", 2,
-                   hinweis="größte Verformung über alle GZG-Kombinationen"),
+                   hinweis="größte Verschiebung über alle GZG-Kombinationen"),
+            Spalte("Verdrehung", "mrad", "zahl", 2,
+                   hinweis="größte Verdrehung über alle GZG-Kombinationen "
+                           "(φx, φy, φz)"),
             Spalte("Grenzwert"),
             Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1"),
             Spalte("Kombination"), Spalte("Stelle"), Spalte("Status")],
@@ -13111,7 +13129,10 @@ class MainWindow(QtWidgets.QMainWindow):
             c = erg.checks.get(name) if erg is not None else None
             zeilen.append([name, g.bezug(), g.groesse,
                            SITUATIONEN.get(g.situation, g.situation or "alle GZG"),
-                           (c.wert * 1e3 if c is not None and not c.fehler else ""),
+                           ("" if c is None or c.fehler or c.winkel
+                            else c.wert * 1e3),
+                           (c.wert * 1e3 if c is not None and not c.fehler
+                            and c.winkel else ""),
                            (c.grenztext if c is not None else g.grenztext()),
                            (c.util if c is not None else ""),
                            (c.kombination if c is not None else ""),
@@ -17297,8 +17318,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(f"WARNUNG: [{b.pruefung}] {b.text}")
         self._abnahme_befunde = befunde
         if not befunde:
-            self.log.appendPlainText("--- Abnahme des Netzes: bestanden ---"
-                                     + (f" ({len(warnungen)} Warnungen)" if warnungen else ""))
+            # „bestanden" darf nicht heissen „nicht geprueft": faellt eine der
+            # Teilpruefungen aus, steht das in der Ueberschrift.
+            ausgefallen = [b for b in alle
+                           if str(b.pruefung).endswith("nicht geprüft")]
+            self.log.appendPlainText(
+                (f"--- Abnahme des Netzes: bestanden, soweit geprüft "
+                 f"({len(ausgefallen)} Prüfungen fielen aus) ---" if ausgefallen
+                 else "--- Abnahme des Netzes: bestanden ---")
+                + (f" ({len(warnungen)} Warnungen)" if warnungen else ""))
             return True
         self.log.appendPlainText(f"--- Abnahme des Netzes: {len(befunde)} Verletzungen ---")
         for b in befunde:

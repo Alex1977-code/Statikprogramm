@@ -149,12 +149,33 @@ def _nachgiebigkeit(model, ids: np.ndarray) -> np.ndarray:
     return C
 
 
+#: Ein Feld gleicher Bauart wie ``solid_res``, in dem der Loeser je Element
+#: das **Mittel ueber die Gausspunkte** fuehrt, wenn er es fuehrt. Der
+#: Schaetzer nimmt es bevorzugt.
+#:
+#: Warum: ``solid_res`` traegt fuer ein elastisches Element mit mehreren
+#: Auswertepunkten den Punkt mit der **hoechsten** Vergleichsspannung, fuer
+#: ein **fliessendes** dagegen nur die **Mitte** (Loeser-Sitzung, 21.09.2026).
+#: In einem Netz mit fliessenden und elastischen Elementen nebeneinander
+#: vergleicht der Zienkiewicz/Zhu-Sprung also Maximum gegen Mitte - genau an
+#: der Fliessgrenze, wo der Indikator am meisten zu tun hat, und ein Teil des
+#: gemessenen Sprungs ist dann der Regelwechsel und nicht das Netz. Fuer tet4
+#: ist das gleichgueltig (ein Punkt), fuer hex8/pent6/pyr5 nicht. Die
+#: Loeser-Sitzung kann das Mittel ohne Mehrkosten danebenstellen; sobald es da
+#: ist, wirkt es hier ohne weitere Aenderung.
+MITTELFELD = "solid_mittel"
+
+
 def _elemente(model, res) -> list:
     """Die Volumenelemente mit Ergebnis, nach Typ: [(typ, Elementnummern,
     Eckknoten (n, k), Spannungen (n, 6))] - tet10 ueber seine vier Ecken,
-    hex20 ueber acht, pent15 ueber sechs."""
+    hex20 ueber acht, pent15 ueber sechs.
+
+    Gelesen wird :data:`MITTELFELD`, wenn der Loeser es fuehrt, sonst
+    ``solid_res``."""
     gruppen: dict = {}
-    for i, s_ in res.solid_res.items():
+    quelle = getattr(res, MITTELFELD, None) or res.solid_res
+    for i, s_ in quelle.items():
         e = model.elements[int(i)]
         if e.typ not in ORDNUNG:
             continue

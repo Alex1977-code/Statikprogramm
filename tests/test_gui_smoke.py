@@ -1194,10 +1194,17 @@ def main():
         check("Verformungen werden mit gerechnet",
               an.gzg is not None and len(an.gzg.checks) == 2)
         z = w.tbl_gzg.modell.zeilen[0]
+        # Spalte 4 ist die Verschiebung [mm], Spalte 5 die Verdrehung [mrad] -
+        # zwei getrennte Zahlenspalten, seit eine Verdrehung nicht mehr unter
+        # dem Kopf "mm" steht. Die Grenze rueckt damit auf 6, die Ausnutzung
+        # auf 7.
         check("Wert, Grenze und Ausnutzung stehen in der Tabelle",
-              isinstance(z[4], float) and z[4] > 0 and "L/300" in str(z[5])
-              and isinstance(z[6], float),
-              f"{z[4]:.2f} mm von {z[5]}, η = {z[6]:.3f}")
+              isinstance(z[4], float) and z[4] > 0 and "L/300" in str(z[6])
+              and isinstance(z[7], float),
+              f"{z[4]:.2f} mm von {z[6]}, η = {z[7]:.3f}")
+        check("eine Durchbiegung steht in der mm-Spalte, nicht in der mrad-Spalte",
+              isinstance(z[4], float) and z[5] == "",
+              f"mm = {z[4]!r}, mrad = {z[5]!r}")
         check("Ergebnisprotokoll nennt die Verformungen",
               "Verformungen (GZG)" in w.txt_res.toPlainText())
 
@@ -5022,6 +5029,27 @@ def main():
         # ändern … es soll einen Vorschauknopf geben“)
         check("Kontaktmaske: Felder für den geometrischen Spalt und seine Aufteilung",
               "spalt" in wv and "spalt_wohin" in wv and "spalt_stand" in wv, str(sorted(wv))[:130])
+        # „Auf Berührung setzen" muss ankommen. Bis zum 22.09.2026 hieß das
+        # Wahlfeld wie das Zahlenfeld darüber („spalt"); im Wörterbuch der
+        # Maske gewann die Zahl, und die Wahl wurde bei JEDEM Übernehmen wieder
+        # auf False gesetzt - auch wenn sie aus Datei oder Import True kam.
+        felder_kb = w._kontaktmaske(kb_p, "Fuge P", {})[0]
+        namen_kb = [f.name for f in felder_kb]
+        check("Kontaktmaske: kein Feldname kommt zweimal vor",
+              len(namen_kb) == len(set(namen_kb)),
+              str([n for n in set(namen_kb) if namen_kb.count(n) > 1]) or "alle eindeutig")
+        mk.setzen("spalt_art", w.KONTAKT_SPALT[1])
+        mk.angewendet.emit(mk.werte())
+        app.processEvents()
+        check("Kontaktmaske: „auf Berührung setzen“ kommt an",
+              w.model.kontaktbedingungen["Fuge P"].spalt_schliessen is True,
+              f"spalt_schliessen = {w.model.kontaktbedingungen['Fuge P'].spalt_schliessen}")
+        mk.setzen("spalt_art", w.KONTAKT_SPALT[0])
+        mk.angewendet.emit(mk.werte())
+        app.processEvents()
+        check("und „wie modelliert“ nimmt es zurück",
+              w.model.kontaktbedingungen["Fuge P"].spalt_schliessen is False,
+              f"spalt_schliessen = {w.model.kontaktbedingungen['Fuge P'].spalt_schliessen}")
         check("Ribbon/Maske: Knopf „Spalt-Vorschau“ neben „Kontaktfugen ausführen“",
               hasattr(w, "spalt_vorschau"))
         check("Übernehmen speichert die Passung (m, N/m², Reihen) und führt die Fuge am Netz neu aus",

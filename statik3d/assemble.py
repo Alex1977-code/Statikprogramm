@@ -370,15 +370,53 @@ def elementfehler(model: Model, i: int, ex: Exception) -> ValueError:
         return ValueError(f"Element {i + 1}: {ex}")
 
 
+#: Hoechstzahl Sechsflaechner je Stapel. 4096 mal 24x24 in double sind 19 MB
+#: je Zwischenfeld, und davon entstehen in hex8_matrizen_stapel drei.
+HEX8_STAPEL = 4096
+
+
 def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
-    out = []
-    for i in idx:
+    out: list = [None] * len(idx)
+    # Sechsflaechner stapelweise: einzeln kostet k_hex8 571,7 µs je Element,
+    # im Stapel 57,5 µs - Faktor 9,9 (gemessen 21.09.2026 an 4000 verzerrten
+    # Wuerfeln, Ergebnis identisch bis 6e-16). Am Drehlagernetz der
+    # Vernetzersitzung sind das 17,8 s gegen 1,79 s je Aufstellen fuer 31.108
+    # Sechsflaechner. Der tet4 braucht das nicht: er kostet 24,2 µs, und der
+    # Aufruf ist dort nicht der Brocken.
+    je_werkstoff: dict = {}
+    for pos, i in enumerate(idx):
+        e = model.elements[i]
+        if e.typ == "hex8" and not getattr(e, "sec", None):
+            je_werkstoff.setdefault(e.mat, []).append((pos, i))
+    gestapelt = set()
+    for mat_name, stellen in je_werkstoff.items():
+        if len(stellen) < 8:            # unter acht lohnt der Umweg nicht
+            continue
+        mat = model.materials[mat_name]
+        for a0 in range(0, len(stellen), HEX8_STAPEL):
+            teil = stellen[a0:a0 + HEX8_STAPEL]
+            X = np.asarray([model.nodes[model.elements[i].nodes[:8]] for _p, i in teil], float)
+            try:
+                Ks, _V = sl.k_hex8_stapel(X, float(mat.E), float(mat.nu))
+            except Exception as ex:     # noqa: BLE001 - einzeln nachfahren, um das Element zu nennen
+                for _p, i in teil:
+                    try:
+                        element_matrix(model, model.elements[i])
+                    except Exception as ex2:    # noqa: BLE001
+                        raise elementfehler(model, i, ex2) from ex2
+                raise elementfehler(model, teil[0][1], ex) from ex
+            for (pos, i), ke in zip(teil, Ks):
+                out[pos] = (element_dofs(model.elements[i], model), ke)
+                gestapelt.add(pos)
+    for pos, i in enumerate(idx):
+        if pos in gestapelt:
+            continue
         e = model.elements[i]
         try:
             ke = np.asarray(element_matrix(model, e), float)
         except Exception as ex:      # noqa: BLE001
             raise elementfehler(model, i, ex) from ex
-        out.append((element_dofs(e, model), ke))
+        out[pos] = (element_dofs(e, model), ke)
     return out
 
 
@@ -1078,6 +1116,16 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
             continue
         e = model.elements[l.elem]
         X = model.nodes[e.nodes]
+        # **Der Nullvektor ist keine Richtung.** Alle drei Zweige normieren mit
+        # ``d / (norm(d) or 1.0)``; aus dem Nullvektor wird dabei wieder der
+        # Nullvektor, und die Last wirkt mit 0 N statt mit ihrem vollen Betrag
+        # (gemessen 1000 kN -> 0 kN). Im Bericht steht sie weiter mit vollem p,
+        # in der Spalte Richtung nur "(0, 0, 0)". Erreichbar von aussen: eine
+        # Nastran-PLOAD4 mit ausgeschriebenem Nullvektor liest sich genau so
+        # ein. Das ebene Element weist ihn seit jeher ab (ebene.py).
+        if l.direction is not None and not any(float(x) for x in l.direction):
+            raise ValueError(f"Flaechenlast auf Element {l.elem}: richtung darf "
+                             "nicht der Nullvektor sein")
         if e.typ in SHELL_TYPES:
             F[element_dofs(e)] += shell_face_load(model, e, l.p, l.direction)
         elif e.typ in SOLID_TYPES:
@@ -1180,7 +1228,15 @@ def solid_face_pressure(model: Model, e, p: float, face: int, direction=None) ->
     faces = sl.FLAECHEN[e.typ]
     f = np.zeros(3 * len(e.nodes))
     if face < 0 or face >= len(faces):
-        return f
+        # **Nicht stillschweigend null zurueckgeben.** Eine Seitennummer
+        # ausserhalb des Bereichs kommt aus einer Eingabe (Abaqus *DLOAD P5 am
+        # Tetraeder, eine von Hand gesetzte Last), und die Last fehlt dann zu
+        # 100 % in der Rechnung - gemessen 1000 kN -> 0 kN -, waehrend sie im
+        # Bericht mit vollem p steht und in der Ansicht an einer Flaeche
+        # gezeichnet wird. Das ebene Element macht es drei Zeilen weiter
+        # richtig (ebene.py: "Kante gibt es nicht").
+        raise ValueError(f"{e.typ}: Seite {face} gibt es nicht "
+                         f"(0..{len(faces) - 1})")
     fn = list(faces[face])
     P = X[fn]
     ecken = P[:4] if len(fn) in (4, 8) else P[:3]

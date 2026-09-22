@@ -737,8 +737,24 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
     normale: dict = {}
     flaeche: dict = {}
     for _e, nd, n_aus in seite_b:
-        X = model.nodes[nd[:3]]
-        A = 0.5 * float(np.linalg.norm(np.cross(X[1] - X[0], X[2] - X[0])))
+        # **Die ganze Facette, nicht ihr erstes Dreieck.** Bis zum 22.09.2026
+        # stand hier ``X = model.nodes[nd[:3]]`` - fuer ein Viereck war das die
+        # halbe Flaeche. Die Facettenliste enthaelt aber Vierecke, sobald das
+        # Netz Hexaeder oder Viereckschalen hat (SOLID_FACES fuehrt fuer eine
+        # Hexaederseite ein Vierertupel). Genau dieses A geht weiter unten in
+        # die Normalfeder (k_n = stiffness * A) und in die Tangentialfedern:
+        # **jede elastische Fuge auf einem Viereckenetz war um den Faktor zwei
+        # zu weich**, und weil es an einem Dreiecksnetz stimmt, sah der
+        # Unterschied beim Netzvergleich wie ein Netzeinfluss aus.
+        #
+        # Faechertriangulierung um den ersten Knoten: fuer ein Dreieck ist es
+        # derselbe eine Term wie vorher, fuer ein ebenes Viereck exakt, fuer
+        # ein leicht windschiefes die Summe seiner beiden Dreiecke.
+        X = model.nodes[nd]
+        A = 0.0
+        for _i in range(1, len(nd) - 1):
+            A += 0.5 * float(np.linalg.norm(
+                np.cross(X[_i] - X[0], X[_i + 1] - X[0])))
         if A <= 0:
             continue
         for k in nd:

@@ -1385,7 +1385,7 @@ class Report:
             rows.append([lc.name, lc.category, cat, lc.description or "–", fmt(psi[0], 2),
                          fmt(psi[1], 2), fmt(psi[2], 2), fmt(gs, 2), fmt(gi, 2),
                          lc.exclusive_group or "–", getattr(lc, "situation", "") or "Grundstellung",
-                         m.theorie_von(lc) if hasattr(m, "theorie_von") else "I",
+                         self._theorie_spalte(lc),
                          str(lc.n_loads)])
         b.append(("table", rows, "Lastfälle und Einwirkungskategorien (DIN EN 1990/NA)",
                   None, ""))
@@ -1517,18 +1517,25 @@ class Report:
         ]))
 
         b.append(self._h(2, "Übersicht"))
-        rows = [["Bereich", "Elemente", "Material", "f_y [MPa]", "σ_v [MPa]",
+        rows = [["Bereich", "Elemente", "Material", "t [mm]", "f_y [MPa]", "σ_v [MPa]",
                  "σ_1 [MPa]", "σ_3 [MPa]", "h", "η", "Komb.", "Status"]]
         for c in v.bereiche.values():
             w = c.werte or {}
-            rows.append([c.name, str(c.n_elemente), c.material,
+            # Die Erzeugnisdicke gehoert in die Uebersicht: an ihr haengt
+            # die Abminderung von f_y, und ein Pruefer muss sie sehen koennen.
+            # Eine selbst angegebene wird mit * gekennzeichnet.
+            t_mm = (fmt(w.get("dicke", 0.0) * 1e3, 0)
+                    + ("*" if w.get("dicke_gesetzt") else "")) if w.get("dicke") else "–"
+            rows.append([c.name, str(c.n_elemente), c.material, t_mm,
                          fmt(c.fy / 1e6, 0), fmt(w.get("sigma_v", 0) / 1e6, 1),
                          fmt(w.get("s1", 0) / 1e6, 1), fmt(w.get("s3", 0) / 1e6, 1),
                          fmt(w.get("h", 0.0), 2),
                          ("–" if c.singular else Util(c.util)),
                          c.kombination, c.status()])
         b.append(("table", rows, "Volumenbereiche: Spannungen und Ausnutzung",
-                  None, ""))
+                  None, "t ist die Erzeugnisdicke für die Abminderung von f_y "
+                  "nach EN 1993-1-1 Tab. 3.1; ohne * die kleinste Abmessung "
+                  "des Körpers, mit * am Bereich angegeben."))
         if self.opt("figures"):
             liste = [c for c in v.bereiche.values() if not c.fehler and not c.singular][:60]
             if liste:
@@ -2326,9 +2333,38 @@ class Report:
                         self._warnings.extend(f"Kontakt {name}: {s}" for s in log)
                     if res.info.get("contact_converged") is False:
                         self._warnings.append(f"Kontakt {name}: Iteration nicht konvergiert")
+                # Die uebrigen Ergebnisse bekommen im Vorgabeumfang keine
+                # Einzeltabelle - ihre WARNUNGEN duerfen deshalb nicht mit
+                # wegfallen. Bei 1931 Kontaktergebnissen nannte der Bericht den
+                # Grund der Nichtkonvergenz fuer hoechstens 5 (0,26 %); 1911
+                # standen ohne jedes Kennzeichen im Statikdokument. Gebuendelt
+                # statt je Ergebnis: die Warnungsliste waechst dadurch um
+                # hoechstens (Zahl der verschiedenen Texte + 1) Zeilen.
+                rest = je_ergebnis[lim:]
+                weitere: dict = {}
+                for _name, _res, _kk in rest:
+                    for s in _res.info.get("contact_log", []):
+                        if "zugeordnet" not in s:
+                            # Die Laufnummer ("(Kontaktlauf 7)") gehoert zum
+                            # Ergebnis, nicht zur Art der Meldung - sonst
+                            # zerfiele eine Meldung in bis zu zwoelf Zeilen.
+                            art = re.sub(r" \(Kontaktlauf \d+\)$", "", s)
+                            weitere.setdefault(art, []).append(_name)
+                nicht_konv = [_name for _name, _res, _kk in rest
+                              if _res.info.get("contact_converged") is False]
+                for s, namen in weitere.items():
+                    self._warnings.append(
+                        f"Kontakt ({len(namen)} weitere Ergebnisse, "
+                        f"z. B. {namen[0]}): {s}")
+                if nicht_konv:
+                    self._warnings.append(
+                        f"Kontakt: {len(nicht_konv)} weitere Ergebnisse nicht "
+                        f"konvergiert (z. B. {', '.join(nicht_konv[:5])})")
                 if len(je_ergebnis) > lim:
                     b.append(("note", f"Kontaktkräfte der übrigen {len(je_ergebnis) - lim} Ergebnisse: "
-                                      "siehe die Übersicht oben; die Langform nennt alle."))
+                                      "siehe die Übersicht oben; die Langform nennt alle."
+                                      + (f" {len(nicht_konv)} davon sind nicht "
+                                         "konvergiert." if nicht_konv else "")))
         # ---- Freie Bewegungen (Singularitaeten)
         # Sie gehoeren in den Bericht, weil sie den Geltungsbereich des
         # Ergebnisses begrenzen: fuer ein Bauteil, an dem Last ins Nichts
@@ -2572,7 +2608,7 @@ class Report:
             rows.append([mc.member, mc.section, mc.material, fmt(mc.L, 2), str(mc.cls),
                          Util(mc.util), g.get("name", "–"), g.get("combo", "–"),
                          fmt(g.get("x", 0.0), 2),
-                         "erfüllt" if mc.util <= 1.0 else "NICHT erfüllt"])
+                         mc.status()])
         rows, note = self._truncate(rows, 400)
         b.append(("table", rows, "Ausnutzung je Stab (maßgebender Nachweis über alle "
                                  "GZT-Kombinationen)", None, ""))
@@ -2754,7 +2790,7 @@ class Report:
                        f"{g.get('name', '')} ({KIND_NAMES.get(g.get('kind', ''), g.get('kind', ''))}), Kombination "
                        f"{g.get('combo', '')}, x = {fmt(g.get('x', 0.0), 2)} m"))
         kv.append(("Ausnutzung", Util(mc.util)))
-        kv.append(("Status", "Nachweis erfüllt" if mc.util <= 1.0 else "Nachweis NICHT erfüllt"))
+        kv.append(("Status", "Nachweis " + mc.status()))
         b.append(("kv", kv, f"Stab {mc.member}"))
         ext = mc.extremes or {}
         if ext:
@@ -3763,6 +3799,7 @@ class Report:
                        f"{np.nanmax(env.node_vm_max) / 1e6:.1f} N/mm²"))
         d = self.design
         status_ok = True
+        nicht_gefuehrt: list = []
         if d is not None and getattr(d, "members", None):
             worst = max(d.members.values(), key=lambda mc: mc.util)
             g = worst.governing
@@ -3772,6 +3809,12 @@ class Report:
             nf = [mc.member for mc in d.members.values() if mc.util > 1.0]
             if nf:
                 status_ok = False
+            # Ein nicht gefuehrter Nachweis ist kein erfuellter. Seine
+            # Ausnutzung ist 0,000 und faellt darum weder bei ``worst`` noch
+            # bei ``nf`` auf - er ging bis zum 22.09.2026 als bestanden durch.
+            ohne = [mc.member for mc in d.members.values() if mc.fehler]
+            if ohne:
+                nicht_gefuehrt.append(f"{len(ohne)} Stäbe (EC3)")
         f = self.fatigue
         if f is not None and getattr(f, "members", None):
             worst = max(f.members.values(), key=lambda fm: fm.util)
@@ -3780,6 +3823,13 @@ class Report:
                                                f"{worst.category / 1e6:.0f}: {_pretty(worst.governing)}"))
             if any(fm.util > 1.0 for fm in f.members.values()):
                 status_ok = False
+            ohne_e = [fm.member for fm in f.members.values() if getattr(fm, "fehler", "")]
+            if ohne_e:
+                nicht_gefuehrt.append(f"{len(ohne_e)} Staebe (Ermuedung)")
+        if f is not None and getattr(f, "volumen", None):
+            ohne_v = [fv.name for fv in f.volumen.values() if getattr(fv, "fehler", "")]
+            if ohne_v:
+                nicht_gefuehrt.append(f"{len(ohne_v)} Volumenkoerper (Ermuedung)")
         bl = self.beulen
         if bl is not None and getattr(bl, "felder", None):
             worst = max(bl.felder.values(), key=lambda c: c.util)
@@ -3814,19 +3864,50 @@ class Report:
                           else f"{_pretty(worst.massgebend)}, Kombination {worst.kombination}")))
             if any(c.eta > 1.0 or c.fehler for c in aj.joints.values()):
                 status_ok = False
+        # Der Volumennachweis fehlte hier bis zum 22.09.2026 **doppelt**: in der
+        # Statuspruefung und in der Liste der gefuehrten Nachweise. Ein Modell,
+        # das nur aus Volumen besteht - am Drehlager der Regelfall -, bekam
+        # darum entweder "Es wurden keine Nachweise gefuehrt" oder "Alle
+        # Nachweise erfuellt", waehrend der gefuehrte Volumennachweis riss.
+        vo = self.volumen
+        if vo is not None and getattr(vo, "bereiche", None):
+            gefuehrte = [c for c in vo.bereiche.values() if not c.singular and not c.fehler]
+            if gefuehrte:
+                schlimmster = max(gefuehrte, key=lambda c: c.util)
+                kv.append(("max. Ausnutzung Volumen", Util(schlimmster.util)))
+                kv.append(("maßgebend (Volumen)",
+                           f"{schlimmster.name}: Element {schlimmster.element}, "
+                           f"{schlimmster.kombination}"))
+                if any(c.util > 1.0 for c in gefuehrte):
+                    status_ok = False
+            offen = [c.name for c in vo.bereiche.values() if c.fehler]
+            if offen:
+                nicht_gefuehrt.append(f"{len(offen)} Volumenbereiche")
+        if f is not None and getattr(f, "volumen", None):
+            if any(getattr(fv, "util", 0.0) > 1.0 for fv in f.volumen.values()):
+                status_ok = False
         b.append(("kv", kv, "Wesentliche Ergebnisse"))
         gefuehrt = ((d is not None and getattr(d, "members", None))
                     or (f is not None and getattr(f, "members", None))
+                    or (f is not None and getattr(f, "volumen", None))
                     or (aj is not None and getattr(aj, "joints", None))
                     or (gz is not None and getattr(gz, "checks", None))
                     or (bl is not None and getattr(bl, "felder", None))
-                    or (li is not None and getattr(li, "stellen", None)))
+                    or (li is not None and getattr(li, "stellen", None))
+                    or (vo is not None and getattr(vo, "bereiche", None)))
         if gefuehrt:
-            if status_ok:
-                b.append(("status", "Alle Nachweise erfüllt.", True))
-            else:
+            if not status_ok:
                 b.append(("status", "Nachweise NICHT erfüllt – siehe die Nachweiskapitel.",
                           False))
+            elif nicht_gefuehrt:
+                # Weder "erfuellt" noch "nicht erfuellt" - und genau das muss
+                # dastehen. Die eine Zeile, die ein Pruefer als Gesamturteil
+                # liest, darf einen uebersprungenen Nachweis nicht verschlucken.
+                b.append(("status", "Alle **geführten** Nachweise erfüllt – nicht geführt "
+                                    "wurden: " + ", ".join(nicht_gefuehrt)
+                                    + " (siehe die Hinweise unten).", False))
+            else:
+                b.append(("status", "Alle Nachweise erfüllt.", True))
         else:
             b.append(("status", "Es wurden keine Nachweise geführt; die Ergebnisse dienen der "
                                 "Schnittgrößen- und Verformungsermittlung.", True))
@@ -3839,6 +3920,28 @@ class Report:
         else:
             b.append(("p", "Es liegen keine offenen Hinweise oder Warnungen vor."))
         return b
+
+    def _theorie_spalte(self, lc) -> str:
+        """Die **gerechnete** Theorie eines Lastfalls, nicht die eingestellte.
+
+        Bis zum 22.09.2026 stand hier ``model.theorie_von(lc)``, also die
+        Einstellung. Scheitert die Rechnung nach Theorie II. oder III. Ordnung
+        (Kontakt im Modell, Zwangsverformung, singulaeres System), bleibt das
+        **lineare** Ergebnis unter demselben Namen stehen - und die Tabelle
+        wies trotzdem "II" bzw. "III" aus. Der Loeser schreibt seither
+        ``res.info["theorie"]``; steht dort etwas anderes als eingestellt,
+        sagt die Spalte es.
+        """
+        m = self.model
+        gewuenscht = m.theorie_von(lc) if hasattr(m, "theorie_von") else "I"
+        res = (self.results or {}).get(lc.name) if isinstance(self.results, dict) else None
+        if res is None:
+            an = getattr(self, "analysis", None)
+            res = (getattr(an, "cases", None) or {}).get(lc.name) if an is not None else None
+        gerechnet = (getattr(res, "info", None) or {}).get("theorie") if res is not None else None
+        if gerechnet and str(gerechnet) != str(gewuenscht):
+            return f"{gerechnet} (statt {gewuenscht}: nicht gerechnet)"
+        return gewuenscht
 
     # ============================================================ Anhang
     def chapter_appendix(self) -> list:

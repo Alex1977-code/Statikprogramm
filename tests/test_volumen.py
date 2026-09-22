@@ -146,8 +146,21 @@ def test_zugkoerper():
     check("σ_2 und σ_3 verschwinden",
           abs(w["s2"]) < 1e-6 * soll and abs(w["s3"]) < 1e-6 * soll,
           f"σ_2 = {w['s2'] / 1e6:.2e}, σ_3 = {w['s3'] / 1e6:.2e} MPa")
-    close("Ausnutzung σ_v/(f_y/γ_M0)", c.util, soll / (355e6 / m.design.gamma_M0),
+    # **335, nicht 355.** Der Prüfkörper ist ein Stab 100 x 100 mm; seine
+    # Erzeugnisdicke ist damit 100 mm, und über 40 mm gilt für S355 nach
+    # EN 1993-1-1 Tab. 3.1 nicht mehr 355 N/mm², sondern 335. Bis zum
+    # 22.09.2026 stand hier 355e6: der Nachweis rechnete immer mit der
+    # dünnsten Stufe und fiel damit **6,0 % zu günstig** aus. Die Prüfung
+    # hielt den Fehler fest - siehe test_erzeugnisdicke_mindert_die_streckgrenze.
+    close("f_y von S355 bei 100 mm Erzeugnisdicke",
+          m.materials["S355"].yield_strength(0.100), 335e6, 1e-9, " Pa")
+    close("Ausnutzung σ_v/(f_y/γ_M0)", c.util, soll / (335e6 / m.design.gamma_M0),
           1e-9)
+    close("die angesetzte Erzeugnisdicke steht im Nachweis",
+          w.get("dicke", 0.0), 0.100, 1e-9, " m")
+    check("und der Bericht sagt, woher sie kommt",
+          any("Erzeugnisdicke" in h and "335" in h for h in c.hinweise),
+          str([h[:60] for h in c.hinweise]))
     check("die Spannung ist über den Bereich gleich", abs(w["spitze"] - 1.0) < 1e-6,
           f"Spitze/Mittel = {w['spitze']:.6f}")
     check("kein falscher Hinweis auf dreiachsigen Zug",
@@ -157,7 +170,8 @@ def test_zugkoerper():
 
     # Material und Speichern
     check("das Material kommt aus dem Bereich",
-          c.material == "S355" and abs(c.fy - 355e6) < 1e-6)
+          c.material == "S355" and abs(c.fy - 335e6) < 1e-6,
+          f"{c.material}, f_y = {c.fy / 1e6:.0f} N/mm² (100 mm dick)")
     d = Model.from_dict(m.to_dict())
     check("der Volumenbereich übersteht Speichern und Laden",
           list(d.volumenbereiche) == ["Schaft"]
@@ -442,11 +456,129 @@ def test_nachweis_nimmt_die_spannung_des_loesers():
           f"(Faktor {max(roh) / loeser:.1f})")
 
 
+def test_erzeugnisdicke_mindert_die_streckgrenze():
+    """Ein dicker Volumenkörper weist sich mit der abgeminderten Streckgrenze
+    nach - und die Dicke hängt nicht daran, wie viel ausgewählt war.
+
+    `_material` rief `mat.yield_strength(0.0)` - also **immer die dünnste
+    Stufe**. Nach EN 1993-1-1 Tab. 3.1 gilt für S355 bis 40 mm 355 N/mm²,
+    darüber 335. Ein Lagerblock von 80 mm wies sich damit mit 355 statt 335
+    nach, und η = σ_v/f_yd fiel **6,0 % zu klein** aus - auf der unsicheren
+    Seite. Der Stabnachweis macht es seit jeher richtig (`design.py`:
+    `mat.yield_strength(sec.t_max)`).
+
+    Die Erzeugnisdicke eines Volumenbereichs ist eine **Festlegung**: die
+    kleinste Abmessung des umschließenden Quaders des ganzen Körpers, zu dem
+    die Elemente gehören. Nicht der Auswahl - sonst hinge das Ergebnis daran,
+    wie viel der Anwender markiert hat, und zwar auf der unsicheren Seite
+    (gemessen: Block 300 x 300 x 200 mm, eine Elementlage ausgewählt → 25 mm
+    statt 200 mm → 355 statt 335 N/mm², 6,0 % zu günstig). Bei einem
+    geschweißten Bauteil ist der Körper umgekehrt zu dick; darum ist die
+    Dicke am Bereich angebbar.
+    """
+    from statik3d.model import Model, Material
+    from statik3d.ec3.volumen import _erzeugnisdicke, _koerper, _material
+
+    def block(name, a, b_, c_, nx=1, ny=1, nz=1, x0=0.0):
+        """Ein Quader a x b x c aus nx*ny*nz Hexaedern, verschoben um x0."""
+        ids, els = {}, []
+        for k in range(nz + 1):
+            for j in range(ny + 1):
+                for i in range(nx + 1):
+                    ids[(i, j, k)] = name.add_node(x0 + a * i / nx, b_ * j / ny,
+                                                   c_ * k / nz)
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    els.append(name.add_element("hex8", [
+                        ids[(i, j, k)], ids[(i + 1, j, k)], ids[(i + 1, j + 1, k)],
+                        ids[(i, j + 1, k)], ids[(i, j, k + 1)],
+                        ids[(i + 1, j, k + 1)], ids[(i + 1, j + 1, k + 1)],
+                        ids[(i, j + 1, k + 1)]], "S355"))
+        return els
+
+    m = Model("block")
+    m.add_material(Material.steel("S355"))
+    # Block 0,30 x 0,30 x 0,20 m, fein vernetzt: die Elemente sind 25 mm dick,
+    # der Koerper 200 mm. Genau hier trennt sich Auswahl von Koerper.
+    els = block(m, 0.30, 0.30, 0.20, 6, 6, 8)
+    kp = _koerper(m)
+
+    t = _erzeugnisdicke(m, els, kp)
+    check("die Erzeugnisdicke ist die kleinste Abmessung des Körpers",
+          abs(t - 0.20) < 1e-12, f"{t * 1000:.1f} mm")
+    t1 = _erzeugnisdicke(m, [els[0]], kp)
+    check("ein einzelnes Element ergibt dieselbe Dicke",
+          abs(t1 - 0.20) < 1e-12, f"{t1 * 1000:.1f} mm bei 1 von {len(els)}")
+    lage = els[:36]
+    t2 = _erzeugnisdicke(m, lage, kp)
+    check("eine einzelne Elementlage auch",
+          abs(t2 - 0.20) < 1e-12, f"{t2 * 1000:.1f} mm bei 36 von {len(els)}")
+    # Die Probe ist scharf: aus der Auswahl allein kaeme 25 mm
+    X = np.asarray(m.nodes, float)[sorted({int(x) for e in lage
+                                           for x in m.elements[e].nodes})]
+    aus_auswahl = float((X.max(axis=0) - X.min(axis=0)).min())
+    check("die Probe ist scharf: aus der Auswahl allein käme 25 mm",
+          abs(aus_auswahl - 0.025) < 1e-12, f"{aus_auswahl * 1000:.1f} mm")
+
+    _n, fy_dick = _material(m, els, t)
+    _n, fy_duenn = _material(m, els, 0.0)
+    check("über 40 mm gilt die abgeminderte Streckgrenze",
+          abs(fy_dick - 335e6) < 1e3, f"{fy_dick / 1e6:.1f} N/mm²")
+    check("die Ausnutzung wäre sonst zu klein gewesen",
+          abs((fy_duenn / fy_dick - 1.0) - 0.0597) < 0.002,
+          f"{(fy_duenn / fy_dick - 1) * 100:.1f} % zu klein")
+
+    # Zwei Koerper im selben Modell bleiben getrennt
+    els2 = block(m, 0.30, 0.30, 0.012, 2, 2, 1, x0=1.0)
+    kp2 = _koerper(m)
+    check("ein zweiter Körper im Modell wird nicht mitgezählt",
+          abs(_erzeugnisdicke(m, els2, kp2) - 0.012) < 1e-12
+          and abs(_erzeugnisdicke(m, els, kp2) - 0.20) < 1e-12,
+          f"{_erzeugnisdicke(m, els2, kp2) * 1000:.1f} mm neben "
+          f"{_erzeugnisdicke(m, els, kp2) * 1000:.1f} mm")
+
+    # Gegenprobe: ein duennes Blech behaelt die volle Streckgrenze
+    _n, fy2 = _material(m, els2, _erzeugnisdicke(m, els2, kp2))
+    check("ein 12-mm-Blech behält die volle Streckgrenze",
+          abs(fy2 - 355e6) < 1e3, f"{fy2 / 1e6:.1f} N/mm²")
+
+
+def test_erzeugnisdicke_ist_angebbar():
+    """Ist das Bauteil aus Blechen geschweißt, ist der Körper zu dick.
+
+    Dann gilt die Blechdicke, und die wird am Volumenbereich angegeben. Die
+    angegebene Dicke hat Vorrang vor der aus dem Körper bestimmten, sie steht
+    im Nachweis und übersteht Speichern und Laden.
+    """
+    m, els, soll = zugkoerper()
+    m.add_volumenbereich("Schaft", els, dicke=0.020)
+    an = solver.solve_all(m, design=True)
+    c = an.volumen.bereiche["Schaft"]
+    check("die angegebene Dicke hat Vorrang vor der des Körpers",
+          abs(c.werte.get("dicke", 0.0) - 0.020) < 1e-12,
+          f"{c.werte.get('dicke', 0.0) * 1000:.1f} mm statt 100,0 mm")
+    check("und damit gilt die volle Streckgrenze",
+          abs(c.fy - 355e6) < 1e-6, f"{c.fy / 1e6:.0f} N/mm²")
+    close("die Ausnutzung rechnet damit", c.util,
+          soll / (355e6 / m.design.gamma_M0), 1e-9)
+    check("der Hinweis auf die Abminderung entfällt",
+          not any("Erzeugnisdicke" in h for h in c.hinweise),
+          str([h[:50] for h in c.hinweise]))
+    d = Model.from_dict(m.to_dict())
+    check("die Erzeugnisdicke übersteht Speichern und Laden",
+          abs(d.volumenbereiche["Schaft"].dicke - 0.020) < 1e-12,
+          f"{d.volumenbereiche['Schaft'].dicke * 1000:.1f} mm")
+    check("und die Modellkopie",
+          abs(m.copy().volumenbereiche["Schaft"].dicke - 0.020) < 1e-12)
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Volumennachweise (DIN EN 1993-1-1, 6.2.1(5))")
     print("=" * 92)
-    for t in (test_spannungsformeln, test_zugkoerper, test_randspannung,
+    for t in (test_erzeugnisdicke_mindert_die_streckgrenze,
+              test_erzeugnisdicke_ist_angebbar, test_spannungsformeln, test_zugkoerper, test_randspannung,
               test_nachweis_nimmt_die_spannung_des_loesers,
               test_fehlerfaelle, test_bericht):
         print()

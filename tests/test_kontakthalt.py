@@ -263,6 +263,136 @@ def test_schub_traegt_misst_die_fuge():
           v_stift > 1e3 * max(v_blech, 1e-18), f"{v_stift:.3f} gegen {v_blech:.3e}")
 
 
+# --------------------------------------------------------------------------
+# Der Faktorisierungsschluessel: was die Matrix aendert, muss darin stehen
+# --------------------------------------------------------------------------
+def test_schub_halt_steht_im_schluessel():
+    """Aendert der Schubhalt die Matrix, muss die Signatur sich aendern.
+
+    ``ContactSystem.matrices`` legt fuer eine **inaktive** Bedingung mit
+    ``schub_halt`` einen kt-Block in Kc. Bis zum 21.09.2026 kannte
+    ``signatur()`` den Schubhalt nicht: eine Runde, in der ``schub_frei`` die
+    Marke abraeumt, ohne dass active, slip oder yielding wechseln, gab
+    dieselbe Signatur bei anderer Matrix - und ``StaticSystem.solve`` behielt
+    die alte Faktorisierung. Geloest wurde dann mit einer Matrix, die um den
+    Schubblock danebenlag.
+
+    Geprueft wird beides: dass die Matrix sich wirklich aendert (sonst waere
+    die Pruefung leer) und dass die Signatur es mitbekommt.
+    """
+    print("")
+    print("--- Der Schubhalt im Faktorisierungsschluessel ---")
+    from statik3d.contact import ContactSystem
+    cons, lage = _stift_bedingungen()
+    ndof = (max(lage) + 1) * 6
+    cs = object.__new__(ContactSystem)     # wie in _kc_auf_moden: ohne Modell
+    cs.cons, cs.stabilising, cs.phase = cons, False, 1
+    for c in cs.cons:                      # alle offen, aber mit Schubhalt
+        c.active = False
+        c.slip = c.yielding = False
+        c.schub_halt = True
+    Kc_mit, _ = cs.matrices(ndof)
+    sig_mit = cs.signatur()
+
+    # schub_halt_loesen raeumt die Marke ab, sobald die Gruppe wieder traegt.
+    # Hier traegt keine - genau der Fall, in dem sich active, slip und
+    # yielding nicht ruehren.
+    for c in cs.cons:
+        c.schub_halt = False
+    Kc_ohne, _ = cs.matrices(ndof)
+    sig_ohne = cs.signatur()
+
+    check("der Schubhalt aendert die Kontaktmatrix wirklich",
+          Kc_mit.nnz > 0 and Kc_ohne.nnz == 0,
+          f"{Kc_mit.nnz} gegen {Kc_ohne.nnz} Eintraege")
+    check("active, slip und yielding sind dabei unveraendert",
+          all(not c.active and not c.slip and not c.yielding for c in cs.cons),
+          "alle Bedingungen offen geblieben")
+    check("und die Signatur bekommt es mit", sig_mit != sig_ohne,
+          "verschieden" if sig_mit != sig_ohne else "GLEICH - Loch im Schluessel")
+
+
+def test_zusatzmatrix_kennt_ihre_belegung():
+    """Zwei Zusatzmatrizen mit gleichen Werten an anderen Stellen sind
+    verschieden - und der Schluessel muss das sehen.
+
+    ``solver.zusatz_kenn`` hashte bis zum 21.09.2026 nur Form, Nichtnullzahl
+    und Werte. Bei baugleichen Staeben (``solve_with_ausfall``) liefert der
+    Ausfall dieselben 144 Eintraege an anderen Indizes; die alte
+    Faktorisierung waere stehengeblieben.
+    """
+    print("")
+    print("--- Die Zusatzmatrix im Faktorisierungsschluessel ---")
+    from scipy import sparse
+    from statik3d import solver as _s
+    A = sparse.csr_matrix(np.array([[1.0, 0.0, 0.0],
+                                    [0.0, 2.0, 0.0],
+                                    [0.0, 0.0, 0.0]]))
+    B = sparse.csr_matrix(np.array([[0.0, 1.0, 0.0],
+                                    [2.0, 0.0, 0.0],
+                                    [0.0, 0.0, 0.0]]))
+    check("die Probe ist scharf: gleiche Form, Zahl und Werte",
+          A.shape == B.shape and A.nnz == B.nnz
+          and np.array_equal(np.sort(A.data), np.sort(B.data)),
+          f"{A.nnz} Eintraege, Werte {sorted(A.data)}")
+    check("aber andere Belegung", not np.array_equal(A.toarray(), B.toarray()))
+    check("die Kennung unterscheidet sie", _s.zusatz_kenn(A) != _s.zusatz_kenn(B),
+          "verschieden" if _s.zusatz_kenn(A) != _s.zusatz_kenn(B)
+          else "GLEICH - Loch im Schluessel")
+    check("dieselbe Matrix gibt dieselbe Kennung",
+          _s.zusatz_kenn(A) == _s.zusatz_kenn(A.copy()))
+    check("ohne Zusatzmatrix keine Kennung", _s.zusatz_kenn(None) is None)
+
+
+def test_der_deckel_gilt_nicht_als_konvergenz():
+    """Gibt die Nachpruefung der Reibung auf, darf niemand "konvergiert" melden.
+
+    ``ContactSystem.update`` gibt ``False`` in **zwei** Faellen zurueck: wenn
+    es fertig ist, und wenn es nach ``MAX_CYCLES`` Zustandswechseln aufgibt.
+    ``solve_with_contact`` las bis zum 21.09.2026 beides als Konvergenz und
+    setzte ``contact_converged`` auf wahr; die Warnung stand allein im
+    ``contact_log``, das kaum jemand liest.
+
+    Das ist keine Geschwindigkeitsfrage: **jede** Vergleichszahl, gegen die
+    wir "aendert das Ergebnis nicht" pruefen, kann aus einem gedeckelten Lauf
+    stammen, ohne dass es jemand sieht. Gefunden von der Loesersitzung am
+    Quelltext.
+
+    Geprueft mit einem kuenstlich niedrigen Deckel am Beispiel "Block mit
+    Reibung" - der braucht mehrere Zustandswechsel, also greift er.
+    """
+    print("")
+    print("--- Der Deckel der Reibungsnachpruefung ---")
+    from statik3d import contact as _ct
+    from statik3d.examples_lib import block_friction_example
+
+    alt_max = _ct.MAX_CYCLES
+    m = block_friction_example()
+    r_frei = solver.solve_static(m)
+    check("ohne Deckel konvergiert das Beispiel",
+          bool(r_frei.info.get("contact_converged")),
+          f"{r_frei.info.get('contact_iterations')} Schritte")
+
+    _ct.MAX_CYCLES = 1
+    try:
+        r = solver.solve_static(block_friction_example())
+    finally:
+        _ct.MAX_CYCLES = alt_max
+    log = " | ".join(r.info.get("contact_log") or [])
+    gedeckelt = "abgebrochen" in log
+    check("mit Deckel 1 bricht die Nachpruefung wirklich ab", gedeckelt,
+          "Protokoll nennt den Abbruch" if gedeckelt else f"Protokoll: {log[:90]}")
+    if gedeckelt:
+        check("und dann meldet contact_converged NICHT konvergiert",
+              r.info.get("contact_converged") is False,
+              f"contact_converged = {r.info.get('contact_converged')}"
+              + ("" if r.info.get("contact_converged") is False
+                 else "  <- der alte Stand meldete wahr"))
+        check("die Meldung nennt den Grund, nicht die Schrittzahl",
+              any("Nachprüfung der Reibung" in t for t in (r.info.get("contact_log") or [])),
+              "der Text unterscheidet Deckel und Schrittgrenze")
+
+
 def _mit_einem_teil(name, fn):
     """fn() ausfuehren, waehrend _teile_bedingungen genau ein Teil mit den
     Bedingungen des uebergebenen Systems meldet. So prueft der Test die Auswahl
@@ -355,7 +485,10 @@ def main():
     for t in (test_halt, test_teile_bedingungen, test_zug_am_teil_gemessen,
               test_schub_haelt_den_stift, test_schub_traegt_misst_die_fuge,
               test_halt_waehlt_den_schub, test_schub_halt_faellt_weg,
-              test_schub_am_ende_wird_gemeldet):
+              test_schub_am_ende_wird_gemeldet,
+              test_schub_halt_steht_im_schluessel,
+              test_zusatzmatrix_kennt_ihre_belegung,
+              test_der_deckel_gilt_nicht_als_konvergenz):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

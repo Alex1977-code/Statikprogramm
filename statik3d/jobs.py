@@ -26,7 +26,8 @@ def _job_solve_case(model: dict, case: str):
 
 @register_job("solve_kette")
 def _job_solve_kette(pfad: str = "", model: dict = None, cases: list = None,
-                     arbeiter: int = 0, loeser_threads: int = 0):
+                     arbeiter: int = 0, loeser_threads: int = 0,
+                     referenzen: dict = None, einstellungen: dict = None):
     """Eine **Kette** von Lastfaellen: nacheinander, in sich warm gestartet.
 
     Der Warmstart ist der groesste Einzelgewinn je Lastfall (Drehlager:
@@ -48,12 +49,24 @@ def _job_solve_kette(pfad: str = "", model: dict = None, cases: list = None,
             m = pickle.load(f)
     else:
         m = Model.from_dict(model)
+    # Die Einstellungen des Hauptprozesses zuerst - unter spawn beginnt dieser
+    # Prozess mit den Vorgaben (solver_backend "auto" statt des gespeicherten
+    # "pardiso"). Unbekannte Schluessel eines neueren Hauptprozesses werden
+    # uebergangen, nicht mit KeyError quittiert.
+    st = parallel.settings()
+    parallel.configure(**{k: v for k, v in (einstellungen or {}).items()
+                          if hasattr(st, k)})
     if arbeiter:
         parallel.configure(workers=max(1, int(arbeiter)))
     if loeser_threads:
         parallel.configure(solver_threads=max(1, int(loeser_threads)))
     parallel.configure(ketten=1)          # in der Kette wird nicht weiter geteilt
-    out = solver.solve_cases(m, cases=list(cases or []))
+    # Die Referenzen muessen mit: ohne sie rechnete jeder eingefrorene Zustand
+    # der Kette voll nichtlinear, und zwar still. Bis zum 22.09.2026 gab
+    # dieser Auftrag sie nicht weiter - das war der zweite Teil der Sperre,
+    # der erste sass in _solve_cases_innen.
+    out = solver.solve_cases(m, cases=list(cases or []),
+                             referenzen=dict(referenzen or {}))
     for r in out.values():
         r.model = None                    # Modell nicht zuruecksenden
     return out
